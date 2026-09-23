@@ -3183,11 +3183,12 @@ function loadInsights(){
   insightsLoading=true;
   fetch('/api/insights',{cache:"no-store"})
     .then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); })
-    .then(function(d){ renderInsights(d); })
+    .then(function(d){ renderSmartInsights(d); })
     .catch(function(){ /* keep prior content on failure */ })
     .then(function(){ insightsLoading=false; });
 }
-function renderInsights(d){
+// renamed from renderInsights to avoid clobbering the HUD's renderInsights(season)
+function renderSmartInsights(d){
   var box=$("insightsList"); if(!box) return;
   var list = Array.isArray(d) ? d : (d && Array.isArray(d.insights) ? d.insights : []);
   if(!list.length){

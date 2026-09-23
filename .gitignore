@@ -1,0 +1,14 @@
+# Runtime state / private data (never commit)
+config.json
+sessions-meta.json
+claude-hq.log
+claude-hq.err.log
+
+# Build/verify artifacts
+verify_*.png
+verify.png
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store

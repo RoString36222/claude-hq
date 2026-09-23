@@ -243,6 +243,31 @@ select.hbtn{padding-right:26px;-webkit-appearance:none;appearance:none;
 .houraxis{display:flex;gap:3px;margin-top:5px}
 .houraxis span{flex:1;text-align:center;font-size:9px;color:var(--faint);font-variant-numeric:tabular-nums}
 
+/* 💡 insights panel (analytics view) — auto-generated insight cards */
+.insight-panel{padding:20px}
+.insight-list{display:flex;flex-direction:column;gap:10px}
+.insight-item{display:flex;gap:12px;align-items:flex-start;padding:11px 13px;border:1px solid var(--line);
+  border-radius:12px;background:var(--panel2);border-left:3px solid var(--faint)}
+.insight-item.good{border-left-color:var(--good)}
+.insight-item.warn{border-left-color:var(--warn)}
+.insight-item.bad{border-left-color:var(--need)}
+.insight-item .ii-ic{font-size:18px;line-height:1.4;flex:none}
+.insight-item .ii-body{min-width:0;flex:1}
+.insight-item .ii-t{font-weight:700;font-size:13px;line-height:1.35}
+.insight-item.good .ii-t{color:var(--good)}
+.insight-item.warn .ii-t{color:var(--warn)}
+.insight-item.bad .ii-t{color:var(--need)}
+.insight-item .ii-d{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.45;overflow-wrap:anywhere}
+.insight-empty{color:var(--muted);font-size:12.5px;padding:6px 2px}
+
+/* digest Day/Week segmented control */
+.digest-modeseg{display:inline-flex;gap:3px;background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:3px}
+.digest-modeseg button{background:none;border:none;color:var(--muted);border-radius:999px;padding:5px 12px;
+  font-size:12.5px;font-weight:700;cursor:pointer;transition:color .15s,background .15s}
+.digest-modeseg button:hover{color:var(--ink)}
+.digest-modeseg button.on{background:var(--panel);color:var(--brand);box-shadow:var(--shadow)}
+.digest-modeseg button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+
 /* detail drawer */
 .backdrop{position:fixed;inset:0;background:rgba(15,16,26,.5);opacity:0;pointer-events:none;
   transition:opacity .2s;z-index:40}
@@ -1124,6 +1149,10 @@ html.hq-calm #confetti{display:none!important}
       <div class="tile"><div class="n" id="aT_out">—</div><div class="l">Output tokens</div><div class="sfx">91d</div></div>
       <div class="tile"><div class="n" id="aT_cost">—</div><div class="l">Est cost</div><div class="sfx">91d</div></div>
     </div>
+    <section class="panel insight-panel" id="insightsPanel" aria-label="Insights">
+      <h3 class="section-h">💡 Insights <span class="muted">auto-generated</span></h3>
+      <div class="insight-list" id="insightsList"><div class="insight-empty">Loading…</div></div>
+    </section>
     <section class="panel a-panel">
       <h3 class="section-h">🟩 Contribution heatmap <span class="muted">last 13 weeks</span></h3>
       <div class="hm-wrap"><div id="aHeatmap" class="hm-outer"><div class="feed-empty">Loading…</div></div></div>
@@ -1280,6 +1309,10 @@ html.hq-calm #confetti{display:none!important}
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="digestTitle">
     <div class="modal-h">
       <h3 id="digestTitle">📝 Daily Digest</h3>
+      <div class="digest-modeseg" id="digestModeSeg" role="group" aria-label="Digest range">
+        <button id="digestModeDay" type="button" aria-pressed="true">Day</button>
+        <button id="digestModeWeek" type="button" aria-pressed="false">Week</button>
+      </div>
       <input type="date" id="digestDate" class="digest-date" aria-label="Digest date">
       <button class="hbtn" id="digestDownload" type="button" title="Download .md">⬇ .md</button>
       <button class="hbtn" id="digestClose" type="button" aria-label="Close">✕</button>
@@ -2426,19 +2459,48 @@ function mdToHtml(md){
   if(inList) out.push("</ul>");
   return out.join("");
 }
+/* ---- digest Day/Week mode (persisted) ---- */
+var DIGEST_MODE = (localStorage.getItem("hq_digest_mode")==="week") ? "week" : "day";
+function digestDays(){ return DIGEST_MODE==="week" ? 7 : 1; }
+// Shift an ISO (YYYY-MM-DD) date by delta days, staying in local calendar terms.
+function isoAddDays(iso, delta){
+  var p=String(iso||"").split("-"); var d=new Date(+p[0], (+p[1]||1)-1, +p[2]||1);
+  d.setDate(d.getDate()+(delta|0));
+  var pad=function(n){return String(n).padStart(2,"0");};
+  return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
+}
+function refreshDigestModeUI(){
+  var dm=$("digestModeDay"), wk=$("digestModeWeek");
+  if(dm){ var onD=DIGEST_MODE==="day"; dm.classList.toggle("on",onD); dm.setAttribute("aria-pressed",onD?"true":"false"); }
+  if(wk){ var onW=DIGEST_MODE==="week"; wk.classList.toggle("on",onW); wk.setAttribute("aria-pressed",onW?"true":"false"); }
+}
+function updateDigestTitle(date, days){
+  var t=$("digestTitle"); if(!t) return;
+  if(days>1) t.textContent = "📝 Weekly Digest — "+isoAddDays(date,-(days-1))+" → "+date;
+  else t.textContent = "📝 Daily Digest";
+}
+function setDigestMode(m){
+  DIGEST_MODE = (m==="week") ? "week" : "day";
+  localStorage.setItem("hq_digest_mode", DIGEST_MODE);
+  refreshDigestModeUI();
+  loadDigest();
+}
 function openDigest(date){
   rememberOpener();
   var dt = $("digestDate");
   if(typeof date==="string" && /^\d{4}-\d{2}-\d{2}$/.test(date)) dt.value=date;
   else if(!dt.value) dt.value = todayLocalISO();
+  refreshDigestModeUI();
   $("digestBack").classList.add("open");
   loadDigest();
   dt.focus();
 }
 function loadDigest(){
   var date = $("digestDate").value || todayLocalISO();
+  var days = digestDays();
+  updateDigestTitle(date, days);
   $("digestBody").innerHTML = "Loading…";
-  fetch("/api/digest?date="+encodeURIComponent(date),{cache:"no-store"})
+  fetch("/api/digest?days="+days+"&date="+encodeURIComponent(date),{cache:"no-store"})
     .then(function(r){ return r.json(); })
     .then(function(d){ $("digestBody").innerHTML = mdToHtml(d.markdown||"_empty_"); })
     .catch(function(){ $("digestBody").textContent = "Could not load digest."; });
@@ -2959,7 +3021,7 @@ function setView(v){
     t.classList.toggle("active", on); t.setAttribute("aria-selected", on?"true":"false");
     if(on) t.setAttribute("aria-current","page"); else t.removeAttribute("aria-current");
   });
-  if(v==="analytics") loadHistory();
+  if(v==="analytics"){ loadHistory(); loadInsights(); }
   if(v==="pokedex") loadPokedex();
   if(v==="gym") renderGym();
   if(v==="quests") loadQuests();
@@ -3113,6 +3175,42 @@ function loadHistory(){
     .then(function(d){ HISTORY=d; renderAnalytics(d); })
     .catch(function(){ /* leave placeholders */ })
     .then(function(){ historyLoading=false; });
+}
+/* ---- 💡 insights (analytics view) ---- */
+var insightsLoading=false;
+function loadInsights(){
+  if(insightsLoading) return;
+  insightsLoading=true;
+  fetch('/api/insights',{cache:"no-store"})
+    .then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); })
+    .then(function(d){ renderInsights(d); })
+    .catch(function(){ /* keep prior content on failure */ })
+    .then(function(){ insightsLoading=false; });
+}
+function renderInsights(d){
+  var box=$("insightsList"); if(!box) return;
+  var list = Array.isArray(d) ? d : (d && Array.isArray(d.insights) ? d.insights : []);
+  if(!list.length){
+    box.innerHTML='<div class="insight-empty">No insights right now — keep shipping and check back later.</div>';
+    return;
+  }
+  box.innerHTML="";
+  list.forEach(function(it){
+    it=it||{};
+    var kind=String(it.kind||it.level||it.severity||"info").toLowerCase();
+    var cls="insight-item", def="💡";
+    if(kind==="good"||kind==="success"){ cls+=" good"; def="✅"; }
+    else if(kind==="warn"||kind==="warning"){ cls+=" warn"; def="⚠️"; }
+    else if(kind==="bad"||kind==="error"||kind==="danger"||kind==="alert"){ cls+=" bad"; def="🚨"; }
+    var icon=it.icon||it.emoji||def;
+    var title=it.title||it.label||it.name||"";
+    var detail=it.detail||it.text||it.desc||it.description||it.body||"";
+    var row=el("div",cls);
+    row.innerHTML='<span class="ii-ic">'+esc(icon)+'</span><div class="ii-body">'+
+      '<div class="ii-t">'+esc(title)+'</div>'+
+      (detail?('<div class="ii-d">'+esc(detail)+'</div>'):'')+'</div>';
+    box.appendChild(row);
+  });
 }
 function renderAnalytics(h){
   if(!h) return;
@@ -3299,6 +3397,7 @@ function renderHall(list){
 }
 // refresh analytics while the view is open
 historyTimer=setInterval(function(){ if(VIEW==="analytics") loadHistory(); }, 30000);
+var insightsTimer=setInterval(function(){ if(VIEW==="analytics") loadInsights(); }, 60000);
 
 /* ---- pokedex view ---- */
 var POKEDEX=null, pokedexTimer=null, pokedexLoading=false;
@@ -3961,10 +4060,14 @@ $("menuVoice").textContent = "🗣️ Voice alerts: "+(VOICE?"on":"off");
 $("menuVoice").setAttribute("aria-pressed", VOICE?"true":"false");
 $("digestClose").addEventListener("click",closeDigest);
 $("digestDate").addEventListener("change",loadDigest);
+$("digestModeDay").addEventListener("click",function(){ setDigestMode("day"); });
+$("digestModeWeek").addEventListener("click",function(){ setDigestMode("week"); });
+refreshDigestModeUI();
 $("digestDownload").addEventListener("click",function(){
   var date=$("digestDate").value||todayLocalISO();
-  var a=el("a"); a.href="/api/digest?download=1&date="+encodeURIComponent(date);
-  a.download="claude-hq-digest-"+date+".md"; document.body.appendChild(a); a.click(); a.remove();
+  var days=digestDays();
+  var a=el("a"); a.href="/api/digest?download=1&days="+days+"&date="+encodeURIComponent(date);
+  a.download="claude-hq-digest-"+date+(days>1?("-"+days+"d"):"")+".md"; document.body.appendChild(a); a.click(); a.remove();
 });
 $("digestBack").addEventListener("click",function(e){ if(e.target===$("digestBack")) closeDigest(); });
 

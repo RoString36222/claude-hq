@@ -1991,9 +1991,15 @@ def _pretty_folder(slug):
 
 
 def _digest_day_detail(path, diso):
-    """Re-read one transcript, extracting just <diso>'s first human prompt,
-    last assistant reply, and files touched that day. Cheap: only called for the
-    handful of sessions active on the target date."""
+    """Back-compat single-day wrapper around _digest_range_detail."""
+    return _digest_range_detail(path, {diso})
+
+
+def _digest_range_detail(path, date_set):
+    """Re-read one transcript, extracting the first human prompt, last assistant
+    reply, and files touched across the given set of local-day iso strings. Cheap:
+    only called for the handful of sessions active in the target range. When
+    date_set has a single date this is identical to the old per-day behaviour."""
     first_prompt = None
     last_reply = None
     files = []
@@ -2015,7 +2021,7 @@ def _digest_day_detail(path, diso):
                 continue
             try:
                 ts = parse_ts(o.get("timestamp"))
-                if ts is None or ts.date().isoformat() != diso:
+                if ts is None or ts.date().isoformat() not in date_set:
                     continue
                 typ = o.get("type")
                 if typ == "user":
@@ -2047,41 +2053,76 @@ def _digest_day_detail(path, diso):
     return first_prompt, last_reply, files
 
 
-def compute_digest(diso):
-    """Build the daily-digest payload (markdown + structured) for a local date."""
+def compute_digest(diso, days=1):
+    """Build the digest payload (markdown + structured). With days=1 this is the
+    single-day daily digest (unchanged). With days>1 it aggregates the last <days>
+    days ENDING at <diso>, summing per-session stats across the range and including
+    only sessions active somewhere in the range."""
+    try:
+        days = int(days)
+    except Exception:
+        days = 1
+    days = max(1, min(31, days))
+
+    try:
+        end_d = date.fromisoformat(diso)
+    except Exception:
+        end_d = now_utc().astimezone().date()
+        diso = end_d.isoformat()
+    start_d = end_d - timedelta(days=days - 1)
+    date_set = {(start_d + timedelta(days=i)).isoformat() for i in range(days)}
+
     entries = []
     tot = {"prompts": 0, "tools": 0, "output": 0, "cost": 0.0}
     for path in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
         agg = scan_file(path)
         if agg is None:
             continue
-        day = (agg.get("per_day") or {}).get(diso)
-        if not day:
+        per_day = agg.get("per_day") or {}
+        s_prompts = s_tools = s_output = 0
+        s_cost = 0.0
+        present = False
+        for di in date_set:
+            day = per_day.get(di)
+            if not day:
+                continue
+            present = True
+            s_prompts += day.get("prompts", 0)
+            s_tools += day.get("tools", 0)
+            s_output += day.get("output", 0)
+            s_cost += day.get("cost", 0.0)
+        if not present:
             continue
-        fp, lr, files = _digest_day_detail(path, diso)
+        fp, lr, files = _digest_range_detail(path, date_set)
         entries.append({
             "sessionId": _session_id_from_path(path),
             "title": agg.get("ai_title") or "Untitled session",
             "folder": _pretty_folder(agg.get("folder")),
-            "prompts": day.get("prompts", 0),
-            "tools": day.get("tools", 0),
-            "output": day.get("output", 0),
-            "cost": round(day.get("cost", 0.0), 4),
+            "prompts": s_prompts,
+            "tools": s_tools,
+            "output": s_output,
+            "cost": round(s_cost, 4),
             "firstPrompt": fp or agg.get("first_prompt") or "",
             "lastReply": lr or agg.get("last_reply") or "",
             "files": files[:8],
             "links": [l.get("url") for l in (agg.get("links") or [])][:4],
         })
-        tot["prompts"] += day.get("prompts", 0)
-        tot["tools"] += day.get("tools", 0)
-        tot["output"] += day.get("output", 0)
-        tot["cost"] += day.get("cost", 0.0)
+        tot["prompts"] += s_prompts
+        tot["tools"] += s_tools
+        tot["output"] += s_output
+        tot["cost"] += s_cost
 
     entries.sort(key=lambda e: (-(e["prompts"] + e["tools"]), -e["output"]))
 
-    lines = ["# Claude HQ — Daily Digest — %s" % diso, ""]
+    if days == 1:
+        lines = ["# Claude HQ — Daily Digest — %s" % diso, ""]
+        empty_span = diso
+    else:
+        lines = ["# Claude HQ — Digest — %s → %s"
+                 % (start_d.isoformat(), diso), ""]
+        empty_span = "%s → %s" % (start_d.isoformat(), diso)
     if not entries:
-        lines.append("_No Claude activity on %s._" % diso)
+        lines.append("_No Claude activity on %s._" % empty_span)
     else:
         lines.append(
             "**%d session%s active** · %d prompts · %d tool calls · ~%s output tokens · ~$%.2f list-price est."
@@ -2103,6 +2144,7 @@ def compute_digest(diso):
             lines.append("")
     return {
         "date": diso,
+        "days": days,
         "markdown": "\n".join(lines),
         "sessionCount": len(entries),
         "totals": {
@@ -2110,6 +2152,151 @@ def compute_digest(diso):
             "output": tot["output"], "estCostUSD": round(tot["cost"], 2),
         },
     }
+
+
+def compute_insights():
+    """A handful of genuinely useful observations computed from the scan_file
+    cache over ALL transcripts + the live payload. Each insight is guarded so it
+    only appears when it has data. Never raises (falls back to empty list)."""
+    try:
+        today = now_utc().date()
+        d7_start = today - timedelta(days=6)     # this week: [today-6 .. today]
+        d14_start = today - timedelta(days=13)   # last week: [today-13 .. today-7]
+        last_week_end = today - timedelta(days=7)
+        d30_start = today - timedelta(days=29)
+
+        day_cost = {}       # date -> est USD
+        day_activity = {}   # date -> prompts + replies
+        day_output = {}     # date -> output tokens
+        folder_last = {}    # folder -> most recent activity date
+        folder_week = {}    # folder -> prompts + tools in last 7d
+        hourly = [0] * 24   # local-hour activity over 30d
+
+        for path in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
+            agg = scan_file(path)
+            if agg is None:
+                continue
+            fol = agg.get("folder") or ""
+            la = agg.get("last_activity")
+            if la is not None:
+                ld = la.date()
+                if fol not in folder_last or ld > folder_last[fol]:
+                    folder_last[fol] = ld
+            for diso, dd in (agg.get("per_day") or {}).items():
+                try:
+                    d = date.fromisoformat(diso)
+                except Exception:
+                    continue
+                if d > today:
+                    continue
+                p = dd.get("prompts", 0)
+                t = dd.get("tools", 0)
+                r = dd.get("replies", 0)
+                day_cost[d] = day_cost.get(d, 0.0) + dd.get("cost", 0.0)
+                day_activity[d] = day_activity.get(d, 0) + p + r
+                day_output[d] = day_output.get(d, 0) + dd.get("output", 0)
+                if d7_start <= d <= today:
+                    folder_week[fol] = folder_week.get(fol, 0) + p + t
+                if d30_start <= d <= today:
+                    for h, hc in (dd.get("hours") or {}).items():
+                        if 0 <= h < 24:
+                            hourly[h] += hc
+
+        insights = []
+
+        # --- spend: this week vs last week ---
+        this_week = sum(v for d, v in day_cost.items() if d7_start <= d <= today)
+        last_week = sum(v for d, v in day_cost.items()
+                        if d14_start <= d <= last_week_end)
+        if this_week > 0 or last_week > 0:
+            if last_week > 0:
+                pct = (this_week - last_week) / last_week * 100.0
+                arrow = "▲" if pct >= 0 else "▼"
+                detail = ("Spend $%.2f this week (%s %d%% vs last week's $%.2f)"
+                          % (this_week, arrow, abs(int(round(pct))), last_week))
+                kind = "warn" if pct > 25 else "info"
+            else:
+                detail = "Spend $%.2f this week (nothing last week)" % this_week
+                kind = "info"
+            insights.append({"icon": "💸", "title": "Weekly spend",
+                             "detail": detail, "kind": kind})
+
+        # --- busiest project this week ---
+        if folder_week:
+            top_fol = max(folder_week, key=lambda k: folder_week[k])
+            score = folder_week[top_fol]
+            if score > 0:
+                insights.append({
+                    "icon": "🔥", "title": "Busiest project",
+                    "detail": "%s — %d prompts + tool calls in the last 7 days"
+                    % (_pretty_folder(top_fol), score),
+                    "kind": "good"})
+
+        # --- dormant projects (untouched > 14 days), up to 2 ---
+        dormant = []
+        for fol, ld in folder_last.items():
+            age = (today - ld).days
+            if age > 14:
+                dormant.append((age, fol))
+        dormant.sort(reverse=True)
+        for age, fol in dormant[:2]:
+            insights.append({
+                "icon": "💤", "title": "Dormant project",
+                "detail": "%s untouched %d days" % (_pretty_folder(fol), age),
+                "kind": "warn"})
+
+        # --- biggest day in the last 30 ---
+        biggest = None
+        for d, v in day_activity.items():
+            if d30_start <= d <= today and v > 0:
+                if biggest is None or v > biggest[1]:
+                    biggest = (d, v)
+        if biggest:
+            insights.append({
+                "icon": "📈", "title": "Biggest day",
+                "detail": "%s was your busiest — %d prompts + replies"
+                % (biggest[0].isoformat(), biggest[1]),
+                "kind": "info"})
+
+        # --- output this week ---
+        out_week = sum(v for d, v in day_output.items() if d7_start <= d <= today)
+        if out_week > 0:
+            insights.append({
+                "icon": "✍️", "title": "Output this week",
+                "detail": "~%s output tokens in the last 7 days" % f"{out_week:,}",
+                "kind": "info"})
+
+        # --- tabs needing attention (stuck or needs), from live payload ---
+        try:
+            payload = build_payload_memo()
+            needs = sum(1 for s in payload.get("sessions", [])
+                        if s.get("status") == "needs")
+            stuck = sum(1 for s in payload.get("sessions", []) if s.get("stuck"))
+        except Exception:
+            needs = stuck = 0
+        attn = needs + stuck
+        if attn > 0:
+            insights.append({
+                "icon": "⚠️", "title": "Needs attention",
+                "detail": "%d tab%s stuck or awaiting input right now"
+                % (attn, "" if attn == 1 else "s"),
+                "kind": "warn"})
+
+        # --- peak local hour over 30d ---
+        if any(hourly):
+            peak = max(range(24), key=lambda h: hourly[h])
+            if hourly[peak] > 0:
+                ampm = "am" if peak < 12 else "pm"
+                h12 = peak % 12 or 12
+                insights.append({
+                    "icon": "🕒", "title": "Peak hour",
+                    "detail": "Most active around %d%s local — %d actions over 30 days"
+                    % (h12, ampm, hourly[peak]),
+                    "kind": "info"})
+
+        return {"generated": now_utc().isoformat(), "insights": insights}
+    except Exception:
+        return {"generated": now_utc().isoformat(), "insights": []}
 
 
 # --------------------------------------------------------------------------- #
@@ -2834,6 +3021,16 @@ class Handler(BaseHTTPRequestHandler):
                 }))
             return
 
+        if path == "/api/insights":
+            try:
+                self._send(200, json.dumps(compute_insights()))
+            except Exception as e:
+                self._send(200, json.dumps({
+                    "generated": now_utc().isoformat(),
+                    "insights": [], "error": str(e),
+                }))
+            return
+
         if path == "/api/pokedex":
             try:
                 self._send(200, json.dumps(compute_pokedex()))
@@ -2876,7 +3073,12 @@ class Handler(BaseHTTPRequestHandler):
                 diso = (qs.get("date", [""])[0] or "").strip()
                 if not re.match(r"^\d{4}-\d{2}-\d{2}$", diso):
                     diso = now_utc().astimezone().date().isoformat()
-                data = compute_digest(diso)
+                try:
+                    days = int(qs.get("days", ["1"])[0])
+                except Exception:
+                    days = 1
+                days = max(1, min(31, days))
+                data = compute_digest(diso, days)
                 if qs.get("download", ["0"])[0] in ("1", "true", "yes"):
                     self._send_download(200, data["markdown"],
                                         "text/markdown; charset=utf-8",

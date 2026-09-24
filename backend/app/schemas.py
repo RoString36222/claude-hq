@@ -138,3 +138,33 @@ class PairResponse(BaseModel):
 class TicketResponse(BaseModel):
     ticket: str
     expiresIn: int
+
+
+# --- nudges ----------------------------------------------------------------
+
+class SendNudgeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    toHandle: str = Field(min_length=1, max_length=64)
+    note: str = Field("", max_length=120)
+
+    @field_validator("note")
+    @classmethod
+    def _clean_note(cls, v: str) -> str:
+        return "".join(ch for ch in v if ch.isprintable()).strip()[:120]
+
+
+class SendNudgeResponse(BaseModel):
+    queued: bool
+    deliveredLive: int = 0
+
+
+class NudgeItem(BaseModel):
+    fromHandle: str
+    fromName: str
+    note: str
+    at: str
+
+
+class NudgesResponse(BaseModel):
+    nudges: list[NudgeItem] = Field(default_factory=list)

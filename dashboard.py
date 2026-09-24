@@ -3178,6 +3178,11 @@ class Handler(BaseHTTPRequestHandler):
                 return arena.publish(PROJECTS_DIR)
             if path == "/api/arena/ticket":
                 return arena.ws_ticket()
+            if path == "/api/arena/nudge":
+                to = body.get("toHandle")
+                if not isinstance(to, str) or not to.strip():
+                    return 400, {"error": "toHandle required"}
+                return arena.send_nudge(to.strip(), note=body.get("note", ""))
         except Exception as e:
             return 500, {"error": "arena request failed: %s" % e}
         return 404, {"error": "not found"}
@@ -3198,7 +3203,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path not in ("/api/action", "/api/config", "/api/meta",
                         "/api/arena/pair", "/api/arena/unpair",
-                        "/api/arena/publish", "/api/arena/ticket"):
+                        "/api/arena/publish", "/api/arena/ticket",
+                        "/api/arena/nudge"):
             self._send(404, json.dumps({"error": "not found"}))
             return
 
@@ -3285,6 +3291,20 @@ def main():
     # Arena (multiplayer) stays dormant until the user pairs and enables it.
     arena.init(scan_file, load_config, HERE)
     arena.start_publisher(PROJECTS_DIR)
+
+    # Raise a native macOS notification for an incoming nudge, so it reaches you
+    # even with no Arena tab open (as long as this process is running).
+    def _notify(title, body):
+        try:
+            subprocess.run(
+                ["osascript", "-e",
+                 'display notification %s with title %s sound name "Ping"'
+                 % (json.dumps(body), json.dumps(title))],
+                check=False, timeout=10,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+    arena.start_nudge_poller(_notify)
 
     # Warm the per-file scan + search caches in the background so the first
     # /api/search and /api/history are instant instead of a one-time ~1s scan.

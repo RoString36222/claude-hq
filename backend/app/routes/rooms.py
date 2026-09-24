@@ -107,6 +107,30 @@ async def _handle(room_id: str, member: Member, msg: dict) -> None:
         await room.broadcast({"type": "state", "state": room.state, "by": member.public()})
         return
 
+    if kind == "nudge":
+        # A directed "hey, come look at the Arena" ping. Deliberately carries no
+        # URL or command -- only who it's from and an optional short note -- so a
+        # nudge can never make the recipient's machine open or do anything. The
+        # recipient's client just shows a toast; acting on it is their choice.
+        target = msg.get("to")
+        if not isinstance(target, str) or not target:
+            await member.ws.send_json({"type": "error", "error": "nudge needs a target userId"})
+            return
+        note = msg.get("note")
+        note = ("".join(ch for ch in note if ch.isprintable()).strip()[:120]
+                if isinstance(note, str) else "")
+        payload = {"type": "nudge", "from": member.public(), "note": note}
+        delivered = 0
+        for ws, m in list(room.members.items()):
+            if m.user_id == target and ws is not member.ws:
+                try:
+                    await ws.send_json(payload)
+                    delivered += 1
+                except Exception:
+                    pass
+        await member.ws.send_json({"type": "nudge_ack", "to": target, "delivered": delivered})
+        return
+
     if kind == "ping":
         await member.ws.send_json({"type": "pong"})
         return

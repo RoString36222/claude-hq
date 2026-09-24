@@ -981,6 +981,9 @@ html.hq-calm #confetti{display:none!important}
   border-radius:999px;border:1px solid var(--line);font-size:12px}
 .arena-peer img{width:20px;height:20px;border-radius:50%;background:var(--line)}
 .arena-dot{width:7px;height:7px;border-radius:50%;background:#3fb950;flex:0 0 auto}
+.arena-nudge{margin-left:2px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);
+  background:transparent;color:var(--muted);font:inherit;font-size:11px;cursor:pointer;line-height:1.6}
+.arena-nudge:hover{background:var(--accent);border-color:var(--accent);color:#fff}
 .arena-stat{position:relative}
 .arena-stat-dot{position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;
   background:var(--muted);box-shadow:0 0 0 2px var(--panel)}
@@ -3179,7 +3182,7 @@ setInterval(function(){ if(STATE){ $("updated").textContent="updated "+relTime(S
 
 /* ---- view switcher ---- */
 // Arena state must exist before setView(VIEW) runs at startup (it calls arenaCloseSocket).
-var ARENA = {window:"season", status:null, sock:null, retry:null};
+var ARENA = {window:"season", status:null, sock:null, retry:null, you:null};
 var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena")?v:"live"; })();
 function setView(v){
   VIEW = v; localStorage.setItem("hq_view", v);
@@ -5043,7 +5046,10 @@ function arenaOpenSocket(){
     ARENA.sock = ws;
     ws.onmessage = function(ev){
       var m; try { m = JSON.parse(ev.data); } catch(e){ return; }
-      if(m.type==="welcome" || m.type==="join" || m.type==="leave") arenaRenderLobby(m.members||[]);
+      if(m.type==="welcome"){ ARENA.you = m.you||null; arenaRenderLobby(m.members||[]); }
+      else if(m.type==="join" || m.type==="leave"){ arenaRenderLobby(m.members||[]); }
+      else if(m.type==="nudge"){ arenaOnNudge(m); }
+      else if(m.type==="nudge_ack"){ toast(m.delivered ? "\uD83D\uDC4B Nudge sent" : "They\u2019re not in the lobby right now", m.delivered?"level":"ach"); }
     };
     ws.onclose = function(){
       ARENA.sock = null;
@@ -5074,8 +5080,32 @@ function arenaRenderLobby(members){
       var img=document.createElement("img"); img.src=m.avatarUrl; img.alt=""; chip.appendChild(img);
     } else { chip.appendChild(dot); }
     var t=document.createElement("span"); t.textContent = m.displayName || m.handle;
-    chip.appendChild(t); el.appendChild(chip);
+    chip.appendChild(t);
+    if(!ARENA.you || m.userId!==ARENA.you.userId){
+      var nb=document.createElement("button"); nb.className="arena-nudge"; nb.type="button";
+      nb.textContent="\uD83D\uDC4B nudge"; nb.title="Nudge "+(m.displayName||m.handle)+" to check the Arena";
+      nb.addEventListener("click", function(){ arenaSendNudge(m); });
+      chip.appendChild(nb);
+    }
+    el.appendChild(chip);
   });
+}
+// Send a directed nudge over the lobby socket. No URL/command -- just a ping.
+function arenaSendNudge(peer){
+  if(!ARENA.sock || ARENA.sock.readyState!==1){ toast("Not connected to the lobby", "ach"); return; }
+  try{ ARENA.sock.send(JSON.stringify({type:"nudge", to:peer.userId})); }catch(e){}
+}
+// A nudge arrived. Show a toast + chime; the user decides whether to act on it.
+function arenaOnNudge(m){
+  var who = (m.from && (m.from.displayName || m.from.handle)) || "Someone";
+  var msg = who + " nudged you" + (m.note ? ": " + m.note : "") + " \u2014 check the Arena";
+  if(NOTIF_ON && ("Notification" in window) && Notification.permission==="granted"){
+    try{ new Notification("\uD83D\uDC4B "+who+" nudged you", {body:(m.note||"Check the Arena"), tag:"hq-nudge", silent:true}); }catch(e){}
+  }
+  playChime();
+  if(typeof toast==="function") toast("\uD83D\uDC4B "+msg, "level");
+  if(typeof announce==="function") announce(msg);
+  if(typeof logEvent==="function") logEvent("\uD83D\uDC4B", msg);
 }
 
 /* ---- Arena controls ---- */

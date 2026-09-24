@@ -2477,6 +2477,7 @@ DEFAULT_CONFIG = {
     "refreshMs": 5000,
     "stuckMinutes": 15,
     "dailyBudgetUSD": 0,
+    "trainerName": "",
 }
 
 _config_lock = threading.Lock()
@@ -2511,6 +2512,11 @@ def _validate_config(raw, base=None):
             cfg["dailyBudgetUSD"] = db
     except Exception:
         pass
+    tn = raw.get("trainerName")
+    if isinstance(tn, str):
+        # printable chars only, whitespace collapsed, capped; "" = auto-derive
+        tn = "".join(ch for ch in tn if ch.isprintable())
+        cfg["trainerName"] = " ".join(tn.split())[:32]
     return cfg
 
 

@@ -1482,6 +1482,11 @@ html.hq-calm #confetti{display:none!important}
           <span class="hint">High contrast is a local display preference (kept in this browser).</span>
         </div>
         <div class="setrow">
+          <label for="setTrainer">Trainer name</label>
+          <input id="setTrainer" type="text" maxlength="32" placeholder="Auto (from session names)">
+          <span class="hint">Shown on your Trainer Card. Leave blank for automatic.</span>
+        </div>
+        <div class="setrow">
           <label for="setAccent">Accent color</label>
           <div class="accent-row">
             <input id="setAccent" type="range" min="0" max="360" step="1" value="262" aria-label="Accent hue">
@@ -1606,7 +1611,7 @@ var FILTERTAG = "";            // active tag filter, "" = all
 var STATE_AT = 0;              // Date.now() of last payload (for live timers)
 
 /* ---- config + creature packs (v5) ---- */
-var CONFIG_DEFAULTS = {theme:"aurora", creaturePack:"monsters", refreshMs:5000, stuckMinutes:15, dailyBudgetUSD:0};
+var CONFIG_DEFAULTS = {theme:"aurora", creaturePack:"monsters", refreshMs:5000, stuckMinutes:15, dailyBudgetUSD:0, trainerName:""};
 var CONFIG = Object.assign({}, CONFIG_DEFAULTS);
 function cfg(){ return CONFIG; }
 // backend creature name order (index-stable). See CREATURES in dashboard.py.
@@ -3901,7 +3906,9 @@ function loadTrainerDex(){
   fetch('/api/pokedex',{cache:'no-store'}).then(function(r){return r.json();})
     .then(function(d){ TRAINER_DEX=d; renderTrainerCard(); maybeRecap(); }).catch(function(){});
 }
+function trainerPref(){ return ((CONFIG&&CONFIG.trainerName)||"").trim(); }
 function trainerName(){
+  var custom=trainerPref(); if(custom) return custom;
   var ss=(STATE&&STATE.sessions)||[];
   for(var i=0;i<ss.length;i++){ var n=(ss[i].name||"").trim(); if(n){ var m=n.split("-")[0]; if(m) return m; } }
   return "You";
@@ -4286,6 +4293,7 @@ function openSettings(){
   $("setBudget").value = c.dailyBudgetUSD!=null ? c.dailyBudgetUSD : 0;
   var lt=$("setLargeText"); if(lt) lt.checked=largePref();
   var cm=$("setCalm"); if(cm) cm.checked=calmPref();
+  var tn=$("setTrainer"); if(tn) tn.value=trainerPref();
   if(typeof syncAccentControls==="function") syncAccentControls();
   $("settingsBack").classList.add("open");
   $("setTheme").focus();
@@ -4312,13 +4320,15 @@ function saveSettings(){
     creaturePack: $("setPack").value,
     refreshMs: Math.max(1000, (parseInt($("setRefresh").value,10)||5)*1000),
     stuckMinutes: Math.max(1, parseInt($("setStuck").value,10)||15),
-    dailyBudgetUSD: Math.max(0, parseFloat($("setBudget").value)||0)
+    dailyBudgetUSD: Math.max(0, parseFloat($("setBudget").value)||0),
+    trainerName: $("setTrainer") ? $("setTrainer").value.trim().slice(0,32) : ""
   };
   // Only send the theme to the backend when it is one the backend understands,
   // so an unknown value (e.g. "contrast") can never wipe a valid stored theme.
   if(SERVER_THEMES.indexOf(theme)>=0) body.theme=theme;
   applyConfig(body);      // apply immediately (theme swap + creature repaint)
   applyDisplayPrefs();    // ensure contrast/large/calm applied even if not in body
+  renderTrainerCard();
   restartPoll();          // new cadence for the poll fallback
   if(STATE) renderHealth(STATE.health);
   postConfig(body).then(function(r){

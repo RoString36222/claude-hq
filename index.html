@@ -981,6 +981,13 @@ html.hq-calm #confetti{display:none!important}
   border-radius:999px;border:1px solid var(--line);font-size:12px}
 .arena-peer img{width:20px;height:20px;border-radius:50%;background:var(--line)}
 .arena-dot{width:7px;height:7px;border-radius:50%;background:#3fb950;flex:0 0 auto}
+.arena-st{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:var(--muted)}
+.arena-st .w::before,.arena-st .n::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px}
+.arena-st .w::before{background:var(--good)}
+.arena-st .n::before{background:var(--need)}
+.arena-lobby-opts{display:flex;flex-direction:column;gap:4px;margin-top:10px;font-size:12px}
+.arena-lobby-opts label{display:flex;align-items:baseline;gap:6px;cursor:pointer}
+.arena-lobby-opts .muted{font-size:11.5px}
 /* ---- Arena chat: talk to everyone in the lobby ---- */
 .arena-chat{display:flex;flex-direction:column;gap:10px}
 .arena-chat-log{max-height:320px;min-height:110px;overflow-y:auto;display:flex;flex-direction:column;
@@ -1436,8 +1443,14 @@ html.hq-calm #confetti{display:none!important}
     </section>
 
     <section class="panel hidden" id="arenaLobbyWrap" aria-label="Lobby">
-      <h3 class="section-h">Lobby <span class="muted">who else has Arena open</span></h3>
+      <h3 class="section-h">Lobby <span class="muted">who&rsquo;s online</span></h3>
       <div class="arena-lobby" id="arenaLobby"><span class="muted">Connecting&hellip;</span></div>
+      <div class="arena-lobby-opts">
+        <label><input type="checkbox" id="arenaStay"> Stay in the lobby on every view
+          <span class="muted">friends see you online, and chat and calls reach you anywhere in HQ</span></label>
+        <label><input type="checkbox" id="arenaShareStatus"> Share my live status
+          <span class="muted">only how many of your sessions are working and how many are waiting on you</span></label>
+      </div>
     </section>
 
     <section class="panel hidden arena-voice" id="arenaVoiceWrap" aria-label="Voice and video">
@@ -3086,6 +3099,7 @@ function render(){
   checkCelebration(STATE.season);
   checkEvolution(STATE.sessions);
   updateDocTitle(STATE.sessions);
+  arenaStatusTick();
   if(FOCUS_ID) renderFocus();
   if(WARROOM_ON) renderWarroom();
   if(CMDK_OPEN) renderCmdk();
@@ -3263,7 +3277,12 @@ setInterval(function(){ if(STATE){ $("updated").textContent="updated "+relTime(S
 
 /* ---- view switcher ---- */
 // Arena state must exist before setView(VIEW) runs at startup (it calls arenaCloseSocket).
-var ARENA = {window:"season", status:null, sock:null, retry:null, you:null, chat:[], chatSeen:{}};
+var ARENA = {window:"season", status:null, sock:null, retry:null, you:null, chat:[], chatSeen:{},
+             paired:false, opening:false, gen:0, fails:0, peerStatus:{}};
+// Lobby options (see "Arena lobby: presence and live status"): staying in the lobby is on unless turned off,
+// sharing your live status is off unless turned on.
+var ARENA_STAY = (function(){ try { return localStorage.getItem("hq_arena_stay") !== "0"; } catch(e){ return true; } })();
+var ARENA_SHARE_STATUS = (function(){ try { return localStorage.getItem("hq_arena_status") === "1"; } catch(e){ return false; } })();
 // Voice state, also needed by the first setView() (which keeps the lobby socket open while in voice).
 var VCHAN = {on:false, peer:null, stream:null, muted:false, cam:false, screen:false, vidStream:null, vidTile:null, peers:{}, roster:{}, ctx:null, me:null, meter:null};
 var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena")?v:"live"; })();
@@ -3284,8 +3303,8 @@ function setView(v){
   if(v==="pokedex") loadPokedex();
   if(v==="gym") renderGym();
   if(v==="quests") loadQuests();
-  // Voice rides the lobby socket, so it stays open on other views while you're in voice.
-  if(v==="arena") loadArena(); else if(!VCHAN.on) arenaCloseSocket();
+  // The lobby socket stays open on other views while you stay in the lobby, or while you're in voice (it carries it).
+  if(v==="arena") loadArena(); else if(!VCHAN.on && !ARENA_STAY) arenaCloseSocket();
 }
 Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
   t.addEventListener("click",function(){ setView(t.getAttribute("data-view")); });
@@ -5038,7 +5057,7 @@ function renderArenaStat(st){
 }
 function pollArenaStat(){
   fetch("/api/arena/status",{cache:"no-store"}).then(function(r){return r.json();})
-    .then(renderArenaStat).catch(function(){});
+    .then(function(st){ renderArenaStat(st); arenaStayOnline(st); }).catch(function(){});
 }
 (function(){ var b=$("arenaStat"); if(b) b.addEventListener("click",function(){ setView("arena"); }); })();
 pollArenaStat(); setInterval(pollArenaStat, 60000);
@@ -5049,6 +5068,7 @@ function loadArena(){
       ARENA.status = st;
       renderArenaStat(st);
       var paired = !!st.paired;
+      ARENA.paired = paired;
       $("arenaSetup").classList.toggle("hidden", paired);
       $("arenaBoardWrap").classList.toggle("hidden", !paired);
       $("arenaLobbyWrap").classList.toggle("hidden", !paired);
@@ -5157,9 +5177,13 @@ function arenaLoadBoard(){
 /* Websocket lobby. The page never sees the device token: dashboard.py mints a
    short-lived ticket and we connect with that. */
 function arenaOpenSocket(){
-  if(ARENA.sock) return;
+  if(ARENA.sock || ARENA.opening) return;
+  ARENA.opening = true;
+  var gen = ARENA.gen;   // arenaCloseSocket() while the ticket is on its way cancels this
   arenaPost("/api/arena/ticket").then(function(res){
-    if(!res.ok || !res.j.ticket || !res.j.wsUrl) return;
+    if(gen !== ARENA.gen) return;
+    ARENA.opening = false;
+    if(ARENA.sock || !res.ok || !res.j.ticket || !res.j.wsUrl) return;
     var url = res.j.wsUrl + "/v1/rooms/lobby/ws?ticket=" + encodeURIComponent(res.j.ticket);
     var ws;
     try { ws = new WebSocket(url); } catch(e){ return; }
@@ -5170,6 +5194,7 @@ function arenaOpenSocket(){
       if(m.type==="welcome"){
         // Who we are: the nudge buttons skip us, and our own chat lines are marked.
         ARENA.you = (m.you && typeof m.you === "object") ? m.you : null;
+        ARENA.fails = 0;
         arenaRenderLobby(m.members||[]);
         var n = Array.isArray(m.members) ? m.members.length : 1;
         // Recent messages the server kept for people joining (none from a server without chat history).
@@ -5177,6 +5202,7 @@ function arenaOpenSocket(){
         arenaChatSys("You joined the lobby · " + n + " online");
         arenaChatReady(true);
         voiceOnLobby();
+        arenaStatusOnLobby();
       }
       else if(m.type==="join" || m.type==="leave"){
         arenaRenderLobby(m.members||[]);
@@ -5184,7 +5210,8 @@ function arenaOpenSocket(){
         if(m.type==="leave") voiceOnLeave(m);
       }
       else if(m.type==="say"){
-        if(m.data && m.data.kind==="voice") voiceOnAnnounce(m); else arenaChatReceive(m);
+        var kind = m.data && m.data.kind;
+        if(kind==="voice") voiceOnAnnounce(m); else if(kind==="status") arenaOnStatus(m); else arenaChatReceive(m);
       }
       else if(m.type==="signal"){ voiceOnSignal(m); }
       else if(m.type==="nudge"){ arenaOnNudge(m); }
@@ -5194,22 +5221,33 @@ function arenaOpenSocket(){
       }
     };
     ws.onclose = function(){
+      if(ARENA.sock !== ws) return;   // closed on purpose (arenaCloseSocket), or a newer socket took over
       ARENA.sock = null;
-      arenaRenderLobby(null);
-      arenaChatReady(false);
-      voiceOnLobbyLost();
-      // Only retry while the Arena tab is open, or while you're in voice.
-      if((VIEW==="arena" || VCHAN.on) && !ARENA.retry){
-        ARENA.retry = setTimeout(function(){ ARENA.retry=null; arenaOpenSocket(); }, 5000);
+      arenaLobbyGone();
+      // Retry while the Arena tab is open, while you're in voice, or while staying in the lobby: 5 s, then
+      // slower each time up to a minute (a full room, a server that's down), until a welcome resets it.
+      if((VIEW==="arena" || VCHAN.on || (ARENA_STAY && ARENA.paired)) && !ARENA.retry){
+        var wait = Math.min(60000, 5000 * Math.pow(2, ARENA.fails++));
+        ARENA.retry = setTimeout(function(){ ARENA.retry=null; arenaOpenSocket(); }, wait);
       }
     };
     ws.onerror = function(){ try { ws.close(); } catch(e){} };
-  });
+  }, function(){ if(gen === ARENA.gen) ARENA.opening = false; });
 }
 
 function arenaCloseSocket(){
+  ARENA.gen++; ARENA.opening = false;
   if(ARENA.retry){ clearTimeout(ARENA.retry); ARENA.retry=null; }
-  if(ARENA.sock){ try { ARENA.sock.close(); } catch(e){} ARENA.sock=null; }
+  var s = ARENA.sock;
+  if(s){ ARENA.sock = null; try { s.close(); } catch(e){} arenaLobbyGone(); }
+}
+
+// Our lobby socket is gone: show it, and drop what only lived on it.
+function arenaLobbyGone(){
+  arenaRenderLobby(null);
+  arenaChatReady(false);
+  voiceOnLobbyLost();
+  ARENA.peerStatus = {};
 }
 
 function arenaRenderLobby(members){
@@ -5219,6 +5257,9 @@ function arenaRenderLobby(members){
   el.innerHTML = "";
   if(!members){ el.innerHTML = '<span class="muted">Offline</span>'; return; }
   if(!members.length){ el.innerHTML = '<span class="muted">Just you.</span>'; return; }
+  // Forget the status of anyone who's left.
+  var here = {}; members.forEach(function(m){ if(m && typeof m.userId === "string") here[m.userId] = 1; });
+  Object.keys(ARENA.peerStatus).forEach(function(u){ if(!here[u]) delete ARENA.peerStatus[u]; });
   members.forEach(function(m){
     var chip = document.createElement("span"); chip.className = "arena-peer";
     var dot = document.createElement("span"); dot.className = "arena-dot";
@@ -5227,6 +5268,9 @@ function arenaRenderLobby(members){
     } else { chip.appendChild(dot); }
     var t=document.createElement("span"); t.textContent = m.displayName || m.handle;
     chip.appendChild(t);
+    var mine = !!(ARENA.you && m.userId===ARENA.you.userId);
+    var st = mine ? (ARENA_SHARE_STATUS ? arenaMyCounts() : null) : ARENA.peerStatus[m.userId];
+    if(st) chip.appendChild(arenaStatusEl(st, mine ? "you" : (m.displayName || m.handle)));
     if(!ARENA.you || m.userId!==ARENA.you.userId){
       var nb=document.createElement("button"); nb.className="arena-nudge"; nb.type="button";
       nb.textContent="\uD83D\uDC4B nudge"; nb.title="Nudge "+(m.displayName||m.handle)+" to check the Arena";
@@ -5236,6 +5280,109 @@ function arenaRenderLobby(members){
     el.appendChild(chip);
   });
 }
+
+/* ---- Arena lobby: presence and live status ----
+   "Stay in the lobby on every view" (on unless you turn it off) keeps the lobby socket open wherever you are in HQ
+   while this machine is paired: friends see you online, and chat, nudges and calls reach you. "Share my live
+   status" (off unless you turn it on) adds two numbers to your lobby entry: how many of your sessions are working
+   and how many are waiting on you. Nothing else about them leaves this machine: no titles, folders or text.
+     say {kind:"status", op:"set", working, needs}   your counts, when they change (at most every 2 s)
+     say {kind:"status", op:"clear"}                 you stopped sharing
+     say {kind:"status", op:"ask"}                   you joined: whoever shares sends theirs again */
+var ARENA_STATUS = {sent:null, at:0, timer:null};
+
+// The minutely Arena status poll: keep the lobby socket open while paired, unless you've turned that off.
+function arenaStayOnline(st){
+  ARENA.paired = !!(st && st.paired);
+  if(ARENA.paired && ARENA_STAY) arenaOpenSocket();
+}
+
+function arenaMyCounts(){
+  var w = 0, n = 0;
+  ((STATE && STATE.sessions) || []).forEach(function(s){ if(s.status==="working") w++; else if(s.status==="needs") n++; });
+  return {working:Math.min(w, 99), needs:Math.min(n, 99)};
+}
+
+function arenaSayStatus(d){
+  if(!ARENA.sock || ARENA.sock.readyState !== 1) return false;
+  d.kind = "status";
+  try { ARENA.sock.send(JSON.stringify({type:"say", data:d})); return true; } catch(e){ return false; }
+}
+
+// On every HQ update: send your counts when they change, at most every 2 seconds.
+function arenaStatusTick(){
+  if(!ARENA_SHARE_STATUS || ARENA_STATUS.timer || !ARENA.sock || ARENA.sock.readyState !== 1) return;
+  var wait = ARENA_STATUS.at + 2000 - Date.now();
+  if(wait > 0){ ARENA_STATUS.timer = setTimeout(function(){ ARENA_STATUS.timer = null; arenaStatusTick(); }, wait); return; }
+  var c = arenaMyCounts(), key = c.working + "," + c.needs;
+  if(key === ARENA_STATUS.sent) return;
+  if(!arenaSayStatus({op:"set", working:c.working, needs:c.needs})) return;
+  ARENA_STATUS.sent = key; ARENA_STATUS.at = Date.now();
+  arenaRerenderLobby();   // your own entry shows what the others see
+}
+
+// Just joined: hear everyone's status again, and send yours.
+function arenaStatusOnLobby(){
+  ARENA.peerStatus = {};
+  ARENA_STATUS.sent = null;
+  arenaSayStatus({op:"ask"});
+  arenaStatusTick();
+}
+
+function arenaIsCount(x){ return typeof x === "number" && x % 1 === 0 && x >= 0 && x <= 99; }
+
+function arenaOnStatus(m){
+  var d = m.data, from = m.from;
+  if(!from || typeof from.userId !== "string") return;
+  // Our own echo, or our other machine: this page shows its own counts for you.
+  if(ARENA.you && from.userId === ARENA.you.userId) return;
+  if(d.op === "ask"){ ARENA_STATUS.sent = null; arenaStatusTick(); return; }
+  if(d.op === "clear") delete ARENA.peerStatus[from.userId];
+  else if(d.op === "set" && arenaIsCount(d.working) && arenaIsCount(d.needs)) ARENA.peerStatus[from.userId] = {working:d.working, needs:d.needs};
+  else return;
+  arenaRerenderLobby();
+}
+
+function arenaRerenderLobby(){ if(ARENA.sock && ARENA.sock.readyState === 1) arenaRenderLobby(ARENA.lobby || []); }
+
+// "2 working · 1 waiting": two dots in the HQ's own colours, and the words for a tooltip and screen readers.
+function arenaStatusEl(st, whom){
+  var el = document.createElement("span"); el.className = "arena-st";
+  var words;
+  if(!st.working && !st.needs){ el.textContent = "idle"; words = "nothing working or waiting on " + whom; }
+  else {
+    if(st.working){ var w = document.createElement("span"); w.className = "w"; w.textContent = st.working; el.appendChild(w); }
+    if(st.needs){ var n = document.createElement("span"); n.className = "n"; n.textContent = st.needs; el.appendChild(n); }
+    words = st.working + (st.working === 1 ? " session" : " sessions") + " working, " + st.needs + " waiting on " + whom;
+  }
+  el.title = words; el.setAttribute("aria-label", words);
+  return el;
+}
+
+(function(){
+  var stay = $("arenaStay"), share = $("arenaShareStatus");
+  if(stay){
+    stay.checked = ARENA_STAY;
+    stay.addEventListener("change", function(){
+      ARENA_STAY = stay.checked;
+      try { localStorage.setItem("hq_arena_stay", ARENA_STAY ? "1" : "0"); } catch(e){}
+      if(ARENA_STAY){ if(ARENA.paired) arenaOpenSocket(); }
+      else if(VIEW !== "arena" && !VCHAN.on) arenaCloseSocket();
+    });
+  }
+  if(share){
+    share.checked = ARENA_SHARE_STATUS;
+    share.addEventListener("change", function(){
+      ARENA_SHARE_STATUS = share.checked;
+      try { localStorage.setItem("hq_arena_status", ARENA_SHARE_STATUS ? "1" : "0"); } catch(e){}
+      if(ARENA_STATUS.timer){ clearTimeout(ARENA_STATUS.timer); ARENA_STATUS.timer = null; }
+      ARENA_STATUS.sent = null; ARENA_STATUS.at = 0;
+      if(ARENA_SHARE_STATUS) arenaStatusTick(); else arenaSayStatus({op:"clear"});
+      arenaRerenderLobby();
+    });
+  }
+})();
+
 // Send a directed nudge over the lobby socket. No URL/command -- just a ping.
 function arenaSendNudge(peer){
   if(!ARENA.sock || ARENA.sock.readyState!==1){ toast("Not connected to the lobby", "ach"); return; }
@@ -5746,7 +5893,7 @@ function voiceLeave(){
   VCHAN.on = false; VCHAN.stream = null; VCHAN.peer = null; VCHAN.me = null; VCHAN.muted = false;
   voiceStopMeter();
   voiceRender();
-  if(VIEW !== "arena") arenaCloseSocket();   // the socket only stayed open for voice
+  if(VIEW !== "arena" && !ARENA_STAY) arenaCloseSocket();   // the socket only stayed open for voice
 }
 
 function voiceToggleMute(){
@@ -5964,6 +6111,7 @@ Array.prototype.forEach.call(document.querySelectorAll("#arenaWins .arena-win"),
   if(un) un.addEventListener("click", function(){
     if(!confirm("Disconnect this machine from the Arena? Your stats stay on the server.")) return;
     voiceLeave();
+    ARENA.paired = false;
     arenaCloseSocket();
     arenaPost("/api/arena/unpair").then(function(){
       postConfig({arenaEnabled:false}).then(function(){ loadArena(); });

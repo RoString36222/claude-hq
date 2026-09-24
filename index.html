@@ -942,6 +942,46 @@ html.hq-calm #confetti{display:none!important}
 .accent-sw:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .accent-sw.default-sw{background:linear-gradient(135deg,#6c5cff,#3ad07f,#f0c74a,#ff6b6f);
   display:grid;place-items:center;font-size:11px;color:#fff}
+/* ---- Arena (multiplayer leaderboard) ---- */
+.arena{padding:18px 20px 40px;display:flex;flex-direction:column;gap:16px}
+.arena-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.arena-title{font-size:20px;font-weight:700;margin:0}
+.arena-sub{color:var(--muted);font-size:13px}
+.arena-wins{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+.arena-win{padding:4px 11px;border-radius:999px;border:1px solid var(--line);
+  background:transparent;color:var(--muted);font:inherit;font-size:12px;cursor:pointer}
+.arena-win.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.arena-tbl{width:100%;border-collapse:collapse;font-size:13px}
+.arena-tbl th{text-align:right;padding:8px 10px;color:var(--muted);font-weight:600;
+  font-size:11px;text-transform:uppercase;letter-spacing:.04em;
+  border-bottom:1px solid var(--line);white-space:nowrap}
+.arena-tbl th:nth-child(-n+2),.arena-tbl td:nth-child(-n+2){text-align:left}
+.arena-tbl td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:right;
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.arena-tbl tr.you{background:color-mix(in srgb,var(--accent) 11%,transparent)}
+.arena-tbl tr.you td{font-weight:600}
+.arena-rank{font-weight:700;color:var(--muted);width:2.5rem}
+.arena-rank.r1{color:#f5b301}.arena-rank.r2{color:#a8b3c2}.arena-rank.r3{color:#c97b3e}
+.arena-who{display:flex;align-items:center;gap:9px;min-width:0}
+.arena-av{width:26px;height:26px;border-radius:50%;flex:0 0 auto;
+  background:var(--line);object-fit:cover}
+.arena-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.arena-name small{display:block;color:var(--muted);font-size:11px;font-weight:400}
+.arena-setup{max-width:34rem;display:flex;flex-direction:column;gap:12px}
+.arena-setup label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+.arena-setup input{width:100%;padding:8px 10px;border-radius:7px;font:inherit;
+  border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+.arena-step{display:flex;gap:10px;align-items:flex-start}
+.arena-step b{flex:0 0 1.4rem;color:var(--accent)}
+.arena-msg{font-size:12.5px;padding:8px 11px;border-radius:7px;border:1px solid var(--line)}
+.arena-msg.err{color:#ff6b6b;border-color:#ff6b6b55}
+.arena-msg.ok{color:#3fb950;border-color:#3fb95055}
+.arena-lobby{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-height:30px}
+.arena-peer{display:flex;align-items:center;gap:6px;padding:3px 10px 3px 4px;
+  border-radius:999px;border:1px solid var(--line);font-size:12px}
+.arena-peer img{width:20px;height:20px;border-radius:50%;background:var(--line)}
+.arena-dot{width:7px;height:7px;border-radius:50%;background:#3fb950;flex:0 0 auto}
+
 </style>
 </head>
 <body>
@@ -956,6 +996,7 @@ html.hq-calm #confetti{display:none!important}
       <button class="viewtab" data-view="pokedex" role="tab" type="button" aria-selected="false">📕 Pokédex</button>
       <button class="viewtab" data-view="gym" role="tab" type="button" aria-selected="false">⚔️ Gym</button>
       <button class="viewtab" data-view="quests" role="tab" type="button" aria-selected="false">🏅 Quests</button>
+      <button class="viewtab" data-view="arena" role="tab" type="button" aria-selected="false">🏆 Arena</button>
     </div>
     <div class="grow"></div>
     <div class="search">
@@ -1276,6 +1317,71 @@ html.hq-calm #confetti{display:none!important}
       <h3 class="section-h">🎖️ Achievements <span class="muted" id="questsAchSub"></span></h3>
       <div class="ach-strip" id="questsAch"></div>
     </section>
+  </div>
+
+  <div id="arenaView" class="arena hidden" aria-label="Arena leaderboard">
+    <div class="arena-head">
+      <h2 class="arena-title">🏆 Arena</h2>
+      <div class="arena-sub" id="arenaSub">Not connected</div>
+      <div class="arena-wins" id="arenaWins" role="group" aria-label="Leaderboard range">
+        <button class="arena-win on" data-window="season" type="button">Season</button>
+        <button class="arena-win" data-window="30d" type="button">30 days</button>
+        <button class="arena-win" data-window="7d" type="button">7 days</button>
+        <button class="arena-win" data-window="all" type="button">All time</button>
+      </div>
+    </div>
+
+    <section class="panel arena-setup hidden" id="arenaSetup" aria-label="Connect to Arena">
+      <h3 class="section-h">Connect this machine</h3>
+      <p class="muted" style="font-size:12.5px;margin:0">
+        Only daily counts are shared &mdash; prompts, tool calls, artifacts and tokens.
+        Never your prompts, replies, file paths or project names.
+      </p>
+      <div>
+        <label for="arenaUrl">Arena server URL</label>
+        <input id="arenaUrl" type="url" placeholder="https://claude-hq-arena.fly.dev"
+               autocomplete="off" spellcheck="false">
+      </div>
+      <div class="arena-step"><b>1.</b>
+        <button class="hbtn" id="arenaSignin" type="button">Sign in with GitHub &rarr;</button>
+      </div>
+      <div class="arena-step"><b>2.</b>
+        <div style="flex:1">
+          <label for="arenaCode">Paste the pairing code you get back</label>
+          <input id="arenaCode" placeholder="HQ-XXXX-XXXX" autocomplete="off"
+                 spellcheck="false" style="text-transform:uppercase">
+        </div>
+      </div>
+      <div class="arena-step"><b>3.</b>
+        <button class="hbtn on" id="arenaPair" type="button">Connect</button>
+      </div>
+      <div class="arena-msg hidden" id="arenaMsg" role="status"></div>
+    </section>
+
+    <section class="panel hidden" id="arenaBoardWrap" aria-label="Leaderboard">
+      <h3 class="section-h">Standings <span class="muted" id="arenaSeason"></span></h3>
+      <div style="overflow-x:auto">
+        <table class="arena-tbl">
+          <thead><tr>
+            <th>#</th><th>Trainer</th><th>XP</th><th>Lvl</th>
+            <th>Prompts</th><th>Tools</th><th>Artifacts</th>
+            <th>Days</th><th>Streak</th><th>Tokens</th>
+          </tr></thead>
+          <tbody id="arenaRows"><tr><td colspan="10" class="muted">Loading&hellip;</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="arenaLobbyWrap" aria-label="Lobby">
+      <h3 class="section-h">Lobby <span class="muted">who else has Arena open</span></h3>
+      <div class="arena-lobby" id="arenaLobby"><span class="muted">Connecting&hellip;</span></div>
+    </section>
+
+    <div id="arenaFoot" class="muted hidden" style="font-size:12px">
+      <button class="hbtn" id="arenaPublish" type="button">Publish now</button>
+      <button class="hbtn" id="arenaUnpair" type="button">Disconnect</button>
+      <span id="arenaLast"></span>
+    </div>
   </div>
   </main>
 </div>
@@ -3038,7 +3144,7 @@ setInterval(function(){ if(STATE){ $("updated").textContent="updated "+relTime(S
 /* ================= v3 additions ================= */
 
 /* ---- view switcher ---- */
-var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests")?v:"live"; })();
+var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena")?v:"live"; })();
 function setView(v){
   VIEW = v; localStorage.setItem("hq_view", v);
   $("liveView").classList.toggle("hidden", v!=="live");
@@ -3046,6 +3152,7 @@ function setView(v){
   var pv=$("pokedexView"); if(pv) pv.classList.toggle("hidden", v!=="pokedex");
   var gv=$("gymView"); if(gv) gv.classList.toggle("hidden", v!=="gym");
   var qv=$("questsView"); if(qv) qv.classList.toggle("hidden", v!=="quests");
+  var av=$("arenaView"); if(av) av.classList.toggle("hidden", v!=="arena");
   Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
     var on = t.getAttribute("data-view")===v;
     t.classList.toggle("active", on); t.setAttribute("aria-selected", on?"true":"false");
@@ -3055,6 +3162,7 @@ function setView(v){
   if(v==="pokedex") loadPokedex();
   if(v==="gym") renderGym();
   if(v==="quests") loadQuests();
+  if(v==="arena") loadArena(); else arenaCloseSocket();
 }
 Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
   t.addEventListener("click",function(){ setView(t.getAttribute("data-view")); });
@@ -4761,6 +4869,209 @@ load();
 startStream();
 // PWA: register the service worker so Claude HQ is installable as a standalone app.
 // (127.0.0.1 is a secure context, so SW is allowed. Network-first, so never stale.)
+
+/* ---- Arena (multiplayer leaderboard) ---------------------------------- */
+var ARENA = {window:"season", status:null, sock:null, retry:null};
+
+function arenaPost(path, body){
+  return fetch(path,{
+    method:"POST",
+    headers:{"Content-Type":"application/json","X-HQ-Token":CSRF},
+    body:JSON.stringify(body||{})
+  }).then(function(r){
+    return r.json().then(function(j){return {ok:r.ok,j:j};},function(){return {ok:r.ok,j:{}};});
+  });
+}
+
+function arenaSay(text, kind){
+  var m=$("arenaMsg"); if(!m) return;
+  m.textContent = text||"";
+  m.className = "arena-msg" + (text?"":" hidden") + (kind?(" "+kind):"");
+}
+
+function arenaNum(n){
+  if(n>=1e9) return (n/1e9).toFixed(1)+"B";
+  if(n>=1e6) return (n/1e6).toFixed(1)+"M";
+  if(n>=1e3) return (n/1e3).toFixed(1)+"k";
+  return String(n||0);
+}
+
+function loadArena(){
+  fetch("/api/arena/status",{cache:"no-store"}).then(function(r){return r.json();})
+    .then(function(st){
+      ARENA.status = st;
+      var paired = !!st.paired;
+      $("arenaSetup").classList.toggle("hidden", paired);
+      $("arenaBoardWrap").classList.toggle("hidden", !paired);
+      $("arenaLobbyWrap").classList.toggle("hidden", !paired);
+      $("arenaFoot").classList.toggle("hidden", !paired);
+      if(!paired){
+        $("arenaSub").textContent = "Not connected";
+        var u=$("arenaUrl"); if(u && !u.value) u.value = st.url||"";
+        return;
+      }
+      $("arenaSub").textContent = "Signed in as " + (st.handle||"?");
+      var lp = st.lastPublish||{};
+      $("arenaLast").textContent = lp.at
+        ? (lp.ok ? (" · last published " + new Date(lp.at).toLocaleTimeString())
+                 : (" · publish failed: " + (lp.error||"")))
+        : " · not published yet";
+      arenaLoadBoard();
+      arenaOpenSocket();
+    }).catch(function(){ $("arenaSub").textContent = "Status unavailable"; });
+}
+
+function arenaLoadBoard(){
+  fetch("/api/arena/board?window="+encodeURIComponent(ARENA.window),{cache:"no-store"})
+    .then(function(r){return r.json();})
+    .then(function(b){
+      var body=$("arenaRows"); if(!body) return;
+      if(b.error){
+        body.innerHTML = '<tr><td colspan="10" class="muted"></td></tr>';
+        body.querySelector("td").textContent = b.error;
+        return;
+      }
+      $("arenaSeason").textContent = (b.seasonName||"") + " · " + b.startsOn + " → " + b.endsOn;
+      var rows = b.entries||[];
+      if(!rows.length){
+        body.innerHTML = '<tr><td colspan="10" class="muted">No one has published stats yet.</td></tr>';
+        return;
+      }
+      body.innerHTML = "";
+      rows.forEach(function(e){
+        var tr = document.createElement("tr");
+        if(e.isYou) tr.className = "you";
+
+        var rk = document.createElement("td");
+        rk.className = "arena-rank" + (e.rank<=3 ? (" r"+e.rank) : "");
+        rk.textContent = e.rank<=3 ? ["🥇","🥈","🥉"][e.rank-1] : String(e.rank);
+        tr.appendChild(rk);
+
+        var who = document.createElement("td");
+        var wrap = document.createElement("div"); wrap.className = "arena-who";
+        if(e.avatarUrl){
+          var img = document.createElement("img");
+          img.className="arena-av"; img.src=e.avatarUrl; img.alt=""; img.loading="lazy";
+          wrap.appendChild(img);
+        }
+        var nm = document.createElement("div"); nm.className="arena-name";
+        nm.textContent = e.trainerName || e.displayName || e.handle;
+        var sub = document.createElement("small");
+        sub.textContent = "@" + e.handle + " · " + e.rankTitle;
+        nm.appendChild(sub); wrap.appendChild(nm); who.appendChild(wrap); tr.appendChild(who);
+
+        [arenaNum(e.xp), e.level, arenaNum(e.prompts), arenaNum(e.tools),
+         e.artifacts, e.activeDays, (e.streak ? e.streak+"🔥" : "0"),
+         arenaNum(e.tokensTotal)].forEach(function(v){
+          var td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
+        });
+        body.appendChild(tr);
+      });
+    }).catch(function(){});
+}
+
+/* Websocket lobby. The page never sees the device token: dashboard.py mints a
+   short-lived ticket and we connect with that. */
+function arenaOpenSocket(){
+  if(ARENA.sock) return;
+  arenaPost("/api/arena/ticket").then(function(res){
+    if(!res.ok || !res.j.ticket || !res.j.wsUrl) return;
+    var url = res.j.wsUrl + "/v1/rooms/lobby/ws?ticket=" + encodeURIComponent(res.j.ticket);
+    var ws;
+    try { ws = new WebSocket(url); } catch(e){ return; }
+    ARENA.sock = ws;
+    ws.onmessage = function(ev){
+      var m; try { m = JSON.parse(ev.data); } catch(e){ return; }
+      if(m.type==="welcome" || m.type==="join" || m.type==="leave") arenaRenderLobby(m.members||[]);
+    };
+    ws.onclose = function(){
+      ARENA.sock = null;
+      arenaRenderLobby(null);
+      // Only retry while the Arena tab is actually open.
+      if(VIEW==="arena" && !ARENA.retry){
+        ARENA.retry = setTimeout(function(){ ARENA.retry=null; arenaOpenSocket(); }, 5000);
+      }
+    };
+    ws.onerror = function(){ try { ws.close(); } catch(e){} };
+  });
+}
+
+function arenaCloseSocket(){
+  if(ARENA.retry){ clearTimeout(ARENA.retry); ARENA.retry=null; }
+  if(ARENA.sock){ try { ARENA.sock.close(); } catch(e){} ARENA.sock=null; }
+}
+
+function arenaRenderLobby(members){
+  var el=$("arenaLobby"); if(!el) return;
+  el.innerHTML = "";
+  if(!members){ el.innerHTML = '<span class="muted">Offline</span>'; return; }
+  if(!members.length){ el.innerHTML = '<span class="muted">Just you.</span>'; return; }
+  members.forEach(function(m){
+    var chip = document.createElement("span"); chip.className = "arena-peer";
+    var dot = document.createElement("span"); dot.className = "arena-dot";
+    if(m.avatarUrl){
+      var img=document.createElement("img"); img.src=m.avatarUrl; img.alt=""; chip.appendChild(img);
+    } else { chip.appendChild(dot); }
+    var t=document.createElement("span"); t.textContent = m.displayName || m.handle;
+    chip.appendChild(t); el.appendChild(chip);
+  });
+}
+
+/* ---- Arena controls ---- */
+Array.prototype.forEach.call(document.querySelectorAll("#arenaWins .arena-win"), function(b){
+  b.addEventListener("click", function(){
+    ARENA.window = b.getAttribute("data-window");
+    Array.prototype.forEach.call(document.querySelectorAll("#arenaWins .arena-win"), function(o){
+      o.classList.toggle("on", o===b);
+    });
+    arenaLoadBoard();
+  });
+});
+
+(function(){
+  var signin=$("arenaSignin"), pair=$("arenaPair"), pub=$("arenaPublish"), un=$("arenaUnpair");
+
+  if(signin) signin.addEventListener("click", function(){
+    var url = ($("arenaUrl").value||"").trim().replace(/\/+$/,"");
+    if(!/^https?:\/\//.test(url)){ arenaSay("Enter the Arena server URL first.","err"); return; }
+    postConfig({arenaUrl:url}).then(function(){
+      window.open(url + "/v1/auth/github/start", "_blank", "noopener");
+      arenaSay("Sign in, then paste the code below.","ok");
+    });
+  });
+
+  if(pair) pair.addEventListener("click", function(){
+    var url = ($("arenaUrl").value||"").trim().replace(/\/+$/,"");
+    var code = ($("arenaCode").value||"").trim().toUpperCase();
+    if(!code){ arenaSay("Paste the pairing code.","err"); return; }
+    arenaSay("Connecting…");
+    postConfig({arenaUrl:url, arenaEnabled:true}).then(function(){
+      return arenaPost("/api/arena/pair", {code:code, label:"claude-hq"});
+    }).then(function(res){
+      if(!res.ok){ arenaSay(res.j.error || "Pairing failed.","err"); return; }
+      arenaSay("Connected. Publishing…","ok");
+      return arenaPost("/api/arena/publish").then(function(){ loadArena(); });
+    });
+  });
+
+  if(pub) pub.addEventListener("click", function(){
+    pub.disabled = true;
+    arenaPost("/api/arena/publish").then(function(res){
+      pub.disabled = false;
+      if(res.ok) toast("Published " + (res.j.accepted||0) + " days");
+      loadArena();
+    });
+  });
+
+  if(un) un.addEventListener("click", function(){
+    if(!confirm("Disconnect this machine from the Arena? Your stats stay on the server.")) return;
+    arenaCloseSocket();
+    arenaPost("/api/arena/unpair").then(function(){
+      postConfig({arenaEnabled:false}).then(function(){ loadArena(); });
+    });
+  });
+})();
+
 if("serviceWorker" in navigator){ window.addEventListener("load",function(){
   navigator.serviceWorker.register("/sw.js").catch(function(){});
 }); }

@@ -45,6 +45,8 @@ import webbrowser
 from datetime import datetime, timezone, timedelta, date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import arena
+
 APP_VERSION = "1.1.0"
 
 # --------------------------------------------------------------------------- #
@@ -2451,6 +2453,9 @@ DEFAULT_CONFIG = {
     "stuckMinutes": 15,
     "dailyBudgetUSD": 0,
     "trainerName": "",
+    "arenaUrl": "",
+    "arenaEnabled": False,
+    "arenaShareCost": False,
 }
 
 _config_lock = threading.Lock()
@@ -2490,6 +2495,14 @@ def _validate_config(raw, base=None):
         # printable chars only, whitespace collapsed, capped; "" = auto-derive
         tn = "".join(ch for ch in tn if ch.isprintable())
         cfg["trainerName"] = " ".join(tn.split())[:32]
+    au = raw.get("arenaUrl")
+    if isinstance(au, str):
+        au = au.strip()
+        # http/https only: this string becomes an outbound request target.
+        cfg["arenaUrl"] = au[:256] if au.startswith(("http://", "https://")) else ""
+    for key in ("arenaEnabled", "arenaShareCost"):
+        if key in raw:
+            cfg[key] = bool(raw.get(key))
     return cfg
 
 
@@ -2865,6 +2878,21 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(payload))
             return
 
+        if path == "/api/arena/status":
+            self._send(200, json.dumps(arena.status()))
+            return
+
+        if path == "/api/arena/board":
+            import urllib.parse
+            qs = urllib.parse.parse_qs(self.path.split("?", 1)[1]
+                                       if "?" in self.path else "")
+            window = (qs.get("window", ["season"])[0] or "season")
+            if window not in ("season", "30d", "7d", "all"):
+                window = "season"
+            code, resp = arena.board(window)
+            self._send(code or 502, json.dumps(resp))
+            return
+
         if path == "/api/config":
             try:
                 self._send(200, json.dumps(load_config()))
@@ -3130,6 +3158,25 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _arena_post(self, path, body):
+        """Arena actions. The device token never crosses back to the page."""
+        try:
+            if path == "/api/arena/pair":
+                code = body.get("code")
+                if not isinstance(code, str) or not code.strip():
+                    return 400, {"error": "pairing code required"}
+                return arena.pair(code, label=body.get("label", ""))
+            if path == "/api/arena/unpair":
+                arena.clear_link()
+                return 200, {"ok": True}
+            if path == "/api/arena/publish":
+                return arena.publish(PROJECTS_DIR)
+            if path == "/api/arena/ticket":
+                return arena.ws_ticket()
+        except Exception as e:
+            return 500, {"error": "arena request failed: %s" % e}
+        return 404, {"error": "not found"}
+
     def do_POST(self):
         if not self._host_ok():
             self._send(403, json.dumps({"error": "local access only"}))
@@ -3144,7 +3191,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         path = self.path.split("?", 1)[0]
-        if path not in ("/api/action", "/api/config", "/api/meta"):
+        if path not in ("/api/action", "/api/config", "/api/meta",
+                        "/api/arena/pair", "/api/arena/unpair",
+                        "/api/arena/publish", "/api/arena/ticket"):
             self._send(404, json.dumps({"error": "not found"}))
             return
 
@@ -3156,6 +3205,11 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("body must be an object")
         except Exception as e:
             self._send(400, json.dumps({"error": "bad JSON body: %s" % e}))
+            return
+
+        if path.startswith("/api/arena/"):
+            code, resp = self._arena_post(path, body)
+            self._send(code, json.dumps(resp))
             return
 
         if path == "/api/config":
@@ -3222,6 +3276,10 @@ def main():
 
     url = f"http://127.0.0.1:{args.port}"
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+
+    # Arena (multiplayer) stays dormant until the user pairs and enables it.
+    arena.init(scan_file, load_config, HERE)
+    arena.start_publisher(PROJECTS_DIR)
 
     # Warm the per-file scan + search caches in the background so the first
     # /api/search and /api/history are instant instead of a one-time ~1s scan.

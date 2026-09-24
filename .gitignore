@@ -12,3 +12,12 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# Arena device token — never commit
+arena-link.json
+
+# Backend local/production env + venv
+backend/.env
+backend/.env.production
+backend/.venv/
+backend/*.db

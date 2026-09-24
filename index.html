@@ -1008,6 +1008,31 @@ html.hq-calm #confetti{display:none!important}
 .arena-prev{margin:2px 0 0;max-height:260px;overflow:auto;padding:11px 13px;border-radius:8px;
   border:1px solid var(--line);background:var(--bg);font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;
   color:var(--ink);white-space:pre;tab-size:2}
+/* ---- Loud nudge: hard-to-miss "get in here" overlay ---- */
+#loudNudge{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;
+  padding:24px;background:rgba(8,10,20,.72);backdrop-filter:blur(3px)}
+#loudNudge.on{display:flex}
+#loudNudge .ln-card{position:relative;max-width:min(92vw,540px);width:100%;text-align:center;
+  padding:34px 28px;border-radius:20px;border:1px solid var(--line);
+  background:var(--panel);box-shadow:0 24px 80px rgba(0,0,0,.5);
+  animation:lnPulse 1.1s ease-in-out infinite}
+#loudNudge .ln-flash{position:absolute;inset:-2px;border-radius:22px;pointer-events:none;
+  box-shadow:0 0 0 3px var(--brand);animation:lnFlash .7s steps(1) infinite}
+#loudNudge .ln-emoji{font-size:52px;line-height:1;animation:lnWave 1s ease-in-out infinite}
+#loudNudge .ln-title{font-size:24px;font-weight:800;margin:12px 0 4px}
+#loudNudge .ln-title b{color:var(--brand)}
+#loudNudge .ln-note{color:var(--muted);font-size:14px;margin:0 0 20px;overflow-wrap:anywhere}
+#loudNudge .ln-btns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+#loudNudge .ln-go{padding:11px 22px;border-radius:11px;border:0;cursor:pointer;font:inherit;
+  font-weight:700;font-size:15px;background:var(--brand);color:#fff}
+#loudNudge .ln-dismiss{padding:11px 18px;border-radius:11px;cursor:pointer;font:inherit;
+  border:1px solid var(--line);background:transparent;color:var(--muted)}
+@keyframes lnPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.03)}}
+@keyframes lnWave{0%,100%{transform:rotate(-12deg)}50%{transform:rotate(12deg)}}
+@keyframes lnFlash{0%{box-shadow:0 0 0 3px var(--brand)}50%{box-shadow:0 0 0 6px #ffd34d}}
+html.hq-calm #loudNudge .ln-card{animation:none}
+html.hq-calm #loudNudge .ln-flash{animation:none;box-shadow:0 0 0 3px var(--brand)}
+html.hq-calm #loudNudge .ln-emoji{animation:none}
 /* ---- Arena voice: WebRTC audio between lobby members ---- */
 .arena-voice{display:flex;flex-direction:column;gap:10px}
 .voice-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -1746,6 +1771,20 @@ html.hq-calm #confetti{display:none!important}
 <!-- celebrations -->
 <div class="toastwrap" id="toastWrap" aria-live="polite"></div>
 <canvas id="confetti" aria-hidden="true"></canvas>
+
+<!-- loud nudge: full-screen "come to the Arena" call -->
+<div id="loudNudge" role="alertdialog" aria-modal="true" aria-labelledby="lnTitle">
+  <div class="ln-card">
+    <div class="ln-flash" aria-hidden="true"></div>
+    <div class="ln-emoji" aria-hidden="true">👋</div>
+    <div class="ln-title" id="lnTitle"></div>
+    <p class="ln-note" id="lnNote"></p>
+    <div class="ln-btns">
+      <button class="ln-go" id="lnGo" type="button">⚔️ Enter Arena</button>
+      <button class="ln-dismiss" id="lnDismiss" type="button">Dismiss</button>
+    </div>
+  </div>
+</div>
 
 <script>
 "use strict";
@@ -3177,6 +3216,7 @@ document.addEventListener("keydown",function(e){
     if($("infoBack").classList.contains("open")){ closeInfo(); return; }
     if($("helpBack").classList.contains("open")){ closeHelp(); return; }
     if($("logBack").classList.contains("open")){ closeLog(); return; }
+    if($("loudNudge").classList.contains("on")){ closeLoudNudge(); return; }
     if(CMDK_OPEN){ closeCmdk(); return; }
     if(SEARCHOV_OPEN){ closeSearchOv(); return; }
     if(DRAWER_OPEN){ closeDrawer(); return; }
@@ -5200,11 +5240,42 @@ function arenaOnNudge(m){
   if(NOTIF_ON && ("Notification" in window) && Notification.permission==="granted"){
     try{ new Notification("\uD83D\uDC4B "+who+" nudged you", {body:(m.note||"Check the Arena"), tag:"hq-nudge", silent:true}); }catch(e){}
   }
-  playChime();
   if(typeof toast==="function") toast("\uD83D\uDC4B "+msg, "level");
   if(typeof announce==="function") announce(msg);
   if(typeof logEvent==="function") logEvent("\uD83D\uDC4B", msg);
+  // #2 auto-focus: bring our own window forward and switch to the Arena view.
+  try{ window.focus(); }catch(e){}
+  if(typeof setView==="function" && VIEW!=="arena") setView("arena");
+  // #3 loud, hard-to-miss call.
+  arenaLoudNudge(who, m.note||"");
 }
+
+/* ---- Loud nudge overlay: full-screen flash + repeating chime + big banner.
+   Everything stays on THIS machine; "Enter Arena" is the recipient's choice. ---- */
+var LN_TIMER=null, LN_CHIME=null, LN_AUTO=null;
+function arenaLoudNudge(who, note){
+  var box=$("loudNudge"); if(!box) return;
+  $("lnTitle").innerHTML = "<b>"+esc(who)+"</b> wants you in the Arena";
+  var nt=$("lnNote"); nt.textContent = note || ""; nt.style.display = note ? "" : "none";
+  box.classList.add("on");
+  // Repeating chime (respects the chime toggle via playChime) — a few times, then stops.
+  var beeps=0; playChime();
+  if(LN_CHIME) clearInterval(LN_CHIME);
+  LN_CHIME = setInterval(function(){ beeps++; if(beeps>=6){ clearInterval(LN_CHIME); LN_CHIME=null; return; } playChime(); }, 1100);
+  // Auto-dismiss after a while so it never traps the screen.
+  if(LN_AUTO) clearTimeout(LN_AUTO);
+  LN_AUTO = setTimeout(closeLoudNudge, 15000);
+}
+function closeLoudNudge(){
+  var box=$("loudNudge"); if(box) box.classList.remove("on");
+  if(LN_CHIME){ clearInterval(LN_CHIME); LN_CHIME=null; }
+  if(LN_AUTO){ clearTimeout(LN_AUTO); LN_AUTO=null; }
+}
+(function(){
+  var go=$("lnGo"), dis=$("lnDismiss");
+  if(go) go.addEventListener("click", function(){ closeLoudNudge(); if(typeof setView==="function") setView("arena"); });
+  if(dis) dis.addEventListener("click", closeLoudNudge);
+})();
 
 /* ---- Arena chat ----
    Talk to everyone in the lobby. Rides the rooms' existing "say" relay: the server

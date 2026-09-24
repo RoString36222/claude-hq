@@ -3144,6 +3144,8 @@ setInterval(function(){ if(STATE){ $("updated").textContent="updated "+relTime(S
 /* ================= v3 additions ================= */
 
 /* ---- view switcher ---- */
+// Arena state must exist before setView(VIEW) runs at startup (it calls arenaCloseSocket).
+var ARENA = {window:"season", status:null, sock:null, retry:null};
 var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena")?v:"live"; })();
 function setView(v){
   VIEW = v; localStorage.setItem("hq_view", v);
@@ -4871,7 +4873,6 @@ startStream();
 // (127.0.0.1 is a secure context, so SW is allowed. Network-first, so never stale.)
 
 /* ---- Arena (multiplayer leaderboard) ---------------------------------- */
-var ARENA = {window:"season", status:null, sock:null, retry:null};
 
 function arenaPost(path, body){
   return fetch(path,{

@@ -58,6 +58,25 @@ uv run uvicorn app.main:app --reload --port 8080
 uv run pytest                 # 22 tests
 ```
 
+### Seeding fake friends
+
+A leaderboard with one row tells you nothing, so there's a seeder. It creates
+users and device tokens directly, then publishes their stats **over HTTP through
+the real API**, exercising auth and the schema allowlist rather than just the ORM:
+
+```bash
+uv run python scripts/seed_demo.py --reset --friends 6
+```
+
+It prints the resulting board and each device token, so you can curl as any of
+them:
+
+```bash
+curl -s localhost:8080/v1/board?window=30d -H "Authorization: Bearer hqd_..." | jq
+```
+
+Point it at a local server only — it writes users it invented.
+
 ## Deploying
 
 `./deploy-wizard.sh` from the repo root walks through Neon, the GitHub OAuth

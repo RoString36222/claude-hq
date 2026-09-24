@@ -981,6 +981,9 @@ html.hq-calm #confetti{display:none!important}
   border-radius:999px;border:1px solid var(--line);font-size:12px}
 .arena-peer img{width:20px;height:20px;border-radius:50%;background:var(--line)}
 .arena-dot{width:7px;height:7px;border-radius:50%;background:#3fb950;flex:0 0 auto}
+.viewtab .tab-badge{display:inline-block;min-width:16px;margin-left:5px;padding:0 5px;border-radius:999px;
+  background:var(--brand);color:#fff;font-size:10.5px;font-weight:700;line-height:16px;text-align:center;vertical-align:1px}
+.viewtab .tab-badge.mention{background:var(--need)}
 .arena-st{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:var(--muted)}
 .arena-st .w::before,.arena-st .n::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px}
 .arena-st .w::before{background:var(--good)}
@@ -1060,7 +1063,7 @@ html.hq-calm #confetti{display:none!important}
       <button class="viewtab" data-view="pokedex" role="tab" type="button" aria-selected="false">📕 Pokédex</button>
       <button class="viewtab" data-view="gym" role="tab" type="button" aria-selected="false">⚔️ Gym</button>
       <button class="viewtab" data-view="quests" role="tab" type="button" aria-selected="false">🏅 Quests</button>
-      <button class="viewtab" data-view="arena" role="tab" type="button" aria-selected="false">🏆 Arena</button>
+      <button class="viewtab" data-view="arena" role="tab" type="button" aria-selected="false">🏆 Arena<span class="tab-badge hidden" id="arenaUnread" aria-hidden="true"></span></button>
     </div>
     <div class="grow"></div>
     <div class="search">
@@ -3278,7 +3281,7 @@ setInterval(function(){ if(STATE){ $("updated").textContent="updated "+relTime(S
 /* ---- view switcher ---- */
 // Arena state must exist before setView(VIEW) runs at startup (it calls arenaCloseSocket).
 var ARENA = {window:"season", status:null, sock:null, retry:null, you:null, chat:[], chatSeen:{},
-             paired:false, opening:false, gen:0, fails:0, peerStatus:{}};
+             paired:false, opening:false, gen:0, fails:0, peerStatus:{}, unread:0, unreadTagged:false};
 // Lobby options (see "Arena lobby: presence and live status"): staying in the lobby is on unless turned off,
 // sharing your live status is off unless turned on.
 var ARENA_STAY = (function(){ try { return localStorage.getItem("hq_arena_stay") !== "0"; } catch(e){ return true; } })();
@@ -3304,7 +3307,7 @@ function setView(v){
   if(v==="gym") renderGym();
   if(v==="quests") loadQuests();
   // The lobby socket stays open on other views while you stay in the lobby, or while you're in voice (it carries it).
-  if(v==="arena") loadArena(); else if(!VCHAN.on && !ARENA_STAY) arenaCloseSocket();
+  if(v==="arena"){ arenaUnreadClear(); loadArena(); } else if(!VCHAN.on && !ARENA_STAY) arenaCloseSocket();
 }
 Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
   t.addEventListener("click",function(){ setView(t.getAttribute("data-view")); });
@@ -5447,7 +5450,31 @@ function arenaChatReceive(m, historic){
   if(!you && !historic){
     var tg = arenaMessageTags(text);
     if(tg.me || tg.all) arenaTagToast(arenaWho(from), (tg.me ? "you" : "all"));
+    if(VIEW !== "arena") arenaUnreadAdd(tg.me || tg.all);
   }
+}
+
+// Chat that arrived while you were on another view: a count on the Arena tab, marked "@" when a message tagged you
+// (or @here / @channel). Opening the Arena clears it.
+function arenaUnreadAdd(tagged){
+  ARENA.unread++;
+  if(tagged) ARENA.unreadTagged = true;
+  arenaRenderUnread();
+}
+function arenaUnreadClear(){
+  if(!ARENA.unread && !ARENA.unreadTagged) return;
+  ARENA.unread = 0; ARENA.unreadTagged = false;
+  arenaRenderUnread();
+}
+function arenaRenderUnread(){
+  var b = $("arenaUnread"), tab = b && b.parentNode;
+  if(!b) return;
+  var n = ARENA.unread;
+  b.classList.toggle("hidden", !n);
+  b.classList.toggle("mention", ARENA.unreadTagged);
+  b.textContent = (ARENA.unreadTagged ? "@" : "") + (n > 99 ? "99+" : n);
+  if(n) tab.setAttribute("aria-label", "Arena, " + n + " unread message" + (n === 1 ? "" : "s") + (ARENA.unreadTagged ? ", you were mentioned" : ""));
+  else tab.removeAttribute("aria-label");
 }
 
 // Does this message tag the current user? @<my handle> tags me; @channel / @here

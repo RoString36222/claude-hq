@@ -1,11 +1,19 @@
 """Runtime settings, read from the environment."""
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Anchored to the package, not the working directory: launchd starts the
+# service from elsewhere, and a relative env_file would silently load nothing
+# and fall back to defaults (an empty SQLite file, no OAuth) rather than fail.
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="ARENA_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="ARENA_", env_file=_ENV_FILE, extra="ignore"
+    )
 
     # Postgres in production; SQLite keeps tests and local runs dependency-free.
     database_url: str = "sqlite+aiosqlite:///./arena.db"

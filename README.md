@@ -164,11 +164,19 @@ so the formula can change without a client release.
 
 ### Connecting
 
-One person deploys the backend once:
+One person hosts the backend once. Either on their own Mac:
 
 ```bash
-./deploy-wizard.sh      # Fly.io + Neon Postgres + a GitHub OAuth app
+./selfhost-wizard.sh    # this Mac + SQLite + a Cloudflare Tunnel
 ```
+
+or in the cloud, if you'd rather it stay up when that Mac sleeps:
+
+```bash
+./deploy-wizard.sh      # Fly.io + Neon Postgres
+```
+
+Both set up the GitHub OAuth app and print exactly what to send your friends.
 
 Everyone else just points their own Claude HQ at it: **🏆 Arena → server URL →
 Sign in with GitHub → paste the pairing code**. Your device token is stored in

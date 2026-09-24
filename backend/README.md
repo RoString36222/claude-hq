@@ -79,9 +79,37 @@ Point it at a local server only — it writes users it invented.
 
 ## Deploying
 
-`./deploy-wizard.sh` from the repo root walks through Neon, the GitHub OAuth
-app, and `fly launch`. It only does the parts a script can; it stops and tells
-you when a step needs a browser.
+Two supported shapes, both driven by a wizard from the repo root:
+
+| | `./selfhost-wizard.sh` | `./deploy-wizard.sh` |
+|---|---|---|
+| Runs on | your own Mac | Fly.io |
+| Database | SQLite (one file) | Neon Postgres |
+| Reachable via | Cloudflare Tunnel | `*.fly.dev` |
+| Cost | free | ~$5/mo |
+| Up when | your Mac is awake | always |
+
+Both stop and tell you when a step needs a browser.
+
+### Self-hosting notes
+
+SQLite is the primary database when self-hosting, so `app/db.py` sets WAL
+(readers don't block while a publish writes), a 5s busy timeout, and foreign
+keys. Back it up by copying `backend/arena.db`.
+
+Two things are anchored to absolute paths on purpose, because launchd starts
+the service from a different working directory and relative paths would fail
+*silently* rather than loudly:
+
+- `ARENA_DATABASE_URL` uses the four-slash form (`sqlite+aiosqlite:////abs/path`)
+  — a relative path would create a second, empty database elsewhere.
+- `env_file` in `app/config.py` is resolved against the package directory —
+  otherwise the service would load no config at all and quietly fall back to
+  defaults with no OAuth configured.
+
+Your Mac sleeping is not destructive: publishes retry every 5 minutes and each
+one carries a 30-day window, so nothing is lost. The board is simply
+unreachable until the machine is back.
 
 ## Scale note
 

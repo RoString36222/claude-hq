@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .db import Base, engine
+from .db import Base, describe_backend, engine
 from .routes import auth as auth_routes
 from .routes import board as board_routes
 from .routes import rooms as room_routes
@@ -43,4 +43,9 @@ app.include_router(room_routes.router)
 
 @app.get("/health")
 async def health() -> dict:
-    return {"ok": True, "service": "claude-hq-arena"}
+    try:
+        db = await describe_backend()
+    except Exception as exc:
+        # Report unhealthy rather than 200-with-a-broken-database.
+        return {"ok": False, "service": "claude-hq-arena", "db": f"unreachable: {exc}"}
+    return {"ok": True, "service": "claude-hq-arena", "db": db}

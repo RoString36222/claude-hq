@@ -992,7 +992,17 @@ html.hq-calm #confetti{display:none!important}
 .arena-line .txt{overflow-wrap:anywhere;white-space:pre-wrap}
 .arena-line.you .who{color:var(--brand)}
 .arena-line.sys{color:var(--muted);font-size:12px;font-style:italic}
-.arena-chat-form{display:flex;gap:8px}
+.arena-chat-form{display:flex;gap:8px;position:relative}
+.arena-mentions{position:absolute;left:0;right:0;bottom:calc(100% + 6px);max-height:190px;overflow-y:auto;
+  padding:5px;border-radius:10px;border:1px solid var(--line);background:var(--panel);
+  box-shadow:0 12px 40px rgba(0,0,0,.35);z-index:60}
+.arena-mentions.hidden{display:none}
+.arena-mention{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:7px;cursor:pointer;font-size:13px}
+.arena-mention.sel{background:color-mix(in srgb,var(--brand) 16%,transparent)}
+.arena-mention img{width:20px;height:20px;border-radius:50%;flex:0 0 auto;background:var(--line)}
+.arena-mention small{color:var(--muted)}
+.arena-line .mention{color:var(--brand);font-weight:600}
+.arena-line .mention.me{background:color-mix(in srgb,var(--brand) 22%,transparent);border-radius:4px;padding:0 3px}
 .arena-chat-form input{flex:1;min-width:0;padding:8px 10px;border-radius:7px;font:inherit;
   border:1px solid var(--line);background:var(--bg);color:var(--ink)}
 .arena-nudge{margin-left:2px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);
@@ -1466,8 +1476,10 @@ html.hq-calm #loudNudge .ln-emoji{animation:none}
       <div class="arena-chat-log" id="arenaChatLog" role="log" aria-live="polite" aria-label="Chat messages"></div>
       <form class="arena-chat-form" id="arenaChatForm" autocomplete="off">
         <label class="sr-only" for="arenaChatInput">Message</label>
-        <input id="arenaChatInput" maxlength="500" placeholder="Connecting&hellip;" disabled>
+        <input id="arenaChatInput" maxlength="500" placeholder="Connecting&hellip;" disabled
+               aria-autocomplete="list" aria-controls="arenaMentions">
         <button class="hbtn on" id="arenaChatSend" type="submit" disabled>Send</button>
+        <div class="arena-mentions hidden" id="arenaMentions" role="listbox" aria-label="Mention someone"></div>
       </form>
       <p class="muted" style="font-size:11.5px;margin:0">
         Goes to everyone in the lobby right now, through the Arena server. Nothing is saved &mdash;
@@ -5017,7 +5029,7 @@ function arenaPost(path, body){
     headers:{"Content-Type":"application/json","X-HQ-Token":CSRF},
     body:JSON.stringify(body||{})
   }).then(function(r){
-    return r.json().then(function(j){return {ok:r.ok,j:j};},function(){return {ok:r.ok,j:{}};});
+    return r.json().then(function(j){return {ok:r.ok,status:r.status,j:j};},function(){return {ok:r.ok,status:r.status,j:{}};});
   });
 }
 
@@ -5089,12 +5101,28 @@ function loadArena(){
 
 // Nudge someone from the leaderboard (by handle). Server persists it, so it
 // reaches them even with their Arena tab closed.
+//
+// An Arena server older than offline nudges has no /v1/nudge, and FastAPI
+// answers that with a bare 404 "Not Found" (a missing *person* is "no such
+// person"). Then someone who is in the lobby right now is nudged over the lobby
+// socket instead -- exactly what the lobby's own button does -- and anyone else
+// gets a message saying why, rather than a silent "nudge failed".
 function arenaNudgeHandle(handle, btn){
   if(btn) btn.disabled = true;
   arenaPost("/api/arena/nudge", {toHandle: handle}).then(function(res){
     if(btn) btn.disabled = false;
-    if(!res.ok){ toast("\u26A0 "+((res.j&&res.j.error)||"nudge failed"), "ach"); return; }
-    toast(res.j.deliveredLive ? "\uD83D\uDC4B Nudge delivered" : "\uD83D\uDC4B Nudge queued \u2014 they\u2019ll get it when Claude HQ is running", "level");
+    if(res.ok){
+      toast(res.j.deliveredLive ? "\uD83D\uDC4B Nudge delivered" : "\uD83D\uDC4B Nudge queued \u2014 they\u2019ll get it when Claude HQ is running", "level");
+      return;
+    }
+    var reason = String((res.j && (res.j.error || res.j.detail)) || "nudge failed");
+    if(res.status===404 && /^not found$/i.test(reason)){
+      var peer = (ARENA.lobby||[]).filter(function(m){ return m.handle===handle; })[0];
+      if(peer){ arenaSendNudge(peer); return; }
+      toast("\u26A0 This Arena server can\u2019t queue nudges yet \u2014 ask whoever hosts it to update it. People in the lobby can still be nudged.", "ach");
+      return;
+    }
+    toast("\u26A0 "+reason, "ach");
   }).catch(function(){ if(btn) btn.disabled=false; });
 }
 function arenaLoadBoard(){
@@ -5207,6 +5235,8 @@ function arenaCloseSocket(){
 }
 
 function arenaRenderLobby(members){
+  // Remembered so a leaderboard nudge can fall back to the lobby socket.
+  ARENA.lobby = members || [];
   var el=$("arenaLobby"); if(!el) return;
   el.innerHTML = "";
   if(!members){ el.innerHTML = '<span class="muted">Offline</span>'; return; }
@@ -5333,7 +5363,8 @@ function arenaRenderChatLine(line){
     if(line.handle) who.title = "@" + line.handle;
     var at = document.createElement("span"); at.className = "at";
     at.textContent = new Date(line.at).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
-    var txt = document.createElement("div"); txt.className = "txt"; txt.textContent = line.text;
+    var txt = document.createElement("div"); txt.className = "txt";
+    arenaRenderMessageText(txt, line.text);
     body.appendChild(who); body.appendChild(at); body.appendChild(txt);
     row.appendChild(body);
   }
@@ -5372,9 +5403,92 @@ function arenaChatSend(){
   i.value = "";
 }
 
+// Build a chat message, wrapping @handle tokens for known lobby members in a
+// highlight span. Each piece is set via textContent, so nothing is ever HTML.
+function arenaRenderMessageText(container, text){
+  var known = {};
+  (ARENA.lobby || []).forEach(function(p){ if(p.handle) known[p.handle.toLowerCase()] = 1; });
+  if(ARENA.you && ARENA.you.handle) known[ARENA.you.handle.toLowerCase()] = 1;
+  var myHandle = (ARENA.you && ARENA.you.handle || "").toLowerCase();
+  var re = /(^|[^\w@])@([\w-]{1,40})/g, last = 0, m;
+  while((m = re.exec(text))){
+    var handle = m[2], lower = handle.toLowerCase();
+    if(!known[lower]) continue;                       // only tag real members
+    container.appendChild(document.createTextNode(text.slice(last, m.index) + m[1]));
+    var span = document.createElement("span");
+    span.className = "mention" + (lower === myHandle ? " me" : "");
+    span.textContent = "@" + handle;
+    container.appendChild(span);
+    last = m.index + m[0].length;
+  }
+  container.appendChild(document.createTextNode(text.slice(last)));
+}
+
+/* ---- @mention autocomplete: type "@" to tag someone in the lobby ---- */
+var MENTION = {open:false, items:[], sel:0, start:-1};
+function arenaMentionClose(){
+  MENTION.open = false;
+  var el = $("arenaMentions"); if(el){ el.classList.add("hidden"); el.innerHTML = ""; }
+}
+function arenaMentionScan(){
+  var i = $("arenaChatInput"); if(!i) return;
+  var pos = i.selectionStart || 0, before = i.value.slice(0, pos);
+  var m = before.match(/(?:^|\s)@([\w-]*)$/);        // an @token the caret is inside
+  if(!m){ arenaMentionClose(); return; }
+  var q = m[1].toLowerCase();
+  var mine = ARENA.you && ARENA.you.userId;
+  var matches = (ARENA.lobby || []).filter(function(p){
+    if(mine && p.userId === mine) return false;       // don't offer yourself
+    return (p.handle||"").toLowerCase().indexOf(q) === 0 ||
+           (p.displayName||"").toLowerCase().indexOf(q) >= 0;
+  }).slice(0, 8);
+  if(!matches.length){ arenaMentionClose(); return; }
+  MENTION = {open:true, items:matches, sel:0, start:pos - m[1].length - 1};
+  arenaMentionRender();
+}
+function arenaMentionRender(){
+  var el = $("arenaMentions"); if(!el) return;
+  el.innerHTML = "";
+  MENTION.items.forEach(function(p, idx){
+    var row = document.createElement("div");
+    row.className = "arena-mention" + (idx === MENTION.sel ? " sel" : "");
+    row.setAttribute("role", "option");
+    if(p.avatarUrl && /^https:\/\//.test(p.avatarUrl)){
+      var img = document.createElement("img"); img.src = p.avatarUrl; img.alt = ""; row.appendChild(img);
+    }
+    var nm = document.createElement("span"); nm.textContent = p.displayName || p.handle;
+    var h = document.createElement("small"); h.textContent = " @" + (p.handle||"");
+    nm.appendChild(h); row.appendChild(nm);
+    // mousedown (not click) so it fires before the input blurs.
+    row.addEventListener("mousedown", function(e){ e.preventDefault(); arenaMentionAccept(idx); });
+    el.appendChild(row);
+  });
+  el.classList.remove("hidden");
+}
+function arenaMentionAccept(idx){
+  var i = $("arenaChatInput"); var p = MENTION.items[idx]; if(!i || !p){ arenaMentionClose(); return; }
+  var pos = i.selectionStart || 0;
+  var insert = "@" + (p.handle||"") + " ";
+  i.value = i.value.slice(0, MENTION.start) + insert + i.value.slice(pos);
+  var caret = MENTION.start + insert.length;
+  i.setSelectionRange(caret, caret);
+  arenaMentionClose(); i.focus();
+}
+
 (function(){
-  var f = $("arenaChatForm");
+  var f = $("arenaChatForm"), i = $("arenaChatInput");
   if(f) f.addEventListener("submit", function(e){ e.preventDefault(); arenaChatSend(); });
+  if(i){
+    i.addEventListener("input", arenaMentionScan);
+    i.addEventListener("keydown", function(e){
+      if(!MENTION.open) return;
+      if(e.key === "ArrowDown"){ e.preventDefault(); MENTION.sel = (MENTION.sel+1) % MENTION.items.length; arenaMentionRender(); }
+      else if(e.key === "ArrowUp"){ e.preventDefault(); MENTION.sel = (MENTION.sel-1+MENTION.items.length) % MENTION.items.length; arenaMentionRender(); }
+      else if(e.key === "Enter" || e.key === "Tab"){ e.preventDefault(); arenaMentionAccept(MENTION.sel); }
+      else if(e.key === "Escape"){ e.preventDefault(); arenaMentionClose(); }
+    });
+    i.addEventListener("blur", function(){ setTimeout(arenaMentionClose, 120); });
+  }
 })();
 
 /* ---- Arena voice ----

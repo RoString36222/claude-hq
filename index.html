@@ -1033,6 +1033,9 @@ html.hq-calm #confetti{display:none!important}
 .voice-tile{position:relative;aspect-ratio:16/9;border-radius:10px;overflow:hidden;background:#000}
 .voice-tile video{width:100%;height:100%;object-fit:cover;display:block}
 .voice-tile.you video{transform:scaleX(-1)}
+.voice-tile.screen{grid-column:1/-1;max-height:70vh}
+.voice-tile.screen video{object-fit:contain}
+.voice-tile.you.screen video{transform:none}
 .voice-tile .vt-name{position:absolute;left:6px;bottom:6px;padding:2px 7px;border-radius:6px;
   background:rgba(0,0,0,.55);color:#fff;font-size:11.5px}
 
@@ -1443,14 +1446,15 @@ html.hq-calm #confetti{display:none!important}
         <button class="hbtn on" id="voiceJoin" type="button">🎙 Join voice</button>
         <button class="hbtn hidden" id="voiceMute" type="button" aria-pressed="false">Mute</button>
         <button class="hbtn hidden" id="voiceCam" type="button" aria-pressed="false">📷 Camera</button>
+        <button class="hbtn hidden" id="voiceScreen" type="button" aria-pressed="false">🖥 Share screen</button>
         <button class="hbtn hidden" id="voiceLeave" type="button">Leave</button>
         <div class="voice-roster" id="voiceRoster" aria-live="polite"></div>
       </div>
       <div class="voice-videos hidden" id="voiceVideos"></div>
       <p class="muted" style="font-size:11.5px;margin:0">
         Audio and video go straight between browsers (WebRTC); the Arena server only passes the connection setup to
-        the people you&rsquo;re talking to. Your microphone is used only after you click Join and your camera only
-        after you click Camera; both stop when you leave.
+        the people you&rsquo;re talking to. Your microphone is used only after you click Join, your camera only after
+        you click Camera, and your screen only after you pick what to share; all of them stop when you leave.
       </p>
       <div id="voiceAudio" hidden></div>
     </section>
@@ -3261,7 +3265,7 @@ setInterval(function(){ if(STATE){ $("updated").textContent="updated "+relTime(S
 // Arena state must exist before setView(VIEW) runs at startup (it calls arenaCloseSocket).
 var ARENA = {window:"season", status:null, sock:null, retry:null, you:null, chat:[], chatSeen:{}};
 // Voice state, also needed by the first setView() (which keeps the lobby socket open while in voice).
-var VCHAN = {on:false, peer:null, stream:null, muted:false, cam:false, camStream:null, camTile:null, peers:{}, roster:{}, ctx:null, me:null, meter:null};
+var VCHAN = {on:false, peer:null, stream:null, muted:false, cam:false, screen:false, vidStream:null, vidTile:null, peers:{}, roster:{}, ctx:null, me:null, meter:null};
 var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena")?v:"live"; })();
 function setView(v){
   VIEW = v; localStorage.setItem("hq_view", v);
@@ -5475,12 +5479,12 @@ function arenaMentionAccept(idx){
 /* ---- Arena voice (and video) ----
    WebRTC audio between lobby members: a small mesh, everyone connected to everyone (up to VCHAN_MAX).
    The lobby socket carries two kinds of messages for it:
-     say    {kind:"voice", op:"join"|"leave"|"mute"|"cam"|"who"|"here", peer, muted, cam}  who's in voice, to everyone
+     say    {kind:"voice", op:"join"|"leave"|"mute"|"cam"|"who"|"here", peer, muted, cam, screen}  who's in voice, to everyone
      signal {to:userId, data:{kind:"hello"|"offer"|"answer"|"ice", fromPeer, toPeer, ...}}  setup, to ONE member
    A peer id is per page, so two tabs or machines of the same person are separate peers. For each pair the
    smaller peer id makes the offer (the larger one says "hello" instead), so two people joining at once never
    both call each other. The audio flows browser to browser; the server only relays the setup.
-   Video is optional inside a call, and flows the same way: see voiceToggleCam. */
+   Video (a camera, or a shared screen) is optional inside a call and flows the same way: see voiceStartVideo. */
 var VCHAN_MAX = 6;
 var VCHAN_ICE = [{urls:"stun:stun.l.google.com:19302"}];
 var VCHAN_PEER_RE = /^[a-f0-9]{16}$/;
@@ -5508,8 +5512,8 @@ function voiceSignal(userId, data){
 function voiceOnLobby(){
   VCHAN.roster = {};
   if(VCHAN.on){
-    VCHAN.roster[VCHAN.peer] = {userId: ARENA.you && ARENA.you.userId, who:"You", you:true, muted:VCHAN.muted, cam:VCHAN.cam};
-    voiceSay("join", {muted:VCHAN.muted, cam:VCHAN.cam});
+    VCHAN.roster[VCHAN.peer] = {userId: ARENA.you && ARENA.you.userId, who:"You", you:true, muted:VCHAN.muted, cam:!!VCHAN.vidStream, screen:VCHAN.screen};
+    voiceSay("join", {muted:VCHAN.muted, cam:!!VCHAN.vidStream, screen:VCHAN.screen});
   }
   voiceSay("who");
   voiceRender();
@@ -5536,10 +5540,10 @@ function voiceOnLeave(m){
 function voiceOnAnnounce(m){
   var d = m.data, from = m.from;
   if(!d || typeof d !== "object" || !from || typeof from.userId !== "string") return;
-  if(d.op === "who"){ if(VCHAN.on) voiceSay("here", {muted:VCHAN.muted, cam:VCHAN.cam}); return; }
+  if(d.op === "who"){ if(VCHAN.on) voiceSay("here", {muted:VCHAN.muted, cam:!!VCHAN.vidStream, screen:VCHAN.screen}); return; }
   if(typeof d.peer !== "string" || !VCHAN_PEER_RE.test(d.peer) || d.peer === VCHAN.peer) return;
   if(d.op === "join" || d.op === "here"){
-    VCHAN.roster[d.peer] = {userId:from.userId, who:arenaWho(from), muted:!!d.muted, cam:d.cam === true};
+    VCHAN.roster[d.peer] = {userId:from.userId, who:arenaWho(from), muted:!!d.muted, cam:d.cam === true, screen:d.cam === true && d.screen === true};
     if(d.op === "join") voicePair(d.peer, from);
   } else if(d.op === "leave"){
     delete VCHAN.roster[d.peer];
@@ -5547,7 +5551,8 @@ function voiceOnAnnounce(m){
   } else if(d.op === "mute"){
     if(VCHAN.roster[d.peer]) VCHAN.roster[d.peer].muted = !!d.muted;
   } else if(d.op === "cam"){
-    if(VCHAN.roster[d.peer]) VCHAN.roster[d.peer].cam = d.cam === true;
+    var r = VCHAN.roster[d.peer];
+    if(r){ r.cam = d.cam === true; r.screen = r.cam && d.screen === true; }
   }
   voiceRender();
 }
@@ -5558,7 +5563,7 @@ function voicePair(peer, from){
   if(ARENA.you && from.userId === ARENA.you.userId) return;   // your own other tab: don't call yourself
   if(Object.keys(VCHAN.peers).length >= VCHAN_MAX - 1) return;
   if(VCHAN.peer < peer) voiceCall(peer, from);
-  else voiceSignal(from.userId, {kind:"hello", toPeer:peer, muted:VCHAN.muted, cam:VCHAN.cam});
+  else voiceSignal(from.userId, {kind:"hello", toPeer:peer, muted:VCHAN.muted, cam:!!VCHAN.vidStream, screen:VCHAN.screen});
 }
 
 function voiceOnSignal(m){
@@ -5566,7 +5571,7 @@ function voiceOnSignal(m){
   if(!VCHAN.on || !d || typeof d !== "object" || !from || typeof from.userId !== "string") return;
   if(d.toPeer !== VCHAN.peer || typeof d.fromPeer !== "string" || !VCHAN_PEER_RE.test(d.fromPeer)) return;
   var peer = d.fromPeer;
-  if(!VCHAN.roster[peer]) VCHAN.roster[peer] = {userId:from.userId, who:arenaWho(from), muted:!!d.muted, cam:d.cam === true};
+  if(!VCHAN.roster[peer]) VCHAN.roster[peer] = {userId:from.userId, who:arenaWho(from), muted:!!d.muted, cam:d.cam === true, screen:d.cam === true && d.screen === true};
   if(d.kind === "hello"){
     voicePair(peer, from);
   } else if(d.kind === "offer" && typeof d.sdp === "string" && d.sdp.length < 20000){
@@ -5591,7 +5596,7 @@ function voiceCall(peer, from){
   var p = voiceMakePeer(peer, from, true);
   p.pc.createOffer()
     .then(function(o){ return p.pc.setLocalDescription(o); })
-    .then(function(){ voiceSignal(from.userId, {kind:"offer", toPeer:peer, sdp:p.pc.localDescription.sdp, muted:VCHAN.muted, cam:VCHAN.cam}); })
+    .then(function(){ voiceSignal(from.userId, {kind:"offer", toPeer:peer, sdp:p.pc.localDescription.sdp, muted:VCHAN.muted, cam:!!VCHAN.vidStream, screen:VCHAN.screen}); })
     .catch(function(){ voiceClosePeer(peer); });
 }
 
@@ -5602,7 +5607,7 @@ function voiceMakePeer(peer, from, offerer){
   VCHAN.stream.getTracks().forEach(function(t){ pc.addTrack(t, VCHAN.stream); });
   // The caller adds one video line up front, so a camera can come and go later without renegotiating (the other
   // side answers on it in voiceAnswerVideo). It has no stream id: pages from before video ignore such a track.
-  if(offerer) p.vt = pc.addTransceiver(voiceCamTrack() || "video", {direction:"sendrecv"});
+  if(offerer) p.vt = pc.addTransceiver(voiceVideoTrack() || "video", {direction:"sendrecv"});
   pc.onicecandidate = function(e){
     if(e.candidate) voiceSignal(p.userId, {kind:"ice", toPeer:peer, candidate:e.candidate.toJSON()});
   };
@@ -5673,19 +5678,22 @@ function voiceStartMeter(){
 function voiceStopMeter(){ if(VCHAN.meter){ clearInterval(VCHAN.meter); VCHAN.meter = null; } }
 
 function voiceRender(){
-  var join = $("voiceJoin"), mute = $("voiceMute"), cam = $("voiceCam"), leave = $("voiceLeave"), ros = $("voiceRoster");
+  var join = $("voiceJoin"), mute = $("voiceMute"), cam = $("voiceCam"), scr = $("voiceScreen"), leave = $("voiceLeave"), ros = $("voiceRoster");
   var pill = $("voicePill"), sub = $("voiceSub");
   if(!join) return;
   var ids = Object.keys(VCHAN.roster);
   join.classList.toggle("hidden", VCHAN.on);
   mute.classList.toggle("hidden", !VCHAN.on);
   cam.classList.toggle("hidden", !VCHAN.on);
+  scr.classList.toggle("hidden", !VCHAN.on || !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia);
   leave.classList.toggle("hidden", !VCHAN.on);
   join.disabled = !ARENA.sock || ARENA.sock.readyState !== 1 || ids.length >= VCHAN_MAX;
   mute.textContent = VCHAN.muted ? "Unmute" : "Mute";
   mute.setAttribute("aria-pressed", VCHAN.muted ? "true" : "false");
   cam.textContent = VCHAN.cam ? "📷 Camera off" : "📷 Camera";
   cam.setAttribute("aria-pressed", VCHAN.cam ? "true" : "false");
+  scr.textContent = VCHAN.screen ? "🖥 Stop sharing" : "🖥 Share screen";
+  scr.setAttribute("aria-pressed", VCHAN.screen ? "true" : "false");
   sub.textContent = ids.length ? (ids.length + " in voice · up to " + VCHAN_MAX) : ("nobody in voice yet · up to " + VCHAN_MAX);
   ros.innerHTML = "";
   ids.forEach(function(id){
@@ -5694,15 +5702,16 @@ function voiceRender(){
     if(VCHAN.on && !r.you && !(p && p.pc.connectionState === "connected")) chip.classList.add("connecting");
     var t = document.createElement("span"); t.textContent = r.you ? "You" : r.who; chip.appendChild(t);
     if(r.muted){ var mm = document.createElement("span"); mm.className = "vm"; mm.textContent = "🔇"; mm.title = "muted"; chip.appendChild(mm); }
-    if(r.cam){ var mc = document.createElement("span"); mc.className = "vm"; mc.textContent = "📹"; mc.title = "camera on"; chip.appendChild(mc); }
+    if(r.cam){ var mc = document.createElement("span"); mc.className = "vm"; mc.textContent = r.screen ? "🖥" : "📹"; mc.title = r.screen ? "sharing their screen" : "camera on"; chip.appendChild(mc); }
     ros.appendChild(chip);
   });
   voiceRenderVideos();
   if(pill){
     pill.classList.toggle("hidden", !VCHAN.on);
-    // A live camera always shows here, from every view, even while you're muted.
-    pill.classList.toggle("muted", VCHAN.muted && !VCHAN.cam);
-    pill.textContent = (VCHAN.cam ? "📹 In voice · camera on" : "🎙 In voice") + (VCHAN.muted ? " · muted" : "");
+    // A live camera or a shared screen always shows here, from every view, even while you're muted.
+    pill.classList.toggle("muted", VCHAN.muted && !VCHAN.vidStream);
+    pill.textContent = (VCHAN.screen ? "🖥 In voice · sharing screen" : VCHAN.cam ? "📹 In voice · camera on" : "🎙 In voice") +
+      (VCHAN.muted ? " · muted" : "");
   }
 }
 
@@ -5729,7 +5738,7 @@ function voiceJoin(){
 function voiceLeave(){
   if(!VCHAN.on) return;
   voiceSay("leave");
-  voiceCamOff();
+  voiceVideoOff();
   Object.keys(VCHAN.peers).forEach(voiceClosePeer);
   if(VCHAN.stream) VCHAN.stream.getTracks().forEach(function(t){ t.stop(); });
   if(VCHAN.me) try { VCHAN.me.src.disconnect(); } catch(e){}
@@ -5749,12 +5758,12 @@ function voiceToggleMute(){
   voiceRender();
 }
 
-/* Video: the camera is optional inside a voice call. Every connection negotiates one video line when it's made
-   (voiceMakePeer on the caller's side, voiceAnswerVideo on the other), so turning the camera on or off only swaps
-   the track that line sends: no renegotiation. Each person's video gets a tile, made once and shown only while
-   their camera is on. */
-function voiceCamTrack(){
-  return (VCHAN.cam && VCHAN.camStream && VCHAN.camStream.getVideoTracks()[0]) || null;
+/* Video: a camera or a shared screen, optional inside a voice call. Every connection negotiates one video line
+   when it's made (voiceMakePeer on the caller's side, voiceAnswerVideo on the other), so switching the camera or a
+   screen on or off only swaps the track that line sends: no renegotiation. One line means one video each: the camera
+   and a shared screen take turns. Each person's video gets a tile, made once and shown only while it's on. */
+function voiceVideoTrack(){
+  return (VCHAN.vidStream && VCHAN.vidStream.getVideoTracks()[0]) || null;
 }
 
 // Answering a call: send back on the caller's video line. A caller from before video has none: no video with them.
@@ -5764,7 +5773,7 @@ function voiceAnswerVideo(p){
   if(!t) return;
   t.direction = "sendrecv";
   p.vt = t;
-  var track = voiceCamTrack();
+  var track = voiceVideoTrack();
   if(track) t.sender.replaceTrack(track).catch(function(){});
 }
 
@@ -5778,7 +5787,7 @@ function voiceMakeTile(you){
   return tile;
 }
 
-// Their video line is up (camera on or not yet): keep a tile ready for it.
+// Their video line is up (video on or not yet): keep a tile ready for it.
 function voiceShowVideo(p, track){
   if(!p.tile){ p.tile = voiceMakeTile(false); p.video = p.tile.firstChild; }
   p.video.srcObject = new MediaStream([track]);   // sound comes through their <audio>, so the video stays muted
@@ -5789,27 +5798,52 @@ function voicePlay(v){
   if(v.paused){ var pl = v.play(); if(pl && pl.catch) pl.catch(function(){}); }
 }
 
-// Your camera first, then everyone whose camera is on. Tiles are only shown or hidden, so their video keeps playing.
+// Your video first, then everyone whose video is on. Tiles are only shown or hidden, so their video keeps playing.
+// A shared screen gets a whole row, uncropped.
 function voiceRenderVideos(){
   var grid = $("voiceVideos"), shown = 0;
   if(!grid) return;
-  if(VCHAN.camTile){
-    VCHAN.camTile.lastChild.textContent = "You" + (VCHAN.muted ? " 🔇" : "");
-    VCHAN.camTile.classList.remove("hidden"); voicePlay(VCHAN.camTile.firstChild); shown++;
+  if(VCHAN.vidTile){
+    VCHAN.vidTile.lastChild.textContent = (VCHAN.screen ? "Your screen" : "You") + (VCHAN.muted ? " 🔇" : "");
+    VCHAN.vidTile.classList.toggle("screen", VCHAN.screen);
+    VCHAN.vidTile.classList.remove("hidden"); voicePlay(VCHAN.vidTile.firstChild); shown++;
   }
   Object.keys(VCHAN.peers).forEach(function(id){
     var p = VCHAN.peers[id], r = VCHAN.roster[id], on = !!(r && r.cam);
     if(!p.tile) return;
-    p.tile.lastChild.textContent = r ? r.who + (r.muted ? " 🔇" : "") : "";
+    p.tile.lastChild.textContent = r ? r.who + (r.screen ? " · screen" : "") + (r.muted ? " 🔇" : "") : "";
+    p.tile.classList.toggle("screen", !!(r && r.screen));
     p.tile.classList.toggle("hidden", !on);
     if(on){ voicePlay(p.video); shown++; }
   });
   grid.classList.toggle("hidden", !shown);
 }
 
+// Tell everyone whether your video is on, and whether it's a screen.
+function voiceSayVideo(){
+  var me = VCHAN.roster[VCHAN.peer];
+  if(me){ me.cam = !!VCHAN.vidStream; me.screen = VCHAN.screen; }
+  voiceSay("cam", {cam:!!VCHAN.vidStream, screen:VCHAN.screen});
+}
+
+// Put a new camera or screen stream on everyone's video line, in place of whatever was there, and show your tile.
+function voiceStartVideo(stream, screen){
+  voiceVideoOff();
+  var track = stream.getVideoTracks()[0];
+  if(screen) try { track.contentHint = "detail"; } catch(e){}   // keep text sharp rather than motion smooth
+  VCHAN.vidStream = stream; VCHAN.cam = !screen; VCHAN.screen = !!screen;
+  // Camera unplugged or its permission taken back, or the browser's own "Stop sharing": same as switching it off.
+  track.onended = function(){ if(VCHAN.vidStream === stream){ voiceVideoOff(); voiceSayVideo(); voiceRender(); } };
+  Object.keys(VCHAN.peers).forEach(function(id){ var vt = VCHAN.peers[id].vt; if(vt) vt.sender.replaceTrack(track).catch(function(){}); });
+  VCHAN.vidTile = voiceMakeTile(true);
+  VCHAN.vidTile.firstChild.srcObject = stream;
+  voiceSayVideo();
+  voiceRender();
+}
+
 function voiceToggleCam(){
   if(!VCHAN.on) return;
-  if(VCHAN.cam){ voiceCamOff(); voiceSay("cam", {cam:false}); voiceRender(); return; }
+  if(VCHAN.cam){ voiceVideoOff(); voiceSayVideo(); voiceRender(); return; }
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ toast("This browser can't do video here", "ach"); return; }
   var btn = $("voiceCam"); btn.disabled = true;
   navigator.mediaDevices.getUserMedia({video:{width:{ideal:640}, height:{ideal:360}, frameRate:{ideal:24, max:30}}, audio:false})
@@ -5817,16 +5851,7 @@ function voiceToggleCam(){
       btn.disabled = false;
       // You left the call while the camera prompt was open.
       if(!VCHAN.on || VCHAN.cam){ stream.getTracks().forEach(function(t){ t.stop(); }); return; }
-      var track = stream.getVideoTracks()[0];
-      VCHAN.camStream = stream; VCHAN.cam = true;
-      // Camera unplugged, or its permission taken back: same as switching it off.
-      track.onended = function(){ if(VCHAN.camStream === stream){ voiceCamOff(); voiceSay("cam", {cam:false}); voiceRender(); } };
-      Object.keys(VCHAN.peers).forEach(function(id){ var vt = VCHAN.peers[id].vt; if(vt) vt.sender.replaceTrack(track).catch(function(){}); });
-      VCHAN.camTile = voiceMakeTile(true);
-      VCHAN.camTile.firstChild.srcObject = stream;
-      if(VCHAN.roster[VCHAN.peer]) VCHAN.roster[VCHAN.peer].cam = true;
-      voiceSay("cam", {cam:true});
-      voiceRender();
+      voiceStartVideo(stream, false);
     })
     .catch(function(e){
       btn.disabled = false;
@@ -5834,26 +5859,47 @@ function voiceToggleCam(){
     });
 }
 
-// Camera off: stop it (its light goes out), stop sending it to everyone, drop your own tile.
-function voiceCamOff(){
-  if(!VCHAN.cam) return;
-  var s = VCHAN.camStream;
-  VCHAN.cam = false; VCHAN.camStream = null;
-  if(s) s.getTracks().forEach(function(t){ t.onended = null; t.stop(); });
+function voiceToggleScreen(){
+  if(!VCHAN.on) return;
+  if(VCHAN.screen){ voiceVideoOff(); voiceSayVideo(); voiceRender(); return; }
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia){ toast("This browser can't share a screen here", "ach"); return; }
+  var btn = $("voiceScreen"); btn.disabled = true;
+  navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:15, max:30}, width:{max:1920}, height:{max:1080}}, audio:false})
+    .then(function(stream){
+      btn.disabled = false;
+      if(!VCHAN.on || VCHAN.screen){ stream.getTracks().forEach(function(t){ t.stop(); }); return; }
+      voiceStartVideo(stream, true);
+    })
+    .catch(function(e){
+      btn.disabled = false;
+      if(e && e.name === "NotAllowedError") return;   // you closed the picker: nothing to say
+      toast("Couldn't share your screen", "ach");
+    });
+}
+
+// Your video off: stop the camera or the shared screen (the camera light goes out, the browser's sharing bar goes
+// away), stop sending it to everyone, drop your own tile.
+function voiceVideoOff(){
+  var s = VCHAN.vidStream;
+  if(!s) return;
+  VCHAN.vidStream = null; VCHAN.cam = false; VCHAN.screen = false;
+  s.getTracks().forEach(function(t){ t.onended = null; t.stop(); });
   Object.keys(VCHAN.peers).forEach(function(id){ var vt = VCHAN.peers[id].vt; if(vt) vt.sender.replaceTrack(null).catch(function(){}); });
-  if(VCHAN.camTile){
-    VCHAN.camTile.firstChild.srcObject = null;
-    if(VCHAN.camTile.parentNode) VCHAN.camTile.parentNode.removeChild(VCHAN.camTile);
-    VCHAN.camTile = null;
+  if(VCHAN.vidTile){
+    VCHAN.vidTile.firstChild.srcObject = null;
+    if(VCHAN.vidTile.parentNode) VCHAN.vidTile.parentNode.removeChild(VCHAN.vidTile);
+    VCHAN.vidTile = null;
   }
-  if(VCHAN.roster[VCHAN.peer]) VCHAN.roster[VCHAN.peer].cam = false;
+  var me = VCHAN.roster[VCHAN.peer];
+  if(me){ me.cam = false; me.screen = false; }
 }
 
 (function(){
-  var j = $("voiceJoin"), mu = $("voiceMute"), cm = $("voiceCam"), lv = $("voiceLeave"), pill = $("voicePill");
+  var j = $("voiceJoin"), mu = $("voiceMute"), cm = $("voiceCam"), sc = $("voiceScreen"), lv = $("voiceLeave"), pill = $("voicePill");
   if(j) j.addEventListener("click", voiceJoin);
   if(mu) mu.addEventListener("click", voiceToggleMute);
   if(cm) cm.addEventListener("click", voiceToggleCam);
+  if(sc) sc.addEventListener("click", voiceToggleScreen);
   if(lv) lv.addEventListener("click", voiceLeave);
   if(pill) pill.addEventListener("click", function(){ setView("arena"); });
 })();

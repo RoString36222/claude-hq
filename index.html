@@ -2172,6 +2172,7 @@ function setupRoving(container, selector){
   container._rovingBound=true;
   container.addEventListener("keydown",function(e){
     if(["ArrowRight","ArrowLeft","ArrowUp","ArrowDown","Home","End"].indexOf(e.key)<0) return;
+    if(e.metaKey||e.ctrlKey||e.altKey) return;   // Cmd-Left/Right = browser back/forward
     var its=Array.prototype.slice.call(container.querySelectorAll(selector));
     if(!its.length) return;
     var idx=its.indexOf(document.activeElement);
@@ -3095,6 +3096,8 @@ document.addEventListener("keydown",function(e){
   var tag = (e.target.tagName||"").toLowerCase();
   var typing = tag==="input"||tag==="textarea"||tag==="select"||e.target.isContentEditable;
   if(typing) return;
+  // Single-key shortcuts only: leave Cmd/Ctrl/Alt combos (Cmd-R, Cmd-1..9, ...) to the browser.
+  if(e.metaKey||e.ctrlKey||e.altKey) return;
   if(e.key==="/"){ e.preventDefault(); $("search").focus(); }
   else if(e.key==="r"||e.key==="R"){ e.preventDefault(); forceRefresh(); }
   else if(e.key==="?"){ e.preventDefault(); openHelp(); }

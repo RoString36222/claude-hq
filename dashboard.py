@@ -2882,6 +2882,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(arena.status()))
             return
 
+        if path == "/api/arena/preview":
+            code, resp = arena.preview(PROJECTS_DIR)
+            self._send(code or 200, json.dumps(resp))
+            return
+
         if path == "/api/arena/board":
             import urllib.parse
             qs = urllib.parse.parse_qs(self.path.split("?", 1)[1]

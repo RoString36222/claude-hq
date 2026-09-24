@@ -899,36 +899,6 @@ def _ach(aid, name, desc, icon, actual, target):
     }
 
 
-def _night_owl_flag(files, window_start, today):
-    """Cheap-ish second pass: any user/assistant record with local hour in 0..5."""
-    for path in files:
-        try:
-            f = open(path, "r", encoding="utf-8", errors="replace")
-        except Exception:
-            continue
-        with f:
-            for line in f:
-                if '"timestamp"' not in line:
-                    continue
-                try:
-                    o = json.loads(line)
-                except Exception:
-                    continue
-                if not isinstance(o, dict):
-                    continue
-                if o.get("type") not in ("user", "assistant"):
-                    continue
-                ts = parse_ts(o.get("timestamp"))
-                if ts is None:
-                    continue
-                local = ts.astimezone()  # system local tz
-                if local.date() < window_start or local.date() > today:
-                    continue
-                if 0 <= local.hour <= 5:
-                    return True
-    return False
-
-
 # --------------------------------------------------------------------------- #
 # Live sessions
 # --------------------------------------------------------------------------- #
@@ -3243,6 +3213,20 @@ def main():
 
     url = f"http://127.0.0.1:{args.port}"
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+
+    # Warm the per-file scan + search caches in the background so the first
+    # /api/search and /api/history are instant instead of a one-time ~1s scan.
+    def _prewarm():
+        try:
+            for p in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
+                try:
+                    scan_file(p)
+                    get_search_entry(p)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+    threading.Thread(target=_prewarm, daemon=True).start()
 
     if not args.no_open:
         try:

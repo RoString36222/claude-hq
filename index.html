@@ -1771,8 +1771,6 @@ function pokeImgFor(dex, cr, px, altName){
     ' data-try="0" data-fb="'+fb+'" onerror="pokeErr(this)" loading="lazy">';
 }
 function pokeImgHTML(cr, px){ return pokeImgFor(pokeDexFor(cr), cr, px, pokeCurrentName(cr)); }
-// canonical species sprite (no evolution) — used by the Pokédex catalog
-function pokeImgCanonical(cr, px){ return pokeImgFor(POKE_DEX[pokeIdx(cr)], cr, px, POKE_REAL[pokeIdx(cr)]); }
 // onerror chain: animated gif -> static png (same shiny/normal) -> generated monster sprite (offline).
 function pokeErr(img){
   var t=+(img.getAttribute("data-try")||0);

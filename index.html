@@ -485,6 +485,12 @@ select.hbtn{padding-right:26px;-webkit-appearance:none;appearance:none;
 .acct-bar{height:8px;border-radius:999px;background:var(--panel2);overflow:hidden}
 .acct-bar>i{display:block;height:100%;border-radius:999px}
 .acct-val{font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;text-align:right;min-width:56px}
+.logrow{display:grid;grid-template-columns:26px 1fr auto;gap:10px;align-items:baseline;padding:8px 2px;border-bottom:1px solid var(--line)}
+.logrow:last-child{border-bottom:none}
+.logrow-ic{font-size:16px}
+.logrow-tx{font-size:13px;overflow-wrap:anywhere}
+.logrow-t{font-size:11.5px;color:var(--faint);white-space:nowrap;font-variant-numeric:tabular-nums}
+#logBtn.has-new{color:var(--need);border-color:var(--need)}
 .kbd{display:inline-block;min-width:1.4em;text-align:center;padding:1px 6px;border:1px solid var(--line);
   border-bottom-width:2px;border-radius:6px;background:var(--panel2);font:600 11.5px ui-monospace,Menlo,monospace;
   color:var(--ink);vertical-align:baseline}
@@ -957,6 +963,7 @@ html.hq-calm #confetti{display:none!important}
       <option value="all">All history</option>
     </select>
     <button class="hbtn" id="cmdkBtn" type="button" title="Command palette (⌘K / Ctrl-K)" aria-label="Command palette">⌘K</button>
+    <button class="hbtn" id="logBtn" type="button" title="Event log" aria-label="Event log">📋</button>
     <button class="hbtn" id="helpBtn" type="button" title="Keyboard shortcuts & help (?)" aria-label="Help and keyboard shortcuts">?</button>
     <div class="hmenu">
       <button class="hbtn" id="menuBtn" type="button" title="More actions" aria-label="More actions" aria-haspopup="true" aria-expanded="false">⋯</button>
@@ -1318,6 +1325,18 @@ html.hq-calm #confetti{display:none!important}
       <button class="hbtn" id="digestClose" type="button" aria-label="Close">✕</button>
     </div>
     <div class="modal-b"><div class="md-body" id="digestBody">Loading…</div></div>
+  </div>
+</div>
+
+<!-- event log -->
+<div class="modalback" id="logBack">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="logTitle">
+    <div class="modal-h">
+      <h3 id="logTitle">📋 Event log</h3>
+      <button class="hbtn" id="logClear" type="button" title="Clear log">Clear</button>
+      <button class="hbtn" id="logClose" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-b"><div id="logList"></div></div>
   </div>
 </div>
 
@@ -2398,7 +2417,8 @@ function checkTransitions(sessions){
     var enteredNeeds = s.status==="needs" && (!prev || prev.status!=="needs");
     var newAlert = s.alert && (!prev || prev.alert!==s.alert);
     if(enteredNeeds || newAlert){ fireNotification(s); speakNeeds(s);
-      announce((s.title||s.name||"A session")+" now needs you"+(s.alert?": "+s.alert:"")); }
+      announce((s.title||s.name||"A session")+" now needs you"+(s.alert?": "+s.alert:""));
+      logEvent("❗", (s.title||s.name||"A session")+" needs you"+(s.alert?" — "+s.alert:"")); }
     PREV[s.id] = {status:s.status, alert:s.alert||null};
   });
   // prune gone sessions
@@ -2950,6 +2970,7 @@ document.addEventListener("keydown",function(e){
     if($("digestBack").classList.contains("open")){ closeDigest(); return; }
     if($("infoBack").classList.contains("open")){ closeInfo(); return; }
     if($("helpBack").classList.contains("open")){ closeHelp(); return; }
+    if($("logBack").classList.contains("open")){ closeLog(); return; }
     if(CMDK_OPEN){ closeCmdk(); return; }
     if(SEARCHOV_OPEN){ closeSearchOv(); return; }
     if(DRAWER_OPEN){ closeDrawer(); return; }
@@ -3955,6 +3976,7 @@ function buildCmdkItems(q){
   items.push({group:"Views", ic:"🎮", label:"Live view", run:function(){ setView("live"); }});
   items.push({group:"Views", ic:"📈", label:"Analytics view", run:function(){ setView("analytics"); }});
   items.push({group:"Views", ic:"📕", label:"Pokédex view", run:function(){ setView("pokedex"); }});
+  items.push({group:"Actions", ic:"📋", label:"Event log", run:function(){ openLog(); }});
   items.push({group:"Actions", ic:"⌨️", label:"Keyboard shortcuts & help", run:function(){ openHelp(); }});
   items.push({group:"Views", ic:"⚔️", label:"Gym / Team analysis", run:function(){ setView("gym"); }});
   items.push({group:"Views", ic:"📺", label:"War Room", run:function(){ openWarroom(); }});
@@ -4080,6 +4102,10 @@ $("infoClose").addEventListener("click",closeInfo);
 $("infoBack").addEventListener("click",function(e){ if(e.target===$("infoBack")) closeInfo(); });
 function openHelp(){ rememberOpener(); $("helpBack").classList.add("open"); $("helpClose").focus(); }
 function closeHelp(){ $("helpBack").classList.remove("open"); restoreOpener(); }
+$("logBtn").addEventListener("click",openLog);
+$("logClose").addEventListener("click",closeLog);
+$("logClear").addEventListener("click",clearLog);
+$("logBack").addEventListener("click",function(e){ if(e.target===$("logBack")) closeLog(); });
 $("helpBtn").addEventListener("click",openHelp);
 $("helpClose").addEventListener("click",closeHelp);
 $("helpBack").addEventListener("click",function(e){ if(e.target===$("helpBack")) closeHelp(); });
@@ -4095,14 +4121,37 @@ function toast(msg, cls){
   setTimeout(function(){ t.style.transition="opacity .4s"; t.style.opacity="0"; setTimeout(function(){ if(t.parentNode) t.remove(); },420); }, 4200);
 }
 function reducedMotion(){ return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
+
+/* ---- event log: a persisted history of notable moments ---- */
+var EVENTS=(function(){ try{ return JSON.parse(localStorage.getItem("hq_events")||"[]"); }catch(e){ return []; } })();
+function logEvent(icon, text){
+  EVENTS.unshift({t:Date.now(), icon:icon||"•", text:text||""});
+  if(EVENTS.length>150) EVENTS.length=150;
+  try{ localStorage.setItem("hq_events", JSON.stringify(EVENTS)); }catch(e){}
+  var b=$("logBtn"); if(b) b.classList.add("has-new");
+  if($("logBack") && $("logBack").classList.contains("open")) renderLog();
+}
+function openLog(){ rememberOpener(); $("logBack").classList.add("open"); var b=$("logBtn"); if(b) b.classList.remove("has-new"); renderLog(); $("logClose").focus(); }
+function closeLog(){ $("logBack").classList.remove("open"); restoreOpener(); }
+function clearLog(){ EVENTS=[]; try{ localStorage.setItem("hq_events","[]"); }catch(e){} renderLog(); }
+function renderLog(){
+  var box=$("logList"); if(!box) return;
+  if(!EVENTS.length){ box.innerHTML='<div class="insight-empty">No events yet — evolutions, level-ups, and needs-you moments will show up here.</div>'; return; }
+  box.innerHTML="";
+  EVENTS.forEach(function(e){
+    var row=el("div","logrow");
+    row.innerHTML='<span class="logrow-ic">'+esc(e.icon)+'</span><span class="logrow-tx">'+esc(e.text)+'</span><span class="logrow-t">'+esc(relTime(new Date(e.t).toISOString()))+'</span>';
+    box.appendChild(row);
+  });
+}
 function checkCelebration(season){
   if(!season) return;
   var lvl=season.level;
   var unlocked={}; (season.achievements||[]).forEach(function(a){ if(a.unlocked) unlocked[a.id]=a.name; });
   if(!CELEB_READY){ PREV_LEVEL=lvl; PREV_ACH=unlocked; CELEB_READY=true; return; }
-  if(lvl!=null && PREV_LEVEL!=null && lvl>PREV_LEVEL){ toast("🎉 Level "+lvl+"!","level"); confettiBurst(); }
+  if(lvl!=null && PREV_LEVEL!=null && lvl>PREV_LEVEL){ toast("🎉 Level "+lvl+"!","level"); confettiBurst(); logEvent("🎉","Reached Level "+lvl); }
   Object.keys(unlocked).forEach(function(id){
-    if(!PREV_ACH[id]){ toast("🏅 Achievement: "+unlocked[id],"ach"); confettiBurst(); }
+    if(!PREV_ACH[id]){ toast("🏅 Achievement: "+unlocked[id],"ach"); confettiBurst(); logEvent("🏅","Achievement unlocked: "+unlocked[id]); }
   });
   PREV_LEVEL=lvl; PREV_ACH=unlocked;
 }
@@ -4122,6 +4171,7 @@ function checkEvolution(sessions){
     if(prev!=null && cur>prev){
       toast("✨ "+creatureSpecies(s.creature)+" evolved to "+creatureStageName(s.creature)+"!","level");
       confettiBurst();
+      logEvent("✨", creatureSpecies(s.creature)+" evolved to "+creatureStageName(s.creature)+" ("+(s.title||s.name||"session")+")");
     }
     STAGE_PREV[id]=cur;
   });

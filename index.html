@@ -1377,6 +1377,7 @@ html.hq-calm #confetti{display:none!important}
         <li><b>⚙️ Settings</b>: theme (incl. High-contrast), creature pack, Large text, Calm mode, refresh rate, stuck threshold, daily budget.</li>
         <li><b>🔔</b> desktop alerts · <b>🗣️</b> voice · <b>📝</b> Daily Digest · <b>⋯</b> exports &amp; War Room.</li>
       </ul>
+      <p class="cost-sub" id="hqVersionLine" style="margin-top:14px">Claude HQ</p>
     </div></div>
   </div>
 </div>
@@ -2867,6 +2868,7 @@ function render(){
   if(WARROOM_ON) renderWarroom();
   if(CMDK_OPEN) renderCmdk();
   $("updated").textContent = "updated "+relTime(STATE.updated);
+  if(STATE.version){ var vl=$("hqVersionLine"); if(vl) vl.textContent="Claude HQ v"+STATE.version+" · github.com/RoString36222/claude-hq"; }
 }
 
 function updateDocTitle(sessions){

@@ -1,6 +1,6 @@
 # ⚡ Claude HQ
 
-A **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
+**Version 1.1.0** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
 
 Claude HQ reads your live sessions (`claude agents --json`) and your session transcripts
 (`~/.claude/projects/**/*.jsonl`) and turns them into a single command center: what every tab is
@@ -139,6 +139,17 @@ refresh rate, stuck threshold, and daily budget. Press **?** in the app for the 
 and feature guide.
 
 ---
+
+## Changelog
+
+- **1.1.0** — Editable Trainer name (thanks @SwastikTripathi, #1), smart Insights engine,
+  weekly digest, event log, project deep-dive, installable PWA, and a perf/dead-code hardening pass.
+- **1.0.0** — Initial release: live fleet view, full-history search + transcript reader, analytics,
+  daily digests, and the Pokémon-style collection / Gym / quests layer.
+
+## Contributors
+
+- [@SwastikTripathi](https://github.com/SwastikTripathi) — editable Trainer name setting (#1)
 
 ## License
 

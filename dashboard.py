@@ -45,6 +45,8 @@ import webbrowser
 from datetime import datetime, timezone, timedelta, date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+APP_VERSION = "1.1.0"
+
 # --------------------------------------------------------------------------- #
 # Paths / constants
 # --------------------------------------------------------------------------- #
@@ -1242,6 +1244,7 @@ def build_payload():
 
     payload = {
         "updated": now_utc().isoformat(),
+        "version": APP_VERSION,
         "season": season,
         "sessions": sessions,
         "feed": feed,
@@ -2724,7 +2727,7 @@ def build_session_markdown(sid, path):
 # --------------------------------------------------------------------------- #
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ClaudeDashboard/1.0"
+    server_version = "ClaudeHQ/" + APP_VERSION
 
     def _host_ok(self):
         host = self.headers.get("Host", "")

@@ -998,6 +998,7 @@ html.hq-calm #confetti{display:none!important}
 .arena-nudge{margin-left:2px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);
   background:transparent;color:var(--muted);font:inherit;font-size:11px;cursor:pointer;line-height:1.6}
 .arena-nudge:hover{background:var(--brand);border-color:var(--brand);color:#fff}
+.arena-who .arena-nudge{margin-left:auto;flex:0 0 auto}
 .arena-stat{position:relative}
 .arena-stat-dot{position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;
   background:var(--muted);box-shadow:0 0 0 2px var(--panel)}
@@ -5046,6 +5047,16 @@ function loadArena(){
     }).catch(function(){ $("arenaSub").textContent = "Status unavailable"; });
 }
 
+// Nudge someone from the leaderboard (by handle). Server persists it, so it
+// reaches them even with their Arena tab closed.
+function arenaNudgeHandle(handle, btn){
+  if(btn) btn.disabled = true;
+  arenaPost("/api/arena/nudge", {toHandle: handle}).then(function(res){
+    if(btn) btn.disabled = false;
+    if(!res.ok){ toast("\u26A0 "+((res.j&&res.j.error)||"nudge failed"), "ach"); return; }
+    toast(res.j.deliveredLive ? "\uD83D\uDC4B Nudge delivered" : "\uD83D\uDC4B Nudge queued \u2014 they\u2019ll get it when Claude HQ is running", "level");
+  }).catch(function(){ if(btn) btn.disabled=false; });
+}
 function arenaLoadBoard(){
   fetch("/api/arena/board?window="+encodeURIComponent(ARENA.window),{cache:"no-store"})
     .then(function(r){return r.json();})
@@ -5083,7 +5094,14 @@ function arenaLoadBoard(){
         nm.textContent = e.trainerName || e.displayName || e.handle;
         var sub = document.createElement("small");
         sub.textContent = "@" + e.handle + " · " + e.rankTitle;
-        nm.appendChild(sub); wrap.appendChild(nm); who.appendChild(wrap); tr.appendChild(who);
+        nm.appendChild(sub); wrap.appendChild(nm);
+        if(!e.isYou){
+          var nb=document.createElement("button"); nb.className="arena-nudge"; nb.type="button";
+          nb.textContent="\uD83D\uDC4B"; nb.title="Nudge "+(e.trainerName||e.displayName||e.handle)+" to come to the Arena";
+          nb.addEventListener("click", function(){ arenaNudgeHandle(e.handle, nb); });
+          wrap.appendChild(nb);
+        }
+        who.appendChild(wrap); tr.appendChild(who);
 
         [arenaNum(e.xp), e.level, arenaNum(e.prompts), arenaNum(e.tools),
          e.artifacts, e.activeDays, (e.streak ? e.streak+"🔥" : "0"),

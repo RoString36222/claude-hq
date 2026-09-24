@@ -39,6 +39,7 @@ KNOWN_TOOLS = frozenset({
 SCHEMA_VERSION = 1
 PUBLISH_WINDOW_DAYS = 30
 PUBLISH_INTERVAL_SECS = 300
+NUDGE_POLL_SECS = 30
 _HTTP_TIMEOUT = 20
 
 # Injected by dashboard.py at startup to avoid a circular import.
@@ -304,6 +305,29 @@ def ws_ticket():
     return status, body
 
 
+def send_nudge(to_handle, note=""):
+    """Ask the Arena server to nudge another member (by handle). Persists server
+    side so it also reaches them when their Arena tab is closed."""
+    link = load_link()
+    token, base = link.get("token"), link.get("url") or _base_url()
+    if not token or not base:
+        return 400, {"error": "not paired"}
+    return _request("POST", base + "/v1/nudge", token=token,
+                    body={"toHandle": to_handle, "note": note or ""})
+
+
+def drain_nudges():
+    """Fetch + clear nudges waiting for this user. Returns a list (may be empty)."""
+    link = load_link()
+    token, base = link.get("token"), link.get("url") or _base_url()
+    if not token or not base:
+        return []
+    status_code, body = _request("GET", base + "/v1/nudges", token=token)
+    if status_code == 200 and isinstance(body, dict):
+        return body.get("nudges", []) or []
+    return []
+
+
 def status():
     """Connection state for the UI. Deliberately excludes the token."""
     link = load_link()
@@ -334,5 +358,29 @@ def start_publisher(projects_dir):
                 pass  # never let the publisher take down the dashboard
 
     t = threading.Thread(target=loop, name="arena-publisher", daemon=True)
+    t.start()
+    return t
+
+
+def start_nudge_poller(notify):
+    """Poll for incoming nudges and hand each to `notify(title, body)` so the
+    dashboard can raise a native OS notification -- this is what lets a nudge
+    reach someone whose Arena tab is closed, as long as Claude HQ is running."""
+    def loop():
+        while True:
+            time.sleep(NUDGE_POLL_SECS)
+            try:
+                cfg = _load_config()
+                if not (cfg.get("arenaEnabled") and load_link().get("token")):
+                    continue
+                for n in drain_nudges():
+                    who = n.get("fromName") or n.get("fromHandle") or "Someone"
+                    note = n.get("note") or ""
+                    body = (who + " nudged you") + (": " + note if note else "")
+                    notify("👋 " + who + " nudged you", body)
+            except Exception:
+                pass  # never let the poller take down the dashboard
+
+    t = threading.Thread(target=loop, name="arena-nudge-poller", daemon=True)
     t.start()
     return t

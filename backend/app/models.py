@@ -139,3 +139,23 @@ class Season(Base):
     starts_on: Mapped[date] = mapped_column(Date)
     ends_on: Mapped[date] = mapped_column(Date)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class Nudge(Base):
+    """A directed "come to the Arena" ping, persisted so it also reaches a friend
+    whose Claude HQ is running but who has no Arena tab open. Carries no URL or
+    command by design -- only who it is from and an optional short note. The
+    recipient's client shows a notification; acting on it is their choice."""
+
+    __tablename__ = "nudges"
+    __table_args__ = (
+        Index("ix_nudges_to_undelivered", "to_user_id", "delivered_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    from_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    to_user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    note: Mapped[str] = mapped_column(String(120), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # NULL until the recipient's client has drained it via GET /v1/nudges.
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

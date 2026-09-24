@@ -267,6 +267,20 @@ def publish(projects_dir):
     return status, body
 
 
+def preview(projects_dir):
+    """Build the exact payload publish() would send, WITHOUT sending it.
+
+    Lets the page show the user precisely what leaves the machine before they
+    ever connect. No token or pairing required -- it only reads local files."""
+    cfg = _load_config()
+    payload = build_payload(
+        projects_dir,
+        share_cost=bool(cfg.get("arenaShareCost")),
+        trainer_name=cfg.get("trainerName") or "",
+    )
+    return 200, payload
+
+
 def board(window="season"):
     link = load_link()
     token, base = link.get("token"), link.get("url") or _base_url()

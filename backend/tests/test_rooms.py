@@ -87,3 +87,43 @@ async def test_empty_rooms_are_reaped(client):
             {"roomId": "ephemeral", "members": 1}
         ]
     assert client.get("/v1/rooms", headers=auth(a_tok)).json()["rooms"] == []
+
+
+async def test_nudge_is_directed_and_carries_no_url(client):
+    a_id, _ = await make_user("ash", 40)
+    b_id, _ = await make_user("gary", 41)
+    c_id, _ = await make_user("misty", 42)
+
+    with client.websocket_connect(url("lobby", issue_ws_ticket(a_id))) as a:
+        a.receive_json()  # welcome
+        with client.websocket_connect(url("lobby", issue_ws_ticket(b_id))) as b:
+            a.receive_json()  # join notice for b
+            b.receive_json()  # b welcome
+            with client.websocket_connect(url("lobby", issue_ws_ticket(c_id))) as c:
+                a.receive_json(); b.receive_json()  # join notices for c
+                c.receive_json()  # c welcome
+
+                # Ash nudges Gary, with an unsafe note that should be trimmed.
+                a.send_json({"type": "nudge", "to": b_id, "note": "  come look\x07  " + "x" * 200})
+
+                got = b.receive_json()
+                assert got["type"] == "nudge"
+                assert got["from"]["handle"] == "ash"
+                assert "url" not in got and "link" not in got  # never a URL
+                assert got["note"].startswith("come look")
+                assert len(got["note"]) <= 120
+
+                ack = a.receive_json()
+                assert ack == {"type": "nudge_ack", "to": b_id, "delivered": 1}
+
+                # Misty (not the target) receives nothing on her socket.
+                c.send_json({"type": "ping"})
+                assert c.receive_json() == {"type": "pong"}
+
+
+async def test_nudge_requires_a_target(client):
+    a_id, _ = await make_user("ash", 43)
+    with client.websocket_connect(url("lobby", issue_ws_ticket(a_id))) as a:
+        a.receive_json()
+        a.send_json({"type": "nudge"})
+        assert "target" in a.receive_json()["error"]

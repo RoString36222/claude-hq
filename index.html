@@ -2514,6 +2514,23 @@ function playChime(){
     });
   }catch(e){}
 }
+// Fire a desktop alert the first time today's est. cost crosses the budget.
+// Guarded per-date in localStorage so it fires once a day, not every refresh.
+function checkBudgetAlert(cost, budget, over){
+  if(!over || !budget) return;
+  var today = new Date().toISOString().slice(0,10), last=null;
+  try{ last = localStorage.getItem("hq_budget_alert_date"); }catch(e){}
+  if(last===today) return;
+  try{ localStorage.setItem("hq_budget_alert_date", today); }catch(e){}
+  var msg = "Daily budget passed \u2014 "+fmtCost(cost)+" / "+fmtCost(budget);
+  if(NOTIF_ON && ("Notification" in window) && Notification.permission==="granted"){
+    try{ new Notification("\uD83D\uDCB8 Over budget", {body:msg, tag:"hq-budget", silent:true}); }catch(e){}
+  }
+  playChime();
+  if(typeof toast==="function") toast("\uD83D\uDCB8 "+msg, "ach");
+  if(typeof announce==="function") announce(msg);
+  if(typeof logEvent==="function") logEvent("\uD83D\uDCB8", msg);
+}
 function fireNotification(sess){
   var body = sess.alert || "waiting for you";
   if(NOTIF_ON && ("Notification" in window) && Notification.permission==="granted"){
@@ -4364,6 +4381,7 @@ function renderHealth(h){
     bw.classList.toggle("over", !!over);
     bw.classList.toggle("warn", !over && pct>=80);
     $("budgetText").innerHTML = "Today <b>"+esc(fmtCost(cost))+"</b> / "+esc(fmtCost(budget));
+    checkBudgetAlert(cost, budget, !!over);
   }
   strip.classList.toggle("hidden", !(stuck.length>0 || (budget && budget>0)));
 }

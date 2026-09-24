@@ -213,11 +213,27 @@ def _request(method, url, token=None, body=None):
             return resp.status, (json.loads(raw) if raw else {})
     except urllib.error.HTTPError as e:
         try:
-            return e.code, json.loads(e.read().decode("utf-8"))
+            body = json.loads(e.read().decode("utf-8"))
         except Exception:
             return e.code, {"error": e.reason}
+        return e.code, _with_error(body)
     except Exception as e:
         return 0, {"error": str(e)}
+
+
+def _with_error(body):
+    """FastAPI reports a failure as {"detail": ...}, but the dashboard page reads
+    "error" -- without this the real reason ("no such person", "you cannot nudge
+    yourself") never reached the toast. Validation errors come as a list."""
+    if not isinstance(body, dict) or "error" in body or "detail" not in body:
+        return body
+    detail = body["detail"]
+    if isinstance(detail, list):
+        detail = "; ".join(
+            str(item.get("msg", item)) if isinstance(item, dict) else str(item)
+            for item in detail
+        )
+    return dict(body, error=str(detail))
 
 
 def _base_url():

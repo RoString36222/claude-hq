@@ -144,7 +144,7 @@ echo 'alias claude-hq="python3 ~/Documents/Claude/claude-dashboard/dashboard.py"
 
 Claude HQ is local-first and stays that way. **Arena** is an opt-in layer that
 adds a shared leaderboard across you and your friends, a lobby chat and a voice
-channel with everyone who has Arena open, plus websocket rooms to build
+and video channel with everyone who has Arena open, plus websocket rooms to build
 minigames on. It is off until you connect it.
 
 ### What is shared
@@ -162,11 +162,12 @@ replies, file paths, project or folder names, session ids, or titles.
   disk) so people who join can catch up; they're gone when the lobby empties or
   the server restarts. The server also cleans and caps messages (500
   characters) and rate-limits them (8 per 10 seconds per connection).
-- **Voice is peer-to-peer.** Audio goes straight between browsers (WebRTC),
-  never through the server. The server relays only the connection setup, which
-  includes IP addresses, and only to the people you're in voice with; a public
-  STUN server (Google's) tells your browser its public address. Your microphone
-  is used only after you click **Join voice**, and it stops when you leave.
+- **Voice and video are peer-to-peer.** Audio and video go straight between
+  browsers (WebRTC), never through the server. The server relays only the
+  connection setup, which includes IP addresses, and only to the people you're
+  in voice with; a public STUN server (Google's) tells your browser its public
+  address. Your microphone is used only after you click **Join voice** and your
+  camera only after you click **Camera**; both stop when you leave.
 - The wire format rejects unknown fields outright, so a future client change
   can't silently start leaking one.
 

@@ -10,7 +10,8 @@ Pokémon-style collection layer on top for fun.
 It runs entirely on your machine and binds to `127.0.0.1` only. **Your conversations never leave your
 computer.** (The one exception is that the "pokemon" creature pack loads sprite images from a public
 CDN — only a Pokédex *number* is ever sent, never any of your data. Switch to the "monsters" pack for
-100% offline.)
+100% offline. The optional [Arena](#-arena-multiplayer--optional) layer, off unless you turn it on,
+shares daily activity *counts* with friends — never conversation content.)
 
 ---
 
@@ -64,7 +65,8 @@ CDN — only a Pokédex *number* is ever sent, never any of your data. Switch to
 - Optional: [`kitty`](https://sw.kovidgoyal.net/kitty/) terminal (Resume opens a kitty window; falls
   back to Terminal.app).
 
-No third-party Python or JS dependencies. Two files do everything: `dashboard.py` + `index.html`.
+No third-party Python or JS dependencies. Two files do everything: `dashboard.py` + `index.html`
+(plus `arena.py`, also stdlib-only, if you turn on Arena).
 
 ---
 
@@ -111,6 +113,9 @@ echo 'alias claude-hq="python3 ~/Documents/Claude/claude-dashboard/dashboard.py"
   token** (injected into the page, sent as `X-HQ-Token`) plus an Origin / `Sec-Fetch-Site` check.
 - File lookups are validated (UUID / known-folder allowlists) — no path traversal.
 - Your transcripts and settings stay on disk. `config.json` and `sessions-meta.json` are git-ignored.
+- **Arena is off by default.** When enabled it publishes daily *counts* only — never conversation
+  content, file paths or project names — and its device token lives in `arena-link.json`, outside
+  `config.json`, so it is never served to the page. See [Arena](#-arena-multiplayer--optional).
 
 ---
 
@@ -120,6 +125,9 @@ echo 'alias claude-hq="python3 ~/Documents/Claude/claude-dashboard/dashboard.py"
 |---|---|
 | `dashboard.py` | Stdlib-only HTTP server: reads live agents + transcripts, serves the JSON API and the page. |
 | `index.html` | The entire self-contained frontend (inline CSS + JS). |
+| `arena.py` | Optional Arena client: builds + publishes the shared-stats payload. |
+| `backend/` | Optional Arena server (FastAPI). Only needed by whoever hosts it. |
+| `arena-link.json` | Your Arena device token. *(git-ignored)* |
 | `config.json` | Your settings (theme, pack, budget, …). Created on first save. *(git-ignored)* |
 | `sessions-meta.json` | Per-session pins / tags / notes / rename aliases. *(git-ignored)* |
 
@@ -129,6 +137,44 @@ echo 'alias claude-hq="python3 ~/Documents/Claude/claude-dashboard/dashboard.py"
 `GET /api/history` · `GET /api/project?folder=` · `GET /api/pokedex` · `GET /api/digest?date&download` ·
 `GET /api/config` · `GET /api/meta` · `GET /api/export.{json,csv}` ·
 `POST /api/action` · `POST /api/config` · `POST /api/meta` (all CSRF-guarded).
+
+---
+
+## 🏆 Arena (multiplayer) — optional
+
+Claude HQ is local-first and stays that way. **Arena** is an opt-in layer that
+adds a shared leaderboard across you and your friends, plus websocket rooms to
+build minigames on. It is off until you connect it.
+
+### What is shared
+
+Your dashboard keeps reading transcripts locally and publishes **daily counts
+only** — prompts, tool calls, artifacts, tokens. It never sends prompt text,
+replies, file paths, project or folder names, session ids, or titles.
+
+- **Tool names are allowlisted.** MCP tools are named `mcp__<server>__<tool>`
+  and routinely carry an employer's or client's name, so anything that isn't a
+  built-in Claude Code tool is bucketed as `Other` before it reaches the wire.
+- **Cost sharing is off by default.** Spend is salary- and employer-adjacent.
+- The wire format rejects unknown fields outright, so a future client change
+  can't silently start leaking one.
+
+Scores are computed on the server from raw counts, not submitted by the client,
+so the formula can change without a client release.
+
+### Connecting
+
+One person deploys the backend once:
+
+```bash
+./deploy-wizard.sh      # Fly.io + Neon Postgres + a GitHub OAuth app
+```
+
+Everyone else just points their own Claude HQ at it: **🏆 Arena → server URL →
+Sign in with GitHub → paste the pairing code**. Your device token is stored in
+`arena-link.json` (git-ignored) and is never exposed to the page.
+
+Backend source, API and design notes: [`backend/README.md`](backend/README.md).
 
 ---
 

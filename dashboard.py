@@ -2834,6 +2834,45 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, f"error reading index.html: {e}\n", "text/plain; charset=utf-8")
             return
 
+        if path == "/manifest.webmanifest":
+            self._send(200, json.dumps({
+                "name": "Claude HQ", "short_name": "Claude HQ",
+                "start_url": "/", "scope": "/", "display": "standalone",
+                "background_color": "#0e0f1a", "theme_color": "#6c5cff",
+                "description": "Local dashboard for your Claude Code sessions.",
+                "icons": [{"src": "/icon.svg", "sizes": "any",
+                           "type": "image/svg+xml", "purpose": "any maskable"}],
+            }), "application/manifest+json; charset=utf-8")
+            return
+
+        if path == "/icon.svg":
+            self._send(200,
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">'
+                '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+                '<stop offset="0" stop-color="#6c5cff"/><stop offset="1" stop-color="#9b8bff"/>'
+                '</linearGradient></defs>'
+                '<rect width="512" height="512" rx="112" fill="url(#g)"/>'
+                '<path d="M286 64 176 288h74l-40 160 150-240h-84z" fill="#fff"/></svg>',
+                "image/svg+xml; charset=utf-8")
+            return
+
+        if path == "/sw.js":
+            # network-first SW: never serves stale content, but enables install +
+            # an offline fallback to the last cached shell.
+            self._send(200,
+                'const C="claude-hq-v1";'
+                'self.addEventListener("install",e=>self.skipWaiting());'
+                'self.addEventListener("activate",e=>e.waitUntil(self.clients.claim()));'
+                'self.addEventListener("fetch",e=>{'
+                'const u=new URL(e.request.url);'
+                'if(e.request.method!=="GET"||u.pathname.startsWith("/api/"))return;'
+                'e.respondWith(fetch(e.request).then(r=>{'
+                'if(u.pathname==="/"){const c=r.clone();caches.open(C).then(x=>x.put("/",c));}'
+                'return r;}).catch(()=>caches.match(u.pathname==="/"?"/":e.request)));'
+                '});',
+                "application/javascript; charset=utf-8")
+            return
+
         if path == "/api/sessions":
             try:
                 payload = build_payload_memo()

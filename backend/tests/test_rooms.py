@@ -127,3 +127,58 @@ async def test_nudge_requires_a_target(client):
         a.receive_json()
         a.send_json({"type": "nudge"})
         assert "target" in a.receive_json()["error"]
+
+
+async def test_signal_is_directed_and_never_broadcast(client):
+    # WebRTC setup (SDP / ICE, which carry IP addresses) must reach only the member it's for.
+    a_id, _ = await make_user("ash", 50)
+    b_id, _ = await make_user("gary", 51)
+    c_id, _ = await make_user("misty", 52)
+
+    with client.websocket_connect(url("lobby", issue_ws_ticket(a_id))) as a:
+        a.receive_json()  # welcome
+        with client.websocket_connect(url("lobby", issue_ws_ticket(b_id))) as b:
+            a.receive_json()  # join notice for b
+            b.receive_json()  # b welcome
+            with client.websocket_connect(url("lobby", issue_ws_ticket(c_id))) as c:
+                a.receive_json(); b.receive_json()  # join notices for c
+                c.receive_json()  # c welcome
+
+                offer = {"kind": "offer", "toPeer": "b1", "fromPeer": "a1", "sdp": "v=0 ..."}
+                a.send_json({"type": "signal", "to": b_id, "data": offer})
+
+                got = b.receive_json()
+                assert got == {"type": "signal", "from": got["from"], "data": offer}
+                assert got["from"]["handle"] == "ash"
+
+                # Neither the sender nor a bystander hears it.
+                a.send_json({"type": "ping"})
+                assert a.receive_json() == {"type": "pong"}
+                c.send_json({"type": "ping"})
+                assert c.receive_json() == {"type": "pong"}
+
+
+async def test_signal_reaches_every_socket_of_the_target(client):
+    a_id, _ = await make_user("ash", 53)
+    b_id, _ = await make_user("gary", 54)
+
+    with client.websocket_connect(url("lobby", issue_ws_ticket(a_id))) as a:
+        a.receive_json()
+        with client.websocket_connect(url("lobby", issue_ws_ticket(b_id))) as b1:
+            a.receive_json(); b1.receive_json()
+            with client.websocket_connect(url("lobby", issue_ws_ticket(b_id))) as b2:
+                a.receive_json(); b1.receive_json(); b2.receive_json()  # join notices + welcome
+
+                a.send_json({"type": "signal", "to": b_id, "data": {"kind": "hello"}})
+                assert b1.receive_json()["data"] == {"kind": "hello"}
+                assert b2.receive_json()["data"] == {"kind": "hello"}
+
+
+async def test_signal_needs_a_target_and_an_object(client):
+    a_id, _ = await make_user("ash", 55)
+    with client.websocket_connect(url("lobby", issue_ws_ticket(a_id))) as a:
+        a.receive_json()
+        a.send_json({"type": "signal", "data": {"kind": "offer"}})
+        assert "target" in a.receive_json()["error"]
+        a.send_json({"type": "signal", "to": a_id, "data": "not an object"})
+        assert "object" in a.receive_json()["error"]

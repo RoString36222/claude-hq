@@ -131,6 +131,29 @@ async def _handle(room_id: str, member: Member, msg: dict) -> None:
         await member.ws.send_json({"type": "nudge_ack", "to": target, "delivered": delivered})
         return
 
+    if kind == "signal":
+        # WebRTC setup for lobby voice: an offer / answer / ICE candidate for ONE
+        # member, relayed only to that member's sockets and never broadcast -- SDP and
+        # ICE candidates carry IP addresses, so only the people you're actually
+        # talking to see yours. The payload is opaque here; MAX_FRAME_BYTES bounds it.
+        # The audio itself never touches this server: it flows browser to browser.
+        target = msg.get("to")
+        data = msg.get("data")
+        if not isinstance(target, str) or not target:
+            await member.ws.send_json({"type": "error", "error": "signal needs a target userId"})
+            return
+        if not isinstance(data, dict):
+            await member.ws.send_json({"type": "error", "error": "signal data must be an object"})
+            return
+        payload = {"type": "signal", "from": member.public(), "data": data}
+        for ws, m in list(room.members.items()):
+            if m.user_id == target and ws is not member.ws:
+                try:
+                    await ws.send_json(payload)
+                except Exception:
+                    pass
+        return
+
     if kind == "ping":
         await member.ws.send_json({"type": "pong"})
         return

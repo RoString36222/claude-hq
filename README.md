@@ -143,9 +143,9 @@ echo 'alias claude-hq="python3 ~/Documents/Claude/claude-dashboard/dashboard.py"
 ## 🏆 Arena (multiplayer) — optional
 
 Claude HQ is local-first and stays that way. **Arena** is an opt-in layer that
-adds a shared leaderboard across you and your friends, a lobby chat with
-everyone who has Arena open, plus websocket rooms to build minigames on. It is
-off until you connect it.
+adds a shared leaderboard across you and your friends, a lobby chat and a voice
+channel with everyone who has Arena open, plus websocket rooms to build
+minigames on. It is off until you connect it.
 
 ### What is shared
 
@@ -159,6 +159,11 @@ replies, file paths, project or folder names, session ids, or titles.
 - **Cost sharing is off by default.** Spend is salary- and employer-adjacent.
 - **Chat is only what you type.** Messages in the lobby chat go to everyone in
   the lobby at that moment, relayed by the server and never stored.
+- **Voice is peer-to-peer.** Audio goes straight between browsers (WebRTC),
+  never through the server. The server relays only the connection setup, which
+  includes IP addresses, and only to the people you're in voice with; a public
+  STUN server (Google's) tells your browser its public address. Your microphone
+  is used only after you click **Join voice**, and it stops when you leave.
 - The wire format rejects unknown fields outright, so a future client change
   can't silently start leaking one.
 

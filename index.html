@@ -987,6 +987,9 @@ html.hq-calm #confetti{display:none!important}
 .arena-stat-dot.ok{background:#3fb950}
 .arena-stat-dot.err{background:#ff6b6b}
 .arena-stat-dot.wait{background:#f5b301}
+.arena-prev{margin:2px 0 0;max-height:260px;overflow:auto;padding:11px 13px;border-radius:8px;
+  border:1px solid var(--line);background:var(--bg);font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;
+  color:var(--fg);white-space:pre;tab-size:2}
 
 </style>
 </head>
@@ -1344,6 +1347,10 @@ html.hq-calm #confetti{display:none!important}
         Only daily counts are shared &mdash; prompts, tool calls, artifacts and tokens.
         Never your prompts, replies, file paths or project names.
       </p>
+      <div>
+        <button class="hbtn" id="arenaPreviewBtn" type="button">🔍 Preview exactly what's shared</button>
+        <pre class="arena-prev hidden" id="arenaPreview" aria-label="Payload preview" tabindex="0"></pre>
+      </div>
       <div>
         <label for="arenaUrl">Arena server URL</label>
         <input id="arenaUrl" type="url" placeholder="https://claude-hq-arena.fly.dev"
@@ -5084,6 +5091,17 @@ Array.prototype.forEach.call(document.querySelectorAll("#arenaWins .arena-win"),
 
 (function(){
   var signin=$("arenaSignin"), pair=$("arenaPair"), pub=$("arenaPublish"), un=$("arenaUnpair");
+  var prevBtn=$("arenaPreviewBtn"), prev=$("arenaPreview");
+  if(prevBtn) prevBtn.addEventListener("click", function(){
+    if(prev && !prev.classList.contains("hidden")){ prev.classList.add("hidden"); return; }
+    prevBtn.disabled = true;
+    fetch("/api/arena/preview",{cache:"no-store"}).then(function(r){return r.json();})
+      .then(function(j){
+        var days=(j.days||[]).length, note="// "+days+" day"+(days===1?"":"s")+" \u2014 this is the entire payload; nothing else leaves your machine\n";
+        if(prev){ prev.textContent = note + JSON.stringify(j, null, 2); prev.classList.remove("hidden"); }
+      }).catch(function(){ if(prev){ prev.textContent="// preview unavailable"; prev.classList.remove("hidden"); } })
+      .then(function(){ prevBtn.disabled=false; });
+  });
 
   if(signin) signin.addEventListener("click", function(){
     var url = ($("arenaUrl").value||"").trim().replace(/\/+$/,"");

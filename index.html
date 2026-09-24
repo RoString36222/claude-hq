@@ -1460,9 +1460,9 @@ html.hq-calm #confetti{display:none!important}
       <h3 class="section-h">Voice &amp; video <span class="muted" id="voiceSub">talk with everyone in voice · up to 6</span></h3>
       <div class="voice-row">
         <button class="hbtn on" id="voiceJoin" type="button">🎙 Join voice</button>
-        <button class="hbtn hidden" id="voiceMute" type="button" aria-pressed="false">Mute</button>
-        <button class="hbtn hidden" id="voiceCam" type="button" aria-pressed="false">📷 Camera</button>
-        <button class="hbtn hidden" id="voiceScreen" type="button" aria-pressed="false">🖥 Share screen</button>
+        <button class="hbtn hidden" id="voiceMute" type="button" aria-pressed="false" aria-keyshortcuts="M">Mute</button>
+        <button class="hbtn hidden" id="voiceCam" type="button" aria-pressed="false" aria-keyshortcuts="V">📷 Camera</button>
+        <button class="hbtn hidden" id="voiceScreen" type="button" aria-pressed="false" aria-keyshortcuts="S">🖥 Share screen</button>
         <button class="hbtn hidden" id="voiceLeave" type="button">Leave</button>
         <div class="voice-roster" id="voiceRoster" aria-live="polite"></div>
       </div>
@@ -1578,6 +1578,7 @@ html.hq-calm #confetti{display:none!important}
         <li><span class="kbd">/</span> focus search · <span class="kbd">R</span> refresh now</li>
         <li><span class="kbd">⌘</span>/<span class="kbd">Ctrl</span>+<span class="kbd">K</span> command palette (jump to any session, run any action)</li>
         <li><span class="kbd">?</span> this help · <span class="kbd">Esc</span> close any overlay</li>
+        <li>In an Arena voice call, from any view: <span class="kbd">M</span> mute · <span class="kbd">V</span> camera · <span class="kbd">S</span> share screen</li>
         <li>In card &amp; Pokédex grids: <span class="kbd">←↑↓→</span> move focus, <span class="kbd">Enter</span> open</li>
       </ul>
       <h2>What the pieces mean</h2>
@@ -3234,6 +3235,11 @@ document.addEventListener("keydown",function(e){
   else if(e.key==="r"||e.key==="R"){ e.preventDefault(); forceRefresh(); }
   else if(e.key==="?"){ e.preventDefault(); openHelp(); }
   else if(e.key>="1"&&e.key<="6"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","arena"][+e.key-1]); }
+  // In a voice call, from any view: M mutes, V switches the camera, S shares your screen. Holding a key down
+  // doesn't repeat it, and outside a call these keys do nothing.
+  else if(VCHAN.on && !e.repeat && (e.key==="m"||e.key==="M")){ e.preventDefault(); voiceToggleMute(); }
+  else if(VCHAN.on && !e.repeat && (e.key==="v"||e.key==="V")){ e.preventDefault(); voiceToggleCam(); }
+  else if(VCHAN.on && !e.repeat && (e.key==="s"||e.key==="S")){ e.preventDefault(); voiceToggleScreen(); }
 });
 
 /* ---------- focus management: trap Tab inside open modals/drawer + return focus ---------- */
@@ -5864,10 +5870,13 @@ function voiceRender(){
   join.disabled = !ARENA.sock || ARENA.sock.readyState !== 1 || ids.length >= VCHAN_MAX;
   mute.textContent = VCHAN.muted ? "Unmute" : "Mute";
   mute.setAttribute("aria-pressed", VCHAN.muted ? "true" : "false");
+  mute.title = (VCHAN.muted ? "Unmute" : "Mute") + " (M)";
   cam.textContent = VCHAN.cam ? "📷 Camera off" : "📷 Camera";
   cam.setAttribute("aria-pressed", VCHAN.cam ? "true" : "false");
+  cam.title = (VCHAN.cam ? "Turn your camera off" : "Turn your camera on") + " (V)";
   scr.textContent = VCHAN.screen ? "🖥 Stop sharing" : "🖥 Share screen";
   scr.setAttribute("aria-pressed", VCHAN.screen ? "true" : "false");
+  scr.title = (VCHAN.screen ? "Stop sharing your screen" : "Share your screen") + " (S)";
   sub.textContent = ids.length ? (ids.length + " in voice · up to " + VCHAN_MAX) : ("nobody in voice yet · up to " + VCHAN_MAX);
   ros.innerHTML = "";
   ids.forEach(function(id){

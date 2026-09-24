@@ -20,6 +20,8 @@ Stdlib only, to keep Claude HQ's "no pip install" promise.
 """
 import json
 import os
+import ssl
+import subprocess
 import threading
 import time
 import urllib.error
@@ -160,6 +162,41 @@ def build_payload(projects_dir, share_cost=False, trainer_name="", days=PUBLISH_
 
 # --- transport -------------------------------------------------------------
 
+_ssl_ctx = None
+
+
+def _ssl_context():
+    """A verifying SSL context that also works on python.org macOS builds.
+
+    Those builds ship with an EMPTY CA store until the user runs
+    "Install Certificates.command", so every HTTPS call fails with
+    CERTIFICATE_VERIFY_FAILED. If the default store is empty, trust the macOS
+    system roots (stdlib only), then certifi if it happens to be installed.
+    Verification is never disabled."""
+    global _ssl_ctx
+    if _ssl_ctx is not None:
+        return _ssl_ctx
+    ctx = ssl.create_default_context()
+    if not ctx.cert_store_stats().get("x509_ca"):
+        try:
+            pem = subprocess.run(
+                ["/usr/bin/security", "find-certificate", "-a", "-p",
+                 "/System/Library/Keychains/SystemRootCertificates.keychain"],
+                capture_output=True, text=True, timeout=10).stdout
+            if pem:
+                ctx.load_verify_locations(cadata=pem)
+        except Exception:
+            pass
+    if not ctx.cert_store_stats().get("x509_ca"):
+        try:
+            import certifi
+            ctx.load_verify_locations(cafile=certifi.where())
+        except Exception:
+            pass
+    _ssl_ctx = ctx
+    return ctx
+
+
 def _request(method, url, token=None, body=None):
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -169,7 +206,8 @@ def _request(method, url, token=None, body=None):
     if token:
         req.add_header("Authorization", "Bearer %s" % token)
     try:
-        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT,
+                                    context=_ssl_context()) as resp:
             raw = resp.read().decode("utf-8")
             return resp.status, (json.loads(raw) if raw else {})
     except urllib.error.HTTPError as e:

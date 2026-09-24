@@ -950,7 +950,7 @@ html.hq-calm #confetti{display:none!important}
 .arena-wins{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
 .arena-win{padding:4px 11px;border-radius:999px;border:1px solid var(--line);
   background:transparent;color:var(--muted);font:inherit;font-size:12px;cursor:pointer}
-.arena-win.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.arena-win.on{background:var(--brand);border-color:var(--brand);color:#fff}
 .arena-tbl{width:100%;border-collapse:collapse;font-size:13px}
 .arena-tbl th{text-align:right;padding:8px 10px;color:var(--muted);font-weight:600;
   font-size:11px;text-transform:uppercase;letter-spacing:.04em;
@@ -958,7 +958,7 @@ html.hq-calm #confetti{display:none!important}
 .arena-tbl th:nth-child(-n+2),.arena-tbl td:nth-child(-n+2){text-align:left}
 .arena-tbl td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:right;
   font-variant-numeric:tabular-nums;white-space:nowrap}
-.arena-tbl tr.you{background:color-mix(in srgb,var(--accent) 11%,transparent)}
+.arena-tbl tr.you{background:color-mix(in srgb,var(--brand) 11%,transparent)}
 .arena-tbl tr.you td{font-weight:600}
 .arena-rank{font-weight:700;color:var(--muted);width:2.5rem}
 .arena-rank.r1{color:#f5b301}.arena-rank.r2{color:#a8b3c2}.arena-rank.r3{color:#c97b3e}
@@ -970,9 +970,9 @@ html.hq-calm #confetti{display:none!important}
 .arena-setup{max-width:34rem;display:flex;flex-direction:column;gap:12px}
 .arena-setup label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
 .arena-setup input{width:100%;padding:8px 10px;border-radius:7px;font:inherit;
-  border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+  border:1px solid var(--line);background:var(--bg);color:var(--ink)}
 .arena-step{display:flex;gap:10px;align-items:flex-start}
-.arena-step b{flex:0 0 1.4rem;color:var(--accent)}
+.arena-step b{flex:0 0 1.4rem;color:var(--brand)}
 .arena-msg{font-size:12.5px;padding:8px 11px;border-radius:7px;border:1px solid var(--line)}
 .arena-msg.err{color:#ff6b6b;border-color:#ff6b6b55}
 .arena-msg.ok{color:#3fb950;border-color:#3fb95055}
@@ -981,9 +981,23 @@ html.hq-calm #confetti{display:none!important}
   border-radius:999px;border:1px solid var(--line);font-size:12px}
 .arena-peer img{width:20px;height:20px;border-radius:50%;background:var(--line)}
 .arena-dot{width:7px;height:7px;border-radius:50%;background:#3fb950;flex:0 0 auto}
+/* ---- Arena chat: talk to everyone in the lobby ---- */
+.arena-chat{display:flex;flex-direction:column;gap:10px}
+.arena-chat-log{max-height:320px;min-height:110px;overflow-y:auto;display:flex;flex-direction:column;
+  gap:7px;padding:2px;font-size:13px}
+.arena-line{display:flex;gap:8px;align-items:flex-start}
+.arena-line img{width:22px;height:22px;border-radius:50%;flex:0 0 auto;background:var(--line);margin-top:1px}
+.arena-line .who{font-weight:600}
+.arena-line .at{color:var(--muted);font-size:11px;margin-left:6px}
+.arena-line .txt{overflow-wrap:anywhere;white-space:pre-wrap}
+.arena-line.you .who{color:var(--brand)}
+.arena-line.sys{color:var(--muted);font-size:12px;font-style:italic}
+.arena-chat-form{display:flex;gap:8px}
+.arena-chat-form input{flex:1;min-width:0;padding:8px 10px;border-radius:7px;font:inherit;
+  border:1px solid var(--line);background:var(--bg);color:var(--ink)}
 .arena-nudge{margin-left:2px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);
   background:transparent;color:var(--muted);font:inherit;font-size:11px;cursor:pointer;line-height:1.6}
-.arena-nudge:hover{background:var(--accent);border-color:var(--accent);color:#fff}
+.arena-nudge:hover{background:var(--brand);border-color:var(--brand);color:#fff}
 .arena-stat{position:relative}
 .arena-stat-dot{position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;
   background:var(--muted);box-shadow:0 0 0 2px var(--panel)}
@@ -992,7 +1006,7 @@ html.hq-calm #confetti{display:none!important}
 .arena-stat-dot.wait{background:#f5b301}
 .arena-prev{margin:2px 0 0;max-height:260px;overflow:auto;padding:11px 13px;border-radius:8px;
   border:1px solid var(--line);background:var(--bg);font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;
-  color:var(--fg);white-space:pre;tab-size:2}
+  color:var(--ink);white-space:pre;tab-size:2}
 
 </style>
 </head>
@@ -1392,6 +1406,20 @@ html.hq-calm #confetti{display:none!important}
     <section class="panel hidden" id="arenaLobbyWrap" aria-label="Lobby">
       <h3 class="section-h">Lobby <span class="muted">who else has Arena open</span></h3>
       <div class="arena-lobby" id="arenaLobby"><span class="muted">Connecting&hellip;</span></div>
+    </section>
+
+    <section class="panel hidden arena-chat" id="arenaChatWrap" aria-label="Chat">
+      <h3 class="section-h">Chat <span class="muted">everyone in the lobby</span></h3>
+      <div class="arena-chat-log" id="arenaChatLog" role="log" aria-live="polite" aria-label="Chat messages"></div>
+      <form class="arena-chat-form" id="arenaChatForm" autocomplete="off">
+        <label class="sr-only" for="arenaChatInput">Message</label>
+        <input id="arenaChatInput" maxlength="500" placeholder="Connecting&hellip;" disabled>
+        <button class="hbtn on" id="arenaChatSend" type="submit" disabled>Send</button>
+      </form>
+      <p class="muted" style="font-size:11.5px;margin:0">
+        Goes to everyone in the lobby right now, through the Arena server. Nothing is saved &mdash;
+        people who join later won&rsquo;t see earlier messages.
+      </p>
     </section>
 
     <div id="arenaFoot" class="muted hidden" style="font-size:12px">
@@ -3182,7 +3210,7 @@ setInterval(function(){ if(STATE){ $("updated").textContent="updated "+relTime(S
 
 /* ---- view switcher ---- */
 // Arena state must exist before setView(VIEW) runs at startup (it calls arenaCloseSocket).
-var ARENA = {window:"season", status:null, sock:null, retry:null, you:null};
+var ARENA = {window:"season", status:null, sock:null, retry:null, you:null, chat:[]};
 var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena")?v:"live"; })();
 function setView(v){
   VIEW = v; localStorage.setItem("hq_view", v);
@@ -4968,6 +4996,7 @@ function loadArena(){
       $("arenaSetup").classList.toggle("hidden", paired);
       $("arenaBoardWrap").classList.toggle("hidden", !paired);
       $("arenaLobbyWrap").classList.toggle("hidden", !paired);
+      $("arenaChatWrap").classList.toggle("hidden", !paired);
       $("arenaFoot").classList.toggle("hidden", !paired);
       if(!paired){
         $("arenaSub").textContent = "Not connected";
@@ -4981,6 +5010,7 @@ function loadArena(){
                  : (" · publish failed: " + (lp.error||"")))
         : " · not published yet";
       arenaLoadBoard();
+      arenaRenderChat();
       arenaOpenSocket();
     }).catch(function(){ $("arenaSub").textContent = "Status unavailable"; });
 }
@@ -5046,14 +5076,27 @@ function arenaOpenSocket(){
     ARENA.sock = ws;
     ws.onmessage = function(ev){
       var m; try { m = JSON.parse(ev.data); } catch(e){ return; }
-      if(m.type==="welcome"){ ARENA.you = m.you||null; arenaRenderLobby(m.members||[]); }
-      else if(m.type==="join" || m.type==="leave"){ arenaRenderLobby(m.members||[]); }
+      if(!m || typeof m !== "object") return;
+      if(m.type==="welcome"){
+        // Who we are: the nudge buttons skip us, and our own chat lines are marked.
+        ARENA.you = (m.you && typeof m.you === "object") ? m.you : null;
+        arenaRenderLobby(m.members||[]);
+        var n = Array.isArray(m.members) ? m.members.length : 1;
+        arenaChatSys("You joined the lobby · " + n + " online");
+        arenaChatReady(true);
+      }
+      else if(m.type==="join" || m.type==="leave"){
+        arenaRenderLobby(m.members||[]);
+        if(m.member) arenaChatSys(arenaWho(m.member) + (m.type==="join" ? " joined" : " left"));
+      }
+      else if(m.type==="say"){ arenaChatReceive(m); }
       else if(m.type==="nudge"){ arenaOnNudge(m); }
       else if(m.type==="nudge_ack"){ toast(m.delivered ? "\uD83D\uDC4B Nudge sent" : "They\u2019re not in the lobby right now", m.delivered?"level":"ach"); }
     };
     ws.onclose = function(){
       ARENA.sock = null;
       arenaRenderLobby(null);
+      arenaChatReady(false);
       // Only retry while the Arena tab is actually open.
       if(VIEW==="arena" && !ARENA.retry){
         ARENA.retry = setTimeout(function(){ ARENA.retry=null; arenaOpenSocket(); }, 5000);
@@ -5107,6 +5150,106 @@ function arenaOnNudge(m){
   if(typeof announce==="function") announce(msg);
   if(typeof logEvent==="function") logEvent("\uD83D\uDC4B", msg);
 }
+
+/* ---- Arena chat ----
+   Talk to everyone in the lobby. Rides the rooms' existing "say" relay: the server
+   broadcasts it to every member, the sender included (that echo is what shows your
+   own message). Nothing is stored server-side, and everything received is untrusted:
+   only {kind:"chat", text:string} is shown, as plain text, clipped. */
+var ARENA_CHAT_MAX = 500;    // characters per message (the input's maxlength too)
+var ARENA_CHAT_KEEP = 200;   // lines kept for this page session
+var ARENA_CHAT_LAST = 0;     // when we last sent, for a light flood guard
+
+function arenaWho(p){
+  var n = p && (p.displayName || p.handle);
+  return typeof n === "string" && n ? n.slice(0, 40) : "someone";
+}
+
+function arenaChatPush(line){
+  ARENA.chat.push(line);
+  if(ARENA.chat.length > ARENA_CHAT_KEEP) ARENA.chat.splice(0, ARENA.chat.length - ARENA_CHAT_KEEP);
+  arenaRenderChatLine(line);
+}
+
+function arenaChatSys(text){ arenaChatPush({sys:true, text:text, at:Date.now()}); }
+
+function arenaChatReceive(m){
+  var d = m.data;
+  // Other room traffic (a future minigame, say) may use "say" too: only chat lines are shown.
+  if(!d || typeof d !== "object" || d.kind !== "chat" || typeof d.text !== "string") return;
+  var text = d.text.slice(0, ARENA_CHAT_MAX).trim();
+  if(!text) return;
+  var from = (m.from && typeof m.from === "object") ? m.from : {};
+  arenaChatPush({
+    who: arenaWho(from),
+    handle: typeof from.handle === "string" ? from.handle.slice(0, 40) : "",
+    avatar: (typeof from.avatarUrl === "string" && /^https:\/\//.test(from.avatarUrl)) ? from.avatarUrl : "",
+    you: !!(ARENA.you && from.userId && from.userId === ARENA.you.userId),
+    text: text, at: Date.now()
+  });
+}
+
+function arenaRenderChatLine(line){
+  var log = $("arenaChatLog"); if(!log) return;
+  var empty = $("arenaChatEmpty"); if(empty) empty.parentNode.removeChild(empty);
+  var stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40;   // reading older lines? don't yank
+  var row = document.createElement("div");
+  row.className = "arena-line" + (line.sys ? " sys" : "") + (line.you ? " you" : "");
+  if(line.sys){
+    row.textContent = line.text;
+  } else {
+    if(line.avatar){
+      var img = document.createElement("img"); img.src = line.avatar; img.alt = ""; img.loading = "lazy";
+      row.appendChild(img);
+    }
+    var body = document.createElement("div");
+    var who = document.createElement("span"); who.className = "who"; who.textContent = line.who;
+    if(line.handle) who.title = "@" + line.handle;
+    var at = document.createElement("span"); at.className = "at";
+    at.textContent = new Date(line.at).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+    var txt = document.createElement("div"); txt.className = "txt"; txt.textContent = line.text;
+    body.appendChild(who); body.appendChild(at); body.appendChild(txt);
+    row.appendChild(body);
+  }
+  log.appendChild(row);
+  if(stick || line.you) log.scrollTop = log.scrollHeight;
+}
+
+function arenaRenderChat(){
+  var log = $("arenaChatLog"); if(!log) return;
+  log.innerHTML = "";
+  if(!ARENA.chat.length){
+    var e = document.createElement("span"); e.id = "arenaChatEmpty"; e.className = "muted";
+    e.textContent = "No messages yet. Say hi 👋";
+    log.appendChild(e);
+    return;
+  }
+  ARENA.chat.forEach(arenaRenderChatLine);
+}
+
+function arenaChatReady(on){
+  var i = $("arenaChatInput"), b = $("arenaChatSend"); if(!i || !b) return;
+  i.disabled = !on; b.disabled = !on;
+  i.placeholder = on ? "Message everyone online…" : "Offline — reconnecting…";
+}
+
+function arenaChatSend(){
+  var i = $("arenaChatInput"); if(!i) return;
+  var text = (i.value || "").trim().slice(0, ARENA_CHAT_MAX);
+  if(!text) return;
+  var ws = ARENA.sock;
+  if(!ws || ws.readyState !== 1){ arenaChatReady(false); return; }
+  var now = Date.now();
+  if(now - ARENA_CHAT_LAST < 700) return;
+  ARENA_CHAT_LAST = now;
+  try { ws.send(JSON.stringify({type:"say", data:{kind:"chat", text:text}})); } catch(e){ return; }
+  i.value = "";
+}
+
+(function(){
+  var f = $("arenaChatForm");
+  if(f) f.addEventListener("submit", function(e){ e.preventDefault(); arenaChatSend(); });
+})();
 
 /* ---- Arena controls ---- */
 Array.prototype.forEach.call(document.querySelectorAll("#arenaWins .arena-win"), function(b){

@@ -143,8 +143,9 @@ echo 'alias claude-hq="python3 ~/Documents/Claude/claude-dashboard/dashboard.py"
 ## 🏆 Arena (multiplayer) — optional
 
 Claude HQ is local-first and stays that way. **Arena** is an opt-in layer that
-adds a shared leaderboard across you and your friends, plus websocket rooms to
-build minigames on. It is off until you connect it.
+adds a shared leaderboard across you and your friends, a lobby chat with
+everyone who has Arena open, plus websocket rooms to build minigames on. It is
+off until you connect it.
 
 ### What is shared
 
@@ -156,6 +157,8 @@ replies, file paths, project or folder names, session ids, or titles.
   and routinely carry an employer's or client's name, so anything that isn't a
   built-in Claude Code tool is bucketed as `Other` before it reaches the wire.
 - **Cost sharing is off by default.** Spend is salary- and employer-adjacent.
+- **Chat is only what you type.** Messages in the lobby chat go to everyone in
+  the lobby at that moment, relayed by the server and never stored.
 - The wire format rejects unknown fields outright, so a future client change
   can't silently start leaking one.
 

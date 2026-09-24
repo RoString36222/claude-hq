@@ -1,0 +1,50 @@
+# Claude HQ Arena on any VM with Docker.
+#
+#   1. point your domain's A record at the VM's IP
+#   2. cp .env.example .env   and fill it in
+#   3. ARENA_DOMAIN=arena.yourdomain.com docker compose up -d
+#
+# Caddy obtains and renews the TLS certificate automatically, so there is no
+# certbot cron to forget about.
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # The volume, not the image: the database must survive a redeploy.
+      ARENA_DATABASE_URL: sqlite+aiosqlite:////data/arena.db
+      ARENA_PUBLIC_BASE_URL: https://${ARENA_DOMAIN:?set ARENA_DOMAIN}
+    volumes:
+      - arena-data:/data
+    # Deliberately NOT published to the host: Caddy is the only way in.
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      ARENA_DOMAIN: ${ARENA_DOMAIN:?set ARENA_DOMAIN}
+    ports:
+      - "80:80"     # needed for the ACME HTTP challenge, and redirects to 443
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data      # certificates live here -- keep this volume
+      - caddy-config:/config
+
+volumes:
+  arena-data:
+  caddy-data:
+  caddy-config:

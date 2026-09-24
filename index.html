@@ -1558,7 +1558,7 @@ html.hq-calm #loudNudge .ln-emoji{animation:none}
     <div class="modal-b"><div class="md-body">
       <h2>Navigation</h2>
       <ul>
-        <li><span class="kbd">1</span>–<span class="kbd">5</span> switch view (Live · Analytics · Pokédex · Gym · Quests)</li>
+        <li><span class="kbd">1</span>–<span class="kbd">6</span> switch view (Live · Analytics · Pokédex · Gym · Quests · Arena)</li>
         <li><span class="kbd">/</span> focus search · <span class="kbd">R</span> refresh now</li>
         <li><span class="kbd">⌘</span>/<span class="kbd">Ctrl</span>+<span class="kbd">K</span> command palette (jump to any session, run any action)</li>
         <li><span class="kbd">?</span> this help · <span class="kbd">Esc</span> close any overlay</li>
@@ -3231,7 +3231,7 @@ document.addEventListener("keydown",function(e){
   if(e.key==="/"){ e.preventDefault(); $("search").focus(); }
   else if(e.key==="r"||e.key==="R"){ e.preventDefault(); forceRefresh(); }
   else if(e.key==="?"){ e.preventDefault(); openHelp(); }
-  else if(e.key>="1"&&e.key<="5"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests"][+e.key-1]); }
+  else if(e.key>="1"&&e.key<="6"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","arena"][+e.key-1]); }
 });
 
 /* ---------- focus management: trap Tab inside open modals/drawer + return focus ---------- */

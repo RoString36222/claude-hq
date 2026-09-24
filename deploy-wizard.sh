@@ -258,41 +258,27 @@ else
   say "Creating the Fly app (no machines yet, so secrets can be staged)."
   fly apps create "$FLY_APP" || { warn "Could not create $FLY_APP — the name may be taken."; exit 1; }
 fi
+PRIMARY_REGION=$(python3 -c "
+import re,pathlib
+m = re.search(r'^primary_region = \"(.+?)\"', pathlib.Path('backend/fly.toml').read_text(), re.M)
+print(m.group(1) if m else 'bom')")
 say "Your Arena URL will be: $APP_URL"
+note "Region: $PRIMARY_REGION (change primary_region in backend/fly.toml first if wrong)"
 pause "Press Enter to continue"
 
 # ── 3 ─────────────────────────────────────────────────────────────────────
-stage "Neon — Postgres database"
-say "Neon's free tier is plenty for a group of friends."
-open_url "https://console.neon.tech/app/projects"
-step "Click 'New Project'. Any name; pick the region nearest you."
-step "When it's created, find the 'Connection string' box on the dashboard."
-step "Choose the 'psql' / URI form and copy the whole string."
-note "It looks like: postgresql://user:pass@ep-xxx.aws.neon.tech/neondb?sslmode=require"
+stage "Storage"
+say "Creating a 1GB volume in $PRIMARY_REGION for the database."
+note "SQLite on a Fly volume -- no second service, no extra account."
+note "Losing it costs only history older than 30 days: every client"
+note "republishes a rolling 30-day window every 5 minutes."
 printf '\n'
-ask_secret NEON_URL "Paste the Neon connection string:"
-if [[ -z "$NEON_URL" ]]; then
-  warn "No connection string given — cannot continue."
-  exit 1
+if fly volumes list --app "$FLY_APP" 2>/dev/null | grep -q "arena_data"; then
+  printf '  %s✓%s volume arena_data already exists\n' "$GREEN" "$RESET"
+else
+  fly volumes create arena_data --app "$FLY_APP" --region "$PRIMARY_REGION" \
+     --size 1 --yes || { warn "Could not create the volume."; exit 1; }
 fi
-
-# The scheme MUST become postgresql+asyncpg:// -- that is what selects the async
-# driver. The query string is then normalised to the single flag the asyncpg
-# dialect names natively; SQLAlchemy 2.0.54 also understands Neon's libpq-style
-# sslmode/channel_binding, so this is belt-and-braces rather than a fix.
-ARENA_DATABASE_URL=$(python3 - "$NEON_URL" <<'PY'
-import sys, urllib.parse as u
-raw = sys.argv[1].strip()
-p = u.urlsplit(raw)
-scheme = "postgresql+asyncpg"
-netloc, path = p.netloc, p.path
-print(u.urlunsplit((scheme, netloc, path, "ssl=require", "")))
-PY
-)
-printf '  %s✓%s converted for asyncpg: %s\n' "$GREEN" "$RESET" \
-  "$(printf '%s' "$ARENA_DATABASE_URL" | sed -E 's#//[^:]+:[^@]+@#//***:***@#')"
-write_env NEON_URL "$NEON_URL"
-write_env ARENA_DATABASE_URL "$ARENA_DATABASE_URL"
 pause "Press Enter to continue"
 
 # ── 4 ─────────────────────────────────────────────────────────────────────
@@ -325,9 +311,8 @@ else
 fi
 write_env ARENA_SECRET_KEY "$ARENA_SECRET_KEY"
 printf '\n'
-say "Staging four secrets on $FLY_APP (applied on the next deploy)."
+say "Staging three secrets on $FLY_APP (applied on the next deploy)."
 ( cd backend && fly secrets set --stage --app "$FLY_APP" \
-    ARENA_DATABASE_URL="$ARENA_DATABASE_URL" \
     ARENA_SECRET_KEY="$ARENA_SECRET_KEY" \
     ARENA_GITHUB_CLIENT_ID="$ARENA_GITHUB_CLIENT_ID" \
     ARENA_GITHUB_CLIENT_SECRET="$ARENA_GITHUB_CLIENT_SECRET" )

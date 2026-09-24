@@ -981,6 +981,12 @@ html.hq-calm #confetti{display:none!important}
   border-radius:999px;border:1px solid var(--line);font-size:12px}
 .arena-peer img{width:20px;height:20px;border-radius:50%;background:var(--line)}
 .arena-dot{width:7px;height:7px;border-radius:50%;background:#3fb950;flex:0 0 auto}
+.arena-stat{position:relative}
+.arena-stat-dot{position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;
+  background:var(--muted);box-shadow:0 0 0 2px var(--panel)}
+.arena-stat-dot.ok{background:#3fb950}
+.arena-stat-dot.err{background:#ff6b6b}
+.arena-stat-dot.wait{background:#f5b301}
 
 </style>
 </head>
@@ -1008,6 +1014,7 @@ html.hq-calm #confetti{display:none!important}
       <option value="all">All history</option>
     </select>
     <button class="hbtn" id="cmdkBtn" type="button" title="Command palette (⌘K / Ctrl-K)" aria-label="Command palette">⌘K</button>
+    <button class="hbtn arena-stat hidden" id="arenaStat" type="button" title="Arena" aria-label="Arena status">🏆<span class="arena-stat-dot" id="arenaStatDot"></span></button>
     <button class="hbtn" id="logBtn" type="button" title="Event log" aria-label="Event log">📋</button>
     <button class="hbtn" id="helpBtn" type="button" title="Keyboard shortcuts & help (?)" aria-label="Help and keyboard shortcuts">?</button>
     <div class="hmenu">
@@ -4918,10 +4925,35 @@ function arenaNum(n){
   return String(n||0);
 }
 
+// Header Arena dot: green publishing, red failed, amber connected-but-stale.
+function renderArenaStat(st){
+  var b=$("arenaStat"); if(!b) return;
+  var show = !!(st && st.paired && st.enabled);
+  b.classList.toggle("hidden", !show);
+  if(!show) return;
+  var lp = st.lastPublish||{}, cls="wait", tip="Arena: connected";
+  if(lp.ok===false){ cls="err"; tip="Arena: last publish failed"+(lp.error?" \u2014 "+lp.error:""); }
+  else if(!lp.at){ cls="wait"; tip="Arena: connected, not published yet"; }
+  else {
+    var age = Date.now() - new Date(lp.at).getTime();
+    cls = age > 20*60*1000 ? "wait" : "ok";
+    tip = "Arena: "+(cls==="ok"?"published ":"last published ")+relTime(lp.at);
+  }
+  $("arenaStatDot").className = "arena-stat-dot "+cls;
+  b.title = tip; b.setAttribute("aria-label", tip);
+}
+function pollArenaStat(){
+  fetch("/api/arena/status",{cache:"no-store"}).then(function(r){return r.json();})
+    .then(renderArenaStat).catch(function(){});
+}
+(function(){ var b=$("arenaStat"); if(b) b.addEventListener("click",function(){ setView("arena"); }); })();
+pollArenaStat(); setInterval(pollArenaStat, 60000);
+
 function loadArena(){
   fetch("/api/arena/status",{cache:"no-store"}).then(function(r){return r.json();})
     .then(function(st){
       ARENA.status = st;
+      renderArenaStat(st);
       var paired = !!st.paired;
       $("arenaSetup").classList.toggle("hidden", paired);
       $("arenaBoardWrap").classList.toggle("hidden", !paired);

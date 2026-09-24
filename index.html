@@ -5336,13 +5336,38 @@ function arenaChatReceive(m){
   var text = d.text.slice(0, ARENA_CHAT_MAX).trim();
   if(!text) return;
   var from = (m.from && typeof m.from === "object") ? m.from : {};
+  var you = !!(ARENA.you && from.userId && from.userId === ARENA.you.userId);
   arenaChatPush({
     who: arenaWho(from),
     handle: typeof from.handle === "string" ? from.handle.slice(0, 40) : "",
     avatar: (typeof from.avatarUrl === "string" && /^https:\/\//.test(from.avatarUrl)) ? from.avatarUrl : "",
-    you: !!(ARENA.you && from.userId && from.userId === ARENA.you.userId),
+    you: you,
     text: text, at: Date.now()
   });
+  // Subtle side toast if this message tags you (never for your own messages).
+  if(!you){
+    var tg = arenaMessageTags(text);
+    if(tg.me || tg.all) arenaTagToast(arenaWho(from), (tg.me ? "you" : "all"));
+  }
+}
+
+// Does this message tag the current user? @<my handle> tags me; @channel / @here
+// tag everyone. Used to raise a quiet notification, not the loud overlay.
+function arenaMessageTags(text){
+  var me = false, all = false, my = (ARENA.you && ARENA.you.handle || "").toLowerCase();
+  var re = /(^|[^\w@])@([\w-]{1,40})/g, m;
+  while((m = re.exec(text))){
+    var h = m[2].toLowerCase();
+    if(h === "channel" || h === "here") all = true;
+    else if(my && h === my) me = true;
+  }
+  return {me: me, all: all};
+}
+function arenaTagToast(who, kind){
+  var msg = kind === "all" ? ("\uD83D\uDCE3 " + who + " notified the channel")
+                           : ("\uD83D\uDCAC " + who + " tagged you in chat");
+  if(typeof toast === "function") toast(msg, "level");
+  if(typeof announce === "function") announce(msg);
 }
 
 function arenaRenderChatLine(line){
@@ -5406,7 +5431,7 @@ function arenaChatSend(){
 // Build a chat message, wrapping @handle tokens for known lobby members in a
 // highlight span. Each piece is set via textContent, so nothing is ever HTML.
 function arenaRenderMessageText(container, text){
-  var known = {};
+  var known = {channel: 1, here: 1};
   (ARENA.lobby || []).forEach(function(p){ if(p.handle) known[p.handle.toLowerCase()] = 1; });
   if(ARENA.you && ARENA.you.handle) known[ARENA.you.handle.toLowerCase()] = 1;
   var myHandle = (ARENA.you && ARENA.you.handle || "").toLowerCase();
@@ -5416,7 +5441,8 @@ function arenaRenderMessageText(container, text){
     if(!known[lower]) continue;                       // only tag real members
     container.appendChild(document.createTextNode(text.slice(last, m.index) + m[1]));
     var span = document.createElement("span");
-    span.className = "mention" + (lower === myHandle ? " me" : "");
+    // @channel/@here concern everyone, and your own handle concerns you: make those stand out.
+    span.className = "mention" + ((lower === myHandle || lower === "channel" || lower === "here") ? " me" : "");
     span.textContent = "@" + handle;
     container.appendChild(span);
     last = m.index + m[0].length;
@@ -5437,11 +5463,16 @@ function arenaMentionScan(){
   if(!m){ arenaMentionClose(); return; }
   var q = m[1].toLowerCase();
   var mine = ARENA.you && ARENA.you.userId;
-  var matches = (ARENA.lobby || []).filter(function(p){
+  var specials = [
+    {handle:"here", displayName:"here", desc:"Notify everyone in the lobby", special:true},
+    {handle:"channel", displayName:"channel", desc:"Notify everyone", special:true}
+  ].filter(function(p){ return p.handle.indexOf(q) === 0; });
+  var people = (ARENA.lobby || []).filter(function(p){
     if(mine && p.userId === mine) return false;       // don't offer yourself
     return (p.handle||"").toLowerCase().indexOf(q) === 0 ||
            (p.displayName||"").toLowerCase().indexOf(q) >= 0;
-  }).slice(0, 8);
+  });
+  var matches = specials.concat(people).slice(0, 8);
   if(!matches.length){ arenaMentionClose(); return; }
   MENTION = {open:true, items:matches, sel:0, start:pos - m[1].length - 1};
   arenaMentionRender();
@@ -5456,8 +5487,10 @@ function arenaMentionRender(){
     if(p.avatarUrl && /^https:\/\//.test(p.avatarUrl)){
       var img = document.createElement("img"); img.src = p.avatarUrl; img.alt = ""; row.appendChild(img);
     }
-    var nm = document.createElement("span"); nm.textContent = p.displayName || p.handle;
-    var h = document.createElement("small"); h.textContent = " @" + (p.handle||"");
+    var nm = document.createElement("span");
+    nm.textContent = p.special ? ("@" + p.handle) : (p.displayName || p.handle);
+    var h = document.createElement("small");
+    h.textContent = p.special ? ("  " + p.desc) : (" @" + (p.handle||""));
     nm.appendChild(h); row.appendChild(nm);
     // mousedown (not click) so it fires before the input blurs.
     row.addEventListener("mousedown", function(e){ e.preventDefault(); arenaMentionAccept(idx); });

@@ -1,6 +1,6 @@
 # ⚡ Claude HQ
 
-**Version 1.1.1** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
+**Version 1.2.0** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
 
 Claude HQ reads your live sessions (`claude agents --json`) and your session transcripts
 (`~/.claude/projects/**/*.jsonl`) and turns them into a single command center: what every tab is
@@ -214,6 +214,12 @@ and feature guide.
 
 ## Changelog
 
+- **1.2.0** — Big Arena expansion (all opt-in): lobby **voice & video** (WebRTC), **chat** with
+  server-side history + rate-limiting, @-mention autocomplete/highlight + `@channel`/`@here`,
+  **nudges** (subtle side-toast; offline nudges to reach friends with the tab closed), **screen
+  sharing**, live status + unread badge + call shortcuts, and the **`6`** key mapped to the Arena
+  view. Plus a **test suite** (`tests/`, `backend/tests/`) and a **CI workflow**. Thanks
+  @shreyash73 and contributors.
 - **1.1.1** — Arena fixes: SSL error on python.org Python, a blank-dashboard startup crash
   (ARENA declared before first `setView`), and stopped hijacking browser shortcuts (thanks @hetnxik).
 - **1.1.0** — Editable Trainer name (thanks @SwastikTripathi, #1), smart Insights engine,

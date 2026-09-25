@@ -57,9 +57,14 @@ async def github_callback(
                 "redirect_uri": f"{s.public_base_url}/v1/auth/github/callback",
             },
         )
-        access = tok.json().get("access_token")
+        token_body = tok.json()
+        access = token_body.get("access_token")
         if not access:
-            raise HTTPException(400, "GitHub did not return an access token")
+            # GitHub names the cause -- most often incorrect_client_credentials
+            # (the secret here does not match the OAuth app) or a redirect_uri
+            # mismatch. Passing it through turns a dead end into a fix.
+            reason = token_body.get("error_description") or token_body.get("error") or "unknown reason"
+            raise HTTPException(400, f"GitHub refused the token exchange: {reason}")
         profile = (
             await client.get(
                 "https://api.github.com/user",

@@ -17,10 +17,28 @@ PANEL_DOMAIN="${PANEL_DOMAIN:?set PANEL_DOMAIN}"
 ALLOWED="${PANEL_ALLOWED_USERS:?set PANEL_ALLOWED_USERS, e.g. hetnxik,shashwat}"
 ARENA_DOMAIN="${ARENA_DOMAIN:-}"
 ENVFILE=/etc/arena-panel.env
-# Containers cannot reach the host's loopback; the bridge gateway they can.
-BRIDGE=$(ip -4 addr show docker0 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1)
+# Containers cannot reach the host's loopback, so the panel binds a bridge
+# gateway instead. It must be the gateway of the network Caddy is actually on
+# -- Compose creates its own network, whose gateway differs from docker0's, and
+# a container on one bridge cannot reach another bridge's gateway. Detecting
+# docker0 here produced a panel Caddy could not dial, and the symptom was a 502
+# with no clue as to why.
+COMPOSE_NET=$(cd "$DIR/backend" && docker compose ps -q caddy 2>/dev/null \
+  | head -1 | xargs -r docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null)
+BRIDGE=""
+if [ -n "$COMPOSE_NET" ]; then
+  BRIDGE=$(docker network inspect "$COMPOSE_NET" \
+    -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null)
+fi
+if [ -z "$BRIDGE" ]; then
+  # Caddy is not up yet (first install): the network is named after the
+  # compose project, which is the directory name.
+  BRIDGE=$(docker network inspect "$(basename "$DIR/backend")_default" \
+    -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null)
+fi
+BRIDGE="${BRIDGE:-$(ip -4 addr show docker0 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1)}"
 BRIDGE="${BRIDGE:-172.17.0.1}"
-echo "  docker bridge: $BRIDGE"
+echo "  compose network gateway: $BRIDGE"
 
 if [ ! -f "$ENVFILE" ]; then
   echo "GitHub OAuth app for the PANEL (callback https://$PANEL_DOMAIN/auth/callback)"
@@ -85,7 +103,18 @@ CADDYCFG
 fi
 
 grep -q PANEL_DOMAIN "$DIR/backend/.env" || echo "PANEL_DOMAIN=$PANEL_DOMAIN" >> "$DIR/backend/.env"
-grep -q PANEL_UPSTREAM "$DIR/backend/.env" || echo "PANEL_UPSTREAM=$BRIDGE:8090" >> "$DIR/backend/.env"
+if grep -q '^PANEL_UPSTREAM=' "$DIR/backend/.env"; then
+  sed -i "s|^PANEL_UPSTREAM=.*|PANEL_UPSTREAM=$BRIDGE:8090|" "$DIR/backend/.env"
+else
+  echo "PANEL_UPSTREAM=$BRIDGE:8090" >> "$DIR/backend/.env"
+fi
+# Kept env files were written before the gateway was detected correctly.
+if [ -f "$ENVFILE" ] && ! grep -q "^PANEL_BIND=$BRIDGE$" "$ENVFILE"; then
+  sed -i "s|^PANEL_BIND=.*|PANEL_BIND=$BRIDGE|" "$ENVFILE" 2>/dev/null \
+    || echo "PANEL_BIND=$BRIDGE" >> "$ENVFILE"
+  echo "  corrected PANEL_BIND to $BRIDGE"
+  systemctl restart arena-panel 2>/dev/null || true
+fi
 cd "$DIR/backend"
 if ! docker run --rm -v "$DIR/backend":/cfg:ro \
      -e ARENA_DOMAIN="$ARENA_DOMAIN" -e PANEL_DOMAIN="$PANEL_DOMAIN" \

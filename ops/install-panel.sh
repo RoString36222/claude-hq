@@ -68,7 +68,12 @@ systemctl is-active arena-panel >/dev/null && echo "  panel running on $BRIDGE:8
 
 # Caddy fronts it; the panel itself is never exposed directly.
 CADDY="$DIR/backend/Caddyfile"
-if ! grep -q "$PANEL_DOMAIN" "$CADDY"; then
+# The appended block contains the literal {$PANEL_DOMAIN}, not the resolved
+# name, so grepping for the domain never matched and every run appended
+# another copy -- which Caddy rejects as an ambiguous site definition and
+# then refuses to start at all, taking Arena down with it. Match the marker
+# that is actually written.
+if ! grep -q 'PANEL_UPSTREAM' "$CADDY"; then
   cat >> "$CADDY" <<CADDYCFG
 
 {\$PANEL_DOMAIN} {
@@ -81,7 +86,16 @@ fi
 
 grep -q PANEL_DOMAIN "$DIR/backend/.env" || echo "PANEL_DOMAIN=$PANEL_DOMAIN" >> "$DIR/backend/.env"
 grep -q PANEL_UPSTREAM "$DIR/backend/.env" || echo "PANEL_UPSTREAM=$BRIDGE:8090" >> "$DIR/backend/.env"
-cd "$DIR/backend" && docker compose up -d --force-recreate caddy
+cd "$DIR/backend"
+if ! docker run --rm -v "$DIR/backend":/cfg:ro \
+     -e ARENA_DOMAIN="$ARENA_DOMAIN" -e PANEL_DOMAIN="$PANEL_DOMAIN" \
+     -e PANEL_UPSTREAM="$BRIDGE:8090" caddy:2-alpine \
+     caddy validate --config /cfg/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+  echo "  ERROR: the Caddyfile is not valid; not restarting Caddy."
+  echo "  Arena stays up. Inspect: $CADDY"
+  exit 1
+fi
+docker compose up -d --force-recreate caddy
 
 echo
 echo "  1. DNS: A record  $PANEL_DOMAIN  ->  this server"

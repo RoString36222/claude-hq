@@ -81,7 +81,7 @@ fi
 
 grep -q PANEL_DOMAIN "$DIR/backend/.env" || echo "PANEL_DOMAIN=$PANEL_DOMAIN" >> "$DIR/backend/.env"
 grep -q PANEL_UPSTREAM "$DIR/backend/.env" || echo "PANEL_UPSTREAM=$BRIDGE:8090" >> "$DIR/backend/.env"
-cd "$DIR/backend" && docker compose up -d
+cd "$DIR/backend" && docker compose up -d --force-recreate caddy
 
 echo
 echo "  1. DNS: A record  $PANEL_DOMAIN  ->  this server"

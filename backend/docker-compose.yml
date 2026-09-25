@@ -29,6 +29,28 @@ services:
       start_period: 20s
       retries: 3
 
+  # Optional: only started with `--profile panel`, so instances that do not
+  # want a deploy panel are unaffected.
+  panel:
+    profiles: ["panel"]
+    build:
+      context: ../ops
+      dockerfile: Dockerfile.panel
+    restart: unless-stopped
+    env_file: /etc/arena-panel.env
+    environment:
+      ARENA_DIR: /repo
+      ARENA_DOMAIN: ${ARENA_DOMAIN:?set ARENA_DOMAIN}
+      ARENA_DEPLOY_LOG: /repo/.arena-deploy.log
+    volumes:
+      # The repo it deploys, and the socket it deploys with. This is root-
+      # equivalent access -- but the panel can already execute deploys, so
+      # containerising it does not widen what it can do, only where it runs.
+      - ${ARENA_DIR:-/root/claude-hq}:/repo
+      - /var/run/docker.sock:/var/run/docker.sock
+    expose:
+      - "8090"
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped

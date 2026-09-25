@@ -36,10 +36,10 @@ PORT = int(os.environ.get("PANEL_PORT", "8090"))
 # The installer sets this to the Docker bridge gateway (e.g. 172.17.0.1),
 # which containers and the host can reach but nothing outside can.
 BIND = os.environ.get("PANEL_BIND", "127.0.0.1")
-ARENA_DIR = os.environ.get("ARENA_DIR", "/root/claude-hq")
+ARENA_DIR = os.environ.get("ARENA_DIR", "/repo")
 ARENA_DOMAIN = os.environ.get("ARENA_DOMAIN", "")
 PANEL_BASE_URL = os.environ.get("PANEL_BASE_URL", "")
-DEPLOY_LOG = os.environ.get("ARENA_DEPLOY_LOG", "/var/log/arena-deploy.log")
+DEPLOY_LOG = os.environ.get("ARENA_DEPLOY_LOG", "/repo/.arena-deploy.log")
 BRANCH = os.environ.get("ARENA_BRANCH", "main")
 
 CLIENT_ID = os.environ.get("PANEL_GITHUB_CLIENT_ID", "")
@@ -350,8 +350,14 @@ def main():
         raise SystemExit("missing required env: " + ", ".join(missing))
     if not ALLOWED:
         raise SystemExit("PANEL_ALLOWED_USERS is empty — refusing to start with no allowlist")
-    if not (BIND.startswith("127.") or BIND.startswith("172.") or BIND.startswith("10.")
-            or BIND.startswith("192.168.")):
+    # In a container with no published port, Docker provides the isolation and
+    # binding all interfaces is correct. On a host it is not, so the refusal
+    # stands unless the container image explicitly says otherwise.
+    in_container = os.environ.get("PANEL_IN_CONTAINER") == "1"
+    if not in_container and not (
+        BIND.startswith("127.") or BIND.startswith("172.")
+        or BIND.startswith("10.") or BIND.startswith("192.168.")
+    ):
         raise SystemExit(f"refusing to bind {BIND}: panel must not listen on a public interface")
     print(f"deploy panel on {BIND}:{PORT}; allowed: {', '.join(sorted(ALLOWED))}", flush=True)
     ThreadingHTTPServer((BIND, PORT), Handler).serve_forever()

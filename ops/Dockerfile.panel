@@ -1,0 +1,23 @@
+# The panel drives git and docker compose on the host, so it needs those
+# binaries and the host's docker socket -- but it does not need to BE on the
+# host. Running it in the compose project lets Caddy reach it by service name,
+# which removes bridge-gateway detection, bind addresses and firewall rules
+# from the problem entirely.
+FROM python:3.12-slim
+
+RUN apt-get update -qq \
+ && apt-get install -y -qq --no-install-recommends git curl ca-certificates \
+ && curl -fsSL https://download.docker.com/linux/static/stable/$(uname -m)/docker-27.3.1.tgz \
+    | tar xz --strip-components=1 -C /usr/local/bin docker/docker \
+ && curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose --create-dirs \
+    https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-$(uname -m) \
+ && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY deploy_panel.py /app/deploy_panel.py
+WORKDIR /app
+# Inside a container with no published port, binding all interfaces is the
+# correct thing -- Docker, not the process, provides the isolation.
+ENV PANEL_BIND=0.0.0.0 PANEL_PORT=8090 PANEL_IN_CONTAINER=1
+EXPOSE 8090
+CMD ["python3", "/app/deploy_panel.py"]

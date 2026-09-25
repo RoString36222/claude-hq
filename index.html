@@ -981,6 +981,16 @@ html.hq-calm #confetti{display:none!important}
   border-radius:999px;border:1px solid var(--line);font-size:12px}
 .arena-peer img{width:20px;height:20px;border-radius:50%;background:var(--line)}
 .arena-dot{width:7px;height:7px;border-radius:50%;background:#3fb950;flex:0 0 auto}
+.viewtab .tab-badge{display:inline-block;min-width:16px;margin-left:5px;padding:0 5px;border-radius:999px;
+  background:var(--brand);color:#fff;font-size:10.5px;font-weight:700;line-height:16px;text-align:center;vertical-align:1px}
+.viewtab .tab-badge.mention{background:var(--need)}
+.arena-st{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:var(--muted)}
+.arena-st .w::before,.arena-st .n::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px}
+.arena-st .w::before{background:var(--good)}
+.arena-st .n::before{background:var(--need)}
+.arena-lobby-opts{display:flex;flex-direction:column;gap:4px;margin-top:10px;font-size:12px}
+.arena-lobby-opts label{display:flex;align-items:baseline;gap:6px;cursor:pointer}
+.arena-lobby-opts .muted{font-size:11.5px}
 /* ---- Arena chat: talk to everyone in the lobby ---- */
 .arena-chat{display:flex;flex-direction:column;gap:10px}
 .arena-chat-log{max-height:320px;min-height:110px;overflow-y:auto;display:flex;flex-direction:column;
@@ -1033,6 +1043,9 @@ html.hq-calm #confetti{display:none!important}
 .voice-tile{position:relative;aspect-ratio:16/9;border-radius:10px;overflow:hidden;background:#000}
 .voice-tile video{width:100%;height:100%;object-fit:cover;display:block}
 .voice-tile.you video{transform:scaleX(-1)}
+.voice-tile.screen{grid-column:1/-1;max-height:70vh}
+.voice-tile.screen video{object-fit:contain}
+.voice-tile.you.screen video{transform:none}
 .voice-tile .vt-name{position:absolute;left:6px;bottom:6px;padding:2px 7px;border-radius:6px;
   background:rgba(0,0,0,.55);color:#fff;font-size:11.5px}
 
@@ -1050,7 +1063,7 @@ html.hq-calm #confetti{display:none!important}
       <button class="viewtab" data-view="pokedex" role="tab" type="button" aria-selected="false">📕 Pokédex</button>
       <button class="viewtab" data-view="gym" role="tab" type="button" aria-selected="false">⚔️ Gym</button>
       <button class="viewtab" data-view="quests" role="tab" type="button" aria-selected="false">🏅 Quests</button>
-      <button class="viewtab" data-view="arena" role="tab" type="button" aria-selected="false">🏆 Arena</button>
+      <button class="viewtab" data-view="arena" role="tab" type="button" aria-selected="false">🏆 Arena<span class="tab-badge hidden" id="arenaUnread" aria-hidden="true"></span></button>
     </div>
     <div class="grow"></div>
     <div class="search">
@@ -1433,24 +1446,31 @@ html.hq-calm #confetti{display:none!important}
     </section>
 
     <section class="panel hidden" id="arenaLobbyWrap" aria-label="Lobby">
-      <h3 class="section-h">Lobby <span class="muted">who else has Arena open</span></h3>
+      <h3 class="section-h">Lobby <span class="muted">who&rsquo;s online</span></h3>
       <div class="arena-lobby" id="arenaLobby"><span class="muted">Connecting&hellip;</span></div>
+      <div class="arena-lobby-opts">
+        <label><input type="checkbox" id="arenaStay"> Stay in the lobby on every view
+          <span class="muted">friends see you online, and chat and calls reach you anywhere in HQ</span></label>
+        <label><input type="checkbox" id="arenaShareStatus"> Share my live status
+          <span class="muted">only how many of your sessions are working and how many are waiting on you</span></label>
+      </div>
     </section>
 
     <section class="panel hidden arena-voice" id="arenaVoiceWrap" aria-label="Voice and video">
       <h3 class="section-h">Voice &amp; video <span class="muted" id="voiceSub">talk with everyone in voice · up to 6</span></h3>
       <div class="voice-row">
         <button class="hbtn on" id="voiceJoin" type="button">🎙 Join voice</button>
-        <button class="hbtn hidden" id="voiceMute" type="button" aria-pressed="false">Mute</button>
-        <button class="hbtn hidden" id="voiceCam" type="button" aria-pressed="false">📷 Camera</button>
+        <button class="hbtn hidden" id="voiceMute" type="button" aria-pressed="false" aria-keyshortcuts="M">Mute</button>
+        <button class="hbtn hidden" id="voiceCam" type="button" aria-pressed="false" aria-keyshortcuts="V">📷 Camera</button>
+        <button class="hbtn hidden" id="voiceScreen" type="button" aria-pressed="false" aria-keyshortcuts="S">🖥 Share screen</button>
         <button class="hbtn hidden" id="voiceLeave" type="button">Leave</button>
         <div class="voice-roster" id="voiceRoster" aria-live="polite"></div>
       </div>
       <div class="voice-videos hidden" id="voiceVideos"></div>
       <p class="muted" style="font-size:11.5px;margin:0">
         Audio and video go straight between browsers (WebRTC); the Arena server only passes the connection setup to
-        the people you&rsquo;re talking to. Your microphone is used only after you click Join and your camera only
-        after you click Camera; both stop when you leave.
+        the people you&rsquo;re talking to. Your microphone is used only after you click Join, your camera only after
+        you click Camera, and your screen only after you pick what to share; all of them stop when you leave.
       </p>
       <div id="voiceAudio" hidden></div>
     </section>
@@ -1558,6 +1578,7 @@ html.hq-calm #confetti{display:none!important}
         <li><span class="kbd">/</span> focus search · <span class="kbd">R</span> refresh now</li>
         <li><span class="kbd">⌘</span>/<span class="kbd">Ctrl</span>+<span class="kbd">K</span> command palette (jump to any session, run any action)</li>
         <li><span class="kbd">?</span> this help · <span class="kbd">Esc</span> close any overlay</li>
+        <li>In an Arena voice call, from any view: <span class="kbd">M</span> mute · <span class="kbd">V</span> camera · <span class="kbd">S</span> share screen</li>
         <li>In card &amp; Pokédex grids: <span class="kbd">←↑↓→</span> move focus, <span class="kbd">Enter</span> open</li>
       </ul>
       <h2>What the pieces mean</h2>
@@ -3082,6 +3103,7 @@ function render(){
   checkCelebration(STATE.season);
   checkEvolution(STATE.sessions);
   updateDocTitle(STATE.sessions);
+  arenaStatusTick();
   if(FOCUS_ID) renderFocus();
   if(WARROOM_ON) renderWarroom();
   if(CMDK_OPEN) renderCmdk();
@@ -3213,6 +3235,11 @@ document.addEventListener("keydown",function(e){
   else if(e.key==="r"||e.key==="R"){ e.preventDefault(); forceRefresh(); }
   else if(e.key==="?"){ e.preventDefault(); openHelp(); }
   else if(e.key>="1"&&e.key<="6"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","arena"][+e.key-1]); }
+  // In a voice call, from any view: M mutes, V switches the camera, S shares your screen. Holding a key down
+  // doesn't repeat it, and outside a call these keys do nothing.
+  else if(VCHAN.on && !e.repeat && (e.key==="m"||e.key==="M")){ e.preventDefault(); voiceToggleMute(); }
+  else if(VCHAN.on && !e.repeat && (e.key==="v"||e.key==="V")){ e.preventDefault(); voiceToggleCam(); }
+  else if(VCHAN.on && !e.repeat && (e.key==="s"||e.key==="S")){ e.preventDefault(); voiceToggleScreen(); }
 });
 
 /* ---------- focus management: trap Tab inside open modals/drawer + return focus ---------- */
@@ -3259,9 +3286,14 @@ setInterval(function(){ if(STATE){ $("updated").textContent="updated "+relTime(S
 
 /* ---- view switcher ---- */
 // Arena state must exist before setView(VIEW) runs at startup (it calls arenaCloseSocket).
-var ARENA = {window:"season", status:null, sock:null, retry:null, you:null, chat:[], chatSeen:{}};
+var ARENA = {window:"season", status:null, sock:null, retry:null, you:null, chat:[], chatSeen:{},
+             paired:false, opening:false, gen:0, fails:0, peerStatus:{}, unread:0, unreadTagged:false};
+// Lobby options (see "Arena lobby: presence and live status"): staying in the lobby is on unless turned off,
+// sharing your live status is off unless turned on.
+var ARENA_STAY = (function(){ try { return localStorage.getItem("hq_arena_stay") !== "0"; } catch(e){ return true; } })();
+var ARENA_SHARE_STATUS = (function(){ try { return localStorage.getItem("hq_arena_status") === "1"; } catch(e){ return false; } })();
 // Voice state, also needed by the first setView() (which keeps the lobby socket open while in voice).
-var VCHAN = {on:false, peer:null, stream:null, muted:false, cam:false, camStream:null, camTile:null, peers:{}, roster:{}, ctx:null, me:null, meter:null};
+var VCHAN = {on:false, peer:null, stream:null, muted:false, cam:false, screen:false, vidStream:null, vidTile:null, peers:{}, roster:{}, ctx:null, me:null, meter:null};
 var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena")?v:"live"; })();
 function setView(v){
   VIEW = v; localStorage.setItem("hq_view", v);
@@ -3280,8 +3312,8 @@ function setView(v){
   if(v==="pokedex") loadPokedex();
   if(v==="gym") renderGym();
   if(v==="quests") loadQuests();
-  // Voice rides the lobby socket, so it stays open on other views while you're in voice.
-  if(v==="arena") loadArena(); else if(!VCHAN.on) arenaCloseSocket();
+  // The lobby socket stays open on other views while you stay in the lobby, or while you're in voice (it carries it).
+  if(v==="arena"){ arenaUnreadClear(); loadArena(); } else if(!VCHAN.on && !ARENA_STAY) arenaCloseSocket();
 }
 Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
   t.addEventListener("click",function(){ setView(t.getAttribute("data-view")); });
@@ -5034,7 +5066,7 @@ function renderArenaStat(st){
 }
 function pollArenaStat(){
   fetch("/api/arena/status",{cache:"no-store"}).then(function(r){return r.json();})
-    .then(renderArenaStat).catch(function(){});
+    .then(function(st){ renderArenaStat(st); arenaStayOnline(st); }).catch(function(){});
 }
 (function(){ var b=$("arenaStat"); if(b) b.addEventListener("click",function(){ setView("arena"); }); })();
 pollArenaStat(); setInterval(pollArenaStat, 60000);
@@ -5045,6 +5077,7 @@ function loadArena(){
       ARENA.status = st;
       renderArenaStat(st);
       var paired = !!st.paired;
+      ARENA.paired = paired;
       $("arenaSetup").classList.toggle("hidden", paired);
       $("arenaBoardWrap").classList.toggle("hidden", !paired);
       $("arenaLobbyWrap").classList.toggle("hidden", !paired);
@@ -5153,9 +5186,13 @@ function arenaLoadBoard(){
 /* Websocket lobby. The page never sees the device token: dashboard.py mints a
    short-lived ticket and we connect with that. */
 function arenaOpenSocket(){
-  if(ARENA.sock) return;
+  if(ARENA.sock || ARENA.opening) return;
+  ARENA.opening = true;
+  var gen = ARENA.gen;   // arenaCloseSocket() while the ticket is on its way cancels this
   arenaPost("/api/arena/ticket").then(function(res){
-    if(!res.ok || !res.j.ticket || !res.j.wsUrl) return;
+    if(gen !== ARENA.gen) return;
+    ARENA.opening = false;
+    if(ARENA.sock || !res.ok || !res.j.ticket || !res.j.wsUrl) return;
     var url = res.j.wsUrl + "/v1/rooms/lobby/ws?ticket=" + encodeURIComponent(res.j.ticket);
     var ws;
     try { ws = new WebSocket(url); } catch(e){ return; }
@@ -5166,6 +5203,7 @@ function arenaOpenSocket(){
       if(m.type==="welcome"){
         // Who we are: the nudge buttons skip us, and our own chat lines are marked.
         ARENA.you = (m.you && typeof m.you === "object") ? m.you : null;
+        ARENA.fails = 0;
         arenaRenderLobby(m.members||[]);
         var n = Array.isArray(m.members) ? m.members.length : 1;
         // Recent messages the server kept for people joining (none from a server without chat history).
@@ -5173,6 +5211,7 @@ function arenaOpenSocket(){
         arenaChatSys("You joined the lobby · " + n + " online");
         arenaChatReady(true);
         voiceOnLobby();
+        arenaStatusOnLobby();
       }
       else if(m.type==="join" || m.type==="leave"){
         arenaRenderLobby(m.members||[]);
@@ -5180,7 +5219,8 @@ function arenaOpenSocket(){
         if(m.type==="leave") voiceOnLeave(m);
       }
       else if(m.type==="say"){
-        if(m.data && m.data.kind==="voice") voiceOnAnnounce(m); else arenaChatReceive(m);
+        var kind = m.data && m.data.kind;
+        if(kind==="voice") voiceOnAnnounce(m); else if(kind==="status") arenaOnStatus(m); else arenaChatReceive(m);
       }
       else if(m.type==="signal"){ voiceOnSignal(m); }
       else if(m.type==="nudge"){ arenaOnNudge(m); }
@@ -5190,22 +5230,33 @@ function arenaOpenSocket(){
       }
     };
     ws.onclose = function(){
+      if(ARENA.sock !== ws) return;   // closed on purpose (arenaCloseSocket), or a newer socket took over
       ARENA.sock = null;
-      arenaRenderLobby(null);
-      arenaChatReady(false);
-      voiceOnLobbyLost();
-      // Only retry while the Arena tab is open, or while you're in voice.
-      if((VIEW==="arena" || VCHAN.on) && !ARENA.retry){
-        ARENA.retry = setTimeout(function(){ ARENA.retry=null; arenaOpenSocket(); }, 5000);
+      arenaLobbyGone();
+      // Retry while the Arena tab is open, while you're in voice, or while staying in the lobby: 5 s, then
+      // slower each time up to a minute (a full room, a server that's down), until a welcome resets it.
+      if((VIEW==="arena" || VCHAN.on || (ARENA_STAY && ARENA.paired)) && !ARENA.retry){
+        var wait = Math.min(60000, 5000 * Math.pow(2, ARENA.fails++));
+        ARENA.retry = setTimeout(function(){ ARENA.retry=null; arenaOpenSocket(); }, wait);
       }
     };
     ws.onerror = function(){ try { ws.close(); } catch(e){} };
-  });
+  }, function(){ if(gen === ARENA.gen) ARENA.opening = false; });
 }
 
 function arenaCloseSocket(){
+  ARENA.gen++; ARENA.opening = false;
   if(ARENA.retry){ clearTimeout(ARENA.retry); ARENA.retry=null; }
-  if(ARENA.sock){ try { ARENA.sock.close(); } catch(e){} ARENA.sock=null; }
+  var s = ARENA.sock;
+  if(s){ ARENA.sock = null; try { s.close(); } catch(e){} arenaLobbyGone(); }
+}
+
+// Our lobby socket is gone: show it, and drop what only lived on it.
+function arenaLobbyGone(){
+  arenaRenderLobby(null);
+  arenaChatReady(false);
+  voiceOnLobbyLost();
+  ARENA.peerStatus = {};
 }
 
 function arenaRenderLobby(members){
@@ -5215,6 +5266,9 @@ function arenaRenderLobby(members){
   el.innerHTML = "";
   if(!members){ el.innerHTML = '<span class="muted">Offline</span>'; return; }
   if(!members.length){ el.innerHTML = '<span class="muted">Just you.</span>'; return; }
+  // Forget the status of anyone who's left.
+  var here = {}; members.forEach(function(m){ if(m && typeof m.userId === "string") here[m.userId] = 1; });
+  Object.keys(ARENA.peerStatus).forEach(function(u){ if(!here[u]) delete ARENA.peerStatus[u]; });
   members.forEach(function(m){
     var chip = document.createElement("span"); chip.className = "arena-peer";
     var dot = document.createElement("span"); dot.className = "arena-dot";
@@ -5223,6 +5277,9 @@ function arenaRenderLobby(members){
     } else { chip.appendChild(dot); }
     var t=document.createElement("span"); t.textContent = m.displayName || m.handle;
     chip.appendChild(t);
+    var mine = !!(ARENA.you && m.userId===ARENA.you.userId);
+    var st = mine ? (ARENA_SHARE_STATUS ? arenaMyCounts() : null) : ARENA.peerStatus[m.userId];
+    if(st) chip.appendChild(arenaStatusEl(st, mine ? "you" : (m.displayName || m.handle)));
     if(!ARENA.you || m.userId!==ARENA.you.userId){
       var nb=document.createElement("button"); nb.className="arena-nudge"; nb.type="button";
       nb.textContent="\uD83D\uDC4B nudge"; nb.title="Nudge "+(m.displayName||m.handle)+" to check the Arena";
@@ -5232,6 +5289,109 @@ function arenaRenderLobby(members){
     el.appendChild(chip);
   });
 }
+
+/* ---- Arena lobby: presence and live status ----
+   "Stay in the lobby on every view" (on unless you turn it off) keeps the lobby socket open wherever you are in HQ
+   while this machine is paired: friends see you online, and chat, nudges and calls reach you. "Share my live
+   status" (off unless you turn it on) adds two numbers to your lobby entry: how many of your sessions are working
+   and how many are waiting on you. Nothing else about them leaves this machine: no titles, folders or text.
+     say {kind:"status", op:"set", working, needs}   your counts, when they change (at most every 2 s)
+     say {kind:"status", op:"clear"}                 you stopped sharing
+     say {kind:"status", op:"ask"}                   you joined: whoever shares sends theirs again */
+var ARENA_STATUS = {sent:null, at:0, timer:null};
+
+// The minutely Arena status poll: keep the lobby socket open while paired, unless you've turned that off.
+function arenaStayOnline(st){
+  ARENA.paired = !!(st && st.paired);
+  if(ARENA.paired && ARENA_STAY) arenaOpenSocket();
+}
+
+function arenaMyCounts(){
+  var w = 0, n = 0;
+  ((STATE && STATE.sessions) || []).forEach(function(s){ if(s.status==="working") w++; else if(s.status==="needs") n++; });
+  return {working:Math.min(w, 99), needs:Math.min(n, 99)};
+}
+
+function arenaSayStatus(d){
+  if(!ARENA.sock || ARENA.sock.readyState !== 1) return false;
+  d.kind = "status";
+  try { ARENA.sock.send(JSON.stringify({type:"say", data:d})); return true; } catch(e){ return false; }
+}
+
+// On every HQ update: send your counts when they change, at most every 2 seconds.
+function arenaStatusTick(){
+  if(!ARENA_SHARE_STATUS || ARENA_STATUS.timer || !ARENA.sock || ARENA.sock.readyState !== 1) return;
+  var wait = ARENA_STATUS.at + 2000 - Date.now();
+  if(wait > 0){ ARENA_STATUS.timer = setTimeout(function(){ ARENA_STATUS.timer = null; arenaStatusTick(); }, wait); return; }
+  var c = arenaMyCounts(), key = c.working + "," + c.needs;
+  if(key === ARENA_STATUS.sent) return;
+  if(!arenaSayStatus({op:"set", working:c.working, needs:c.needs})) return;
+  ARENA_STATUS.sent = key; ARENA_STATUS.at = Date.now();
+  arenaRerenderLobby();   // your own entry shows what the others see
+}
+
+// Just joined: hear everyone's status again, and send yours.
+function arenaStatusOnLobby(){
+  ARENA.peerStatus = {};
+  ARENA_STATUS.sent = null;
+  arenaSayStatus({op:"ask"});
+  arenaStatusTick();
+}
+
+function arenaIsCount(x){ return typeof x === "number" && x % 1 === 0 && x >= 0 && x <= 99; }
+
+function arenaOnStatus(m){
+  var d = m.data, from = m.from;
+  if(!from || typeof from.userId !== "string") return;
+  // Our own echo, or our other machine: this page shows its own counts for you.
+  if(ARENA.you && from.userId === ARENA.you.userId) return;
+  if(d.op === "ask"){ ARENA_STATUS.sent = null; arenaStatusTick(); return; }
+  if(d.op === "clear") delete ARENA.peerStatus[from.userId];
+  else if(d.op === "set" && arenaIsCount(d.working) && arenaIsCount(d.needs)) ARENA.peerStatus[from.userId] = {working:d.working, needs:d.needs};
+  else return;
+  arenaRerenderLobby();
+}
+
+function arenaRerenderLobby(){ if(ARENA.sock && ARENA.sock.readyState === 1) arenaRenderLobby(ARENA.lobby || []); }
+
+// "2 working · 1 waiting": two dots in the HQ's own colours, and the words for a tooltip and screen readers.
+function arenaStatusEl(st, whom){
+  var el = document.createElement("span"); el.className = "arena-st";
+  var words;
+  if(!st.working && !st.needs){ el.textContent = "idle"; words = "nothing working or waiting on " + whom; }
+  else {
+    if(st.working){ var w = document.createElement("span"); w.className = "w"; w.textContent = st.working; el.appendChild(w); }
+    if(st.needs){ var n = document.createElement("span"); n.className = "n"; n.textContent = st.needs; el.appendChild(n); }
+    words = st.working + (st.working === 1 ? " session" : " sessions") + " working, " + st.needs + " waiting on " + whom;
+  }
+  el.title = words; el.setAttribute("aria-label", words);
+  return el;
+}
+
+(function(){
+  var stay = $("arenaStay"), share = $("arenaShareStatus");
+  if(stay){
+    stay.checked = ARENA_STAY;
+    stay.addEventListener("change", function(){
+      ARENA_STAY = stay.checked;
+      try { localStorage.setItem("hq_arena_stay", ARENA_STAY ? "1" : "0"); } catch(e){}
+      if(ARENA_STAY){ if(ARENA.paired) arenaOpenSocket(); }
+      else if(VIEW !== "arena" && !VCHAN.on) arenaCloseSocket();
+    });
+  }
+  if(share){
+    share.checked = ARENA_SHARE_STATUS;
+    share.addEventListener("change", function(){
+      ARENA_SHARE_STATUS = share.checked;
+      try { localStorage.setItem("hq_arena_status", ARENA_SHARE_STATUS ? "1" : "0"); } catch(e){}
+      if(ARENA_STATUS.timer){ clearTimeout(ARENA_STATUS.timer); ARENA_STATUS.timer = null; }
+      ARENA_STATUS.sent = null; ARENA_STATUS.at = 0;
+      if(ARENA_SHARE_STATUS) arenaStatusTick(); else arenaSayStatus({op:"clear"});
+      arenaRerenderLobby();
+    });
+  }
+})();
+
 // Send a directed nudge over the lobby socket. No URL/command -- just a ping.
 function arenaSendNudge(peer){
   if(!ARENA.sock || ARENA.sock.readyState!==1){ toast("Not connected to the lobby", "ach"); return; }
@@ -5296,7 +5456,31 @@ function arenaChatReceive(m, historic){
   if(!you && !historic){
     var tg = arenaMessageTags(text);
     if(tg.me || tg.all) arenaTagToast(arenaWho(from), (tg.me ? "you" : "all"));
+    if(VIEW !== "arena") arenaUnreadAdd(tg.me || tg.all);
   }
+}
+
+// Chat that arrived while you were on another view: a count on the Arena tab, marked "@" when a message tagged you
+// (or @here / @channel). Opening the Arena clears it.
+function arenaUnreadAdd(tagged){
+  ARENA.unread++;
+  if(tagged) ARENA.unreadTagged = true;
+  arenaRenderUnread();
+}
+function arenaUnreadClear(){
+  if(!ARENA.unread && !ARENA.unreadTagged) return;
+  ARENA.unread = 0; ARENA.unreadTagged = false;
+  arenaRenderUnread();
+}
+function arenaRenderUnread(){
+  var b = $("arenaUnread"), tab = b && b.parentNode;
+  if(!b) return;
+  var n = ARENA.unread;
+  b.classList.toggle("hidden", !n);
+  b.classList.toggle("mention", ARENA.unreadTagged);
+  b.textContent = (ARENA.unreadTagged ? "@" : "") + (n > 99 ? "99+" : n);
+  if(n) tab.setAttribute("aria-label", "Arena, " + n + " unread message" + (n === 1 ? "" : "s") + (ARENA.unreadTagged ? ", you were mentioned" : ""));
+  else tab.removeAttribute("aria-label");
 }
 
 // Does this message tag the current user? @<my handle> tags me; @channel / @here
@@ -5475,12 +5659,12 @@ function arenaMentionAccept(idx){
 /* ---- Arena voice (and video) ----
    WebRTC audio between lobby members: a small mesh, everyone connected to everyone (up to VCHAN_MAX).
    The lobby socket carries two kinds of messages for it:
-     say    {kind:"voice", op:"join"|"leave"|"mute"|"cam"|"who"|"here", peer, muted, cam}  who's in voice, to everyone
+     say    {kind:"voice", op:"join"|"leave"|"mute"|"cam"|"who"|"here", peer, muted, cam, screen}  who's in voice, to everyone
      signal {to:userId, data:{kind:"hello"|"offer"|"answer"|"ice", fromPeer, toPeer, ...}}  setup, to ONE member
    A peer id is per page, so two tabs or machines of the same person are separate peers. For each pair the
    smaller peer id makes the offer (the larger one says "hello" instead), so two people joining at once never
    both call each other. The audio flows browser to browser; the server only relays the setup.
-   Video is optional inside a call, and flows the same way: see voiceToggleCam. */
+   Video (a camera, or a shared screen) is optional inside a call and flows the same way: see voiceStartVideo. */
 var VCHAN_MAX = 6;
 var VCHAN_ICE = [{urls:"stun:stun.l.google.com:19302"}];
 var VCHAN_PEER_RE = /^[a-f0-9]{16}$/;
@@ -5508,8 +5692,8 @@ function voiceSignal(userId, data){
 function voiceOnLobby(){
   VCHAN.roster = {};
   if(VCHAN.on){
-    VCHAN.roster[VCHAN.peer] = {userId: ARENA.you && ARENA.you.userId, who:"You", you:true, muted:VCHAN.muted, cam:VCHAN.cam};
-    voiceSay("join", {muted:VCHAN.muted, cam:VCHAN.cam});
+    VCHAN.roster[VCHAN.peer] = {userId: ARENA.you && ARENA.you.userId, who:"You", you:true, muted:VCHAN.muted, cam:!!VCHAN.vidStream, screen:VCHAN.screen};
+    voiceSay("join", {muted:VCHAN.muted, cam:!!VCHAN.vidStream, screen:VCHAN.screen});
   }
   voiceSay("who");
   voiceRender();
@@ -5536,10 +5720,10 @@ function voiceOnLeave(m){
 function voiceOnAnnounce(m){
   var d = m.data, from = m.from;
   if(!d || typeof d !== "object" || !from || typeof from.userId !== "string") return;
-  if(d.op === "who"){ if(VCHAN.on) voiceSay("here", {muted:VCHAN.muted, cam:VCHAN.cam}); return; }
+  if(d.op === "who"){ if(VCHAN.on) voiceSay("here", {muted:VCHAN.muted, cam:!!VCHAN.vidStream, screen:VCHAN.screen}); return; }
   if(typeof d.peer !== "string" || !VCHAN_PEER_RE.test(d.peer) || d.peer === VCHAN.peer) return;
   if(d.op === "join" || d.op === "here"){
-    VCHAN.roster[d.peer] = {userId:from.userId, who:arenaWho(from), muted:!!d.muted, cam:d.cam === true};
+    VCHAN.roster[d.peer] = {userId:from.userId, who:arenaWho(from), muted:!!d.muted, cam:d.cam === true, screen:d.cam === true && d.screen === true};
     if(d.op === "join") voicePair(d.peer, from);
   } else if(d.op === "leave"){
     delete VCHAN.roster[d.peer];
@@ -5547,7 +5731,8 @@ function voiceOnAnnounce(m){
   } else if(d.op === "mute"){
     if(VCHAN.roster[d.peer]) VCHAN.roster[d.peer].muted = !!d.muted;
   } else if(d.op === "cam"){
-    if(VCHAN.roster[d.peer]) VCHAN.roster[d.peer].cam = d.cam === true;
+    var r = VCHAN.roster[d.peer];
+    if(r){ r.cam = d.cam === true; r.screen = r.cam && d.screen === true; }
   }
   voiceRender();
 }
@@ -5558,7 +5743,7 @@ function voicePair(peer, from){
   if(ARENA.you && from.userId === ARENA.you.userId) return;   // your own other tab: don't call yourself
   if(Object.keys(VCHAN.peers).length >= VCHAN_MAX - 1) return;
   if(VCHAN.peer < peer) voiceCall(peer, from);
-  else voiceSignal(from.userId, {kind:"hello", toPeer:peer, muted:VCHAN.muted, cam:VCHAN.cam});
+  else voiceSignal(from.userId, {kind:"hello", toPeer:peer, muted:VCHAN.muted, cam:!!VCHAN.vidStream, screen:VCHAN.screen});
 }
 
 function voiceOnSignal(m){
@@ -5566,7 +5751,7 @@ function voiceOnSignal(m){
   if(!VCHAN.on || !d || typeof d !== "object" || !from || typeof from.userId !== "string") return;
   if(d.toPeer !== VCHAN.peer || typeof d.fromPeer !== "string" || !VCHAN_PEER_RE.test(d.fromPeer)) return;
   var peer = d.fromPeer;
-  if(!VCHAN.roster[peer]) VCHAN.roster[peer] = {userId:from.userId, who:arenaWho(from), muted:!!d.muted, cam:d.cam === true};
+  if(!VCHAN.roster[peer]) VCHAN.roster[peer] = {userId:from.userId, who:arenaWho(from), muted:!!d.muted, cam:d.cam === true, screen:d.cam === true && d.screen === true};
   if(d.kind === "hello"){
     voicePair(peer, from);
   } else if(d.kind === "offer" && typeof d.sdp === "string" && d.sdp.length < 20000){
@@ -5591,7 +5776,7 @@ function voiceCall(peer, from){
   var p = voiceMakePeer(peer, from, true);
   p.pc.createOffer()
     .then(function(o){ return p.pc.setLocalDescription(o); })
-    .then(function(){ voiceSignal(from.userId, {kind:"offer", toPeer:peer, sdp:p.pc.localDescription.sdp, muted:VCHAN.muted, cam:VCHAN.cam}); })
+    .then(function(){ voiceSignal(from.userId, {kind:"offer", toPeer:peer, sdp:p.pc.localDescription.sdp, muted:VCHAN.muted, cam:!!VCHAN.vidStream, screen:VCHAN.screen}); })
     .catch(function(){ voiceClosePeer(peer); });
 }
 
@@ -5602,7 +5787,7 @@ function voiceMakePeer(peer, from, offerer){
   VCHAN.stream.getTracks().forEach(function(t){ pc.addTrack(t, VCHAN.stream); });
   // The caller adds one video line up front, so a camera can come and go later without renegotiating (the other
   // side answers on it in voiceAnswerVideo). It has no stream id: pages from before video ignore such a track.
-  if(offerer) p.vt = pc.addTransceiver(voiceCamTrack() || "video", {direction:"sendrecv"});
+  if(offerer) p.vt = pc.addTransceiver(voiceVideoTrack() || "video", {direction:"sendrecv"});
   pc.onicecandidate = function(e){
     if(e.candidate) voiceSignal(p.userId, {kind:"ice", toPeer:peer, candidate:e.candidate.toJSON()});
   };
@@ -5673,19 +5858,25 @@ function voiceStartMeter(){
 function voiceStopMeter(){ if(VCHAN.meter){ clearInterval(VCHAN.meter); VCHAN.meter = null; } }
 
 function voiceRender(){
-  var join = $("voiceJoin"), mute = $("voiceMute"), cam = $("voiceCam"), leave = $("voiceLeave"), ros = $("voiceRoster");
+  var join = $("voiceJoin"), mute = $("voiceMute"), cam = $("voiceCam"), scr = $("voiceScreen"), leave = $("voiceLeave"), ros = $("voiceRoster");
   var pill = $("voicePill"), sub = $("voiceSub");
   if(!join) return;
   var ids = Object.keys(VCHAN.roster);
   join.classList.toggle("hidden", VCHAN.on);
   mute.classList.toggle("hidden", !VCHAN.on);
   cam.classList.toggle("hidden", !VCHAN.on);
+  scr.classList.toggle("hidden", !VCHAN.on || !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia);
   leave.classList.toggle("hidden", !VCHAN.on);
   join.disabled = !ARENA.sock || ARENA.sock.readyState !== 1 || ids.length >= VCHAN_MAX;
   mute.textContent = VCHAN.muted ? "Unmute" : "Mute";
   mute.setAttribute("aria-pressed", VCHAN.muted ? "true" : "false");
+  mute.title = (VCHAN.muted ? "Unmute" : "Mute") + " (M)";
   cam.textContent = VCHAN.cam ? "📷 Camera off" : "📷 Camera";
   cam.setAttribute("aria-pressed", VCHAN.cam ? "true" : "false");
+  cam.title = (VCHAN.cam ? "Turn your camera off" : "Turn your camera on") + " (V)";
+  scr.textContent = VCHAN.screen ? "🖥 Stop sharing" : "🖥 Share screen";
+  scr.setAttribute("aria-pressed", VCHAN.screen ? "true" : "false");
+  scr.title = (VCHAN.screen ? "Stop sharing your screen" : "Share your screen") + " (S)";
   sub.textContent = ids.length ? (ids.length + " in voice · up to " + VCHAN_MAX) : ("nobody in voice yet · up to " + VCHAN_MAX);
   ros.innerHTML = "";
   ids.forEach(function(id){
@@ -5694,15 +5885,16 @@ function voiceRender(){
     if(VCHAN.on && !r.you && !(p && p.pc.connectionState === "connected")) chip.classList.add("connecting");
     var t = document.createElement("span"); t.textContent = r.you ? "You" : r.who; chip.appendChild(t);
     if(r.muted){ var mm = document.createElement("span"); mm.className = "vm"; mm.textContent = "🔇"; mm.title = "muted"; chip.appendChild(mm); }
-    if(r.cam){ var mc = document.createElement("span"); mc.className = "vm"; mc.textContent = "📹"; mc.title = "camera on"; chip.appendChild(mc); }
+    if(r.cam){ var mc = document.createElement("span"); mc.className = "vm"; mc.textContent = r.screen ? "🖥" : "📹"; mc.title = r.screen ? "sharing their screen" : "camera on"; chip.appendChild(mc); }
     ros.appendChild(chip);
   });
   voiceRenderVideos();
   if(pill){
     pill.classList.toggle("hidden", !VCHAN.on);
-    // A live camera always shows here, from every view, even while you're muted.
-    pill.classList.toggle("muted", VCHAN.muted && !VCHAN.cam);
-    pill.textContent = (VCHAN.cam ? "📹 In voice · camera on" : "🎙 In voice") + (VCHAN.muted ? " · muted" : "");
+    // A live camera or a shared screen always shows here, from every view, even while you're muted.
+    pill.classList.toggle("muted", VCHAN.muted && !VCHAN.vidStream);
+    pill.textContent = (VCHAN.screen ? "🖥 In voice · sharing screen" : VCHAN.cam ? "📹 In voice · camera on" : "🎙 In voice") +
+      (VCHAN.muted ? " · muted" : "");
   }
 }
 
@@ -5729,7 +5921,7 @@ function voiceJoin(){
 function voiceLeave(){
   if(!VCHAN.on) return;
   voiceSay("leave");
-  voiceCamOff();
+  voiceVideoOff();
   Object.keys(VCHAN.peers).forEach(voiceClosePeer);
   if(VCHAN.stream) VCHAN.stream.getTracks().forEach(function(t){ t.stop(); });
   if(VCHAN.me) try { VCHAN.me.src.disconnect(); } catch(e){}
@@ -5737,7 +5929,7 @@ function voiceLeave(){
   VCHAN.on = false; VCHAN.stream = null; VCHAN.peer = null; VCHAN.me = null; VCHAN.muted = false;
   voiceStopMeter();
   voiceRender();
-  if(VIEW !== "arena") arenaCloseSocket();   // the socket only stayed open for voice
+  if(VIEW !== "arena" && !ARENA_STAY) arenaCloseSocket();   // the socket only stayed open for voice
 }
 
 function voiceToggleMute(){
@@ -5749,12 +5941,12 @@ function voiceToggleMute(){
   voiceRender();
 }
 
-/* Video: the camera is optional inside a voice call. Every connection negotiates one video line when it's made
-   (voiceMakePeer on the caller's side, voiceAnswerVideo on the other), so turning the camera on or off only swaps
-   the track that line sends: no renegotiation. Each person's video gets a tile, made once and shown only while
-   their camera is on. */
-function voiceCamTrack(){
-  return (VCHAN.cam && VCHAN.camStream && VCHAN.camStream.getVideoTracks()[0]) || null;
+/* Video: a camera or a shared screen, optional inside a voice call. Every connection negotiates one video line
+   when it's made (voiceMakePeer on the caller's side, voiceAnswerVideo on the other), so switching the camera or a
+   screen on or off only swaps the track that line sends: no renegotiation. One line means one video each: the camera
+   and a shared screen take turns. Each person's video gets a tile, made once and shown only while it's on. */
+function voiceVideoTrack(){
+  return (VCHAN.vidStream && VCHAN.vidStream.getVideoTracks()[0]) || null;
 }
 
 // Answering a call: send back on the caller's video line. A caller from before video has none: no video with them.
@@ -5764,7 +5956,7 @@ function voiceAnswerVideo(p){
   if(!t) return;
   t.direction = "sendrecv";
   p.vt = t;
-  var track = voiceCamTrack();
+  var track = voiceVideoTrack();
   if(track) t.sender.replaceTrack(track).catch(function(){});
 }
 
@@ -5778,7 +5970,7 @@ function voiceMakeTile(you){
   return tile;
 }
 
-// Their video line is up (camera on or not yet): keep a tile ready for it.
+// Their video line is up (video on or not yet): keep a tile ready for it.
 function voiceShowVideo(p, track){
   if(!p.tile){ p.tile = voiceMakeTile(false); p.video = p.tile.firstChild; }
   p.video.srcObject = new MediaStream([track]);   // sound comes through their <audio>, so the video stays muted
@@ -5789,27 +5981,52 @@ function voicePlay(v){
   if(v.paused){ var pl = v.play(); if(pl && pl.catch) pl.catch(function(){}); }
 }
 
-// Your camera first, then everyone whose camera is on. Tiles are only shown or hidden, so their video keeps playing.
+// Your video first, then everyone whose video is on. Tiles are only shown or hidden, so their video keeps playing.
+// A shared screen gets a whole row, uncropped.
 function voiceRenderVideos(){
   var grid = $("voiceVideos"), shown = 0;
   if(!grid) return;
-  if(VCHAN.camTile){
-    VCHAN.camTile.lastChild.textContent = "You" + (VCHAN.muted ? " 🔇" : "");
-    VCHAN.camTile.classList.remove("hidden"); voicePlay(VCHAN.camTile.firstChild); shown++;
+  if(VCHAN.vidTile){
+    VCHAN.vidTile.lastChild.textContent = (VCHAN.screen ? "Your screen" : "You") + (VCHAN.muted ? " 🔇" : "");
+    VCHAN.vidTile.classList.toggle("screen", VCHAN.screen);
+    VCHAN.vidTile.classList.remove("hidden"); voicePlay(VCHAN.vidTile.firstChild); shown++;
   }
   Object.keys(VCHAN.peers).forEach(function(id){
     var p = VCHAN.peers[id], r = VCHAN.roster[id], on = !!(r && r.cam);
     if(!p.tile) return;
-    p.tile.lastChild.textContent = r ? r.who + (r.muted ? " 🔇" : "") : "";
+    p.tile.lastChild.textContent = r ? r.who + (r.screen ? " · screen" : "") + (r.muted ? " 🔇" : "") : "";
+    p.tile.classList.toggle("screen", !!(r && r.screen));
     p.tile.classList.toggle("hidden", !on);
     if(on){ voicePlay(p.video); shown++; }
   });
   grid.classList.toggle("hidden", !shown);
 }
 
+// Tell everyone whether your video is on, and whether it's a screen.
+function voiceSayVideo(){
+  var me = VCHAN.roster[VCHAN.peer];
+  if(me){ me.cam = !!VCHAN.vidStream; me.screen = VCHAN.screen; }
+  voiceSay("cam", {cam:!!VCHAN.vidStream, screen:VCHAN.screen});
+}
+
+// Put a new camera or screen stream on everyone's video line, in place of whatever was there, and show your tile.
+function voiceStartVideo(stream, screen){
+  voiceVideoOff();
+  var track = stream.getVideoTracks()[0];
+  if(screen) try { track.contentHint = "detail"; } catch(e){}   // keep text sharp rather than motion smooth
+  VCHAN.vidStream = stream; VCHAN.cam = !screen; VCHAN.screen = !!screen;
+  // Camera unplugged or its permission taken back, or the browser's own "Stop sharing": same as switching it off.
+  track.onended = function(){ if(VCHAN.vidStream === stream){ voiceVideoOff(); voiceSayVideo(); voiceRender(); } };
+  Object.keys(VCHAN.peers).forEach(function(id){ var vt = VCHAN.peers[id].vt; if(vt) vt.sender.replaceTrack(track).catch(function(){}); });
+  VCHAN.vidTile = voiceMakeTile(true);
+  VCHAN.vidTile.firstChild.srcObject = stream;
+  voiceSayVideo();
+  voiceRender();
+}
+
 function voiceToggleCam(){
   if(!VCHAN.on) return;
-  if(VCHAN.cam){ voiceCamOff(); voiceSay("cam", {cam:false}); voiceRender(); return; }
+  if(VCHAN.cam){ voiceVideoOff(); voiceSayVideo(); voiceRender(); return; }
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ toast("This browser can't do video here", "ach"); return; }
   var btn = $("voiceCam"); btn.disabled = true;
   navigator.mediaDevices.getUserMedia({video:{width:{ideal:640}, height:{ideal:360}, frameRate:{ideal:24, max:30}}, audio:false})
@@ -5817,16 +6034,7 @@ function voiceToggleCam(){
       btn.disabled = false;
       // You left the call while the camera prompt was open.
       if(!VCHAN.on || VCHAN.cam){ stream.getTracks().forEach(function(t){ t.stop(); }); return; }
-      var track = stream.getVideoTracks()[0];
-      VCHAN.camStream = stream; VCHAN.cam = true;
-      // Camera unplugged, or its permission taken back: same as switching it off.
-      track.onended = function(){ if(VCHAN.camStream === stream){ voiceCamOff(); voiceSay("cam", {cam:false}); voiceRender(); } };
-      Object.keys(VCHAN.peers).forEach(function(id){ var vt = VCHAN.peers[id].vt; if(vt) vt.sender.replaceTrack(track).catch(function(){}); });
-      VCHAN.camTile = voiceMakeTile(true);
-      VCHAN.camTile.firstChild.srcObject = stream;
-      if(VCHAN.roster[VCHAN.peer]) VCHAN.roster[VCHAN.peer].cam = true;
-      voiceSay("cam", {cam:true});
-      voiceRender();
+      voiceStartVideo(stream, false);
     })
     .catch(function(e){
       btn.disabled = false;
@@ -5834,26 +6042,47 @@ function voiceToggleCam(){
     });
 }
 
-// Camera off: stop it (its light goes out), stop sending it to everyone, drop your own tile.
-function voiceCamOff(){
-  if(!VCHAN.cam) return;
-  var s = VCHAN.camStream;
-  VCHAN.cam = false; VCHAN.camStream = null;
-  if(s) s.getTracks().forEach(function(t){ t.onended = null; t.stop(); });
+function voiceToggleScreen(){
+  if(!VCHAN.on) return;
+  if(VCHAN.screen){ voiceVideoOff(); voiceSayVideo(); voiceRender(); return; }
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia){ toast("This browser can't share a screen here", "ach"); return; }
+  var btn = $("voiceScreen"); btn.disabled = true;
+  navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:15, max:30}, width:{max:1920}, height:{max:1080}}, audio:false})
+    .then(function(stream){
+      btn.disabled = false;
+      if(!VCHAN.on || VCHAN.screen){ stream.getTracks().forEach(function(t){ t.stop(); }); return; }
+      voiceStartVideo(stream, true);
+    })
+    .catch(function(e){
+      btn.disabled = false;
+      if(e && e.name === "NotAllowedError") return;   // you closed the picker: nothing to say
+      toast("Couldn't share your screen", "ach");
+    });
+}
+
+// Your video off: stop the camera or the shared screen (the camera light goes out, the browser's sharing bar goes
+// away), stop sending it to everyone, drop your own tile.
+function voiceVideoOff(){
+  var s = VCHAN.vidStream;
+  if(!s) return;
+  VCHAN.vidStream = null; VCHAN.cam = false; VCHAN.screen = false;
+  s.getTracks().forEach(function(t){ t.onended = null; t.stop(); });
   Object.keys(VCHAN.peers).forEach(function(id){ var vt = VCHAN.peers[id].vt; if(vt) vt.sender.replaceTrack(null).catch(function(){}); });
-  if(VCHAN.camTile){
-    VCHAN.camTile.firstChild.srcObject = null;
-    if(VCHAN.camTile.parentNode) VCHAN.camTile.parentNode.removeChild(VCHAN.camTile);
-    VCHAN.camTile = null;
+  if(VCHAN.vidTile){
+    VCHAN.vidTile.firstChild.srcObject = null;
+    if(VCHAN.vidTile.parentNode) VCHAN.vidTile.parentNode.removeChild(VCHAN.vidTile);
+    VCHAN.vidTile = null;
   }
-  if(VCHAN.roster[VCHAN.peer]) VCHAN.roster[VCHAN.peer].cam = false;
+  var me = VCHAN.roster[VCHAN.peer];
+  if(me){ me.cam = false; me.screen = false; }
 }
 
 (function(){
-  var j = $("voiceJoin"), mu = $("voiceMute"), cm = $("voiceCam"), lv = $("voiceLeave"), pill = $("voicePill");
+  var j = $("voiceJoin"), mu = $("voiceMute"), cm = $("voiceCam"), sc = $("voiceScreen"), lv = $("voiceLeave"), pill = $("voicePill");
   if(j) j.addEventListener("click", voiceJoin);
   if(mu) mu.addEventListener("click", voiceToggleMute);
   if(cm) cm.addEventListener("click", voiceToggleCam);
+  if(sc) sc.addEventListener("click", voiceToggleScreen);
   if(lv) lv.addEventListener("click", voiceLeave);
   if(pill) pill.addEventListener("click", function(){ setView("arena"); });
 })();
@@ -5918,6 +6147,7 @@ Array.prototype.forEach.call(document.querySelectorAll("#arenaWins .arena-win"),
   if(un) un.addEventListener("click", function(){
     if(!confirm("Disconnect this machine from the Arena? Your stats stay on the server.")) return;
     voiceLeave();
+    ARENA.paired = false;
     arenaCloseSocket();
     arenaPost("/api/arena/unpair").then(function(){
       postConfig({arenaEnabled:false}).then(function(){ loadArena(); });

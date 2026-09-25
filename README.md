@@ -168,6 +168,12 @@ replies, file paths, project or folder names, session ids, or titles.
   in voice with; a public STUN server (Google's) tells your browser its public
   address. Your microphone is used only after you click **Join voice** and your
   camera only after you click **Camera**; both stop when you leave.
+- **Live status is off by default.** Turn on **Share my live status** and your
+  lobby entry shows how many of your sessions are working and how many are
+  waiting on you: just those two numbers, never titles, folders or text.
+- **You're in the lobby while HQ is open.** So friends see you online and chat
+  and calls reach you on any view. Turn off **Stay in the lobby on every view**
+  to show up only while the Arena tab is open.
 - The wire format rejects unknown fields outright, so a future client change
   can't silently start leaking one.
 

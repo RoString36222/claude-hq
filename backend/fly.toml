@@ -6,6 +6,16 @@ primary_region = "bom"          # Mumbai; see `fly platform regions`
 
 [env]
   ARENA_PUBLIC_BASE_URL = "https://claude-hq-arena.fly.dev"
+  # SQLite on the mounted volume. Four slashes = absolute path.
+  ARENA_DATABASE_URL = "sqlite+aiosqlite:////data/arena.db"
+
+# One machine, one volume. Rooms are in-process (see app/rooms.py) and SQLite
+# is a single file, so this app is deliberately not horizontally scalable.
+# Losing this volume costs only history older than 30 days: every client
+# republishes a rolling 30-day window every 5 minutes.
+[mounts]
+  source = "arena_data"
+  destination = "/data"
 
 [http_service]
   internal_port = 8080

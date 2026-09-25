@@ -91,6 +91,25 @@ Two supported shapes, both driven by a wizard from the repo root:
 
 Both stop and tell you when a step needs a browser.
 
+### Or any VM with Docker
+
+`docker-compose.yml` runs the app behind Caddy, which obtains and renews TLS
+automatically — no certbot cron to forget. Works on Hetzner, DigitalOcean,
+Oracle's free ARM tier, or anything else with Docker.
+
+```bash
+# point your domain's A record at the VM, then:
+cp .env.example .env            # fill in the GitHub OAuth values
+ARENA_DOMAIN=arena.example.com docker compose up -d
+```
+
+The app is only reachable through Caddy (`expose`, not `ports`), the database
+lives on the `arena-data` volume so it survives a redeploy, and `caddy-data`
+holds the certificates — keep both.
+
+You still need a domain: Let's Encrypt will not issue for a bare IP, and the
+game rooms want `wss://`.
+
 ### Self-hosting notes
 
 SQLite is the primary database when self-hosting, so `app/db.py` sets WAL

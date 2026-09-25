@@ -21,3 +21,6 @@ backend/.env
 backend/.env.production
 backend/.venv/
 backend/*.db
+backend/*.db-wal
+backend/*.db-shm
+backend/*.db-journal

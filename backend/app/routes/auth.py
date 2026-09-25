@@ -116,7 +116,7 @@ def _pair_page(handle: str, code: str, mins: int) -> str:
 </style>
 <div class="card">
   <h1>Signed in as {handle}</h1>
-  <p>Paste this code into <strong>Claude HQ &rarr; Settings &rarr; Arena</strong>:</p>
+  <p>Paste this code into the <strong>&#127942; Arena</strong> tab in Claude HQ:</p>
   <code>{code}</code>
   <p>It expires in {mins} minutes and can be used once.</p>
 </div>"""

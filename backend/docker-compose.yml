@@ -36,6 +36,11 @@ services:
       - app
     environment:
       ARENA_DOMAIN: ${ARENA_DOMAIN:?set ARENA_DOMAIN}
+      # Set by ops/install-panel.sh. Empty when the panel is not installed,
+      # which is fine because the Caddyfile block that uses them is only
+      # appended by that installer.
+      PANEL_DOMAIN: ${PANEL_DOMAIN:-}
+      PANEL_UPSTREAM: ${PANEL_UPSTREAM:-}
     ports:
       - "80:80"     # needed for the ACME HTTP challenge, and redirects to 443
       - "443:443"

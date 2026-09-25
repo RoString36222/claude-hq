@@ -3287,7 +3287,8 @@ setInterval(function(){ if(STATE){ $("updated").textContent="updated "+relTime(S
 /* ---- view switcher ---- */
 // Arena state must exist before setView(VIEW) runs at startup (it calls arenaCloseSocket).
 var ARENA = {window:"season", status:null, sock:null, retry:null, you:null, chat:[], chatSeen:{},
-             paired:false, opening:false, gen:0, fails:0, peerStatus:{}, unread:0, unreadTagged:false};
+             paired:false, opening:false, gen:0, fails:0, peerStatus:{}, unread:0, unreadTagged:false,
+             nudgeCount:{}};
 // Lobby options (see "Arena lobby: presence and live status"): staying in the lobby is on unless turned off,
 // sharing your live status is off unless turned on.
 var ARENA_STAY = (function(){ try { return localStorage.getItem("hq_arena_stay") !== "0"; } catch(e){ return true; } })();
@@ -3313,7 +3314,7 @@ function setView(v){
   if(v==="gym") renderGym();
   if(v==="quests") loadQuests();
   // The lobby socket stays open on other views while you stay in the lobby, or while you're in voice (it carries it).
-  if(v==="arena"){ arenaUnreadClear(); loadArena(); } else if(!VCHAN.on && !ARENA_STAY) arenaCloseSocket();
+  if(v==="arena"){ arenaUnreadClear(); ARENA.nudgeCount={}; loadArena(); } else if(!VCHAN.on && !ARENA_STAY) arenaCloseSocket();
 }
 Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
   t.addEventListener("click",function(){ setView(t.getAttribute("data-view")); });
@@ -5406,9 +5407,41 @@ function arenaOnNudge(m){
   if(NOTIF_ON && ("Notification" in window) && Notification.permission==="granted"){
     try{ new Notification("\uD83D\uDC4B "+who+" nudged you", {body:(m.note||"Check the Arena"), tag:"hq-nudge", silent:true}); }catch(e){}
   }
-  if(typeof toast==="function") toast("\uD83D\uDC4B "+msg, "level");
+  // Count consecutive nudges from this sender while the Arena tab stays unopened.
+  // The 26th from the same person (after 25 ignored) escalates to a siren.
+  var sid = (m.from && m.from.userId) || "?";
+  var count = (ARENA.nudgeCount[sid] = (ARENA.nudgeCount[sid] || 0) + 1);
+  var siren = count >= 26;
+  if(siren){
+    playSiren();
+    if(typeof toast==="function") toast("\uD83D\uDEA8 "+who+" has nudged you "+count+" times \u2014 check the Arena!", "ach");
+  } else {
+    if(typeof toast==="function") toast("\uD83D\uDC4B "+msg, "level");
+  }
   if(typeof announce==="function") announce(msg);
-  if(typeof logEvent==="function") logEvent("\uD83D\uDC4B", msg);
+  if(typeof logEvent==="function") logEvent(siren ? "\uD83D\uDEA8" : "\uD83D\uDC4B", msg);
+}
+
+/* A short two-tone siren via WebAudio (no asset). Respects the chime toggle, so
+   muting HQ still silences it. Used when a nudger crosses the spam threshold. */
+function playSiren(){
+  if(!CHIME_ON) return;
+  try{
+    if(!audioCtx){ var AC = window.AudioContext||window.webkitAudioContext; if(!AC) return; audioCtx = new AC(); }
+    if(audioCtx.state==="suspended") audioCtx.resume();
+    var now = audioCtx.currentTime;
+    var o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = "sawtooth";
+    // Wail between two pitches a handful of times (~2.4s total).
+    var t = now;
+    for(var i=0;i<6;i++){ o.frequency.setValueAtTime(660, t); o.frequency.linearRampToValueAtTime(880, t+0.2); o.frequency.linearRampToValueAtTime(660, t+0.4); t += 0.4; }
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(0.22, now+0.05);
+    g.gain.setValueAtTime(0.22, t-0.1);
+    g.gain.exponentialRampToValueAtTime(0.0001, t);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(now); o.stop(t+0.05);
+  }catch(e){}
 }
 
 /* ---- Arena chat ----

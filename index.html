@@ -540,8 +540,15 @@ details.stalewrap .hint{text-transform:none;letter-spacing:0}
 .hm-cell.blank{background:transparent}
 .hm-legend{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--faint);margin-top:12px;justify-content:flex-end}
 .hm-legend i{width:11px;height:11px;border-radius:3px;display:inline-block}
-.trend-wrap{width:100%}
-.trend-wrap svg{width:100%;height:auto;display:block}
+.trend-wrap{width:100%;padding:10px 52px 0 48px}
+.trend-plot{position:relative;height:200px}
+.trend-plot svg{width:100%;height:100%;display:block;overflow:visible}
+.trend-plot .ty{position:absolute;transform:translateY(-50%);font:11px/1 var(--mono);color:var(--faint);white-space:nowrap}
+.trend-plot .ty-l{right:calc(100% + 8px)}
+.trend-plot .ty-r{left:calc(100% + 8px);color:var(--gold)}
+.trend-x{position:relative;height:16px;margin-top:8px}
+.trend-x span{position:absolute;top:0;transform:translateX(-50%);font:11px/1 var(--mono);color:var(--faint);white-space:nowrap}
+@media(max-width:640px){.trend-plot{height:150px}}
 .trend-legend{display:flex;gap:16px;font-size:12px;color:var(--muted);margin-top:8px}
 .trend-legend span{display:inline-flex;align-items:center;gap:6px}
 .trend-legend i{width:14px;height:3px;border-radius:2px;display:inline-block}
@@ -3749,36 +3756,41 @@ function renderHeatmap(cells){
 function renderTrend(daily){
   var wrap=$("aTrend"); var lg=$("aTrendLegend");
   if(!daily.length){ wrap.innerHTML='<div class="feed-empty">No daily data.</div>'; lg.innerHTML=""; return; }
-  var W=720,H=180,PL=44,PR=44,PT=14,PB=26;
+  // The plot stretches to the panel width (preserveAspectRatio="none"); axis labels are
+  // HTML laid over it so they stay a fixed size instead of scaling with the SVG.
+  var W=1000,H=180,PT=8;
   var outs = daily.map(function(d){ return d.output!=null?d.output:(d.outputTokens||0); });
   var costs = daily.map(function(d){ return d.cost!=null?d.cost:(d.usd!=null?d.usd:(d.estCostUSD||0)); });
   var maxO=Math.max.apply(null,outs.concat([1]));
   var maxC=Math.max.apply(null,costs.concat([0.0001]));
   var n=daily.length;
-  function xx(i){ return PL + (n<=1?0:i*(W-PL-PR)/(n-1)); }
-  function yO(v){ return PT + (1-(v/maxO))*(H-PT-PB); }
-  function yC(v){ return PT + (1-(v/maxC))*(H-PT-PB); }
-  var areaPts = outs.map(function(v,i){ return xx(i)+","+yO(v); });
-  var area = "M"+PL+","+(H-PB)+" L"+areaPts.join(" L")+" L"+xx(n-1)+","+(H-PB)+" Z";
+  function xx(i){ return n<=1?W/2:i*W/(n-1); }
+  function yO(v){ return PT + (1-(v/maxO))*(H-PT); }
+  function yC(v){ return PT + (1-(v/maxC))*(H-PT); }
+  function pct(i){ return (xx(i)/W*100).toFixed(3)+"%"; }
+  var area = "M0,"+H+" L"+outs.map(function(v,i){ return xx(i)+","+yO(v); }).join(" L")+" L"+xx(n-1)+","+H+" Z";
   var lineO = "M"+outs.map(function(v,i){ return xx(i)+","+yO(v); }).join(" L");
   var lineC = "M"+costs.map(function(v,i){ return xx(i)+","+yC(v); }).join(" L");
   var mid=Math.floor((n-1)/2);
   function dl(i){ var d=daily[i].date||""; return d.slice(5); }
-  var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" role="img" aria-label="Output tokens and cost over 30 days">';
-  svg+='<line x1="'+PL+'" y1="'+(H-PB)+'" x2="'+(W-PR)+'" y2="'+(H-PB)+'" stroke="var(--line)" stroke-width="1"/>';
-  svg+='<path d="'+area+'" fill="var(--brand)" opacity="0.10"/>';
-  svg+='<path d="'+lineO+'" fill="none" stroke="var(--brand)" stroke-width="2" stroke-linejoin="round"/>';
-  svg+='<path d="'+lineC+'" fill="none" stroke="var(--gold)" stroke-width="2" stroke-linejoin="round" stroke-dasharray="4 3"/>';
-  // y-axis labels (left=tokens, right=cost)
-  svg+='<text x="'+(PL-6)+'" y="'+(PT+8)+'" text-anchor="end" font-size="10" fill="var(--faint)">'+fmtTok(maxO)+'</text>';
-  svg+='<text x="'+(PL-6)+'" y="'+(H-PB)+'" text-anchor="end" font-size="10" fill="var(--faint)">0</text>';
-  svg+='<text x="'+(W-PR+6)+'" y="'+(PT+8)+'" text-anchor="start" font-size="10" fill="var(--gold)">'+fmtCost(maxC)+'</text>';
-  // x-axis labels
-  svg+='<text x="'+PL+'" y="'+(H-8)+'" text-anchor="start" font-size="10" fill="var(--faint)">'+esc(dl(0))+'</text>';
-  svg+='<text x="'+xx(mid)+'" y="'+(H-8)+'" text-anchor="middle" font-size="10" fill="var(--faint)">'+esc(dl(mid))+'</text>';
-  svg+='<text x="'+(W-PR)+'" y="'+(H-8)+'" text-anchor="end" font-size="10" fill="var(--faint)">'+esc(dl(n-1))+'</text>';
+  var ns='vector-effect="non-scaling-stroke"';
+  var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" role="img" aria-label="Output tokens and cost over '+n+' days. Peak '+fmtTok(maxO)+' output tokens, '+fmtCost(maxC)+' est cost.">';
+  svg+='<line x1="0" y1="'+(PT+(H-PT)/2)+'" x2="'+W+'" y2="'+(PT+(H-PT)/2)+'" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 4" '+ns+'/>';
+  svg+='<line x1="0" y1="'+PT+'" x2="'+W+'" y2="'+PT+'" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 4" '+ns+'/>';
+  svg+='<line x1="0" y1="'+H+'" x2="'+W+'" y2="'+H+'" stroke="var(--line2)" stroke-width="1" '+ns+'/>';
+  svg+='<path d="'+area+'" fill="var(--brand)" opacity="0.12"/>';
+  svg+='<path d="'+lineO+'" fill="none" stroke="var(--brand)" stroke-width="2" stroke-linejoin="round" '+ns+'/>';
+  svg+='<path d="'+lineC+'" fill="none" stroke="var(--gold)" stroke-width="2" stroke-linejoin="round" stroke-dasharray="4 3" '+ns+'/>';
   svg+='</svg>';
-  wrap.innerHTML=svg;
+  var yl='<span class="ty ty-l" style="top:0">'+fmtTok(maxO)+'</span>'+
+         '<span class="ty ty-l" style="top:50%">'+fmtTok(maxO/2)+'</span>'+
+         '<span class="ty ty-l" style="top:100%">0</span>'+
+         '<span class="ty ty-r" style="top:0">'+fmtCost(maxC)+'</span>'+
+         '<span class="ty ty-r" style="top:50%">'+fmtCost(maxC/2)+'</span>';
+  var xl='<span style="left:0;transform:none">'+esc(dl(0))+'</span>'+
+         (n>2?'<span style="left:'+pct(mid)+'">'+esc(dl(mid))+'</span>':'')+
+         (n>1?'<span style="left:100%;transform:translateX(-100%)">'+esc(dl(n-1))+'</span>':'');
+  wrap.innerHTML='<div class="trend-plot">'+svg+yl+'</div><div class="trend-x">'+xl+'</div>';
   lg.innerHTML='<span><i style="background:var(--brand)"></i>Output tokens</span><span><i style="background:var(--gold)"></i>Est cost (USD)</span>';
 }
 function renderByHour(arr){

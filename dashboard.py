@@ -2452,7 +2452,7 @@ KNOWN_THEMES = ("aurora", "midnight", "forest", "mono")
 KNOWN_CREATURE_PACKS = ("monsters", "pokemon", "pokemon3d", "animals", "faces")
 DEFAULT_CONFIG = {
     "theme": "aurora",
-    "creaturePack": "monsters",
+    "creaturePack": "pokemon3d",
     "refreshMs": 5000,
     "stuckMinutes": 15,
     "dailyBudgetUSD": 0,

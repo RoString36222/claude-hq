@@ -2922,8 +2922,6 @@ function evobarHTML(cr){
 var POKE_ANIM="https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/sprites/pokemon/versions/generation-v/black-white/animated/";
 var POKE_STATIC="https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/sprites/pokemon/";
 var PKPARAISO_SWSH="https://www.pkparaiso.com/imagenes/espada_escudo/sprites/animados/"; // Gen 8 animated 3D (shiny: <name>-s.gif)
-var PKPARAISO_XY="https://www.pkparaiso.com/imagenes/xy/sprites/animados/";  // Gen 6 X/Y (fallback / full coverage)
-var PKPARAISO_XY_SHINY="https://www.pkparaiso.com/imagenes/xy/sprites/animados-shiny/";
 var POKE_DEX=[25,4,7,1,133,94,143,149,448,282,155,158,152,403,130,131,37,39,54,445,248,59,633,151,212,28,468,461,306,169,330,473,18,65,68,76,610,80,125,81,128,142,636,254,257,260,373,376];
 var POKE_REAL=["Pikachu","Charmander","Squirtle","Bulbasaur","Eevee","Gengar","Snorlax","Dragonite","Lucario","Gardevoir","Cyndaquil","Totodile","Chikorita","Shinx","Gyarados","Lapras","Vulpix","Jigglypuff","Psyduck","Garchomp","Tyranitar","Arcanine","Deino","Mew","Scizor","Sandslash","Togekiss","Weavile","Aggron","Crobat","Flygon","Mamoswine","Pidgeot","Alakazam","Machamp","Golem","Axew","Slowbro","Electabuzz","Magnemite","Tauros","Aerodactyl","Larvesta","Sceptile","Blaziken","Swampert","Salamence","Metagross"];
 // Real evolution LINES (base -> final), index-aligned with the 48 species. The sprite
@@ -2973,9 +2971,8 @@ function pokeErr(img){
   var sub = shiny ? "shiny/" : "";
   var dex = img.getAttribute("data-dex");
   if(img.getAttribute("data-3d")==="1"){
-    var slug=img.getAttribute("data-slug")||"";
-    if(t===0){ img.setAttribute("data-try","1"); img.src=(shiny?PKPARAISO_XY_SHINY:PKPARAISO_XY)+slug+".gif"; return; } // Gen6 X/Y
-    if(t===1){ img.setAttribute("data-try","2"); img.src=POKE_STATIC+sub+dex+".png"; return; }                        // gen5 static
+    // Gen 8 only: SwSh gif -> HOME 3D still render (keeps it 3D) -> monster svg
+    if(t===0){ img.setAttribute("data-try","1"); img.src=POKE_STATIC+"other/home/"+(shiny?"shiny/":"")+dex+".png"; return; }
   } else if(t===0){
     img.setAttribute("data-try","1"); img.src=POKE_STATIC+sub+dex+".png"; return;
   }
@@ -3326,8 +3323,20 @@ $("thinkingNow").addEventListener("click",function(){
   Array.prototype.forEach.call($("filterChips").children,function(c){ c.classList.toggle("active", c.getAttribute("data-filter")==="working"); });
   if(STATE) renderParty(STATE.sessions);
 });
+var PARTY_SIG=null;
+function partySig(sessions){
+  // Only fields that affect the rendered cards — NOT volatile ones (now/ageSecs/tokens)
+  // so the party isn't rebuilt (which restarts every animated sprite) each SSE tick.
+  var parts=(sessions||[]).map(function(s){ var c=s.creature||{};
+    return [s.id,s.status,s.title,s.alias||"",s.pinned?1:0,(s.tags||[]).join(","),s.note||"",s.folder||"",
+            c.species,c.stage,c.shiny?1:0].join(""); });
+  return [QUERY,SORT,FILTER,FILTERTAG,FILTERFOLDER,STALE_OPEN?1:0,cfg().creaturePack].join("|")+"||"+parts.join("");
+}
 function renderParty(sessions){
   renderThinking(sessions);
+  var sig=partySig(sessions);
+  if(sig===PARTY_SIG) return;   // nothing card-relevant changed -> don't rebuild (avoids sprite flicker)
+  PARTY_SIG=sig;
   var party = $("party"); party.innerHTML="";
   sessions = sessions||[];
   var buckets = {needs:[],working:[],idle:[],stale:[]};

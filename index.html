@@ -714,6 +714,30 @@ html.hq-calm #evoSplash.flash .evo-flash{animation:none}
 html.hq-calm #evoSplash.mega .evo-creature{animation:none}
 html.hq-calm #evoSplash.mega .evo-creature::before{animation:none;opacity:.4}
 @media (prefers-reduced-motion: reduce){ #evoSplash.mega .evo-creature,#evoSplash.mega .evo-creature::before{animation:none} }
+/* Evolution-line preview modal */
+.evoline{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;justify-content:center;padding:6px 2px}
+.evonode{display:flex;flex-direction:column;align-items:center;gap:4px;width:96px;padding:8px 6px;border-radius:12px;border:1px solid var(--line);background:var(--panel2)}
+.evonode .evo-spr{width:72px;height:72px;display:grid;place-items:center}
+.evonode .evo-spr img,.evonode .evo-spr .mon-svg{width:100%;height:100%;object-fit:contain}
+.evonode .evo-nm{font-size:12.5px;font-weight:600;color:var(--ink);text-align:center;line-height:1.2}
+.evonode .evo-dx{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.evonode.current{border-color:var(--brand);box-shadow:0 0 0 2px var(--brand-soft)}
+.evonode.mega{border-color:color-mix(in srgb,#ff6ec7 55%,var(--line));background:color-mix(in srgb,#ff6ec7 10%,var(--panel2))}
+.evonode.mega .evo-nm{color:#ff6ec7}
+.evoarrow{align-self:center;color:var(--faint);font-size:18px;font-weight:700;padding-bottom:22px}
+.evoprev-note{margin-top:12px;text-align:center;font-size:12.5px;color:var(--faint)}
+/* Game-style evolving animation: two stacked sprite layers cross-toggled with an
+   accelerating white-out, then the reveal. Cross-fades EXISTING sprite <img>s only. */
+#evoCreature .evo-morph{position:absolute;inset:0}
+#evoCreature .evo-pre,#evoCreature .evo-post{position:absolute;inset:0;display:grid;place-items:center}
+#evoCreature .evo-pre img,#evoCreature .evo-post img,#evoCreature .evo-pre .mon-svg,#evoCreature .evo-post .mon-svg{width:100%;height:100%;object-fit:contain}
+#evoCreature.morphing .evo-pre,#evoCreature.morphing .evo-post{animation:evoWhiten .34s ease-in-out infinite}
+@keyframes evoWhiten{0%,100%{filter:brightness(1)}50%{filter:brightness(5.5) contrast(1.2) grayscale(.35)}}
+#evoCreature .evo-post.evo-reveal{animation:evopop .6s cubic-bezier(.2,.9,.3,1.4)}
+html.hq-calm #evoCreature.morphing .evo-pre,html.hq-calm #evoCreature.morphing .evo-post{animation:none}
+@media (prefers-reduced-motion: reduce){ #evoCreature.morphing .evo-pre,#evoCreature.morphing .evo-post{animation:none} }
+/* mega gets a longer, hotter whiteout + a second flash pass (handled in JS) */
+#evoSplash.mega #evoCreature.morphing .evo-pre,#evoSplash.mega #evoCreature.morphing .evo-post{animation-duration:.26s}
 @keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.06) translateY(-3%)}}
 .animo-img{image-rendering:auto;animation:breathe 2.6s ease-in-out infinite}
 .card.working .avatar .animo-img{animation:breathe 1.2s ease-in-out infinite}
@@ -1846,6 +1870,17 @@ html.hq-calm #confetti{display:none!important}
   </div>
 </div>
 
+<!-- evolution line preview -->
+<div class="modalback" id="evoPreviewBack">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="evoPrevTitle">
+    <div class="modal-h">
+      <h3 id="evoPrevTitle"><svg class="i" aria-hidden="true"><use href="#i-book"/></svg>Evolution line</h3>
+      <button class="hbtn icon ghost" id="evoPrevClose" type="button" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="modal-b"><div id="evoPrevBody"></div></div>
+  </div>
+</div>
+
 <!-- help / keyboard shortcuts overlay -->
 <div class="modalback" id="helpBack">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
@@ -2968,7 +3003,15 @@ function creatureTypeHue(cr){ cr=cr||{};
   if(isPokePack()){ var h=POKE_TYPE_HUE[POKE_TYPES[pokeIdx(cr)]]; if(h!=null) return h; }
   if(cfg().creaturePack==="village"){ return TROOP_HUE[TROOP_ARCH[pokeIdx(cr)%8]]; }
   return cr.typeHue!=null?cr.typeHue:(cr.hue!=null?cr.hue:220); }
-function creatureStage(cr){ cr=cr||{}; var s=cr.stage!=null?cr.stage|0:3; return Math.max(0,Math.min(4,s)); }
+// Cross-session high-water evolution stage for a species (New Game+): once a species has
+// reached a stage in ANY past/live session, new sessions START at that grown form instead
+// of resetting to Egg. Keyed by pokeIdx(cr) to match dexHighWater()'s species key. DEX_MAX
+// is the same persisted map the Pokedex uses; it is also seeded on startup from /api/pokedex
+// (see primeHighWater) so the floor applies even if the Pokedex view was never opened.
+function speciesHighWater(cr){ var hw=DEX_MAX[String(pokeIdx(cr))]; return hw!=null?Math.max(0,Math.min(4,hw|0)):0; }
+function creatureStage(cr){ cr=cr||{}; var s=cr.stage!=null?cr.stage|0:3; s=Math.max(0,Math.min(4,s));
+  if(cr._noFloor) return s;   // explicit-stage renders (preview nodes, evolving animation) skip the floor
+  var hw=speciesHighWater(cr); return hw>s?hw:s; }
 function creatureSeed(cr){ cr=cr||{}; return hashStr((cr.species||cr.name||"")+"|"+creatureIndex(cr)); }
 function creatureSpecies(cr){ cr=cr||{};
   if(isPokePack()) return pokeCurrentName(cr);  // current evolved form
@@ -3110,12 +3153,16 @@ function pokeImgFor(dex, cr, px, altName){
   if(cfg().creaturePack==="pokemon3d"){
     var mega = (stage>=4) ? (MEGA_SLUG[pokeIdx(cr)]||null) : null;
     var slug = mega || String(altName||"").toLowerCase().replace(/[^a-z0-9]/g,"");
-    // mega gifs live in the X/Y animados dir; regular 3D come from SwSh
-    var src8 = mega ? ((shiny?PKPARAISO_XY_SHINY:PKPARAISO_XY)+mega+".gif")
-                    : (PKPARAISO_SWSH+slug+(shiny?"-s":"")+".gif");
-    return '<img class="pokeimg pokeimg-3d'+(mega?" pokeimg-mega":"")+'" src="'+src8+'" width="'+px+'" height="'+px+'"'+
+    // Lead with the Gen-6 X/Y animated 3D sprite. Every species here is <=649, so X/Y
+    // (national dex Gen1-6) has ALL of them — the first request succeeds, so we never
+    // paint the SwSh 404 -> onerror -> swap that caused the render/dim/re-render flicker.
+    // X/Y shiny lives in a SEPARATE dir (no "-s" suffix); mega gifs are X/Y-only anyway
+    // (Gen 8 dropped Mega Evolution). Fallback chain: X/Y gif -> HOME still png -> monster svg.
+    var xyBase = shiny ? PKPARAISO_XY_SHINY : PKPARAISO_XY;
+    var src0 = xyBase + slug + ".gif";
+    return '<img class="pokeimg pokeimg-3d'+(mega?" pokeimg-mega":"")+'" src="'+src0+'" width="'+px+'" height="'+px+'"'+
       ' alt="'+esc(altName||"")+(shiny?" (shiny)":"")+'" data-dex="'+dex+'" data-shiny="'+shiny+'"'+
-      ' data-3d="1" data-mega="'+(mega?1:0)+'" data-slug="'+slug+'" data-try="'+(mega?1:0)+'" data-fb="'+fb+'" onerror="pokeErr(this)" loading="lazy">';
+      ' data-3d="1" data-mega="'+(mega?1:0)+'" data-slug="'+slug+'" data-try="0" data-fb="'+fb+'" onerror="pokeErr(this)" loading="lazy">';
   }
   return '<img class="pokeimg" src="'+POKE_ANIM+sub+dex+'.gif" width="'+px+'" height="'+px+'"'+
     ' alt="'+esc(altName||"")+(shiny?" (shiny)":"")+'" data-dex="'+dex+'" data-shiny="'+shiny+'"'+
@@ -3130,10 +3177,9 @@ function pokeErr(img){
   var sub = shiny ? "shiny/" : "";
   var dex = img.getAttribute("data-dex");
   if(img.getAttribute("data-3d")==="1"){
-    // animated 3D: SwSh(Gen8) -> X/Y(Gen6, near-full coverage, still ANIMATED) -> HOME still -> svg
-    var slug=img.getAttribute("data-slug")||"";
-    if(t===0){ img.setAttribute("data-try","1"); img.src=(shiny?PKPARAISO_XY_SHINY:PKPARAISO_XY)+slug+".gif"; return; }
-    if(t===1){ img.setAttribute("data-try","2"); img.src=POKE_STATIC+"other/home/"+(shiny?"shiny/":"")+dex+".png"; return; }
+    // primary is now the X/Y(Gen6) animated gif, so on failure go straight to the HOME
+    // still png, then the generated monster svg. (SwSh added no coverage for species<=649.)
+    if(t===0){ img.setAttribute("data-try","1"); img.src=POKE_STATIC+"other/home/"+(shiny?"shiny/":"")+dex+".png"; return; }
   } else if(t===0){
     img.setAttribute("data-try","1"); img.src=POKE_STATIC+sub+dex+".png"; return;
   }
@@ -3560,7 +3606,7 @@ function partySig(sessions){
   // so the party isn't rebuilt (which restarts every animated sprite) each SSE tick.
   var parts=(sessions||[]).map(function(s){ var c=s.creature||{};
     return [s.id,s.status,s.title,s.alias||"",s.pinned?1:0,(s.tags||[]).join(","),s.note||"",s.folder||"",
-            c.species,c.stage,c.shiny?1:0].join(""); });
+            c.species,creatureStage(c),c.shiny?1:0].join(""); });
   return [QUERY,SORT,FILTER,FILTERTAG,FILTERFOLDER,STALE_OPEN?1:0,cfg().creaturePack].join("|")+"||"+parts.join("");
 }
 function renderParty(sessions){
@@ -4186,6 +4232,9 @@ function renderDrawer(sess, d){
     '<div class="crline"><span class="species">'+esc(creatureSpecies(crD))+'</span>'+typeBadgeHTML(crD)+
     '<span class="stagepill">'+esc(creatureStageName(crD))+(crD.shiny?' <span class="shinystar" title="Shiny">✦</span>':'')+'</span></div>'+
     evobarHTML(crD);
+  if(isPokePack()){ var evb=el("button","hbtn"); evb.type="button"; evb.style.marginTop="8px";
+    evb.textContent="🧬 Evolution line";
+    evb.addEventListener("click",function(){ openEvoPreview(crD); }); crBox.appendChild(evb); }
   secCr.appendChild(crBox); body.appendChild(secCr);
   // keep the drawer avatar in sync with the freshest creature data
   paintCreature($("dwAv"), crD, 76);
@@ -4346,6 +4395,7 @@ function render(){
   if(!STATE) return;
   syncConfig(STATE.config);
   STATE_AT = Date.now();
+  seedHighWaterFromSessions(STATE.sessions);   // lift New Game+ floor before painting cards
   renderSeason(STATE.season);
   renderInsights(STATE.season);
   renderTagFilter(STATE.sessions);
@@ -4473,6 +4523,7 @@ document.addEventListener("keydown",function(e){
   if((e.metaKey||e.ctrlKey) && (e.key==="k"||e.key==="K")){ e.preventDefault(); toggleCmdk(); return; }
   if(e.key==="Escape"){
     if($("evoSplash").classList.contains("on")){ closeEvoSplash(); return; }
+    if($("evoPreviewBack").classList.contains("open")){ closeEvoPreview(); return; }
     if($("warroom").classList.contains("on")){ closeWarroom(); return; }
     if($("transcriptBack").classList.contains("open")){ closeTranscript(); return; }
     if($("projectBack").classList.contains("open")){ closeProject(); return; }
@@ -4512,6 +4563,7 @@ function restoreOpener(){ var t=MODAL_RETURN; MODAL_RETURN=null;
 // The currently-topmost open overlay, or null. Order = visual stacking priority.
 function currentModal(){
   if($("warroom") && $("warroom").classList.contains("on")) return $("warroom");
+  if($("evoPreviewBack") && $("evoPreviewBack").classList.contains("open")) return $("evoPreviewBack");
   if(typeof CMDK_OPEN!=="undefined" && CMDK_OPEN) return $("cmdk");
   if($("transcriptBack") && $("transcriptBack").classList.contains("open")) return $("transcriptBack");
   if($("projectBack") && $("projectBack").classList.contains("open")) return $("projectBack");
@@ -4592,6 +4644,7 @@ Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
   t.addEventListener("click",function(){ setView(t.getAttribute("data-view")); });
 });
 setView(VIEW);
+primeHighWater();   // seed New Game+ evolution floor from the backend Pokédex on startup
 
 /* ---- live streaming (SSE) with poll fallback ---- */
 var es=null, pollTimer=null, sseRetry=null;
@@ -4992,6 +5045,30 @@ function dexHighWater(species, cur){
   var k=String(species), prev=DEX_MAX[k]||0, m=Math.max(prev, cur||0);
   if(m!==prev){ DEX_MAX[k]=m; try{ localStorage.setItem("hq_dex_max", JSON.stringify(DEX_MAX)); }catch(e){} }
   return m;
+}
+// --- New Game+ high-water seeding (drives speciesHighWater/creatureStage flooring) ---
+// Raise DEX_MAX for a species from a RAW stage value only (never the floored creatureStage
+// output — else an inflated value would lock into localStorage). Returns true if it rose.
+function seedHW(species, rawStage){
+  var k=String(((species|0)%48+48)%48), v=Math.max(0,Math.min(4,rawStage|0));
+  if(v>(DEX_MAX[k]||0)){ DEX_MAX[k]=v; try{ localStorage.setItem("hq_dex_max",JSON.stringify(DEX_MAX)); }catch(e){} return true; }
+  return false;
+}
+// Seed from the live sessions' RAW backend stage each render (before renderParty), so a
+// concurrent higher session of a species lifts new ones to the same form immediately.
+function seedHighWaterFromSessions(sessions){ var ch=false;
+  (sessions||[]).forEach(function(s){ var c=s.creature||{}; if(c.stage==null) return;
+    if(seedHW(pokeIdx(c), c.stage)) ch=true; });
+  return ch;
+}
+// Seed once on startup from the backend Pokédex (cross-session maxStage) regardless of
+// whether the Pokédex view was ever opened, then repaint the party if the floor rose.
+function primeHighWater(){
+  fetch('/api/pokedex',{cache:"no-store"}).then(function(r){ return r.ok?r.json():null; })
+   .then(function(d){ if(!d) return; var list=d.species||d.pokedex||d.entries||[]; var ch=false;
+     list.forEach(function(sp){ if(sp&&sp.caught&&sp.maxStage!=null){ if(seedHW(sp.species!=null?sp.species:sp.index, sp.maxStage)) ch=true; } });
+     if(ch && typeof STATE!=="undefined" && STATE){ PARTY_SIG=null; renderParty(STATE.sessions); } })
+   .catch(function(){});
 }
 function dexCrOf(sp,i){
   var caught=!!sp.caught, idx=sp.index!=null?sp.index:i;
@@ -5639,6 +5716,48 @@ $("menuDigest").addEventListener("click",function(){ openDigest(); closeMenu(); 
 $("menuVoice").addEventListener("click",function(){ toggleVoice(); closeMenu(); });
 function forceRefresh(){ load(); pulse(); if(VIEW==="analytics") loadHistory(); }
 
+/* ---- evolution-line preview modal ----
+   Reuses the existing sprite helper (pokeImgFor with an explicit dex) for every node,
+   so nothing new is drawn: base->final along POKE_EVO, plus the Mega form when eligible.
+   Non-apex nodes are rendered from a stage-clamped clone so the 3D pack's mega-override
+   (creatureStage>=4) doesn't hijack mid-line sprites. */
+function openEvoPreview(cr){
+  cr=cr||{}; var body=$("evoPrevBody"); if(!body) return;
+  if(!isPokePack()){
+    body.innerHTML='<div class="feed-empty">Evolution preview is available in the Pokémon packs.</div>';
+  } else {
+    var line=pokeEvoLine(cr), pos=pokeEvoPos(cr,line), megaActive=!!pokeMega(cr),
+        canMega=(cfg().creaturePack==="pokemon3d" && pokeCanMega(cr));
+    var html='<div class="evoline">';
+    line.forEach(function(dex,i){
+      var clone=Object.assign({},cr,{stage:3,_noFloor:true});   // clamp so mega-override never fires mid-line
+      var nm=DEX_NAMES[dex]||POKE_REAL[pokeIdx(cr)]||"???";
+      if(i>0) html+='<span class="evoarrow" aria-hidden="true">→</span>';
+      html+='<div class="evonode'+((!megaActive && i===pos)?" current":"")+'">'+
+        '<div class="evo-spr">'+pokeImgFor(dex,clone,72,nm)+'</div>'+
+        '<div class="evo-nm">'+esc(nm)+'</div><div class="evo-dx">#'+String(dex).padStart(3,"0")+'</div></div>';
+    });
+    if(canMega){
+      var finalDex=line[line.length-1], mclone=Object.assign({},cr,{stage:4,_noFloor:true}),
+          mnm="Mega "+(DEX_NAMES[finalDex]||POKE_REAL[pokeIdx(cr)]||"");
+      html+='<span class="evoarrow" aria-hidden="true">⚡</span>'+
+        '<div class="evonode mega'+(megaActive?" current":"")+'">'+
+        '<div class="evo-spr">'+pokeImgFor(finalDex,mclone,72,mnm)+'</div>'+
+        '<div class="evo-nm">'+esc(mnm)+'</div><div class="evo-dx">'+(megaActive?"active":"at Apex")+'</div></div>';
+    }
+    html+='</div>';
+    var note = megaActive ? "Mega-evolved — its ultimate form."
+      : (canMega ? "Reaches its Mega form at Apex."
+      : (line.length>1 ? "Grows along this line as the session earns prompts." : "This species has a single form."));
+    html+='<div class="evoprev-note">'+esc(note)+'</div>';
+    body.innerHTML=html;
+  }
+  rememberOpener(); $("evoPreviewBack").classList.add("open"); var c=$("evoPrevClose"); if(c) c.focus();
+}
+function closeEvoPreview(){ $("evoPreviewBack").classList.remove("open"); restoreOpener(); }
+(function(){ var b=$("evoPrevClose"); if(b) b.addEventListener("click",closeEvoPreview);
+  var s=$("evoPreviewBack"); if(s) s.addEventListener("click",function(e){ if(e.target===s) closeEvoPreview(); }); })();
+
 /* ---- digest + focus wiring ---- */
 $("menuVoice").innerHTML = ico("volume")+"Voice alerts: "+(VOICE?"on":"off");
 $("menuVoice").setAttribute("aria-pressed", VOICE?"true":"false");
@@ -5810,21 +5929,71 @@ function villageRaidClose(){ var ov=$("vilRaidOverlay"); if(ov){ ov.classList.re
   var c=$("vilRaidClose"); if(c) c.addEventListener("click",villageRaidClose);
   var ov=$("vilRaidOverlay"); if(ov) ov.addEventListener("click",function(e){ if(e.target===ov) villageRaidClose(); }); })();
 
-var EVO_TIMER=null;
+var EVO_TIMER=null, EVO_MORPH_TIMERS=[];
+function clearEvoMorph(){ EVO_MORPH_TIMERS.forEach(clearTimeout); EVO_MORPH_TIMERS=[]; var n=$("evoCreature"); if(n) n.classList.remove("morphing"); }
+// Sprite HTML at an EXPLICIT stage (bypasses the New Game+ floor via _noFloor), reusing
+// the existing sprite helpers — nothing new is drawn.
+function spriteHTMLAtStage(cr, stage, px){ var c=Object.assign({},cr,{stage:Math.max(0,Math.min(4,stage|0)),_noFloor:true}); return creatureVisual({creature:c}, px); }
+function pokeNameAtStage(cr, stage){ if(!isPokePack()) return creatureSpecies(cr);
+  return pokeCurrentName(Object.assign({},cr,{stage:Math.max(0,Math.min(4,stage|0)),_noFloor:true})); }
+// Classic evolving animation: stack the pre-form and evolved sprite, cross-toggle them at
+// an ACCELERATING pace under a pulsing white-out, then reveal. Returns ms until reveal.
+function playEvoMorph(node, cr, fromStage, toStage, px, onReveal){
+  node.innerHTML='<div class="evo-morph"><span class="evo-pre">'+spriteHTMLAtStage(cr,fromStage,px)+
+    '</span><span class="evo-post" style="opacity:0">'+spriteHTMLAtStage(cr,toStage,px)+'</span></div>';
+  var pre=node.querySelector(".evo-pre"), post=node.querySelector(".evo-post");
+  if(calmMode()){ if(pre) pre.style.opacity=0; if(post) post.style.opacity=1; if(onReveal) onReveal(); return 0; }
+  node.classList.add("morphing");
+  var mega=$("evoSplash").classList.contains("mega");
+  var sched=mega?[520,470,420,370,320,280,240,205,175,150,130,110,95,82,72,64,58,54,50,48]
+                :[600,540,480,420,370,320,280,240,205,175,150,130,112,96,84,74,66,60];
+  var acc=0, showPost=false;
+  sched.forEach(function(d){ acc+=d; EVO_MORPH_TIMERS.push(setTimeout(function(){ showPost=!showPost;
+    if(pre) pre.style.opacity=showPost?0:1; if(post) post.style.opacity=showPost?1:0; }, acc)); });
+  EVO_MORPH_TIMERS.push(setTimeout(function(){ node.classList.remove("morphing");
+    if(pre) pre.style.opacity=0; if(post){ post.style.opacity=1; post.classList.add("evo-reveal"); }
+    if(onReveal) onReveal(); }, acc+140));
+  return acc+140;
+}
+// Announce a notable evolution to everyone on the Arena leaderboard (throttled fan-out over
+// the existing nudge mechanism — the server has no broadcast primitive). Fire-and-forget.
+function arenaAnnounceEvolution(s, mega){
+  var cr=s.creature||{}, name=isPokePack()?pokeCurrentName(cr):creatureSpecies(cr);
+  fetch("/api/arena/status",{cache:"no-store"}).then(function(r){return r.json();}).then(function(st){
+    if(!st || !st.paired || !st.enabled) return;
+    var me=(st.handle||"").toLowerCase(), who=st.displayName||st.handle||"A trainer";
+    var note=who+"'s "+name+(mega?" just MEGA-EVOLVED! ⚡":" evolved! ✨");
+    fetch("/api/arena/board?window=season",{cache:"no-store"}).then(function(r){return r.json();}).then(function(b){
+      var rows=(b&&b.entries)||[], handles=[];
+      rows.forEach(function(e){ var h=e.handle; if(h && h.toLowerCase()!==me && handles.indexOf(h)<0) handles.push(h); });
+      handles=handles.slice(0,40);   // cap so we never trip the server's rate limit
+      handles.forEach(function(h,i){ setTimeout(function(){ try{ arenaPost("/api/arena/nudge",{toHandle:h, note:note}); }catch(e){} }, 300+i*280); });
+      if(handles.length) logEvent("📣","Announced to "+handles.length+" trainer"+(handles.length===1?"":"s")+" in the Arena");
+    }).catch(function(){});
+  }).catch(function(){});
+}
 function showEvoSplash(s, fromStage){
   var el2=$("evoSplash"); if(!el2) return;
   var cr=s.creature||{};
   var mega = !!pokeMega(cr);   // reached Apex with an eligible Mega form (3D pack)
   var species=creatureSpecies(cr), stageNm=creatureStageName(cr), nm=isPokePack()?pokeCurrentName(cr):species;
-  paintCreature($("evoCreature"), cr, Math.min(mega?380:320, Math.round(window.innerHeight*(mega?0.5:0.42))), false);
+  var size=Math.min(mega?380:320, Math.round(window.innerHeight*(mega?0.5:0.42)));
   el2.classList.toggle("mega", mega);
-  $("evoKicker").textContent = mega ? "⚡ MEGA EVOLUTION! ⚡" : "✨ What?! Your creature is evolving! ✨";
-  $("evoTitle").textContent = mega ? (nm+"!") : (species+" evolved!");
-  $("evoSub").textContent = mega ? ((s.title||s.name||"Session")+" reached its ultimate form")
-                                 : ((s.title||s.name||"Session")+" · now "+stageNm);
+  // Start on the "evolving" beat (pre-form name); reveal the evolved identity at morph end.
+  $("evoKicker").textContent = "✨ What?! "+pokeNameAtStage(cr,fromStage)+" is evolving! ✨";
+  $("evoTitle").textContent = "";
+  $("evoSub").textContent = (s.title||s.name||"Session");
   el2.classList.add("on"); el2.setAttribute("aria-hidden","false");
-  if(!calmMode()){ el2.classList.remove("flash"); void el2.offsetWidth; el2.classList.add("flash"); confettiBurst(); if(mega) setTimeout(confettiBurst,450); }
   try{ playChime(); }catch(e){}
+  clearEvoMorph();
+  playEvoMorph($("evoCreature"), cr, fromStage, creatureStage(cr), size, function(){
+    $("evoKicker").textContent = mega ? "⚡ MEGA EVOLUTION! ⚡" : "✨ Congratulations! ✨";
+    $("evoTitle").textContent = mega ? (nm+"!") : (species+" evolved into "+nm+"!");
+    $("evoSub").textContent = mega ? ((s.title||s.name||"Session")+" reached its ultimate form")
+                                   : ((s.title||s.name||"Session")+" · now "+stageNm);
+    if(!calmMode()){ el2.classList.remove("flash"); void el2.offsetWidth; el2.classList.add("flash"); confettiBurst(); if(mega) setTimeout(confettiBurst,450); }
+    try{ if(mega) playChime(); }catch(e){}
+  });
   if(mega){  // make the moment reach the user even if HQ isn't the active tab
     try{ if(NOTIF_ON && ("Notification" in window) && Notification.permission==="granted"){
       var n=new Notification("⚡ MEGA EVOLUTION", {body:nm+" — "+(s.title||s.name||"a session")+" reached its ultimate form!", tag:"hq-mega-"+(s.id||s.sessionId||""), silent:false});
@@ -5833,22 +6002,34 @@ function showEvoSplash(s, fromStage){
     try{ window.focus(); }catch(e){}
   }
   $("evoClose").focus();
-  clearTimeout(EVO_TIMER); EVO_TIMER=setTimeout(closeEvoSplash, mega?7000:5000);  // auto-dismiss
+  // Broadcast only NOTABLE events (final form reached, or mega) to be a good Arena citizen.
+  var notable = mega || (isPokePack() && (function(){ var l=pokeEvoLine(cr); return pokeEvoPos(cr,l)===l.length-1; })());
+  if(notable){ try{ arenaAnnounceEvolution(s, mega); }catch(e){} }
+  clearTimeout(EVO_TIMER); EVO_TIMER=setTimeout(closeEvoSplash, mega?11000:10000);  // ~10s cinematic
 }
-function closeEvoSplash(){ clearTimeout(EVO_TIMER); var e=$("evoSplash"); if(e){ e.classList.remove("on","flash","mega"); e.setAttribute("aria-hidden","true"); } }
+function closeEvoSplash(){ clearTimeout(EVO_TIMER); clearEvoMorph(); var e=$("evoSplash"); if(e){ e.classList.remove("on","flash","mega"); e.setAttribute("aria-hidden","true"); } }
 (function(){ var b=$("evoClose"); if(b) b.addEventListener("click",closeEvoSplash);
   var s=$("evoSplash"); if(s) s.addEventListener("click",function(e){ if(e.target===s) closeEvoSplash(); }); })();
+// Raw (un-floored) backend growth stage for a session. Defaults to 0 (not 3) when the
+// backend omits stage, so a genuinely-new session is distinguished and the New Game+
+// floor is never mistaken for organic growth.
+function rawStageOf(s){ var c=(s&&s.creature)||{}; return Math.max(0,Math.min(4, c.stage!=null?c.stage|0:0)); }
 function checkEvolution(sessions){
   sessions = sessions||[];
   if(!STAGE_BASE){
-    sessions.forEach(function(s){ var id=s.sessionId||s.id; if(id) STAGE_PREV[id]=creatureStage(s.creature); });
+    sessions.forEach(function(s){ var id=s.sessionId||s.id; if(id) STAGE_PREV[id]={r:rawStageOf(s), d:creatureStage(s.creature)}; });
     STAGE_BASE=true; return;
   }
   sessions.forEach(function(s){
     var id=s.sessionId||s.id; if(!id) return;
-    var cur=creatureStage(s.creature);
+    var curR=rawStageOf(s), curD=creatureStage(s.creature);
     var prev=STAGE_PREV[id];
-    if(prev!=null && cur>prev){
+    // Celebrate ONLY when this session actually grew (raw stage up) AND that growth
+    // raised the shown form (display up). A rising New Game+ floor (a sibling/seed
+    // bumping DEX_MAX) changes curD but not curR, so it can't fire a phantom evolution;
+    // organic growth below an already-unlocked floor changes curR but not curD, so it
+    // stays silent until the form visibly changes.
+    if(prev && prev.r!=null && curR>prev.r && curD>prev.d){
       var mg=!!pokeMega(s.creature);
       if(mg){
         toast("⚡ "+pokeCurrentName(s.creature)+"! Mega Evolution!","level");
@@ -5858,9 +6039,9 @@ function checkEvolution(sessions){
         logEvent("✨", creatureSpecies(s.creature)+" evolved to "+creatureStageName(s.creature)+" ("+(s.title||s.name||"session")+")");
       }
       confettiBurst();
-      showEvoSplash(s, prev);
+      showEvoSplash(s, prev.d);
     }
-    STAGE_PREV[id]=cur;
+    STAGE_PREV[id]={r:curR, d:curD};
   });
   var live={}; sessions.forEach(function(s){ var id=s.sessionId||s.id; if(id) live[id]=1; });
   Object.keys(STAGE_PREV).forEach(function(k){ if(!live[k]) delete STAGE_PREV[k]; });

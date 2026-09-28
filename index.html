@@ -1878,7 +1878,6 @@ html.hq-calm #confetti{display:none!important}
           <label for="setPack">Creature pack</label>
           <select id="setPack">
             <option value="pokemon">Pokémon (animated sprites)</option>
-            <option value="anime">Anime — Digimon (sprites)</option>
             <option value="monsters">Monsters (generated)</option>
             <option value="animals">Animals (emoji)</option>
             <option value="faces">Faces (emoji)</option>
@@ -2824,7 +2823,6 @@ function creatureStage(cr){ cr=cr||{}; var s=cr.stage!=null?cr.stage|0:3; return
 function creatureSeed(cr){ cr=cr||{}; return hashStr((cr.species||cr.name||"")+"|"+creatureIndex(cr)); }
 function creatureSpecies(cr){ cr=cr||{};
   if(cfg().creaturePack==="pokemon") return pokeCurrentName(cr);  // current evolved form
-  if(cfg().creaturePack==="anime") return digiName(cr);
   if(cr.speciesName) return cr.speciesName;
   if(cfg().creaturePack==="monsters") return MONSTER_SPECIES[creatureIndex(cr)]||cr.name||"Monster";
   return cr.name||MONSTER_SPECIES[creatureIndex(cr)]||"Monster"; }
@@ -2954,26 +2952,6 @@ function pokeErr(img){
   catch(e){ img.style.display="none"; }
 }
 
-/* ---- "anime" pack: Digimon sprites (public digi-api.com CDN) ----
-   Same posture as the pokemon pack: we hotlink public sprite URLs (never bundle
-   assets). Needs internet; falls back to the generated monster sprite offline/404. */
-var DIGI_BASE="https://digi-api.com/images/digimon/w/";
-var DIGI_NAMES=["Agumon","Gabumon","Patamon","Biyomon","Tentomon","Palmon","Gomamon","Gatomon","Veemon","Guilmon","Renamon","Terriermon","Impmon","Greymon","Garurumon","Angemon","Birdramon","Kabuterimon","Togemon","Ikkakumon","Devimon","Leomon","Meramon","Kuwagamon","Numemon","Monochromon","Seadramon","Ogremon","MetalGreymon","Angewomon","Lillymon","Zudomon","Garudamon","WereGarurumon","Myotismon","Wizardmon","WarGreymon","MetalGarurumon","Gallantmon","Beelzemon","Growlmon","Kyubimon","Gargomon","ExVeemon","Stingmon","Flamedramon","Salamon","Elecmon"];
-function digiName(cr){ return DIGI_NAMES[pokeIdx(cr)] || "Agumon"; }
-function digiImgHTML(cr, px){
-  var seed=creatureSeed(cr), hue=creatureTypeHue(cr), stage=creatureStage(cr), shiny=cr&&cr.shiny?1:0;
-  var fb=encodeURIComponent(JSON.stringify([seed,hue,stage,shiny,px]));
-  var nm=digiName(cr);
-  return '<img class="pokeimg" src="'+DIGI_BASE+encodeURIComponent(nm)+'.png" width="'+px+'" height="'+px+'"'+
-    ' alt="'+esc(nm)+'" data-fb="'+fb+'" onerror="svgErr(this)" loading="lazy">';
-}
-// onerror: fall straight back to the generated monster sprite (offline / 404).
-function svgErr(img){
-  try{ var a=JSON.parse(decodeURIComponent(img.getAttribute("data-fb")));
-       img.outerHTML=monsterSVG(a[0],a[1],a[2],!!a[3],a[4]); }
-  catch(e){ img.style.display="none"; }
-}
-
 function paintCreature(node, cr, px, bg){
   cr=cr||{}; if(bg===undefined) bg=true; px=px||46;
   node.classList.remove("shiny","cre-svg");
@@ -2981,13 +2959,6 @@ function paintCreature(node, cr, px, bg){
     if(bg){ var isD=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches;
             node.style.background="hsl("+creatureTypeHue(cr)+",55%,"+(isD?"20%":"90%")+")"; }
     node.innerHTML=pokeImgHTML(cr, px);
-    if(cr.shiny) node.classList.add("shiny");
-    return;
-  }
-  if(cfg().creaturePack==="anime"){
-    if(bg){ var isDa=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches;
-            node.style.background="hsl("+creatureTypeHue(cr)+",55%,"+(isDa?"20%":"90%")+")"; }
-    node.innerHTML=digiImgHTML(cr, px);
     if(cr.shiny) node.classList.add("shiny");
     return;
   }
@@ -3009,7 +2980,6 @@ function paintCreature(node, cr, px, bg){
 function creatureVisual(x, px){
   var cr=(x && x.creature)?x.creature:(x||{}); px=px||46;
   if(cfg().creaturePack==="pokemon") return pokeImgHTML(cr, px);
-  if(cfg().creaturePack==="anime") return digiImgHTML(cr, px);
   if(cfg().creaturePack==="monsters")
     return monsterSVG(creatureSeed(cr),creatureTypeHue(cr),creatureStage(cr),!!cr.shiny,px);
   return esc(creatureEmoji(cr));
@@ -4763,11 +4733,10 @@ function buildDexCard(sp,i,cr){
     var spr=el("div","dex-sprite");
     // caught pokemon -> real sprite; everything else / uncaught -> deterministic silhouette (greyed via CSS)
     if(caught && cfg().creaturePack==="pokemon"){ spr.innerHTML=pokeImgHTML(cr, 72); }
-    else if(caught && cfg().creaturePack==="anime"){ spr.innerHTML=digiImgHTML(cr, 72); }
     else { spr.innerHTML=monsterSVG(creatureSeed(cr), creatureTypeHue(cr), Math.max(0,Math.min(4,maxStage)), caught&&!!sp.shiny, 72); }
     card.appendChild(spr);
     var nm=el("div","dex-name");
-    nm.textContent = !caught ? "???" : (cfg().creaturePack==="pokemon" ? pokeCurrentName(cr) : cfg().creaturePack==="anime" ? digiName(cr) : (sp.speciesName||sp.name||"Monster"));
+    nm.textContent = !caught ? "???" : (cfg().creaturePack==="pokemon" ? pokeCurrentName(cr) : (sp.speciesName||sp.name||"Monster"));
     card.appendChild(nm);
     if(caught){ var tb=el("div"); tb.innerHTML=typeBadgeHTML(cr); if(tb.firstChild) card.appendChild(tb.firstChild); }
     var st=el("div","dex-statrow");
@@ -5295,7 +5264,6 @@ function renderCmdk(){
     var ic=el("div","ci-ic");
     if(it.cr && cfg().creaturePack==="monsters"){ ic.innerHTML=monsterSVG(creatureSeed(it.cr),creatureTypeHue(it.cr),creatureStage(it.cr),!!it.cr.shiny,18); }
     else if(it.cr && cfg().creaturePack==="pokemon"){ ic.innerHTML=pokeImgHTML(it.cr,18); }
-    else if(it.cr && cfg().creaturePack==="anime"){ ic.innerHTML=digiImgHTML(it.cr,18); }
     else { ic.textContent=it.ic; }
     row.appendChild(ic);
     var t=el("div","ci-t"); t.textContent=it.label; row.appendChild(t);

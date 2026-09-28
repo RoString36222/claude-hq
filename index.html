@@ -638,7 +638,7 @@ details.stalewrap .hint{text-transform:none;letter-spacing:0}
 @keyframes evoflash{0%{opacity:0}8%{opacity:.9}30%{opacity:0}100%{opacity:0}}
 .evo-inner{position:relative;display:flex;flex-direction:column;align-items:center;gap:14px;padding:24px}
 .evo-kicker{font-weight:800;letter-spacing:.5px;color:#ffe08a;font-size:15px;text-shadow:0 0 12px rgba(255,210,90,.6)}
-.evo-creature{width:min(48vmin,320px);height:min(48vmin,320px);display:grid;place-items:center;
+.evo-creature{position:relative;width:min(48vmin,320px);height:min(48vmin,320px);display:grid;place-items:center;
   filter:drop-shadow(0 0 40px rgba(140,110,255,.7));animation:evopop .6s cubic-bezier(.2,.9,.3,1.4)}
 .evo-creature img,.evo-creature .mon-svg{width:100%;height:100%;object-fit:contain;image-rendering:auto}
 @keyframes evopop{0%{transform:scale(.2);opacity:0}60%{transform:scale(1.12)}100%{transform:scale(1);opacity:1}}
@@ -648,6 +648,20 @@ details.stalewrap .hint{text-transform:none;letter-spacing:0}
 html.hq-calm #evoSplash .evo-creature{animation:none}
 html.hq-calm #evoSplash.flash .evo-flash{animation:none}
 @media (prefers-reduced-motion: reduce){ #evoSplash .evo-creature,#evoSplash.flash .evo-flash{animation:none} }
+/* Mega Evolution — grander, hotter, with an aura */
+#evoSplash.mega{background:radial-gradient(1200px 900px at 50% 42%,#3a0d3d 0%,#1a0522 55%,#000 100%)}
+#evoSplash.mega .evo-kicker{color:#ff7ae0;font-size:18px;text-shadow:0 0 16px rgba(255,90,200,.8)}
+#evoSplash.mega .evo-title{font-size:36px;background:linear-gradient(90deg,#ffd36e,#ff6ec7,#8f7bff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+#evoSplash.mega .evo-creature{width:min(58vmin,380px);height:min(58vmin,380px);
+  filter:drop-shadow(0 0 60px rgba(255,110,199,.85));animation:evopop .7s cubic-bezier(.2,.9,.3,1.4),megahover 2.4s ease-in-out .7s infinite}
+#evoSplash.mega .evo-creature::before{content:"";position:absolute;inset:-8%;border-radius:50%;
+  background:conic-gradient(from 0deg,rgba(255,110,199,.0),rgba(255,110,199,.35),rgba(143,123,255,.0),rgba(255,211,110,.35),rgba(255,110,199,.0));
+  animation:megaspin 3.2s linear infinite;z-index:-1}
+@keyframes megaspin{to{transform:rotate(360deg)}}
+@keyframes megahover{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+html.hq-calm #evoSplash.mega .evo-creature{animation:none}
+html.hq-calm #evoSplash.mega .evo-creature::before{animation:none;opacity:.4}
+@media (prefers-reduced-motion: reduce){ #evoSplash.mega .evo-creature,#evoSplash.mega .evo-creature::before{animation:none} }
 @keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.06) translateY(-3%)}}
 .animo-img{image-rendering:auto;animation:breathe 2.6s ease-in-out infinite}
 .card.working .avatar .animo-img{animation:breathe 1.2s ease-in-out infinite}
@@ -1968,7 +1982,7 @@ html.hq-calm #confetti{display:none!important}
 <div id="evoSplash" role="dialog" aria-modal="true" aria-label="Evolution" aria-hidden="true">
   <div class="evo-flash" id="evoFlash"></div>
   <div class="evo-inner">
-    <div class="evo-kicker">✨ What?! Your creature is evolving! ✨</div>
+    <div class="evo-kicker" id="evoKicker">✨ What?! Your creature is evolving! ✨</div>
     <div class="evo-creature" id="evoCreature">🐣</div>
     <div class="evo-title" id="evoTitle"></div>
     <div class="evo-sub" id="evoSub"></div>
@@ -2967,13 +2981,20 @@ var DEX_NAMES={172:"Pichu",25:"Pikachu",26:"Raichu",4:"Charmander",5:"Charmeleon
 152:"Chikorita",153:"Bayleef",154:"Meganium",403:"Shinx",404:"Luxio",405:"Luxray",
 633:"Deino",634:"Zweilous",635:"Hydreigon",610:"Axew",611:"Fraxure",612:"Haxorus",
 81:"Magnemite",82:"Magneton",462:"Magnezone",636:"Larvesta",637:"Volcarona"};
+// Eligible Mega Evolutions (species index -> PkParaiso X/Y mega slug). A creature that
+// reaches Apex (stage 4) in the 3D pack Mega-evolves into this form. Only the confirmed-
+// available animated mega sprites are listed; others just stay at their final form.
+var MEGA_SLUG={1:"charizard-megax",2:"blastoise-mega",3:"venusaur-mega",5:"gengar-mega",8:"lucario-mega",9:"gardevoir-mega",14:"gyarados-mega",19:"garchomp-mega",20:"tyranitar-mega",24:"scizor-mega",28:"aggron-mega",33:"alakazam-mega",41:"aerodactyl-mega",44:"blaziken-mega"};
 function pokeIdx(cr){ cr=cr||{}; var i=(cr.species!=null)?(cr.species|0):creatureIndex(cr); return ((i%48)+48)%48; }
+// Mega form active? Only in the 3D pack, only at Apex, only for eligible species.
+function pokeMega(cr){ return (cfg().creaturePack==="pokemon3d" && creatureStage(cr)>=4) ? (MEGA_SLUG[pokeIdx(cr)]||null) : null; }
+function pokeCanMega(cr){ return !!MEGA_SLUG[pokeIdx(cr)]; }
 function pokeEvoLine(cr){ return POKE_EVO[pokeIdx(cr)] || [POKE_DEX[pokeIdx(cr)]]; }
 // map evolution stage (0..4) to a position along the line
 function pokeEvoPos(cr, line){ line=line||pokeEvoLine(cr);
   return Math.max(0, Math.min(line.length-1, Math.round((creatureStage(cr)/4)*(line.length-1)))); }
 function pokeDexFor(cr){ var line=pokeEvoLine(cr); return line[pokeEvoPos(cr,line)]; }
-function pokeCurrentName(cr){ return DEX_NAMES[pokeDexFor(cr)] || POKE_REAL[pokeIdx(cr)]; }
+function pokeCurrentName(cr){ var n=DEX_NAMES[pokeDexFor(cr)] || POKE_REAL[pokeIdx(cr)]; return pokeMega(cr) ? ("Mega "+n) : n; }
 // name of the NEXT form in the line, or null if already final
 function pokeNextName(cr){ var line=pokeEvoLine(cr); var p=pokeEvoPos(cr,line);
   return p < line.length-1 ? (DEX_NAMES[line[p+1]] || null) : null; }
@@ -2987,11 +3008,14 @@ function pokeImgFor(dex, cr, px, altName){
   // 3D pack: ANIMATED 3D models. Prefer Gen 8 (Sword/Shield), fall back to Gen 6 (X/Y)
   // for 'mon not in the Galar dex, then Gen-5 static, then the generated monster sprite.
   if(cfg().creaturePack==="pokemon3d"){
-    var slug=String(altName||"").toLowerCase().replace(/[^a-z0-9]/g,"");
-    var src8=PKPARAISO_SWSH+slug+(shiny?"-s":"")+".gif";
-    return '<img class="pokeimg pokeimg-3d" src="'+src8+'" width="'+px+'" height="'+px+'"'+
+    var mega = (stage>=4) ? (MEGA_SLUG[pokeIdx(cr)]||null) : null;
+    var slug = mega || String(altName||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+    // mega gifs live in the X/Y animados dir; regular 3D come from SwSh
+    var src8 = mega ? ((shiny?PKPARAISO_XY_SHINY:PKPARAISO_XY)+mega+".gif")
+                    : (PKPARAISO_SWSH+slug+(shiny?"-s":"")+".gif");
+    return '<img class="pokeimg pokeimg-3d'+(mega?" pokeimg-mega":"")+'" src="'+src8+'" width="'+px+'" height="'+px+'"'+
       ' alt="'+esc(altName||"")+(shiny?" (shiny)":"")+'" data-dex="'+dex+'" data-shiny="'+shiny+'"'+
-      ' data-3d="1" data-slug="'+slug+'" data-try="0" data-fb="'+fb+'" onerror="pokeErr(this)" loading="lazy">';
+      ' data-3d="1" data-mega="'+(mega?1:0)+'" data-slug="'+slug+'" data-try="'+(mega?1:0)+'" data-fb="'+fb+'" onerror="pokeErr(this)" loading="lazy">';
   }
   return '<img class="pokeimg" src="'+POKE_ANIM+sub+dex+'.gif" width="'+px+'" height="'+px+'"'+
     ' alt="'+esc(altName||"")+(shiny?" (shiny)":"")+'" data-dex="'+dex+'" data-shiny="'+shiny+'"'+
@@ -5523,17 +5547,28 @@ var EVO_TIMER=null;
 function showEvoSplash(s, fromStage){
   var el2=$("evoSplash"); if(!el2) return;
   var cr=s.creature||{};
-  var species=creatureSpecies(cr), stageNm=creatureStageName(cr);
-  paintCreature($("evoCreature"), cr, Math.min(320, Math.round(window.innerHeight*0.42)), false);
-  $("evoTitle").textContent = species+" evolved!";
-  $("evoSub").textContent = (s.title||s.name||"Session")+" · now "+stageNm;
+  var mega = !!pokeMega(cr);   // reached Apex with an eligible Mega form (3D pack)
+  var species=creatureSpecies(cr), stageNm=creatureStageName(cr), nm=isPokePack()?pokeCurrentName(cr):species;
+  paintCreature($("evoCreature"), cr, Math.min(mega?380:320, Math.round(window.innerHeight*(mega?0.5:0.42))), false);
+  el2.classList.toggle("mega", mega);
+  $("evoKicker").textContent = mega ? "⚡ MEGA EVOLUTION! ⚡" : "✨ What?! Your creature is evolving! ✨";
+  $("evoTitle").textContent = mega ? (nm+"!") : (species+" evolved!");
+  $("evoSub").textContent = mega ? ((s.title||s.name||"Session")+" reached its ultimate form")
+                                 : ((s.title||s.name||"Session")+" · now "+stageNm);
   el2.classList.add("on"); el2.setAttribute("aria-hidden","false");
-  if(!calmMode()){ el2.classList.remove("flash"); void el2.offsetWidth; el2.classList.add("flash"); confettiBurst(); }
+  if(!calmMode()){ el2.classList.remove("flash"); void el2.offsetWidth; el2.classList.add("flash"); confettiBurst(); if(mega) setTimeout(confettiBurst,450); }
   try{ playChime(); }catch(e){}
+  if(mega){  // make the moment reach the user even if HQ isn't the active tab
+    try{ if(NOTIF_ON && ("Notification" in window) && Notification.permission==="granted"){
+      var n=new Notification("⚡ MEGA EVOLUTION", {body:nm+" — "+(s.title||s.name||"a session")+" reached its ultimate form!", tag:"hq-mega-"+(s.id||s.sessionId||""), silent:false});
+      n.onclick=function(){ try{ window.focus(); }catch(e){} this.close(); };
+    } }catch(e){}
+    try{ window.focus(); }catch(e){}
+  }
   $("evoClose").focus();
-  clearTimeout(EVO_TIMER); EVO_TIMER=setTimeout(closeEvoSplash, 5000);  // auto-dismiss
+  clearTimeout(EVO_TIMER); EVO_TIMER=setTimeout(closeEvoSplash, mega?7000:5000);  // auto-dismiss
 }
-function closeEvoSplash(){ clearTimeout(EVO_TIMER); var e=$("evoSplash"); if(e){ e.classList.remove("on","flash"); e.setAttribute("aria-hidden","true"); } }
+function closeEvoSplash(){ clearTimeout(EVO_TIMER); var e=$("evoSplash"); if(e){ e.classList.remove("on","flash","mega"); e.setAttribute("aria-hidden","true"); } }
 (function(){ var b=$("evoClose"); if(b) b.addEventListener("click",closeEvoSplash);
   var s=$("evoSplash"); if(s) s.addEventListener("click",function(e){ if(e.target===s) closeEvoSplash(); }); })();
 function checkEvolution(sessions){
@@ -5547,9 +5582,15 @@ function checkEvolution(sessions){
     var cur=creatureStage(s.creature);
     var prev=STAGE_PREV[id];
     if(prev!=null && cur>prev){
-      toast("✨ "+creatureSpecies(s.creature)+" evolved to "+creatureStageName(s.creature)+"!","level");
+      var mg=!!pokeMega(s.creature);
+      if(mg){
+        toast("⚡ "+pokeCurrentName(s.creature)+"! Mega Evolution!","level");
+        logEvent("⚡", pokeCurrentName(s.creature)+" — Mega Evolution ("+(s.title||s.name||"session")+")");
+      } else {
+        toast("✨ "+creatureSpecies(s.creature)+" evolved to "+creatureStageName(s.creature)+"!","level");
+        logEvent("✨", creatureSpecies(s.creature)+" evolved to "+creatureStageName(s.creature)+" ("+(s.title||s.name||"session")+")");
+      }
       confettiBurst();
-      logEvent("✨", creatureSpecies(s.creature)+" evolved to "+creatureStageName(s.creature)+" ("+(s.title||s.name||"session")+")");
       showEvoSplash(s, prev);
     }
     STAGE_PREV[id]=cur;

@@ -108,11 +108,6 @@ h1,h2,h3,h4,h5{letter-spacing:-.01em}
 .wrap{max-width:none;margin:0;padding:0}
 
 .logo{display:flex;align-items:center;gap:10px;font-weight:650;font-size:15px;padding:2px 8px;letter-spacing:-.01em}
-/* original HQ crest (hex shield) — the activity orb rides as a status dot on it */
-.hq-crest{position:relative;display:inline-flex;flex:none;filter:drop-shadow(0 2px 6px color-mix(in srgb,var(--accent,#6c5cff) 40%,transparent))}
-.hq-crest svg{display:block}
-.hq-crest .logo-orb{--s:14px;position:absolute;right:-3px;bottom:-2px;margin:0;border-radius:50%;
-  box-shadow:0 0 0 2px var(--bg,#0b0d12)}
 /* the logo is a thinking orb: "listening" at rest, "working" while sessions think */
 .logo-orb{--s:40px;margin:-6px -6px -6px -8px}
 .logo small{display:block;font-size:11px;font-weight:500;color:var(--faint);letter-spacing:0;margin-top:-2px}
@@ -363,6 +358,7 @@ main:focus{outline:none}
 .shinystar{color:var(--gold);font-weight:700}
 .evobar{height:4px;border-radius:999px;background:var(--heat0);overflow:hidden;margin-top:7px}
 .evobar>span{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--brand),var(--brand2));transition:width .5s var(--ease)}
+.evobar.mega>span{background:linear-gradient(90deg,#ffd36e,#ff6ec7)}  /* climbing toward Mega */
 .evonext{font-size:11px;color:var(--faint);margin-top:4px;font-variant-numeric:tabular-nums}
 
 /* card footer: sparkline + token chip, then actions */
@@ -1325,30 +1321,7 @@ html.hq-calm #confetti{display:none!important}
 
 <div class="app">
   <aside class="sidebar" aria-label="Primary">
-    <div class="logo">
-      <span class="hq-crest" id="hqCrest" aria-hidden="true">
-        <svg viewBox="0 0 48 48" width="34" height="34" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <linearGradient id="hqg" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" style="stop-color:var(--accent,#6c5cff)"/>
-              <stop offset="1" style="stop-color:var(--accent-2,#9b8bff)"/>
-            </linearGradient>
-          </defs>
-          <!-- hex shield -->
-          <path d="M24 2 L43 12 V30 Q43 34 39 36 L26 45 Q24 46 22 45 L9 36 Q5 34 5 30 V12 Z"
-                fill="url(#hqg)" style="stroke:var(--accent,#6c5cff)" stroke-width="1.5" stroke-opacity=".35"/>
-          <path d="M24 2 L43 12 V30 Q43 34 39 36 L26 45 Q24 46 22 45 L9 36 Q5 34 5 30 V12 Z"
-                fill="none" stroke="#fff" stroke-opacity=".18" stroke-width="1"/>
-          <!-- upward command chevrons -->
-          <path d="M14 30 L24 21 L34 30" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M17 36 L24 30 L31 36" fill="none" stroke="#fff" stroke-opacity=".6" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
-          <!-- spark -->
-          <path d="M24 7 l1.3 3.1 3.1 1.3 -3.1 1.3 -1.3 3.1 -1.3 -3.1 -3.1 -1.3 3.1 -1.3 z" fill="#fff"/>
-        </svg>
-        <span class="orb logo-orb" id="logoOrb" data-orb="searching" data-speed="0.45"></span>
-      </span>
-      <span>Claude&nbsp;HQ<small>Session command center</small></span>
-    </div>
+    <div class="logo"><span class="orb logo-orb" id="logoOrb" data-orb="searching" data-speed="0.45" aria-hidden="true"></span><span>Claude&nbsp;HQ<small>Session command center</small></span></div>
     <div class="side-label" aria-hidden="true">Views</div>
     <div class="viewtabs" role="tablist" aria-label="View" aria-orientation="vertical">
       <button class="viewtab active" data-view="live" role="tab" type="button" aria-selected="true" aria-current="page"><svg class="i" aria-hidden="true"><use href="#i-live"/></svg><span class="vt-l">Live</span><span class="vt-k" aria-hidden="true">1</span></button>
@@ -3164,7 +3137,17 @@ function typeBadgeHTML(cr){ return '<span class="typebadge" style="background:hs
 function pokeFormProgress(cr){
   var raw=Object.assign({},cr,{_noFloor:true});
   var line=pokeEvoLine(raw), curPos=pokeEvoPos(raw,line), rawStage=creatureStage(raw);
-  if(curPos>=line.length-1) return {pct:100, next:null};             // already the final form
+  if(curPos>=line.length-1){                                         // at the final line form
+    // If it still Mega-evolves at Apex (stage 4), keep the meter climbing toward that.
+    if(cfg().creaturePack==="pokemon3d" && pokeCanMega(raw) && rawStage<4){
+      var fStart=null; for(var s2=0;s2<=4;s2++){ if(Math.round((s2/4)*(line.length-1))===curPos){ fStart=s2; break; } }
+      if(fStart===null) fStart=rawStage;
+      var mspan=Math.max(1, 4-fStart), mdone=(rawStage-fStart)+(creatureStagePct(cr)/100);
+      var mf=pokeMegaForm(Object.assign({},raw,{stage:4}));
+      return {pct:Math.max(0,Math.min(100,Math.round(mdone/mspan*100))), next:(mf&&mf.name)||"Mega form", mega:true};
+    }
+    return {pct:100, next:null};
+  }
   var formStart=null, nextFormStage=null;
   for(var st=0; st<=4; st++){ var p=Math.round((st/4)*(line.length-1));
     if(p===curPos && formStart===null) formStart=st;
@@ -3178,16 +3161,16 @@ function pokeFormProgress(cr){
 }
 function evobarHTML(cr){
   cr=cr||{};
-  var pct, next;
-  if(isPokePack()){ var fp=pokeFormProgress(cr); pct=fp.pct; next=fp.next; }
+  var pct, next, mega=false;
+  if(isPokePack()){ var fp=pokeFormProgress(cr); pct=fp.pct; next=fp.next; mega=!!fp.mega; }
   else {
     // non-poke packs: each stage IS a visible change, so per-stage progress is correct.
     // Use RAW growth (_noFloor) so the New Game+ display floor never resets earned progress.
     var raw=Object.assign({},cr,{_noFloor:true});
     next=creatureNextStageName(raw); pct=creatureStagePct(cr);
   }
-  return '<div class="evobar"><span style="width:'+pct+'%"></span></div>'+
-    (next ? '<div class="evonext">'+pct+'% → '+esc(next)+'</div>' : '<div class="evonext">Fully evolved</div>');
+  return '<div class="evobar'+(mega?' mega':'')+'"><span style="width:'+pct+'%"></span></div>'+
+    (next ? '<div class="evonext">'+pct+'% '+(mega?'⚡':'→')+' '+esc(next)+'</div>' : '<div class="evonext">Fully evolved</div>');
 }
 // The one place that decides sprite vs emoji. Used everywhere a creature is shown.
 // pack "monsters" (default) -> generated SVG; "pokemon"/"animals"/"faces" -> emoji.

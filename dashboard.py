@@ -2851,7 +2851,7 @@ class Handler(BaseHTTPRequestHandler):
             # network-first SW: never serves stale content, but enables install +
             # an offline fallback to the last cached shell.
             self._send(200,
-                'const C="claude-hq-v3";'
+                'const C="claude-hq-v4";'
                 'self.addEventListener("install",e=>self.skipWaiting());'
                 'self.addEventListener("activate",e=>e.waitUntil(self.clients.claim()));'
                 'self.addEventListener("fetch",e=>{'

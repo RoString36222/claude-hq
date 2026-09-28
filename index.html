@@ -727,6 +727,19 @@ html.hq-calm #evoSplash.mega .evo-creature::before{animation:none;opacity:.4}
 .evoarrow{align-self:center;color:var(--faint);font-size:18px;font-weight:700;padding-bottom:22px}
 .evoprev-note{margin-top:12px;text-align:center;font-size:12.5px;color:var(--faint)}
 /* compact inline evolution line inside the session drawer */
+.dw-choose{margin-top:10px}
+/* evolution/mega path picker */
+.evopick-prev{display:flex;justify-content:center;padding:4px 0 10px;border-bottom:1px solid var(--border);margin-bottom:12px;overflow-x:auto}
+.evopick-h{font-weight:700;font-size:13px;margin:12px 0 8px}
+.evopick-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:10px}
+.evopick-grid.mega{grid-template-columns:repeat(auto-fill,minmax(120px,1fr))}
+.evopick-opt{display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 6px;border:2px solid var(--border);
+  border-radius:12px;background:var(--panel);cursor:pointer;color:var(--text);transition:border-color .12s,transform .12s,background .12s}
+.evopick-opt:hover{transform:translateY(-2px);border-color:var(--accent,#6c5cff)}
+.evopick-opt:focus-visible{outline:2px solid var(--accent,#6c5cff);outline-offset:2px}
+.evopick-opt.sel{border-color:var(--accent,#6c5cff);background:color-mix(in srgb,var(--accent,#6c5cff) 12%,var(--panel))}
+.evopick-opt .evo-spr{width:64px;height:64px;display:grid;place-items:center;overflow:visible}
+.evopick-opt .evo-nm{font-size:12px;font-weight:600}.evopick-opt .evo-dx{font-size:10px;color:var(--muted)}
 .dw-evoline{margin-top:10px}
 .dw-evoline .evoline{gap:6px;justify-content:flex-start;padding:2px 0}
 .dw-evoline .evonode{width:72px;padding:6px 4px;gap:3px}
@@ -1887,6 +1900,17 @@ html.hq-calm #confetti{display:none!important}
       <button class="hbtn icon ghost" id="evoPrevClose" type="button" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
     </div>
     <div class="modal-b"><div id="evoPrevBody"></div></div>
+  </div>
+</div>
+
+<!-- evolution / mega path picker -->
+<div class="modalback" id="evoPickBack">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="evoPickTitle">
+    <div class="modal-h">
+      <h3 id="evoPickTitle"><svg class="i" aria-hidden="true"><use href="#i-book"/></svg>Choose evolution</h3>
+      <button class="hbtn icon ghost" id="evoPickClose" type="button" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="modal-b"><div id="evoPickBody"></div></div>
   </div>
 </div>
 
@@ -3121,7 +3145,8 @@ function pokeFormProgress(cr){
   if(nextFormStage===null) return {pct:100, next:null};
   var span=Math.max(1, nextFormStage-formStart);
   var done=(rawStage-formStart)+(creatureStagePct(cr)/100);          // stages cleared + within-stage
-  return {pct:Math.max(0,Math.min(100,Math.round(done/span*100))), next:DEX_NAMES[line[curPos+1]]||null};
+  var nextName = (curPos+1===line.length-1) ? branchFinalName(cr) : (DEX_NAMES[line[curPos+1]]||null); // honor chosen branch on last hop
+  return {pct:Math.max(0,Math.min(100,Math.round(done/span*100))), next:nextName};
 }
 function evobarHTML(cr){
   cr=cr||{};
@@ -3152,6 +3177,11 @@ var PKPARAISO_SWSH="https://www.pkparaiso.com/imagenes/espada_escudo/sprites/ani
 // for 'mon that SwSh (Galar dex) dropped, so nearly everything stays ANIMATED.
 var PKPARAISO_XY="https://www.pkparaiso.com/imagenes/xy/sprites/animados/";
 var PKPARAISO_XY_SHINY="https://www.pkparaiso.com/imagenes/xy/sprites/animados-shiny/";
+// ORAS (Omega Ruby/Alpha Sapphire) animated gallery — where the 6 ORAS-era Mega
+// Evolutions (Pidgeot/Slowbro/Sceptile/Swampert/Salamence/Metagross) live; they are
+// NOT in the X/Y dir. Shiny lives in the sibling animados-shiny/ dir.
+var PKPARAISO_ORAS="https://www.pkparaiso.com/imagenes/rubi-omega-zafiro-alfa/sprites/animados/";
+var PKPARAISO_ORAS_SHINY="https://www.pkparaiso.com/imagenes/rubi-omega-zafiro-alfa/sprites/animados-shiny/";
 var POKE_DEX=[25,4,7,1,133,94,143,149,448,282,155,158,152,403,130,131,37,39,54,445,248,59,633,151,212,28,468,461,306,169,330,473,18,65,68,76,610,80,125,81,128,142,636,254,257,260,373,376];
 var POKE_REAL=["Pikachu","Charmander","Squirtle","Bulbasaur","Eevee","Gengar","Snorlax","Dragonite","Lucario","Gardevoir","Cyndaquil","Totodile","Chikorita","Shinx","Gyarados","Lapras","Vulpix","Jigglypuff","Psyduck","Garchomp","Tyranitar","Arcanine","Deino","Mew","Scizor","Sandslash","Togekiss","Weavile","Aggron","Crobat","Flygon","Mamoswine","Pidgeot","Alakazam","Machamp","Golem","Axew","Slowbro","Electabuzz","Magnemite","Tauros","Aerodactyl","Larvesta","Sceptile","Blaziken","Swampert","Salamence","Metagross"];
 // Real evolution LINES (base -> final), index-aligned with the 48 species. The sprite
@@ -3161,24 +3191,73 @@ var DEX_NAMES={172:"Pichu",25:"Pikachu",26:"Raichu",4:"Charmander",5:"Charmeleon
 155:"Cyndaquil",156:"Quilava",157:"Typhlosion",158:"Totodile",159:"Croconaw",160:"Feraligatr",
 152:"Chikorita",153:"Bayleef",154:"Meganium",403:"Shinx",404:"Luxio",405:"Luxray",
 633:"Deino",634:"Zweilous",635:"Hydreigon",610:"Axew",611:"Fraxure",612:"Haxorus",
-81:"Magnemite",82:"Magneton",462:"Magnezone",636:"Larvesta",637:"Volcarona"};
-// Eligible Mega Evolutions (species index -> PkParaiso X/Y mega slug). A creature that
-// reaches Apex (stage 4) in the 3D pack Mega-evolves into this form. Only the confirmed-
-// available animated mega sprites are listed; others just stay at their final form.
-var MEGA_SLUG={1:"charizard-megax",2:"blastoise-mega",3:"venusaur-mega",5:"gengar-mega",8:"lucario-mega",9:"gardevoir-mega",14:"gyarados-mega",19:"garchomp-mega",20:"tyranitar-mega",24:"scizor-mega",28:"aggron-mega",33:"alakazam-mega",41:"aerodactyl-mega",44:"blaziken-mega"};
+81:"Magnemite",82:"Magneton",462:"Magnezone",636:"Larvesta",637:"Volcarona",
+135:"Jolteon",136:"Flareon",470:"Leafeon",471:"Glaceon",700:"Sylveon",475:"Gallade",199:"Slowking"};
+// ---- Choosable branching evolutions + Mega forms ----
+// POKE_BRANCH: species index -> selectable FINAL forms. Element [0] MUST equal the current
+// POKE_EVO final (canonical/back-compat). A per-session choice (EVO_CHOICE) or a deterministic
+// sessionId-hash default picks which one a creature becomes at Apex. Only the FINAL position of
+// the line is affected; mid-line forms (Eevee, Kirlia, Slowpoke) are unchanged.
+var POKE_BRANCH={
+  4:[{name:"Vaporeon",dex:134},{name:"Jolteon",dex:135},{name:"Flareon",dex:136},{name:"Espeon",dex:196},{name:"Umbreon",dex:197},{name:"Leafeon",dex:470},{name:"Glaceon",dex:471},{name:"Sylveon",dex:700}], // Eevee
+  9:[{name:"Gardevoir",dex:282},{name:"Gallade",dex:475}],   // Ralts/Kirlia line
+  37:[{name:"Slowbro",dex:80},{name:"Slowking",dex:199}]      // Slowpoke line
+};
+// MEGA_FORMS: keyed by FINAL-FORM DEX (not species index) so mega availability follows the
+// chosen branch automatically (Gallade 475 / Slowking 199 have no entry -> no mega). Each form
+// carries its source dir because ORAS-era megas live in a different PkParaiso gallery.
+var MEGA_FORMS={
+  6:[{name:"Mega Charizard X",slug:"charizard-megax",dir:"xy"},{name:"Mega Charizard Y",slug:"charizard-megay",dir:"xy"}],
+  9:[{name:"Mega Blastoise",slug:"blastoise-mega",dir:"xy"}], 3:[{name:"Mega Venusaur",slug:"venusaur-mega",dir:"xy"}],
+  94:[{name:"Mega Gengar",slug:"gengar-mega",dir:"xy"}], 448:[{name:"Mega Lucario",slug:"lucario-mega",dir:"xy"}],
+  282:[{name:"Mega Gardevoir",slug:"gardevoir-mega",dir:"xy"}], 130:[{name:"Mega Gyarados",slug:"gyarados-mega",dir:"xy"}],
+  445:[{name:"Mega Garchomp",slug:"garchomp-mega",dir:"xy"}], 248:[{name:"Mega Tyranitar",slug:"tyranitar-mega",dir:"xy"}],
+  212:[{name:"Mega Scizor",slug:"scizor-mega",dir:"xy"}], 306:[{name:"Mega Aggron",slug:"aggron-mega",dir:"xy"}],
+  65:[{name:"Mega Alakazam",slug:"alakazam-mega",dir:"xy"}], 142:[{name:"Mega Aerodactyl",slug:"aerodactyl-mega",dir:"xy"}],
+  257:[{name:"Mega Blaziken",slug:"blaziken-mega",dir:"xy"}],
+  18:[{name:"Mega Pidgeot",slug:"pidgeot-mega",dir:"oras"}], 80:[{name:"Mega Slowbro",slug:"slowbro-mega",dir:"oras"}],
+  254:[{name:"Mega Sceptile",slug:"sceptile-mega",dir:"oras"}], 260:[{name:"Mega Swampert",slug:"swampert-mega",dir:"oras"}],
+  373:[{name:"Mega Salamence",slug:"salamence-mega",dir:"oras"}], 376:[{name:"Mega Metagross",slug:"metagross-mega",dir:"oras"}]
+};
+// Per-session evolution choice, keyed by sessionId: { branchDex, megaSlug }. Separate localStorage
+// key from hq_dex_max (New Game+ floor) — the two are orthogonal and both persist.
+var EVO_CHOICE=(function(){ try{ return JSON.parse(localStorage.getItem("hq_evo_choice")||"{}"); }catch(e){ return {}; } })();
 function pokeIdx(cr){ cr=cr||{}; var i=(cr.species!=null)?(cr.species|0):creatureIndex(cr); return ((i%48)+48)%48; }
-// Mega form active? Only in the 3D pack, only at Apex, only for eligible species.
-function pokeMega(cr){ return (cfg().creaturePack==="pokemon3d" && creatureStage(cr)>=4) ? (MEGA_SLUG[pokeIdx(cr)]||null) : null; }
-function pokeCanMega(cr){ return !!MEGA_SLUG[pokeIdx(cr)]; }
+function evoChoice(cr){ var sid=cr&&cr._sid; return (sid&&EVO_CHOICE[sid])||null; }
+function branchDefault(cr,opts){ return opts[ hashStr(cr&&cr._sid||"")%opts.length ]; } // deterministic by sessionId
+// The chosen (or default) FINAL dex for this creature's line.
+function branchFinalDex(cr){
+  var opts=POKE_BRANCH[pokeIdx(cr)];
+  if(!opts){ var ln=pokeEvoLine(cr); return ln[ln.length-1]; }
+  var ch=evoChoice(cr), d=(ch&&ch.branchDex!=null)?ch.branchDex:branchDefault(cr,opts).dex;
+  return opts.some(function(o){return o.dex===d;}) ? d : opts[0].dex;
+}
+function branchFinalName(cr){ return DEX_NAMES[branchFinalDex(cr)]||POKE_REAL[pokeIdx(cr)]; }
+// The active Mega FORM object (or null): 3D pack only, Apex only, follows chosen branch + X/Y toggle.
+function pokeMegaForm(cr){
+  if(cfg().creaturePack!=="pokemon3d" || creatureStage(cr)<4) return null;
+  var fs=MEGA_FORMS[branchFinalDex(cr)]; if(!fs||!fs.length) return null;
+  if(fs.length>1){ var ch=evoChoice(cr);
+    var f=ch&&ch.megaSlug&&fs.filter(function(x){return x.slug===ch.megaSlug;})[0];
+    return f||fs[ hashStr(cr&&cr._sid||"")%fs.length ]; }
+  return fs[0];
+}
+function pokeMega(cr){ return (pokeMegaForm(cr)||{}).slug||null; }
+function pokeCanMega(cr){ var fs=MEGA_FORMS[branchFinalDex(cr)]; return !!(fs&&fs.length); }
+// True when this species offers a user choice (a branch, or >1 mega on its chosen final).
+function pokeHasChoice(cr){ if(POKE_BRANCH[pokeIdx(cr)]) return true;
+  var fs=MEGA_FORMS[branchFinalDex(cr)]; return !!(fs&&fs.length>1); }
 function pokeEvoLine(cr){ return POKE_EVO[pokeIdx(cr)] || [POKE_DEX[pokeIdx(cr)]]; }
 // map evolution stage (0..4) to a position along the line
 function pokeEvoPos(cr, line){ line=line||pokeEvoLine(cr);
   return Math.max(0, Math.min(line.length-1, Math.round((creatureStage(cr)/4)*(line.length-1)))); }
-function pokeDexFor(cr){ var line=pokeEvoLine(cr); return line[pokeEvoPos(cr,line)]; }
+function pokeDexFor(cr){ var line=pokeEvoLine(cr), pos=pokeEvoPos(cr,line);
+  return pos===line.length-1 ? branchFinalDex(cr) : line[pos]; }   // final position honors the chosen branch
 function pokeCurrentName(cr){ var n=DEX_NAMES[pokeDexFor(cr)] || POKE_REAL[pokeIdx(cr)]; return pokeMega(cr) ? ("Mega "+n) : n; }
-// name of the NEXT form in the line, or null if already final
+// name of the NEXT form in the line, or null if already final (branch-aware for the last hop)
 function pokeNextName(cr){ var line=pokeEvoLine(cr); var p=pokeEvoPos(cr,line);
-  return p < line.length-1 ? (DEX_NAMES[line[p+1]] || null) : null; }
+  if(p>=line.length-1) return null;
+  return (p+1===line.length-1) ? branchFinalName(cr) : (DEX_NAMES[line[p+1]] || null); }
 // Build an <img> for a specific dex number (dex + shiny explicit). Live cards pass the
 // evolved form; the Pokédex passes the canonical species dex so its catalog is stable.
 function pokeImgFor(dex, cr, px, altName){
@@ -3189,15 +3268,17 @@ function pokeImgFor(dex, cr, px, altName){
   // 3D pack: ANIMATED 3D models. Prefer Gen 8 (Sword/Shield), fall back to Gen 6 (X/Y)
   // for 'mon not in the Galar dex, then Gen-5 static, then the generated monster sprite.
   if(cfg().creaturePack==="pokemon3d"){
-    var mega = (stage>=4) ? (MEGA_SLUG[pokeIdx(cr)]||null) : null;
+    var mf = (stage>=4) ? pokeMegaForm(cr) : null;   // branch-aware mega form (or null)
+    var mega = mf ? mf.slug : null;
     var slug = mega || String(altName||"").toLowerCase().replace(/[^a-z0-9]/g,"");
-    // Lead with the Gen-6 X/Y animated 3D sprite. Every species here is <=649, so X/Y
-    // (national dex Gen1-6) has ALL of them — the first request succeeds, so we never
-    // paint the SwSh 404 -> onerror -> swap that caused the render/dim/re-render flicker.
-    // X/Y shiny lives in a SEPARATE dir (no "-s" suffix); mega gifs are X/Y-only anyway
-    // (Gen 8 dropped Mega Evolution). Fallback chain: X/Y gif -> HOME still png -> monster svg.
-    var xyBase = shiny ? PKPARAISO_XY_SHINY : PKPARAISO_XY;
-    var src0 = xyBase + slug + ".gif";
+    // Lead with the Gen-6 X/Y animated 3D sprite. Every base species here is <=649, so X/Y
+    // has ALL of them — the first request succeeds, so we never paint the SwSh 404 flicker.
+    // ORAS-era megas (mf.dir==="oras") live in a separate gallery; X/Y shiny + ORAS shiny each
+    // have their own animados-shiny dir. Fallback: gif -> HOME still png -> monster svg.
+    var base = mega
+      ? (mf.dir==="oras" ? (shiny?PKPARAISO_ORAS_SHINY:PKPARAISO_ORAS) : (shiny?PKPARAISO_XY_SHINY:PKPARAISO_XY))
+      : (shiny ? PKPARAISO_XY_SHINY : PKPARAISO_XY);
+    var src0 = base + slug + ".gif";
     return '<img class="pokeimg pokeimg-3d'+(mega?" pokeimg-mega":"")+'" src="'+src0+'" width="'+px+'" height="'+px+'"'+
       ' alt="'+esc(altName||"")+(shiny?" (shiny)":"")+'" data-dex="'+dex+'" data-shiny="'+shiny+'"'+
       ' data-3d="1" data-mega="'+(mega?1:0)+'" data-slug="'+slug+'" data-try="0" data-fb="'+fb+'" onerror="pokeErr(this)" loading="lazy">';
@@ -3644,7 +3725,7 @@ function partySig(sessions){
   // so the party isn't rebuilt (which restarts every animated sprite) each SSE tick.
   var parts=(sessions||[]).map(function(s){ var c=s.creature||{};
     return [s.id,s.status,s.title,s.alias||"",s.pinned?1:0,(s.tags||[]).join(","),s.note||"",s.folder||"",
-            c.species,creatureStage(c),c.shiny?1:0].join(""); });
+            c.species,creatureStage(c),c.shiny?1:0,(EVO_CHOICE[s.sessionId||s.id]||{}).branchDex||"",(EVO_CHOICE[s.sessionId||s.id]||{}).megaSlug||""].join(""); });
   return [QUERY,SORT,FILTER,FILTERTAG,FILTERFOLDER,STALE_OPEN?1:0,cfg().creaturePack].join("|")+"||"+parts.join("");
 }
 function renderParty(sessions){
@@ -4180,7 +4261,7 @@ function renderFocus(){
 
 /* ---------- detail drawer ---------- */
 var DRAWER_OPEN = false, LAST_FOCUS = null, DRAWER_SID = null, DRAWER_SESS = null,
-    DRAWER_TAIL = null, DRAWER_TL_LEN = 0;
+    DRAWER_TAIL = null, DRAWER_TL_LEN = 0, DRAWER_LAST = null;
 // Build the timeline rows into a container (reused by the live tail).
 function fillTimeline(wrap, tl){
   wrap.innerHTML="";
@@ -4256,6 +4337,8 @@ function dwSec(title){
 }
 function renderDrawer(sess, d){
   d = d||{};
+  DRAWER_LAST = d;                       // remember detail so setEvoChoice can re-render
+  if(sess && sess.creature) sess.creature._sid = sess.sessionId || sess.id;  // stamp for branch/mega choice
   var body = $("dwBody"); body.innerHTML="";
   var tk = d.tokens||sess.tokens||{};
 
@@ -4264,13 +4347,18 @@ function renderDrawer(sess, d){
 
   // creature / evolution
   var crD = d.creature || sess.creature || {};
+  crD._sid = sess.sessionId || sess.id;   // stamp so branch/mega choice resolves in the drawer preview
   var secCr = dwSec("Creature");
   var crBox = el("div","evowrap"); crBox.style.marginTop="0";
   crBox.innerHTML =
     '<div class="crline"><span class="species">'+esc(creatureSpecies(crD))+'</span>'+typeBadgeHTML(crD)+
     '<span class="stagepill">'+esc(creatureStageName(crD))+(crD.shiny?' <span class="shinystar" title="Shiny">✦</span>':'')+'</span></div>'+
     evobarHTML(crD);
-  if(isPokePack()){ var evln=el("div","dw-evoline"); evln.innerHTML=evoLineHTML(crD, 54); crBox.appendChild(evln); }
+  if(isPokePack()){ var evln=el("div","dw-evoline"); evln.innerHTML=evoLineHTML(crD, 54); crBox.appendChild(evln);
+    if(pokeHasChoice(crD)){ var pb=el("button","hbtn small dw-choose"); pb.type="button";
+      pb.innerHTML=ico("book")+"Choose path";
+      pb.addEventListener("click",function(){ crD._sid=sess.sessionId||sess.id; openEvoPicker(crD); });
+      crBox.appendChild(pb); } }
   secCr.appendChild(crBox); body.appendChild(secCr);
   // keep the drawer avatar in sync with the freshest creature data
   paintCreature($("dwAv"), crD, 76);
@@ -4431,6 +4519,9 @@ function render(){
   if(!STATE) return;
   syncConfig(STATE.config);
   STATE_AT = Date.now();
+  // Stamp each live creature with its sessionId so branch/mega choice lookups (evoChoice,
+  // branchFinalDex, pokeMegaForm) resolve. Object.assign clones carry _sid forward.
+  (STATE.sessions||[]).forEach(function(s){ if(s.creature) s.creature._sid = s.sessionId || s.id; });
   seedHighWaterFromSessions(STATE.sessions);   // lift New Game+ floor before painting cards
   renderSeason(STATE.season);
   renderInsights(STATE.season);
@@ -4559,6 +4650,7 @@ document.addEventListener("keydown",function(e){
   if((e.metaKey||e.ctrlKey) && (e.key==="k"||e.key==="K")){ e.preventDefault(); toggleCmdk(); return; }
   if(e.key==="Escape"){
     if($("evoSplash").classList.contains("on")){ closeEvoSplash(); return; }
+    if($("evoPickBack").classList.contains("open")){ closeEvoPicker(); return; }
     if($("evoPreviewBack").classList.contains("open")){ closeEvoPreview(); return; }
     if($("warroom").classList.contains("on")){ closeWarroom(); return; }
     if($("transcriptBack").classList.contains("open")){ closeTranscript(); return; }
@@ -4599,6 +4691,7 @@ function restoreOpener(){ var t=MODAL_RETURN; MODAL_RETURN=null;
 // The currently-topmost open overlay, or null. Order = visual stacking priority.
 function currentModal(){
   if($("warroom") && $("warroom").classList.contains("on")) return $("warroom");
+  if($("evoPickBack") && $("evoPickBack").classList.contains("open")) return $("evoPickBack");
   if($("evoPreviewBack") && $("evoPreviewBack").classList.contains("open")) return $("evoPreviewBack");
   if(typeof CMDK_OPEN!=="undefined" && CMDK_OPEN) return $("cmdk");
   if($("transcriptBack") && $("transcriptBack").classList.contains("open")) return $("transcriptBack");
@@ -5081,6 +5174,19 @@ function dexHighWater(species, cur){
   var k=String(species), prev=DEX_MAX[k]||0, m=Math.max(prev, cur||0);
   if(m!==prev){ DEX_MAX[k]=m; try{ localStorage.setItem("hq_dex_max", JSON.stringify(DEX_MAX)); }catch(e){} }
   return m;
+}
+// Persist a per-session evolution/mega choice, then repaint the affected surfaces. Keyed by the
+// SAME id used to stamp cr._sid (sessionId||id), or the party card won't repaint on a pick.
+function setEvoChoice(sid, patch){
+  if(!sid) return;
+  EVO_CHOICE[sid]=Object.assign({},EVO_CHOICE[sid],patch);
+  try{ localStorage.setItem("hq_evo_choice", JSON.stringify(EVO_CHOICE)); }catch(e){}
+  // A manual re-pick must never fire an evolution splash — drop this session's baseline so
+  // checkEvolution re-snapshots next tick instead of seeing a (mega-gaining) form delta.
+  if(typeof STAGE_PREV!=="undefined" && STAGE_PREV) delete STAGE_PREV[sid];
+  PARTY_SIG=null;                                   // force party re-render (sig now differs)
+  if(typeof STATE!=="undefined" && STATE) renderParty(STATE.sessions);
+  if(DRAWER_OPEN && DRAWER_SESS){ if(DRAWER_SESS.creature) DRAWER_SESS.creature._sid=sid; renderDrawer(DRAWER_SESS, DRAWER_LAST); }
 }
 // --- New Game+ high-water seeding (drives speciesHighWater/creatureStage flooring) ---
 // Raise DEX_MAX for a species from a RAW stage value only (never the floored creatureStage
@@ -5764,22 +5870,25 @@ function evoLineHTML(cr, px){
   cr=cr||{}; px=px||72;
   if(!isPokePack()) return '';
   var line=pokeEvoLine(cr), pos=pokeEvoPos(cr,line), megaActive=!!pokeMega(cr),
-      canMega=(cfg().creaturePack==="pokemon3d" && pokeCanMega(cr));
+      canMega=(cfg().creaturePack==="pokemon3d" && pokeCanMega(cr)),
+      lastI=line.length-1, chosenFinal=branchFinalDex(cr);
   var html='<div class="evoline">';
   line.forEach(function(dex,i){
+    var showDex=(i===lastI)?chosenFinal:dex;                 // final node reflects the chosen branch
     var clone=Object.assign({},cr,{stage:3,_noFloor:true});
-    var nm=DEX_NAMES[dex]||POKE_REAL[pokeIdx(cr)]||"???";
+    var nm=DEX_NAMES[showDex]||POKE_REAL[pokeIdx(cr)]||"???";
     if(i>0) html+='<span class="evoarrow" aria-hidden="true">→</span>';
     html+='<div class="evonode'+((!megaActive && i===pos)?" current":"")+'">'+
-      '<div class="evo-spr">'+pokeImgFor(dex,clone,px,nm)+'</div>'+
-      '<div class="evo-nm">'+esc(nm)+'</div><div class="evo-dx">#'+String(dex).padStart(3,"0")+'</div></div>';
+      '<div class="evo-spr">'+pokeImgFor(showDex,clone,px,nm)+'</div>'+
+      '<div class="evo-nm">'+esc(nm)+'</div><div class="evo-dx">#'+String(showDex).padStart(3,"0")+'</div></div>';
   });
   if(canMega){
-    var finalDex=line[line.length-1], mclone=Object.assign({},cr,{stage:4,_noFloor:true}),
-        mnm="Mega "+(DEX_NAMES[finalDex]||POKE_REAL[pokeIdx(cr)]||"");
+    var mf=pokeMegaForm(Object.assign({},cr,{stage:4,_noFloor:true})),
+        mclone=Object.assign({},cr,{stage:4,_noFloor:true}),
+        mnm=(mf&&mf.name)||("Mega "+(DEX_NAMES[chosenFinal]||POKE_REAL[pokeIdx(cr)]||""));
     html+='<span class="evoarrow" aria-hidden="true">⚡</span>'+
       '<div class="evonode mega'+(megaActive?" current":"")+'">'+
-      '<div class="evo-spr">'+pokeImgFor(finalDex,mclone,px,mnm)+'</div>'+
+      '<div class="evo-spr">'+pokeImgFor(chosenFinal,mclone,px,mnm)+'</div>'+
       '<div class="evo-nm">'+esc(mnm)+'</div><div class="evo-dx">'+(megaActive?"active":"at Apex")+'</div></div>';
   }
   html+='</div>';
@@ -5797,6 +5906,66 @@ function openEvoPreview(cr){
 function closeEvoPreview(){ $("evoPreviewBack").classList.remove("open"); restoreOpener(); }
 (function(){ var b=$("evoPrevClose"); if(b) b.addEventListener("click",closeEvoPreview);
   var s=$("evoPreviewBack"); if(s) s.addEventListener("click",function(e){ if(e.target===s) closeEvoPreview(); }); })();
+
+/* ---- Evolution / Mega PATH PICKER (choose branch + X/Y mega) ---- */
+// Build an <img> for a SPECIFIC mega form (used for the X/Y toggle tiles), honoring its source dir.
+function megaFormImg(f, cr, px){
+  var shiny=cr.shiny?1:0, seed=creatureSeed(cr), hue=creatureTypeHue(cr), finalDex=branchFinalDex(cr);
+  var base = f.dir==="oras" ? (shiny?PKPARAISO_ORAS_SHINY:PKPARAISO_ORAS) : (shiny?PKPARAISO_XY_SHINY:PKPARAISO_XY);
+  var fb=encodeURIComponent(JSON.stringify([seed,hue,4,shiny,px]));
+  return '<img class="pokeimg pokeimg-3d pokeimg-mega" src="'+base+f.slug+'.gif" width="'+px+'" height="'+px+'"'+
+    ' alt="'+esc(f.name)+'" data-dex="'+finalDex+'" data-shiny="'+shiny+'" data-3d="1" data-mega="1"'+
+    ' data-slug="'+f.slug+'" data-try="0" data-fb="'+fb+'" onerror="pokeErr(this)" loading="lazy">';
+}
+function renderEvoPicker(cr){
+  var body=$("evoPickBody"); if(!body) return;
+  if(!isPokePack()){ body.innerHTML='<div class="feed-empty">Path choices are available in the Pokémon packs.</div>'; return; }
+  var sid=cr&&cr._sid;
+  var opts=POKE_BRANCH[pokeIdx(cr)];
+  var chosenFinal=branchFinalDex(cr);
+  var megaForms=MEGA_FORMS[chosenFinal]||[];
+  var activeMega=pokeMegaForm(Object.assign({},cr,{stage:4,_noFloor:true}));
+  var h='<div class="evopick-prev">'+evoLineHTML(cr,60)+'</div>';
+  if(opts){
+    h+='<div class="evopick-h">Evolution path</div>';
+    h+='<div class="evopick-grid" role="radiogroup" aria-label="Evolution path">';
+    opts.forEach(function(o){
+      var clone=Object.assign({},cr,{stage:3,_noFloor:true});
+      var sel=(o.dex===chosenFinal);
+      h+='<button type="button" class="evopick-opt'+(sel?" sel":"")+'" role="radio" aria-checked="'+(sel?"true":"false")+'"'+
+         ' data-branch="'+o.dex+'"><div class="evo-spr">'+pokeImgFor(o.dex,clone,64,o.name)+'</div>'+
+         '<div class="evo-nm">'+esc(o.name)+'</div><div class="evo-dx">#'+String(o.dex).padStart(3,"0")+'</div></button>';
+    });
+    h+='</div>';
+  }
+  if(megaForms.length>1){
+    h+='<div class="evopick-h">Mega form <span class="muted">(at Apex)</span></div>';
+    h+='<div class="evopick-grid mega" role="radiogroup" aria-label="Mega form">';
+    megaForms.forEach(function(f){
+      var sel=activeMega&&activeMega.slug===f.slug;
+      h+='<button type="button" class="evopick-opt'+(sel?" sel":"")+'" role="radio" aria-checked="'+(sel?"true":"false")+'"'+
+         ' data-mega="'+f.slug+'"><div class="evo-spr">'+megaFormImg(f,cr,64)+'</div>'+
+         '<div class="evo-nm">'+esc(f.name)+'</div></button>';
+    });
+    h+='</div>';
+  }
+  if(!opts && megaForms.length<=1) h+='<div class="feed-empty">This species has a single evolution path.</div>';
+  body.innerHTML=h;
+  // wire selections
+  Array.prototype.forEach.call(body.querySelectorAll("[data-branch]"),function(b){
+    b.addEventListener("click",function(){ setEvoChoice(sid,{branchDex:+b.getAttribute("data-branch")}); renderEvoPicker(cr); }); });
+  Array.prototype.forEach.call(body.querySelectorAll("[data-mega]"),function(b){
+    b.addEventListener("click",function(){ setEvoChoice(sid,{megaSlug:b.getAttribute("data-mega")}); renderEvoPicker(cr); }); });
+  Array.prototype.forEach.call(body.querySelectorAll(".evopick-grid"),function(g){ if(typeof setupRoving==="function") setupRoving(g,'[role="radio"]'); });
+  var first=body.querySelector(".evopick-opt.sel")||body.querySelector(".evopick-opt"); if(first) first.focus();
+}
+var EVO_PICK_CR=null;
+function openEvoPicker(cr){ cr=cr||{}; if(!cr._sid){ toast("Open this from a session card","level"); return; }
+  EVO_PICK_CR=cr; rememberOpener(); renderEvoPicker(cr);
+  $("evoPickBack").classList.add("open"); }
+function closeEvoPicker(){ $("evoPickBack").classList.remove("open"); EVO_PICK_CR=null; restoreOpener(); }
+(function(){ var b=$("evoPickClose"); if(b) b.addEventListener("click",closeEvoPicker);
+  var s=$("evoPickBack"); if(s) s.addEventListener("click",function(e){ if(e.target===s) closeEvoPicker(); }); })();
 
 /* ---- digest + focus wiring ---- */
 $("menuVoice").innerHTML = ico("volume")+"Voice alerts: "+(VOICE?"on":"off");

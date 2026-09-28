@@ -6028,7 +6028,9 @@ function showEvoSplash(s, fromStage){
   clearEvoMorph();
   playEvoMorph($("evoCreature"), cr, fromStage, creatureStage(cr), size, function(){
     $("evoKicker").textContent = mega ? "⚡ MEGA EVOLUTION! ⚡" : "✨ Congratulations! ✨";
-    $("evoTitle").textContent = mega ? (nm+"!") : (species+" evolved into "+nm+"!");
+    $("evoTitle").textContent = mega ? (nm+"!")
+      : (isPokePack() ? (pokeNameAtStage(cr,fromStage)+" evolved into "+nm+"!")
+                      : (species+" evolved to "+stageNm+"!"));
     $("evoSub").textContent = mega ? ((s.title||s.name||"Session")+" reached its ultimate form")
                                    : ((s.title||s.name||"Session")+" · now "+stageNm);
     if(!calmMode()){ el2.classList.remove("flash"); void el2.offsetWidth; el2.classList.add("flash"); confettiBurst(); if(mega) setTimeout(confettiBurst,450); }
@@ -6054,34 +6056,46 @@ function closeEvoSplash(){ clearTimeout(EVO_TIMER); clearEvoMorph(); var e=$("ev
 // backend omits stage, so a genuinely-new session is distinguished and the New Game+
 // floor is never mistaken for organic growth.
 function rawStageOf(s){ var c=(s&&s.creature)||{}; return Math.max(0,Math.min(4, c.stage!=null?c.stage|0:0)); }
+// Index of the VISIBLE form for a creature: for pokemon packs the position along the evo
+// line (so the 5 internal stages that compress onto 2-3 forms don't count as separate
+// forms), plus +1 when a Mega is active so reaching Apex-with-mega still registers as a
+// new form. Non-poke packs change appearance every stage, so the stage IS the form.
+function formIndexOf(cr){ cr=cr||{};
+  if(isPokePack()) return pokeEvoPos(cr, pokeEvoLine(cr)) + (pokeMega(cr)?1:0);
+  return creatureStage(cr); }
 function checkEvolution(sessions){
   sessions = sessions||[];
+  function snap(s){ var c=s.creature||{}, rawC=Object.assign({},c,{_noFloor:true});
+    return { r:rawStageOf(s), d:creatureStage(c), rf:formIndexOf(rawC), df:formIndexOf(c) }; }
   if(!STAGE_BASE){
-    sessions.forEach(function(s){ var id=s.sessionId||s.id; if(id) STAGE_PREV[id]={r:rawStageOf(s), d:creatureStage(s.creature)}; });
+    sessions.forEach(function(s){ var id=s.sessionId||s.id; if(id) STAGE_PREV[id]=snap(s); });
     STAGE_BASE=true; return;
   }
   sessions.forEach(function(s){
     var id=s.sessionId||s.id; if(!id) return;
-    var curR=rawStageOf(s), curD=creatureStage(s.creature);
-    var prev=STAGE_PREV[id];
-    // Celebrate ONLY when this session actually grew (raw stage up) AND that growth
-    // raised the shown form (display up). A rising New Game+ floor (a sibling/seed
-    // bumping DEX_MAX) changes curD but not curR, so it can't fire a phantom evolution;
-    // organic growth below an already-unlocked floor changes curR but not curD, so it
-    // stays silent until the form visibly changes.
-    if(prev && prev.r!=null && curR>prev.r && curD>prev.d){
+    var cur=snap(s), prev=STAGE_PREV[id];
+    // Celebrate ONLY when the VISIBLE FORM advances because THIS session grew: raw form
+    // index up AND displayed form index up. This ignores (a) internal stage-ups that don't
+    // change the sprite — e.g. Wartortle occupies two stages, so stage 1→2 is NOT an
+    // evolution — and (b) a New Game+ floor rising from a sibling/seed (changes df, not rf).
+    if(prev && prev.rf!=null && cur.rf>prev.rf && cur.df>prev.df){
       var mg=!!pokeMega(s.creature);
+      var postName = isPokePack()? pokeCurrentName(s.creature) : creatureSpecies(s.creature);
+      var preName  = isPokePack()? pokeNameAtStage(s.creature, prev.d) : null;
       if(mg){
-        toast("⚡ "+pokeCurrentName(s.creature)+"! Mega Evolution!","level");
-        logEvent("⚡", pokeCurrentName(s.creature)+" — Mega Evolution ("+(s.title||s.name||"session")+")");
+        toast("⚡ "+postName+"! Mega Evolution!","level");
+        logEvent("⚡", postName+" — Mega Evolution ("+(s.title||s.name||"session")+")");
+      } else if(isPokePack() && preName && preName!==postName){
+        toast("✨ "+preName+" evolved into "+postName+"!","level");
+        logEvent("✨", preName+" evolved into "+postName+" ("+(s.title||s.name||"session")+")");
       } else {
-        toast("✨ "+creatureSpecies(s.creature)+" evolved to "+creatureStageName(s.creature)+"!","level");
-        logEvent("✨", creatureSpecies(s.creature)+" evolved to "+creatureStageName(s.creature)+" ("+(s.title||s.name||"session")+")");
+        toast("✨ "+postName+" evolved to "+creatureStageName(s.creature)+"!","level");
+        logEvent("✨", postName+" evolved to "+creatureStageName(s.creature)+" ("+(s.title||s.name||"session")+")");
       }
       confettiBurst();
       showEvoSplash(s, prev.d);
     }
-    STAGE_PREV[id]={r:curR, d:curD};
+    STAGE_PREV[id]=cur;
   });
   var live={}; sessions.forEach(function(s){ var id=s.sessionId||s.id; if(id) live[id]=1; });
   Object.keys(STAGE_PREV).forEach(function(k){ if(!live[k]) delete STAGE_PREV[k]; });

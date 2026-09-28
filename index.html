@@ -628,6 +628,7 @@ details.stalewrap .hint{text-transform:none;letter-spacing:0}
 @keyframes shimmer{0%,100%{filter:drop-shadow(0 0 0 rgba(233,196,106,0))}50%{filter:drop-shadow(0 0 3px rgba(233,196,106,.8))}}
 .cre-svg.shiny .mon-svg{animation:shimmer 2.4s ease-in-out infinite}
 .pokeimg{image-rendering:pixelated;object-fit:contain;display:block}
+.pokeimg-3d{image-rendering:auto}
 @keyframes pokehop{0%,100%{transform:translateY(0)}35%{transform:translateY(-4px)}55%{transform:translateY(0)}}
 @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
 .card.working .avatar .pokeimg,.card.working .avatar .mon-svg,
@@ -1878,6 +1879,7 @@ html.hq-calm #confetti{display:none!important}
           <label for="setPack">Creature pack</label>
           <select id="setPack">
             <option value="pokemon">Pokémon (animated sprites)</option>
+            <option value="pokemon3d">Pokémon 3D (HOME renders)</option>
             <option value="monsters">Monsters (generated)</option>
             <option value="animals">Animals (emoji)</option>
             <option value="faces">Faces (emoji)</option>
@@ -2780,6 +2782,8 @@ var STATE_AT = 0;              // Date.now() of last payload (for live timers)
 var CONFIG_DEFAULTS = {theme:"aurora", creaturePack:"monsters", refreshMs:5000, stuckMinutes:15, dailyBudgetUSD:0, trainerName:""};
 var CONFIG = Object.assign({}, CONFIG_DEFAULTS);
 function cfg(){ return CONFIG; }
+// both Pokémon packs share evolution/type/name logic; only the sprite source differs
+function isPokePack(){ var p=cfg().creaturePack; return p==="pokemon"||p==="pokemon3d"; }
 // backend creature name order (index-stable). See CREATURES in dashboard.py.
 var POKE_NAMES = ["Pikachu","Charmander","Squirtle","Bulbasaur","Dragonite","Psyduck","Umbreon","Geodude"];
 var CREATURE_PACKS = {
@@ -2817,21 +2821,21 @@ var MONSTER_TYPES=["Spark","Ember","Aqua","Leaf","Gale","Tide","Umbra","Terra"];
 var POKE_TYPES=["Electric","Fire","Water","Grass","Normal","Ghost","Normal","Dragon","Fighting","Psychic","Fire","Water","Grass","Electric","Water","Water","Fire","Normal","Water","Dragon","Rock","Fire","Dark","Psychic","Bug","Ground","Fairy","Ice","Steel","Poison","Ground","Ice","Flying","Psychic","Fighting","Rock","Dragon","Water","Electric","Electric","Normal","Flying","Bug","Grass","Fire","Water","Dragon","Steel"];
 var POKE_TYPE_HUE={Normal:52,Fire:20,Water:212,Electric:48,Grass:99,Ice:190,Fighting:5,Poison:290,Ground:35,Flying:200,Psychic:325,Bug:75,Rock:45,Ghost:270,Dragon:255,Dark:25,Steel:210,Fairy:330};
 function creatureTypeHue(cr){ cr=cr||{};
-  if(cfg().creaturePack==="pokemon"){ var h=POKE_TYPE_HUE[POKE_TYPES[pokeIdx(cr)]]; if(h!=null) return h; }
+  if(isPokePack()){ var h=POKE_TYPE_HUE[POKE_TYPES[pokeIdx(cr)]]; if(h!=null) return h; }
   return cr.typeHue!=null?cr.typeHue:(cr.hue!=null?cr.hue:220); }
 function creatureStage(cr){ cr=cr||{}; var s=cr.stage!=null?cr.stage|0:3; return Math.max(0,Math.min(4,s)); }
 function creatureSeed(cr){ cr=cr||{}; return hashStr((cr.species||cr.name||"")+"|"+creatureIndex(cr)); }
 function creatureSpecies(cr){ cr=cr||{};
-  if(cfg().creaturePack==="pokemon") return pokeCurrentName(cr);  // current evolved form
+  if(isPokePack()) return pokeCurrentName(cr);  // current evolved form
   if(cr.speciesName) return cr.speciesName;
   if(cfg().creaturePack==="monsters") return MONSTER_SPECIES[creatureIndex(cr)]||cr.name||"Monster";
   return cr.name||MONSTER_SPECIES[creatureIndex(cr)]||"Monster"; }
 function creatureType(cr){ cr=cr||{};
-  if(cfg().creaturePack==="pokemon") return POKE_TYPES[pokeIdx(cr)]||"Normal";
+  if(isPokePack()) return POKE_TYPES[pokeIdx(cr)]||"Normal";
   return cr.type || MONSTER_TYPES[creatureIndex(cr)] || "Neutral"; }
 function creatureStageName(cr){ cr=cr||{}; return cr.stageName || STAGE_NAMES[creatureStage(cr)] || ("Stage "+creatureStage(cr)); }
 function creatureNextStageName(cr){ cr=cr||{};
-  if(cfg().creaturePack==="pokemon"){ var n=pokeNextName(cr); return n; }  // next evolution form
+  if(isPokePack()){ var n=pokeNextName(cr); return n; }  // next evolution form
   if(cr.nextStageName) return cr.nextStageName;
   var st=creatureStage(cr); return st>=4?null:STAGE_NAMES[st+1]; }
 function creatureStagePct(cr){ cr=cr||{}; var p=cr.stagePct!=null?cr.stagePct:0; return Math.max(0,Math.min(100,Math.round(p))); }
@@ -2937,6 +2941,13 @@ function pokeImgFor(dex, cr, px, altName){
       stage=creatureStage(cr), shiny=cr.shiny?1:0;
   var sub = shiny ? "shiny/" : "";
   var fb=encodeURIComponent(JSON.stringify([seed,hue,stage,shiny,px]));
+  // 3D pack: Pokémon HOME renders (newer-gen 3D models, high-res, static)
+  if(cfg().creaturePack==="pokemon3d"){
+    var h3=(shiny?"other/home/shiny/":"other/home/")+dex+".png";
+    return '<img class="pokeimg pokeimg-3d" src="'+POKE_STATIC+h3+'" width="'+px+'" height="'+px+'"'+
+      ' alt="'+esc(altName||"")+(shiny?" (shiny)":"")+'" data-dex="'+dex+'" data-shiny="'+shiny+'"'+
+      ' data-try="0" data-fb="'+fb+'" onerror="pokeErr(this)" loading="lazy">';
+  }
   return '<img class="pokeimg" src="'+POKE_ANIM+sub+dex+'.gif" width="'+px+'" height="'+px+'"'+
     ' alt="'+esc(altName||"")+(shiny?" (shiny)":"")+'" data-dex="'+dex+'" data-shiny="'+shiny+'"'+
     ' data-try="0" data-fb="'+fb+'" onerror="pokeErr(this)" loading="lazy">';
@@ -2955,7 +2966,7 @@ function pokeErr(img){
 function paintCreature(node, cr, px, bg){
   cr=cr||{}; if(bg===undefined) bg=true; px=px||46;
   node.classList.remove("shiny","cre-svg");
-  if(cfg().creaturePack==="pokemon"){
+  if(isPokePack()){
     if(bg){ var isD=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches;
             node.style.background="hsl("+creatureTypeHue(cr)+",55%,"+(isD?"20%":"90%")+")"; }
     node.innerHTML=pokeImgHTML(cr, px);
@@ -2979,7 +2990,7 @@ function paintCreature(node, cr, px, bg){
 // String form for callers that build markup (feed/cmdk): svg or an emoji.
 function creatureVisual(x, px){
   var cr=(x && x.creature)?x.creature:(x||{}); px=px||46;
-  if(cfg().creaturePack==="pokemon") return pokeImgHTML(cr, px);
+  if(isPokePack()) return pokeImgHTML(cr, px);
   if(cfg().creaturePack==="monsters")
     return monsterSVG(creatureSeed(cr),creatureTypeHue(cr),creatureStage(cr),!!cr.shiny,px);
   return esc(creatureEmoji(cr));
@@ -4678,7 +4689,7 @@ var DEX_CAUGHT_ONLY = localStorage.getItem("hq_dex_caught")==="1";
 var DEX_SORT = (function(){ var s=localStorage.getItem("hq_dex_sort"); return (s==="sessions"||s==="output"||s==="num")?s:"num"; })();
 var DEX_TYPE = "All";
 // derive a species' display type/sessions/output consistently with the live cards
-function dexTypeOf(sp,cr){ return (cfg().creaturePack==="pokemon") ? (POKE_TYPES[pokeIdx(cr)]||"Normal") : (sp.type||cr.type||"Normal"); }
+function dexTypeOf(sp,cr){ return (isPokePack()) ? (POKE_TYPES[pokeIdx(cr)]||"Normal") : (sp.type||cr.type||"Normal"); }
 function dexSessionsOf(sp){ return (sp.count!=null?sp.count:(sp.sessions!=null?sp.sessions:0)); }
 function dexOutputOf(sp){ return (sp.totalOutput!=null?sp.totalOutput:(sp.output||sp.outputTokens||0)); }
 function dexCrOf(sp,i){
@@ -4732,11 +4743,11 @@ function buildDexCard(sp,i,cr){
     if(caught && sp.shiny){ var sh=el("div","dex-shiny"); sh.textContent="✦"; sh.title="Shiny caught"; card.appendChild(sh); }
     var spr=el("div","dex-sprite");
     // caught pokemon -> real sprite; everything else / uncaught -> deterministic silhouette (greyed via CSS)
-    if(caught && cfg().creaturePack==="pokemon"){ spr.innerHTML=pokeImgHTML(cr, 72); }
+    if(caught && isPokePack()){ spr.innerHTML=pokeImgHTML(cr, 72); }
     else { spr.innerHTML=monsterSVG(creatureSeed(cr), creatureTypeHue(cr), Math.max(0,Math.min(4,maxStage)), caught&&!!sp.shiny, 72); }
     card.appendChild(spr);
     var nm=el("div","dex-name");
-    nm.textContent = !caught ? "???" : (cfg().creaturePack==="pokemon" ? pokeCurrentName(cr) : (sp.speciesName||sp.name||"Monster"));
+    nm.textContent = !caught ? "???" : (isPokePack() ? pokeCurrentName(cr) : (sp.speciesName||sp.name||"Monster"));
     card.appendChild(nm);
     if(caught){ var tb=el("div"); tb.innerHTML=typeBadgeHTML(cr); if(tb.firstChild) card.appendChild(tb.firstChild); }
     var st=el("div","dex-statrow");
@@ -5263,7 +5274,7 @@ function renderCmdk(){
     var row=el("div","cmdk-item"+(i===CMDK_SEL?" sel":""));
     var ic=el("div","ci-ic");
     if(it.cr && cfg().creaturePack==="monsters"){ ic.innerHTML=monsterSVG(creatureSeed(it.cr),creatureTypeHue(it.cr),creatureStage(it.cr),!!it.cr.shiny,18); }
-    else if(it.cr && cfg().creaturePack==="pokemon"){ ic.innerHTML=pokeImgHTML(it.cr,18); }
+    else if(it.cr && isPokePack()){ ic.innerHTML=pokeImgHTML(it.cr,18); }
     else { ic.textContent=it.ic; }
     row.appendChild(ic);
     var t=el("div","ci-t"); t.textContent=it.label; row.appendChild(t);

@@ -629,6 +629,25 @@ details.stalewrap .hint{text-transform:none;letter-spacing:0}
 .cre-svg.shiny .mon-svg{animation:shimmer 2.4s ease-in-out infinite}
 .pokeimg{image-rendering:pixelated;object-fit:contain;display:block}
 .pokeimg-3d{image-rendering:auto}  /* X/Y models are already animated GIFs */
+/* ---- evolution splash ---- */
+#evoSplash{position:fixed;inset:0;z-index:120;display:none;place-content:center;text-align:center;
+  background:radial-gradient(1200px 800px at 50% 40%,#1b1140 0%,#05030f 70%,#000 100%)}
+#evoSplash.on{display:grid}
+.evo-flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
+#evoSplash.flash .evo-flash{animation:evoflash 1.2s ease-out 2}
+@keyframes evoflash{0%{opacity:0}8%{opacity:.9}30%{opacity:0}100%{opacity:0}}
+.evo-inner{position:relative;display:flex;flex-direction:column;align-items:center;gap:14px;padding:24px}
+.evo-kicker{font-weight:800;letter-spacing:.5px;color:#ffe08a;font-size:15px;text-shadow:0 0 12px rgba(255,210,90,.6)}
+.evo-creature{width:min(48vmin,320px);height:min(48vmin,320px);display:grid;place-items:center;
+  filter:drop-shadow(0 0 40px rgba(140,110,255,.7));animation:evopop .6s cubic-bezier(.2,.9,.3,1.4)}
+.evo-creature img,.evo-creature .mon-svg{width:100%;height:100%;object-fit:contain;image-rendering:auto}
+@keyframes evopop{0%{transform:scale(.2);opacity:0}60%{transform:scale(1.12)}100%{transform:scale(1);opacity:1}}
+.evo-title{font-size:30px;font-weight:800;color:#fff}
+.evo-sub{font-size:15px;color:#cbb8ff}
+#evoSplash .hbtn{margin-top:6px;font-size:14px;padding:8px 20px}
+html.hq-calm #evoSplash .evo-creature{animation:none}
+html.hq-calm #evoSplash.flash .evo-flash{animation:none}
+@media (prefers-reduced-motion: reduce){ #evoSplash .evo-creature,#evoSplash.flash .evo-flash{animation:none} }
 @keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.06) translateY(-3%)}}
 .animo-img{image-rendering:auto;animation:breathe 2.6s ease-in-out infinite}
 .card.working .avatar .animo-img{animation:breathe 1.2s ease-in-out infinite}
@@ -1945,6 +1964,18 @@ html.hq-calm #confetti{display:none!important}
 </div>
 
 <!-- celebrations -->
+<!-- evolution splash (full-screen) -->
+<div id="evoSplash" role="dialog" aria-modal="true" aria-label="Evolution" aria-hidden="true">
+  <div class="evo-flash" id="evoFlash"></div>
+  <div class="evo-inner">
+    <div class="evo-kicker">✨ What?! Your creature is evolving! ✨</div>
+    <div class="evo-creature" id="evoCreature">🐣</div>
+    <div class="evo-title" id="evoTitle"></div>
+    <div class="evo-sub" id="evoSub"></div>
+    <button class="hbtn" id="evoClose" type="button">Continue</button>
+  </div>
+</div>
+
 <div class="toastwrap" id="toastWrap" aria-live="polite"></div>
 <canvas id="confetti" aria-hidden="true"></canvas>
 
@@ -4246,6 +4277,7 @@ document.addEventListener("keydown",function(e){
   // Cmd/Ctrl-K opens the command palette from anywhere
   if((e.metaKey||e.ctrlKey) && (e.key==="k"||e.key==="K")){ e.preventDefault(); toggleCmdk(); return; }
   if(e.key==="Escape"){
+    if($("evoSplash").classList.contains("on")){ closeEvoSplash(); return; }
     if($("warroom").classList.contains("on")){ closeWarroom(); return; }
     if($("transcriptBack").classList.contains("open")){ closeTranscript(); return; }
     if($("projectBack").classList.contains("open")){ closeProject(); return; }
@@ -4755,9 +4787,18 @@ var DEX_TYPE = "All";
 function dexTypeOf(sp,cr){ return (isPokePack()) ? (POKE_TYPES[pokeIdx(cr)]||"Normal") : (sp.type||cr.type||"Normal"); }
 function dexSessionsOf(sp){ return (sp.count!=null?sp.count:(sp.sessions!=null?sp.sessions:0)); }
 function dexOutputOf(sp){ return (sp.totalOutput!=null?sp.totalOutput:(sp.output||sp.outputTokens||0)); }
+// Persisted per-species high-water stage so the Pokédex never "de-evolves" (backtracks)
+// when the current representative session has fewer prompts than one you had before.
+var DEX_MAX=(function(){ try{ return JSON.parse(localStorage.getItem("hq_dex_max")||"{}"); }catch(e){ return {}; } })();
+function dexHighWater(species, cur){
+  var k=String(species), prev=DEX_MAX[k]||0, m=Math.max(prev, cur||0);
+  if(m!==prev){ DEX_MAX[k]=m; try{ localStorage.setItem("hq_dex_max", JSON.stringify(DEX_MAX)); }catch(e){} }
+  return m;
+}
 function dexCrOf(sp,i){
   var caught=!!sp.caught, idx=sp.index!=null?sp.index:i;
   var maxStage=sp.maxStage!=null?sp.maxStage:3;
+  if(caught) maxStage=dexHighWater(sp.species!=null?sp.species:idx, maxStage);  // monotonic
   return { species:sp.species||sp.name, name:sp.name, hue:sp.hue, index:idx,
     typeHue:(sp.typeHue!=null?sp.typeHue:sp.hue), type:sp.type,
     stage:Math.max(0,Math.min(4,maxStage)), shiny:!!sp.shiny };
@@ -4800,7 +4841,7 @@ function renderPokedex(d){
 }
 function buildDexCard(sp,i,cr){
     var caught=!!sp.caught;
-    var maxStage = sp.maxStage!=null?sp.maxStage:(caught?3:3);
+    var maxStage = creatureStage(cr);  // high-water (monotonic), matches sprite/name
     var card=el("div","dexcard "+(caught?"caught":"uncaught"));
     var num=el("div","dex-num"); num.textContent="#"+String(sp.id!=null?sp.id:(i+1)).padStart(2,"0"); card.appendChild(num);
     if(caught && sp.shiny){ var sh=el("div","dex-shiny"); sh.textContent="✦"; sh.title="Shiny caught"; card.appendChild(sh); }
@@ -5478,6 +5519,23 @@ function checkCelebration(season){
 // Celebrate when a session's creature stage INCREASES between updates.
 // Baseline on first load so we never celebrate the initial snapshot.
 var STAGE_PREV={}, STAGE_BASE=false;
+var EVO_TIMER=null;
+function showEvoSplash(s, fromStage){
+  var el2=$("evoSplash"); if(!el2) return;
+  var cr=s.creature||{};
+  var species=creatureSpecies(cr), stageNm=creatureStageName(cr);
+  paintCreature($("evoCreature"), cr, Math.min(320, Math.round(window.innerHeight*0.42)), false);
+  $("evoTitle").textContent = species+" evolved!";
+  $("evoSub").textContent = (s.title||s.name||"Session")+" · now "+stageNm;
+  el2.classList.add("on"); el2.setAttribute("aria-hidden","false");
+  if(!calmMode()){ el2.classList.remove("flash"); void el2.offsetWidth; el2.classList.add("flash"); confettiBurst(); }
+  try{ playChime(); }catch(e){}
+  $("evoClose").focus();
+  clearTimeout(EVO_TIMER); EVO_TIMER=setTimeout(closeEvoSplash, 5000);  // auto-dismiss
+}
+function closeEvoSplash(){ clearTimeout(EVO_TIMER); var e=$("evoSplash"); if(e){ e.classList.remove("on","flash"); e.setAttribute("aria-hidden","true"); } }
+(function(){ var b=$("evoClose"); if(b) b.addEventListener("click",closeEvoSplash);
+  var s=$("evoSplash"); if(s) s.addEventListener("click",function(e){ if(e.target===s) closeEvoSplash(); }); })();
 function checkEvolution(sessions){
   sessions = sessions||[];
   if(!STAGE_BASE){
@@ -5492,6 +5550,7 @@ function checkEvolution(sessions){
       toast("✨ "+creatureSpecies(s.creature)+" evolved to "+creatureStageName(s.creature)+"!","level");
       confettiBurst();
       logEvent("✨", creatureSpecies(s.creature)+" evolved to "+creatureStageName(s.creature)+" ("+(s.title||s.name||"session")+")");
+      showEvoSplash(s, prev);
     }
     STAGE_PREV[id]=cur;
   });

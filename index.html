@@ -628,6 +628,57 @@ details.stalewrap .hint{text-transform:none;letter-spacing:0}
 @keyframes shimmer{0%,100%{filter:drop-shadow(0 0 0 rgba(233,196,106,0))}50%{filter:drop-shadow(0 0 3px rgba(233,196,106,.8))}}
 .cre-svg.shiny .mon-svg{animation:shimmer 2.4s ease-in-out infinite}
 .troop-svg{display:block;overflow:visible}
+/* ---- Village view ---- */
+.vil-topbar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:14px 16px;margin-bottom:12px}
+.vil-th{display:flex;align-items:center;gap:12px}
+.vil-th-badge{width:52px;height:52px;border-radius:12px;display:grid;place-items:center;font:800 22px/1 var(--mono);color:#3a2a00;
+  background:radial-gradient(circle at 40% 30%,#ffe89a,#f0b429);box-shadow:0 2px 0 #b8860b,inset 0 1px 2px rgba(255,255,255,.6)}
+.vil-th-name{font-weight:800;font-size:15px}.vil-th-sub{font-size:12px;color:var(--muted)}
+.vil-res{display:flex;gap:14px;flex-wrap:wrap;margin-left:auto}
+.vil-res-item{display:flex;align-items:center;gap:8px}
+.vil-res-item>div{display:flex;flex-direction:column;line-height:1.1}
+.vil-res-item b{font:700 15px/1 var(--mono);font-variant-numeric:tabular-nums}
+.vil-res-item span{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.vil-res-ic{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;font-size:15px;color:#241a00}
+.vil-res-ic.gold{background:linear-gradient(180deg,#ffe08a,#f0b429)}
+.vil-res-ic.mana{background:linear-gradient(180deg,#a5d8ff,#4dabf7);color:#022}
+.vil-res-ic.ember{background:linear-gradient(180deg,#ffc9c9,#ff6b6b);color:#300}
+.vil-xpbar{position:relative;height:16px;border-radius:10px;background:var(--panel);border:1px solid var(--border);overflow:hidden;margin-bottom:16px}
+.vil-xpfill{height:100%;background:linear-gradient(90deg,#8ce99a,#40c057);border-radius:10px 0 0 10px;transition:width .5s}
+.vil-xptext{position:absolute;inset:0;display:grid;place-items:center;font-size:10px;font-weight:700;color:var(--text);text-shadow:0 1px 2px rgba(0,0,0,.25)}
+.vil-sec{margin-bottom:14px}
+.vil-army{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
+.vil-troop{position:relative;background:var(--panel-2,var(--panel));border:1px solid var(--border);border-radius:14px;padding:10px;text-align:center;cursor:pointer;transition:transform .12s,box-shadow .12s}
+.vil-troop:hover{transform:translateY(-3px);box-shadow:0 6px 18px rgba(0,0,0,.18)}
+.vil-troop-av{width:56px;height:56px;margin:0 auto 4px;border-radius:12px;display:grid;place-items:center;overflow:visible}
+.vil-troop-nm{font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vil-troop-lv{font-size:11px;color:var(--muted)}
+.vil-troop-pw{font:700 12px/1 var(--mono);color:var(--gold,#f0b429);margin-top:3px}.vil-sword{opacity:.8;margin-right:2px}
+.vil-troop-st{font-size:10px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
+.vil-troop.status-working{border-color:#40c057}.vil-troop.status-waiting{border-color:#f0b429}
+.vil-grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:720px){.vil-grid2{grid-template-columns:1fr}}
+.vil-buildings{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:12px}
+.vil-bld{cursor:pointer;text-align:center;transition:transform .12s}.vil-bld:hover{transform:translateY(-3px)}
+.vil-bld-roof{width:0;height:0;margin:0 auto;border-left:34px solid transparent;border-right:34px solid transparent;border-bottom:22px solid #b5651d}
+.vil-bld-body{position:relative;width:60px;height:44px;margin:0 auto;background:linear-gradient(180deg,#d9a066,#c98a4b);border-radius:0 0 6px 6px;display:grid;place-items:center}
+.vil-bld-lv{font:700 11px/1 var(--mono);color:#3a2400;background:#ffe08a;border-radius:6px;padding:2px 5px}
+.vil-bld-nm{font-size:11px;color:var(--muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vil-warlog{display:flex;flex-direction:column;gap:6px;max-height:280px;overflow:auto}
+.vil-war-row{display:flex;align-items:center;gap:8px;font-size:12px;padding:5px 8px;border-radius:8px;background:var(--panel)}
+.vil-war-ic{flex:none}.vil-war-tx{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vil-war-t{color:var(--faint);font-size:10px;flex:none}
+/* raid overlay */
+.vil-raid-overlay{position:fixed;inset:0;z-index:120;display:none;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+  background:radial-gradient(1000px 700px at 50% 40%,#20303a,#0a1014 75%)}
+.vil-raid-overlay.on{display:flex}
+.vil-raid-stage{display:flex;gap:14px;align-items:flex-end;min-height:70px}
+.vil-march{width:54px;height:54px;display:grid;place-items:center;animation:vilmarch 1s ease-out both}
+@keyframes vilmarch{0%{transform:translateX(-120px) scale(.6);opacity:0}70%{opacity:1}100%{transform:translateX(0) scale(1);opacity:1}}
+.vil-raid-stars{font-size:44px;letter-spacing:6px}.vil-star{color:#3a4046}.vil-star.on{color:#ffd76a;text-shadow:0 0 16px rgba(255,215,106,.7)}
+.vil-raid-verdict{font-size:26px;font-weight:800;color:#fff}
+.vil-raid-loot{font-size:14px;color:#9fb3c0;font-variant-numeric:tabular-nums}
+html.hq-calm .vil-march{animation:none}
+@media(prefers-reduced-motion:reduce){.vil-march{animation:none}}
 .pokeimg{image-rendering:pixelated;object-fit:contain;display:block}
 .pokeimg-3d{image-rendering:auto}  /* X/Y models are already animated GIFs */
 /* ---- evolution splash ---- */
@@ -1176,6 +1227,7 @@ html.hq-calm #confetti{display:none!important}
 <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></symbol>
 <symbol id="i-swords" viewBox="0 0 24 24"><polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5"/><line x1="13" x2="19" y1="19" y2="13"/><line x1="16" x2="20" y1="16" y2="20"/><line x1="19" x2="21" y1="21" y2="19"/><polyline points="14.5 6.5 18 3 21 3 21 6 17.5 9.5"/><line x1="5" x2="9" y1="14" y2="18"/><line x1="7" x2="4" y1="17" y2="20"/><line x1="3" x2="5" y1="19" y2="21"/></symbol>
 <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></symbol>
+<symbol id="i-castle" viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M4 21V9l2 1V7l2 1V5h2v3l2-1v3l2-1v3"/><path d="M4 9h16v12H4z" fill="none"/><path d="M20 21V9l-2 1V7l-2 1V5h-2"/><path d="M10 21v-4a2 2 0 0 1 4 0v4"/></symbol>
 <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></symbol>
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
 <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
@@ -1230,6 +1282,7 @@ html.hq-calm #confetti{display:none!important}
       <button class="viewtab" data-view="pokedex" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-book"/></svg><span class="vt-l">Pokédex</span><span class="vt-k" aria-hidden="true">3</span></button>
       <button class="viewtab" data-view="gym" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-swords"/></svg><span class="vt-l">Gym</span><span class="vt-k" aria-hidden="true">4</span></button>
       <button class="viewtab" data-view="quests" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><span class="vt-l">Quests</span><span class="vt-k" aria-hidden="true">5</span></button>
+      <button class="viewtab" data-view="village" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-castle"/></svg><span class="vt-l">Village</span><span class="vt-k" aria-hidden="true">7</span></button>
       <button class="viewtab" data-view="arena" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-trophy"/></svg><span class="vt-l">Arena</span><span class="tab-badge hidden" id="arenaUnread" aria-hidden="true"></span><span class="vt-k" aria-hidden="true">6</span></button>
     </div>
 
@@ -1576,6 +1629,44 @@ html.hq-calm #confetti{display:none!important}
       <h3 class="section-h"><svg class="i" aria-hidden="true"><use href="#i-award"/></svg>Achievements <span class="muted" id="questsAchSub"></span></h3>
       <div class="ach-strip" id="questsAch"></div>
     </section>
+  </div>
+
+  <div id="villageView" class="village hidden" aria-label="Village">
+    <div class="vil-topbar">
+      <div class="vil-th" id="vilTH">
+        <div class="vil-th-badge" id="vilTHBadge">1</div>
+        <div class="vil-th-meta"><div class="vil-th-name">Town Hall</div><div class="vil-th-sub" id="vilTHsub">Level 1</div></div>
+      </div>
+      <div class="vil-res">
+        <div class="vil-res-item" title="Gold — total spend"><span class="vil-res-ic gold">◈</span><div><b id="vilGold">0</b><span>Gold</span></div></div>
+        <div class="vil-res-item" title="Mana — output tokens today"><span class="vil-res-ic mana">✧</span><div><b id="vilMana">0</b><span>Mana</span></div></div>
+        <div class="vil-res-item" title="Ember — lifetime prompts"><span class="vil-res-ic ember">✦</span><div><b id="vilEmber">0</b><span>Ember</span></div></div>
+      </div>
+      <button class="hbtn primary" id="vilRaid" type="button">⚔ Muster &amp; Raid</button>
+    </div>
+    <div class="vil-xpbar"><div class="vil-xpfill" id="vilXP"></div><span class="vil-xptext" id="vilXPtext"></span></div>
+
+    <section class="panel vil-sec" aria-label="Army camp">
+      <h3 class="section-h"><svg class="i" aria-hidden="true"><use href="#i-swords"/></svg>Army Camp <span class="muted" id="vilArmySub"></span></h3>
+      <div class="vil-army" id="vilArmy"></div>
+    </section>
+
+    <div class="vil-grid2">
+      <section class="panel vil-sec" aria-label="Builder base">
+        <h3 class="section-h"><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg>Builder Base <span class="muted">your projects</span></h3>
+        <div class="vil-buildings" id="vilBuild"></div>
+      </section>
+      <section class="panel vil-sec" aria-label="War log">
+        <h3 class="section-h"><svg class="i" aria-hidden="true"><use href="#i-trophy"/></svg>War Log</h3>
+        <div class="vil-warlog" id="vilWar"></div>
+      </section>
+    </div>
+
+    <div class="vil-raid-overlay" id="vilRaidOverlay" aria-hidden="true">
+      <div class="vil-raid-stage" id="vilRaidStage"></div>
+      <div class="vil-raid-result" id="vilRaidResult"></div>
+      <button class="hbtn" id="vilRaidClose" type="button">Return to village</button>
+    </div>
   </div>
 
   <div id="arenaView" class="arena hidden" aria-label="Arena leaderboard">
@@ -4268,6 +4359,7 @@ function render(){
   renderGymCard();
   renderNextUp();
   if(VIEW==="gym") renderGym();
+  if(VIEW==="village") renderVillage();
   checkTransitions(STATE.sessions);
   checkCelebration(STATE.season);
   checkEvolution(STATE.sessions);
@@ -4404,7 +4496,7 @@ document.addEventListener("keydown",function(e){
   if(e.key==="/"){ e.preventDefault(); $("search").focus(); }
   else if(e.key==="r"||e.key==="R"){ e.preventDefault(); forceRefresh(); }
   else if(e.key==="?"){ e.preventDefault(); openHelp(); }
-  else if(e.key>="1"&&e.key<="6"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","arena"][+e.key-1]); }
+  else if(e.key>="1"&&e.key<="7"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","arena","village"][+e.key-1]); }
   // In a voice call, from any view: M mutes, V switches the camera, S shares your screen. Holding a key down
   // doesn't repeat it, and outside a call these keys do nothing.
   else if(VCHAN.on && !e.repeat && (e.key==="m"||e.key==="M")){ e.preventDefault(); voiceToggleMute(); }
@@ -4469,7 +4561,8 @@ var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="anal
 var VIEW_TITLES = {
   live:["Live","Every Claude session, right now"], analytics:["Analytics","Usage, cost and rhythm over time"],
   pokedex:["Pokédex","Your creature collection"], gym:["Gym","Active sessions scored as a team"],
-  quests:["Quests","Daily, weekly and collection goals"], arena:["Arena","Friends, standings and voice"]
+  quests:["Quests","Daily, weekly and collection goals"], arena:["Arena","Friends, standings and voice"],
+  village:["Village","Your base & army, built from your Claude activity"]
 };
 function setView(v){
   VIEW = v; localStorage.setItem("hq_view", v);
@@ -4480,6 +4573,7 @@ function setView(v){
   var pv=$("pokedexView"); if(pv) pv.classList.toggle("hidden", v!=="pokedex");
   var gv=$("gymView"); if(gv) gv.classList.toggle("hidden", v!=="gym");
   var qv=$("questsView"); if(qv) qv.classList.toggle("hidden", v!=="quests");
+  var vv=$("villageView"); if(vv) vv.classList.toggle("hidden", v!=="village");
   var av=$("arenaView"); if(av) av.classList.toggle("hidden", v!=="arena");
   Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
     var on = t.getAttribute("data-view")===v;
@@ -4490,6 +4584,7 @@ function setView(v){
   if(v==="pokedex") loadPokedex();
   if(v==="gym") renderGym();
   if(v==="quests") loadQuests();
+  if(v==="village") renderVillage();
   // The lobby socket stays open on other views while you stay in the lobby, or while you're in voice (it carries it).
   if(v==="arena"){ arenaUnreadClear(); ARENA.nudgeCount={}; loadArena(); } else if(!VCHAN.on && !ARENA_STAY) arenaCloseSocket();
 }
@@ -5624,6 +5719,97 @@ function checkCelebration(season){
 // Celebrate when a session's creature stage INCREASES between updates.
 // Baseline on first load so we never celebrate the initial snapshot.
 var STAGE_PREV={}, STAGE_BASE=false;
+/* ================= Village (base + army, driven by real stats) ================= */
+function troopPower(s){ // original "power" score from real activity
+  var tk=s.tokens||{}; var out=tk.output||0; var pr=s.promptCount||0;
+  var stg=creatureStage(s.creature||{});
+  return Math.round(out/1500 + pr*4 + stg*25 + (s.status==="working"?15:0));
+}
+var VILLAGE_STATUS={working:["⚔","on the attack"],waiting:["🛡","awaiting orders"],idle:["💤","resting"],stale:["🏚","retired"]};
+function renderVillage(){
+  var s=(STATE&&STATE.season)||{}, sess=(STATE&&STATE.sessions)||[];
+  var lvl=s.level!=null?s.level:1;
+  $("vilTHBadge").textContent=lvl; $("vilTHsub").textContent="Level "+lvl+" · "+(s.rank||"Adventurer");
+  // resources from real stats
+  var gold=0, mana=0; sess.forEach(function(x){ var tk=x.tokens||{}; gold+=(tk.estCostUSD||0); mana+=(tk.output||0); });
+  var ember=(s.totals&&s.totals.prompts)||0;
+  $("vilGold").textContent=fmtCost(gold).replace("$",""); $("vilMana").textContent=fmtTok(mana); $("vilEmber").textContent=fmtTok(ember);
+  var pct=Math.max(0,Math.min(100,s.pct||0));
+  $("vilXP").style.width=pct+"%";
+  $("vilXPtext").textContent=(s.xpIntoLevel||0).toLocaleString()+" / "+(s.xpForLevel||0).toLocaleString()+" XP to TH "+(lvl+1);
+
+  // ---- Army Camp ----
+  var army=sess.slice().map(function(x){ return {s:x, pw:troopPower(x)}; }).sort(function(a,b){ return b.pw-a.pw; });
+  var camp=$("vilArmy"); camp.innerHTML="";
+  $("vilArmySub").textContent=army.length+" troop"+(army.length===1?"":"s")+" · total power "+army.reduce(function(a,b){return a+b.pw;},0);
+  if(!army.length){ camp.innerHTML='<div class="feed-empty">No troops yet — start a Claude session to recruit one.</div>'; }
+  army.slice(0,30).forEach(function(a){
+    var x=a.s, cr=x.creature||{}, st=VILLAGE_STATUS[x.status]||VILLAGE_STATUS.idle;
+    var card=el("div","vil-troop status-"+(x.status||"idle"));
+    var av=el("div","vil-troop-av"); paintCreature(av, cr, 56, true); card.appendChild(av);
+    var nm=el("div","vil-troop-nm"); nm.textContent=creatureSpecies(cr); card.appendChild(nm);
+    var lv=el("div","vil-troop-lv"); lv.textContent=creatureStageName(cr)+(cr.shiny?" ✦":""); card.appendChild(lv);
+    var pw=el("div","vil-troop-pw"); pw.innerHTML='<span class="vil-sword">⚔</span>'+a.pw; card.appendChild(pw);
+    var stt=el("div","vil-troop-st"); stt.textContent=st[0]+" "+(x.title||x.alias||"session"); stt.title=st[1]; card.appendChild(stt);
+    card.addEventListener("click",function(){ if(typeof openDrawer==="function") openDrawer(x); });
+    camp.appendChild(card);
+  });
+
+  // ---- Builder Base (projects as buildings) ----
+  var byFolder={}; sess.forEach(function(x){ var f=x.folder||"(no project)"; (byFolder[f]=byFolder[f]||[]).push(x); });
+  var builds=Object.keys(byFolder).map(function(f){ var arr=byFolder[f];
+    var prompts=arr.reduce(function(a,b){return a+(b.promptCount||0);},0);
+    return {f:f, n:arr.length, prompts:prompts, blvl:Math.max(1,Math.min(12,1+Math.floor(prompts/25)))}; })
+    .sort(function(a,b){ return b.prompts-a.prompts; });
+  var bwrap=$("vilBuild"); bwrap.innerHTML="";
+  if(!builds.length){ bwrap.innerHTML='<div class="feed-empty">No buildings yet.</div>'; }
+  builds.slice(0,12).forEach(function(b){
+    var name=b.f.split("/").pop()||b.f;
+    var t=el("div","vil-bld");
+    t.innerHTML='<div class="vil-bld-roof"></div><div class="vil-bld-body"><span class="vil-bld-lv">Lv '+b.blvl+'</span></div>';
+    var lab=el("div","vil-bld-nm"); lab.textContent=name; lab.title=b.f+" · "+b.n+" sessions · "+b.prompts+" prompts"; t.appendChild(lab);
+    t.addEventListener("click",function(){ if(typeof openProject==="function") openProject(b.f); });
+    bwrap.appendChild(t);
+  });
+
+  // ---- War Log (from event log) ----
+  var war=$("vilWar"); war.innerHTML="";
+  var evs=(typeof EVENTS!=="undefined"&&EVENTS)?EVENTS.slice(0,12):[];
+  if(!evs.length){ war.innerHTML='<div class="feed-empty">No battles logged yet.</div>'; }
+  evs.forEach(function(e){ var r=el("div","vil-war-row");
+    r.innerHTML='<span class="vil-war-ic">'+esc(e.icon||"•")+'</span><span class="vil-war-tx">'+esc(e.text||"")+'</span><span class="vil-war-t">'+esc(relTime(e.t))+'</span>';
+    war.appendChild(r); });
+}
+// ---- Raid: a self-contained deterministic skirmish from your army power ----
+function villageRaid(){
+  var sess=(STATE&&STATE.sessions)||[];
+  var army=sess.map(troopPower).sort(function(a,b){return b-a;});
+  var power=army.reduce(function(a,b){return a+b;},0);
+  var ov=$("vilRaidOverlay"); if(!ov) return;
+  var stage=$("vilRaidStage"); stage.innerHTML="";
+  var top=sess.slice().map(function(x){return {s:x,pw:troopPower(x)};}).sort(function(a,b){return b.pw-a.pw;}).slice(0,6);
+  top.forEach(function(a,i){ var m=el("div","vil-march"); m.style.animationDelay=(i*0.12)+"s";
+    paintCreature(m, a.s.creature||{}, 54, false); stage.appendChild(m); });
+  // defenders + result (deterministic, no RNG banned APIs)
+  var defense=Math.round(power*0.7 + 40 + (top.length*11));
+  var ratio=power/(defense||1);
+  var stars = ratio>=1.4?3 : ratio>=1.0?2 : ratio>=0.6?1 : 0;
+  var loot = Math.round(power*3.5*(0.5+stars*0.25));
+  var res=$("vilRaidResult");
+  var starRow=""; for(var i=0;i<3;i++) starRow+='<span class="vil-star '+(i<stars?"on":"")+'">★</span>';
+  var verdict = stars>=2?"Victory!" : stars===1?"Partial raid" : "Raid repelled";
+  res.innerHTML='<div class="vil-raid-stars">'+starRow+'</div><div class="vil-raid-verdict">'+verdict+'</div>'+
+    '<div class="vil-raid-loot">Power '+power+' vs Defense '+defense+' · +'+fmtTok(loot)+' loot</div>';
+  ov.classList.add("on"); ov.setAttribute("aria-hidden","false");
+  if(!calmMode()) confettiBurst();
+  try{ playChime(); }catch(e){}
+  if(stars>=1) logEvent("⚔", verdict+" — "+stars+"★ raid ("+fmtTok(loot)+" loot)");
+}
+function villageRaidClose(){ var ov=$("vilRaidOverlay"); if(ov){ ov.classList.remove("on"); ov.setAttribute("aria-hidden","true"); } if(VIEW==="village") renderVillage(); }
+(function(){ var r=$("vilRaid"); if(r) r.addEventListener("click",villageRaid);
+  var c=$("vilRaidClose"); if(c) c.addEventListener("click",villageRaidClose);
+  var ov=$("vilRaidOverlay"); if(ov) ov.addEventListener("click",function(e){ if(e.target===ov) villageRaidClose(); }); })();
+
 var EVO_TIMER=null;
 function showEvoSplash(s, fromStage){
   var el2=$("evoSplash"); if(!el2) return;

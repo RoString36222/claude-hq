@@ -1,6 +1,8 @@
 # Runtime state / private data (never commit)
 config.json
 sessions-meta.json
+meals.json
+.meals-*.tmp
 claude-hq.log
 claude-hq.err.log
 

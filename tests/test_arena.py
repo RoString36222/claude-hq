@@ -5,6 +5,7 @@ tool name outside the built-in allowlist (an MCP name can carry an employer or
 client) ever reaches the wire. Stdlib only. Run with:
     python3 -m unittest discover -s tests
 """
+import json
 import os
 import sys
 import tempfile
@@ -21,6 +22,11 @@ FORBIDDEN_KEYS = {
     "cwd", "folder", "project", "projectName", "sessionId", "sessionTitle",
     "title", "file", "files",
 }
+
+# Local creature-fatigue and meal-ledger state: never in the stats payload.
+# (requestId legitimately goes to the pantry routes, never to /v1/stats.)
+LOCAL_ONLY_KEYS = {"fatigue", "busy_spans", "open_tool_since", "meals", "lastMeal",
+                   "requestId"}
 
 
 def _collect_keys(obj):
@@ -96,6 +102,47 @@ class BuildPayloadTests(unittest.TestCase):
     def test_trainer_name_passthrough(self):
         payload = arena.build_payload(self._tmp.name, trainer_name="Ash")
         self.assertEqual(payload["trainerName"], "Ash")
+
+    def test_fatigue_inputs_never_reach_the_stats_payload(self):
+        # The scan aggregate carries the creature-fatigue inputs; they are local.
+        self._synthetic["busy_spans"] = [[1790000000.0, 1790003600.0]]
+        self._synthetic["open_tool_since"] = 1790003000.0
+        payload = arena.build_payload(self._tmp.name)
+        leaked = _collect_keys(payload) & (FORBIDDEN_KEYS | LOCAL_ONLY_KEYS)
+        self.assertEqual(leaked, set(), "payload leaked keys: %s" % leaked)
+        self.assertNotIn("1790003600", json.dumps(payload))
+
+
+class PantryWireTests(unittest.TestCase):
+    """arena.pantry is the privacy boundary for coins, food and gifts: whatever
+    the caller passes, only the allowlisted fields go out."""
+
+    def setUp(self):
+        self._req = arena._request
+        self._link = arena.load_link
+        self._cfg = arena._load_config
+        arena.load_link = lambda: {"token": "T", "url": "https://arena.example"}
+        arena._load_config = lambda: {}
+        self.sent = []
+        arena._request = lambda method, url, token=None, body=None: (
+            self.sent.append(body) or (200, {}))
+
+    def tearDown(self):
+        arena._request = self._req
+        arena.load_link = self._link
+        arena._load_config = self._cfg
+
+    def test_no_forbidden_or_local_keys_on_the_wire(self):
+        leaky = {k: "x" for k in FORBIDDEN_KEYS | LOCAL_ONLY_KEYS}
+        leaky.update({"requestId": "a" * 16, "kind": "berry", "qty": 1, "coins": 1,
+                      "toHandle": "gary", "note": "hi"})
+        for action in arena.PANTRY_ACTIONS:
+            arena.pantry(action, leaky)
+        self.assertEqual(len(self.sent), len(arena.PANTRY_ACTIONS))
+        for body in self.sent:
+            self.assertEqual(
+                _collect_keys(body) & (FORBIDDEN_KEYS | (LOCAL_ONLY_KEYS - {"requestId"})), set())
+            self.assertLessEqual(set(body), set(arena._PANTRY_KEYS))
 
 
 if __name__ == "__main__":

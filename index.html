@@ -254,6 +254,10 @@ main:focus{outline:none}
   background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:4px 7px}
 .tc-chip b{font:650 12px var(--mono);color:var(--ink)}
 .tc-chip.shiny{color:var(--gold);border-color:color-mix(in srgb,var(--gold) 40%,var(--line));background:var(--goldbg)}
+.tc-chip.coins b{color:var(--gold)}
+.tc-dot{width:6px;height:6px;border-radius:50%;background:var(--brand);flex:none}
+@keyframes coinbump{0%,100%{transform:scale(1)}40%{transform:scale(1.15)}}
+.tc-chip.bump{animation:coinbump .6s var(--ease)}
 
 /* =================== banners =================== */
 .alertbanner{display:flex;align-items:center;gap:12px;background:var(--needbg);
@@ -777,6 +781,51 @@ html.hq-calm .animo-img{animation:none}
 .card.working .avatar::after{content:"";position:absolute;inset:-1px;border-radius:12px;z-index:-1;background:var(--panel)}
 .shiny .pokeimg{filter:drop-shadow(0 0 3px rgba(233,196,106,.85)) saturate(1.25)}
 .dexcard.uncaught .dex-sprite .pokeimg{filter:grayscale(1) brightness(.35)}
+/* creature energy (fatigue). Filters go on the WRAPPER only: .pokeimg / .mon-svg own the shiny filters. */
+.fz-tired,.fz-fatigued,.fz-ko{position:relative}
+.fz-fatigued{filter:saturate(.55) brightness(.97)}
+.fz-ko{filter:grayscale(.9);opacity:.75}
+.fz-ko .pokeimg,.fz-ko .mon-svg,.fz-ko .troop-svg{animation:none!important;transform:rotate(-90deg) scale(.9);transition:transform .35s var(--ease)}
+.card.working .avatar.fz-fatigued .pokeimg,.card.working .avatar.fz-fatigued .mon-svg{animation-duration:1.8s}
+.card.working .avatar.fz-fatigued .animo-img{animation-duration:2.6s}
+#focus.working .fcreature.fz-ko,#warroom.working .wr-creature.fz-ko{animation:none}
+.fz-badge{position:absolute;right:-4px;bottom:-4px;font-size:13px;line-height:1;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:1px 2px;pointer-events:none}
+html.hq-calm .fz-ko .pokeimg,html.hq-calm .fz-ko .mon-svg,html.hq-calm .fz-ko .troop-svg{transition:none}
+/* energy meter (card evo strip + drawer care) */
+.enrow{display:flex;align-items:center;gap:8px;margin-top:6px;min-width:0}
+.enbar{flex:1;min-width:40px;height:4px;border-radius:999px;background:var(--heat0);overflow:hidden}
+.enbar span{display:block;height:100%;border-radius:999px;background:var(--good);transition:width .5s var(--ease)}
+.enrow.tired .enbar span{background:color-mix(in srgb,var(--warn) 70%,var(--good))}
+.enrow.fatigued .enbar span{background:var(--warn)}
+.enrow.risk .enbar span,.enrow.unconscious .enbar span{background:var(--need)}
+.enlbl{font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.dw-care{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.dw-care .enrow{margin-top:0}
+.dw-care .enbar{height:6px}
+.dw-care .enlbl{font-size:12px;font-weight:600;color:var(--muted)}
+.care-line,.care-note{margin:0;font-size:12.5px;color:var(--muted)}
+.care-note{font-size:12px;color:var(--faint)}
+.care-pending{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.dw-meals{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)}
+.meal-btn{min-height:32px;border-radius:999px;border:1px solid var(--line);background:var(--panel2);padding:4px 10px;font-size:12.5px;
+  display:inline-flex;align-items:center;gap:5px;transition:border-color var(--t-fast),background var(--t-fast)}
+.meal-btn:hover:not([disabled]){border-color:var(--line2);background:var(--panel3)}
+.meal-btn[disabled]{opacity:.5;cursor:default}
+.meal-btn.best{border-color:var(--brand-line);box-shadow:0 0 0 2px var(--brand-soft)}
+.meal-btn.buy{border-style:dashed}
+.meal-btn .mb-n{font:600 11.5px var(--mono);color:var(--muted)}
+.meal-btn .mb-p{font-size:11.5px;color:var(--good);font-variant-numeric:tabular-nums}
+.meal-btn.buy .mb-p{color:var(--gold)}
+.dw-meals.offline .meal-btn{opacity:.4}
+.care-link{align-self:flex-start;background:none;border:none;padding:2px 0;color:var(--brand);font-size:12.5px;font-weight:600}
+.care-link:hover{text-decoration:underline}
+.dw-head .dw-av{position:relative}
+@keyframes nom{0%,100%{transform:scale(1)}35%{transform:scale(1.12)}70%{transform:scale(.96)}}
+.dw-av.nom{animation:nom .5s var(--ease)}
+.en-gain{position:absolute;left:50%;top:-8px;transform:translateX(-50%);font:700 12px/1 var(--mono);color:var(--good);white-space:nowrap;
+  background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:2px 6px;pointer-events:none}
+.en-gain.fly{animation:engain .9s ease-out forwards}
+@keyframes engain{0%{opacity:0;transform:translate(-50%,6px)}20%{opacity:1}100%{opacity:0;transform:translate(-50%,-16px)}}
 
 /* =================== gym =================== */
 .tchip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:650;color:#fff;
@@ -1097,6 +1146,36 @@ html.hq-calm .animo-img{animation:none}
 .arena-nudge{margin-left:2px;padding:1px 8px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--muted);font-size:12px;line-height:1.6}
 .arena-nudge:hover{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
 .arena-who .arena-nudge{margin-left:auto;flex:0 0 auto}
+.arena-who .arena-nudge + .arena-nudge{margin-left:4px}
+/* Poke Coins & snacks (Arena store) */
+.store-wallet{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap;margin-bottom:14px}
+.store-coins{font-size:13px;color:var(--muted);white-space:nowrap}
+.store-coins b{font:700 22px/1 var(--mono);color:var(--gold);font-variant-numeric:tabular-nums;margin-right:2px}
+#storeClaim{display:inline-flex;align-items:center;gap:6px 10px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);min-width:0}
+.store-warn{color:var(--warn)}
+.store-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.store-item{display:flex;flex-direction:column;gap:6px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);min-width:0}
+.si-top{display:flex;align-items:center;gap:9px;min-width:0}
+.si-emoji{font-size:24px;line-height:1;flex:none}
+.si-name{font-weight:650;font-size:13px}
+.si-eff{font-size:11.5px;color:var(--muted)}
+.si-meta{display:flex;justify-content:space-between;gap:4px 8px;flex-wrap:wrap;font-size:11.5px;color:var(--faint)}
+.si-price{font:650 12px var(--mono);color:var(--gold)}
+.store-item .hbtn{height:30px;font-size:12.5px;white-space:normal}
+.si-ok{font-size:11.5px;color:var(--good);min-height:1.4em}
+.si-ok.err{color:var(--warn)}
+.store-gifts,.store-privacy{font-size:12px;margin:12px 0 0}
+.store-state{font-size:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0}
+.gift-modal{width:min(440px,100%)}
+.gift-form{gap:14px}
+.setrow.gift-pair{flex-direction:row;flex-wrap:wrap;gap:10px}
+.gift-pair>div{display:flex;flex-direction:column;gap:6px;flex:1 1 140px;min-width:0}
+.gift-form label{font-size:12.5px;font-weight:600;color:var(--ink)}
+.gift-form label .muted{font-weight:500;color:var(--faint)}
+#giftSummary{margin:0;font-weight:600;font-size:13.5px}
+#giftLimits{margin:0;font-size:12px}
+#giftErr{margin:0;font-size:12.5px;color:var(--need)}
+#giftErr:empty{display:none}
 .arena-stat{position:relative}
 .arena-stat-dot{position:absolute;top:5px;right:5px;width:7px;height:7px;border-radius:50%;background:var(--faint);box-shadow:0 0 0 2px var(--panel)}
 .arena-stat-dot.ok{background:var(--good)}
@@ -1198,6 +1277,7 @@ html.hq-calm .animo-img{animation:none}
 }
 :root[data-theme="contrast"] .card,:root[data-theme="contrast"] .panel,
 :root[data-theme="contrast"] .tile,:root[data-theme="contrast"] .dexcard{border-width:2px}
+:root[data-theme="contrast"] .enbar{outline:1px solid var(--line2)}
 
 /* =================== accessibility =================== */
 .sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
@@ -1773,6 +1853,23 @@ html.hq-calm #confetti{display:none!important}
       </div>
     </section>
 
+    <section class="panel hidden" id="arenaStoreWrap" aria-label="Poke Coins and snacks" tabindex="-1">
+      <h3 class="section-h"><span aria-hidden="true">🪙</span>Poke Coins &amp; snacks <span class="muted" id="storeSub"></span></h3>
+      <div id="storeBody" class="hidden">
+        <div class="store-wallet">
+          <span class="store-coins"><b id="storeCoins">0</b> / <span id="storeCap">30</span> Poke Coins</span>
+          <span id="storeClaim"></span>
+        </div>
+        <div class="store-grid" id="storeGrid"></div>
+        <p class="muted store-gifts" id="storeGifts"></p>
+      </div>
+      <p class="muted store-state" id="storeState"><span class="loading-row"><span class="orb" data-orb="searching" aria-hidden="true"></span>Loading…</span></p>
+      <p class="muted store-privacy">
+        Coins and snacks are kept by the Arena server under your GitHub handle. It sees what you buy, eat or give,
+        never which session ate it: that stays on this machine.
+      </p>
+    </section>
+
     <section class="panel hidden" id="arenaLobbyWrap" aria-label="Lobby">
       <h3 class="section-h"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg>Lobby <span class="muted">who&rsquo;s online</span></h3>
       <div class="arena-lobby" id="arenaLobby"><span class="muted">Connecting&hellip;</span></div>
@@ -1938,6 +2035,7 @@ html.hq-calm #confetti{display:none!important}
         <li><b>Creatures</b>: each session maps to a Pokémon (stable), evolves with prompts, rare shiny. See the Pokédex ⓘ button.</li>
         <li><b>⚔️ Gym</b>: your active tabs scored as a team on the real 18-type chart — coverage, weaknesses, grade.</li>
         <li><b>✨ Next up</b>: what to do next. <b>🩺 Health</b>: stuck tabs + daily budget. <b>📕 Pokédex</b>: your collection.</li>
+        <li><b>⚡ Energy</b>: creatures tire after long unbroken runs (💦 fatigued, 💫 fainted) and recover while you rest; a 🍙 snack from the Arena store perks them up. Purely cosmetic.</li>
       </ul>
       <h2>Per session</h2>
       <ul>
@@ -1998,6 +2096,16 @@ html.hq-calm #confetti{display:none!important}
         <li>Sprites are the classic animated Gen-5 pixel art, loaded from the public <b>PokéAPI</b> library. The only thing that
           leaves your machine is a Pokédex <i>number</i> — never your conversation data. Offline, they fall back to a
           generated monster sprite. Switch packs anytime in <b>⚙️ Settings</b>.</li>
+      </ul>
+      <h2>⚡ Energy, rest &amp; snacks</h2>
+      <ul>
+        <li>About <b>2h</b> of non-stop work makes a creature <b>Fatigued</b> 💦; past <b>3h</b> it may faint 💫, and by <b>4h</b> it will.</li>
+        <li>Pauses under 5 min still count as work; after <b>10 min away</b> it rests and recovers <b>4× as fast</b> as it tires.</li>
+        <li>A fainted creature wakes once its load drops below 2h (at most ~55 min of rest) or with a <b>Revive Tonic</b>.</li>
+        <li>Snacks: 🫐 Berry 1🪙 −20m · 🍙 Rice Ball 2🪙 −45m · 🍱 Bento 3🪙 −2h · 🧃 Revive Tonic 5🪙 wakes it.</li>
+        <li><b>5 Poke Coins</b> per UTC day (05:30 IST), and the purse holds 30; gift coins or snacks from the <b>Arena</b> tab.</li>
+        <li>Which session ate stays on this machine. Energy is purely cosmetic: it never touches XP or the Arena board.
+          Turn it off in <b>⚙️ Settings</b>.</li>
       </ul>
     </div></div>
   </div>
@@ -2075,6 +2183,11 @@ html.hq-calm #confetti{display:none!important}
           <span class="hint">Saved in this browser. Calm mode defaults on when your OS requests reduced motion.</span>
         </div>
         <div class="setrow">
+          <label id="setFatigueLbl">Creatures</label>
+          <label class="dex-toggle"><input type="checkbox" id="setFatigue" aria-describedby="setFatigueHint"> Creature energy (fatigue, rest &amp; snacks)</label>
+          <span class="hint" id="setFatigueHint">Creatures tire after long unbroken runs. Purely cosmetic: never affects XP or the Arena.</span>
+        </div>
+        <div class="setrow">
           <label for="setPack">Creature pack</label>
           <select id="setPack">
             <option value="pokemon">Pokémon (animated sprites)</option>
@@ -2104,6 +2217,40 @@ html.hq-calm #confetti{display:none!important}
         <div class="setfoot">
           <button class="hbtn" id="settingsCancel" type="button">Cancel</button>
           <button class="hbtn on" id="settingsSave" type="button">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- give Poke Coins / a snack to someone in the Arena (a global overlay, so lobby re-renders can't destroy it) -->
+<div class="modalback" id="giftBack">
+  <div class="modal gift-modal" role="dialog" aria-modal="true" aria-labelledby="giftTitle">
+    <div class="modal-h">
+      <h3 id="giftTitle">🎁 Give</h3>
+      <button class="hbtn icon ghost" id="giftX" type="button" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="modal-b">
+      <div class="setform gift-form">
+        <div class="setrow">
+          <label for="giftCoins">Poke Coins</label>
+          <input type="number" id="giftCoins" min="0" max="5" step="1" value="0" inputmode="numeric">
+          <span class="hint" id="giftCoinsHint"></span>
+        </div>
+        <div class="setrow gift-pair">
+          <div><label for="giftKind">Snack</label><select id="giftKind"><option value="">No snack</option></select></div>
+          <div><label for="giftQty">Amount</label><input type="number" id="giftQty" min="0" max="3" step="1" value="0" inputmode="numeric"></div>
+        </div>
+        <div class="setrow">
+          <label for="giftNote">Note <span class="muted">(optional)</span></label>
+          <input id="giftNote" type="text" maxlength="80" placeholder="for your sleepy Voltkit" autocomplete="off" spellcheck="true">
+        </div>
+        <p id="giftSummary" aria-live="polite"></p>
+        <p class="muted" id="giftLimits"></p>
+        <p id="giftErr" role="alert"></p>
+        <div class="setfoot">
+          <button class="hbtn" id="giftCancel" type="button">Cancel</button>
+          <button class="hbtn on" id="giftSend" type="button">Send</button>
         </div>
       </div>
     </div>
@@ -2992,7 +3139,7 @@ var FILTERTAG = "";            // active tag filter, "" = all
 var STATE_AT = 0;              // Date.now() of last payload (for live timers)
 
 /* ---- config + creature packs (v5) ---- */
-var CONFIG_DEFAULTS = {theme:"aurora", creaturePack:"pokemon3d", refreshMs:5000, stuckMinutes:15, dailyBudgetUSD:0, trainerName:""};
+var CONFIG_DEFAULTS = {theme:"aurora", creaturePack:"pokemon3d", refreshMs:5000, stuckMinutes:15, dailyBudgetUSD:0, trainerName:"", creatureFatigue:true};
 var CONFIG = Object.assign({}, CONFIG_DEFAULTS);
 function cfg(){ return CONFIG; }
 // both Pokémon packs share evolution/type/name logic; only the sprite source differs
@@ -3068,6 +3215,80 @@ function creatureNextStageName(cr){ cr=cr||{};
   if(cfg().creaturePack==="village") return st>=4?null:TROOP_LEVELS[st+1];
   return st>=4?null:STAGE_NAMES[st+1]; }
 function creatureStagePct(cr){ cr=cr||{}; var p=cr.stagePct!=null?cr.stagePct:0; if(p<=1) p=p*100; /* backend sends 0..1 */ return Math.max(0,Math.min(100,Math.round(p))); }
+
+/* ---- creature energy (fatigue) + the Poke Coins pantry: shared state + helpers ----
+   s.creature.fatigue is computed locally by dashboard.py from transcript activity. It is
+   cosmetic: never XP, never the Arena board. Coins and snacks live on the Arena server and
+   reach the page only through the local /api/arena/pantry proxy. The two FZ_ lines mirror
+   dashboard.py FATIGUE_CERTAIN_SECS / FATIGUE_TIRED_SECS (a test greps them). */
+var FZ_SCALE_MINS = 240;
+var FZ_TIRED_MINS = 60;
+var FZ_STATES = ["rested","tired","fatigued","unconscious"];
+// The creature's fatigue, or null (key absent, malformed, or energy turned off in Settings).
+function fzOf(cr){
+  var f = cr && cr.fatigue;
+  if(!f || typeof f!=="object" || FZ_STATES.indexOf(f.state)<0 || CONFIG.creatureFatigue===false) return null;
+  return f;
+}
+// energy is 0..1 on the wire (never creatureStagePct: that one guesses units).
+function fzPct(f){ return Math.max(0, Math.min(100, Math.round((Number(f.energy)||0)*100))); }
+function fzMins(v){ return Math.max(0, Math.round(Number(v)||0)); }
+function fmtMins(m){ m=fzMins(m); if(m<60) return m+"m"; var h=Math.floor(m/60), r=m%60; return h+"h"+(r?" "+r+"m":""); }
+function fzLabel(state){ return state==="tired"?"Tired":state==="fatigued"?"Fatigued":state==="unconscious"?"Fainted":"Rested"; }
+// One id per user intent (a snack, a buy, a gift), reused for every retry of it: the
+// server replays a repeated id instead of spending twice.
+function newRequestId(){
+  try{ if(window.crypto && crypto.randomUUID) return crypto.randomUUID(); }catch(e){}
+  var b=new Uint8Array(16), s="";
+  try{ crypto.getRandomValues(b); }catch(e){ for(var i=0;i<16;i++) b[i]=Math.floor(Math.random()*256); }
+  for(var k=0;k<16;k++) s+=(b[k]<16?"0":"")+b[k].toString(16);
+  return s;
+}
+// Fallback food labels + effects until the Arena catalog arrives. The server catalog (backend
+// app/pantry.py) is the authority for names and prices; the local proxy overlays the effects.
+var FOOD_ORDER = ["berry","riceball","bento","tonic"];
+var FOOD_UI = {
+  berry:   {name:"Berry",        plural:"Berries",       emoji:"\uD83E\uDED0", price:1, restoreMins:20,  revives:false},
+  riceball:{name:"Rice Ball",    plural:"Rice Balls",    emoji:"\uD83C\uDF59", price:2, restoreMins:45,  revives:false},
+  bento:   {name:"Bento",        plural:"Bentos",        emoji:"\uD83C\uDF71", price:3, restoreMins:120, revives:false},
+  tonic:   {name:"Revive Tonic", plural:"Revive Tonics", emoji:"\uD83E\uDDC3", price:5, restoreMins:0,   revives:true, wakeToMins:105}
+};
+function isFood(k){ return typeof k==="string" && Object.prototype.hasOwnProperty.call(FOOD_UI, k); }
+// store: "unknown" | "ok" | "unsupported" (an older Arena server) | "unpaired" | "error"
+var PANTRY = {store:"unknown", j:null, at:0, rev:0, claiming:false, offAt:0, loading:false, bump:false};
+// A server without the store answers FastAPI's bare 404 "Not Found" (a missing person is
+// "no such person"), the same test arenaNudgeHandle uses. A local miss can't look like this:
+// every pantry path is in dashboard.py POST_PATHS.
+function pantryIsBare404(res){ return res.status===404 && /^not found$/i.test(String((res.j&&(res.j.error||res.j.detail))||"")); }
+// A food kind's catalog entry: the server's strings and prices over the local fallback.
+function foodInfo(kind){
+  if(!isFood(kind)) return null;
+  var b=FOOD_UI[kind];
+  var out={kind:kind, name:b.name, plural:b.plural, emoji:b.emoji, price:b.price, restoreMins:b.restoreMins, revives:b.revives, wakeToMins:b.wakeToMins||105};
+  var cat=(PANTRY.j && Array.isArray(PANTRY.j.catalog)) ? PANTRY.j.catalog : [];
+  for(var i=0;i<cat.length;i++){
+    var c=cat[i]; if(!c || c.kind!==kind) continue;
+    if(typeof c.name==="string" && c.name) out.name=c.name.slice(0,40);
+    if(typeof c.plural==="string" && c.plural) out.plural=c.plural.slice(0,40);
+    if(typeof c.emoji==="string" && c.emoji) out.emoji=c.emoji.slice(0,8);
+    if(typeof c.price==="number" && c.price>=0 && c.price%1===0) out.price=c.price;
+    if(typeof c.restoreMins==="number" && c.restoreMins>=0) out.restoreMins=c.restoreMins;
+    if(typeof c.revives==="boolean") out.revives=c.revives;
+    if(typeof c.wakeToMins==="number" && c.wakeToMins>=0) out.wakeToMins=c.wakeToMins;
+    break;
+  }
+  return out;
+}
+// The catalog in the server's order (known kinds only), else the fallback order.
+function pantryCatalog(){
+  var cat=(PANTRY.j && Array.isArray(PANTRY.j.catalog)) ? PANTRY.j.catalog : [], out=[], seen={};
+  cat.forEach(function(c){ if(c && isFood(c.kind) && !seen[c.kind]){ seen[c.kind]=1; out.push(foodInfo(c.kind)); } });
+  if(!out.length) FOOD_ORDER.forEach(function(k){ out.push(foodInfo(k)); });
+  return out;
+}
+function foodA(info){ return (/^[aeiou]/i.test(info.name)?"an ":"a ")+info.name; }
+function foodN(info, n){ return n+" "+(n===1?info.name:info.plural); }
+function coinsN(n){ return n+" Poke Coin"+(n===1?"":"s"); }
 
 // monsterSVG(seed,typeHue,stage,shiny,px) -> a left-right symmetric pixel-monster
 // on a 10x10 grid: decide cols 1..4 then mirror to 5..8, blobby toward center,
@@ -3412,15 +3633,28 @@ function troopSVG(seed, hue, arch, stage, shiny, px){
     g.join('')+'</g></g></svg>';
 }
 function troopVisual(cr, px){ return troopSVG(creatureSeed(cr), TROOP_HUE[troopArch(cr)], troopArch(cr), creatureStage(cr), !!cr.shiny, px); }
+// Energy look on top of whatever the pack painted: a class on the wrapper (the sprite keeps
+// its own shiny filter) and, at avatar size and up, a small 💦 / 💫 corner badge.
+// (Never 💤, 😴 or 🛌: those already mean stale, ended or empty.)
+function applyFatigueFx(node, cr, px){
+  var f=fzOf(cr); if(!f || f.state==="rested") return;
+  node.classList.add(f.state==="unconscious" ? "fz-ko" : (f.state==="fatigued" ? "fz-fatigued" : "fz-tired"));
+  if(px>=40 && (f.state==="fatigued" || f.state==="unconscious")){
+    var b=el("span","fz-badge"); b.setAttribute("aria-hidden","true");
+    b.textContent = f.state==="unconscious" ? "\uD83D\uDCAB" : "\uD83D\uDCA6";
+    node.appendChild(b);
+  }
+}
 function paintCreature(node, cr, px, bg){
   cr=cr||{}; if(bg===undefined) bg=true; px=px||46;
-  node.classList.remove("shiny","cre-svg");
+  node.classList.remove("shiny","cre-svg","fz-tired","fz-fatigued","fz-ko");
   if(isVillagePack()){
     node.classList.add("cre-svg");
     if(bg){ var isDv=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches;
             node.style.background="hsl("+TROOP_HUE[troopArch(cr)]+",45%,"+(isDv?"18%":"90%")+")"; }
     node.innerHTML=troopVisual(cr, px);
     if(cr.shiny) node.classList.add("shiny");
+    applyFatigueFx(node, cr, px);
     return;
   }
   if(isPokePack()){
@@ -3428,6 +3662,7 @@ function paintCreature(node, cr, px, bg){
             node.style.background="hsl("+creatureTypeHue(cr)+",55%,"+(isD?"20%":"90%")+")"; }
     node.innerHTML=pokeImgHTML(cr, px);
     if(cr.shiny) node.classList.add("shiny");
+    applyFatigueFx(node, cr, px);
     return;
   }
   if(cfg().creaturePack==="aniimo"){
@@ -3435,6 +3670,7 @@ function paintCreature(node, cr, px, bg){
             node.style.background="hsl("+creatureTypeHue(cr)+",55%,"+(isDn?"20%":"90%")+")"; }
     node.innerHTML=animoImgHTML(cr, px);
     if(cr.shiny) node.classList.add("shiny");
+    applyFatigueFx(node, cr, px);
     return;
   }
   if(cfg().creaturePack==="monsters"){
@@ -3450,6 +3686,7 @@ function paintCreature(node, cr, px, bg){
     node.textContent=creatureEmoji(cr);
     if(cr.shiny) node.classList.add("shiny");
   }
+  applyFatigueFx(node, cr, px);
 }
 // String form for callers that build markup (feed/cmdk): svg or an emoji.
 function creatureVisual(x, px){
@@ -3748,15 +3985,33 @@ var PARTY_SIG=null;
 function partySig(sessions){
   // Only fields that affect the rendered cards — NOT volatile ones (now/ageSecs/tokens)
   // so the party isn't rebuilt (which restarts every animated sprite) each SSE tick.
-  var parts=(sessions||[]).map(function(s){ var c=s.creature||{};
+  // Energy: only the coarse state is here (it changes the sprite look and the Snack button);
+  // the meter's numbers are patched in place by patchEnergyRows.
+  var parts=(sessions||[]).map(function(s){ var c=s.creature||{}, f=fzOf(c);
     return [s.id,s.status,s.title,s.alias||"",s.pinned?1:0,(s.tags||[]).join(","),s.note||"",s.folder||"",
-            c.species,creatureStage(c),c.shiny?1:0,(EVO_CHOICE[s.sessionId||s.id]||{}).branchDex||"",(EVO_CHOICE[s.sessionId||s.id]||{}).megaSlug||""].join(""); });
-  return [QUERY,SORT,FILTER,FILTERTAG,FILTERFOLDER,STALE_OPEN?1:0,cfg().creaturePack].join("|")+"||"+parts.join("");
+            c.species,creatureStage(c),c.shiny?1:0,(EVO_CHOICE[s.sessionId||s.id]||{}).branchDex||"",(EVO_CHOICE[s.sessionId||s.id]||{}).megaSlug||"",f?(f.state+(f.mayFaint?"!":"")):""].join(""); });
+  return [QUERY,SORT,FILTER,FILTERTAG,FILTERFOLDER,STALE_OPEN?1:0,cfg().creaturePack,PANTRY.store==="ok"?1:0].join("|")+"||"+parts.join("");
+}
+}
+// Keep each card's energy meter current without rebuilding the party (a rebuild restarts
+// every animated sprite).
+function patchEnergyRows(sessions){
+  var party=$("party"); if(!party) return;
+  var rows=party.querySelectorAll(".enrow"); if(!rows.length) return;
+  var by={}; (sessions||[]).forEach(function(s){ if(s.sessionId) by[s.sessionId]=s; });
+  Array.prototype.forEach.call(rows,function(row){
+    var card=row.closest(".card"); if(!card) return;
+    var s=by[card.getAttribute("data-sid")]; if(!s) return;
+    var f=fzOf(s.creature); if(!f || f.state==="rested") return;   // a state change rebuilds via partySig
+    var h=energyRowHTML(f); if(card._enh===h) return;
+    row.outerHTML=h; card._enh=h;
+    card.setAttribute("aria-label", cardAriaLabel(s));
+  });
 }
 function renderParty(sessions){
   renderThinking(sessions);
   var sig=partySig(sessions);
-  if(sig===PARTY_SIG) return;   // nothing card-relevant changed -> don't rebuild (avoids sprite flicker)
+  if(sig===PARTY_SIG){ patchEnergyRows(sessions); return; }   // nothing card-relevant changed -> don't rebuild (avoids sprite flicker)
   PARTY_SIG=sig;
   var party = $("party"); party.innerHTML="";
   sessions = sessions||[];
@@ -3815,10 +4070,40 @@ function renderParty(sessions){
   $("emptyState").classList.toggle("hidden", !(sessions.length===0 || shownTotal===0));
 }
 
+// The energy meter's words: what state it's in and how long a break it needs.
+function energyLabel(f){
+  var pct=fzPct(f), rm=fzMins(f.restMins);
+  if(f.state==="unconscious") return f.phase==="resting" ? "Fainted \u00B7 resting \u00B7 wakes in ~"+rm+"m"
+                                                          : "Fainted \u00B7 wakes after a ~"+rm+"m break";
+  if(f.phase==="resting" && f.state!=="rested") return "Energy "+pct+"% \u00B7 resting \u00B7 rested in ~"+rm+"m";
+  if(f.mayFaint) return "Energy "+pct+"% \u00B7 exhausted, may faint";
+  if(f.state==="fatigued") return "Energy "+pct+"% \u00B7 fatigued \u00B7 ~"+rm+"m break";
+  if(f.state==="tired") return "Energy "+pct+"% \u00B7 tired";
+  return "Energy "+pct+"%";
+}
+// A role=meter bar (text always goes with the colour). state is one of FZ_STATES, numbers are coerced.
+function energyMeterHTML(f, label){
+  var pct=fzPct(f);
+  return '<div class="enrow '+f.state+((f.mayFaint||f.state==="unconscious")?' risk':'')+'">'+
+    '<div class="enbar" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+pct+'" aria-valuetext="'+pct+'% energy, '+esc(fzLabel(f.state).toLowerCase())+'">'+
+    '<span style="width:'+pct+'%"></span></div><span class="enlbl">'+esc(label)+'</span></div>';
+}
+function energyRowHTML(f){ return energyMeterHTML(f, energyLabel(f)); }
+function cardAriaLabel(s){
+  var cr=s.creature||{}, f=fzOf(cr);
+  var st=(s.status||""), stCap=st ? st.charAt(0).toUpperCase()+st.slice(1) : "Session";
+  var fz = (!f || f.state==="rested") ? "" : f.state==="unconscious" ? ", fainted"
+         : f.state==="fatigued" ? ", fatigued, energy "+fzPct(f)+"%" : ", tired";
+  return stCap+": "+(s.title||"Untitled session")+", "+
+    creatureSpecies(cr)+", "+creatureType(cr)+", "+creatureStageName(cr)+
+    (cr.shiny?", shiny":"")+fz+(s.alert?" \u2014 "+s.alert:"")+". Activate to open details.";
+}
 function buildCard(s){
   var card = el("div","card "+s.status);
   var cr = s.creature||{};
   var hue = (cr.hue!=null?cr.hue:220);
+  var fz = fzOf(cr);
+  if(s.sessionId) card.setAttribute("data-sid", s.sessionId);
   if(s.pinned) card.classList.add("pinned");
   if(s.stuck) card.classList.add("stuckcard");
 
@@ -3864,6 +4149,7 @@ function buildCard(s){
     '<div class="crline"><span class="species">'+esc(creatureSpecies(cr))+'</span>'+typeBadgeHTML(cr)+
     '<span class="stagepill">'+esc(creatureStageName(cr))+(cr.shiny?' <span class="shinystar" title="Shiny">✦</span>':'')+'</span></div>'+
     evobarHTML(cr);
+  if(fz && fz.state!=="rested"){ card._enh=energyRowHTML(fz); evo.insertAdjacentHTML("beforeend", card._enh); }
   card.appendChild(evo);
 
   if(s.status==="working"){
@@ -3926,6 +4212,7 @@ function buildCard(s){
     var b = el("button","actbtn"+(cls?" "+cls:"")); b.type="button"; setActLabel(b,label);
     b.addEventListener("click",function(e){ e.stopPropagation(); fn(); });
     acts.appendChild(b);
+    return b;
   }
   (function(){
     var b = el("button","actbtn"+(s.pinned?" on":"")); b.type="button";
@@ -3934,6 +4221,13 @@ function buildCard(s){
     b.addEventListener("click",function(e){ e.stopPropagation(); togglePin(s); });
     acts.appendChild(b);
   })();
+  // Snack / Revive open the drawer's care section: cards rebuild, so there's no in-card picker.
+  if(fz && fz.state!=="rested" && PANTRY.store==="ok"){
+    var ko=fz.state==="unconscious";
+    var cb=mkAct(ko?"\uD83E\uDDC3 Revive":"\uD83C\uDF59 Snack",null,function(){ openDrawer(s,{care:true}); });
+    cb.title = ko ? "Wake "+creatureSpecies(cr)+" with a Revive Tonic" : "Give "+creatureSpecies(cr)+" a snack";
+    cb.setAttribute("aria-label", cb.title);
+  }
   mkAct("✏️ Rename",null,function(){ sessRename(s); });
   mkAct("▶ Resume",null,function(){ sessResume(s.sessionId); });   // works for archived too
   if(s.kind!=="archived"){ mkAct("📂 Reveal",null,function(){ sessReveal(s.sessionId); }); }
@@ -3943,11 +4237,7 @@ function buildCard(s){
 
   card.tabIndex = 0;
   card.setAttribute("role","button");
-  var _st = (s.status||""); var _stCap = _st ? _st.charAt(0).toUpperCase()+_st.slice(1) : "Session";
-  card.setAttribute("aria-label",
-    _stCap+": "+(s.title||"Untitled session")+", "+
-    creatureSpecies(cr)+", "+creatureType(cr)+", "+creatureStageName(cr)+
-    (cr.shiny?", shiny":"")+(s.alert?" — "+s.alert:"")+". Activate to open details.");
+  card.setAttribute("aria-label", cardAriaLabel(s));
   function open(){ openDrawer(s); }
   card.addEventListener("click",function(e){
     if(e.target.closest("a")||e.target.closest("button")) return;
@@ -4265,7 +4555,7 @@ function renderFocus(){
   var s = (STATE && STATE.sessions || []).filter(function(x){return x.sessionId===FOCUS_ID;})[0];
   var f = $("focus");
   if(!s){ f.classList.remove("working"); $("focusTitle").textContent="Session ended";
-          $("focusNow").style.display="none"; $("focusCreature").classList.remove("cre-svg","shiny");
+          $("focusNow").style.display="none"; $("focusCreature").classList.remove("cre-svg","shiny","fz-tired","fz-fatigued","fz-ko");
           $("focusCreature").textContent="💤"; $("focusMeta").innerHTML=""; return; }
   f.classList.toggle("working", s.status==="working");
   paintCreature($("focusCreature"), s.creature, 120, false);
@@ -4274,9 +4564,10 @@ function renderFocus(){
   if(s.status==="working"){ now.style.display=""; now.innerHTML=orb("sm",orbStateFor(s.now))+esc(s.now||"Thinking…"); }
   else { now.style.display="none"; }
   $("focusAsk").textContent = s.lastPrompt ? ("“"+s.lastPrompt+"”") : "";
-  var tk = s.tokens||{};
+  var tk = s.tokens||{}, ff = fzOf(s.creature);
   $("focusMeta").innerHTML =
     '<div><b>'+esc(creatureSpecies(s.creature))+'</b>'+esc(creatureStageName(s.creature))+'</div>'+
+    (ff ? '<div><b>'+fzPct(ff)+'%</b>energy'+(ff.state==="rested"?'':' \u00B7 '+esc(fzLabel(ff.state).toLowerCase()))+'</div>' : '')+
     '<div><b>'+esc(fmtAge(s.ageSecs))+'</b>since activity</div>'+
     '<div><b>'+esc(s.status)+'</b>status</div>'+
     '<div><b>'+esc(fmtTok(tk.output||0))+'</b>output tok</div>'+
@@ -4287,6 +4578,11 @@ function renderFocus(){
 /* ---------- detail drawer ---------- */
 var DRAWER_OPEN = false, LAST_FOCUS = null, DRAWER_SID = null, DRAWER_SESS = null,
     DRAWER_TAIL = null, DRAWER_TL_LEN = 0, DRAWER_LAST = null;
+// Drawer energy + snacks: the last detail payload, what #dwCare / the avatar last showed,
+// and whether to move focus onto the best snack once the pantry arrives.
+var DRAWER_DETAIL = null, DRAWER_CARE_SIG = "", DRAWER_AV_SIG = "", DRAWER_CARE_FOCUS = false, CARE_FOCUS_KEEP = null;
+// CARE_BUSY {sid,kind}: a snack or buy in flight from the drawer. CARE_NOTE {sid,text,until}: an inline outcome.
+var CARE_BUSY = null, CARE_NOTE = null, EAT_INFLIGHT = {};
 // Build the timeline rows into a container (reused by the live tail).
 function fillTimeline(wrap, tl){
   wrap.innerHTML="";
@@ -4330,26 +4626,29 @@ function startDrawerTail(sess){
   }, 3000);
 }
 function stopDrawerTail(){ if(DRAWER_TAIL){ clearInterval(DRAWER_TAIL); DRAWER_TAIL=null; } }
-function openDrawer(sess){
+// opts.care: open on the creature's energy + snacks (the card's Snack / Revive, Next up's Care).
+function openDrawer(sess, opts){
   var dw = $("drawer"), bd = $("backdrop");
   LAST_FOCUS = document.activeElement;
   DRAWER_SID = sess.sessionId || sess.id; DRAWER_SESS = sess;
+  DRAWER_DETAIL = null; DRAWER_CARE_SIG = ""; DRAWER_CARE_FOCUS = !!(opts && opts.care); CARE_NOTE = null;
   var cr = sess.creature||{};
-  paintCreature($("dwAv"), cr, 76);
+  paintCreature($("dwAv"), cr, 76); DRAWER_AV_SIG = drawerAvSig(cr);
   $("dwTitle").textContent = sess.title || "Untitled session";
   $("dwSub").textContent = (sess.status||"")+" · "+esc(sess.folder||"~");
   $("dwBody").innerHTML = '<div class="dw-loading">'+LOADING_HTML+'</div>';
   bd.classList.add("open"); dw.classList.add("open"); dw.setAttribute("aria-hidden","false");
   DRAWER_OPEN = true; document.body.style.overflow="hidden";
   $("dwClose").focus();
+  if(ARENA.paired && Date.now()-PANTRY.at > 60000) pantryLoad();
   fetch('/api/session/'+encodeURIComponent(DRAWER_SID),{cache:"no-store"})
     .then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); })
-    .then(function(d){ renderDrawer(sess, d); startDrawerTail(sess); })
+    .then(function(d){ renderDrawer(sess, d); startDrawerTail(sess); if(DRAWER_CARE_FOCUS) drawerFocusCare(true); })
     .catch(function(){ $("dwBody").innerHTML='<div class="dw-loading">Could not load session detail.</div>'; });
 }
 function closeDrawer(){
   if(!DRAWER_OPEN) return;
-  stopDrawerTail(); DRAWER_SID=null; DRAWER_SESS=null;
+  stopDrawerTail(); DRAWER_SID=null; DRAWER_SESS=null; DRAWER_DETAIL=null; DRAWER_CARE_FOCUS=false; CARE_NOTE=null;
   $("drawer").classList.remove("open"); $("backdrop").classList.remove("open");
   $("drawer").setAttribute("aria-hidden","true");
   DRAWER_OPEN=false; document.body.style.overflow="";
@@ -4373,7 +4672,7 @@ function renderDrawer(sess, d){
   // creature / evolution
   var crD = d.creature || sess.creature || {};
   crD._sid = sess.sessionId || sess.id;   // stamp so branch/mega choice resolves in the drawer preview
-  var secCr = dwSec("Creature");
+  var secCr = dwSec("Creature"); secCr.id = "dwCrSec";
   var crBox = el("div","evowrap"); crBox.style.marginTop="0";
   crBox.innerHTML =
     '<div class="crline"><span class="species">'+esc(creatureSpecies(crD))+'</span>'+typeBadgeHTML(crD)+
@@ -4384,9 +4683,15 @@ function renderDrawer(sess, d){
       pb.innerHTML=ico("book")+"Choose path";
       pb.addEventListener("click",function(){ crD._sid=sess.sessionId||sess.id; openEvoPicker(crD); });
       crBox.appendChild(pb); } }
-  secCr.appendChild(crBox); body.appendChild(secCr);
+  secCr.appendChild(crBox);
+  // energy + snacks (omitted when the creature has no fatigue, e.g. turned off in Settings)
+  DRAWER_DETAIL = d;
+  var care = renderCare(drawerCareSess(), drawerCareCreature());
+  if(care) secCr.appendChild(care);
+  DRAWER_CARE_SIG = careSig();
+  body.appendChild(secCr);
   // keep the drawer avatar in sync with the freshest creature data
-  paintCreature($("dwAv"), crD, 76);
+  paintCreature($("dwAv"), crD, 76); DRAWER_AV_SIG = drawerAvSig(crD);
 
   // tokens + cost
   var secT = dwSec("Usage");
@@ -4540,6 +4845,350 @@ function renderDrawer(sess, d){
   }
 }
 
+/* ---------- drawer: creature energy + snacks ----------
+   #dwCare lives in the drawer's Creature section. It is rebuilt only when what it shows
+   changes (careSig), so keyboard focus survives the ~1.5 s SSE ticks. Which session ate is
+   sent to the LOCAL dashboard only; the Arena just sees "one Rice Ball eaten". */
+function sessBySid(sid){ var ss=(STATE&&STATE.sessions)||[]; for(var i=0;i<ss.length;i++){ if(ss[i].sessionId===sid) return ss[i]; } return null; }
+function drawerCareSess(){ return sessBySid(DRAWER_SID) || DRAWER_SESS; }
+function drawerCareCreature(){
+  var live=sessBySid(DRAWER_SID);
+  return (live && live.creature) || (DRAWER_DETAIL && DRAWER_DETAIL.creature) || (DRAWER_SESS && DRAWER_SESS.creature) || null;
+}
+// What the drawer avatar shows: repaint only when this changes (a repaint restarts an animated sprite).
+function drawerAvSig(cr){ cr=cr||{}; var f=fzOf(cr);
+  return [cfg().creaturePack, cr.species, cr.stage, cr.shiny?1:0, cr.name, cr.index, cr.hue, f?f.state:""].join("|"); }
+function pantryErr(res, fallback){ var e=res && res.j && (res.j.error || res.j.detail); return (typeof e==="string" && e) ? e.slice(0,200) : fallback; }
+function careSig(){
+  var f=fzOf(drawerCareCreature()); if(!f) return "none|"+PANTRY.store;
+  var p=pendingEatFor(DRAWER_SID), lm=f.lastMeal;
+  var note=(CARE_NOTE && CARE_NOTE.sid===DRAWER_SID && Date.now()<CARE_NOTE.until) ? CARE_NOTE.text : "";
+  return [f.state, fzPct(f), f.loadMins, f.mayFaint?1:0, f.phase, f.restMins, f.restInMins, f.streakMins,
+          (lm && lm.at) ? lm.at+relTime(lm.at) : "", p ? p.kind+(EAT_INFLIGHT[p.rid]?"*":"") : "",
+          PANTRY.rev, PANTRY.store, PANTRY.loading?1:0, CARE_BUSY?CARE_BUSY.kind:"", note, cfg().creaturePack].join("|");
+}
+// Best fit: the Tonic when fainted; else the smallest snack that gets it back under "tired",
+// else the biggest. Snacks you own or can afford win over ones you can't get.
+function careBestKind(f, cat, items, coins){
+  if(f.state==="unconscious"){ var t=cat.filter(function(it){ return it.revives; })[0]; return t ? t.kind : null; }
+  var food=cat.filter(function(it){ return !it.revives; });
+  var usable=food.filter(function(it){ return (items[it.kind]|0)>0 || coins>=it.price; });
+  var pool=usable.length ? usable : food, load=fzMins(f.loadMins);
+  var fits=pool.filter(function(it){ return load-it.restoreMins < FZ_TIRED_MINS; }).sort(function(a,b){ return a.restoreMins-b.restoreMins; });
+  if(fits.length) return fits[0].kind;
+  pool=pool.slice().sort(function(a,b){ return b.restoreMins-a.restoreMins; });
+  return pool.length ? pool[0].kind : null;
+}
+function careMeals(sid, f, cr, pending){
+  var box=el("div","dw-meals"); box.id="dwMeals"; box.setAttribute("role","group"); box.setAttribute("aria-label","Snacks");
+  var st=PANTRY.store, j=PANTRY.j;
+  function say(t){ var s=el("span"); s.textContent=t; box.appendChild(s); }
+  function act(label, key, fn){ var b=el("button","hbtn"); b.type="button"; b.textContent=label; b.setAttribute("data-act",key); b.addEventListener("click",fn); box.appendChild(b); return b; }
+  if(f.state==="rested"){ say("Full of energy: no snack needed."); return box; }
+  if(st==="unpaired"){
+    say("Rest restores energy. Connect the Arena to get 5 Poke Coins a day for snacks.");
+    act("Open Arena","arena",function(){ closeDrawer(); setView("arena"); });
+    return box;
+  }
+  if(st==="unsupported"){ say("Rest restores energy. This Arena server doesn\u2019t have the store yet."); return box; }
+  if(st==="error" && !j){ say("Pantry unreachable right now. Rest still works."); act("Retry","reload",function(){ pantryLoad(true); }); return box; }
+  if(!j){ box.insertAdjacentHTML("beforeend", orb("xs","searching")); say("Checking your pantry\u2026"); return box; }
+  var offline = st!=="ok";
+  if(offline) box.classList.add("offline");
+  var cat=pantryCatalog(), items=j.items||{}, coins=j.coins|0, ko=f.state==="unconscious";
+  var load=fzMins(f.loadMins), now=fzPct(f), nm=creatureSpecies(cr);
+  var best=careBestKind(f, cat, items, coins);
+  cat.forEach(function(it){
+    var own=Math.max(0, items[it.kind]|0), fits = ko ? it.revives : !it.revives;
+    var after = it.revives ? Math.min(load, fzMins(it.wakeToMins)) : Math.max(0, load-fzMins(it.restoreMins));
+    var to = Math.max(0, Math.min(100, Math.round(100*(1-after/FZ_SCALE_MINS))));
+    var buy = fits && own===0 && coins>=it.price;
+    var b=el("button","meal-btn"+(buy?" buy":"")); b.type="button"; b.setAttribute("data-kind", it.kind);
+    if(CARE_BUSY && CARE_BUSY.sid===sid && CARE_BUSY.kind===it.kind) b.insertAdjacentHTML("beforeend", orb("xs"));
+    var em=el("span"); em.setAttribute("aria-hidden","true"); em.textContent=it.emoji;
+    var label;
+    if(buy){
+      b.appendChild(document.createTextNode("Buy ")); b.appendChild(em);
+      var pr=el("span","mb-p"); pr.textContent=" \u00B7 \uD83E\uDE99"+it.price; b.appendChild(pr);
+      label="Buy "+foodA(it)+" for "+coinsN(it.price);
+      b.addEventListener("click",function(){ careBuy(sid, it.kind); });
+    } else {
+      b.appendChild(em);
+      var nmS=el("span"); nmS.textContent=it.name; b.appendChild(nmS);
+      var n=el("span","mb-n"); n.textContent="\u00D7"+own; b.appendChild(n);
+      if(fits){ var pv=el("span","mb-p"); pv.textContent=(it.revives?"wakes \u2192 ":"\u2192 ")+to+"%"; b.appendChild(pv); }
+      if(!fits){
+        b.disabled=true; b.title = it.revives ? "For fainted creatures" : "It\u2019s fainted: only a Revive Tonic works";
+        label=it.name+": "+(it.revives ? "for fainted creatures" : "it\u2019s fainted, only a Revive Tonic works");
+      } else if(own>0){
+        label="Give "+nm+" "+foodA(it)+": "+(it.revives?"wakes it, ":"")+"energy "+now+"% to "+to+"%, "+own+" left";
+        b.addEventListener("click",function(){ pantryEat(sid, it.kind, b); });
+      } else {
+        var need=it.price-coins;
+        b.disabled=true; b.title="Need "+need+" more Poke Coin"+(need===1?"":"s");
+        label=it.name+": need "+need+" more Poke Coin"+(need===1?"":"s");
+      }
+    }
+    if(it.kind===best && !b.disabled){
+      b.classList.add("best");
+      var sr=el("span","sr-only"); sr.textContent=" (best fit)"; b.appendChild(sr);
+      label+=" (best fit)";
+    }
+    if(CARE_BUSY || pending || offline) b.disabled=true;
+    b.setAttribute("aria-label", label+(offline?" (offline)":""));
+    box.appendChild(b);
+  });
+  if(offline){ say("(offline) Pantry unreachable right now. Rest still works."); act("Retry","reload",function(){ pantryLoad(true); }); }
+  return box;
+}
+function renderCare(sess, cr){
+  var f=fzOf(cr); if(!f) return null;
+  var sid=(sess && sess.sessionId) || DRAWER_SID, ko=f.state==="unconscious", rm=fzMins(f.restMins);
+  var box=el("div","dw-care"); box.id="dwCare"; box.tabIndex=-1;
+  box.insertAdjacentHTML("beforeend", energyMeterHTML(f, "Energy "+fzPct(f)+"% \u00B7 "+fzLabel(f.state)));
+  var line;
+  if(f.phase==="active"){
+    line = f.state==="rested" ? "Working \u00B7 full of energy"
+         : "Working"+(fzMins(f.streakMins)>=60 ? " for "+fmtMins(f.streakMins) : "")+" \u00B7 a ~"+rm+"m break would "+(ko?"wake it":"restore it");
+  } else if(f.phase==="pause"){
+    line = "Catching its breath \u00B7 resting starts in "+fzMins(f.restInMins)+"m";
+  } else {
+    line = ko ? "Resting \u00B7 wakes in ~"+rm+"m" : (f.state==="rested" ? "Rested" : "Resting \u00B7 rested in ~"+rm+"m");
+  }
+  var pl=el("p","care-line"); pl.textContent=line; box.appendChild(pl);
+  var lm=f.lastMeal, li=(lm && typeof lm==="object") ? foodInfo(lm.kind) : null;
+  if(li){
+    var ago=relTime(lm.at), lp=el("p","care-line");
+    lp.textContent="Last snack: "+li.emoji+" "+li.name+(ago==="\u2014" ? "" : " \u00B7 "+(ago==="just now" ? ago : ago+" ago"));
+    box.appendChild(lp);
+  }
+  var p=pendingEatFor(sid);
+  if(p){
+    var pi=foodInfo(p.kind), pr=el("div","care-pending"), pt=el("span");
+    pt.textContent=pi.emoji+" "+pi.name+" on its way \u00B7 waiting for the Arena\u2026"; pr.appendChild(pt);
+    var rb=el("button","hbtn"); rb.type="button"; rb.textContent="Retry"; rb.setAttribute("data-act","retry");
+    rb.setAttribute("aria-label","Retry the "+pi.name+" (safe: it won\u2019t be eaten twice)");
+    rb.disabled=!!EAT_INFLIGHT[p.rid];
+    rb.addEventListener("click",function(){ pantryEat(p.sid, p.kind, rb, p.rid, true); });
+    pr.appendChild(rb); box.appendChild(pr);
+  }
+  if(CARE_NOTE && CARE_NOTE.sid===sid && Date.now()<CARE_NOTE.until){
+    var nt=el("p","care-note"); nt.setAttribute("role","status"); nt.textContent=CARE_NOTE.text; box.appendChild(nt);
+  }
+  box.appendChild(careMeals(sid, f, cr, !!p));
+  if(PANTRY.store==="ok" && PANTRY.j){
+    var sl=el("button","care-link"); sl.type="button"; sl.setAttribute("data-act","store");
+    sl.textContent="\uD83E\uDE99 "+(PANTRY.j.coins|0)+" \u00B7 Store \u2192";
+    sl.setAttribute("aria-label", "You have "+coinsN(PANTRY.j.coins|0)+". Open the store");
+    sl.addEventListener("click", openStore);
+    box.appendChild(sl);
+  }
+  return box;
+}
+// Rebuild #dwCare only when what it shows changed; put focus back on the same button.
+function refreshDrawerCare(force){
+  if(!DRAWER_OPEN || !DRAWER_SID) return;
+  var cr=drawerCareCreature();
+  if(cr){ var as=drawerAvSig(cr); if(as!==DRAWER_AV_SIG){ DRAWER_AV_SIG=as; paintCreature($("dwAv"), cr, 76); } }
+  var sec=$("dwCrSec"); if(!sec) return;          // the detail hasn't rendered yet
+  var sig=careSig(); if(!force && sig===DRAWER_CARE_SIG) return;
+  DRAWER_CARE_SIG=sig;
+  var old=$("dwCare"), a=document.activeElement, had=false, keep=null;
+  if(old && a && old.contains(a)){ had=true; keep=a.getAttribute("data-kind")||a.getAttribute("data-act")||CARE_FOCUS_KEEP; }
+  var fresh=renderCare(drawerCareSess(), cr);
+  if(old && fresh) old.parentNode.replaceChild(fresh, old);
+  else if(old) old.parentNode.removeChild(old);
+  else if(fresh) sec.appendChild(fresh);
+  if(!fresh) return;
+  if(had){
+    var t = keep ? (fresh.querySelector('[data-kind="'+keep+'"]:not([disabled])') || fresh.querySelector('[data-act="'+keep+'"]:not([disabled])')) : null;
+    CARE_FOCUS_KEEP = t ? null : keep;       // a busy (disabled) button: hold focus on the section until it's back
+    try{ (t||fresh).focus({preventScroll:true}); }catch(e){ (t||fresh).focus(); }
+  } else if(DRAWER_CARE_FOCUS) drawerFocusCare(false);
+}
+// Opened with {care:true}: bring the section into view and focus the best-fit snack. If the
+// pantry is still loading, try again when it lands (unless focus has moved on meanwhile).
+function drawerFocusCare(scroll){
+  var c=$("dwCare"); if(!c){ DRAWER_CARE_FOCUS=false; return; }
+  if(scroll){ try{ c.scrollIntoView({behavior:calmMode()?"auto":"smooth", block:"nearest"}); }catch(e){} }
+  var a=document.activeElement;
+  if(a && a!==document.body && a!==$("dwClose") && !c.contains(a)){ DRAWER_CARE_FOCUS=false; return; }
+  var b=c.querySelector(".meal-btn.best:not([disabled])") || c.querySelector(".meal-btn:not([disabled])");
+  if(!b && !PANTRY.j && (PANTRY.store==="unknown" || PANTRY.loading)) return;
+  DRAWER_CARE_FOCUS=false;
+  b = b || c.querySelector("button:not([disabled])") || c;
+  try{ b.focus({preventScroll:true}); }catch(e){ b.focus(); }
+}
+function careNote(sid, text){ CARE_NOTE={sid:sid, text:text, until:Date.now()+15000}; refreshDrawerCare(true); }
+function openStore(){
+  closeDrawer(); setView("arena");
+  var w=$("arenaStoreWrap"); if(!w) return;
+  if(PANTRY.store==="ok") w.classList.remove("hidden");
+  try{ w.focus({preventScroll:true}); }catch(e){ w.focus(); }
+  try{ w.scrollIntoView({behavior:calmMode()?"auto":"smooth", block:"start"}); }catch(e){}
+}
+function careBuy(sid, kind){
+  if(CARE_BUSY) return;
+  CARE_BUSY={sid:sid, kind:kind}; refreshDrawerCare(true);
+  pantryBuy(kind, STORE_RETRY[kind]).then(function(r){
+    CARE_BUSY=null;
+    var it=foodInfo(kind);
+    if(r.ok) announce("Bought "+foodA(it)+". "+coinsN(PANTRY.j ? PANTRY.j.coins|0 : 0)+" left.");
+    else if(r.lost) careNote(sid, "Couldn\u2019t confirm the "+it.name+". Retry it from the store: it won\u2019t be bought twice.");
+    else if(r.msg) careNote(sid, r.msg);
+    refreshDrawerCare(true);
+  });
+}
+
+/* Pending snacks: written BEFORE the eat request so a reload (or a lost response) resumes it with
+   the same requestId. The retry is safe: the server replays the id, and the meal is recorded at
+   the server's original time. localStorage "hq_pending_eats", at most 5, dropped after 15 min. */
+var PENDING_EAT_TTL = 900000;
+function pendingEatsLoad(){
+  var a=[]; try{ a=JSON.parse(localStorage.getItem("hq_pending_eats")||"[]"); }catch(e){ a=[]; }
+  if(!Array.isArray(a)) return [];
+  return a.filter(function(p){ return p && typeof p.rid==="string" && /^[A-Za-z0-9_-]{16,64}$/.test(p.rid) &&
+    typeof p.sid==="string" && p.sid && isFood(p.kind) && typeof p.t==="number"; });
+}
+function pendingEatsSave(a){ try{ localStorage.setItem("hq_pending_eats", JSON.stringify(a.slice(-5))); }catch(e){} }
+function pendingEatAdd(p){ var a=pendingEatsLoad(); if(a.some(function(x){ return x.rid===p.rid; })) return; a.push(p); pendingEatsSave(a); }
+function pendingEatDrop(rid){ var a=pendingEatsLoad(), b=a.filter(function(x){ return x.rid!==rid; }); if(b.length!==a.length) pendingEatsSave(b); }
+function pendingEatFor(sid){
+  var now=Date.now(); return pendingEatsLoad().filter(function(p){ return p.sid===sid && now-p.t<=PENDING_EAT_TTL; })[0] || null;
+}
+// After each good pantry load: retry what's still pending, drop what's too old to trust.
+function pantryRetryPending(){
+  var now=Date.now(), a=pendingEatsLoad(), keep=[];
+  a.forEach(function(p){
+    if(now-p.t>PENDING_EAT_TTL){
+      var s=sessBySid(p.sid);
+      logEvent("\u26A0", "Couldn\u2019t confirm a snack for "+(s ? creatureSpecies(s.creature) : "a creature"));
+    } else keep.push(p);
+  });
+  if(keep.length!==a.length) pendingEatsSave(keep);
+  keep.forEach(function(p){ if(!EAT_INFLIGHT[p.rid]) pantryEat(p.sid, p.kind, null, p.rid, true, true); });
+}
+// Give a creature a snack. rid is reused for every retry of the same snack; retry:true skips
+// the local "is it hungry?" gate (the first try already passed it). quiet: a background retry.
+function pantryEat(sid, kind, btn, rid, isRetry, quiet){
+  if(!sid || !isFood(kind)) return;
+  rid = rid || newRequestId();
+  if(EAT_INFLIGHT[rid] || (!quiet && CARE_BUSY)) return;
+  var live=sessBySid(sid), f0=fzOf(live && live.creature);
+  pendingEatAdd({rid:rid, sid:sid, kind:kind, t:Date.now()});
+  EAT_INFLIGHT[rid]=1;
+  if(!quiet) CARE_BUSY={sid:sid, kind:kind};
+  refreshDrawerCare(true);
+  arenaPost("/api/arena/pantry/eat", {sessionId:sid, kind:kind, requestId:rid, retry:!!isRetry}).then(function(res){
+    delete EAT_INFLIGHT[rid]; if(!quiet) CARE_BUSY=null;
+    if(res.status===200){ pendingEatDrop(rid); eatDone(sid, kind, res.j||{}, f0); }
+    else if(res.status===202){
+      // still pending: one automatic retry, then the Retry button, the next pantry load or a reload
+      if(!quiet) careNote(sid, pantryErr(res, "The Arena didn\u2019t answer. Your snack is safe: Claude HQ will retry it."));
+      if(!isRetry) setTimeout(function(){ pantryEat(sid, kind, null, rid, true, true); }, 2000);
+    }
+    else if(pantryIsBare404(res)){ pendingEatDrop(rid); pantrySetStore("unsupported"); }
+    else if(res.status===400 && /not paired/i.test(pantryErr(res,""))){ pendingEatDrop(rid); pantrySetStore("unpaired"); }
+    else if(res.status>=400 && res.status<500){
+      pendingEatDrop(rid);
+      var err=pantryErr(res, "That snack didn\u2019t go through");
+      careNote(sid, err); toast("\u26A0 "+err, "ach");
+    }
+    refreshDrawerCare(true);
+  }, function(){
+    delete EAT_INFLIGHT[rid]; if(!quiet) CARE_BUSY=null;
+    if(!quiet) careNote(sid, "Couldn\u2019t reach Claude HQ. Your snack is saved: retry when it\u2019s back.");
+    refreshDrawerCare(true);
+  });
+}
+function eatDone(sid, kind, j, f0){
+  if(j.items) pantryApply(j);
+  var info=foodInfo(kind), live=sessBySid(sid), f1=j.fatigue;
+  if(live && live.creature && f1 && typeof f1==="object" && FZ_STATES.indexOf(f1.state)>=0) live.creature.fatigue=f1;
+  var cr=(live && live.creature) || {}, nm=creatureSpecies(cr), f=fzOf(cr);
+  refreshDrawerCare(true);
+  if(STATE) renderParty(STATE.sessions);
+  var gain=(f0 && f) ? Math.max(0, fzMins(f0.loadMins)-fzMins(f.loadMins)) : 0;
+  if(gain>0 && DRAWER_OPEN && DRAWER_SID===sid) eatFx(gain);
+  var a=f0 ? fzPct(f0) : null, b=f ? fzPct(f) : null, moved=(a!=null && b!=null);
+  var msg = info.revives ? "\u2728 "+nm+" woke up!"+(moved ? " Energy "+a+"% \u2192 "+b+"%" : "")
+                         : info.emoji+" "+nm+" ate "+foodA(info)+(moved ? " \u00B7 energy "+a+"% \u2192 "+b+"%" : "");
+  toast(msg, "level"); announce(msg);
+  logEvent(info.emoji, "Gave "+nm+" "+foodA(info)+" ("+((live && live.title) || "session")+")");
+  forceRefresh();
+}
+// The drawer avatar's "nom" + a floating "+45m". Calm mode: just the text, still, for 3 s.
+function eatFx(gainMins){
+  var av=$("dwAv"); if(!av) return;
+  var g=el("span","en-gain"); g.setAttribute("aria-hidden","true"); g.textContent="+"+fmtMins(gainMins);
+  if(calmMode()){ av.appendChild(g); setTimeout(function(){ if(g.parentNode) g.parentNode.removeChild(g); }, 3000); return; }
+  av.classList.remove("nom"); void av.offsetWidth; av.classList.add("nom");
+  g.classList.add("fly"); av.appendChild(g);
+  setTimeout(function(){ av.classList.remove("nom"); if(g.parentNode) g.parentNode.removeChild(g); }, 950);
+}
+
+/* ---------- energy transitions: quiet by design ----------
+   Toasts only for entering Fatigued and fainting, at most one per (session, state) every
+   45 min, and creatures that tire in the same update share ONE toast (a multi-agent run
+   can tire several at once). Tired and "may faint" never toast; waking up and resting are
+   log-only. */
+var FZ_PREV={}, FZ_BASE=false, FZ_TOAST_AT={}, FZ_TOAST_GAP=2700000;
+function fzThrottled(key){ var now=Date.now(); if(FZ_TOAST_AT[key] && now-FZ_TOAST_AT[key]<FZ_TOAST_GAP) return true; FZ_TOAST_AT[key]=now; return false; }
+// "Voltkit", "Voltkit and Pupitar", "Voltkit, Pupitar and 2 more"
+function fzNames(list){
+  var n=list.map(function(x){ return x.nm; });
+  if(n.length<=2) return n.join(" and ");
+  return n[0]+", "+n[1]+" and "+(n.length-2)+" more";
+}
+function checkFatigue(sessions){
+  sessions=sessions||[];
+  if(!FZ_BASE){
+    sessions.forEach(function(s){ var id=s.sessionId||s.id, f=fzOf(s.creature); if(id && f && s.kind!=="archived") FZ_PREV[id]=f.state; });
+    FZ_BASE=true; return;
+  }
+  var live={}, fainted=[], tired=[];
+  sessions.forEach(function(s){
+    if(s.kind==="archived") return;
+    var id=s.sessionId||s.id; if(!id) return;
+    var f=fzOf(s.creature); if(!f){ delete FZ_PREV[id]; return; }
+    live[id]=1;
+    var prev=FZ_PREV[id], cur=f.state;
+    FZ_PREV[id]=cur;
+    if(prev==null || prev===cur) return;
+    var nm=creatureSpecies(s.creature), where=" ("+(s.title||s.name||"session")+")";
+    if(cur==="unconscious"){
+      if(fzThrottled(id+"|unconscious")) return;
+      fainted.push({id:id, nm:nm, f:f}); logEvent("\uD83D\uDCAB", nm+" fainted"+where);
+    } else if(prev==="unconscious"){
+      if(!fzThrottled(id+"|woke")) logEvent("\u2728", nm+" woke up"+where);
+    } else if(cur==="fatigued"){
+      if(fzThrottled(id+"|fatigued")) return;
+      tired.push({id:id, nm:nm, f:f}); logEvent("\uD83D\uDCA6", nm+" is fatigued"+where);
+    } else if(prev==="fatigued" && cur==="rested"){
+      if(!fzThrottled(id+"|rested")) logEvent("\uD83C\uDF3F", nm+" is rested again"+where);
+    }
+  });
+  Object.keys(FZ_PREV).forEach(function(k){ if(!live[k]) delete FZ_PREV[k]; });
+  var store=PANTRY.store==="ok", msg;
+  if(fainted.length){
+    var one=fainted.length===1, rm=fzMins(fainted[0].f.restMins);
+    msg="\uD83D\uDCAB "+fzNames(fainted)+(one ? " fainted! It wakes after a ~"+rm+"m break" : " fainted! They wake after a break")+
+        (store ? (one ? ", or with a Revive Tonic" : " or a Revive Tonic") : "");
+    toast(msg,"ach"); announce(msg);
+    if(NOTIF_ON && document.hidden && ("Notification" in window) && Notification.permission==="granted"){
+      try{ new Notification("\uD83D\uDCAB "+fzNames(fainted)+" fainted", {body:one ? "It wakes after a ~"+rm+"m break" : "They wake after a break",
+                                                                        silent:true, tag:"hq-faint-"+fainted[0].id}); }catch(e){}
+    }
+  }
+  if(tired.length){
+    var f0=tired[0].f;
+    msg = tired.length===1
+      ? "\uD83D\uDCA6 "+tired[0].nm+" is fatigued after "+fmtMins(Math.max(fzMins(f0.streakMins), fzMins(f0.loadMins)))+" of work: a short break"+(store?" or a snack":"")+" will perk it up"
+      : "\uD83D\uDCA6 "+fzNames(tired)+" are fatigued: a short break"+(store?" or a snack":"")+" will perk them up";
+    toast(msg,"level"); announce(msg);
+  }
+}
+
 function render(){
   if(!STATE) return;
   syncConfig(STATE.config);
@@ -4565,6 +5214,8 @@ function render(){
   checkTransitions(STATE.sessions);
   checkCelebration(STATE.season);
   checkEvolution(STATE.sessions);
+  checkFatigue(STATE.sessions);
+  refreshDrawerCare();
   updateDocTitle(STATE.sessions);
   arenaStatusTick();
   if(FOCUS_ID) renderFocus();
@@ -4677,6 +5328,7 @@ document.addEventListener("keydown",function(e){
     if($("evoSplash").classList.contains("on")){ closeEvoSplash(); return; }
     if($("evoPickBack").classList.contains("open")){ closeEvoPicker(); return; }
     if($("evoPreviewBack").classList.contains("open")){ closeEvoPreview(); return; }
+    if($("giftBack").classList.contains("open")){ giftClose(); return; }
     if($("warroom").classList.contains("on")){ closeWarroom(); return; }
     if($("transcriptBack").classList.contains("open")){ closeTranscript(); return; }
     if($("projectBack").classList.contains("open")){ closeProject(); return; }
@@ -4721,6 +5373,7 @@ function currentModal(){
   if(typeof CMDK_OPEN!=="undefined" && CMDK_OPEN) return $("cmdk");
   if($("transcriptBack") && $("transcriptBack").classList.contains("open")) return $("transcriptBack");
   if($("projectBack") && $("projectBack").classList.contains("open")) return $("projectBack");
+  if($("giftBack") && $("giftBack").classList.contains("open")) return $("giftBack");
   if($("settingsBack") && $("settingsBack").classList.contains("open")) return $("settingsBack");
   if($("infoBack") && $("infoBack").classList.contains("open")) return $("infoBack");
   if($("digestBack") && $("digestBack").classList.contains("open")) return $("digestBack");
@@ -5642,6 +6295,20 @@ function renderNextUp(){
       s:(s.alert||"needs your input")+" · "+fmtAge(s.ageSecs)+" ago",
       btn:"Open", fn:function(){ openSession(s.sessionId||s.id,{title:s.title,folder:s.folder,status:s.status,creature:s.creature}); }});
   });
+  // 1b) at most one worn-out creature: fainted first, else the most fatigued
+  if(items.length<4){
+    var worn=ss.filter(function(s){ var f=fzOf(s.creature); return s.kind!=="archived" && f && (f.state==="unconscious"||f.state==="fatigued"); })
+      .sort(function(a,b){ var fa=fzOf(a.creature), fb=fzOf(b.creature);
+        return ((fb.state==="unconscious")-(fa.state==="unconscious")) || (fzMins(fb.loadMins)-fzMins(fa.loadMins)); })[0];
+    if(worn){
+      var wf=fzOf(worn.creature), wko=wf.state==="unconscious", wnm=creatureSpecies(worn.creature);
+      var wsub=(worn.title||worn.name||"session")+" \u00B7 "+(wf.phase==="resting"
+        ? "resting \u00B7 "+(wko?"wakes":"rested")+" in ~"+fzMins(wf.restMins)+"m"
+        : fmtMins(Math.max(fzMins(wf.streakMins), fzMins(wf.loadMins)))+" without a real break \u00B7 rest ~"+fzMins(wf.restMins)+"m"+(PANTRY.store==="ok"?" or give it a snack":""));
+      items.push({cls:wko?"needs":"", ic:wko?"\uD83D\uDCAB":"\uD83D\uDCA6", t:wnm+(wko?" fainted":" is fatigued"), s:wsub,
+        btn:"Care", fn:function(){ openDrawer(worn,{care:true}); }});
+    }
+  }
   // 2) idle sessions active in the last few hours -> resume
   if(items.length<4){
     var idleRecent=ss.filter(function(s){ return s.status==="idle" && s.ageSecs!=null && s.ageSecs<6*3600; })
@@ -5720,6 +6387,12 @@ function renderTrainerCard(){
   }
   var party=((STATE&&STATE.sessions)||[]).filter(function(x){return x.status==="working"||x.status==="idle";}).length;
   chips.push('<span class="tc-chip">🎮 <b>'+party+'</b> active</span>');
+  if(PANTRY.store==="ok" && PANTRY.j){
+    var ready=!!(PANTRY.j.claim && PANTRY.j.claim.claimable), bump=PANTRY.bump && !calmMode();
+    PANTRY.bump=false;   // one bump per gain (this card rebuilds every tick)
+    chips.push('<span class="tc-chip coins'+(bump?' bump':'')+'" title="Poke Coins'+(ready?' \u00B7 today\u2019s coins are ready in the Arena':'')+'">\uD83E\uDE99 <b>'+(PANTRY.j.coins|0)+'</b>'+
+      (ready?'<span class="tc-dot" aria-hidden="true"></span>':'')+'</span>');
+  }
   $("tcStats").innerHTML = chips.join("");
 }
 (function(){
@@ -6211,6 +6884,8 @@ function showEvoSplash(s, fromStage){
   var cr=s.creature||{};
   var mega = !!pokeMega(cr);   // reached Apex with an eligible Mega form (3D pack)
   var species=creatureSpecies(cr), stageNm=creatureStageName(cr), nm=isPokePack()?pokeCurrentName(cr):species;
+  // the celebration shows the creature at its best: no tired/fainted look here
+  var crShow=Object.assign({}, cr); delete crShow.fatigue;
   var size=Math.min(mega?380:320, Math.round(window.innerHeight*(mega?0.5:0.42)));
   el2.classList.toggle("mega", mega);
   // Start on the "evolving" beat (pre-form name); reveal the evolved identity at morph end.
@@ -6220,7 +6895,7 @@ function showEvoSplash(s, fromStage){
   el2.classList.add("on"); el2.setAttribute("aria-hidden","false");
   try{ playChime(); }catch(e){}
   clearEvoMorph();
-  playEvoMorph($("evoCreature"), cr, fromStage, creatureStage(cr), size, function(){
+  playEvoMorph($("evoCreature"), crShow, fromStage, creatureStage(cr), size, function(){
     $("evoKicker").textContent = mega ? "⚡ MEGA EVOLUTION! ⚡" : "✨ Congratulations! ✨";
     $("evoTitle").textContent = mega ? (nm+"!")
       : (isPokePack() ? (pokeNameAtStage(cr,fromStage)+" evolved into "+nm+"!")
@@ -6399,6 +7074,7 @@ function openSettings(){
   $("setBudget").value = c.dailyBudgetUSD!=null ? c.dailyBudgetUSD : 0;
   var lt=$("setLargeText"); if(lt) lt.checked=largePref();
   var cm=$("setCalm"); if(cm) cm.checked=calmPref();
+  var fz=$("setFatigue"); if(fz) fz.checked = c.creatureFatigue!==false;
   var tn=$("setTrainer"); if(tn) tn.value=trainerPref();
   if(typeof syncAccentControls==="function") syncAccentControls();
   $("settingsBack").classList.add("open");
@@ -6427,7 +7103,8 @@ function saveSettings(){
     refreshMs: Math.max(1000, (parseInt($("setRefresh").value,10)||5)*1000),
     stuckMinutes: Math.max(1, parseInt($("setStuck").value,10)||15),
     dailyBudgetUSD: Math.max(0, parseFloat($("setBudget").value)||0),
-    trainerName: $("setTrainer") ? $("setTrainer").value.trim().slice(0,32) : ""
+    trainerName: $("setTrainer") ? $("setTrainer").value.trim().slice(0,32) : "",
+    creatureFatigue: $("setFatigue") ? $("setFatigue").checked : true
   };
   // Only send the theme to the backend when it is one the backend understands,
   // so an unknown value (e.g. "contrast") can never wipe a valid stored theme.
@@ -6539,7 +7216,7 @@ function renderWarroom(){
   var list=warroomSessions();
   if(!list.length){
     wr.classList.remove("working");
-    $("wrCreature").classList.remove("cre-svg","shiny");
+    $("wrCreature").classList.remove("cre-svg","shiny","fz-tired","fz-fatigued","fz-ko");
     $("wrCreature").textContent="😴";
     $("wrTitle").textContent="No sessions working right now";
     $("wrNow").style.display="none"; $("wrTimer").textContent=""; $("wrMeta").textContent="";
@@ -6554,7 +7231,9 @@ function renderWarroom(){
   now.style.display=""; now.innerHTML=orb("sm",orbStateFor(s.now))+esc(s.now||"Thinking…");
   $("wrTimer").textContent=fmtAge(warAge(s));
   var tk=s.tokens||{};
-  $("wrMeta").textContent=creatureSpecies(s.creature)+" · "+creatureStageName(s.creature)+" · "+(s.folder||"~")+" · "+fmtTok(tk.output||0)+" out · ≈"+fmtCost(tk.estCostUSD||0);
+  var wf=fzOf(s.creature);
+  $("wrMeta").textContent=creatureSpecies(s.creature)+" · "+creatureStageName(s.creature)+" · "+(s.folder||"~")+" · "+fmtTok(tk.output||0)+" out · ≈"+fmtCost(tk.estCostUSD||0)+
+    (wf && wf.state==="unconscious" ? " \u00B7 \uD83D\uDCAB fainted" : (wf && wf.state==="fatigued" ? " \u00B7 \uD83D\uDCA6 fatigued" : ""));
   var dots=$("wrDots"); dots.innerHTML="";
   list.forEach(function(_,i){ var dd=el("i"); if(i===WR_IDX) dd.className="on"; dots.appendChild(dd); });
 }
@@ -6912,7 +7591,7 @@ function renderArenaStat(st){
 }
 function pollArenaStat(){
   fetch("/api/arena/status",{cache:"no-store"}).then(function(r){return r.json();})
-    .then(function(st){ renderArenaStat(st); arenaStayOnline(st); }).catch(function(){});
+    .then(function(st){ renderArenaStat(st); arenaStayOnline(st); pantryTick(); }).catch(function(){});
 }
 (function(){ var b=$("arenaStat"); if(b) b.addEventListener("click",function(){ setView("arena"); }); })();
 pollArenaStat(); setInterval(pollArenaStat, 60000);
@@ -6926,6 +7605,7 @@ function loadArena(){
       ARENA.paired = paired;
       $("arenaSetup").classList.toggle("hidden", paired);
       $("arenaBoardWrap").classList.toggle("hidden", !paired);
+      $("arenaStoreWrap").classList.toggle("hidden", !paired);
       $("arenaLobbyWrap").classList.toggle("hidden", !paired);
       $("arenaChatWrap").classList.toggle("hidden", !paired);
       $("arenaVoiceWrap").classList.toggle("hidden", !paired);
@@ -6933,6 +7613,7 @@ function loadArena(){
       if(!paired){
         $("arenaSub").textContent = "Not connected";
         var u=$("arenaUrl"); if(u && !u.value) u.value = st.url||"";
+        pantryLoad(true);   // -> "unpaired": snack buttons hide, the drawer explains how to get coins
         return;
       }
       $("arenaSub").textContent = "Signed in as " + (st.handle||"?");
@@ -6942,6 +7623,7 @@ function loadArena(){
                  : (" · publish failed: " + (lp.error||"")))
         : " · not published yet";
       arenaLoadBoard();
+      pantryLoad(true);
       arenaRenderChat();
       arenaOpenSocket();
     }).catch(function(){ $("arenaSub").textContent = "Status unavailable"; });
@@ -7016,6 +7698,7 @@ function arenaLoadBoard(){
           nb.textContent="\uD83D\uDC4B"; nb.title="Nudge "+(e.trainerName||e.displayName||e.handle)+" to come to the Arena";
           nb.addEventListener("click", function(){ arenaNudgeHandle(e.handle, nb); });
           wrap.appendChild(nb);
+          wrap.appendChild(arenaGiftButton(e.handle, e.trainerName || e.displayName || e.handle, "\uD83C\uDF81"));
         }
         who.appendChild(wrap); tr.appendChild(who);
 
@@ -7026,7 +7709,365 @@ function arenaLoadBoard(){
         });
         body.appendChild(tr);
       });
+      arenaGiftButtonsSync();
     }).catch(function(){});
+}
+
+/* ---- Arena pantry: Poke Coins, snacks and gifts ----
+   All of it lives on the Arena server under your GitHub account (every paired device shares one
+   wallet); the page reaches it only through dashboard.py's /api/arena/pantry proxy, which forwards
+   an allowlist of fields (kind, qty, coins, recipient, note, requestId) and never a session.
+   A server without these routes answers a bare 404: then it's "not supported yet", re-checked
+   every 10 minutes, and rest alone still restores every creature. */
+var PANTRY_STALE_MS=60000, PANTRY_REFRESH_MS=300000, PANTRY_REPROBE_MS=600000;
+function pantryValid(j){ return !!(j && typeof j==="object" && typeof j.coins==="number" && j.items && typeof j.items==="object" && j.claim && typeof j.claim==="object"); }
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+// Everything that shows coins or snacks, redrawn together.
+function pantryChanged(){
+  renderStore(); refreshDrawerCare(); renderTrainerCard(); arenaGiftButtonsSync();
+  if(GIFT.handle) giftFill(false);
+  if(STATE) renderParty(STATE.sessions);   // the card Snack buttons (partySig-guarded, so usually a no-op)
+}
+function pantrySetStore(st){
+  if(st==="unsupported") PANTRY.offAt=Date.now();
+  if(st==="unpaired"){ PANTRY.j=null; PANTRY.at=0; }
+  if(PANTRY.store===st) return;
+  PANTRY.store=st; PANTRY.rev++;
+  if(st!=="ok" && GIFT.handle) giftClose();
+  pantryChanged();
+}
+// Balance-bearing responses (the GET and every successful claim/buy/eat/give) land here.
+function pantryApply(j){
+  if(!pantryValid(j)) return;
+  if(PANTRY.j && (j.coins|0)>(PANTRY.j.coins|0)) PANTRY.bump=true;
+  PANTRY.j=j; PANTRY.at=Date.now(); PANTRY.rev++; PANTRY.store="ok";
+  pantryChanged();
+}
+function pantryLoad(force){
+  if(!ARENA.paired){ pantrySetStore("unpaired"); return; }
+  var now=Date.now();
+  if(PANTRY.loading) return;
+  if(!force && PANTRY.store==="unsupported" && now-PANTRY.offAt<PANTRY_REPROBE_MS) return;
+  if(!force && PANTRY.store==="ok" && now-PANTRY.at<PANTRY_STALE_MS) return;
+  PANTRY.loading=true;
+  if(!PANTRY.j) renderStore();
+  fetch("/api/arena/pantry",{cache:"no-store"}).then(function(r){
+    return r.json().then(function(j){ return {ok:r.ok,status:r.status,j:j}; }, function(){ return {ok:r.ok,status:r.status,j:{}}; });
+  }).then(function(res){
+    PANTRY.loading=false;
+    if(res.status===200 && pantryValid(res.j)){ pantryApply(res.j); pantryAutoClaim(); pantryRetryPending(); return; }
+    if(pantryIsBare404(res)) pantrySetStore("unsupported");
+    else if(res.status===400) pantrySetStore("unpaired");
+    else pantrySetStore("error");
+    refreshDrawerCare();
+  }, function(){ PANTRY.loading=false; pantrySetStore("error"); refreshDrawerCare(); });
+}
+// The minutely status poll: refresh when there's nothing yet, it's 5 min old, or a new day's
+// coins are due. Otherwise just keep the store's countdown fresh.
+function pantryTick(){
+  if(!ARENA.paired){ pantrySetStore("unpaired"); return; }
+  var j=PANTRY.j, now=Date.now(), next=(j && j.claim) ? Date.parse(j.claim.nextClaimAt) : NaN;
+  if(!j || PANTRY.store!=="ok" || now-PANTRY.at>PANTRY_REFRESH_MS || (!isNaN(next) && now>=next)) pantryLoad();
+  else if(VIEW==="arena") renderStore();
+}
+// "For coming online": claim today's coins once, automatically. A 200 or 4xx settles today for
+// this browser; a network failure leaves it for the next load. Only the tab whose request
+// granted the coins says so (the server answers the others claimed:false).
+function pantryAutoClaim(){
+  var c=PANTRY.j && PANTRY.j.claim;
+  if(!c || !c.claimable || PANTRY.claiming || lsGet("hq_coin_claim_try")===c.today) return;
+  pantryClaim(false);
+}
+function pantryClaim(manual){
+  if(PANTRY.claiming || !PANTRY.j) return;
+  var today=PANTRY.j.claim && PANTRY.j.claim.today;
+  PANTRY.claiming=true; renderStore();
+  arenaPost("/api/arena/pantry/claim", {}).then(function(res){
+    PANTRY.claiming=false;
+    if(res.status>=200 && res.status<500 && typeof today==="string") lsSet("hq_coin_claim_try", today);
+    if(res.ok && pantryValid(res.j)){
+      var got=res.j, n=got.granted|0;
+      pantryApply(got);
+      if(got.claimed && n>0){
+        var msg="\uD83E\uDE99 +"+n+" Poke Coin"+(n===1?"":"s")+" for showing up today"+(got.starter?" \u00B7 and a free \uD83C\uDF59 Rice Ball to get you started":"");
+        PANTRY.bump=true; renderTrainerCard();
+        toast(msg,"level"); announce(msg);
+        logEvent("\uD83E\uDE99", "Collected "+coinsN(n)+(got.starter?" and a free Rice Ball":""));
+      }
+      return;
+    }
+    if(pantryIsBare404(res)){ pantrySetStore("unsupported"); return; }
+    if(manual) toast("\u26A0 "+pantryErr(res, "Couldn\u2019t collect today\u2019s coins"), "ach");
+    renderStore();
+  }, function(){ PANTRY.claiming=false; if(manual) toast("\u26A0 Couldn\u2019t reach the Arena", "ach"); renderStore(); });
+}
+// Buy one snack. {ok} | {ok:false, lost:true, rid} (couldn't confirm: retry with the SAME rid) | {ok:false, msg}
+function pantryBuy(kind, rid){
+  rid = rid || newRequestId();
+  return arenaPost("/api/arena/pantry/buy", {requestId:rid, kind:kind, qty:1}).then(function(res){
+    if(res.ok && pantryValid(res.j)){ delete STORE_RETRY[kind]; pantryApply(res.j); return {ok:true}; }
+    if(res.status===502 || res.status===0){ STORE_RETRY[kind]=rid; renderStore(); return {ok:false, lost:true, rid:rid}; }
+    delete STORE_RETRY[kind];
+    if(pantryIsBare404(res)){ pantrySetStore("unsupported"); return {ok:false}; }
+    var err=pantryErr(res, "Couldn\u2019t buy that");
+    if(res.status===400 && /not paired/i.test(err)){ pantrySetStore("unpaired"); return {ok:false}; }
+    toast("\u26A0 "+err, "ach");
+    return {ok:false, msg:err};
+  }, function(){ STORE_RETRY[kind]=rid; renderStore(); return {ok:false, lost:true, rid:rid}; });
+}
+
+/* The store panel (Arena view). */
+var STORE_BUSY={}, STORE_RETRY={}, STORE_ADDED={};
+function storeBuy(kind){
+  if(STORE_BUSY[kind]) return;
+  STORE_BUSY[kind]=1; renderStore();
+  pantryBuy(kind, STORE_RETRY[kind]).then(function(r){
+    delete STORE_BUSY[kind];
+    if(r.ok){
+      var it=foodInfo(kind);
+      STORE_ADDED[kind]=Date.now()+1200;
+      announce("Bought "+foodA(it)+". "+coinsN(PANTRY.j ? PANTRY.j.coins|0 : 0)+" left.");
+      setTimeout(renderStore, 1250);
+    }
+    renderStore();
+  });
+}
+function renderStore(){
+  var body=$("storeBody"), msg=$("storeState"); if(!body || !msg) return;
+  var st=PANTRY.store, j=PANTRY.j;
+  if(st!=="ok" || !j){
+    body.classList.add("hidden"); msg.classList.remove("hidden"); msg.innerHTML="";
+    $("storeSub").textContent="";
+    if(st==="unsupported") msg.textContent="This Arena server doesn\u2019t have the store yet. Ask whoever hosts it to update it. Your creatures still recover by resting.";
+    else if(st==="unpaired") msg.textContent="Connect the Arena to collect Poke Coins.";
+    else if(st==="error"){
+      var t=el("span"); t.textContent="Store unavailable: can\u2019t reach the Arena server."; msg.appendChild(t);
+      var rb=el("button","hbtn"); rb.type="button"; rb.textContent="Retry"; rb.addEventListener("click",function(){ pantryLoad(true); }); msg.appendChild(rb);
+    } else msg.innerHTML=LOADING_HTML;
+    return;
+  }
+  body.classList.remove("hidden"); msg.classList.add("hidden");
+  var coins=j.coins|0, cap=(j.coinCap|0)||30, itemCap=(j.itemCap|0)||10, items=j.items||{}, c=j.claim||{};
+  $("storeCoins").textContent=String(coins); $("storeCap").textContent=String(cap);
+  $("storeSub").textContent=((c.amount|0)||5)+" a day \u00B7 the purse holds "+cap;
+  // today's coins
+  var cl=$("storeClaim"), claimFocused=document.activeElement && document.activeElement.id==="storeClaimBtn";
+  cl.innerHTML="";
+  var next=Date.parse(c.nextClaimAt), amt=(c.amount|0)||5;
+  if(c.claimable){
+    var cb=el("button","hbtn on"); cb.type="button"; cb.id="storeClaimBtn";
+    cb.textContent=PANTRY.claiming ? "Collecting\u2026" : "Collect "+amt+" \uD83E\uDE99"; cb.disabled=PANTRY.claiming;
+    cb.setAttribute("aria-label","Collect today\u2019s "+coinsN(amt));
+    cb.addEventListener("click",function(){ pantryClaim(true); });
+    cl.appendChild(cb);
+    if(claimFocused) cb.focus();
+  } else if(c.claimedToday){
+    var dn=el("span"), when="";
+    if(!isNaN(next)){
+      when=" \u00B7 next at "+new Date(next).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})+
+           " (in "+fmtMins(Math.max(1, Math.ceil((next-Date.now())/60000)))+")";
+    }
+    dn.textContent="\u2713 Collected today"+when; cl.appendChild(dn);
+  } else if(coins>=cap){
+    var fl=el("span","store-warn"); fl.textContent="Purse full: today\u2019s coins wait until you spend or give some"; cl.appendChild(fl);
+  }
+  if(coins>=26 && coins<cap){ var af=el("span","store-warn"); af.textContent="Purse almost full"; cl.appendChild(af); }
+  // the shelf
+  var grid=$("storeGrid"), focusKind=(document.activeElement && grid.contains(document.activeElement)) ? document.activeElement.getAttribute("data-kind") : null;
+  grid.innerHTML="";
+  pantryCatalog().forEach(function(it){
+    var own=Math.max(0, items[it.kind]|0), card=el("div","store-item");
+    var top=el("div","si-top"), em=el("span","si-emoji"); em.setAttribute("aria-hidden","true"); em.textContent=it.emoji; top.appendChild(em);
+    var nmw=el("div"), nm=el("div","si-name"); nm.textContent=it.name; nmw.appendChild(nm);
+    var ef=el("div","si-eff");
+    ef.textContent = it.revives ? "Wakes a fainted creature \u00B7 then "+Math.round(100*(1-fzMins(it.wakeToMins)/FZ_SCALE_MINS))+"%"
+                                : "+"+fzMins(it.restoreMins)+" min energy";
+    nmw.appendChild(ef); top.appendChild(nmw); card.appendChild(top);
+    var meta=el("div","si-meta"), pr=el("span","si-price"); pr.textContent="\uD83E\uDE99 "+it.price; meta.appendChild(pr);
+    var ow=el("span"); ow.textContent="You have "+own+" / "+itemCap; meta.appendChild(ow); card.appendChild(meta);
+    var b=el("button","hbtn"); b.type="button"; b.setAttribute("data-kind", it.kind);
+    var busy=!!STORE_BUSY[it.kind], lost=!!STORE_RETRY[it.kind];
+    b.textContent = busy ? "Buying\u2026" : (lost ? "Retry \u00B7 \uD83E\uDE99"+it.price : "Buy \u00B7 \uD83E\uDE99"+it.price);
+    b.setAttribute("aria-label", (lost?"Retry buying ":"Buy ")+foodA(it)+" for "+coinsN(it.price));
+    if(!lost && coins<it.price){ var need=it.price-coins; b.disabled=true; b.title="Need "+need+" more Poke Coin"+(need===1?"":"s"); }
+    else if(!lost && own>=itemCap){ b.disabled=true; b.title="Pantry holds "+itemCap; }
+    if(busy) b.disabled=true;
+    b.addEventListener("click",function(){ storeBuy(it.kind); });
+    card.appendChild(b);
+    var ok=el("span","si-ok"+(lost?" err":"")); ok.setAttribute("role","status");
+    if(lost) ok.textContent="Couldn\u2019t confirm \u00B7 Retry is safe";
+    else if((STORE_ADDED[it.kind]||0)>Date.now()) ok.textContent="\u2713 Added";
+    card.appendChild(ok);
+    grid.appendChild(card);
+    if(focusKind===it.kind && !b.disabled) b.focus();
+  });
+  // gifts people sent you (strings from the server: textContent only)
+  var gl=$("storeGifts"), rg=Array.isArray(j.recentGifts) ? j.recentGifts.slice(0,3) : [], parts=[];
+  rg.forEach(function(g){
+    if(!g || typeof g!=="object") return;
+    var who=(typeof g.fromName==="string" && g.fromName) ? g.fromName.slice(0,40) : ((typeof g.fromHandle==="string" && g.fromHandle) ? g.fromHandle.slice(0,40) : "someone");
+    var bits=["\uD83C\uDF81 "+who];
+    if((g.coins|0)>0) bits.push("\uD83E\uDE99 "+(g.coins|0));
+    var gi=foodInfo(g.kind); if(gi && (g.qty|0)>0) bits.push(gi.emoji+" \u00D7"+(g.qty|0));
+    var ago=relTime(g.at); if(ago!=="\u2014") bits.push(ago==="just now" ? ago : ago+" ago");
+    parts.push(bits.join(" \u00B7 "));
+  });
+  gl.textContent = parts.length ? "Recent gifts: "+parts.join("; ") : "";
+  gl.classList.toggle("hidden", !parts.length);
+}
+
+/* ---- gifts: coins and/or one snack kind, to anyone on the board or in the lobby ---- */
+var GIFT={handle:null, name:"", rid:null, busy:false, unsure:false};
+function arenaGiftButton(handle, name, label){
+  var b=document.createElement("button"); b.className="arena-nudge arena-gift"; b.type="button";
+  b.textContent=label; b.setAttribute("data-who", String(name||handle||"").slice(0,40));
+  b.addEventListener("click", function(){ openGift(handle, name, b); });
+  arenaGiftButtonSync(b);
+  return b;
+}
+function arenaGiftButtonSync(b){
+  var j=PANTRY.j, ok=PANTRY.store==="ok" && !!j;
+  var has=ok && ((j.coins|0)>0 || FOOD_ORDER.some(function(k){ return j.items && (j.items[k]|0)>0; }));
+  var who=b.getAttribute("data-who")||"";
+  b.classList.toggle("hidden", !ok);
+  b.disabled = ok && !has;
+  b.title = (ok && !has) ? "Nothing to give yet \u00B7 you get 5 Poke Coins a day" : "Give Poke Coins or a snack to "+who;
+  b.setAttribute("aria-label", b.title);
+}
+// Gift buttons show only when the store works; with nothing to give they explain why.
+function arenaGiftButtonsSync(){ Array.prototype.forEach.call(document.querySelectorAll(".arena-gift"), arenaGiftButtonSync); }
+function openGift(handle, name, btn){
+  if(PANTRY.store!=="ok" || !PANTRY.j || typeof handle!=="string" || !/^[A-Za-z0-9_-]{1,64}$/.test(handle)) return;
+  rememberOpener();
+  GIFT.handle=handle; GIFT.name=String(name||handle).slice(0,40); GIFT.rid=newRequestId(); GIFT.busy=false; GIFT.unsure=false;
+  $("giftTitle").textContent="\uD83C\uDF81 Give to "+GIFT.name;
+  $("giftCoins").value="0"; $("giftQty").value="0"; $("giftNote").value=""; $("giftErr").textContent="";
+  giftFill(true);
+  $("giftBack").classList.add("open");
+  $("giftCoins").focus();
+}
+function giftClose(){
+  $("giftBack").classList.remove("open");
+  GIFT.handle=null; GIFT.busy=false; GIFT.unsure=false;
+  restoreOpener();
+}
+// (Re)build the snack list from what you own, keeping the current pick when you still have it.
+function giftFill(reset){
+  var j=PANTRY.j||{}, items=j.items||{}, sel=$("giftKind"), cur=reset ? "" : sel.value;
+  sel.innerHTML="";
+  var o0=el("option"); o0.value=""; o0.textContent="No snack"; sel.appendChild(o0);
+  pantryCatalog().forEach(function(it){
+    var own=items[it.kind]|0; if(own<=0) return;
+    var o=el("option"); o.value=it.kind; o.textContent=it.emoji+" "+it.name+" \u00D7"+own; sel.appendChild(o);
+  });
+  sel.value=cur; if(sel.value!==cur) sel.value="";
+  giftUpdate();
+}
+function giftVals(){
+  var j=PANTRY.j||{}, items=j.items||{}, lim=j.limits||{};
+  var c=parseInt($("giftCoins").value,10), q=parseInt($("giftQty").value,10), k=$("giftKind").value;
+  if(!isFood(k)) k="";
+  var capC=(lim.giftMaxCoins|0)||5, capQ=(lim.giftMaxQty|0)||3;
+  return {coins:(c>=0?c:0), kind:k, qty:(k && q>=0 ? q : 0), note:$("giftNote").value.replace(/\s+/g," ").trim().slice(0,80),
+          have:j.coins|0, capC:capC, maxC:Math.min(capC, j.coins|0), maxQ:k ? Math.min(capQ, items[k]|0) : 0,
+          left:(typeof lim.giftsLeftToday==="number") ? lim.giftsLeftToday : null, bad:!(c>=0) || !!(k && !(q>=0))};
+}
+// "2 Poke Coins + 1 Berry" (sep " + ") or "2 Poke Coins and a Berry" (sep " and ", article).
+function giftWhat(coins, kind, qty, sep, article){
+  var parts=[], it=foodInfo(kind);
+  if(coins>0) parts.push(coinsN(coins));
+  if(it && qty>0) parts.push(article && qty===1 ? foodA(it) : foodN(it, qty));
+  return parts.join(sep);
+}
+function giftUpdate(){
+  var v=giftVals(), err="";
+  $("giftCoins").max=String(v.maxC); $("giftQty").max=String(v.maxQ);
+  $("giftQty").disabled=!v.kind || GIFT.unsure;
+  $("giftCoins").disabled=$("giftKind").disabled=$("giftNote").disabled=GIFT.unsure;
+  $("giftCoinsHint").textContent="You have "+coinsN(v.have)+" \u00B7 up to "+v.capC+" per gift";
+  if(v.bad) err="Use whole numbers";
+  else if(v.coins>v.maxC) err=(v.have<v.capC) ? "You have "+coinsN(v.have) : "At most "+coinsN(v.capC)+" per gift";
+  else if(v.kind && v.qty>v.maxQ) err="You can give up to "+v.maxQ+" of those";
+  else if(v.kind && v.qty===0) err="Pick an amount for that snack";
+  var what=giftWhat(v.coins, v.kind, v.qty, " + ", false);
+  $("giftSummary").textContent = err ? err : (what ? GIFT.name+" gets "+what : "Pick Poke Coins, a snack, or both");
+  $("giftLimits").textContent = v.left==null ? "" : (v.left>0 ? v.left+" gift"+(v.left===1?"":"s")+" left today" : "No gifts left today: try again tomorrow");
+  var send=$("giftSend");
+  send.textContent = GIFT.busy ? "Sending\u2026" : (GIFT.unsure ? "Send again" : "Send");
+  send.disabled = GIFT.busy || !!err || !what || v.left===0;
+}
+function giftSend(){
+  var v=giftVals(); if(GIFT.busy || !GIFT.handle) return;
+  if(!giftWhat(v.coins, v.kind, v.qty, "+", false)) return;
+  var name=GIFT.name, body={requestId:GIFT.rid, toHandle:GIFT.handle, coins:v.coins, qty:v.kind?v.qty:0, note:v.note};
+  if(v.kind && v.qty>0) body.kind=v.kind;
+  GIFT.busy=true; $("giftErr").textContent=""; giftUpdate();
+  arenaPost("/api/arena/pantry/give", body).then(function(res){
+    GIFT.busy=false;
+    if(res.ok && pantryValid(res.j)){
+      var s=(res.j.sent && typeof res.j.sent==="object") ? res.j.sent : {coins:body.coins, kind:body.kind||null, qty:body.qty};
+      var what=giftWhat(s.coins|0, s.kind, s.qty|0, " and ", true) || giftWhat(body.coins, body.kind, body.qty, " and ", true);
+      giftClose();
+      var msg = res.j.deliveredLive ? "\uD83C\uDF81 "+name+" got "+what : "\uD83C\uDF81 Sent: "+name+" gets it next time Claude HQ is running";
+      toast(msg,"level"); announce(msg); logEvent("\uD83C\uDF81", "Gave "+name+" "+what);
+      pantryApply(res.j);
+      GIFT.rid=newRequestId();
+      return;
+    }
+    if(pantryIsBare404(res)){ giftClose(); pantrySetStore("unsupported"); toast("\u26A0 This Arena server doesn\u2019t have the store yet","ach"); return; }
+    if(res.status===502 || res.status===0){ giftUnsure(); return; }
+    $("giftErr").textContent=pantryErr(res, "That gift didn\u2019t go through");
+    if(res.status===400 && /not paired/i.test($("giftErr").textContent)){ giftClose(); pantrySetStore("unpaired"); return; }
+    giftUpdate();
+  }, function(){ GIFT.busy=false; giftUnsure(); });
+}
+// The request may or may not have landed: keep the SAME requestId and lock the form, so
+// "Send again" can only replay this exact gift (the server never applies it twice).
+function giftUnsure(){
+  GIFT.unsure=true;
+  $("giftErr").textContent="Couldn\u2019t confirm. Send again (safe, won\u2019t send twice)";
+  giftUpdate();
+  $("giftSend").focus();
+}
+(function(){
+  var gb=$("giftBack"); if(!gb) return;
+  gb.addEventListener("click",function(e){ if(e.target===gb) giftClose(); });
+  $("giftX").addEventListener("click",giftClose);
+  $("giftCancel").addEventListener("click",giftClose);
+  $("giftSend").addEventListener("click",giftSend);
+  ["giftCoins","giftQty","giftNote"].forEach(function(id){
+    $(id).addEventListener("input",giftUpdate);
+    $(id).addEventListener("keydown",function(e){ if(e.key==="Enter" && !$("giftSend").disabled){ e.preventDefault(); giftSend(); } });
+  });
+  $("giftKind").addEventListener("change",function(){
+    var q=$("giftQty");
+    if($("giftKind").value && !(parseInt(q.value,10)>0)) q.value="1";
+    if(!$("giftKind").value) q.value="0";
+    giftUpdate();
+  });
+})();
+// A gift arrived on the lobby socket. Untrusted: shape-checked, shown as text, no sound.
+var GIFT_SEEN={}, GIFT_RELOAD_T=null;
+function arenaOnGift(m){
+  if(!m.from || typeof m.from!=="object") return;
+  var k=(m.kind==null) ? null : m.kind, c=m.coins, q=m.qty;
+  if(k!==null && !isFood(k)) return;
+  if(!(typeof c==="number" && c%1===0 && c>=0 && c<=5)) return;
+  if(!(typeof q==="number" && q%1===0 && q>=0 && q<=3)) return;
+  if(c+q<=0 || (q>0 && !k)) return;
+  if(typeof m.id==="string"){ if(GIFT_SEEN[m.id]) return; GIFT_SEEN[m.id]=1; }
+  var note=(typeof m.note==="string") ? m.note.replace(/\s+/g," ").trim().slice(0,80) : "";
+  var who=arenaWho(m.from), it=foodInfo(k), bits=[];
+  if(c>0) bits.push(coinsN(c));
+  if(it && q>0) bits.push(it.emoji+" "+it.name+" \u00D7"+q);
+  var msg="\uD83C\uDF81 "+who+" sent you "+bits.join(" + ")+(note ? " \u2014 \u201C"+note+"\u201D" : "");
+  toast(msg,"level"); announce(msg);
+  logEvent("\uD83C\uDF81", who+" sent you "+giftWhat(c, k, q, " and ", false)+(note ? ": "+note : ""));
+  if(NOTIF_ON && ("Notification" in window) && Notification.permission==="granted"){
+    try{ new Notification("\uD83C\uDF81 "+who+" sent you a gift", {body:giftWhat(c, k, q, " and ", false)+(note ? ": "+note : ""), tag:"hq-gift", silent:true}); }catch(e){}
+  }
+  clearTimeout(GIFT_RELOAD_T); GIFT_RELOAD_T=setTimeout(function(){ pantryLoad(true); }, 1000);
 }
 
 /* Websocket lobby. The page never sees the device token: dashboard.py mints a
@@ -7058,6 +8099,7 @@ function arenaOpenSocket(){
         arenaChatReady(true);
         voiceOnLobby();
         arenaStatusOnLobby();
+        pantryLoad();   // "coming online": also where today's coins get auto-collected
       }
       else if(m.type==="join" || m.type==="leave"){
         arenaRenderLobby(m.members||[]);
@@ -7070,6 +8112,7 @@ function arenaOpenSocket(){
       }
       else if(m.type==="signal"){ voiceOnSignal(m); }
       else if(m.type==="nudge"){ arenaOnNudge(m); }
+      else if(m.type==="gift"){ arenaOnGift(m); }
       else if(m.type==="nudge_ack"){ toast(m.delivered ? "\uD83D\uDC4B Nudge sent" : "They\u2019re not in the lobby right now", m.delivered?"level":"ach"); }
       else if(m.type==="error" && typeof m.error==="string" && m.error.indexOf("chat: ")===0){
         arenaChatSys(m.error.slice(6, 120));   // e.g. the server's flood guard: "slow down \u2014 \u2026"
@@ -7131,6 +8174,7 @@ function arenaRenderLobby(members){
       nb.textContent="\uD83D\uDC4B nudge"; nb.title="Nudge "+(m.displayName||m.handle)+" to check the Arena";
       nb.addEventListener("click", function(){ arenaSendNudge(m); });
       chip.appendChild(nb);
+      if(typeof m.handle==="string" && m.handle) chip.appendChild(arenaGiftButton(m.handle, m.displayName || m.handle, "\uD83C\uDF81 gift"));
     }
     el.appendChild(chip);
   });

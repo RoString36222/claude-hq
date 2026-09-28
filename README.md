@@ -45,6 +45,11 @@ shares daily activity *counts* with friends — never conversation content.)
   as the session grows, with elemental **types** and rare **shiny** variants.
 - A **Pokédex** collection view, a **⚔️ Gym** team-type-matchup analyzer (real 18-type chart),
   a **🏅 Quests** view, a **Trainer Card**, XP/levels, streaks, achievements, and confetti.
+- **⚡ Creature energy**: creatures tire after long unbroken runs (about 2h makes one 💦 Fatigued;
+  past 3h it may 💫 faint) and recover while you take a break. With the Arena connected you also
+  get **🪙 Poke Coins** (5 a day) to buy snacks (🫐 🍙 🍱, plus a 🧃 Revive Tonic) and gift coins or
+  snacks to friends. Purely cosmetic: it never touches XP or the leaderboard, rest alone always
+  works, and you can turn it off in Settings.
 
 **Quality-of-life**
 - Command palette (⌘/Ctrl-K), keyboard shortcuts (`?` for help, `1`–`5` for views, `/` search, `r`
@@ -130,13 +135,15 @@ echo 'alias claude-hq="python3 ~/Documents/Claude/claude-dashboard/dashboard.py"
 | `arena-link.json` | Your Arena device token. *(git-ignored)* |
 | `config.json` | Your settings (theme, pack, budget, …). Created on first save. *(git-ignored)* |
 | `sessions-meta.json` | Per-session pins / tags / notes / rename aliases. *(git-ignored)* |
+| `meals.json` | Which session ate which snack (local only). *(git-ignored)* |
 
 ### HTTP API (all `127.0.0.1` only)
 `GET /` · `GET /api/sessions` · `GET /api/stream` (SSE) · `GET /api/session/<id>` ·
 `GET /api/session/<id>/export.md` · `GET /api/transcript/<id>?offset&limit&q` · `GET /api/search?q=` ·
 `GET /api/history` · `GET /api/project?folder=` · `GET /api/pokedex` · `GET /api/digest?date&download` ·
-`GET /api/config` · `GET /api/meta` · `GET /api/export.{json,csv}` ·
-`POST /api/action` · `POST /api/config` · `POST /api/meta` (all CSRF-guarded).
+`GET /api/config` · `GET /api/meta` · `GET /api/export.{json,csv}` · `GET /api/arena/pantry` ·
+`POST /api/action` · `POST /api/config` · `POST /api/meta` ·
+`POST /api/arena/pantry/{claim,buy,eat,give}` (all POSTs CSRF-guarded).
 
 ---
 
@@ -174,6 +181,10 @@ replies, file paths, project or folder names, session ids, or titles.
 - **You're in the lobby while HQ is open.** So friends see you online and chat
   and calls reach you on any view. Turn off **Stay in the lobby on every view**
   to show up only while the Arena tab is open.
+- **Poke Coins and snacks live on the server**: it sees what you buy, eat or
+  give (kind, amount, recipient, an optional note), never which session ate it.
+  That stays on this machine, in `meals.json`. Creature energy itself is
+  computed locally and is never shared.
 - The wire format rejects unknown fields outright, so a future client change
   can't silently start leaking one.
 

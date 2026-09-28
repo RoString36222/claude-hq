@@ -32,6 +32,7 @@ import argparse
 import glob
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -39,6 +40,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import webbrowser
@@ -468,6 +470,8 @@ def _scan_file_uncached(path):
         "per_day": {}, "activity_ts": [], "errors": [], "timeline": [], "files": {},
         "model": "", "tok_output": 0, "tok_input": 0, "tok_cacheRead": 0,
         "tok_cacheCreation": 0, "cost": 0.0,
+        # creature fatigue inputs: merged busy spans + oldest still-open tool
+        "busy_spans": [], "open_tool_since": None,
     }
     try:
         f = open(path, "r", encoding="utf-8", errors="replace")
@@ -477,6 +481,8 @@ def _scan_file_uncached(path):
     seen_links = set()
     last_assistant_text = None
     last_assistant_tool = None
+    busy = []        # (start, end) epoch secs when Claude or the user was at it
+    open_tools = {}  # tool_use id -> epoch secs, until its tool_result arrives
 
     with f:
         for line in f:
@@ -494,6 +500,7 @@ def _scan_file_uncached(path):
                 ts = parse_ts(o.get("timestamp"))
                 diso = ts.date().isoformat() if ts else None
                 lhour = ts.astimezone().hour if ts else None
+                t = ts.timestamp() if ts else None
 
                 if typ == "ai-title":
                     at = o.get("aiTitle")
@@ -507,7 +514,20 @@ def _scan_file_uncached(path):
 
                 elif typ == "user":
                     content = (o.get("message") or {}).get("content")
+                    # Fatigue: every user record is a busy instant, and a
+                    # tool_result closes its tool's interval (capped per pair).
+                    if t is not None:
+                        busy.append((t, t))
+                        if isinstance(content, list):
+                            for blk in content:
+                                if not isinstance(blk, dict) or blk.get("type") != "tool_result":
+                                    continue
+                                tid = blk.get("tool_use_id")
+                                u = open_tools.pop(tid, None) if isinstance(tid, str) else None
+                                if u is not None and t >= u:
+                                    busy.append((u, min(t, u + FATIGUE_MAX_PAIR_SECS)))
                     if is_real_human_prompt(content):
+                        open_tools.clear()  # a new human turn ends any orphaned tool
                         cleaned = clean_prompt(content)
                         agg["prompt_count"] += 1
                         if agg["first_prompt"] is None:
@@ -530,6 +550,8 @@ def _scan_file_uncached(path):
                             })
 
                 elif typ == "assistant":
+                    if t is not None:
+                        busy.append((t, t))
                     msg = o.get("message") or {}
                     blocks = msg.get("content")
                     model = msg.get("model") or ""
@@ -568,6 +590,11 @@ def _scan_file_uncached(path):
                             elif bt == "tool_use":
                                 last_tool = b
                                 name = b.get("name") or "Tool"
+                                # Human-wait tools never open a busy interval.
+                                tuid = b.get("id")
+                                if (t is not None and tuid and isinstance(tuid, str)
+                                        and name not in FATIGUE_SKIP_TOOLS):
+                                    open_tools[tuid] = t
                                 if d is not None:
                                     d["tools"] += 1
                                     d["tools_by_name"][name] = d["tools_by_name"].get(name, 0) + 1
@@ -620,6 +647,17 @@ def _scan_file_uncached(path):
                             agg["errors"].append((ts.timestamp(), sig))
                         if "claude.ai" in content or "github.com" in content:
                             _extract_links_from_text(content, agg["links"], seen_links)
+                    # Fatigue: a finished turn covers its whole duration (clamped,
+                    # so a long background Workflow still counts); away_summary
+                    # and other subtypes are ignored.
+                    st = o.get("subtype")
+                    dms = o.get("durationMs")
+                    if t is not None:
+                        if (st == "turn_duration" and isinstance(dms, (int, float))
+                                and not isinstance(dms, bool) and dms > 0):
+                            busy.append((t - min(dms / 1000.0, FATIGUE_MAX_TURN_SECS), t))
+                        elif st in ("local_command", "api_error", "compact_boundary"):
+                            busy.append((t, t))
 
                 else:
                     if "claude.ai" in line or "github.com" in line:
@@ -635,6 +673,8 @@ def _scan_file_uncached(path):
     agg["links"] = agg["links"][:4]
     if len(agg["timeline"]) > 60:
         agg["timeline"] = agg["timeline"][-60:]
+    agg["busy_spans"] = _merge_spans(busy, FATIGUE_TAIL_SECS)[-FATIGUE_MAX_SPANS:]
+    agg["open_tool_since"] = min(open_tools.values()) if open_tools else None
     return agg
 
 
@@ -683,6 +723,229 @@ def _buckets_from_ts(activity_ts, n_buckets, span_secs):
             idx = n_buckets - 1
         buckets[idx] += 1
     return buckets
+
+
+# --------------------------------------------------------------------------- #
+# Creature fatigue (local, cosmetic, deterministic)
+#
+# A creature tires while its session works and recovers while it rests. Load
+# (seconds) rises 1:1 with busy time; the first FATIGUE_TAIL_SECS after the last
+# record still count as work, load holds until FATIGUE_HOLD_SECS, then drains
+# FATIGUE_REST_RATE times faster than it built. From FATIGUE_RISK_SECS of load
+# it may faint on an absolute 15-min tick (a per-session hash roll), and it
+# always has by FATIGUE_CERTAIN_SECS. Food from the Arena pantry takes load off.
+#
+# Nothing here is stored: it is recomputed from the cached busy spans on every
+# build. It never feeds XP, the season, the Pokedex or the Arena publish.
+# --------------------------------------------------------------------------- #
+
+FATIGUE_WINDOW_SECS = 86400
+FATIGUE_TAIL_SECS = 300          # work tail; also the scan merge gap
+FATIGUE_HOLD_SECS = 600          # recovery starts this long after the last record
+FATIGUE_REST_RATE = 4.0
+FATIGUE_TIRED_SECS = 3600
+FATIGUE_FATIGUED_SECS = 7200     # also the wake threshold (load < this)
+FATIGUE_RISK_SECS = 10800
+FATIGUE_CERTAIN_SECS = 14400     # also the energy scale
+FATIGUE_CAP_SECS = 18000
+FATIGUE_TICK_SECS = 900
+FATIGUE_REVIVE_TO_SECS = 6300
+FATIGUE_MAX_PAIR_SECS = 3600     # cap on tool pairs and on the live extension
+FATIGUE_MAX_TURN_SECS = 21600    # turn_duration clamp
+FATIGUE_MAX_SPANS = 96
+FATIGUE_SKIP_TOOLS = ("AskUserQuestion", "ExitPlanMode")
+
+# kind -> (seconds of load removed, revives). Mirrors CATALOG in backend
+# app/pantry.py (restoreMins * 60); tests/test_catalog_sync.py checks it.
+FOOD_EFFECTS = {"berry": (1200, False), "riceball": (2700, False),
+                "bento": (7200, False), "tonic": (0, True)}
+
+FATIGUE_RESTED = {"state": "rested", "energy": 1.0, "loadMins": 0, "mayFaint": False,
+                  "phase": "resting", "restInMins": 0, "restMins": 0, "streakMins": 0,
+                  "lastMeal": None}
+
+
+def _merge_spans(intervals, gap):
+    """Sort (start, end) pairs and merge those at most `gap` seconds apart.
+    Sorting also repairs out-of-order transcript timestamps."""
+    out = []
+    for s, e in sorted((float(a), float(b)) for a, b in intervals if b >= a):
+        if out and s - out[-1][1] <= gap:
+            if e > out[-1][1]:
+                out[-1][1] = e
+        else:
+            out.append([s, e])
+    return out
+
+
+def _faint_roll(sid, k):
+    """Deterministic [0, 1) roll for tick k (an absolute epoch // 900)."""
+    h = hashlib.sha256(("hq:faint:%s:%d" % (sid, k)).encode("utf-8")).hexdigest()
+    return int(h[:8], 16) / 4294967296.0
+
+
+def fatigue_for(sid, spans, now, open_since=None, meals=()):
+    """The creature's fatigue at `now` from its busy spans and meals.
+
+    spans: [[start, end], ...] epoch secs, any order. meals: (at, kind) pairs
+    for THIS session. open_since: the oldest still-open tool, passed only for a
+    live, busy, interactive session so a long tool call keeps tiring it."""
+    lo = now - FATIGUE_WINDOW_SECS
+    sp = _merge_spans([(max(s, lo), min(e, now)) for s, e in spans
+                       if e >= lo and s <= now], FATIGUE_TAIL_SECS)
+    # Live extension: an orphan that started before the last span is ignored,
+    # and the cap equals the pair cap so the later tool_result changes nothing.
+    if open_since is not None and sp and sp[-1][0] <= open_since <= now:
+        ext = min(now, open_since + FATIGUE_MAX_PAIR_SECS)
+        if ext > sp[-1][1]:
+            sp[-1][1] = ext
+    ml = sorted((float(t), k) for t, k in meals
+                if lo <= t <= now and k in FOOD_EFFECTS)
+    # Load is provably 0 past hold + a full drain of the cap: O(1) for idle cards.
+    if not ml and (not sp or now - sp[-1][1] >
+                   FATIGUE_HOLD_SECS + FATIGUE_CAP_SECS / FATIGUE_REST_RATE):
+        return dict(FATIGUE_RESTED)
+
+    # Segments: ("work", a, b, None) or ("rest", a, b, recovery_start).
+    segs = []
+    for i, (s, e) in enumerate(sp):
+        nxt = sp[i + 1][0] if i + 1 < len(sp) else now
+        wend = min(e + FATIGUE_TAIL_SECS, nxt)
+        segs.append(("work", s, wend, None))
+        if nxt > wend:
+            segs.append(("rest", wend, nxt, e + FATIGUE_HOLD_SECS))
+
+    load = 0.0
+    ko = False
+    meal = None
+
+    def work(a, b):
+        nonlocal load, ko
+        x = a
+        while x < b:
+            bnd = (math.floor(x / FATIGUE_TICK_SECS) + 1) * FATIGUE_TICK_SECS
+            y = min(b, bnd)
+            load = min(FATIGUE_CAP_SECS, load + (y - x))
+            if y == bnd and not ko and load >= FATIGUE_RISK_SECS:
+                p = min(1.0, (load - FATIGUE_RISK_SECS) /
+                        float(FATIGUE_CERTAIN_SECS - FATIGUE_RISK_SECS))
+                if _faint_roll(sid, int(bnd // FATIGUE_TICK_SECS)) < p:
+                    ko = True
+            x = y
+
+    def rest(a, b, rec):
+        # rec is absolute, so a meal inside a pause does not restart the hold.
+        nonlocal load, ko
+        d = b - max(a, rec)
+        if d > 0:
+            load = max(0.0, load - d * FATIGUE_REST_RATE)
+        if ko and load < FATIGUE_FATIGUED_SECS:
+            ko = False
+
+    def eat(t, k):
+        nonlocal load, ko, meal
+        credit, revives = FOOD_EFFECTS[k]
+        if revives:
+            ko = False
+            load = min(load, FATIGUE_REVIVE_TO_SECS)
+        else:
+            load = max(0.0, load - credit)
+            if ko and load < FATIGUE_FATIGUED_SECS:
+                ko = False
+        meal = (t, k)
+
+    mi = 0
+    for kind, a, b, rec in segs:
+        while mi < len(ml) and ml[mi][0] < a:
+            eat(*ml[mi])
+            mi += 1
+        cur = a
+        while mi < len(ml) and ml[mi][0] < b:   # a meal splits its segment
+            t, k = ml[mi]
+            if kind == "work":
+                work(cur, t)
+            else:
+                rest(cur, t, rec)
+            eat(t, k)
+            mi += 1
+            cur = t
+        if kind == "work":
+            work(cur, b)
+        else:
+            rest(cur, b, rec)
+    while mi < len(ml):
+        eat(*ml[mi])
+        mi += 1
+
+    if ko:
+        state = "unconscious"
+    elif load >= FATIGUE_FATIGUED_SECS:
+        state = "fatigued"
+    elif load >= FATIGUE_TIRED_SECS:
+        state = "tired"
+    else:
+        state = "rested"
+
+    last_end = sp[-1][1] if sp else None
+    p = (now - last_end) if sp else FATIGUE_HOLD_SECS + 1
+    if p <= FATIGUE_TAIL_SECS:
+        phase = "active"
+    elif p <= FATIGUE_HOLD_SECS:
+        phase = "pause"
+    else:
+        phase = "resting"
+
+    rest_mins = 0
+    if state != "rested":
+        # time until it wakes (unconscious) or is rested again, with a clean break
+        target = FATIGUE_FATIGUED_SECS if ko else FATIGUE_TIRED_SECS
+        tail_left = max(0.0, FATIGUE_TAIL_SECS - p)
+        hold_left = max(0.0, FATIGUE_HOLD_SECS - p)
+        need = max(0.0, load + tail_left - target + 1) / FATIGUE_REST_RATE
+        rest_mins = int(math.ceil((hold_left + need) / 60.0))
+
+    streak = 0
+    if sp and phase != "resting":
+        run_start = sp[-1][0]
+        for i in range(len(sp) - 2, -1, -1):
+            if sp[i + 1][0] - sp[i][1] <= FATIGUE_HOLD_SECS:
+                run_start = sp[i][0]
+            else:
+                break
+        streak = int((min(now, last_end + FATIGUE_TAIL_SECS) - run_start) // 60)
+
+    return {
+        "state": state,
+        "energy": round(max(0.0, min(1.0, 1.0 - load / FATIGUE_CERTAIN_SECS)), 3),
+        "loadMins": int(load // 60),
+        "mayFaint": (not ko) and load >= FATIGUE_RISK_SECS,
+        "phase": phase,
+        "restInMins": 0 if phase == "resting"
+        else int(math.ceil((FATIGUE_HOLD_SECS - p) / 60.0)),
+        "restMins": rest_mins,
+        "streakMins": streak,
+        "lastMeal": ({"kind": meal[1],
+                      "at": datetime.fromtimestamp(meal[0], tz=timezone.utc).isoformat()}
+                     if meal else None),
+    }
+
+
+def _fatigue_safe(sid, agg, open_since, meals, now=None):
+    """fatigue_for over a scan aggregate; one bad transcript never breaks the payload."""
+    try:
+        return fatigue_for(sid, (agg or {}).get("busy_spans") or [],
+                           now or time.time(), open_since, meals)
+    except Exception:
+        return dict(FATIGUE_RESTED)
+
+
+def session_fatigue_now(sess):
+    """Fresh fatigue for one payload session (the eat response's meter)."""
+    sid = sess.get("sessionId") or ""
+    agg = scan_file(find_transcript(sid)) or {}
+    ext = agg.get("open_tool_since") if (sess.get("kind") == "interactive"
+                                         and sess.get("rawStatus") == "busy") else None
+    return _fatigue_safe(sid, agg, ext, load_meals().get(sid, ()))
 
 
 # --------------------------------------------------------------------------- #
@@ -954,8 +1217,10 @@ def get_live_agents():
         return [], f"claude agents error: {e}"
 
 
-def build_session(agent):
-    """Build one session object from a live agent + its transcript."""
+def build_session(agent, meals=None, fatigue_on=True):
+    """Build one session object from a live agent + its transcript.
+    `meals` is load_meals() (read once per build); `fatigue_on` mirrors
+    config.creatureFatigue."""
     session_id = agent.get("sessionId") or agent.get("id") or ""
     short_id = (session_id or "")[:8] or "unknown"
     cwd = agent.get("cwd") or ""
@@ -1034,6 +1299,16 @@ def build_session(agent):
                   "estCostUSD": 0.0, "model": ""}
         spark = [0] * 12
 
+    creature = creature_for(session_id, tx["prompt_count"])
+    if fatigue_on:
+        # Only a busy interactive session with a tool still open keeps tiring
+        # past its last record; a plain "busy" (e.g. a background workflow)
+        # does not, so nothing collapses retroactively when it ends.
+        ext = agg.get("open_tool_since") if (kind == "interactive" and raw_status == "busy"
+                                             and isinstance(agg, dict)) else None
+        creature["fatigue"] = _fatigue_safe(session_id, agg, ext,
+                                            (meals or {}).get(session_id, ()))
+
     return {
         "id": short_id,
         "sessionId": session_id,
@@ -1045,7 +1320,7 @@ def build_session(agent):
         "pid": agent.get("pid") if isinstance(agent.get("pid"), int) else None,
         "status": status,
         "rawStatus": raw_status,
-        "creature": creature_for(session_id, tx["prompt_count"]),
+        "creature": creature,
         "firstPrompt": tx["first_prompt"] or "",
         "lastPrompt": tx["last_prompt"] or (tx["first_prompt"] or ""),
         "lastReply": tx["last_reply"] or "",
@@ -1112,7 +1387,7 @@ def build_feed(sessions, limit=25):
 _ARCHIVED_CAP = 150  # most-recent archived transcripts to surface as stale cards
 
 
-def build_archived_session(path, sid):
+def build_archived_session(path, sid, meals=None, fatigue_on=True):
     """Build a stale 'card' for a past (non-live) transcript, mirroring build_session."""
     agg = scan_file(path) or {}
     la = agg.get("last_activity")
@@ -1124,13 +1399,16 @@ def build_archived_session(path, sid):
         tokens = {"output": 0, "input": 0, "cacheRead": 0, "total": 0,
                   "estCostUSD": 0.0, "model": ""}
         spark = [0] * 12
+    creature = creature_for(sid, agg.get("prompt_count", 0))
+    if fatigue_on:
+        creature["fatigue"] = _fatigue_safe(sid, agg, None, (meals or {}).get(sid, ()))
     return {
         "id": (sid or "")[:8] or "unknown", "sessionId": sid,
         "name": (sid or "")[:8] or "archived",
         "title": agg.get("ai_title") or "Untitled session",
         "cwd": "", "folder": agg.get("folder") or "", "kind": "archived", "pid": None,
         "status": "stale", "rawStatus": "archived",
-        "creature": creature_for(sid, agg.get("prompt_count", 0)),
+        "creature": creature,
         "firstPrompt": agg.get("first_prompt") or "",
         "lastPrompt": agg.get("last_prompt") or agg.get("first_prompt") or "",
         "lastReply": agg.get("last_reply") or "",
@@ -1143,11 +1421,22 @@ def build_archived_session(path, sid):
 
 
 def build_payload():
+    # Config first: creatureFatigue decides whether the meal ledger is read at all.
+    try:
+        config = load_config()
+    except Exception:
+        config = dict(DEFAULT_CONFIG)
+    fz_on = bool(config.get("creatureFatigue", True))
+    try:
+        meals = load_meals() if fz_on else {}
+    except Exception:
+        meals = {}
+
     agents, error = get_live_agents()
     sessions = []
     for a in agents:
         try:
-            sessions.append(build_session(a))
+            sessions.append(build_session(a, meals=meals, fatigue_on=fz_on))
         except Exception:
             # never let one bad agent crash the whole payload
             continue
@@ -1168,7 +1457,8 @@ def build_payload():
         arch.sort(key=lambda x: -x[0])
         for _, p, sid in arch[:_ARCHIVED_CAP]:
             try:
-                sessions.append(build_archived_session(p, sid))
+                sessions.append(build_archived_session(p, sid, meals=meals,
+                                                       fatigue_on=fz_on))
             except Exception:
                 continue
     except Exception:
@@ -1188,11 +1478,7 @@ def build_payload():
     except Exception:
         feed = []
 
-    # --- config + session-meta merge + health (all additive) ---
-    try:
-        config = load_config()
-    except Exception:
-        config = dict(DEFAULT_CONFIG)
+    # --- session-meta merge + health (all additive; config loaded above) ---
     try:
         meta = load_meta()
     except Exception:
@@ -1268,8 +1554,16 @@ def _epoch(iso):
 
 
 # Short whole-payload memo so bursts of requests don't recompute everything.
-_payload_memo = {"ts": 0.0, "data": None}
+# "gen" bumps on every invalidation, so a build that started before a meal was
+# recorded can't be cached as fresh after it.
+_payload_memo = {"ts": 0.0, "data": None, "gen": 0}
 _payload_memo_lock = threading.Lock()
+
+
+def _invalidate_payload_memo():
+    with _payload_memo_lock:
+        _payload_memo["ts"] = 0.0
+        _payload_memo["gen"] += 1
 
 
 def build_payload_memo():
@@ -1277,9 +1571,10 @@ def build_payload_memo():
     with _payload_memo_lock:
         if _payload_memo["data"] is not None and (now - _payload_memo["ts"]) < 1.5:
             return _payload_memo["data"]
+        gen0 = _payload_memo["gen"]
     data = build_payload()
     with _payload_memo_lock:
-        _payload_memo["ts"] = time.monotonic()
+        _payload_memo["ts"] = time.monotonic() if _payload_memo["gen"] == gen0 else 0.0
         _payload_memo["data"] = data
     return data
 
@@ -1308,6 +1603,7 @@ def build_session_detail(sid):
         status = sess.get("status", "idle")
         links = sess.get("links", []) or agg["links"][:4]
         title = sess.get("title") or (agg["ai_title"] or "Untitled session")
+        creature = sess.get("creature") or creature_for(sid, agg["prompt_count"])
     else:
         folder = agg["folder"]
         cwd = ""
@@ -1320,6 +1616,17 @@ def build_session_detail(sid):
         cutoff = now_utc().timestamp() - 6 * 3600
         if any(ts >= cutoff for ts, _ in agg["errors"]):
             status = "needs"
+        creature = creature_for(sid, agg["prompt_count"])
+        try:
+            fz_on = bool(load_config().get("creatureFatigue", True))
+        except Exception:
+            fz_on = True
+        if fz_on:
+            try:
+                sid_meals = load_meals().get(sid, ())
+            except Exception:
+                sid_meals = ()
+            creature["fatigue"] = _fatigue_safe(sid, agg, None, sid_meals)
 
     files = sorted(agg["files"].values(), key=lambda x: -x["count"])[:15]
 
@@ -1355,6 +1662,7 @@ def build_session_detail(sid):
         "spanDays": span_days,
         "activeDays": active_days,
         "promptCount": agg.get("prompt_count", 0),
+        "creature": creature,
     }
 
 
@@ -2283,6 +2591,9 @@ def compute_insights():
 # --------------------------------------------------------------------------- #
 
 _UUID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
+# Pantry idempotency keys and Arena handles (use fullmatch: "$" allows a "\n").
+_RID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+_HANDLE_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 def _cwd_for_session(sid):
@@ -2460,6 +2771,7 @@ DEFAULT_CONFIG = {
     "arenaUrl": "",
     "arenaEnabled": False,
     "arenaShareCost": False,
+    "creatureFatigue": True,
 }
 
 _config_lock = threading.Lock()
@@ -2504,7 +2816,7 @@ def _validate_config(raw, base=None):
         au = au.strip()
         # http/https only: this string becomes an outbound request target.
         cfg["arenaUrl"] = au[:256] if au.startswith(("http://", "https://")) else ""
-    for key in ("arenaEnabled", "arenaShareCost"):
+    for key in ("arenaEnabled", "arenaShareCost", "creatureFatigue"):
         if key in raw:
             cfg[key] = bool(raw.get(key))
     return cfg
@@ -2594,6 +2906,293 @@ def save_meta(sid, patch):
         except Exception:
             pass
         return entry
+
+
+# --------------------------------------------------------------------------- #
+# Local meal ledger (which session ate what; never leaves this machine)
+#
+# Written ONLY by pantry_eat, after the Arena confirmed the snack, and deduped
+# globally by requestId: a replayed or reused requestId can never add a second
+# meal. The effect comes from FOOD_EFFECTS by kind and is never stored.
+# --------------------------------------------------------------------------- #
+
+MEALS_PATH = os.path.join(HERE, "meals.json")
+MEALS_KEEP_SECS = 172800
+MEALS_MAX = 500
+MEALS_PER_SID = 20
+
+_meals_lock = threading.Lock()
+_EAT_INFLIGHT = set()  # requestIds with an eat in flight (guarded by _meals_lock)
+
+
+def _read_meal_entries(now):
+    """Valid meal entries from meals.json; a missing or corrupt file is []."""
+    try:
+        with open(MEALS_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return []
+    items = raw.get("meals") if isinstance(raw, dict) else None
+    if not isinstance(items, list):
+        return []
+    out = []
+    for m in items:
+        if not isinstance(m, dict):
+            continue
+        sid, kind, rid, at = m.get("sessionId"), m.get("kind"), m.get("requestId"), m.get("at")
+        if not (isinstance(sid, str) and _UUID_RE.fullmatch(sid)):
+            continue
+        if not (isinstance(kind, str) and kind in FOOD_EFFECTS):
+            continue
+        if not (isinstance(rid, str) and _RID_RE.fullmatch(rid)):
+            continue
+        if isinstance(at, bool) or not isinstance(at, (int, float)) or not math.isfinite(at):
+            continue
+        if not (now - MEALS_KEEP_SECS <= at <= now + 60):
+            continue
+        out.append({"requestId": rid, "sessionId": sid, "kind": kind, "at": float(at)})
+    return out
+
+
+def load_meals(now=None):
+    """{sessionId: [(at, kind), ...]} sorted by time, for the fatigue walk."""
+    out = {}
+    for m in _read_meal_entries(time.time() if now is None else now):
+        out.setdefault(m["sessionId"], []).append((m["at"], m["kind"]))
+    for v in out.values():
+        v.sort()
+    return out
+
+
+def find_meal(rid):
+    """The recorded meal for this requestId, or None."""
+    for m in _read_meal_entries(time.time()):
+        if m["requestId"] == rid:
+            return m
+    return None
+
+
+def _write_meals(entries):
+    """Atomic write: temp file in the same folder, fsync, then rename over."""
+    tmp = tempfile.NamedTemporaryFile("w", encoding="utf-8",
+                                      dir=os.path.dirname(MEALS_PATH),
+                                      prefix=".meals-", suffix=".tmp", delete=False)
+    try:
+        with tmp:
+            json.dump({"version": 1, "meals": entries}, tmp)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.chmod(tmp.name, 0o600)
+        os.replace(tmp.name, MEALS_PATH)
+    except BaseException:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        raise
+
+
+def record_meal(rid, sid, kind, at, now=None):
+    """Record one meal and return its entry. Idempotent by requestId across ALL
+    sessions: a known rid returns the first entry unchanged. Raises if the file
+    can't be written (pantry_eat turns that into a retryable 202)."""
+    with _meals_lock:
+        now = time.time() if now is None else now
+        entries = _read_meal_entries(now)
+        for m in entries:
+            if m["requestId"] == rid:
+                return m
+        entry = {"requestId": rid, "sessionId": sid, "kind": kind, "at": float(at)}
+        entries.append(entry)
+        # prune: the keep window, then the newest MEALS_PER_SID per session and
+        # the newest MEALS_MAX overall
+        kept, per_sid = [], {}
+        for m in sorted(entries, key=lambda m: -m["at"]):
+            if not (now - MEALS_KEEP_SECS <= m["at"] <= now + 60):
+                continue
+            n = per_sid.get(m["sessionId"], 0)
+            if n >= MEALS_PER_SID:
+                continue
+            per_sid[m["sessionId"]] = n + 1
+            kept.append(m)
+            if len(kept) >= MEALS_MAX:
+                break
+        kept.reverse()
+        _write_meals(kept)
+        return entry
+
+
+# --------------------------------------------------------------------------- #
+# Arena pantry proxy (Poke Coins, food, gifts). The page talks only to these
+# local routes; arena.pantry() forwards an allowlisted body to the server.
+# --------------------------------------------------------------------------- #
+
+def _int_in(v, lo, hi):
+    return isinstance(v, int) and not isinstance(v, bool) and lo <= v <= hi
+
+
+def _food_kind(v):
+    return isinstance(v, str) and v in FOOD_EFFECTS
+
+
+def pantry_body(action, body):
+    """Validate a page request -> (clean body for arena.pantry, None) or
+    (None, error text). `clean` never contains a sessionId."""
+    if action not in arena.PANTRY_ACTIONS:
+        return None, "unknown pantry action"
+    if action == "claim":
+        return {}, None
+    body = body if isinstance(body, dict) else {}
+    rid = body.get("requestId")
+    if not (isinstance(rid, str) and _RID_RE.fullmatch(rid)):
+        return None, "invalid requestId"
+    kind = body.get("kind")
+    if action == "eat":
+        if not _food_kind(kind):
+            return None, "unknown food"
+        return {"requestId": rid, "kind": kind}, None
+    if action == "buy":
+        if not _food_kind(kind):
+            return None, "unknown food"
+        qty = body.get("qty", 1)
+        if not _int_in(qty, 1, 5):
+            return None, "qty must be a whole number from 1 to 5"
+        return {"requestId": rid, "kind": kind, "qty": qty}, None
+    # give
+    to = body.get("toHandle")
+    to = to.strip() if isinstance(to, str) else ""
+    if not _HANDLE_RE.fullmatch(to):
+        return None, "invalid handle"
+    coins = body.get("coins", 0)
+    if not _int_in(coins, 0, 5):
+        return None, "coins must be a whole number from 0 to 5"
+    qty = body.get("qty", 0)
+    if not _int_in(qty, 0, 3):
+        return None, "qty must be a whole number from 0 to 3"
+    if kind is not None and not _food_kind(kind):
+        return None, "unknown food"
+    if qty > 0 and kind is None:
+        return None, "pick a food for that amount"
+    if kind is not None and qty == 0:
+        return None, "pick an amount for that food"
+    if coins == 0 and qty == 0:
+        return None, "a gift needs Poke Coins or food"
+    note = body.get("note")
+    note = " ".join("".join(c for c in note if c.isprintable()).split())[:80] \
+        if isinstance(note, str) else ""
+    clean = {"requestId": rid, "toHandle": to, "coins": coins, "qty": qty, "note": note}
+    if kind is not None:
+        clean["kind"] = kind
+    return clean, None
+
+
+def _overlay_food_effects(resp):
+    """Stamp the LOCAL effect of each food onto a server catalog, so the page
+    always previews the effect that will actually apply here."""
+    if not isinstance(resp, dict) or not isinstance(resp.get("catalog"), list):
+        return resp
+    catalog = []
+    for item in resp["catalog"]:
+        kind = item.get("kind") if isinstance(item, dict) else None
+        if not _food_kind(kind):
+            continue
+        secs, revives = FOOD_EFFECTS[kind]
+        catalog.append(dict(item, restoreMins=secs // 60, revives=revives,
+                            wakeToMins=FATIGUE_REVIVE_TO_SECS // 60 if revives else None))
+    return dict(resp, catalog=catalog)
+
+
+def _meal_view(kind, at):
+    return {"kind": kind,
+            "at": datetime.fromtimestamp(at, tz=timezone.utc).isoformat(),
+            "restoreMins": FOOD_EFFECTS[kind][0] // 60,
+            "revives": FOOD_EFFECTS[kind][1]}
+
+
+def _payload_session(sid):
+    return next((s for s in build_payload_memo().get("sessions", [])
+                 if s.get("sessionId") == sid), None)
+
+
+def pantry_eat(body):
+    """Feed one session's creature -> (code, dict).
+
+    The local state gate only protects the user's own pantry; the Arena still
+    has to confirm the snack, and the meal is stamped at the server's time. A
+    retry (same requestId, retry: true) skips the gate."""
+    body = body if isinstance(body, dict) else {}
+    sid = body.get("sessionId")
+    if not (isinstance(sid, str) and _UUID_RE.fullmatch(sid)):
+        return 400, {"error": "invalid sessionId"}
+    clean, err = pantry_body("eat", body)
+    if err:
+        return 400, {"error": err}
+    rid, kind = clean["requestId"], clean["kind"]
+    retry = body.get("retry") is True
+
+    m = find_meal(rid)
+    if m is not None:
+        if m["sessionId"] == sid and m["kind"] == kind:
+            sess = _payload_session(sid) or {"sessionId": sid}
+            return 200, {"op": "eat", "replayed": True, "kind": kind, "sessionId": sid,
+                         "meal": _meal_view(kind, m["at"]),
+                         "fatigue": session_fatigue_now(sess)}
+        return 409, {"error": "that requestId was already used for a different meal",
+                     "code": "rid_reused"}
+
+    with _meals_lock:
+        if rid in _EAT_INFLIGHT:
+            return 202, {"pending": True, "requestId": rid}
+        _EAT_INFLIGHT.add(rid)
+    try:
+        sess = _payload_session(sid)
+        if sess is None:
+            return 404, {"error": "unknown session"}
+        fz = (sess.get("creature") or {}).get("fatigue")
+        if fz is None:
+            return 409, {"error": "Creature energy is turned off in Settings",
+                         "code": "fatigue_off"}
+        if not retry:
+            state = fz.get("state")
+            if state == "rested":
+                return 409, {"error": "This creature is full of energy: no snack needed",
+                             "code": "not_hungry"}
+            if state == "unconscious" and kind != "tonic":
+                return 409, {"error": "This creature has fainted: only a Revive Tonic "
+                                      "(or a break) can wake it", "code": "fainted"}
+            if kind == "tonic" and state != "unconscious":
+                return 409, {"error": "Revive Tonic only works on a fainted creature",
+                             "code": "not_fainted"}
+
+        code, resp = arena.pantry("eat", {"requestId": rid, "kind": kind})
+        if code == 200 and isinstance(resp, dict) and resp.get("kind") == kind:
+            # The server's ORIGINAL time (a replay returns it too), never in the future.
+            now = time.time()
+            at = min(_epoch(resp.get("at")) or now, now)
+            try:
+                entry = record_meal(rid, sid, kind, at)
+            except Exception:
+                return 202, {"pending": True, "requestId": rid,
+                             "error": "Ate it, but couldn't save the meal on this "
+                                      "machine. Retrying…"}
+            if entry["sessionId"] != sid or entry["kind"] != kind:
+                # lost a race with the same requestId used for another meal
+                return 409, {"error": "that requestId was already used for a different meal",
+                             "code": "rid_reused"}
+            _invalidate_payload_memo()
+            return 200, dict(_overlay_food_effects(resp), sessionId=sid,
+                             meal=_meal_view(kind, entry["at"]),
+                             fatigue=session_fatigue_now(sess))
+        if code == 0 or code >= 500:
+            return 202, {"pending": True, "requestId": rid,
+                         "error": "The Arena didn't answer. Your snack is safe: "
+                                  "Claude HQ will retry it."}
+        if code == 200:
+            return 502, {"error": "the Arena sent an unexpected answer"}
+        return code, resp
+    finally:
+        with _meals_lock:
+            _EAT_INFLIGHT.discard(rid)
 
 
 # --------------------------------------------------------------------------- #
@@ -2742,6 +3341,18 @@ def build_session_markdown(sid, path):
 # --------------------------------------------------------------------------- #
 # HTTP server
 # --------------------------------------------------------------------------- #
+
+# Every state-changing route. A path missing here 404s locally as "not found",
+# which the page would misread as an Arena server without the feature.
+POST_PATHS = (
+    "/api/action", "/api/config", "/api/meta",
+    "/api/arena/pair", "/api/arena/unpair",
+    "/api/arena/publish", "/api/arena/ticket",
+    "/api/arena/nudge",
+    "/api/arena/pantry/claim", "/api/arena/pantry/buy",
+    "/api/arena/pantry/eat", "/api/arena/pantry/give",
+)
+
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "ClaudeHQ/" + APP_VERSION
@@ -2895,6 +3506,16 @@ class Handler(BaseHTTPRequestHandler):
                 window = "season"
             code, resp = arena.board(window)
             self._send(code or 502, json.dumps(resp))
+            return
+
+        if path == "/api/arena/pantry":
+            # Read-only here and on the server: GETs never claim or drain.
+            try:
+                code, resp = arena.pantry()
+            except Exception as e:
+                code, resp = 502, {"error": "arena request failed: %s" % e}
+            self._send(code or 502, json.dumps(
+                _overlay_food_effects(resp) if code == 200 else resp))
             return
 
         if path == "/api/config":
@@ -3182,6 +3803,15 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(to, str) or not to.strip():
                     return 400, {"error": "toHandle required"}
                 return arena.send_nudge(to.strip(), note=body.get("note", ""))
+            if path.startswith("/api/arena/pantry/"):
+                action = path[len("/api/arena/pantry/"):]
+                if action == "eat":
+                    return pantry_eat(body)
+                clean, err = pantry_body(action, body)
+                if err:
+                    return 400, {"error": err}
+                code, resp = arena.pantry(action, clean)
+                return (code or 502), (_overlay_food_effects(resp) if code == 200 else resp)
         except Exception as e:
             return 500, {"error": "arena request failed: %s" % e}
         return 404, {"error": "not found"}
@@ -3200,10 +3830,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         path = self.path.split("?", 1)[0]
-        if path not in ("/api/action", "/api/config", "/api/meta",
-                        "/api/arena/pair", "/api/arena/unpair",
-                        "/api/arena/publish", "/api/arena/ticket",
-                        "/api/arena/nudge"):
+        if path not in POST_PATHS:
             self._send(404, json.dumps({"error": "not found"}))
             return
 
@@ -3259,6 +3886,27 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 
+def _applescript_str(s):
+    """An AppleScript string literal. json.dumps escapes " and \\, but its default
+    \\uXXXX escapes (every emoji) are an AppleScript syntax error, so non-ASCII
+    stays as-is and control characters are dropped."""
+    return json.dumps("".join(c for c in str(s) if c.isprintable()), ensure_ascii=False)
+
+
+def _notify(title, body, sound=True):
+    """Native macOS notification: nudges ping, gifts arrive silently."""
+    try:
+        subprocess.run(
+            ["osascript", "-e",
+             "display notification %s with title %s%s"
+             % (_applescript_str(body), _applescript_str(title),
+                ' sound name "Ping"' if sound else "")],
+            check=False, timeout=10,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser(description="Local Claude sessions dashboard.")
     ap.add_argument("--port", type=int, default=8765)
@@ -3291,18 +3939,8 @@ def main():
     arena.init(scan_file, load_config, HERE)
     arena.start_publisher(PROJECTS_DIR)
 
-    # Raise a native macOS notification for an incoming nudge, so it reaches you
-    # even with no Arena tab open (as long as this process is running).
-    def _notify(title, body):
-        try:
-            subprocess.run(
-                ["osascript", "-e",
-                 'display notification %s with title %s sound name "Ping"'
-                 % (json.dumps(body), json.dumps(title))],
-                check=False, timeout=10,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            pass
+    # Raise a native macOS notification for an incoming nudge or gift, so it
+    # reaches you even with no Arena tab open (as long as this process is running).
     arena.start_nudge_poller(_notify)
 
     # Warm the per-file scan + search caches in the background so the first

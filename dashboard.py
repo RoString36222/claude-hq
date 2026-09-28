@@ -2449,7 +2449,7 @@ CONFIG_PATH = os.path.join(HERE, "config.json")
 META_PATH = os.path.join(HERE, "sessions-meta.json")
 
 KNOWN_THEMES = ("aurora", "midnight", "forest", "mono")
-KNOWN_CREATURE_PACKS = ("monsters", "pokemon", "pokemon3d", "aniimo", "animals", "faces")
+KNOWN_CREATURE_PACKS = ("monsters", "pokemon", "pokemon3d", "aniimo", "village", "animals", "faces")
 DEFAULT_CONFIG = {
     "theme": "aurora",
     "creaturePack": "pokemon3d",

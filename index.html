@@ -627,6 +627,7 @@ details.stalewrap .hint{text-transform:none;letter-spacing:0}
 .avatar.shiny:not(.cre-svg),.dw-av.shiny:not(.cre-svg),.feed-ic.shiny:not(.cre-svg){box-shadow:0 0 0 2px var(--gold),0 0 8px rgba(233,196,106,.5)}
 @keyframes shimmer{0%,100%{filter:drop-shadow(0 0 0 rgba(233,196,106,0))}50%{filter:drop-shadow(0 0 3px rgba(233,196,106,.8))}}
 .cre-svg.shiny .mon-svg{animation:shimmer 2.4s ease-in-out infinite}
+.troop-svg{display:block;overflow:visible}
 .pokeimg{image-rendering:pixelated;object-fit:contain;display:block}
 .pokeimg-3d{image-rendering:auto}  /* X/Y models are already animated GIFs */
 /* ---- evolution splash ---- */
@@ -1919,6 +1920,7 @@ html.hq-calm #confetti{display:none!important}
             <option value="pokemon">Pokémon (animated sprites)</option>
             <option value="pokemon3d">Pokémon 3D (animated · Gen 8→6)</option>
             <option value="aniimo">Aniimo (game creatures)</option>
+            <option value="village">Village Troops (animated · original)</option>
             <option value="monsters">Monsters (generated)</option>
             <option value="animals">Animals (emoji)</option>
             <option value="faces">Faces (emoji)</option>
@@ -2873,23 +2875,30 @@ var POKE_TYPES=["Electric","Fire","Water","Grass","Normal","Ghost","Normal","Dra
 var POKE_TYPE_HUE={Normal:52,Fire:20,Water:212,Electric:48,Grass:99,Ice:190,Fighting:5,Poison:290,Ground:35,Flying:200,Psychic:325,Bug:75,Rock:45,Ghost:270,Dragon:255,Dark:25,Steel:210,Fairy:330};
 function creatureTypeHue(cr){ cr=cr||{};
   if(isPokePack()){ var h=POKE_TYPE_HUE[POKE_TYPES[pokeIdx(cr)]]; if(h!=null) return h; }
+  if(cfg().creaturePack==="village"){ return TROOP_HUE[TROOP_ARCH[pokeIdx(cr)%8]]; }
   return cr.typeHue!=null?cr.typeHue:(cr.hue!=null?cr.hue:220); }
 function creatureStage(cr){ cr=cr||{}; var s=cr.stage!=null?cr.stage|0:3; return Math.max(0,Math.min(4,s)); }
 function creatureSeed(cr){ cr=cr||{}; return hashStr((cr.species||cr.name||"")+"|"+creatureIndex(cr)); }
 function creatureSpecies(cr){ cr=cr||{};
   if(isPokePack()) return pokeCurrentName(cr);  // current evolved form
+  if(cfg().creaturePack==="village") return TROOP_NAMES[pokeIdx(cr)]||"Troop";
   if(cfg().creaturePack==="aniimo") return animoLabel(cr);
   if(cr.speciesName) return cr.speciesName;
   if(cfg().creaturePack==="monsters") return MONSTER_SPECIES[creatureIndex(cr)]||cr.name||"Monster";
   return cr.name||MONSTER_SPECIES[creatureIndex(cr)]||"Monster"; }
 function creatureType(cr){ cr=cr||{};
   if(isPokePack()) return POKE_TYPES[pokeIdx(cr)]||"Normal";
+  if(cfg().creaturePack==="village") return TROOP_ROLE[TROOP_ARCH[pokeIdx(cr)%8]]||"Troop";
   return cr.type || MONSTER_TYPES[creatureIndex(cr)] || "Neutral"; }
-function creatureStageName(cr){ cr=cr||{}; return cr.stageName || STAGE_NAMES[creatureStage(cr)] || ("Stage "+creatureStage(cr)); }
+function creatureStageName(cr){ cr=cr||{};
+  if(cfg().creaturePack==="village") return TROOP_LEVELS[creatureStage(cr)]||("Lv "+(creatureStage(cr)+1));
+  return cr.stageName || STAGE_NAMES[creatureStage(cr)] || ("Stage "+creatureStage(cr)); }
 function creatureNextStageName(cr){ cr=cr||{};
   if(isPokePack()){ var n=pokeNextName(cr); return n; }  // next evolution form
   if(cr.nextStageName) return cr.nextStageName;
-  var st=creatureStage(cr); return st>=4?null:STAGE_NAMES[st+1]; }
+  var st=creatureStage(cr);
+  if(cfg().creaturePack==="village") return st>=4?null:TROOP_LEVELS[st+1];
+  return st>=4?null:STAGE_NAMES[st+1]; }
 function creatureStagePct(cr){ cr=cr||{}; var p=cr.stagePct!=null?cr.stagePct:0; if(p<=1) p=p*100; /* backend sends 0..1 */ return Math.max(0,Math.min(100,Math.round(p))); }
 
 // monsterSVG(seed,typeHue,stage,shiny,px) -> a left-right symmetric pixel-monster
@@ -3061,9 +3070,78 @@ function svgErr(img){
   catch(e){ img.style.display="none"; }
 }
 
+/* ---- Village pack: ORIGINAL animated troop creatures ----
+   Base-building / army genre (Clash-style mechanics) but 100% ORIGINAL art & names —
+   no third-party characters or assets. A troop "evolves" every level-up (stage 0..4). */
+var TROOP_ARCH=["brute","slinger","caster","wyrm","golem","sapper","mender","rider"];
+var TROOP_ROLE={brute:"Brawler",slinger:"Ranger",caster:"Caster",wyrm:"Wyrm",golem:"Guardian",sapper:"Sapper",mender:"Mender",rider:"Skyrider"};
+var TROOP_HUE={brute:12,slinger:112,caster:282,wyrm:205,golem:30,sapper:45,mender:330,rider:188};
+var TROOP_LEVELS=["Recruit","Fighter","Veteran","Champion","Warlord"];   // level = stage+1
+var TROOP_NAMES=[
+ "Thwack","Pipp","Zephry","Drakel","Cobble","Fizzle","Dewdrop","Gustle",
+ "Bonker","Twangle","Runelet","Wyrmi","Boulderk","Boomkin","Balmy","Skywisp",
+ "Maulkin","Dartkin","Sparkwick","Scaldon","Granyt","Kegsy","Sootha","Talonn",
+ "Grumble","Slingo","Glimmr","Emberynn","Stomprock","Sputt","Menda","Aeron",
+ "Smashling","Quillby","Hexle","Frostwyrm","Moltenite","Crackle","Lifewick","Cirro",
+ "Wreckoz","Zipnock","Embercant","Gloamdrake","Bastion","Demoll","Vesper","Windle"];
+function troopIdx(cr){ return pokeIdx(cr); }               // stable 0..47
+function troopArch(cr){ return TROOP_ARCH[troopIdx(cr)%8]; }
+function troopName(cr){ return TROOP_NAMES[troopIdx(cr)]||"Troop"; }
+function isVillagePack(){ return cfg().creaturePack==="village"; }
+// troopSVG(seed,hue,arch,stage,shiny,px) — original chibi troop, animated (SMIL bob + gear).
+function troopSVG(seed, hue, arch, stage, shiny, px){
+  px=px||46; stage=Math.max(0,Math.min(4,stage|0));
+  var body="hsl("+hue+",60%,52%)", dark="hsl("+hue+",52%,34%)", light="hsl("+hue+",72%,70%)",
+      skin="hsl("+((hue+28)%360)+",42%,80%)", gold="#ffd76a", wood="#8a5a33", steel="#c9d2dc";
+  var scale=(0.72+stage*0.055).toFixed(3);   // grows each level-up
+  var g=[];
+  g.push('<ellipse cx="50" cy="93" rx="'+(18+stage*2)+'" ry="4.5" fill="rgba(0,0,0,.18)"/>');
+  g.push('<rect x="40" y="70" width="7" height="16" rx="3" fill="'+dark+'"/><rect x="53" y="70" width="7" height="16" rx="3" fill="'+dark+'"/>');
+  // gear that sits BEHIND the body (wings)
+  if(arch==="wyrm"||arch==="rider"){
+    g.push('<path d="M34 46 Q10 34 16 58 Q28 54 40 60 Z" fill="'+light+'" opacity=".9"/>');
+    g.push('<path d="M66 46 Q90 34 84 58 Q72 54 60 60 Z" fill="'+light+'" opacity=".9"/>');
+  }
+  g.push('<rect x="34" y="44" width="32" height="32" rx="12" fill="'+body+'"/>');
+  g.push('<rect x="41" y="53" width="18" height="19" rx="9" fill="'+light+'" opacity=".55"/>');
+  if(arch==="golem"){ g.push('<path d="M36 50 l8 -4 l6 5 l8 -3 v10 l-7 4 l-8 -3 l-7 3 z" fill="'+dark+'" opacity=".55"/>'); }
+  g.push('<rect x="26" y="48" width="10" height="20" rx="5" fill="'+body+'"/><rect x="64" y="48" width="10" height="20" rx="5" fill="'+body+'"/>');
+  if(stage>=3){ g.push('<rect x="32" y="44" width="12" height="8" rx="4" fill="'+steel+'"/><rect x="56" y="44" width="12" height="8" rx="4" fill="'+steel+'"/>'); } // pauldrons
+  g.push('<circle cx="50" cy="34" r="16" fill="'+skin+'"/>');
+  g.push('<circle cx="44" cy="34" r="2.6" fill="#20242c"/><circle cx="56" cy="34" r="2.6" fill="#20242c"/>');
+  g.push('<path d="M45 41 Q50 45 55 41" stroke="#20242c" stroke-width="1.6" fill="none" stroke-linecap="round"/>');
+  if(arch==="wyrm"){ g.push('<path d="M40 22 l-4 -9 l9 5 z" fill="'+dark+'"/><path d="M60 22 l4 -9 l-9 5 z" fill="'+dark+'"/>'); } // horns
+  // held gear (in front), with a subtle SMIL swing
+  var swing='<animateTransform attributeName="transform" type="rotate" values="-6 72 50;6 72 50;-6 72 50" dur="2.8s" repeatCount="indefinite"/>';
+  if(arch==="brute"){ g.push('<g transform="rotate(0 72 50)">'+swing+'<rect x="70" y="18" width="6" height="30" rx="3" fill="'+wood+'"/><circle cx="73" cy="16" r="9" fill="#6b4423"/><circle cx="70" cy="14" r="1.5" fill="'+steel+'"/><circle cx="77" cy="17" r="1.5" fill="'+steel+'"/></g>'); }
+  else if(arch==="slinger"){ g.push('<path d="M74 22 Q90 42 74 62" stroke="'+wood+'" stroke-width="3.2" fill="none"/><line x1="74" y1="22" x2="74" y2="62" stroke="#eee" stroke-width="1"/><line x1="60" y1="42" x2="82" y2="42" stroke="'+dark+'" stroke-width="1.6"/>'); }
+  else if(arch==="caster"){ g.push('<rect x="72" y="22" width="4" height="42" rx="2" fill="'+wood+'"/><circle cx="74" cy="20" r="7" fill="'+light+'"><animate attributeName="r" values="6;8;6" dur="1.8s" repeatCount="indefinite"/><animate attributeName="opacity" values=".7;1;.7" dur="1.8s" repeatCount="indefinite"/></circle>'); }
+  else if(arch==="sapper"){ g.push('<circle cx="72" cy="42" r="9" fill="#2b2f36"/><rect x="71" y="30" width="2" height="5" fill="'+wood+'"/><circle cx="72" cy="29" r="2.4" fill="'+gold+'"><animate attributeName="opacity" values="1;.2;1" dur="0.7s" repeatCount="indefinite"/></circle>'); }
+  else if(arch==="mender"){ g.push('<rect x="72" y="24" width="4" height="40" rx="2" fill="'+steel+'"/><g transform="translate(74 22)"><rect x="-2" y="-6" width="4" height="12" rx="1" fill="#3ddc84"/><rect x="-6" y="-2" width="12" height="4" rx="1" fill="#3ddc84"/></g>'); }
+  else if(arch==="wyrm"){ g.push('<path d="M34 72 q-14 6 -20 -2 q10 2 16 -6 z" fill="'+dark+'"/>'); } // tail
+  // rank pips (level) on the chest ribbon
+  var pips=''; for(var i=0;i<=stage;i++){ pips+='<circle cx="'+(43+i*3.5)+'" cy="66" r="1.5" fill="'+gold+'"/>'; }
+  g.push(pips);
+  if(stage>=4){ g.push('<path d="M40 20 l3 -8 l6 6 l4 -9 l4 9 l6 -6 l3 8 z" fill="'+gold+'" stroke="#c99a2e" stroke-width="0.8"/>'); } // crown at max level
+  if(shiny){ g.push('<g fill="'+gold+'"><path d="M22 24 l1.5 3 3 1.5 -3 1.5 -1.5 3 -1.5 -3 -3 -1.5 3 -1.5 z"/><path d="M80 70 l1 2 2 1 -2 1 -1 2 -1 -2 -2 -1 2 -1 z"/></g>'); }
+  var stroke=shiny?' style="filter:drop-shadow(0 0 3px '+gold+')"':'';
+  return '<svg class="troop-svg" viewBox="0 0 100 100" width="'+px+'" height="'+px+'" xmlns="http://www.w3.org/2000/svg"'+stroke+'>'+
+    '<g transform="translate(50 52) scale('+scale+') translate(-50 -52)">'+
+    '<g><animateTransform attributeName="transform" type="translate" values="0 0;0 -2.4;0 0" dur="2.6s" repeatCount="indefinite" keyTimes="0;0.5;1" calcMode="spline" keySplines="0.4 0 0.6 1;0.4 0 0.6 1"/>'+
+    g.join('')+'</g></g></svg>';
+}
+function troopVisual(cr, px){ return troopSVG(creatureSeed(cr), TROOP_HUE[troopArch(cr)], troopArch(cr), creatureStage(cr), !!cr.shiny, px); }
 function paintCreature(node, cr, px, bg){
   cr=cr||{}; if(bg===undefined) bg=true; px=px||46;
   node.classList.remove("shiny","cre-svg");
+  if(isVillagePack()){
+    node.classList.add("cre-svg");
+    if(bg){ var isDv=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches;
+            node.style.background="hsl("+TROOP_HUE[troopArch(cr)]+",45%,"+(isDv?"18%":"90%")+")"; }
+    node.innerHTML=troopVisual(cr, px);
+    if(cr.shiny) node.classList.add("shiny");
+    return;
+  }
   if(isPokePack()){
     if(bg){ var isD=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches;
             node.style.background="hsl("+creatureTypeHue(cr)+",55%,"+(isD?"20%":"90%")+")"; }
@@ -3095,6 +3173,7 @@ function paintCreature(node, cr, px, bg){
 // String form for callers that build markup (feed/cmdk): svg or an emoji.
 function creatureVisual(x, px){
   var cr=(x && x.creature)?x.creature:(x||{}); px=px||46;
+  if(cfg().creaturePack==="village") return troopVisual(cr, px);
   if(cfg().creaturePack==="aniimo") return animoImgHTML(cr, px);
   if(isPokePack()) return pokeImgHTML(cr, px);
   if(cfg().creaturePack==="monsters")
@@ -4873,10 +4952,11 @@ function buildDexCard(sp,i,cr){
     // caught pokemon -> real sprite; everything else / uncaught -> deterministic silhouette (greyed via CSS)
     if(caught && isPokePack()){ spr.innerHTML=pokeImgHTML(cr, 72); }
     else if(caught && cfg().creaturePack==="aniimo"){ spr.innerHTML=animoImgHTML(cr, 72); }
+    else if(cfg().creaturePack==="village"){ spr.innerHTML=troopSVG(creatureSeed(cr), TROOP_HUE[TROOP_ARCH[(sp.species!=null?sp.species:idx)%8]], TROOP_ARCH[(sp.species!=null?sp.species:idx)%8], Math.max(0,Math.min(4,maxStage)), caught&&!!sp.shiny, 72); }
     else { spr.innerHTML=monsterSVG(creatureSeed(cr), creatureTypeHue(cr), Math.max(0,Math.min(4,maxStage)), caught&&!!sp.shiny, 72); }
     card.appendChild(spr);
     var nm=el("div","dex-name");
-    nm.textContent = !caught ? "???" : (isPokePack() ? pokeCurrentName(cr) : cfg().creaturePack==="aniimo" ? animoLabel(cr) : (sp.speciesName||sp.name||"Monster"));
+    nm.textContent = !caught ? "???" : (isPokePack() ? pokeCurrentName(cr) : cfg().creaturePack==="aniimo" ? animoLabel(cr) : cfg().creaturePack==="village" ? (TROOP_NAMES[(sp.species!=null?sp.species:idx)]||"Troop") : (sp.speciesName||sp.name||"Monster"));
     card.appendChild(nm);
     if(caught){ var tb=el("div"); tb.innerHTML=typeBadgeHTML(cr); if(tb.firstChild) card.appendChild(tb.firstChild); }
     var st=el("div","dex-statrow");
@@ -5403,6 +5483,7 @@ function renderCmdk(){
     var row=el("div","cmdk-item"+(i===CMDK_SEL?" sel":""));
     var ic=el("div","ci-ic");
     if(it.cr && cfg().creaturePack==="monsters"){ ic.innerHTML=monsterSVG(creatureSeed(it.cr),creatureTypeHue(it.cr),creatureStage(it.cr),!!it.cr.shiny,18); }
+    else if(it.cr && cfg().creaturePack==="village"){ ic.innerHTML=troopVisual(it.cr,18); }
     else if(it.cr && isPokePack()){ ic.innerHTML=pokeImgHTML(it.cr,18); }
     else if(it.cr && cfg().creaturePack==="aniimo"){ ic.innerHTML=animoImgHTML(it.cr,18); }
     else { ic.textContent=it.ic; }

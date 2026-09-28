@@ -3093,13 +3093,37 @@ function monsterSVG(seed, hue, stage, shiny, px){
 // Type badge markup coloured by typeHue.
 function typeBadgeHTML(cr){ return '<span class="typebadge" style="background:hsl('+creatureTypeHue(cr)+',60%,45%)">'+esc(creatureType(cr))+'</span>'; }
 // Evolve progress bar + next-stage label.
+// Progress toward the next VISIBLE evolution for the pokemon packs. The 5 internal growth
+// stages (0..4) don't map 1:1 to a line's 2-3 forms — some forms span two stages (e.g.
+// Gabite occupies two stages of Gible→Gabite→Garchomp). Measuring progress per-internal-
+// stage makes the bar reset to 0% when the form DOESN'T change, which reads as lost
+// progress. Instead, aggregate the stages that map to the current form so the bar climbs
+// monotonically until the creature actually evolves. Uses RAW growth (via _noFloor) so the
+// New Game+ display floor never distorts it.
+function pokeFormProgress(cr){
+  var raw=Object.assign({},cr,{_noFloor:true});
+  var line=pokeEvoLine(raw), curPos=pokeEvoPos(raw,line), rawStage=creatureStage(raw);
+  if(curPos>=line.length-1) return {pct:100, next:null};             // already the final form
+  var formStart=null, nextFormStage=null;
+  for(var st=0; st<=4; st++){ var p=Math.round((st/4)*(line.length-1));
+    if(p===curPos && formStart===null) formStart=st;
+    if(p===curPos+1){ nextFormStage=st; break; } }
+  if(formStart===null) formStart=rawStage;
+  if(nextFormStage===null) return {pct:100, next:null};
+  var span=Math.max(1, nextFormStage-formStart);
+  var done=(rawStage-formStart)+(creatureStagePct(cr)/100);          // stages cleared + within-stage
+  return {pct:Math.max(0,Math.min(100,Math.round(done/span*100))), next:DEX_NAMES[line[curPos+1]]||null};
+}
 function evobarHTML(cr){
   cr=cr||{};
-  // Progress reflects the session's REAL growth (raw stage), NOT the New Game+ display
-  // floor — so a creature shown at an unlocked-early form never resets earned progress
-  // (e.g. "84% → next" stays 84%, it doesn't jump to 0 or "Fully evolved").
-  var raw=Object.assign({},cr,{_noFloor:true});
-  var next=creatureNextStageName(raw), pct=creatureStagePct(cr);
+  var pct, next;
+  if(isPokePack()){ var fp=pokeFormProgress(cr); pct=fp.pct; next=fp.next; }
+  else {
+    // non-poke packs: each stage IS a visible change, so per-stage progress is correct.
+    // Use RAW growth (_noFloor) so the New Game+ display floor never resets earned progress.
+    var raw=Object.assign({},cr,{_noFloor:true});
+    next=creatureNextStageName(raw); pct=creatureStagePct(cr);
+  }
   return '<div class="evobar"><span style="width:'+pct+'%"></span></div>'+
     (next ? '<div class="evonext">'+pct+'% → '+esc(next)+'</div>' : '<div class="evonext">Fully evolved</div>');
 }

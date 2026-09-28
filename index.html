@@ -628,7 +628,12 @@ details.stalewrap .hint{text-transform:none;letter-spacing:0}
 @keyframes shimmer{0%,100%{filter:drop-shadow(0 0 0 rgba(233,196,106,0))}50%{filter:drop-shadow(0 0 3px rgba(233,196,106,.8))}}
 .cre-svg.shiny .mon-svg{animation:shimmer 2.4s ease-in-out infinite}
 .pokeimg{image-rendering:pixelated;object-fit:contain;display:block}
-.pokeimg-3d{image-rendering:auto}
+/* static 3D renders get a gentle idle float so they don't feel dead */
+@keyframes idlefloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-6%)}}
+.pokeimg-3d{image-rendering:auto;animation:idlefloat 3s ease-in-out infinite}
+.card.working .avatar .pokeimg-3d{animation:idlefloat 1.3s ease-in-out infinite}
+html.hq-calm .pokeimg-3d{animation:none}
+@media (prefers-reduced-motion: reduce){ .pokeimg-3d{animation:none} }
 @keyframes pokehop{0%,100%{transform:translateY(0)}35%{transform:translateY(-4px)}55%{transform:translateY(0)}}
 @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
 .card.working .avatar .pokeimg,.card.working .avatar .mon-svg,

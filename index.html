@@ -628,12 +628,7 @@ details.stalewrap .hint{text-transform:none;letter-spacing:0}
 @keyframes shimmer{0%,100%{filter:drop-shadow(0 0 0 rgba(233,196,106,0))}50%{filter:drop-shadow(0 0 3px rgba(233,196,106,.8))}}
 .cre-svg.shiny .mon-svg{animation:shimmer 2.4s ease-in-out infinite}
 .pokeimg{image-rendering:pixelated;object-fit:contain;display:block}
-/* static 3D renders get a gentle idle float so they don't feel dead */
-@keyframes idlefloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-6%)}}
-.pokeimg-3d{image-rendering:auto;animation:idlefloat 3s ease-in-out infinite}
-.card.working .avatar .pokeimg-3d{animation:idlefloat 1.3s ease-in-out infinite}
-html.hq-calm .pokeimg-3d{animation:none}
-@media (prefers-reduced-motion: reduce){ .pokeimg-3d{animation:none} }
+.pokeimg-3d{image-rendering:auto}  /* X/Y models are already animated GIFs */
 @keyframes pokehop{0%,100%{transform:translateY(0)}35%{transform:translateY(-4px)}55%{transform:translateY(0)}}
 @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
 .card.working .avatar .pokeimg,.card.working .avatar .mon-svg,
@@ -711,7 +706,7 @@ html.hq-calm .pokeimg-3d{animation:none}
   transform:translateX(calc(100% + 16px));transition:transform .28s var(--ease);display:flex;flex-direction:column;overflow:hidden}
 .drawer.open{transform:translateX(0)}
 .dw-head{display:flex;align-items:flex-start;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line)}
-.dw-head .dw-av{width:44px;height:44px;border-radius:11px;display:grid;place-items:center;font-size:24px;flex:none}
+.dw-head .dw-av{width:76px;height:76px;border-radius:16px;display:grid;place-items:center;font-size:24px;flex:none}
 .dw-head .dw-meta{flex:1;min-width:0}
 .dw-head .dw-title{font-weight:650;font-size:16px;line-height:1.3}
 .dw-head .dw-sub{font-size:12.5px;color:var(--faint);margin-top:3px}
@@ -2919,6 +2914,7 @@ function evobarHTML(cr){
 // real CDN that ad/content blockers (e.g. Opera GX) don't block like raw.githubusercontent.com.
 var POKE_ANIM="https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/sprites/pokemon/versions/generation-v/black-white/animated/";
 var POKE_STATIC="https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/sprites/pokemon/";
+var PKPARAISO_XY="https://www.pkparaiso.com/imagenes/xy/sprites/animados/";  // animated 3D X/Y models
 var POKE_DEX=[25,4,7,1,133,94,143,149,448,282,155,158,152,403,130,131,37,39,54,445,248,59,633,151,212,28,468,461,306,169,330,473,18,65,68,76,610,80,125,81,128,142,636,254,257,260,373,376];
 var POKE_REAL=["Pikachu","Charmander","Squirtle","Bulbasaur","Eevee","Gengar","Snorlax","Dragonite","Lucario","Gardevoir","Cyndaquil","Totodile","Chikorita","Shinx","Gyarados","Lapras","Vulpix","Jigglypuff","Psyduck","Garchomp","Tyranitar","Arcanine","Deino","Mew","Scizor","Sandslash","Togekiss","Weavile","Aggron","Crobat","Flygon","Mamoswine","Pidgeot","Alakazam","Machamp","Golem","Axew","Slowbro","Electabuzz","Magnemite","Tauros","Aerodactyl","Larvesta","Sceptile","Blaziken","Swampert","Salamence","Metagross"];
 // Real evolution LINES (base -> final), index-aligned with the 48 species. The sprite
@@ -2946,11 +2942,12 @@ function pokeImgFor(dex, cr, px, altName){
       stage=creatureStage(cr), shiny=cr.shiny?1:0;
   var sub = shiny ? "shiny/" : "";
   var fb=encodeURIComponent(JSON.stringify([seed,hue,stage,shiny,px]));
-  // 3D pack: Pokémon HOME renders (newer-gen 3D models, high-res, static)
+  // 3D pack: ANIMATED 3D models from Pokémon X/Y (PkParaiso), by current-form name.
+  // Falls back (pokeErr) to the Gen-5 static png, then the generated monster sprite.
   if(cfg().creaturePack==="pokemon3d"){
-    var h3=(shiny?"other/home/shiny/":"other/home/")+dex+".png";
-    return '<img class="pokeimg pokeimg-3d" src="'+POKE_STATIC+h3+'" width="'+px+'" height="'+px+'"'+
-      ' alt="'+esc(altName||"")+(shiny?" (shiny)":"")+'" data-dex="'+dex+'" data-shiny="'+shiny+'"'+
+    var slug=String(altName||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+    return '<img class="pokeimg pokeimg-3d" src="'+PKPARAISO_XY+slug+'.gif" width="'+px+'" height="'+px+'"'+
+      ' alt="'+esc(altName||"")+'" data-dex="'+dex+'" data-shiny="'+shiny+'"'+
       ' data-try="0" data-fb="'+fb+'" onerror="pokeErr(this)" loading="lazy">';
   }
   return '<img class="pokeimg" src="'+POKE_ANIM+sub+dex+'.gif" width="'+px+'" height="'+px+'"'+
@@ -3862,7 +3859,7 @@ function openDrawer(sess){
   LAST_FOCUS = document.activeElement;
   DRAWER_SID = sess.sessionId || sess.id; DRAWER_SESS = sess;
   var cr = sess.creature||{};
-  paintCreature($("dwAv"), cr, 44);
+  paintCreature($("dwAv"), cr, 76);
   $("dwTitle").textContent = sess.title || "Untitled session";
   $("dwSub").textContent = (sess.status||"")+" · "+esc(sess.folder||"~");
   $("dwBody").innerHTML = '<div class="dw-loading">'+LOADING_HTML+'</div>';
@@ -3905,7 +3902,7 @@ function renderDrawer(sess, d){
     evobarHTML(crD);
   secCr.appendChild(crBox); body.appendChild(secCr);
   // keep the drawer avatar in sync with the freshest creature data
-  paintCreature($("dwAv"), crD, 44);
+  paintCreature($("dwAv"), crD, 76);
 
   // tokens + cost
   var secT = dwSec("Usage");

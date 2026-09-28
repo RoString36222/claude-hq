@@ -242,7 +242,19 @@ and feature guide.
 
 ## Contributors
 
-- [@SwastikTripathi](https://github.com/SwastikTripathi) — editable Trainer name setting (#1)
+Thanks to everyone who has contributed to Claude HQ:
+
+- [@RoString36222](https://github.com/RoString36222) — creator & maintainer (fleet view, search,
+  analytics, digests, the creature / evolution / Mega system, and the Village mini-game)
+- [@SwastikTripathi](https://github.com/SwastikTripathi) — editable Trainer name setting (#1) and
+  Arena contributions
+- [@hetnxik](https://github.com/hetnxik) (Het Naik) — Arena fixes: SSL/startup crash fixes and
+  stopping browser-shortcut hijacking (#1.1.1)
+- [@shreyash73](https://github.com/shreyash73) (Shreyash Shanbhag) — Arena self-hosting & ops
+  tooling (docker-compose + Caddy, VPS bootstrap, containerized deploy panel, auto-deploy) and the
+  alternative Rust Arena backend (#1.2.1)
+
+Made with [Claude Code](https://claude.com/claude-code).
 
 ## License
 

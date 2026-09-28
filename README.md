@@ -214,6 +214,15 @@ and feature guide.
 
 ## Changelog
 
+- **1.2.2** — Creature/evolution pass. **New Game+**: a new session of a species you've
+  already evolved now starts at that grown form (incl. mega at Apex) instead of resetting to
+  Egg. Fixed the **3D-sprite flicker** (lead with the Gen-6 X/Y animated sprite, which covers
+  every species used, so the SwSh-404→swap flash is gone). New **🧬 Evolution line** preview
+  in the session drawer (full base→final line + mega node). Evolution moment is now a ~10s
+  cinematic with a game-style **evolving animation** (silhouette flicker → white flash →
+  reveal) and broadcasts notable evolutions (final form / mega) to the Arena leaderboard.
+  The evolve progress bar tracks real growth, independent of the New Game+ display floor.
+  Added `CONTRIBUTING.md` + `AGENTS.md` engineering standards.
 - **1.2.1** — UI polish pass (PR #30) and an Arena "persistent nudger" siren (#24), plus
   self-hosting/ops tooling for the Arena server: docker-compose + Caddy, a VPS bootstrap, an
   ACL-gated containerized **deploy panel**, pull-based auto-deploy, and an alternative **Rust**

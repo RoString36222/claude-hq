@@ -1,6 +1,6 @@
 # ⚡ Claude HQ
 
-**Version 1.2.0** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
+**Version 1.2.1** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
 
 Claude HQ reads your live sessions (`claude agents --json`) and your session transcripts
 (`~/.claude/projects/**/*.jsonl`) and turns them into a single command center: what every tab is
@@ -214,6 +214,10 @@ and feature guide.
 
 ## Changelog
 
+- **1.2.1** — UI polish pass (PR #30) and an Arena "persistent nudger" siren (#24), plus
+  self-hosting/ops tooling for the Arena server: docker-compose + Caddy, a VPS bootstrap, an
+  ACL-gated containerized **deploy panel**, pull-based auto-deploy, and an alternative **Rust**
+  Arena backend (`backend-rs/`). Local dashboard is unchanged in behavior. Thanks @shreyash73, @hetnxik.
 - **1.2.0** — Big Arena expansion (all opt-in): lobby **voice & video** (WebRTC), **chat** with
   server-side history + rate-limiting, @-mention autocomplete/highlight + `@channel`/`@here`,
   **nudges** (subtle side-toast; offline nudges to reach friends with the tab closed), **screen

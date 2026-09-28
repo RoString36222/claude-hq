@@ -726,6 +726,15 @@ html.hq-calm #evoSplash.mega .evo-creature::before{animation:none;opacity:.4}
 .evonode.mega .evo-nm{color:#ff6ec7}
 .evoarrow{align-self:center;color:var(--faint);font-size:18px;font-weight:700;padding-bottom:22px}
 .evoprev-note{margin-top:12px;text-align:center;font-size:12.5px;color:var(--faint)}
+/* compact inline evolution line inside the session drawer */
+.dw-evoline{margin-top:10px}
+.dw-evoline .evoline{gap:6px;justify-content:flex-start;padding:2px 0}
+.dw-evoline .evonode{width:72px;padding:6px 4px;gap:3px}
+.dw-evoline .evonode .evo-spr{width:54px;height:54px}
+.dw-evoline .evonode .evo-nm{font-size:11px}
+.dw-evoline .evonode .evo-dx{font-size:10px}
+.dw-evoline .evoarrow{font-size:15px;padding-bottom:18px}
+.dw-evoline .evoprev-note{margin-top:8px;text-align:left;font-size:11.5px}
 /* Game-style evolving animation: two stacked sprite layers cross-toggled with an
    accelerating white-out, then the reveal. Cross-fades EXISTING sprite <img>s only. */
 #evoCreature .evo-morph{position:absolute;inset:0}
@@ -4261,9 +4270,7 @@ function renderDrawer(sess, d){
     '<div class="crline"><span class="species">'+esc(creatureSpecies(crD))+'</span>'+typeBadgeHTML(crD)+
     '<span class="stagepill">'+esc(creatureStageName(crD))+(crD.shiny?' <span class="shinystar" title="Shiny">✦</span>':'')+'</span></div>'+
     evobarHTML(crD);
-  if(isPokePack()){ var evb=el("button","hbtn"); evb.type="button"; evb.style.marginTop="8px";
-    evb.textContent="🧬 Evolution line";
-    evb.addEventListener("click",function(){ openEvoPreview(crD); }); crBox.appendChild(evb); }
+  if(isPokePack()){ var evln=el("div","dw-evoline"); evln.innerHTML=evoLineHTML(crD, 54); crBox.appendChild(evln); }
   secCr.appendChild(crBox); body.appendChild(secCr);
   // keep the drawer avatar in sync with the freshest creature data
   paintCreature($("dwAv"), crD, 76);
@@ -5750,37 +5757,41 @@ function forceRefresh(){ load(); pulse(); if(VIEW==="analytics") loadHistory(); 
    so nothing new is drawn: base->final along POKE_EVO, plus the Mega form when eligible.
    Non-apex nodes are rendered from a stage-clamped clone so the 3D pack's mega-override
    (creatureStage>=4) doesn't hijack mid-line sprites. */
+// Build the evolution-line markup for a creature (reused inline in the drawer and by the
+// preview modal). Each node reuses the existing sprite helper with an explicit dex + a
+// stage-clamped, _noFloor clone so the 3D mega-override never hijacks a mid-line sprite.
+function evoLineHTML(cr, px){
+  cr=cr||{}; px=px||72;
+  if(!isPokePack()) return '';
+  var line=pokeEvoLine(cr), pos=pokeEvoPos(cr,line), megaActive=!!pokeMega(cr),
+      canMega=(cfg().creaturePack==="pokemon3d" && pokeCanMega(cr));
+  var html='<div class="evoline">';
+  line.forEach(function(dex,i){
+    var clone=Object.assign({},cr,{stage:3,_noFloor:true});
+    var nm=DEX_NAMES[dex]||POKE_REAL[pokeIdx(cr)]||"???";
+    if(i>0) html+='<span class="evoarrow" aria-hidden="true">→</span>';
+    html+='<div class="evonode'+((!megaActive && i===pos)?" current":"")+'">'+
+      '<div class="evo-spr">'+pokeImgFor(dex,clone,px,nm)+'</div>'+
+      '<div class="evo-nm">'+esc(nm)+'</div><div class="evo-dx">#'+String(dex).padStart(3,"0")+'</div></div>';
+  });
+  if(canMega){
+    var finalDex=line[line.length-1], mclone=Object.assign({},cr,{stage:4,_noFloor:true}),
+        mnm="Mega "+(DEX_NAMES[finalDex]||POKE_REAL[pokeIdx(cr)]||"");
+    html+='<span class="evoarrow" aria-hidden="true">⚡</span>'+
+      '<div class="evonode mega'+(megaActive?" current":"")+'">'+
+      '<div class="evo-spr">'+pokeImgFor(finalDex,mclone,px,mnm)+'</div>'+
+      '<div class="evo-nm">'+esc(mnm)+'</div><div class="evo-dx">'+(megaActive?"active":"at Apex")+'</div></div>';
+  }
+  html+='</div>';
+  var note = megaActive ? "Mega-evolved — its ultimate form."
+    : (canMega ? "Reaches its Mega form at Apex."
+    : (line.length>1 ? "Grows along this line as the session earns prompts." : "This species has a single form."));
+  return html+'<div class="evoprev-note">'+esc(note)+'</div>';
+}
 function openEvoPreview(cr){
   cr=cr||{}; var body=$("evoPrevBody"); if(!body) return;
-  if(!isPokePack()){
-    body.innerHTML='<div class="feed-empty">Evolution preview is available in the Pokémon packs.</div>';
-  } else {
-    var line=pokeEvoLine(cr), pos=pokeEvoPos(cr,line), megaActive=!!pokeMega(cr),
-        canMega=(cfg().creaturePack==="pokemon3d" && pokeCanMega(cr));
-    var html='<div class="evoline">';
-    line.forEach(function(dex,i){
-      var clone=Object.assign({},cr,{stage:3,_noFloor:true});   // clamp so mega-override never fires mid-line
-      var nm=DEX_NAMES[dex]||POKE_REAL[pokeIdx(cr)]||"???";
-      if(i>0) html+='<span class="evoarrow" aria-hidden="true">→</span>';
-      html+='<div class="evonode'+((!megaActive && i===pos)?" current":"")+'">'+
-        '<div class="evo-spr">'+pokeImgFor(dex,clone,72,nm)+'</div>'+
-        '<div class="evo-nm">'+esc(nm)+'</div><div class="evo-dx">#'+String(dex).padStart(3,"0")+'</div></div>';
-    });
-    if(canMega){
-      var finalDex=line[line.length-1], mclone=Object.assign({},cr,{stage:4,_noFloor:true}),
-          mnm="Mega "+(DEX_NAMES[finalDex]||POKE_REAL[pokeIdx(cr)]||"");
-      html+='<span class="evoarrow" aria-hidden="true">⚡</span>'+
-        '<div class="evonode mega'+(megaActive?" current":"")+'">'+
-        '<div class="evo-spr">'+pokeImgFor(finalDex,mclone,72,mnm)+'</div>'+
-        '<div class="evo-nm">'+esc(mnm)+'</div><div class="evo-dx">'+(megaActive?"active":"at Apex")+'</div></div>';
-    }
-    html+='</div>';
-    var note = megaActive ? "Mega-evolved — its ultimate form."
-      : (canMega ? "Reaches its Mega form at Apex."
-      : (line.length>1 ? "Grows along this line as the session earns prompts." : "This species has a single form."));
-    html+='<div class="evoprev-note">'+esc(note)+'</div>';
-    body.innerHTML=html;
-  }
+  body.innerHTML = isPokePack() ? evoLineHTML(cr,72)
+    : '<div class="feed-empty">Evolution preview is available in the Pokémon packs.</div>';
   rememberOpener(); $("evoPreviewBack").classList.add("open"); var c=$("evoPrevClose"); if(c) c.focus();
 }
 function closeEvoPreview(){ $("evoPreviewBack").classList.remove("open"); restoreOpener(); }

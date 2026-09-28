@@ -3094,7 +3094,12 @@ function monsterSVG(seed, hue, stage, shiny, px){
 function typeBadgeHTML(cr){ return '<span class="typebadge" style="background:hsl('+creatureTypeHue(cr)+',60%,45%)">'+esc(creatureType(cr))+'</span>'; }
 // Evolve progress bar + next-stage label.
 function evobarHTML(cr){
-  var next=creatureNextStageName(cr), pct=creatureStagePct(cr);
+  cr=cr||{};
+  // Progress reflects the session's REAL growth (raw stage), NOT the New Game+ display
+  // floor — so a creature shown at an unlocked-early form never resets earned progress
+  // (e.g. "84% → next" stays 84%, it doesn't jump to 0 or "Fully evolved").
+  var raw=Object.assign({},cr,{_noFloor:true});
+  var next=creatureNextStageName(raw), pct=creatureStagePct(cr);
   return '<div class="evobar"><span style="width:'+pct+'%"></span></div>'+
     (next ? '<div class="evonext">'+pct+'% → '+esc(next)+'</div>' : '<div class="evonext">Fully evolved</div>');
 }

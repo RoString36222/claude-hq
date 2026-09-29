@@ -1,6 +1,6 @@
 # ⚡ Claude HQ
 
-**Version 1.2.1** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
+**Version 1.2.3** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
 
 Claude HQ reads your live sessions (`claude agents --json`) and your session transcripts
 (`~/.claude/projects/**/*.jsonl`) and turns them into a single command center: what every tab is
@@ -8,9 +8,9 @@ working on right now, what it's cost you, a searchable archive of every past ses
 Pokémon-style collection layer on top for fun.
 
 It runs entirely on your machine and binds to `127.0.0.1` only. **Your conversations never leave your
-computer.** (The one exception is that the "pokemon" creature pack loads sprite images from a public
-CDN — only a Pokédex *number* is ever sent, never any of your data. Switch to the "monsters" pack for
-100% offline. The optional [Arena](#-arena-multiplayer--optional) layer, off unless you turn it on,
+computer.** (The one exception is that some creature packs load sprite images from a public CDN —
+the "pokemon"/"aniimo" packs by creature id, and the "Clash of Clans" pack by troop name + level
+number — never any of your data. Switch to the "monsters" pack for 100% offline. The optional [Arena](#-arena-multiplayer--optional) layer, off unless you turn it on,
 shares daily activity *counts* with friends — never conversation content.)
 
 ---
@@ -225,6 +225,17 @@ and feature guide.
 
 ## Changelog
 
+- **1.2.3** — **Clash of Clans creature pack** (Settings → Creature pack). Sessions render as
+  real Clash troops, and each one **evolves through that troop's own in-game levels** (1 → its
+  real max, e.g. Barbarian 1→12, Golem 1→13) instead of the 5 generic stages — every level shows
+  the troop's actual level artwork, hotlinked at runtime from a community dataset
+  (`chiefpansancolt/clash-of-clans-data`) via jsDelivr. Nothing copyrighted is bundled in the
+  repo; only a troop slug + level number is ever requested (same model as the PokéAPI-sprite
+  packs), a missing level steps down to the nearest one, then to a drawn SVG. Troops animate with
+  a CSS **march / attack** loop — note that real in-game frame animations aren't available as
+  hotlinkable per-level assets (those are Supercell's proprietary sprite/Spine files), so the
+  motion is CSS, not game frames. Replaces the short-lived standalone Troops tab. Sits on top of
+  the freshly merged **Arena private rooms + quests/achievements** (PR #32).
 - **1.2.2** — Creature/evolution pass. **New Game+**: a new session of a species you've
   already evolved now starts at that grown form (incl. mega at Apex) instead of resetting to
   Egg. Fixed the **3D-sprite flicker** (lead with the Gen-6 X/Y animated sprite, which covers

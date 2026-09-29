@@ -775,13 +775,16 @@ html.hq-calm .animo-img{animation:none}
 @media (prefers-reduced-motion: reduce){ .animo-img{animation:none} }
 @keyframes pokehop{0%,100%{transform:translateY(0)}35%{transform:translateY(-4px)}55%{transform:translateY(0)}}
 @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
-/* real Clash troop art is static per level — give it life with a CSS march/breathe
-   (same approach the Aniimo pack uses). Anchored at the feet so it "steps". */
-@keyframes troopmarch{0%,100%{transform:translateY(0) scaleY(1) rotate(-1.5deg)}25%{transform:translateY(-9%) scaleY(1.05) rotate(0deg)}50%{transform:translateY(0) scaleY(.96) rotate(1.5deg)}75%{transform:translateY(-4%) scaleY(1.02) rotate(0deg)}}
-.troop-img{image-rendering:auto;object-fit:contain;display:block;transform-origin:50% 92%;animation:troopmarch 2.2s ease-in-out infinite}
-.card.working .avatar .troop-img,.vil-troop.status-working .troop-img{animation-duration:1.05s}
+/* Real Clash troop art is a static frame per level (no in-game animation is available
+   as a hotlinkable per-level asset — those are Supercell's proprietary sprite/Spine
+   files). So we fake motion in CSS: an idle MARCH with squash-and-stretch, and an
+   ATTACK lunge for sessions that are actively working. Anchored at the feet so it steps. */
+@keyframes troopmarch{0%{transform:translateY(0) scaleY(1) scaleX(1) rotate(-2deg)}20%{transform:translateY(-13%) scaleY(1.07) scaleX(.96) rotate(0deg)}45%{transform:translateY(0) scaleY(.93) scaleX(1.06) rotate(2deg)}70%{transform:translateY(-6%) scaleY(1.03) scaleX(.99) rotate(0deg)}100%{transform:translateY(0) scaleY(1) scaleX(1) rotate(-2deg)}}
+@keyframes troopattack{0%,100%{transform:translateX(0) rotate(0) scale(1)}28%{transform:translateX(-9%) rotate(-7deg) scale(1.02)}46%{transform:translateX(15%) rotate(9deg) scaleX(1.1) scaleY(.95)}62%{transform:translateX(0) rotate(0) scale(1)}}
+.troop-img{image-rendering:auto;object-fit:contain;display:block;transform-origin:50% 92%;animation:troopmarch 1.5s ease-in-out infinite}
+.card.working .avatar .troop-img,.vil-troop.status-working .troop-img{animation:troopattack .8s ease-in-out infinite}
 .shiny .troop-img{filter:drop-shadow(0 0 4px rgba(233,196,106,.9)) saturate(1.2)}
-.dexcard.uncaught .dex-sprite .troop-img{filter:grayscale(1) brightness(.28)}
+.dexcard.uncaught .dex-sprite .troop-img{filter:grayscale(1) brightness(.28);animation:none}
 html.hq-calm .troop-img{animation:none}
 @media (prefers-reduced-motion: reduce){ .troop-img{animation:none} }
 .card.working .avatar .pokeimg,.card.working .avatar .mon-svg,
@@ -1465,7 +1468,6 @@ html.hq-calm #confetti{display:none!important}
       <button class="viewtab" data-view="quests" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><span class="vt-l">Quests</span><span class="vt-k" aria-hidden="true">5</span></button>
       <button class="viewtab" data-view="village" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-castle"/></svg><span class="vt-l">Village</span><span class="vt-k" aria-hidden="true">7</span></button>
       <button class="viewtab" data-view="arena" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-trophy"/></svg><span class="vt-l">Arena</span><span class="tab-badge hidden" id="arenaUnread" aria-hidden="true"></span><span class="vt-k" aria-hidden="true">6</span></button>
-      <button class="viewtab" data-view="troops" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-swords"/></svg><span class="vt-l">Troops</span><span class="vt-k" aria-hidden="true">8</span></button>
     </div>
 
     <div class="side-trainer">
@@ -2023,54 +2025,6 @@ html.hq-calm #confetti{display:none!important}
     </div>
   </div>
 
-  <!-- troops view: real per-level Clash of Clans troop art (hotlinked, animated) -->
-  <style>
-    #troopsView{max-width:1200px}
-    .troops-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px}
-    .troops-title{display:flex;align-items:center;gap:8px;margin:0;font-size:20px}
-    .troops-title .i{width:20px;height:20px;color:var(--brand)}
-    .troops-intro{color:var(--muted);font-size:13px;margin:0 0 14px;line-height:1.5;max-width:72ch}
-    .troops-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 16px}
-    .troops-master{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
-    .troops-master button{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:var(--radius-sm);padding:5px 10px;font-size:12px;cursor:pointer}
-    .troops-master button:hover{border-color:var(--brand-line)}
-    .troop-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:14px}
-    .troop-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 12px 12px;display:flex;flex-direction:column;align-items:center;gap:8px;position:relative;overflow:hidden;transition:border-color var(--t-fast) var(--ease),transform var(--t-fast) var(--ease)}
-    .troop-card:hover{transform:translateY(-2px);border-color:var(--brand-line)}
-    .troop-art{width:104px;height:104px;display:flex;align-items:center;justify-content:center;border-radius:14px;margin-top:6px;transition:box-shadow var(--t-med) var(--ease),background var(--t-med) var(--ease)}
-    .troop-art img{width:90px;height:90px}
-    /* real art already differs per level; higher tiers add a gold aura + slight scale as celebration (no desaturation, so low-level art stays visible) */
-    .troop-card[data-tier="4"] .troop-art img{filter:saturate(1.1) drop-shadow(0 0 6px rgba(240,190,60,.55))}
-    .troop-card[data-tier="5"] .troop-art img{filter:saturate(1.2) drop-shadow(0 0 10px rgba(240,190,60,.85))}
-    .troop-card[data-tier="4"] .troop-art{background:radial-gradient(circle at 50% 55%,rgba(240,190,60,.10),transparent 70%)}
-    .troop-card[data-tier="5"] .troop-art{background:radial-gradient(circle at 50% 55%,rgba(240,190,60,.20),transparent 72%);box-shadow:0 0 0 1px var(--gold) inset}
-    .troop-name{font-weight:600;font-size:13px;text-align:center;line-height:1.2;color:var(--ink)}
-    .troop-stars{font-size:12px;letter-spacing:1px;color:var(--gold);height:14px}
-    .troop-stars .off{color:var(--line2)}
-    .troop-tier-name{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:600}
-    .troop-lvlrow{display:flex;align-items:center;gap:8px;width:100%;margin-top:2px}
-    .troop-lvlrow input[type=range]{flex:1;accent-color:var(--brand);cursor:pointer}
-    .troop-lvl-badge{font-size:11px;font-weight:700;color:var(--ink);min-width:44px;text-align:right}
-    .troop-lvl-badge b{color:var(--brand)}
-    .troop-fallback{width:90px;height:90px;display:flex;align-items:center;justify-content:center;font-size:36px;background:var(--panel3);border-radius:12px}
-    .troops-note{color:var(--faint);font-size:11px;margin:18px 0 0;line-height:1.5}
-    .troops-empty{grid-column:1/-1;color:var(--muted);text-align:center;padding:40px}
-  </style>
-  <div id="troopsView" class="troops hidden" aria-label="Clash of Clans troops">
-    <div class="troops-head">
-      <h2 class="troops-title"><svg class="i" aria-hidden="true"><use href="#i-swords"/></svg>Troops</h2>
-      <span class="troops-intro">Real Clash of Clans troops, one card each. Drag a troop's slider to level it up &mdash; the art swaps to that troop's actual in-game artwork for the chosen level, and gains a gold aura + stars as it nears max.</span>
-    </div>
-    <div class="troops-controls">
-      <div class="troops-master">
-        <span>Army:</span>
-        <button type="button" id="troopMaxAll">Max all</button>
-        <button type="button" id="troopResetAll">Reset</button>
-      </div>
-    </div>
-    <div class="troop-grid" id="troopGrid"></div>
-    <p class="troops-note" id="troopsNote"></p>
-  </div>
   </main>
   </div><!-- /main-col -->
 </div><!-- /app -->
@@ -2342,6 +2296,7 @@ html.hq-calm #confetti{display:none!important}
             <option value="pokemon">Pokémon (animated sprites)</option>
             <option value="pokemon3d">Pokémon 3D (animated · Gen 8→6)</option>
             <option value="aniimo">Aniimo (game creatures)</option>
+            <option value="village">Clash of Clans (real troops · levels 1→13 = evolution)</option>
             <option value="monsters">Monsters (generated)</option>
             <option value="animals">Animals (emoji)</option>
             <option value="faces">Faces (emoji)</option>
@@ -3347,7 +3302,7 @@ function creatureStage(cr){ cr=cr||{}; var s=cr.stage!=null?cr.stage|0:3; s=Math
 function creatureSeed(cr){ cr=cr||{}; return hashStr((cr.species||cr.name||"")+"|"+creatureIndex(cr)); }
 function creatureSpecies(cr){ cr=cr||{};
   if(isPokePack()) return pokeCurrentName(cr);  // current evolved form
-  if(cfg().creaturePack==="village") return TROOP_NAMES[pokeIdx(cr)]||"Troop";
+  if(cfg().creaturePack==="village") return troopLabel(cr);
   if(cfg().creaturePack==="aniimo") return animoLabel(cr);
   if(cr.speciesName) return cr.speciesName;
   if(cfg().creaturePack==="monsters") return MONSTER_SPECIES[creatureIndex(cr)]||cr.name||"Monster";
@@ -3357,13 +3312,13 @@ function creatureType(cr){ cr=cr||{};
   if(cfg().creaturePack==="village") return TROOP_ROLE[TROOP_ARCH[pokeIdx(cr)%8]]||"Troop";
   return cr.type || MONSTER_TYPES[creatureIndex(cr)] || "Neutral"; }
 function creatureStageName(cr){ cr=cr||{};
-  if(cfg().creaturePack==="village") return TROOP_LEVELS[creatureStage(cr)]||("Lv "+(creatureStage(cr)+1));
+  if(cfg().creaturePack==="village") return "Lv "+troopLevelForCreature(cr)+"/"+troopMaxLvl(cr);
   return cr.stageName || STAGE_NAMES[creatureStage(cr)] || ("Stage "+creatureStage(cr)); }
 function creatureNextStageName(cr){ cr=cr||{};
   if(isPokePack()){ var n=pokeNextName(cr); return n; }  // next evolution form
   if(cr.nextStageName) return cr.nextStageName;
   var st=creatureStage(cr);
-  if(cfg().creaturePack==="village") return st>=4?null:TROOP_LEVELS[st+1];
+  if(cfg().creaturePack==="village"){ var l=troopLevelForCreature(cr); return l>=troopMaxLvl(cr)?null:("Lv "+(l+1)); }
   return st>=4?null:STAGE_NAMES[st+1]; }
 function creatureStagePct(cr){ cr=cr||{}; var p=cr.stagePct!=null?cr.stagePct:0; if(p<=1) p=p*100; /* backend sends 0..1 */ return Math.max(0,Math.min(100,Math.round(p))); }
 
@@ -3783,26 +3738,39 @@ var TROOP_LABELS=["Barbarian","Archer","Giant","Goblin","Wall Breaker","Balloon"
  "Bowler","Baby Dragon","Miner","Electro Dragon","Yeti","Dragon Rider","Headhunter","Apprentice Warden",
  "Root Rider","Druid","Thrower","Ice Golem","Electro Titan","Ruin Witch","Furnace","Meteor Golem"];
 var TROOP_N=TROOP_SLUGS.length;                 // 32 real troops
-var TROOP_STAGE_LVL=[1,5,8,11,13];              // 5 evolution stages -> real in-game levels
+// Each troop's real max in-game level. A session's evolution progress (stage 0..4 plus
+// its within-stage %) maps across 1..max, so the sprite climbs THIS troop's own levels
+// as the session grows — the in-game levels ARE the evolution line.
+var TROOP_MAXLVL={barbarian:12,archer:12,giant:12,goblin:9,"wall-breaker":11,balloon:11,wizard:12,healer:8,
+ dragon:11,pekka:11,minion:11,"hog-rider":12,valkyrie:11,golem:13,witch:6,"lava-hound":7,
+ bowler:7,"baby-dragon":11,miner:10,"electro-dragon":8,yeti:6,"dragon-rider":5,headhunter:4,"apprentice-warden":5,
+ "root-rider":4,druid:3,thrower:3,"ice-golem":7,"electro-titan":5,"ruin-witch":3,furnace:3,"meteor-golem":3};
 function troopSlot(cr){ return troopIdx(cr)%TROOP_N; }        // 0..31 (stable)
 function troopSlug(cr){ return TROOP_SLUGS[troopSlot(cr)]; }
 function troopLabel(cr){ return TROOP_LABELS[troopSlot(cr)]; }
-function troopLevelFor(stage){ return TROOP_STAGE_LVL[Math.max(0,Math.min(4,stage|0))]; }
+function troopMaxLvl(cr){ return TROOP_MAXLVL[troopSlug(cr)]||10; }
+// Evolution progress (0..1) from stage(0..4) + within-stage% -> this troop's level 1..max.
+function troopLevelForCreature(cr){
+  var mx=troopMaxLvl(cr), prog=(creatureStage(cr) + (creatureStagePct(cr)||0)/100)/4;
+  prog=Math.max(0,Math.min(1,prog));
+  return Math.max(1, Math.min(mx, 1+Math.round(prog*(mx-1))));
+}
 function troopImgURL(slug,lvl){ return TROOP_CDN+slug+"/normal/level-"+lvl+".png"; }
-// Real troop image at the creature's stage, animated, with a graceful fallback chain.
-function troopImgHTML(cr, px, stageOverride){
+// Real troop image at the creature's evolved LEVEL, animated, with a graceful fallback chain.
+function troopImgHTML(cr, px, lvlOverride){
   px=px||46;
-  var st=Math.max(0,Math.min(4,(stageOverride!=null?stageOverride:creatureStage(cr))|0));
-  var slug=troopSlug(cr), lvl=troopLevelFor(st);
+  var slug=troopSlug(cr), mx=troopMaxLvl(cr);
+  var lvl=Math.max(1, Math.min(mx, (lvlOverride!=null?lvlOverride:troopLevelForCreature(cr))|0));
+  var st=Math.max(0,Math.min(4,creatureStage(cr)));
   var fb=encodeURIComponent(JSON.stringify([creatureSeed(cr),TROOP_HUE[troopArch(cr)],troopArch(cr),st,!!cr.shiny,px]));
   return '<img class="pokeimg troop-img" src="'+troopImgURL(slug,lvl)+'" width="'+px+'" height="'+px+'"'+
-    ' alt="'+esc(troopLabel(cr))+' — level '+lvl+'" data-slug="'+slug+'" data-try="0" data-fb="'+fb+'"'+
+    ' alt="'+esc(troopLabel(cr))+' — level '+lvl+'" data-slug="'+slug+'" data-lvl="'+lvl+'" data-fb="'+fb+'"'+
     ' onerror="troopErr(this)" loading="lazy">';
 }
-// level-N missing -> try level-1 -> drawn troop SVG.
+// missing level image -> step DOWN to the nearest lower level -> drawn troop SVG.
 function troopErr(img){
-  var t=+(img.getAttribute("data-try")||0);
-  if(t===0){ img.setAttribute("data-try","1"); img.src=troopImgURL(img.getAttribute("data-slug"),1); return; }
+  var lvl=+(img.getAttribute("data-lvl")||1);
+  if(lvl>1){ lvl--; img.setAttribute("data-lvl",lvl); img.src=troopImgURL(img.getAttribute("data-slug"),lvl); return; }
   try{ var a=JSON.parse(decodeURIComponent(img.getAttribute("data-fb")));
        img.outerHTML=troopSVG(a[0],a[1],a[2],a[3],!!a[4],a[5]); }
   catch(e){ img.style.display="none"; }
@@ -3959,7 +3927,6 @@ function syncConfig(c){
 // Heavy apply — used on explicit save / startup; re-renders creature surfaces.
 function applyConfig(c){
   CONFIG = Object.assign({}, CONFIG_DEFAULTS, CONFIG, c||{});
-  if(CONFIG.creaturePack==="village") CONFIG.creaturePack="pokemon3d"; // troops moved to Troop-Dex
   // Only adopt the server theme if the user has never chosen one locally.
   if(c && c.theme && !storedTheme()){ try{ localStorage.setItem("hq_theme", c.theme); }catch(e){} }
   applyDisplayPrefs();
@@ -5653,7 +5620,7 @@ document.addEventListener("keydown",function(e){
   if(e.key==="/"){ e.preventDefault(); $("search").focus(); }
   else if(e.key==="r"||e.key==="R"){ e.preventDefault(); forceRefresh(); }
   else if(e.key==="?"){ e.preventDefault(); openHelp(); }
-  else if(e.key>="1"&&e.key<="8"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","arena","village","troops"][+e.key-1]); }
+  else if(e.key>="1"&&e.key<="7"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","arena","village"][+e.key-1]); }
   // In a voice call, from any view: M mutes, V switches the camera, S shares your screen. Holding a key down
   // doesn't repeat it, and outside a call these keys do nothing.
   else if(VCHAN.on && !e.repeat && (e.key==="m"||e.key==="M")){ e.preventDefault(); voiceToggleMute(); }
@@ -5727,8 +5694,7 @@ var VIEW_TITLES = {
   live:["Live","Every Claude session, right now"], analytics:["Analytics","Usage, cost and rhythm over time"],
   pokedex:["Pokédex","Your creature collection"], gym:["Gym","Active sessions scored as a team"],
   quests:["Quests","Daily, weekly and collection goals"], arena:["Arena","Friends, standings and voice"],
-  village:["Village","Your base & army, built from your Claude activity"],
-  troops:["Troops","Real Clash of Clans troops — level them up to see each level's art"]
+  village:["Village","Your base & army, built from your Claude activity"]
 };
 function setView(v){
   VIEW = v; localStorage.setItem("hq_view", v);
@@ -5741,7 +5707,6 @@ function setView(v){
   var qv=$("questsView"); if(qv) qv.classList.toggle("hidden", v!=="quests");
   var vv=$("villageView"); if(vv) vv.classList.toggle("hidden", v!=="village");
   var av=$("arenaView"); if(av) av.classList.toggle("hidden", v!=="arena");
-  var tv=$("troopsView"); if(tv) tv.classList.toggle("hidden", v!=="troops");
   Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
     var on = t.getAttribute("data-view")===v;
     t.classList.toggle("active", on); t.setAttribute("aria-selected", on?"true":"false");
@@ -5752,7 +5717,6 @@ function setView(v){
   if(v==="gym") renderGym();
   if(v==="quests") loadQuests();
   if(v==="village") renderVillage();
-  if(v==="troops") renderTroops();
   // The lobby socket stays open on other views while you stay in the lobby, or while you're in voice (it carries it).
   if(v==="arena"){ arenaUnreadClear(); ARENA.nudgeCount={}; loadArena(); } else { arenaRoomFormsClear(); if(!VCHAN.on && !ARENA_STAY) arenaCloseSocket(); }
 }
@@ -6272,11 +6236,11 @@ function buildDexCard(sp,i,cr){
     // caught pokemon -> real sprite; everything else / uncaught -> deterministic silhouette (greyed via CSS)
     if(caught && isPokePack()){ spr.innerHTML=pokeImgHTML(cr, 72); }
     else if(caught && cfg().creaturePack==="aniimo"){ spr.innerHTML=animoImgHTML(cr, 72); }
-    else if(cfg().creaturePack==="village"){ spr.innerHTML=troopSVG(creatureSeed(cr), TROOP_HUE[TROOP_ARCH[(sp.species!=null?sp.species:idx)%8]], TROOP_ARCH[(sp.species!=null?sp.species:idx)%8], Math.max(0,Math.min(4,maxStage)), caught&&!!sp.shiny, 72); }
+    else if(cfg().creaturePack==="village"){ spr.innerHTML=troopImgHTML(cr, 72); }
     else { spr.innerHTML=monsterSVG(creatureSeed(cr), creatureTypeHue(cr), Math.max(0,Math.min(4,maxStage)), caught&&!!sp.shiny, 72); }
     card.appendChild(spr);
     var nm=el("div","dex-name");
-    nm.textContent = !caught ? "???" : (isPokePack() ? pokeCurrentName(cr) : cfg().creaturePack==="aniimo" ? animoLabel(cr) : cfg().creaturePack==="village" ? (TROOP_NAMES[(sp.species!=null?sp.species:idx)]||"Troop") : (sp.speciesName||sp.name||"Monster"));
+    nm.textContent = !caught ? "???" : (isPokePack() ? pokeCurrentName(cr) : cfg().creaturePack==="aniimo" ? animoLabel(cr) : cfg().creaturePack==="village" ? troopLabel(cr) : (sp.speciesName||sp.name||"Monster"));
     card.appendChild(nm);
     if(caught){ var tb=el("div"); tb.innerHTML=typeBadgeHTML(cr); if(tb.firstChild) card.appendChild(tb.firstChild); }
     var st=el("div","dex-statrow");
@@ -7163,77 +7127,6 @@ function villageRaidClose(){ var ov=$("vilRaidOverlay"); if(ov){ ov.classList.re
 (function(){ var r=$("vilRaid"); if(r) r.addEventListener("click",villageRaid);
   var c=$("vilRaidClose"); if(c) c.addEventListener("click",villageRaidClose);
   var ov=$("vilRaidOverlay"); if(ov) ov.addEventListener("click",function(e){ if(e.target===ov) villageRaidClose(); }); })();
-
-/* ================= Troops (standalone view) =================
-   A browsable roster of real Clash of Clans troops. The level slider swaps in that
-   troop's ACTUAL per-level artwork, hotlinked at runtime from a public jsDelivr
-   gh-mirror (chiefpansancolt/clash-of-clans-data) — nothing is bundled in this repo,
-   exactly like the Pokédex hotlinks PokéAPI sprites. Only a troop slug + level number
-   is ever requested. Not all in-game levels ship a distinct image, so a missing level
-   steps down to the nearest lower one, then to an emoji. Clash of Clans is a trademark
-   of Supercell; this is a fan/community dataset, not affiliated with Supercell. */
-var TROOP_MAXLVL={barbarian:12,archer:12,giant:12,goblin:9,"wall-breaker":11,balloon:11,wizard:12,healer:8,
- dragon:11,pekka:11,minion:11,"hog-rider":12,valkyrie:11,golem:13,witch:6,"lava-hound":7,
- bowler:7,"baby-dragon":11,miner:10,"electro-dragon":8,yeti:6,"dragon-rider":5,headhunter:4,"apprentice-warden":5,
- "root-rider":4,druid:3,thrower:3,"ice-golem":7,"electro-titan":5,"ruin-witch":3,furnace:3,"meteor-golem":3};
-var TROOP_EMOJI={barbarian:"⚔️",archer:"🏹",giant:"🗿",goblin:"👺","wall-breaker":"💣",balloon:"🎈",wizard:"🧙",healer:"🧚",
- dragon:"🐉",pekka:"🤖",minion:"🦇","hog-rider":"🐗",valkyrie:"🪓",golem:"🪨",witch:"🧟","lava-hound":"🔥",
- bowler:"🎳","baby-dragon":"🐲",miner:"⛏️","electro-dragon":"⚡",yeti:"🦍","dragon-rider":"🐴",headhunter:"🗡️","apprentice-warden":"📘",
- "root-rider":"🌳",druid:"🌿",thrower:"🪨","ice-golem":"🧊","electro-titan":"🌩️","ruin-witch":"💀",furnace:"🔥","meteor-golem":"☄️"};
-var TROOP_ROSTER=TROOP_SLUGS.map(function(s,i){ return {n:TROOP_LABELS[i], s:s, max:(TROOP_MAXLVL[s]||10), e:(TROOP_EMOJI[s]||"⚔️")}; });
-var TROOP_TIER_NAMES=["","Recruit","Seasoned","Veteran","Elite","Maxed"];
-var TROOP_LVL=(function(){ try{ return JSON.parse(localStorage.getItem("hq_troop_lvl")||"{}"); }catch(e){ return {}; } })();
-function troopLvl(t){ var v=TROOP_LVL[t.s]; return (v>=1&&v<=t.max)?v:1; }
-function troopTier(t,lvl){ var f=(lvl-1)/Math.max(1,(t.max-1)); return Math.min(5, Math.max(1, Math.round(f*4)+1)); }
-function troopSaveLvl(){ try{ localStorage.setItem("hq_troop_lvl", JSON.stringify(TROOP_LVL)); }catch(e){} }
-function troopStars(tier){ var s=""; for(var i=1;i<=5;i++){ s+= i<=tier ? "★" : '<span class="off">★</span>'; } return s; }
-// missing level image -> step down to the nearest lower level -> emoji fallback.
-function troopBrowseErr(img){
-  var lvl=+(img.getAttribute("data-lvl")||1), slug=img.getAttribute("data-slug");
-  if(lvl>1){ lvl--; img.setAttribute("data-lvl",lvl); img.src=troopImgURL(slug,lvl); return; }
-  var art=img.parentNode; if(art){ var fb=el("div","troop-fallback"); fb.textContent=img.getAttribute("data-emoji")||"⚔️"; art.innerHTML=""; art.appendChild(fb); }
-}
-function troopSetArt(card,t){
-  var lvl=troopLvl(t);
-  var art=card.querySelector(".troop-art");
-  if(art){ art.innerHTML='<img class="pokeimg troop-img" loading="lazy" decoding="async" alt="'+esc(t.n)+' level '+lvl+'"'+
-    ' data-slug="'+t.s+'" data-lvl="'+lvl+'" data-emoji="'+esc(t.e)+'" src="'+troopImgURL(t.s,lvl)+'" onerror="troopBrowseErr(this)">'; }
-}
-function troopApplyCard(card,t){
-  var lvl=troopLvl(t), tier=troopTier(t,lvl);
-  card.setAttribute("data-tier", tier);
-  var st=card.querySelector(".troop-stars"); if(st) st.innerHTML=troopStars(tier);
-  var tn=card.querySelector(".troop-tier-name"); if(tn) tn.textContent=TROOP_TIER_NAMES[tier];
-  var bd=card.querySelector(".troop-lvl-badge"); if(bd) bd.innerHTML="Lv <b>"+lvl+"</b>/"+t.max;
-}
-function renderTroops(){
-  var grid=$("troopGrid"); if(!grid) return;
-  grid.innerHTML="";
-  if(!TROOP_ROSTER.length){ grid.innerHTML='<div class="troops-empty">No troops.</div>'; return; }
-  TROOP_ROSTER.forEach(function(t){
-    var card=el("div","troop-card");
-    var art=el("div","troop-art"); card.appendChild(art);
-    var nm=el("div","troop-name"); nm.textContent=t.n; card.appendChild(nm);
-    var stars=el("div","troop-stars"); card.appendChild(stars);
-    var tname=el("div","troop-tier-name"); card.appendChild(tname);
-    var row=el("div","troop-lvlrow");
-    var rng=el("input"); rng.type="range"; rng.min="1"; rng.max=String(t.max); rng.step="1"; rng.value=String(troopLvl(t));
-    rng.setAttribute("aria-label","Level "+t.n);
-    var badge=el("div","troop-lvl-badge");
-    rng.addEventListener("input",function(){ TROOP_LVL[t.s]=+rng.value; troopSaveLvl(); troopSetArt(card,t); troopApplyCard(card,t); });
-    row.appendChild(rng); row.appendChild(badge); card.appendChild(row);
-    troopSetArt(card,t); troopApplyCard(card,t);
-    grid.appendChild(card);
-  });
-  var note=$("troopsNote");
-  if(note) note.innerHTML="Troop art via a community dataset (chiefpansancolt/clash-of-clans-data), hotlinked through jsDelivr &mdash; not bundled here and not affiliated with Supercell. Clash of Clans is a trademark of Supercell. Levels are a visual toy and may not match exact in-game stats.";
-}
-function troopSetAll(toMax){
-  TROOP_ROSTER.forEach(function(t){ TROOP_LVL[t.s]= toMax? t.max : 1; });
-  troopSaveLvl(); renderTroops();
-}
-(function(){ var mx=$("troopMaxAll"); if(mx) mx.addEventListener("click",function(){ troopSetAll(true); });
-  var rs=$("troopResetAll"); if(rs) rs.addEventListener("click",function(){ troopSetAll(false); }); })();
 
 var EVO_TIMER=null, EVO_MORPH_TIMERS=[];
 function clearEvoMorph(){ EVO_MORPH_TIMERS.forEach(clearTimeout); EVO_MORPH_TIMERS=[]; var n=$("evoCreature"); if(n) n.classList.remove("morphing"); }
@@ -8254,9 +8147,6 @@ function syncAccentControls(){
   try{
     var t=localStorage.getItem("hq_theme"); if(t) CONFIG.theme=t;
     var p=localStorage.getItem("hq_pack"); if(p) CONFIG.creaturePack=p;
-    // "village" is no longer a whole-app skin — troops now live only in their own
-    // Troop-Dex (Village view). Migrate any saved selection to the default pack.
-    if(CONFIG.creaturePack==="village"){ CONFIG.creaturePack="pokemon3d"; try{ localStorage.setItem("hq_pack","pokemon3d"); }catch(e){} }
     // Default to high contrast when the OS asks for it and the user has no stored choice.
     if(!t && prefContrast()){ try{ localStorage.setItem("hq_theme","contrast"); }catch(e){} }
   }catch(e){}

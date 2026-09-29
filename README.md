@@ -236,6 +236,14 @@ and feature guide.
   hotlinkable per-level assets (those are Supercell's proprietary sprite/Spine files), so the
   motion is CSS, not game frames. Replaces the short-lived standalone Troops tab. Sits on top of
   the freshly merged **Arena private rooms + quests/achievements** (PR #32).
+  <br>_Animation note:_ an exhaustive multi-source search (Giphy/Tenor direct GIFs, GitHub
+  Spine/sprite-sheet repos, Clash Royale frame dumps, Fandom animated-webp, Lottie) confirmed
+  there is **no source that is animated *and* hotlinkable *and* uniform-per-troop *and* covers all
+  ~32 troops *and* supports per-level *and* is official/consistent art**. Real-motion options
+  (curated Giphy GIFs, Clash-Royale sprite frames) all sacrifice per-level + full coverage +
+  official art, so the official per-level PNGs + CSS motion remain the best fit. A curated Giphy
+  overlay (real GIF where hand-picked, static per-level fallback elsewhere) is a documented opt-in
+  if real motion is ever required.
 - **1.2.2** — Creature/evolution pass. **New Game+**: a new session of a species you've
   already evolved now starts at that grown form (incl. mega at Apex) instead of resetting to
   Egg. Fixed the **3D-sprite flicker** (lead with the Gen-6 X/Y animated sprite, which covers

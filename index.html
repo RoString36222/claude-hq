@@ -1136,6 +1136,26 @@ html.hq-calm .ach-tier.claimable,html.hq-calm .ach-tier.claimable{animation:none
 .arena-tbl td:nth-child(2){font-family:var(--font);font-size:13px}
 .arena-tbl tbody tr:hover{background:var(--panel2)}
 .arena-tbl tr.you{background:var(--brand-soft)}
+/* Cali (taco Tuesdays). Reuses .panel / .arena-tbl / .arena-win / .hbtn. */
+.cali-row{display:grid;grid-template-columns:minmax(120px,1.6fr) repeat(4,minmax(58px,.8fr)) 30px;gap:7px;align-items:center;margin-bottom:7px}
+.cali-row.cali-head{margin-bottom:5px;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);font-weight:600}
+.cali-row input{width:100%;min-width:0}
+.cali-row input[type=number]{font-family:var(--mono);text-align:center}
+.cali-drop{min-height:26px;padding:0 7px;border-radius:6px;border:1px solid transparent;background:none;color:var(--faint);font-size:15px;line-height:1}
+.cali-drop:hover{color:var(--ink);border-color:var(--line)}
+.cali-actions{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin:11px 0 9px}
+.cali-actions .cali-note{flex:1;min-width:150px}
+.cali-actions label{display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--muted)}
+.cali-total{display:flex;flex-wrap:wrap;gap:14px;padding:9px 11px;margin-bottom:10px;border-radius:9px;
+  background:var(--panel2);border:1px solid var(--line);font-family:var(--mono);font-size:12.5px}
+.cali-total b{font-size:15px}
+.cali-total .free{color:var(--brand)}
+.cali-wins{margin:14px 0 4px}
+.cali-privacy{font-size:12px;margin:10px 0 0}
+@media (max-width:640px){
+  .cali-row{grid-template-columns:1fr 1fr 1fr;grid-auto-rows:min-content}
+  .cali-row.cali-head{display:none}
+}
 .arena-tbl tr.you td{font-weight:650}
 .arena-rank{font-weight:700;color:var(--faint);width:2.5rem}
 .arena-rank.r1{color:#d9a300}.arena-rank.r2{color:#98a2b3}.arena-rank.r3{color:#c27a3e}
@@ -1913,6 +1933,49 @@ html.hq-calm #confetti{display:none!important}
           <tbody id="arenaRows"><tr><td colspan="10" class="muted"><span class="loading-row"><span class="orb" data-orb="searching" aria-hidden="true"></span>Loading…</span></td></tr></tbody>
         </table>
       </div>
+    </section>
+
+    <section class="panel hidden" id="caliWrap" aria-label="California Burrito taco Tuesdays" tabindex="-1">
+      <h3 class="section-h"><span aria-hidden="true">🌮</span>Cali Tuesdays <span class="muted" id="caliSub"></span></h3>
+
+      <div class="cali-row cali-head">
+        <span>Who</span><span>Mild hard</span><span>Mild soft</span><span>Wild hard</span><span>Wild soft</span><span></span>
+      </div>
+      <div id="caliDiners"></div>
+
+      <div class="cali-actions">
+        <button class="hbtn" id="caliAdd" type="button">+ Add someone</button>
+        <label for="caliDate">Date <input id="caliDate" type="date"></label>
+        <input id="caliNote" class="cali-note" placeholder="Note (optional)" maxlength="80" autocomplete="off">
+      </div>
+
+      <div class="cali-total" id="caliTotal" role="status" aria-live="polite"></div>
+      <button class="hbtn on" id="caliLog" type="button">Log the order</button>
+      <div class="arena-msg hidden" id="caliMsg" role="status"></div>
+
+      <div class="arena-wins cali-wins" id="caliWins" role="group" aria-label="Leaderboard range">
+        <button class="arena-win on" data-window="season" type="button">Season</button>
+        <button class="arena-win" data-window="30d" type="button">30 days</button>
+        <button class="arena-win" data-window="7d" type="button">7 days</button>
+        <button class="arena-win" data-window="all" type="button">All time</button>
+      </div>
+
+      <div style="overflow-x:auto">
+        <table class="arena-tbl">
+          <thead><tr>
+            <th>#</th><th>Founder</th><th title="Dinners attended">Tuesdays</th>
+            <th title="Total tacos">TT</th><th title="Tacos per Tuesday">TPP</th>
+            <th>Mild</th><th>Wild</th><th>Hard</th><th>Soft</th>
+          </tr></thead>
+          <tbody id="caliRows"><tr><td colspan="9" class="muted"><span class="loading-row"><span class="orb" data-orb="searching" aria-hidden="true"></span>Loading…</span></td></tr></tbody>
+        </table>
+      </div>
+
+      <p class="muted cali-privacy">
+        Buy 1 get 1 is pooled across the whole table, so two people wanting 3 tacos each pay for 3, not 4.
+        Type <b>@handle</b> to tie someone to their Arena account, or just a name for anyone who hasn’t paired.
+        The board ranks on Tuesdays turned up for; tacos only break ties.
+      </p>
     </section>
 
     <section class="panel hidden" id="arenaStoreWrap" aria-label="Poke Coins and snacks" tabindex="-1">
@@ -8293,6 +8356,7 @@ function loadArena(){
       $("arenaSetup").classList.toggle("hidden", paired);
       $("arenaBoardWrap").classList.toggle("hidden", !paired);
       $("arenaStoreWrap").classList.toggle("hidden", !paired);
+      $("caliWrap").classList.toggle("hidden", !paired);
       $("arenaLobbyWrap").classList.toggle("hidden", !paired);
       $("arenaChatWrap").classList.toggle("hidden", !paired);
       $("arenaVoiceWrap").classList.toggle("hidden", !paired);
@@ -8310,6 +8374,7 @@ function loadArena(){
                  : (" · publish failed: " + (lp.error||"")))
         : " · not published yet";
       arenaLoadBoard();
+      caliLoad();
       arenaRoomsLoad(); arenaRenderRoomBar();
       pantryLoad(true);
       arenaRenderChat();
@@ -10513,6 +10578,269 @@ function voiceVideoOff(){
   if(sc) sc.addEventListener("click", voiceToggleScreen);
   if(lv) lv.addEventListener("click", voiceLeave);
   if(pill) pill.addEventListener("click", function(){ setView("arena"); });
+})();
+
+/* ---- Cali: California Burrito taco Tuesdays ----
+   The page collects who ordered what and nothing else. TT, the buy-1-get-1
+   price and TPP are all decided by the Arena server (backend/app/tacos.py);
+   caliPaid() below only powers the running total you see while typing, so the
+   numbers on screen and the numbers in the database can never disagree about
+   who owns the rule. */
+var CALI = { window:"season", rid:null, busy:false };
+// Wire field -> column label. Mirrors arena.CALI_TACO_KEYS.
+var CALI_VARIANTS = [["mildHard","Mild hard"],["mildSoft","Mild soft"],
+                     ["wildHard","Wild hard"],["wildSoft","Wild soft"]];
+
+// Pooled buy-1-get-1: every second taco at the table is free, whatever it is.
+// Mirrors tacos.paid_tacos.
+function caliPaid(total){ return Math.floor((total+1)/2); }
+
+function caliSay(text, kind){
+  var m=$("caliMsg"); if(!m) return;
+  m.textContent = text||"";
+  m.classList.toggle("hidden", !text);
+  m.classList.toggle("err", kind==="err");
+}
+
+function caliDinerRow(who){
+  var row = document.createElement("div");
+  row.className = "cali-row";
+
+  var name = document.createElement("input");
+  name.type="text"; name.className="cali-who"; name.maxLength=41;
+  name.placeholder="@handle or name"; name.autocomplete="off";
+  name.setAttribute("aria-label","Diner");
+  if(who) name.value = who;
+  row.appendChild(name);
+
+  CALI_VARIANTS.forEach(function(v){
+    var n = document.createElement("input");
+    n.type="number"; n.min="0"; n.max="50"; n.step="1"; n.value="0";
+    n.className="cali-n"; n.setAttribute("data-k", v[0]);
+    n.setAttribute("aria-label", v[1]);
+    n.addEventListener("input", caliPreview);
+    row.appendChild(n);
+  });
+
+  var drop = document.createElement("button");
+  drop.type="button"; drop.className="cali-drop"; drop.textContent="×";
+  drop.title="Remove this person";
+  drop.setAttribute("aria-label","Remove this person");
+  drop.addEventListener("click", function(){
+    row.remove();
+    if(!$("caliDiners").children.length) caliAddDiner();
+    caliPreview();
+  });
+  row.appendChild(drop);
+  return row;
+}
+
+function caliAddDiner(who){
+  var box = $("caliDiners"); if(!box) return;
+  var row = caliDinerRow(who);
+  box.appendChild(row);
+  var first = row.querySelector(".cali-who");
+  if(first && !who) first.focus();
+  caliPreview();
+}
+
+/* Read the form. "@ana" is an Arena handle, anything else is a plain name --
+   the server keeps the account when it has one and the name when it doesn't. */
+function caliCollect(){
+  var diners = [];
+  Array.prototype.forEach.call(document.querySelectorAll("#caliDiners .cali-row"), function(row){
+    var raw = (row.querySelector(".cali-who").value||"").trim();
+    var d = { tacos:{} }, any = false;
+    Array.prototype.forEach.call(row.querySelectorAll(".cali-n"), function(n){
+      var v = parseInt(n.value, 10);
+      if(!isFinite(v) || v < 0) v = 0;
+      d.tacos[n.getAttribute("data-k")] = v;
+      if(v > 0) any = true;
+    });
+    if(!raw){ if(any) diners.push(null); return; }   // null = "counts with no one"
+    if(raw.charAt(0) === "@") d.handle = raw.slice(1); else d.name = raw;
+    diners.push(d);
+  });
+  return diners;
+}
+
+function caliTotalOf(diners){
+  var t = 0;
+  diners.forEach(function(d){
+    if(!d) return;
+    CALI_VARIANTS.forEach(function(v){ t += d.tacos[v[0]]||0; });
+  });
+  return t;
+}
+
+function caliPreview(){
+  var box = $("caliTotal"); if(!box) return;
+  var diners = caliCollect().filter(Boolean);
+  var tt = caliTotalOf(diners), paid = caliPaid(tt), people = diners.length;
+  var tpp = people ? (tt/people) : 0;
+  box.innerHTML = "";
+  [["TT", String(tt), ""],
+   ["Pay for", String(paid), ""],
+   ["Free", String(tt-paid), "free"],
+   ["TPP", (Math.round(tpp*100)/100).toFixed(2), ""],
+   ["People", String(people), ""]].forEach(function(cell){
+    var span = document.createElement("span");
+    span.className = "muted";
+    var b = document.createElement("b");
+    b.textContent = cell[1];
+    if(cell[2]) b.className = cell[2];
+    span.appendChild(b);
+    span.appendChild(document.createTextNode(" " + cell[0]));
+    box.appendChild(span);
+  });
+}
+
+function caliReset(){
+  var box = $("caliDiners"); if(box) box.innerHTML = "";
+  var note = $("caliNote"); if(note) note.value = "";
+  CALI.rid = null;
+  caliAddDiner();
+}
+
+function caliSubmit(){
+  if(CALI.busy) return;
+  var diners = caliCollect();
+  if(diners.some(function(d){ return d === null; })){
+    caliSay("Someone has tacos but no name — add a name or a @handle.", "err"); return;
+  }
+  diners = diners.filter(Boolean);
+  if(!diners.length){ caliSay("Add at least one person.", "err"); return; }
+
+  var body = { diners: diners, note: ($("caliNote").value||"").trim() };
+  var when = ($("caliDate").value||"").trim();
+  if(when) body.date = when;
+  // One id per dinner, reused for every retry: the server replays a repeated id
+  // instead of logging Tuesday twice.
+  if(!CALI.rid) CALI.rid = newRequestId();
+  body.requestId = CALI.rid;
+
+  CALI.busy = true;
+  var btn = $("caliLog"); if(btn) btn.disabled = true;
+  caliSay("");
+  arenaPost("/api/arena/cali/order", body).then(function(res){
+    CALI.busy = false; if(btn) btn.disabled = false;
+    if(!res.ok){
+      if(res.status === 404 && !(res.j && res.j.detail && /no such person/.test(res.j.detail))){
+        caliSay("This Arena server doesn’t have the taco board yet — ask whoever hosts it to update it.", "err");
+        return;
+      }
+      caliSay((res.j && (res.j.error || res.j.detail)) || "couldn’t log that order", "err");
+      return;
+    }
+    var o = res.j.order || {};
+    toast(res.j.replayed
+      ? "🌮 Already logged — " + o.totalTacos + " tacos"
+      : "🌮 Logged: " + o.totalTacos + " tacos, paid for " + o.paidTacos +
+        ", " + o.freeTacos + " free", "level");
+    caliReset();
+    caliLoadBoard();
+  }).catch(function(){
+    CALI.busy = false; if(btn) btn.disabled = false;
+    caliSay("couldn’t reach the Arena — try again", "err");
+  });
+}
+
+function caliLoadBoard(){
+  fetch("/api/arena/cali/board?window="+encodeURIComponent(CALI.window),{cache:"no-store"})
+    .then(function(r){ return r.json().then(function(j){ return {status:r.status, j:j}; }); })
+    .then(function(res){
+      var body=$("caliRows"); if(!body) return;
+      var b=res.j||{};
+      var note=function(text){
+        body.innerHTML = '<tr><td colspan="9" class="muted"></td></tr>';
+        body.querySelector("td").textContent = text;
+      };
+      // A server without these routes answers a bare 404, same as the pantry.
+      if(res.status === 404){ note("This Arena doesn’t have the taco board yet."); return; }
+      if(b.error || b.detail){ note(b.error || b.detail); return; }
+
+      var sub=$("caliSub");
+      if(sub) sub.textContent = b.orders
+        ? (b.orders + (b.orders===1?" dinner":" dinners") + " · " + b.totalTacos +
+           " tacos · " + b.freeTacos + " free · " + b.startsOn + " → " + b.endsOn)
+        : "";
+
+      var rows=b.entries||[];
+      if(!rows.length){ note("No taco Tuesdays logged in this range yet."); return; }
+      body.innerHTML = "";
+      rows.forEach(function(e){
+        var tr=document.createElement("tr");
+        if(e.isYou) tr.className="you";
+
+        var rk=document.createElement("td");
+        rk.className="arena-rank" + (e.rank<=3 ? (" r"+e.rank) : "");
+        rk.textContent = e.rank<=3 ? ["🥇","🥈","🥉"][e.rank-1] : String(e.rank);
+        tr.appendChild(rk);
+
+        var who=document.createElement("td");
+        var wrap=document.createElement("div"); wrap.className="arena-who";
+        if(e.avatarUrl){
+          var img=document.createElement("img");
+          img.className="arena-av"; img.src=e.avatarUrl; img.alt=""; img.loading="lazy";
+          wrap.appendChild(img);
+        }
+        var nm=document.createElement("div"); nm.className="arena-name";
+        nm.textContent = e.name || e.handle || "?";
+        if(e.handle){
+          var sm=document.createElement("small");
+          sm.textContent = "@" + e.handle;
+          nm.appendChild(sm);
+        }
+        wrap.appendChild(nm); who.appendChild(wrap); tr.appendChild(who);
+
+        [e.tuesdays, e.totalTacos, (e.tacosPerPerson).toFixed(2),
+         e.mild, e.wild, e.hard, e.soft].forEach(function(v){
+          var td=document.createElement("td");
+          td.textContent = String(v);
+          tr.appendChild(td);
+        });
+        body.appendChild(tr);
+      });
+    })
+    .catch(function(){
+      var body=$("caliRows");
+      if(body){
+        body.innerHTML = '<tr><td colspan="9" class="muted"></td></tr>';
+        body.querySelector("td").textContent = "Couldn’t reach the Arena.";
+      }
+    });
+}
+
+function caliLoad(){
+  if(!$("caliDiners").children.length){
+    // Whoever is logging it is almost always at the table.
+    var me = (ARENA.status && ARENA.status.handle) ? "@"+ARENA.status.handle : "";
+    caliAddDiner(me);
+  }
+  caliPreview();
+  caliLoadBoard();
+}
+
+(function(){
+  var add=$("caliAdd"), log=$("caliLog"), note=$("caliNote"), diners=$("caliDiners");
+  if(add) add.addEventListener("click", function(){ caliAddDiner(); });
+  if(log) log.addEventListener("click", caliSubmit);
+  // A changed name never changes the totals, but it can change "People".
+  if(diners) diners.addEventListener("input", function(ev){
+    if(ev.target && ev.target.classList.contains("cali-who")) caliPreview();
+  });
+  if(note) note.addEventListener("keydown", function(ev){
+    if(ev.key==="Enter"){ ev.preventDefault(); caliSubmit(); }
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("#caliWins .arena-win"), function(b){
+    b.addEventListener("click", function(){
+      CALI.window = b.getAttribute("data-window");
+      Array.prototype.forEach.call(document.querySelectorAll("#caliWins .arena-win"), function(o){
+        o.classList.toggle("on", o===b);
+      });
+      caliLoadBoard();
+    });
+  });
 })();
 
 /* ---- Arena controls ---- */

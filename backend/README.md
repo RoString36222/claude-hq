@@ -164,5 +164,8 @@ the only file that changes.
 | `POST` | `/v1/pantry/eat` | `{requestId, kind}`. Never says which session ate. |
 | `POST` | `/v1/pantry/give` | `{requestId, toHandle, coins, kind?, qty, note?}`, delivered live as a lobby `gift` |
 | `POST` | `/v1/pantry/gifts/drain` | Undelivered gifts, each returned once |
+| `POST` | `/v1/cali/orders` | Log one California Burrito dinner: `{requestId, date?, diners[], note?}`. Each diner is `{handle? , name?, tacos:{mildHard,mildSoft,wildHard,wildSoft}}`. Buy-1-get-1 is pooled across the table, so the server prices it (`paid = ceil(TT/2)`) rather than trusting a total. Idempotent by `requestId`. |
+| `GET` | `/v1/cali/orders` | The shared dinner log, newest first |
+| `GET` | `/v1/cali/board?window=season\|30d\|7d\|all` | The cali-leaderboard: Tuesdays attended, total tacos (TT) as the tiebreak, with tacos-per-person (TPP) per entry |
 | `GET` | `/v1/rooms` | Open rooms |
 | `WS` | `/v1/rooms/{room}/ws?ticket=` | Presence, `say` (a `{kind: "chat"}` payload is lobby chat: cleaned, rate-limited, last 50 kept in memory and sent in `welcome`), `state`, `nudge`, `signal` (WebRTC setup, to one member), `ping` |

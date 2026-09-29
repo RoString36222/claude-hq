@@ -3550,6 +3550,84 @@ def build_session_markdown(sid, path):
 
 
 # --------------------------------------------------------------------------- #
+# Arena cali proxy (California Burrito taco Tuesdays). The page talks only to
+# these local routes; arena.cali_log_order() forwards an allowlisted body.
+#
+# The deal is buy-1-get-1 pooled across the whole table, so the page sends only
+# who ordered what: TT, the paid count and TPP are all worked out by the server.
+# --------------------------------------------------------------------------- #
+
+# Mirrors backend/app/schemas.py (MAX_DINERS, MAX_PER_VARIANT, DINER_NAME_MAX);
+# change both together. Validating here too means a typo gets a readable local
+# error instead of a round trip to a 422.
+CALI_MAX_DINERS = 20
+CALI_MAX_PER_VARIANT = 50
+CALI_NAME_MAX = 40
+
+_CALI_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def cali_body(body):
+    """Validate a page order -> (clean body for arena.cali_log_order, None) or
+    (None, error text). `clean` never contains a sessionId."""
+    body = body if isinstance(body, dict) else {}
+    rid = body.get("requestId")
+    if not (isinstance(rid, str) and _RID_RE.fullmatch(rid)):
+        return None, "invalid requestId"
+
+    diners = body.get("diners")
+    if not isinstance(diners, list) or not 1 <= len(diners) <= CALI_MAX_DINERS:
+        return None, "an order needs 1 to %d diners" % CALI_MAX_DINERS
+
+    clean_diners, seen = [], set()
+    for d in diners:
+        if not isinstance(d, dict):
+            return None, "each diner must be an object"
+        handle = d.get("handle")
+        handle = handle.strip() if isinstance(handle, str) else ""
+        if handle and not _HANDLE_RE.fullmatch(handle):
+            return None, "invalid handle"
+        name = d.get("name")
+        name = " ".join("".join(c for c in name if c.isprintable()).split())[:CALI_NAME_MAX] \
+            if isinstance(name, str) else ""
+        if not handle and not name:
+            return None, "every diner needs a handle or a name"
+        # Same key the board groups on, so a double-entry is caught here.
+        key = "@" + handle.lower() if handle else "#" + name.casefold()
+        if key in seen:
+            return None, "the same diner is listed twice"
+        seen.add(key)
+
+        tacos = d.get("tacos")
+        tacos = tacos if isinstance(tacos, dict) else {}
+        counts = {}
+        for k in arena.CALI_TACO_KEYS:
+            v = tacos.get(k, 0)
+            if not _int_in(v, 0, CALI_MAX_PER_VARIANT):
+                return None, ("each taco count must be a whole number from 0 to %d"
+                              % CALI_MAX_PER_VARIANT)
+            counts[k] = v
+
+        row = {"tacos": counts}
+        if handle:
+            row["handle"] = handle
+        if name:
+            row["name"] = name
+        clean_diners.append(row)
+
+    clean = {"requestId": rid, "diners": clean_diners}
+    when = body.get("date")
+    if when is not None:
+        if not (isinstance(when, str) and _CALI_DATE_RE.fullmatch(when)):
+            return None, "date must look like YYYY-MM-DD"
+        clean["date"] = when
+    note = body.get("note")
+    clean["note"] = " ".join("".join(c for c in note if c.isprintable()).split())[:80] \
+        if isinstance(note, str) else ""
+    return clean, None
+
+
+# --------------------------------------------------------------------------- #
 # HTTP server
 # --------------------------------------------------------------------------- #
 
@@ -3563,6 +3641,7 @@ POST_PATHS = (
     "/api/arena/pantry/claim", "/api/arena/pantry/buy",
     "/api/arena/pantry/eat", "/api/arena/pantry/give",
     "/api/arena/pantry/reward",
+    "/api/arena/cali/order",
 ) + ARENA_ROOM_POSTS
 
 
@@ -3745,6 +3824,28 @@ class Handler(BaseHTTPRequestHandler):
                 code, resp = 502, {"error": "arena request failed: %s" % e}
             self._send(code or 502, json.dumps(
                 _overlay_food_effects(resp) if code == 200 else resp))
+            return
+
+        if path == "/api/arena/cali/board":
+            import urllib.parse
+            qs = urllib.parse.parse_qs(self.path.split("?", 1)[1]
+                                       if "?" in self.path else "")
+            window = (qs.get("window", ["season"])[0] or "season")
+            if window not in arena.CALI_WINDOWS:
+                window = "season"
+            try:
+                code, resp = arena.cali_board(window)
+            except Exception as e:
+                code, resp = 502, {"error": "arena request failed: %s" % e}
+            self._send(code or 502, json.dumps(resp))
+            return
+
+        if path == "/api/arena/cali/orders":
+            try:
+                code, resp = arena.cali_orders()
+            except Exception as e:
+                code, resp = 502, {"error": "arena request failed: %s" % e}
+            self._send(code or 502, json.dumps(resp))
             return
 
         if path == "/api/config":
@@ -4045,6 +4146,12 @@ class Handler(BaseHTTPRequestHandler):
                     return 400, {"error": err}
                 code, resp = arena.pantry(action, clean)
                 return (code or 502), (_overlay_food_effects(resp) if code == 200 else resp)
+            if path == "/api/arena/cali/order":
+                clean, err = cali_body(body)
+                if err:
+                    return 400, {"error": err}
+                code, resp = arena.cali_log_order(clean)
+                return (code or 502), resp
         except Exception as e:
             return 500, {"error": "arena request failed: %s" % e}
         return 404, {"error": "not found"}

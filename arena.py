@@ -633,3 +633,62 @@ def delete_room(room_id):
         return 400, {"error": "not paired"}
     return _request("POST", base + "/v1/rooms/delete", token=token,
                     body={"roomId": room_id})
+
+
+# --------------------------------------------------------------------------- #
+# Cali — California Burrito taco Tuesdays
+# --------------------------------------------------------------------------- #
+
+CALI_WINDOWS = ("season", "30d", "7d", "all")
+# The privacy boundary, same idea as _PANTRY_KEYS: an order carries who ate what
+# and nothing else. A sessionId, title, path or project name can never reach the
+# server, even through a bug in the caller.
+_CALI_ORDER_KEYS = ("requestId", "date", "diners", "note")
+_CALI_DINER_KEYS = ("handle", "name", "tacos")
+CALI_TACO_KEYS = ("mildHard", "mildSoft", "wildHard", "wildSoft")
+
+
+def _cali_order(body):
+    """Rebuild an order from allowlisted keys only, one level at a time."""
+    body = body if isinstance(body, dict) else {}
+    clean = {k: body[k] for k in _CALI_ORDER_KEYS if k in body and k != "diners"}
+    diners = body.get("diners")
+    out = []
+    for d in diners if isinstance(diners, list) else []:
+        if not isinstance(d, dict):
+            continue
+        row = {k: d[k] for k in _CALI_DINER_KEYS if k in d and k != "tacos"}
+        tacos = d.get("tacos")
+        row["tacos"] = {
+            k: tacos[k] for k in CALI_TACO_KEYS if isinstance(tacos, dict) and k in tacos
+        }
+        out.append(row)
+    clean["diners"] = out
+    return clean
+
+
+def cali_board(window="season"):
+    """The cali-leaderboard: Tuesdays attended, total tacos as the tiebreak."""
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    if window not in CALI_WINDOWS:
+        window = "season"
+    return _request("GET", "%s/v1/cali/board?window=%s" % (base, window), token=token)
+
+
+def cali_orders():
+    """The shared dinner log, newest first."""
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("GET", base + "/v1/cali/orders", token=token)
+
+
+def cali_log_order(body):
+    """Log one dinner. TT, the buy-1-get-1 price and TPP are all worked out
+    server-side; this sends only what each person ordered."""
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("POST", base + "/v1/cali/orders", token=token, body=_cali_order(body))

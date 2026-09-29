@@ -455,3 +455,142 @@ class RoomMembersResponse(BaseModel):
     roomId: str
     members: list[RoomMemberOut]
     banned: list[BannedOut] = Field(default_factory=list)
+
+
+# --- cali (California Burrito taco Tuesdays) ---------------------------------
+# The deal is buy-1-get-1 pooled across the whole table, so a client sends only
+# what each person ordered; TT, the paid count and TPP are all derived in
+# app/tacos.py. As everywhere else here, `extra="forbid"` and strict ints mean a
+# stray field or a `"3"` is a 422 rather than something quietly wrong.
+
+# `LogOrderRequest.date` is a field with a default, which binds the name in the
+# class namespace and would shadow the `date` type while pydantic resolves the
+# annotation. The alias keeps the wire name.
+DinnerDate = date
+
+DINER_NAME_MAX = 40
+MAX_DINERS = 20
+MAX_PER_VARIANT = 50
+
+
+class TacoCounts(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mildHard: Annotated[int, Field(ge=0, le=MAX_PER_VARIANT, strict=True)] = 0
+    mildSoft: Annotated[int, Field(ge=0, le=MAX_PER_VARIANT, strict=True)] = 0
+    wildHard: Annotated[int, Field(ge=0, le=MAX_PER_VARIANT, strict=True)] = 0
+    wildSoft: Annotated[int, Field(ge=0, le=MAX_PER_VARIANT, strict=True)] = 0
+
+    @property
+    def total(self) -> int:
+        return self.mildHard + self.mildSoft + self.wildHard + self.wildSoft
+
+
+class DinerOrder(BaseModel):
+    """One person's order. `handle` ties them to an Arena account; `name` covers
+    a founder who never paired a device. A zero-taco diner is allowed -- they
+    still showed up, which is what the board ranks on."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    handle: Handle | None = None
+    name: str = Field("", max_length=DINER_NAME_MAX)
+    tacos: TacoCounts = Field(default_factory=TacoCounts)
+
+    @field_validator("name")
+    @classmethod
+    def _clean_name(cls, v: str) -> str:
+        return " ".join("".join(c for c in v if c.isprintable()).split())[:DINER_NAME_MAX]
+
+    @model_validator(mode="after")
+    def _has_identity(self) -> "DinerOrder":
+        if self.handle is None and not self.name:
+            raise ValueError("a diner needs a handle or a name")
+        return self
+
+
+class LogOrderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requestId: RequestId
+    # Omitted means tonight (UTC). The server refuses a future date.
+    date: DinnerDate | None = None
+    diners: list[DinerOrder] = Field(min_length=1, max_length=MAX_DINERS)
+    note: str = Field("", max_length=80)
+
+    @field_validator("note")
+    @classmethod
+    def _clean_note(cls, v: str) -> str:
+        return " ".join("".join(c for c in v if c.isprintable()).split())[:80]
+
+    @model_validator(mode="after")
+    def _no_duplicate_diners(self) -> "LogOrderRequest":
+        seen = set()
+        for d in self.diners:
+            key = f"@{d.handle.lower()}" if d.handle else f"#{d.name.casefold()}"
+            if key in seen:
+                raise ValueError("the same diner is listed twice")
+            seen.add(key)
+        return self
+
+
+class OrderDinerOut(BaseModel):
+    handle: str | None
+    name: str
+    avatarUrl: str = ""
+    tacos: TacoCounts
+    total: int
+
+
+class OrderOut(BaseModel):
+    id: str
+    date: date
+    people: int
+    totalTacos: int
+    paidTacos: int
+    freeTacos: int
+    # TPP for this one dinner: TT / people, rounded to 2dp.
+    tacosPerPerson: float
+    note: str
+    loggedByHandle: str
+    createdAt: str
+    diners: list[OrderDinerOut] = Field(default_factory=list)
+
+
+class LogOrderResponse(BaseModel):
+    order: OrderOut
+    # True when this requestId already logged this dinner; nothing was written.
+    replayed: bool = False
+
+
+class OrdersResponse(BaseModel):
+    orders: list[OrderOut] = Field(default_factory=list)
+
+
+class CaliBoardEntry(BaseModel):
+    rank: int
+    handle: str | None
+    name: str
+    avatarUrl: str = ""
+    # The ranking key: distinct dinner dates attended.
+    tuesdays: int
+    totalTacos: int
+    # TPP across the window: TT / tuesdays, rounded to 2dp.
+    tacosPerPerson: float
+    mild: int
+    wild: int
+    hard: int
+    soft: int
+    isYou: bool = False
+
+
+class CaliBoardResponse(BaseModel):
+    window: str
+    startsOn: date
+    endsOn: date
+    generatedAt: str
+    orders: int
+    totalTacos: int
+    paidTacos: int
+    freeTacos: int
+    entries: list[CaliBoardEntry] = Field(default_factory=list)

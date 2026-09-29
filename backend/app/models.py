@@ -265,3 +265,84 @@ class PokeLedger(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     # NULL until the gift reached the recipient, live or via the drain.
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TacoOrder(Base):
+    """One California Burrito dinner, logged by whoever picked up the tab.
+
+    The deal is buy-1-get-1 pooled across the whole table, so the free tacos are
+    a property of the *order*, not of any one diner: an odd count per person is
+    fine as long as the table's total is even. `total_tacos` and `paid_tacos`
+    are the receipt as priced at the time, computed server-side in `tacos.py` --
+    a client never submits them, for the same reason it never submits an XP
+    score.
+    """
+
+    __tablename__ = "taco_orders"
+    __table_args__ = (
+        UniqueConstraint("user_id", "request_id", name="uq_taco_orders_user_request"),
+        CheckConstraint("total_tacos >= 0", name="ck_taco_orders_total_nonneg"),
+        CheckConstraint("paid_tacos >= 0", name="ck_taco_orders_paid_nonneg"),
+        CheckConstraint("paid_tacos <= total_tacos", name="ck_taco_orders_paid_le_total"),
+        Index("ix_taco_orders_date", "order_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    # Who logged it. Not "who ate" -- that is taco_diners.
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    request_id: Mapped[str] = mapped_column(String(64))
+    order_date: Mapped[date] = mapped_column(Date)
+
+    total_tacos: Mapped[int] = mapped_column(Integer, server_default="0")
+    paid_tacos: Mapped[int] = mapped_column(Integer, server_default="0")
+
+    note: Mapped[str] = mapped_column(String(80), server_default="")
+    # Set in Python rather than by the server so a replay can return it.
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    diners: Mapped[list["TacoDiner"]] = relationship(
+        back_populates="order", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class TacoDiner(Base):
+    """What one person at the table ordered, by variant.
+
+    `user_id` is nullable on purpose: a founder who has paired a device gets a
+    real account (and an avatar on the board), and anyone else is carried by
+    name alone. SET NULL, not CASCADE, so deleting an account leaves the
+    dinner's history intact -- `diner_name` is always written, so the row keeps
+    an identity either way.
+    """
+
+    __tablename__ = "taco_diners"
+    __table_args__ = (
+        CheckConstraint(
+            "user_id IS NOT NULL OR diner_name <> ''", name="ck_taco_diners_identity"
+        ),
+        CheckConstraint(
+            "mild_hard >= 0 AND mild_soft >= 0 AND wild_hard >= 0 AND wild_soft >= 0",
+            name="ck_taco_diners_counts_nonneg",
+        ),
+        Index("ix_taco_diners_user", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    order_id: Mapped[str] = mapped_column(
+        ForeignKey("taco_orders.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    diner_name: Mapped[str] = mapped_column(String(40), server_default="")
+
+    mild_hard: Mapped[int] = mapped_column(Integer, server_default="0")
+    mild_soft: Mapped[int] = mapped_column(Integer, server_default="0")
+    wild_hard: Mapped[int] = mapped_column(Integer, server_default="0")
+    wild_soft: Mapped[int] = mapped_column(Integer, server_default="0")
+
+    order: Mapped[TacoOrder] = relationship(back_populates="diners")
+
+    @property
+    def tacos(self) -> int:
+        return self.mild_hard + self.mild_soft + self.wild_hard + self.wild_soft

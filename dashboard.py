@@ -2659,6 +2659,84 @@ _UUID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
 _RID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 _HANDLE_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
+ARENA_ROOM_POSTS = (
+    "/api/arena/rooms/create", "/api/arena/rooms/join",
+    "/api/arena/rooms/leave", "/api/arena/rooms/rename",
+    "/api/arena/rooms/password", "/api/arena/rooms/kick",
+    "/api/arena/rooms/unban", "/api/arena/rooms/delete",
+)
+
+
+def _room_body_error(path, body):
+    op = path.rsplit("/", 1)[1] if "/" in path else ""
+    if op == "create":
+        name = body.get("name")
+        if not isinstance(name, str) or len(name) > 200 or len(name.strip()) < 1:
+            return "room name required"
+        pw = body.get("password")
+        if not isinstance(pw, str) or len(pw) < 1 or len(pw) > 1024:
+            return "password required"
+        return None
+    if op in ("join", "leave", "rename", "password", "kick", "unban", "delete"):
+        rid = body.get("roomId")
+        if not isinstance(rid, str) or not arena.ROOM_ID_RE.fullmatch(rid):
+            return "roomId required"
+    else:
+        return "not found"
+    if op == "join":
+        pw = body.get("password")
+        if not isinstance(pw, str) or len(pw) < 1 or len(pw) > 1024:
+            return "password required"
+    if op == "rename":
+        name = body.get("name")
+        if not isinstance(name, str) or len(name) > 200 or len(name.strip()) < 1:
+            return "room name required"
+    if op == "password":
+        pw = body.get("password")
+        if not isinstance(pw, str) or len(pw) < 1 or len(pw) > 1024:
+            return "password required"
+        soo = body.get("signOutOthers")
+        if soo is not None and not isinstance(soo, bool):
+            return "signOutOthers must be true or false"
+    if op in ("kick", "unban"):
+        uid = body.get("userId")
+        if not isinstance(uid, str) or not arena.USER_ID_RE.fullmatch(uid):
+            return "userId required"
+    return None
+
+
+def _room_post(path, body):
+    err = _room_body_error(path, body)
+    if err:
+        if err == "not found":
+            return 404, {"error": "not found"}
+        return 400, {"error": err}
+    op = path.rsplit("/", 1)[1]
+    try:
+        if op == "create":
+            code, resp = arena.create_room(body["name"], body["password"])
+        elif op == "join":
+            code, resp = arena.join_room(body["roomId"], body["password"])
+        elif op == "leave":
+            code, resp = arena.leave_room(body["roomId"])
+        elif op == "rename":
+            code, resp = arena.rename_room(body["roomId"], body["name"])
+        elif op == "password":
+            code, resp = arena.set_room_password(
+                body["roomId"], body["password"],
+                sign_out_others=(body.get("signOutOthers") is True))
+        elif op == "kick":
+            code, resp = arena.kick_room_member(body["roomId"], body["userId"])
+        elif op == "unban":
+            code, resp = arena.unban_room_member(body["roomId"], body["userId"])
+        elif op == "delete":
+            code, resp = arena.delete_room(body["roomId"])
+        else:
+            return 404, {"error": "not found"}
+    except Exception:
+        return 500, {"error": "arena request failed"}
+    return (code or 502), resp
+
 
 def _cwd_for_session(sid):
     """Best-effort cwd for a session id, from the live agent list."""
@@ -3435,7 +3513,7 @@ POST_PATHS = (
     "/api/arena/nudge",
     "/api/arena/pantry/claim", "/api/arena/pantry/buy",
     "/api/arena/pantry/eat", "/api/arena/pantry/give",
-)
+) + ARENA_ROOM_POSTS
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -3579,6 +3657,23 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/arena/preview":
             code, resp = arena.preview(PROJECTS_DIR)
             self._send(code or 200, json.dumps(resp))
+            return
+
+        if path == "/api/arena/rooms":
+            code, resp = arena.rooms_directory()
+            self._send(code or 502, json.dumps(resp))
+            return
+
+        if path == "/api/arena/rooms/members":
+            import urllib.parse as _up
+            qs = _up.parse_qs(self.path.split("?", 1)[1]
+                              if "?" in self.path else "")
+            rid = (qs.get("roomId", [""])[0] or "")
+            if not arena.ROOM_ID_RE.fullmatch(rid):
+                self._send(400, json.dumps({"error": "roomId required"}))
+                return
+            code, resp = arena.room_members(rid)
+            self._send(code or 502, json.dumps(resp))
             return
 
         if path == "/api/arena/board":
@@ -3870,6 +3965,8 @@ class Handler(BaseHTTPRequestHandler):
     def _arena_post(self, path, body):
         """Arena actions. The device token never crosses back to the page."""
         try:
+            if path in ARENA_ROOM_POSTS:
+                return _room_post(path, body)
             if path == "/api/arena/pair":
                 code = body.get("code")
                 if not isinstance(code, str) or not code.strip():

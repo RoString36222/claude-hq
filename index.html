@@ -6077,7 +6077,7 @@ function checkCelebration(season){
 }
 // Celebrate when a session's creature stage INCREASES between updates.
 // Baseline on first load so we never celebrate the initial snapshot.
-var STAGE_PREV={}, STAGE_BASE=false;
+var STAGE_PREV={}, STAGE_BASE=false, SHINY_SEEN={};
 /* ================= Village (base + army, driven by real stats) ================= */
 function troopPower(s){ // original "power" score from real activity
   var tk=s.tokens||{}; var out=tk.output||0; var pr=s.promptCount||0;
@@ -6201,17 +6201,17 @@ function playEvoMorph(node, cr, fromStage, toStage, px, onReveal){
 // so their HQ shows the same full-screen evolution splash (not just a nudge). Rides the existing
 // "say" relay (server stamps m.from), so no server change is needed. Carries a resolved sprite
 // descriptor so peers render the exact evolved/mega form regardless of their own creature pack.
-function arenaAnnounceEvolution(s, mega){
+function arenaAnnounceEvo(s, event){
   if(!ARENA.sock || ARENA.sock.readyState!==1) return;   // must be in the lobby to show peers a live splash
-  var cr=s.creature||{}, name=isPokePack()?pokeCurrentName(cr):creatureSpecies(cr);
+  var mega=(event==="mega"), cr=s.creature||{}, name=isPokePack()?pokeCurrentName(cr):creatureSpecies(cr);
   var spr=null;
   if(isPokePack()){
     if(mega){ var mf=pokeMegaForm(cr)||{}; spr={dex:branchFinalDex(cr), slug:mf.slug||"", dir:mf.dir||"xy", shiny:cr.shiny?1:0, mega:1}; }
     else { spr={dex:pokeDexFor(cr), slug:String(name).toLowerCase().replace(/[^a-z0-9]/g,""), dir:"xy", shiny:cr.shiny?1:0, mega:0}; }
   }
   var pre = isPokePack() ? pokeNameAtStage(cr, (typeof STAGE_PREV!=="undefined"&&STAGE_PREV[s.sessionId||s.id]?STAGE_PREV[s.sessionId||s.id].d:3)) : "";
-  try{ ARENA.sock.send(JSON.stringify({type:"say", data:{kind:"evo", mega:!!mega, name:name, pre:pre, spr:spr}})); }catch(e){}
-  logEvent("📣", "Announced "+name+(mega?" (Mega)":"")+" to the Arena lobby");
+  try{ ARENA.sock.send(JSON.stringify({type:"say", data:{kind:"evo", event:event||"evolve", mega:!!mega, shiny:cr.shiny?1:0, name:name, pre:pre, spr:spr}})); }catch(e){}
+  logEvent("📣", "Announced "+(event==="shiny"?("shiny "+name):name+(mega?" (Mega)":""))+" to the Arena lobby");
 }
 // A specific evolved/mega sprite from a peer's descriptor — pack-independent, with the usual
 // onerror fallback chain (X/Y or ORAS gif -> HOME still png -> generated monster).
@@ -6231,7 +6231,8 @@ function arenaOnEvo(m){
   if(ARENA.you && from.userId && from.userId===ARENA.you.userId) return;   // ignore my own echo
   showPeerEvoSplash({
     who:arenaWho(from), handle:(typeof from.handle==="string"?from.handle.slice(0,40):""),
-    mega:!!d.mega, name:String(d.name||"A creature").slice(0,40),
+    event:(typeof d.event==="string"?d.event:(d.mega?"mega":"evolve")),
+    mega:!!d.mega, shiny:!!d.shiny, name:String(d.name||"A creature").slice(0,40),
     pre:(typeof d.pre==="string"?d.pre.slice(0,40):""),
     spr:(d.spr&&typeof d.spr==="object")?d.spr:null
   });
@@ -6239,12 +6240,14 @@ function arenaOnEvo(m){
 function showPeerEvoSplash(p){
   var el2=$("evoSplash"); if(!el2) return;
   clearEvoMorph();
-  el2.classList.toggle("mega", !!p.mega); el2.classList.add("peer");
+  var isShiny=(p.event==="shiny");
+  el2.classList.toggle("mega", !!p.mega); el2.classList.add("peer"); el2.classList.toggle("shiny", isShiny);
   var size=Math.min(p.mega?360:300, Math.round(window.innerHeight*(p.mega?0.46:0.4)));
   $("evoCreature").innerHTML = p.spr ? peerEvoImg(p.spr, size) : '<div style="font-size:'+Math.round(size*0.6)+'px" aria-hidden="true">✨</div>';
-  $("evoKicker").textContent = "📣 In the Arena";
-  $("evoTitle").textContent  = p.who+"'s "+p.name+"!";
-  $("evoSub").textContent    = p.mega ? (p.who+"'s creature just MEGA-EVOLVED! ⚡")
+  $("evoKicker").textContent = isShiny ? "✨ SHINY UNLOCKED ✨" : "📣 In the Arena";
+  $("evoTitle").textContent  = isShiny ? (p.who+" found a Shiny "+p.name+"!") : (p.who+"'s "+p.name+"!");
+  $("evoSub").textContent    = isShiny ? ("A shiny "+p.name+" joined "+p.who+"'s team! ✨")
+    : p.mega ? (p.who+"'s creature just MEGA-EVOLVED! ⚡")
     : (p.pre ? (p.who+"'s "+p.pre+" evolved into "+p.name+"! ✨") : (p.who+"'s creature evolved into "+p.name+"! ✨"));
   var cg=$("evoCongrat");
   if(cg){ cg.style.display=""; cg.disabled=false; cg.textContent="🎉 Congratulate";
@@ -6299,8 +6302,8 @@ function showEvoSplash(s, fromStage){
   }
   $("evoClose").focus();
   // Broadcast only NOTABLE events (final form reached, or mega) to be a good Arena citizen.
-  var notable = mega || (isPokePack() && (function(){ var l=pokeEvoLine(cr); return pokeEvoPos(cr,l)===l.length-1; })());
-  if(notable){ try{ arenaAnnounceEvolution(s, mega); }catch(e){} }
+  // Announce EVERY evolution to the Arena lobby (this fires only on a real visible-form change).
+  try{ arenaAnnounceEvo(s, mega?"mega":"evolve"); }catch(e){}
   clearTimeout(EVO_TIMER); EVO_TIMER=setTimeout(closeEvoSplash, mega?11000:10000);  // ~10s cinematic
 }
 function closeEvoSplash(){ clearTimeout(EVO_TIMER); clearEvoMorph(); var e=$("evoSplash"); if(e){ e.classList.remove("on","flash","mega","peer"); e.setAttribute("aria-hidden","true"); }
@@ -6323,7 +6326,8 @@ function checkEvolution(sessions){
   function snap(s){ var c=s.creature||{}, rawC=Object.assign({},c,{_noFloor:true});
     return { r:rawStageOf(s), d:creatureStage(c), rf:formIndexOf(rawC), df:formIndexOf(c) }; }
   if(!STAGE_BASE){
-    sessions.forEach(function(s){ var id=s.sessionId||s.id; if(id) STAGE_PREV[id]=snap(s); });
+    // Seed baselines silently so a page load doesn't burst-fire every existing evolution/shiny.
+    sessions.forEach(function(s){ var id=s.sessionId||s.id; if(id){ STAGE_PREV[id]=snap(s); if(s.creature&&s.creature.shiny) SHINY_SEEN[id]=1; } });
     STAGE_BASE=true; return;
   }
   sessions.forEach(function(s){
@@ -6350,10 +6354,20 @@ function checkEvolution(sessions){
       confettiBurst();
       showEvoSplash(s, prev.d);
     }
+    // Shiny unlock: a shiny creature newly appeared in the fleet (deterministic per species, so
+    // this fires when a NEW shiny session joins). Celebrate locally + announce to the Arena.
+    if(s.creature && s.creature.shiny && !SHINY_SEEN[id]){
+      SHINY_SEEN[id]=1;
+      var snm=isPokePack()?pokeCurrentName(s.creature):creatureSpecies(s.creature);
+      toast("✨ Shiny "+snm+" joined your fleet!","ach");
+      logEvent("✨","Shiny "+snm+" ("+(s.title||s.name||"session")+")");
+      try{ arenaAnnounceEvo(s, "shiny"); }catch(e){}
+    }
     STAGE_PREV[id]=cur;
   });
   var live={}; sessions.forEach(function(s){ var id=s.sessionId||s.id; if(id) live[id]=1; });
   Object.keys(STAGE_PREV).forEach(function(k){ if(!live[k]) delete STAGE_PREV[k]; });
+  Object.keys(SHINY_SEEN).forEach(function(k){ if(!live[k]) delete SHINY_SEEN[k]; });
 }
 function confettiBurst(){
   if(calmMode()) return;

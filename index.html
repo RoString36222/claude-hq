@@ -3931,6 +3931,7 @@ function applyConfig(c){
   if(c && c.theme && !storedTheme()){ try{ localStorage.setItem("hq_theme", c.theme); }catch(e){} }
   applyDisplayPrefs();
   try{ localStorage.setItem("hq_pack",CONFIG.creaturePack); }catch(e){}
+  if(typeof syncPackLabels==="function") syncPackLabels();
   if(typeof STATE!=="undefined" && STATE){
     if(typeof renderParty==="function") renderParty(STATE.sessions);
     if(typeof renderFeed==="function") renderFeed(STATE.feed);
@@ -5696,8 +5697,19 @@ var VIEW_TITLES = {
   quests:["Quests","Daily, weekly and collection goals"], arena:["Arena","Friends, standings and voice"],
   village:["Village","Your base & army, built from your Claude activity"]
 };
+// The Clash of Clans pack renames the "Pokédex" collection to "Troops" (nav tab + title).
+function syncPackLabels(){
+  var vil = (typeof cfg==="function") && cfg().creaturePack==="village";
+  var label = vil ? "Troops" : "Pokédex";
+  VIEW_TITLES.pokedex = [label, vil ? "Your Clash of Clans troop collection" : "Your creature collection"];
+  var tl=document.querySelector('.viewtab[data-view="pokedex"] .vt-l'); if(tl) tl.textContent=label;
+  if(typeof VIEW!=="undefined" && VIEW==="pokedex" && $("viewTitle")){
+    $("viewTitle").textContent=VIEW_TITLES.pokedex[0]; $("viewSub").textContent=VIEW_TITLES.pokedex[1];
+  }
+}
 function setView(v){
   VIEW = v; localStorage.setItem("hq_view", v);
+  syncPackLabels();
   var vt = VIEW_TITLES[v]||VIEW_TITLES.live;
   if($("viewTitle")){ $("viewTitle").textContent = vt[0]; $("viewSub").textContent = vt[1]; }
   $("liveView").classList.toggle("hidden", v!=="live");
@@ -6217,7 +6229,7 @@ function renderPokedex(d){
   var total   = isVil ? TROOP_N : (d.total!=null ? d.total : (list.length||48));
   var caughtN = isVil ? list.filter(function(s){ return s.caught; }).length : (d.caught!=null ? d.caught : list.filter(function(s){ return s.caught; }).length);
   var shinyN  = isVil ? list.filter(function(s){ return s.shiny; }).length : (d.shinyCount!=null ? d.shinyCount : list.filter(function(s){ return s.shiny; }).length);
-  $("dexStats").innerHTML = esc(caughtN)+' / '+esc(total)+' caught'+
+  $("dexStats").innerHTML = esc(caughtN)+' / '+esc(total)+(isVil?' recruited':' caught')+
     (shinyN ? ' · <span style="color:var(--gold);font-weight:700">✦ '+esc(shinyN)+' shiny</span>' : '');
   if(!list.length){ grid.innerHTML='<div class="feed-empty">No species yet.</div>'; renderDexCoverage([]); renderDexTypeChips([]); return; }
 

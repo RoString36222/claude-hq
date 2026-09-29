@@ -1418,6 +1418,7 @@ html.hq-calm #confetti{display:none!important}
       <button class="viewtab" data-view="quests" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><span class="vt-l">Quests</span><span class="vt-k" aria-hidden="true">5</span></button>
       <button class="viewtab" data-view="village" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-castle"/></svg><span class="vt-l">Village</span><span class="vt-k" aria-hidden="true">7</span></button>
       <button class="viewtab" data-view="arena" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-trophy"/></svg><span class="vt-l">Arena</span><span class="tab-badge hidden" id="arenaUnread" aria-hidden="true"></span><span class="vt-k" aria-hidden="true">6</span></button>
+      <button class="viewtab" data-view="troops" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-swords"/></svg><span class="vt-l">Troops</span><span class="vt-k" aria-hidden="true">8</span></button>
     </div>
 
     <div class="side-trainer">
@@ -1928,6 +1929,68 @@ html.hq-calm #confetti{display:none!important}
       <button class="hbtn" id="arenaUnpair" type="button">Disconnect</button>
       <span id="arenaLast"></span>
     </div>
+  </div>
+
+  <!-- troops view -->
+  <style>
+    #troopsView{max-width:1200px}
+    .troops-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+    .troops-title{display:flex;align-items:center;gap:8px;margin:0;font-size:20px}
+    .troops-title .i{width:20px;height:20px;color:var(--brand)}
+    .troops-intro{color:var(--muted);font-size:13px;margin:0 0 14px;line-height:1.5;max-width:70ch}
+    .troops-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 16px}
+    .troop-catchips{display:flex;gap:6px;flex-wrap:wrap}
+    .troop-catchip{border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:999px;padding:5px 12px;font-size:12px;cursor:pointer;transition:all var(--t-fast) var(--ease)}
+    .troop-catchip:hover{border-color:var(--brand-line);color:var(--ink)}
+    .troop-catchip.active{background:var(--brand-soft);border-color:var(--brand-line);color:var(--brand);font-weight:600}
+    .troops-master{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+    .troops-master button{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:var(--radius-sm);padding:5px 10px;font-size:12px;cursor:pointer}
+    .troops-master button:hover{border-color:var(--brand-line)}
+    .troop-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:14px}
+    .troop-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 12px 12px;display:flex;flex-direction:column;align-items:center;gap:8px;position:relative;overflow:hidden;transition:border-color var(--t-fast) var(--ease),transform var(--t-fast) var(--ease)}
+    .troop-card:hover{transform:translateY(-2px)}
+    .troop-cat-tag{position:absolute;top:8px;left:8px;font-size:9px;letter-spacing:.5px;text-transform:uppercase;font-weight:700;padding:2px 6px;border-radius:5px;background:var(--panel3);color:var(--muted)}
+    .troop-cat-tag[data-cat="Elixir"]{background:rgba(219,68,204,.14);color:#c04fd0}
+    .troop-cat-tag[data-cat="Dark"]{background:rgba(120,90,190,.16);color:#8a6bd6}
+    .troop-cat-tag[data-cat="Super"]{background:var(--goldbg);color:var(--gold)}
+    .troop-cat-tag[data-cat="Siege"]{background:rgba(120,140,160,.16);color:var(--muted)}
+    .troop-art{width:96px;height:96px;display:flex;align-items:center;justify-content:center;border-radius:14px;margin-top:6px;transition:box-shadow var(--t-med) var(--ease),background var(--t-med) var(--ease)}
+    .troop-art img{width:84px;height:84px;object-fit:contain;image-rendering:auto;transition:filter var(--t-med) var(--ease),transform var(--t-med) var(--ease)}
+    /* leveling up = troop becomes more "visible": dim & desaturated at low level, vivid + glowing at max */
+    .troop-card[data-tier="1"] .troop-art img{filter:grayscale(.6) brightness(.82) contrast(.95)}
+    .troop-card[data-tier="2"] .troop-art img{filter:grayscale(.28) brightness(.94)}
+    .troop-card[data-tier="3"] .troop-art img{filter:none}
+    .troop-card[data-tier="4"] .troop-art img{filter:saturate(1.12) drop-shadow(0 0 6px rgba(240,190,60,.55))}
+    .troop-card[data-tier="5"] .troop-art img{filter:saturate(1.25) drop-shadow(0 0 10px rgba(240,190,60,.85));transform:scale(1.05)}
+    .troop-card[data-tier="4"] .troop-art{background:radial-gradient(circle at 50% 55%,rgba(240,190,60,.10),transparent 70%)}
+    .troop-card[data-tier="5"] .troop-art{background:radial-gradient(circle at 50% 55%,rgba(240,190,60,.20),transparent 72%);box-shadow:0 0 0 1px var(--gold) inset}
+    .troop-name{font-weight:600;font-size:13px;text-align:center;line-height:1.2;color:var(--ink)}
+    .troop-stars{font-size:12px;letter-spacing:1px;color:var(--gold);height:14px}
+    .troop-stars .off{color:var(--line2)}
+    .troop-tier-name{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:600}
+    .troop-lvlrow{display:flex;align-items:center;gap:8px;width:100%;margin-top:2px}
+    .troop-lvlrow input[type=range]{flex:1;accent-color:var(--brand);cursor:pointer}
+    .troop-lvl-badge{font-size:11px;font-weight:700;color:var(--ink);min-width:38px;text-align:right}
+    .troop-lvl-badge b{color:var(--brand)}
+    .troop-fallback{width:84px;height:84px;display:flex;align-items:center;justify-content:center;font-size:34px;background:var(--panel3);border-radius:12px}
+    .troops-note{color:var(--faint);font-size:11px;margin:18px 0 0;line-height:1.5}
+    .troops-empty{grid-column:1/-1;color:var(--muted);text-align:center;padding:40px}
+  </style>
+  <div id="troopsView" class="troops hidden" aria-label="Clash of Clans troops">
+    <div class="troops-head">
+      <h2 class="troops-title"><svg class="i" aria-hidden="true"><use href="#i-swords"/></svg>Troops</h2>
+      <span class="troops-intro">Popular Clash of Clans troops. Drag a troop's slider to level it up &mdash; it starts dim &amp; battle-worn and grows brighter, gains a gold aura and stars as it approaches max level.</span>
+    </div>
+    <div class="troops-controls">
+      <div class="troop-catchips" id="troopCatChips" role="group" aria-label="Filter by category"></div>
+      <div class="troops-master">
+        <span>Army:</span>
+        <button type="button" id="troopMaxAll">Max all</button>
+        <button type="button" id="troopResetAll">Reset</button>
+      </div>
+    </div>
+    <div class="troop-grid" id="troopGrid"></div>
+    <p class="troops-note" id="troopsNote"></p>
   </div>
   </main>
   </div><!-- /main-col -->
@@ -5464,7 +5527,7 @@ document.addEventListener("keydown",function(e){
   if(e.key==="/"){ e.preventDefault(); $("search").focus(); }
   else if(e.key==="r"||e.key==="R"){ e.preventDefault(); forceRefresh(); }
   else if(e.key==="?"){ e.preventDefault(); openHelp(); }
-  else if(e.key>="1"&&e.key<="7"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","arena","village"][+e.key-1]); }
+  else if(e.key>="1"&&e.key<="8"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","arena","village","troops"][+e.key-1]); }
   // In a voice call, from any view: M mutes, V switches the camera, S shares your screen. Holding a key down
   // doesn't repeat it, and outside a call these keys do nothing.
   else if(VCHAN.on && !e.repeat && (e.key==="m"||e.key==="M")){ e.preventDefault(); voiceToggleMute(); }
@@ -5533,8 +5596,136 @@ var VIEW_TITLES = {
   live:["Live","Every Claude session, right now"], analytics:["Analytics","Usage, cost and rhythm over time"],
   pokedex:["Pokédex","Your creature collection"], gym:["Gym","Active sessions scored as a team"],
   quests:["Quests","Daily, weekly and collection goals"], arena:["Arena","Friends, standings and voice"],
-  village:["Village","Your base & army, built from your Claude activity"]
+  village:["Village","Your base & army, built from your Claude activity"],
+  troops:["Troops","Popular Clash of Clans troops — level them up"]
 };
+/* ---- Troops view: popular Clash of Clans troops with a level-up control ----
+   Real troop art is hotlinked from coc.guide (a fan asset host), the same way the
+   Pokédex hotlinks PokeAPI sprites. Only static PNGs exist on any stable/hotlinkable
+   host, so "leveling up" is conveyed by an interactive level slider that brightens the
+   art and adds a gold aura + stars as it climbs — not per-level Supercell frames. */
+var TROOP_IMG_BASE="https://coc.guide/static/imgs/troop/";
+// {name, slug, cat, emoji(fallback), max}. slug is Supercell's internal codename (can't be
+// derived from the display name — e.g. Minion->gargoyle, Witch->warlock), so it's hardcoded.
+var TROOP_ROSTER=[
+  // Elixir
+  {n:"Barbarian",s:"barbarian",c:"Elixir",e:"⚔️",max:12},
+  {n:"Archer",s:"archer",c:"Elixir",e:"🏹",max:12},
+  {n:"Giant",s:"giant",c:"Elixir",e:"🗿",max:12},
+  {n:"Goblin",s:"goblin",c:"Elixir",e:"👺",max:9},
+  {n:"Wall Breaker",s:"wall-breaker",c:"Elixir",e:"💣",max:11},
+  {n:"Balloon",s:"balloon",c:"Elixir",e:"🎈",max:11},
+  {n:"Wizard",s:"wizard",c:"Elixir",e:"🧙",max:12},
+  {n:"Healer",s:"healer",c:"Elixir",e:"🧚",max:8},
+  {n:"Dragon",s:"dragon",c:"Elixir",e:"🐉",max:11},
+  {n:"P.E.K.K.A",s:"pekka",c:"Elixir",e:"🤖",max:11},
+  {n:"Baby Dragon",s:"babydragon",c:"Elixir",e:"🐲",max:11},
+  {n:"Miner",s:"miner",c:"Elixir",e:"⛏️",max:10},
+  {n:"Electro Dragon",s:"electro-dragon",c:"Elixir",e:"⚡",max:8},
+  {n:"Yeti",s:"yeti",c:"Elixir",e:"🦍",max:6},
+  {n:"Dragon Rider",s:"dragon-rider",c:"Elixir",e:"🐴",max:5},
+  {n:"Electro Titan",s:"electro-titan",c:"Elixir",e:"🌩️",max:5},
+  {n:"Root Rider",s:"root-rider",c:"Elixir",e:"🌳",max:4},
+  {n:"Thrower",s:"thrower",c:"Elixir",e:"🪨",max:3},
+  {n:"Apprentice Warden",s:"apprentice-warden",c:"Elixir",e:"📘",max:5},
+  // Dark Elixir
+  {n:"Minion",s:"gargoyle",c:"Dark",e:"🦇",max:11},
+  {n:"Hog Rider",s:"boar-rider",c:"Dark",e:"🐗",max:12},
+  {n:"Valkyrie",s:"warrior-girl",c:"Dark",e:"🪓",max:11},
+  {n:"Golem",s:"golem",c:"Dark",e:"🪨",max:13},
+  {n:"Witch",s:"warlock",c:"Dark",e:"🧟",max:6},
+  {n:"Lava Hound",s:"airdefenceseeker",c:"Dark",e:"🔥",max:7},
+  {n:"Bowler",s:"bowler",c:"Dark",e:"🎳",max:7},
+  {n:"Ice Golem",s:"ice-golem",c:"Dark",e:"🧊",max:7},
+  {n:"Headhunter",s:"headhunter",c:"Dark",e:"🗡️",max:4},
+  {n:"Druid",s:"druid_healer",c:"Dark",e:"🌿",max:3},
+  // Super Troops
+  {n:"Super Barbarian",s:"elitebarbarian",c:"Super",e:"💪",max:12},
+  {n:"Super Archer",s:"elitearcher",c:"Super",e:"🎯",max:12},
+  {n:"Super Giant",s:"elitegiant",c:"Super",e:"🛡️",max:12},
+  {n:"Sneaky Goblin",s:"elitegoblin",c:"Super",e:"🥷",max:9},
+  {n:"Super Wall Breaker",s:"elitewallbreaker",c:"Super",e:"🧨",max:11},
+  {n:"Super Wizard",s:"super-wizard",c:"Super",e:"✨",max:12},
+  {n:"Super Dragon",s:"super-dragon",c:"Super",e:"🐲",max:11},
+  {n:"Inferno Dragon",s:"infernodragon",c:"Super",e:"🔥",max:11},
+  {n:"Super Minion",s:"super-minion",c:"Super",e:"🦇",max:11},
+  {n:"Super Valkyrie",s:"elitevalkyrie",c:"Super",e:"⚡",max:11},
+  {n:"Super Witch",s:"head-witch",c:"Super",e:"💀",max:6},
+  {n:"Ice Hound",s:"ice-hound",c:"Super",e:"❄️",max:7},
+  {n:"Super Bowler",s:"super-bowler",c:"Super",e:"🎳",max:7},
+  {n:"Super Hog Rider",s:"super-hog-rider",c:"Super",e:"🐗",max:12},
+  {n:"Super Miner",s:"super-miner",c:"Super",e:"⛏️",max:10},
+  {n:"Rocket Balloon",s:"hastyballoon",c:"Super",e:"🚀",max:11},
+  // Siege Machines
+  {n:"Wall Wrecker",s:"siege-machine-ram",c:"Siege",e:"🚜",max:5},
+  {n:"Battle Blimp",s:"siege-machine-flyer",c:"Siege",e:"🎈",max:5},
+  {n:"Stone Slammer",s:"siege-bowler-balloon",c:"Siege",e:"🪨",max:5}
+];
+var TROOP_CATS=["All","Elixir","Dark","Super","Siege"];
+var TROOP_TIER_NAMES=["","Recruit","Seasoned","Veteran","Elite","Maxed"];
+var TROOP_FILTER=(function(){ var s=localStorage.getItem("hq_troop_cat"); return TROOP_CATS.indexOf(s)>=0?s:"All"; })();
+var TROOP_LVL=(function(){ try{ return JSON.parse(localStorage.getItem("hq_troop_lvl")||"{}"); }catch(e){ return {}; } })();
+function troopLvl(t){ var v=TROOP_LVL[t.s]; return (v>=1&&v<=t.max)?v:1; }
+function troopTier(t,lvl){ var f=(lvl-1)/Math.max(1,(t.max-1)); return Math.min(5, Math.max(1, Math.round(f*4)+1)); }
+function troopSaveLvl(){ try{ localStorage.setItem("hq_troop_lvl", JSON.stringify(TROOP_LVL)); }catch(e){} }
+function troopStars(tier){ var s=""; for(var i=1;i<=5;i++){ s+= i<=tier ? "★" : '<span class="off">★</span>'; } return s; }
+function troopApplyCard(card,t){
+  var lvl=troopLvl(t), tier=troopTier(t,lvl);
+  card.setAttribute("data-tier", tier);
+  var st=card.querySelector(".troop-stars"); if(st) st.innerHTML=troopStars(tier);
+  var tn=card.querySelector(".troop-tier-name"); if(tn) tn.textContent=TROOP_TIER_NAMES[tier];
+  var bd=card.querySelector(".troop-lvl-badge"); if(bd) bd.innerHTML="Lv <b>"+lvl+"</b>/"+t.max;
+}
+function renderTroops(){
+  var grid=$("troopGrid"); if(!grid) return;
+  // category chips (built once)
+  var chipWrap=$("troopCatChips");
+  if(chipWrap && !chipWrap.childNodes.length){
+    TROOP_CATS.forEach(function(cat){
+      var b=el("button","troop-catchip"+(cat===TROOP_FILTER?" active":"")); b.type="button"; b.textContent=cat;
+      b.addEventListener("click",function(){
+        TROOP_FILTER=cat; try{ localStorage.setItem("hq_troop_cat",cat); }catch(e){}
+        Array.prototype.forEach.call(chipWrap.children,function(c){ c.classList.toggle("active", c.textContent===cat); });
+        renderTroops();
+      });
+      chipWrap.appendChild(b);
+    });
+  }
+  var list=TROOP_ROSTER.filter(function(t){ return TROOP_FILTER==="All"||t.c===TROOP_FILTER; });
+  grid.innerHTML="";
+  if(!list.length){ grid.innerHTML='<div class="troops-empty">No troops in this category.</div>'; return; }
+  list.forEach(function(t){
+    var card=el("div","troop-card");
+    var tag=el("div","troop-cat-tag"); tag.setAttribute("data-cat",t.c); tag.textContent=t.c; card.appendChild(tag);
+    var art=el("div","troop-art");
+    var img=el("img"); img.loading="lazy"; img.decoding="async"; img.alt=t.n+" troop"; img.src=TROOP_IMG_BASE+t.s+".png";
+    img.addEventListener("error",function(){ var fb=el("div","troop-fallback"); fb.textContent=t.e; art.innerHTML=""; art.appendChild(fb); });
+    art.appendChild(img); card.appendChild(art);
+    var nm=el("div","troop-name"); nm.textContent=t.n; card.appendChild(nm);
+    var stars=el("div","troop-stars"); card.appendChild(stars);
+    var tname=el("div","troop-tier-name"); card.appendChild(tname);
+    var row=el("div","troop-lvlrow");
+    var rng=el("input"); rng.type="range"; rng.min="1"; rng.max=String(t.max); rng.step="1"; rng.value=String(troopLvl(t));
+    rng.setAttribute("aria-label","Level "+t.n);
+    var badge=el("div","troop-lvl-badge");
+    rng.addEventListener("input",function(){ TROOP_LVL[t.s]=+rng.value; troopSaveLvl(); troopApplyCard(card,t); });
+    row.appendChild(rng); row.appendChild(badge); card.appendChild(row);
+    troopApplyCard(card,t);
+    grid.appendChild(card);
+  });
+  var note=$("troopsNote");
+  if(note) note.innerHTML="Troop art via <span style=\"color:var(--muted)\">coc.guide</span> — a fan site, not affiliated with Supercell. Clash of Clans is a trademark of Supercell. Levels are a visual toy; they don't reflect exact in-game stats.";
+}
+function troopSetAll(toMax){
+  TROOP_ROSTER.forEach(function(t){ TROOP_LVL[t.s]= toMax? t.max : 1; });
+  troopSaveLvl(); renderTroops();
+}
+(function troopWireMaster(){
+  var mx=$("troopMaxAll"), rs=$("troopResetAll");
+  if(mx) mx.addEventListener("click",function(){ troopSetAll(true); });
+  if(rs) rs.addEventListener("click",function(){ troopSetAll(false); });
+})();
+
 function setView(v){
   VIEW = v; localStorage.setItem("hq_view", v);
   var vt = VIEW_TITLES[v]||VIEW_TITLES.live;
@@ -5546,6 +5737,7 @@ function setView(v){
   var qv=$("questsView"); if(qv) qv.classList.toggle("hidden", v!=="quests");
   var vv=$("villageView"); if(vv) vv.classList.toggle("hidden", v!=="village");
   var av=$("arenaView"); if(av) av.classList.toggle("hidden", v!=="arena");
+  var tv=$("troopsView"); if(tv) tv.classList.toggle("hidden", v!=="troops");
   Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
     var on = t.getAttribute("data-view")===v;
     t.classList.toggle("active", on); t.setAttribute("aria-selected", on?"true":"false");
@@ -5556,6 +5748,7 @@ function setView(v){
   if(v==="gym") renderGym();
   if(v==="quests") loadQuests();
   if(v==="village") renderVillage();
+  if(v==="troops") renderTroops();
   // The lobby socket stays open on other views while you stay in the lobby, or while you're in voice (it carries it).
   if(v==="arena"){ arenaUnreadClear(); ARENA.nudgeCount={}; loadArena(); } else if(!VCHAN.on && !ARENA_STAY) arenaCloseSocket();
 }

@@ -39,14 +39,20 @@ services:
     restart: unless-stopped
     env_file: /etc/arena-panel.env
     environment:
-      ARENA_DIR: /repo
+      # Mounted at the SAME path it has on the host, not at /repo. The panel
+      # drives `docker compose` through the mounted socket, so every path it
+      # passes is resolved by the daemon on the host. Under /repo, compose
+      # expanded ./Caddyfile to /repo/backend/Caddyfile, the daemon could not
+      # find that, created a directory in its place, and Caddy then failed to
+      # start with "not a directory" -- taking every site on the box down.
+      ARENA_DIR: ${ARENA_DIR:-/root/claude-hq}
       ARENA_DOMAIN: ${ARENA_DOMAIN:?set ARENA_DOMAIN}
-      ARENA_DEPLOY_LOG: /repo/.arena-deploy.log
+      ARENA_DEPLOY_LOG: ${ARENA_DIR:-/root/claude-hq}/.arena-deploy.log
     volumes:
       # The repo it deploys, and the socket it deploys with. This is root-
       # equivalent access -- but the panel can already execute deploys, so
       # containerising it does not widen what it can do, only where it runs.
-      - ${ARENA_DIR:-/root/claude-hq}:/repo
+      - ${ARENA_DIR:-/root/claude-hq}:${ARENA_DIR:-/root/claude-hq}
       - /var/run/docker.sock:/var/run/docker.sock
     expose:
       - "8090"

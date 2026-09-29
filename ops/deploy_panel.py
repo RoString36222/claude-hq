@@ -41,6 +41,7 @@ ARENA_DOMAIN = os.environ.get("ARENA_DOMAIN", "")
 PANEL_BASE_URL = os.environ.get("PANEL_BASE_URL", "")
 DEPLOY_LOG = os.environ.get("ARENA_DEPLOY_LOG", "/repo/.arena-deploy.log")
 BRANCH = os.environ.get("ARENA_BRANCH", "main")
+HEALTH_URL = os.environ.get("ARENA_HEALTH_URL", "http://app:8080/health")
 
 CLIENT_ID = os.environ.get("PANEL_GITHUB_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("PANEL_GITHUB_CLIENT_SECRET", "")
@@ -100,7 +101,11 @@ def status():
     remote = git("rev-parse", f"origin/{BRANCH}")[:7]
     behind = git("rev-list", "--count", f"HEAD..origin/{BRANCH}") or "0"
     pending = git("log", "--oneline", f"HEAD..origin/{BRANCH}") if behind != "0" else ""
-    code, _ = run(["curl", "-fsS", "--max-time", "5", "http://127.0.0.1:8080/health"], timeout=15)
+    # Reached over the compose network by service name, not 127.0.0.1: the
+    # panel runs in its own container, so loopback is the panel itself (:8090)
+    # and never the app. The app is `expose`d, not published, so it has no
+    # host port either -- a loopback probe cannot succeed in either layout.
+    code, _ = run(["curl", "-fsS", "--max-time", "5", HEALTH_URL], timeout=15)
     try:
         with open(DEPLOY_LOG) as f:
             log = "".join(f.readlines()[-40:])

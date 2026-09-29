@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Claude Sessions Dashboard — a local, private web dashboard for your Claude Code sessions.
+# gotta catch 'em all
 
 What it does
 ------------

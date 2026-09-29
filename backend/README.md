@@ -20,6 +20,11 @@ folder names, session ids, or titles. Two details worth knowing:
 silently start leaking it — the server rejects the whole submission until that
 field is added to `app/schemas.py` deliberately.
 
+Poke Coins and snacks (`app/pantry.py`) are the one other thing the server
+stores. A pantry request carries a food kind, an amount, a recipient handle and
+an optional note. It never says which session ate a snack: that stays on your
+machine. Coins are cosmetic and never touch XP or the board.
+
 ## Scoring is the server's job
 
 Clients submit raw activity, never a score. XP, levels, ranks and streaks are
@@ -39,6 +44,8 @@ determined faker.
 | `app/schemas.py` | The wire allowlist. The privacy boundary. |
 | `app/scoring.py` | XP / level / rank / streak. Mirrors `dashboard.py`. |
 | `app/service.py` | Ingest (upsert per day) and leaderboard queries. |
+| `app/pantry.py` | Poke Coins, snacks and gifts: the rules, caps and `CATALOG`. The server is the authority. |
+| `app/routes/pantry.py` | The thin pantry routes. |
 | `app/rooms.py` | In-process websocket rooms: presence, broadcast, shared state. |
 | `app/auth.py` | Device tokens, pairing codes, websocket tickets. |
 | `alembic/` | Migrations. |
@@ -55,7 +62,7 @@ cd backend
 uv sync
 cp .env.example .env          # defaults to SQLite; no Postgres needed
 uv run uvicorn app.main:app --reload --port 8080
-uv run pytest                 # 22 tests
+uv run pytest                 # 56 tests
 ```
 
 ### Seeding fake friends
@@ -151,5 +158,11 @@ the only file that changes.
 | `GET` | `/v1/board?window=season\|30d\|7d\|all` | |
 | `GET` | `/v1/board/stream` | SSE, pushes on ingest |
 | `GET` | `/v1/me` | |
+| `GET` | `/v1/pantry` | Poke Coins, snacks, today's claim, limits, recent gifts. Read-only. |
+| `POST` | `/v1/pantry/claim` | Today's 5 coins, once per UTC day (the first ever adds a Rice Ball) |
+| `POST` | `/v1/pantry/buy` | `{requestId, kind, qty}` |
+| `POST` | `/v1/pantry/eat` | `{requestId, kind}`. Never says which session ate. |
+| `POST` | `/v1/pantry/give` | `{requestId, toHandle, coins, kind?, qty, note?}`, delivered live as a lobby `gift` |
+| `POST` | `/v1/pantry/gifts/drain` | Undelivered gifts, each returned once |
 | `GET` | `/v1/rooms` | Open rooms |
 | `WS` | `/v1/rooms/{room}/ws?ticket=` | Presence, `say` (a `{kind: "chat"}` payload is lobby chat: cleaned, rate-limited, last 50 kept in memory and sent in `welcome`), `state`, `nudge`, `signal` (WebRTC setup, to one member), `ping` |

@@ -9,7 +9,7 @@ module can carry prompt text, file paths, project names or session titles.
 from datetime import date
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SCHEMA_VERSION = 1
 
@@ -168,3 +168,148 @@ class NudgeItem(BaseModel):
 
 class NudgesResponse(BaseModel):
     nudges: list[NudgeItem] = Field(default_factory=list)
+
+
+# --- pantry (Poke Coins, food, gifts) ---------------------------------------
+# The literal limits here mirror app/pantry.py (BUY_MAX_QTY, GIFT_MAX_COINS,
+# GIFT_MAX_QTY, CATALOG keys); change both together. Every int is strict, so
+# `true` or `"3"` is a 422 rather than a quiet 1 or 3. A request carries a kind,
+# an amount, a handle and a note -- never a session id, title or path, and
+# `extra="forbid"` turns a stray one into a 422.
+
+FoodKind = Literal["berry", "riceball", "bento", "tonic"]
+RequestId = Annotated[str, Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
+
+
+class BuyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requestId: RequestId
+    kind: FoodKind
+    qty: Annotated[int, Field(ge=1, le=5, strict=True)] = 1
+
+
+class EatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requestId: RequestId
+    kind: FoodKind
+
+
+class GiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requestId: RequestId
+    toHandle: Handle
+    coins: Annotated[int, Field(ge=0, le=5, strict=True)] = 0
+    kind: FoodKind | None = None
+    qty: Annotated[int, Field(ge=0, le=3, strict=True)] = 0
+    note: str = Field("", max_length=80)
+
+    @field_validator("note")
+    @classmethod
+    def _clean_note(cls, v: str) -> str:
+        return " ".join("".join(c for c in v if c.isprintable()).split())[:80]
+
+    @model_validator(mode="after")
+    def _something_to_give(self) -> "GiveRequest":
+        if self.qty > 0 and self.kind is None:
+            raise ValueError("kind is required when qty > 0")
+        if self.kind is not None and self.qty == 0:
+            raise ValueError("qty is required with kind")
+        if self.coins == 0 and self.qty == 0:
+            raise ValueError("a gift needs coins or food")
+        return self
+
+
+class CatalogItem(BaseModel):
+    kind: str
+    name: str
+    plural: str
+    emoji: str
+    price: int
+    restoreMins: int
+    revives: bool
+
+
+class ClaimInfo(BaseModel):
+    claimedToday: bool
+    claimable: bool
+    amount: int
+    today: str
+    nextClaimAt: str
+
+
+class PantryLimits(BaseModel):
+    buyMaxQty: int
+    giftMaxCoins: int
+    giftMaxQty: int
+    giftsLeftToday: int
+
+
+class GiftItem(BaseModel):
+    fromHandle: str
+    fromName: str
+    coins: int
+    kind: str | None
+    qty: int
+    note: str
+    at: str
+
+
+class PantryState(BaseModel):
+    coins: int
+    coinCap: int
+    items: dict[str, int]
+    itemCap: int
+    catalog: list[CatalogItem]
+    claim: ClaimInfo
+    limits: PantryLimits
+    recentGifts: list[GiftItem] = Field(default_factory=list)
+
+
+class ClaimResponse(PantryState):
+    op: Literal["claim"] = "claim"
+    claimed: bool
+    granted: int
+    starter: bool
+    full: bool
+
+
+class BuyResponse(PantryState):
+    op: Literal["buy"] = "buy"
+    replayed: bool
+    kind: str
+    qty: int
+    spent: int
+
+
+class EatResponse(PantryState):
+    op: Literal["eat"] = "eat"
+    replayed: bool
+    kind: str
+    restoreMins: int
+    revives: bool
+    at: str
+
+
+class SentGift(BaseModel):
+    coins: int
+    kind: str | None
+    qty: int
+
+
+class GiveResponse(PantryState):
+    op: Literal["give"] = "give"
+    replayed: bool
+    toHandle: str
+    sent: SentGift
+    deliveredLive: int = 0
+
+
+class DrainedGift(GiftItem):
+    id: str
+
+
+class GiftsResponse(BaseModel):
+    gifts: list[DrainedGift] = Field(default_factory=list)

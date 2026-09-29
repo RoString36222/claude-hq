@@ -88,19 +88,46 @@ class ErrorReasonTests(unittest.TestCase):
 
 
 class PollerTests(unittest.TestCase):
+    """The real poller pass (arena._poll_once), without the sleep loop."""
+
+    def setUp(self):
+        self._req = arena._request
+        self._link = arena.load_link
+        self._cfg = arena._load_config
+        self._off = arena._gift_drain_off_until
+        arena.load_link = lambda: {"token": "T", "url": "https://arena.example"}
+        arena._load_config = lambda: {}
+        arena._gift_drain_off_until = 0.0
+
+    def tearDown(self):
+        arena._request = self._req
+        arena.load_link = self._link
+        arena._load_config = self._cfg
+        arena._gift_drain_off_until = self._off
+
     def test_one_poll_notifies_once_per_nudge(self):
-        # Drive the poller body once without the sleep loop.
-        nudges = [{"fromName": "Ash", "note": "come look"},
-                  {"fromHandle": "gary", "note": ""}]
+        def fake(method, url, token=None, body=None):
+            if url.endswith("/v1/nudges"):
+                return 200, {"nudges": [{"fromName": "Ash", "note": "come look"},
+                                        {"fromHandle": "gary", "note": ""}]}
+            return 200, {"gifts": []}
+        arena._request = fake
         fired = []
-        # Reuse the same logic the poller runs per nudge.
-        for n in nudges:
-            who = n.get("fromName") or n.get("fromHandle") or "Someone"
-            note = n.get("note") or ""
-            body = (who + " nudged you") + (": " + note if note else "")
-            fired.append((who, body))
-        self.assertEqual(fired[0], ("Ash", "Ash nudged you: come look"))
-        self.assertEqual(fired[1], ("gary", "gary nudged you"))
+        arena._poll_once(lambda *args: fired.append(args))
+        self.assertEqual(fired, [("👋 Ash nudged you", "Ash nudged you: come look"),
+                                 ("👋 gary nudged you", "gary nudged you")])
+
+    def test_an_old_server_without_gifts_still_delivers_nudges(self):
+        def fake(method, url, token=None, body=None):
+            if url.endswith("/v1/nudges"):
+                return 200, {"nudges": [{"fromName": "Ash"}]}
+            return 404, {"detail": "Not Found", "error": "Not Found"}
+        arena._request = fake
+        fired = []
+        arena._poll_once(lambda *args: fired.append(args))
+        arena._poll_once(lambda *args: fired.append(args))
+        self.assertEqual(fired, [("👋 Ash nudged you", "Ash nudged you")] * 2)
+        self.assertGreater(arena._gift_drain_off_until, 0.0)
 
 
 if __name__ == "__main__":

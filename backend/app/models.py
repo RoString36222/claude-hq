@@ -15,8 +15,8 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import (
-    JSON, BigInteger, Boolean, Date, DateTime, ForeignKey, Index, Integer,
-    Numeric, String, UniqueConstraint, func,
+    JSON, BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index,
+    Integer, Numeric, String, UniqueConstraint, func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -158,4 +158,61 @@ class Nudge(Base):
     note: Mapped[str] = mapped_column(String(120), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # NULL until the recipient's client has drained it via GET /v1/nudges.
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PokeBalance(Base):
+    """One row per (user, item). Poke Coins are just the item "coins", so the
+    purse and the pantry share one code path. Every change is a conditional
+    UPDATE in `pantry.py`; the CHECK is the backstop, and caps live in those
+    WHERE clauses rather than the schema so they can change without a rebuild."""
+
+    __tablename__ = "poke_balances"
+    __table_args__ = (
+        UniqueConstraint("user_id", "item", name="uq_poke_balances_user_item"),
+        CheckConstraint("qty >= 0", name="ck_poke_balances_qty_nonneg"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    item: Mapped[str] = mapped_column(String(16))
+    qty: Mapped[int] = mapped_column(Integer, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PokeLedger(Base):
+    """The pantry journal: one row per claim, buy, eat or give. It is also the
+    idempotency store (UNIQUE per user and request id; the daily claim is the
+    reserved id "claim:YYYY-MM-DD"), the source of the daily caps, and the gift
+    inbox. It holds no session ids, titles or paths."""
+
+    __tablename__ = "poke_ledger"
+    __table_args__ = (
+        UniqueConstraint("user_id", "request_id", name="uq_poke_ledger_user_request"),
+        CheckConstraint("op IN ('claim','buy','eat','give')", name="ck_poke_ledger_op"),
+        CheckConstraint("qty >= 0", name="ck_poke_ledger_qty_nonneg"),
+        CheckConstraint("coins >= 0", name="ck_poke_ledger_coins_nonneg"),
+        Index("ix_poke_ledger_user_date", "user_id", "op_date"),
+        Index("ix_poke_ledger_to_date", "to_user_id", "op_date"),
+        Index("ix_poke_ledger_to_undelivered", "to_user_id", "delivered_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    # The actor.
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    request_id: Mapped[str] = mapped_column(String(64))
+    op: Mapped[str] = mapped_column(String(8))
+    op_date: Mapped[date] = mapped_column(Date)  # UTC
+    kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    qty: Mapped[int] = mapped_column(Integer, server_default="0")
+    coins: Mapped[int] = mapped_column(Integer, server_default="0")
+    # SET NULL, not CASCADE: deleting a recipient keeps the sender's history
+    # and idempotency.
+    to_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    note: Mapped[str] = mapped_column(String(80), server_default="")
+    # Set in Python rather than by the server so a replay can return it.
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # NULL until the gift reached the recipient, live or via the drain.
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

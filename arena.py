@@ -4,7 +4,9 @@ Arena client: publishes derived stats to the multiplayer backend.
 THE PRIVACY BOUNDARY LIVES HERE. Claude HQ reads your transcripts; this module
 decides what -- if anything -- leaves the machine. It sends daily *counts* only:
 prompts, tool calls, artifacts, tokens. It never sends prompt text, replies,
-file paths, project or folder names, session ids, or session titles.
+file paths, project or folder names, session ids, or session titles. Pantry
+actions (Poke Coins, food, gifts) send only the fields in _PANTRY_KEYS; which
+session ate, and how tired it was, stays on this machine.
 
 Two deliberate details:
 
@@ -344,6 +346,98 @@ def drain_nudges():
     return []
 
 
+# --- pantry (Poke Coins, food, gifts) ---------------------------------------
+#
+# The server is the only authority for coins and food. What crosses the wire is
+# the allowlist in _PANTRY_KEYS: which session ate, and its fatigue, never leave
+# the machine (dashboard.py keeps that in meals.json).
+
+# Mirrors CATALOG in backend app/pantry.py. Keep in sync.
+FOOD_KINDS = ("berry", "riceball", "bento", "tonic")
+FOOD_LABELS = {
+    "berry": ("Berry", "Berries"),
+    "riceball": ("Rice Ball", "Rice Balls"),
+    "bento": ("Bento", "Bentos"),
+    "tonic": ("Revive Tonic", "Revive Tonics"),
+}
+PANTRY_ACTIONS = ("claim", "buy", "eat", "give")
+_PANTRY_KEYS = ("requestId", "kind", "qty", "coins", "toHandle", "note")
+
+# A server without the pantry routes answers the drain with 404; stop asking
+# for a while instead of hitting it every poll.
+GIFT_DRAIN_BACKOFF_SECS = 1800
+_gift_drain_off_until = 0.0
+
+
+def _authed():
+    """(token, base) when paired, else (None, None)."""
+    link = load_link()
+    token, base = link.get("token"), link.get("url") or _base_url()
+    if not token or not base:
+        return None, None
+    return token, base
+
+
+def pantry(action=None, body=None):
+    """GET the pantry state (action None), or POST one pantry action.
+
+    Only _PANTRY_KEYS are forwarded: this is the privacy boundary, so a
+    sessionId, title or path can never reach the server, even through a bug in
+    the caller."""
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    if action is None:
+        return _request("GET", base + "/v1/pantry", token=token)
+    if action not in PANTRY_ACTIONS:
+        return 400, {"error": "unknown pantry action"}
+    body = body if isinstance(body, dict) else {}
+    return _request("POST", base + "/v1/pantry/" + action, token=token,
+                    body={k: body[k] for k in _PANTRY_KEYS if k in body})
+
+
+def drain_gifts():
+    """Fetch + mark delivered the gifts that missed live delivery. Returns a list."""
+    global _gift_drain_off_until
+    if time.time() < _gift_drain_off_until:
+        return []
+    token, base = _authed()
+    if not token:
+        return []
+    status_code, body = _request("POST", base + "/v1/pantry/gifts/drain",
+                                 token=token, body={})
+    if status_code == 404:
+        _gift_drain_off_until = time.time() + GIFT_DRAIN_BACKOFF_SECS
+        return []
+    if status_code == 200 and isinstance(body, dict):
+        gifts = body.get("gifts") or []
+        return [g for g in gifts if isinstance(g, dict)] if isinstance(gifts, list) else []
+    return []
+
+
+def _count(v):
+    return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else 0
+
+
+def gift_notice(g):
+    """(title, body) for the OS notification of one gift."""
+    who = g.get("fromName") or g.get("fromHandle") or "Someone"
+    if not isinstance(who, str):
+        who = "Someone"
+    c, q, kind = _count(g.get("coins")), _count(g.get("qty")), g.get("kind")
+    parts = []
+    if c:
+        parts.append("%d Poke Coin%s" % (c, "" if c == 1 else "s"))
+    if q and isinstance(kind, str) and kind in FOOD_LABELS:
+        name, plural = FOOD_LABELS[kind]
+        parts.append("%d %s" % (q, name if q == 1 else plural))
+    body = " and ".join(parts) or "a gift"
+    note = g.get("note") or ""
+    if isinstance(note, str) and note:
+        body += ": " + note
+    return "\U0001F381 " + who + " sent you a gift", body
+
+
 def status():
     """Connection state for the UI. Deliberately excludes the token."""
     link = load_link()
@@ -378,22 +472,30 @@ def start_publisher(projects_dir):
     return t
 
 
+def _poll_once(notify):
+    """One poller pass: nudges ping, gifts that missed live delivery arrive
+    silently (notify's third argument is `sound`)."""
+    for n in drain_nudges():
+        who = n.get("fromName") or n.get("fromHandle") or "Someone"
+        note = n.get("note") or ""
+        body = (who + " nudged you") + (": " + note if note else "")
+        notify("👋 " + who + " nudged you", body)
+    for g in drain_gifts():
+        notify(*gift_notice(g), False)
+
+
 def start_nudge_poller(notify):
-    """Poll for incoming nudges and hand each to `notify(title, body)` so the
-    dashboard can raise a native OS notification -- this is what lets a nudge
-    reach someone whose Arena tab is closed, as long as Claude HQ is running."""
+    """Poll for incoming nudges and gifts and hand each to `notify(title, body[,
+    sound])` so the dashboard can raise a native OS notification -- this is what
+    lets a nudge reach someone whose Arena tab is closed, as long as Claude HQ
+    is running."""
     def loop():
         while True:
             time.sleep(NUDGE_POLL_SECS)
             try:
                 cfg = _load_config()
-                if not (cfg.get("arenaEnabled") and load_link().get("token")):
-                    continue
-                for n in drain_nudges():
-                    who = n.get("fromName") or n.get("fromHandle") or "Someone"
-                    note = n.get("note") or ""
-                    body = (who + " nudged you") + (": " + note if note else "")
-                    notify("👋 " + who + " nudged you", body)
+                if cfg.get("arenaEnabled") and load_link().get("token"):
+                    _poll_once(notify)
             except Exception:
                 pass  # never let the poller take down the dashboard
 

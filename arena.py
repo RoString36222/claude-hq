@@ -398,6 +398,21 @@ def pantry(action=None, body=None):
                     body={k: body[k] for k in _PANTRY_KEYS if k in body})
 
 
+_QUEST_REWARD_KEYS = ("requestId", "kind", "questId", "tier", "coins")
+
+
+def quest_reward(request_id, kind, quest_id, tier, coins):
+    """Claim coins for a completed quest or achievement. Privacy-safe: only the
+    quest catalog id and date leave the machine (encoded in request_id)."""
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    body = {"requestId": request_id, "kind": kind, "questId": quest_id, "coins": coins}
+    if tier is not None:
+        body["tier"] = tier
+    return _request("POST", base + "/v1/pantry/reward", token=token, body=body)
+
+
 def drain_gifts():
     """Fetch + mark delivered the gifts that missed live delivery. Returns a list."""
     global _gift_drain_off_until

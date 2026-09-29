@@ -315,6 +315,21 @@ class GiftsResponse(BaseModel):
     gifts: list[DrainedGift] = Field(default_factory=list)
 
 
+class QuestRewardRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    requestId: str = Field(max_length=100, pattern=r"^(quest|ach):[a-z0-9_]+:.+$")
+    kind: Literal["quest", "achievement"]
+    questId: str = Field(max_length=40)
+    tier: Literal["bronze", "silver", "gold"] | None = None
+    coins: int = Field(ge=1, le=15)
+
+
+class QuestRewardResponse(BaseModel):
+    ok: bool = True
+    coins: int
+    reward: int
+
+
 # --- private rooms -----------------------------------------------------------
 
 RoomId = Annotated[str, Field(pattern=r"^r_[A-Za-z0-9_-]{22}$")]

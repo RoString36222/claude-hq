@@ -2657,6 +2657,7 @@ def compute_insights():
 _UUID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
 # Pantry idempotency keys and Arena handles (use fullmatch: "$" allows a "\n").
 _RID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+_QUEST_RID_RE = re.compile(r"^(quest|ach):[a-z0-9_]+:.{1,60}$")
 _HANDLE_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 ARENA_ROOM_POSTS = (
@@ -3234,6 +3235,32 @@ def pantry_body(action, body):
     return clean, None
 
 
+_QUEST_KINDS = ("quest", "achievement")
+_QUEST_TIERS = ("bronze", "silver", "gold")
+
+
+def _quest_reward(body):
+    """Validate + forward a quest/achievement reward claim to the Arena."""
+    body = body if isinstance(body, dict) else {}
+    rid = body.get("requestId")
+    if not (isinstance(rid, str) and _QUEST_RID_RE.fullmatch(rid)):
+        return 400, {"error": "invalid requestId"}
+    kind = body.get("kind")
+    if kind not in _QUEST_KINDS:
+        return 400, {"error": "kind must be quest or achievement"}
+    quest_id = body.get("questId")
+    if not (isinstance(quest_id, str) and 1 <= len(quest_id) <= 40):
+        return 400, {"error": "invalid questId"}
+    tier = body.get("tier")
+    if tier is not None and tier not in _QUEST_TIERS:
+        return 400, {"error": "invalid tier"}
+    coins = body.get("coins")
+    if not _int_in(coins, 1, 15):
+        return 400, {"error": "coins must be 1-15"}
+    code, resp = arena.quest_reward(rid, kind, quest_id, tier, coins)
+    return (code or 502), resp
+
+
 def _overlay_food_effects(resp):
     """Stamp the LOCAL effect of each food onto a server catalog, so the page
     always previews the effect that will actually apply here."""
@@ -3513,6 +3540,7 @@ POST_PATHS = (
     "/api/arena/nudge",
     "/api/arena/pantry/claim", "/api/arena/pantry/buy",
     "/api/arena/pantry/eat", "/api/arena/pantry/give",
+    "/api/arena/pantry/reward",
 ) + ARENA_ROOM_POSTS
 
 
@@ -3986,6 +4014,8 @@ class Handler(BaseHTTPRequestHandler):
                 return arena.send_nudge(to.strip(), note=body.get("note", ""))
             if path.startswith("/api/arena/pantry/"):
                 action = path[len("/api/arena/pantry/"):]
+                if action == "reward":
+                    return _quest_reward(body)
                 if action == "eat":
                     return pantry_eat(body)
                 clean, err = pantry_body(action, body)

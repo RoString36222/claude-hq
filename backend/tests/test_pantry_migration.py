@@ -34,8 +34,8 @@ def test_upgrade_head_creates_the_pantry(tmp_path):
     alembic(db, "upgrade", "head")
     tables = schema(db)
     assert PANTRY_TABLES <= set(tables)
-    assert "uq_poke_ledger_user_request" in tables["poke_ledger"]
-    assert "CHECK (op IN ('claim','buy','eat','give'))" in tables["poke_ledger"]
+    assert "UNIQUE (user_id, request_id)" in tables["poke_ledger"]
+    assert "CHECK (op IN ('claim','buy','eat','give','quest'))" in tables["poke_ledger"]
     assert "ON DELETE SET NULL" in tables["poke_ledger"]
     assert "uq_poke_balances_user_item" in tables["poke_balances"]
     assert "CHECK (qty >= 0)" in tables["poke_balances"]
@@ -64,10 +64,10 @@ def test_upgrade_over_tables_create_all_already_built(tmp_path):
         f"Base.metadata.create_all(sa.create_engine('sqlite:///{db}'))")
     assert PANTRY_TABLES <= set(schema(db))
     alembic(db, "upgrade", "head")
-    assert "6f838c2049e2" in alembic(db, "current")
+    assert "b3c4d5e6f7a8" in alembic(db, "current")
 
 
 def test_single_head(tmp_path):
     heads = [line for line in alembic(tmp_path / "m.db", "heads").splitlines() if line.strip()]
     assert len(heads) == 1, heads
-    assert heads[0].startswith("6f838c2049e2")
+    assert heads[0].startswith("b3c4d5e6f7a8")

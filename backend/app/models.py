@@ -238,7 +238,7 @@ class PokeLedger(Base):
     __tablename__ = "poke_ledger"
     __table_args__ = (
         UniqueConstraint("user_id", "request_id", name="uq_poke_ledger_user_request"),
-        CheckConstraint("op IN ('claim','buy','eat','give')", name="ck_poke_ledger_op"),
+        CheckConstraint("op IN ('claim','buy','eat','give','quest')", name="ck_poke_ledger_op"),
         CheckConstraint("qty >= 0", name="ck_poke_ledger_qty_nonneg"),
         CheckConstraint("coins >= 0", name="ck_poke_ledger_coins_nonneg"),
         Index("ix_poke_ledger_user_date", "user_id", "op_date"),

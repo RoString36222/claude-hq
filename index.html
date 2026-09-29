@@ -886,6 +886,26 @@ html.hq-calm .fz-ko .pokeimg,html.hq-calm .fz-ko .mon-svg,html.hq-calm .fz-ko .t
 .quest-bar>span{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--brand),var(--brand2));transition:width .5s var(--ease)}
 .quest-card.done .quest-bar>span{background:var(--good)}
 .quest-nums{display:flex;justify-content:space-between;font:11.5px var(--mono);color:var(--muted)}
+.quest-coin{display:inline-flex;align-items:center;gap:3px;font:600 11px var(--mono);background:var(--brand);color:#fff;padding:2px 7px;border-radius:999px;white-space:nowrap}
+.quest-card.done .quest-coin{background:var(--good)}
+.quest-claim{display:inline-flex;align-items:center;gap:3px;font:600 11.5px/1 var(--sans);background:var(--brand);color:#fff;border:none;border-radius:6px;padding:4px 10px;cursor:pointer;white-space:nowrap;transition:opacity .15s}
+.quest-claim:hover{opacity:.85}
+.quest-claimed{color:var(--good);font:600 11px var(--mono)}
+.quest-noarena{font:11px/1.3 var(--sans);color:var(--muted);text-align:center;padding:6px 0}
+.ach-card{border:1px solid var(--line);border-radius:10px;padding:12px 13px;background:var(--panel2);display:flex;flex-direction:column;gap:6px}
+.ach-top{display:flex;align-items:center;gap:8px}
+.ach-icon{font-size:20px;flex:none}
+.ach-name{font-weight:650;font-size:13px;flex:1;min-width:0}
+.ach-tiers{display:flex;gap:6px;flex-wrap:wrap}
+.ach-tier{display:inline-flex;align-items:center;gap:3px;font:600 11px var(--mono);padding:2px 7px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.ach-tier.earned{border-color:var(--good);color:var(--good);background:var(--goodbg)}
+.ach-tier.claimable{border-color:var(--brand);color:var(--brand);cursor:pointer;animation:ach-pulse 1.5s ease-in-out infinite}
+@keyframes ach-pulse{0%,100%{opacity:1}50%{opacity:.6}}
+html.hq-calm .ach-tier.claimable,html.hq-calm .ach-tier.claimable{animation:none}
+@media(prefers-reduced-motion:reduce){:root:not(.hq-nocalm) .ach-tier.claimable{animation:none}}
+.ach-desc{font:11.5px/1.3 var(--sans);color:var(--muted)}
+.ach-prog{height:5px;border-radius:999px;background:var(--heat0);overflow:hidden}
+.ach-prog>span{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--brand),var(--brand2));transition:width .5s var(--ease)}
 
 /* =================== drawer =================== */
 .backdrop{position:fixed;inset:0;background:var(--scrim);opacity:0;pointer-events:none;transition:opacity var(--t-med);z-index:40;
@@ -7629,62 +7649,280 @@ $("projectBack").addEventListener("click",function(e){ if(e.target===this) close
 
 /* ================= v7: quests view ================= */
 var QUESTS_HIST=null, QUESTS_DEX=null, questsTimer=null;
+
+var DAILY_POOL=[
+  {id:"d_prompts_10",   title:"Send 10 prompts",          ic:"💬", target:10,  metric:"todayPrompts",    coins:2},
+  {id:"d_prompts_25",   title:"Send 25 prompts",          ic:"💬", target:25,  metric:"todayPrompts",    coins:3},
+  {id:"d_prompts_50",   title:"Send 50 prompts",          ic:"💬", target:50,  metric:"todayPrompts",    coins:5},
+  {id:"d_tools_50",     title:"Use 50 tools",             ic:"🛠️", target:50,  metric:"todayTools",  coins:2},
+  {id:"d_tools_150",    title:"Use 150 tools",            ic:"🛠️", target:150, metric:"todayTools",  coins:3},
+  {id:"d_tools_300",    title:"Use 300 tools",            ic:"🛠️", target:300, metric:"todayTools",  coins:5},
+  {id:"d_sessions_3",   title:"Use 3 sessions",           ic:"📂", target:3,   metric:"todayActiveSessions", coins:2},
+  {id:"d_sessions_5",   title:"Use 5 sessions",           ic:"📂", target:5,   metric:"todayActiveSessions", coins:3},
+  {id:"d_active",       title:"Be active today",          ic:"🔥", target:1,   metric:"todayActive",     coins:1},
+  {id:"d_artifacts_1",  title:"Create an artifact",       ic:"🎨", target:1,   metric:"todayArtifacts",  coins:2},
+  {id:"d_artifacts_3",  title:"Create 3 artifacts",       ic:"🎨", target:3,   metric:"todayArtifacts",  coins:3},
+  {id:"d_feed_creature",title:"Feed a creature",          ic:"🍎", target:1,   metric:"todayFed",        coins:1}
+];
+var WEEKLY_POOL=[
+  {id:"w_active_5",    title:"Active 5 days this week",    ic:"📅", target:5,   metric:"weekActiveDays",  coins:5},
+  {id:"w_active_7",    title:"Active every day this week", ic:"📅", target:7,   metric:"weekActiveDays",  coins:8},
+  {id:"w_prompts_100", title:"100 prompts this week",      ic:"💬", target:100, metric:"weekPrompts",     coins:5},
+  {id:"w_prompts_250", title:"250 prompts this week",      ic:"💬", target:250, metric:"weekPrompts",     coins:8},
+  {id:"w_tools_500",   title:"500 tool calls this week",   ic:"🛠️", target:500, metric:"weekTools", coins:5},
+  {id:"w_streak_5",    title:"Hit a 5-day streak",         ic:"🔥", target:5,   metric:"streak",          coins:5},
+  {id:"w_streak_7",    title:"Hit a 7-day streak",         ic:"🔥", target:7,   metric:"streak",          coins:8},
+  {id:"w_folders_3",   title:"Work in 3 projects",         ic:"🌐", target:3,   metric:"weekFolders",     coins:3}
+];
+var ACH_CATALOG=[
+  {id:"a_first_prompt",name:"First Steps",   desc:"Send your first prompt",        ic:"👣",
+    tiers:[{tier:"bronze",target:1,   metric:"totalPrompts",coins:2}]},
+  {id:"a_prompts",     name:"Chatterbox",    desc:"Send prompts",                  ic:"💬",
+    tiers:[{tier:"bronze",target:100,metric:"totalPrompts",coins:3},{tier:"silver",target:500,metric:"totalPrompts",coins:5},{tier:"gold",target:2000,metric:"totalPrompts",coins:10}]},
+  {id:"a_tools",       name:"Tool Smith",    desc:"Use tools",                     ic:"🛠️",
+    tiers:[{tier:"bronze",target:500,metric:"totalTools",coins:3},{tier:"silver",target:2000,metric:"totalTools",coins:5},{tier:"gold",target:10000,metric:"totalTools",coins:10}]},
+  {id:"a_streak",      name:"Streak Keeper", desc:"Maintain a streak",             ic:"🔥",
+    tiers:[{tier:"bronze",target:5,metric:"bestStreak",coins:3},{tier:"silver",target:14,metric:"bestStreak",coins:8},{tier:"gold",target:30,metric:"bestStreak",coins:15}]},
+  {id:"a_active_days", name:"Marathoner",    desc:"Be active on many days",        ic:"🏃",
+    tiers:[{tier:"bronze",target:10,metric:"activeDays",coins:3},{tier:"silver",target:30,metric:"activeDays",coins:8},{tier:"gold",target:60,metric:"activeDays",coins:15}]},
+  {id:"a_catch",       name:"Collector",     desc:"Catch creatures",               ic:"📕",
+    tiers:[{tier:"bronze",target:10,metric:"caughtCount",coins:3},{tier:"silver",target:25,metric:"caughtCount",coins:5},{tier:"gold",target:48,metric:"caughtCount",coins:15}]},
+  {id:"a_shiny",       name:"Shiny Hunter",  desc:"Find shiny creatures",          ic:"✦",
+    tiers:[{tier:"bronze",target:1,metric:"shinyCount",coins:3},{tier:"silver",target:3,metric:"shinyCount",coins:5},{tier:"gold",target:5,metric:"shinyCount",coins:10}]},
+  {id:"a_evolve",      name:"Breeder",       desc:"Evolve creatures to Apex",      ic:"🧬",
+    tiers:[{tier:"bronze",target:1,metric:"apexCount",coins:3},{tier:"silver",target:5,metric:"apexCount",coins:8},{tier:"gold",target:15,metric:"apexCount",coins:15}]},
+  {id:"a_level",       name:"Rank Up",       desc:"Reach trainer levels",          ic:"⭐",
+    tiers:[{tier:"bronze",target:5,metric:"level",coins:3},{tier:"silver",target:12,metric:"level",coins:5},{tier:"gold",target:20,metric:"level",coins:15}]},
+  {id:"a_artifacts",   name:"Artificer",     desc:"Create artifacts",              ic:"🎨",
+    tiers:[{tier:"bronze",target:10,metric:"totalArtifacts",coins:3},{tier:"silver",target:50,metric:"totalArtifacts",coins:5},{tier:"gold",target:200,metric:"totalArtifacts",coins:10}]},
+  {id:"a_night_owl",   name:"Night Owl",     desc:"Code between midnight and 5am", ic:"🦉",
+    tiers:[{tier:"bronze",target:1,metric:"nightOwl",coins:3}]},
+  {id:"a_polyglot",    name:"Polyglot",      desc:"Work in many project folders",  ic:"🌐",
+    tiers:[{tier:"bronze",target:5,metric:"distinctFolders",coins:3},{tier:"silver",target:10,metric:"distinctFolders",coins:5}]},
+  {id:"a_gift",        name:"Generous",      desc:"Gift coins or food to friends", ic:"🎁",
+    tiers:[{tier:"bronze",target:1,metric:"totalGifts",coins:2},{tier:"silver",target:10,metric:"totalGifts",coins:5},{tier:"gold",target:50,metric:"totalGifts",coins:10}]}
+];
+
+function questClaimsLoad(){
+  try{ var raw=localStorage.getItem("hq_quest_claims"); return raw?JSON.parse(raw):{}; }catch(e){ return {}; }
+}
+function questClaimsSave(obj){
+  try{ localStorage.setItem("hq_quest_claims",JSON.stringify(obj)); }catch(e){}
+}
+function questClaimsPrune(obj){
+  var now=new Date(), cutD=new Date(now-7*864e5).toISOString().slice(0,10), cutW=new Date(now-28*864e5).toISOString().slice(0,10);
+  if(obj.daily){ Object.keys(obj.daily).forEach(function(k){ if(k<cutD) delete obj.daily[k]; }); }
+  if(obj.weekly){ Object.keys(obj.weekly).forEach(function(k){ if(k<cutW) delete obj.weekly[k]; }); }
+  return obj;
+}
+
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+function isoWeekStr(){
+  var d=new Date(), day=d.getUTCDay()||7;
+  d.setUTCDate(d.getUTCDate()+4-day);
+  var yr=d.getUTCFullYear();
+  var jan1=new Date(Date.UTC(yr,0,1));
+  var wk=Math.ceil(((d-jan1)/864e5+1)/7);
+  return yr+"-W"+(wk<10?"0":"")+wk;
+}
+
+function pickQuests(pool, seed, count){
+  var rng=mulberry32(seed), picked=[], prefixes={};
+  var order=pool.map(function(_,i){return i;});
+  for(var i=order.length-1;i>0;i--){ var j=Math.floor(rng()*(i+1)); var t=order[i]; order[i]=order[j]; order[j]=t; }
+  for(var k=0;k<order.length&&picked.length<count;k++){
+    var q=pool[order[k]], pfx=q.id.replace(/_[^_]*$/,"");
+    if(!prefixes[pfx]){ prefixes[pfx]=1; picked.push(q); }
+  }
+  return picked;
+}
+
+function questMetric(m, hist, dex, season){
+  var tt=season.totals||{}, fl=season.folderLeaderboard||[];
+  var todayP=0, todayT=0, todayA=0;
+  if(hist && hist.daily && hist.daily.length){
+    var last=hist.daily[hist.daily.length-1]||{};
+    todayP=last.prompts||0; todayT=last.tools||0; todayA=last.artifacts||0;
+  }
+  if(m==="todayPrompts") return todayP;
+  if(m==="todayTools") return todayT;
+  if(m==="todayArtifacts") return todayA;
+  if(m==="todayActive") return todayP>0?1:0;
+  if(m==="todayActiveSessions"){
+    var ss=(STATE&&STATE.sessions)||[], c=0, dayStart=new Date(todayStr()+"T00:00:00Z").getTime();
+    ss.forEach(function(s){ if(s.lastActivity && new Date(s.lastActivity).getTime()>=dayStart) c++; });
+    return c;
+  }
+  if(m==="todayFed"){
+    try{ var ml=JSON.parse(localStorage.getItem("hq_meals_today")||"0"); return ml||0; }catch(e){ return 0; }
+  }
+  if(m==="weekActiveDays"){
+    if(hist && hist.heatmap && hist.heatmap.length){
+      var n=0; hist.heatmap.slice(-7).forEach(function(c){ if((c.count||0)>0||(c.level||0)>0) n++; }); return n;
+    }
+    return 0;
+  }
+  if(m==="weekPrompts"){
+    if(hist && hist.daily) return hist.daily.slice(-7).reduce(function(s,d){return s+(d.prompts||0);},0);
+    return 0;
+  }
+  if(m==="weekTools"){
+    if(hist && hist.daily) return hist.daily.slice(-7).reduce(function(s,d){return s+(d.tools||0);},0);
+    return 0;
+  }
+  if(m==="weekFolders") return fl.length;
+  if(m==="streak") return season.streak||0;
+  if(m==="bestStreak") return season.bestStreak||0;
+  if(m==="totalPrompts") return tt.prompts||0;
+  if(m==="totalTools") return tt.tools||0;
+  if(m==="totalArtifacts") return tt.artifacts||0;
+  if(m==="activeDays") return tt.activeDays||0;
+  if(m==="level") return season.level||0;
+  if(m==="caughtCount") return (dex&&(dex.caughtCount!=null?dex.caughtCount:dex.caught))||0;
+  if(m==="shinyCount") return (dex&&dex.shinyCount)||0;
+  if(m==="apexCount"){
+    if(!dex||!dex.entries) return 0;
+    var n=0; (dex.entries||[]).forEach(function(e){ if(e.stage==="Apex") n++; }); return n;
+  }
+  if(m==="nightOwl"){
+    var hr=new Date().getHours(); return (hr>=0&&hr<5&&todayP>0)?1:0;
+  }
+  if(m==="distinctFolders") return fl.length;
+  if(m==="totalGifts"){
+    var j=PANTRY&&PANTRY.j; if(!j) return 0;
+    try{ var ledger=j.recentGifts||[]; return ledger.length; }catch(e){ return 0; }
+  }
+  return 0;
+}
+
+var QUEST_CLAIMING={};
+function questClaim(questId, kind, tier, coins, requestId, btn){
+  if(QUEST_CLAIMING[requestId]) return;
+  QUEST_CLAIMING[requestId]=true;
+  btn.disabled=true; btn.textContent="Claiming…";
+  arenaPost("/api/arena/pantry/reward",{
+    requestId:requestId, kind:kind, questId:questId, tier:tier, coins:coins
+  }).then(function(res){
+    delete QUEST_CLAIMING[requestId];
+    if(res.ok){
+      var claims=questClaimsLoad();
+      if(kind==="quest"){
+        var isWeekly=questId.charAt(0)==="w";
+        var bucket=isWeekly?"weekly":"daily";
+        var key=isWeekly?isoWeekStr():todayStr();
+        if(!claims[bucket]) claims[bucket]={};
+        if(!claims[bucket][key]) claims[bucket][key]={};
+        claims[bucket][key][questId]={done:true,claimed:true,claimedAt:new Date().toISOString()};
+      } else {
+        if(!claims.achievements) claims.achievements={};
+        claims.achievements[questId]={tier:tier,claimed:true,claimedAt:new Date().toISOString()};
+      }
+      questClaimsSave(claims);
+      if(PANTRY&&PANTRY.j&&res.j&&res.j.coins!=null) PANTRY.j.coins=res.j.coins;
+      toast("🪙 +"+(res.j&&res.j.reward||coins)+" Poke Coins!", "good");
+      renderQuests();
+    } else {
+      var msg=(res.j&&res.j.detail)||"Claim failed";
+      if(res.status===429) msg="Too many rewards today";
+      toast(msg, "warn");
+      btn.disabled=false; btn.textContent="Claim 🪙 "+coins;
+    }
+  }).catch(function(){
+    delete QUEST_CLAIMING[requestId];
+    btn.disabled=false; btn.textContent="Claim 🪙 "+coins;
+    toast("Network error", "warn");
+  });
+}
+
 function loadQuests(){
-  renderQuests();  // paint immediately from whatever we already have (STATE/TRAINER_DEX)
+  renderQuests();
   fetch('/api/history',{cache:"no-store"}).then(function(r){ return r.ok?r.json():null; })
     .then(function(d){ if(d){ QUESTS_HIST=d; renderQuests(); } }).catch(function(){});
   fetch('/api/pokedex',{cache:"no-store"}).then(function(r){ return r.ok?r.json():null; })
     .then(function(d){ if(d){ QUESTS_DEX=d; renderQuests(); } }).catch(function(){});
 }
+
 function questCard(q){
   var cur=q.cur||0, target=q.target||1;
   var pct=q.pct!=null?q.pct:Math.max(0,Math.min(100,Math.round(cur/target*100)));
   var done=q.done!=null?q.done:(cur>=target);
+  var claimed=!!q.claimed;
   var card=el("div","quest-card"+(done?" done":""));
   var top=el("div","quest-top");
   var ic=el("span"); ic.textContent=q.ic||"⭐"; top.appendChild(ic);
   var ti=el("div","quest-title2"); ti.textContent=q.title||""; top.appendChild(ti);
-  if(done){ var ck=el("span","quest-check"); ck.textContent="✓"; top.appendChild(ck); }
+  if(q.coins && !claimed){
+    var cb=el("span","quest-coin"); cb.textContent="🪙 "+q.coins; top.appendChild(cb);
+  }
+  if(claimed){ var ck=el("span","quest-claimed"); ck.textContent="🪙 +"+q.coins+" ✓"; top.appendChild(ck); }
+  else if(done && !q.coins){ var ck2=el("span","quest-check"); ck2.textContent="✓"; top.appendChild(ck2); }
   card.appendChild(top);
   var bar=el("div","quest-bar"); var sp=el("span"); sp.style.width=Math.max(0,Math.min(100,pct))+"%"; bar.appendChild(sp); card.appendChild(bar);
   var nums=el("div","quest-nums");
   var left=el("span"); left.textContent=q.curLabel!=null?q.curLabel:(cur.toLocaleString()+" / "+target.toLocaleString());
-  var right=el("span"); right.textContent=(q.sub!=null?q.sub:(pct+"%"));
-  nums.appendChild(left); nums.appendChild(right); card.appendChild(nums);
+  if(done && !claimed && q.coins && q.requestId && PANTRY&&PANTRY.store==="ok"){
+    var btn=el("button","quest-claim"); btn.type="button";
+    btn.textContent="Claim 🪙 "+q.coins;
+    btn.addEventListener("click",function(ev){
+      ev.stopPropagation();
+      questClaim(q.questId||q.id, q.kind||"quest", q.tier||null, q.coins, q.requestId, btn);
+    });
+    nums.appendChild(left); nums.appendChild(btn);
+  } else {
+    var right=el("span"); right.textContent=(q.sub!=null?q.sub:(pct+"%"));
+    nums.appendChild(left); nums.appendChild(right);
+  }
+  card.appendChild(nums);
   return card;
 }
+
 function renderQuests(){
   var season=(STATE&&STATE.season)||{};
   var hist=QUESTS_HIST;
   var dex=QUESTS_DEX||TRAINER_DEX;
-  // ---- today's prompts + tools (prefer history.daily last entry, else season totals) ----
-  var todayPrompts=0, todayTools=0;
-  if(hist && hist.daily && hist.daily.length){
-    var last=hist.daily[hist.daily.length-1]||{};
-    todayPrompts=last.prompts||0; todayTools=last.tools||0;
-  }
-  // ---- daily ----
+  var claims=questClaimsPrune(questClaimsLoad());
+  questClaimsSave(claims);
+  var today=todayStr(), week=isoWeekStr();
+  var arenaOk=PANTRY&&PANTRY.store==="ok";
+  var dailyClaims=(claims.daily&&claims.daily[today])||{};
+  var weeklyClaims=(claims.weekly&&claims.weekly[week])||{};
+  var achClaims=claims.achievements||{};
+
+  // ---- header hint ----
+  var sub=$("questsSub");
+  if(sub) sub.textContent=arenaOk?"Daily & weekly goals — earn Poke Coins":"Connect to Arena to earn Poke Coins";
+
+  // ---- daily quests (3 from pool, seeded by date) ----
+  var dailySeed=hashStr("quest:daily:"+today);
+  var dailyQuests=pickQuests(DAILY_POOL, dailySeed, 3);
   var dw=$("questsDaily"); if(dw){ dw.innerHTML="";
-    [ {ic:"💬", title:"Prompts today", cur:todayPrompts, target:25},
-      {ic:"🛠️", title:"Tool calls today", cur:todayTools, target:150},
-      {ic:"🔥", title:"Stay active (≥1 prompt)", cur:Math.min(1,todayPrompts), target:1,
-        curLabel:(todayPrompts>0?"active":"not yet"), sub:(todayPrompts>0?"done":"send a prompt")}
-    ].forEach(function(q){ dw.appendChild(questCard(q)); });
+    dailyQuests.forEach(function(q){
+      var cur=questMetric(q.metric, hist, dex, season);
+      var cl=dailyClaims[q.id];
+      dw.appendChild(questCard({
+        id:q.id, questId:q.id, ic:q.ic, title:q.title, cur:cur, target:q.target,
+        coins:q.coins, kind:"quest", claimed:cl&&cl.claimed,
+        requestId:"quest:"+q.id+":"+today
+      }));
+    });
   }
-  // ---- weekly ----
-  var activeThisWeek=0;
-  if(hist && hist.heatmap && hist.heatmap.length){
-    hist.heatmap.slice(-7).forEach(function(c){ if((c.count||0)>0 || (c.level||0)>0) activeThisWeek++; });
-  }
-  var streak=season.streak!=null?season.streak:0;
-  var streakTarget=Math.max(7, season.bestStreak||0);
+
+  // ---- weekly quests (2 from pool, seeded by ISO week) ----
+  var weeklySeed=hashStr("quest:weekly:"+week);
+  var weeklyQuests=pickQuests(WEEKLY_POOL, weeklySeed, 2);
   var ww=$("questsWeekly"); if(ww){ ww.innerHTML="";
-    [ {ic:"📅", title:"Active days this week", cur:activeThisWeek, target:5},
-      {ic:"🔥", title:"Keep your streak", cur:streak, target:streakTarget,
-        curLabel:streak+" day"+(streak===1?"":"s"), sub:(season.bestStreak!=null?"best "+season.bestStreak:"") }
-    ].forEach(function(q){ ww.appendChild(questCard(q)); });
+    weeklyQuests.forEach(function(q){
+      var cur=questMetric(q.metric, hist, dex, season);
+      var cl=weeklyClaims[q.id];
+      ww.appendChild(questCard({
+        id:q.id, questId:q.id, ic:q.ic, title:q.title, cur:cur, target:q.target,
+        coins:q.coins, kind:"quest", claimed:cl&&cl.claimed,
+        requestId:"quest:"+q.id+":"+week
+      }));
+    });
   }
-  // ---- collection ----
+
+  // ---- collection (no coins — progression trackers) ----
   var caught=(dex&&(dex.caughtCount!=null?dex.caughtCount:dex.caught))||0;
   var total=(dex&&dex.total)||48;
   var shiny=(dex&&dex.shinyCount)||0;
@@ -7697,24 +7935,60 @@ function renderQuests(){
         curLabel:"Lv "+lvl+" → "+(lvl+1), sub:lvlPct+"% to next", done:false}
     ].forEach(function(q){ cw.appendChild(questCard(q)); });
   }
-  // ---- achievements grid (reuse .ach-strip/.badge styling) ----
-  var ach=season.achievements||[];
+
+  // ---- achievements (tiered cards with claim buttons) ----
   var ag=$("questsAch"); if(ag){ ag.innerHTML="";
-    var un=0;
-    ach.forEach(function(a){
-      if(a.unlocked) un++;
-      var b=el("div","badge "+(a.unlocked?"on":"off"));
-      var ic=el("div","ic"); ic.textContent=a.icon||"⭐"; b.appendChild(ic);
-      var bd=el("div"); bd.style.minWidth="0"; bd.style.flex="1";
-      var nm=el("div","nm"); nm.textContent=a.name||"";
-      if(a.unlocked){ var ck=el("span","check"); ck.textContent="✓"; nm.appendChild(ck); }
-      bd.appendChild(nm);
-      var ds=el("div","ds"); ds.textContent=a.desc||""; bd.appendChild(ds);
-      if(!a.unlocked){ var pb=el("div","pbar"); var sp=el("span");
-        sp.style.width=Math.round(Math.max(0,Math.min(1,a.progress||0))*100)+"%"; pb.appendChild(sp); bd.appendChild(pb); }
-      b.appendChild(bd); ag.appendChild(b);
+    var totalEarned=0;
+    ACH_CATALOG.forEach(function(a){
+      var card=el("div","ach-card");
+      var top=el("div","ach-top");
+      var aic=el("span","ach-icon"); aic.textContent=a.ic; top.appendChild(aic);
+      var nm=el("span","ach-name"); nm.textContent=a.name; top.appendChild(nm);
+      card.appendChild(top);
+      var desc=el("div","ach-desc"); desc.textContent=a.desc; card.appendChild(desc);
+      var tierRow=el("div","ach-tiers");
+      var claimedTier=achClaims[a.id];
+      var TIER_IC={bronze:"🥉",silver:"🥈",gold:"🥇"};
+      var highestEarned=null;
+      a.tiers.forEach(function(t){
+        var val=questMetric(t.metric, hist, dex, season);
+        var reached=val>=t.target;
+        var isClaimed=claimedTier&&(claimedTier.tier===t.tier||
+          (t.tier==="bronze"&&(claimedTier.tier==="silver"||claimedTier.tier==="gold"))||
+          (t.tier==="silver"&&claimedTier.tier==="gold"));
+        if(isClaimed){ totalEarned+=t.coins; highestEarned=t.tier; }
+        var pill=el(reached&&!isClaimed&&arenaOk?"button":"span",
+          "ach-tier"+(isClaimed?" earned":"")+(reached&&!isClaimed&&arenaOk?" claimable":""));
+        if(reached&&!isClaimed&&arenaOk) pill.type="button";
+        pill.textContent=(isClaimed?TIER_IC[t.tier]+" ":"")+(reached&&!isClaimed?"Claim 🪙 "+t.coins:t.tier+" "+t.target);
+        if(reached&&!isClaimed&&arenaOk){
+          (function(achId,tier,coins){
+            pill.addEventListener("click",function(){
+              questClaim(achId,"achievement",tier,coins,"ach:"+achId+":"+tier,pill);
+            });
+          })(a.id,t.tier,t.coins);
+        }
+        tierRow.appendChild(pill);
+      });
+      card.appendChild(tierRow);
+      var nextTier=null;
+      a.tiers.forEach(function(t){
+        if(!nextTier){
+          var isClaimed=claimedTier&&(claimedTier.tier===t.tier||
+            (t.tier==="bronze"&&(claimedTier.tier==="silver"||claimedTier.tier==="gold"))||
+            (t.tier==="silver"&&claimedTier.tier==="gold"));
+          var val=questMetric(t.metric, hist, dex, season);
+          if(!isClaimed&&val<t.target) nextTier={metric:t.metric,target:t.target,cur:val};
+        }
+      });
+      if(nextTier){
+        var prog=el("div","ach-prog"); var ps=el("span");
+        ps.style.width=Math.max(0,Math.min(100,Math.round(nextTier.cur/nextTier.target*100)))+"%";
+        prog.appendChild(ps); card.appendChild(prog);
+      }
+      ag.appendChild(card);
     });
-    $("questsAchSub").textContent = ach.length ? (un+"/"+ach.length+" unlocked") : "";
+    $("questsAchSub").textContent=totalEarned>0?("🪙 "+totalEarned+" earned"):"";
   }
 }
 questsTimer=setInterval(function(){ if(VIEW==="quests") loadQuests(); }, 30000);

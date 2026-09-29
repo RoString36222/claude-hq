@@ -20,7 +20,7 @@ set -euo pipefail
 
 DIR="${ARENA_DIR:-/root/claude-hq}"
 PANEL_DOMAIN="${PANEL_DOMAIN:?set PANEL_DOMAIN}"
-ALLOWED="${PANEL_ALLOWED_USERS:-RoString36222}"   # repo owner is the default; override/extend with PANEL_ALLOWED_USERS=alice,bob
+ALLOWED="${PANEL_ALLOWED_USERS:?set PANEL_ALLOWED_USERS, e.g. alice,bob}"
 ARENA_DOMAIN="${ARENA_DOMAIN:?set ARENA_DOMAIN}"
 ENVFILE=/etc/arena-panel.env
 

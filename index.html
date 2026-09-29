@@ -698,6 +698,11 @@ html.hq-calm .vil-march{animation:none}
 .evo-creature{position:relative;width:min(48vmin,320px);height:min(48vmin,320px);display:grid;place-items:center;
   filter:drop-shadow(0 0 40px rgba(140,110,255,.7));animation:evopop .6s cubic-bezier(.2,.9,.3,1.4)}
 .evo-creature img,.evo-creature .mon-svg{width:100%;height:100%;object-fit:contain;image-rendering:auto}
+/* Real Clash troop art fills its frame to the bottom edge (unlike the padded Pokémon
+   sprites), so in the evolution splash its feet ran into the title. Shrink troop art a
+   touch, keep it top-weighted, and drop the march-drift here so it can't overlap the text. */
+#evoSplash .evo-creature .troop-img{width:82%;height:82%;align-self:start;animation:none;transform:none}
+#evoSplash .evo-inner{gap:20px}
 @keyframes evopop{0%{transform:scale(.2);opacity:0}60%{transform:scale(1.12)}100%{transform:scale(1);opacity:1}}
 .evo-title{font-size:30px;font-weight:800;color:#fff}
 .evo-sub{font-size:15px;color:#cbb8ff}

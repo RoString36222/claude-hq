@@ -10587,6 +10587,14 @@ function voiceVideoOff(){
    numbers on screen and the numbers in the database can never disagree about
    who owns the rule. */
 var CALI = { window:"season", rid:null, busy:false };
+// Three different things go wrong here and only one of them is the host's
+// fault, so say which. The pantry's helpers already tell the shapes apart:
+// dashboard.py's own refusals carry "error" and no "detail" (pantryLocalReject),
+// a stale local proxy 404s with {"error":"not found"} and an Arena without the
+// routes 404s with a bare "Not Found" (pantryMissState).
+var CALI_RELOAD_MSG = "Claude HQ restarted since this page loaded. Reload the page to log an order \u2014 what you typed stays in the form.";
+var CALI_RESTART_MSG = "Restart Claude HQ, then reload this page, to finish updating it: the copy that\u2019s running is older than this page and has no taco board yet.";
+var CALI_UNSUPPORTED_MSG = "This Arena server doesn\u2019t have the taco board yet \u2014 ask whoever hosts it to update it.";
 // Wire field -> column label. Mirrors arena.CALI_TACO_KEYS.
 var CALI_VARIANTS = [["mildHard","Mild hard"],["mildSoft","Mild soft"],
                      ["wildHard","Wild hard"],["wildSoft","Wild soft"]];
@@ -10725,10 +10733,16 @@ function caliSubmit(){
   arenaPost("/api/arena/cali/order", body).then(function(res){
     CALI.busy = false; if(btn) btn.disabled = false;
     if(!res.ok){
-      if(res.status === 404 && !(res.j && res.j.detail && /no such person/.test(res.j.detail))){
-        caliSay("This Arena server doesn’t have the taco board yet — ask whoever hosts it to update it.", "err");
-        return;
-      }
+      // dashboard.py turned the POST away itself, so it never reached the
+      // Arena. Usually its CSRF token: it mints a new one every start and this
+      // page only picks one up when it loads. The order is still in the form,
+      // so a reload costs nothing.
+      if(pantryLocalReject(res)){ caliSay(CALI_RELOAD_MSG, "err"); return; }
+      // A stale local proxy and an Arena without these routes both answer 404.
+      // Blaming the host for the first sends someone to the wrong machine.
+      var miss = pantryMissState(res);
+      if(miss === "restart"){ caliSay(CALI_RESTART_MSG, "err"); return; }
+      if(miss === "unsupported"){ caliSay(CALI_UNSUPPORTED_MSG, "err"); return; }
       caliSay((res.j && (res.j.error || res.j.detail)) || "couldn’t log that order", "err");
       return;
     }
@@ -10755,8 +10769,12 @@ function caliLoadBoard(){
         body.innerHTML = '<tr><td colspan="9" class="muted"></td></tr>';
         body.querySelector("td").textContent = text;
       };
-      // A server without these routes answers a bare 404, same as the pantry.
-      if(res.status === 404){ note("This Arena doesn’t have the taco board yet."); return; }
+      // The same 404 split as the write path, and before the generic error line
+      // below: a stale local proxy's {"error":"not found"} would otherwise
+      // print as "not found" and blame nothing in particular.
+      var miss = pantryMissState(res);
+      if(miss === "restart"){ note(CALI_RESTART_MSG); return; }
+      if(miss === "unsupported"){ note(CALI_UNSUPPORTED_MSG); return; }
       if(b.error || b.detail){ note(b.error || b.detail); return; }
 
       var sub=$("caliSub");

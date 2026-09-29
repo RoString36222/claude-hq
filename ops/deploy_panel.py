@@ -56,7 +56,14 @@ def _sign(payload: str) -> str:
     return f"{payload}.{mac}"
 
 
-def _verify(token: str) -> str | None:
+def _verify(token: str, purpose: str = "") -> str | None:
+    """Check a signed token, optionally requiring a purpose prefix.
+
+    Purpose-bound tokens carry "<purpose>:" *inside* the signed payload, so a
+    session cookie cannot be replayed as a CSRF token or the reverse. The
+    prefix therefore has to stay in the string the MAC is verified against --
+    stripping it before calling here is what made every CSRF check fail.
+    """
     try:
         payload, mac = token.rsplit(".", 1)
         login, exp = payload.split("|", 1)
@@ -65,6 +72,14 @@ def _verify(token: str) -> str | None:
     if not hmac.compare_digest(mac, hmac.new(SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()):
         return None
     if float(exp) < time.time():
+        return None
+    if purpose:
+        want = purpose + ":"
+        if not login.startswith(want):
+            return None
+        login = login[len(want):]
+    elif ":" in login:
+        # An unprefixed call must not accept a purpose-bound token.
         return None
     # Re-checked on every request: removing a login revokes access immediately.
     return login if login.lower() in ALLOWED else None
@@ -318,7 +333,7 @@ class Handler(BaseHTTPRequestHandler):
         if not login:
             return self._json(401, {"ok": False, "error": "not signed in"})
         token = self.headers.get("X-Panel-Token", "")
-        if not token or _verify(token.replace("csrf:", "", 1)) != login:
+        if not token or _verify(token, "csrf") != login:
             return self._json(403, {"ok": False, "error": "bad CSRF token"})
 
         path = self.path.split("?", 1)[0]

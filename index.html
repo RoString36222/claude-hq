@@ -1246,6 +1246,71 @@ html.hq-calm .ach-tier.claimable,html.hq-calm .ach-tier.claimable{animation:none
 .si-ok.err{color:var(--warn)}
 .store-gifts,.store-privacy{font-size:.86em;margin:12px 0 0}
 .store-state{font-size:.93em;display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0}
+/* Konbini store view */
+.store-view{padding:0 0 32px}
+.konbini{max-width:720px;margin:0 auto}
+.konbini-scene{position:relative;border-radius:14px;overflow:hidden;background:var(--panel);border:1px solid var(--line);margin-bottom:18px}
+.konbini-awning{height:38px;background:repeating-linear-gradient(90deg,var(--brand) 0,var(--brand) 24px,var(--panel) 24px,var(--panel) 48px);border-bottom:2px solid var(--line);position:relative}
+.konbini-sign{position:absolute;left:50%;top:6px;transform:translateX(-50%);background:var(--panel2);border:2px solid var(--gold);border-radius:6px;padding:2px 14px;font:700 .82em/1.5 var(--mono);color:var(--gold);letter-spacing:.05em;white-space:nowrap;text-transform:uppercase}
+.konbini-floor{display:flex;gap:0;min-height:200px;padding:18px 18px 14px;align-items:flex-end}
+.konbini-keeper{flex:0 0 120px;display:flex;flex-direction:column;align-items:center;gap:8px}
+.keeper-wrap{position:relative}
+.keeper-bubble{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:6px 10px;font-size:.79em;color:var(--fg);max-width:140px;text-align:center;position:relative;min-height:2.4em;line-height:1.35}
+.keeper-bubble::after{content:"";position:absolute;bottom:-7px;left:50%;margin-left:-6px;border:6px solid transparent;border-top-color:var(--line)}
+.keeper-bubble::before{content:"";position:absolute;bottom:-5px;left:50%;margin-left:-5px;border:5px solid transparent;border-top-color:var(--panel2);z-index:1}
+.keeper-body{width:64px;height:100px;position:relative;margin:0 auto}
+.keeper-hair{position:absolute;top:0;left:8px;width:48px;height:32px;background:var(--gold);border-radius:24px 24px 0 0}
+.keeper-bangs{position:absolute;top:18px;left:12px;width:40px;height:10px;background:var(--gold);border-radius:0 0 8px 8px}
+.keeper-face{position:absolute;top:14px;left:14px;width:36px;height:30px;background:var(--goldbg);border-radius:50%;border:2px solid var(--gold)}
+.keeper-eye{position:absolute;top:24px;width:5px;height:6px;background:var(--brand);border-radius:50%}
+.keeper-eye.l{left:22px}
+.keeper-eye.r{left:37px}
+.keeper-blush{position:absolute;top:29px;width:8px;height:4px;background:var(--need);border-radius:50%;opacity:.35}
+.keeper-blush.l{left:18px}
+.keeper-blush.r{left:38px}
+.keeper-smile{position:absolute;top:33px;left:27px;width:10px;height:5px;border:2px solid var(--brand);border-top:0;border-radius:0 0 6px 6px;background:transparent}
+.keeper-torso{position:absolute;top:44px;left:12px;width:40px;height:36px;background:var(--brand);border-radius:6px 6px 0 0}
+.keeper-apron{position:absolute;top:52px;left:16px;width:32px;height:30px;background:var(--panel);border-radius:4px 4px 0 0;border:1px solid var(--line);border-bottom:0}
+.keeper-skirt{position:absolute;top:80px;left:14px;width:36px;height:20px;background:var(--brand2);border-radius:0 0 4px 4px}
+.konbini-counter-area{flex:1;min-width:0}
+.konbini-counter{background:var(--panel2);border:2px solid var(--line);border-radius:8px;padding:12px;min-height:120px}
+.konbini-counter-label{font:650 .79em/1 var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px}
+.konbini-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px}
+.konbini-item{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);text-align:center;transition:border-color .15s}
+.konbini-item:hover{border-color:var(--brand)}
+.konbini-item .ki-emoji{font-size:2em;line-height:1}
+.konbini-item .ki-name{font:650 .82em/1.2 var(--sans);color:var(--fg)}
+.konbini-item .ki-price{font:600 .79em/1 var(--mono);color:var(--gold)}
+.konbini-item .ki-eff{font-size:.72em;color:var(--muted);line-height:1.2}
+.konbini-item .ki-own{font-size:.72em;color:var(--faint)}
+.konbini-item .hbtn{margin-top:2px;font-size:.79em;padding:3px 10px}
+.konbini-item .ki-note{font-size:.72em;color:var(--good);min-height:1.2em}
+.konbini-item .ki-note.err{color:var(--warn)}
+html:not(.hq-calm) .konbini-register.kaching{animation:kaching .3s ease}
+@media(prefers-reduced-motion:reduce){.konbini-register.kaching{animation:none}}
+@keyframes kaching{0%{transform:scale(1)}50%{transform:scale(1.15)}100%{transform:scale(1)}}
+.konbini-register{display:inline-flex;align-items:center;gap:4px;font-size:.82em;color:var(--gold);margin-top:8px}
+.konbini-register svg{width:16px;height:16px}
+.konbini-wallet-bar{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap;padding:14px 0}
+.konbini-wallet-bar .kw-coins{font-size:.93em;color:var(--muted);white-space:nowrap}
+.konbini-wallet-bar .kw-coins b{font:700 1.69em/1 var(--mono);color:var(--gold);font-variant-numeric:tabular-nums;margin-right:2px}
+.konbini-wallet-bar .kw-claim{display:inline-flex;align-items:center;gap:6px 10px;flex-wrap:wrap;font-size:.89em;color:var(--muted)}
+.konbini-pantry{margin-top:4px}
+.konbini-pantry-h{font:650 .86em/1.4 var(--sans);color:var(--muted);margin-bottom:6px}
+.konbini-pantry-grid{display:flex;gap:8px;flex-wrap:wrap}
+.konbini-pantry-slot{display:flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);font-size:.86em}
+.konbini-pantry-slot .kps-emoji{font-size:1.2em}
+.konbini-pantry-slot .kps-n{font:650 1em var(--mono);color:var(--fg)}
+.konbini-state{font-size:.93em;color:var(--muted);padding:18px;text-align:center}
+.konbini-privacy{font-size:.82em;color:var(--faint);margin-top:14px}
+.konbini-gifts{font-size:.82em;color:var(--muted);margin-top:8px}
+@media(max-width:600px){
+  .konbini-floor{flex-direction:column;align-items:stretch}
+  .konbini-keeper{flex:none;flex-direction:row;gap:12px}
+  .keeper-wrap{order:1}
+  .keeper-bubble{order:0;max-width:none}
+  .konbini-items{grid-template-columns:repeat(2,1fr)}
+}
 .gift-modal{width:min(440px,100%)}
 .gift-form{gap:14px}
 .setrow.gift-pair{flex-direction:row;flex-wrap:wrap;gap:10px}
@@ -1479,6 +1544,7 @@ html.hq-calm #confetti{display:none!important}
 <symbol id="i-keyboard" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/></symbol>
 <symbol id="i-scroll" viewBox="0 0 24 24"><path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/></symbol>
 <symbol id="i-message" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
+<symbol id="i-store" viewBox="0 0 24 24"><path d="M4 7l3-4h10l3 4H4z"/><path d="M4 7v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7"/><path d="M9 22v-5a3 3 0 0 1 6 0v5"/></symbol>
 </defs></svg>
 
 <div class="app">
@@ -1491,8 +1557,9 @@ html.hq-calm #confetti{display:none!important}
       <button class="viewtab" data-view="pokedex" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-book"/></svg><span class="vt-l">Pokédex</span><span class="vt-k" aria-hidden="true">3</span></button>
       <button class="viewtab" data-view="gym" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-swords"/></svg><span class="vt-l">Gym</span><span class="vt-k" aria-hidden="true">4</span></button>
       <button class="viewtab" data-view="quests" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><span class="vt-l">Quests</span><span class="vt-k" aria-hidden="true">5</span></button>
-      <button class="viewtab" data-view="village" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-castle"/></svg><span class="vt-l">Village</span><span class="vt-k" aria-hidden="true">7</span></button>
-      <button class="viewtab" data-view="arena" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-trophy"/></svg><span class="vt-l">Arena</span><span class="tab-badge hidden" id="arenaUnread" aria-hidden="true"></span><span class="vt-k" aria-hidden="true">6</span></button>
+      <button class="viewtab" data-view="store" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-store"/></svg><span class="vt-l">Store</span><span class="vt-k" aria-hidden="true">6</span></button>
+      <button class="viewtab" data-view="arena" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-trophy"/></svg><span class="vt-l">Arena</span><span class="tab-badge hidden" id="arenaUnread" aria-hidden="true"></span><span class="vt-k" aria-hidden="true">7</span></button>
+      <button class="viewtab" data-view="village" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-castle"/></svg><span class="vt-l">Village</span><span class="vt-k" aria-hidden="true">8</span></button>
     </div>
 
     <div class="side-trainer">
@@ -1838,6 +1905,55 @@ html.hq-calm #confetti{display:none!important}
       <h3 class="section-h"><svg class="i" aria-hidden="true"><use href="#i-award"/></svg>Achievements <span class="muted" id="questsAchSub"></span></h3>
       <div class="ach-strip" id="questsAch"></div>
     </section>
+  </div>
+
+  <div id="storeView" class="store-view hidden" aria-label="Store">
+    <div class="konbini">
+      <div class="konbini-scene">
+        <div class="konbini-awning"><span class="konbini-sign">Poke Mart</span></div>
+        <div class="konbini-floor">
+          <div class="konbini-keeper">
+            <div class="keeper-bubble" id="keeperBubble" aria-live="polite">Irasshaimase!</div>
+            <div class="keeper-wrap">
+              <div class="keeper-body">
+                <div class="keeper-hair"></div>
+                <div class="keeper-bangs"></div>
+                <div class="keeper-face"></div>
+                <div class="keeper-eye l" aria-hidden="true"></div>
+                <div class="keeper-eye r" aria-hidden="true"></div>
+                <div class="keeper-blush l" aria-hidden="true"></div>
+                <div class="keeper-blush r" aria-hidden="true"></div>
+                <div class="keeper-smile" aria-hidden="true"></div>
+                <div class="keeper-torso"></div>
+                <div class="keeper-apron"></div>
+                <div class="keeper-skirt"></div>
+              </div>
+            </div>
+          </div>
+          <div class="konbini-counter-area">
+            <div class="konbini-counter">
+              <div class="konbini-counter-label">Today&rsquo;s menu</div>
+              <div class="konbini-items" id="konbiniItems"></div>
+              <div class="konbini-register" id="konbiniRegister" aria-hidden="true"><span>&#x1FA99;</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="konbini-wallet-bar">
+        <span class="kw-coins"><b id="kwCoins">0</b> / <span id="kwCap">30</span> Poke Coins</span>
+        <span class="kw-claim" id="kwClaim" tabindex="-1"></span>
+      </div>
+      <div class="konbini-pantry" id="konbiniPantry">
+        <div class="konbini-pantry-h">Your pantry</div>
+        <div class="konbini-pantry-grid" id="konbiniPantryGrid"></div>
+      </div>
+      <p class="konbini-gifts hidden" id="konbiniGifts"></p>
+      <p class="konbini-state hidden" id="konbiniState"></p>
+      <p class="konbini-privacy muted">
+        Coins and snacks are kept by the Arena server under your GitHub handle. It sees what you buy, eat or give,
+        never which session ate it: that stays on this machine.
+      </p>
+    </div>
   </div>
 
   <div id="villageView" class="village hidden" aria-label="Village">
@@ -5325,7 +5441,7 @@ function openArenaSection(id, show){
   focusQuiet(w);
   try{ w.scrollIntoView({behavior:calmMode()?"auto":"smooth", block:"start"}); }catch(e){}
 }
-function openStore(){ openArenaSection("arenaStoreWrap", PANTRY.store==="ok"); }
+function openStore(){ closeDrawer(); setView("store"); }
 // The drawer's Buy (shown only when you own none of it). A lost buy of the same kind is replayed
 // first, with its own requestId, so it can't be bought twice. If that replay says the earlier buy
 // had landed, nothing was bought now: then you already have one (done), or you had eaten it and
@@ -5697,7 +5813,7 @@ document.addEventListener("keydown",function(e){
   if(e.key==="/"){ e.preventDefault(); $("search").focus(); }
   else if(e.key==="r"||e.key==="R"){ e.preventDefault(); forceRefresh(); }
   else if(e.key==="?"){ e.preventDefault(); openHelp(); }
-  else if(e.key>="1"&&e.key<="7"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","arena","village"][+e.key-1]); }
+  else if(e.key>="1"&&e.key<="8"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","store","arena","village"][+e.key-1]); }
   // In a voice call, from any view: M mutes, V switches the camera, S shares your screen. Holding a key down
   // doesn't repeat it, and outside a call these keys do nothing.
   else if(VCHAN.on && !e.repeat && (e.key==="m"||e.key==="M")){ e.preventDefault(); voiceToggleMute(); }
@@ -5766,11 +5882,12 @@ var ARENA_STAY = (function(){ try { return localStorage.getItem("hq_arena_stay")
 var ARENA_SHARE_STATUS = (function(){ try { return localStorage.getItem("hq_arena_status") === "1"; } catch(e){ return false; } })();
 // Voice state, also needed by the first setView() (which keeps the lobby socket open while in voice).
 var VCHAN = {on:false, peer:null, stream:null, muted:false, cam:false, screen:false, vidStream:null, vidTile:null, peers:{}, roomId:null, roster:{}, ctx:null, me:null, meter:null};
-var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena")?v:"live"; })();
+var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="store"||v==="arena")?v:"live"; })();
 var VIEW_TITLES = {
   live:["Live","Every Claude session, right now"], analytics:["Analytics","Usage, cost and rhythm over time"],
   pokedex:["Pokédex","Your creature collection"], gym:["Gym","Active sessions scored as a team"],
-  quests:["Quests","Daily, weekly and collection goals"], arena:["Arena","Friends, standings and voice"],
+  quests:["Quests","Daily, weekly and collection goals"], store:["Store","Poke Mart · snacks, coins and supplies"],
+  arena:["Arena","Friends, standings and voice"],
   village:["Village","Your base & army, built from your Claude activity"]
 };
 // The Clash of Clans pack renames the "Pokédex" collection to "Troops" (nav tab + title).
@@ -5793,6 +5910,7 @@ function setView(v){
   var pv=$("pokedexView"); if(pv) pv.classList.toggle("hidden", v!=="pokedex");
   var gv=$("gymView"); if(gv) gv.classList.toggle("hidden", v!=="gym");
   var qv=$("questsView"); if(qv) qv.classList.toggle("hidden", v!=="quests");
+  var stv=$("storeView"); if(stv) stv.classList.toggle("hidden", v!=="store");
   var vv=$("villageView"); if(vv) vv.classList.toggle("hidden", v!=="village");
   var av=$("arenaView"); if(av) av.classList.toggle("hidden", v!=="arena");
   Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
@@ -5804,6 +5922,7 @@ function setView(v){
   if(v==="pokedex") loadPokedex();
   if(v==="gym") renderGym();
   if(v==="quests") loadQuests();
+  if(v==="store") loadStore();
   if(v==="village") renderVillage();
   // The lobby socket stays open on other views while you stay in the lobby, or while you're in voice (it carries it).
   if(v==="arena"){ arenaUnreadClear(); ARENA.nudgeCount={}; loadArena(); } else { arenaRoomFormsClear(); if(!VCHAN.on && !ARENA_STAY) arenaCloseSocket(); }
@@ -8355,7 +8474,7 @@ function loadArena(){
       ARENA.paired = paired;
       $("arenaSetup").classList.toggle("hidden", paired);
       $("arenaBoardWrap").classList.toggle("hidden", !paired);
-      $("arenaStoreWrap").classList.toggle("hidden", !paired);
+      $("arenaStoreWrap").classList.add("hidden");
       $("caliWrap").classList.toggle("hidden", !paired);
       $("arenaLobbyWrap").classList.toggle("hidden", !paired);
       $("arenaChatWrap").classList.toggle("hidden", !paired);
@@ -8478,8 +8597,8 @@ function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; 
 function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
 // Everything that shows coins or snacks, redrawn together.
 function pantryChanged(){
-  renderStore(); refreshDrawerCare(); renderTrainerCard(); arenaGiftButtonsSync();
-  if(GIFT.handle) giftFill(false);
+  renderStore(); if(VIEW==="store") renderKonbini(); refreshDrawerCare(); renderTrainerCard(); arenaGiftButtonsSync();
+  if(typeof GIFT!=="undefined" && GIFT.handle) giftFill(false);
   if(STATE) renderParty(STATE.sessions);   // the card Snack buttons (partySig-guarded, so usually a no-op)
 }
 // Why an open gift dialog had to close: the store is gone, not just unreachable for a moment.
@@ -8497,7 +8616,7 @@ function pantrySetStore(st){
   PANTRY.store=st; PANTRY.rev++;
   // A transient "error" (a background reload that failed) leaves an open gift alone: its own Send
   // says what happened, and closing it would drop the form of a gift that may still be unconfirmed.
-  if(pantryGoneMsg(st) && GIFT.handle){ giftClose(); announce("Gift closed: "+pantryGoneMsg(st)); }
+  if(pantryGoneMsg(st) && typeof GIFT!=="undefined" && GIFT.handle){ giftClose(); announce("Gift closed: "+pantryGoneMsg(st)); }
   pantryChanged();
 }
 // dashboard.py refused this page's token (pantryLocalReject): every POST from here will be refused
@@ -8550,6 +8669,7 @@ function pantryTick(){
   var j=PANTRY.j, now=Date.now(), next=(j && j.claim) ? Date.parse(j.claim.nextClaimAt) : NaN;
   if(!j || PANTRY.store!=="ok" || now-PANTRY.at>PANTRY_REFRESH_MS || (!isNaN(next) && now>=next)) pantryLoad();
   else if(VIEW==="arena"){ renderStoreClaim(j); storeGiftsLine(j); }
+  else if(VIEW==="store"){ renderKonbini(); }
 }
 // "For coming online": claim today's coins once, automatically. A 200 or 4xx settles today for
 // this browser; a network failure leaves it for the next load. Only the tab whose request
@@ -8806,6 +8926,202 @@ function storeGiftsLine(j){
   });
   gl.textContent = parts.length ? "Recent gifts: "+parts.join("; ") : "";
   gl.classList.toggle("hidden", !parts.length);
+}
+
+/* ---- Konbini store view ---- */
+var KONBINI_DIALOGUES = [
+  "Irasshaimase! Welcome!",
+  "Fresh bentos just came in~",
+  "Your creatures must be hungry!",
+  "Berry special deals today!",
+  "Need a Revive Tonic? Got you covered!",
+  "Come back tomorrow for more coins~",
+  "Onigiri are still warm!",
+  "Thanks for stopping by!",
+  "We never close! Open 24/7~",
+  "Try the bento, it’s my favorite!",
+  "Your pantry looking a little empty?",
+  "A well-fed creature is a happy creature!",
+  "The tonic works wonders, trust me~",
+  "Gambatte! Good luck out there!",
+  "O-kaimono wa tanoshii desu ne~"
+];
+var KONBINI_SIG="", KONBINI_SHELF_SIG="", KONBINI_CLAIM_SIG="", KONBINI_BUSY={}, KONBINI_ADDED={};
+
+function keeperDialogue(){
+  if(!KONBINI_DIALOGUES || !KONBINI_DIALOGUES.length) return "Irasshaimase!";
+  var d=new Date(), seed=hashStr(d.getFullYear()+"-"+(d.getMonth()+1)+"-"+d.getDate());
+  var rng=mulberry32(seed);
+  return KONBINI_DIALOGUES[(rng()*KONBINI_DIALOGUES.length)|0];
+}
+function loadStore(){
+  if(ARENA.paired) pantryLoad();
+  renderKonbini();
+  var bb=$("keeperBubble"); if(bb) bb.textContent=keeperDialogue();
+}
+function renderKonbini(){
+  var j=PANTRY.j, st=PANTRY.store;
+  var state=$("konbiniState"), scene=document.querySelector(".konbini-scene"),
+      wallet=document.querySelector(".konbini-wallet-bar"), pantryEl=$("konbiniPantry");
+  if(!state) return;
+  if(st!=="ok" || !j){
+    if(scene) scene.style.display="none";
+    if(wallet) wallet.style.display="none";
+    if(pantryEl) pantryEl.style.display="none";
+    state.classList.remove("hidden");
+    var sig2=st+"|"+(PANTRY.retrying?1:0);
+    if(sig2===KONBINI_SIG) return;
+    KONBINI_SIG=sig2; state.innerHTML="";
+    if(st==="unsupported") state.textContent="This Arena server doesn’t have the store yet. Ask whoever hosts it to update.";
+    else if(st==="restart") state.textContent="Restart Claude HQ and reload to use the store.";
+    else if(st==="unpaired") state.textContent="Connect the Arena to collect Poke Coins.";
+    else if(st==="reload"){
+      var rt=el("span"); rt.textContent=PANTRY_RELOAD_MSG; state.appendChild(rt);
+      var pb=el("button","hbtn"); pb.type="button"; pb.textContent="Reload page"; pb.addEventListener("click", pageReload); state.appendChild(pb);
+    } else if(st==="error"){
+      var t2=el("span"); t2.textContent="Can’t reach the Arena server."; state.appendChild(t2);
+      var rb=el("button","hbtn"); rb.type="button"; rb.textContent=PANTRY.retrying?"Retrying…":"Retry";
+      if(PANTRY.retrying) rb.setAttribute("aria-disabled","true");
+      rb.addEventListener("click", pantryRetry); state.appendChild(rb);
+    } else state.innerHTML=LOADING_HTML;
+    return;
+  }
+  KONBINI_SIG="";
+  state.classList.add("hidden");
+  if(scene) scene.style.display="";
+  if(wallet) wallet.style.display="";
+  if(pantryEl) pantryEl.style.display="";
+  var coins=j.coins|0, cap=(j.coinCap|0)||30;
+  $("kwCoins").textContent=String(coins); $("kwCap").textContent=String(cap);
+  renderKonbiniClaim(j);
+  renderKonbiniShelf(j);
+  renderKonbiniPantry(j);
+  konbiniGiftsLine(j);
+}
+function renderKonbiniClaim(j){
+  var cl=$("kwClaim"); if(!cl || !j) return;
+  var coins=j.coins|0, cap=(j.coinCap|0)||30, c=j.claim||{};
+  var next=Date.parse(c.nextClaimAt), amt=(c.amount|0)||5, when="";
+  if(!c.claimable && c.claimedToday && !isNaN(next)){
+    when=" · next at "+new Date(next).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+  }
+  var sig=[c.claimable?1:0, PANTRY.claiming?1:0, c.claimedToday?1:0, amt, when, coins>=cap?1:0].join("|");
+  if(sig===KONBINI_CLAIM_SIG) return;
+  KONBINI_CLAIM_SIG=sig;
+  cl.innerHTML="";
+  if(c.claimable){
+    var cb=el("button","hbtn on"); cb.type="button";
+    if(PANTRY.claiming){ cb.textContent="Collecting…"; cb.setAttribute("aria-disabled","true"); }
+    else { cb.textContent="Collect "+amt+" 🪙"; cb.setAttribute("aria-label","Collect today’s "+coinsN(amt)); }
+    cb.addEventListener("click",function(){ pantryClaim(true); });
+    cl.appendChild(cb);
+  } else if(c.claimedToday){
+    var dn=el("span"); dn.textContent="✓ Collected today"+when; cl.appendChild(dn);
+  } else if(coins>=cap){
+    var fl=el("span","store-warn"); fl.textContent="Purse full"; cl.appendChild(fl);
+  }
+}
+function renderKonbiniShelf(j){
+  var grid=$("konbiniItems"); if(!grid || !j) return;
+  var coins=j.coins|0, itemCap=(j.itemCap|0)||10, items=j.items||{};
+  var sig=[coins, itemCap].concat(pantryCatalog().map(function(it){
+    return [it.kind,it.price,items[it.kind]|0,KONBINI_BUSY[it.kind]?1:0].join(",");
+  })).join("|");
+  if(sig===KONBINI_SHELF_SIG && grid.firstChild) return;
+  KONBINI_SHELF_SIG=sig;
+  var fa=document.activeElement, fk=(fa && grid.contains(fa) && fa.closest) ? fa.closest("[data-kind]") : null;
+  var focusKind=fk ? fk.getAttribute("data-kind") : null;
+  grid.innerHTML="";
+  pantryCatalog().forEach(function(it){
+    var own=Math.max(0, items[it.kind]|0), card=el("div","konbini-item");
+    card.setAttribute("data-kind", it.kind);
+    var em2=el("span","ki-emoji"); em2.setAttribute("aria-hidden","true"); em2.textContent=it.emoji; card.appendChild(em2);
+    var nm=el("div","ki-name"); nm.textContent=it.name; card.appendChild(nm);
+    var ef=el("div","ki-eff");
+    ef.textContent=it.revives ? "Revives + "+Math.round(100*(1-fzMins(it.wakeToMins)/FZ_SCALE_MINS))+"%" : "+"+fzMins(it.restoreMins)+" min";
+    card.appendChild(ef);
+    var pr=el("div","ki-price"); pr.textContent="🪙 "+it.price; card.appendChild(pr);
+    var ow=el("div","ki-own"); ow.textContent=own+" / "+itemCap+" owned"; card.appendChild(ow);
+    var b=el("button","hbtn"); b.type="button";
+    var busy=!!KONBINI_BUSY[it.kind];
+    b.textContent=busy ? "Buying…" : "Buy · 🪙"+it.price;
+    b.setAttribute("aria-label", (busy?"Buying ":"Buy ")+foodA(it)+" for "+coinsN(it.price));
+    if(busy) b.setAttribute("aria-disabled","true");
+    else if(coins<it.price){ b.disabled=true; b.title="Need "+(it.price-coins)+" more"; }
+    else if(own>=itemCap){ b.disabled=true; b.title="Pantry full"; }
+    b.addEventListener("click",function(){ konbiniBuy(it.kind); });
+    card.appendChild(b);
+    var note=el("span","ki-note"); card.appendChild(note);
+    grid.appendChild(card);
+    if(focusKind===it.kind && !b.disabled) b.focus();
+  });
+  konbiniShelfNotes();
+}
+function konbiniShelfNotes(){
+  var now=Date.now();
+  Array.prototype.forEach.call(document.querySelectorAll("#konbiniItems .konbini-item"), function(card){
+    var k=card.getAttribute("data-kind"), n=card.querySelector(".ki-note"); if(!n) return;
+    var a=KONBINI_ADDED[k], t=(a && a.until>now) ? a.text : "";
+    if(n.textContent!==t) n.textContent=t;
+  });
+}
+function renderKonbiniPantry(j){
+  var grid=$("konbiniPantryGrid"); if(!grid || !j) return;
+  var items=j.items||{};
+  grid.innerHTML="";
+  var any=false;
+  FOOD_ORDER.forEach(function(k){
+    var n=items[k]|0; if(n<=0) return;
+    any=true;
+    var info=foodInfo(k), slot=el("div","konbini-pantry-slot");
+    var em3=el("span","kps-emoji"); em3.textContent=info.emoji; slot.appendChild(em3);
+    var nn=el("span","kps-n"); nn.textContent="×"+n; slot.appendChild(nn);
+    var nm2=el("span"); nm2.textContent=info.name; nm2.style.fontSize=".82em"; nm2.style.color="var(--muted)"; slot.appendChild(nm2);
+    grid.appendChild(slot);
+  });
+  if(!any){ var e=el("span","muted"); e.textContent="Empty — buy some snacks!"; e.style.fontSize=".86em"; grid.appendChild(e); }
+}
+function konbiniGiftsLine(j){
+  var gl=$("konbiniGifts"); if(!gl) return;
+  var rg=Array.isArray(j.recentGifts) ? j.recentGifts.slice(0,3) : [], parts=[];
+  rg.forEach(function(g){
+    if(!g || typeof g!=="object") return;
+    var who=(typeof g.fromName==="string" && g.fromName) ? g.fromName.slice(0,40) : ((typeof g.fromHandle==="string" && g.fromHandle) ? g.fromHandle.slice(0,40) : "someone");
+    var bits=["🎁 "+who];
+    if((g.coins|0)>0) bits.push("🪙 "+(g.coins|0));
+    var gi=foodInfo(g.kind); if(gi && (g.qty|0)>0) bits.push(gi.emoji+" ×"+(g.qty|0));
+    parts.push(bits.join(" · "));
+  });
+  gl.textContent = parts.length ? "Recent gifts: "+parts.join("; ") : "";
+  gl.classList.toggle("hidden", !parts.length);
+}
+function konbiniKaching(){
+  try{
+    var ac=new (window.AudioContext||window.webkitAudioContext)();
+    var g=ac.createGain(); g.connect(ac.destination); g.gain.setValueAtTime(0.12, ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime+0.15);
+    var o1=ac.createOscillator(); o1.type="sine"; o1.frequency.value=1800; o1.connect(g); o1.start(ac.currentTime); o1.stop(ac.currentTime+0.15);
+    var o2=ac.createOscillator(); o2.type="sine"; o2.frequency.value=2400; o2.connect(g); o2.start(ac.currentTime+0.03); o2.stop(ac.currentTime+0.15);
+  }catch(e){}
+}
+function konbiniBuy(kind){
+  if(KONBINI_BUSY[kind]) return;
+  KONBINI_BUSY[kind]=1; renderKonbiniShelf(PANTRY.j);
+  pantryBuy(kind, storeRetryRid(kind)).then(function(r){
+    delete KONBINI_BUSY[kind];
+    var it=foodInfo(kind), left=coinsN(PANTRY.j ? PANTRY.j.coins|0 : 0)+" left.";
+    if(r.ok){
+      KONBINI_ADDED[kind]={until:Date.now()+1200, text:r.replayed ? "✓ Already went through" : "✓ Added!"};
+      konbiniKaching();
+      var reg=$("konbiniRegister"); if(reg){ reg.classList.remove("kaching"); void reg.offsetWidth; reg.classList.add("kaching"); }
+      var bb=$("keeperBubble");
+      if(bb && !r.replayed) bb.textContent=["Arigatou!", "Great choice!", "Enjoy~", "Yatta! Sold!"][(hashStr(kind+Date.now())>>>0)%4];
+      announce(r.replayed ? "Already went through. "+left : "Bought "+foodA(it)+". "+left);
+      setTimeout(function(){ renderKonbiniShelf(PANTRY.j); konbiniShelfNotes(); }, 1250);
+    } else if(r.lost) announce("Couldn’t confirm. Retry is safe.");
+    else if(r.stale) announce(PANTRY_RELOAD_MSG);
+    renderKonbini();
+  });
 }
 
 /* ---- gifts: coins and/or one snack kind, to anyone on the board or in the lobby ----

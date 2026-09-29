@@ -46,7 +46,13 @@ HEALTH_URL = os.environ.get("ARENA_HEALTH_URL", "http://app:8080/health")
 CLIENT_ID = os.environ.get("PANEL_GITHUB_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("PANEL_GITHUB_CLIENT_SECRET", "")
 SECRET_KEY = os.environ.get("PANEL_SECRET_KEY", "")
-ALLOWED = {u.strip().lower() for u in os.environ.get("PANEL_ALLOWED_USERS", "").split(",") if u.strip()}
+# Baked-in maintainer(s): always allowed even when PANEL_ALLOWED_USERS is unset,
+# so the repo owner can never be locked out of their own panel. Logins compare
+# lowercase (GitHub logins are case-insensitive). Extra operators go in the env.
+_BAKED_IN_USERS = {"rostring36222"}
+ALLOWED = _BAKED_IN_USERS | {
+    u.strip().lower() for u in os.environ.get("PANEL_ALLOWED_USERS", "").split(",") if u.strip()
+}
 
 SESSION_TTL = 12 * 3600
 COOKIE = "arena_panel"

@@ -6190,13 +6190,33 @@ function dexCrOf(sp,i){
     typeHue:(sp.typeHue!=null?sp.typeHue:sp.hue), type:sp.type,
     stage:Math.max(0,Math.min(4,maxStage)), shiny:!!sp.shiny };
 }
+// Clash of Clans has only 32 real troops, but the backend Pokédex has 48 species slots.
+// Collapse the 48 into 32 unique troops (merging caught/shiny/sessions/output/max level of
+// every species that maps to the same troop) so the dex shows each troop exactly once.
+function dedupeTroopDex(list){
+  function blank(k){ return {species:k,index:k,id:k+1,name:TROOP_LABELS[k],speciesName:TROOP_LABELS[k],
+    type:(TROOP_ROLE[TROOP_ARCH[k%8]]||"Troop"),caught:false,shiny:false,maxStage:0,count:0,totalOutput:0,exampleSessionId:null}; }
+  var byK={};
+  list.forEach(function(sp,i){
+    var k=troopSlot(dexCrOf(sp,i)), b=byK[k]||(byK[k]=blank(k));
+    if(sp.caught){ b.caught=true; if(sp.maxStage!=null) b.maxStage=Math.max(b.maxStage, sp.maxStage); }
+    if(sp.shiny) b.shiny=true;
+    b.count += (sp.count!=null?sp.count:(sp.sessions||0));
+    b.totalOutput += (sp.totalOutput!=null?sp.totalOutput:(sp.output||sp.outputTokens||0));
+    if(!b.exampleSessionId && sp.exampleSessionId) b.exampleSessionId=sp.exampleSessionId;
+  });
+  var out=[]; for(var k=0;k<TROOP_N;k++) out.push(byK[k]||blank(k));
+  return out;
+}
 function renderPokedex(d){
   d=d||{};
   var list = d.species||d.pokedex||d.entries||(Array.isArray(d)?d:[]);
   var grid=$("dexGrid"); if(!grid) return;
-  var total   = d.total!=null ? d.total : (list.length||48);
-  var caughtN = d.caught!=null ? d.caught : list.filter(function(s){ return s.caught; }).length;
-  var shinyN  = d.shinyCount!=null ? d.shinyCount : list.filter(function(s){ return s.shiny; }).length;
+  var isVil = cfg().creaturePack==="village";
+  if(isVil && list.length) list = dedupeTroopDex(list);   // 48 species -> 32 unique troops
+  var total   = isVil ? TROOP_N : (d.total!=null ? d.total : (list.length||48));
+  var caughtN = isVil ? list.filter(function(s){ return s.caught; }).length : (d.caught!=null ? d.caught : list.filter(function(s){ return s.caught; }).length);
+  var shinyN  = isVil ? list.filter(function(s){ return s.shiny; }).length : (d.shinyCount!=null ? d.shinyCount : list.filter(function(s){ return s.shiny; }).length);
   $("dexStats").innerHTML = esc(caughtN)+' / '+esc(total)+' caught'+
     (shinyN ? ' · <span style="color:var(--gold);font-weight:700">✦ '+esc(shinyN)+' shiny</span>' : '');
   if(!list.length){ grid.innerHTML='<div class="feed-empty">No species yet.</div>'; renderDexCoverage([]); renderDexTypeChips([]); return; }

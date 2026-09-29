@@ -697,7 +697,10 @@ html.hq-calm .vil-march{animation:none}
 @keyframes evopop{0%{transform:scale(.2);opacity:0}60%{transform:scale(1.12)}100%{transform:scale(1);opacity:1}}
 .evo-title{font-size:30px;font-weight:800;color:#fff}
 .evo-sub{font-size:15px;color:#cbb8ff}
-#evoSplash .hbtn{margin-top:6px;font-size:14px;padding:8px 20px}
+.evo-btns{display:flex;gap:10px;align-items:center;margin-top:6px;flex-wrap:wrap;justify-content:center}
+#evoSplash .hbtn{font-size:14px;padding:8px 20px}
+#evoSplash #evoCongrat{background:linear-gradient(90deg,#ffd36e,#ff6ec7);color:#3a0d3d;border:none;font-weight:700}
+#evoSplash.peer .evo-kicker{color:#8fe3ff;text-shadow:0 0 12px rgba(90,200,255,.5)}
 html.hq-calm #evoSplash .evo-creature{animation:none}
 html.hq-calm #evoSplash.flash .evo-flash{animation:none}
 @media (prefers-reduced-motion: reduce){ #evoSplash .evo-creature,#evoSplash.flash .evo-flash{animation:none} }
@@ -2148,7 +2151,10 @@ html.hq-calm #confetti{display:none!important}
     <div class="evo-creature" id="evoCreature">🐣</div>
     <div class="evo-title" id="evoTitle"></div>
     <div class="evo-sub" id="evoSub"></div>
-    <button class="hbtn" id="evoClose" type="button">Continue</button>
+    <div class="evo-btns">
+      <button class="hbtn primary" id="evoCongrat" type="button" style="display:none">🎉 Congratulate</button>
+      <button class="hbtn" id="evoClose" type="button">Continue</button>
+    </div>
   </div>
 </div>
 
@@ -6191,20 +6197,72 @@ function playEvoMorph(node, cr, fromStage, toStage, px, onReveal){
 }
 // Announce a notable evolution to everyone on the Arena leaderboard (throttled fan-out over
 // the existing nudge mechanism — the server has no broadcast primitive). Fire-and-forget.
+// Broadcast a NOTABLE evolution to everyone currently in the Arena lobby as a real "evo" event,
+// so their HQ shows the same full-screen evolution splash (not just a nudge). Rides the existing
+// "say" relay (server stamps m.from), so no server change is needed. Carries a resolved sprite
+// descriptor so peers render the exact evolved/mega form regardless of their own creature pack.
 function arenaAnnounceEvolution(s, mega){
+  if(!ARENA.sock || ARENA.sock.readyState!==1) return;   // must be in the lobby to show peers a live splash
   var cr=s.creature||{}, name=isPokePack()?pokeCurrentName(cr):creatureSpecies(cr);
-  fetch("/api/arena/status",{cache:"no-store"}).then(function(r){return r.json();}).then(function(st){
-    if(!st || !st.paired || !st.enabled) return;
-    var me=(st.handle||"").toLowerCase(), who=st.displayName||st.handle||"A trainer";
-    var note=who+"'s "+name+(mega?" just MEGA-EVOLVED! ⚡":" evolved! ✨");
-    fetch("/api/arena/board?window=season",{cache:"no-store"}).then(function(r){return r.json();}).then(function(b){
-      var rows=(b&&b.entries)||[], handles=[];
-      rows.forEach(function(e){ var h=e.handle; if(h && h.toLowerCase()!==me && handles.indexOf(h)<0) handles.push(h); });
-      handles=handles.slice(0,40);   // cap so we never trip the server's rate limit
-      handles.forEach(function(h,i){ setTimeout(function(){ try{ arenaPost("/api/arena/nudge",{toHandle:h, note:note}); }catch(e){} }, 300+i*280); });
-      if(handles.length) logEvent("📣","Announced to "+handles.length+" trainer"+(handles.length===1?"":"s")+" in the Arena");
-    }).catch(function(){});
-  }).catch(function(){});
+  var spr=null;
+  if(isPokePack()){
+    if(mega){ var mf=pokeMegaForm(cr)||{}; spr={dex:branchFinalDex(cr), slug:mf.slug||"", dir:mf.dir||"xy", shiny:cr.shiny?1:0, mega:1}; }
+    else { spr={dex:pokeDexFor(cr), slug:String(name).toLowerCase().replace(/[^a-z0-9]/g,""), dir:"xy", shiny:cr.shiny?1:0, mega:0}; }
+  }
+  var pre = isPokePack() ? pokeNameAtStage(cr, (typeof STAGE_PREV!=="undefined"&&STAGE_PREV[s.sessionId||s.id]?STAGE_PREV[s.sessionId||s.id].d:3)) : "";
+  try{ ARENA.sock.send(JSON.stringify({type:"say", data:{kind:"evo", mega:!!mega, name:name, pre:pre, spr:spr}})); }catch(e){}
+  logEvent("📣", "Announced "+name+(mega?" (Mega)":"")+" to the Arena lobby");
+}
+// A specific evolved/mega sprite from a peer's descriptor — pack-independent, with the usual
+// onerror fallback chain (X/Y or ORAS gif -> HOME still png -> generated monster).
+function peerEvoImg(spr, px){
+  var shiny=spr.shiny?1:0, slug=String(spr.slug||"").toLowerCase().replace(/[^a-z0-9-]/g,""), dex=spr.dex|0;
+  if(!slug) return '<div style="font-size:'+Math.round(px*0.6)+'px" aria-hidden="true">✨</div>';
+  var base = spr.dir==="oras" ? (shiny?PKPARAISO_ORAS_SHINY:PKPARAISO_ORAS) : (shiny?PKPARAISO_XY_SHINY:PKPARAISO_XY);
+  var fb=encodeURIComponent(JSON.stringify([hashStr(slug),220,4,shiny,px]));
+  return '<img class="pokeimg pokeimg-3d'+(spr.mega?" pokeimg-mega":"")+'" src="'+base+slug+'.gif" width="'+px+'" height="'+px+'"'+
+    ' alt="'+esc(slug)+'" data-dex="'+dex+'" data-shiny="'+shiny+'" data-3d="1" data-mega="'+(spr.mega?1:0)+'"'+
+    ' data-slug="'+slug+'" data-try="0" data-fb="'+fb+'" onerror="pokeErr(this)">';
+}
+// A peer's evolution arrived over the lobby -> show them the full-screen splash + a Congratulate button.
+function arenaOnEvo(m){
+  var d=m.data||{}; if(!d || d.kind!=="evo") return;
+  var from=(m.from&&typeof m.from==="object")?m.from:{};
+  if(ARENA.you && from.userId && from.userId===ARENA.you.userId) return;   // ignore my own echo
+  showPeerEvoSplash({
+    who:arenaWho(from), handle:(typeof from.handle==="string"?from.handle.slice(0,40):""),
+    mega:!!d.mega, name:String(d.name||"A creature").slice(0,40),
+    pre:(typeof d.pre==="string"?d.pre.slice(0,40):""),
+    spr:(d.spr&&typeof d.spr==="object")?d.spr:null
+  });
+}
+function showPeerEvoSplash(p){
+  var el2=$("evoSplash"); if(!el2) return;
+  clearEvoMorph();
+  el2.classList.toggle("mega", !!p.mega); el2.classList.add("peer");
+  var size=Math.min(p.mega?360:300, Math.round(window.innerHeight*(p.mega?0.46:0.4)));
+  $("evoCreature").innerHTML = p.spr ? peerEvoImg(p.spr, size) : '<div style="font-size:'+Math.round(size*0.6)+'px" aria-hidden="true">✨</div>';
+  $("evoKicker").textContent = "📣 In the Arena";
+  $("evoTitle").textContent  = p.who+"'s "+p.name+"!";
+  $("evoSub").textContent    = p.mega ? (p.who+"'s creature just MEGA-EVOLVED! ⚡")
+    : (p.pre ? (p.who+"'s "+p.pre+" evolved into "+p.name+"! ✨") : (p.who+"'s creature evolved into "+p.name+"! ✨"));
+  var cg=$("evoCongrat");
+  if(cg){ cg.style.display=""; cg.disabled=false; cg.textContent="🎉 Congratulate";
+    cg.onclick=function(){ arenaCongratulate(p); cg.disabled=true; cg.textContent="🎉 Congratulated!"; }; }
+  el2.classList.add("on"); el2.setAttribute("aria-hidden","false");
+  if(!calmMode()){ el2.classList.remove("flash"); void el2.offsetWidth; el2.classList.add("flash"); confettiBurst(); if(p.mega) setTimeout(confettiBurst,450); }
+  try{ playChime(); }catch(e){}
+  if(cg) cg.focus(); else $("evoClose").focus();
+  clearTimeout(EVO_TIMER); EVO_TIMER=setTimeout(closeEvoSplash, p.mega?9000:8000);
+}
+// Send the evolving trainer a congrats — a targeted nudge (reaches them even if offline),
+// falling back to a lobby chat line if we only have their display name.
+function arenaCongratulate(p){
+  var note="🎉 Congrats on "+(p.name||"your evolution")+"!";
+  if(p.handle){ try{ arenaPost("/api/arena/nudge",{toHandle:p.handle, note:note}); }catch(e){} }
+  else if(ARENA.sock && ARENA.sock.readyState===1){ try{ ARENA.sock.send(JSON.stringify({type:"say", data:{kind:"chat", text:note}})); }catch(e){} }
+  toast("🎉 Congrats sent to "+(p.who||"them"),"level");
+  logEvent("🎉","Congratulated "+(p.who||"a trainer")+" on "+(p.name||"their evolution"));
 }
 function showEvoSplash(s, fromStage){
   var el2=$("evoSplash"); if(!el2) return;
@@ -6213,6 +6271,8 @@ function showEvoSplash(s, fromStage){
   var species=creatureSpecies(cr), stageNm=creatureStageName(cr), nm=isPokePack()?pokeCurrentName(cr):species;
   var size=Math.min(mega?380:320, Math.round(window.innerHeight*(mega?0.5:0.42)));
   el2.classList.toggle("mega", mega);
+  el2.classList.remove("peer");
+  var _cg=$("evoCongrat"); if(_cg) _cg.style.display="none";   // local evolution: no congrat button
   // Start on the "evolving" beat (pre-form name); reveal the evolved identity at morph end.
   $("evoKicker").textContent = "✨ What?! "+pokeNameAtStage(cr,fromStage)+" is evolving! ✨";
   $("evoTitle").textContent = "";
@@ -6243,7 +6303,8 @@ function showEvoSplash(s, fromStage){
   if(notable){ try{ arenaAnnounceEvolution(s, mega); }catch(e){} }
   clearTimeout(EVO_TIMER); EVO_TIMER=setTimeout(closeEvoSplash, mega?11000:10000);  // ~10s cinematic
 }
-function closeEvoSplash(){ clearTimeout(EVO_TIMER); clearEvoMorph(); var e=$("evoSplash"); if(e){ e.classList.remove("on","flash","mega"); e.setAttribute("aria-hidden","true"); } }
+function closeEvoSplash(){ clearTimeout(EVO_TIMER); clearEvoMorph(); var e=$("evoSplash"); if(e){ e.classList.remove("on","flash","mega","peer"); e.setAttribute("aria-hidden","true"); }
+  var cg=$("evoCongrat"); if(cg){ cg.style.display="none"; cg.disabled=false; cg.textContent="🎉 Congratulate"; } }
 (function(){ var b=$("evoClose"); if(b) b.addEventListener("click",closeEvoSplash);
   var s=$("evoSplash"); if(s) s.addEventListener("click",function(e){ if(e.target===s) closeEvoSplash(); }); })();
 // Raw (un-floored) backend growth stage for a session. Defaults to 0 (not 3) when the
@@ -7066,7 +7127,7 @@ function arenaOpenSocket(){
       }
       else if(m.type==="say"){
         var kind = m.data && m.data.kind;
-        if(kind==="voice") voiceOnAnnounce(m); else if(kind==="status") arenaOnStatus(m); else arenaChatReceive(m);
+        if(kind==="voice") voiceOnAnnounce(m); else if(kind==="status") arenaOnStatus(m); else if(kind==="evo") arenaOnEvo(m); else arenaChatReceive(m);
       }
       else if(m.type==="signal"){ voiceOnSignal(m); }
       else if(m.type==="nudge"){ arenaOnNudge(m); }

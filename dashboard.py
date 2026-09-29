@@ -231,8 +231,28 @@ def strip_markdown(text):
     return t
 
 
-def clean_prompt(text):
-    """Strip pasted-content noise and normalise whitespace for a human prompt."""
+def _human_text(content):
+    """Human-authored text from a user message's content. Claude Code stores a plain
+    text prompt as a string, but a prompt that carries an IMAGE/attachment arrives as
+    a list of content blocks (text + image). Pull the text out of either shape; ignore
+    tool_result / tool_use / image blocks. Returns "" when there is no human text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for b in content:
+            if isinstance(b, str):
+                parts.append(b)
+            elif isinstance(b, dict) and b.get("type") == "text":
+                parts.append(b.get("text") or "")
+        return " ".join(p for p in parts if p).strip()
+    return ""
+
+
+def clean_prompt(content):
+    """Strip pasted-content noise and normalise whitespace for a human prompt.
+    Accepts a raw string OR a content-block list (image+text prompts)."""
+    text = content if isinstance(content, str) else _human_text(content)
     if not text:
         return ""
     t = _PASTED_RE.sub(" [pasted content] ", text)
@@ -241,10 +261,11 @@ def clean_prompt(text):
 
 
 def is_real_human_prompt(content):
-    """A real human prompt: content is a string not starting with a noise prefix."""
-    if not isinstance(content, str):
-        return False
-    s = content.lstrip()
+    """A real human prompt: a genuine user turn whose text doesn't start with a noise
+    prefix. Accepts a plain string OR a content-block list, so image/attachment prompts
+    (which arrive as a list) are counted too. tool_result-only carriers yield no text
+    and are ignored."""
+    s = _human_text(content).lstrip()
     if not s:
         return False
     for p in _NON_HUMAN_PREFIXES:

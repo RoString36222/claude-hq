@@ -11,11 +11,21 @@ fly.toml). That is the right trade at this size; moving to multiple machines
 means putting this behind Redis pub/sub.
 """
 import asyncio
+import re
+import weakref
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import WebSocket
+
+LOBBY = "lobby"
+PRIVATE_PREFIX = "r_"
+PRIVATE_ID_RE = re.compile(r"^r_[A-Za-z0-9_-]{22}$")
+
+
+def is_private_id(room_id: str) -> bool:
+    return room_id.startswith(PRIVATE_PREFIX)
 
 MAX_ROOM_MEMBERS = 32
 MAX_STATE_BYTES = 64 * 1024
@@ -85,6 +95,7 @@ class RoomManager:
     def __init__(self) -> None:
         self._rooms: dict[str, Room] = {}
         self._lock = asyncio.Lock()
+        self._gates: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 
     async def join(self, room_id: str, member: Member) -> Room:
         async with self._lock:
@@ -115,10 +126,86 @@ class RoomManager:
     def get(self, room_id: str) -> Room | None:
         return self._rooms.get(room_id)
 
+    def gate(self, room_id: str) -> asyncio.Lock:
+        lock = self._gates.get(room_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._gates[room_id] = lock
+        return lock
+
+    def online(self, room_id: str) -> int:
+        room = self._rooms.get(room_id)
+        if room is None:
+            return 0
+        return len(room.roster())
+
+    def online_user_ids(self, room_id: str) -> set[str]:
+        room = self._rooms.get(room_id)
+        if room is None:
+            return set()
+        return {m.user_id for m in room.members.values()}
+
+    async def evict(
+        self,
+        room_id: str,
+        *,
+        code: int,
+        reason: str,
+        user_id: str | None = None,
+        keep_user_id: str | None = None,
+    ) -> int:
+        victims: list[tuple[WebSocket, Member]] = []
+        room: Room | None = None
+        async with self._lock:
+            room = self._rooms.get(room_id)
+            if room is None:
+                return 0
+            to_remove: list[WebSocket] = []
+            for ws, m in list(room.members.items()):
+                if user_id is not None and m.user_id != user_id:
+                    continue
+                if keep_user_id is not None and m.user_id == keep_user_id:
+                    continue
+                to_remove.append(ws)
+                victims.append((ws, m))
+            for ws in to_remove:
+                room.members.pop(ws, None)
+            if not room.members:
+                self._rooms.pop(room_id, None)
+
+        for ws, _m in victims:
+            try:
+                await ws.close(code=code, reason=reason)
+            except Exception:
+                pass
+
+        if room is not None and room.members:
+            seen_users: set[str] = set()
+            for _ws, m in victims:
+                if m.user_id not in seen_users:
+                    seen_users.add(m.user_id)
+                    await room.broadcast(
+                        {"type": "leave", "member": m.public(), "members": room.roster()}
+                    )
+        return len(victims)
+
+    async def deliver_to_user(self, user_id: str, payload: dict) -> int:
+        sent = 0
+        for room in list(self._rooms.values()):
+            for ws, member in list(room.members.items()):
+                if member.user_id == user_id:
+                    try:
+                        await ws.send_json(payload)
+                        sent += 1
+                    except Exception:
+                        pass
+        return sent
+
     def summary(self) -> list[dict[str, Any]]:
         return [
             {"roomId": r.room_id, "members": len(r.roster())}
             for r in self._rooms.values()
+            if not is_private_id(r.room_id)
         ]
 
 

@@ -22,11 +22,13 @@ Stdlib only, to keep Claude HQ's "no pip install" promise.
 """
 import json
 import os
+import re
 import ssl
 import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -396,6 +398,21 @@ def pantry(action=None, body=None):
                     body={k: body[k] for k in _PANTRY_KEYS if k in body})
 
 
+_QUEST_REWARD_KEYS = ("requestId", "kind", "questId", "tier", "coins")
+
+
+def quest_reward(request_id, kind, quest_id, tier, coins):
+    """Claim coins for a completed quest or achievement. Privacy-safe: only the
+    quest catalog id and date leave the machine (encoded in request_id)."""
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    body = {"requestId": request_id, "kind": kind, "questId": quest_id, "coins": coins}
+    if tier is not None:
+        body["tier"] = tier
+    return _request("POST", base + "/v1/pantry/reward", token=token, body=body)
+
+
 def drain_gifts():
     """Fetch + mark delivered the gifts that missed live delivery. Returns a list."""
     global _gift_drain_off_until
@@ -502,3 +519,117 @@ def start_nudge_poller(notify):
     t = threading.Thread(target=loop, name="arena-nudge-poller", daemon=True)
     t.start()
     return t
+
+
+# --- private rooms ---------------------------------------------------------
+
+ROOM_ID_RE = re.compile(r"^r_[A-Za-z0-9_-]{22}$")
+USER_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def _valid_room_id(rid):
+    return isinstance(rid, str) and ROOM_ID_RE.fullmatch(rid)
+
+
+def _valid_user_id(uid):
+    return isinstance(uid, str) and USER_ID_RE.fullmatch(uid)
+
+
+def rooms_directory():
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("GET", base + "/v1/rooms/directory", token=token)
+
+
+def room_members(room_id):
+    if not _valid_room_id(room_id):
+        return 400, {"error": "bad room id"}
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("GET", base + "/v1/rooms/members?roomId=" +
+                    urllib.parse.quote(room_id, safe=""), token=token)
+
+
+def create_room(name, password):
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("POST", base + "/v1/rooms/create", token=token,
+                    body={"name": name, "password": password})
+
+
+def join_room(room_id, password):
+    if not _valid_room_id(room_id):
+        return 400, {"error": "bad room id"}
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("POST", base + "/v1/rooms/join", token=token,
+                    body={"roomId": room_id, "password": password})
+
+
+def leave_room(room_id):
+    if not _valid_room_id(room_id):
+        return 400, {"error": "bad room id"}
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("POST", base + "/v1/rooms/leave", token=token,
+                    body={"roomId": room_id})
+
+
+def rename_room(room_id, name):
+    if not _valid_room_id(room_id):
+        return 400, {"error": "bad room id"}
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("POST", base + "/v1/rooms/rename", token=token,
+                    body={"roomId": room_id, "name": name})
+
+
+def set_room_password(room_id, password, sign_out_others=False):
+    if not _valid_room_id(room_id):
+        return 400, {"error": "bad room id"}
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("POST", base + "/v1/rooms/password", token=token,
+                    body={"roomId": room_id, "password": password,
+                          "signOutOthers": bool(sign_out_others)})
+
+
+def kick_room_member(room_id, user_id):
+    if not _valid_room_id(room_id):
+        return 400, {"error": "bad room id"}
+    if not _valid_user_id(user_id):
+        return 400, {"error": "bad user id"}
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("POST", base + "/v1/rooms/kick", token=token,
+                    body={"roomId": room_id, "userId": user_id})
+
+
+def unban_room_member(room_id, user_id):
+    if not _valid_room_id(room_id):
+        return 400, {"error": "bad room id"}
+    if not _valid_user_id(user_id):
+        return 400, {"error": "bad user id"}
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("POST", base + "/v1/rooms/unban", token=token,
+                    body={"roomId": room_id, "userId": user_id})
+
+
+def delete_room(room_id):
+    if not _valid_room_id(room_id):
+        return 400, {"error": "bad room id"}
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("POST", base + "/v1/rooms/delete", token=token,
+                    body={"roomId": room_id})

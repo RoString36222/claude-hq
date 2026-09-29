@@ -30,19 +30,8 @@ _MAX_UNDELIVERED_PER_PAIR = 5
 
 
 async def _deliver_live(to_user_id: str, payload: dict) -> int:
-    """Best-effort instant delivery to any of the target's lobby sockets."""
-    room = manager.get("lobby")
-    if room is None:
-        return 0
-    sent = 0
-    for ws, member in list(room.members.items()):
-        if member.user_id == to_user_id:
-            try:
-                await ws.send_json(payload)
-                sent += 1
-            except Exception:
-                pass
-    return sent
+    """Best-effort instant delivery to any of the target's open sockets (all rooms)."""
+    return await manager.deliver_to_user(to_user_id, payload)
 
 
 @router.post("/nudge", response_model=SendNudgeResponse)

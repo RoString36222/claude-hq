@@ -14,7 +14,7 @@ from ..auth import Caller, require_device
 from ..db import get_session
 from ..schemas import (
     BuyRequest, BuyResponse, ClaimResponse, EatRequest, EatResponse, GiftsResponse,
-    GiveRequest, GiveResponse, PantryState,
+    GiveRequest, GiveResponse, PantryState, QuestRewardRequest, QuestRewardResponse,
 )
 
 router = APIRouter(prefix="/v1", tags=["pantry"])
@@ -63,6 +63,15 @@ async def give(
     db: AsyncSession = Depends(get_session),
 ) -> GiveResponse:
     return await pantry.give(db, caller.user, body)
+
+
+@router.post("/pantry/reward", response_model=QuestRewardResponse)
+async def quest_reward(
+    body: QuestRewardRequest,
+    caller: Caller = Depends(require_device),
+    db: AsyncSession = Depends(get_session),
+) -> QuestRewardResponse:
+    return await pantry.reward(db, caller.user, body)
 
 
 @router.post("/pantry/gifts/drain", response_model=GiftsResponse)

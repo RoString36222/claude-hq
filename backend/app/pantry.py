@@ -31,7 +31,8 @@ from .rooms import manager
 from .routes.nudges import _deliver_live
 from .schemas import (
     BuyRequest, BuyResponse, ClaimResponse, DrainedGift, EatRequest, EatResponse,
-    GiftsResponse, GiveRequest, GiveResponse, SentGift,
+    GiftsResponse, GiveRequest, GiveResponse, QuestRewardRequest, QuestRewardResponse,
+    SentGift,
 )
 
 DAILY_COINS = 5
@@ -57,6 +58,40 @@ CATALOG = {
     "riceball": {"name": "Rice Ball",    "plural": "Rice Balls",    "emoji": "\U0001F359", "price": 2, "restoreMins": 45,  "revives": False},
     "bento":    {"name": "Bento",        "plural": "Bentos",        "emoji": "\U0001F371", "price": 3, "restoreMins": 120, "revives": False},
     "tonic":    {"name": "Revive Tonic", "plural": "Revive Tonics", "emoji": "\U0001F9C3", "price": 5, "restoreMins": 0,   "revives": True},
+}
+
+QUEST_REWARDS_PER_DAY = 10
+
+# A pure literal: quest/achievement id -> coins. The client's catalog matches
+# this. The server verifies the claimed coins before crediting.
+QUEST_REWARDS = {
+    "d_prompts_10": 2, "d_prompts_25": 3, "d_prompts_50": 5,
+    "d_tools_50": 2, "d_tools_150": 3, "d_tools_300": 5,
+    "d_sessions_3": 2, "d_sessions_5": 3,
+    "d_active": 1,
+    "d_artifacts_1": 2, "d_artifacts_3": 3,
+    "d_feed_creature": 1,
+    "w_active_5": 5, "w_active_7": 8,
+    "w_prompts_100": 5, "w_prompts_250": 8,
+    "w_tools_500": 5,
+    "w_streak_5": 5, "w_streak_7": 8,
+    "w_folders_3": 3,
+}
+
+ACH_REWARDS = {
+    "a_first_prompt": {"bronze": 2},
+    "a_prompts": {"bronze": 3, "silver": 5, "gold": 10},
+    "a_tools": {"bronze": 3, "silver": 5, "gold": 10},
+    "a_streak": {"bronze": 3, "silver": 8, "gold": 15},
+    "a_active_days": {"bronze": 3, "silver": 8, "gold": 15},
+    "a_catch": {"bronze": 3, "silver": 5, "gold": 15},
+    "a_shiny": {"bronze": 3, "silver": 5, "gold": 10},
+    "a_evolve": {"bronze": 3, "silver": 8, "gold": 15},
+    "a_level": {"bronze": 3, "silver": 5, "gold": 15},
+    "a_artifacts": {"bronze": 3, "silver": 5, "gold": 10},
+    "a_night_owl": {"bronze": 3},
+    "a_polyglot": {"bronze": 3, "silver": 5},
+    "a_gift": {"bronze": 2, "silver": 5, "gold": 10},
 }
 
 _REUSED = "that requestId was already used for a different request"
@@ -555,3 +590,59 @@ async def drain(db: AsyncSession, user: User) -> GiftsResponse:
             gifts.append(DrainedGift(id=row.id, **_gift_item(row, sender)))
     await db.commit()
     return GiftsResponse(gifts=gifts)
+
+
+# --- quest / achievement rewards -----------------------------------------------
+
+async def reward(db: AsyncSession, user: User, body: QuestRewardRequest) -> QuestRewardResponse:
+    """Credit coins for a completed quest or achievement. Idempotent by requestId."""
+    uid = user.id
+    today = _today()
+
+    if body.kind == "quest":
+        expected = QUEST_REWARDS.get(body.questId)
+    else:
+        tiers = ACH_REWARDS.get(body.questId)
+        expected = tiers.get(body.tier) if tiers else None
+    if expected is None:
+        raise HTTPException(404, "unknown quest or achievement")
+    if body.coins != expected:
+        raise HTTPException(422, "reward amount does not match the catalog")
+
+    prior = await _find_op(db, uid, body.requestId)
+    if prior is not None:
+        bal = await _qty(db, uid, "coins") or 0
+        return QuestRewardResponse(ok=True, coins=bal, reward=0)
+
+    quest_today = await _count(
+        db, PokeLedger.user_id == uid, PokeLedger.op == "quest",
+        PokeLedger.op_date == today,
+    )
+    if quest_today >= QUEST_REWARDS_PER_DAY:
+        raise HTTPException(429, "too many quest rewards today, try again tomorrow")
+
+    try:
+        row = PokeLedger(
+            user_id=uid, request_id=body.requestId, op="quest", op_date=today,
+            kind=None, qty=0, coins=body.coins, to_user_id=None,
+            note=body.questId, created_at=_now(),
+        )
+        db.add(row)
+        await db.flush()
+        await _credit(db, uid, "coins", body.coins, COIN_CAP, "wallet full")
+        await db.commit()
+    except IntegrityError:
+        await _rollback(db, user)
+        if await _find_op(db, uid, body.requestId) is not None:
+            bal = await _qty(db, uid, "coins") or 0
+            return QuestRewardResponse(ok=True, coins=bal, reward=0)
+        raise HTTPException(503, _BUSY) from None
+    except OperationalError:
+        await db.rollback()
+        raise HTTPException(503, _BUSY) from None
+    except EconomyError as e:
+        await db.rollback()
+        raise HTTPException(e.code, e.msg) from None
+
+    bal = await _qty(db, uid, "coins") or 0
+    return QuestRewardResponse(ok=True, coins=bal, reward=body.coins)

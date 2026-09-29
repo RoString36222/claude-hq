@@ -1,8 +1,10 @@
 """Claude HQ Arena -- the multiplayer backend."""
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .config import get_settings
 from .db import Base, describe_backend, engine
@@ -10,6 +12,7 @@ from .routes import auth as auth_routes
 from .routes import board as board_routes
 from .routes import nudges as nudge_routes
 from .routes import pantry as pantry_routes
+from .routes import private_rooms as private_room_routes
 from .routes import rooms as room_routes
 from .routes import stats as stats_routes
 
@@ -25,6 +28,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Claude HQ Arena", version="0.1.0", lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def _scrub_422(_request: Request, exc: RequestValidationError) -> JSONResponse:
+    safe = []
+    for err in exc.errors():
+        entry = {"loc": err.get("loc", []), "msg": err.get("msg", ""), "type": err.get("type", "")}
+        safe.append(entry)
+    return JSONResponse(status_code=422, content={"detail": safe})
+
 
 # The dashboard proxies API calls server-side, so the browser never calls us
 # cross-origin for authenticated routes. Websockets are exempt from CORS and are
@@ -43,6 +56,7 @@ app.include_router(board_routes.router)
 app.include_router(nudge_routes.router)
 app.include_router(pantry_routes.router)
 app.include_router(room_routes.router)
+app.include_router(private_room_routes.router)
 
 
 @app.get("/health")

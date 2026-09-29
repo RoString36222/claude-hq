@@ -161,6 +161,55 @@ class Nudge(Base):
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class PrivateRoom(Base):
+    __tablename__ = "private_rooms"
+    __table_args__ = (
+        UniqueConstraint("name_key", name="uq_private_rooms_name_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    name: Mapped[str] = mapped_column(String(40))
+    name_key: Mapped[str] = mapped_column(String(255))
+    owner_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    password_hash: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PrivateRoomMember(Base):
+    __tablename__ = "private_room_members"
+    __table_args__ = (
+        UniqueConstraint("room_id", "user_id", name="uq_private_room_member"),
+        CheckConstraint("role IN ('owner','member','banned')", name="ck_private_room_member_role"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    room_id: Mapped[str] = mapped_column(
+        ForeignKey("private_rooms.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(8), default="member")
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PrivateRoomJoinAttempt(Base):
+    __tablename__ = "private_room_join_attempts"
+    __table_args__ = (
+        Index("ix_private_room_attempts_user_room_at", "user_id", "room_id", "created_at"),
+        Index("ix_private_room_attempts_room_at", "room_id", "created_at"),
+        Index("ix_private_room_attempts_user_at", "user_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    room_id: Mapped[str] = mapped_column(ForeignKey("private_rooms.id", ondelete="CASCADE"))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class PokeBalance(Base):
     """One row per (user, item). Poke Coins are just the item "coins", so the
     purse and the pantry share one code path. Every change is a conditional
@@ -189,7 +238,7 @@ class PokeLedger(Base):
     __tablename__ = "poke_ledger"
     __table_args__ = (
         UniqueConstraint("user_id", "request_id", name="uq_poke_ledger_user_request"),
-        CheckConstraint("op IN ('claim','buy','eat','give')", name="ck_poke_ledger_op"),
+        CheckConstraint("op IN ('claim','buy','eat','give','quest')", name="ck_poke_ledger_op"),
         CheckConstraint("qty >= 0", name="ck_poke_ledger_qty_nonneg"),
         CheckConstraint("coins >= 0", name="ck_poke_ledger_coins_nonneg"),
         Index("ix_poke_ledger_user_date", "user_id", "op_date"),

@@ -313,3 +313,145 @@ class DrainedGift(GiftItem):
 
 class GiftsResponse(BaseModel):
     gifts: list[DrainedGift] = Field(default_factory=list)
+
+
+class QuestRewardRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    requestId: str = Field(max_length=100, pattern=r"^(quest|ach):[a-z0-9_]+:.+$")
+    kind: Literal["quest", "achievement"]
+    questId: str = Field(max_length=40)
+    tier: Literal["bronze", "silver", "gold"] | None = None
+    coins: int = Field(ge=1, le=15)
+
+
+class QuestRewardResponse(BaseModel):
+    ok: bool = True
+    coins: int
+    reward: int
+
+
+# --- private rooms -----------------------------------------------------------
+
+RoomId = Annotated[str, Field(pattern=r"^r_[A-Za-z0-9_-]{22}$")]
+UserId = Annotated[
+    str,
+    Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+]
+
+
+class CreateRoomRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(max_length=200)
+    password: str = Field(max_length=1024)
+
+
+class JoinRoomRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    roomId: RoomId
+    password: str = Field(max_length=1024)
+
+
+class RoomRefRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    roomId: RoomId
+
+
+class RenameRoomRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    roomId: RoomId
+    name: str = Field(max_length=200)
+
+
+class RoomPasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    roomId: RoomId
+    password: str = Field(max_length=1024)
+    signOutOthers: bool = False
+
+
+class RoomUserRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    roomId: RoomId
+    userId: UserId
+
+
+class RoomOut(BaseModel):
+    id: str
+    name: str
+    ownerUserId: str
+    ownerHandle: str
+    ownerName: str
+    online: int
+    memberCount: int
+    role: Literal["owner", "member", "banned"] | None = None
+    createdAt: str
+
+
+class LobbyOut(BaseModel):
+    id: Literal["lobby"] = "lobby"
+    name: str = "Lobby"
+    online: int
+
+
+class RoomLimits(BaseModel):
+    nameMax: int
+    passwordMin: int
+    passwordMax: int
+    maxOwned: int
+    maxJoined: int
+    maxMembers: int
+
+
+class RoomDirectoryResponse(BaseModel):
+    lobby: LobbyOut
+    rooms: list[RoomOut]
+    limits: RoomLimits
+
+
+class RoomResponse(BaseModel):
+    room: RoomOut
+    already: bool = False
+
+
+class LeaveRoomResponse(BaseModel):
+    ok: bool = True
+    deleted: bool = False
+    newOwnerHandle: str | None = None
+
+
+class RoomPasswordResponse(BaseModel):
+    ok: bool = True
+    signedOut: int = 0
+
+
+class RoomOkResponse(BaseModel):
+    ok: bool = True
+
+
+class RoomMemberOut(BaseModel):
+    userId: str
+    handle: str
+    displayName: str
+    avatarUrl: str
+    role: Literal["owner", "member"]
+    online: bool
+    joinedAt: str
+
+
+class BannedOut(BaseModel):
+    userId: str
+    handle: str
+    displayName: str
+    avatarUrl: str
+
+
+class RoomMembersResponse(BaseModel):
+    roomId: str
+    members: list[RoomMemberOut]
+    banned: list[BannedOut] = Field(default_factory=list)

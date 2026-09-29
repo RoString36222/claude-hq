@@ -39,9 +39,20 @@ async def room_ws(
 
     async with SessionLocal() as db:
         user = await db.get(User, user_id)
-    if user is None or not user.is_active:
-        await websocket.close(code=4403, reason="account disabled")
-        return
+        if user is None or not user.is_active:
+            await websocket.close(code=4403, reason="account disabled")
+            return
+
+        if rooms.is_private_id(room_id):
+            from .. import private_rooms
+            result = await private_rooms.admission(db, room_id, user_id)
+            if result is None:
+                await websocket.close(code=4404, reason="no such room")
+                return
+            _name, role = result
+            if role not in ("owner", "member"):
+                await websocket.close(code=4403, reason="join this room first")
+                return
 
     await websocket.accept()
     member = Member(

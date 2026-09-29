@@ -3382,17 +3382,21 @@ function typeBadgeHTML(cr){ return '<span class="typebadge" style="background:hs
 // Gabite occupies two stages of Gible→Gabite→Garchomp). Measuring progress per-internal-
 // stage makes the bar reset to 0% when the form DOESN'T change, which reads as lost
 // progress. Instead, aggregate the stages that map to the current form so the bar climbs
-// monotonically until the creature actually evolves. Uses RAW growth (via _noFloor) so the
-// New Game+ display floor never distorts it.
+// monotonically until the creature actually evolves. Uses EFFECTIVE growth (this session's raw
+// growth floored by the species' persisted high-water) so progress carries across sessions of
+// the same species instead of resetting to 0%, and always tracks the floored sprite form.
 function pokeFormProgress(cr){
-  var raw=Object.assign({},cr,{_noFloor:true});
-  var line=pokeEvoLine(raw), curPos=pokeEvoPos(raw,line), rawStage=creatureStage(raw);
+  var effG=effectiveGrowthOf(cr);
+  var rawStage=Math.max(0,Math.min(4,Math.floor(effG)));            // effective (floored) stage
+  var effPct=(rawStage>=4)?1:(effG-rawStage);                        // within-stage fraction 0..1
+  var raw=Object.assign({},cr,{_noFloor:true, stage:rawStage});
+  var line=pokeEvoLine(raw), curPos=pokeEvoPos(raw,line);
   if(curPos>=line.length-1){                                         // at the final line form
     // If it still Mega-evolves at Apex (stage 4), keep the meter climbing toward that.
     if(cfg().creaturePack==="pokemon3d" && pokeCanMega(raw) && rawStage<4){
       var fStart=null; for(var s2=0;s2<=4;s2++){ if(Math.round((s2/4)*(line.length-1))===curPos){ fStart=s2; break; } }
       if(fStart===null) fStart=rawStage;
-      var mspan=Math.max(1, 4-fStart), mdone=(rawStage-fStart)+(creatureStagePct(cr)/100);
+      var mspan=Math.max(1, 4-fStart), mdone=(rawStage-fStart)+effPct;
       var mf=pokeMegaForm(Object.assign({},raw,{stage:4}));
       return {pct:Math.max(0,Math.min(100,Math.round(mdone/mspan*100))), next:(mf&&mf.name)||"Mega form", mega:true};
     }
@@ -3405,7 +3409,7 @@ function pokeFormProgress(cr){
   if(formStart===null) formStart=rawStage;
   if(nextFormStage===null) return {pct:100, next:null};
   var span=Math.max(1, nextFormStage-formStart);
-  var done=(rawStage-formStart)+(creatureStagePct(cr)/100);          // stages cleared + within-stage
+  var done=(rawStage-formStart)+effPct;                              // stages cleared + within-stage
   var nextName = (curPos+1===line.length-1) ? branchFinalName(cr) : (DEX_NAMES[line[curPos+1]]||null); // honor chosen branch on last hop
   return {pct:Math.max(0,Math.min(100,Math.round(done/span*100))), next:nextName};
 }
@@ -3415,9 +3419,10 @@ function evobarHTML(cr){
   if(isPokePack()){ var fp=pokeFormProgress(cr); pct=fp.pct; next=fp.next; mega=!!fp.mega; }
   else {
     // non-poke packs: each stage IS a visible change, so per-stage progress is correct.
-    // Use RAW growth (_noFloor) so the New Game+ display floor never resets earned progress.
-    var raw=Object.assign({},cr,{_noFloor:true});
-    next=creatureNextStageName(raw); pct=creatureStagePct(cr);
+    // Use EFFECTIVE growth so progress persists across sessions of the same species.
+    var effG=effectiveGrowthOf(cr), effStage=Math.max(0,Math.min(4,Math.floor(effG)));
+    var raw=Object.assign({},cr,{_noFloor:true, stage:effStage});
+    next=creatureNextStageName(raw); pct=(effStage>=4)?100:Math.round((effG-effStage)*100);
   }
   return '<div class="evobar'+(mega?' mega':'')+'"><span style="width:'+pct+'%"></span></div>'+
     (next ? '<div class="evonext">'+pct+'% '+(mega?'⚡':'→')+' '+esc(next)+'</div>' : '<div class="evonext">Fully evolved</div>');
@@ -5965,6 +5970,24 @@ function dexHighWater(species, cur){
   if(m!==prev){ DEX_MAX[k]=m; try{ localStorage.setItem("hq_dex_max", JSON.stringify(DEX_MAX)); }catch(e){} }
   return m;
 }
+// ---- Per-species FRACTIONAL growth high-water ----------------------------------------
+// DEX_MAX persists the integer STAGE across sessions of a species, but not the within-stage
+// progress — so a new session of a species you'd already grown reset the progress bar to 0%.
+// This persists a continuous growth value (0..4 = stage + within-stage fraction), keyed the
+// same way (species % 48). Seeded ONLY from RAW growth, never the floored value, so it can't
+// inflate itself. Read by the evolution/level-up progress bar.
+var DEX_MAXG=(function(){ try{ return JSON.parse(localStorage.getItem("hq_dex_maxg")||"{}"); }catch(e){ return {}; } })();
+function speciesGrowthHW(species){ var v=DEX_MAXG[String(((species|0)%48+48)%48)]; return (typeof v==="number"&&v>0)?Math.min(4,v):0; }
+function seedGrowthHW(species, g){ var k=String(((species|0)%48+48)%48); g=Math.max(0,Math.min(4,g||0));
+  if(g>(DEX_MAXG[k]||0)){ DEX_MAXG[k]=g; try{ localStorage.setItem("hq_dex_maxg", JSON.stringify(DEX_MAXG)); }catch(e){} return true; } return false; }
+// This session's OWN raw growth (ignores every floor), 0..4 = rawStage + within-stage fraction.
+function rawGrowthOf(cr){ cr=cr||{}; var raw=Object.assign({},cr,{_noFloor:true});
+  var rs=creatureStage(raw), rp=creatureStagePct(cr)/100; return Math.min(4, rs + (rs<4?rp:0)); }
+// Effective growth = best of this session's raw growth and everything persisted for the species
+// (fractional high-water AND the integer stage floor), so the bar is monotonic and always stays
+// consistent with the floored sprite form. Raises the fractional high-water as a side effect.
+function effectiveGrowthOf(cr){ var g=rawGrowthOf(cr); seedGrowthHW(pokeIdx(cr), g);
+  return Math.min(4, Math.max(g, speciesGrowthHW(pokeIdx(cr)), speciesHighWater(cr))); }
 // Persist a per-session evolution/mega choice, then repaint the affected surfaces. Keyed by the
 // SAME id used to stamp cr._sid (sessionId||id), or the party card won't repaint on a pick.
 function setEvoChoice(sid, patch){
@@ -5990,7 +6013,8 @@ function seedHW(species, rawStage){
 // concurrent higher session of a species lifts new ones to the same form immediately.
 function seedHighWaterFromSessions(sessions){ var ch=false;
   (sessions||[]).forEach(function(s){ var c=s.creature||{}; if(c.stage==null) return;
-    if(seedHW(pokeIdx(c), c.stage)) ch=true; });
+    if(seedHW(pokeIdx(c), c.stage)) ch=true;
+    seedGrowthHW(pokeIdx(c), rawGrowthOf(c)); });   // persist within-stage progress too
   return ch;
 }
 // Seed once on startup from the backend Pokédex (cross-session maxStage) regardless of

@@ -27,6 +27,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import PokeBalance, PokeLedger, User
+from .rooms import manager
 from .routes.nudges import _deliver_live
 from .schemas import (
     BuyRequest, BuyResponse, ClaimResponse, DrainedGift, EatRequest, EatResponse,
@@ -115,6 +116,18 @@ async def _qty(db: AsyncSession, uid: str, item: str) -> int | None:
     ).scalar_one_or_none()
 
 
+def _not_enough(label: str, n: int, have: int) -> EconomyError:
+    return EconomyError(409, f"not enough {label} (need {n}, you have {have})")
+
+
+async def _afford(db: AsyncSession, uid: str, item: str, n: int, label: str) -> None:
+    """Refuse as _debit would unless uid holds n. A read, not a hold: the
+    conditional debit is still the guard."""
+    have = await _qty(db, uid, item) or 0
+    if have < n:
+        raise _not_enough(label, n, have)
+
+
 async def _debit(
     db: AsyncSession, uid: str, item: str, n: int, label: str, short: str | None = None
 ) -> None:
@@ -128,8 +141,7 @@ async def _debit(
     if res.rowcount != 1:
         if short:
             raise EconomyError(409, short)
-        have = await _qty(db, uid, item) or 0
-        raise EconomyError(409, f"not enough {label} (need {n}, you have {have})")
+        raise _not_enough(label, n, await _qty(db, uid, item) or 0)
 
 
 async def _credit(db: AsyncSession, uid: str, item: str, n: int, cap: int, err: str) -> None:
@@ -170,6 +182,12 @@ def _gift_item(row: PokeLedger, sender: User) -> dict:
         "note": row.note,
         "at": _aware(row.created_at).isoformat(),
     }
+
+
+def _in_lobby(uid: str) -> bool:
+    """Whether uid has a lobby socket open, as _deliver_live would find it."""
+    room = manager.get("lobby")
+    return room is not None and any(m.user_id == uid for m in list(room.members.values()))
 
 
 async def pantry_state(db: AsyncSession, user: User) -> dict:
@@ -327,8 +345,9 @@ async def eat(db: AsyncSession, user: User, body: EatRequest) -> EatResponse:
 
 async def give(db: AsyncSession, user: User, body: GiveRequest) -> GiveResponse:
     """Coins and/or one food kind to a person by handle, resolved now; the
-    ledger stores ids. Delivered live over the lobby socket when the recipient
-    is there, otherwise through their client's drain."""
+    ledger stores ids. Delivered by exactly one channel: live over the lobby
+    socket when the recipient is there at commit, otherwise their client's
+    drain."""
     uid = user.id
     target = (
         await db.execute(select(User).where(User.handle == body.toHandle))
@@ -354,6 +373,14 @@ async def give(db: AsyncSession, user: User, body: GiveRequest) -> GiveResponse:
             raise EconomyError(
                 429, f"you've already sent {to_handle} {GIFTS_PER_PAIR_PER_DAY} gifts today"
             )
+        # A sender who can't pay is refused before anything reads the
+        # recipient, whatever order the rows are touched in below. Otherwise
+        # which 409 came back would tell a broke sender the recipient's balance
+        # or today's receipts, for free: a refused gift writes nothing.
+        if body.coins:
+            await _afford(db, uid, "coins", body.coins, "Poke Coins")
+        if body.qty:
+            await _afford(db, uid, body.kind, body.qty, CATALOG[body.kind]["plural"])
         # Every recipient-side refusal reads the same, so their balance never leaks.
         refused = f"{to_handle} can't receive that right now"
         to_them = (*gives, PokeLedger.to_user_id == to_id)
@@ -380,13 +407,25 @@ async def give(db: AsyncSession, user: User, body: GiveRequest) -> GiveResponse:
         await first()
         await second()
 
+        # Pick the channel in this transaction. A gift that will go live
+        # commits already marked delivered, so a drain racing the live send
+        # finds nothing and the recipient is not told twice.
+        if _in_lobby(to_id):
+            row.delivered_at = _now()
+
     row, replayed = await _spend(
         db, user, body.requestId, want, apply, note=body.note, check=check
     )
     sent = SentGift(coins=row.coins, kind=row.kind, qty=row.qty)
 
-    live = 0
-    if not replayed:
+    if replayed:
+        # "Send again" replays after an unconfirmed send that has often landed,
+        # and the page reads 0 as "queued". The socket count is not kept, so
+        # report whether it has reached them by now, live or drained.
+        live = int(row.delivered_at is not None)
+    elif row.delivered_at is None:
+        live = 0  # not in the lobby: their drain delivers it
+    else:
         live = await _deliver_live(to_id, {
             "type": "gift",
             "id": row.id,
@@ -401,14 +440,14 @@ async def give(db: AsyncSession, user: User, body: GiveRequest) -> GiveResponse:
             "qty": row.qty,
             "note": row.note,
         })
-        if live > 0:
-            # Best-effort: mark it delivered so the recipient's poller does not
-            # notify a second time. If this fails, they just hear about it twice.
+        if live == 0:
+            # No socket took it: hand it back to their drain. Best-effort: if
+            # this fails too they miss the notification, never the gift.
             try:
                 await db.execute(
                     update(PokeLedger)
-                    .where(PokeLedger.id == row.id, PokeLedger.delivered_at.is_(None))
-                    .values(delivered_at=_now())
+                    .where(PokeLedger.id == row.id)
+                    .values(delivered_at=None)
                     .execution_options(synchronize_session=False)
                 )
                 await db.commit()
@@ -487,7 +526,8 @@ async def claim(db: AsyncSession, user: User) -> ClaimResponse:
 async def drain(db: AsyncSession, user: User) -> GiftsResponse:
     """Undelivered gifts to me, oldest first, each returned exactly once. The
     conditional UPDATE is what makes it once: of two drains racing for the same
-    row, only one sees delivered_at still NULL."""
+    row, only one sees delivered_at still NULL. A gift going live commits
+    already delivered (see give), so the drain never returns that one too."""
     rows = (
         await db.execute(
             select(PokeLedger, User)

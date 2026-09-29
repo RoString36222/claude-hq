@@ -285,6 +285,214 @@ class ScanCollectorTests(unittest.TestCase):
         agg = dashboard._scan_file_uncached(self.path)
         self.assertEqual(agg["busy_spans"], [[BASE + 4 * H, BASE + 10 * H]])
 
+    def test_turn_duration_stays_inside_the_turn_it_closes(self):
+        # The turn answering a <task-notification> reports durationMs from the
+        # first turn's start (real transcripts: 295 min for a 40-s turn). Only
+        # its own 40 s are work. The isMeta skill body 10 min into turn one
+        # does not move that turn's start.
+        self._write([
+            {"type": "user", "timestamp": _ts(), "message": {"content": "build it"}},
+            {"type": "user", "isMeta": True, "timestamp": _ts(minutes=10),
+             "message": {"content": [{"type": "text", "text": "skill body"}]}},
+            {"type": "assistant", "timestamp": _ts(minutes=19),
+             "message": {"content": [{"type": "tool_use", "id": "w1", "name": "Workflow",
+                                      "input": {}}]}},
+            {"type": "user", "timestamp": _ts(minutes=19, seconds=2),
+             "message": {"content": [{"type": "tool_result", "tool_use_id": "w1",
+                                      "content": "launched in background"}]}},
+            {"type": "system", "subtype": "turn_duration", "durationMs": 20 * 60 * 1000,
+             "timestamp": _ts(minutes=20)},
+            {"type": "user", "timestamp": _ts(hours=3),
+             "message": {"content": "<task-notification> <task-id>w1</task-id> done"}},
+            {"type": "assistant", "timestamp": _ts(hours=3, seconds=30),
+             "message": {"content": [{"type": "text", "text": "it finished"}]}},
+            {"type": "system", "subtype": "turn_duration", "durationMs": (3 * H + 40) * 1000,
+             "timestamp": _ts(hours=3, seconds=40)},
+        ])
+        agg = dashboard._scan_file_uncached(self.path)
+        self.assertEqual(agg["busy_spans"], [[BASE, BASE + 20 * M],
+                                             [BASE + 3 * H, BASE + 3 * H + 40]])
+
+    def test_a_turn_opened_by_another_sessions_message_starts_there(self):
+        # An isMeta record right after a finished turn opens the next one.
+        self._write([
+            {"type": "user", "timestamp": _ts(), "message": {"content": "ship it"}},
+            {"type": "system", "subtype": "turn_duration", "durationMs": 5 * 60 * 1000,
+             "timestamp": _ts(minutes=5)},
+            {"type": "user", "isMeta": True, "timestamp": _ts(hours=2),
+             "message": {"content": "Another Claude session sent a message: hi"}},
+            {"type": "system", "subtype": "turn_duration", "durationMs": (2 * H + 20) * 1000,
+             "timestamp": _ts(hours=2, seconds=20)},
+        ])
+        agg = dashboard._scan_file_uncached(self.path)
+        self.assertEqual(agg["busy_spans"], [[BASE, BASE + 5 * M],
+                                             [BASE + 2 * H, BASE + 2 * H + 20]])
+
+    def _jump_on_the_last_record(self, recs, before, after):
+        """Load 1 s before and 1 s after the last record lands."""
+        self._write(recs[:-1])
+        a = dashboard.fatigue_for(SID, dashboard._scan_file_uncached(self.path)["busy_spans"],
+                                  before)
+        self._write(recs)
+        agg = dashboard._scan_file_uncached(self.path)
+        b = dashboard.fatigue_for(SID, agg["busy_spans"], after)
+        return agg, a, b
+
+    def test_another_sessions_message_after_a_slash_command(self):
+        # A local command (/model) writes no turn_duration, so the turn it
+        # "opened" never ends; the message 2 h later still starts its own turn.
+        recs = [
+            {"type": "user", "timestamp": _ts(), "message": {"content": "ship it"}},
+            {"type": "system", "subtype": "turn_duration", "durationMs": 5 * 60 * 1000,
+             "timestamp": _ts(minutes=5)},
+            {"type": "user", "isMeta": True, "timestamp": _ts(minutes=6),
+             "message": {"content": "<local-command-caveat>Caveat</local-command-caveat>"}},
+            {"type": "user", "timestamp": _ts(minutes=6),
+             "message": {"content": "<command-name>/model</command-name>"}},
+            {"type": "user", "timestamp": _ts(minutes=6),
+             "message": {"content": "<local-command-stdout>Set model</local-command-stdout>"}},
+            {"type": "user", "isMeta": True, "timestamp": _ts(hours=2),
+             "message": {"content": "Another Claude session sent a message: hi"}},
+            {"type": "system", "subtype": "turn_duration", "durationMs": (2 * H + 20) * 1000,
+             "timestamp": _ts(hours=2, seconds=20)},
+        ]
+        agg, a, b = self._jump_on_the_last_record(recs, BASE + 2 * H + 19, BASE + 2 * H + 21)
+        self.assertEqual(agg["busy_spans"], [[BASE, BASE + 6 * M],
+                                             [BASE + 2 * H, BASE + 2 * H + 20]])
+        self.assertEqual((a["state"], b["state"]), ("rested", "rested"))
+        self.assertLessEqual(b["loadMins"] - a["loadMins"], 1)
+
+    def test_another_sessions_message_after_an_interrupted_turn(self):
+        # Esc: the interrupted turn writes no turn_duration either.
+        recs = [
+            {"type": "user", "timestamp": _ts(), "message": {"content": "build it"}},
+            {"type": "assistant", "timestamp": _ts(seconds=10),
+             "message": {"content": [{"type": "tool_use", "id": "b1", "name": "Bash",
+                                      "input": {}}]}},
+            {"type": "user", "timestamp": _ts(seconds=60),
+             "message": {"content": [{"type": "tool_result", "tool_use_id": "b1",
+                                      "content": "interrupted", "is_error": True}]}},
+            {"type": "user", "timestamp": _ts(seconds=60),
+             "message": {"content": [{"type": "text",
+                                      "text": "[Request interrupted by user for tool use]"}]}},
+            {"type": "user", "isMeta": True, "timestamp": _ts(hours=3),
+             "message": {"content": "Another Claude session sent a message: hi"}},
+            {"type": "assistant", "timestamp": _ts(hours=3, seconds=20),
+             "message": {"content": [{"type": "text", "text": "ok"}]}},
+            {"type": "system", "subtype": "turn_duration", "durationMs": (3 * H + 30) * 1000,
+             "timestamp": _ts(hours=3, seconds=30)},
+        ]
+        agg, a, b = self._jump_on_the_last_record(recs, BASE + 3 * H + 29, BASE + 3 * H + 31)
+        self.assertEqual(agg["busy_spans"], [[BASE, BASE + 60],
+                                             [BASE + 3 * H, BASE + 3 * H + 30]])
+        self.assertEqual((b["state"], b["mayFaint"]), ("rested", False))
+        self.assertLessEqual(b["loadMins"] - a["loadMins"], 1)
+
+    def test_turn_duration_skips_a_human_wait(self):
+        # Real transcripts: durationMs leaves out an AskUserQuestion wait, so
+        # t - durationMs lands inside it. The wait stays rest.
+        self._write([
+            {"type": "user", "timestamp": _ts(), "message": {"content": "improve it"}},
+            {"type": "assistant", "timestamp": _ts(seconds=54),
+             "message": {"content": [{"type": "tool_use", "id": "q1",
+                                      "name": "AskUserQuestion", "input": {}}]}},
+            {"type": "user", "timestamp": _ts(minutes=15),
+             "message": {"content": [{"type": "tool_result", "tool_use_id": "q1",
+                                      "content": "yes"}]}},
+            {"type": "assistant", "timestamp": _ts(minutes=15, seconds=30),
+             "message": {"content": [{"type": "text", "text": "done"}]}},
+            {"type": "system", "subtype": "turn_duration", "durationMs": 89 * 1000,
+             "timestamp": _ts(minutes=15, seconds=35)},
+        ])
+        self.assertEqual(dashboard._scan_file_uncached(self.path)["busy_spans"],
+                         [[BASE, BASE + 54], [BASE + 15 * M, BASE + 15 * M + 35]])
+
+    def test_a_tool_past_the_pair_cap_never_jumps(self):
+        # One foreground tool (a subagent) runs longer than FATIGUE_MAX_PAIR_SECS
+        # in a busy interactive session. The page stops tiring the creature at
+        # the cap; the turn_duration that closes the turn covers the whole
+        # tool, yet must not turn the capped stretch into work afterwards.
+        for run_mins in (150, 240):
+            with self.subTest(run_mins=run_mins):
+                recs = [
+                    {"type": "user", "timestamp": _ts(), "message": {"content": "audit"}},
+                    {"type": "assistant", "timestamp": _ts(seconds=10),
+                     "message": {"content": [{"type": "tool_use", "id": "a1", "name": "Agent",
+                                              "input": {}}]}},
+                    {"type": "user", "timestamp": _ts(minutes=run_mins),
+                     "message": {"content": [{"type": "tool_result", "tool_use_id": "a1",
+                                              "content": "report"}]}},
+                    {"type": "assistant", "timestamp": _ts(minutes=run_mins, seconds=10),
+                     "message": {"content": [{"type": "text", "text": "done"}]}},
+                    {"type": "system", "subtype": "turn_duration",
+                     "durationMs": (run_mins * 60 + 20) * 1000,
+                     "timestamp": _ts(minutes=run_mins, seconds=20)},
+                ]
+                stamps = [dashboard.parse_ts(r["timestamp"]).timestamp() for r in recs]
+                prev, written = None, -1
+                for sec in range(0, (run_mins + 5) * 60, 30):
+                    now = BASE + sec
+                    n = sum(1 for s in stamps if s <= now)
+                    if n != written:
+                        self._write(recs[:n])
+                        agg = dashboard._scan_file_uncached(self.path)
+                        written = n
+                    ext = agg["open_tool_since"] if n < len(recs) else None  # busy
+                    load = dashboard.fatigue_for(SID, agg["busy_spans"], now, ext)["loadMins"]
+                    if prev is not None:
+                        self.assertLessEqual(load - prev, 1, "load jumped at %d s" % sec)
+                    prev = load
+                cap = dashboard.FATIGUE_MAX_PAIR_SECS
+                self.assertEqual(agg["busy_spans"],
+                                 [[BASE, BASE + 10 + cap],
+                                  [BASE + run_mins * M, BASE + run_mins * M + 20]])
+
+    def test_live_load_never_outruns_the_clock(self):
+        # Grow a transcript record by record, as the page sees it, and check
+        # load never rises faster than wall time (1 min per min, +1 rounding).
+        recs = [{"type": "user", "timestamp": _ts(), "message": {"content": "build it"}}]
+        for i in range(1, 20):
+            recs.append({"type": "assistant", "timestamp": _ts(minutes=2 * i),
+                         "message": {"content": [{"type": "text", "text": "step"}]}})
+        recs += [
+            {"type": "assistant", "timestamp": _ts(minutes=39),
+             "message": {"content": [{"type": "tool_use", "id": "w1", "name": "Workflow",
+                                      "input": {}}]}},
+            {"type": "user", "timestamp": _ts(minutes=39, seconds=2),
+             "message": {"content": [{"type": "tool_result", "tool_use_id": "w1",
+                                      "content": "launched in background"}]}},
+            {"type": "system", "subtype": "turn_duration", "durationMs": 40 * 60 * 1000,
+             "timestamp": _ts(minutes=40)},
+            {"type": "user", "timestamp": _ts(minutes=60), "message": {"content": "working?"}},
+            {"type": "system", "subtype": "turn_duration", "durationMs": 30 * 1000,
+             "timestamp": _ts(minutes=60, seconds=30)},
+            {"type": "user", "timestamp": _ts(hours=4),
+             "message": {"content": "<task-notification> <task-id>w1</task-id> done"}},
+            {"type": "system", "subtype": "turn_duration", "durationMs": (4 * H + 40) * 1000,
+             "timestamp": _ts(hours=4, seconds=40)},
+        ]
+        stamps = [dashboard.parse_ts(r["timestamp"]).timestamp() for r in recs]
+        prev, written = None, -1
+        for minute in range(0, 5 * 60):
+            now = BASE + minute * M
+            n = sum(1 for s in stamps if s <= now)
+            if n != written:
+                self._write(recs[:n])
+                spans = dashboard._scan_file_uncached(self.path)["busy_spans"]
+                written = n
+            load = dashboard.fatigue_for(SID, spans, now)["loadMins"]
+            if prev is not None:
+                self.assertLessEqual(load - prev, 2, "load jumped at minute %d" % minute)
+            prev = load
+
+    def test_opens_turn(self):
+        for content in ("hi", "<task-notification>x", "<command-name>/model</command-name>",
+                        [{"type": "text", "text": "look"}, {"type": "image"}]):
+            self.assertTrue(dashboard._opens_turn(content), content)
+        for content in ("", "   ", None, 7, [], [{"type": "tool_result", "tool_use_id": "t"}],
+                        ["junk"]):
+            self.assertFalse(dashboard._opens_turn(content), content)
+
     def test_spans_are_capped(self):
         recs = [{"type": "assistant", "timestamp": _ts(minutes=10 * i),
                  "message": {"content": [{"type": "text", "text": "x"}]}} for i in range(150)]

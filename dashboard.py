@@ -49,7 +49,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import arena
 
-APP_VERSION = "1.2.2"
+APP_VERSION = "1.3.0"
 
 # --------------------------------------------------------------------------- #
 # Paths / constants
@@ -483,6 +483,28 @@ def _scan_file_uncached(path):
     last_assistant_tool = None
     busy = []        # (start, end) epoch secs when Claude or the user was at it
     open_tools = {}  # tool_use id -> epoch secs, until its tool_result arrives
+    turn_floor = None  # start of the current turn: a turn_duration never reaches back before it
+    turn_ended = True  # the next user record (even an isMeta one) opens a turn
+    last_busy = None   # latest busy instant so far (a running max: records can be out of order)
+    rest_until = None  # first busy instant after a stretch the page showed as rest
+
+    def mark_busy(t):
+        """A busy instant at t. When nothing covered the stretch before it for
+        more than FATIGUE_HOLD_SECS (no record, and no open tool inside its
+        FATIGUE_MAX_PAIR_SECS horizon), the page showed that stretch as rest,
+        so no turn_duration may later reach back across it. This holds however
+        the turn was opened: an isMeta message after a slash command or an Esc
+        interrupt, a <task-notification>, or a tool that ran past the cap."""
+        nonlocal last_busy, rest_until
+        if last_busy is None or t > last_busy:
+            if last_busy is not None and t - last_busy > FATIGUE_HOLD_SECS:
+                cover = last_busy
+                if open_tools:
+                    cover = max(cover, max(open_tools.values()) + FATIGUE_MAX_PAIR_SECS)
+                if t - cover > FATIGUE_HOLD_SECS:
+                    rest_until = t
+            last_busy = t
+        busy.append((t, t))
 
     with f:
         for line in f:
@@ -517,7 +539,7 @@ def _scan_file_uncached(path):
                     # Fatigue: every user record is a busy instant, and a
                     # tool_result closes its tool's interval (capped per pair).
                     if t is not None:
-                        busy.append((t, t))
+                        mark_busy(t)
                         if isinstance(content, list):
                             for blk in content:
                                 if not isinstance(blk, dict) or blk.get("type") != "tool_result":
@@ -526,6 +548,13 @@ def _scan_file_uncached(path):
                                 u = open_tools.pop(tid, None) if isinstance(tid, str) else None
                                 if u is not None and t >= u:
                                     busy.append((u, min(t, u + FATIGUE_MAX_PAIR_SECS)))
+                        # A turn starts at the first user record after the last
+                        # one ended (an isMeta agent message can open it) or at
+                        # a later prompt / <task-notification>. isMeta inserts
+                        # inside a turn (skill body, image note) don't move it.
+                        if turn_ended or (not o.get("isMeta") and _opens_turn(content)):
+                            turn_floor = t
+                            turn_ended = False
                     if is_real_human_prompt(content):
                         open_tools.clear()  # a new human turn ends any orphaned tool
                         cleaned = clean_prompt(content)
@@ -551,7 +580,7 @@ def _scan_file_uncached(path):
 
                 elif typ == "assistant":
                     if t is not None:
-                        busy.append((t, t))
+                        mark_busy(t)
                     msg = o.get("message") or {}
                     blocks = msg.get("content")
                     model = msg.get("model") or ""
@@ -647,17 +676,30 @@ def _scan_file_uncached(path):
                             agg["errors"].append((ts.timestamp(), sig))
                         if "claude.ai" in content or "github.com" in content:
                             _extract_links_from_text(content, agg["links"], seen_links)
-                    # Fatigue: a finished turn covers its whole duration (clamped,
-                    # so a long background Workflow still counts); away_summary
-                    # and other subtypes are ignored.
+                    # Fatigue: a finished turn covers its own duration (clamped),
+                    # but never reaches back past the start of the turn it
+                    # closes, nor across a stretch the page already showed as
+                    # rest (mark_busy). A turn opened by a <task-notification>
+                    # or another session's message can report a durationMs
+                    # from an EARLIER turn's start, and a foreground tool that
+                    # ran past the pair cap is inside its own turn's duration;
+                    # taken at face value either would turn hours the page
+                    # showed as rest into work in one refresh.
+                    # away_summary and other subtypes are ignored.
                     st = o.get("subtype")
                     dms = o.get("durationMs")
                     if t is not None:
                         if (st == "turn_duration" and isinstance(dms, (int, float))
                                 and not isinstance(dms, bool) and dms > 0):
-                            busy.append((t - min(dms / 1000.0, FATIGUE_MAX_TURN_SECS), t))
+                            mark_busy(t)
+                            start = t - min(dms / 1000.0, FATIGUE_MAX_TURN_SECS)
+                            for floor in (turn_floor, rest_until):
+                                if floor is not None and floor <= t:
+                                    start = max(start, floor)
+                            busy.append((start, t))
+                            turn_floor, turn_ended = t, True
                         elif st in ("local_command", "api_error", "compact_boundary"):
-                            busy.append((t, t))
+                            mark_busy(t)
 
                 else:
                     if "claude.ai" in line or "github.com" in line:
@@ -763,6 +805,17 @@ FOOD_EFFECTS = {"berry": (1200, False), "riceball": (2700, False),
 FATIGUE_RESTED = {"state": "rested", "energy": 1.0, "loadMins": 0, "mayFaint": False,
                   "phase": "resting", "restInMins": 0, "restMins": 0, "streakMins": 0,
                   "lastMeal": None}
+
+
+def _opens_turn(content):
+    """True for the content of a user record that starts a turn: a prompt, a
+    slash command or a <task-notification> (any string), or a list with a block
+    that isn't a tool_result. A tool_result carrier happens inside a turn."""
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        return any(isinstance(b, dict) and b.get("type") != "tool_result" for b in content)
+    return False
 
 
 def _merge_spans(intervals, gap):
@@ -939,8 +992,26 @@ def _fatigue_safe(sid, agg, open_since, meals, now=None):
         return dict(FATIGUE_RESTED)
 
 
+def _offpayload_fatigue(sid, agg):
+    """creature.fatigue for a transcript that isn't in the payload (a drawer
+    opened from search or a project: past the archive cap, or no real prompt),
+    or None when creature energy is off. The session detail shows it and the
+    eat gate checks it, so both always agree."""
+    try:
+        fz_on = bool(load_config().get("creatureFatigue", True))
+    except Exception:
+        fz_on = True
+    if not fz_on:
+        return None
+    try:
+        sid_meals = load_meals().get(sid, ())
+    except Exception:
+        sid_meals = ()
+    return _fatigue_safe(sid, agg, None, sid_meals)
+
+
 def session_fatigue_now(sess):
-    """Fresh fatigue for one payload session (the eat response's meter)."""
+    """Fresh fatigue for the session a snack was for (the eat response's meter)."""
     sid = sess.get("sessionId") or ""
     agg = scan_file(find_transcript(sid)) or {}
     ext = agg.get("open_tool_since") if (sess.get("kind") == "interactive"
@@ -1617,16 +1688,9 @@ def build_session_detail(sid):
         if any(ts >= cutoff for ts, _ in agg["errors"]):
             status = "needs"
         creature = creature_for(sid, agg["prompt_count"])
-        try:
-            fz_on = bool(load_config().get("creatureFatigue", True))
-        except Exception:
-            fz_on = True
-        if fz_on:
-            try:
-                sid_meals = load_meals().get(sid, ())
-            except Exception:
-                sid_meals = ()
-            creature["fatigue"] = _fatigue_safe(sid, agg, None, sid_meals)
+        fz = _offpayload_fatigue(sid, agg)
+        if fz is not None:
+            creature["fatigue"] = fz
 
     files = sorted(agg["files"].values(), key=lambda x: -x["count"])[:15]
 
@@ -3005,13 +3069,19 @@ def record_meal(rid, sid, kind, at, now=None):
         entry = {"requestId": rid, "sessionId": sid, "kind": kind, "at": float(at)}
         entries.append(entry)
         # prune: the keep window, then the newest MEALS_PER_SID per session and
-        # the newest MEALS_MAX overall
+        # the newest MEALS_MAX overall. A meal inside the fatigue window is never
+        # dropped for the per-session count: the walk replays every one of them,
+        # so losing an old Revive Tonic or Bento would make the snack just eaten
+        # leave the creature worse off. MEALS_MAX stays the hard bound: it is
+        # above the most eats the Arena allows in any 24 h (MAX_OPS_PER_DAY is
+        # 200 per UTC day and every eat is one op, so at most 400).
+        fz_lo = now - FATIGUE_WINDOW_SECS
         kept, per_sid = [], {}
         for m in sorted(entries, key=lambda m: -m["at"]):
             if not (now - MEALS_KEEP_SECS <= m["at"] <= now + 60):
                 continue
             n = per_sid.get(m["sessionId"], 0)
-            if n >= MEALS_PER_SID:
+            if n >= MEALS_PER_SID and m["at"] < fz_lo:
                 continue
             per_sid[m["sessionId"]] = n + 1
             kept.append(m)
@@ -3114,6 +3184,20 @@ def _payload_session(sid):
                  if s.get("sessionId") == sid), None)
 
 
+def _eat_target(sid):
+    """The session a snack is for: its payload entry, else (for a transcript the
+    drawer opened outside the payload) a stub carrying the same creature.fatigue
+    build_session_detail showed. None if no transcript has that id."""
+    sess = _payload_session(sid)
+    if sess is not None:
+        return sess
+    agg = scan_file(find_transcript(sid))
+    if agg is None:
+        return None
+    fz = _offpayload_fatigue(sid, agg)
+    return {"sessionId": sid, "creature": {"fatigue": fz} if fz is not None else {}}
+
+
 def pantry_eat(body):
     """Feed one session's creature -> (code, dict).
 
@@ -3145,7 +3229,7 @@ def pantry_eat(body):
             return 202, {"pending": True, "requestId": rid}
         _EAT_INFLIGHT.add(rid)
     try:
-        sess = _payload_session(sid)
+        sess = _eat_target(sid)
         if sess is None:
             return 404, {"error": "unknown session"}
         fz = (sess.get("creature") or {}).get("fatigue")

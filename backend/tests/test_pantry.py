@@ -400,6 +400,57 @@ async def test_give_limits(client, clock):
     assert await held(giver_ids[3]) == {"coins": 10, "berry": 5}
 
 
+async def test_give_refuses_the_sender_first(client):
+    """A sender who can't pay hears that, whatever the recipient holds, or which
+    409 comes back would read the recipient's balance for free. The ids pin the
+    row order both ways round the recipient."""
+    low_id, low = await make_user("low", 300, user_id="00000000-0000-4000-8000-000000000000")
+    oak_id, _ = await make_user("oak", 301, user_id="77777777-7777-4777-8777-777777777777")
+    high_id, high = await make_user("high", 302, user_id="ffffffff-ffff-4fff-8fff-ffffffffffff")
+    rich_id, rich = await make_user("rich", 303)
+    assert low_id < oak_id < high_id
+
+    n = 0
+
+    def probe(tok, **gift):
+        nonlocal n
+        n += 1
+        return give(client, tok, "oak", rid(f"probe{n}"), **gift)
+
+    def refused_as_broke(tok):
+        for coins in range(1, 6):
+            r = probe(tok, coins=coins)
+            assert r.status_code == 409
+            assert r.json()["detail"] == f"not enough Poke Coins (need {coins}, you have 0)"
+        for qty in range(1, 4):
+            r = probe(tok, kind="berry", qty=qty)
+            assert r.status_code == 409
+            assert r.json()["detail"] == f"not enough Berries (need {qty}, you have 0)"
+
+    # A full purse and a full stack...
+    await put(oak_id, coins=30, berry=10)
+    for tok in (low, high):
+        refused_as_broke(tok)
+
+    # ...and today's receipts at the cap.
+    await put(oak_id, coins=0, berry=0)
+    await put(rich_id, coins=15)
+    for i in range(3):
+        assert give(client, rich, "oak", rid(f"rich{i}"), coins=5).status_code == 200
+    for tok in (low, high):
+        refused_as_broke(tok)
+
+    # A sender who can pay still gets only the generic refusal, both ways round.
+    await put(low_id, coins=5)
+    await put(high_id, coins=5)
+    for tok in (low, high):
+        r = probe(tok, coins=1)
+        assert r.status_code == 409 and r.json()["detail"] == "oak can't receive that right now"
+    assert await held(low_id) == await held(high_id) == {"coins": 5}
+    assert await held(oak_id) == {"coins": 15}
+    assert [row.user_id for row in await ledger(op="give")] == [rich_id] * 3
+
+
 async def test_gift_live_and_drain(client):
     ash_id, ash = await make_user("ash", 240)
     gary_id, gary = await make_user("gary", 241)
@@ -434,6 +485,67 @@ async def test_gift_live_and_drain(client):
     # marks nothing.
     recent = client.get("/v1/pantry", headers=auth(gary)).json()["recentGifts"]
     assert [(g["coins"], g["kind"]) for g in recent] == [(1, None), (2, "riceball")]
+
+
+async def test_gift_goes_one_way(client, monkeypatch):
+    """A gift reaches the recipient live or through their drain, never both."""
+    ash_id, ash = await make_user("ash", 320)
+    gary_id, gary = await make_user("gary", 321)
+    await put(ash_id, coins=10)
+    real = pantry._deliver_live
+    mid_send = []
+
+    async def poller_lands_mid_send(to_id, payload):
+        async with SessionLocal() as db:
+            mid_send.append((await pantry.drain(db, await db.get(User, to_id))).gifts)
+        return await real(to_id, payload)
+
+    monkeypatch.setattr(pantry, "_deliver_live", poller_lands_mid_send)
+    with client.websocket_connect(f"/v1/rooms/lobby/ws?ticket={issue_ws_ticket(gary_id)}") as g:
+        g.receive_json()  # welcome
+        assert give(client, ash, "gary", rid("race"), coins=1).json()["deliveredLive"] == 1
+        assert g.receive_json()["type"] == "gift"
+    # Their poller found nothing while the live send was in flight.
+    assert mid_send == [[]]
+    assert post(client, gary, "gifts/drain").json() == {"gifts": []}
+
+    # In the lobby but no socket took it: the drain has it, exactly once.
+    async def no_socket_took_it(to_id, payload):
+        return 0
+
+    monkeypatch.setattr(pantry, "_deliver_live", no_socket_took_it)
+    with client.websocket_connect(f"/v1/rooms/lobby/ws?ticket={issue_ws_ticket(gary_id)}") as g:
+        g.receive_json()
+        assert give(client, ash, "gary", rid("lost"), coins=1).json()["deliveredLive"] == 0
+    [got] = post(client, gary, "gifts/drain").json()["gifts"]
+    [row] = await ledger(request_id=rid("lost"))
+    assert got["id"] == row.id
+    assert post(client, gary, "gifts/drain").json() == {"gifts": []}
+
+
+async def test_give_replay_reports_delivery(client):
+    """"Send again" after an unconfirmed send replays the same requestId. It
+    must not call a gift that already landed "queued"."""
+    ash_id, ash = await make_user("ash", 330)
+    gary_id, gary = await make_user("gary", 331)
+    await put(ash_id, coins=10)
+
+    with client.websocket_connect(f"/v1/rooms/lobby/ws?ticket={issue_ws_ticket(gary_id)}") as g:
+        g.receive_json()  # welcome
+        assert give(client, ash, "gary", rid("live"), coins=1).json()["deliveredLive"] == 1
+        g.receive_json()
+    # Gary has left the lobby, so this reads the record; it sends nothing new.
+    again = give(client, ash, "gary", rid("live"), coins=1).json()
+    assert (again["replayed"], again["deliveredLive"]) == (True, 1)
+
+    # Queued until their drain has it, and delivered after.
+    assert give(client, ash, "gary", rid("queued"), coins=1).json()["deliveredLive"] == 0
+    again = give(client, ash, "gary", rid("queued"), coins=1).json()
+    assert (again["replayed"], again["deliveredLive"]) == (True, 0)
+    assert len(post(client, gary, "gifts/drain").json()["gifts"]) == 1
+    again = give(client, ash, "gary", rid("queued"), coins=1).json()
+    assert (again["replayed"], again["deliveredLive"]) == (True, 1)
+    assert await held(gary_id) == {"coins": 2}
 
 
 async def test_drain_oldest_first_and_limited(client, monkeypatch):

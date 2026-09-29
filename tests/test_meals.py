@@ -109,16 +109,19 @@ class MealLedgerTests(unittest.TestCase):
         self.assertEqual(dashboard.load_meals(now=NOW), {SID_A: [(NOW - 60, "berry")]})
 
     def test_per_session_and_total_caps(self):
+        # Past the fatigue window (the walk no longer reads them) only the
+        # newest MEALS_PER_SID per session stay.
+        old = NOW - dashboard.FATIGUE_WINDOW_SECS - 1000
         entries = []
         for i in range(30):
             entries.append({"requestId": rid(i), "sessionId": SID_A, "kind": "berry",
-                            "at": NOW - 1000 + i})
+                            "at": old + i})
         self._write_raw(entries)
         dashboard.record_meal(rid(99), SID_A, "bento", NOW, now=NOW)
         meals = dashboard.load_meals(now=NOW)[SID_A]
         self.assertEqual(len(meals), dashboard.MEALS_PER_SID)
         self.assertEqual(meals[-1], (NOW, "bento"))      # the newest are kept
-        self.assertEqual(meals[0], (NOW - 1000 + 11, "berry"))
+        self.assertEqual(meals[0], (old + 11, "berry"))
 
         many = []
         for i in range(600):
@@ -131,6 +134,52 @@ class MealLedgerTests(unittest.TestCase):
         self.assertEqual(len(data), dashboard.MEALS_MAX)
         self.assertEqual(data[-1]["requestId"], rid(5000))
         self.assertEqual([m["at"] for m in data], sorted(m["at"] for m in data))
+
+    def test_meals_inside_the_fatigue_window_are_never_pruned(self):
+        # More than MEALS_PER_SID snacks in 24 h: every one the walk replays
+        # stays, and only older meals give way to the per-session count.
+        lo = NOW - dashboard.FATIGUE_WINDOW_SECS
+        entries = [{"requestId": rid(i), "sessionId": SID_A, "kind": "berry",
+                    "at": lo - 5000 + i} for i in range(5)]
+        entries.append({"requestId": rid(10), "sessionId": SID_A, "kind": "tonic",
+                        "at": lo + 60})
+        entries += [{"requestId": rid(20 + i), "sessionId": SID_A, "kind": "berry",
+                     "at": lo + 120 + i} for i in range(dashboard.MEALS_PER_SID + 4)]
+        self._write_raw(entries)
+        dashboard.record_meal(rid(99), SID_A, "berry", NOW, now=NOW)
+        meals = dashboard.load_meals(now=NOW)[SID_A]
+        self.assertEqual(len(meals), dashboard.MEALS_PER_SID + 6)
+        self.assertEqual(meals[0], (lo + 60, "tonic"))
+        self.assertTrue(all(at >= lo for at, _ in meals))
+
+    def test_a_snack_never_leaves_the_creature_worse_off(self):
+        # A 12-h working day: a Revive Tonic at the 4-h faint, then a Berry
+        # every 20 min whenever the eat gate allows one. Pruning the tonic
+        # would bring the faint back the moment the 21st meal lands.
+        base = NOW - NOW % 900 - 12 * 3600
+        spans = [[base, base + 12 * 3600]]
+
+        def fz(now):
+            return dashboard.fatigue_for(SID_A, spans, now, None,
+                                         dashboard.load_meals(now=now).get(SID_A, ()))
+
+        now = base + 4 * 3600
+        self.assertEqual(fz(now)["state"], "unconscious")
+        dashboard.record_meal(rid(0), SID_A, "tonic", now, now=now)
+        self.assertEqual(fz(now)["state"], "tired")
+        eaten = 1
+        for k in range(1, dashboard.MEALS_PER_SID + 5):
+            now += 20 * 60
+            before = fz(now)
+            if before["state"] not in ("tired", "fatigued"):
+                continue
+            dashboard.record_meal(rid(k), SID_A, "berry", now, now=now)
+            eaten += 1
+            after = fz(now)
+            self.assertNotEqual(after["state"], "unconscious", "meal %d" % k)
+            self.assertLessEqual(after["loadMins"], before["loadMins"], "meal %d" % k)
+        self.assertGreater(eaten, dashboard.MEALS_PER_SID)
+        self.assertEqual(len(dashboard.load_meals(now=now)[SID_A]), eaten)
 
     def test_concurrent_records_both_land(self):
         start = threading.Barrier(2)

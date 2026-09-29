@@ -29,13 +29,15 @@ async def clean_db():
     yield
 
 
-async def make_user(handle: str, github_id: int) -> tuple[str, str]:
-    """Create a user with a paired device. Returns (user_id, device_token)."""
+async def make_user(handle: str, github_id: int, user_id: str | None = None) -> tuple[str, str]:
+    """Create a user with a paired device. Returns (user_id, device_token).
+    `user_id` pins the id where a test needs a known sort order."""
     token = new_device_token()
     async with SessionLocal() as db:
         user = User(
             github_id=github_id, handle=handle,
             display_name=handle.title(), avatar_url="",
+            **({"id": user_id} if user_id else {}),
         )
         db.add(user)
         await db.flush()

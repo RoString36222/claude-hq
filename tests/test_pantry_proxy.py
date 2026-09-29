@@ -188,14 +188,20 @@ class PantryEatTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self._orig = {
             "MEALS_PATH": dashboard.MEALS_PATH,
+            "PROJECTS_DIR": dashboard.PROJECTS_DIR,
+            "load_config": dashboard.load_config,
             "build_payload_memo": dashboard.build_payload_memo,
             "session_fatigue_now": dashboard.session_fatigue_now,
             "record_meal": dashboard.record_meal,
         }
         self._pantry = arena.pantry
         dashboard.MEALS_PATH = os.path.join(self._tmp.name, "meals.json")
+        dashboard.PROJECTS_DIR = os.path.join(self._tmp.name, "projects")
+        os.makedirs(os.path.join(dashboard.PROJECTS_DIR, "proj"))
         self.state = "tired"
         self.fatigue_on = True
+        dashboard.load_config = lambda: dict(dashboard.DEFAULT_CONFIG,
+                                             creatureFatigue=self.fatigue_on)
         dashboard.build_payload_memo = self._memo
         dashboard.session_fatigue_now = lambda sess: {"state": "fresh",
                                                       "sid": sess.get("sessionId")}
@@ -208,7 +214,30 @@ class PantryEatTests(unittest.TestCase):
             setattr(dashboard, k, v)
         arena.pantry = self._pantry
         dashboard._EAT_INFLIGHT.clear()
+        with dashboard._scan_lock:
+            for p in [p for p in dashboard._scan_cache if p.startswith(self._tmp.name)]:
+                dashboard._scan_cache.pop(p, None)
         self._tmp.cleanup()
+
+    def _transcript(self, sid, busy_mins):
+        """A transcript outside the payload (no real prompt, so build_payload
+        skips it) whose Claude worked the last `busy_mins` minutes, writing a
+        record every few minutes as a real turn does (a turn_duration never
+        reaches back across a quiet stretch the page showed as rest)."""
+        now = int(time.time())
+        path = os.path.join(dashboard.PROJECTS_DIR, "proj", sid + ".jsonl")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "user", "timestamp": iso(now - busy_mins * 60),
+                                "message": {"content": "<command-name>/go</command-name>"}})
+                    + "\n")
+            for m in range(busy_mins - 4, 0, -4):
+                f.write(json.dumps({"type": "assistant", "timestamp": iso(now - m * 60),
+                                    "message": {"content": [{"type": "text", "text": "step"}]}})
+                        + "\n")
+            f.write(json.dumps({"type": "system", "subtype": "turn_duration",
+                                "durationMs": busy_mins * 60 * 1000,
+                                "timestamp": iso(now)}) + "\n")
+        return path
 
     def _memo(self):
         creature = {"species": 3}
@@ -241,6 +270,33 @@ class PantryEatTests(unittest.TestCase):
     def test_unknown_session(self):
         code, resp = self.eat(sid=OTHER_SID)
         self.assertEqual((code, resp), (404, {"error": "unknown session"}))
+        self.assertEqual(self.calls, [])
+
+    def test_session_outside_the_payload_eats_by_the_drawers_fatigue(self):
+        # The drawer can open a transcript the payload skips (no real prompt,
+        # or past the archive cap) and shows its creature.fatigue; the eat gate
+        # must judge the same fatigue instead of answering "unknown session".
+        self._transcript(OTHER_SID, 80)
+        detail = dashboard.build_session_detail(OTHER_SID)
+        self.assertEqual(detail["creature"]["fatigue"]["state"], "tired")
+        self.reply = self._server_eat("berry")
+        code, resp = self.eat("berry", sid=OTHER_SID)
+        self.assertEqual(code, 200, resp)
+        self.assertEqual(self.calls, [("eat", {"requestId": RID, "kind": "berry"})])
+        self.assertEqual(resp["sessionId"], OTHER_SID)
+        self.assertEqual([k for _, k in dashboard.load_meals()[OTHER_SID]], ["berry"])
+        # The meal shows up in the drawer's fatigue too.
+        detail = dashboard.build_session_detail(OTHER_SID)
+        self.assertEqual(detail["creature"]["fatigue"]["lastMeal"]["kind"], "berry")
+
+    def test_session_outside_the_payload_keeps_the_gate(self):
+        self._transcript(OTHER_SID, 20)          # rested
+        code, resp = self.eat("berry", sid=OTHER_SID)
+        self.assertEqual((code, resp["code"]), (409, "not_hungry"))
+        self.fatigue_on = False
+        self.assertNotIn("fatigue", dashboard.build_session_detail(OTHER_SID)["creature"])
+        code, resp = self.eat("berry", sid=OTHER_SID)
+        self.assertEqual((code, resp["code"]), (409, "fatigue_off"))
         self.assertEqual(self.calls, [])
 
     def test_state_gate(self):

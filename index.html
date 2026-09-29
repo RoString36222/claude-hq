@@ -3662,11 +3662,11 @@ function pokeImgFor(dex, cr, px, altName){
     var src0 = base + slug + ".gif";
     return '<img class="pokeimg pokeimg-3d'+(mega?" pokeimg-mega":"")+'" src="'+src0+'" width="'+px+'" height="'+px+'"'+
       ' alt="'+esc(altName||"")+(shiny?" (shiny)":"")+'" data-dex="'+dex+'" data-shiny="'+shiny+'"'+
-      ' data-3d="1" data-mega="'+(mega?1:0)+'" data-slug="'+slug+'" data-try="0" data-fb="'+fb+'" onerror="pokeErr(this)" loading="lazy">';
+      ' data-3d="1" data-mega="'+(mega?1:0)+'" data-slug="'+slug+'" data-try="0" data-fb="'+fb+'" decoding="async" onerror="pokeErr(this)" loading="lazy">';
   }
   return '<img class="pokeimg" src="'+POKE_ANIM+sub+dex+'.gif" width="'+px+'" height="'+px+'"'+
     ' alt="'+esc(altName||"")+(shiny?" (shiny)":"")+'" data-dex="'+dex+'" data-shiny="'+shiny+'"'+
-    ' data-try="0" data-fb="'+fb+'" onerror="pokeErr(this)" loading="lazy">';
+    ' data-try="0" data-fb="'+fb+'" decoding="async" onerror="pokeErr(this)" loading="lazy">';
 }
 function pokeImgHTML(cr, px){ return pokeImgFor(pokeDexFor(cr), cr, px, pokeCurrentName(cr)); }
 // onerror chains. 3D pack: SwSh gif -> X/Y gif -> gen5 static png -> monster svg.
@@ -3699,7 +3699,7 @@ function animoImgHTML(cr, px){
   var seed=creatureSeed(cr), hue=creatureTypeHue(cr), stage=creatureStage(cr), shiny=cr&&cr.shiny?1:0;
   var fb=encodeURIComponent(JSON.stringify([seed,hue,stage,shiny,px]));
   return '<img class="pokeimg animo-img" src="'+ANIMO_BASE+animoName(cr)+'.webp" width="'+px+'" height="'+px+'"'+
-    ' alt="'+esc(animoLabel(cr))+'" data-fb="'+fb+'" onerror="svgErr(this)" loading="lazy">';
+    ' alt="'+esc(animoLabel(cr))+'" data-fb="'+fb+'" decoding="async" onerror="svgErr(this)" loading="lazy">';
 }
 function svgErr(img){
   try{ var a=JSON.parse(decodeURIComponent(img.getAttribute("data-fb")));
@@ -3761,6 +3761,13 @@ function troopLevelForCreature(cr){
   return Math.max(1, Math.min(mx, 1+Math.round(prog*(mx-1))));
 }
 function troopImgURL(slug,lvl){ return TROOP_CDN+slug+"/normal/level-"+lvl+".png"; }
+// Warm the browser cache for a level's art once, so evolution level-ups swap instantly.
+var TROOP_PRELOADED = (typeof Set!=="undefined") ? new Set() : null;
+function troopPreload(slug,lvl){
+  if(!TROOP_PRELOADED || lvl<1) return;
+  var u=troopImgURL(slug,lvl); if(TROOP_PRELOADED.has(u)) return; TROOP_PRELOADED.add(u);
+  try{ var im=new Image(); im.decoding="async"; im.src=u; }catch(e){ hqErr(e,"troopPreload"); }
+}
 // Real troop image at the creature's evolved LEVEL, animated, with a graceful fallback chain.
 function troopImgHTML(cr, px, lvlOverride){
   px=px||46;
@@ -3768,9 +3775,10 @@ function troopImgHTML(cr, px, lvlOverride){
   var lvl=Math.max(1, Math.min(mx, (lvlOverride!=null?lvlOverride:troopLevelForCreature(cr))|0));
   var st=Math.max(0,Math.min(4,creatureStage(cr)));
   var fb=encodeURIComponent(JSON.stringify([creatureSeed(cr),TROOP_HUE[troopArch(cr)],troopArch(cr),st,!!cr.shiny,px]));
+  if(lvl<mx) troopPreload(slug, lvl+1);   // next level ready before it's needed
   return '<img class="pokeimg troop-img" src="'+troopImgURL(slug,lvl)+'" width="'+px+'" height="'+px+'"'+
     ' alt="'+esc(troopLabel(cr))+' — level '+lvl+'" data-slug="'+slug+'" data-lvl="'+lvl+'" data-fb="'+fb+'"'+
-    ' onerror="troopErr(this)" loading="lazy">';
+    ' decoding="async" onerror="troopErr(this)" loading="lazy">';
 }
 // missing level image -> step DOWN to the nearest lower level -> drawn troop SVG.
 function troopErr(img){
@@ -5775,6 +5783,18 @@ function startStream(){
     scheduleSseRetry();   // periodically retry SSE
   };
 }
+// Battery/CPU: when the tab is hidden, stop the fetch loops entirely; on return, resume and
+// refresh immediately so the view is never stale. (The orb canvas already pauses on hidden.)
+document.addEventListener("visibilitychange", function(){
+  if(document.hidden){ stopPoll(); return; }
+  try{
+    if(es){ load(); } else { startPoll(); }          // fleet refresh
+    if(VIEW==="analytics"){ loadHistory(); loadInsights(); }
+    else if(VIEW==="pokedex"){ loadPokedex(); }
+    else if(VIEW==="quests"){ loadQuests(); }
+    else if(VIEW==="arena" && typeof arenaRoomsLoad==="function"){ arenaRoomsLoad(); }
+  }catch(e){ hqErr(e,"visibility-resume"); }
+});
 
 /* ---- fleet feed ---- */
 function feedActor(f){
@@ -6114,8 +6134,8 @@ function renderHall(list){
   });
 }
 // refresh analytics while the view is open
-historyTimer=setInterval(function(){ if(VIEW==="analytics") loadHistory(); }, 30000);
-var insightsTimer=setInterval(function(){ if(VIEW==="analytics") loadInsights(); }, 60000);
+historyTimer=setInterval(function(){ if(VIEW==="analytics" && !document.hidden) loadHistory(); }, 30000);
+var insightsTimer=setInterval(function(){ if(VIEW==="analytics" && !document.hidden) loadInsights(); }, 60000);
 
 /* ---- pokedex view ---- */
 var POKEDEX=null, pokedexTimer=null, pokedexLoading=false;
@@ -6334,7 +6354,7 @@ function renderDexTypeChips(rows){
       localStorage.setItem("hq_dex_sort",DEX_SORT); if(POKEDEX) renderPokedex(POKEDEX); }); }
 })();
 // refresh pokedex while its view is open
-pokedexTimer=setInterval(function(){ if(VIEW==="pokedex") loadPokedex(); }, 30000);
+pokedexTimer=setInterval(function(){ if(VIEW==="pokedex" && !document.hidden) loadPokedex(); }, 30000);
 
 /* ================= gym / team analysis ================= */
 // Canonical 18-type effectiveness chart (attacker -> {defender: multiplier}; omitted = 1x).
@@ -6730,7 +6750,7 @@ function renderTrainerCard(){
   c.addEventListener("keydown",function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); setView("pokedex"); } });
 })();
 loadTrainerDex();
-setInterval(loadTrainerDex, 60000);
+setInterval(function(){ if(!document.hidden) loadTrainerDex(); }, 60000);
 
 /* ---- "welcome back" recap: diff current state vs the last snapshot ---- */
 var RECAP_PREV=null, RECAP_DONE=false, RECAP_AWAY_MS=15*60*1000;
@@ -7026,6 +7046,21 @@ $("helpBtn").addEventListener("click",openHelp);
 $("helpClose").addEventListener("click",closeHelp);
 $("helpBack").addEventListener("click",function(e){ if(e.target===$("helpBack")) closeHelp(); });
 $("focusClose").addEventListener("click",closeFocus);
+
+/* ---- error visibility ----
+   Uncaught errors and rejected promises normally vanish silently (and the app has many
+   deliberate empty catches for optional/localStorage paths). Always log to the console;
+   when debug mode is on (localStorage hq_debug="1"), also surface a toast so failures are
+   visible while developing. Toggle from the console: localStorage.hq_debug="1". */
+function hqDebug(){ try{ return localStorage.getItem("hq_debug")==="1"; }catch(e){ return false; } }
+function hqErr(e, ctx){
+  try{ console.error("[HQ]"+(ctx?" "+ctx:""), e); }catch(_){}
+  if(hqDebug() && typeof toast==="function"){
+    try{ toast("⚠ "+(ctx?ctx+": ":"")+((e&&e.message)||e||"error"), "ach"); }catch(_){}
+  }
+}
+window.addEventListener("error", function(ev){ hqErr(ev.error||ev.message, "uncaught"); });
+window.addEventListener("unhandledrejection", function(ev){ hqErr(ev.reason, "promise"); });
 
 /* ---- celebrations ---- */
 var CELEB_READY=false, PREV_LEVEL=null, PREV_ACH={};
@@ -8120,7 +8155,7 @@ function renderQuests(){
     $("questsAchSub").textContent=totalEarned>0?("🪙 "+totalEarned+" earned"):"";
   }
 }
-questsTimer=setInterval(function(){ if(VIEW==="quests") loadQuests(); }, 30000);
+questsTimer=setInterval(function(){ if(VIEW==="quests" && !document.hidden) loadQuests(); }, 30000);
 
 /* ================= v7: accent color picker ================= */
 var ACCENT_PRESETS=[262,212,150,20,325,99,0,190];  // brand-ish hues
@@ -8246,7 +8281,7 @@ function pollArenaStat(){
     .then(function(st){ renderArenaStat(st); arenaStayOnline(st); pantryTick(); }).catch(function(){});
 }
 (function(){ var b=$("arenaStat"); if(b) b.addEventListener("click",function(){ setView("arena"); }); })();
-pollArenaStat(); setInterval(pollArenaStat, 60000);
+pollArenaStat(); setInterval(function(){ if(!document.hidden) pollArenaStat(); }, 60000);
 
 function loadArena(){
   fetch("/api/arena/status",{cache:"no-store"}).then(function(r){return r.json();})
@@ -9483,7 +9518,7 @@ function arenaRoomFormsClear(){
     var opened = togglePanel(list, sw, [{el:create,btn:nw},{el:settings,btn:stBtn}]);
     if(opened){
       arenaRoomsLoad();
-      ARENA.roomsTimer = setInterval(function(){ if(VIEW==="arena") arenaRoomsLoad(); }, 30000);
+      ARENA.roomsTimer = setInterval(function(){ if(VIEW==="arena" && !document.hidden) arenaRoomsLoad(); }, 30000);
     } else { if(ARENA.roomsTimer){ clearInterval(ARENA.roomsTimer); ARENA.roomsTimer=null; } }
   });
   if(nw) nw.addEventListener("click", function(){

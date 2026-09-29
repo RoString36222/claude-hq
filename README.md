@@ -1,6 +1,6 @@
 # ⚡ Claude HQ
 
-**Version 1.2.3** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
+**Version 1.2.4** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
 
 Claude HQ reads your live sessions (`claude agents --json`) and your session transcripts
 (`~/.claude/projects/**/*.jsonl`) and turns them into a single command center: what every tab is
@@ -225,6 +225,13 @@ and feature guide.
 
 ## Changelog
 
+- **1.2.4** — Polish & efficiency pass. **Battery/CPU**: all recurring data-fetch loops (the
+  5s fleet poll + the analytics/pokedex/quests/trainer/arena timers) now fully idle when the
+  browser tab is hidden and refresh instantly when you return, so a backgrounded dashboard stops
+  hammering the network. **Clash pack**: the next troop level is preloaded so evolution level-ups
+  swap with no flash, and all creature `<img>`s now decode off the main thread (`decoding=async`)
+  to cut scroll jank. **Error visibility**: uncaught errors and rejected promises are now logged to
+  the console (and shown as a toast when `localStorage.hq_debug="1"`), instead of vanishing silently.
 - **1.2.3** — **Clash of Clans creature pack** (Settings → Creature pack). Sessions render as
   real Clash troops, and each one **evolves through that troop's own in-game levels** (1 → its
   real max, e.g. Barbarian 1→12, Golem 1→13) instead of the 5 generic stages — every level shows

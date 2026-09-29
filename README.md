@@ -142,8 +142,10 @@ echo 'alias claude-hq="python3 ~/Documents/Claude/claude-dashboard/dashboard.py"
 `GET /api/session/<id>/export.md` · `GET /api/transcript/<id>?offset&limit&q` · `GET /api/search?q=` ·
 `GET /api/history` · `GET /api/project?folder=` · `GET /api/pokedex` · `GET /api/digest?date&download` ·
 `GET /api/config` · `GET /api/meta` · `GET /api/export.{json,csv}` · `GET /api/arena/pantry` ·
+`GET /api/arena/cali/board?window=` · `GET /api/arena/cali/orders` ·
 `POST /api/action` · `POST /api/config` · `POST /api/meta` ·
-`POST /api/arena/pantry/{claim,buy,eat,give}` (all POSTs CSRF-guarded).
+`POST /api/arena/pantry/{claim,buy,eat,give}` · `POST /api/arena/cali/order`
+(all POSTs CSRF-guarded).
 
 ---
 

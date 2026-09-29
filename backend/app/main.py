@@ -15,6 +15,7 @@ from .routes import pantry as pantry_routes
 from .routes import private_rooms as private_room_routes
 from .routes import rooms as room_routes
 from .routes import stats as stats_routes
+from .routes import tacos as taco_routes
 
 
 @asynccontextmanager
@@ -57,6 +58,7 @@ app.include_router(nudge_routes.router)
 app.include_router(pantry_routes.router)
 app.include_router(room_routes.router)
 app.include_router(private_room_routes.router)
+app.include_router(taco_routes.router)
 
 
 @app.get("/health")

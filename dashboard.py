@@ -50,7 +50,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import arena
 
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.4.0"
 
 # --------------------------------------------------------------------------- #
 # Paths / constants
@@ -2960,6 +2960,11 @@ META_PATH = os.path.join(HERE, "sessions-meta.json")
 
 KNOWN_THEMES = ("aurora", "midnight", "forest", "mono")
 KNOWN_CREATURE_PACKS = ("monsters", "pokemon", "pokemon3d", "aniimo", "village", "animals", "faces")
+# Per-cell upper index (inclusive) of the trainer-avatar spec
+# [skin,hair,hairColor,outfit,outfitColor,hat,accessory,bg,face]. MUST stay
+# byte-identical to TR_MAX in index.html (client) and schemas.py (Arena wire).
+# Append-only: raising a max never renumbers existing choices.
+TRAINER_MAX = (5, 7, 7, 7, 7, 6, 4, 7, 3)
 DEFAULT_CONFIG = {
     "theme": "aurora",
     "creaturePack": "pokemon3d",
@@ -2967,6 +2972,9 @@ DEFAULT_CONFIG = {
     "stuckMinutes": 15,
     "dailyBudgetUSD": 0,
     "trainerName": "",
+    # None = auto-derive from a stable handle (never []/{}: a mutable default
+    # would alias across the shallow dict(base) copy in _validate_config).
+    "trainerAvatar": None,
     "arenaUrl": "",
     "arenaEnabled": False,
     "arenaShareCost": False,
@@ -3010,6 +3018,22 @@ def _validate_config(raw, base=None):
         # printable chars only, whitespace collapsed, capped; "" = auto-derive
         tn = "".join(ch for ch in tn if ch.isprintable())
         cfg["trainerName"] = " ".join(tn.split())[:32]
+    if "trainerAvatar" in raw:
+        # A tiny fixed-length list of small ints (user menu choices only). None
+        # keeps the auto-derive sentinel; a list is coerced to exactly 9 cells,
+        # each clamped to [0, TRAINER_MAX[i]]; anything else is ignored.
+        ta = raw.get("trainerAvatar")
+        if ta is None:
+            cfg["trainerAvatar"] = None
+        elif isinstance(ta, list):
+            spec = []
+            for i, m in enumerate(TRAINER_MAX):
+                try:
+                    v = int(ta[i]) if i < len(ta) else 0
+                except Exception:
+                    v = 0
+                spec.append(v % (m + 1) if v >= 0 else ((v % (m + 1)) + (m + 1)) % (m + 1))
+            cfg["trainerAvatar"] = spec
     au = raw.get("arenaUrl")
     if isinstance(au, str):
         au = au.strip()

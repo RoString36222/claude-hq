@@ -227,6 +227,17 @@ and feature guide.
 
 ## Changelog
 
+- **1.4.0** — **Customizable Trainer avatar.** Build your own trainer — a
+  Pokémon-style character creator from **100% original, generated SVG parts**
+  (skin, hair style + color, outfit + color, headwear, accessory, background,
+  expression; ~5.5M combinations) in **Settings → Trainer look** or the ✎ on the
+  Trainer Card. It becomes your identity/logo across HQ, starting with the
+  Trainer Card (its first-ever avatar). Deterministic and dependency-free
+  (`trainerSVG` sits beside `monsterSVG`); the spec is a tiny 9-int array stored
+  in `config.json` (mirrored to localStorage for instant boot); non-builders get
+  a distinct auto-derived trainer from a stable, non-transcript key. No
+  copyrighted assets — invented parts only. _Arena leaderboard integration
+  (showing friends' trainers) ships next and needs a backend deploy._
 - **1.3.1** — **Per-install shiny.** Which species are shiny is now seeded by a
   per-install salt (`.dex-seed`, git-ignored), so friends sharing an Arena no
   longer all see the identical set of shiny species. Shiny stays a stable,

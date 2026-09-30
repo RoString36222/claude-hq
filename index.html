@@ -244,6 +244,24 @@ main:focus{outline:none}
   background:var(--panel);transition:border-color var(--t-fast),transform var(--t-fast)}
 .trainercard:hover{border-color:var(--brand-line)}
 .tc-top{display:flex;align-items:center;gap:10px;min-width:0}
+.tc-av{flex:none;width:40px;height:40px;border-radius:11px;position:relative;overflow:hidden;background:var(--panel-2,var(--panel));border:1px solid var(--line)}
+.tc-av .trainer-svg{display:block;width:100%;height:100%}
+.tc-lvpip{position:absolute;left:0;right:0;bottom:0;text-align:center;font:650 8.5px var(--mono);line-height:1.35;color:#fff;background:linear-gradient(to top,rgba(0,0,0,.55),rgba(0,0,0,0))}
+.tc-edit{flex:none;margin-left:auto;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;color:var(--muted);background:transparent;border:1px solid transparent;cursor:pointer}
+.tc-edit:hover{color:var(--ink);border-color:var(--line);background:var(--panel)}
+.tb-wrap{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+.tb-preview{flex:none;display:flex;flex-direction:column;gap:8px;align-items:center}
+.tb-stage{width:112px;height:112px;border-radius:14px;overflow:hidden;border:1px solid var(--line);background:var(--panel)}
+.tb-stage .trainer-svg{width:100%;height:100%;display:block}
+.tb-pbtns{display:flex;gap:6px}
+.tb-controls{flex:1;min-width:230px;display:grid;grid-template-columns:1fr 1fr;gap:9px 12px}
+.tb-field{display:flex;flex-direction:column;gap:3px;min-width:0}
+.tb-field>label{font-size:11px;color:var(--muted)}
+.tb-field select{width:100%}
+.tb-sw{display:flex;flex-wrap:wrap;gap:5px}
+.tb-sw button{width:20px;height:20px;border-radius:6px;border:2px solid transparent;cursor:pointer;padding:0}
+.tb-sw button[aria-pressed="true"]{border-color:var(--ink);box-shadow:0 0 0 2px var(--bg)}
+.tb-sw button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .tc-badge{flex:none;width:38px;height:38px;border-radius:10px;display:grid;place-items:center;text-align:center;
   font:700 12px/1 var(--mono);color:var(--on-brand);background:linear-gradient(140deg,var(--brand2),var(--brand))}
 .tc-main{min-width:0}
@@ -1499,11 +1517,12 @@ html.hq-calm #confetti{display:none!important}
       <!-- trainer card -->
       <div class="panel trainercard" id="trainerCard" role="button" tabindex="0" title="Open your Pokédex">
         <div class="tc-top">
-          <div class="tc-badge" id="tcLvl">Lv.—</div>
+          <div class="tc-av" id="tcAvatar" aria-hidden="true"><span class="tc-lvpip" id="tcLvl">Lv.—</span></div>
           <div class="tc-main">
             <div class="tc-name" id="tcName">Trainer</div>
             <div class="tc-rank" id="tcRank">—</div>
           </div>
+          <button class="tc-edit" id="tcEdit" type="button" title="Customize your trainer" aria-label="Customize your trainer"><svg class="i sm" aria-hidden="true"><use href="#i-sliders"/></svg></button>
         </div>
         <div class="tc-stats" id="tcStats"></div>
       </div>
@@ -2337,6 +2356,19 @@ html.hq-calm #confetti{display:none!important}
           <label for="setTrainer">Trainer name</label>
           <input id="setTrainer" type="text" maxlength="32" placeholder="Auto (from session names)">
           <span class="hint">Shown on your Trainer Card. Leave blank for automatic.</span>
+        </div>
+        <div class="setrow" id="trainerBuilderRow">
+          <label>Trainer look</label>
+          <div class="tb-wrap">
+            <div class="tb-preview"><div class="tb-stage" id="tbPreview"></div>
+              <div class="tb-pbtns">
+                <button class="hbtn" id="tbRandom" type="button">🎲 Randomize</button>
+                <button class="hbtn" id="tbReset" type="button">Reset</button>
+              </div>
+            </div>
+            <div class="tb-controls" id="tbControls"></div>
+          </div>
+          <span class="hint">A customizable trainer, built from original parts — becomes your logo across HQ. With the Arena on, friends see it on the leaderboard.</span>
         </div>
         <div class="setrow">
           <label for="setAccent">Accent color</label>
@@ -3313,7 +3345,7 @@ var FILTERTAG = "";            // active tag filter, "" = all
 var STATE_AT = 0;              // Date.now() of last payload (for live timers)
 
 /* ---- config + creature packs (v5) ---- */
-var CONFIG_DEFAULTS = {theme:"aurora", creaturePack:"pokemon3d", refreshMs:5000, stuckMinutes:15, dailyBudgetUSD:0, trainerName:"", creatureFatigue:true};
+var CONFIG_DEFAULTS = {theme:"aurora", creaturePack:"pokemon3d", refreshMs:5000, stuckMinutes:15, dailyBudgetUSD:0, trainerName:"", trainerAvatar:null, creatureFatigue:true};
 var CONFIG = Object.assign({}, CONFIG_DEFAULTS);
 function cfg(){ return CONFIG; }
 // both Pokémon packs share evolution/type/name logic; only the sprite source differs
@@ -3486,6 +3518,136 @@ function coinsN(n){ return n+" Poke Coin"+(n===1?"":"s"); }
 // monsterSVG(seed,typeHue,stage,shiny,px) -> a left-right symmetric pixel-monster
 // on a 10x10 grid: decide cols 1..4 then mirror to 5..8, blobby toward center,
 // always a face; stage morphs egg->hatchling->…->elder(+crown/glow).
+/* ===== Trainer avatar — original, deterministic, dependency-free SVG =========
+ * A customizable "you" identity built from a tiny 9-int spec. 100% original
+ * inline geometry (no <img>, no CDN/url()); reuses mulberry32/hashStr/calmMode.
+ * spec = [skin,hair,hairColor,outfit,outfitColor,hat,accessory,bg,face]. */
+var TR = {SKIN:0,HAIR:1,HAIRC:2,OUTFIT:3,OUTC:4,HAT:5,ACC:6,BG:7,FACE:8};
+var TR_MAX = [5,7,7,7,7,6,4,7,3];   // keep byte-identical to dashboard.py + schemas.py
+var TR_SKIN  = ['#f4d6bb','#e7b892','#cd9269','#a06a45','#6f4a32','#402a20'];
+var TR_HAIRC = ['#241f22','#4a3324','#7a4a26','#c98f3f','#dcd6c8','#a9b0bc','#c14259','#456fa6'];
+var TR_OUTC  = ['#4f6d7a','#bd5638','#3f8a5b','#6a4f9c','#d3a33f','#333a43','#c46f9a','#dadbe2'];
+var TR_BG    = ['','#3b4a6b','#276b68','#6b3b5a','#4a6b3b','#6b5a3b','#39414d','#5a4a6b'];
+// human labels for the builder controls
+var TR_LABELS = {
+  skin:['Fair','Light','Tan','Brown','Deep','Rich'],
+  hair:['Bald','Short','Side part','Spiky','Pulled back','Long','Curly','Top knot'],
+  hairColor:['Black','Dark brown','Brown','Blond','Platinum','Grey','Red','Blue'],
+  outfit:['Collar','Crew','Hoodie','Collar 2','Crew 2','Hoodie 2','Collar 3','Crew 3'],
+  outfitColor:['Teal','Rust','Green','Purple','Gold','Charcoal','Pink','White'],
+  hat:['None','Beanie','Wide brim','Headband','Visor','Hood','Bandana'],
+  accessory:['None','Glasses','Round glasses','Earrings','Face mask'],
+  bg:['Theme','Glow','Chevrons','Dots','Rings','Split','Stripes','Halo'],
+  face:['Neutral','Smile','Wink','Stoic']
+};
+function _trHx(h){h=String(h||'').replace('#','');if(h.length===3)h=h[0]+h[0]+h[1]+h[1]+h[2]+h[2];return [parseInt(h.slice(0,2),16)||0,parseInt(h.slice(2,4),16)||0,parseInt(h.slice(4,6),16)||0];}
+function _trTo(r,g,b){function c(x){x=Math.max(0,Math.min(255,Math.round(x)));var s=x.toString(16);return s.length<2?'0'+s:s;}return '#'+c(r)+c(g)+c(b);}
+function trShade(hex,f){var a=_trHx(hex),t=f<0?0:255,k=Math.min(1,Math.abs(f));return _trTo(a[0]+(t-a[0])*k,a[1]+(t-a[1])*k,a[2]+(t-a[2])*k);}
+function trv(spec,i){var m=TR_MAX[i],v=(spec&&spec[i]!=null)?(spec[i]|0):0;return ((v%(m+1))+(m+1))%(m+1);}
+function _trBg(bi){
+  if(bi===0) return '<rect width="100" height="100" fill="currentColor" opacity="0.06"/>';
+  var base=TR_BG[bi]||'#3b4a6b',lite=trShade(base,0.16),dark=trShade(base,-0.16);
+  var s='<rect width="100" height="100" fill="'+base+'"/>';
+  if(bi===1) s+='<ellipse cx="50" cy="18" rx="62" ry="40" fill="'+lite+'" opacity="0.55"/>';
+  else if(bi===2) s+='<g fill="'+lite+'" opacity="0.5"><polygon points="0,66 50,40 50,54 0,80"/><polygon points="50,40 100,66 100,80 50,54"/><polygon points="0,86 50,60 50,74 0,100"/><polygon points="50,60 100,86 100,100 50,74"/></g>';
+  else if(bi===3){s+='<g fill="'+lite+'" opacity="0.55">';for(var y=12;y<=88;y+=19)for(var x=12;x<=88;x+=19)s+='<circle cx="'+x+'" cy="'+y+'" r="2.6"/>';s+='</g>';}
+  else if(bi===4) s+='<g fill="none" stroke="'+lite+'" stroke-width="3" opacity="0.5"><circle cx="50" cy="50" r="20"/><circle cx="50" cy="50" r="33"/><circle cx="50" cy="50" r="46"/></g>';
+  else if(bi===5) s+='<polygon points="0,0 100,0 0,100" fill="'+lite+'" opacity="0.4"/><polygon points="100,0 100,100 0,100" fill="'+dark+'" opacity="0.35"/>';
+  else if(bi===6) s+='<g fill="'+lite+'" opacity="0.4"><rect x="8" y="0" width="10" height="100"/><rect x="34" y="0" width="10" height="100"/><rect x="60" y="0" width="10" height="100"/><rect x="86" y="0" width="10" height="100"/></g>';
+  else s+='<circle cx="50" cy="46" r="30" fill="'+lite+'" opacity="0.6"/>';
+  return s;
+}
+function _trFace(fi,skin){
+  var brow=trShade(skin,-0.4),eye='#2b2b31',s='';
+  if(fi===2){s+='<path d="M37,44 q4,4 8,0" fill="none" stroke="'+eye+'" stroke-width="2.2" stroke-linecap="round"/>';s+='<ellipse cx="59" cy="44" rx="2.4" ry="3" fill="'+eye+'"/>';}
+  else {s+='<ellipse cx="41" cy="44" rx="2.4" ry="3" fill="'+eye+'"/><ellipse cx="59" cy="44" rx="2.4" ry="3" fill="'+eye+'"/>';}
+  if(fi===3) s+='<g stroke="'+brow+'" stroke-width="2" stroke-linecap="round"><line x1="36" y1="38" x2="46" y2="38"/><line x1="54" y1="38" x2="64" y2="38"/></g>';
+  else s+='<g stroke="'+brow+'" stroke-width="2" stroke-linecap="round"><line x1="36" y1="37" x2="46" y2="35.5"/><line x1="54" y1="35.5" x2="64" y2="37"/></g>';
+  s+='<path d="M50,46 q-2,6 -3,7" fill="none" stroke="'+trShade(skin,-0.22)+'" stroke-width="1.6" stroke-linecap="round"/>';
+  if(fi===1) s+='<path d="M43,55 q7,7 14,0" fill="none" stroke="#7a4a44" stroke-width="2.2" stroke-linecap="round"/>';
+  else if(fi===2) s+='<path d="M44,55 q6,4 12,0" fill="none" stroke="#7a4a44" stroke-width="2.2" stroke-linecap="round"/>';
+  else s+='<line x1="45" y1="56" x2="55" y2="56" stroke="#7a4a44" stroke-width="2.2" stroke-linecap="round"/>';
+  return s;
+}
+function _trHairBack(hi,col){
+  if(hi===5) return '<path d="M28,40 C24,64 30,86 34,92 L66,92 C70,86 76,64 72,40 Z" fill="'+col+'"/>';
+  if(hi===4) return '<path d="M64,40 C78,46 80,70 72,86 L64,84 C70,70 68,52 60,46 Z" fill="'+col+'"/>';
+  if(hi===6) return '<circle cx="50" cy="40" r="26" fill="'+col+'"/>';
+  return '';
+}
+function _trHairFront(hi,col){
+  var hl=trShade(col,0.16),sh=trShade(col,-0.2);
+  if(hi===0) return '';
+  if(hi===1) return '<path d="M32,42 C31,27 40,21 50,21 C60,21 69,27 68,42 C64,33 58,30 50,30 C42,30 36,33 32,42 Z" fill="'+col+'"/><path d="M34,40 C36,31 43,28 50,28 C50,28 44,31 42,40 Z" fill="'+hl+'" opacity="0.5"/>';
+  if(hi===2) return '<path d="M31,42 C31,26 41,21 51,21 C61,21 68,27 69,40 C60,31 52,32 46,34 C40,36 35,39 31,44 Z" fill="'+col+'"/>';
+  if(hi===3) return '<path d="M32,42 L36,24 L42,36 L48,20 L54,36 L60,24 L64,30 L68,42 C60,32 40,32 32,42 Z" fill="'+col+'"/>';
+  if(hi===4) return '<path d="M32,42 C32,28 41,22 50,22 C59,22 68,28 68,42 C60,34 40,34 32,42 Z" fill="'+col+'"/>';
+  if(hi===5) return '<path d="M31,44 C30,27 40,21 50,21 C60,21 70,27 69,44 C66,34 58,30 50,30 C42,30 34,34 31,44 Z" fill="'+col+'"/><path d="M31,44 C29,58 30,72 31,80 L36,80 C34,66 34,54 35,46 Z" fill="'+sh+'"/>';
+  if(hi===6) return '<g fill="'+hl+'" opacity="0.45"><circle cx="38" cy="28" r="7"/><circle cx="52" cy="24" r="8"/><circle cx="63" cy="30" r="6"/></g>';
+  return '<path d="M33,42 C33,28 42,22 50,22 C58,22 67,28 67,42 C60,34 40,34 33,42 Z" fill="'+col+'"/><circle cx="50" cy="16" r="7" fill="'+col+'"/><circle cx="50" cy="16" r="3.5" fill="'+hl+'" opacity="0.5"/>';
+}
+function _trHat(hi2,oc){
+  var band=trShade(oc,-0.25);
+  if(hi2===0) return '';
+  if(hi2===1) return '<path d="M30,34 C30,20 40,15 50,15 C60,15 70,20 70,34 C58,29 42,29 30,34 Z" fill="'+oc+'"/><rect x="30" y="32" width="40" height="6" rx="3" fill="'+band+'"/>';
+  if(hi2===2) return '<ellipse cx="50" cy="34" rx="34" ry="8" fill="'+band+'"/><path d="M34,34 C34,18 44,13 50,13 C56,13 66,18 66,34 Z" fill="'+oc+'"/><rect x="34" y="30" width="32" height="5" rx="2.5" fill="'+trShade(oc,0.12)+'"/>';
+  if(hi2===3) return '<path d="M30,33 C40,29 60,29 70,33 L70,39 C60,35 40,35 30,39 Z" fill="'+oc+'"/>';
+  if(hi2===4) return '<path d="M28,33 C40,27 60,27 72,33 L72,37 C60,32 40,32 28,37 Z" fill="'+oc+'"/><path d="M26,37 C40,34 60,34 74,37 L78,42 C60,37 40,37 22,42 Z" fill="'+band+'"/>';
+  if(hi2===5) return '<path d="M24,46 C22,24 38,12 50,12 C62,12 78,24 76,46 C66,34 34,34 24,46 Z" fill="'+oc+'"/><path d="M30,44 C32,28 42,20 50,20 C58,20 68,28 70,44 C60,36 40,36 30,44 Z" fill="'+trShade(oc,-0.14)+'"/>';
+  return '<path d="M30,32 C40,27 60,27 70,32 L70,40 C60,35 40,35 30,40 Z" fill="'+oc+'"/><polygon points="66,34 78,40 68,44" fill="'+band+'"/>';
+}
+function _trAcc(ai){
+  if(ai===0) return '';
+  if(ai===1) return '<g fill="none" stroke="#2b2b31" stroke-width="2"><rect x="34" y="40" width="12" height="8" rx="2"/><rect x="54" y="40" width="12" height="8" rx="2"/><line x1="46" y1="44" x2="54" y2="44"/></g>';
+  if(ai===2) return '<g fill="none" stroke="#2b2b31" stroke-width="2"><circle cx="40" cy="44" r="5.5"/><circle cx="60" cy="44" r="5.5"/><line x1="45.5" y1="44" x2="54.5" y2="44"/></g>';
+  if(ai===3) return '<g fill="#d3a33f"><circle cx="32" cy="52" r="2.4"/><circle cx="68" cy="52" r="2.4"/></g>';
+  return '<path d="M36,48 C40,62 60,62 64,48 C60,52 40,52 36,48 Z" fill="#dfe4ea"/><path d="M36,48 L30,45 M64,48 L70,45" stroke="#c2c8d0" stroke-width="1.6"/>';
+}
+// trainerSVG(spec, px, opts) -> self-contained <svg> string. Idle bob only when
+// not in calm mode (opts.animate overrides). Numbers only via trv() -> XSS-safe.
+function trainerSVG(spec, px, opts){
+  px=px||64; opts=opts||{};
+  var si=trv(spec,TR.SKIN),hi=trv(spec,TR.HAIR),hc=trv(spec,TR.HAIRC),of=trv(spec,TR.OUTFIT),
+      oc=trv(spec,TR.OUTC),ht=trv(spec,TR.HAT),ac=trv(spec,TR.ACC),bg=trv(spec,TR.BG),fa=trv(spec,TR.FACE);
+  var skin=TR_SKIN[si],skinSh=trShade(skin,-0.16),hair=TR_HAIRC[hc],
+      outfit=TR_OUTC[of],outfitSh=trShade(outfit,-0.2),outfitHl=trShade(outfit,0.16),hatCol=TR_OUTC[oc];
+  var b=_trBg(bg);
+  b+='<path d="M10,100 C10,80 26,71 50,71 C74,71 90,80 90,100 Z" fill="'+outfit+'"/>';
+  if(of%3===0) b+='<path d="M40,72 L50,84 L60,72 L56,71 L50,79 L44,71 Z" fill="'+outfitSh+'"/>';
+  else if(of%3===1) b+='<rect x="38" y="72" width="24" height="6" rx="3" fill="'+outfitHl+'" opacity="0.7"/>';
+  else b+='<path d="M42,72 L50,80 L58,72" fill="none" stroke="'+outfitSh+'" stroke-width="2.5"/>';
+  b+='<path d="M50,71 C74,71 90,80 90,100 L70,100 C70,84 62,76 50,74 Z" fill="'+outfitSh+'" opacity="0.35"/>';
+  b+=_trHairBack(hi,hair);
+  b+='<rect x="43" y="60" width="14" height="15" rx="5" fill="'+skin+'"/><rect x="43" y="60" width="14" height="5" rx="2.5" fill="'+skinSh+'" opacity="0.6"/>';
+  if(ht!==5) b+='<ellipse cx="32.5" cy="46" rx="3.4" ry="5" fill="'+skin+'"/><ellipse cx="67.5" cy="46" rx="3.4" ry="5" fill="'+skin+'"/>';
+  b+='<ellipse cx="50" cy="44" rx="18" ry="20" fill="'+skin+'"/>';
+  b+='<path d="M50,24 C61,24 68,33 68,44 C68,55 61,64 50,64 C58,58 60,52 60,44 C60,36 58,30 50,24 Z" fill="'+skinSh+'" opacity="0.22"/>';
+  b+=_trFace(fa,skin); b+=_trHairFront(hi,hair); b+=_trAcc(ac); b+=_trHat(ht,hatCol);
+  var animate = (opts.animate!=null)?opts.animate:!calmMode();
+  var g = animate ? ('<g>'+b+'<animateTransform attributeName="transform" type="translate" values="0 0;0 -1.4;0 0" dur="3.6s" repeatCount="indefinite"/></g>') : b;
+  var title = opts.title ? ('<title>'+esc(opts.title)+'</title>') : '';
+  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="'+(px|0)+'" height="'+(px|0)+'" role="img" class="trainer-svg" aria-hidden="'+(opts.title?'false':'true')+'">'+title+g+'</svg>';
+}
+// Stable, NON-TRANSCRIPT identity for the default avatar: Arena handle -> a saved
+// label -> "guest". NEVER a session id/title/path/prompt.
+function stableTrainerKey(){
+  try{ if(ARENA && ARENA.you && (ARENA.you.handle||ARENA.you.userId)) return String(ARENA.you.handle||ARENA.you.userId); }catch(e){}
+  try{ var d=localStorage.getItem("hq_trainer_key"); if(d) return d; }catch(e){}
+  return "guest";
+}
+function defaultTrainerSpec(key){
+  var r=mulberry32(hashStr("trainer:"+(key||stableTrainerKey())));
+  var s=[]; for(var i=0;i<TR_MAX.length;i++) s.push(Math.floor(r()*(TR_MAX[i]+1))); return s;
+}
+function _validTrainerSpec(a){ if(!a||a.length!==9) return false; for(var i=0;i<9;i++){ if(typeof a[i]!=="number"||a[i]!==(a[i]|0)) return false; } return true; }
+// The spec to render for THIS user: saved config -> validated localStorage mirror
+// (instant boot) -> auto-derived default. Callers pass this into trainerSVG().
+function resolveTrainerSpec(){
+  if(CONFIG && _validTrainerSpec(CONFIG.trainerAvatar)) return CONFIG.trainerAvatar;
+  try{ var m=JSON.parse(localStorage.getItem("hq_trainer")||"null"); if(_validTrainerSpec(m)) return m; }catch(e){}
+  return defaultTrainerSpec(stableTrainerKey());
+}
+
 function monsterSVG(seed, hue, stage, shiny, px){
   stage=Math.max(0,Math.min(4,stage|0)); px=px||46;
   var body="hsl("+hue+",68%,52%)", dark="hsl("+hue+",60%,32%)", belly="hsl("+hue+",70%,68%)";
@@ -6787,7 +6949,10 @@ function trainerName(){
 function renderTrainerCard(){
   var card=$("trainerCard"); if(!card) return;
   var s=(STATE&&STATE.season)||{};
-  $("tcLvl").textContent = "Lv."+(s.level!=null?s.level:"—");
+  var av=$("tcAvatar"), lv="Lv."+(s.level!=null?s.level:"—");
+  if(av && typeof trainerSVG==="function"){
+    av.innerHTML = trainerSVG(resolveTrainerSpec(), 46) + '<span class="tc-lvpip" id="tcLvl">'+esc(lv)+'</span>';
+  } else if($("tcLvl")){ $("tcLvl").textContent = lv; }
   $("tcName").textContent = "Trainer "+trainerName();
   $("tcRank").textContent = (s.rank||"")+(s.pct!=null?(" · "+Math.round(s.pct)+"% to next"):"");
   var ach=(s.achievements||[]); var unlocked=ach.filter(function(a){return a.unlocked;}).length;
@@ -6811,6 +6976,8 @@ function renderTrainerCard(){
   var c=$("trainerCard"); if(!c) return;
   c.addEventListener("click",function(){ setView("pokedex"); });
   c.addEventListener("keydown",function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); setView("pokedex"); } });
+  var ed=$("tcEdit");
+  if(ed) ed.addEventListener("click",function(e){ e.stopPropagation(); openSettings(); var r=$("trainerBuilderRow"); if(r&&r.scrollIntoView) r.scrollIntoView({block:"center"}); });
 })();
 loadTrainerDex();
 setInterval(function(){ if(!document.hidden) loadTrainerDex(); }, 60000);
@@ -7560,9 +7727,50 @@ $("folderFilter").addEventListener("change",function(e){ FILTERFOLDER=e.target.v
 
 /* ---- settings modal ---- */
 var SERVER_THEMES=["aurora","midnight","forest","mono"];
+/* ---- Trainer builder (Settings) ---- */
+var TB_SPEC=null;
+var TB_IDX={skin:TR.SKIN,hair:TR.HAIR,hairColor:TR.HAIRC,outfit:TR.OUTFIT,outfitColor:TR.OUTC,hat:TR.HAT,accessory:TR.ACC,bg:TR.BG,face:TR.FACE};
+var TB_TITLE={skin:"Skin",hair:"Hair",hairColor:"Hair color",outfit:"Outfit",outfitColor:"Outfit color",hat:"Headwear",accessory:"Accessory",bg:"Background",face:"Expression"};
+var TB_COLOR={skin:TR_SKIN,hairColor:TR_HAIRC,outfitColor:TR_OUTC};
+var TB_ORDER=["skin","face","hair","hairColor","outfit","outfitColor","hat","accessory","bg"];
+function tbPreview(){ var p=$("tbPreview"); if(p&&typeof trainerSVG==="function") p.innerHTML=trainerSVG(TB_SPEC,112,{animate:!calmMode()}); }
+function buildTrainerBuilder(spec){
+  var host=$("tbControls"); if(!host||typeof trainerSVG!=="function") return;
+  TB_SPEC=(_validTrainerSpec(spec)?spec:resolveTrainerSpec()).slice(0,9);
+  host.innerHTML="";
+  TB_ORDER.forEach(function(key){
+    var idx=TB_IDX[key], max=TR_MAX[idx], labels=TR_LABELS[key]||[];
+    var f=el("div","tb-field"), lb=el("label"); lb.textContent=TB_TITLE[key]; f.appendChild(lb);
+    if(TB_COLOR[key]){
+      var pal=TB_COLOR[key], sw=el("div","tb-sw"); sw.setAttribute("role","group"); sw.setAttribute("aria-label",TB_TITLE[key]);
+      for(var v=0;v<=max;v++){(function(v){
+        var btn=el("button"); btn.type="button"; btn.style.background=pal[v];
+        btn.title=labels[v]||("Option "+(v+1)); btn.setAttribute("aria-label",btn.title);
+        btn.setAttribute("aria-pressed", TB_SPEC[idx]===v?"true":"false");
+        btn.addEventListener("click",function(){ TB_SPEC[idx]=v; Array.prototype.forEach.call(sw.children,function(c,ci){c.setAttribute("aria-pressed",ci===v?"true":"false");}); tbPreview(); });
+        sw.appendChild(btn);
+      })(v);}
+      f.appendChild(sw);
+    } else {
+      var sel=el("select");
+      for(var v2=0;v2<=max;v2++){ var o=el("option"); o.value=String(v2); o.textContent=labels[v2]||("Option "+(v2+1)); if(TB_SPEC[idx]===v2)o.selected=true; sel.appendChild(o); }
+      sel.addEventListener("change",function(){ TB_SPEC[idx]=parseInt(sel.value,10)||0; tbPreview(); });
+      f.appendChild(sel);
+    }
+    host.appendChild(f);
+  });
+  tbPreview();
+}
+function readTrainerBuilder(){ return _validTrainerSpec(TB_SPEC)?TB_SPEC.slice(0,9):resolveTrainerSpec(); }
+(function(){
+  var r=$("tbRandom"); if(r) r.addEventListener("click",function(){ var s=[]; for(var i=0;i<9;i++) s.push(Math.floor(Math.random()*(TR_MAX[i]+1))); buildTrainerBuilder(s); });
+  var rs=$("tbReset"); if(rs) rs.addEventListener("click",function(){ buildTrainerBuilder(defaultTrainerSpec(stableTrainerKey())); });
+})();
+
 function openSettings(){
   rememberOpener();
   var c=CONFIG;
+  buildTrainerBuilder();
   $("setTheme").value = effectiveTheme();
   $("setPack").value = c.creaturePack||"pokemon";
   $("setRefresh").value = Math.round((c.refreshMs||5000)/1000);
@@ -7600,8 +7808,12 @@ function saveSettings(){
     stuckMinutes: Math.max(1, parseInt($("setStuck").value,10)||15),
     dailyBudgetUSD: Math.max(0, parseFloat($("setBudget").value)||0),
     trainerName: $("setTrainer") ? $("setTrainer").value.trim().slice(0,32) : "",
+    trainerAvatar: readTrainerBuilder(),
     creatureFatigue: $("setFatigue") ? $("setFatigue").checked : true
   };
+  // localStorage mirror so the Trainer Card paints instantly on next boot,
+  // before the /api/config fetch resolves (resolveTrainerSpec validates it).
+  try{ localStorage.setItem("hq_trainer", JSON.stringify(body.trainerAvatar)); }catch(e){}
   // Only send the theme to the backend when it is one the backend understands,
   // so an unknown value (e.g. "contrast") can never wipe a valid stored theme.
   if(SERVER_THEMES.indexOf(theme)>=0) body.theme=theme;

@@ -2,6 +2,7 @@
 config.json
 sessions-meta.json
 meals.json
+.dex-seed
 .meals-*.tmp
 claude-hq.log
 claude-hq.err.log

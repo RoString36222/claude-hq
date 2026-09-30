@@ -227,6 +227,12 @@ and feature guide.
 
 ## Changelog
 
+- **1.3.1** — **Per-install shiny.** Which species are shiny is now seeded by a
+  per-install salt (`.dex-seed`, git-ignored), so friends sharing an Arena no
+  longer all see the identical set of shiny species. Shiny stays a stable,
+  deterministic per-species trait (live cards still always match the Pokédex) —
+  it just differs from one machine to the next. No data crosses the wire; shiny
+  is computed locally and was never shared.
 - **1.2.4** — Polish & efficiency pass. **Battery/CPU**: all recurring data-fetch loops (the
   5s fleet poll + the analytics/pokedex/quests/trainer/arena timers) now fully idle when the
   browser tab is hidden and refresh instantly when you return, so a backgrounded dashboard stops

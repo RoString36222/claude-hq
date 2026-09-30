@@ -50,7 +50,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import arena
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 
 # --------------------------------------------------------------------------- #
 # Paths / constants
@@ -133,10 +133,44 @@ def species_seed(species):
     return int(h.hexdigest(), 16) & 0xFFFFFF
 
 
-def shiny_for_species(species):
-    """Shiny is a stable PER-SPECIES property (~1 in 6 species), so every session of
-    a shiny species is shiny — the Pokédex and the live cards always agree."""
-    h = hashlib.sha256(("nymonster:shiny:%d" % int(species)).encode("utf-8"))
+DEX_SEED_PATH = os.path.join(HERE, ".dex-seed")
+_dex_salt_cache = None
+
+
+def dex_salt():
+    """A stable, per-install random salt for the shiny roll. Generated once and
+    persisted, so it never changes on this machine (determinism: a user never
+    sees a creature flip shiny), but it differs between installs — so two people
+    sharing an Arena do NOT get the identical set of shiny species. Not secret;
+    it only seeds a cosmetic roll."""
+    global _dex_salt_cache
+    if _dex_salt_cache is not None:
+        return _dex_salt_cache
+    try:
+        with open(DEX_SEED_PATH, "r", encoding="utf-8") as f:
+            s = f.read().strip()
+    except Exception:
+        s = ""
+    if not re.fullmatch(r"[0-9a-f]{8,64}", s or ""):
+        s = secrets.token_hex(8)
+        try:
+            with open(DEX_SEED_PATH, "w", encoding="utf-8") as f:
+                f.write(s)
+            os.chmod(DEX_SEED_PATH, 0o600)
+        except Exception:
+            pass
+    _dex_salt_cache = s
+    return s
+
+
+def shiny_for_species(species, salt=None):
+    """Shiny is a stable PER-SPECIES property (~1 in 6 species), so every session
+    of a shiny species is shiny — the Pokédex and the live cards always agree.
+    The per-install `salt` (see dex_salt) keeps that consistency and determinism
+    while making the shiny set unique to this machine, so Arena friends don't all
+    share the same shinies."""
+    salt = dex_salt() if salt is None else salt
+    h = hashlib.sha256(("nymonster:shiny:%s:%d" % (salt, int(species))).encode("utf-8"))
     return int(h.hexdigest(), 16) % 6 == 0
 
 

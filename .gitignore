@@ -19,6 +19,10 @@ __pycache__/
 # Arena device token — never commit
 arena-link.json
 
+# Soundboard clips — private, served from the host, never in the public repo
+sounds/
+backend/sounds/
+
 # Backend local/production env + venv
 backend/.env
 backend/.env.production

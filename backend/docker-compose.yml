@@ -16,8 +16,13 @@ services:
       # The volume, not the image: the database must survive a redeploy.
       ARENA_DATABASE_URL: sqlite+aiosqlite:////data/arena.db
       ARENA_PUBLIC_BASE_URL: https://${ARENA_DOMAIN:?set ARENA_DOMAIN}
+      # Soundboard clips, read from a bind-mounted host dir (git-ignored, and
+      # kept out of the image) so they survive a redeploy. Drop files into
+      # backend/sounds/ on the host; they appear in GET /v1/sounds immediately.
+      ARENA_SOUNDS_DIR: /srv/sounds
     volumes:
       - arena-data:/data
+      - ./sounds:/srv/sounds:ro
     # Deliberately NOT published to the host: Caddy is the only way in.
     expose:
       - "8080"

@@ -225,6 +225,22 @@ def _request(method, url, token=None, body=None):
         return 0, {"error": str(e)}
 
 
+def _request_raw(method, url, token=None):
+    """Like _request, but returns the body as raw bytes plus its content type,
+    for non-JSON payloads (audio clips). Returns (status, content_type, bytes)."""
+    req = urllib.request.Request(url, method=method)
+    if token:
+        req.add_header("Authorization", "Bearer %s" % token)
+    try:
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT,
+                                    context=_ssl_context()) as resp:
+            return resp.status, resp.headers.get("Content-Type", ""), resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, "", b""
+    except Exception:
+        return 0, "", b""
+
+
 def _with_error(body):
     """FastAPI reports a failure as {"detail": ...}, but the dashboard page reads
     "error" -- without this the real reason ("no such person", "you cannot nudge
@@ -308,6 +324,25 @@ def board(window="season"):
     if not token or not base:
         return 400, {"error": "not paired"}
     return _request("GET", "%s/v1/board?window=%s" % (base, window), token=token)
+
+
+def list_sounds():
+    """List the soundboard clips the Arena host is serving. Names are filenames."""
+    link = load_link()
+    token, base = link.get("token"), link.get("url") or _base_url()
+    if not token or not base:
+        return 400, {"error": "not paired"}
+    return _request("GET", base + "/v1/sounds", token=token)
+
+
+def get_sound(file):
+    """Fetch one soundboard clip's bytes. Returns (status, content_type, bytes)."""
+    link = load_link()
+    token, base = link.get("token"), link.get("url") or _base_url()
+    if not token or not base:
+        return 400, "", b""
+    return _request_raw("GET", base + "/v1/sounds/" + urllib.parse.quote(file),
+                        token=token)
 
 
 def ws_ticket():

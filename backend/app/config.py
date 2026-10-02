@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     max_daily_tools: int = 50_000
     max_backfill_days: int = 400
 
+    # Directory of soundboard clips served by GET /v1/sounds. The files live on
+    # the host (git-ignored) and should sit on a mounted volume so a redeploy
+    # does not wipe them -- set ARENA_SOUNDS_DIR=/data/sounds in production.
+    sounds_dir: str = "./sounds"
+    # Largest clip POST /v1/sounds will accept, in bytes (default 5 MB). Keeps a
+    # stray large file from filling the sounds volume.
+    max_sound_bytes: int = 5 * 1024 * 1024
+
     ws_ticket_ttl_secs: int = 60
     pair_code_ttl_secs: int = 900
 

@@ -10,15 +10,21 @@ next GET /v1/sounds with no code change.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from ..auth import Caller, require_device
 from ..config import get_settings
 
 router = APIRouter(prefix="/v1", tags=["sounds"])
+
+# Characters we keep in a stored filename; everything else becomes "_". Keeps a
+# label readable while blocking path tricks and shell-surprising names.
+_SAFE_NAME = re.compile(r"[^A-Za-z0-9 ._()-]")
+_MAX_NAME_LEN = 80
 
 # Extensions we are willing to list and serve, mapped to their MIME type.
 _AUDIO_TYPES = {
@@ -45,6 +51,49 @@ async def list_sounds(caller: Caller = Depends(require_device)) -> dict:
             if p.is_file() and p.suffix.lower() in _AUDIO_TYPES:
                 out.append({"name": p.stem, "file": p.name, "size": p.stat().st_size})
     return {"sounds": out}
+
+
+@router.post("/sounds", status_code=201)
+async def upload_sound(
+    request: Request,
+    name: str,
+    caller: Caller = Depends(require_device),
+) -> dict:
+    """Store an uploaded clip so it joins the soundboard -- the web equivalent of
+    SSHing in to drop a file in the sounds dir. The raw audio is the request
+    body; `name` (a query param) is the desired filename, and its extension
+    decides the type. Same device gate as the rest of /v1/sounds."""
+    settings = get_settings()
+
+    safe = _SAFE_NAME.sub("_", Path(name).name).strip()  # basename, tamed
+    ext = Path(safe).suffix.lower()
+    if not safe or safe.startswith(".") or ext not in _AUDIO_TYPES:
+        allowed = ", ".join(sorted(_AUDIO_TYPES))
+        raise HTTPException(400, f"name must be an audio file ({allowed})")
+    if len(safe) > _MAX_NAME_LEN:
+        safe = safe[: _MAX_NAME_LEN - len(ext)] + ext
+
+    data = await request.body()
+    if not data:
+        raise HTTPException(400, "empty upload")
+    if len(data) > settings.max_sound_bytes:
+        mb = settings.max_sound_bytes // (1024 * 1024)
+        raise HTTPException(413, f"file too large (max {mb} MB)")
+
+    d = _sounds_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    target = (d / safe).resolve()
+    if d not in target.parents:  # last guard against any traversal
+        raise HTTPException(400, "bad name")
+    if target.exists():
+        raise HTTPException(409, "a sound with that name already exists")
+
+    # Write to a temp sibling then rename, so a half-sent upload never shows up
+    # as a playable (truncated) clip.
+    tmp = target.with_name(target.name + ".part")
+    tmp.write_bytes(data)
+    tmp.replace(target)
+    return {"name": target.stem, "file": target.name, "size": len(data)}
 
 
 @router.get("/sounds/{file}")

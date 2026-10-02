@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # the host (git-ignored) and should sit on a mounted volume so a redeploy
     # does not wipe them -- set ARENA_SOUNDS_DIR=/data/sounds in production.
     sounds_dir: str = "./sounds"
+    # Largest clip POST /v1/sounds will accept, in bytes (default 5 MB). Keeps a
+    # stray large file from filling the sounds volume.
+    max_sound_bytes: int = 5 * 1024 * 1024
 
     ws_ticket_ttl_secs: int = 60
     pair_code_ttl_secs: int = 900

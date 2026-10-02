@@ -31,6 +31,7 @@ Usage
 
 import argparse
 import glob
+import base64
 import hashlib
 import json
 import math
@@ -71,6 +72,8 @@ PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 LOCAL_SOUNDS_DIR = os.path.join(HERE, "sounds")
 SOUND_TYPES = {".ogg": "audio/ogg", ".mp3": "audio/mpeg", ".wav": "audio/wav",
                ".m4a": "audio/mp4", ".webm": "audio/webm"}
+# Upload ceiling for POST /api/arena/sounds; matches the backend's default.
+MAX_SOUND_UPLOAD = 5 * 1024 * 1024
 
 
 def local_sounds():
@@ -87,6 +90,62 @@ def local_sounds():
     except FileNotFoundError:
         pass
     return out
+
+
+def receive_sound_upload(body):
+    """Accept a browser upload ({name, data:<base64>}) and store the clip. If the
+    Arena host is paired the clip goes there (so everyone hears it); otherwise it
+    lands in the local ./sounds dir. Returns (status, json)."""
+    name = body.get("name")
+    data_b64 = body.get("data")
+    if not isinstance(name, str) or not name.strip():
+        return 400, {"error": "name required"}
+    if not isinstance(data_b64, str) or not data_b64:
+        return 400, {"error": "file data required"}
+
+    base = os.path.basename(name).strip()
+    ext = os.path.splitext(base)[1].lower()
+    if (not base or base.startswith(".") or "/" in base or "\\" in base
+            or ".." in base or ext not in SOUND_TYPES):
+        return 400, {"error": "must be an audio file (%s)"
+                     % ", ".join(sorted(SOUND_TYPES))}
+
+    try:
+        raw = base64.b64decode(data_b64, validate=True)
+    except Exception:
+        return 400, {"error": "invalid file encoding"}
+    if not raw:
+        return 400, {"error": "empty file"}
+    if len(raw) > MAX_SOUND_UPLOAD:
+        return 413, {"error": "file too large (max %d MB)"
+                     % (MAX_SOUND_UPLOAD // (1024 * 1024))}
+
+    # Paired -> push to the Arena host, the shared machine everyone plays from.
+    if arena.is_paired():
+        try:
+            code, resp = arena.upload_sound(base, raw, SOUND_TYPES[ext])
+        except Exception as e:
+            return 502, {"error": "arena upload failed: %s" % e}
+        # arena returns 0 when the host is unreachable; never emit status 0.
+        return (code or 502), resp
+
+    # Not paired -> keep it on this machine (dev / single-user).
+    try:
+        os.makedirs(LOCAL_SOUNDS_DIR, exist_ok=True)
+        dest = os.path.join(LOCAL_SOUNDS_DIR, base)
+        if (os.path.realpath(os.path.dirname(dest))
+                != os.path.realpath(LOCAL_SOUNDS_DIR)):
+            return 400, {"error": "bad name"}
+        if os.path.exists(dest):
+            return 409, {"error": "a sound with that name already exists"}
+        tmp = dest + ".part"
+        with open(tmp, "wb") as f:
+            f.write(raw)
+        os.replace(tmp, dest)
+    except Exception as e:
+        return 500, {"error": "could not save: %s" % e}
+    return 201, {"name": os.path.splitext(base)[0], "file": base,
+                 "size": len(raw), "source": "local"}
 
 # CSRF: a per-process token, injected into index.html (replacing the __HQ_CSRF__
 # placeholder) so only a same-origin page can read it and echo it back on POSTs.
@@ -3724,6 +3783,7 @@ POST_PATHS = (
     "/api/arena/pantry/eat", "/api/arena/pantry/give",
     "/api/arena/pantry/reward",
     "/api/arena/cali/order",
+    "/api/arena/sounds",
 ) + ARENA_ROOM_POSTS
 
 
@@ -4278,6 +4338,8 @@ class Handler(BaseHTTPRequestHandler):
                     return 400, {"error": err}
                 code, resp = arena.cali_log_order(clean)
                 return (code or 502), resp
+            if path == "/api/arena/sounds":
+                return receive_sound_upload(body)
         except Exception as e:
             return 500, {"error": "arena request failed: %s" % e}
         return 404, {"error": "not found"}

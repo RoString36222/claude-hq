@@ -345,6 +345,39 @@ def get_sound(file):
                         token=token)
 
 
+def is_paired():
+    """True when we hold a device token and know where the Arena host is."""
+    link = load_link()
+    return bool(link.get("token") and (link.get("url") or _base_url()))
+
+
+def upload_sound(filename, data, content_type):
+    """Push one clip to the Arena host's sounds dir (raw bytes in the body, the
+    name as a query param). Returns (status, json). Mirrors _request's error
+    handling but sends bytes rather than JSON."""
+    link = load_link()
+    token, base = link.get("token"), link.get("url") or _base_url()
+    if not token or not base:
+        return 400, {"error": "not paired"}
+    url = base + "/v1/sounds?name=" + urllib.parse.quote(filename)
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Accept", "application/json")
+    req.add_header("Content-Type", content_type or "application/octet-stream")
+    req.add_header("Authorization", "Bearer %s" % token)
+    try:
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT,
+                                    context=_ssl_context()) as resp:
+            raw = resp.read().decode("utf-8")
+            return resp.status, (json.loads(raw) if raw else {})
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, _with_error(json.loads(e.read().decode("utf-8")))
+        except Exception:
+            return e.code, {"error": e.reason}
+    except Exception as e:
+        return 0, {"error": str(e)}
+
+
 def ws_ticket():
     """Mint a short-lived ticket so the page can open a websocket directly.
 

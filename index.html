@@ -1243,26 +1243,8 @@ html.hq-calm .ach-tier.claimable,html.hq-calm .ach-tier.claimable{animation:none
 .arena-nudge:hover{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
 .arena-who .arena-nudge{margin-left:auto;flex:0 0 auto}
 .arena-who .arena-nudge + .arena-nudge{margin-left:4px}
-/* Poke Coins & snacks (Arena store); type in em, see the energy meter note */
-.store-wallet{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap;margin-bottom:14px}
-.store-coins{font-size:.93em;color:var(--muted);white-space:nowrap}
-.store-coins b{font:700 1.69em/1 var(--mono);color:var(--gold);font-variant-numeric:tabular-nums;margin-right:2px}
-#storeClaim{display:inline-flex;align-items:center;gap:6px 10px;flex-wrap:wrap;font-size:.89em;color:var(--muted);min-width:0}
-.store-warn{color:var(--warn)}
-.store-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
-.store-item{display:flex;flex-direction:column;gap:6px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);min-width:0}
-.si-top{display:flex;align-items:center;gap:9px;min-width:0}
-.si-emoji{font-size:1.71em;line-height:1;flex:none}
-.si-name{font-weight:650;font-size:.93em}
-.si-eff{font-size:.82em;color:var(--muted)}
-.si-meta{display:flex;justify-content:space-between;gap:4px 8px;flex-wrap:wrap;font-size:.82em;color:var(--faint)}
-.si-price{font:650 1.05em var(--mono);color:var(--gold)}
-.store-item .hbtn{height:auto;min-height:30px;padding-top:4px;padding-bottom:4px;font-size:.89em;white-space:normal}
-.store-item .hbtn[aria-disabled="true"],#storeClaimBtn[aria-disabled="true"],.store-state .hbtn[aria-disabled="true"],#giftSend[aria-disabled="true"]{opacity:.45;cursor:default}
-.store-item:focus-visible,#storeClaim:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
-.si-ok{font-size:.82em;color:var(--good);min-height:1.4em}
-.si-ok.err{color:var(--warn)}
-.store-gifts,.store-privacy{font-size:.86em;margin:12px 0 0}
+#giftSend[aria-disabled="true"]{opacity:.45;cursor:default}
+.arena-store-moved{margin:0 0 10px}
 .store-state{font-size:.93em;display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0}
 .gift-modal{width:min(440px,100%)}
 .gift-form{gap:14px}
@@ -1300,6 +1282,205 @@ html.hq-calm .ach-tier.claimable,html.hq-calm .ach-tier.claimable{animation:none
 .voice-tile.screen video{object-fit:contain}
 .voice-tile.you.screen video{transform:none}
 .voice-tile .vt-name{position:absolute;left:6px;bottom:6px;padding:2px 7px;border-radius:6px;background:rgba(0,0,0,.6);color:#fff;font-size:12px}
+
+/* =================== store (the General Store) =================== */
+/* Its own wood-and-parchment palette, tuned per theme; the art inside the scene is pixel data. */
+:root{
+  --sv-wood:#b5652f; --sv-wood-hi:#e2914f; --sv-wood-dk:#5b2a10; --sv-wood-2:#8f4a20;
+  --sv-parch:#fbe3b1; --sv-parch-2:#f6d397; --sv-parch-dk:#d6a463; --sv-parch-hi:#fff3d6;
+  --sv-ink:#3d2210; --sv-ink-soft:#74472a; --sv-hover:#ffe1a1; --sv-focus:#1f5fd0;
+  --sv-slot:#c98a4e; --sv-slot-dk:#8a5226; --sv-slot-hi:#e8b07a; --sv-qty:#ffffff;
+  --sv-gold:#f5c542; --sv-good:#2c7a2f; --sv-bad:#b3261e; --sv-portrait:#f3d79c;
+  --sv-c-fruit:#b02a57; --sv-c-snack:#8f520e; --sv-c-meal:#2c7a2f; --sv-c-drink:#25599e; --sv-c-sweet:#9b337f; --sv-c-tonic:#0c776c;
+  --sv-shadow:rgba(60,25,5,.32);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --sv-wood:#8e4c22; --sv-wood-hi:#b9713a; --sv-wood-dk:#2a1206; --sv-wood-2:#6b3518;
+    --sv-parch:#ead09f; --sv-parch-2:#dfbf85; --sv-parch-dk:#b88a4e; --sv-parch-hi:#f5e2bb;
+    --sv-hover:#f5d58e; --sv-portrait:#e2c58c; --sv-shadow:rgba(0,0,0,.5);
+  }
+}
+:root[data-theme="mono"]{
+  --sv-wood:#7a7570; --sv-wood-hi:#a39e98; --sv-wood-dk:#2e2b28; --sv-wood-2:#5c5853;
+  --sv-parch:#f1efea; --sv-parch-2:#e4e1da; --sv-parch-dk:#b9b4ac; --sv-parch-hi:#fbfaf7;
+  --sv-ink:#1d1b19; --sv-ink-soft:#55514c; --sv-hover:#fff2c4; --sv-portrait:#e9e6df;
+  --sv-slot:#9a958e; --sv-slot-dk:#6d6963; --sv-slot-hi:#bdb8b1;
+}
+:root[data-theme="contrast"]{
+  --sv-wood:#4a2208; --sv-wood-hi:#4a2208; --sv-wood-dk:#000000; --sv-wood-2:#2a1204;
+  --sv-parch:#ffffff; --sv-parch-2:#ffffff; --sv-parch-dk:#000000; --sv-parch-hi:#ffffff;
+  --sv-ink:#000000; --sv-ink-soft:#1a1a1a; --sv-hover:#ffe680; --sv-focus:#0033cc; --sv-portrait:#ffffff;
+  --sv-good:#006400; --sv-bad:#b00000;
+  --sv-c-fruit:#8a0030; --sv-c-snack:#5a3000; --sv-c-meal:#004d00; --sv-c-drink:#00337a; --sv-c-sweet:#6b0057; --sv-c-tonic:#004d45;
+}
+@media (prefers-color-scheme: dark){
+  :root[data-theme="contrast"]{
+    --sv-wood:#000000; --sv-wood-hi:#ffffff; --sv-wood-dk:#ffffff; --sv-wood-2:#000000;
+    --sv-parch:#000000; --sv-parch-2:#000000; --sv-parch-dk:#ffffff; --sv-parch-hi:#000000;
+    --sv-ink:#ffffff; --sv-ink-soft:#f0f0f0; --sv-hover:#333300; --sv-focus:#66aaff; --sv-portrait:#000000;
+    --sv-good:#5aff9a; --sv-bad:#ff8a8d;
+    --sv-c-fruit:#ff9ab8; --sv-c-snack:#ffd27a; --sv-c-meal:#8dff9e; --sv-c-drink:#9fc8ff; --sv-c-sweet:#ff9ee8; --sv-c-tonic:#7fffe9;
+  }
+}
+.sv{display:flex;flex-direction:column;gap:22px;color:var(--sv-ink);padding-bottom:12px;container:sv / inline-size}
+.sv-stage-wrap{position:relative;overflow:hidden;border:4px solid var(--sv-wood-dk);border-radius:6px;background:var(--sv-wood-dk);box-shadow:0 5px 0 var(--sv-shadow)}
+.sv-stage{position:relative;max-width:none}
+#svCanvas{position:absolute;left:0;top:0;width:100%;height:100%;image-rendering:pixelated;image-rendering:crisp-edges}
+.sv-hots{position:absolute;inset:0}
+.sv-night .sv-hots{filter:brightness(.8) saturate(.88)}
+.sv-hot{position:absolute;display:block;padding:0;margin:0;border:0;background:none;line-height:0;cursor:pointer;-webkit-user-select:none;user-select:none}
+.sv-hot img{display:block;width:100%;height:100%;image-rendering:pixelated;pointer-events:none}
+.sv-hot:hover img,.sv-hot:focus-visible img{filter:brightness(1.1) drop-shadow(0 0 2px var(--sv-parch-hi))}
+.sv-hot:focus-visible{outline:3px solid var(--sv-focus);outline-offset:3px;border-radius:2px}
+.sv-hot-item{transition:transform .12s steps(2)}
+.sv-hot-item:hover{transform:translateY(-3px)}
+.sv-hot-bell.ring img{animation:svRing .5s steps(4)}
+.sv-zzz{position:absolute;image-rendering:pixelated;pointer-events:none;animation:svZzz 2.4s steps(6) infinite}
+.sv-float{position:absolute;image-rendering:pixelated;pointer-events:none;height:auto;animation:svFloat 1.4s steps(7) forwards}
+.sv-menu{display:grid;grid-template-columns:minmax(230px,270px) minmax(0,1fr) minmax(240px,290px);gap:24px 20px;align-items:start}
+.sv-side{display:flex;flex-direction:column;gap:24px;min-width:0}
+/* laid out by the store's own width (the sidebar and the drawer take their share) */
+@container sv (max-width:1080px){
+  .sv-menu{grid-template-columns:minmax(220px,260px) minmax(0,1fr)}
+  .sv-side{grid-column:1 / -1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:24px 20px;align-items:start}
+  .sv-fine{grid-column:1 / -1}
+}
+@container sv (max-width:700px){
+  .sv-menu{grid-template-columns:minmax(0,1fr)}
+  .sv-side{grid-template-columns:minmax(0,1fr)}
+  .sv-list .sv-row{grid-template-columns:34px minmax(0,1fr) auto;grid-template-areas:"ico mid pr" "ico tags pr";row-gap:3px}
+  .sv-list .sv-ico{grid-area:ico}
+  .sv-list .sv-mid{grid-area:mid}
+  .sv-list .sv-tags{grid-area:tags;justify-content:flex-start}
+  .sv-list .sv-tags:empty{display:none}
+  .sv-list .sv-pr{grid-area:pr}
+}
+.sv-box{position:relative;min-width:0;background:var(--sv-parch);color:var(--sv-ink);border:3px solid var(--sv-wood-dk);border-radius:7px;
+  box-shadow:inset 0 0 0 3px var(--sv-wood-hi),inset 0 0 0 7px var(--sv-wood),inset 0 0 0 9px var(--sv-wood-dk),0 4px 0 var(--sv-shadow);
+  padding:24px 18px 16px}
+.sv-plate{position:absolute;top:-16px;left:14px;z-index:1;background:var(--sv-wood);color:var(--sv-parch-hi);border:3px solid var(--sv-wood-dk);border-radius:5px;
+  box-shadow:inset 0 2px 0 var(--sv-wood-hi);padding:1px 11px 2px;font-weight:800;font-size:.93em;letter-spacing:.02em;text-shadow:1px 1px 0 var(--sv-wood-dk);white-space:nowrap}
+.sv-keeper-top{display:flex;flex-direction:column;gap:10px;align-items:center}
+.sv-portrait{flex:none;width:140px;height:140px;padding:3px;border:3px solid var(--sv-wood-dk);border-radius:5px;background:var(--sv-portrait);
+  box-shadow:inset 0 0 0 2px var(--sv-wood-hi);cursor:pointer;line-height:0}
+.sv-portrait img{width:128px;height:128px;image-rendering:pixelated;display:block}
+.sv-portrait:focus-visible,.sv-dialog:focus-visible,.sv-slot:focus-visible,.sv-tab:focus-visible,.sv-btn:focus-visible,.sv-special:focus-visible,.sv-mute:focus-visible,.sv-feed-row:focus-visible{outline:3px solid var(--sv-focus);outline-offset:2px}
+.sv-friend{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0}
+.sv-hearts{display:flex;flex-wrap:wrap;justify-content:center;gap:2px}
+.sv-hearts img{width:18px;height:16px;image-rendering:pixelated}
+.sv-friend-l{font-size:.82em;font-weight:700;color:var(--sv-ink-soft)}
+.sv-dialog{display:block;position:relative;width:100%;margin-top:14px;min-height:7.2em;text-align:left;background:var(--sv-parch-hi);border:3px solid var(--sv-parch-dk);border-radius:5px;
+  padding:10px 12px 20px;font:inherit;font-size:1.02em;line-height:1.5;color:var(--sv-ink);cursor:pointer}
+.sv-dialog .sv-more{position:absolute;right:10px;bottom:7px;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:7px solid var(--sv-wood);opacity:0}
+.sv-dialog.done .sv-more{opacity:1;animation:svBob 1s steps(2) infinite}
+.sv-shop-head{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;margin:2px 0 12px;font-size:.92em}
+.sv-season{display:inline-flex;align-items:center;gap:6px;font-weight:800}
+.sv-season img,.sv-special img{image-rendering:pixelated}
+.sv-special{display:inline-flex;align-items:center;gap:5px;background:var(--sv-parch-hi);border:2px dashed var(--sv-wood);border-radius:5px;padding:2px 9px;color:inherit;font:inherit;font-size:.95em;cursor:pointer}
+.sv-special:hover{background:var(--sv-hover)}
+.sv-special-l{font-weight:700;color:var(--sv-ink-soft)}
+.sv-special s{color:var(--sv-ink-soft);font-weight:600}
+.sv-mute{margin-left:auto;background:var(--sv-parch-2);border:2px solid var(--sv-parch-dk);border-radius:5px;padding:1px 7px;font-size:1em;cursor:pointer;line-height:1.4}
+.sv-tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:3px solid var(--sv-wood-dk);margin:0 0 12px;padding:0 2px}
+.sv-tab{display:inline-flex;align-items:center;gap:5px;background:var(--sv-wood);color:var(--sv-parch-hi);border:3px solid var(--sv-wood-dk);border-bottom:0;border-radius:7px 7px 0 0;
+  padding:4px 9px 3px;margin-bottom:-3px;font:inherit;font-size:.85em;font-weight:800;cursor:pointer;text-shadow:1px 1px 0 var(--sv-wood-dk)}
+.sv-tab img{width:16px;height:16px;image-rendering:pixelated}
+.sv-tab:hover{filter:brightness(1.08)}
+.sv-tab[aria-selected="true"]{background:var(--sv-parch);color:var(--sv-ink);text-shadow:none;padding-bottom:6px}
+.sv-list{display:flex;flex-direction:column;gap:6px;max-height:min(64vh,600px);overflow:auto;padding:3px 6px 6px 3px;scrollbar-color:var(--sv-wood) var(--sv-parch-2)}
+.sv-row{display:grid;flex:none;grid-template-columns:34px minmax(0,1fr) auto auto;align-items:center;gap:10px;width:100%;min-height:54px;text-align:left;
+  background:var(--sv-parch-2);border:2px solid var(--sv-parch-dk);border-radius:5px;padding:6px 10px;color:var(--sv-ink);font:inherit;cursor:pointer}
+.sv-row:hover{background:var(--sv-hover);border-color:var(--sv-wood)}
+.sv-row:focus-visible{background:var(--sv-hover);border-color:var(--sv-wood);outline:3px solid var(--sv-focus);outline-offset:1px}
+.sv-row .sv-ico{width:32px;height:32px;image-rendering:pixelated}
+.sv-mid{display:flex;flex-direction:column;gap:1px;min-width:0}
+.sv-nm{font-weight:800;font-size:1.02em;overflow-wrap:anywhere}
+.sv-ef{display:inline-flex;align-items:center;gap:4px;font-size:.83em;font-weight:600;color:var(--sv-good)}
+.sv-ef img{width:8px;height:9px;image-rendering:pixelated}
+.sv-tags{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+.sv-tag{font-size:.74em;font-weight:800;padding:1px 6px;border-radius:4px;background:var(--sv-parch-hi);border:2px solid var(--sv-parch-dk);white-space:nowrap;color:var(--sv-ink)}
+.sv-tag.spec{background:var(--sv-gold);border-color:var(--sv-wood-dk)}
+.sv-tag.own{color:var(--sv-ink-soft)}
+.sv-tag.warn{border-color:var(--sv-bad);color:var(--sv-bad)}
+.sv-pr{display:inline-flex;align-items:center;justify-content:flex-end;gap:4px;min-width:3.4em;font:800 1.15em var(--mono)}
+.sv-pr img{width:20px;height:20px;image-rendering:pixelated}
+.sv-pr s{font-size:.75em;font-weight:600;color:var(--sv-ink-soft)}
+.sv-pr .orb{margin-right:2px}
+.sv-row.off{opacity:.6}
+.sv-row.off .sv-ico{filter:saturate(.45)}
+.sv-row.special{border-color:var(--sv-wood);box-shadow:inset 0 0 0 2px var(--sv-gold)}
+.sv-row.shake{animation:svShake .32s steps(4)}
+.sv-row.flash{animation:svFlash .9s steps(3)}
+.sv-hint{margin:10px 0 0;font-size:.8em;color:var(--sv-ink-soft)}
+.sv-closed{display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;background:var(--sv-parch-hi);border:3px dashed var(--sv-wood);border-radius:6px;padding:10px 12px;margin-bottom:12px;font-weight:600;font-size:.93em}
+.sv-sign{font:900 1em var(--mono);letter-spacing:.08em;background:var(--sv-bad);color:var(--sv-parch-hi);border:3px solid var(--sv-wood-dk);border-radius:3px;padding:2px 9px;transform:rotate(-3deg)}
+.sv-closed-t{flex:1 1 200px;min-width:0}
+.sv-btn{display:inline-flex;align-items:center;gap:6px;background:var(--sv-wood);color:var(--sv-parch-hi);border:3px solid var(--sv-wood-dk);border-radius:6px;
+  box-shadow:inset 0 2px 0 var(--sv-wood-hi),0 3px 0 var(--sv-wood-dk);padding:5px 12px;font:inherit;font-weight:800;cursor:pointer;text-shadow:1px 1px 0 var(--sv-wood-dk)}
+.sv-btn img{image-rendering:pixelated}
+.sv-btn:hover{filter:brightness(1.07)}
+.sv-btn:active{transform:translateY(2px);box-shadow:inset 0 2px 0 var(--sv-wood-hi),0 1px 0 var(--sv-wood-dk)}
+.sv-btn[aria-disabled="true"]{opacity:.55;cursor:default}
+.sv-odo-row{display:flex;align-items:center;gap:10px}
+.sv-odo-row img{width:30px;height:30px;image-rendering:pixelated}
+#svOdo{width:84px;height:45px;image-rendering:pixelated;border-radius:3px;box-shadow:0 0 0 3px var(--sv-wood-dk)}
+.sv-cap{font:800 .95em var(--mono);color:var(--sv-ink-soft)}
+.sv-claim{margin-top:12px;font-size:.88em;display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.sv-ok{font-weight:800;color:var(--sv-good)}
+.sv-soft{color:var(--sv-ink-soft);font-weight:600}
+.sv-warn{color:var(--sv-bad);font-weight:700}
+.sv-slots{display:grid;grid-template-columns:repeat(auto-fill,42px);gap:4px}
+.sv-slot{position:relative;width:42px;height:42px;padding:0;border:2px solid var(--sv-wood-dk);border-radius:4px;background:var(--sv-slot);
+  box-shadow:inset 2px 2px 0 var(--sv-slot-dk),inset -2px -2px 0 var(--sv-slot-hi);cursor:pointer}
+.sv-slot img{position:absolute;left:3px;top:3px;width:32px;height:32px;image-rendering:pixelated}
+.sv-slot.empty{display:block;cursor:default}
+button.sv-slot:hover{filter:brightness(1.1)}
+.sv-slot.pop{animation:svPop .32s steps(3)}
+.sv-qty{position:absolute;right:2px;bottom:0;font:800 12px/1 var(--mono);color:var(--sv-qty);
+  text-shadow:1px 0 var(--sv-wood-dk),-1px 0 var(--sv-wood-dk),0 1px var(--sv-wood-dk),0 -1px var(--sv-wood-dk),1px 1px var(--sv-wood-dk)}
+.sv-bag-hint{margin:10px 0 0;font-size:.82em;color:var(--sv-ink-soft)}
+.sv-bag .sv-plate img,.sv-wallet .sv-plate img{width:16px;height:14px;image-rendering:pixelated;vertical-align:-2px;margin-right:4px}
+.sv-fine{margin:0;font-size:.78em;color:var(--muted);line-height:1.5}
+.sv-tip{position:fixed;z-index:130;max-width:290px;background:var(--sv-parch);color:var(--sv-ink);border:3px solid var(--sv-wood-dk);border-radius:6px;
+  box-shadow:inset 0 0 0 2px var(--sv-wood-hi),0 4px 0 var(--sv-shadow);padding:10px 12px;pointer-events:none;font-size:.88em;line-height:1.4}
+.sv-tip-nm{font-weight:900;font-size:1.14em}
+.sv-tip-cat{font-weight:800}
+.sv-tip hr{border:0;border-top:2px solid var(--sv-parch-dk);margin:6px 0}
+.sv-tip-d{margin:0 0 6px}
+.sv-tip-ef{display:flex;align-items:center;gap:6px;font-weight:800;color:var(--sv-good)}
+.sv-tip-ef img{image-rendering:pixelated}
+.sv-tip-m{margin-top:4px;font-size:.92em;color:var(--sv-ink-soft);font-weight:600}
+.sv-c-fruit{color:var(--sv-c-fruit)} .sv-c-snack{color:var(--sv-c-snack)} .sv-c-meal{color:var(--sv-c-meal)}
+.sv-c-drink{color:var(--sv-c-drink)} .sv-c-sweet{color:var(--sv-c-sweet)} .sv-c-tonic{color:var(--sv-c-tonic)}
+.sv-feed{position:fixed;z-index:131;width:min(330px,calc(100vw - 20px));max-height:min(70vh,520px);overflow:auto;background:var(--sv-parch);color:var(--sv-ink);
+  border:3px solid var(--sv-wood-dk);border-radius:7px;box-shadow:inset 0 0 0 3px var(--sv-wood-hi),0 6px 0 var(--sv-shadow);padding:12px 14px}
+.sv-feed-h{display:flex;align-items:center;gap:8px;font-weight:900;font-size:1.02em;margin-bottom:6px}
+.sv-feed-h img{image-rendering:pixelated}
+.sv-feed-row{display:grid;grid-template-columns:44px minmax(0,1fr);grid-template-rows:auto auto;column-gap:10px;align-items:center;width:100%;text-align:left;
+  background:var(--sv-parch-2);border:2px solid var(--sv-parch-dk);border-radius:5px;padding:5px 8px;margin-top:6px;color:inherit;font:inherit;cursor:pointer}
+.sv-feed-row:hover:not([disabled]){background:var(--sv-hover);border-color:var(--sv-wood)}
+.sv-feed-row[disabled]{opacity:.5;cursor:default}
+.sv-feed-av{grid-row:1 / span 2;width:44px;height:44px;display:flex;align-items:center;justify-content:center;border-radius:6px;overflow:hidden}
+.sv-feed-nm{font-weight:800}
+.sv-feed-sub{font-size:.82em;color:var(--sv-ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sv-feed-none{margin:8px 0;font-weight:600}
+.sv-feed-x{margin-top:10px}
+.sv-fly{position:fixed;z-index:140;pointer-events:none;image-rendering:pixelated}
+@keyframes svBob{50%{transform:translateY(3px)}}
+@keyframes svShake{25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
+@keyframes svFlash{0%,66%{background:var(--sv-gold)}}
+@keyframes svPop{50%{transform:scale(1.18)}}
+@keyframes svRing{25%{transform:rotate(-14deg)}75%{transform:rotate(14deg)}}
+@keyframes svZzz{0%{opacity:0;transform:translate(0,0)}30%{opacity:1}100%{opacity:0;transform:translate(10px,-18px)}}
+@keyframes svFloat{0%{opacity:0;transform:translateY(0)}20%{opacity:1}100%{opacity:0;transform:translateY(-30px)}}
+html.hq-calm .sv-dialog.done .sv-more,html.hq-calm .sv-row.shake,html.hq-calm .sv-row.flash,html.hq-calm .sv-slot.pop,
+html.hq-calm .sv-hot-bell.ring img,html.hq-calm .sv-zzz,html.hq-calm .sv-float{animation:none}
+html.hq-calm .sv-hot-item,html.hq-calm .sv-hot-item:hover{transition:none;transform:none}
+@media (prefers-reduced-motion: reduce){
+  .sv-dialog.done .sv-more,.sv-row.shake,.sv-row.flash,.sv-slot.pop,.sv-hot-bell.ring img,.sv-zzz,.sv-float{animation:none}
+  .sv-hot-item,.sv-hot-item:hover{transition:none;transform:none}
+}
 
 /* =================== themes =================== */
 :root[data-theme="midnight"]{
@@ -1455,6 +1636,7 @@ html.hq-calm #confetti{display:none!important}
 <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></symbol>
 <symbol id="i-castle" viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M4 21V9l2 1V7l2 1V5h2v3l2-1v3l2-1v3"/><path d="M4 9h16v12H4z" fill="none"/><path d="M20 21V9l-2 1V7l-2 1V5h-2"/><path d="M10 21v-4a2 2 0 0 1 4 0v4"/></symbol>
 <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></symbol>
+<symbol id="i-store" viewBox="0 0 24 24"><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/><path d="M22 7v3a2 2 0 0 1-2 2a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 16 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 12 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 8 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 4 12a2 2 0 0 1-2-2V7"/></symbol>
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
 <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
 <symbol id="i-bell-off" viewBox="0 0 24 24"><path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 .6 5"/><path d="M17 17H3s3-2 3-9a4.67 4.67 0 0 1 .3-1.7"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="m2 2 20 20"/></symbol>
@@ -1511,6 +1693,7 @@ html.hq-calm #confetti{display:none!important}
       <button class="viewtab" data-view="quests" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><span class="vt-l">Quests</span><span class="vt-k" aria-hidden="true">5</span></button>
       <button class="viewtab" data-view="village" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-castle"/></svg><span class="vt-l">Village</span><span class="vt-k" aria-hidden="true">7</span></button>
       <button class="viewtab" data-view="arena" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-trophy"/></svg><span class="vt-l">Arena</span><span class="tab-badge hidden" id="arenaUnread" aria-hidden="true"></span><span class="vt-k" aria-hidden="true">6</span></button>
+      <button class="viewtab" data-view="store" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-store"/></svg><span class="vt-l">Store</span><span class="vt-k" aria-hidden="true">8</span></button>
     </div>
 
     <div class="side-trainer">
@@ -1898,6 +2081,42 @@ html.hq-calm #confetti{display:none!important}
     </div>
   </div>
 
+  <div id="storeView" class="sv hidden" aria-label="Store">
+    <div class="sv-stage-wrap" id="svWrap"><div class="sv-stage" id="svStage"><canvas id="svCanvas" aria-hidden="true"></canvas><div class="sv-hots" id="svHots"></div></div></div>
+    <div class="sv-menu">
+      <section class="sv-box sv-keeper" aria-labelledby="svKeeperH">
+        <span class="sv-plate" id="svKeeperH">Marigold</span>
+        <div class="sv-keeper-top">
+          <button class="sv-portrait" id="svPortrait" type="button" aria-label="Talk to Marigold, the shopkeeper"><img id="svPortraitImg" alt="" width="128" height="128"></button>
+          <div class="sv-friend"><div class="sv-hearts" id="svHearts" role="img" aria-label="Friendship"></div><div class="sv-friend-l" id="svFriendL"></div></div>
+        </div>
+        <button class="sv-dialog" id="svDialog" type="button"><span id="svSay" aria-hidden="true"></span><span class="sr-only" id="svSaySr"></span><span class="sv-more" aria-hidden="true"></span></button>
+      </section>
+      <section class="sv-box sv-shop" aria-labelledby="svShopH">
+        <span class="sv-plate" id="svShopH">General Store</span>
+        <div class="sv-shop-head"><span class="sv-season" id="svSeason"></span><button class="sv-special hidden" id="svSpecial" type="button"></button><button class="sv-mute" id="svMute" type="button" aria-pressed="true">&#x1F50A;</button></div>
+        <div class="sv-closed hidden" id="svClosed"></div>
+        <div class="sv-tabs" id="svTabs" role="tablist" aria-label="Food categories"></div>
+        <div class="sv-list" id="svList" role="tabpanel"></div>
+        <p class="sv-hint">Click to buy one &middot; Shift-click buys up to five &middot; Hover for details</p>
+      </section>
+      <div class="sv-side">
+        <section class="sv-box sv-wallet" aria-labelledby="svWalletH">
+          <span class="sv-plate" id="svWalletH">Wallet</span>
+          <div class="sv-odo-row"><img id="svCoinImg" alt="" width="30" height="30"><canvas id="svOdo" width="28" height="15" aria-hidden="true"></canvas><span class="sv-cap" id="svCap" aria-hidden="true"></span><span class="sr-only" id="svCoinsSr"></span></div>
+          <div class="sv-claim" id="svClaim"></div>
+        </section>
+        <section class="sv-box sv-bag" aria-labelledby="svBagH">
+          <span class="sv-plate" id="svBagH"><img id="svBagImg" alt="" width="16" height="14">Bag</span>
+          <div class="sv-slots" id="svBag" role="group" aria-labelledby="svBagH"></div>
+          <p class="sv-bag-hint" id="svBagHint"></p>
+        </section>
+        <p class="sv-fine">Coins and snacks are kept by the Arena server under your GitHub handle. It sees what you buy, eat or give, never which session ate it: that stays on this machine.</p>
+      </div>
+    </div>
+    <div class="sv-tip hidden" id="svTip" aria-hidden="true"></div>
+    <div class="sv-feed hidden" id="svFeed" role="dialog" aria-labelledby="svFeedH"></div>
+  </div>
   <div id="arenaView" class="arena hidden" aria-label="Arena leaderboard">
     <div class="arena-head">
       <h2 class="arena-title"><svg class="i" aria-hidden="true"><use href="#i-trophy"/></svg>Arena</h2>
@@ -1999,20 +2218,9 @@ html.hq-calm #confetti{display:none!important}
     </section>
 
     <section class="panel hidden" id="arenaStoreWrap" aria-label="Poke Coins and snacks" tabindex="-1">
-      <h3 class="section-h"><span aria-hidden="true">🪙</span>Poke Coins &amp; snacks <span class="muted" id="storeSub"></span></h3>
-      <div id="storeBody" class="hidden">
-        <div class="store-wallet">
-          <span class="store-coins"><b id="storeCoins">0</b> / <span id="storeCap">30</span> Poke Coins</span>
-          <span id="storeClaim" tabindex="-1"></span>
-        </div>
-        <div class="store-grid" id="storeGrid"></div>
-        <p class="muted store-gifts" id="storeGifts"></p>
-      </div>
-      <p class="muted store-state" id="storeState"><span class="loading-row"><span class="orb" data-orb="searching" aria-hidden="true"></span>Loading…</span></p>
-      <p class="muted store-privacy">
-        Coins and snacks are kept by the Arena server under your GitHub handle. It sees what you buy, eat or give,
-        never which session ate it: that stays on this machine.
-      </p>
+      <h3 class="section-h"><span aria-hidden="true">&#x1FA99;</span>Poke Coins &amp; snacks</h3>
+      <p class="muted arena-store-moved">The General Store has its own tab now: daily coins, today&rsquo;s special and snacks for your creatures.</p>
+      <button class="hbtn" type="button" id="arenaStoreGo">Visit the Store <span aria-hidden="true">&rarr;</span></button>
     </section>
 
     <section class="panel hidden" id="arenaLobbyWrap" aria-labelledby="arenaRoomH">
@@ -2213,7 +2421,7 @@ html.hq-calm #confetti{display:none!important}
     <div class="modal-b"><div class="md-body">
       <h2>Navigation</h2>
       <ul>
-        <li><span class="kbd">1</span>–<span class="kbd">6</span> switch view (Live · Analytics · Pokédex · Gym · Quests · Arena)</li>
+        <li><span class="kbd">1</span>–<span class="kbd">8</span> switch view (Live · Analytics · Pokédex · Gym · Quests · Arena · Village · Store)</li>
         <li><span class="kbd">/</span> focus search · <span class="kbd">R</span> refresh now</li>
         <li><span class="kbd">⌘</span>/<span class="kbd">Ctrl</span>+<span class="kbd">K</span> command palette (jump to any session, run any action)</li>
         <li><span class="kbd">?</span> this help · <span class="kbd">Esc</span> close any overlay</li>
@@ -3452,13 +3660,32 @@ function newRequestId(){
   return s;
 }
 // Fallback food labels + effects until the Arena catalog arrives. The server catalog (backend
-// app/pantry.py) is the authority for names and prices; the local proxy overlays the effects.
-var FOOD_ORDER = ["berry","riceball","bento","tonic"];
+// app/pantry.py) is the authority for names, prices and stock; the local proxy overlays the effects.
+// season/cat/desc are the store's own: when it's stocked, its shelf category, its tooltip line.
+var FOOD_ORDER = ["berry","bread","riceball","coffee","bento","noodles","hotpot","tonic","elixir",
+  "strawberry","dango","omelette","watermelon","shavedice","curry","apple","sweetpotato","pumpkinstew","chestnuts","cocoa","oden"];
 var FOOD_UI = {
-  berry:   {name:"Berry",        plural:"Berries",       emoji:"\uD83E\uDED0", price:1, restoreMins:20,  revives:false},
-  riceball:{name:"Rice Ball",    plural:"Rice Balls",    emoji:"\uD83C\uDF59", price:2, restoreMins:45,  revives:false},
-  bento:   {name:"Bento",        plural:"Bentos",        emoji:"\uD83C\uDF71", price:3, restoreMins:120, revives:false},
-  tonic:   {name:"Revive Tonic", plural:"Revive Tonics", emoji:"\uD83E\uDDC3", price:5, restoreMins:0,   revives:true, wakeToMins:105}
+  berry:      {name:"Berry", plural:"Berries", emoji:"🫐", price:1, restoreMins:20, revives:false, season:"all", cat:"fruit", desc:"A handful of wild berries. Tart, sweet, gone in a second."},
+  bread:      {name:"Bread Loaf", plural:"Bread Loaves", emoji:"🍞", price:1, restoreMins:20, revives:false, season:"all", cat:"snack", desc:"Crusty outside, pillowy inside. Still warm from the oven."},
+  riceball:   {name:"Rice Ball", plural:"Rice Balls", emoji:"🍙", price:2, restoreMins:45, revives:false, season:"all", cat:"snack", desc:"Hand-pressed rice wrapped in crisp seaweed. Fits in any pocket."},
+  coffee:     {name:"Coffee", plural:"Coffees", emoji:"☕", price:2, restoreMins:45, revives:false, season:"all", cat:"drink", desc:"Dark roast with a splash of cream, for trainers who work late."},
+  bento:      {name:"Bento", plural:"Bentos", emoji:"🍱", price:3, restoreMins:120, revives:false, season:"all", cat:"meal", desc:"A boxed lunch: rice, salmon, rolled omelette and greens."},
+  noodles:    {name:"Noodle Bowl", plural:"Noodle Bowls", emoji:"🍜", price:3, restoreMins:120, revives:false, season:"all", cat:"meal", desc:"Slurpable noodles in savory broth with a soft-boiled egg."},
+  hotpot:     {name:"Hot Pot", plural:"Hot Pots", emoji:"🍲", price:4, restoreMins:180, revives:false, season:"all", cat:"meal", desc:"A bubbling clay pot of stew. Feeds a whole team."},
+  tonic:      {name:"Revive Tonic", plural:"Revive Tonics", emoji:"🧃", price:5, restoreMins:0, revives:true, wakeToMins:105, season:"all", cat:"tonic", desc:"Fizzy and herbal. Wakes a creature that has fainted."},
+  elixir:     {name:"Honey Elixir", plural:"Honey Elixirs", emoji:"🍯", price:7, restoreMins:60, revives:true, wakeToMins:45, season:"all", cat:"tonic", desc:"Golden honey and mountain herbs. Wakes a fainted creature almost fully rested."},
+  strawberry: {name:"Strawberry", plural:"Strawberries", emoji:"🍓", price:1, restoreMins:25, revives:false, season:"spring", cat:"fruit", desc:"Picked at dawn. The sweetest bite of spring."},
+  dango:      {name:"Hanami Dango", plural:"Hanami Dango", emoji:"🍡", price:2, restoreMins:55, revives:false, season:"spring", cat:"sweet", desc:"Three chewy rice dumplings for cherry-blossom picnics."},
+  omelette:   {name:"Garden Omelette", plural:"Garden Omelettes", emoji:"🍳", price:3, restoreMins:135, revives:false, season:"spring", cat:"meal", desc:"Fluffy eggs with garden herbs and a ribbon of tomato."},
+  watermelon: {name:"Watermelon Slice", plural:"Watermelon Slices", emoji:"🍉", price:1, restoreMins:25, revives:false, season:"summer", cat:"fruit", desc:"Cold, crisp and dripping. Summer in a slice."},
+  shavedice:  {name:"Shaved Ice", plural:"Shaved Ices", emoji:"🍧", price:2, restoreMins:55, revives:false, season:"summer", cat:"sweet", desc:"A snowy mound drizzled with strawberry and blue syrup."},
+  curry:      {name:"Summer Curry", plural:"Summer Curries", emoji:"🍛", price:3, restoreMins:135, revives:false, season:"summer", cat:"meal", desc:"Golden curry with summer veggies over rice. A little kick."},
+  apple:      {name:"Apple", plural:"Apples", emoji:"🍎", price:1, restoreMins:25, revives:false, season:"fall", cat:"fruit", desc:"Crisp and juicy, straight from the orchard."},
+  sweetpotato:{name:"Baked Sweet Potato", plural:"Baked Sweet Potatoes", emoji:"🍠", price:2, restoreMins:55, revives:false, season:"fall", cat:"snack", desc:"Roasted in its skin until the inside turns to honey."},
+  pumpkinstew:{name:"Pumpkin Stew", plural:"Pumpkin Stews", emoji:"🎃", price:3, restoreMins:135, revives:false, season:"fall", cat:"meal", desc:"Hearty stew served in a hollowed-out pumpkin."},
+  chestnuts:  {name:"Bag of Chestnuts", plural:"Bags of Chestnuts", emoji:"🌰", price:1, restoreMins:25, revives:false, season:"winter", cat:"snack", desc:"Roasted by the door until the shells split. Warm hands guaranteed."},
+  cocoa:      {name:"Hot Cocoa", plural:"Hot Cocoas", emoji:"🍫", price:2, restoreMins:55, revives:false, season:"winter", cat:"drink", desc:"Rich hot chocolate with marshmallows on top."},
+  oden:       {name:"Oden Skewer", plural:"Oden Skewers", emoji:"🍢", price:3, restoreMins:135, revives:false, season:"winter", cat:"meal", desc:"Daikon, konjac and fried tofu, simmered all day in broth."}
 };
 function isFood(k){ return typeof k==="string" && Object.prototype.hasOwnProperty.call(FOOD_UI, k); }
 // store: "unknown" | "ok" | "unsupported" (an older Arena server) | "unpaired" | "error"
@@ -3486,21 +3713,29 @@ function pantryLocalReject(res){
     (j.code==="csrf" || /^(bad or missing CSRF token|cross-site request rejected|local access only)$/.test(j.error));
 }
 function pageReload(){ try{ location.reload(); }catch(e){} }
-// A food kind's catalog entry: the server's strings and prices over the local fallback.
+// A food kind's catalog entry: the server's strings, prices and stock over the local fallback.
+// stocked: this Arena's catalog lists it (an older server lacks the newer foods); inStock: sold today.
 function foodInfo(kind){
   if(!isFood(kind)) return null;
   var b=FOOD_UI[kind];
-  var out={kind:kind, name:b.name, plural:b.plural, emoji:b.emoji, price:b.price, restoreMins:b.restoreMins, revives:b.revives, wakeToMins:b.wakeToMins||105};
+  var out={kind:kind, name:b.name, plural:b.plural, emoji:b.emoji, price:b.price, basePrice:b.price, restoreMins:b.restoreMins,
+           revives:b.revives, wakeToMins:b.wakeToMins!=null ? b.wakeToMins : 105, season:b.season||"all", cat:b.cat||"snack",
+           desc:b.desc||"", stocked:false, inStock:false, special:false};
   var cat=(PANTRY.j && Array.isArray(PANTRY.j.catalog)) ? PANTRY.j.catalog : [];
   for(var i=0;i<cat.length;i++){
     var c=cat[i]; if(!c || c.kind!==kind) continue;
     if(typeof c.name==="string" && c.name) out.name=c.name.slice(0,40);
     if(typeof c.plural==="string" && c.plural) out.plural=c.plural.slice(0,40);
     if(typeof c.emoji==="string" && c.emoji) out.emoji=c.emoji.slice(0,8);
-    if(typeof c.price==="number" && c.price>=0 && c.price%1===0) out.price=c.price;
+    if(typeof c.price==="number" && c.price>=0 && c.price%1===0) out.price=out.basePrice=c.price;
+    if(typeof c.basePrice==="number" && c.basePrice>=0 && c.basePrice%1===0) out.basePrice=c.basePrice;
     if(typeof c.restoreMins==="number" && c.restoreMins>=0) out.restoreMins=c.restoreMins;
     if(typeof c.revives==="boolean") out.revives=c.revives;
     if(typeof c.wakeToMins==="number" && c.wakeToMins>=0) out.wakeToMins=c.wakeToMins;
+    if(c.season==="all"||c.season==="spring"||c.season==="summer"||c.season==="fall"||c.season==="winter") out.season=c.season;
+    out.stocked=true;
+    out.inStock=typeof c.inStock==="boolean" ? c.inStock : true;
+    out.special=c.special===true && out.inStock;
     break;
   }
   return out;
@@ -3515,6 +3750,1855 @@ function pantryCatalog(){
 function foodA(info){ return (/^[aeiou]/i.test(info.name)?"an ":"a ")+info.name; }
 function foodN(info, n){ return n+" "+(n===1?info.name:info.plural); }
 function coinsN(n){ return n+" Poke Coin"+(n===1?"":"s"); }
+
+/* ===== Store pixel art: original sprites, drawn at runtime (no assets, no network) ===== */
+// A sprite is rows of palette letters; "." is empty. `k` is an outline drawn around the
+// silhouette (4-neighbour), skipping letters listed in `n` (steam, sparkles: no outline).
+var PX_ART = {
+  berry:{k:"#1b2152", p:{b:"#4f63c9",d:"#33449a",h:"#b4c4ff",c:"#26306e",l:"#8fd45f",g:"#3f9b45"}, r:[
+    "................",
+    "........lg......",
+    "......bbbb......",
+    ".....bhbbbb.....",
+    ".....bbccbb.....",
+    ".....bbbbbd.....",
+    ".....bbbbdd.....",
+    "......bddd......",
+    "................",
+    "..bbbb...bbbb...",
+    ".bhbbbb.bhbbbb..",
+    ".bbccbb.bbccbb..",
+    ".bbbbbd.bbbbbd..",
+    ".bbbbdd.bbbbdd..",
+    "..bddd...bddd...",
+    "................"]},
+  bread:{k:"#5a3417", p:{c:"#c98a45",C:"#e8b86a",s:"#f6dfb0",d:"#9c6230"}, r:[
+    "................",
+    "................",
+    "................",
+    "................",
+    "......cccc......",
+    "....cCCCCCCc....",
+    "...cCCsCCCsCc...",
+    "..cCCsCCCsCCcc..",
+    ".ccCsCCCsCCCccc.",
+    ".cccccccccccccd.",
+    ".dcccccccccccdd.",
+    ".ddcccccccccddd.",
+    "..dddddddddddd..",
+    "................",
+    "................",
+    "................"]},
+  riceball:{k:"#5e574b", p:{w:"#fdfcf7",r:"#e2dccf",s:"#c9c0ae",n:"#203a2c",N:"#3f6a52"}, r:[
+    "................",
+    "................",
+    ".......ww.......",
+    "......wwww......",
+    ".....wwwwwr.....",
+    ".....wwwwwr.....",
+    "....wwwwwwwr....",
+    "...wwwwwwwwrr...",
+    "...wwwwwwwwwr...",
+    "..wwwnnnnnnwrr..",
+    "..wwwnNnnnnwwr..",
+    ".wwwwnnnnnnwwrr.",
+    ".rwwwnnnnnnwrrs.",
+    "..rrrnnnnnnrss..",
+    "................",
+    "................"]},
+  coffee:{k:"#4a3a2a", n:"v", p:{m:"#ece5d3",M:"#ffffff",s:"#c4b9a0",c:"#4a2f1b",C:"#7d5536",r:"#c8553d",v:"#cfc8bb"}, r:[
+    "................",
+    "....v....v......",
+    ".....v....v.....",
+    "....v....v......",
+    "................",
+    "..mmmmmmmmmm....",
+    "..mcCCcccccm....",
+    "..Mmmmmmmmms....",
+    "..Mmmmmmmmssmm..",
+    "..Mmmmmmmmss.m..",
+    "..Mrrrrrrrss.m..",
+    "..Mmmmmmmmssmm..",
+    "..Mmmmmmmmss....",
+    "..mmmmmmmmss....",
+    "...ssssssss.....",
+    "................"]},
+  bento:{k:"#3c1712", p:{r:"#d9574a",R:"#b33a2e",d:"#7a241d",w:"#fbfaf5",s:"#3a3a3a",p:"#e0526b",o:"#f08a4b",O:"#ffb27a",y:"#f5cf4a",Y:"#fff0a0",g:"#5aa83c",G:"#8fd45f"}, r:[
+    "................",
+    "................",
+    "................",
+    ".rrrrrrrrrrrrrr.",
+    ".RwwwwwwRooOooR.",
+    ".RwswwwwROOooOR.",
+    ".RwwwwwwRooooOR.",
+    ".RwwppwwRoooooR.",
+    ".RwwppwwRRRRRRR.",
+    ".RwwwwwwRyYyyyR.",
+    ".RwwwwswRyyyyyR.",
+    ".RwswwwwRgGgGgR.",
+    ".RwwwwwwRgggggR.",
+    ".dddddddddddddd.",
+    "................",
+    "................"]},
+  noodles:{k:"#24324a", n:"c", p:{c:"#a8743f",w:"#f4f1e8",n:"#f2d48f",N:"#e0b866",e:"#ffffff",y:"#ffb43c",g:"#6cc04a",h:"#c8803d",B:"#7aa7e0",b:"#4e7fbf",d:"#2f5590"}, r:[
+    "................",
+    "............c.c.",
+    "...........c.c..",
+    "..........c.c...",
+    ".........c.c....",
+    "...wwwwwcwcww...",
+    ".wneyynNnngnhhw.",
+    ".wheeennNnngnhw.",
+    ".wwwwwwwwwwwwww.",
+    ".BBbbbbbbbbbbbd.",
+    "..Bbbbwbbbwbbd..",
+    "..Bbbbbbbbbbdd..",
+    "...bbbbbbbbdd...",
+    ".....dddddd.....",
+    "................",
+    "................"]},
+  hotpot:{k:"#2a1a12", n:"v", p:{p:"#6b4a3a",P:"#8d6650",d:"#4a3226",s:"#d9502e",S:"#f08a4b",c:"#f5e6c8",g:"#5aa83c",v:"#e6e0d4"}, r:[
+    "................",
+    ".....v....v.....",
+    "......v....v....",
+    ".....v....v.....",
+    "................",
+    "..pPPPPPPPPPPp..",
+    "..psSsccSgsSsp..",
+    ".pPPPPPPPPPPPPp.",
+    ".dPppppppppppdd.",
+    "..Pppppppppppd..",
+    "..PpPpPpPpPppd..",
+    "..ppppppppppdd..",
+    "...ppppppppdd...",
+    "....dddddddd....",
+    "................",
+    "................"]},
+  tonic:{k:"#24453f", n:"x", p:{w:"#dff3ff",W:"#ffffff",g:"#3fd0a0",G:"#8ff0cf",d:"#1f9a74",c:"#b07a48",C:"#d9a066",x:"#fff6a8"}, r:[
+    "................",
+    ".......Cc.......",
+    ".......cc....x..",
+    "......wWww..xxx.",
+    "......wWww...x..",
+    ".....wwwwww.....",
+    "....wwwwwwww....",
+    "...wGGGGGGGGw...",
+    "...wWggggggdw...",
+    "...wWggggxgdw...",
+    "...wWggggggdw...",
+    "...wggggggddw...",
+    "....wggggddw....",
+    ".....wddddw.....",
+    "................",
+    "................"]},
+  elixir:{k:"#5a3a0a", n:"x", p:{p:"#e8577f",r:"#c43a5c",R:"#ff7aa0",w:"#fff4dc",W:"#ffffff",y:"#f5b52e",Y:"#ffd866",o:"#d98a12",x:"#fff4a0"}, r:[
+    "................",
+    "..x...p..p......",
+    ".xxx..pppp......",
+    "..x....pp.......",
+    "......rRrr......",
+    ".....wwwwww.....",
+    "....wYYYYYYw....",
+    "...wWyyyyyyow...",
+    "...wWyyxyyyow...",
+    "...wWyyyyyyow...",
+    "...wyyyyyyoow...",
+    "....wyyyyoow....",
+    ".....woooow.....",
+    "..........x.....",
+    ".........xxx....",
+    "..........x....."]},
+  strawberry:{k:"#5a1018", p:{r:"#e23b4a",R:"#ff7880",d:"#a8202f",s:"#ffe08a",g:"#3f9b45",G:"#7fd05a"}, r:[
+    "................",
+    ".......G........",
+    ".....gGgGgg.....",
+    "...rgggGgggrr...",
+    "..rRRgrrgrrrrd..",
+    "..rRsrrrsrrsrd..",
+    "..rRrrsrrrsrrd..",
+    "...rsrrrsrrrd...",
+    "...rrrsrrrsrd...",
+    "....rsrrrsrd....",
+    "....rrrsrrdd....",
+    ".....rsrrdd.....",
+    "......rrdd......",
+    ".......dd.......",
+    "................",
+    "................"]},
+  dango:{k:"#5a4030", p:{P:"#ffd0e0",p:"#f6a5c0",q:"#d77fa0",W:"#ffffff",w:"#f5f1e6",e:"#d8d0c0",G:"#c4e8a8",g:"#8cc66d",h:"#5f9a48",s:"#c9a46b"}, r:[
+    "................",
+    ".....PPpppp.....",
+    "....PPppppqq....",
+    "....Ppppppqq....",
+    ".....qqqqqq.....",
+    ".....WWwwww.....",
+    "....WWwwwwee....",
+    "....Wwwwwwee....",
+    ".....eeeeee.....",
+    ".....GGgggg.....",
+    "....GGgggghh....",
+    "....Gggggghh....",
+    ".....hhhhhh.....",
+    ".......ss.......",
+    ".......ss.......",
+    "................"]},
+  omelette:{k:"#5a4a2a", p:{Y:"#ffe88a",y:"#ffd34d",o:"#e3a52c",r:"#d8433a",w:"#f6f6f2",e:"#d2d2cc",g:"#5aa83c"}, r:[
+    "................",
+    "................",
+    "................",
+    "................",
+    ".....YYYyyy.....",
+    "....YYyyyyyo....",
+    "...Yyyryryryo...",
+    "...yyyyryryyo...",
+    "..yyoyyyyyyyyo..",
+    ".wyyyyyyyyyyoow.",
+    ".woooooooooooow.",
+    ".wwggwwwwwwwrrw.",
+    "..ewwwwwwwwwwe..",
+    "....eeeeeeee....",
+    "................",
+    "................"]},
+  watermelon:{k:"#1f4a25", p:{R:"#ff7b85",r:"#ef4b5c",s:"#2a1d1a",w:"#f5f0d0",g:"#3f9b45",G:"#2a7535"}, r:[
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+    ".gwRRRRRRRRRRwg.",
+    ".gwrrsrrrrsrrwg.",
+    ".ggwrrrsrrrrwgg.",
+    "..gwrsrrrrsrwg..",
+    "..ggwrrrrrrwgg..",
+    "...ggwrrsrwgg...",
+    "....ggwwwwgg....",
+    "......GGGG......",
+    "................",
+    "................",
+    "................"]},
+  shavedice:{k:"#34495e", p:{w:"#f4fbff",W:"#ffffff",b:"#cfe6f5",r:"#ff6b8a",R:"#ffa0b8",l:"#5cb8f0",c:"#d7413f",g:"#3f9b45",U:"#d4f0f8",u:"#9ed3e6",d:"#6fa8c0"}, r:[
+    "................",
+    "........g.......",
+    ".......cc.......",
+    "......wccw......",
+    ".....wWwwrw.....",
+    "....wWwrrRww....",
+    "...wWwrrRrwlw...",
+    "..wWwwrrrwwllb..",
+    "..bwwwwrwwlllb..",
+    ".UUUUUUUUUUUUUU.",
+    "..uUuuuuuuuudd..",
+    "...uUuuuuuudd...",
+    "....uuuuuudd....",
+    "......uudd......",
+    ".....dddddd.....",
+    "................"]},
+  curry:{k:"#4a3a2a", p:{i:"#fffdf5",I:"#e8e2d2",c:"#d98a2b",C:"#f0b04a",d:"#a8611a",o:"#f07a3a",m:"#8a5a3a",p:"#6cb04a",w:"#f4f4f0",e:"#d0d0c8"}, r:[
+    "................",
+    "................",
+    "................",
+    "...iiii.........",
+    "..iiiiII........",
+    "..iiiiII..CCc...",
+    "..iiiiII.CcmcC..",
+    "..iiiiIICcocpc..",
+    ".wwiiiIIccmcccw.",
+    ".wwwiIIcccocccw.",
+    ".wwcccccmccccww.",
+    "..wwdccpcccdww..",
+    "...eewwwwwwee...",
+    ".....eeeeee.....",
+    "................",
+    "................"]},
+  apple:{k:"#4a1010", p:{r:"#d93a3a",R:"#ff6b6b",W:"#ffd8d0",d:"#9e2222",s:"#6b4423",g:"#3f9b45",G:"#7fd05a"}, r:[
+    "................",
+    "........gG......",
+    ".......sgGG.....",
+    "....rrrsrrrr....",
+    "...rRRrrrrrrd...",
+    "..rRWRrrrrrrrd..",
+    "..rRRrrrrrrrrd..",
+    "..rRrrrrrrrrrd..",
+    "..rrrrrrrrrrdd..",
+    "..rrrrrrrrrrdd..",
+    "...rrrrrrrrdd...",
+    "...rrrrrrrddd...",
+    "....rrd..ddd....",
+    "................",
+    "................",
+    "................"]},
+  sweetpotato:{k:"#3d1424", n:"v", p:{p:"#9c3b5a",P:"#c4567a",q:"#6e2540",y:"#f5b041",Y:"#ffd27a",v:"#e6e0d4"}, r:[
+    "................",
+    "......v...v.....",
+    ".......v...v....",
+    "......v...v.....",
+    "................",
+    "....pppppppp....",
+    "..pPPyYYYyyPpp..",
+    ".pPyYYYYyyyyPpq.",
+    ".pPyyyYyyyyypqq.",
+    ".ppPyyyyyyyPpqq.",
+    "..ppppPPpppqqq..",
+    "....qqqqqqqq....",
+    "................",
+    "................",
+    "................",
+    "................"]},
+  pumpkinstew:{k:"#4a2408", n:"v", p:{o:"#f08c2a",O:"#ffb35c",d:"#b85d14",y:"#ffd27a",s:"#c0632a",S:"#e0894a",m:"#8a4a2a",v:"#e6e0d4"}, r:[
+    "................",
+    "......v....v....",
+    ".......v....v...",
+    "......v....v....",
+    "................",
+    "....yyyyyyyy....",
+    "...ysSsmsSssy...",
+    "..oyyyyyyyyyyo..",
+    ".oOOodOOoodOood.",
+    ".oOOodOOoodOood.",
+    ".oOoodOooodOodd.",
+    "..ooodoooododd..",
+    "...dddddddddd...",
+    "................",
+    "................",
+    "................"]},
+  chestnuts:{k:"#3a2010", p:{b:"#7a4422",B:"#a8643a",d:"#4a2410",L:"#e6c49a",P:"#f2e2c4",p:"#d9b98a",q:"#b08d5e",r:"#c8453a"}, r:[
+    "................",
+    "................",
+    "........LL......",
+    "....LL.bBbb.....",
+    "...bBbbbbbdLL...",
+    "...bbbdLLbbBbb..",
+    "..bbbBbbbbbbbd..",
+    "..PPPPPPPPPPPP..",
+    "...pppppppppp...",
+    "...rrrrrrrrrr...",
+    "....pppppppp....",
+    ".....ppppqq.....",
+    ".....ppppqq.....",
+    "......ppqq......",
+    ".......qq.......",
+    "................"]},
+  cocoa:{k:"#4a1a14", n:"v", p:{m:"#c8453a",M:"#e8705f",s:"#962f27",c:"#5e3420",C:"#8f5a3a",W:"#fffaf0",w:"#ffffff",v:"#e6e0d4"}, r:[
+    "................",
+    "....v....v......",
+    ".....v....v.....",
+    "....v....v......",
+    "................",
+    "..mmmmmmmmmm....",
+    "..mcWWcCWWcm....",
+    "..Mmmmmmmmms....",
+    "..Mmmmmmmmssmm..",
+    "..Mmmwmwmmss.m..",
+    "..Mmmmwmmmss.m..",
+    "..Mmmwmwmmssmm..",
+    "..Mmmmmmmmss....",
+    "..mmmmmmmmss....",
+    "...ssssssss.....",
+    "................"]},
+  oden:{k:"#3a2a1a", p:{s:"#c9a46b",g:"#7d7d78",G:"#a3a39c",d:"#55554f",W:"#fff6dc",w:"#f0dcae",e:"#c9ae7a",Y:"#ffd27a",y:"#e5a23e",o:"#a8661c"}, r:[
+    "................",
+    ".......ss.......",
+    ".......gg.......",
+    "......gGgg......",
+    ".....gGggGd.....",
+    "....gggGgggd....",
+    "......WWww......",
+    ".....WWwwwe.....",
+    ".....Wwwwee.....",
+    "......eeee......",
+    ".....YYyyyy.....",
+    ".....Yyyyyo.....",
+    ".....Yyyyyo.....",
+    ".....oooooo.....",
+    ".......ss.......",
+    "................"]},
+
+  /* ---- UI icons ---- */
+  coin:{k:"#6b3d06", p:{y:"#f5c542",Y:"#ffe58a",o:"#c98a1a",s:"#fff6c8"}, r:[
+    "..........",
+    "...yyyy...",
+    "..yYYyyo..",
+    ".yYyysyoo.",
+    ".yYysssyo.",
+    ".yyyysyoo.",
+    ".yyyyyyoo.",
+    "..yyyooo..",
+    "...oooo...",
+    ".........."]},
+  heart:{k:"#5a1018", p:{r:"#e8455a",R:"#ff8a96",d:"#b02a3c"}, r:[
+    ".........",
+    ".rr..rr..",
+    "rRRrrrrd.",
+    "rRrrrrrd.",
+    ".rrrrrd..",
+    "..rrrd...",
+    "...rd....",
+    "........."]},
+  heart0:{k:"#7a5a40", p:{e:"#e8d2b0"}, r:[
+    ".........",
+    ".ee..ee..",
+    "eeeeeeee.",
+    "eeeeeeee.",
+    ".eeeeee..",
+    "..eeee...",
+    "...ee....",
+    "........."]},
+  bolt:{k:"#7a4a00", p:{y:"#ffd93d",Y:"#fff3a8"}, r:[
+    "........",
+    "....yy..",
+    "...yY...",
+    "..yY....",
+    ".yyyyy..",
+    "...yY...",
+    "..yY....",
+    ".yY.....",
+    "........"]},
+  star:{k:"#7a4a00", p:{y:"#ffd93d",Y:"#fff3a8",o:"#e8a020"}, r:[
+    "...........",
+    ".....y.....",
+    "....yYy....",
+    ".yyyyYyyyy.",
+    "..yyYYYyo..",
+    "...yyyyo...",
+    "..yyo.yyo..",
+    ".yo.....yo.",
+    "..........."]},
+  bell:{k:"#5a3a06", p:{y:"#f5c542",Y:"#ffe58a",o:"#c98a1a",d:"#8a5a10"}, r:[
+    "............",
+    ".....yy.....",
+    "....yYYy....",
+    "...yYyyyo...",
+    "...yYyyyo...",
+    "...yYyyyo...",
+    "..yYyyyyoo..",
+    ".yyyyyyyyoo.",
+    ".dddddddddd.",
+    "............"]},
+  blossom:{k:"#7a2a4a", p:{p:"#ffa5c8",P:"#ffd6e6",y:"#ffd93d"}, r:[
+    "..........",
+    "....pp....",
+    "..p.PP.p..",
+    ".pPppppPp.",
+    "..ppyypp..",
+    "..ppyypp..",
+    ".pPppppPp.",
+    "..p.pp.p..",
+    "....pp....",
+    ".........."]},
+  sun:{k:"#8a5a00", p:{y:"#ffd93d",Y:"#fff3a8",o:"#f5a020"}, r:[
+    "..........",
+    "....y.....",
+    ".y..y...y.",
+    "...yYy....",
+    "..yYYyy...",
+    "yy.yyyy.yy",
+    "...yyyo...",
+    "....y.....",
+    ".y..y...y.",
+    ".........."]},
+  leaf:{k:"#5a2408", p:{o:"#f08c2a",O:"#ffb35c",r:"#d9542a",s:"#8a4a1a"}, r:[
+    "..........",
+    "....o.....",
+    "..o.Oo.o..",
+    "..OoOoOo..",
+    ".oOooooro.",
+    "..ooOorr..",
+    "...oorr...",
+    "....s.....",
+    "....s.....",
+    ".........."]},
+  snow:{k:"#2a4a7a", n:"", p:{w:"#ffffff",b:"#bfe0ff"}, r:[
+    "..........",
+    "....w.....",
+    ".w..w..w..",
+    "..w.b.w...",
+    "...wbw....",
+    "wwbbwbbww.",
+    "...wbw....",
+    "..w.b.w...",
+    ".w..w..w..",
+    "....w....."]},
+  bag:{k:"#3a2010", p:{b:"#b5763a",B:"#d99a5a",d:"#8a5226",t:"#e8c08a",r:"#c8453a"}, r:[
+    "............",
+    "....tttt....",
+    ".....rr.....",
+    "....bBBb....",
+    "...bBbbbd...",
+    "..bBbbbbbd..",
+    "..bBbbbbbd..",
+    "..bbbbbbdd..",
+    "...dddddd...",
+    "............"]},
+  zzz:{p:{z:"#ffffff"}, r:[
+    "zzz.",
+    "..z.",
+    ".z..",
+    "zzz."]}
+};
+
+/* ---- the shop cat (Biscuit): sleeping loaf, tail flick, awake ---- */
+PX_ART.cat0={k:"#4a2410", p:{o:"#e8964a",O:"#f8bf86",d:"#b8682c",w:"#fff0dc",p:"#f4a0a0",e:"#4a2410"}, r:[
+  "..................",
+  "..o..o............",
+  ".oOooOo...........",
+  ".oOOOOo.dooodoo...",
+  "oeeOeeoOooOoooOo..",
+  "oOOpOOoOoodooooodo",
+  ".wwwwwoOoooooooodo",
+  ".wwoooooooooooodo.",
+  "..ddddddddddddoo..",
+  ".................."]};
+PX_ART.cat1={k:"#4a2410", p:PX_ART.cat0.p, r:[
+  "..................",
+  "..o..o............",
+  ".oOooOo...........",
+  ".oOOOOo.dooodoo...",
+  "oeeOeeoOooOoooOo..",
+  "oOOpOOoOoodooooo..",
+  ".wwwwwoOoooooooo.o",
+  ".wwooooooooooooodo",
+  "..ddddddddddddddo.",
+  ".................."]};
+PX_ART.cat2={k:"#4a2410", p:{o:"#e8964a",O:"#f8bf86",d:"#b8682c",w:"#fff0dc",p:"#f4a0a0",e:"#2a1408",g:"#7fd05a"}, r:[
+  "..o..o............",
+  ".oOooOo...........",
+  ".oOOOOo...........",
+  "oegOegoOooodoo....",
+  "oeeOeeoOooOoooOo..",
+  "oOOpOOoOoodooooodo",
+  ".wwwwwoOoooooooodo",
+  ".wwoooooooooooodo.",
+  "..ddddddddddddoo..",
+  ".................."]};
+
+/* ---- the shopkeeper (Marigold): a 32x32 bust built from shapes, then details ---- */
+var PX_KEEPER_PAL = {
+  h:"#e8c46a", H:"#f7de8f", j:"#b98f3f", b:"#5f8f3a", f:"#ff9f1c", F:"#ffc857", c:"#8a4b0f",
+  r:"#b5562d", R:"#d9773f", q:"#7d3519",
+  s:"#f8cfae", S:"#ffe3cc", t:"#e3a98a", p:"#f28b82",
+  e:"#2b1d16", w:"#ffffff", m:"#a83a44", M:"#e97a7a",
+  n:"#f5ead6", N:"#d9c8a8", a:"#4f8a4b", A:"#6fae62", g:"#356637", y:"#ffd23f"
+};
+function pxGrid(w,h){ var g=[]; for(var y=0;y<h;y++){ var row=[]; for(var x=0;x<w;x++) row.push("."); g.push(row); } return g; }
+function pxEll(g,cx,cy,rx,ry,ch){
+  for(var y=0;y<g.length;y++) for(var x=0;x<g[0].length;x++){
+    var dx=(x+0.5-cx)/rx, dy=(y+0.5-cy)/ry; if(dx*dx+dy*dy<=1) g[y][x]=ch;
+  }
+}
+function pxRect(g,x0,y0,x1,y1,ch){ for(var y=y0;y<=y1;y++) for(var x=x0;x<=x1;x++) if(g[y] && x>=0 && x<g[0].length) g[y][x]=ch; }
+function pxDot(g,pts,ch){ for(var i=0;i<pts.length;i+=2){ var x=pts[i], y=pts[i+1]; if(g[y] && x>=0 && x<g[0].length) g[y][x]=ch; } }
+// Re-letter only cells that currently hold `from` (for shading inside a shape).
+function pxTint(g,test,from,to){ for(var y=0;y<g.length;y++) for(var x=0;x<g[0].length;x++) if(g[y][x]===from && test(x,y)) g[y][x]=to; }
+function pxKeeperGrid(expr){
+  var g=pxGrid(32,32);
+  // hair behind the head + braid over her left shoulder (our right)
+  pxEll(g,15.5,16,9.2,9.6,"r");
+  pxTint(g,function(x,y){ return x>=21 || y>=21; },"r","q");
+  // shoulders: blouse, then apron bib + straps
+  pxEll(g,15.5,34.5,13.5,9,"n");
+  pxTint(g,function(x,y){ return x>=23; },"n","N");
+  pxRect(g,11,27,20,31,"a"); pxRect(g,11,27,12,31,"A"); pxRect(g,19,27,20,31,"g");
+  pxDot(g,[10,26,9,25,8,26, 21,26,22,25,23,26],"a");
+  pxRect(g,13,29,18,30,"g"); pxDot(g,[15,29,16,29],"y");
+  // neck + collar
+  pxRect(g,14,22,17,26,"t"); pxRect(g,15,22,16,24,"s");
+  pxDot(g,[12,26,13,26,14,27,17,27,18,26,19,26],"N");
+  // face
+  pxEll(g,15.5,16.6,6.4,6.9,"s");
+  pxTint(g,function(x,y){ return x>=20 || y>=22; },"s","t");
+  pxDot(g,[10,14,10,15],"S");
+  // bangs swept to her right, a parting at x 16-17
+  pxRect(g,10,10,21,11,"r");
+  pxDot(g,[10,12,11,12,12,12,13,12,14,12,15,12, 19,12,20,12,21,12, 10,13,11,13,21,13, 10,14,21,14],"r");
+  pxDot(g,[12,11,13,11,18,11,19,11],"R");
+  // braid
+  pxEll(g,23.6,20.6,2.2,2.2,"r"); pxEll(g,24.4,23.6,2.1,2.1,"r"); pxEll(g,24.8,26.4,1.9,1.9,"r");
+  pxDot(g,[23,19,24,22,24,25],"R"); pxDot(g,[22,22,23,25,24,28],"q");
+  pxDot(g,[24,28,25,28,24,29,25,29],"b"); pxDot(g,[24,30,25,30,25,31],"r");
+  // straw sun hat: brim, crown, band, marigold
+  pxEll(g,15.5,9.4,14.2,2.7,"h");
+  pxTint(g,function(x,y){ return y>=11; },"h","j");
+  pxTint(g,function(x,y){ return y<=7 && x<=12; },"h","H");
+  pxRect(g,10,2,21,7,"h"); pxRect(g,11,1,20,1,"h");
+  pxRect(g,10,2,12,6,"H"); pxRect(g,20,2,21,6,"j");
+  pxRect(g,10,6,21,7,"b");
+  pxDot(g,[22,3, 21,4,22,4,23,4, 20,5,21,5,23,5,24,5, 21,6,22,6,23,6, 22,7],"f");
+  pxDot(g,[21,4,23,4,22,3],"F"); pxDot(g,[22,5],"c");
+  // face shadow under the brim
+  pxDot(g,[13,13,14,13,15,13,16,13,17,13,18,13],"t");
+  pxKeeperFace(g, expr||"smile");
+  return g;
+}
+// Eyes, brows, blush and mouth for one expression (smile, happy, talk, wink, wow, sad, sleep, blink).
+function pxKeeperFace(g, ex){
+  var E="e", L=[12,13], R=[18,19];
+  // brows
+  if(ex==="wow") pxDot(g,[11,12,12,12,13,12, 18,12,19,12,20,12],"q");
+  else if(ex==="sad") pxDot(g,[11,14,12,13,13,13, 18,13,19,13,20,14],"q");
+  else pxDot(g,[11,13,12,13,13,13, 18,13,19,13,20,13],"q");
+  // eyes
+  if(ex==="happy"){ pxDot(g,[11,16,12,15,13,15,14,16, 17,16,18,15,19,15,20,16],E); }
+  else if(ex==="sleep"||ex==="blink"){ pxDot(g,[11,16,12,16,13,16, 18,16,19,16,20,16],E); }
+  else {
+    pxDot(g,[L[0],15,L[1],15,L[0],16,L[1],16,L[0],17,L[1],17],E); pxDot(g,[L[0],15],"w");
+    if(ex==="wink") pxDot(g,[17,16,18,15,19,15,20,16],E);
+    else { pxDot(g,[R[0],15,R[1],15,R[0],16,R[1],16,R[0],17,R[1],17],E); pxDot(g,[R[0],15],"w"); }
+    if(ex==="wow") pxDot(g,[L[0],14,L[1],14,R[0],14,R[1],14],E);
+  }
+  // blush, freckles, nose
+  pxDot(g,[11,19,12,19,19,19,20,19],"p");
+  pxDot(g,[12,18,19,18],"t");
+  pxDot(g,[15,18],"t");
+  // mouth
+  if(ex==="happy"||ex==="talk") pxDot(g,[14,20,15,20,16,20,17,20, 15,21,16,21],"m"), pxDot(g,[15,21,16,21],"M");
+  else if(ex==="wow") pxDot(g,[15,20,16,20,15,21,16,21],"m");
+  else if(ex==="sad") pxDot(g,[14,21,15,20,16,20,17,21],"m");
+  else if(ex==="sleep") pxDot(g,[15,21,16,21],"m");
+  else pxDot(g,[14,20,15,21,16,21,17,20],"m");
+}
+
+/* ---- painting ---- */
+function pxPaintGrid(grid, pal, outline, soft){
+  var h=grid.length, w=grid[0].length, cv=document.createElement("canvas");
+  cv.width=w; cv.height=h;
+  var c=cv.getContext("2d"); if(!c) return cv;
+  soft=soft||"";
+  if(outline){
+    var solid=function(x,y){ if(x<0||y<0||x>=w||y>=h) return false; var ch=grid[y][x]; return ch!=="." && ch!=="k" && soft.indexOf(ch)<0; };
+    var add=[];
+    for(var y=0;y<h;y++) for(var x=0;x<w;x++){
+      if(grid[y][x]==="." && (solid(x-1,y)||solid(x+1,y)||solid(x,y-1)||solid(x,y+1))) add.push(x,y);
+    }
+    for(var i=0;i<add.length;i+=2) grid[add[i+1]][add[i]]="k";
+  }
+  for(var yy=0;yy<h;yy++) for(var xx=0;xx<w;xx++){
+    var ch=grid[yy][xx]; if(ch===".") continue;
+    var col = ch==="k" ? (outline||pal.k) : pal[ch]; if(!col) continue;
+    c.fillStyle=col; c.fillRect(xx,yy,1,1);
+  }
+  return cv;
+}
+var PX_CANVAS={}, PX_URL={};
+function pxCanvas(key){
+  if(PX_CANVAS[key]) return PX_CANVAS[key];
+  var cv=null;
+  if(key.indexOf("keeper:")===0){
+    cv=pxPaintGrid(pxKeeperGrid(key.slice(7)), PX_KEEPER_PAL, "#3b2418", "");
+  } else {
+    var s=PX_ART[key]; if(!s) return null;
+    cv=pxPaintGrid(s.r.map(function(r){ return r.split(""); }), s.p||{}, s.k||null, s.n||"");
+  }
+  PX_CANVAS[key]=cv; return cv;
+}
+function pxURL(key){
+  if(PX_URL[key]!=null) return PX_URL[key];
+  var cv=pxCanvas(key), u="";
+  try{ u=cv ? cv.toDataURL("image/png") : ""; }catch(e){ u=""; }
+  PX_URL[key]=u; return u;
+}
+
+/* ---- a 5x7 pixel font (bits, left = 16) for signs, the calendar and the coin counter ---- */
+var PX_FONT = {
+  A:[14,17,17,31,17,17,17], B:[30,17,17,30,17,17,30], C:[14,17,16,16,16,17,14], D:[30,17,17,17,17,17,30],
+  E:[31,16,16,30,16,16,31], F:[31,16,16,30,16,16,16], G:[14,17,16,23,17,17,15], H:[17,17,17,31,17,17,17],
+  I:[14,4,4,4,4,4,14], J:[7,2,2,2,2,18,12], K:[17,18,20,24,20,18,17], L:[16,16,16,16,16,16,31],
+  M:[17,27,21,21,17,17,17], N:[17,17,25,21,19,17,17], O:[14,17,17,17,17,17,14], P:[30,17,17,30,16,16,16],
+  Q:[14,17,17,17,21,18,13], R:[30,17,17,30,20,18,17], S:[15,16,16,14,1,1,30], T:[31,4,4,4,4,4,4],
+  U:[17,17,17,17,17,17,14], V:[17,17,17,17,17,10,4], W:[17,17,17,21,21,21,10], X:[17,17,10,4,10,17,17],
+  Y:[17,17,10,4,4,4,4], Z:[31,1,2,4,8,16,31],
+  "0":[14,17,19,21,25,17,14], "1":[4,12,4,4,4,4,14], "2":[14,17,1,2,4,8,31], "3":[31,2,4,2,1,17,14],
+  "4":[2,6,10,18,31,2,2], "5":[31,16,30,1,1,17,14], "6":[6,8,16,30,17,17,14], "7":[31,1,2,4,8,8,8],
+  "8":[14,17,17,14,17,17,14], "9":[14,17,17,15,1,2,12],
+  "&":[12,18,20,8,21,18,13], "'":[4,4,0,0,0,0,0], "!":[4,4,4,4,4,0,4], ":":[0,0,4,0,0,4,0],
+  "-":[0,0,0,14,0,0,0], ".":[0,0,0,0,0,0,4], "/":[1,1,2,4,8,16,16], " ":[0,0,0,0,0,0,0]
+};
+function pxTextW(str){ return Math.max(0, String(str).length*6-1); }
+function pxText(c, str, x, y, col, shadow){
+  str=String(str).toUpperCase();
+  if(shadow) pxText(c, str, x+1, y+1, shadow, null);
+  c.fillStyle=col;
+  for(var i=0;i<str.length;i++){
+    var gl=PX_FONT[str.charAt(i)] || PX_FONT[" "];
+    for(var r=0;r<7;r++){ var bits=gl[r]; for(var b=0;b<5;b++) if(bits & (16>>b)) c.fillRect(x+i*6+b, y+r, 1, 1); }
+  }
+}
+
+/* ===== The shop interior: drawn at 1 logical pixel per canvas pixel, scaled up by CSS ===== */
+var SV_H = 120;
+var SV_SKY = {
+  dawn:["#f49a7c","#ffc49a","#ffe4bd"], day:["#78bdf2","#a3d4fa","#d2ebff"],
+  dusk:["#5f4b97","#d9735a","#ffae78"], night:["#121838","#1c2756","#2a376c"]
+};
+var SV_SEASON_ART = {
+  spring:{g:"#7ccf5a", g2:"#5aae46", f:"#ffb3d1", f2:"#f285b4", hill:"#9ad86e"},
+  summer:{g:"#5cbd47", g2:"#3f9a37", f:"#3f9b45", f2:"#2e7a35", hill:"#79c95a"},
+  fall:  {g:"#c2a64a", g2:"#9c8436", f:"#f0912e", f2:"#c9542a", hill:"#d0b25a"},
+  winter:{g:"#eef4fa", g2:"#d3e1ee", f:"#ffffff", f2:"#dbe6f1", hill:"#f6f9fc"}
+};
+var SV_MONTHS=["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+var SV_SEASON_HEAD={spring:"#e8679a", summer:"#e2a52b", fall:"#d7642a", winter:"#5d9bd6"};
+
+// Where everything sits for a scene `W` logical pixels wide. Shared by the canvas and the
+// buttons laid over it, so a click target always lines up with what's drawn.
+function svLayout(W){
+  W=Math.max(160, W|0);
+  var L={W:W, H:SV_H, cx:Math.round(W/2)};
+  var cw=Math.max(150, Math.min(250, Math.round(W*0.56)));
+  L.counter={x0:L.cx-Math.round(cw/2), x1:L.cx+Math.round(cw/2), top:80};
+  L.keeper={x:L.counter.x0+16, y:48, w:32, h:32};
+  L.bell={x:L.keeper.x+36, y:70, w:12, h:10};
+  var room=L.counter.x1-24-(L.bell.x+L.bell.w+4), n=Math.max(1, Math.min(3, Math.floor((room+4)/20)));
+  L.feature=[]; for(var i=0;i<n;i++) L.feature.push({x:L.bell.x+L.bell.w+4+i*20, y:64, w:16, h:16});
+  L.cat={x:L.counter.x1-20, y:70, w:18, h:10};
+  var sw=W>=300 ? pxTextW("GENERAL STORE")+14 : pxTextW("STORE")+14;
+  L.sign={x:L.cx-Math.round(sw/2), y:20, w:sw, h:15, text:W>=300 ? "GENERAL STORE" : "STORE"};
+  var ww=Math.max(32, Math.min(52, Math.round(W*0.13)));
+  L.win={x:10, y:13, w:ww, h:34};
+  L.cal={x:L.win.x+ww+9, y:17, w:19, h:23};
+  L.clock={x:L.cal.x+L.cal.w+7, y:18, r:7};
+  if(L.clock.x+16 > L.sign.x) L.clock=null;
+  if(L.cal.x+L.cal.w+4 > L.sign.x) L.cal=null;
+  var sx0=Math.max(L.sign.x+L.sign.w+10, Math.round(W*0.6)), sx1=W-8;
+  L.shelves=[];
+  if(sx1-sx0>=44){ L.shelves.push({x0:sx0, x1:sx1, y:31}); L.shelves.push({x0:sx0, x1:sx1, y:53}); }
+  L.slots=[];
+  L.shelves.forEach(function(s){
+    var k=Math.floor((s.x1-s.x0-4)/20), pad=Math.floor((s.x1-s.x0-k*20+4)/2);
+    for(var j=0;j<k;j++) L.slots.push({x:s.x0+pad+j*20, y:s.y-16, w:16, h:16});
+  });
+  // lamps hang in the wall gaps wide enough for one: never over the window, calendar, clock,
+  // sign or the shelves (their items stand up to the beam)
+  var busy=[[L.win.x-2, L.win.x+L.win.w+2], [L.sign.x-3, L.sign.x+L.sign.w+3]];
+  if(L.cal) busy.push([L.cal.x-2, L.cal.x+L.cal.w+2]);
+  if(L.clock) busy.push([L.clock.x-L.clock.r-2, L.clock.x+L.clock.r+2]);
+  if(L.shelves.length) busy.push([L.shelves[0].x0-2, W]);
+  busy.sort(function(a,b){ return a[0]-b[0]; });
+  L.lamps=[]; var at=0;
+  busy.forEach(function(b){ if(b[0]-at>=18) L.lamps.push(Math.round((at+b[0])/2)); at=Math.max(at,b[1]); });
+  if(W-at>=18) L.lamps.push(Math.round((at+W)/2));
+  L.crate = L.counter.x0>=40 ? {x:6, y:90, w:30, h:22} : null;
+  L.board = W-L.counter.x1>=46 ? {x:W-42, y:82, w:34, h:30} : null;
+  return L;
+}
+
+// Season, time of day and the day's weather. Weather is a pure function of the local date.
+function svSeasonOfMonth(m){ return m===11||m<=1 ? "winter" : m<=4 ? "spring" : m<=7 ? "summer" : "fall"; }
+function svWeather(day, season){
+  var r=hashStr("hq:weather:"+day)%100;
+  if(season==="winter") return r<45 ? "clear" : r<62 ? "cloudy" : "snow";
+  if(season==="spring") return r<45 ? "clear" : r<60 ? "breeze" : r<75 ? "cloudy" : "rain";
+  if(season==="summer") return r<60 ? "clear" : r<75 ? "cloudy" : r<92 ? "rain" : "storm";
+  return r<35 ? "clear" : r<60 ? "breeze" : r<78 ? "cloudy" : "rain";
+}
+function svTod(h){ return h<5 ? "night" : h<7 ? "dawn" : h<17 ? "day" : h<20 ? "dusk" : "night"; }
+
+function svFill(c, col, x, y, w, h){ c.fillStyle=col; c.fillRect(x, y, w, h); }
+function svLine(c, col, x0, y0, x1, y1){
+  // Bresenham, one pixel wide
+  c.fillStyle=col; var dx=Math.abs(x1-x0), dy=-Math.abs(y1-y0), sx=x0<x1?1:-1, sy=y0<y1?1:-1, e=dx+dy;
+  for(var n=0;n<200;n++){ c.fillRect(x0, y0, 1, 1); if(x0===x1 && y0===y1) break; var e2=2*e; if(e2>=dy){ e+=dy; x0+=sx; } if(e2<=dx){ e+=dx; y0+=sy; } }
+}
+function svDisc(c, col, cx, cy, r){
+  c.fillStyle=col;
+  for(var y=-r;y<=r;y++){ var hw=Math.floor(Math.sqrt(r*r-y*y)+0.35); c.fillRect(cx-hw, cy+y, hw*2+1, 1); }
+}
+
+// The static part (everything but weather particles and flickers), cached per key.
+function svDrawRoom(c, L, env){
+  var W=L.W, H=L.H, sa=SV_SEASON_ART[env.season]||SV_SEASON_ART.fall;
+  // wall
+  svFill(c,"#efd29b",0,0,W,58);
+  for(var x=3;x<W;x+=8){ svFill(c,"#e6c487",x,6,2,52); }
+  for(var y=12;y<56;y+=12) for(x=7;x<W;x+=16){ svFill(c,"#dcb878",x,y+((x>>4)&1?6:0),1,1); }
+  svFill(c,"#d8b36f",0,6,W,2);
+  // wainscot + baseboard
+  svFill(c,"#c47f43",0,58,W,2); svFill(c,"#9c5c2c",0,60,W,16);
+  for(x=0;x<W;x+=18){ svFill(c,"#874d23",x,60,1,16); svFill(c,"#b06c35",x+3,63,12,1); svFill(c,"#874d23",x+3,72,12,1); }
+  svFill(c,"#5b3317",0,76,W,2);
+  // floor planks
+  for(y=78;y<H;y+=7){
+    var row=(y/7)|0, fr=mulberry32(hashStr("hq:plank:"+row));
+    svFill(c,row%2 ? "#b37645" : "#a96d3c",0,y,W,7); svFill(c,"#c4884f",0,y,W,1); svFill(c,"#7a4a26",0,y+6,W,1);
+    for(x=Math.floor(fr()*40);x<W;x+=48+Math.floor(fr()*40)){ svFill(c,"#7a4a26",x,y+1,1,5); svFill(c,"#c4884f",x+1,y+1,1,5); }
+    for(x=Math.floor(fr()*60);x<W;x+=70+Math.floor(fr()*50)) svFill(c,"#93592f",x,y+3,3,1);
+  }
+  // ceiling beam with a seasonal garland
+  svFill(c,"#5b3317",0,0,W,6); svFill(c,"#7a4a26",0,0,W,1); svFill(c,"#3e2210",0,5,W,1);
+  for(x=2;x<W;x+=6){
+    var gy=6+(((x/6)|0)%2);
+    if(env.season==="winter") svFill(c,["#ff5a5a","#ffd23f","#5ad1ff","#7fe07a"][((x/6)|0)%4],x,gy,1,1);
+    else { svFill(c,sa.f2,x,6,2,1); svFill(c,sa.f,x+1,gy,1,1); }
+  }
+  if(env.season==="winter"){ for(x=0;x<W;x+=6) svFill(c,"#2e5a2e",x,6,4,1); }
+  svDrawWindow(c, L, env, sa);
+  if(L.cal) svDrawCalendar(c, L.cal, env);
+  if(L.clock) svDrawClock(c, L.clock, env);
+  svDrawSign(c, L);
+  L.lamps.forEach(function(lx){ svDrawLamp(c, lx, env); });
+  L.shelves.forEach(function(s){ svDrawShelf(c, s); });
+  if(L.crate) svDrawCrate(c, L.crate, env);
+  if(L.board) svDrawBoard(c, L.board, env);
+  svDrawCounter(c, L);
+  // rug in front of the counter
+  var rx=L.cx-48; svFill(c,"#8a2f2f",rx,114,96,6); svFill(c,"#c9a24a",rx+2,115,92,1);
+  for(x=rx+4;x<rx+92;x+=6) svFill(c,"#d8b860",x,117,2,1);
+  // light: a sunbeam on clear days, dusk/dawn tint, night with the lamps lit
+  if(env.tod==="day" && (env.weather==="clear"||env.weather==="breeze")){
+    c.fillStyle="rgba(255,244,200,.16)"; c.beginPath();
+    c.moveTo(L.win.x+4, L.win.y+L.win.h); c.lineTo(L.win.x+L.win.w-4, L.win.y+L.win.h);
+    c.lineTo(L.win.x+L.win.w+44, H); c.lineTo(L.win.x+24, H); c.closePath(); c.fill();
+  }
+  if(env.tod==="dawn") svFill(c,"rgba(255,170,120,.08)",0,0,W,H);
+  if(env.tod==="dusk") svFill(c,"rgba(255,130,70,.12)",0,0,W,H);
+  if(env.tod==="night") svFill(c,"rgba(16,20,52,.36)",0,0,W,H);
+}
+
+function svDrawWindow(c, L, env, sa){
+  var w=L.win, sky=SV_SKY[env.tod]||SV_SKY.day, gray=env.weather==="cloudy"||env.weather==="rain"||env.weather==="storm"||env.weather==="snow";
+  var x0=w.x+2, y0=w.y+2, iw=w.w-4, ih=w.h-4, band=Math.ceil(ih*0.55/3);
+  for(var i=0;i<3;i++){
+    var col=sky[i]; if(gray && env.tod!=="night") col=["#8e9bab","#a9b4c1","#c4ccd6"][i];
+    svFill(c,col,x0,y0+i*band,iw,band+1);
+    if(i<2) for(var x=x0+(i%2);x<x0+iw;x+=2) svFill(c,col,x,y0+(i+1)*band,1,1);
+  }
+  var hz=y0+Math.round(ih*0.58);
+  // sun or moon, and stars
+  if(env.tod==="night"){
+    var rng=mulberry32(hashStr("hq:stars:"+env.day));
+    for(i=0;i<9;i++) svFill(c,"#fff6c8",x0+Math.floor(rng()*iw),y0+Math.floor(rng()*(hz-y0-4)),1,1);
+    svDisc(c,"#f5efc8",x0+iw-9,y0+6,3); svDisc(c,sky[0],x0+iw-8,y0+5,2);
+  } else if(!gray){
+    var sy=env.tod==="day" ? y0+6 : hz-5;
+    svDisc(c,env.tod==="day" ? "#ffe066" : "#ffb04a",x0+iw-9,sy,env.tod==="day"?3:4);
+  }
+  // hills, ground, a fence and the tree
+  for(x=x0;x<x0+iw;x++){
+    var hh=Math.round(3+2*Math.sin((x+env.dayN)*0.35)+1.5*Math.sin(x*0.13));
+    svFill(c,sa.hill,x,hz-hh,1,hh);
+  }
+  svFill(c,sa.g,x0,hz,iw,y0+ih-hz); svFill(c,sa.g2,x0,hz,iw,1);
+  for(x=x0+2;x<x0+iw;x+=5){ svFill(c,"#a8754a",x,hz+2,1,4); }
+  svFill(c,"#a8754a",x0,hz+3,iw,1);
+  var tx=x0+Math.round(iw*0.32), ty=hz;
+  svFill(c,"#6b4423",tx,ty-11,2,12);
+  if(env.season==="winter"){
+    svLine(c,"#6b4423",tx,ty-8,tx-4,ty-12); svLine(c,"#6b4423",tx+1,ty-9,tx+5,ty-13);
+    svFill(c,"#ffffff",tx-5,ty-13,2,1); svFill(c,"#ffffff",tx+4,ty-14,2,1);
+  } else {
+    svDisc(c,sa.f2,tx+1,ty-14,6); svDisc(c,sa.f,tx,ty-15,5);
+    var rf=mulberry32(hashStr("hq:fruit:"+env.season));
+    var dot=env.season==="spring" ? "#ffffff" : env.season==="summer" ? "#ff5a5a" : "#ffd23f";
+    for(i=0;i<5;i++) svFill(c,dot,tx-4+Math.floor(rf()*9),ty-19+Math.floor(rf()*8),1,1);
+  }
+  if(gray){ // clouds
+    svDisc(c,"#d9dee6",x0+8,y0+5,4); svDisc(c,"#e7ebf0",x0+13,y0+4,4); svDisc(c,"#d9dee6",x0+iw-10,y0+8,3);
+  } else if(env.tod==="day"){
+    svDisc(c,"#ffffff",x0+7,y0+9,2); svDisc(c,"#ffffff",x0+10,y0+8,3);
+  }
+  if(env.season==="winter" && env.weather!=="rain"){ svFill(c,"#ffffff",x0,y0+ih-2,iw,2); }
+  // frame, mullions, sill and a flower box
+  svFill(c,"#5b3317",w.x,w.y,w.w,2); svFill(c,"#5b3317",w.x,w.y+w.h-2,w.w,2);
+  svFill(c,"#5b3317",w.x,w.y,2,w.h); svFill(c,"#5b3317",w.x+w.w-2,w.y,2,w.h);
+  svFill(c,"#7a4a26",w.x+Math.floor(w.w/2)-1,w.y,2,w.h); svFill(c,"#7a4a26",w.x,w.y+Math.floor(w.h/2)-1,w.w,2);
+  svFill(c,"rgba(255,255,255,.22)",x0+1,y0+1,1,6); svFill(c,"rgba(255,255,255,.22)",x0+2,y0+1,1,3);
+  svFill(c,"#c47f43",w.x-2,w.y+w.h,w.w+4,2); svFill(c,"#8a4f24",w.x-2,w.y+w.h+2,w.w+4,1);
+  var bx=w.x+2, by=w.y+w.h+3, bw=w.w-4;
+  svFill(c,"#9c5c2c",bx,by+2,bw,5); svFill(c,"#7a4a26",bx,by+6,bw,1);
+  for(x=bx+2;x<bx+bw-1;x+=4){
+    var fc = env.season==="spring" ? (x%8<4 ? "#ff7fb0" : "#ffe14a") : env.season==="summer" ? "#ffd23f"
+           : env.season==="fall" ? (x%8<4 ? "#ef7d2a" : "#d9542a") : "#d8303a";
+    svFill(c,env.season==="winter" ? "#2e7a35" : "#4f9a44",x,by,1,2); svFill(c,fc,x-1+(x%3===0?1:0),by-1,2,2);
+    if(env.season==="winter") svFill(c,"#ffffff",x-1,by-2,2,1);
+  }
+}
+function svDrawCalendar(c, k, env){
+  svFill(c,"#7a4a26",k.x+k.w/2-1|0,k.y-3,2,3);
+  svFill(c,"#fffaf0",k.x,k.y,k.w,k.h); svFill(c,"#d8c8a8",k.x,k.y+k.h-1,k.w,1); svFill(c,"#d8c8a8",k.x+k.w-1,k.y,1,k.h);
+  svFill(c,SV_SEASON_HEAD[env.season]||"#d7642a",k.x,k.y,k.w,9);
+  pxText(c,SV_MONTHS[env.month],k.x+1,k.y+1,"#ffffff",null);
+  var d=String(env.date);
+  pxText(c,d,k.x+Math.round((k.w-pxTextW(d))/2),k.y+12,"#3d2210",null);
+}
+function svDrawClock(c, k, env){
+  svDisc(c,"#6b3f22",k.x,k.y+k.r,k.r); svDisc(c,"#fff4dc",k.x,k.y+k.r,k.r-2);
+  var cy=k.y+k.r, h=env.hour%12, m=env.min;
+  var ah=(h+m/60)/12*Math.PI*2, am=m/60*Math.PI*2;
+  svLine(c,"#3d2210",k.x,cy,k.x+Math.round(Math.sin(ah)*3),cy-Math.round(Math.cos(ah)*3));
+  svLine(c,"#8a2f2f",k.x,cy,k.x+Math.round(Math.sin(am)*4),cy-Math.round(Math.cos(am)*4));
+  svFill(c,"#3d2210",k.x,k.y+2,1,1);
+}
+function svDrawSign(c, L){
+  var s=L.sign;
+  svFill(c,"#3e2210",s.x+6,6,1,s.y-6); svFill(c,"#3e2210",s.x+s.w-7,6,1,s.y-6);
+  svFill(c,"#3e2210",s.x,s.y,s.w,s.h); svFill(c,"#a8612c",s.x+1,s.y+1,s.w-2,s.h-2);
+  svFill(c,"#c97d3f",s.x+1,s.y+1,s.w-2,1); svFill(c,"#7a4520",s.x+1,s.y+s.h-2,s.w-2,1);
+  pxText(c,s.text,s.x+7,s.y+4,"#fff0c8","#4a240c");
+}
+function svDrawLamp(c, x, env){
+  svFill(c,"#3e2210",x,6,1,5);
+  svFill(c,"#8a6a2a",x-3,11,7,1); svFill(c,env.tod==="night"||env.tod==="dusk" ? "#ffe9a0" : "#f3e2b0",x-2,12,5,4);
+  svFill(c,"#8a6a2a",x-3,16,7,1);
+}
+function svDrawShelf(c, s){
+  svFill(c,"#c98a4e",s.x0,s.y,s.x1-s.x0,1); svFill(c,"#9a5a2c",s.x0,s.y+1,s.x1-s.x0,2); svFill(c,"rgba(60,30,10,.25)",s.x0,s.y+3,s.x1-s.x0,2);
+  [s.x0+3, s.x1-5].forEach(function(bx){ svFill(c,"#6b3f22",bx,s.y+3,2,2); svFill(c,"#6b3f22",bx+1,s.y+5,1,2); });
+}
+function svDrawCounter(c, L){
+  var k=L.counter, w=k.x1-k.x0;
+  svFill(c,"#e8b87a",k.x0-3,80,w+6,1); svFill(c,"#d39a5b",k.x0-3,81,w+6,2); svFill(c,"#8a4f24",k.x0-3,83,w+6,1);
+  svFill(c,"#a5622f",k.x0,84,w,26);
+  for(var x=k.x0;x<k.x1;x+=9){ svFill(c,"#8f5228",x,84,1,26); svFill(c,"#b26c36",x+1,86,1,22); }
+  svFill(c,"#c8854a",k.x0,88,w,1); svFill(c,"#c8854a",k.x0,105,w,1); svFill(c,"#6e3a17",k.x0,109,w,1);
+  svFill(c,"rgba(40,20,5,.35)",k.x0-2,110,w+4,2);
+}
+function svDrawCrate(c, k, env){
+  var fruit={spring:"strawberry", summer:"watermelon", fall:"apple", winter:"chestnuts"}[env.season]||"apple";
+  var sp=pxCanvas(fruit);
+  if(sp){ c.drawImage(sp,k.x-1,k.y-9); c.drawImage(sp,k.x+7,k.y-11); c.drawImage(sp,k.x+15,k.y-8); }
+  svFill(c,"#9c6a3a",k.x,k.y,k.w,k.h); svFill(c,"#5b3317",k.x,k.y,k.w,1); svFill(c,"#5b3317",k.x,k.y+k.h-1,k.w,1);
+  svFill(c,"#5b3317",k.x,k.y,1,k.h); svFill(c,"#5b3317",k.x+k.w-1,k.y,1,k.h);
+  for(var y=k.y+5;y<k.y+k.h-1;y+=5) svFill(c,"#7a4a26",k.x+1,y,k.w-2,1);
+  svFill(c,"#c49060",k.x+1,k.y+1,k.w-2,1);
+}
+function svDrawBoard(c, k, env){
+  // an A-frame chalkboard with today's special
+  svFill(c,"#5b3317",k.x+3,k.y+k.h-3,2,3); svFill(c,"#5b3317",k.x+k.w-5,k.y+k.h-3,2,3);
+  svFill(c,"#6b3f22",k.x,k.y,k.w,k.h-2); svFill(c,"#2e4436",k.x+2,k.y+2,k.w-4,k.h-6);
+  pxText(c,"TODAY",k.x+3,k.y+3,"#f4f1e4",null);
+  var sp=env.special ? pxCanvas(env.special) : null;
+  if(sp){ c.drawImage(sp,k.x+3,k.y+11); pxText(c,String(env.specialPrice),k.x+22,k.y+15,"#ffe066",null); svFill(c,"#ffe066",k.x+20,k.y+23,9,1); }
+  else pxText(c,"FRESH",k.x+3,k.y+14,"#9fd8a8",null);
+}
+
+// Weather and flickers, drawn every frame over the cached room.
+function svDrawLive(c, L, env, t){
+  var w=L.win, x0=w.x+2, y0=w.y+2, iw=w.w-4, ih=w.h-4, i, rng=mulberry32(hashStr("hq:wx:"+env.day));
+  var mid=w.x+Math.floor(w.w/2)-1, midy=w.y+Math.floor(w.h/2)-1;
+  function pane(x,y){ return x>=x0 && x<x0+iw && y>=y0 && y<y0+ih && !(x>=mid && x<mid+2) && !(y>=midy && y<midy+2); }
+  if(env.weather==="rain"||env.weather==="storm"){
+    for(i=0;i<(env.weather==="storm"?28:18);i++){
+      var rx=rng()*iw, ry=rng()*ih, sp=0.09+rng()*0.05;
+      var px=x0+Math.floor((rx+t*0.025)%iw), py=y0+Math.floor((ry+t*sp)%ih);
+      for(var d=0;d<3;d++) if(pane(px,py+d)) svFill(c,"rgba(170,205,255,.85)",px,py+d,1,1);
+    }
+    if(env.weather==="storm" && Math.floor(t/1000)%11===0 && (t%1000)<90) svFill(c,"rgba(255,255,255,.55)",x0,y0,iw,ih);
+  } else if(env.weather==="snow"){
+    for(i=0;i<16;i++){
+      var sx=rng()*iw, sy=rng()*ih, ph=rng()*6;
+      var fx=x0+Math.floor((sx+Math.sin(t*0.0015+ph)*2+iw)%iw), fy=y0+Math.floor((sy+t*0.012)%ih);
+      if(pane(fx,fy)) svFill(c,"#ffffff",fx,fy,1,1);
+    }
+  } else if(env.weather==="breeze" && (env.season==="fall"||env.season==="spring")){
+    var col=env.season==="fall" ? ["#f0912e","#c9542a","#ffd23f"] : ["#ffb3d1","#ffffff","#f285b4"];
+    for(i=0;i<7;i++){
+      var lx=rng()*iw, ly=rng()*ih, ph2=rng()*6;
+      var qx=x0+Math.floor((lx+t*0.02)%iw), qy=y0+Math.floor((ly+t*0.01+Math.sin(t*0.003+ph2)*2+ih)%ih);
+      if(pane(qx,qy)) svFill(c,col[i%3],qx,qy,env.season==="fall"?2:1,1);
+    }
+  }
+  if(env.tod==="night"||env.tod==="dusk"){
+    L.lamps.forEach(function(lx,j){
+      var a=0.10+0.03*Math.sin(t*0.004+j*2);
+      for(var r=14;r>=4;r-=5) { c.fillStyle="rgba(255,214,140,"+(a*(1-(r-4)/14)).toFixed(3)+")"; svDiscA(c,lx,14,r); }
+    });
+  }
+  if(env.season==="winter" && env.tod==="night"){
+    for(var x=2;x<L.W;x+=6) if(((x/6|0)+Math.floor(t/600))%3===0) svFill(c,"#ffffff",x,6+(((x/6)|0)%2),1,1);
+  }
+}
+function svDiscA(c, cx, cy, r){ for(var y=-r;y<=r;y++){ var hw=Math.floor(Math.sqrt(r*r-y*y)); c.fillRect(cx-hw, cy+y, hw*2+1, 1); } }
+
+/* ===== Store view: the General Store. A Stardew-inspired shop with original pixel art
+   (PX_ART, svDrawRoom); the Arena pantry stays the authority for coins, stock and prices.
+   Everything the shop says or shows about your creatures stays on this page. ===== */
+var SV_CATS = [
+  {id:"all", label:"All", icon:"bag"}, {id:"fruit", label:"Fruit", icon:"berry"},
+  {id:"snack", label:"Snacks", icon:"riceball"}, {id:"meal", label:"Meals", icon:"bento"},
+  {id:"drink", label:"Drinks", icon:"coffee"}, {id:"sweet", label:"Sweets", icon:"dango"},
+  {id:"tonic", label:"Tonics", icon:"tonic"}
+];
+var SV_CAT_ORDER = ["fruit","snack","meal","drink","sweet","tonic"];
+var SV_CAT_NAME = {fruit:"Fruit", snack:"Snack", meal:"Meal", drink:"Drink", sweet:"Sweet", tonic:"Tonic"};
+var SV_SEASONS = ["spring","summer","fall","winter"];
+var SV_SEASON_NAME = {spring:"Spring", summer:"Summer", fall:"Fall", winter:"Winter", all:"Year-round"};
+var SV_SEASON_ICON = {spring:"blossom", summer:"sun", fall:"leaf", winter:"snow"};
+var SV_KEEPER = "Marigold", SV_PET = "Biscuit";
+var SV = {built:false, s:3, W:400, L:null, env:null, room:null, roomKey:"", raf:0, anim:false, last:0, calmTimer:0,
+  tab:"all", busy:{}, tipKind:null, feedKind:null, feedFrom:null, coins:null, odoRaf:0, claimAsked:false,
+  talk:{text:"", shown:0, timer:0, expr:"smile"}, face:"", sceneFace:"", catUntil:0, catFrame:"", wakeUntil:0,
+  blinkUntil:0, nextBlink:0, n:{}, sfx:true, friend:null, listSig:"", bagSig:"", hotSig:"", claimSig:"", headSig:"", openedAt:0};
+
+var SV_LINES = {
+  greet:{
+    dawn:["You're up early! The bread's still warm.", "Morning! I just finished stocking the shelves."],
+    day:["Welcome in! Take your time.", "Hi there! Anything catch your eye?", "Welcome back! Your creatures doing alright?"],
+    dusk:["Evening! Just in time, I was about to light the lamps.", "Welcome back! Long day?"],
+    night:["Burning the midnight oil? I'll keep the lamps on for you.", "Late shift, huh? Me too."]
+  },
+  season:{
+    spring:["The cherry trees are blooming! Have you tried the dango?", "Strawberries are finally in. Sweetest of the year!", "Spring rain makes everything grow. Even my to-do list."],
+    summer:["It's a scorcher! Shaved ice is flying off the shelves.", "Watermelon's best eaten on the porch, if you ask me.", "Summer curry: spicy enough to make you sweat, in a good way."],
+    fall:["Smell that? Pumpkin stew's on the stove.", "The apples are crisp this time of year.", "Baked sweet potatoes, fresh from the coals. Careful, they're hot!"],
+    winter:["Brr! Hot cocoa will warm those little paws.", "Chestnuts roasting by the door. Want a bag?", "The oden's been simmering since sunrise."]
+  },
+  weather:{
+    rain:["Rain's good for the crops... and for naps.", "Shake off that umbrella, hon."],
+    storm:["Did you hear that thunder? Biscuit hid under the counter."],
+    snow:["Snow day! Stay as long as you like."],
+    breeze:["Windy one today. Hold onto your hat!"],
+    clear:["Lovely weather, isn't it?"], cloudy:["Gray skies, but the shop's cozy."]
+  },
+  chatter:["Biscuit's been napping on the counter since noon.", "Did you know berries taste sweeter after a frost?",
+    "The bell sticks sometimes. Ring it twice!", "I'm thinking of painting the sign. Green, maybe?",
+    "Every creature has a favorite food. Watch their faces when they eat!", "Coffee for you, rice ball for them. That's the deal.",
+    "Things on the counter are today's picks. The chalkboard has the special."],
+  friend:[
+    [2, "I grew up on a farm past the hills. I still miss the goats."],
+    [2, "Biscuit wandered in during a storm and never left. Best decision she ever made."],
+    [4, "I keep a little notebook of everyone's favorite snack. Yours is safe with me."],
+    [4, "Between you and me, the honey comes from my grandma's bees."],
+    [7, "You're my favorite customer. Don't tell the others!"],
+    [7, "When I was little I dreamed of running a shop like this. Dreams come true, huh?"]
+  ],
+  thanks:["Thanks, hon!", "Good choice!", "Enjoy every bite!", "That one's my favorite.", "Pleasure doing business!", "Come again soon!"],
+  heartUp:["I feel like we're becoming real friends.", "You always brighten up the shop.", "Stop by anytime, even just to chat!"]
+};
+
+function svToday(){ var d=new Date(); return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2); }
+// The next line of a list for today: a fixed per-day order, so a line doesn't repeat until the list runs out.
+function svPick(arr, key){
+  arr=arr||[]; if(!arr.length) return "";
+  var n=SV.n[key]=((SV.n[key]|0)+1), start=hashStr("hq:sv:"+key+":"+svToday())%arr.length;
+  return arr[(start+n-1)%arr.length];
+}
+function svPl(n, one, many){ return n+" "+(n===1?one:many); }
+
+/* ---- catalog, as the shop sees it ---- */
+function svCatalog(){ var out=[]; FOOD_ORDER.forEach(function(k){ var it=foodInfo(k); if(it) out.push(it); }); return out; }
+function svOpen(){ return PANTRY.store==="ok" && !!PANTRY.j; }
+function svBuyable(it){ return svOpen() && !!it && it.stocked && it.inStock; }
+function svSpecialKind(){
+  if(!svOpen()) return null;
+  var c=svCatalog(); for(var i=0;i<c.length;i++){ if(c[i].special && c[i].stocked && c[i].inStock) return c[i].kind; }
+  return null;
+}
+// What the shelves show: what you can buy today first, then the rest of this season's range
+// (an Arena that hasn't stocked the newer foods yet still gets a full-looking shop).
+function svDisplayStock(){
+  var season=(SV.env && SV.env.season) || svSeasonOfMonth(new Date().getMonth());
+  var c=svCatalog(), buy=c.filter(svBuyable).map(function(it){ return it.kind; });
+  c.forEach(function(it){ if(buy.indexOf(it.kind)<0 && (it.season==="all" || it.season===season)) buy.push(it.kind); });
+  return buy;
+}
+// The counter: today's special, then what's in season and buyable, then anything buyable.
+function svFeatured(n){
+  var c=svCatalog(), sp=svSpecialKind(), season=(SV.env && SV.env.season) || "", out=[];
+  if(sp) out.push(sp);
+  function add(ok){ c.forEach(function(it){ if(out.length<n && out.indexOf(it.kind)<0 && ok(it)) out.push(it.kind); }); }
+  add(function(it){ return svBuyable(it) && it.season===season; });
+  add(svBuyable);
+  svDisplayStock().forEach(function(k){ if(out.length<n && out.indexOf(k)<0) out.push(k); });
+  return out.slice(0,n);
+}
+function svEffect(it){
+  if(it.revives) return "Wakes a fainted creature · then "+Math.round(100*(1-fzMins(it.wakeToMins)/FZ_SCALE_MINS))+"% energy";
+  return "+"+fzMins(it.restoreMins)+" min energy";
+}
+function svRowOrder(a, b){
+  function rank(it){
+    var cur=(SV.env && SV.env.season) || "fall";
+    if(it.stocked && it.inStock) return it.special ? 0 : 1;
+    if(!it.stocked) return 9;
+    return 2+((SV_SEASONS.indexOf(it.season)-SV_SEASONS.indexOf(cur)+4)%4);
+  }
+  var ra=rank(a), rb=rank(b); if(ra!==rb) return ra-rb;
+  var ca=SV_CAT_ORDER.indexOf(a.cat), cb=SV_CAT_ORDER.indexOf(b.cat); if(ca!==cb) return ca-cb;
+  return (a.basePrice-b.basePrice) || (FOOD_ORDER.indexOf(a.kind)-FOOD_ORDER.indexOf(b.kind));
+}
+
+/* ---- environment: season, time of day and today's weather ---- */
+function svEnvNow(){
+  var d=new Date(), j=PANTRY.j||{}, mo=d.getMonth(), day=svToday();
+  var season=SV_SEASONS.indexOf(j.season)>=0 && svOpen() ? j.season : svSeasonOfMonth(mo);
+  var sp=svSpecialKind(), si=sp ? foodInfo(sp) : null;
+  return {season:season, tod:svTod(d.getHours()), hour:d.getHours(), min:d.getMinutes(), day:day, dayN:d.getDate()+mo*31,
+          month:mo, date:d.getDate(), weather:svWeather(day, season), special:sp, specialPrice:si ? si.price : 0};
+}
+function svKeeperAsleep(){ var h=new Date().getHours(); return (h>=23 || h<5) && Date.now()>SV.wakeUntil; }
+
+/* ---- sound: tiny WebAudio blips, all generated (no assets). Store-only toggle. ---- */
+function svAudio(){
+  try{
+    if(!audioCtx){ var AC=window.AudioContext||window.webkitAudioContext; if(!AC) return null; audioCtx=new AC(); }
+    if(audioCtx.state==="suspended") audioCtx.resume();
+    return audioCtx;
+  }catch(e){ return null; }
+}
+function svTone(a, type, f0, f1, t0, dur, vol){
+  var o=a.createOscillator(), g=a.createGain();
+  o.type=type; o.frequency.setValueAtTime(f0, t0);
+  if(f1 && f1!==f0) o.frequency.exponentialRampToValueAtTime(f1, t0+dur);
+  g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0+0.008); g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+  o.connect(g); g.connect(a.destination); o.start(t0); o.stop(t0+dur+0.03);
+}
+function svNoise(a, t0, dur, vol, freq, q, purr){
+  var n=Math.max(1, Math.floor(a.sampleRate*dur)), buf=a.createBuffer(1, n, a.sampleRate), d=buf.getChannelData(0), r=mulberry32(n+(freq|0));
+  for(var i=0;i<n;i++){ var env=1-i/n; if(purr) env*=0.55+0.45*Math.sin(2*Math.PI*24*i/a.sampleRate); d[i]=(r()*2-1)*env; }
+  var s=a.createBufferSource(), f=a.createBiquadFilter(), g=a.createGain();
+  s.buffer=buf; f.type=purr ? "lowpass" : "bandpass"; f.frequency.value=freq; f.Q.value=q;
+  g.gain.value=vol; s.connect(f); f.connect(g); g.connect(a.destination); s.start(t0);
+}
+function svSfx(name){
+  if(!SV.sfx || document.hidden) return;
+  // no audio before the first click or key on the page (browsers block it and log a warning)
+  if(!audioCtx && !(navigator.userActivation && navigator.userActivation.hasBeenActive)) return;
+  var a=svAudio(); if(!a) return;
+  try{
+    var t=a.currentTime+0.01;
+    if(name==="buy"){ svTone(a,"square",1319,0,t,0.06,0.045); svTone(a,"square",1976,0,t+0.06,0.1,0.045); svNoise(a,t+0.06,0.22,0.16,6500,2.5); svTone(a,"triangle",2637,0,t+0.07,0.32,0.035); }
+    else if(name==="coin"){ svTone(a,"square",1047,0,t,0.07,0.045); svTone(a,"square",1568,0,t+0.07,0.2,0.045); }
+    else if(name==="blip"){ svTone(a,"square",620+((SV.talk.shown*53)%140),0,t,0.028,0.016); }
+    else if(name==="bell"){ svTone(a,"sine",1760,0,t,1.0,0.11); svTone(a,"sine",2637,0,t,0.6,0.045); svTone(a,"sine",3520,0,t,0.35,0.025); }
+    else if(name==="purr"){ svNoise(a,t,1.1,0.5,320,0.7,true); }
+    else if(name==="bonk"){ svTone(a,"triangle",190,95,t,0.16,0.12); }
+    else if(name==="tab"){ svNoise(a,t,0.035,0.07,2600,1.2); }
+    else if(name==="pop"){ svTone(a,"sine",440,920,t,0.08,0.07); }
+    else if(name==="munch"){ for(var i=0;i<3;i++) svNoise(a,t+i*0.12,0.07,0.22,1300,0.9); }
+    else if(name==="heart"){ svTone(a,"triangle",784,0,t,0.1,0.05); svTone(a,"triangle",1175,0,t+0.1,0.1,0.05); svTone(a,"triangle",1568,0,t+0.2,0.25,0.05); }
+  }catch(e){}
+}
+function svMuteSync(){
+  var b=$("svMute"); if(!b) return;
+  b.setAttribute("aria-pressed", SV.sfx ? "true" : "false");
+  b.title = SV.sfx ? "Shop sounds on" : "Shop sounds off";
+  b.setAttribute("aria-label", "Shop sounds");
+  b.textContent = SV.sfx ? "🔊" : "🔇";
+}
+function svMuteToggle(){ SV.sfx=!SV.sfx; lsSet("hq_store_sfx", SV.sfx ? "1" : "0"); svMuteSync(); announce(SV.sfx ? "Shop sounds on" : "Shop sounds off"); }
+
+/* ---- friendship with the shopkeeper: local only, a per-browser nicety ---- */
+function svFriendLoad(){
+  var f=null; try{ f=JSON.parse(localStorage.getItem("hq_store_friend")||"null"); }catch(e){ f=null; }
+  f=(f && typeof f==="object") ? f : {};
+  return {pts:Math.max(0, Math.min(120, f.pts|0)), day:typeof f.day==="string" ? f.day : "", buys:Math.max(0, f.buys|0),
+          chat:f.chat===true, pet:f.pet===true, visit:f.visit===true};
+}
+function svHearts(){ return Math.min(10, Math.floor(((SV.friend||{}).pts|0)/12)); }
+function svFriendAdd(kind){
+  var f=SV.friend=SV.friend||svFriendLoad(), d=svToday();
+  if(f.day!==d){ f.day=d; f.buys=0; f.chat=false; f.pet=false; f.visit=false; }
+  var add=0;
+  if(kind==="buy" && f.buys<3){ f.buys++; add=2; }
+  else if(kind==="chat" && !f.chat){ f.chat=true; add=1; }
+  else if(kind==="pet" && !f.pet){ f.pet=true; add=1; }
+  else if(kind==="visit" && !f.visit){ f.visit=true; add=1; }
+  if(!add) return false;
+  var before=svHearts(); f.pts=Math.min(120, f.pts+add);
+  try{ localStorage.setItem("hq_store_friend", JSON.stringify(f)); }catch(e){}
+  svRenderHearts();
+  return svHearts()>before;
+}
+function svRenderHearts(){
+  var box=$("svHearts"); if(!box) return;
+  var h=svHearts(), sig=String(h); if(box.getAttribute("data-h")===sig) return;
+  box.setAttribute("data-h", sig); box.innerHTML="";
+  for(var i=0;i<10;i++){ var im=el("img"); im.alt=""; im.width=18; im.height=16; im.src=pxURL(i<h ? "heart" : "heart0"); box.appendChild(im); }
+  box.setAttribute("aria-label", "Friendship with "+SV_KEEPER+": "+h+" of 10 hearts");
+  var fl=$("svFriendL"); if(fl) fl.textContent = h>=10 ? "Best friends!" : h>=6 ? "Good friends" : h>=3 ? "Friendly" : h>=1 ? "Acquaintance" : "New customer";
+}
+
+/* ---- the shopkeeper's dialogue: typed out with blips, instant in Calm mode ---- */
+function svFace(expr){
+  if(SV.face===expr) return; SV.face=expr;
+  var im=$("svPortraitImg"); if(im) im.src=pxURL("keeper:"+expr);
+  svSceneFace();
+}
+// The keeper behind the counter mirrors the portrait, except while she's dozing.
+function svSceneFace(){
+  var kb=$("svKeeperHot"); if(!kb) return;
+  var want = svKeeperAsleep() ? "sleep" : (Date.now()<SV.blinkUntil ? "blink" : (SV.face||"smile"));
+  if(SV.sceneFace===want) return; SV.sceneFace=want;
+  var im=kb.querySelector("img"); if(im) im.src=pxURL("keeper:"+want);
+  var z=$("svZzz"); if(z) z.classList.toggle("hidden", want!=="sleep");
+}
+function svMore(on){ var m=$("svDialog"); if(m) m.classList.toggle("done", !!on); }
+function svSay(text, expr){
+  var t=SV.talk; if(t.timer){ clearInterval(t.timer); t.timer=0; }
+  t.text=String(text||""); t.shown=0; t.expr=expr||"smile";
+  var sr=$("svSaySr"); if(sr) sr.textContent=SV_KEEPER+": "+t.text;
+  var say=$("svSay"); if(!say) return;
+  if(calmMode() || VIEW!=="store"){ say.textContent=t.text; t.shown=t.text.length; svFace(t.expr); svMore(true); return; }
+  say.textContent=""; svMore(false);
+  t.start=Date.now();
+  t.timer=setInterval(svTalkTick, 24);
+}
+// Paced by the clock, not the tick count: a throttled background tab still finishes the line.
+function svTalkTick(){
+  var t=SV.talk, say=$("svSay");
+  if(!say){ clearInterval(t.timer); t.timer=0; return; }
+  var was=t.shown;
+  t.shown=Math.min(t.text.length, Math.max(was+1, Math.floor((Date.now()-t.start)/24)));
+  say.textContent=t.text.slice(0, t.shown);
+  if(Math.floor(t.shown/2)!==Math.floor(was/2) && /[A-Za-z0-9]/.test(t.text.charAt(t.shown-1))){
+    svSfx("blip");
+    if(t.expr==="smile"||t.expr==="happy") svFace(Math.floor(t.shown/2)%2===0 ? "talk" : t.expr);
+  }
+  if(t.shown>=t.text.length){ clearInterval(t.timer); t.timer=0; svFace(t.expr); svMore(true); }
+}
+function svSkip(){
+  var t=SV.talk; if(!t.timer) return false;
+  clearInterval(t.timer); t.timer=0; t.shown=t.text.length;
+  var say=$("svSay"); if(say) say.textContent=t.text;
+  svFace(t.expr); svMore(true); return true;
+}
+// What she says when you click her: today's news first, then small talk.
+function svChatter(){
+  var env=SV.env||svEnvNow(), pool=[];
+  var sp=svSpecialKind(), si=sp ? foodInfo(sp) : null;
+  if(si) pool.push(["Today's special is "+foodA(si)+": "+svPl(si.price, "coin", "coins")+" instead of "+si.basePrice+".", "happy"]);
+  var cr=svCreatureMood(); if(cr) pool.push([cr, "smile"]);
+  var j=PANTRY.j;
+  if(svOpen()){
+    var coins=j.coins|0, cap=(j.coinCap|0)||30;
+    if(j.claim && j.claim.claimable) pool.push(["Don't forget today's coins! The wallet's on the right.", "wow"]);
+    else if(coins===0) pool.push(["Coins come in every day, and I hear quests pay well.", "smile"]);
+    else if(coins>=cap-4) pool.push(["Your purse is bursting! Treat yourself.", "happy"]);
+  }
+  pool.push([svPick(SV_LINES.season[env.season], "season"), "smile"]);
+  pool.push([svPick(SV_LINES.weather[env.weather], "weather"), "smile"]);
+  var h=svHearts(), fr=SV_LINES.friend.filter(function(x){ return h>=x[0]; }).map(function(x){ return x[1]; });
+  if(fr.length) pool.push([svPick(fr, "friend"), "happy"]);
+  pool.push([svPick(SV_LINES.chatter, "chatter"), "smile"]);
+  var n=SV.n.chat=((SV.n.chat|0)+1), pick=pool[(n-1)%pool.length];
+  svSay(pick[0], pick[1]);
+}
+// One line about your team's energy, from the live payload (local only).
+function svCreatureMood(){
+  var ss=(STATE&&STATE.sessions)||[], ko=0, fat=0, tir=0;
+  ss.forEach(function(s){ var f=fzOf(s.creature); if(!f) return; if(f.state==="unconscious") ko++; else if(f.state==="fatigued") fat++; else if(f.state==="tired") tir++; });
+  if(ko) return ko===1 ? "One of your creatures fainted? A Revive Tonic will have it up in no time." : ko+" of your creatures fainted! Revive Tonics are by the register.";
+  if(fat) return "Your team looks worn out. Something hearty, maybe? The hot pot never fails.";
+  if(tir) return "A little snack would perk your creatures right up.";
+  return ss.some(function(s){ return !!fzOf(s.creature); }) ? "Your creatures look full of beans today!" : "";
+}
+function svGreet(){
+  var env=SV.env=svEnvNow();
+  if(svKeeperAsleep()){ SV.talk.expr="sleep"; svSay("(She's dozing behind the counter. Maybe ring the bell?)", "sleep"); return; }
+  var g=svPick(SV_LINES.greet[env.tod], "greet"), name=trainerPref();
+  if(name && hashStr(svToday()+name)%2===0) g=g.replace(/^(\w+)([!,.])/, "$1, "+name+"$2");
+  var sp=svSpecialKind(), si=sp ? foodInfo(sp) : null;
+  var more = si ? " Today's special is "+foodA(si)+"!" : (svCreatureMood() || "");
+  svSay(g+(more ? " "+more : ""), "happy");
+}
+function svWake(){
+  if(!svKeeperAsleep()) return false;
+  SV.wakeUntil=Date.now()+15*60000; SV.sceneFace="";
+  svSay("Oh! Sorry, I must've dozed off. What can I get you?", "wow");
+  return true;
+}
+function svKeeperPoke(){
+  if(svWake()) return;
+  if(svSkip()) return;
+  if(svFriendAdd("chat")){ svSfx("heart"); svSay(svPick(SV_LINES.heartUp, "heartUp"), "happy"); return; }
+  svChatter();
+}
+function svRingBell(){
+  svSfx("bell");
+  var b=document.querySelector(".sv-hot-bell");
+  if(b && !calmMode()){ b.classList.remove("ring"); void b.offsetWidth; b.classList.add("ring"); }
+  if(svWake()) return;
+  svSay(svPick(["Coming, coming!", "Yes? Oh, you just like the bell. Me too.", "Ding ding! What'll it be?"], "bell"), "happy");
+}
+function svPetCat(){
+  svSfx("purr"); SV.catUntil=Date.now()+3500;
+  svHeartsFloat();
+  var up=svFriendAdd("pet");
+  if(up){ svSfx("heart"); svSay("Aww, "+SV_PET+" really likes you. "+svPick(SV_LINES.heartUp, "heartUp"), "happy"); }
+  else svSay(svPick([SV_PET+" purrs and kneads the counter.", "She likes you! "+SV_PET+" doesn't let just anyone do that.", SV_PET+" blinks at you slowly. That's cat for “I love you.”"], "cat"), "happy");
+}
+function svHeartsFloat(){
+  if(calmMode() || !SV.L) return;
+  var hots=$("svHots"); if(!hots) return;
+  for(var i=0;i<3;i++){
+    var im=el("img","sv-float"); im.alt=""; im.setAttribute("aria-hidden","true"); im.src=pxURL("heart");
+    im.style.left=((SV.L.cat.x+2+i*5)*SV.s)+"px"; im.style.top=((SV.L.cat.y-6)*SV.s)+"px";
+    im.style.width=(9*SV.s/1.5)+"px"; im.style.animationDelay=(i*0.18)+"s";
+    hots.appendChild(im);
+    (function(n){ setTimeout(function(){ if(n.parentNode) n.parentNode.removeChild(n); }, 1600); })(im);
+  }
+}
+
+/* ---- the scene ---- */
+function svResize(force){
+  var wrap=$("svWrap"), stage=$("svStage"), cv=$("svCanvas"); if(!wrap || !stage || !cv) return;
+  var cw=wrap.clientWidth|0; if(cw<=0) return;
+  var s=cw>=980 ? 3 : 2, W=Math.max(160, Math.ceil(cw/s));
+  if(!force && s===SV.s && W===SV.W && SV.L) return;
+  SV.s=s; SV.W=W; SV.L=svLayout(W); SV.roomKey=""; SV.hotSig="";
+  cv.width=SV.L.W; cv.height=SV.L.H;
+  stage.style.width=(SV.L.W*s)+"px"; stage.style.height=(SV.L.H*s)+"px";
+  svHots(); svDraw(0);
+}
+function svDraw(t){
+  var cv=$("svCanvas"); if(!cv || !SV.L) return;
+  var c=cv.getContext("2d"); if(!c) return;
+  var env=SV.env=svEnvNow();
+  var key=[SV.L.W, env.season, env.tod, env.weather, env.day, env.hour, env.min, env.special||"", env.specialPrice].join("|");
+  if(key!==SV.roomKey || !SV.room){
+    SV.roomKey=key;
+    if(!SV.room) SV.room=document.createElement("canvas");
+    SV.room.width=SV.L.W; SV.room.height=SV.L.H;
+    var rc=SV.room.getContext("2d"); if(!rc) return;
+    rc.clearRect(0,0,SV.L.W,SV.L.H); svDrawRoom(rc, SV.L, env);
+    var st=$("svStage"); if(st) st.classList.toggle("sv-night", env.tod==="night");
+  }
+  c.clearRect(0,0,cv.width,cv.height); c.drawImage(SV.room,0,0);
+  svDrawLive(c, SV.L, env, calmMode() ? 0 : t);
+  svHotTick(t);
+}
+// Blinks, the cat's tail, the dozing keeper. Cheap: an <img> src changes only when its frame does.
+function svHotTick(t){
+  var now=Date.now(), calm=calmMode();
+  if(!calm && !SV.talk.timer && now>SV.nextBlink){ SV.blinkUntil=now+140; SV.nextBlink=now+3200+(hashStr("b"+now)%2600); }
+  svSceneFace();
+  var cb=$("svCatHot"); if(!cb) return;
+  var fr = now<SV.catUntil ? "cat2" : (!calm && Math.floor(t/1700)%3===0 && (t%1700)<380 ? "cat1" : "cat0");
+  if(fr!==SV.catFrame){ SV.catFrame=fr; var im=cb.querySelector("img"); if(im) im.src=pxURL(fr); }
+}
+function svAnimStop(){
+  SV.anim=false; if(SV.raf) cancelAnimationFrame(SV.raf); SV.raf=0;
+  if(SV.calmTimer){ clearInterval(SV.calmTimer); SV.calmTimer=0; }
+}
+function svAnimStart(){
+  svAnimStop();
+  if(VIEW!=="store" || document.hidden) return;
+  svDraw(0);
+  if(calmMode()){ SV.calmTimer=setInterval(function(){ if(VIEW==="store" && !document.hidden) svDraw(0); }, 20000); return; }
+  SV.anim=true;
+  var loop=function(ts){
+    if(!SV.anim) return;
+    if(calmMode()){ svAnimStart(); return; }
+    if(ts-SV.last>=80){ SV.last=ts; svDraw(ts); }
+    SV.raf=requestAnimationFrame(loop);
+  };
+  SV.raf=requestAnimationFrame(loop);
+}
+// The buttons laid over the canvas: the keeper, the bell, the cat, plus the counter and shelf
+// items (a mouse shortcut to the same rows the list has, so those stay out of the tab order).
+function svHots(){
+  var L=SV.L, hots=$("svHots"); if(!L || !hots) return;
+  var feat=svFeatured(L.feature.length), shelf=svDisplayStock().slice(0, L.slots.length), spots=svShelfSpots(L, shelf.length);
+  var sig=[SV.W, SV.s, feat.join(","), shelf.join(",")].join("|");
+  if(sig===SV.hotSig && hots.firstChild) return;
+  SV.hotSig=sig;
+  var fa=document.activeElement, keepId=(fa && hots.contains(fa)) ? fa.id : "";
+  hots.innerHTML=""; SV.sceneFace=""; SV.catFrame="";
+  var s=SV.s;
+  function place(n, r){ n.style.left=(r.x*s)+"px"; n.style.top=(r.y*s)+"px"; n.style.width=(r.w*s)+"px"; n.style.height=(r.h*s)+"px"; }
+  function img(key, r){ var im=el("img"); im.alt=""; im.src=pxURL(key); im.width=r.w*s; im.height=r.h*s; im.draggable=false; return im; }
+  function btn(id, cls, r, key, label, fn){
+    var b=el("button","sv-hot "+cls); b.type="button"; b.id=id; place(b, r);
+    b.setAttribute("aria-label", label); b.appendChild(img(key, r)); b.addEventListener("click", fn);
+    hots.appendChild(b); return b;
+  }
+  function item(k, r, where){
+    var it=foodInfo(k); if(!it) return;
+    var sp=el("span","sv-hot sv-hot-item"); sp.setAttribute("aria-hidden","true"); sp.setAttribute("data-kind", k); place(sp, r);
+    sp.title=it.name+" ("+where+")"; sp.appendChild(img(k, r));
+    sp.addEventListener("click", function(){ svShowItem(k); });
+    sp.addEventListener("mousemove", function(e){ svTipShow(k, sp, e); });
+    sp.addEventListener("mouseleave", svTipHide);
+    hots.appendChild(sp);
+  }
+  shelf.forEach(function(k,i){ item(k, spots[i], "on the shelf"); });
+  btn("svKeeperHot", "sv-hot-keeper", L.keeper, "keeper:smile", "Talk to "+SV_KEEPER+", the shopkeeper", function(){ svKeeperPoke(); });
+  var z=el("img","sv-zzz hidden"); z.id="svZzz"; z.alt=""; z.setAttribute("aria-hidden","true"); z.src=pxURL("zzz");
+  z.style.left=((L.keeper.x+26)*s)+"px"; z.style.top=((L.keeper.y-4)*s)+"px"; z.style.width=(4*s)+"px"; z.style.height=(4*s)+"px";
+  hots.appendChild(z);
+  btn("svBellHot", "sv-hot-bell", L.bell, "bell", "Ring the counter bell", svRingBell);
+  feat.forEach(function(k,i){ item(k, L.feature[i], i===0 && k===svSpecialKind() ? "today’s special" : "on the counter"); });
+  btn("svCatHot", "sv-hot-cat", L.cat, "cat0", "Pet "+SV_PET+", the shop cat", svPetCat);
+  if(keepId && $(keepId)) $(keepId).focus();
+}
+// n shelf items split evenly over the shelves (top gets the odd one), centred on each.
+function svShelfSpots(L, n){
+  var rows=L.shelves.map(function(sh){ return L.slots.filter(function(sl){ return sl.y===sh.y-16; }); });
+  var out=[], left=n;
+  rows.forEach(function(r, i){
+    var take=Math.min(r.length, i===rows.length-1 ? left : Math.ceil(left/(rows.length-i)));
+    var from=Math.floor((r.length-take)/2);
+    for(var j=0;j<take;j++) out.push(r[from+j]);
+    left-=take;
+  });
+  return out;
+}
+// From the scene (or the special badge) to the item's row in the list.
+function svShowItem(k){
+  var it=foodInfo(k); if(!it) return;
+  if(SV.tab!=="all" && SV.tab!==it.cat) svSetTab("all", false);
+  svRenderList();
+  var row=document.querySelector('#svList .sv-row[data-kind="'+k+'"]');
+  if(row){
+    Array.prototype.forEach.call(document.querySelectorAll("#svList .sv-row"), function(r){ r.tabIndex=(r===row)?0:-1; });
+    try{ row.scrollIntoView({block:"nearest", behavior:calmMode()?"auto":"smooth"}); }catch(e){}
+    focusQuiet(row); row.classList.remove("flash"); void row.offsetWidth; row.classList.add("flash");
+  }
+  var line = it.desc+" "+(svBuyable(it) ? (it.special ? "Today it's just "+svPl(it.price,"coin","coins")+"!" : svPl(it.price,"coin","coins")+".")
+            : (it.stocked && !it.inStock ? "Back in "+SV_SEASON_NAME[it.season]+"." : ""));
+  svSay(it.name+"! "+line, "smile");
+}
+
+/* ---- the menu ---- */
+function svBuild(){
+  if(SV.built) return;
+  SV.built=true;
+  SV.sfx=lsGet("hq_store_sfx")!=="0";
+  SV.friend=svFriendLoad();
+  var tabs=$("svTabs");
+  SV_CATS.forEach(function(c){
+    var b=el("button","sv-tab"); b.type="button"; b.id="svTab-"+c.id;
+    b.setAttribute("role","tab"); b.setAttribute("aria-controls","svList"); b.setAttribute("data-cat", c.id);
+    var im=el("img"); im.alt=""; im.width=16; im.height=16; im.src=pxURL(c.icon); b.appendChild(im);
+    var sp=el("span"); sp.textContent=c.label; b.appendChild(sp);
+    b.addEventListener("click", function(){ svSetTab(c.id, true); });
+    tabs.appendChild(b);
+  });
+  tabs.addEventListener("keydown", function(e){
+    var all=[].slice.call(tabs.querySelectorAll(".sv-tab")), i=all.indexOf(document.activeElement); if(i<0) return;
+    var n = e.key==="ArrowRight" ? (i+1)%all.length : e.key==="ArrowLeft" ? (i-1+all.length)%all.length : e.key==="Home" ? 0 : e.key==="End" ? all.length-1 : -1;
+    if(n<0) return; e.preventDefault(); svSetTab(all[n].getAttribute("data-cat"), true); all[n].focus();
+  });
+  var list=$("svList");
+  list.addEventListener("keydown", svListKey);
+  list.addEventListener("mouseleave", svTipHide);
+  list.addEventListener("scroll", svTipHide, {passive:true});
+  $("svDialog").addEventListener("click", function(){ if(!svSkip()) svKeeperPoke(); });
+  $("svPortrait").addEventListener("click", function(){ svKeeperPoke(); });
+  $("svMute").addEventListener("click", svMuteToggle);
+  $("svSpecial").addEventListener("click", function(){ var k=svSpecialKind(); if(k) svShowItem(k); });
+  $("svBag").addEventListener("keydown", svBagKey);
+  $("svFeed").addEventListener("keydown", function(e){ if(e.key==="Escape"){ e.preventDefault(); e.stopPropagation(); svFeedClose(true); } });
+  document.addEventListener("mousedown", function(e){
+    var f=$("svFeed"); if(!SV.feedKind || !f) return;
+    if(!f.contains(e.target) && !(SV.feedFrom && SV.feedFrom.contains(e.target))) svFeedClose(false);
+  }, true);
+  if(window.ResizeObserver){ SV.ro=new ResizeObserver(function(){ if(VIEW==="store") svResize(false); }); SV.ro.observe($("svWrap")); }
+  else window.addEventListener("resize", function(){ if(VIEW==="store") svResize(false); });
+  document.addEventListener("visibilitychange", function(){ if(VIEW!=="store") return; if(document.hidden) svAnimStop(); else svAnimStart(); });
+  var saved=lsGet("hq_store_tab");
+  svSetTab(SV_CATS.some(function(c){ return c.id===saved; }) ? saved : "all", false);
+  svMuteSync(); svRenderHearts();
+  var im=$("svPortraitImg"); if(im) im.src=pxURL("keeper:smile");
+  var ci=$("svCoinImg"); if(ci) ci.src=pxURL("coin");
+  var bi=$("svBagImg"); if(bi) bi.src=pxURL("bag");
+}
+function svSetTab(id, user){
+  SV.tab=id; lsSet("hq_store_tab", id);
+  Array.prototype.forEach.call(document.querySelectorAll("#svTabs .sv-tab"), function(b){
+    var on=b.getAttribute("data-cat")===id;
+    b.setAttribute("aria-selected", on ? "true" : "false"); b.tabIndex=on ? 0 : -1;
+  });
+  var l=$("svList"); if(l) l.setAttribute("aria-labelledby", "svTab-"+id);
+  SV.listSig=""; svRenderList();
+  if(user) svSfx("tab");
+}
+// Called by everything that changes coins or snacks (pantryChanged). Cheap off the Store view.
+function renderStore(){ if(SV.built && VIEW==="store") svRender(); }
+function svTick(){ if(SV.built && VIEW==="store"){ svRenderWallet(); svRenderHead(); } }
+function svRender(){
+  SV.env=svEnvNow();
+  svRenderHead(); svRenderList(); svRenderClosed(); svRenderWallet(); svRenderBag(); svRenderHearts();
+  svHots();
+  svDraw(SV.last||0);   // the chalkboard and stock follow the pantry without waiting for a frame
+  if(SV.feedKind) svFeedRender();
+}
+function svRenderHead(){
+  var env=SV.env||svEnvNow(), sp=svSpecialKind(), si=sp ? foodInfo(sp) : null;
+  var sig=[env.season, env.weather, env.date, sp||"", si ? si.price+"/"+si.basePrice : ""].join("|");
+  if(sig===SV.headSig) return; SV.headSig=sig;
+  var se=$("svSeason");
+  if(se){
+    se.innerHTML="";
+    var im=el("img"); im.alt=""; im.width=20; im.height=20; im.src=pxURL(SV_SEASON_ICON[env.season]||"leaf"); se.appendChild(im);
+    var tx=el("span"); tx.textContent=SV_SEASON_NAME[env.season]+" stock · "+SV_MONTHS[env.month].charAt(0)+SV_MONTHS[env.month].slice(1).toLowerCase()+" "+env.date; se.appendChild(tx);
+  }
+  var b=$("svSpecial");
+  if(b){
+    b.classList.toggle("hidden", !si); b.innerHTML="";
+    if(si){
+      var lab=el("span","sv-special-l"); lab.textContent="Today’s special"; b.appendChild(lab);
+      var ii=el("img"); ii.alt=""; ii.width=20; ii.height=20; ii.src=pxURL(si.kind); b.appendChild(ii);
+      var nm=el("b"); nm.textContent=si.name; b.appendChild(nm);
+      var was=el("s"); was.textContent=String(si.basePrice); b.appendChild(was);
+      var ci=el("img"); ci.alt=""; ci.width=16; ci.height=16; ci.src=pxURL("coin"); b.appendChild(ci);
+      var pr=el("b"); pr.textContent=String(si.price); b.appendChild(pr);
+      b.setAttribute("aria-label", "Today’s special: "+si.name+", "+coinsN(si.price)+" instead of "+si.basePrice+". Show it in the list");
+    }
+  }
+}
+// Not open for business: a sign and one action, above a menu you can still browse.
+function svRenderClosed(){
+  var box=$("svClosed"); if(!box) return;
+  var st=PANTRY.store, open=svOpen(), sig=st+"|"+(PANTRY.retrying?1:0)+"|"+(PANTRY.loading?1:0);
+  if(box.getAttribute("data-sig")===sig) return;
+  var ae=document.activeElement, had=!!ae && box.contains(ae);
+  box.setAttribute("data-sig", sig);
+  box.classList.toggle("hidden", open); box.innerHTML="";
+  if(open){ if(had) focusQuiet(document.querySelector('#svList .sv-row[tabindex="0"]') || $("svDialog")); return; }
+  var sign=el("span","sv-sign"); sign.setAttribute("aria-hidden","true");
+  sign.textContent = (st==="unknown" || (PANTRY.loading && !PANTRY.j)) ? "OPENING" : "CLOSED"; box.appendChild(sign);
+  var msg=el("span","sv-closed-t"), act=null;
+  if(st==="unpaired"){ msg.textContent="Connect the Arena to start earning Poke Coins: 5 a day, plus quest rewards."; act=["Connect Arena", function(){ openArenaSection("arenaSetup", true); }]; }
+  else if(st==="unsupported") msg.textContent="This Arena server doesn’t have the store yet. Ask whoever hosts it to update it. Your creatures still recover by resting.";
+  else if(st==="restart") msg.textContent="Restart Claude HQ, then reload this page, to finish updating it.";
+  else if(st==="reload"){ msg.textContent=PANTRY_RELOAD_MSG+" Nothing unfinished is lost."; act=["Reload page", pageReload]; }
+  else if(st==="error"){ msg.textContent="Can’t reach the Arena server right now."; act=[PANTRY.retrying ? "Retrying…" : "Retry", pantryRetry]; }
+  else msg.textContent="Opening up…";
+  box.appendChild(msg);
+  if(act){
+    var b=el("button","sv-btn"); b.type="button"; b.textContent=act[0];
+    if(PANTRY.retrying && act[1]===pantryRetry) b.setAttribute("aria-disabled","true");
+    b.addEventListener("click", act[1]); box.appendChild(b);
+    if(had) b.focus();
+  }
+}
+function svRenderList(){
+  var list=$("svList"); if(!list) return;
+  var open=svOpen(), j=PANTRY.j||{}, items=j.items||{}, coins=j.coins|0, cap=(j.itemCap|0)||10;
+  var rows=svCatalog().filter(function(it){ return SV.tab==="all" || it.cat===SV.tab; }).sort(svRowOrder);
+  var sig=[open?1:0, coins, cap, SV.tab, rows.map(function(it){
+    return [it.kind, it.name, it.price, it.basePrice, it.stocked?1:0, it.inStock?1:0, it.special?1:0, it.season,
+            items[it.kind]|0, SV.busy[it.kind]?1:0, storeRetryRid(it.kind)?1:0].join(",");
+  }).join(";")].join("|");
+  if(sig===SV.listSig && list.firstChild) return;
+  SV.listSig=sig;
+  var fa=document.activeElement, fk=(fa && list.contains(fa)) ? fa.getAttribute("data-kind") : null;
+  var cur=list.querySelector('.sv-row[tabindex="0"]'), ck=cur ? cur.getAttribute("data-kind") : null;
+  list.innerHTML="";
+  var any=null;
+  rows.forEach(function(it){
+    var own=items[it.kind]|0, busy=!!SV.busy[it.kind], lost=!!storeRetryRid(it.kind), avail=svBuyable(it);
+    var b=el("button","sv-row"); b.type="button"; b.setAttribute("data-kind", it.kind);
+    if(!avail) b.classList.add("off");
+    if(avail && it.special) b.classList.add("special");
+    var ic=el("img","sv-ico"); ic.alt=""; ic.width=32; ic.height=32; ic.src=pxURL(it.kind); b.appendChild(ic);
+    var mid=el("span","sv-mid"), nm=el("span","sv-nm"); nm.textContent=it.name; mid.appendChild(nm);
+    var ef=el("span","sv-ef"), bo=el("img"); bo.alt=""; bo.width=8; bo.height=9; bo.src=pxURL("bolt"); ef.appendChild(bo);
+    var et=el("span"); et.textContent=it.revives ? "Revives · "+Math.round(100*(1-fzMins(it.wakeToMins)/FZ_SCALE_MINS))+"%" : "+"+fzMins(it.restoreMins)+" min"; ef.appendChild(et);
+    mid.appendChild(ef); b.appendChild(mid);
+    var tags=el("span","sv-tags");
+    function tag(cls, text){ var t=el("span","sv-tag"+(cls?" "+cls:"")); t.textContent=text; tags.appendChild(t); }
+    if(avail && it.special) tag("spec","Special");
+    if(open && !it.stocked) tag("","Sold out");
+    else if(it.stocked && !it.inStock) tag("season", SV_SEASON_NAME[it.season]);
+    if(own>0) tag("own", "×"+own+" in bag");
+    if(lost) tag("warn","Unconfirmed");
+    b.appendChild(tags);
+    var pr=el("span","sv-pr");
+    if(busy) pr.insertAdjacentHTML("beforeend", orb("xs"));
+    if(it.special && avail && it.basePrice!==it.price){ var s=el("s"); s.textContent=String(it.basePrice); pr.appendChild(s); }
+    var co=el("img"); co.alt=""; co.width=20; co.height=20; co.src=pxURL("coin"); pr.appendChild(co);
+    var pn=el("span"); pn.textContent=String(it.price); pr.appendChild(pn);
+    b.appendChild(pr);
+    var why = !open ? "the store is closed" : !it.stocked ? "sold out at this Arena" : !it.inStock ? "in season in "+SV_SEASON_NAME[it.season]
+            : own>=cap ? "your bag is full of them" : coins<it.price ? "need "+svPl(it.price-coins,"more coin","more coins") : "";
+    var label = it.name+", "+coinsN(it.price)+(it.special&&avail ? " (today’s special, usually "+it.basePrice+")" : "")+". "+svEffect(it)+". "+
+                (SV_CAT_NAME[it.cat]||"Food")+(own>0 ? ". In your bag: "+own : "")+". "+
+                (busy ? "Buying…" : lost ? "Last purchase unconfirmed: press to retry, it won’t be bought twice." : why ? "Can’t buy: "+why+"." : "Press to buy one, Shift+Enter for up to five.");
+    b.setAttribute("aria-label", label);
+    if(why && !lost) b.setAttribute("aria-disabled","true");
+    if(busy) b.setAttribute("aria-busy","true");
+    b.tabIndex=-1;
+    b.addEventListener("click", function(e){ svBuy(it.kind, !!e.shiftKey); });
+    b.addEventListener("mousemove", function(e){ svTipShow(it.kind, b, e); });
+    b.addEventListener("focus", function(){ svTipShow(it.kind, b, null); });
+    b.addEventListener("blur", svTipHide);
+    list.appendChild(b);
+    if(!any) any=b;
+  });
+  var keep=(fk && list.querySelector('.sv-row[data-kind="'+fk+'"]')) || (ck && list.querySelector('.sv-row[data-kind="'+ck+'"]')) || any;
+  if(keep) keep.tabIndex=0;
+  if(fk && keep) focusQuiet(keep);
+}
+function svListKey(e){
+  var rows=[].slice.call($("svList").querySelectorAll(".sv-row")), i=rows.indexOf(document.activeElement); if(i<0) return;
+  if(e.key==="Enter" && e.shiftKey){ e.preventDefault(); svBuy(rows[i].getAttribute("data-kind"), true); return; }
+  var n = e.key==="ArrowDown" ? Math.min(rows.length-1, i+1) : e.key==="ArrowUp" ? Math.max(0, i-1) : e.key==="Home" ? 0 : e.key==="End" ? rows.length-1 : -1;
+  if(n<0) return;
+  e.preventDefault(); rows[i].tabIndex=-1; rows[n].tabIndex=0; rows[n].focus();
+}
+
+/* ---- tooltip (decorative: every row's label already says all of it) ---- */
+function svTipShow(kind, anchor, ev){
+  var tip=$("svTip"), it=foodInfo(kind); if(!tip || !it) return;
+  var j=PANTRY.j||{}, own=(j.items||{})[kind]|0;
+  var sig=kind+"|"+own+"|"+it.price+"|"+(it.inStock?1:0)+"|"+(it.stocked?1:0);
+  if(tip.getAttribute("data-sig")!==sig){
+    tip.setAttribute("data-sig", sig);
+    var season = it.season==="all" ? "Sold year-round" : (it.stocked && !it.inStock ? "Back in "+SV_SEASON_NAME[it.season] : SV_SEASON_NAME[it.season]+" only");
+    tip.innerHTML='<div class="sv-tip-nm">'+esc(it.name)+'</div>'+
+      '<div class="sv-tip-cat sv-c-'+esc(it.cat)+'">'+esc(SV_CAT_NAME[it.cat]||"Food")+'</div><hr>'+
+      '<p class="sv-tip-d">'+esc(it.desc)+'</p>'+
+      '<div class="sv-tip-ef"><img alt="" width="12" height="14" src="'+pxURL("bolt")+'"><span>'+esc(svEffect(it))+'</span></div>'+
+      '<div class="sv-tip-m">'+esc(season)+(own>0 ? ' · '+own+' in your bag' : '')+'</div>';
+  }
+  tip.classList.remove("hidden");
+  var tw=tip.offsetWidth, th=tip.offsetHeight, vw=window.innerWidth, vh=window.innerHeight, x, y;
+  if(ev){ x=ev.clientX+18; y=ev.clientY+14; if(x+tw>vw-8) x=ev.clientX-tw-14; }
+  else { var r=anchor.getBoundingClientRect(); x=r.right+10; y=r.top; if(x+tw>vw-8) x=Math.max(8, r.left-tw-10); }
+  if(y+th>vh-8) y=Math.max(8, vh-th-8);
+  tip.style.left=Math.max(8, x)+"px"; tip.style.top=Math.max(8, y)+"px";
+  SV.tipKind=kind;
+}
+function svTipHide(){ var tip=$("svTip"); if(tip) tip.classList.add("hidden"); SV.tipKind=null; }
+
+/* ---- buying ---- */
+function svRefuse(kind, line, mood){
+  svSfx("bonk"); svSay(line, mood||"sad"); announce(line);
+  var row=document.querySelector('#svList .sv-row[data-kind="'+kind+'"]');
+  if(row && !calmMode()){ row.classList.remove("shake"); void row.offsetWidth; row.classList.add("shake"); }
+}
+function svBuy(kind, many){
+  var it=foodInfo(kind), j=PANTRY.j; if(!it) return;
+  if(SV.busy[kind]) return;
+  svTipHide();
+  if(!svOpen()){ svRefuse(kind, PANTRY.store==="unpaired" ? "We're not open for business until you connect the Arena, hon." : "The register's offline right now. Try again in a bit?"); return; }
+  var coins=j.coins|0, own=(j.items||{})[kind]|0, cap=(j.itemCap|0)||10, max=((j.limits||{}).buyMaxQty|0)||5;
+  var lost=storeRetryGet(kind), qty=1;
+  if(!lost){
+    if(!it.stocked) return svRefuse(kind, "Haven't got "+it.plural.toLowerCase()+" in yet. The supplier's running late.", "sad");
+    if(!it.inStock) return svRefuse(kind, it.plural+" won't be ready until "+SV_SEASON_NAME[it.season]+". Patience!", "wow");
+    if(own>=cap) return svRefuse(kind, "Your bag can't fit any more "+it.plural.toLowerCase()+"!", "wow");
+    if(coins<it.price){ var need=it.price-coins; return svRefuse(kind, "Hmm, you're "+svPl(need,"coin","coins")+" short, sweetie.", "sad"); }
+    if(many) qty=Math.max(1, Math.min(max, cap-own, it.price>0 ? Math.floor(coins/it.price) : max));
+  }
+  svWake();
+  SV.busy[kind]=1; svRenderList();
+  pantryBuy(kind, lost ? lost.rid : null, qty, true).then(function(r){
+    delete SV.busy[kind];
+    if(r.ok){
+      var n=r.qty||qty, left=coinsN(PANTRY.j ? PANTRY.j.coins|0 : 0)+" left.";
+      svSfx("buy"); svFly(kind);
+      var up=svFriendAdd("buy");
+      if(r.replayed){ svSay("Looks like your earlier "+it.name+" went through after all. No extra charge!", "happy"); announce("Your earlier "+it.name+" purchase had gone through. "+left); }
+      else {
+        var line = up ? svPick(SV_LINES.heartUp, "heartUp") : it.special ? "Ooh, today's special! Smart shopper." : it.revives ? "Keep that handy. You never know." : svPick(SV_LINES.thanks, "thanks");
+        if(up) svSfx("heart");
+        svSay(line, "happy");
+        announce("Bought "+(n>1 ? foodN(it, n) : foodA(it))+". "+left);
+      }
+    } else if(r.lost){ svSay("Hmm, the register hiccuped. Try again, I won't charge you twice.", "wow"); svSfx("bonk"); announce("Couldn’t confirm the "+it.name+". Retry is safe: it won’t be bought twice."); }
+    else if(r.stale){ svSay("The shop needs a fresh start! Reload the page, hon.", "sad"); announce(PANTRY_RELOAD_MSG); }
+    else if(r.msg){ svRefuse(kind, r.msg.charAt(0).toUpperCase()+r.msg.slice(1)+".", "sad"); }
+    svRender();
+  });
+}
+// The bought snack hops from its row into the bag.
+function svFly(kind){
+  svRenderBag();
+  var to=document.querySelector('#svBag .sv-slot[data-kind="'+kind+'"]');
+  var pop=function(){ if(!to) return; to.classList.remove("pop"); void to.offsetWidth; to.classList.add("pop"); svSfx("pop"); };
+  if(calmMode()){ return; }
+  var from=document.querySelector('#svList .sv-row[data-kind="'+kind+'"] .sv-ico');
+  if(!from || !to || !document.body.animate){ setTimeout(pop, 120); return; }
+  var a=from.getBoundingClientRect(), b=to.getBoundingClientRect();
+  var im=el("img","sv-fly"); im.alt=""; im.setAttribute("aria-hidden","true"); im.src=pxURL(kind);
+  im.style.left=a.left+"px"; im.style.top=a.top+"px"; im.style.width=a.width+"px"; im.style.height=a.height+"px";
+  document.body.appendChild(im);
+  var dx=(b.left+b.width/2)-(a.left+a.width/2), dy=(b.top+b.height/2)-(a.top+a.height/2);
+  var an=im.animate([{transform:"translate(0,0) scale(1)"},
+    {transform:"translate("+(dx*0.5)+"px,"+(dy*0.5-70)+"px) scale(1.35)", offset:0.5},
+    {transform:"translate("+dx+"px,"+dy+"px) scale(.9)"}], {duration:560, easing:"ease-in-out"});
+  an.onfinish=function(){ if(im.parentNode) im.parentNode.removeChild(im); pop(); };
+}
+
+/* ---- wallet: the coin counter rolls like a money box ---- */
+function svOdoDraw(from, to, p){
+  var cv=$("svOdo"); if(!cv) return;
+  var c=cv.getContext("2d"); if(!c) return;
+  var D=3, cw=9, ch=13; cv.width=D*cw+1; cv.height=ch+2;
+  c.fillStyle="#2e1608"; c.fillRect(0,0,cv.width,cv.height);
+  function pad(n){ return n==null ? "  -" : ("   "+Math.max(0, n|0)).slice(-D); }
+  var fs=pad(from), ts=pad(to), up=(to|0)>=(from|0);
+  for(var i=0;i<D;i++){
+    var x=1+i*cw;
+    c.fillStyle="#5b3317"; c.fillRect(x,1,cw-1,ch); c.fillStyle="#6b3f22"; c.fillRect(x,1,cw-1,2);
+    c.save(); c.beginPath(); c.rect(x,1,cw-1,ch); c.clip();
+    var a=fs.charAt(i), b=ts.charAt(i);
+    if(a===b || p>=1) pxText(c, b, x+2, 4, "#ffe08a", "#2a1408");
+    else {
+      var off=Math.round(p*ch)*(up ? -1 : 1);
+      pxText(c, a, x+2, 4+off, "#ffe08a", "#2a1408");
+      pxText(c, b, x+2, 4+off+(up ? ch : -ch), "#ffe08a", "#2a1408");
+    }
+    c.restore();
+  }
+}
+function svOdoTo(n){
+  var from=SV.coins, tok=SV.odoTok=(SV.odoTok|0)+1; SV.coins=n;
+  if(SV.odoRaf){ cancelAnimationFrame(SV.odoRaf); SV.odoRaf=0; }
+  if(from==null || n==null || from===n || calmMode() || document.hidden){ svOdoDraw(n, n, 1); return; }
+  var t0=Date.now();
+  var step=function(){
+    if(tok!==SV.odoTok) return;
+    var p=Math.min(1, (Date.now()-t0)/380); svOdoDraw(from, n, p);
+    SV.odoRaf = p<1 ? requestAnimationFrame(step) : 0;
+  };
+  SV.odoRaf=requestAnimationFrame(step);
+  // frames can be paused (a hidden or covered window): the final number still lands
+  setTimeout(function(){ if(tok!==SV.odoTok) return; if(SV.odoRaf){ cancelAnimationFrame(SV.odoRaf); SV.odoRaf=0; } svOdoDraw(n, n, 1); }, 600);
+}
+function svRenderWallet(){
+  var j=PANTRY.j, open=svOpen(), coins=open ? j.coins|0 : null, cap=open ? ((j.coinCap|0)||30) : 30;
+  var prev=SV.coins;
+  if(coins!==SV.coins || !SV.odoInit){ SV.odoInit=true; svOdoTo(coins); }
+  if(open && prev!=null && coins>prev){
+    svSfx("coin");
+    if(SV.claimAsked){ SV.claimAsked=false; svSay("There's today's allowance. Spend it wisely! Or don't, I won't tell.", "happy"); }
+  }
+  $("svCap").textContent = open ? "/ "+cap : "";
+  $("svCoinsSr").textContent = open ? "Wallet: "+coinsN(coins)+" (holds "+cap+")" : "Wallet unavailable";
+  var cl=$("svClaim"); if(!cl) return;
+  var c=open ? (j.claim||{}) : {}, next=Date.parse(c.nextClaimAt), amt=(c.amount|0)||5, when="";
+  if(open && !c.claimable && c.claimedToday && !isNaN(next)) when="Next coins in "+fmtMins(Math.max(1, Math.ceil((next-Date.now())/60000)));
+  var sig=[open?1:0, c.claimable?1:0, PANTRY.claiming?1:0, c.claimedToday?1:0, amt, when, open && coins>=cap ? 1 : 0].join("|");
+  if(sig===SV.claimSig) return; SV.claimSig=sig;
+  var had=!!document.activeElement && cl.contains(document.activeElement);
+  cl.innerHTML="";
+  if(!open){ var u=el("span"); u.textContent=PANTRY.store==="unpaired" ? "Connect the Arena to get 5 coins a day." : "—"; cl.appendChild(u); return; }
+  if(c.claimable){
+    var b=el("button","sv-btn"); b.type="button"; b.id="svClaimBtn";
+    var ci=el("img"); ci.alt=""; ci.width=18; ci.height=18; ci.src=pxURL("coin");
+    if(PANTRY.claiming){ b.textContent="Collecting…"; b.setAttribute("aria-disabled","true"); }
+    else { b.appendChild(document.createTextNode("Collect "+amt+" ")); b.appendChild(ci); b.setAttribute("aria-label", "Collect today’s "+coinsN(amt)); }
+    b.addEventListener("click", function(){ if(PANTRY.claiming) return; SV.claimAsked=true; pantryClaim(true); });
+    cl.appendChild(b); if(had) b.focus();
+  } else if(c.claimedToday){
+    var d=el("span","sv-ok"); d.textContent="✓ Today’s coins collected"; cl.appendChild(d);
+    if(when){ var w=el("span","sv-soft"); w.textContent=when; cl.appendChild(w); }
+  }
+  if(coins>=cap){ var f=el("span","sv-warn"); f.textContent="Purse full: spend or gift some to collect more"; cl.appendChild(f); }
+}
+
+/* ---- the bag: what you own; pick one to feed a creature ---- */
+function svRenderBag(){
+  var box=$("svBag"); if(!box) return;
+  var j=PANTRY.j, open=svOpen(), items=(j&&j.items)||{};
+  var owned=open ? FOOD_ORDER.filter(function(k){ return (items[k]|0)>0; }) : [];
+  var sig=[open?1:0, owned.map(function(k){ return k+":"+(items[k]|0); }).join(",")].join("|");
+  var hint=$("svBagHint");
+  if(hint) hint.textContent = !open ? "Your snacks show up here once the store is open." : owned.length ? "Pick a snack to feed a creature. Gift them from the Arena." : "Empty! Buy something tasty from the shelf.";
+  if(sig===SV.bagSig && box.firstChild) return; SV.bagSig=sig;
+  var fa=document.activeElement, fk=(fa && box.contains(fa)) ? fa.getAttribute("data-kind") : null;
+  box.innerHTML="";
+  var slots=Math.max(12, Math.ceil(owned.length/6)*6), first=null;
+  for(var i=0;i<slots;i++){
+    var k=owned[i];
+    if(!k){ var e=el("span","sv-slot empty"); e.setAttribute("aria-hidden","true"); box.appendChild(e); continue; }
+    (function(k){
+      var it=foodInfo(k), n=items[k]|0, b=el("button","sv-slot"); b.type="button"; b.setAttribute("data-kind", k);
+      var im=el("img"); im.alt=""; im.width=32; im.height=32; im.src=pxURL(k); b.appendChild(im);
+      var q=el("span","sv-qty"); q.setAttribute("aria-hidden","true"); q.textContent=String(n); b.appendChild(q);
+      b.setAttribute("aria-label", foodN(it, n)+". Feed a creature");
+      b.tabIndex=-1;
+      b.addEventListener("click", function(){ svFeedOpen(k, b); });
+      b.addEventListener("mousemove", function(ev){ svTipShow(k, b, ev); });
+      b.addEventListener("mouseleave", svTipHide);
+      box.appendChild(b);
+      if(!first) first=b;
+    })(k);
+  }
+  var keep=(fk && box.querySelector('.sv-slot[data-kind="'+fk+'"]')) || first;
+  if(keep){ keep.tabIndex=0; if(fk) focusQuiet(keep); }
+  else if(fk) focusQuiet(box);
+}
+function svBagKey(e){
+  var all=[].slice.call($("svBag").querySelectorAll("button.sv-slot")), i=all.indexOf(document.activeElement); if(i<0) return;
+  var cols=Math.max(1, (getComputedStyle($("svBag")).gridTemplateColumns||"").split(" ").filter(Boolean).length);
+  var n = e.key==="ArrowRight" ? i+1 : e.key==="ArrowLeft" ? i-1 : e.key==="ArrowDown" ? i+cols : e.key==="ArrowUp" ? i-cols : e.key==="Home" ? 0 : e.key==="End" ? all.length-1 : null;
+  if(n==null) return;
+  e.preventDefault(); n=Math.max(0, Math.min(all.length-1, n));
+  all[i].tabIndex=-1; all[n].tabIndex=0; all[n].focus();
+}
+function svFeedOpen(kind, from){
+  svTipHide();
+  SV.feedKind=kind; SV.feedFrom=from;
+  var box=$("svFeed"); if(!box) return;
+  box.classList.remove("hidden");
+  svFeedRender();
+  var r=from.getBoundingClientRect(), bw=box.offsetWidth, bh=box.offsetHeight;
+  var x=Math.min(window.innerWidth-bw-10, Math.max(10, r.left+r.width/2-bw/2));
+  var y=r.top-bh-10; if(y<10) y=Math.min(window.innerHeight-bh-10, r.bottom+10);
+  box.style.left=x+"px"; box.style.top=y+"px";
+  var first=box.querySelector(".sv-feed-row:not([disabled])") || box.querySelector("button");
+  if(first) first.focus();
+}
+function svFeedClose(refocus){
+  var box=$("svFeed"); if(!box || !SV.feedKind) return;
+  box.classList.add("hidden"); box.innerHTML="";
+  var from=SV.feedFrom; SV.feedKind=null; SV.feedFrom=null;
+  if(refocus && from && document.body.contains(from)) focusQuiet(from);
+}
+function svFeedRender(){
+  var box=$("svFeed"), it=foodInfo(SV.feedKind); if(!box || !it) return;
+  var j=PANTRY.j||{}, own=(j.items||{})[it.kind]|0;
+  if(own<=0){ svFeedClose(true); return; }
+  box.innerHTML="";
+  var h=el("div","sv-feed-h"); h.id="svFeedH";
+  var hi=el("img"); hi.alt=""; hi.width=24; hi.height=24; hi.src=pxURL(it.kind); h.appendChild(hi);
+  var ht=el("span"); ht.textContent="Who gets "+(it.revives ? "the "+it.name : foodA(it))+"?"; h.appendChild(ht);
+  box.appendChild(h);
+  var ss=(STATE&&STATE.sessions)||[], rows=0;
+  ss.forEach(function(s){
+    var cr=s.creature, f=fzOf(cr); if(!f || !s.sessionId) return;
+    var ko=f.state==="unconscious";
+    if(it.revives ? !ko : (ko || f.state==="rested")) return;
+    rows++;
+    var load=fzMins(f.loadMins), after=it.revives ? Math.max(0, Math.min(load, fzMins(it.wakeToMins))) : Math.max(0, load-fzMins(it.restoreMins));
+    var to=Math.max(0, Math.min(100, Math.round(100*(1-after/FZ_SCALE_MINS)))), nm=creatureSpecies(cr);
+    var b=el("button","sv-feed-row"); b.type="button";
+    var av=el("span","sv-feed-av"); av.setAttribute("aria-hidden","true"); paintCreature(av, cr, 40); b.appendChild(av);
+    var t1=el("span","sv-feed-nm"); t1.textContent=nm; b.appendChild(t1);
+    var t2=el("span","sv-feed-sub"); t2.textContent=fzLabel(f.state)+" · "+fzPct(f)+"% → "+to+"%"+(s.title ? " · "+String(s.title).slice(0,40) : ""); b.appendChild(t2);
+    b.setAttribute("aria-label", "Give "+nm+" "+foodA(it)+": "+fzLabel(f.state)+", energy "+fzPct(f)+"% to "+to+"%");
+    if(CARE_BUSY || pendingEatFor(s.sessionId)) b.disabled=true;
+    b.addEventListener("click", function(){ svFeed(s.sessionId, it.kind, nm); });
+    box.appendChild(b);
+  });
+  if(!rows){
+    var p=el("p","sv-feed-none");
+    p.textContent = it.revives ? "No one has fainted. Keep it for a rainy day!" : "Everyone's full of energy right now. Save it for later!";
+    box.appendChild(p);
+  }
+  var x=el("button","sv-btn sv-feed-x"); x.type="button"; x.textContent="Not now";
+  x.addEventListener("click", function(){ svFeedClose(true); }); box.appendChild(x);
+}
+function svFeed(sid, kind, nm){
+  var it=foodInfo(kind);
+  svFeedClose(false); svSfx("munch");
+  svSay(it && it.revives ? "Up you get, "+nm+"!" : "Bon appétit, "+nm+"!", "happy");
+  pantryEat(sid, kind, null);
+  var bag=$("svBag"); if(bag) focusQuiet(bag.querySelector('.sv-slot[data-kind="'+kind+'"]') || bag.querySelector("button.sv-slot") || $("svList"));
+}
+
+/* ---- opening and leaving the view ---- */
+function svEnter(){
+  svBuild();
+  SV.openedAt=Date.now();
+  SV.env=svEnvNow();
+  svResize(true);
+  if(ARENA.paired) pantryLoad(); else pollArenaStat();
+  svRender();
+  if(svFriendAdd("visit")){ svSfx("heart"); svSay(svPick(SV_LINES.heartUp, "heartUp"), "happy"); }
+  else svGreet();
+  svAnimStart();
+}
+function svLeave(){
+  if(!SV.built) return;
+  svAnimStop(); svTipHide(); svFeedClose(false);
+  if(SV.talk.timer){ svSkip(); }
+}
+
 
 // monsterSVG(seed,typeHue,stage,shiny,px) -> a left-right symmetric pixel-monster
 // on a 10x10 grid: decide cols 1..4 then mirror to 5..8, blobby toward center,
@@ -4652,7 +6736,7 @@ function buildCard(s){
   if(fz && fz.state!=="rested" && PANTRY.store==="ok"){
     var ko=fz.state==="unconscious";
     var cb=mkAct(ko?"\uD83E\uDDC3 Revive":"\uD83C\uDF59 Snack",null,function(){ openDrawer(s,{care:true}); });
-    cb.title = ko ? "Wake "+creatureSpecies(cr)+" with a Revive Tonic" : "Give "+creatureSpecies(cr)+" a snack";
+    cb.title = ko ? "Wake "+creatureSpecies(cr)+" with a revive item" : "Give "+creatureSpecies(cr)+" a snack";
     cb.setAttribute("aria-label", cb.title);
     cb.setAttribute("data-act","care");   // closeDrawer finds it again on the rebuilt card
   }
@@ -5312,17 +7396,23 @@ function careSig(){
           (lm && lm.at) ? lm.at+relTime(lm.at) : "", p ? p.kind+(EAT_INFLIGHT[p.rid]?"*":"") : "",
           PANTRY.rev, PANTRY.store, PANTRY.loading?1:0, CARE_BUSY?CARE_BUSY.kind:"", note, cfg().creaturePack].join("|");
 }
-// Best fit: the Tonic when fainted; else the smallest snack that gets it back under "tired",
-// else the biggest. Snacks you own or can afford win over ones you can't get.
+// Best fit: a revive when fainted (one you own, else the cheapest you can buy); else the smallest
+// snack that gets it back under "tired", else the biggest. Snacks you own or can buy today win.
 function careBestKind(f, cat, items, coins){
-  if(f.state==="unconscious"){ var t=cat.filter(function(it){ return it.revives; })[0]; return t ? t.kind : null; }
+  function canBuy(it){ return it.inStock!==false && coins>=it.price; }
+  if(f.state==="unconscious"){
+    var rv=cat.filter(function(it){ return it.revives; });
+    var mine=rv.filter(function(it){ return (items[it.kind]|0)>0; });
+    var pool=(mine.length ? mine : rv.filter(canBuy)).slice().sort(function(a,b){ return a.price-b.price; });
+    return pool.length ? pool[0].kind : (rv.length ? rv[0].kind : null);
+  }
   var food=cat.filter(function(it){ return !it.revives; });
-  var usable=food.filter(function(it){ return (items[it.kind]|0)>0 || coins>=it.price; });
-  var pool=usable.length ? usable : food, load=fzMins(f.loadMins);
-  var fits=pool.filter(function(it){ return load-it.restoreMins < FZ_TIRED_MINS; }).sort(function(a,b){ return a.restoreMins-b.restoreMins; });
+  var usable=food.filter(function(it){ return (items[it.kind]|0)>0 || canBuy(it); });
+  var pool2=usable.length ? usable : food, load=fzMins(f.loadMins);
+  var fits=pool2.filter(function(it){ return load-it.restoreMins < FZ_TIRED_MINS; }).sort(function(a,b){ return (a.restoreMins-b.restoreMins) || (a.price-b.price); });
   if(fits.length) return fits[0].kind;
-  pool=pool.slice().sort(function(a,b){ return b.restoreMins-a.restoreMins; });
-  return pool.length ? pool[0].kind : null;
+  pool2=pool2.slice().sort(function(a,b){ return (b.restoreMins-a.restoreMins) || (a.price-b.price); });
+  return pool2.length ? pool2[0].kind : null;
 }
 function careMeals(sid, f, cr, pending){
   var box=el("div","dw-meals"); box.id="dwMeals"; box.setAttribute("role","group"); box.setAttribute("aria-label","Snacks");
@@ -5345,11 +7435,14 @@ function careMeals(sid, f, cr, pending){
   var cat=pantryCatalog(), items=j.items||{}, coins=j.coins|0, ko=f.state==="unconscious";
   var load=fzMins(f.loadMins), now=fzPct(f), nm=creatureSpecies(cr);
   var best=careBestKind(f, cat, items, coins);
-  cat.forEach(function(it){
+  // What you own, plus the best fit when you own none of it: the whole shelf is in the Store tab.
+  var show=cat.filter(function(it){ return (items[it.kind]|0)>0 || it.kind===best; });
+  if(!show.length) say("No snacks in your bag that help right now. The Store has plenty.");
+  show.forEach(function(it){
     var own=Math.max(0, items[it.kind]|0), fits = ko ? it.revives : !it.revives;
     var after = it.revives ? Math.min(load, fzMins(it.wakeToMins)) : Math.max(0, load-fzMins(it.restoreMins));
     var to = Math.max(0, Math.min(100, Math.round(100*(1-after/FZ_SCALE_MINS))));
-    var buy = fits && own===0 && coins>=it.price;
+    var buy = fits && own===0 && coins>=it.price && it.inStock!==false;
     var b=el("button","meal-btn"+(buy?" buy":"")); b.type="button"; b.setAttribute("data-kind", it.kind);
     if(CARE_BUSY && CARE_BUSY.sid===sid && CARE_BUSY.kind===it.kind) b.insertAdjacentHTML("beforeend", orb("xs"));
     var em=el("span"); em.setAttribute("aria-hidden","true"); em.textContent=it.emoji;
@@ -5365,8 +7458,8 @@ function careMeals(sid, f, cr, pending){
       var n=el("span","mb-n"); n.textContent="\u00D7"+own; b.appendChild(n);
       if(fits){ var pv=el("span","mb-p"); pv.textContent=(it.revives?"wakes \u2192 ":"\u2192 ")+to+"%"; b.appendChild(pv); }
       if(!fits){
-        b.disabled=true; b.title = it.revives ? "For fainted creatures" : "It\u2019s fainted: only a Revive Tonic works";
-        label=it.name+": "+(it.revives ? "for fainted creatures" : "it\u2019s fainted, only a Revive Tonic works");
+        b.disabled=true; b.title = it.revives ? "For fainted creatures" : "It\u2019s fainted: only a revive item works";
+        label=it.name+": "+(it.revives ? "for fainted creatures" : "it\u2019s fainted, only a revive item works");
       } else if(own>0){
         label="Give "+nm+" "+foodA(it)+": "+(it.revives?"wakes it, ":"")+"energy "+now+"% to "+to+"%, "+own+" left";
         b.addEventListener("click",function(){ pantryEat(sid, it.kind, b); });
@@ -5488,7 +7581,7 @@ function openArenaSection(id, show){
   focusQuiet(w);
   try{ w.scrollIntoView({behavior:calmMode()?"auto":"smooth", block:"start"}); }catch(e){}
 }
-function openStore(){ openArenaSection("arenaStoreWrap", PANTRY.store==="ok"); }
+function openStore(){ closeDrawer(); setView("store"); focusQuiet(document.querySelector('#svList .sv-row[tabindex="0"]') || $("svDialog")); }
 // The drawer's Buy (shown only when you own none of it). A lost buy of the same kind is replayed
 // first, with its own requestId, so it can't be bought twice. If that replay says the earlier buy
 // had landed, nothing was bought now: then you already have one (done), or you had eaten it and
@@ -5866,7 +7959,7 @@ document.addEventListener("keydown",function(e){
   if(e.key==="/"){ e.preventDefault(); $("search").focus(); }
   else if(e.key==="r"||e.key==="R"){ e.preventDefault(); forceRefresh(); }
   else if(e.key==="?"){ e.preventDefault(); openHelp(); }
-  else if(e.key>="1"&&e.key<="7"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","arena","village"][+e.key-1]); }
+  else if(e.key>="1"&&e.key<="8"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","arena","village","store"][+e.key-1]); }
   // In a voice call, from any view: M mutes, V switches the camera, S shares your screen. Holding a key down
   // doesn't repeat it, and outside a call these keys do nothing.
   else if(VCHAN.on && !e.repeat && (e.key==="m"||e.key==="M")){ e.preventDefault(); voiceToggleMute(); }
@@ -5935,12 +8028,13 @@ var ARENA_STAY = (function(){ try { return localStorage.getItem("hq_arena_stay")
 var ARENA_SHARE_STATUS = (function(){ try { return localStorage.getItem("hq_arena_status") === "1"; } catch(e){ return false; } })();
 // Voice state, also needed by the first setView() (which keeps the lobby socket open while in voice).
 var VCHAN = {on:false, peer:null, stream:null, muted:false, cam:false, screen:false, vidStream:null, vidTile:null, peers:{}, roomId:null, roster:{}, ctx:null, me:null, meter:null};
-var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena")?v:"live"; })();
+var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena"||v==="store")?v:"live"; })();
 var VIEW_TITLES = {
   live:["Live","Every Claude session, right now"], analytics:["Analytics","Usage, cost and rhythm over time"],
   pokedex:["Pokédex","Your creature collection"], gym:["Gym","Active sessions scored as a team"],
   quests:["Quests","Daily, weekly and collection goals"], arena:["Arena","Friends, standings and voice"],
-  village:["Village","Your base & army, built from your Claude activity"]
+  village:["Village","Your base & army, built from your Claude activity"],
+  store:["Store","Snacks for your creatures, paid in Poke Coins"]
 };
 // The Clash of Clans pack renames the "Pokédex" collection to "Troops" (nav tab + title).
 function syncPackLabels(){
@@ -5964,6 +8058,7 @@ function setView(v){
   var qv=$("questsView"); if(qv) qv.classList.toggle("hidden", v!=="quests");
   var vv=$("villageView"); if(vv) vv.classList.toggle("hidden", v!=="village");
   var av=$("arenaView"); if(av) av.classList.toggle("hidden", v!=="arena");
+  var stv=$("storeView"); if(stv) stv.classList.toggle("hidden", v!=="store");
   Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
     var on = t.getAttribute("data-view")===v;
     t.classList.toggle("active", on); t.setAttribute("aria-selected", on?"true":"false");
@@ -5974,6 +8069,7 @@ function setView(v){
   if(v==="gym") renderGym();
   if(v==="quests") loadQuests();
   if(v==="village") renderVillage();
+  if(v==="store") svEnter(); else svLeave();
   // The lobby socket stays open on other views while you stay in the lobby, or while you're in voice (it carries it).
   if(v==="arena"){ arenaUnreadClear(); ARENA.nudgeCount={}; loadArena(); } else { arenaRoomFormsClear(); if(!VCHAN.on && !ARENA_STAY) arenaCloseSocket(); }
 }
@@ -6974,7 +9070,7 @@ function renderTrainerCard(){
   if(PANTRY.store==="ok" && PANTRY.j){
     var ready=!!(PANTRY.j.claim && PANTRY.j.claim.claimable), bump=PANTRY.bump && !calmMode();
     PANTRY.bump=false;   // one bump per gain (this card rebuilds every tick)
-    chips.push('<span class="tc-chip coins'+(bump?' bump':'')+'" title="Poke Coins'+(ready?' \u00B7 today\u2019s coins are ready in the Arena':'')+'">\uD83E\uDE99 <b>'+(PANTRY.j.coins|0)+'</b>'+
+    chips.push('<span class="tc-chip coins'+(bump?' bump':'')+'" title="Poke Coins'+(ready?' \u00B7 today\u2019s coins are ready in the Store':'')+'">\uD83E\uDE99 <b>'+(PANTRY.j.coins|0)+'</b>'+
       (ready?'<span class="tc-dot" aria-hidden="true"></span>':'')+'</span>');
   }
   $("tcStats").innerHTML = chips.join("");
@@ -7041,6 +9137,7 @@ function buildCmdkItems(q){
   items.push({group:"Actions", ic:"📋", label:"Event log", run:function(){ openLog(); }});
   items.push({group:"Actions", ic:"⌨️", label:"Keyboard shortcuts & help", run:function(){ openHelp(); }});
   items.push({group:"Views", ic:"⚔️", label:"Gym / Team analysis", run:function(){ setView("gym"); }});
+  items.push({group:"Views", ic:"\uD83C\uDFEA", label:"Store", run:function(){ setView("store"); }});
   items.push({group:"Views", ic:"📺", label:"War Room", run:function(){ openWarroom(); }});
   // actions
   items.push({group:"Actions", ic:"⚙️", label:"Open Settings", run:function(){ openSettings(); }});
@@ -8768,7 +10865,7 @@ function pantryTick(){
   if(!ARENA.paired){ pantrySetStore("unpaired"); return; }
   var j=PANTRY.j, now=Date.now(), next=(j && j.claim) ? Date.parse(j.claim.nextClaimAt) : NaN;
   if(!j || PANTRY.store!=="ok" || now-PANTRY.at>PANTRY_REFRESH_MS || (!isNaN(next) && now>=next)) pantryLoad();
-  else if(VIEW==="arena"){ renderStoreClaim(j); storeGiftsLine(j); }
+  else if(VIEW==="store") svTick();
 }
 // "For coming online": claim today's coins once, automatically. A 200 or 4xx settles today for
 // this browser; a network failure leaves it for the next load. Only the tab whose request
@@ -8826,206 +10923,44 @@ function retryMapLoad(name, mem, keyOk){
 }
 function retryMapSave(name, map){ try{ localStorage.setItem(name, JSON.stringify(map)); }catch(e){} }
 function pantryUnsure(res){ return res.status===0 || res.status>=500; }
-// A lost buy, per food kind (localStorage "hq_buy_retry").
+// A lost buy, per food kind (localStorage "hq_buy_retry"): its requestId and quantity, so a retry
+// replays exactly the same purchase.
 var STORE_RETRY={};
 function storeRetryAll(){ return retryMapLoad("hq_buy_retry", STORE_RETRY, function(k){ return isFood(k); }); }
-function storeRetryRid(kind){ var p=storeRetryAll()[kind]; return p ? p.rid : null; }
-function storeRetrySet(kind, rid){
+function storeRetryGet(kind){ var p=storeRetryAll()[kind]; return p ? {rid:p.rid, qty:Math.max(1, Math.min(5, (p.qty|0)||1))} : null; }
+function storeRetryRid(kind){ var p=storeRetryGet(kind); return p ? p.rid : null; }
+function storeRetrySet(kind, rid, qty){
   var m=storeRetryAll();
-  if(rid) m[kind]={rid:rid, t:(m[kind] && m[kind].rid===rid) ? m[kind].t : Date.now()};
+  if(rid) m[kind]={rid:rid, qty:Math.max(1, Math.min(5, (qty|0)||1)), t:(m[kind] && m[kind].rid===rid) ? m[kind].t : Date.now()};
   else delete m[kind];
   STORE_RETRY=m; retryMapSave("hq_buy_retry", m);
 }
-// Buy one snack. {ok, replayed} | {ok:false, lost:true, rid} (couldn't confirm: retry with the SAME
-// rid) | {ok:false, stale:true} (refused by dashboard.py itself: nothing sent) | {ok:false, msg}.
-// replayed: that rid had already bought it earlier (a lost buy that had landed), so nothing was
-// bought now; the balances in the answer are today's.
-function pantryBuy(kind, rid){
+// Buy qty (1-5) of one snack. {ok, replayed, qty} | {ok:false, lost:true, rid} (couldn't confirm:
+// retry with the SAME rid, which replays the saved quantity) | {ok:false, stale:true} (refused by
+// dashboard.py itself: nothing sent) | {ok:false, msg}. replayed: that rid had already bought it
+// earlier (a lost buy that had landed), so nothing was bought now; the balances in the answer are
+// today's. quiet: the caller reports errors itself (no toast).
+function pantryBuy(kind, rid, qty, quiet){
+  var saved=storeRetryGet(kind);
+  if(rid && saved && saved.rid===rid) qty=saved.qty;
+  qty=Math.max(1, Math.min(5, (qty|0)||1));
   rid = rid || newRequestId();
-  return arenaPost("/api/arena/pantry/buy", {requestId:rid, kind:kind, qty:1}).then(function(res){
-    if(res.ok && pantryValid(res.j)){ storeRetrySet(kind, null); pantryApply(res.j); return {ok:true, replayed:res.j.replayed===true}; }
-    if(pantryUnsure(res)){ storeRetrySet(kind, rid); renderStore(); return {ok:false, lost:true, rid:rid}; }
+  return arenaPost("/api/arena/pantry/buy", {requestId:rid, kind:kind, qty:qty}).then(function(res){
+    if(res.ok && pantryValid(res.j)){ storeRetrySet(kind, null); pantryApply(res.j); return {ok:true, replayed:res.j.replayed===true, qty:(res.j.qty|0)||qty}; }
+    if(pantryUnsure(res)){ storeRetrySet(kind, rid, qty); renderStore(); return {ok:false, lost:true, rid:rid}; }
     if(pantryLocalReject(res)){ pantryStale(); return {ok:false, stale:true}; }   // a lost buy stays saved
     storeRetrySet(kind, null);
     var miss=pantryMissState(res);
     if(miss){ pantrySetStore(miss); return {ok:false}; }
-    var err=pantryErr(res, "Couldn\u2019t buy that");
+    var err=pantryErr(res, "Couldn’t buy that");
     if(res.status===400 && /not paired/i.test(err)){ pantrySetStore("unpaired"); return {ok:false}; }
-    toast("\u26A0 "+err, "ach");
+    if(!quiet) toast("⚠ "+err, "ach");
     return {ok:false, msg:err};
-  }, function(){ storeRetrySet(kind, rid); renderStore(); return {ok:false, lost:true, rid:rid}; });
-}
-
-/* The store panel (Arena view). */
-var STORE_BUSY={}, STORE_ADDED={};   // STORE_ADDED[kind]: {until, text}, the "\u2713 Added" line under an item
-function storeBuy(kind){
-  if(STORE_BUSY[kind]) return;
-  STORE_BUSY[kind]=1; renderStore();
-  pantryBuy(kind, storeRetryRid(kind)).then(function(r){
-    delete STORE_BUSY[kind];
-    var it=foodInfo(kind), left=coinsN(PANTRY.j ? PANTRY.j.coins|0 : 0)+" left.";
-    if(r.ok){
-      // A Retry whose first try had landed buys nothing now: say so, not "Bought".
-      STORE_ADDED[kind]={until:Date.now()+1200, text:r.replayed ? "\u2713 It had gone through" : "\u2713 Added"};
-      announce(r.replayed ? "Your earlier "+it.name+" purchase had gone through. "+left : "Bought "+foodA(it)+". "+left);
-      setTimeout(renderStore, 1250);
-    } else if(r.lost) announce("Couldn\u2019t confirm the "+it.name+". Retry is safe: it won\u2019t be bought twice.");
-    else if(r.stale) announce(PANTRY_RELOAD_MSG);
-    renderStore();
-  });
+  }, function(){ storeRetrySet(kind, rid, qty); renderStore(); return {ok:false, lost:true, rid:rid}; });
 }
 function focusQuiet(n){ if(!n) return; try{ n.focus({preventScroll:true}); }catch(e){ n.focus(); } }
-var STORE_MSG_SIG="";
-function renderStore(){
-  var body=$("storeBody"), msg=$("storeState"); if(!body || !msg) return;
-  var st=PANTRY.store, j=PANTRY.j;
-  // #storeState is rebuilt (or hidden) below: if it held focus (its Retry), focus follows.
-  var ae=document.activeElement, msgFocused=!!ae && msg.contains(ae);
-  if(st!=="ok" || !j){
-    body.classList.add("hidden"); msg.classList.remove("hidden");
-    // Same message as shown: leave it (and a focused Retry) alone; background loads land here a lot.
-    var msig=st+"|"+(PANTRY.retrying?1:0);
-    if(msig===STORE_MSG_SIG && msg.firstChild) return;
-    STORE_MSG_SIG=msig; msg.innerHTML="";
-    $("storeSub").textContent="";
-    if(st==="unsupported") msg.textContent="This Arena server doesn\u2019t have the store yet. Ask whoever hosts it to update it. Your creatures still recover by resting.";
-    else if(st==="restart") msg.textContent="Restart Claude HQ, then reload this page, to finish updating it: the copy that\u2019s running is older than this page and has no store yet. Your creatures still recover by resting.";
-    else if(st==="unpaired") msg.textContent="Connect the Arena to collect Poke Coins.";
-    else if(st==="reload"){
-      var rt=el("span"); rt.textContent=PANTRY_RELOAD_MSG+" Nothing unfinished is lost."; msg.appendChild(rt);
-      var pb=el("button","hbtn"); pb.type="button"; pb.textContent="Reload page"; pb.addEventListener("click", pageReload); msg.appendChild(pb);
-    } else if(st==="error"){
-      var t=el("span"); t.textContent="Store unavailable: can\u2019t reach the Arena server."; msg.appendChild(t);
-      // While it retries, it stays focusable (aria-disabled) and pantryLoad ignores the click.
-      var rb=el("button","hbtn"); rb.type="button"; rb.textContent=PANTRY.retrying ? "Retrying\u2026" : "Retry";
-      if(PANTRY.retrying) rb.setAttribute("aria-disabled","true");
-      rb.addEventListener("click", pantryRetry); msg.appendChild(rb);
-    } else msg.innerHTML=LOADING_HTML;
-    if(msgFocused) focusQuiet(msg.querySelector("button") || $("arenaStoreWrap"));
-    return;
-  }
-  STORE_MSG_SIG="";
-  body.classList.remove("hidden"); msg.classList.add("hidden");
-  var coins=j.coins|0, cap=(j.coinCap|0)||30;
-  $("storeCoins").textContent=String(coins); $("storeCap").textContent=String(cap);
-  $("storeSub").textContent=(((j.claim||{}).amount|0)||5)+" a day \u00B7 the purse holds "+cap;
-  renderStoreClaim(j);
-  renderStoreShelf(j);
-  if(msgFocused) focusQuiet($("storeClaimBtn") || $("arenaStoreWrap"));   // the store is back
-  // gifts people sent you (strings from the server: textContent only)
-  storeGiftsLine(j);
-}
-// Today's coins. Rebuilt only when what it says changes (the countdown moves once a minute).
-// While collecting, the button stays focusable (aria-disabled, not disabled: a disabled button
-// can't hold focus, so a keyboard user would land on the page). Once it's replaced by the
-// "collected" line, focus moves onto that line.
-var STORE_CLAIM_SIG="";
-function renderStoreClaim(j){
-  var cl=$("storeClaim"); if(!cl || !j) return;
-  var coins=j.coins|0, cap=(j.coinCap|0)||30, c=j.claim||{};
-  var next=Date.parse(c.nextClaimAt), amt=(c.amount|0)||5, when="";
-  if(!c.claimable && c.claimedToday && !isNaN(next)){
-    when=" \u00B7 next at "+new Date(next).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})+
-         " (in "+fmtMins(Math.max(1, Math.ceil((next-Date.now())/60000)))+")";
-  }
-  var sig=[c.claimable?1:0, PANTRY.claiming?1:0, c.claimedToday?1:0, amt, when, coins>=cap?1:0, (coins>=26 && coins<cap)?1:0].join("|");
-  if(sig===STORE_CLAIM_SIG) return;
-  STORE_CLAIM_SIG=sig;
-  var ae=document.activeElement, claimFocused=!!ae && (ae.id==="storeClaimBtn" || ae===cl);
-  cl.innerHTML="";
-  if(c.claimable){
-    var cb=el("button","hbtn on"); cb.type="button"; cb.id="storeClaimBtn";
-    if(PANTRY.claiming){ cb.textContent="Collecting\u2026"; cb.setAttribute("aria-disabled","true"); cb.setAttribute("aria-label","Collecting today\u2019s Poke Coins\u2026"); }
-    else { cb.textContent="Collect "+amt+" \uD83E\uDE99"; cb.setAttribute("aria-label","Collect today\u2019s "+coinsN(amt)); }
-    cb.addEventListener("click",function(){ pantryClaim(true); });   // a no-op while collecting
-    cl.appendChild(cb);
-    if(claimFocused) cb.focus();
-  } else if(c.claimedToday){
-    var dn=el("span"); dn.textContent="\u2713 Collected today"+when; cl.appendChild(dn);
-  } else if(coins>=cap){
-    var fl=el("span","store-warn"); fl.textContent="Purse full: today\u2019s coins wait until you spend or give some"; cl.appendChild(fl);
-  }
-  if(coins>=26 && coins<cap){ var af=el("span","store-warn"); af.textContent="Purse almost full"; cl.appendChild(af); }
-  if(claimFocused && !c.claimable) cl.focus();
-}
-// The shelf, rebuilt only when what it shows changes: a rebuild moves focus onto a new Buy button,
-// which a screen reader reads out again. The outcome line under each item changes in place.
-var STORE_SHELF_SIG="";
-function storeShelfSig(j){
-  var items=j.items||{};
-  return [j.coins|0, (j.itemCap|0)||10].concat(pantryCatalog().map(function(it){
-    return [it.kind, it.name, it.emoji, it.price, it.restoreMins, it.revives?1:0, it.wakeToMins,
-            items[it.kind]|0, STORE_BUSY[it.kind]?1:0, storeRetryRid(it.kind)?1:0].join(",");
-  })).join("|");
-}
-function renderStoreShelf(j){
-  var grid=$("storeGrid"); if(!grid || !j) return;
-  var sig=storeShelfSig(j);
-  if(sig!==STORE_SHELF_SIG || !grid.firstChild){ STORE_SHELF_SIG=sig; storeShelfBuild(j); }
-  storeShelfNotes();
-}
-// Outcome text only: storeBuy announces it (a node rebuilt with its text in place is no live region).
-function storeShelfNotes(){
-  var now=Date.now();
-  Array.prototype.forEach.call(document.querySelectorAll("#storeGrid .store-item"), function(card){
-    var k=card.getAttribute("data-kind"), ok=card.querySelector(".si-ok"); if(!ok) return;
-    var lost=!!storeRetryRid(k), a=STORE_ADDED[k];
-    var t = lost ? "Couldn\u2019t confirm \u00B7 Retry is safe" : ((a && a.until>now) ? a.text : "");
-    ok.classList.toggle("err", lost);
-    if(ok.textContent!==t) ok.textContent=t;
-  });
-}
-function storeShelfBuild(j){
-  var coins=j.coins|0, itemCap=(j.itemCap|0)||10, items=j.items||{};
-  // A Buy in flight stays focusable too (aria-disabled) and focus returns to the same item after
-  // every rebuild: its button, or the item itself once the button is disabled (say, that buy spent
-  // the last coins it needed).
-  var grid=$("storeGrid"), fa=document.activeElement, fk=(fa && fa!==grid && grid.contains(fa) && fa.closest) ? fa.closest("[data-kind]") : null;
-  var focusKind=fk ? fk.getAttribute("data-kind") : null;
-  grid.innerHTML="";
-  pantryCatalog().forEach(function(it){
-    var own=Math.max(0, items[it.kind]|0), card=el("div","store-item");
-    card.setAttribute("data-kind", it.kind);
-    var top=el("div","si-top"), em=el("span","si-emoji"); em.setAttribute("aria-hidden","true"); em.textContent=it.emoji; top.appendChild(em);
-    var nmw=el("div"), nm=el("div","si-name"); nm.textContent=it.name; nmw.appendChild(nm);
-    var ef=el("div","si-eff");
-    ef.textContent = it.revives ? "Wakes a fainted creature \u00B7 then "+Math.round(100*(1-fzMins(it.wakeToMins)/FZ_SCALE_MINS))+"%"
-                                : "+"+fzMins(it.restoreMins)+" min energy";
-    nmw.appendChild(ef); top.appendChild(nmw); card.appendChild(top);
-    var meta=el("div","si-meta"), pr=el("span","si-price"); pr.textContent="\uD83E\uDE99 "+it.price; meta.appendChild(pr);
-    var ow=el("span"); ow.textContent="You have "+own+" / "+itemCap; meta.appendChild(ow); card.appendChild(meta);
-    var b=el("button","hbtn"); b.type="button"; b.setAttribute("data-kind", it.kind);
-    var busy=!!STORE_BUSY[it.kind], lost=!!storeRetryRid(it.kind);
-    b.textContent = busy ? "Buying\u2026" : (lost ? "Retry \u00B7 \uD83E\uDE99"+it.price : "Buy \u00B7 \uD83E\uDE99"+it.price);
-    b.setAttribute("aria-label", busy ? "Buying "+foodA(it)+"\u2026" : (lost?"Retry buying ":"Buy ")+foodA(it)+" for "+coinsN(it.price));
-    if(busy) b.setAttribute("aria-disabled","true");   // storeBuy ignores clicks while busy
-    else if(!lost && coins<it.price){ var need=it.price-coins; b.disabled=true; b.title="Need "+need+" more Poke Coin"+(need===1?"":"s"); }
-    else if(!lost && own>=itemCap){ b.disabled=true; b.title="Pantry holds "+itemCap; }
-    b.addEventListener("click",function(){ storeBuy(it.kind); });
-    card.appendChild(b);
-    card.appendChild(el("span","si-ok"));   // filled by storeShelfNotes
-    grid.appendChild(card);
-    if(focusKind===it.kind){
-      if(!b.disabled) b.focus();
-      else { card.tabIndex=-1; card.focus(); }
-    }
-  });
-}
-// Gifts people sent you (strings from the server: textContent only).
-function storeGiftsLine(j){
-  var gl=$("storeGifts"), rg=Array.isArray(j.recentGifts) ? j.recentGifts.slice(0,3) : [], parts=[];
-  rg.forEach(function(g){
-    if(!g || typeof g!=="object") return;
-    var who=(typeof g.fromName==="string" && g.fromName) ? g.fromName.slice(0,40) : ((typeof g.fromHandle==="string" && g.fromHandle) ? g.fromHandle.slice(0,40) : "someone");
-    var bits=["\uD83C\uDF81 "+who];
-    if((g.coins|0)>0) bits.push("\uD83E\uDE99 "+(g.coins|0));
-    var gi=foodInfo(g.kind); if(gi && (g.qty|0)>0) bits.push(gi.emoji+" \u00D7"+(g.qty|0));
-    var ago=relTime(g.at); if(ago!=="\u2014") bits.push(ago==="just now" ? ago : ago+" ago");
-    parts.push(bits.join(" \u00B7 "));
-  });
-  gl.textContent = parts.length ? "Recent gifts: "+parts.join("; ") : "";
-  gl.classList.toggle("hidden", !parts.length);
-}
+// The Arena keeps a pointer to the store, which has its own tab now.
+(function(){ var b=$("arenaStoreGo"); if(b) b.addEventListener("click", function(){ setView("store"); focusQuiet(document.querySelector('#svList .sv-row[tabindex="0"]') || $("svDialog")); }); })();
 
 /* ---- gifts: coins and/or one snack kind, to anyone on the board or in the lobby ----
    GIFT.body: the exact request of a gift that has no answer yet (in flight, or lost). While the

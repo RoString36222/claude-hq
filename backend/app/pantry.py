@@ -2,8 +2,11 @@
 Poke Coins, pantry and gifts. The server is the authority; arena.py FOOD_KINDS
 and dashboard.py FOOD_EFFECTS mirror CATALOG.
 
-Coins and food are cosmetic: they never touch XP, scoring or the board. Every
-write is one transaction in a fixed order:
+Coins and food are cosmetic: they never touch XP, scoring or the board. The
+store's stock follows the UTC season, and one in-stock food a day is the
+special, a coin off; both are pure functions of the date (season_of,
+special_of), so they need no storage. Every write is one transaction in a
+fixed order:
 
 1. the journal INSERT into `poke_ledger`, flushed. It is the first write, so on
    SQLite (pysqlite's lazy BEGIN) it takes the database write lock here, and it
@@ -19,7 +22,9 @@ with the same request id re-executes; a request id that already committed
 replays its result instead of spending twice. CHECK(qty >= 0) is the backstop.
 There are no savepoints: a failure always discards the whole transaction.
 """
+import hashlib
 from datetime import UTC, date, datetime, time, timedelta
+from functools import lru_cache
 
 from fastapi import HTTPException
 from sqlalchemy import func, select, update
@@ -52,13 +57,40 @@ RECENT_GIFT_DAYS = 7
 DRAIN_LIMIT = 50
 
 # A pure literal: the client's tests/test_catalog_sync.py ast-parses it, so keep
-# it free of names and calls. Keys are in display order.
+# it free of names and calls. Keys are in display order; schemas.FoodKind lists
+# them too. "season" is when the store stocks it ("all" = year-round); food you
+# already hold can be eaten or gifted in any season. A revive item wakes a
+# fainted creature and then takes restoreMins off on top.
 CATALOG = {
-    "berry":    {"name": "Berry",        "plural": "Berries",       "emoji": "\U0001FAD0", "price": 1, "restoreMins": 20,  "revives": False},
-    "riceball": {"name": "Rice Ball",    "plural": "Rice Balls",    "emoji": "\U0001F359", "price": 2, "restoreMins": 45,  "revives": False},
-    "bento":    {"name": "Bento",        "plural": "Bentos",        "emoji": "\U0001F371", "price": 3, "restoreMins": 120, "revives": False},
-    "tonic":    {"name": "Revive Tonic", "plural": "Revive Tonics", "emoji": "\U0001F9C3", "price": 5, "restoreMins": 0,   "revives": True},
+    "berry":       {"name": "Berry",              "plural": "Berries",              "emoji": "\U0001FAD0", "price": 1, "restoreMins": 20,  "revives": False, "season": "all"},
+    "bread":       {"name": "Bread Loaf",         "plural": "Bread Loaves",         "emoji": "\U0001F35E", "price": 1, "restoreMins": 20,  "revives": False, "season": "all"},
+    "riceball":    {"name": "Rice Ball",          "plural": "Rice Balls",           "emoji": "\U0001F359", "price": 2, "restoreMins": 45,  "revives": False, "season": "all"},
+    "coffee":      {"name": "Coffee",             "plural": "Coffees",              "emoji": "☕",     "price": 2, "restoreMins": 45,  "revives": False, "season": "all"},
+    "bento":       {"name": "Bento",              "plural": "Bentos",               "emoji": "\U0001F371", "price": 3, "restoreMins": 120, "revives": False, "season": "all"},
+    "noodles":     {"name": "Noodle Bowl",        "plural": "Noodle Bowls",         "emoji": "\U0001F35C", "price": 3, "restoreMins": 120, "revives": False, "season": "all"},
+    "hotpot":      {"name": "Hot Pot",            "plural": "Hot Pots",             "emoji": "\U0001F372", "price": 4, "restoreMins": 180, "revives": False, "season": "all"},
+    "tonic":       {"name": "Revive Tonic",       "plural": "Revive Tonics",        "emoji": "\U0001F9C3", "price": 5, "restoreMins": 0,   "revives": True,  "season": "all"},
+    "elixir":      {"name": "Honey Elixir",       "plural": "Honey Elixirs",        "emoji": "\U0001F36F", "price": 7, "restoreMins": 60,  "revives": True,  "season": "all"},
+    "strawberry":  {"name": "Strawberry",         "plural": "Strawberries",         "emoji": "\U0001F353", "price": 1, "restoreMins": 25,  "revives": False, "season": "spring"},
+    "dango":       {"name": "Hanami Dango",       "plural": "Hanami Dango",         "emoji": "\U0001F361", "price": 2, "restoreMins": 55,  "revives": False, "season": "spring"},
+    "omelette":    {"name": "Garden Omelette",    "plural": "Garden Omelettes",     "emoji": "\U0001F373", "price": 3, "restoreMins": 135, "revives": False, "season": "spring"},
+    "watermelon":  {"name": "Watermelon Slice",   "plural": "Watermelon Slices",    "emoji": "\U0001F349", "price": 1, "restoreMins": 25,  "revives": False, "season": "summer"},
+    "shavedice":   {"name": "Shaved Ice",         "plural": "Shaved Ices",          "emoji": "\U0001F367", "price": 2, "restoreMins": 55,  "revives": False, "season": "summer"},
+    "curry":       {"name": "Summer Curry",       "plural": "Summer Curries",       "emoji": "\U0001F35B", "price": 3, "restoreMins": 135, "revives": False, "season": "summer"},
+    "apple":       {"name": "Apple",              "plural": "Apples",               "emoji": "\U0001F34E", "price": 1, "restoreMins": 25,  "revives": False, "season": "fall"},
+    "sweetpotato": {"name": "Baked Sweet Potato", "plural": "Baked Sweet Potatoes", "emoji": "\U0001F360", "price": 2, "restoreMins": 55,  "revives": False, "season": "fall"},
+    "pumpkinstew": {"name": "Pumpkin Stew",       "plural": "Pumpkin Stews",        "emoji": "\U0001F383", "price": 3, "restoreMins": 135, "revives": False, "season": "fall"},
+    "chestnuts":   {"name": "Bag of Chestnuts",   "plural": "Bags of Chestnuts",    "emoji": "\U0001F330", "price": 1, "restoreMins": 25,  "revives": False, "season": "winter"},
+    "cocoa":       {"name": "Hot Cocoa",          "plural": "Hot Cocoas",           "emoji": "\U0001F36B", "price": 2, "restoreMins": 55,  "revives": False, "season": "winter"},
+    "oden":        {"name": "Oden Skewer",        "plural": "Oden Skewers",         "emoji": "\U0001F362", "price": 3, "restoreMins": 135, "revives": False, "season": "winter"},
 }
+
+# The UTC month (1-12) -> season, northern-hemisphere meteorological.
+SEASON_BY_MONTH = (None, "winter", "winter", "spring", "spring", "spring", "summer",
+                   "summer", "summer", "fall", "fall", "fall", "winter")
+# Today's special: one in-stock food costing at least this much, this many coins off.
+SPECIAL_MIN_PRICE = 2
+SPECIAL_DISCOUNT = 1
 
 QUEST_REWARDS_PER_DAY = 10
 
@@ -105,6 +137,36 @@ def _today() -> date:
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+# --- seasons and today's special (pure, deterministic per UTC day) -------------
+
+def season_of(day: date) -> str:
+    return SEASON_BY_MONTH[day.month]
+
+
+def in_stock(kind: str, day: date) -> bool:
+    """Whether the store sells `kind` on `day`."""
+    season = CATALOG[kind]["season"]
+    return season == "all" or season == season_of(day)
+
+
+@lru_cache(maxsize=16)
+def special_of(day: date) -> str | None:
+    """The day's special: an in-stock food priced at least SPECIAL_MIN_PRICE,
+    picked by a hash of the date, so every server and client agrees all day."""
+    pool = [k for k, v in CATALOG.items()
+            if v["price"] >= SPECIAL_MIN_PRICE and in_stock(k, day)]
+    if not pool:
+        return None
+    h = int(hashlib.sha256(("hq:special:" + day.isoformat()).encode("utf-8")).hexdigest()[:8], 16)
+    return pool[h % len(pool)]
+
+
+def price_of(kind: str, day: date) -> int:
+    """What one `kind` costs on `day`: the base price, less the special's discount."""
+    price = CATALOG[kind]["price"]
+    return price - SPECIAL_DISCOUNT if kind == special_of(day) else price
 
 
 class EconomyError(Exception):
@@ -257,12 +319,20 @@ async def pantry_state(db: AsyncSession, user: User) -> dict:
         )
     ).all()
 
+    special = special_of(today)
     return {
         "coins": coins,
         "coinCap": COIN_CAP,
         "items": {k: held.get(k, 0) for k in CATALOG},
         "itemCap": ITEM_CAP,
-        "catalog": [{"kind": k, **v} for k, v in CATALOG.items()],
+        # "price" is today's (the special's discount applied); "basePrice" is the usual.
+        "catalog": [
+            {"kind": k, **v, "basePrice": v["price"], "price": price_of(k, today),
+             "inStock": in_stock(k, today), "special": k == special}
+            for k, v in CATALOG.items()
+        ],
+        "season": season_of(today),
+        "special": special,
         "claim": {
             "claimedToday": claimed_today,
             "claimable": not claimed_today and coins < COIN_CAP,
@@ -294,12 +364,14 @@ async def _prior(db: AsyncSession, uid: str, rid: str, want: tuple) -> PokeLedge
 
 
 async def _spend(
-    db: AsyncSession, user: User, rid: str, want: tuple, apply, note: str = "", check=None
+    db: AsyncSession, user: User, rid: str, want: tuple, apply, note: str = "", check=None,
+    day: date | None = None,
 ):
     """Run one spend in the journal-first order. Returns (row, replayed): the
     committed ledger row, or the prior one when this request id already ran.
     `check()` runs only when it did not (a replay wins over give's 404/400), and
-    `apply(row)` does the op's caps, debits and credits, raising EconomyError."""
+    `apply(row)` does the op's caps, debits and credits, raising EconomyError.
+    `day` is the row's op_date (default today): pass the date a price came from."""
     uid = user.id
     prior = await _prior(db, uid, rid, want)
     if prior is not None:
@@ -309,7 +381,7 @@ async def _spend(
 
     op, kind, qty, coins, to_uid = want
     row = PokeLedger(
-        user_id=uid, request_id=rid, op=op, op_date=_today(), kind=kind, qty=qty,
+        user_id=uid, request_id=rid, op=op, op_date=day or _today(), kind=kind, qty=qty,
         coins=coins, to_user_id=to_uid, note=note, created_at=_now(),
     )
     try:
@@ -343,7 +415,16 @@ async def _spend(
 
 async def buy(db: AsyncSession, user: User, body: BuyRequest) -> BuyResponse:
     food = CATALOG[body.kind]
-    spend = food["price"] * body.qty
+    # Priced on the day the buy runs. A request id that already committed a buy
+    # is priced on ITS day, so a retry that crosses UTC midnight (when the
+    # special changes) still replays instead of failing as a reused id.
+    prior = await _find_op(db, user.id, body.requestId)
+    day = prior.op_date if prior is not None and prior.op == "buy" else _today()
+    spend = price_of(body.kind, day) * body.qty
+
+    def check() -> None:
+        if not in_stock(body.kind, day):
+            raise HTTPException(409, f"{food['plural']} are out of season")
 
     async def apply(row: PokeLedger) -> None:
         await _debit(db, user.id, "coins", spend, "Poke Coins")
@@ -351,7 +432,8 @@ async def buy(db: AsyncSession, user: User, body: BuyRequest) -> BuyResponse:
                       f"your pantry holds at most {ITEM_CAP} {food['plural']}")
 
     row, replayed = await _spend(
-        db, user, body.requestId, ("buy", body.kind, body.qty, spend, None), apply
+        db, user, body.requestId, ("buy", body.kind, body.qty, spend, None), apply,
+        check=check, day=day,
     )
     return BuyResponse(
         **await pantry_state(db, user),

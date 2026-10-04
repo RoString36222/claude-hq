@@ -154,6 +154,24 @@ class OverlayTests(unittest.TestCase):
         self.assertEqual(out["coins"], 3)
         self.assertEqual(server["catalog"][0]["restoreMins"], 999)  # input not mutated
 
+    def test_elixir_wakes_lower_and_new_fields_pass_through(self):
+        server = {"catalog": [
+            {"kind": "elixir", "price": 7, "basePrice": 7, "inStock": True, "special": False,
+             "season": "all", "restoreMins": 0, "revives": False},
+            {"kind": "pumpkinstew", "price": 2, "basePrice": 3, "inStock": True,
+             "special": True, "season": "fall"},
+            {"kind": "strawberry", "price": 1, "basePrice": 1, "inStock": False,
+             "special": False, "season": "spring"}]}
+        by = {c["kind"]: c for c in dashboard._overlay_food_effects(server)["catalog"]}
+        self.assertEqual((by["elixir"]["restoreMins"], by["elixir"]["revives"],
+                          by["elixir"]["wakeToMins"]), (60, True, 45))
+        self.assertEqual((by["pumpkinstew"]["restoreMins"], by["pumpkinstew"]["wakeToMins"]),
+                         (135, None))
+        self.assertEqual((by["pumpkinstew"]["price"], by["pumpkinstew"]["basePrice"],
+                          by["pumpkinstew"]["special"], by["pumpkinstew"]["season"]),
+                         (2, 3, True, "fall"))
+        self.assertIs(by["strawberry"]["inStock"], False)
+
     def test_passes_through_other_shapes(self):
         for resp in ({"error": "not paired"}, {"catalog": "x"}, [], None):
             self.assertEqual(dashboard._overlay_food_effects(resp), resp)
@@ -302,7 +320,9 @@ class PantryEatTests(unittest.TestCase):
     def test_state_gate(self):
         cases = [("rested", "berry", "not_hungry"), ("unconscious", "berry", "fainted"),
                  ("unconscious", "bento", "fainted"), ("tired", "tonic", "not_fainted"),
-                 ("fatigued", "tonic", "not_fainted")]
+                 ("fatigued", "tonic", "not_fainted"), ("unconscious", "hotpot", "fainted"),
+                 ("tired", "elixir", "not_fainted"), ("fatigued", "elixir", "not_fainted"),
+                 ("rested", "elixir", "not_hungry")]
         for state, kind, want in cases:
             with self.subTest(state=state, kind=kind):
                 self.state = state
@@ -311,6 +331,18 @@ class PantryEatTests(unittest.TestCase):
                 self.assertTrue(resp["error"])
         self.assertEqual(self.calls, [])
         self.assertEqual(dashboard.load_meals(), {})
+
+    def test_fainted_takes_any_revive_item(self):
+        for i, kind in enumerate(("tonic", "elixir")):
+            with self.subTest(kind=kind):
+                self.state = "unconscious"
+                rid = RID[:-1] + str(i)
+                self.reply = self._server_eat(kind)
+                code, resp = self.eat(kind, rid=rid)
+                self.assertEqual(code, 200, resp)
+                self.assertEqual(self.calls[-1], ("eat", {"requestId": rid, "kind": kind}))
+                self.assertEqual(resp["meal"]["revives"], True)
+        self.assertEqual(sorted(k for _, k in dashboard.load_meals()[SID]), ["elixir", "tonic"])
 
     def test_fatigue_off(self):
         self.fatigue_on = False

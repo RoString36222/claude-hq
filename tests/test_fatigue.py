@@ -64,6 +64,11 @@ VECTORS = {
             ("tired", 0.562, 105, False, "active", 10, 23, 360), "tonic"),
     "V8d": ([(0, 6 * H)], 6 * H + 55 * M, (), None,
             ("unconscious", 0.5, 120, False, "resting", 0, 1, 0), None),
+    # The Honey Elixir wakes like the Tonic (load -> 105 min), then takes 60 min more off.
+    "V8e": ([(0, 4 * H)], 4 * H, [(4 * H, "elixir")], None,
+            ("rested", 0.812, 45, False, "active", 10, 0, 240), "elixir"),
+    "V8f": ([(0, 6 * H)], 6 * H, [(6 * H, "elixir")], None,
+            ("rested", 0.812, 45, False, "active", 10, 0, 360), "elixir"),
     "V9": ([(0, 2 * H)], 2 * H, [(2 * H, "bento")], None,
            ("rested", 1.0, 0, False, "active", 10, 0, 120), "bento"),
     "V10": ([(0, 50 * M), (70 * M, 120 * M), (140 * M, 190 * M), (210 * M, 260 * M)],
@@ -110,6 +115,19 @@ class FatigueVectorTests(unittest.TestCase):
     def test_v15_meal_outside_the_window_is_ignored(self):
         self.assertEqual(fz([(0, 2 * H)], 2 * H, [(-25 * H, "bento")]),
                          fz([(0, 2 * H)], 2 * H))
+
+    def test_revive_items_wake_then_take_their_credit(self):
+        for spans, now in (([(0, 4 * H)], 4 * H), ([(0, 6 * H)], 6 * H),
+                           ([(0, 6 * H)], 6 * H + 55 * M)):
+            with self.subTest(now=now):
+                tonic = fz(spans, now, [(now, "tonic")])
+                elixir = fz(spans, now, [(now, "elixir")])
+                self.assertEqual(tonic["loadMins"], 105)   # the Tonic is unchanged
+                self.assertEqual(elixir["loadMins"], 45)
+                self.assertNotEqual(elixir["state"], "unconscious")
+        # Credit can't push load below zero.
+        r = fz([(0, 30 * M)], 30 * M, [(30 * M, "elixir")])
+        self.assertEqual((r["state"], r["loadMins"]), ("rested", 0))
 
     def test_unknown_food_is_ignored(self):
         self.assertEqual(fz([(0, 2 * H)], 2 * H, [(2 * H, "pizza")]),

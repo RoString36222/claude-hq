@@ -1325,7 +1325,6 @@ html.hq-calm .ach-tier.claimable,html.hq-calm .ach-tier.claimable{animation:none
 .arena-who .arena-nudge{margin-left:auto;flex:0 0 auto}
 .arena-who .arena-nudge + .arena-nudge{margin-left:4px}
 #giftSend[aria-disabled="true"]{opacity:.45;cursor:default}
-.arena-store-moved{margin:0 0 10px}
 .store-state{font-size:.93em;display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0}
 .gift-modal{width:min(440px,100%)}
 .gift-form{gap:14px}
@@ -2311,12 +2310,6 @@ html.hq-calm #confetti{display:none!important}
         Type <b>@handle</b> to tie someone to their Arena account, or just a name for anyone who hasn’t paired.
         The board ranks on Tuesdays turned up for; tacos only break ties.
       </p>
-    </section>
-
-    <section class="panel hidden" id="arenaStoreWrap" aria-label="Poke Coins and snacks" tabindex="-1">
-      <h3 class="section-h"><span aria-hidden="true">&#x1FA99;</span>Poke Coins &amp; snacks</h3>
-      <p class="muted arena-store-moved">The General Store has its own tab now: daily coins, today&rsquo;s special and snacks for your creatures.</p>
-      <button class="hbtn" type="button" id="arenaStoreGo">Visit the Store <span aria-hidden="true">&rarr;</span></button>
     </section>
 
     <section class="panel hidden" id="arenaLobbyWrap" aria-labelledby="arenaRoomH">
@@ -10868,7 +10861,6 @@ function loadArena(){
       ARENA.paired = paired;
       $("arenaSetup").classList.toggle("hidden", paired);
       $("arenaBoardWrap").classList.toggle("hidden", !paired);
-      $("arenaStoreWrap").classList.toggle("hidden", !paired);
       $("caliWrap").classList.toggle("hidden", !paired);
       $("arenaLobbyWrap").classList.toggle("hidden", !paired);
       $("arenaChatWrap").classList.toggle("hidden", !paired);
@@ -11156,8 +11148,6 @@ function pantryBuy(kind, rid, qty, quiet){
   }, function(){ storeRetrySet(kind, rid, qty); renderStore(); return {ok:false, lost:true, rid:rid}; });
 }
 function focusQuiet(n){ if(!n) return; try{ n.focus({preventScroll:true}); }catch(e){ n.focus(); } }
-// The Arena keeps a pointer to the store, which has its own tab now.
-(function(){ var b=$("arenaStoreGo"); if(b) b.addEventListener("click", function(){ setView("store"); focusQuiet(document.querySelector('#svList .sv-row[tabindex="0"]') || $("svDialog")); }); })();
 
 /* ---- gifts: coins and/or one snack kind, to anyone on the board or in the lobby ----
    GIFT.body: the exact request of a gift that has no answer yet (in flight, or lost). While the

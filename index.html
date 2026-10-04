@@ -2085,9 +2085,9 @@ html.hq-calm #confetti{display:none!important}
     <div class="sv-stage-wrap" id="svWrap"><div class="sv-stage" id="svStage"><canvas id="svCanvas" aria-hidden="true"></canvas><div class="sv-hots" id="svHots"></div></div></div>
     <div class="sv-menu">
       <section class="sv-box sv-keeper" aria-labelledby="svKeeperH">
-        <span class="sv-plate" id="svKeeperH">Marigold</span>
+        <span class="sv-plate" id="svKeeperH">Katie</span>
         <div class="sv-keeper-top">
-          <button class="sv-portrait" id="svPortrait" type="button" aria-label="Talk to Marigold, the shopkeeper"><img id="svPortraitImg" alt="" width="128" height="128"></button>
+          <button class="sv-portrait" id="svPortrait" type="button" aria-label="Talk to Katie, the shopkeeper"><img id="svPortraitImg" alt="" width="128" height="128"></button>
           <div class="sv-friend"><div class="sv-hearts" id="svHearts" role="img" aria-label="Friendship"></div><div class="sv-friend-l" id="svFriendL"></div></div>
         </div>
         <button class="sv-dialog" id="svDialog" type="button"><span id="svSay" aria-hidden="true"></span><span class="sr-only" id="svSaySr"></span><span class="sv-more" aria-hidden="true"></span></button>
@@ -4271,7 +4271,7 @@ PX_ART.cat2={k:"#4a2410", p:{o:"#e8964a",O:"#f8bf86",d:"#b8682c",w:"#fff0dc",p:"
   "..ddddddddddddoo..",
   ".................."]};
 
-/* ---- the shopkeeper (Marigold): a 32x32 bust built from shapes, then details ---- */
+/* ---- the shopkeeper (Katie): a 32x32 bust built from shapes, then details ---- */
 var PX_KEEPER_PAL = {
   h:"#e8c46a", H:"#f7de8f", j:"#b98f3f", b:"#5f8f3a", f:"#ff9f1c", F:"#ffc857", c:"#8a4b0f",
   r:"#b5562d", R:"#d9773f", q:"#7d3519",
@@ -4315,7 +4315,7 @@ function pxKeeperGrid(expr){
   pxEll(g,23.6,20.6,2.2,2.2,"r"); pxEll(g,24.4,23.6,2.1,2.1,"r"); pxEll(g,24.8,26.4,1.9,1.9,"r");
   pxDot(g,[23,19,24,22,24,25],"R"); pxDot(g,[22,22,23,25,24,28],"q");
   pxDot(g,[24,28,25,28,24,29,25,29],"b"); pxDot(g,[24,30,25,30,25,31],"r");
-  // straw sun hat: brim, crown, band, marigold
+  // straw sun hat: brim, crown, band, a flower
   pxEll(g,15.5,9.4,14.2,2.7,"h");
   pxTint(g,function(x,y){ return y>=11; },"h","j");
   pxTint(g,function(x,y){ return y<=7 && x<=12; },"h","H");
@@ -4722,7 +4722,7 @@ var SV_CAT_NAME = {fruit:"Fruit", snack:"Snack", meal:"Meal", drink:"Drink", swe
 var SV_SEASONS = ["spring","summer","fall","winter"];
 var SV_SEASON_NAME = {spring:"Spring", summer:"Summer", fall:"Fall", winter:"Winter", all:"Year-round"};
 var SV_SEASON_ICON = {spring:"blossom", summer:"sun", fall:"leaf", winter:"snow"};
-var SV_KEEPER = "Marigold", SV_PET = "Biscuit";
+var SV_KEEPER = "Katie", SV_PET = "Biscuit";
 var SV = {built:false, s:3, W:400, L:null, env:null, room:null, roomKey:"", raf:0, anim:false, last:0, calmTimer:0,
   tab:"all", busy:{}, tipKind:null, feedKind:null, feedFrom:null, coins:null, odoRaf:0, claimAsked:false,
   talk:{text:"", shown:0, timer:0, expr:"smile"}, face:"", sceneFace:"", catUntil:0, catFrame:"", wakeUntil:0,

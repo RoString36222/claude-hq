@@ -235,7 +235,7 @@ and feature guide.
   **Store** tab (key `8`): a Stardew-inspired pixel-art shop with **100% original art**
   drawn at runtime (no assets, no network): a window that follows your local time of day,
   the season and the day's weather, a wall calendar and clock, shelves stocked with what's
-  for sale, and **Marigold** behind the counter, who greets you, chats, reacts to what you
+  for sale, and **Katie** behind the counter, who greets you, chats, reacts to what you
   buy and dozes after 11pm (ring the bell). Pet **Biscuit** the shop cat, build friendship
   hearts, and hear WebAudio blips, chimes and a purr (with a store-only mute). The menu is a
   wood-and-parchment shop list with category tabs, item tooltips, a rolling coin counter,

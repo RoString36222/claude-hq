@@ -5,3 +5,5 @@ __pycache__/
 .pytest_cache/
 tests/
 .env
+# Soundboard clips are bind-mounted at runtime; never bake them into the image.
+sounds/

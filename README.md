@@ -47,12 +47,16 @@ shares daily activity *counts* with friends — never conversation content.)
   a **🏅 Quests** view, a **Trainer Card**, XP/levels, streaks, achievements, and confetti.
 - **⚡ Creature energy**: creatures tire after long unbroken runs (about 2h makes one 💦 Fatigued;
   past 3h it may 💫 faint) and recover while you take a break. With the Arena connected you also
-  get **🪙 Poke Coins** (5 a day) to buy snacks (🫐 🍙 🍱, plus a 🧃 Revive Tonic) and gift coins or
-  snacks to friends. Purely cosmetic: it never touches XP or the leaderboard, rest alone always
-  works, and you can turn it off in Settings.
+  get **🪙 Poke Coins** (5 a day) to spend in the **🏪 Store** and gift coins or snacks to friends.
+  Purely cosmetic: it never touches XP or the leaderboard, rest alone always works, and you can
+  turn it off in Settings.
+- **🏪 The General Store** (key `8`): a cozy pixel-art shop in the spirit of farm-sim games, all
+  original art. 21 foods (fruit, snacks, meals, drinks, sweets and two revives), seasonal stock
+  that rotates with the real calendar, a daily special, a shopkeeper who chats (and dozes after
+  11pm), a shop cat to pet, and a bag you feed your creatures from.
 
 **Quality-of-life**
-- Command palette (⌘/Ctrl-K), keyboard shortcuts (`?` for help, `1`–`5` for views, `/` search, `r`
+- Command palette (⌘/Ctrl-K), keyboard shortcuts (`?` for help, `1`–`8` for views, `/` search, `r`
   refresh), desktop notifications + optional chime + voice alerts when a tab needs you, a
   **War Room** rotating big-screen view, a **Focus Pomodoro** timer, and a **"welcome back" recap**.
 - Settings: **themes** (Aurora / Midnight / Forest / Mono + High-contrast), **creature packs**,
@@ -227,6 +231,22 @@ and feature guide.
 
 ## Changelog
 
+- **1.5.0** — **The General Store.** The store moves out of the Arena into its own
+  **Store** tab (key `8`): a Stardew-inspired pixel-art shop with **100% original art**
+  drawn at runtime (no assets, no network): a window that follows your local time of day,
+  the season and the day's weather, a wall calendar and clock, shelves stocked with what's
+  for sale, and **Katie** behind the counter, who greets you, chats, reacts to what you
+  buy and dozes after 11pm (ring the bell). Pet **Biscuit** the shop cat, build friendship
+  hearts, and hear WebAudio blips, chimes and a purr (with a store-only mute). The menu is a
+  wood-and-parchment shop list with category tabs, item tooltips, a rolling coin counter,
+  the daily claim, and a **bag** you feed creatures from. **21 foods** (up from 4): 9 sold
+  year-round plus 3 seasonal ones per season (UTC calendar), including a **Hot Pot** (4 🪙,
+  +3h) and a **Honey Elixir** revive that wakes a fainted creature nearly rested. One
+  in-stock food a day is the **special**, a coin off. Stock, prices and the special are
+  enforced by the Arena server; an Arena that hasn't updated yet keeps selling the original
+  four and shows the rest as sold out. Shift-click buys up to five; a lost purchase retries
+  with the same quantity. The creature drawer now lists only snacks you own (plus the best
+  one to buy). _Needs a backend deploy: no migration, catalog only._
 - **1.4.0** — **Customizable Trainer avatar.** Build your own trainer — a
   Pokémon-style character creator from **100% original, generated SVG parts**
   (skin, hair style + color, outfit + color, headwear, accessory, background,

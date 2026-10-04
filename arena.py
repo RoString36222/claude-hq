@@ -355,12 +355,32 @@ def drain_nudges():
 # the machine (dashboard.py keeps that in meals.json).
 
 # Mirrors CATALOG in backend app/pantry.py. Keep in sync.
-FOOD_KINDS = ("berry", "riceball", "bento", "tonic")
+FOOD_KINDS = ("berry", "bread", "riceball", "coffee", "bento", "noodles", "hotpot",
+              "tonic", "elixir", "strawberry", "dango", "omelette", "watermelon",
+              "shavedice", "curry", "apple", "sweetpotato", "pumpkinstew",
+              "chestnuts", "cocoa", "oden")
 FOOD_LABELS = {
     "berry": ("Berry", "Berries"),
+    "bread": ("Bread Loaf", "Bread Loaves"),
     "riceball": ("Rice Ball", "Rice Balls"),
+    "coffee": ("Coffee", "Coffees"),
     "bento": ("Bento", "Bentos"),
+    "noodles": ("Noodle Bowl", "Noodle Bowls"),
+    "hotpot": ("Hot Pot", "Hot Pots"),
     "tonic": ("Revive Tonic", "Revive Tonics"),
+    "elixir": ("Honey Elixir", "Honey Elixirs"),
+    "strawberry": ("Strawberry", "Strawberries"),
+    "dango": ("Hanami Dango", "Hanami Dango"),
+    "omelette": ("Garden Omelette", "Garden Omelettes"),
+    "watermelon": ("Watermelon Slice", "Watermelon Slices"),
+    "shavedice": ("Shaved Ice", "Shaved Ices"),
+    "curry": ("Summer Curry", "Summer Curries"),
+    "apple": ("Apple", "Apples"),
+    "sweetpotato": ("Baked Sweet Potato", "Baked Sweet Potatoes"),
+    "pumpkinstew": ("Pumpkin Stew", "Pumpkin Stews"),
+    "chestnuts": ("Bag of Chestnuts", "Bags of Chestnuts"),
+    "cocoa": ("Hot Cocoa", "Hot Cocoas"),
+    "oden": ("Oden Skewer", "Oden Skewers"),
 }
 PANTRY_ACTIONS = ("claim", "buy", "eat", "give")
 _PANTRY_KEYS = ("requestId", "kind", "qty", "coins", "toHandle", "note")

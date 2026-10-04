@@ -50,7 +50,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import arena
 
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.5.0"
 
 # --------------------------------------------------------------------------- #
 # Paths / constants
@@ -854,9 +854,19 @@ FATIGUE_MAX_SPANS = 96
 FATIGUE_SKIP_TOOLS = ("AskUserQuestion", "ExitPlanMode")
 
 # kind -> (seconds of load removed, revives). Mirrors CATALOG in backend
-# app/pantry.py (restoreMins * 60); tests/test_catalog_sync.py checks it.
-FOOD_EFFECTS = {"berry": (1200, False), "riceball": (2700, False),
-                "bento": (7200, False), "tonic": (0, True)}
+# app/pantry.py (restoreMins * 60); tests/test_catalog_sync.py checks it. A
+# revive item wakes a fainted creature at FATIGUE_REVIVE_TO_SECS of load, then
+# takes its seconds off that.
+FOOD_EFFECTS = {"berry": (1200, False), "bread": (1200, False),
+                "riceball": (2700, False), "coffee": (2700, False),
+                "bento": (7200, False), "noodles": (7200, False),
+                "hotpot": (10800, False), "tonic": (0, True), "elixir": (3600, True),
+                "strawberry": (1500, False), "dango": (3300, False),
+                "omelette": (8100, False), "watermelon": (1500, False),
+                "shavedice": (3300, False), "curry": (8100, False),
+                "apple": (1500, False), "sweetpotato": (3300, False),
+                "pumpkinstew": (8100, False), "chestnuts": (1500, False),
+                "cocoa": (3300, False), "oden": (8100, False)}
 
 FATIGUE_RESTED = {"state": "rested", "energy": 1.0, "loadMins": 0, "mayFaint": False,
                   "phase": "resting", "restInMins": 0, "restMins": 0, "streakMins": 0,
@@ -956,7 +966,7 @@ def fatigue_for(sid, spans, now, open_since=None, meals=()):
         credit, revives = FOOD_EFFECTS[k]
         if revives:
             ko = False
-            load = min(load, FATIGUE_REVIVE_TO_SECS)
+            load = max(0.0, min(load, FATIGUE_REVIVE_TO_SECS) - credit)
         else:
             load = max(0.0, load - credit)
             if ko and load < FATIGUE_FATIGUED_SECS:
@@ -3353,7 +3363,8 @@ def _overlay_food_effects(resp):
             continue
         secs, revives = FOOD_EFFECTS[kind]
         catalog.append(dict(item, restoreMins=secs // 60, revives=revives,
-                            wakeToMins=FATIGUE_REVIVE_TO_SECS // 60 if revives else None))
+                            wakeToMins=max(0, FATIGUE_REVIVE_TO_SECS - secs) // 60
+                            if revives else None))
     return dict(resp, catalog=catalog)
 
 
@@ -3426,11 +3437,12 @@ def pantry_eat(body):
             if state == "rested":
                 return 409, {"error": "This creature is full of energy: no snack needed",
                              "code": "not_hungry"}
-            if state == "unconscious" and kind != "tonic":
-                return 409, {"error": "This creature has fainted: only a Revive Tonic "
-                                      "(or a break) can wake it", "code": "fainted"}
-            if kind == "tonic" and state != "unconscious":
-                return 409, {"error": "Revive Tonic only works on a fainted creature",
+            revives = FOOD_EFFECTS[kind][1]
+            if state == "unconscious" and not revives:
+                return 409, {"error": "This creature has fainted: only a revive item like "
+                                      "a Revive Tonic (or a break) can wake it", "code": "fainted"}
+            if revives and state != "unconscious":
+                return 409, {"error": "Revive items only work on a fainted creature",
                              "code": "not_fainted"}
 
         code, resp = arena.pantry("eat", {"requestId": rid, "kind": kind})

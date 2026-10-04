@@ -177,7 +177,11 @@ class NudgesResponse(BaseModel):
 # an amount, a handle and a note -- never a session id, title or path, and
 # `extra="forbid"` turns a stray one into a 422.
 
-FoodKind = Literal["berry", "riceball", "bento", "tonic"]
+FoodKind = Literal[
+    "berry", "bread", "riceball", "coffee", "bento", "noodles", "hotpot", "tonic", "elixir",
+    "strawberry", "dango", "omelette", "watermelon", "shavedice", "curry",
+    "apple", "sweetpotato", "pumpkinstew", "chestnuts", "cocoa", "oden",
+]
 RequestId = Annotated[str, Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
 
 
@@ -227,9 +231,13 @@ class CatalogItem(BaseModel):
     name: str
     plural: str
     emoji: str
-    price: int
+    price: int          # today's price (the special's discount applied)
+    basePrice: int
     restoreMins: int
     revives: bool
+    season: str         # "all" | "spring" | "summer" | "fall" | "winter"
+    inStock: bool
+    special: bool
 
 
 class ClaimInfo(BaseModel):
@@ -266,6 +274,8 @@ class PantryState(BaseModel):
     claim: ClaimInfo
     limits: PantryLimits
     recentGifts: list[GiftItem] = Field(default_factory=list)
+    season: str = ""               # the UTC season the store stocks today
+    special: str | None = None     # today's special kind, if any
 
 
 class ClaimResponse(PantryState):

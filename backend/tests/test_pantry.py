@@ -21,7 +21,11 @@ FORBIDDEN_KEYS = {
     "title", "file", "files",
 }
 
-KINDS = ["berry", "riceball", "bento", "tonic"]
+KINDS = ["berry", "bread", "riceball", "coffee", "bento", "noodles", "hotpot", "tonic",
+         "elixir", "strawberry", "dango", "omelette", "watermelon", "shavedice", "curry",
+         "apple", "sweetpotato", "pumpkinstew", "chestnuts", "cocoa", "oden"]
+# The Clock's default day, 2026-09-28, is in the fall and its special is the Hot Pot.
+FALL = {"apple", "sweetpotato", "pumpkinstew"}
 
 
 class Clock:
@@ -131,12 +135,16 @@ async def test_get_is_read_only(client):
     assert j["coins"] == 0 and j["coinCap"] == 30 and j["itemCap"] == 10
     assert j["items"] == {k: 0 for k in KINDS}
     assert [c["kind"] for c in j["catalog"]] == KINDS
-    assert [c["price"] for c in j["catalog"]] == [1, 2, 3, 5]
-    assert [c["restoreMins"] for c in j["catalog"]] == [20, 45, 120, 0]
-    assert [c["revives"] for c in j["catalog"]] == [False, False, False, True]
-    assert j["catalog"][1] == {"kind": "riceball", "name": "Rice Ball", "plural": "Rice Balls",
-                               "emoji": "\U0001F359", "price": 2, "restoreMins": 45,
-                               "revives": False}
+    assert [c["basePrice"] for c in j["catalog"]] == [
+        1, 1, 2, 2, 3, 3, 4, 5, 7, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3]
+    assert [c["restoreMins"] for c in j["catalog"]] == [
+        20, 20, 45, 45, 120, 120, 180, 0, 60, 25, 55, 135, 25, 55, 135, 25, 55, 135, 25, 55, 135]
+    assert [c["kind"] for c in j["catalog"] if c["revives"]] == ["tonic", "elixir"]
+    assert j["catalog"][2] == {"kind": "riceball", "name": "Rice Ball", "plural": "Rice Balls",
+                               "emoji": "\U0001F359", "price": 2, "basePrice": 2,
+                               "restoreMins": 45, "revives": False, "season": "all",
+                               "inStock": True, "special": False}
+    assert (j["season"], j["special"]) == ("fall", "hotpot")
     assert j["claim"] == {"claimedToday": False, "claimable": True, "amount": 5,
                           "today": "2026-09-28", "nextClaimAt": "2026-09-29T00:00:00+00:00"}
     assert j["limits"] == {"buyMaxQty": 5, "giftMaxCoins": 5, "giftMaxQty": 3,
@@ -675,3 +683,120 @@ async def test_no_forbidden_keys(client):
     assert all(isinstance(b, dict) and "detail" not in b for b in bodies)
     leaked = _collect_keys(bodies) & FORBIDDEN_KEYS
     assert leaked == set(), leaked
+
+
+# --- seasons and the daily special ------------------------------------------------
+
+def test_season_of_boundaries():
+    cases = {
+        date(2027, 1, 1): "winter", date(2027, 2, 28): "winter", date(2027, 3, 1): "spring",
+        date(2026, 5, 31): "spring", date(2026, 6, 1): "summer", date(2026, 8, 31): "summer",
+        date(2026, 9, 1): "fall", date(2026, 11, 30): "fall", date(2026, 12, 1): "winter",
+    }
+    for day, season in cases.items():
+        assert pantry.season_of(day) == season, day
+
+
+def test_special_is_deterministic_and_in_stock():
+    start, seen = date(2026, 1, 1), set()
+    for i in range(400):
+        day = start + timedelta(days=i)
+        special = pantry.special_of(day)
+        assert special == pantry.special_of(day)
+        assert pantry.in_stock(special, day)
+        base = pantry.CATALOG[special]["price"]
+        assert base >= pantry.SPECIAL_MIN_PRICE
+        assert pantry.price_of(special, day) == base - pantry.SPECIAL_DISCOUNT >= 1
+        others = [k for k in pantry.CATALOG if k != special]
+        assert all(pantry.price_of(k, day) == pantry.CATALOG[k]["price"] for k in others)
+        seen.add(special)
+    assert len(seen) >= 8   # it really rotates, and seasonal food takes its turn
+    assert seen & {"dango", "omelette", "shavedice", "curry", "sweetpotato", "pumpkinstew",
+                   "cocoa", "oden"}
+
+
+async def test_catalog_flags(client, clock):
+    _, ash = await make_user("ash", 340)
+    j = client.get("/v1/pantry", headers=auth(ash)).json()
+    by = {c["kind"]: c for c in j["catalog"]}
+    for kind, c in by.items():
+        assert c["inStock"] is (c["season"] == "all" or kind in FALL), kind
+        assert c["special"] is (kind == "hotpot"), kind
+        assert c["price"] == c["basePrice"] - (1 if kind == "hotpot" else 0), kind
+    assert (by["hotpot"]["basePrice"], by["hotpot"]["price"]) == (4, 3)
+    assert by["strawberry"]["season"] == "spring" and by["strawberry"]["inStock"] is False
+
+    clock.day = date(2026, 12, 1)   # winter, the Hot Cocoa's day
+    j = client.get("/v1/pantry", headers=auth(ash)).json()
+    assert (j["season"], j["special"]) == ("winter", "cocoa")
+    stocked = {c["kind"] for c in j["catalog"] if c["inStock"]}
+    assert stocked & {"chestnuts", "cocoa", "oden"} == {"chestnuts", "cocoa", "oden"}
+    assert not stocked & FALL
+
+
+async def test_out_of_season_buy_is_refused(client):
+    uid, ash = await make_user("ash", 341)
+    await put(uid, coins=10)
+    r = buy(client, ash, "strawberry", r=rid("oos"))
+    assert r.status_code == 409
+    assert r.json()["detail"] == "Strawberries are out of season"
+    assert await held(uid) == {"coins": 10}
+    assert await row_count(PokeLedger) == 0
+    # In season it sells, at its base price.
+    j = buy(client, ash, "apple", qty=2, r=rid("ins")).json()
+    assert (j["spent"], j["coins"], j["items"]["apple"]) == (2, 8, 2)
+
+
+async def test_off_season_food_is_still_eaten_and_given(client, clock):
+    ash_id, ash = await make_user("ash", 342)
+    await make_user("gary", 343)
+    await put(ash_id, strawberry=3)
+    r = post(client, ash, "eat", {"requestId": rid("s1"), "kind": "strawberry"})
+    assert r.status_code == 200 and r.json()["restoreMins"] == 25
+    r = give(client, ash, "gary", rid("s2"), kind="strawberry", qty=1)
+    assert r.status_code == 200 and r.json()["items"]["strawberry"] == 1
+
+
+async def test_special_price_is_charged(client):
+    uid, ash = await make_user("ash", 344)
+    await put(uid, coins=10)
+    j = buy(client, ash, "hotpot", qty=2, r=rid("sp")).json()
+    assert (j["spent"], j["coins"], j["items"]["hotpot"]) == (6, 4, 2)
+    [row] = await ledger(op="buy")
+    assert (row.kind, row.qty, row.coins, row.op_date) == ("hotpot", 2, 6, date(2026, 9, 28))
+
+
+async def test_buy_replays_across_midnight(client, clock):
+    uid, ash = await make_user("ash", 345)
+    await put(uid, coins=20)
+    body = {"requestId": rid("mid"), "kind": "hotpot", "qty": 1}
+    first = post(client, ash, "buy", body).json()
+    assert (first["spent"], first["coins"]) == (3, 17)   # the special's price
+
+    clock.day = date(2026, 9, 29)   # a new special: the Hot Pot is back to 4
+    again = post(client, ash, "buy", body)
+    assert again.status_code == 200
+    j = again.json()
+    assert (j["replayed"], j["spent"], j["coins"], j["items"]["hotpot"]) == (True, 3, 17, 1)
+    assert j["special"] == "pumpkinstew"
+    new = buy(client, ash, "hotpot", r=rid("mid2")).json()
+    assert (new["replayed"], new["spent"], new["coins"]) == (False, 4, 13)
+
+    # A buy that committed in its season replays after the season has turned.
+    clock.day = date(2026, 11, 30)
+    late = {"requestId": rid("apple"), "kind": "apple", "qty": 1}
+    assert post(client, ash, "buy", late).json()["replayed"] is False
+    clock.day = date(2026, 12, 1)
+    r = post(client, ash, "buy", late)
+    assert r.status_code == 200 and r.json()["replayed"] is True
+    r = buy(client, ash, "apple", r=rid("apple2"))
+    assert (r.status_code, r.json()["detail"]) == (409, "Apples are out of season")
+
+
+async def test_unknown_kind_is_422(client):
+    uid, ash = await make_user("ash", 346)
+    await make_user("gary", 347)
+    await put(uid, coins=10)
+    assert buy(client, ash, "pizza", r=rid("u1")).status_code == 422
+    assert post(client, ash, "eat", {"requestId": rid("u2"), "kind": "pizza"}).status_code == 422
+    assert give(client, ash, "gary", rid("u3"), kind="pizza", qty=1).status_code == 422

@@ -7951,7 +7951,7 @@ function partySig(sessions){
   // card: a store flip while every creature is rested rebuilds nothing.
   var store=PANTRY.store==="ok";
   var parts=(sessions||[]).map(function(s){ var c=s.creature||{}, f=fzOf(c);
-    return [s.id,s.status,s.title,s.alias||"",s.pinned?1:0,(s.tags||[]).join(","),s.note||"",s.folder||"",
+    return [s.id,s.status+(s.alertKind||"")+(s.likelyAwaiting?"~":""),s.title,s.alias||"",s.pinned?1:0,(s.tags||[]).join(","),s.note||"",s.folder||"",
             c.species,creatureStage(c),c.shiny?1:0,(EVO_CHOICE[s.sessionId||s.id]||{}).branchDex||"",(EVO_CHOICE[s.sessionId||s.id]||{}).megaSlug||"",f?(f.state+(f.mayFaint?"!":"")+(store && f.state!=="rested"?"$":"")):""].join(""); });
   return [QUERY,SORT,FILTER,FILTERTAG,FILTERFOLDER,STALE_OPEN?1:0,cfg().creaturePack,PANTRY.store==="ok"?1:0].join("|")+"||"+parts.join("");
 }
@@ -8068,6 +8068,7 @@ function buildCard(s){
   if(s.sessionId) card.setAttribute("data-sid", s.sessionId);
   if(s.pinned) card.classList.add("pinned");
   if(s.stuck) card.classList.add("stuckcard");
+  if(s.likelyAwaiting){ var lw=el("div","stuckmark"); lw.innerHTML=ico("alert","sm")+"permission?"; lw.title=s.likelyAwaiting; card.appendChild(lw); }
 
   if(s.status==="stale"){ var z=el("div","snooze"); z.textContent="💤"; card.appendChild(z); }
   if(s.stuck){ var sm=el("div","stuckmark"); sm.innerHTML=ico("alert","sm")+"stuck?"; sm.title=s.stuckReason||"May be stuck"; card.appendChild(sm); }
@@ -8102,7 +8103,7 @@ function buildCard(s){
   meta.appendChild(sub);
   chead.appendChild(meta);
 
-  if(s.status==="needs"){ var nb=el("div","needbadge"); nb.textContent="Needs you"; nb.title="Needs your input"; chead.appendChild(nb); }
+  if(s.status==="needs"){ var nb=el("div","needbadge"); nb.textContent=s.alertKind==="question"?"Question":s.alertKind==="plan"?"Plan approval":"Needs you"; nb.title=s.alert||"Needs your input"; chead.appendChild(nb); }
   card.appendChild(chead);
 
   // evolution: species + type badge + stage + evolve progress bar

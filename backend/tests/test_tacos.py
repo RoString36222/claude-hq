@@ -289,3 +289,135 @@ async def test_board_is_shared_across_founders(client):
     board = client.get("/v1/cali/board?window=all", headers=auth(bo_token)).json()
     you = [e["handle"] for e in board["entries"] if e["isYou"]]
     assert you == ["bo"]
+
+
+# --- the rest of the menu ------------------------------------------------------
+
+async def test_items_round_trip_in_menu_order_without_zeros(client):
+    _, token = await make_user("ana", 1)
+    r = client.post("/v1/cali/orders", json=order_body([
+        {"handle": "ana", "tacos": counts(mh=2),
+         "items": {"soda": 1, "nachos": 0, "burrito": 2, "churros": 1}},
+        {"name": "Bo", "items": {"guac": 3}},
+    ]), headers=auth(token))
+    assert r.status_code == 200, r.text
+    o = r.json()["order"]
+    ana, bo = o["diners"]
+    assert list(ana["items"].items()) == [("burrito", 2), ("churros", 1), ("soda", 1)]
+    assert bo["items"] == {"guac": 3}
+    assert o["totalItems"] == 7
+    # Items are never priced: the receipt is still tacos only.
+    assert (o["totalTacos"], o["paidTacos"]) == (2, 1)
+
+    logged = client.get("/v1/cali/orders", headers=auth(token)).json()["orders"][0]
+    assert logged["diners"][0]["items"] == {"burrito": 2, "churros": 1, "soda": 1}
+    assert logged["totalItems"] == 7
+
+
+async def test_a_diner_without_items_reads_back_empty(client):
+    _, token = await make_user("ana", 1)
+    o = client.post("/v1/cali/orders", json=order_body(
+        [{"name": "Ana", "tacos": counts(mh=1)}]), headers=auth(token)).json()["order"]
+    assert o["diners"][0]["items"] == {}
+    assert o["totalItems"] == 0
+
+
+@pytest.mark.parametrize("items", [
+    {"pizza": 1},          # not on the menu
+    {"burrito": 21},       # over MAX_PER_ITEM
+    {"burrito": -1},
+    {"burrito": "2"},      # strict ints
+    {"burrito": True},
+    ["burrito"],
+])
+async def test_bad_items_are_rejected(client, items):
+    _, token = await make_user("ana", 1)
+    r = client.post("/v1/cali/orders", json=order_body(
+        [{"name": "Ana", "tacos": counts(mh=1), "items": items}]), headers=auth(token))
+    assert r.status_code == 422
+    assert client.get("/v1/cali/orders", headers=auth(token)).json()["orders"] == []
+
+
+async def test_board_totals_items_and_names_a_favorite(client, clock):
+    _, token = await make_user("ana", 1)
+    client.post("/v1/cali/orders", json=order_body([
+        {"handle": "ana", "tacos": counts(mh=1), "items": {"burrito": 2, "soda": 1}},
+        {"name": "Bo", "tacos": counts(ws=4), "items": {"nachos": 3}},
+        {"name": "Cam"},
+    ], rid=RID), headers=auth(token))
+    clock.day = date(2026, 10, 6)
+    client.post("/v1/cali/orders", json=order_body([
+        {"handle": "ana", "items": {"burrito": 1}},
+    ], rid=RID2), headers=auth(token))
+
+    board = client.get("/v1/cali/board?window=all", headers=auth(token)).json()
+    by = {e["name"]: e for e in board["entries"]}
+    assert board["totalItems"] == 7
+    assert (by["Ana"]["items"], by["Ana"]["favorite"]) == (4, "burrito")
+    assert (by["Bo"]["items"], by["Bo"]["favorite"]) == (3, "wildSoft")   # a taco wins
+    assert (by["Cam"]["items"], by["Cam"]["favorite"]) == (0, None)
+    assert board["menu"][0] == {"kind": "burrito", "name": "Burrito"}
+    assert [m["kind"] for m in board["menu"]] == list(tacos.CALI_MENU)
+
+
+async def test_favorite_ties_go_to_the_earlier_key(client):
+    _, token = await make_user("ana", 1)
+    client.post("/v1/cali/orders", json=order_body([
+        {"name": "Ana", "tacos": counts(ws=2), "items": {"burrito": 2}},   # taco first
+        {"name": "Bo", "items": {"soda": 2, "ricebowl": 2}},              # menu order
+    ]), headers=auth(token))
+    by = {e["name"]: e for e in client.get(
+        "/v1/cali/board?window=all", headers=auth(token)).json()["entries"]}
+    assert by["Ana"]["favorite"] == "wildSoft"
+    assert by["Bo"]["favorite"] == "ricebowl"
+
+
+async def test_items_never_change_the_ranking(client, clock):
+    """Two Tuesdays beat one, and TT breaks ties: a mountain of burritos counts
+    for nothing on the board."""
+    _, token = await make_user("ana", 1)
+    client.post("/v1/cali/orders", json=order_body([
+        {"name": "Ana", "tacos": counts(mh=1)},
+        {"name": "Bo", "tacos": counts(mh=2)},
+        {"name": "Cam", "items": {"burrito": 20, "nachos": 20}},
+    ], rid=RID), headers=auth(token))
+    clock.day = date(2026, 10, 6)
+    client.post("/v1/cali/orders", json=order_body(
+        [{"name": "Ana", "tacos": counts(mh=1)}], rid=RID2), headers=auth(token))
+
+    entries = client.get("/v1/cali/board?window=all", headers=auth(token)).json()["entries"]
+    assert [e["name"] for e in entries] == ["Ana", "Bo", "Cam"]
+
+
+@pytest.mark.parametrize("today,starts,ends", [
+    (date(2026, 10, 5), "2026-09-01", "2026-09-30"),
+    (date(2026, 3, 1), "2026-02-01", "2026-02-28"),
+    (date(2027, 1, 12), "2026-12-01", "2026-12-31"),   # January wraps the year
+])
+async def test_lastseason_is_the_whole_previous_month(client, clock, today, starts, ends):
+    _, token = await make_user("ana", 1)
+    clock.day = today
+    board = client.get("/v1/cali/board?window=lastseason", headers=auth(token)).json()
+    assert (board["window"], board["startsOn"], board["endsOn"]) == ("lastseason", starts, ends)
+
+
+async def test_lastseason_counts_only_last_month(client, clock):
+    _, token = await make_user("ana", 1)
+    clock.day = date(2026, 9, 29)
+    client.post("/v1/cali/orders", json=order_body(
+        [{"handle": "ana", "tacos": counts(mh=3)}], rid=RID), headers=auth(token))
+    clock.day = date(2026, 10, 1)
+    client.post("/v1/cali/orders", json=order_body(
+        [{"handle": "ana", "tacos": counts(mh=1)}], rid=RID2), headers=auth(token))
+
+    last = client.get("/v1/cali/board?window=lastseason", headers=auth(token)).json()
+    now = client.get("/v1/cali/board?window=season", headers=auth(token)).json()
+    assert [(e["tuesdays"], e["totalTacos"]) for e in last["entries"]] == [(1, 3)]
+    assert [(e["tuesdays"], e["totalTacos"]) for e in now["entries"]] == [(1, 1)]
+
+
+async def test_xp_board_does_not_take_lastseason(client):
+    """The window is the cali board's own; the XP board's list is unchanged."""
+    from app.service import WINDOWS
+    assert "lastseason" not in WINDOWS
+    assert "lastseason" in tacos.CALI_WINDOWS

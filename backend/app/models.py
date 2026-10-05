@@ -340,6 +340,9 @@ class TacoDiner(Base):
     mild_soft: Mapped[int] = mapped_column(Integer, server_default="0")
     wild_hard: Mapped[int] = mapped_column(Integer, server_default="0")
     wild_soft: Mapped[int] = mapped_column(Integer, server_default="0")
+    # The rest of the menu, {menu key: count}: positive counts only, keys in
+    # tacos.CALI_MENU order. Recorded and reported, never priced or scored.
+    items: Mapped[dict] = mapped_column(JSON, server_default="{}", default=dict)
 
     order: Mapped[TacoOrder] = relationship(back_populates="diners")
 

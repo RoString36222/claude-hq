@@ -1235,26 +1235,6 @@ html.hq-calm .ach-tier.claimable,html.hq-calm .ach-tier.claimable{animation:none
 .arena-tbl td:nth-child(2){font-family:var(--font);font-size:13px}
 .arena-tbl tbody tr:hover{background:var(--panel2)}
 .arena-tbl tr.you{background:var(--brand-soft)}
-/* Cali (taco Tuesdays). Reuses .panel / .arena-tbl / .arena-win / .hbtn. */
-.cali-row{display:grid;grid-template-columns:minmax(120px,1.6fr) repeat(4,minmax(58px,.8fr)) 30px;gap:7px;align-items:center;margin-bottom:7px}
-.cali-row.cali-head{margin-bottom:5px;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);font-weight:600}
-.cali-row input{width:100%;min-width:0}
-.cali-row input[type=number]{font-family:var(--mono);text-align:center}
-.cali-drop{min-height:26px;padding:0 7px;border-radius:6px;border:1px solid transparent;background:none;color:var(--faint);font-size:15px;line-height:1}
-.cali-drop:hover{color:var(--ink);border-color:var(--line)}
-.cali-actions{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin:11px 0 9px}
-.cali-actions .cali-note{flex:1;min-width:150px}
-.cali-actions label{display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--muted)}
-.cali-total{display:flex;flex-wrap:wrap;gap:14px;padding:9px 11px;margin-bottom:10px;border-radius:9px;
-  background:var(--panel2);border:1px solid var(--line);font-family:var(--mono);font-size:12.5px}
-.cali-total b{font-size:15px}
-.cali-total .free{color:var(--brand)}
-.cali-wins{margin:14px 0 4px}
-.cali-privacy{font-size:12px;margin:10px 0 0}
-@media (max-width:640px){
-  .cali-row{grid-template-columns:1fr 1fr 1fr;grid-auto-rows:min-content}
-  .cali-row.cali-head{display:none}
-}
 .arena-tbl tr.you td{font-weight:650}
 .arena-rank{font-weight:700;color:var(--faint);width:2.5rem}
 .arena-rank.r1{color:#d9a300}.arena-rank.r2{color:#98a2b3}.arena-rank.r3{color:#c27a3e}
@@ -1562,6 +1542,153 @@ html.hq-calm .sv-hot-item,html.hq-calm .sv-hot-item:hover{transition:none;transf
   .sv-hot-item,.sv-hot-item:hover{transition:none;transform:none}
 }
 
+/* =================== Cali Tuesdays (retro taqueria) =================== */
+:root{
+  --cd-wall:#0f4a57; --cd-counter:#f6e3c4; --cd-tray:#fff3dc; --cd-paper:#fffaf0; --cd-cream:#fff3dc;
+  --cd-ink:#2a1a10; --cd-ink-soft:#6b4a32; --cd-wood:#7a4a26; --cd-wood-hi:#a8693a; --cd-wood-dk:#3a2414;
+  --cd-neon:#ff4f8b; --cd-on-neon:#ffffff; --cd-sun:#ffd23f; --cd-cyan:#3fd0c8; --cd-checkout:#e8433a;
+  --cd-cloth-a:#e8433a; --cd-cloth-b:#fff3e6; --cd-stamp:#d62a2a; --cd-good:#1f8a4a; --cd-bad:#c0261e;
+  --cd-arcade:#120a24; --cd-arcade-2:#2a1d52; --cd-arcade-edge:#ff4f8b; --cd-arcade-ink:#f2ecff;
+  --cd-gold:#ffd23f; --cd-silver:#cfd6e6; --cd-bronze:#e09a5a; --cd-focus:#1f5fd0; --cd-shadow:rgba(0,0,0,.32);
+}
+@media (prefers-color-scheme: dark){
+  :root{ --cd-counter:#e9d2ae; --cd-tray:#f6e6c8; --cd-paper:#f6eedc; --cd-cloth-b:#f0e2cf; --cd-shadow:rgba(0,0,0,.5); }
+}
+:root[data-theme="mono"]{
+  --cd-wall:#3a3a40; --cd-counter:#e8e6e1; --cd-tray:#f5f4f0; --cd-cream:#f5f4f0; --cd-wood:#5c5853; --cd-wood-hi:#8a8580; --cd-wood-dk:#2a2826;
+  --cd-neon:#2a2826; --cd-sun:#e4e2dc; --cd-cyan:#bdb8b1; --cd-checkout:#2a2826; --cd-cloth-a:#8a8580; --cd-cloth-b:#f5f4f0; --cd-stamp:#2a2826;
+  --cd-arcade:#18181b; --cd-arcade-2:#3a3a40; --cd-arcade-edge:#a1a1aa;
+}
+:root[data-theme="contrast"]{
+  --cd-counter:#ffffff; --cd-tray:#ffffff; --cd-paper:#ffffff; --cd-cream:#ffffff; --cd-ink:#000000; --cd-ink-soft:#1a1a1a;
+  --cd-wood-dk:#000000; --cd-cloth-b:#ffffff; --cd-focus:#0033cc; --cd-good:#006400; --cd-bad:#b00000;
+  --cd-arcade:#000000; --cd-arcade-ink:#ffffff; --cd-arcade-edge:#ffffff;
+}
+@media (prefers-color-scheme: dark){
+  :root[data-theme="contrast"]{ --cd-focus:#66aaff; --cd-arcade-edge:#ffffff; }
+}
+.cd{display:flex;flex-direction:column;gap:22px;padding-bottom:12px;container:cd / inline-size}
+.cd button,.cd input{font:inherit}
+.cd-h{margin:0;font:900 .95em var(--mono);letter-spacing:.14em;text-transform:uppercase}
+.cd-diner{border:4px solid var(--cd-wood-dk);border-radius:8px;overflow:hidden;background:var(--cd-wall);box-shadow:0 5px 0 var(--cd-shadow)}
+.cd-banner-wrap{line-height:0;overflow:hidden}
+#cdBanner{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
+.cd-counter-bar{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;padding:8px 16px;background:var(--cd-wood);color:var(--cd-sun);border-top:4px solid var(--cd-wood-hi);border-bottom:3px solid var(--cd-wood-dk)}
+.cd-hint{margin:0;flex:1 1 260px;font:700 .8em var(--mono);color:var(--cd-cream);text-transform:uppercase;letter-spacing:.04em}
+.cd-mute{background:var(--cd-wood-dk);border:2px solid var(--cd-wood-hi);border-radius:6px;padding:1px 8px;cursor:pointer;line-height:1.5}
+.cd-counter{display:flex;flex-direction:column;gap:14px;padding:14px 16px 18px;background:var(--cd-counter)}
+.cd-shelf{display:flex;flex-direction:column;gap:8px}
+.cd-shelf-l{align-self:flex-start;font:900 .72em var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--cd-sun);background:var(--cd-wood-dk);padding:2px 9px;border-radius:3px}
+.cd-items{display:flex;flex-wrap:wrap;gap:12px}
+.cd-food{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;width:98px;padding:6px 4px 8px;color:var(--cd-ink);
+  background:var(--cd-tray);border:3px solid var(--cd-wood-dk);border-radius:9px;box-shadow:0 4px 0 var(--cd-wood-dk);cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none}
+.cd-food:hover{transform:translateY(-2px);box-shadow:0 6px 0 var(--cd-wood-dk)}
+.cd-food.picked{background:var(--cd-sun);box-shadow:0 0 0 3px var(--cd-neon),0 4px 0 var(--cd-wood-dk)}
+.cd-food:focus-visible,.cd-surface:focus-visible,.cd-chip:focus-visible,.cd-unseat:focus-visible,.cd-btn:focus-visible,.cd-checkout:focus-visible,.cd-win:focus-visible,.cd-mute:focus-visible{outline:3px solid var(--cd-focus);outline-offset:3px}
+.cd-tray img{display:block;width:64px;height:64px;image-rendering:pixelated;pointer-events:none}
+.cd-food-l{font:800 .7em/1.15 var(--mono);text-transform:uppercase;letter-spacing:.03em;text-align:center}
+.cd-tag{position:absolute;top:-9px;right:-7px;font:900 .58em var(--mono);letter-spacing:.06em;padding:1px 5px;border-radius:4px;border:2px solid var(--cd-wood-dk);background:var(--cd-cyan);color:var(--cd-ink)}
+.cd-tag.wild{background:var(--cd-neon);color:var(--cd-on-neon)}
+.cd-floor{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px;align-items:start}
+@container cd (max-width:860px){ .cd-floor{grid-template-columns:minmax(0,1fr)} }
+.cd-table-wrap{border:4px solid var(--cd-wood-dk);border-radius:8px;padding:14px 16px 16px;box-shadow:0 5px 0 var(--cd-shadow);
+  background-color:var(--cd-cloth-b);background-image:conic-gradient(var(--cd-cloth-a) 25%,transparent 0 50%,var(--cd-cloth-a) 0 75%,transparent 0);background-size:44px 44px}
+.cd-h-table{display:inline-block;color:var(--cd-sun);background:var(--cd-wood-dk);padding:3px 10px;border-radius:4px;margin-bottom:12px}
+.cd-table{display:grid;grid-template-columns:repeat(auto-fill,minmax(214px,1fr));gap:16px}
+.cd-empty{grid-column:1 / -1;margin:0;padding:18px;text-align:center;font:800 .9em var(--mono);text-transform:uppercase;background:var(--cd-cream);border:3px dashed var(--cd-wood);border-radius:8px;color:var(--cd-ink)}
+.cd-plate{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 10px 8px;background:var(--cd-cream);color:var(--cd-ink);
+  border:3px solid var(--cd-wood-dk);border-radius:10px;box-shadow:0 4px 0 var(--cd-wood-dk);transition:transform .1s steps(2)}
+.cd-plate.over{outline:4px dashed var(--cd-neon);outline-offset:3px;transform:scale(1.03)}
+body.cd-picking .cd-plate{outline:3px dashed var(--cd-cyan);outline-offset:2px}
+.cd-card{display:flex;align-items:center;gap:6px;width:100%;min-width:0}
+.cd-name{flex:1;min-width:0;font:900 .88em var(--mono);text-transform:uppercase;letter-spacing:.05em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cd-handle{font:900 .58em var(--mono);letter-spacing:.06em;background:var(--cd-cyan);color:var(--cd-ink);border-radius:3px;padding:1px 4px}
+.cd-crown{width:24px;height:14px;image-rendering:pixelated}
+.cd-unseat{flex:none;width:24px;height:24px;padding:0;border:2px solid var(--cd-wood-dk);border-radius:6px;background:var(--cd-tray);color:var(--cd-ink);cursor:pointer;line-height:1;font-weight:900}
+.cd-dish{position:relative;width:192px;height:118px}
+.cd-surface{position:absolute;left:0;bottom:0;width:192px;height:72px;padding:0;border:0;background:none;cursor:pointer;line-height:0}
+.cd-plate-img{display:block;width:192px;height:72px;image-rendering:pixelated;pointer-events:none}
+.cd-on{position:absolute;left:14px;right:14px;bottom:22px;display:flex;flex-wrap:wrap-reverse;justify-content:center;align-items:flex-end;pointer-events:none}
+.cd-chip{position:relative;pointer-events:auto;width:42px;height:42px;padding:0;margin:0 -2px -12px;border:0;background:none;cursor:grab;touch-action:none;line-height:0}
+.cd-chip img{width:40px;height:40px;image-rendering:pixelated;pointer-events:none}
+.cd-chip:hover img{filter:brightness(1.08) drop-shadow(0 0 2px var(--cd-neon))}
+.cd-n{position:absolute;right:-4px;top:-5px;font:900 11px/1 var(--mono);padding:1px 3px;border-radius:7px;border:2px solid var(--cd-wood-dk);background:var(--cd-neon);color:var(--cd-on-neon)}
+.cd-sum{font:800 .72em var(--mono);text-transform:uppercase;letter-spacing:.04em;color:var(--cd-ink-soft)}
+.cd-seat{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.cd-seat input{flex:1 1 200px;min-width:0;padding:8px 10px;font:800 .92em var(--mono);color:var(--cd-ink);background:var(--cd-paper);border:3px solid var(--cd-wood-dk);border-radius:7px}
+.cd-btn{padding:8px 14px;font:900 .9em var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--cd-ink);background:var(--cd-sun);border:3px solid var(--cd-wood-dk);border-radius:7px;box-shadow:0 4px 0 var(--cd-wood-dk);cursor:pointer}
+.cd-btn:active,.cd-checkout:active:not([disabled]){transform:translateY(3px);box-shadow:0 1px 0 var(--cd-wood-dk)}
+.cd-seat-msg{margin:8px 0 0;display:inline-block;font:800 .82em var(--mono);color:var(--cd-bad);background:var(--cd-paper);padding:2px 8px;border-radius:4px}
+.cd-receipt{position:sticky;top:12px;display:flex;flex-direction:column;gap:12px}
+.cd-paper{position:relative;padding:16px 14px 18px;margin-bottom:10px;background:var(--cd-paper);color:var(--cd-ink);font:600 .8em/1.5 var(--mono);box-shadow:0 4px 0 var(--cd-shadow)}
+.cd-paper::after{content:"";position:absolute;left:0;right:0;bottom:-10px;height:10px;
+  background:linear-gradient(-45deg,transparent 7px,var(--cd-paper) 0) 0 0/14px 10px,linear-gradient(45deg,transparent 7px,var(--cd-paper) 0) 0 0/14px 10px}
+.cd-rl{display:flex;justify-content:space-between;gap:10px;min-width:0}
+.cd-rl > span:first-child{min-width:0;overflow-wrap:anywhere}
+.cd-rl.c{justify-content:center;text-align:center}
+.cd-rl.big{font-weight:900;font-size:1.18em;letter-spacing:.14em}
+.cd-rl.rule{border-top:2px dashed var(--cd-ink-soft);margin:7px 0}
+.cd-rl.who{font-weight:900;margin-top:3px}
+.cd-rl.dim{color:var(--cd-ink-soft)}
+.cd-rl.free .cd-rv{color:var(--cd-good);font-weight:900}
+.cd-rv{font-weight:800;white-space:nowrap}
+.cd-paper.paid::before{content:"PAID";position:absolute;left:50%;top:44%;z-index:1;transform:translate(-50%,-50%) rotate(-14deg);font:900 2.6em var(--mono);letter-spacing:.1em;
+  color:var(--cd-stamp);border:5px solid var(--cd-stamp);border-radius:8px;padding:0 14px;opacity:.82;animation:cdStamp .3s steps(3)}
+.cd-opts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font:800 .8em var(--mono);text-transform:uppercase}
+.cd-opts input{padding:6px 8px;border:3px solid var(--cd-wood-dk);border-radius:6px;background:var(--cd-paper);color:var(--cd-ink);font:700 .95em var(--mono);min-width:0}
+.cd-opts input[type="text"],#cdNote{flex:1 1 150px}
+.cd-checkout{padding:14px 12px;font:900 1.25em var(--mono);letter-spacing:.16em;color:var(--cd-on-neon);background:var(--cd-checkout);border:4px solid var(--cd-wood-dk);border-radius:10px;box-shadow:0 6px 0 var(--cd-wood-dk);cursor:pointer;text-shadow:2px 2px 0 var(--cd-wood-dk)}
+.cd-checkout[disabled]{opacity:.55;cursor:default}
+.cd-msg{margin:0;font:800 .82em var(--mono);color:var(--cd-good);background:var(--cd-paper);border:2px solid var(--cd-wood-dk);border-radius:6px;padding:6px 8px}
+.cd-msg.err{color:var(--cd-bad)}
+.cd-scores{position:relative;overflow:hidden;padding:16px 18px 14px;color:var(--cd-arcade-ink);background:var(--cd-arcade);border:4px solid var(--cd-arcade-edge);border-radius:10px;
+  box-shadow:inset 0 0 0 3px var(--cd-arcade-2),0 5px 0 var(--cd-shadow);font-family:var(--mono)}
+.cd-scores::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px)}
+.cd-scores-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px}
+.cd-scores h3{margin:0;font:900 1.55em var(--mono);letter-spacing:.22em;color:var(--cd-sun);text-shadow:3px 3px 0 var(--cd-neon)}
+.cd-season{font-weight:800;letter-spacing:.08em;color:var(--cd-cyan);font-size:.85em}
+.cd-wins{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+.cd-win{padding:4px 9px;font:800 .72em var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--cd-arcade-ink);background:transparent;border:2px solid var(--cd-arcade-2);border-radius:5px;cursor:pointer}
+.cd-win.on{color:var(--cd-arcade);background:var(--cd-sun);border-color:var(--cd-sun)}
+.cd-champ{display:flex;align-items:center;gap:10px;margin:12px 0 0;padding:6px 10px;color:var(--cd-sun);font-weight:900;letter-spacing:.06em;font-size:.86em;border:2px dashed var(--cd-sun);border-radius:6px}
+.cd-champ img{image-rendering:pixelated}
+.cd-stats{margin:10px 0 0;font-size:.78em;letter-spacing:.06em;color:var(--cd-cyan);text-transform:uppercase}
+.cd-stats:empty{display:none}
+.cd-tblwrap{overflow-x:auto;margin-top:8px}
+.cd-tbl{width:100%;border-collapse:collapse;font-size:.9em;text-transform:uppercase}
+.cd-tbl th{padding:6px 8px;text-align:left;font-weight:800;letter-spacing:.1em;color:var(--cd-cyan);border-bottom:2px solid var(--cd-arcade-2);white-space:nowrap}
+.cd-tbl td{padding:7px 8px;border-bottom:1px dashed var(--cd-arcade-2);vertical-align:middle}
+.cd-tbl tr.you td{background:color-mix(in srgb,var(--cd-neon) 16%,transparent)}
+.cd-rk{font-weight:900;letter-spacing:.06em}
+.cd-rk.r1{color:var(--cd-gold)} .cd-rk.r2{color:var(--cd-silver)} .cd-rk.r3{color:var(--cd-bronze)}
+.cd-whowrap{display:flex;align-items:center;gap:8px;min-width:0}
+.cd-av{width:22px;height:22px;border-radius:4px;flex:none}
+.cd-pname{font-weight:900;letter-spacing:.05em}
+.cd-whowrap small{color:var(--cd-cyan);text-transform:none;font-size:.82em}
+.cd-num{text-align:right;font-variant-numeric:tabular-nums;font-weight:700}
+.cd-fav img{display:block;image-rendering:pixelated}
+.cd-new{color:var(--cd-neon);font-weight:900;animation:cdBlink 1s steps(2) infinite}
+.cd-note{color:var(--cd-arcade-ink);text-transform:none;opacity:.85}
+.cd-tbl.noitems .cd-it,.cd-tbl.noitems .cd-fav{display:none}
+@container cd (max-width:720px){ .cd-tbl .cd-mini{display:none} }
+.cd-fine{margin:12px 0 0;font-size:.74em;line-height:1.55;color:var(--cd-arcade-ink);opacity:.75;text-transform:none}
+.cd-ghost{position:fixed;z-index:150;width:64px;height:64px;image-rendering:pixelated;pointer-events:none;transform:rotate(-10deg) scale(1.12);filter:drop-shadow(0 6px 0 var(--cd-shadow))}
+body.cd-dragging,body.cd-dragging *{cursor:grabbing!important}
+.cd-chip.pop{animation:cdPop .3s steps(3)}
+.cd-plate.arrive{animation:cdArrive .35s steps(4)}
+.cd-plate.nudge{animation:cdNudge .3s steps(4)}
+@keyframes cdPop{0%{transform:translateY(-14px) scale(1.25)}100%{transform:none}}
+@keyframes cdArrive{0%{transform:translateY(12px);opacity:0}100%{transform:none;opacity:1}}
+@keyframes cdNudge{25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
+@keyframes cdStamp{0%{transform:translate(-50%,-50%) rotate(-14deg) scale(1.8);opacity:0}100%{transform:translate(-50%,-50%) rotate(-14deg) scale(1);opacity:.82}}
+@keyframes cdBlink{50%{opacity:0}}
+html.hq-calm .cd-chip.pop,html.hq-calm .cd-plate.arrive,html.hq-calm .cd-plate.nudge,html.hq-calm .cd-paper.paid::before,html.hq-calm .cd-new{animation:none}
+html.hq-calm .cd-food:hover,html.hq-calm .cd-plate.over{transform:none}
+@media (prefers-reduced-motion: reduce){
+  .cd-chip.pop,.cd-plate.arrive,.cd-plate.nudge,.cd-paper.paid::before,.cd-new{animation:none}
+  .cd-food:hover,.cd-plate.over{transform:none}
+}
+
 /* =================== themes =================== */
 :root[data-theme="midnight"]{
   --bg:#080a14; --bg2:#0b0e1b; --panel:#11152a; --panel2:#171c36;
@@ -1717,6 +1844,7 @@ html.hq-calm #confetti{display:none!important}
 <symbol id="i-castle" viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M4 21V9l2 1V7l2 1V5h2v3l2-1v3l2-1v3"/><path d="M4 9h16v12H4z" fill="none"/><path d="M20 21V9l-2 1V7l-2 1V5h-2"/><path d="M10 21v-4a2 2 0 0 1 4 0v4"/></symbol>
 <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></symbol>
 <symbol id="i-store" viewBox="0 0 24 24"><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/><path d="M22 7v3a2 2 0 0 1-2 2a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 16 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 12 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 8 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 4 12a2 2 0 0 1-2-2V7"/></symbol>
+<symbol id="i-utensils" viewBox="0 0 24 24"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/></symbol>
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
 <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
 <symbol id="i-bell-off" viewBox="0 0 24 24"><path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 .6 5"/><path d="M17 17H3s3-2 3-9a4.67 4.67 0 0 1 .3-1.7"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="m2 2 20 20"/></symbol>
@@ -1774,6 +1902,7 @@ html.hq-calm #confetti{display:none!important}
       <button class="viewtab" data-view="village" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-castle"/></svg><span class="vt-l">Village</span><span class="vt-k" aria-hidden="true">7</span></button>
       <button class="viewtab" data-view="arena" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-trophy"/></svg><span class="vt-l">Arena</span><span class="tab-badge hidden" id="arenaUnread" aria-hidden="true"></span><span class="vt-k" aria-hidden="true">6</span></button>
       <button class="viewtab" data-view="store" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-store"/></svg><span class="vt-l">Store</span><span class="vt-k" aria-hidden="true">8</span></button>
+      <button class="viewtab" data-view="cali" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-utensils"/></svg><span class="vt-l">Cali Tuesdays</span><span class="vt-k" aria-hidden="true">9</span></button>
     </div>
 
     <div class="side-trainer">
@@ -2212,6 +2341,53 @@ html.hq-calm #confetti{display:none!important}
     <div class="sv-tip hidden" id="svTip" aria-hidden="true"></div>
     <div class="sv-feed hidden" id="svFeed" role="dialog" aria-labelledby="svFeedH"></div>
   </div>
+  <div id="caliView" class="cd hidden" aria-label="Cali Tuesdays">
+    <section class="cd-diner" aria-labelledby="cdCounterH">
+      <div class="cd-banner-wrap" id="cdBannerWrap"><canvas id="cdBanner" aria-hidden="true"></canvas></div>
+      <div class="cd-counter-bar"><h3 class="cd-h" id="cdCounterH">The counter</h3><p class="cd-hint" id="cdHint"></p><button class="cd-mute" id="cdMute" type="button" aria-pressed="true" aria-label="Diner sounds">&#x1F50A;</button></div>
+      <div class="cd-counter" id="cdCounter"></div>
+    </section>
+    <div class="cd-floor">
+      <section class="cd-table-wrap" aria-labelledby="cdTableH">
+        <h3 class="cd-h cd-h-table" id="cdTableH">The table</h3>
+        <div class="cd-table" id="cdTable"></div>
+        <form class="cd-seat" id="cdSeatForm" autocomplete="off" novalidate>
+          <label class="sr-only" for="cdSeatName">Seat someone: a name, or @handle for an Arena account</label>
+          <input id="cdSeatName" type="text" maxlength="41" placeholder="Name, or @handle" spellcheck="false">
+          <button class="cd-btn" type="submit">+ Seat</button>
+        </form>
+        <p class="cd-seat-msg hidden" id="cdSeatMsg" role="status"></p>
+      </section>
+      <aside class="cd-receipt" aria-labelledby="cdReceiptH">
+        <h3 class="sr-only" id="cdReceiptH">Receipt</h3>
+        <div class="cd-paper" id="cdReceipt"></div>
+        <div class="cd-opts"><label for="cdDate">Date</label><input type="date" id="cdDate"><input id="cdNote" type="text" maxlength="80" placeholder="Note (optional)" aria-label="Note" autocomplete="off"></div>
+        <button class="cd-checkout" id="cdCheckout" type="button">CHECKOUT</button>
+        <p class="cd-msg hidden" id="cdMsg"></p>
+      </aside>
+    </div>
+    <section class="cd-scores" aria-labelledby="cdScoresH">
+      <div class="cd-scores-head">
+        <h3 id="cdScoresH">HI-SCORES</h3><span class="cd-season" id="cdSeason"></span>
+        <div class="cd-wins" id="cdWins" role="group" aria-label="Board range">
+          <button class="cd-win on" data-window="season" type="button" aria-pressed="true">Season</button>
+          <button class="cd-win" data-window="30d" type="button" aria-pressed="false">30 days</button>
+          <button class="cd-win" data-window="7d" type="button" aria-pressed="false">7 days</button>
+          <button class="cd-win" data-window="all" type="button" aria-pressed="false">All time</button>
+        </div>
+      </div>
+      <div class="cd-champ hidden" id="cdChamp"></div>
+      <p class="cd-stats" id="cdStats"></p>
+      <div class="cd-tblwrap">
+        <table class="cd-tbl" id="cdTbl">
+          <thead><tr><th>Rank</th><th>Name</th><th class="cd-num" title="Tuesdays attended">Tues</th><th class="cd-num" title="Total tacos">TT</th><th class="cd-num" title="Tacos per Tuesday">TPP</th><th class="cd-num cd-mini">Mild</th><th class="cd-num cd-mini">Wild</th><th class="cd-num cd-mini">Hard</th><th class="cd-num cd-mini">Soft</th><th class="cd-num cd-it" title="Other dishes">Dishes</th><th class="cd-fav">Fav</th></tr></thead>
+          <tbody id="cdRows"><tr><td colspan="11" class="cd-note">Loading&hellip;</td></tr></tbody>
+        </table>
+      </div>
+      <p class="cd-fine">Buy 1 get 1 is pooled across the whole table, so two people wanting 3 tacos each pay for 3, not 4. Seat someone as <b>@handle</b> to tie them to their Arena account, or by name if they haven&rsquo;t paired. The board ranks on Tuesdays turned up for; tacos only break ties. Seasons are calendar months (UTC) and start fresh on the 1st. The Arena sees names and what was eaten, nothing from your sessions.</p>
+    </section>
+    <img class="cd-ghost hidden" id="cdGhost" alt="" aria-hidden="true">
+  </div>
   <div id="arenaView" class="arena hidden" aria-label="Arena leaderboard">
     <div class="arena-head">
       <h2 class="arena-title"><svg class="i" aria-hidden="true"><use href="#i-trophy"/></svg>Arena</h2>
@@ -2267,49 +2443,6 @@ html.hq-calm #confetti{display:none!important}
           <tbody id="arenaRows"><tr><td colspan="10" class="muted"><span class="loading-row"><span class="orb" data-orb="searching" aria-hidden="true"></span>Loading…</span></td></tr></tbody>
         </table>
       </div>
-    </section>
-
-    <section class="panel hidden" id="caliWrap" aria-label="California Burrito taco Tuesdays" tabindex="-1">
-      <h3 class="section-h"><span aria-hidden="true">🌮</span>Cali Tuesdays <span class="muted" id="caliSub"></span></h3>
-
-      <div class="cali-row cali-head">
-        <span>Who</span><span>Mild hard</span><span>Mild soft</span><span>Wild hard</span><span>Wild soft</span><span></span>
-      </div>
-      <div id="caliDiners"></div>
-
-      <div class="cali-actions">
-        <button class="hbtn" id="caliAdd" type="button">+ Add someone</button>
-        <label for="caliDate">Date <input id="caliDate" type="date"></label>
-        <input id="caliNote" class="cali-note" placeholder="Note (optional)" maxlength="80" autocomplete="off">
-      </div>
-
-      <div class="cali-total" id="caliTotal" role="status" aria-live="polite"></div>
-      <button class="hbtn on" id="caliLog" type="button">Log the order</button>
-      <div class="arena-msg hidden" id="caliMsg" role="status"></div>
-
-      <div class="arena-wins cali-wins" id="caliWins" role="group" aria-label="Leaderboard range">
-        <button class="arena-win on" data-window="season" type="button">Season</button>
-        <button class="arena-win" data-window="30d" type="button">30 days</button>
-        <button class="arena-win" data-window="7d" type="button">7 days</button>
-        <button class="arena-win" data-window="all" type="button">All time</button>
-      </div>
-
-      <div style="overflow-x:auto">
-        <table class="arena-tbl">
-          <thead><tr>
-            <th>#</th><th>Founder</th><th title="Dinners attended">Tuesdays</th>
-            <th title="Total tacos">TT</th><th title="Tacos per Tuesday">TPP</th>
-            <th>Mild</th><th>Wild</th><th>Hard</th><th>Soft</th>
-          </tr></thead>
-          <tbody id="caliRows"><tr><td colspan="9" class="muted"><span class="loading-row"><span class="orb" data-orb="searching" aria-hidden="true"></span>Loading…</span></td></tr></tbody>
-        </table>
-      </div>
-
-      <p class="muted cali-privacy">
-        Buy 1 get 1 is pooled across the whole table, so two people wanting 3 tacos each pay for 3, not 4.
-        Type <b>@handle</b> to tie someone to their Arena account, or just a name for anyone who hasn’t paired.
-        The board ranks on Tuesdays turned up for; tacos only break ties.
-      </p>
     </section>
 
     <section class="panel hidden" id="arenaLobbyWrap" aria-labelledby="arenaRoomH">
@@ -2510,7 +2643,7 @@ html.hq-calm #confetti{display:none!important}
     <div class="modal-b"><div class="md-body">
       <h2>Navigation</h2>
       <ul>
-        <li><span class="kbd">1</span>–<span class="kbd">8</span> switch view (Live · Analytics · Pokédex · Gym · Quests · Arena · Village · Store)</li>
+        <li><span class="kbd">1</span>–<span class="kbd">9</span> switch view (Live · Analytics · Pokédex · Gym · Quests · Arena · Village · Store · Cali Tuesdays)</li>
         <li><span class="kbd">/</span> focus search · <span class="kbd">R</span> refresh now</li>
         <li><span class="kbd">⌘</span>/<span class="kbd">Ctrl</span>+<span class="kbd">K</span> command palette (jump to any session, run any action)</li>
         <li><span class="kbd">?</span> this help · <span class="kbd">Esc</span> close any overlay</li>
@@ -5688,6 +5821,851 @@ function svLeave(){
   if(SV.talk.timer){ svSkip(); }
 }
 
+/* ===== Cali Tuesdays diner: original pixel food (16x16) for the counter and the plates ===== */
+// Taco shells share one shape; the filling (mild/wild) and the shell (hard/soft) swap palettes.
+var CD_TACO_ROWS_MILD = [
+  "................",
+  "................",
+  "................",
+  "....gG.Gg.gG....",
+  "..gGgyGgwgGyGg..",
+  ".gGyrGgyGgrGygg.",
+  ".hhhhhhhhhhhhhs.",
+  ".hSSSSSSSSSSSSs.",
+  ".SSSdSSSSSdSSSs.",
+  "..SSSSSSSdSSSs..",
+  "..sSSdSSSSSSss..",
+  "...sSSSSSdSss...",
+  "....ssSSSSss....",
+  "......dddd......",
+  "................",
+  "................"];
+var CD_TACO_ROWS_WILD = [
+  "...........F....",
+  "..........FfF...",
+  "..........fef...",
+  "....mR.Rm..f....",
+  "..RmRoRmRgRoR...",
+  ".RmoRmRgRmRomRR.",
+  ".hhhhhhhhhhhhhs.",
+  ".hSSSSSSSSSSSSs.",
+  ".SSSdSSSSSdSSSs.",
+  "..SSSSSSSdSSSs..",
+  "..sSSdSSSSSSss..",
+  "...sSSSSSdSss...",
+  "....ssSSSSss....",
+  "......dddd......",
+  "................",
+  "................"];
+var CD_HARD = {S:"#f3c34e", s:"#d99a2b", h:"#ffe28a", d:"#b8761a"};
+var CD_SOFT = {S:"#f6e3b4", s:"#dcbc85", h:"#fff3d6", d:"#b9874e"};
+var CD_MILD = {g:"#5aa83c", G:"#8fd45f", y:"#ffd34d", w:"#fff6e0", r:"#e5533d"};
+var CD_WILD = {R:"#d9381e", m:"#7a3a1e", o:"#f08a2a", g:"#5aa83c", F:"#ffd23f", f:"#ff7a1c", e:"#e8301a"};
+function cdMix(a, b){ var o={}, k; for(k in a) o[k]=a[k]; for(k in b) o[k]=b[k]; return o; }
+PX_ART.cd_mh={k:"#5a3a10", p:cdMix(CD_HARD, CD_MILD), r:CD_TACO_ROWS_MILD};
+PX_ART.cd_ms={k:"#5a3a10", p:cdMix(CD_SOFT, CD_MILD), r:CD_TACO_ROWS_MILD};
+PX_ART.cd_wh={k:"#5a2408", n:"Ffe", p:cdMix(CD_HARD, CD_WILD), r:CD_TACO_ROWS_WILD};
+PX_ART.cd_ws={k:"#5a2408", n:"Ffe", p:cdMix(CD_SOFT, CD_WILD), r:CD_TACO_ROWS_WILD};
+
+// A capsule from (x0,y0) to (x1,y1) of radius r; colorAt(t along, side across, x, y) -> a letter.
+function cdCapsule(rows, x0, y0, x1, y1, r, colorAt){
+  var dx=x1-x0, dy=y1-y0, L2=dx*dx+dy*dy, L=Math.sqrt(L2);
+  for(var y=0;y<rows.length;y++){
+    var row=rows[y].split("");
+    for(var x=0;x<row.length;x++){
+      var px=x+0.5, py=y+0.5, t=Math.max(0, Math.min(1, ((px-x0)*dx+(py-y0)*dy)/L2));
+      var cx=x0+t*dx, cy=y0+t*dy, ex=px-cx, ey=py-cy;
+      if(ex*ex+ey*ey>r*r) continue;
+      var side=(ex*(-dy)+ey*dx)/L;
+      var ch=colorAt(t, side, x, y); if(ch) row[x]=ch;
+    }
+    rows[y]=row.join("");
+  }
+  return rows;
+}
+function cdBlank(w, h){ var a=[]; for(var i=0;i<h;i++) a.push(new Array(w+1).join(".")); return a; }
+PX_ART.cd_burrito={k:"#4a2e12", p:{t:"#f2d7a2", T:"#fff0cf", d:"#cfa66a", c:"#b98a4e", f:"#c9ced8", F:"#f2f4f8", e:"#8f96a3",
+    w:"#fbfaf2", b:"#5a3420", r:"#d9452e", g:"#5aa83c", o:"#d8b27a"},
+  r:cdCapsule(cdBlank(16,16), 3.2, 12.8, 12.6, 3.4, 3.4, function(t, side, x, y){
+    if(t>0.86){ var q=(x*3+y*5)%4; return Math.abs(side)>2.5 ? "o" : ["w","b","r","g"][q]; }
+    if(t<0.48){ if((x+2*y)%5===0) return "e"; return side<-1.1 ? "F" : side>1.6 ? "e" : "f"; }
+    if((x*7+y*3)%11===0) return "c";
+    return side<-1.2 ? "T" : side>1.7 ? "d" : "t";
+  })};
+PX_ART.cd_churros={k:"#4a2408", n:"x", p:{a:"#d9902e", A:"#f4b45a", d:"#a8611a", x:"#fffaf0", c:"#5a2e14", C:"#7d4220", m:"#e8dcc8", M:"#ffffff"},
+  r:(function(){
+    var rows=cdBlank(16,16);
+    function stick(x0,y0,x1,y1){ cdCapsule(rows, x0,y0,x1,y1, 1.6, function(t, side, x, y){
+      if((Math.round(t*14))%2===0) return side>0.4 ? "d" : "a";
+      return side<-0.3 ? "A" : "a"; }); }
+    stick(3.2,12.5,8.2,2.2); stick(6.8,12.5,12.6,3.0);
+    // a cup of chocolate to dip in
+    for(var y=10;y<15;y++){ var w=y<14 ? 5 : 3, x0=y<14 ? 9 : 10; var r=rows[y].split(""); for(var x=x0;x<x0+w;x++) r[x]= y===10 ? (x%2 ? "C" : "c") : (y===11 ? "M" : "m"); rows[y]=r.join(""); }
+    var s=rows[4].split(""); s[3]="x"; rows[4]=s.join(""); s=rows[7].split(""); s[12]="x"; rows[7]=s.join(""); s=rows[2].split(""); s[13]="x"; rows[2]=s.join("");
+    return rows; })()};
+
+PX_ART.cd_ricebowl={k:"#4a2410", p:{w:"#fbfaf2", W:"#ffffff", b:"#3a2418", B:"#5a3a26", c:"#ffd34d", r:"#e5533d", g:"#7bc25a", G:"#5aa83c",
+    H:"#f2f2ee", P:"#e2e2dc", p:"#c8c8c0", q:"#a8a8a0", t:"#3f8fa6"}, r:[
+  "................",
+  "................",
+  "................",
+  "....wwwbbbcc....",
+  "..rrwWwwbBbccc..",
+  ".rrRrwwWwbbcccg.",
+  ".rrrwwwwbbbccgG.",
+  ".HHHHHHHHHHHHHH.",
+  ".PtPPtPPtPPtPPq.",
+  "..PPPPPPPPPPPq..",
+  "..pPPPPPPPPPqq..",
+  "...pPPPPPPPqq...",
+  "....ppppppqq....",
+  ".....qqqqqq.....",
+  "................",
+  "................"]};
+PX_ART.cd_ricebowl.p.R="#ff7a5c";
+PX_ART.cd_saladbowl={k:"#3a2410", p:{g:"#5aa83c", G:"#8fd45f", L:"#c4ec8a", r:"#e5533d", c:"#ffd34d", y:"#ffe88a", w:"#fff6e0",
+    H:"#d9a066", P:"#b07a46", p:"#8a5a30", q:"#6a4222", l:"#c98a4e"}, r:[
+  "................",
+  "................",
+  "....G.gL.G......",
+  "...gGLgrGgLg....",
+  "..gLgGcgLrgGgL..",
+  ".gGrgLgGyGgcLGg.",
+  ".gLgGgwLgGrgGgg.",
+  ".HHHHHHHHHHHHHH.",
+  ".PPlPPPPlPPPPlq.",
+  "..PPPPPPPPPPPq..",
+  "..pPPPlPPPPPqq..",
+  "...pPPPPPPPqq...",
+  "....ppppppqq....",
+  ".....qqqqqq.....",
+  "................",
+  "................"]};
+PX_ART.cd_quesadilla={k:"#4a2a08", p:{T:"#f6d48a", t:"#e8b866", d:"#b8762a", y:"#ffd23f", Y:"#ffe88a", o:"#f0a020"}, r:[
+  "................",
+  "................",
+  "........TT......",
+  ".......TtTT.....",
+  "......TtdtTT....",
+  ".....TtttdtTT...",
+  "....TdttttdtTT..",
+  "...TttdtttttdTo.",
+  "..TTttttdtttttd.",
+  ".TtdtttttdtttTd.",
+  ".yyYyyyYyyyyYyo.",
+  ".TtttdtttttdtTd.",
+  "..TTttttdtttTd..",
+  "....TTTttttdd...",
+  "........ddd.....",
+  "................"]};
+PX_ART.cd_nachos={k:"#4a2a08", p:{c:"#f3c34e", C:"#ffe28a", d:"#d0962a", y:"#ffb020", Y:"#ffd25a", j:"#4f9a3a", J:"#9ad06a", r:"#e5533d", P:"#4a4a52", p:"#2f2f36"}, r:[
+  "................",
+  "................",
+  ".......C........",
+  "......CcC..C....",
+  "....C.ccdCCcC...",
+  "...CcYyccdcccC..",
+  "..CcyJjYcyrccdC.",
+  ".CcccYycJjcyYcd.",
+  ".cdcCccyycrccdd.",
+  ".PPPPPPPPPPPPPP.",
+  "..pPPPPPPPPPPp..",
+  "...pppppppppp...",
+  "................",
+  "................",
+  "................",
+  "................"]};
+PX_ART.cd_tostada={k:"#4a2a08", p:{T:"#f3c34e", t:"#d99a2b", h:"#ffe28a", b:"#7a4a2a", g:"#5aa83c", G:"#8fd45f", r:"#e5533d", y:"#ffd34d", w:"#fff6e0"}, r:[
+  "................",
+  "................",
+  "................",
+  "................",
+  "....hhhhhhhh....",
+  "..hTbbgGrgbbTh..",
+  ".hTbgGywwGrbbTt.",
+  ".TbrgGyGwgGybbt.",
+  ".TtbbgGrgGybbtt.",
+  "..ttTbbbbbbbtt..",
+  "....tttttttt....",
+  "................",
+  "................",
+  "................",
+  "................",
+  "................"]};
+PX_ART.cd_chips={k:"#3a1a0a", p:{c:"#f3c34e", C:"#ffe28a", d:"#d0962a", R:"#d9381e", W:"#fff6f0", s:"#e5533d", S:"#ff8a6a", z:"#b8b8c0", Z:"#e8e8ee"}, r:[
+  "................",
+  "................",
+  "................",
+  "....C..C........",
+  "...CcCcCcC......",
+  "..CccdCcdcC.....",
+  "..cdcCcccdc.....",
+  ".RWRWRWRWRWR....",
+  ".WRWRWRWRWRW.ZZZ",
+  "..RWRWRWRWR.zSsz",
+  "..WRWRWRWRW.zssz",
+  "...RWRWRWR..zzzz",
+  "................",
+  "................",
+  "................",
+  "................"]};
+PX_ART.cd_guac={k:"#1f2a14", p:{g:"#6cb04a", G:"#9ad06a", d:"#4f8a36", y:"#f3c34e", Y:"#ffe28a", r:"#e5533d", s:"#6e6e74", S:"#8e8e96", q:"#4e4e54"}, r:[
+  "................",
+  "................",
+  ".........Y......",
+  "........YyY.....",
+  "........yYy.....",
+  "....GGgGyGgg....",
+  "..gGgrgGgdgGgg..",
+  ".gGgdgGgrgGgdgg.",
+  ".SSSSSSSSSSSSSS.",
+  ".SsSsSSsSSsSSsq.",
+  "..sSSSSSSSSSSq..",
+  "..qsSSSsSSSsqq..",
+  "...qssssssssq...",
+  ".....qqqqqq.....",
+  "................",
+  "................"]};
+PX_ART.cd_soda={k:"#3a0a0a", p:{R:"#e23b3b", r:"#b52626", W:"#ffffff", w:"#e8e8ee", L:"#f4f4f8", l:"#cfcfd8", s:"#ffffff", S:"#e23b3b"}, r:[
+  "..........S.....",
+  ".........sS.....",
+  "........Ss......",
+  "........sS......",
+  "...LLLLLSLLLL...",
+  "...lllllllll....",
+  "....RRRRRRRr....",
+  "....RWWWWWRr....",
+  "....RRRRRRRr....",
+  ".....RWWWRr.....",
+  ".....RRRRRr.....",
+  ".....RRRRRr.....",
+  "......RRRr......",
+  "......rrrr......",
+  "................",
+  "................"]};
+PX_ART.cd_icedtea={k:"#3a2408", n:"", p:{g:"#cfeaf2", G:"#ffffff", t:"#c8782a", T:"#e8a04a", i:"#f2f8fb", y:"#ffe14a", Y:"#fff3a0", s:"#2f9a6a"}, r:[
+  "..........s.....",
+  ".........s......",
+  "...yYy..s.......",
+  "..yYyyg.s.......",
+  "...yYgGGsGGGg...",
+  "....gGtTsTttg...",
+  "....gtiitTitg...",
+  "....gTiitiiTg...",
+  "....gtTtTtttg...",
+  "....gTttiitTg...",
+  "....gtTtiiTtg...",
+  ".....gtTtttg....",
+  ".....gGGGGGg....",
+  "......gggg......",
+  "................",
+  "................"]};
+// The plate each friend eats from (32x12), and a crown for the season's champion.
+PX_ART.cd_plate={k:"#6a6a78", p:{w:"#ffffff", W:"#f4f4f8", e:"#dcdce6", E:"#c4c4d2", b:"#e9426b"}, r:[
+  "........eeeeeeeeeeeeeeee........",
+  ".....eeeWWWWWWWWWWWWWWWWeee.....",
+  "...eeWWWwwwwwwwwwwwwwwwwWWWee...",
+  "..eWWwwwwwwwwwwwwwwwwwwwwwwWWe..",
+  ".eWwwwwwwwwwwwwwwwwwwwwwwwwwwWe.",
+  ".eWwwwwwwwwwwwwwwwwwwwwwwwwwwWE.",
+  ".eWWwwwwwwwwwwwwwwwwwwwwwwwwWWE.",
+  "..eWWWwwwwwwwwwwwwwwwwwwwwWWWE..",
+  "...eeWWWWwwwwwwwwwwwwwwWWWWEE...",
+  ".....bbbWWWWWWWWWWWWWWWWbbb.....",
+  "........EEEEEEEEEEEEEEEE........",
+  "................................"]};
+PX_ART.cd_crown={k:"#6b3d06", p:{y:"#ffd23f", Y:"#fff3a8", o:"#e8a020", r:"#e23b6b", b:"#3fa8e0"}, r:[
+  "............",
+  ".y...y...y..",
+  ".yY.yYy.yY..",
+  ".yyyyyyyyy..",
+  ".yryybyyry..",
+  ".ooooooooo..",
+  "............"]};
+PX_ART.cd_chili={k:"#4a0a0a", p:{r:"#e02a1a", R:"#ff6a4a", g:"#4f9a3a"}, r:[
+  "..........",
+  "......gg..",
+  ".....gg...",
+  "....rRr...",
+  "...rRrr...",
+  "..rRrr....",
+  ".rrr......",
+  ".r........",
+  ".........."]};
+
+/* ===== Cali Tuesdays: a retro taqueria. Seat friends, drag food from the counter onto their
+   plates, check out, watch the hi-score board. The page sends only who ate what; TT, the
+   buy-1-get-1 price and TPP are the Arena server's (backend/app/tacos.py), and caliPaid()
+   only powers the running receipt. ===== */
+// Wire key, name, sprite, shelf. The four tacos are TacoCounts; everything else is an item.
+var CD_FOODS = [
+  {key:"mildHard", taco:true, name:"Mild Hard Taco", sprite:"cd_mh", shelf:"tacos"},
+  {key:"mildSoft", taco:true, name:"Mild Soft Taco", sprite:"cd_ms", shelf:"tacos"},
+  {key:"wildHard", taco:true, name:"Wild Hard Taco", sprite:"cd_wh", shelf:"tacos"},
+  {key:"wildSoft", taco:true, name:"Wild Soft Taco", sprite:"cd_ws", shelf:"tacos"},
+  {key:"burrito", name:"Burrito", sprite:"cd_burrito", shelf:"mains"},
+  {key:"ricebowl", name:"Rice Bowl", sprite:"cd_ricebowl", shelf:"mains"},
+  {key:"saladbowl", name:"Salad Bowl", sprite:"cd_saladbowl", shelf:"mains"},
+  {key:"quesadilla", name:"Quesadilla", sprite:"cd_quesadilla", shelf:"mains"},
+  {key:"nachos", name:"Nachos", sprite:"cd_nachos", shelf:"mains"},
+  {key:"tostada", name:"Tostada", sprite:"cd_tostada", shelf:"mains"},
+  {key:"chips", name:"Chips & Salsa", sprite:"cd_chips", shelf:"extras"},
+  {key:"guac", name:"Guacamole", sprite:"cd_guac", shelf:"extras"},
+  {key:"churros", name:"Churros", sprite:"cd_churros", shelf:"extras"},
+  {key:"soda", name:"Soda", sprite:"cd_soda", shelf:"extras"},
+  {key:"icedtea", name:"Iced Tea", sprite:"cd_icedtea", shelf:"extras"}
+];
+var CD_SHELVES = [["tacos","Tacos · buy 1 get 1"], ["mains","Mains"], ["extras","Sides, sweets & drinks"]];
+// Mirrors backend/app/schemas.py (MAX_DINERS, MAX_PER_VARIANT, MAX_PER_ITEM, DINER_NAME_MAX).
+var CD_MAX_PEOPLE = 20, CD_MAX_TACO = 50, CD_MAX_ITEM = 20, CD_NAME_MAX = 40;
+var CD = {built:false, people:[], seq:0, picked:null, drag:null, justDragged:false, window:"season", board:null,
+  menuOk:null, menuNames:{}, busy:false, rid:null, sfx:true, prevRows:null, fresh:{}, s:3, W:400, raf:0, anim:false,
+  last:0, calmTimer:0, paid:false};
+
+function cdFood(key){ for(var i=0;i<CD_FOODS.length;i++) if(CD_FOODS[i].key===key) return CD_FOODS[i]; return null; }
+function cdName(f){ return (!f.taco && CD.menuNames[f.key]) || f.name; }
+function cdPerson(pid){ for(var i=0;i<CD.people.length;i++) if(CD.people[i].id===pid) return CD.people[i]; return null; }
+function cdCount(p, key){ var f=cdFood(key); if(!p || !f) return 0; return (f.taco ? p.tacos[key] : p.items[key])|0; }
+function cdTacos(p){ return (p.tacos.mildHard|0)+(p.tacos.mildSoft|0)+(p.tacos.wildHard|0)+(p.tacos.wildSoft|0); }
+function cdItems(p){ var n=0; for(var k in p.items) n+=p.items[k]|0; return n; }
+// "@ana" is an Arena handle, anything else a plain name: the server keeps the account when it has one.
+function cdWho(raw){
+  raw=String(raw||"").replace(/\s+/g," ").trim().slice(0, CD_NAME_MAX+1);
+  if(raw.charAt(0)==="@"){ var h=raw.slice(1); return /^[A-Za-z0-9_-]{1,64}$/.test(h) ? {handle:h, label:h, key:"@"+h.toLowerCase()} : null; }
+  raw=raw.slice(0, CD_NAME_MAX); return raw ? {name:raw, label:raw, key:"#"+raw.toLowerCase()} : null;
+}
+function cdNewPerson(who){ CD.seq++; return {id:"p"+CD.seq, who:who, tacos:{mildHard:0, mildSoft:0, wildHard:0, wildSoft:0}, items:{}}; }
+
+/* ---- the table survives a reload (a per-browser convenience) ---- */
+function cdSave(){
+  try{ localStorage.setItem("hq_cali_table", JSON.stringify({v:1, people:CD.people.map(function(p){ return {w:p.who.handle ? "@"+p.who.handle : p.who.name, t:p.tacos, i:p.items}; })})); }catch(e){}
+}
+function cdLoadSaved(){
+  var raw=null; try{ raw=JSON.parse(localStorage.getItem("hq_cali_table")||"null"); }catch(e){ raw=null; }
+  if(!raw || !Array.isArray(raw.people)) return;
+  raw.people.slice(0, CD_MAX_PEOPLE).forEach(function(s){
+    var who=cdWho(s && s.w); if(!who || CD.people.some(function(p){ return p.who.key===who.key; })) return;
+    var p=cdNewPerson(who);
+    CD_FOODS.forEach(function(f){
+      var src=f.taco ? (s.t||{}) : (s.i||{}), v=src[f.key];
+      v=(typeof v==="number" && v>0) ? Math.min(f.taco ? CD_MAX_TACO : CD_MAX_ITEM, Math.floor(v)) : 0;
+      if(f.taco) p.tacos[f.key]=v; else if(v) p.items[f.key]=v;
+    });
+    CD.people.push(p);
+  });
+}
+
+/* ---- sound: 8-bit blips (WebAudio, generated), with their own mute ---- */
+function cdSfx(name){
+  if(!CD.sfx || document.hidden) return;
+  if(!audioCtx && !(navigator.userActivation && navigator.userActivation.hasBeenActive)) return;
+  var a=svAudio(); if(!a) return;
+  try{
+    var t=a.currentTime+0.01;
+    if(name==="pick") svTone(a,"square",660,990,t,0.07,0.04);
+    else if(name==="drop"){ svTone(a,"square",523,0,t,0.05,0.045); svTone(a,"square",784,0,t+0.05,0.08,0.045); }
+    else if(name==="remove") svTone(a,"square",520,260,t,0.1,0.04);
+    else if(name==="seat"){ svTone(a,"sine",1568,0,t,0.5,0.08); svTone(a,"sine",2349,0,t,0.3,0.03); }
+    else if(name==="bonk") svTone(a,"triangle",190,95,t,0.16,0.1);
+    else if(name==="kaching"){ svTone(a,"square",1319,0,t,0.06,0.045); svTone(a,"square",1976,0,t+0.06,0.1,0.045); svNoise(a,t+0.06,0.25,0.16,6500,2.5); svTone(a,"triangle",2637,0,t+0.08,0.35,0.035); }
+    else if(name==="fanfare"){ [523,659,784,1047].forEach(function(f,i){ svTone(a,"square",f,0,t+0.4+i*0.09,0.12,0.04); }); svTone(a,"square",1319,0,t+0.4+0.36,0.4,0.045); }
+  }catch(e){}
+}
+function cdMuteSync(){
+  var b=$("cdMute"); if(!b) return;
+  b.setAttribute("aria-pressed", CD.sfx ? "true" : "false");
+  b.textContent = CD.sfx ? "🔊" : "🔇";
+  b.title = CD.sfx ? "Diner sounds on" : "Diner sounds off";
+}
+
+/* ---- the neon banner over the counter (canvas, 1 logical px = s CSS px) ---- */
+var CD_BH = 54, CD_FLAGS = ["#ff4f8b","#ffd23f","#3fd0c8","#ff8a3d","#a36bff","#6fdc6f"];
+function cdDrawBanner(t){
+  var cv=$("cdBanner"); if(!cv) return;
+  var c=cv.getContext("2d"); if(!c) return;
+  var W=CD.W, H=CD_BH, calm=calmMode(), x, y, i;
+  c.clearRect(0,0,W,H);
+  // wall: teal tiles with a little diamond pattern
+  svFill(c,"#0f4a57",0,0,W,H); svFill(c,"#0c3d48",0,H-8,W,8);
+  for(y=8;y<H-8;y+=6) for(x=((y/6)|0)%2*3;x<W;x+=6) svFill(c,"#13586a",x,y,1,1);
+  svFill(c,"#3a2414",0,0,W,3); svFill(c,"#55361e",0,0,W,1);
+  // papel picado: a string of cut-paper flags
+  svFill(c,"#e8dcc0",0,4,W,1);
+  for(x=2, i=0; x<W-8; x+=13, i++){
+    var col=CD_FLAGS[i%CD_FLAGS.length];
+    svFill(c,col,x,5,10,8);
+    svFill(c,"#0f4a57",x+2,7,1,1); svFill(c,"#0f4a57",x+7,7,1,1); svFill(c,"#0f4a57",x+4,8,2,2); svFill(c,"#0f4a57",x+2,10,1,1); svFill(c,"#0f4a57",x+7,10,1,1);
+    for(var z=0;z<10;z+=2) svFill(c,col,x+z,13,1,1);
+  }
+  // the neon sign
+  var big=W>=150 ? "CALI TUESDAYS" : "CALI TUES", tw=pxTextW(big), sx=Math.round((W-tw)/2), sy=21;
+  var flick=!calm && t>0 && Math.floor(t/1000)%9===0 && (t%1000)<140, dimAt=Math.floor(t/9000)%big.length;
+  svFill(c,"#7a1446",sx-6,sy-5,tw+12,1); svFill(c,"#7a1446",sx-6,sy+11,tw+12,1);
+  svFill(c,"#7a1446",sx-7,sy-4,1,15); svFill(c,"#7a1446",sx+tw+6,sy-4,1,15);
+  svFill(c,"#ff4f8b",sx-5,sy-4,tw+10,1); svFill(c,"#ff4f8b",sx-5,sy+10,tw+10,1);
+  svFill(c,"#ff4f8b",sx-6,sy-3,1,13); svFill(c,"#ff4f8b",sx+tw+5,sy-3,1,13);
+  [[-1,0],[1,0],[0,-1],[0,1]].forEach(function(o){ pxText(c, big, sx+o[0], sy+o[1], "#a8205c", null); });
+  pxText(c, big, sx, sy, "#ffd0e4", null);
+  if(flick){ var dx=sx+dimAt*6; svFill(c,"#0f4a57",dx-1,sy-1,7,9); pxText(c, big.charAt(dimAt), dx, sy, "#7a1446", null); }
+  // the deal, in chalk-yellow
+  var sub=W>=230 ? "TACO TUESDAY: BUY 1 GET 1" : (W>=120 ? "BUY 1 GET 1" : "B1G1");
+  pxText(c, sub, Math.round((W-pxTextW(sub))/2), 37, "#ffd23f", "#3a2414");
+  // a cactus in a pot at each end
+  [6, W-18].forEach(function(px){
+    if(W<170) return;
+    svFill(c,"#3f9b45",px+4,26,4,14); svFill(c,"#5cc062",px+5,27,1,12);
+    svFill(c,"#3f9b45",px,30,3,2); svFill(c,"#3f9b45",px,28,2,3); svFill(c,"#3f9b45",px+9,32,3,2); svFill(c,"#3f9b45",px+10,29,2,4);
+    svFill(c,"#ff6fae",px+5,25,2,1);
+    svFill(c,"#c8643a",px+1,40,10,6); svFill(c,"#e08a5a",px+1,40,10,1); svFill(c,"#9a4628",px+2,45,8,1);
+  });
+  // string lights, twinkling
+  for(x=5, i=0; x<W; x+=9, i++){
+    var yy=48+((i%2) ? 1 : 0), on=calm || ((i+Math.floor(t/500))%4)!==0;
+    svFill(c,"#2a1a10",x,yy-1,1,1);
+    svFill(c, on ? CD_FLAGS[(i+2)%CD_FLAGS.length] : "#4a4a4a", x, yy, 2, 2);
+  }
+  svFill(c,"#2a1a10",0,47,W,1);
+}
+function cdResize(){
+  var wrap=$("cdBannerWrap"), cv=$("cdBanner"); if(!wrap || !cv) return;
+  var cw=wrap.clientWidth|0; if(cw<=0) return;
+  var s=cw>=900 ? 3 : 2, W=Math.max(100, Math.ceil(cw/s));
+  if(s===CD.s && W===CD.W && cv.width===W) return;
+  CD.s=s; CD.W=W; cv.width=W; cv.height=CD_BH;
+  cv.style.width=(W*s)+"px"; cv.style.height=(CD_BH*s)+"px";
+  cdDrawBanner(0);
+}
+function cdAnimStop(){ CD.anim=false; if(CD.raf) cancelAnimationFrame(CD.raf); CD.raf=0; if(CD.calmTimer){ clearInterval(CD.calmTimer); CD.calmTimer=0; } }
+function cdAnimStart(){
+  cdAnimStop();
+  if(VIEW!=="cali" || document.hidden) return;
+  cdDrawBanner(0);
+  if(calmMode()) return;
+  CD.anim=true;
+  var loop=function(ts){
+    if(!CD.anim) return;
+    if(calmMode()){ cdAnimStop(); cdDrawBanner(0); return; }
+    if(ts-CD.last>=100){ CD.last=ts; cdDrawBanner(ts); }
+    CD.raf=requestAnimationFrame(loop);
+  };
+  CD.raf=requestAnimationFrame(loop);
+}
+
+/* ---- the counter ---- */
+function cdBuildCounter(){
+  var box=$("cdCounter"); if(!box) return;
+  box.innerHTML="";
+  CD_SHELVES.forEach(function(sh){
+    var g=el("div","cd-shelf"), l=el("div","cd-shelf-l"); l.textContent=sh[1]; g.appendChild(l);
+    var row=el("div","cd-items"); row.setAttribute("role","group"); row.setAttribute("aria-label", sh[1]);
+    CD_FOODS.filter(function(f){ return f.shelf===sh[0]; }).forEach(function(f){
+      var b=el("button","cd-food"); b.type="button"; b.setAttribute("data-food", f.key);
+      var tray=el("span","cd-tray"), im=el("img"); im.alt=""; im.width=64; im.height=64; im.draggable=false; im.src=pxURL(f.sprite);
+      tray.appendChild(im); b.appendChild(tray);
+      var nm=el("span","cd-food-l"); nm.textContent=cdName(f); b.appendChild(nm);
+      if(f.taco){ var tag=el("span","cd-tag"+(f.key.indexOf("wild")===0 ? " wild" : "")); tag.setAttribute("aria-hidden","true"); tag.textContent=f.key.indexOf("wild")===0 ? "SPICY" : "MILD"; b.appendChild(tag); }
+      cdFoodLabel(b, f);
+      b.addEventListener("pointerdown", function(e){ cdPointerDown(e, f.key, null, b); });
+      b.addEventListener("click", function(){ if(CD.justDragged) return; cdPick(CD.picked===f.key ? null : f.key); });
+      row.appendChild(b);
+    });
+    g.appendChild(row); box.appendChild(g);
+  });
+}
+function cdFoodLabel(b, f){
+  b.setAttribute("aria-pressed", CD.picked===f.key ? "true" : "false");
+  b.setAttribute("aria-label", cdName(f)+(f.taco ? " (counts toward tacos)" : "")+". Drag onto a plate, or press to pick it up and then choose a plate.");
+}
+function cdPick(key){
+  CD.picked=key;
+  document.body.classList.toggle("cd-picking", !!key);
+  Array.prototype.forEach.call(document.querySelectorAll("#cdCounter .cd-food"), function(b){
+    var on=b.getAttribute("data-food")===key; b.classList.toggle("picked", on); cdFoodLabel(b, cdFood(b.getAttribute("data-food")));
+    if(on) b.setAttribute("aria-pressed","true");
+  });
+  if(key){ cdSfx("pick"); announce(cdName(cdFood(key))+" picked up. Choose a plate to put it on; Escape to put it back."); }
+  cdHintSync();
+  cdRenderTable();   // food on the plates now serves (or takes back): their labels follow
+}
+function cdHintSync(){
+  var h=$("cdHint"); if(!h) return;
+  var f=CD.picked ? cdFood(CD.picked) : null;
+  h.textContent = f ? "Holding "+cdName(f)+": click a plate to serve it (Esc to put it back)"
+                    : (CD.people.length ? "Drag food onto a plate · or click a food, then a plate · click food on a plate to take one back"
+                                        : "Seat someone first, then plate up their order");
+}
+
+/* ---- dragging (pointer events, so mouse, pen and touch all work) ---- */
+function cdPointerDown(e, key, fromPid, srcEl){
+  if(e.pointerType==="mouse" && e.button!==0) return;
+  CD.drag={key:key, from:fromPid, el:srcEl, x0:e.clientX, y0:e.clientY, id:e.pointerId, on:false, over:null};
+  try{ srcEl.setPointerCapture(e.pointerId); }catch(_){}
+  srcEl.addEventListener("pointermove", cdPointerMove);
+  srcEl.addEventListener("pointerup", cdPointerUp);
+  srcEl.addEventListener("pointercancel", cdPointerUp);
+}
+function cdPointerMove(e){
+  var d=CD.drag; if(!d || e.pointerId!==d.id) return;
+  if(!d.on){
+    if(Math.abs(e.clientX-d.x0)+Math.abs(e.clientY-d.y0)<6) return;
+    d.on=true;
+    var g=$("cdGhost"), f=cdFood(d.key);
+    if(g && f){ g.src=pxURL(f.sprite); g.classList.remove("hidden"); }
+    document.body.classList.add("cd-dragging");
+    cdSfx("pick");
+  }
+  e.preventDefault();
+  var gh=$("cdGhost"); if(gh){ gh.style.left=(e.clientX-32)+"px"; gh.style.top=(e.clientY-40)+"px"; }
+  var n=document.elementFromPoint(e.clientX, e.clientY), plate=(n && n.closest) ? n.closest(".cd-plate") : null;
+  var over=plate ? plate.getAttribute("data-pid") : null;
+  if(over!==d.over){ cdHover(d.over, false); d.over=over; cdHover(over, true); }
+}
+function cdPointerUp(e){
+  var d=CD.drag; if(!d || e.pointerId!==d.id) return;
+  CD.drag=null;
+  d.el.removeEventListener("pointermove", cdPointerMove);
+  d.el.removeEventListener("pointerup", cdPointerUp);
+  d.el.removeEventListener("pointercancel", cdPointerUp);
+  if(!d.on) return;   // a plain click: the click handler takes it
+  CD.justDragged=true; setTimeout(function(){ CD.justDragged=false; }, 0);
+  cdHover(d.over, false);
+  var g=$("cdGhost"); if(g) g.classList.add("hidden");
+  document.body.classList.remove("cd-dragging");
+  if(e.type==="pointercancel") return;
+  if(d.over && d.over!==d.from){
+    if(cdAdd(d.over, d.key) && d.from) cdTake(d.from, d.key, true);
+  } else if(!d.over && d.from) cdTake(d.from, d.key);
+}
+function cdHover(pid, on){
+  if(!pid) return;
+  var p=document.querySelector('.cd-plate[data-pid="'+pid+'"]'); if(p) p.classList.toggle("over", on);
+}
+
+/* ---- plates ---- */
+function cdAdd(pid, key){
+  var p=cdPerson(pid), f=cdFood(key); if(!p || !f) return false;
+  var cap=f.taco ? CD_MAX_TACO : CD_MAX_ITEM, n=cdCount(p, key);
+  if(n>=cap){ cdSfx("bonk"); announce(p.who.label+" can’t fit more than "+cap+" "+cdName(f)+"."); return false; }
+  if(f.taco) p.tacos[key]=n+1; else p.items[key]=n+1;
+  CD.paid=false;
+  cdSave(); cdRenderTable(pid, key); cdRenderReceipt();
+  cdSfx("drop");
+  announce(cdName(f)+" for "+p.who.label+". "+cdPlateSummary(p)+".");
+  return true;
+}
+function cdTake(pid, key, moving){
+  var p=cdPerson(pid), f=cdFood(key); if(!p || !f) return;
+  var n=cdCount(p, key); if(n<=0) return;
+  if(f.taco) p.tacos[key]=n-1; else if(n-1>0) p.items[key]=n-1; else delete p.items[key];
+  cdSave(); cdRenderTable(); cdRenderReceipt();
+  if(!moving){ cdSfx("remove"); announce("Took one "+cdName(f)+" back from "+p.who.label+". "+cdPlateSummary(p)+"."); }
+}
+function cdPlateSummary(p){
+  var parts=[];
+  CD_FOODS.forEach(function(f){ var n=cdCount(p, f.key); if(n) parts.push(n+" "+cdName(f)); });
+  return parts.length ? parts.join(", ") : "an empty plate";
+}
+function cdSeat(raw){
+  var who=cdWho(raw), msg=$("cdSeatMsg");
+  var say=function(t){ if(msg){ msg.textContent=t; msg.classList.toggle("hidden", !t); } if(t){ cdSfx("bonk"); announce(t); } };
+  if(!who){ say("Type a name, or @handle for someone on the Arena."); return false; }
+  if(CD.people.length>=CD_MAX_PEOPLE){ say("The table seats "+CD_MAX_PEOPLE+"."); return false; }
+  if(CD.people.some(function(p){ return p.who.key===who.key; })){ say(who.label+" already has a seat."); return false; }
+  say("");
+  var p=cdNewPerson(who); CD.people.push(p); CD.paid=false;
+  cdSave(); cdRenderTable(p.id); cdRenderReceipt(); cdHintSync();
+  cdSfx("seat"); announce(who.label+" sat down. Their plate is ready.");
+  return true;
+}
+function cdUnseat(pid){
+  var p=cdPerson(pid); if(!p) return;
+  CD.people=CD.people.filter(function(x){ return x.id!==pid; });
+  cdSave(); cdRenderTable(); cdRenderReceipt(); cdHintSync();
+  cdSfx("remove"); announce(p.who.label+" left the table.");
+  var inp=$("cdSeatName"); if(inp) focusQuiet(inp);
+}
+function cdRenderTable(popPid, popKey){
+  var box=$("cdTable"); if(!box) return;
+  var fa=document.activeElement, keep=null;
+  if(fa && box.contains(fa)) keep={pid:(fa.closest(".cd-plate")||{getAttribute:function(){ return null; }}).getAttribute("data-pid"), food:fa.getAttribute("data-food"), cls:fa.className};
+  box.innerHTML="";
+  if(!CD.people.length){
+    var e=el("p","cd-empty"); e.textContent="The table’s empty. Seat yourself and your friends below."; box.appendChild(e);
+  }
+  var champ=CD.people.reduce(function(best, p){ var n=cdTacos(p)+cdItems(p); return n>best.n ? {id:p.id, n:n} : best; }, {id:null, n:0});
+  CD.people.forEach(function(p, idx){
+    var plate=el("div","cd-plate"); plate.setAttribute("data-pid", p.id);
+    plate.setAttribute("role","group"); plate.setAttribute("aria-label", p.who.label+"’s plate");
+    var card=el("div","cd-card");
+    var nm=el("span","cd-name"); nm.textContent=p.who.label; card.appendChild(nm);
+    if(p.who.handle){ var hs=el("span","cd-handle"); hs.textContent="@ARENA"; hs.title="Tied to @"+p.who.handle+"’s Arena account"; card.appendChild(hs); }
+    if(champ.id===p.id && champ.n>0 && CD.people.length>1){ var cr=el("img","cd-crown"); cr.alt=""; cr.title="Hungriest at the table"; cr.src=pxURL("cd_crown"); card.appendChild(cr); }
+    var x=el("button","cd-unseat"); x.type="button"; x.textContent="×"; x.setAttribute("aria-label","Unseat "+p.who.label);
+    x.addEventListener("click", function(){ cdUnseat(p.id); }); card.appendChild(x);
+    plate.appendChild(card);
+    var dish=el("div","cd-dish");
+    var surf=el("button","cd-surface"); surf.type="button";
+    surf.setAttribute("aria-label", p.who.label+"’s plate: "+cdPlateSummary(p)+". Press to serve the food you’re holding.");
+    var pim=el("img","cd-plate-img"); pim.alt=""; pim.draggable=false; pim.src=pxURL("cd_plate"); surf.appendChild(pim);
+    surf.addEventListener("click", function(){
+      if(CD.justDragged) return;
+      if(!CD.picked){ cdSfx("bonk"); announce("Pick a food from the counter first."); plate.classList.remove("nudge"); void plate.offsetWidth; plate.classList.add("nudge"); return; }
+      cdAdd(p.id, CD.picked);
+    });
+    dish.appendChild(surf);
+    var on=el("div","cd-on");
+    CD_FOODS.forEach(function(f){
+      var n=cdCount(p, f.key); if(!n) return;
+      var chip=el("button","cd-chip"); chip.type="button"; chip.setAttribute("data-food", f.key);
+      var ci=el("img"); ci.alt=""; ci.draggable=false; ci.width=40; ci.height=40; ci.src=pxURL(f.sprite); chip.appendChild(ci);
+      if(n>1){ var b=el("span","cd-n"); b.setAttribute("aria-hidden","true"); b.textContent="×"+n; chip.appendChild(b); }
+      chip.setAttribute("aria-label", n+" "+cdName(f)+" on "+p.who.label+"’s plate. "+(CD.picked ? "Press to serve the food you’re holding." : "Press to take one back."));
+      chip.addEventListener("pointerdown", function(e){ cdPointerDown(e, f.key, p.id, chip); });
+      // While you're holding food, the whole plate serves it, the food already on it included.
+      chip.addEventListener("click", function(){ if(CD.justDragged) return; if(CD.picked) cdAdd(p.id, CD.picked); else cdTake(p.id, f.key); });
+      if(popPid===p.id && popKey===f.key && !calmMode()) chip.classList.add("pop");
+      on.appendChild(chip);
+    });
+    dish.appendChild(on);
+    plate.appendChild(dish);
+    var sum=el("div","cd-sum"), t=cdTacos(p), it=cdItems(p);
+    sum.textContent = t+" taco"+(t===1?"":"s")+(it ? " · "+it+" other" : "");
+    plate.appendChild(sum);
+    if(popPid===p.id && !popKey && !calmMode()) plate.classList.add("arrive");
+    box.appendChild(plate);
+  });
+  if(keep && keep.pid){
+    var pl=box.querySelector('.cd-plate[data-pid="'+keep.pid+'"]'), t2=null;
+    if(pl) t2=(keep.food && pl.querySelector('.cd-chip[data-food="'+keep.food+'"]')) || pl.querySelector(".cd-surface");
+    if(t2) focusQuiet(t2);
+  }
+}
+
+/* ---- the receipt ---- */
+function cdRenderReceipt(){
+  var box=$("cdReceipt"); if(!box) return;
+  var lines=[], people=CD.people, tt=0, items=0;
+  function line(l, r, cls){ lines.push([l, r==null ? "" : String(r), cls||""]); }
+  var d=$("cdDate") && $("cdDate").value ? new Date($("cdDate").value+"T12:00:00") : new Date();
+  line("CALI TUESDAYS", null, "c big"); line(d.toDateString().toUpperCase(), null, "c");
+  line("-", null, "rule");
+  people.forEach(function(p){
+    line(p.who.label.toUpperCase(), null, "who");
+    var any=false;
+    CD_FOODS.forEach(function(f){ var n=cdCount(p, f.key); if(!n) return; any=true; line("  "+n+" × "+cdName(f).toUpperCase(), null, f.taco ? "taco" : ""); });
+    if(!any) line("  (JUST VIBES)", null, "dim");
+    tt+=cdTacos(p); items+=cdItems(p);
+  });
+  if(!people.length) line("NOBODY SEATED YET", null, "dim c");
+  line("-", null, "rule");
+  var paid=caliPaid(tt), n=people.length;
+  line("TACOS (TT)", tt); line("PAY FOR", paid); line("FREE (B1G1)", tt-paid, tt-paid ? "free" : "");
+  line("PEOPLE", n); line("TPP", n ? (Math.round(tt/n*100)/100).toFixed(2) : "0.00");
+  if(items) line("OTHER DISHES", items);
+  line("-", null, "rule");
+  if(CD.menuOk===false && items) line("THIS ARENA SAVES TACOS ONLY FOR NOW", null, "dim c");
+  line(CD.paid ? "*** PAID · ¡GRACIAS! ***" : "THANK YOU · ¡GRACIAS!", null, "c"+(CD.paid ? " paidl" : ""));
+  box.innerHTML="";
+  lines.forEach(function(l){
+    var row=el("div","cd-rl"+(l[2] ? " "+l[2] : ""));
+    if(l[2].indexOf("rule")>=0){ row.setAttribute("aria-hidden","true"); box.appendChild(row); return; }
+    var a=el("span"); a.textContent=l[0]; row.appendChild(a);
+    if(l[1]!==""){ var b=el("span","cd-rv"); b.textContent=l[1]; row.appendChild(b); }
+    box.appendChild(row);
+  });
+  box.classList.toggle("paid", CD.paid);
+  var co=$("cdCheckout"); if(co){ co.disabled=CD.busy || !people.length; co.textContent=CD.busy ? "RINGING UP…" : "CHECKOUT"; }
+}
+
+/* ---- checkout: log the dinner on the Arena ---- */
+function cdSay(text, kind){
+  var m=$("cdMsg"); if(!m) return;
+  m.textContent=text||""; m.classList.toggle("hidden", !text); m.classList.toggle("err", kind==="err");
+  if(text) announce(text);
+}
+function cdCheckout(){
+  if(CD.busy) return;
+  if(!CD.people.length){ cdSay("Seat at least one person first.", "err"); cdSfx("bonk"); return; }
+  if(!ARENA.paired){ cdSay("Connect the Arena to log dinners on the board.", "err"); cdSfx("bonk"); return; }
+  var sendItems=CD.menuOk===true, dropped=0;
+  var diners=CD.people.map(function(p){
+    var d={tacos:{mildHard:p.tacos.mildHard|0, mildSoft:p.tacos.mildSoft|0, wildHard:p.tacos.wildHard|0, wildSoft:p.tacos.wildSoft|0}};
+    if(p.who.handle) d.handle=p.who.handle; else d.name=p.who.name;
+    var it={}, any=false; for(var k in p.items){ if((p.items[k]|0)>0){ it[k]=p.items[k]|0; any=true; } }
+    if(any){ if(sendItems) d.items=it; else dropped+=cdItems(p); }
+    return d;
+  });
+  var body={diners:diners, note:(($("cdNote")||{}).value||"").trim().slice(0,80)};
+  var when=(($("cdDate")||{}).value||"").trim(); if(when) body.date=when;
+  // One id per dinner, reused for every retry: the server replays it instead of logging Tuesday twice.
+  if(!CD.rid) CD.rid=newRequestId();
+  body.requestId=CD.rid;
+  CD.busy=true; cdRenderReceipt(); cdSay("");
+  var before=CD.board;
+  arenaPost("/api/arena/cali/order", body).then(function(res){
+    CD.busy=false;
+    if(!res.ok){
+      if(pantryLocalReject(res)) cdSay(CALI_RELOAD_MSG, "err");
+      else if(pantryMissState(res)==="restart") cdSay(CALI_RESTART_MSG, "err");
+      else if(pantryMissState(res)==="unsupported") cdSay(CALI_UNSUPPORTED_MSG, "err");
+      else cdSay((res.j && (res.j.error || res.j.detail) && String(res.j.error || res.j.detail).slice(0,200)) || "Couldn’t log that dinner.", "err");
+      cdSfx("bonk"); cdRenderReceipt(); return;
+    }
+    var o=(res.j && res.j.order) || {};
+    CD.rid=null; CD.paid=true;
+    cdSfx("kaching"); confettiBurst();
+    var msg=res.j.replayed ? "Already logged: "+(o.totalTacos|0)+" tacos." :
+      "🌮 Logged! "+(o.totalTacos|0)+" tacos, paid for "+(o.paidTacos|0)+", "+(o.freeTacos|0)+" free."+(dropped ? " (Other dishes aren’t saved by this Arena yet.)" : "");
+    toast(msg, "level"); cdSay(msg);
+    // clear the plates, keep everyone seated for next Tuesday
+    CD.people.forEach(function(p){ p.tacos={mildHard:0, mildSoft:0, wildHard:0, wildSoft:0}; p.items={}; });
+    cdSave(); cdRenderTable(); cdRenderReceipt();
+    CD.prevRows=before ? before.entries || [] : null;
+    cdLoadBoard(true);
+  }, function(){
+    CD.busy=false; cdRenderReceipt();
+    cdSay("Couldn’t reach the Arena. Try again: it won’t be logged twice.", "err"); cdSfx("bonk");
+  });
+}
+
+/* ---- the hi-score board ---- */
+var CD_ORD = ["1ST","2ND","3RD"];
+function cdOrd(n){ return n<=3 ? CD_ORD[n-1] : n+"TH"; }
+function cdSeasonLine(b){
+  var now=new Date(), next=Date.UTC(now.getUTCFullYear(), now.getUTCMonth()+1, 1), days=Math.max(1, Math.ceil((next-now.getTime())/86400000));
+  var mon=SV_MONTHS[now.getUTCMonth()]+" "+now.getUTCFullYear();
+  if(CD.window==="season") return "SEASON "+mon+" · NEW SEASON IN "+days+" DAY"+(days===1?"":"S");
+  if(b && b.startsOn) return String(b.startsOn)+" → "+String(b.endsOn);
+  return "";
+}
+function cdLoadBoard(afterCheckout){
+  var rows=$("cdRows"); if(!rows) return;
+  var win=CD.window;
+  fetch("/api/arena/cali/board?window="+encodeURIComponent(win), {cache:"no-store"})
+    .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, status:r.status, j:j}; }, function(){ return {ok:r.ok, status:r.status, j:{}}; }); })
+    .then(function(res){
+      if(win!==CD.window) return;
+      var b=res.j||{};
+      var miss=pantryMissState(res);
+      if(miss==="restart") return cdBoardNote(CALI_RESTART_MSG);
+      if(miss==="unsupported") return cdBoardNote(CALI_UNSUPPORTED_MSG);
+      if(res.status===400 && /not paired/i.test(String(b.error||""))) return cdBoardNote("Connect the Arena to see the hi-scores.");
+      if(!res.ok || b.error || b.detail) return cdBoardNote(String(b.error || b.detail || "Couldn’t load the board.").slice(0,200));
+      CD.board=b;
+      if(Array.isArray(b.menu)){
+        CD.menuOk=true; CD.menuNames={};
+        b.menu.forEach(function(m){ if(m && typeof m.kind==="string" && typeof m.name==="string" && cdFood(m.kind)) CD.menuNames[m.kind]=m.name.slice(0,40); });
+      } else CD.menuOk=false;
+      cdRenderBoard(b, afterCheckout);
+      cdRenderReceipt();
+    }, function(){ cdBoardNote("Couldn’t reach the Arena."); });
+  if(win==="season") cdLoadChamp();
+}
+function cdBoardNote(text){
+  var rows=$("cdRows"); if(!rows) return;
+  rows.innerHTML='<tr><td colspan="11" class="cd-note"></td></tr>';
+  rows.querySelector("td").textContent=text;
+  var s=$("cdSeason"); if(s) s.textContent=cdSeasonLine(null);
+}
+function cdRenderBoard(b, afterCheckout){
+  var rows=$("cdRows"), s=$("cdSeason"); if(!rows) return;
+  if(s) s.textContent=cdSeasonLine(b);
+  var tbl=$("cdTbl"); if(tbl) tbl.classList.toggle("noitems", CD.menuOk!==true);
+  var st=$("cdStats");
+  if(st) st.textContent = (b.orders|0) ? ((b.orders|0)+" dinner"+((b.orders|0)===1?"":"s")+" · "+(b.totalTacos|0)+" tacos · "+(b.freeTacos|0)+" free"+(b.totalItems ? " · "+(b.totalItems|0)+" other dishes" : "")) : "";
+  var list=Array.isArray(b.entries) ? b.entries : [];
+  if(!list.length) return cdBoardNote(CD.window==="season" ? "No tacos this season yet. Be the first on the board!" : "No taco Tuesdays logged in this range yet.");
+  var prev={}; (CD.prevRows||[]).forEach(function(e){ prev[(e.handle ? "@"+e.handle : "#"+e.name)]=e; });
+  rows.innerHTML="";
+  var newOnes=0;
+  list.forEach(function(e){
+    var tr=el("tr"); if(e.isYou) tr.className="you";
+    var key=e.handle ? "@"+e.handle : "#"+e.name, was=prev[key];
+    var fresh=afterCheckout && CD.prevRows && (!was || (was.tuesdays|0)!==(e.tuesdays|0) || (was.totalTacos|0)!==(e.totalTacos|0) || (was.items|0)!==(e.items|0));
+    var rk=el("td","cd-rk r"+Math.min(4, e.rank|0)); rk.textContent=cdOrd(e.rank|0); tr.appendChild(rk);
+    var who=el("td","cd-who"), wrap=el("div","cd-whowrap");
+    if(e.avatarUrl && /^https:\/\//.test(e.avatarUrl)){ var av=el("img","cd-av"); av.alt=""; av.loading="lazy"; av.src=e.avatarUrl; wrap.appendChild(av); }
+    var nm=el("span","cd-pname"); nm.textContent=String(e.name||e.handle||"?").toUpperCase(); wrap.appendChild(nm);
+    if(e.handle){ var h=el("small"); h.textContent="@"+e.handle; wrap.appendChild(h); }
+    if(fresh){ var nw=el("span","cd-new"); nw.textContent="NEW!"; wrap.appendChild(nw); newOnes++; }
+    who.appendChild(wrap); tr.appendChild(who);
+    [e.tuesdays|0, e.totalTacos|0, Number(e.tacosPerPerson||0).toFixed(2), e.mild|0, e.wild|0, e.hard|0, e.soft|0].forEach(function(v, i){
+      var td=el("td", i<3 ? "cd-num" : "cd-num cd-mini"); td.textContent=String(v); tr.appendChild(td);
+    });
+    var itd=el("td","cd-num cd-it"); itd.textContent=String(e.items|0); tr.appendChild(itd);
+    var fav=el("td","cd-fav"), ff=cdFood(e.favorite);
+    if(ff){ var fi=el("img"); fi.alt=cdName(ff); fi.title="Favorite: "+cdName(ff); fi.width=32; fi.height=32; fi.src=pxURL(ff.sprite); fav.appendChild(fi); }
+    tr.appendChild(fav);
+    rows.appendChild(tr);
+  });
+  if(afterCheckout && newOnes){ cdSfx("fanfare"); announce("The hi-score board updated."); }
+  CD.prevRows=null;
+}
+// Last season's winner, from the server's "lastseason" window (an older Arena 400s: no banner).
+function cdLoadChamp(){
+  var box=$("cdChamp"); if(!box) return;
+  fetch("/api/arena/cali/board?window=lastseason", {cache:"no-store"})
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(b){
+      var top=b && Array.isArray(b.entries) ? b.entries[0] : null;
+      box.classList.toggle("hidden", !top);
+      if(!top) return;
+      box.innerHTML="";
+      var cr=el("img"); cr.alt=""; cr.width=36; cr.height=21; cr.src=pxURL("cd_crown"); box.appendChild(cr);
+      var t=el("span"); t.textContent="LAST SEASON’S CHAMP: "+String(top.name||top.handle||"?").toUpperCase()+" · "+(top.tuesdays|0)+" TUESDAY"+((top.tuesdays|0)===1?"":"S")+" · "+(top.totalTacos|0)+" TACOS";
+      box.appendChild(t);
+    }, function(){ box.classList.add("hidden"); });
+}
+
+/* ---- building, opening and leaving the view ---- */
+function cdBuild(){
+  if(CD.built) return;
+  CD.built=true;
+  CD.sfx=lsGet("hq_cali_sfx")!=="0";
+  cdLoadSaved();
+  cdBuildCounter();
+  var f=$("cdSeatForm");
+  if(f) f.addEventListener("submit", function(e){ e.preventDefault(); var i=$("cdSeatName"); if(cdSeat(i.value)){ i.value=""; } i.focus(); });
+  var co=$("cdCheckout"); if(co) co.addEventListener("click", cdCheckout);
+  var dt=$("cdDate"); if(dt) dt.addEventListener("change", cdRenderReceipt);
+  var m=$("cdMute"); if(m) m.addEventListener("click", function(){ CD.sfx=!CD.sfx; lsSet("hq_cali_sfx", CD.sfx ? "1" : "0"); cdMuteSync(); announce(CD.sfx ? "Diner sounds on" : "Diner sounds off"); });
+  Array.prototype.forEach.call(document.querySelectorAll("#cdWins .cd-win"), function(b){
+    b.addEventListener("click", function(){
+      CD.window=b.getAttribute("data-window");
+      Array.prototype.forEach.call(document.querySelectorAll("#cdWins .cd-win"), function(o){ var on=o===b; o.classList.toggle("on", on); o.setAttribute("aria-pressed", on ? "true" : "false"); });
+      var ch=$("cdChamp"); if(ch && CD.window!=="season") ch.classList.add("hidden");
+      cdLoadBoard(false);
+    });
+  });
+  document.addEventListener("keydown", function(e){
+    if(VIEW!=="cali" || e.key!=="Escape" || !CD.picked) return;
+    e.preventDefault(); e.stopPropagation(); cdPick(null); announce("Put it back on the counter.");
+  }, true);
+  if(window.ResizeObserver){ CD.ro=new ResizeObserver(function(){ if(VIEW==="cali") cdResize(); }); CD.ro.observe($("cdBannerWrap")); }
+  else window.addEventListener("resize", function(){ if(VIEW==="cali") cdResize(); });
+  document.addEventListener("visibilitychange", function(){ if(VIEW!=="cali") return; if(document.hidden) cdAnimStop(); else cdAnimStart(); });
+  cdMuteSync();
+}
+function cdEnter(){
+  cdBuild();
+  // Whoever is logging the dinner is almost always at the table: seat them on an empty one.
+  // ARENA.status is only loaded by the Arena view, so ask the local dashboard when it's missing.
+  if(!CD.people.length){
+    if(ARENA.status && ARENA.status.handle) cdSeat("@"+ARENA.status.handle);
+    else fetch("/api/arena/status", {cache:"no-store"}).then(function(r){ return r.json(); }).then(function(st){
+      if(st && typeof st.handle==="string" && st.handle && !CD.people.length && VIEW==="cali") cdSeat("@"+st.handle);
+    }, function(){});
+  }
+  cdResize(); cdRenderTable(); cdRenderReceipt(); cdHintSync();
+  cdLoadBoard(false);
+  cdAnimStart();
+}
+function cdLeave(){
+  if(!CD.built) return;
+  cdAnimStop(); if(CD.picked) cdPick(null);
+}
+
+
 
 // monsterSVG(seed,typeHue,stage,shiny,px) -> a left-right symmetric pixel-monster
 // on a 10x10 grid: decide cols 1..4 then mirror to 5..8, blobby toward center,
@@ -8149,7 +9127,7 @@ document.addEventListener("keydown",function(e){
   if(e.key==="/"){ e.preventDefault(); $("search").focus(); }
   else if(e.key==="r"||e.key==="R"){ e.preventDefault(); forceRefresh(); }
   else if(e.key==="?"){ e.preventDefault(); openHelp(); }
-  else if(e.key>="1"&&e.key<="8"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","arena","village","store"][+e.key-1]); }
+  else if(e.key>="1"&&e.key<="9"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","arena","village","store","cali"][+e.key-1]); }
   // In a voice call, from any view: M mutes, V switches the camera, S shares your screen. Holding a key down
   // doesn't repeat it, and outside a call these keys do nothing.
   else if(VCHAN.on && !e.repeat && (e.key==="m"||e.key==="M")){ e.preventDefault(); voiceToggleMute(); }
@@ -8218,13 +9196,14 @@ var ARENA_STAY = (function(){ try { return localStorage.getItem("hq_arena_stay")
 var ARENA_SHARE_STATUS = (function(){ try { return localStorage.getItem("hq_arena_status") === "1"; } catch(e){ return false; } })();
 // Voice state, also needed by the first setView() (which keeps the lobby socket open while in voice).
 var VCHAN = {on:false, peer:null, stream:null, muted:false, cam:false, screen:false, vidStream:null, vidTile:null, peers:{}, roomId:null, roster:{}, ctx:null, me:null, meter:null};
-var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena"||v==="store")?v:"live"; })();
+var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena"||v==="store"||v==="cali")?v:"live"; })();
 var VIEW_TITLES = {
   live:["Live","Every Claude session, right now"], analytics:["Analytics","Usage, cost and rhythm over time"],
   pokedex:["Pokédex","Your creature collection"], gym:["Gym","Active sessions scored as a team"],
   quests:["Quests","Daily, weekly and collection goals"], arena:["Arena","Friends, standings and voice"],
   village:["Village","Your base & army, built from your Claude activity"],
-  store:["Store","Snacks for your creatures, paid in Poke Coins"]
+  store:["Store","Snacks for your creatures, paid in Poke Coins"],
+  cali:["Cali Tuesdays","Taco Tuesday at California Burrito: seat friends, plate their food, check out"]
 };
 // The Clash of Clans pack renames the "Pokédex" collection to "Troops" (nav tab + title).
 function syncPackLabels(){
@@ -8249,6 +9228,7 @@ function setView(v){
   var vv=$("villageView"); if(vv) vv.classList.toggle("hidden", v!=="village");
   var av=$("arenaView"); if(av) av.classList.toggle("hidden", v!=="arena");
   var stv=$("storeView"); if(stv) stv.classList.toggle("hidden", v!=="store");
+  var cdv=$("caliView"); if(cdv) cdv.classList.toggle("hidden", v!=="cali");
   Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
     var on = t.getAttribute("data-view")===v;
     t.classList.toggle("active", on); t.setAttribute("aria-selected", on?"true":"false");
@@ -8260,6 +9240,7 @@ function setView(v){
   if(v==="quests") loadQuests();
   if(v==="village") renderVillage();
   if(v==="store") svEnter(); else svLeave();
+  if(v==="cali") cdEnter(); else cdLeave();
   // The lobby socket stays open on other views while you stay in the lobby, or while you're in voice (it carries it).
   if(v==="arena"){ arenaUnreadClear(); ARENA.nudgeCount={}; loadArena(); } else { arenaRoomFormsClear(); if(!VCHAN.on && !ARENA_STAY) arenaCloseSocket(); }
 }
@@ -9328,6 +10309,7 @@ function buildCmdkItems(q){
   items.push({group:"Actions", ic:"⌨️", label:"Keyboard shortcuts & help", run:function(){ openHelp(); }});
   items.push({group:"Views", ic:"⚔️", label:"Gym / Team analysis", run:function(){ setView("gym"); }});
   items.push({group:"Views", ic:"\uD83C\uDFEA", label:"Store", run:function(){ setView("store"); }});
+  items.push({group:"Views", ic:"\uD83C\uDF2E", label:"Cali Tuesdays", run:function(){ setView("cali"); }});
   items.push({group:"Views", ic:"📺", label:"War Room", run:function(){ openWarroom(); }});
   // actions
   items.push({group:"Actions", ic:"⚙️", label:"Open Settings", run:function(){ openSettings(); }});
@@ -10861,8 +11843,7 @@ function loadArena(){
       ARENA.paired = paired;
       $("arenaSetup").classList.toggle("hidden", paired);
       $("arenaBoardWrap").classList.toggle("hidden", !paired);
-      $("caliWrap").classList.toggle("hidden", !paired);
-      $("arenaLobbyWrap").classList.toggle("hidden", !paired);
+            $("arenaLobbyWrap").classList.toggle("hidden", !paired);
       $("arenaChatWrap").classList.toggle("hidden", !paired);
       $("arenaVoiceWrap").classList.toggle("hidden", !paired);
       $("arenaFoot").classList.toggle("hidden", !paired);
@@ -10879,7 +11860,6 @@ function loadArena(){
                  : (" · publish failed: " + (lp.error||"")))
         : " · not published yet";
       arenaLoadBoard();
-      caliLoad();
       arenaRoomsLoad(); arenaRenderRoomBar();
       pantryLoad(true);
       arenaRenderChat();
@@ -12921,286 +13901,17 @@ function voiceVideoOff(){
   if(pill) pill.addEventListener("click", function(){ setView("arena"); });
 })();
 
-/* ---- Cali: California Burrito taco Tuesdays ----
-   The page collects who ordered what and nothing else. TT, the buy-1-get-1
-   price and TPP are all decided by the Arena server (backend/app/tacos.py);
-   caliPaid() below only powers the running total you see while typing, so the
-   numbers on screen and the numbers in the database can never disagree about
-   who owns the rule. */
-var CALI = { window:"season", rid:null, busy:false };
-// Three different things go wrong here and only one of them is the host's
-// fault, so say which. The pantry's helpers already tell the shapes apart:
-// dashboard.py's own refusals carry "error" and no "detail" (pantryLocalReject),
-// a stale local proxy 404s with {"error":"not found"} and an Arena without the
-// routes 404s with a bare "Not Found" (pantryMissState).
-var CALI_RELOAD_MSG = "Claude HQ restarted since this page loaded. Reload the page to log an order \u2014 what you typed stays in the form.";
-var CALI_RESTART_MSG = "Restart Claude HQ, then reload this page, to finish updating it: the copy that\u2019s running is older than this page and has no taco board yet.";
-var CALI_UNSUPPORTED_MSG = "This Arena server doesn\u2019t have the taco board yet \u2014 ask whoever hosts it to update it.";
-// Wire field -> column label. Mirrors arena.CALI_TACO_KEYS.
-var CALI_VARIANTS = [["mildHard","Mild hard"],["mildSoft","Mild soft"],
-                     ["wildHard","Wild hard"],["wildSoft","Wild soft"]];
-
-// Pooled buy-1-get-1: every second taco at the table is free, whatever it is.
-// Mirrors tacos.paid_tacos.
+/* ---- Cali: California Burrito taco Tuesdays (the diner lives in the "cali" view) ----
+   Three different things go wrong here and only one of them is the host's fault, so say which.
+   The pantry's helpers tell the shapes apart: dashboard.py's own refusals carry "error" and no
+   "detail" (pantryLocalReject), a stale local proxy 404s with {"error":"not found"} and an Arena
+   without the routes 404s with a bare "Not Found" (pantryMissState). */
+var CALI_RELOAD_MSG = "Claude HQ restarted since this page loaded. Reload the page to log the dinner — the plates stay as they are.";
+var CALI_RESTART_MSG = "Restart Claude HQ, then reload this page, to finish updating it: the copy that’s running is older than this page and has no taco board yet.";
+var CALI_UNSUPPORTED_MSG = "This Arena server doesn’t have the taco board yet — ask whoever hosts it to update it.";
+// Pooled buy-1-get-1: every second taco at the table is free, whatever it is. Mirrors
+// tacos.paid_tacos; it only powers the running receipt, the server owns the real number.
 function caliPaid(total){ return Math.floor((total+1)/2); }
-
-function caliSay(text, kind){
-  var m=$("caliMsg"); if(!m) return;
-  m.textContent = text||"";
-  m.classList.toggle("hidden", !text);
-  m.classList.toggle("err", kind==="err");
-}
-
-function caliDinerRow(who){
-  var row = document.createElement("div");
-  row.className = "cali-row";
-
-  var name = document.createElement("input");
-  name.type="text"; name.className="cali-who"; name.maxLength=41;
-  name.placeholder="@handle or name"; name.autocomplete="off";
-  name.setAttribute("aria-label","Diner");
-  if(who) name.value = who;
-  row.appendChild(name);
-
-  CALI_VARIANTS.forEach(function(v){
-    var n = document.createElement("input");
-    n.type="number"; n.min="0"; n.max="50"; n.step="1"; n.value="0";
-    n.className="cali-n"; n.setAttribute("data-k", v[0]);
-    n.setAttribute("aria-label", v[1]);
-    n.addEventListener("input", caliPreview);
-    row.appendChild(n);
-  });
-
-  var drop = document.createElement("button");
-  drop.type="button"; drop.className="cali-drop"; drop.textContent="×";
-  drop.title="Remove this person";
-  drop.setAttribute("aria-label","Remove this person");
-  drop.addEventListener("click", function(){
-    row.remove();
-    if(!$("caliDiners").children.length) caliAddDiner();
-    caliPreview();
-  });
-  row.appendChild(drop);
-  return row;
-}
-
-function caliAddDiner(who){
-  var box = $("caliDiners"); if(!box) return;
-  var row = caliDinerRow(who);
-  box.appendChild(row);
-  var first = row.querySelector(".cali-who");
-  if(first && !who) first.focus();
-  caliPreview();
-}
-
-/* Read the form. "@ana" is an Arena handle, anything else is a plain name --
-   the server keeps the account when it has one and the name when it doesn't. */
-function caliCollect(){
-  var diners = [];
-  Array.prototype.forEach.call(document.querySelectorAll("#caliDiners .cali-row"), function(row){
-    var raw = (row.querySelector(".cali-who").value||"").trim();
-    var d = { tacos:{} }, any = false;
-    Array.prototype.forEach.call(row.querySelectorAll(".cali-n"), function(n){
-      var v = parseInt(n.value, 10);
-      if(!isFinite(v) || v < 0) v = 0;
-      d.tacos[n.getAttribute("data-k")] = v;
-      if(v > 0) any = true;
-    });
-    if(!raw){ if(any) diners.push(null); return; }   // null = "counts with no one"
-    if(raw.charAt(0) === "@") d.handle = raw.slice(1); else d.name = raw;
-    diners.push(d);
-  });
-  return diners;
-}
-
-function caliTotalOf(diners){
-  var t = 0;
-  diners.forEach(function(d){
-    if(!d) return;
-    CALI_VARIANTS.forEach(function(v){ t += d.tacos[v[0]]||0; });
-  });
-  return t;
-}
-
-function caliPreview(){
-  var box = $("caliTotal"); if(!box) return;
-  var diners = caliCollect().filter(Boolean);
-  var tt = caliTotalOf(diners), paid = caliPaid(tt), people = diners.length;
-  var tpp = people ? (tt/people) : 0;
-  box.innerHTML = "";
-  [["TT", String(tt), ""],
-   ["Pay for", String(paid), ""],
-   ["Free", String(tt-paid), "free"],
-   ["TPP", (Math.round(tpp*100)/100).toFixed(2), ""],
-   ["People", String(people), ""]].forEach(function(cell){
-    var span = document.createElement("span");
-    span.className = "muted";
-    var b = document.createElement("b");
-    b.textContent = cell[1];
-    if(cell[2]) b.className = cell[2];
-    span.appendChild(b);
-    span.appendChild(document.createTextNode(" " + cell[0]));
-    box.appendChild(span);
-  });
-}
-
-function caliReset(){
-  var box = $("caliDiners"); if(box) box.innerHTML = "";
-  var note = $("caliNote"); if(note) note.value = "";
-  CALI.rid = null;
-  caliAddDiner();
-}
-
-function caliSubmit(){
-  if(CALI.busy) return;
-  var diners = caliCollect();
-  if(diners.some(function(d){ return d === null; })){
-    caliSay("Someone has tacos but no name — add a name or a @handle.", "err"); return;
-  }
-  diners = diners.filter(Boolean);
-  if(!diners.length){ caliSay("Add at least one person.", "err"); return; }
-
-  var body = { diners: diners, note: ($("caliNote").value||"").trim() };
-  var when = ($("caliDate").value||"").trim();
-  if(when) body.date = when;
-  // One id per dinner, reused for every retry: the server replays a repeated id
-  // instead of logging Tuesday twice.
-  if(!CALI.rid) CALI.rid = newRequestId();
-  body.requestId = CALI.rid;
-
-  CALI.busy = true;
-  var btn = $("caliLog"); if(btn) btn.disabled = true;
-  caliSay("");
-  arenaPost("/api/arena/cali/order", body).then(function(res){
-    CALI.busy = false; if(btn) btn.disabled = false;
-    if(!res.ok){
-      // dashboard.py turned the POST away itself, so it never reached the
-      // Arena. Usually its CSRF token: it mints a new one every start and this
-      // page only picks one up when it loads. The order is still in the form,
-      // so a reload costs nothing.
-      if(pantryLocalReject(res)){ caliSay(CALI_RELOAD_MSG, "err"); return; }
-      // A stale local proxy and an Arena without these routes both answer 404.
-      // Blaming the host for the first sends someone to the wrong machine.
-      var miss = pantryMissState(res);
-      if(miss === "restart"){ caliSay(CALI_RESTART_MSG, "err"); return; }
-      if(miss === "unsupported"){ caliSay(CALI_UNSUPPORTED_MSG, "err"); return; }
-      caliSay((res.j && (res.j.error || res.j.detail)) || "couldn’t log that order", "err");
-      return;
-    }
-    var o = res.j.order || {};
-    toast(res.j.replayed
-      ? "🌮 Already logged — " + o.totalTacos + " tacos"
-      : "🌮 Logged: " + o.totalTacos + " tacos, paid for " + o.paidTacos +
-        ", " + o.freeTacos + " free", "level");
-    caliReset();
-    caliLoadBoard();
-  }).catch(function(){
-    CALI.busy = false; if(btn) btn.disabled = false;
-    caliSay("couldn’t reach the Arena — try again", "err");
-  });
-}
-
-function caliLoadBoard(){
-  fetch("/api/arena/cali/board?window="+encodeURIComponent(CALI.window),{cache:"no-store"})
-    .then(function(r){ return r.json().then(function(j){ return {status:r.status, j:j}; }); })
-    .then(function(res){
-      var body=$("caliRows"); if(!body) return;
-      var b=res.j||{};
-      var note=function(text){
-        body.innerHTML = '<tr><td colspan="9" class="muted"></td></tr>';
-        body.querySelector("td").textContent = text;
-      };
-      // The same 404 split as the write path, and before the generic error line
-      // below: a stale local proxy's {"error":"not found"} would otherwise
-      // print as "not found" and blame nothing in particular.
-      var miss = pantryMissState(res);
-      if(miss === "restart"){ note(CALI_RESTART_MSG); return; }
-      if(miss === "unsupported"){ note(CALI_UNSUPPORTED_MSG); return; }
-      if(b.error || b.detail){ note(b.error || b.detail); return; }
-
-      var sub=$("caliSub");
-      if(sub) sub.textContent = b.orders
-        ? (b.orders + (b.orders===1?" dinner":" dinners") + " · " + b.totalTacos +
-           " tacos · " + b.freeTacos + " free · " + b.startsOn + " → " + b.endsOn)
-        : "";
-
-      var rows=b.entries||[];
-      if(!rows.length){ note("No taco Tuesdays logged in this range yet."); return; }
-      body.innerHTML = "";
-      rows.forEach(function(e){
-        var tr=document.createElement("tr");
-        if(e.isYou) tr.className="you";
-
-        var rk=document.createElement("td");
-        rk.className="arena-rank" + (e.rank<=3 ? (" r"+e.rank) : "");
-        rk.textContent = e.rank<=3 ? ["🥇","🥈","🥉"][e.rank-1] : String(e.rank);
-        tr.appendChild(rk);
-
-        var who=document.createElement("td");
-        var wrap=document.createElement("div"); wrap.className="arena-who";
-        if(e.avatarUrl){
-          var img=document.createElement("img");
-          img.className="arena-av"; img.src=e.avatarUrl; img.alt=""; img.loading="lazy";
-          wrap.appendChild(img);
-        }
-        var nm=document.createElement("div"); nm.className="arena-name";
-        nm.textContent = e.name || e.handle || "?";
-        if(e.handle){
-          var sm=document.createElement("small");
-          sm.textContent = "@" + e.handle;
-          nm.appendChild(sm);
-        }
-        wrap.appendChild(nm); who.appendChild(wrap); tr.appendChild(who);
-
-        [e.tuesdays, e.totalTacos, (e.tacosPerPerson).toFixed(2),
-         e.mild, e.wild, e.hard, e.soft].forEach(function(v){
-          var td=document.createElement("td");
-          td.textContent = String(v);
-          tr.appendChild(td);
-        });
-        body.appendChild(tr);
-      });
-    })
-    .catch(function(){
-      var body=$("caliRows");
-      if(body){
-        body.innerHTML = '<tr><td colspan="9" class="muted"></td></tr>';
-        body.querySelector("td").textContent = "Couldn’t reach the Arena.";
-      }
-    });
-}
-
-function caliLoad(){
-  if(!$("caliDiners").children.length){
-    // Whoever is logging it is almost always at the table.
-    var me = (ARENA.status && ARENA.status.handle) ? "@"+ARENA.status.handle : "";
-    caliAddDiner(me);
-  }
-  caliPreview();
-  caliLoadBoard();
-}
-
-(function(){
-  var add=$("caliAdd"), log=$("caliLog"), note=$("caliNote"), diners=$("caliDiners");
-  if(add) add.addEventListener("click", function(){ caliAddDiner(); });
-  if(log) log.addEventListener("click", caliSubmit);
-  // A changed name never changes the totals, but it can change "People".
-  if(diners) diners.addEventListener("input", function(ev){
-    if(ev.target && ev.target.classList.contains("cali-who")) caliPreview();
-  });
-  if(note) note.addEventListener("keydown", function(ev){
-    if(ev.key==="Enter"){ ev.preventDefault(); caliSubmit(); }
-  });
-  Array.prototype.forEach.call(document.querySelectorAll("#caliWins .arena-win"), function(b){
-    b.addEventListener("click", function(){
-      CALI.window = b.getAttribute("data-window");
-      Array.prototype.forEach.call(document.querySelectorAll("#caliWins .arena-win"), function(o){
-        o.classList.toggle("on", o===b);
-      });
-      caliLoadBoard();
-    });
-  });
-})();
 
 /* ---- Arena controls ---- */
 Array.prototype.forEach.call(document.querySelectorAll("#arenaWins .arena-win"), function(b){

@@ -133,6 +133,37 @@ class CaliBodyTests(unittest.TestCase):
                               sessionId=SID, cwd="/Users/ana/secret-project"))
         self.assertFalse(FORBIDDEN_KEYS & _collect_keys(clean))
 
+    def test_items_kept_in_menu_order_without_zeros(self):
+        clean = self.ok(order([{"name": "Ana", "tacos": counts(mh=1),
+                                "items": {"soda": 1, "burrito": 0, "nachos": 2}}]))
+        self.assertEqual(list(clean["diners"][0]["items"].items()),
+                         [("nachos", 2), ("soda", 1)])
+
+    def test_all_zero_items_leave_no_items_key(self):
+        """An Arena from before items 422s on the key itself, so an order with
+        nothing but tacos must look exactly like it always did."""
+        clean = self.ok(order([{"name": "Ana", "items": {"burrito": 0}}]))
+        self.assertNotIn("items", clean["diners"][0])
+        self.assertNotIn("items", self.ok(order())["diners"][0])
+
+    def test_items_only_diner_is_fine(self):
+        clean = self.ok(order([{"name": "Ana", "items": {"churros": 3}}]))
+        self.assertEqual(clean["diners"][0]["items"], {"churros": 3})
+        self.assertEqual(clean["diners"][0]["tacos"], counts())
+
+    def test_unknown_menu_item(self):
+        self.assertEqual(self.err(order([{"name": "Ana", "items": {"pizza": 1}}])),
+                         "unknown menu item")
+
+    def test_items_must_be_an_object(self):
+        self.assertIn("object", self.err(order([{"name": "Ana", "items": ["burrito"]}])))
+
+    def test_bad_item_counts(self):
+        for bad in (21, -1, "2", True, 1.5):
+            with self.subTest(bad=bad):
+                self.assertIn("whole number",
+                              self.err(order([{"name": "Ana", "items": {"burrito": bad}}])))
+
     def test_totals_are_never_accepted_from_the_page(self):
         """TT and the buy-1-get-1 price are the server's to decide."""
         clean = self.ok(order(totalTacos=999, paidTacos=0, freeTacos=999))
@@ -157,6 +188,22 @@ class ArenaAllowlistTests(unittest.TestCase):
         self.assertFalse(FORBIDDEN_KEYS & _collect_keys(clean))
         self.assertEqual(sorted(clean), ["date", "diners", "note", "requestId"])
         self.assertEqual(sorted(clean["diners"][0]), ["handle", "name", "tacos"])
+
+    def test_items_are_rebuilt_from_known_keys_and_ints_only(self):
+        clean = arena._cali_order({"requestId": RID, "diners": [{
+            "name": "Ana", "tacos": counts(mh=1),
+            "items": {"burrito": 2, "pizza": 9, "soda": "1", "guac": True,
+                      "nachos": 0, "cwd": "/Users/ana"},
+        }]})
+        self.assertEqual(clean["diners"][0]["items"], {"burrito": 2})
+        self.assertFalse(FORBIDDEN_KEYS & _collect_keys(clean))
+
+    def test_empty_items_are_left_off(self):
+        for items in ({}, {"nachos": 0}, {"pizza": 1}, "burrito", None):
+            with self.subTest(items=items):
+                clean = arena._cali_order({"requestId": RID, "diners": [
+                    {"name": "Ana", "tacos": counts(mh=1), "items": items}]})
+                self.assertNotIn("items", clean["diners"][0])
 
     def test_non_dict_diners_are_dropped(self):
         clean = arena._cali_order({"requestId": RID, "diners": ["ana", None, 7]})
@@ -227,6 +274,11 @@ class LocalRouteTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(self.board_calls, ["7d"])
 
+    def test_lastseason_window_passes_through(self):
+        code, _ = self.call("GET", "/api/arena/cali/board?window=lastseason")
+        self.assertEqual(code, 200)
+        self.assertEqual(self.board_calls, ["lastseason"])
+
     def test_unknown_window_falls_back_to_season(self):
         self.call("GET", "/api/arena/cali/board?window=forever")
         self.assertEqual(self.board_calls, ["season"])
@@ -244,6 +296,14 @@ class LocalRouteTests(unittest.TestCase):
             "diners": [{"tacos": counts(mh=3), "name": "Ana"}],
             "note": "",
         }])
+
+    def test_post_order_forwards_items(self):
+        code, _ = self.call("POST", "/api/arena/cali/order", order(
+            [{"name": "Ana", "tacos": counts(ws=2), "items": {"guac": 1, "burrito": 1}}]))
+        self.assertEqual(code, 200)
+        self.assertEqual(self.logged[0]["diners"],
+                         [{"tacos": counts(ws=2), "items": {"burrito": 1, "guac": 1},
+                           "name": "Ana"}])
 
     def test_post_order_rejects_a_bad_body_locally(self):
         code, body = self.call("POST", "/api/arena/cali/order", order([]))

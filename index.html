@@ -6185,49 +6185,27 @@ function cdMuteSync(){
    and a red-tiled front with an LED glow. All of it original: our own sign, our own food sprites
    on the boards, our own mascot. The food you drag sits in the pans (buttons laid over the art). */
 var CD_GROUPS = [["tacos",4], ["mains",6], ["extras",5]];
-var CD_KN = ["ಕಾಲಿ", "ಮಂಗಳವಾರ"];   // "Cali" / "Tuesday" in Kannada
-PX_ART.cd_masc0={k:"#3a2008", p:{g:"#5aa83c", G:"#8fd45f", r:"#e5533d", h:"#ffe28a", S:"#f3c34e", s:"#d99a2b", b:"#1a1a1e", B:"#5a6a7e", m:"#7a2a10", l:"#6b3a14"}, r:[
-  "................",
-  ".....gGgGgG.....",
-  "...gGrgGgGrGg...",
-  "..hhhhhhhhhhhh..",
-  ".hSSSSSSSSSSSSs.",
-  ".SbbbbSSSSbbbbS.",
-  ".SbBbbbSSbBbbbS.",
-  ".SSSSSSSSSSSSSs.",
-  ".SSSSmSSSSmSSSs.",
-  "..sSSSmmmmSSSs..",
-  "...ssSSSSSSss...",
-  ".....ssssss.....",
-  "......l..l......",
-  ".....l....l.....",
-  "....ll....ll....",
-  "................"]};
-PX_ART.cd_masc1={k:"#3a2008", p:PX_ART.cd_masc0.p, r:PX_ART.cd_masc0.r.slice(0,12).concat([
-  "......l..l......",
-  "......l..l......",
-  ".....ll..ll.....",
-  "................"])};
-
+// Food stands 1.5x its 16px sprite: crisp on a 2x screen at s=3 (9 device px per art px).
+var CD_FOOD_PX = 24;
 function cdStoreLayout(W){
   W=Math.max(150, W|0);
   var L={W:W, pil:W>=280 ? 14 : 6};
   L.x0=L.pil; L.x1=W-L.pil;
-  var inner=L.x1-L.x0-12, pw=18, gap=2, ggap=8;
-  function rowW(gs){ var w=0; gs.forEach(function(g, i){ var n=CD_GROUPS[g][1]; w+=n*pw+(n-1)*gap+(i ? ggap : 0); }); return w; }
-  var rows = inner>=rowW([0,1,2]) ? [[0,1,2]] : inner>=rowW([0,1]) ? [[0,1],[2]] : [[0],[1],[2]];
-  L.cTop=112;   // the steel counter's lip: food stands on it, pans sink into it
-  L.slots={};
+  var inner=L.x1-L.x0-12, gap=3, ggap=10, fp=CD_FOOD_PX;
+  function rowW(gs, f){ var w=0; gs.forEach(function(g, i){ var n=CD_GROUPS[g][1]; w+=n*(f+2)+(n-1)*gap+(i ? ggap : 0); }); return w; }
+  if(inner<rowW([1], fp)) fp=16;   // a very narrow screen: the art at its own size
+  var rows = inner>=rowW([0,1,2], fp) ? [[0,1,2]] : inner>=rowW([0,1], fp) ? [[0,1],[2]] : [[0],[1],[2]];
+  L.fp=fp; L.cTop=120; L.slots={};
   rows.forEach(function(gs, ri){
-    var x=Math.round((L.x0+L.x1-rowW(gs))/2), y=L.cTop-16+ri*20;
+    var x=Math.round((L.x0+L.x1-rowW(gs, fp))/2), y=L.cTop-fp+ri*(fp+6);
     gs.forEach(function(g, gi){
       if(gi) x+=ggap;
-      CD_FOODS.filter(function(f){ return f.shelf===CD_GROUPS[g][0]; }).forEach(function(f){ L.slots[f.key]={x:x+1, y:y, w:16, h:16}; x+=pw+gap; });
+      CD_FOODS.filter(function(f){ return f.shelf===CD_GROUPS[g][0]; }).forEach(function(f){ L.slots[f.key]={x:x+1, y:y, w:fp, h:fp}; x+=fp+2+gap; });
     });
   });
   L.rows=rows.length;
-  L.front=L.cTop+6+(L.rows-1)*20;
-  L.H=L.front+38;
+  L.front=L.cTop+8+(L.rows-1)*(fp+6);
+  L.H=L.front+26;
   return L;
 }
 // Text with a two-step mint extrusion under it, like a lit-letter sign.
@@ -6235,39 +6213,9 @@ function cd3d(c, s, x, y, sc){
   pxText(c, s, x+2, y+2, "#22a37f", null, sc); pxText(c, s, x+1, y+1, "#3fe0b5", null, sc);
   pxText(c, s, x, y, "#ff5c8a", null, sc);
 }
-// The Kannada line, rasterised once and thresholded so it is as crisp as the pixel font.
-var CD_KN_IMG=null;
-function cdKannadaImgs(){
-  if(CD_KN_IMG!==null) return CD_KN_IMG;
-  CD_KN_IMG=false;
-  try{
-    var font="700 14px 'Kannada Sangam MN','Noto Sans Kannada','Tunga','Kannada MN',sans-serif";
-    var m=document.createElement("canvas").getContext("2d"); m.font=font;
-    var w=Math.ceil(Math.max(m.measureText(CD_KN[0]).width, m.measureText(CD_KN[1]).width))+4;
-    var out={};
-    [["pink",[255,92,138]], ["mint",[63,224,181]], ["deep",[34,163,127]]].forEach(function(v){
-      var cv=document.createElement("canvas"); cv.width=w; cv.height=34;
-      var g=cv.getContext("2d"); g.font=font; g.textBaseline="top"; g.fillStyle="#ffffff";
-      g.fillText(CD_KN[0], 2, 0); g.fillText(CD_KN[1], 2, 16);
-      var im=g.getImageData(0, 0, w, 34), d=im.data;
-      for(var i=0;i<d.length;i+=4){ var on=d[i+3]>120; d[i]=v[1][0]; d[i+1]=v[1][1]; d[i+2]=v[1][2]; d[i+3]=on ? 255 : 0; }
-      g.putImageData(im, 0, 0); out[v[0]]=cv;
-    });
-    out.w=w; CD_KN_IMG=out;
-  }catch(e){ CD_KN_IMG=false; }
-  return CD_KN_IMG;
-}
 function cdStar(c, x, y, col){ svFill(c,col,x+2,y,1,1); svFill(c,col,x+1,y+1,3,1); svFill(c,col,x,y+2,5,1); svFill(c,col,x+1,y+3,3,1); svFill(c,col,x,y+4,2,1); svFill(c,col,x+3,y+4,2,1); }
-// The two blocks (Kannada, English) are centred as a pair, like the lettering over a stall.
 function cdDrawSign(c, L){
-  var W=L.W, sc=2, w2=pxTextW("TUESDAYS", sc), kn=W>=300 ? cdKannadaImgs() : null;
-  var gapK=kn ? 40 : 0, total=(kn ? kn.w+gapK : 0)+w2+10, x=Math.round((W-total)/2);
-  if(kn){
-    var ky=7;
-    cdStar(c, x, ky+20, "#3fe0b5"); cdStar(c, x+1, ky+19, "#ff5c8a");
-    c.drawImage(kn.deep, x+10, ky+2); c.drawImage(kn.mint, x+9, ky+1); c.drawImage(kn.pink, x+8, ky);
-    x+=kn.w+gapK;
-  }
+  var sc=2, w2=pxTextW("TUESDAYS", sc), x=Math.round((L.W-w2-10)/2);
   cdStar(c, x, 28, "#3fe0b5"); cdStar(c, x+1, 27, "#ff5c8a");
   cd3d(c, "CALI", x+24, 9, sc); cd3d(c, "TUESDAYS", x+10, 24, sc);
 }
@@ -6292,38 +6240,43 @@ function cdDrawBoards(c, L){
   });
 }
 function cdDrawWallBits(c, L, t){
-  var span=L.x1-L.x0, x, y;
+  var span=L.x1-L.x0, x, y, lx=L.x0+5, shelfFrom=L.x0;
   if(span>=210){
-    // ORDER HERE, stacked, with an arrow pointing at the counter
-    var ox=L.x0+5, oy=56;
-    svFill(c,"#2e2622",ox,oy,9,44); svFill(c,"#4a3e38",ox,oy,9,1);
-    var word="ORDER"; for(var i=0;i<word.length;i++) pxText(c, word.charAt(i), ox+2, oy+2+i*8, "#f2e8d2", null);
-    svFill(c,"#f2e8d2",ox+4,oy+43,1,4); svFill(c,"#f2e8d2",ox+2,oy+45,5,1); svFill(c,"#f2e8d2",ox+3,oy+46,3,1);
-    // a round green badge with an avocado
-    var bx=L.x0+28, by=78; svDisc(c,"#e8f0e0",bx,by,10); svDisc(c,"#2f6b3a",bx,by,9);
-    for(var a=0;a<12;a++){ var ang=a/12*Math.PI*2; svFill(c,"#cfe6c4",bx+Math.round(Math.cos(ang)*7),by+Math.round(Math.sin(ang)*7),1,1); }
-    svDisc(c,"#8fc85a",bx,by+1,4); svDisc(c,"#c8e8a0",bx,by+1,2); svDisc(c,"#8a5a2a",bx,by+2,1);
+    // ORDER, stacked, with an arrow pointing at the counter
+    var oy=56;
+    svFill(c,"#2e2622",lx,oy,9,44); svFill(c,"#4a3e38",lx,oy,9,1);
+    var word="ORDER"; for(var i=0;i<word.length;i++) pxText(c, word.charAt(i), lx+2, oy+2+i*8, "#f2e8d2", null);
+    svFill(c,"#f2e8d2",lx+4,oy+43,1,4); svFill(c,"#f2e8d2",lx+2,oy+45,5,1); svFill(c,"#f2e8d2",lx+3,oy+46,3,1);
+    lx+=16;
   }
   if(span>=260){
     // the kitchen door: brushed steel with a round window
-    var dx=L.x1-54, dy=62; svFill(c,"#8e959e",dx-1,dy-1,20,L.cTop-dy+1); svFill(c,"#c3c9d0",dx,dy,18,L.cTop-dy);
-    for(y=dy+2;y<L.cTop;y+=3) svFill(c,"#b4bac2",dx+1,y,16,1);
-    svDisc(c,"#6a7a88",dx+9,dy+10,4); svDisc(c,"#9ab0c0",dx+8,dy+9,1);
-    // posters
-    svFill(c,"#2a2a2a",L.x1-31,57,27,31); svFill(c,"#8cc650",L.x1-30,58,25,29);
-    pxText(c, "B1G1", L.x1-29, 60, "#1f3a2c", null);
-    var bw=pxCanvas("cd_ricebowl"); if(bw) c.drawImage(bw, L.x1-26, 69);
+    var dy=60; svFill(c,"#8e959e",lx-1,dy-1,22,L.cTop-dy+1); svFill(c,"#c3c9d0",lx,dy,20,L.cTop-dy);
+    for(y=dy+2;y<L.cTop;y+=3) svFill(c,"#b4bac2",lx+1,y,18,1);
+    svDisc(c,"#6a7a88",lx+10,dy+11,4); svDisc(c,"#9ab0c0",lx+9,dy+10,1);
+    svFill(c,"#8e959e",lx+16,dy+28,2,6);
+    shelfFrom=lx+21; lx+=28;
+  }
+  if(span>=210){
+    // a round green badge with an avocado
+    var bx=lx+10, by=76; svDisc(c,"#e8f0e0",bx,by,10); svDisc(c,"#2f6b3a",bx,by,9);
+    for(var a=0;a<12;a++){ var ang=a/12*Math.PI*2; svFill(c,"#cfe6c4",bx+Math.round(Math.cos(ang)*7),by+Math.round(Math.sin(ang)*7),1,1); }
+    svDisc(c,"#8fc85a",bx,by+1,4); svDisc(c,"#c8e8a0",bx,by+1,2); svDisc(c,"#8a5a2a",bx,by+2,1);
+    lx+=26;
   }
   // the back counter: oven, juice dispenser, cups, the till
-  y=L.cTop-26;
-  svFill(c,"#9aa1aa",L.x0,y+12,span,2);
+  y=L.cTop-28;
+  svFill(c,"#9aa1aa",shelfFrom,y+12,L.x1-shelfFrom,2);
   if(span>=200){
-    var ox2=L.x0+40; svFill(c,"#26282c",ox2,y-2,18,14); svFill(c,"#3a3d42",ox2+2,y,10,9); svFill(c,"#7ad0f0",ox2+13,y+1,3,2);
-    var jx=Math.round(L.x0+span*0.42); svFill(c,"#e8f4f8",jx,y-6,5,10); svFill(c,"#e8f4f8",jx+6,y-6,5,10);
+    var jx=Math.round(L.x0+span*0.44); svFill(c,"#e8f4f8",jx,y-6,5,10); svFill(c,"#e8f4f8",jx+6,y-6,5,10);
     svFill(c,"#e8433a",jx+1,y-3,3,6); svFill(c,"#ff7aa0",jx+7,y-3,3,6); svFill(c,"#6e7178",jx-1,y+4,13,8);
-    for(x=Math.round(L.x0+span*0.55);x<L.x0+span*0.55+9;x+=3){ svFill(c,"#ffffff",x,y+2,2,8); svFill(c,"#e8433a",x,y+4,2,1); }
-    var tx=L.x1-(span>=260 ? 78 : 30); svFill(c,"#1a1a1e",tx,y-2,10,7); svFill(c,"#3a8ab8",tx+1,y-1,8,5); svFill(c,"#1a1a1e",tx+4,y+5,2,7);
-    svFill(c,"#ffd23f",tx-10,y+6,2,2); svFill(c,"#ffffff",tx-8,y+5,2,2); svFill(c,"#ffd23f",tx-6,y+6,2,2); svFill(c,"#4f9a3a",tx-8,y+8,1,4);
+    for(x=Math.round(L.x0+span*0.57);x<L.x0+span*0.57+9;x+=3){ svFill(c,"#ffffff",x,y+2,2,8); svFill(c,"#e8433a",x,y+4,2,1); }
+    // the till at the far right, the oven beside it when it clears the food
+    var tx=L.x1-24, foodEnd=0, k;
+    for(k in L.slots) foodEnd=Math.max(foodEnd, L.slots[k].x+L.slots[k].w+2);
+    svFill(c,"#1a1a1e",tx,y-2,10,7); svFill(c,"#3a8ab8",tx+1,y-1,8,5); svFill(c,"#1a1a1e",tx+4,y+5,2,7);
+    var ox=tx-24;
+    if(ox>=foodEnd+4){ svFill(c,"#26282c",ox,y-2,18,14); svFill(c,"#3a3d42",ox+2,y,10,9); svFill(c,"#7ad0f0",ox+13,y+1,3,2); }
   }
 }
 function cdDrawPillars(c, L, t){
@@ -6343,28 +6296,25 @@ function cdDrawPillars(c, L, t){
   });
 }
 function cdDrawCounter(c, L){
-  var x0=L.x0, x1=L.x1;
-  svFill(c,"rgba(200,236,248,.5)",x0+6,L.cTop-24,x1-x0-12,1);
-  for(var gx=x0+20;gx<x1-10;gx+=60) svFill(c,"rgba(200,236,248,.35)",gx,L.cTop-24,1,6);
+  var x0=L.x0, x1=L.x1, fp=L.fp;
+  svFill(c,"rgba(200,236,248,.5)",x0+6,L.cTop-fp-8,x1-x0-12,1);
+  for(var gx=x0+20;gx<x1-10;gx+=60) svFill(c,"rgba(200,236,248,.35)",gx,L.cTop-fp-8,1,6);
   svFill(c,"#c9ced5",x0,L.cTop-2,x1-x0,L.front-(L.cTop-2)); svFill(c,"#f2f4f6",x0,L.cTop-2,x1-x0,1);
   for(var y=L.cTop+1;y<L.front-1;y+=3) svFill(c,"#bcc2ca",x0,y,x1-x0,1);
   svFill(c,"#9aa1aa",x0,L.front-2,x1-x0,2);
   CD_FOODS.forEach(function(f){
     var s=L.slots[f.key]; if(!s) return;
-    svFill(c,"#7d848d",s.x-2,s.y+9,20,9); svFill(c,"#b2b8c0",s.x-1,s.y+10,18,7); svFill(c,"#5c636b",s.x,s.y+11,16,5);
+    var top=s.y+Math.round(fp*0.55), ph=fp-Math.round(fp*0.55)+2;
+    svFill(c,"#7d848d",s.x-2,top,fp+4,ph); svFill(c,"#b2b8c0",s.x-1,top+1,fp+2,ph-2); svFill(c,"#5c636b",s.x,top+2,fp,ph-4);
   });
 }
 function cdDrawFront(c, L, t){
-  var y0=L.front, x0=L.x0, x1=L.x1, calm=calmMode();
+  var y0=L.front, x0=L.x0, x1=L.x1;
   svFill(c,"#7a7f87",x0,y0,x1-x0,2);
   for(var y=y0+3;y<L.H;y+=5) for(var x=x0;x<x1;x+=5){ svFill(c,"#b3281f",x,y,5,5); svFill(c,"#7c1813",x+4,y,1,5); svFill(c,"#7c1813",x,y+4,5,1); }
-  var pulse=calm ? 1 : 0.85+0.15*Math.sin(t/600);
+  var pulse=calmMode() ? 1 : 0.85+0.15*Math.sin(t/600);
   svFill(c,"#ffe2b0",x0+2,y0+2,x1-x0-4,1);
   for(var k=0;k<7;k++){ c.fillStyle="rgba(255,190,120,"+((0.24-k*0.032)*pulse).toFixed(3)+")"; c.fillRect(x0, y0+3+k*2, x1-x0, 2); }
-  if(x1-x0>=150){
-    var m=pxCanvas((!calm && Math.floor(t/320)%2) ? "cd_masc1" : "cd_masc0");
-    if(m){ c.imageSmoothingEnabled=false; c.drawImage(m, x0+12, y0+5, 32, 32); }
-  }
 }
 function cdDrawStore(t){
   var cv=$("cdCanvas"), L=CD.L; if(!cv || !L) return;
@@ -6398,7 +6348,7 @@ function cdResize(){
   stage.style.width=(CD.L.W*s)+"px"; stage.style.height=(CD.L.H*s)+"px";
   Array.prototype.forEach.call(document.querySelectorAll("#cdHots .cd-food"), function(b){
     var sl=CD.L.slots[b.getAttribute("data-food")]; if(!sl) return;
-    b.style.left=(sl.x*s)+"px"; b.style.top=(sl.y*s)+"px"; b.style.width=(16*s)+"px"; b.style.height=(16*s)+"px";
+    b.style.left=(sl.x*s)+"px"; b.style.top=(sl.y*s)+"px"; b.style.width=(sl.w*s)+"px"; b.style.height=(sl.h*s)+"px";
   });
   cdDrawStore(0);
 }

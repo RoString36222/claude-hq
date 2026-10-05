@@ -5,6 +5,8 @@ import tempfile
 _TMP = tempfile.mkdtemp(prefix="arena-test-")
 os.environ["ARENA_DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP}/test.db"
 os.environ["ARENA_SECRET_KEY"] = "test-secret"
+# The short test key is only accepted in dev mode (see config.check_secret_key).
+os.environ["ARENA_DEV"] = "1"
 
 import pytest
 from fastapi.testclient import TestClient

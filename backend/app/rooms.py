@@ -45,6 +45,9 @@ class Member:
     handle: str
     display_name: str
     avatar_url: str
+    # The paired device whose ticket opened this socket (None for an old
+    # ticket minted before tickets carried it).
+    device_id: str | None = None
     chat_times: deque = field(default_factory=lambda: deque(maxlen=CHAT_RATE_COUNT))
 
     def public(self) -> dict[str, Any]:
@@ -154,21 +157,26 @@ class RoomManager:
         user_id: str | None = None,
         keep_user_id: str | None = None,
     ) -> int:
+        def match(m: Member) -> bool:
+            if user_id is not None and m.user_id != user_id:
+                return False
+            if keep_user_id is not None and m.user_id == keep_user_id:
+                return False
+            return True
+
+        return await self._evict_matching(room_id, match, code=code, reason=reason)
+
+    async def _evict_matching(self, room_id: str, match, *, code: int, reason: str) -> int:
         victims: list[tuple[WebSocket, Member]] = []
         room: Room | None = None
         async with self._lock:
             room = self._rooms.get(room_id)
             if room is None:
                 return 0
-            to_remove: list[WebSocket] = []
             for ws, m in list(room.members.items()):
-                if user_id is not None and m.user_id != user_id:
-                    continue
-                if keep_user_id is not None and m.user_id == keep_user_id:
-                    continue
-                to_remove.append(ws)
-                victims.append((ws, m))
-            for ws in to_remove:
+                if match(m):
+                    victims.append((ws, m))
+            for ws, _m in victims:
                 room.members.pop(ws, None)
             if not room.members:
                 self._rooms.pop(room_id, None)
@@ -188,6 +196,22 @@ class RoomManager:
                         {"type": "leave", "member": m.public(), "members": room.roster()}
                     )
         return len(victims)
+
+    async def evict_device(self, device_id: str, *, code: int = 4401,
+                           reason: str = "device revoked") -> int:
+        """Close every socket opened with a ticket from this device, in every
+        room. Called when the device is revoked so it loses live access too."""
+        rooms_hit = [
+            room_id
+            for room_id, room in list(self._rooms.items())
+            if any(m.device_id == device_id for m in room.members.values())
+        ]
+        closed = 0
+        for room_id in rooms_hit:
+            closed += await self._evict_matching(
+                room_id, lambda m: m.device_id == device_id, code=code, reason=reason
+            )
+        return closed
 
     async def deliver_to_user(self, user_id: str, payload: dict) -> int:
         sent = 0

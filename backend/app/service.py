@@ -66,6 +66,15 @@ def _reject_reason(day: DayStat, today: date, oldest: date, settings) -> str | N
         return f"daily prompts above {settings.max_daily_prompts} rejected"
     if day.tools > settings.max_daily_tools:
         return f"daily tool calls above {settings.max_daily_tools} rejected"
+    if sum(tc.count for tc in day.toolBreakdown) > settings.max_daily_tools:
+        return f"daily tool breakdown above {settings.max_daily_tools} rejected"
+    if day.artifacts > settings.max_daily_artifacts:
+        return f"daily artifacts above {settings.max_daily_artifacts} rejected"
+    if day.replies > settings.max_daily_replies:
+        return f"daily replies above {settings.max_daily_replies} rejected"
+    t = day.tokens
+    if max(t.input, t.output, t.cacheRead, t.cacheCreation) > settings.max_daily_tokens:
+        return f"daily token counts above {settings.max_daily_tokens} rejected"
     return None
 
 

@@ -6,7 +6,7 @@ that grows a new field cannot silently start leaking it — the server rejects t
 whole submission until the field is added here deliberately. Nothing in this
 module can carry prompt text, file paths, project names or session titles.
 """
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -27,20 +27,27 @@ KNOWN_TOOLS = frozenset({
 Handle = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
 
 
+# Storage ceilings, not policy: the per-day caps in config.Settings
+# (max_daily_*) are far lower and reject a single day. These only stop a value
+# the database column cannot hold (INTEGER / BIGINT) from reaching it as a 500.
+INT_MAX = 2**31 - 1
+BIGINT_MAX = 2**63 - 1
+
+
 class TokenCounts(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    input: int = Field(0, ge=0)
-    output: int = Field(0, ge=0)
-    cacheRead: int = Field(0, ge=0)
-    cacheCreation: int = Field(0, ge=0)
+    input: int = Field(0, ge=0, le=BIGINT_MAX)
+    output: int = Field(0, ge=0, le=BIGINT_MAX)
+    cacheRead: int = Field(0, ge=0, le=BIGINT_MAX)
+    cacheCreation: int = Field(0, ge=0, le=BIGINT_MAX)
 
 
 class ToolCount(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(max_length=48)
-    count: int = Field(ge=0)
+    count: int = Field(ge=0, le=INT_MAX)
 
     @field_validator("name")
     @classmethod
@@ -54,10 +61,10 @@ class DayStat(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     date: date
-    prompts: int = Field(0, ge=0)
-    tools: int = Field(0, ge=0)
-    artifacts: int = Field(0, ge=0)
-    replies: int = Field(0, ge=0)
+    prompts: int = Field(0, ge=0, le=INT_MAX)
+    tools: int = Field(0, ge=0, le=INT_MAX)
+    artifacts: int = Field(0, ge=0, le=INT_MAX)
+    replies: int = Field(0, ge=0, le=INT_MAX)
     tokens: TokenCounts = Field(default_factory=TokenCounts)
     toolBreakdown: list[ToolCount] = Field(default_factory=list, max_length=32)
     # Opt-in. Omitted entirely unless the user turned on cost sharing.
@@ -138,6 +145,26 @@ class PairResponse(BaseModel):
 class TicketResponse(BaseModel):
     ticket: str
     expiresIn: int
+
+
+class DeviceInfo(BaseModel):
+    id: str
+    label: str
+    created: datetime | None = None
+    lastSeen: datetime | None = None
+    # True for the device making this request.
+    current: bool = False
+
+
+class DevicesResponse(BaseModel):
+    devices: list[DeviceInfo]
+
+
+class RevokeResponse(BaseModel):
+    ok: bool = True
+    revoked: str
+    # Live websocket connections that were closed for the revoked device.
+    closedSockets: int = 0
 
 
 # --- nudges ----------------------------------------------------------------
@@ -327,7 +354,10 @@ class GiftsResponse(BaseModel):
 
 class QuestRewardRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    requestId: str = Field(max_length=100, pattern=r"^(quest|ach):[a-z0-9_]+:.+$")
+    # Kept for compatibility and validated, but no longer the ledger key: the
+    # server derives that from kind, questId and the period/tier (see
+    # pantry.reward_request_id). 64 matches the poke_ledger.request_id column.
+    requestId: str = Field(max_length=64, pattern=r"^(quest|ach):[a-z0-9_]+:.+$")
     kind: Literal["quest", "achievement"]
     questId: str = Field(max_length=40)
     tier: Literal["bronze", "silver", "gold"] | None = None

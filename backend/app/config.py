@@ -10,6 +10,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
+DEFAULT_SECRET_KEY = "dev-only-insecure-change-me"
+MIN_SECRET_KEY_LEN = 32
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="ARENA_", env_file=_ENV_FILE, extra="ignore"
@@ -18,8 +22,12 @@ class Settings(BaseSettings):
     # Postgres in production; SQLite keeps tests and local runs dependency-free.
     database_url: str = "sqlite+aiosqlite:///./arena.db"
 
-    # Signs pairing codes and websocket tickets. Must be set in production.
-    secret_key: str = "dev-only-insecure-change-me"
+    # Signs pairing codes and websocket tickets. Must be set in production:
+    # the server refuses to start with this default or anything shorter than
+    # MIN_SECRET_KEY_LEN characters unless ARENA_DEV=1 (see check_secret_key).
+    secret_key: str = DEFAULT_SECRET_KEY
+    # Local development and tests only: allows the default/short secret key.
+    dev: bool = False
 
     github_client_id: str = ""
     github_client_secret: str = ""
@@ -31,6 +39,15 @@ class Settings(BaseSettings):
     max_daily_prompts: int = 5_000
     max_daily_tools: int = 50_000
     max_backfill_days: int = 400
+    # Same idea for the other per-day counters. Generous: a real heavy day sits
+    # orders of magnitude below these, a corrupt or forged payload does not.
+    max_daily_artifacts: int = 5_000
+    max_daily_replies: int = 50_000
+    # Per token bucket (input, output, cacheRead, cacheCreation) per day.
+    max_daily_tokens: int = 10_000_000_000
+
+    # A device token unused for this many days is revoked on its next use.
+    device_idle_days: int = 90
 
     # Directory of soundboard clips served by GET /v1/sounds. The files live on
     # the host (git-ignored) and should sit on a mounted volume so a redeploy
@@ -46,6 +63,22 @@ class Settings(BaseSettings):
     @property
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")
+
+
+def check_secret_key(settings: "Settings") -> None:
+    """Refuse to serve with a guessable signing key. Anyone who knows the key
+    can mint websocket tickets for any user, so this is a startup failure, not
+    a warning. ARENA_DEV=1 opts out for local runs and tests."""
+    if settings.dev:
+        return
+    key = settings.secret_key
+    if key == DEFAULT_SECRET_KEY or len(key) < MIN_SECRET_KEY_LEN:
+        raise RuntimeError(
+            "ARENA_SECRET_KEY is unset, the default, or shorter than "
+            f"{MIN_SECRET_KEY_LEN} characters. Generate one with: "
+            'python3 -c "import secrets; print(secrets.token_urlsafe(48))" '
+            "(or set ARENA_DEV=1 for local development only)."
+        )
 
 
 @lru_cache

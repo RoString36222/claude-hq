@@ -3631,6 +3631,19 @@ function fmtAge(secs){
 }
 
 var STATE = null;
+// One /api/pokedex request shared by every reader (startup high-water seeding, the trainer card,
+// the Pokédex view, quests): a full-history scan on the server, so callers within DEX_FETCH_TTL
+// reuse the same promise. A failed request is never cached. Readers must not mutate the result.
+var DEX_FETCH={p:null, at:0}, DEX_FETCH_TTL=30000;   // declared up here: primeHighWater runs during startup
+function fetchPokedex(){
+  var now=Date.now();
+  if(DEX_FETCH.p && now-DEX_FETCH.at<DEX_FETCH_TTL) return DEX_FETCH.p;
+  var p=fetch('/api/pokedex',{cache:"no-store"})
+    .then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); });
+  DEX_FETCH={p:p, at:now};
+  p.catch(function(){ if(DEX_FETCH.p===p) DEX_FETCH={p:null, at:0}; });
+  return p;
+}
 var QUERY = "";
 var SORT = localStorage.getItem("hq_sort") || "recent";
 var FILTER = "all";
@@ -6591,7 +6604,17 @@ function partySig(sessions){
   var parts=(sessions||[]).map(function(s){ var c=s.creature||{}, f=fzOf(c);
     return [s.id,s.status,s.title,s.alias||"",s.pinned?1:0,(s.tags||[]).join(","),s.note||"",s.folder||"",
             c.species,creatureStage(c),c.shiny?1:0,(EVO_CHOICE[s.sessionId||s.id]||{}).branchDex||"",(EVO_CHOICE[s.sessionId||s.id]||{}).megaSlug||"",f?(f.state+(f.mayFaint?"!":"")+(store && f.state!=="rested"?"$":"")):""].join(""); });
-  return [QUERY,SORT,FILTER,FILTERTAG,FILTERFOLDER,STALE_OPEN?1:0,cfg().creaturePack,PANTRY.store==="ok"?1:0].join("|")+"||"+parts.join("");
+  // Text that changes every tick (age, prompt count, tokens, the in-flight line...) is patched in
+  // place by patchCards; only when a volatile value REORDERS the cards (the Recent/Tokens sorts)
+  // does the order itself go into the signature.
+  var order="";
+  if(SORT==="recent" || SORT==="tokens"){
+    order=(sessions||[]).slice().sort(SORT==="recent"
+      ? function(a,b){ return (a.ageSecs==null?1e12:a.ageSecs)-(b.ageSecs==null?1e12:b.ageSecs); }
+      : function(a,b){ return ((b.tokens&&b.tokens.output)||0)-((a.tokens&&a.tokens.output)||0); })
+      .map(function(s){ return s.id; }).join(",");
+  }
+  return [QUERY,SORT,FILTER,FILTERTAG,FILTERFOLDER,STALE_OPEN?1:0,cfg().creaturePack,PANTRY.store==="ok"?1:0].join("|")+"||"+parts.join("")+"||"+order;
 }
 // Keep each card's energy meter current without rebuilding the party (a rebuild restarts
 // every animated sprite).
@@ -6611,7 +6634,7 @@ function patchEnergyRows(sessions){
 function renderParty(sessions){
   renderThinking(sessions);
   var sig=partySig(sessions);
-  if(sig===PARTY_SIG){ patchEnergyRows(sessions); return; }   // nothing card-relevant changed -> don't rebuild (avoids sprite flicker)
+  if(sig===PARTY_SIG){ patchEnergyRows(sessions); patchCards(sessions); return; }   // nothing card-relevant changed -> don't rebuild (avoids sprite flicker)
   PARTY_SIG=sig;
   var party = $("party"); party.innerHTML="";
   sessions = sessions||[];
@@ -6710,14 +6733,6 @@ function buildCard(s){
   if(s.status==="stale"){ var z=el("div","snooze"); z.textContent="💤"; card.appendChild(z); }
   if(s.stuck){ var sm=el("div","stuckmark"); sm.innerHTML=ico("alert","sm")+"stuck?"; sm.title=s.stuckReason||"May be stuck"; card.appendChild(sm); }
 
-  var tk = s.tokens||{}, chip = null;
-  if((tk.output||0)>0 || (tk.estCostUSD||0)>0){
-    chip = el("div","tokchip");
-    chip.textContent = fmtTok(tk.output)+" out · ≈"+fmtCost(tk.estCostUSD);
-    chip.title = (tk.output||0).toLocaleString()+" output tokens · "+fmtTok(tk.total)+
-      " processed (incl. cache) · list-price est."+(tk.model?" · "+tk.model:"");
-  }
-
   var chead = el("div","chead");
   var av = el("div","avatar");
   paintCreature(av, cr, 46);
@@ -6731,7 +6746,7 @@ function buildCard(s){
     ? '<span class="proj-openbtn" data-projfolder="'+esc(s.folder)+'" role="button" tabindex="0" title="Open project deep-dive">'+esc(prettyFolder(s.folder))+'</span>'
     : esc(s.folder||"~");
   sub.innerHTML = folderHTML+' · <span class="handle">'+esc(s.name||s.id||"?")+'</span> · '+
-    count+' prompt'+(count===1?"":"s")+' · '+esc(fmtAge(s.ageSecs))+' ago';
+    '<span data-role="pc">'+esc(cardPromptsText(s))+'</span> · <span data-role="age">'+esc(cardAgeText(s))+'</span>';
   (function(){ var fb=sub.querySelector("[data-projfolder]"); if(fb){
     var slug=fb.getAttribute("data-projfolder");
     fb.addEventListener("click",function(e){ e.stopPropagation(); openProject(slug); });
@@ -6754,41 +6769,25 @@ function buildCard(s){
 
   if(s.status==="working"){
     var inf = el("div","inflight"+(s.now?"":" thinking"));
+    inf.setAttribute("data-role","now");
     inf.innerHTML = orb("sm", orbStateFor(s.now));
-    var t = el("span"); t.textContent = s.now || "Thinking…"; inf.appendChild(t);
+    var t = el("span"); t.setAttribute("data-role","nowtxt"); t.textContent = s.now || "Thinking…"; inf.appendChild(t);
     card.appendChild(inf);
   }
 
-  var lines = el("div","lines");
-  if(s.firstPrompt) lines.appendChild(mkLine("You",s.firstPrompt,true,false));
-  if(s.lastPrompt && s.lastPrompt!==s.firstPrompt) lines.appendChild(mkLine("Latest",s.lastPrompt,false,false));
-  if(s.lastReply) lines.appendChild(mkLine("Claude",s.lastReply,true,true));
+  // The parts below change while a session runs (new prompts/replies, links, tokens, the 24h spark)
+  // but are not in partySig, so patchCards refreshes each in place, keyed so it only touches a part
+  // whose inputs changed.
+  var lines = el("div","lines"); lines.setAttribute("data-role","lines");
+  fillCardLines(lines, s); card._linesKey = cardLinesKey(s);
   card.appendChild(lines);
 
-  var links = s.links||[];
-  if(links.length){
-    var pills = el("div","pills");
-    links.forEach(function(l){
-      var a = el("a","pill "+(l.type==="pr"?"pr":"artifact"));
-      a.href = l.url||"#"; a.target="_blank"; a.rel="noopener";
-      a.innerHTML = ico(l.type==="pr"?"trend":"sparkles","sm")+'<span>'+esc(l.label||l.type||"link")+'</span>';
-      pills.appendChild(a);
-    });
-    card.appendChild(pills);
-  }
+  var pills = el("div","pills"); pills.setAttribute("data-role","links");
+  fillCardLinks(pills, s); card._linksKey = cardLinksKey(s);
+  card.appendChild(pills);
 
-  var sp12 = s.spark||[];
-  var foot = el("div","cfoot");
-  if(sp12.length){
-    var mx = Math.max.apply(null, sp12.concat([1]));
-    var sw = el("div","spark"); sw.title = "24h activity";
-    sw.setAttribute("aria-hidden","true");
-    sp12.forEach(function(v){
-      var b = el("i"); b.style.height = Math.max(1, Math.round((v/mx)*18))+"px"; sw.appendChild(b);
-    });
-    foot.appendChild(sw);
-  }
-  if(chip) foot.appendChild(chip);
+  var foot = el("div","cfoot"); foot.setAttribute("data-role","foot");
+  fillCardFoot(foot, s); card._footKey = cardFootKey(s);
 
   var tags = s.tags||[];
   if(tags.length || (s.note&&s.note.trim())){
@@ -6805,7 +6804,7 @@ function buildCard(s){
     }
     card.appendChild(tr);
   }
-  if(foot.firstChild) card.appendChild(foot);
+  card.appendChild(foot);
 
   var acts = el("div","cardactions");
   function mkAct(label,cls,fn){
@@ -6824,7 +6823,7 @@ function buildCard(s){
   // Snack / Revive open the drawer's care section: cards rebuild, so there's no in-card picker.
   if(fz && fz.state!=="rested" && PANTRY.store==="ok"){
     var ko=fz.state==="unconscious";
-    var cb=mkAct(ko?"\uD83E\uDDC3 Revive":"\uD83C\uDF59 Snack",null,function(){ openDrawer(s,{care:true}); });
+    var cb=mkAct(ko?"\uD83E\uDDC3 Revive":"\uD83C\uDF59 Snack",null,function(){ openDrawer(card._s||s,{care:true}); });
     cb.title = ko ? "Wake "+creatureSpecies(cr)+" with a revive item" : "Give "+creatureSpecies(cr)+" a snack";
     cb.setAttribute("aria-label", cb.title);
     cb.setAttribute("data-act","care");   // closeDrawer finds it again on the rebuilt card
@@ -6839,7 +6838,8 @@ function buildCard(s){
   card.tabIndex = 0;
   card.setAttribute("role","button");
   card.setAttribute("aria-label", cardAriaLabel(s));
-  function open(){ openDrawer(s); }
+  card._s = s;   // patchCards swaps in each tick's session so the drawer opens on fresh data
+  function open(){ openDrawer(card._s||s); }
   card.addEventListener("click",function(e){
     if(e.target.closest("a")||e.target.closest("button")) return;
     open();
@@ -6851,6 +6851,82 @@ function buildCard(s){
     if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); }
   });
   return card;
+}
+
+// ---- the volatile parts of a party card (built by buildCard, refreshed in place by patchCards) ----
+function cardPromptsText(s){ var n=(s&&s.promptCount!=null)?(s.promptCount|0):0; return n+" prompt"+(n===1?"":"s"); }
+function cardAgeText(s){ return fmtAge((s||{}).ageSecs)+" ago"; }
+function cardLinesKey(s){ s=s||{}; return [s.firstPrompt||"", s.lastPrompt||"", s.lastReply||""].join("\u0001"); }
+function fillCardLines(box, s){
+  box.innerHTML="";
+  if(s.firstPrompt) box.appendChild(mkLine("You",s.firstPrompt,true,false));
+  if(s.lastPrompt && s.lastPrompt!==s.firstPrompt) box.appendChild(mkLine("Latest",s.lastPrompt,false,false));
+  if(s.lastReply) box.appendChild(mkLine("Claude",s.lastReply,true,true));
+}
+function cardLinksKey(s){ return JSON.stringify(((s||{}).links||[]).map(function(l){ l=l||{}; return [l.type||"", l.url||"", l.label||""]; })); }
+function fillCardLinks(box, s){
+  var links=(s&&s.links)||[];
+  box.innerHTML="";
+  links.forEach(function(l){
+    l=l||{};
+    var a = el("a","pill "+(l.type==="pr"?"pr":"artifact"));
+    a.href = l.url||"#"; a.target="_blank"; a.rel="noopener";
+    a.innerHTML = ico(l.type==="pr"?"trend":"sparkles","sm")+'<span>'+esc(l.label||l.type||"link")+'</span>';
+    box.appendChild(a);
+  });
+  box.classList.toggle("hidden", !links.length);
+}
+function cardFootKey(s){ s=s||{}; var tk=s.tokens||{};
+  return JSON.stringify([s.spark||[], tk.output||0, tk.estCostUSD||0, tk.total||0, tk.model||""]); }
+function fillCardFoot(foot, s){
+  var sp12=(s&&s.spark)||[], tk=(s&&s.tokens)||{};
+  foot.innerHTML="";
+  if(sp12.length){
+    var mx = Math.max.apply(null, sp12.concat([1]));
+    var sw = el("div","spark"); sw.title = "24h activity";
+    sw.setAttribute("aria-hidden","true");
+    sp12.forEach(function(v){
+      var b = el("i"); b.style.height = Math.max(1, Math.round(((v||0)/mx)*18))+"px"; sw.appendChild(b);
+    });
+    foot.appendChild(sw);
+  }
+  if((tk.output||0)>0 || (tk.estCostUSD||0)>0){
+    var chip = el("div","tokchip");
+    chip.textContent = fmtTok(tk.output)+" out · ≈"+fmtCost(tk.estCostUSD);
+    chip.title = (tk.output||0).toLocaleString()+" output tokens · "+fmtTok(tk.total)+
+      " processed (incl. cache) · list-price est."+(tk.model?" · "+tk.model:"");
+    foot.appendChild(chip);
+  }
+  foot.classList.toggle("hidden", !foot.firstChild);
+}
+function setText(node, txt){ if(node && node.textContent!==txt) node.textContent=txt; }
+// Refresh every card's volatile text in place (what partySig leaves out so animated sprites aren't
+// restarted each tick): prompt count, age, the in-flight tool line, the prompt/reply lines, links,
+// tokens and the spark. Each part is only touched when its own inputs changed.
+function patchCards(sessions){
+  var party=$("party"); if(!party) return;
+  var cards=party.querySelectorAll(".card[data-sid]"); if(!cards.length) return;
+  var by={}; (sessions||[]).forEach(function(s){ if(s && s.sessionId) by[s.sessionId]=s; });
+  Array.prototype.forEach.call(cards,function(card){
+    var s=by[card.getAttribute("data-sid")]; if(!s) return;
+    card._s=s;
+    setText(card.querySelector('[data-role="pc"]'), cardPromptsText(s));
+    setText(card.querySelector('[data-role="age"]'), cardAgeText(s));
+    var inf=card.querySelector('[data-role="now"]');
+    if(inf){
+      inf.classList.toggle("thinking", !s.now);
+      var o=inf.querySelector(".orb"), st=orbStateFor(s.now);
+      if(o && o.getAttribute("data-orb")!==st) o.setAttribute("data-orb", st);
+      setText(inf.querySelector('[data-role="nowtxt"]'), s.now || "Thinking…");
+    }
+    var k=cardLinesKey(s), box;
+    if(card._linesKey!==k && (box=card.querySelector('[data-role="lines"]'))){ fillCardLines(box, s); card._linesKey=k; }
+    k=cardLinksKey(s);
+    if(card._linksKey!==k && (box=card.querySelector('[data-role="links"]'))){ fillCardLinks(box, s); card._linksKey=k; }
+    k=cardFootKey(s);
+    if(card._footKey!==k && (box=card.querySelector('[data-role="foot"]'))){ fillCardFoot(box, s); card._footKey=k; }
+    var al=cardAriaLabel(s); if(card.getAttribute("aria-label")!==al) card.setAttribute("aria-label", al);
+  });
 }
 
 function mkLine(tag,text,clamp,toggle){
@@ -7239,7 +7315,7 @@ function openDrawer(sess, opts){
   var cr = sess.creature||{};
   paintCreature($("dwAv"), cr, 76); DRAWER_AV_SIG = drawerAvSig(cr);
   $("dwTitle").textContent = sess.title || "Untitled session";
-  $("dwSub").textContent = (sess.status||"")+" · "+esc(sess.folder||"~");
+  $("dwSub").textContent = (sess.status||"")+" · "+(sess.folder||"~");
   $("dwBody").innerHTML = '<div class="dw-loading">'+LOADING_HTML+'</div>';
   bd.classList.add("open"); dw.classList.add("open"); dw.setAttribute("aria-hidden","false");
   DRAWER_OPEN = true; document.body.style.overflow="hidden";
@@ -7755,7 +7831,7 @@ function pantryEat(sid, kind, btn, rid, isRetry, quiet){
   refreshDrawerCare(true);
   arenaPost("/api/arena/pantry/eat", {sessionId:sid, kind:kind, requestId:rid, retry:!!isRetry}).then(function(res){
     delete EAT_INFLIGHT[rid]; if(!quiet) CARE_BUSY=null;
-    if(res.status===200){ pendingEatDrop(rid); eatDone(sid, kind, res.j||{}, f0, cr0); }
+    if(res.status===200){ pendingEatDrop(rid); mealsTodayBump(rid); eatDone(sid, kind, res.j||{}, f0, cr0); }
     else if(res.status===202){
       // still pending: one automatic retry, then the Retry button, the next pantry load or a reload
       if(!quiet) careNote(sid, pantryErr(res, "The Arena didn\u2019t answer. Your snack is safe: Claude HQ will retry it."));
@@ -7879,6 +7955,9 @@ function checkFatigue(sessions){
   }
 }
 
+// Set when an update arrives while the tab is hidden: nothing is painted then, so the page
+// renders once when it is shown again (see the visibilitychange handler).
+var RENDER_DIRTY=false;
 function render(){
   if(!STATE) return;
   syncConfig(STATE.config);
@@ -7886,6 +7965,17 @@ function render(){
   // Stamp each live creature with its sessionId so branch/mega choice lookups (evoChoice,
   // branchFinalDex, pokeMegaForm) resolve. Object.assign clones carry _sid forward.
   (STATE.sessions||[]).forEach(function(s){ if(s.creature) s.creature._sid = s.sessionId || s.id; });
+  if(document.hidden){
+    // Hidden tab: skip all painting, but keep what reaches you outside the page current:
+    // needs-you / faint notifications, the tab title, and the Arena status you share.
+    RENDER_DIRTY=true;
+    checkTransitions(STATE.sessions);
+    checkFatigue(STATE.sessions);
+    updateDocTitle(STATE.sessions);
+    arenaStatusTick();
+    return;
+  }
+  RENDER_DIRTY=false;
   seedHighWaterFromSessions(STATE.sessions);   // lift New Game+ floor before painting cards
   renderSeason(STATE.season);
   renderInsights(STATE.season);
@@ -8306,6 +8396,7 @@ function startStream(){
 document.addEventListener("visibilitychange", function(){
   if(document.hidden){ stopPoll(); return; }
   try{
+    if(RENDER_DIRTY && STATE) render();             // paint what arrived while hidden, once
     if(es){ load(); } else { startPoll(); }          // fleet refresh
     if(VIEW==="analytics"){ loadHistory(); loadInsights(); }
     else if(VIEW==="pokedex"){ loadPokedex(); }
@@ -8321,12 +8412,39 @@ function feedActor(f){
   if(who==="tool"||who==="tool_use") return {label:(f.tool||f.name||"tool"), cls:"tool"};
   return {label:"Claude", cls:"claude"};
 }
+// Per-section render signatures: render() runs on every SSE tick, so each section below rebuilds
+// its DOM only when its own inputs changed (a rebuild restarts animated sprites and costs layout).
+// paintEnvSig covers what every painted sprite depends on besides the creature itself.
+function paintEnvSig(){
+  var dark=!!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  return [cfg().creaturePack, document.documentElement.getAttribute("data-theme")||"", dark?1:0].join(",");
+}
+// What a painted creature looks like: species, (floored) stage, shiny, evolution/mega choice, energy.
+function creatureSigKey(cr){
+  var c=cr||{}, ch=EVO_CHOICE[c._sid]||{}, f=fzOf(c);
+  return [c.species, creatureStage(c), c.shiny?1:0, ch.branchDex||"", ch.megaSlug||"", f?f.state:"", c.emoji||""].join(",");
+}
+var FEED_SIG=null;
+function feedSig(feed, byId){
+  return paintEnvSig()+"||"+(feed||[]).length+"||"+JSON.stringify((feed||[]).slice(0,25).map(function(f){
+    var live=byId[f.sessionId||f.id];
+    return [f.sessionId||f.id||"", (live&&live.title)||f.title||f.session||"", feedActor(f).label, f.text||f.detail||f.summary||"",
+            creatureSigKey((live&&live.creature)||f.creature||{emoji:f.emoji}), f.t||f.ts||f.time||f.timestamp||""];
+  }));
+}
 function renderFeed(feed){
   var wrap=$("feedList"); if(!wrap) return;
   feed = feed||[];
+  var byId={}; ((STATE&&STATE.sessions)||[]).forEach(function(s){ byId[s.sessionId]=s; });
+  var sig=feedSig(feed, byId);
+  if(sig===FEED_SIG && wrap.firstChild){
+    // Same events: only the relative times move on.
+    Array.prototype.forEach.call(wrap.querySelectorAll(".feed-time"),function(tm){ setText(tm, relTime(tm._t)); });
+    return;
+  }
+  FEED_SIG=sig;
   if(!feed.length){ wrap.innerHTML='<div class="feed-empty">No recent fleet activity.</div>'; $("feedSub").textContent=""; return; }
   wrap.innerHTML="";
-  var byId={}; ((STATE&&STATE.sessions)||[]).forEach(function(s){ byId[s.sessionId]=s; });
   feed.slice(0,25).forEach(function(f){
     var row=el("div","feed-row");
     var ic=el("div","feed-ic");
@@ -8344,7 +8462,8 @@ function renderFeed(feed){
     body.appendChild(what);
     row.appendChild(body);
     var tm=el("div","feed-time");
-    tm.textContent = relTime(f.t||f.ts||f.time||f.timestamp);
+    tm._t = f.t||f.ts||f.time||f.timestamp;
+    tm.textContent = relTime(tm._t);
     row.appendChild(tm);
     var sid=f.sessionId||f.id;
     row.addEventListener("click",function(){ if(sid) openSession(sid,{title:f.title,creature:f.creature}); });
@@ -8659,8 +8778,7 @@ var insightsTimer=setInterval(function(){ if(VIEW==="analytics" && !document.hid
 var POKEDEX=null, pokedexTimer=null, pokedexLoading=false;
 function loadPokedex(){
   if(pokedexLoading) return; pokedexLoading=true;
-  fetch('/api/pokedex',{cache:"no-store"})
-    .then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); })
+  fetchPokedex()
     .then(function(d){ POKEDEX=d; renderPokedex(d); })
     .catch(function(){ var g=$("dexGrid"); if(g && !POKEDEX){ g.innerHTML='<div class="feed-empty">Pokédex unavailable.</div>'; } $("dexStats").textContent="—"; })
     .then(function(){ pokedexLoading=false; });
@@ -8731,7 +8849,7 @@ function seedHighWaterFromSessions(sessions){ var ch=false;
 // Seed once on startup from the backend Pokédex (cross-session maxStage) regardless of
 // whether the Pokédex view was ever opened, then repaint the party if the floor rose.
 function primeHighWater(){
-  fetch('/api/pokedex',{cache:"no-store"}).then(function(r){ return r.ok?r.json():null; })
+  fetchPokedex()
    .then(function(d){ if(!d) return; var list=d.species||d.pokedex||d.entries||[]; var ch=false;
      list.forEach(function(sp){ if(sp&&sp.caught&&sp.maxStage!=null){ if(seedHW(sp.species!=null?sp.species:sp.index, sp.maxStage)) ch=true; } });
      if(ch && typeof STATE!=="undefined" && STATE){ PARTY_SIG=null; renderParty(STATE.sessions); } })
@@ -9003,9 +9121,13 @@ function buildSuggestions(a){
 function paintMon(node, cr, px){ paintCreature(node, cr, px, true); }
 
 // ---- compact summary card (live view) ----
+var GYMCARD_SIG=null;
 function renderGymCard(){
   var card=$("gymCard"); if(!card) return;
   var team=gymTeam();
+  var sig=paintEnvSig()+"||"+JSON.stringify(team.map(function(m){ return [m.name, m.type, m.title, creatureSigKey(m.cr)]; }));
+  if(sig===GYMCARD_SIG) return;   // same roster: don't repaint (it would restart every sprite)
+  GYMCARD_SIG=sig;
   if(!team.length){ card.classList.add("hidden"); return; }
   card.classList.remove("hidden");
   var a=analyzeTeam(team);
@@ -9183,7 +9305,7 @@ function renderNextUp(){
     idleRecent.forEach(function(s){
       if(items.length>=4) return;
       items.push({cls:"", ic:"↻", t:"Pick up where you left off: "+(s.title||s.name||"session"),
-        s:"idle "+fmtAge(s.ageSecs)+" · "+esc(prettyFolder(s.folder||"")),
+        s:"idle "+fmtAge(s.ageSecs)+" · "+prettyFolder(s.folder||""),
         btn:"Resume", fn:function(){ sessResume(s.sessionId||s.id); }});
     });
   }
@@ -9201,6 +9323,15 @@ function renderNextUp(){
     }
   }
   items=items.slice(0,4);
+  wrap._items=items;   // the buttons call the CURRENT tick's actions, even when the DOM is kept
+  // Same rows: only the subtitles (which carry ages) are refreshed in place.
+  var sig=JSON.stringify(items.map(function(it){ return [it.cls, it.ic, it.t, it.btn||""]; }));
+  if(sig===wrap._sig && wrap.firstChild){
+    var subs=wrap.querySelectorAll(".nextup-s");
+    if(items.length) items.forEach(function(it, i){ setText(subs[i], it.s); });
+    return;
+  }
+  wrap._sig=sig;
   wrap.innerHTML="";
   if(!items.length){
     var clr=el("div","nextup-item clear");
@@ -9213,7 +9344,7 @@ function renderNextUp(){
     return;
   }
   $("nextUpSub").textContent = items.length+" suggestion"+(items.length===1?"":"s");
-  items.forEach(function(it){
+  items.forEach(function(it, idx){
     var row=el("div","nextup-item"+(it.cls?" "+it.cls:""));
     var ic=el("div","nextup-ic"); ic.textContent=it.ic; row.appendChild(ic);
     var bd=el("div","nextup-body");
@@ -9221,7 +9352,7 @@ function renderNextUp(){
     var s=el("div","nextup-s"); s.textContent=it.s; bd.appendChild(s);
     row.appendChild(bd);
     if(it.btn){ var b=el("button","nextup-btn"); b.type="button"; b.textContent=it.btn;
-      b.addEventListener("click",function(e){ e.stopPropagation(); it.fn(); }); row.appendChild(b); }
+      b.addEventListener("click",function(e){ e.stopPropagation(); var cur=(wrap._items||[])[idx]||it; cur.fn(); }); row.appendChild(b); }
     wrap.appendChild(row);
   });
 }
@@ -9229,7 +9360,7 @@ function renderNextUp(){
 /* ---- trainer card (Pokémon-theme capstone: level + badges + pokedex + shiny) ---- */
 var TRAINER_DEX=null;
 function loadTrainerDex(){
-  fetch('/api/pokedex',{cache:'no-store'}).then(function(r){return r.json();})
+  fetchPokedex()
     .then(function(d){ TRAINER_DEX=d; renderTrainerCard(); maybeRecap(); }).catch(function(){});
 }
 function trainerPref(){ return ((CONFIG&&CONFIG.trainerName)||"").trim(); }
@@ -9779,11 +9910,22 @@ function peerEvoImg(spr, px){
     ' alt="'+esc(slug)+'" data-dex="'+dex+'" data-shiny="'+shiny+'" data-3d="1" data-mega="'+(spr.mega?1:0)+'"'+
     ' data-slug="'+slug+'" data-try="0" data-fb="'+fb+'" onerror="pokeErr(this)">';
 }
+// A full-screen splash takes over the page, so a member can show one at most every
+// PEER_EVO_GAP_MS (a burst of evolutions, or a misbehaving client, can't keep covering the screen).
+var PEER_EVO_GAP_MS=60000, PEER_EVO_LAST={};
+function peerEvoAllowed(userId, now){
+  var k=(typeof userId==="string" && userId) ? userId : "?";
+  var last=PEER_EVO_LAST[k];
+  if(last!=null && now-last < PEER_EVO_GAP_MS) return false;
+  PEER_EVO_LAST[k]=now;
+  return true;
+}
 // A peer's evolution arrived over the lobby -> show them the full-screen splash + a Congratulate button.
 function arenaOnEvo(m){
   var d=m.data||{}; if(!d || d.kind!=="evo") return;
   var from=(m.from&&typeof m.from==="object")?m.from:{};
   if(ARENA.you && from.userId && from.userId===ARENA.you.userId) return;   // ignore my own echo
+  if(!peerEvoAllowed(from.userId, Date.now())) return;   // one splash per member per minute
   showPeerEvoSplash({
     who:arenaWho(from), handle:(typeof from.handle==="string"?from.handle.slice(0,40):""),
     event:(typeof d.event==="string"?d.event:(d.mega?"mega":"evolve")),
@@ -9997,6 +10139,11 @@ function renderTagFilter(sessions){
   var set={}; (sessions||[]).forEach(function(s){ (s.tags||[]).forEach(function(t){ if(t) set[t]=1; }); });
   var tags=Object.keys(set).sort();
   if(FILTERTAG && tags.indexOf(FILTERTAG)<0) FILTERTAG="";
+  // Rebuild only when the options changed, and never under an open/focused picker (that would
+  // close it or move the highlighted option); it catches up on the next tick after blur.
+  var sig=JSON.stringify([tags, FILTERTAG]);
+  if(sig===sel._sig || document.activeElement===sel) return;
+  sel._sig=sig;
   sel.innerHTML="";
   var o0=el("option"); o0.value=""; o0.textContent="All tags"; sel.appendChild(o0);
   tags.forEach(function(t){ var o=el("option"); o.value=t; o.textContent="#"+t; sel.appendChild(o); });
@@ -10011,6 +10158,9 @@ function renderFolderFilter(sessions){
   var set={}; (sessions||[]).forEach(function(s){ if(s.folder) set[s.folder]=(set[s.folder]||0)+1; });
   var folders=Object.keys(set).sort();
   if(FILTERFOLDER && folders.indexOf(FILTERFOLDER)<0) FILTERFOLDER="";
+  var sig=JSON.stringify([folders.map(function(f){ return [f, set[f]]; }), FILTERFOLDER]);   // see renderTagFilter
+  if(sig===sel._sig || document.activeElement===sel) return;
+  sel._sig=sig;
   sel.innerHTML="";
   var o0=el("option"); o0.value=""; o0.textContent="All projects"; sel.appendChild(o0);
   folders.forEach(function(f){ var o=el("option"); o.value=f; o.textContent=prettyFolderShort(f)+" ("+set[f]+")"; sel.appendChild(o); });
@@ -10450,6 +10600,29 @@ function questClaimsPrune(obj){
 }
 
 function todayStr(){ return new Date().toISOString().slice(0,10); }
+// Species that reached Apex (stage index 4, STAGE_NAMES in dashboard.py), from the backend
+// Pokédex shape {species:[{caught, maxStage}]}.
+function dexApexCount(dex){
+  var list=(dex && Array.isArray(dex.species)) ? dex.species : [], n=0;
+  list.forEach(function(sp){ if(sp && sp.caught && sp.maxStage!=null && (sp.maxStage|0)>=4) n++; });
+  return n;
+}
+// Snacks that went through today (the "Feed a creature" quest): {date, n, rids} in localStorage
+// "hq_meals_today", keyed by the same UTC day as the daily quests. Counted once per requestId, so a
+// replayed retry of the same snack doesn't count twice.
+function mealsTodayLoad(){
+  var o=null; try{ o=JSON.parse(localStorage.getItem("hq_meals_today")||"null"); }catch(e){ o=null; }
+  if(!o || typeof o!=="object" || o.date!==todayStr()) return {date:todayStr(), n:0, rids:[]};
+  return {date:o.date, n:Math.max(0, o.n|0), rids:Array.isArray(o.rids)?o.rids.filter(function(r){ return typeof r==="string"; }).slice(-20):[]};
+}
+function mealsTodayCount(){ return mealsTodayLoad().n; }
+function mealsTodayBump(rid){
+  var o=mealsTodayLoad();
+  if(rid){ if(o.rids.indexOf(rid)>=0) return o.n; o.rids.push(rid); o.rids=o.rids.slice(-20); }
+  o.n++;
+  try{ localStorage.setItem("hq_meals_today", JSON.stringify(o)); }catch(e){}
+  return o.n;
+}
 function isoWeekStr(){
   var d=new Date(), day=d.getUTCDay()||7;
   d.setUTCDate(d.getUTCDate()+4-day);
@@ -10486,9 +10659,7 @@ function questMetric(m, hist, dex, season){
     ss.forEach(function(s){ if(s.lastActivity && new Date(s.lastActivity).getTime()>=dayStart) c++; });
     return c;
   }
-  if(m==="todayFed"){
-    try{ var ml=JSON.parse(localStorage.getItem("hq_meals_today")||"0"); return ml||0; }catch(e){ return 0; }
-  }
+  if(m==="todayFed") return mealsTodayCount();
   if(m==="weekActiveDays"){
     if(hist && hist.heatmap && hist.heatmap.length){
       var n=0; hist.heatmap.slice(-7).forEach(function(c){ if((c.count||0)>0||(c.level||0)>0) n++; }); return n;
@@ -10513,10 +10684,7 @@ function questMetric(m, hist, dex, season){
   if(m==="level") return season.level||0;
   if(m==="caughtCount") return (dex&&(dex.caughtCount!=null?dex.caughtCount:dex.caught))||0;
   if(m==="shinyCount") return (dex&&dex.shinyCount)||0;
-  if(m==="apexCount"){
-    if(!dex||!dex.entries) return 0;
-    var n=0; (dex.entries||[]).forEach(function(e){ if(e.stage==="Apex") n++; }); return n;
-  }
+  if(m==="apexCount") return dexApexCount(dex);
   if(m==="nightOwl"){
     var hr=new Date().getHours(); return (hr>=0&&hr<5&&todayP>0)?1:0;
   }
@@ -10571,7 +10739,7 @@ function loadQuests(){
   renderQuests();
   fetch('/api/history',{cache:"no-store"}).then(function(r){ return r.ok?r.json():null; })
     .then(function(d){ if(d){ QUESTS_HIST=d; renderQuests(); } }).catch(function(){});
-  fetch('/api/pokedex',{cache:"no-store"}).then(function(r){ return r.ok?r.json():null; })
+  fetchPokedex()
     .then(function(d){ if(d){ QUESTS_DEX=d; renderQuests(); } }).catch(function(){});
 }
 
@@ -12570,11 +12738,18 @@ function voiceOnAnnounce(m){
   voiceRender();
 }
 
+// May a NEW peer connection be made to this peer? Never to ourselves (this page, or your own other
+// tab/machine), and never past VCHAN_MAX people in the call (you plus VCHAN_MAX-1 peers). Shared by
+// the side that calls (voicePair) and the side that answers an incoming offer (voiceOnSignal).
+function voiceMayAddPeer(peer, from){
+  if(!peer || peer === VCHAN.peer) return false;
+  if(!from || (ARENA.you && from.userId === ARENA.you.userId)) return false;
+  return Object.keys(VCHAN.peers).length < VCHAN_MAX - 1;
+}
 // Connect to one peer: the smaller peer id offers, the larger says hello so the smaller one calls.
 function voicePair(peer, from){
   if(!VCHAN.on || VCHAN.peers[peer]) return;
-  if(ARENA.you && from.userId === ARENA.you.userId) return;   // your own other tab: don't call yourself
-  if(Object.keys(VCHAN.peers).length >= VCHAN_MAX - 1) return;
+  if(!voiceMayAddPeer(peer, from)) return;   // yourself (another tab of yours) or the call is full
   if(VCHAN.peer < peer) voiceCall(peer, from);
   else voiceSignal(from.userId, {kind:"hello", toPeer:peer, muted:VCHAN.muted, cam:!!VCHAN.vidStream, screen:VCHAN.screen});
 }
@@ -12588,6 +12763,7 @@ function voiceOnSignal(m){
   if(d.kind === "hello"){
     voicePair(peer, from);
   } else if(d.kind === "offer" && typeof d.sdp === "string" && d.sdp.length < 20000){
+    if(!VCHAN.peers[peer] && !voiceMayAddPeer(peer, from)){ voiceRender(); return; }
     var p = VCHAN.peers[peer] || voiceMakePeer(peer, from, false);
     p.pc.setRemoteDescription({type:"offer", sdp:d.sdp})
       .then(function(){ voiceAnswerVideo(p); voiceFlushIce(p); return p.pc.createAnswer(); })

@@ -204,12 +204,53 @@ class ErrorSignatureTests(_TranscriptCase):
                           "content": "We discussed the billing quota and rate limits."}])
         self.assertEqual(agg["errors"], [])
 
+    def test_flagged_error_texts_without_old_signatures_match(self):
+        for msg, sig in (("You've hit your monthly spend limit", "spend limit"),
+                         ("Login expired \u00b7 Please run /login", "login expired"),
+                         ("Prompt is too long", "prompt is too long")):
+            agg = self.scan([asst([text(msg)], mid="m1", isApiErrorMessage=True)])
+            self.assertEqual([s for _, s in agg["errors"]], [sig], msg)
+
+    def test_flagged_error_with_unknown_text_gets_generic_sig(self):
+        agg = self.scan([asst([text("API Error: Unable to connect to API (ENOTFOUND)")],
+                              mid="m1", isApiErrorMessage=True)])
+        self.assertEqual([s for _, s in agg["errors"]], ["api_error"])
+        agg = self.scan([{"type": "system", "subtype": "api_error", "timestamp": TS,
+                          "error": {"message": "socket hang up"}}])
+        self.assertEqual([s for _, s in agg["errors"]], ["api_error"])
+
+    def test_permission_denied_signature_removed(self):
+        self.assertNotIn("permission denied by user", dashboard._ERROR_SIGS)
+
     def test_record_error_sig_garbage(self):
         self.assertIsNone(dashboard._record_error_sig(None))
         self.assertIsNone(dashboard._record_error_sig({"type": "user"}))
         self.assertIsNone(dashboard._record_error_sig(
             {"type": "assistant", "isApiErrorMessage": "yes",
              "message": {"content": "rate limit"}}))
+
+
+class TranscriptErrorEventTests(_TranscriptCase):
+    def events(self, records):
+        self.scan(records)
+        return list(dashboard._iter_transcript_events(self.path))
+
+    def test_system_note_mentioning_billing_is_not_an_error_event(self):
+        ev = self.events([{"type": "system", "subtype": "away_summary",
+                           "timestamp": TS,
+                           "content": "We discussed billing and the rate limit."}])
+        self.assertEqual([e for e in ev if e["role"] == "system"], [])
+
+    def test_final_api_error_is_an_error_event_with_payload_text(self):
+        ev = self.events([
+            {"type": "system", "subtype": "api_error", "timestamp": TS,
+             "error": {"message": "Overloaded"}, "retryAttempt": 1, "maxRetries": 10},
+            {"type": "system", "subtype": "api_error", "timestamp": TS,
+             "error": {"message": "Overloaded"}, "retryAttempt": 10, "maxRetries": 10},
+        ])
+        sys_ev = [e for e in ev if e["role"] == "system"]
+        self.assertEqual(len(sys_ev), 1)
+        self.assertIn("Overloaded", sys_ev[0]["text"])
 
 
 class InterruptTests(_TranscriptCase):

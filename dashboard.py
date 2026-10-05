@@ -677,11 +677,19 @@ def _usage_cost(model, usage):
 
 
 # Error signatures that mean a session needs attention (case-insensitive).
+# Matched only against records that already ARE API errors (see
+# _record_error_sig); tool_result text such as a user's permission denial is
+# never scanned, so it has no signature here.
 _ERROR_SIGS = (
     "organization has disabled", "disabled claude", "rate limit", "overloaded",
     "invalid api key", "credit balance", "billing", "quota", "insufficient",
-    "authentication_error", "permission denied by user",
+    "authentication_error", "spend limit", "login expired", "/login",
+    "prompt is too long",
 )
+
+# Signature for a flagged API-error record whose text matches nothing above:
+# the flag alone already means the session needs attention.
+_GENERIC_ERROR_SIG = "api_error"
 
 
 def _match_error(text):
@@ -701,7 +709,8 @@ def _record_error_sig(o):
     (skipped while Claude Code is still retrying it), and an assistant record
     Claude Code flagged isApiErrorMessage (the synthetic error reply). Ordinary
     assistant prose or system notes that merely mention "billing" or "rate
-    limit" never count."""
+    limit" never count. A qualifying record whose text matches no known
+    signature still returns the generic "api_error" signature."""
     if not isinstance(o, dict):
         return None
     typ = o.get("type")
@@ -728,7 +737,7 @@ def _record_error_sig(o):
             parts.append(err)
     else:
         return None
-    return _match_error(" ".join(p for p in parts if p))
+    return _match_error(" ".join(p for p in parts if p)) or _GENERIC_ERROR_SIG
 
 
 # --------------------------------------------------------------------------- #
@@ -3835,8 +3844,21 @@ def _iter_transcript_events(path):
                             })
                             i += 1
                 elif typ == "system":
-                    content = o.get("content")
-                    if isinstance(content, str) and _match_error(content):
+                    # Same rule as the session's "needs" status: only a final
+                    # system api_error record is an error event.
+                    if _record_error_sig(o):
+                        content = o.get("content")
+                        if not (isinstance(content, str) and content.strip()):
+                            err = o.get("error")
+                            if isinstance(err, dict) and isinstance(
+                                    err.get("message"), str):
+                                content = err["message"]
+                            elif isinstance(err, str):
+                                content = err
+                            elif err is not None:
+                                content = json.dumps(err, default=str)
+                            else:
+                                content = "API error"
                         events.append({
                             "i": i, "t": tiso, "role": "system",
                             "text": truncate(strip_markdown(content), 1200),

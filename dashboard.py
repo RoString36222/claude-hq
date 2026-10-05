@@ -391,6 +391,13 @@ def is_real_human_prompt(content):
     return True
 
 
+# The live payload (sent every stream frame) carries trimmed text; the drawer
+# reads the full text from /api/session/<sid> and exports rehydrate it.
+LIVE_PROMPT_MAX = 280
+LIVE_REPLY_MAX = 400
+STREAM_HEARTBEAT_SECS = 15.0
+
+
 def truncate(s, n):
     if s is None:
         return ""
@@ -1541,9 +1548,9 @@ def build_session(agent, meals=None, fatigue_on=True):
         "status": status,
         "rawStatus": raw_status,
         "creature": creature,
-        "firstPrompt": tx["first_prompt"] or "",
-        "lastPrompt": tx["last_prompt"] or (tx["first_prompt"] or ""),
-        "lastReply": tx["last_reply"] or "",
+        "firstPrompt": truncate(tx["first_prompt"] or "", LIVE_PROMPT_MAX),
+        "lastPrompt": truncate(tx["last_prompt"] or (tx["first_prompt"] or ""), LIVE_PROMPT_MAX),
+        "lastReply": truncate(tx["last_reply"] or "", LIVE_REPLY_MAX),
         "now": now_label,
         "promptCount": tx["prompt_count"],
         "lastActivity": last_activity_iso,
@@ -1629,9 +1636,10 @@ def build_archived_session(path, sid, meals=None, fatigue_on=True):
         "cwd": "", "folder": agg.get("folder") or "", "kind": "archived", "pid": None,
         "status": "stale", "rawStatus": "archived",
         "creature": creature,
-        "firstPrompt": agg.get("first_prompt") or "",
-        "lastPrompt": agg.get("last_prompt") or agg.get("first_prompt") or "",
-        "lastReply": agg.get("last_reply") or "",
+        "firstPrompt": truncate(agg.get("first_prompt") or "", LIVE_PROMPT_MAX),
+        "lastPrompt": truncate(agg.get("last_prompt") or agg.get("first_prompt") or "",
+                               LIVE_PROMPT_MAX),
+        "lastReply": truncate(agg.get("last_reply") or "", LIVE_REPLY_MAX),
         "now": None, "promptCount": agg.get("prompt_count", 0),
         "lastActivity": la.isoformat() if la else "", "ageSecs": age,
         "stale": True, "links": (agg.get("links") or [])[:4],
@@ -1786,6 +1794,51 @@ def _invalidate_payload_memo():
         _payload_memo["gen"] += 1
 
 
+def _stream_sig(payload):
+    """What a stream client needs to see change: everything except the clock
+    (`updated`) and the per-tick session ages, which drift every frame. Ages
+    still reach the page on the heartbeat frame (STREAM_HEARTBEAT_SECS)."""
+    slim = {k: v for k, v in payload.items() if k != "updated"}
+    if isinstance(slim.get("sessions"), list):
+        slim["sessions"] = [{k: v for k, v in s.items() if k != "ageSecs"}
+                            if isinstance(s, dict) else s for s in slim["sessions"]]
+    return json.dumps(slim, sort_keys=True)
+
+
+_blob_memo = {"data": None, "blob": None, "sig": None}
+_blob_memo_lock = threading.Lock()
+
+
+def build_payload_blob():
+    """(serialized payload, change signature), shared by every stream client so
+    each tick serializes the payload once, not once per open tab."""
+    data = build_payload_memo()
+    with _blob_memo_lock:
+        if _blob_memo["data"] is data:
+            return _blob_memo["blob"], _blob_memo["sig"]
+    blob, sig = json.dumps(data), _stream_sig(data)
+    with _blob_memo_lock:
+        _blob_memo.update(data=data, blob=blob, sig=sig)
+    return blob, sig
+
+
+def _full_text_sessions(sessions):
+    """Copies of the payload sessions with untruncated prompt/reply text, for
+    exports (the live payload trims them to keep each stream frame small)."""
+    out = []
+    for s in sessions or []:
+        s = dict(s)
+        sid = s.get("sessionId")
+        path = find_transcript(sid) if sid else None
+        agg = scan_file(path) if path else None
+        if isinstance(agg, dict) and agg:
+            s["firstPrompt"] = agg.get("first_prompt") or ""
+            s["lastPrompt"] = agg.get("last_prompt") or agg.get("first_prompt") or ""
+            s["lastReply"] = agg.get("last_reply") or ""
+        out.append(s)
+    return out
+
+
 def build_payload_memo():
     now = time.monotonic()
     with _payload_memo_lock:
@@ -1870,6 +1923,8 @@ def build_session_detail(sid):
         "sparkHourly": _buckets_from_ts(agg.get("activity_ts", []), 24, 24 * 3600),
         "resumeCmd": "claude --resume %s" % sid,
         "lastReplyFull": agg["last_reply"] or "",
+        "firstPromptFull": agg.get("first_prompt") or "",
+        "lastPromptFull": agg.get("last_prompt") or agg.get("first_prompt") or "",
         "firstActivity": first_iso,
         "lastActivity": (agg["last_activity"].isoformat() if agg.get("last_activity") else ""),
         "spanDays": span_days,
@@ -4150,17 +4205,20 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
             except Exception:
                 return
-            last = None
+            last_sig, last_sent = None, 0.0
             try:
                 while True:
                     try:
-                        payload = build_payload_memo()
-                        blob = json.dumps(payload)
+                        blob, sig = build_payload_blob()
                     except Exception as e:
                         blob = json.dumps({"error": str(e)})
-                    if blob != last:
+                        sig = blob
+                    now_m = time.monotonic()
+                    # A frame when something the page shows changed, else one per
+                    # heartbeat so ages move on; keepalives in between.
+                    if sig != last_sig or now_m - last_sent >= STREAM_HEARTBEAT_SECS:
                         self.wfile.write(("data: " + blob + "\n\n").encode("utf-8"))
-                        last = blob
+                        last_sig, last_sent = sig, now_m
                     else:
                         self.wfile.write(b":keepalive\n\n")
                     self.wfile.flush()
@@ -4246,7 +4304,7 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.dumps({
                     "generated": now_utc().isoformat(),
                     "season": p.get("season"),
-                    "sessions": p.get("sessions", []),
+                    "sessions": _full_text_sessions(p.get("sessions", [])),
                 })
             except Exception as e:
                 body = json.dumps({"generated": now_utc().isoformat(),

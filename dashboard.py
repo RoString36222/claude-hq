@@ -228,8 +228,10 @@ def species_seed(species):
 
 def _atomic_write_text(path, text, mode=0o600):
     """Write `text` to `path` atomically with permissions `mode`. Raises OSError
-    on failure (the original file is left untouched)."""
-    d = os.path.dirname(os.path.abspath(path))
+    on failure (the original file is left untouched). A symlinked `path` is
+    resolved first, so the real file is replaced and the link is kept."""
+    path = os.path.realpath(path)
+    d = os.path.dirname(path)
     fd, tmp = tempfile.mkstemp(dir=d, prefix="." + os.path.basename(path) + "-",
                                suffix=".tmp")
     try:
@@ -266,11 +268,21 @@ def _load_json_guarded(path, default=None):
     try:
         with open(path, "rb") as f:
             raw = f.read()
+            seen = os.fstat(f.fileno())
     except OSError:
         return default
     try:
         return json.loads(raw.decode("utf-8"))
     except ValueError:  # JSONDecodeError and UnicodeDecodeError
+        # Only quarantine the very file we read: a concurrent atomic save may
+        # already have swapped a good file in, which must not be moved aside.
+        try:
+            now = os.stat(path)
+        except OSError:
+            return default
+        if (now.st_ino, now.st_dev, now.st_size, now.st_mtime_ns) != \
+                (seen.st_ino, seen.st_dev, seen.st_size, seen.st_mtime_ns):
+            return default
         dest = "%s.corrupt-%d" % (path, int(time.time() * 1000))
         try:
             os.replace(path, dest)
@@ -3023,8 +3035,9 @@ def action_reveal(sid):
 
 
 def _live_interactive_pids():
-    """Pids of the live interactive Claude sessions `claude agents` reports."""
-    agents, _err = get_live_agents()
+    """(pids, error): pids of the live interactive Claude sessions `claude
+    agents` reports, and the CLI error (None on success)."""
+    agents, err = get_live_agents()
     out = set()
     for a in agents or []:
         if not isinstance(a, dict):
@@ -3034,7 +3047,7 @@ def _live_interactive_pids():
         p = a.get("pid")
         if isinstance(p, int) and not isinstance(p, bool):
             out.add(p)
-    return out
+    return out, err
 
 
 def action_close(pid):
@@ -3049,7 +3062,11 @@ def action_close(pid):
         return 400, {"error": "pid must be an integer"}
     if pid <= 1 or pid == os.getpid():
         return 400, {"error": "refusing that pid"}
-    if pid not in _live_interactive_pids():
+    live, err = _live_interactive_pids()
+    if err:
+        # Fail closed, but say why: we could not list sessions at all.
+        return 503, {"error": "cannot verify live sessions: %s" % err}
+    if pid not in live:
         return 400, {"error": "pid %d is not a live interactive Claude session" % pid}
     try:
         ps = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
@@ -4461,6 +4478,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         length = int(cl)
         if length > _post_body_limit(path):
+            # Reply without reading the body (a DoS guard). A browser still
+            # uploading may see a connection reset instead of this 413; the
+            # UI pre-checks sizes (e.g. the 5 MB sound cap), so that's rare.
             self.close_connection = True
             self._send(413, json.dumps({"error": "request body too large"}))
             return

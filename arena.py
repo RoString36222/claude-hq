@@ -70,8 +70,10 @@ def init(scan_file, load_config, here):
 
 def _atomic_write_text(path, text, mode=0o600):
     """Write `text` to `path` atomically with permissions `mode`. Raises OSError
-    on failure (the original file is left untouched)."""
-    d = os.path.dirname(os.path.abspath(path))
+    on failure (the original file is left untouched). A symlinked `path` is
+    resolved first, so the real file is replaced and the link is kept."""
+    path = os.path.realpath(path)
+    d = os.path.dirname(path)
     fd, tmp = tempfile.mkstemp(dir=d, prefix="." + os.path.basename(path) + "-",
                                suffix=".tmp")
     try:
@@ -107,11 +109,21 @@ def _load_json_guarded(path, default=None):
     try:
         with open(path, "rb") as f:
             raw = f.read()
+            seen = os.fstat(f.fileno())
     except OSError:
         return default
     try:
         return json.loads(raw.decode("utf-8"))
     except ValueError:  # JSONDecodeError and UnicodeDecodeError
+        # Only quarantine the very file we read: a concurrent atomic save may
+        # already have swapped a good file in, which must not be moved aside.
+        try:
+            now = os.stat(path)
+        except OSError:
+            return default
+        if (now.st_ino, now.st_dev, now.st_size, now.st_mtime_ns) != \
+                (seen.st_ino, seen.st_dev, seen.st_size, seen.st_mtime_ns):
+            return default
         dest = "%s.corrupt-%d" % (path, int(time.time() * 1000))
         try:
             os.replace(path, dest)

@@ -69,6 +69,19 @@ class AtomicWriteTests(TempDirCase):
             self.assertEqual(json.load(f), {"new": True})
         self.assertEqual(_mode(p), 0o600)
 
+    def test_symlinked_target_is_written_through_and_link_kept(self):
+        for mod in MODULES:
+            real = self.path("real-%s.json" % mod.__name__)
+            link = self.path("link-%s.json" % mod.__name__)
+            with open(real, "w") as f:
+                f.write("{}")
+            os.symlink(real, link)
+            mod._atomic_write_json(link, {"via": "link"})
+            self.assertTrue(os.path.islink(link))
+            with open(real) as f:
+                self.assertEqual(json.load(f), {"via": "link"})
+            self.assertEqual(mod._load_json_guarded(link, {}), {"via": "link"})
+
     def test_custom_mode(self):
         p = self.path("x.json")
         dashboard._atomic_write_json(p, [], mode=0o640)
@@ -116,6 +129,27 @@ class GuardedLoadTests(TempDirCase):
                 with open(q[0], "rb") as f:
                     self.assertEqual(f.read(), junk)  # evidence preserved
                 os.remove(q[0])
+
+    def test_good_file_saved_mid_read_is_not_quarantined(self):
+        """Race: a reader parses corrupt bytes while a concurrent save swaps a
+        valid file in; the reader must not move the fresh file aside."""
+        real_loads = json.loads
+        for mod in MODULES:
+            p = self.path("race-%s.json" % mod.__name__)
+            with open(p, "w") as f:
+                f.write("{corrupt")
+
+            def loads(text, *a, **k):
+                mod._atomic_write_json(p, {"theme": "forest"})  # concurrent save
+                return real_loads(text, *a, **k)
+
+            json.loads = loads
+            try:
+                self.assertEqual(mod._load_json_guarded(p, {}), {})
+            finally:
+                json.loads = real_loads
+            self.assertEqual(glob.glob(p + ".corrupt-*"), [])
+            self.assertEqual(mod._load_json_guarded(p, {}), {"theme": "forest"})
 
     @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root reads anything")
     def test_permission_error_never_quarantines(self):
@@ -281,6 +315,30 @@ class ActionCloseTests(unittest.TestCase):
         self.assertEqual(code, 400)
         self.assertIn("not a Claude process", resp["error"])
         self.assertIsNone(p.poll())
+
+    def test_refuses_a_pid_absent_from_the_agent_list(self):
+        p = self.spawn("claude-unlisted")
+        self.agents = [{"kind": "interactive", "pid": p.pid + 100000}]
+        code, resp = dashboard.action_close(p.pid)
+        self.assertEqual(code, 400)
+        self.assertIn("not a live interactive", resp["error"])
+        self.assertIsNone(p.poll())
+
+    def test_agent_list_failure_is_503_with_the_cli_error(self):
+        p = self.spawn("claude-session")
+        dashboard.get_live_agents = lambda: ([], "claude CLI not found on PATH")
+        code, resp = dashboard.action_close(p.pid)
+        self.assertEqual(code, 503)
+        self.assertIn("cannot verify live sessions", resp["error"])
+        self.assertIn("claude CLI not found", resp["error"])
+        self.assertIsNone(p.poll())
+
+    def test_agent_without_kind_counts_as_interactive(self):
+        p = self.spawn("claude-session")
+        self.agents = [{"pid": p.pid}]
+        code, resp = dashboard.action_close(p.pid)
+        self.assertEqual((code, resp.get("pid")), (200, p.pid))
+        p.wait(5)
 
     def test_closes_a_live_interactive_claude(self):
         p = self.spawn("claude-session")

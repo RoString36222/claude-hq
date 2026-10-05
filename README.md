@@ -59,6 +59,14 @@ shares daily activity *counts* with friends — never conversation content.)
   counter onto their plates (or click a food, then a plate), watch the receipt work out the pooled buy-1-get-1, then check out to the
   arcade-style hi-score board. Seasons are calendar months; last season's champion gets a crown.
 
+- **🌾 The Valley** (key `0`): nine minigames for the moments a tab is working. A "play while
+  you wait" pill appears while tabs work, and the game pauses the moment a tab needs you.
+  Fishing pond (each project is its own pond), a garden your prompts water, a bundles board,
+  the Mines (deeper on weeks you're active more days), creature battles on the Gym's type
+  chart, a daily code puzzle, three townsfolk, a monthly fishing-derby festival, and the Bug
+  Blaster arcade. All art is drawn in code; progress is a local `games-save.json`; in an Arena
+  room only scores and counts are shared.
+
 **Quality-of-life**
 - Command palette (⌘/Ctrl-K), keyboard shortcuts (`?` for help, `1`–`8` for views, `/` search, `r`
   refresh), desktop notifications + optional chime + voice alerts when a tab needs you, a

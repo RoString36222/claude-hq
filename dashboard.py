@@ -216,6 +216,69 @@ def species_seed(species):
     return int(h.hexdigest(), 16) & 0xFFFFFF
 
 
+# --------------------------------------------------------------------------- #
+# Local state files: atomic writes + corruption-tolerant reads
+#
+# Every small JSON state file (config.json, sessions-meta.json, the Arena link)
+# is written via a temp file in the same folder (0600 from birth), fsynced, then
+# os.replace()d over the target -- a crash or full disk mid-write leaves the old
+# file intact instead of a truncated one. arena.py keeps identical copies of
+# these three helpers (it cannot import dashboard without a cycle).
+# --------------------------------------------------------------------------- #
+
+def _atomic_write_text(path, text, mode=0o600):
+    """Write `text` to `path` atomically with permissions `mode`. Raises OSError
+    on failure (the original file is left untouched)."""
+    d = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(dir=d, prefix="." + os.path.basename(path) + "-",
+                               suffix=".tmp")
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            fd = None
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _atomic_write_json(path, data, mode=0o600):
+    """json.dump `data` to `path` atomically (see _atomic_write_text)."""
+    _atomic_write_text(path, json.dumps(data, indent=2), mode=mode)
+
+
+def _load_json_guarded(path, default=None):
+    """Parsed JSON from `path`, or `default` if it is missing/unreadable/corrupt.
+    A file that exists but does not parse is renamed to <name>.corrupt-<ts> so
+    the next save does not silently destroy it. Permission and other I/O errors
+    never quarantine (the file may be fine; we just cannot read it right now)."""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return default
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except ValueError:  # JSONDecodeError and UnicodeDecodeError
+        dest = "%s.corrupt-%d" % (path, int(time.time() * 1000))
+        try:
+            os.replace(path, dest)
+        except OSError:
+            pass
+        return default
+
+
 DEX_SEED_PATH = os.path.join(HERE, ".dex-seed")
 _dex_salt_cache = None
 
@@ -237,10 +300,8 @@ def dex_salt():
     if not re.fullmatch(r"[0-9a-f]{8,64}", s or ""):
         s = secrets.token_hex(8)
         try:
-            with open(DEX_SEED_PATH, "w", encoding="utf-8") as f:
-                f.write(s)
-            os.chmod(DEX_SEED_PATH, 0o600)
-        except Exception:
+            _atomic_write_text(DEX_SEED_PATH, s)
+        except OSError:
             pass
     _dex_salt_cache = s
     return s
@@ -2961,14 +3022,35 @@ def action_reveal(sid):
     return 200, {"ok": True, "action": "reveal", "sessionId": sid}
 
 
+def _live_interactive_pids():
+    """Pids of the live interactive Claude sessions `claude agents` reports."""
+    agents, _err = get_live_agents()
+    out = set()
+    for a in agents or []:
+        if not isinstance(a, dict):
+            continue
+        if (a.get("kind") or "interactive") != "interactive":
+            continue
+        p = a.get("pid")
+        if isinstance(p, int) and not isinstance(p, bool):
+            out.add(p)
+    return out
+
+
 def action_close(pid):
-    """Terminate an interactive Claude session by pid (only if it IS claude)."""
+    """Terminate an interactive Claude session by pid. The pid must be one of
+    the live interactive agents (never this server, init, or an arbitrary
+    process), and its command line must still look like claude."""
+    if isinstance(pid, bool):
+        return 400, {"error": "pid must be an integer"}
     try:
         pid = int(pid)
     except Exception:
         return 400, {"error": "pid must be an integer"}
-    if pid <= 1:
+    if pid <= 1 or pid == os.getpid():
         return 400, {"error": "refusing that pid"}
+    if pid not in _live_interactive_pids():
+        return 400, {"error": "pid %d is not a live interactive Claude session" % pid}
     try:
         ps = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
                             capture_output=True, text=True, timeout=10)
@@ -3139,25 +3221,18 @@ def _validate_config(raw, base=None):
 
 
 def load_config():
-    """Read + validate config.json; returns defaults if missing/corrupt."""
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-    except Exception:
-        raw = {}
-    return _validate_config(raw)
+    """Read + validate config.json; returns defaults if missing/corrupt (a
+    corrupt file is quarantined, see _load_json_guarded)."""
+    return _validate_config(_load_json_guarded(CONFIG_PATH, {}))
 
 
 def save_config(patch):
-    """Merge `patch` into the current config, validate, persist, return saved."""
+    """Merge `patch` into the current config, validate, persist, return saved.
+    Raises OSError if the file could not be written."""
     with _config_lock:
         cur = load_config()
         cfg = _validate_config(patch, base=cur)
-        try:
-            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, indent=2)
-        except Exception:
-            pass
+        _atomic_write_json(CONFIG_PATH, cfg)
         return cfg
 
 
@@ -3186,11 +3261,7 @@ def _clean_meta_entry(entry):
 
 def load_meta():
     """Read sessions-meta.json -> {sessionId: {pinned,tags,note}} (validated)."""
-    try:
-        with open(META_PATH, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-    except Exception:
-        raw = {}
+    raw = _load_json_guarded(META_PATH, {})
     out = {}
     if isinstance(raw, dict):
         for sid, entry in raw.items():
@@ -3216,11 +3287,7 @@ def save_meta(sid, patch):
                 merged["name"] = patch["name"]
         entry = _clean_meta_entry(merged)
         data[sid] = entry
-        try:
-            with open(META_PATH, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-        except Exception:
-            pass
+        _atomic_write_json(META_PATH, data)  # OSError -> caller (HTTP 500)
         return entry
 
 
@@ -3783,6 +3850,16 @@ def cali_body(body):
 # --------------------------------------------------------------------------- #
 # HTTP server
 # --------------------------------------------------------------------------- #
+
+# POST body ceilings. Sound uploads arrive base64-encoded in JSON, so their
+# ceiling is MAX_SOUND_UPLOAD * 4/3 plus headroom; everything else is tiny.
+MAX_POST_BODY = 1024 * 1024
+MAX_SOUND_POST_BODY = 8 * 1024 * 1024
+
+
+def _post_body_limit(path):
+    return MAX_SOUND_POST_BODY if path == "/api/arena/sounds" else MAX_POST_BODY
+
 
 # Every state-changing route. A path missing here 404s locally as "not found",
 # which the page would misread as an Arena server without the feature.
@@ -4374,8 +4451,21 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, json.dumps({"error": "not found"}))
             return
 
+        cl = (self.headers.get("Content-Length") or "").strip()
+        if not (cl.isascii() and cl.isdigit()):
+            # Missing (e.g. chunked) or garbage length: we never read an
+            # unbounded body. The connection can't be reused safely either.
+            self.close_connection = True
+            self._send(411 if not cl else 400,
+                       json.dumps({"error": "a valid Content-Length is required"}))
+            return
+        length = int(cl)
+        if length > _post_body_limit(path):
+            self.close_connection = True
+            self._send(413, json.dumps({"error": "request body too large"}))
+            return
+
         try:
-            length = int(self.headers.get("Content-Length", "0") or "0")
             raw = self.rfile.read(length) if length > 0 else b""
             body = json.loads(raw.decode("utf-8")) if raw else {}
             if not isinstance(body, dict):
@@ -4392,6 +4482,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/config":
             try:
                 self._send(200, json.dumps(save_config(body)))
+            except OSError as e:
+                self._send(500, json.dumps({"error": "could not save config: %s" % e}))
             except Exception as e:
                 self._send(400, json.dumps({"error": "bad config: %s" % e}))
             return
@@ -4403,6 +4495,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 self._send(200, json.dumps(save_meta(sid, body)))
+            except OSError as e:
+                self._send(500, json.dumps({"error": "could not save meta: %s" % e}))
             except Exception as e:
                 self._send(400, json.dumps({"error": "bad meta: %s" % e}))
             return

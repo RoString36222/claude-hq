@@ -744,7 +744,7 @@ details.stalewrap .hint{text-transform:none;letter-spacing:0}
 .vil-res-item b{font:700 15px/1 var(--mono);font-variant-numeric:tabular-nums}
 .vil-res-item span{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
 .vil-res-ic{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;font-size:15px;color:#241a00}
-.vil-res-ic.gold{background:linear-gradient(180deg,#ffe08a,#f0b429)}
+.vil-res-ic.ore{background:linear-gradient(180deg,color-mix(in srgb,var(--faint) 30%,var(--panel)),color-mix(in srgb,var(--faint) 65%,var(--panel)));color:var(--ink)}
 .vil-res-ic.mana{background:linear-gradient(180deg,#a5d8ff,#4dabf7);color:#022}
 .vil-res-ic.ember{background:linear-gradient(180deg,#ffc9c9,#ff6b6b);color:#300}
 .vil-xpbar{position:relative;height:16px;border-radius:10px;background:var(--panel);border:1px solid var(--border);overflow:hidden;margin-bottom:16px}
@@ -764,6 +764,7 @@ details.stalewrap .hint{text-transform:none;letter-spacing:0}
 @media(max-width:720px){.vil-grid2{grid-template-columns:1fr}}
 .vil-buildings{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:12px}
 .vil-bld{cursor:pointer;text-align:center;transition:transform .12s}.vil-bld:hover{transform:translateY(-3px)}
+.vil-bld.nolink{cursor:default}.vil-bld.nolink:hover{transform:none}
 .vil-bld-roof{width:0;height:0;margin:0 auto;border-left:34px solid transparent;border-right:34px solid transparent;border-bottom:22px solid #b5651d}
 .vil-bld-body{position:relative;width:60px;height:44px;margin:0 auto;background:linear-gradient(180deg,#d9a066,#c98a4b);border-radius:0 0 6px 6px;display:grid;place-items:center}
 .vil-bld-lv{font:700 11px/1 var(--mono);color:#3a2400;background:#ffe08a;border-radius:6px;padding:2px 5px}
@@ -797,10 +798,6 @@ html.hq-calm .vil-march{animation:none}
 .evo-creature{position:relative;width:min(48vmin,320px);height:min(48vmin,320px);display:grid;place-items:center;
   filter:drop-shadow(0 0 40px rgba(140,110,255,.7));animation:evopop .6s cubic-bezier(.2,.9,.3,1.4)}
 .evo-creature img,.evo-creature .mon-svg{width:100%;height:100%;object-fit:contain;image-rendering:auto}
-/* Real Clash troop art fills its frame to the bottom edge (unlike the padded Pokémon
-   sprites), so in the evolution splash its feet ran into the title. Shrink troop art a
-   touch, keep it top-weighted, and drop the march-drift here so it can't overlap the text. */
-#evoSplash .evo-creature .troop-img{width:82%;height:82%;align-self:start;animation:none;transform:none}
 #evoSplash .evo-inner{gap:20px}
 @keyframes evopop{0%{transform:scale(.2);opacity:0}60%{transform:scale(1.12)}100%{transform:scale(1);opacity:1}}
 .evo-title{font-size:30px;font-weight:800;color:#fff}
@@ -879,18 +876,13 @@ html.hq-calm .animo-img{animation:none}
 @media (prefers-reduced-motion: reduce){ .animo-img{animation:none} }
 @keyframes pokehop{0%,100%{transform:translateY(0)}35%{transform:translateY(-4px)}55%{transform:translateY(0)}}
 @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
-/* Real Clash troop art is a static frame per level (no in-game animation is available
-   as a hotlinkable per-level asset — those are Supercell's proprietary sprite/Spine
-   files). So we fake motion in CSS: an idle MARCH with squash-and-stretch, and an
-   ATTACK lunge for sessions that are actively working. Anchored at the feet so it steps. */
-@keyframes troopmarch{0%{transform:translateY(0) scaleY(1) scaleX(1) rotate(-2deg)}20%{transform:translateY(-13%) scaleY(1.07) scaleX(.96) rotate(0deg)}45%{transform:translateY(0) scaleY(.93) scaleX(1.06) rotate(2deg)}70%{transform:translateY(-6%) scaleY(1.03) scaleX(.99) rotate(0deg)}100%{transform:translateY(0) scaleY(1) scaleX(1) rotate(-2deg)}}
+/* Village troops (original troopSVG) bob via SMIL; a working session's troop also lunges
+   in an ATTACK loop. Anchored at the feet. Calm / reduced motion stills both. */
 @keyframes troopattack{0%,100%{transform:translateX(0) rotate(0) scale(1)}28%{transform:translateX(-9%) rotate(-7deg) scale(1.02)}46%{transform:translateX(15%) rotate(9deg) scaleX(1.1) scaleY(.95)}62%{transform:translateX(0) rotate(0) scale(1)}}
-.troop-img{image-rendering:auto;object-fit:contain;display:block;transform-origin:50% 92%;animation:troopmarch 1.5s ease-in-out infinite}
-.card.working .avatar .troop-img,.vil-troop.status-working .troop-img{animation:troopattack .8s ease-in-out infinite}
-.shiny .troop-img{filter:drop-shadow(0 0 4px rgba(233,196,106,.9)) saturate(1.2)}
-.dexcard.uncaught .dex-sprite .troop-img{filter:grayscale(1) brightness(.28);animation:none}
-html.hq-calm .troop-img{animation:none}
-@media (prefers-reduced-motion: reduce){ .troop-img{animation:none} }
+.card.working .avatar .troop-svg,.vil-troop.status-working .troop-svg{transform-origin:50% 92%;animation:troopattack .8s ease-in-out infinite}
+.dexcard.uncaught .dex-sprite .troop-svg{filter:grayscale(1) brightness(.28)}
+html.hq-calm .troop-svg{animation:none}
+@media (prefers-reduced-motion: reduce){ .troop-svg{animation:none} }
 .card.working .avatar .pokeimg,.card.working .avatar .mon-svg,
 .wr-creature.working .pokeimg,#focus.working .pokeimg{animation:pokehop .9s ease-in-out infinite}
 .card.working .avatar{position:relative;isolation:isolate}
@@ -2142,10 +2134,10 @@ html.hq-calm #confetti{display:none!important}
     <div class="vil-topbar">
       <div class="vil-th" id="vilTH">
         <div class="vil-th-badge" id="vilTHBadge">1</div>
-        <div class="vil-th-meta"><div class="vil-th-name">Town Hall</div><div class="vil-th-sub" id="vilTHsub">Level 1</div></div>
+        <div class="vil-th-meta"><div class="vil-th-name">Citadel</div><div class="vil-th-sub" id="vilTHsub">Level 1</div></div>
       </div>
       <div class="vil-res">
-        <div class="vil-res-item" title="Gold — total spend"><span class="vil-res-ic gold">◈</span><div><b id="vilGold">0</b><span>Gold</span></div></div>
+        <div class="vil-res-item" title="Ore — tool calls, last 30 days"><span class="vil-res-ic ore" aria-hidden="true">⛏</span><div><b id="vilOre">0</b><span>Ore</span></div></div>
         <div class="vil-res-item" title="Mana — output tokens today"><span class="vil-res-ic mana">✧</span><div><b id="vilMana">0</b><span>Mana</span></div></div>
         <div class="vil-res-item" title="Ember — lifetime prompts"><span class="vil-res-ic ember">✦</span><div><b id="vilEmber">0</b><span>Ember</span></div></div>
       </div>
@@ -2153,18 +2145,18 @@ html.hq-calm #confetti{display:none!important}
     </div>
     <div class="vil-xpbar"><div class="vil-xpfill" id="vilXP"></div><span class="vil-xptext" id="vilXPtext"></span></div>
 
-    <section class="panel vil-sec" aria-label="Army camp">
-      <h3 class="section-h"><svg class="i" aria-hidden="true"><use href="#i-swords"/></svg>Army Camp <span class="muted" id="vilArmySub"></span></h3>
+    <section class="panel vil-sec" aria-label="Muster grounds">
+      <h3 class="section-h"><svg class="i" aria-hidden="true"><use href="#i-swords"/></svg>Muster Grounds <span class="muted" id="vilArmySub"></span></h3>
       <div class="vil-army" id="vilArmy"></div>
     </section>
 
     <div class="vil-grid2">
-      <section class="panel vil-sec" aria-label="Builder base">
-        <h3 class="section-h"><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg>Builder Base <span class="muted">your projects</span></h3>
+      <section class="panel vil-sec" aria-label="Workshop quarter">
+        <h3 class="section-h"><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg>Workshop Quarter <span class="muted">your projects</span></h3>
         <div class="vil-buildings" id="vilBuild"></div>
       </section>
-      <section class="panel vil-sec" aria-label="War log">
-        <h3 class="section-h"><svg class="i" aria-hidden="true"><use href="#i-trophy"/></svg>War Log</h3>
+      <section class="panel vil-sec" aria-label="Battle log">
+        <h3 class="section-h"><svg class="i" aria-hidden="true"><use href="#i-trophy"/></svg>Battle Log</h3>
         <div class="vil-warlog" id="vilWar"></div>
       </section>
     </div>
@@ -2694,7 +2686,7 @@ html.hq-calm #confetti{display:none!important}
             <option value="pokemon">Pokémon (animated sprites)</option>
             <option value="pokemon3d">Pokémon 3D (animated · Gen 8→6)</option>
             <option value="aniimo">Aniimo (game creatures)</option>
-            <option value="village">Clash of Clans (real troops · levels 1→13 = evolution)</option>
+            <option value="village">Village (original troops · 5 ranks, offline)</option>
             <option value="monsters">Monsters (generated)</option>
             <option value="animals">Animals (emoji)</option>
             <option value="faces">Faces (emoji)</option>
@@ -3700,7 +3692,7 @@ function creatureStage(cr){ cr=cr||{}; var s=cr.stage!=null?cr.stage|0:3; s=Math
 function creatureSeed(cr){ cr=cr||{}; return hashStr((cr.species||cr.name||"")+"|"+creatureIndex(cr)); }
 function creatureSpecies(cr){ cr=cr||{};
   if(isPokePack()) return pokeCurrentName(cr);  // current evolved form
-  if(cfg().creaturePack==="village") return troopLabel(cr);
+  if(cfg().creaturePack==="village") return troopName(cr);
   if(cfg().creaturePack==="aniimo") return animoLabel(cr);
   if(cr.speciesName) return cr.speciesName;
   if(cfg().creaturePack==="monsters") return MONSTER_SPECIES[creatureIndex(cr)]||cr.name||"Monster";
@@ -3710,13 +3702,13 @@ function creatureType(cr){ cr=cr||{};
   if(cfg().creaturePack==="village") return TROOP_ROLE[TROOP_ARCH[pokeIdx(cr)%8]]||"Troop";
   return cr.type || MONSTER_TYPES[creatureIndex(cr)] || "Neutral"; }
 function creatureStageName(cr){ cr=cr||{};
-  if(cfg().creaturePack==="village") return "Lv "+troopLevelForCreature(cr)+"/"+troopMaxLvl(cr);
+  if(cfg().creaturePack==="village") return troopRankName(creatureStage(cr));
   return cr.stageName || STAGE_NAMES[creatureStage(cr)] || ("Stage "+creatureStage(cr)); }
 function creatureNextStageName(cr){ cr=cr||{};
   if(isPokePack()){ var n=pokeNextName(cr); return n; }  // next evolution form
   if(cr.nextStageName) return cr.nextStageName;
   var st=creatureStage(cr);
-  if(cfg().creaturePack==="village"){ var l=troopLevelForCreature(cr); return l>=troopMaxLvl(cr)?null:("Lv "+(l+1)); }
+  if(cfg().creaturePack==="village") return st>=4?null:troopRankName(st+1);
   return st>=4?null:STAGE_NAMES[st+1]; }
 function creatureStagePct(cr){ cr=cr||{}; var p=cr.stagePct!=null?cr.stagePct:0; if(p<=1) p=p*100; /* backend sends 0..1 */ return Math.max(0,Math.min(100,Math.round(p))); }
 
@@ -6107,7 +6099,7 @@ function svgErr(img){
 }
 
 /* ---- Village pack: ORIGINAL animated troop creatures ----
-   Base-building / army genre (Clash-style mechanics) but 100% ORIGINAL art & names —
+   Base-building / army genre mechanics with 100% ORIGINAL art & names, drawn locally —
    no third-party characters or assets. A troop "evolves" every level-up (stage 0..4). */
 var TROOP_ARCH=["brute","slinger","caster","wyrm","golem","sapper","mender","rider"];
 var TROOP_ROLE={brute:"Brawler",slinger:"Ranger",caster:"Caster",wyrm:"Wyrm",golem:"Guardian",sapper:"Sapper",mender:"Mender",rider:"Skyrider"};
@@ -6125,69 +6117,10 @@ function troopArch(cr){ return TROOP_ARCH[troopIdx(cr)%8]; }
 function troopName(cr){ return TROOP_NAMES[troopIdx(cr)]||"Troop"; }
 function isVillagePack(){ return cfg().creaturePack==="village"; }
 
-/* ---- REAL Clash of Clans troop art (per level) ----
-   Hotlinked at runtime from a public jsDelivr gh-mirror (nothing bundled in this repo),
-   exactly like the Pokémon pack loads PokéAPI sprites. Only a troop slug + level number is
-   ever requested — never any of your data. Source: chiefpansancolt/clash-of-clans-data
-   (community dataset). The images are static per level, so we animate them with CSS
-   (.troop-img). Each troop upgrades through real in-game levels as your session grows;
-   if a specific level image is missing it falls back to level 1, then to the drawn SVG. */
-var TROOP_CDN="https://cdn.jsdelivr.net/gh/chiefpansancolt/clash-of-clans-data@main/images/home/troops/";
-var TROOP_SLUGS=["barbarian","archer","giant","goblin","wall-breaker","balloon","wizard","healer",
- "dragon","pekka","minion","hog-rider","valkyrie","golem","witch","lava-hound",
- "bowler","baby-dragon","miner","electro-dragon","yeti","dragon-rider","headhunter","apprentice-warden",
- "root-rider","druid","thrower","ice-golem","electro-titan","ruin-witch","furnace","meteor-golem"];
-var TROOP_LABELS=["Barbarian","Archer","Giant","Goblin","Wall Breaker","Balloon","Wizard","Healer",
- "Dragon","P.E.K.K.A","Minion","Hog Rider","Valkyrie","Golem","Witch","Lava Hound",
- "Bowler","Baby Dragon","Miner","Electro Dragon","Yeti","Dragon Rider","Headhunter","Apprentice Warden",
- "Root Rider","Druid","Thrower","Ice Golem","Electro Titan","Ruin Witch","Furnace","Meteor Golem"];
-var TROOP_N=TROOP_SLUGS.length;                 // 32 real troops
-// Each troop's real max in-game level. A session's evolution progress (stage 0..4 plus
-// its within-stage %) maps across 1..max, so the sprite climbs THIS troop's own levels
-// as the session grows — the in-game levels ARE the evolution line.
-var TROOP_MAXLVL={barbarian:12,archer:12,giant:12,goblin:9,"wall-breaker":11,balloon:11,wizard:12,healer:8,
- dragon:11,pekka:11,minion:11,"hog-rider":12,valkyrie:11,golem:13,witch:6,"lava-hound":7,
- bowler:7,"baby-dragon":11,miner:10,"electro-dragon":8,yeti:6,"dragon-rider":5,headhunter:4,"apprentice-warden":5,
- "root-rider":4,druid:3,thrower:3,"ice-golem":7,"electro-titan":5,"ruin-witch":3,furnace:3,"meteor-golem":3};
-function troopSlot(cr){ return troopIdx(cr)%TROOP_N; }        // 0..31 (stable)
-function troopSlug(cr){ return TROOP_SLUGS[troopSlot(cr)]; }
-function troopLabel(cr){ return TROOP_LABELS[troopSlot(cr)]; }
-function troopMaxLvl(cr){ return TROOP_MAXLVL[troopSlug(cr)]||10; }
-// Evolution progress (0..1) from stage(0..4) + within-stage% -> this troop's level 1..max.
-function troopLevelForCreature(cr){
-  var mx=troopMaxLvl(cr), prog=(creatureStage(cr) + (creatureStagePct(cr)||0)/100)/4;
-  prog=Math.max(0,Math.min(1,prog));
-  return Math.max(1, Math.min(mx, 1+Math.round(prog*(mx-1))));
-}
-function troopImgURL(slug,lvl){ return TROOP_CDN+slug+"/normal/level-"+lvl+".png"; }
-// Warm the browser cache for a level's art once, so evolution level-ups swap instantly.
-var TROOP_PRELOADED = (typeof Set!=="undefined") ? new Set() : null;
-function troopPreload(slug,lvl){
-  if(!TROOP_PRELOADED || lvl<1) return;
-  var u=troopImgURL(slug,lvl); if(TROOP_PRELOADED.has(u)) return; TROOP_PRELOADED.add(u);
-  try{ var im=new Image(); im.decoding="async"; im.src=u; }catch(e){ hqErr(e,"troopPreload"); }
-}
-// Real troop image at the creature's evolved LEVEL, animated, with a graceful fallback chain.
-function troopImgHTML(cr, px, lvlOverride){
-  px=px||46;
-  var slug=troopSlug(cr), mx=troopMaxLvl(cr);
-  var lvl=Math.max(1, Math.min(mx, (lvlOverride!=null?lvlOverride:troopLevelForCreature(cr))|0));
-  var st=Math.max(0,Math.min(4,creatureStage(cr)));
-  var fb=encodeURIComponent(JSON.stringify([creatureSeed(cr),TROOP_HUE[troopArch(cr)],troopArch(cr),st,!!cr.shiny,px]));
-  if(lvl<mx) troopPreload(slug, lvl+1);   // next level ready before it's needed
-  return '<img class="pokeimg troop-img" src="'+troopImgURL(slug,lvl)+'" width="'+px+'" height="'+px+'"'+
-    ' alt="'+esc(troopLabel(cr))+' — level '+lvl+'" data-slug="'+slug+'" data-lvl="'+lvl+'" data-fb="'+fb+'"'+
-    ' decoding="async" onerror="troopErr(this)" loading="lazy">';
-}
-// missing level image -> step DOWN to the nearest lower level -> drawn troop SVG.
-function troopErr(img){
-  var lvl=+(img.getAttribute("data-lvl")||1);
-  if(lvl>1){ lvl--; img.setAttribute("data-lvl",lvl); img.src=troopImgURL(img.getAttribute("data-slug"),lvl); return; }
-  try{ var a=JSON.parse(decodeURIComponent(img.getAttribute("data-fb")));
-       img.outerHTML=troopSVG(a[0],a[1],a[2],a[3],!!a[4],a[5]); }
-  catch(e){ img.style.display="none"; }
-}
-// troopSVG(seed,hue,arch,stage,shiny,px) — drawn troop, animated (SMIL bob + gear). Offline fallback.
+// Rank shown for a troop: stage 0..4 -> "Lv 1 · Recruit" .. "Lv 5 · Warlord".
+function troopRankName(stage){ var st=Math.max(0,Math.min(4,stage|0)); return "Lv "+(st+1)+" · "+TROOP_LEVELS[st]; }
+// troopSVG(seed,hue,arch,stage,shiny,px) — drawn troop, animated (SMIL bob + gear) unless
+// Calm / reduced motion is on. 100% local: the Village pack makes no network requests.
 function troopSVG(seed, hue, arch, stage, shiny, px){
   px=px||46; stage=Math.max(0,Math.min(4,stage|0));
   var body="hsl("+hue+",60%,52%)", dark="hsl("+hue+",52%,34%)", light="hsl("+hue+",72%,70%)",
@@ -6224,12 +6157,17 @@ function troopSVG(seed, hue, arch, stage, shiny, px){
   if(stage>=4){ g.push('<path d="M40 20 l3 -8 l6 6 l4 -9 l4 9 l6 -6 l3 8 z" fill="'+gold+'" stroke="#c99a2e" stroke-width="0.8"/>'); } // crown at max level
   if(shiny){ g.push('<g fill="'+gold+'"><path d="M22 24 l1.5 3 3 1.5 -3 1.5 -1.5 3 -1.5 -3 -3 -1.5 3 -1.5 z"/><path d="M80 70 l1 2 2 1 -2 1 -1 2 -1 -2 -2 -1 2 -1 z"/></g>'); }
   var stroke=shiny?' style="filter:drop-shadow(0 0 3px '+gold+')"':'';
-  return '<svg class="troop-svg" viewBox="0 0 100 100" width="'+px+'" height="'+px+'" xmlns="http://www.w3.org/2000/svg"'+stroke+'>'+
+  var svg='<svg class="troop-svg" viewBox="0 0 100 100" width="'+px+'" height="'+px+'" xmlns="http://www.w3.org/2000/svg"'+stroke+' aria-hidden="true">'+
     '<g transform="translate(50 52) scale('+scale+') translate(-50 -52)">'+
     '<g><animateTransform attributeName="transform" type="translate" values="0 0;0 -2.4;0 0" dur="2.6s" repeatCount="indefinite" keyTimes="0;0.5;1" calcMode="spline" keySplines="0.4 0 0.6 1;0.4 0 0.6 1"/>'+
     g.join('')+'</g></g></svg>';
+  // Calm mode / prefers-reduced-motion: drop every SMIL animation so the troop stands still.
+  if(typeof calmMode==="function" && calmMode()) svg=svg.replace(/<animate(?:Transform)?\b[^>]*\/>/g,"");
+  return svg;
 }
-function troopVisual(cr, px){ return troopImgHTML(cr, px); }  // real per-level art, SVG fallback
+function troopVisual(cr, px){ cr=cr||{};
+  var arch=troopArch(cr), st=Math.max(0,Math.min(4,creatureStage(cr)));
+  return troopSVG(creatureSeed(cr), TROOP_HUE[arch], arch, st, !!cr.shiny, px); }
 // Energy look on top of whatever the pack painted: a class on the wrapper (the sprite keeps
 // its own shiny filter) and, at avatar size and up, a small 💦 / 💫 corner badge.
 // (Never 💤, 😴 or 🛌: those already mean stale, ended or empty.)
@@ -8218,7 +8156,6 @@ var ARENA_STAY = (function(){ try { return localStorage.getItem("hq_arena_stay")
 var ARENA_SHARE_STATUS = (function(){ try { return localStorage.getItem("hq_arena_status") === "1"; } catch(e){ return false; } })();
 // Voice state, also needed by the first setView() (which keeps the lobby socket open while in voice).
 var VCHAN = {on:false, peer:null, stream:null, muted:false, cam:false, screen:false, vidStream:null, vidTile:null, peers:{}, roomId:null, roster:{}, ctx:null, me:null, meter:null};
-var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena"||v==="store")?v:"live"; })();
 var VIEW_TITLES = {
   live:["Live","Every Claude session, right now"], analytics:["Analytics","Usage, cost and rhythm over time"],
   pokedex:["Pokédex","Your creature collection"], gym:["Gym","Active sessions scored as a team"],
@@ -8226,11 +8163,15 @@ var VIEW_TITLES = {
   village:["Village","Your base & army, built from your Claude activity"],
   store:["Store","Snacks for your creatures, paid in Poke Coins"]
 };
-// The Clash of Clans pack renames the "Pokédex" collection to "Troops" (nav tab + title).
+// Restore the last view. Any key of VIEW_TITLES is a real view (incl. village/store), so
+// the allowlist can't drift from the nav; anything else falls back to Live.
+var VIEW = (function(){ var v=null; try{ v=localStorage.getItem("hq_view"); }catch(e){}
+  return (typeof v==="string" && Object.prototype.hasOwnProperty.call(VIEW_TITLES, v)) ? v : "live"; })();
+// The Village pack renames the "Pokédex" collection to "Troops" (nav tab + title).
 function syncPackLabels(){
   var vil = (typeof cfg==="function") && cfg().creaturePack==="village";
   var label = vil ? "Troops" : "Pokédex";
-  VIEW_TITLES.pokedex = [label, vil ? "Your Clash of Clans troop collection" : "Your creature collection"];
+  VIEW_TITLES.pokedex = [label, vil ? "Your village troop collection" : "Your creature collection"];
   var tl=document.querySelector('.viewtab[data-view="pokedex"] .vt-l'); if(tl) tl.textContent=label;
   if(typeof VIEW!=="undefined" && VIEW==="pokedex" && $("viewTitle")){
     $("viewTitle").textContent=VIEW_TITLES.pokedex[0]; $("viewSub").textContent=VIEW_TITLES.pokedex[1];
@@ -8745,33 +8686,14 @@ function dexCrOf(sp,i){
     typeHue:(sp.typeHue!=null?sp.typeHue:sp.hue), type:sp.type,
     stage:Math.max(0,Math.min(4,maxStage)), shiny:!!sp.shiny };
 }
-// Clash of Clans has only 32 real troops, but the backend Pokédex has 48 species slots.
-// Collapse the 48 into 32 unique troops (merging caught/shiny/sessions/output/max level of
-// every species that maps to the same troop) so the dex shows each troop exactly once.
-function dedupeTroopDex(list){
-  function blank(k){ return {species:k,index:k,id:k+1,name:TROOP_LABELS[k],speciesName:TROOP_LABELS[k],
-    type:(TROOP_ROLE[TROOP_ARCH[k%8]]||"Troop"),caught:false,shiny:false,maxStage:0,count:0,totalOutput:0,exampleSessionId:null}; }
-  var byK={};
-  list.forEach(function(sp,i){
-    var k=troopSlot(dexCrOf(sp,i)), b=byK[k]||(byK[k]=blank(k));
-    if(sp.caught){ b.caught=true; if(sp.maxStage!=null) b.maxStage=Math.max(b.maxStage, sp.maxStage); }
-    if(sp.shiny) b.shiny=true;
-    b.count += (sp.count!=null?sp.count:(sp.sessions||0));
-    b.totalOutput += (sp.totalOutput!=null?sp.totalOutput:(sp.output||sp.outputTokens||0));
-    if(!b.exampleSessionId && sp.exampleSessionId) b.exampleSessionId=sp.exampleSessionId;
-  });
-  var out=[]; for(var k=0;k<TROOP_N;k++) out.push(byK[k]||blank(k));
-  return out;
-}
 function renderPokedex(d){
   d=d||{};
   var list = d.species||d.pokedex||d.entries||(Array.isArray(d)?d:[]);
   var grid=$("dexGrid"); if(!grid) return;
   var isVil = cfg().creaturePack==="village";
-  if(isVil && list.length) list = dedupeTroopDex(list);   // 48 species -> 32 unique troops
-  var total   = isVil ? TROOP_N : (d.total!=null ? d.total : (list.length||48));
-  var caughtN = isVil ? list.filter(function(s){ return s.caught; }).length : (d.caught!=null ? d.caught : list.filter(function(s){ return s.caught; }).length);
-  var shinyN  = isVil ? list.filter(function(s){ return s.shiny; }).length : (d.shinyCount!=null ? d.shinyCount : list.filter(function(s){ return s.shiny; }).length);
+  var total   = d.total!=null ? d.total : (list.length||48);
+  var caughtN = d.caught!=null ? d.caught : list.filter(function(s){ return s.caught; }).length;
+  var shinyN  = d.shinyCount!=null ? d.shinyCount : list.filter(function(s){ return s.shiny; }).length;
   $("dexStats").innerHTML = esc(caughtN)+' / '+esc(total)+(isVil?' recruited':' caught')+
     (shinyN ? ' · <span style="color:var(--gold);font-weight:700">✦ '+esc(shinyN)+' shiny</span>' : '');
   if(!list.length){ grid.innerHTML='<div class="feed-empty">No species yet.</div>'; renderDexCoverage([]); renderDexTypeChips([]); return; }
@@ -8811,11 +8733,11 @@ function buildDexCard(sp,i,cr){
     // caught pokemon -> real sprite; everything else / uncaught -> deterministic silhouette (greyed via CSS)
     if(caught && isPokePack()){ spr.innerHTML=pokeImgHTML(cr, 72); }
     else if(caught && cfg().creaturePack==="aniimo"){ spr.innerHTML=animoImgHTML(cr, 72); }
-    else if(cfg().creaturePack==="village"){ spr.innerHTML=troopImgHTML(cr, 72); }
+    else if(cfg().creaturePack==="village"){ spr.innerHTML=troopVisual(cr, 72); }
     else { spr.innerHTML=monsterSVG(creatureSeed(cr), creatureTypeHue(cr), Math.max(0,Math.min(4,maxStage)), caught&&!!sp.shiny, 72); }
     card.appendChild(spr);
     var nm=el("div","dex-name");
-    nm.textContent = !caught ? "???" : (isPokePack() ? pokeCurrentName(cr) : cfg().creaturePack==="aniimo" ? animoLabel(cr) : cfg().creaturePack==="village" ? troopLabel(cr) : (sp.speciesName||sp.name||"Monster"));
+    nm.textContent = !caught ? "???" : (isPokePack() ? pokeCurrentName(cr) : cfg().creaturePack==="aniimo" ? animoLabel(cr) : cfg().creaturePack==="village" ? troopName(cr) : (sp.speciesName||sp.name||"Monster"));
     card.appendChild(nm);
     if(caught){ var tb=el("div"); tb.innerHTML=typeBadgeHTML(cr); if(tb.firstChild) card.appendChild(tb.firstChild); }
     var st=el("div","dex-statrow");
@@ -9639,20 +9561,34 @@ function troopPower(s){ // original "power" score from real activity
   var stg=creatureStage(s.creature||{});
   return Math.round(out/1500 + pr*4 + stg*25 + (s.status==="working"?15:0));
 }
+// Village resources, all from ACTIVITY (never spend): Ore = tool calls (30-day season
+// window), Mana = output tokens across live sessions, Ember = prompts (30-day season window).
+function villageResources(season, sess){
+  season=season||{}; sess=sess||[];
+  var t=season.totals||{}, mana=0;
+  sess.forEach(function(x){ var tk=(x&&x.tokens)||{}; mana+=Math.max(0,+tk.output||0); });
+  return { ore:Math.max(0,+t.tools||0), mana:mana, ember:Math.max(0,+t.prompts||0) };
+}
+// The /api/project slug for a session: the transcript's project-dir name. Live sessions carry
+// it as projectSlug (their `folder` is just the cwd basename); archived ones as `folder`.
+function villageProjectSlug(x){ x=x||{};
+  if(looksLikeSlug(x.projectSlug)) return x.projectSlug;
+  return looksLikeSlug(x.folder) ? x.folder : ""; }
+// Event-log timestamps are epoch ms; relTime() wants an ISO string.
+function eventIso(t){ var d=new Date(t); return (t!=null && !isNaN(d.getTime())) ? d.toISOString() : ""; }
 var VILLAGE_STATUS={working:["⚔","on the attack"],waiting:["🛡","awaiting orders"],idle:["💤","resting"],stale:["🏚","retired"]};
 function renderVillage(){
   var s=(STATE&&STATE.season)||{}, sess=(STATE&&STATE.sessions)||[];
   var lvl=s.level!=null?s.level:1;
   $("vilTHBadge").textContent=lvl; $("vilTHsub").textContent="Level "+lvl+" · "+(s.rank||"Adventurer");
   // resources from real stats
-  var gold=0, mana=0; sess.forEach(function(x){ var tk=x.tokens||{}; gold+=(tk.estCostUSD||0); mana+=(tk.output||0); });
-  var ember=(s.totals&&s.totals.prompts)||0;
-  $("vilGold").textContent=fmtCost(gold).replace("$",""); $("vilMana").textContent=fmtTok(mana); $("vilEmber").textContent=fmtTok(ember);
+  var res=villageResources(s, sess);
+  $("vilOre").textContent=fmtTok(res.ore); $("vilMana").textContent=fmtTok(res.mana); $("vilEmber").textContent=fmtTok(res.ember);
   var pct=Math.max(0,Math.min(100,s.pct||0));
   $("vilXP").style.width=pct+"%";
-  $("vilXPtext").textContent=(s.xpIntoLevel||0).toLocaleString()+" / "+(s.xpForLevel||0).toLocaleString()+" XP to TH "+(lvl+1);
+  $("vilXPtext").textContent=(s.xpIntoLevel||0).toLocaleString()+" / "+(s.xpForLevel||0).toLocaleString()+" XP to Citadel "+(lvl+1);
 
-  // ---- Army Camp ----
+  // ---- Muster Grounds (sessions as troops) ----
   var army=sess.slice().map(function(x){ return {s:x, pw:troopPower(x)}; }).sort(function(a,b){ return b.pw-a.pw; });
   var camp=$("vilArmy"); camp.innerHTML="";
   $("vilArmySub").textContent=army.length+" troop"+(army.length===1?"":"s")+" · total power "+army.reduce(function(a,b){return a+b.pw;},0);
@@ -9669,29 +9605,34 @@ function renderVillage(){
     camp.appendChild(card);
   });
 
-  // ---- Builder Base (projects as buildings) ----
+  // ---- Workshop Quarter (projects as buildings) ----
   var byFolder={}; sess.forEach(function(x){ var f=x.folder||"(no project)"; (byFolder[f]=byFolder[f]||[]).push(x); });
   var builds=Object.keys(byFolder).map(function(f){ var arr=byFolder[f];
     var prompts=arr.reduce(function(a,b){return a+(b.promptCount||0);},0);
-    return {f:f, n:arr.length, prompts:prompts, blvl:Math.max(1,Math.min(12,1+Math.floor(prompts/25)))}; })
+    var slug=""; arr.forEach(function(x){ if(!slug) slug=villageProjectSlug(x); });
+    return {f:f, slug:slug, n:arr.length, prompts:prompts, blvl:Math.max(1,Math.min(12,1+Math.floor(prompts/25)))}; })
     .sort(function(a,b){ return b.prompts-a.prompts; });
   var bwrap=$("vilBuild"); bwrap.innerHTML="";
   if(!builds.length){ bwrap.innerHTML='<div class="feed-empty">No buildings yet.</div>'; }
   builds.slice(0,12).forEach(function(b){
     var name=b.f.split("/").pop()||b.f;
-    var t=el("div","vil-bld");
-    t.innerHTML='<div class="vil-bld-roof"></div><div class="vil-bld-body"><span class="vil-bld-lv">Lv '+b.blvl+'</span></div>';
+    var t=el("div","vil-bld"+(b.slug?"":" nolink"));
+    t.innerHTML='<div class="vil-bld-roof"></div><div class="vil-bld-body"><span class="vil-bld-lv">Lv '+esc(b.blvl)+'</span></div>';
     var lab=el("div","vil-bld-nm"); lab.textContent=name; lab.title=b.f+" · "+b.n+" sessions · "+b.prompts+" prompts"; t.appendChild(lab);
-    t.addEventListener("click",function(){ if(typeof openProject==="function") openProject(b.f); });
+    if(b.slug){   // only buildings we can resolve to a known project dir open the deep-dive
+      t.setAttribute("role","button"); t.tabIndex=0; t.setAttribute("aria-label","Open project deep-dive: "+name);
+      t.addEventListener("click",function(){ if(typeof openProject==="function") openProject(b.slug); });
+      t.addEventListener("keydown",function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); if(typeof openProject==="function") openProject(b.slug); } });
+    }
     bwrap.appendChild(t);
   });
 
-  // ---- War Log (from event log) ----
+  // ---- Battle Log (from event log) ----
   var war=$("vilWar"); war.innerHTML="";
   var evs=(typeof EVENTS!=="undefined"&&EVENTS)?EVENTS.slice(0,12):[];
   if(!evs.length){ war.innerHTML='<div class="feed-empty">No battles logged yet.</div>'; }
   evs.forEach(function(e){ var r=el("div","vil-war-row");
-    r.innerHTML='<span class="vil-war-ic">'+esc(e.icon||"•")+'</span><span class="vil-war-tx">'+esc(e.text||"")+'</span><span class="vil-war-t">'+esc(relTime(e.t))+'</span>';
+    r.innerHTML='<span class="vil-war-ic">'+esc(e.icon||"•")+'</span><span class="vil-war-tx">'+esc(e.text||"")+'</span><span class="vil-war-t">'+esc(relTime(eventIso(e.t)))+'</span>';
     war.appendChild(r); });
 }
 // ---- Raid: a self-contained deterministic skirmish from your army power ----

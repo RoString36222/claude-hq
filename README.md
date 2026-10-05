@@ -9,8 +9,8 @@ Pokémon-style collection layer on top for fun.
 
 It runs entirely on your machine and binds to `127.0.0.1` only. **Your conversations never leave your
 computer.** (The one exception is that some creature packs load sprite images from a public CDN —
-the "pokemon"/"aniimo" packs by creature id, and the "Clash of Clans" pack by troop name + level
-number — never any of your data. Switch to the "monsters" pack for 100% offline. The optional [Arena](#-arena-multiplayer--optional) layer, off unless you turn it on,
+the "pokemon"/"aniimo" packs by creature id — never any of your data. Switch to the "monsters" or
+"village" pack (both drawn locally) for 100% offline. The optional [Arena](#-arena-multiplayer--optional) layer, off unless you turn it on,
 shares daily activity *counts* with friends — never conversation content.)
 
 ---
@@ -267,29 +267,16 @@ and feature guide.
 - **1.2.4** — Polish & efficiency pass. **Battery/CPU**: all recurring data-fetch loops (the
   5s fleet poll + the analytics/pokedex/quests/trainer/arena timers) now fully idle when the
   browser tab is hidden and refresh instantly when you return, so a backgrounded dashboard stops
-  hammering the network. **Clash pack**: the next troop level is preloaded so evolution level-ups
+  hammering the network. **Troop pack**: the next troop level is preloaded so evolution level-ups
   swap with no flash, and all creature `<img>`s now decode off the main thread (`decoding=async`)
   to cut scroll jank. **Error visibility**: uncaught errors and rejected promises are now logged to
   the console (and shown as a toast when `localStorage.hq_debug="1"`), instead of vanishing silently.
-- **1.2.3** — **Clash of Clans creature pack** (Settings → Creature pack). Sessions render as
-  real Clash troops, and each one **evolves through that troop's own in-game levels** (1 → its
-  real max, e.g. Barbarian 1→12, Golem 1→13) instead of the 5 generic stages — every level shows
-  the troop's actual level artwork, hotlinked at runtime from a community dataset
-  (`chiefpansancolt/clash-of-clans-data`) via jsDelivr. Nothing copyrighted is bundled in the
-  repo; only a troop slug + level number is ever requested (same model as the PokéAPI-sprite
-  packs), a missing level steps down to the nearest one, then to a drawn SVG. Troops animate with
-  a CSS **march / attack** loop — note that real in-game frame animations aren't available as
-  hotlinkable per-level assets (those are Supercell's proprietary sprite/Spine files), so the
-  motion is CSS, not game frames. Replaces the short-lived standalone Troops tab. Sits on top of
-  the freshly merged **Arena private rooms + quests/achievements** (PR #32).
-  <br>_Animation note:_ an exhaustive multi-source search (Giphy/Tenor direct GIFs, GitHub
-  Spine/sprite-sheet repos, Clash Royale frame dumps, Fandom animated-webp, Lottie) confirmed
-  there is **no source that is animated *and* hotlinkable *and* uniform-per-troop *and* covers all
-  ~32 troops *and* supports per-level *and* is official/consistent art**. Real-motion options
-  (curated Giphy GIFs, Clash-Royale sprite frames) all sacrifice per-level + full coverage +
-  official art, so the official per-level PNGs + CSS motion remain the best fit. A curated Giphy
-  overlay (real GIF where hand-picked, static per-level fallback elsewhere) is a documented opt-in
-  if real motion is ever required.
+- **1.2.3** — Third-party troop creature pack (Settings → Creature pack): sessions rendered as
+  troops from another game, hotlinked at runtime and evolving through per-level art. _Removed
+  (#50): it broke the original-art rule; the Village pack now draws only its own original
+  `troopSVG` troops with invented names, fully offline._ Replaced the short-lived standalone
+  Troops tab. Sits on top of the freshly merged **Arena private rooms + quests/achievements**
+  (PR #32).
 - **1.2.2** — Creature/evolution pass. **New Game+**: a new session of a species you've
   already evolved now starts at that grown form (incl. mega at Apex) instead of resetting to
   Egg. Fixed the **3D-sprite flicker** (lead with the Gen-6 X/Y animated sprite, which covers

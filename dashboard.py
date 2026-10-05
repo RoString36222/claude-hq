@@ -1536,6 +1536,9 @@ def build_session(agent, meals=None, fatigue_on=True):
         "title": title,
         "cwd": cwd,
         "folder": folder,
+        # transcript project-dir name: the slug /api/project?folder= accepts
+        # (`folder` above is only the cwd basename for live sessions)
+        "projectSlug": (agg.get("folder") or "") if isinstance(agg, dict) else "",
         "kind": kind,
         "pid": agent.get("pid") if isinstance(agent.get("pid"), int) else None,
         "status": status,

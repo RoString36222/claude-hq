@@ -237,7 +237,8 @@ and feature guide.
 
 - **1.6.0** — **Cali Tuesdays gets its own diner.** The taco log moves out of the Arena into a
   **Cali Tuesdays** tab (key `9`): a retro taqueria with **100% original pixel art** drawn at
-  runtime (no photos, no new network calls). A neon-sign counter holds the menu as food you can
+  runtime (no photos, no new network calls). A food-court stall (a bilingual 3D sign in Kannada
+  and English, tiled walls, menu boards, a steel counter of food pans) holds the menu as food you can
   pick up (the four mild/wild × hard/soft tacos, burrito, rice and salad bowls, quesadilla,
   nachos, tostada, chips & salsa, guacamole, churros, soda, iced tea); **drag it onto a friend's
   plate** (mouse, pen or touch), or click a food and then a plate, and click food on a plate to

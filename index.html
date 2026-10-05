@@ -1571,24 +1571,22 @@ html.hq-calm .sv-hot-item,html.hq-calm .sv-hot-item:hover{transition:none;transf
 .cd button,.cd input{font:inherit}
 .cd-h{margin:0;font:900 .95em var(--mono);letter-spacing:.14em;text-transform:uppercase}
 .cd-diner{border:4px solid var(--cd-wood-dk);border-radius:8px;overflow:hidden;background:var(--cd-wall);box-shadow:0 5px 0 var(--cd-shadow)}
-.cd-banner-wrap{line-height:0;overflow:hidden}
-#cdBanner{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
 .cd-counter-bar{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;padding:8px 16px;background:var(--cd-wood);color:var(--cd-sun);border-top:4px solid var(--cd-wood-hi);border-bottom:3px solid var(--cd-wood-dk)}
 .cd-hint{margin:0;flex:1 1 260px;font:700 .8em var(--mono);color:var(--cd-cream);text-transform:uppercase;letter-spacing:.04em}
 .cd-mute{background:var(--cd-wood-dk);border:2px solid var(--cd-wood-hi);border-radius:6px;padding:1px 8px;cursor:pointer;line-height:1.5}
-.cd-counter{display:flex;flex-direction:column;gap:14px;padding:14px 16px 18px;background:var(--cd-counter)}
-.cd-shelf{display:flex;flex-direction:column;gap:8px}
-.cd-shelf-l{align-self:flex-start;font:900 .72em var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--cd-sun);background:var(--cd-wood-dk);padding:2px 9px;border-radius:3px}
-.cd-items{display:flex;flex-wrap:wrap;gap:12px}
-.cd-food{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;width:98px;padding:6px 4px 8px;color:var(--cd-ink);
-  background:var(--cd-tray);border:3px solid var(--cd-wood-dk);border-radius:9px;box-shadow:0 4px 0 var(--cd-wood-dk);cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none}
-.cd-food:hover{transform:translateY(-2px);box-shadow:0 6px 0 var(--cd-wood-dk)}
-.cd-food.picked{background:var(--cd-sun);box-shadow:0 0 0 3px var(--cd-neon),0 4px 0 var(--cd-wood-dk)}
-.cd-food:focus-visible,.cd-surface:focus-visible,.cd-chip:focus-visible,.cd-unseat:focus-visible,.cd-btn:focus-visible,.cd-checkout:focus-visible,.cd-win:focus-visible,.cd-mute:focus-visible{outline:3px solid var(--cd-focus);outline-offset:3px}
-.cd-tray img{display:block;width:64px;height:64px;image-rendering:pixelated;pointer-events:none}
-.cd-food-l{font:800 .7em/1.15 var(--mono);text-transform:uppercase;letter-spacing:.03em;text-align:center}
-.cd-tag{position:absolute;top:-9px;right:-7px;font:900 .58em var(--mono);letter-spacing:.06em;padding:1px 5px;border-radius:4px;border:2px solid var(--cd-wood-dk);background:var(--cd-cyan);color:var(--cd-ink)}
-.cd-tag.wild{background:var(--cd-neon);color:var(--cd-on-neon)}
+.cd-stage-wrap{position:relative;overflow:hidden;line-height:0;background:var(--cd-wood-dk)}
+.cd-stage{position:relative}
+#cdCanvas{position:absolute;left:0;top:0;width:100%;height:100%;image-rendering:pixelated;image-rendering:crisp-edges}
+.cd-hots{position:absolute;inset:0}
+.cd-food{position:absolute;padding:0;margin:0;border:0;background:none;line-height:0;cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none;transition:transform .1s steps(2)}
+.cd-food img{display:block;width:100%;height:100%;image-rendering:pixelated;pointer-events:none}
+.cd-food:hover{transform:translateY(-4px)}
+.cd-food:hover img{filter:brightness(1.08) drop-shadow(0 0 3px var(--cd-cream))}
+.cd-food:focus-visible{outline:3px solid var(--cd-focus);outline-offset:3px;border-radius:3px}
+.cd-food.picked{transform:translateY(-6px);animation:cdBob .7s steps(2) infinite}
+.cd-food.picked img{filter:drop-shadow(0 0 2px var(--cd-neon)) drop-shadow(0 0 6px var(--cd-neon))}
+.cd-label{position:absolute;z-index:2;transform:translate(-50%,calc(-100% - 8px));padding:3px 7px;font:900 11px/1.3 var(--mono);letter-spacing:.06em;white-space:nowrap;
+  color:var(--cd-sun);background:var(--cd-wood-dk);border:2px solid var(--cd-sun);border-radius:4px;pointer-events:none}
 .cd-floor{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px;align-items:start}
 @container cd (max-width:860px){ .cd-floor{grid-template-columns:minmax(0,1fr)} }
 .cd-table-wrap{border:4px solid var(--cd-wood-dk);border-radius:8px;padding:14px 16px 16px;box-shadow:0 5px 0 var(--cd-shadow);
@@ -1682,11 +1680,14 @@ body.cd-dragging,body.cd-dragging *{cursor:grabbing!important}
 @keyframes cdNudge{25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
 @keyframes cdStamp{0%{transform:translate(-50%,-50%) rotate(-14deg) scale(1.8);opacity:0}100%{transform:translate(-50%,-50%) rotate(-14deg) scale(1);opacity:.82}}
 @keyframes cdBlink{50%{opacity:0}}
+@keyframes cdBob{50%{transform:translateY(-10px)}}
 html.hq-calm .cd-chip.pop,html.hq-calm .cd-plate.arrive,html.hq-calm .cd-plate.nudge,html.hq-calm .cd-paper.paid::before,html.hq-calm .cd-new{animation:none}
 html.hq-calm .cd-food:hover,html.hq-calm .cd-plate.over{transform:none}
+html.hq-calm .cd-food.picked{animation:none}
 @media (prefers-reduced-motion: reduce){
   .cd-chip.pop,.cd-plate.arrive,.cd-plate.nudge,.cd-paper.paid::before,.cd-new{animation:none}
   .cd-food:hover,.cd-plate.over{transform:none}
+  .cd-food.picked{animation:none}
 }
 
 /* =================== themes =================== */
@@ -2343,9 +2344,9 @@ html.hq-calm #confetti{display:none!important}
   </div>
   <div id="caliView" class="cd hidden" aria-label="Cali Tuesdays">
     <section class="cd-diner" aria-labelledby="cdCounterH">
-      <div class="cd-banner-wrap" id="cdBannerWrap"><canvas id="cdBanner" aria-hidden="true"></canvas></div>
-      <div class="cd-counter-bar"><h3 class="cd-h" id="cdCounterH">The counter</h3><p class="cd-hint" id="cdHint"></p><button class="cd-mute" id="cdMute" type="button" aria-pressed="true" aria-label="Diner sounds">&#x1F50A;</button></div>
-      <div class="cd-counter" id="cdCounter"></div>
+      <h3 class="sr-only" id="cdCounterH">The counter</h3>
+      <div class="cd-stage-wrap" id="cdStageWrap"><div class="cd-stage" id="cdStage"><canvas id="cdCanvas" aria-hidden="true"></canvas><div class="cd-hots" id="cdHots" role="group" aria-label="The menu: drag food onto a plate"></div><div class="cd-label hidden" id="cdLabel" aria-hidden="true"></div></div></div>
+      <div class="cd-counter-bar"><p class="cd-hint" id="cdHint"></p><button class="cd-mute" id="cdMute" type="button" aria-pressed="true" aria-label="Diner sounds">&#x1F50A;</button></div>
     </section>
     <div class="cd-floor">
       <section class="cd-table-wrap" aria-labelledby="cdTableH">
@@ -4634,14 +4635,14 @@ var PX_FONT = {
   "&":[12,18,20,8,21,18,13], "'":[4,4,0,0,0,0,0], "!":[4,4,4,4,4,0,4], ":":[0,0,4,0,0,4,0],
   "-":[0,0,0,14,0,0,0], ".":[0,0,0,0,0,0,4], "/":[1,1,2,4,8,16,16], " ":[0,0,0,0,0,0,0]
 };
-function pxTextW(str){ return Math.max(0, String(str).length*6-1); }
-function pxText(c, str, x, y, col, shadow){
-  str=String(str).toUpperCase();
-  if(shadow) pxText(c, str, x+1, y+1, shadow, null);
+function pxTextW(str, sc){ sc=sc||1; return Math.max(0, (String(str).length*6-1)*sc); }
+function pxText(c, str, x, y, col, shadow, sc){
+  str=String(str).toUpperCase(); sc=sc||1;
+  if(shadow) pxText(c, str, x+sc, y+sc, shadow, null, sc);
   c.fillStyle=col;
   for(var i=0;i<str.length;i++){
     var gl=PX_FONT[str.charAt(i)] || PX_FONT[" "];
-    for(var r=0;r<7;r++){ var bits=gl[r]; for(var b=0;b<5;b++) if(bits & (16>>b)) c.fillRect(x+i*6+b, y+r, 1, 1); }
+    for(var r=0;r<7;r++){ var bits=gl[r]; for(var b=0;b<5;b++) if(bits & (16>>b)) c.fillRect(x+(i*6+b)*sc, y+r*sc, sc, sc); }
   }
 }
 
@@ -6178,110 +6179,281 @@ function cdMuteSync(){
   b.title = CD.sfx ? "Diner sounds on" : "Diner sounds off";
 }
 
-/* ---- the neon banner over the counter (canvas, 1 logical px = s CSS px) ---- */
-var CD_BH = 54, CD_FLAGS = ["#ff4f8b","#ffd23f","#3fd0c8","#ff8a3d","#a36bff","#6fdc6f"];
-function cdDrawBanner(t){
-  var cv=$("cdBanner"); if(!cv) return;
-  var c=cv.getContext("2d"); if(!c) return;
-  var W=CD.W, H=CD_BH, calm=calmMode(), x, y, i;
-  c.clearRect(0,0,W,H);
-  // wall: teal tiles with a little diamond pattern
-  svFill(c,"#0f4a57",0,0,W,H); svFill(c,"#0c3d48",0,H-8,W,8);
-  for(y=8;y<H-8;y+=6) for(x=((y/6)|0)%2*3;x<W;x+=6) svFill(c,"#13586a",x,y,1,1);
-  svFill(c,"#3a2414",0,0,W,3); svFill(c,"#55361e",0,0,W,1);
-  // papel picado: a string of cut-paper flags
-  svFill(c,"#e8dcc0",0,4,W,1);
-  for(x=2, i=0; x<W-8; x+=13, i++){
-    var col=CD_FLAGS[i%CD_FLAGS.length];
-    svFill(c,col,x,5,10,8);
-    svFill(c,"#0f4a57",x+2,7,1,1); svFill(c,"#0f4a57",x+7,7,1,1); svFill(c,"#0f4a57",x+4,8,2,2); svFill(c,"#0f4a57",x+2,10,1,1); svFill(c,"#0f4a57",x+7,10,1,1);
-    for(var z=0;z<10;z+=2) svFill(c,col,x+z,13,1,1);
-  }
-  // the neon sign
-  var big=W>=150 ? "CALI TUESDAYS" : "CALI TUES", tw=pxTextW(big), sx=Math.round((W-tw)/2), sy=21;
-  var flick=!calm && t>0 && Math.floor(t/1000)%9===0 && (t%1000)<140, dimAt=Math.floor(t/9000)%big.length;
-  svFill(c,"#7a1446",sx-6,sy-5,tw+12,1); svFill(c,"#7a1446",sx-6,sy+11,tw+12,1);
-  svFill(c,"#7a1446",sx-7,sy-4,1,15); svFill(c,"#7a1446",sx+tw+6,sy-4,1,15);
-  svFill(c,"#ff4f8b",sx-5,sy-4,tw+10,1); svFill(c,"#ff4f8b",sx-5,sy+10,tw+10,1);
-  svFill(c,"#ff4f8b",sx-6,sy-3,1,13); svFill(c,"#ff4f8b",sx+tw+5,sy-3,1,13);
-  [[-1,0],[1,0],[0,-1],[0,1]].forEach(function(o){ pxText(c, big, sx+o[0], sy+o[1], "#a8205c", null); });
-  pxText(c, big, sx, sy, "#ffd0e4", null);
-  if(flick){ var dx=sx+dimAt*6; svFill(c,"#0f4a57",dx-1,sy-1,7,9); pxText(c, big.charAt(dimAt), dx, sy, "#7a1446", null); }
-  // the deal, in chalk-yellow
-  var sub=W>=230 ? "TACO TUESDAY: BUY 1 GET 1" : (W>=120 ? "BUY 1 GET 1" : "B1G1");
-  pxText(c, sub, Math.round((W-pxTextW(sub))/2), 37, "#ffd23f", "#3a2414");
-  // a cactus in a pot at each end
-  [6, W-18].forEach(function(px){
-    if(W<170) return;
-    svFill(c,"#3f9b45",px+4,26,4,14); svFill(c,"#5cc062",px+5,27,1,12);
-    svFill(c,"#3f9b45",px,30,3,2); svFill(c,"#3f9b45",px,28,2,3); svFill(c,"#3f9b45",px+9,32,3,2); svFill(c,"#3f9b45",px+10,29,2,4);
-    svFill(c,"#ff6fae",px+5,25,2,1);
-    svFill(c,"#c8643a",px+1,40,10,6); svFill(c,"#e08a5a",px+1,40,10,1); svFill(c,"#9a4628",px+2,45,8,1);
+/* ---- the storefront: a food-court taqueria stall in pixel art (canvas, 1 logical px = s CSS px) ----
+   Laid out like a mall food-court counter: a slate sign board with 3D lettering, a red tile band
+   over cream subway tiles, menu boards, brick pillars with lanterns, a steel counter of food pans
+   and a red-tiled front with an LED glow. All of it original: our own sign, our own food sprites
+   on the boards, our own mascot. The food you drag sits in the pans (buttons laid over the art). */
+var CD_GROUPS = [["tacos",4], ["mains",6], ["extras",5]];
+var CD_KN = ["ಕಾಲಿ", "ಮಂಗಳವಾರ"];   // "Cali" / "Tuesday" in Kannada
+PX_ART.cd_masc0={k:"#3a2008", p:{g:"#5aa83c", G:"#8fd45f", r:"#e5533d", h:"#ffe28a", S:"#f3c34e", s:"#d99a2b", b:"#1a1a1e", B:"#5a6a7e", m:"#7a2a10", l:"#6b3a14"}, r:[
+  "................",
+  ".....gGgGgG.....",
+  "...gGrgGgGrGg...",
+  "..hhhhhhhhhhhh..",
+  ".hSSSSSSSSSSSSs.",
+  ".SbbbbSSSSbbbbS.",
+  ".SbBbbbSSbBbbbS.",
+  ".SSSSSSSSSSSSSs.",
+  ".SSSSmSSSSmSSSs.",
+  "..sSSSmmmmSSSs..",
+  "...ssSSSSSSss...",
+  ".....ssssss.....",
+  "......l..l......",
+  ".....l....l.....",
+  "....ll....ll....",
+  "................"]};
+PX_ART.cd_masc1={k:"#3a2008", p:PX_ART.cd_masc0.p, r:PX_ART.cd_masc0.r.slice(0,12).concat([
+  "......l..l......",
+  "......l..l......",
+  ".....ll..ll.....",
+  "................"])};
+
+function cdStoreLayout(W){
+  W=Math.max(150, W|0);
+  var L={W:W, pil:W>=280 ? 14 : 6};
+  L.x0=L.pil; L.x1=W-L.pil;
+  var inner=L.x1-L.x0-12, pw=18, gap=2, ggap=8;
+  function rowW(gs){ var w=0; gs.forEach(function(g, i){ var n=CD_GROUPS[g][1]; w+=n*pw+(n-1)*gap+(i ? ggap : 0); }); return w; }
+  var rows = inner>=rowW([0,1,2]) ? [[0,1,2]] : inner>=rowW([0,1]) ? [[0,1],[2]] : [[0],[1],[2]];
+  L.cTop=112;   // the steel counter's lip: food stands on it, pans sink into it
+  L.slots={};
+  rows.forEach(function(gs, ri){
+    var x=Math.round((L.x0+L.x1-rowW(gs))/2), y=L.cTop-16+ri*20;
+    gs.forEach(function(g, gi){
+      if(gi) x+=ggap;
+      CD_FOODS.filter(function(f){ return f.shelf===CD_GROUPS[g][0]; }).forEach(function(f){ L.slots[f.key]={x:x+1, y:y, w:16, h:16}; x+=pw+gap; });
+    });
   });
-  // string lights, twinkling
-  for(x=5, i=0; x<W; x+=9, i++){
-    var yy=48+((i%2) ? 1 : 0), on=calm || ((i+Math.floor(t/500))%4)!==0;
-    svFill(c,"#2a1a10",x,yy-1,1,1);
-    svFill(c, on ? CD_FLAGS[(i+2)%CD_FLAGS.length] : "#4a4a4a", x, yy, 2, 2);
+  L.rows=rows.length;
+  L.front=L.cTop+6+(L.rows-1)*20;
+  L.H=L.front+38;
+  return L;
+}
+// Text with a two-step mint extrusion under it, like a lit-letter sign.
+function cd3d(c, s, x, y, sc){
+  pxText(c, s, x+2, y+2, "#22a37f", null, sc); pxText(c, s, x+1, y+1, "#3fe0b5", null, sc);
+  pxText(c, s, x, y, "#ff5c8a", null, sc);
+}
+// The Kannada line, rasterised once and thresholded so it is as crisp as the pixel font.
+var CD_KN_IMG=null;
+function cdKannadaImgs(){
+  if(CD_KN_IMG!==null) return CD_KN_IMG;
+  CD_KN_IMG=false;
+  try{
+    var font="700 14px 'Kannada Sangam MN','Noto Sans Kannada','Tunga','Kannada MN',sans-serif";
+    var m=document.createElement("canvas").getContext("2d"); m.font=font;
+    var w=Math.ceil(Math.max(m.measureText(CD_KN[0]).width, m.measureText(CD_KN[1]).width))+4;
+    var out={};
+    [["pink",[255,92,138]], ["mint",[63,224,181]], ["deep",[34,163,127]]].forEach(function(v){
+      var cv=document.createElement("canvas"); cv.width=w; cv.height=34;
+      var g=cv.getContext("2d"); g.font=font; g.textBaseline="top"; g.fillStyle="#ffffff";
+      g.fillText(CD_KN[0], 2, 0); g.fillText(CD_KN[1], 2, 16);
+      var im=g.getImageData(0, 0, w, 34), d=im.data;
+      for(var i=0;i<d.length;i+=4){ var on=d[i+3]>120; d[i]=v[1][0]; d[i+1]=v[1][1]; d[i+2]=v[1][2]; d[i+3]=on ? 255 : 0; }
+      g.putImageData(im, 0, 0); out[v[0]]=cv;
+    });
+    out.w=w; CD_KN_IMG=out;
+  }catch(e){ CD_KN_IMG=false; }
+  return CD_KN_IMG;
+}
+function cdStar(c, x, y, col){ svFill(c,col,x+2,y,1,1); svFill(c,col,x+1,y+1,3,1); svFill(c,col,x,y+2,5,1); svFill(c,col,x+1,y+3,3,1); svFill(c,col,x,y+4,2,1); svFill(c,col,x+3,y+4,2,1); }
+// The two blocks (Kannada, English) are centred as a pair, like the lettering over a stall.
+function cdDrawSign(c, L){
+  var W=L.W, sc=2, w2=pxTextW("TUESDAYS", sc), kn=W>=300 ? cdKannadaImgs() : null;
+  var gapK=kn ? 40 : 0, total=(kn ? kn.w+gapK : 0)+w2+10, x=Math.round((W-total)/2);
+  if(kn){
+    var ky=7;
+    cdStar(c, x, ky+20, "#3fe0b5"); cdStar(c, x+1, ky+19, "#ff5c8a");
+    c.drawImage(kn.deep, x+10, ky+2); c.drawImage(kn.mint, x+9, ky+1); c.drawImage(kn.pink, x+8, ky);
+    x+=kn.w+gapK;
   }
-  svFill(c,"#2a1a10",0,47,W,1);
+  cdStar(c, x, 28, "#3fe0b5"); cdStar(c, x+1, 27, "#ff5c8a");
+  cd3d(c, "CALI", x+24, 9, sc); cd3d(c, "TUESDAYS", x+10, 24, sc);
 }
+function cdDrawBoards(c, L){
+  var span=L.x1-L.x0, n=span>=330 ? 5 : span>=230 ? 3 : 2, bw=26, gap=2, tw=n*bw+(n-1)*gap, x=Math.round((L.x0+L.x1-tw)/2), y=56, h=28;
+  var all=[
+    {bg:"#fbf7ee", ink:"#6b5a48", sp:"cd_burrito"},
+    {bg:"#1f3a2c", ink:"#e8f4ea", sp:"cd_mh"},
+    {bg:"#e8432f", ink:"#ffffff", sp:"cd_ws", tag:"NEW"},
+    {bg:"#c46fd0", ink:"#ffffff", sp:"cd_quesadilla"},
+    {bg:"#ffd23f", ink:"#6b4a10", sp:"cd_nachos"}];
+  var pick = n===5 ? [0,1,2,3,4] : n===3 ? [0,2,4] : [0,2];
+  svFill(c,"#6e7178",x-3,y-3,tw+6,1);
+  pick.forEach(function(k){
+    var p=all[k];
+    svFill(c,"#2a2a2a",x-1,y-1,bw+2,h+2); svFill(c,p.bg,x,y,bw,h);
+    svFill(c,"#6e7178",x+5,y-3,1,2); svFill(c,"#6e7178",x+bw-6,y-3,1,2);
+    if(p.tag) pxText(c, p.tag, x+4, y+2, "#ffd23f", null);
+    else { svFill(c,p.ink,x+2,y+2,bw-8,1); svFill(c,p.ink,x+2,y+4,bw-12,1); svFill(c,p.ink,x+2,y+6,bw-10,1); }
+    var sp=pxCanvas(p.sp); if(sp) c.drawImage(sp, x+5, y+11);
+    x+=bw+gap;
+  });
+}
+function cdDrawWallBits(c, L, t){
+  var span=L.x1-L.x0, x, y;
+  if(span>=210){
+    // ORDER HERE, stacked, with an arrow pointing at the counter
+    var ox=L.x0+5, oy=56;
+    svFill(c,"#2e2622",ox,oy,9,44); svFill(c,"#4a3e38",ox,oy,9,1);
+    var word="ORDER"; for(var i=0;i<word.length;i++) pxText(c, word.charAt(i), ox+2, oy+2+i*8, "#f2e8d2", null);
+    svFill(c,"#f2e8d2",ox+4,oy+43,1,4); svFill(c,"#f2e8d2",ox+2,oy+45,5,1); svFill(c,"#f2e8d2",ox+3,oy+46,3,1);
+    // a round green badge with an avocado
+    var bx=L.x0+28, by=78; svDisc(c,"#e8f0e0",bx,by,10); svDisc(c,"#2f6b3a",bx,by,9);
+    for(var a=0;a<12;a++){ var ang=a/12*Math.PI*2; svFill(c,"#cfe6c4",bx+Math.round(Math.cos(ang)*7),by+Math.round(Math.sin(ang)*7),1,1); }
+    svDisc(c,"#8fc85a",bx,by+1,4); svDisc(c,"#c8e8a0",bx,by+1,2); svDisc(c,"#8a5a2a",bx,by+2,1);
+  }
+  if(span>=260){
+    // the kitchen door: brushed steel with a round window
+    var dx=L.x1-54, dy=62; svFill(c,"#8e959e",dx-1,dy-1,20,L.cTop-dy+1); svFill(c,"#c3c9d0",dx,dy,18,L.cTop-dy);
+    for(y=dy+2;y<L.cTop;y+=3) svFill(c,"#b4bac2",dx+1,y,16,1);
+    svDisc(c,"#6a7a88",dx+9,dy+10,4); svDisc(c,"#9ab0c0",dx+8,dy+9,1);
+    // posters
+    svFill(c,"#2a2a2a",L.x1-31,57,27,31); svFill(c,"#8cc650",L.x1-30,58,25,29);
+    pxText(c, "B1G1", L.x1-29, 60, "#1f3a2c", null);
+    var bw=pxCanvas("cd_ricebowl"); if(bw) c.drawImage(bw, L.x1-26, 69);
+  }
+  // the back counter: oven, juice dispenser, cups, the till
+  y=L.cTop-26;
+  svFill(c,"#9aa1aa",L.x0,y+12,span,2);
+  if(span>=200){
+    var ox2=L.x0+40; svFill(c,"#26282c",ox2,y-2,18,14); svFill(c,"#3a3d42",ox2+2,y,10,9); svFill(c,"#7ad0f0",ox2+13,y+1,3,2);
+    var jx=Math.round(L.x0+span*0.42); svFill(c,"#e8f4f8",jx,y-6,5,10); svFill(c,"#e8f4f8",jx+6,y-6,5,10);
+    svFill(c,"#e8433a",jx+1,y-3,3,6); svFill(c,"#ff7aa0",jx+7,y-3,3,6); svFill(c,"#6e7178",jx-1,y+4,13,8);
+    for(x=Math.round(L.x0+span*0.55);x<L.x0+span*0.55+9;x+=3){ svFill(c,"#ffffff",x,y+2,2,8); svFill(c,"#e8433a",x,y+4,2,1); }
+    var tx=L.x1-(span>=260 ? 78 : 30); svFill(c,"#1a1a1e",tx,y-2,10,7); svFill(c,"#3a8ab8",tx+1,y-1,8,5); svFill(c,"#1a1a1e",tx+4,y+5,2,7);
+    svFill(c,"#ffd23f",tx-10,y+6,2,2); svFill(c,"#ffffff",tx-8,y+5,2,2); svFill(c,"#ffd23f",tx-6,y+6,2,2); svFill(c,"#4f9a3a",tx-8,y+8,1,4);
+  }
+}
+function cdDrawPillars(c, L, t){
+  var calm=calmMode();
+  [0, L.x1].forEach(function(px, side){
+    for(var y=40;y<L.H;y+=4){
+      var off=((y/4)|0)%2 ? 4 : 0;
+      svFill(c,"#5a3a26",px,y,L.pil,4); svFill(c,"#3e2818",px,y+3,L.pil,1);
+      for(var x=px+off;x<px+L.pil;x+=8) svFill(c,"#3e2818",x,y,1,3);
+    }
+    if(L.pil<12) return;
+    var lx=px+Math.round(L.pil/2)-3, ly=64, lit=calm ? 1 : 0.85+0.15*Math.sin(t/180+side*2);
+    c.fillStyle="rgba(255,206,120,"+(0.16*lit).toFixed(3)+")"; svDiscA(c, lx+3, ly+3, 9);
+    svFill(c,"#141416",lx-1,ly-4,8,2); svFill(c,"#141416",lx,ly-2,6,10);
+    svFill(c,"rgb(255,"+Math.round(200*lit+20)+",120)",lx+1,ly-1,4,8); svFill(c,"#141416",lx+2,ly-1,1,8);
+    svFill(c,"#141416",lx-1,ly+8,8,1); svFill(c,"#141416",lx+2,ly+9,2,2);
+  });
+}
+function cdDrawCounter(c, L){
+  var x0=L.x0, x1=L.x1;
+  svFill(c,"rgba(200,236,248,.5)",x0+6,L.cTop-24,x1-x0-12,1);
+  for(var gx=x0+20;gx<x1-10;gx+=60) svFill(c,"rgba(200,236,248,.35)",gx,L.cTop-24,1,6);
+  svFill(c,"#c9ced5",x0,L.cTop-2,x1-x0,L.front-(L.cTop-2)); svFill(c,"#f2f4f6",x0,L.cTop-2,x1-x0,1);
+  for(var y=L.cTop+1;y<L.front-1;y+=3) svFill(c,"#bcc2ca",x0,y,x1-x0,1);
+  svFill(c,"#9aa1aa",x0,L.front-2,x1-x0,2);
+  CD_FOODS.forEach(function(f){
+    var s=L.slots[f.key]; if(!s) return;
+    svFill(c,"#7d848d",s.x-2,s.y+9,20,9); svFill(c,"#b2b8c0",s.x-1,s.y+10,18,7); svFill(c,"#5c636b",s.x,s.y+11,16,5);
+  });
+}
+function cdDrawFront(c, L, t){
+  var y0=L.front, x0=L.x0, x1=L.x1, calm=calmMode();
+  svFill(c,"#7a7f87",x0,y0,x1-x0,2);
+  for(var y=y0+3;y<L.H;y+=5) for(var x=x0;x<x1;x+=5){ svFill(c,"#b3281f",x,y,5,5); svFill(c,"#7c1813",x+4,y,1,5); svFill(c,"#7c1813",x,y+4,5,1); }
+  var pulse=calm ? 1 : 0.85+0.15*Math.sin(t/600);
+  svFill(c,"#ffe2b0",x0+2,y0+2,x1-x0-4,1);
+  for(var k=0;k<7;k++){ c.fillStyle="rgba(255,190,120,"+((0.24-k*0.032)*pulse).toFixed(3)+")"; c.fillRect(x0, y0+3+k*2, x1-x0, 2); }
+  if(x1-x0>=150){
+    var m=pxCanvas((!calm && Math.floor(t/320)%2) ? "cd_masc1" : "cd_masc0");
+    if(m){ c.imageSmoothingEnabled=false; c.drawImage(m, x0+12, y0+5, 32, 32); }
+  }
+}
+function cdDrawStore(t){
+  var cv=$("cdCanvas"), L=CD.L; if(!cv || !L) return;
+  var c=cv.getContext("2d"); if(!c) return;
+  var W=L.W, H=L.H, x;
+  c.imageSmoothingEnabled=false;
+  c.clearRect(0,0,W,H);
+  svFill(c,"#141416",0,0,W,6);
+  for(x=18;x<W;x+=46){ svFill(c,"#fff4d6",x,3,3,1); svFill(c,"rgba(255,244,214,.35)",x-1,4,5,1); }
+  svFill(c,"#4b4e55",0,6,W,34); svFill(c,"#5b5e66",0,6,W,2); svFill(c,"#3a3c42",0,38,W,2);
+  cdDrawSign(c, L);
+  svFill(c,"#efe8da",L.x0,40,L.x1-L.x0,4);
+  for(x=L.x0+10;x<L.x1-6;x+=26) svFill(c,"#ffffff",x,41,4,1);
+  for(var y=44;y<52;y+=4) for(x=L.x0;x<L.x1;x+=4){ svFill(c,"#c8342a",x,y,4,4); svFill(c,"#8e1f18",x+3,y,1,4); svFill(c,"#8e1f18",x,y+3,4,1); }
+  svFill(c,"#f2e8d2",L.x0,52,L.x1-L.x0,L.cTop-52);
+  for(y=52;y<L.cTop;y+=6) svFill(c,"#dacdb2",L.x0,y,L.x1-L.x0,1);
+  for(x=L.x0;x<L.x1;x+=6) svFill(c,"#dacdb2",x,52,1,L.cTop-52);
+  cdDrawBoards(c, L); cdDrawWallBits(c, L, t);
+  cdDrawPillars(c, L, t);
+  cdDrawCounter(c, L);
+  cdDrawFront(c, L, t);
+}
+// Size the stage to whole-pixel steps, lay the food buttons over their pans.
 function cdResize(){
-  var wrap=$("cdBannerWrap"), cv=$("cdBanner"); if(!wrap || !cv) return;
+  var wrap=$("cdStageWrap"), stage=$("cdStage"), cv=$("cdCanvas"); if(!wrap || !stage || !cv) return;
   var cw=wrap.clientWidth|0; if(cw<=0) return;
-  var s=cw>=900 ? 3 : 2, W=Math.max(100, Math.ceil(cw/s));
-  if(s===CD.s && W===CD.W && cv.width===W) return;
-  CD.s=s; CD.W=W; cv.width=W; cv.height=CD_BH;
-  cv.style.width=(W*s)+"px"; cv.style.height=(CD_BH*s)+"px";
-  cdDrawBanner(0);
+  var s=cw>=1080 ? 3 : 2, W=Math.max(150, Math.ceil(cw/s));
+  if(s===CD.s && W===CD.W && CD.L) return;
+  CD.s=s; CD.W=W; CD.L=cdStoreLayout(W);
+  cv.width=CD.L.W; cv.height=CD.L.H;
+  stage.style.width=(CD.L.W*s)+"px"; stage.style.height=(CD.L.H*s)+"px";
+  Array.prototype.forEach.call(document.querySelectorAll("#cdHots .cd-food"), function(b){
+    var sl=CD.L.slots[b.getAttribute("data-food")]; if(!sl) return;
+    b.style.left=(sl.x*s)+"px"; b.style.top=(sl.y*s)+"px"; b.style.width=(16*s)+"px"; b.style.height=(16*s)+"px";
+  });
+  cdDrawStore(0);
 }
-function cdAnimStop(){ CD.anim=false; if(CD.raf) cancelAnimationFrame(CD.raf); CD.raf=0; if(CD.calmTimer){ clearInterval(CD.calmTimer); CD.calmTimer=0; } }
+function cdAnimStop(){ CD.anim=false; if(CD.raf) cancelAnimationFrame(CD.raf); CD.raf=0; }
 function cdAnimStart(){
   cdAnimStop();
   if(VIEW!=="cali" || document.hidden) return;
-  cdDrawBanner(0);
+  cdDrawStore(0);
   if(calmMode()) return;
   CD.anim=true;
   var loop=function(ts){
     if(!CD.anim) return;
-    if(calmMode()){ cdAnimStop(); cdDrawBanner(0); return; }
-    if(ts-CD.last>=100){ CD.last=ts; cdDrawBanner(ts); }
+    if(calmMode()){ cdAnimStop(); cdDrawStore(0); return; }
+    if(ts-CD.last>=90){ CD.last=ts; cdDrawStore(ts); }
     CD.raf=requestAnimationFrame(loop);
   };
   CD.raf=requestAnimationFrame(loop);
 }
 
-/* ---- the counter ---- */
+/* ---- the food in the pans ---- */
 function cdBuildCounter(){
-  var box=$("cdCounter"); if(!box) return;
+  var box=$("cdHots"); if(!box) return;
   box.innerHTML="";
-  CD_SHELVES.forEach(function(sh){
-    var g=el("div","cd-shelf"), l=el("div","cd-shelf-l"); l.textContent=sh[1]; g.appendChild(l);
-    var row=el("div","cd-items"); row.setAttribute("role","group"); row.setAttribute("aria-label", sh[1]);
-    CD_FOODS.filter(function(f){ return f.shelf===sh[0]; }).forEach(function(f){
-      var b=el("button","cd-food"); b.type="button"; b.setAttribute("data-food", f.key);
-      var tray=el("span","cd-tray"), im=el("img"); im.alt=""; im.width=64; im.height=64; im.draggable=false; im.src=pxURL(f.sprite);
-      tray.appendChild(im); b.appendChild(tray);
-      var nm=el("span","cd-food-l"); nm.textContent=cdName(f); b.appendChild(nm);
-      if(f.taco){ var tag=el("span","cd-tag"+(f.key.indexOf("wild")===0 ? " wild" : "")); tag.setAttribute("aria-hidden","true"); tag.textContent=f.key.indexOf("wild")===0 ? "SPICY" : "MILD"; b.appendChild(tag); }
-      cdFoodLabel(b, f);
-      b.addEventListener("pointerdown", function(e){ cdPointerDown(e, f.key, null, b); });
-      b.addEventListener("click", function(){ if(CD.justDragged) return; cdPick(CD.picked===f.key ? null : f.key); });
-      row.appendChild(b);
-    });
-    g.appendChild(row); box.appendChild(g);
+  CD_FOODS.forEach(function(f){
+    var b=el("button","cd-food"); b.type="button"; b.setAttribute("data-food", f.key);
+    var im=el("img"); im.alt=""; im.draggable=false; im.src=pxURL(f.sprite); b.appendChild(im);
+    cdFoodLabel(b, f);
+    b.addEventListener("pointerdown", function(e){ cdPointerDown(e, f.key, null, b); });
+    b.addEventListener("click", function(){ if(CD.justDragged) return; cdPick(CD.picked===f.key ? null : f.key); });
+    b.addEventListener("mouseenter", function(){ cdTag(b, f); });
+    b.addEventListener("focus", function(){ cdTag(b, f); });
+    b.addEventListener("mouseleave", function(){ cdTag(null); });
+    b.addEventListener("blur", function(){ cdTag(null); });
+    box.appendChild(b);
   });
+}
+// The name card that pops up over a pan you point at.
+function cdTag(b, f){
+  var t=$("cdLabel"); if(!t) return;
+  if(!b || CD.drag && CD.drag.on){ t.classList.add("hidden"); return; }
+  t.textContent=cdName(f).toUpperCase()+(f.taco ? (f.key.indexOf("wild")===0 ? " · SPICY" : " · MILD") : "");
+  t.classList.remove("hidden");
+  var left=b.offsetLeft+b.offsetWidth/2, top=b.offsetTop;
+  t.style.left=left+"px"; t.style.top=top+"px";
 }
 function cdFoodLabel(b, f){
   b.setAttribute("aria-pressed", CD.picked===f.key ? "true" : "false");
-  b.setAttribute("aria-label", cdName(f)+(f.taco ? " (counts toward tacos)" : "")+". Drag onto a plate, or press to pick it up and then choose a plate.");
+  b.setAttribute("aria-label", cdName(f)+(f.taco ? (f.key.indexOf("wild")===0 ? ", spicy taco" : ", mild taco") : "")+". Drag onto a plate, or press to pick it up and then choose a plate.");
+  b.title=cdName(f);
 }
 function cdPick(key){
   CD.picked=key;
   document.body.classList.toggle("cd-picking", !!key);
-  Array.prototype.forEach.call(document.querySelectorAll("#cdCounter .cd-food"), function(b){
+  Array.prototype.forEach.call(document.querySelectorAll("#cdHots .cd-food"), function(b){
     var on=b.getAttribute("data-food")===key; b.classList.toggle("picked", on); cdFoodLabel(b, cdFood(b.getAttribute("data-food")));
-    if(on) b.setAttribute("aria-pressed","true");
   });
   if(key){ cdSfx("pick"); announce(cdName(cdFood(key))+" picked up. Choose a plate to put it on; Escape to put it back."); }
   cdHintSync();
@@ -6291,7 +6463,7 @@ function cdHintSync(){
   var h=$("cdHint"); if(!h) return;
   var f=CD.picked ? cdFood(CD.picked) : null;
   h.textContent = f ? "Holding "+cdName(f)+": click a plate to serve it (Esc to put it back)"
-                    : (CD.people.length ? "Drag food onto a plate · or click a food, then a plate · click food on a plate to take one back"
+                    : (CD.people.length ? "Drag food from the counter onto a plate · or click a food, then a plate · click food on a plate to take one back"
                                         : "Seat someone first, then plate up their order");
 }
 
@@ -6312,7 +6484,7 @@ function cdPointerMove(e){
     var g=$("cdGhost"), f=cdFood(d.key);
     if(g && f){ g.src=pxURL(f.sprite); g.classList.remove("hidden"); }
     document.body.classList.add("cd-dragging");
-    cdSfx("pick");
+    cdTag(null); cdSfx("pick");
   }
   e.preventDefault();
   var gh=$("cdGhost"); if(gh){ gh.style.left=(e.clientX-32)+"px"; gh.style.top=(e.clientY-40)+"px"; }
@@ -6641,7 +6813,7 @@ function cdBuild(){
     if(VIEW!=="cali" || e.key!=="Escape" || !CD.picked) return;
     e.preventDefault(); e.stopPropagation(); cdPick(null); announce("Put it back on the counter.");
   }, true);
-  if(window.ResizeObserver){ CD.ro=new ResizeObserver(function(){ if(VIEW==="cali") cdResize(); }); CD.ro.observe($("cdBannerWrap")); }
+  if(window.ResizeObserver){ CD.ro=new ResizeObserver(function(){ if(VIEW==="cali") cdResize(); }); CD.ro.observe($("cdStageWrap")); }
   else window.addEventListener("resize", function(){ if(VIEW==="cali") cdResize(); });
   document.addEventListener("visibilitychange", function(){ if(VIEW!=="cali") return; if(document.hidden) cdAnimStop(); else cdAnimStart(); });
   cdMuteSync();

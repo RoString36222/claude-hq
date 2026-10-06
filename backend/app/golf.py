@@ -200,6 +200,7 @@ SHOT_GRACE = 0.3
 POS_BURST = 3                # walking updates: a token bucket per player, 3 deep,
 POS_RATE = 12.0              # refilled 12 per second (clients send <= 10/s)
 PARK_SECS = 120.0            # a dropped player's card is kept this long for a rejoin
+GRACE = 15.0                 # a socket drop holds the hole open this long for a rejoin
 CHARS = 6
 COLORS = 8
 
@@ -215,7 +216,7 @@ class Golf:
         self.players: dict[str, dict] = {}
         self.chars: dict[str, int] = {}    # user_id -> character, kept between rounds
         self.bucket: dict[str, list[float]] = {}   # user_id -> [tokens, last refill time]
-        self.parked: dict[str, dict] = {}          # user_id -> {p, hole, at}: dropped mid-round
+        self.parked: dict[str, dict] = {}          # user_id -> {p, hole, at, course, blip}
         self.hole_ready_at = 0.0
         self.last_shot: dict[str, dict] = {}
 
@@ -315,8 +316,11 @@ class Golf:
         return took
 
     def advance(self, t: float, last_ticks: int = 0) -> tuple[str, dict] | None:
-        """If everyone is done with the hole: ("hole", data) or ("done", data)."""
-        if self.phase != "playing" or not self.players or not all(p["done"] for p in self.players.values()):
+        """If everyone is done with the hole: ("hole", data) or ("done", data). A player
+        whose socket dropped mid-hole less than GRACE ago still counts as playing it."""
+        self.expire(t)
+        if self.phase != "playing" or not self.players or not all(p["done"] for p in self.players.values()) \
+                or self.holding(t):
             return None
         holes = self.holes()
         card = self.card()
@@ -339,6 +343,32 @@ class Golf:
         self.phase = "idle"
         self.players = {}
         self.last_shot = {}
+        self.parked = {}
+
+    def holding(self, t: float) -> bool:
+        """Someone dropped off the network mid-hole and may still come back to it."""
+        return any(k["blip"] and k["hole"] == self.hole and not k["p"]["done"] and t - k["at"] < GRACE
+                   for k in self.parked.values())
+
+    def grace_left(self, t: float) -> float | None:
+        """Seconds until the last hold on this hole runs out (None: nothing held)."""
+        left = [GRACE - (t - k["at"]) for k in self.parked.values()
+                if k["blip"] and k["hole"] == self.hole and not k["p"]["done"] and t - k["at"] < GRACE]
+        return max(left) if left else None
+
+    def release(self) -> None:
+        """The host skipped the hole: nobody parked holds it any more."""
+        for k in self.parked.values():
+            k["blip"] = False
+
+    def expire(self, t: float) -> bool:
+        """With nobody left in the round and no hold, it ends. True if it just did."""
+        if self.phase == "playing" and not self.players and not self.holding(t):
+            self.phase = "idle"
+            self.parked = {}
+            self.last_shot = {}
+            return True
+        return False
 
     def pos(self, uid: str, msg: dict, t: float) -> dict | None:
         """A walking update to relay, or None (over the rate, not playing, or malformed).
@@ -367,19 +397,18 @@ class Golf:
             out["q"] = q
         return out
 
-    def drop(self, uid: str, t: float = 0.0) -> bool:
+    def drop(self, uid: str, t: float = 0.0, blip: bool = False) -> bool:
         """Remove a player; True if they were in the round. Mid-round their card is
-        parked for PARK_SECS so a reconnect (socket blip) restores it."""
+        parked for PARK_SECS so a reconnect restores it. blip: the socket dropped (not
+        an explicit leave), so the hole also waits GRACE seconds for them."""
         self.bucket.pop(uid, None)
         self.last_shot.pop(uid, None)
         p = self.players.pop(uid, None)
         if p is None:
             return False
         if self.phase == "playing":
-            self.parked[uid] = {"p": p, "hole": self.hole, "at": t, "course": self.course}
-            if not self.players:
-                self.phase = "idle"
-                self.parked = {}
+            self.parked[uid] = {"p": p, "hole": self.hole, "at": t, "course": self.course, "blip": blip}
+            self.expire(t)
         return True
 
     def restore(self, uid: str, pub: dict, t: float) -> bool:

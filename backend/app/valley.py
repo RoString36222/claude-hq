@@ -40,6 +40,7 @@ GAME_NAMES = {"pond": "Fishing Pond", "race": "Puzzle Race", "duel": "Creature D
 MAX_LOBBY = 8
 SEND_TIMEOUT = 0.5            # seconds one socket may take to accept a lobby fan-out
 now = time.monotonic          # patched in tests
+HOST_GRACE = golfmod.GRACE    # a host back from a socket drop this soon is host again
 wall = time.time              # patched in tests
 
 # ----------------------------------------------------------------- catalogs --
@@ -272,6 +273,8 @@ class Lobby:
     def __init__(self) -> None:
         self.members: dict[str, dict] = {}     # user_id -> public profile, in join order
         self.host: str | None = None
+        # (user_id, when) of a host whose socket dropped: a quick rejoin takes the host back
+        self.prev_host: tuple[str, float] | None = None
 
     def roster(self) -> list[dict]:
         return [dict(p, host=(uid == self.host)) for uid, p in self.members.items()]
@@ -808,8 +811,12 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
         else:
             fresh = member.user_id not in lobby.members
             lobby.members[member.user_id] = member.public()
-            if lobby.host is None or lobby.host not in lobby.members:
-                lobby.host = member.user_id
+            ph = lobby.prev_host
+            if lobby.host is None or lobby.host not in lobby.members or \
+                    (ph is not None and ph[0] == member.user_id and now() - ph[1] < HOST_GRACE):
+                lobby.host = member.user_id      # first in, or the host back from a socket blip
+            if ph is not None and (ph[0] == member.user_id or now() - ph[1] >= HOST_GRACE):
+                lobby.prev_host = None
             out.all("lobby", members=lobby.roster(), joined=member.public() if fresh else None, name=GAME_NAMES[g])
             if g == "pond":
                 out.to(member.ws, "pond", pond=v.pond.snapshot())
@@ -886,6 +893,7 @@ def golf_op(gm: "golfmod.Golf", lobby: Lobby, member: Member, op: str, msg: dict
     t = now()
     uid = member.user_id
     ids = list(lobby.members)
+    _golf_advance(gm, ids, out, t)       # a dropped player's hold may have run out meanwhile
     if op == "view":
         out.to(member.ws, "golf", round=gm.view(t))
     elif op == "pos":
@@ -914,13 +922,16 @@ def golf_op(gm: "golfmod.Golf", lobby: Lobby, member: Member, op: str, msg: dict
     elif op in ("start", "skip", "end"):
         if lobby.host != uid:
             out.err(member.ws, "only the host can do that")
-        elif op == "start":
+            return
+        lobby.prev_host = None               # the new host acted: a returning old host stays a player
+        if op == "start":
             err = gm.start(lobby.members, msg.get("course"), t)
             if err:
                 out.err(member.ws, err)
             else:
                 out.lobby(ids, "golf", round=gm.view(t), by=member.public())
         elif op == "skip":
+            gm.release()                     # nobody parked holds the hole open any more
             gm.pick_up(list(gm.players))
             out.lobby(ids, "golf", round=gm.view(t))
             _golf_advance(gm, ids, out, t)
@@ -930,29 +941,72 @@ def golf_op(gm: "golfmod.Golf", lobby: Lobby, member: Member, op: str, msg: dict
 
 
 def _golf_advance(gm: "golfmod.Golf", ids: list[str], out: Out, t: float, ticks: int = 0) -> None:
+    was = gm.phase
     step = gm.advance(t, ticks)
     if step is not None:
         out.lobby(ids, step[0], **step[1])
         out.lobby(ids, "golf", round=gm.view(t))
+    elif gm.phase != was:                # the round ended: its last (dropped) player never came back
+        out.lobby(ids, "golf", round=gm.view(t))
 
 
-def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out) -> None:
+_timers: set = set()                     # strong refs to the recheck tasks in flight
+
+
+def _golf_recheck_later(room_id: str, delay: float) -> None:
+    """Re-run the golf advance once a dropped player's grace runs out, so the hole
+    moves on even if nobody else does anything meanwhile."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    def fire() -> None:
+        task = loop.create_task(golf_recheck(room_id))
+        _timers.add(task)
+        task.add_done_callback(_timers.discard)
+    loop.call_later(max(0.0, delay) + 0.05, fire)
+
+
+async def golf_recheck(room_id: str) -> None:
+    v = _rooms.get(room_id)
+    if v is None:
+        return
+    room = manager.get(room_id)
+    t = now()
+    out = Out("golf")
+    _golf_advance(v.golf, list(v.lobbies["golf"].members), out, t)
+    left = v.golf.grace_left(t)
+    if left is not None:
+        _golf_recheck_later(room_id, left)
+    if room is not None and room.members:
+        await _flush(room, out)
+    elif left is None and _rooms.get(room_id) is v:
+        _rooms.pop(room_id, None)        # nobody came back to the room
+
+
+def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out, disconnected: bool = False) -> None:
+    """Leave one game's lobby. disconnected: the socket dropped rather than an explicit
+    leave, so the multi.js shell will most likely rejoin within seconds: the host is
+    handed back on a quick return and a golf hole waits for the player."""
     lobby = v.lobbies[g]
     who = lobby.members.pop(user_id, None)
     if who is None:
         return
     if lobby.host == user_id:
         lobby.host = next(iter(lobby.members), None)
+        lobby.prev_host = (user_id, now()) if disconnected and lobby.host is not None else None
     if g == "pond":
         v.pond.drop(user_id)
     elif g == "duel":
         v.duel.drop(user_id, out)
     elif g == "mines":
         v.mines.drop(user_id, out)
-    elif g == "golf" and v.golf.drop(user_id, now()):
+    elif g == "golf" and v.golf.drop(user_id, now(), blip=disconnected):
         ids = list(lobby.members)
         out.lobby(ids, "golf", round=v.golf.view(now()), left=user_id)
-        _golf_advance(v.golf, ids, out, now())
+        if not disconnected:
+            _golf_advance(v.golf, ids, out, now())
     out.all("lobby", members=lobby.roster(), left=who, name=GAME_NAMES[g])
 
 
@@ -967,10 +1021,13 @@ async def on_disconnect(room_id: str, member: Member) -> None:
         return                       # the same person is still here on another socket
     for g in GAMES:
         out = Out(g)
-        _leave_lobby(v, g, member.user_id, out)
+        _leave_lobby(v, g, member.user_id, out, disconnected=True)
         if room is not None:
             await _flush(room, out)
-    if room is None or all(ws is member.ws for ws in room.members):
+    left = v.golf.grace_left(now())
+    if left is not None:
+        _golf_recheck_later(room_id, left)   # the recheck also tidies an emptied room
+    elif room is None or all(ws is member.ws for ws in room.members):
         _rooms.pop(room_id, None)
 
 

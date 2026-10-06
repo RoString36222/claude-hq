@@ -379,13 +379,35 @@ function makeGame(host, opts){
     V.readyAt = now() + (view.readyInMs|0)/1000;
     if(fresh || !V.hole || view.hole !== V.holeIdx) setHole(view.hole);
     (view.players || []).forEach(function(p){
-      var P = V.players[p.user && p.user.userId]; if(!P || P.fly || (P.uid === myId() && V.pending)) return;
-      P.ball = [p.ball[0]|0, p.ball[1]|0];
-      if(P.done && P.ball[0] === V.hole.cup[0] && P.ball[1] === V.hole.cup[1]) P.sunk = true;
+      var P = V.players[p.user && p.user.userId], b = [p.ball[0]|0, p.ball[1]|0];
+      if(P && P.uid === myId() && V.resync){ V.resync = false; settleMine(P, b); return; }
+      if(!P || P.fly || (P.uid === myId() && V.pending)) return;
+      P.ball = b;
+      P.sunk = P.done && P.ball[0] === V.hole.cup[0] && P.ball[1] === V.hole.cup[1];
     });
+    V.resync = false;
+    var Pm = me();
+    if(Pm && !Pm.fly && !V.pending){
+      // never left stuck "rolling" (or "holed" on a shot the server never got)
+      if(V.state === "flight" || (V.state === "done" && !Pm.done && V.phase === "playing")){ V.state = Pm.done ? "done" : "walk"; V.auto = null; }
+    }
     if(V.phase === "done" && !V.finalCard) V.finalCard = {card: cardFromView(view), par: view.par, done: true};
     showStage(true);
     hudUpdate();
+  }
+  // After a reconnect the server's view is the truth about my ball. If my optimistic
+  // roll ends where the server says, let it finish; otherwise ease the ball there.
+  function settleMine(P, b){
+    var f = P.fly, land = f ? (f.oob ? f.from : f.end) : P.ball;
+    P.sunk = P.done && b[0] === V.hole.cup[0] && b[1] === V.hole.cup[1];
+    if(f && land[0] === b[0] && land[1] === b[1]) return;          // finishFlight sets the state
+    if(f || P.ball[0] !== b[0] || P.ball[1] !== b[1]){
+      var at = ballAt(P, now());
+      P.fly = null; P.lastFly = null; P.ball = b.slice();
+      if(!api.calm()) startFlight(P, {from: b.slice(), path: [b.slice()], end: b.slice(), holed: false, oob: false, mine: true,
+                                       quiet: true, blend: {x: at[0], z: at[1], t0: now(), dur: 0.2}});
+    }
+    if(V.state !== "address" || P.done){ V.state = P.done ? "done" : "walk"; V.auto = null; }
   }
   function cardFromView(view){ var c = {}; (view.players || []).forEach(function(p){ c[p.user.userId] = p.strokes; }); return c; }
   function onEvent(m){
@@ -490,6 +512,7 @@ function makeGame(host, opts){
     var P = me(); if(!P || V.state !== "address" || P.fly || P.done) return;
     if(V.mode === "mp" && now() < V.readyAt) { api.toast("Wait for the next hole to open"); return; }
     if(V.mode === "mp" && (V.pending || now() < V.shotReadyAt)) return;
+    if(V.mode === "mp" && V.offline){ api.toast("Reconnecting to the Arena…"); return; }
     var ax = Math.round(Math.cos(V.aim.a)*4096), az = Math.round(Math.sin(V.aim.a)*4096), power = clamp(Math.round(V.aim.p), 1, 100);
     if(!ax && !az) ax = 1;
     var n = V.holeIdx;
@@ -561,6 +584,8 @@ function makeGame(host, opts){
       if(Q.uid !== myId() && Q.snaps.length) sampleSnaps(Q, t, dt, calm);
     });
     if(P && P.av.anim === A_SWING && !P.fly && V.state !== "wait" && t - P.swingAt > 0.8) P.av.anim = A_IDLE;
+    // a roll that ended without finishFlight (a quiet blend, a reset) never leaves me unable to walk
+    if(P && V.state === "flight" && !P.fly && !V.pending){ V.state = P.done ? "done" : "walk"; hudUpdate(); }
     // hole transitions (practice timer or the server's cut-scene)
     var flying = V.order.some(function(u){ return V.players[u].fly; });
     if(V.pendingHole && !flying){
@@ -581,7 +606,8 @@ function makeGame(host, opts){
     // position relay: 10/s while something changes, one "rest" frame when it stops (the
     // key differs), a keepalive every 2 s. q is my clock in centiseconds: a sequence
     // number that also lets the others place each frame on a jitter-free timeline.
-    if(V.mode === "mp" && P && MP && V.phase === "playing" && t - V.lastPos >= POS_EVERY){
+    // (not while offline: a new socket that hasn't re-joined the lobby yet would only earn errors)
+    if(V.mode === "mp" && P && MP && !V.offline && V.phase === "playing" && t - V.lastPos >= POS_EVERY){
       var r = ((Math.round(P.av.yaw*180/Math.PI) % 360) + 360) % 360, x = Math.round(P.av.x), z = Math.round(P.av.z);
       var key = x+","+z+","+r+","+P.av.anim;
       if(key !== V.lastPosKey || t - V.lastPos >= POS_KEEPALIVE){
@@ -1074,8 +1100,9 @@ function makeGame(host, opts){
   V.onConn = function(on){
     V.offline = !on; badge.classList.toggle("hidden", on);
     if(on && V.pending){
-      var P = me(); V.pending = false; V.shotUndo = null;
-      if(P && P.fly){ P.fly = null; }        // the server's view says where that ball really is
+      // My shot may or may not have reached the server. Keep the ball rolling; the
+      // view that follows the shell's re-join settles where it really is (settleMine).
+      V.pending = false; V.shotUndo = null; V.resync = true;
     }
     if(!on){ V.order.forEach(function(u){ var Q = V.players[u]; if(u !== myId()) Q.lastQ = -1; }); }
   };

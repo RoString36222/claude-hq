@@ -17,6 +17,10 @@ function me(){ var y = A().you; return y && y.userId; }
 function sockOpen(){ var s = A().sock; return !!(s && s.readyState === 1); }
 function send(g, op, data){
   if(!sockOpen()) return false;
+  // A game's moves wait until its shell has (re-)joined the lobby on this very socket:
+  // after a quick reconnect the server would only answer "join the lobby first".
+  var c = CTX[g];
+  if(c && op !== "join" && op !== "leave" && c.sock !== A().sock) return false;
   var msg = {type:"game", g:g, op:op}; for(var k in (data||{})) msg[k] = data[k];
   try { A().sock.send(JSON.stringify(msg)); return true; } catch(e){ return false; }
 }
@@ -51,7 +55,7 @@ function shell(g, el, body){
     }
     if(!joined || A().sock !== sock){
       var again = joined;
-      joined = true; sock = A().sock; send(g, "join");
+      joined = true; sock = ctx.sock = A().sock; send(g, "join");
       if(again){ ctx.offline = false; renderLobby(ctx); if(ctx.onConn) try{ ctx.onConn(true); }catch(e){} }
     }
     timer = setTimeout(connect, 500);

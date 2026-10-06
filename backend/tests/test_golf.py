@@ -459,3 +459,106 @@ async def test_late_joiner_spectates_and_a_rejoin_returns_to_the_round(client, c
                 assert until(wa, "hole")["hole"] == 1
             send(wc, "leave")
         send(wa, "leave")
+
+
+# ------------------------------------------------- smoothness: socket blips --
+def test_a_socket_drop_holds_the_hole_for_the_grace_period():
+    gm = _engine(2)
+    gm.pick_up(["u0"])                                     # u0 finished the hole
+    gm.shot("u1", {"ax": 0, "az": -4096, "power": 20}, 1.0)
+    assert gm.drop("u1", 5.0, blip=True)
+    assert gm.advance(6.0) is None and gm.hole == 0        # u1 may still come back
+    assert gm.grace_left(6.0) == pytest.approx(golf.GRACE - 1.0)
+    assert gm.restore("u1", {"userId": "u1", "handle": "h1"}, 7.0)
+    assert gm.players["u1"]["strokes"][0] == 1 and gm.hole == 0
+    # a second drop that never comes back: the hole moves on once the grace runs out
+    gm.drop("u1", 10.0, blip=True)
+    assert gm.advance(10.0 + golf.GRACE - 0.1) is None
+    assert gm.advance(10.0 + golf.GRACE + 0.1)[0] == "hole" and gm.hole == 1
+    # an explicit leave never holds the hole; neither does a host skip
+    gm2 = _engine(2)
+    gm2.pick_up(["u0"])
+    gm2.drop("u1", 5.0)
+    assert gm2.advance(5.0) is not None
+    gm3 = _engine(2)
+    gm3.pick_up(["u0"])
+    gm3.drop("u1", 5.0, blip=True)
+    gm3.release()
+    assert gm3.advance(5.0) is not None
+
+
+def test_a_lone_players_round_survives_a_blip_and_ends_if_they_never_return():
+    gm = _engine(1)
+    gm.drop("u0", 5.0, blip=True)
+    assert gm.phase == "playing"
+    assert gm.restore("u0", {"userId": "u0"}, 6.0) and gm.phase == "playing"
+    gm.drop("u0", 10.0, blip=True)
+    assert gm.advance(10.0 + golf.GRACE + 0.1) is None and gm.phase == "idle" and gm.parked == {}
+
+
+async def test_grace_timer_recheck_advances_the_hole_and_tells_the_lobby(monkeypatch, clock):
+    room_id = "blip-room"
+    v = valley.valley_for(room_id)
+    lobby = v.lobbies["golf"]
+    lobby.members = {"u0": {"userId": "u0"}, "u1": {"userId": "u1"}}
+    assert v.golf.start(lobby.members, "meadow", clock["now"]) is None
+    v.golf.pick_up(["u0"])
+    lobby.members.pop("u1")
+    v.golf.drop("u1", clock["now"], blip=True)
+    ws = _SlowWS(0)
+    monkeypatch.setattr(valley.manager, "get", lambda rid: _Room({ws: _M("u0")}) if rid == room_id else None)
+    await valley.golf_recheck(room_id)
+    assert ws.got == [] and v.golf.hole == 0                # still inside the grace period
+    clock["now"] += golf.GRACE + 0.1
+    await valley.golf_recheck(room_id)
+    assert [p["ev"] for p in ws.got] == ["hole", "golf"] and v.golf.hole == 1
+
+
+async def test_socket_drop_keeps_the_hole_and_the_host_on_a_quick_rejoin(client, clock):
+    a, _ = await make_user("ash", 61)
+    b, _ = await make_user("misty", 62)
+    with client.websocket_connect(url("lobby", a)) as wa:
+        wa.receive_json()
+        send(wa, "join"); until(wa, "golf")
+        with client.websocket_connect(url("lobby", b)) as wb:
+            wb.receive_json()
+            send(wb, "join"); until(wb, "golf")
+            until(wa, "lobby", where=lambda m: len(m["members"]) == 2)
+            send(wa, "start", course="meadow")
+            until(wa, "golf", where=lambda m: m["round"] and m["round"]["phase"] == "playing")
+            send(wa, "concede")                              # a has finished hole 1...
+            until(wa, "golf", where=lambda m: m["round"]["players"][0]["done"])
+            send(wb, "shot", ax=0, az=-4096, power=25, seq=1, hole=0)   # ...b is mid-putt
+            until(wa, "shot")
+        # b's socket dropped: the hole waits for them
+        gone = until(wa, "golf", where=lambda m: m.get("left") == b)
+        assert gone["round"]["hole"] == 0
+        clock["now"] += 1
+        with client.websocket_connect(url("lobby", b)) as wb2:
+            wb2.receive_json()
+            send(wb2, "join")
+            back = until(wb2, "golf")
+            assert back.get("back") == b and back["round"]["hole"] == 0
+            me = [p for p in back["round"]["players"] if p["user"]["userId"] == b][0]
+            assert me["strokes"][0] == 1 and not me["done"]
+            # now the host (a) blips: b holds the host meanwhile, a gets it back on return
+            wa.close()
+            roster = until(wb2, "lobby", where=lambda m: len(m["members"]) == 1)["members"]
+            assert roster[0]["userId"] == b and roster[0]["host"]
+            clock["now"] += 1
+            with client.websocket_connect(url("lobby", a)) as wa2:
+                wa2.receive_json()
+                send(wa2, "join")
+                roster = until(wa2, "lobby", where=lambda m: len(m["members"]) == 2)["members"]
+                assert {m["userId"]: m["host"] for m in roster} == {a: True, b: False}
+                send(wa2, "skip")                            # host controls work again
+                assert until(wb2, "hole")["hole"] == 1
+                # a blip after the grace period: the new host keeps it
+                wa2.close()
+                until(wb2, "lobby", where=lambda m: len(m["members"]) == 1)
+                clock["now"] += golf.GRACE + 1
+                with client.websocket_connect(url("lobby", a)) as wa3:
+                    wa3.receive_json()
+                    send(wa3, "join")
+                    roster = until(wa3, "lobby", where=lambda m: len(m["members"]) == 2)["members"]
+                    assert {m["userId"]: m["host"] for m in roster} == {a: False, b: True}

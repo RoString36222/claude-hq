@@ -55,8 +55,8 @@ shares daily activity *counts* with friends — never conversation content.)
   that rotates with the real calendar, a daily special, a shopkeeper who chats (and dozes after
   11pm), a shop cat to pet, and a bag you feed your creatures from.
 - **🌮 Cali Tuesdays** (key `9`): a retro pixel-art taqueria for logging Taco Tuesday at
-  California Burrito. Seat your friends, drag food from the counter onto their plates (or click a
-  food, then a plate), watch the receipt work out the pooled buy-1-get-1, then check out to the
+  California Burrito. Seat your friends (type `@` to pick them from the Arena), drag food from the
+  counter onto their plates (or click a food, then a plate), watch the receipt work out the pooled buy-1-get-1, then check out to the
   arcade-style hi-score board. Seasons are calendar months; last season's champion gets a crown.
 
 **Quality-of-life**
@@ -235,6 +235,15 @@ and feature guide.
 
 ## Changelog
 
+- **1.6.1** — **Tag friends from the Arena.** In Cali Tuesdays, type `@` in the seat box to
+  **autocomplete people from the Arena** (avatar, name and exact handle); the list narrows as you
+  type, and a plain name also offers matching Arena people. Before, any `@text` was accepted and
+  shown as tagged, but the server matches handles exactly and refuses the whole order on an unknown
+  one: now a tag that isn't on the Arena is flagged on its plate and stops checkout with a clear
+  message. Click a name at the table to tag, re-tag or untag that person (picking someone already
+  seated merges the two plates). Count badges on a crowded plate no longer hide behind other food.
+  **Privacy:** no new egress. The diner reads the Arena board through the local proxy (the same
+  read the Arena tab makes) and shows the avatars it lists; nothing new is sent.
 - **1.6.0** — **Cali Tuesdays gets its own diner.** The taco log moves out of the Arena into a
   **Cali Tuesdays** tab (key `9`): a retro taqueria with **100% original pixel art** drawn at
   runtime (no photos, no new network calls). A food-court stall (a 3D-lettered sign, tiled walls,

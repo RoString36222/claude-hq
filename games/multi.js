@@ -263,54 +263,159 @@ register("race", "🏁", "Live puzzle race against the room", function(ctx){
 });
 
 /* =============================== DUEL =============================== */
+// Real-Pokemon duel (games/pokebattle.js draws it). We send only {species, stage, branch,
+// mega, shiny, name} per creature and a move/switch choice per turn; the server derives
+// every stat and move, resolves both choices at once and sends back the ordered events.
 function myDuelTeam(){
   var team = typeof window.gymTeam === "function" ? window.gymTeam() : [];
-  return team.slice(0,6).map(function(m){ return {name:String(m.name||"Creature").slice(0,24), type:m.type||"Normal",
-    stage: typeof window.creatureStage==="function" ? (window.creatureStage(m.cr)|0) : 1}; });
+  return team.slice(0,6).map(function(m){
+    var cr = m.cr || {}, br = null, mg = null;
+    try { br = window.branchFinalDex(cr); } catch(e){}
+    try { mg = window.pokeMega(cr); } catch(e){}
+    return {sp: typeof window.pokeIdx === "function" ? window.pokeIdx(cr) : 0,
+            st: typeof window.creatureStage === "function" ? Math.max(0, Math.min(4, window.creatureStage(cr)|0)) : 2,
+            br: br, mg: mg, sh: !!cr.shiny, name: String(m.name||"").slice(0,24)};
+  });
 }
 HANDLERS.duel = {
   on: function(m, s){
+    s.queue = s.queue || [];
     if(m.ev === "challenge"){ s.incoming = m.from; api.toast("⚔️ "+nameOf(m.from)+" challenged you to a duel!"); }
-    if(m.ev === "duel"){ s.duel = m.duel; if(m.duel) s.incoming = null; }
-    if(m.ev === "duelend"){ s.duel = m.duel; s.ended = m; if(m.winner && m.winner.userId === me()) { var b = api.save.battle; b.wins = (b.wins|0)+1; api.persist(); } }
+    if(m.ev === "challenged"){ s.sent = m.to; }
+    if(m.ev === "duel"){ s.duel = m.duel; if(m.duel){ s.incoming = null; s.sent = null; s.ended = null; s.queue = []; s.live = copyDuel(m.duel); } }
+    if(m.ev === "waiting" && s.duel && m.mid === s.duel.mid){ s.duel.waiting = m.waiting || []; }
+    if(m.ev === "turn" && m.duel){ s.queue.push({events: Array.isArray(m.events) ? m.events : [], duel: m.duel}); s.duel = m.duel; }
+    if(m.ev === "duelend"){
+      s.queue.push({end:m});
+      if(m.winner && m.winner.userId === me()){ var b = api.save.battle; b.wins = (b.wins|0)+1; api.persist(); }
+      else if(m.winner && m.duel && (m.duel.ids||[]).indexOf(me()) >= 0){ var b2 = api.save.battle; b2.losses = (b2.losses|0)+1; api.persist(); }
+    }
   },
   render: function(ctx, s){ renderDuel(ctx, s); }
 };
+function copyDuel(d){ return JSON.parse(JSON.stringify(d)); }
+// The server's {sides:{uid:...}} -> the scene's {me, foe}, from my seat (spectators sit with a).
+function duelSeat(d){ var i = (d.ids||[]).indexOf(me()); return i < 0 ? 0 : i; }
+function duelView(d){
+  var seat = duelSeat(d), ids = d.ids || [];
+  return {me: copyDuel(d.sides[ids[seat]]), foe: copyDuel(d.sides[ids[1-seat]])};
+}
+function duelWho(d){
+  var seat = duelSeat(d), foe = seat === 0 ? d.b : d.a;
+  var playing = (d.ids||[]).indexOf(me()) >= 0;
+  return function(side, name, sendOut){
+    if(side === seat) return sendOut ? (playing ? "Go! "+name : nameOf(seat === 0 ? d.a : d.b)+" sent out "+name) : name;
+    return sendOut ? nameOf(foe)+" sent out "+name : "The foe's "+name;
+  };
+}
+function duelChallengeRow(box, s){
+  var others = (s.lobby||[]).filter(function(p){ return p.userId !== me(); });
+  if(!others.length) box.appendChild(api.mk("p","vg-muted","Invite someone into this lobby to duel."));
+  others.forEach(function(p){ var r = api.mk("div","vg-row"); r.appendChild(api.mk("span",null,nameOf(p)));
+    r.appendChild(api.btn("Challenge","",function(){ var t = myDuelTeam(); if(!t.length){ api.toast("You need a working or idle session creature"); return; }
+      send("duel","challenge",{to:p.userId, team:t}); api.toast("Challenge sent"); }));
+    box.appendChild(r); });
+  box.appendChild(api.mk("p","vg-muted","Your team is your working and idle session creatures, battling as the Pokémon they are now, with real moves, stats and types. Both of you choose each turn; the Arena server resolves it."));
+}
 function renderDuel(ctx, s){
-  var box = ctx.box; box.textContent = "";
-  var d = s.duel;
+  var box = ctx.box, d = s.duel;
+  // A battle in progress (or still animating its last turn) owns the box.
+  if(ctx.scene && !ctx.scene.dead && (s.queue && s.queue.length || ctx.playing || (d && d.mid === ctx.mid))){ pumpDuel(ctx, s); return; }
+  if(ctx.scene && !ctx.scene.dead && ctx.endShown) return;
+  box.textContent = ""; ctx.scene = null;
   if(s.incoming && !d){
     var inc = api.mk("div","vg-row"); inc.appendChild(api.mk("b",null,nameOf(s.incoming)+" challenged you!"));
     inc.appendChild(api.btn("Accept","primary",function(){ var t = myDuelTeam(); if(!t.length){ api.toast("You need a working or idle session creature"); return; } send("duel","accept",{team:t}); }));
     box.appendChild(inc);
   }
-  if(!d || (s.ended && s.ended.duel === d)){
-    if(s.ended && s.ended.winner) box.appendChild(api.mk("p",null,"🏆 "+(s.ended.winner.userId===me()?"You won":nameOf(s.ended.winner)+" won")+(s.ended.forfeit?" (forfeit)":"")+"."));
-    var others = (s.lobby||[]).filter(function(p){ return p.userId !== me(); });
-    if(!others.length) box.appendChild(api.mk("p","vg-muted","Invite someone into this lobby to duel."));
-    others.forEach(function(p){ var r = api.mk("div","vg-row"); r.appendChild(api.mk("span",null,nameOf(p)));
-      r.appendChild(api.btn("Challenge","",function(){ var t = myDuelTeam(); if(!t.length){ api.toast("You need a working or idle session creature"); return; } send("duel","challenge",{to:p.userId, team:t}); api.toast("Challenge sent"); }));
-      box.appendChild(r); });
-    box.appendChild(api.mk("p","vg-muted","Your team is your working and idle session creatures. The server computes damage on the Gym's type chart; stats come from evolution stage."));
+  if(!d){
+    if(s.ended && s.ended.winner !== undefined) box.appendChild(api.mk("p",null, s.ended.winner ? "🏆 "+(s.ended.winner.userId===me()?"You won":nameOf(s.ended.winner)+" won")+(s.ended.forfeit?" (forfeit)":"")+"." : "It's a draw."));
+    duelChallengeRow(box, s);
     return;
   }
-  var ids = [d.a.userId, d.b.userId], arena = api.mk("div","vg-battle");
-  ids.forEach(function(uid){
-    var col = api.mk("div","vg-side"), who = uid === d.a.userId ? d.a : d.b;
-    col.appendChild(api.mk("h4",null,(uid===me()?"You":nameOf(who))+(d.turn===uid ? (uid===me()?" — your move":" — their move") : "")));
-    (d.teams[uid]||[]).forEach(function(c, i){
-      var r = api.mk("div","vg-mon"+(c.hp<=0?" ko":"")); r.appendChild(api.mk("b",null,c.name)); r.appendChild(api.mk("span","vg-type",c.type));
-      var w = api.mk("div","vg-meter"+(c.hp/c.max<.3?" low":"")), f = api.mk("i"); f.style.width = Math.round(c.hp/c.max*100)+"%"; w.appendChild(f); r.appendChild(w);
-      if(uid===me() && d.turn===me() && c.hp>0 && !ctx.paused) r.appendChild(api.btn("Attack","",function(){ send("duel","move",{idx:i}); }));
-      col.appendChild(r);
-    });
-    arena.appendChild(col);
-  });
-  box.appendChild(arena);
-  var log = api.mk("div","vg-battlelog"); log.setAttribute("aria-live","polite"); (d.log||[]).forEach(function(l){ log.appendChild(api.mk("div",null,l)); }); box.appendChild(log);
-  if(ids.indexOf(me()) >= 0) box.appendChild(api.btn("Forfeit","ghost",function(){ send("duel","forfeit"); }));
+  startDuelScene(ctx, s, d);
 }
-register("duel", "⚔️", "Live 1v1 battles with friends", function(ctx){ renderDuel(ctx, st("duel")); });
+function startDuelScene(ctx, s, d){
+  var P = HQV.pk, box = ctx.box;
+  if(!P || !P.data()){ box.appendChild(api.mk("p","vg-muted","Loading battle data…")); return; }
+  box.textContent = "";
+  var playing = (d.ids||[]).indexOf(me()) >= 0;
+  var head = api.mk("div","vg-row"); head.appendChild(api.mk("b",null, nameOf(d.a)+" vs "+nameOf(d.b)+(playing ? "" : " · watching")));
+  box.appendChild(head);
+  ctx.mid = d.mid; ctx.endShown = false; ctx.playing = false;
+  s.live = copyDuel(d);
+  var sc = ctx.scene = new P.Scene(box, {
+    runLabel: playing ? "FORFEIT" : "LEAVE",
+    onMove: function(i){ duelAct(ctx, s, {k:"move", i:i}); },
+    onSwitch: function(i){ duelAct(ctx, s, {k:"switch", to:i}); },
+    onRun: function(){
+      if(!playing) return;
+      sc.setMode("over", [{label:"Yes, forfeit", fn:function(){ send("duel","forfeit"); sc.setMode("wait", "Forfeiting…"); }},
+                          {label:"Keep battling", primary:true, fn:function(){ sc.setMode("main"); }}]);
+      sc.text.textContent = "Forfeit this duel?";
+    }
+  });
+  if(ctx.paused) sc.pause();
+  sc.setView(duelView(d));
+  var w = duelWho(d), seat = duelSeat(d), ids = d.ids;
+  var foeMon = d.sides[ids[1-seat]].team[d.sides[ids[1-seat]].active], myMon = d.sides[ids[seat]].team[d.sides[ids[seat]].active];
+  ctx.playing = true;
+  sc.intro([w(1-seat, foeMon.name, true)+"!", w(seat, myMon.name, true)+"!"]).then(function(){ ctx.playing = false; pumpDuel(ctx, s); });
+  clearInterval(ctx.duelTimer);
+  ctx.duelTimer = setInterval(function(){ duelPrompt(ctx, s); }, 1000);
+  var oldStop = ctx.stop;
+  ctx.stop = function(){ clearInterval(ctx.duelTimer); if(ctx.scene) ctx.scene.destroy(); if(oldStop) oldStop(); };
+}
+function duelAct(ctx, s, a){
+  var d = s.live; if(!d || ctx.playing || !ctx.scene || ctx.scene.busy) return;
+  if(send("duel","act",{turn:d.turn, a:a})){ ctx.acted = d.turn+":"+d.phase; duelPrompt(ctx, s); }
+}
+// One queued server turn at a time, animated in order; then the prompt for the next choice.
+function pumpDuel(ctx, s){
+  if(ctx.playing || !ctx.scene || ctx.scene.dead) return;
+  var item = (s.queue||[]).shift();
+  if(!item){ duelPrompt(ctx, s); return; }
+  var sc = ctx.scene;
+  if(item.end){
+    var m = item.end; s.ended = m; s.duel = null; ctx.endShown = true;
+    ctx.playing = true;
+    var line = !m.winner ? "It's a draw!" : m.winner.userId === me() ? (m.forfeit ? "Your opponent forfeited. You win!" : "You won the duel!") :
+      (m.duel && (m.duel.ids||[]).indexOf(me()) >= 0 ? (m.forfeit ? "You forfeited." : "You lost the duel.") : nameOf(m.winner)+" won the duel!");
+    sc.setMode("busy");
+    sc.say(line, 600).then(function(){
+      ctx.playing = false;
+      sc.setMode("over", [{label:"Back to the lobby", primary:true, fn:function(){ clearInterval(ctx.duelTimer); sc.destroy(); ctx.scene = null; ctx.endShown = false; renderDuel(ctx, s); }}]);
+    });
+    return;
+  }
+  ctx.playing = true;
+  var d = item.duel, seat = duelSeat(d);
+  sc.play(item.events, seat, duelWho(d)).then(function(){
+    ctx.playing = false;
+    s.live = copyDuel(d); ctx.acted = null;
+    if(!sc.dead){ sc.setView(duelView(d)); pumpDuel(ctx, s); }
+  });
+}
+function duelPrompt(ctx, s){
+  var sc = ctx.scene, d = s.live;
+  if(!sc || sc.dead || ctx.playing || ctx.endShown || !d || (s.queue && s.queue.length) || sc.mode === "over") return;
+  var cur = s.duel && s.duel.mid === d.mid ? s.duel : d;
+  var playing = (d.ids||[]).indexOf(me()) >= 0, waiting = cur.waiting || [];
+  if(!ctx.deadlineFor || ctx.deadlineFor !== d.turn+":"+d.phase){ ctx.deadlineFor = d.turn+":"+d.phase; ctx.deadline = Date.now() + (d.deadline_in|0)*1000; ctx.poked = false; }
+  var left = Math.max(0, Math.round((ctx.deadline - Date.now())/1000));
+  if(left <= 0 && !ctx.poked){ ctx.poked = true; send("duel","poke"); }
+  var mine = playing && waiting.indexOf(me()) >= 0 && ctx.acted !== d.turn+":"+d.phase;
+  if(mine){
+    var want = d.phase === "replace" ? "replace" : (sc.mode === "fight" || sc.mode === "team" ? sc.mode : "main");
+    if(sc.mode !== want) sc.setMode(want);
+    sc.cmd.setAttribute("data-left", left+"s");
+    return;
+  }
+  var who = waiting.filter(function(u){ return u !== me(); }).map(function(u){ return u === d.a.userId ? nameOf(d.a) : nameOf(d.b); });
+  var txt = playing ? "Waiting for "+(who.join(" and ") || "the server")+"… "+left+"s" : "Watching · "+(who.length ? who.join(" and ")+" choosing… "+left+"s" : "");
+  if(sc.mode !== "wait" || sc.modeInfo !== txt) sc.setMode("wait", txt);
+}
+register("duel", "⚔️", "Live Pokémon battles with friends", function(ctx){ renderDuel(ctx, st("duel")); });
 
 /* =============================== MINES =============================== */
 HANDLERS.mines = {

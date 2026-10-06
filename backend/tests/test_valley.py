@@ -1,5 +1,6 @@
 """Valley multiplayer (app/valley.py): lobbies, invites, and the server-refereed
 pond, race, duel, mines and farm, driven over real room websockets."""
+import random
 from datetime import date
 
 import pytest
@@ -144,37 +145,165 @@ def test_mark_handles_repeated_letters():
     assert valley.mark("eerie", "there") == ["near", "miss", "near", "miss", "hit"]
 
 
-async def test_duel_turns_and_server_side_stats(client, clock):
+class FixedRng:
+    """Every draw is 0.5: no crits, no misses below 50% accuracy, damage roll 93, side b wins ties."""
+
+    def random(self):
+        return 0.5
+
+    def __getattr__(self, name):
+        return getattr(random.Random(1), name)
+
+
+@pytest.fixture
+def fixed(monkeypatch):
+    monkeypatch.setattr(valley, "_rng", lambda: FixedRng())
+
+
+CHARIZARD = {"sp": 1, "st": 4}            # Lv55, Speed 132: Flare Blitz, Dragon Claw, Air Slash, Scary Face
+VENUSAUR = {"sp": 3, "st": 4}             # Lv55, Speed 110
+PIKACHU18 = {"sp": 0, "st": 1}            # Lv18, Speed 42: Thunder Shock, Quick Attack (+1), ...
+MAGIKARP = {"sp": 14, "st": 0}            # Lv8: Tackle only
+GENGAR = {"sp": 5, "st": 4}               # Ghost/Poison
+
+
+def start_duel(wa, wb, b, team_a, team_b):
+    both_in("duel", wa, wb)
+    wa.send_json({"type": "game", "g": "duel", "op": "challenge", "to": b, "team": team_a})
+    assert until(wb, "challenge")["from"]["handle"] == "ash"
+    wb.send_json({"type": "game", "g": "duel", "op": "accept", "team": team_b})
+    duel = until(wa, "duel", where=lambda m: m["duel"])["duel"]
+    until(wb, "duel", where=lambda m: m["duel"])
+    return duel
+
+
+def act(ws, turn, **a):
+    ws.send_json({"type": "game", "g": "duel", "op": "act", "turn": turn, "a": a})
+
+
+async def duel_users():
     a, _ = await make_user("ash", 9)
     b, _ = await make_user("misty", 10)
-    team_a = [{"name": "Sparky", "type": "Electric", "stage": 4, "hp": 9999, "atk": 9999}]
-    team_b = [{"name": "Splash", "type": "Water", "stage": 0}]
+    return a, b
+
+
+async def test_duel_stats_and_moves_are_derived_server_side(client, clock, fixed):
+    a, b = await duel_users()
+    fake = dict(CHARIZARD, hp=9999, max=9999, atk=9999, stats={"spe": 999}, moves=["hyperbeam"], name="Sparky")
     with client.websocket_connect(url("lobby", a)) as wa, client.websocket_connect(url("lobby", b)) as wb:
         wa.receive_json(); wb.receive_json()
-        both_in("duel", wa, wb)
-        wa.send_json({"type": "game", "g": "duel", "op": "challenge", "to": b, "team": team_a})
-        assert until(wb, "challenge")["from"]["handle"] == "ash"
-        wb.send_json({"type": "game", "g": "duel", "op": "accept", "team": team_b})
-        duel = until(wa, "duel", where=lambda m: m["duel"])["duel"]
-        sparky = duel["teams"][a][0]
-        assert sparky["hp"] == 30 + 4 * 12 and sparky["atk"] == 8 + 4 * 3   # client hp/atk ignored
-        first = duel["turn"]
-        other_ws = wb if first == a else wa
-        other_ws.send_json({"type": "game", "g": "duel", "op": "move", "idx": 0})
-        assert until(other_ws, "error")["error"] == "not your turn"
-        # Play it out: Electric vs Water is super effective, so ash wins.
-        for _ in range(20):
-            turn_ws = wa if first == a else wb
-            turn_ws.send_json({"type": "game", "g": "duel", "op": "move", "idx": 0})
-            m = wa.receive_json()
-            while m.get("ev") not in ("duel", "duelend") or (m.get("ev") == "duel" and not m.get("duel")):
-                m = wa.receive_json()
-            if m["ev"] == "duelend":
-                assert m["winner"]["handle"] == "ash"
-                break
-            first = m["duel"]["turn"]
-        else:
-            raise AssertionError("duel never ended")
+        duel = start_duel(wa, wb, b, [fake], [VENUSAUR])
+        zard = duel["sides"][a]["team"][0]
+        assert (zard["name"], zard["lvl"], zard["hp"], zard["max"]) == ("Charizard", 55, 167, 167)
+        assert zard["types"] == ["Fire", "Flying"]
+        assert [m["id"] for m in zard["moves"]] == ["flareblitz", "dragonclaw", "airslash", "scaryface"]
+        assert [m["pp"] for m in zard["moves"]] == [15, 15, 15, 10]
+        assert duel["phase"] == "choose" and set(duel["waiting"]) == {a, b}
+
+
+async def test_duel_simultaneous_choice_speed_damage_and_pp(client, clock, fixed):
+    from app import pokebattle as pb
+    a, b = await duel_users()
+    with client.websocket_connect(url("lobby", a)) as wa, client.websocket_connect(url("lobby", b)) as wb:
+        wa.receive_json(); wb.receive_json()
+        duel = start_duel(wa, wb, b, [CHARIZARD], [VENUSAUR])
+        act(wa, duel["turn"], k="move", i=0)                       # Flare Blitz
+        assert until(wb, "waiting")["waiting"] == [b]              # nothing resolves on one choice
+        act(wa, duel["turn"], k="move", i=1)
+        assert until(wa, "error")["error"] == "wait for the other player"
+        act(wb, duel["turn"], k="move", i=0)
+        turn = until(wa, "turn")
+        moves = [e for e in turn["events"] if e["t"] == "move"]
+        assert [e["side"] for e in moves] == [0, 1]                # faster Charizard first
+        zard, saur = pb.build_mon(dict(CHARIZARD, br=None, mg=None)), pb.build_mon(dict(VENUSAUR, br=None, mg=None))
+        want, mult = pb.damage(zard, saur, pb.MOVES["flareblitz"], False, 93)
+        assert mult == 2
+        hit = next(e for e in turn["events"] if e["t"] == "dmg" and e["side"] == 1)
+        assert hit["hp"] == saur["max"] - want and not hit["crit"]
+        assert 1 <= want <= saur["max"]
+        lo, hi = pb.damage(zard, saur, pb.MOVES["flareblitz"], False, 85)[0], pb.damage(zard, saur, pb.MOVES["flareblitz"], False, 100)[0]
+        assert lo <= want <= hi
+        recoil = next(e for e in turn["events"] if e["t"] == "residual" and e["why"] == "recoil")
+        assert recoil["side"] == 0
+        view = turn["duel"]
+        assert view["sides"][a]["team"][0]["moves"][0]["pp"] == 14
+        assert view["turn"] == duel["turn"] + 1
+        # A move with no PP left is refused.
+        valley._rooms["lobby"].duel.match["state"]["sides"][0]["team"][0]["moves"][1]["pp"] = 0
+        act(wa, view["turn"], k="move", i=1)
+        assert until(wa, "error")["error"] == "you can't do that now"
+        act(wa, view["turn"] - 1, k="move", i=0)
+        assert until(wa, "error")["error"] == "that turn is over"
+
+
+async def test_duel_priority_beats_speed_and_type_immunity(client, clock, fixed):
+    a, b = await duel_users()
+    with client.websocket_connect(url("lobby", a)) as wa, client.websocket_connect(url("lobby", b)) as wb:
+        wa.receive_json(); wb.receive_json()
+        duel = start_duel(wa, wb, b, [GENGAR], [PIKACHU18])
+        assert duel["sides"][b]["team"][0]["moves"][1]["id"] == "quickattack"
+        act(wa, duel["turn"], k="move", i=0)
+        act(wb, duel["turn"], k="move", i=1)                       # Quick Attack, +1 priority
+        events = until(wa, "turn")["events"]
+        moves = [e for e in events if e["t"] == "move"]
+        assert moves[0]["side"] == 1 and moves[0]["move"] == "quickattack"
+        assert next(e for e in events if e["side"] == 0 and e["t"] in ("dmg", "immune"))["t"] == "immune"
+
+
+async def test_duel_replace_phase_then_win(client, clock, fixed):
+    a, b = await duel_users()
+    with client.websocket_connect(url("lobby", a)) as wa, client.websocket_connect(url("lobby", b)) as wb:
+        wa.receive_json(); wb.receive_json()
+        duel = start_duel(wa, wb, b, [CHARIZARD], [MAGIKARP, MAGIKARP])
+        act(wa, duel["turn"], k="move", i=0)
+        act(wb, duel["turn"], k="move", i=0)
+        turn = until(wb, "turn")
+        assert any(e["t"] == "faint" and e["side"] == 1 for e in turn["events"])
+        view = turn["duel"]
+        assert view["phase"] == "replace" and view["waiting"] == [b] and view["deadline_in"] == 30
+        act(wa, view["turn"], k="move", i=0)
+        assert until(wa, "error")["error"] == "wait for the other player"
+        act(wb, view["turn"], k="move", i=0)
+        assert until(wb, "error")["error"] == "you can't do that now"
+        act(wb, view["turn"], k="switch", to=1)
+        swap = until(wa, "turn")
+        assert swap["events"] == [{"t": "switch", "side": 1, "slot": 1, "name": "Magikarp"}]
+        assert swap["duel"]["phase"] == "choose"
+        act(wa, view["turn"], k="move", i=0)
+        act(wb, view["turn"], k="move", i=0)
+        end = until(wa, "duelend")
+        assert end["winner"]["handle"] == "ash" and not end.get("forfeit")
+
+
+async def test_duel_timeout_picks_for_you_and_forfeit(client, clock, fixed):
+    a, b = await duel_users()
+    with client.websocket_connect(url("lobby", a)) as wa, client.websocket_connect(url("lobby", b)) as wb:
+        wa.receive_json(); wb.receive_json()
+        duel = start_duel(wa, wb, b, [VENUSAUR], [CHARIZARD])
+        act(wa, duel["turn"], k="move", i=2)
+        until(wa, "waiting")
+        clock["now"] += valley.DUEL_CHOOSE_SECS + 1
+        wa.send_json({"type": "game", "g": "duel", "op": "poke"})
+        turn = until(wb, "turn")
+        assert [e["move"] for e in turn["events"] if e["t"] == "move" and e["side"] == 1] == ["flareblitz"]
+        wb.send_json({"type": "game", "g": "duel", "op": "forfeit"})
+        end = until(wa, "duelend")
+        assert end["winner"]["handle"] == "ash" and end["forfeit"] is True
+
+
+def test_duel_team_validation_mega_and_branch():
+    t = valley._team
+    assert t([]) is None and t([CHARIZARD] * 7) is None
+    assert t([{"sp": True, "st": 4}]) is None and t([{"sp": 1, "st": 4.0}]) is None
+    assert t([{"sp": 48, "st": 0}]) is None and t([{"sp": 1, "st": 5}]) is None
+    assert t([dict(CHARIZARD, st=3, mg="charizard-megax")])[0]["name"] == "Charizard"   # Mega only at stage 4
+    mega = t([dict(CHARIZARD, mg="charizard-megax")])[0]
+    assert (mega["name"], mega["types"], mega["mega"], mega["sprite"]) == ("Mega Charizard X", ["Fire", "Dragon"], "charizard-megax", 10034)
+    assert t([dict(CHARIZARD, mg="gengar-mega")])[0]["mega"] is None
+    assert t([{"sp": 4, "st": 4, "br": 197}])[0]["name"] == "Umbreon"
+    assert t([{"sp": 4, "st": 4, "br": 25}])[0]["name"] == "Vaporeon"       # not an Eevee branch: default
+    assert t([{"sp": 4, "st": 1, "br": 197}])[0]["name"] == "Eevee"
+    assert t([{"sp": 0, "st": 4, "name": "x" * 99}])[0]["name"] == "Raichu"
 
 
 async def test_mines_coop_loot_goes_to_the_digger(client, clock):

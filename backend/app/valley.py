@@ -8,7 +8,9 @@ has a lobby (who is in it, who hosts) with join notices and invites. The games:
   pond   shared fishing dock: the server picks each bite, times the reel and scores
          the catch; a room goal; a boss fish the whole lobby reels in together.
   race   live code-puzzle race: the server holds the word and marks each guess.
-  duel   1v1 creature battle on the Gym's type chart; the server computes damage.
+  duel   1v1 Pokemon-style battle with real moves/stats (app/pokebattle.py): both pick
+         a move or switch at once, the server resolves the turn (priority, speed,
+         accuracy, crits, damage, status) with its own RNG and broadcasts the events.
   mines  co-op mine floor: one shared grid, server-side loot and slimes.
   farm   one shared garden per room, stored in the database and watered by the
          members' real published activity (daily_stats prompts).
@@ -25,6 +27,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
+from . import pokebattle as pb
 from .db import SessionLocal
 from .models import DailyStat, RoomFarm
 from .rooms import Member, Room, manager
@@ -59,31 +62,8 @@ CROPS = {   # id: (hours, water per gardener, season)
 }
 FARM_PLOTS = 9
 FARM_SEEDS_PER_DAY = 6
-DUEL_TYPES = ("Normal", "Fire", "Water", "Electric", "Grass", "Ice", "Fighting", "Poison", "Ground",
-              "Flying", "Psychic", "Bug", "Rock", "Ghost", "Dragon", "Dark", "Steel", "Fairy")
 MINE_COLS, MINE_ROWS, MINE_MAX_DEPTH = 12, 8, 12
 RACE_GUESSES, RACE_SECS = 6, 180
-TYPE_CHART: dict[str, dict[str, float]] = {
-    'Normal': {'Rock': 0.5, 'Ghost': 0, 'Steel': 0.5},
-    'Fire': {'Fire': 0.5, 'Water': 0.5, 'Grass': 2, 'Ice': 2, 'Bug': 2, 'Rock': 0.5, 'Dragon': 0.5, 'Steel': 2},
-    'Water': {'Fire': 2, 'Water': 0.5, 'Grass': 0.5, 'Ground': 2, 'Rock': 2, 'Dragon': 0.5},
-    'Electric': {'Water': 2, 'Electric': 0.5, 'Grass': 0.5, 'Ground': 0, 'Flying': 2, 'Dragon': 0.5},
-    'Grass': {'Fire': 0.5, 'Water': 2, 'Grass': 0.5, 'Poison': 0.5, 'Ground': 2, 'Flying': 0.5, 'Bug': 0.5, 'Rock': 2, 'Dragon': 0.5, 'Steel': 0.5},
-    'Ice': {'Fire': 0.5, 'Water': 0.5, 'Grass': 2, 'Ice': 0.5, 'Ground': 2, 'Flying': 2, 'Dragon': 2, 'Steel': 0.5},
-    'Fighting': {'Normal': 2, 'Ice': 2, 'Poison': 0.5, 'Flying': 0.5, 'Psychic': 0.5, 'Bug': 0.5, 'Rock': 2, 'Ghost': 0, 'Dark': 2, 'Steel': 2, 'Fairy': 0.5},
-    'Poison': {'Grass': 2, 'Poison': 0.5, 'Ground': 0.5, 'Rock': 0.5, 'Ghost': 0.5, 'Steel': 0, 'Fairy': 2},
-    'Ground': {'Fire': 2, 'Electric': 2, 'Grass': 0.5, 'Poison': 2, 'Flying': 0, 'Bug': 0.5, 'Rock': 2, 'Steel': 2},
-    'Flying': {'Electric': 0.5, 'Grass': 2, 'Fighting': 2, 'Bug': 2, 'Rock': 0.5, 'Steel': 0.5},
-    'Psychic': {'Fighting': 2, 'Poison': 2, 'Psychic': 0.5, 'Dark': 0, 'Steel': 0.5},
-    'Bug': {'Fire': 0.5, 'Grass': 2, 'Fighting': 0.5, 'Poison': 0.5, 'Flying': 0.5, 'Psychic': 2, 'Ghost': 0.5, 'Dark': 2, 'Steel': 0.5, 'Fairy': 0.5},
-    'Rock': {'Fire': 2, 'Ice': 2, 'Fighting': 0.5, 'Ground': 0.5, 'Flying': 2, 'Bug': 2, 'Steel': 0.5},
-    'Ghost': {'Normal': 0, 'Psychic': 2, 'Ghost': 2, 'Dark': 0.5},
-    'Dragon': {'Dragon': 2, 'Steel': 0.5, 'Fairy': 0},
-    'Dark': {'Fighting': 0.5, 'Psychic': 2, 'Ghost': 2, 'Dark': 0.5, 'Fairy': 0.5},
-    'Steel': {'Fire': 0.5, 'Water': 0.5, 'Electric': 0.5, 'Ice': 2, 'Rock': 2, 'Steel': 0.5, 'Fairy': 2},
-    'Fairy': {'Fire': 0.5, 'Fighting': 2, 'Poison': 0.5, 'Dragon': 2, 'Dark': 2, 'Steel': 0.5},
-}
-
 RACE_WORDS = (
     'admin',
     'agent',
@@ -225,10 +205,6 @@ RACE_WORDS = (
 def season_of(d: date) -> str:
     m = d.month
     return "winter" if m in (12, 1, 2) else "spring" if m <= 5 else "summer" if m <= 8 else "autumn"
-
-
-def eff(atk: str, dfn: str) -> float:
-    return TYPE_CHART.get(atk, {}).get(dfn, 1)
 
 
 def _clip(v: Any, n: int) -> str:
@@ -461,19 +437,18 @@ class Race:
 
 
 # -------------------------------------------------------------------- duel --
+DUEL_CHOOSE_SECS = 60          # to pick a move or switch; then the server picks for you
+DUEL_REPLACE_SECS = 30         # to send in the next creature after a faint
+
+
 def _team(raw: Any) -> list[dict] | None:
+    """1-6 creatures as {sp, st, br, mg, sh, name}; every number is derived server-side."""
     if not isinstance(raw, list) or not 1 <= len(raw) <= 6:
         return None
-    team = []
-    for c in raw:
-        if not isinstance(c, dict):
-            return None
-        stage = max(0, min(4, int(c.get("stage", 0)) if isinstance(c.get("stage"), int) else 0))
-        typ = c.get("type") if c.get("type") in DUEL_TYPES else "Normal"
-        hp = 30 + stage * 12          # stats are derived here, never taken from the client
-        team.append({"name": _clip(c.get("name"), 24) or "Creature", "type": typ,
-                     "hp": hp, "max": hp, "atk": 8 + stage * 3})
-    return team
+    specs = [pb.clean_spec(c) for c in raw]
+    if any(c is None for c in specs):
+        return None
+    return [pb.build_mon(c) for c in specs]
 
 
 class Duel:
@@ -485,7 +460,21 @@ class Duel:
         mt = self.match
         if not mt:
             return None
-        return {"a": mt["a"], "b": mt["b"], "teams": mt["teams"], "turn": mt["turn"], "log": mt["log"][-6:]}
+        st = mt["state"]
+        return {"mid": mt["mid"], "a": mt["a"], "b": mt["b"], "ids": mt["ids"], "turn": st["turn"],
+                "phase": mt["phase"], "deadline_in": max(0, round(mt["deadline"] - now())),
+                "waiting": self._waiting(),
+                "sides": {uid: {"active": st["sides"][i]["active"],
+                                "team": [pb.view_mon(m) for m in st["sides"][i]["team"]]}
+                          for i, uid in enumerate(mt["ids"])}}
+
+    def _waiting(self) -> list[str]:
+        mt = self.match
+        if not mt:
+            return []
+        if mt["phase"] == "replace":
+            return [mt["ids"][i] for i in mt["need"] if i not in mt["choices"]]
+        return [uid for i, uid in enumerate(mt["ids"]) if i not in mt["choices"]]
 
     def challenge(self, m: Member, msg: dict, out: Out, lobby: Lobby) -> None:
         if self.match:
@@ -503,7 +492,10 @@ class Duel:
         out.user(to, "challenge", **{"from": m.public()})
         out.to(m.ws, "challenged", to=lobby.members[to])
 
-    def accept(self, m: Member, msg: dict, out: Out, lobby: Lobby, rng: random.Random) -> None:
+    def accept(self, m: Member, msg: dict, out: Out, lobby: Lobby) -> None:
+        if self.match:
+            out.err(m.ws, "a duel is already on")
+            return
         p = self.pending.pop(m.user_id, None)
         team = _team(msg.get("team"))
         if not p or p["from"] not in lobby.members:
@@ -513,39 +505,70 @@ class Duel:
             out.err(m.ws, "bring a team of 1 to 6 creatures")
             return
         a, b = p["from"], m.user_id
-        self.match = {"a": lobby.members[a], "b": lobby.members[b], "ids": [a, b],
-                      "teams": {a: p["team"], b: team}, "turn": a if rng.random() < 0.5 else b,
-                      "log": ["The duel begins!"]}
+        self.match = {"mid": secrets.token_hex(4), "a": lobby.members[a], "b": lobby.members[b], "ids": [a, b],
+                      "state": pb.new_battle(p["team"], team), "phase": "choose", "choices": {}, "need": [],
+                      "deadline": now() + DUEL_CHOOSE_SECS}
         out.all("duel", duel=self.view())
 
-    def move(self, m: Member, msg: dict, out: Out, rng: random.Random) -> None:
+    def act(self, m: Member, msg: dict, out: Out, rng: random.Random) -> None:
         mt = self.match
         if not mt or m.user_id not in mt["ids"]:
             out.err(m.ws, "you are not in this duel")
             return
-        if mt["turn"] != m.user_id:
-            out.err(m.ws, "not your turn")
+        if self.tick(out, rng):
+            out.err(m.ws, "time ran out, so the server chose for you")
             return
-        foe = mt["ids"][1] if m.user_id == mt["ids"][0] else mt["ids"][0]
-        mine, theirs = mt["teams"][m.user_id], mt["teams"][foe]
-        i = msg.get("idx")
-        if not isinstance(i, int) or not 0 <= i < len(mine) or mine[i]["hp"] <= 0:
-            out.err(m.ws, "pick a creature that can still fight")
+        side = mt["ids"].index(m.user_id)
+        if msg.get("turn") != mt["state"]["turn"]:
+            out.err(m.ws, "that turn is over")
             return
-        target = next(c for c in theirs if c["hp"] > 0)
-        att = mine[i]
-        mult = eff(att["type"], target["type"])
-        dmg = max(1, round(att["atk"] * mult * rng.uniform(0.85, 1.15))) if mult else 0
-        target["hp"] = max(0, target["hp"] - dmg)
-        tag = " Super effective!" if mult >= 2 else " No effect." if mult == 0 else " Not very effective." if mult < 1 else ""
-        mt["log"].append(f"{att['name']} hits {target['name']} for {dmg}.{tag}")
-        if all(c["hp"] <= 0 for c in theirs):
-            winner = mt["a"] if m.user_id == mt["ids"][0] else mt["b"]
-            out.all("duelend", duel=self.view(), winner=winner)
+        if side in mt["choices"] or (mt["phase"] == "replace" and side not in mt["need"]):
+            out.err(m.ws, "wait for the other player")
+            return
+        act = pb.legal(mt["state"], side, msg.get("a"))
+        if act is None or (mt["phase"] == "replace" and act["k"] != "switch"):
+            out.err(m.ws, "you can't do that now")
+            return
+        mt["choices"][side] = act
+        self._advance(out, rng)
+
+    def tick(self, out: Out, rng: random.Random) -> bool:
+        """Lazy deadline: anyone who ran out of time gets a choice made for them."""
+        mt = self.match
+        if not mt or now() <= mt["deadline"]:
+            return False
+        st = mt["state"]
+        for side in (mt["need"] if mt["phase"] == "replace" else (0, 1)):
+            if side not in mt["choices"]:
+                mt["choices"][side] = ({"k": "switch", "to": pb.alive(st, side)[0]} if mt["phase"] == "replace"
+                                       else pb.auto_act(st, side))
+        self._advance(out, rng)
+        return True
+
+    def _advance(self, out: Out, rng: random.Random) -> None:
+        mt = self.match
+        st = mt["state"]
+        if mt["phase"] == "replace":
+            if any(side not in mt["choices"] for side in mt["need"]):
+                out.all("waiting", mid=mt["mid"], waiting=self._waiting())
+                return
+            events: list[dict] = []
+            for side in mt["need"]:
+                events += pb.replace(st, side, mt["choices"][side]["to"])
+        else:
+            if len(mt["choices"]) < 2:
+                out.all("waiting", mid=mt["mid"], waiting=self._waiting())
+                return
+            events = pb.resolve_turn(st, mt["choices"][0], mt["choices"][1], rng.random)
+        mt["choices"] = {}
+        mt["need"] = pb.needs_replace(st)
+        mt["phase"] = "replace" if mt["need"] else "choose"
+        mt["deadline"] = now() + (DUEL_REPLACE_SECS if mt["need"] else DUEL_CHOOSE_SECS)
+        out.all("turn", events=events, duel=self.view())
+        if st["over"]:
+            w = st["winner"]
+            out.all("duelend", duel=self.view(), winner=None if w is None else (mt["a"] if w == 0 else mt["b"]))
             self.match = None
-            return
-        mt["turn"] = foe
-        out.all("duel", duel=self.view())
 
     def drop(self, user_id: str, out: Out) -> None:
         self.pending.pop(user_id, None)
@@ -779,6 +802,10 @@ async def farm_op(room_id: str, m: Member, msg: dict, out: Out, rng: random.Rand
 
 
 # --------------------------------------------------------------- dispatch --
+def _rng() -> random.Random:
+    return random.Random(secrets.randbits(64))     # patched in tests
+
+
 async def handle(room: Room, member: Member, msg: dict) -> None:
     g, op = msg.get("g"), msg.get("op")
     out = Out(g if isinstance(g, str) else "?")
@@ -788,7 +815,7 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
         return
     v = valley_for(room.room_id)
     lobby = v.lobbies[g]
-    rng = random.Random(secrets.randbits(64))
+    rng = _rng()
 
     if op == "join":
         if member.user_id not in lobby.members and len(lobby.members) >= MAX_LOBBY:
@@ -804,6 +831,7 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
             elif g == "race" and v.race.running():
                 out.to(member.ws, "start", round=v.race.round, secs=max(0, round(v.race.until - now())))
             elif g == "duel":
+                v.duel.tick(out, rng)
                 out.to(member.ws, "duel", duel=v.duel.view())
             elif g == "mines":
                 out.to(member.ws, "mines", run=v.mines.view())
@@ -843,9 +871,11 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
         if op == "challenge":
             v.duel.challenge(member, msg, out, lobby)
         elif op == "accept":
-            v.duel.accept(member, msg, out, lobby, rng)
-        elif op == "move":
-            v.duel.move(member, msg, out, rng)
+            v.duel.accept(member, msg, out, lobby)
+        elif op == "act":
+            v.duel.act(member, msg, out, rng)
+        elif op == "poke":
+            v.duel.tick(out, rng)
         elif op == "forfeit":
             v.duel.drop(member.user_id, out)
     elif g == "mines":

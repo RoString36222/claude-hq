@@ -641,7 +641,8 @@ def test_duel_team_validation_mega_and_branch():
     t = valley._team
     assert t([]) is None and t([CHARIZARD] * 7) is None
     assert t([{"sp": True, "st": 4}]) is None and t([{"sp": 1, "st": 4.0}]) is None
-    assert t([{"sp": 48, "st": 0}]) is None and t([{"sp": 1, "st": 5}]) is None
+    assert t([{"sp": 48, "st": 0}]) is None
+    assert t([{"sp": 1, "st": 5}])[0]["lvl"] == t([{"sp": 1, "st": 4}])[0]["lvl"]    # stage is clamped
     assert t([dict(CHARIZARD, st=3, mg="charizard-megax")])[0]["name"] == "Charizard"   # Mega only at stage 4
     mega = t([dict(CHARIZARD, mg="charizard-megax")])[0]
     assert (mega["name"], mega["types"], mega["mega"], mega["sprite"]) == ("Mega Charizard X", ["Fire", "Dragon"], "charizard-megax", 10034)
@@ -739,3 +740,12 @@ async def test_a_quick_rejoin_after_a_socket_drop_is_not_a_fresh_join(client, cl
             wb.receive_json()
             wb.send_json({"type": "game", "g": "pond", "op": "join"})
             assert until(wa, "lobby", where=lambda m: len(m["members"]) == 2)["joined"]["handle"] == "misty"
+
+
+def test_duel_team_spec_clamps_stage_and_rejects_junk():
+    from app import pokebattle as pbm
+    assert pbm.clean_spec({"sp": 3, "st": 9})["st"] == 4
+    assert pbm.clean_spec({"sp": 3, "st": -2})["st"] == 0
+    assert pbm.clean_spec({"sp": 3, "st": "4"}) is None
+    assert pbm.clean_spec({"sp": 99, "st": 2}) is None
+    assert pbm.clean_spec({"sp": 3, "st": True}) is None

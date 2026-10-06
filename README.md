@@ -1,6 +1,6 @@
 # ⚡ Claude HQ
 
-**Version 1.8.1** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
+**Version 1.9.0** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
 
 Claude HQ reads your live sessions (`claude agents --json`) and your session transcripts
 (`~/.claude/projects/**/*.jsonl`) and turns them into a single command center: what every tab is
@@ -69,10 +69,10 @@ shares daily activity *counts* with friends — never conversation content.)
   holes: windmills, hills, sliding gates, bumpers, sand, ice and water). Battles use a team you
   pick from the Pokémon you've unlocked, or your live sessions. With the Arena connected
   you can also play with friends in your room: a shared fishing dock with a room goal and boss
-  fish, a live puzzle race, the live **Creature Duel**, co-op Mines, a shared farm and Mini Golf
-  together. The server referees every multiplayer game; your own moves show instantly, other
+  fish, a live puzzle race, the live **Creature Duel**, co-op Mines, a shared farm, Mini Golf
+  and Kart Racing for up to 8. The server referees every multiplayer game; your own moves show instantly, other
   players are interpolated, and a dropped connection rejoins by itself in about a second. Art is
-  drawn in code except Mini Golf's CC0 Kenney models and the optional Pokémon sprite pack;
+  drawn in code except the 3D games' CC0 Kenney models and the optional Pokémon sprite pack;
   progress is a local `games-save.json`; in an Arena room only game moves are shared.
 
 - **🔥 Flexible streaks:** a streak survives a quiet day or two. It only breaks when you're inactive on 3 days within any 7 (at least 5 active days in every 7), and today never counts as a miss while it's still going. The Arena leaderboard uses the same rule.
@@ -265,6 +265,32 @@ and feature guide.
 ---
 
 ## Changelog
+
+- **1.9.0** — **Kart Racing: the Valley's first real-time multiplayer game.**
+  - **Kart Racing** (🏎️ in the Valley): arcade cars on three tile-built tracks (Meadow Loop,
+    Canyon Notch, Twin Peaks; 1–5 laps), made from Kenney's CC0 Starter Kit Racing models. Drive
+    with W/A/S/D or the arrows, Shift to drift (tyre smoke), R to hop back onto the road, C for
+    the camera; a gamepad works too. The HUD has an analog **speedometer and RPM gauge**, lap,
+    place, race and lap times, a minimap and a "Wrong way!" warning. Solo it's a time trial with
+    your best lap saved per track; with friends it's a race of up to 8 with a countdown grid,
+    live standings and a results card. Low-detail mode for older laptops, and a 2D map view
+    without WebGL2.
+  - **Real-time multiplayer foundation** (shared by the platformer and arena games to come): a
+    fixed-rate server tick per room (`backend/app/realtime.py`, 15 Hz for racing) that batches one
+    snapshot per tick, a process-wide cap on running game loops, a per-room bandwidth budget that
+    thins snapshots under pressure, and token buckets for inbound frames; one shared input layer in
+    the browser (`games/input.js`: keyboard, pointer-lock mouse look, gamepad).
+  - **Fair racing under lag:** each player drives locally and streams positions; the Arena checks
+    every frame (on the road, no faster than a car, laps in order, the sender's own clock bounded
+    against the server's so frames bunched or reordered by jitter are never punished) and times
+    the finish. An 8-car race at 120 ms ± 60 ms simulated lag runs in the backend tests on both
+    the Python and the Rust Arena.
+  - **Both Arena backends:** the Rust port (`backend-rs/`) gains the same tick, budgets and kart
+    referee, with per-connection message queues so game events reach exactly the right sockets.
+  - **Third-party assets:** the IP rule now allows vendored assets whose license permits it (with
+    the license alongside, never hotlinked); this release adds Kenney's Starter Kit Racing models
+    (CC0) in `games/kart/`. The local server's listen backlog is raised so a 3D game loading a
+    dozen models at once no longer sees a reset connection.
 
 - **1.8.1** — **Mini Golf grows to five themed courses, and you pick your battle team.**
   - **Five Mini Golf courses, 25 holes.** Meadow Greens (4), Windmill Lane (5) and Castle Keep (6)
@@ -494,9 +520,9 @@ Made with [Claude Code](https://claude.com/claude-code).
 
 MIT — see [LICENSE](LICENSE).
 
-Mini Golf uses [three.js](https://threejs.org/) (MIT, `games/vendor/LICENSE-three.txt`) and models
-from [Kenney](https://kenney.nl/) — Minigolf Kit, Mini Characters and Nature Kit — which are public domain (CC0,
-`games/golf/LICENSE-kenney.txt`). Thank you, Kenney!
+Mini Golf and Kart Racing use [three.js](https://threejs.org/) (MIT, `games/vendor/LICENSE-three.txt`) and models
+from [Kenney](https://kenney.nl/) — Minigolf Kit, Mini Characters, Nature Kit and Starter Kit Racing — which are public
+domain (CC0, `games/golf/LICENSE-kenney.txt`, `games/kart/LICENSE-kenney.txt`). Thank you, Kenney!
 
 Pokémon names and sprites are the property of Nintendo / Game Freak / The Pokémon Company; the
 "pokemon" creature pack hotlinks sprites from the public [PokéAPI](https://pokeapi.co/) sprite library

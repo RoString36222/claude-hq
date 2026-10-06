@@ -51,7 +51,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import arena
 
-APP_VERSION = "1.8.1"
+APP_VERSION = "1.9.0"
 
 # --------------------------------------------------------------------------- #
 # Paths / constants
@@ -4295,12 +4295,20 @@ GAMES_DIR = os.path.join(HERE, "games")
 GAMES_SAVE_PATH = os.path.join(HERE, "games-save.json")
 GAMES_SAVE_MAX = 256 * 1024
 _GAME_FILE_RE = re.compile(r"[a-z][a-z0-9_-]{0,40}\.(js|css)")
-# Mini Golf's vendored three.js modules and its Kenney (CC0) models/course data: exactly
-# one folder level, lowercase names, these extensions only.
-_GAME_ASSET_RE = re.compile(r"(vendor/[a-z][a-z0-9-]{0,40}\.js|golf/[a-z][a-z0-9-]{0,40}\.(glb|json|png))")
+# The vendored three.js modules and each 3D game's Kenney (CC0) models and data (Mini Golf,
+# Kart Racing): exactly one folder level, lowercase names, these extensions only.
+_GAME_ASSET_RE = re.compile(r"(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart)/[a-z][a-z0-9-]{0,40}\.(glb|json|png))")
 _GAME_TYPES = {"js": "application/javascript; charset=utf-8", "css": "text/css; charset=utf-8",
                "glb": "model/gltf-binary", "json": "application/json; charset=utf-8", "png": "image/png"}
 _games_lock = threading.Lock()
+
+
+class HQServer(ThreadingHTTPServer):
+    """The stdlib default listen backlog is 5: a 3D game opening fetches a dozen models at
+    once (more with two tabs open), and on macOS connections past the backlog are reset,
+    which the browser reports as a failed model load. Same server otherwise."""
+    request_queue_size = 128
+    daemon_threads = True
 
 
 def game_cache_control(name):
@@ -5110,7 +5118,7 @@ def main():
         return
 
     url = f"http://127.0.0.1:{args.port}"
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    server = HQServer(("127.0.0.1", args.port), Handler)
 
     # Arena (multiplayer) stays dormant until the user pairs and enables it.
     arena.init(scan_file, load_config, HERE)

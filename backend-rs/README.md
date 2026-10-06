@@ -50,8 +50,14 @@ types rather than a nullable column you must remember to check.
 | `db.rs` | next — sqlx against the existing schema |
 | `service.rs` | ingest + board queries |
 | `auth.rs` | device tokens, OAuth, WS tickets |
-| `rooms.rs` | websocket rooms |
+| `rooms.rs` | websocket rooms; room-wide broadcast plus a bounded direct queue per connection (one socket / one user / a lobby) |
+| `realtime.rs` | done: fixed-rate per-room tick (tokio), process-wide ticker budget, per-room bytes/s budget with snapshot thinning, overrun counting, token `Bucket` — port of `app/realtime.py` |
+| `kart.rs` | done: Kart Racing — track compile/geometry, referee (grid → race → done, laps, sender-clock speed check, fixes, drop/restore), the kart lobby and its tick loop — port of `app/kart.py` + the kart branch of `app/valley.py`. Kart is the only Valley game here; any other `g` gets `unknown game` |
+
+Kart tracks are read from `backend/app/kart_tracks.json` with `include_str!`
+at build time, so both backends race on the same file; a test checks the
+embedded copy against it.
 
 ```bash
-cargo test    # 18 tests
+cargo test    # 69 tests
 ```

@@ -3814,6 +3814,40 @@ var FILTER = "all";
 var BASELINE = false;          // becomes true after first successful load
 var CSRF = (document.querySelector('meta[name=hq-csrf]')||{}).getAttribute
   ? document.querySelector('meta[name=hq-csrf]').getAttribute("content") : "";
+// The server mints a new CSRF token every time it starts. If Claude HQ restarted while this
+// page stayed open, every save/action would fail with 403 until a reload. Instead: on a
+// "bad or missing CSRF token" answer, fetch a fresh token from "/" once and retry the request.
+(function(){
+  var orig = window.fetch.bind(window), refreshing = null;
+  function freshToken(){
+    return refreshing || (refreshing = orig("/", {cache:"no-store", credentials:"same-origin"})
+      .then(function(r){ return r.text(); })
+      .then(function(html){
+        var m = /<meta name="hq-csrf" content="([^"]+)"/.exec(html);
+        if(!m || m[1] === "__HQ_CSRF__") throw new Error("no token");
+        CSRF = m[1];
+        var meta = document.querySelector('meta[name=hq-csrf]'); if(meta) meta.setAttribute("content", m[1]);
+        return m[1];
+      })
+      .then(function(t){ refreshing = null; return t; }, function(e){ refreshing = null; throw e; }));
+  }
+  window.fetch = function(input, init){
+    var hdrs = init && init.headers, sent = hdrs && !(hdrs instanceof Headers) && hdrs["X-HQ-Token"];
+    var p = orig(input, init);
+    if(!sent || typeof input !== "string" || input.charAt(0) !== "/") return p;
+    return p.then(function(r){
+      if(r.status !== 403) return r;
+      return r.clone().json().catch(function(){ return {}; }).then(function(j){
+        if(!j || j.error !== "bad or missing CSRF token") return r;
+        return freshToken().then(function(tok){
+          var h = {}; for(var k in hdrs) h[k] = hdrs[k]; h["X-HQ-Token"] = tok;
+          var again = {}; for(var k2 in init) again[k2] = init[k2]; again.headers = h;
+          return orig(input, again);
+        }, function(){ return r; });
+      });
+    });
+  };
+})();
 var VOICE = localStorage.getItem("hq_voice")==="1";
 var FOCUS_ID = null;           // sessionId currently in focus mode, or null
 var FILTERTAG = "";            // active tag filter, "" = all

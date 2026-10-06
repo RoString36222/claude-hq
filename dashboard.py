@@ -51,7 +51,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import arena
 
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.6.1"
 
 # --------------------------------------------------------------------------- #
 # Paths / constants

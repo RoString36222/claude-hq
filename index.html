@@ -1599,8 +1599,30 @@ html.hq-calm .sv-hot-item,html.hq-calm .sv-hot-item:hover{transition:none;transf
 .cd-plate.over{outline:4px dashed var(--cd-neon);outline-offset:3px;transform:scale(1.03)}
 body.cd-picking .cd-plate{outline:3px dashed var(--cd-cyan);outline-offset:2px}
 .cd-card{display:flex;align-items:center;gap:6px;width:100%;min-width:0}
-.cd-name{flex:1;min-width:0;font:900 .88em var(--mono);text-transform:uppercase;letter-spacing:.05em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cd-handle{font:900 .58em var(--mono);letter-spacing:.06em;background:var(--cd-cyan);color:var(--cd-ink);border-radius:3px;padding:1px 4px}
+.cd-name{flex:1;min-width:0;margin:-2px -3px;padding:2px 3px;border:0;border-radius:4px;background:none;color:inherit;text-align:left;cursor:pointer;
+  font:900 .88em var(--mono);text-transform:uppercase;letter-spacing:.05em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cd-name:hover{background:color-mix(in srgb,var(--cd-cyan) 30%,transparent)}
+.cd-name:focus-visible,.cd-tagadd:focus-visible,.cd-tagopt:focus-visible{outline:3px solid var(--cd-focus);outline-offset:1px}
+.cd-pav{width:20px;height:20px;flex:none;border-radius:4px;border:2px solid var(--cd-wood-dk)}
+.cd-tagline{display:flex;width:100%;min-width:0;margin-top:-3px}
+.cd-handle{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:900 .62em var(--mono);letter-spacing:.04em;background:var(--cd-cyan);color:var(--cd-ink);border-radius:3px;padding:1px 5px}
+.cd-handle.bad{background:var(--cd-bad);color:var(--cd-on-neon)}
+.cd-tagadd{padding:0 2px;border:0;background:none;color:var(--cd-ink-soft);font:800 .6em var(--mono);letter-spacing:.06em;cursor:pointer;opacity:.75}
+.cd-tagadd:hover{opacity:1;text-decoration:underline}
+.cd-sugg{position:absolute;left:0;top:calc(100% + 4px);z-index:20;width:min(420px,100%);padding:4px;background:var(--cd-paper);border:3px solid var(--cd-wood-dk);border-radius:8px;box-shadow:0 5px 0 var(--cd-shadow)}
+.cd-sugg-o,.cd-tagopt{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border:0;border-radius:5px;background:none;color:var(--cd-ink);font:inherit;text-align:left;cursor:pointer}
+.cd-sugg-o.on,.cd-sugg-o:hover,.cd-tagopt:hover,.cd-tagopt[aria-selected="true"]{background:var(--cd-sun)}
+.cd-sugg-o img,.cd-tagopt img{width:22px;height:22px;flex:none;border-radius:4px}
+.cd-tagopt-n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:900 .84em var(--mono);text-transform:uppercase;letter-spacing:.04em}
+.cd-tagopt-h{flex:none;font:700 .76em var(--mono);color:var(--cd-ink-soft)}
+.cd-tagpop{position:fixed;z-index:140;width:min(330px,calc(100vw - 20px));padding:10px;background:var(--cd-paper);color:var(--cd-ink);border:3px solid var(--cd-wood-dk);border-radius:9px;box-shadow:0 6px 0 var(--cd-shadow)}
+.cd-tagpop-h{margin-bottom:8px;font:900 .8em var(--mono);text-transform:uppercase;letter-spacing:.06em}
+.cd-tagq{width:100%;padding:7px 9px;font:800 .88em var(--mono);color:var(--cd-ink);background:var(--cd-cream);border:3px solid var(--cd-wood-dk);border-radius:6px}
+.cd-taglist{display:flex;flex-direction:column;gap:2px;max-height:260px;overflow:auto;margin-top:8px}
+.cd-tagnote{margin:6px 2px;font:700 .8em var(--mono);color:var(--cd-ink-soft)}
+.cd-tagacts{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:10px}
+.cd-btn.small{padding:5px 10px;font-size:.74em;box-shadow:0 3px 0 var(--cd-wood-dk)}
+.cd-btn.ghost{background:var(--cd-tray)}
 .cd-crown{width:24px;height:14px;image-rendering:pixelated}
 .cd-unseat{flex:none;width:24px;height:24px;padding:0;border:2px solid var(--cd-wood-dk);border-radius:6px;background:var(--cd-tray);color:var(--cd-ink);cursor:pointer;line-height:1;font-weight:900}
 .cd-dish{position:relative;width:192px;height:118px}
@@ -1610,9 +1632,9 @@ body.cd-picking .cd-plate{outline:3px dashed var(--cd-cyan);outline-offset:2px}
 .cd-chip{position:relative;pointer-events:auto;width:42px;height:42px;padding:0;margin:0 -2px -12px;border:0;background:none;cursor:grab;touch-action:none;line-height:0}
 .cd-chip img{width:40px;height:40px;image-rendering:pixelated;pointer-events:none}
 .cd-chip:hover img{filter:brightness(1.08) drop-shadow(0 0 2px var(--cd-neon))}
-.cd-n{position:absolute;right:-4px;top:-5px;font:900 11px/1 var(--mono);padding:1px 3px;border-radius:7px;border:2px solid var(--cd-wood-dk);background:var(--cd-neon);color:var(--cd-on-neon)}
+.cd-n{position:absolute;z-index:3;right:-4px;top:-5px;font:900 11px/1 var(--mono);padding:1px 3px;border-radius:7px;border:2px solid var(--cd-wood-dk);background:var(--cd-neon);color:var(--cd-on-neon)}
 .cd-sum{font:800 .72em var(--mono);text-transform:uppercase;letter-spacing:.04em;color:var(--cd-ink-soft)}
-.cd-seat{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.cd-seat{position:relative;display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
 .cd-seat input{flex:1 1 200px;min-width:0;padding:8px 10px;font:800 .92em var(--mono);color:var(--cd-ink);background:var(--cd-paper);border:3px solid var(--cd-wood-dk);border-radius:7px}
 .cd-btn{padding:8px 14px;font:900 .9em var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--cd-ink);background:var(--cd-sun);border:3px solid var(--cd-wood-dk);border-radius:7px;box-shadow:0 4px 0 var(--cd-wood-dk);cursor:pointer}
 .cd-btn:active,.cd-checkout:active:not([disabled]){transform:translateY(3px);box-shadow:0 1px 0 var(--cd-wood-dk)}
@@ -2353,8 +2375,9 @@ html.hq-calm #confetti{display:none!important}
         <h3 class="cd-h cd-h-table" id="cdTableH">The table</h3>
         <div class="cd-table" id="cdTable"></div>
         <form class="cd-seat" id="cdSeatForm" autocomplete="off" novalidate>
-          <label class="sr-only" for="cdSeatName">Seat someone: a name, or @handle for an Arena account</label>
-          <input id="cdSeatName" type="text" maxlength="41" placeholder="Name, or @handle" spellcheck="false">
+          <label class="sr-only" for="cdSeatName">Seat someone: type a name, or @ to pick someone on the Arena</label>
+          <input id="cdSeatName" type="text" maxlength="41" placeholder="Name, or @ to tag someone on the Arena" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cdSugg">
+          <div class="cd-sugg hidden" id="cdSugg" role="listbox" aria-label="Arena people"></div>
           <button class="cd-btn" type="submit">+ Seat</button>
         </form>
         <p class="cd-seat-msg hidden" id="cdSeatMsg" role="status"></p>
@@ -2385,7 +2408,7 @@ html.hq-calm #confetti{display:none!important}
           <tbody id="cdRows"><tr><td colspan="11" class="cd-note">Loading&hellip;</td></tr></tbody>
         </table>
       </div>
-      <p class="cd-fine">Buy 1 get 1 is pooled across the whole table, so two people wanting 3 tacos each pay for 3, not 4. Seat someone as <b>@handle</b> to tie them to their Arena account, or by name if they haven&rsquo;t paired. The board ranks on Tuesdays turned up for; tacos only break ties. Seasons are calendar months (UTC) and start fresh on the 1st. The Arena sees names and what was eaten, nothing from your sessions.</p>
+      <p class="cd-fine">Buy 1 get 1 is pooled across the whole table, so two people wanting 3 tacos each pay for 3, not 4. Type <b>@</b> in the seat box to pick someone from the Arena so the dinner counts on their account, or seat them by name if they haven&rsquo;t paired; click a name at the table to tag them later. The board ranks on Tuesdays turned up for; tacos only break ties. Seasons are calendar months (UTC) and start fresh on the 1st. The Arena sees names and what was eaten, nothing from your sessions.</p>
     </section>
     <img class="cd-ghost hidden" id="cdGhost" alt="" aria-hidden="true">
   </div>
@@ -6132,9 +6155,210 @@ function cdItems(p){ var n=0; for(var k in p.items) n+=p.items[k]|0; return n; }
 // "@ana" is an Arena handle, anything else a plain name: the server keeps the account when it has one.
 function cdWho(raw){
   raw=String(raw||"").replace(/\s+/g," ").trim().slice(0, CD_NAME_MAX+1);
-  if(raw.charAt(0)==="@"){ var h=raw.slice(1); return /^[A-Za-z0-9_-]{1,64}$/.test(h) ? {handle:h, label:h, key:"@"+h.toLowerCase()} : null; }
-  raw=raw.slice(0, CD_NAME_MAX); return raw ? {name:raw, label:raw, key:"#"+raw.toLowerCase()} : null;
+  if(raw.charAt(0)==="@"){
+    var h=raw.slice(1).trim(); if(!/^[A-Za-z0-9_-]{1,64}$/.test(h)) return null;
+    var r=cdRosterFind(h); if(r) h=r.handle;   // the Arena matches handles exactly: use its spelling
+    return {handle:h, key:"@"+h.toLowerCase()};
+  }
+  raw=raw.slice(0, CD_NAME_MAX); return raw ? {name:raw, key:"#"+raw.toLowerCase()} : null;
 }
+function cdLabel(p){ var w=(p && p.who) || {}; if(w.handle){ var r=cdRosterFind(w.handle); return r ? r.name : w.handle; } return w.name || "?"; }
+function cdWhoLabel(w){ return cdLabel({who:w}); }
+// "ok" (a known Arena account), "unknown" (the roster loaded and has no such handle), "pending",
+// or "" for someone seated by name.
+function cdTagState(p){ var w=(p && p.who) || {}; if(!w.handle) return ""; if(cdRosterFind(w.handle)) return "ok"; return CD_ROSTER.ok ? "unknown" : "pending"; }
+
+/* ---- tagging people on the Arena. The roster is the Arena board (everyone who has published
+   stats), anyone already on the taco board, and the paired account; the diner only reads it. The
+   server matches handles exactly and fails the whole order on an unknown one, so a tag always
+   takes the roster's spelling. ---- */
+var CD_ROSTER = {list:[], at:0, loading:false, ok:false, err:false};
+function cdMe(){
+  var A=(typeof ARENA!=="undefined" && ARENA) || {}, st=(A.status && A.status.handle) ? A.status : (CD.me || {});
+  if(typeof st.handle!=="string" || !/^[A-Za-z0-9_-]{1,64}$/.test(st.handle)) return null;
+  return {handle:st.handle, name:(typeof st.displayName==="string" && st.displayName.trim()) ? st.displayName.trim().slice(0, CD_NAME_MAX) : st.handle,
+          av:(typeof st.avatarUrl==="string" && /^https:\/\//.test(st.avatarUrl)) ? st.avatarUrl : ""};
+}
+function cdRosterFind(h){
+  h=String(h||"").replace(/^@/,"").toLowerCase(); if(!h) return null;
+  for(var i=0;i<CD_ROSTER.list.length;i++) if(CD_ROSTER.list[i].handle.toLowerCase()===h) return CD_ROSTER.list[i];
+  var me=cdMe(); return (me && me.handle.toLowerCase()===h) ? me : null;
+}
+function cdRosterAdd(m, handle, name, av){
+  if(typeof handle!=="string" || !/^[A-Za-z0-9_-]{1,64}$/.test(handle)) return;
+  var k=handle.toLowerCase(); if(m[k]) return;
+  name=(typeof name==="string") ? name.replace(/\s+/g," ").trim().slice(0, CD_NAME_MAX) : "";
+  m[k]={handle:handle, name:name || handle, av:(typeof av==="string" && /^https:\/\//.test(av)) ? av : ""};
+}
+function cdRosterLoad(force){
+  var age=Date.now()-CD_ROSTER.at;
+  if(CD_ROSTER.loading || (!force && ((CD_ROSTER.ok && age<600000) || (CD_ROSTER.err && age<15000)))) return;
+  CD_ROSTER.loading=true; CD_ROSTER.at=Date.now();
+  var settle=function(changed){
+    CD_ROSTER.loading=false;
+    if(VIEW!=="cali") return;
+    if(changed){ cdRenderTable(); cdRenderReceipt(); }
+    if(CD.tagFill) CD.tagFill();
+    if(CD.sugg) cdSuggest();
+  };
+  fetch("/api/arena/board?window=all", {cache:"no-store"})
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(b){
+      if(!b || !Array.isArray(b.entries)){ CD_ROSTER.err=true; settle(false); return; }
+      var m={};
+      b.entries.forEach(function(e){ if(e) cdRosterAdd(m, e.handle, e.displayName || e.trainerName, e.avatarUrl); });
+      ((CD.board||{}).entries||[]).forEach(function(e){ if(e && e.handle) cdRosterAdd(m, e.handle, e.name, e.avatarUrl); });
+      var me=cdMe(); if(me) cdRosterAdd(m, me.handle, me.name, me.av);
+      CD_ROSTER.list=Object.keys(m).map(function(k){ return m[k]; }).sort(function(a, b){ return a.name.localeCompare(b.name); });
+      CD_ROSTER.ok=true; CD_ROSTER.err=false; CD_ROSTER.at=Date.now();
+      // a tag typed with other capitalisation takes the Arena's spelling
+      var fixed=false;
+      CD.people.forEach(function(p){ var r=p.who.handle ? cdRosterFind(p.who.handle) : null; if(r && r.handle!==p.who.handle){ p.who.handle=r.handle; fixed=true; } });
+      if(fixed) cdSave();
+      settle(true);
+    }, function(){ CD_ROSTER.err=true; settle(false); });
+}
+// Everyone matching "het", "@het" or "shah": handle or name prefix first, then a later word, then anywhere.
+function cdRosterMatch(q){
+  q=String(q||"").trim().replace(/^@/,"").toLowerCase(); if(!q) return [];
+  var out=[];
+  CD_ROSTER.list.forEach(function(r){
+    var h=r.handle.toLowerCase(), n=r.name.toLowerCase();
+    var sc = (h.indexOf(q)===0 || n.indexOf(q)===0) ? 0
+           : n.split(" ").some(function(w){ return w.indexOf(q)===0; }) ? 1
+           : (h.indexOf(q)>=0 || n.indexOf(q)>=0) ? 2 : -1;
+    if(sc>=0) out.push({r:r, s:sc});
+  });
+  out.sort(function(a, b){ return (a.s-b.s) || a.r.name.localeCompare(b.r.name); });
+  return out.map(function(x){ return x.r; });
+}
+function cdSeatedAs(handle){ var k="@"+handle.toLowerCase(); return CD.people.filter(function(p){ return p.who.key===k; })[0] || null; }
+function cdOptRow(o, r, aside){
+  if(r.av){ var im=el("img"); im.alt=""; im.loading="lazy"; im.src=r.av; o.appendChild(im); }
+  var a=el("span","cd-tagopt-n"); a.textContent=r.name; o.appendChild(a);
+  var b=el("span","cd-tagopt-h"); b.textContent=aside || "@"+r.handle; o.appendChild(b);
+}
+// The seat box autocompletes from the Arena: "@" lists everyone and narrows as you type, with the
+// top match ready for Enter. A plain name also offers matching Arena people, but Enter keeps the name.
+function cdSuggest(){
+  var inp=$("cdSeatName"), box=$("cdSugg"); if(!inp || !box) return;
+  var q=inp.value.trim(), at=q.charAt(0)==="@", note="";
+  if(at) cdRosterLoad();
+  var ms=(at && q.length===1) ? CD_ROSTER.list.slice() : cdRosterMatch(q);
+  ms=ms.filter(function(r){ return !cdSeatedAs(r.handle); }).slice(0, at ? 8 : 4);
+  if(at && !ms.length){
+    note = CD_ROSTER.ok ? (q.length>1 ? "Nobody on the Arena matches “"+q+"”." : "Everyone on the Arena already has a seat.")
+         : CD_ROSTER.err ? "Couldn’t load the Arena. Type their exact @handle, or seat them by name."
+         : "Loading the Arena…";
+  }
+  CD.sugg={list:ms, active:(at && ms.length) ? 0 : -1};
+  box.innerHTML="";
+  ms.forEach(function(r, i){
+    var o=el("div","cd-sugg-o"); o.id="cdSugg-"+i; o.setAttribute("role","option");
+    cdOptRow(o, r);
+    o.addEventListener("mousedown", function(e){ e.preventDefault(); cdSuggPick(i); });
+    box.appendChild(o);
+  });
+  if(note){ var n=el("p","cd-tagnote"); n.textContent=note; box.appendChild(n); }
+  box.classList.toggle("hidden", !(ms.length || note));
+  inp.setAttribute("aria-expanded", ms.length ? "true" : "false");
+  cdSuggPaint();
+}
+function cdSuggPaint(){
+  var sg=CD.sugg, box=$("cdSugg"), inp=$("cdSeatName"); if(!sg || !box || !inp) return;
+  Array.prototype.forEach.call(box.querySelectorAll(".cd-sugg-o"), function(o, i){ var on=i===sg.active; o.classList.toggle("on", on); o.setAttribute("aria-selected", on ? "true" : "false"); });
+  if(sg.active>=0) inp.setAttribute("aria-activedescendant", "cdSugg-"+sg.active); else inp.removeAttribute("aria-activedescendant");
+}
+function cdSuggMove(d){
+  var sg=CD.sugg, n=sg ? sg.list.length : 0; if(!n) return;
+  sg.active = sg.active<0 ? (d>0 ? 0 : n-1) : (sg.active+d+n)%n;
+  cdSuggPaint();
+}
+function cdSuggPick(i){
+  var r=CD.sugg && CD.sugg.list[i], inp=$("cdSeatName"); if(!r || !inp) return;
+  if(cdSeat("@"+r.handle)) inp.value="";
+  cdSuggClose(); inp.focus();
+}
+function cdSuggClose(){
+  var box=$("cdSugg"), inp=$("cdSeatName"); CD.sugg=null;
+  if(box){ box.classList.add("hidden"); box.innerHTML=""; }
+  if(inp){ inp.setAttribute("aria-expanded","false"); inp.removeAttribute("aria-activedescendant"); }
+}
+// "Who is this on the Arena?": tag (or re-tag) someone already at the table.
+function cdTagOpen(pid, anchor){
+  var p=cdPerson(pid); if(!p) return;
+  if(CD.tagFor && CD.tagFor.pid===pid){ cdTagClose(true); return; }
+  cdTagClose(false); cdRosterLoad();
+  var box=el("div","cd-tagpop"); box.id="cdTagPop"; box.setAttribute("role","dialog"); box.setAttribute("aria-label","Tag "+cdLabel(p)+" on the Arena");
+  var h=el("div","cd-tagpop-h"); h.textContent="Who is "+cdLabel(p)+" on the Arena?"; box.appendChild(h);
+  var q=el("input","cd-tagq"); q.type="text"; q.placeholder="Search names or @handles"; q.autocomplete="off"; q.spellcheck=false;
+  q.setAttribute("aria-label","Search the Arena"); q.value=p.who.handle ? "" : (p.who.name||""); box.appendChild(q);
+  var list=el("div","cd-taglist"); list.setAttribute("role","listbox"); list.setAttribute("aria-label","Arena people"); box.appendChild(list);
+  var acts=el("div","cd-tagacts");
+  if(p.who.handle){ var un=el("button","cd-btn small ghost"); un.type="button"; un.textContent="Untag"; un.title="Keep them at the table by name only"; un.addEventListener("click", function(){ cdUntag(pid); }); acts.appendChild(un); }
+  var cx=el("button","cd-btn small ghost"); cx.type="button"; cx.textContent="Cancel"; cx.addEventListener("click", function(){ cdTagClose(true); }); acts.appendChild(cx);
+  box.appendChild(acts);
+  var fill=function(){
+    list.innerHTML="";
+    var ms=(q.value.trim().replace(/^@/,"") ? cdRosterMatch(q.value) : CD_ROSTER.list).slice(0, 8);
+    if(!CD_ROSTER.list.length){
+      var n=el("p","cd-tagnote"); n.textContent=CD_ROSTER.err ? "Couldn\u2019t load the Arena. Seat them with their exact @handle instead." : "Loading the Arena\u2026"; list.appendChild(n); return;
+    }
+    if(!ms.length){ var n2=el("p","cd-tagnote"); n2.textContent="Nobody on the Arena matches that."; list.appendChild(n2); return; }
+    ms.forEach(function(r){
+      var o=el("button","cd-tagopt"); o.type="button"; o.setAttribute("role","option");
+      o.setAttribute("aria-selected", (p.who.handle && r.handle===p.who.handle) ? "true" : "false");
+      var at=cdSeatedAs(r.handle);
+      cdOptRow(o, r, (at && at!==p) ? "SEATED \u00B7 MERGE" : "");
+      o.addEventListener("click", function(){ cdRetag(pid, r.handle); });
+      list.appendChild(o);
+    });
+  };
+  q.addEventListener("input", fill);
+  q.addEventListener("keydown", function(e){
+    if(e.key==="ArrowDown"){ var f=list.querySelector(".cd-tagopt"); if(f){ e.preventDefault(); f.focus(); } }
+    else if(e.key==="Enter"){ var g=list.querySelector(".cd-tagopt"); if(g){ e.preventDefault(); g.click(); } }
+  });
+  list.addEventListener("keydown", function(e){
+    var all=[].slice.call(list.querySelectorAll(".cd-tagopt")), i=all.indexOf(document.activeElement); if(i<0) return;
+    if(e.key==="ArrowDown"){ e.preventDefault(); (all[i+1]||all[i]).focus(); }
+    else if(e.key==="ArrowUp"){ e.preventDefault(); if(i>0) all[i-1].focus(); else q.focus(); }
+  });
+  box.addEventListener("keydown", function(e){ if(e.key==="Escape"){ e.preventDefault(); e.stopPropagation(); cdTagClose(true); } });
+  document.body.appendChild(box);
+  CD.tagFor={pid:pid, anchor:anchor}; CD.tagFill=fill;
+  fill();
+  var rc=anchor.getBoundingClientRect(), bw=box.offsetWidth, bh=box.offsetHeight;
+  var x=Math.min(window.innerWidth-bw-10, Math.max(10, rc.left)), y=rc.bottom+6;
+  if(y+bh>window.innerHeight-10) y=Math.max(10, rc.top-bh-6);
+  box.style.left=x+"px"; box.style.top=y+"px";
+  q.focus(); q.select();
+}
+function cdTagClose(refocus){
+  var b=$("cdTagPop"); if(!b) return;
+  var a=CD.tagFor && CD.tagFor.anchor;
+  b.parentNode.removeChild(b); CD.tagFor=null; CD.tagFill=null;
+  if(refocus && a && document.body.contains(a)) focusQuiet(a);
+}
+function cdMergeInto(dst, src){
+  CD_FOODS.forEach(function(f){
+    var n=Math.min(f.taco ? CD_MAX_TACO : CD_MAX_ITEM, cdCount(dst, f.key)+cdCount(src, f.key));
+    if(f.taco) dst.tacos[f.key]=n; else if(n) dst.items[f.key]=n; else delete dst.items[f.key];
+  });
+  CD.people=CD.people.filter(function(x){ return x!==src; });
+}
+// Give a seated person an identity; if someone already sits under it, the two plates merge.
+function cdReseat(pid, who, said){
+  var p=cdPerson(pid); if(!p || !who) return;
+  var other=null; CD.people.forEach(function(x){ if(x!==p && x.who.key===who.key) other=x; });
+  if(other){ cdMergeInto(other, p); toast(cdLabel(other)+" already had a seat, so the two plates were merged."); announce(cdLabel(other)+" already had a seat, so the two plates were merged."); }
+  else { p.who=who; announce(said(p)); }
+  CD.paid=false; cdTagClose(false);
+  cdSave(); cdRenderTable(); cdRenderReceipt(); cdSfx("seat");
+  var keep=other||p, btn=document.querySelector('.cd-plate[data-pid="'+keep.id+'"] .cd-name'); if(btn) focusQuiet(btn);
+}
+function cdRetag(pid, handle){ cdReseat(pid, cdWho("@"+handle), function(p){ return cdLabel(p)+" is tagged as @"+p.who.handle+" on the Arena."; }); }
+function cdUntag(pid){ var p=cdPerson(pid); if(p) cdReseat(pid, cdWho(cdLabel(p)), function(q){ return cdLabel(q)+" is seated by name now."; }); }
 function cdNewPerson(who){ CD.seq++; return {id:"p"+CD.seq, who:who, tacos:{mildHard:0, mildSoft:0, wildHard:0, wildSoft:0}, items:{}}; }
 
 /* ---- the table survives a reload (a per-browser convenience) ---- */
@@ -6467,12 +6691,12 @@ function cdHover(pid, on){
 function cdAdd(pid, key){
   var p=cdPerson(pid), f=cdFood(key); if(!p || !f) return false;
   var cap=f.taco ? CD_MAX_TACO : CD_MAX_ITEM, n=cdCount(p, key);
-  if(n>=cap){ cdSfx("bonk"); announce(p.who.label+" can’t fit more than "+cap+" "+cdName(f)+"."); return false; }
+  if(n>=cap){ cdSfx("bonk"); announce(cdLabel(p)+" can’t fit more than "+cap+" "+cdName(f)+"."); return false; }
   if(f.taco) p.tacos[key]=n+1; else p.items[key]=n+1;
   CD.paid=false;
   cdSave(); cdRenderTable(pid, key); cdRenderReceipt();
   cdSfx("drop");
-  announce(cdName(f)+" for "+p.who.label+". "+cdPlateSummary(p)+".");
+  announce(cdName(f)+" for "+cdLabel(p)+". "+cdPlateSummary(p)+".");
   return true;
 }
 function cdTake(pid, key, moving){
@@ -6480,7 +6704,7 @@ function cdTake(pid, key, moving){
   var n=cdCount(p, key); if(n<=0) return;
   if(f.taco) p.tacos[key]=n-1; else if(n-1>0) p.items[key]=n-1; else delete p.items[key];
   cdSave(); cdRenderTable(); cdRenderReceipt();
-  if(!moving){ cdSfx("remove"); announce("Took one "+cdName(f)+" back from "+p.who.label+". "+cdPlateSummary(p)+"."); }
+  if(!moving){ cdSfx("remove"); announce("Took one "+cdName(f)+" back from "+cdLabel(p)+". "+cdPlateSummary(p)+"."); }
 }
 function cdPlateSummary(p){
   var parts=[];
@@ -6490,20 +6714,21 @@ function cdPlateSummary(p){
 function cdSeat(raw){
   var who=cdWho(raw), msg=$("cdSeatMsg");
   var say=function(t){ if(msg){ msg.textContent=t; msg.classList.toggle("hidden", !t); } if(t){ cdSfx("bonk"); announce(t); } };
-  if(!who){ say("Type a name, or @handle for someone on the Arena."); return false; }
+  if(!who){ say("Type a name, or @ and pick someone on the Arena."); return false; }
+  if(who.handle && CD_ROSTER.ok && !cdRosterFind(who.handle)){ say("No Arena account called @"+who.handle+". Pick someone from the list, or seat them by name."); return false; }
   if(CD.people.length>=CD_MAX_PEOPLE){ say("The table seats "+CD_MAX_PEOPLE+"."); return false; }
-  if(CD.people.some(function(p){ return p.who.key===who.key; })){ say(who.label+" already has a seat."); return false; }
+  if(CD.people.some(function(p){ return p.who.key===who.key; })){ say(cdWhoLabel(who)+" already has a seat."); return false; }
   say("");
   var p=cdNewPerson(who); CD.people.push(p); CD.paid=false;
   cdSave(); cdRenderTable(p.id); cdRenderReceipt(); cdHintSync();
-  cdSfx("seat"); announce(who.label+" sat down. Their plate is ready.");
+  cdSfx("seat"); announce(cdWhoLabel(who)+" sat down. Their plate is ready.");
   return true;
 }
 function cdUnseat(pid){
   var p=cdPerson(pid); if(!p) return;
   CD.people=CD.people.filter(function(x){ return x.id!==pid; });
   cdSave(); cdRenderTable(); cdRenderReceipt(); cdHintSync();
-  cdSfx("remove"); announce(p.who.label+" left the table.");
+  cdSfx("remove"); announce(cdLabel(p)+" left the table.");
   var inp=$("cdSeatName"); if(inp) focusQuiet(inp);
 }
 function cdRenderTable(popPid, popKey){
@@ -6517,17 +6742,30 @@ function cdRenderTable(popPid, popKey){
   var champ=CD.people.reduce(function(best, p){ var n=cdTacos(p)+cdItems(p); return n>best.n ? {id:p.id, n:n} : best; }, {id:null, n:0});
   CD.people.forEach(function(p, idx){
     var plate=el("div","cd-plate"); plate.setAttribute("data-pid", p.id);
-    plate.setAttribute("role","group"); plate.setAttribute("aria-label", p.who.label+"’s plate");
-    var card=el("div","cd-card");
-    var nm=el("span","cd-name"); nm.textContent=p.who.label; card.appendChild(nm);
-    if(p.who.handle){ var hs=el("span","cd-handle"); hs.textContent="@ARENA"; hs.title="Tied to @"+p.who.handle+"’s Arena account"; card.appendChild(hs); }
+    plate.setAttribute("role","group"); plate.setAttribute("aria-label", cdLabel(p)+"’s plate");
+    var card=el("div","cd-card"), ts=cdTagState(p), rr=p.who.handle ? cdRosterFind(p.who.handle) : null;
+    if(rr && rr.av){ var pav=el("img","cd-pav"); pav.alt=""; pav.loading="lazy"; pav.src=rr.av; card.appendChild(pav); }
+    var nm=el("button","cd-name"); nm.type="button"; nm.textContent=cdLabel(p);
+    nm.setAttribute("aria-label", cdLabel(p)+(ts==="ok" ? ", tagged as @"+p.who.handle : ts==="unknown" ? ", tagged as @"+p.who.handle+" but there’s no such Arena account" : "")+". Press to tag them on the Arena.");
+    nm.addEventListener("click", function(){ cdTagOpen(p.id, nm); });
+    card.appendChild(nm);
     if(champ.id===p.id && champ.n>0 && CD.people.length>1){ var cr=el("img","cd-crown"); cr.alt=""; cr.title="Hungriest at the table"; cr.src=pxURL("cd_crown"); card.appendChild(cr); }
-    var x=el("button","cd-unseat"); x.type="button"; x.textContent="×"; x.setAttribute("aria-label","Unseat "+p.who.label);
+    var x=el("button","cd-unseat"); x.type="button"; x.textContent="×"; x.setAttribute("aria-label","Unseat "+cdLabel(p));
     x.addEventListener("click", function(){ cdUnseat(p.id); }); card.appendChild(x);
     plate.appendChild(card);
+    var tl=el("div","cd-tagline");
+    if(p.who.handle){
+      var hs=el("span","cd-handle"+(ts==="unknown" ? " bad" : "")); hs.textContent="@"+p.who.handle+(ts==="unknown" ? " · NOT ON ARENA" : "");
+      hs.title = ts==="unknown" ? "No Arena account called @"+p.who.handle+": click the name to pick the right one" : "Tied to @"+p.who.handle+"’s Arena account";
+      tl.appendChild(hs);
+    } else {
+      var tg=el("button","cd-tagadd"); tg.type="button"; tg.textContent="+ TAG ON ARENA"; tg.setAttribute("aria-label","Tag "+cdLabel(p)+" on the Arena");
+      tg.addEventListener("click", function(){ cdTagOpen(p.id, tg); }); tl.appendChild(tg);
+    }
+    plate.appendChild(tl);
     var dish=el("div","cd-dish");
     var surf=el("button","cd-surface"); surf.type="button";
-    surf.setAttribute("aria-label", p.who.label+"’s plate: "+cdPlateSummary(p)+". Press to serve the food you’re holding.");
+    surf.setAttribute("aria-label", cdLabel(p)+"’s plate: "+cdPlateSummary(p)+". Press to serve the food you’re holding.");
     var pim=el("img","cd-plate-img"); pim.alt=""; pim.draggable=false; pim.src=pxURL("cd_plate"); surf.appendChild(pim);
     surf.addEventListener("click", function(){
       if(CD.justDragged) return;
@@ -6541,7 +6779,7 @@ function cdRenderTable(popPid, popKey){
       var chip=el("button","cd-chip"); chip.type="button"; chip.setAttribute("data-food", f.key);
       var ci=el("img"); ci.alt=""; ci.draggable=false; ci.width=40; ci.height=40; ci.src=pxURL(f.sprite); chip.appendChild(ci);
       if(n>1){ var b=el("span","cd-n"); b.setAttribute("aria-hidden","true"); b.textContent="×"+n; chip.appendChild(b); }
-      chip.setAttribute("aria-label", n+" "+cdName(f)+" on "+p.who.label+"’s plate. "+(CD.picked ? "Press to serve the food you’re holding." : "Press to take one back."));
+      chip.setAttribute("aria-label", n+" "+cdName(f)+" on "+cdLabel(p)+"’s plate. "+(CD.picked ? "Press to serve the food you’re holding." : "Press to take one back."));
       chip.addEventListener("pointerdown", function(e){ cdPointerDown(e, f.key, p.id, chip); });
       // While you're holding food, the whole plate serves it, the food already on it included.
       chip.addEventListener("click", function(){ if(CD.justDragged) return; if(CD.picked) cdAdd(p.id, CD.picked); else cdTake(p.id, f.key); });
@@ -6572,7 +6810,7 @@ function cdRenderReceipt(){
   line("CALI TUESDAYS", null, "c big"); line(d.toDateString().toUpperCase(), null, "c");
   line("-", null, "rule");
   people.forEach(function(p){
-    line(p.who.label.toUpperCase(), null, "who");
+    line(cdLabel(p).toUpperCase(), null, "who");
     var any=false;
     CD_FOODS.forEach(function(f){ var n=cdCount(p, f.key); if(!n) return; any=true; line("  "+n+" × "+cdName(f).toUpperCase(), null, f.taco ? "taco" : ""); });
     if(!any) line("  (JUST VIBES)", null, "dim");
@@ -6609,6 +6847,8 @@ function cdCheckout(){
   if(CD.busy) return;
   if(!CD.people.length){ cdSay("Seat at least one person first.", "err"); cdSfx("bonk"); return; }
   if(!ARENA.paired){ cdSay("Connect the Arena to log dinners on the board.", "err"); cdSfx("bonk"); return; }
+  var bad=CD.people.filter(function(p){ return cdTagState(p)==="unknown"; });
+  if(bad.length){ cdSay("@"+bad[0].who.handle+" isn’t on the Arena. Click "+cdLabel(bad[0])+"’s name to pick the right account, or untag them.", "err"); cdSfx("bonk"); return; }
   var sendItems=CD.menuOk===true, dropped=0;
   var diners=CD.people.map(function(p){
     var d={tacos:{mildHard:p.tacos.mildHard|0, mildSoft:p.tacos.mildSoft|0, wildHard:p.tacos.wildHard|0, wildSoft:p.tacos.wildSoft|0}};
@@ -6747,8 +6987,28 @@ function cdBuild(){
   cdLoadSaved();
   cdBuildCounter();
   var f=$("cdSeatForm");
-  if(f) f.addEventListener("submit", function(e){ e.preventDefault(); var i=$("cdSeatName"); if(cdSeat(i.value)){ i.value=""; } i.focus(); });
+  if(f) f.addEventListener("submit", function(e){ e.preventDefault(); var i=$("cdSeatName"); if(cdSeat(i.value)){ i.value=""; } cdSuggClose(); i.focus(); });
   var co=$("cdCheckout"); if(co) co.addEventListener("click", cdCheckout);
+  var si=$("cdSeatName");
+  if(si){
+    si.addEventListener("input", function(){ var sm=$("cdSeatMsg"); if(sm && !sm.classList.contains("hidden")){ sm.textContent=""; sm.classList.add("hidden"); } cdSuggest(); });
+    si.addEventListener("focus", function(){ cdRosterLoad(); if(si.value.trim()) cdSuggest(); });
+    si.addEventListener("keydown", function(e){
+      var sg=CD.sugg; if(!sg) return;
+      if(e.key==="ArrowDown" && sg.list.length){ e.preventDefault(); cdSuggMove(1); }
+      else if(e.key==="ArrowUp" && sg.list.length){ e.preventDefault(); cdSuggMove(-1); }
+      else if(e.key==="Enter" && sg.active>=0){ e.preventDefault(); cdSuggPick(sg.active); }
+      else if(e.key==="Escape"){ e.preventDefault(); e.stopPropagation(); cdSuggClose(); }
+    });
+    si.addEventListener("blur", function(){ setTimeout(cdSuggClose, 150); });
+  }
+  document.addEventListener("mousedown", function(e){
+    var tp=$("cdTagPop"); if(!tp || tp.contains(e.target)) return;
+    if(CD.tagFor && CD.tagFor.anchor && CD.tagFor.anchor.contains(e.target)) return;
+    cdTagClose(false);
+  }, true);
+  window.addEventListener("scroll", function(e){ var tp=$("cdTagPop"); if(tp && !(e.target && e.target.nodeType===1 && tp.contains(e.target))) cdTagClose(false); }, true);
+  window.addEventListener("resize", function(){ cdTagClose(false); });
   var dt=$("cdDate"); if(dt) dt.addEventListener("change", cdRenderReceipt);
   var m=$("cdMute"); if(m) m.addEventListener("click", function(){ CD.sfx=!CD.sfx; lsSet("hq_cali_sfx", CD.sfx ? "1" : "0"); cdMuteSync(); announce(CD.sfx ? "Diner sounds on" : "Diner sounds off"); });
   Array.prototype.forEach.call(document.querySelectorAll("#cdWins .cd-win"), function(b){
@@ -6770,12 +7030,13 @@ function cdBuild(){
 }
 function cdEnter(){
   cdBuild();
+  cdRosterLoad();
   // Whoever is logging the dinner is almost always at the table: seat them on an empty one.
   // ARENA.status is only loaded by the Arena view, so ask the local dashboard when it's missing.
   if(!CD.people.length){
     if(ARENA.status && ARENA.status.handle) cdSeat("@"+ARENA.status.handle);
     else fetch("/api/arena/status", {cache:"no-store"}).then(function(r){ return r.json(); }).then(function(st){
-      if(st && typeof st.handle==="string" && st.handle && !CD.people.length && VIEW==="cali") cdSeat("@"+st.handle);
+      if(st && typeof st.handle==="string" && st.handle){ CD.me=st; if(!CD.people.length && VIEW==="cali") cdSeat("@"+st.handle); }
     }, function(){});
   }
   cdResize(); cdRenderTable(); cdRenderReceipt(); cdHintSync();
@@ -6784,6 +7045,7 @@ function cdEnter(){
 }
 function cdLeave(){
   if(!CD.built) return;
+  cdTagClose(false); cdSuggClose();
   cdAnimStop(); if(CD.picked) cdPick(null);
 }
 

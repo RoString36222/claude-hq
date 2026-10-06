@@ -53,7 +53,6 @@ BOSS_SECS = 60
 BOSS_HP_PER_PLAYER = 40
 PULL_RATE = 8                  # pulls per second per player, at most
 POND_OP_RATE = 6               # cast / hook / land / lose per second per player, at most
-PERFECT_BONUS = 1              # a reel where the fish never left the bar
 CHEST_CHANCE = 0.15            # a cast with a treasure chest on the reel
 CHEST_LOOT = (("quartz", 50), ("copper", 25), ("amethyst", 12), ("gold", 8), ("emerald", 4), ("ruby", 1))
 HOOK_EARLY_MS = 250            # a hook this much before the bite still counts (latency)
@@ -338,9 +337,9 @@ class Pond:
 
     def cast(self, m: Member, msg: dict, out: Out, rng: random.Random) -> None:
         self._expire_boss(out)
-        if m.user_id in self.casts:
-            out.err(m.ws, "you already have a line in the water")
-            return
+        old = self.casts.pop(m.user_id, None)
+        if old:                      # a line left out by an earlier socket or tab: reel it in for everyone
+            out.all("lost", user=m.public(), id=old["id"], fish=old["fish"])
         aim = msg.get("aim")
         if isinstance(aim, (int, float)) and not isinstance(aim, bool) and aim == aim:
             aim = round(min(1.0, max(0.0, float(aim))), 3)
@@ -382,8 +381,8 @@ class Pond:
         if elapsed > c["bite_ms"] + MAX_REEL_MS:
             out.all("lost", user=m.public(), id=c["id"], fish=c["fish"])
             return
-        perfect = msg.get("perfect") is True
-        pts = FISH_POINTS[r] + (PERFECT_BONUS if perfect else 0)
+        perfect = msg.get("perfect") is True     # cosmetic only: the reel runs on the client, so it can't score
+        pts = FISH_POINTS[r]
         if msg.get("chest") is True and c["chest"]:
             items, weights = zip(*CHEST_LOOT)
             out.to(m.ws, "loot", item=rng.choices(items, weights=weights)[0])
@@ -436,10 +435,11 @@ class Pond:
             self.last_boss_push = t
             out.all("bosshp", boss=self._boss_view(), pulling=together)
 
-    def drop(self, user_id: str) -> None:
-        self.casts.pop(user_id, None)
+    def drop(self, user_id: str) -> dict | None:
+        """Forget a player who left; returns the line they still had out, if any."""
         self.pulls.pop(user_id, None)
         self.ops.pop(user_id, None)
+        return self.casts.pop(user_id, None)
 
 
 # -------------------------------------------------------------------- race --
@@ -917,7 +917,9 @@ def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out) -> None:
     if lobby.host == user_id:
         lobby.host = next(iter(lobby.members), None)
     if g == "pond":
-        v.pond.drop(user_id)
+        c = v.pond.drop(user_id)
+        if c:                        # their bobber leaves everyone else's water too
+            out.all("lost", user=who, id=c["id"], fish=c["fish"])
     elif g == "duel":
         v.duel.drop(user_id, out)
     elif g == "mines":

@@ -404,3 +404,7 @@ MIT — see [LICENSE](LICENSE).
 Pokémon names and sprites are the property of Nintendo / Game Freak / The Pokémon Company; the
 "pokemon" creature pack hotlinks sprites from the public [PokéAPI](https://pokeapi.co/) sprite library
 for personal use only. Use the built-in original "monsters" pack to avoid third-party assets entirely.
+
+Fish sizes and length-weight coefficients in `games/fishart.js`: [FishBase](https://www.fishbase.se/)
+(Froese & Pauly, eds.). Only numeric facts are used, cited per species in the source; no FishBase
+text or images are bundled.

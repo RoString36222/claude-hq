@@ -165,7 +165,7 @@ async def test_pond_hook_waits_for_the_bite_and_shows_in_snapshot(client, clock)
         assert snap["lines"] == [{"userId": a, "id": cast["id"], "aim": 0.3, "hooked": True}]
 
 
-async def test_pond_perfect_bonus_and_server_rolled_chest(client, clock, monkeypatch):
+async def test_pond_perfect_is_cosmetic_and_chest_is_server_rolled(client, clock, monkeypatch):
     a, _ = await make_user("ash", 35)
     with client.websocket_connect(url("lobby", a)) as wa:
         wa.receive_json()
@@ -187,12 +187,58 @@ async def test_pond_perfect_bonus_and_server_rolled_chest(client, clock, monkeyp
                     break
             loot = [m for m in frames if m.get("ev") == "loot"]
             got = frames[-1]
-            assert got["perfect"] is True
-            assert got["points"] == valley.FISH_POINTS[cast["rarity"]] + valley.PERFECT_BONUS
+            assert got["perfect"] is True     # relayed for the feed and the card...
+            assert got["points"] == valley.FISH_POINTS[cast["rarity"]]   # ...but never worth points
             if chance:
                 assert len(loot) == 1 and loot[0]["item"] in dict(valley.CHEST_LOOT)
             else:
                 assert not loot
+
+
+async def test_pond_line_left_out_is_lost_for_everyone_on_leave_and_disconnect(client, clock):
+    a, _ = await make_user("ash", 37)
+    b, _ = await make_user("misty", 38)
+    with client.websocket_connect(url("lobby", b)) as wb:
+        wb.receive_json()
+        with client.websocket_connect(url("lobby", a)) as wa:
+            wa.receive_json()
+            both_in("pond", wa, wb)
+            pond_op(wa, "cast")
+            cast = until(wa, "cast")
+            until(wb, "casting")
+            pond_op(wa, "leave")
+            lost = until(wb, "lost")
+            assert lost["id"] == cast["id"] and lost["user"]["userId"] == a and lost["fish"] == cast["fish"]
+            assert until(wb, "lobby")["left"]["userId"] == a
+            clock["now"] += 1.1
+            pond_op(wa, "join")
+            until(wa, "pond")
+            pond_op(wa, "cast")
+            cast = until(wa, "cast")
+            until(wb, "casting")
+        lost = until(wb, "lost")         # the socket dropped with a line out
+        assert lost["id"] == cast["id"] and lost["user"]["userId"] == a
+
+
+async def test_pond_second_cast_replaces_the_old_line(client, clock):
+    a, _ = await make_user("ash", 39)
+    b, _ = await make_user("misty", 40)
+    with client.websocket_connect(url("lobby", a)) as wa, client.websocket_connect(url("lobby", b)) as wb:
+        wa.receive_json(); wb.receive_json()
+        both_in("pond", wa, wb)
+        pond_op(wa, "cast")
+        old = until(wa, "cast")
+        until(wb, "casting")
+        clock["now"] += 1.1
+        pond_op(wa, "cast")
+        lost = until(wb, "lost")
+        assert lost["id"] == old["id"]
+        new = until(wb, "casting")
+        assert new["id"] != old["id"]
+        cast = until(wa, "cast")
+        assert cast["id"] == new["id"]
+        pond_op(wa, "land", token=old["token"])
+        assert until(wa, "error")["error"] == "no such cast"
 
 
 async def test_pond_line_ops_are_rate_limited(client, clock):

@@ -172,6 +172,13 @@ HANDLERS.pond = {
       s.lines = lines;
       if(V) V.resync(now);
     }
+    if(m.ev === "lobby" && m.left && m.left.userId && m.left.userId !== me()){
+      // Someone left (or their last socket dropped): the server reels their line in with a
+      // 'lost' first; this also clears a line from a server too old to do that.
+      var gone = m.left.userId, rp = V && V.remote[gone];
+      delete s.lines[gone];
+      if(rp && rp.phase !== "idle"){ rp.phase = "idle"; if(rp.bob) rp.reelIn = {x:rp.bob.x, y:rp.bob.y, at:now}; rp.bob = null; }
+    }
     if(m.ev === "cast" && V) V.onCast(m, now);
     if(m.ev === "loot" && api.items[m.item]){ s.loot = m.item; api.inv.add(m.item, 1); if(V) V.onLoot(m.item); }
     if(m.ev === "casting" && uid){ s.lines[uid] = {id:m.id, aim: typeof m.aim === "number" ? m.aim : null, hooked:false}; if(V && !mine) V.remoteCast(uid, now, false); }
@@ -360,10 +367,11 @@ register("pond", "🎣", "Shared dock, room goal and a boss fish", function(ctx)
     }
     if(err === "not yet") return true;     // a hook a hair early: cosmetic, the reel goes on
     if(/already have a line/.test(err)){
-      // A line from an earlier socket is still out: rejoin to clear it, then cast again.
+      // Only an older Arena says this (newer ones replace the old line and broadcast it as
+      // lost). Let go of our last known line quietly, no lobby churn, and ask for a recast.
       if(m && m.pending){ s.mine = null; rig.end("reeled", now); }
-      send("pond","leave"); send("pond","join");
-      say = "Your old line was still out. Reset it; cast again.";
+      if(V.lastToken) send("pond","lose",{token:V.lastToken});
+      say = "Your old line was still out. Reeled it in; cast again.";
       return true;
     }
     return false;

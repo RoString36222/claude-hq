@@ -283,6 +283,38 @@ function loadGlb(lib, name){
 function hasWebGL2(){
   try { var c = document.createElement("canvas"); return !!c.getContext("webgl2"); } catch(e){ return false; }
 }
+// Small rendered portraits of the six character looks, made once with an offscreen renderer.
+var THUMBS = null, THUMBS_P = null;
+function charThumbs(){
+  if(THUMBS || THUMBS_P || !hasWebGL2()) return THUMBS_P || Promise.resolve(THUMBS);
+  THUMBS_P = golfLib().then(function(lib){
+    return Promise.all(CHARS.map(function(c){ return loadGlb(lib, c.f); })).then(function(gs){
+      var THREE = lib.THREE, S = 96, cv = document.createElement("canvas"); cv.width = S; cv.height = S;
+      var r = new THREE.WebGLRenderer({canvas: cv, alpha: true, antialias: true, preserveDrawingBuffer: true});
+      r.setSize(S, S, false); r.outputColorSpace = THREE.SRGBColorSpace;
+      var out = gs.map(function(g){
+        var scene = new THREE.Scene(), obj = lib.clone(g.scene);
+        scene.add(obj); scene.add(new THREE.HemisphereLight(0xffffff, 0x667788, 2.2));
+        var d = new THREE.DirectionalLight(0xffffff, 1.6); d.position.set(1, 2, 3); scene.add(d);
+        var box = new THREE.Box3().setFromObject(obj), size = box.getSize(new THREE.Vector3()), mid = box.getCenter(new THREE.Vector3());
+        var cam = new THREE.PerspectiveCamera(30, 1, 0.01, 100), h = size.y;
+        cam.position.set(mid.x, mid.y + h*0.08, mid.z + h*2.1); cam.lookAt(mid.x, mid.y + h*0.05, mid.z);
+        r.render(scene, cam);
+        return cv.toDataURL("image/png");
+      });
+      r.dispose(); THUMBS = out; return out;
+    });
+  }).catch(function(){ THUMBS_P = null; return null; });
+  return THUMBS_P;
+}
+// Your own Arena identity (display name + avatar), if you're paired.
+function arenaMe(){
+  var y = window.ARENA && window.ARENA.you;
+  if(!y || typeof y !== "object") return null;
+  var name = String(y.displayName || y.handle || "").slice(0, 40);
+  var av = typeof y.avatarUrl === "string" && /^https:\/\//.test(y.avatarUrl) ? y.avatarUrl : "";
+  return name ? {name: name, avatar: av, handle: String(y.handle || "").slice(0, 40)} : null;
+}
 
 /* ---------- save: best totals per course + preferences (local only) ---------- */
 function gsave(){
@@ -406,16 +438,26 @@ function makeGame(host, opts){
     menu.appendChild(top);
     // character picker
     menu.appendChild(api.mk("h4", "vg-golf-h", "Your golfer"));
-    var chars = api.mk("div", "vg-golf-chars"); chars.setAttribute("role", "group"); chars.setAttribute("aria-label", "Pick a golfer");
+    var who = api.mk("div", "vg-golf-me"), meA = arenaMe();
+    if(meA && meA.avatar){ var im = document.createElement("img"); im.src = meA.avatar; im.alt = ""; im.referrerPolicy = "no-referrer"; im.width = 28; im.height = 28; who.appendChild(im); }
+    who.appendChild(api.mk("b", null, meA ? meA.name : "You"));
+    if(meA && meA.handle && meA.handle !== meA.name) who.appendChild(api.mk("span", "vg-muted", "@"+meA.handle));
+    if(!meA) who.appendChild(api.mk("span", "vg-muted", "Pair with the Arena to play under your name"));
+    menu.appendChild(who);
+    menu.appendChild(api.mk("h4", "vg-golf-h vg-golf-h2", "Look"));
+    var chars = api.mk("div", "vg-golf-chars"); chars.setAttribute("role", "group"); chars.setAttribute("aria-label", "Pick a look");
     var mine = sv.char != null ? clamp(sv.char|0, 0, 5) : 0;
     CHARS.forEach(function(ch, i){
-      var b = api.btn(ch.n, "vg-golf-char"+(i === mine ? " on" : ""), function(){
+      var b = api.btn("", "vg-golf-char"+(i === mine ? " on" : ""), function(){
         sv.char = i; api.persist(); if(mp && MP) MP.send("golf", "char", {c: i}); renderMenu();
       });
-      b.setAttribute("aria-pressed", i === mine ? "true" : "false");
+      if(THUMBS && THUMBS[i]){ var ti = document.createElement("img"); ti.src = THUMBS[i]; ti.alt = ""; ti.width = 48; ti.height = 48; b.appendChild(ti); }
+      b.appendChild(api.mk("span", null, "Look "+(i+1)));
+      b.setAttribute("aria-label", "Look "+(i+1)); b.setAttribute("aria-pressed", i === mine ? "true" : "false");
       chars.appendChild(b);
     });
     menu.appendChild(chars);
+    if(!THUMBS) charThumbs().then(function(t){ if(t && V.alive && stage.classList.contains("hidden")) renderMenu(); });   // menu still showing
     // courses
     var isHost = mp && isLobbyHost();
     menu.appendChild(api.mk("h4", "vg-golf-h", mp ? (isHost ? "Pick a course to start the round" : "Courses") : "Courses"));
@@ -1203,6 +1245,21 @@ function makeGame(host, opts){
         s.o.position.set((m[1] + (m[3] ? 0 : o))/T, 0, (m[2] + (m[3] ? o : 0))/T);
       });
     }
+    function nameTag(THREE, P){
+      var text = String(P.uid === myId() ? "You" : (P.name || "Player")).slice(0, 24);
+      var c = document.createElement("canvas"), g = c.getContext("2d"), fs = 34;
+      g.font = "700 "+fs+"px system-ui, sans-serif";
+      var w = Math.ceil(g.measureText(text).width) + 28, h = fs + 18; c.width = w; c.height = h;
+      g.font = "700 "+fs+"px system-ui, sans-serif"; g.textBaseline = "middle"; g.textAlign = "center";
+      g.fillStyle = "rgba(15,18,30,0.72)"; var rr = h/2;
+      g.beginPath(); g.moveTo(rr, 0); g.lineTo(w-rr, 0); g.arc(w-rr, rr, rr, -Math.PI/2, Math.PI/2); g.lineTo(rr, h); g.arc(rr, rr, rr, Math.PI/2, Math.PI*1.5); g.fill();
+      g.fillStyle = "#"+("000000"+(COLORS[P.color % COLORS.length]>>>0).toString(16)).slice(-6); g.beginPath(); g.arc(18, h/2, 7, 0, Math.PI*2); g.fill();
+      g.fillStyle = "#ffffff"; g.fillText(text, w/2 + 6, h/2 + 1);
+      var tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+      var sp = new THREE.Sprite(new THREE.SpriteMaterial({map: tex, depthTest: false, transparent: true}));
+      sp.renderOrder = 10; sp.scale.set(0.26*w/h, 0.26, 1);   // ~0.13 world units tall at the avatar's 0.5 scale
+      return sp;
+    }
     function makeAvatar(P){
       var g = scene3(CHARS[P.c % CHARS.length].f); if(!g) return null;
       var obj = lib.clone(g.scene); obj.scale.setScalar(0.5);
@@ -1213,6 +1270,9 @@ function makeGame(host, opts){
         if(i >= A_SWING){ a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
         actions[i] = a;
       });
+      // Name tag over the golfer's head: "You", or the friend's Arena name.
+      var tag = nameTag(THREE, P), hb = new THREE.Box3().setFromObject(g.scene);
+      if(tag){ tag.position.set(0, hb.max.y + 0.3, 0); obj.add(tag); }
       var club = null, arm = obj.getObjectByName("arm-right"), cg = scene3(CLUBS[P.color % CLUBS.length]);
       if(arm && cg){ club = cg.scene.clone(); club.scale.setScalar(0.5); club.position.set(0, -0.13, 0.02); arm.add(club); }
       var ball = new THREE.Mesh(ballGeo, new THREE.MeshStandardMaterial({color: COLORS[P.color % COLORS.length], roughness: 0.45}));

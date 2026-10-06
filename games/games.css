@@ -320,3 +320,8 @@ html.hq-calm .pkb-bcard{transition:none}
 html.hq-calm .pkb-bcard:hover{transform:none}
 @media (prefers-reduced-motion: reduce){.pkb-bcard{transition:none}.pkb-bcard:hover{transform:none}}
 .pkb-keys{font-size:12px;color:var(--muted);margin-top:6px;min-height:1.2em}
+.vg-golf-me{display:flex;align-items:center;gap:8px;font-size:14px}
+.vg-golf-me img{border-radius:50%;border:1px solid var(--line)}
+.vg-golf-h2{margin-top:2px}
+.vg-golf-char{display:inline-flex;flex-direction:column;align-items:center;gap:2px;height:auto;padding:6px 10px}
+.vg-golf-char img{display:block}

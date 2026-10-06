@@ -291,6 +291,16 @@ and feature guide.
     the license alongside, never hotlinked); this release adds Kenney's Starter Kit Racing models
     (CC0) in `games/kart/`. The local server's listen backlog is raised so a 3D game loading a
     dozen models at once no longer sees a reset connection.
+  - **Mini Golf: Play random — 5, 10 or 15 holes from every course.** The Mini Golf menu (solo
+    practice and the Arena host's course picker) gets a "Play random" row. A round draws that many
+    holes, no repeats, from all 25 holes of every course, and each hole keeps its own course's sky,
+    fog, light, tint and scenery, switching look as you move between holes (the HUD names the
+    course each hole came from). In a room the Arena server draws the holes with its own RNG (a
+    start of `course: "random"` with `holes` 5, 10 or 15; anything else is refused) and sends the
+    chosen `mix` of `[course, hole]` pairs in the round view, so every client builds the same holes
+    and the referee rolls each putt on the right one. Random rounds don't record a "best" score.
+    No new network traffic beyond the existing opt-in Arena game messages; the putting physics is
+    unchanged.
 
 - **1.8.1** — **Mini Golf grows to five themed courses, and you pick your battle team.**
   - **Five Mini Golf courses, 25 holes.** Meadow Greens (4), Windmill Lane (5) and Castle Keep (6)

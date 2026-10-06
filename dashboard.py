@@ -4298,6 +4298,20 @@ _GAME_TYPES = {"js": "application/javascript; charset=utf-8", "css": "text/css; 
 _games_lock = threading.Lock()
 
 
+def game_cache_control(name):
+    """The big, rarely-changing Mini Golf files (three.js ~2 MB, models ~1.8 MB) are
+    cacheable but always revalidated by ETag ("no-cache"), so a reload costs a 304 per
+    file and an upgrade can never pair a stale module with a new one. The game scripts
+    themselves stay no-store."""
+    if isinstance(name, str) and _GAME_ASSET_RE.fullmatch(name):
+        return "no-cache"
+    return "no-store"
+
+
+def game_etag(body):
+    return '"' + hashlib.sha1(body).hexdigest()[:20] + '"'
+
+
 def game_file(name):
     """(bytes, content type) for an allowlisted file under games/, else None."""
     if not isinstance(name, str):
@@ -4363,13 +4377,15 @@ class Handler(BaseHTTPRequestHandler):
         hostname = host.split(":")[0].strip().lower()
         return hostname in ("127.0.0.1", "localhost", "")
 
-    def _send(self, code, body, content_type="application/json; charset=utf-8"):
+    def _send(self, code, body, content_type="application/json; charset=utf-8", cache="no-store", etag=None):
         if isinstance(body, str):
             body = body.encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
+        if etag:
+            self.send_header("ETag", etag)
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -4477,11 +4493,17 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/games/"):
-            got = game_file(path[len("/games/"):])
+            name = path[len("/games/"):]
+            got = game_file(name)
             if got is None:
                 self._send(404, "not found\n", "text/plain; charset=utf-8")
             else:
-                self._send(200, got[0], got[1])
+                cache = game_cache_control(name)
+                tag = game_etag(got[0]) if cache != "no-store" else None
+                if tag and self.headers.get("If-None-Match", "") == tag:
+                    self._send(304, b"", got[1], cache, tag)
+                else:
+                    self._send(200, got[0], got[1], cache, tag)
             return
 
         if path == "/api/games/state":

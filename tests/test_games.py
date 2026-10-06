@@ -51,6 +51,16 @@ class GameFileTests(unittest.TestCase):
                     "golf/missing.glb", "golf//straight.glb", "golf/straight.glb/", "/golf/straight.glb"):
             self.assertIsNone(dashboard.game_file(bad), repr(bad))
 
+    def test_golf_assets_revalidate_and_game_scripts_never_cache(self):
+        for name in ("vendor/three-core.js", "golf/straight.glb", "golf/courses.json"):
+            self.assertEqual(dashboard.game_cache_control(name), "no-cache", name)
+        for name in ("golf.js", "multi.js", "games.css", "vendor/../golf.js", None):
+            self.assertEqual(dashboard.game_cache_control(name), "no-store", repr(name))
+        a = dashboard.game_etag(b"abc")
+        self.assertEqual(a, dashboard.game_etag(b"abc"))
+        self.assertNotEqual(a, dashboard.game_etag(b"abd"))
+        self.assertRegex(a, r'^"[0-9a-f]{20}"$')
+
     def test_rejects_symlink_escaping_the_folder(self):
         link = os.path.join(GAMES, "golf", "zz-escape.json")
         try:

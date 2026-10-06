@@ -236,9 +236,7 @@ Both set up the GitHub OAuth app and print exactly what to send your friends.
 
 Everyone else just points their own Claude HQ at it: **🏆 Arena → server URL →
 Sign in with GitHub → paste the pairing code**. Your device token is stored in
-`arena-link.json` (git-ignored) and is never exposed to the page. Disconnecting
-revokes that token on the server too (best-effort), and a token unused for 90
-days expires on its own.
+`arena-link.json` (git-ignored) and is never exposed to the page.
 
 Backend source, API and design notes: [`backend/README.md`](backend/README.md).
 

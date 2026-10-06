@@ -55,14 +55,3 @@ types rather than a nullable column you must remember to check.
 ```bash
 cargo test    # 18 tests
 ```
-
-## Parity gaps with the Python backend
-
-Hardening that landed in `backend/` (issue #49) and is not yet ported here:
-
-- refusing to start with the default or a short `ARENA_SECRET_KEY` (unless `ARENA_DEV=1`);
-- `GET /v1/auth/devices`, `POST /v1/auth/devices/{id}/revoke`, `POST /v1/auth/revoke-self`,
-  idle expiry (`ARENA_DEVICE_IDLE_DAYS`), and device-bound websocket tickets;
-- the artifacts / replies / token / tool-breakdown ingest caps;
-- server-derived quest reward ledger keys and the in-transaction daily cap;
-- `/health` answering 503 when the database is unreachable.

@@ -362,7 +362,11 @@ impl Kart {
     }
 
     pub fn view(&self, t: f64) -> Value {
-        let Some(track) = &self.track else { return Value::Null };
+        let Some(track) = &self.track else {
+            // no race yet: still tell clients which tracks (and at what scale) this server runs
+            return json!({"phase": "idle", "track": Value::Null, "scale": SCALE, "players": [],
+                          "tracks": TRACKS.iter().map(|t| t.id.clone()).collect::<Vec<_>>()});
+        };
         let order = self.order();
         let players: Vec<Value> = self
             .players
@@ -377,7 +381,7 @@ impl Kart {
                "goInMs": if self.phase == Phase::Grid { (((self.go_at - t) * 1000.0) as i64).max(0) } else { 0 },
                "raceMs": if self.phase == Phase::Race { self.ms(t) } else { 0 },
                "players": players, "results": self.results, "cars": self.cars,
-               "scale": SCALE})
+               "scale": SCALE, "tracks": TRACKS.iter().map(|t| t.id.clone()).collect::<Vec<_>>()})
     }
 
     // -- ops --

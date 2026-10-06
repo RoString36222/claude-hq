@@ -1,10 +1,10 @@
 # ⚡ Claude HQ
 
-**Version 1.2.4** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
+**Version 1.7.0** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
 
 Claude HQ reads your live sessions (`claude agents --json`) and your session transcripts
 (`~/.claude/projects/**/*.jsonl`) and turns them into a single command center: what every tab is
-working on right now, what it's cost you, a searchable archive of every past session, and a whole
+working on right now, what it would cost at API list prices, a searchable archive of every past session, and a whole
 Pokémon-style collection layer on top for fun.
 
 It runs entirely on your machine and binds to `127.0.0.1` only. **Your conversations never leave your
@@ -245,6 +245,27 @@ and feature guide.
 ---
 
 ## Changelog
+
+- **1.7.0** — **One-click update.** A new **Update** button in the top bar shows when new
+  commits are waiting ("Update · 3 new", with the commit list on hover) and, on click, pulls them
+  and restarts Claude HQ, then reloads the page. It only ever fast-forwards: it refuses if you have
+  local edits in the Claude HQ folder or your branch has diverged, so it never merges or discards
+  anything. Under the launchd agent it restarts through `launchctl kickstart`; otherwise it
+  re-executes itself. **Also in this release (merged since 1.6.1):**
+  - **Cost is now right.** Usage was counted once per transcript line instead of once per API
+    message (about 2× too high) and Opus 5.5 was priced at the old $15/$75 instead of $4/$20; 1-hour
+    cache writes now cost 2× input. Historical cost figures drop accordingly (#52).
+  - **Scanner fixes:** image prompts count again, "billing"/"rate limit" in a reply no longer flags a
+    tab for 6h, Esc interrupts aren't prompts, session ids on GET routes are validated (#52).
+  - **Needs you, for real:** an unanswered question or plan approval marks a tab "Question" /
+    "Plan approval"; a long-open permission-gated tool shows a "permission?" hint (#56).
+  - **Safer local state:** atomic 0600 writes with corrupt-file quarantine, Close only targets live
+    Claude tabs, POST bodies are size-capped (#51).
+  - **Live cards stay fresh** without rebuilding every 1.5s; quest and voice fixes (#55).
+  - **Arena hardening:** refuses the default secret key, device list/revoke and idle expiry, ingest
+    caps, server-derived quest rewards, `/health` returns 503 when the database is down (#53).
+    _Needs a backend deploy with `ARENA_SECRET_KEY` set._
+  **Privacy:** the update check runs `git fetch` against your own remote; nothing else is sent.
 
 - **1.6.1** — **Tag friends from the Arena.** In Cali Tuesdays, type `@` in the seat box to
   **autocomplete people from the Arena** (avatar, name and exact handle); the list narrows as you

@@ -171,6 +171,9 @@ h1,h2,h3,h4,h5{letter-spacing:-.01em}
 .search .mag{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--faint);display:flex;pointer-events:none}
 
 /* buttons */
+.update-btn{gap:6px;padding:0 10px}
+.update-btn.has-update{color:var(--good);border-color:var(--good);background:var(--goodbg)}
+.update-btn.busy{opacity:.7;cursor:progress}
 .hbtn{height:34px;min-width:34px;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:8px;
   padding:0 11px;font-size:13px;font-weight:550;display:inline-flex;align-items:center;justify-content:center;gap:6px;
   transition:border-color var(--t-fast),background var(--t-fast),color var(--t-fast),transform var(--t-fast);white-space:nowrap}
@@ -1970,6 +1973,7 @@ html.hq-calm #confetti{display:none!important}
     <div class="tb-group">
       <button class="hbtn icon ghost arena-stat hidden" id="arenaStat" type="button" title="Arena" aria-label="Arena status"><svg class="i" aria-hidden="true"><use href="#i-trophy"/></svg><span class="arena-stat-dot" id="arenaStatDot"></span></button>
       <button class="hbtn voice-pill hidden" id="voicePill" type="button" title="You're in Arena voice — open the Arena" aria-label="In Arena voice"><svg class="i sm" aria-hidden="true"><use href="#i-mic"/></svg> In voice</button>
+      <button class="hbtn ghost update-btn" id="updateBtn" type="button" title="Pull the latest Claude HQ and restart" aria-label="Pull the latest Claude HQ and restart"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg><span id="updateLbl">Update</span></button>
       <button class="hbtn icon ghost" id="logBtn" type="button" title="Event log" aria-label="Event log"><svg class="i" aria-hidden="true"><use href="#i-list"/></svg></button>
       <button class="hbtn icon ghost" id="bellBtn" type="button" title="Desktop notifications & chime" aria-label="Toggle notifications" aria-pressed="false"><svg class="i" aria-hidden="true"><use href="#i-bell"/></svg></button>
       <div class="hmenu sound-wrap">
@@ -7766,6 +7770,54 @@ var FILTERFOLDER="";
 function matchesFolder(s){ if(!FILTERFOLDER) return true; return (s.folder||"")===FILTERFOLDER; }
 
 // POST a guarded action to the backend; toasts the result.
+/* ---- self-update: pull the latest commits and restart the server ---- */
+var UPDATE = {st:null, busy:false};
+function updatePaint(){
+  var b=$("updateBtn"), l=$("updateLbl"); if(!b||!l) return;
+  var st=UPDATE.st, n=(st && st.ok && st.behind)|0;
+  b.classList.toggle("has-update", n>0); b.classList.toggle("busy", UPDATE.busy);
+  l.textContent = UPDATE.busy ? "Updating…" : n>0 ? "Update · "+n+" new" : "Update";
+  b.title = !st ? "Pull the latest Claude HQ and restart"
+    : !st.ok ? "Update unavailable: "+(st.error||"unknown")
+    : n>0 ? n+" new commit"+(n>1?"s":"")+" on "+st.upstream+":\n"+(st.commits||[]).join("\n")
+    : "Up to date ("+st.head+" on "+st.branch+"). Click to check again.";
+}
+function updateCheck(force){
+  return fetch("/api/update"+(force?"?force=1":""),{cache:"no-store"}).then(function(r){ return r.json(); })
+    .then(function(j){ UPDATE.st=j; updatePaint(); return j; }).catch(function(){ return null; });
+}
+function updateWaitForRestart(){
+  var tries=0;
+  (function poll(){
+    tries++;
+    fetch("/api/update",{cache:"no-store"}).then(function(r){ if(!r.ok) throw 0; location.reload(); })
+      .catch(function(){ if(tries<90) setTimeout(poll, 1000); else { UPDATE.busy=false; updatePaint(); toast("⚠ Claude HQ didn’t come back. Start it again from a terminal.","ach"); } });
+  })();
+}
+function updateRun(){
+  if(UPDATE.busy) return;
+  updateCheck(true).then(function(st){
+    if(!st){ toast("⚠ Couldn’t check for updates","ach"); return; }
+    if(!st.ok){ toast("⚠ "+(st.error||"Update unavailable"),"ach"); return; }
+    if(!st.behind){ toast("✓ Claude HQ is up to date ("+st.head+")","level"); return; }
+    if(st.dirty){ toast("⚠ Local changes in the Claude HQ folder: commit or stash them first","ach"); return; }
+    var list=(st.commits||[]).slice(0,8).join("\n");
+    if(!confirm("Pull "+st.behind+" new commit"+(st.behind>1?"s":"")+" from "+st.upstream+" and restart Claude HQ?\n\n"+list)) return;
+    UPDATE.busy=true; updatePaint();
+    fetch("/api/update",{method:"POST",headers:{"Content-Type":"application/json","X-HQ-Token":CSRF},body:"{}"})
+      .then(function(r){ return r.json().then(function(j){ return {ok:r.ok,j:j}; }); })
+      .then(function(res){
+        if(!res.ok || !res.j.updated){ UPDATE.busy=false; updatePaint(); toast("⚠ "+(res.j.error||"Nothing to update"),"ach"); return; }
+        toast("⬇ Updated "+res.j.from+" → "+res.j.to+". Restarting…","level");
+        setTimeout(updateWaitForRestart, 2500);
+      })
+      .catch(function(){ UPDATE.busy=false; updatePaint(); toast("⚠ Update request failed","ach"); });
+  });
+}
+(function(){ var b=$("updateBtn"); if(b) b.addEventListener("click", updateRun);
+  setTimeout(function(){ updateCheck(false); }, 4000);
+  setInterval(function(){ if(!document.hidden) updateCheck(false); }, 15*60*1000); })();
+
 function postAction(body){
   return fetch("/api/action",{
     method:"POST",

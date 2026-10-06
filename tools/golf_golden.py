@@ -31,14 +31,17 @@ def main():
                 if ax == 0 and az == 0:
                     ax = 1
                 power = rng.randint(1, 100)
-                r = golf.simulate(h, ball[0], ball[1], ax, az, power)
-                vecs.append({"course": cid, "hole": hi, "from": ball, "ax": ax, "az": az, "power": power,
-                             "end": r["end"], "holed": r["holed"], "oob": r["oob"], "ticks": r["ticks"]})
+                clk = rng.randint(0, golf.CLOCK - 1)       # moving obstacles: any phase of the shot clock
+                r = golf.simulate(h, ball[0], ball[1], ax, az, power, clk)
+                vecs.append({"course": cid, "hole": hi, "from": ball, "ax": ax, "az": az, "power": power, "clk": clk,
+                             "end": r["end"], "holed": r["holed"], "oob": r["oob"], "water": r["water"],
+                             "ticks": r["ticks"]})
                 if not r["holed"]:
                     ball = list(r["end"])
     with open(OUT, "w", encoding="utf-8") as f:
         f.write("[\n" + ",\n".join(json.dumps(v, separators=(",", ":")) for v in vecs) + "\n]\n")
-    print(len(vecs), "vectors;", sum(v["holed"] for v in vecs), "holed;", sum(v["oob"] for v in vecs), "oob")
+    print(len(vecs), "vectors;", sum(v["holed"] for v in vecs), "holed;", sum(v["oob"] for v in vecs), "oob;",
+          sum(v["water"] for v in vecs), "water")
 
 
 if __name__ == "__main__":

@@ -17,7 +17,9 @@ GOLF_JS = os.path.join(ROOT, "games", "golf.js")
 GOLF_PY = os.path.join(ROOT, "backend", "app", "golf.py")
 GOLDEN = os.path.join(ROOT, "backend", "tests", "golf_golden.json")
 CONSTS = ("R", "CUP", "VS", "TICK", "VMIN", "VMAX", "DRAG_NUM", "DRAG_DEN", "ROLL", "STOP", "REST_NUM",
-          "REST_DEN", "CAPTURE", "SUBSTEP", "MAX_TICKS", "MAX_STROKES", "OOB_PENALTY", "AIM_MAX")
+          "REST_DEN", "CAPTURE", "SUBSTEP", "MAX_TICKS", "MAX_STROKES", "OOB_PENALTY", "AIM_MAX", "SAND_DRAG",
+          "SAND_ROLL", "ICE_DRAG", "ICE_ROLL", "BUMP_NUM", "BUMP_DEN", "CLOCK", "BLADE_GAP", "BLADE_HIT", "Z_SAND",
+          "Z_ICE", "Z_WATER")
 
 
 def read(p):
@@ -78,9 +80,9 @@ const cache = {}; const bad = [];
 for (const v of vec) {
   const c = data.courses.find(x => x.id === v.course), key = v.course + "/" + v.hole;
   const h = cache[key] || (cache[key] = GS.compileHole(c.holes[v.hole], data.pieces));
-  const r = GS.simulate(h, v.from[0], v.from[1], v.ax, v.az, v.power, true);
-  if (r.end[0] !== v.end[0] || r.end[1] !== v.end[1] || r.holed !== v.holed || r.oob !== v.oob || r.ticks !== v.ticks
-      || r.path.length < 1) bad.push(v);
+  const r = GS.simulate(h, v.from[0], v.from[1], v.ax, v.az, v.power, true, v.clk);
+  if (r.end[0] !== v.end[0] || r.end[1] !== v.end[1] || r.holed !== v.holed || r.oob !== v.oob || r.water !== v.water
+      || r.ticks !== v.ticks || r.path.length < 1) bad.push(v);
 }
 console.log(JSON.stringify({n: vec.length, bad: bad.slice(0, 3), nbad: bad.length}));
 """

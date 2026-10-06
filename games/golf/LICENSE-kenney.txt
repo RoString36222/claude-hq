@@ -1,6 +1,9 @@
 Kenney asset licenses (verbatim). Files in this folder (*.glb, colormap.png) come from:
   Minigolf Kit 3.1   https://kenney.nl/assets/minigolf-kit
   Mini Characters 1.0 https://kenney.nl/assets/mini-characters
+  Nature Kit 2.1     https://kenney.nl/assets/nature-kit  (the scenery props: trees, flowers,
+                     bushes, rocks, cacti, fences, crops, logs, stumps, a stone column;
+                     renamed from e.g. tree_pineTallA.glb to tree-pine-tall.glb, otherwise unchanged)
 
 ==== Minigolf Kit: License.txt ====
 	
@@ -61,3 +64,29 @@ Kenney asset licenses (verbatim). Files in this folder (*.glb, colormap.png) com
 	• Twitter:   twitter.com/KenneyNL
 	• Instagram: instagram.com/kenney_nl
 	• Mastodon:  mastodon.gamedev.place/@kenney
+
+==== Nature Kit: License.txt ====
+	
+
+	Nature Kit (2.1)
+
+	Created/distributed by Kenney (www.kenney.nl)
+	Creation date: 29-04-2020 01:02
+
+			------------------------------
+
+	License: (Creative Commons Zero, CC0)
+	http://creativecommons.org/publicdomain/zero/1.0/
+
+	This content is free to use in personal, educational and commercial projects.
+
+	Support us by crediting Kenney or www.kenney.nl (this is not mandatory)
+
+			------------------------------
+
+	Donate:   http://support.kenney.nl
+	Request:  http://request.kenney.nl
+	Patreon:  http://patreon.com/kenney/
+
+	Follow on Twitter for updates:
+	http://twitter.com/KenneyNL

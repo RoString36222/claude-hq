@@ -28,13 +28,21 @@ var GS = (function(){
   var VMIN = 30*VS, VMAX = 360*VS, DRAG_NUM = 25, DRAG_DEN = 10000, ROLL = 90, STOP = 60;
   var REST_NUM = 3, REST_DEN = 4, CAPTURE = 160*VS, SUBSTEP = 150*VS, MAX_TICKS = 1800;
   var MAX_STROKES = 8, OOB_PENALTY = 1, AIM_MAX = 4096;
+  // Surfaces, bumpers and the shot clock that drives every moving obstacle.
+  var SAND_DRAG = 150, SAND_ROLL = 420, ICE_DRAG = 6, ICE_ROLL = 22, BUMP_NUM = 5, BUMP_DEN = 4;
+  var CLOCK = 2880, BLADE_GAP = 144, BLADE_HIT = 20, Z_SAND = 1, Z_ICE = 2, Z_WATER = 3;
+  var ZONES = {sand: Z_SAND, ice: Z_ICE, water: Z_WATER};
+  var OCT = [[1000, 0], [707, 707], [0, 1000], [-707, 707], [-1000, 0], [-707, -707], [0, -1000], [707, -707]];
   function tdiv(a, b){ return Math.trunc(a/b); }
   function isqrt(n){ if(n <= 0) return 0; var x = n, y = Math.floor((x+1)/2); while(y < x){ x = y; y = Math.floor((x + Math.floor(n/x))/2); } return x; }
   function rot(x, z, k){ k = k & 3; return k === 1 ? [z, -x] : k === 2 ? [-x, -z] : k === 3 ? [-z, x] : [x, z]; }
   function cellOf(v){ return Math.floor((v + HALF)/TILE); }
   function lexLess(a, b){ for(var i = 0; i < 4; i++){ if(a[i] !== b[i]) return a[i] < b[i]; } return false; }
+  function seg(x1, z1, x2, z2, kind){ var dx = x2-x1, dz = z2-z1; return [x1, z1, dx, dz, isqrt(dx*dx + dz*dz) || 1, kind]; }
+  function box(x1, z1, x2, z2){ return [[Math.min(x1, x2), Math.min(z1, z2), Math.max(x1, x2), Math.max(z1, z2)]]; }
   function compileHole(hole, pieces){
     var segs = [], seen = {}, floor = {}, voids = [], tee = null, cup = null, cols = [], rows = [];
+    var slopes = [], zones = [], movers = [], bumpers = [];
     (hole.tiles || []).forEach(function(t){
       var p = pieces[t[0]] || {}, col = t[1]|0, row = t[2]|0, k = t[3]|0, cx = col*TILE, cz = row*TILE;
       floor[col+","+row] = 1; cols.push(col); rows.push(row);
@@ -44,15 +52,38 @@ var GS = (function(){
         var key = (lexLess(r, s) ? r : s).join(",");
         if(seen[key]) return;
         seen[key] = 1;
-        var dx = s[2]-s[0], dz = s[3]-s[1];
-        segs.push([s[0], s[1], dx, dz, isqrt(dx*dx + dz*dz) || 1]);
+        segs.push(seg(s[0], s[1], s[2], s[3], 0));
       });
       (p.voids || []).forEach(function(v){
         var a = rot(v[0], v[1], k), b = rot(v[2], v[3], k);
-        voids.push([cx+Math.min(a[0], b[0]), cz+Math.min(a[1], b[1]), cx+Math.max(a[0], b[0]), cz+Math.max(a[1], b[1])]);
+        voids.push(box(cx+a[0], cz+a[1], cx+b[0], cz+b[1])[0]);
       });
+      // a slope: a box where gravity pulls the ball along (gx, gz) every tick
+      (p.slopes || []).forEach(function(v){
+        var a = rot(v[0], v[1], k), b = rot(v[2], v[3], k), g = rot(v[4], v[5], k);
+        slopes.push(box(cx+a[0], cz+a[1], cx+b[0], cz+b[1])[0].concat([g[0], g[1]]));
+      });
+      if(p.blades){
+        var a = rot(p.blades[0], p.blades[1], k), b = rot(p.blades[2], p.blades[3], k);
+        movers.push([0, seg(cx+a[0], cz+a[1], cx+b[0], cz+b[1], 0)]);
+      }
       if(p.tee){ var te = rot(p.tee[0], p.tee[1], k); tee = [cx+te[0], cz+te[1]]; }
       if(p.cup){ var cu = rot(p.cup[0], p.cup[1], k); cup = [cx+cu[0], cz+cu[1]]; }
+    });
+    // per-hole surfaces: [kind, col, row, x1, z1, x2, z2] (tile-local, not rotated)
+    (hole.zones || []).forEach(function(z){
+      var c = (z[1]|0)*TILE, r = (z[2]|0)*TILE;
+      zones.push([ZONES[z[0]]|0].concat(box(c+(z[3]|0), r+(z[4]|0), c+(z[5]|0), r+(z[6]|0))[0]));
+    });
+    // bumpers: [col, row, x, z, radius], an octagon that kicks the ball back harder than a wall
+    (hole.bumpers || []).forEach(function(b){
+      var x = (b[0]|0)*TILE + (b[2]|0), z = (b[1]|0)*TILE + (b[3]|0), r = b[4]|0, pts = OCT.map(function(o){ return [x + tdiv(r*o[0], 1000), z + tdiv(r*o[1], 1000)]; });
+      pts.forEach(function(p, i){ var q = pts[(i+1) % 8]; segs.push(seg(p[0], p[1], q[0], q[1], 1)); });
+      bumpers.push([x, z, r]);
+    });
+    // sliders: ["slider", col, row, axis (0 = x, 1 = z), half width, half depth, travel, period, phase]
+    (hole.movers || []).forEach(function(m){
+      if(m[0] === "slider") movers.push([1, (m[1]|0)*TILE, (m[2]|0)*TILE, m[3]|0, m[4]|0, m[5]|0, m[6]|0, m[7]|0, m[8]|0]);
     });
     var grid = {};
     segs.forEach(function(sg, i){
@@ -63,6 +94,7 @@ var GS = (function(){
       }
     });
     return {name: hole.name, par: hole.par|0, tiles: hole.tiles || [], segs: segs, grid: grid, floor: floor, voids: voids,
+      slopes: slopes, zones: zones, movers: movers, bumpers: bumpers,
       tee: tee, cup: cup, bbox: [Math.min.apply(null, cols)*TILE - HALF, Math.min.apply(null, rows)*TILE - HALF,
         Math.max.apply(null, cols)*TILE + HALF, Math.max.apply(null, rows)*TILE + HALF]};
   }
@@ -71,52 +103,94 @@ var GS = (function(){
     for(var i = 0; i < h.voids.length; i++){ var v = h.voids[i]; if(v[0] < x && x < v[2] && v[1] < z && z < v[3]) return false; }
     return true;
   }
+  function zoneAt(h, x, z){
+    for(var i = 0; i < h.zones.length; i++){ var v = h.zones[i]; if(v[1] < x && x < v[3] && v[2] < z && z < v[4]) return v[0]; }
+    return 0;
+  }
+  function slopeAt(h, x, z){
+    for(var i = 0; i < h.slopes.length; i++){ var v = h.slopes[i]; if(v[0] < x && x < v[2] && v[1] < z && z < v[3]) return v; }
+    return null;
+  }
+  // A slider's centre offset along its axis at clock phase ph (a triangle wave).
+  function slideOff(m, ph){
+    var u = (ph + m[8]) % m[7], half = tdiv(m[7], 2), tri = u < half ? u : m[7] - u;
+    return -m[6] + tdiv(2*m[6]*tri, half);
+  }
+  // Windmill blades block their doorway while one sweeps past the bottom.
+  function bladesDown(ph){ return (ph + BLADE_HIT) % BLADE_GAP < 2*BLADE_HIT; }
+  // The obstacle walls that exist at clock phase ph.
+  function moverSegs(h, ph){
+    var out = [];
+    for(var i = 0; i < h.movers.length; i++){
+      var m = h.movers[i];
+      if(m[0] === 0){ if(bladesDown(ph)) out.push(m[1]); continue; }
+      var off = slideOff(m, ph), x = m[1] + (m[3] ? 0 : off), z = m[2] + (m[3] ? off : 0);
+      var x1 = x - m[4], z1 = z - m[5], x2 = x + m[4], z2 = z + m[5];
+      out.push(seg(x1, z1, x2, z1, 0), seg(x2, z1, x2, z2, 0), seg(x2, z2, x1, z2, 0), seg(x1, z2, x1, z1, 0));
+    }
+    return out;
+  }
   function launch(ax, az, power){
     var m = isqrt(ax*ax + az*az) || 1, sp = VMIN + tdiv((power-1)*(VMAX-VMIN), 99);
     return [tdiv(ax*sp, m), tdiv(az*sp, m)];
   }
-  // One shot. Returns {end:[x,z], holed, oob, ticks} (+ path: one [x,z] per tick when wanted).
-  function simulate(h, bx, bz, ax, az, power, wantPath){
+  // One shot from the shot clock's phase clk. Returns {end:[x,z], holed, oob, water, ticks}
+  // (+ path: one [x,z] per tick when wanted).
+  function simulate(h, bx, bz, ax, az, power, wantPath, clk){
     var sx = bx, sz = bz, v = launch(ax, az, power), vx = v[0], vz = v[1];
     var cx = h.cup[0], cz = h.cup[1], segs = h.segs, grid = h.grid, rr = R*R, path = wantPath ? [] : null;
+    clk = ((clk|0) % CLOCK + CLOCK) % CLOCK;
     function done(o){ if(path){ path.push([o.end[0], o.end[1]]); o.path = path; } return o; }
+    function hit(sg){
+      var x1 = sg[0], z1 = sg[1], dx = sg[2], dz = sg[3], L = sg[4];
+      var p = tdiv((bx-x1)*dx + (bz-z1)*dz, L);
+      p = p < 0 ? 0 : (p > L ? L : p);
+      var px = x1 + tdiv(dx*p, L), pz = z1 + tdiv(dz*p, L), ox = bx - px, oz = bz - pz, d2 = ox*ox + oz*oz;
+      if(d2 < rr){
+        var d = isqrt(d2) || 1;
+        bx = px + tdiv(ox*R, d); bz = pz + tdiv(oz*R, d);
+        var vn = tdiv(vx*ox + vz*oz, d), num = sg[5] ? BUMP_NUM : REST_NUM, den = sg[5] ? BUMP_DEN : REST_DEN;
+        if(vn < 0){
+          vx -= tdiv((den+num)*vn*ox, den*d);
+          vz -= tdiv((den+num)*vn*oz, den*d);
+        }
+      }
+    }
     for(var t = 1; t <= MAX_TICKS; t++){
+      var dyn = h.movers.length ? moverSegs(h, (clk + t) % CLOCK) : [];
       var s = isqrt(vx*vx + vz*vz), n = Math.max(1, tdiv(s + SUBSTEP - 1, SUBSTEP));
       for(var j = 0; j < n; j++){
         bx += tdiv(vx, n*VS); bz += tdiv(vz, n*VS);
         var list = grid[cellOf(bx)+","+cellOf(bz)];
-        if(!list) continue;
-        for(var q = 0; q < list.length; q++){
-          var sg = segs[list[q]], x1 = sg[0], z1 = sg[1], dx = sg[2], dz = sg[3], L = sg[4];
-          var p = tdiv((bx-x1)*dx + (bz-z1)*dz, L);
-          p = p < 0 ? 0 : (p > L ? L : p);
-          var px = x1 + tdiv(dx*p, L), pz = z1 + tdiv(dz*p, L), ox = bx - px, oz = bz - pz, d2 = ox*ox + oz*oz;
-          if(d2 < rr){
-            var d = isqrt(d2) || 1;
-            bx = px + tdiv(ox*R, d); bz = pz + tdiv(oz*R, d);
-            var vn = tdiv(vx*ox + vz*oz, d);
-            if(vn < 0){
-              vx -= tdiv((REST_DEN+REST_NUM)*vn*ox, REST_DEN*d);
-              vz -= tdiv((REST_DEN+REST_NUM)*vn*oz, REST_DEN*d);
-            }
-          }
-        }
+        if(list) for(var q = 0; q < list.length; q++) hit(segs[list[q]]);
+        for(var w = 0; w < dyn.length; w++) hit(dyn[w]);
       }
+      var sl = slopeAt(h, bx, bz);
+      if(sl){ vx += sl[4]; vz += sl[5]; }
       s = isqrt(vx*vx + vz*vz);
+      if(s > VMAX){ vx = tdiv(vx*VMAX, s); vz = tdiv(vz*VMAX, s); s = isqrt(vx*vx + vz*vz); }
       var ddx = bx - cx, ddz = bz - cz;
-      if(ddx*ddx + ddz*ddz < CUP*CUP && s <= CAPTURE) return done({end:[cx, cz], holed:true, oob:false, ticks:t});
-      if(!onFloor(h, bx, bz)){ if(path) path.push([bx, bz]); return done({end:[sx, sz], holed:false, oob:true, ticks:t}); }
-      var ns = s - tdiv(s*DRAG_NUM, DRAG_DEN) - ROLL;
-      if(ns <= STOP) return done({end:[bx, bz], holed:false, oob:false, ticks:t});
-      vx = tdiv(vx*ns, s); vz = tdiv(vz*ns, s);
+      if(ddx*ddx + ddz*ddz < CUP*CUP && s <= CAPTURE) return done({end:[cx, cz], holed:true, oob:false, water:false, ticks:t});
+      if(!onFloor(h, bx, bz)){ if(path) path.push([bx, bz]); return done({end:[sx, sz], holed:false, oob:true, water:false, ticks:t}); }
+      var zk = zoneAt(h, bx, bz);
+      if(zk === Z_WATER){ if(path) path.push([bx, bz]); return done({end:[sx, sz], holed:false, oob:true, water:true, ticks:t}); }
+      var dn = zk === Z_SAND ? SAND_DRAG : zk === Z_ICE ? ICE_DRAG : DRAG_NUM, rl = zk === Z_SAND ? SAND_ROLL : zk === Z_ICE ? ICE_ROLL : ROLL;
+      var ns = s - tdiv(s*dn, DRAG_DEN) - rl;
+      if(ns <= STOP){
+        if(!sl) return done({end:[bx, bz], holed:false, oob:false, water:false, ticks:t});
+        if(ns < 0) ns = 0;          // on a slope the ball never rests: gravity takes it next tick
+      }
+      if(s){ vx = tdiv(vx*ns, s); vz = tdiv(vz*ns, s); }
       if(path) path.push([bx, bz]);
     }
-    return done({end:[bx, bz], holed:false, oob:false, ticks:MAX_TICKS});
+    return done({end:[bx, bz], holed:false, oob:false, water:false, ticks:MAX_TICKS});
   }
-  return {compileHole:compileHole, simulate:simulate, onFloor:onFloor, isqrt:isqrt, tdiv:tdiv, cellOf:cellOf,
+  return {compileHole:compileHole, simulate:simulate, onFloor:onFloor, zoneAt:zoneAt, slopeAt:slopeAt, moverSegs:moverSegs,
+    slideOff:slideOff, bladesDown:bladesDown, isqrt:isqrt, tdiv:tdiv, cellOf:cellOf,
     C:{TILE:TILE, R:R, CUP:CUP, VS:VS, TICK:TICK, VMIN:VMIN, VMAX:VMAX, DRAG_NUM:DRAG_NUM, DRAG_DEN:DRAG_DEN, ROLL:ROLL,
        STOP:STOP, REST_NUM:REST_NUM, REST_DEN:REST_DEN, CAPTURE:CAPTURE, SUBSTEP:SUBSTEP, MAX_TICKS:MAX_TICKS,
-       MAX_STROKES:MAX_STROKES, OOB_PENALTY:OOB_PENALTY, AIM_MAX:AIM_MAX}};
+       MAX_STROKES:MAX_STROKES, OOB_PENALTY:OOB_PENALTY, AIM_MAX:AIM_MAX, CLOCK:CLOCK, BLADE_GAP:BLADE_GAP,
+       BLADE_HIT:BLADE_HIT, Z_SAND:Z_SAND, Z_ICE:Z_ICE, Z_WATER:Z_WATER}};
 })();
 /* GOLF-SIM END */
 
@@ -135,6 +209,27 @@ var POS_EVERY = 0.1, POS_KEEPALIVE = 2.0, SHOT_GAP = 0.35;
 var SHOT_ERRORS = {"wait for the ball to stop":1, "that hole is over":1, "you've finished this hole":1, "bad shot":1,
   "no round is being played":1, "you're not in this round":1, "unknown game":1, "join the lobby first":1};
 function css(c){ return "#"+("000000"+(c>>>0).toString(16)).slice(-6); }
+// "#rrggbb" from the course file -> 0xrrggbb (anything else -> fallback)
+function hex(s, fb){ return typeof s === "string" && /^#[0-9a-f]{6}$/i.test(s) ? parseInt(s.slice(1), 16) : fb; }
+// The shot clock every moving obstacle follows: wall-clock ticks, so every player sees the
+// blades and gates at (nearly) the same place, and a putt sends the phase it left at.
+function clockNow(){ return (Date.now()*GS.C.TICK/1000) % GS.C.CLOCK; }
+function shotClock(){ return Math.floor(clockNow()) % GS.C.CLOCK; }
+// How high the felt is at (x, z) above the flat floor (tile units): only the hill and
+// mound pieces lift it. Drawing only: the physics uses their slope boxes.
+var LIFT = {"hill-round": function(lx, lz){ var u = Math.abs(lz)/3000; return u < 1 ? 0.084*Math.pow(1 - u*u, 1.5) : 0; },
+            "bump": function(lx, lz){ var u = (lx*lx + lz*lz)/(2500*2500); return u < 1 ? 0.034*(1 - u) : 0; }};
+function liftAt(h, x, z){
+  if(!h || !h.lifts || !h.lifts.length) return 0;
+  var c = GS.cellOf(x), r = GS.cellOf(z);
+  for(var i = 0; i < h.lifts.length; i++){
+    var L = h.lifts[i]; if(L[1] !== c || L[2] !== r) continue;
+    var dx = x - c*T, dz = z - r*T, k = (4 - (L[3] & 3)) & 3;   // undo the tile's rotation
+    var lx = k === 1 ? dz : k === 2 ? -dx : k === 3 ? -dz : dx, lz = k === 1 ? -dx : k === 2 ? -dz : k === 3 ? dx : dz;
+    return LIFT[L[0]](lx, lz);
+  }
+  return 0;
+}
 function now(){ return performance.now()/1000; }
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
 
@@ -147,6 +242,19 @@ function loadData(){
   return DATA_P;
 }
 function courseById(id){ var c = null; ((DATA && DATA.courses) || []).forEach(function(x){ if(x.id === id) c = x; }); return c; }
+// What a course has in it, for its card ("sand, ice, windmill …").
+function courseFeatures(c){
+  var f = {};
+  (c.holes || []).forEach(function(h){
+    (h.zones || []).forEach(function(z){ f[z[0] === "water" ? "water" : z[0]] = 1; });
+    if((h.bumpers || []).length) f.bumpers = 1;
+    if((h.movers || []).length) f["moving gates"] = 1;
+    (h.tiles || []).forEach(function(t){ if(t[0] === "windmill") f.windmill = 1; if(t[0] === "hill-round" || t[0] === "bump") f.hills = 1;
+      if(t[0] === "gap") f.moats = 1; if(t[0].indexOf("tunnel") === 0) f.tunnels = 1; });
+  });
+  var k = Object.keys(f); return k.length ? k.join(", ") : "classic lanes";
+}
+function courseTheme(c){ return (c && c.theme && typeof c.theme === "object") ? c.theme : {}; }
 function coursePar(c){ return (c.holes || []).reduce(function(a, h){ return a + (h.par|0); }, 0); }
 function coursePieces(c){
   var seen = {}, out = [];
@@ -241,7 +349,11 @@ function makeGame(host, opts){
       canvas.remove(); canvas = null; R2 = null;
     }
     V.course = c;
-    V.holes = c.holes.map(function(h){ return GS.compileHole(h, DATA.pieces); });
+    V.holes = c.holes.map(function(h){
+      var ch = GS.compileHole(h, DATA.pieces);
+      ch.lifts = (h.tiles || []).filter(function(t){ return LIFT[t[0]]; }).map(function(t){ return [t[0], t[1]|0, t[2]|0, t[3]|0]; });
+      return ch;
+    });
     return true;
   }
   function setHole(i){
@@ -293,10 +405,12 @@ function makeGame(host, opts){
     var grid = api.mk("div", "vg-golf-courses");
     DATA.courses.forEach(function(c){
       var card = api.mk("button", "vg-card vg-golf-course"); card.type = "button";
-      card.appendChild(api.mk("span", "vg-card-ic", c.id === "meadow" ? "🌼" : c.id === "windmill" ? "🌬️" : "🏰"));
+      var th = courseTheme(c), ic = api.mk("span", "vg-card-ic", typeof th.icon === "string" ? th.icon.slice(0, 4) : "⛳");
+      ic.setAttribute("aria-hidden", "true"); card.appendChild(ic);
       var t = api.mk("span", "vg-card-t"); t.appendChild(api.mk("b", null, c.name));
       var best = sv.best[c.id];
       t.appendChild(api.mk("span", null, c.holes.length+" holes · par "+coursePar(c)+(best ? " · your best "+best : "")));
+      if(typeof th.mood === "string") t.appendChild(api.mk("span", "vg-golf-mood", th.mood.slice(0, 40)+" · "+courseFeatures(c)));
       card.appendChild(t);
       if(mp && !isHost) card.disabled = true;
       card.addEventListener("click", function(){
@@ -440,12 +554,12 @@ function makeGame(host, opts){
       var f = P.fly || P.lastFly;
       if(hole === V.holeIdx && f && (f.end[0] !== end[0] || f.end[1] !== end[1] || f.holed !== !!m.holed || f.oob !== !!m.oob)){
         warnOnce();
-        var res = GS.simulate(V.hole, from[0], from[1], m.ax|0, m.az|0, m.power|0, true);
+        var res = GS.simulate(V.hole, from[0], from[1], m.ax|0, m.az|0, m.power|0, true, m.clk|0);
         if(res.end[0] !== end[0] || res.end[1] !== end[1]) res.path.push(end);
         var t = now(), at = ballAt(P, t), skip = Math.min(Math.floor((t - f.t0)*GS.C.TICK), res.path.length - 1);
         P.fly = null;
         // ease from where the ball is drawn now onto the server's roll (same moment of it) over 150 ms
-        startFlight(P, {from: from, path: res.path, end: end, holed: !!m.holed, oob: !!m.oob, mine: true, noSwing: true,
+        startFlight(P, {from: from, path: res.path, end: end, holed: !!m.holed, oob: !!m.oob, water: !!m.water, mine: true, noSwing: true,
                         blend: {x: at[0], z: at[1], t0: t, dur: 0.15}}, skip);
         if(!P.done) V.state = "flight";
       }
@@ -456,9 +570,9 @@ function makeGame(host, opts){
     if(hole !== V.holeIdx || mine){ hudUpdate(); return; }     // mine without a pending seq: another tab of mine; the view resyncs
     // Remote shots replay exactly; never overlap two flights of the same ball.
     if(P.fly) finishFlight(P);
-    var r = GS.simulate(V.hole, from[0], from[1], m.ax|0, m.az|0, m.power|0, true);
+    var r = GS.simulate(V.hole, from[0], from[1], m.ax|0, m.az|0, m.power|0, true, m.clk|0);
     if(r.end[0] !== end[0] || r.end[1] !== end[1] || r.holed !== !!m.holed){ warnOnce(); r.path.push(end); }
-    startFlight(P, {from: from, path: r.path, end: end, holed: !!m.holed, oob: !!m.oob});
+    startFlight(P, {from: from, path: r.path, end: end, holed: !!m.holed, oob: !!m.oob, water: !!m.water});
     hudUpdate();
   }
   function warnOnce(){ if(!V.warned){ V.warned = true; if(window.console) console.warn("golf: replay differs from the server; using the server's result"); } }
@@ -501,7 +615,7 @@ function makeGame(host, opts){
       V.state = P.done || f.holed ? "done" : "walk";
       var n = P.strokes[V.holeIdx]|0, par = V.hole.par;
       var msg = f.holed ? (n === 1 ? "Hole in one!" : "In the hole: "+n+" stroke"+(n === 1 ? "" : "s")+(n < par ? " (under par!)" : n === par ? " (par)" : ""))
-        : f.oob ? "Out of bounds: +1, back to your last lie" : P.done ? "Picked up at "+GS.C.MAX_STROKES+" strokes" : "";
+        : f.water ? "Splash! Water hazard: +1, back to your last lie" : f.oob ? "Out of bounds: +1, back to your last lie" : P.done ? "Picked up at "+GS.C.MAX_STROKES+" strokes" : "";
       if(msg){ api.toast((f.holed ? "⛳ " : "")+msg); say(msg); }
       if(V.mode === "practice") practiceAfterShot(P);
     }
@@ -515,20 +629,20 @@ function makeGame(host, opts){
     if(V.mode === "mp" && V.offline){ api.toast("Reconnecting to the Arena…"); return; }
     var ax = Math.round(Math.cos(V.aim.a)*4096), az = Math.round(Math.sin(V.aim.a)*4096), power = clamp(Math.round(V.aim.p), 1, 100);
     if(!ax && !az) ax = 1;
-    var n = V.holeIdx;
+    var n = V.holeIdx, clk = shotClock();
     if(V.mode === "mp"){
       // Optimistic: every client runs the server's exact integer roll, so the ball starts
       // moving now; the server's "shot" answer (same seq) only confirms it.
       V.seq++;
-      if(!MP || !MP.send("golf", "shot", {ax: ax, az: az, power: power, seq: V.seq, hole: n})){ api.toast("Not connected to the Arena"); return; }
+      if(!MP || !MP.send("golf", "shot", {ax: ax, az: az, power: power, seq: V.seq, hole: n, clk: clk})){ api.toast("Not connected to the Arena"); return; }
       V.pending = true; V.pendingAt = now();
       V.shotUndo = {hole: n, ball: P.ball.slice(), strokes: P.strokes[n]|0, done: P.done};
     }
-    var res = GS.simulate(V.hole, P.ball[0], P.ball[1], ax, az, power, true);
+    var res = GS.simulate(V.hole, P.ball[0], P.ball[1], ax, az, power, true, clk);
     P.strokes[n] = (P.strokes[n]|0) + 1 + (res.oob ? GS.C.OOB_PENALTY : 0);
     if(res.holed) P.done = true;
     else if(P.strokes[n] >= GS.C.MAX_STROKES){ P.strokes[n] = GS.C.MAX_STROKES; P.done = true; }
-    startFlight(P, {from: [P.ball[0], P.ball[1]], path: res.path, end: res.end, holed: res.holed, oob: res.oob, mine: true});
+    startFlight(P, {from: [P.ball[0], P.ball[1]], path: res.path, end: res.end, holed: res.holed, oob: res.oob, water: res.water, mine: true});
     V.state = "flight";
     hudUpdate();
   }
@@ -841,11 +955,23 @@ function makeGame(host, opts){
       r.fit = {s: s, ox: (W - (bb[2]+bb[0])*s)/2, oy: (H - (bb[3]+bb[1])*s)/2};
       var f = r.fit;
       function X(x){ return f.ox + x*s; } function Y(z){ return f.oy + z*s; }
+      var TH = courseTheme(V.course), ph = clockNow();
       g.setTransform(1, 0, 0, 1, 0, 0);
-      g.fillStyle = "#6fb35a"; g.fillRect(0, 0, W, H);
+      g.fillStyle = css(hex(TH.island, 0x6fb35a)); g.fillRect(0, 0, W, H);
       h.tiles.forEach(function(tl){ g.fillStyle = "#4fae55"; g.fillRect(X(tl[1]*T - T/2), Y(tl[2]*T - T/2), T*s+0.5, T*s+0.5); });
       g.fillStyle = "#2c3b2c";
       h.voids.forEach(function(v){ g.fillRect(X(v[0]), Y(v[1]), (v[2]-v[0])*s, (v[3]-v[1])*s); });
+      // surfaces, hills (light stripes), bumpers and the moving gates at the clock's phase
+      h.zones.forEach(function(z){
+        g.fillStyle = z[0] === GS.C.Z_SAND ? css(hex(TH.sand, 0xe9d59b)) : z[0] === GS.C.Z_ICE ? "#d6f0fb" : "#2f86c8";
+        g.fillRect(X(z[1]), Y(z[2]), (z[3]-z[1])*s, (z[4]-z[2])*s);
+      });
+      g.fillStyle = "rgba(255,255,255,.18)";
+      h.slopes.forEach(function(v){ g.fillRect(X(v[0]), Y(v[1]), (v[2]-v[0])*s, (v[3]-v[1])*s); });
+      h.bumpers.forEach(function(b){ g.fillStyle = css(hex(TH.bumper, 0xe74c3c)); g.beginPath(); g.arc(X(b[0]), Y(b[1]), b[2]*s, 0, 7); g.fill(); });
+      g.fillStyle = "#8a5a3c";
+      GS.moverSegs(h, Math.floor(ph)).forEach(function(sg){ g.fillRect(Math.min(X(sg[0]), X(sg[0]+sg[2])) - 2, Math.min(Y(sg[1]), Y(sg[1]+sg[3])) - 2,
+        Math.abs(sg[2])*s + 4, Math.abs(sg[3])*s + 4); });
       g.strokeStyle = "#d9825b"; g.lineWidth = Math.max(2, 600*s); g.lineCap = "round";
       g.beginPath(); h.segs.forEach(function(sg){ g.moveTo(X(sg[0]), Y(sg[1])); g.lineTo(X(sg[0]+sg[2]), Y(sg[1]+sg[3])); }); g.stroke();
       g.fillStyle = "#1d2a1d"; g.beginPath(); g.arc(X(h.cup[0]), Y(h.cup[1]), Math.max(3, GS.C.CUP*s), 0, 7); g.fill();
@@ -878,7 +1004,9 @@ function makeGame(host, opts){
   function make3d(cv){
     return Promise.all([golfLib(), loadData()]).then(function(res){
       var lib = res[0], THREE = lib.THREE;
-      var names = coursePieces(V.course).concat(["flag-red"], CHARS.map(function(c){ return c.f; }), CLUBS);
+      var props = (courseTheme(V.course).props || []).filter(function(n){ return typeof n === "string"; }).slice(0, 16);
+      var slid = V.course.holes.some(function(h){ return (h.movers || []).length; });
+      var names = coursePieces(V.course).concat(["flag-red"], CHARS.map(function(c){ return c.f; }), CLUBS, props, slid ? ["block"] : []);
       var got = 0;
       V.note = "Loading 0/"+names.length; load.classList.remove("hidden"); loadFill.style.width = "4%";
       return Promise.all(names.map(function(n){ return loadGlb(lib, n).then(function(g){
@@ -888,15 +1016,29 @@ function makeGame(host, opts){
     });
   }
   function build3d(lib, THREE, cv){
+    var TH = courseTheme(V.course), snow = !!TH.snow;
     var renderer = new THREE.WebGLRenderer({canvas: cv, antialias: true});
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
-    var scene = new THREE.Scene(); scene.background = new THREE.Color(0x9fd3f0);
+    renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
+    var scene = new THREE.Scene();
+    // sky: a vertical gradient behind everything, fog fading the far island into it
+    var sky = hex((TH.sky || [])[0], 0x8fc9ef), horizon = hex((TH.sky || [])[1], 0xdff1ff);
+    var gc = document.createElement("canvas"); gc.width = 2; gc.height = 256;
+    var gg = gc.getContext("2d"), grad = gg.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, css(sky)); grad.addColorStop(0.62, css(horizon)); grad.addColorStop(1, css(hex(TH.fog, horizon)));
+    gg.fillStyle = grad; gg.fillRect(0, 0, 2, 256);
+    var skyTex = new THREE.CanvasTexture(gc); skyTex.colorSpace = THREE.SRGBColorSpace; scene.background = skyTex;
+    scene.fog = new THREE.Fog(hex(TH.fog, horizon), +TH.fogNear || 9, +TH.fogFar || 40);
     var camera = new THREE.PerspectiveCamera(55, 1.6, 0.03, 200);
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x4b5b45, 2.2));
-    var sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(3, 8, 4); scene.add(sun);
+    scene.add(new THREE.HemisphereLight(hex(TH.hemiSky, 0xffffff), hex(TH.hemiGround, 0x4b5b45), +TH.hemiI || 2.0));
+    var sun = new THREE.DirectionalLight(hex(TH.sun, 0xffffff), +TH.sunI || 1.8); sun.position.set(3, 8, 4);
+    sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024); sun.shadow.bias = -0.0008; sun.shadow.normalBias = 0.01;
+    scene.add(sun); scene.add(sun.target);
+    // the sea / plain the island sits in
     var groundGeo = new THREE.PlaneGeometry(400, 400); groundGeo.rotateX(-Math.PI/2);
-    var ground = new THREE.Mesh(groundGeo, new THREE.MeshLambertMaterial({color: 0x6fb35a})); ground.position.y = -0.002; scene.add(ground);
-    var holeGroup = null, blades = [], ballGeo = new THREE.SphereGeometry(BALL_R, 16, 12);
+    var ground = new THREE.Mesh(groundGeo, new THREE.MeshLambertMaterial({color: hex(TH.sea, 0x6fb35a)})); ground.position.y = -0.09; scene.add(ground);
+    var tint = new THREE.Color(hex(TH.tint, 0xffffff)), tinted = {}, snowed = {};
+    var holeGroup = null, blades = [], sliders = [], waters = [], ballGeo = new THREE.SphereGeometry(BALL_R, 16, 12);
     var blobGeo = new THREE.CircleGeometry(1, 20); blobGeo.rotateX(-Math.PI/2);
     var blobMat = new THREE.MeshBasicMaterial({color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false});
     var arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), new THREE.Vector3(), 0.5, 0xffffff, 0.08, 0.05); arrow.visible = false; scene.add(arrow);
@@ -904,22 +1046,135 @@ function makeGame(host, opts){
     var lost = function(e){ e.preventDefault(); if(V.alive){ V.note = "3D unavailable: showing the map view."; setTimeout(fallback2d, 0); } };
     cv.addEventListener("webglcontextlost", lost);
     function scene3(name){ return GLTF[name] || null; }
+    // course pieces take the theme's tint (one shared copy per material); props get a dusting of snow
+    function dress(o, how){
+      o.traverse(function(m){
+        if(!m.isMesh) return;
+        m.castShadow = true; m.receiveShadow = true;
+        if(how === "tile" && tint.getHex() !== 0xffffff){
+          var k = m.material.uuid;
+          if(!tinted[k]){ tinted[k] = m.material.clone(); tinted[k].color.multiply(tint); }
+          m.material = tinted[k];
+        } else if(how === "prop"){
+          // Nature Kit materials leave glTF's metallic default (1.0), which renders black without an
+          // environment map: make them matte. Grass tufts on rocks take the island's colour, and
+          // on Snowy Peak everything gets a dusting of snow.
+          m.castShadow = true; m.receiveShadow = false;
+          var j = m.material.uuid, nm = m.material.name || "";
+          if(!snowed[j]){
+            var c = snowed[j] = m.material.clone(); c.metalness = 0; c.roughness = 0.9;
+            if(/^grass$/i.test(nm) && TH.tuftTint) c.color.lerp(new THREE.Color(hex(TH.island, 0x79b95a)), snow ? 0.9 : 0.75);
+            if(/^dirt$/i.test(nm) && TH.rockTint) c.color.lerp(new THREE.Color(hex(TH.rockTint, 0x9a9aa6)), 0.75);
+            if(snow) c.color.lerp(new THREE.Color(0xf4f8ff), /leaf/i.test(nm) ? 0.4 : /grass/i.test(nm) ? 0.6 : 0.25);
+          }
+          m.material = snowed[j];
+        }
+      });
+      return o;
+    }
+    function flat(w, d, color, opts){
+      var g = new THREE.PlaneGeometry(w, d); g.rotateX(-Math.PI/2);
+      var mt = opts && opts.standard ? new THREE.MeshStandardMaterial({color: color, roughness: opts.rough != null ? opts.rough : 0.6, metalness: 0.05,
+                 transparent: !!opts.alpha, opacity: opts.alpha || 1, polygonOffset: true, polygonOffsetFactor: -2})
+               : new THREE.MeshLambertMaterial({color: color, polygonOffset: true, polygonOffsetFactor: -2});
+      var m = new THREE.Mesh(g, mt); m.receiveShadow = true; return m;
+    }
+    // an island: a rounded plate a couple of tiles wider than the hole
+    function island(bb){
+      var x0 = bb[0]/T - 2.2, z0 = bb[1]/T - 2.2, x1 = bb[2]/T + 2.2, z1 = bb[3]/T + 2.2, rr = 1.6, sh = new THREE.Shape();
+      sh.moveTo(x0 + rr, z0); sh.lineTo(x1 - rr, z0); sh.quadraticCurveTo(x1, z0, x1, z0 + rr); sh.lineTo(x1, z1 - rr);
+      sh.quadraticCurveTo(x1, z1, x1 - rr, z1); sh.lineTo(x0 + rr, z1); sh.quadraticCurveTo(x0, z1, x0, z1 - rr); sh.lineTo(x0, z0 + rr);
+      sh.quadraticCurveTo(x0, z0, x0 + rr, z0);
+      var g = new THREE.ExtrudeGeometry(sh, {depth: 0.09, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.08, bevelSegments: 2, curveSegments: 6});
+      g.rotateX(Math.PI/2);
+      var m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({color: hex(TH.island, 0x79b95a)}));
+      m.position.y = -0.003; m.receiveShadow = true; m.userData.own = true; return m;
+    }
+    // scenery: the theme's props scattered (deterministically) on the island, clear of the lanes
+    function scatter(group, h, idx){
+      var props = (TH.props || []).filter(function(n){ return scene3(n); });
+      if(!props.length) return;
+      var r = api.rng("golf:"+V.course.id+":"+idx), bb = h.bbox, placed = 0;
+      var tall = /^(tree|stone-tall|rock-tall|statue|cactus-tall|crops-corn)/;
+      function clear(x, z, gap){
+        for(var key in h.floor){ var c = key.split(","), cx = +c[0], cz = +c[1];
+          var dx = Math.max(Math.abs(x - cx) - 0.5, 0), dz = Math.max(Math.abs(z - cz) - 0.5, 0);
+          if(dx*dx + dz*dz < gap*gap) return false; }
+        var tx = h.tee[0]/T, tz = h.tee[1]/T;           // golfers wait to the right of the tee, and the
+        if(x > tx - 0.2 && x < tx + 1.4 && z > tz - 0.4 && z < tz + 1.2) return false;   // camera looks from behind it
+        if(Math.abs(x - tx) < 2.4 && z > tz && z < tz + 3.5) return false;
+        return true;
+      }
+      for(var tries = 0; tries < 260 && placed < 34; tries++){
+        var name = props[Math.floor(r()*props.length)], x = bb[0]/T - 1.9 + r()*((bb[2]-bb[0])/T + 3.8), z = bb[1]/T - 1.9 + r()*((bb[3]-bb[1])/T + 3.8);
+        var big = tall.test(name);
+        if(!clear(x, z, big ? 0.85 : 0.35)) continue;
+        var o = dress(scene3(name).scene.clone(), "prop"), sc = (big ? 0.5 : 0.75) + r()*0.3;
+        o.scale.setScalar(sc); o.position.set(x, 0, z); o.rotation.y = r()*Math.PI*2;
+        group.add(o); placed++;
+      }
+    }
     var r = {};
     r.size = function(w, h){ renderer.setSize(w, h, false); camera.aspect = w/h; camera.updateProjectionMatrix(); };
     r.buildHole = function(){
-      if(holeGroup){ scene.remove(holeGroup); }
-      holeGroup = new THREE.Group(); blades = [];
-      V.hole.tiles.forEach(function(tl){
+      if(holeGroup){
+        scene.remove(holeGroup);
+        holeGroup.traverse(function(o){ if(o.userData && o.userData.own){ o.geometry.dispose(); o.material.dispose(); } });
+      }
+      holeGroup = new THREE.Group(); blades = []; sliders = []; waters = [];
+      var h = V.hole, bb = h.bbox;
+      holeGroup.add(island(bb));
+      h.tiles.forEach(function(tl){
         var g = scene3(tl[0]); if(!g) return;
-        var o = g.scene.clone(); o.position.set(tl[1], 0, tl[2]); o.rotation.y = (tl[3]|0)*Math.PI/2; holeGroup.add(o);
-        var b = o.getObjectByName("blades"); if(b) blades.push(b);
+        var o = dress(g.scene.clone(), "tile"); o.position.set(tl[1], 0, tl[2]); o.rotation.y = (tl[3]|0)*Math.PI/2; holeGroup.add(o);
+        var b = o.getObjectByName("blades");
+        if(b){ b.position.y -= 0.06; blades.push(b); }   // hub a touch lower, so a blade at the bottom really covers the door
+      });
+      // surfaces: sand, ice and water drawn on the felt
+      h.zones.forEach(function(z){
+        var w = (z[3]-z[1])/T, d = (z[4]-z[2])/T, m;
+        if(z[0] === GS.C.Z_SAND) m = flat(w, d, hex(TH.sand, 0xe9d59b));
+        else if(z[0] === GS.C.Z_ICE) m = flat(w, d, 0xdaf2ff, {standard: true, rough: 0.08, alpha: 0.82});
+        else if(z[0] === GS.C.Z_WATER){ m = flat(w, d, 0x2f86c8, {standard: true, rough: 0.15, alpha: 0.9}); waters.push(m); }
+        if(!m) return;
+        m.userData.own = true; m.position.set((z[1]+z[3])/2/T, FLOOR_Y + (z[0] === GS.C.Z_WATER ? 0.0016 : 0.0008), (z[2]+z[4])/2/T); holeGroup.add(m);
+      });
+      // bumpers: a fat ring post in the theme's colour
+      h.bumpers.forEach(function(b){
+        var rad = b[2]/T, post = new THREE.Mesh(new THREE.CylinderGeometry(rad*0.92, rad, 0.13, 20),
+          new THREE.MeshStandardMaterial({color: hex(TH.bumper, 0xe74c3c), roughness: 0.35}));
+        post.position.set(b[0]/T, FLOOR_Y + 0.065, b[1]/T); post.castShadow = true; post.userData.own = true; holeGroup.add(post);
+        var cap = new THREE.Mesh(new THREE.TorusGeometry(rad*0.78, rad*0.12, 8, 24), new THREE.MeshStandardMaterial({color: 0xffffff, roughness: 0.3}));
+        cap.rotation.x = Math.PI/2; cap.position.set(b[0]/T, FLOOR_Y + 0.13, b[1]/T); cap.userData.own = true; holeGroup.add(cap);
+      });
+      // sliding gates: a Kenney block, stretched to the gate's size; moved every frame by the clock
+      var bk = scene3("block");
+      h.movers.forEach(function(m){
+        if(m[0] !== 1 || !bk) return;
+        var o = dress(bk.scene.clone(), "tile"); o.scale.set(2*m[4]/T, 0.9, 2*m[5]/T);
+        holeGroup.add(o); sliders.push({o: o, m: m});
       });
       var fg = scene3("flag-red");
       if(fg){ var flag = fg.scene.clone(); flag.scale.setScalar(0.45); flag.position.set(V.hole.cup[0]/T, FLOOR_Y - 0.03, V.hole.cup[1]/T); holeGroup.add(flag); r.flag = flag; }
+      scatter(holeGroup, h, V.holeIdx);
       scene.add(holeGroup);
+      // the sun follows the hole so its shadows cover the whole course
+      var cx = (bb[0]+bb[2])/2/T, cz = (bb[1]+bb[3])/2/T, span = Math.max(bb[2]-bb[0], bb[3]-bb[1])/T/2 + 2.6;
+      sun.position.set(cx + 3, 8, cz + 4); sun.target.position.set(cx, 0, cz);
+      var sc = sun.shadow.camera; sc.left = -span; sc.right = span; sc.top = span; sc.bottom = -span; sc.near = 1; sc.far = 24; sc.updateProjectionMatrix();
       V.order.forEach(function(uid){ r.removePlayer(V.players[uid]); });
       r.size(Math.max(280, wrap.clientWidth || 640), parseInt(cv.style.height, 10) || 400);
     };
+    // moving obstacles at the shot clock's phase (they are part of play, so they move under Calm too)
+    function placeMovers(ph){
+      var BR = GS.C.BLADE_GAP*4;
+      blades.forEach(function(b){ b.rotation.z = Math.PI/4 + 2*Math.PI*(ph % BR)/BR; });
+      sliders.forEach(function(s){
+        var m = s.m, ip = Math.floor(ph), off = GS.slideOff(m, ip % GS.C.CLOCK), off2 = GS.slideOff(m, (ip + 1) % GS.C.CLOCK), u = ph - ip;
+        var o = off + (off2 - off)*u;
+        s.o.position.set((m[1] + (m[3] ? 0 : o))/T, 0, (m[2] + (m[3] ? o : 0))/T);
+      });
+    }
     function makeAvatar(P){
       var g = scene3(CHARS[P.c % CHARS.length].f); if(!g) return null;
       var obj = lib.clone(g.scene); obj.scale.setScalar(0.5);
@@ -957,25 +1212,27 @@ function makeGame(host, opts){
     };
     r.render = function(dt, t){
       var calm = api.calm();
-      blades.forEach(function(b){ if(!calm) b.rotation.z += dt*1.2; });
+      placeMovers(clockNow());
+      waters.forEach(function(w){ w.material.opacity = calm ? 0.9 : 0.86 + 0.05*Math.sin(t*1.7); });
       V.order.forEach(function(uid){
         var P = V.players[uid];
         if(!P.mesh) P.mesh = makeAvatar(P);
         var m = P.mesh; if(!m) return;
-        m.obj.position.set(P.av.x/T, FLOOR_Y, P.av.z/T); m.obj.rotation.y = P.av.yaw;
+        m.obj.position.set(P.av.x/T, FLOOR_Y + liftAt(V.hole, P.av.x, P.av.z), P.av.z/T); m.obj.rotation.y = P.av.yaw;
         m.cshadow.position.set(P.av.x/T, FLOOR_Y + 0.002, P.av.z/T);
         setAnim(m, P.av.anim);
         if(m.club){ var sw = P.av.anim === A_SWING && !calm ? Math.max(0, 1 - (t - P.swingAt)/0.6) : 0; m.club.rotation.x = -Math.sin(sw*Math.PI)*0.9; }
         m.mixer.update(dt);
         var b = ballAt(P, t), sink = P.sunk && !P.fly;
         m.ball.visible = !sink; m.bshadow.visible = !sink;
-        m.ball.position.set(b[0]/T, BALL_Y, b[1]/T); m.bshadow.position.set(b[0]/T, FLOOR_Y + 0.002, b[1]/T);
+        var ly = liftAt(V.hole, b[0], b[1]);
+        m.ball.position.set(b[0]/T, BALL_Y + ly, b[1]/T); m.bshadow.position.set(b[0]/T, FLOOR_Y + ly + 0.002, b[1]/T);
       });
       if(r.flag){ var any = V.order.some(function(u){ var Q = V.players[u]; return Q.sunk && !Q.fly; }); r.flag.position.y = FLOOR_Y - 0.03 + (any && !calm ? 0.08 : 0); }
       // aim arrow
       var P = me();
       if(P && V.state === "address"){
-        arrow.visible = true; arrow.position.set(P.ball[0]/T, BALL_Y, P.ball[1]/T);
+        arrow.visible = true; arrow.position.set(P.ball[0]/T, BALL_Y + liftAt(V.hole, P.ball[0], P.ball[1]), P.ball[1]/T);
         arrow.setDirection(new THREE.Vector3(Math.cos(V.aim.a), 0, Math.sin(V.aim.a)));
         arrow.setLength(0.15 + V.aim.p/100*1.4, 0.08, 0.05);
       } else arrow.visible = false;
@@ -1006,7 +1263,8 @@ function makeGame(host, opts){
         var mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
         mats.forEach(function(mt){ if(mt.map) mt.map.dispose(); mt.dispose(); });
       });
-      ballGeo.dispose(); blobGeo.dispose(); blobMat.dispose();
+      ballGeo.dispose(); blobGeo.dispose(); blobMat.dispose(); skyTex.dispose();
+      [tinted, snowed].forEach(function(c){ for(var k in c) c[k].dispose(); });
       renderer.dispose(); try { renderer.forceContextLoss(); } catch(e){}
     };
     return r;
@@ -1107,11 +1365,12 @@ function makeGame(host, opts){
     if(!on){ V.order.forEach(function(u){ var Q = V.players[u]; if(u !== myId()) Q.lastQ = -1; }); }
   };
   V.startPractice = startPractice;
+  V.setHole = function(i){ if(V.mode === "practice" && V.holes.length) setHole(i); };   // smoke tests
   return V;
 }
 
 /* ---------- registration: a solo card and a "with friends" card ---------- */
-HQV.register({id: "golf", name: "Mini Golf", icon: "⛳", desc: "3D putting practice on three courses",
+HQV.register({id: "golf", name: "Mini Golf", icon: "⛳", desc: "3D putting on five themed courses",
   mount: function(el){ if(CUR) CUR.destroy(); CUR = makeGame(el, {mode: "practice"}); },
   unmount: function(){ if(CUR){ CUR.destroy(); CUR = null; } },
   pause: function(){ if(CUR) CUR.paused = true; },

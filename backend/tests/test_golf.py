@@ -45,8 +45,9 @@ def test_golden_vectors_match():
     assert len(vecs) >= 150
     for v in vecs:
         h = golf.course_holes(v["course"])[v["hole"]]
-        r = golf.simulate(h, v["from"][0], v["from"][1], v["ax"], v["az"], v["power"])
-        assert (r["end"], r["holed"], r["oob"], r["ticks"]) == (v["end"], v["holed"], v["oob"], v["ticks"]), v
+        r = golf.simulate(h, v["from"][0], v["from"][1], v["ax"], v["az"], v["power"], v["clk"])
+        assert (r["end"], r["holed"], r["oob"], r["water"], r["ticks"]) == \
+            (v["end"], v["holed"], v["oob"], v["water"], v["ticks"]), v
 
 
 def test_deterministic_and_integer():
@@ -80,7 +81,7 @@ def test_every_hole_compiles():
             assert names.count("start") == 1, spec["name"]
             assert sum(n.startswith("hole-") for n in names) == 1, spec["name"]
             assert golf.on_floor(h, *h["tee"]) and golf.on_floor(h, *h["cup"]), spec["name"]
-            for x1, z1, dx, dz, L in h["segs"]:
+            for x1, z1, dx, dz, L, _kind in h["segs"]:
                 assert dx * dx + dz * dz <= 15000 ** 2
             assert 2 <= h["par"] <= 5
             assert len({(t[1], t[2]) for t in spec["tiles"]}) == len(spec["tiles"]), "overlapping tiles"
@@ -103,7 +104,7 @@ def _dist_field(h, step=500):
         for k in range(5):
             x, z = a[0] + (b[0] - a[0]) * k // 4, a[1] + (b[1] - a[1]) * k // 4
             for i in h["grid"].get((golf.cell_of(x), golf.cell_of(z)), ()):
-                x1, z1, dx, dz, L = h["segs"][i]
+                x1, z1, dx, dz, L = h["segs"][i][:5]
                 p = max(0, min(L, ((x - x1) * dx + (z - z1) * dz) / L))
                 if (x - x1 - dx * p / L) ** 2 + (z - z1 - dz * p / L) ** 2 < (golf.R * 0.8) ** 2:
                     return True
@@ -148,6 +149,86 @@ def test_every_hole_is_playable_within_par_plus_three():
                 strokes += 1 + (golf.OOB_PENALTY if r["oob"] else 0)
                 ball, holed = r["end"], r["holed"]
             assert holed and strokes <= h["par"] + 3, (cid, h["name"], strokes)
+
+
+def _lane(*mid, **extra):
+    """start, the given middle tiles (straight lanes heading -z), a cup."""
+    tiles = [["start", 0, 0, 0]] + [[name, 0, -i - 1, 0] for i, name in enumerate(mid)] + [["hole-round", 0, -len(mid) - 1, 2]]
+    return golf.compile_hole(dict({"name": "t", "par": 3, "tiles": tiles}, **extra))
+
+
+def test_five_courses_with_themes():
+    assert list(golf.COURSES) == ["meadow", "windmill", "keep", "desert", "snow"]
+    assert [len(c["holes"]) for c in golf.COURSES.values()] == [4, 5, 6, 5, 5]
+    for c in golf.COURSES.values():
+        assert isinstance(c["theme"]["props"], list) and len(c["theme"]["sky"]) == 2
+
+
+def test_every_mover_period_divides_the_clock():
+    for cid in golf.COURSES:
+        for h in golf.course_holes(cid):
+            for m in h["movers"]:
+                if m[0] == 1:
+                    assert golf.CLOCK % m[7] == 0 and m[7] % 2 == 0, (cid, h["name"])
+                    assert 2 * m[6] // (m[7] // 2) < golf.R, "a gate must move slower than a ball radius per tick"
+
+
+def test_sand_slows_and_ice_speeds_the_roll():
+    plain = _lane(*["straight"] * 6)
+    sand = _lane(*["straight"] * 6, zones=[["sand", 0, -i, -4000, -5000, 4000, 5000] for i in range(1, 7)])
+    ice = _lane(*["straight"] * 6, zones=[["ice", 0, -i, -4000, -5000, 4000, 5000] for i in range(1, 7)])
+    d = [h["tee"][1] - golf.simulate(h, *h["tee"], 0, -4096, 30)["end"][1] for h in (sand, plain, ice)]
+    assert 0 < d[0] < d[1] / 2 and d[2] > d[1] * 1.5, d
+
+
+def test_water_is_a_hazard_back_to_the_lie():
+    h = _lane("straight", "straight", "straight", zones=[["water", 0, -2, -4000, -3000, 4000, 3000]])
+    r = golf.simulate(h, *h["tee"], 0, -4096, 50)
+    assert r["oob"] and r["water"] and r["end"] == list(h["tee"])
+    g = golf.Golf()
+    g.start({"a": {"userId": "a"}}, "desert", 0.0)
+    g.hole = 1                                       # Oasis: the pond sits right in the line
+    h = golf.course_holes("desert")[1]
+    for p in g.players.values():
+        p["ball"] = h["tee"]
+    ev, err = g.shot("a", {"ax": 0, "az": -4096, "power": 55, "clk": 5}, 1)
+    assert err is None and ev["water"] and ev["strokes"] == 2 and ev["end"] == list(h["tee"]) and ev["clk"] == 5
+
+
+def test_bumper_kicks_harder_than_a_wall():
+    h = _lane("straight", "straight", "straight", bumpers=[[0, -2, 0, 0, 900]])
+    r = golf.simulate(h, *h["tee"], 0, -4096, 45)
+    assert not r["holed"] and r["end"][1] > -2 * golf.TILE    # bounced back toward the tee
+    wall = _lane("straight", "straight", "straight")
+    assert golf.simulate(wall, *wall["tee"], 0, -4096, 45)["end"] != r["end"]
+
+
+def test_hill_rolls_a_weak_putt_back():
+    h = _lane("straight", "hill-round", "straight")
+    weak = golf.simulate(h, *h["tee"], 0, -4096, 12)
+    assert weak["end"][1] > -2 * golf.TILE + 3000          # never got over the crest
+    strong = golf.simulate(h, *h["tee"], 0, -4096, 60)
+    assert strong["end"][1] < -2 * golf.TILE                # rolled over it
+    assert golf.slope_at(h, 0, -2 * golf.TILE + 1000) is not None
+
+
+def test_windmill_blades_block_by_the_clock():
+    h = golf.course_holes("windmill")[0]                   # start, straight, windmill, straight, cup
+    outs = {golf.simulate(h, *h["tee"], 0, -4096, 70, clk)["holed"] or
+            golf.simulate(h, *h["tee"], 0, -4096, 70, clk)["end"][1] < -2 * golf.TILE for clk in range(0, 576, 8)}
+    assert outs == {True, False}, "some phases get through the door and some are blocked"
+    for clk in (0, 100, 2879):                             # the same phase always rolls the same
+        assert golf.simulate(h, *h["tee"], 0, -4096, 70, clk) == golf.simulate(h, *h["tee"], 0, -4096, 70, clk + golf.CLOCK)
+    assert golf.blades_down(0) and golf.blades_down(golf.BLADE_GAP) and not golf.blades_down(golf.BLADE_GAP // 2)
+
+
+def test_slider_moves_with_the_clock():
+    h = golf.course_holes("desert")[2]                     # Canyon Gates
+    m = [m for m in h["movers"] if m[0] == 1][0]
+    offs = {golf.slide_off(m, ph) for ph in range(0, m[7])}
+    assert min(offs) == -m[6] and max(offs) == m[6]
+    ends = {tuple(golf.simulate(h, *h["tee"], 0, -4096, 55, clk)["end"]) for clk in range(0, 720, 24)}
+    assert len(ends) > 1
 
 
 def test_gap_is_out_of_bounds_and_returns_to_the_lie():

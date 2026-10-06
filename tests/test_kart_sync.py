@@ -73,7 +73,8 @@ probes.forEach(function(p){
 var grid = []; for(var k = 0; k < 8; k++) grid.push(KT.gridSlot(k));
 console.log(JSON.stringify({out: out, grid: grid, tiles: data.tracks.map(function(t){ return tr[t.id].tiles; })}));
 """ % (json.dumps(data), json.dumps(probes))
-        res = subprocess.run([NODE, "-e", script], capture_output=True, text=True, timeout=60)
+        # the script carries every probe: pipe it in (argv is capped at 128 KB per string on Linux)
+        res = subprocess.run([NODE, "-"], input=script, capture_output=True, text=True, timeout=60)
         self.assertEqual(res.returncode, 0, res.stderr)
         got = json.loads(res.stdout)
         for (tid, u, lat, x, z), (pa, loc) in zip(probes, got["out"]):

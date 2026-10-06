@@ -52,12 +52,14 @@ types rather than a nullable column you must remember to check.
 | `auth.rs` | device tokens, OAuth, WS tickets |
 | `rooms.rs` | websocket rooms; room-wide broadcast plus a bounded direct queue per connection (one socket / one user / a lobby) |
 | `realtime.rs` | done: fixed-rate per-room tick (tokio), process-wide ticker budget, per-room bytes/s budget with snapshot thinning, overrun counting, token `Bucket` — port of `app/realtime.py` |
-| `kart.rs` | done: Kart Racing — track compile/geometry, referee (grid → race → done, laps, sender-clock speed check, fixes, drop/restore), the kart lobby and its tick loop — port of `app/kart.py` + the kart branch of `app/valley.py`. Kart is the only Valley game here; any other `g` gets `unknown game` |
+| `kart.rs` | done: Kart Racing — track compile/geometry, referee (grid → race → done, laps, sender-clock speed check, fixes, drop/restore), the kart lobby and its tick loop — port of `app/kart.py` + the kart branch of `app/valley.py`. Kart and the platformer are the only Valley games here; any other `g` gets `unknown game` |
+| `platformer.rs` | done: Platformer Rush — level compile/geometry, referee (grid → run → done; race and co-op; sender-clock speed, rise/fall and jump-envelope checks, never inside a platform, checkpoints in order, coins once per player / once per room, the flag, fixes, respawns, drop/restore), the plat lobby and its tick loop (sharing the process-wide `realtime::Registry` with kart) — port of `app/platformer.py` + the plat branch of `app/valley.py` |
 
 Kart tracks are read from `backend/app/kart_tracks.json` with `include_str!`
 at build time, so both backends race on the same file; a test checks the
 embedded copy against it.
+Platformer levels come from `backend/app/platformer_levels.json` the same way.
 
 ```bash
-cargo test    # 69 tests
+cargo test    # 97 tests
 ```

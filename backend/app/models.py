@@ -349,3 +349,16 @@ class TacoDiner(Base):
     @property
     def tacos(self) -> int:
         return self.mild_hard + self.mild_soft + self.wild_hard + self.wild_soft
+
+
+class RoomFarm(Base):
+    """The Valley's shared garden for one room: plots, seeds and who gardens there.
+    One small JSON document per room; water is read from daily_stats, not stored."""
+
+    __tablename__ = "room_farms"
+
+    room_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

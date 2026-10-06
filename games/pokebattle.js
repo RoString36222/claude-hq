@@ -320,6 +320,13 @@ function spriteUrls(mon, back){
   if(back) out.push({u: A+(sh?"shiny/":""), f: mon.dex+".gif", flip:true});
   return out;
 }
+// Warm the image cache so a send-out never pops in late (first candidate of each side).
+pk.preload = function(mons){
+  if(!packIsPoke() || typeof Image === "undefined") return;
+  (mons || []).forEach(function(m){
+    [false, true].forEach(function(back){ var u = spriteUrls(m, back)[0]; if(u){ var im = new Image(); im.decoding = "async"; im.src = u.u + u.f; } });
+  });
+};
 function creatureBox(mon, px){
   var box = mk("div", "pkb-cre");
   if(typeof G.paintCreature === "function"){
@@ -367,6 +374,8 @@ Fx.prototype.size = function(){
 // Runs draw(g, t 0..1, size) for ms, then clears. Resolves when done.
 Fx.prototype.run = function(ms, draw){
   var self = this;
+  // A hidden tab gets no animation frames: skip the effect rather than stall the turn queue.
+  if(typeof document !== "undefined" && document.hidden) return Promise.resolve();
   return new Promise(function(res){
     var t0 = 0, sz = self.size();
     function frame(now){
@@ -732,12 +741,21 @@ Scene.prototype.play = function(events, mySide, who){
   return p.then(function(){ self.busy = false; });
 };
 /* ---------- commands ---------- */
-Scene.prototype.setMode = function(mode, info){
-  this.mode = mode; this.modeInfo = info || null;
+Scene.prototype.setMode = function(mode, info, extra){
+  // Waiting text (a countdown) updates in place: no DOM rebuild every second.
+  if(mode === "wait" && this.mode === "wait" && this.waitEl && !!extra === !!this.waitExtra){
+    if(this.modeInfo !== info){ this.modeInfo = info; this.waitEl.textContent = info || "Waiting…"; }
+    return;
+  }
+  this.mode = mode; this.modeInfo = info || null; this.waitEl = null; this.waitExtra = extra || null;
   var c = this.cmd, self = this, v = this.view, o = this.opts;
   c.textContent = ""; c.className = "pkb-cmd m-"+mode;
   if(mode === "busy" || mode === "idle") return;
-  if(mode === "wait"){ c.appendChild(mk("div", "pkb-wait", info || "Waiting…")); return; }
+  if(mode === "wait"){
+    var wt = mk("div", "pkb-wait", info || "Waiting…"); c.appendChild(wt); this.waitEl = wt;
+    if(extra){ var xb = mk("button", "pkb-btn ghost", extra.label); xb.type = "button"; xb.addEventListener("click", extra.fn); c.appendChild(xb); }
+    return;
+  }
   if(mode === "over"){ (info || []).forEach(function(b){ var x = mk("button", "hbtn"+(b.primary ? " primary" : ""), b.label); x.type = "button"; x.addEventListener("click", b.fn); c.appendChild(x); }); this.focusFirst(); return; }
   var me = v.me.team[v.me.active];
   if(mode === "main"){

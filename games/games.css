@@ -145,13 +145,13 @@ html.hq-calm .vg-card:hover{transform:none}
 .pkb-hpnum{align-self:flex-end;font-family:var(--mono);font-size:12px;font-weight:700}
 .pkb-exp{display:flex;align-items:center;gap:6px}
 .pkb-expbar{flex:1;height:3px;background:var(--bg2);border-radius:999px;overflow:hidden}
-.pkb-expbar i{display:block;height:100%;background:var(--brand)}
+.pkb-expbar i{display:block;height:100%;width:0;background:var(--brand)}
 .pkb-balls{display:flex;gap:3px}
 .pkb-ball{width:7px;height:7px;border-radius:50%;background:var(--need);border:1px solid var(--line)}
 .pkb-ball.pkb-b-st{background:var(--gold)}
 .pkb-ball.pkb-b-out{background:var(--faint)}
 .pkb-ball.pkb-b-none{background:transparent}
-.pkb-ui{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pkb-ui{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:minmax(158px,auto);gap:8px}   /* fixed height: no jump between menus */
 .pkb-text{min-height:64px;padding:10px 12px;border-radius:var(--radius-sm);background:var(--panel);border:2px solid var(--line);font-size:14px;line-height:1.4;cursor:default}
 .pkb-cmd{display:grid;grid-template-columns:1fr 1fr;gap:6px;align-content:start;position:relative}
 .pkb-cmd.m-wait{display:flex}
@@ -180,10 +180,16 @@ html.hq-calm .vg-card:hover{transform:none}
 .pkb-roster{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}
 .pkb-rcard{display:flex;flex-direction:column;gap:4px;padding:8px 10px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);font-size:12px}
 @media (max-width:640px){
-  .pkb-scene{aspect-ratio:4/3}
-  .pkb-ui{grid-template-columns:1fr}
+  .pkb-scene{aspect-ratio:1/1}
+  .pkb-ui{grid-template-columns:1fr;grid-template-rows:auto minmax(158px,auto)}
   .pkb-plate{max-width:58%;font-size:11px}
   .pkb-name{font-size:12px}
 }
 html.hq-calm .pkb *{transition:none!important;animation:none!important}
 @media (prefers-reduced-motion:reduce){ .pkb *{transition:none!important;animation:none!important} }
+.vg-reconnect{align-self:flex-start;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:700;color:var(--ink);
+  background:color-mix(in srgb,var(--warn) 22%,var(--panel));border:1px solid var(--warn);animation:vgPulse 1.4s ease-in-out infinite}
+.vg-reconnect[hidden]{display:none}
+@keyframes vgPulse{50%{opacity:.55}}
+html.hq-calm .vg-reconnect{animation:none}
+@media (prefers-reduced-motion:reduce){ .vg-reconnect{animation:none} }

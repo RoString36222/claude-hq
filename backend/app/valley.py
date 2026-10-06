@@ -437,8 +437,11 @@ class Race:
 
 
 # -------------------------------------------------------------------- duel --
-DUEL_CHOOSE_SECS = 60          # to pick a move or switch; then the server picks for you
+DUEL_FIRST_SECS = 60           # the first choice (time to read the screen)
+DUEL_CHOOSE_SECS = 30          # each later move-or-switch choice; then the server picks for you
 DUEL_REPLACE_SECS = 30         # to send in the next creature after a faint
+DUEL_GRACE_SECS = 20           # a dropped connection may come back within this and play on
+DUEL_AFK_PICKS = 2             # consecutive server picks for one side = that side forfeits
 
 
 def _team(raw: Any) -> list[dict] | None:
@@ -452,6 +455,12 @@ def _team(raw: Any) -> list[dict] | None:
 
 
 class Duel:
+    """One live duel per room. Both players choose at once; the turn resolves when both are
+    in (or a deadline passes). There is no server tick: deadlines are enforced lazily on the
+    next message from anyone in the match, and clients send 'poke' when a countdown ends.
+    A player whose last socket drops gets DUEL_GRACE_SECS to come back before forfeiting;
+    rejoining the lobby returns the full match view, so a refresh resumes mid-battle."""
+
     def __init__(self) -> None:
         self.pending: dict[str, dict] = {}     # challenged user_id -> {from, team}
         self.match: dict | None = None
@@ -461,9 +470,12 @@ class Duel:
         if not mt:
             return None
         st = mt["state"]
+        t = now()
         return {"mid": mt["mid"], "a": mt["a"], "b": mt["b"], "ids": mt["ids"], "turn": st["turn"],
-                "phase": mt["phase"], "deadline_in": max(0, round(mt["deadline"] - now())),
+                "phase": mt["phase"], "deadline_in": max(0, round(mt["deadline"] - t)),
+                "deadline_ms": max(0, int((mt["deadline"] - t) * 1000)),
                 "waiting": self._waiting(),
+                "away": {uid: max(0, int((d - t) * 1000)) for uid, d in mt["away"].items()},
                 "sides": {uid: {"active": st["sides"][i]["active"],
                                 "team": [pb.view_mon(m) for m in st["sides"][i]["team"]]}
                           for i, uid in enumerate(mt["ids"])}}
@@ -492,6 +504,11 @@ class Duel:
         out.user(to, "challenge", **{"from": m.public()})
         out.to(m.ws, "challenged", to=lobby.members[to])
 
+    def decline(self, m: Member, out: Out, lobby: Lobby) -> None:
+        p = self.pending.pop(m.user_id, None)
+        if p:
+            out.user(p["from"], "declined", by=m.public())
+
     def accept(self, m: Member, msg: dict, out: Out, lobby: Lobby) -> None:
         if self.match:
             out.err(m.ws, "a duel is already on")
@@ -507,7 +524,7 @@ class Duel:
         a, b = p["from"], m.user_id
         self.match = {"mid": secrets.token_hex(4), "a": lobby.members[a], "b": lobby.members[b], "ids": [a, b],
                       "state": pb.new_battle(p["team"], team), "phase": "choose", "choices": {}, "need": [],
-                      "deadline": now() + DUEL_CHOOSE_SECS}
+                      "deadline": now() + DUEL_FIRST_SECS, "auto": [0, 0], "away": {}}
         out.all("duel", duel=self.view())
 
     def act(self, m: Member, msg: dict, out: Out, rng: random.Random) -> None:
@@ -516,32 +533,50 @@ class Duel:
             out.err(m.ws, "you are not in this duel")
             return
         if self.tick(out, rng):
-            out.err(m.ws, "time ran out, so the server chose for you")
+            if self.match is mt:
+                out.to(m.ws, "late", turn=mt["state"]["turn"])
             return
         side = mt["ids"].index(m.user_id)
         if msg.get("turn") != mt["state"]["turn"]:
-            out.err(m.ws, "that turn is over")
+            out.to(m.ws, "late", turn=mt["state"]["turn"])     # a stale or replayed choice: ignore quietly
             return
-        if side in mt["choices"] or (mt["phase"] == "replace" and side not in mt["need"]):
+        if mt["phase"] == "replace" and side not in mt["need"]:
             out.err(m.ws, "wait for the other player")
             return
         act = pb.legal(mt["state"], side, msg.get("a"))
         if act is None or (mt["phase"] == "replace" and act["k"] != "switch"):
             out.err(m.ws, "you can't do that now")
             return
-        mt["choices"][side] = act
-        self._advance(out, rng)
+        fresh = side not in mt["choices"]
+        mt["choices"][side] = act          # a resend or a changed mind overwrites until both are in
+        mt["auto"][side] = 0
+        if fresh or len(mt["choices"]) == 2:
+            self._advance(out, rng)
 
     def tick(self, out: Out, rng: random.Random) -> bool:
-        """Lazy deadline: anyone who ran out of time gets a choice made for them."""
+        """Enforce lazy deadlines. True if something happened (a forfeit or a forced turn)."""
         mt = self.match
-        if not mt or now() <= mt["deadline"]:
+        if not mt:
+            return False
+        t = now()
+        gone = [i for i, uid in enumerate(mt["ids"]) if mt["away"].get(uid, t + 1) < t]
+        if gone:
+            self._end(out, None if len(gone) == 2 else 1 - gone[0], forfeit=True, left=True)
+            return True
+        if t <= mt["deadline"]:
             return False
         st = mt["state"]
+        afk = []
         for side in (mt["need"] if mt["phase"] == "replace" else (0, 1)):
             if side not in mt["choices"]:
                 mt["choices"][side] = ({"k": "switch", "to": pb.alive(st, side)[0]} if mt["phase"] == "replace"
                                        else pb.auto_act(st, side))
+                mt["auto"][side] += 1
+                if mt["auto"][side] >= DUEL_AFK_PICKS:
+                    afk.append(side)
+        if afk:
+            self._end(out, None if len(afk) == 2 else 1 - afk[0], forfeit=True, timeout=True)
+            return True
         self._advance(out, rng)
         return True
 
@@ -550,33 +585,52 @@ class Duel:
         st = mt["state"]
         if mt["phase"] == "replace":
             if any(side not in mt["choices"] for side in mt["need"]):
-                out.all("waiting", mid=mt["mid"], waiting=self._waiting())
+                out.all("waiting", mid=mt["mid"], turn=st["turn"], waiting=self._waiting())
                 return
             events: list[dict] = []
             for side in mt["need"]:
                 events += pb.replace(st, side, mt["choices"][side]["to"])
         else:
             if len(mt["choices"]) < 2:
-                out.all("waiting", mid=mt["mid"], waiting=self._waiting())
+                out.all("waiting", mid=mt["mid"], turn=st["turn"], waiting=self._waiting())
                 return
             events = pb.resolve_turn(st, mt["choices"][0], mt["choices"][1], rng.random)
         mt["choices"] = {}
         mt["need"] = pb.needs_replace(st)
         mt["phase"] = "replace" if mt["need"] else "choose"
         mt["deadline"] = now() + (DUEL_REPLACE_SECS if mt["need"] else DUEL_CHOOSE_SECS)
-        out.all("turn", events=events, duel=self.view())
+        mt["seq"] = mt.get("seq", 0) + 1
+        out.all("turn", mid=mt["mid"], seq=mt["seq"], events=events, duel=self.view())
         if st["over"]:
             w = st["winner"]
-            out.all("duelend", duel=self.view(), winner=None if w is None else (mt["a"] if w == 0 else mt["b"]))
-            self.match = None
+            self._end(out, w)
+
+    def _end(self, out: Out, winner_side: int | None, **extra: Any) -> None:
+        mt = self.match
+        winner = None if winner_side is None else (mt["a"] if winner_side == 0 else mt["b"])
+        out.all("duelend", duel=self.view(), winner=winner, **extra)
+        self.match = None
+
+    def away(self, user_id: str, out: Out) -> bool:
+        """The user's last socket dropped. True if they are mid-duel and get a grace period."""
+        self.pending.pop(user_id, None)
+        mt = self.match
+        if not mt or user_id not in mt["ids"]:
+            return False
+        mt["away"][user_id] = now() + DUEL_GRACE_SECS
+        out.all("away", mid=mt["mid"], user=user_id, ms=DUEL_GRACE_SECS * 1000)
+        return True
+
+    def back(self, user_id: str, out: Out) -> None:
+        mt = self.match
+        if mt and mt["away"].pop(user_id, None) is not None:
+            out.all("back", mid=mt["mid"], user=user_id)
 
     def drop(self, user_id: str, out: Out) -> None:
         self.pending.pop(user_id, None)
         mt = self.match
         if mt and user_id in mt["ids"]:
-            other = mt["b"] if user_id == mt["ids"][0] else mt["a"]
-            out.all("duelend", duel=self.view(), winner=other, forfeit=True)
-            self.match = None
+            self._end(out, 1 - mt["ids"].index(user_id), forfeit=True)
 
 
 # ------------------------------------------------------------------- mines --
@@ -831,6 +885,7 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
             elif g == "race" and v.race.running():
                 out.to(member.ws, "start", round=v.race.round, secs=max(0, round(v.race.until - now())))
             elif g == "duel":
+                v.duel.back(member.user_id, out)
                 v.duel.tick(out, rng)
                 out.to(member.ws, "duel", duel=v.duel.view())
             elif g == "mines":
@@ -876,6 +931,11 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
             v.duel.act(member, msg, out, rng)
         elif op == "poke":
             v.duel.tick(out, rng)
+        elif op == "sync":
+            v.duel.tick(out, rng)
+            out.to(member.ws, "duel", duel=v.duel.view())
+        elif op == "decline":
+            v.duel.decline(member, out, lobby)
         elif op == "forfeit":
             v.duel.drop(member.user_id, out)
     elif g == "mines":
@@ -890,7 +950,9 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
     await _flush(room, out)
 
 
-def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out) -> None:
+def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out, dropped: bool = False) -> None:
+    """Leave a game lobby. dropped=True: the connection went away (not a choice), so a live
+    duel waits DUEL_GRACE_SECS for the player to reconnect instead of forfeiting at once."""
     lobby = v.lobbies[g]
     who = lobby.members.pop(user_id, None)
     if who is None:
@@ -900,7 +962,8 @@ def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out) -> None:
     if g == "pond":
         v.pond.drop(user_id)
     elif g == "duel":
-        v.duel.drop(user_id, out)
+        if not (dropped and v.duel.away(user_id, out)):
+            v.duel.drop(user_id, out)
     elif g == "mines":
         v.mines.drop(user_id, out)
     out.all("lobby", members=lobby.roster(), left=who, name=GAME_NAMES[g])
@@ -917,7 +980,7 @@ async def on_disconnect(room_id: str, member: Member) -> None:
         return                       # the same person is still here on another socket
     for g in GAMES:
         out = Out(g)
-        _leave_lobby(v, g, member.user_id, out)
+        _leave_lobby(v, g, member.user_id, out, dropped=True)
         if room is not None:
             await _flush(room, out)
     if room is None or all(ws is member.ws for ws in room.members):

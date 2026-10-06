@@ -68,7 +68,11 @@ function begin(foeSpecs, label, wild){
   var mine = myCreatures();
   if(!mine.length){ api.toast("You need at least one creature (a session) to battle"); return; }
   var a = mine.map(function(m){ return P.buildMon(specOf(m.cr, m.name)); }), b = foeSpecs.map(P.buildMon);
-  fight = {state: P.newBattle(a, b), crs: mine.map(function(m){ return m.cr; }), label: label, wild: !!wild, over:false};
+  // One seeded stream per battle (reproducible from fight.seed), as the duel server does with its own RNG.
+  var seed = api.day()+":"+Date.now();
+  fight = {state: P.newBattle(a, b), crs: mine.map(function(m){ return m.cr; }), label: label, wild: !!wild, over:false,
+           seed: seed, rand: api.rng("battle:"+seed), ai: api.rng("ai:"+seed)};
+  P.preload(a.concat(b));
   b.forEach(seen);
   root.textContent = "";
   var head = api.mk("div", "vg-row");
@@ -92,11 +96,11 @@ function prompt(){
   else fight.scene.setMode("main");
 }
 function choose(act){
+  if(!fight || fight.over || fight.scene.busy) return;
   var P = pk(), s = fight.state, sc = fight.scene;
-  if(!fight || fight.over || sc.busy) return;
   var mine = P.legal(s, 0, act); if(!mine) return;
-  var foe = P.aiAct(s, 1);
-  var events = P.resolveTurn(s, mine, foe, Math.random);
+  var foe = P.aiAct(s, 1, fight.ai);
+  var events = P.resolveTurn(s, mine, foe, fight.rand);
   sc.play(events, 0, who).then(afterTurn);
 }
 function afterTurn(){
@@ -119,8 +123,8 @@ function replaceMine(i){
   sc.play(ev, 0, who).then(afterTurn);
 }
 function run(){
+  if(!fight || fight.over || fight.scene.busy) return;
   var sc = fight.scene;
-  if(sc.busy) return;
   fight.over = true;
   sc.setMode("busy");
   sc.say(fight.wild ? "Got away safely!" : "You left the battle.").then(function(){ finishScreen(null); });

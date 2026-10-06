@@ -643,3 +643,123 @@ async def test_socket_drop_keeps_the_hole_and_the_host_on_a_quick_rejoin(client,
                     send(wa3, "join")
                     roster = until(wa3, "lobby", where=lambda m: len(m["members"]) == 2)["members"]
                     assert {m["userId"]: m["host"] for m in roster} == {a: False, b: True}
+
+
+# ------------------------------------------------------------ play random --
+def _mh(m):
+    return golf.course_holes(m[0])[m[1]]
+
+
+def test_random_round_draws_distinct_holes_from_every_course():
+    import random
+    assert len(golf.ALL_HOLES) == sum(len(c["holes"]) for c in golf.COURSES.values())
+    for n in golf.RANDOM_SIZES:
+        gm = golf.Golf()
+        members = {"u0": {"userId": "u0"}}
+        assert gm.start(members, golf.RANDOM, 0.0, n, random.Random(n)) is None
+        mix = [tuple(x) for x in gm.mix]
+        assert len(mix) == min(n, len(golf.ALL_HOLES)) == len(gm.holes()) == len(gm.players["u0"]["strokes"])
+        assert len(set(mix)) == len(mix) and all(m in golf.ALL_HOLES for m in mix)
+        assert [h is golf.course_holes(c)[i] for (c, i), h in zip(mix, gm.holes())] == [True] * len(mix)
+        v = gm.view(0.0)
+        assert v["course"] == golf.RANDOM and v["mix"] == [list(m) for m in mix]
+        assert v["par"] == [golf.course_holes(c)[i]["par"] for c, i in mix]
+        assert gm.players["u0"]["ball"] == _mh(mix[0])["tee"]
+    # 15 holes over enough rounds touch more than one course
+    seen = {c for s in range(5) for c, _ in golf.pick_mix(15, random.Random(s))}
+    assert len(seen) > 1
+    # a fixed-course round carries no mix
+    gm = _engine()
+    assert gm.mix is None and "mix" not in gm.view(0.0)
+
+
+def test_random_round_caps_at_every_hole_there_is(monkeypatch):
+    import random
+    monkeypatch.setattr(golf, "ALL_HOLES", golf.ALL_HOLES[:7])
+    gm = golf.Golf()
+    assert gm.start({"u0": {"userId": "u0"}}, golf.RANDOM, 0.0, 15, random.Random(1)) is None
+    assert len(gm.mix) == 7 and len({tuple(x) for x in gm.mix}) == 7
+
+
+def test_random_round_refuses_bad_hole_counts():
+    gm = golf.Golf()
+    members = {"u0": {"userId": "u0"}}
+    for bad in (None, 0, 3, 7, 20, -5, 5.0, "5", True, [5]):
+        assert gm.start(members, golf.RANDOM, 0.0, bad) == "pick 5, 10 or 15 holes"
+        assert gm.phase == "idle" and gm.mix is None
+
+
+def test_random_round_plays_to_done_with_the_mix_on_the_card():
+    import random
+    gm = golf.Golf()
+    members = {"u0": {"userId": "u0"}, "u1": {"userId": "u1"}}
+    assert gm.start(members, golf.RANDOM, 0.0, 5, random.Random(7)) is None
+    mix = [list(x) for x in gm.mix]
+    t, step = 1.0, None
+    for i in range(5):
+        h = gm.holes()[gm.hole]
+        assert h is _mh(mix[i])
+        # u0 putts once from the tee (rolled on that hole's own course), then everybody picks up
+        ev, err = gm.shot("u0", {"ax": 0, "az": -4096, "power": 30, "hole": i}, t + 10.0)  # after the pause
+        assert err is None and ev["end"] == golf.simulate(h, *h["tee"], 0, -4096, 30)["end"]
+        gm.pick_up(["u0", "u1"])
+        t += 60.0
+        step = gm.advance(t)
+        assert step is not None and step[0] == ("hole" if i < 4 else "done")
+        if i < 4:
+            assert gm.players["u0"]["ball"] == _mh(mix[i + 1])["tee"]
+    data = step[1]
+    assert data["course"] == golf.RANDOM and data["mix"] == mix
+    assert data["par"] == [golf.course_holes(c)[i]["par"] for c, i in mix]
+    assert data["card"]["u1"] == [golf.MAX_STROKES] * 5 and gm.phase == "done"
+
+
+def test_random_round_restore_only_into_the_same_mix():
+    import random
+    gm = golf.Golf()
+    members = {"u0": {"userId": "u0"}, "u1": {"userId": "u1"}}
+    assert gm.start(members, golf.RANDOM, 0.0, 5, random.Random(3)) is None
+    gm.drop("u1", 1.0)
+    assert gm.restore("u1", {"userId": "u1"}, 2.0)
+    gm.drop("u1", 3.0)
+    gm.parked["u1"]["mix"] = [["meadow", 0]]                 # parked from some other random round
+    assert not gm.restore("u1", {"userId": "u1"}, 4.0)
+
+
+async def test_random_round_over_websockets(client, clock, monkeypatch):
+    import random
+    monkeypatch.setattr(valley, "_rng", lambda: random.Random(42))
+    expect = golf.pick_mix(10, random.Random(42))
+    a, _ = await make_user("ash", 81)
+    b, _ = await make_user("misty", 82)
+    with client.websocket_connect(url("lobby", a)) as wa, client.websocket_connect(url("lobby", b)) as wb:
+        wa.receive_json(); wb.receive_json()
+        send(wa, "join"); until(wa, "golf")
+        send(wb, "join"); until(wb, "golf")
+        until(wa, "lobby", where=lambda m: len(m["members"]) == 2)
+        send(wa, "start", course="random", holes=12)
+        assert until(wa, "error")["error"] == "pick 5, 10 or 15 holes"
+        send(wa, "start", course="random")
+        assert until(wa, "error")["error"] == "pick 5, 10 or 15 holes"
+        send(wb, "start", course="random", holes=10)
+        assert until(wb, "error")["error"] == "only the host can do that"
+        send(wa, "start", course="random", holes=10)
+        rnd = until(wb, "golf", where=lambda m: m["round"] and m["round"]["phase"] == "playing")["round"]
+        assert rnd["course"] == "random" and rnd["mix"] == expect and len(rnd["par"]) == 10
+        assert len({tuple(x) for x in rnd["mix"]}) == 10
+        # every client sees the same mix, and the shot rolls on the first drawn hole
+        assert until(wa, "golf", where=lambda m: m["round"] and m["round"]["phase"] == "playing")["round"]["mix"] == expect
+        send(wb, "shot", ax=0, az=-4096, power=40, seq=1, hole=0)
+        h = _mh(expect[0])
+        assert until(wa, "shot")["end"] == golf.simulate(h, *h["tee"], 0, -4096, 40)["end"]
+        for i in range(10):
+            clock["now"] += 30
+            send(wa, "skip")
+            if i < 9:
+                assert until(wb, "hole")["hole"] == i + 1
+            else:
+                done = until(wb, "done")
+        assert done["course"] == "random" and done["mix"] == expect
+        assert done["par"] == [golf.course_holes(c)[i]["par"] for c, i in expect]
+        send(wa, "end")
+        until(wb, "golf", where=lambda m: m["round"]["phase"] == "idle")

@@ -51,7 +51,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import arena
 
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.6.0"
 
 # --------------------------------------------------------------------------- #
 # Paths / constants
@@ -3710,11 +3710,12 @@ def build_session_markdown(sid, path):
 # who ordered what: TT, the paid count and TPP are all worked out by the server.
 # --------------------------------------------------------------------------- #
 
-# Mirrors backend/app/schemas.py (MAX_DINERS, MAX_PER_VARIANT, DINER_NAME_MAX);
-# change both together. Validating here too means a typo gets a readable local
-# error instead of a round trip to a 422.
+# Mirrors backend/app/schemas.py (MAX_DINERS, MAX_PER_VARIANT, MAX_PER_ITEM,
+# DINER_NAME_MAX); change both together. Validating here too means a typo gets a
+# readable local error instead of a round trip to a 422.
 CALI_MAX_DINERS = 20
 CALI_MAX_PER_VARIANT = 50
+CALI_MAX_PER_ITEM = 20
 CALI_NAME_MAX = 40
 
 _CALI_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -3762,6 +3763,23 @@ def cali_body(body):
             counts[k] = v
 
         row = {"tacos": counts}
+        # The rest of the menu: known keys, whole numbers 0..CALI_MAX_PER_ITEM.
+        # Zeros are dropped, and `items` is left off entirely when nothing is
+        # left, because an Arena from before items 422s on the key itself.
+        items = d.get("items")
+        if items is not None and not isinstance(items, dict):
+            return None, "items must be an object of menu item counts"
+        kept = {}
+        for k, v in (items or {}).items():
+            if k not in arena.CALI_ITEM_KEYS:
+                return None, "unknown menu item"
+            if not _int_in(v, 0, CALI_MAX_PER_ITEM):
+                return None, ("each menu item count must be a whole number from 0 to %d"
+                              % CALI_MAX_PER_ITEM)
+            if v > 0:
+                kept[k] = v
+        if kept:
+            row["items"] = {k: kept[k] for k in arena.CALI_ITEM_KEYS if k in kept}
         if handle:
             row["handle"] = handle
         if name:

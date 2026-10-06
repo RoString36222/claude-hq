@@ -54,6 +54,10 @@ shares daily activity *counts* with friends — never conversation content.)
   original art. 21 foods (fruit, snacks, meals, drinks, sweets and two revives), seasonal stock
   that rotates with the real calendar, a daily special, a shopkeeper who chats (and dozes after
   11pm), a shop cat to pet, and a bag you feed your creatures from.
+- **🌮 Cali Tuesdays** (key `9`): a retro pixel-art taqueria for logging Taco Tuesday at
+  California Burrito. Seat your friends, drag food from the counter onto their plates (or click a
+  food, then a plate), watch the receipt work out the pooled buy-1-get-1, then check out to the
+  arcade-style hi-score board. Seasons are calendar months; last season's champion gets a crown.
 
 **Quality-of-life**
 - Command palette (⌘/Ctrl-K), keyboard shortcuts (`?` for help, `1`–`8` for views, `/` search, `r`
@@ -146,7 +150,7 @@ echo 'alias claude-hq="python3 ~/Documents/Claude/claude-dashboard/dashboard.py"
 `GET /api/session/<id>/export.md` · `GET /api/transcript/<id>?offset&limit&q` · `GET /api/search?q=` ·
 `GET /api/history` · `GET /api/project?folder=` · `GET /api/pokedex` · `GET /api/digest?date&download` ·
 `GET /api/config` · `GET /api/meta` · `GET /api/export.{json,csv}` · `GET /api/arena/pantry` ·
-`GET /api/arena/cali/board?window=` · `GET /api/arena/cali/orders` ·
+`GET /api/arena/cali/board?window={season,30d,7d,all,lastseason}` · `GET /api/arena/cali/orders` ·
 `POST /api/action` · `POST /api/config` · `POST /api/meta` ·
 `POST /api/arena/pantry/{claim,buy,eat,give}` · `POST /api/arena/cali/order`
 (all POSTs CSRF-guarded).
@@ -231,6 +235,20 @@ and feature guide.
 
 ## Changelog
 
+- **1.6.0** — **Cali Tuesdays gets its own diner.** The taco log moves out of the Arena into a
+  **Cali Tuesdays** tab (key `9`): a retro taqueria with **100% original pixel art** drawn at
+  runtime (no photos, no new network calls). A food-court stall (a 3D-lettered sign, tiled walls,
+  menu boards, a steel counter of food pans) holds the menu as food you can pick up (the four mild/wild × hard/soft tacos, burrito, rice and salad bowls, quesadilla,
+  nachos, tostada, chips & salsa, guacamole, churros, soda, iced tea); **drag it onto a friend's
+  plate** (mouse, pen or touch), or click a food and then a plate, and click food on a plate to
+  take one back. A thermal-paper receipt keeps the running TT, the pooled buy-1-get-1 and TPP;
+  **Checkout** logs the dinner (one request id per dinner, safe to retry), stamps it PAID and
+  refreshes the **arcade hi-score board**, which flags who moved, shows each person's favorite
+  dish, counts down to the next monthly season and crowns last season's champion. The table
+  survives a reload. Backend: diners can now record **other dishes** besides tacos (stored and
+  reported, never priced or scored: the board still ranks Tuesdays, then tacos), a `lastseason`
+  board window, and per-person favorites. _Needs a backend deploy with a migration (an added
+  column); until then the diner logs tacos only and says so on the receipt._
 - **1.5.0** — **The General Store.** The store moves out of the Arena into its own
   **Store** tab (key `8`): a Stardew-inspired pixel-art shop with **100% original art**
   drawn at runtime (no assets, no network): a window that follows your local time of day,

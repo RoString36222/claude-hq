@@ -19,8 +19,12 @@ Two metrics come out of that:
 
 The board ranks by **Tuesdays attended**, with TT as the tiebreak: turning up is
 the score, appetite only settles ties.
+
+The rest of the menu (burritos, bowls, nachos, ...) is recorded per diner as
+`items` and reported back -- each person's favourite, the table's total -- but it
+is never priced and never scored: the deal and the board stay tacos.
 """
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -29,8 +33,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import TacoDiner, TacoOrder, User
 from .schemas import (
-    CaliBoardEntry, CaliBoardResponse, LogOrderRequest, LogOrderResponse, OrderDinerOut,
-    OrderOut, OrdersResponse, TacoCounts,
+    CaliBoardEntry, CaliBoardResponse, CaliMenuItem, LogOrderRequest, LogOrderResponse,
+    OrderDinerOut, OrderOut, OrdersResponse, TacoCounts,
 )
 from .service import WINDOWS, window_range
 
@@ -41,6 +45,30 @@ VARIANTS = (
     ("wildHard", "wild_hard"),
     ("wildSoft", "wild_soft"),
 )
+
+# A pure literal: tests/test_cali_menu_sync.py ast-parses it, so keep it free of
+# names and calls. menu key -> display name, in display order. schemas.MenuItem
+# and arena.CALI_ITEM_KEYS mirror the keys.
+CALI_MENU = {
+    "burrito": "Burrito",
+    "ricebowl": "Rice Bowl",
+    "saladbowl": "Salad Bowl",
+    "quesadilla": "Quesadilla",
+    "nachos": "Nachos",
+    "tostada": "Tostada",
+    "chips": "Chips & Salsa",
+    "guac": "Guacamole",
+    "churros": "Churros",
+    "soda": "Soda",
+    "icedtea": "Iced Tea",
+}
+
+# Every key a favourite can be, in tie-break order: the taco variants first.
+FAVORITE_ORDER = tuple(field for field, _ in VARIANTS) + tuple(CALI_MENU)
+
+# The XP board's windows plus the whole previous calendar month, so last
+# season's champion can be crowned after the 1st.
+CALI_WINDOWS = WINDOWS + ("lastseason",)
 
 RECENT_ORDERS = 50
 
@@ -72,6 +100,16 @@ def paid_tacos(total: int) -> int:
     return (total + 1) // 2
 
 
+def _favorite(eaten: dict[str, int]) -> str | None:
+    """The key eaten most, ties to the earlier key in FAVORITE_ORDER (tacos
+    first); None when nothing was eaten."""
+    best, most = None, 0
+    for k in FAVORITE_ORDER:
+        if eaten.get(k, 0) > most:
+            best, most = k, eaten[k]
+    return best
+
+
 def _round2(value: float) -> float:
     return round(value + 0.0, 2)
 
@@ -79,6 +117,25 @@ def _round2(value: float) -> float:
 def _tpp(tacos: int, people: int) -> float:
     """Tacos per person. Zero people is not a dinner, but never divide by it."""
     return _round2(tacos / people) if people else 0.0
+
+
+def cali_window_range(window: str, today: date) -> tuple[date, date]:
+    """window_range, plus "lastseason": the whole previous calendar month."""
+    if window == "lastseason":
+        last = today.replace(day=1) - timedelta(days=1)
+        return last.replace(day=1), last
+    return window_range(window, today)
+
+
+def _clean_items(items: dict | None) -> dict[str, int]:
+    """Positive counts only, keys in CALI_MENU order; anything else dropped."""
+    items = items if isinstance(items, dict) else {}
+    out = {}
+    for k in CALI_MENU:
+        v = items.get(k, 0)
+        if isinstance(v, int) and not isinstance(v, bool) and v > 0:
+            out[k] = v
+    return out
 
 
 def _counts_of(row: TacoDiner) -> TacoCounts:
@@ -98,6 +155,7 @@ def _order_out(order: TacoOrder, users: dict[str, User], logged_by: str) -> Orde
             avatarUrl=u.avatar_url if u else "",
             tacos=_counts_of(row),
             total=row.tacos,
+            items=_clean_items(row.items),
         ))
     people = len(order.diners)
     return OrderOut(
@@ -107,6 +165,7 @@ def _order_out(order: TacoOrder, users: dict[str, User], logged_by: str) -> Orde
         totalTacos=order.total_tacos,
         paidTacos=order.paid_tacos,
         freeTacos=order.total_tacos - order.paid_tacos,
+        totalItems=sum(sum(d.items.values()) for d in diners),
         tacosPerPerson=_tpp(order.total_tacos, people),
         note=order.note,
         loggedByHandle=logged_by,
@@ -168,6 +227,7 @@ async def log_order(db: AsyncSession, user: User, body: LogOrderRequest) -> LogO
             # Always written, so the row keeps an identity after the account's
             # ondelete=SET NULL.
             diner_name=(u.display_name or u.handle) if u else d.name,
+            items=_clean_items(d.items),
             **{col: getattr(d.tacos, field) for field, col in VARIANTS},
         ))
 
@@ -232,11 +292,11 @@ async def build_board(
     name the next is two people on the board. Pair the device, or spell the name
     the same way.
     """
-    if window not in WINDOWS:
-        raise HTTPException(400, f"window must be one of {', '.join(WINDOWS)}")
+    if window not in CALI_WINDOWS:
+        raise HTTPException(400, f"window must be one of {', '.join(CALI_WINDOWS)}")
 
     today = _today()
-    starts_on, ends_on = window_range(window, today)
+    starts_on, ends_on = cali_window_range(window, today)
 
     rows = (
         await db.execute(
@@ -250,13 +310,15 @@ async def build_board(
 
     people: dict[str, dict] = {}
     order_ids: set[str] = set()
-    total = paid = 0
+    total = paid = total_items = 0
 
     for diner, order in rows:
         if order.id not in order_ids:
             order_ids.add(order.id)
             total += order.total_tacos
             paid += order.paid_tacos
+        items = _clean_items(diner.items)
+        total_items += sum(items.values())
 
         key = f"@{diner.user_id}" if diner.user_id else f"#{diner.diner_name.casefold()}"
         u = users.get(diner.user_id) if diner.user_id else None
@@ -266,6 +328,7 @@ async def build_board(
             "avatarUrl": u.avatar_url if u else "",
             "dates": set(),
             "tacos": 0, "mild": 0, "wild": 0, "hard": 0, "soft": 0,
+            "items": 0, "eaten": dict.fromkeys(FAVORITE_ORDER, 0),
             "isYou": bool(viewer_id and diner.user_id == viewer_id),
         })
         p["dates"].add(order.order_date)
@@ -274,6 +337,11 @@ async def build_board(
         p["wild"] += diner.wild_hard + diner.wild_soft
         p["hard"] += diner.mild_hard + diner.wild_hard
         p["soft"] += diner.mild_soft + diner.wild_soft
+        p["items"] += sum(items.values())
+        for field, col in VARIANTS:
+            p["eaten"][field] += getattr(diner, col)
+        for k, v in items.items():
+            p["eaten"][k] += v
 
     ranked = sorted(
         people.values(),
@@ -292,6 +360,8 @@ async def build_board(
             tacosPerPerson=_tpp(p["tacos"], len(p["dates"])),
             mild=p["mild"], wild=p["wild"], hard=p["hard"], soft=p["soft"],
             isYou=p["isYou"],
+            items=p["items"],
+            favorite=_favorite(p["eaten"]),
         )
         for i, p in enumerate(ranked, start=1)
     ]
@@ -305,5 +375,7 @@ async def build_board(
         totalTacos=total,
         paidTacos=paid,
         freeTacos=total - paid,
+        totalItems=total_items,
         entries=entries,
+        menu=[CaliMenuItem(kind=k, name=v) for k, v in CALI_MENU.items()],
     )

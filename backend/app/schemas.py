@@ -481,6 +481,16 @@ DinnerDate = date
 DINER_NAME_MAX = 40
 MAX_DINERS = 20
 MAX_PER_VARIANT = 50
+MAX_PER_ITEM = 20
+
+# The rest of the menu, by key: mirrors app/tacos.py CALI_MENU (same keys, same
+# order; tests/test_cali_menu_sync.py checks it). Items are recorded and
+# reported, never priced and never scored: the deal and the board stay tacos.
+MenuItem = Literal[
+    "burrito", "ricebowl", "saladbowl", "quesadilla", "nachos", "tostada",
+    "chips", "guac", "churros", "soda", "icedtea",
+]
+ItemCount = Annotated[int, Field(ge=0, le=MAX_PER_ITEM, strict=True)]
 
 
 class TacoCounts(BaseModel):
@@ -506,6 +516,9 @@ class DinerOrder(BaseModel):
     handle: Handle | None = None
     name: str = Field("", max_length=DINER_NAME_MAX)
     tacos: TacoCounts = Field(default_factory=TacoCounts)
+    # Everything else they ate, by menu key. An unknown key is a 422; a zero is
+    # accepted and dropped when the order is written.
+    items: dict[MenuItem, ItemCount] = Field(default_factory=dict)
 
     @field_validator("name")
     @classmethod
@@ -550,6 +563,8 @@ class OrderDinerOut(BaseModel):
     avatarUrl: str = ""
     tacos: TacoCounts
     total: int
+    # Non-taco menu items, positive counts only, in menu order.
+    items: dict[str, int] = Field(default_factory=dict)
 
 
 class OrderOut(BaseModel):
@@ -559,6 +574,8 @@ class OrderOut(BaseModel):
     totalTacos: int
     paidTacos: int
     freeTacos: int
+    # Non-taco menu items across the table.
+    totalItems: int = 0
     # TPP for this one dinner: TT / people, rounded to 2dp.
     tacosPerPerson: float
     note: str
@@ -592,6 +609,16 @@ class CaliBoardEntry(BaseModel):
     hard: int
     soft: int
     isYou: bool = False
+    # Non-taco menu items eaten in the window.
+    items: int = 0
+    # What they ate most of: a taco variant key (mildHard, ...) or a menu key
+    # (burrito, ...). Ties go to the earlier key, tacos first; None if nothing.
+    favorite: str | None = None
+
+
+class CaliMenuItem(BaseModel):
+    kind: str
+    name: str
 
 
 class CaliBoardResponse(BaseModel):
@@ -603,4 +630,9 @@ class CaliBoardResponse(BaseModel):
     totalTacos: int
     paidTacos: int
     freeTacos: int
+    # Non-taco menu items across the window's orders.
+    totalItems: int = 0
     entries: list[CaliBoardEntry] = Field(default_factory=list)
+    # The non-taco menu, in display order. Its presence tells a client this
+    # server records items.
+    menu: list[CaliMenuItem] = Field(default_factory=list)

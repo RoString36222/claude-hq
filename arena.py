@@ -727,13 +727,18 @@ def delete_room(room_id):
 # Cali — California Burrito taco Tuesdays
 # --------------------------------------------------------------------------- #
 
-CALI_WINDOWS = ("season", "30d", "7d", "all")
+# "lastseason" is the whole previous calendar month (the board's champion).
+CALI_WINDOWS = ("season", "30d", "7d", "all", "lastseason")
 # The privacy boundary, same idea as _PANTRY_KEYS: an order carries who ate what
 # and nothing else. A sessionId, title, path or project name can never reach the
 # server, even through a bug in the caller.
 _CALI_ORDER_KEYS = ("requestId", "date", "diners", "note")
-_CALI_DINER_KEYS = ("handle", "name", "tacos")
+_CALI_DINER_KEYS = ("handle", "name", "tacos", "items")
 CALI_TACO_KEYS = ("mildHard", "mildSoft", "wildHard", "wildSoft")
+# The rest of the menu, recorded but never priced or scored. Mirrors CALI_MENU in
+# backend app/tacos.py; tests/test_cali_menu_sync.py checks it.
+CALI_ITEM_KEYS = ("burrito", "ricebowl", "saladbowl", "quesadilla", "nachos",
+                  "tostada", "chips", "guac", "churros", "soda", "icedtea")
 
 
 def _cali_order(body):
@@ -745,11 +750,21 @@ def _cali_order(body):
     for d in diners if isinstance(diners, list) else []:
         if not isinstance(d, dict):
             continue
-        row = {k: d[k] for k in _CALI_DINER_KEYS if k in d and k != "tacos"}
+        row = {k: d[k] for k in _CALI_DINER_KEYS if k in d and k not in ("tacos", "items")}
         tacos = d.get("tacos")
         row["tacos"] = {
             k: tacos[k] for k in CALI_TACO_KEYS if isinstance(tacos, dict) and k in tacos
         }
+        # Known menu keys with positive int counts only, and no key at all when
+        # there are none: an Arena that predates items refuses any `items` field.
+        items = d.get("items")
+        items = {
+            k: items[k] for k in CALI_ITEM_KEYS
+            if isinstance(items, dict) and isinstance(items.get(k), int)
+            and not isinstance(items.get(k), bool) and items[k] > 0
+        }
+        if items:
+            row["items"] = items
         out.append(row)
     clean["diners"] = out
     return clean

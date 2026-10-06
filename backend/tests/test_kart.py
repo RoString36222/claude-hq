@@ -361,7 +361,7 @@ async def test_race_over_websockets(client, clock):
         assert until(wb, "car")["car"] == 4
         send(wa, "start", track="meadow", laps=1)
         race = until(wb, "kart", where=lambda m: m["race"] and m["race"]["phase"] == "grid")["race"]
-        assert race["laps"] == 1 and len(race["players"]) == 2
+        assert race["laps"] == 1 and len(race["players"]) == 2 and race["scale"] == kart.SCALE
         assert {p["car"] for p in race["players"] if p["user"]["userId"] == a} == {4}
         clock["now"] += kart.COUNTDOWN + 0.01
         until(wa, "go")

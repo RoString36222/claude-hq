@@ -197,7 +197,8 @@ class Kart:
                              "place": order.index(uid) + 1, "fin": p["fin"], "dnf": p["dnf"], "away": p["away"],
                              "x": p["x"], "z": p["z"], "r": p["r"]}
                             for uid, p in self.players.items()],
-                "results": self.results, "cars": dict(self.cars)}
+                "results": self.results, "cars": dict(self.cars),
+                "scale": SCALE}   # the geometry this server referees (clients from 1.9.0 assume 1)
 
     # -- ops --
     def car(self, uid: str, msg: dict) -> int | None:

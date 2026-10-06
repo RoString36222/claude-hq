@@ -68,9 +68,20 @@ var KT = (function(){
     var tx = -a0x*Math.sin(th) + a1x*Math.cos(th), tz = -a0z*Math.sin(th) + a1z*Math.cos(th);
     return [cx + t.pivot[0] + vx*rad, cz + t.pivot[1] + vz*rad, ((Math.atan2(tx, -tz)*180/Math.PI) + 360) % 360];
   }
-  function gridSlot(k){ return [k % 2 === 0 ? -3 : 3, 4 + Math.floor(k/2)*4 + (k % 2 ? 2 : 0)]; }
-  return {SCALE: SCALE, TILE: TILE, HALF: HALF, ROAD_HALF: ROAD_HALF, R_IN: R_IN, R_MID: R_MID, R_OUT: R_OUT, DIRS: DIRS,
-          compileTrack: compileTrack, cellOf: cellOf, locate: locate, pointAt: pointAt, gridSlot: gridSlot};
+  function gridSlot(k){
+    if(SCALE === 1) return [k % 2 === 0 ? -2 : 2, 3 + Math.floor(k/2)*3.2 + (k % 2 ? 1.6 : 0)];   // 1.9.0 servers
+    return [k % 2 === 0 ? -3 : 3, 4 + Math.floor(k/2)*4 + (k % 2 ? 2 : 0)];
+  }
+  var K = {DIRS: DIRS, compileTrack: compileTrack, cellOf: cellOf, locate: locate, pointAt: pointAt, gridSlot: gridSlot};
+  // Race at the scale the Arena referees: a server from before the wider tracks sends none
+  // (its roads are the kit's own 10 m tiles), and positions must match its geometry exactly.
+  K.setScale = function(s){
+    s = s === 1 ? 1 : 1.5;
+    SCALE = s; TILE = 10*s; HALF = TILE/2; ROAD_HALF = 4.5*s; R_IN = 0.5*s; R_MID = 5*s; R_OUT = 9.5*s;
+    K.SCALE = SCALE; K.TILE = TILE; K.HALF = HALF; K.ROAD_HALF = ROAD_HALF; K.R_IN = R_IN; K.R_MID = R_MID; K.R_OUT = R_OUT;
+  };
+  K.setScale(SCALE);
+  return K;
 })();
 /* KART-TRACK END */
 
@@ -110,13 +121,23 @@ function myClock(){ return Math.floor(performance.now()/10) % 1073741824; }
 
 /* ---------- data + three.js, loaded on demand ---------- */
 var DATA = null, DATA_P = null, TRACKS = {};
+// Compile every track at the current KT scale (again whenever the scale changes).
+function compileTracks(){
+  TRACKS = {};
+  ((DATA && DATA.tracks) || []).forEach(function(t){ try { var c = KT.compileTrack(t.path); c.id = t.id; c.name = t.name; c.laps = t.laps|0 || 3;
+    c.theme = t.theme || {}; c.scenery = t.scenery || "forest"; TRACKS[t.id] = c; } catch(e){} });
+}
+// The scale the next race runs at: the Arena's in a room (none = a 1.9.0 server: 1), 1.5 solo.
+function useScale(s){
+  s = s === 1 ? 1 : 1.5;
+  if(s === KT.SCALE && Object.keys(TRACKS).length) return false;
+  KT.setScale(s); VMAX = s === 1 ? 26 : 30; compileTracks(); return true;
+}
 function loadData(){
   if(DATA_P) return DATA_P;
   DATA_P = fetch("/games/kart/tracks.json").then(function(r){ if(!r.ok) throw new Error("tracks "+r.status); return r.json(); })
     .then(function(j){
-      DATA = j; TRACKS = {};
-      (j.tracks || []).forEach(function(t){ try { var c = KT.compileTrack(t.path); c.id = t.id; c.name = t.name; c.laps = t.laps|0 || 3;
-        c.theme = t.theme || {}; c.scenery = t.scenery || "forest"; TRACKS[t.id] = c; } catch(e){} });
+      DATA = j; compileTracks();
       return j;
     }, function(e){ DATA_P = null; throw e; });
   return DATA_P;
@@ -287,6 +308,7 @@ function makeGame(host, opts){
 
   /* ---------- practice: a solo time trial ---------- */
   function startPractice(id, laps){
+    if(useScale(1.5) && R3){ R3.clearTrack(); }
     var tr = TRACKS[id]; if(!tr) return;
     resetRace(); V.mode = "practice"; V.track = tr; V.laps = laps; V.lapTimes = [];
     var C = ensureCar("me", {name: "You", car: clamp(ksave().car|0, 0, CARS.length - 1)});
@@ -302,6 +324,7 @@ function makeGame(host, opts){
     V.round = view; V.gotView = true;
     if(!view || !TRACKS[view.track]){ if(V.phase !== "idle" && V.mode === "mp"){ resetRace(); showStage(false); } renderMenu(); return; }
     if(V.mode !== "mp") return;
+    if(useScale(view.scale === 1.5 ? 1.5 : 1)){ V.track = null; if(R3) R3.clearTrack(); }
     var mine = inRace(view);
     if(view.phase === "idle"){ if(V.phase !== "idle"){ resetRace(); showStage(false); } renderMenu(); return; }
     if(view.phase === "done"){ V.results = view.results; if(V.phase !== "idle" && V.phase !== "done") showResults(view.results); V.phase = "done"; renderMenu(); return; }

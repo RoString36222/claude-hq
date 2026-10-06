@@ -376,7 +376,8 @@ impl Kart {
         json!({"track": track, "laps": self.laps, "phase": self.phase.as_str(),
                "goInMs": if self.phase == Phase::Grid { (((self.go_at - t) * 1000.0) as i64).max(0) } else { 0 },
                "raceMs": if self.phase == Phase::Race { self.ms(t) } else { 0 },
-               "players": players, "results": self.results, "cars": self.cars})
+               "players": players, "results": self.results, "cars": self.cars,
+               "scale": SCALE})
     }
 
     // -- ops --

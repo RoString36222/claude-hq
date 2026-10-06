@@ -197,7 +197,9 @@ def as_int(v: Any, lo: int, hi: int) -> int | None:
 # ------------------------------------------------------------------- referee --
 HOLE_PAUSE = 4.0             # scorecard cut-scene between holes (seconds)
 SHOT_GRACE = 0.3
-POS_GAP = 0.09               # at most one position update per user per 90 ms
+POS_BURST = 3                # walking updates: a token bucket per player, 3 deep,
+POS_RATE = 12.0              # refilled 12 per second (clients send <= 10/s)
+PARK_SECS = 120.0            # a dropped player's card is kept this long for a rejoin
 CHARS = 6
 COLORS = 8
 
@@ -212,7 +214,8 @@ class Golf:
         self.phase = "idle"                # idle | playing | done
         self.players: dict[str, dict] = {}
         self.chars: dict[str, int] = {}    # user_id -> character, kept between rounds
-        self.last_pos: dict[str, float] = {}
+        self.bucket: dict[str, list[float]] = {}   # user_id -> [tokens, last refill time]
+        self.parked: dict[str, dict] = {}          # user_id -> {p, hole, at}: dropped mid-round
         self.hole_ready_at = 0.0
         self.last_shot: dict[str, dict] = {}
 
@@ -253,6 +256,7 @@ class Golf:
         self.phase = "playing"
         self.hole_ready_at = t
         self.last_shot = {}
+        self.parked = {}
         holes = self.holes()
         tee = holes[0]["tee"]
         self.players = {}
@@ -271,6 +275,9 @@ class Golf:
             return None, "you're not in this round"
         if p["done"]:
             return None, "you've finished this hole"
+        hole_no = msg.get("hole")
+        if hole_no is not None and as_int(hole_no, -1, 1 << 16) != self.hole:
+            return None, "that hole is over"
         if t < max(p["busy_until"], self.hole_ready_at):
             return None, "wait for the ball to stop"
         ax, az = as_int(msg.get("ax"), -AIM_MAX, AIM_MAX), as_int(msg.get("az"), -AIM_MAX, AIM_MAX)
@@ -334,10 +341,17 @@ class Golf:
         self.last_shot = {}
 
     def pos(self, uid: str, msg: dict, t: float) -> dict | None:
-        """A walking update to relay, or None (throttled, not playing, or malformed)."""
+        """A walking update to relay, or None (over the rate, not playing, or malformed).
+        Rate: a token bucket (POS_BURST deep, POS_RATE/s), so network bunching of a
+        10 Hz sender never drops the final "stopped here" frame. No storage, no DB."""
         if uid not in self.players or self.phase != "playing":
             return None
-        if t - self.last_pos.get(uid, -1e9) < POS_GAP:
+        b = self.bucket.get(uid)
+        if b is None:
+            b = self.bucket[uid] = [float(POS_BURST), t]
+        b[0] = min(float(POS_BURST), b[0] + (t - b[1]) * POS_RATE)
+        b[1] = t
+        if b[0] < 1.0:
             return None
         x0, z0, x1, z1 = self.holes()[self.hole]["bbox"]
         x = as_int(msg.get("x"), x0 - 2 * TILE, x1 + 2 * TILE)
@@ -346,15 +360,42 @@ class Golf:
         a = as_int(msg.get("a"), 0, 7)
         if x is None or z is None or r is None or a is None:
             return None
-        self.last_pos[uid] = t
-        return {"u": uid, "x": x, "z": z, "r": r % 360, "a": a}
+        b[0] -= 1.0
+        q = as_int(msg.get("q"), 0, (1 << 30) - 1)
+        out = {"u": uid, "x": x, "z": z, "r": r % 360, "a": a}
+        if q is not None:
+            out["q"] = q
+        return out
 
-    def drop(self, uid: str) -> bool:
-        """Remove a player; True if they were in the round."""
-        self.last_pos.pop(uid, None)
+    def drop(self, uid: str, t: float = 0.0) -> bool:
+        """Remove a player; True if they were in the round. Mid-round their card is
+        parked for PARK_SECS so a reconnect (socket blip) restores it."""
+        self.bucket.pop(uid, None)
         self.last_shot.pop(uid, None)
-        if self.players.pop(uid, None) is None:
+        p = self.players.pop(uid, None)
+        if p is None:
             return False
-        if self.phase == "playing" and not self.players:
-            self.phase = "idle"
+        if self.phase == "playing":
+            self.parked[uid] = {"p": p, "hole": self.hole, "at": t, "course": self.course}
+            if not self.players:
+                self.phase = "idle"
+                self.parked = {}
+        return True
+
+    def restore(self, uid: str, pub: dict, t: float) -> bool:
+        """A parked player rejoined the lobby: put them back in the round. Holes that
+        finished without them count as picked up."""
+        k = self.parked.pop(uid, None)
+        if k is None or self.phase != "playing" or k["course"] != self.course or t - k["at"] > PARK_SECS \
+                or uid in self.players or len(self.players) >= 8:
+            return False
+        p = k["p"]
+        p["user"] = pub
+        if k["hole"] != self.hole:
+            for i in range(k["hole"], self.hole):
+                if i == k["hole"] and p["done"]:
+                    continue
+                p["strokes"][i] = MAX_STROKES
+            p["ball"], p["done"], p["busy_until"] = self.holes()[self.hole]["tee"], False, 0.0
+        self.players[uid] = p
         return True

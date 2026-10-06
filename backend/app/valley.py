@@ -19,6 +19,7 @@ has a lobby (who is in it, who hosts) with join notices and invites. The games:
 Only game state lives here; nothing transcript-derived ever reaches this server.
 State is in process memory except the farm (same single-instance trade as rooms.py).
 """
+import asyncio
 import random
 import re
 import secrets
@@ -37,6 +38,7 @@ GAMES = ("pond", "race", "duel", "mines", "farm", "golf")
 GAME_NAMES = {"pond": "Fishing Pond", "race": "Puzzle Race", "duel": "Creature Duel",
               "mines": "Co-op Mines", "farm": "Shared Farm", "golf": "Mini Golf"}
 MAX_LOBBY = 8
+SEND_TIMEOUT = 0.5            # seconds one socket may take to accept a lobby fan-out
 now = time.monotonic          # patched in tests
 wall = time.time              # patched in tests
 
@@ -820,7 +822,11 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
             elif g == "farm":
                 await farm_op(room.room_id, member, {"op": "view"}, out, rng)
             elif g == "golf":
-                out.to(member.ws, "golf", round=v.golf.view(now()))
+                if v.golf.restore(member.user_id, member.public(), now()):
+                    # back from a dropped socket: everyone sees them return to the round
+                    out.lobby(list(lobby.members), "golf", round=v.golf.view(now()), back=member.user_id)
+                else:
+                    out.to(member.ws, "golf", round=v.golf.view(now()))
     elif op == "leave":
         _leave_lobby(v, g, member.user_id, out)
     elif op == "invite":
@@ -943,7 +949,7 @@ def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out) -> None:
         v.duel.drop(user_id, out)
     elif g == "mines":
         v.mines.drop(user_id, out)
-    elif g == "golf" and v.golf.drop(user_id):
+    elif g == "golf" and v.golf.drop(user_id, now()):
         ids = list(lobby.members)
         out.lobby(ids, "golf", round=v.golf.view(now()), left=user_id)
         _golf_advance(v.golf, ids, out, now())
@@ -968,6 +974,13 @@ async def on_disconnect(room_id: str, member: Member) -> None:
         _rooms.pop(room_id, None)
 
 
+async def _send_quiet(ws: Any, payload: dict) -> None:
+    try:
+        await asyncio.wait_for(ws.send_json(payload), SEND_TIMEOUT)
+    except Exception:
+        pass
+
+
 async def _flush(room: Room, out: Out) -> None:
     for kind, target, payload in out.items:
         if kind == "all":
@@ -978,13 +991,16 @@ async def _flush(room: Room, out: Out) -> None:
             except Exception:
                 pass
         elif kind == "lobby":
+            # Fan out concurrently with a per-socket timeout: one slow player never
+            # holds up everyone else's position or shot.
             ids, skip = target
-            for ws, mem in list(room.members.items()):
-                if mem.user_id in ids and mem.user_id != skip:
-                    try:
-                        await ws.send_json(payload)
-                    except Exception:
-                        pass
+            socks = [ws for ws, mem in list(room.members.items()) if mem.user_id in ids and mem.user_id != skip]
+            if len(socks) == 1:
+                await _send_quiet(socks[0], payload)       # no task needed (wait_for runs it inline)
+            elif socks:
+                # shielded: if this handler is cancelled mid-send (a closing socket), the
+                # other players' copies still go out
+                await asyncio.shield(asyncio.gather(*(_send_quiet(ws, payload) for ws in socks)))
         else:
             for ws, mem in list(room.members.items()):
                 if mem.user_id == target:

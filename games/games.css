@@ -325,3 +325,24 @@ html.hq-calm .pkb-bcard:hover{transform:none}
 .vg-golf-h2{margin-top:2px}
 .vg-golf-char{display:inline-flex;flex-direction:column;align-items:center;gap:2px;height:auto;padding:6px 10px}
 .vg-golf-char img{display:block}
+/* ---- Kart Racing ---- */
+.vg-kart-canvas{cursor:default}
+.vg-kart-hud{min-width:150px}
+.vg-kart-big{font-size:15px;font-variant-numeric:tabular-nums}
+.vg-kart-time{font:600 12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.vg-kart-stand{margin:4px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:1px}
+.vg-kart-stand:empty{display:none}
+.vg-kart-stand li.me{font-weight:700;color:var(--ink)}
+.vg-kart-sw{display:inline-block;width:10px;height:10px;border-radius:3px;border:1px solid var(--line);vertical-align:-1px}
+.vg-kart-car .vg-kart-sw{width:22px;height:14px;border-radius:4px}
+.vg-kart-mini{position:absolute;right:8px;top:8px;width:120px;height:120px;border-radius:10px;border:1px solid var(--line);pointer-events:none}
+.vg-kart-gauges{position:absolute;right:8px;bottom:8px;width:236px;height:124px;pointer-events:none}
+.vg-kart-cd{position:absolute;left:50%;top:34%;transform:translate(-50%,-50%);padding:6px 22px;border-radius:var(--radius);
+  font:800 44px var(--mono);color:var(--ink);background:var(--panel);border:2px solid var(--brand);box-shadow:var(--shadow-lg);pointer-events:none;
+  animation:vg-kart-pop .35s var(--ease)}
+.vg-kart-warn{position:absolute;left:50%;top:16%;transform:translateX(-50%);padding:4px 14px;border-radius:999px;font-weight:800;
+  background:var(--needbg);color:var(--need);border:1px solid var(--need);pointer-events:none}
+@keyframes vg-kart-pop{from{transform:translate(-50%,-50%) scale(.7);opacity:0}to{transform:translate(-50%,-50%) scale(1);opacity:1}}
+html.hq-calm .vg-kart-cd{animation:none}
+@media (prefers-reduced-motion:reduce){ .vg-kart-cd{animation:none} }
+@media (max-width:560px){ .vg-kart-gauges{transform:scale(.72);transform-origin:right bottom} .vg-kart-mini{width:84px;height:84px} }

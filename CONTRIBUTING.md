@@ -22,7 +22,7 @@ Optional, and out of scope for most contributions: `arena.py` (opt-in multiplaye
 - **No npm, no package.json, no build/watch scripts.** If a change would require a build step to run, it does not belong here.
 - **No TypeScript, JSX, SCSS, or any dialect that needs compilation.** Plain `.js`, plain `.css`, plain `.html`.
 - **No external JS/CSS libraries.** No React, no jQuery, no Tailwind, no icon fonts, no Chart.js. Charts are hand-drawn SVG; icons are an inline SVG sprite (Lucide geometry, MIT). Keep it that way.
-  - **One narrow exception (Mini Golf, pending maintainer sign-off):** games/vendor/ holds vendored MIT three.js (r186, unminified, only its import paths rewritten, reproducible with tools/vendor_three.py) and games/golf/ holds CC0 Kenney models; both are served only from 127.0.0.1, loaded lazily by Mini Golf, never fetched from a third party at runtime. The exception covers exactly these two folders and that one game; it is not a precedent for other libraries or art. The `/games/` route serves only `vendor/<name>.js` and `golf/<name>.glb|json|png` there (tests in `tests/test_games.py`).
+  - **One library exception (the 3D games):** games/vendor/ holds vendored MIT three.js (r186, unminified, only its import paths rewritten, reproducible with tools/vendor_three.py), served only from 127.0.0.1, loaded lazily by the 3D games (Mini Golf, Kart Racing), never fetched from a third party at runtime. It is not a precedent for other libraries. Game assets are covered in §7: each 3D game keeps its models in its own folder (`games/golf/`, `games/kart/`). The `/games/` route serves only `vendor/<name>.js` and `<game>/<name>.glb|json|png` for those folders (tests in `tests/test_games.py`).
 - **No import maps requiring a server rewrite, no bare specifiers.** ES module imports must be relative paths (`./foo.js`) that the plain static server can resolve directly.
 - Backend Python targets **3.x standard library only** (see the imports block at the top of `dashboard.py`: `argparse, glob, hashlib, json, os, re, secrets, shlex, signal, subprocess, sys, threading, time, webbrowser, datetime, http.server`). Adding an import that isn't stdlib is a bug.
 
@@ -165,14 +165,15 @@ Concretely:
 
 ### The IP rule (hard line)
 
-**Only two kinds of visual asset are permitted:**
+**Three kinds of asset are permitted:**
 
 1. **Original art** authored for this repo — the generated pixel-monster SVGs (`monsterSVG`), the original Village troop creatures (`troopSVG`), the inline Lucide-geometry icon sprite (MIT), and the vendored thinking-orbs (RareFormLabs, MIT).
 2. **Pre-existing hotlinks** to already-established public sprite libraries, loaded at runtime via `<img src>` and **never bundled into the repo**.
+3. **Vendored third-party game assets** (models, textures, sounds) whose license allows redistribution — e.g. Kenney's public-domain (CC0) kits. Each game keeps them in its own folder under `games/` with the license text alongside (`LICENSE-<source>.txt`, checked by `tests/test_games.py`), they are served only from 127.0.0.1 and never hotlinked, and the PR says where they came from.
 
 **No new copyrighted characters, assets, or names may be added** — and specifically **no Supercell / Clash of Clans / Clash Royale assets, characters, or names.** The Village pack deliberately implements base-building/army *mechanics* with **100% original art and invented names** (Thwack, Pipp, Zephry, …) precisely to avoid this. If you build another game layer, invent your own creatures and names; do not import someone's IP.
 
-Pokémon names/sprites remain the property of Nintendo/Game Freak/The Pokémon Company; the "pokemon" packs hotlink them from public sprite libraries for personal use, which is why they're a runtime hotlink and not committed. Do not add new bundled third-party art of any kind — the single exception is Mini Golf's public-domain (CC0) Kenney models in `games/golf/`, shipped with their license text in `games/golf/LICENSE-kenney.txt` (see the no-build-step section).
+Pokémon names/sprites remain the property of Nintendo/Game Freak/The Pokémon Company; the "pokemon" packs hotlink them from public sprite libraries for personal use, which is why they're a runtime hotlink and not committed. Bundled third-party art follows rule 3 above: a redistributable license, the license text next to the files, no runtime hotlinks — today Kenney's CC0 kits for Mini Golf (`games/golf/`) and Kart Racing (`games/kart/`).
 
 ### The sprite fallback chain
 

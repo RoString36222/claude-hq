@@ -1445,6 +1445,32 @@ def session_fatigue_now(sess):
 # Season stats (30-day scan of ALL transcripts)
 # --------------------------------------------------------------------------- #
 
+# A flexible streak: it survives missed days as long as no 7-day stretch inside it
+# has more than 2 of them (at least 5 active days in every 7). Today never counts
+# as a miss while it is still in progress. The streak runs from its oldest to its
+# newest active day, so a single quiet day no longer resets it to zero.
+STREAK_WINDOW = 7
+STREAK_MAX_MISSES = 2
+
+
+def flex_streak(active, end, lookback=400):
+    """Length in days of the flexible streak ending at `end` (a date)."""
+    start = end if end in active else end - timedelta(days=1)
+    span = []          # True/False per day, newest first
+    d = start
+    for _ in range(lookback):
+        span.append(d in active)
+        if span[-STREAK_WINDOW:].count(False) > STREAK_MAX_MISSES:
+            span.pop()
+            break
+        d -= timedelta(days=1)
+    if True not in span:
+        return 0
+    newest = span.index(True)
+    oldest = len(span) - 1 - span[::-1].index(True)
+    return oldest - newest + 1
+
+
 def compute_season():
     """
     Scan all *.jsonl under projects, counting per-day real prompts, tool_use blocks,
@@ -1520,31 +1546,10 @@ def compute_season():
     level, xp_into, xp_for = derive_level(xp)
     pct = round((xp_into / xp_for) * 100.0, 1) if xp_for else 0.0
 
-    # streak: consecutive active days ending today or yesterday
-    streak = 0
-    if today in active_dates:
-        cur = today
-    elif (today - timedelta(days=1)) in active_dates:
-        cur = today - timedelta(days=1)
-    else:
-        cur = None
-    if cur is not None:
-        while cur in active_dates:
-            streak += 1
-            cur = cur - timedelta(days=1)
-
-    # best streak within the window
-    best = 0
-    run = 0
-    prev = None
-    for d in sorted(active_dates):
-        if prev is not None and (d - prev).days == 1:
-            run += 1
-        else:
-            run = 1
-        best = max(best, run)
-        prev = d
-    best_streak = max(best, streak)
+    # streak: flexible (see flex_streak) -- at least 5 active days in every 7
+    streak = flex_streak(active_dates, today)
+    # best streak within the window: the longest flexible streak ending on any day
+    best_streak = max([streak] + [flex_streak(active_dates, d) for d in active_dates])
 
     # calendar: last 14 days oldest -> newest
     calendar = []

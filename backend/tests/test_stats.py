@@ -141,3 +141,12 @@ async def test_streak_counts_consecutive_active_days(client):
 async def test_bad_window_is_rejected(client):
     _, token = await make_user("badwin", 22)
     assert client.get("/v1/board?window=forever", headers=auth(token)).status_code == 400
+
+
+async def test_streak_survives_a_missed_day(client):
+    _, token = await make_user("flexy", 23)
+    active = [i for i in range(10) if i != 3]          # missed 3 days ago
+    client.post("/v1/stats", headers=auth(token), json=payload(
+        *[day(TODAY - timedelta(days=i), prompts=3) for i in active]
+    ))
+    assert client.get("/v1/board", headers=auth(token)).json()["entries"][0]["streak"] == 10

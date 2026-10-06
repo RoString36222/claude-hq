@@ -64,10 +64,10 @@ def test_upgrade_over_tables_create_all_already_built(tmp_path):
         f"Base.metadata.create_all(sa.create_engine('sqlite:///{db}'))")
     assert PANTRY_TABLES <= set(schema(db))
     alembic(db, "upgrade", "head")
-    assert "d8e9f0a1b2c3" in alembic(db, "current")
+    assert "e9f0a1b2c3d4" in alembic(db, "current")
 
 
 def test_single_head(tmp_path):
     heads = [line for line in alembic(tmp_path / "m.db", "heads").splitlines() if line.strip()]
     assert len(heads) == 1, heads
-    assert heads[0].startswith("d8e9f0a1b2c3")
+    assert heads[0].startswith("e9f0a1b2c3d4")

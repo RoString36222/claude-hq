@@ -9787,7 +9787,7 @@ Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
 });
 
 /* ---- Valley minigames: loaded from /games/ on first use (keeps this file from growing) ---- */
-var VALLEY_FILES = ["core","fishing","garden","bundles","mines","battle","puzzle","town","festival","arcade"];
+var VALLEY_FILES = ["core","fishing","garden","bundles","mines","battle","puzzle","town","festival","arcade","multi"];
 var VALLEY_LOAD = null;
 function valleyLoad(){
   if(VALLEY_LOAD) return VALLEY_LOAD;
@@ -9825,6 +9825,44 @@ function valleyPillSync(){
   }
   var txt="🎣 Play while you wait · "+working+" working";
   if(p.textContent!==txt) p.textContent=txt;
+}
+// Valley multiplayer traffic from the Arena room. Join notices and invites work even
+// before the Valley view has ever been opened; everything else goes to games/multi.js.
+var VALLEY_GAME_NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm"};
+function valleyOnGame(m){
+  if(!m || typeof m.g!=="string" || !VALLEY_GAME_NAMES[m.g]) return;
+  var you = ARENA.you && ARENA.you.userId;
+  if(m.ev==="invite"){ valleyInvite(m); return; }
+  if(m.ev==="lobby" && m.joined && m.joined.userId!==you){
+    var who = String(m.joined.displayName||m.joined.handle||"Someone").slice(0,40);
+    toast("🎮 "+who+" joined "+VALLEY_GAME_NAMES[m.g], "level");
+  }
+  if(typeof HQV!=="undefined" && HQV.onGame){ try{ HQV.onGame(m); }catch(e){} }
+}
+function valleyInvite(m){
+  var from = (m.from && typeof m.from==="object") ? m.from : {};
+  var who = String(from.displayName||from.handle||"A friend").slice(0,40), game = VALLEY_GAME_NAMES[m.g];
+  var room = (typeof m.room==="string" && (m.room==="lobby" || ARENA_ROOM_RE.test(m.room))) ? m.room : null;
+  toast("🎮 "+who+" invited you to "+game, "level");
+  try{ if(typeof Notification!=="undefined" && Notification.permission==="granted" && document.hidden) new Notification("Claude HQ", {body: who+" invited you to "+game}); }catch(e){}
+  var old=$("valleyInvite"); if(old) old.remove();
+  var card=document.createElement("div"); card.id="valleyInvite"; card.setAttribute("role","dialog"); card.setAttribute("aria-label","Game invite");
+  var t=document.createElement("b"); t.textContent=who+" invited you to "+game; card.appendChild(t);
+  var row=document.createElement("div"); row.className="vg-row";
+  var join=document.createElement("button"); join.type="button"; join.className="hbtn primary"; join.textContent="Join";
+  join.addEventListener("click",function(){
+    card.remove();
+    if(room && room!==ARENA.roomId) arenaGoRoom(room);
+    setView("valley");
+    valleyLoad().then(function(){ if(typeof HQV!=="undefined" && HQV.api) HQV.api.open("mp-"+m.g); });
+  });
+  var later=document.createElement("button"); later.type="button"; later.className="hbtn ghost"; later.textContent="Later";
+  later.addEventListener("click",function(){ card.remove(); });
+  row.appendChild(join); row.appendChild(later); card.appendChild(row);
+  document.body.appendChild(card);
+  if(!document.getElementById("valleyCss")){ var l=document.createElement("link"); l.id="valleyCss"; l.rel="stylesheet"; l.href="/games/games.css"; document.head.appendChild(l); }
+  join.focus();
+  setTimeout(function(){ if(card.parentNode) card.remove(); }, 60000);
 }
 function cfgValleyOff(){ try{ return localStorage.getItem("hq_valley_pill")==="0"; }catch(e){ return false; } }
 setView(VIEW);
@@ -13664,6 +13702,7 @@ function arenaOpenSocket(){
       else if(m.type==="nudge"){ arenaOnNudge(m); }
       else if(m.type==="gift"){ arenaOnGift(m); }
       else if(m.type==="room"){ arenaRoomOnMsg(m, rid); }
+      else if(m.type==="game"){ valleyOnGame(m); }
       else if(m.type==="nudge_ack"){ toast(m.delivered ? "\uD83D\uDC4B Nudge sent" : "They\u2019re not in this room right now", m.delivered?"level":"ach"); }
       else if(m.type==="error" && typeof m.error==="string" && m.error.indexOf("chat: ")===0){
         arenaChatSys(m.error.slice(6, 120));   // e.g. the server's flood guard: "slow down \u2014 \u2026"

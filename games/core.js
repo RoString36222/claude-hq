@@ -213,7 +213,10 @@ function renderHome(){
   if(!ROOT) return;
   var home = ROOT.querySelector(".vg-home"); if(!home) return;
   home.textContent = "";
-  GAMES.forEach(function(g){
+  var solo = GAMES.filter(function(g){ return !g.mp; }), multi = GAMES.filter(function(g){ return g.mp; });
+  if(multi.length) home.appendChild(mk("h4","vg-section","Solo"));
+  solo.concat(multi.length ? [{_section:"With friends \u00b7 refereed by your Arena server"}] : [], multi).forEach(function(g){
+    if(g._section){ home.appendChild(mk("h4","vg-section",g._section)); return; }
     var card = mk("button","vg-card"); card.type="button";
     card.appendChild(mk("span","vg-card-ic", g.icon||"✨"));
     var t = mk("span","vg-card-t"); t.appendChild(mk("b",null,g.name)); t.appendChild(mk("span",null,g.desc||"")); card.appendChild(t);

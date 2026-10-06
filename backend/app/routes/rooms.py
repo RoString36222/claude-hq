@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import rooms
+from .. import rooms, valley
 from ..auth import Caller, device_usable, read_ws_ticket_claims, require_device
 from ..db import SessionLocal, get_session
 from ..models import User
@@ -100,7 +100,11 @@ async def room_ws(
     except WebSocketDisconnect:
         pass
     finally:
-        await manager.leave(room_id, websocket)
+        # Valley first: leave game lobbies while the room can still tell the others.
+        try:
+            await valley.on_disconnect(room_id, member)
+        finally:
+            await manager.leave(room_id, websocket)
 
 
 async def _handle(room_id: str, member: Member, msg: dict) -> None:
@@ -181,6 +185,11 @@ async def _handle(room_id: str, member: Member, msg: dict) -> None:
 
     if kind == "ping":
         await member.ws.send_json({"type": "pong"})
+        return
+
+    if kind == "game":
+        # Valley minigames: the rules run server-side (app/valley.py).
+        await valley.handle(room, member, msg)
         return
 
     await member.ws.send_json({"type": "error", "error": f"unknown message type: {kind!r}"})

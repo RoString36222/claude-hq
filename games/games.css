@@ -77,6 +77,21 @@
 .vg-pause{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:var(--scrim);border-radius:var(--radius);z-index:5}
 .vg-pause-box{display:flex;flex-direction:column;gap:8px;max-width:360px;padding:18px;border-radius:var(--radius);background:var(--panel);border:1px solid var(--need);box-shadow:var(--shadow-lg)}
 .vg-pause-box p{margin:0;color:var(--muted)}
+/* Multiplayer */
+.vg-section{margin:6px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);grid-column:1/-1}
+.vg-mp{display:flex;flex-direction:column;gap:12px}
+.vg-lobby{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-radius:var(--radius-sm);background:var(--panel2);border:1px solid var(--line)}
+.vg-players{display:flex;flex-wrap:wrap;gap:6px}
+.vg-player{padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--panel);font-size:12px;font-weight:600}
+.vg-player.me{border-color:var(--brand)}
+.vg-input{height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit;min-width:180px}
+.vg-mp-game{display:flex;flex-direction:column;gap:10px}
+.vg-mp-side{display:flex;flex-direction:column;gap:8px;font-size:13px}
+.vg-goal,.vg-boss{display:flex;flex-direction:column;gap:4px;max-width:420px}
+.vg-boss b{color:var(--need)}
+.vg-feed{font-family:var(--mono);font-size:12px;padding:8px;border-radius:8px;background:var(--bg2);min-height:4em;max-width:520px}
+#valleyInvite{position:fixed;right:16px;top:72px;z-index:60;display:flex;flex-direction:column;gap:8px;padding:14px;border-radius:var(--radius);
+  background:var(--panel);border:1px solid var(--brand);box-shadow:var(--shadow-lg);max-width:320px}
 /* Waiting Room pill (shown by index.html on other views while tabs work) */
 #valleyPill{position:fixed;left:16px;bottom:16px;z-index:40;display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;
   background:var(--panel);border:1px solid var(--good);color:var(--good);font-weight:700;box-shadow:var(--shadow);cursor:pointer;font:inherit}

@@ -871,7 +871,7 @@ function duelAct(ctx, s, a){
   var me0 = d.sides[me()], mon = me0 && me0.team[me0.active], M = HQV.pk.data().moves, label;
   if(a.k === "move" && mon && mon.moves[a.i]) label = (M[mon.moves[a.i].id]||{}).name || "a move";
   else if(a.k === "switch" && me0 && me0.team[a.to]) label = "to switch to "+me0.team[a.to].name;
-  ctx.acted = {key: d.turn+":"+d.phase, label: label || "your move"}; ctx.changing = null;
+  ctx.acted = {key: d.turn+":"+d.phase, label: label || "your move", sock: A().sock}; ctx.changing = null;
   duelPrompt(ctx, s);
 }
 // One queued item at a time, in order: animated turns, resync snapshots, the ending.
@@ -891,7 +891,14 @@ function pumpDuel(ctx, s){
   }
   var item = q.shift();
   if(!item){ duelPrompt(ctx, s); return; }
-  if(item.snap){ s.live = copyDuel(item.snap); ctx.acted = null; sc.setView(duelView(item.snap)); return pumpDuel(ctx, s); }
+  if(item.snap){
+    // A resync snapshot can overtake nothing on the same socket: if my pick for this very turn
+    // went out on it after the join, the snapshot predates it, so the pick still stands. A pick
+    // sent on an older socket may be lost, so then the menu comes back.
+    var ak = item.snap.turn+":"+item.snap.phase;
+    if(!(ctx.acted && ctx.acted.key === ak && ctx.acted.sock === A().sock)) ctx.acted = null;
+    s.live = copyDuel(item.snap); sc.setView(duelView(item.snap)); return pumpDuel(ctx, s);
+  }
   if(item.end){
     var m = item.end; s.ended = m; s.duel = null; ctx.playing = true; s.queue = [];
     sc.cmd.removeAttribute("data-left");

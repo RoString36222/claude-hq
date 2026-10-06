@@ -84,9 +84,9 @@ fn centre_line_round_trips_and_road_edges() {
                 assert!(on_road(t, x, z, 0.0), "{} {u} {side}", t.id);
             }
         }
-        // well off the road: a straight's barrier is at 4.5 m, a corner's ring ends at 9.5 m
+        // well off the road: past a straight's barrier (ROAD_HALF), or off the track's tiles
         assert!(locate(t, 1000.0, 1000.0).is_none());
-        let (x, z, _) = point_at(t, 0.3, 4.4);
+        let (x, z, _) = point_at(t, 0.3, ROAD_HALF - 0.1);
         assert!(!on_road(t, x + 2.0, z, 0.0));
     }
 }

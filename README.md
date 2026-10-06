@@ -275,6 +275,9 @@ and feature guide.
     your best lap saved per track; with friends it's a race of up to 8 with a countdown grid,
     live standings and a results card. Low-detail mode for older laptops, and a 2D map view
     without WebGL2.
+    Tracks are drawn 1.5× the kit's size (a 13.5 m road, so eight cars have room) with a 108 km/h
+    top speed; the chase camera holds a fixed distance and only smooths its heading, so the car
+    stays big on screen at full speed; steered wheels no longer wobble while they spin.
   - **Real-time multiplayer foundation** (shared by the platformer and arena games to come): a
     fixed-rate server tick per room (`backend/app/realtime.py`, 15 Hz for racing) that batches one
     snapshot per tick, a process-wide cap on running game loops, a per-room bandwidth budget that

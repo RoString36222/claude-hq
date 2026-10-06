@@ -70,9 +70,9 @@ def test_centre_line_round_trips_and_road_edges():
             assert abs(lat) < 1e-6 and min(off, tr["n"] - off) < 1e-6, (tid, u)
             for side in (-4.2, 4.2):
                 assert kart.on_road(tr, *kart.point_at(tr, u, side)[:2]), (tid, u, side)
-        # well off the road: a straight's barrier is at 4.5 m, a corner's ring ends at 9.5 m
+        # well off the road: past a straight's barrier (ROAD_HALF), or off the track's tiles
         assert kart.locate(tr, 1000.0, 1000.0) is None
-        x, z, _ = kart.point_at(tr, 0.3, 4.4)
+        x, z, _ = kart.point_at(tr, 0.3, kart.ROAD_HALF - 0.1)
         assert not kart.on_road(tr, x + 2.0, z)
 
 

@@ -283,7 +283,8 @@ class ScanCollectorTests(unittest.TestCase):
 
     def test_existing_keys_are_unchanged(self):
         agg = dashboard._scan_file_uncached(self.path)
-        self.assertEqual(set(agg) - {"busy_spans", "open_tool_since"}, PRE_FATIGUE_KEYS)
+        self.assertEqual(set(agg) - {"busy_spans", "open_tool_since",
+                                    "pending_ask", "gated_tool_open", "permission_mode"}, PRE_FATIGUE_KEYS)
         self.assertEqual(agg["prompt_count"], 2)
         self.assertEqual(agg["activity_ts"],
                          [BASE, BASE - 13 * 86400, BASE + 10, BASE + 3020,

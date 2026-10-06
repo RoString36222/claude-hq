@@ -804,6 +804,9 @@ def _scan_file_uncached(path):
     last_assistant_tool = None
     busy = []        # (start, end) epoch secs when Claude or the user was at it
     open_tools = {}  # tool_use id -> epoch secs, until its tool_result arrives
+    open_tool_names = {}  # tool_use id -> tool name, for the permission-wait hint
+    pending_ask = {}  # AskUserQuestion / ExitPlanMode tool_use id -> (kind, epoch secs, text)
+    perm_mode = None  # last permissionMode seen on a user record
     turn_floor = None  # start of the current turn: a turn_duration never reaches back before it
     turn_ended = True  # the next user record (even an isMeta one) opens a turn
     last_busy = None   # latest busy instant so far (a running max: records can be out of order)
@@ -866,6 +869,9 @@ def _scan_file_uncached(path):
                                 if not isinstance(blk, dict) or blk.get("type") != "tool_result":
                                     continue
                                 tid = blk.get("tool_use_id")
+                                if isinstance(tid, str):
+                                    pending_ask.pop(tid, None)
+                                    open_tool_names.pop(tid, None)
                                 u = open_tools.pop(tid, None) if isinstance(tid, str) else None
                                 if u is not None and t >= u:
                                     busy.append((u, min(t, u + FATIGUE_MAX_PAIR_SECS)))
@@ -876,10 +882,17 @@ def _scan_file_uncached(path):
                         if turn_ended or (not o.get("isMeta") and _opens_turn(content)):
                             turn_floor = t
                             turn_ended = False
+                    pm = o.get("permissionMode")
+                    if isinstance(pm, str):
+                        perm_mode = pm
                     if _is_interrupt_marker(content):
                         open_tools.clear()  # Esc ends the turn and any orphaned tool
+                        open_tool_names.clear()
+                        pending_ask.clear()
                     if is_real_human_prompt(content):
                         open_tools.clear()  # a new human turn ends any orphaned tool
+                        open_tool_names.clear()
+                        pending_ask.clear()
                         cleaned = clean_prompt(content)
                         agg["prompt_count"] += 1
                         if agg["first_prompt"] is None:
@@ -957,6 +970,9 @@ def _scan_file_uncached(path):
                                 if (t is not None and tuid and isinstance(tuid, str)
                                         and name not in FATIGUE_SKIP_TOOLS):
                                     open_tools[tuid] = t
+                                    open_tool_names[tuid] = name
+                                elif t is not None and tuid and isinstance(tuid, str):
+                                    pending_ask[tuid] = (_ask_kind(name), t, _ask_text(b))
                                 if d is not None:
                                     d["tools"] += 1
                                     d["tools_by_name"][name] = d["tools_by_name"].get(name, 0) + 1
@@ -1050,6 +1066,15 @@ def _scan_file_uncached(path):
         agg["timeline"] = agg["timeline"][-60:]
     agg["busy_spans"] = _merge_spans(busy, FATIGUE_TAIL_SECS)[-FATIGUE_MAX_SPANS:]
     agg["open_tool_since"] = min(open_tools.values()) if open_tools else None
+    if pending_ask:
+        kind_, since_, text_ = max(pending_ask.values(), key=lambda v: v[1])
+        agg["pending_ask"] = {"kind": kind_, "since": since_, "text": text_}
+    else:
+        agg["pending_ask"] = None
+    gated = [(open_tools[k], open_tool_names.get(k, "")) for k in open_tools
+             if _permission_gated(open_tool_names.get(k, ""), perm_mode)]
+    agg["gated_tool_open"] = min(gated) if gated else None
+    agg["permission_mode"] = perm_mode
     return agg
 
 
@@ -1129,6 +1154,53 @@ FATIGUE_MAX_PAIR_SECS = 3600     # cap on tool pairs and on the live extension
 FATIGUE_MAX_TURN_SECS = 21600    # turn_duration clamp
 FATIGUE_MAX_SPANS = 96
 FATIGUE_SKIP_TOOLS = ("AskUserQuestion", "ExitPlanMode")
+
+# --- "needs you" signals read from the transcript ---------------------------
+# A tab waiting on a question or a plan approval shows an AskUserQuestion /
+# ExitPlanMode tool_use with no tool_result yet. A tool that needs permission in
+# the session's permission mode and has been open a while MAY be waiting on a
+# prompt: that is only a hint (likelyAwaiting), never "needs".
+ASK_TEXT_MAX = 140
+# claude agents --json status values that mean an interactive tab is parked on
+# you. Only "busy" and "idle" have been observed so far; the rest are accepted
+# defensively so a future status does not read as idle.
+LIVE_WAIT_STATES = ("waiting", "blocked", "needs_input", "awaiting_input", "permission")
+LIKELY_AWAIT_SECS = 20
+_EDIT_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
+_GATED_TOOLS = ("Bash", "WebFetch") + _EDIT_TOOLS
+
+
+def _iso_or_none(epoch):
+    if not isinstance(epoch, (int, float)):
+        return None
+    try:
+        return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _ask_kind(name):
+    return "plan" if name == "ExitPlanMode" else "question"
+
+
+def _ask_text(block):
+    """First question of an AskUserQuestion call, trimmed; "" for anything else."""
+    inp = block.get("input") if isinstance(block, dict) else None
+    qs = inp.get("questions") if isinstance(inp, dict) else None
+    if isinstance(qs, list) and qs and isinstance(qs[0], dict):
+        q = qs[0].get("question")
+        if isinstance(q, str):
+            return truncate(" ".join(q.split()), ASK_TEXT_MAX)
+    return ""
+
+
+def _permission_gated(name, mode):
+    """Would this tool normally show a permission prompt in this mode?"""
+    if not name or mode in (None, "auto", "bypassPermissions", "dontAsk"):
+        return False
+    if name.startswith("mcp__") or name in ("Bash", "WebFetch"):
+        return True
+    return mode == "default" and name in _EDIT_TOOLS
 
 # kind -> (seconds of load removed, revives). Mirrors CATALOG in backend
 # app/pantry.py (restoreMins * 60); tests/test_catalog_sync.py checks it. A
@@ -1651,8 +1723,8 @@ def build_session(agent, meals=None, fatigue_on=True):
     if kind == "interactive":
         if raw_status == "busy":
             status = "working"
-        elif raw_status == "idle":
-            status = "idle"
+        elif raw_status in LIVE_WAIT_STATES:
+            status = "needs"
         else:
             status = "idle"
     else:  # background
@@ -1683,22 +1755,44 @@ def build_session(agent, meals=None, fatigue_on=True):
     if stale and status != "working":
         status = "stale"
 
-    # --- alert detection: recent (age < 6h) error override, else blocked note ---
+    # --- alert detection: open question/plan, recent (age < 6h) error, else blocked note ---
     alert = None
     alert_kind = None
+    waiting_since = None
+    ask = agg.get("pending_ask") if isinstance(agg, dict) else None
     errors = agg.get("errors", []) if isinstance(agg, dict) else []
     cutoff = now_utc().timestamp() - 6 * 3600
     recent = None
     for ts, sig in errors:
         if ts >= cutoff and (recent is None or ts > recent[0]):
             recent = (ts, sig)
-    if recent is not None:
+    if ask and status != "stale":
+        # The tab is parked on a question or a plan approval until you answer it.
+        status = "needs"
+        alert_kind = ask.get("kind") or "question"
+        if alert_kind == "plan":
+            alert = "Waiting for you to approve a plan"
+        else:
+            alert = "Asked you a question" + (": " + ask["text"] if ask.get("text") else "")
+        waiting_since = _iso_or_none(ask.get("since"))
+    elif recent is not None:
         alert = 'Recent error detected: matched "%s" in session output' % recent[1]
         alert_kind = "error"
         status = "needs"  # force attention regardless of prior status
+    elif status == "needs" and kind == "interactive":
+        alert = "Waiting for your input"
+        alert_kind = "waiting"
     elif status == "needs":
         alert = "Background agent is blocked / awaiting input"
         alert_kind = "blocked"
+
+    # A permission-gated tool open for a while in a prompting permission mode MAY
+    # be sitting on a permission prompt. A hint only: the status is unchanged.
+    likely_awaiting = None
+    gated = agg.get("gated_tool_open") if isinstance(agg, dict) else None
+    if (gated and status == "working" and kind == "interactive"
+            and now_utc().timestamp() - gated[0] >= LIKELY_AWAIT_SECS):
+        likely_awaiting = "May be waiting for permission to run %s" % (gated[1] or "a tool")
 
     now_label = tx["now_label"] if status == "working" else None
 
@@ -1746,6 +1840,8 @@ def build_session(agent, meals=None, fatigue_on=True):
         "links": tx["links"],
         "alert": alert,
         "alertKind": alert_kind,
+        "waitingSince": waiting_since,
+        "likelyAwaiting": likely_awaiting,
         "tokens": tokens,
         "spark": spark,
         # session-meta (merged from sessions-meta.json in build_payload)

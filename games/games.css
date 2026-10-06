@@ -155,7 +155,7 @@ html.hq-calm .vg-card:hover{transform:none}
 .pkb-text{min-height:64px;padding:10px 12px;border-radius:var(--radius-sm);background:var(--panel);border:2px solid var(--line);font-size:14px;line-height:1.4;cursor:default}
 .pkb-cmd{display:grid;grid-template-columns:1fr 1fr;gap:6px;align-content:start;position:relative}
 .pkb-cmd.m-wait{display:flex}
-.pkb-cmd[data-left]:not(.m-wait)::after{content:attr(data-left);position:absolute;right:4px;bottom:-16px;font-size:11px;color:var(--muted)}
+.pkb-cmd[data-left]:is(.m-main,.m-fight,.m-team,.m-replace)::after{content:attr(data-left);position:absolute;right:4px;bottom:-16px;font-size:11px;color:var(--muted)}
 .pkb-cmd.m-over{display:flex;flex-wrap:wrap;gap:6px}
 .pkb-wait{padding:10px;color:var(--muted);font-size:13px}
 .pkb-btn{height:38px;border-radius:8px;border:2px solid var(--line);background:var(--panel2);color:var(--ink);font:inherit;font-weight:800;letter-spacing:.04em;cursor:pointer}

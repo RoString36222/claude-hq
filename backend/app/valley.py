@@ -442,6 +442,16 @@ DUEL_CHOOSE_SECS = 30          # each later move-or-switch choice; then the serv
 DUEL_REPLACE_SECS = 30         # to send in the next creature after a faint
 DUEL_GRACE_SECS = 20           # a dropped connection may come back within this and play on
 DUEL_AFK_PICKS = 2             # consecutive server picks for one side = that side forfeits
+DUEL_SLACK_SECS = 2            # a pick sent as a visible countdown ends still counts (network trip)
+DUEL_ANIM_SECS = 2             # extra choosing time per animated move/switch/faint of the last turn
+DUEL_ANIM_CAP = 12             # ...capped, so a long turn never stalls the match
+DUEL_RESULT_SECS = 600         # an ending a dropped player missed is replayed when they rejoin
+
+
+def _anim_allowance(events: list[dict]) -> int:
+    """Seconds the client spends animating a turn before it shows the menu again."""
+    n = sum(1 for e in events if e.get("t") in ("move", "switch", "faint"))
+    return min(DUEL_ANIM_CAP, DUEL_ANIM_SECS * n)
 
 
 def _team(raw: Any) -> list[dict] | None:
@@ -464,6 +474,7 @@ class Duel:
     def __init__(self) -> None:
         self.pending: dict[str, dict] = {}     # challenged user_id -> {from, team}
         self.match: dict | None = None
+        self.missed: dict[str, tuple[float, dict]] = {}   # user_id -> (at, duelend payload) they missed
 
     def view(self) -> dict | None:
         mt = self.match
@@ -474,7 +485,7 @@ class Duel:
         return {"mid": mt["mid"], "a": mt["a"], "b": mt["b"], "ids": mt["ids"], "turn": st["turn"],
                 "phase": mt["phase"], "deadline_in": max(0, round(mt["deadline"] - t)),
                 "deadline_ms": max(0, int((mt["deadline"] - t) * 1000)),
-                "waiting": self._waiting(),
+                "slack_ms": DUEL_SLACK_SECS * 1000, "waiting": self._waiting(),
                 "away": {uid: max(0, int((d - t) * 1000)) for uid, d in mt["away"].items()},
                 "sides": {uid: {"active": st["sides"][i]["active"],
                                 "team": [pb.view_mon(m) for m in st["sides"][i]["team"]]}
@@ -522,6 +533,8 @@ class Duel:
             out.err(m.ws, "bring a team of 1 to 6 creatures")
             return
         a, b = p["from"], m.user_id
+        self.missed.pop(a, None)
+        self.missed.pop(b, None)
         self.match = {"mid": secrets.token_hex(4), "a": lobby.members[a], "b": lobby.members[b], "ids": [a, b],
                       "state": pb.new_battle(p["team"], team), "phase": "choose", "choices": {}, "need": [],
                       "deadline": now() + DUEL_FIRST_SECS, "auto": [0, 0], "away": {}}
@@ -563,7 +576,7 @@ class Duel:
         if gone:
             self._end(out, None if len(gone) == 2 else 1 - gone[0], forfeit=True, left=True)
             return True
-        if t <= mt["deadline"]:
+        if t <= mt["deadline"] + DUEL_SLACK_SECS:     # slack: a last-second pick is still in flight
             return False
         st = mt["state"]
         afk = []
@@ -598,7 +611,7 @@ class Duel:
         mt["choices"] = {}
         mt["need"] = pb.needs_replace(st)
         mt["phase"] = "replace" if mt["need"] else "choose"
-        mt["deadline"] = now() + (DUEL_REPLACE_SECS if mt["need"] else DUEL_CHOOSE_SECS)
+        mt["deadline"] = now() + (DUEL_REPLACE_SECS if mt["need"] else DUEL_CHOOSE_SECS) + _anim_allowance(events)
         mt["seq"] = mt.get("seq", 0) + 1
         out.all("turn", mid=mt["mid"], seq=mt["seq"], events=events, duel=self.view())
         if st["over"]:
@@ -608,8 +621,20 @@ class Duel:
     def _end(self, out: Out, winner_side: int | None, **extra: Any) -> None:
         mt = self.match
         winner = None if winner_side is None else (mt["a"] if winner_side == 0 else mt["b"])
-        out.all("duelend", duel=self.view(), winner=winner, **extra)
+        view = self.view()
+        out.all("duelend", duel=view, winner=winner, **extra)
+        # Whoever is mid-grace (socket down) cannot hear that broadcast: keep it for their rejoin.
+        for uid in mt["away"]:
+            self.missed[uid] = (now(), {"duel": view, "winner": winner, **extra})
         self.match = None
+
+    def replay_missed(self, user_id: str, ws: Any, out: Out) -> None:
+        """A rejoining player whose duel ended while they were away gets that ending, once."""
+        got = self.missed.pop(user_id, None)
+        t = now()
+        self.missed = {u: v for u, v in self.missed.items() if t - v[0] < DUEL_RESULT_SECS}
+        if got and t - got[0] < DUEL_RESULT_SECS:
+            out.to(ws, "duelend", **got[1])
 
     def away(self, user_id: str, out: Out) -> bool:
         """The user's last socket dropped. True if they are mid-duel and get a grace period."""
@@ -621,10 +646,17 @@ class Duel:
         out.all("away", mid=mt["mid"], user=user_id, ms=DUEL_GRACE_SECS * 1000)
         return True
 
-    def back(self, user_id: str, out: Out) -> None:
+    def back(self, user_id: str, out: Out) -> bool:
+        """True if the user was away mid-duel (a reconnect, not a fresh join)."""
         mt = self.match
         if mt and mt["away"].pop(user_id, None) is not None:
             out.all("back", mid=mt["mid"], user=user_id)
+            return True
+        return False
+
+    def seated(self, user_id: str) -> bool:
+        """A duelist of the live match: their lobby seat is reserved while they reconnect."""
+        return bool(self.match and user_id in self.match["ids"])
 
     def drop(self, user_id: str, out: Out) -> None:
         self.pending.pop(user_id, None)
@@ -872,21 +904,24 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
     rng = _rng()
 
     if op == "join":
-        if member.user_id not in lobby.members and len(lobby.members) >= MAX_LOBBY:
+        reserved = g == "duel" and v.duel.seated(member.user_id)
+        if member.user_id not in lobby.members and len(lobby.members) >= MAX_LOBBY and not reserved:
             out.err(member.ws, "this game's lobby is full")
         else:
             fresh = member.user_id not in lobby.members
+            returning = g == "duel" and v.duel.back(member.user_id, out)   # a reconnect: no "joined" toast
             lobby.members[member.user_id] = member.public()
             if lobby.host is None or lobby.host not in lobby.members:
                 lobby.host = member.user_id
-            out.all("lobby", members=lobby.roster(), joined=member.public() if fresh else None, name=GAME_NAMES[g])
+            out.all("lobby", members=lobby.roster(), joined=member.public() if fresh and not returning else None,
+                    name=GAME_NAMES[g])
             if g == "pond":
                 out.to(member.ws, "pond", pond=v.pond.snapshot())
             elif g == "race" and v.race.running():
                 out.to(member.ws, "start", round=v.race.round, secs=max(0, round(v.race.until - now())))
             elif g == "duel":
-                v.duel.back(member.user_id, out)
                 v.duel.tick(out, rng)
+                v.duel.replay_missed(member.user_id, member.ws, out)
                 out.to(member.ws, "duel", duel=v.duel.view())
             elif g == "mines":
                 out.to(member.ws, "mines", run=v.mines.view())
@@ -959,14 +994,17 @@ def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out, dropped: bool = 
         return
     if lobby.host == user_id:
         lobby.host = next(iter(lobby.members), None)
+    away = False
     if g == "pond":
         v.pond.drop(user_id)
     elif g == "duel":
-        if not (dropped and v.duel.away(user_id, out)):
+        away = dropped and v.duel.away(user_id, out)
+        if not away:
             v.duel.drop(user_id, out)
     elif g == "mines":
         v.mines.drop(user_id, out)
-    out.all("lobby", members=lobby.roster(), left=who, name=GAME_NAMES[g])
+    # A duelist on a grace period has not left: the "away" event says so, no "left" notice.
+    out.all("lobby", members=lobby.roster(), left=None if away else who, name=GAME_NAMES[g])
 
 
 async def on_disconnect(room_id: str, member: Member) -> None:

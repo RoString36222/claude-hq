@@ -317,9 +317,20 @@ HANDLERS.duel = {
     else if(m.ev === "declined"){ s.sent = null; api.toast(nameOf(m.by)+" declined your duel"); }
     else if(m.ev === "duel"){
       var d = m.duel;
-      if(!d){ if(s.duel && !s.queue.some(function(q){ return q.end; })) s.duel = null; return; }   // no match (any more)
+      var c = CTX.duel, live = c && c.scene && !c.scene.dead ? c : null;
+      if(!d){                                                    // no match (any more)
+        if(!s.duel || s.queue.some(function(q){ return q.end; })) return;
+        // It ended while our socket was down and we never heard the ending: close the battle definitively.
+        if(live) s.queue.push({end:{duel:null, winner:undefined, missed:true}});
+        else { s.duel = null; s.queue = []; s.live = null; }
+        return;
+      }
       if(s.duel && s.duel.mid === d.mid){ s.queue.push({snap:d}); }      // a resync (rejoin/sync): apply after queued turns
-      else { s.queue = []; s.ended = null; s.seq = 0; s.live = null; s.fresh = !!(s.sent || s.incoming); }   // intro only for a match we just started
+      else {
+        // A different match: any scene still showing an older one goes; renderDuel mounts the new one.
+        if(live && live.mid !== d.mid){ clearInterval(live.duelTimer); live.scene.destroy(); live.scene = null; live.lobbySig = null; live.playing = false; }
+        s.queue = []; s.ended = null; s.seq = 0; s.live = null; s.fresh = !!(s.sent || s.incoming);   // intro only for a match we just started
+      }
       s.incoming = null; s.sent = null; s.duel = d; duelClock(s, d);
       if(HQV.pk && HQV.pk.preload){ var ids = d.ids||[]; ids.forEach(function(u){ var sd = d.sides[u]; if(sd) HQV.pk.preload(sd.team); }); }
     }
@@ -334,7 +345,12 @@ HANDLERS.duel = {
     else if(m.ev === "late"){ s.late = m.turn; send("duel","sync"); }       // our pick missed the turn: resync
     else if(m.ev === "duelend"){
       if(s.duel && m.duel && m.duel.mid !== s.duel.mid) return;
-      s.queue.push({end:m}); duelRecord(m);
+      if(s.queue.some(function(q){ return q.end; })) return;            // already ending (e.g. a replay after a missed one)
+      duelRecord(m);
+      var cl = CTX.duel;
+      if(s.duel && cl && cl.scene && !cl.scene.dead) s.queue.push({end:m});
+      else if(s.duel && cl && cl.alive && !cl.scene) s.queue.push({end:m});     // the scene is still loading
+      else { s.ended = m; s.queue = []; s.duel = null; }                                // no battle on screen: just show the result
     }
   },
   render: function(ctx, s){ renderDuel(ctx, s); }
@@ -448,9 +464,10 @@ function pumpDuel(ctx, s){
   if(!item){ duelPrompt(ctx, s); return; }
   if(item.snap){ s.live = copyDuel(item.snap); ctx.acted = null; sc.setView(duelView(item.snap)); return pumpDuel(ctx, s); }
   if(item.end){
-    var m = item.end; s.ended = m; s.duel = null; ctx.playing = true;
-    var line = !m.winner ? "It's a draw!" : m.winner.userId === me() ? (m.left ? "Your opponent didn't come back. You win!" : m.timeout ? "Your opponent stopped choosing. You win!" : m.forfeit ? "Your opponent forfeited. You win!" : "You won the duel!") :
-      (m.duel && (m.duel.ids||[]).indexOf(me()) >= 0 ? (m.timeout ? "You ran out of time twice, so you forfeited." : m.forfeit ? "You forfeited." : "You lost the duel.") : nameOf(m.winner)+" won the duel!");
+    var m = item.end; s.ended = m; s.duel = null; ctx.playing = true; s.queue = [];
+    sc.cmd.removeAttribute("data-left");
+    var line = m.missed ? "The duel ended while you were offline." : !m.winner ? "It's a draw!" : m.winner.userId === me() ? (m.left ? "Your opponent didn't come back. You win!" : m.timeout ? "Your opponent stopped choosing. You win!" : m.forfeit ? "Your opponent forfeited. You win!" : "You won the duel!") :
+      (m.duel && (m.duel.ids||[]).indexOf(me()) >= 0 ? (m.timeout ? "You ran out of time twice, so you forfeited." : m.left ? "You were offline too long, so you forfeited." : m.forfeit ? "You forfeited." : "You lost the duel.") : nameOf(m.winner)+" won the duel!");
     sc.setMode("busy");
     sc.say(line, 600).then(function(){
       ctx.playing = false;
@@ -472,12 +489,15 @@ function duelPrompt(ctx, s){
   if(!sc || sc.dead || ctx.playing || !d || (s.queue && s.queue.length) || sc.mode === "over" || sc.busy) return;
   var cur = s.duel && s.duel.mid === d.mid && s.duel.turn === d.turn ? s.duel : d;
   var playing = (d.ids||[]).indexOf(me()) >= 0, waiting = cur.waiting || [], now = performance.now();
-  var key = d.turn+":"+d.phase, left = Math.max(0, Math.ceil(((s.deadlineAt||now) - now)/1000));
+  // The visible timer runs out a second before the server's deadline (which also allows slack_ms),
+  // so a pick made at "1s" always lands in time.
+  var slack = cur.slack_ms != null ? cur.slack_ms|0 : 2000;
+  var key = d.turn+":"+d.phase, left = Math.max(0, Math.ceil(((s.deadlineAt||now) - 1000 - now)/1000));
   // Someone dropped: their grace countdown replaces the turn timer.
   var away = Object.keys(s.awayAt||{}).filter(function(u){ return u !== me(); }), awayLeft = 0;
   away.forEach(function(u){ awayLeft = Math.max(awayLeft, Math.ceil((s.awayAt[u]-now)/1000)); });
   // Countdown over (turn timer or someone's grace): ask the server to enforce it, every 3 s until it does.
-  var due = (s.deadlineAt && now >= s.deadlineAt) || (away.length && awayLeft <= 0);
+  var due = (s.deadlineAt && now >= s.deadlineAt + slack + 250) || (away.length && awayLeft <= 0);
   if(due && sockOpen() && now - (ctx.poked||0) > 3000){ ctx.poked = now; send("duel","poke"); }
   var mine = playing && (waiting.indexOf(me()) >= 0 || ctx.changing === key) && !(ctx.acted && ctx.acted.key === key);
   var foeReady = playing && waiting.indexOf(d.ids[1-duelSeat(d)]) < 0 && d.phase === "choose";

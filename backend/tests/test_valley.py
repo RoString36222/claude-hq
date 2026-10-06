@@ -259,7 +259,7 @@ async def test_duel_replace_phase_then_win(client, clock, fixed):
         turn = until(wb, "turn")
         assert any(e["t"] == "faint" and e["side"] == 1 for e in turn["events"])
         view = turn["duel"]
-        assert view["phase"] == "replace" and view["waiting"] == [b] and view["deadline_in"] == 30
+        assert view["phase"] == "replace" and view["waiting"] == [b] and view["deadline_in"] == valley.DUEL_REPLACE_SECS + valley._anim_allowance(turn["events"])
         act(wa, view["turn"], k="move", i=0)
         assert until(wa, "error")["error"] == "wait for the other player"
         act(wb, view["turn"], k="move", i=0)
@@ -281,7 +281,7 @@ async def test_duel_timeout_picks_for_you_and_forfeit(client, clock, fixed):
         duel = start_duel(wa, wb, b, [VENUSAUR], [CHARIZARD])
         act(wa, duel["turn"], k="move", i=2)
         until(wa, "waiting")
-        clock["now"] += valley.DUEL_FIRST_SECS + 1
+        clock["now"] += valley.DUEL_FIRST_SECS + valley.DUEL_SLACK_SECS + 1
         wa.send_json({"type": "game", "g": "duel", "op": "poke"})
         turn = until(wb, "turn")
         assert [e["move"] for e in turn["events"] if e["t"] == "move" and e["side"] == 1] == ["flareblitz"]
@@ -310,13 +310,15 @@ async def test_duel_two_server_picks_in_a_row_forfeit(client, clock, fixed):
         duel = start_duel(wa, wb, b, [VENUSAUR], [VENUSAUR])
         act(wa, duel["turn"], k="move", i=0)
         until(wa, "waiting")                                        # processed before the clock moves
-        clock["now"] += valley.DUEL_FIRST_SECS + 1
+        clock["now"] += valley.DUEL_FIRST_SECS + valley.DUEL_SLACK_SECS + 1
         wa.send_json({"type": "game", "g": "duel", "op": "poke"})
-        view = until(wa, "turn")["duel"]                            # b idled once: the server chose
-        assert view["deadline_in"] == valley.DUEL_CHOOSE_SECS
+        turn = until(wa, "turn")                                    # b idled once: the server chose
+        view = turn["duel"]
+        assert view["deadline_in"] == valley.DUEL_CHOOSE_SECS + valley._anim_allowance(turn["events"])
+        assert valley.DUEL_CHOOSE_SECS < view["deadline_in"] <= valley.DUEL_CHOOSE_SECS + valley.DUEL_ANIM_CAP
         act(wa, view["turn"], k="move", i=0)
         until(wa, "waiting", where=lambda m: m["turn"] == view["turn"])
-        clock["now"] += valley.DUEL_CHOOSE_SECS + 1
+        clock["now"] += view["deadline_in"] + valley.DUEL_SLACK_SECS + 1
         wa.send_json({"type": "game", "g": "duel", "op": "poke"})
         end = until(wa, "duelend")
         assert end["winner"]["handle"] == "ash" and end["timeout"] is True and end["forfeit"] is True
@@ -329,7 +331,7 @@ async def test_duel_choosing_resets_the_idle_count(client, clock, fixed):
         duel = start_duel(wa, wb, b, [VENUSAUR], [VENUSAUR])
         act(wa, duel["turn"], k="move", i=0)
         until(wa, "waiting")                                        # processed before the clock moves
-        clock["now"] += valley.DUEL_FIRST_SECS + 1
+        clock["now"] += valley.DUEL_FIRST_SECS + valley.DUEL_SLACK_SECS + 1
         wa.send_json({"type": "game", "g": "duel", "op": "poke"})
         view = until(wb, "turn")["duel"]
         act(wb, view["turn"], k="move", i=0)                       # b is back
@@ -337,7 +339,7 @@ async def test_duel_choosing_resets_the_idle_count(client, clock, fixed):
         view = until(wb, "turn", where=lambda m: m["duel"]["turn"] == view["turn"] + 1)["duel"]
         act(wa, view["turn"], k="move", i=0)
         until(wa, "waiting", where=lambda m: m["turn"] == view["turn"])
-        clock["now"] += valley.DUEL_CHOOSE_SECS + 1
+        clock["now"] += view["deadline_in"] + valley.DUEL_SLACK_SECS + 1
         wa.send_json({"type": "game", "g": "duel", "op": "poke"})
         nxt = until(wa, "turn", where=lambda m: m["duel"]["turn"] == view["turn"] + 1)   # one more pick, no forfeit
         assert valley._rooms["lobby"].duel.match is not None and nxt["duel"]["phase"] == "choose"
@@ -394,6 +396,82 @@ async def test_duel_leaving_the_lobby_on_purpose_forfeits_at_once(client, clock,
         wb.send_json({"type": "game", "g": "duel", "op": "leave"})
         end = until(wa, "duelend")
         assert end["winner"]["handle"] == "ash" and end["forfeit"] is True
+
+
+async def test_duel_a_pick_just_after_the_deadline_is_still_yours(client, clock, fixed):
+    a, b = await duel_users()
+    with client.websocket_connect(url("lobby", a)) as wa, client.websocket_connect(url("lobby", b)) as wb:
+        wa.receive_json(); wb.receive_json()
+        duel = start_duel(wa, wb, b, [CHARIZARD], [VENUSAUR])
+        assert duel["slack_ms"] == valley.DUEL_SLACK_SECS * 1000
+        act(wa, duel["turn"], k="move", i=3)                       # Scary Face
+        until(wb, "waiting")
+        clock["now"] += valley.DUEL_FIRST_SECS + 1                  # in flight as b's countdown ended
+        act(wb, duel["turn"], k="move", i=0)
+        turn = until(wa, "turn")
+        mine = [e["move"] for e in turn["events"] if e["t"] == "move" and e["side"] == 1]
+        assert mine == [duel["sides"][b]["team"][0]["moves"][0]["id"]]       # b's own pick, not a server one
+        assert valley._rooms["lobby"].duel.match["auto"] == [0, 0]
+
+
+async def test_duel_ending_missed_while_offline_is_replayed_on_rejoin(client, clock, fixed):
+    a, b = await duel_users()
+    with client.websocket_connect(url("lobby", b)) as wb:
+        wb.receive_json()
+        with client.websocket_connect(url("lobby", a)) as wa:
+            wa.receive_json()
+            duel = start_duel(wa, wb, b, [CHARIZARD], [VENUSAUR])
+        until(wb, "away")                                           # a's socket dropped
+        wb.send_json({"type": "game", "g": "duel", "op": "forfeit"})
+        until(wb, "duelend")
+        with client.websocket_connect(url("lobby", a)) as wa2:
+            wa2.receive_json()
+            wa2.send_json({"type": "game", "g": "duel", "op": "join"})
+            end = until(wa2, "duelend")                             # the ending a missed, before the snapshot
+            assert end["duel"]["mid"] == duel["mid"] and end["winner"]["handle"] == "ash" and end["forfeit"]
+            assert until(wa2, "duel")["duel"] is None
+            wa2.send_json({"type": "game", "g": "duel", "op": "join"})
+            assert until(wa2, "duel")["duel"] is None              # replayed once only
+            wa2.send_json({"type": "game", "g": "duel", "op": "sync"})
+            m = wa2.receive_json()
+            while m.get("ev") != "duel":
+                assert m.get("ev") != "duelend"
+                m = wa2.receive_json()
+
+
+async def test_duel_reconnect_keeps_the_seat_and_skips_join_notices(client, clock, fixed, monkeypatch):
+    monkeypatch.setattr(valley, "MAX_LOBBY", 2)
+    a, b = await duel_users()
+    c, _ = await make_user("brock", 12)
+    with client.websocket_connect(url("lobby", a)) as wa:
+        wa.receive_json()
+        with client.websocket_connect(url("lobby", b)) as wb:
+            wb.receive_json()
+            duel = start_duel(wa, wb, b, [CHARIZARD], [VENUSAUR])
+        until(wa, "away")
+        assert list(valley._rooms["lobby"].lobbies["duel"].members) == [a]
+        with client.websocket_connect(url("lobby", c)) as wc:      # a spectator takes the free seat
+            wc.receive_json()
+            wc.send_json({"type": "game", "g": "duel", "op": "join"})
+            until(wc, "duel")
+            with client.websocket_connect(url("lobby", b)) as wb2:
+                wb2.receive_json()
+                wb2.send_json({"type": "game", "g": "duel", "op": "join"})
+                back = until(wa, "lobby", where=lambda m: len(m["members"]) == 3)
+                assert back["joined"] is None                       # a reconnect, not a fresh join
+                assert until(wb2, "duel")["duel"]["mid"] == duel["mid"]
+
+
+def test_duel_drop_during_a_match_is_away_not_left():
+    v = valley.RoomValley("x")
+    lobby = v.lobbies["duel"]
+    lobby.members = {"a": {"userId": "a"}, "b": {"userId": "b"}}
+    v.duel.match = {"mid": "m1", "ids": ["a", "b"], "away": {}}
+    out = valley.Out("duel")
+    valley._leave_lobby(v, "duel", "b", out, dropped=True)
+    evs = [(p["ev"], p.get("left")) for _, _, p in out.items]
+    assert evs == [("away", None), ("lobby", None)]                # no "left" notice for a blip
+    assert v.duel.match is not None and v.duel.seated("b")
 
 
 async def test_duel_decline_tells_the_challenger(client, clock):

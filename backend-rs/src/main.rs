@@ -6,6 +6,8 @@
 mod auth;
 mod config;
 mod db;
+mod kart;
+mod realtime;
 mod rooms;
 mod schemas;
 mod scoring;
@@ -36,6 +38,7 @@ struct AppState {
     pool: SqlitePool,
     cfg: Arc<config::Settings>,
     rooms: RoomManager,
+    kart: kart::KartHub,
     conn_seq: Arc<AtomicU64>,
 }
 
@@ -226,7 +229,8 @@ async fn room_ws(
 async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member: Member) {
     use futures::{SinkExt, StreamExt};
     let conn_id = st.conn_seq.fetch_add(1, Ordering::Relaxed);
-    let Some((mut rx, roster, state)) = st.rooms.join(&room_id, conn_id, member.clone()).await
+    let Some((mut rx, mut direct, roster, state)) =
+        st.rooms.join_direct(&room_id, conn_id, member.clone()).await
     else {
         return;
     };
@@ -239,9 +243,14 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
         return;
     }
 
-    // One task pumps the broadcast channel out; the main loop reads input.
+    // One task pumps the room broadcast and this socket's direct queue (game
+    // events for one socket, one user or a lobby) out; the main loop reads input.
     let mut out = tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
+        loop {
+            let msg = tokio::select! {
+                m = rx.recv() => match m { Ok(m) => m, Err(_) => break },
+                Some(m) = direct.recv() => m,
+            };
             if tx.send(Message::Text(msg)).await.is_err() {
                 break;
             }
@@ -251,6 +260,7 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
     let rooms = st.rooms.clone();
     let rid = room_id.clone();
     let me = member.clone();
+    let games = st.kart.clone();
     let mut inbound = tokio::spawn(async move {
         while let Some(Ok(msg)) = recv.next().await {
             let Message::Text(text) = msg else { continue };
@@ -274,6 +284,7 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
                 Some("ping") => {
                     rooms.broadcast(&rid, json!({"type": "pong"}).to_string()).await;
                 }
+                Some("game") => games.handle(&rid, conn_id, &me, &v).await,
                 _ => {}
             }
         }
@@ -283,6 +294,8 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
         _ = &mut out => inbound.abort(),
         _ = &mut inbound => out.abort(),
     }
+    // Games first: leave the lobby (a blip) while the room can still tell the others.
+    st.kart.on_disconnect(&room_id, conn_id, &member).await;
     st.rooms.leave(&room_id, conn_id).await;
 }
 
@@ -465,10 +478,19 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|p| p.parse().ok()).unwrap_or(8081);
     let bind = format!("{}:{}", cfg.bind, port);
 
+    let rooms = RoomManager::new();
+    let started = std::time::Instant::now();
+    let kart = kart::KartHub::new(
+        rooms.clone(),
+        realtime::Registry::new(realtime::MAX_TICKERS),
+        // A monotonic game clock in seconds (the Python's time.monotonic()).
+        Arc::new(move || 1000.0 + started.elapsed().as_secs_f64()),
+    );
     let state = AppState {
         pool,
         cfg: Arc::new(cfg),
-        rooms: RoomManager::new(),
+        rooms,
+        kart,
         conn_seq: Arc::new(AtomicU64::new(1)),
     };
 

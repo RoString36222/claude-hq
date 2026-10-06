@@ -1,0 +1,25 @@
+Kenney asset licenses. Files in this folder (*.glb, colormap.png, smoke.png) come from:
+  Starter Kit Racing   https://github.com/KenneyNL/Starter-Kit-Racing  (models/, models/Textures/colormap.png,
+                       sprites/smoke.png; unchanged)
+
+The kit's 3D models, textures and sprites are licensed CC0 (the kit's README: "3D Models & sounds
+(CC0 licensed)"); its Godot code is MIT and is NOT included here: games/kart.js is an original
+three.js re-implementation.
+
+==== CC0 ====
+
+	License: (Creative Commons Zero, CC0)
+	http://creativecommons.org/publicdomain/zero/1.0/
+
+	You can use this content for personal, educational, and commercial purposes.
+
+	Support by crediting 'Kenney' or 'www.kenney.nl' (this is not a requirement)
+
+	Created/distributed by Kenney (www.kenney.nl)
+	License: (Creative Commons Zero, CC0)
+
+==== Starter Kit Racing: LICENSE (code, not included; kept for reference) ====
+
+MIT License
+
+Copyright (c) 2023 Kenney

@@ -39,7 +39,11 @@ class GameFileTests(unittest.TestCase):
                             ("vendor/three-gltf-loader.js", "application/javascript"),
                             ("golf/courses.json", "application/json"),
                             ("golf/straight.glb", "model/gltf-binary"),
-                            ("golf/colormap.png", "image/png")):
+                            ("golf/colormap.png", "image/png"),
+                            ("kart/tracks.json", "application/json"),
+                            ("kart/track-corner.glb", "model/gltf-binary"),
+                            ("kart/vehicle-motorcycle.glb", "model/gltf-binary"),
+                            ("kart/smoke.png", "image/png")):
             got = dashboard.game_file(name)
             self.assertIsNotNone(got, name)
             self.assertTrue(got[1].startswith(ctype), name)
@@ -48,7 +52,8 @@ class GameFileTests(unittest.TestCase):
         for bad in ("vendor/../dashboard.py", "vendor/x.css", "golf/Textures/colormap.png", "golf/a/b.glb",
                     "golf/X.glb", "vendor/three.core.js", "golf/x.js", "golf/x.glb\n", "vendor/", "golf/.x.glb",
                     "golf/LICENSE-kenney.txt", "vendor/LICENSE-three.txt", "other/three-module.js",
-                    "golf/missing.glb", "golf//straight.glb", "golf/straight.glb/", "/golf/straight.glb"):
+                    "golf/missing.glb", "golf//straight.glb", "golf/straight.glb/", "/golf/straight.glb",
+                    "kart/LICENSE-kenney.txt", "kart/x.js", "kart/../dashboard.py", "karts/track-corner.glb"):
             self.assertIsNone(dashboard.game_file(bad), repr(bad))
 
     def test_golf_assets_revalidate_and_game_scripts_never_cache(self):
@@ -111,6 +116,8 @@ class GameScriptRules(unittest.TestCase):
         with open(os.path.join(GAMES, "vendor", "LICENSE-three.txt"), encoding="utf-8") as f:
             self.assertIn("The MIT License", f.read())
         with open(os.path.join(GAMES, "golf", "LICENSE-kenney.txt"), encoding="utf-8") as f:
+            self.assertGreaterEqual(f.read().count("Creative Commons Zero, CC0"), 2)
+        with open(os.path.join(GAMES, "kart", "LICENSE-kenney.txt"), encoding="utf-8") as f:
             self.assertGreaterEqual(f.read().count("Creative Commons Zero, CC0"), 2)
 
     def test_css_uses_tokens_not_hex(self):

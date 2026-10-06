@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "note": "Kart Racing tracks. path: one letter per 10 m tile from the start line, driving north first: F finish straight, S straight, L/R a 90-degree corner. backend/app/kart_tracks.json is a byte copy (the Arena deploys backend/ only).",
+  "tracks": [
+    {"id": "meadow", "name": "Meadow Loop", "path": "FSSSRSSRSSSSSRSSRS", "laps": 3, "scenery": "forest",
+     "theme": {"sky": "#9fd3f0", "fog": "#cfe8f2", "ground": "#76b85a"}},
+    {"id": "canyon", "name": "Canyon Notch", "path": "FSSSRSSRSLSSRSSSRSSSSSRS", "laps": 3, "scenery": "tents",
+     "theme": {"sky": "#f3c98b", "fog": "#f6dcb4", "ground": "#d9a45f"}},
+    {"id": "peaks", "name": "Twin Peaks", "path": "FSRSLSRSSRSSSLSRSSSRSSSSSSRSSS", "laps": 3, "scenery": "forest",
+     "theme": {"sky": "#b9c7e8", "fog": "#dfe5f3", "ground": "#8fae6a"}}
+  ]
+}

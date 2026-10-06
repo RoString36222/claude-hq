@@ -9824,7 +9824,7 @@ Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
 });
 
 /* ---- Valley minigames: loaded from /games/ on first use (keeps this file from growing) ---- */
-var VALLEY_FILES = ["core","fishart","fishing","garden","bundles","mines","pokedata","pokebattle","battle","puzzle","town","festival","arcade","multi","golf","input","kart"];
+var VALLEY_FILES = ["core","fishart","fishing","garden","bundles","mines","pokedata","pokebattle","battle","puzzle","town","festival","arcade","multi","golf","input","kart","fps"];
 var VALLEY_LOAD = null;
 function valleyLoad(){
   if(VALLEY_LOAD) return VALLEY_LOAD;
@@ -9865,7 +9865,7 @@ function valleyPillSync(){
 }
 // Valley multiplayer traffic from the Arena room. Join notices and invites work even
 // before the Valley view has ever been opened; everything else goes to games/multi.js.
-var VALLEY_GAME_NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm", golf:"Mini Golf", kart:"Kart Racing"};
+var VALLEY_GAME_NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm", golf:"Mini Golf", kart:"Kart Racing", fps:"Blaster Arena"};
 function valleyOnGame(m){
   if(!m || typeof m.g!=="string" || !VALLEY_GAME_NAMES[m.g]) return;
   var you = ARENA.you && ARENA.you.userId;

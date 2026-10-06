@@ -346,3 +346,54 @@ html.hq-calm .pkb-bcard:hover{transform:none}
 html.hq-calm .vg-kart-cd{animation:none}
 @media (prefers-reduced-motion:reduce){ .vg-kart-cd{animation:none} }
 @media (max-width:560px){ .vg-kart-gauges{transform:scale(.72);transform-origin:right bottom} .vg-kart-mini{width:84px;height:84px} }
+/* ---- Blaster Arena ---- */
+.vg-fps-canvas{cursor:crosshair}
+.vg-fps-hud{position:absolute;inset:0;pointer-events:none;font-variant-numeric:tabular-nums}
+.vg-fps-cross{position:absolute;left:50%;top:50%;width:18px;height:18px;transform:translate(-50%,-50%)}
+.vg-fps-cross::before,.vg-fps-cross::after{content:"";position:absolute;background:var(--panel);box-shadow:0 0 0 1px var(--ink)}
+.vg-fps-cross::before{left:8px;top:2px;width:2px;height:14px}
+.vg-fps-cross::after{left:2px;top:8px;width:14px;height:2px}
+.vg-fps-cross.wide{width:24px;height:24px}
+.vg-fps-cross.wide::before{left:11px;top:2px;height:20px}
+.vg-fps-cross.wide::after{left:2px;top:11px;width:20px}
+.vg-fps-hitm{position:absolute;left:50%;top:50%;width:30px;height:30px;transform:translate(-50%,-50%) rotate(45deg);opacity:0;transition:opacity .12s}
+.vg-fps-hitm::before,.vg-fps-hitm::after{content:"";position:absolute;background:var(--ink)}
+.vg-fps-hitm::before{left:14px;top:0;width:3px;height:30px;clip-path:polygon(0 0,100% 0,100% 30%,0 30%,0 70%,100% 70%,100% 100%,0 100%)}
+.vg-fps-hitm::after{top:14px;left:0;height:3px;width:30px;clip-path:polygon(0 0,30% 0,30% 100%,0 100%,70% 0,100% 0,100% 100%,70% 100%,70% 0)}
+.vg-fps-hitm.on{opacity:1;transition:none}
+.vg-fps-hitm.head::before,.vg-fps-hitm.head::after{background:var(--need)}
+.vg-fps-hurt{position:absolute;left:50%;top:50%;width:150px;height:150px;border-radius:50%;border:5px solid transparent;
+  border-top-color:var(--need);opacity:0;transition:opacity .35s}
+.vg-fps-hurt.on{opacity:.9}
+.vg-fps-vig{position:absolute;inset:0;box-shadow:inset 0 0 70px 10px var(--need);opacity:0;transition:opacity .2s}
+.vg-fps-vig.on{opacity:.55}
+.vg-fps-hp,.vg-fps-ammo,.vg-fps-top{position:absolute;padding:6px 10px;border-radius:8px;background:color-mix(in srgb,var(--panel) 88%,transparent);
+  border:1px solid var(--line);color:var(--ink)}
+.vg-fps-hp{left:10px;bottom:10px;width:170px;display:flex;align-items:center;gap:8px}
+.vg-fps-hpt{display:block;width:110px;height:10px;border-radius:5px;background:var(--panel2);border:1px solid var(--line);overflow:hidden}
+.vg-fps-hpt i{display:block;height:100%;width:100%;background:var(--good)}
+.vg-fps-hp.low .vg-fps-hpt i{background:var(--need)}
+.vg-fps-hp b{margin-left:auto;font:800 18px var(--mono)}
+.vg-fps-ammo{right:10px;bottom:10px;min-width:150px;text-align:right;display:flex;flex-direction:column;gap:1px;overflow:hidden}
+.vg-fps-ammo b{font:800 20px var(--mono)}
+.vg-fps-ammo span{font-size:12px;color:var(--muted)}
+.vg-fps-rl{position:absolute;left:0;bottom:0;height:3px;width:0;background:var(--brand)}
+.vg-fps-top{left:50%;top:8px;transform:translateX(-50%);font:700 13px var(--mono);white-space:nowrap}
+.vg-fps-feed{position:absolute;right:8px;top:8px;margin:0;padding:0;list-style:none;display:flex;flex-direction:column;align-items:flex-end;gap:3px;font-size:12px}
+.vg-fps-feed li{padding:2px 8px;border-radius:6px;background:color-mix(in srgb,var(--panel) 88%,transparent);border:1px solid var(--line)}
+.vg-fps-feed li.me{border-color:var(--brand)}
+.vg-fps-w{color:var(--muted)}
+.vg-fps-center{position:absolute;left:50%;top:32%;transform:translate(-50%,-50%);padding:6px 22px;border-radius:var(--radius);
+  font:800 32px var(--mono);color:var(--ink);background:var(--panel);border:2px solid var(--brand);box-shadow:var(--shadow-lg);white-space:nowrap}
+.vg-fps-board{z-index:3}
+.vg-fps-pause{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:16px;text-align:center;
+  background:color-mix(in srgb,var(--bg2) 55%,transparent);color:var(--ink);cursor:pointer;z-index:2}
+.vg-fps-pause b{font-size:22px}
+.vg-fps-pause span{max-width:420px;font-size:13px;padding:6px 10px;border-radius:8px;background:var(--panel);border:1px solid var(--line)}
+.vg-fps-sw{display:inline-block;width:18px;height:18px;border-radius:50%;border:1px solid var(--line)}
+.vg-fps-dead .vg-fps-canvas{filter:grayscale(.7)}
+.vg-fps-dead .vg-fps-cross{display:none}
+html.hq-calm .vg-fps-hitm,html.hq-calm .vg-fps-hurt,html.hq-calm .vg-fps-vig{transition:none}
+html.hq-calm .vg-fps-vig{display:none}
+@media (prefers-reduced-motion:reduce){ .vg-fps-hitm,.vg-fps-hurt,.vg-fps-vig{transition:none} .vg-fps-vig{display:none} }
+@media (max-width:560px){ .vg-fps-hp{width:120px} .vg-fps-hpt{width:60px} .vg-fps-ammo{min-width:100px} .vg-fps-feed{display:none} }

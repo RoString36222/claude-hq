@@ -6,6 +6,9 @@
  *   each frame: I.poll(); I.axis("x") / I.axis("y") in -1..1; I.down("jump");
  *               I.pressed("jump") (this frame only); I.look() -> {dx, dy} since last call
  *   I.destroy() when the view goes away.
+ *   opts.buttons adds named buttons for this one view (e.g. weapon keys), so a key only
+ *   one game uses is never taken from the others; I.wheel() -> mouse wheel steps since
+ *   the last call (counted while the pointer is locked or over the view).
  *
  * Keys only count while `el` (or something inside it) has focus, so typing anywhere
  * else in HQ is never stolen; a key the game uses is preventDefault()ed so the global
@@ -44,8 +47,12 @@ function create(el, opts){
   opts = opts || {};
   var I = {keys: {}, mouse: {}, pad: null, padDown: {}, was: {}, now: {}, lookX: 0, lookY: 0, locked: false,
            alive: true, lastPoll: 0, sens: +opts.sensitivity || 1};
-  var codes = {};
-  Object.keys(BUTTONS).forEach(function(b){ BUTTONS[b].keys.forEach(function(c){ codes[c] = 1; }); });
+  var codes = {}, MAP = {};
+  Object.keys(BUTTONS).forEach(function(b){ MAP[b] = BUTTONS[b]; });
+  Object.keys(opts.buttons || {}).forEach(function(b){ var x = opts.buttons[b] || {};
+    MAP[b] = {keys: Array.isArray(x.keys) ? x.keys : [], pad: Array.isArray(x.pad) ? x.pad : [], mouse: x.mouse}; });
+  Object.keys(MAP).forEach(function(b){ MAP[b].keys.forEach(function(c){ codes[c] = 1; }); });
+  I.wheelN = 0;
   (opts.extraKeys || []).forEach(function(c){ codes[c] = 1; });
 
   function inside(){ var a = document.activeElement; return !!(a && (a === el || el.contains(a))); }
@@ -62,6 +69,7 @@ function create(el, opts){
   function md(e){ if(e.button === 0 || e.button === 2){ I.mouse[e.button] = true; if(opts.look && !I.locked) lock(); } }
   function mu(e){ delete I.mouse[e.button]; }
   function mm(e){ if(I.locked){ I.lookX += e.movementX || 0; I.lookY += e.movementY || 0; } }
+  function wh(e){ if(!opts.wheel || !(I.locked || inside())) return; I.wheelN += e.deltaY > 0 ? 1 : e.deltaY < 0 ? -1 : 0; e.preventDefault(); }
   function lockChange(){ I.locked = document.pointerLockElement === el; if(!I.locked) I.mouse = {}; }
   function vis(){ if(document.hidden) release(); }
   function lock(){ try { var r = el.requestPointerLock && el.requestPointerLock(); if(r && r.catch) r.catch(function(){}); } catch(e){} }
@@ -76,6 +84,7 @@ function create(el, opts){
   document.addEventListener("pointermove", mm);
   document.addEventListener("pointerlockchange", lockChange);
   el.addEventListener("contextmenu", function(e){ if(opts.look) e.preventDefault(); });
+  if(opts.wheel) el.addEventListener("wheel", wh, {passive: false});
 
   function readPad(){
     var pads = null;
@@ -86,7 +95,7 @@ function create(el, opts){
   }
   function padBtn(i){ var p = I.pad, b = p && p.buttons && p.buttons[i]; return b ? (typeof b === "object" ? b.value : b) : 0; }
   function raw(name){
-    var b = BUTTONS[name]; if(!b) return false;
+    var b = MAP[name]; if(!b) return false;
     for(var i = 0; i < b.keys.length; i++) if(I.keys[b.keys[i]]) return true;
     for(var j = 0; j < b.pad.length; j++) if(padBtn(b.pad[j]) > 0.5) return true;
     return b.mouse != null && !!I.mouse[b.mouse];
@@ -96,7 +105,7 @@ function create(el, opts){
     I.lastPoll = t;
     readPad();
     I.was = I.now; I.now = {};
-    Object.keys(BUTTONS).forEach(function(n){ I.now[n] = raw(n); });
+    Object.keys(MAP).forEach(function(n){ I.now[n] = raw(n); });
     if(I.pad && I.pad.axes && I.pad.axes.length >= 4){
       I.lookX += dz(I.pad.axes[2])*LOOK_PAD*dt; I.lookY += dz(I.pad.axes[3])*LOOK_PAD*dt;
     }
@@ -116,6 +125,7 @@ function create(el, opts){
     return 0;
   };
   I.look = function(){ var r = {dx: I.lookX*I.sens, dy: I.lookY*I.sens}; I.lookX = 0; I.lookY = 0; return r; };
+  I.wheel = function(){ var n = I.wheelN; I.wheelN = 0; return n; };
   I.hasPad = function(){ return !!I.pad; };
   I.lock = lock;
   I.unlock = function(){ try { if(document.pointerLockElement === el) document.exitPointerLock(); } catch(e){} };

@@ -6,6 +6,7 @@
 mod auth;
 mod config;
 mod db;
+mod fps;
 mod kart;
 mod realtime;
 mod rooms;
@@ -39,6 +40,7 @@ struct AppState {
     cfg: Arc<config::Settings>,
     rooms: RoomManager,
     kart: kart::KartHub,
+    fps: fps::FpsHub,
     conn_seq: Arc<AtomicU64>,
 }
 
@@ -261,6 +263,7 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
     let rid = room_id.clone();
     let me = member.clone();
     let games = st.kart.clone();
+    let arena = st.fps.clone();
     let mut inbound = tokio::spawn(async move {
         while let Some(Ok(msg)) = recv.next().await {
             let Message::Text(text) = msg else { continue };
@@ -284,7 +287,15 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
                 Some("ping") => {
                     rooms.broadcast(&rid, json!({"type": "pong"}).to_string()).await;
                 }
-                Some("game") => games.handle(&rid, conn_id, &me, &v).await,
+                Some("game") => {
+                    // each real-time game keeps its own lobby and loop; anything else
+                    // goes to the kart hub, which answers "unknown game"
+                    if v.get("g").and_then(|g| g.as_str()) == Some(fps::GAME) {
+                        arena.handle(&rid, conn_id, &me, &v).await
+                    } else {
+                        games.handle(&rid, conn_id, &me, &v).await
+                    }
+                }
                 _ => {}
             }
         }
@@ -296,6 +307,7 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
     }
     // Games first: leave the lobby (a blip) while the room can still tell the others.
     st.kart.on_disconnect(&room_id, conn_id, &member).await;
+    st.fps.on_disconnect(&room_id, conn_id, &member).await;
     st.rooms.leave(&room_id, conn_id).await;
 }
 
@@ -480,17 +492,18 @@ async fn main() -> anyhow::Result<()> {
 
     let rooms = RoomManager::new();
     let started = std::time::Instant::now();
-    let kart = kart::KartHub::new(
-        rooms.clone(),
-        realtime::Registry::new(realtime::MAX_TICKERS),
-        // A monotonic game clock in seconds (the Python's time.monotonic()).
-        Arc::new(move || 1000.0 + started.elapsed().as_secs_f64()),
-    );
+    // One process-wide budget of game loops, shared by every real-time game.
+    let registry = realtime::Registry::new(realtime::MAX_TICKERS);
+    // A monotonic game clock in seconds (the Python's time.monotonic()).
+    let clock: realtime::Clock = Arc::new(move || 1000.0 + started.elapsed().as_secs_f64());
+    let kart = kart::KartHub::new(rooms.clone(), registry.clone(), clock.clone());
+    let fps = fps::FpsHub::new(rooms.clone(), registry, clock);
     let state = AppState {
         pool,
         cfg: Arc::new(cfg),
         rooms,
         kart,
+        fps,
         conn_seq: Arc::new(AtomicU64::new(1)),
     };
 

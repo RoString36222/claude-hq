@@ -52,6 +52,11 @@ BOSS_EVERY = 8                 # a boss surfaces every 8th room catch
 BOSS_SECS = 60
 BOSS_HP_PER_PLAYER = 40
 PULL_RATE = 8                  # pulls per second per player, at most
+POND_OP_RATE = 6               # cast / hook / land / lose per second per player, at most
+PERFECT_BONUS = 1              # a reel where the fish never left the bar
+CHEST_CHANCE = 0.15            # a cast with a treasure chest on the reel
+CHEST_LOOT = (("quartz", 50), ("copper", 25), ("amethyst", 12), ("gold", 8), ("emerald", 4), ("ruby", 1))
+HOOK_EARLY_MS = 250            # a hook this much before the bite still counts (latency)
 CROPS = {   # id: (hours, water per gardener, season)
     "radish": (4, 6, "spring"), "pea": (6, 8, "spring"), "tulip": (8, 10, "spring"),
     "tomato": (6, 10, "summer"), "melon": (12, 16, "summer"), "corn": (10, 12, "summer"),
@@ -289,18 +294,23 @@ def valley_for(room_id: str) -> RoomValley:
 # -------------------------------------------------------------------- pond --
 class Pond:
     def __init__(self) -> None:
-        self.casts: dict[str, dict] = {}       # user_id -> {token, fish, bite_ms, at}
+        self.casts: dict[str, dict] = {}       # user_id -> {token, fish, bite_ms, at, aim, hooked, chest}
         self.scores: dict[str, int] = {}
         self.goal = 0
         self.catches = 0
         self.boss: dict | None = None
         self.pulls: dict[str, list[float]] = {}
+        self.ops: dict[str, list[float]] = {}  # recent line ops per player (rate limit)
+        self.seq = 0                   # public cast id: lets every page match events to a line
         self.last_boss_push = 0.0
         self.boss_at = 0               # catch count that last spawned a boss
 
     def snapshot(self) -> dict:
+        # "casting" stays for older pages; "lines" lets a late joiner draw every line.
         return {"casting": list(self.casts), "scores": self.scores, "goal": self.goal,
-                "goalTarget": POND_GOAL, "boss": self._boss_view()}
+                "goalTarget": POND_GOAL, "boss": self._boss_view(),
+                "lines": [{"userId": uid, "id": c["id"], "aim": c["aim"], "hooked": c["hooked"]}
+                          for uid, c in self.casts.items()]}
 
     def _boss_view(self) -> dict | None:
         b = self.boss
@@ -315,20 +325,49 @@ class Pond:
             self.boss = None
             self.pulls = {}
 
-    def cast(self, m: Member, out: Out, rng: random.Random) -> None:
+    def throttled(self, user_id: str) -> bool:
+        """At most POND_OP_RATE line ops per second per player; the rest are dropped."""
+        t = now()
+        mine = [x for x in self.ops.get(user_id, []) if t - x < 1.0]
+        if len(mine) >= POND_OP_RATE:
+            self.ops[user_id] = mine
+            return True
+        mine.append(t)
+        self.ops[user_id] = mine
+        return False
+
+    def cast(self, m: Member, msg: dict, out: Out, rng: random.Random) -> None:
         self._expire_boss(out)
         if m.user_id in self.casts:
             out.err(m.ws, "you already have a line in the water")
             return
+        aim = msg.get("aim")
+        if isinstance(aim, (int, float)) and not isinstance(aim, bool) and aim == aim:
+            aim = round(min(1.0, max(0.0, float(aim))), 3)
+        else:
+            aim = round(rng.random(), 3)
         ids = list(FISH)
         fish = rng.choices(ids, weights=[FISH_WEIGHT[FISH[f]] for f in ids])[0]
-        c = {"token": secrets.token_urlsafe(8), "fish": fish,
-             "bite_ms": rng.randint(800, 3000), "at": now()}
+        self.seq += 1
+        c = {"token": secrets.token_urlsafe(8), "id": self.seq, "fish": fish, "bite_ms": rng.randint(800, 3000),
+             "at": now(), "aim": aim, "hooked": False, "chest": rng.random() < CHEST_CHANCE}
         self.casts[m.user_id] = c
-        out.to(m.ws, "cast", token=c["token"], fish=fish, rarity=FISH[fish], biteIn=c["bite_ms"])
-        out.all("casting", user=m.public())
+        out.to(m.ws, "cast", token=c["token"], id=c["id"], fish=fish, rarity=FISH[fish], biteIn=c["bite_ms"],
+               chest=c["chest"])
+        out.all("casting", user=m.public(), id=c["id"], aim=aim)
 
-    def land(self, m: Member, msg: dict, out: Out) -> None:
+    def hook(self, m: Member, msg: dict, out: Out) -> None:
+        """Cosmetic: the angler struck on the bite, so the others see the fight start."""
+        c = self.casts.get(m.user_id)
+        if not c or msg.get("token") != c["token"] or c["hooked"]:
+            return
+        if (now() - c["at"]) * 1000 < c["bite_ms"] - HOOK_EARLY_MS:
+            out.err(m.ws, "not yet")
+            return
+        c["hooked"] = True
+        out.all("hooked", user=m.public(), id=c["id"])
+
+    def land(self, m: Member, msg: dict, out: Out, rng: random.Random) -> None:
         self._expire_boss(out)
         c = self.casts.get(m.user_id)
         if not c or msg.get("token") != c["token"]:
@@ -341,14 +380,18 @@ class Pond:
             return
         del self.casts[m.user_id]
         if elapsed > c["bite_ms"] + MAX_REEL_MS:
-            out.all("lost", user=m.public(), fish=c["fish"])
+            out.all("lost", user=m.public(), id=c["id"], fish=c["fish"])
             return
-        pts = FISH_POINTS[r]
+        perfect = msg.get("perfect") is True
+        pts = FISH_POINTS[r] + (PERFECT_BONUS if perfect else 0)
+        if msg.get("chest") is True and c["chest"]:
+            items, weights = zip(*CHEST_LOOT)
+            out.to(m.ws, "loot", item=rng.choices(items, weights=weights)[0])
         self.scores[m.user_id] = self.scores.get(m.user_id, 0) + pts
         self.goal += 1
         self.catches += 1
-        out.all("caught", user=m.public(), fish=c["fish"], points=pts, scores=self.scores,
-                goal=self.goal, goalTarget=POND_GOAL)
+        out.all("caught", user=m.public(), id=c["id"], fish=c["fish"], points=pts, perfect=perfect,
+                scores=self.scores, goal=self.goal, goalTarget=POND_GOAL)
         if self.goal >= POND_GOAL:
             out.all("goal", reward="gold")
             self.goal = 0
@@ -357,7 +400,7 @@ class Pond:
         c = self.casts.get(m.user_id)
         if c and msg.get("token") == c["token"]:
             del self.casts[m.user_id]
-            out.all("lost", user=m.public(), fish=c["fish"])
+            out.all("lost", user=m.public(), id=c["id"], fish=c["fish"])
 
     def maybe_boss(self, lobby: Lobby, out: Out) -> None:
         if self.boss or not self.catches or self.catches % BOSS_EVERY or self.catches == self.boss_at:
@@ -396,6 +439,7 @@ class Pond:
     def drop(self, user_id: str) -> None:
         self.casts.pop(user_id, None)
         self.pulls.pop(user_id, None)
+        self.ops.pop(user_id, None)
 
 
 # -------------------------------------------------------------------- race --
@@ -800,6 +844,7 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
                 lobby.host = member.user_id
             out.all("lobby", members=lobby.roster(), joined=member.public() if fresh else None, name=GAME_NAMES[g])
             if g == "pond":
+                v.pond._expire_boss(out)      # a boss nobody touched may have run out
                 out.to(member.ws, "pond", pond=v.pond.snapshot())
             elif g == "race" and v.race.running():
                 out.to(member.ws, "start", round=v.race.round, secs=max(0, round(v.race.until - now())))
@@ -825,10 +870,14 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
     elif member.user_id not in lobby.members:
         out.err(member.ws, "join the lobby first")
     elif g == "pond":
-        if op == "cast":
-            v.pond.cast(member, out, rng)
+        if op in ("cast", "hook", "land", "lose") and v.pond.throttled(member.user_id):
+            pass                                  # flooding: drop it (pull has its own limit)
+        elif op == "cast":
+            v.pond.cast(member, msg, out, rng)
+        elif op == "hook":
+            v.pond.hook(member, msg, out)
         elif op == "land":
-            v.pond.land(member, msg, out)
+            v.pond.land(member, msg, out, rng)
             v.pond.maybe_boss(lobby, out)
         elif op == "lose":
             v.pond.lose(member, msg, out)

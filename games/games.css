@@ -1,0 +1,87 @@
+/* Valley minigames. Colours come only from index.html's semantic tokens so every theme
+   (aurora / midnight / forest / mono / contrast, light and dark) works; pixel art is drawn
+   on canvases and only scaled here. */
+.vg-shell{display:flex;flex-direction:column;gap:14px;position:relative}
+.vg-wait{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;border-radius:var(--radius);
+  background:var(--panel);border:1px solid var(--line);color:var(--muted);font-weight:600}
+.vg-wait.working{color:var(--good);background:var(--goodbg);border-color:var(--good)}
+.vg-wait.needs{color:var(--need);background:var(--needbg);border-color:var(--need)}
+.vg-home{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.vg-card{display:flex;align-items:center;gap:12px;text-align:left;padding:14px;border-radius:var(--radius);cursor:pointer;
+  background:var(--panel);border:1px solid var(--line);color:var(--ink);font:inherit;position:relative;
+  transition:transform var(--t-fast) var(--ease),border-color var(--t-fast) var(--ease)}
+.vg-card:hover,.vg-card:focus-visible{border-color:var(--brand);transform:translateY(-2px)}
+.vg-card-ic{font-size:28px;line-height:1}
+.vg-card-t{display:flex;flex-direction:column;gap:2px}
+.vg-card-t span{color:var(--muted);font-size:12px}
+.vg-badge{position:absolute;top:8px;right:8px;font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;
+  background:var(--goldbg);color:var(--gold)}
+.vg-stage{display:flex;flex-direction:column;gap:12px;padding:14px;border-radius:var(--radius);background:var(--panel);border:1px solid var(--line)}
+.vg-stage-head{display:flex;align-items:center;gap:12px}
+.vg-stage-head h3{margin:0;font-size:16px}
+.vg-body{display:flex;flex-direction:column;gap:10px}
+.vg-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.vg-muted{color:var(--muted);font-size:13px}
+.vg-msg{margin:0;font-weight:600;min-height:1.3em}
+.vg-select{height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);font:inherit}
+.vg-canvas{display:block;width:100%;max-width:720px;height:auto;image-rendering:pixelated;border-radius:var(--radius-sm);
+  border:1px solid var(--line);background:var(--bg2);outline-offset:3px}
+.vg-canvas:focus-visible{outline:2px solid var(--brand)}
+.vg-invwrap h4{margin:0 0 6px;font-size:13px;color:var(--muted)}
+.vg-inv{display:flex;flex-wrap:wrap;gap:6px}
+.vg-slot{display:inline-flex;align-items:center;gap:4px;padding:3px 7px 3px 3px;border-radius:8px;background:var(--panel);border:1px solid var(--line);font-size:12px}
+.vg-slot canvas,.vg-logcell canvas,.vg-need canvas{image-rendering:pixelated}
+.vg-log{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px}
+.vg-logcell{display:flex;align-items:center;gap:6px;font-size:12px;padding:4px;border-radius:8px;background:var(--panel2)}
+.vg-logcell.unknown canvas{filter:brightness(0);opacity:.35}
+.vg-logcell.unknown{color:var(--faint)}
+.vg-garden{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.vg-plot{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px;border-radius:var(--radius-sm);
+  background:var(--panel2);border:1px solid var(--line);text-align:center;font-size:12px}
+.vg-plot.ripe{border-color:var(--good);background:var(--goodbg)}
+.vg-plant{width:48px;height:48px;image-rendering:pixelated}
+.vg-soil-empty{display:flex;align-items:center;justify-content:center;width:48px;height:48px;border-radius:6px;background:var(--bg2);color:var(--faint);font-size:11px}
+.vg-meter{width:100%;height:6px;border-radius:999px;background:var(--bg2);overflow:hidden}
+.vg-meter i{display:block;height:100%;background:var(--good);transition:width var(--t-med) var(--ease)}
+.vg-meter.low i{background:var(--need)}
+.vg-bundles{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.vg-bundle{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:var(--radius-sm);background:var(--panel2);border:1px solid var(--line)}
+.vg-bundle.done{border-color:var(--gold);background:var(--goldbg)}
+.vg-needs{display:flex;flex-wrap:wrap;gap:6px}
+.vg-need{display:flex;align-items:center;gap:4px;padding:3px 6px;border-radius:8px;background:var(--panel);border:1px dashed var(--line);font-size:12px}
+.vg-need.met{border-style:solid;border-color:var(--good)}
+.vg-need.can{cursor:pointer;border-color:var(--brand)}
+.vg-need.can:focus-visible{outline:2px solid var(--brand)}
+.vg-battle{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.vg-side h4{margin:0 0 6px}
+.vg-mon{display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:center;padding:8px;border-radius:8px;background:var(--panel2);margin-bottom:6px}
+.vg-mon .vg-meter{grid-column:1/-1}
+.vg-mon.ko{opacity:.45}
+.vg-type{font-size:11px;color:var(--muted)}
+.vg-battlelog{font-family:var(--mono);font-size:12px;padding:8px;border-radius:8px;background:var(--bg2);min-height:5em}
+.vg-wordle{display:inline-flex;align-self:flex-start;flex-direction:column;gap:5px;padding:6px;border-radius:8px;outline-offset:3px}
+.vg-wordle:focus-visible{outline:2px solid var(--brand)}
+.vg-wrow{display:flex;gap:5px}
+.vg-tile{width:40px;height:40px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;
+  border-radius:6px;border:2px solid var(--line);background:var(--panel2);color:var(--ink)}
+.vg-tile.hit{background:var(--good);border-color:var(--good);color:var(--on-brand)}
+.vg-tile.near{background:var(--gold);border-color:var(--gold);color:var(--on-brand)}
+.vg-tile.miss{background:var(--bg2);color:var(--muted)}
+.vg-town{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.vg-npc{display:flex;gap:12px;padding:12px;border-radius:var(--radius-sm);background:var(--panel2);border:1px solid var(--line)}
+.vg-face{width:56px;height:56px;image-rendering:pixelated;flex:none}
+.vg-npc-info{display:flex;flex-direction:column;gap:6px;min-width:0}
+.vg-hearts{color:var(--need);letter-spacing:1px;font-size:13px}
+.vg-say{margin:0;font-style:italic;color:var(--ink);min-height:1.2em}
+.vg-board{margin:0;padding-left:20px}
+.vg-pause{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:var(--scrim);border-radius:var(--radius);z-index:5}
+.vg-pause-box{display:flex;flex-direction:column;gap:8px;max-width:360px;padding:18px;border-radius:var(--radius);background:var(--panel);border:1px solid var(--need);box-shadow:var(--shadow-lg)}
+.vg-pause-box p{margin:0;color:var(--muted)}
+/* Waiting Room pill (shown by index.html on other views while tabs work) */
+#valleyPill{position:fixed;left:16px;bottom:16px;z-index:40;display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;
+  background:var(--panel);border:1px solid var(--good);color:var(--good);font-weight:700;box-shadow:var(--shadow);cursor:pointer;font:inherit}
+#valleyPill:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+@media (max-width:640px){ .vg-battle{grid-template-columns:1fr} #valleyPill{left:8px;bottom:8px} }
+html.hq-calm .vg-card,html.hq-calm .vg-meter i{transition:none}
+html.hq-calm .vg-card:hover{transform:none}
+@media (prefers-reduced-motion:reduce){ .vg-card,.vg-meter i{transition:none} .vg-card:hover{transform:none} }

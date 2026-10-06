@@ -1929,6 +1929,7 @@ html.hq-calm #confetti{display:none!important}
       <button class="viewtab" data-view="arena" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-trophy"/></svg><span class="vt-l">Arena</span><span class="tab-badge hidden" id="arenaUnread" aria-hidden="true"></span><span class="vt-k" aria-hidden="true">6</span></button>
       <button class="viewtab" data-view="store" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-store"/></svg><span class="vt-l">Store</span><span class="vt-k" aria-hidden="true">8</span></button>
       <button class="viewtab" data-view="cali" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-utensils"/></svg><span class="vt-l">Cali Tuesdays</span><span class="vt-k" aria-hidden="true">9</span></button>
+      <button class="viewtab" data-view="valley" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-sparkles"/></svg><span class="vt-l">Valley</span><span class="vt-k" aria-hidden="true">0</span></button>
     </div>
 
     <div class="side-trainer">
@@ -2331,6 +2332,8 @@ html.hq-calm #confetti{display:none!important}
       <button class="hbtn" id="vilRaidClose" type="button">Return to village</button>
     </div>
   </div>
+
+  <div id="valleyView" class="hidden" aria-label="Valley"></div>
 
   <div id="storeView" class="sv hidden" aria-label="Store">
     <div class="sv-stage-wrap" id="svWrap"><div class="sv-stage" id="svStage"><canvas id="svCanvas" aria-hidden="true"></canvas><div class="sv-hots" id="svHots"></div></div></div>
@@ -9380,6 +9383,9 @@ function render(){
   // Stamp each live creature with its sessionId so branch/mega choice lookups (evoChoice,
   // branchFinalDex, pokeMegaForm) resolve. Object.assign clones carry _sid forward.
   (STATE.sessions||[]).forEach(function(s){ if(s.creature) s.creature._sid = s.sessionId || s.id; });
+  // The Valley pauses its game when a tab starts needing you, even while hidden.
+  if(typeof HQV!=="undefined" && HQV.onState){ try{ HQV.onState(STATE); }catch(e){} }
+  if(typeof valleyPillSync==="function") valleyPillSync();
   if(document.hidden){
     // Hidden tab: skip all painting, but keep what reaches you outside the page current:
     // needs-you / faint notifications, the tab title, and the Arena status you share.
@@ -9655,6 +9661,7 @@ document.addEventListener("keydown",function(e){
   else if(e.key==="r"||e.key==="R"){ e.preventDefault(); forceRefresh(); }
   else if(e.key==="?"){ e.preventDefault(); openHelp(); }
   else if(e.key>="1"&&e.key<="9"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","arena","village","store","cali"][+e.key-1]); }
+  else if(e.key==="0"){ e.preventDefault(); setView("valley"); }
   // In a voice call, from any view: M mutes, V switches the camera, S shares your screen. Holding a key down
   // doesn't repeat it, and outside a call these keys do nothing.
   else if(VCHAN.on && !e.repeat && (e.key==="m"||e.key==="M")){ e.preventDefault(); voiceToggleMute(); }
@@ -9723,14 +9730,15 @@ var ARENA_STAY = (function(){ try { return localStorage.getItem("hq_arena_stay")
 var ARENA_SHARE_STATUS = (function(){ try { return localStorage.getItem("hq_arena_status") === "1"; } catch(e){ return false; } })();
 // Voice state, also needed by the first setView() (which keeps the lobby socket open while in voice).
 var VCHAN = {on:false, peer:null, stream:null, muted:false, cam:false, screen:false, vidStream:null, vidTile:null, peers:{}, roomId:null, roster:{}, ctx:null, me:null, meter:null};
-var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena"||v==="store"||v==="cali")?v:"live"; })();
+var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena"||v==="store"||v==="cali"||v==="valley")?v:"live"; })();
 var VIEW_TITLES = {
   live:["Live","Every Claude session, right now"], analytics:["Analytics","Usage, cost and rhythm over time"],
   pokedex:["Pokédex","Your creature collection"], gym:["Gym","Active sessions scored as a team"],
   quests:["Quests","Daily, weekly and collection goals"], arena:["Arena","Friends, standings and voice"],
   village:["Village","Your base & army, built from your Claude activity"],
   store:["Store","Snacks for your creatures, paid in Poke Coins"],
-  cali:["Cali Tuesdays","Taco Tuesday at California Burrito: seat friends, plate their food, check out"]
+  cali:["Cali Tuesdays","Taco Tuesday at California Burrito: seat friends, plate their food, check out"],
+  valley:["Valley","Minigames to play while your tabs work"]
 };
 // The Clash of Clans pack renames the "Pokédex" collection to "Troops" (nav tab + title).
 function syncPackLabels(){
@@ -9756,6 +9764,7 @@ function setView(v){
   var av=$("arenaView"); if(av) av.classList.toggle("hidden", v!=="arena");
   var stv=$("storeView"); if(stv) stv.classList.toggle("hidden", v!=="store");
   var cdv=$("caliView"); if(cdv) cdv.classList.toggle("hidden", v!=="cali");
+  var vlv=$("valleyView"); if(vlv) vlv.classList.toggle("hidden", v!=="valley");
   Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
     var on = t.getAttribute("data-view")===v;
     t.classList.toggle("active", on); t.setAttribute("aria-selected", on?"true":"false");
@@ -9768,12 +9777,56 @@ function setView(v){
   if(v==="village") renderVillage();
   if(v==="store") svEnter(); else svLeave();
   if(v==="cali") cdEnter(); else cdLeave();
+  if(v==="valley") valleyEnter(); else valleyLeave();
+  valleyPillSync();
   // The lobby socket stays open on other views while you stay in the lobby, or while you're in voice (it carries it).
   if(v==="arena"){ arenaUnreadClear(); ARENA.nudgeCount={}; loadArena(); } else { arenaRoomFormsClear(); if(!VCHAN.on && !ARENA_STAY) arenaCloseSocket(); }
 }
 Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
   t.addEventListener("click",function(){ setView(t.getAttribute("data-view")); });
 });
+
+/* ---- Valley minigames: loaded from /games/ on first use (keeps this file from growing) ---- */
+var VALLEY_FILES = ["core","fishing","garden","bundles","mines","battle","puzzle","town","festival","arcade"];
+var VALLEY_LOAD = null;
+function valleyLoad(){
+  if(VALLEY_LOAD) return VALLEY_LOAD;
+  if(!document.getElementById("valleyCss")){
+    var l=document.createElement("link"); l.id="valleyCss"; l.rel="stylesheet"; l.href="/games/games.css"; document.head.appendChild(l);
+  }
+  // Scripts run in order: core first, then each game registers with it.
+  VALLEY_LOAD = VALLEY_FILES.reduce(function(p, name){
+    return p.then(function(){ return new Promise(function(res, rej){
+      var sc=document.createElement("script"); sc.src="/games/"+name+".js"; sc.async=false;
+      sc.onload=res; sc.onerror=function(){ rej(new Error(name+".js failed to load")); };
+      document.head.appendChild(sc);
+    }); });
+  }, Promise.resolve()).catch(function(e){ VALLEY_LOAD=null; throw e; });
+  return VALLEY_LOAD;
+}
+function valleyEnter(){
+  var root=$("valleyView"); if(!root) return;
+  if(!window.HQV || !window.HQV.enter) root.textContent="Loading the Valley…";
+  valleyLoad().then(function(){ if(VIEW==="valley" && window.HQV) window.HQV.enter(root); })
+    .catch(function(e){ root.textContent="The Valley couldn’t load: "+e.message; });
+}
+function valleyLeave(){ if(window.HQV && window.HQV.leave) window.HQV.leave(); }
+// Waiting Room: while a tab works and you're on another view, offer a game.
+function valleyPillSync(){
+  var working=((STATE&&STATE.sessions)||[]).filter(function(s){ return s.status==="working"; }).length;
+  var show = working>0 && VIEW!=="valley" && VIEW!=="store" && !cfgValleyOff();
+  var p=$("valleyPill");
+  if(!show){ if(p) p.remove(); return; }
+  if(!p){
+    p=document.createElement("button"); p.id="valleyPill"; p.type="button";
+    p.addEventListener("click",function(){ setView("valley"); });
+    document.body.appendChild(p);
+    if(!document.getElementById("valleyCss")){ var l=document.createElement("link"); l.id="valleyCss"; l.rel="stylesheet"; l.href="/games/games.css"; document.head.appendChild(l); }
+  }
+  var txt="🎣 Play while you wait · "+working+" working";
+  if(p.textContent!==txt) p.textContent=txt;
+}
+function cfgValleyOff(){ try{ return localStorage.getItem("hq_valley_pill")==="0"; }catch(e){ return false; } }
 setView(VIEW);
 primeHighWater();   // seed New Game+ evolution floor from the backend Pokédex on startup
 
@@ -13603,7 +13656,9 @@ function arenaOpenSocket(){
       }
       else if(m.type==="say"){
         var kind = m.data && m.data.kind;
-        if(kind==="voice") voiceOnAnnounce(m); else if(kind==="status") arenaOnStatus(m); else if(kind==="evo") arenaOnEvo(m); else arenaChatReceive(m);
+        if(kind==="voice") voiceOnAnnounce(m); else if(kind==="status") arenaOnStatus(m); else if(kind==="evo") arenaOnEvo(m);
+        else if(kind==="game"){ if(window.HQV && window.HQV.onSay){ try{ window.HQV.onSay(m); }catch(e){} } }
+        else arenaChatReceive(m);
       }
       else if(m.type==="signal"){ voiceOnSignal(m); }
       else if(m.type==="nudge"){ arenaOnNudge(m); }

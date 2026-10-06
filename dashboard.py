@@ -4277,7 +4277,73 @@ POST_PATHS = (
     "/api/arena/pantry/reward",
     "/api/arena/cali/order",
     "/api/arena/sounds",
+    "/api/games/state",
 ) + ARENA_ROOM_POSTS
+
+
+# --------------------------------------------------------------------------- #
+# Valley minigames: static game scripts + one local save file
+# --------------------------------------------------------------------------- #
+# The games live in games/*.js|css so index.html does not grow; they are served
+# from an allowlisted name pattern only (no subdirectories, no dotfiles), and
+# their progress is a local JSON file that never leaves this machine.
+GAMES_DIR = os.path.join(HERE, "games")
+GAMES_SAVE_PATH = os.path.join(HERE, "games-save.json")
+GAMES_SAVE_MAX = 256 * 1024
+_GAME_FILE_RE = re.compile(r"[a-z][a-z0-9_-]{0,40}\.(js|css)")
+_GAME_TYPES = {"js": "application/javascript; charset=utf-8", "css": "text/css; charset=utf-8"}
+_games_lock = threading.Lock()
+
+
+def game_file(name):
+    """(bytes, content type) for an allowlisted file under games/, else None."""
+    if not isinstance(name, str) or not _GAME_FILE_RE.fullmatch(name):
+        return None
+    root = os.path.realpath(GAMES_DIR)
+    path = os.path.realpath(os.path.join(root, name))
+    if os.path.dirname(path) != root or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "rb") as f:
+            return f.read(), _GAME_TYPES[name.rsplit(".", 1)[1]]
+    except OSError:
+        return None
+
+
+def load_games_save():
+    try:
+        with open(GAMES_SAVE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_games_save(body):
+    """Replace the whole save. The page owns the shape; the server only checks
+    it is a JSON object of bounded size, then writes it atomically (0600)."""
+    state = body.get("state")
+    if not isinstance(state, dict):
+        raise ValueError("state must be an object")
+    blob = json.dumps(state, separators=(",", ":"))
+    if len(blob) > GAMES_SAVE_MAX:
+        raise ValueError("save too large")
+    with _games_lock:
+        fd, tmp = tempfile.mkstemp(dir=HERE, prefix=".games-save.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(blob)
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, GAMES_SAVE_PATH)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    return {"ok": True, "bytes": len(blob)}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -4399,6 +4465,18 @@ class Handler(BaseHTTPRequestHandler):
                 'return r;}).catch(()=>caches.match(u.pathname==="/"?"/":e.request)));'
                 '});',
                 "application/javascript; charset=utf-8")
+            return
+
+        if path.startswith("/games/"):
+            got = game_file(path[len("/games/"):])
+            if got is None:
+                self._send(404, "not found\n", "text/plain; charset=utf-8")
+            else:
+                self._send(200, got[0], got[1])
+            return
+
+        if path == "/api/games/state":
+            self._send(200, json.dumps({"state": load_games_save()}))
             return
 
         if path == "/api/sessions":
@@ -4905,6 +4983,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, json.dumps({"error": "could not save config: %s" % e}))
             except Exception as e:
                 self._send(400, json.dumps({"error": "bad config: %s" % e}))
+            return
+
+        if path == "/api/games/state":
+            try:
+                self._send(200, json.dumps(save_games_save(body)))
+            except ValueError as e:
+                self._send(400, json.dumps({"error": "bad save: %s" % e}))
+            except OSError as e:
+                self._send(500, json.dumps({"error": "could not write save: %s" % e}))
             return
 
         if path == "/api/meta":

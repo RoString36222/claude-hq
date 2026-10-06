@@ -265,7 +265,7 @@ def _ssl_context():
     return ctx
 
 
-def _request(method, url, token=None, body=None, timeout=None):
+def _request(method, url, token=None, body=None):
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Accept", "application/json")
@@ -274,7 +274,7 @@ def _request(method, url, token=None, body=None, timeout=None):
     if token:
         req.add_header("Authorization", "Bearer %s" % token)
     try:
-        with urllib.request.urlopen(req, timeout=timeout or _HTTP_TIMEOUT,
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT,
                                     context=_ssl_context()) as resp:
             raw = resp.read().decode("utf-8")
             return resp.status, (json.loads(raw) if raw else {})
@@ -344,31 +344,6 @@ def pair(code, label=""):
             return 500, {"error": "paired, but could not save the device token: %s" % e}
         return 200, {"ok": True, "handle": body.get("handle", "")}
     return status or 502, {"error": body.get("detail") or body.get("error") or "pairing failed"}
-
-
-# Unpair should feel instant even when the Arena is unreachable.
-_UNPAIR_TIMEOUT = 5
-
-
-def unpair():
-    """Forget the Arena link, revoking this device's token server-side first.
-
-    The revoke is best-effort: an unreachable server or an older one without
-    /v1/auth/revoke-self must never stop the user from disconnecting, so the
-    local link is cleared whatever happens. Returns (200, {"ok", "revoked"})."""
-    link = load_link()
-    token, base = link.get("token"), link.get("url") or _base_url()
-    revoked = False
-    if token and base:
-        try:
-            status, _ = _request("POST", base + "/v1/auth/revoke-self", token=token,
-                                 timeout=_UNPAIR_TIMEOUT)
-            # 401: already revoked or idled out -- the token is dead either way.
-            revoked = status in (200, 401)
-        except Exception:
-            revoked = False
-    clear_link()
-    return 200, {"ok": True, "revoked": revoked}
 
 
 def publish(projects_dir):
@@ -456,7 +431,7 @@ def upload_sound(filename, data, content_type):
     req.add_header("Content-Type", content_type or "application/octet-stream")
     req.add_header("Authorization", "Bearer %s" % token)
     try:
-        with urllib.request.urlopen(req, timeout=timeout or _HTTP_TIMEOUT,
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT,
                                     context=_ssl_context()) as resp:
             raw = resp.read().decode("utf-8")
             return resp.status, (json.loads(raw) if raw else {})

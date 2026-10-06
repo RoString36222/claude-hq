@@ -676,25 +676,8 @@ async def drain(db: AsyncSession, user: User) -> GiftsResponse:
 
 # --- quest / achievement rewards -----------------------------------------------
 
-def reward_request_id(kind: str, quest_id: str, tier: str | None, today: date) -> str:
-    """The ledger key for a reward, derived here rather than taken from the
-    client, so one quest pays once per period however many requestIds a client
-    invents. Daily quests (d_*) key on the UTC date, weekly ones (w_*) on the
-    ISO week -- the same strings the page builds (todayStr / isoWeekStr) -- and
-    an achievement tier pays once ever."""
-    if kind == "achievement":
-        return f"ach:{quest_id}:{tier}"
-    if quest_id.startswith("w_"):
-        year, week, _ = today.isocalendar()
-        return f"quest:{quest_id}:{year}-W{week:02d}"
-    return f"quest:{quest_id}:{today.isoformat()}"
-
-
 async def reward(db: AsyncSession, user: User, body: QuestRewardRequest) -> QuestRewardResponse:
-    """Credit coins for a completed quest or achievement, once per quest per
-    period (see reward_request_id). Journal-first like _spend: the ledger row
-    claims the key, then the daily cap is counted under that same write lock,
-    so two concurrent claims cannot both slip under QUEST_REWARDS_PER_DAY."""
+    """Credit coins for a completed quest or achievement. Idempotent by requestId."""
     uid = user.id
     today = _today()
 
@@ -708,35 +691,33 @@ async def reward(db: AsyncSession, user: User, body: QuestRewardRequest) -> Ques
     if body.coins != expected:
         raise HTTPException(422, "reward amount does not match the catalog")
 
-    rid = reward_request_id(body.kind, body.questId, body.tier, today)
-
-    async def replay() -> QuestRewardResponse:
+    prior = await _find_op(db, uid, body.requestId)
+    if prior is not None:
         bal = await _qty(db, uid, "coins") or 0
         return QuestRewardResponse(ok=True, coins=bal, reward=0)
 
-    if await _find_op(db, uid, rid) is not None:
-        return await replay()
+    quest_today = await _count(
+        db, PokeLedger.user_id == uid, PokeLedger.op == "quest",
+        PokeLedger.op_date == today,
+    )
+    if quest_today >= QUEST_REWARDS_PER_DAY:
+        raise HTTPException(429, "too many quest rewards today, try again tomorrow")
 
     try:
         row = PokeLedger(
-            user_id=uid, request_id=rid, op="quest", op_date=today,
+            user_id=uid, request_id=body.requestId, op="quest", op_date=today,
             kind=None, qty=0, coins=body.coins, to_user_id=None,
             note=body.questId, created_at=_now(),
         )
         db.add(row)
-        await db.flush()  # the first write: takes the lock and claims the key
-        # Exact: read under the lock, and includes the row just inserted.
-        if await _count(
-            db, PokeLedger.user_id == uid, PokeLedger.op == "quest",
-            PokeLedger.op_date == today,
-        ) > QUEST_REWARDS_PER_DAY:
-            raise EconomyError(429, "too many quest rewards today, try again tomorrow")
+        await db.flush()
         await _credit(db, uid, "coins", body.coins, COIN_CAP, "wallet full")
         await db.commit()
     except IntegrityError:
         await _rollback(db, user)
-        if await _find_op(db, uid, rid) is not None:
-            return await replay()
+        if await _find_op(db, uid, body.requestId) is not None:
+            bal = await _qty(db, uid, "coins") or 0
+            return QuestRewardResponse(ok=True, coins=bal, reward=0)
         raise HTTPException(503, _BUSY) from None
     except OperationalError:
         await db.rollback()

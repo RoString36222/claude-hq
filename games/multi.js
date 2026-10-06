@@ -27,24 +27,37 @@ function st(g){ return LIVE[g] = LIVE[g] || {lobby:[]}; }
 function shell(g, el, body){
   var root = api.mk("div","vg-mp"), lobbyBox = api.mk("div","vg-lobby"), gameBox = api.mk("div","vg-mp-game");
   root.appendChild(lobbyBox); root.appendChild(gameBox); el.appendChild(root);
-  var tries = 0, joined = false, ctx = {g:g, lobbyBox:lobbyBox, box:gameBox, alive:true};
+  var tries = 0, joined = false, ctx = {g:g, lobbyBox:lobbyBox, box:gameBox, alive:true, offline:false}, sock = null, timer = 0;
+  // Keeps watching the room socket for as long as the game is open: when it drops, show a
+  // small "reconnecting" badge (the game keeps running); when a new socket opens, join the
+  // lobby again so the server hands back the game state (ctx.onConn(true) is told).
   (function connect(){
+    timer = 0;
     if(!ctx.alive) return;
     if(!sockOpen()){
+      if(joined){
+        if(!ctx.offline){ ctx.offline = true; renderLobby(ctx); if(ctx.onConn) try{ ctx.onConn(false); }catch(e){} }
+        timer = setTimeout(connect, 500); return;
+      }
       lobbyBox.textContent = "";
       lobbyBox.appendChild(api.mk("p","vg-muted", tries ? "Connecting to the Arena…" : "Play with friends in your current Arena room."));
       if(!A().sock && tries > 4){
         lobbyBox.textContent = "";
         lobbyBox.appendChild(api.mk("p",null,"Multiplayer games run in an Arena room. Pair with an Arena server and open the Arena once to connect."));
         lobbyBox.appendChild(api.btn("Open the Arena","primary",function(){ if(window.setView) window.setView("arena"); }));
-        return;
+        timer = setTimeout(connect, 2000); return;     // keep listening: the Arena may connect later
       }
-      tries++; setTimeout(connect, 600); return;
+      tries++; timer = setTimeout(connect, 600); return;
     }
-    if(!joined){ joined = true; send(g, "join"); }
+    if(!joined || A().sock !== sock){
+      var again = joined;
+      joined = true; sock = A().sock; send(g, "join");
+      if(again){ ctx.offline = false; renderLobby(ctx); if(ctx.onConn) try{ ctx.onConn(true); }catch(e){} }
+    }
+    timer = setTimeout(connect, 500);
   })();
   ctx.renderLobby = function(){ renderLobby(ctx); };
-  ctx.cleanup = function(){ ctx.alive = false; if(joined) send(g, "leave"); };
+  ctx.cleanup = function(){ ctx.alive = false; if(timer) clearTimeout(timer); if(joined) send(g, "leave"); };
   body(ctx);
   return ctx;
 }
@@ -52,6 +65,7 @@ function renderLobby(ctx){
   var s = st(ctx.g), box = ctx.lobbyBox; box.textContent = "";
   var head = api.mk("div","vg-row");
   head.appendChild(api.mk("b",null,"Lobby · "+s.lobby.length+" player"+(s.lobby.length===1?"":"s")+" · room: "+(A().roomName || A().roomId || "?")));
+  if(ctx.offline){ var rb = api.mk("span","vg-reconnecting","Reconnecting…"); rb.setAttribute("role","status"); head.appendChild(rb); }
   box.appendChild(head);
   var list = api.mk("div","vg-players");
   s.lobby.forEach(function(p){

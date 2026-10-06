@@ -8,6 +8,14 @@
  * players see the same roll. Only shot integers, course coordinates, a yaw, an animation
  * id and a character id ever travel; nothing transcript-derived.
  * If WebGL2, the import or a model fails, the same game runs as a top-down map view.
+ *
+ * Multiplayer smoothness: my own putt rolls the moment I release (the same integer sim the
+ * server runs) and the server's "shot" with my seq only confirms it (eased onto the server's
+ * roll if they ever differ, rewound if refused). Other golfers are drawn from a small buffer
+ * of timed snapshots (the sender's clock rides along as the sequence number q), ~100 ms plus
+ * measured jitter behind, extrapolated briefly across gaps. Positions go out at <= 10/s and
+ * only on change, with a final "rest" frame and a 2 s keepalive. A dropped room socket shows
+ * "Reconnecting…"; the lobby shell re-joins and the server hands the round back.
  */
 (function(){
 "use strict";
@@ -119,6 +127,13 @@ var COLORS = [0xe74c3c, 0x3a6fd8, 0x3aa86a, 0xf2d14b, 0x8a3fd8, 0xe07b25, 0xd83a
 var CLUBS = ["club-red", "club-blue", "club-green"];
 var CLIPS = ["idle", "walk", "sprint", "holding-right", "interact-right", "emote-yes", "emote-no", "sit"];
 var A_IDLE = 0, A_WALK = 1, A_SPRINT = 2, A_ADDRESS = 3, A_SWING = 4, A_CHEER = 5, A_SAD = 6;
+// Remote avatars are drawn from a short buffer of timed snapshots (sender clock in
+// centiseconds, carried as the pos sequence number q), INTERP seconds behind plus the
+// measured jitter, extrapolated briefly across gaps and snapped only on teleports.
+var INTERP = 0.1, JIT_MAX = 0.2, EXTRAP = 0.2, SNAPS = 8, TELEPORT = 1.5*10000;
+var POS_EVERY = 0.1, POS_KEEPALIVE = 2.0, SHOT_GAP = 0.35;
+var SHOT_ERRORS = {"wait for the ball to stop":1, "that hole is over":1, "you've finished this hole":1, "bad shot":1,
+  "no round is being played":1, "you're not in this round":1, "unknown game":1, "join the lobby first":1};
 function css(c){ return "#"+("000000"+(c>>>0).toString(16)).slice(-6); }
 function now(){ return performance.now()/1000; }
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
@@ -127,7 +142,7 @@ function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
 var DATA = null, DATA_P = null;
 function loadData(){
   if(DATA_P) return DATA_P;
-  DATA_P = fetch("/games/golf/courses.json", {cache:"no-store"}).then(function(r){ if(!r.ok) throw new Error("courses "+r.status); return r.json(); })
+  DATA_P = fetch("/games/golf/courses.json").then(function(r){ if(!r.ok) throw new Error("courses "+r.status); return r.json(); })
     .then(function(j){ DATA = j; return j; }, function(e){ DATA_P = null; throw e; });
   return DATA_P;
 }
@@ -140,7 +155,7 @@ function coursePieces(c){
 }
 
 /* ---------- three.js: imported on demand from the vendored copy ---------- */
-var LIB = null, GLB = {};
+var LIB = null, GLB = {}, GLTF = {};   // name -> loading promise / loaded glTF (shared by every hole and avatar)
 function golfLib(){
   return LIB || (LIB = Promise.all([import("/games/vendor/three-module.js"), import("/games/vendor/three-gltf-loader.js"),
                                     import("/games/vendor/three-skeleton-utils.js")])
@@ -154,7 +169,7 @@ function golfLib(){
 function loadGlb(lib, name){
   if(!/^[a-z][a-z0-9-]{0,40}$/.test(name)) return Promise.reject(new Error("bad model name"));
   return GLB[name] || (GLB[name] = new Promise(function(res, rej){
-    lib.loader.load("/games/golf/"+name+".glb", res, null, function(e){ delete GLB[name]; rej(e); });
+    lib.loader.load("/games/golf/"+name+".glb", function(g){ GLTF[name] = g; res(g); }, null, function(e){ delete GLB[name]; rej(e); });
   }));
 }
 function hasWebGL2(){
@@ -177,7 +192,8 @@ function makeGame(host, opts){
     course: null, holes: [], hole: null, holeIdx: 0, phase: "idle", state: "walk", aim: {a: -Math.PI/2, p: 40},
     keys: {}, readyAt: 0, seq: 0, pending: false, cam: {yaw: Math.PI, dist: 2.4, x: 0, y: 1.5, z: 0, tx: 0, ty: 0, tz: 0, over: false, init: false},
     view2d: !!gsave().map, spectate: 0, lastPos: 0, lastPosKey: "", warned: false, pendingHole: null, deferredView: null,
-    finalCard: null, cardUntil: 0, gotView: false, unsupported: false, openSince: 0, round: null, auto: null, note: ""};
+    finalCard: null, cardUntil: 0, gotView: false, unsupported: false, openSince: 0, round: null, auto: null, note: "",
+    posQ: 0, shotReadyAt: 0, offline: false, stats: {n: 0, sum: 0, max: 0, slow: 0, gaps: 0, last: 0}};
   var practicePlayer = {uid: "me", name: "You"};
   function myId(){ return V.mode === "mp" && MP ? MP.me() : "me"; }
   function me(){ return V.players[myId()] || null; }
@@ -190,6 +206,8 @@ function makeGame(host, opts){
   hud.setAttribute("aria-live", "polite");
   cardBox.setAttribute("role", "dialog"); cardBox.setAttribute("aria-label", "Scorecard");
   var tools = api.mk("div", "vg-row vg-golf-tools");
+  var load = api.mk("div", "vg-meter vg-golf-load hidden"), loadFill = api.mk("i"); load.appendChild(loadFill); load.setAttribute("aria-hidden", "true");
+  var badge = api.mk("span", "vg-reconnecting vg-golf-badge hidden", "Reconnecting…"); badge.setAttribute("role", "status");
   stage.appendChild(wrap); stage.appendChild(hint); stage.appendChild(tools);
   var canvas = null, R3 = null, R2 = null, raf = 0, lastT = 0, ro = null;
 
@@ -198,7 +216,7 @@ function makeGame(host, opts){
     var P = V.players[uid];
     if(!P){
       P = V.players[uid] = {uid: uid, name: "", c: 0, color: 0, ball: [0, 0], strokes: [], done: false, fly: null, sunk: false,
-        av: {x: 0, z: 0, yaw: Math.PI, anim: A_IDLE}, tgt: null, swingAt: 0, mesh: null};
+        av: {x: 0, z: 0, yaw: Math.PI, anim: A_IDLE}, snaps: [], lastQ: -1, off: null, jit: 0, relA: A_IDLE, swingAt: 0, mesh: null};
       V.order.push(uid);
     }
     if(info){ for(var k in info) P[k] = info[k]; }
@@ -212,7 +230,7 @@ function makeGame(host, opts){
   function placeAtTee(P, i){
     var tee = V.hole.tee;
     P.ball = [tee[0], tee[1]]; P.fly = null; P.sunk = false; P.done = false;
-    P.av.x = tee[0] + 2600 + (i % 4)*900; P.av.z = tee[1] + 1500 + Math.floor(i/4)*900; P.av.yaw = Math.PI; P.av.anim = A_IDLE; P.tgt = null;
+    P.av.x = tee[0] + 2600 + (i % 4)*1700; P.av.z = tee[1] + 1500 + Math.floor(i/4)*1700; P.av.yaw = Math.PI; P.av.anim = A_IDLE; P.snaps.length = 0;
   }
 
   /* ---------- course + hole ---------- */
@@ -352,6 +370,7 @@ function makeGame(host, opts){
       keep[uid] = 1;
       var P = ensurePlayer(uid), cChanged = P.c !== (p.c|0) || P.color !== (p.color|0);
       P.name = uid === myId() ? "You" : MP.nameOf(p.user); P.c = p.c|0; P.color = p.color|0;
+      if(uid === myId() && V.pending && view.hole === V.holeIdx) return;   // my shot is in flight to the server: it answers with "shot"
       P.strokes = (p.strokes || []).slice(); P.done = !!p.done;
       if(cChanged && R3) R3.removePlayer(P);
     });
@@ -360,7 +379,7 @@ function makeGame(host, opts){
     V.readyAt = now() + (view.readyInMs|0)/1000;
     if(fresh || !V.hole || view.hole !== V.holeIdx) setHole(view.hole);
     (view.players || []).forEach(function(p){
-      var P = V.players[p.user && p.user.userId]; if(!P || P.fly) return;
+      var P = V.players[p.user && p.user.userId]; if(!P || P.fly || (P.uid === myId() && V.pending)) return;
       P.ball = [p.ball[0]|0, p.ball[1]|0];
       if(P.done && P.ball[0] === V.hole.cup[0] && P.ball[1] === V.hole.cup[1]) P.sunk = true;
     });
@@ -371,15 +390,13 @@ function makeGame(host, opts){
   function cardFromView(view){ var c = {}; (view.players || []).forEach(function(p){ c[p.user.userId] = p.strokes; }); return c; }
   function onEvent(m){
     if(!V.alive) return;
-    if(m.ev === "golf"){ applyView(m.round || null); if(m.by && m.round && m.round.phase === "playing" && m.by.userId !== myId()) api.toast("⛳ "+MP.nameOf(m.by)+" started "+((courseById(m.round.course)||{}).name||"a round")); return; }
+    if(m.ev === "golf"){
+      if(m.back && m.back !== myId() && V.players[m.back]){ V.players[m.back].lastQ = -1; }
+      applyView(m.round || null); if(m.by && m.round && m.round.phase === "playing" && m.by.userId !== myId()) api.toast("⛳ "+MP.nameOf(m.by)+" started "+((courseById(m.round.course)||{}).name||"a round")); return; }
     if(m.ev === "lobby"){ if(V.mode === "mp" && !menu.classList.contains("hidden")) renderMenu(); hudUpdate(); return; }
     if(V.mode !== "mp") return;
     if(m.ev === "shot") return onShot(m);
-    if(m.ev === "pos"){
-      var P = V.players[m.u]; if(!P || m.u === myId()) return;
-      P.tgt = {x: +m.x || 0, z: +m.z || 0, yaw: (+m.r || 0)*Math.PI/180}; P.av.anim = clamp(m.a|0, 0, 7);
-      return;
-    }
+    if(m.ev === "pos"){ var P = V.players[m.u]; if(P && m.u !== myId()) pushSnap(P, m); return; }
     if(m.ev === "char"){ var Q = V.players[m.user]; if(Q && Q.c !== (m.c|0)){ Q.c = m.c|0; if(R3) R3.removePlayer(Q); } return; }
     if(m.ev === "hole"){ V.pendingHole = {hole: m.hole|0, at: now() + (m.delayMs|0)/1000, card: m.card, shown: false}; return; }
     if(m.ev === "done"){
@@ -392,63 +409,104 @@ function makeGame(host, opts){
   function onShot(m){
     var uid = m.user && m.user.userId, P = V.players[uid];
     if(!P || !V.hole) return;
-    P.strokes[m.hole|0] = m.strokes|0; P.done = !!m.done;
-    if((m.hole|0) !== V.holeIdx){ return; }
-    var res = GS.simulate(V.hole, m.from[0]|0, m.from[1]|0, m.ax|0, m.az|0, m.power|0, true);
-    var end = [m.end[0]|0, m.end[1]|0];
-    if(res.end[0] !== end[0] || res.end[1] !== end[1] || res.holed !== !!m.holed){
-      if(!V.warned){ V.warned = true; if(window.console) console.warn("golf: replay differs from the server; using the server's result"); }
-      res.path.push(end);
+    var mine = uid === myId(), hole = m.hole|0;
+    var from = [m.from[0]|0, m.from[1]|0], end = [m.end[0]|0, m.end[1]|0];
+    if(mine && V.pending && (m.seq|0) === V.seq){
+      // The server's answer to my own (already rolling) shot: normally identical.
+      V.pending = false;
+      P.strokes[hole] = m.strokes|0; P.done = !!m.done;
+      var f = P.fly || P.lastFly;
+      if(hole === V.holeIdx && f && (f.end[0] !== end[0] || f.end[1] !== end[1] || f.holed !== !!m.holed || f.oob !== !!m.oob)){
+        warnOnce();
+        var res = GS.simulate(V.hole, from[0], from[1], m.ax|0, m.az|0, m.power|0, true);
+        if(res.end[0] !== end[0] || res.end[1] !== end[1]) res.path.push(end);
+        var t = now(), at = ballAt(P, t), skip = Math.min(Math.floor((t - f.t0)*GS.C.TICK), res.path.length - 1);
+        P.fly = null;
+        // ease from where the ball is drawn now onto the server's roll (same moment of it) over 150 ms
+        startFlight(P, {from: from, path: res.path, end: end, holed: !!m.holed, oob: !!m.oob, mine: true, noSwing: true,
+                        blend: {x: at[0], z: at[1], t0: t, dur: 0.15}}, skip);
+        if(!P.done) V.state = "flight";
+      }
+      hudUpdate();
+      return;
     }
-    startFlight(P, {from: [m.from[0]|0, m.from[1]|0], path: res.path, end: end, holed: !!m.holed, oob: !!m.oob});
-    if(uid === myId()){ V.pending = false; V.state = "flight"; }
+    P.strokes[hole] = m.strokes|0; P.done = !!m.done;
+    if(hole !== V.holeIdx || mine){ hudUpdate(); return; }     // mine without a pending seq: another tab of mine; the view resyncs
+    // Remote shots replay exactly; never overlap two flights of the same ball.
+    if(P.fly) finishFlight(P);
+    var r = GS.simulate(V.hole, from[0], from[1], m.ax|0, m.az|0, m.power|0, true);
+    if(r.end[0] !== end[0] || r.end[1] !== end[1] || r.holed !== !!m.holed){ warnOnce(); r.path.push(end); }
+    startFlight(P, {from: from, path: r.path, end: end, holed: !!m.holed, oob: !!m.oob});
     hudUpdate();
   }
+  function warnOnce(){ if(!V.warned){ V.warned = true; if(window.console) console.warn("golf: replay differs from the server; using the server's result"); } }
   function onError(m){
     var e = String(m.error || "");
     if(e === "unknown game"){ V.unsupported = true; if(V.mode === "mp") renderMenu(); }
-    if(V.pending){ V.pending = false; if(V.state === "wait") V.state = "address"; }
+    if(V.pending && SHOT_ERRORS[e]) rewindShot();
+  }
+  // The server refused my optimistic shot: put the ball back where it was and let me retry.
+  function rewindShot(){
+    var P = me(); V.pending = false;
+    if(!P || !V.shotUndo) return;
+    var u = V.shotUndo; V.shotUndo = null;
+    var at = ballAt(P, now());
+    P.fly = null; P.lastFly = null; P.strokes[u.hole] = u.strokes; P.done = u.done; P.sunk = false;
+    if(u.hole === V.holeIdx){
+      P.ball = u.ball.slice();
+      if(!api.calm()) startFlight(P, {from: u.ball.slice(), path: [u.ball.slice()], end: u.ball.slice(), holed: false, oob: false, mine: true,
+                                       quiet: true, blend: {x: at[0], z: at[1], t0: now(), dur: 0.2}});
+      V.state = "address";
+    }
+    hudUpdate();
   }
 
   /* ---------- shots ---------- */
-  function startFlight(P, d){
-    d.t0 = now(); P.fly = d; P.swingAt = d.t0; P.sunk = false;
-    if(P.uid === myId()) P.av.anim = A_SWING;
+  function startFlight(P, d, skipTicks){
+    d.t0 = now() - (skipTicks || 0)/GS.C.TICK; P.fly = d; P.sunk = false;
+    if(!d.quiet && !d.noSwing){ P.swingAt = d.t0; if(P.uid === myId()) P.av.anim = A_SWING; }
   }
   function finishFlight(P){
-    var f = P.fly; P.fly = null;
+    var f = P.fly; P.fly = null; P.lastFly = f;
     P.ball = f.oob ? f.from : f.end;
     if(f.holed) P.sunk = true;
+    if(f.quiet){ return; }
     var mine = P.uid === myId();
     if(mine){
       P.av.anim = f.holed ? A_CHEER : f.oob ? A_SAD : A_IDLE;
       P.cheerUntil = now() + 1.6;
+      V.shotReadyAt = now() + SHOT_GAP;
       V.state = P.done || f.holed ? "done" : "walk";
       var n = P.strokes[V.holeIdx]|0, par = V.hole.par;
-      if(f.holed) api.toast(n === 1 ? "⛳ Hole in one!" : "⛳ In the hole: "+n+" stroke"+(n === 1 ? "" : "s")+(n < par ? " (under par!)" : n === par ? " (par)" : ""));
-      else if(f.oob) api.toast("Out of bounds: +1, back to your last lie");
-      else if(P.done) api.toast("Picked up at "+GS.C.MAX_STROKES+" strokes");
+      var msg = f.holed ? (n === 1 ? "Hole in one!" : "In the hole: "+n+" stroke"+(n === 1 ? "" : "s")+(n < par ? " (under par!)" : n === par ? " (par)" : ""))
+        : f.oob ? "Out of bounds: +1, back to your last lie" : P.done ? "Picked up at "+GS.C.MAX_STROKES+" strokes" : "";
+      if(msg){ api.toast((f.holed ? "⛳ " : "")+msg); say(msg); }
       if(V.mode === "practice") practiceAfterShot(P);
     }
     hudUpdate();
   }
+  function say(t){ if(typeof window.announce === "function"){ try { window.announce(t); } catch(e){} } }
   function shoot(){
     var P = me(); if(!P || V.state !== "address" || P.fly || P.done) return;
     if(V.mode === "mp" && now() < V.readyAt) { api.toast("Wait for the next hole to open"); return; }
+    if(V.mode === "mp" && (V.pending || now() < V.shotReadyAt)) return;
     var ax = Math.round(Math.cos(V.aim.a)*4096), az = Math.round(Math.sin(V.aim.a)*4096), power = clamp(Math.round(V.aim.p), 1, 100);
     if(!ax && !az) ax = 1;
-    if(V.mode === "practice"){
-      var res = GS.simulate(V.hole, P.ball[0], P.ball[1], ax, az, power, true);
-      var n = V.holeIdx;
-      P.strokes[n] = (P.strokes[n]|0) + 1 + (res.oob ? GS.C.OOB_PENALTY : 0);
-      if(res.holed) P.done = true;
-      else if(P.strokes[n] >= GS.C.MAX_STROKES){ P.strokes[n] = GS.C.MAX_STROKES; P.done = true; }
-      startFlight(P, {from: [P.ball[0], P.ball[1]], path: res.path, end: res.end, holed: res.holed, oob: res.oob});
-      V.state = "flight";
-    } else {
-      V.seq++; V.pending = true; V.state = "wait"; P.av.anim = A_SWING; P.swingAt = now();
-      if(!MP.send("golf", "shot", {ax: ax, az: az, power: power, seq: V.seq})){ V.pending = false; V.state = "address"; api.toast("Not connected to the Arena"); }
+    var n = V.holeIdx;
+    if(V.mode === "mp"){
+      // Optimistic: every client runs the server's exact integer roll, so the ball starts
+      // moving now; the server's "shot" answer (same seq) only confirms it.
+      V.seq++;
+      if(!MP || !MP.send("golf", "shot", {ax: ax, az: az, power: power, seq: V.seq, hole: n})){ api.toast("Not connected to the Arena"); return; }
+      V.pending = true; V.pendingAt = now();
+      V.shotUndo = {hole: n, ball: P.ball.slice(), strokes: P.strokes[n]|0, done: P.done};
     }
+    var res = GS.simulate(V.hole, P.ball[0], P.ball[1], ax, az, power, true);
+    P.strokes[n] = (P.strokes[n]|0) + 1 + (res.oob ? GS.C.OOB_PENALTY : 0);
+    if(res.holed) P.done = true;
+    else if(P.strokes[n] >= GS.C.MAX_STROKES){ P.strokes[n] = GS.C.MAX_STROKES; P.done = true; }
+    startFlight(P, {from: [P.ball[0], P.ball[1]], path: res.path, end: res.end, holed: res.holed, oob: res.oob, mine: true});
+    V.state = "flight";
     hudUpdate();
   }
   function concede(){
@@ -499,12 +557,8 @@ function makeGame(host, opts){
     // flights + remote avatars
     V.order.forEach(function(uid){
       var Q = V.players[uid];
-      if(Q.fly && (t - Q.fly.t0)*GS.C.TICK >= Q.fly.path.length - 1) finishFlight(Q);
-      if(Q.uid !== myId() && Q.tgt){
-        var a = calm ? 1 : 1 - Math.exp(-12*dt);
-        Q.av.x += (Q.tgt.x - Q.av.x)*a; Q.av.z += (Q.tgt.z - Q.av.z)*a;
-        var dy = Math.atan2(Math.sin(Q.tgt.yaw - Q.av.yaw), Math.cos(Q.tgt.yaw - Q.av.yaw)); Q.av.yaw += dy*a;
-      }
+      if(Q.fly && (t - Q.fly.t0)*GS.C.TICK >= Q.fly.path.length - 1 && (!Q.fly.blend || t - Q.fly.blend.t0 >= Q.fly.blend.dur)) finishFlight(Q);
+      if(Q.uid !== myId() && Q.snaps.length) sampleSnaps(Q, t, dt, calm);
     });
     if(P && P.av.anim === A_SWING && !P.fly && V.state !== "wait" && t - P.swingAt > 0.8) P.av.anim = A_IDLE;
     // hole transitions (practice timer or the server's cut-scene)
@@ -524,25 +578,86 @@ function makeGame(host, opts){
       showCard(V.finalCard.card, w.length ? "🏆 "+w.join(" & ")+(w.length > 1 ? " tie" : " win"+(w[0] === "You" ? "" : "s")) : "Round over", true);
       if((V.finalCard.winners || []).indexOf(myId()) >= 0) api.toast("🏆 You won the round! +1 Gold Ore");
     }
-    // position relay (<= 10/s, only when changed)
-    if(V.mode === "mp" && P && MP && t - V.lastPos >= 0.1){
-      var key = Math.round(P.av.x)+","+Math.round(P.av.z)+","+Math.round(P.av.yaw*57.3)+","+P.av.anim;
-      if(key !== V.lastPosKey){
-        V.lastPos = t; V.lastPosKey = key;
-        MP.send("golf", "pos", {x: Math.round(P.av.x), z: Math.round(P.av.z), r: ((Math.round(P.av.yaw*180/Math.PI) % 360) + 360) % 360, a: P.av.anim|0});
+    // position relay: 10/s while something changes, one "rest" frame when it stops (the
+    // key differs), a keepalive every 2 s. q is my clock in centiseconds: a sequence
+    // number that also lets the others place each frame on a jitter-free timeline.
+    if(V.mode === "mp" && P && MP && V.phase === "playing" && t - V.lastPos >= POS_EVERY){
+      var r = ((Math.round(P.av.yaw*180/Math.PI) % 360) + 360) % 360, x = Math.round(P.av.x), z = Math.round(P.av.z);
+      var key = x+","+z+","+r+","+P.av.anim;
+      if(key !== V.lastPosKey || t - V.lastPos >= POS_KEEPALIVE){
+        V.posQ = Math.max(V.posQ + 1, Math.floor(Date.now()/10) % 1073741824);
+        if(MP.send("golf", "pos", {x: x, z: z, r: r, a: P.av.anim|0, q: V.posQ})){ V.lastPos = t; V.lastPosKey = key; }
       }
     }
+    // no answer to my shot for far longer than the roll takes: ask the server where things stand
+    if(V.pending && V.pendingAt && t - V.pendingAt > 8 + GS.C.MAX_TICKS/GS.C.TICK){ V.pending = false; V.shotUndo = null; requestView(); }
     if(V.mode === "mp" && MP && !V.gotView){
       if(MP.sockOpen()){ if(!V.openSince) V.openSince = t; else if(t - V.openSince > 3 && !V.unsupported){ V.unsupported = true; renderMenu(); } }
     }
     meterFill.style.width = Math.round(V.aim.p)+"%";
     meter.classList.toggle("hidden", V.state !== "address");
   }
+  /* ---------- remote avatars: snapshot interpolation ---------- */
+  function pushSnap(P, m){
+    var q = m.q, t = now();
+    if(typeof q === "number" && isFinite(q)){
+      q = q|0;
+      // stale or out of order (but accept a wrapped or restarted clock)
+      if(P.lastQ >= 0 && q <= P.lastQ && P.lastQ - q < 536870912 && P.lastQ - q < 6000) return;
+      if(P.lastQ >= 0 && q <= P.lastQ) P.off = null;           // the sender restarted: re-learn its clock
+      P.lastQ = q;
+      // Map the sender's clock onto mine. The offset tracks the fastest delivery seen
+      // (jitter only ever adds delay) and drifts up slowly so a changed route is learnt.
+      var off = t - q/100;
+      if(P.off === null || off < P.off) P.off = off; else P.off += (off - P.off)*0.01;
+      var st = q/100 + P.off, late = t - st;
+      late = Math.min(Math.max(late, 0), JIT_MAX);
+      P.jit += (late - P.jit)*(late > P.jit ? 0.3 : 0.02);   // follows the late tail, forgets it slowly
+      t = st;
+    }
+    var x = +m.x || 0, z = +m.z || 0, sn = P.snaps, last = sn[sn.length - 1];
+    if(last && t <= last.t) t = last.t + 0.001;
+    var tp = last && (Math.abs(x - last.x) > TELEPORT || Math.abs(z - last.z) > TELEPORT);
+    if(tp) sn.length = 0;
+    sn.push({t: t, x: x, z: z, yaw: (+m.r || 0)*Math.PI/180, a: clamp(m.a|0, 0, 7)});
+    if(sn.length > SNAPS) sn.shift();
+    if(tp || sn.length === 1){ P.av.x = x; P.av.z = z; P.av.yaw = sn[sn.length - 1].yaw; }
+  }
+  function angLerp(a, b, u){ return a + Math.atan2(Math.sin(b - a), Math.cos(b - a))*u; }
+  function sampleSnaps(P, t, dt, calm){
+    var sn = P.snaps, rt = t - INTERP - P.jit, n = sn.length, x, z, yaw, a, sp = 0;
+    if(rt <= sn[0].t){ x = sn[0].x; z = sn[0].z; yaw = sn[0].yaw; a = sn[0].a; }
+    else if(rt >= sn[n-1].t){
+      // past the newest frame: keep going at the last velocity for a moment, then hold
+      var L = sn[n-1], K = n > 1 ? sn[n-2] : L, span = L.t - K.t, ex = Math.min(rt - L.t, EXTRAP);
+      var moving = L.a === A_WALK || L.a === A_SPRINT;
+      var vx = span > 0 && moving ? (L.x - K.x)/span : 0, vz = span > 0 && moving ? (L.z - K.z)/span : 0;
+      x = L.x + vx*ex; z = L.z + vz*ex; yaw = L.yaw; a = L.a; sp = Math.sqrt(vx*vx + vz*vz);
+    } else {
+      for(var i = n - 1; i > 0 && sn[i-1].t > rt; i--){}
+      var A = sn[i-1], B = sn[i], u = (rt - A.t)/(B.t - A.t || 1);
+      x = A.x + (B.x - A.x)*u; z = A.z + (B.z - A.z)*u; yaw = angLerp(A.yaw, B.yaw, u); a = u < 0.5 ? A.a : B.a;
+      var ddx = B.x - A.x, ddz = B.z - A.z; sp = Math.sqrt(ddx*ddx + ddz*ddz)/((B.t - A.t) || 1);
+    }
+    // a light 40 ms smoothing hides the rare correction after an extrapolation
+    var k = calm ? 1 : 1 - Math.exp(-25*dt), ex2 = x - P.av.x, ez2 = z - P.av.z;
+    if(Math.abs(ex2) > TELEPORT || Math.abs(ez2) > TELEPORT) k = 1;
+    P.av.x += ex2*k; P.av.z += ez2*k; P.av.yaw = angLerp(P.av.yaw, yaw, calm ? 1 : Math.min(1, k*1.5));
+    // the walk cycle follows the speed actually shown, not only the relayed id
+    if(a === A_IDLE || a === A_WALK || a === A_SPRINT) a = sp > 2.2*T ? A_SPRINT : sp > 0.25*T ? A_WALK : A_IDLE;
+    if(a !== P.av.anim && (a === A_SWING)) P.swingAt = t;
+    P.av.anim = a;
+  }
   // where a player's ball is drawn right now (units, with the flight interpolated)
   function ballAt(P, t){
     if(!P.fly) return P.ball;
-    var f = P.fly, k = (t - f.t0)*GS.C.TICK, i = Math.floor(k), a = f.path[Math.min(i, f.path.length-1)], b = f.path[Math.min(i+1, f.path.length-1)], u = k - i;
-    return [a[0] + (b[0]-a[0])*u, a[1] + (b[1]-a[1])*u];
+    var f = P.fly, k = Math.max(0, (t - f.t0)*GS.C.TICK), i = Math.floor(k), a = f.path[Math.min(i, f.path.length-1)], b = f.path[Math.min(i+1, f.path.length-1)], u = k - i;
+    var x = a[0] + (b[0]-a[0])*u, z = a[1] + (b[1]-a[1])*u;
+    if(f.blend){
+      var w = (t - f.blend.t0)/f.blend.dur;
+      if(w < 1){ w = w*w*(3 - 2*w); x = f.blend.x + (x - f.blend.x)*w; z = f.blend.z + (z - f.blend.z)*w; }
+    }
+    return [x, z];
   }
   function focusPlayer(){
     var P = me();
@@ -627,7 +742,7 @@ function makeGame(host, opts){
   function ensureRenderer(){
     if(canvas) return;
     wrap.textContent = "";
-    wrap.appendChild(hud); wrap.appendChild(meter); wrap.appendChild(cardBox);
+    wrap.appendChild(hud); wrap.appendChild(meter); wrap.appendChild(cardBox); wrap.appendChild(badge); wrap.appendChild(load);
     var want3d = !V.view2d && hasWebGL2();
     canvas = api.mk("canvas", "vg-golf-canvas"); canvas.tabIndex = 0;
     canvas.setAttribute("aria-label", "Mini golf course. WASD walks, E addresses the ball, arrows aim and set power, Space putts.");
@@ -675,14 +790,19 @@ function makeGame(host, opts){
   function frame(ts){
     raf = 0;
     if(!V.alive) return;
-    var t = ts/1000, dt = lastT ? Math.min(0.05, t - lastT) : 0.016; lastT = t;
+    raf = requestAnimationFrame(frame);     // first, so one bad frame can never stop the loop
+    var t = ts/1000, gap = lastT ? t - lastT : 0, dt = lastT ? Math.min(0.05, gap) : 0.016; lastT = t;
     var paused = V.paused || (V.ctx && V.ctx.paused) || document.hidden;
     if(!paused && V.hole && !stage.classList.contains("hidden")){
-      update(dt, now());
-      if(R3) R3.render(dt, now());
-      else if(R2 && R2.canvas) R2.draw(now());
+      var w0 = performance.now(), tn = now();
+      update(dt, tn);
+      if(R3) R3.render(dt, tn);
+      else if(R2 && R2.canvas) R2.draw(tn);
+      // frame-time stats (work per frame; frame gaps over 25 ms) for the smoke test
+      var st = V.stats, ms = performance.now() - w0;
+      if(!st.n) st.t0 = performance.now();
+      st.n++; st.sum += ms; if(ms > st.max) st.max = ms; if(ms > 8) st.slow++; if(gap > 0.025 && gap < 1) st.gaps++;
     }
-    raf = requestAnimationFrame(frame);
   }
 
   /* ----- 2D map view: same data and simulation, drawn top-down ----- */
@@ -734,9 +854,11 @@ function makeGame(host, opts){
       var lib = res[0], THREE = lib.THREE;
       var names = coursePieces(V.course).concat(["flag-red"], CHARS.map(function(c){ return c.f; }), CLUBS);
       var got = 0;
-      V.note = "Loading 0/"+names.length;
-      return Promise.all(names.map(function(n){ return loadGlb(lib, n).then(function(g){ got++; V.note = "Loading "+got+"/"+names.length; hint.textContent = V.note; return g; }); }))
-        .then(function(){ V.note = ""; return build3d(lib, THREE, cv); });
+      V.note = "Loading 0/"+names.length; load.classList.remove("hidden"); loadFill.style.width = "4%";
+      return Promise.all(names.map(function(n){ return loadGlb(lib, n).then(function(g){
+          got++; V.note = "Loading "+got+"/"+names.length; hint.textContent = V.note; loadFill.style.width = Math.round(got/names.length*100)+"%"; return g; }); }))
+        .then(function(){ V.note = ""; load.classList.add("hidden"); return build3d(lib, THREE, cv); },
+              function(e){ load.classList.add("hidden"); throw e; });
     });
   }
   function build3d(lib, THREE, cv){
@@ -755,7 +877,7 @@ function makeGame(host, opts){
     var raycaster = new THREE.Raycaster(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -FLOOR_Y), hit = new THREE.Vector3();
     var lost = function(e){ e.preventDefault(); if(V.alive){ V.note = "3D unavailable: showing the map view."; setTimeout(fallback2d, 0); } };
     cv.addEventListener("webglcontextlost", lost);
-    function scene3(name){ return GLB[name] ? GLB[name] : null; }
+    function scene3(name){ return GLTF[name] || null; }
     var r = {};
     r.size = function(w, h){ renderer.setSize(w, h, false); camera.aspect = w/h; camera.updateProjectionMatrix(); };
     r.buildHole = function(){
@@ -944,7 +1066,19 @@ function makeGame(host, opts){
     if(R3){ R3.dispose(); R3 = null; }
     root.remove();
   };
+  V.rendererKind = function(){ return R3 ? "3d" : R2 && R2.canvas ? "2d" : ""; };
+  V.ballAt = ballAt;
   V.onEvent = onEvent; V.onError = onError;
+  // The room socket dropped (on=false) or came back (on=true; the shell has re-joined the
+  // lobby and the server's view follows). The game keeps animating meanwhile.
+  V.onConn = function(on){
+    V.offline = !on; badge.classList.toggle("hidden", on);
+    if(on && V.pending){
+      var P = me(); V.pending = false; V.shotUndo = null;
+      if(P && P.fly){ P.fly = null; }        // the server's view says where that ball really is
+    }
+    if(!on){ V.order.forEach(function(u){ var Q = V.players[u]; if(u !== myId()) Q.lastQ = -1; }); }
+  };
   V.startPractice = startPractice;
   return V;
 }
@@ -965,8 +1099,10 @@ if(MP){
   MP.register("golf", "⛳", "3D mini golf together: walk, aim, putt", function(ctx){
     if(CUR) CUR.destroy();
     var g = CUR = makeGame(ctx.box, {mode: "mp", ctx: ctx});
+    ctx.onConn = function(on){ if(g.alive) g.onConn(on); };
     ctx.stop = function(){ g.destroy(); if(CUR === g) CUR = null; };
   });
 }
 HQV.golfSim = GS;     // for the browser smoke test
+HQV.golfDebug = function(){ return CUR; };
 })();

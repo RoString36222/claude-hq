@@ -77,7 +77,14 @@ function shell(g, el, body){
   return ctx;
 }
 function renderLobby(ctx){
-  var s = st(ctx.g), box = ctx.lobbyBox; box.textContent = "";
+  // The roster part is redrawn on every lobby event; the invite picker below it is one
+  // persistent node (redrawing it would blur the box and drop what you're typing).
+  var s = st(ctx.g), pick = invitePicker(ctx);
+  if(!ctx.lobbyInfo) ctx.lobbyInfo = api.mk("div","vg-lobby-info");
+  if(ctx.lobbyInfo.parentNode !== ctx.lobbyBox || pick.parentNode !== ctx.lobbyBox){
+    ctx.lobbyBox.textContent = ""; ctx.lobbyBox.appendChild(ctx.lobbyInfo); ctx.lobbyBox.appendChild(pick);
+  }
+  var box = ctx.lobbyInfo; box.textContent = "";
   var head = api.mk("div","vg-row");
   head.appendChild(api.mk("b",null,"Lobby · "+s.lobby.length+" player"+(s.lobby.length===1?"":"s")+" · room: "+(A().roomName || A().roomId || "?")));
   box.appendChild(head);
@@ -88,27 +95,113 @@ function renderLobby(ctx){
     list.appendChild(chip);
   });
   box.appendChild(list);
-  // Invite: people in this Arena room who aren't in the game yet; or nudge anyone by handle.
-  var inLobby = {}; s.lobby.forEach(function(p){ inLobby[p.userId] = 1; });
-  var others = (A().lobby || []).filter(function(p){ return p && p.userId && !inLobby[p.userId] && p.userId !== me(); });
-  var row = api.mk("div","vg-row");
-  if(others.length){
-    var sel = api.mk("select","vg-select"); sel.setAttribute("aria-label","Invite someone");
-    others.forEach(function(p){ var o = api.mk("option",null,nameOf(p)); o.value = p.userId; o.dataset.handle = p.handle||""; sel.appendChild(o); });
-    row.appendChild(sel);
-    row.appendChild(api.btn("Invite","",function(){
-      var o = sel.options[sel.selectedIndex]; if(!o) return;
-      ctx.pendingInvite = {handle:o.dataset.handle, name:o.textContent};
-      send(ctx.g, "invite", {to:o.value});
-    }));
-  } else row.appendChild(api.mk("span","vg-muted","Everyone online in this room is here."));
-  var h = api.mk("input","vg-input"); h.placeholder = "@handle (offline friend)"; h.setAttribute("aria-label","Nudge a friend by handle"); h.maxLength = 40;
-  row.appendChild(h);
-  row.appendChild(api.btn("Nudge","",function(){
-    var handle = h.value.replace(/^@/,"").trim(); if(!/^[A-Za-z0-9_-]{1,39}$/.test(handle)){ api.toast("Type a GitHub handle"); return; }
-    nudge(handle, ctx.g); h.value = "";
-  }));
-  box.appendChild(row);
+}
+
+/* ---------- invite / nudge picker ----------
+ * One search box with suggestions (avatar, name, @handle): people in this Arena room who
+ * aren't in the game get a game invite, anyone else on the Arena board gets a nudge; an exact
+ * @handle nobody matches can still be nudged. Arrows / Enter / Esc, or click. */
+var ROSTER = {list: [], at: 0, loading: false, ok: false};    // everyone on the Arena board
+function rosterLoad(then){
+  if(ROSTER.loading || (ROSTER.ok && Date.now() - ROSTER.at < 600000)){ if(then) then(); return; }
+  ROSTER.loading = true;
+  fetch("/api/arena/board?window=all", {cache: "no-store"}).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){
+    var seen = {};
+    ROSTER.list = ((b && b.entries) || []).filter(function(e){
+      if(!e || typeof e.handle !== "string" || !/^[A-Za-z0-9_-]{1,39}$/.test(e.handle) || seen[e.handle.toLowerCase()]) return false;
+      return (seen[e.handle.toLowerCase()] = true);
+    }).map(function(e){
+      return {handle: e.handle, name: String(e.displayName || e.trainerName || e.handle).slice(0, 40),
+              av: typeof e.avatarUrl === "string" && /^https:\/\//.test(e.avatarUrl) ? e.avatarUrl : ""};
+    });
+    ROSTER.ok = !!b; ROSTER.at = Date.now();
+  }, function(){}).then(function(){ ROSTER.loading = false; if(then) then(); });
+}
+function invitePicker(ctx){
+  if(ctx.picker){ ctx.picker.refresh(); return ctx.picker.el; }
+  var wrap = api.mk("div","vg-invite"), inp = api.mk("input","vg-input vg-invite-in"), list = api.mk("div","vg-sugg hidden");
+  var lid = "vgSugg-"+ctx.g;
+  list.id = lid; list.setAttribute("role","listbox"); list.setAttribute("aria-label","People to invite");
+  inp.type = "text"; inp.maxLength = 41; inp.autocomplete = "off"; inp.spellcheck = false;
+  inp.placeholder = "Invite or nudge: type a name or @handle";
+  inp.setAttribute("role","combobox"); inp.setAttribute("aria-autocomplete","list"); inp.setAttribute("aria-expanded","false"); inp.setAttribute("aria-controls", lid);
+  var go = api.btn("Invite","", function(){ pick(P.active >= 0 ? P.items[P.active] : null, true); });
+  var row = api.mk("div","vg-row vg-invite-row"); row.appendChild(inp); row.appendChild(go);
+  wrap.appendChild(row); wrap.appendChild(list);
+  var P = {el: wrap, items: [], active: -1, open: false};
+  // Candidates: people online in this room and not in the game (invite), then the Arena (nudge).
+  function candidates(){
+    var s = st(ctx.g), inLobby = {}, q = inp.value.trim().replace(/^@/, "").toLowerCase(), out = [], have = {};
+    s.lobby.forEach(function(p){ inLobby[p.userId] = 1; });
+    (A().lobby || []).forEach(function(p){
+      if(!p || !p.userId || inLobby[p.userId] || p.userId === me()) return;
+      var h = String(p.handle || ""); have[h.toLowerCase()] = 1;
+      out.push({kind: "invite", userId: p.userId, handle: h, name: nameOf(p), av: typeof p.avatarUrl === "string" && /^https:\/\//.test(p.avatarUrl) ? p.avatarUrl : ""});
+    });
+    var mine = String((A().you && A().you.handle) || "").toLowerCase();
+    ROSTER.list.forEach(function(r){
+      var k = r.handle.toLowerCase(); if(have[k] || k === mine) return;
+      out.push({kind: "nudge", handle: r.handle, name: r.name, av: r.av});
+    });
+    if(!q) return out.filter(function(c){ return c.kind === "invite"; }).concat(out.filter(function(c){ return c.kind === "nudge"; })).slice(0, 8);
+    var scored = [];
+    out.forEach(function(c){
+      var h = c.handle.toLowerCase(), n = c.name.toLowerCase();
+      var sc = (h.indexOf(q) === 0 || n.indexOf(q) === 0) ? 0 : n.split(" ").some(function(w){ return w.indexOf(q) === 0; }) ? 1 : (h.indexOf(q) >= 0 || n.indexOf(q) >= 0) ? 2 : -1;
+      if(sc >= 0) scored.push({c: c, s: sc + (c.kind === "invite" ? 0 : 0.5)});
+    });
+    scored.sort(function(a, b){ return (a.s - b.s) || a.c.name.localeCompare(b.c.name); });
+    return scored.slice(0, 8).map(function(x){ return x.c; });
+  }
+  function paint(){
+    Array.prototype.forEach.call(list.children, function(o, i){ var on = i === P.active; o.classList.toggle("on", on); o.setAttribute("aria-selected", on ? "true" : "false"); });
+    if(P.active >= 0 && P.items[P.active]){ inp.setAttribute("aria-activedescendant", lid+"-"+P.active); go.textContent = P.items[P.active].kind === "invite" ? "Invite" : "Nudge"; }
+    else { inp.removeAttribute("aria-activedescendant"); go.textContent = /^@?[A-Za-z0-9_-]{1,39}$/.test(inp.value.trim()) ? "Nudge" : "Invite"; }
+  }
+  function show(){
+    P.items = candidates(); P.active = P.items.length && inp.value.trim() ? 0 : -1;
+    list.textContent = "";
+    P.items.forEach(function(c, i){
+      var o = api.mk("div","vg-sugg-o"); o.id = lid+"-"+i; o.setAttribute("role","option");
+      if(c.av){ var im = document.createElement("img"); im.alt = ""; im.loading = "lazy"; im.referrerPolicy = "no-referrer"; im.width = 22; im.height = 22; im.src = c.av; o.appendChild(im); }
+      else o.appendChild(api.mk("span","vg-sugg-dot", (c.name || "?").charAt(0).toUpperCase()));
+      o.appendChild(api.mk("span","vg-sugg-n", c.name));
+      o.appendChild(api.mk("span","vg-sugg-h", c.kind === "invite" ? "in this room · invite" : "@"+c.handle+" · nudge"));
+      o.addEventListener("mousedown", function(e){ e.preventDefault(); pick(c, false); });
+      list.appendChild(o);
+    });
+    if(!P.items.length && inp.value.trim()){
+      list.appendChild(api.mk("p","vg-sugg-note", ROSTER.ok ? "Nobody on the Arena matches. Enter nudges that exact @handle." : "Loading the Arena…"));
+    }
+    P.open = !!(P.items.length || inp.value.trim());
+    list.classList.toggle("hidden", !P.open);
+    inp.setAttribute("aria-expanded", P.items.length ? "true" : "false");
+    paint();
+  }
+  function close(){ P.open = false; list.classList.add("hidden"); inp.setAttribute("aria-expanded","false"); P.active = -1; paint(); }
+  function pick(c, fromButton){
+    if(!c){
+      var raw = inp.value.trim().replace(/^@/, "");
+      if(!/^[A-Za-z0-9_-]{1,39}$/.test(raw)){ if(fromButton) api.toast("Type a name or @handle"); inp.focus(); return; }
+      c = {kind: "nudge", handle: raw, name: raw};
+    }
+    if(c.kind === "invite"){ ctx.pendingInvite = {handle: c.handle, name: c.name}; send(ctx.g, "invite", {to: c.userId}); }
+    else nudge(c.handle, ctx.g);
+    inp.value = ""; close(); inp.focus();
+  }
+  inp.addEventListener("focus", function(){ rosterLoad(function(){ if(document.activeElement === inp) show(); }); show(); });
+  inp.addEventListener("input", show);
+  inp.addEventListener("blur", function(){ setTimeout(close, 120); });
+  inp.addEventListener("keydown", function(e){
+    var n = P.items.length;
+    if(e.key === "ArrowDown" && n){ e.preventDefault(); if(!P.open) show(); P.active = (P.active + 1) % n; paint(); }
+    else if(e.key === "ArrowUp" && n){ e.preventDefault(); P.active = P.active <= 0 ? n - 1 : P.active - 1; paint(); }
+    else if(e.key === "Enter"){ e.preventDefault(); pick(P.active >= 0 ? P.items[P.active] : null, true); }
+    else if(e.key === "Escape" && P.open){ e.preventDefault(); e.stopPropagation(); close(); }
+  });
+  P.refresh = function(){ if(P.open && document.activeElement === inp) show(); };
+  ctx.picker = P;
+  return wrap;
 }
 function nudge(handle, g){
   if(typeof window.arenaPost !== "function") return;

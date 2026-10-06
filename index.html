@@ -1345,6 +1345,29 @@ html.hq-calm .ach-tier.claimable,html.hq-calm .ach-tier.claimable{animation:none
 .voice-tile.screen video{object-fit:contain}
 .voice-tile.you.screen video{transform:none}
 .voice-tile .vt-name{position:absolute;left:6px;bottom:6px;padding:2px 7px;border-radius:6px;background:rgba(0,0,0,.6);color:#fff;font-size:12px}
+/* The call overlay: while you're in a call on any view but the Arena, a small panel floats in a corner (drag it
+   anywhere) with who's in the call, who's talking, the controls, and everyone's video. */
+.vdock{position:fixed;right:16px;bottom:16px;z-index:60;width:min(280px,calc(100vw - 32px));max-height:calc(100vh - 32px);display:flex;flex-direction:column;
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-lg);overflow:hidden}
+.vdock-head{display:flex;align-items:center;gap:6px;padding:8px 10px;cursor:grab;user-select:none;touch-action:none;border-bottom:1px solid var(--line)}
+.vdock-head:active{cursor:grabbing}
+.vdock-title{flex:1;min-width:0;font-weight:700;font-size:13px;color:var(--good);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vdock-btn{width:30px;height:30px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);font-size:14px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex:none}
+.vdock-btn[aria-pressed="true"]{border-color:var(--good);color:var(--good)}
+.vdock-btn.leave{border-color:var(--need);color:var(--need)}
+.vdock-btn:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+.vdock-body{display:flex;flex-direction:column;gap:8px;padding:8px 10px;overflow:auto}
+.vdock.collapsed .vdock-body{display:none}
+.vdock-peers{display:flex;flex-direction:column;gap:4px}
+.vdock .voice-peer{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:8px;font-size:13px;box-shadow:none}
+.vdock .voice-peer .vd-av{width:24px;height:24px;border-radius:50%;flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;
+  background:var(--panel2);color:var(--muted);box-shadow:0 0 0 2px transparent;transition:box-shadow var(--t-fast)}
+.vdock .voice-peer.speaking .vd-av{box-shadow:0 0 0 2px var(--good);color:var(--good)}
+.vdock .voice-peer .vd-n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vdock .voice-videos{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:6px}
+.vdock .voice-tile.screen{max-height:none}
+html.hq-calm .vdock .voice-peer .vd-av{transition:none}
+@media (prefers-reduced-motion:reduce){ .vdock .voice-peer .vd-av{transition:none} }
 
 /* =================== store (the General Store) =================== */
 /* Its own wood-and-parchment palette, tuned per theme; the art inside the scene is pixel data. */
@@ -9789,6 +9812,7 @@ function syncPackLabels(){
 }
 function setView(v){
   VIEW = v; localStorage.setItem("hq_view", v);
+  if(typeof voiceDockRender === "function") voiceDockRender();
   syncPackLabels();
   var vt = VIEW_TITLES[v]||VIEW_TITLES.live;
   if($("viewTitle")){ $("viewTitle").textContent = vt[0]; $("viewSub").textContent = vt[1]; }
@@ -14419,7 +14443,7 @@ function voiceLevel(a){
 function voiceStartMeter(){
   if(VCHAN.meter) return;
   VCHAN.meter = setInterval(function(){
-    Array.prototype.forEach.call(document.querySelectorAll("#voiceRoster .voice-peer"), function(c){
+    Array.prototype.forEach.call(document.querySelectorAll("#voiceRoster .voice-peer, #voiceDock .voice-peer"), function(c){
       var id = c.getAttribute("data-peer"), r = VCHAN.roster[id];
       var a = (r && r.you) ? (VCHAN.muted ? null : VCHAN.me) : (VCHAN.peers[id] && VCHAN.peers[id].analyser);
       c.classList.toggle("speaking", voiceLevel(a) > 0.04);
@@ -14468,6 +14492,84 @@ function voiceRender(){
     pill.textContent = (VCHAN.screen ? "🖥 In voice · sharing screen" : VCHAN.cam ? "📹 In voice · camera on" : "🎙 In voice") +
       (VCHAN.muted ? " · muted" : "");
   }
+  voiceDockRender();
+}
+
+/* The call overlay (see .vdock): built once, shown while you're in a call and not on the Arena view, where the full
+   voice panel already is. Everyone's video moves into it (the tiles keep playing) and back when you open the Arena. */
+var VDOCK = null;
+function voiceDockBuild(){
+  if(VDOCK) return VDOCK;
+  var d = document.createElement("section"); d.id = "voiceDock"; d.className = "vdock hidden"; d.setAttribute("aria-label", "Voice call");
+  var head = document.createElement("div"); head.className = "vdock-head";
+  var title = document.createElement("span"); title.className = "vdock-title";
+  function b(txt, label, fn, cls){ var x = document.createElement("button"); x.type = "button"; x.className = "vdock-btn" + (cls ? " " + cls : ""); x.textContent = txt; x.title = label; x.setAttribute("aria-label", label);
+    x.addEventListener("click", function(e){ e.stopPropagation(); fn(); }); x.addEventListener("pointerdown", function(e){ e.stopPropagation(); }); return x; }
+  var mute = b("🎙", "Mute", voiceToggleMute), cam = b("📷", "Camera", voiceToggleCam), scr = b("🖥", "Share screen", voiceToggleScreen);
+  var fold = b("▾", "Collapse", function(){ d.classList.toggle("collapsed"); fold.textContent = d.classList.contains("collapsed") ? "▸" : "▾";
+    try { localStorage.setItem("hq_vdock_fold", d.classList.contains("collapsed") ? "1" : "0"); } catch(e){} });
+  var leave = b("✕", "Leave the call", voiceLeave, "leave");
+  head.appendChild(title); head.appendChild(mute); head.appendChild(cam); head.appendChild(scr); head.appendChild(fold); head.appendChild(leave);
+  var body = document.createElement("div"); body.className = "vdock-body";
+  var peers = document.createElement("div"); peers.className = "vdock-peers";
+  var open = document.createElement("button"); open.type = "button"; open.className = "hbtn ghost"; open.textContent = "Open the Arena";
+  open.addEventListener("click", function(){ setView("arena"); });
+  body.appendChild(peers); body.appendChild(open);
+  d.appendChild(head); d.appendChild(body); document.body.appendChild(d);
+  try { if(localStorage.getItem("hq_vdock_fold") === "1"){ d.classList.add("collapsed"); fold.textContent = "▸"; } } catch(e){}
+  // drag by the header; the spot is remembered (this browser only) and kept on screen
+  var drag = null;
+  function place(x, y){
+    var w = d.offsetWidth, h = d.offsetHeight;
+    x = Math.max(8, Math.min(window.innerWidth - w - 8, x)); y = Math.max(8, Math.min(window.innerHeight - h - 8, y));
+    d.style.left = x + "px"; d.style.top = y + "px"; d.style.right = "auto"; d.style.bottom = "auto";
+    return [x, y];
+  }
+  head.addEventListener("pointerdown", function(e){ var r = d.getBoundingClientRect(); drag = {dx: e.clientX - r.left, dy: e.clientY - r.top}; try { head.setPointerCapture(e.pointerId); } catch(x){} });
+  head.addEventListener("pointermove", function(e){ if(drag) place(e.clientX - drag.dx, e.clientY - drag.dy); });
+  head.addEventListener("pointerup", function(){ if(!drag) return; drag = null;
+    try { localStorage.setItem("hq_vdock_pos", JSON.stringify([parseInt(d.style.left, 10), parseInt(d.style.top, 10)])); } catch(e){} });
+  window.addEventListener("resize", function(){ if(d.style.left) place(parseInt(d.style.left, 10), parseInt(d.style.top, 10)); });
+  var grid = $("voiceVideos");
+  VDOCK = {el: d, title: title, mute: mute, cam: cam, scr: scr, peers: peers, body: body, open: open, place: place,
+           home: grid ? grid.parentNode : null, homeNext: grid ? grid.nextSibling : null, placed: false};
+  return VDOCK;
+}
+function voiceDockRender(){
+  var show = VCHAN.on && VIEW !== "arena";
+  if(!show && !VDOCK) return;
+  var D = voiceDockBuild(), grid = $("voiceVideos");
+  D.el.classList.toggle("hidden", !show);
+  // everyone's video lives in the overlay while it shows, back in the Arena's voice panel otherwise
+  if(grid){
+    var want = show ? D.body : D.home;
+    if(want && grid.parentNode !== want){
+      if(show) D.body.insertBefore(grid, D.open); else D.home.insertBefore(grid, D.homeNext);
+      Array.prototype.forEach.call(grid.querySelectorAll("video"), function(v){ if(!v.closest(".hidden")) voicePlay(v); });
+    }
+  }
+  if(!show) return;
+  if(!D.placed){ D.placed = true; try { var p = JSON.parse(localStorage.getItem("hq_vdock_pos") || "null"); if(p && p.length === 2) D.place(p[0], p[1]); } catch(e){} }
+  var ids = Object.keys(VCHAN.roster);
+  D.title.textContent = (VCHAN.screen ? "🖥 " : VCHAN.cam ? "📹 " : "🎙 ") + "Voice · " + ids.length + (VCHAN.muted ? " · muted" : "");
+  D.mute.textContent = VCHAN.muted ? "🔇" : "🎙"; D.mute.setAttribute("aria-pressed", VCHAN.muted ? "true" : "false");
+  D.mute.title = VCHAN.muted ? "Unmute (M)" : "Mute (M)"; D.mute.setAttribute("aria-label", D.mute.title);
+  D.cam.setAttribute("aria-pressed", VCHAN.cam ? "true" : "false"); D.cam.title = VCHAN.cam ? "Turn your camera off" : "Turn your camera on";
+  D.scr.setAttribute("aria-pressed", VCHAN.screen ? "true" : "false"); D.scr.title = VCHAN.screen ? "Stop sharing your screen" : "Share your screen";
+  D.scr.hidden = !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia;
+  D.peers.textContent = "";
+  ids.forEach(function(id){
+    var r = VCHAN.roster[id], p = VCHAN.peers[id];
+    var row = document.createElement("div"); row.className = "voice-peer"; row.setAttribute("data-peer", id);
+    if(!r.you && !(p && p.pc.connectionState === "connected")) row.classList.add("connecting");
+    var name = r.you ? "You" : String(r.who || "Someone");
+    var av = document.createElement("span"); av.className = "vd-av"; av.setAttribute("aria-hidden", "true"); av.textContent = name.charAt(0).toUpperCase();
+    var n = document.createElement("span"); n.className = "vd-n"; n.textContent = name;
+    row.appendChild(av); row.appendChild(n);
+    if(r.cam){ var c = document.createElement("span"); c.textContent = r.screen ? "🖥" : "📹"; c.title = r.screen ? "sharing their screen" : "camera on"; row.appendChild(c); }
+    if(r.muted){ var m = document.createElement("span"); m.textContent = "🔇"; m.title = "muted"; row.appendChild(m); }
+    D.peers.appendChild(row);
+  });
 }
 
 function voiceJoin(){

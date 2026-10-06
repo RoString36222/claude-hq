@@ -290,6 +290,11 @@ and feature guide.
     first three (390–570 m a lap), each with its own sky and scenery tint (snow-dusted on Frostbite,
     autumn leaves, dry grass). A 🎲 Random track button picks one, solo or as the room's host. An Arena
     from 1.9.0 still gets the three original tracks at their first size until it's updated.
+  - **Call overlay.** While you're in an Arena voice call on any view but the Arena, a small panel floats in the
+    corner (drag it anywhere, collapse it): who's in the call and who's talking, mute, camera, screen share and
+    leave, and everyone's video. The videos move back to the Arena's voice panel when you open it.
+  - **Mini Golf ghosts.** Once you've finished a hole you're a ghost: see-through, no shadow, a faint name tag, and
+    you can roam the hole while the others play. Other finished players are fainter still, so nobody blocks the view.
   - **Real-time multiplayer foundation** (shared by Platformer Rush and Blaster Arena): a
     fixed-rate server tick per room (`backend/app/realtime.py`, 15 Hz for racing) that batches one
     snapshot per tick, a process-wide cap on running game loops, a per-room bandwidth budget that

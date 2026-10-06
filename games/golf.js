@@ -784,7 +784,8 @@ function makeGame(host, opts){
   function update(dt, t){
     var P = me(), calm = api.calm();
     // my walking
-    if(P && !P.done && V.phase === "playing" && (V.state === "walk" || V.state === "done")){
+    // Once you've holed out (or picked up) you're a ghost: you can still roam the hole while the others play.
+    if(P && V.phase === "playing" && (V.state === "walk" || V.state === "done")){
       var k = V.keys, f = 0, s = 0;
       if(k.w || k.arrowup) f += 1; if(k.s || k.arrowdown) f -= 1;
       if(k.d || k.arrowright) s += 1; if(k.a || k.arrowleft) s -= 1;
@@ -796,7 +797,7 @@ function makeGame(host, opts){
       } else if(V.auto){
         mx = V.auto.x - P.av.x; mz = V.auto.z - P.av.z;
         var dd = Math.sqrt(mx*mx + mz*mz);
-        if(dd < 0.45*T){ V.auto = null; mx = mz = 0; V.state = "walk"; tryAddress(); }
+        if(dd < 0.45*T){ V.auto = null; mx = mz = 0; if(!P.done){ V.state = "walk"; tryAddress(); } }
       }
       var len = Math.sqrt(mx*mx + mz*mz);
       if(len > 0){
@@ -953,7 +954,7 @@ function makeGame(host, opts){
     var msg;
     if(V.phase === "done") msg = "Round over.";
     else if(!P) msg = "Spectating. V cycles players, C toggles the overview.";
-    else if(P.done) msg = "You're done with this hole. Waiting for the others…";
+    else if(P.done) msg = "You're done with this hole: roam as a ghost (WASD) or press V to watch someone. Waiting for the others…";
     else if(V.state === "address") msg = "Aim with ←/→ (Shift = fine), power ↑/↓ ("+Math.round(V.aim.p)+"), Space to putt. Or drag back and release. Esc cancels.";
     else if(V.state === "wait") msg = "Putting…";
     else if(V.state === "flight") msg = "Rolling…";
@@ -1343,6 +1344,8 @@ function makeGame(host, opts){
     function makeAvatar(P){
       var g = scene3(CHARS[P.c % CHARS.length].f); if(!g) return null;
       var obj = lib.clone(g.scene); obj.scale.setScalar(0.5);
+      var mats = [];
+      obj.traverse(function(o){ if(o.isMesh && o.material){ o.material = o.material.clone(); mats.push(o.material); } });
       var mixer = new THREE.AnimationMixer(obj), actions = {};
       CLIPS.forEach(function(n, i){
         var clip = THREE.AnimationClip.findByName(g.animations, n); if(!clip) return;
@@ -1354,12 +1357,14 @@ function makeGame(host, opts){
       var tag = nameTag(THREE, P), hb = new THREE.Box3().setFromObject(g.scene);
       if(tag){ tag.position.set(0, hb.max.y + 0.3, 0); obj.add(tag); }
       var club = null, arm = obj.getObjectByName("arm-right"), cg = scene3(CLUBS[P.color % CLUBS.length]);
-      if(arm && cg){ club = cg.scene.clone(); club.scale.setScalar(0.5); club.position.set(0, -0.13, 0.02); arm.add(club); }
+      if(arm && cg){ club = cg.scene.clone(); club.scale.setScalar(0.5); club.position.set(0, -0.13, 0.02); arm.add(club);
+        club.traverse(function(o){ if(o.isMesh && o.material){ o.material = o.material.clone(); mats.push(o.material); } }); }
       var ball = new THREE.Mesh(ballGeo, new THREE.MeshStandardMaterial({color: COLORS[P.color % COLORS.length], roughness: 0.45}));
       var bshadow = new THREE.Mesh(blobGeo, blobMat); bshadow.scale.setScalar(BALL_R*1.1);
       var cshadow = new THREE.Mesh(blobGeo, blobMat); cshadow.scale.setScalar(0.12);
       scene.add(obj); scene.add(ball); scene.add(bshadow); scene.add(cshadow);
-      return {obj: obj, mixer: mixer, actions: actions, cur: -1, club: club, ball: ball, bshadow: bshadow, cshadow: cshadow, c: P.c, color: P.color};
+      return {obj: obj, mixer: mixer, actions: actions, cur: -1, club: club, ball: ball, bshadow: bshadow, cshadow: cshadow, c: P.c, color: P.color,
+              mats: mats, tag: tag, ghost: false};
     }
     function setAnim(m, id){
       if(m.cur === id || !m.actions[id]) return;
@@ -1372,6 +1377,7 @@ function makeGame(host, opts){
       var m = P && P.mesh; if(!m) return;
       [m.obj, m.ball, m.bshadow, m.cshadow].forEach(function(o){ scene.remove(o); });
       m.mixer.stopAllAction(); if(m.ball.material) m.ball.material.dispose();
+      (m.mats || []).forEach(function(x){ x.dispose(); });
       P.mesh = null;
     };
     r.pick = function(nx, ny){
@@ -1388,6 +1394,17 @@ function makeGame(host, opts){
         var m = P.mesh; if(!m) return;
         m.obj.position.set(P.av.x/T, FLOOR_Y + liftAt(V.hole, P.av.x, P.av.z), P.av.z/T); m.obj.rotation.y = P.av.yaw;
         m.cshadow.position.set(P.av.x/T, FLOOR_Y + 0.002, P.av.z/T);
+        // A golfer who has finished the hole is a ghost: see-through, no shadow, a faint tag, so they never block
+        // anyone's view of the green while they roam or wait.
+        var ghost = !!(P.done && V.phase === "playing" && !P.fly && !V.pendingHole);
+        if(ghost !== m.ghost){
+          m.ghost = ghost;
+          var op = ghost ? (uid === myId() ? 0.38 : 0.2) : 1;
+          m.mats.forEach(function(x){ x.transparent = ghost; x.opacity = op; x.depthWrite = !ghost; x.needsUpdate = true; });
+          m.obj.traverse(function(o){ if(o.isMesh) o.castShadow = !ghost; });
+          m.cshadow.visible = !ghost;
+          if(m.tag){ m.tag.material.opacity = ghost ? 0.4 : 1; m.tag.scale.multiplyScalar(ghost ? 0.75 : 1/0.75); }
+        }
         setAnim(m, P.av.anim);
         if(m.club){ var sw = P.av.anim === A_SWING && !calm ? Math.max(0, 1 - (t - P.swingAt)/0.6) : 0; m.club.rotation.x = -Math.sin(sw*Math.PI)*0.9; }
         m.mixer.update(dt);

@@ -668,7 +668,9 @@ Scene.prototype.missFx = function(w){
 };
 Scene.prototype.sendOutFx = function(w){
   var el = this.slots[w].firstChild, self = this;
-  if(calm()) return Promise.resolve();
+  if(calm()){ if(el) el.style.opacity = ""; return Promise.resolve(); }
+  // The Pok\u00e9mon stays hidden while the ball flies; it appears only when the ball opens.
+  if(el) el.style.opacity = "0";
   var to = this.center(w), from = w === "me" ? {x:-10, y:to.y+40} : {x:this.scene.clientWidth+10, y:to.y-30};
   return this.fx.run(300, function(g, t){
     var x = from.x + (to.x-from.x)*t, y = from.y + (to.y-from.y)*t - Math.sin(t*Math.PI)*60;
@@ -678,7 +680,7 @@ Scene.prototype.sendOutFx = function(w){
   }).then(function(){
     return Promise.all([self.fx.run(220, function(g, t){ g.fillStyle = "rgba(255,255,255,"+(0.8*(1-t))+")"; g.beginPath(); g.arc(to.x, to.y, to.r*(0.3+t), 0, Math.PI*2); g.fill(); }),
       self.anim(el, [{transform:"scale(0)", opacity:0},{transform:"scale(1)", opacity:1}], 260)]);
-  });
+  }).then(function(){ if(el) el.style.opacity = ""; });
 };
 Scene.prototype.recallFx = function(w){
   var el = this.slots[w].firstChild;
@@ -692,6 +694,7 @@ Scene.prototype.faintFx = function(w){
 Scene.prototype.intro = function(lines){
   var self = this;
   if(!calm()){
+    var mine = this.slots.me.firstChild; if(mine) mine.style.opacity = "0";   // appears when its ball opens
     this.anim(this.plates.foe.el, [{transform:"translateX(-120%)"},{transform:"translateX(0)"}], 380);
     this.anim(this.plates.me.el, [{transform:"translateX(120%)"},{transform:"translateX(0)"}], 380);
     this.anim(this.slots.foe.firstChild, [{opacity:0},{opacity:1}], 500);
@@ -712,6 +715,8 @@ Scene.prototype.play = function(events, mySide, who){
         case "switch":
           return (side && side.team[side.active] && side.team[side.active].hp > 0 ? self.recallFx(w) : Promise.resolve()).then(function(){
             side.active = ev.slot; self.setView(v);
+            // keep the incoming Pok\u00e9mon out of sight until its ball is thrown and opens
+            var inc = self.slots[w].firstChild; if(inc && !calm()) inc.style.opacity = "0";
             return self.say(w === "me" ? "Go! "+ev.name+"!" : who(ev.side, ev.name, true)+"!", 500);
           }).then(function(){ return self.sendOutFx(w); });
         case "move":

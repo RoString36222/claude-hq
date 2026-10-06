@@ -3096,7 +3096,8 @@ def compute_insights():
 _UUID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
 # Pantry idempotency keys and Arena handles (use fullmatch: "$" allows a "\n").
 _RID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
-_QUEST_RID_RE = re.compile(r"^(quest|ach):[a-z0-9_]+:.{1,60}$")
+# 64 = the Arena's poke_ledger.request_id column (and QuestRewardRequest).
+_QUEST_RID_RE = re.compile(r"^(?=.{1,64}$)(quest|ach):[a-z0-9_]+:.{1,60}$")
 _HANDLE_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 ARENA_ROOM_POSTS = (
@@ -4664,8 +4665,7 @@ class Handler(BaseHTTPRequestHandler):
                     return 400, {"error": "pairing code required"}
                 return arena.pair(code, label=body.get("label", ""))
             if path == "/api/arena/unpair":
-                arena.clear_link()
-                return 200, {"ok": True}
+                return arena.unpair()
             if path == "/api/arena/publish":
                 return arena.publish(PROJECTS_DIR)
             if path == "/api/arena/ticket":

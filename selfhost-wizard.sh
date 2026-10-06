@@ -326,6 +326,11 @@ DB_PATH="$REPO/backend/arena.db"
 write_env ARENA_DATABASE_URL "sqlite+aiosqlite:////${DB_PATH#/}"
 
 ARENA_SECRET_KEY=$(_existing ARENA_SECRET_KEY || true)
+# The server refuses to start with the .env.example placeholder or a key under
+# 32 characters, so never reuse one of those.
+if [[ "$ARENA_SECRET_KEY" == "dev-only-insecure-change-me" || ${#ARENA_SECRET_KEY} -lt 32 ]]; then
+  ARENA_SECRET_KEY=""
+fi
 if [[ -n "$ARENA_SECRET_KEY" ]]; then
   say "Reusing the existing signing key."
   note "Regenerating it would invalidate outstanding pairing codes."

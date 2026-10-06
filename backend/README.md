@@ -32,7 +32,8 @@ derived in `app/scoring.py`. That means the formula can change without a client
 release, and faking a score means faking plausible daily activity rather than
 POSTing `{"xp": 999999}`.
 
-There is no anti-cheat beyond sanity clamps (`ARENA_MAX_DAILY_*`), and that's
+There is no anti-cheat beyond sanity clamps (`ARENA_MAX_DAILY_*`: prompts, tools,
+artifacts, replies, and each token bucket per day), and that's
 deliberate: the client runs on your friends' machines. The clamps exist so a
 client bug or a prank can't permanently distort the board, not to stop a
 determined faker.
@@ -61,6 +62,7 @@ the scoring rules change.
 cd backend
 uv sync
 cp .env.example .env          # defaults to SQLite; no Postgres needed
+echo ARENA_DEV=1 >> .env      # local only: allows the placeholder secret key
 uv run uvicorn app.main:app --reload --port 8080
 uv run pytest                 # 56 tests
 ```
@@ -119,6 +121,15 @@ game rooms want `wss://`.
 
 ### Self-hosting notes
 
+The server **refuses to start** when `ARENA_SECRET_KEY` is the placeholder from
+`.env.example` or shorter than 32 characters: that key signs websocket tickets,
+so anyone who knows it could open a socket as any user. Both wizards generate a
+strong one. `ARENA_DEV=1` lifts the check for local development and tests only.
+
+Device tokens are revoked after `ARENA_DEVICE_IDLE_DAYS` (default 90) without
+use; that device simply pairs again. Users can list and revoke their own devices
+(`/v1/auth/devices`), and Claude HQ revokes its token when you disconnect.
+
 SQLite is the primary database when self-hosting, so `app/db.py` sets WAL
 (readers don't block while a publish writes), a 5s busy timeout, and foreign
 keys. Back it up by copying `backend/arena.db`.
@@ -149,11 +160,14 @@ the only file that changes.
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/health` | |
+| `GET` | `/health` | 200 when the database answers, **503** when it does not |
 | `GET` | `/v1/auth/github/start` | Redirects to GitHub |
 | `GET` | `/v1/auth/github/callback` | Shows a one-shot pairing code |
 | `POST` | `/v1/auth/pair` | Code → device token |
-| `POST` | `/v1/auth/ticket` | Device token → 60s websocket ticket |
+| `POST` | `/v1/auth/ticket` | Device token → 60s websocket ticket (bound to the device) |
+| `GET` | `/v1/auth/devices` | Your paired devices: `{id, label, created, lastSeen, current}` |
+| `POST` | `/v1/auth/devices/{id}/revoke` | Revoke one of your devices; closes its live websockets |
+| `POST` | `/v1/auth/revoke-self` | Revoke the calling device (Claude HQ's unpair) |
 | `POST` | `/v1/stats` | Ingest. Bearer device token. |
 | `GET` | `/v1/board?window=season\|30d\|7d\|all` | |
 | `GET` | `/v1/board/stream` | SSE, pushes on ingest |
@@ -164,6 +178,7 @@ the only file that changes.
 | `POST` | `/v1/pantry/eat` | `{requestId, kind}`. Never says which session ate. |
 | `POST` | `/v1/pantry/give` | `{requestId, toHandle, coins, kind?, qty, note?}`, delivered live as a lobby `gift` |
 | `POST` | `/v1/pantry/gifts/drain` | Undelivered gifts, each returned once |
+| `POST` | `/v1/pantry/reward` | `{requestId, kind, questId, tier?, coins}`. Coins must match the catalog. The ledger key is derived server-side (`quest:<id>:<UTC date or ISO week>`, `ach:<id>:<tier>`), so each quest pays once per period; at most 10 rewards per UTC day. |
 | `POST` | `/v1/cali/orders` | Log one California Burrito dinner: `{requestId, date?, diners[], note?}`. Each diner is `{handle? , name?, tacos:{mildHard,mildSoft,wildHard,wildSoft}}`. Buy-1-get-1 is pooled across the table, so the server prices it (`paid = ceil(TT/2)`) rather than trusting a total. Idempotent by `requestId`. |
 | `GET` | `/v1/cali/orders` | The shared dinner log, newest first |
 | `GET` | `/v1/cali/board?window=season\|30d\|7d\|all` | The cali-leaderboard: Tuesdays attended, total tacos (TT) as the tiebreak, with tacos-per-person (TPP) per entry |

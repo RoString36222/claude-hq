@@ -9,13 +9,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import (
-    Caller, check_oauth_state, consume_pair_code, hash_token, issue_oauth_state,
+    Caller, _aware, check_oauth_state, consume_pair_code, hash_token, issue_oauth_state,
     issue_ws_ticket, mint_pair_code, new_device_token, require_device,
 )
 from ..config import get_settings
 from ..db import get_session
 from ..models import Device, User
-from ..schemas import PairRequest, PairResponse, TicketResponse
+from ..rooms import manager
+from ..schemas import (
+    DeviceInfo, DevicesResponse, PairRequest, PairResponse, RevokeResponse, TicketResponse,
+)
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
@@ -155,6 +158,67 @@ async def ticket(caller: Caller = Depends(require_device)) -> TicketResponse:
     Keeps the device token out of the browser page and out of WS query strings.
     """
     return TicketResponse(
-        ticket=issue_ws_ticket(caller.user.id),
+        ticket=issue_ws_ticket(caller.user.id, caller.device.id),
         expiresIn=get_settings().ws_ticket_ttl_secs,
     )
+
+
+# --- devices ---------------------------------------------------------------
+
+@router.get("/devices", response_model=DevicesResponse)
+async def list_devices(
+    caller: Caller = Depends(require_device),
+    db: AsyncSession = Depends(get_session),
+) -> DevicesResponse:
+    """The caller's paired devices that still work, most recently used first."""
+    rows = (
+        await db.execute(
+            select(Device).where(Device.user_id == caller.user.id, Device.revoked.is_(False))
+        )
+    ).scalars().all()
+    rows = sorted(
+        rows,
+        key=lambda d: (d.id != caller.device.id, -_ts(d.last_seen_at or d.created_at)),
+    )
+    return DevicesResponse(devices=[
+        DeviceInfo(
+            id=d.id, label=d.label, created=d.created_at, lastSeen=d.last_seen_at,
+            current=d.id == caller.device.id,
+        )
+        for d in rows
+    ])
+
+
+def _ts(dt) -> float:
+    return _aware(dt).timestamp() if dt is not None else 0.0
+
+
+async def _revoke(db: AsyncSession, device: Device) -> RevokeResponse:
+    device.revoked = True
+    await db.commit()
+    closed = await manager.evict_device(device.id)
+    return RevokeResponse(revoked=device.id, closedSockets=closed)
+
+
+@router.post("/devices/{device_id}/revoke", response_model=RevokeResponse)
+async def revoke_device(
+    device_id: str,
+    caller: Caller = Depends(require_device),
+    db: AsyncSession = Depends(get_session),
+) -> RevokeResponse:
+    """Sign out one of your own devices (a lost laptop, an old install)."""
+    device = await db.get(Device, device_id[:36])
+    # 404 for someone else's device too: never confirm another user's ids.
+    if device is None or device.user_id != caller.user.id or device.revoked:
+        raise HTTPException(404, "no such device")
+    return await _revoke(db, device)
+
+
+@router.post("/revoke-self", response_model=RevokeResponse)
+async def revoke_self(
+    caller: Caller = Depends(require_device),
+    db: AsyncSession = Depends(get_session),
+) -> RevokeResponse:
+    """Revoke the calling device's own token. Claude HQ calls this on unpair."""
+    device = await db.get(Device, caller.device.id)
+    return await _revoke(db, device)

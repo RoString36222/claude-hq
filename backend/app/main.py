@@ -6,7 +6,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .config import get_settings
+from .config import check_secret_key, get_settings
 from .db import Base, describe_backend, engine
 from .routes import auth as auth_routes
 from .routes import board as board_routes
@@ -21,6 +21,9 @@ from .routes import tacos as taco_routes
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Fail closed before serving anything: a default key lets anyone forge
+    # websocket tickets.
+    check_secret_key(get_settings())
     # Alembic owns the schema in production; this only helps SQLite dev/test runs.
     if get_settings().is_sqlite:
         async with engine.begin() as conn:
@@ -64,10 +67,14 @@ app.include_router(taco_routes.router)
 
 
 @app.get("/health")
-async def health() -> dict:
+async def health() -> JSONResponse:
     try:
         db = await describe_backend()
     except Exception as exc:
-        # Report unhealthy rather than 200-with-a-broken-database.
-        return {"ok": False, "service": "claude-hq-arena", "db": f"unreachable: {exc}"}
-    return {"ok": True, "service": "claude-hq-arena", "db": db}
+        # 503, not 200-with-a-broken-database: the Fly/compose health checks
+        # and ops/autodeploy.sh only look at the status code.
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "service": "claude-hq-arena", "db": f"unreachable: {exc}"},
+        )
+    return JSONResponse({"ok": True, "service": "claude-hq-arena", "db": db})

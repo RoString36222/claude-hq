@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import rooms
-from ..auth import Caller, read_ws_ticket, require_device
+from ..auth import Caller, device_usable, read_ws_ticket_claims, require_device
 from ..db import SessionLocal, get_session
 from ..models import User
 from ..rooms import MAX_STATE_BYTES, Member, Room, manager
@@ -27,10 +27,11 @@ async def list_rooms(caller: Caller = Depends(require_device)) -> dict:
 async def room_ws(
     websocket: WebSocket, room_id: str, ticket: str = Query(...)
 ) -> None:
-    user_id = read_ws_ticket(ticket)
-    if user_id is None:
+    claims = read_ws_ticket_claims(ticket)
+    if claims is None:
         await websocket.close(code=4401, reason="invalid or expired ticket")
         return
+    user_id, device_id = claims
 
     room_id = room_id.strip()[:64]
     if not room_id:
@@ -41,6 +42,11 @@ async def room_ws(
         user = await db.get(User, user_id)
         if user is None or not user.is_active:
             await websocket.close(code=4403, reason="account disabled")
+            return
+        # A ticket outlives nothing: one minted just before its device was
+        # revoked must not open a socket in the remaining TTL.
+        if device_id is not None and not await device_usable(db, device_id):
+            await websocket.close(code=4401, reason="device revoked")
             return
 
         if rooms.is_private_id(room_id):
@@ -61,6 +67,7 @@ async def room_ws(
         handle=user.handle,
         display_name=user.display_name or user.handle,
         avatar_url=user.avatar_url,
+        device_id=device_id,
     )
 
     try:

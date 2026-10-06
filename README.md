@@ -69,8 +69,8 @@ shares daily activity *counts* with friends — never conversation content.)
   holes: windmills, hills, sliding gates, bumpers, sand, ice and water). Battles use a team you
   pick from the Pokémon you've unlocked, or your live sessions. With the Arena connected
   you can also play with friends in your room: a shared fishing dock with a room goal and boss
-  fish, a live puzzle race, the live **Creature Duel**, co-op Mines, a shared farm, Mini Golf
-  and Kart Racing for up to 8. The server referees every multiplayer game; your own moves show instantly, other
+  fish, a live puzzle race, the live **Creature Duel**, co-op Mines, a shared farm, Mini Golf,
+  Kart Racing and **Platformer Rush** (race or co-op across floating islands) for up to 8. The server referees every multiplayer game; your own moves show instantly, other
   players are interpolated, and a dropped connection rejoins by itself in about a second. Art is
   drawn in code except the 3D games' CC0 Kenney models and the optional Pokémon sprite pack;
   progress is a local `games-save.json`; in an Arena room only game moves are shared.
@@ -301,6 +301,33 @@ and feature guide.
     and the referee rolls each putt on the right one. Random rounds don't record a "best" score.
     No new network traffic beyond the existing opt-in Arena game messages; the putting physics is
     unchanged.
+  - **Platformer Rush** (🏝️ in the Valley): run, jump and **double-jump** across floating islands
+    to the flag, coins on the way, built from Kenney's CC0 Starter Kit 3D Platformer models. Three
+    levels (Meadow Hop, Sky Steps, Cloud Fortress) with checkpoints, coin trails that hint the
+    route, a few double-jump gaps and a shortcut or two. A third-person character controller
+    (camera-relative WASD/arrows/stick, coyote time, jump buffering, idle/run/jump animations, a
+    spin on the double jump, squash on landing) and an orbit camera (mouse look under pointer lock,
+    right-drag, right stick or Q/E; it drifts behind you as you run and never sits inside a
+    platform). Fall below the clouds and you're back on your last checkpoint. Solo it's a time
+    trial with your best time saved per level; with friends, up to 8 play a **Race** (first to the
+    flag, every checkpoint in order first, live standings) or **Co-op** (the whole lobby shares one
+    coin goal against the clock, with a team progress bar). Six runner colours, name tags,
+    countdown, results card, low-detail mode, and a top-down map view without WebGL2.
+  - **Platformer referee:** the Arena checks every frame on the 15 Hz real-time tick: inside the
+    level, no faster than a run, rising and falling no faster than a jump and gravity, never inside
+    a platform, and never higher above the last platform stood on than a jump plus a double jump
+    can reach in the time since (a closed-form envelope, so hovering across a gap is caught). The
+    server owns the checkpoints (in order, within reach), the coins (each once per player in a race;
+    once for the whole room in co-op, first to reach it) and the flag (only after every
+    checkpoint); a refused frame puts you back where you last stood, and respawns go to the last
+    checkpoint the server confirmed. Clients send their *simulation* clock, so a stalling tab that
+    runs in slow motion is never mistaken for a cheat. Tested with 8 bots at 120 ms ± 60 ms lag and
+    reordering on every level, race and co-op, on both the Python and the Rust Arena (zero false
+    rejections, true finish order, each co-op coin counted once, snapshots inside the room's
+    bandwidth budget). The level files are shared byte-for-byte by the browser and both backends.
+  - **Third-party assets:** Kenney's Starter Kit 3D Platformer models, texture and blob-shadow
+    sprite (CC0) in `games/platformer/` with the license alongside; the kit's Godot code (MIT) is
+    not used.
 
 - **1.8.1** — **Mini Golf grows to five themed courses, and you pick your battle team.**
   - **Five Mini Golf courses, 25 holes.** Meadow Greens (4), Windmill Lane (5) and Castle Keep (6)
@@ -530,9 +557,10 @@ Made with [Claude Code](https://claude.com/claude-code).
 
 MIT — see [LICENSE](LICENSE).
 
-Mini Golf and Kart Racing use [three.js](https://threejs.org/) (MIT, `games/vendor/LICENSE-three.txt`) and models
-from [Kenney](https://kenney.nl/) — Minigolf Kit, Mini Characters, Nature Kit and Starter Kit Racing — which are public
-domain (CC0, `games/golf/LICENSE-kenney.txt`, `games/kart/LICENSE-kenney.txt`). Thank you, Kenney!
+Mini Golf, Kart Racing and Platformer Rush use [three.js](https://threejs.org/) (MIT, `games/vendor/LICENSE-three.txt`)
+and models from [Kenney](https://kenney.nl/) — Minigolf Kit, Mini Characters, Nature Kit, Starter Kit Racing and Starter
+Kit 3D Platformer — which are public domain (CC0, `games/golf/LICENSE-kenney.txt`, `games/kart/LICENSE-kenney.txt`,
+`games/platformer/LICENSE-kenney.txt`). Thank you, Kenney!
 
 Pokémon names and sprites are the property of Nintendo / Game Freak / The Pokémon Company; the
 "pokemon" creature pack hotlinks sprites from the public [PokéAPI](https://pokeapi.co/) sprite library

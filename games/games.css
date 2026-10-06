@@ -346,3 +346,29 @@ html.hq-calm .pkb-bcard:hover{transform:none}
 html.hq-calm .vg-kart-cd{animation:none}
 @media (prefers-reduced-motion:reduce){ .vg-kart-cd{animation:none} }
 @media (max-width:560px){ .vg-kart-gauges{transform:scale(.72);transform-origin:right bottom} .vg-kart-mini{width:84px;height:84px} }
+/* ---- Platformer Rush ---- */
+.vg-plat-canvas{cursor:crosshair}
+.vg-plat-hud{min-width:170px;max-width:46%}
+.vg-plat-big{font-size:14px}
+.vg-plat-time{font:600 12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.vg-plat-line{font-size:12px;font-variant-numeric:tabular-nums}
+.vg-plat-bar{margin:3px 0 1px;height:8px}
+.vg-plat-bar i{background:var(--gold)}
+.vg-plat-stand{margin:4px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:1px;font-size:12px}
+.vg-plat-stand:empty{display:none}
+.vg-plat-stand li.me{font-weight:700;color:var(--ink)}
+.vg-plat-sw{display:inline-block;width:10px;height:10px;border-radius:50%;border:1px solid var(--line);vertical-align:-1px}
+.vg-plat-char .vg-plat-sw{width:18px;height:18px}
+.vg-plat-cd{position:absolute;left:50%;top:30%;transform:translate(-50%,-50%);padding:6px 22px;border-radius:var(--radius);
+  font:800 34px var(--mono);color:var(--ink);background:var(--panel);border:2px solid var(--brand);box-shadow:var(--shadow-lg);pointer-events:none;
+  white-space:nowrap;animation:vg-plat-pop .35s var(--ease)}
+.vg-plat-fade{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;
+  background:color-mix(in srgb,var(--bg) 78%,transparent);animation:vg-plat-fade .3s var(--ease)}
+.vg-plat-fade span{font:800 22px var(--mono);color:var(--ink);padding:6px 18px;border-radius:999px;background:var(--panel);border:1px solid var(--line)}
+.vg-plat-verdict{margin:0 0 6px;font-weight:800;color:var(--need)}
+.vg-plat-verdict.win{color:var(--good)}
+@keyframes vg-plat-pop{from{transform:translate(-50%,-50%) scale(.7);opacity:0}to{transform:translate(-50%,-50%) scale(1);opacity:1}}
+@keyframes vg-plat-fade{from{opacity:0}to{opacity:1}}
+html.hq-calm .vg-plat-cd,html.hq-calm .vg-plat-fade{animation:none}
+@media (prefers-reduced-motion:reduce){ .vg-plat-cd,.vg-plat-fade{animation:none} }
+@media (max-width:560px){ .vg-plat-hud{max-width:60%} .vg-plat-cd{font-size:24px} }

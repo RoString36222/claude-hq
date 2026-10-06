@@ -101,7 +101,8 @@ console.log(JSON.stringify({out: out, seg: segs.map(function(s){ return PL.segDi
   levels: data.levels.map(function(lv){ var c = L[lv.id]; return {solids: c.solids, bounds: c.bounds, goal: c.goal, secs: c.secs,
     spawns: c.spawns, cps: c.cps, flag: c.flag, kill: c.kill}; })}));
 """ % (json.dumps(data), json.dumps(probes), json.dumps(segs))
-        res = subprocess.run([NODE, "-e", script], capture_output=True, text=True, timeout=60)
+        # piped in: argv is capped at 128 KB per string on Linux, and the probes grow with the levels
+        res = subprocess.run([NODE, "-"], input=script, capture_output=True, text=True, timeout=60)
         self.assertEqual(res.returncode, 0, res.stderr)
         got = json.loads(res.stdout)
         for (lid, x, y, z), (sup, ground, ins, feet) in zip(probes, got["out"]):

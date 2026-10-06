@@ -9,7 +9,7 @@
 "use strict";
 var HQV = window.HQV; if(!HQV) return;
 var api = HQV.api;
-var NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm"};
+var NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm", golf:"Mini Golf"};
 var LIVE = {};          // g -> {lobby:[...], ...game state from the server}
 
 function A(){ return window.ARENA || {}; }
@@ -17,6 +17,10 @@ function me(){ var y = A().you; return y && y.userId; }
 function sockOpen(){ var s = A().sock; return !!(s && s.readyState === 1); }
 function send(g, op, data){
   if(!sockOpen()) return false;
+  // A game's moves wait until its shell has (re-)joined the lobby on this very socket:
+  // after a quick reconnect the server would only answer "join the lobby first".
+  var c = CTX[g];
+  if(c && op !== "join" && op !== "leave" && c.sock !== A().sock) return false;
   var msg = {type:"game", g:g, op:op}; for(var k in (data||{})) msg[k] = data[k];
   try { A().sock.send(JSON.stringify(msg)); return true; } catch(e){ return false; }
 }
@@ -43,22 +47,24 @@ function shell(g, el, body){
       }
       tries++; setTimeout(connect, 600); return;
     }
-    if(!joined){ joined = true; ctx.sock = A().sock; send(g, "join"); }
-    ctx.watch = setInterval(watch, 400);
+    watch();
+    ctx.watch = setInterval(watch, 250);
   })();
-  // The room socket can drop (wifi, laptop sleep, server restart): show a small badge, let
-  // the game park itself, and when index.html has a new socket open, rejoin the lobby; the
-  // server answers with a full snapshot, so the game resyncs from that.
+  // The room socket can drop (wifi, laptop sleep, server restart): show a small badge (or let
+  // a game with its own badge, ctx.onConn, show it), keep the game running, and when
+  // index.html has a new socket open, rejoin the lobby on it; the server answers with a full
+  // snapshot, so the game resyncs from that. send() holds a game's moves until that rejoin.
+  function hook(name, arg){ if(ctx[name]){ try { ctx[name](arg); } catch(e){} } }
   function watch(){
     if(!ctx.alive){ clearInterval(ctx.watch); return; }
     var sk = A().sock, open = sockOpen();
     if(open && sk !== ctx.sock){
       var again = joined; joined = true; ctx.sock = sk; send(g, "join");
       if(ctx.offline){ ctx.offline = false; badge.hidden = true; }
-      if(again && ctx.onRejoin){ try { ctx.onRejoin(); } catch(e){} }
+      if(again){ hook("onRejoin"); hook("onConn", true); }
     } else if(!open && joined && !ctx.offline){
-      ctx.offline = true; badge.hidden = false;
-      if(ctx.onOffline){ try { ctx.onOffline(); } catch(e){} }
+      ctx.offline = true; badge.hidden = !!ctx.onConn;
+      hook("onOffline"); hook("onConn", false);
     }
   }
   ctx.renderLobby = function(){ renderLobby(ctx); };
@@ -118,7 +124,9 @@ HQV.onGame = function(m){
   if(m.ev === "lobby"){ s.lobby = Array.isArray(m.members) ? m.members : []; }
   if(m.ev === "error"){
     var eh = HANDLERS[g];
-    if(eh && eh.onError && eh.onError(m, s)) return;     // the game handled it (e.g. pond land retry)
+    var handled = false;
+    if(eh && eh.onError){ try { handled = eh.onError(m, s); } catch(e){} }
+    if(handled) return;     // the game handled it (e.g. pond land retry)
     if(CTX[g]) api.toast("⚠ "+String(m.error||"error").slice(0,120));
     return;
   }
@@ -141,6 +149,9 @@ function register(g, icon, desc, mount){
     badge:function(){ var s = LIVE[g]; return s && s.lobby.length ? s.lobby.length+" playing" : ""; }});
 }
 var HANDLERS = {};
+// Games in their own files (golf.js) reuse the lobby, invite and connect shell through this.
+HQV.mp = {register:register, send:send, handlers:HANDLERS, st:st, me:me, nameOf:nameOf, sockOpen:sockOpen,
+  ctx:function(g){ return CTX[g]; }};
 
 /* =============================== POND =============================== */
 // A shared dock drawn with games/fishart.js (same scene, rig and reel as the solo pond).

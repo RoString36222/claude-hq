@@ -33,6 +33,45 @@ class GameFileTests(unittest.TestCase):
                     "sub/core.js", "", None, "core.js\n", "a" * 60 + ".js", "missing.js"):
             self.assertIsNone(dashboard.game_file(bad), repr(bad))
 
+    def test_serves_golf_assets_and_vendored_three(self):
+        for name, ctype in (("vendor/three-module.js", "application/javascript"),
+                            ("vendor/three-core.js", "application/javascript"),
+                            ("vendor/three-gltf-loader.js", "application/javascript"),
+                            ("golf/courses.json", "application/json"),
+                            ("golf/straight.glb", "model/gltf-binary"),
+                            ("golf/colormap.png", "image/png")):
+            got = dashboard.game_file(name)
+            self.assertIsNotNone(got, name)
+            self.assertTrue(got[1].startswith(ctype), name)
+
+    def test_rejects_other_subpaths(self):
+        for bad in ("vendor/../dashboard.py", "vendor/x.css", "golf/Textures/colormap.png", "golf/a/b.glb",
+                    "golf/X.glb", "vendor/three.core.js", "golf/x.js", "golf/x.glb\n", "vendor/", "golf/.x.glb",
+                    "golf/LICENSE-kenney.txt", "vendor/LICENSE-three.txt", "other/three-module.js",
+                    "golf/missing.glb", "golf//straight.glb", "golf/straight.glb/", "/golf/straight.glb"):
+            self.assertIsNone(dashboard.game_file(bad), repr(bad))
+
+    def test_golf_assets_revalidate_and_game_scripts_never_cache(self):
+        for name in ("vendor/three-core.js", "golf/straight.glb", "golf/courses.json"):
+            self.assertEqual(dashboard.game_cache_control(name), "no-cache", name)
+        for name in ("golf.js", "multi.js", "games.css", "vendor/../golf.js", None):
+            self.assertEqual(dashboard.game_cache_control(name), "no-store", repr(name))
+        a = dashboard.game_etag(b"abc")
+        self.assertEqual(a, dashboard.game_etag(b"abc"))
+        self.assertNotEqual(a, dashboard.game_etag(b"abd"))
+        self.assertRegex(a, r'^"[0-9a-f]{20}"$')
+
+    def test_rejects_symlink_escaping_the_folder(self):
+        link = os.path.join(GAMES, "golf", "zz-escape.json")
+        try:
+            os.symlink(os.path.join(ROOT, "README.md"), link)
+        except OSError:
+            self.skipTest("cannot create symlinks here")
+        try:
+            self.assertIsNone(dashboard.game_file("golf/zz-escape.json"))
+        finally:
+            os.unlink(link)
+
     def test_index_loads_every_game_file_that_exists(self):
         with open(os.path.join(ROOT, "index.html"), encoding="utf-8") as f:
             html = f.read()
@@ -55,6 +94,24 @@ class GameScriptRules(unittest.TestCase):
             self.assertNotRegex(src, r"https?://", n)
             self.assertNotIn("innerHTML", src, n)
             self.assertNotIn("eval(", src, n)
+
+    def test_vendored_modules_import_only_relative_siblings(self):
+        vendor = os.path.join(GAMES, "vendor")
+        for n in sorted(os.listdir(vendor)):
+            if not n.endswith(".js"):
+                continue
+            with open(os.path.join(vendor, n), encoding="utf-8") as f:
+                src = f.read()
+            for spec in re.findall(r"^(?:import|export)[^;]*?from\s+'([^']+)'", src, re.M):
+                self.assertRegex(spec, r"^\./three-[a-z-]+\.js$", n)
+                self.assertTrue(os.path.isfile(os.path.join(vendor, spec[2:])), spec)
+            self.assertNotRegex(src, r"import\(\s*['\"]https?:", n)
+
+    def test_third_party_files_carry_their_licenses(self):
+        with open(os.path.join(GAMES, "vendor", "LICENSE-three.txt"), encoding="utf-8") as f:
+            self.assertIn("The MIT License", f.read())
+        with open(os.path.join(GAMES, "golf", "LICENSE-kenney.txt"), encoding="utf-8") as f:
+            self.assertGreaterEqual(f.read().count("Creative Commons Zero, CC0"), 2)
 
     def test_css_uses_tokens_not_hex(self):
         with open(os.path.join(GAMES, "games.css"), encoding="utf-8") as f:

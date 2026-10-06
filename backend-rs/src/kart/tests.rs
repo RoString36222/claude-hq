@@ -84,9 +84,9 @@ fn centre_line_round_trips_and_road_edges() {
                 assert!(on_road(t, x, z, 0.0), "{} {u} {side}", t.id);
             }
         }
-        // well off the road: a straight's barrier is at 4.5 m, a corner's ring ends at 9.5 m
+        // well off the road: past a straight's barrier (ROAD_HALF), or off the track's tiles
         assert!(locate(t, 1000.0, 1000.0).is_none());
-        let (x, z, _) = point_at(t, 0.3, 4.4);
+        let (x, z, _) = point_at(t, 0.3, ROAD_HALF - 0.1);
         assert!(!on_road(t, x + 2.0, z, 0.0));
     }
 }
@@ -95,7 +95,8 @@ fn centre_line_round_trips_and_road_edges() {
 fn yaw_points_along_the_track() {
     let t = tr("meadow");
     assert_eq!(point_at(t, 0.5, 0.0).2, 0.0); // the start line heads north
-    let (_, _, r) = point_at(t, 4.5, 0.0); // tile 4 is the first right turn: half way round, NE
+    let first_r = t.tiles.iter().position(|x| x.o == (x.d + 1) % 4).expect("meadow turns right");
+    let (_, _, r) = point_at(t, first_r as f64 + 0.5, 0.0); // the first right turn: half way round, NE
     assert!((r - 45.0).abs() < 1e-9, "{r}");
 }
 
@@ -419,7 +420,7 @@ fn eight_car_race(seed: u64) {
     let t0 = 1000.0;
     assert_eq!(k.start(&ms, &json!("peaks"), &json!(2), t0), None);
     let go = t0 + COUNTDOWN;
-    let speed = |i: usize| 24.0 - i as f64 * 1.3; // bot0 fastest
+    let speed = |i: usize| 24.0 - i as f64 * 0.8; // bot0 fastest; all inside FINISH_GRACE
     let mut u: Vec<f64> = k.players.iter().map(|(_, p)| p.u).collect();
     let grid_x: Vec<f64> = k.players.iter().map(|(_, p)| grid_slot(t_, p.slot).0).collect();
     let goal = 0.5 + 2.0 * t_.n as f64 + 0.2;

@@ -23,7 +23,8 @@ var api = HQV.api, MP = HQV.mp || null;
 
 /* KART-TRACK BEGIN */
 var KT = (function(){
-  var TILE = 10, HALF = 5, ROAD_HALF = 4.5, R_IN = 0.5, R_MID = 5, R_OUT = 9.5;
+  // the kit's 10 m pieces drawn at SCALE 1.5 (15 m tiles, a 13.5 m road): room for 8 cars
+  var SCALE = 1.5, TILE = 15, HALF = 7.5, ROAD_HALF = 6.75, R_IN = 0.75, R_MID = 7.5, R_OUT = 14.25;
   var DIRS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
   function compileTrack(path){
     var col = 0, row = 0, d = 0, tiles = [], cells = {};
@@ -67,14 +68,25 @@ var KT = (function(){
     var tx = -a0x*Math.sin(th) + a1x*Math.cos(th), tz = -a0z*Math.sin(th) + a1z*Math.cos(th);
     return [cx + t.pivot[0] + vx*rad, cz + t.pivot[1] + vz*rad, ((Math.atan2(tx, -tz)*180/Math.PI) + 360) % 360];
   }
-  function gridSlot(k){ return [k % 2 === 0 ? -2 : 2, 3 + Math.floor(k/2)*3.2 + (k % 2 ? 1.6 : 0)]; }
-  return {TILE: TILE, HALF: HALF, ROAD_HALF: ROAD_HALF, R_IN: R_IN, R_MID: R_MID, R_OUT: R_OUT, DIRS: DIRS,
-          compileTrack: compileTrack, cellOf: cellOf, locate: locate, pointAt: pointAt, gridSlot: gridSlot};
+  function gridSlot(k){
+    if(SCALE === 1) return [k % 2 === 0 ? -2 : 2, 3 + Math.floor(k/2)*3.2 + (k % 2 ? 1.6 : 0)];   // 1.9.0 servers
+    return [k % 2 === 0 ? -3 : 3, 4 + Math.floor(k/2)*4 + (k % 2 ? 2 : 0)];
+  }
+  var K = {DIRS: DIRS, compileTrack: compileTrack, cellOf: cellOf, locate: locate, pointAt: pointAt, gridSlot: gridSlot};
+  // Race at the scale the Arena referees: a server from before the wider tracks sends none
+  // (its roads are the kit's own 10 m tiles), and positions must match its geometry exactly.
+  K.setScale = function(s){
+    s = s === 1 ? 1 : 1.5;
+    SCALE = s; TILE = 10*s; HALF = TILE/2; ROAD_HALF = 4.5*s; R_IN = 0.5*s; R_MID = 5*s; R_OUT = 9.5*s;
+    K.SCALE = SCALE; K.TILE = TILE; K.HALF = HALF; K.ROAD_HALF = ROAD_HALF; K.R_IN = R_IN; K.R_MID = R_MID; K.R_OUT = R_OUT;
+  };
+  K.setScale(SCALE);
+  return K;
 })();
 /* KART-TRACK END */
 
 /* ---------- handling (browser only: the server checks, it doesn't simulate) ---------- */
-var VMAX = 26, VREV = 8, CAR_R = 0.85, TURN = 2.3, DRIFT_TURN = 1.45, STEP = 1/120;
+var VMAX = 30, VREV = 8, CAR_R = 0.85, TURN = 2.3, DRIFT_TURN = 1.45, STEP = 1/120;
 var SEND_EVERY = 0.05, KEEPALIVE = 1.0, CD_SECS = 3;
 var INTERP = 0.1, JIT_MAX = 0.2, EXTRAP = 0.25, SNAPS = 10;
 var CARS = [{f: "vehicle-truck-red", n: "Red truck"}, {f: "vehicle-truck-green", n: "Green truck"},
@@ -109,13 +121,40 @@ function myClock(){ return Math.floor(performance.now()/10) % 1073741824; }
 
 /* ---------- data + three.js, loaded on demand ---------- */
 var DATA = null, DATA_P = null, TRACKS = {};
+// An Arena from 1.9.0 ("legacy") referees the first three tracks only, at their original
+// short layouts (`legacy` in tracks.json) and the kit's 1x scale; it sends no "scale" and no
+// "tracks" (and no view at all between races). Newer servers say both. Solo is never legacy.
+var LEGACY = null, SERVER_IDS = null;
+function compileTracks(){
+  TRACKS = {};
+  ((DATA && DATA.tracks) || []).forEach(function(t){
+    var path = LEGACY ? t.legacy : t.path; if(typeof path !== "string") return;
+    try { var c = KT.compileTrack(path); c.id = t.id; c.name = t.name; c.laps = t.laps|0 || 3;
+      c.theme = t.theme || {}; c.scenery = t.scenery || "forest"; TRACKS[t.id] = c; } catch(e){} });
+}
+// Switch tracks, scale and top speed to match the server (or solo). True if anything changed.
+function useServer(legacy){
+  legacy = !!legacy;
+  if(legacy === LEGACY && Object.keys(TRACKS).length) return false;
+  LEGACY = legacy; KT.setScale(legacy ? 1 : 1.5); VMAX = legacy ? 26 : 30; compileTracks(); return true;
+}
+// Track ids this race can use: the server's list in a room, everything solo.
+function trackIds(mp){
+  var all = ((DATA && DATA.tracks) || []).map(function(t){ return t.id; }).filter(function(id){ return TRACKS[id]; });
+  if(!mp || !SERVER_IDS) return all;
+  return all.filter(function(id){ return SERVER_IDS.indexOf(id) >= 0; });
+}
+function randomOf(list){
+  if(!list.length) return null;
+  var r = new Uint32Array(1);
+  try { crypto.getRandomValues(r); } catch(e){ r[0] = Date.now(); }
+  return list[r[0] % list.length];
+}
 function loadData(){
   if(DATA_P) return DATA_P;
   DATA_P = fetch("/games/kart/tracks.json").then(function(r){ if(!r.ok) throw new Error("tracks "+r.status); return r.json(); })
     .then(function(j){
-      DATA = j; TRACKS = {};
-      (j.tracks || []).forEach(function(t){ try { var c = KT.compileTrack(t.path); c.id = t.id; c.name = t.name; c.laps = t.laps|0 || 3;
-        c.theme = t.theme || {}; c.scenery = t.scenery || "forest"; TRACKS[t.id] = c; } catch(e){} });
+      DATA = j; LEGACY = null; useServer(false);
       return j;
     }, function(e){ DATA_P = null; throw e; });
   return DATA_P;
@@ -245,9 +284,18 @@ function makeGame(host, opts){
     if(!mp || host){ lr.appendChild(api.mk("span", "vg-muted", "Race length")); lr.appendChild(lsel); menu.appendChild(lr); }
     // tracks
     menu.appendChild(api.mk("h4", "vg-golf-h", mp ? (host ? "Pick a track to start the race" : "Tracks") : "Tracks"));
+    var ids = trackIds(mp);
+    if(mp && LEGACY) menu.appendChild(api.mk("p", "vg-muted", "This Arena runs an older Kart Racing: the three original tracks at their first size. Update the Arena for every track."));
+    var rnd = api.btn("🎲 Random track", "", function(){
+      var id = randomOf(ids), n = +lsel.value || 3; if(!id) return;
+      if(mp){ if(MP) MP.send("kart", "start", {track: id, laps: n}); }
+      else startPractice(id, n);
+    });
+    if(mp && !host) rnd.disabled = true;
+    var rr = api.mk("div", "vg-row"); rr.appendChild(rnd); menu.appendChild(rr);
     var grid = api.mk("div", "vg-golf-courses");
     (DATA.tracks || []).forEach(function(t){
-      var tr = TRACKS[t.id]; if(!tr) return;
+      var tr = TRACKS[t.id]; if(!tr || ids.indexOf(t.id) < 0) return;
       var card = api.mk("button", "vg-card vg-golf-course"); card.type = "button";
       var ic = api.mk("span", "vg-card-ic", "🏁"); ic.setAttribute("aria-hidden", "true"); card.appendChild(ic);
       var tt = api.mk("span", "vg-card-t"); tt.appendChild(api.mk("b", null, t.name));
@@ -286,6 +334,7 @@ function makeGame(host, opts){
 
   /* ---------- practice: a solo time trial ---------- */
   function startPractice(id, laps){
+    if(useServer(false) && R3){ R3.clearTrack(); }
     var tr = TRACKS[id]; if(!tr) return;
     resetRace(); V.mode = "practice"; V.track = tr; V.laps = laps; V.lapTimes = [];
     var C = ensureCar("me", {name: "You", car: clamp(ksave().car|0, 0, CARS.length - 1)});
@@ -299,6 +348,10 @@ function makeGame(host, opts){
   function requestView(){ if(MP) MP.send("kart", "view"); }
   function applyView(view, force){
     V.round = view; V.gotView = true;
+    if(V.mode === "mp"){
+      SERVER_IDS = view && Array.isArray(view.tracks) ? view.tracks.filter(function(x){ return typeof x === "string"; }).slice(0, 64) : null;
+      if(useServer(!view || view.scale == null)){ V.track = null; if(R3) R3.clearTrack(); }
+    }
     if(!view || !TRACKS[view.track]){ if(V.phase !== "idle" && V.mode === "mp"){ resetRace(); showStage(false); } renderMenu(); return; }
     if(V.mode !== "mp") return;
     var mine = inRace(view);
@@ -704,13 +757,13 @@ function makeGame(host, opts){
       var g = cv.getContext("2d"), W = cv.width, H = cv.height, T = TOK;
       g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = T.bg2; g.fillRect(0, 0, W, H);
       if(!V.track){ g.fillStyle = T.muted; g.font = "14px sans-serif"; g.fillText("Loading…", 16, 24); return; }
-      var F = me() || V.cars[V.spectate] || V.cars[V.order[0]], sc = Math.min(W, H)/70;
+      var F = me() || V.cars[V.spectate] || V.cars[V.order[0]], sc = Math.min(W, H)/95;
       g.save(); g.translate(W/2, H/2); g.scale(sc, sc); if(F) g.translate(-F.x, -F.z);
       var tr = V.track;
       g.beginPath(); for(var k = 0; k <= tr.n*8; k++){ var p = KT.pointAt(tr, k/8); if(k) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]); }
-      g.lineJoin = "round"; g.lineWidth = 10; g.strokeStyle = T.line; g.stroke(); g.lineWidth = 9; g.strokeStyle = T.panel2; g.stroke();
+      g.lineJoin = "round"; g.lineWidth = KT.ROAD_HALF*2 + 1; g.strokeStyle = T.line; g.stroke(); g.lineWidth = KT.ROAD_HALF*2; g.strokeStyle = T.panel2; g.stroke();
       g.setLineDash([1.5, 1.5]); g.lineWidth = 0.15; g.strokeStyle = T.muted; g.stroke(); g.setLineDash([]);
-      g.fillStyle = T.ink; g.fillRect(-4.5, -0.25, 9, 0.5);
+      g.fillStyle = T.ink; g.fillRect(-KT.ROAD_HALF, -0.25, KT.ROAD_HALF*2, 0.5);
       V.order.forEach(function(uid){
         var C = V.cars[uid]; g.save(); g.translate(C.x, C.z); g.rotate(C.yaw);
         g.fillStyle = CAR_SWATCH[C.car|0] || T.brand; g.fillRect(-0.75, -1.4, 1.5, 2.8);
@@ -740,7 +793,7 @@ function makeGame(host, opts){
     var hemi = new THREE.HemisphereLight(0xffffff, 0x556644, 2.0); scene.add(hemi);
     var sun = new THREE.DirectionalLight(0xffffff, 1.9); sun.position.set(12, 30, 8);
     sun.castShadow = !V.low; sun.shadow.mapSize.set(1024, 1024); sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.02;
-    var sc = sun.shadow.camera; sc.left = -30; sc.right = 30; sc.top = 30; sc.bottom = -30; sc.near = 1; sc.far = 90;
+    var sc = sun.shadow.camera; sc.left = -40; sc.right = 40; sc.top = 40; sc.bottom = -40; sc.near = 1; sc.far = 110;
     scene.add(sun); scene.add(sun.target);
     var groundGeo = new THREE.PlaneGeometry(1200, 1200); groundGeo.rotateX(-Math.PI/2);
     var groundMat = new THREE.MeshLambertMaterial({color: 0x76b85a}), ground = new THREE.Mesh(groundGeo, groundMat);
@@ -754,6 +807,23 @@ function makeGame(host, opts){
       o.traverse(function(m){ if(m.isMesh){ m.castShadow = !V.low && how !== "ground"; m.receiveShadow = !V.low; } });
       return o;
     }
+    // Scenery tint per track: "mul" multiplies the scenery's colours (autumn leaves, dry grass),
+    // "add" + "addK" glows them towards a colour (a dusting of snow). One copy per material.
+    var tinted = {};
+    function tintDeco(o, th){
+      var d = th && th.deco; if(!d || typeof d !== "object") return;
+      var mul = hex(d.mul, 0xffffff), add = hex(d.add, 0), k = clamp(+d.addK || 0, 0, 1);
+      o.traverse(function(m){
+        if(!m.isMesh || !m.material) return;
+        var key = m.material.uuid + "|" + mul + "|" + add + "|" + k;
+        if(!tinted[key]){
+          var c = tinted[key] = m.material.clone();
+          c.color.multiply(new THREE.Color(mul));
+          if(k > 0 && c.emissive){ c.emissive = new THREE.Color(add); c.emissiveIntensity = k; }
+        }
+        m.material = tinted[key];
+      });
+    }
     function hash(a, b){ var h = (a*73856093) ^ (b*19349663); h = (h ^ (h >>> 13))*1274126177; return ((h ^ (h >>> 16)) >>> 0)/4294967296; }
     function buildTrack(){
       clearTrack();
@@ -761,7 +831,7 @@ function makeGame(host, opts){
       var tr = V.track, th = tr.theme || {};
       trackGroup = new THREE.Group(); scene.add(trackGroup);
       var sky = hex(th.sky, 0x9fd3f0), fog = hex(th.fog, 0xcfe8f2);
-      scene.background = new THREE.Color(sky); scene.fog = new THREE.Fog(fog, V.low ? 45 : 70, V.low ? 110 : 190);
+      scene.background = new THREE.Color(sky); scene.fog = new THREE.Fog(fog, V.low ? 65 : 100, V.low ? 160 : 270);
       groundMat.color.setHex(hex(th.ground, 0x76b85a));
       var minC = 1e9, maxC = -1e9, minR = 1e9, maxR = -1e9;
       tr.tiles.forEach(function(t){
@@ -770,7 +840,7 @@ function makeGame(host, opts){
           var px = t.pivot[0], pz = t.pivot[1];
           k = px < 0 && pz > 0 ? 0 : px > 0 && pz > 0 ? 1 : px > 0 && pz < 0 ? 2 : 3;
         } else k = t.d % 2 === 0 ? 0 : 1;
-        o.position.set(t.col*KT.TILE, 0, t.row*KT.TILE); o.rotation.y = k*Math.PI/2;
+        o.position.set(t.col*KT.TILE, 0, t.row*KT.TILE); o.rotation.y = k*Math.PI/2; o.scale.setScalar(KT.SCALE);
         trackGroup.add(o);
         minC = Math.min(minC, t.col); maxC = Math.max(maxC, t.col); minR = Math.min(minR, t.row); maxR = Math.max(maxR, t.row);
       });
@@ -779,7 +849,8 @@ function makeGame(host, opts){
         for(var c = minC - pad; c <= maxC + pad; c++) for(var r = minR - pad; r <= maxR + pad; r++){
           if(tr.cells[c+","+r] != null) continue;
           var hv = hash(c + 1000, r + 1000), nm = hv < 0.45 ? "decoration-forest" : hv < 0.6 ? (tr.scenery === "tents" ? "decoration-tents" : "decoration-forest") : "decoration-empty";
-          var d = model(nm, "ground"); d.position.set(c*KT.TILE, 0, r*KT.TILE); d.rotation.y = Math.floor(hash(r, c)*4)*Math.PI/2;
+          var d = model(nm, "ground"); d.position.set(c*KT.TILE, 0, r*KT.TILE); d.rotation.y = Math.floor(hash(r, c)*4)*Math.PI/2; d.scale.setScalar(KT.SCALE);
+          tintDeco(d, th);
           trackGroup.add(d);
         }
       }
@@ -807,7 +878,8 @@ function makeGame(host, opts){
       o.traverse(function(n){
         if(/^wheel-front(-left)?$/.test(n.name)) parts.fl = n;
         if(n.name === "wheel-front-right") parts.fr = n;
-        if(/^wheel/.test(n.name)) parts.wheels.push(n);
+        // steer (Y) outside the roll (X): with three's default XYZ order a steered wheel wobbles
+        if(/^wheel/.test(n.name)){ n.rotation.order = "YXZ"; parts.wheels.push(n); }
         if(n.name === "body") parts.body = n;
         if(n.name === "fork") parts.fork = n;
       });
@@ -821,7 +893,7 @@ function makeGame(host, opts){
       if(!s.sp.parent) scene.add(s.sp);
       s.sp.position.set(x, 0.25, z); s.sp.scale.set(0.6, 0.6, 1); s.t0 = t; s.sp.material.opacity = 0.55; smoke.push(s);
     }
-    var camPos = new THREE.Vector3(0, 6, 10), look = new THREE.Vector3(), tmp = new THREE.Vector3(), camInit = false;
+    var camPos = new THREE.Vector3(0, 6, 10), look = new THREE.Vector3(), tmp = new THREE.Vector3(), camInit = false, camYaw = 0;
     var R = {};
     R.buildTrack = buildTrack; R.clearTrack = clearTrack; R.removeCar = removeCar;
     R.size = function(w, h){ renderer.setSize(w, h, false); camera.aspect = w/h; camera.updateProjectionMatrix(); };
@@ -848,8 +920,14 @@ function makeGame(host, opts){
       // camera: chase (0), far chase (1), or high above (2)
       var F = me() || V.cars[V.spectate] || V.cars[V.order[0]];
       if(F){
-        var fx = Math.sin(F.yaw), fz = -Math.cos(F.yaw), dist = V.cam === 1 ? 11 : 6.2, high = V.cam === 1 ? 5.5 : 2.9;
-        if(V.cam === 2) tmp.set(F.x, 34, F.z + 0.01);
+        // The chase camera sits a fixed distance behind the car and only its heading is
+        // smoothed (faster the faster you go), so at top speed the car stays big on screen
+        // instead of pulling away from a camera that trails it.
+        var sp = clamp(Math.abs(F.v)/VMAX, 0, 1);
+        if(!camInit || calm()) camYaw = F.yaw; else camYaw = angLerp(camYaw, F.yaw, 1 - Math.exp(-dt*(3 + 5*sp)));
+        camInit = true;
+        var fx = Math.sin(camYaw), fz = -Math.cos(camYaw), dist = V.cam === 1 ? 12 : 6.6 + 0.6*sp, high = V.cam === 1 ? 6 : 3.0;
+        if(V.cam === 2) tmp.set(F.x, 44, F.z + 0.01);
         else {
           // keep the chase camera on our side of the barriers: walk it in towards the car
           // until it is over the road, so it never looks back through a wall
@@ -861,11 +939,11 @@ function makeGame(host, opts){
           }
           tmp.set(gx, high + lift, gz);
         }
-        var k2 = calm() || !camInit ? 1 : 1 - Math.exp(-dt*(V.cam === 2 ? 3 : 6)); camInit = true;
-        camPos.lerp(tmp, k2);
-        look.set(F.x + (V.cam === 2 ? 0 : fx*4), 0.8, F.z + (V.cam === 2 ? 0 : fz*4));
+        if(V.cam === 2 && camPos.y > 20) camPos.lerp(tmp, calm() ? 1 : 1 - Math.exp(-dt*4)); else camPos.copy(tmp);
+        var ahead = V.cam === 2 ? 0 : 4 + 2*sp;
+        look.set(F.x + Math.sin(F.yaw)*ahead, 0.8, F.z - Math.cos(F.yaw)*ahead);
         camera.position.copy(camPos); camera.lookAt(look);
-        var fov = V.cam === 2 || calm() ? 60 : 60 + 12*clamp(Math.abs(F.v)/VMAX, 0, 1);
+        var fov = V.cam === 2 || calm() ? 60 : 60 + 6*sp;
         if(Math.abs(camera.fov - fov) > 0.1){ camera.fov += (fov - camera.fov)*Math.min(1, dt*3); camera.updateProjectionMatrix(); }
         sun.position.set(F.x + 12, 30, F.z + 8); sun.target.position.set(F.x, 0, F.z);
       }

@@ -43,7 +43,17 @@ class GameFileTests(unittest.TestCase):
                             ("kart/tracks.json", "application/json"),
                             ("kart/track-corner.glb", "model/gltf-binary"),
                             ("kart/vehicle-motorcycle.glb", "model/gltf-binary"),
-                            ("kart/smoke.png", "image/png")):
+                            ("kart/smoke.png", "image/png"),
+                            ("platformer/levels.json", "application/json"),
+                            ("platformer/character.glb", "model/gltf-binary"),
+                            ("platformer/platform-grass-large-round.glb", "model/gltf-binary"),
+                            ("platformer/colormap.png", "image/png"),
+                            ("platformer/blob-shadow.png", "image/png"),
+                            ("fps/map.json", "application/json"),
+                            ("fps/blaster-repeater.glb", "model/gltf-binary"),
+                            ("fps/wall-high.glb", "model/gltf-binary"),
+                            ("fps/colormap.png", "image/png"),
+                            ("fps/burst.png", "image/png")):
             got = dashboard.game_file(name)
             self.assertIsNotNone(got, name)
             self.assertTrue(got[1].startswith(ctype), name)
@@ -53,7 +63,12 @@ class GameFileTests(unittest.TestCase):
                     "golf/X.glb", "vendor/three.core.js", "golf/x.js", "golf/x.glb\n", "vendor/", "golf/.x.glb",
                     "golf/LICENSE-kenney.txt", "vendor/LICENSE-three.txt", "other/three-module.js",
                     "golf/missing.glb", "golf//straight.glb", "golf/straight.glb/", "/golf/straight.glb",
-                    "kart/LICENSE-kenney.txt", "kart/x.js", "kart/../dashboard.py", "karts/track-corner.glb"):
+                    "kart/LICENSE-kenney.txt", "kart/x.js", "kart/../dashboard.py", "karts/track-corner.glb",
+                    "platformer/LICENSE-kenney.txt", "platformer/x.js", "platformer/../dashboard.py",
+                    "platformer/Textures/colormap.png", "platformers/coin.glb", "platformer/Coin.glb",
+                    "platformer/missing.glb", "platformer/coin.glb/",
+                    "fps/LICENSE-kenney.txt", "fps/x.js", "fps/../dashboard.py", "fps/Textures/colormap.png",
+                    "fpss/blaster.glb", "fps/Blaster.glb", "fps/missing.glb", "fps/blaster.glb/", "fps/a/b.glb"):
             self.assertIsNone(dashboard.game_file(bad), repr(bad))
 
     def test_golf_assets_revalidate_and_game_scripts_never_cache(self):
@@ -119,6 +134,15 @@ class GameScriptRules(unittest.TestCase):
             self.assertGreaterEqual(f.read().count("Creative Commons Zero, CC0"), 2)
         with open(os.path.join(GAMES, "kart", "LICENSE-kenney.txt"), encoding="utf-8") as f:
             self.assertGreaterEqual(f.read().count("Creative Commons Zero, CC0"), 2)
+        with open(os.path.join(GAMES, "platformer", "LICENSE-kenney.txt"), encoding="utf-8") as f:
+            self.assertGreaterEqual(f.read().count("Creative Commons Zero, CC0"), 2)
+        with open(os.path.join(GAMES, "fps", "LICENSE-kenney.txt"), encoding="utf-8") as f:
+            self.assertGreaterEqual(f.read().count("Creative Commons Zero, CC0"), 2)
+        for n in os.listdir(os.path.join(GAMES, "fps")):
+            self.assertRegex(n, r"^([a-z][a-z0-9-]*\.glb|colormap\.png|burst\.png|hit\.png|map\.json|LICENSE-kenney\.txt)$", n)
+        # every vendored platformer file is one of the kit's (named in its license)
+        for n in os.listdir(os.path.join(GAMES, "platformer")):
+            self.assertRegex(n, r"^([a-z][a-z0-9-]*\.glb|colormap\.png|blob-shadow\.png|levels\.json|LICENSE-kenney\.txt)$", n)
 
     def test_css_uses_tokens_not_hex(self):
         with open(os.path.join(GAMES, "games.css"), encoding="utf-8") as f:

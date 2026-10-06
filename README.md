@@ -69,8 +69,9 @@ shares daily activity *counts* with friends — never conversation content.)
   holes: windmills, hills, sliding gates, bumpers, sand, ice and water). Battles use a team you
   pick from the Pokémon you've unlocked, or your live sessions. With the Arena connected
   you can also play with friends in your room: a shared fishing dock with a room goal and boss
-  fish, a live puzzle race, the live **Creature Duel**, co-op Mines, a shared farm, Mini Golf
-  and Kart Racing for up to 8. The server referees every multiplayer game; your own moves show instantly, other
+  fish, a live puzzle race, the live **Creature Duel**, co-op Mines, a shared farm, Mini Golf,
+  Kart Racing, **Platformer Rush** (race or co-op across floating islands) and **Blaster Arena** (a
+  cartoon first-person free-for-all with lag-compensated shots, plus a solo target range) for up to 8. The server referees every multiplayer game; your own moves show instantly, other
   players are interpolated, and a dropped connection rejoins by itself in about a second. Art is
   drawn in code except the 3D games' CC0 Kenney models and the optional Pokémon sprite pack;
   progress is a local `games-save.json`; in an Arena room only game moves are shared.
@@ -275,7 +276,21 @@ and feature guide.
     your best lap saved per track; with friends it's a race of up to 8 with a countdown grid,
     live standings and a results card. Low-detail mode for older laptops, and a 2D map view
     without WebGL2.
-  - **Real-time multiplayer foundation** (shared by the platformer and arena games to come): a
+    Tracks are drawn 1.5× the kit's size (a 13.5 m road, so eight cars have room) with a 108 km/h
+    top speed; the chase camera holds a fixed distance and only smooths its heading, so the car
+    stays big on screen at full speed; steered wheels no longer wobble while they spin.
+  - **Mini Golf: the camera follows your drag.** Dragging to aim in 3D now works like a slingshot on
+    the screen (pull back to putt away from you, sideways to aim), so the camera swings round behind
+    the aim while you drag instead of holding still.
+  - **Valley lobbies: invite or nudge with suggestions.** One search box in every multiplayer game's
+    lobby suggests people as you type (avatar, name, @handle): friends online in your room get a game
+    invite, anyone else on the Arena gets a nudge, and an exact @handle can still be nudged.
+  - **Kart Racing: nine tracks, longer laps, a random pick.** Six new tracks (Pine Speedway, Lakeside
+    Sprint, Harvest Hairpins, Autumn Run, Frostbite Ring, Sunset Switchbacks) and longer layouts for the
+    first three (390–570 m a lap), each with its own sky and scenery tint (snow-dusted on Frostbite,
+    autumn leaves, dry grass). A 🎲 Random track button picks one, solo or as the room's host. An Arena
+    from 1.9.0 still gets the three original tracks at their first size until it's updated.
+  - **Real-time multiplayer foundation** (shared by Platformer Rush and Blaster Arena): a
     fixed-rate server tick per room (`backend/app/realtime.py`, 15 Hz for racing) that batches one
     snapshot per tick, a process-wide cap on running game loops, a per-room bandwidth budget that
     thins snapshots under pressure, and token buckets for inbound frames; one shared input layer in
@@ -301,6 +316,66 @@ and feature guide.
     and the referee rolls each putt on the right one. Random rounds don't record a "best" score.
     No new network traffic beyond the existing opt-in Arena game messages; the putting physics is
     unchanged.
+  - **Platformer Rush** (🏝️ in the Valley): run, jump and **double-jump** across floating islands
+    to the flag, coins on the way, built from Kenney's CC0 Starter Kit 3D Platformer models. Three
+    levels (Meadow Hop, Sky Steps, Cloud Fortress) with checkpoints, coin trails that hint the
+    route, a few double-jump gaps and a shortcut or two. A third-person character controller
+    (camera-relative WASD/arrows/stick, coyote time, jump buffering, idle/run/jump animations, a
+    spin on the double jump, squash on landing) and an orbit camera (mouse look under pointer lock,
+    right-drag, right stick or Q/E; it drifts behind you as you run and never sits inside a
+    platform). Fall below the clouds and you're back on your last checkpoint. Solo it's a time
+    trial with your best time saved per level; with friends, up to 8 play a **Race** (first to the
+    flag, every checkpoint in order first, live standings) or **Co-op** (the whole lobby shares one
+    coin goal against the clock, with a team progress bar). Six runner colours, name tags,
+    countdown, results card, low-detail mode, and a top-down map view without WebGL2.
+  - **Platformer referee:** the Arena checks every frame on the 15 Hz real-time tick: inside the
+    level, no faster than a run, rising and falling no faster than a jump and gravity, never inside
+    a platform, and never higher above the last platform stood on than a jump plus a double jump
+    can reach in the time since (a closed-form envelope, so hovering across a gap is caught). The
+    server owns the checkpoints (in order, within reach), the coins (each once per player in a race;
+    once for the whole room in co-op, first to reach it) and the flag (only after every
+    checkpoint); a refused frame puts you back where you last stood, and respawns go to the last
+    checkpoint the server confirmed. Clients send their *simulation* clock, so a stalling tab that
+    runs in slow motion is never mistaken for a cheat. Tested with 8 bots at 120 ms ± 60 ms lag and
+    reordering on every level, race and co-op, on both the Python and the Rust Arena (zero false
+    rejections, true finish order, each co-op coin counted once, snapshots inside the room's
+    bandwidth budget). The level files are shared byte-for-byte by the browser and both backends.
+  - **Third-party assets:** Kenney's Starter Kit 3D Platformer models, texture and blob-shadow
+    sprite (CC0) in `games/platformer/` with the license alongside; the kit's Godot code (MIT) is
+    not used.
+  - **Blaster Arena** (🎯 in the Valley): a cartoon first-person shooter on **Sky Courtyard**, an
+    enclosed arena laid out from Kenney's CC0 Starter Kit FPS blocks (a raised keep with stairs and a
+    parapet, two corner towers, L-walls, waist-high cover, crates, health and ammo packs). Two
+    blasters: the automatic **Rapid blaster** and the slow, hard-hitting **Heavy blaster** (1/2,
+    the mouse wheel or Y to switch; R to reload; headshots count extra). Click the view to aim with
+    the mouse (pointer lock; Esc gives it back and the game says so), WASD and Space, a sensitivity
+    slider, a gamepad (sticks, RT, A, X, Y, Back), or the keyboard alone (Q/E turn, F fires). Solo
+    it's a 60-second **target range** of flying drones with your best score saved; with friends it's
+    a **free-for-all for up to 8**: 3, 5 or 10 minutes, first to 10, 20 or 30 kills, a countdown,
+    respawns after 3 s at the spawn farthest from everyone (with a moment of spawn protection),
+    drop-in mid-match, a quick rejoin keeps your score. HUD: crosshair, hit marker (from the
+    server), directional damage indicator, health, ammo with a reload bar, round clock, kill feed,
+    scoreboard (Tab or the Scores button) and a results card. Other players are Mini Characters
+    holding their blaster, with name tags and walk animations. Calm mode / reduced motion drop the
+    weapon bob, screen tilt and hit flashes and shrink the muzzle flash. Low-detail mode, and a
+    playable top-down map view without WebGL2.
+  - **Arena referee with lag compensation:** a 20 Hz tick checks every move (no faster than a run
+    on the sender's own clock, bounded against the server's; inside the arena; never inside a wall;
+    never off the ground longer than a jump) and judges every shot: fire rate, ammo, reload and
+    weapon switch on the shooter's clock, the shot's origin near where the server has the shooter,
+    then it **rewinds every target** to what the shooter saw (the shooter's clock mapped onto the
+    server's, minus the round trip the server measures from snapshot acknowledgements, minus the
+    interpolation delay the client reports, capped at 350 ms; at most 1.2 s of history) and casts
+    the ray against head and body boxes and the arena's walls (no hits through cover). Spread is
+    deterministic per shot, so your tracer and the server's verdict agree. One batched snapshot per
+    tick carries the players who changed and the shots judged. Tested on both backends with 8 bots
+    at 120 ms ± 60 ms lag each way and reordering: no honest frame refused, ≥ 90% of shots aimed at
+    the drawn target register, shots at where someone was 0.8 s earlier don't, kills and deaths add
+    up, and the room stays inside its bandwidth budget. The arena file is shared byte-for-byte by the
+    browser and both backends.
+  - **Third-party assets:** Kenney's Starter Kit FPS blasters, blocks, drone, cloud and grass
+    models, texture and muzzle/impact sprites (CC0) in `games/fps/` with the license alongside;
+    the kit's Godot code (MIT) is not used. The players reuse the Mini Characters in `games/golf/`.
 
 - **1.8.1** — **Mini Golf grows to five themed courses, and you pick your battle team.**
   - **Five Mini Golf courses, 25 holes.** Meadow Greens (4), Windmill Lane (5) and Castle Keep (6)
@@ -530,9 +605,10 @@ Made with [Claude Code](https://claude.com/claude-code).
 
 MIT — see [LICENSE](LICENSE).
 
-Mini Golf and Kart Racing use [three.js](https://threejs.org/) (MIT, `games/vendor/LICENSE-three.txt`) and models
-from [Kenney](https://kenney.nl/) — Minigolf Kit, Mini Characters, Nature Kit and Starter Kit Racing — which are public
-domain (CC0, `games/golf/LICENSE-kenney.txt`, `games/kart/LICENSE-kenney.txt`). Thank you, Kenney!
+Mini Golf, Kart Racing, Platformer Rush and Blaster Arena use [three.js](https://threejs.org/) (MIT, `games/vendor/LICENSE-three.txt`)
+and models from [Kenney](https://kenney.nl/) — Minigolf Kit, Mini Characters, Nature Kit, Starter Kit Racing, Starter
+Kit 3D Platformer and Starter Kit FPS — which are public domain (CC0, `games/golf/LICENSE-kenney.txt`,
+`games/kart/LICENSE-kenney.txt`, `games/platformer/LICENSE-kenney.txt`, `games/fps/LICENSE-kenney.txt`). Thank you, Kenney!
 
 Pokémon names and sprites are the property of Nintendo / Game Freak / The Pokémon Company; the
 "pokemon" creature pack hotlinks sprites from the public [PokéAPI](https://pokeapi.co/) sprite library

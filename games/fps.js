@@ -910,7 +910,11 @@ function makeGame(host, opts){
     if(burstTex){
       burstTex.colorSpace = THREE.SRGBColorSpace; burstTex.repeat.set(0.5, 1);
       flash = new THREE.Sprite(new THREE.SpriteMaterial({map: burstTex, transparent: true, depthTest: false, blending: THREE.AdditiveBlending}));
-      flash.position.set(0.0, GUN_S*0.55, -GUN_S*1.05); flash.visible = false; gunHold.add(flash);
+      // at the muzzle: the front face of the blaster's bounds (it looks down -z here)
+      gunHold.updateMatrixWorld(true);
+      var gb = new THREE.Box3().setFromObject(guns[0]);
+      flash.position.set((gb.min.x + gb.max.x)/2, gb.min.y + (gb.max.y - gb.min.y)*0.62, gb.min.z - 0.02);
+      flash.visible = false; gunHold.add(flash);
     }
     var mapGroup = null, dyn = new THREE.Group(); scene.add(dyn);
     var lost = function(e){ e.preventDefault(); if(V.alive) setTimeout(fallback2d, 0); };
@@ -1006,10 +1010,11 @@ function makeGame(host, opts){
       o.scale.setScalar(1.75/CH_H);
       o.traverse(function(n){ if(n.isMesh){ n.castShadow = !V.low; n.frustumCulled = false; } });
       var mixer = new THREE.AnimationMixer(o), acts = {};
-      ["idle", "walk", "die", "holding-right"].forEach(function(n){ var cl = THREE.AnimationClip.findByName(g.animations, n); if(cl) acts[n] = mixer.clipAction(cl); });
+      ["idle", "walk", "die"].forEach(function(n){ var cl = THREE.AnimationClip.findByName(g.animations, n); if(cl) acts[n] = mixer.clipAction(cl); });
       if(acts.die){ acts.die.setLoop(THREE.LoopOnce, 1); acts.die.clampWhenFinished = true; }
-      var arm = o.getObjectByName("arm-right"), gun = null;
-      if(arm){ gun = [model("blaster-repeater"), model("blaster")]; gun.forEach(function(gn, i){ gn.scale.setScalar(0.45); gn.rotation.set(-Math.PI/2, Math.PI, 0); gn.position.set(0, -0.12, 0.08); gn.visible = i === 0; arm.add(gn); }); }
+      // the blaster is held out in front at the right hand (barrel along the model's +z, its facing)
+      var gun = [model("blaster-repeater"), model("blaster")];
+      gun.forEach(function(gn, i){ gn.scale.setScalar(0.34); gn.position.set(-0.36, 0.74, 0.3); gn.visible = i === 0; holder.add(gn); });
       var tg = tag(P.name.slice(0, 18), CHAR_SWATCH[P.ch|0] || "#ffffff"); tg.position.set(0, 2.15, 0); holder.add(tg);
       P.mesh = {g: holder, mixer: mixer, acts: acts, cur: null, gun: gun, tag: tg, ch: P.ch}; scene.add(holder);
     }

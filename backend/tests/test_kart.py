@@ -70,9 +70,9 @@ def test_centre_line_round_trips_and_road_edges():
             assert abs(lat) < 1e-6 and min(off, tr["n"] - off) < 1e-6, (tid, u)
             for side in (-4.2, 4.2):
                 assert kart.on_road(tr, *kart.point_at(tr, u, side)[:2]), (tid, u, side)
-        # well off the road: a straight's barrier is at 4.5 m, a corner's ring ends at 9.5 m
+        # well off the road: past a straight's barrier (ROAD_HALF), or off the track's tiles
         assert kart.locate(tr, 1000.0, 1000.0) is None
-        x, z, _ = kart.point_at(tr, 0.3, 4.4)
+        x, z, _ = kart.point_at(tr, 0.3, kart.ROAD_HALF - 0.1)
         assert not kart.on_road(tr, x + 2.0, z)
 
 
@@ -237,7 +237,7 @@ def test_eight_cars_with_lag_finish_in_order_with_no_false_rejections():
     t0 = 1000.0
     assert k.start(members, "peaks", 2, t0) is None
     go = t0 + kart.COUNTDOWN
-    speeds = {f"bot{i}": 24.0 - i * 1.3 for i in range(8)}         # bot0 fastest
+    speeds = {f"bot{i}": 24.0 - i * 0.8 for i in range(8)}         # bot0 fastest; all inside FINISH_GRACE
     u = {uid: p["u"] for uid, p in k.players.items()}
     grid_x = {uid: kart.grid_slot(tr, p["slot"])[0] for uid, p in k.players.items()}
     goal = 0.5 + 2 * tr["n"] + 0.2
@@ -361,7 +361,7 @@ async def test_race_over_websockets(client, clock):
         assert until(wb, "car")["car"] == 4
         send(wa, "start", track="meadow", laps=1)
         race = until(wb, "kart", where=lambda m: m["race"] and m["race"]["phase"] == "grid")["race"]
-        assert race["laps"] == 1 and len(race["players"]) == 2
+        assert race["laps"] == 1 and len(race["players"]) == 2 and race["scale"] == kart.SCALE
         assert {p["car"] for p in race["players"] if p["user"]["userId"] == a} == {4}
         clock["now"] += kart.COUNTDOWN + 0.01
         until(wa, "go")

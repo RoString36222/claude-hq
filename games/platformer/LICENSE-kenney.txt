@@ -1,0 +1,45 @@
+Kenney asset licenses. Files in this folder (*.glb, colormap.png, blob-shadow.png) come from:
+  Starter Kit 3D Platformer   https://github.com/KenneyNL/Starter-Kit-3D-Platformer  (commit 3fa8a04;
+                              models/, models/Textures/colormap.png, sprites/blob_shadow.png
+                              renamed blob-shadow.png; otherwise unchanged)
+
+The kit's 3D models, sprites and sounds are licensed CC0 (the kit's README: "Assets included in
+this package (2D sprites, 3D models and sound effects) are CC0 licensed"); its Godot code is MIT
+and is NOT included here: games/platformer.js is an original three.js re-implementation.
+levels.json is original to Claude HQ (it only names the models).
+
+==== CC0 ====
+
+	License: (Creative Commons Zero, CC0)
+	http://creativecommons.org/publicdomain/zero/1.0/
+
+	You can use this content for personal, educational, and commercial purposes.
+
+	Support by crediting 'Kenney' or 'www.kenney.nl' (this is not a requirement)
+
+	Created/distributed by Kenney (www.kenney.nl)
+	License: (Creative Commons Zero, CC0)
+
+==== Starter Kit 3D Platformer: LICENSE (code, not included; kept for reference) ====
+
+MIT License
+
+Copyright (c) 2023 Kenney
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -346,6 +346,46 @@ html.hq-calm .pkb-bcard:hover{transform:none}
 html.hq-calm .vg-kart-cd{animation:none}
 @media (prefers-reduced-motion:reduce){ .vg-kart-cd{animation:none} }
 @media (max-width:560px){ .vg-kart-gauges{transform:scale(.72);transform-origin:right bottom} .vg-kart-mini{width:84px;height:84px} }
+/* ---- Platformer Rush ---- */
+.vg-plat-canvas{cursor:crosshair}
+.vg-plat-hud{min-width:170px;max-width:46%}
+.vg-plat-big{font-size:14px}
+.vg-plat-time{font:600 12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.vg-plat-line{font-size:12px;font-variant-numeric:tabular-nums}
+.vg-plat-bar{margin:3px 0 1px;height:8px}
+.vg-plat-bar i{background:var(--gold)}
+.vg-plat-stand{margin:4px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:1px;font-size:12px}
+.vg-plat-stand:empty{display:none}
+.vg-plat-stand li.me{font-weight:700;color:var(--ink)}
+.vg-plat-sw{display:inline-block;width:10px;height:10px;border-radius:50%;border:1px solid var(--line);vertical-align:-1px}
+.vg-plat-char .vg-plat-sw{width:18px;height:18px}
+.vg-plat-cd{position:absolute;left:50%;top:30%;transform:translate(-50%,-50%);padding:6px 22px;border-radius:var(--radius);
+  font:800 34px var(--mono);color:var(--ink);background:var(--panel);border:2px solid var(--brand);box-shadow:var(--shadow-lg);pointer-events:none;
+  white-space:nowrap;animation:vg-plat-pop .35s var(--ease)}
+.vg-plat-fade{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;
+  background:color-mix(in srgb,var(--bg) 78%,transparent);animation:vg-plat-fade .3s var(--ease)}
+.vg-plat-fade span{font:800 22px var(--mono);color:var(--ink);padding:6px 18px;border-radius:999px;background:var(--panel);border:1px solid var(--line)}
+.vg-plat-verdict{margin:0 0 6px;font-weight:800;color:var(--need)}
+.vg-plat-verdict.win{color:var(--good)}
+@keyframes vg-plat-pop{from{transform:translate(-50%,-50%) scale(.7);opacity:0}to{transform:translate(-50%,-50%) scale(1);opacity:1}}
+@keyframes vg-plat-fade{from{opacity:0}to{opacity:1}}
+html.hq-calm .vg-plat-cd,html.hq-calm .vg-plat-fade{animation:none}
+@media (prefers-reduced-motion:reduce){ .vg-plat-cd,.vg-plat-fade{animation:none} }
+@media (max-width:560px){ .vg-plat-hud{max-width:60%} .vg-plat-cd{font-size:24px} }
+/* ---- Valley lobby: invite / nudge picker ---- */
+.vg-lobby-info{display:flex;flex-direction:column;gap:8px}
+.vg-invite{position:relative;margin-top:8px}
+.vg-invite-in{flex:1;min-width:220px;max-width:420px}
+.vg-sugg{position:absolute;left:0;top:calc(100% + 4px);z-index:30;width:min(420px,100%);padding:4px;border-radius:var(--radius-sm);
+  background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow-lg);display:flex;flex-direction:column;gap:2px}
+.vg-sugg-o{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:13px}
+.vg-sugg-o.on,.vg-sugg-o:hover{background:var(--panel2);box-shadow:inset 3px 0 0 var(--brand)}
+.vg-sugg-o img{width:22px;height:22px;flex:none;border-radius:5px}
+.vg-sugg-dot{width:22px;height:22px;flex:none;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:11px;background:var(--panel2);color:var(--muted)}
+.vg-sugg-n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}
+.vg-sugg-h{flex:none;font:600 11px var(--mono);color:var(--muted)}
+.vg-sugg-note{margin:4px 8px;font-size:12px;color:var(--muted)}
 /* ---- Blaster Arena ---- */
 .vg-fps-canvas{cursor:crosshair}
 .vg-fps-hud{position:absolute;inset:0;pointer-events:none;font-variant-numeric:tabular-nums}

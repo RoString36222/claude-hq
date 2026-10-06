@@ -25,6 +25,7 @@ import os
 import re
 import ssl
 import subprocess
+import tempfile
 import threading
 import time
 import urllib.error
@@ -62,25 +63,87 @@ def init(scan_file, load_config, here):
     _link_path = os.path.join(here, "arena-link.json")
 
 
+# --- local state files -----------------------------------------------------
+# Identical copies of dashboard._atomic_write_text / _atomic_write_json /
+# _load_json_guarded (dashboard imports arena, so arena cannot import it back).
+# Keep the two in sync; tests/test_atomic_state.py checks they behave alike.
+
+def _atomic_write_text(path, text, mode=0o600):
+    """Write `text` to `path` atomically with permissions `mode`. Raises OSError
+    on failure (the original file is left untouched). A symlinked `path` is
+    resolved first, so the real file is replaced and the link is kept."""
+    path = os.path.realpath(path)
+    d = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix="." + os.path.basename(path) + "-",
+                               suffix=".tmp")
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            fd = None
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _atomic_write_json(path, data, mode=0o600):
+    """json.dump `data` to `path` atomically (see _atomic_write_text)."""
+    _atomic_write_text(path, json.dumps(data, indent=2), mode=mode)
+
+
+def _load_json_guarded(path, default=None):
+    """Parsed JSON from `path`, or `default` if it is missing/unreadable/corrupt.
+    A file that exists but does not parse is renamed to <name>.corrupt-<ts>;
+    permission and other I/O errors never quarantine."""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+            seen = os.fstat(f.fileno())
+    except OSError:
+        return default
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except ValueError:  # JSONDecodeError and UnicodeDecodeError
+        # Only quarantine the very file we read: a concurrent atomic save may
+        # already have swapped a good file in, which must not be moved aside.
+        try:
+            now = os.stat(path)
+        except OSError:
+            return default
+        if (now.st_ino, now.st_dev, now.st_size, now.st_mtime_ns) != \
+                (seen.st_ino, seen.st_dev, seen.st_size, seen.st_mtime_ns):
+            return default
+        dest = "%s.corrupt-%d" % (path, int(time.time() * 1000))
+        try:
+            os.replace(path, dest)
+        except OSError:
+            pass
+        return default
+
+
 # --- link file (holds the device token; never served to the browser) --------
 
 def load_link():
-    try:
-        with open(_link_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    data = _load_json_guarded(_link_path, {}) if _link_path else {}
+    return data if isinstance(data, dict) else {}
 
 
 def save_link(data):
+    """Persist the link atomically, 0600 from the first byte (the token is never
+    world-readable, even briefly). Raises OSError if it could not be written."""
     with _lock:
-        try:
-            with open(_link_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-            os.chmod(_link_path, 0o600)
-        except Exception:
-            pass
+        _atomic_write_json(_link_path, data)
         return data
 
 
@@ -269,13 +332,16 @@ def pair(code, label=""):
     status, body = _request("POST", base + "/v1/auth/pair",
                             body={"code": code.strip().upper(), "label": label or "claude-hq"})
     if status == 200 and body.get("token"):
-        save_link({
-            "url": base,
-            "token": body["token"],
-            "handle": body.get("handle", ""),
-            "displayName": body.get("displayName", ""),
-            "avatarUrl": body.get("avatarUrl", ""),
-        })
+        try:
+            save_link({
+                "url": base,
+                "token": body["token"],
+                "handle": body.get("handle", ""),
+                "displayName": body.get("displayName", ""),
+                "avatarUrl": body.get("avatarUrl", ""),
+            })
+        except OSError as e:
+            return 500, {"error": "paired, but could not save the device token: %s" % e}
         return 200, {"ok": True, "handle": body.get("handle", "")}
     return status or 502, {"error": body.get("detail") or body.get("error") or "pairing failed"}
 
@@ -412,7 +478,8 @@ def drain_nudges():
         return []
     status_code, body = _request("GET", base + "/v1/nudges", token=token)
     if status_code == 200 and isinstance(body, dict):
-        return body.get("nudges", []) or []
+        nudges = body.get("nudges")
+        return nudges if isinstance(nudges, list) else []
     return []
 
 
@@ -577,16 +644,32 @@ def start_publisher(projects_dir):
     return t
 
 
+def _text(v):
+    """A server-sent field as display text: str as-is, numbers stringified,
+    anything else (None, dict, list, bool) as ""."""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return str(v)
+    return ""
+
+
 def _poll_once(notify):
     """One poller pass: nudges ping, gifts that missed live delivery arrive
     silently (notify's third argument is `sound`)."""
     for n in drain_nudges():
-        who = n.get("fromName") or n.get("fromHandle") or "Someone"
-        note = n.get("note") or ""
-        body = (who + " nudged you") + (": " + note if note else "")
-        notify("👋 " + who + " nudged you", body)
+        try:  # one malformed item must not drop the rest of the batch
+            who = _text(n.get("fromName")) or _text(n.get("fromHandle")) or "Someone"
+            note = _text(n.get("note"))
+            body = (who + " nudged you") + (": " + note if note else "")
+            notify("👋 " + who + " nudged you", body)
+        except Exception:
+            continue
     for g in drain_gifts():
-        notify(*gift_notice(g), False)
+        try:
+            notify(*gift_notice(g), False)
+        except Exception:
+            continue
 
 
 def start_nudge_poller(notify):

@@ -4,6 +4,9 @@ sessions-meta.json
 meals.json
 .dex-seed
 .meals-*.tmp
+# Atomic-write temp files and quarantined corrupt state (may hold tokens)
+.*.tmp
+*.corrupt-*
 claude-hq.log
 claude-hq.err.log
 

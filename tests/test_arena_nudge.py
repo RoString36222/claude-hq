@@ -129,6 +129,39 @@ class PollerTests(unittest.TestCase):
         self.assertEqual(fired, [("👋 Ash nudged you", "Ash nudged you")] * 2)
         self.assertGreater(arena._gift_drain_off_until, 0.0)
 
+    def test_one_bad_nudge_does_not_drop_the_rest(self):
+        def fake(method, url, token=None, body=None):
+            if url.endswith("/v1/nudges"):
+                return 200, {"nudges": [None, "junk",
+                                        {"fromName": {"x": 1}, "fromHandle": 7, "note": ["n"]},
+                                        {"fromName": "Ash", "note": 42}]}
+            return 200, {"gifts": [None, {"fromName": "Gary", "coins": 1}]}
+        arena._request = fake
+        fired = []
+        arena._poll_once(lambda *args: fired.append(args))
+        self.assertEqual(fired, [("👋 7 nudged you", "7 nudged you"),
+                                 ("👋 Ash nudged you", "Ash nudged you: 42"),
+                                 ("\U0001F381 Gary sent you a gift", "1 Poke Coin", False)])
+
+    def test_a_failing_notify_does_not_drop_the_rest(self):
+        def fake(method, url, token=None, body=None):
+            if url.endswith("/v1/nudges"):
+                return 200, {"nudges": [{"fromName": "Boom"}, {"fromName": "Ash"}]}
+            return 200, {"gifts": []}
+        arena._request = fake
+        fired = []
+
+        def notify(*args):
+            if "Boom" in args[0]:
+                raise RuntimeError("notifier down")
+            fired.append(args)
+        arena._poll_once(notify)
+        self.assertEqual(fired, [("👋 Ash nudged you", "Ash nudged you")])
+
+    def test_non_list_nudges_payload_is_empty(self):
+        arena._request = lambda *a, **k: (200, {"nudges": "oops"})
+        self.assertEqual(arena.drain_nudges(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

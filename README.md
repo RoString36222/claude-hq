@@ -125,6 +125,15 @@ echo 'alias claude-hq="python3 ~/Documents/Claude/claude-dashboard/dashboard.py"
 - All state-changing actions (rename / pin / close / resume / settings) require a per-process **CSRF
   token** (injected into the page, sent as `X-HQ-Token`) plus an Origin / `Sec-Fetch-Site` check.
 - File lookups are validated (UUID / known-folder allowlists) — no path traversal.
+- **Close** only signals a pid that `claude agents` lists as a live interactive session (and whose
+  command is still `claude`) — never the dashboard itself or an arbitrary process. If the session
+  list cannot be read (e.g. the `claude` CLI is missing), Close is refused with `503`.
+- POST bodies are capped at 1 MiB (8 MiB for soundboard uploads); larger requests get `413` (sent
+  without reading the body, so a client mid-upload may see a connection reset instead).
+- Local state files (`config.json`, `sessions-meta.json`, `arena-link.json`, `.dex-seed`) are written
+  atomically with `0600` permissions. A file that no longer parses is set aside as
+  `<name>.corrupt-<timestamp>` (git-ignored) and defaults are used, so nothing is silently overwritten.
+  A symlinked state file is written through (the link is kept, the target replaced).
 - Your transcripts and settings stay on disk. `config.json` and `sessions-meta.json` are git-ignored.
 - **Arena is off by default.** When enabled it publishes daily *counts* only — never conversation
   content, file paths or project names — and its device token lives in `arena-link.json`, outside

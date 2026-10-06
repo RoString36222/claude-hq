@@ -67,6 +67,8 @@ shares daily activity *counts* with friends — never conversation content.)
   Blaster arcade. All art is drawn in code; progress is a local `games-save.json`; in an Arena
   room only scores and counts are shared.
 
+- **🔥 Flexible streaks:** a streak survives a quiet day or two. It only breaks when you're inactive on 3 days within any 7 (at least 5 active days in every 7), and today never counts as a miss while it's still going. The Arena leaderboard uses the same rule.
+
 **Quality-of-life**
 - Command palette (⌘/Ctrl-K), keyboard shortcuts (`?` for help, `1`–`8` for views, `/` search, `r`
   refresh), desktop notifications + optional chime + voice alerts when a tab needs you, a

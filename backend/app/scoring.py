@@ -52,16 +52,26 @@ def rank_for_level(level: int) -> str:
     return RANKS[-1][1]
 
 
-def streak_from_dates(active: set[date], today: date) -> int:
-    """Consecutive active days ending today or yesterday."""
-    if today in active:
-        cur = today
-    elif (today - timedelta(days=1)) in active:
-        cur = today - timedelta(days=1)
-    else:
+STREAK_WINDOW = 7
+STREAK_MAX_MISSES = 2
+
+
+def streak_from_dates(active: set[date], today: date, lookback: int = 400) -> int:
+    """Flexible streak: it survives missed days as long as no 7-day stretch
+    inside it has more than 2 of them (at least 5 active days in every 7).
+    Today never counts as a miss while it is in progress. Mirrors
+    flex_streak in the dashboard's dashboard.py."""
+    start = today if today in active else today - timedelta(days=1)
+    span: list[bool] = []
+    d = start
+    for _ in range(lookback):
+        span.append(d in active)
+        if span[-STREAK_WINDOW:].count(False) > STREAK_MAX_MISSES:
+            span.pop()
+            break
+        d -= timedelta(days=1)
+    if True not in span:
         return 0
-    n = 0
-    while cur in active:
-        n += 1
-        cur -= timedelta(days=1)
-    return n
+    newest = span.index(True)
+    oldest = len(span) - 1 - span[::-1].index(True)
+    return oldest - newest + 1

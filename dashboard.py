@@ -4296,8 +4296,8 @@ GAMES_SAVE_PATH = os.path.join(HERE, "games-save.json")
 GAMES_SAVE_MAX = 256 * 1024
 _GAME_FILE_RE = re.compile(r"[a-z][a-z0-9_-]{0,40}\.(js|css)")
 # The vendored three.js modules and each 3D game's Kenney (CC0) models and data (Mini Golf,
-# Kart Racing, Platformer Rush): exactly one folder level, lowercase names, these extensions only.
-_GAME_ASSET_RE = re.compile(r"(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart|platformer)/[a-z][a-z0-9-]{0,40}\.(glb|json|png))")
+# Kart Racing, Platformer Rush, Blaster Arena): exactly one folder level, lowercase names, these extensions only.
+_GAME_ASSET_RE = re.compile(r"(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart|platformer|fps)/[a-z][a-z0-9-]{0,40}\.(glb|json|png))")
 _GAME_TYPES = {"js": "application/javascript; charset=utf-8", "css": "text/css; charset=utf-8",
                "glb": "model/gltf-binary", "json": "application/json; charset=utf-8", "png": "image/png"}
 _games_lock = threading.Lock()

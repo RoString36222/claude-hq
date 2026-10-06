@@ -24,6 +24,9 @@ has a lobby (who is in it, who hosts) with join notices and invites. The games:
          and jumps locally, the server checks every move against the level, owns the
          checkpoints, the coins (per player in a race, once for the room in co-op) and
          the flag, and sends respawns back to the last checkpoint.
+  fps    Blaster Arena (app/fps.py): a first-person free-for-all on the same 20 Hz
+         tick; the server checks every move and judges every shot with lag
+         compensation (it rewinds the targets to what the shooter saw).
 
 Only game state lives here; nothing transcript-derived ever reaches this server.
 State is in process memory except the farm (same single-instance trade as rooms.py).
@@ -40,6 +43,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from . import golf as golfmod
+from . import fps as fpsmod
 from . import kart as kartmod
 from . import platformer as platmod
 from . import realtime
@@ -48,10 +52,10 @@ from .db import SessionLocal
 from .models import DailyStat, RoomFarm
 from .rooms import Member, Room, manager
 
-GAMES = ("pond", "race", "duel", "mines", "farm", "golf", "kart", "plat")
+GAMES = ("pond", "race", "duel", "mines", "farm", "golf", "kart", "plat", "fps")
 GAME_NAMES = {"pond": "Fishing Pond", "race": "Puzzle Race", "duel": "Creature Duel",
               "mines": "Co-op Mines", "farm": "Shared Farm", "golf": "Mini Golf",
-              "kart": "Kart Racing", "plat": "Platformer Rush"}
+              "kart": "Kart Racing", "plat": "Platformer Rush", "fps": "Blaster Arena"}
 MAX_LOBBY = 8
 SEND_TIMEOUT = 0.5            # seconds one socket may take to accept a lobby fan-out
 now = time.monotonic          # patched in tests
@@ -285,6 +289,7 @@ class RoomValley:
         self.golf = golfmod.Golf()
         self.kart = kartmod.Kart()
         self.plat = platmod.Plat()
+        self.fps = fpsmod.Fps()
 
 
 _rooms: dict[str, RoomValley] = {}
@@ -1026,6 +1031,12 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
                     out.lobby(list(lobby.members), "plat", run=v.plat.view(now()), back=member.user_id)
                 else:
                     out.to(member.ws, "plat", run=v.plat.view(now()))
+            elif g == "fps":
+                if v.fps.enter(member.user_id, member.public(), now()):
+                    # back from a dropped socket, or dropping in mid-match: everyone sees it
+                    out.lobby(list(lobby.members), "fps", match=v.fps.view(now()), back=member.user_id)
+                else:
+                    out.to(member.ws, "fps", match=v.fps.view(now()))
     elif op == "leave":
         _leave_lobby(v, g, member.user_id, out)
     elif op == "invite":
@@ -1091,6 +1102,8 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
         kart_op(room.room_id, v.kart, lobby, member, op, msg, out)
     elif g == "plat":
         plat_op(room.room_id, v.plat, lobby, member, op, msg, out)
+    elif g == "fps":
+        fps_op(room.room_id, v.fps, lobby, member, op, msg, out)
     await _flush(room, out)
 
 
@@ -1229,6 +1242,79 @@ def _kart_tick_on(room_id: str) -> bool:
     return realtime.start(key, kartmod.HZ, step, lambda: now()) is not None
 
 
+# --------------------------------------------------------------------- fps --
+def fps_op(room_id: str, fm: "fpsmod.Fps", lobby: Lobby, member: Member, op: str, msg: dict, out: Out) -> None:
+    """Blaster Arena: moves and shots feed the room's tick loop (which batches what
+    happened into one snapshot per tick); everything else goes to the lobby at once."""
+    t = now()
+    uid = member.user_id
+    ids = list(lobby.members)
+    if op == "pos":
+        _ok, fix = fm.pos(uid, msg, t)
+        if fix is not None:
+            out.to(member.ws, "fix", **fix)
+    elif op == "fire":
+        _shot, sync = fm.fire(uid, msg, t)
+        if sync is not None:
+            out.to(member.ws, "ammo", **sync)
+    elif op == "reload":
+        fm.reload(uid, msg, t)
+    elif op == "weapon":
+        fm.weapon(uid, msg, t)
+    elif op == "view":
+        out.to(member.ws, "fps", match=fm.view(t))
+    elif op == "char":
+        c = fm.char(uid, msg)
+        if c is None:
+            out.err(member.ws, "pick a character")
+        else:
+            out.lobby(ids, "char", user=uid, c=c)
+    elif op in ("start", "end"):
+        if lobby.host != uid:
+            out.err(member.ws, "only the host can do that")
+            return
+        lobby.prev_host = None
+        if op == "start":
+            err = fm.start(lobby.members, msg.get("minutes"), msg.get("kills"), t)
+            if err is None and not _fps_tick_on(room_id):
+                fm.end()
+                err = "the Arena is busy right now: try again in a minute"
+            if err:
+                out.err(member.ws, err)
+            else:
+                out.lobby(ids, "fps", match=fm.view(t), by=member.public())
+        else:
+            fm.end()
+            realtime.stop("fps:" + room_id)
+            out.lobby(ids, "fps", match=fm.view(t))
+
+
+def _fps_tick_on(room_id: str) -> bool:
+    """Start the room's match loop (a no-op if it runs). False: no slot under the budget."""
+    key = "fps:" + room_id
+
+    async def step(t: float, send: bool) -> bool:
+        v = _rooms.get(room_id)
+        room = manager.get(room_id)
+        if v is None or room is None or not v.fps.running():
+            return False
+        ids = list(v.lobbies["fps"].members) + [u for u in v.fps.players if u not in v.lobbies["fps"].members]
+        out = Out("fps")
+        for ev, data in v.fps.tick(t, send):
+            out.lobby(ids, ev, **data)
+        if not v.fps.running():
+            out.lobby(ids, "fps", match=v.fps.view(t))
+        if out.items:
+            tk = realtime.get(key)
+            if tk is not None:
+                n = sum(1 for m in room.members.values() if m.user_id in ids)
+                tk.count(sum(len(json.dumps(p, separators=(",", ":"))) for _k, _t, p in out.items) * max(1, n))
+            await _flush(room, out)
+        return v.fps.running()
+
+    return realtime.start(key, fpsmod.HZ, step, lambda: now()) is not None
+
+
 # -------------------------------------------------------------------- golf --
 def golf_op(gm: "golfmod.Golf", lobby: Lobby, member: Member, op: str, msg: dict, out: Out,
             rng: random.Random | None = None) -> None:
@@ -1357,6 +1443,8 @@ def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out, disconnected: bo
         out.lobby(list(lobby.members), "kart", race=v.kart.view(now()), left=user_id)
     elif g == "plat" and v.plat.drop(user_id, now(), blip=disconnected):
         out.lobby(list(lobby.members), "plat", run=v.plat.view(now()), left=user_id)
+    elif g == "fps" and v.fps.drop(user_id, now(), blip=disconnected):
+        out.lobby(list(lobby.members), "fps", match=v.fps.view(now()), left=user_id)
     elif g == "golf" and v.golf.drop(user_id, now(), blip=disconnected):
         ids = list(lobby.members)
         out.lobby(ids, "golf", round=v.golf.view(now()), left=user_id)

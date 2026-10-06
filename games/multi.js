@@ -9,7 +9,7 @@
 "use strict";
 var HQV = window.HQV; if(!HQV) return;
 var api = HQV.api;
-var NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm", golf:"Mini Golf", kart:"Kart Racing", plat:"Platformer Rush"};
+var NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm", golf:"Mini Golf", kart:"Kart Racing", plat:"Platformer Rush", fps:"Blaster Arena"};
 var LIVE = {};          // g -> {lobby:[...], ...game state from the server}
 
 function A(){ return window.ARENA || {}; }

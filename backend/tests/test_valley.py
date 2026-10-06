@@ -605,7 +605,7 @@ def test_duel_drop_during_a_match_is_away_not_left():
     lobby.members = {"a": {"userId": "a"}, "b": {"userId": "b"}}
     v.duel.match = {"mid": "m1", "ids": ["a", "b"], "away": {}}
     out = valley.Out("duel")
-    valley._leave_lobby(v, "duel", "b", out, dropped=True)
+    valley._leave_lobby(v, "duel", "b", out, disconnected=True)
     evs = [(p["ev"], p.get("left")) for _, _, p in out.items]
     assert evs == [("away", None), ("lobby", None)]                # no "left" notice for a blip
     assert v.duel.match is not None and v.duel.seated("b")
@@ -711,3 +711,31 @@ async def test_actions_need_the_lobby(client, clock):
         assert until(wa, "error")["error"] == "join the lobby first"
         wa.send_json({"type": "game", "g": "nope", "op": "join"})
         assert until(wa, "error")["error"] == "unknown game"
+
+
+
+async def test_a_quick_rejoin_after_a_socket_drop_is_not_a_fresh_join(client, clock):
+    """A socket blip in any lobby must not fire a "joined" toast for everyone on return;
+    coming back after the grace period, or after an explicit leave, is a fresh join."""
+    a, _ = await make_user("ash", 61)
+    b, _ = await make_user("misty", 62)
+    with client.websocket_connect(url("lobby", a)) as wa:
+        wa.receive_json()
+        with client.websocket_connect(url("lobby", b)) as wb:
+            wb.receive_json()
+            both_in("pond", wa, wb)
+        until(wa, "lobby", where=lambda m: len(m["members"]) == 1)          # misty's socket dropped
+        with client.websocket_connect(url("lobby", b)) as wb:
+            wb.receive_json()
+            wb.send_json({"type": "game", "g": "pond", "op": "join"})
+            assert until(wa, "lobby", where=lambda m: len(m["members"]) == 2)["joined"] is None
+            wb.send_json({"type": "game", "g": "pond", "op": "leave"})
+            until(wa, "lobby", where=lambda m: len(m["members"]) == 1)
+            wb.send_json({"type": "game", "g": "pond", "op": "join"})
+            assert until(wa, "lobby", where=lambda m: len(m["members"]) == 2)["joined"]["handle"] == "misty"
+        until(wa, "lobby", where=lambda m: len(m["members"]) == 1)
+        clock["now"] += valley.HOST_GRACE + 1
+        with client.websocket_connect(url("lobby", b)) as wb:
+            wb.receive_json()
+            wb.send_json({"type": "game", "g": "pond", "op": "join"})
+            assert until(wa, "lobby", where=lambda m: len(m["members"]) == 2)["joined"]["handle"] == "misty"

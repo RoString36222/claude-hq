@@ -51,7 +51,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import arena
 
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.8.0"
 
 # --------------------------------------------------------------------------- #
 # Paths / constants
@@ -4295,17 +4295,41 @@ GAMES_DIR = os.path.join(HERE, "games")
 GAMES_SAVE_PATH = os.path.join(HERE, "games-save.json")
 GAMES_SAVE_MAX = 256 * 1024
 _GAME_FILE_RE = re.compile(r"[a-z][a-z0-9_-]{0,40}\.(js|css)")
-_GAME_TYPES = {"js": "application/javascript; charset=utf-8", "css": "text/css; charset=utf-8"}
+# Mini Golf's vendored three.js modules and its Kenney (CC0) models/course data: exactly
+# one folder level, lowercase names, these extensions only.
+_GAME_ASSET_RE = re.compile(r"(vendor/[a-z][a-z0-9-]{0,40}\.js|golf/[a-z][a-z0-9-]{0,40}\.(glb|json|png))")
+_GAME_TYPES = {"js": "application/javascript; charset=utf-8", "css": "text/css; charset=utf-8",
+               "glb": "model/gltf-binary", "json": "application/json; charset=utf-8", "png": "image/png"}
 _games_lock = threading.Lock()
+
+
+def game_cache_control(name):
+    """The big, rarely-changing Mini Golf files (three.js ~2 MB, models ~1.8 MB) are
+    cacheable but always revalidated by ETag ("no-cache"), so a reload costs a 304 per
+    file and an upgrade can never pair a stale module with a new one. The game scripts
+    themselves stay no-store."""
+    if isinstance(name, str) and _GAME_ASSET_RE.fullmatch(name):
+        return "no-cache"
+    return "no-store"
+
+
+def game_etag(body):
+    return '"' + hashlib.sha1(body).hexdigest()[:20] + '"'
 
 
 def game_file(name):
     """(bytes, content type) for an allowlisted file under games/, else None."""
-    if not isinstance(name, str) or not _GAME_FILE_RE.fullmatch(name):
+    if not isinstance(name, str):
         return None
     root = os.path.realpath(GAMES_DIR)
+    if _GAME_FILE_RE.fullmatch(name):
+        folder = root
+    elif _GAME_ASSET_RE.fullmatch(name):
+        folder = os.path.join(root, name.split("/", 1)[0])
+    else:
+        return None
     path = os.path.realpath(os.path.join(root, name))
-    if os.path.dirname(path) != root or not os.path.isfile(path):
+    if os.path.dirname(path) != folder or not os.path.isfile(path):
         return None
     try:
         with open(path, "rb") as f:
@@ -4358,13 +4382,15 @@ class Handler(BaseHTTPRequestHandler):
         hostname = host.split(":")[0].strip().lower()
         return hostname in ("127.0.0.1", "localhost", "")
 
-    def _send(self, code, body, content_type="application/json; charset=utf-8"):
+    def _send(self, code, body, content_type="application/json; charset=utf-8", cache="no-store", etag=None):
         if isinstance(body, str):
             body = body.encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
+        if etag:
+            self.send_header("ETag", etag)
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -4472,11 +4498,17 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/games/"):
-            got = game_file(path[len("/games/"):])
+            name = path[len("/games/"):]
+            got = game_file(name)
             if got is None:
                 self._send(404, "not found\n", "text/plain; charset=utf-8")
             else:
-                self._send(200, got[0], got[1])
+                cache = game_cache_control(name)
+                tag = game_etag(got[0]) if cache != "no-store" else None
+                if tag and self.headers.get("If-None-Match", "") == tag:
+                    self._send(304, b"", got[1], cache, tag)
+                else:
+                    self._send(200, got[0], got[1], cache, tag)
             return
 
         if path == "/api/games/state":

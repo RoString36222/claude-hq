@@ -1,6 +1,6 @@
 # ⚡ Claude HQ
 
-**Version 1.7.0** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
+**Version 1.8.0** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
 
 Claude HQ reads your live sessions (`claude agents --json`) and your session transcripts
 (`~/.claude/projects/**/*.jsonl`) and turns them into a single command center: what every tab is
@@ -59,13 +59,19 @@ shares daily activity *counts* with friends — never conversation content.)
   counter onto their plates (or click a food, then a plate), watch the receipt work out the pooled buy-1-get-1, then check out to the
   arcade-style hi-score board. Seasons are calendar months; last season's champion gets a crown.
 
-- **🌾 The Valley** (key `0`): nine minigames for the moments a tab is working. A "play while
+- **🌾 The Valley** (key `0`): ten minigames for the moments a tab is working. A "play while
   you wait" pill appears while tabs work, and the game pauses the moment a tab needs you.
-  Fishing pond (each project is its own pond), a garden your prompts water, a bundles board,
-  the Mines (deeper on weeks you're active more days), creature battles on the Gym's type
-  chart, a daily code puzzle, three townsfolk, a monthly fishing-derby festival, and the Bug
-  Blaster arcade. All art is drawn in code; progress is a local `games-save.json`; in an Arena
-  room only scores and counts are shared.
+  A pixel-art fishing pond (each project is its own pond; fish modelled on 16 real species with
+  real sizes, a hook-and-reel meter and treasure), a garden your prompts water, a bundles
+  board, the Mines (deeper on weeks you're active more days), **Pokémon-style Creature Battles** with real species, base stats,
+  level-up moves and the 18-type chart, a daily code puzzle, three townsfolk, a monthly
+  fishing-derby festival, the Bug Blaster arcade, and **3D Mini Golf**. With the Arena connected
+  you can also play with friends in your room: a shared fishing dock with a room goal and boss
+  fish, a live puzzle race, the live **Creature Duel**, co-op Mines, a shared farm and Mini Golf
+  together. The server referees every multiplayer game; your own moves show instantly, other
+  players are interpolated, and a dropped connection rejoins by itself in about a second. Art is
+  drawn in code except Mini Golf's CC0 Kenney models and the optional Pokémon sprite pack;
+  progress is a local `games-save.json`; in an Arena room only game moves are shared.
 
 - **🔥 Flexible streaks:** a streak survives a quiet day or two. It only breaks when you're inactive on 3 days within any 7 (at least 5 active days in every 7), and today never counts as a miss while it's still going. The Arena leaderboard uses the same rule.
 
@@ -214,6 +220,10 @@ replies, file paths, project or folder names, session ids, or titles.
   give (kind, amount, recipient, an optional note), never which session ate it.
   That stays on this machine, in `meals.json`. Creature energy itself is
   computed locally and is never shared.
+- **Valley games send only moves.** In a multiplayer Valley game your browser sends casts,
+  reels, puzzle guesses, battle picks, your team as species numbers and species names, golf
+  shots and your golfer's position on the course. The server keeps game state in memory (the
+  shared farm is stored) and never sees session titles, prompts or project names.
 - The wire format rejects unknown fields outright, so a future client change
   can't silently start leaking one.
 
@@ -254,6 +264,58 @@ and feature guide.
 
 ## Changelog
 
+- **1.8.0** — **Valley v2: real Pokémon battles, a new fishing pond and 3D Mini Golf, with
+  butter-smooth multiplayer.**
+  - **Pokémon-style battles.** Creature Battles (solo) and the live Creature Duel now use real
+    Pokémon data: species, types, base stats, level-up movesets and the type chart, generated from
+    Pokémon Showdown (MIT) by `tools/build_pokedata.mjs` into `games/pokedata.js` and
+    `backend/app/data/pokemon.json`. A battle screen with HP bars, move menus, switching,
+    animated attacks and a battle log. In a duel the Arena runs the same damage engine
+    (`backend/app/pokebattle.py`, parity-tested against the browser) and both players pick at
+    once: your pick shows at once, the other player's "is ready" appears as soon as they choose,
+    late picks get a 2 s grace instead of a strike, animations don't eat the turn timer, a
+    player who drops gets 20 s to come back (their seat is kept, with a countdown for the
+    opponent), and an ending missed while offline is replayed when they return.
+  - **Fishing redesign.** A pixel-art pond whose fish are modelled on 16 real species (sizes from FishBase), a charge-and-cast
+    aim, a hook window and a reel meter, treasure chests and a catch card. The shared dock shows
+    everyone's line live: casts, bites and hooks appear one round trip later, slots glide when
+    people join, the room goal and boss fish HP ease instead of jumping, the server rolls fish,
+    points and chests (a "perfect" reel is cosmetic), and a player who leaves takes their line
+    with them.
+  - **3D Mini Golf (solo or with friends).** Three courses
+    (Meadow Greens, Windmill Lane, Castle Keep; 15 holes) built from Kenney's CC0 Minigolf Kit, with
+    a golfer per player (Kenney Mini Characters) who walks to the ball, aims and putts. In an Arena
+    room everyone plays the same hole at once and the server rolls every putt with integer physics
+    that each browser replays bit-for-bit, so all players see the same roll. **Smooth multiplayer:**
+    your own putt starts the instant you release (the server only confirms it), other golfers are
+    drawn from a jitter-buffered timeline of their positions (no stutter or teleporting), position
+    updates are small, sequenced and rate-limited by a per-player token bucket, the server fans
+    out to a game's lobby concurrently with a per-socket timeout, and a dropped room socket shows
+    "Reconnecting…", rejoins the game lobby automatically and gets your scorecard back. Falls back
+    to a 2D map view when WebGL isn't available. **Third-party assets (new, flagged for review):**
+    three.js r186 (MIT) is vendored unminified in `games/vendor/` (only import paths rewritten;
+    `tools/vendor_three.py` reproduces it) and the CC0 Kenney models live in `games/golf/` with
+    their license text; both load only from `127.0.0.1` and only when Mini Golf opens. The
+    `/games/` route now also serves `vendor/<name>.js` and `golf/<name>.glb|json|png` (strict
+    allowlist, one folder level, ETag-revalidated). **Privacy:** golf messages carry only shot
+    integers, positions on the course, a character id and an animation id.
+  - **Smoother multiplayer everywhere.** One reconnect shell for every Valley game: after a
+    socket drop it shows "Reconnecting…", rejoins the game's lobby on the new socket and resyncs
+    from the server's snapshot, and holds a game's moves until that rejoin so none are refused.
+    The Arena room socket now retries 250-750 ms after a blip (it used to wait 5 s), backs off from
+    1 s to 30 s with jitter after that, retries when a ticket request fails, and retries at once
+    when the browser comes back online. A quick rejoin no longer fires a "joined" toast for the
+    whole room, and a duel pick made right after a reconnect is kept.
+  - **Arena backend needs a deploy** for the duel engine, the new pond and Mini Golf (no
+    database migrations). Until then, solo games are unaffected, the shared dock falls back
+    quietly where the old server differs, Mini Golf says the server doesn't support it yet, and
+    live duels need the new server.
+  - **Third-party data and assets, all vendored** (no new runtime requests): three.js r186 (MIT),
+    Kenney Minigolf Kit and Mini Characters (CC0), Pokémon Showdown data (MIT), FishBase numbers
+    (cited). The optional "pokemon" creature pack still hotlinks its sprites as before. Licenses
+    are in `games/vendor/`, `games/golf/` and `LICENSES/`.
+  - **Privacy:** multiplayer messages carry only game moves (casts, picks, shot integers, course
+    positions, a team of species/stage numbers and species names); nothing from transcripts.
 - **1.7.0** — **One-click update.** A new **Update** button in the top bar shows when new
   commits are waiting ("Update · 3 new", with the commit list on hover) and, on click, pulls them
   and restarts Claude HQ, then reloads the page. It only ever fast-forwards: it refuses if you have
@@ -403,6 +465,21 @@ Made with [Claude Code](https://claude.com/claude-code).
 
 MIT — see [LICENSE](LICENSE).
 
+Mini Golf uses [three.js](https://threejs.org/) (MIT, `games/vendor/LICENSE-three.txt`) and models
+from [Kenney](https://kenney.nl/) — Minigolf Kit and Mini Characters — which are public domain (CC0,
+`games/golf/LICENSE-kenney.txt`). Thank you, Kenney!
+
 Pokémon names and sprites are the property of Nintendo / Game Freak / The Pokémon Company; the
 "pokemon" creature pack hotlinks sprites from the public [PokéAPI](https://pokeapi.co/) sprite library
 for personal use only. Use the built-in original "monsters" pack to avoid third-party assets entirely.
+
+Valley battle data (species, types, base stats, level-up moves and the type chart in
+`games/pokedata.js` and `backend/app/data/pokemon.json`) is generated by `tools/build_pokedata.mjs`
+from [Pokémon Showdown](https://github.com/smogon/pokemon-showdown) (MIT,
+© 2011-2026 Guangcong Luo and other contributors; see `LICENSES/pokemon-showdown-MIT.txt`).
+Battle sprites use the same PokéAPI sprite library (repository CC0; image content © The Pokémon
+Company) and the PkParaiso host the 3D pack already uses. This is a non-commercial fan feature.
+
+Fish sizes and length-weight coefficients in `games/fishart.js`: [FishBase](https://www.fishbase.se/)
+(Froese & Pauly, eds.). Only numeric facts are used, cited per species in the source; no FishBase
+text or images are bundled.

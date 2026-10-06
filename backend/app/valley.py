@@ -8,14 +8,20 @@ has a lobby (who is in it, who hosts) with join notices and invites. The games:
   pond   shared fishing dock: the server picks each bite, times the reel and scores
          the catch; a room goal; a boss fish the whole lobby reels in together.
   race   live code-puzzle race: the server holds the word and marks each guess.
-  duel   1v1 creature battle on the Gym's type chart; the server computes damage.
+  duel   1v1 Pokemon-style battle with real moves/stats (app/pokebattle.py): both pick
+         a move or switch at once, the server resolves the turn (priority, speed,
+         accuracy, crits, damage, status) with its own RNG and broadcasts the events.
   mines  co-op mine floor: one shared grid, server-side loot and slimes.
   farm   one shared garden per room, stored in the database and watered by the
          members' real published activity (daily_stats prompts).
+  golf   3D mini golf: the server rolls every putt with integer physics (app/golf.py)
+         that the clients replay identically; walking positions are relayed to the
+         lobby only, at most ~10 per second per player.
 
 Only game state lives here; nothing transcript-derived ever reaches this server.
 State is in process memory except the farm (same single-instance trade as rooms.py).
 """
+import asyncio
 import random
 import re
 import secrets
@@ -25,15 +31,19 @@ from typing import Any
 
 from sqlalchemy import func, select
 
+from . import golf as golfmod
+from . import pokebattle as pb
 from .db import SessionLocal
 from .models import DailyStat, RoomFarm
 from .rooms import Member, Room, manager
 
-GAMES = ("pond", "race", "duel", "mines", "farm")
+GAMES = ("pond", "race", "duel", "mines", "farm", "golf")
 GAME_NAMES = {"pond": "Fishing Pond", "race": "Puzzle Race", "duel": "Creature Duel",
-              "mines": "Co-op Mines", "farm": "Shared Farm"}
+              "mines": "Co-op Mines", "farm": "Shared Farm", "golf": "Mini Golf"}
 MAX_LOBBY = 8
+SEND_TIMEOUT = 0.5            # seconds one socket may take to accept a lobby fan-out
 now = time.monotonic          # patched in tests
+HOST_GRACE = golfmod.GRACE    # a host back from a socket drop this soon is host again
 wall = time.time              # patched in tests
 
 # ----------------------------------------------------------------- catalogs --
@@ -52,6 +62,10 @@ BOSS_EVERY = 8                 # a boss surfaces every 8th room catch
 BOSS_SECS = 60
 BOSS_HP_PER_PLAYER = 40
 PULL_RATE = 8                  # pulls per second per player, at most
+POND_OP_RATE = 6               # cast / hook / land / lose per second per player, at most
+CHEST_CHANCE = 0.15            # a cast with a treasure chest on the reel
+CHEST_LOOT = (("quartz", 50), ("copper", 25), ("amethyst", 12), ("gold", 8), ("emerald", 4), ("ruby", 1))
+HOOK_EARLY_MS = 250            # a hook this much before the bite still counts (latency)
 CROPS = {   # id: (hours, water per gardener, season)
     "radish": (4, 6, "spring"), "pea": (6, 8, "spring"), "tulip": (8, 10, "spring"),
     "tomato": (6, 10, "summer"), "melon": (12, 16, "summer"), "corn": (10, 12, "summer"),
@@ -59,31 +73,8 @@ CROPS = {   # id: (hours, water per gardener, season)
 }
 FARM_PLOTS = 9
 FARM_SEEDS_PER_DAY = 6
-DUEL_TYPES = ("Normal", "Fire", "Water", "Electric", "Grass", "Ice", "Fighting", "Poison", "Ground",
-              "Flying", "Psychic", "Bug", "Rock", "Ghost", "Dragon", "Dark", "Steel", "Fairy")
 MINE_COLS, MINE_ROWS, MINE_MAX_DEPTH = 12, 8, 12
 RACE_GUESSES, RACE_SECS = 6, 180
-TYPE_CHART: dict[str, dict[str, float]] = {
-    'Normal': {'Rock': 0.5, 'Ghost': 0, 'Steel': 0.5},
-    'Fire': {'Fire': 0.5, 'Water': 0.5, 'Grass': 2, 'Ice': 2, 'Bug': 2, 'Rock': 0.5, 'Dragon': 0.5, 'Steel': 2},
-    'Water': {'Fire': 2, 'Water': 0.5, 'Grass': 0.5, 'Ground': 2, 'Rock': 2, 'Dragon': 0.5},
-    'Electric': {'Water': 2, 'Electric': 0.5, 'Grass': 0.5, 'Ground': 0, 'Flying': 2, 'Dragon': 0.5},
-    'Grass': {'Fire': 0.5, 'Water': 2, 'Grass': 0.5, 'Poison': 0.5, 'Ground': 2, 'Flying': 0.5, 'Bug': 0.5, 'Rock': 2, 'Dragon': 0.5, 'Steel': 0.5},
-    'Ice': {'Fire': 0.5, 'Water': 0.5, 'Grass': 2, 'Ice': 0.5, 'Ground': 2, 'Flying': 2, 'Dragon': 2, 'Steel': 0.5},
-    'Fighting': {'Normal': 2, 'Ice': 2, 'Poison': 0.5, 'Flying': 0.5, 'Psychic': 0.5, 'Bug': 0.5, 'Rock': 2, 'Ghost': 0, 'Dark': 2, 'Steel': 2, 'Fairy': 0.5},
-    'Poison': {'Grass': 2, 'Poison': 0.5, 'Ground': 0.5, 'Rock': 0.5, 'Ghost': 0.5, 'Steel': 0, 'Fairy': 2},
-    'Ground': {'Fire': 2, 'Electric': 2, 'Grass': 0.5, 'Poison': 2, 'Flying': 0, 'Bug': 0.5, 'Rock': 2, 'Steel': 2},
-    'Flying': {'Electric': 0.5, 'Grass': 2, 'Fighting': 2, 'Bug': 2, 'Rock': 0.5, 'Steel': 0.5},
-    'Psychic': {'Fighting': 2, 'Poison': 2, 'Psychic': 0.5, 'Dark': 0, 'Steel': 0.5},
-    'Bug': {'Fire': 0.5, 'Grass': 2, 'Fighting': 0.5, 'Poison': 0.5, 'Flying': 0.5, 'Psychic': 2, 'Ghost': 0.5, 'Dark': 2, 'Steel': 0.5, 'Fairy': 0.5},
-    'Rock': {'Fire': 2, 'Ice': 2, 'Fighting': 0.5, 'Ground': 0.5, 'Flying': 2, 'Bug': 2, 'Steel': 0.5},
-    'Ghost': {'Normal': 0, 'Psychic': 2, 'Ghost': 2, 'Dark': 0.5},
-    'Dragon': {'Dragon': 2, 'Steel': 0.5, 'Fairy': 0},
-    'Dark': {'Fighting': 0.5, 'Psychic': 2, 'Ghost': 2, 'Dark': 0.5, 'Fairy': 0.5},
-    'Steel': {'Fire': 0.5, 'Water': 0.5, 'Electric': 0.5, 'Ice': 2, 'Rock': 2, 'Steel': 0.5, 'Fairy': 2},
-    'Fairy': {'Fire': 0.5, 'Fighting': 2, 'Poison': 0.5, 'Dragon': 2, 'Dark': 2, 'Steel': 0.5},
-}
-
 RACE_WORDS = (
     'admin',
     'agent',
@@ -227,10 +218,6 @@ def season_of(d: date) -> str:
     return "winter" if m in (12, 1, 2) else "spring" if m <= 5 else "summer" if m <= 8 else "autumn"
 
 
-def eff(atk: str, dfn: str) -> float:
-    return TYPE_CHART.get(atk, {}).get(dfn, 1)
-
-
 def _clip(v: Any, n: int) -> str:
     return "".join(ch for ch in v if ch.isprintable()).strip()[:n] if isinstance(v, str) else ""
 
@@ -252,6 +239,11 @@ class Out:
     def user(self, user_id: str, ev: str, **data: Any) -> None:
         self.items.append(("user", user_id, {"type": "game", "g": self.g, "ev": ev, **data}))
 
+    def lobby(self, member_ids: Any, ev: str, skip_user: str | None = None, **data: Any) -> None:
+        """Only to the sockets of these lobby members (optionally not back to one user)."""
+        self.items.append(("lobby", (frozenset(member_ids), skip_user),
+                           {"type": "game", "g": self.g, "ev": ev, **data}))
+
     def err(self, ws: Any, msg: str) -> None:
         self.to(ws, "error", error=msg)
 
@@ -261,6 +253,10 @@ class Lobby:
     def __init__(self) -> None:
         self.members: dict[str, dict] = {}     # user_id -> public profile, in join order
         self.host: str | None = None
+        # (user_id, when) of a host whose socket dropped: a quick rejoin takes the host back
+        self.prev_host: tuple[str, float] | None = None
+        # user_id -> when their socket dropped: a quick rejoin is a reconnect, not a "joined" toast
+        self.blips: dict[str, float] = {}
 
     def roster(self) -> list[dict]:
         return [dict(p, host=(uid == self.host)) for uid, p in self.members.items()]
@@ -274,6 +270,7 @@ class RoomValley:
         self.race = Race()
         self.duel = Duel()
         self.mines = Mines()
+        self.golf = golfmod.Golf()
 
 
 _rooms: dict[str, RoomValley] = {}
@@ -289,18 +286,23 @@ def valley_for(room_id: str) -> RoomValley:
 # -------------------------------------------------------------------- pond --
 class Pond:
     def __init__(self) -> None:
-        self.casts: dict[str, dict] = {}       # user_id -> {token, fish, bite_ms, at}
+        self.casts: dict[str, dict] = {}       # user_id -> {token, fish, bite_ms, at, aim, hooked, chest}
         self.scores: dict[str, int] = {}
         self.goal = 0
         self.catches = 0
         self.boss: dict | None = None
         self.pulls: dict[str, list[float]] = {}
+        self.ops: dict[str, list[float]] = {}  # recent line ops per player (rate limit)
+        self.seq = 0                   # public cast id: lets every page match events to a line
         self.last_boss_push = 0.0
         self.boss_at = 0               # catch count that last spawned a boss
 
     def snapshot(self) -> dict:
+        # "casting" stays for older pages; "lines" lets a late joiner draw every line.
         return {"casting": list(self.casts), "scores": self.scores, "goal": self.goal,
-                "goalTarget": POND_GOAL, "boss": self._boss_view()}
+                "goalTarget": POND_GOAL, "boss": self._boss_view(),
+                "lines": [{"userId": uid, "id": c["id"], "aim": c["aim"], "hooked": c["hooked"]}
+                          for uid, c in self.casts.items()]}
 
     def _boss_view(self) -> dict | None:
         b = self.boss
@@ -315,20 +317,49 @@ class Pond:
             self.boss = None
             self.pulls = {}
 
-    def cast(self, m: Member, out: Out, rng: random.Random) -> None:
+    def throttled(self, user_id: str) -> bool:
+        """At most POND_OP_RATE line ops per second per player; the rest are dropped."""
+        t = now()
+        mine = [x for x in self.ops.get(user_id, []) if t - x < 1.0]
+        if len(mine) >= POND_OP_RATE:
+            self.ops[user_id] = mine
+            return True
+        mine.append(t)
+        self.ops[user_id] = mine
+        return False
+
+    def cast(self, m: Member, msg: dict, out: Out, rng: random.Random) -> None:
         self._expire_boss(out)
-        if m.user_id in self.casts:
-            out.err(m.ws, "you already have a line in the water")
-            return
+        old = self.casts.pop(m.user_id, None)
+        if old:                      # a line left out by an earlier socket or tab: reel it in for everyone
+            out.all("lost", user=m.public(), id=old["id"], fish=old["fish"])
+        aim = msg.get("aim")
+        if isinstance(aim, (int, float)) and not isinstance(aim, bool) and aim == aim:
+            aim = round(min(1.0, max(0.0, float(aim))), 3)
+        else:
+            aim = round(rng.random(), 3)
         ids = list(FISH)
         fish = rng.choices(ids, weights=[FISH_WEIGHT[FISH[f]] for f in ids])[0]
-        c = {"token": secrets.token_urlsafe(8), "fish": fish,
-             "bite_ms": rng.randint(800, 3000), "at": now()}
+        self.seq += 1
+        c = {"token": secrets.token_urlsafe(8), "id": self.seq, "fish": fish, "bite_ms": rng.randint(800, 3000),
+             "at": now(), "aim": aim, "hooked": False, "chest": rng.random() < CHEST_CHANCE}
         self.casts[m.user_id] = c
-        out.to(m.ws, "cast", token=c["token"], fish=fish, rarity=FISH[fish], biteIn=c["bite_ms"])
-        out.all("casting", user=m.public())
+        out.to(m.ws, "cast", token=c["token"], id=c["id"], fish=fish, rarity=FISH[fish], biteIn=c["bite_ms"],
+               chest=c["chest"])
+        out.all("casting", user=m.public(), id=c["id"], aim=aim)
 
-    def land(self, m: Member, msg: dict, out: Out) -> None:
+    def hook(self, m: Member, msg: dict, out: Out) -> None:
+        """Cosmetic: the angler struck on the bite, so the others see the fight start."""
+        c = self.casts.get(m.user_id)
+        if not c or msg.get("token") != c["token"] or c["hooked"]:
+            return
+        if (now() - c["at"]) * 1000 < c["bite_ms"] - HOOK_EARLY_MS:
+            out.err(m.ws, "not yet")
+            return
+        c["hooked"] = True
+        out.all("hooked", user=m.public(), id=c["id"])
+
+    def land(self, m: Member, msg: dict, out: Out, rng: random.Random) -> None:
         self._expire_boss(out)
         c = self.casts.get(m.user_id)
         if not c or msg.get("token") != c["token"]:
@@ -341,14 +372,18 @@ class Pond:
             return
         del self.casts[m.user_id]
         if elapsed > c["bite_ms"] + MAX_REEL_MS:
-            out.all("lost", user=m.public(), fish=c["fish"])
+            out.all("lost", user=m.public(), id=c["id"], fish=c["fish"])
             return
+        perfect = msg.get("perfect") is True     # cosmetic only: the reel runs on the client, so it can't score
         pts = FISH_POINTS[r]
+        if msg.get("chest") is True and c["chest"]:
+            items, weights = zip(*CHEST_LOOT)
+            out.to(m.ws, "loot", item=rng.choices(items, weights=weights)[0])
         self.scores[m.user_id] = self.scores.get(m.user_id, 0) + pts
         self.goal += 1
         self.catches += 1
-        out.all("caught", user=m.public(), fish=c["fish"], points=pts, scores=self.scores,
-                goal=self.goal, goalTarget=POND_GOAL)
+        out.all("caught", user=m.public(), id=c["id"], fish=c["fish"], points=pts, perfect=perfect,
+                scores=self.scores, goal=self.goal, goalTarget=POND_GOAL)
         if self.goal >= POND_GOAL:
             out.all("goal", reward="gold")
             self.goal = 0
@@ -357,7 +392,7 @@ class Pond:
         c = self.casts.get(m.user_id)
         if c and msg.get("token") == c["token"]:
             del self.casts[m.user_id]
-            out.all("lost", user=m.public(), fish=c["fish"])
+            out.all("lost", user=m.public(), id=c["id"], fish=c["fish"])
 
     def maybe_boss(self, lobby: Lobby, out: Out) -> None:
         if self.boss or not self.catches or self.catches % BOSS_EVERY or self.catches == self.boss_at:
@@ -393,9 +428,11 @@ class Pond:
             self.last_boss_push = t
             out.all("bosshp", boss=self._boss_view(), pulling=together)
 
-    def drop(self, user_id: str) -> None:
-        self.casts.pop(user_id, None)
+    def drop(self, user_id: str) -> dict | None:
+        """Forget a player who left; returns the line they still had out, if any."""
         self.pulls.pop(user_id, None)
+        self.ops.pop(user_id, None)
+        return self.casts.pop(user_id, None)
 
 
 # -------------------------------------------------------------------- race --
@@ -461,31 +498,67 @@ class Race:
 
 
 # -------------------------------------------------------------------- duel --
+DUEL_FIRST_SECS = 60           # the first choice (time to read the screen)
+DUEL_CHOOSE_SECS = 30          # each later move-or-switch choice; then the server picks for you
+DUEL_REPLACE_SECS = 30         # to send in the next creature after a faint
+DUEL_GRACE_SECS = 20           # a dropped connection may come back within this and play on
+DUEL_AFK_PICKS = 2             # consecutive server picks for one side = that side forfeits
+DUEL_SLACK_SECS = 2            # a pick sent as a visible countdown ends still counts (network trip)
+DUEL_ANIM_SECS = 2             # extra choosing time per animated move/switch/faint of the last turn
+DUEL_ANIM_CAP = 12             # ...capped, so a long turn never stalls the match
+DUEL_RESULT_SECS = 600         # an ending a dropped player missed is replayed when they rejoin
+
+
+def _anim_allowance(events: list[dict]) -> int:
+    """Seconds the client spends animating a turn before it shows the menu again."""
+    n = sum(1 for e in events if e.get("t") in ("move", "switch", "faint"))
+    return min(DUEL_ANIM_CAP, DUEL_ANIM_SECS * n)
+
+
 def _team(raw: Any) -> list[dict] | None:
+    """1-6 creatures as {sp, st, br, mg, sh, name}; every number is derived server-side."""
     if not isinstance(raw, list) or not 1 <= len(raw) <= 6:
         return None
-    team = []
-    for c in raw:
-        if not isinstance(c, dict):
-            return None
-        stage = max(0, min(4, int(c.get("stage", 0)) if isinstance(c.get("stage"), int) else 0))
-        typ = c.get("type") if c.get("type") in DUEL_TYPES else "Normal"
-        hp = 30 + stage * 12          # stats are derived here, never taken from the client
-        team.append({"name": _clip(c.get("name"), 24) or "Creature", "type": typ,
-                     "hp": hp, "max": hp, "atk": 8 + stage * 3})
-    return team
+    specs = [pb.clean_spec(c) for c in raw]
+    if any(c is None for c in specs):
+        return None
+    return [pb.build_mon(c) for c in specs]
 
 
 class Duel:
+    """One live duel per room. Both players choose at once; the turn resolves when both are
+    in (or a deadline passes). There is no server tick: deadlines are enforced lazily on the
+    next message from anyone in the match, and clients send 'poke' when a countdown ends.
+    A player whose last socket drops gets DUEL_GRACE_SECS to come back before forfeiting;
+    rejoining the lobby returns the full match view, so a refresh resumes mid-battle."""
+
     def __init__(self) -> None:
         self.pending: dict[str, dict] = {}     # challenged user_id -> {from, team}
         self.match: dict | None = None
+        self.missed: dict[str, tuple[float, dict]] = {}   # user_id -> (at, duelend payload) they missed
 
     def view(self) -> dict | None:
         mt = self.match
         if not mt:
             return None
-        return {"a": mt["a"], "b": mt["b"], "teams": mt["teams"], "turn": mt["turn"], "log": mt["log"][-6:]}
+        st = mt["state"]
+        t = now()
+        return {"mid": mt["mid"], "a": mt["a"], "b": mt["b"], "ids": mt["ids"], "turn": st["turn"],
+                "phase": mt["phase"], "deadline_in": max(0, round(mt["deadline"] - t)),
+                "deadline_ms": max(0, int((mt["deadline"] - t) * 1000)),
+                "slack_ms": DUEL_SLACK_SECS * 1000, "waiting": self._waiting(),
+                "away": {uid: max(0, int((d - t) * 1000)) for uid, d in mt["away"].items()},
+                "sides": {uid: {"active": st["sides"][i]["active"],
+                                "team": [pb.view_mon(m) for m in st["sides"][i]["team"]]}
+                          for i, uid in enumerate(mt["ids"])}}
+
+    def _waiting(self) -> list[str]:
+        mt = self.match
+        if not mt:
+            return []
+        if mt["phase"] == "replace":
+            return [mt["ids"][i] for i in mt["need"] if i not in mt["choices"]]
+        return [uid for i, uid in enumerate(mt["ids"]) if i not in mt["choices"]]
 
     def challenge(self, m: Member, msg: dict, out: Out, lobby: Lobby) -> None:
         if self.match:
@@ -503,7 +576,15 @@ class Duel:
         out.user(to, "challenge", **{"from": m.public()})
         out.to(m.ws, "challenged", to=lobby.members[to])
 
-    def accept(self, m: Member, msg: dict, out: Out, lobby: Lobby, rng: random.Random) -> None:
+    def decline(self, m: Member, out: Out, lobby: Lobby) -> None:
+        p = self.pending.pop(m.user_id, None)
+        if p:
+            out.user(p["from"], "declined", by=m.public())
+
+    def accept(self, m: Member, msg: dict, out: Out, lobby: Lobby) -> None:
+        if self.match:
+            out.err(m.ws, "a duel is already on")
+            return
         p = self.pending.pop(m.user_id, None)
         team = _team(msg.get("team"))
         if not p or p["from"] not in lobby.members:
@@ -513,47 +594,136 @@ class Duel:
             out.err(m.ws, "bring a team of 1 to 6 creatures")
             return
         a, b = p["from"], m.user_id
-        self.match = {"a": lobby.members[a], "b": lobby.members[b], "ids": [a, b],
-                      "teams": {a: p["team"], b: team}, "turn": a if rng.random() < 0.5 else b,
-                      "log": ["The duel begins!"]}
+        self.missed.pop(a, None)
+        self.missed.pop(b, None)
+        self.match = {"mid": secrets.token_hex(4), "a": lobby.members[a], "b": lobby.members[b], "ids": [a, b],
+                      "state": pb.new_battle(p["team"], team), "phase": "choose", "choices": {}, "need": [],
+                      "deadline": now() + DUEL_FIRST_SECS, "auto": [0, 0], "away": {}}
         out.all("duel", duel=self.view())
 
-    def move(self, m: Member, msg: dict, out: Out, rng: random.Random) -> None:
+    def act(self, m: Member, msg: dict, out: Out, rng: random.Random) -> None:
         mt = self.match
         if not mt or m.user_id not in mt["ids"]:
             out.err(m.ws, "you are not in this duel")
             return
-        if mt["turn"] != m.user_id:
-            out.err(m.ws, "not your turn")
+        if self.tick(out, rng):
+            if self.match is mt:
+                out.to(m.ws, "late", turn=mt["state"]["turn"])
             return
-        foe = mt["ids"][1] if m.user_id == mt["ids"][0] else mt["ids"][0]
-        mine, theirs = mt["teams"][m.user_id], mt["teams"][foe]
-        i = msg.get("idx")
-        if not isinstance(i, int) or not 0 <= i < len(mine) or mine[i]["hp"] <= 0:
-            out.err(m.ws, "pick a creature that can still fight")
+        side = mt["ids"].index(m.user_id)
+        if msg.get("turn") != mt["state"]["turn"]:
+            out.to(m.ws, "late", turn=mt["state"]["turn"])     # a stale or replayed choice: ignore quietly
             return
-        target = next(c for c in theirs if c["hp"] > 0)
-        att = mine[i]
-        mult = eff(att["type"], target["type"])
-        dmg = max(1, round(att["atk"] * mult * rng.uniform(0.85, 1.15))) if mult else 0
-        target["hp"] = max(0, target["hp"] - dmg)
-        tag = " Super effective!" if mult >= 2 else " No effect." if mult == 0 else " Not very effective." if mult < 1 else ""
-        mt["log"].append(f"{att['name']} hits {target['name']} for {dmg}.{tag}")
-        if all(c["hp"] <= 0 for c in theirs):
-            winner = mt["a"] if m.user_id == mt["ids"][0] else mt["b"]
-            out.all("duelend", duel=self.view(), winner=winner)
-            self.match = None
+        if mt["phase"] == "replace" and side not in mt["need"]:
+            out.err(m.ws, "wait for the other player")
             return
-        mt["turn"] = foe
-        out.all("duel", duel=self.view())
+        act = pb.legal(mt["state"], side, msg.get("a"))
+        if act is None or (mt["phase"] == "replace" and act["k"] != "switch"):
+            out.err(m.ws, "you can't do that now")
+            return
+        fresh = side not in mt["choices"]
+        mt["choices"][side] = act          # a resend or a changed mind overwrites until both are in
+        mt["auto"][side] = 0
+        if fresh or len(mt["choices"]) == 2:
+            self._advance(out, rng)
+
+    def tick(self, out: Out, rng: random.Random) -> bool:
+        """Enforce lazy deadlines. True if something happened (a forfeit or a forced turn)."""
+        mt = self.match
+        if not mt:
+            return False
+        t = now()
+        gone = [i for i, uid in enumerate(mt["ids"]) if mt["away"].get(uid, t + 1) < t]
+        if gone:
+            self._end(out, None if len(gone) == 2 else 1 - gone[0], forfeit=True, left=True)
+            return True
+        if t <= mt["deadline"] + DUEL_SLACK_SECS:     # slack: a last-second pick is still in flight
+            return False
+        st = mt["state"]
+        afk = []
+        for side in (mt["need"] if mt["phase"] == "replace" else (0, 1)):
+            if side not in mt["choices"]:
+                mt["choices"][side] = ({"k": "switch", "to": pb.alive(st, side)[0]} if mt["phase"] == "replace"
+                                       else pb.auto_act(st, side))
+                mt["auto"][side] += 1
+                if mt["auto"][side] >= DUEL_AFK_PICKS:
+                    afk.append(side)
+        if afk:
+            self._end(out, None if len(afk) == 2 else 1 - afk[0], forfeit=True, timeout=True)
+            return True
+        self._advance(out, rng)
+        return True
+
+    def _advance(self, out: Out, rng: random.Random) -> None:
+        mt = self.match
+        st = mt["state"]
+        if mt["phase"] == "replace":
+            if any(side not in mt["choices"] for side in mt["need"]):
+                out.all("waiting", mid=mt["mid"], turn=st["turn"], waiting=self._waiting())
+                return
+            events: list[dict] = []
+            for side in mt["need"]:
+                events += pb.replace(st, side, mt["choices"][side]["to"])
+        else:
+            if len(mt["choices"]) < 2:
+                out.all("waiting", mid=mt["mid"], turn=st["turn"], waiting=self._waiting())
+                return
+            events = pb.resolve_turn(st, mt["choices"][0], mt["choices"][1], rng.random)
+        mt["choices"] = {}
+        mt["need"] = pb.needs_replace(st)
+        mt["phase"] = "replace" if mt["need"] else "choose"
+        mt["deadline"] = now() + (DUEL_REPLACE_SECS if mt["need"] else DUEL_CHOOSE_SECS) + _anim_allowance(events)
+        mt["seq"] = mt.get("seq", 0) + 1
+        out.all("turn", mid=mt["mid"], seq=mt["seq"], events=events, duel=self.view())
+        if st["over"]:
+            w = st["winner"]
+            self._end(out, w)
+
+    def _end(self, out: Out, winner_side: int | None, **extra: Any) -> None:
+        mt = self.match
+        winner = None if winner_side is None else (mt["a"] if winner_side == 0 else mt["b"])
+        view = self.view()
+        out.all("duelend", duel=view, winner=winner, **extra)
+        # Whoever is mid-grace (socket down) cannot hear that broadcast: keep it for their rejoin.
+        for uid in mt["away"]:
+            self.missed[uid] = (now(), {"duel": view, "winner": winner, **extra})
+        self.match = None
+
+    def replay_missed(self, user_id: str, ws: Any, out: Out) -> None:
+        """A rejoining player whose duel ended while they were away gets that ending, once."""
+        got = self.missed.pop(user_id, None)
+        t = now()
+        self.missed = {u: v for u, v in self.missed.items() if t - v[0] < DUEL_RESULT_SECS}
+        if got and t - got[0] < DUEL_RESULT_SECS:
+            out.to(ws, "duelend", **got[1])
+
+    def away(self, user_id: str, out: Out) -> bool:
+        """The user's last socket dropped. True if they are mid-duel and get a grace period."""
+        self.pending.pop(user_id, None)
+        mt = self.match
+        if not mt or user_id not in mt["ids"]:
+            return False
+        mt["away"][user_id] = now() + DUEL_GRACE_SECS
+        out.all("away", mid=mt["mid"], user=user_id, ms=DUEL_GRACE_SECS * 1000)
+        return True
+
+    def back(self, user_id: str, out: Out) -> bool:
+        """True if the user was away mid-duel (a reconnect, not a fresh join)."""
+        mt = self.match
+        if mt and mt["away"].pop(user_id, None) is not None:
+            out.all("back", mid=mt["mid"], user=user_id)
+            return True
+        return False
+
+    def seated(self, user_id: str) -> bool:
+        """A duelist of the live match: their lobby seat is reserved while they reconnect."""
+        return bool(self.match and user_id in self.match["ids"])
 
     def drop(self, user_id: str, out: Out) -> None:
         self.pending.pop(user_id, None)
         mt = self.match
         if mt and user_id in mt["ids"]:
-            other = mt["b"] if user_id == mt["ids"][0] else mt["a"]
-            out.all("duelend", duel=self.view(), winner=other, forfeit=True)
-            self.match = None
+            self._end(out, 1 - mt["ids"].index(user_id), forfeit=True)
 
 
 # ------------------------------------------------------------------- mines --
@@ -779,6 +949,10 @@ async def farm_op(room_id: str, m: Member, msg: dict, out: Out, rng: random.Rand
 
 
 # --------------------------------------------------------------- dispatch --
+def _rng() -> random.Random:
+    return random.Random(secrets.randbits(64))     # patched in tests
+
+
 async def handle(room: Room, member: Member, msg: dict) -> None:
     g, op = msg.get("g"), msg.get("op")
     out = Out(g if isinstance(g, str) else "?")
@@ -788,27 +962,46 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
         return
     v = valley_for(room.room_id)
     lobby = v.lobbies[g]
-    rng = random.Random(secrets.randbits(64))
+    rng = _rng()
 
     if op == "join":
-        if member.user_id not in lobby.members and len(lobby.members) >= MAX_LOBBY:
+        reserved = g == "duel" and v.duel.seated(member.user_id)
+        if member.user_id not in lobby.members and len(lobby.members) >= MAX_LOBBY and not reserved:
             out.err(member.ws, "this game's lobby is full")
         else:
             fresh = member.user_id not in lobby.members
+            returning = g == "duel" and v.duel.back(member.user_id, out)   # a reconnect: no "joined" toast
+            blip = lobby.blips.pop(member.user_id, None)
+            returning = returning or (blip is not None and now() - blip < HOST_GRACE)
+            lobby.blips = {u: t for u, t in lobby.blips.items() if now() - t < HOST_GRACE}
             lobby.members[member.user_id] = member.public()
-            if lobby.host is None or lobby.host not in lobby.members:
-                lobby.host = member.user_id
-            out.all("lobby", members=lobby.roster(), joined=member.public() if fresh else None, name=GAME_NAMES[g])
+            ph = lobby.prev_host
+            if lobby.host is None or lobby.host not in lobby.members or \
+                    (ph is not None and ph[0] == member.user_id and now() - ph[1] < HOST_GRACE):
+                lobby.host = member.user_id      # first in, or the host back from a socket blip
+            if ph is not None and (ph[0] == member.user_id or now() - ph[1] >= HOST_GRACE):
+                lobby.prev_host = None
+            out.all("lobby", members=lobby.roster(), joined=member.public() if fresh and not returning else None,
+                    name=GAME_NAMES[g])
             if g == "pond":
+                v.pond._expire_boss(out)      # a boss nobody touched may have run out
                 out.to(member.ws, "pond", pond=v.pond.snapshot())
             elif g == "race" and v.race.running():
                 out.to(member.ws, "start", round=v.race.round, secs=max(0, round(v.race.until - now())))
             elif g == "duel":
+                v.duel.tick(out, rng)
+                v.duel.replay_missed(member.user_id, member.ws, out)
                 out.to(member.ws, "duel", duel=v.duel.view())
             elif g == "mines":
                 out.to(member.ws, "mines", run=v.mines.view())
             elif g == "farm":
                 await farm_op(room.room_id, member, {"op": "view"}, out, rng)
+            elif g == "golf":
+                if v.golf.restore(member.user_id, member.public(), now()):
+                    # back from a dropped socket: everyone sees them return to the round
+                    out.lobby(list(lobby.members), "golf", round=v.golf.view(now()), back=member.user_id)
+                else:
+                    out.to(member.ws, "golf", round=v.golf.view(now()))
     elif op == "leave":
         _leave_lobby(v, g, member.user_id, out)
     elif op == "invite":
@@ -825,10 +1018,14 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
     elif member.user_id not in lobby.members:
         out.err(member.ws, "join the lobby first")
     elif g == "pond":
-        if op == "cast":
-            v.pond.cast(member, out, rng)
+        if op in ("cast", "hook", "land", "lose") and v.pond.throttled(member.user_id):
+            pass                                  # flooding: drop it (pull has its own limit)
+        elif op == "cast":
+            v.pond.cast(member, msg, out, rng)
+        elif op == "hook":
+            v.pond.hook(member, msg, out)
         elif op == "land":
-            v.pond.land(member, msg, out)
+            v.pond.land(member, msg, out, rng)
             v.pond.maybe_boss(lobby, out)
         elif op == "lose":
             v.pond.lose(member, msg, out)
@@ -843,9 +1040,16 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
         if op == "challenge":
             v.duel.challenge(member, msg, out, lobby)
         elif op == "accept":
-            v.duel.accept(member, msg, out, lobby, rng)
-        elif op == "move":
-            v.duel.move(member, msg, out, rng)
+            v.duel.accept(member, msg, out, lobby)
+        elif op == "act":
+            v.duel.act(member, msg, out, rng)
+        elif op == "poke":
+            v.duel.tick(out, rng)
+        elif op == "sync":
+            v.duel.tick(out, rng)
+            out.to(member.ws, "duel", duel=v.duel.view())
+        elif op == "decline":
+            v.duel.decline(member, out, lobby)
         elif op == "forfeit":
             v.duel.drop(member.user_id, out)
     elif g == "mines":
@@ -857,23 +1061,141 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
             v.mines.leave(member, out)
     elif g == "farm":
         await farm_op(room.room_id, member, msg, out, rng)
+    elif g == "golf":
+        golf_op(v.golf, lobby, member, op, msg, out)
     await _flush(room, out)
 
 
-def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out) -> None:
+# -------------------------------------------------------------------- golf --
+def golf_op(gm: "golfmod.Golf", lobby: Lobby, member: Member, op: str, msg: dict, out: Out) -> None:
+    """Mini Golf: every event goes to this game's lobby only."""
+    t = now()
+    uid = member.user_id
+    ids = list(lobby.members)
+    _golf_advance(gm, ids, out, t)       # a dropped player's hold may have run out meanwhile
+    if op == "view":
+        out.to(member.ws, "golf", round=gm.view(t))
+    elif op == "pos":
+        rel = gm.pos(uid, msg, t)
+        if rel is not None:
+            out.lobby(ids, "pos", skip_user=uid, **rel)
+    elif op == "char":
+        c = gm.char(uid, msg)
+        if c is None:
+            out.err(member.ws, "pick a character")
+        else:
+            out.lobby(ids, "char", user=uid, c=c)
+    elif op == "shot":
+        ev, err = gm.shot(uid, msg, t)
+        if err:
+            out.err(member.ws, err)
+            return
+        out.lobby(ids, "shot", **ev)
+        _golf_advance(gm, ids, out, t, ev["ticks"])
+    elif op == "concede":
+        if not gm.pick_up([uid]):
+            out.err(member.ws, "nothing to pick up")
+            return
+        out.lobby(ids, "golf", round=gm.view(t))
+        _golf_advance(gm, ids, out, t)
+    elif op in ("start", "skip", "end"):
+        if lobby.host != uid:
+            out.err(member.ws, "only the host can do that")
+            return
+        lobby.prev_host = None               # the new host acted: a returning old host stays a player
+        if op == "start":
+            err = gm.start(lobby.members, msg.get("course"), t)
+            if err:
+                out.err(member.ws, err)
+            else:
+                out.lobby(ids, "golf", round=gm.view(t), by=member.public())
+        elif op == "skip":
+            gm.release()                     # nobody parked holds the hole open any more
+            gm.pick_up(list(gm.players))
+            out.lobby(ids, "golf", round=gm.view(t))
+            _golf_advance(gm, ids, out, t)
+        else:
+            gm.end()
+            out.lobby(ids, "golf", round=gm.view(t))
+
+
+def _golf_advance(gm: "golfmod.Golf", ids: list[str], out: Out, t: float, ticks: int = 0) -> None:
+    was = gm.phase
+    step = gm.advance(t, ticks)
+    if step is not None:
+        out.lobby(ids, step[0], **step[1])
+        out.lobby(ids, "golf", round=gm.view(t))
+    elif gm.phase != was:                # the round ended: its last (dropped) player never came back
+        out.lobby(ids, "golf", round=gm.view(t))
+
+
+_timers: set = set()                     # strong refs to the recheck tasks in flight
+
+
+def _golf_recheck_later(room_id: str, delay: float) -> None:
+    """Re-run the golf advance once a dropped player's grace runs out, so the hole
+    moves on even if nobody else does anything meanwhile."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    def fire() -> None:
+        task = loop.create_task(golf_recheck(room_id))
+        _timers.add(task)
+        task.add_done_callback(_timers.discard)
+    loop.call_later(max(0.0, delay) + 0.05, fire)
+
+
+async def golf_recheck(room_id: str) -> None:
+    v = _rooms.get(room_id)
+    if v is None:
+        return
+    room = manager.get(room_id)
+    t = now()
+    out = Out("golf")
+    _golf_advance(v.golf, list(v.lobbies["golf"].members), out, t)
+    left = v.golf.grace_left(t)
+    if left is not None:
+        _golf_recheck_later(room_id, left)
+    if room is not None and room.members:
+        await _flush(room, out)
+    elif left is None and _rooms.get(room_id) is v:
+        _rooms.pop(room_id, None)        # nobody came back to the room
+
+
+def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out, disconnected: bool = False) -> None:
+    """Leave one game's lobby. disconnected: the socket dropped rather than an explicit
+    leave, so the multi.js shell will most likely rejoin within seconds: the host is
+    handed back on a quick return and a golf hole waits for the player."""
+    """A dropped live duelist waits DUEL_GRACE_SECS for a reconnect instead of forfeiting."""
     lobby = v.lobbies[g]
     who = lobby.members.pop(user_id, None)
     if who is None:
         return
+    if disconnected:
+        lobby.blips[user_id] = now()
     if lobby.host == user_id:
         lobby.host = next(iter(lobby.members), None)
+        lobby.prev_host = (user_id, now()) if disconnected and lobby.host is not None else None
+    away = False
     if g == "pond":
-        v.pond.drop(user_id)
+        c = v.pond.drop(user_id)
+        if c:                        # their bobber leaves everyone else's water too
+            out.all("lost", user=who, id=c["id"], fish=c["fish"])
     elif g == "duel":
-        v.duel.drop(user_id, out)
+        away = disconnected and v.duel.away(user_id, out)
+        if not away:
+            v.duel.drop(user_id, out)
     elif g == "mines":
         v.mines.drop(user_id, out)
-    out.all("lobby", members=lobby.roster(), left=who, name=GAME_NAMES[g])
+    elif g == "golf" and v.golf.drop(user_id, now(), blip=disconnected):
+        ids = list(lobby.members)
+        out.lobby(ids, "golf", round=v.golf.view(now()), left=user_id)
+        if not disconnected:
+            _golf_advance(v.golf, ids, out, now())
+    # A duelist on a grace period has not left: the "away" event says so, no "left" notice.
+    out.all("lobby", members=lobby.roster(), left=None if away else who, name=GAME_NAMES[g])
 
 
 async def on_disconnect(room_id: str, member: Member) -> None:
@@ -887,11 +1209,21 @@ async def on_disconnect(room_id: str, member: Member) -> None:
         return                       # the same person is still here on another socket
     for g in GAMES:
         out = Out(g)
-        _leave_lobby(v, g, member.user_id, out)
+        _leave_lobby(v, g, member.user_id, out, disconnected=True)
         if room is not None:
             await _flush(room, out)
-    if room is None or all(ws is member.ws for ws in room.members):
+    left = v.golf.grace_left(now())
+    if left is not None:
+        _golf_recheck_later(room_id, left)   # the recheck also tidies an emptied room
+    elif room is None or all(ws is member.ws for ws in room.members):
         _rooms.pop(room_id, None)
+
+
+async def _send_quiet(ws: Any, payload: dict) -> None:
+    try:
+        await asyncio.wait_for(ws.send_json(payload), SEND_TIMEOUT)
+    except Exception:
+        pass
 
 
 async def _flush(room: Room, out: Out) -> None:
@@ -903,6 +1235,17 @@ async def _flush(room: Room, out: Out) -> None:
                 await target.send_json(payload)
             except Exception:
                 pass
+        elif kind == "lobby":
+            # Fan out concurrently with a per-socket timeout: one slow player never
+            # holds up everyone else's position or shot.
+            ids, skip = target
+            socks = [ws for ws, mem in list(room.members.items()) if mem.user_id in ids and mem.user_id != skip]
+            if len(socks) == 1:
+                await _send_quiet(socks[0], payload)       # no task needed (wait_for runs it inline)
+            elif socks:
+                # shielded: if this handler is cancelled mid-send (a closing socket), the
+                # other players' copies still go out
+                await asyncio.shield(asyncio.gather(*(_send_quiet(ws, payload) for ws in socks)))
         else:
             for ws, mem in list(room.members.items()):
                 if mem.user_id == target:

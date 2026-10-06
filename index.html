@@ -9787,7 +9787,7 @@ Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
 });
 
 /* ---- Valley minigames: loaded from /games/ on first use (keeps this file from growing) ---- */
-var VALLEY_FILES = ["core","fishing","garden","bundles","mines","battle","puzzle","town","festival","arcade","multi"];
+var VALLEY_FILES = ["core","fishart","fishing","garden","bundles","mines","pokedata","pokebattle","battle","puzzle","town","festival","arcade","multi","golf"];
 var VALLEY_LOAD = null;
 function valleyLoad(){
   if(VALLEY_LOAD) return VALLEY_LOAD;
@@ -9828,7 +9828,7 @@ function valleyPillSync(){
 }
 // Valley multiplayer traffic from the Arena room. Join notices and invites work even
 // before the Valley view has ever been opened; everything else goes to games/multi.js.
-var VALLEY_GAME_NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm"};
+var VALLEY_GAME_NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm", golf:"Mini Golf"};
 function valleyOnGame(m){
   if(!m || typeof m.g!=="string" || !VALLEY_GAME_NAMES[m.g]) return;
   var you = ARENA.you && ARENA.you.userId;
@@ -13119,12 +13119,21 @@ function arenaOnGift(m){
 
 /* ---- Arena rooms ---- */
 function arenaWantSocket(){ return VIEW==="arena" || VCHAN.on || (ARENA_STAY && ARENA.paired); }
+// A socket that was working comes back almost at once (a blip should not freeze a game for
+// seconds); after that the wait doubles from 1 s up to 30 s, with jitter so a restarted
+// server is not hit by every page in the same instant.
 function arenaRetryLater(){
   if(arenaWantSocket() && !ARENA.retry){
-    var wait = Math.min(60000, 5000 * Math.pow(2, ARENA.fails++));
+    var n = ARENA.fails++;
+    var wait = n === 0 ? 250 + Math.random()*500 : Math.min(30000, 1000 * Math.pow(2, n - 1)) * (0.8 + Math.random()*0.4);
     ARENA.retry = setTimeout(function(){ ARENA.retry=null; arenaOpenSocket(); }, wait);
   }
 }
+// The network came back (wifi, laptop wake): don't sit out the rest of a long backoff.
+window.addEventListener("online", function(){
+  if(!ARENA.retry || ARENA.sock || ARENA.opening) return;
+  clearTimeout(ARENA.retry); ARENA.retry = null; arenaOpenSocket();
+});
 function arenaRoomRemember(id){
   try { if(id==="lobby") localStorage.removeItem("hq_arena_room"); else localStorage.setItem("hq_arena_room", id); } catch(e){}
 }
@@ -13660,7 +13669,11 @@ function arenaOpenSocket(){
   arenaPost("/api/arena/ticket").then(function(res){
     if(gen !== ARENA.gen) return;
     ARENA.opening = false;
-    if(ARENA.sock || !res.ok || !res.j.ticket || !res.j.wsUrl) return;
+    if(ARENA.sock) return;
+    if(!res.ok || !res.j.ticket || !res.j.wsUrl){
+      if(!res.status || res.status >= 500) arenaRetryLater();   // the Arena is down or restarting
+      return;
+    }
     var url = res.j.wsUrl + "/v1/rooms/" + encodeURIComponent(rid) + "/ws?ticket=" + encodeURIComponent(res.j.ticket);
     var ws;
     try { ws = new WebSocket(url); } catch(e){ return; }
@@ -13721,7 +13734,7 @@ function arenaOpenSocket(){
       arenaRetryLater();
     };
     ws.onerror = function(){ try { ws.close(); } catch(e){} };
-  }, function(){ if(gen === ARENA.gen) ARENA.opening = false; });
+  }, function(){ if(gen === ARENA.gen){ ARENA.opening = false; arenaRetryLater(); } });
 }
 
 function arenaCloseSocket(){

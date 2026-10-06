@@ -39,13 +39,23 @@ UNIT = 10000
 PIECES = ["start", "straight", "corner", "end", "side", "round-corner-a", "split", "split-t",
           "split-start", "walls-to-open", "gap", "obstacle-block", "obstacle-diamond",
           "obstacle-triangle", "narrow-block", "narrow-round", "castle", "windmill", "tunnel-wide",
-          "tunnel-narrow", "hole-round", "hole-square"]
+          "tunnel-narrow", "hole-round", "hole-square", "hole-open", "open", "inner-corner", "hill-round", "bump",
+          "tunnel-double"]
 # start: the back half (z > 0) is a ramp down to the grass, so it is a void and the
 # tee sits on the flat front half. gap: a square hole, about 0.4 x 0.4 tiles.
 EXTRA = {
     "start": {"tee": [0, -2500], "voids": [[-5000, 0, 5000, 5000]]},
     "hole-round": {"cup": [0, 0]}, "hole-square": {"cup": [0, 0]}, "hole-open": {"cup": [0, 0]},
     "gap": {"voids": [[-2000, -2000, 2000, 2000]]},
+    # windmill: while a blade sweeps past the bottom it closes the far doorway (the blades
+    # hang in front of the z = -4000 face, hub at z = -0.446)
+    "windmill": {"blades": [-1625, -4458, 1625, -4458]},
+    # hill-round: a ridge across the lane (crest at z = 0, 0.084 above the floor); gravity
+    # pulls a slow ball back down either side
+    "hill-round": {"slopes": [[-4000, -3000, 4000, 0, 0, -400], [-4000, 0, 4000, 3000, 0, 400]]},
+    # bump: a low round mound in the middle of an open tile; it nudges the ball outward
+    "bump": {"slopes": [[-2500, -2500, 0, 0, -110, -110], [0, -2500, 2500, 0, 110, -110],
+                        [-2500, 0, 0, 2500, -110, 110], [0, 0, 2500, 2500, 110, 110]]},
 }
 
 
@@ -170,7 +180,10 @@ def render(data):
     lines.append("},")
     lines.append('"courses": [')
     for ci, c in enumerate(data["courses"]):
-        lines.append('{"id": %s, "name": %s, "holes": [' % (json.dumps(c["id"]), json.dumps(c["name"])))
+        head = '{"id": %s, "name": %s, ' % (json.dumps(c["id"]), json.dumps(c["name"]))
+        if "theme" in c:
+            head += '"theme": %s,\n' % json.dumps(c["theme"], separators=(", ", ": "))
+        lines.append(head + '"holes": [')
         for hi, h in enumerate(c["holes"]):
             lines.append("  " + json.dumps(h, separators=(", ", ": "))
                          + ("," if hi < len(c["holes"]) - 1 else ""))

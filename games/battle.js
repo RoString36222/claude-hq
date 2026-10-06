@@ -1,7 +1,8 @@
 /* Valley: Creature Battles (solo). A Pokemon-style battle with REAL Pokemon data: your team
  * is your live session creatures (the same ones the Gym scores), each battling as the
  * Pokemon its sprite shows, with that Pokemon's real types, base stats and level-up moves
- * (games/pokedata.js). Engine + battle screen: games/pokebattle.js (HQV.pk).
+ * (games/pokedata.js). Or pick a team yourself from every Pokemon you've unlocked in the
+ * Pokedex (the team builder in games/pokebattle.js; saved locally). Engine + battle screen: games/pokebattle.js (HQV.pk).
  * Fight the day's wild team, or a friend's team: in an Arena room, "Share my team" sends
  * only species numbers and evolution stages (evolution announcements already share those),
  * and the receiver rebuilds every stat and move from the data, never from the message. */
@@ -31,7 +32,15 @@ function myCreatures(){
   }
   return team.slice(0,6);
 }
-function mySpecs(){ return myCreatures().map(function(m){ return specOf(m.cr, m.name); }); }
+// The team you battle with: the one saved in the team builder (from your unlocked Pokemon),
+// else your live session creatures. crs: the session creatures behind it (for the EXP bar).
+function myTeam(){
+  var P = pk(), saved = P && P.savedTeam ? P.savedTeam() : null;
+  if(saved) return {specs: saved, crs: saved.map(function(){ return null; }), saved: true};
+  var mine = myCreatures();
+  return {specs: mine.map(function(m){ return specOf(m.cr, m.name); }), crs: mine.map(function(m){ return m.cr; }), saved: false};
+}
+function mySpecs(){ return myTeam().specs; }
 function wildSpecs(mine){
   var r = api.rng("wild:"+api.day()), avg = 0;
   mine.forEach(function(s){ avg += s.st; }); avg = mine.length ? avg/mine.length : 1;
@@ -65,12 +74,12 @@ function who(side, name, sendOut){
 function begin(foeSpecs, label, wild){
   var P = pk();
   if(!P){ api.toast("Battle data is still loading"); return; }
-  var mine = myCreatures();
-  if(!mine.length){ api.toast("You need at least one creature (a session) to battle"); return; }
-  var a = mine.map(function(m){ return P.buildMon(specOf(m.cr, m.name)); }), b = foeSpecs.map(P.buildMon);
+  var mine = myTeam();
+  if(!mine.specs.length){ api.toast("You need at least one creature (a session) or a saved team to battle"); return; }
+  var a = mine.specs.map(P.buildMon), b = foeSpecs.map(P.buildMon);
   // One seeded stream per battle (reproducible from fight.seed), as the duel server does with its own RNG.
   var seed = api.day()+":"+Date.now();
-  fight = {state: P.newBattle(a, b), crs: mine.map(function(m){ return m.cr; }), label: label, wild: !!wild, over:false,
+  fight = {state: P.newBattle(a, b), crs: mine.crs, label: label, wild: !!wild, over:false,
            seed: seed, rand: api.rng("battle:"+seed), ai: api.rng("ai:"+seed)};
   P.preload(a.concat(b));
   b.forEach(seen);
@@ -152,7 +161,7 @@ function startWild(){ var mine = mySpecs(); if(!pk()){ api.toast("Battle data is
 function startFriend(name){ var f = challengers[name]; begin(f, name, false); if(fight) fight.foeSpecs = f; }
 
 function render(){
-  if(!root || fight) return;
+  if(!root || fight || building) return;
   root.textContent = "";
   var b = api.save.battle, P = pk();
   var rec = api.mk("p", "vg-muted", "Record: "+(b.wins|0)+" wins, "+(b.losses|0)+" losses · Seen "+((b.seen||[]).length)+" Pokémon. " +
@@ -165,7 +174,11 @@ function render(){
     if(api.say({g:"battle", op:"team", team:t})) api.toast("Team shared with the room"); }));
   root.appendChild(row);
   if(P){
-    var team = mySpecs().map(P.buildMon), list = api.mk("div", "pkb-roster");
+    var mt = myTeam(), team = mt.specs.map(P.buildMon), list = api.mk("div", "pkb-roster");
+    var th = api.mk("div", "vg-row pkb-teamhead");
+    th.appendChild(api.mk("b", null, mt.saved ? "Your saved team" : "Your team: your working and idle sessions"));
+    th.appendChild(api.btn(mt.saved ? "Edit team" : "Pick a team", "", openBuilder));
+    root.appendChild(th);
     team.forEach(function(m){
       var c = api.mk("div", "pkb-rcard");
       c.appendChild(api.mk("b", null, m.name+" · Lv"+m.lvl));
@@ -192,8 +205,17 @@ game.onSay = function(d, who){
   } else if(d.op === "result" && d.won){ api && api.toast("⚔️ "+who+" won a battle against "+(typeof d.vs === "string" ? d.vs.slice(0,40) : "a team")); }
 };
 game.badge = function(){ var n = Object.keys(challengers).length; return n ? n+" challenger"+(n>1?"s":"") : ""; };
-game.mount = function(el, a){ api = a; root = el; fight = null; render(); };
-game.unmount = function(){ if(fight && fight.scene) fight.scene.destroy(); root = null; fight = null; };
+function openBuilder(){
+  var P = pk(); if(!P || !root || fight) return;
+  root.textContent = "";
+  root.appendChild(api.mk("p", "vg-muted", "Pick up to 6 of the Pokémon you've unlocked in the Pokédex. They battle at the highest stage you've reached, with their real moves."));
+  building = true;
+  P.teamBuilder(root, {onDone: function(){ building = false; render(); }});
+}
+var building = false;
+game.mount = function(el, a){ api = a; root = el; fight = null; building = false; render();
+  var P = pk(); if(P && P.loadUnlocked) P.loadUnlocked().then(function(){ if(root === el && !fight && !building) render(); }); };
+game.unmount = function(){ if(fight && fight.scene) fight.scene.destroy(); root = null; fight = null; building = false; };
 game.pause = function(){ if(fight){ fight.paused = true; if(fight.scene) fight.scene.pause(); } };
 game.resume = function(){ if(fight){ fight.paused = false; if(fight.scene) fight.scene.resume(); } };
 HQV.register(game);

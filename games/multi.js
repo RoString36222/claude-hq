@@ -716,6 +716,9 @@ register("race", "🏁", "Live puzzle race against the room", function(ctx){
 // the local clock from the server's remaining-ms and the waiting side 'poke's the server
 // when one runs out; a dropped socket rejoins and resyncs from a full snapshot.
 function myDuelTeam(){
+  // the team saved in the team builder (unlocked Pokemon), else the live session creatures
+  var saved = HQV.pk && HQV.pk.savedTeam ? HQV.pk.savedTeam() : null;
+  if(saved) return saved.map(function(m){ return {sp: m.sp, st: m.st, br: m.br, mg: m.mg, sh: m.sh, name: ""}; });
   var team = typeof window.gymTeam === "function" ? window.gymTeam() : [];
   return team.slice(0,6).map(function(m){
     var cr = m.cr || {}, br = null, mg = null;
@@ -808,13 +811,14 @@ function renderDuel(ctx, s){
   var box = ctx.box, d = s.duel;
   // A battle in progress (or still playing its last turn) owns the box and is only updated.
   if(ctx.scene && !ctx.scene.dead){ pumpDuel(ctx, s); return; }
-  if(d && !s.ended){ startDuelScene(ctx, s, d); return; }
+  if(d && !s.ended){ ctx.building = false; startDuelScene(ctx, s, d); return; }
+  if(ctx.building) return;                  // the team builder owns the box until Save/Cancel
   var sig = duelLobbySig(s);
   if(ctx.lobbySig === sig) return;          // nothing on this screen changed: keep the DOM
   ctx.lobbySig = sig; box.textContent = "";
   if(s.incoming){
     var inc = api.mk("div","vg-row"); inc.appendChild(api.mk("b",null,nameOf(s.incoming)+" challenged you!"));
-    inc.appendChild(api.btn("Accept","primary",function(){ var t = myDuelTeam(); if(!t.length){ api.toast("You need a working or idle session creature"); return; } send("duel","accept",{team:t}); }));
+    inc.appendChild(api.btn("Accept","primary",function(){ var t = myDuelTeam(); if(!t.length){ api.toast("Pick a team, or have a working or idle session creature"); return; } send("duel","accept",{team:t}); }));
     inc.appendChild(api.btn("Decline","ghost",function(){ send("duel","decline"); s.incoming = null; renderDuel(ctx, s); }));
     box.appendChild(inc);
   }
@@ -823,10 +827,20 @@ function renderDuel(ctx, s){
   var others = (s.lobby||[]).filter(function(p){ return p.userId !== me(); });
   if(!others.length) box.appendChild(api.mk("p","vg-muted","Invite someone into this lobby to duel."));
   others.forEach(function(p){ var r = api.mk("div","vg-row"); r.appendChild(api.mk("span",null,nameOf(p)));
-    r.appendChild(api.btn("Challenge","",function(){ var t = myDuelTeam(); if(!t.length){ api.toast("You need a working or idle session creature"); return; }
+    r.appendChild(api.btn("Challenge","",function(){ var t = myDuelTeam(); if(!t.length){ api.toast("Pick a team, or have a working or idle session creature"); return; }
       if(send("duel","challenge",{to:p.userId, team:t})){ s.sent = p; renderDuel(ctx, s); } }));
     box.appendChild(r); });
-  box.appendChild(api.mk("p","vg-muted","Your team is your working and idle session creatures, battling as the Pokémon they are now, with real moves, stats and types. Both of you choose each turn; the Arena server resolves it."));
+  var saved = HQV.pk && HQV.pk.savedTeam ? HQV.pk.savedTeam() : null;
+  var tr = api.mk("div","vg-row");
+  tr.appendChild(api.mk("span","vg-muted", saved ? "Your team: "+saved.map(function(m){ return HQV.pk.buildMon(m).name; }).join(", ")+"."
+    : "Your team is your working and idle session creatures, battling as the Pokémon they are now."));
+  if(HQV.pk && HQV.pk.teamBuilder) tr.appendChild(api.btn(saved ? "Edit team" : "Pick a team","",function(){
+    ctx.building = true; box.textContent = "";
+    HQV.pk.teamBuilder(box, {onDone: function(){ ctx.building = false; ctx.lobbySig = null; renderDuel(ctx, s); }});
+  }));
+  box.appendChild(tr);
+  box.appendChild(api.mk("p","vg-muted","Real moves, stats and types. Both of you choose each turn; the Arena server resolves it."));
+  if(HQV.pk && HQV.pk.loadUnlocked && !HQV.pk.unlocked() && HQV.pk.hasSavedTeam()) HQV.pk.loadUnlocked().then(function(){ if(ctx.alive && !ctx.scene && !ctx.building){ ctx.lobbySig = null; renderDuel(ctx, s); } });
 }
 function startDuelScene(ctx, s, d){
   var P = HQV.pk, box = ctx.box;

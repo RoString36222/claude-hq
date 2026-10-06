@@ -1,6 +1,6 @@
 # ⚡ Claude HQ
 
-**Version 1.8.0** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
+**Version 1.8.1** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
 
 Claude HQ reads your live sessions (`claude agents --json`) and your session transcripts
 (`~/.claude/projects/**/*.jsonl`) and turns them into a single command center: what every tab is
@@ -65,7 +65,9 @@ shares daily activity *counts* with friends — never conversation content.)
   real sizes, a hook-and-reel meter and treasure), a garden your prompts water, a bundles
   board, the Mines (deeper on weeks you're active more days), **Pokémon-style Creature Battles** with real species, base stats,
   level-up moves and the 18-type chart, a daily code puzzle, three townsfolk, a monthly
-  fishing-derby festival, the Bug Blaster arcade, and **3D Mini Golf**. With the Arena connected
+  fishing-derby festival, the Bug Blaster arcade, and **3D Mini Golf** (five themed courses, 25
+  holes: windmills, hills, sliding gates, bumpers, sand, ice and water). Battles use a team you
+  pick from the Pokémon you've unlocked, or your live sessions. With the Arena connected
   you can also play with friends in your room: a shared fishing dock with a room goal and boss
   fish, a live puzzle race, the live **Creature Duel**, co-op Mines, a shared farm and Mini Golf
   together. The server referees every multiplayer game; your own moves show instantly, other
@@ -263,6 +265,33 @@ and feature guide.
 ---
 
 ## Changelog
+
+- **1.8.1** — **Mini Golf grows to five themed courses, and you pick your battle team.**
+  - **Five Mini Golf courses, 25 holes.** Meadow Greens (4), Windmill Lane (5) and Castle Keep (6)
+    are joined by **Desert Canyon** and **Snowy Peak** (5 holes each). Every course has its own
+    scenery and mood: a sky gradient with fog, an island dressed with Kenney's CC0 Nature Kit props
+    (trees, flowers, cacti, rocks, fences, crops, a stone column; snow-dusted on the peak), per-theme
+    sunlight with real shadows and a tint on the felt. The course cards list holes, par, the mood
+    and what's in the course.
+  - **Varied holes.** The windmill's blades now block the doorway while one sweeps past, hills
+    roll a weak putt back, sliding gates cross the lane, bumpers kick the ball off harder than a
+    wall, sand drags, ice glides, and water is a hazard (+1 stroke, back to your last lie). Blades
+    and gates follow a shared shot clock: a putt carries the phase it left at, so it replays
+    identically on every client and on the Arena server. The fixed-step integer physics stays
+    line-for-line identical in `games/golf.js` and `backend/app/golf.py`, and the golden/parity
+    vectors now cover every surface and obstacle at random clock phases.
+  - **Battle team picker.** Creature Battles and the Creature Duel get a team builder: every
+    Pokémon you've unlocked in the Pokédex, at the highest stage you've reached, with its real
+    sprite, types and four moves. Pick up to 6, put your lead first and save (locally, in the
+    Valley save); with nothing saved, battles use your working and idle sessions as before. Duels
+    still send only species and stage numbers per member; the server derives everything else and
+    now clamps the stage.
+  - **Arena backend needs a deploy** for the new courses and obstacles (no database migrations).
+  - **Third-party assets:** 29 more CC0 models from Kenney's Nature Kit 2.1 and three more
+    Minigolf Kit pieces in `games/golf/`, with the Nature Kit license added to
+    `games/golf/LICENSE-kenney.txt`. Still served only from `127.0.0.1`, only when Mini Golf opens.
+  - **Privacy:** a golf shot now also carries the shot clock's phase (an integer); the saved team
+    is species numbers in your local save.
 
 - **1.8.0** — **Valley v2: real Pokémon battles, a new fishing pond and 3D Mini Golf, with
   butter-smooth multiplayer.**
@@ -466,7 +495,7 @@ Made with [Claude Code](https://claude.com/claude-code).
 MIT — see [LICENSE](LICENSE).
 
 Mini Golf uses [three.js](https://threejs.org/) (MIT, `games/vendor/LICENSE-three.txt`) and models
-from [Kenney](https://kenney.nl/) — Minigolf Kit and Mini Characters — which are public domain (CC0,
+from [Kenney](https://kenney.nl/) — Minigolf Kit, Mini Characters and Nature Kit — which are public domain (CC0,
 `games/golf/LICENSE-kenney.txt`). Thank you, Kenney!
 
 Pokémon names and sprites are the property of Nintendo / Game Freak / The Pokémon Company; the

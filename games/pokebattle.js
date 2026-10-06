@@ -42,7 +42,8 @@ pk.evoPos = evoPos; pk.typeMult = typeMult; pk.calcStat = calcStat;
 pk.cleanSpec = function(raw){
   if(!raw || typeof raw !== "object") return null;
   var sp = raw.sp, st = raw.st;
-  if(!isInt(sp) || sp < 0 || sp >= D().lines.length || !isInt(st) || st < 0 || st > 4) return null;
+  if(!isInt(sp) || sp < 0 || sp >= D().lines.length || !isInt(st)) return null;
+  st = Math.max(0, Math.min(4, st));     // a stage outside 0..4 is clamped, never trusted
   var name = typeof raw.name === "string" ? raw.name : (typeof raw.n === "string" ? raw.n : "");
   name = name.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 24);
   return {sp:sp, st:st, br: isInt(raw.br) ? raw.br : null, mg: typeof raw.mg === "string" ? raw.mg : null,
@@ -834,4 +835,151 @@ Scene.prototype.pressMove = function(i){
 Scene.prototype.pause = function(){ this.paused = true; };
 Scene.prototype.resume = function(){ this.paused = false; };
 Scene.prototype.destroy = function(){ this.dead = true; cancelAnimationFrame(this.fx.raf); this.root.removeEventListener("keydown", this.onKey); if(this.root.parentNode) this.root.parentNode.removeChild(this.root); };
+/* =============================== TEAM BUILDER =============================== */
+// A saved battle team picked from the Pokemon you have UNLOCKED (caught in the Pokedex, at the
+// highest stage any of your sessions reached). Creature Battles and the Creature Duel both use
+// it; with nothing saved they fall back to the live working/idle session creatures.
+// The save keeps only species numbers in order (save.battle.team); every stage, form, type and
+// move is derived from the Pokedex and games/pokedata.js each time it is used.
+var TEAM_MAX = 6, DEX = null, DEX_P = null;
+function tapi(){ return HQV.api || null; }
+function unlockedFrom(dex){
+  var out = [];
+  ((dex && dex.species) || []).forEach(function(d){
+    if(!d || !d.caught || !isInt(d.species) || d.species < 0 || d.species >= D().lines.length) return;
+    // the same creature -> Pokemon mapping the battle code uses for a live session creature
+    var cr = {species: d.species, stage: Math.max(0, Math.min(4, d.maxStage|0)), shiny: !!d.shiny,
+              _sid: typeof d.exampleSessionId === "string" ? d.exampleSessionId : ""};
+    var st = cr.stage, br = null, mg = null;
+    try { if(typeof G.creatureStage === "function") st = Math.max(0, Math.min(4, G.creatureStage(cr)|0)); } catch(e){}
+    cr.stage = st;
+    try { if(typeof G.branchFinalDex === "function") br = G.branchFinalDex(cr); } catch(e){}
+    try { if(typeof G.pokeMega === "function") mg = G.pokeMega(cr); } catch(e){}
+    out.push({sp: d.species, st: st, br: isInt(br) ? br : null, mg: typeof mg === "string" ? mg : null, sh: !!d.shiny, name: ""});
+  });
+  return out;
+}
+// Fetch the unlocked list (shared /api/pokedex request); resolves to [] when unavailable.
+pk.loadUnlocked = function(){
+  if(DEX) return Promise.resolve(DEX);
+  if(DEX_P) return DEX_P;
+  var f = typeof G.fetchPokedex === "function" ? G.fetchPokedex()
+        : fetch("/api/pokedex", {cache: "no-store"}).then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); });
+  DEX_P = f.then(function(j){ DEX = D() ? unlockedFrom(j) : []; DEX_P = null; return DEX; }, function(){ DEX_P = null; return []; });
+  return DEX_P;
+};
+pk.unlocked = function(){ return DEX; };
+function savedIds(){
+  var a = tapi(), b = a && a.save && a.save.battle, t = b && Array.isArray(b.team) ? b.team : [];
+  var seen = {}, out = [];
+  t.forEach(function(v){ if(isInt(v) && v >= 0 && v < 48 && !seen[v] && out.length < TEAM_MAX){ seen[v] = 1; out.push(v); } });
+  return out;
+}
+// The saved team as battle specs (lead first), or null when none is saved / the Pokedex isn't loaded.
+pk.savedTeam = function(){
+  if(!DEX || !D()) return null;
+  var by = {}; DEX.forEach(function(u){ by[u.sp] = u; });
+  var out = savedIds().filter(function(i){ return by[i]; }).map(function(i){ var u = by[i]; return {sp:u.sp, st:u.st, br:u.br, mg:u.mg, sh:u.sh, name:""}; });
+  return out.length ? out : null;
+};
+pk.hasSavedTeam = function(){ return savedIds().length > 0; };
+function saveIds(ids){
+  var a = tapi(); if(!a || !a.save) return;
+  if(!a.save.battle || typeof a.save.battle !== "object") a.save.battle = {};
+  if(ids.length) a.save.battle.team = ids.slice(0, TEAM_MAX); else delete a.save.battle.team;
+  a.persist();
+}
+// The builder: host gets a panel; opts.onDone() runs after Save or Cancel.
+pk.teamBuilder = function(host, opts){
+  opts = opts || {};
+  var box = mk("div", "pkb-builder"), picked = savedIds(), list = null, dirty = false;
+  box.setAttribute("role", "region"); box.setAttribute("aria-label", "Team builder");
+  host.appendChild(box);
+  box.appendChild(mk("p", "vg-muted", "Loading your Pokédex…"));
+  function say(t){ if(typeof G.announce === "function"){ try { G.announce(t); } catch(e){} } }
+  function monOf(u){ return pk.buildMon({sp:u.sp, st:u.st, br:u.br, mg:u.mg, sh:u.sh}); }
+  function byId(){ var o = {}; (list || []).forEach(function(u){ o[u.sp] = u; }); return o; }
+  function card(u, cls){
+    var m = monOf(u), c = mk("span", "pkb-bcard-in"+(cls ? " "+cls : ""));
+    var spr = mk("span", "pkb-bspr"); spr.appendChild(spriteEl(m, false, null)); c.appendChild(spr);
+    var info = mk("span", "pkb-binfo");
+    info.appendChild(mk("b", null, m.name+(m.shiny ? " ★" : "")));
+    info.appendChild(mk("span", "pkb-blv", "Lv"+m.lvl));
+    var types = mk("span", "pkb-types"); m.types.forEach(function(t){ types.appendChild(chip(t)); }); info.appendChild(types);
+    var mv = mk("span", "pkb-bmoves");
+    m.moves.forEach(function(x){ var d = D().moves[x.id]; mv.appendChild(mk("span", "pkb-bmove", d ? d.name : x.id)); });
+    info.appendChild(mv);
+    c.appendChild(info);
+    return {el: c, mon: m};
+  }
+  function render(focusSel){
+    box.textContent = "";
+    var by = byId();
+    picked = picked.filter(function(i){ return by[i]; });
+    var head = mk("div", "pkb-bhead");
+    head.appendChild(mk("b", null, "Your team ("+picked.length+"/"+TEAM_MAX+")"));
+    head.appendChild(mk("span", "vg-muted", picked.length ? "The first one leads. Saved on this computer only." : "Nothing picked: battles use your working and idle sessions."));
+    box.appendChild(head);
+    var team = mk("ol", "pkb-bteam"); team.setAttribute("aria-label", "Picked team, lead first");
+    picked.forEach(function(i, k){
+      var u = by[i], li = mk("li", "pkb-bslot"), c = card(u, "sm");
+      li.appendChild(c.el);
+      var ctl = mk("span", "pkb-bctl");
+      function b(label, aria, fn, dis, key){ var x = mk("button", "pkb-btn ghost pkb-bmini", label); x.type = "button"; x.setAttribute("aria-label", aria);
+        x.disabled = !!dis; x.dataset.k = key; x.addEventListener("click", fn); ctl.appendChild(x); return x; }
+      b("↑", "Move "+c.mon.name+" earlier", function(){ move(k, -1); }, k === 0, "up"+i);
+      b("↓", "Move "+c.mon.name+" later", function(){ move(k, 1); }, k === picked.length - 1, "dn"+i);
+      b("✕", "Remove "+c.mon.name, function(){ toggle(i); }, false, "rm"+i);
+      li.appendChild(ctl);
+      team.appendChild(li);
+    });
+    if(picked.length) box.appendChild(team);
+    var row = mk("div", "pkb-brow");
+    var save = mk("button", "pkb-btn primary", "Save team"); save.type = "button";
+    save.addEventListener("click", function(){ saveIds(picked); dirty = false; say(picked.length ? "Team saved" : "Using your session creatures");
+      if(tapi()) tapi().toast(picked.length ? "Team saved" : "Team cleared: battles use your sessions"); if(opts.onDone) opts.onDone(true); });
+    row.appendChild(save);
+    var clear = mk("button", "pkb-btn ghost", "Use my sessions"); clear.type = "button"; clear.disabled = !picked.length;
+    clear.addEventListener("click", function(){ picked = []; dirty = true; render(); });
+    row.appendChild(clear);
+    var cancel = mk("button", "pkb-btn ghost", "Cancel"); cancel.type = "button";
+    cancel.addEventListener("click", function(){ if(opts.onDone) opts.onDone(false); });
+    row.appendChild(cancel);
+    box.appendChild(row);
+    box.appendChild(mk("h4", "pkb-bh", "Unlocked Pokémon ("+list.length+")"));
+    if(!list.length){ box.appendChild(mk("p", "vg-muted", "Nothing unlocked yet: every session you run catches its species in the Pokédex.")); return; }
+    var grid = mk("div", "pkb-bgrid"); grid.setAttribute("role", "group"); grid.setAttribute("aria-label", "Unlocked Pokémon: press to add or remove");
+    list.forEach(function(u){
+      var on = picked.indexOf(u.sp) >= 0, full = !on && picked.length >= TEAM_MAX, c = card(u);
+      var btn = mk("button", "pkb-bcard"+(on ? " on" : "")); btn.type = "button"; btn.dataset.k = "sp"+u.sp;
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.setAttribute("aria-label", c.mon.name+", level "+c.mon.lvl+", "+c.mon.types.join(" and ")+". Moves: "+
+        c.mon.moves.map(function(x){ var d = D().moves[x.id]; return d ? d.name : x.id; }).join(", ")+(on ? ". On your team" : full ? ". Team is full" : ""));
+      btn.disabled = full;
+      btn.appendChild(c.el);
+      if(on){ var n = mk("span", "pkb-bnum", String(picked.indexOf(u.sp)+1)); n.setAttribute("aria-hidden", "true"); btn.appendChild(n); }
+      btn.addEventListener("click", function(){ toggle(u.sp); });
+      grid.appendChild(btn);
+    });
+    box.appendChild(grid);
+    if(focusSel){ var f = box.querySelector('[data-k="'+focusSel+'"]'); if(f && !f.disabled) f.focus(); else { f = box.querySelector(".pkb-bcard:not([disabled])"); if(f) f.focus(); } }
+  }
+  function toggle(i){
+    var k = picked.indexOf(i);
+    if(k >= 0) picked.splice(k, 1); else if(picked.length < TEAM_MAX) picked.push(i); else return;
+    dirty = true; render("sp"+i);
+  }
+  function move(k, d){
+    var j = k + d; if(j < 0 || j >= picked.length) return;
+    var t = picked[k]; picked[k] = picked[j]; picked[j] = t; dirty = true;
+    render((d < 0 ? "up" : "dn")+t);
+  }
+  pk.loadUnlocked().then(function(l){
+    if(!box.isConnected && !box.parentNode) return;
+    list = (l || []).slice().sort(function(a, b){ return b.st - a.st || a.sp - b.sp; });
+    render(null);
+    var f = box.querySelector(".pkb-bcard:not([disabled]), .pkb-btn"); if(f) f.focus();
+  });
+  return {el: box, dirty: function(){ return dirty; }};
+};
 })();

@@ -61,8 +61,9 @@ def clean_spec(raw: Any) -> dict | None:
     if not isinstance(raw, dict):
         return None
     sp, st = raw.get("sp"), raw.get("st")
-    if not _int(sp) or not 0 <= sp < len(DATA["lines"]) or not _int(st) or not 0 <= st <= 4:
+    if not _int(sp) or not 0 <= sp < len(DATA["lines"]) or not _int(st):
         return None
+    st = max(0, min(4, st))      # a stage outside 0..4 is clamped, never trusted
     br, mg, name = raw.get("br"), raw.get("mg"), raw.get("name", raw.get("n"))
     name = "".join(ch for ch in name if ch.isprintable()).strip()[:24] if isinstance(name, str) else ""
     return {"sp": sp, "st": st, "br": br if _int(br) else None, "mg": mg if isinstance(mg, str) else None,

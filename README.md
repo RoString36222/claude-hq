@@ -63,8 +63,9 @@ shares daily activity *counts* with friends — never conversation content.)
   you wait" pill appears while tabs work, and the game pauses the moment a tab needs you.
   Fishing pond (each project is its own pond), a garden your prompts water, a bundles board,
   the Mines (deeper on weeks you're active more days), creature battles on the Gym's type
-  chart, a daily code puzzle, three townsfolk, a monthly fishing-derby festival, and the Bug
-  Blaster arcade. All art is drawn in code; progress is a local `games-save.json`; in an Arena
+  chart, a daily code puzzle, three townsfolk, a monthly fishing-derby festival, the Bug
+  Blaster arcade, and 3D Mini Golf (solo or with friends). All art is drawn in code (except Mini
+  Golf's CC0 Kenney models); progress is a local `games-save.json`; in an Arena
   room only scores and counts are shared.
 
 **Quality-of-life**
@@ -252,6 +253,23 @@ and feature guide.
 
 ## Changelog
 
+- **Unreleased** — **Mini Golf in the Valley (3D, solo or with friends).** Three courses
+  (Meadow Greens, Windmill Lane, Castle Keep; 15 holes) built from Kenney's CC0 Minigolf Kit, with
+  a golfer per player (Kenney Mini Characters) who walks to the ball, aims and putts. In an Arena
+  room everyone plays the same hole at once and the server rolls every putt with integer physics
+  that each browser replays bit-for-bit, so all players see the same roll. **Smooth multiplayer:**
+  your own putt starts the instant you release (the server only confirms it), other golfers are
+  drawn from a jitter-buffered timeline of their positions (no stutter or teleporting), position
+  updates are small, sequenced and rate-limited by a per-player token bucket, the server fans
+  out to a game's lobby concurrently with a per-socket timeout, and a dropped room socket shows
+  "Reconnecting…", rejoins the game lobby automatically and gets your scorecard back. Falls back
+  to a 2D map view when WebGL isn't available. **Third-party assets (new, flagged for review):**
+  three.js r186 (MIT) is vendored unminified in `games/vendor/` (only import paths rewritten;
+  `tools/vendor_three.py` reproduces it) and the CC0 Kenney models live in `games/golf/` with
+  their license text; both load only from `127.0.0.1` and only when Mini Golf opens. The
+  `/games/` route now also serves `vendor/<name>.js` and `golf/<name>.glb|json|png` (strict
+  allowlist, one folder level, ETag-revalidated). **Privacy:** golf messages carry only shot
+  integers, positions on the course, a character id and an animation id.
 - **1.7.0** — **One-click update.** A new **Update** button in the top bar shows when new
   commits are waiting ("Update · 3 new", with the commit list on hover) and, on click, pulls them
   and restarts Claude HQ, then reloads the page. It only ever fast-forwards: it refuses if you have
@@ -400,6 +418,10 @@ Made with [Claude Code](https://claude.com/claude-code).
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Mini Golf uses [three.js](https://threejs.org/) (MIT, `games/vendor/LICENSE-three.txt`) and models
+from [Kenney](https://kenney.nl/) — Minigolf Kit and Mini Characters — which are public domain (CC0,
+`games/golf/LICENSE-kenney.txt`). Thank you, Kenney!
 
 Pokémon names and sprites are the property of Nintendo / Game Freak / The Pokémon Company; the
 "pokemon" creature pack hotlinks sprites from the public [PokéAPI](https://pokeapi.co/) sprite library

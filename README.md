@@ -293,6 +293,8 @@ and feature guide.
   - **Call overlay.** While you're in an Arena voice call on any view but the Arena, a small panel floats in the
     corner (drag it anywhere, collapse it): who's in the call and who's talking, mute, camera, screen share and
     leave, and everyone's video. The videos move back to the Arena's voice panel when you open it.
+    Voice no longer shows ghost duplicates of people who reloaded or reconnected: a rejoin replaces their old
+    entry, and anyone who stops answering (and isn't connected) drops off within about 20 seconds.
   - **Mini Golf ghosts.** Once you've finished a hole you're a ghost: see-through, no shadow, a faint name tag, and
     you can roam the hole while the others play. Other finished players are fainter still, so nobody blocks the view.
   - **Real-time multiplayer foundation** (shared by Platformer Rush and Blaster Arena): a

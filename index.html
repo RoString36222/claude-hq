@@ -14305,13 +14305,47 @@ function voiceOnLeave(m){
   voiceRender();
 }
 
+// Is our call with this peer actually up? (A stale entry never gets here.)
+function voiceLive(id){ var p = VCHAN.peers[id]; return !!(p && p.pc && p.pc.connectionState === "connected"); }
+// Someone (re)joined as a new peer: a reload or reconnect gives their page a new peer id, and their old one can
+// outlive it in our roster when the lobby saw the new socket before the old one left. Drop their other entries
+// that never connected; a second tab or machine of theirs that IS connected stays.
+function voiceDropStale(userId, keepPeer){
+  Object.keys(VCHAN.roster).forEach(function(id){
+    var r = VCHAN.roster[id];
+    if(id === keepPeer || r.you || r.userId !== userId || voiceLive(id)) return;
+    delete VCHAN.roster[id]; voiceClosePeer(id);
+  });
+}
+// Every so often ask who's in voice; whoever doesn't answer within a few seconds and isn't connected to us is
+// gone (closed the tab, lost the network, reloaded). Pages from before this answer "who" too.
+var VCHAN_SWEEP_EVERY = 15000, VCHAN_SWEEP_WAIT = 5000;
+function voiceSweep(){
+  if(!ARENA.sock || ARENA.sock.readyState !== 1) return;
+  var asked = Date.now();
+  voiceSay("who");
+  setTimeout(function(){
+    var changed = false;
+    Object.keys(VCHAN.roster).forEach(function(id){
+      var r = VCHAN.roster[id];
+      if(r.you || (r.seen || 0) >= asked) return;
+      if(voiceLive(id)){ r.seen = Date.now(); return; }
+      delete VCHAN.roster[id]; voiceClosePeer(id); changed = true;
+    });
+    if(changed) voiceRender();
+  }, VCHAN_SWEEP_WAIT);
+}
+setInterval(voiceSweep, VCHAN_SWEEP_EVERY);
+
 function voiceOnAnnounce(m){
   var d = m.data, from = m.from;
   if(!d || typeof d !== "object" || !from || typeof from.userId !== "string") return;
   if(d.op === "who"){ if(VCHAN.on) voiceSay("here", {muted:VCHAN.muted, cam:!!VCHAN.vidStream, screen:VCHAN.screen}); return; }
   if(typeof d.peer !== "string" || !VCHAN_PEER_RE.test(d.peer) || d.peer === VCHAN.peer) return;
+  if(VCHAN.roster[d.peer]) VCHAN.roster[d.peer].seen = Date.now();
   if(d.op === "join" || d.op === "here"){
-    VCHAN.roster[d.peer] = {userId:from.userId, who:arenaWho(from), muted:!!d.muted, cam:d.cam === true, screen:d.cam === true && d.screen === true};
+    if(!VCHAN.roster[d.peer]) voiceDropStale(from.userId, d.peer);
+    VCHAN.roster[d.peer] = {userId:from.userId, who:arenaWho(from), muted:!!d.muted, cam:d.cam === true, screen:d.cam === true && d.screen === true, seen:Date.now()};
     if(d.op === "join") voicePair(d.peer, from);
   } else if(d.op === "leave"){
     delete VCHAN.roster[d.peer];
@@ -14346,7 +14380,9 @@ function voiceOnSignal(m){
   if(!VCHAN.on || !d || typeof d !== "object" || !from || typeof from.userId !== "string") return;
   if(d.toPeer !== VCHAN.peer || typeof d.fromPeer !== "string" || !VCHAN_PEER_RE.test(d.fromPeer)) return;
   var peer = d.fromPeer;
-  if(!VCHAN.roster[peer]) VCHAN.roster[peer] = {userId:from.userId, who:arenaWho(from), muted:!!d.muted, cam:d.cam === true, screen:d.cam === true && d.screen === true};
+  if(!VCHAN.roster[peer]){ voiceDropStale(from.userId, peer);
+    VCHAN.roster[peer] = {userId:from.userId, who:arenaWho(from), muted:!!d.muted, cam:d.cam === true, screen:d.cam === true && d.screen === true}; }
+  VCHAN.roster[peer].seen = Date.now();
   if(d.kind === "hello"){
     voicePair(peer, from);
   } else if(d.kind === "offer" && typeof d.sdp === "string" && d.sdp.length < 20000){

@@ -702,20 +702,20 @@ details.stalewrap .hint{text-transform:none;letter-spacing:0}
 .dex-stats,.quests-sub,.arena-sub{color:var(--faint);font-size:13px;font-weight:500}
 
 /* =================== pokedex =================== */
-.dex-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:10px}
+.dex-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
 .dexcard{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);
-  padding:16px 12px 12px;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;position:relative}
+  padding:20px 14px 14px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;position:relative}
 .dexcard.caught{cursor:pointer;transition:transform var(--t-med) var(--ease),border-color var(--t-fast)}
 .dexcard.caught:hover{transform:translateY(-2px);border-color:var(--line2)}
 .dexcard.uncaught{background:var(--panel2);box-shadow:none;border-style:dashed}
 .dexcard.uncaught .dex-name{color:var(--faint)}
-.dex-sprite{width:72px;height:72px;display:grid;place-items:center}
+.dex-sprite{width:var(--dex-spr,140px);height:var(--dex-spr,140px);display:grid;place-items:center}
 .dexcard.uncaught .dex-sprite .mon-svg{filter:brightness(0) saturate(0);opacity:.22}
 @media (prefers-color-scheme: dark){.dexcard.uncaught .dex-sprite .mon-svg{filter:brightness(0) invert(1) saturate(0);opacity:.2}}
-.dex-name{font-weight:650;font-size:13px}
+.dex-name{font-weight:650;font-size:15px}
 .dex-num{position:absolute;top:8px;left:10px;font:600 11px var(--mono);color:var(--faint)}
 .dex-shiny{position:absolute;top:8px;right:10px;color:var(--gold);font-size:13px}
-.dex-statrow{font-size:11px;color:var(--muted);display:flex;flex-direction:column;gap:1px;font-variant-numeric:tabular-nums}
+.dex-statrow{font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:1px;font-variant-numeric:tabular-nums}
 .dex-coverage{font-size:13px;color:var(--muted)}
 .dex-coverage b{color:var(--ink);font-variant-numeric:tabular-nums}
 .dex-coverage .miss{color:var(--faint)}
@@ -10428,6 +10428,8 @@ function renderPokedex(d){
   view.forEach(function(r){ grid.appendChild(buildDexCard(r.sp,r.i,r.cr)); });
   setupRoving(grid, '.dexcard[role="button"]');
 }
+// Pok\u00e9dex sprite size: big cards, about six per row on a laptop screen, fewer on narrow ones.
+var DEX_SPR = 140;
 function buildDexCard(sp,i,cr){
     var caught=!!sp.caught;
     var maxStage = creatureStage(cr);  // high-water (monotonic), matches sprite/name
@@ -10436,10 +10438,10 @@ function buildDexCard(sp,i,cr){
     if(caught && sp.shiny){ var sh=el("div","dex-shiny"); sh.textContent="✦"; sh.title="Shiny caught"; card.appendChild(sh); }
     var spr=el("div","dex-sprite");
     // caught pokemon -> real sprite; everything else / uncaught -> deterministic silhouette (greyed via CSS)
-    if(caught && isPokePack()){ spr.innerHTML=pokeImgHTML(cr, 72); }
-    else if(caught && cfg().creaturePack==="aniimo"){ spr.innerHTML=animoImgHTML(cr, 72); }
-    else if(cfg().creaturePack==="village"){ spr.innerHTML=troopImgHTML(cr, 72); }
-    else { spr.innerHTML=monsterSVG(creatureSeed(cr), creatureTypeHue(cr), Math.max(0,Math.min(4,maxStage)), caught&&!!sp.shiny, 72); }
+    if(caught && isPokePack()){ spr.innerHTML=pokeImgHTML(cr, DEX_SPR); }
+    else if(caught && cfg().creaturePack==="aniimo"){ spr.innerHTML=animoImgHTML(cr, DEX_SPR); }
+    else if(cfg().creaturePack==="village"){ spr.innerHTML=troopImgHTML(cr, DEX_SPR); }
+    else { spr.innerHTML=monsterSVG(creatureSeed(cr), creatureTypeHue(cr), Math.max(0,Math.min(4,maxStage)), caught&&!!sp.shiny, DEX_SPR); }
     card.appendChild(spr);
     var nm=el("div","dex-name");
     nm.textContent = !caught ? "???" : (isPokePack() ? pokeCurrentName(cr) : cfg().creaturePack==="aniimo" ? animoLabel(cr) : cfg().creaturePack==="village" ? troopLabel(cr) : (sp.speciesName||sp.name||"Monster"));

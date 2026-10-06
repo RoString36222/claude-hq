@@ -366,6 +366,7 @@ _NON_HUMAN_PREFIXES = (
     "<system-reminder",
     "Caveat:",
     "This session is being continued",
+    "[Request interrupted",  # Esc marker: "...by user]", "...by user for tool use]"
 )
 
 _PASTED_RE = re.compile(r"<pasted_content\b[^>]*>.*?</pasted_content>", re.DOTALL)
@@ -464,6 +465,12 @@ def is_real_human_prompt(content):
     return True
 
 
+def _is_interrupt_marker(content):
+    """True for the "[Request interrupted by user...]" note Claude Code writes when
+    the user presses Esc: it ends the turn but is not a prompt."""
+    return _human_text(content).lstrip().startswith("[Request interrupted")
+
+
 def truncate(s, n):
     if s is None:
         return ""
@@ -553,8 +560,10 @@ def tool_label(tool_use):
 # --------------------------------------------------------------------------- #
 
 def find_transcript(session_id):
-    """Locate the JSONL for a session id anywhere under projects."""
-    if not session_id:
+    """Locate the JSONL for a session id anywhere under projects. Only a
+    UUID-shaped id is looked up: anything else (glob metacharacters, path
+    separators) returns None before it reaches glob."""
+    if not isinstance(session_id, str) or not _UUID_RE.fullmatch(session_id):
         return None
     matches = glob.glob(os.path.join(PROJECTS_DIR, "*", f"{session_id}.jsonl"))
     return matches[0] if matches else None
@@ -579,47 +588,108 @@ def _extract_links_from_text(text, links, seen):
 # Cost model (ESTIMATE). Prices per 1,000,000 tokens: (input, output)
 # --------------------------------------------------------------------------- #
 
-_PRICES = {
-    "opus": (15.0, 75.0),
-    "fable": (15.0, 75.0),
-    "sonnet": (3.0, 15.0),
-    "haiku": (0.8, 4.0),
-}
+# Anthropic first-party list prices (USD / 1M tokens), checked 2026-10.
+# Ordered most-specific first: the first key found in the lowercased model id
+# wins, so "opus-5-5" must precede "opus-5". The trailing bare family names are
+# fallbacks for ids not listed (e.g. Opus 4 / 4.1, Haiku 3.5).
+_PRICES = (
+    ("fable-5-1", (10.0, 50.0)),
+    ("mythos-5-1", (10.0, 50.0)),
+    ("fable", (10.0, 50.0)),
+    ("mythos", (10.0, 50.0)),
+    ("opus-5-5", (4.0, 20.0)),
+    ("opus-5", (5.0, 25.0)),
+    ("opus-4-8", (5.0, 25.0)),
+    ("opus-4-7", (5.0, 25.0)),
+    ("opus-4-6", (5.0, 25.0)),
+    ("opus-4-5", (5.0, 25.0)),
+    ("opus", (15.0, 75.0)),
+    ("sonnet-5", (2.0, 10.0)),
+    ("sonnet", (3.0, 15.0)),
+    ("haiku-4", (1.0, 5.0)),
+    ("haiku", (0.8, 4.0)),
+)
+_DEFAULT_PRICE = (3.0, 15.0)  # unknown / empty -> Sonnet 4.x pricing
+
+# Cache reads are 0.1x input, except where a model prices them lower.
+_CACHE_READ_MULT = (
+    ("fable-5-1", 0.025),
+    ("mythos-5-1", 0.025),
+    ("opus-5-5", 0.05),
+)
+_CACHE_WRITE_5M = 1.25  # 5-minute TTL write (also the undifferentiated default)
+_CACHE_WRITE_1H = 2.0   # 1-hour TTL write
 
 
 def _price_for(model):
     """Return (input_price, output_price) per 1e6 tokens for a model string."""
     m = (model or "").lower()
-    for key in ("opus", "fable", "sonnet", "haiku"):
+    for key, price in _PRICES:
         if key in m:
-            return _PRICES[key]
-    return _PRICES["sonnet"]  # unknown / empty -> sonnet pricing
+            return price
+    return _DEFAULT_PRICE
+
+
+def _cache_read_mult(model):
+    """Cache-read price as a fraction of the model's input price."""
+    m = (model or "").lower()
+    for key, mult in _CACHE_READ_MULT:
+        if key in m:
+            return mult
+    return 0.1
 
 
 def _usage_cost(model, usage):
-    """Return (est_cost_usd, output, input, cache_read, cache_creation) for one record."""
+    """Return (est_cost_usd, output, input, cache_read, cache_creation) for one record.
+
+    Cache writes are priced by TTL when the usage carries the
+    cache_creation.ephemeral_5m/1h_input_tokens breakdown (5m at 1.25x input,
+    1h at 2x); any undifferentiated remainder is priced at 1.25x."""
     if not isinstance(usage, dict):
         return 0.0, 0, 0, 0, 0
     in_price, out_price = _price_for(model)
-    it = int(usage.get("input_tokens") or 0)
-    ot = int(usage.get("output_tokens") or 0)
-    cr = int(usage.get("cache_read_input_tokens") or 0)
-    cc = int(usage.get("cache_creation_input_tokens") or 0)
+
+    def num(d, k):
+        try:
+            return max(0, int(d.get(k) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    it = num(usage, "input_tokens")
+    ot = num(usage, "output_tokens")
+    cr = num(usage, "cache_read_input_tokens")
+    cc = num(usage, "cache_creation_input_tokens")
+    brk = usage.get("cache_creation")
+    c5 = c1h = 0
+    if isinstance(brk, dict):
+        c5 = num(brk, "ephemeral_5m_input_tokens")
+        c1h = num(brk, "ephemeral_1h_input_tokens")
+    cc = max(cc, c5 + c1h)
+    rest = cc - c5 - c1h
     cost = (
         it * in_price
-        + cr * in_price * 0.1
-        + cc * in_price * 1.25
+        + cr * in_price * _cache_read_mult(model)
+        + (c5 + rest) * in_price * _CACHE_WRITE_5M
+        + c1h * in_price * _CACHE_WRITE_1H
         + ot * out_price
     ) / 1_000_000.0
     return cost, ot, it, cr, cc
 
 
 # Error signatures that mean a session needs attention (case-insensitive).
+# Matched only against records that already ARE API errors (see
+# _record_error_sig); tool_result text such as a user's permission denial is
+# never scanned, so it has no signature here.
 _ERROR_SIGS = (
     "organization has disabled", "disabled claude", "rate limit", "overloaded",
     "invalid api key", "credit balance", "billing", "quota", "insufficient",
-    "authentication_error", "permission denied by user",
+    "authentication_error", "spend limit", "login expired", "/login",
+    "prompt is too long",
 )
+
+# Signature for a flagged API-error record whose text matches nothing above:
+# the flag alone already means the session needs attention.
+_GENERIC_ERROR_SIG = "api_error"
 
 
 def _match_error(text):
@@ -630,6 +700,44 @@ def _match_error(text):
         if sig in low:
             return sig
     return None
+
+
+def _record_error_sig(o):
+    """Error signature for a transcript record that IS an API error, else None.
+
+    Only two record shapes qualify: a system record with subtype "api_error"
+    (skipped while Claude Code is still retrying it), and an assistant record
+    Claude Code flagged isApiErrorMessage (the synthetic error reply). Ordinary
+    assistant prose or system notes that merely mention "billing" or "rate
+    limit" never count. A qualifying record whose text matches no known
+    signature still returns the generic "api_error" signature."""
+    if not isinstance(o, dict):
+        return None
+    typ = o.get("type")
+    parts = []
+    if typ == "system":
+        if o.get("subtype") != "api_error":
+            return None
+        ra, mr = o.get("retryAttempt"), o.get("maxRetries")
+        if (isinstance(ra, int) and isinstance(mr, int) and not isinstance(ra, bool)
+                and not isinstance(mr, bool) and ra < mr):
+            return None  # a retry in progress; the final failure is recorded separately
+        content = o.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        err = o.get("error")
+        if err is not None:
+            parts.append(err if isinstance(err, str) else json.dumps(err, default=str))
+    elif typ == "assistant":
+        if o.get("isApiErrorMessage") is not True:
+            return None
+        parts.append(_human_text((o.get("message") or {}).get("content")))
+        err = o.get("error")
+        if isinstance(err, str):
+            parts.append(err)
+    else:
+        return None
+    return _match_error(" ".join(p for p in parts if p)) or _GENERIC_ERROR_SIG
 
 
 # --------------------------------------------------------------------------- #
@@ -691,6 +799,7 @@ def _scan_file_uncached(path):
         return agg
 
     seen_links = set()
+    seen_usage = set()  # message.id / requestId whose usage was already counted
     last_assistant_text = None
     last_assistant_tool = None
     busy = []        # (start, end) epoch secs when Claude or the user was at it
@@ -767,6 +876,8 @@ def _scan_file_uncached(path):
                         if turn_ended or (not o.get("isMeta") and _opens_turn(content)):
                             turn_floor = t
                             turn_ended = False
+                    if _is_interrupt_marker(content):
+                        open_tools.clear()  # Esc ends the turn and any orphaned tool
                     if is_real_human_prompt(content):
                         open_tools.clear()  # a new human turn ends any orphaned tool
                         cleaned = clean_prompt(content)
@@ -775,11 +886,12 @@ def _scan_file_uncached(path):
                             agg["first_prompt"] = cleaned
                         if ts and (agg["last_activity"] is None or ts > agg["last_activity"]):
                             agg["last_activity"] = ts
-                        _extract_links_from_text(content, agg["links"], seen_links)
+                        text = _human_text(content)
+                        _extract_links_from_text(text, agg["links"], seen_links)
                         if diso:
                             d = agg["per_day"].setdefault(diso, _new_day())
                             d["prompts"] += 1
-                            for _ in _ARTIFACT_RE.finditer(content):
+                            for _ in _ARTIFACT_RE.finditer(text):
                                 d["artifacts"] += 1
                             if lhour is not None:
                                 d["hours"][lhour] = d["hours"].get(lhour, 0) + 1
@@ -798,19 +910,31 @@ def _scan_file_uncached(path):
                     model = msg.get("model") or ""
                     if model:
                         agg["model"] = model
-                    cost, ot, it, cr, cc = _usage_cost(model, msg.get("usage") or {})
-                    agg["cost"] += cost
-                    agg["tok_output"] += ot
-                    agg["tok_input"] += it
-                    agg["tok_cacheRead"] += cr
-                    agg["tok_cacheCreation"] += cc
+                    sig = _record_error_sig(o)
+                    if sig and ts is not None:
+                        agg["errors"].append((ts.timestamp(), sig))
                     d = agg["per_day"].setdefault(diso, _new_day()) if diso else None
-                    if d is not None:
-                        d["cost"] += cost
-                        d["output"] += ot
-                        d["input"] += it
-                        d["cacheRead"] += cr
-                        d["cacheCreation"] += cc
+                    # One API response is written as several records (one per
+                    # content block) that all repeat the same usage; count it
+                    # once per message.id (else requestId; neither -> count).
+                    ukey = msg.get("id") or o.get("requestId")
+                    if not isinstance(ukey, str) or not ukey:
+                        ukey = None
+                    if ukey is None or ukey not in seen_usage:
+                        if ukey is not None:
+                            seen_usage.add(ukey)
+                        cost, ot, it, cr, cc = _usage_cost(model, msg.get("usage") or {})
+                        agg["cost"] += cost
+                        agg["tok_output"] += ot
+                        agg["tok_input"] += it
+                        agg["tok_cacheRead"] += cr
+                        agg["tok_cacheCreation"] += cc
+                        if d is not None:
+                            d["cost"] += cost
+                            d["output"] += ot
+                            d["input"] += it
+                            d["cacheRead"] += cr
+                            d["cacheCreation"] += cc
                     if isinstance(blocks, list):
                         texts = []
                         last_tool = None
@@ -822,9 +946,6 @@ def _scan_file_uncached(path):
                                 txt = b.get("text") or ""
                                 texts.append(txt)
                                 _extract_links_from_text(txt, agg["links"], seen_links)
-                                sig = _match_error(txt)
-                                if sig and ts is not None:
-                                    agg["errors"].append((ts.timestamp(), sig))
                                 if d is not None:
                                     for _ in _ARTIFACT_RE.finditer(txt):
                                         d["artifacts"] += 1
@@ -882,10 +1003,10 @@ def _scan_file_uncached(path):
 
                 elif typ == "system":
                     content = o.get("content")
+                    sig = _record_error_sig(o)
+                    if sig and ts is not None:
+                        agg["errors"].append((ts.timestamp(), sig))
                     if isinstance(content, str):
-                        sig = _match_error(content)
-                        if sig and ts is not None:
-                            agg["errors"].append((ts.timestamp(), sig))
                         if "claude.ai" in content or "github.com" in content:
                             _extract_links_from_text(content, agg["links"], seen_links)
                     # Fatigue: a finished turn covers its own duration (clamped),
@@ -3723,8 +3844,21 @@ def _iter_transcript_events(path):
                             })
                             i += 1
                 elif typ == "system":
-                    content = o.get("content")
-                    if isinstance(content, str) and _match_error(content):
+                    # Same rule as the session's "needs" status: only a final
+                    # system api_error record is an error event.
+                    if _record_error_sig(o):
+                        content = o.get("content")
+                        if not (isinstance(content, str) and content.strip()):
+                            err = o.get("error")
+                            if isinstance(err, dict) and isinstance(
+                                    err.get("message"), str):
+                                content = err["message"]
+                            elif isinstance(err, str):
+                                content = err
+                            elif err is not None:
+                                content = json.dumps(err, default=str)
+                            else:
+                                content = "API error"
                         events.append({
                             "i": i, "t": tiso, "role": "system",
                             "text": truncate(strip_markdown(content), 1200),
@@ -4174,7 +4308,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/transcript/"):
             sid = path[len("/api/transcript/"):]
-            if not sid or "/" in sid or ".." in sid or "\\" in sid:
+            if not _UUID_RE.fullmatch(sid or ""):
                 self._send(404, json.dumps({"error": "unknown session"}))
                 return
             tpath = find_transcript(sid)
@@ -4219,7 +4353,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/session/") and path.endswith("/export.md"):
             sid = path[len("/api/session/"):-len("/export.md")]
-            if not sid or "/" in sid or ".." in sid or "\\" in sid:
+            if not _UUID_RE.fullmatch(sid or ""):
                 self._send(404, json.dumps({"error": "unknown session"}))
                 return
             tpath = find_transcript(sid)
@@ -4238,8 +4372,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/session/"):
             sid = path[len("/api/session/"):]
-            # reject empty / path-traversal-ish ids outright
-            if not sid or "/" in sid or ".." in sid or "\\" in sid:
+            # only a UUID-shaped session id is ever looked up
+            if not _UUID_RE.fullmatch(sid or ""):
                 self._send(404, json.dumps({"error": "unknown session"}))
                 return
             try:

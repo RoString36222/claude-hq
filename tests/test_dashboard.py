@@ -14,10 +14,10 @@ import dashboard  # noqa: E402
 
 class PriceForTests(unittest.TestCase):
     def test_known_models_match_by_substring(self):
-        self.assertEqual(dashboard._price_for("claude-opus-4-8"), (15.0, 75.0))
-        self.assertEqual(dashboard._price_for("claude-sonnet-5"), (3.0, 15.0))
-        self.assertEqual(dashboard._price_for("claude-haiku-4-5"), (0.8, 4.0))
-        self.assertEqual(dashboard._price_for("some-fable-thing"), (15.0, 75.0))
+        self.assertEqual(dashboard._price_for("claude-opus-4-8"), (5.0, 25.0))
+        self.assertEqual(dashboard._price_for("claude-sonnet-5"), (2.0, 10.0))
+        self.assertEqual(dashboard._price_for("claude-haiku-4-5"), (1.0, 5.0))
+        self.assertEqual(dashboard._price_for("some-fable-thing"), (10.0, 50.0))
 
     def test_unknown_and_empty_fall_back_to_sonnet(self):
         self.assertEqual(dashboard._price_for("gpt-4o"), (3.0, 15.0))

@@ -1,124 +1,201 @@
-/* Valley: Creature battles. Your team is your live session creatures (the same ones the Gym
- * scores). Each turn you pick which creature attacks; damage uses the Gym's real 18-type
- * chart (window.eff). Fight the day's wild team, or a friend's team: in an Arena room, "Share
- * my team" sends only species numbers and types (evolution announcements already share
- * species), and friends' shared teams appear as challengers. */
+/* Valley: Creature Battles (solo). A Pokemon-style battle with REAL Pokemon data: your team
+ * is your live session creatures (the same ones the Gym scores), each battling as the
+ * Pokemon its sprite shows, with that Pokemon's real types, base stats and level-up moves
+ * (games/pokedata.js). Engine + battle screen: games/pokebattle.js (HQV.pk).
+ * Fight the day's wild team, or a friend's team: in an Arena room, "Share my team" sends
+ * only species numbers and evolution stages (evolution announcements already share those),
+ * and the receiver rebuilds every stat and move from the data, never from the message. */
 (function(){
 "use strict";
 var HQV = window.HQV; if(!HQV) return;
-var game = {id:"battle", name:"Creature Battles", icon:"⚔️", desc:"Type matchups with your session creatures"};
+var game = {id:"battle", name:"Creature Battles", icon:"⚔️", desc:"Pokémon battles with real moves, stats and types"};
 var api = null, root = null, fight = null, challengers = {};
-var TYPES = ["Normal","Fire","Water","Grass","Electric","Ice","Fighting","Poison","Ground","Flying","Psychic","Bug","Rock","Ghost","Dragon","Dark","Steel","Fairy"];
 
-function effOf(a, d){ return typeof window.eff==="function" ? window.eff(a, d) : 1; }
-function myTeam(){
-  var team = typeof window.gymTeam==="function" ? window.gymTeam() : [];
+function pk(){ return HQV.pk && HQV.pk.data() ? HQV.pk : null; }
+// A creature -> the battle spec both engines understand (no transcript data in it).
+function specOf(cr, name){
+  cr = cr || {};
+  var sp = typeof window.pokeIdx === "function" ? window.pokeIdx(cr) : (((cr.species|0)%48)+48)%48;
+  var st = typeof window.creatureStage === "function" ? (window.creatureStage(cr)|0) : 2;
+  var br = null, mg = null;
+  try { if(typeof window.branchFinalDex === "function") br = window.branchFinalDex(cr); } catch(e){}
+  try { if(typeof window.pokeMega === "function") mg = window.pokeMega(cr); } catch(e){}
+  return {sp:sp, st:Math.max(0, Math.min(4, st)), br:br, mg:mg, sh:!!cr.shiny, name:String(name||"").slice(0,24)};
+}
+function myCreatures(){
+  var team = typeof window.gymTeam === "function" ? window.gymTeam() : [];
   if(!team.length){
     // No live team: borrow your three most recent creatures.
-    team = (api.activity().sessions||[]).slice(0,3).map(function(s){ var cr=s.creature||{};
-      return {cr:cr, type: typeof window.creatureType==="function" ? window.creatureType(cr) : "Normal",
-              name: typeof window.creatureSpecies==="function" ? window.creatureSpecies(cr) : "Creature"}; });
+    team = (api.activity().sessions||[]).slice(0,3).map(function(s){ var cr = s.creature||{};
+      return {cr:cr, name: typeof window.creatureSpecies === "function" ? window.creatureSpecies(cr) : "Creature"}; });
   }
-  return team.slice(0,6).map(function(m){
-    var stage = typeof window.creatureStage==="function" ? (window.creatureStage(m.cr)|0) : 1;
-    return {name:m.name, type:m.type||"Normal", species:m.cr.species|0, hp:30+stage*12, max:30+stage*12, atk:8+stage*3};
-  });
+  return team.slice(0,6);
 }
-function wildTeam(){
-  var r = api.rng("wild:"+api.day()), n = 3, lvl = 1 + Math.floor(api.activity().weekActiveDays/2), t = [];
-  for(var i=0;i<n;i++){ var ty = TYPES[Math.floor(r()*TYPES.length)];
-    t.push({name:"Wild "+ty+" sprite", type:ty, species:-1, hp:34+lvl*10, max:34+lvl*10, atk:9+lvl*2}); }
-  return t;
+function mySpecs(){ return myCreatures().map(function(m){ return specOf(m.cr, m.name); }); }
+function wildSpecs(mine){
+  var r = api.rng("wild:"+api.day()), avg = 0;
+  mine.forEach(function(s){ avg += s.st; }); avg = mine.length ? avg/mine.length : 1;
+  var out = [];
+  for(var i=0;i<3;i++){
+    var st = Math.max(0, Math.min(4, Math.round(avg) - (r() < 0.4 ? 1 : 0)));
+    out.push({sp: Math.floor(r()*48), st: st, br: null, mg: null, sh: r() < 1/64, name: ""});
+  }
+  // Branching lines pick a branch at random too.
+  var d = pk().data();
+  out.forEach(function(s){ var b = d.branches[String(s.sp)]; if(b) s.br = b[Math.floor(r()*b.length)]; });
+  return out;
 }
-function begin(foe, label){
-  var mine = myTeam();
+function seen(mon){
+  var b = api.save.battle; if(!Array.isArray(b.seen)) b.seen = [];
+  if(b.seen.indexOf(mon.dex) < 0){ b.seen.push(mon.dex); if(b.seen.length > 200) b.seen = b.seen.slice(-200); api.persist(); }
+}
+function copy(o){ return JSON.parse(JSON.stringify(o)); }
+function view(){
+  var s = fight.state, evo = 0;
+  var cr = fight.crs[s.sides[0].active];
+  if(cr && typeof window.creatureStagePct === "function") evo = window.creatureStagePct(cr);
+  return {me: copy(s.sides[0]), foe: copy(s.sides[1]), evo: evo};
+}
+function who(side, name, sendOut){
+  if(side === 0) return sendOut ? "Go! "+name : name;
+  if(fight.wild) return sendOut ? "A wild "+name+" appeared" : "The wild "+name;
+  return sendOut ? fight.label+" sent out "+name : "The foe's "+name;
+}
+
+function begin(foeSpecs, label, wild){
+  var P = pk();
+  if(!P){ api.toast("Battle data is still loading"); return; }
+  var mine = myCreatures();
   if(!mine.length){ api.toast("You need at least one creature (a session) to battle"); return; }
-  fight = {mine:mine, foe:foe, label:label, log:["A battle against "+label+" begins!"], over:false, foeIdx:0};
-  render();
+  var a = mine.map(function(m){ return P.buildMon(specOf(m.cr, m.name)); }), b = foeSpecs.map(P.buildMon);
+  // One seeded stream per battle (reproducible from fight.seed), as the duel server does with its own RNG.
+  var seed = api.day()+":"+Date.now();
+  fight = {state: P.newBattle(a, b), crs: mine.map(function(m){ return m.cr; }), label: label, wild: !!wild, over:false,
+           seed: seed, rand: api.rng("battle:"+seed), ai: api.rng("ai:"+seed)};
+  P.preload(a.concat(b));
+  b.forEach(seen);
+  root.textContent = "";
+  var head = api.mk("div", "vg-row");
+  head.appendChild(api.mk("span", "vg-muted", wild ? "Today's wild team · 3 Pokémon" : "vs "+label));
+  root.appendChild(head);
+  var sc = fight.scene = new P.Scene(root, {
+    runLabel: "RUN",
+    onMove: function(i){ choose({k:"move", i:i}); },
+    onSwitch: function(i){ if(sc.mode === "replace") replaceMine(i); else choose({k:"switch", to:i}); },
+    onRun: function(){ run(); }
+  });
+  if(fight.paused) sc.pause();
+  sc.setView(view());
+  var foe = b[0];
+  sc.intro([who(1, foe.name, true)+"!", "Go! "+a[0].name+"!"]).then(function(){ prompt(); });
 }
-function alive(t){ return t.filter(function(m){ return m.hp>0; }); }
-function hit(att, def){
-  var m = effOf(att.type, def.type), dmg = Math.max(1, Math.round(att.atk * m * (0.85 + Math.random()*0.3)));
-  def.hp = Math.max(0, def.hp - dmg);
-  var tag = m >= 2 ? " It's super effective!" : m === 0 ? " It had no effect." : m < 1 ? " Not very effective." : "";
-  return att.name+" hits "+def.name+" for "+dmg+"."+tag;
+function prompt(){
+  if(!fight || fight.over) return;
+  var P = pk(), s = fight.state;
+  if(P.needsReplace(s).indexOf(0) >= 0) fight.scene.setMode("replace");
+  else fight.scene.setMode("main");
 }
-function turn(i){
-  if(!fight || fight.over || fight.paused) return;
-  var me = fight.mine[i], foes = alive(fight.foe); if(!me || me.hp<=0 || !foes.length) return;
-  var target = foes[0];
-  fight.log.push(hit(me, target));
-  if(!alive(fight.foe).length) return end(true);
-  // foe strikes the creature it is best against
-  var att = alive(fight.foe)[0], mine = alive(fight.mine);
-  mine.sort(function(a,b){ return effOf(att.type,b.type)-effOf(att.type,a.type); });
-  fight.log.push(hit(att, mine[0]));
-  if(!alive(fight.mine).length) return end(false);
-  render();
+function choose(act){
+  if(!fight || fight.over || fight.scene.busy) return;
+  var P = pk(), s = fight.state, sc = fight.scene;
+  var mine = P.legal(s, 0, act); if(!mine) return;
+  var foe = P.aiAct(s, 1, fight.ai);
+  var events = P.resolveTurn(s, mine, foe, fight.rand);
+  sc.play(events, 0, who).then(afterTurn);
+}
+function afterTurn(){
+  if(!fight || fight.scene.dead) return;
+  var P = pk(), s = fight.state, sc = fight.scene;
+  if(s.over) return end(s.winner === 0);
+  // The foe sends in its next Pokemon by itself; you pick yours.
+  if(P.needsReplace(s).indexOf(1) >= 0){
+    var next = P.alive(s, 1)[0], ev = P.replace(s, 1, next);
+    seen(s.sides[1].team[next]);
+    return sc.play(ev, 0, who).then(function(){ sc.setView(view()); prompt(); });
+  }
+  sc.setView(view());
+  prompt();
+}
+function replaceMine(i){
+  var P = pk(), s = fight.state, sc = fight.scene;
+  if(!P.legal(s, 0, {k:"switch", to:i})) return;
+  var ev = P.replace(s, 0, i);
+  sc.play(ev, 0, who).then(afterTurn);
+}
+function run(){
+  if(!fight || fight.over || fight.scene.busy) return;
+  var sc = fight.scene;
+  fight.over = true;
+  sc.setMode("busy");
+  sc.say(fight.wild ? "Got away safely!" : "You left the battle.").then(function(){ finishScreen(null); });
 }
 function end(won){
   fight.over = true;
-  var b = api.save.battle; b.wins=(b.wins|0)+(won?1:0); b.losses=(b.losses|0)+(won?0:1);
-  if(won && fight.label==="the wild team" && b.wildDay !== api.day()){ b.wildDay = api.day(); api.inv.add("shell", 1); fight.log.push("Daily win! You found a Bug Shell."); }
+  var b = api.save.battle; b.wins = (b.wins|0)+(won ? 1 : 0); b.losses = (b.losses|0)+(won ? 0 : 1);
+  var lines = [won ? "You won the battle!" : "Your team fainted. They'll be fine after a rest."];
+  if(won && fight.wild && b.wildDay !== api.day()){ b.wildDay = api.day(); api.inv.add("shell", 1); lines.push("Daily win! You found a Bug Shell."); }
   api.persist();
-  fight.log.push(won ? "You won!" : "Your team fainted. They'll be fine after a rest.");
-  if(won && api.inArenaRoom() && fight.label!=="the wild team") api.say({g:"battle", op:"result", won:true, vs:fight.label.slice(0,40)});
-  render();
+  if(won && api.inArenaRoom() && !fight.wild) api.say({g:"battle", op:"result", won:true, vs:fight.label.slice(0,40)});
+  var sc = fight.scene;
+  lines.reduce(function(p, l){ return p.then(function(){ return sc.say(l, 900); }); }, Promise.resolve())
+    .then(function(){ finishScreen(won); });
 }
-function hpBar(m){ var w = api.mk("div","vg-meter"+(m.hp/m.max<.3?" low":"")); var f=api.mk("i"); f.style.width=Math.round(m.hp/m.max*100)+"%"; w.appendChild(f); return w; }
+function finishScreen(won){
+  if(!fight || !fight.scene || fight.scene.dead) return;
+  var label = fight.label, wild = fight.wild, foes = fight.foeSpecs;
+  fight.scene.setMode("over", [
+    {label:"Back to battles", primary:true, fn:function(){ fight.scene.destroy(); fight = null; render(); }},
+    {label:"Rematch", fn:function(){ fight.scene.destroy(); var f = foes; fight = null; begin(f, label, wild); }}
+  ]);
+}
+function startWild(){ var mine = mySpecs(); if(!pk()){ api.toast("Battle data is still loading"); return; } var f = wildSpecs(mine); begin(f, "the wild team", true); if(fight) fight.foeSpecs = f; }
+function startFriend(name){ var f = challengers[name]; begin(f, name, false); if(fight) fight.foeSpecs = f; }
+
 function render(){
-  if(!root) return;
+  if(!root || fight) return;
   root.textContent = "";
-  var b = api.save.battle;
-  root.appendChild(api.mk("p","vg-muted","Record: "+(b.wins|0)+" wins, "+(b.losses|0)+" losses. Damage uses the Gym's type chart."));
-  if(!fight || fight.over){
-    var row = api.mk("div","vg-row");
-    row.appendChild(api.btn("Battle today’s wild team", "primary", function(){ begin(wildTeam(), "the wild team"); }));
-    if(api.inArenaRoom()) row.appendChild(api.btn("Share my team in this room", "", function(){
-      var t = myTeam().map(function(m){ return {s:m.species, t:m.type, n:m.name.slice(0,24), h:m.max, a:m.atk}; });
-      if(api.say({g:"battle", op:"team", team:t})) api.toast("Team shared with the room"); }));
-    root.appendChild(row);
-    var names = Object.keys(challengers);
-    if(names.length){
-      var cl = api.mk("div","vg-row"); cl.appendChild(api.mk("span",null,"Challengers: "));
-      names.forEach(function(n){ cl.appendChild(api.btn(n, "", function(){
-        begin(challengers[n].map(function(m){ return {name:m.n, type:m.t, species:m.s, hp:m.h, max:m.h, atk:m.a}; }), n+"’s team"); })); });
-      root.appendChild(cl);
-    } else if(api.inArenaRoom()) root.appendChild(api.mk("p","vg-muted","When friends in this room share their teams, they show up here as challengers."));
-    else root.appendChild(api.mk("p","vg-muted","Join an Arena room to battle friends' teams."));
-  }
-  if(fight){
-    var arena = api.mk("div","vg-battle");
-    [["Your team", fight.mine, true], [fight.label, fight.foe, false]].forEach(function(side){
-      var col = api.mk("div","vg-side"); col.appendChild(api.mk("h4",null,side[0]));
-      side[1].forEach(function(m, i){
-        var r = api.mk("div","vg-mon"+(m.hp<=0?" ko":""));
-        r.appendChild(api.mk("b",null,m.name)); r.appendChild(api.mk("span","vg-type",m.type)); r.appendChild(hpBar(m));
-        if(side[2] && !fight.over && m.hp>0){ r.appendChild(api.btn("Attack", "", function(){ turn(i); })); }
-        col.appendChild(r);
-      });
-      arena.appendChild(col);
+  var b = api.save.battle, P = pk();
+  var rec = api.mk("p", "vg-muted", "Record: "+(b.wins|0)+" wins, "+(b.losses|0)+" losses · Seen "+((b.seen||[]).length)+" Pokémon. " +
+    "Real moves, stats and types; your creatures battle as the Pokémon they are right now.");
+  root.appendChild(rec);
+  var row = api.mk("div", "vg-row");
+  row.appendChild(api.btn("Battle today’s wild team", "primary", startWild));
+  if(api.inArenaRoom()) row.appendChild(api.btn("Share my team in this room", "", function(){
+    var t = mySpecs().map(function(s){ return {sp:s.sp, st:s.st, br:s.br, mg:s.mg, sh:s.sh ? 1 : 0, n:s.name}; });
+    if(api.say({g:"battle", op:"team", team:t})) api.toast("Team shared with the room"); }));
+  root.appendChild(row);
+  if(P){
+    var team = mySpecs().map(P.buildMon), list = api.mk("div", "pkb-roster");
+    team.forEach(function(m){
+      var c = api.mk("div", "pkb-rcard");
+      c.appendChild(api.mk("b", null, m.name+" · Lv"+m.lvl));
+      var types = api.mk("span", "pkb-types"); m.types.forEach(function(t){ var x = api.mk("span", "pkb-type", t); x.style.background = "hsl("+((window.POKE_TYPE_HUE||{})[t]||220)+",60%,42%)"; types.appendChild(x); });
+      c.appendChild(types);
+      c.appendChild(api.mk("span", "vg-muted", m.moves.map(function(x){ return P.data().moves[x.id].name; }).join(" · ")));
+      list.appendChild(c);
     });
-    root.appendChild(arena);
-    var log = api.mk("div","vg-battlelog"); log.setAttribute("aria-live","polite");
-    fight.log.slice(-6).forEach(function(l){ log.appendChild(api.mk("div",null,l)); });
-    root.appendChild(log);
+    if(team.length) root.appendChild(list);
   }
+  var names = Object.keys(challengers);
+  if(names.length){
+    var cl = api.mk("div", "vg-row"); cl.appendChild(api.mk("span", null, "Challengers: "));
+    names.forEach(function(n){ cl.appendChild(api.btn(n, "", function(){ startFriend(n); })); });
+    root.appendChild(cl);
+  } else if(api.inArenaRoom()) root.appendChild(api.mk("p", "vg-muted", "When friends in this room share their teams, they show up here as challengers."));
+  else root.appendChild(api.mk("p", "vg-muted", "Join an Arena room to battle friends' teams, or play a live Creature Duel."));
 }
 game.onSay = function(d, who){
-  if(d.op==="team" && Array.isArray(d.team)){
-    var clean = d.team.slice(0,6).filter(function(m){ return m && typeof m==="object"; }).map(function(m){
-      return {s:(m.s|0), t: TYPES.indexOf(m.t)>=0 ? m.t : "Normal", n: typeof m.n==="string" ? m.n.slice(0,24) : "Creature",
-              h: Math.max(10, Math.min(120, m.h|0)), a: Math.max(3, Math.min(40, m.a|0))};
-    });
-    if(clean.length){ challengers[who] = clean; if(root && (!fight || fight.over)) render(); }
-  } else if(d.op==="result" && d.won){ api && api.toast("⚔️ "+who+" won a battle against "+(typeof d.vs==="string"?d.vs.slice(0,40):"a team")); }
+  if(d.op === "team" && Array.isArray(d.team)){
+    var P = pk(); if(!P) return;
+    var clean = d.team.slice(0,6).map(function(m){ return P.cleanSpec(m); }).filter(Boolean);
+    if(clean.length){ challengers[String(who).slice(0,40)] = clean; if(root && !fight) render(); }
+  } else if(d.op === "result" && d.won){ api && api.toast("⚔️ "+who+" won a battle against "+(typeof d.vs === "string" ? d.vs.slice(0,40) : "a team")); }
 };
 game.badge = function(){ var n = Object.keys(challengers).length; return n ? n+" challenger"+(n>1?"s":"") : ""; };
-game.mount = function(el, a){ api = a; root = el; render(); };
-game.unmount = function(){ root = null; fight = null; };
-game.pause = function(){ if(fight) fight.paused = true; };
-game.resume = function(){ if(fight) fight.paused = false; };
+game.mount = function(el, a){ api = a; root = el; fight = null; render(); };
+game.unmount = function(){ if(fight && fight.scene) fight.scene.destroy(); root = null; fight = null; };
+game.pause = function(){ if(fight){ fight.paused = true; if(fight.scene) fight.scene.pause(); } };
+game.resume = function(){ if(fight){ fight.paused = false; if(fight.scene) fight.scene.resume(); } };
 HQV.register(game);
 if(HQV.api) api = HQV.api;
 })();

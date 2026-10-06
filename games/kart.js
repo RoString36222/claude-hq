@@ -121,23 +121,40 @@ function myClock(){ return Math.floor(performance.now()/10) % 1073741824; }
 
 /* ---------- data + three.js, loaded on demand ---------- */
 var DATA = null, DATA_P = null, TRACKS = {};
-// Compile every track at the current KT scale (again whenever the scale changes).
+// An Arena from 1.9.0 ("legacy") referees the first three tracks only, at their original
+// short layouts (`legacy` in tracks.json) and the kit's 1x scale; it sends no "scale" and no
+// "tracks" (and no view at all between races). Newer servers say both. Solo is never legacy.
+var LEGACY = null, SERVER_IDS = null;
 function compileTracks(){
   TRACKS = {};
-  ((DATA && DATA.tracks) || []).forEach(function(t){ try { var c = KT.compileTrack(t.path); c.id = t.id; c.name = t.name; c.laps = t.laps|0 || 3;
-    c.theme = t.theme || {}; c.scenery = t.scenery || "forest"; TRACKS[t.id] = c; } catch(e){} });
+  ((DATA && DATA.tracks) || []).forEach(function(t){
+    var path = LEGACY ? t.legacy : t.path; if(typeof path !== "string") return;
+    try { var c = KT.compileTrack(path); c.id = t.id; c.name = t.name; c.laps = t.laps|0 || 3;
+      c.theme = t.theme || {}; c.scenery = t.scenery || "forest"; TRACKS[t.id] = c; } catch(e){} });
 }
-// The scale the next race runs at: the Arena's in a room (none = a 1.9.0 server: 1), 1.5 solo.
-function useScale(s){
-  s = s === 1 ? 1 : 1.5;
-  if(s === KT.SCALE && Object.keys(TRACKS).length) return false;
-  KT.setScale(s); VMAX = s === 1 ? 26 : 30; compileTracks(); return true;
+// Switch tracks, scale and top speed to match the server (or solo). True if anything changed.
+function useServer(legacy){
+  legacy = !!legacy;
+  if(legacy === LEGACY && Object.keys(TRACKS).length) return false;
+  LEGACY = legacy; KT.setScale(legacy ? 1 : 1.5); VMAX = legacy ? 26 : 30; compileTracks(); return true;
+}
+// Track ids this race can use: the server's list in a room, everything solo.
+function trackIds(mp){
+  var all = ((DATA && DATA.tracks) || []).map(function(t){ return t.id; }).filter(function(id){ return TRACKS[id]; });
+  if(!mp || !SERVER_IDS) return all;
+  return all.filter(function(id){ return SERVER_IDS.indexOf(id) >= 0; });
+}
+function randomOf(list){
+  if(!list.length) return null;
+  var r = new Uint32Array(1);
+  try { crypto.getRandomValues(r); } catch(e){ r[0] = Date.now(); }
+  return list[r[0] % list.length];
 }
 function loadData(){
   if(DATA_P) return DATA_P;
   DATA_P = fetch("/games/kart/tracks.json").then(function(r){ if(!r.ok) throw new Error("tracks "+r.status); return r.json(); })
     .then(function(j){
-      DATA = j; compileTracks();
+      DATA = j; LEGACY = null; useServer(false);
       return j;
     }, function(e){ DATA_P = null; throw e; });
   return DATA_P;
@@ -267,9 +284,18 @@ function makeGame(host, opts){
     if(!mp || host){ lr.appendChild(api.mk("span", "vg-muted", "Race length")); lr.appendChild(lsel); menu.appendChild(lr); }
     // tracks
     menu.appendChild(api.mk("h4", "vg-golf-h", mp ? (host ? "Pick a track to start the race" : "Tracks") : "Tracks"));
+    var ids = trackIds(mp);
+    if(mp && LEGACY) menu.appendChild(api.mk("p", "vg-muted", "This Arena runs an older Kart Racing: the three original tracks at their first size. Update the Arena for every track."));
+    var rnd = api.btn("🎲 Random track", "", function(){
+      var id = randomOf(ids), n = +lsel.value || 3; if(!id) return;
+      if(mp){ if(MP) MP.send("kart", "start", {track: id, laps: n}); }
+      else startPractice(id, n);
+    });
+    if(mp && !host) rnd.disabled = true;
+    var rr = api.mk("div", "vg-row"); rr.appendChild(rnd); menu.appendChild(rr);
     var grid = api.mk("div", "vg-golf-courses");
     (DATA.tracks || []).forEach(function(t){
-      var tr = TRACKS[t.id]; if(!tr) return;
+      var tr = TRACKS[t.id]; if(!tr || ids.indexOf(t.id) < 0) return;
       var card = api.mk("button", "vg-card vg-golf-course"); card.type = "button";
       var ic = api.mk("span", "vg-card-ic", "🏁"); ic.setAttribute("aria-hidden", "true"); card.appendChild(ic);
       var tt = api.mk("span", "vg-card-t"); tt.appendChild(api.mk("b", null, t.name));
@@ -308,7 +334,7 @@ function makeGame(host, opts){
 
   /* ---------- practice: a solo time trial ---------- */
   function startPractice(id, laps){
-    if(useScale(1.5) && R3){ R3.clearTrack(); }
+    if(useServer(false) && R3){ R3.clearTrack(); }
     var tr = TRACKS[id]; if(!tr) return;
     resetRace(); V.mode = "practice"; V.track = tr; V.laps = laps; V.lapTimes = [];
     var C = ensureCar("me", {name: "You", car: clamp(ksave().car|0, 0, CARS.length - 1)});
@@ -322,9 +348,12 @@ function makeGame(host, opts){
   function requestView(){ if(MP) MP.send("kart", "view"); }
   function applyView(view, force){
     V.round = view; V.gotView = true;
+    if(V.mode === "mp"){
+      SERVER_IDS = view && Array.isArray(view.tracks) ? view.tracks.filter(function(x){ return typeof x === "string"; }).slice(0, 64) : null;
+      if(useServer(!view || view.scale == null)){ V.track = null; if(R3) R3.clearTrack(); }
+    }
     if(!view || !TRACKS[view.track]){ if(V.phase !== "idle" && V.mode === "mp"){ resetRace(); showStage(false); } renderMenu(); return; }
     if(V.mode !== "mp") return;
-    if(useScale(view.scale === 1.5 ? 1.5 : 1)){ V.track = null; if(R3) R3.clearTrack(); }
     var mine = inRace(view);
     if(view.phase === "idle"){ if(V.phase !== "idle"){ resetRace(); showStage(false); } renderMenu(); return; }
     if(view.phase === "done"){ V.results = view.results; if(V.phase !== "idle" && V.phase !== "done") showResults(view.results); V.phase = "done"; renderMenu(); return; }
@@ -778,6 +807,23 @@ function makeGame(host, opts){
       o.traverse(function(m){ if(m.isMesh){ m.castShadow = !V.low && how !== "ground"; m.receiveShadow = !V.low; } });
       return o;
     }
+    // Scenery tint per track: "mul" multiplies the scenery's colours (autumn leaves, dry grass),
+    // "add" + "addK" glows them towards a colour (a dusting of snow). One copy per material.
+    var tinted = {};
+    function tintDeco(o, th){
+      var d = th && th.deco; if(!d || typeof d !== "object") return;
+      var mul = hex(d.mul, 0xffffff), add = hex(d.add, 0), k = clamp(+d.addK || 0, 0, 1);
+      o.traverse(function(m){
+        if(!m.isMesh || !m.material) return;
+        var key = m.material.uuid + "|" + mul + "|" + add + "|" + k;
+        if(!tinted[key]){
+          var c = tinted[key] = m.material.clone();
+          c.color.multiply(new THREE.Color(mul));
+          if(k > 0 && c.emissive){ c.emissive = new THREE.Color(add); c.emissiveIntensity = k; }
+        }
+        m.material = tinted[key];
+      });
+    }
     function hash(a, b){ var h = (a*73856093) ^ (b*19349663); h = (h ^ (h >>> 13))*1274126177; return ((h ^ (h >>> 16)) >>> 0)/4294967296; }
     function buildTrack(){
       clearTrack();
@@ -804,6 +850,7 @@ function makeGame(host, opts){
           if(tr.cells[c+","+r] != null) continue;
           var hv = hash(c + 1000, r + 1000), nm = hv < 0.45 ? "decoration-forest" : hv < 0.6 ? (tr.scenery === "tents" ? "decoration-tents" : "decoration-forest") : "decoration-empty";
           var d = model(nm, "ground"); d.position.set(c*KT.TILE, 0, r*KT.TILE); d.rotation.y = Math.floor(hash(r, c)*4)*Math.PI/2; d.scale.setScalar(KT.SCALE);
+          tintDeco(d, th);
           trackGroup.add(d);
         }
       }

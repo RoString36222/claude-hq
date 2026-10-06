@@ -188,7 +188,8 @@ class Kart:
 
     def view(self, t: float) -> dict | None:
         if self.track is None:
-            return None
+            # no race yet: still tell clients which tracks (and at what scale) this server runs
+            return {"phase": "idle", "track": None, "scale": SCALE, "tracks": list(TRACKS), "players": []}
         order = self.order()
         return {"track": self.track, "laps": self.laps, "phase": self.phase,
                 "goInMs": max(0, int((self.go_at - t) * 1000)) if self.phase == "grid" else 0,
@@ -198,7 +199,8 @@ class Kart:
                              "x": p["x"], "z": p["z"], "r": p["r"]}
                             for uid, p in self.players.items()],
                 "results": self.results, "cars": dict(self.cars),
-                "scale": SCALE}   # the geometry this server referees (clients from 1.9.0 assume 1)
+                "scale": SCALE,   # the geometry this server referees (clients from 1.9.0 assume 1)
+                "tracks": list(TRACKS)}   # the tracks it knows (a 1.9.0 server: the first three)
 
     # -- ops --
     def car(self, uid: str, msg: dict) -> int | None:

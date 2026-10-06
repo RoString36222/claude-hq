@@ -237,7 +237,7 @@ def test_eight_cars_with_lag_finish_in_order_with_no_false_rejections():
     t0 = 1000.0
     assert k.start(members, "peaks", 2, t0) is None
     go = t0 + kart.COUNTDOWN
-    speeds = {f"bot{i}": 24.0 - i * 1.3 for i in range(8)}         # bot0 fastest
+    speeds = {f"bot{i}": 24.0 - i * 0.8 for i in range(8)}         # bot0 fastest; all inside FINISH_GRACE
     u = {uid: p["u"] for uid, p in k.players.items()}
     grid_x = {uid: kart.grid_slot(tr, p["slot"])[0] for uid, p in k.players.items()}
     goal = 0.5 + 2 * tr["n"] + 0.2

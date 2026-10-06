@@ -284,6 +284,11 @@ and feature guide.
   - **Valley lobbies: invite or nudge with suggestions.** One search box in every multiplayer game's
     lobby suggests people as you type (avatar, name, @handle): friends online in your room get a game
     invite, anyone else on the Arena gets a nudge, and an exact @handle can still be nudged.
+  - **Kart Racing: nine tracks, longer laps, a random pick.** Six new tracks (Pine Speedway, Lakeside
+    Sprint, Harvest Hairpins, Autumn Run, Frostbite Ring, Sunset Switchbacks) and longer layouts for the
+    first three (390–570 m a lap), each with its own sky and scenery tint (snow-dusted on Frostbite,
+    autumn leaves, dry grass). A 🎲 Random track button picks one, solo or as the room's host. An Arena
+    from 1.9.0 still gets the three original tracks at their first size until it's updated.
   - **Real-time multiplayer foundation** (shared by the platformer and arena games to come): a
     fixed-rate server tick per room (`backend/app/realtime.py`, 15 Hz for racing) that batches one
     snapshot per tick, a process-wide cap on running game loops, a per-room bandwidth budget that

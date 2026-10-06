@@ -118,9 +118,10 @@ mod tests {
         assert_eq!(read_ws_ticket(s, &t).as_deref(), Some("user-1"));
         assert_eq!(read_ws_ticket("other-secret", &t), None);
         assert_eq!(read_ws_ticket(s, "garbage"), None);
+        // flip the last hex digit to a *different* one ('0' alone matched 1 time in 16)
         let mut bad = t.clone();
-        bad.pop();
-        bad.push('0');
+        let last = bad.pop().unwrap();
+        bad.push(if last == '0' { '1' } else { '0' });
         assert_eq!(read_ws_ticket(s, &bad), None);
     }
 

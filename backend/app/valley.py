@@ -1062,13 +1062,14 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
     elif g == "farm":
         await farm_op(room.room_id, member, msg, out, rng)
     elif g == "golf":
-        golf_op(v.golf, lobby, member, op, msg, out)
+        golf_op(v.golf, lobby, member, op, msg, out, rng)
     await _flush(room, out)
 
 
 # -------------------------------------------------------------------- golf --
-def golf_op(gm: "golfmod.Golf", lobby: Lobby, member: Member, op: str, msg: dict, out: Out) -> None:
-    """Mini Golf: every event goes to this game's lobby only."""
+def golf_op(gm: "golfmod.Golf", lobby: Lobby, member: Member, op: str, msg: dict, out: Out,
+            rng: random.Random | None = None) -> None:
+    """Mini Golf: every event goes to this game's lobby only. rng draws a random round's holes."""
     t = now()
     uid = member.user_id
     ids = list(lobby.members)
@@ -1104,7 +1105,7 @@ def golf_op(gm: "golfmod.Golf", lobby: Lobby, member: Member, op: str, msg: dict
             return
         lobby.prev_host = None               # the new host acted: a returning old host stays a player
         if op == "start":
-            err = gm.start(lobby.members, msg.get("course"), t)
+            err = gm.start(lobby.members, msg.get("course"), t, msg.get("holes"), rng if rng is not None else _rng())
             if err:
                 out.err(member.ws, err)
             else:

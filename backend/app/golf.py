@@ -7,6 +7,9 @@ and the clients replay the same simulation (games/golf.js, between the GOLF-SIM
 markers) only to animate it. Keep the two in lock-step: tests/test_golf_sync.py runs
 the JS copy against golden vectors produced by this file.
 
+"Play random" rounds draw N distinct holes from every course (pick_mix) and carry the
+chosen [course_id, hole_index] list in the view so every client builds the same holes.
+
 Units: 1 tile = 10000. Velocity is units/tick x VS, 120 ticks per second. Courses
 live in golf_courses.json (a byte copy of games/golf/courses.json; the wall segments
 are generated from the Kenney GLB tiles by tools/golf_walls.py).
@@ -18,6 +21,8 @@ client sends the phase it putted at ("clk", 0..CLOCK-1) and both sides roll from
 import json
 import math
 import os
+import random
+import secrets
 from typing import Any
 
 # ------------------------------------------------------------------ physics --
@@ -185,6 +190,15 @@ def compile_hole(hole: dict, pieces: dict | None = None) -> dict:
 
 
 _COMPILED: dict[str, list[dict]] = {}
+# "Play random": a round of N holes drawn (no repeats) from every hole of every course.
+RANDOM = "random"
+RANDOM_SIZES = (5, 10, 15)
+ALL_HOLES: list[tuple[str, int]] = [(c["id"], i) for c in DATA["courses"] for i in range(len(c["holes"]))]
+
+
+def pick_mix(n: int, rng: random.Random) -> list[list]:
+    """n distinct [course_id, hole_index] pairs in play order (capped at every hole there is)."""
+    return [[cid, i] for cid, i in rng.sample(ALL_HOLES, min(n, len(ALL_HOLES)))]
 
 
 def course_holes(course_id: str) -> list[dict]:
@@ -341,6 +355,7 @@ class Golf:
 
     def __init__(self) -> None:
         self.course: str | None = None
+        self.mix: list[list] | None = None         # a random round: [[course_id, hole_index], ...]
         self.hole = 0
         self.phase = "idle"                # idle | playing | done
         self.players: dict[str, dict] = {}
@@ -352,17 +367,22 @@ class Golf:
 
     # -- views --
     def holes(self) -> list[dict]:
+        if self.mix:
+            return [course_holes(cid)[i] for cid, i in self.mix]
         return course_holes(self.course) if self.course else []
 
     def view(self, t: float) -> dict | None:
         if self.course is None:
             return None
-        return {"course": self.course, "hole": self.hole, "phase": self.phase,
-                "par": [h["par"] for h in self.holes()],
-                "players": [{"user": p["user"], "c": p["c"], "color": p["color"], "ball": list(p["ball"]),
-                             "done": p["done"], "strokes": list(p["strokes"])} for p in self.players.values()],
-                "readyInMs": max(0, int((self.hole_ready_at - t) * 1000)),
-                "chars": dict(self.chars)}
+        out = {"course": self.course, "hole": self.hole, "phase": self.phase,
+               "par": [h["par"] for h in self.holes()],
+               "players": [{"user": p["user"], "c": p["c"], "color": p["color"], "ball": list(p["ball"]),
+                            "done": p["done"], "strokes": list(p["strokes"])} for p in self.players.values()],
+               "readyInMs": max(0, int((self.hole_ready_at - t) * 1000)),
+               "chars": dict(self.chars)}
+        if self.mix:
+            out["mix"] = [list(x) for x in self.mix]   # every client builds the same holes from this
+        return out
 
     def card(self) -> dict:
         return {uid: list(p["strokes"]) for uid, p in self.players.items()}
@@ -377,12 +397,21 @@ class Golf:
             self.players[uid]["c"] = c
         return c
 
-    def start(self, members: dict[str, dict], course: Any, t: float) -> str | None:
+    def start(self, members: dict[str, dict], course: Any, t: float, holes: Any = None,
+              rng: random.Random | None = None) -> str | None:
+        """Start a round on one course, or (course "random", holes 5|10|15) on holes the
+        server draws from every course with its own rng."""
         if self.phase == "playing":
             return "a round is already on: the host can end it first"
-        if not isinstance(course, str) or course not in COURSES:
+        mix = None
+        if course == RANDOM:
+            if isinstance(holes, bool) or not isinstance(holes, int) or holes not in RANDOM_SIZES:
+                return "pick 5, 10 or 15 holes"
+            mix = pick_mix(holes, rng if rng is not None else random.Random(secrets.randbits(64)))
+        elif not isinstance(course, str) or course not in COURSES:
             return "pick a course"
         self.course = course
+        self.mix = mix
         self.hole = 0
         self.phase = "playing"
         self.hole_ready_at = t
@@ -461,8 +490,11 @@ class Golf:
             totals = {uid: sum(s) for uid, s in card.items()}
             best = min(totals.values())
             winners = [uid for uid, v in totals.items() if v == best]
-            return "done", {"card": card, "totals": totals, "par": [h["par"] for h in holes], "winners": winners,
-                            "course": self.course}
+            data = {"card": card, "totals": totals, "par": [h["par"] for h in holes], "winners": winners,
+                    "course": self.course}
+            if self.mix:
+                data["mix"] = [list(x) for x in self.mix]
+            return "done", data
         self.hole += 1
         tee = holes[self.hole]["tee"]
         for p in self.players.values():
@@ -539,7 +571,8 @@ class Golf:
         if p is None:
             return False
         if self.phase == "playing":
-            self.parked[uid] = {"p": p, "hole": self.hole, "at": t, "course": self.course, "blip": blip}
+            self.parked[uid] = {"p": p, "hole": self.hole, "at": t, "course": self.course, "mix": self.mix,
+                                "blip": blip}
             self.expire(t)
         return True
 
@@ -547,7 +580,8 @@ class Golf:
         """A parked player rejoined the lobby: put them back in the round. Holes that
         finished without them count as picked up."""
         k = self.parked.pop(uid, None)
-        if k is None or self.phase != "playing" or k["course"] != self.course or t - k["at"] > PARK_SECS \
+        if k is None or self.phase != "playing" or k["course"] != self.course or k.get("mix") != self.mix \
+                or t - k["at"] > PARK_SECS \
                 or uid in self.players or len(self.players) >= 8:
             return False
         p = k["p"]

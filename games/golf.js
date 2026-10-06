@@ -256,6 +256,47 @@ function courseFeatures(c){
 }
 function courseTheme(c){ return (c && c.theme && typeof c.theme === "object") ? c.theme : {}; }
 function coursePar(c){ return (c.holes || []).reduce(function(a, h){ return a + (h.par|0); }, 0); }
+// Every [course id, hole index] in the course file, in file order.
+function allHoles(){
+  var out = [];
+  ((DATA && DATA.courses) || []).forEach(function(c){ (c.holes || []).forEach(function(_, i){ out.push([c.id, i]); }); });
+  return out;
+}
+// "Play random": n distinct holes from every course (capped at all there are). A fresh
+// seed each round (the draw is meant to differ), through the shared PRNG, not Math.random.
+var RANDOM_SIZES = [5, 10, 15];
+function pickMix(n){
+  var all = allHoles(), r = api.rng("golf:random:"+Date.now()+":"+Math.floor(performance.now()*1000)), out = [];
+  n = Math.max(0, Math.min(n|0, all.length));
+  for(var i = 0; i < n; i++){ var j = i + Math.floor(r()*(all.length - i)), tmp = all[i]; all[i] = all[j]; all[j] = tmp; out.push(all[i]); }
+  return out;
+}
+// A random round as one course: the drawn holes in play order, each remembering the course
+// it came from (theme, scenery). null if any pair is unknown to this copy of the course file.
+function mixCourse(mix){
+  if(!Array.isArray(mix) || !mix.length) return null;
+  var holes = [], src = [], ids = [], ok = true;
+  mix.forEach(function(m){
+    var c = Array.isArray(m) ? courseById(m[0]) : null, i = Array.isArray(m) ? m[1]|0 : -1, h = c && c.holes ? c.holes[i] : null;
+    if(!h){ ok = false; return; }
+    holes.push(h); src.push({course: c, idx: i}); ids.push(c.id+"."+i);
+  });
+  return ok ? {id: "random:"+ids.join(","), name: "Random "+holes.length, random: true, holes: holes, src: src, theme: {}} : null;
+}
+// The course a server view is played on (a random round builds the server's mix).
+function viewCourse(view){ view = view || {}; return view.course === "random" ? mixCourse(view.mix) : courseById(view.course); }
+// Where hole i of a round came from: its own course (theme, scenery seed) and its index there.
+function holeSrc(c, i){ i = i|0; return c && c.src ? (c.src[i] || {course: null, idx: i}) : {course: c || null, idx: i}; }
+// The scenery models a round needs: each source course's theme props.
+function courseProps(c){
+  var seen = {}, out = [];
+  (c && c.src ? c.src.map(function(s){ return s.course; }) : [c]).forEach(function(k){
+    (courseTheme(k).props || []).filter(function(n){ return typeof n === "string"; }).slice(0, 16).forEach(function(n){
+      if(!seen[n]){ seen[n] = 1; out.push(n); }
+    });
+  });
+  return out;
+}
 function coursePieces(c){
   var seen = {}, out = [];
   (c.holes || []).forEach(function(h){ (h.tiles || []).forEach(function(t){ if(!seen[t[0]]){ seen[t[0]] = 1; out.push(t[0]); } }); });
@@ -391,9 +432,10 @@ function makeGame(host, opts){
   }
 
   /* ---------- course + hole ---------- */
-  function setCourse(id){
-    var c = courseById(id); if(!c) return false;
-    if(canvas && (!V.course || V.course.id !== id)){   // the 3D view loads one course's models: rebuild it
+  function setCourse(c){
+    if(typeof c === "string") c = courseById(c);
+    if(!c) return false;
+    if(canvas && (!V.course || V.course.id !== c.id)){   // the 3D view loads one round's models: rebuild it
       if(R3){ R3.dispose(); R3 = null; }
       canvas.remove(); canvas = null; R2 = null;
     }
@@ -479,6 +521,23 @@ function makeGame(host, opts){
       grid.appendChild(card);
     });
     menu.appendChild(grid);
+    // play random: N holes drawn from every course, each with its own course's look
+    var total = allHoles().length, lastK = -1;
+    menu.appendChild(api.mk("h4", "vg-golf-h", "Play random"));
+    menu.appendChild(api.mk("p", "vg-muted", "Holes drawn at random from every course, each keeping its own scenery."));
+    var rnd = api.mk("div", "vg-row vg-golf-random"); rnd.setAttribute("role", "group"); rnd.setAttribute("aria-label", "Play random holes");
+    RANDOM_SIZES.forEach(function(n){
+      var k = Math.min(n, total); if(k < 1 || k === lastK) return; lastK = k;
+      var lbl = k+" holes"+(k < n ? " (all "+total+" there are)" : "");
+      var b = api.btn("\ud83c\udfb2 "+lbl, "", function(){
+        if(mp){ if(MP) MP.send("golf", "start", {course: "random", holes: n}); }
+        else startPractice(mixCourse(pickMix(n)));
+      });
+      b.setAttribute("aria-label", "Play "+lbl+" at random");
+      if(mp && !isHost) b.disabled = true;
+      rnd.appendChild(b);
+    });
+    menu.appendChild(rnd);
     if(mp){
       if(!isHost) menu.appendChild(api.mk("p", "vg-muted", "Waiting for the host (★ in the lobby) to pick a course."));
       if(V.finalCard) menu.appendChild(scoreTable(V.finalCard.card, V.finalCard.par, "Last round"));
@@ -495,9 +554,9 @@ function makeGame(host, opts){
   function resetPlayers(){ V.order.slice().forEach(dropPlayer); V.course = null; V.hole = null; V.phase = "idle"; }
 
   /* ---------- practice ---------- */
-  function startPractice(id){
+  function startPractice(c){
     resetPlayers();
-    if(!setCourse(id)) return;
+    if(!setCourse(c)) return;
     V.mode = "practice"; V.phase = "playing"; V.finalCard = null; V.pendingHole = null;
     var sv = gsave();
     ensurePlayer("me", {name: "You", c: sv.char != null ? clamp(sv.char|0, 0, 5) : 0, color: 1, strokes: V.holes.map(function(){ return 0; })});
@@ -511,9 +570,11 @@ function makeGame(host, opts){
     var card = {me: P.strokes.slice()};
     if(n + 1 >= V.holes.length){
       var total = P.strokes.reduce(function(a, b){ return a + b; }, 0), sv = gsave(), id = V.course.id;
-      var prev = sv.best[id]; if(!prev || total < prev){ sv.best[id] = total; api.persist(); }
+      // a random round's holes differ every time: no "best" to keep
+      var rec = !V.course.random, prev = rec ? sv.best[id] : 0, better = rec && (!prev || total < prev);
+      if(better){ sv.best[id] = total; api.persist(); }
       V.finalCard = {card: card, par: V.holes.map(function(h){ return h.par; }), done: true};
-      showCard(card, "Round complete: "+total+" strokes (par "+coursePar(V.course)+")"+(!prev || total < prev ? " · new best!" : ""), true);
+      showCard(card, "Round complete: "+total+" strokes (par "+coursePar(V.course)+")"+(better ? " · new best!" : ""), true);
       V.phase = "done";
     } else {
       showCard(card, "Hole "+(n+1)+" done", false);
@@ -534,9 +595,10 @@ function makeGame(host, opts){
     }
     V.mode = "mp";
     if(!view || view.phase === "idle"){ resetPlayers(); showStage(false); renderMenu(); return; }
-    if(V.pendingHole && view.hole !== V.holeIdx && view.course === (V.course && V.course.id)){ V.deferredView = view; return; }
-    var fresh = !V.course || V.course.id !== view.course;
-    if(fresh){ resetPlayers(); if(!setCourse(view.course)) return; }
+    var vc = viewCourse(view); if(!vc) return;
+    if(V.pendingHole && view.hole !== V.holeIdx && V.course && vc.id === V.course.id){ V.deferredView = view; return; }
+    var fresh = !V.course || V.course.id !== vc.id;
+    if(fresh){ resetPlayers(); if(!setCourse(vc)) return; }
     var keep = {};
     (view.players || []).forEach(function(p, i){
       var uid = p.user && p.user.userId; if(!uid) return;
@@ -587,7 +649,7 @@ function makeGame(host, opts){
     if(!V.alive) return;
     if(m.ev === "golf"){
       if(m.back && m.back !== myId() && V.players[m.back]){ V.players[m.back].lastQ = -1; }
-      applyView(m.round || null); if(m.by && m.round && m.round.phase === "playing" && m.by.userId !== myId()) api.toast("⛳ "+MP.nameOf(m.by)+" started "+((courseById(m.round.course)||{}).name||"a round")); return; }
+      applyView(m.round || null); if(m.by && m.round && m.round.phase === "playing" && m.by.userId !== myId()) api.toast("⛳ "+MP.nameOf(m.by)+" started "+((viewCourse(m.round)||{}).name||"a round")); return; }
     if(m.ev === "lobby"){ if(V.mode === "mp" && !menu.classList.contains("hidden")) renderMenu(); hudUpdate(); return; }
     if(V.mode !== "mp") return;
     if(m.ev === "shot") return onShot(m);
@@ -878,7 +940,8 @@ function makeGame(host, opts){
     hud.textContent = "";
     var P = me(), n = V.holeIdx;
     hud.appendChild(api.mk("b", null, V.course.name+" · Hole "+(n+1)+"/"+V.holes.length+" · Par "+V.hole.par));
-    hud.appendChild(api.mk("span", null, V.hole.name));
+    var hs = holeSrc(V.course, n);
+    hud.appendChild(api.mk("span", null, V.hole.name+(V.course.random && hs.course ? " · from "+hs.course.name : "")));
     var list = api.mk("div", "vg-golf-hud-players");
     V.order.forEach(function(uid){
       var Q = V.players[uid], row = api.mk("span", "vg-golf-hud-p"+(uid === myId() ? " me" : ""));
@@ -941,7 +1004,7 @@ function makeGame(host, opts){
     if(final){
       var row = api.mk("div", "vg-row");
       row.appendChild(api.btn(V.mode === "practice" ? "Play again" : "Close", "primary", function(){
-        hideCard(); if(V.mode === "practice") startPractice(V.course.id);
+        hideCard(); if(V.mode === "practice") startPractice(V.course.random ? mixCourse(pickMix(V.holes.length)) : V.course.id);
       }));
       cardBox.appendChild(row);
     }
@@ -1025,7 +1088,7 @@ function makeGame(host, opts){
       r.fit = {s: s, ox: (W - (bb[2]+bb[0])*s)/2, oy: (H - (bb[3]+bb[1])*s)/2};
       var f = r.fit;
       function X(x){ return f.ox + x*s; } function Y(z){ return f.oy + z*s; }
-      var TH = courseTheme(V.course), ph = clockNow();
+      var TH = courseTheme(holeSrc(V.course, V.holeIdx).course), ph = clockNow();
       g.setTransform(1, 0, 0, 1, 0, 0);
       g.fillStyle = css(hex(TH.island, 0x6fb35a)); g.fillRect(0, 0, W, H);
       h.tiles.forEach(function(tl){ g.fillStyle = "#4fae55"; g.fillRect(X(tl[1]*T - T/2), Y(tl[2]*T - T/2), T*s+0.5, T*s+0.5); });
@@ -1074,7 +1137,7 @@ function makeGame(host, opts){
   function make3d(cv){
     return Promise.all([golfLib(), loadData()]).then(function(res){
       var lib = res[0], THREE = lib.THREE;
-      var props = (courseTheme(V.course).props || []).filter(function(n){ return typeof n === "string"; }).slice(0, 16);
+      var props = courseProps(V.course);       // a random round: every source course's scenery
       var slid = V.course.holes.some(function(h){ return (h.movers || []).length; });
       var names = coursePieces(V.course).concat(["flag-red"], CHARS.map(function(c){ return c.f; }), CLUBS, props, slid ? ["block"] : []);
       var got = 0;
@@ -1086,28 +1149,44 @@ function makeGame(host, opts){
     });
   }
   function build3d(lib, THREE, cv){
-    var TH = courseTheme(V.course), snow = !!TH.snow;
+    // The theme is per hole (a random round mixes courses): applyTheme restyles the sky,
+    // fog, lights, sea and tile tint when a hole from another course starts.
+    var TH = {}, snow = false, themeOf;
     var renderer = new THREE.WebGLRenderer({canvas: cv, antialias: true});
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
     var scene = new THREE.Scene();
     // sky: a vertical gradient behind everything, fog fading the far island into it
-    var sky = hex((TH.sky || [])[0], 0x8fc9ef), horizon = hex((TH.sky || [])[1], 0xdff1ff);
     var gc = document.createElement("canvas"); gc.width = 2; gc.height = 256;
-    var gg = gc.getContext("2d"), grad = gg.createLinearGradient(0, 0, 0, 256);
-    grad.addColorStop(0, css(sky)); grad.addColorStop(0.62, css(horizon)); grad.addColorStop(1, css(hex(TH.fog, horizon)));
-    gg.fillStyle = grad; gg.fillRect(0, 0, 2, 256);
+    var gg = gc.getContext("2d");
     var skyTex = new THREE.CanvasTexture(gc); skyTex.colorSpace = THREE.SRGBColorSpace; scene.background = skyTex;
-    scene.fog = new THREE.Fog(hex(TH.fog, horizon), +TH.fogNear || 9, +TH.fogFar || 40);
+    scene.fog = new THREE.Fog(0xdff1ff, 9, 40);
     var camera = new THREE.PerspectiveCamera(55, 1.6, 0.03, 200);
-    scene.add(new THREE.HemisphereLight(hex(TH.hemiSky, 0xffffff), hex(TH.hemiGround, 0x4b5b45), +TH.hemiI || 2.0));
-    var sun = new THREE.DirectionalLight(hex(TH.sun, 0xffffff), +TH.sunI || 1.8); sun.position.set(3, 8, 4);
+    var hemi = new THREE.HemisphereLight(0xffffff, 0x4b5b45, 2.0); scene.add(hemi);
+    var sun = new THREE.DirectionalLight(0xffffff, 1.8); sun.position.set(3, 8, 4);
     sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024); sun.shadow.bias = -0.0008; sun.shadow.normalBias = 0.01;
     scene.add(sun); scene.add(sun.target);
     // the sea / plain the island sits in
     var groundGeo = new THREE.PlaneGeometry(400, 400); groundGeo.rotateX(-Math.PI/2);
-    var ground = new THREE.Mesh(groundGeo, new THREE.MeshLambertMaterial({color: hex(TH.sea, 0x6fb35a)})); ground.position.y = -0.09; scene.add(ground);
-    var tint = new THREE.Color(hex(TH.tint, 0xffffff)), tinted = {}, snowed = {};
+    var ground = new THREE.Mesh(groundGeo, new THREE.MeshLambertMaterial({color: 0x6fb35a})); ground.position.y = -0.09; scene.add(ground);
+    var tint = new THREE.Color(0xffffff), tinted = {}, snowed = {};
+    function applyTheme(c){
+      if(themeOf === c) return;
+      themeOf = c; TH = courseTheme(c); snow = !!TH.snow;
+      var sky = hex((TH.sky || [])[0], 0x8fc9ef), horizon = hex((TH.sky || [])[1], 0xdff1ff);
+      var grad = gg.createLinearGradient(0, 0, 0, 256);
+      grad.addColorStop(0, css(sky)); grad.addColorStop(0.62, css(horizon)); grad.addColorStop(1, css(hex(TH.fog, horizon)));
+      gg.clearRect(0, 0, 2, 256); gg.fillStyle = grad; gg.fillRect(0, 0, 2, 256); skyTex.needsUpdate = true;
+      scene.fog.color.setHex(hex(TH.fog, horizon)); scene.fog.near = +TH.fogNear || 9; scene.fog.far = +TH.fogFar || 40;
+      hemi.color.setHex(hex(TH.hemiSky, 0xffffff)); hemi.groundColor.setHex(hex(TH.hemiGround, 0x4b5b45)); hemi.intensity = +TH.hemiI || 2.0;
+      sun.color.setHex(hex(TH.sun, 0xffffff)); sun.intensity = +TH.sunI || 1.8;
+      ground.material.color.setHex(hex(TH.sea, 0x6fb35a));
+      tint.setHex(hex(TH.tint, 0xffffff));
+      // tinted / snowed material copies belong to the old theme (its hole is already off the scene)
+      [tinted, snowed].forEach(function(m){ for(var k in m) m[k].dispose(); });
+      tinted = {}; snowed = {};
+    }
+    applyTheme(holeSrc(V.course, V.holeIdx).course);
     var holeGroup = null, blades = [], sliders = [], waters = [], ballGeo = new THREE.SphereGeometry(BALL_R, 16, 12);
     var blobGeo = new THREE.CircleGeometry(1, 20); blobGeo.rotateX(-Math.PI/2);
     var blobMat = new THREE.MeshBasicMaterial({color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false});
@@ -1164,7 +1243,7 @@ function makeGame(host, opts){
     function scatter(group, h, idx){
       var props = (TH.props || []).filter(function(n){ return scene3(n); });
       if(!props.length) return;
-      var r = api.rng("golf:"+V.course.id+":"+idx), bb = h.bbox, placed = 0;
+      var hs = holeSrc(V.course, idx), r = api.rng("golf:"+((hs.course || V.course).id)+":"+hs.idx), bb = h.bbox, placed = 0;
       var tall = /^(tree|stone-tall|rock-tall|statue|cactus-tall|crops-corn)/;
       function clear(x, z, gap){
         for(var key in h.floor){ var c = key.split(","), cx = +c[0], cz = +c[1];
@@ -1191,6 +1270,7 @@ function makeGame(host, opts){
         scene.remove(holeGroup);
         holeGroup.traverse(function(o){ if(o.userData && o.userData.own){ o.geometry.dispose(); o.material.dispose(); } });
       }
+      applyTheme(holeSrc(V.course, V.holeIdx).course);   // a random round: this hole's own course look
       holeGroup = new THREE.Group(); blades = []; sliders = []; waters = [];
       var h = V.hole, bb = h.bbox;
       holeGroup.add(island(bb));

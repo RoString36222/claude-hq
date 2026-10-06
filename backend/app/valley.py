@@ -20,6 +20,10 @@ has a lobby (who is in it, who hosts) with join notices and invites. The games:
   kart   kart racing (app/kart.py), the first real-time game: each player drives
          locally and streams positions; a fixed-rate server tick (app/realtime.py)
          checks them, counts laps and sends the lobby one snapshot per tick.
+  plat   platformer rush (app/platformer.py): the same real-time loop; each player runs
+         and jumps locally, the server checks every move against the level, owns the
+         checkpoints, the coins (per player in a race, once for the room in co-op) and
+         the flag, and sends respawns back to the last checkpoint.
 
 Only game state lives here; nothing transcript-derived ever reaches this server.
 State is in process memory except the farm (same single-instance trade as rooms.py).
@@ -37,16 +41,17 @@ from sqlalchemy import func, select
 
 from . import golf as golfmod
 from . import kart as kartmod
+from . import platformer as platmod
 from . import realtime
 from . import pokebattle as pb
 from .db import SessionLocal
 from .models import DailyStat, RoomFarm
 from .rooms import Member, Room, manager
 
-GAMES = ("pond", "race", "duel", "mines", "farm", "golf", "kart")
+GAMES = ("pond", "race", "duel", "mines", "farm", "golf", "kart", "plat")
 GAME_NAMES = {"pond": "Fishing Pond", "race": "Puzzle Race", "duel": "Creature Duel",
               "mines": "Co-op Mines", "farm": "Shared Farm", "golf": "Mini Golf",
-              "kart": "Kart Racing"}
+              "kart": "Kart Racing", "plat": "Platformer Rush"}
 MAX_LOBBY = 8
 SEND_TIMEOUT = 0.5            # seconds one socket may take to accept a lobby fan-out
 now = time.monotonic          # patched in tests
@@ -279,6 +284,7 @@ class RoomValley:
         self.mines = Mines()
         self.golf = golfmod.Golf()
         self.kart = kartmod.Kart()
+        self.plat = platmod.Plat()
 
 
 _rooms: dict[str, RoomValley] = {}
@@ -1015,6 +1021,11 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
                     out.lobby(list(lobby.members), "kart", race=v.kart.view(now()), back=member.user_id)
                 else:
                     out.to(member.ws, "kart", race=v.kart.view(now()))
+            elif g == "plat":
+                if v.plat.restore(member.user_id, member.public()):
+                    out.lobby(list(lobby.members), "plat", run=v.plat.view(now()), back=member.user_id)
+                else:
+                    out.to(member.ws, "plat", run=v.plat.view(now()))
     elif op == "leave":
         _leave_lobby(v, g, member.user_id, out)
     elif op == "invite":
@@ -1078,7 +1089,79 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
         golf_op(v.golf, lobby, member, op, msg, out, rng)
     elif g == "kart":
         kart_op(room.room_id, v.kart, lobby, member, op, msg, out)
+    elif g == "plat":
+        plat_op(room.room_id, v.plat, lobby, member, op, msg, out)
     await _flush(room, out)
+
+
+# -------------------------------------------------------------------- plat --
+def plat_op(room_id: str, pm: "platmod.Plat", lobby: Lobby, member: Member, op: str, msg: dict, out: Out) -> None:
+    """Platformer Rush: position frames feed the room's tick loop; a respawn answers the
+    player at once; everything else goes to this game's lobby."""
+    t = now()
+    uid = member.user_id
+    ids = list(lobby.members)
+    if op == "pos":
+        ok, fix = pm.pos(uid, msg, t)
+        if fix is not None:
+            out.to(member.ws, "fix", **fix)
+    elif op == "respawn":
+        sp = pm.respawn(uid, t)
+        if sp is not None:
+            out.to(member.ws, "spawn", **sp)
+    elif op == "view":
+        out.to(member.ws, "plat", run=pm.view(t))
+    elif op == "char":
+        c = pm.char(uid, msg)
+        if c is None:
+            out.err(member.ws, "pick a character")
+        else:
+            out.lobby(ids, "char", user=uid, char=c)
+    elif op in ("start", "end"):
+        if lobby.host != uid:
+            out.err(member.ws, "only the host can do that")
+            return
+        lobby.prev_host = None
+        if op == "start":
+            err = pm.start(lobby.members, msg.get("level"), msg.get("mode"), t)
+            if err is None and not _plat_tick_on(room_id):
+                pm.end()
+                err = "the Arena is busy right now: try again in a minute"
+            if err:
+                out.err(member.ws, err)
+            else:
+                out.lobby(ids, "plat", run=pm.view(t), by=member.public())
+        else:
+            pm.end()
+            realtime.stop("plat:" + room_id)
+            out.lobby(ids, "plat", run=pm.view(t))
+
+
+def _plat_tick_on(room_id: str) -> bool:
+    """Start the room's run loop (a no-op if it runs). False: no slot under the budget."""
+    key = "plat:" + room_id
+
+    async def step(t: float, send: bool) -> bool:
+        v = _rooms.get(room_id)
+        room = manager.get(room_id)
+        if v is None or room is None or not v.plat.running():
+            return False
+        lob = v.lobbies["plat"].members
+        ids = list(lob) + [u for u in v.plat.players if u not in lob]
+        out = Out("plat")
+        for ev, data in v.plat.tick(t, send):
+            out.lobby(ids, ev, **data)
+        if not v.plat.running():
+            out.lobby(ids, "plat", run=v.plat.view(t))
+        if out.items:
+            tk = realtime.get(key)
+            if tk is not None:
+                n = sum(1 for m in room.members.values() if m.user_id in ids)
+                tk.count(sum(len(json.dumps(p, separators=(",", ":"))) for _k, _t, p in out.items) * max(1, n))
+            await _flush(room, out)
+        return v.plat.running()
+
+    return realtime.start(key, platmod.HZ, step, lambda: now()) is not None
 
 
 # -------------------------------------------------------------------- kart --
@@ -1272,6 +1355,8 @@ def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out, disconnected: bo
         v.mines.drop(user_id, out)
     elif g == "kart" and v.kart.drop(user_id, now(), blip=disconnected):
         out.lobby(list(lobby.members), "kart", race=v.kart.view(now()), left=user_id)
+    elif g == "plat" and v.plat.drop(user_id, now(), blip=disconnected):
+        out.lobby(list(lobby.members), "plat", run=v.plat.view(now()), left=user_id)
     elif g == "golf" and v.golf.drop(user_id, now(), blip=disconnected):
         ids = list(lobby.members)
         out.lobby(ids, "golf", round=v.golf.view(now()), left=user_id)

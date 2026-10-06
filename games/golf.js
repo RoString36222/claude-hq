@@ -1410,10 +1410,10 @@ function makeGame(host, opts){
         if(F.fly){ var fb = ballAt(F, t); tx = fb[0]/T; tz = fb[1]/T; }
         else if(F === P && V.state === "address"){
           tx = P.ball[0]/T; tz = P.ball[1]/T; dist = Math.min(dist, 1.6);
-          // Follow the aim with the keyboard, but hold the camera still while you drag to aim:
-          // turning it under the pointer would change the aim again (twitchy on trackpads).
-          if(!drag){ var want = Math.atan2(Math.cos(V.aim.a), Math.sin(V.aim.a)), dy = Math.atan2(Math.sin(want - c.yaw), Math.cos(want - c.yaw));
-            c.yaw += dy*(calm ? 1 : 1 - Math.exp(-5*dt)); }
+          // The camera swings round behind the aim, from the keyboard or while you drag
+          // (dragging aims on the screen, so turning the camera never moves the aim).
+          var want = Math.atan2(Math.cos(V.aim.a), Math.sin(V.aim.a)), dy = Math.atan2(Math.sin(want - c.yaw), Math.cos(want - c.yaw));
+          c.yaw += dy*(calm ? 1 : 1 - Math.exp(-(drag ? 4 : 5)*dt));
           yaw = c.yaw; }
         else { tx = F.av.x/T; tz = F.av.z/T; }
       } else { tx = V.hole.tee[0]/T; tz = V.hole.tee[1]/T; }
@@ -1486,7 +1486,7 @@ function makeGame(host, opts){
       if(e.button === 2){ if(drag){ drag = null; return; } orbit = {x: e.clientX, yaw: V.cam.yaw}; return; }
       if(e.button !== 0) return;
       var P = me(), w = worldAt(e); if(!P || !w) return;
-      if(V.state === "address"){ drag = {on: true, x: e.clientX, y: e.clientY}; try { cv.setPointerCapture(e.pointerId); } catch(x){} return; }
+      if(V.state === "address"){ drag = {on: true, x: e.clientX, y: e.clientY, yaw0: V.cam.yaw}; try { cv.setPointerCapture(e.pointerId); } catch(x){} return; }
       var dx = (w[0] - P.ball[0])/T, dz = (w[1] - P.ball[1])/T;
       if(V.state === "walk" && dx*dx + dz*dz < 0.12) tryAddress();
     });
@@ -1495,7 +1495,9 @@ function makeGame(host, opts){
       if(drag){
         // ignore tiny jitters at the start of a trackpad drag
         if(!drag.moved && Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) < 6) return;
-        drag.moved = true; var w = worldAt(e); if(w) dragTo(w); }
+        drag.moved = true;
+        if(R3) dragScreen(e);               // 3D: a slingshot on the screen, so the camera can swing with the aim
+        else { var w = worldAt(e); if(w) dragTo(w); } }
     });
     cv.addEventListener("pointerup", function(e){
       orbit = null;
@@ -1512,6 +1514,21 @@ function makeGame(host, opts){
       if(Math.abs(dy) >= Math.abs(dx)) V.cam.dist = clamp(V.cam.dist*Math.exp(dy*0.0025*s), 1.2, 5);
       else if(!V.cam.over && V.state !== "address") V.cam.yaw -= dx*0.004*s;
     }, {passive: false});
+  }
+  // 3D drag-to-aim, slingshot style: pull back (down the screen) to putt away from you,
+  // sideways to aim. Measured on the screen against the camera's heading when the drag
+  // began, not by the ground point under the pointer, so the camera is free to turn and
+  // follow the aim while you drag without the aim chasing it.
+  function dragScreen(e){
+    var P = me(); if(!P) return;
+    var dx = e.clientX - drag.x, dy = e.clientY - drag.y, px = Math.sqrt(dx*dx + dy*dy);
+    var y0 = drag.yaw0, sx = Math.cos(y0)*dx + Math.sin(y0)*dy, sz = -Math.sin(y0)*dx + Math.cos(y0)*dy;
+    var full = Math.max(120, (canvas && canvas.clientHeight || 400)*0.45);
+    V.aim.p = clamp(Math.round(px/full*100), 1, 100);
+    drag.len = V.aim.p/100*1.5;
+    if(px < 4) return;
+    V.aim.a = Math.atan2(sz, sx);
+    hudUpdate();
   }
   function dragTo(w){
     var P = me(); if(!P) return;

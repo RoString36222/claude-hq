@@ -35,16 +35,17 @@ use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, LazyLock, Mutex};
 
-pub const TILE: f64 = 10.0;
+pub const SCALE: f64 = 1.5; // the kit's 10 m pieces drawn 1.5x: a 13.5 m road fits 8 cars
+pub const TILE: f64 = 10.0 * SCALE;
 pub const HALF: f64 = TILE / 2.0;
-pub const ROAD_HALF: f64 = 4.5; // straight: road from -4.5 to 4.5 m across
+pub const ROAD_HALF: f64 = 4.5 * SCALE; // straight: road from -6.75 to 6.75 m across
 #[allow(dead_code)] // documents the corner ring (inner edge); the referee bounds by ROAD_HALF
-pub const R_IN: f64 = 0.5;
-pub const R_MID: f64 = 5.0;
+pub const R_IN: f64 = 0.5 * SCALE;
+pub const R_MID: f64 = 5.0 * SCALE;
 #[allow(dead_code)]
-pub const R_OUT: f64 = 9.5;
-pub const MARGIN: f64 = 1.2; // off the road by more than this (m): not a real position
-pub const MAX_SPEED: f64 = 30.0; // m/s; the browser's car tops out at 26
+pub const R_OUT: f64 = 9.5 * SCALE;
+pub const MARGIN: f64 = 1.5; // off the road by more than this (m): not a real position
+pub const MAX_SPEED: f64 = 34.0; // m/s; the browser's car tops out at 30
 pub const SLACK: f64 = 2.5; // m allowed on top of MAX_SPEED x dt (bunched frames)
 pub const CLOCK_LEAD: f64 = 0.6; // s a sender's clock may run ahead of ours, summed over the race
 pub const MAX_STEP_TILES: f64 = 3.0; // one update may move the track distance at most this far
@@ -211,8 +212,8 @@ pub fn on_road(tr: &Track, x: f64, z: f64, margin: f64) -> bool {
 /// Start position k (0 = pole) behind the line in the middle of tile 0, two
 /// abreast, facing north. The line is at z = 0; the grid runs back into the tile behind it.
 pub fn grid_slot(_tr: &Track, k: usize) -> (f64, f64) {
-    let x = if k % 2 == 0 { -2.0 } else { 2.0 };
-    (x, 3.0 + (k / 2) as f64 * 3.2 + if k % 2 == 1 { 1.6 } else { 0.0 })
+    let x = if k % 2 == 0 { -3.0 } else { 3.0 };
+    (x, 4.0 + (k / 2) as f64 * 4.0 + if k % 2 == 1 { 2.0 } else { 0.0 })
 }
 
 /// A finite JSON number (not a bool), clamped to [lo, hi].
@@ -375,7 +376,8 @@ impl Kart {
         json!({"track": track, "laps": self.laps, "phase": self.phase.as_str(),
                "goInMs": if self.phase == Phase::Grid { (((self.go_at - t) * 1000.0) as i64).max(0) } else { 0 },
                "raceMs": if self.phase == Phase::Race { self.ms(t) } else { 0 },
-               "players": players, "results": self.results, "cars": self.cars})
+               "players": players, "results": self.results, "cars": self.cars,
+               "scale": SCALE})
     }
 
     // -- ops --

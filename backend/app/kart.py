@@ -12,7 +12,8 @@ loop of 10 m tiles written as letters from the start line, driving north first: 
 finish straight, S a straight, L/R a 90-degree corner. Geometry (metres, tile-local,
 origin at the tile centre) matches Kenney's Starter Kit Racing pieces: a straight's road
 is 9 m wide between its barriers; a corner is a quarter ring around the tile corner it
-turns about, from radius 0.5 to 9.5 m (centre line 5 m).
+turns about, from radius 0.5 to 9.5 m (centre line 5 m). Everything is drawn and checked
+at SCALE (1.5x: 15 m tiles, a 13.5 m road) so eight cars have room.
 
 Units on the wire: x, z in centimetres, yaw in whole degrees, speed in decimetres/s,
 the sender's clock in centiseconds (q). Nothing transcript-derived ever travels.
@@ -22,12 +23,13 @@ import math
 import os
 from typing import Any
 
-TILE = 10.0
+SCALE = 1.5                  # the kit's 10 m pieces drawn 1.5x: a 13.5 m road fits 8 cars
+TILE = 10.0 * SCALE
 HALF = TILE / 2
-ROAD_HALF = 4.5              # straight: road from -4.5 to 4.5 m across
-R_IN, R_MID, R_OUT = 0.5, 5.0, 9.5
-MARGIN = 1.2                 # off the road by more than this (m): not a real position
-MAX_SPEED = 30.0             # m/s; the browser's car tops out at 26
+ROAD_HALF = 4.5 * SCALE      # straight: road from -6.75 to 6.75 m across
+R_IN, R_MID, R_OUT = 0.5 * SCALE, 5.0 * SCALE, 9.5 * SCALE
+MARGIN = 1.5                 # off the road by more than this (m): not a real position
+MAX_SPEED = 34.0             # m/s; the browser's car tops out at 30
 SLACK = 2.5                  # m of distance allowed on top of MAX_SPEED x dt (bunched frames)
 CLOCK_LEAD = 0.6             # s a sender's clock may run ahead of ours, summed over the race
 MAX_STEP_TILES = 3           # one update may move the track distance at most this far
@@ -138,7 +140,7 @@ def on_road(tr: dict, x: float, z: float, margin: float = 0.0) -> bool:
 def grid_slot(tr: dict, k: int) -> tuple[float, float]:
     """Start position k (0 = pole) behind the line in the middle of tile 0, two abreast,
     facing north. The line is at z = 0; the grid runs back into the tile behind it."""
-    return (-2.0 if k % 2 == 0 else 2.0), 3.0 + (k // 2) * 3.2 + (1.6 if k % 2 else 0.0)
+    return (-3.0 if k % 2 == 0 else 3.0), 4.0 + (k // 2) * 4.0 + (2.0 if k % 2 else 0.0)
 
 
 def as_num(v: Any, lo: float, hi: float) -> float | None:
@@ -195,7 +197,8 @@ class Kart:
                              "place": order.index(uid) + 1, "fin": p["fin"], "dnf": p["dnf"], "away": p["away"],
                              "x": p["x"], "z": p["z"], "r": p["r"]}
                             for uid, p in self.players.items()],
-                "results": self.results, "cars": dict(self.cars)}
+                "results": self.results, "cars": dict(self.cars),
+                "scale": SCALE}   # the geometry this server referees (clients from 1.9.0 assume 1)
 
     # -- ops --
     def car(self, uid: str, msg: dict) -> int | None:

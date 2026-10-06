@@ -26,11 +26,9 @@ function st(g){ return LIVE[g] = LIVE[g] || {lobby:[]}; }
 /* ---------- shared shell: connect, lobby panel, invites ---------- */
 function shell(g, el, body){
   var root = api.mk("div","vg-mp"), lobbyBox = api.mk("div","vg-lobby"), gameBox = api.mk("div","vg-mp-game");
-  root.appendChild(lobbyBox); root.appendChild(gameBox); el.appendChild(root);
-  // A small "reconnecting" badge instead of freezing; the game box keeps what it shows.
   var badge = api.mk("span","vg-reconnect","Reconnecting…"); badge.hidden = true; badge.setAttribute("role","status");
-  root.insertBefore(badge, lobbyBox);
-  var tries = 0, joinedSock = null, ctx = {g:g, lobbyBox:lobbyBox, box:gameBox, alive:true};
+  root.appendChild(badge); root.appendChild(lobbyBox); root.appendChild(gameBox); el.appendChild(root);
+  var tries = 0, joined = false, ctx = {g:g, lobbyBox:lobbyBox, box:gameBox, alive:true, sock:null, offline:false, watch:0};
   (function connect(){
     if(!ctx.alive) return;
     if(!sockOpen()){
@@ -40,24 +38,35 @@ function shell(g, el, body){
         lobbyBox.textContent = "";
         lobbyBox.appendChild(api.mk("p",null,"Multiplayer games run in an Arena room. Pair with an Arena server and open the Arena once to connect."));
         lobbyBox.appendChild(api.btn("Open the Arena","primary",function(){ if(window.setView) window.setView("arena"); }));
+        ctx.watch = setInterval(watch, 400);    // join as soon as the Arena connects
         return;
       }
       tries++; setTimeout(connect, 600); return;
     }
-    watch();
+    if(!joined){ joined = true; ctx.sock = A().sock; send(g, "join"); }
+    ctx.watch = setInterval(watch, 400);
   })();
-  // Join on the current socket, and again on every new one: the room socket reconnects by
-  // itself after a drop, and the server answers a join with a full snapshot of the game.
+  // The room socket can drop (wifi, laptop sleep, server restart): show a small badge, let
+  // the game park itself, and when index.html has a new socket open, rejoin the lobby; the
+  // server answers with a full snapshot, so the game resyncs from that.
   function watch(){
-    var sk = A().sock;
-    if(sk && sk.readyState === 1){
-      if(joinedSock !== sk){ joinedSock = sk; send(g, "join"); }
-      if(!badge.hidden) badge.hidden = true;
-    } else if(joinedSock && badge.hidden) badge.hidden = false;
+    if(!ctx.alive){ clearInterval(ctx.watch); return; }
+    var sk = A().sock, open = sockOpen();
+    if(open && sk !== ctx.sock){
+      var again = joined; joined = true; ctx.sock = sk; send(g, "join");
+      if(ctx.offline){ ctx.offline = false; badge.hidden = true; }
+      if(again && ctx.onRejoin){ try { ctx.onRejoin(); } catch(e){} }
+    } else if(!open && joined && !ctx.offline){
+      ctx.offline = true; badge.hidden = false;
+      if(ctx.onOffline){ try { ctx.onOffline(); } catch(e){} }
+    }
   }
-  ctx.watch = setInterval(function(){ if(ctx.alive) watch(); }, 400);
   ctx.renderLobby = function(){ renderLobby(ctx); };
-  ctx.cleanup = function(){ ctx.alive = false; clearInterval(ctx.watch); if(joinedSock && joinedSock === A().sock) send(g, "leave"); };
+  ctx.cleanup = function(){
+    ctx.alive = false; clearInterval(ctx.watch);
+    if(joined && ctx.beforeLeave){ try { ctx.beforeLeave(); } catch(e){} }
+    if(joined) send(g, "leave");
+  };
   body(ctx);
   return ctx;
 }
@@ -107,7 +116,12 @@ var CTX = {};   // g -> mounted ctx
 HQV.onGame = function(m){
   var g = m.g, s = st(g);
   if(m.ev === "lobby"){ s.lobby = Array.isArray(m.members) ? m.members : []; }
-  if(m.ev === "error"){ if(CTX[g]) api.toast("⚠ "+String(m.error||"error").slice(0,120)); return; }
+  if(m.ev === "error"){
+    var eh = HANDLERS[g];
+    if(eh && eh.onError && eh.onError(m, s)) return;     // the game handled it (e.g. pond land retry)
+    if(CTX[g]) api.toast("⚠ "+String(m.error||"error").slice(0,120));
+    return;
+  }
   if(m.ev === "invited"){
     var c = CTX[g];
     if(m.delivered) api.toast("Invite sent");
@@ -129,106 +143,510 @@ function register(g, icon, desc, mount){
 var HANDLERS = {};
 
 /* =============================== POND =============================== */
+// A shared dock drawn with games/fishart.js (same scene, rig and reel as the solo pond).
+// The server referees every cast (valley.Pond): it picks the fish, the bite time and the
+// treasure, and it refuses a land sooner than bite + MIN_REEL_MS[rarity]. That table is
+// mirrored here so a fast, clean reel waits a moment instead of being refused.
+//
+// Smoothness: everything you do renders at once (charge, cast arc, hook, reel, the fish
+// leaping to you on land) and the server's answer only fills in the score; other anglers
+// animate from their discrete events (cast arc, waiting bob, hooked thrash, catch arc),
+// dock slots glide when people join or leave, the boss HP bar is predicted from your own
+// pulls and eased toward the server's value, and the side panel patches nodes in place.
+var MIN_REEL = {1:1500, 2:2200, 3:3000, 4:4000};   // keep in sync with backend/app/valley.py MIN_REEL_MS
+var POND = null;                                    // the mounted dock view, if any
+function pondFeed(s, text){
+  s.feed = s.feed || []; s.feedSeq = (s.feedSeq|0) + 1;
+  s.feed.unshift({id:s.feedSeq, text:text}); if(s.feed.length > 6) s.feed.length = 6;
+}
 HANDLERS.pond = {
   on: function(m, s){
-    s.feed = s.feed || []; s.casting = s.casting || {};
-    if(m.ev === "pond"){ var p = m.pond||{}; s.scores = p.scores||{}; s.goal = p.goal|0; s.goalTarget = p.goalTarget||20; s.boss = p.boss; (p.casting||[]).forEach(function(u){ s.casting[u]=1; }); }
-    if(m.ev === "cast"){ s.mine = {token:m.token, fish:m.fish, rarity:m.rarity, biteAt:performance.now()+m.biteIn, phase:"wait", progress:0.3, barY:60, barV:0, fishY:75, fishV:0, target:75}; }
-    if(m.ev === "casting" && m.user){ s.casting[m.user.userId] = 1; }
+    s.lines = s.lines || {}; s.last = s.last || {};
+    var V = POND, now = performance.now(), uid = m.user && m.user.userId, mine = !!uid && uid === me();
+    if(m.ev === "pond"){
+      var p = m.pond||{}, lines = {};
+      s.scores = p.scores||{}; s.goal = p.goal|0; s.goalTarget = p.goalTarget||20; s.boss = p.boss || null;
+      // Newer servers send every line with its aim and state; older ones only who is casting.
+      if(Array.isArray(p.lines)) p.lines.forEach(function(l){ if(l && l.userId) lines[l.userId] = {id:l.id, aim: typeof l.aim === "number" ? l.aim : null, hooked: !!l.hooked}; });
+      else (p.casting||[]).forEach(function(u){ lines[u] = {aim:null, hooked:false}; });
+      s.lines = lines;
+      if(V) V.resync(now);
+    }
+    if(m.ev === "lobby" && m.left && m.left.userId && m.left.userId !== me()){
+      // Someone left (or their last socket dropped): the server reels their line in with a
+      // 'lost' first; this also clears a line from a server too old to do that.
+      var gone = m.left.userId, rp = V && V.remote[gone];
+      delete s.lines[gone];
+      if(rp && rp.phase !== "idle"){ rp.phase = "idle"; if(rp.bob) rp.reelIn = {x:rp.bob.x, y:rp.bob.y, at:now}; rp.bob = null; }
+    }
+    if(m.ev === "cast" && V) V.onCast(m, now);
+    if(m.ev === "loot" && api.items[m.item]){ s.loot = m.item; api.inv.add(m.item, 1); if(V) V.onLoot(m.item); }
+    if(m.ev === "casting" && uid){ s.lines[uid] = {id:m.id, aim: typeof m.aim === "number" ? m.aim : null, hooked:false}; if(V && !mine) V.remoteCast(uid, now, false); }
+    if(m.ev === "hooked" && uid && s.lines[uid] && (m.id == null || s.lines[uid].id == null || s.lines[uid].id === m.id)){ s.lines[uid].hooked = true; if(V && !mine) V.remoteHooked(uid, now); }
     if(m.ev === "caught" || m.ev === "lost"){
-      if(m.user){ delete s.casting[m.user.userId]; }
-      var it = api.items[m.fish], who = nameOf(m.user);
-      s.feed.unshift(m.ev === "caught" ? who+" caught "+(it?it.name:m.fish)+" (+"+m.points+")" : who+" lost "+(it?it.name:"a fish"));
-      s.feed = s.feed.slice(0,6);
-      if(m.ev === "caught"){ s.scores = m.scores||s.scores; s.goal = m.goal|0; s.goalTarget = m.goalTarget||s.goalTarget;
-        if(m.user && m.user.userId === me()){ api.inv.add(m.fish, 1); s.mine = null; } }
-      else if(m.user && m.user.userId === me()) s.mine = null;
+      var it = api.items[m.fish], line = uid && s.lines[uid];
+      // An event about an older line (one we let go of on unmount or a reconnect) must not
+      // touch the line that is out now: cast ids tell them apart.
+      var stale = m.id != null && (mine ? !!(s.mine && (s.mine.id != null ? s.mine.id !== m.id : s.mine.pending)) : !!(line && line.id != null && line.id !== m.id));
+      if(uid && !stale) delete s.lines[uid];
+      pondFeed(s, m.ev === "caught" ? (mine ? "You" : nameOf(m.user))+" caught "+(it?it.name:m.fish)+" (+"+m.points+(m.perfect ? ", perfect" : "")+")" : (mine ? "You" : nameOf(m.user))+" lost "+(it?it.name:"a fish"));
+      if(m.ev === "caught"){ s.scores = m.scores||s.scores; s.goal = m.goal|0; s.goalTarget = m.goalTarget||s.goalTarget; if(uid && it) s.last[uid] = m.fish;
+        if(mine) api.inv.add(m.fish, 1); }
+      if(V && !stale) V.onResult(m, mine, now);
+      if(mine && !stale) s.mine = null;
     }
-    if(m.ev === "goal"){ s.feed.unshift("🎉 Room goal reached! Everyone gets a Gold Ore"); if(CTX.pond) api.inv.add("gold", 1); }
-    if(m.ev === "boss" || m.ev === "bosshp"){ s.boss = m.boss; if(m.ev==="boss") { s.feed.unshift("🐉 A Merge Leviathan surfaced! Everyone hold to reel!"); api.toast("🐉 Boss fish! Everyone hold to reel it in"); } s.pulling = m.pulling|0; }
-    if(m.ev === "bossdown"){ s.boss = null; s.scores = m.scores||s.scores; s.feed.unshift("🐉 The room landed the Merge Leviathan!");
-      if((m.helpers||[]).indexOf(me()) >= 0) api.inv.add("leviathan", 1); }
-    if(m.ev === "bossgone"){ s.boss = null; s.feed.unshift("The Leviathan slipped away…"); }
+    if(m.ev === "goal"){ pondFeed(s, "🎉 Room goal reached! Everyone gets a Gold Ore"); if(CTX.pond){ api.inv.add("gold", 1); api.toast("🎉 Room goal reached! +1 Gold Ore", "ach"); } if(V) V.fx.confetti(); }
+    if(m.ev === "boss" || m.ev === "bosshp"){
+      var prev = s.boss; s.boss = m.boss; s.pulling = m.pulling|0;
+      if(m.ev === "boss" && V) V.bossGoneLocal = false;
+      if(m.ev === "boss"){ pondFeed(s, "🐉 A Merge Leviathan surfaced! Everyone hold to reel!"); api.toast("🐉 Boss fish! Everyone hold to reel it in"); if(V) V.bossUp(now); }
+      else if(V && prev && m.boss && m.boss.hp < prev.hp) V.bossHit(now);
+      if(V) V.bossSync(now);
+    }
+    if(m.ev === "bossdown"){
+      var helped = (m.helpers||[]).indexOf(me()) >= 0;
+      s.boss = null; s.pulling = 0; s.scores = m.scores||s.scores; pondFeed(s, "🐉 The room landed the Merge Leviathan!");
+      if(helped) api.inv.add("leviathan", 1);
+      if(V) V.bossDown(now, helped);
+    }
+    if(m.ev === "bossgone"){
+      s.boss = null; s.pulling = 0;
+      if(V && V.bossGoneLocal) V.bossGoneLocal = false;        // our countdown already let it go
+      else { pondFeed(s, "The Leviathan slipped away…"); if(V) V.bossGone(now); }
+    }
   },
-  render: function(ctx, s){ if(ctx.side) drawPondSide(ctx, s); }
+  onError: function(m){ return POND ? POND.onError(String(m.error||""), performance.now()) : false; },
+  render: function(ctx, s){ if(ctx.side) ctx.side.update(s); }
 };
-function drawPondSide(ctx, s){
-  var side = ctx.side; side.textContent = "";
-  var goal = api.mk("div","vg-goal"); goal.appendChild(api.mk("span",null,"Room goal: "+(s.goal|0)+"/"+(s.goalTarget||20)+" fish"));
-  var gm = api.mk("div","vg-meter"), gf = api.mk("i"); gf.style.width = Math.min(100, Math.round((s.goal|0)/(s.goalTarget||20)*100))+"%"; gm.appendChild(gf); goal.appendChild(gm);
-  side.appendChild(goal);
-  if(s.boss){
-    var b = api.mk("div","vg-boss"); b.appendChild(api.mk("b",null,"BOSS: Merge Leviathan · "+s.boss.left+"s"));
-    var bm = api.mk("div","vg-meter low"), bf = api.mk("i"); bf.style.width = Math.round(s.boss.hp/s.boss.max*100)+"%"; bm.appendChild(bf); b.appendChild(bm);
-    b.appendChild(api.mk("span","vg-muted","Hold Space / mouse to reel together · "+(s.pulling||0)+" pulling now"));
-    side.appendChild(b);
-  }
-  var names = {}; (s.lobby||[]).forEach(function(p){ names[p.userId] = nameOf(p); });
-  var sc = Object.keys(s.scores||{}).sort(function(a,b){ return s.scores[b]-s.scores[a]; });
-  side.appendChild(api.mk("div",null,"Scores: "+(sc.length ? sc.map(function(u){ return (u===me()?"You":(names[u]||"?"))+" "+s.scores[u]; }).join(" · ") : "none yet")));
-  var feed = api.mk("div","vg-feed"); feed.setAttribute("aria-live","polite");
-  (s.feed||[]).forEach(function(l){ feed.appendChild(api.mk("div",null,l)); });
-  if(!(s.feed||[]).length) feed.appendChild(api.mk("div","vg-muted","Catches, misses and boss fights show up here."));
-  side.appendChild(feed);
-}
-register("pond", "🎣", "Shared dock, room goal and a boss fish", function(ctx){
-  var s = st("pond"), W = 320, H = 150;
-  var cv = api.canvas(W, H); cv.setAttribute("aria-label","Shared pond. Cast, then hold Space or the mouse to reel; during a boss, hold to pull together.");
-  var row = api.mk("div","vg-row"); row.appendChild(api.btn("Cast","primary",function(){ if(!s.mine) send("pond","cast"); cv.focus(); }));
-  var msg = api.mk("span","vg-msg"); row.appendChild(msg);
-  ctx.box.appendChild(row); ctx.box.appendChild(cv);
-  ctx.side = api.mk("div","vg-mp-side"); ctx.box.appendChild(ctx.side);
-  var g = cv.getContext("2d"), hold = false, raf = 0, last = 0, lastPull = 0;
-  function down(e){ if(e.type==="keydown" && e.key!==" ") return; e.preventDefault(); hold = true; }
-  function up(e){ if(e.type==="keyup" && e.key!==" ") return; hold = false; }
-  cv.addEventListener("mousedown",down); cv.addEventListener("keydown",down); cv.addEventListener("keyup",up);
-  window.addEventListener("mouseup",up);
-  function step(dt, t){
-    var m = s.mine;
-    if(s.boss && hold && t - lastPull > 160){ lastPull = t; send("pond","pull"); }
-    if(!m) return;
-    if(m.phase==="wait" && t >= m.biteAt){ m.phase = "reel"; }
-    if(m.phase!=="reel") return;
-    var sp = 0.6 + m.rarity*0.45;
-    if(Math.random() < 0.02*sp) m.target = 8 + Math.random()*(H-16);
-    m.fishV += (m.target - m.fishY)*0.002*sp*dt; m.fishV *= 0.92; m.fishY = Math.max(4, Math.min(H-4, m.fishY + m.fishV*dt));
-    m.barV += (hold && !s.boss ? -0.012 : 0.010)*dt; m.barV = Math.max(-0.35, Math.min(0.35, m.barV)); m.barY += m.barV*dt;
-    if(m.barY < 0){ m.barY = 0; m.barV = 0; } if(m.barY > H-34){ m.barY = H-34; m.barV *= -0.3; }
-    var inside = m.fishY >= m.barY && m.fishY <= m.barY+34;
-    m.progress += (inside ? 0.00045 : -0.0004)*dt;
-    if(m.progress >= 1){ m.phase = "sent"; send("pond","land",{token:m.token}); }
-    else if(m.progress <= 0){ m.phase = "sent"; send("pond","lose",{token:m.token}); }
-  }
-  function draw(t){
-    g.imageSmoothingEnabled = false;
-    g.fillStyle = "#2b5f7a"; g.fillRect(0,0,W,H-40);
-    g.fillStyle = "#357590"; for(var i=0;i<7;i++) g.fillRect(((i*53+(api.calm()?0:Math.floor(t/90)))%W),12+i*14,16,1);
-    g.fillStyle = "#7a5a3a"; g.fillRect(0,H-40,W,12); g.fillStyle = "#5e4329"; for(var x=0;x<W;x+=16) g.fillRect(x,H-40,1,12);
-    g.fillStyle = "#3f7d3a"; g.fillRect(0,H-28,W,28);
-    if(s.boss){ var bx = 120 + Math.sin(t/400)*30; g.fillStyle = "#7a3fb0"; g.fillRect(bx, 40, 60, 14); g.fillStyle = "#e2c4ff"; g.fillRect(bx+44, 44, 6, 4); }
-    var players = s.lobby || [], n = Math.max(1, players.length);
-    players.forEach(function(p, i){
-      var x = Math.round((i+0.5)*(W-60)/n), mine = p.userId === me();
-      g.fillStyle = mine ? "#3a6fd8" : "#c9a14a"; g.fillRect(x, H-52, 8, 12); g.fillStyle = "#f2c99a"; g.fillRect(x+1, H-58, 6, 6);
-      g.fillStyle = "#ffffff"; g.font = "7px monospace"; g.fillText((mine?"You":nameOf(p)).slice(0,8), x-6, H-4);
-      if(s.casting[p.userId] || (mine && s.mine)){ g.strokeStyle = "rgba(255,255,255,.6)"; g.beginPath(); g.moveTo(x+8,H-56); g.lineTo(x+20, H-80); g.stroke();
-        g.fillStyle = "#f5f5f5"; g.fillRect(x+18, H-80, 4, 4); g.fillStyle = "#e0452f"; g.fillRect(x+18, H-83, 4, 3); }
+
+// The side panel: built once, then only text, widths and order change (no rebuild per
+// message, so nothing flickers and the aria-live feed announces only new lines).
+function pondSide(el){
+  var goal = api.mk("div","vg-goal"), goalT = api.mk("span"), gm = api.mk("div","vg-meter"), gf = api.mk("i");
+  gm.appendChild(gf); goal.appendChild(goalT); goal.appendChild(gm); el.appendChild(goal);
+  var boss = api.mk("div","vg-boss"), bossT = api.mk("b"), bm = api.mk("div","vg-meter low"), bf = api.mk("i"), bossN = api.mk("span","vg-muted");
+  bm.appendChild(bf); boss.appendChild(bossT); boss.appendChild(bm); boss.appendChild(bossN); boss.hidden = true; el.appendChild(boss);
+  el.appendChild(api.mk("b", null, "Scores"));
+  var empty = api.mk("span","vg-muted","No catches yet."), ol = api.mk("ol","vg-score");
+  el.appendChild(empty); el.appendChild(ol);
+  var feed = api.mk("div","vg-feed"); feed.setAttribute("aria-live","polite"); feed.setAttribute("aria-relevant","additions");
+  var feedEmpty = api.mk("div","vg-muted","Catches, misses and boss fights show up here."); feed.appendChild(feedEmpty);
+  el.appendChild(feed);
+  var rows = {}, feedNodes = [];     // uid -> {li, ic, rar, nm, pts, fish}; feed nodes newest first
+  function set(n, t){ t = String(t); if(n.textContent !== t) n.textContent = t; }
+  function width(n, pct){ var w = Math.max(0, Math.min(100, Math.round(pct)))+"%"; if(n.style.width !== w) n.style.width = w; }
+  var side = {el:el, mut:0};
+  side.update = function(s){
+    var tgt = s.goalTarget||20;
+    set(goalT, "Room goal: "+(s.goal|0)+"/"+tgt+" fish"); width(gf, (s.goal|0)/tgt*100);
+    boss.hidden = !s.boss;
+    var names = {}; (s.lobby||[]).forEach(function(p){ names[p.userId] = nameOf(p); });
+    var sc = s.scores||{}, ids = Object.keys(sc).sort(function(a,b){ return sc[b]-sc[a] || (a < b ? -1 : 1); });
+    empty.hidden = ids.length > 0;
+    ids.forEach(function(u, i){
+      var r = rows[u];
+      if(!r){ r = rows[u] = {li:api.mk("li", u === me() ? "me" : ""), ic:null, rar:api.mk("span"), nm:api.mk("span"), pts:api.mk("b"), fish:null};
+        r.li.appendChild(r.rar); r.li.appendChild(r.nm); r.li.appendChild(r.pts); }
+      var last = (s.last||{})[u];
+      if(last !== r.fish && api.items[last]){
+        r.fish = last; var ic = api.iconEl(last, 2); ic.title = api.items[last].name;
+        if(r.ic) r.li.replaceChild(ic, r.ic); else r.li.insertBefore(ic, r.rar);
+        r.ic = ic; r.rar.className = "vg-rar vg-rar-"+api.items[last].rarity; set(r.rar, api.items[last].name);
+      }
+      set(r.nm, u === me() ? "You" : (names[u]||"?")); set(r.pts, sc[u]);
+      if(ol.children[i] !== r.li) ol.insertBefore(r.li, ol.children[i] || null);   // moves, never rebuilds
     });
-    var m = s.mine;
-    if(m && m.phase==="reel"){
-      g.fillStyle = "#1d3140"; g.fillRect(W-40,0,18,H-40); g.fillRect(W-18,0,6,H-40);
-      var sc = (H-40)/H;
-      g.fillStyle = "#6fd36a"; g.fillRect(W-38, m.barY*sc, 14, 34*sc);
-      g.drawImage(api.icon(api.items[m.fish],1), W-36, m.fishY*sc-4);
-      g.fillStyle = m.progress>0.66?"#6fd36a":m.progress>0.33?"#f2d14b":"#e0452f"; var ph = Math.max(0,Math.min(1,m.progress))*(H-40); g.fillRect(W-17,(H-40)-ph,4,ph);
-    }
-    msg.textContent = ctx.paused ? "Paused" : s.boss ? "Hold to reel the boss together!" : !m ? "Cast to fish with the room." : m.phase==="wait" ? "Waiting for a bite…" : m.phase==="reel" ? "Bite! Hold to keep the fish in the bar." : "Landing…";
+    Object.keys(rows).forEach(function(u){ if(!(u in sc)){ rows[u].li.remove(); delete rows[u]; } });
+    // feed: prepend only entries we haven't shown, drop the ones that fell off the end
+    var list = s.feed||[], have = feedNodes.length ? feedNodes[0].id : 0, add = list.filter(function(f){ return f.id > have; });
+    for(var k=add.length-1;k>=0;k--){ var n = api.mk("div", null, add[k].text); n.dataset.id = add[k].id; feed.insertBefore(n, feed.firstChild); feedNodes.unshift({id:add[k].id, n:n}); side.mut++; }
+    while(feedNodes.length > 6){ feedNodes.pop().n.remove(); }
+    feedEmpty.hidden = feedNodes.length > 0;
+  };
+  // Called from the animation loop: boss line at most once a second (only when it changed).
+  side.boss = function(s, left, hpShown){
+    if(!s.boss) return;
+    set(bossT, "BOSS: Merge Leviathan · "+left+"s");
+    width(bf, hpShown/(s.boss.max||1)*100);
+    set(bossN, "HP "+Math.max(0, Math.round(hpShown))+"/"+s.boss.max+" · hold Space / mouse to reel together · "+(s.pulling||0)+" pulling now");
+  };
+  return side;
+}
+
+register("pond", "🎣", "Shared dock, room goal and a boss fish", function(ctx){
+  var FA = HQV.fishArt, s = st("pond");
+  s.feed = s.feed || []; s.lines = s.lines || {}; s.last = s.last || {};
+  var DECK_TOP = 123, dbg = false; try { dbg = !!localStorage.getItem("hq-debug"); } catch(e){}
+  var layout = api.mk("div","vg-dock"), left = api.mk("div","vg-body"), row = api.mk("div","vg-row");
+  var castBtn = api.btn("Cast","primary",function(){ quickCast(); cv.focus(); });
+  var snd = api.btn("", "ghost", function(){ FA.sfx.set(!FA.sfx.on()); syncSound(); if(FA.sfx.on()) FA.sfx.unlock(); });
+  function syncSound(){ var on = FA.sfx.on(); snd.textContent = on ? "🔊 Sound" : "🔇 Sound"; snd.setAttribute("aria-pressed", on ? "true" : "false"); }
+  syncSound();
+  row.appendChild(castBtn); row.appendChild(snd);
+  var wrap = api.mk("div","vg-fish-wrap"), cv = api.canvas(FA.W, FA.H); wrap.appendChild(cv);
+  var msg = api.mk("p","vg-msg"); msg.setAttribute("aria-live","polite");
+  left.appendChild(row); left.appendChild(wrap); left.appendChild(msg);
+  var sideEl = api.mk("div","vg-mp-side");
+  layout.appendChild(left); layout.appendChild(sideEl); ctx.box.appendChild(layout);
+  ctx.side = pondSide(sideEl);
+  var view = FA.view(cv), scene = new FA.Scene("dock:"+(A().roomId||"room"), "dock"), fx = new FA.Fx(), shadows = new FA.Shadows(scene, 5);
+  var raf = 0, last = 0, pullHold = false, lastPull = 0, shakeUntil = 0, say = "", lastDraw = 0, sideBossAt = 0;
+  var V = POND = {fx:fx, remote:{}, card:null, boss:null, errors:[], pulls:[], rtt:150, hpShown:null, bossEnds:0, slotX:{}, frames:[], lastToken:null};
+  function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
+
+  /* ---- who stands where: stable order by user id, up to 8; slots glide, never jump ---- */
+  function players(){
+    var l = (s.lobby||[]).slice().sort(function(a,b){ return String(a.userId).localeCompare(String(b.userId)); }).slice(0,8);
+    if(me() && !l.some(function(p){ return p.userId === me(); })) l.push({userId:me(), displayName:"You"});
+    return l;
   }
-  function loop(t){ var dt = last ? Math.min(50, t-last) : 16; last = t; if(!ctx.paused) step(dt, t); draw(t); raf = requestAnimationFrame(loop); }
+  function slots(){
+    var l = players(), n = l.length, out = {};
+    l.forEach(function(p, i){ out[p.userId] = {tx: n > 1 ? Math.round(24 + i*(272/(n-1))) : 160, p:p}; });
+    Object.keys(out).forEach(function(u){ var x = V.slotX[u]; out[u].x = Math.round(x == null ? out[u].tx : x); });
+    return out;
+  }
+  function glideSlots(dt){
+    var sl = slots(), k = 1 - Math.exp(-dt/140);
+    Object.keys(sl).forEach(function(u){
+      var x = V.slotX[u], tx = sl[u].tx;
+      if(x == null || api.calm() || Math.abs(tx - x) > 200) V.slotX[u] = tx;   // first sight / calm: place it
+      else V.slotX[u] = Math.abs(tx - x) < 0.3 ? tx : x + (tx - x)*k;
+    });
+    Object.keys(V.slotX).forEach(function(u){ if(!sl[u]) delete V.slotX[u]; });
+  }
+  // Where a cast with this power lands: the same rule for me and for everyone watching me.
+  function castTarget(uid, x0, pw){
+    var r = api.rng(uid+":cast:"+pw);
+    return {x: clamp(Math.round(x0 + 8 + (r()*2-1)*16), 12, 308), y: Math.round(128 - pw*38)};
+  }
+
+  /* ---- my line ---- */
+  var rig = new FA.Rig({scene:scene, fx:fx, shadows:shadows, look:FA.looks(me()||"me"), me:true, dir:1, x:154, y:DECK_TOP, zone:36, treasure:false, serverLands:true,
+    target: function(pw){ var sl = slots()[me()]; return castTarget(me()||"me", sl ? sl.tx : rig.o.x + 6, Math.round(pw*1000)/1000); },
+    cast: function(pw, now){
+      if(!send("pond","cast",{aim:Math.round(pw*1000)/1000})){ say = ctx.offline ? "Reconnecting to the Arena…" : "Not connected to the Arena yet."; rig.end("reeled", now); return; }
+      s.mine = {pending:true, sentAt:now};
+      say = "Casting…";
+    },
+    canLand: function(now){ var m = s.mine; return !!(m && m.token) && now - m.recvAt >= m.biteIn + MIN_REEL[m.rarity||4] + 250; },
+    onResult: onRig});
+  function onRig(kind, info){
+    var now = performance.now(), m = s.mine;
+    if(kind === "bite"){ say = "Bite! Press Space now."; if(!api.calm()) shakeUntil = now + 150; return; }
+    if(kind === "hooked"){ if(m && m.token) send("pond","hook",{token:m.token}); say = s.boss ? "Hooked! The boss comes first: hold to pull together." : "Hooked! Hold to keep the fish in the green bar."; return; }
+    if(kind === "land"){
+      if(m && m.token){ send("pond","land",{token:m.token, perfect:!!(info.result && info.result.perfect), chest:!!(info.result && info.result.chest)}); m.tries = 1; m.landAt = now; }
+      say = "Landing…"; return;
+    }
+    if(kind === "won") return;
+    // spooked / missed / reeled / lost: tell the server, unless it told us
+    if(!(info && info.server)){
+      if(m && m.token) send("pond","lose",{token:m.token});
+      else if(m && m.pending) m.cancelled = true;
+    }
+    if(!(m && m.pending && !m.token)) s.mine = null;
+    say = kind === "spooked" ? "Too early, it got spooked." : kind === "reeled" ? (/^(Not connected|Reconnecting)/.test(say) ? say : "Reeled in.") : "It got away…";
+  }
+  V.onCast = function(m, now){
+    var prev = s.mine;
+    if(prev && prev.sentAt) V.rtt = V.rtt*0.7 + (now - prev.sentAt)*0.3;
+    if(prev && prev.cancelled || (rig.phase !== "flying" && rig.phase !== "waiting")){ send("pond","lose",{token:m.token}); s.mine = null; return; }
+    s.mine = {token:m.token, id:m.id, fish:m.fish, rarity:m.rarity|0, biteIn:m.biteIn|0, recvAt:now};
+    V.lastToken = m.token;
+    rig.arm({fish:m.fish, rarity:m.rarity|0, biteAt:now + (m.biteIn|0), token:m.token, chest:!!m.chest}, now);
+    say = "Waiting for a bite… ignore the nibbles.";
+  };
+  V.onLoot = function(item){ V.loot = item; if(V.card && V.card.setLoot) V.card.setLoot(item); };
+  V.onError = function(err, now){
+    V.errors.push(err.slice(0,80));
+    var m = s.mine;
+    if(/^too fast/.test(err) && m && m.token && rig.phase === "sent"){
+      if((m.tries|0) < 3){ setTimeout(function(){ if(s.mine === m && rig.phase === "sent"){ m.tries++; send("pond","land",{token:m.token, perfect:!!(rig.result && rig.result.perfect), chest:!!(rig.result && rig.result.chest)}); } }, 400); }
+      return true;
+    }
+    if(err === "not yet") return true;     // a hook a hair early: cosmetic, the reel goes on
+    if(/already have a line/.test(err)){
+      // Only an older Arena says this (newer ones replace the old line and broadcast it as
+      // lost). Let go of our last known line quietly, no lobby churn, and ask for a recast.
+      if(m && m.pending){ s.mine = null; rig.end("reeled", now); }
+      if(V.lastToken) send("pond","lose",{token:V.lastToken});
+      say = "Your old line was still out. Reeled it in; cast again.";
+      return true;
+    }
+    return false;
+  };
+  V.onResult = function(m, mine, now){
+    var sl = slots(), uid = m.user && m.user.userId, slot = sl[uid];
+    var it = api.items[m.fish], col = FA.RARITY_COL[(it||{}).rarity||1];
+    if(mine){
+      if(m.ev === "caught"){
+        rig.finish(true, now);
+        var tok = (s.mine && s.mine.token) || V.lastToken, u = api.rng(String(tok||m.fish+now))();
+        var perfect = !!(rig.result && rig.result.perfect), size = FA.sizeFor(m.fish, u, perfect);
+        say = "You caught "+(it?it.name:m.fish)+"! "+size.len+" cm, "+FA.fmtKg(size.kg)+" (+"+m.points+")";
+        if(slot) fx.popup(slot.x, DECK_TOP - 10, m.fish, "+"+m.points, col);
+        var loot = V.loot; V.loot = null;
+        setTimeout(function(){ if(POND === V){ closeCard(); V.card = FA.card(wrap, {id:m.fish, size:size, stars:(perfect?1:0)+(size.big?1:0)+(rig.perfectCast?1:0), perfect:perfect, points:m.points, loot:loot || V.loot}, {onClose:function(){ V.card = null; cv.focus(); }}); V.loot = null; } }, 300);
+      } else { rig.finish(false, now); }
+      return;
+    }
+    var p = V.remote[uid]; if(!p) p = V.remote[uid] = {castN:0, phase:"idle"};
+    if(m.ev === "caught"){
+      p.cheerUntil = now + 900; p.arc = {fish:m.fish, x0:p.bob ? p.bob.x : (slot ? slot.x : 160), y0:p.bob ? p.bob.y : 100, at:now};
+      if(slot) fx.popup(slot.x, DECK_TOP - 10, m.fish, "+"+m.points, col);
+      if(p.bob) fx.ripple(p.bob.x, p.bob.y);
+      if(it && it.rarity >= 3 && p.bob) fx.sparkle(p.bob.x, p.bob.y - 6);
+    } else { p.slumpUntil = now + 800; if(p.bob) p.reelIn = {x:p.bob.x, y:p.bob.y, at:now}; }
+    p.phase = "idle"; p.bob = null;
+  };
+  // Another angler cast (or, instant=true, was already out when we joined / reconnected).
+  V.remoteCast = function(uid, now, instant, hooked){
+    var sl = slots()[uid], p = V.remote[uid] = V.remote[uid] || {castN:0, phase:"idle"}, line = s.lines[uid] || {};
+    p.castN++; p.id = line.id;
+    var x0 = sl ? sl.tx : 160, r = api.rng(uid+":r:"+p.castN);
+    var aim = typeof line.aim === "number" ? line.aim : 0.3 + r()*0.6;
+    p.target = castTarget(uid, x0, aim);
+    p.nib = r()*5000; p.at = now; p.phase = instant ? (hooked ? "hooked" : "wait") : "fly"; p.bob = instant ? p.target : null;
+    if(hooked) p.hookAt = now - 1000;
+  };
+  V.remoteHooked = function(uid, now){
+    var p = V.remote[uid]; if(!p || p.phase === "idle") { V.remoteCast(uid, now, true, true); p = V.remote[uid]; }
+    if(p.phase === "fly"){ p.bob = p.target; }
+    p.phase = "hooked"; p.hookAt = now;
+    if(p.bob){ fx.splash(p.bob.x, p.bob.y, 6); fx.ripple(p.bob.x, p.bob.y, 120); }
+  };
+  // A full snapshot arrived (join, rejoin after a reconnect): rebuild every remote line.
+  V.resync = function(now){
+    var keep = {};
+    Object.keys(s.lines).forEach(function(uid){
+      if(uid === me()) return;
+      keep[uid] = 1;
+      var p = V.remote[uid], l = s.lines[uid];
+      if(!p || p.phase === "idle") V.remoteCast(uid, now, true, l.hooked);
+      else if(l.hooked && p.phase !== "hooked") V.remoteHooked(uid, now);
+    });
+    Object.keys(V.remote).forEach(function(uid){ var p = V.remote[uid]; if(!keep[uid] && p.phase !== "idle"){ p.phase = "idle"; p.bob = null; } });
+    if(s.boss){ if(!V.boss) V.bossUp(now, true); V.bossSync(now); } else if(V.boss) V.boss = null;
+  };
+
+  /* ---- the boss: predicted from my pulls, eased toward the server ---- */
+  V.bossUp = function(now, quiet){
+    V.boss = {at:now, seed:Date.now(), hit:0}; V.hpShown = s.boss ? s.boss.hp : null; V.pulls = [];
+    if(quiet) return;
+    fx.splash(160, 108, 14); for(var i=0;i<4;i++) fx.ripple(160, 110, i*160, true); FA.sfx.play("boss");
+  };
+  V.bossSync = function(now){ if(s.boss){ V.bossEnds = now + (s.boss.left|0)*1000; V.hpAt = now; V.pulls = V.pulls.filter(function(t){ return t > now - V.rtt; }); } };
+  V.bossHit = function(now){ if(V.boss) V.boss.hit = now; };
+  V.bossDown = function(now, helped){
+    var b = V.boss || {seed:Date.now()};
+    V.boss = null; V.hpShown = null; V.bossArc = {at:now, x0:V.bossX||160, y0:V.bossY||106};
+    FA.sfx.play("catch"); fx.confetti();
+    if(helped) setTimeout(function(){ if(POND === V){ closeCard(); var size = FA.sizeFor("leviathan", api.rng("boss:"+b.seed)(), false);
+      V.card = FA.card(wrap, {id:"leviathan", size:size, stars:2, title:"Group catch!", points:10}, {onClose:function(){ V.card = null; cv.focus(); }}); } }, 900);
+  };
+  V.bossGone = function(now){ V.boss = null; V.hpShown = null; V.bossDive = {at:now, x:V.bossX||160, y:V.bossY||106}; fx.ripple(V.bossX||160, (V.bossY||106)+6, 0, true); fx.ripple(V.bossX||160, (V.bossY||106)+6, 200, true); };
+  function bossHpTarget(now){
+    // Server HP, minus my pulls it can't have counted yet: a pull sent at t reaches the server
+    // at about t + rtt/2, and that HP left the server about rtt/2 before we got it (at hpAt).
+    var b = s.boss; if(!b) return 0;
+    var dmg = 1 + 0.5*Math.max(0, (s.pulling|0) - 1), since = (V.hpAt||0) - V.rtt, pending = V.pulls.filter(function(t){ return t > since; }).length;
+    return Math.max(0, b.hp - pending*dmg);
+  }
+  function pull(now){
+    if(!send("pond","pull")) return;
+    lastPull = now; V.pulls.push(now); if(V.pulls.length > 32) V.pulls.shift();
+    if(V.boss) V.boss.jolt = now;
+    if(!api.calm() && V.bossX != null) fx.splash(V.bossX + (Math.random()*30 - 15), (V.bossY||106) + 4, 2);
+  }
+  function closeCard(){ if(V.card){ V.card.close(true); V.card = null; } }
+
+  /* ---- connection: drop / rejoin without freezing ---- */
+  ctx.onOffline = function(){
+    var now = performance.now();
+    if(rig.phase !== "idle") rig.end("reeled", now, {server:true});
+    s.mine = null; pullHold = false;
+    Object.keys(V.remote).forEach(function(u){ V.remote[u].phase = "idle"; V.remote[u].bob = null; });
+    say = "Connection lost. Reconnecting…";
+  };
+  ctx.onRejoin = function(){
+    // The old socket may still hold our line on the server for a moment: let it go.
+    if(V.lastToken) send("pond","lose",{token:V.lastToken});
+    say = "Back on the dock.";
+  };
+  ctx.beforeLeave = function(){ var m = s.mine; if(m && m.token) send("pond","lose",{token:m.token}); };
+
+  /* ---- input: Pointer Events (mouse, pen, touch) + Space ---- */
+  function press(){
+    if(ctx.paused || V.card) return;
+    FA.sfx.unlock();
+    var now = performance.now();
+    pullHold = true;                             // held through a boss spawn = pulling
+    if(s.boss){
+      if(now - lastPull >= 160) pull(now);
+      if(rig.phase === "bite") rig.down(now);   // still strike your own bite
+      return;
+    }
+    rig.down(now);
+  }
+  function release(){ pullHold = false; if(!ctx.paused) rig.up(performance.now()); else rig.hold = false; }
+  function quickCast(){ if(ctx.paused || V.card || s.boss || rig.phase !== "idle") return; FA.sfx.unlock(); rig.release(performance.now(), 0.7); }
+  function kd(e){ if(e.key !== " " && e.key !== "Spacebar") return; e.preventDefault(); if(!e.repeat) press(); }
+  function ku(e){ if(e.key !== " " && e.key !== "Spacebar") return; e.preventDefault(); release(); }
+  function pd(e){ if(e.button != null && e.button !== 0 && e.pointerType === "mouse") return; e.preventDefault(); cv.focus(); try { cv.setPointerCapture(e.pointerId); } catch(x){} press(); }
+  function pu(){ release(); }
+  cv.addEventListener("keydown", kd); cv.addEventListener("keyup", ku); cv.addEventListener("pointerdown", pd);
+  cv.addEventListener("pointerup", pu); cv.addEventListener("pointercancel", pu); cv.addEventListener("lostpointercapture", pu);
+  window.addEventListener("pointerup", pu);
+
+  /* ---- loop ---- */
+  function step(now, dt){
+    var m = s.mine;
+    if(m && m.pending && !m.token && now - m.sentAt > 4000){ s.mine = null; if(rig.phase === "flying" || rig.phase === "waiting") rig.end("reeled", now); say = "No answer from the Arena. Cast again."; }
+    if(rig.phase === "sent" && m && m.landAt && now - m.landAt > 5000){ rig.end("lost", now, {fish:rig.fish}); }
+    if(s.boss && pullHold && now - lastPull >= 160) pull(now);
+    // The server only notices a boss ran out when someone acts; past our own countdown we let
+    // it go here so nobody is stuck waiting (the next cast makes the server say "bossgone").
+    if(s.boss && V.bossEnds && now > V.bossEnds + 1500){
+      s.boss = null; s.pulling = 0; V.bossGoneLocal = true; pondFeed(s, "The Leviathan slipped away…"); V.bossGone(now); ctx.side.update(s);
+    }
+    rig.frozen = !!s.boss;
+    rig.update(now, dt);
+    glideSlots(dt);
+    var sl = slots();
+    Object.keys(V.remote).forEach(function(uid){
+      var p = V.remote[uid];
+      if(p.phase === "fly" && now - p.at >= 450){ p.phase = "wait"; p.bob = p.target; fx.splash(p.bob.x, p.bob.y, 5); }
+      if(!sl[uid] && p.phase === "idle" && !p.arc) delete V.remote[uid];
+    });
+    if(s.boss){
+      var tgt = bossHpTarget(now);
+      if(V.hpShown == null || api.calm()) V.hpShown = tgt;
+      else V.hpShown += (tgt - V.hpShown)*(1 - Math.exp(-dt/90));
+    }
+  }
+  var BUBBLE_T = 700;
+  function drawRemote(g, uid, sx, p, now, night, bossMouth){
+    var calm = api.calm(), hooked = p.phase === "hooked";
+    var frame = now < (p.cheerUntil||0) ? "cheer" : now < (p.slumpUntil||0) ? "slump" : ((hooked || (bossMouth && (s.pulling|0) > (pullHold ? 1 : 0))) && Math.floor(now/120)%2) ? "reel" : "idle";
+    var hand = FA.drawAngler(g, sx - 6, DECK_TOP, {frame:frame, look:FA.looks(uid)});
+    var tip = FA.drawRod(g, hand, bossMouth ? 15 : p.phase === "idle" ? 25 : hooked ? 20 + (calm ? 0 : Math.sin(now/160)*6) : 35, 1);
+    if(bossMouth) FA.drawLine(g, tip.x, tip.y, bossMouth.x, bossMouth.y, 2, night);
+    else if(p.phase === "fly"){
+      var u = clamp((now - p.at)/450, 0, 1), x = tip.x + (p.target.x - tip.x)*u, y = tip.y + (p.target.y - tip.y)*u - 40*Math.sin(Math.PI*u);
+      FA.drawLine(g, tip.x, tip.y, x, y, 4, night); FA.drawBobber(g, x, y, 0, true);
+    } else if((p.phase === "wait" || hooked) && p.bob){
+      var jx = hooked && !calm ? Math.round(Math.sin(now/90 + p.nib)*2) : 0;
+      var nib = hooked ? 3 : (!calm && Math.sin((now + p.nib)/650) > 0.93 ? 2 : (!calm && Math.sin(now/500 + p.nib) > 0 ? 1 : 0));
+      FA.drawLine(g, tip.x, tip.y, p.bob.x + jx, p.bob.y - 3, hooked ? 2 : 18, night); FA.drawBobber(g, p.bob.x + jx, p.bob.y, nib);
+      if(hooked && !calm && Math.floor(now/260)%3 === 0) fx.ripple(p.bob.x, p.bob.y);
+    }
+    if(hooked && now - (p.hookAt||0) < BUBBLE_T) FA.label(g, "!", sx, DECK_TOP - 12, "#ffd75a");
+    if(p.reelIn){ var v = (now - p.reelIn.at)/300; if(v >= 1) p.reelIn = null; else FA.drawBobber(g, p.reelIn.x + (tip.x - p.reelIn.x)*v, p.reelIn.y + (tip.y - p.reelIn.y)*v, 0, true); }
+    if(p.arc){ var w = (now - p.arc.at)/400; if(w >= 1){ fx.sparkle(hand.x, hand.y - 4); p.arc = null; } else FA.drawFish(g, p.arc.fish, p.arc.x0 + (hand.x - p.arc.x0)*w, p.arc.y0 + (hand.y - 6 - p.arc.y0)*w - 30*Math.sin(Math.PI*w), 1, false, now); }
+  }
+  function drawGoal(g){
+    var goal = s.goal|0, tgt = s.goalTarget||20, txt = "ROOM GOAL "+goal+"/"+tgt, tw = FA.textWidth(txt), cells = Math.min(20, tgt), cw = 6;
+    var x0 = Math.round(160 - (tw + 6 + cells*(cw+1))/2);
+    g.fillStyle = "rgba(10,14,24,0.72)"; g.fillRect(x0-3, 1, tw + 6 + cells*(cw+1) + 5, 9);
+    FA.text(g, txt, x0, 3, "#ffffff");
+    for(var i=0;i<cells;i++){
+      var cx = x0 + tw + 6 + i*(cw+1), lit = i < Math.round(goal*cells/tgt);
+      g.fillStyle = lit ? "#6fd36a" : "#2a3a48"; g.fillRect(cx, 3, cw, 5);
+      if(lit){ g.fillStyle = "#2f6f3a"; g.fillRect(cx+1, 5, 3, 1); g.fillRect(cx+4, 4, 1, 3); }
+    }
+  }
+  function bossLeft(now){ return Math.max(0, Math.ceil((V.bossEnds - now)/1000)); }
+  function drawBoss(g, now, calm){
+    var b = s.boss, jolt = V.boss && (now - V.boss.hit < 90 || now - (V.boss.jolt||0) < 70) ? 1 : 0;
+    var bx = Math.round(160 + (calm ? 0 : Math.sin(now/900)*50)), by = Math.round(106 + (calm ? 0 : Math.sin(now/400)*2)) + jolt;
+    V.bossX = bx; V.bossY = by;
+    var facing = calm ? true : Math.cos(now/900) > 0;   // moving right -> faces right
+    g.fillStyle = "rgba(0,0,0,0.28)";
+    for(var y=0;y<14;y++){ var f = 1 - Math.pow((y-6.5)/7, 2), w = Math.round(48*Math.sqrt(Math.max(0, f))); g.fillRect(bx - Math.round(w/2), by + 8 + y - 7, w, 1); }
+    FA.drawFish(g, "leviathan", bx, by, 4, !facing, now);
+    var mouth = {x: bx + (facing ? 30 : -30), y: by + 2};
+    // HP bar (eased) + local countdown + together badge
+    var hx = 100, hy = 14, hp = V.hpShown != null ? V.hpShown : b.hp, frac = clamp(hp/(b.max||1), 0, 1);
+    g.fillStyle = "rgba(10,14,24,0.72)"; g.fillRect(hx-2, hy-2, 124 + 18, 10);
+    g.fillStyle = "#2a1838"; g.fillRect(hx, hy, 120, 6);
+    g.fillStyle = "#7a3fb0"; g.fillRect(hx, hy, Math.round(120*frac), 6);
+    g.fillStyle = "rgba(255,255,255,0.7)"; g.fillRect(hx, hy, Math.round(120*frac), 1);
+    for(var k=1;k<8;k++){ g.fillStyle = "rgba(10,14,24,0.5)"; g.fillRect(hx + k*15, hy, 1, 6); }
+    FA.text(g, bossLeft(now)+"S", hx + 123, hy, "#ffffff");
+    var mult = 1 + 0.5*Math.max(0, (s.pulling|0) - 1);
+    if((s.pulling|0) >= 2) FA.label(g, "X"+mult+" TOGETHER", 160, 26, "#f2d14b");
+    return mouth;
+  }
+  function draw(now){
+    var g = view.g, calm = api.calm(), night;
+    scene.boss = s.boss ? 1 : 0;
+    scene.drawBack(g, now); night = scene.night();
+    if(!s.boss) shadows.draw(g, now);
+    var mouth = s.boss ? drawBoss(g, now, calm) : null;
+    if(V.bossDive){ var d = (now - V.bossDive.at)/900; if(d >= 1) V.bossDive = null; else { g.globalAlpha = 1 - d; FA.drawFish(g, "leviathan", V.bossDive.x, V.bossDive.y + d*30, 4, false, now); g.globalAlpha = 1; } }
+    var sl = slots(), myId = me();
+    Object.keys(sl).forEach(function(uid){
+      var x = sl[uid].x;
+      if(uid === myId){
+        rig.o.x = x - 6; rig.o.y = DECK_TOP;
+        if(mouth && (rig.phase === "idle" || rig.phase === "reeling")){
+          var fr = pullHold && Math.floor(now/120)%2 ? "reel" : "idle";
+          var hand = FA.drawAngler(g, x - 6, DECK_TOP, {frame:fr, look:rig.o.look, me:true});
+          var tip = FA.drawRod(g, hand, pullHold ? 10 : 18, 1);
+          FA.drawLine(g, tip.x, tip.y, mouth.x, mouth.y, pullHold ? 1 : 3, night);
+        } else rig.draw(g, now, scene);
+      } else drawRemote(g, uid, x, V.remote[uid] || {phase:"idle"}, now, night, mouth);
+    });
+    if(V.bossArc){ var u = (now - V.bossArc.at)/900; if(u >= 1) V.bossArc = null; else if(calm){ g.globalAlpha = 1 - u; FA.drawFish(g, "leviathan", V.bossArc.x0, V.bossArc.y0, 4, false, now); g.globalAlpha = 1; } else FA.drawFish(g, "leviathan", V.bossArc.x0 + (160 - V.bossArc.x0)*u, V.bossArc.y0 + (140 - V.bossArc.y0)*u - 70*Math.sin(Math.PI*u), 4, false, now); }
+    fx.draw(g, now);
+    scene.drawFront(g, now);
+    Object.keys(sl).forEach(function(uid){
+      var nm = uid === myId ? "YOU" : nameOf(sl[uid].p).replace(/[^A-Za-z0-9 !+\-\/:.?']/g, "").slice(0, 8) || "?";
+      FA.label(g, nm, sl[uid].x, DECK_TOP + 21, uid === myId ? "#ffd75a" : "#ffffff");
+    });
+    drawGoal(g);
+    var mySlot = sl[myId] ? sl[myId].x : 160;
+    rig.drawUI(g, now, mySlot > 160 ? 8 : FA.W - 52);
+    if(ctx.paused) FA.label(g, "PAUSED", 160, 70, "#f2d14b", 2);
+    else if(ctx.offline) FA.label(g, "RECONNECTING...", 160, 70, "#f2d14b");
+    view.blit(now < shakeUntil ? {x: Math.floor(now/30)%2 ? 2 : -2, y:0} : null);
+    if(V.card && !calm) V.card.draw(now);
+  }
+  function loop(t){
+    if(!ctx.alive) return;
+    var now = performance.now(), dt = last ? Math.min(50, now - last) : 16;
+    // Paused (a tab needs you): keep a still frame, redrawn at most 4 times a second.
+    if(ctx.paused && now - lastDraw < 250){ raf = requestAnimationFrame(loop); return; }
+    var t0 = performance.now();
+    last = now;
+    if(!ctx.paused) step(now, dt);
+    shadows.update(dt); fx.update(dt);
+    draw(now);
+    lastDraw = now;
+    var m = s.mine, txt = ctx.paused ? (m ? "Paused: your line is still in the water." : "Paused") : ctx.offline ? "Connection lost. Reconnecting…" : s.boss ? (rig.phase === "idle" || rig.phase === "reeling" ? "Boss! Hold Space or the mouse to reel it in together." : say) : say || (rig.phase === "idle" ? "Hold Space or the mouse to charge a cast, release to cast." : "");
+    if(msg.textContent !== txt) msg.textContent = txt;
+    var np = players().length, lab = "Shared pond dock with "+np+" angler"+(np === 1 ? "" : "s")+". "+(s.boss ? "Boss fish: hold Space to pull." : rig.phase === "reeling" ? "Reeling: hold Space to raise the green bar." : rig.phase === "bite" ? "Bite! Press Space." : "Hold Space to cast.");
+    if(cv.getAttribute("aria-label") !== lab) cv.setAttribute("aria-label", lab);
+    var dis = !!s.boss || rig.phase !== "idle" || !!ctx.offline; if(castBtn.disabled !== dis) castBtn.disabled = dis;
+    if(s.boss && now - sideBossAt >= 1000){ sideBossAt = now; ctx.side.boss(s, bossLeft(now), V.hpShown != null ? V.hpShown : s.boss.hp); }
+    if(dbg){
+      V.frames.push(performance.now() - t0); if(V.frames.length > 600) V.frames.shift();
+      var r = rig.reel; window.__hqDock = {phase:rig.phase, progress:r ? r.progress : 0, fishY:r ? r.fishY : 0, barY:r ? r.barY : 0, barV:r ? r.barV : 0, zone:r ? r.zone : 0, inside:r ? r.inside : false,
+      fish:rig.fish, mine:s.mine ? {token:!!s.mine.token, pending:!!s.mine.pending, tries:s.mine.tries|0} : null, nibbling:rig.phase === "waiting" && rig.nibbling(now),
+      remote:Object.keys(V.remote).map(function(u){ return V.remote[u].phase; }), players:players().length, goal:s.goal|0, boss:s.boss ? s.boss.hp : null, hpShown:V.hpShown, pulling:s.pulling|0,
+      pullHold:pullHold, frozen:!!rig.frozen, card:!!V.card, errors:V.errors.slice(-5), renders:scene.renders, offline:!!ctx.offline, rtt:Math.round(V.rtt),
+      slotX:JSON.parse(JSON.stringify(V.slotX)), feedMut:ctx.side.mut, drawMs:V.frames.slice(-120)}; }
+    raf = requestAnimationFrame(loop);
+  }
   raf = requestAnimationFrame(loop);
-  var sideTimer = setInterval(function(){ drawPondSide(ctx, s); }, 1000);
-  ctx.stop = function(){ cancelAnimationFrame(raf); clearInterval(sideTimer); window.removeEventListener("mouseup",up); s.mine = null; };
-  drawPondSide(ctx, s);
+  ctx.stop = function(){
+    cancelAnimationFrame(raf); closeCard();
+    window.removeEventListener("pointerup", pu);
+    if(POND === V) POND = null;
+    s.mine = null; try { delete window.__hqDock; } catch(e){}
+  };
+  ctx.side.update(s);
 });
 
 /* =============================== RACE =============================== */

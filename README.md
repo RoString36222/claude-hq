@@ -411,3 +411,7 @@ from [Pokémon Showdown](https://github.com/smogon/pokemon-showdown) (MIT,
 © 2011-2026 Guangcong Luo and other contributors; see `LICENSES/pokemon-showdown-MIT.txt`).
 Battle sprites use the same PokéAPI sprite library (repository CC0; image content © The Pokémon
 Company) and the PkParaiso host the 3D pack already uses. This is a non-commercial fan feature.
+
+Fish sizes and length-weight coefficients in `games/fishart.js`: [FishBase](https://www.fishbase.se/)
+(Froese & Pauly, eds.). Only numeric facts are used, cited per species in the source; no FishBase
+text or images are bundled.

@@ -4290,17 +4290,27 @@ GAMES_DIR = os.path.join(HERE, "games")
 GAMES_SAVE_PATH = os.path.join(HERE, "games-save.json")
 GAMES_SAVE_MAX = 256 * 1024
 _GAME_FILE_RE = re.compile(r"[a-z][a-z0-9_-]{0,40}\.(js|css)")
-_GAME_TYPES = {"js": "application/javascript; charset=utf-8", "css": "text/css; charset=utf-8"}
+# Mini Golf's vendored three.js modules and its Kenney (CC0) models/course data: exactly
+# one folder level, lowercase names, these extensions only.
+_GAME_ASSET_RE = re.compile(r"(vendor/[a-z][a-z0-9-]{0,40}\.js|golf/[a-z][a-z0-9-]{0,40}\.(glb|json|png))")
+_GAME_TYPES = {"js": "application/javascript; charset=utf-8", "css": "text/css; charset=utf-8",
+               "glb": "model/gltf-binary", "json": "application/json; charset=utf-8", "png": "image/png"}
 _games_lock = threading.Lock()
 
 
 def game_file(name):
     """(bytes, content type) for an allowlisted file under games/, else None."""
-    if not isinstance(name, str) or not _GAME_FILE_RE.fullmatch(name):
+    if not isinstance(name, str):
         return None
     root = os.path.realpath(GAMES_DIR)
+    if _GAME_FILE_RE.fullmatch(name):
+        folder = root
+    elif _GAME_ASSET_RE.fullmatch(name):
+        folder = os.path.join(root, name.split("/", 1)[0])
+    else:
+        return None
     path = os.path.realpath(os.path.join(root, name))
-    if os.path.dirname(path) != root or not os.path.isfile(path):
+    if os.path.dirname(path) != folder or not os.path.isfile(path):
         return None
     try:
         with open(path, "rb") as f:

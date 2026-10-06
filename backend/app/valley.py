@@ -12,6 +12,9 @@ has a lobby (who is in it, who hosts) with join notices and invites. The games:
   mines  co-op mine floor: one shared grid, server-side loot and slimes.
   farm   one shared garden per room, stored in the database and watered by the
          members' real published activity (daily_stats prompts).
+  golf   3D mini golf: the server rolls every putt with integer physics (app/golf.py)
+         that the clients replay identically; walking positions are relayed to the
+         lobby only, at most ~10 per second per player.
 
 Only game state lives here; nothing transcript-derived ever reaches this server.
 State is in process memory except the farm (same single-instance trade as rooms.py).
@@ -25,13 +28,14 @@ from typing import Any
 
 from sqlalchemy import func, select
 
+from . import golf as golfmod
 from .db import SessionLocal
 from .models import DailyStat, RoomFarm
 from .rooms import Member, Room, manager
 
-GAMES = ("pond", "race", "duel", "mines", "farm")
+GAMES = ("pond", "race", "duel", "mines", "farm", "golf")
 GAME_NAMES = {"pond": "Fishing Pond", "race": "Puzzle Race", "duel": "Creature Duel",
-              "mines": "Co-op Mines", "farm": "Shared Farm"}
+              "mines": "Co-op Mines", "farm": "Shared Farm", "golf": "Mini Golf"}
 MAX_LOBBY = 8
 now = time.monotonic          # patched in tests
 wall = time.time              # patched in tests
@@ -252,6 +256,11 @@ class Out:
     def user(self, user_id: str, ev: str, **data: Any) -> None:
         self.items.append(("user", user_id, {"type": "game", "g": self.g, "ev": ev, **data}))
 
+    def lobby(self, member_ids: Any, ev: str, skip_user: str | None = None, **data: Any) -> None:
+        """Only to the sockets of these lobby members (optionally not back to one user)."""
+        self.items.append(("lobby", (frozenset(member_ids), skip_user),
+                           {"type": "game", "g": self.g, "ev": ev, **data}))
+
     def err(self, ws: Any, msg: str) -> None:
         self.to(ws, "error", error=msg)
 
@@ -274,6 +283,7 @@ class RoomValley:
         self.race = Race()
         self.duel = Duel()
         self.mines = Mines()
+        self.golf = golfmod.Golf()
 
 
 _rooms: dict[str, RoomValley] = {}
@@ -809,6 +819,8 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
                 out.to(member.ws, "mines", run=v.mines.view())
             elif g == "farm":
                 await farm_op(room.room_id, member, {"op": "view"}, out, rng)
+            elif g == "golf":
+                out.to(member.ws, "golf", round=v.golf.view(now()))
     elif op == "leave":
         _leave_lobby(v, g, member.user_id, out)
     elif op == "invite":
@@ -857,7 +869,65 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
             v.mines.leave(member, out)
     elif g == "farm":
         await farm_op(room.room_id, member, msg, out, rng)
+    elif g == "golf":
+        golf_op(v.golf, lobby, member, op, msg, out)
     await _flush(room, out)
+
+
+# -------------------------------------------------------------------- golf --
+def golf_op(gm: "golfmod.Golf", lobby: Lobby, member: Member, op: str, msg: dict, out: Out) -> None:
+    """Mini Golf: every event goes to this game's lobby only."""
+    t = now()
+    uid = member.user_id
+    ids = list(lobby.members)
+    if op == "view":
+        out.to(member.ws, "golf", round=gm.view(t))
+    elif op == "pos":
+        rel = gm.pos(uid, msg, t)
+        if rel is not None:
+            out.lobby(ids, "pos", skip_user=uid, **rel)
+    elif op == "char":
+        c = gm.char(uid, msg)
+        if c is None:
+            out.err(member.ws, "pick a character")
+        else:
+            out.lobby(ids, "char", user=uid, c=c)
+    elif op == "shot":
+        ev, err = gm.shot(uid, msg, t)
+        if err:
+            out.err(member.ws, err)
+            return
+        out.lobby(ids, "shot", **ev)
+        _golf_advance(gm, ids, out, t, ev["ticks"])
+    elif op == "concede":
+        if not gm.pick_up([uid]):
+            out.err(member.ws, "nothing to pick up")
+            return
+        out.lobby(ids, "golf", round=gm.view(t))
+        _golf_advance(gm, ids, out, t)
+    elif op in ("start", "skip", "end"):
+        if lobby.host != uid:
+            out.err(member.ws, "only the host can do that")
+        elif op == "start":
+            err = gm.start(lobby.members, msg.get("course"), t)
+            if err:
+                out.err(member.ws, err)
+            else:
+                out.lobby(ids, "golf", round=gm.view(t), by=member.public())
+        elif op == "skip":
+            gm.pick_up(list(gm.players))
+            out.lobby(ids, "golf", round=gm.view(t))
+            _golf_advance(gm, ids, out, t)
+        else:
+            gm.end()
+            out.lobby(ids, "golf", round=gm.view(t))
+
+
+def _golf_advance(gm: "golfmod.Golf", ids: list[str], out: Out, t: float, ticks: int = 0) -> None:
+    step = gm.advance(t, ticks)
+    if step is not None:
+        out.lobby(ids, step[0], **step[1])
+        out.lobby(ids, "golf", round=gm.view(t))
 
 
 def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out) -> None:
@@ -873,6 +943,10 @@ def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out) -> None:
         v.duel.drop(user_id, out)
     elif g == "mines":
         v.mines.drop(user_id, out)
+    elif g == "golf" and v.golf.drop(user_id):
+        ids = list(lobby.members)
+        out.lobby(ids, "golf", round=v.golf.view(now()), left=user_id)
+        _golf_advance(v.golf, ids, out, now())
     out.all("lobby", members=lobby.roster(), left=who, name=GAME_NAMES[g])
 
 
@@ -903,6 +977,14 @@ async def _flush(room: Room, out: Out) -> None:
                 await target.send_json(payload)
             except Exception:
                 pass
+        elif kind == "lobby":
+            ids, skip = target
+            for ws, mem in list(room.members.items()):
+                if mem.user_id in ids and mem.user_id != skip:
+                    try:
+                        await ws.send_json(payload)
+                    except Exception:
+                        pass
         else:
             for ws, mem in list(room.members.items()):
                 if mem.user_id == target:

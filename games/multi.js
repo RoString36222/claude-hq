@@ -9,7 +9,7 @@
 "use strict";
 var HQV = window.HQV; if(!HQV) return;
 var api = HQV.api;
-var NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm"};
+var NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm", golf:"Mini Golf"};
 var LIVE = {};          // g -> {lobby:[...], ...game state from the server}
 
 function A(){ return window.ARENA || {}; }
@@ -94,7 +94,11 @@ var CTX = {};   // g -> mounted ctx
 HQV.onGame = function(m){
   var g = m.g, s = st(g);
   if(m.ev === "lobby"){ s.lobby = Array.isArray(m.members) ? m.members : []; }
-  if(m.ev === "error"){ if(CTX[g]) api.toast("⚠ "+String(m.error||"error").slice(0,120)); return; }
+  if(m.ev === "error"){
+    if(HANDLERS[g] && HANDLERS[g].onError){ try{ HANDLERS[g].onError(m); }catch(e){} }
+    if(CTX[g]) api.toast("⚠ "+String(m.error||"error").slice(0,120));
+    return;
+  }
   if(m.ev === "invited"){
     var c = CTX[g];
     if(m.delivered) api.toast("Invite sent");
@@ -114,6 +118,9 @@ function register(g, icon, desc, mount){
     badge:function(){ var s = LIVE[g]; return s && s.lobby.length ? s.lobby.length+" playing" : ""; }});
 }
 var HANDLERS = {};
+// Games in their own files (golf.js) reuse the lobby, invite and connect shell through this.
+HQV.mp = {register:register, send:send, handlers:HANDLERS, st:st, me:me, nameOf:nameOf, sockOpen:sockOpen,
+  ctx:function(g){ return CTX[g]; }};
 
 /* =============================== POND =============================== */
 HANDLERS.pond = {

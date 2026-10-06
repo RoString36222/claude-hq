@@ -109,3 +109,14 @@ class ValidateConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReadmeVersionTests(unittest.TestCase):
+    def test_readme_version_matches_app_version(self):
+        import re
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "README.md"),
+                  encoding="utf-8") as f:
+            head = f.read(2000)
+        m = re.search(r"\*\*Version (\d+\.\d+\.\d+)\*\*", head)
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), dashboard.APP_VERSION)

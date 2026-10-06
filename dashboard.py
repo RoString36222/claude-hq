@@ -51,7 +51,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import arena
 
-APP_VERSION = "1.6.1"
+APP_VERSION = "1.7.0"
 
 # --------------------------------------------------------------------------- #
 # Paths / constants
@@ -4184,7 +4184,90 @@ def _post_body_limit(path):
 
 # Every state-changing route. A path missing here 404s locally as "not found",
 # which the page would misread as an Arena server without the feature.
+# --------------------------------------------------------------------------- #
+# Self-update: pull the latest commits (fast-forward only) and restart
+# --------------------------------------------------------------------------- #
+UPDATE_CHECK_SECS = 600
+_update_cache = {"at": 0.0, "data": None}
+_update_lock = threading.Lock()
+
+
+def _git(*args, timeout=30):
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
+    return subprocess.run(["git", "-C", HERE] + list(args), capture_output=True,
+                          text=True, timeout=timeout, env=env)
+
+
+def update_status(force=False):
+    """How far this checkout is behind its upstream. Fetches at most every
+    UPDATE_CHECK_SECS unless forced; never changes the working tree."""
+    with _update_lock:
+        now = time.time()
+        if not force and _update_cache["data"] and now - _update_cache["at"] < UPDATE_CHECK_SECS:
+            return _update_cache["data"]
+        if not os.path.isdir(os.path.join(HERE, ".git")) and not os.path.isfile(os.path.join(HERE, ".git")):
+            return {"ok": False, "error": "this copy of Claude HQ is not a git checkout"}
+        try:
+            fetched = _git("fetch", "--quiet", "origin", timeout=60).returncode == 0
+            up = _git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+            if up.returncode != 0:
+                return {"ok": False, "error": "the current branch has no upstream to pull from"}
+            counts = _git("rev-list", "--left-right", "--count", "HEAD...@{u}").stdout.split()
+            ahead, behind = (int(counts[0]), int(counts[1])) if len(counts) == 2 else (0, 0)
+            data = {
+                "ok": True, "fetched": fetched,
+                "branch": _git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip(),
+                "upstream": up.stdout.strip(),
+                "head": _git("rev-parse", "--short", "HEAD").stdout.strip(),
+                "ahead": ahead, "behind": behind,
+                "dirty": bool(_git("status", "--porcelain", "--untracked-files=no").stdout.strip()),
+                "commits": _git("log", "--format=%h %s", "-n", "10", "HEAD..@{u}").stdout.splitlines(),
+                "version": APP_VERSION,
+            }
+        except (OSError, subprocess.SubprocessError) as e:
+            return {"ok": False, "error": "git failed: %s" % e}
+        _update_cache.update(at=now, data=data)
+        return data
+
+
+def _restart_self():
+    """Replace this process with a fresh one. Under the launchd agent, ask
+    launchd to restart it (KeepAlive brings it back); otherwise re-exec."""
+    try:
+        if os.getppid() == 1 and sys.platform == "darwin":
+            subprocess.Popen(["launchctl", "kickstart", "-k", "gui/%d/%s" % (os.getuid(), LAUNCH_LABEL)],
+                             start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+    except OSError:
+        pass
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
+def update_and_restart():
+    """Fast-forward to the upstream and restart. Refuses local edits and
+    diverged history rather than merging or discarding anything."""
+    st = update_status(force=True)
+    if not st.get("ok"):
+        return 409, st
+    if st["dirty"]:
+        return 409, dict(st, error="you have local changes in the Claude HQ folder; commit or stash them first")
+    if st["ahead"] and st["behind"]:
+        return 409, dict(st, error="your branch and %s have diverged; pull by hand" % st["upstream"])
+    if not st["behind"]:
+        return 200, dict(st, updated=False)
+    old = st["head"]
+    r = _git("merge", "--ff-only", "@{u}", timeout=60)
+    if r.returncode != 0:
+        return 409, dict(st, error="pull failed: %s" % (r.stderr.strip()[:300] or "unknown error"))
+    new = _git("rev-parse", "--short", "HEAD").stdout.strip()
+    _update_cache.update(at=0.0, data=None)
+    threading.Timer(1.0, _restart_self).start()   # after this response is sent
+    return 200, {"ok": True, "updated": True, "from": old, "to": new, "commits": st["commits"],
+                 "count": st["behind"], "restarting": True}
+
+
 POST_PATHS = (
+    "/api/update",
     "/api/action", "/api/config", "/api/meta",
     "/api/arena/pair", "/api/arena/unpair",
     "/api/arena/publish", "/api/arena/ticket",
@@ -4442,6 +4525,11 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 code, resp = 502, {"error": "arena request failed: %s" % e}
             self._send(code or 502, json.dumps(resp))
+            return
+
+        if path == "/api/update":
+            force = "force=1" in (self.path.split("?", 1)[1] if "?" in self.path else "")
+            self._send(200, json.dumps(update_status(force=force)))
             return
 
         if path == "/api/config":
@@ -4802,6 +4890,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/arena/"):
             code, resp = self._arena_post(path, body)
+            self._send(code, json.dumps(resp))
+            return
+
+        if path == "/api/update":
+            code, resp = update_and_restart()
             self._send(code, json.dumps(resp))
             return
 

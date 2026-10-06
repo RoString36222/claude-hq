@@ -156,9 +156,13 @@ html.hq-calm .vg-fish-card{animation:none}
 .vg-golf-sw{display:inline-block;width:9px;height:9px;border-radius:50%;border:1px solid var(--line)}
 .vg-golf-badge{position:absolute;right:8px;top:8px;pointer-events:none}
 .vg-golf-load{position:absolute;left:50%;bottom:12px;width:min(260px,70%);transform:translateX(-50%);pointer-events:none}
-.vg-golf-power{position:absolute;left:50%;bottom:12px;width:min(240px,60%);height:10px;transform:translateX(-50%);border-radius:999px;
-  background:var(--panel);border:1px solid var(--line);overflow:hidden}
-.vg-golf-power i{display:block;height:100%;width:0;background:var(--brand)}
+.vg-golf-power{position:absolute;left:50%;bottom:16px;width:min(360px,70%);height:22px;transform:translateX(-50%);border-radius:999px;
+  background:var(--panel);border:2px solid var(--ink);overflow:hidden;box-shadow:var(--shadow-lg)}
+.vg-golf-power i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--good),var(--gold) 55%,var(--need));background-repeat:no-repeat}
+.vg-golf-power-l{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font:700 12px var(--mono);color:var(--ink);
+  text-shadow:0 0 3px var(--panel),0 0 3px var(--panel),0 0 3px var(--panel)}
+.vg-golf-keys{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted)}
+.vg-golf-key kbd{font:600 11px var(--mono);padding:1px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
 .vg-golf-hint{margin:0;font-size:13px;color:var(--muted);min-height:1.3em}
 .vg-golf-tools{gap:6px}
 .vg-golf-card{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:calc(100% - 24px);max-height:calc(100% - 24px);overflow:auto;
@@ -315,3 +319,4 @@ html.hq-calm .vg-reconnect{animation:none}
 html.hq-calm .pkb-bcard{transition:none}
 html.hq-calm .pkb-bcard:hover{transform:none}
 @media (prefers-reduced-motion: reduce){.pkb-bcard{transition:none}.pkb-bcard:hover{transform:none}}
+.pkb-keys{font-size:12px;color:var(--muted);margin-top:6px;min-height:1.2em}

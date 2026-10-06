@@ -310,13 +310,30 @@ function makeGame(host, opts){
   root.appendChild(menu); root.appendChild(stage); host.appendChild(root);
   var wrap = api.mk("div", "vg-golf-view"), hud = api.mk("div", "vg-golf-hud"), hint = api.mk("p", "vg-golf-hint");
   var meter = api.mk("div", "vg-golf-power"), meterFill = api.mk("i"), cardBox = api.mk("div", "vg-golf-card hidden");
-  meter.appendChild(meterFill); meter.setAttribute("aria-hidden", "true");
+  var meterLabel = api.mk("span", "vg-golf-power-l", "Power");
+  meter.appendChild(meterFill); meter.appendChild(meterLabel); meter.setAttribute("aria-hidden", "true");
+  // Controls legend (H or ? toggles it); remembered in the Valley save.
+  var keysBox = api.mk("div", "vg-golf-keys");
   hud.setAttribute("aria-live", "polite");
   cardBox.setAttribute("role", "dialog"); cardBox.setAttribute("aria-label", "Scorecard");
   var tools = api.mk("div", "vg-row vg-golf-tools");
   var load = api.mk("div", "vg-meter vg-golf-load hidden"), loadFill = api.mk("i"); load.appendChild(loadFill); load.setAttribute("aria-hidden", "true");
   var badge = api.mk("span", "vg-reconnecting vg-golf-badge hidden", "Reconnecting…"); badge.setAttribute("role", "status");
-  stage.appendChild(wrap); stage.appendChild(hint); stage.appendChild(tools);
+  stage.appendChild(wrap); stage.appendChild(hint); stage.appendChild(tools); stage.appendChild(keysBox);
+  var CAM_SPEEDS = [["Slow", 0.5], ["Normal", 1], ["Fast", 1.6]];
+  function camSensIdx(){ var i = gsave().camSpeed; return (i === 0 || i === 1 || i === 2) ? i : 0; }   // default Slow: comfortable on trackpads
+  function camSens(){ return CAM_SPEEDS[camSensIdx()][1]; }
+  var KEYS = {
+    walk: [["W A S D / arrows", "walk"], ["Shift", "sprint"], ["E / Enter / click ball", "address the ball"], ["Q / R", "turn camera"], ["Z / X", "zoom in / out"], ["C", "overview"], ["V", "watch another player"], ["H", "hide these keys"]],
+    address: [["\u2190 / \u2192", "aim (Shift = fine)"], [", / .", "nudge aim a hair"], ["\u2191 / \u2193", "power \u00b12"], ["+ / \u2212", "power \u00b15"], ["1 \u2026 9, 0", "power 10%\u2026100%"], ["Space", "putt"], ["drag back", "aim + power with mouse/trackpad"], ["Esc / E", "step away"]]
+  };
+  function renderKeys(){
+    keysBox.textContent = "";
+    if(gsave().keysHidden){ keysBox.appendChild(api.mk("span", "vg-muted", "Keys hidden \u2014 press H to show them")); return; }
+    (KEYS[V.state === "address" ? "address" : "walk"]).forEach(function(r){
+      var it = api.mk("span", "vg-golf-key"); it.appendChild(api.mk("kbd", null, r[0])); it.appendChild(document.createTextNode(" "+r[1])); keysBox.appendChild(it);
+    });
+  }
   var canvas = null, R3 = null, R2 = null, raf = 0, lastT = 0, ro = null;
 
   /* ---------- players ---------- */
@@ -734,8 +751,7 @@ function makeGame(host, opts){
     if(V.mode === "mp" && MP && !V.gotView){
       if(MP.sockOpen()){ if(!V.openSince) V.openSince = t; else if(t - V.openSince > 3 && !V.unsupported){ V.unsupported = true; renderMenu(); } }
     }
-    meterFill.style.width = Math.round(V.aim.p)+"%";
-    meter.classList.toggle("hidden", V.state !== "address");
+    meterPaint();
   }
   /* ---------- remote avatars: snapshot interpolation ---------- */
   function pushSnap(P, m){
@@ -807,7 +823,15 @@ function makeGame(host, opts){
   }
 
   /* ---------- HUD + scorecard ---------- */
+  function meterPaint(){
+    var pw = Math.max(1, Math.round(V.aim.p));
+    meterFill.style.width = pw+"%";
+    meterFill.style.backgroundSize = (10000/pw)+"% 100%";   // the colour ramp spans the whole bar, not just the fill
+    var lt = "Power "+pw+"%"; if(meterLabel.textContent !== lt) meterLabel.textContent = lt;
+    meter.classList.toggle("hidden", V.state !== "address");
+  }
   function hudUpdate(){
+    meterPaint();
     if(!V.hole){ hud.textContent = ""; hint.textContent = ""; return; }
     hud.textContent = "";
     var P = me(), n = V.holeIdx;
@@ -833,6 +857,10 @@ function makeGame(host, opts){
     tools.textContent = "";
     if(P && !P.done && V.phase === "playing") tools.appendChild(api.btn("Pick up", "ghost", concede));
     tools.appendChild(api.btn(V.view2d || !R3 ? "3D view" : "Map view", "", function(){ V.view2d = !V.view2d; gsave().map = V.view2d; api.persist(); swapRenderer(); }));
+    var cs = api.btn("Camera: "+CAM_SPEEDS[camSensIdx()][0], "", function(){ gsave().camSpeed = (camSensIdx()+1) % 3; api.persist(); hudUpdate(); });
+    cs.title = "How fast the camera turns and zooms with a mouse or trackpad";
+    tools.appendChild(cs);
+    renderKeys();
     if(V.mode === "mp" && isLobbyHost() && V.phase === "playing"){
       tools.appendChild(api.btn("Skip hole", "ghost", function(){ MP.send("golf", "skip"); }));
       tools.appendChild(api.btn("End round", "ghost", function(){ MP.send("golf", "end"); }));
@@ -1240,7 +1268,13 @@ function makeGame(host, opts){
       var c = V.cam, F = focusPlayer(), tx, tz, dist = c.dist, yaw = c.yaw, ty = 0.15;
       if(F){
         if(F.fly){ var fb = ballAt(F, t); tx = fb[0]/T; tz = fb[1]/T; }
-        else if(F === P && V.state === "address"){ tx = P.ball[0]/T; tz = P.ball[1]/T; yaw = Math.atan2(Math.cos(V.aim.a), Math.sin(V.aim.a)); dist = Math.min(dist, 1.6); c.yaw = yaw; }
+        else if(F === P && V.state === "address"){
+          tx = P.ball[0]/T; tz = P.ball[1]/T; dist = Math.min(dist, 1.6);
+          // Follow the aim with the keyboard, but hold the camera still while you drag to aim:
+          // turning it under the pointer would change the aim again (twitchy on trackpads).
+          if(!drag){ var want = Math.atan2(Math.cos(V.aim.a), Math.sin(V.aim.a)), dy = Math.atan2(Math.sin(want - c.yaw), Math.cos(want - c.yaw));
+            c.yaw += dy*(calm ? 1 : 1 - Math.exp(-5*dt)); }
+          yaw = c.yaw; }
         else { tx = F.av.x/T; tz = F.av.z/T; }
       } else { tx = V.hole.tee[0]/T; tz = V.hole.tee[1]/T; }
       var px, py, pz;
@@ -1289,6 +1323,11 @@ function makeGame(host, opts){
         else V.aim.p = clamp(V.aim.p + (k === "arrowup" ? 2 : -2), 1, 100);
         hudUpdate();
       }
+      else if(V.state === "address" && /^[0-9]$/.test(k)){ V.aim.p = k === "0" ? 100 : (+k)*10; hudUpdate(); }
+      else if(V.state === "address" && (k === "+" || k === "=" || k === "-" || k === "_")){ V.aim.p = clamp(V.aim.p + (k === "+" || k === "=" ? 5 : -5), 1, 100); hudUpdate(); }
+      else if(V.state === "address" && (k === "," || k === ".")){ V.aim.a += (k === "," ? -1 : 1)*0.25*Math.PI/180; hudUpdate(); }
+      else if(k === "h" || k === "?"){ var gs = gsave(); gs.keysHidden = !gs.keysHidden; api.persist(); renderKeys(); }
+      else if(k === "z" || k === "x"){ V.cam.dist = clamp(V.cam.dist*(k === "z" ? 0.9 : 1.1), 1.2, 5); }
       else if(k === " " || k === "spacebar"){ if(V.state === "address") shoot(); }
       else if(k === "e" || k === "enter"){ if(V.state === "address"){ V.state = "walk"; hudUpdate(); } else tryAddress(); }
       else if(k === "escape"){ if(V.state === "address"){ V.state = "walk"; drag = null; hudUpdate(); } else handled = false; }
@@ -1307,13 +1346,16 @@ function makeGame(host, opts){
       if(e.button === 2){ if(drag){ drag = null; return; } orbit = {x: e.clientX, yaw: V.cam.yaw}; return; }
       if(e.button !== 0) return;
       var P = me(), w = worldAt(e); if(!P || !w) return;
-      if(V.state === "address"){ drag = {on: true}; try { cv.setPointerCapture(e.pointerId); } catch(x){} dragTo(w); return; }
+      if(V.state === "address"){ drag = {on: true, x: e.clientX, y: e.clientY}; try { cv.setPointerCapture(e.pointerId); } catch(x){} return; }
       var dx = (w[0] - P.ball[0])/T, dz = (w[1] - P.ball[1])/T;
       if(V.state === "walk" && dx*dx + dz*dz < 0.12) tryAddress();
     });
     cv.addEventListener("pointermove", function(e){
-      if(orbit){ V.cam.yaw = orbit.yaw - (e.clientX - orbit.x)*0.008; return; }
-      if(drag){ var w = worldAt(e); if(w) dragTo(w); }
+      if(orbit){ V.cam.yaw = orbit.yaw - (e.clientX - orbit.x)*0.004*camSens(); return; }
+      if(drag){
+        // ignore tiny jitters at the start of a trackpad drag
+        if(!drag.moved && Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) < 6) return;
+        drag.moved = true; var w = worldAt(e); if(w) dragTo(w); }
     });
     cv.addEventListener("pointerup", function(e){
       orbit = null;
@@ -1323,7 +1365,12 @@ function makeGame(host, opts){
     });
     cv.addEventListener("wheel", function(e){
       if(!R3) return;
-      e.preventDefault(); V.cam.dist = clamp(V.cam.dist*(e.deltaY > 0 ? 1.1 : 0.9), 1.2, 5);
+      e.preventDefault();
+      // Trackpads send many small wheel events, mice a few big ones: scale by the actual delta.
+      var unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1, s = camSens();
+      var dy = clamp(e.deltaY*unit, -60, 60), dx = clamp(e.deltaX*unit, -60, 60);
+      if(Math.abs(dy) >= Math.abs(dx)) V.cam.dist = clamp(V.cam.dist*Math.exp(dy*0.0025*s), 1.2, 5);
+      else if(!V.cam.over && V.state !== "address") V.cam.yaw -= dx*0.004*s;
     }, {passive: false});
   }
   function dragTo(w){

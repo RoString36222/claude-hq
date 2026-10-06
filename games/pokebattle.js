@@ -493,6 +493,8 @@ function Scene(host, opts){
   this.cmd = mk("div", "pkb-cmd");
   ui.appendChild(this.text); ui.appendChild(this.cmd);
   this.root.appendChild(ui);
+  // Always-visible keyboard help (the keys work while the battle has focus).
+  this.keysEl = mk("div", "pkb-keys"); this.root.appendChild(this.keysEl);
   this.logBox = mk("details", "pkb-log"); this.logBox.appendChild(mk("summary", null, "Battle log"));
   this.logList = mk("ol"); this.logBox.appendChild(this.logList);
   this.root.appendChild(this.logBox);
@@ -749,6 +751,10 @@ Scene.prototype.setMode = function(mode, info, extra){
     return;
   }
   this.mode = mode; this.modeInfo = info || null; this.waitEl = null; this.waitExtra = extra || null;
+  this.keysEl.textContent = mode === "main" ? "Keys: F fight \u00b7 1\u20134 use a move \u00b7 T team" + (this.opts.onRun ? " \u00b7 R run" : "")
+    : mode === "fight" ? "Keys: 1\u20134 use a move \u00b7 Esc back"
+    : mode === "team" ? "Keys: Esc back"
+    : (mode === "busy" ? "Keys: Enter or Space skips the text" : "");
   var c = this.cmd, self = this, v = this.view, o = this.opts;
   c.textContent = ""; c.className = "pkb-cmd m-"+mode;
   if(mode === "busy" || mode === "idle") return;

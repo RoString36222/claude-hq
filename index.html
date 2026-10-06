@@ -9655,6 +9655,9 @@ document.addEventListener("keydown",function(e){
   var tag = (e.target.tagName||"").toLowerCase();
   var typing = tag==="input"||tag==="textarea"||tag==="select"||e.target.isContentEditable;
   if(typing) return;
+  // A game that already handled this key (golf power 1-9/0, its R/? keys, battle moves 1-4)
+  // keeps it: don't also switch views or refresh.
+  if(e.defaultPrevented) return;
   // Single-key shortcuts only: leave Cmd/Ctrl/Alt combos (Cmd-R, Cmd-1..9, ...) to the browser.
   if(e.metaKey||e.ctrlKey||e.altKey) return;
   if(e.key==="/"){ e.preventDefault(); $("search").focus(); }

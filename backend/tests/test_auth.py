@@ -8,6 +8,8 @@ from tests.conftest import auth, make_user
 
 def test_health(client):
     assert client.get("/health").json()["ok"] is True
+    h = client.get("/health").json()
+    assert h["impl"] == "py" and h["version"]   # stamped by ops/release.sh, "dev" otherwise
 
 
 def test_unauthenticated_requests_are_rejected(client):

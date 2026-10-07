@@ -42,8 +42,8 @@ git merge --ff-only "origin/$BRANCH" --quiet || { log "ERROR: not a fast-forward
 # rolled it straight back. ops/deploy_panel.py's status() documents the same trap.
 healthy() {
   ( cd "$DIR/backend" \
-    && docker compose exec -T app \
-         python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/health')" \
+    && docker compose exec -T app sh -c 'command -v arena-health >/dev/null && exec arena-health; \
+         exec python -c "import urllib.request;urllib.request.urlopen(\"http://127.0.0.1:8080/health\")"' \
   ) >/dev/null 2>&1
 }
 

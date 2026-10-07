@@ -35,3 +35,6 @@ backend/*.db-wal
 backend/*.db-shm
 backend/*.db-journal
 games-save.json
+backend/.release.env
+backend/.release.env.tmp
+backend/.releases

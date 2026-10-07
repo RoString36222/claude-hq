@@ -24,7 +24,8 @@ var VIEW_TITLES = {
   village:["Village","Your base & army, built from your Claude activity"],
   store:["Store","Snacks for your creatures, paid in Poke Coins"],
   cali:["Cali Tuesdays","Taco Tuesday at California Burrito: seat friends, plate their food, check out"],
-  valley:["Valley","Minigames to play while your tabs work"]
+  valley:["Valley","Minigames to play while your tabs work"],
+  hq:["HQ","Mission Control: your sessions as crew at their desks"]
 };
 // The Clash of Clans pack renames the "Pokédex" collection to "Troops" (nav tab + title).
 function syncPackLabels(){
@@ -52,6 +53,7 @@ function setView(v){
   var stv=$("storeView"); if(stv) stv.classList.toggle("hidden", v!=="store");
   var cdv=$("caliView"); if(cdv) cdv.classList.toggle("hidden", v!=="cali");
   var vlv=$("valleyView"); if(vlv) vlv.classList.toggle("hidden", v!=="valley");
+  var hqv=$("hqView"); if(hqv) hqv.classList.toggle("hidden", v!=="hq");
   Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
     var on = t.getAttribute("data-view")===v;
     t.classList.toggle("active", on); t.setAttribute("aria-selected", on?"true":"false");
@@ -65,6 +67,7 @@ function setView(v){
   if(v==="store") svEnter(); else svLeave();
   if(v==="cali") cdEnter(); else cdLeave();
   if(v==="valley") valleyEnter(); else valleyLeave();
+  if(typeof hqViewChanged==="function") hqViewChanged(v);
   valleyPillSync();
   // The lobby socket stays open on other views while you stay in the lobby, or while you're in voice (it carries it).
   if(v==="arena"){ arenaUnreadClear(); ARENA.nudgeCount={}; loadArena(); } else { arenaRoomFormsClear(); if(!VCHAN.on && !ARENA_STAY) arenaCloseSocket(); }
@@ -176,7 +179,7 @@ function checkBoot(d){
   }
   SERVER_BOOT=d.boot;
 }
-function applyPayload(d){ checkBoot(d); STATE=d; render(); pulse(); }
+function applyPayload(d){ checkBoot(d); STATE=d; render(); pulse(); if(typeof hqOnState==="function") hqOnState(d); }
 function startPoll(){ if(pollTimer) return; load(); pollTimer=setInterval(load, CONFIG.refreshMs||5000); }
 function stopPoll(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
 // re-arm the poll loop with the current cadence (after a settings change)

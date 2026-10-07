@@ -18,7 +18,11 @@
  */
 (function(){
 "use strict";
-var HQV = window.HQV; if(!HQV || !HQV.api) return;
+var HQV = window.HQV; if(!HQV || !HQV.api || !HQV.engine) return;
+// Shared helpers, three.js loading and snapshot timing: games/engine.js.
+var E = HQV.engine;
+var now = E.now, clamp = E.clamp, hex = E.hex, angLerp = E.angLerp, calm = E.calm, say = E.say,
+    tokens = E.tokens, myClock = E.myClock, hasWebGL2 = E.hasWebGL2, fmt = E.fmtTime;
 var api = HQV.api, MP = HQV.mp || null;
 
 /* KART-TRACK BEGIN */
@@ -95,29 +99,7 @@ var CARS = [{f: "vehicle-truck-red", n: "Red truck"}, {f: "vehicle-truck-green",
 var CAR_SWATCH = ["#d8433a", "#3aa86a", "#8a3fd8", "#e0b325", "#3a6fd8"];
 var LAP_CHOICES = [1, 2, 3, 4, 5];
 
-function now(){ return performance.now()/1000; }
-function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
-function hex(s, fb){ return typeof s === "string" && /^#[0-9a-f]{6}$/i.test(s) ? parseInt(s.slice(1), 16) : fb; }
-function angLerp(a, b, u){ return a + Math.atan2(Math.sin(b - a), Math.cos(b - a))*u; }
-function fmt(ms){
-  if(ms == null || !isFinite(ms)) return "–";
-  ms = Math.max(0, Math.round(ms)); var m = Math.floor(ms/60000), s = (ms % 60000)/1000;
-  return m+":"+(s < 10 ? "0" : "")+s.toFixed(2);
-}
-function calm(){ return document.documentElement.classList.contains("hq-calm") ||
-  (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); }
-function say(t){ if(typeof window.announce === "function"){ try { window.announce(t); } catch(e){} } }
 function nameOf(p){ return (p && (p.displayName || p.handle)) || "Racer"; }
-// Theme colours for the 2D canvases (gauges, minimap, map view) from the page's tokens.
-function tokens(){
-  var cs = getComputedStyle(document.documentElement);
-  function g(n, fb){ var v = (cs.getPropertyValue(n) || "").trim(); return v || fb; }
-  return {ink: g("--ink", "currentColor"), muted: g("--muted", "gray"), line: g("--line", "gray"), panel: g("--panel", "canvas"),
-          panel2: g("--panel2", "canvas"), brand: g("--brand", "royalblue"), need: g("--need", "crimson"), good: g("--good", "seagreen"),
-          gold: g("--gold", "goldenrod"), bg2: g("--bg2", "canvas"), mono: g("--mono", "monospace")};
-}
-// my clock for the server, centiseconds (never goes backwards; a reload starts over)
-function myClock(){ return Math.floor(performance.now()/10) % 1073741824; }
 
 /* ---------- data + three.js, loaded on demand ---------- */
 var DATA = null, DATA_P = null, TRACKS = {};
@@ -159,23 +141,8 @@ function loadData(){
     }, function(e){ DATA_P = null; throw e; });
   return DATA_P;
 }
-var LIB = null, GLB = {};
-function kartLib(){
-  return LIB || (LIB = Promise.all([import("/games/vendor/three-module.js"), import("/games/vendor/three-gltf-loader.js"),
-                                    import("/games/vendor/three-skeleton-utils.js")])
-    .then(function(m){
-      var THREE = m[0], manager = new THREE.LoadingManager();
-      manager.setURLModifier(function(u){ return /\/Textures\/colormap\.png$/.test(u) ? "/games/kart/colormap.png" : u; });
-      return {THREE: THREE, loader: new m[1].GLTFLoader(manager), clone: m[2].clone, tex: new THREE.TextureLoader()};
-    }, function(e){ LIB = null; throw e; }));
-}
-function loadGlb(lib, name){
-  if(!/^[a-z][a-z0-9-]{0,40}$/.test(name)) return Promise.reject(new Error("bad model name"));
-  return GLB[name] || (GLB[name] = new Promise(function(res, rej){
-    lib.loader.load("/games/kart/"+name+".glb", res, null, function(e){ delete GLB[name]; rej(e); });
-  }));
-}
-function hasWebGL2(){ try { return !!document.createElement("canvas").getContext("webgl2"); } catch(e){ return false; } }
+function kartLib(){ return E.lib(); }
+function loadGlb(lib, name){ return E.loadGlb(lib, "kart", name); }
 function ksave(){
   var s = api.save; if(!s) return {best: {}};
   if(!s.kart || typeof s.kart !== "object" || Array.isArray(s.kart)) s.kart = {};
@@ -548,14 +515,8 @@ function makeGame(host, opts){
   function pushSnap(C, m){
     var t = now(), q = m.q;
     if(typeof q === "number" && isFinite(q)){
-      q = q|0;
-      if(C.lastQ >= 0 && q <= C.lastQ && C.lastQ - q < 6000) return;
-      if(C.lastQ >= 0 && q <= C.lastQ) C.off = null;
-      C.lastQ = q;
-      var off = t - q/100;
-      if(C.off === null || off < C.off) C.off = off; else C.off += (off - C.off)*0.01;
-      var st = q/100 + C.off, late = clamp(t - st, 0, JIT_MAX);
-      C.jit += (late - C.jit)*(late > C.jit ? 0.3 : 0.02);
+      var st = E.senderTime(C, q, t, JIT_MAX);
+      if(st === null) return;
       t = st;
     }
     var sn = C.snaps, last = sn[sn.length - 1];

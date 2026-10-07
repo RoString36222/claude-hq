@@ -1864,3 +1864,33 @@ html.hq-calm #confetti{display:none!important}
   .hbar,.gym-distrow{grid-template-columns:72px 1fr auto}
 }
 @media(min-width:961px){ .search input:focus{width:320px} }
+
+/* ---- HQ 2.0: the 3D HQ view (ui/app/22-hq.js, games/hq3d.js) ---- */
+.hq3d{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:14px;align-items:stretch;height:calc(100vh - 150px);min-height:520px}
+.hq3d-stage{position:relative;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--bg2);min-width:0}
+.hq3d-canvas{display:block;width:100%;height:100%;cursor:grab;touch-action:none;outline:none}
+.hq3d-canvas.hot{cursor:pointer}
+.hq3d-canvas:active{cursor:grabbing}
+.hq3d-canvas:focus-visible{box-shadow:inset 0 0 0 2px var(--brand)}
+.hq3d-tip{position:absolute;pointer-events:none;max-width:320px;font-size:12px;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-sm);padding:5px 9px;box-shadow:var(--shadow)}
+.hq3d-loading,.hq3d-msg{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font:500 13px var(--mono);text-align:center;padding:24px}
+.hq3d-msg{position:static;display:block;padding:32px 24px 12px}
+.hq3d-stage > .hbtn{margin:0 24px}
+.hq3d-side{display:flex;flex-direction:column;gap:10px;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px;overflow:auto}
+.hq3d-side-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.hq3d-filter{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;background:var(--brand-soft);border:1px solid var(--brand-line);border-radius:var(--radius-sm);padding:6px 8px}
+.hq3d-crew{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.hq3d-mate{width:100%;display:grid;grid-template-columns:10px minmax(0,1fr);column-gap:8px;align-items:center;text-align:left;background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius-sm);padding:7px 9px;color:var(--ink);cursor:pointer;font:inherit}
+.hq3d-mate:hover{border-color:var(--line2)}
+.hq3d-mate:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+.hq3d-mate b{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hq3d-mate small{grid-column:2;color:var(--muted);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hq3d-dot{width:10px;height:10px;border-radius:50%;background:var(--faint);grid-row:1 / span 2}
+.hq3d-mate[data-state="working"] .hq3d-dot{background:var(--good)}
+.hq3d-mate[data-state="needs"] .hq3d-dot{background:var(--need)}
+.hq3d-mate[data-state="idle"] .hq3d-dot{background:var(--warn)}
+.hq3d-help{font-size:12px;line-height:1.5;margin:auto 0 0}
+.hq3d-help kbd{font:600 10.5px var(--mono);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 4px;margin:0 1px;background:var(--panel2)}
+#hqModeBtn[aria-pressed="true"]{color:var(--brand)}
+@media (max-width:900px){.hq3d{grid-template-columns:minmax(0,1fr);height:auto}.hq3d-stage{height:62vh;min-height:380px}}
+.hq3d-filter[hidden]{display:none}

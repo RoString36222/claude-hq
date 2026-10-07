@@ -990,6 +990,7 @@ document.addEventListener("keydown",function(e){
   else if(e.key==="?"){ e.preventDefault(); openHelp(); }
   else if(e.key>="1"&&e.key<="9"){ e.preventDefault(); setView(["live","analytics","pokedex","gym","quests","arena","village","store","cali"][+e.key-1]); }
   else if(e.key==="0"){ e.preventDefault(); setView("valley"); }
+  else if(e.key==="h"||e.key==="H"){ e.preventDefault(); hqToggle(); }
   // In a voice call, from any view: M mutes, V switches the camera, S shares your screen. Holding a key down
   // doesn't repeat it, and outside a call these keys do nothing.
   else if(VCHAN.on && !e.repeat && (e.key==="m"||e.key==="M")){ e.preventDefault(); voiceToggleMute(); }

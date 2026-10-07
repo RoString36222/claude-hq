@@ -1,6 +1,6 @@
 # ⚡ Claude HQ
 
-**Version 1.9.0** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
+**Version 2.0.0** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
 
 Claude HQ reads your live sessions (`claude agents --json`) and your session transcripts
 (`~/.claude/projects/**/*.jsonl`) and turns them into a single command center: what every tab is
@@ -267,6 +267,22 @@ and feature guide.
 
 ## Changelog
 
+- **2.0.0** — **HQ 2.0, Wave 0: HQ becomes a place.**
+  - **The 3D HQ** (**HQ** tab, or press **H**): Mission Control as a room you walk around. Every live
+    session is a crew member at a console: typing when working, standing and waving when it needs
+    you, dozing when idle; recently away sessions are empty desks. Click a crew member for their
+    card, a door to go to the Lab (Analytics), Gym, Quest Board, Shop, Trophy Hall (Pokédex), Valley
+    or Arena, and a project on the holo-table to show only its crew. Walk with WASD or click the
+    floor; day and night follow your clock. A crew list beside it does the same with the keyboard.
+  - **One switch** (header button or **H**) flips between the 3D HQ and the classic dashboard and
+    remembers your choice; with Calm mode or reduced motion, HQ opens on the classic view.
+  - **Self-updating HQ**: every open tab reloads after a restart, and the Update button offers
+    **Restart · new code** when the code on disk is newer than the running server.
+  - **Arena protocol versions**: games say "update the Arena" or "Update Claude HQ" instead of
+    misbehaving when the two are on different versions.
+  - Under the hood: the frontend is split into `ui/` (stitched into the same page by the server, no
+    build step), the 3D games share `games/engine.js`, the Arena ships with `ops/release.sh`
+    (versioned images, CI gate, one-step rollback, Python or Rust), a load test, and Rust CI.
 - **1.9.0** — **Kart Racing: the Valley's first real-time multiplayer game.**
   - **Kart Racing** (🏎️ in the Valley): arcade cars on three tile-built tracks (Meadow Loop,
     Canyon Notch, Twin Peaks; 1–5 laps), made from Kenney's CC0 Starter Kit Racing models. Drive

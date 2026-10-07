@@ -2066,6 +2066,7 @@ def build_payload():
     payload = {
         "updated": now_utc().isoformat(),
         "version": APP_VERSION,
+        "boot": BOOT_ID,      # changes on every restart: open tabs reload on a new one
         "season": season,
         "sessions": sessions,
         "feed": feed,
@@ -4200,6 +4201,21 @@ def _post_body_limit(path):
 UPDATE_CHECK_SECS = 600
 _update_cache = {"at": 0.0, "data": None}
 _update_lock = threading.Lock()
+# What this process is running, captured at start. When the code on disk moves on
+# (a pull from a terminal, a local edit) the server keeps serving the old backend
+# until it restarts; update_status reports that as "stale".
+BOOT_ID = secrets.token_hex(8)
+_CODE_FILES = (os.path.abspath(__file__),)
+
+
+def _code_sig():
+    try:
+        return tuple(os.stat(f).st_mtime_ns for f in _CODE_FILES)
+    except OSError:
+        return ()
+
+
+BOOT_CODE_SIG = _code_sig()
 
 
 def _git(*args, timeout=30):
@@ -4210,7 +4226,12 @@ def _git(*args, timeout=30):
 
 def update_status(force=False):
     """How far this checkout is behind its upstream. Fetches at most every
-    UPDATE_CHECK_SECS unless forced; never changes the working tree."""
+    UPDATE_CHECK_SECS unless forced; never changes the working tree. Always
+    says (uncached) whether this process is running the code on disk."""
+    return dict(_update_status_git(force), stale=_code_sig() != BOOT_CODE_SIG)
+
+
+def _update_status_git(force):
     with _update_lock:
         now = time.time()
         if not force and _update_cache["data"] and now - _update_cache["at"] < UPDATE_CHECK_SECS:
@@ -4258,7 +4279,15 @@ def update_and_restart():
     diverged history rather than merging or discarding anything."""
     st = update_status(force=True)
     if not st.get("ok"):
+        if st.get("stale"):
+            threading.Timer(1.0, _restart_self).start()
+            return 200, {"ok": True, "updated": False, "restarting": True}
         return 409, st
+    if not st["behind"] and st.get("stale"):
+        # Nothing to pull, but the code on disk is newer than this process.
+        _update_cache.update(at=0.0, data=None)
+        threading.Timer(1.0, _restart_self).start()
+        return 200, dict(st, updated=False, restarting=True)
     if st["dirty"]:
         return 409, dict(st, error="you have local changes in the Claude HQ folder; commit or stash them first")
     if st["ahead"] and st["behind"]:

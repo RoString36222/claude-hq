@@ -95,6 +95,31 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(dashboard.update_status()["behind"], 0)        # cached
         self.assertEqual(dashboard.update_status(force=True)["behind"], 1)
 
+    def test_stale_code_restarts_without_pulling(self):
+        # The code on disk changed after this process started (a terminal pull, a local
+        # edit): nothing to fetch, but the server must restart to run it.
+        saved = dashboard.BOOT_CODE_SIG
+        dashboard.BOOT_CODE_SIG = ("older",)
+        try:
+            st = dashboard.update_status(force=True)
+            self.assertTrue(st["stale"])
+            self.assertTrue(dashboard.update_status()["stale"])       # fresh even when cached
+            code, resp = dashboard.update_and_restart()
+            self.assertEqual(code, 200)
+            self.assertEqual((resp["updated"], resp["restarting"]), (False, True))
+            import time
+            time.sleep(1.3)
+            self.assertEqual(self.restarts, [1])
+        finally:
+            dashboard.BOOT_CODE_SIG = saved
+
+    def test_not_stale_by_default(self):
+        self.assertFalse(dashboard.update_status(force=True)["stale"])
+
+    def test_payload_carries_boot_id(self):
+        self.assertEqual(len(dashboard.BOOT_ID), 16)
+        self.assertIn('"boot": BOOT_ID', open(dashboard.__file__).read())
+
 
 if __name__ == "__main__":
     unittest.main()

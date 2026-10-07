@@ -37,6 +37,10 @@ jobs:
       # if two revisions both claim to follow the same parent.
       - name: Single alembic head
         run: test "$(uv run alembic heads | grep -c '(head)')" = "1"
+      # A small load test: 6 rooms x 8 bots across kart, platformer and Blaster
+      # for 15 s; fails on a room that cannot start or >1% late ticks.
+      - name: Arena load test (small)
+        run: uv run python scripts/loadtest.py --rooms 6 --seconds 15
 
   rust:
     runs-on: ubuntu-latest

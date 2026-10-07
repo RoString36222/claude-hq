@@ -1,4 +1,5 @@
 """Claude HQ Arena -- the multiplayer backend."""
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -61,6 +62,15 @@ app.include_router(room_routes.router)
 app.include_router(sound_routes.router)
 app.include_router(private_room_routes.router)
 app.include_router(taco_routes.router)
+
+
+if os.environ.get("ARENA_EXPOSE_REALTIME_STATS") == "1":
+    # Only for scripts/loadtest.py: per-room tick counts, overruns and bytes/s.
+    from . import realtime
+
+    @app.get("/v1/realtime/stats")
+    async def realtime_stats() -> dict:
+        return realtime.stats()
 
 
 @app.get("/health")

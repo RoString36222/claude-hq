@@ -319,29 +319,21 @@ def dex_salt():
     return s
 
 
-SHINY_COUNT = 10        # exactly this many of the 48 species are shiny per install
-_shiny_sets = {}
-
-
-def shiny_set(salt=None):
-    """The install's shiny species: exactly SHINY_COUNT of the 48, picked by a
-    salted sha256 rank. Species that passed the old 1-in-6 roll rank first, so
-    existing shinies stay shiny when the count was raised from ~8 to 10."""
-    salt = dex_salt() if salt is None else salt
-    if salt not in _shiny_sets:
-        def rank(sp):
-            h = int(hashlib.sha256(("nymonster:shiny:%s:%d" % (salt, sp)).encode("utf-8")).hexdigest(), 16)
-            return (0 if h % 6 == 0 else 1, h)
-        _shiny_sets[salt] = frozenset(sorted(range(48), key=rank)[:SHINY_COUNT])
-    return _shiny_sets[salt]
-
-
 def shiny_for_species(species, salt=None):
-    """Shiny is a stable PER-SPECIES property, so every session of a shiny species
-    is shiny — the Pokédex and the live cards always agree. The per-install `salt`
-    (see dex_salt) keeps that consistency and determinism while making the shiny
-    set unique to this machine, so Arena friends don't all share the same shinies."""
-    return (int(species) % 48) in shiny_set(salt)
+    """Shiny is a stable PER-SPECIES property (1 in 4 species, ~12 of 48), so every
+    session of a shiny species is shiny — the Pokédex and the live cards always
+    agree. The per-install `salt` (see dex_salt) keeps that consistency and
+    determinism while making the shiny set unique to this machine, so Arena
+    friends don't all share the same shinies. Species that passed the original
+    1-in-6 roll stay shiny; the rest get a second 1-in-10 roll, which makes the
+    total exactly 1/6 + 5/6 * 1/10 = 1/4."""
+    salt = dex_salt() if salt is None else salt
+    sp = int(species) % 48
+    h = int(hashlib.sha256(("nymonster:shiny:%s:%d" % (salt, sp)).encode("utf-8")).hexdigest(), 16)
+    if h % 6 == 0:
+        return True
+    h2 = int(hashlib.sha256(("nymonster:shiny2:%s:%d" % (salt, sp)).encode("utf-8")).hexdigest(), 16)
+    return h2 % 10 == 0
 
 
 def stage_for(prompt_count):

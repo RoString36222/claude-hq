@@ -1,6 +1,7 @@
 //! Prints scoring output as JSON so it can be diffed against the Python.
 use std::io::Write;
 #[path = "../scoring.rs"]
+#[allow(dead_code)] // the server uses parts of scoring this checker does not
 mod scoring;
 
 fn main() {

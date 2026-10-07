@@ -183,7 +183,7 @@ pub async fn ingest(
 
     let (mut accepted, mut rejected) = (0i64, 0i64);
     let mut notes: Vec<String> = Vec::new();
-    let mut note = |n: String, notes: &mut Vec<String>| {
+    let note = |n: String, notes: &mut Vec<String>| {
         if !notes.contains(&n) { notes.push(n); }
     };
 

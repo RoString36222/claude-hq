@@ -37,3 +37,21 @@ jobs:
       # if two revisions both claim to follow the same parent.
       - name: Single alembic head
         run: test "$(uv run alembic heads | grep -c '(head)')" = "1"
+
+  rust:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend-rs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend-rs
+      - name: Run Rust tests
+        run: cargo test --locked
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --locked --all-targets -- -D warnings

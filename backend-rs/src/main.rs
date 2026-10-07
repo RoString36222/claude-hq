@@ -460,7 +460,7 @@ async fn pair(State(st): State<AppState>, Json(req): Json<PairReq>) -> Response 
     if sqlx::query("INSERT INTO devices (id, user_id, token_hash, label, created_at, revoked)
                     VALUES (?1,?2,?3,?4,datetime('now'),0)")
         .bind(uuid::Uuid::new_v4().to_string()).bind(&user_id)
-        .bind(auth::hash_token(&token)).bind(&label.chars().take(64).collect::<String>())
+        .bind(auth::hash_token(&token)).bind(label.chars().take(64).collect::<String>())
         .execute(&st.pool).await.is_err()
     {
         return err(StatusCode::INTERNAL_SERVER_ERROR, "could not register the device");

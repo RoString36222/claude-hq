@@ -64,6 +64,10 @@ app.include_router(private_room_routes.router)
 app.include_router(taco_routes.router)
 
 
+# Stamped into the image by ops/release.sh (a date + commit, e.g. 2026.10.07-76ee057).
+ARENA_VERSION = os.environ.get("ARENA_VERSION", "dev")
+
+
 if os.environ.get("ARENA_EXPOSE_REALTIME_STATS") == "1":
     # Only for scripts/loadtest.py: per-room tick counts, overruns and bytes/s.
     from . import realtime
@@ -79,5 +83,6 @@ async def health() -> dict:
         db = await describe_backend()
     except Exception as exc:
         # Report unhealthy rather than 200-with-a-broken-database.
-        return {"ok": False, "service": "claude-hq-arena", "db": f"unreachable: {exc}"}
-    return {"ok": True, "service": "claude-hq-arena", "db": db}
+        return {"ok": False, "service": "claude-hq-arena", "impl": "py", "version": ARENA_VERSION,
+                "db": f"unreachable: {exc}"}
+    return {"ok": True, "service": "claude-hq-arena", "impl": "py", "version": ARENA_VERSION, "db": db}

@@ -111,16 +111,38 @@ async fn require_device(State(st): State<AppState>, mut req: Request, next: Next
     }
 }
 
+/// Stamped into the image by ops/release.sh (a date + commit, e.g. 2026.10.07-76ee057).
+fn arena_version() -> String {
+    std::env::var("ARENA_VERSION").unwrap_or_else(|_| "dev".into())
+}
+
+/// `arena --health`: the container healthcheck. Asks this process's own /health
+/// over plain TCP (the runtime image has no curl or python) and exits 0 only on
+/// a 200 that says ok.
+fn health_probe() -> i32 {
+    use std::io::{Read, Write};
+    let port = std::env::var("ARENA_BIND_PORT").unwrap_or_else(|_| "8081".into());
+    let Ok(mut s) = std::net::TcpStream::connect(format!("127.0.0.1:{port}")) else { return 1 };
+    let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+    if s.write_all(b"GET /health HTTP/1.0\r\nHost: localhost\r\n\r\n").is_err() {
+        return 1;
+    }
+    let mut body = String::new();
+    let _ = s.read_to_string(&mut body);
+    let ok = body.starts_with("HTTP/1.") && body.contains(" 200 ") && body.contains("\"ok\":true");
+    if ok { 0 } else { 1 }
+}
+
 async fn health(State(st): State<AppState>) -> Response {
     match sqlx::query("PRAGMA journal_mode").fetch_one(&st.pool).await {
         Ok(r) => {
             let mode: String = r.try_get(0).unwrap_or_else(|_| "?".into());
-            Json(json!({"ok": true, "service": "claude-hq-arena",
-                        "impl": "rust", "db": format!("sqlite (journal_mode={mode})")}))
+            Json(json!({"ok": true, "service": "claude-hq-arena", "impl": "rust",
+                        "version": arena_version(), "db": format!("sqlite (journal_mode={mode})")}))
                 .into_response()
         }
-        Err(e) => Json(json!({"ok": false, "service": "claude-hq-arena",
-                              "impl": "rust", "db": format!("unreachable: {e}")}))
+        Err(e) => Json(json!({"ok": false, "service": "claude-hq-arena", "impl": "rust",
+                              "version": arena_version(), "db": format!("unreachable: {e}")}))
             .into_response(),
     }
 }
@@ -481,8 +503,14 @@ async fn pair(State(st): State<AppState>, Json(req): Json<PairReq>) -> Response 
         .into_response()
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    if std::env::args().any(|a| a == "--health") {
+        std::process::exit(health_probe());
+    }
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(serve())
+}
+
+async fn serve() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env()
             .add_directive("arena=info".parse()?))

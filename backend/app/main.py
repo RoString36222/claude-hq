@@ -68,6 +68,15 @@ app.include_router(taco_routes.router)
 ARENA_VERSION = os.environ.get("ARENA_VERSION", "dev")
 
 
+if os.environ.get("ARENA_EXPOSE_REALTIME_STATS") == "1":
+    # Only for scripts/loadtest.py: per-room tick counts, overruns and bytes/s.
+    from . import realtime
+
+    @app.get("/v1/realtime/stats")
+    async def realtime_stats() -> dict:
+        return realtime.stats()
+
+
 @app.get("/health")
 async def health() -> dict:
     try:

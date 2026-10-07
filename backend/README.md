@@ -155,6 +155,28 @@ rollback just starts the previous image. A deploy refuses a commit whose GitHub 
 has not passed, and rolls itself back if the new build is not healthy within two
 minutes. CI runs the whole thing on every backend PR (`release-smoke.yml`).
 
+## Load test
+
+`scripts/loadtest.py` starts an Arena on a throwaway database and fills 8-player
+rooms with bots across Kart Racing, Platformer Rush and Blaster Arena, then
+reports server CPU and memory, bandwidth, and late ticks:
+
+```bash
+uv run python scripts/loadtest.py                    # Python Arena, 24 rooms x 8 bots, 60 s
+uv run python scripts/loadtest.py --impl rs          # Rust Arena (cargo build --release first)
+uv run python scripts/loadtest.py --rooms 48 -v      # up to the 48-loop process cap
+```
+
+Measured on an M-series laptop (October 2026), 0 late ticks in every run:
+
+| Arena | Players | CPU (one core) | Memory | Out |
+|---|---|---|---|---|
+| Python | 192 (24 rooms) | 39% mean, 49% max | 114 MB | 21 Mbit/s |
+| Python | 384 (48 rooms, the cap) | 67% mean, 82% max | 143 MB | 42 Mbit/s |
+| Rust | 192 (24 rooms) | 21% mean, 25% max | 27 MB | 21 Mbit/s |
+
+CI runs a small one (6 rooms, 15 s) on every backend change.
+
 ## Scale note
 
 Rooms hold presence and shared state **in process memory**, so this service must

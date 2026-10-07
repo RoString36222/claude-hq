@@ -7840,10 +7840,11 @@ function matchesFolder(s){ if(!FILTERFOLDER) return true; return (s.folder||"")=
 var UPDATE = {st:null, busy:false};
 function updatePaint(){
   var b=$("updateBtn"), l=$("updateLbl"); if(!b||!l) return;
-  var st=UPDATE.st, n=(st && st.ok && st.behind)|0;
-  b.classList.toggle("has-update", n>0); b.classList.toggle("busy", UPDATE.busy);
-  l.textContent = UPDATE.busy ? "Updating…" : n>0 ? "Update · "+n+" new" : "Update";
+  var st=UPDATE.st, n=(st && st.ok && st.behind)|0, stale=!!(st && st.stale) && !n;
+  b.classList.toggle("has-update", n>0 || stale); b.classList.toggle("busy", UPDATE.busy);
+  l.textContent = UPDATE.busy ? "Updating…" : n>0 ? "Update · "+n+" new" : stale ? "Restart · new code" : "Update";
   b.title = !st ? "Pull the latest Claude HQ and restart"
+    : stale ? "The Claude HQ code on disk is newer than the running server. Click to restart it."
     : !st.ok ? "Update unavailable: "+(st.error||"unknown")
     : n>0 ? n+" new commit"+(n>1?"s":"")+" on "+st.upstream+":\n"+(st.commits||[]).join("\n")
     : "Up to date ("+st.head+" on "+st.branch+"). Click to check again.";
@@ -7864,6 +7865,16 @@ function updateRun(){
   if(UPDATE.busy) return;
   updateCheck(true).then(function(st){
     if(!st){ toast("⚠ Couldn’t check for updates","ach"); return; }
+    if(st.stale && !st.behind){
+      if(!confirm("The Claude HQ code on disk is newer than the running server. Restart Claude HQ now?")) return;
+      UPDATE.busy=true; updatePaint();
+      fetch("/api/update",{method:"POST",headers:{"Content-Type":"application/json","X-HQ-Token":CSRF},body:"{}"})
+        .then(function(r){ return r.json(); })
+        .then(function(j){ if(!j.restarting){ UPDATE.busy=false; updatePaint(); toast("⚠ "+(j.error||"Restart failed"),"ach"); return; }
+          toast("↻ Restarting Claude HQ…","level"); setTimeout(updateWaitForRestart, 2500); })
+        .catch(function(){ UPDATE.busy=false; updatePaint(); toast("⚠ Restart request failed","ach"); });
+      return;
+    }
     if(!st.ok){ toast("⚠ "+(st.error||"Update unavailable"),"ach"); return; }
     if(!st.behind){ toast("✓ Claude HQ is up to date ("+st.head+")","level"); return; }
     if(st.dirty){ toast("⚠ Local changes in the Claude HQ folder: commit or stash them first","ach"); return; }
@@ -7882,7 +7893,7 @@ function updateRun(){
 }
 (function(){ var b=$("updateBtn"); if(b) b.addEventListener("click", updateRun);
   setTimeout(function(){ updateCheck(false); }, 4000);
-  setInterval(function(){ if(!document.hidden) updateCheck(false); }, 15*60*1000); })();
+  setInterval(function(){ if(!document.hidden) updateCheck(false); }, 60*1000); })();
 
 function postAction(body){
   return fetch("/api/action",{
@@ -9503,7 +9514,7 @@ function pulse(){
 function load(){
   fetch('/api/sessions',{cache:"no-store"})
     .then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); })
-    .then(function(d){ STATE=d; render(); pulse(); })
+    .then(function(d){ applyPayload(d); })
     .catch(function(e){
       $("updated").textContent = "offline — retrying…";
     });
@@ -9942,7 +9953,21 @@ function setLive(on){
   e.classList.toggle("on", on);
   var lt=e.querySelector(".lt"); if(lt) lt.textContent = on?"live":"polling";
 }
-function applyPayload(d){ STATE=d; render(); pulse(); }
+// Every open tab reloads once the server restarts (after an Update, a launchd restart or a
+// crash): the new process has a new CSRF token and may serve new code, so an old tab would
+// otherwise keep failing its POSTs. The boot id changes on every start.
+var SERVER_BOOT=null;
+function checkBoot(d){
+  if(!d || !d.boot) return;
+  if(SERVER_BOOT && d.boot!==SERVER_BOOT){
+    var ae=document.activeElement, typing=ae && (ae.tagName==="TEXTAREA" || (ae.tagName==="INPUT" && ae.type!=="checkbox" && ae.type!=="range"));
+    if(typing){ toast("⬇ Claude HQ restarted. Reloading when you finish typing…","level"); ae.addEventListener("blur",function(){ location.reload(); },{once:true}); }
+    else location.reload();
+    SERVER_BOOT=d.boot; return;
+  }
+  SERVER_BOOT=d.boot;
+}
+function applyPayload(d){ checkBoot(d); STATE=d; render(); pulse(); }
 function startPoll(){ if(pollTimer) return; load(); pollTimer=setInterval(load, CONFIG.refreshMs||5000); }
 function stopPoll(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
 // re-arm the poll loop with the current cadence (after a settings change)

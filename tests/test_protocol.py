@@ -1,0 +1,71 @@
+"""Arena protocol versions (Wave 0): the client's CLIENT_PROTO in games/multi.js must
+cover both servers' tables, and protoCheck must tell "update the Arena" from
+"update Claude HQ". The JS runs in node (piped on stdin); skipped without node."""
+import json
+import os
+import re
+import shutil
+import subprocess
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def read(*p):
+    with open(os.path.join(ROOT, *p), encoding="utf-8") as f:
+        return f.read()
+
+
+def client_proto():
+    m = re.search(r"var CLIENT_PROTO = (\{[^}]*\});", read("games", "multi.js"))
+    return json.loads(re.sub(r"(\w+):", r'"\1":', m.group(1)))
+
+
+class ProtocolTables(unittest.TestCase):
+    def test_client_covers_python_games_and_versions(self):
+        py = read("backend", "app", "valley.py")
+        games = re.findall(r'"(\w+)"', re.search(r"^GAMES = \(([^)]*)\)", py, re.M).group(1))
+        cp = client_proto()
+        self.assertEqual(set(cp), set(games))
+        for g, v in re.findall(r'PROTOCOL\["(\w+)"\] = \{"v": (\d+)', py):
+            self.assertTrue(cp[g][0] <= int(v) <= cp[g][1], g)
+
+    def test_client_covers_rust_versions(self):
+        rs = read("backend-rs", "src", "protocol.rs")
+        cp = client_proto()
+        rows = re.findall(r'\("(\w+)", (\d+), &\[', rs)
+        self.assertEqual({g for g, _ in rows}, {"kart", "plat", "fps"})
+        for g, v in rows:
+            self.assertTrue(cp[g][0] <= int(v) <= cp[g][1], g)
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class ProtoCheck(unittest.TestCase):
+    SCRIPT = r"""
+const fs = require('fs');
+function stub(){ return new Proxy(function(){}, {get:(t,k)=>k===Symbol.toPrimitive?()=>'':stub(), apply:()=>stub(), set:()=>true}); }
+const window = {HQV:{api:stub(), games:{}, register:()=>{}, onGame:null}};
+window.ARENA = {arena:{impl:"rs", games:{kart:{v:2,caps:[]}, plat:{v:1,caps:[]}, fps:{v:3,caps:[]}}}};
+new Function('window','document', fs.readFileSync(process.argv[2],'utf8'))(window, stub());
+const pc = window.HQV.protoCheck, out = {};
+out.kart = pc("kart"); out.golf = pc("golf"); out.fps = pc("fps");
+window.ARENA.arena.games.plat.v = 0; out.plat = pc("plat");
+window.ARENA.arena = null; out.legacy = pc("golf");
+console.log(JSON.stringify(out));
+"""
+
+    def test_verdicts(self):
+        r = subprocess.run(["node", "-", os.path.join(ROOT, "games", "multi.js")], input=self.SCRIPT,
+                           capture_output=True, text=True, cwd=ROOT, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout)
+        self.assertIsNone(out["kart"])                       # in range
+        self.assertEqual(out["golf"]["who"], "arena")        # Rust Arena has no golf
+        self.assertIn("Python Arena", out["golf"]["text"])
+        self.assertEqual(out["fps"]["who"], "hq")            # server newer than client
+        self.assertEqual(out["plat"]["who"], "arena")        # server older than client
+        self.assertIsNone(out["legacy"])                     # pre-2.0 Arena: games cope alone
+
+
+if __name__ == "__main__":
+    unittest.main()

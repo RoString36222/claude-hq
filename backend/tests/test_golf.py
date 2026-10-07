@@ -327,7 +327,7 @@ async def test_round_over_websockets(client, clock):
         send(wb, "pos", x=10**9, z=-5, r=725, a=1, q=1)
         p = until(wa, "pos")
         x0, z0, x1, z1 = h["bbox"]
-        assert p == {"type": "game", "g": "golf", "ev": "pos", "u": b, "x": x1 + 2 * golf.TILE, "z": -5, "r": 5,
+        assert p == {"type": "game", "g": "golf", "ev": "pos", "pv": 1, "u": b, "x": x1 + 2 * golf.TILE, "z": -5, "r": 5,
                      "a": 1, "q": 1}
         send(wb, "pos", x=1, z=2, r=0, a=0, q=2)     # a burst of 3 passes...
         send(wb, "pos", x=1, z=3, r=0, a=0, q=3)
@@ -763,3 +763,13 @@ async def test_random_round_over_websockets(client, clock, monkeypatch):
         assert done["par"] == [golf.course_holes(c)[i]["par"] for c, i in expect]
         send(wa, "end")
         until(wb, "golf", where=lambda m: m["round"]["phase"] == "idle")
+
+
+def test_protocol_table_and_welcome_info():
+    from app import valley
+    info = valley.arena_info()
+    assert info["impl"] == "py" and set(info["games"]) == set(valley.GAMES)
+    assert info["games"]["kart"] == {"v": 2, "caps": ["scale", "tracks"]}
+    out = valley.Out("kart")
+    out.all("x", a=1)
+    assert out.items[0][2] == {"type": "game", "g": "kart", "ev": "x", "pv": 2, "a": 1}

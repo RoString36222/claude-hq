@@ -755,6 +755,7 @@ impl Out {
         m.insert("type".into(), json!("game"));
         m.insert("g".into(), json!(self.g));
         m.insert("ev".into(), json!(ev));
+        m.insert("pv".into(), json!(crate::protocol::version(&self.g)));
         if let Value::Object(d) = data {
             m.extend(d);
         }
@@ -870,7 +871,7 @@ impl KartHub {
             }
         }
         if let Some(to) = invite {
-            let payload = json!({"type": "game", "g": GAME, "ev": "invite", "from": member.public(),
+            let payload = json!({"type": "game", "g": GAME, "ev": "invite", "pv": crate::protocol::version(GAME), "from": member.public(),
                                  "room": room_id, "name": GAME_NAME});
             let delivered = self.inner.rooms.deliver_to_user(&to, payload.to_string()).await;
             out.push(To::Conn(conn), "invited", json!({"to": to, "delivered": delivered}));

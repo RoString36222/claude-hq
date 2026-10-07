@@ -11,6 +11,22 @@ var HQV = window.HQV; if(!HQV) return;
 var api = HQV.api;
 var NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm", golf:"Mini Golf", kart:"Kart Racing", plat:"Platformer Rush", fps:"Blaster Arena"};
 var LIVE = {};          // g -> {lobby:[...], ...game state from the server}
+// Protocol versions this client speaks, per game: [oldest, newest]. Must cover the
+// server's PROTOCOL table (backend/app/valley.py, backend-rs/src/protocol.rs). A server
+// below the range is an Arena to update; above it, Claude HQ is the one to update.
+var CLIENT_PROTO = {pond:[1,1], race:[1,1], duel:[1,1], mines:[1,1], farm:[1,1], golf:[1,1], kart:[1,2], plat:[1,1], fps:[1,1]};
+// null = fine to play; else {who:"arena"|"hq", text} explaining why not.
+function protoCheck(g){
+  var info = A().arena;
+  if(!info) return null;                         // an Arena from before 2.0: each game copes on its own
+  var gi = info.games[g], want = CLIENT_PROTO[g] || [1,1], name = NAMES[g] || g;
+  if(!gi) return {who:"arena", text:"This Arena doesn't run " + name + " yet. Ask its owner to update it" + (info.impl === "rs" ? " (or use the Python Arena, which runs every game)." : ".")};
+  var v = gi.v|0;
+  if(v < want[0]) return {who:"arena", text:"This Arena runs an older " + name + " than Claude HQ speaks. Ask its owner to update the Arena."};
+  if(v > want[1]) return {who:"hq", text:"This Arena runs a newer " + name + ". Update Claude HQ to play it."};
+  return null;
+}
+HQV.protoCheck = protoCheck;
 
 function A(){ return window.ARENA || {}; }
 function me(){ var y = A().you; return y && y.userId; }
@@ -46,6 +62,13 @@ function shell(g, el, body){
         return;
       }
       tries++; setTimeout(connect, 600); return;
+    }
+    var bad = protoCheck(g);
+    if(bad){
+      lobbyBox.textContent = "";
+      lobbyBox.appendChild(api.mk("p", null, bad.text));
+      if(bad.who === "hq" && typeof window.updateRun === "function") lobbyBox.appendChild(api.btn("Update Claude HQ", "primary", function(){ window.updateRun(); }));
+      return;
     }
     watch();
     ctx.watch = setInterval(watch, 250);

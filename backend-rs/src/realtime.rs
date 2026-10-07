@@ -155,7 +155,7 @@ impl Ticker {
         } else if s.bytes_1s < ROOM_BYTES_PER_SEC / 2 && s.stride > 1 {
             s.stride -= 1;
         }
-        let send = s.ticks % s.stride == 0;
+        let send = s.ticks.is_multiple_of(s.stride);
         s.ticks += 1;
         send
     }

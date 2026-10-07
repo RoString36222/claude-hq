@@ -212,7 +212,7 @@ pub fn on_road(tr: &Track, x: f64, z: f64, margin: f64) -> bool {
 /// Start position k (0 = pole) behind the line in the middle of tile 0, two
 /// abreast, facing north. The line is at z = 0; the grid runs back into the tile behind it.
 pub fn grid_slot(_tr: &Track, k: usize) -> (f64, f64) {
-    let x = if k % 2 == 0 { -3.0 } else { 3.0 };
+    let x = if k.is_multiple_of(2) { -3.0 } else { 3.0 };
     (x, 4.0 + (k / 2) as f64 * 4.0 + if k % 2 == 1 { 2.0 } else { 0.0 })
 }
 

@@ -54,6 +54,7 @@ pub const FALL_MAX: f64 = 25.0;
 
 // --- weapons (shared with games/fps.js) ---
 pub struct Weapon {
+    #[allow(dead_code)] // kept in step with games/fps.js weapon ids
     pub id: &'static str,
     pub interval: f64,
     pub damage: i64,
@@ -121,6 +122,7 @@ pub const MAP_JSON: &str = include_str!("../../backend/app/fps_map.json");
 pub type Box3 = [f64; 6];
 
 pub struct Pickup {
+    #[allow(dead_code)] // mirrors the map JSON; read by tests and the client
     pub id: String,
     pub health: bool,
     pub at: [f64; 3],
@@ -132,6 +134,7 @@ pub struct Map {
     pub boxes: Vec<Box3>,
     pub spawns: Vec<[f64; 4]>,
     pub pickups: Vec<Pickup>,
+    #[allow(dead_code)] // practice drones: the client animates them from target_at
     pub targets: Vec<([f64; 3], [f64; 3], f64)>,
 }
 
@@ -319,6 +322,7 @@ pub fn ray_player(o: [f64; 3], d: [f64; 3], x: f64, y: f64, z: f64, maxd: f64) -
 }
 
 /// A practice drone's centre at time t: back and forth between a and b.
+#[allow(dead_code)] // parity with the Python backend; exercised by tests
 pub fn target_at(a: [f64; 3], b: [f64; 3], s: f64, t: f64) -> [f64; 3] {
     let ln = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2) + (b[2] - a[2]).powi(2)).sqrt();
     let ln = if ln == 0.0 { 1.0 } else { ln };

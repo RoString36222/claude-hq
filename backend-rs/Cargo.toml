@@ -21,3 +21,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures = "0.3"
 anyhow = "1.0.104"
+
+# Style lints the game simulations trip on purpose: index loops mirror the
+# Python port line for line, and the tuple types are wire shapes.
+[lints.clippy]
+needless_range_loop = "allow"
+type_complexity = "allow"
+enum_variant_names = "allow"

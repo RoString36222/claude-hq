@@ -131,7 +131,7 @@ fn started(n: usize, track_id: &str, laps: i64) -> (Kart, &'static Track, f64) {
 fn drive(k: &mut Kart, uid: &str, u0: f64, u1: f64, t0: f64) -> f64 {
     let t_ = k.tr().unwrap();
     let (mut t, mut u) = (t0, u0);
-    let step = 20.0 / 20.0 / TILE;
+    let step = 1.0 / TILE; // 20 m/s at 20 Hz = 1 m per tick
     while u < u1 && k.player(uid).unwrap().fin.is_none() {
         u = u1.min(u + step);
         t += 1.0 / 20.0;
@@ -433,7 +433,7 @@ fn eight_car_race(seed: u64) {
     let mut true_finish: Vec<Option<f64>> = vec![None; 8];
     let mut rejected = 0;
     let mut out_of_order = 0;
-    let mut last_arrival = vec![0.0f64; 8];
+    let mut last_arrival = [0.0f64; 8];
     while t < go + 200.0 && k.phase != Phase::Done {
         t = ((t + 0.05) * 1e6).round() / 1e6; // every client sends at 20 Hz
         if t >= go {

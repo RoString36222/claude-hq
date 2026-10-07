@@ -3,7 +3,7 @@
 Guidance for anyone (human or AI agent) making changes here. **Read [`CONTRIBUTING.md`](./CONTRIBUTING.md) in full before your first change** — this file is only the fast path to it.
 
 ## What this is
-A **local-first, privacy-sensitive** dashboard that reads your own Claude Code sessions and renders them as a live command center with a creature-collection game layer. Two files do the work: `dashboard.py` (stdlib-only HTTP server on `127.0.0.1`) and `index.html` (frontend, being refactored into `css/` + `js/` ES modules). `arena.py` is the opt-in multiplayer client.
+A **local-first, privacy-sensitive** dashboard that reads your own Claude Code sessions and renders them as a live command center with a creature-collection game layer. Two files do the work: `dashboard.py` (stdlib-only HTTP server on `127.0.0.1`) and `index.html` + `ui/` (frontend template; CSS and script split by area in `ui/`, stitched into one page by `assemble_index()`). `arena.py` is the opt-in multiplayer client.
 
 ## Non-negotiable invariants (a PR violating one will not merge)
 1. **No build step.** No npm/bundler/transpiler; no TypeScript/JSX/SCSS; no external JS/CSS libraries (one narrow, documented exception: games/vendor/ holds vendored MIT three.js (r186, unminified, only its import paths rewritten, reproducible with tools/vendor_three.py) used by the 3D games; it is served only from 127.0.0.1, loaded lazily, never fetched from a third party at runtime; see CONTRIBUTING.md). Plain `.html`/`.css`/`.js` served as-is. Backend is Python **stdlib only** — no `pip install`, ever.

@@ -6,13 +6,16 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NODE = shutil.which("node")
 
-with open(os.path.join(ROOT, "index.html"), encoding="utf-8") as _f:
-    HTML = _f.read()
+sys.path.insert(0, ROOT)
+import dashboard  # noqa: E402
+
+HTML = dashboard.assemble_index()   # index.html with its ui/ parts stitched in, as served
 
 
 def js_function(name):

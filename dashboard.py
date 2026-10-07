@@ -59,6 +59,7 @@ APP_VERSION = "1.9.0"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 INDEX_HTML = os.path.join(HERE, "index.html")
+UI_DIR = os.path.join(HERE, "ui")
 # The Claude HQ mark: one still frame of the "searching" thinking orb (the dotted
 # globe the sidebar logo animates), rendered from the vendored thinking-orbs engine
 # (RareFormLabs, MIT) and flattened to SVG dots on a dark tile.
@@ -4346,6 +4347,50 @@ class HQServer(ThreadingHTTPServer):
     daemon_threads = True
 
 
+# index.html is a template: its CSS and script live in ui/ (one file per area of the
+# page) and are stitched back in, in order, where a whole line reads
+# `//@include ui/...` or `/*@include ui/...*/`. The browser gets one page with the
+# same single inline script it always had (same globals, hoisting and "use strict"),
+# with no build step: edit a file in ui/ and reload.
+_INCLUDE_RE = re.compile(r"^[ \t]*(?://@include (ui/[\w./-]+)|/\*@include (ui/[\w./-]+)\*/)[ \t]*$", re.M)
+_index_memo = {"sig": None, "html": None}
+_index_lock = threading.Lock()
+
+
+def _include_path(rel):
+    path = os.path.realpath(os.path.join(HERE, rel))
+    root = os.path.realpath(UI_DIR)
+    if ".." in rel.split("/") or not path.startswith(root + os.sep) or not os.path.isfile(path):
+        raise FileNotFoundError(rel)
+    return path
+
+
+def assemble_index():
+    """The full page: index.html with every @include line replaced by that file.
+    Re-read whenever any part changes on disk (mtime), like index.html always was."""
+    with open(INDEX_HTML, "r", encoding="utf-8") as f:
+        tpl = f.read()
+    rels = [m.group(1) or m.group(2) for m in _INCLUDE_RE.finditer(tpl)]
+    paths = [_include_path(r) for r in rels]
+    sig = (tpl,) + tuple(os.stat(p).st_mtime_ns for p in paths)
+    with _index_lock:
+        if _index_memo["sig"] == sig:
+            return _index_memo["html"]
+    parts = {}
+    for r, p in zip(rels, paths):
+        with open(p, "r", encoding="utf-8") as f:
+            parts[r] = f.read()
+
+    def put(m):
+        body = parts[m.group(1) or m.group(2)]
+        return body[:-1] if body.endswith("\n") else body   # the include line keeps its own newline
+
+    html = _INCLUDE_RE.sub(put, tpl)
+    with _index_lock:
+        _index_memo.update(sig=sig, html=html)
+    return html
+
+
 def game_cache_control(name):
     """The big, rarely-changing Mini Golf files (three.js ~2 MB, models ~1.8 MB) are
     cacheable but always revalidated by ETag ("no-cache"), so a reload costs a 304 per
@@ -4488,8 +4533,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/":
             try:
-                with open(INDEX_HTML, "r", encoding="utf-8") as f:
-                    html = f.read()
+                html = assemble_index()
                 # Inject the per-process CSRF token (same-origin can read it only).
                 html = html.replace(CSRF_PLACEHOLDER, CSRF_TOKEN)
                 self._send(200, html, "text/html; charset=utf-8")

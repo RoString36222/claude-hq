@@ -633,8 +633,7 @@ class UiSyncTests(unittest.TestCase):
     """index.html mirrors two fatigue constants; drift breaks the meter."""
 
     def test_fz_constants_in_index_html(self):
-        with open(os.path.join(ROOT, "index.html"), encoding="utf-8") as f:
-            lines = {ln.strip() for ln in f}
+        lines = {ln.strip() for ln in dashboard.assemble_index().splitlines()}
         for want in ("var FZ_SCALE_MINS = %d;" % (dashboard.FATIGUE_CERTAIN_SECS // 60),
                      "var FZ_TIRED_MINS = %d;" % (dashboard.FATIGUE_TIRED_SECS // 60)):
             self.assertTrue(want in lines, "index.html has no line %r" % want)

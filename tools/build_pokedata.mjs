@@ -32,8 +32,10 @@ const imp = f => import(pathToFileURL(path.join(path.resolve(src), f + ".ts")).h
 const {Pokedex} = await imp("pokedex"), {Moves} = await imp("moves");
 const {Learnsets} = await imp("learnsets"), {TypeChart} = await imp("typechart");
 
-// ---- what the app can show: parsed from index.html so the two never drift ----
-const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+// ---- what the app can show: parsed from the page's script (ui/app/*.js) so the two never drift ----
+const appDir = path.join(ROOT, "ui", "app");
+const html = fs.readdirSync(appDir).filter(f => f.endsWith(".js")).sort()
+  .map(f => fs.readFileSync(path.join(appDir, f), "utf8")).join("\n");
 const POKE_EVO = JSON.parse(/var POKE_EVO=(\[\[[\d,\[\]]*\]\]);/.exec(html)[1]);
 const branchSrc = /var POKE_BRANCH=\{([\s\S]*?)\n\};/.exec(html)[1];
 const BRANCHES = {};

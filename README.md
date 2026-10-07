@@ -97,7 +97,7 @@ shares daily activity *counts* with friends — never conversation content.)
 - Optional: [`kitty`](https://sw.kovidgoyal.net/kitty/) terminal (Resume opens a kitty window; falls
   back to Terminal.app).
 
-No third-party Python or JS dependencies. Two files do everything: `dashboard.py` + `index.html`
+No third-party Python or JS dependencies. Two parts do everything: `dashboard.py` + the frontend (`index.html` with its `ui/` files)
 (plus `arena.py`, also stdlib-only, if you turn on Arena).
 
 ---
@@ -125,7 +125,7 @@ python3 dashboard.py --print-plist # preview the LaunchAgent, no side effects
 ```
 Once installed you never start it by hand again — just open <http://127.0.0.1:8765>.
 
-> **Note:** the LaunchAgent runs the code as it is on disk. Frontend (`index.html`) changes are picked
+> **Note:** the LaunchAgent runs the code as it is on disk. Frontend (`index.html`, `ui/`) changes are picked
 > up on refresh; after editing `dashboard.py`, reload the backend with:
 > ```bash
 > launchctl kickstart -k gui/$(id -u)/com.claudehq.dashboard
@@ -165,7 +165,7 @@ echo 'alias claude-hq="python3 ~/Documents/Claude/claude-dashboard/dashboard.py"
 | File | What |
 |---|---|
 | `dashboard.py` | Stdlib-only HTTP server: reads live agents + transcripts, serves the JSON API and the page. |
-| `index.html` | The entire self-contained frontend (inline CSS + JS). |
+| `index.html` + `ui/` | The frontend: the page template and its CSS and script, split by area in `ui/` and stitched into one page by the server (no build step). |
 | `arena.py` | Optional Arena client: builds + publishes the shared-stats payload. |
 | `backend/` | Optional Arena server (FastAPI). Only needed by whoever hosts it. |
 | `arena-link.json` | Your Arena device token. *(git-ignored)* |

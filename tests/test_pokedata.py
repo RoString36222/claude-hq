@@ -4,6 +4,7 @@ move exists and only uses effects the engines implement, and the license ships w
 import json
 import os
 import re
+import sys
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -20,8 +21,9 @@ def load_js():
 
 
 def index_html():
-    with open(os.path.join(ROOT, "index.html"), encoding="utf-8") as f:
-        return f.read()
+    sys.path.insert(0, ROOT)
+    import dashboard
+    return dashboard.assemble_index()
 
 
 class PokedataTests(unittest.TestCase):

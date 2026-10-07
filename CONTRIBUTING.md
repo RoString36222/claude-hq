@@ -13,7 +13,7 @@ Two files do everything:
 | File | Role |
 |---|---|
 | `dashboard.py` | Stdlib-only HTTP server (`http.server.ThreadingHTTPServer`). Reads live agents + transcripts, computes cost/creature/season data, serves the JSON API and the page. **No `pip install`, ever.** |
-| `index.html` | The frontend. Currently a single self-contained file (inline CSS + JS, ~7.6k lines) being refactored into external CSS + native ES modules. |
+| `index.html` + `ui/` | The frontend: `index.html` is the markup template, `ui/` holds its CSS and script split by area; the server stitches them into one page (§2). |
 
 Optional, and out of scope for most contributions: `arena.py` (opt-in multiplayer client, also stdlib-only), `backend/` + `backend-rs/` (the Arena server someone self-hosts), and the `*-wizard.sh` / `ops/` deploy tooling.
 
@@ -26,7 +26,7 @@ Optional, and out of scope for most contributions: `arena.py` (opt-in multiplaye
 - **No import maps requiring a server rewrite, no bare specifiers.** ES module imports must be relative paths (`./foo.js`) that the plain static server can resolve directly.
 - Backend Python targets **3.x standard library only** (see the imports block at the top of `dashboard.py`: `argparse, glob, hashlib, json, os, re, secrets, shlex, signal, subprocess, sys, threading, time, webbrowser, datetime, http.server`). Adding an import that isn't stdlib is a bug.
 
-`GET /` re-reads `index.html` from disk on every request (frontend edits are live on refresh). After editing `dashboard.py` under the LaunchAgent, reload the backend:
+`GET /` re-assembles `index.html` + `ui/` from disk on every change (frontend edits are live on refresh). After editing `dashboard.py` under the LaunchAgent, reload the backend:
 
 ```bash
 launchctl kickstart -k gui/$(id -u)/com.claudehq.dashboard
@@ -44,30 +44,29 @@ Every request is gated by the loopback + CSRF machinery already in `dashboard.py
 
 ---
 
-## 2. File & module layout (during and after the refactor)
+## 2. File & module layout
 
-The frontend is migrating from one inline `<script>`/`<style>` block to external files served statically. Target layout:
+`index.html` is a template: markup, plus `@include` lines for its CSS and script, which live in `ui/`. `dashboard.py` (`assemble_index()`) stitches them back in, in order, every time the page is served, so the browser still gets one page with one inline script (same globals, hoisting and `"use strict"` as before the split). There is no build step: edit a file in `ui/` and reload.
 
 ```
-index.html          # markup + <link rel="stylesheet"> + <script type="module" src="./js/main.js">
-css/
-  tokens.css        # :root design tokens + all theme overrides (see §4)
-  base.css          # reset, layout shell, typography
-  components.css    # cards, drawer, charts, sprites, arena, village…
-js/
-  main.js           # entry module: boot, SSE wiring, view routing
-  util.js           # esc(), el(), ico(), relTime(), announce(), hashStr, mulberry32…
-  creatures.js      # creature*/poke*/monster*/troop* helpers + sprite packs
-  render/*.js        # per-view render functions (live, analytics, pokedex, gym, …)
+index.html             # markup + //@include lines (template)
+ui/hq.css              # all styles: tokens, themes, components (see §4)
+ui/orbs.js             # vendored thinking-orbs engine (MIT)
+ui/app/00-core.js      # $, esc, state, render loop, boot helpers
+ui/app/01-creatures.js # creature*/poke*/monster*/troop* helpers + sprite packs
+ui/app/02-store-art.js … 21-arena-controls.js   # one file per area of the page, loaded in name order
+games/*.js             # Valley minigames, loaded on first use
 ```
+
+The files run as ONE script in name order, so a top-level function in a later file is still hoisted for code in an earlier one. Tests read the stitched page with `dashboard.assemble_index()`.
 
 Rules for where new code goes:
 
-- **New pure helper** (formatting, hashing, seeding, escaping) → `util.js`. Keep it small and side-effect-free.
-- **Anything touching creatures, sprites, evolution, packs** → `creatures.js`. This is the single home for the `creature*`, `poke*`, `monster*`, `troop*`, `animo*` families.
-- **A new view** → its own `render/<view>.js`, wired into the view router in `main.js`. Add the tab button with proper `role="tab"` + `aria-selected` (see §7) and map its number key.
+- **New pure helper** (formatting, hashing, seeding, escaping) → `ui/app/00-core.js`. Keep it small and side-effect-free.
+- **Anything touching creatures, sprites, evolution, packs** → `ui/app/01-creatures.js`. This is the single home for the `creature*`, `poke*`, `monster*`, `troop*`, `animo*` families.
+- **A new view** → its own `ui/app/NN-<view>.js` plus an `//@include` line in `index.html`, wired into the view switcher (`ui/app/10-views.js`). Add the tab button with proper `role="tab"` + `aria-selected` (see §7) and map its number key.
 - **A new API endpoint** → add the handler branch in `dashboard.py` next to the existing routes, gated by `_host_ok()`; document it in the README's HTTP API line.
-- **Styles** → tokens in `tokens.css`, everything else in `base.css`/`components.css`. Never inline a hex color (see §4).
+- **Styles** → `ui/hq.css` (tokens at the top). Never inline a hex color (see §4).
 
 During the refactor, when you touch a region that is still inline, **extract that region** rather than adding more inline code beside it. Don't start new inline `<style>`/`<script>` content.
 

@@ -93,8 +93,7 @@ class GameFileTests(unittest.TestCase):
             os.unlink(link)
 
     def test_index_loads_every_game_file_that_exists(self):
-        with open(os.path.join(ROOT, "index.html"), encoding="utf-8") as f:
-            html = f.read()
+        html = dashboard.assemble_index()
         files = re.search(r'VALLEY_FILES = \[([^\]]*)\]', html).group(1)
         names = re.findall(r'"([a-z]+)"', files)
         self.assertEqual(names[0], "core")
@@ -221,3 +220,42 @@ class SaveEndpointTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IndexAssembly(unittest.TestCase):
+    """index.html is a template stitched from ui/ (Wave 0 split)."""
+
+    def test_every_include_exists_and_nothing_is_left_unstitched(self):
+        html = dashboard.assemble_index()
+        self.assertNotIn("@include ui/", html)
+        self.assertGreater(len(html), 500000)
+        self.assertIn('"use strict";\nvar $ = function(id)', html)
+
+    def test_include_cannot_escape_ui(self):
+        for bad in ("ui/../dashboard.py", "ui/app/../../README.md", "ui/nope.js"):
+            with self.assertRaises(FileNotFoundError):
+                dashboard._include_path(bad)
+
+    def test_edit_in_ui_shows_up_without_restart(self):
+        path = os.path.join(ROOT, "ui", "app", "zz-probe.js")
+        tpl = os.path.join(ROOT, "index.html")
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("var ZZ_PROBE = 1;\n")
+            saved = dashboard.INDEX_HTML
+            with open(tpl, encoding="utf-8") as f:
+                body = f.read()
+            alt = os.path.join(ROOT, "ui", "zz-index.html")
+            with open(alt, "w", encoding="utf-8") as f:
+                f.write(body.replace("</body>", "<script>\n//@include ui/app/zz-probe.js\n</script>\n</body>"))
+            dashboard.INDEX_HTML = alt
+            self.assertIn("var ZZ_PROBE = 1;", dashboard.assemble_index())
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("var ZZ_PROBE = 2;\n")
+            os.utime(path, ns=(1, 10 ** 18))       # a different mtime even on coarse clocks
+            self.assertIn("var ZZ_PROBE = 2;", dashboard.assemble_index())
+        finally:
+            dashboard.INDEX_HTML = saved
+            for p in (path, os.path.join(ROOT, "ui", "zz-index.html")):
+                if os.path.exists(p):
+                    os.remove(p)

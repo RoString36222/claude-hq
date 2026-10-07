@@ -7472,7 +7472,7 @@ function pokeEvoPos(cr, line){ line=line||pokeEvoLine(cr);
   return Math.max(0, Math.min(line.length-1, Math.round((creatureStage(cr)/4)*(line.length-1)))); }
 function pokeDexFor(cr){ var line=pokeEvoLine(cr), pos=pokeEvoPos(cr,line);
   return pos===line.length-1 ? branchFinalDex(cr) : line[pos]; }   // final position honors the chosen branch
-function pokeCurrentName(cr){ var n=DEX_NAMES[pokeDexFor(cr)] || POKE_REAL[pokeIdx(cr)]; return pokeMega(cr) ? ("Mega "+n) : n; }
+function pokeCurrentName(cr){ var n=DEX_NAMES[pokeDexFor(cr)] || POKE_REAL[pokeIdx(cr)], mf=pokeMegaForm(cr); return mf ? (mf.name||("Mega "+n)) : n; }  // keeps X/Y suffix
 // name of the NEXT form in the line, or null if already final (branch-aware for the last hop)
 function pokeNextName(cr){ var line=pokeEvoLine(cr); var p=pokeEvoPos(cr,line);
   if(p>=line.length-1) return null;
@@ -10399,6 +10399,7 @@ function setEvoChoice(sid, patch){
   PARTY_SIG=null;                                   // force party re-render (sig now differs)
   if(typeof STATE!=="undefined" && STATE) renderParty(STATE.sessions);
   if(DRAWER_OPEN && DRAWER_SESS){ if(DRAWER_SESS.creature) DRAWER_SESS.creature._sid=sid; renderDrawer(DRAWER_SESS, DRAWER_LAST); }
+  if(typeof POKEDEX!=="undefined" && POKEDEX) renderPokedex(POKEDEX);   // dex cards follow the pick too
 }
 // --- New Game+ high-water seeding (drives speciesHighWater/creatureStage flooring) ---
 // Raise DEX_MAX for a species from a RAW stage value only (never the floored creatureStage
@@ -10425,13 +10426,23 @@ function primeHighWater(){
      if(ch && typeof STATE!=="undefined" && STATE){ PARTY_SIG=null; renderParty(STATE.sessions); } })
    .catch(function(){});
 }
+// Session whose branch/mega choice a Pok\u00e9dex card should show: a live session of this species
+// that has an explicit choice wins, else the entry's example session (hash default).
+function dexChoiceSid(sp, cr){
+  var k=pokeIdx(cr), hit=null;
+  ((STATE&&STATE.sessions)||[]).some(function(s){ var sid=s.sessionId||s.id, c=s.creature;
+    if(c && EVO_CHOICE[sid] && pokeIdx(c)===k){ hit=sid; return true; } return false; });
+  return hit || sp.exampleSessionId || null;
+}
 function dexCrOf(sp,i){
   var caught=!!sp.caught, idx=sp.index!=null?sp.index:i;
   var maxStage=sp.maxStage!=null?sp.maxStage:3;
   if(caught) maxStage=dexHighWater(sp.species!=null?sp.species:idx, maxStage);  // monotonic
-  return { species:sp.species||sp.name, name:sp.name, hue:sp.hue, index:idx,
+  var cr={ species:sp.species||sp.name, name:sp.name, hue:sp.hue, index:idx,
     typeHue:(sp.typeHue!=null?sp.typeHue:sp.hue), type:sp.type,
     stage:Math.max(0,Math.min(4,maxStage)), shiny:!!sp.shiny };
+  cr._sid=dexChoiceSid(sp, cr);
+  return cr;
 }
 // Clash of Clans has only 32 real troops, but the backend Pokédex has 48 species slots.
 // Collapse the 48 into 32 unique troops (merging caught/shiny/sessions/output/max level of

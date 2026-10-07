@@ -7314,7 +7314,13 @@ function monsterSVG(seed, hue, stage, shiny, px){
     glow+parts.join("")+sparkle+'</svg>';
 }
 // Type badge markup coloured by typeHue.
-function typeBadgeHTML(cr){ return '<span class="typebadge" style="background:hsl('+creatureTypeHue(cr)+',60%,45%)">'+esc(creatureType(cr))+'</span>'; }
+function typeBadgeHTML(cr){
+  // A Mega form shows its own (often dual) typing, e.g. Mega Charizard X = Fire / Dragon.
+  var mf=isPokePack()&&pokeMegaForm(cr), ts=mf&&mf.types;
+  if(ts&&ts.length){ var hs=ts.map(function(t){ var h=POKE_TYPE_HUE[t]; return h!=null?h:creatureTypeHue(cr); });
+    var bg=hs.length>1 ? 'linear-gradient(90deg,hsl('+hs[0]+',60%,45%),hsl('+hs[1]+',60%,45%))' : 'hsl('+hs[0]+',60%,45%)';
+    return '<span class="typebadge" style="background:'+bg+'">'+esc(ts.join(" / "))+'</span>'; }
+  return '<span class="typebadge" style="background:hsl('+creatureTypeHue(cr)+',60%,45%)">'+esc(creatureType(cr))+'</span>'; }
 // Evolve progress bar + next-stage label.
 // Progress toward the next VISIBLE evolution for the pokemon packs. The 5 internal growth
 // stages (0..4) don't map 1:1 to a line's 2-3 forms — some forms span two stages (e.g.
@@ -7412,31 +7418,31 @@ var POKE_BRANCH={
 // chosen branch automatically (Gallade 475 / Slowking 199 have no entry -> no mega). Each form
 // carries its source dir because ORAS-era megas live in a different PkParaiso gallery.
 var MEGA_FORMS={
-  6:[{name:"Mega Charizard X",slug:"charizard-megax",dir:"xy"},{name:"Mega Charizard Y",slug:"charizard-megay",dir:"xy"}],
-  9:[{name:"Mega Blastoise",slug:"blastoise-mega",dir:"xy"}], 3:[{name:"Mega Venusaur",slug:"venusaur-mega",dir:"xy"}],
-  94:[{name:"Mega Gengar",slug:"gengar-mega",dir:"xy"}], 448:[{name:"Mega Lucario",slug:"lucario-mega",dir:"xy"}],
-  282:[{name:"Mega Gardevoir",slug:"gardevoir-mega",dir:"xy"}], 475:[{name:"Mega Gallade",slug:"gallade-mega",dir:"oras"}],
-  130:[{name:"Mega Gyarados",slug:"gyarados-mega",dir:"xy"}],
-  445:[{name:"Mega Garchomp",slug:"garchomp-mega",dir:"xy"}], 248:[{name:"Mega Tyranitar",slug:"tyranitar-mega",dir:"xy"}],
-  212:[{name:"Mega Scizor",slug:"scizor-mega",dir:"xy"}], 306:[{name:"Mega Aggron",slug:"aggron-mega",dir:"xy"}],
-  65:[{name:"Mega Alakazam",slug:"alakazam-mega",dir:"xy"}], 142:[{name:"Mega Aerodactyl",slug:"aerodactyl-mega",dir:"xy"}],
-  257:[{name:"Mega Blaziken",slug:"blaziken-mega",dir:"xy"}],
-  18:[{name:"Mega Pidgeot",slug:"pidgeot-mega",dir:"oras"}], 80:[{name:"Mega Slowbro",slug:"slowbro-mega",dir:"oras"}],
-  254:[{name:"Mega Sceptile",slug:"sceptile-mega",dir:"oras"}], 260:[{name:"Mega Swampert",slug:"swampert-mega",dir:"oras"}],
-  373:[{name:"Mega Salamence",slug:"salamence-mega",dir:"oras"}], 376:[{name:"Mega Metagross",slug:"metagross-mega",dir:"oras"}],
-  150:[{name:"Mega Mewtwo X",slug:"mewtwo-megax",dir:"xy"},{name:"Mega Mewtwo Y",slug:"mewtwo-megay",dir:"xy"}],
-  319:[{name:"Mega Sharpedo",slug:"sharpedo-mega",dir:"oras"}],
-  115:[{name:"Mega Kangaskhan",slug:"kangaskhan-mega",dir:"xy"}],
-  208:[{name:"Mega Steelix",slug:"steelix-mega",dir:"oras"}],
-  359:[{name:"Mega Absol",slug:"absol-mega",dir:"xy"}],
-  15:[{name:"Mega Beedrill",slug:"beedrill-mega",dir:"oras"}],
-  334:[{name:"Mega Altaria",slug:"altaria-mega",dir:"oras"}],
-  460:[{name:"Mega Abomasnow",slug:"abomasnow-mega",dir:"xy"}],
-  214:[{name:"Mega Heracross",slug:"heracross-mega",dir:"xy"}],
-  323:[{name:"Mega Camerupt",slug:"camerupt-mega",dir:"oras"}],
-  310:[{name:"Mega Manectric",slug:"manectric-mega",dir:"xy"}],
-  181:[{name:"Mega Ampharos",slug:"ampharos-mega",dir:"xy"}],
-  229:[{name:"Mega Houndoom",slug:"houndoom-mega",dir:"xy"}]
+  6:[{name:"Mega Charizard X",slug:"charizard-megax",dir:"xy",types:["Fire", "Dragon"]},{name:"Mega Charizard Y",slug:"charizard-megay",dir:"xy",types:["Fire", "Flying"]}],
+  9:[{name:"Mega Blastoise",slug:"blastoise-mega",dir:"xy",types:["Water"]}], 3:[{name:"Mega Venusaur",slug:"venusaur-mega",dir:"xy",types:["Grass", "Poison"]}],
+  94:[{name:"Mega Gengar",slug:"gengar-mega",dir:"xy",types:["Ghost", "Poison"]}], 448:[{name:"Mega Lucario",slug:"lucario-mega",dir:"xy",types:["Fighting", "Steel"]}],
+  282:[{name:"Mega Gardevoir",slug:"gardevoir-mega",dir:"xy",types:["Psychic", "Fairy"]}], 475:[{name:"Mega Gallade",slug:"gallade-mega",dir:"oras",types:["Psychic", "Fighting"]}],
+  130:[{name:"Mega Gyarados",slug:"gyarados-mega",dir:"xy",types:["Water", "Dark"]}],
+  445:[{name:"Mega Garchomp",slug:"garchomp-mega",dir:"xy",types:["Dragon", "Ground"]}], 248:[{name:"Mega Tyranitar",slug:"tyranitar-mega",dir:"xy",types:["Rock", "Dark"]}],
+  212:[{name:"Mega Scizor",slug:"scizor-mega",dir:"xy",types:["Bug", "Steel"]}], 306:[{name:"Mega Aggron",slug:"aggron-mega",dir:"xy",types:["Steel"]}],
+  65:[{name:"Mega Alakazam",slug:"alakazam-mega",dir:"xy",types:["Psychic"]}], 142:[{name:"Mega Aerodactyl",slug:"aerodactyl-mega",dir:"xy",types:["Rock", "Flying"]}],
+  257:[{name:"Mega Blaziken",slug:"blaziken-mega",dir:"xy",types:["Fire", "Fighting"]}],
+  18:[{name:"Mega Pidgeot",slug:"pidgeot-mega",dir:"oras",types:["Normal", "Flying"]}], 80:[{name:"Mega Slowbro",slug:"slowbro-mega",dir:"oras",types:["Water", "Psychic"]}],
+  254:[{name:"Mega Sceptile",slug:"sceptile-mega",dir:"oras",types:["Grass", "Dragon"]}], 260:[{name:"Mega Swampert",slug:"swampert-mega",dir:"oras",types:["Water", "Ground"]}],
+  373:[{name:"Mega Salamence",slug:"salamence-mega",dir:"oras",types:["Dragon", "Flying"]}], 376:[{name:"Mega Metagross",slug:"metagross-mega",dir:"oras",types:["Steel", "Psychic"]}],
+  150:[{name:"Mega Mewtwo X",slug:"mewtwo-megax",dir:"xy",types:["Psychic", "Fighting"]},{name:"Mega Mewtwo Y",slug:"mewtwo-megay",dir:"xy",types:["Psychic"]}],
+  319:[{name:"Mega Sharpedo",slug:"sharpedo-mega",dir:"oras",types:["Water", "Dark"]}],
+  115:[{name:"Mega Kangaskhan",slug:"kangaskhan-mega",dir:"xy",types:["Normal"]}],
+  208:[{name:"Mega Steelix",slug:"steelix-mega",dir:"oras",types:["Steel", "Ground"]}],
+  359:[{name:"Mega Absol",slug:"absol-mega",dir:"xy",types:["Dark"]}],
+  15:[{name:"Mega Beedrill",slug:"beedrill-mega",dir:"oras",types:["Bug", "Poison"]}],
+  334:[{name:"Mega Altaria",slug:"altaria-mega",dir:"oras",types:["Dragon", "Fairy"]}],
+  460:[{name:"Mega Abomasnow",slug:"abomasnow-mega",dir:"xy",types:["Grass", "Ice"]}],
+  214:[{name:"Mega Heracross",slug:"heracross-mega",dir:"xy",types:["Bug", "Fighting"]}],
+  323:[{name:"Mega Camerupt",slug:"camerupt-mega",dir:"oras",types:["Fire", "Ground"]}],
+  310:[{name:"Mega Manectric",slug:"manectric-mega",dir:"xy",types:["Electric"]}],
+  181:[{name:"Mega Ampharos",slug:"ampharos-mega",dir:"xy",types:["Electric", "Dragon"]}],
+  229:[{name:"Mega Houndoom",slug:"houndoom-mega",dir:"xy",types:["Dark", "Fire"]}]
 };
 // Per-session evolution choice, keyed by sessionId: { branchDex, megaSlug }. Separate localStorage
 // key from hq_dex_max (New Game+ floor) — the two are orthogonal and both persist.

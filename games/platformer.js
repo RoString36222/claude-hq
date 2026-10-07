@@ -24,7 +24,11 @@
  */
 (function(){
 "use strict";
-var HQV = window.HQV; if(!HQV || !HQV.api) return;
+var HQV = window.HQV; if(!HQV || !HQV.api || !HQV.engine) return;
+// Shared helpers, three.js loading and snapshot timing: games/engine.js.
+var E = HQV.engine;
+var now = E.now, clamp = E.clamp, hex = E.hex, angLerp = E.angLerp, calm = E.calm, say = E.say,
+    tokens = E.tokens, myClock = E.myClock, hasWebGL2 = E.hasWebGL2, fmt = E.fmtTime, dist3 = E.dist3;
 var api = HQV.api, MP = HQV.mp || null;
 
 /* PLAT-LEVEL BEGIN */
@@ -97,28 +101,8 @@ var CHARS = [{n: "Classic", c: 0xffffff}, {n: "Coral", c: 0xff9a8a}, {n: "Mint",
 var CHAR_SWATCH = ["#e8eef4", "#ff9a8a", "#9ff0c4", "#ffe07a", "#c6a2ff", "#8ec9ff"];
 var MODES = [["race", "Race"], ["coop", "Co-op"]];
 
-function now(){ return performance.now()/1000; }
-function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
-function hex(s, fb){ return typeof s === "string" && /^#[0-9a-f]{6}$/i.test(s) ? parseInt(s.slice(1), 16) : fb; }
-function angLerp(a, b, u){ return a + Math.atan2(Math.sin(b - a), Math.cos(b - a))*u; }
-function fmt(ms){
-  if(ms == null || !isFinite(ms)) return "–";
-  ms = Math.max(0, Math.round(ms)); var m = Math.floor(ms/60000), s = (ms % 60000)/1000;
-  return m+":"+(s < 10 ? "0" : "")+s.toFixed(2);
-}
 function fmtS(ms){ ms = Math.max(0, ms|0); var s = Math.ceil(ms/1000), m = Math.floor(s/60); s = s % 60; return m+":"+(s < 10 ? "0" : "")+s; }
-function calm(){ return document.documentElement.classList.contains("hq-calm") ||
-  (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); }
-function say(t){ if(typeof window.announce === "function"){ try { window.announce(t); } catch(e){} } }
 function nameOf(p){ return (p && (p.displayName || p.handle)) || "Runner"; }
-function tokens(){
-  var cs = getComputedStyle(document.documentElement);
-  function g(n, fb){ var v = (cs.getPropertyValue(n) || "").trim(); return v || fb; }
-  return {ink: g("--ink", "currentColor"), muted: g("--muted", "gray"), line: g("--line", "gray"), panel: g("--panel", "canvas"),
-          panel2: g("--panel2", "canvas"), brand: g("--brand", "royalblue"), need: g("--need", "crimson"), good: g("--good", "seagreen"),
-          gold: g("--gold", "goldenrod"), bg2: g("--bg2", "canvas"), mono: g("--mono", "monospace")};
-}
-function dist3(a, b){ var dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2]; return Math.sqrt(dx*dx + dy*dy + dz*dz); }
 
 /* ---------- data + three.js, loaded on demand ---------- */
 var DATA = null, DATA_P = null, LEVELS = {};
@@ -133,23 +117,8 @@ function loadData(){
     }, function(e){ DATA_P = null; throw e; });
   return DATA_P;
 }
-var LIB = null, GLB = {};
-function platLib(){
-  return LIB || (LIB = Promise.all([import("/games/vendor/three-module.js"), import("/games/vendor/three-gltf-loader.js"),
-                                    import("/games/vendor/three-skeleton-utils.js")])
-    .then(function(m){
-      var THREE = m[0], manager = new THREE.LoadingManager();
-      manager.setURLModifier(function(u){ return /\/Textures\/colormap\.png$/.test(u) ? "/games/platformer/colormap.png" : u; });
-      return {THREE: THREE, loader: new m[1].GLTFLoader(manager), clone: m[2].clone, tex: new THREE.TextureLoader()};
-    }, function(e){ LIB = null; throw e; }));
-}
-function loadGlb(lib, name){
-  if(!/^[a-z][a-z0-9-]{0,40}$/.test(name)) return Promise.reject(new Error("bad model name"));
-  return GLB[name] || (GLB[name] = new Promise(function(res, rej){
-    lib.loader.load("/games/platformer/"+name+".glb", res, null, function(e){ delete GLB[name]; rej(e); });
-  }));
-}
-function hasWebGL2(){ try { return !!document.createElement("canvas").getContext("webgl2"); } catch(e){ return false; } }
+function platLib(){ return E.lib(); }
+function loadGlb(lib, name){ return E.loadGlb(lib, "platformer", name); }
 function psave(){
   var s = api.save; if(!s) return {best: {}};
   if(!s.plat || typeof s.plat !== "object" || Array.isArray(s.plat)) s.plat = {};
@@ -608,14 +577,8 @@ function makeGame(host, opts){
   function pushSnap(P, m){
     var t = now(), q = m.q;
     if(typeof q === "number" && isFinite(q)){
-      q = q|0;
-      if(P.lastQ >= 0 && q <= P.lastQ && P.lastQ - q < 6000) return;
-      if(P.lastQ >= 0 && q <= P.lastQ) P.off = null;
-      P.lastQ = q;
-      var off = t - q/100;
-      if(P.off === null || off < P.off) P.off = off; else P.off += (off - P.off)*0.01;
-      var st = q/100 + P.off, late = clamp(t - st, 0, JIT_MAX);
-      P.jit += (late - P.jit)*(late > P.jit ? 0.3 : 0.02);
+      var st = E.senderTime(P, q, t, JIT_MAX);
+      if(st === null) return;
       t = st;
     }
     var sn = P.snaps, last = sn[sn.length - 1];

@@ -22,7 +22,11 @@
  */
 (function(){
 "use strict";
-var HQV = window.HQV; if(!HQV || !HQV.api) return;
+var HQV = window.HQV; if(!HQV || !HQV.api || !HQV.engine) return;
+// Shared helpers, three.js loading and snapshot timing: games/engine.js.
+var E = HQV.engine;
+var now = E.now, clamp = E.clamp, hex = E.hex, angLerp = E.angLerp, calm = E.calm, say = E.say,
+    tokens = E.tokens, myClock = E.myClock, hasWebGL2 = E.hasWebGL2;
 var api = HQV.api, MP = HQV.mp || null;
 
 /* FPS-SHARED BEGIN */
@@ -156,24 +160,8 @@ var KEYS = [["W A S D / stick", "move"], ["mouse / right stick / Q E", "look"], 
 var BUTTONS = {w1: {keys: ["Digit1"]}, w2: {keys: ["Digit2"]}, swap: {keys: [], pad: [3]}, shoot: {keys: ["KeyF"]},
                trig: {keys: [], pad: [7]}, turnL: {keys: ["KeyQ"]}, turnR: {keys: ["KeyE"]}, score: {keys: [], pad: [8]}};
 
-function now(){ return performance.now()/1000; }
-function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
-function hex(s, fb){ return typeof s === "string" && /^#[0-9a-f]{6}$/i.test(s) ? parseInt(s.slice(1), 16) : fb; }
-function angLerp(a, b, u){ return a + Math.atan2(Math.sin(b - a), Math.cos(b - a))*u; }
-function calm(){ return document.documentElement.classList.contains("hq-calm") ||
-  (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); }
-function say(t){ if(typeof window.announce === "function"){ try { window.announce(t); } catch(e){} } }
 function nameOf(p){ return String((p && (p.displayName || p.handle)) || "Player").slice(0, 24); }
 function mmss(ms){ ms = Math.max(0, ms|0); var s = Math.ceil(ms/1000), m = Math.floor(s/60); s %= 60; return m+":"+(s < 10 ? "0" : "")+s; }
-function tokens(){
-  var cs = getComputedStyle(document.documentElement);
-  function g(n, fb){ var v = (cs.getPropertyValue(n) || "").trim(); return v || fb; }
-  return {ink: g("--ink", "currentColor"), muted: g("--muted", "gray"), line: g("--line", "gray"), panel: g("--panel", "canvas"),
-          panel2: g("--panel2", "canvas"), brand: g("--brand", "royalblue"), need: g("--need", "crimson"), good: g("--good", "seagreen"),
-          gold: g("--gold", "goldenrod"), bg2: g("--bg2", "canvas")};
-}
-// my clock for the server, centiseconds (never goes backwards; a reload starts over)
-function myClock(){ return Math.floor(performance.now()/10) % 1073741824; }
 function fsave(){
   var s = api.save; if(!s) return {best: 0};
   if(!s.fps || typeof s.fps !== "object" || Array.isArray(s.fps)) s.fps = {};
@@ -188,28 +176,8 @@ function loadMap(){
     .then(function(j){ MAP = FS.compileMap(j); return MAP; }, function(e){ MAP_P = null; throw e; });
   return MAP_P;
 }
-var LIB = null, GLB = {};
-function fpsLib(){
-  return LIB || (LIB = Promise.all([import("/games/vendor/three-module.js"), import("/games/vendor/three-gltf-loader.js"),
-                                    import("/games/vendor/three-skeleton-utils.js")])
-    .then(function(m){
-      var THREE = m[0], manager = new THREE.LoadingManager();
-      // Each kit's GLBs point at their own "Textures/colormap.png"; one copy sits next to them.
-      manager.setURLModifier(function(u){
-        var k = /\/games\/(fps|golf)\/Textures\/colormap\.png$/.exec(u);
-        return k ? "/games/"+k[1]+"/colormap.png" : u;
-      });
-      return {THREE: THREE, loader: new m[1].GLTFLoader(manager), clone: m[2].clone, tex: new THREE.TextureLoader()};
-    }, function(e){ LIB = null; throw e; }));
-}
-function loadGlb(lib, dir, name){
-  if(!/^[a-z][a-z0-9-]{0,40}$/.test(name) || (dir !== "fps" && dir !== "golf")) return Promise.reject(new Error("bad model name"));
-  var key = dir+"/"+name;
-  return GLB[key] || (GLB[key] = new Promise(function(res, rej){
-    lib.loader.load("/games/"+key+".glb", res, null, function(e){ delete GLB[key]; rej(e); });
-  }));
-}
-function hasWebGL2(){ try { return !!document.createElement("canvas").getContext("webgl2"); } catch(e){ return false; } }
+function fpsLib(){ return E.lib(); }
+function loadGlb(lib, dir, name){ return E.loadGlb(lib, dir, name); }
 
 /* =============================== the game view =============================== */
 var CUR = null;
@@ -523,8 +491,8 @@ function makeGame(host, opts){
     var key = e[9]|0;
     if(key < 0 || (P.last >= 0 && key <= P.last)) return;
     P.last = key;
-    var st = key/1000, late = V.off === null ? 0 : clamp(t - (st + V.off), 0, JIT_MAX);
-    P.jit += (late - P.jit)*(late > P.jit ? 0.3 : 0.02);
+    var st = key/1000;
+    E.jitter(P, V.off === null ? 0 : clamp(t - (st + V.off), 0, JIT_MAX));
     var sn = P.snaps, x = e[1]/100, y = e[2]/100, z = e[3]/100, L = sn[sn.length - 1];
     var tp = L && (Math.abs(x - L.x) > 6 || Math.abs(z - L.z) > 6);
     if(tp) sn.length = 0;

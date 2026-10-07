@@ -8,8 +8,17 @@
 # certbot cron to forget about.
 
 services:
+  # The Arena. ops/release.sh picks which one (Python or Rust) and stamps a
+  # version: it sets ARENA_APP_IMAGE / ARENA_BUILD_CONTEXT / ARENA_DOCKERFILE /
+  # ARENA_VERSION. A plain `docker compose up -d --build` still builds and runs
+  # the Python Arena as before.
   app:
-    build: .
+    image: ${ARENA_APP_IMAGE:-claude-hq-arena-py:local}
+    build:
+      context: ${ARENA_BUILD_CONTEXT:-.}
+      dockerfile: ${ARENA_DOCKERFILE:-Dockerfile}
+      args:
+        ARENA_VERSION: ${ARENA_VERSION:-dev}
     restart: unless-stopped
     env_file: .env
     environment:
@@ -27,12 +36,30 @@ services:
     expose:
       - "8080"
     healthcheck:
-      test: ["CMD", "python", "-c",
-             "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      # The same command in both images: the Python one asks /health with
+      # urllib, the Rust one runs `arena --health`.
+      test: ["CMD", "arena-health"]
       interval: 30s
       timeout: 5s
       start_period: 20s
       retries: 3
+
+  # One-off Alembic migration with the Python image, for a Rust release (the
+  # Rust Arena never migrates; Alembic owns the schema). ops/release.sh runs it:
+  #   docker compose --profile tools run --rm migrate
+  migrate:
+    profiles: ["tools"]
+    image: ${ARENA_PY_IMAGE:-claude-hq-arena-py:local}
+    build:
+      context: .
+      args:
+        ARENA_VERSION: ${ARENA_VERSION:-dev}
+    env_file: .env
+    environment:
+      ARENA_DATABASE_URL: sqlite+aiosqlite:////data/arena.db
+    volumes:
+      - arena-data:/data
+    command: ["uv", "run", "--no-dev", "alembic", "upgrade", "head"]
 
   # Optional: only started with `--profile panel`, so instances that do not
   # want a deploy panel are unaffected.

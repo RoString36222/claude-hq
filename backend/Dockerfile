@@ -14,6 +14,11 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY . .
+RUN install -m 0755 /app/arena-health /usr/local/bin/arena-health
+
+# Stamped by ops/release.sh; reported by /health.
+ARG ARENA_VERSION=dev
+ENV ARENA_VERSION=$ARENA_VERSION
 
 EXPOSE 8080
 CMD ["/app/entrypoint.sh"]

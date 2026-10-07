@@ -1,0 +1,8 @@
+# The Rust image builds from the repo root; send only what it compiles.
+*
+!backend-rs/Cargo.toml
+!backend-rs/Cargo.lock
+!backend-rs/src
+!backend/app/kart_tracks.json
+!backend/app/platformer_levels.json
+!backend/app/fps_map.json

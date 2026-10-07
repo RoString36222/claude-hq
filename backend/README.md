@@ -137,6 +137,24 @@ Your Mac sleeping is not destructive: publishes retry every 5 minutes and each
 one carries a 30-day window, so nothing is lost. The board is simply
 unreachable until the machine is back.
 
+## Releasing
+
+`ops/release.sh` is the one command for shipping the Arena once it is deployed:
+
+```bash
+ops/release.sh check                  # every test suite, locally, before you merge
+ops/release.sh deploy                 # on the host: pull main, check CI, build, ship, verify
+ARENA_IMPL=rs ops/release.sh deploy   # the same, running the Rust Arena (migrates with Alembic first)
+ops/release.sh rollback               # back to the previous release, no rebuild
+ops/release.sh status                 # what runs now, history, kept images
+```
+
+Each release is an image tagged with the UTC date and commit (`2026.10.07-76ee057`),
+shown by `/health` as `version`. The last three per implementation are kept, so a
+rollback just starts the previous image. A deploy refuses a commit whose GitHub CI
+has not passed, and rolls itself back if the new build is not healthy within two
+minutes. CI runs the whole thing on every backend PR (`release-smoke.yml`).
+
 ## Scale note
 
 Rooms hold presence and shared state **in process memory**, so this service must

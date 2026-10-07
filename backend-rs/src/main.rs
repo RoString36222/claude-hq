@@ -9,6 +9,7 @@ mod db;
 mod fps;
 mod kart;
 mod platformer;
+mod protocol;
 mod realtime;
 mod rooms;
 mod schemas;
@@ -241,7 +242,8 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
     let (mut tx, mut recv) = socket.split();
 
     let welcome = json!({"type": "welcome", "room": room_id, "you": member.public(),
-                         "members": roster, "state": state});
+                         "members": roster, "state": state,
+                         "arena": protocol::arena_info()});
     if tx.send(Message::Text(welcome.to_string())).await.is_err() {
         st.rooms.leave(&room_id, conn_id).await;
         return;

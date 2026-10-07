@@ -13792,6 +13792,8 @@ function arenaOpenSocket(){
       ARENA.roomRole = (info && (info.role === "owner" || info.role === "member")) ? info.role : null;
       ARENA.roomClose = 0; arenaRenderRoomBar();
         ARENA.you = (m.you && typeof m.you === "object") ? m.you : null;
+        // Which games this Arena runs, at what protocol version (null from an Arena older than 2.0).
+        ARENA.arena = (m.arena && typeof m.arena === "object" && m.arena.games && typeof m.arena.games === "object") ? m.arena : null;
         ARENA.fails = 0;
         arenaRenderLobby(m.members||[]);
         var n = Array.isArray(m.members) ? m.members.length : 1;

@@ -53,6 +53,19 @@ from .models import DailyStat, RoomFarm
 from .rooms import Member, Room, manager
 
 GAMES = ("pond", "race", "duel", "mines", "farm", "golf", "kart", "plat", "fps")
+
+# Protocol version + capabilities per game. Sent in the room's welcome (so a client
+# can tell "this Arena is too old for me" from "I am too old for this Arena" before it
+# joins) and as "pv" on every game message. Bump v when a message changes shape in a
+# way an older client or server would misread; add a cap for an optional extra.
+# Keep in step with backend-rs (arena_info) and games/multi.js (CLIENT_PROTO).
+PROTOCOL: dict[str, dict] = {g: {"v": 1, "caps": []} for g in GAMES}
+PROTOCOL["kart"] = {"v": 2, "caps": ["scale", "tracks"]}   # v2: geometry scale + server track list
+
+
+def arena_info() -> dict:
+    """What this Arena runs, for the room welcome."""
+    return {"impl": "py", "games": {g: dict(PROTOCOL[g]) for g in GAMES}}
 GAME_NAMES = {"pond": "Fishing Pond", "race": "Puzzle Race", "duel": "Creature Duel",
               "mines": "Co-op Mines", "farm": "Shared Farm", "golf": "Mini Golf",
               "kart": "Kart Racing", "plat": "Platformer Rush", "fps": "Blaster Arena"}
@@ -246,19 +259,22 @@ class Out:
         self.g = g
         self.items: list[tuple[str, Any, dict]] = []
 
+    def _m(self, ev: str, data: dict) -> dict:
+        pv = PROTOCOL.get(self.g, {}).get("v", 1)
+        return {"type": "game", "g": self.g, "ev": ev, "pv": pv, **data}
+
     def all(self, ev: str, **data: Any) -> None:
-        self.items.append(("all", None, {"type": "game", "g": self.g, "ev": ev, **data}))
+        self.items.append(("all", None, self._m(ev, data)))
 
     def to(self, ws: Any, ev: str, **data: Any) -> None:
-        self.items.append(("ws", ws, {"type": "game", "g": self.g, "ev": ev, **data}))
+        self.items.append(("ws", ws, self._m(ev, data)))
 
     def user(self, user_id: str, ev: str, **data: Any) -> None:
-        self.items.append(("user", user_id, {"type": "game", "g": self.g, "ev": ev, **data}))
+        self.items.append(("user", user_id, self._m(ev, data)))
 
     def lobby(self, member_ids: Any, ev: str, skip_user: str | None = None, **data: Any) -> None:
         """Only to the sockets of these lobby members (optionally not back to one user)."""
-        self.items.append(("lobby", (frozenset(member_ids), skip_user),
-                           {"type": "game", "g": self.g, "ev": ev, **data}))
+        self.items.append(("lobby", (frozenset(member_ids), skip_user), self._m(ev, data)))
 
     def err(self, ws: Any, msg: str) -> None:
         self.to(ws, "error", error=msg)
@@ -1046,7 +1062,7 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
         elif not isinstance(to, str) or not to or to == member.user_id:
             out.err(member.ws, "invite someone else")
         else:
-            delivered = await manager.deliver_to_user(to, {"type": "game", "g": g, "ev": "invite",
+            delivered = await manager.deliver_to_user(to, {"type": "game", "g": g, "ev": "invite", "pv": PROTOCOL[g]["v"],
                                                          "from": member.public(), "room": room.room_id,
                                                          "name": GAME_NAMES[g]})
             out.to(member.ws, "invited", to=to, delivered=delivered)

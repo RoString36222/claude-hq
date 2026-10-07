@@ -76,6 +76,7 @@ async def room_ws(
         "members": room.roster(),
         "state": room.state,
         "chat": list(room.chat),   # recent lobby chat, oldest first, so a joiner can catch up
+        "arena": valley.arena_info(),   # games this Arena runs, with protocol version + caps
     })
 
     try:

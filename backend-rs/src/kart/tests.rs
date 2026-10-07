@@ -651,7 +651,7 @@ async fn lobby_rules() {
     // other games do not exist on this backend
     e.hub.handle("lob", 1, &a, &json!({"type": "game", "g": "golf", "op": "join"})).await;
     let m: Value = serde_json::from_str(&wa.recv().await.unwrap()).unwrap();
-    assert_eq!(m, json!({"type": "game", "g": "golf", "ev": "error", "error": "unknown game"}));
+    assert_eq!(m, json!({"type": "game", "g": "golf", "ev": "error", "pv": 1, "error": "unknown game"}));
     e.hub.handle("lob", 1, &a, &json!({"type": "game", "g": 3, "op": "join"})).await;
     let m: Value = serde_json::from_str(&wa.recv().await.unwrap()).unwrap();
     assert_eq!((m["g"].as_str(), m["error"].as_str()), (Some("?"), Some("unknown game")));

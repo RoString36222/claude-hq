@@ -214,6 +214,7 @@ TROPHIES = [  # (id, name, test over a player's stats)
 
 
 async def profile(db: AsyncSession, user: User, viewer_id: str | None) -> dict:
+    from .crews import tag_of as crew_tags            # (crews imports this module)
     pr = (await progress(db, [user.id]))[user.id]
     today = datetime.now(UTC).date()
     active = set((await db.execute(select(DailyStat.stat_date).where(
@@ -249,5 +250,6 @@ async def profile(db: AsyncSession, user: User, viewer_id: str | None) -> dict:
         "totals": {"played": stats["games"], "wins": stats["wins"], "podiums": podiums},
         "trophies": [{"id": t[0], "name": t[1]} for t in TROPHIES if t[2](stats)],
         "cos": (await equipped_cosmetics(db, [user.id]))[user.id],
+        "crew": (await crew_tags(db, [user.id])).get(user.id),
         "isYou": user.id == viewer_id,
     }

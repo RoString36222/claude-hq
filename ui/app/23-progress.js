@@ -58,7 +58,7 @@ function tcardRender(p){
   var av=document.createElement("div"); av.className="tcard-av"; av.textContent=(name||"?").slice(0,2).toUpperCase();
   var who=document.createElement("div");
   var h=document.createElement("h3"); h.textContent=name+(p.isYou?" (you)":"");
-  var sub=document.createElement("div"); sub.className="tcard-sub"; sub.textContent="Lv "+pr.level+" · "+(pr.rank||"")+" · @"+p.handle;
+  var sub=document.createElement("div"); sub.className="tcard-sub"; sub.textContent="Lv "+pr.level+" · "+(pr.rank||"")+" · @"+p.handle+(p.crew ? " · ["+p.crew.tag+"] "+p.crew.name : "");
   who.appendChild(h); who.appendChild(sub); head.appendChild(av); head.appendChild(who); body.appendChild(head);
   var bar=document.createElement("div"); bar.className="tcard-bar"; var fill=document.createElement("i");
   fill.style.width=Math.round(100*(pr.xpIntoLevel||0)/Math.max(1,pr.xpForLevel||1))+"%"; bar.appendChild(fill); body.appendChild(bar);

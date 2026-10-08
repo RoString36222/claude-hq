@@ -4371,6 +4371,7 @@ POST_PATHS = (
     "/api/arena/pantry/reward",
     "/api/arena/hq/me",
     "/api/arena/cosmetics/buy", "/api/arena/cosmetics/equip", "/api/arena/market/sell",
+    "/api/arena/crews/create", "/api/arena/crews/join", "/api/arena/crews/leave",
     "/api/arena/cali/order",
     "/api/arena/sounds",
     "/api/games/state",
@@ -4762,6 +4763,14 @@ class Handler(BaseHTTPRequestHandler):
                 _overlay_food_effects(resp) if code == 200 else resp))
             return
 
+        if path in ("/api/arena/crews", "/api/arena/crews/mine"):
+            try:
+                code, resp = arena.crews("mine" if path.endswith("/mine") else "board")
+            except Exception as e:
+                code, resp = 502, {"error": "arena request failed: %s" % e}
+            self._send(code or 502, json.dumps(resp))
+            return
+
         if path == "/api/arena/cosmetics":
             try:
                 code, resp = arena.cosmetics()
@@ -5132,6 +5141,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(to, str) or not to.strip():
                     return 400, {"error": "toHandle required"}
                 return arena.send_nudge(to.strip(), note=body.get("note", ""))
+            if path in ("/api/arena/crews/create", "/api/arena/crews/join", "/api/arena/crews/leave"):
+                return arena.crews(path.rsplit("/", 1)[1], body)
             if path in ("/api/arena/cosmetics/buy", "/api/arena/cosmetics/equip"):
                 return arena.cosmetics(path.rsplit("/", 1)[1], body)
             if path == "/api/arena/market/sell":

@@ -263,6 +263,13 @@ HQV.hqWorlds.base = function(c, w){
     } else if(look.decor === "neon"){
       [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function(q){ box(0.08, top - 3.5, 0.08, emis(0x0d1a24, accent, 2.5), q[0]*4.62, 3.5 + (top - 3.5)/2, q[1]*3.62, baseG, true); });
     }
+    // your crew's banner on the roof (HQ 2.1 crews)
+    if(look.crew && /^#[0-9a-f]{6}$/i.test(look.crew.color || "")){
+      var crewCol = parseInt(look.crew.color.slice(1), 16);
+      cyl(0.08, 0.08, 4, mat(0xb8c4cf, {metalness: 0.6}), -2.6, top + 2, 1.6, baseG, 8);
+      var ct = c.canvasTex(256, 128, function(g){ g.fillStyle = look.crew.color; g.fillRect(0, 0, 256, 128); g.fillStyle = "#0e1923"; g.font = "700 64px system-ui, sans-serif"; g.textAlign = "center"; g.fillText(String(look.crew.tag || "").slice(0, 4), 128, 86); });
+      var cf = c.screen(1.8, 0.9, ct.t); cf.material.side = THREE.DoubleSide; cf.position.set(-1.7, top + 3.5, 1.6); baseG.add(cf); cf.userData.wave = 9; dyn.flags.push(cf);
+    }
     var sb = c.label(c.short((look.sign || "Claude HQ"), 16) + " · Lv " + level, HEX.amber, 1.1); sb.position.set(0, top + 7, 0); baseG.add(sb);
     built.level = level; built.look = JSON.stringify(look); built.top = top;
     w.wings = level >= 30 ? 2 : level >= 10 ? 1 : 0; w.level = level;

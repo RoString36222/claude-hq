@@ -15,6 +15,7 @@ from .routes import hq as hq_routes
 from .routes import progress as progress_routes
 from .routes import cosmetics as cosmetic_routes
 from .routes import server as server_routes
+from .routes import crews as crew_routes
 from .routes import nudges as nudge_routes
 from .routes import pantry as pantry_routes
 from .routes import private_rooms as private_room_routes
@@ -71,6 +72,7 @@ app.include_router(progress_routes.router)
 app.include_router(cosmetic_routes.router)
 app.include_router(cosmetic_routes.market)
 app.include_router(server_routes.router)
+app.include_router(crew_routes.router)
 
 
 # Stamped into the image by ops/release.sh (a date + commit, e.g. 2026.10.07-76ee057).

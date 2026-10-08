@@ -34,7 +34,8 @@ function hqApi(){
     // your HQ level is the season level the page already shows (the Base grows with it)
     // your HQ level: the Arena's (sessions + games) when paired, else the season level the page shows
     level: function(){ var a=(typeof progLevel==="function") && progLevel(); if(a) return a; var s=(STATE && STATE.season) || {}; return Math.max(1, (s.level|0) || 1); },
-    look: function(){ return Object.assign({}, hqLook(), {decor: (window.HQ_MYCOS || {}).decor}); },
+    look: function(){ return Object.assign({}, hqLook(), {decor: (window.HQ_MYCOS || {}).decor,
+                                                          crew: (typeof crewBanner==="function") ? crewBanner() : null}); },
     startWorld: (function(){ try { var w=localStorage.getItem("hq_world"); return w==="base"||w==="lobby"||w==="mission" ? w : "base"; } catch(e){ return "base"; } })(),
     onWorld: function(name){ HQ3D.world = name; hqRenderWhere(); }
   };
@@ -83,7 +84,7 @@ function hqViewChanged(v){
   if(b){ b.setAttribute("aria-pressed", v==="hq" ? "true" : "false"); }
   if(l) l.textContent = v==="hq" ? "Classic" : "3D HQ";
   if(v==="hq"){ hqEnter(); if(typeof progLoad==="function") progLoad(false); } else hqLeave();
-  if(v==="arena" && typeof gbLoad==="function"){ gbLoad(); progLoad(false); }
+  if(v==="arena" && typeof gbLoad==="function"){ gbLoad(); progLoad(false); if(typeof crewLoad==="function") crewLoad(); }
 }
 // One key (H) and the header switch flip between the 3D HQ and the classic view you came from.
 function hqToggle(){

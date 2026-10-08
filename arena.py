@@ -1001,3 +1001,24 @@ def market_sell(cat, qty):
         return 400, {"error": "sell 1 to 10 of one kind"}
     return _request("POST", base + "/v1/market/sell", token=token,
                     body={"requestId": "sell-" + uuid.uuid4().hex[:24], "cat": cat, "qty": qty})
+
+
+# ---- HQ 2.1: crews ----------------------------------------------------------
+def crews(action=None, body=None):
+    """GET the crew board ('board') or yours ('mine'); POST create / join / leave."""
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    if action in (None, "board"):
+        return _request("GET", base + "/v1/crews", token=token)
+    if action == "mine":
+        return _request("GET", base + "/v1/crews/mine", token=token)
+    body = body if isinstance(body, dict) else {}
+    if action == "create":
+        clean = {k: str(body.get(k) or "")[:40] for k in ("name", "tag", "color")}
+        return _request("POST", base + "/v1/crews/create", token=token, body=clean)
+    if action == "join":
+        return _request("POST", base + "/v1/crews/join", token=token, body={"code": str(body.get("code") or "")[:12]})
+    if action == "leave":
+        return _request("POST", base + "/v1/crews/leave", token=token, body={})
+    return 400, {"error": "unknown crews action"}

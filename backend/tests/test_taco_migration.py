@@ -45,4 +45,4 @@ def test_upgrade_over_tables_create_all_already_built(tmp_path):
         f"Base.metadata.create_all(sa.create_engine('sqlite:///{db}'))")
     assert TACO_TABLES <= set(schema(db))
     alembic(db, "upgrade", "head")
-    assert "2c3d4e5f6a7b" in alembic(db, "current")
+    assert "3d4e5f6a7b8c" in alembic(db, "current")

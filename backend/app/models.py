@@ -414,3 +414,26 @@ class EquippedCosmetics(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class Crew(Base):
+    """A crew (HQ 2.1): a named group with a tag and banner colour. Joined with a
+    private invite code; its level comes from its members' combined XP."""
+
+    __tablename__ = "crews"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(32), unique=True)
+    tag: Mapped[str] = mapped_column(String(4))
+    color: Mapped[str] = mapped_column(String(7), default="#ffb347")
+    code: Mapped[str] = mapped_column(String(12), unique=True)
+    owner_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CrewMember(Base):
+    __tablename__ = "crew_members"
+
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    crew_id: Mapped[str] = mapped_column(String(36), ForeignKey("crews.id", ondelete="CASCADE"), index=True)
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

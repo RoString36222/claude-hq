@@ -499,6 +499,7 @@
     <div class="hq3d-stage" id="hqStage"></div>
     <aside class="hq3d-side" aria-label="Crew">
       <div class="hq3d-where" id="hqWhere" role="group" aria-label="Go to"></div>
+      <button class="hbtn ghost hq3d-card" id="hqMyCard" type="button">My trainer card</button>
       <div class="hq3d-visiting" id="hqVisiting" hidden></div>
       <div class="hq3d-here" id="hqHere" hidden aria-live="polite"></div>
       <div class="hq3d-side-head"><b>Crew</b><span id="hqCrewCount" class="muted"></span></div>
@@ -661,6 +662,13 @@
       </div>
     </section>
 
+    <section class="panel" id="gbWrap" aria-labelledby="gbH">
+      <div class="gb-head"><h3 class="section-h" id="gbH"><svg class="i" aria-hidden="true"><use href="#i-trophy"/></svg>Game boards</h3>
+        <div class="gb-tabs" id="gbTabs" role="group" aria-label="Game"></div>
+        <button class="hbtn ghost" id="gbRefresh" type="button">Refresh</button></div>
+      <p class="muted gb-note">Best times and scores from multiplayer games the Arena refereed. Click a name for their trainer card.</p>
+      <div id="gbBody"></div>
+    </section>
     <section class="panel hidden" id="arenaLobbyWrap" aria-labelledby="arenaRoomH">
       <h3 class="section-h" id="arenaRoomH"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg><bdi class="arena-room-name" id="arenaRoomName" dir="auto" tabindex="-1">Lobby</bdi> <span class="muted" id="arenaRoomMeta">who&rsquo;s online</span></h3>
       <div class="arena-room-bar hidden" id="arenaRoomBar">
@@ -1152,6 +1160,12 @@
   </div>
 </div>
 
+<div class="tcard-back" id="tcardBack" aria-hidden="true">
+  <div class="tcard-modal" role="dialog" aria-modal="true" aria-labelledby="tcardTitle">
+    <div class="tcard-top"><b id="tcardTitle">Trainer card</b><button class="hbtn icon ghost" id="tcardClose" type="button" aria-label="Close">✕</button></div>
+    <div id="tcardBody"></div>
+  </div>
+</div>
 <div class="toastwrap" id="toastWrap" aria-live="polite"></div>
 <canvas id="confetti" aria-hidden="true"></canvas>
 
@@ -1182,6 +1196,7 @@
 //@include ui/app/20-arena-voice.js
 //@include ui/app/21-arena-controls.js
 //@include ui/app/22-hq.js
+//@include ui/app/23-progress.js
 </script>
 </body>
 </html>

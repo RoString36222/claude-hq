@@ -4721,6 +4721,23 @@ class Handler(BaseHTTPRequestHandler):
                 _overlay_food_effects(resp) if code == 200 else resp))
             return
 
+        if path in ("/api/arena/progress", "/api/arena/leaderboards", "/api/arena/profile"):
+            # HQ 2.1: your level (sessions + games), per-game boards, a trainer card. Read-only.
+            import urllib.parse
+            qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            arg = lambda k: (qs.get(k, [""])[0] or "").strip()
+            try:
+                if path == "/api/arena/progress":
+                    code, resp = arena.progress()
+                elif path == "/api/arena/leaderboards":
+                    code, resp = arena.leaderboards(arg("game"), arg("key") or None)
+                else:
+                    code, resp = arena.profile(arg("u") or "me")
+            except Exception as e:
+                code, resp = 502, {"error": "arena request failed: %s" % e}
+            self._send(code or 502, json.dumps(resp))
+            return
+
         if path in ("/api/arena/hq/me", "/api/arena/hq/open", "/api/arena/hq/visit"):
             # HQ 2.1: your building's look/openness, the open HQs, one HQ to visit.
             try:

@@ -32,7 +32,8 @@ function hqApi(){
     go: function(v){ hqModeSave("classic"); setView(v); },
     onFilter: function(p){ HQ3D.filter = p || null; hqRenderCrew(); },
     // your HQ level is the season level the page already shows (the Base grows with it)
-    level: function(){ var s=(STATE && STATE.season) || {}; return Math.max(1, (s.level|0) || 1); },
+    // your HQ level: the Arena's (sessions + games) when paired, else the season level the page shows
+    level: function(){ var a=(typeof progLevel==="function") && progLevel(); if(a) return a; var s=(STATE && STATE.season) || {}; return Math.max(1, (s.level|0) || 1); },
     look: hqLook,
     startWorld: (function(){ try { var w=localStorage.getItem("hq_world"); return w==="base"||w==="lobby"||w==="mission" ? w : "base"; } catch(e){ return "base"; } })(),
     onWorld: function(name){ HQ3D.world = name; hqRenderWhere(); }
@@ -81,7 +82,8 @@ function hqViewChanged(v){
   var b=$("hqModeBtn"), l=$("hqModeLbl");
   if(b){ b.setAttribute("aria-pressed", v==="hq" ? "true" : "false"); }
   if(l) l.textContent = v==="hq" ? "Classic" : "3D HQ";
-  if(v==="hq") hqEnter(); else hqLeave();
+  if(v==="hq"){ hqEnter(); if(typeof progLoad==="function") progLoad(false); } else hqLeave();
+  if(v==="arena" && typeof gbLoad==="function"){ gbLoad(); progLoad(false); }
 }
 // One key (H) and the header switch flip between the 3D HQ and the classic view you came from.
 function hqToggle(){
@@ -343,5 +345,9 @@ function hqRenderHere(){
   box.hidden=!ps.length; box.textContent="";
   if(!ps.length) return;
   var h=document.createElement("b"); h.textContent="Here now"; box.appendChild(h);
-  ps.slice(0,12).forEach(function(p){ var d=document.createElement("div"); d.textContent=(p.n||"Visitor")+" · "+(HQ_FLOOR_NAME[p.w]||""); box.appendChild(d); });
+  ps.slice(0,12).forEach(function(p){
+    var d=document.createElement("button"); d.type="button"; d.className="hq3d-person"; d.textContent=(p.n||"Visitor")+" · "+(HQ_FLOOR_NAME[p.w]||"");
+    d.title="Open their trainer card"; d.addEventListener("click", function(){ if(typeof tcardOpen==="function") tcardOpen(p.u); });
+    box.appendChild(d);
+  });
 }

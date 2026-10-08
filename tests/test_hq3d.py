@@ -117,3 +117,31 @@ class HqArenaBoundary(unittest.TestCase):
         c = dashboard.hq_crew_counts()
         self.assertEqual(set(c), {"working", "needs", "idle"})
         self.assertTrue(all(isinstance(v, int) for v in c.values()))
+
+
+class ProgressBoundary(unittest.TestCase):
+    def setUp(self):
+        import arena
+        self.arena = arena
+        self.sent = []
+        self._saved = (arena._request, arena._authed)
+        arena._authed = lambda: ("tok", "https://arena.test")
+        arena._request = lambda m, url, token=None, body=None: (self.sent.append((m, url, body)) or (200, {}))
+
+    def tearDown(self):
+        self.arena._request, self.arena._authed = self._saved
+
+    def test_read_only_and_validated(self):
+        self.arena.progress(); self.arena.leaderboards("kart", "meadow"); self.arena.profile("me")
+        self.assertEqual([(m, u.split("arena.test")[1], b) for m, u, b in self.sent],
+                         [("GET", "/v1/progress/me", None), ("GET", "/v1/leaderboards/kart?key=meadow", None),
+                          ("GET", "/v1/profile/me", None)])
+        self.assertEqual(self.arena.leaderboards("chess")[0], 400)
+        self.assertEqual(self.arena.profile("../admin")[0], 400)
+        self.arena.leaderboards("golf", "../../x")
+        self.assertTrue(self.sent[-1][1].endswith("/v1/leaderboards/golf"))
+
+    def test_page_has_card_and_boards(self):
+        html = dashboard.assemble_index()
+        for needle in ('id="tcardBack"', 'id="gbWrap"', 'id="hqMyCard"', "//@include" not in html and "function tcardOpen"):
+            self.assertTrue(needle in html if isinstance(needle, str) else needle)

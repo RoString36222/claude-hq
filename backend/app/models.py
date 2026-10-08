@@ -380,3 +380,24 @@ class HqProfile(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class GameResult(Base):
+    """One player's result in one finished multiplayer game the Arena refereed
+    (Kart, Platformer, Blaster, Golf). Written by the server when the game ends,
+    never by a client, so leaderboards, profiles and game XP can be trusted."""
+
+    __tablename__ = "game_results"
+    __table_args__ = (Index("ix_game_results_board", "game", "key", "value"),
+                      Index("ix_game_results_user", "user_id", "at"))
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"))
+    game: Mapped[str] = mapped_column(String(8))          # kart | plat | fps | golf
+    key: Mapped[str] = mapped_column(String(40))          # track / level / course ("match" for fps)
+    mode: Mapped[str] = mapped_column(String(16), default="")
+    place: Mapped[int] = mapped_column(Integer)
+    players: Mapped[int] = mapped_column(Integer)
+    value: Mapped[int | None] = mapped_column(Integer, nullable=True)   # ms, strokes or kills; lower is better except kills
+    extra: Mapped[dict] = mapped_column(JSON, default=dict)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

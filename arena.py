@@ -923,3 +923,35 @@ def hq_visit(user_id):
     if not _valid_user_id(user_id):
         return 400, {"error": "bad user id"}
     return _request("GET", base + "/v1/hq/" + user_id, token=token)
+
+
+# ---- HQ 2.1: progression, leaderboards, trainer profiles (read-only) --------
+_GAMES = ("kart", "plat", "fps", "golf")
+
+
+def progress():
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("GET", base + "/v1/progress/me", token=token)
+
+
+def leaderboards(game, key=None):
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    if game not in _GAMES:
+        return 400, {"error": "unknown game"}
+    q = ""
+    if isinstance(key, str) and re.fullmatch(r"[a-z0-9_-]{1,40}", key):
+        q = "?key=" + key
+    return _request("GET", base + "/v1/leaderboards/" + game + q, token=token)
+
+
+def profile(user_id):
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    if user_id != "me" and not _valid_user_id(user_id):
+        return 400, {"error": "bad user id"}
+    return _request("GET", base + "/v1/profile/" + user_id, token=token)

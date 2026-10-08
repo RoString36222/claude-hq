@@ -6,30 +6,19 @@ them or are idle: counts and cosmetics only. The level is scored here from
 daily_stats (all time, the same XP rules as the board), never taken from the
 client, so a building cannot be grown by editing a request.
 """
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import DailyStat, HqProfile, User
+from .models import HqProfile, User
 from .schemas import HqCrew, HqLook, HqProfileOut, HqUpdate
-from .scoring import derive_level, xp_from_counts
 
 OPEN_LIST_MAX = 100
 
 
 async def levels_for(db: AsyncSession, user_ids: list[str]) -> dict[str, int]:
-    if not user_ids:
-        return {}
-    rows = (await db.execute(
-        select(DailyStat.user_id,
-               func.coalesce(func.sum(DailyStat.prompts), 0),
-               func.coalesce(func.sum(DailyStat.tools), 0),
-               func.coalesce(func.sum(DailyStat.artifacts), 0))
-        .where(DailyStat.user_id.in_(user_ids)).group_by(DailyStat.user_id)
-    )).all()
-    out = {uid: 1 for uid in user_ids}
-    for uid, p, t, a in rows:
-        out[uid] = derive_level(xp_from_counts(int(p), int(t), int(a)))[0]
-    return out
+    """The HQ level (progression): session XP plus game XP, scored here."""
+    from .results import progress
+    return {u: p["level"] for u, p in (await progress(db, user_ids)).items()}
 
 
 def _out(user: User, prof: HqProfile | None, level: int, viewer_id: str | None) -> HqProfileOut:

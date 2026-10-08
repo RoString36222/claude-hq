@@ -579,7 +579,11 @@ function makeGame(host, opts){
     warn.classList.toggle("hidden", !(V.wrongFor > 1.2 && racing));
     if(cdBox.dataset.until && t > +cdBox.dataset.until){ cdBox.classList.add("hidden"); cdBox.dataset.until = ""; }
   }
+  var WB = null;    // HQ 2.1 spectate: follow any racer
+  function watchList(){ return V.order.filter(function(u){ return u !== myId() && V.cars[u]; }).map(function(u){ return {id: u, name: V.cars[u].name}; }); }
   function hudUpdate(){
+    if(!WB) WB = E.watchBar(stage, {list: watchList, get: function(){ return me() ? null : V.spectate; }, set: function(id){ V.spectate = id; }});
+    WB.update();
     if(!V.track){ hudLap.textContent = ""; return; }
     var C = me(), t = now(), F = C || V.cars[V.spectate] || null;
     var lap = F ? clamp(F.lap, 1, V.laps) : 1, n = V.order.length;
@@ -936,6 +940,7 @@ function makeGame(host, opts){
   if(!raf) raf = requestAnimationFrame(frame);
   V.destroy = function(){
     if(V.eng){ V.eng.stop(); V.eng = null; }
+    if(WB){ WB.destroy(); WB = null; }
     V.alive = false;
     if(raf) cancelAnimationFrame(raf); raf = 0;
     window.removeEventListener("resize", onResize); if(ro) ro.disconnect();

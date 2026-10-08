@@ -660,7 +660,11 @@ function makeGame(host, opts){
     sendPos(t);
     if(cdBox.dataset.until && t > +cdBox.dataset.until){ cdBox.classList.add("hidden"); cdBox.dataset.until = ""; }
   }
+  var WB = null;    // HQ 2.1 spectate: follow any runner
+  function watchList(){ return V.order.filter(function(u){ return u !== myId() && V.ps[u]; }).map(function(u){ return {id: u, name: V.ps[u].name}; }); }
   function hudUpdate(){
+    if(!WB) WB = E.watchBar(stage, {list: watchList, get: function(){ return me() ? null : V.spectate; }, set: function(id){ V.spectate = id; }});
+    WB.update();
     if(!V.level){ hudTitle.textContent = ""; return; }
     var P = me(), t = now(), F = P || V.ps[V.spectate] || null, L = V.level, coop = V.play === "coop";
     var title = (V.mode === "practice" ? "Time trial" : coop ? "Co-op" : "Race")+" · "+L.name+(V.mode === "mp" && !coop && F && F.place ? " · P"+F.place+"/"+V.order.length : "");
@@ -1007,6 +1011,7 @@ function makeGame(host, opts){
     function(){ V.note = "Couldn't load the levels."; renderMenu(); });
   if(!raf) raf = requestAnimationFrame(frame);
   V.destroy = function(){
+    if(WB){ WB.destroy(); WB = null; }
     V.alive = false;
     if(raf) cancelAnimationFrame(raf); raf = 0;
     window.removeEventListener("resize", onResize); if(ro) ro.disconnect();

@@ -1984,3 +1984,8 @@ html.hq-calm #confetti{display:none!important}
 .crew-form{display:grid;gap:5px;background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius-sm);padding:10px}
 .crew-form input{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-sm);padding:5px 8px}
 .crew-msg{font-size:12.5px;margin:0 0 6px}
+/* ---- HQ 2.1 spectate bar (games/engine.js watchBar) ---- */
+.vg-watch{position:absolute;left:50%;top:10px;transform:translateX(-50%);display:flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:3px 8px;font-size:12.5px;z-index:5;box-shadow:var(--shadow)}
+.vg-watch[hidden]{display:none}
+.vg-watch .hbtn{padding:2px 8px}
+.vg-golf-stage{position:relative}

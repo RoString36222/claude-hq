@@ -214,8 +214,31 @@ if(typeof window.addEventListener === "function"){
   window.addEventListener("keydown", function(){ if(sfxVolume() > 0) audio(); }, {once: true, capture: true});
 }
 
+/* ---------- spectating (HQ 2.1): "Watching X  ◀ ▶" with [ and ] ---------- */
+// watchBar(stage, opts) -> {update(), destroy()}; opts.list() -> [{id, name}], opts.get() -> id,
+// opts.set(id), opts.stop() (optional: a "Stop watching" button). Shows only while opts.get() is set.
+function watchBar(stage, opts){
+  var bar = document.createElement("div"); bar.className = "vg-watch"; bar.setAttribute("role", "group"); bar.setAttribute("aria-label", "Spectating");
+  var prev = document.createElement("button"), label = document.createElement("span"), next = document.createElement("button");
+  prev.type = next.type = "button"; prev.className = next.className = "hbtn ghost"; prev.textContent = "◀"; next.textContent = "▶";
+  prev.setAttribute("aria-label", "Watch the previous player"); next.setAttribute("aria-label", "Watch the next player");
+  label.setAttribute("aria-live", "polite");
+  bar.appendChild(prev); bar.appendChild(label); bar.appendChild(next);
+  var stop = null;
+  if(opts.stop){ stop = document.createElement("button"); stop.type = "button"; stop.className = "hbtn ghost"; stop.textContent = "Stop watching"; stop.addEventListener("click", opts.stop); bar.appendChild(stop); }
+  stage.appendChild(bar);
+  function step(d){ var L = opts.list(); if(!L.length) return; var i = 0; L.forEach(function(p, k){ if(p.id === opts.get()) i = k; });
+    var n = L[(i + d + L.length) % L.length]; opts.set(n.id); upd(); say("Watching " + n.name); }
+  prev.addEventListener("click", function(){ step(-1); }); next.addEventListener("click", function(){ step(1); });
+  function key(e){ if(!opts.get() || bar.hidden) return; if(e.key === "[" ){ e.preventDefault(); step(-1); } else if(e.key === "]"){ e.preventDefault(); step(1); } }
+  window.addEventListener("keydown", key);
+  function upd(){ var id = opts.get(); bar.hidden = !id; if(!id) return;
+    var p = opts.list().filter(function(x){ return x.id === id; })[0]; label.textContent = "Watching " + (p ? p.name : "…") + "  ·  [ ] to switch"; }
+  return {update: upd, destroy: function(){ window.removeEventListener("keydown", key); if(bar.parentNode) bar.parentNode.removeChild(bar); }};
+}
+
 HQV.engine = {now: now, clamp: clamp, hex: hex, angLerp: angLerp, calm: calm, say: say, tokens: tokens, myClock: myClock,
               fmtTime: fmtTime, dist3: dist3, lib: lib, loadGlb: loadGlb, hasWebGL2: hasWebGL2,
               senderTime: senderTime, jitter: jitter, pushSnap: pushSnap, bracket: bracket,
-              sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES)};
+              sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES), watchBar: watchBar};
 })();

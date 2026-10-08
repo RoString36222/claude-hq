@@ -238,7 +238,12 @@ function makeGame(host, opts){
   function others(){ return V.order.filter(function(u){ return u !== myId(); }).map(function(u){ return V.players[u]; }); }
 
   /* ---------- screens ---------- */
-  function showStage(on){ stage.classList.toggle("hidden", !on); menu.classList.toggle("hidden", on); if(on){ ensureRenderer(); renderTools(); renderKeys(); } }
+  var WB = null;    // HQ 2.1 spectate: follow any player, or stop watching
+  function showStage(on){ stage.classList.toggle("hidden", !on); menu.classList.toggle("hidden", on); if(on){ ensureRenderer(); renderTools(); renderKeys(); }
+    if(!WB) WB = E.watchBar(stage, {list: function(){ return Object.keys(V.players).filter(function(u){ return u !== myId() && !V.players[u].gone; }).map(function(u){ return {id: u, name: V.players[u].name}; }); },
+      get: function(){ return V.watch; }, set: function(id){ V.watch = id; },
+      stop: function(){ V.watch = null; resetMatch(); showStage(false); renderMenu(); }});
+    WB.update(); }
   function isHost(){
     var s = MP ? MP.st("fps") : null, id = myId(), h = false;
     ((s && s.lobby) || []).forEach(function(p){ if(p.userId === id && p.host) h = true; });
@@ -287,6 +292,13 @@ function makeGame(host, opts){
       chars.appendChild(b);
     });
     menu.appendChild(chars);
+    // HQ 2.1 spectate: a match is on and you're not in it
+    if(mp && V.round && (V.round.phase === "warmup" || V.round.phase === "round") && !inMatch(V.round)){
+      menu.appendChild(api.btn("Watch the match", "primary", function(){
+        var first = (V.round.players || []).filter(function(p){ return p.user && !p.gone; })[0];
+        if(first){ V.watch = first.user.userId; applyView(V.round); }
+      }));
+    }
     if(mp){
       menu.appendChild(api.mk("h4", "vg-golf-h", host ? "Start a match" : "Match"));
       var row = api.mk("div", "vg-row");
@@ -371,9 +383,14 @@ function makeGame(host, opts){
     V.round = view; V.gotView = true;
     if(V.mode !== "mp" || !view) { renderMenu(); return; }
     V.minutes = view.minutes|0 || 5; V.limit = view.limit|0 || 20;
-    if(view.phase === "idle"){ if(V.phase !== "idle"){ resetMatch(); showStage(false); } V.results = view.results || V.results; renderMenu(); return; }
-    if(view.phase === "done"){ V.results = view.results; if(V.phase === "warmup" || V.phase === "round") showResults(view.results); V.phase = "done"; renderMenu(); return; }
-    if(!inMatch(view)){ renderMenu(); return; }
+    if(view.phase === "idle"){ V.watch = null; if(V.phase !== "idle"){ resetMatch(); showStage(false); } V.results = view.results || V.results; renderMenu(); return; }
+    if(view.phase === "done"){ V.results = view.results; if(V.phase === "warmup" || V.phase === "round") showResults(view.results); V.watch = null; V.phase = "done"; renderMenu(); return; }
+    if(inMatch(view)) V.watch = null;
+    else if(!V.watch){ renderMenu(); return; }
+    else if(!(view.players || []).some(function(p){ return p.user && p.user.userId === V.watch && !p.gone; })){
+      var first = (view.players || []).filter(function(p){ return p.user && !p.gone; })[0]; V.watch = first ? first.user.userId : null;
+      if(!V.watch){ renderMenu(); return; }
+    }
     var fresh = V.phase === "idle" || V.phase === "done";
     if(fresh){ resetMatch(); V.off = null; V.k = null; }
     var seen = {};
@@ -616,7 +633,7 @@ function makeGame(host, opts){
       V.yaw += lk.dx*LOOK; V.pitch = clamp(V.pitch - lk.dy*LOOK, -PITCH_MAX*Math.PI/180, PITCH_MAX*Math.PI/180);
       V.yaw += ((IN.down("turnR") ? 1 : 0) - (IN.down("turnL") ? 1 : 0))*TURN_KEYS*dt;
     }
-    var canMove = !V.dead && !V.paused && (V.phase === "round" || (V.mode === "practice" && V.phase === "warmup"));
+    var canMove = !V.watch && !V.dead && !V.paused && (V.phase === "round" || (V.mode === "practice" && V.phase === "warmup"));
     var ax = canMove && IN ? IN.axis("x") : 0, ay = canMove && IN ? IN.axis("y") : 0;
     var fx = Math.sin(V.yaw), fz = -Math.cos(V.yaw), rx = Math.cos(V.yaw), rz = Math.sin(V.yaw);
     var wx = fx*ay + rx*ax, wz = fz*ay + rz*ax, wl = Math.sqrt(wx*wx + wz*wz); if(wl > 1){ wx /= wl; wz /= wl; }
@@ -629,7 +646,7 @@ function makeGame(host, opts){
     V.bob += spd*dt*1.6;
     // weapons
     finishReload(t);
-    if(IN && !V.paused && !V.dead){
+    if(IN && !V.paused && !V.dead && !V.watch){
       if(IN.pressed("w1")) switchTo(0, t);
       if(IN.pressed("w2")) switchTo(1, t);
       if(IN.pressed("swap")) switchTo(1 - V.w, t);
@@ -651,7 +668,7 @@ function makeGame(host, opts){
     });
     if(V.mode === "practice" && V.itemBack) Object.keys(V.itemBack).forEach(function(i){ if(t >= V.itemBack[i]){ V.items[i] = 1; delete V.itemBack[i]; } });
     others().forEach(function(P){ sampleSnaps(P, t, dt); });
-    sendPos(t);
+    if(!V.watch) sendPos(t);
     if(V.dead && V.mode === "mp"){ var rl = Math.max(0, Math.ceil(V.deadAt + RESPAWN - t)); var txt = rl > 0 ? "Respawning in "+rl : "Respawning…";
       if(center.textContent !== txt){ center.textContent = txt; center.classList.remove("hidden"); center.dataset.until = ""; } }
     if(center.dataset.until && t > +center.dataset.until){ center.classList.add("hidden"); center.dataset.until = ""; }
@@ -672,6 +689,7 @@ function makeGame(host, opts){
 
   /* ---------- HUD ---------- */
   function hudUpdate(t){
+    if(WB) WB.update();
     var wp = W(), hp = V.mode === "practice" ? 100 : clamp(V.hp, 0, 100);
     hpBar.style.width = hp+"%"; hpBox.classList.toggle("low", hp <= 30);
     var ht = String(hp); if(hpNum.textContent !== ht) hpNum.textContent = ht;
@@ -1038,10 +1056,17 @@ function makeGame(host, opts){
       // effects fade
       for(var i = tracers.length - 1; i >= 0; i--){ var a = t - tracers[i].at; if(a > 0.09){ dyn.remove(tracers[i].o); tracers[i].o.geometry.dispose(); tracers.splice(i, 1); } else tracers[i].o.material.opacity = 1 - a/0.09; }
       for(var j = puffs.length - 1; j >= 0; j--){ var b = t - puffs[j].at; if(b > 0.25){ dyn.remove(puffs[j].o); puffs.splice(j, 1); } else { puffs[j].o.material.opacity = 1 - b/0.25; if(!quiet) puffs[j].o.scale.setScalar(0.35 + b*1.6); } }
-      // camera: your eyes (lower when down)
-      var M = V.me, ey = V.dead ? 0.5 : FS.EYE;
-      camera.position.set(M.x, M.y + ey, M.z);
-      camera.rotation.order = "YXZ"; camera.rotation.set(V.pitch + (V.dead ? -0.3 : 0), -V.yaw, V.dead && !quiet ? 0.35 : 0);
+      // camera: your eyes (lower when down); spectating, a chase camera behind whoever you watch
+      var M = V.me, ey = V.dead ? 0.5 : FS.EYE, WP = V.watch && V.players[V.watch];
+      if(WP){
+        var fwx = Math.sin(WP.yaw), fwz = -Math.cos(WP.yaw);
+        camera.position.set(WP.x - fwx*3.6, WP.y + 2.3, WP.z - fwz*3.6);
+        camera.rotation.order = "YXZ"; camera.lookAt(WP.x + fwx*2, WP.y + 1.2, WP.z + fwz*2);
+        M = WP;
+      } else {
+        camera.position.set(M.x, M.y + ey, M.z);
+        camera.rotation.order = "YXZ"; camera.rotation.set(V.pitch + (V.dead ? -0.3 : 0), -V.yaw, V.dead && !quiet ? 0.35 : 0);
+      }
       sun.position.set(M.x + 14, 30, M.z + 10); sun.target.position.set(M.x, 0, M.z);
       // the blaster in your hands: bob, recoil, a muzzle flash
       guns[0].visible = V.w === 0; guns[1].visible = V.w === 1;
@@ -1053,7 +1078,7 @@ function makeGame(host, opts){
       renderer.clear();
       renderer.render(scene, camera);
       renderer.clearDepth();
-      renderer.render(vScene, vCam);
+      if(!V.watch) renderer.render(vScene, vCam);         // no blaster in your hands while you watch
     };
     R.dispose = function(){
       cv.removeEventListener("webglcontextlost", lost);
@@ -1071,6 +1096,7 @@ function makeGame(host, opts){
     function(){ V.note = "Couldn't load the arena."; renderMenu(); });
   if(!raf) raf = requestAnimationFrame(frame);
   V.destroy = function(){
+    if(WB){ WB.destroy(); WB = null; }
     V.alive = false;
     if(raf) cancelAnimationFrame(raf); raf = 0;
     window.removeEventListener("resize", onResize); if(ro) ro.disconnect();

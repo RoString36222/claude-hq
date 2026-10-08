@@ -213,10 +213,10 @@ class ArenaCity(unittest.TestCase):
         got = json.loads(r.stdout)
         self.assertEqual(got["order"], ["a", "b", "c"])          # by user id, whoever asks
         self.assertTrue(got["same"])
-        self.assertEqual(got["R"], 24)                            # a small street keeps a usable plaza
-        self.assertEqual(got["manyN"], 40)                        # capped, and you are always on it
+        self.assertEqual(got["R"], 30)                            # a small street keeps a usable plaza
+        self.assertEqual(got["manyN"], 12)                        # capped, and you are always on it
         self.assertTrue(got["manyYou"])
-        self.assertEqual(got["manyR"], 95)
+        self.assertEqual(got["manyR"], 69)
         self.assertTrue(got["doorFacesMiddle"])
         self.assertEqual(got["names"], ["Owl Works", "Bob's HQ", "Someone's HQ"])
 

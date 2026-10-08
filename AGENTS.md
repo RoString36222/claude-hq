@@ -12,6 +12,11 @@ A **local-first, privacy-sensitive** dashboard that reads your own Claude Code s
 4. **IP rule.** Only original art (generated `monsterSVG`, original Village `troopSVG`, MIT Lucide icons/thinking-orbs) or **pre-existing runtime hotlinks** (never bundled). **Third-party models, textures and sounds may be vendored** when their license allows redistribution (e.g. Kenney's CC0 kits in `games/golf/`, `games/kart/`): each game's folder ships the license text alongside, files are served only from 127.0.0.1 and never hotlinked at runtime, and the PR names the source. **No new copyrighted characters/assets/names — specifically no Supercell / Clash assets, characters, or names.** Invent your own.
 5. **Backend security.** Bind `127.0.0.1` only; `_host_ok()` gate on every request; mutations are POST + CSRF (`X-HQ-Token`) + same-site Origin check; validate every path/id against an allowlist (no traversal). Reads GET, mutations POST.
 
+## The Arena backend is Rust (`backend-rs/`)
+The multiplayer Arena runs on the **Rust** server in `backend-rs/` (axum + sqlx; it owns the schema through `backend-rs/migrations/`). **Every Arena backend change goes there**: new routes, game engines (`backend-rs/src/valley/`), room/socket behaviour, results, schema. `backend/` (Python/FastAPI) is frozen: it is the rollback target for `ops/release.sh rollback` and nothing else. Do not add features to it; do not "port back". The local server `dashboard.py` / `arena.py` (the HQ app on your machine) is unchanged by this and stays Python stdlib.
+- Before a PR: `cd backend-rs && cargo test && cargo clippy --locked --all-targets -- -D warnings`; for socket changes also `uv run python backend/scripts/socket_parity.py`.
+- Deploy: `ops/release.sh deploy` (keeps the running impl, now `rs`); `ARENA_IMPL=rs ops/release.sh check` to try a build first.
+
 ## House style (match it, don't "modernize")
 - `var`, function-scoped. Defensive guards on every helper (`cr = cr || {}`, `|0`, `Math.max/Math.min`, `!=null ? x : fallback`).
 - Small pure helpers; deterministic sprites via `mulberry32(hashStr(...))` — **never `Math.random()`** for anything a user sees twice.

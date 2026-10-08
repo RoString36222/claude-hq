@@ -11,6 +11,7 @@ from .config import get_settings
 from .db import Base, describe_backend, engine
 from .routes import auth as auth_routes
 from .routes import board as board_routes
+from .routes import hq as hq_routes
 from .routes import nudges as nudge_routes
 from .routes import pantry as pantry_routes
 from .routes import private_rooms as private_room_routes
@@ -62,6 +63,7 @@ app.include_router(room_routes.router)
 app.include_router(sound_routes.router)
 app.include_router(private_room_routes.router)
 app.include_router(taco_routes.router)
+app.include_router(hq_routes.router)
 
 
 # Stamped into the image by ops/release.sh (a date + commit, e.g. 2026.10.07-76ee057).

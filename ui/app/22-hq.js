@@ -68,7 +68,7 @@ function hqEnter(){
   hqLoadScripts().then(function(){
     if(VIEW!=="hq") return;
     if(!HQ3D.inst){ HQ3D.inst = window.HQV.hq3d.mount(stage, hqApi()); }
-    HQ3D.inst.update((STATE && STATE.sessions) || []);
+    if(!HQ3D.visit) HQ3D.inst.update((STATE && STATE.sessions) || []);
     HQ3D.inst.setFilter(HQ3D.filter);
     HQ3D.inst.resume();
   }).catch(function(e){ stage.textContent="The 3D HQ couldn't load: "+e.message; });
@@ -90,7 +90,7 @@ function hqToggle(){
 }
 function hqOnState(d){
   if(!HQ3D || VIEW!=="hq") return;
-  if(HQ3D.inst) HQ3D.inst.update((d && d.sessions) || []);
+  if(HQ3D.inst && !HQ3D.visit) HQ3D.inst.update((d && d.sessions) || []);
   hqRenderCrew();
 }
 var HQ_STATE_TXT = {working:"Working", needs:"Needs you", idle:"Idle", stale:"Away"};
@@ -99,6 +99,15 @@ function hqProject(s){ return window.HQV && HQV.hq3d ? HQV.hq3d.projectOf(s) : S
 // The crew beside the scene: everyone live, needs-you first; the same click opens their card.
 function hqRenderCrew(){
   var ul=$("hqCrew"); if(!ul) return;
+  if(HQ3D.visit){
+    var c=HQ3D.visit.crew||{}; ul.textContent=""; $("hqCrewCount").textContent=""; $("hqFilter").hidden=true;
+    [["needs","Need them",c.needs],["working","Working",c.working],["idle","Idle",c.idle]].forEach(function(r){
+      var li=document.createElement("li"), d=document.createElement("div"); d.className="hq3d-mate"; d.dataset.state=r[0];
+      var dot=document.createElement("span"); dot.className="hq3d-dot"; var b=document.createElement("b"); b.textContent=(r[2]|0)+" "+r[1].toLowerCase();
+      var sm=document.createElement("small"); sm.textContent="Their sessions stay private: counts only."; d.appendChild(dot); d.appendChild(b); d.appendChild(sm); li.appendChild(d); ul.appendChild(li);
+    });
+    return;
+  }
   var order={needs:0, working:1, idle:2, stale:3};
   var all=((STATE && STATE.sessions) || []).filter(function(s){ return hqCrewState(s)!=="stale"; });
   var list=all.filter(function(s){ return !HQ3D.filter || hqProject(s)===HQ3D.filter; })
@@ -129,4 +138,143 @@ function hqRenderCrew(){
   var b=$("hqModeBtn"); if(b) b.addEventListener("click", hqToggle);
   // Open where you left off: the 3D HQ if you chose it (and the page can draw it), else the classic view.
   if(hqModePref()==="3d" && !hqCalm() && hqWebGL()) setView("hq"); else hqViewChanged(VIEW);
+})();
+
+/* ---- HQ 2.1: customise your building; visit friends' HQs through the Arena ---- */
+// The look is kept here (localStorage hq_look) and, when paired, on the Arena so visitors see it.
+// Visiting mounts a second copy of the scene fed by THEIR level, look and crew counts.
+var HQ_PAINTS = ["#2a3c50","#3a2a50","#24443a","#4a3424","#4a2a30","#2c2c34","#3b4a5c","#1e3a52"];
+var HQ_ACCENTS = ["#ffb347","#5fd3e6","#6fd38a","#ff6b5b","#9b8cf0","#f4f4f4"];
+var HQ_REMOTE = {open:false, synced:false, beat:0};
+function hqSaveLook(l){ try { localStorage.setItem("hq_look", JSON.stringify(l)); } catch(e){} }
+function hqSwatches(id, list, key){
+  var box=$(id); if(!box) return; box.textContent="";
+  var cur=hqLook()[key];
+  list.forEach(function(c){
+    var b=document.createElement("button"); b.type="button"; b.className="hq3d-sw"; b.style.background=c;
+    b.setAttribute("aria-label", key+" "+c); b.setAttribute("aria-pressed", cur===c ? "true" : "false");
+    b.addEventListener("click", function(){ var l=hqLook(); l[key]=c; hqSaveLook(l); hqSwatches(id, list, key); hqPreview(); });
+    box.appendChild(b);
+  });
+}
+function hqPreview(){ if(HQ3D.inst && !HQ3D.visit && HQ3D.inst.lookChanged) HQ3D.inst.lookChanged(); }
+function hqRenderBuild(){
+  hqSwatches("hqPaint", HQ_PAINTS, "paint"); hqSwatches("hqAccent", HQ_ACCENTS, "accent");
+  var s=$("hqSign"); if(s && document.activeElement!==s) s.value=hqLook().sign||"";
+  var o=$("hqOpen"); if(o) o.checked=!!HQ_REMOTE.open;
+}
+function hqArena(method, path, body){
+  var opt={cache:"no-store"};
+  if(method==="POST"){ opt.method="POST"; opt.headers={"Content-Type":"application/json","X-HQ-Token":CSRF}; opt.body=JSON.stringify(body||{}); }
+  return fetch(path, opt).then(function(r){ return r.json().then(function(j){ return {ok:r.ok, code:r.status, j:j}; }, function(){ return {ok:false, code:r.status, j:{}}; }); });
+}
+function hqArenaWhy(res){
+  if(res.code===400 && /not paired/.test((res.j && res.j.error)||"")) return "Pair with an Arena (Arena tab) to save online and visit friends.";
+  if(res.code===404) return "This Arena doesn't have HQ visits yet: ask its owner to update it.";
+  return (res.j && (res.j.error || res.j.detail)) || "The Arena didn't answer.";
+}
+// Pull the saved look and openness once; the Arena copy wins over this browser's.
+function hqSync(){
+  if(HQ_REMOTE.synced) return;
+  HQ_REMOTE.synced=true;
+  hqArena("GET","/api/arena/hq/me").then(function(res){
+    if(!res.ok) return;
+    HQ_REMOTE.open=!!res.j.open;
+    var l=res.j.look||{}, mine=hqLook();
+    ["paint","accent","sign"].forEach(function(k){ if(l[k]) mine[k]=l[k]; });
+    hqSaveLook(mine); hqRenderBuild(); hqPreview();
+  }).catch(function(){});
+}
+function hqSave(){
+  var l=hqLook(), s=$("hqSign"), note=$("hqSaveNote");
+  l.sign = (s && s.value.trim()) || ""; if(!l.sign) delete l.sign;
+  hqSaveLook(l); hqPreview();
+  var open=!!($("hqOpen") && $("hqOpen").checked);
+  note.textContent="Saving…";
+  hqArena("POST","/api/arena/hq/me",{open:open, look:l, crew:true}).then(function(res){
+    if(res.ok){ HQ_REMOTE.open=!!res.j.open; note.textContent = HQ_REMOTE.open ? "Saved. Your HQ is open to visitors." : "Saved. Your HQ is closed to visitors."; }
+    else note.textContent="Saved here. "+hqArenaWhy(res);
+  }).catch(function(){ note.textContent="Saved here. The Arena didn't answer."; });
+}
+// While your HQ is open and you are in it, refresh the crew counts visitors see (every 2 minutes).
+function hqHeartbeat(){
+  if(!HQ_REMOTE.open || VIEW!=="hq" || document.hidden) return;
+  var now=Date.now(); if(now - HQ_REMOTE.beat < 120000) return;
+  HQ_REMOTE.beat=now; hqArena("POST","/api/arena/hq/me",{crew:true}).catch(function(){});
+}
+setInterval(hqHeartbeat, 15000);
+function hqLoadOpen(){
+  var ul=$("hqOpenList"); if(!ul) return;
+  ul.innerHTML='<li class="muted">Looking…</li>';
+  hqArena("GET","/api/arena/hq/open").then(function(res){
+    ul.textContent="";
+    if(!res.ok){ var e=document.createElement("li"); e.className="muted"; e.textContent=hqArenaWhy(res); ul.appendChild(e); return; }
+    var list=(res.j.hqs||[]).filter(function(h){ return !h.isYou; });
+    if(!list.length){ var n=document.createElement("li"); n.className="muted"; n.textContent="No one has opened their HQ yet. Open yours above and tell a friend."; ul.appendChild(n); return; }
+    list.forEach(function(h){
+      var li=document.createElement("li"), b=document.createElement("button"); b.type="button"; b.className="hq3d-mate";
+      var nm=document.createElement("b"); nm.textContent=(h.trainerName||h.displayName||h.handle)+"'s HQ";
+      var c=h.crew||{}, meta=document.createElement("small");
+      meta.textContent="Lv "+h.level+" · "+(c.working|0)+" working · "+(c.needs|0)+" need them · "+(c.idle|0)+" idle";
+      var dot=document.createElement("span"); dot.className="hq3d-dot"; dot.setAttribute("aria-hidden","true");
+      b.appendChild(dot); b.appendChild(nm); b.appendChild(meta);
+      b.addEventListener("click", function(){ hqVisit(h.userId); });
+      li.appendChild(b); ul.appendChild(li);
+    });
+  }).catch(function(){ ul.innerHTML='<li class="muted">The Arena didn\'t answer.</li>'; });
+}
+// Their crew as stand-ins: states only, no names or projects (that is all the Arena has).
+function hqVisitCrew(c){
+  var out=[], n=0;
+  [["needs",c.needs],["working",c.working],["idle",c.idle]].forEach(function(p){
+    for(var i=0;i<Math.min(16,p[1]|0);i++){ out.push({sessionId:"visit-"+(n++), status:p[0], title:"Crew member", cwd:"", folder:"crew", spark:[], creature:{typeHue:(n*47)%360}}); }
+  });
+  return out.slice(0,16);
+}
+function hqMount(api){
+  if(HQ3D.inst){ HQ3D.inst.destroy(); HQ3D.inst=null; }
+  var stage=$("hqStage"); stage.textContent="";
+  HQ3D.inst=window.HQV.hq3d.mount(stage, api);
+}
+function hqVisit(userId){
+  hqArena("GET","/api/arena/hq/visit?u="+encodeURIComponent(userId)).then(function(res){
+    if(!res.ok){ toast("⚠ "+hqArenaWhy(res),"ach"); return; }
+    var p=res.j, who=p.trainerName||p.displayName||p.handle;
+    HQ3D.visit=p;
+    hqLoadScripts().then(function(){
+      var base=hqApi();
+      hqMount({
+        name: base.name, remember:false, startWorld:"base",
+        level: function(){ return Math.max(1, p.level|0); },
+        look: function(){ return p.look||{}; },
+        openSession: function(){ toast("That's "+who+"'s crew: their sessions stay private.","level"); },
+        go: function(){ toast("That room is in "+who+"'s HQ. Go home first.","level"); },
+        onFilter: function(){}, onWorld: base.onWorld
+      });
+      HQ3D.inst.update(hqVisitCrew(p.crew||{})); HQ3D.inst.resume();
+      hqRenderVisiting(); hqRenderCrew();
+      announce("Visiting "+who+"'s HQ");
+    });
+  }).catch(function(){ toast("⚠ The Arena didn't answer","ach"); });
+}
+function hqGoHome(){
+  if(!HQ3D.visit) return;
+  HQ3D.visit=null;
+  hqMount(Object.assign(hqApi(), {startWorld:"base"}));
+  HQ3D.inst.update((STATE && STATE.sessions) || []); HQ3D.inst.resume();
+  hqRenderVisiting(); hqRenderCrew();
+}
+function hqRenderVisiting(){
+  var v=$("hqVisiting"); if(!v) return;
+  var p=HQ3D.visit; v.hidden=!p; v.textContent="";
+  if(!p) return;
+  var t=document.createElement("span"); t.textContent="Visiting "+(p.trainerName||p.displayName||p.handle)+"'s HQ · Lv "+p.level;
+  var b=document.createElement("button"); b.type="button"; b.className="hbtn"; b.textContent="Back home"; b.addEventListener("click", hqGoHome);
+  v.appendChild(t); v.appendChild(b);
+}
+(function(){
+  var sv=$("hqSave"); if(sv) sv.addEventListener("click", hqSave);
+  var si=$("hqSign"); if(si) si.addEventListener("input", function(){ var l=hqLook(); l.sign=si.value.trim(); if(!l.sign) delete l.sign; hqSaveLook(l); hqPreview(); });
+  var vs=$("hqVisitSec"); if(vs) vs.addEventListener("toggle", function(){ if(vs.open) hqLoadOpen(); });
+  var bs=$("hqBuildSec"); if(bs) bs.addEventListener("toggle", function(){ if(bs.open){ hqRenderBuild(); hqSync(); } });
 })();

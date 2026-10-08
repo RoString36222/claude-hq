@@ -3726,6 +3726,20 @@ def _food_kind(v):
     return isinstance(v, str) and v in FOOD_EFFECTS
 
 
+def hq_crew_counts():
+    """How many sessions are working / need you / are idle right now (HQ 2.1).
+    The only thing about your sessions an open HQ shares: three counts."""
+    out = {"working": 0, "needs": 0, "idle": 0}
+    try:
+        for s in (build_payload_memo().get("sessions") or []):
+            st = s.get("status")
+            if st in out:
+                out[st] += 1
+    except Exception:
+        pass
+    return out
+
+
 def pantry_body(action, body):
     """Validate a page request -> (clean body for arena.pantry, None) or
     (None, error text). `clean` never contains a sessionId."""
@@ -4315,6 +4329,7 @@ POST_PATHS = (
     "/api/arena/pantry/claim", "/api/arena/pantry/buy",
     "/api/arena/pantry/eat", "/api/arena/pantry/give",
     "/api/arena/pantry/reward",
+    "/api/arena/hq/me",
     "/api/arena/cali/order",
     "/api/arena/sounds",
     "/api/games/state",
@@ -4706,6 +4721,22 @@ class Handler(BaseHTTPRequestHandler):
                 _overlay_food_effects(resp) if code == 200 else resp))
             return
 
+        if path in ("/api/arena/hq/me", "/api/arena/hq/open", "/api/arena/hq/visit"):
+            # HQ 2.1: your building's look/openness, the open HQs, one HQ to visit.
+            try:
+                if path == "/api/arena/hq/me":
+                    code, resp = arena.hq_me()
+                elif path == "/api/arena/hq/open":
+                    code, resp = arena.hq_open()
+                else:
+                    import urllib.parse
+                    qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+                    code, resp = arena.hq_visit((qs.get("u", [""])[0] or "").strip())
+            except Exception as e:
+                code, resp = 502, {"error": "arena request failed: %s" % e}
+            self._send(code or 502, json.dumps(resp))
+            return
+
         if path == "/api/arena/cali/board":
             import urllib.parse
             qs = urllib.parse.parse_qs(self.path.split("?", 1)[1]
@@ -5023,6 +5054,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(to, str) or not to.strip():
                     return 400, {"error": "toHandle required"}
                 return arena.send_nudge(to.strip(), note=body.get("note", ""))
+            if path == "/api/arena/hq/me":
+                # Crew counts come from this process's own view of your sessions,
+                # never from the page: only three numbers can leave.
+                crew = hq_crew_counts() if body.get("crew") else None
+                return arena.hq_update(open_=body.get("open"), look=body.get("look"), crew=crew)
             if path.startswith("/api/arena/pantry/"):
                 action = path[len("/api/arena/pantry/"):]
                 if action == "reward":

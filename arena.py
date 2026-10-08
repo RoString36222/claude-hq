@@ -878,3 +878,48 @@ def cali_log_order(body):
     if not token:
         return 400, {"error": "not paired"}
     return _request("POST", base + "/v1/cali/orders", token=token, body=_cali_order(body))
+
+
+# ---- HQ 2.1: visit and customise HQs ---------------------------------------
+# What may leave the machine about your HQ: whether it is open to visitors, how
+# the building looks (paint, accent, sign) and how many crew are working, need
+# you or are idle. Counts and cosmetics only; this allowlist is the boundary.
+_HQ_LOOK_KEYS = ("paint", "accent", "sign")
+_HQ_CREW_KEYS = ("working", "needs", "idle")
+
+
+def hq_me():
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("GET", base + "/v1/hq/me", token=token)
+
+
+def hq_update(open_=None, look=None, crew=None):
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    body = {}
+    if isinstance(open_, bool):
+        body["open"] = open_
+    if isinstance(look, dict):
+        body["look"] = {k: look[k] for k in _HQ_LOOK_KEYS if isinstance(look.get(k), str)}
+    if isinstance(crew, dict):
+        body["crew"] = {k: max(0, min(64, int(crew.get(k) or 0))) for k in _HQ_CREW_KEYS}
+    return _request("PUT", base + "/v1/hq/me", token=token, body=body)
+
+
+def hq_open():
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("GET", base + "/v1/hq/open", token=token)
+
+
+def hq_visit(user_id):
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    if not _valid_user_id(user_id):
+        return 400, {"error": "bad user id"}
+    return _request("GET", base + "/v1/hq/" + user_id, token=token)

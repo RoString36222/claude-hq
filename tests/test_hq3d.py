@@ -83,3 +83,37 @@ class HqCrewMapping(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HqArenaBoundary(unittest.TestCase):
+    """HQ 2.1: what an open HQ sends the Arena is allowlisted in arena.py, and the
+    crew counts come from this process's own view of your sessions."""
+
+    def setUp(self):
+        import arena
+        self.arena = arena
+        self.sent = []
+        self._saved = (arena._request, arena._authed)
+        arena._authed = lambda: ("tok", "https://arena.test")
+        arena._request = lambda m, url, token=None, body=None: (self.sent.append((m, url, body)) or (200, {}))
+
+    def tearDown(self):
+        self.arena._request, self.arena._authed = self._saved
+
+    def test_only_open_look_and_counts_leave(self):
+        self.arena.hq_update(open_=True, look={"paint": "#224466", "sign": "Mine", "cwd": "/Users/me", "title": "secret"},
+                             crew={"working": 3, "needs": 1, "idle": 99, "sessionId": "x"})
+        m, url, body = self.sent[-1]
+        self.assertEqual((m, url), ("PUT", "https://arena.test/v1/hq/me"))
+        self.assertEqual(body, {"open": True, "look": {"paint": "#224466", "sign": "Mine"},
+                                "crew": {"working": 3, "needs": 1, "idle": 64}})
+
+    def test_visit_validates_the_user_id(self):
+        self.assertEqual(self.arena.hq_visit("../../v1/admin")[0], 400)
+        self.arena.hq_visit("11111111-2222-3333-4444-555555555555")
+        self.assertTrue(self.sent[-1][1].endswith("/v1/hq/11111111-2222-3333-4444-555555555555"))
+
+    def test_crew_counts_are_three_numbers(self):
+        c = dashboard.hq_crew_counts()
+        self.assertEqual(set(c), {"working", "needs", "idle"})
+        self.assertTrue(all(isinstance(v, int) for v in c.values()))

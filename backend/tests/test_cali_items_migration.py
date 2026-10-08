@@ -7,7 +7,7 @@ from contextlib import closing
 from tests.test_pantry_migration import alembic, run, schema
 
 BEFORE = "c7d8e9f0a1b2"
-HEAD = "e9f0a1b2c3d4"
+HEAD = "f0a1b2c3d4e5"
 
 
 def columns(db) -> dict[str, tuple]:

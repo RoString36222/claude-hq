@@ -63,8 +63,12 @@ async def room_ws(
                 await websocket.close(code=4403, reason="join this room first")
                 return
 
+    from .. import cosmetics
+    async with SessionLocal() as db:
+        cos = (await cosmetics.equipped(db, [user.id]))[user.id]
     await websocket.accept()
     member = Member(
+        cos=cos,
         ws=websocket,
         user_id=user.id,
         handle=user.handle,

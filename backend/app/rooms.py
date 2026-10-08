@@ -45,6 +45,7 @@ class Member:
     handle: str
     display_name: str
     avatar_url: str
+    cos: dict = field(default_factory=dict)          # equipped cosmetics, slot -> value (HQ 2.1)
     chat_times: deque = field(default_factory=lambda: deque(maxlen=CHAT_RATE_COUNT))
 
     def public(self) -> dict[str, Any]:
@@ -53,6 +54,7 @@ class Member:
             "handle": self.handle,
             "displayName": self.display_name,
             "avatarUrl": self.avatar_url,
+            **({"cos": dict(self.cos)} if self.cos else {}),
         }
 
     def may_chat(self, now: float) -> bool:

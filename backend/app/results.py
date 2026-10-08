@@ -17,6 +17,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .cosmetics import equipped as equipped_cosmetics
 from .db import SessionLocal
 from .models import DailyStat, GameResult, User
 from .scoring import derive_level, rank_for_level, streak_from_dates, xp_for_level, xp_from_counts
@@ -91,11 +92,23 @@ async def record(game: str, data: dict) -> int:
         return 0
 
 
+_pending: set = set()
+
+
 def record_later(game: str, data: dict) -> None:
+    """Record without holding up the game's tick; drain() waits for these."""
     try:
-        asyncio.get_running_loop().create_task(record(game, data))
+        task = asyncio.get_running_loop().create_task(record(game, data))
     except RuntimeError:
-        pass
+        return
+    _pending.add(task)
+    task.add_done_callback(_pending.discard)
+
+
+async def drain() -> None:
+    """Wait for results still being written (tests, shutdown)."""
+    while _pending:
+        await asyncio.gather(*list(_pending), return_exceptions=True)
 
 
 def xp_for_result(place: int, players: int) -> int:
@@ -231,5 +244,6 @@ async def profile(db: AsyncSession, user: User, viewer_id: str | None) -> dict:
         "progress": pr, "streak": stats["streak"], "games": per,
         "totals": {"played": stats["games"], "wins": stats["wins"], "podiums": podiums},
         "trophies": [{"id": t[0], "name": t[1]} for t in TROPHIES if t[2](stats)],
+        "cos": (await equipped_cosmetics(db, [user.id]))[user.id],
         "isYou": user.id == viewer_id,
     }

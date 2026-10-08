@@ -61,7 +61,15 @@ async def list_open(db: AsyncSession, viewer: User) -> list[HqProfileOut]:
         .order_by(HqProfile.updated_at.desc()).limit(OPEN_LIST_MAX)
     )).all()
     levels = await levels_for(db, [u.id for u, _ in rows])
-    return [_out(u, p, levels[u.id], viewer.id) for u, p in rows]
+    return await _with_cos(db, [_out(u, p, levels[u.id], viewer.id) for u, p in rows])
+
+
+async def _with_cos(db: AsyncSession, outs: list[HqProfileOut]) -> list[HqProfileOut]:
+    from .cosmetics import equipped
+    eq = await equipped(db, [o.userId for o in outs])
+    for o in outs:
+        o.cos = eq.get(o.userId, {})
+    return outs
 
 
 async def get_one(db: AsyncSession, viewer: User, user_id: str) -> HqProfileOut | None:
@@ -72,4 +80,4 @@ async def get_one(db: AsyncSession, viewer: User, user_id: str) -> HqProfileOut 
     prof = await db.get(HqProfile, user_id)
     if user_id != viewer.id and not (prof and prof.open):
         return None
-    return _out(user, prof, (await levels_for(db, [user_id]))[user_id], viewer.id)
+    return (await _with_cos(db, [_out(user, prof, (await levels_for(db, [user_id]))[user_id], viewer.id)]))[0]

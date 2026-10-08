@@ -238,7 +238,7 @@ class PokeLedger(Base):
     __tablename__ = "poke_ledger"
     __table_args__ = (
         UniqueConstraint("user_id", "request_id", name="uq_poke_ledger_user_request"),
-        CheckConstraint("op IN ('claim','buy','eat','give','quest')", name="ck_poke_ledger_op"),
+        CheckConstraint("op IN ('claim','buy','eat','give','quest','cosmetic','sell')", name="ck_poke_ledger_op"),
         CheckConstraint("qty >= 0", name="ck_poke_ledger_qty_nonneg"),
         CheckConstraint("coins >= 0", name="ck_poke_ledger_coins_nonneg"),
         Index("ix_poke_ledger_user_date", "user_id", "op_date"),
@@ -401,3 +401,16 @@ class GameResult(Base):
     value: Mapped[int | None] = mapped_column(Integer, nullable=True)   # ms, strokes or kills; lower is better except kills
     extra: Mapped[dict] = mapped_column(JSON, default=dict)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EquippedCosmetics(Base):
+    """What a trainer wears (HQ 2.1 cosmetics): slot -> item id. Owning an item is a
+    PokeBalance row "cos:<id>" (bought through the pantry ledger) or a level unlock."""
+
+    __tablename__ = "equipped_cosmetics"
+
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    slots: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

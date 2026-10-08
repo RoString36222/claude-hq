@@ -690,6 +690,7 @@ class HqProfileOut(BaseModel):
     crew: HqCrew
     updatedAt: str | None = None
     isYou: bool = False
+    cos: dict[str, str] = Field(default_factory=dict)     # equipped cosmetics (HQ decor shows at their base)
 
 
 class HqOpenList(BaseModel):

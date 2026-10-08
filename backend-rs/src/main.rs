@@ -28,6 +28,7 @@ mod scoring;
 mod server_stats;
 mod service;
 mod sounds;
+mod valley;
 
 use axum::{
     extract::{

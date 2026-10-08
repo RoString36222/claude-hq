@@ -196,7 +196,8 @@ function hqRenderCrew(){
 /* ---- HQ 2.1: customise your building; visit friends' HQs through the Arena ---- */
 // The look is kept here (localStorage hq_look) and, when paired, on the Arena so visitors see it.
 // Visiting mounts a second copy of the scene fed by THEIR level, look and crew counts.
-var HQ_PAINTS = ["#2a3c50","#3a2a50","#24443a","#4a3424","#4a2a30","#2c2c34","#3b4a5c","#1e3a52"];
+// Paint: the default navy and graphite, then colours bold enough to tell HQs apart across the street.
+var HQ_PAINTS = ["#2a3c50","#2c2c34","#b5473a","#d07a2c","#c9a227","#3f8f5a","#2f8fa3","#3d6fd1","#7a52c7","#c2507f","#d9d2c3","#6b4a32"];
 var HQ_ACCENTS = ["#ffb347","#5fd3e6","#6fd38a","#ff6b5b","#9b8cf0","#f4f4f4"];
 var HQ_REMOTE = {open:false, synced:false, beat:0};
 function hqSaveLook(l){ try { localStorage.setItem("hq_look", JSON.stringify(l)); } catch(e){} }

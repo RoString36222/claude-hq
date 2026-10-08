@@ -36,6 +36,8 @@ function makeBuilding(c, opts){
   /* ---------- the building, rebuilt when your level or look changes ---------- */
   var baseG = new THREE.Group();
   var dyn = null, built = {level: null, look: ""}, litShare = 0.5;
+  // a dim copy of the paint, so the building keeps its colour at night (the emissive map's background)
+  function dimPaint(hex, k){ var n = parseInt(hex.slice(1), 16); return "rgb(" + [n >> 16 & 255, n >> 8 & 255, n & 255].map(function(v){ return Math.round(v*k); }).join(",") + ")"; }
   function paintWin(e, wn){
     e.fillStyle = "#000"; e.fillRect(wn.x, wn.y, wn.w, wn.h);
     if(!wn.lit) return;
@@ -48,6 +50,7 @@ function makeBuilding(c, opts){
     var cw = 40, fh = 48, Wd = cols*cw, H = floors*fh, R = c.rng(seed);
     var map = c.canvasTex(Wd, H), emi = c.canvasTex(Wd, H), g = map.g, wins = [];
     g.fillStyle = paint; g.fillRect(0, 0, Wd, H);
+    emi.g.fillStyle = dimPaint(paint, 0.7); emi.g.fillRect(0, 0, Wd, H);
     for(var f = 0; f < floors; f++){
       var y0 = f*fh; g.fillStyle = "rgba(255,255,255,.12)"; g.fillRect(0, y0, Wd, 9);
       for(var k = 0; k < cols; k++){
@@ -68,7 +71,8 @@ function makeBuilding(c, opts){
     function fm(F){ var m = new THREE.MeshStandardMaterial({map: F.map.t, emissiveMap: F.emi.t, emissive: new THREE.Color(0xffffff), emissiveIntensity: 1, roughness: 0.35, metalness: 0.35}); dyn.facMats.push(m); return m; }
     var mF = fm(Ff), mS = fm(Fs), mB = fm(Fb), roof = mat(0x2b3a48, {roughness: 0.8});
     var H = floors*2.6, body = new THREE.Mesh(new THREE.BoxGeometry(wd, H, d), [mS, mS, roof, roof, mF, mB]); c.add(body, x, y0 + H/2, z, baseG);
-    var ledge = mat(0x4d6680, {metalness: 0.4, roughness: 0.5});
+    // the floor lines carry the building's light colour (HQ customisation), so each HQ reads from across the street
+    var ledge = emis(0x2b3a48, dyn.accent, 0.5, {metalness: 0.4, roughness: 0.5}); dyn.ledges.push(ledge);
     for(var f = 1; f <= floors; f++) box(wd + 0.24, 0.12, d + 0.24, ledge, x, y0 + f*2.6 - 0.06, z, baseG, true);
     [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function(q){ box(0.24, H, 0.24, mat(0x5a7590, {metalness: 0.5}), x + q[0]*wd/2, y0 + H/2, z + q[1]*d/2, baseG); });
     var top = y0 + H, led = emis(0x0d1a24, dyn.accent, 2);
@@ -79,7 +83,7 @@ function makeBuilding(c, opts){
     return top;
   }
   function lobbyBlock(x, z, wd, d){
-    var gl = new THREE.MeshStandardMaterial({color: 0x0b1622, emissive: new THREE.Color(0xffb866), emissiveIntensity: 0.3, transparent: true, opacity: 0.9, roughness: 0.1, metalness: 0.3});
+    var gl = new THREE.MeshStandardMaterial({color: 0x0b1622, emissive: new THREE.Color(dyn.accent).lerp(new THREE.Color(0xffb866), 0.35), emissiveIntensity: 0.3, transparent: true, opacity: 0.9, roughness: 0.1, metalness: 0.3});
     dyn.lobbyMats.push(gl);
     box(wd - 0.4, 3.2, d - 0.4, gl, x, 1.6, z, baseG);
     for(var m = -wd/2 + 0.2; m <= wd/2 - 0.2 + 0.01; m += 1.2) box(0.1, 3.2, 0.1, mat(0x5a7590, {metalness: 0.6}), x + m, 1.6, z + d/2 - 0.18, baseG);
@@ -94,7 +98,7 @@ function makeBuilding(c, opts){
     while(baseG.children.length) baseG.remove(baseG.children[0]);
     hits.length = 0; doors.length = 0;
     dyn = {facades: [], facMats: [], leds: [], lobbyMats: [], beacons: [], beaconGlows: [], banners: [], heli: null, jets: [], karts: [], glows: [], accent: accent,
-           flags: [], fireworks: []};
+           flags: [], fireworks: [], ledges: []};
     var floorsLow = Math.min(8, 1 + Math.floor(level/5)), floorsHigh = level >= 25 ? Math.min(8, 1 + Math.floor((level - 25)/4)) : 0;
     var y = lobbyBlock(0, 0, 9, 7);
     var topLow = tower(0, y, 0, 9, 7, floorsLow, 100 + level % 7, paint), top = topLow;
@@ -218,7 +222,8 @@ function makeBuilding(c, opts){
   function applyTime(){
     if(!dyn) return;
     dyn.facMats.forEach(function(m){ m.emissiveIntensity = night ? 1 : 0.06; });
-    dyn.lobbyMats.forEach(function(m){ m.emissiveIntensity = night ? 0.32 : 0.08; });
+    dyn.lobbyMats.forEach(function(m){ m.emissiveIntensity = night ? 0.45 : 0.12; });
+    dyn.ledges.forEach(function(m){ m.emissiveIntensity = night ? 1.1 : 0.45; });
     dyn.glows.forEach(function(g){ g.visible = night; });
   }
   B.g = baseG;

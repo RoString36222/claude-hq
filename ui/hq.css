@@ -1989,3 +1989,16 @@ html.hq-calm #confetti{display:none!important}
 .vg-watch[hidden]{display:none}
 .vg-watch .hbtn{padding:2px 8px}
 .vg-golf-stage{position:relative}
+/* ---- Code Typing Race (games/typerace.js) ---- */
+.tr-text{font:500 15px/1.6 var(--mono);white-space:pre-wrap;background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius-sm);padding:12px 14px;color:var(--muted);outline:none}
+.tr-text:focus-visible{box-shadow:0 0 0 2px var(--brand-line)}
+.tr-ok{color:var(--good)}
+.tr-bad{color:var(--need);background:var(--need-soft);text-decoration:underline}
+.tr-cur{color:var(--ink);background:var(--brand-soft);border-bottom:2px solid var(--brand)}
+.tr-count{font:700 44px var(--mono);text-align:center;color:var(--brand)}
+.tr-lanes{display:grid;gap:4px;margin:8px 0}
+.tr-lane{display:grid;grid-template-columns:140px minmax(0,1fr);gap:8px;align-items:center;font-size:12.5px}
+.tr-lane.you .tr-name{font-weight:700}
+.tr-bar{height:8px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);overflow:hidden}
+.tr-bar i{display:block;height:100%;background:var(--brand);transition:width .2s}
+.tr-stats{font:600 13px var(--mono);font-variant-numeric:tabular-nums}

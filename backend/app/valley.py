@@ -45,6 +45,7 @@ from sqlalchemy import func, select
 from . import golf as golfmod
 from . import fps as fpsmod
 from . import hqpresence as hqmod
+from . import typerace as typemod
 from . import results as resultsmod
 from . import kart as kartmod
 from . import platformer as platmod
@@ -54,7 +55,7 @@ from .db import SessionLocal
 from .models import DailyStat, RoomFarm
 from .rooms import Member, Room, manager
 
-GAMES = ("pond", "race", "duel", "mines", "farm", "golf", "kart", "plat", "fps", "hq")
+GAMES = ("pond", "race", "duel", "mines", "farm", "golf", "kart", "plat", "fps", "hq", "type")
 
 # Protocol version + capabilities per game. Sent in the room's welcome (so a client
 # can tell "this Arena is too old for me" from "I am too old for this Arena" before it
@@ -70,7 +71,7 @@ def arena_info() -> dict:
     return {"impl": "py", "games": {g: dict(PROTOCOL[g]) for g in GAMES}}
 GAME_NAMES = {"pond": "Fishing Pond", "race": "Puzzle Race", "duel": "Creature Duel",
               "mines": "Co-op Mines", "farm": "Shared Farm", "golf": "Mini Golf",
-              "kart": "Kart Racing", "plat": "Platformer Rush", "fps": "Blaster Arena", "hq": "HQ"}
+              "kart": "Kart Racing", "plat": "Platformer Rush", "fps": "Blaster Arena", "hq": "HQ", "type": "Code Typing Race"}
 MAX_LOBBY = 8
 SEND_TIMEOUT = 0.5            # seconds one socket may take to accept a lobby fan-out
 now = time.monotonic          # patched in tests
@@ -309,6 +310,7 @@ class RoomValley:
         self.plat = platmod.Plat()
         self.fps = fpsmod.Fps()
         self.hq = hqmod.Presence()
+        self.type = typemod.TypeRace()
 
 
 _rooms: dict[str, RoomValley] = {}
@@ -1055,6 +1057,8 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
                     out.lobby(list(lobby.members), "plat", run=v.plat.view(now()), back=member.user_id)
                 else:
                     out.to(member.ws, "plat", run=v.plat.view(now()))
+            elif g == "type":
+                out.to(member.ws, "type", race=v.type.view(now()))
             elif g == "hq":
                 v.hq.enter(member.user_id, member.public(), now())
                 out.to(member.ws, "snap", ps=v.hq.listing())
@@ -1127,6 +1131,8 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
     elif g == "hq":
         if op == "pos":
             v.hq.pos(member.user_id, msg, now())
+    elif g == "type":
+        type_op(room.room_id, v, lobby, member, op, msg, out, rng)
     elif g == "golf":
         golf_op(v.golf, lobby, member, op, msg, out, rng)
     elif g == "kart":
@@ -1206,6 +1212,54 @@ def _plat_tick_on(room_id: str) -> bool:
         return v.plat.running()
 
     return realtime.start(key, platmod.HZ, step, lambda: now()) is not None
+
+
+# -------------------------------------------------------------------- type --
+def type_op(room_id: str, v: "RoomValley", lobby: Lobby, member: Member, op: str, msg: dict, out: Out,
+            rng: random.Random) -> None:
+    """Code Typing Race: the host starts; everyone's progress feeds the room's loop."""
+    t = now()
+    ids = list(lobby.members)
+    if op == "prog":
+        v.type.prog(member.user_id, msg, t)
+    elif op == "view":
+        out.to(member.ws, "type", race=v.type.view(t))
+    elif op in ("start", "end"):
+        if lobby.host != member.user_id:
+            out.err(member.ws, "only the host can do that")
+            return
+        if op == "start":
+            err = v.type.start(dict(lobby.members), t, rng)
+            if err is None and not _type_tick_on(room_id):
+                v.type.end()
+                err = "the Arena is busy right now: try again in a minute"
+            if err:
+                out.err(member.ws, err)
+            else:
+                out.lobby(ids, "type", race=v.type.view(t), by=member.public())
+        else:
+            v.type.end()
+            realtime.stop("type:" + room_id)
+            out.lobby(ids, "type", race=v.type.view(t))
+
+
+def _type_tick_on(room_id: str) -> bool:
+    key = "type:" + room_id
+
+    async def step(t: float, send: bool) -> bool:
+        v = _rooms.get(room_id)
+        room = manager.get(room_id)
+        if v is None or room is None or not v.type.running():
+            return False
+        ids = list(v.lobbies["type"].members) + [u for u in v.type.players if u not in v.lobbies["type"].members]
+        out = Out("type")
+        for ev, data in v.type.tick(t):
+            out.lobby(ids, ev, **data)
+        if out.items:
+            await _flush(room, out)
+        return v.type.running()
+
+    return realtime.start(key, typemod.HZ, step, lambda: now()) is not None
 
 
 # ---------------------------------------------------------------------- hq --
@@ -1498,6 +1552,8 @@ def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out, disconnected: bo
         out.lobby(list(lobby.members), "fps", match=v.fps.view(now()), left=user_id)
     elif g == "hq":
         v.hq.drop(user_id)
+    elif g == "type":
+        v.type.drop(user_id)
     elif g == "golf" and v.golf.drop(user_id, now(), blip=disconnected):
         ids = list(lobby.members)
         out.lobby(ids, "golf", round=v.golf.view(now()), left=user_id)

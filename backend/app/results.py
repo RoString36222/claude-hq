@@ -22,7 +22,7 @@ from .db import SessionLocal
 from .models import DailyStat, GameResult, User
 from .scoring import derive_level, rank_for_level, streak_from_dates, xp_for_level, xp_from_counts
 
-GAMES = ("kart", "plat", "fps", "golf")
+GAMES = ("kart", "plat", "fps", "golf", "type")
 GAME_XP_DAY_CAP = 400
 BOARD_SIZE = 20
 
@@ -56,6 +56,13 @@ def rows_from_done(game: str, data: dict) -> list[dict]:
                 row.update(key="match", mode="", value=int(r.get("kills") or 0),
                            extra={"kills": int(r.get("kills") or 0), "deaths": int(r.get("deaths") or 0)})
             out.append(row)
+    elif game == "type":
+        res = [r for r in (data.get("results") or []) if _uid(r)]
+        for r in res:
+            out.append({"user_id": _uid(r), "game": "type", "key": "all", "mode": str(data.get("lang") or "")[:16],
+                        "place": int(r.get("place") or len(res)), "players": len(res),
+                        "value": None if r.get("dnf") else r.get("ms"),
+                        "extra": {"wpm": float(r.get("wpm") or 0), "acc": float(r.get("acc") or 0)}})
     elif game == "golf":
         totals = data.get("totals") or {}
         ranked = sorted((v, uid) for uid, v in totals.items() if isinstance(uid, str) and isinstance(v, (int, float)))
@@ -187,7 +194,19 @@ async def leaderboard(db: AsyncSession, game: str, key: str | None, viewer_id: s
             lap = (r.extra or {}).get("bestLap")
             if isinstance(lap, int) and (b["bestLap"] is None or lap < b["bestLap"]):
                 b["bestLap"] = lap
+        if game == "type":
+            for r, u in rows:
+                b = best[u.id]; w = float((r.extra or {}).get("wpm", 0))
+                if r.value is not None and w > (b.get("wpm") or 0):
+                    b["wpm"], b["acc"] = w, float((r.extra or {}).get("acc", 0))
         entries = list(best.values())
+        if game == "type":
+            entries = [e for e in entries if e.get("wpm")]
+            entries.sort(key=lambda e: (-e["wpm"], e["user"]["handle"]))
+            for i, e in enumerate(entries, 1):
+                e["rank"] = i
+            boards.append({"key": k, "entries": entries[:BOARD_SIZE]})
+            continue
         if game == "fps":
             for e in entries:
                 e["kd"] = round(e["kills"] / max(1, e["deaths"]), 2)
@@ -206,7 +225,8 @@ TROPHIES = [  # (id, name, test over a player's stats)
     ("first-win", "First win", lambda s: s["wins"] >= 1),
     ("ten-wins", "Ten wins", lambda s: s["wins"] >= 10),
     ("podium-5", "Five podiums", lambda s: s["podiums"] >= 5),
-    ("all-rounder", "All-rounder: played all four games", lambda s: all(s["per"][g]["played"] for g in GAMES)),
+    ("all-rounder", "All-rounder: played every game", lambda s: all(s["per"][g]["played"] for g in GAMES)),
+    ("fast-fingers", "Fast fingers: 80 WPM", lambda s: (s["per"]["type"].get("bestWpm") or 0) >= 80),
     ("sharpshooter", "Sharpshooter: 100 Blaster kills", lambda s: s["per"]["fps"].get("kills", 0) >= 100),
     ("speedster", "Speedster: a lap under 15 s", lambda s: (s["per"]["kart"].get("bestLap") or 10 ** 9) < 15000),
     ("streak-7", "A week-long streak", lambda s: s["streak"] >= 7),
@@ -221,6 +241,7 @@ async def profile(db: AsyncSession, user: User, viewer_id: str | None) -> dict:
         DailyStat.user_id == user.id, DailyStat.stat_date >= today - timedelta(days=400),
         (DailyStat.prompts > 0) | (DailyStat.replies > 0)))).scalars())
     per: dict[str, dict[str, Any]] = {g: {"played": 0, "wins": 0} for g in GAMES}
+    best_wpm = 0.0
     podiums = 0
     for r in (await db.execute(select(GameResult).where(GameResult.user_id == user.id))).scalars():
         p = per[r.game] if r.game in per else None
@@ -237,6 +258,9 @@ async def profile(db: AsyncSession, user: User, viewer_id: str | None) -> dict:
         elif r.value is not None:
             k = "best:" + r.key
             p[k] = r.value if p.get(k) is None else min(p[k], r.value)
+        if r.game == "type" and r.value is not None:
+            best_wpm = max(best_wpm, float(ex.get("wpm", 0)))
+            p["bestWpm"] = best_wpm
         if isinstance(ex.get("bestLap"), int):
             p["bestLap"] = ex["bestLap"] if p.get("bestLap") is None else min(p["bestLap"], ex["bestLap"])
     if per["fps"].get("kills") is not None:

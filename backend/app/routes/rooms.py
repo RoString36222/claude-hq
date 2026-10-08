@@ -43,6 +43,15 @@ async def room_ws(
             await websocket.close(code=4403, reason="account disabled")
             return
 
+        if room_id.startswith("hq_"):
+            # Someone's HQ (HQ 2.1): its owner, or anyone while the owner keeps it open.
+            from ..models import HqProfile
+            owner = room_id[3:]
+            prof = await db.get(HqProfile, owner)
+            if owner != user.id and not (prof and prof.open):
+                await websocket.close(code=4403, reason="that HQ is closed to visitors")
+                return
+
         if rooms.is_private_id(room_id):
             from .. import private_rooms
             result = await private_rooms.admission(db, room_id, user_id)

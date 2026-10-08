@@ -44,6 +44,7 @@ from sqlalchemy import func, select
 
 from . import golf as golfmod
 from . import fps as fpsmod
+from . import hqpresence as hqmod
 from . import kart as kartmod
 from . import platformer as platmod
 from . import realtime
@@ -52,7 +53,7 @@ from .db import SessionLocal
 from .models import DailyStat, RoomFarm
 from .rooms import Member, Room, manager
 
-GAMES = ("pond", "race", "duel", "mines", "farm", "golf", "kart", "plat", "fps")
+GAMES = ("pond", "race", "duel", "mines", "farm", "golf", "kart", "plat", "fps", "hq")
 
 # Protocol version + capabilities per game. Sent in the room's welcome (so a client
 # can tell "this Arena is too old for me" from "I am too old for this Arena" before it
@@ -68,7 +69,7 @@ def arena_info() -> dict:
     return {"impl": "py", "games": {g: dict(PROTOCOL[g]) for g in GAMES}}
 GAME_NAMES = {"pond": "Fishing Pond", "race": "Puzzle Race", "duel": "Creature Duel",
               "mines": "Co-op Mines", "farm": "Shared Farm", "golf": "Mini Golf",
-              "kart": "Kart Racing", "plat": "Platformer Rush", "fps": "Blaster Arena"}
+              "kart": "Kart Racing", "plat": "Platformer Rush", "fps": "Blaster Arena", "hq": "HQ"}
 MAX_LOBBY = 8
 SEND_TIMEOUT = 0.5            # seconds one socket may take to accept a lobby fan-out
 now = time.monotonic          # patched in tests
@@ -306,6 +307,7 @@ class RoomValley:
         self.kart = kartmod.Kart()
         self.plat = platmod.Plat()
         self.fps = fpsmod.Fps()
+        self.hq = hqmod.Presence()
 
 
 _rooms: dict[str, RoomValley] = {}
@@ -995,13 +997,18 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
         out.err(member.ws, "unknown game")
         await _flush(room, out)
         return
+    if g == "hq" and not room.room_id.startswith("hq_"):
+        out.err(member.ws, "HQ presence lives in an HQ room")
+        await _flush(room, out)
+        return
     v = valley_for(room.room_id)
     lobby = v.lobbies[g]
     rng = _rng()
 
     if op == "join":
         reserved = g == "duel" and v.duel.seated(member.user_id)
-        if member.user_id not in lobby.members and len(lobby.members) >= MAX_LOBBY and not reserved:
+        cap = hqmod.MAX_PEOPLE if g == "hq" else MAX_LOBBY
+        if member.user_id not in lobby.members and len(lobby.members) >= cap and not reserved:
             out.err(member.ws, "this game's lobby is full")
         else:
             fresh = member.user_id not in lobby.members
@@ -1047,6 +1054,10 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
                     out.lobby(list(lobby.members), "plat", run=v.plat.view(now()), back=member.user_id)
                 else:
                     out.to(member.ws, "plat", run=v.plat.view(now()))
+            elif g == "hq":
+                v.hq.enter(member.user_id, member.public(), now())
+                out.to(member.ws, "snap", ps=v.hq.listing())
+                _hq_tick_on(room.room_id)
             elif g == "fps":
                 if v.fps.enter(member.user_id, member.public(), now()):
                     # back from a dropped socket, or dropping in mid-match: everyone sees it
@@ -1112,6 +1123,9 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
             v.mines.leave(member, out)
     elif g == "farm":
         await farm_op(room.room_id, member, msg, out, rng)
+    elif g == "hq":
+        if op == "pos":
+            v.hq.pos(member.user_id, msg, now())
     elif g == "golf":
         golf_op(v.golf, lobby, member, op, msg, out, rng)
     elif g == "kart":
@@ -1191,6 +1205,26 @@ def _plat_tick_on(room_id: str) -> bool:
         return v.plat.running()
 
     return realtime.start(key, platmod.HZ, step, lambda: now()) is not None
+
+
+# ---------------------------------------------------------------------- hq --
+def _hq_tick_on(room_id: str) -> bool:
+    """Send everyone in an HQ where everyone is, 8 times a second while anyone is there."""
+    key = "hq:" + room_id
+
+    async def step(t: float, send: bool) -> bool:
+        v = _rooms.get(room_id)
+        room = manager.get(room_id)
+        if v is None or room is None or not v.hq.people:
+            return False
+        if send and (v.hq.dirty or t - v.hq.sent_at >= hqmod.KEEPALIVE):
+            v.hq.dirty, v.hq.sent_at = False, t
+            out = Out("hq")
+            out.lobby(list(v.lobbies["hq"].members), "snap", ps=v.hq.listing())
+            await _flush(room, out)
+        return True
+
+    return realtime.start(key, hqmod.HZ, step, lambda: now()) is not None
 
 
 # -------------------------------------------------------------------- kart --
@@ -1461,6 +1495,8 @@ def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out, disconnected: bo
         out.lobby(list(lobby.members), "plat", run=v.plat.view(now()), left=user_id)
     elif g == "fps" and v.fps.drop(user_id, now(), blip=disconnected):
         out.lobby(list(lobby.members), "fps", match=v.fps.view(now()), left=user_id)
+    elif g == "hq":
+        v.hq.drop(user_id)
     elif g == "golf" and v.golf.drop(user_id, now(), blip=disconnected):
         ids = list(lobby.members)
         out.lobby(ids, "golf", round=v.golf.view(now()), left=user_id)

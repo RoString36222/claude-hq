@@ -14,7 +14,7 @@ var LIVE = {};          // g -> {lobby:[...], ...game state from the server}
 // Protocol versions this client speaks, per game: [oldest, newest]. Must cover the
 // server's PROTOCOL table (backend/app/valley.py, backend-rs/src/protocol.rs). A server
 // below the range is an Arena to update; above it, Claude HQ is the one to update.
-var CLIENT_PROTO = {pond:[1,1], race:[1,1], duel:[1,1], mines:[1,1], farm:[1,1], golf:[1,1], kart:[1,2], plat:[1,1], fps:[1,1]};
+var CLIENT_PROTO = {pond:[1,1], race:[1,1], duel:[1,1], mines:[1,1], farm:[1,1], golf:[1,1], kart:[1,2], plat:[1,1], fps:[1,1], hq:[1,1]};
 // null = fine to play; else {who:"arena"|"hq", text} explaining why not.
 function protoCheck(g){
   var info = A().arena;

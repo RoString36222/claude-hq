@@ -72,7 +72,7 @@ function hqEnter(){
     HQ3D.inst.setFilter(HQ3D.filter);
     HQ3D.inst.resume();
   }).catch(function(e){ stage.textContent="The 3D HQ couldn't load: "+e.message; });
-  hqRenderCrew(); hqRenderWhere();
+  hqRenderCrew(); hqRenderWhere(); hqSync();
 }
 function hqLeave(){ if(HQ3D.inst) HQ3D.inst.pause(); }
 function hqViewChanged(v){
@@ -175,11 +175,11 @@ function hqArenaWhy(res){
 }
 // Pull the saved look and openness once; the Arena copy wins over this browser's.
 function hqSync(){
-  if(HQ_REMOTE.synced) return;
+  if(typeof HQ_REMOTE==="undefined" || !HQ_REMOTE || HQ_REMOTE.synced) return;   // (boot runs before this file's state is set)
   HQ_REMOTE.synced=true;
   hqArena("GET","/api/arena/hq/me").then(function(res){
     if(!res.ok) return;
-    HQ_REMOTE.open=!!res.j.open;
+    HQ_REMOTE.open=!!res.j.open; HQ_REMOTE.me=res.j.userId||null;
     var l=res.j.look||{}, mine=hqLook();
     ["paint","accent","sign"].forEach(function(k){ if(l[k]) mine[k]=l[k]; });
     hqSaveLook(mine); hqRenderBuild(); hqPreview();
@@ -192,7 +192,7 @@ function hqSave(){
   var open=!!($("hqOpen") && $("hqOpen").checked);
   note.textContent="Saving…";
   hqArena("POST","/api/arena/hq/me",{open:open, look:l, crew:true}).then(function(res){
-    if(res.ok){ HQ_REMOTE.open=!!res.j.open; note.textContent = HQ_REMOTE.open ? "Saved. Your HQ is open to visitors." : "Saved. Your HQ is closed to visitors."; }
+    if(res.ok){ HQ_REMOTE.open=!!res.j.open; HQ_REMOTE.me=res.j.userId||HQ_REMOTE.me; note.textContent = HQ_REMOTE.open ? "Saved. Your HQ is open to visitors." : "Saved. Your HQ is closed to visitors."; }
     else note.textContent="Saved here. "+hqArenaWhy(res);
   }).catch(function(){ note.textContent="Saved here. The Arena didn't answer."; });
 }
@@ -278,3 +278,70 @@ function hqRenderVisiting(){
   var vs=$("hqVisitSec"); if(vs) vs.addEventListener("toggle", function(){ if(vs.open) hqLoadOpen(); });
   var bs=$("hqBuildSec"); if(bs) bs.addEventListener("toggle", function(){ if(bs.open){ hqRenderBuild(); hqSync(); } });
 })();
+
+/* ---- HQ 2.1: live together. Everyone in the same HQ sees everyone else walk around. ---- */
+// One extra Arena socket, to the room of the HQ you are in: "hq_<owner id>" (yours while it is
+// open to visitors, or the one you are visiting). It carries only where you stand: the floor,
+// x/z, facing and whether you walk. The server sends everyone's spot back 8 times a second.
+var HQNET = {ws:null, room:null, gen:0, sentAt:0, last:"", peers:[], timer:null};
+function hqNetWant(){
+  if(VIEW!=="hq" || !HQ3D.inst || document.hidden) return null;
+  if(HQ3D.visit) return "hq_"+HQ3D.visit.userId;
+  if(HQ_REMOTE.open && HQ_REMOTE.me) return "hq_"+HQ_REMOTE.me;
+  return null;
+}
+function hqNetClose(){
+  HQNET.gen++; HQNET.room=null; HQNET.peers=[];
+  if(HQNET.ws){ try { HQNET.ws.close(); } catch(e){} HQNET.ws=null; }
+  if(HQ3D.inst && HQ3D.inst.setPeers) HQ3D.inst.setPeers([]);
+  hqRenderHere();
+}
+function hqNetSync(){
+  var want=hqNetWant();
+  if(want===HQNET.room) return;
+  hqNetClose();
+  if(!want) return;
+  HQNET.room=want; var gen=HQNET.gen;
+  arenaPost("/api/arena/ticket").then(function(res){
+    if(gen!==HQNET.gen || !res.ok || !res.j || !res.j.wsUrl) { if(gen===HQNET.gen) HQNET.room=null; return; }
+    var ws;
+    try { ws=new WebSocket(res.j.wsUrl+"/v1/rooms/"+encodeURIComponent(want)+"/ws?ticket="+encodeURIComponent(res.j.ticket)); }
+    catch(e){ HQNET.room=null; return; }
+    HQNET.ws=ws;
+    ws.onmessage=function(ev){
+      if(gen!==HQNET.gen) return;
+      var m; try { m=JSON.parse(ev.data); } catch(e){ return; }
+      if(!m || typeof m!=="object") return;
+      if(m.type==="welcome"){ HQNET.me=(m.you&&m.you.userId)||null; ws.send(JSON.stringify({type:"game", g:"hq", op:"join"})); return; }
+      if(m.type!=="game" || m.g!=="hq") return;
+      if(m.ev==="snap" && Array.isArray(m.ps)){
+        HQNET.peers=m.ps.filter(function(p){ return p && p.u!==HQNET.me; });
+        if(HQ3D.inst && HQ3D.inst.setPeers) HQ3D.inst.setPeers(HQNET.peers);
+        hqRenderHere();
+      }
+    };
+    ws.onclose=function(){ if(gen===HQNET.gen){ HQNET.ws=null; HQNET.room=null; HQNET.peers=[]; if(HQ3D.inst && HQ3D.inst.setPeers) HQ3D.inst.setPeers([]); hqRenderHere(); } };
+  }).catch(function(){ if(gen===HQNET.gen) HQNET.room=null; });
+}
+// Send where you are 8 times a second while you move (once every 2 s when you stand still).
+function hqNetSend(){
+  var ws=HQNET.ws; if(!ws || ws.readyState!==1 || !HQ3D.inst || !HQ3D.inst.where) return;
+  var w=HQ3D.inst.where(); if(!w || !w.world) return;
+  var msg={type:"game", g:"hq", op:"pos", w:w.world, x:Math.round(w.x*100), z:Math.round(w.z*100),
+           r:Math.round(((w.yaw*180/Math.PI)%360+360)%360), a:HQ3D.inst.moving ? HQ3D.inst.moving() : 0};
+  var key=[msg.w,msg.x,msg.z,msg.r,msg.a].join(","), now=Date.now();
+  if(key===HQNET.last && now-HQNET.sentAt<2000) return;
+  HQNET.last=key; HQNET.sentAt=now;
+  try { ws.send(JSON.stringify(msg)); } catch(e){}
+}
+setInterval(function(){ if(VIEW==="hq") hqSync(); hqNetSync(); hqNetSend(); }, 125);
+// "Here now": who else is in this HQ, and on which floor.
+var HQ_FLOOR_NAME = {base:"outside", lobby:"in the Lobby", mission:"in Mission Control"};
+function hqRenderHere(){
+  var box=$("hqHere"); if(!box) return;
+  var ps=HQNET.peers||[];
+  box.hidden=!ps.length; box.textContent="";
+  if(!ps.length) return;
+  var h=document.createElement("b"); h.textContent="Here now"; box.appendChild(h);
+  ps.slice(0,12).forEach(function(p){ var d=document.createElement("div"); d.textContent=(p.n||"Visitor")+" · "+(HQ_FLOOR_NAME[p.w]||""); box.appendChild(d); });
+}

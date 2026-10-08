@@ -13,12 +13,20 @@
 //! one slow player never holds up the others.
 
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
 pub const MAX_ROOM_MEMBERS: usize = 32;
 pub const MAX_STATE_BYTES: usize = 64 * 1024;
+
+// Lobby chat: a room keeps its last CHAT_HISTORY messages in memory, never on
+// disk, for whoever joins next; each connection may send CHAT_RATE_COUNT per
+// CHAT_RATE_WINDOW seconds. Same numbers as backend/app/rooms.py.
+pub const CHAT_HISTORY: usize = 50;
+pub const CHAT_MAX_CHARS: usize = 500;
+pub const CHAT_RATE_COUNT: usize = 8;
+pub const CHAT_RATE_WINDOW: f64 = 10.0;
 /// Messages one connection's direct queue holds before new ones are dropped.
 pub const DIRECT_QUEUE: usize = 256;
 
@@ -28,14 +36,21 @@ pub struct Member {
     pub handle: String,
     pub display_name: String,
     pub avatar_url: String,
+    /// Worn cosmetics, slot -> value. Null when nothing is equipped, and then
+    /// omitted from public() entirely -- exactly as the Python omits the key.
+    pub cos: Value,
 }
 
 impl Member {
     pub fn public(&self) -> Value {
-        json!({
+        let mut v = json!({
             "userId": self.user_id, "handle": self.handle,
             "displayName": self.display_name, "avatarUrl": self.avatar_url,
-        })
+        });
+        if !self.cos.is_null() {
+            v["cos"] = self.cos.clone();
+        }
+        v
     }
 }
 
@@ -45,6 +60,10 @@ pub struct Room {
     pub state: Value,
     /// conn_id -> that socket's direct queue (only for join_direct connections).
     pub direct: HashMap<u64, mpsc::Sender<String>>,
+    /// The last CHAT_HISTORY lobby messages, oldest first, so a joiner can
+    /// catch up. Memory only: it goes when the room empties or the server
+    /// restarts.
+    pub chat: VecDeque<Value>,
 }
 
 #[derive(Clone, Default)]
@@ -93,6 +112,7 @@ impl RoomManager {
             members: Vec::new(),
             state: json!({}),
             direct: HashMap::new(),
+            chat: VecDeque::new(),
         });
         if room.members.len() >= MAX_ROOM_MEMBERS {
             return None;
@@ -135,6 +155,26 @@ impl RoomManager {
         }
     }
 
+    /// The room's chat backlog, oldest first, for a joiner's welcome.
+    pub async fn chat_history(&self, room_id: &str) -> Value {
+        let rooms = self.rooms.lock().await;
+        match rooms.get(room_id) {
+            Some(room) => Value::Array(room.chat.iter().cloned().collect()),
+            None => json!([]),
+        }
+    }
+
+    /// Append one lobby message to the room's backlog and broadcast it.
+    pub async fn chat_say(&self, room_id: &str, entry: Value) {
+        let mut rooms = self.rooms.lock().await;
+        let Some(room) = rooms.get_mut(room_id) else { return };
+        if room.chat.len() >= CHAT_HISTORY {
+            room.chat.pop_front();
+        }
+        room.chat.push_back(entry.clone());
+        let _ = room.tx.send(entry.to_string());
+    }
+
     pub async fn exists(&self, room_id: &str) -> bool {
         self.rooms.lock().await.contains_key(room_id)
     }
@@ -152,13 +192,24 @@ impl RoomManager {
     pub async fn send_where(&self, room_id: &str, pick: impl Fn(&Member) -> bool, msg: String) -> usize {
         let rooms = self.rooms.lock().await;
         let Some(room) = rooms.get(room_id) else { return 0 };
-        Self::fan_out(room, &pick, &msg)
+        Self::fan_out(room, &|_, m| pick(m), &msg)
+    }
+
+    /// Like `send_where`, but never the sender's own socket -- a directed
+    /// message to yourself should reach your OTHER tabs, not echo back down
+    /// the socket that sent it. Returns how many sockets it reached.
+    pub async fn send_where_except(
+        &self, room_id: &str, conn_id: u64, pick: impl Fn(&Member) -> bool, msg: String,
+    ) -> usize {
+        let rooms = self.rooms.lock().await;
+        let Some(room) = rooms.get(room_id) else { return 0 };
+        Self::fan_out(room, &|c, m| c != conn_id && pick(m), &msg)
     }
 
     /// Every socket of `user_id` in every room (game invites). Returns how many.
     pub async fn deliver_to_user(&self, user_id: &str, msg: String) -> usize {
         let rooms = self.rooms.lock().await;
-        rooms.values().map(|r| Self::fan_out(r, &|m: &Member| m.user_id == user_id, &msg)).sum()
+        rooms.values().map(|r| Self::fan_out(r, &|_, m: &Member| m.user_id == user_id, &msg)).sum()
     }
 
     /// How many sockets in the room belong to users passing `pick`.
@@ -175,10 +226,10 @@ impl RoomManager {
             .unwrap_or(false)
     }
 
-    fn fan_out(room: &Room, pick: &dyn Fn(&Member) -> bool, msg: &str) -> usize {
+    fn fan_out(room: &Room, pick: &dyn Fn(u64, &Member) -> bool, msg: &str) -> usize {
         room.members
             .iter()
-            .filter(|(_, m)| pick(m))
+            .filter(|(c, m)| pick(*c, m))
             .filter_map(|(c, _)| room.direct.get(c))
             .filter(|d| d.try_send(msg.to_string()).is_ok())
             .count()
@@ -231,7 +282,7 @@ mod tests {
 
     fn member(id: &str) -> Member {
         Member { user_id: id.into(), handle: id.into(),
-                 display_name: id.into(), avatar_url: String::new() }
+                 display_name: id.into(), avatar_url: String::new() , cos: serde_json::Value::Null}
     }
 
     #[tokio::test]

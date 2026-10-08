@@ -837,6 +837,33 @@ pub fn routes() -> Router<AppState> {
 // == s` (dropping a stale entry from the view while leaving it in the stored
 // map), and it never re-checks ownership.
 
+/// The worn cosmetics for one user, as `slot -> value`, for the room roster.
+/// Mirrors `cosmetics.equipped(db, [uid])[uid]` in the Python: a slot only
+/// counts when the stored key is in the catalogue AND is declared for that
+/// slot, so a stale or mismatched key is dropped rather than drawn.
+pub async fn equipped_one(pool: &sqlx::SqlitePool, user_id: &str) -> serde_json::Value {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT slots FROM equipped_cosmetics WHERE user_id = ?1")
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+    let Some((raw,)) = row else { return serde_json::Value::Null };
+    let Ok(slots) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw) else {
+        return serde_json::Value::Null;
+    };
+    let mut out = serde_json::Map::new();
+    for (slot, key) in slots {
+        let Some(k) = key.as_str() else { continue };
+        if let Some(item) = CATALOG.iter().find(|c| c.id == k) {
+            if item.slot == slot {
+                out.insert(slot, serde_json::Value::String(item.value.to_string()));
+            }
+        }
+    }
+    if out.is_empty() { serde_json::Value::Null } else { serde_json::Value::Object(out) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1041,3 +1068,4 @@ mod tests {
         assert!(find("nope").is_none());
     }
 }
+

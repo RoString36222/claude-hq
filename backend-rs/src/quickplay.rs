@@ -62,9 +62,6 @@ pub const ROOM_TTL: f64 = 3.0 * 3600.0;
 /// Pydantic's `Field(max_length=8)` on `game`: a *string length* cap, not an
 /// allowlist. "chess" passes this and fails the allowlist; "platformer" 422s.
 const MAX_GAME_LEN: usize = 8;
-/// Byte for byte as the Python emits it -- the client renders it verbatim.
-const BAD_GAME: &str = "Quick Play has Kart, Platformer, Blaster, Golf and Code Typing Race";
-
 /// The five queues. A closed set, so an array beats a map: `_queues[g]` can
 /// never be a missing key and the GAMES iteration order is a compile-time fact.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -79,6 +76,36 @@ pub enum Game {
 /// Iteration order is load-bearing: `status` scans the queues in this order, so
 /// even a corrupted double-entry resolves the same way every time.
 pub const GAMES: [Game; 5] = [Game::Kart, Game::Plat, Game::Fps, Game::Golf, Game::Type];
+
+/// What Quick Play may offer: the catalog, minus whatever this Arena's engine
+/// cannot actually referee. Matching two people into a room where no game ever
+/// starts is worse than telling them the game is not available, so the queue
+/// stays shut for a game this build does not have.
+///
+/// Driven off `protocol::GAMES`, the same table the room welcome advertises, so
+/// porting a game opens its queue with no second edit here. When the Rust Arena
+/// runs all five this returns the whole catalog and [`bad_game`] becomes
+/// [`BAD_GAME`] again, byte for byte.
+fn runnable() -> Vec<Game> {
+    GAMES.into_iter().filter(|g| crate::protocol::runs(g.as_str())).collect()
+}
+
+/// The unknown-game error. Over all of [`GAMES`] this is the Python's literal
+/// byte for byte -- `quickplay_lists_what_this_arena_runs` pins that -- and the
+/// client renders whatever comes back verbatim.
+fn game_list(games: &[Game]) -> String {
+    let names: Vec<&str> = games.iter().map(|g| g.short_name()).collect();
+    match names.split_last() {
+        Some((last, [])) => format!("Quick Play has {last}"),
+        Some((last, rest)) => format!("Quick Play has {} and {last}", rest.join(", ")),
+        None => "Quick Play is not available on this Arena".to_string(),
+    }
+}
+
+/// ...narrowed to the games this Arena really runs.
+fn bad_game() -> String {
+    game_list(&runnable())
+}
 
 impl Game {
     /// No trimming and no lowercasing, matching `game not in GAMES`: " kart",
@@ -102,6 +129,18 @@ impl Game {
             Game::Fps => "fps",
             Game::Golf => "golf",
             Game::Type => "type",
+        }
+    }
+
+    /// How [`bad_game`] lists the game -- the short label the Python's literal
+    /// uses, not the room's display name ("Platformer", not "Platformer Rush").
+    fn short_name(self) -> &'static str {
+        match self {
+            Game::Kart => "Kart",
+            Game::Plat => "Platformer",
+            Game::Fps => "Blaster",
+            Game::Golf => "Golf",
+            Game::Type => "Code Typing Race",
         }
     }
 
@@ -500,10 +539,14 @@ async fn join(State(st): State<crate::AppState>, req: Request) -> Response {
         Ok(g) => g,
         Err(errs) => return err422(errs),
     };
-    let Some(game) = Game::parse(&raw_game) else {
-        // Returned before anything is clocked or touched: the caller is not
-        // dequeued, their match is not dropped, their `seen` is not refreshed.
-        return Json(json!({"state": "error", "error": BAD_GAME})).into_response();
+    // Both rejections are returned before anything is clocked or touched: the
+    // caller is not dequeued, their match is not dropped, their `seen` is not
+    // refreshed. A game this Arena cannot referee is rejected the same way as
+    // one that does not exist -- the alternative is a match into a room where
+    // nothing ever starts.
+    let game = match Game::parse(&raw_game) {
+        Some(g) if crate::protocol::runs(g.as_str()) => g,
+        _ => return Json(json!({"state": "error", "error": bad_game()})).into_response(),
     };
 
     // One timestamp for the whole call, as the Python's single `_now()`.
@@ -575,6 +618,30 @@ mod tests {
 
     fn q(inner: &Inner, game: Game) -> Vec<String> {
         inner.queues[game as usize].iter().map(|(u, _)| u.clone()).collect()
+    }
+
+    #[test]
+    fn quickplay_lists_what_this_arena_runs() {
+        // Over the whole catalog, the Python's literal, byte for byte.
+        assert_eq!(
+            game_list(&GAMES),
+            "Quick Play has Kart, Platformer, Blaster, Golf and Code Typing Race"
+        );
+        // And the queue is only open for games the engine can referee, so
+        // nobody is matched into a room where nothing starts.
+        let open = runnable();
+        assert!(open.iter().all(|g| crate::protocol::runs(g.as_str())));
+        assert!(open.contains(&Game::Kart), "kart is refereed, so it must be offered");
+        for g in GAMES {
+            if !crate::protocol::runs(g.as_str()) {
+                assert!(!open.contains(&g), "{} is offered but cannot run", g.as_str());
+                assert!(!bad_game().contains(g.short_name()));
+            }
+        }
+        // English, not a comma-spliced list, however many are left.
+        assert_eq!(game_list(&[Game::Kart]), "Quick Play has Kart");
+        assert_eq!(game_list(&[Game::Kart, Game::Fps]), "Quick Play has Kart and Blaster");
+        assert_eq!(game_list(&[]), "Quick Play is not available on this Arena");
     }
 
     #[test]

@@ -30,6 +30,7 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 use crate::realtime::{Clock, Registry, Ticker};
+use crate::results::Recorder;
 use crate::rooms::{Member, RoomManager};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap};
@@ -782,6 +783,8 @@ struct HubInner {
     rooms: RoomManager,
     reg: Arc<Registry>,
     clock: Clock,
+    /// Where a finished game is written down. Empty in the unit tests.
+    results: Recorder,
     state: Mutex<HashMap<String, KartRoom>>,
 }
 
@@ -790,8 +793,14 @@ fn tick_key(room_id: &str) -> String {
 }
 
 impl KartHub {
-    pub fn new(rooms: RoomManager, reg: Arc<Registry>, clock: Clock) -> Self {
-        Self { inner: Arc::new(HubInner { rooms, reg, clock, state: Mutex::new(HashMap::new()) }) }
+    pub fn new(
+        rooms: RoomManager, reg: Arc<Registry>, clock: Clock, results: Recorder,
+    ) -> Self {
+        Self {
+            inner: Arc::new(HubInner {
+                rooms, reg, clock, results, state: Mutex::new(HashMap::new()),
+            }),
+        }
     }
 
     pub fn now(&self) -> f64 {
@@ -1000,6 +1009,14 @@ impl KartHub {
     async fn flush(&self, room_id: &str, out: Out) {
         let rooms = &self.inner.rooms;
         for (to, payload) in out.items {
+            // A finished game is written down from the event the server itself
+            // sends the lobby or the room -- once per game, never from a
+            // client. The Python records at the same point, in valley._flush.
+            if matches!(to, To::All | To::Users(..)) {
+                if let Some(g) = crate::results::is_done(&payload) {
+                    self.inner.results.record_later(g, &payload);
+                }
+            }
             let s = payload.to_string();
             match to {
                 To::All => {

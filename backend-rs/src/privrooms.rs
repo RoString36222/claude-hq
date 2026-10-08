@@ -1213,6 +1213,12 @@ async fn delete_room_rows(tx: &mut SqliteConnection, room_id: &str) -> Result<()
 /// and the caller's role, or None when there is no such room. It lives here
 /// because the membership rules do, and the ws route is main.rs's to register.
 #[allow(dead_code)]
+/// Python's `rooms.is_private_id`: a private room is any id with the `r_`
+/// prefix. The websocket admission check keys off this.
+pub fn is_private_id(room_id: &str) -> bool {
+    room_id.starts_with("r_")
+}
+
 pub async fn admission(
     pool: &SqlitePool,
     room_id: &str,

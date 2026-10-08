@@ -179,7 +179,7 @@ function checkBoot(d){
   }
   SERVER_BOOT=d.boot;
 }
-function applyPayload(d){ checkBoot(d); STATE=d; render(); pulse(); if(typeof hqOnState==="function") hqOnState(d); }
+function applyPayload(d){ checkBoot(d); STATE=d; render(); pulse(); if(typeof hqOnState==="function") hqOnState(d); if(typeof focusOnState==="function") focusOnState(d); }
 function startPoll(){ if(pollTimer) return; load(); pollTimer=setInterval(load, CONFIG.refreshMs||5000); }
 function stopPoll(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
 // re-arm the poll loop with the current cadence (after a settings change)

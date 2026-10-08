@@ -318,3 +318,13 @@ class EscapingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class FocusComboTests(unittest.TestCase):
+    """HQ 2.1 combo + focus: ×1, +0.25 every 30 minutes of unbroken work, up to ×2."""
+
+    def test_multiplier_steps(self):
+        out = run_js(["focusMult"], "var FOCUS_STEP = 30*60*1000, FOCUS_MAX = 2;\n"
+                     "out([0, 29, 30, 61, 90, 119, 120, 600].map(function(m){ return focusMult(m*60000); }));")
+        self.assertEqual(out, [1, 1, 1.25, 1.5, 1.75, 1.75, 2, 2])

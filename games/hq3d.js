@@ -679,7 +679,9 @@ function mount(el, api){
     if(acc.scr > 0.18){ acc.scr = 0; desks.forEach(function(D){ if(!filter || projectOf(D.s) === filter) drawScreen(D, t); }); drawLeds(); }
     if(acc.wall > 1){ acc.wall = 0; drawWall(t); }
     // the table
-    holo.rim.material.emissiveIntensity = 2.6 + Math.sin(t*2)*0.5*k;
+    holo.rim.material.emissiveIntensity = (2.6 + Math.sin(t*2)*0.5*k)*(0.8 + combo*0.35);
+    var warm = combo - 1; holo.rim.material.emissive.setRGB(0.37 + warm*0.63, 0.83 - warm*0.13, 0.9 - warm*0.62);
+    holo.light.intensity = holo.light.userData.base*(0.8 + combo*0.4);
     holo.stripe.t.offset.y = -t*0.25*k;
     var sy = (t*0.45*k) % 1; holo.scan.position.y = 1.15 + sy*3.4; var sr = (2.35 - sy*0.35)/2.2; holo.scan.scale.set(sr, sr, 1); holo.scan.material.opacity = 0.8*(1 - sy);
     var pa = holo.pgeo.attributes.position.array;
@@ -707,6 +709,9 @@ function mount(el, api){
     Object.keys(worlds).forEach(function(k){ if(worlds[k].onData) worlds[k].onData(sessions); });
   };
   // The building's paint/accent/sign changed (customisation): every floor redraws what shows it.
+  // Focus combo (×1..×2): the holo-table glows brighter and warms from cyan to amber.
+  var combo = 1;
+  inst.setCombo = function(m){ combo = E.clamp(+m || 1, 1, 2); };
   inst.lookChanged = function(){ Object.keys(worlds).forEach(function(k){ if(worlds[k].onLook) worlds[k].onLook(); }); };
   /* ---------- other people in this HQ (live, from the Arena) ---------- */
   // inst.setPeers([{u, n, w, x, z, r, a}]): x/z in cm, r in degrees, a 0 idle / 1 walk / 2 run.

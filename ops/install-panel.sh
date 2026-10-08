@@ -92,7 +92,12 @@ if ! docker run --rm -v "$DIR/backend":/cfg:ro \
   echo "  Inspect: $CADDY"; exit 1
 fi
 
-docker compose --profile panel up -d --build
+# Named services, never a bare `up -d`: that would bring up every service in
+# the default profile too, rebuilding `app` from the compose defaults -- the
+# PYTHON Arena -- on a host that may be running the Rust one. The panel is new
+# and Caddy needs the Caddyfile this installer just wrote; `app` is none of this
+# installer's business.
+docker compose --profile panel up -d --build panel caddy
 sleep 6
 docker compose --profile panel ps
 

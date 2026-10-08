@@ -350,3 +350,17 @@ out({went:went, opened:opened, state:QP.state, toast:toasts[0]});""")
         self.assertEqual(out["opened"], ["kart"])
         self.assertEqual(out["state"], "idle")
         self.assertIn("3 players", out["toast"])
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class OneLevelTests(unittest.TestCase):
+    """Your level is the Arena's HQ level when paired (the one your building and friends see),
+    else the 30-day season level: never two different numbers called 'your level'."""
+
+    def test_hq_level_wins_when_paired(self):
+        out = run_js(["myLevel"], """
+var STATE={season:{level:26, rank:"Prompt Deity", pct:65.7, xpIntoLevel:2314, xpForLevel:3520}};
+var PROG={data:null}; var a=myLevel();
+PROG.data={level:30, rank:"Prompt Deity", xpIntoLevel:3860, xpForLevel:4000}; var b=myLevel();
+out([a.level, a.hq, b.level, b.hq, b.pct]);""")
+        self.assertEqual(out, [26, False, 30, True, 96.5])

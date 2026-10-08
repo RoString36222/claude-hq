@@ -278,7 +278,7 @@ function questMetric(m, hist, dex, season){
   if(m==="totalTools") return tt.tools||0;
   if(m==="totalArtifacts") return tt.artifacts||0;
   if(m==="activeDays") return tt.activeDays||0;
-  if(m==="level") return season.level||0;
+  if(m==="level") return ((typeof myLevel==="function") ? myLevel().level : season.level)||0;
   if(m==="caughtCount") return (dex&&(dex.caughtCount!=null?dex.caughtCount:dex.caught))||0;
   if(m==="shinyCount") return (dex&&dex.shinyCount)||0;
   if(m==="apexCount") return dexApexCount(dex);
@@ -424,8 +424,9 @@ function renderQuests(){
   var caught=(dex&&(dex.caughtCount!=null?dex.caughtCount:dex.caught))||0;
   var total=(dex&&dex.total)||48;
   var shiny=(dex&&dex.shinyCount)||0;
-  var lvl=season.level!=null?season.level:0;
-  var lvlPct=season.pct!=null?Math.max(0,Math.min(100,Math.round(season.pct))):0;
+  var me=(typeof myLevel==="function") ? myLevel() : season;
+  var lvl=me.level!=null?me.level:0;
+  var lvlPct=me.pct!=null?Math.max(0,Math.min(100,Math.round(me.pct))):0;
   var cw=$("questsCollection"); if(cw){ cw.innerHTML="";
     [ {ic:"📕", title:"Pokédex", cur:caught, target:total},
       {ic:"✦", title:"Shiny hunter", cur:shiny, target:5},

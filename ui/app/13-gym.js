@@ -379,12 +379,13 @@ function trainerName(){
 function renderTrainerCard(){
   var card=$("trainerCard"); if(!card) return;
   var s=(STATE&&STATE.season)||{};
-  var av=$("tcAvatar"), lv="Lv."+(s.level!=null?s.level:"—");
+  var me=(typeof myLevel==="function") ? myLevel() : s;
+  var av=$("tcAvatar"), lv="Lv."+(me.level!=null?me.level:"—");
   if(av && typeof trainerSVG==="function"){
     av.innerHTML = trainerSVG(resolveTrainerSpec(), 46) + '<span class="tc-lvpip" id="tcLvl">'+esc(lv)+'</span>';
   } else if($("tcLvl")){ $("tcLvl").textContent = lv; }
   $("tcName").textContent = "Trainer "+trainerName();
-  $("tcRank").textContent = (s.rank||"")+(s.pct!=null?(" · "+Math.round(s.pct)+"% to next"):"");
+  $("tcRank").textContent = (me.rank||"")+(me.pct!=null?(" · "+Math.round(me.pct)+"% to next"):"");
   var ach=(s.achievements||[]); var unlocked=ach.filter(function(a){return a.unlocked;}).length;
   var chips=[];
   chips.push('<span class="tc-chip">🏅 <b>'+unlocked+'</b>/'+ach.length+' badges</span>');

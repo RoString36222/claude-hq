@@ -4,7 +4,8 @@ try{ RECAP_PREV=JSON.parse(localStorage.getItem("hq_snapshot")||"null"); }catch(
 function snapshotNow(){
   var s=(STATE&&STATE.season)||{}, stages={};
   ((STATE&&STATE.sessions)||[]).forEach(function(x){ if(x.sessionId) stages[x.sessionId]=creatureStage(x.creature||{}); });
-  return { ts:Date.now(), level:s.level!=null?s.level:0,
+  var me=(typeof myLevel==="function") ? myLevel() : s;
+  return { ts:Date.now(), level:me.level!=null?me.level:0, hq:!!me.hq,
            caught:(TRAINER_DEX&&TRAINER_DEX.caughtCount)||0, stages:stages };
 }
 function saveSnapshot(){ try{ localStorage.setItem("hq_snapshot", JSON.stringify(snapshotNow())); }catch(e){} }
@@ -14,7 +15,7 @@ function maybeRecap(){
   RECAP_DONE=true;
   if(!RECAP_PREV || !RECAP_PREV.ts || (Date.now()-RECAP_PREV.ts) < RECAP_AWAY_MS){ saveSnapshot(); return; }
   var cur=snapshotNow(), bits=[];
-  var lv=cur.level-(RECAP_PREV.level||0); if(lv>0) bits.push("leveled up to Lv."+cur.level);
+  var lv=(!!RECAP_PREV.hq===!!cur.hq) ? cur.level-(RECAP_PREV.level||0) : 0;      // never compare a season level with an HQ level if(lv>0) bits.push("leveled up to Lv."+cur.level);
   var caught=cur.caught-(RECAP_PREV.caught||0); if(caught>0) bits.push("caught "+caught+" new species");
   var evolved=0, fresh=0, ps=RECAP_PREV.stages||{};
   Object.keys(cur.stages).forEach(function(sid){
@@ -348,6 +349,8 @@ function checkCelebration(season){
   var lvl=season.level;
   var unlocked={}; (season.achievements||[]).forEach(function(a){ if(a.unlocked) unlocked[a.id]=a.name; });
   if(!CELEB_READY){ PREV_LEVEL=lvl; PREV_ACH=unlocked; CELEB_READY=true; return; }
+  // with the Arena, level-ups are the HQ level's (23-progress.js celebrates those); the 30-day season only counts unpaired
+  if(typeof progLevel==="function" && progLevel()) lvl=null;
   if(lvl!=null && PREV_LEVEL!=null && lvl>PREV_LEVEL){ toast("🎉 Level "+lvl+"!","level"); confettiBurst(); logEvent("🎉","Reached Level "+lvl); }
   Object.keys(unlocked).forEach(function(id){
     if(!PREV_ACH[id]){ toast("🏅 Achievement: "+unlocked[id],"ach"); confettiBurst(); logEvent("🏅","Achievement unlocked: "+unlocked[id]); }

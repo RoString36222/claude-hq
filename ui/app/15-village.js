@@ -7,8 +7,9 @@ function troopPower(s){ // original "power" score from real activity
 var VILLAGE_STATUS={working:["⚔","on the attack"],waiting:["🛡","awaiting orders"],idle:["💤","resting"],stale:["🏚","retired"]};
 function renderVillage(){
   var s=(STATE&&STATE.season)||{}, sess=(STATE&&STATE.sessions)||[];
-  var lvl=s.level!=null?s.level:1;
-  $("vilTHBadge").textContent=lvl; $("vilTHsub").textContent="Level "+lvl+" · "+(s.rank||"Adventurer");
+  var me=(typeof myLevel==="function") ? myLevel() : s;
+  var lvl=me.level!=null?me.level:1;
+  $("vilTHBadge").textContent=lvl; $("vilTHsub").textContent="Level "+lvl+" · "+(me.rank||"Adventurer");
   // resources from real stats
   var gold=0, mana=0; sess.forEach(function(x){ var tk=x.tokens||{}; gold+=(tk.estCostUSD||0); mana+=(tk.output||0); });
   var ember=(s.totals&&s.totals.prompts)||0;

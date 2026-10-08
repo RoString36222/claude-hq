@@ -9,7 +9,16 @@ function progGet(path){
 function progMs(ms){ if(ms==null) return "–"; ms=Math.max(0,ms|0); var m=Math.floor(ms/60000), s=(ms%60000)/1000; return (m?m+":":"")+(m&&s<10?"0":"")+s.toFixed(2); }
 
 // Your HQ level from the Arena (falls back to the season level the page shows when unpaired).
-function progLevel(){ return PROG.data && PROG.data.level ? PROG.data.level : null; }
+function progLevel(){ return (typeof PROG!=="undefined" && PROG && PROG.data && PROG.data.level) ? PROG.data.level : null; }
+// The one level everything calls "your level": the Arena's HQ level (all-time session XP + game XP)
+// when paired, else this machine's 30-day season level. {level, rank, pct, xpIntoLevel, xpForLevel, hq}
+function myLevel(){
+  var d=(typeof PROG!=="undefined" && PROG) ? PROG.data : null;
+  if(d && d.level) return {level:d.level, rank:d.rank, xpIntoLevel:d.xpIntoLevel|0, xpForLevel:d.xpForLevel|0,
+    pct: d.xpForLevel ? Math.round(1000*(d.xpIntoLevel||0)/d.xpForLevel)/10 : 0, hq:true};
+  var s=(typeof STATE!=="undefined" && STATE && STATE.season) || {};
+  return {level:s.level!=null ? s.level : null, rank:s.rank, xpIntoLevel:s.xpIntoLevel|0, xpForLevel:s.xpForLevel|0, pct:s.pct||0, hq:false};
+}
 function progLoad(force){
   if(typeof PROG==="undefined" || !PROG) return;          // called before this file ran (startup)
   if(PROG.loading || (!force && Date.now()-PROG.at < 5*60*1000)) return;
@@ -24,6 +33,8 @@ function progLoad(force){
     if(seen && res.j.level>seen) progLevelUp(seen, res.j.level);
     try { localStorage.setItem("hq_seen_level", String(res.j.level)); } catch(e){}
     if(prev!==res.j.level && HQ3D && HQ3D.inst && !HQ3D.visit && HQ3D.inst.lookChanged) HQ3D.inst.lookChanged();
+    // everywhere that shows your level now shows this one
+    if(typeof STATE!=="undefined" && STATE){ if(typeof renderSeason==="function") renderSeason(STATE.season); if(typeof renderTrainerCard==="function") renderTrainerCard(); }
   }).catch(function(){ PROG.loading=false; });
 }
 function progLevelUp(from, to){

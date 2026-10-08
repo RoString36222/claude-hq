@@ -31,7 +31,6 @@ function hqApi(){
     openSession: hqOpen,
     go: function(v){ hqModeSave("classic"); setView(v); },
     onFilter: function(p){ HQ3D.filter = p || null; hqRenderCrew(); },
-    // your HQ level is the season level the page already shows (the Base grows with it)
     // your HQ level: the Arena's (sessions + games) when paired, else the season level the page shows
     level: function(){ var a=(typeof progLevel==="function") && progLevel(); if(a) return a; var s=(STATE && STATE.season) || {}; return Math.max(1, (s.level|0) || 1); },
     look: function(){ return Object.assign({}, hqLook(), {decor: (window.HQ_MYCOS || {}).decor,

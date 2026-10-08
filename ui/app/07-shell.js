@@ -131,12 +131,15 @@ function fileAction(a){
 
 function renderSeason(s){
   if(!s) return;
-  $("lvlNum").textContent = s.level!=null? s.level : "—";
-  var pct = Math.max(0,Math.min(100, s.pct||0));
+  // your level: the Arena's HQ level when paired (the same number your building, trainer card and
+  // friends see), else the 30-day season; the season's own level is named beside it
+  var me = (typeof myLevel==="function") ? myLevel() : {level:s.level, rank:s.rank, pct:s.pct, xpIntoLevel:s.xpIntoLevel, xpForLevel:s.xpForLevel};
+  $("lvlNum").textContent = me.level!=null? me.level : "—";
+  var pct = Math.max(0,Math.min(100, me.pct||0));
   $("ring").style.setProperty("--pct", pct);
-  $("rank").firstChild.textContent = s.rank || "Adventurer";
-  $("ranksub").textContent = "Season progress";
-  $("xpText").textContent = (s.xpIntoLevel||0).toLocaleString()+" / "+(s.xpForLevel||0).toLocaleString()+" XP";
+  $("rank").firstChild.textContent = me.rank || "Adventurer";
+  $("ranksub").textContent = me.hq ? "HQ level · 30-day season Lv "+(s.level!=null?s.level:"—") : "Season progress";
+  $("xpText").textContent = (me.xpIntoLevel||0).toLocaleString()+" / "+(me.xpForLevel||0).toLocaleString()+" XP";
   $("xpFill").style.width = pct+"%";
 
   var tt = s.totals||{};

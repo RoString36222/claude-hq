@@ -72,3 +72,23 @@ class EngineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SoundPack(unittest.TestCase):
+    def test_every_game_calls_the_sound_pack(self):
+        src = {n: open(os.path.join(ROOT, "games", n + ".js"), encoding="utf-8").read()
+               for n in ("engine", "kart", "platformer", "fps", "golf", "hq3d")}
+        for name in ("ui", "count", "go", "jump", "coin", "shot", "putt", "sink", "finish", "levelup", "door"):
+            self.assertIn("  %s: function(a" % name, src["engine"], name)
+        self.assertIn("E.engineSound(ek)", src["kart"])
+        # a different engine voice for every vehicle
+        import re as _re
+        voices = _re.findall(r'eng: "(\w+)"', src["kart"])
+        self.assertEqual(len(voices), len(set(voices)))
+        for v in voices:
+            self.assertIn("  %s:" % v, src["engine"])
+        self.assertIn('E.sfx("jump")', src["platformer"])
+        self.assertIn('E.sfx("shot"', src["fps"])
+        self.assertIn('sfx("putt"', src["golf"])
+        self.assertIn('E.sfx("door")', src["hq3d"])
+        self.assertIn("calm() ? 0 : 0.5", src["engine"])      # off by default under Calm

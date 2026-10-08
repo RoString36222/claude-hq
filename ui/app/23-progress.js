@@ -33,6 +33,7 @@ function progLevelUp(from, to){
   var got=unlocks.filter(function(u){ return u[0]>from && u[0]<=to; }).map(function(u){ return u[1]; });
   toast("⬆ HQ level "+to+"!"+(got.length ? " New at your base: "+got.join(", ")+"." : " Your tower grew."),"level");
   if(typeof confettiBurst==="function" && !hqCalm()) confettiBurst();
+  if(window.HQV && HQV.engine) HQV.engine.sfx("levelup");
   announce("HQ level "+to);
 }
 setInterval(function(){ if(VIEW==="hq" || VIEW==="arena") progLoad(false); }, 30000);

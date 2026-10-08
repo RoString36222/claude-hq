@@ -352,3 +352,22 @@ function srvLoad(){
     else if(!open && SRV.timer){ clearInterval(SRV.timer); SRV.timer=null; }
   }).observe(back, {attributes:true, attributeFilter:["class"]});
 })();
+
+/* ---- one volume for every game sound (HQ 2.1 sound pack) ---- */
+function sfxVolumeNow(){
+  if(window.HQV && HQV.engine) return HQV.engine.sfxVolume();
+  var v=null; try { v=localStorage.getItem("hq_sfx"); } catch(e){}
+  if(v===null || v==="") return (document.documentElement.classList.contains("hq-calm") || (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches)) ? 0 : 0.5;
+  return Math.max(0, Math.min(1, parseFloat(v) || 0));
+}
+(function(){
+  var r=$("setSfx"), lbl=$("setSfxVal"); if(!r) return;
+  function show(){ var v=Math.round(sfxVolumeNow()*100); r.value=v; lbl.textContent = v ? v+"%" : "off"; }
+  var back=$("settingsBack"); if(back) new MutationObserver(function(){ if(back.classList.contains("open")) show(); }).observe(back, {attributes:true, attributeFilter:["class"]});
+  r.addEventListener("input", function(){
+    var v=(+r.value||0)/100;
+    if(window.HQV && HQV.engine) HQV.engine.sfxSetVolume(v); else { try { localStorage.setItem("hq_sfx", String(v)); } catch(e){} }
+    lbl.textContent = v ? Math.round(v*100)+"%" : "off";
+  });
+  r.addEventListener("change", function(){ if(window.HQV && HQV.engine) HQV.engine.sfx("coin"); });
+})();

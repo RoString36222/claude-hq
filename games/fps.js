@@ -418,6 +418,7 @@ function makeGame(host, opts){
       var K = V.players[m.k], D = V.players[m.v];
       if(K) K.kills = m.kills|0; if(D){ D.deaths = m.deaths|0; D.dead = true; D.deadAt = t; }
       V.feed.unshift({k: K ? K.name : "?", v: D ? D.name : "?", w: m.w|0, hs: !!m.hs, at: t, mine: m.k === myId() || m.v === myId()});
+      if(m.k === myId()) E.sfx("hit");
       if(V.feed.length > 5) V.feed.length = 5;
       if(m.v === myId()){ V.dead = true; V.deadAt = t; V.deaths = m.deaths|0; V.hp = 0; say((K ? K.name : "Someone")+" got you. Respawning in "+RESPAWN+" seconds."); }
       if(m.k === myId()){ V.kills = m.kills|0; say("You got "+(D ? D.name : "someone")+(m.hs ? " with a headshot" : "")+". "+V.kills+" kills."); }
@@ -553,6 +554,7 @@ function makeGame(host, opts){
   // Fire one shot: drawn at once; in a match the server says whether it hit.
   function fire(t){
     var wp = W(), e = eye();
+    E.sfx("shot", {w: V.w});
     V.mag[V.w]--; V.nextShot = t + wp.interval; V.n++; V.shots++;
     V.flashAt = t; V.kick = calm() ? 0.15 : 1;
     var sp = FS.spreadOf(V.n, V.w), yawD = V.yaw*180/Math.PI, pitD = V.pitch*180/Math.PI;

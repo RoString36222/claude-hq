@@ -731,6 +731,7 @@ function makeGame(host, opts){
     if(f.holed) P.sunk = true;
     if(f.quiet){ return; }
     var mine = P.uid === myId();
+    if(mine && f.holed && window.HQV && HQV.engine) HQV.engine.sfx("sink");
     if(mine){
       P.av.anim = f.holed ? A_CHEER : f.oob ? A_SAD : A_IDLE;
       P.cheerUntil = now() + 1.6;
@@ -761,6 +762,7 @@ function makeGame(host, opts){
       V.pending = true; V.pendingAt = now();
       V.shotUndo = {hole: n, ball: P.ball.slice(), strokes: P.strokes[n]|0, done: P.done};
     }
+    if(window.HQV && HQV.engine) HQV.engine.sfx("putt", {power: power});
     var res = GS.simulate(V.hole, P.ball[0], P.ball[1], ax, az, power, true, clk);
     P.strokes[n] = (P.strokes[n]|0) + 1 + (res.oob ? GS.C.OOB_PENALTY : 0);
     if(res.holed) P.done = true;

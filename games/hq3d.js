@@ -648,7 +648,7 @@ function mount(el, api){
       if(api.onWorld) api.onWorld(name);
     };
     if(instant || E.calm()){ go(); return; }
-    fading = true; fadeEl.classList.add("on");
+    fading = true; fadeEl.classList.add("on"); E.sfx("door");
     setTimeout(function(){ go(); fadeEl.classList.remove("on"); setTimeout(function(){ fading = false; }, 260); }, 260);
   }
   function onWheel(e){ e.preventDefault(); view.zoom = E.clamp(view.zoom*Math.exp(-e.deltaY*0.0012), 0.6, 3.5); }

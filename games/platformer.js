@@ -367,7 +367,7 @@ function makeGame(host, opts){
     if(m.ev === "coin"){
       var K = V.ps[m.user]; if(K) K.coins = m.n|0;
       if(V.play === "coop"){ V.taken[m.id] = 1; V.roomCoins = m.room|0; }
-      if(m.user === myId()){ V.mine[m.id] = 1; delete V.pend[m.id]; coinSay(m.n|0); }
+      if(m.user === myId()){ V.mine[m.id] = 1; delete V.pend[m.id]; coinSay(m.n|0); E.sfx("coin"); }
       if(R3) R3.coinPop(m.id, m.user === myId() || V.play === "coop");
       return;
     }
@@ -430,7 +430,7 @@ function makeGame(host, opts){
     if(V.play === "coop") say(info.win ? "Co-op goal reached with "+(info.total|0)+" coins" : "Time's up with "+(info.total|0)+" of "+(info.goal|0)+" coins");
     else if(mine) say(mine.dnf ? "Run over: did not finish" : "Run over: place "+mine.place+", "+fmt(mine.ms));
   }
-  function cdShow(t){ cdBox.textContent = t; cdBox.classList.remove("hidden"); cdBox.dataset.until = String(now() + 1.1); }
+  function cdShow(t){ E.sfx(t === "GO!" ? "go" : /^\d$/.test(t) ? "count" : "finish"); cdBox.textContent = t; cdBox.classList.remove("hidden"); cdBox.dataset.until = String(now() + 1.1); }
 
   /* ---------- the character controller ---------- */
   function physics(P, dt, wx, wz, jp){
@@ -443,8 +443,8 @@ function makeGame(host, opts){
     // jump: buffered a moment before landing, allowed a moment after leaving an edge (coyote)
     if(jp) P.buf = JBUF; else P.buf = Math.max(0, P.buf - dt);
     P.coy = P.ground ? COYOTE : Math.max(0, P.coy - dt);
-    if(P.buf > 0 && P.jumps === 0 && (P.ground || P.coy > 0)){ P.vy = JUMP; P.jumps = 1; P.ground = false; P.coy = 0; P.buf = 0; P.jumpAt = now(); }
-    else if(jp && !P.ground && P.jumps < 2 && P.coy <= 0){ P.vy = DJUMP; P.jumps = 2; P.buf = 0; P.djAt = now(); }
+    if(P.buf > 0 && P.jumps === 0 && (P.ground || P.coy > 0)){ P.vy = JUMP; P.jumps = 1; P.ground = false; P.coy = 0; P.buf = 0; P.jumpAt = now(); E.sfx("jump"); }
+    else if(jp && !P.ground && P.jumps < 2 && P.coy <= 0){ P.vy = DJUMP; P.jumps = 2; P.buf = 0; P.djAt = now(); E.sfx("djump"); }
     P.vy = Math.max(P.vy - GRAV*dt, -FALL_MAX);
     // vertical: land on tops, bump heads on bottoms
     var ny = P.y + P.vy*dt, was = P.ground; P.ground = false;
@@ -518,7 +518,7 @@ function makeGame(host, opts){
       if(V.mine[i] || V.pend[i] || (V.play === "coop" && V.taken[i])) continue;
       if(PL.segDist(a0, a1, L.coins[i]) <= COIN_TAKE){
         if(V.mode === "mp") V.pend[i] = now();
-        else { V.mine[i] = 1; P.coins++; coinSay(P.coins); }
+        else { V.mine[i] = 1; P.coins++; coinSay(P.coins); E.sfx("coin"); }
         if(R3) R3.coinPop(i, true);
       }
     }

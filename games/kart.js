@@ -93,9 +93,10 @@ var KT = (function(){
 var VMAX = 30, VREV = 8, CAR_R = 0.85, TURN = 2.3, DRIFT_TURN = 1.45, STEP = 1/120;
 var SEND_EVERY = 0.05, KEEPALIVE = 1.0, CD_SECS = 3;
 var INTERP = 0.1, JIT_MAX = 0.2, EXTRAP = 0.25, SNAPS = 10;
-var CARS = [{f: "vehicle-truck-red", n: "Red truck"}, {f: "vehicle-truck-green", n: "Green truck"},
-            {f: "vehicle-truck-purple", n: "Purple truck"}, {f: "vehicle-truck-yellow", n: "Yellow truck"},
-            {f: "vehicle-motorcycle", n: "Motorcycle"}];
+// each vehicle has its own engine voice (games/engine.js ENGINES)
+var CARS = [{f: "vehicle-truck-red", n: "Red truck", eng: "v8"}, {f: "vehicle-truck-green", n: "Green truck", eng: "diesel"},
+            {f: "vehicle-truck-purple", n: "Purple truck", eng: "turbo"}, {f: "vehicle-truck-yellow", n: "Yellow truck", eng: "hotrod"},
+            {f: "vehicle-motorcycle", n: "Motorcycle", eng: "bike"}];
 var CAR_SWATCH = ["#d8433a", "#3aa86a", "#8a3fd8", "#e0b325", "#3a6fd8"];
 var LAP_CHOICES = [1, 2, 3, 4, 5];
 
@@ -420,7 +421,7 @@ function makeGame(host, opts){
     var mine = (rows || []).filter(function(r){ return r.user && r.user.userId === myId(); })[0];
     if(mine) say(mine.dnf ? "Race over: did not finish" : "Race over: place "+mine.place+", "+fmt(mine.ms));
   }
-  function cdShow(t){ cdBox.textContent = t; cdBox.classList.remove("hidden"); cdBox.dataset.until = String(now() + 1.1); }
+  function cdShow(t){ E.sfx(t === "GO!" ? "go" : /^\d$/.test(t) ? "count" : "finish"); cdBox.textContent = t; cdBox.classList.remove("hidden"); cdBox.dataset.until = String(now() + 1.1); }
 
   /* ---------- driving ---------- */
   // Keep a car on its tile's road; returns the wall normal it was pushed along, or null.
@@ -474,6 +475,10 @@ function makeGame(host, opts){
     var tgt = 900 + 6500*Math.pow(clamp(Math.abs(C.v)/VMAX, 0, 1), 0.85) + (thr > 0 ? 700*thr : 0);
     if(Math.abs(C.v) >= VMAX*0.985 && thr > 0.5) tgt = 7600 + (calm() ? 0 : 250*Math.sin(now()*40));
     C.rpm += (tgt - C.rpm)*(1 - Math.exp(-dt*6));
+    var ek = (CARS[C.car|0] || CARS[0]).eng;
+    if(V.eng && V.engKind !== ek){ V.eng.stop(); V.eng = null; }
+    if(!V.eng){ V.eng = E.engineSound(ek); V.engKind = ek; }   // HQ 2.1 sound pack: your vehicle's own engine, following the revs
+    V.eng.set(C.rpm);
     C.wheel += C.v*dt/0.3;
     return sp;
   }
@@ -930,6 +935,7 @@ function makeGame(host, opts){
     function(){ V.note = "Couldn't load the tracks."; renderMenu(); });
   if(!raf) raf = requestAnimationFrame(frame);
   V.destroy = function(){
+    if(V.eng){ V.eng.stop(); V.eng = null; }
     V.alive = false;
     if(raf) cancelAnimationFrame(raf); raf = 0;
     window.removeEventListener("resize", onResize); if(ro) ro.disconnect();

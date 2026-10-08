@@ -3726,6 +3726,46 @@ def _food_kind(v):
     return isinstance(v, str) and v in FOOD_EFFECTS
 
 
+_PROC_STARTED = time.time()
+
+
+def _ps_self(pid=None):
+    """(cpu %, rss MB) of a process from ps (macOS and Linux), or (None, None)."""
+    try:
+        out = subprocess.run(["ps", "-o", "%cpu=,rss=", "-p", str(pid or os.getpid())],
+                             capture_output=True, text=True, timeout=3).stdout.split()
+        return float(out[0]), round(float(out[1]) / 1024.0, 1)
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return None, None
+
+
+def _machine_ram_mb():
+    try:
+        if sys.platform == "darwin":
+            return round(int(subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True,
+                                            timeout=3).stdout.strip()) / 1048576)
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return round(int(line.split()[1]) / 1024)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def server_stats():
+    """This HQ server's own numbers, for Settings: memory, CPU, uptime, threads, version."""
+    cpu, rss = _ps_self()
+    try:
+        load = [round(x, 2) for x in os.getloadavg()]
+    except OSError:
+        load = None
+    return {"version": APP_VERSION, "python": sys.version.split()[0], "pid": os.getpid(), "boot": BOOT_ID,
+            "uptimeSecs": int(time.time() - _PROC_STARTED), "cpuPct": cpu, "rssMb": rss,
+            "machineRamMb": _machine_ram_mb(), "cpus": os.cpu_count(), "load": load,
+            "threads": threading.active_count(), "platform": sys.platform}
+
+
 def hq_crew_counts():
     """How many sessions are working / need you / are idle right now (HQ 2.1).
     The only thing about your sessions an open HQ shares: three counts."""
@@ -4719,6 +4759,18 @@ class Handler(BaseHTTPRequestHandler):
                 code, resp = 502, {"error": "arena request failed: %s" % e}
             self._send(code or 502, json.dumps(
                 _overlay_food_effects(resp) if code == 200 else resp))
+            return
+
+        if path == "/api/server-stats":
+            self._send(200, json.dumps(server_stats()))
+            return
+
+        if path == "/api/arena/server-stats":
+            try:
+                code, resp = arena.server_stats()
+            except Exception as e:
+                code, resp = 502, {"error": "arena request failed: %s" % e}
+            self._send(code or 502, json.dumps(resp))
             return
 
         if path in ("/api/arena/progress", "/api/arena/leaderboards", "/api/arena/profile"):

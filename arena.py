@@ -955,3 +955,11 @@ def profile(user_id):
     if user_id != "me" and not _valid_user_id(user_id):
         return 400, {"error": "bad user id"}
     return _request("GET", base + "/v1/profile/" + user_id, token=token)
+
+
+def server_stats():
+    """The Arena's own numbers (memory, CPU, uptime, rooms, people online, game loops)."""
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("GET", base + "/v1/server/stats", token=token)

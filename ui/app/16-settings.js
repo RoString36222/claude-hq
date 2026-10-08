@@ -305,3 +305,50 @@ $("warroom").addEventListener("mouseleave",function(){ WR_PAUSED=false; });
 $("warroomClose").addEventListener("click",closeWarroom);
 $("menuWarRoom").addEventListener("click",function(){ openWarroom(); closeMenu(); });
 
+
+/* ---- server stats in Settings (HQ 2.1): this HQ server and the Arena ---- */
+var SRV = {timer:null};
+function srvFmtUp(s){ s=s|0; var d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60);
+  return d ? d+"d "+h+"h" : h ? h+"h "+m+"m" : m+"m "+(s%60)+"s"; }
+function srvCard(title, rows, note){
+  var c=document.createElement("div"); c.className="srv-card";
+  var h=document.createElement("b"); h.textContent=title; c.appendChild(h);
+  rows.forEach(function(r){ if(r[1]==null || r[1]==="") return;
+    var d=document.createElement("div"); d.className="srv-kv";
+    var k=document.createElement("span"); k.textContent=r[0]; var v=document.createElement("span"); v.textContent=String(r[1]);
+    d.appendChild(k); d.appendChild(v); c.appendChild(d); });
+  if(note){ var n=document.createElement("small"); n.className="hint"; n.textContent=note; c.appendChild(n); }
+  return c;
+}
+function srvLoad(){
+  var box=$("srvStats"); if(!box) return;
+  var get=function(p){ return fetch(p,{cache:"no-store"}).then(function(r){ return r.json().then(function(j){ return {ok:r.ok, code:r.status, j:j}; }); }).catch(function(){ return {ok:false, code:0, j:{}}; }); };
+  Promise.all([get("/api/server-stats"), get("/api/arena/server-stats")]).then(function(res){
+    var me=res[0].j||{}, ar=res[1];
+    box.textContent="";
+    box.appendChild(srvCard("This HQ (your machine)", [
+      ["Memory", me.rssMb!=null ? me.rssMb+" MB"+(me.machineRamMb ? " of "+Math.round(me.machineRamMb/1024)+" GB" : "") : null],
+      ["CPU", me.cpuPct!=null ? me.cpuPct+"% of a core" : null],
+      ["Uptime", me.uptimeSecs!=null ? srvFmtUp(me.uptimeSecs) : null],
+      ["Load", me.load ? me.load.join(" · ")+" ("+me.cpus+" cores)" : null],
+      ["Threads", me.threads], ["Version", me.version ? me.version+" · Python "+me.python : null]]));
+    if(ar.ok){ var a=ar.j;
+      box.appendChild(srvCard("Arena ("+(a.impl==="py" ? "Python" : a.impl)+")", [
+        ["Memory", a.rssMb!=null ? a.rssMb+" MB" : null], ["CPU", a.cpuPct!=null ? a.cpuPct+"% of a core" : null],
+        ["Uptime", srvFmtUp(a.uptimeSecs)], ["Online", a.online+" in "+a.rooms+" room"+(a.rooms===1?"":"s")],
+        ["Game loops", a.gameLoops+" of "+a.gameLoopsMax+(a.overruns ? " · "+a.overruns+" late ticks" : "")],
+        ["Database", a.db+(a.dbMb!=null ? " · "+a.dbMb+" MB" : "")], ["Version", a.version]]));
+    } else {
+      box.appendChild(srvCard("Arena", [], ar.code===404 ? "This Arena doesn't report stats yet: update it with ops/release.sh."
+        : ar.code===400 ? "Not paired: connect in the Arena tab." : "The Arena didn't answer."));
+    }
+  });
+}
+(function(){
+  var back=$("settingsBack"); if(!back) return;
+  new MutationObserver(function(){
+    var open=back.classList.contains("open");
+    if(open && !SRV.timer){ srvLoad(); SRV.timer=setInterval(srvLoad, 5000); }
+    else if(!open && SRV.timer){ clearInterval(SRV.timer); SRV.timer=null; }
+  }).observe(back, {attributes:true, attributeFilter:["class"]});
+})();

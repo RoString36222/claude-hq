@@ -56,3 +56,11 @@ async def test_level_is_scored_on_the_server(client):
     assert lvl > 1
     # a client cannot send a level
     assert client.put("/v1/hq/me", headers=auth(ta), json={"level": 99}).status_code == 422
+
+
+async def test_server_stats_for_settings(client):
+    _a, ta = await make_user("ann", 1)
+    assert client.get("/v1/server/stats").status_code == 401
+    s = client.get("/v1/server/stats", headers=auth(ta)).json()
+    assert s["impl"] == "py" and s["rssMb"] > 0 and s["uptimeSecs"] >= 0 and s["gameLoopsMax"] >= 1
+    assert {"rooms", "online", "gameLoops", "overruns", "db", "cpuPct"} <= set(s)

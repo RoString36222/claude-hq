@@ -1951,3 +1951,10 @@ html.hq-calm #confetti{display:none!important}
 .gb-who{all:unset;cursor:pointer;font-weight:600}
 .gb-who:hover{text-decoration:underline}
 .gb-who:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.srv-row{display:grid;gap:6px}
+.srv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
+.srv-card{background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius-sm);padding:8px 10px;display:grid;gap:3px;font-size:12.5px}
+.srv-card b{font-size:12.5px;margin-bottom:2px}
+.srv-kv{display:flex;justify-content:space-between;gap:10px}
+.srv-kv span:first-child{color:var(--muted)}
+.srv-kv span:last-child{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}

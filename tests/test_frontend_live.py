@@ -397,3 +397,15 @@ VCHAN.on=true; hqTalkFollow(); var a=[ARENA.roomId, TALK.offer];
 VCHAN.on=false; HQ_REMOTE.open=false; HQ3D.world="base"; TALK.offer=null; hqTalkFollow();
 out([a, ARENA.roomId, went]);""")
         self.assertEqual(out, [["lobby", "hq_city"], "lobby", []])
+
+
+class TalkPanelMentionsTests(unittest.TestCase):
+    """The HQ talk panel has the Arena chat's @mentions: one shared picker, its own list."""
+
+    def test_wiring(self):
+        html = dashboard.assemble_index()
+        self.assertIn('id="hqTalkInput" maxlength="500" autocomplete="off" data-mentions="hqTalkMentions"', html)
+        self.assertIn('id="hqTalkMentions" role="listbox"', html)
+        self.assertIn('arenaMentionBind(i);          // @mentions, as in the Arena\'s chat', html)
+        self.assertIn('if(e.key==="Enter" && !e.defaultPrevented)', html)
+        self.assertIn('arenaRenderMessageText(txt, line.text)', html)

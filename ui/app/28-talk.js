@@ -44,13 +44,18 @@ function hqTalkRefused(rid){
   hqTalkRender();
 }
 
+// One line, drawn like the Arena's chat: avatar, name (@handle on hover), time, and the text with
+// @mentions highlighted (yours and @here/@channel stand out).
 function hqTalkLineEl(line){
   var row=document.createElement("div"); row.className="talk-line"+(line.sys?" sys":"")+(line.you?" you":"");
   if(line.sys){ row.textContent=line.text; return row; }
-  var who=document.createElement("b"); who.textContent=line.who; row.appendChild(who);
-  var txt=document.createElement("span"); txt.className="talk-txt";
+  if(line.avatar){ var img=document.createElement("img"); img.src=line.avatar; img.alt=""; img.loading="lazy"; row.appendChild(img); }
+  var body=document.createElement("div"); body.className="talk-body-line";
+  var who=document.createElement("b"); who.textContent=line.who; if(line.handle) who.title="@"+line.handle;
+  var at=document.createElement("small"); at.className="talk-at"; at.textContent=new Date(line.at).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+  var txt=document.createElement("div"); txt.className="talk-txt";
   if(typeof arenaRenderMessageText==="function") arenaRenderMessageText(txt, line.text); else txt.textContent=line.text;
-  row.appendChild(txt);
+  body.appendChild(who); body.appendChild(at); body.appendChild(txt); row.appendChild(body);
   return row;
 }
 function hqTalkLine(line){
@@ -110,7 +115,13 @@ function hqTalkVoice(){
 (function(){
   var t=$("hqTalkToggle"); if(t) t.addEventListener("click", function(){ TALK.open=!TALK.open; try { localStorage.setItem("hq_talk_open", TALK.open ? "1" : "0"); } catch(e){} hqTalkRender(); });
   var s=$("hqTalkSend"); if(s) s.addEventListener("click", hqTalkSend);
-  var i=$("hqTalkInput"); if(i) i.addEventListener("keydown", function(e){ if(e.key==="Enter"){ e.preventDefault(); hqTalkSend(); } });
+  var i=$("hqTalkInput");
+  if(i){
+    if(typeof arenaMentionBind==="function") arenaMentionBind(i);          // @mentions, as in the Arena's chat
+    // Enter sends, unless the mention list is open (then Enter picks a name)
+    // (the mention handler runs first and marks the event handled when it picks a name)
+    i.addEventListener("keydown", function(e){ if(e.key==="Enter" && !e.defaultPrevented){ e.preventDefault(); hqTalkSend(); } });
+  }
   var v=$("hqTalkVoice"); if(v) v.addEventListener("click", hqTalkVoice);
   setInterval(function(){
     hqTalkFollow();

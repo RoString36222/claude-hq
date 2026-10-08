@@ -596,7 +596,8 @@ function arenaOpenSocket(){
       }
       else if(m.type==="join" || m.type==="leave"){
         arenaRenderLobby(m.members||[]);
-        if(m.member) arenaChatSys(arenaWho(m.member) + (m.type==="join" ? " joined" : " left"));
+        // your own other tabs / sockets coming and going is not news
+        if(m.member && !(ARENA.you && m.member.userId === ARENA.you.userId)) arenaChatSys(arenaWho(m.member) + (m.type==="join" ? " joined" : " left"));
         if(m.type==="leave") voiceOnLeave(m);
       }
       else if(m.type==="say"){
@@ -1007,14 +1008,18 @@ function arenaRenderMessageText(container, text){
   container.appendChild(document.createTextNode(text.slice(last)));
 }
 
-/* ---- @mention autocomplete: type "@" to tag someone in the lobby ---- */
-var MENTION = {open:false, items:[], sel:0, start:-1};
+/* ---- @mention autocomplete: type "@" to tag someone in the room ---- */
+// Shared by every chat box (the Arena's, and the HQ's talk panel: ui/app/28-talk.js). Each input
+// names its suggestion list in data-mentions; MENTION.input is the one being typed in.
+var MENTION = {open:false, items:[], sel:0, start:-1, input:null};
+function arenaMentionList(){ var i = MENTION.input || $("arenaChatInput"); return i && $(i.getAttribute("data-mentions") || "arenaMentions"); }
 function arenaMentionClose(){
   MENTION.open = false;
-  var el = $("arenaMentions"); if(el){ el.classList.add("hidden"); el.innerHTML = ""; }
+  ["arenaMentions", "hqTalkMentions"].forEach(function(id){ var el = $(id); if(el){ el.classList.add("hidden"); el.innerHTML = ""; } });
 }
-function arenaMentionScan(){
-  var i = $("arenaChatInput"); if(!i) return;
+function arenaMentionScan(ev){
+  var i = (ev && ev.target) || MENTION.input || $("arenaChatInput"); if(!i) return;
+  MENTION.input = i;
   var pos = i.selectionStart || 0, before = i.value.slice(0, pos);
   var m = before.match(/(?:^|\s)@([\w-]*)$/);        // an @token the caret is inside
   if(!m){ arenaMentionClose(); return; }
@@ -1031,11 +1036,11 @@ function arenaMentionScan(){
   });
   var matches = specials.concat(people).slice(0, 8);
   if(!matches.length){ arenaMentionClose(); return; }
-  MENTION = {open:true, items:matches, sel:0, start:pos - m[1].length - 1};
+  MENTION = {open:true, items:matches, sel:0, start:pos - m[1].length - 1, input:i};
   arenaMentionRender();
 }
 function arenaMentionRender(){
-  var el = $("arenaMentions"); if(!el) return;
+  var el = arenaMentionList(); if(!el) return;
   el.innerHTML = "";
   MENTION.items.forEach(function(p, idx){
     var row = document.createElement("div");
@@ -1056,7 +1061,7 @@ function arenaMentionRender(){
   el.classList.remove("hidden");
 }
 function arenaMentionAccept(idx){
-  var i = $("arenaChatInput"); var p = MENTION.items[idx]; if(!i || !p){ arenaMentionClose(); return; }
+  var i = MENTION.input || $("arenaChatInput"); var p = MENTION.items[idx]; if(!i || !p){ arenaMentionClose(); return; }
   var pos = i.selectionStart || 0;
   var insert = "@" + (p.handle||"") + " ";
   i.value = i.value.slice(0, MENTION.start) + insert + i.value.slice(pos);
@@ -1065,10 +1070,9 @@ function arenaMentionAccept(idx){
   arenaMentionClose(); i.focus();
 }
 
-(function(){
-  var f = $("arenaChatForm"), i = $("arenaChatInput");
-  if(f) f.addEventListener("submit", function(e){ e.preventDefault(); arenaChatSend(); });
-  if(i){
+// Wire a chat input for @mentions (arrow keys, Enter/Tab to pick, Escape to close).
+function arenaMentionBind(i){
+  if(!i) return;
     i.addEventListener("input", arenaMentionScan);
     i.addEventListener("keydown", function(e){
       if(!MENTION.open) return;
@@ -1078,6 +1082,10 @@ function arenaMentionAccept(idx){
       else if(e.key === "Escape"){ e.preventDefault(); arenaMentionClose(); }
     });
     i.addEventListener("blur", function(){ setTimeout(arenaMentionClose, 120); });
-  }
+}
+(function(){
+  var f = $("arenaChatForm"), i = $("arenaChatInput");
+  if(f) f.addEventListener("submit", function(e){ e.preventDefault(); arenaChatSend(); });
+  arenaMentionBind(i);
 })();
 

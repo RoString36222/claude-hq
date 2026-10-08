@@ -384,6 +384,11 @@ function hqNetSync(){
     return;
   }
   if(HQNET.shared){ hqNetClose(); }
+  // the Arena socket is on its way to this place (talk follows you): wait for it, don't open a second one
+  if(want && typeof hqTalkRoom==="function" && hqTalkRoom()===want && typeof TALK!=="undefined" && TALK.refused!==want){
+    if(HQNET.ws) hqNetClose();
+    return;
+  }
   if(want===HQNET.room) return;
   hqNetClose();
   if(!want) return;

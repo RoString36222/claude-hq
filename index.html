@@ -503,7 +503,8 @@
       <div class="talk-top"><b id="hqTalkHead">💬</b><button class="hbtn ghost icon" id="hqTalkToggle" type="button" aria-controls="hqTalkBody" aria-expanded="true">–</button></div>
       <div id="hqTalkBody" class="talk-body">
         <div class="talk-log" id="hqTalkLog" aria-live="polite"></div>
-        <div class="talk-row"><label class="sr-only" for="hqTalkInput">Message</label><input id="hqTalkInput" maxlength="500" autocomplete="off"><button class="hbtn" id="hqTalkSend" type="button">Send</button></div>
+        <div class="talk-row"><label class="sr-only" for="hqTalkInput">Message</label><input id="hqTalkInput" maxlength="500" autocomplete="off" data-mentions="hqTalkMentions" aria-autocomplete="list" aria-controls="hqTalkMentions"><button class="hbtn" id="hqTalkSend" type="button">Send</button>
+          <div class="arena-mentions hidden" id="hqTalkMentions" role="listbox" aria-label="Mention someone"></div></div>
         <button class="hbtn ghost talk-voice" id="hqTalkVoice" type="button">🎙 Join voice</button>
       </div>
     </div>

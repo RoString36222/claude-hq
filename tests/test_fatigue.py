@@ -533,9 +533,11 @@ class PayloadWiringTests(unittest.TestCase):
         proj = os.path.join(self._tmp.name, "proj")
         os.makedirs(proj)
         self._orig = {k: getattr(dashboard, k) for k in
-                      ("PROJECTS_DIR", "MEALS_PATH", "load_config", "get_live_agents",
-                       "build_payload_memo")}
+                      ("PROJECTS_DIR", "CURSOR_PROJECTS_DIR", "MEALS_PATH", "load_config",
+                       "get_live_agents", "build_payload_memo")}
         dashboard.PROJECTS_DIR = self._tmp.name
+        dashboard.CURSOR_PROJECTS_DIR = os.path.join(self._tmp.name, "cursor-empty")
+        os.makedirs(dashboard.CURSOR_PROJECTS_DIR)
         dashboard.MEALS_PATH = os.path.join(self._tmp.name, "meals.json")
         # A user prompt 70 min ago, then a tool that has been running for 40 min.
         now = time.time()

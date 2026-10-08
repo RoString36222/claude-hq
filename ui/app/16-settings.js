@@ -223,7 +223,8 @@ function renderTranscript(d){
               : (role==="system") ? "system" : "claude";
       var row=el("div","tr-ev "+cls);
       var k=el("div","tr-k");
-      k.textContent = cls==="you"?"You":cls==="tool"?(ev.tool||ev.name||"tool"):cls==="system"?"System":"Claude";
+      var who = (d.source==="cursor") ? "Cursor" : "Claude";
+      k.textContent = cls==="you"?"You":cls==="tool"?(ev.tool||ev.name||"tool"):cls==="system"?"System":who;
       var x=el("div","tr-x");
       var txt = ev.text||ev.detail||ev.content||ev.summary||"";
       if(TR_Q) x.innerHTML = highlight(txt, TR_Q);   // highlight() escapes then wraps matches

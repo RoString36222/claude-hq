@@ -6,6 +6,7 @@ Stdlib only; transcripts are written to a temp dir, nothing touches ~/.claude.
 import json
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -341,6 +342,136 @@ class SessionRouteTests(unittest.TestCase):
         for route in ("/api/transcript/%s", "/api/session/%s/export.md"):
             self.assertEqual(self.get(route % SID), 404)
         self.assertEqual(self.calls, [SID, SID])
+
+
+class CursorTranscriptTests(unittest.TestCase):
+    """Cursor agent JSONL: role/message records, <user_query>, <timestamp>."""
+
+    SID = "33333333-3333-4333-8333-333333333333"
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._saved = (dashboard.PROJECTS_DIR, dashboard.CURSOR_PROJECTS_DIR)
+        dashboard.PROJECTS_DIR = os.path.join(self.tmp, "claude")
+        dashboard.CURSOR_PROJECTS_DIR = os.path.join(self.tmp, "cursor")
+        os.makedirs(dashboard.PROJECTS_DIR)
+        self.path = os.path.join(
+            dashboard.CURSOR_PROJECTS_DIR, "Users-ada-demo",
+            "agent-transcripts", self.SID, self.SID + ".jsonl")
+        os.makedirs(os.path.dirname(self.path))
+        # A nested subagent must not be picked up as its own session.
+        sub = os.path.join(os.path.dirname(self.path), "subagents",
+                           "44444444-4444-4444-8444-444444444444.jsonl")
+        os.makedirs(os.path.dirname(sub))
+        with open(sub, "w", encoding="utf-8") as f:
+            f.write("{}\n")
+
+    def tearDown(self):
+        dashboard.PROJECTS_DIR, dashboard.CURSOR_PROJECTS_DIR = self._saved
+        with dashboard._scan_lock:
+            dashboard._scan_cache.pop(self.path, None)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, lines):
+        with open(self.path, "w", encoding="utf-8") as f:
+            for row in lines:
+                f.write(json.dumps(row) + "\n")
+
+    def test_user_query_tools_and_clock(self):
+        stamp = ("<timestamp>Thursday, Sep 24, 2026, 1:44 PM (UTC+5:30)</timestamp>\n"
+                 "<user_query>fix the milestone bug</user_query>")
+        self._write([
+            {"role": "user", "message": {"content": [{"type": "text", "text":
+                "<git_status>snapshot only</git_status>"}]}},
+            {"role": "user", "message": {"content": [{"type": "text", "text": stamp}]}},
+            {"role": "assistant", "message": {"content": [
+                {"type": "text", "text": "Looking now."},
+                {"type": "tool_use", "name": "Read", "input": {"path": "/tmp/a.py"}},
+            ]}},
+            {"role": "user", "message": {"content": [{"type": "text", "text":
+                "<user_query>Briefly inform the user about the task result and "
+                "perform any follow-up actions.</user_query>"}]}},
+            {"role": "assistant", "message": {"content": [
+                {"type": "text", "text": "Fixed the consumer."},
+            ]}},
+            {"type": "turn_ended", "status": "success"},
+        ])
+        agg = dashboard.scan_file(self.path)
+        self.assertEqual(agg["source"], "cursor")
+        self.assertEqual(agg["folder"], "Users-ada-demo")
+        self.assertEqual(agg["prompt_count"], 1)
+        self.assertEqual(agg["first_prompt"], "fix the milestone bug")
+        self.assertEqual(agg["ai_title"], "fix the milestone bug")
+        self.assertIn("Fixed the consumer", agg["last_reply"])
+        self.assertEqual(agg["per_day"]["2026-09-24"]["prompts"], 1)
+        self.assertEqual(agg["per_day"]["2026-09-24"]["tools"], 1)
+        self.assertEqual(agg["files"]["/tmp/a.py"]["action"], "read")
+        self.assertEqual(dashboard.find_transcript(self.SID), self.path)
+        paths = list(dashboard.iter_transcript_paths())
+        self.assertEqual(paths, [self.path])
+        events = dashboard.get_transcript_events(self.path)
+        roles = [e["role"] for e in events]
+        self.assertEqual(roles, ["you", "claude", "tool", "claude"])
+
+    def test_slug_resolves_hyphenated_directory(self):
+        d = tempfile.mkdtemp(prefix="hq-cursor-")
+        try:
+            slug = d.lstrip(os.sep).replace(os.sep, "-")
+            self.assertEqual(os.path.realpath(dashboard._path_from_project_slug(slug)),
+                             os.path.realpath(d))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_card_heading_uses_cursor_chat_title(self):
+        self._write([
+            {"role": "user", "message": {"content": [{"type": "text", "text":
+                "<user_query>You're reading it exactly right and the first "
+                "message is long</user_query>"}]}},
+        ])
+        db = os.path.join(self.tmp, "state.vscdb")
+        con = sqlite3.connect(db)
+        con.execute(
+            "CREATE TABLE composerHeaders (composerId TEXT PRIMARY KEY, value TEXT)")
+        con.execute(
+            "INSERT INTO composerHeaders (composerId, value) VALUES (?, ?)",
+            (self.SID, json.dumps({
+                "name": "  Extend chat data support  ",
+                "subtitle": "Edited dashboard.py",
+            })))
+        con.commit()
+        con.close()
+        saved = dashboard.CURSOR_STATE_DB
+        dashboard.CURSOR_STATE_DB = db
+        with dashboard._cursor_title_lock:
+            dashboard._cursor_title_cache["key"] = None
+        try:
+            card = dashboard.build_archived_session(self.path, self.SID, status="idle")
+            self.assertEqual(card["title"], "Extend chat data support")
+            self.assertIn("You're reading it exactly right", card["firstPrompt"])
+            # A blank stored name keeps the first message.
+            con = sqlite3.connect(db)
+            con.execute("UPDATE composerHeaders SET value=? WHERE composerId=?",
+                        (json.dumps({"name": "   "}), self.SID))
+            con.commit()
+            con.close()
+            os.utime(db, None)
+            with dashboard._cursor_title_lock:
+                dashboard._cursor_title_cache["key"] = None
+            card = dashboard.build_archived_session(self.path, self.SID, status="idle")
+            self.assertEqual(card["title"], "You're reading it exactly right and the first message is long")
+        finally:
+            dashboard.CURSOR_STATE_DB = saved
+            with dashboard._cursor_title_lock:
+                dashboard._cursor_title_cache["key"] = None
+
+    def test_resume_refuses_cursor(self):
+        self._write([
+            {"role": "user", "message": {"content": [{"type": "text", "text":
+                "<user_query>hello</user_query>"}]}},
+        ])
+        code, resp = dashboard.action_resume(self.SID)
+        self.assertEqual(code, 400)
+        self.assertIn("Cursor", resp["error"])
 
 
 if __name__ == "__main__":

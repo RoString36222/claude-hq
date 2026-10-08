@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.1.0** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
+**Version 2.1.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -22,10 +22,14 @@ Walk in, see who needs you, and play with friends while they work.
 |:---:|:---:|:---:|
 | <img src="docs/screenshots/valley.png" alt="The Valley game menu"> | <img src="docs/screenshots/game-kart.png" alt="Kart Racing with speedometer and minimap"> | <img src="docs/screenshots/game-golf.png" alt="Mini Golf, Windmill Lane"> |
 
-Claude HQ reads your live sessions (`claude agents --json`) and your session transcripts
-(`~/.claude/projects/**/*.jsonl`) and turns them into a single command center: what every tab is
-working on right now, what it would cost at API list prices, a searchable archive of every past session, and a whole
-Pokémon-style collection layer on top for fun.
+Claude HQ reads your live Claude Code sessions (`claude agents --json`) and the transcripts
+already on disk — Claude Code at `~/.claude/projects/**/*.jsonl`, and Cursor agent chats at
+`~/.cursor/projects/*/agent-transcripts/*/*.jsonl` — and turns them into a single command center:
+what every tab is working on right now, what it would cost at API list prices, a searchable archive
+of every past session, and a whole Pokémon-style collection layer on top for fun. A Cursor card's
+heading is the chat title Cursor already saved locally, with the first message as a fallback when
+that title is missing. Cursor chats have no token totals (Cursor doesn't write them into those
+files), so their cost shows as zero. The optional Arena share stays Claude-only.
 
 It runs entirely on your machine and binds to `127.0.0.1` only. **Your conversations never leave your
 computer.** (The one exception is that some creature packs load sprite images from a public CDN —
@@ -307,6 +311,14 @@ and feature guide.
 
 ## Changelog
 
+- **2.1.2** — **Cursor cards use the chat's own title.** The heading is the name Cursor shows
+  for that agent chat (read locally from Cursor's state database on this machine), so a card says
+  "Extend chat data support" instead of the opening message. Chats with no saved title still use
+  the first message. Nothing from that database is sent anywhere.
+- **2.1.1** — **Cursor sessions next to Claude.** Agent chats Cursor already saved under
+  `~/.cursor/projects` show up on the same board as Claude Code: a Cursor badge on the card,
+  recent ones in Working or Idle, older ones in the archive. Still local files only — no token,
+  no upload. Arena's opt-in daily counts stay Claude-only. Codex is not read yet.
 - **2.1.0** — **HQ 2.1: Play Together.**
   - **Base and walk-in**: the HQ is a building on a plaza; walk through the door into the Lobby
     (reception) and on into Mission Control. The Base grows with your HQ level and is customisable.

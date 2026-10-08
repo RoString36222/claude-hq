@@ -145,3 +145,41 @@ class ProgressBoundary(unittest.TestCase):
         html = dashboard.assemble_index()
         for needle in ('id="tcardBack"', 'id="gbWrap"', 'id="hqMyCard"', "//@include" not in html and "function tcardOpen"):
             self.assertTrue(needle in html if isinstance(needle, str) else needle)
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class PageScriptRunsToTheEnd(unittest.TestCase):
+    """The page script is ONE script (ui/app/*): a top-level throw in an early file
+    silently drops every later file. Run it under node with a forgiving DOM stub
+    and check the last line is reached, both in classic and in 3D-HQ start mode."""
+
+    def run_page(self, mode):
+        html = dashboard.assemble_index()
+        import re as _re
+        scripts = _re.findall(r"<script>\n(.*?)\n</script>", html, _re.S)
+        body = scripts[-1] + "\n;globalThis.__END__ = [typeof progLoad, typeof invOpen, typeof hqToggle].join(' ');"
+        stub = r"""
+const mk = () => new Proxy(function(){}, {get:(t,k)=>{ if(k===Symbol.toPrimitive) return ()=>''; if(k==='classList') return {add(){},remove(){},toggle(){},contains(){return false}};
+  if(k==='dataset') return {}; if(k==='value'||k==='textContent'||k==='innerHTML') return ''; if(k==='checked') return false; if(k==='length') return 0;
+  if(k==='getContext') return ()=>null; if(k==='then') return undefined; return mk(); }, apply:()=>mk(), construct:()=>mk(), set:()=>true});
+const store = {hq_mode: MODE};
+globalThis.localStorage = {getItem:k=>store[k]??null, setItem:(k,v)=>{store[k]=String(v)}, removeItem:k=>{delete store[k]}};
+globalThis.window = globalThis; globalThis.document = mk(); globalThis.navigator = {userAgent:'node'}; globalThis.location = mk();
+globalThis.matchMedia = ()=>({matches:false, addEventListener(){}}); globalThis.fetch = ()=>new Promise(()=>{});
+globalThis.requestAnimationFrame = ()=>0; globalThis.setInterval = ()=>0; globalThis.MutationObserver = function(){ return {observe(){}}; };
+globalThis.EventSource = undefined; globalThis.WebSocket = function(){}; globalThis.Audio = function(){};
+globalThis.getComputedStyle = ()=>mk(); globalThis.addEventListener = ()=>{}; globalThis.performance = {now:()=>0};
+globalThis.sessionStorage = globalThis.localStorage; globalThis.crypto = {getRandomValues:a=>a};
+const pending = []; globalThis.setTimeout = (f)=>{ pending.push(f); return 0; };
+try { (0, eval)(require('fs').readFileSync(0, 'utf8')); } catch(e) { console.log('THROW', e && e.message); }
+for (let i = 0; i < 50 && pending.length; i++) { const f = pending.shift(); try { f(); } catch(e) { console.log('TIMER', e && e.message); } }
+console.log('END', globalThis.__END__);
+""".replace("MODE", json.dumps(mode))
+        r = subprocess.run(["node", "-e", stub], input=body, capture_output=True, text=True, timeout=60)
+        return r.stdout
+
+    def test_reaches_the_end(self):
+        for mode in ("classic", "3d"):
+            out = self.run_page(mode)
+            self.assertIn("END function function function", out, mode + ": " + out[-600:])
+            self.assertNotIn("TIMER", out, mode + ": " + out[-600:])

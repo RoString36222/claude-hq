@@ -380,7 +380,8 @@ function makeGame(host, opts){
     (view.players || []).forEach(function(p){
       var uid = p.user && p.user.userId; if(!uid) return; seen[uid] = 1;
       var P = ensure(uid, {name: nameOf(p.user), slot: p.slot|0, ch: clamp(p.char|0, 0, CHARS.length - 1), kills: p.kills|0,
-        deaths: p.deaths|0, hp: p.hp|0, dead: !!p.dead, away: !!p.away, gone: !!p.gone, w: p.w|0});
+        deaths: p.deaths|0, hp: p.hp|0, dead: !!p.dead, away: !!p.away, gone: !!p.gone, w: p.w|0,
+        cos: (p.user && p.user.cos) || null});
       if(uid === myId()){
         V.mySlot = p.slot|0; V.kills = p.kills|0; V.deaths = p.deaths|0; V.hp = p.hp|0;
         if(fresh || V.life !== (p.e|0) || view.phase === "warmup"){
@@ -872,7 +873,9 @@ function makeGame(host, opts){
     vScene.add(new THREE.HemisphereLight(0xffffff, 0x667755, 2.3));
     var vSun = new THREE.DirectionalLight(0xffffff, 1.4); vSun.position.set(2, 3, 2); vScene.add(vSun);
     var GUN_S = 0.2, guns = [model("blaster-repeater"), model("blaster")], gunHold = new THREE.Group(); vScene.add(gunHold);
-    guns.forEach(function(g, i){ g.traverse(function(n){ if(n.isMesh){ n.castShadow = false; n.receiveShadow = false; } });
+    var mySkin = window.HQ_MYCOS && hex(window.HQ_MYCOS.blaster, null);       // HQ 2.1: the blaster skin you wear
+    guns.forEach(function(g, i){ g.traverse(function(n){ if(n.isMesh){ n.castShadow = false; n.receiveShadow = false;
+      if(mySkin != null){ n.material = n.material.clone(); n.material.color.setHex(mySkin); } } });
       g.scale.setScalar(GUN_S); g.rotation.y = Math.PI; g.visible = i === 0; gunHold.add(g); });
     var flash = null;
     if(burstTex){
@@ -982,7 +985,9 @@ function makeGame(host, opts){
       if(acts.die){ acts.die.setLoop(THREE.LoopOnce, 1); acts.die.clampWhenFinished = true; }
       // the blaster is held out in front at the right hand (barrel along the model's +z, its facing)
       var gun = [model("blaster-repeater"), model("blaster")];
-      gun.forEach(function(gn, i){ gn.scale.setScalar(0.34); gn.position.set(-0.36, 0.74, 0.3); gn.visible = i === 0; holder.add(gn); });
+      var skin = P.cos && hex(P.cos.blaster, null);
+      gun.forEach(function(gn, i){ gn.scale.setScalar(0.34); gn.position.set(-0.36, 0.74, 0.3); gn.visible = i === 0; holder.add(gn);
+        if(skin != null) gn.traverse(function(n){ if(n.isMesh){ n.material = n.material.clone(); n.material.color.setHex(skin); } }); });
       var tg = tag(P.name.slice(0, 18), CHAR_SWATCH[P.ch|0] || "#ffffff"); tg.position.set(0, 2.15, 0); holder.add(tg);
       P.mesh = {g: holder, mixer: mixer, acts: acts, cur: null, gun: gun, tag: tg, ch: P.ch}; scene.add(holder);
     }

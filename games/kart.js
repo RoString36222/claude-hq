@@ -304,7 +304,7 @@ function makeGame(host, opts){
     if(useServer(false) && R3){ R3.clearTrack(); }
     var tr = TRACKS[id]; if(!tr) return;
     resetRace(); V.mode = "practice"; V.track = tr; V.laps = laps; V.lapTimes = [];
-    var C = ensureCar("me", {name: "You", car: clamp(ksave().car|0, 0, CARS.length - 1)});
+    var C = ensureCar("me", {name: "You", car: clamp(ksave().car|0, 0, CARS.length - 1), cos: window.HQ_MYCOS || null});
     placeOnGrid(C, 0);
     V.phase = "grid"; V.goAt = now() + CD_SECS;
     showStage(true); if(R3) R3.buildTrack();
@@ -331,7 +331,8 @@ function makeGame(host, opts){
     var seen = {};
     (view.players || []).forEach(function(p){
       var uid = p.user && p.user.userId; if(!uid) return; seen[uid] = 1;
-      var C = ensureCar(uid, {name: nameOf(p.user), car: clamp(p.car|0, 0, CARS.length - 1), place: p.place|0, fin: p.fin, dnf: !!p.dnf, away: !!p.away});
+      var C = ensureCar(uid, {name: nameOf(p.user), car: clamp(p.car|0, 0, CARS.length - 1), place: p.place|0, fin: p.fin, dnf: !!p.dnf, away: !!p.away,
+                              cos: (p.user && p.user.cos) || null});
       if(fresh || view.phase === "grid") placeOnGrid(C, p.slot|0);
       if(view.phase === "race" && (fresh || uid !== myId())){
         C.x = (+p.x || 0)/100; C.z = (+p.z || 0)/100; C.yaw = (+p.r || 0)*Math.PI/180;
@@ -844,6 +845,9 @@ function makeGame(host, opts){
         if(n.name === "body") parts.body = n;
         if(n.name === "fork") parts.fork = n;
       });
+      // HQ 2.1 cosmetics: a car paint the driver wears tints the body for everyone
+      var paint = C.cos && hex(C.cos.kart, null);
+      if(paint != null && parts.body) parts.body.traverse(function(n){ if(n.isMesh){ n.material = n.material.clone(); n.material.color.setHex(paint); } });
       if(C.uid !== myId()){ var tg = tag(C.name.slice(0, 18)); tg.position.set(0, 2.3, 0); wrapG.add(tg); parts.tag = tg; }
       C.mesh = {g: wrapG, p: parts}; scene.add(wrapG);
     }

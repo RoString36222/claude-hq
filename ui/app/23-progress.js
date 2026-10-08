@@ -11,6 +11,7 @@ function progMs(ms){ if(ms==null) return "–"; ms=Math.max(0,ms|0); var m=Math.
 // Your HQ level from the Arena (falls back to the season level the page shows when unpaired).
 function progLevel(){ return PROG.data && PROG.data.level ? PROG.data.level : null; }
 function progLoad(force){
+  if(typeof PROG==="undefined" || !PROG) return;          // called before this file ran (startup)
   if(PROG.loading || (!force && Date.now()-PROG.at < 5*60*1000)) return;
   PROG.loading=true;
   progGet("/api/arena/progress").then(function(res){

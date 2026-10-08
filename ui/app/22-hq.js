@@ -34,7 +34,7 @@ function hqApi(){
     // your HQ level is the season level the page already shows (the Base grows with it)
     // your HQ level: the Arena's (sessions + games) when paired, else the season level the page shows
     level: function(){ var a=(typeof progLevel==="function") && progLevel(); if(a) return a; var s=(STATE && STATE.season) || {}; return Math.max(1, (s.level|0) || 1); },
-    look: hqLook,
+    look: function(){ return Object.assign({}, hqLook(), {decor: (window.HQ_MYCOS || {}).decor}); },
     startWorld: (function(){ try { var w=localStorage.getItem("hq_world"); return w==="base"||w==="lobby"||w==="mission" ? w : "base"; } catch(e){ return "base"; } })(),
     onWorld: function(name){ HQ3D.world = name; hqRenderWhere(); }
   };
@@ -139,7 +139,8 @@ function hqRenderCrew(){
 (function(){
   var b=$("hqModeBtn"); if(b) b.addEventListener("click", hqToggle);
   // Open where you left off: the 3D HQ if you chose it (and the page can draw it), else the classic view.
-  if(hqModePref()==="3d" && !hqCalm() && hqWebGL()) setView("hq"); else hqViewChanged(VIEW);
+  // After every file of the page script has run (later files add to HQ: progress, inventory).
+  setTimeout(function(){ if(hqModePref()==="3d" && !hqCalm() && hqWebGL()) setView("hq"); else hqViewChanged(VIEW); }, 0);
 })();
 
 /* ---- HQ 2.1: customise your building; visit friends' HQs through the Arena ---- */
@@ -248,7 +249,7 @@ function hqVisit(userId){
       hqMount({
         name: base.name, remember:false, startWorld:"base",
         level: function(){ return Math.max(1, p.level|0); },
-        look: function(){ return p.look||{}; },
+        look: function(){ return Object.assign({}, p.look||{}, {decor: (p.cos||{}).decor}); },
         openSession: function(){ toast("That's "+who+"'s crew: their sessions stay private.","level"); },
         go: function(){ toast("That room is in "+who+"'s HQ. Go home first.","level"); },
         onFilter: function(){}, onWorld: base.onWorld

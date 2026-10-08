@@ -134,6 +134,7 @@
     <div class="tb-group">
       <button class="hbtn icon ghost arena-stat hidden" id="arenaStat" type="button" title="Arena" aria-label="Arena status"><svg class="i" aria-hidden="true"><use href="#i-trophy"/></svg><span class="arena-stat-dot" id="arenaStatDot"></span></button>
       <button class="hbtn voice-pill hidden" id="voicePill" type="button" title="You're in Arena voice — open the Arena" aria-label="In Arena voice"><svg class="i sm" aria-hidden="true"><use href="#i-mic"/></svg> In voice</button>
+      <button class="hbtn icon ghost" id="invHeadBtn" type="button" title="Inventory: coins, snacks, Valley finds and cosmetics" aria-label="Inventory">🎒</button>
       <button class="hbtn ghost" id="hqModeBtn" type="button" aria-pressed="false" title="Switch between the 3D HQ and the classic dashboard (H)"><svg class="i" aria-hidden="true"><use href="#i-hq"/></svg><span id="hqModeLbl">3D HQ</span></button>
       <button class="hbtn ghost update-btn" id="updateBtn" type="button" title="Pull the latest Claude HQ and restart" aria-label="Pull the latest Claude HQ and restart"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg><span id="updateLbl">Update</span></button>
       <button class="hbtn icon ghost" id="logBtn" type="button" title="Event log" aria-label="Event log"><svg class="i" aria-hidden="true"><use href="#i-list"/></svg></button>
@@ -499,7 +500,7 @@
     <div class="hq3d-stage" id="hqStage"></div>
     <aside class="hq3d-side" aria-label="Crew">
       <div class="hq3d-where" id="hqWhere" role="group" aria-label="Go to"></div>
-      <button class="hbtn ghost hq3d-card" id="hqMyCard" type="button">My trainer card</button>
+      <div class="hq3d-where"><button class="hbtn ghost hq3d-card" id="hqMyCard" type="button">My trainer card</button><button class="hbtn ghost hq3d-card" id="hqInvBtn" type="button">Inventory</button></div>
       <div class="hq3d-visiting" id="hqVisiting" hidden></div>
       <div class="hq3d-here" id="hqHere" hidden aria-live="polite"></div>
       <div class="hq3d-side-head"><b>Crew</b><span id="hqCrewCount" class="muted"></span></div>
@@ -1165,6 +1166,12 @@
   </div>
 </div>
 
+<div class="tcard-back" id="invBack" aria-hidden="true">
+  <div class="tcard-modal inv-modal" role="dialog" aria-modal="true" aria-labelledby="invTitle">
+    <div class="tcard-top"><b id="invTitle">Inventory</b><button class="hbtn icon ghost" id="invClose" type="button" aria-label="Close">✕</button></div>
+    <div id="invBody"></div>
+  </div>
+</div>
 <div class="tcard-back" id="tcardBack" aria-hidden="true">
   <div class="tcard-modal" role="dialog" aria-modal="true" aria-labelledby="tcardTitle">
     <div class="tcard-top"><b id="tcardTitle">Trainer card</b><button class="hbtn icon ghost" id="tcardClose" type="button" aria-label="Close">✕</button></div>
@@ -1202,6 +1209,7 @@
 //@include ui/app/21-arena-controls.js
 //@include ui/app/22-hq.js
 //@include ui/app/23-progress.js
+//@include ui/app/24-inventory.js
 </script>
 </body>
 </html>

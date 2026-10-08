@@ -559,7 +559,8 @@ function makeGame(host, opts){
     if(!setCourse(c)) return;
     V.mode = "practice"; V.phase = "playing"; V.finalCard = null; V.pendingHole = null;
     var sv = gsave();
-    ensurePlayer("me", {name: "You", c: sv.char != null ? clamp(sv.char|0, 0, 5) : 0, color: 1, strokes: V.holes.map(function(){ return 0; })});
+    ensurePlayer("me", {name: "You", c: sv.char != null ? clamp(sv.char|0, 0, 5) : 0, color: 1, strokes: V.holes.map(function(){ return 0; }),
+                        cos: window.HQ_MYCOS || null});
     showStage(true);
     setHole(0);
     if(canvas) canvas.focus();
@@ -605,6 +606,7 @@ function makeGame(host, opts){
       keep[uid] = 1;
       var P = ensurePlayer(uid), cChanged = P.c !== (p.c|0) || P.color !== (p.color|0);
       P.name = uid === myId() ? "You" : MP.nameOf(p.user); P.c = p.c|0; P.color = p.color|0;
+      P.cos = (p.user && p.user.cos) || null;                       // HQ 2.1: the ball colour they wear
       if(uid === myId() && V.pending && view.hole === V.holeIdx) return;   // my shot is in flight to the server: it answers with "shot"
       P.strokes = (p.strokes || []).slice(); P.done = !!p.done;
       if(cChanged && R3) R3.removePlayer(P);
@@ -1359,7 +1361,8 @@ function makeGame(host, opts){
       var club = null, arm = obj.getObjectByName("arm-right"), cg = scene3(CLUBS[P.color % CLUBS.length]);
       if(arm && cg){ club = cg.scene.clone(); club.scale.setScalar(0.5); club.position.set(0, -0.13, 0.02); arm.add(club);
         club.traverse(function(o){ if(o.isMesh && o.material){ o.material = o.material.clone(); mats.push(o.material); } }); }
-      var ball = new THREE.Mesh(ballGeo, new THREE.MeshStandardMaterial({color: COLORS[P.color % COLORS.length], roughness: 0.45}));
+      var worn = P.cos && hex(P.cos.ball, null);
+      var ball = new THREE.Mesh(ballGeo, new THREE.MeshStandardMaterial({color: worn != null ? worn : COLORS[P.color % COLORS.length], roughness: 0.45}));
       var bshadow = new THREE.Mesh(blobGeo, blobMat); bshadow.scale.setScalar(BALL_R*1.1);
       var cshadow = new THREE.Mesh(blobGeo, blobMat); cshadow.scale.setScalar(0.12);
       scene.add(obj); scene.add(ball); scene.add(bshadow); scene.add(cshadow);

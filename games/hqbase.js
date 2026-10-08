@@ -162,7 +162,8 @@ HQV.hqWorlds.base = function(c, w){
     var accent = /^#[0-9a-f]{6}$/i.test(look.accent || "") ? parseInt(look.accent.slice(1), 16) : COL.amber;
     while(baseG.children.length) baseG.remove(baseG.children[0]);
     hits.length = 0; doors.length = 0;
-    dyn = {facades: [], facMats: [], leds: [], lobbyMats: [], beacons: [], beaconGlows: [], banners: [], heli: null, jets: [], karts: [], glows: [], accent: accent};
+    dyn = {facades: [], facMats: [], leds: [], lobbyMats: [], beacons: [], beaconGlows: [], banners: [], heli: null, jets: [], karts: [], glows: [], accent: accent,
+           flags: [], fireworks: []};
     var floorsLow = Math.min(8, 1 + Math.floor(level/5)), floorsHigh = level >= 25 ? Math.min(8, 1 + Math.floor((level - 25)/4)) : 0;
     var y = lobbyBlock(0, 0, 9, 7);
     var topLow = tower(0, y, 0, 9, 7, floorsLow, 100 + level % 7, paint), top = topLow;
@@ -246,6 +247,22 @@ HQV.hqWorlds.base = function(c, w){
       var field = new THREE.Mesh(new THREE.CircleGeometry(7.6, 40), new THREE.MeshStandardMaterial({color: 0x1d4a3a, emissive: new THREE.Color(COL.cyan), emissiveIntensity: 0.15})); field.rotation.x = -PI/2; field.position.y = 0.05; ar.add(field);
       var al = c.label("Arena", HEX.cyan, 1.1); al.position.set(0, 7, 0); ar.add(al);
     }
+    // HQ 2.1 decor (a cosmetic the owner wears): flags, gnomes, fireworks or a neon outline
+    if(look.decor === "flags"){
+      for(var fi = 0; fi < 8; fi++){ var fa = fi/8*PI*2 + 0.2, fx = Math.cos(fa)*13.6, fz = Math.sin(fa)*13.6;
+        cyl(0.05, 0.05, 4.2, mat(0xb8c4cf, {metalness: 0.6}), fx, 2.1, fz, baseG, 6);
+        var fl = box(1.1, 0.7, 0.03, mat([0xff6b5b, 0x5fd3e6, 0xffb347, 0x6fd38a][fi % 4]), fx + 0.55, 3.75, fz, baseG); fl.userData.wave = fi; dyn.flags.push(fl); }
+    } else if(look.decor === "gnomes"){
+      for(var gi = 0; gi < 10; gi++){ var ga = gi/10*PI*2 + 0.3, gx = Math.cos(ga)*14.8, gz = Math.sin(ga)*14.8, gn = new THREE.Group(); gn.position.set(gx, 0, gz); baseG.add(gn);
+        cyl(0.22, 0.28, 0.45, mat(0x3a5ea8), 0, 0.22, 0, gn, 10); sph(0.18, mat(0xf1c9a5), 0, 0.58, 0, gn); sph(0.16, mat(0xf4f4f4), 0, 0.48, 0.1, gn);
+        c.add(new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.45, 10), mat(0xd14a5c)), 0, 0.88, 0, gn); }
+    } else if(look.decor === "fireworks"){
+      for(var fw = 0; fw < 3; fw++){ var g = new THREE.Group(); baseG.add(g); var parts = [];
+        for(var q = 0; q < 18; q++){ var sp = c.glow([COL.amber, COL.cyan, COL.coral][fw], 0.6, 1); g.add(sp); parts.push({s: sp, a: q/18*PI*2, b: (q % 3 - 1)*0.6}); }
+        dyn.fireworks.push({g: g, parts: parts, o: fw/3, x: (fw - 1)*6, y: top + 8 + fw*2}); }
+    } else if(look.decor === "neon"){
+      [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function(q){ box(0.08, top - 3.5, 0.08, emis(0x0d1a24, accent, 2.5), q[0]*4.62, 3.5 + (top - 3.5)/2, q[1]*3.62, baseG, true); });
+    }
     var sb = c.label(c.short((look.sign || "Claude HQ"), 16) + " · Lv " + level, HEX.amber, 1.1); sb.position.set(0, top + 7, 0); baseG.add(sb);
     built.level = level; built.look = JSON.stringify(look); built.top = top;
     w.wings = level >= 30 ? 2 : level >= 10 ? 1 : 0; w.level = level;
@@ -295,6 +312,9 @@ HQV.hqWorlds.base = function(c, w){
       dyn.heli.g.position.y = dyn.heli.y + lift*6*k; dyn.heli.g.position.x = dyn.heli.x + lift*Math.sin(t*0.4)*3*k; }
     dyn.beacons.forEach(function(b, n){ var on = ((t + n*0.3) % 1.4) < 0.25; b.material.emissiveIntensity = on ? 3 : 0.4; dyn.beaconGlows[n].material.opacity = on ? 1 : 0.1; });
     dyn.banners.forEach(function(b, n){ b.rotation.x = Math.sin(t*1.6 + n)*0.06*k; });
+    dyn.flags.forEach(function(f){ f.rotation.y = Math.sin(t*2.4 + f.userData.wave)*0.35*k; });
+    dyn.fireworks.forEach(function(fw){ var u = (t*0.35*k + fw.o) % 1; fw.g.visible = night && u > 0.15;
+      fw.parts.forEach(function(p){ var r = (u - 0.15)*9; p.s.position.set(fw.x + Math.cos(p.a)*r, fw.y + Math.sin(p.a)*r*0.8 - u*u*4 + p.b, Math.sin(p.a)*r*0.4); p.s.material.opacity = Math.max(0, 1 - u); }); });
     dyn.jets.forEach(function(j){ var u = (t*0.9*k + j.o) % 1, r = 0.6 + u*1.4; j.g.position.set(Math.cos(j.a)*r, 2.0 + Math.sin(u*PI)*1.3 - u*0.9, Math.sin(j.a)*r); j.g.material.opacity = 0.9*(1 - u*0.6); });
     dyn.karts.forEach(function(kk){ var a = t*0.7*k + kk.o*PI*2; kk.g.position.set(-31 + Math.cos(a)*4.4, 0.05, Math.sin(a)*8); kk.g.rotation.y = Math.atan2(-Math.cos(a)*8, -Math.sin(a)*4.4); });
     cars.forEach(function(k2){ k2.a += k2.v*dt*k; var x = Math.cos(k2.a)*k2.r, z = Math.sin(k2.a)*k2.r, dx = -Math.sin(k2.a)*k2.v, dz = Math.cos(k2.a)*k2.v; k2.c.g.position.set(x, 0, z); k2.c.g.rotation.y = Math.atan2(-dz, dx); });

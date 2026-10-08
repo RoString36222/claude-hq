@@ -285,7 +285,7 @@ function makeGame(host, opts){
   function startPractice(id){
     var L = LEVELS[id]; if(!L) return;
     resetRun(); V.mode = "practice"; V.play = "race"; V.level = L;
-    var P = ensureP("me", {name: "You", chr: clamp(psave().char|0, 0, CHARS.length - 1)});
+    var P = ensureP("me", {name: "You", chr: clamp(psave().char|0, 0, CHARS.length - 1), cos: window.HQ_MYCOS || null});
     placeOnSpawn(P, 0);
     V.camYaw = 0; V.phase = "grid"; V.goAt = now() + CD_SECS;
     showStage(true); if(R3) R3.buildLevel();
@@ -314,7 +314,7 @@ function makeGame(host, opts){
     (view.players || []).forEach(function(p){
       var uid = p.user && p.user.userId; if(!uid) return; seen[uid] = 1;
       var P = ensureP(uid, {name: nameOf(p.user), chr: clamp(p.char|0, 0, CHARS.length - 1), place: p.place|0, fin: p.fin, dnf: !!p.dnf,
-        away: !!p.away, cp: p.cp|0, coins: p.coins|0});
+        away: !!p.away, cp: p.cp|0, coins: p.coins|0, cos: (p.user && p.user.cos) || null});
       if(uid === myId()){ V.mine = {}; (p.got || []).forEach(function(i){ V.mine[i] = 1; }); }
       if(fresh || view.phase === "grid") placeOnSpawn(P, p.slot|0);
       if(view.phase === "run" && (fresh || uid !== myId())){ placeAt(P, [(+p.x || 0)/100, (+p.y || 0)/100, (+p.z || 0)/100]); P.yaw = (+p.r || 0)*Math.PI/180; }
@@ -893,6 +893,7 @@ function makeGame(host, opts){
     function addP(P){
       var g = GL.character, outer = new THREE.Group(), body = new THREE.Group(), o = lib.clone(g.scene);
       var tint = CHARS[P.chr|0] ? CHARS[P.chr|0].c : 0xffffff;
+      var worn = P.cos && hex(P.cos.runner, null); if(worn != null) tint = worn;      // HQ 2.1 runner colour
       o.traverse(function(m){ if(m.isMesh){ m.castShadow = !V.low; m.receiveShadow = false; if(tint !== 0xffffff){ m.material = m.material.clone(); m.material.color.setHex(tint); } } });
       body.add(o); outer.add(body);
       var mixer = new THREE.AnimationMixer(o), actions = {};

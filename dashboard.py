@@ -4370,6 +4370,7 @@ POST_PATHS = (
     "/api/arena/pantry/eat", "/api/arena/pantry/give",
     "/api/arena/pantry/reward",
     "/api/arena/hq/me",
+    "/api/arena/cosmetics/buy", "/api/arena/cosmetics/equip", "/api/arena/market/sell",
     "/api/arena/cali/order",
     "/api/arena/sounds",
     "/api/games/state",
@@ -4761,6 +4762,14 @@ class Handler(BaseHTTPRequestHandler):
                 _overlay_food_effects(resp) if code == 200 else resp))
             return
 
+        if path == "/api/arena/cosmetics":
+            try:
+                code, resp = arena.cosmetics()
+            except Exception as e:
+                code, resp = 502, {"error": "arena request failed: %s" % e}
+            self._send(code or 502, json.dumps(resp))
+            return
+
         if path == "/api/server-stats":
             self._send(200, json.dumps(server_stats()))
             return
@@ -5123,6 +5132,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(to, str) or not to.strip():
                     return 400, {"error": "toHandle required"}
                 return arena.send_nudge(to.strip(), note=body.get("note", ""))
+            if path in ("/api/arena/cosmetics/buy", "/api/arena/cosmetics/equip"):
+                return arena.cosmetics(path.rsplit("/", 1)[1], body)
+            if path == "/api/arena/market/sell":
+                return arena.market_sell(body.get("cat"), body.get("qty"))
             if path == "/api/arena/hq/me":
                 # Crew counts come from this process's own view of your sessions,
                 # never from the page: only three numbers can leave.

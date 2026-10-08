@@ -24,6 +24,7 @@ import json
 import os
 import re
 import ssl
+import uuid
 import subprocess
 import tempfile
 import threading
@@ -963,3 +964,40 @@ def server_stats():
     if not token:
         return 400, {"error": "not paired"}
     return _request("GET", base + "/v1/server/stats", token=token)
+
+
+# ---- HQ 2.1: cosmetics and the Valley market --------------------------------
+_COS_SLOTS = ("kart", "runner", "blaster", "ball", "frame", "decor")
+_MARKET_CATS = ("fish", "crop", "ore", "gem", "misc")
+
+
+def cosmetics(action=None, body=None):
+    """GET the wardrobe (action None), or POST buy {item} / equip {slot, item}."""
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    if action is None:
+        return _request("GET", base + "/v1/cosmetics", token=token)
+    body = body if isinstance(body, dict) else {}
+    item = body.get("item")
+    if item is not None and not (isinstance(item, str) and re.fullmatch(r"[a-z]-[a-z]{2,12}", item)):
+        return 400, {"error": "bad item"}
+    if action == "buy":
+        return _request("POST", base + "/v1/cosmetics/buy", token=token,
+                        body={"requestId": "cos-" + uuid.uuid4().hex[:24], "item": item})
+    if action == "equip":
+        slot = body.get("slot")
+        if slot not in _COS_SLOTS:
+            return 400, {"error": "unknown slot"}
+        return _request("POST", base + "/v1/cosmetics/equip", token=token, body={"slot": slot, "item": item})
+    return 400, {"error": "unknown cosmetics action"}
+
+
+def market_sell(cat, qty):
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    if cat not in _MARKET_CATS or not isinstance(qty, int) or isinstance(qty, bool) or not 1 <= qty <= 10:
+        return 400, {"error": "sell 1 to 10 of one kind"}
+    return _request("POST", base + "/v1/market/sell", token=token,
+                    body={"requestId": "sell-" + uuid.uuid4().hex[:24], "cat": cat, "qty": qty})

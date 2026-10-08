@@ -27,6 +27,29 @@ pub const CHAT_HISTORY: usize = 50;
 pub const CHAT_MAX_CHARS: usize = 500;
 pub const CHAT_RATE_COUNT: usize = 8;
 pub const CHAT_RATE_WINDOW: f64 = 10.0;
+
+/// Python's `str.isprintable()` for the characters a client can send: false for
+/// control characters, every space but U+0020, private-use code points and the
+/// invisible format characters (Unicode Cf) -- zero-width spaces and joiners, the
+/// bidi embeddings and overrides (U+202A-202E, U+2066-2069, which can make text read
+/// backwards), soft hyphen, word joiner, BOM, tag characters. Chat and nudge notes
+/// are cleaned with this so nothing invisible rides along in what people read.
+pub fn py_printable(c: char) -> bool {
+    if c == ' ' {
+        return true;
+    }
+    if c.is_control() || c.is_whitespace() {
+        return false;
+    }
+    let u = c as u32;
+    let format = matches!(u,
+        0x00AD | 0x0600..=0x0605 | 0x061C | 0x06DD | 0x070F | 0x0890..=0x0891 | 0x08E2 | 0x180E
+        | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F | 0xFEFF
+        | 0xFFF9..=0xFFFB | 0x110BD | 0x110CD | 0x13430..=0x1343F | 0x1BCA0..=0x1BCA3
+        | 0x1D173..=0x1D17A | 0xE0001 | 0xE0020..=0xE007F);
+    let private_use = matches!(u, 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD);
+    !(format || private_use)
+}
 /// Messages one connection's direct queue holds before new ones are dropped.
 pub const DIRECT_QUEUE: usize = 256;
 
@@ -273,6 +296,20 @@ impl RoomManager {
             }
         }
         Value::Array(out)
+    }
+}
+
+#[cfg(test)]
+mod printable_tests {
+    use super::py_printable;
+
+    #[test]
+    fn matches_python_isprintable_on_what_clients_send() {
+        for c in ['a', ' ', 'é', '😀', '中', '-'] { assert!(py_printable(c), "{c:?}"); }
+        for c in ['\n', '\t', '\u{7}', '\u{a0}', '\u{2003}', '\u{200b}', '\u{200d}', '\u{202e}',
+                  '\u{2066}', '\u{feff}', '\u{ad}', '\u{e000}', '\u{e0041}'] {
+            assert!(!py_printable(c), "{c:?}");
+        }
     }
 }
 

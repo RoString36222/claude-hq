@@ -300,14 +300,20 @@ async fn room_ws(
         });
     }
 
+    // The page only opens a private room once the welcome says which one it is
+    // (name, and your role for the owner controls); without it the room reads as
+    // "this Arena is too old for rooms" and the page falls back to the Lobby.
+    let mut room_info = Value::Null;
     if privrooms::is_private_id(&room_id) {
         match privrooms::admission(&st.pool, &room_id, &user_id).await {
             Ok(None) => return err(StatusCode::NOT_FOUND, "no such room"),
-            Ok(Some((_name, role))) => {
+            Ok(Some((name, role))) => {
                 let ok = matches!(role.as_deref(), Some("owner") | Some("member"));
                 if !ok {
                     return err(StatusCode::FORBIDDEN, "join this room first");
                 }
+                room_info = json!({"kind": "private", "id": room_id, "name": name,
+                                   "role": role.unwrap_or_default()});
             }
             Err(_) => return err(StatusCode::INTERNAL_SERVER_ERROR, "room lookup failed"),
         }
@@ -323,7 +329,7 @@ async fn room_ws(
         avatar_url: r.get("avatar_url"),
         cos,
     };
-    ws.on_upgrade(move |socket| handle_socket(socket, st, room_id, member))
+    ws.on_upgrade(move |socket| handle_socket(socket, st, room_id, member, room_info))
 }
 
 /// Accept the upgrade only to close it with a specific code, the way Starlette
@@ -342,7 +348,8 @@ async fn close_with(socket: WebSocket, code: u16, reason: &'static str) {
         .await;
 }
 
-async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member: Member) {
+async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member: Member,
+                       room_info: Value) {
     use futures::{SinkExt, StreamExt};
     let conn_id = st.conn_seq.fetch_add(1, Ordering::Relaxed);
     let Some((mut rx, mut direct, roster, state)) =
@@ -357,7 +364,7 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
                          // the page reads it to label the match.
                          "roomInfo": if room_id.starts_with("qp_") {
                              quickplay::room_info(&room_id).unwrap_or(Value::Null)
-                         } else { Value::Null },
+                         } else { room_info },
                          "members": roster, "state": state,
                          // Recent lobby chat, oldest first, so a joiner catches up.
                          "chat": st.rooms.chat_history(&room_id).await,
@@ -410,13 +417,13 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
                                        "error": "chat: text must be a string"}).to_string()).await;
                             continue;
                         };
-                        // Control characters (bells, newlines, escapes) and the exotic
-                        // Unicode spaces become spaces; runs of whitespace fold to one.
-                        // Python asks str.isprintable(); this covers the cases a client
-                        // can actually produce.
+                        // Anything str.isprintable() rejects -- control characters, the
+                        // exotic spaces, and invisible format characters such as bidi
+                        // overrides and zero-width spaces -- becomes a space; runs of
+                        // whitespace fold to one.
                         let cleaned: String = raw
                             .chars()
-                            .map(|c| if c.is_control() || c.is_whitespace() { ' ' } else { c })
+                            .map(|c| if rooms::py_printable(c) { c } else { ' ' })
                             .collect();
                         let text: String = cleaned
                             .split_whitespace()
@@ -461,16 +468,27 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
                     rooms.broadcast(&rid, json!({"type": "say", "from": me.public(),
                                                  "data": data}).to_string()).await;
                 }
+                // Python answers a bad patch rather than dropping it.
                 Some("state") => {
-                    if let Some(patch) = v.get("patch").filter(|p| p.is_object()) {
-                        if let Some(merged) = rooms.patch_state(&rid, patch).await {
+                    let Some(patch) = v.get("patch").filter(|p| p.is_object()) else {
+                        rooms.send_conn(&rid, conn_id, json!({"type": "error",
+                            "error": "patch must be an object"}).to_string()).await;
+                        continue;
+                    };
+                    match rooms.patch_state(&rid, patch).await {
+                        Some(merged) => {
                             rooms.broadcast(&rid, json!({"type": "state", "state": merged,
                                                          "by": me.public()}).to_string()).await;
                         }
+                        None => {
+                            rooms.send_conn(&rid, conn_id, json!({"type": "error",
+                                "error": "state too large"}).to_string()).await;
+                        }
                     }
                 }
+                // Python answers the one socket that asked, not the whole room.
                 Some("ping") => {
-                    rooms.broadcast(&rid, json!({"type": "pong"}).to_string()).await;
+                    rooms.send_conn(&rid, conn_id, json!({"type": "pong"}).to_string()).await;
                 }
                 Some("game") if v.get("g").and_then(|g| g.as_str()) == Some(platformer::GAME) => {
                     plat.handle(&rid, conn_id, &me, &v).await
@@ -493,7 +511,7 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
                         }
                     };
                     let note: String = v.get("note").and_then(|n| n.as_str()).unwrap_or("")
-                        .chars().filter(|c| !c.is_control()).collect::<String>()
+                        .chars().filter(|c| rooms::py_printable(*c)).collect::<String>()
                         .trim().chars().take(120).collect();
                     let delivered = rooms.send_where_except(
                         &rid, conn_id, |m| m.user_id == target,

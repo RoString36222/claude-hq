@@ -12,7 +12,7 @@ It starts its own server on a throwaway database (schema from the Rust baseline
 migration, which was generated from the Alembic head), makes two users with
 device tokens, and exercises presence, nudges, WebRTC signalling, lobby chat
 (cleaning, the rate limit and the backlog a joiner catches up on), unknown
-message types, oversized and malformed frames, the loadtest stats route
+message types, oversized and malformed frames, every game the Arena\nadvertises, the loadtest stats route
 and the Quick Play queue.
 
 Where the two are deliberately different the check says so and asserts both
@@ -256,6 +256,81 @@ async def main():
                       texts == ["hi there all", "hi reversed there"]
                       + [f"m{i}" for i in range(6)], repr(texts))
 
+        # --- every game the Arena advertises, and a join with each ---------
+        # The welcome's `arena` block is what games/multi.js gates each panel
+        # on: a game missing from it makes the page say "This Arena doesn't run
+        # <game> yet", however well the engine works.
+        GAMES = ["pond", "race", "duel", "mines", "farm", "golf", "kart", "plat",
+                 "fps", "hq", "type"]
+        # The event a join answers with, beyond the shared "lobby" broadcast.
+        # From valley.py:1036-1076. race answers only when a round is already
+        # running, so it has none on a fresh join.
+        SNAP = {"pond": "pond", "duel": "duel", "mines": "mines", "farm": "farm",
+                "golf": "golf", "kart": "kart", "plat": "plat", "fps": "fps",
+                "hq": "snap", "type": "type", "race": None}
+
+        k4 = await ticket(t1)
+        async with websockets.connect(f"{WS}/v1/rooms/{room}/ws?ticket={k4}") as d:
+            w = json.loads(await d.recv())
+            info = w.get("arena") or {}
+            check("the welcome advertises every game, in order",
+                  list((info.get("games") or {}).keys()) == GAMES,
+                  repr(list((info.get("games") or {}).keys())))
+            check("kart is still protocol 2 with its caps",
+                  (info.get("games") or {}).get("kart") == {"v": 2, "caps": ["scale", "tracks"]},
+                  repr((info.get("games") or {}).get("kart")))
+            check("the welcome carries the party playlist",
+                  info.get("party") == {"v": 1, "order": ["kart", "plat", "fps", "golf"]},
+                  repr(info.get("party")))
+
+            for g in GAMES:
+                if g == "hq":
+                    continue        # needs an hq_ room; done separately below
+                await d.send(json.dumps({"type": "game", "g": g, "op": "join"}))
+                got = await recv(d, 1.2)
+                evs = [m.get("ev") for m in got if m.get("g") == g]
+                errs = [m for m in got if m.get("ev") == "error"]
+                check(f"{g}: join is accepted",
+                      not errs and "lobby" in evs, repr(got)[:300])
+                want = SNAP[g]
+                if want:
+                    check(f"{g}: join answers with its {want} snapshot",
+                          want in evs, repr(evs))
+
+            # A game nothing runs is still refused, by name.
+            await d.send(json.dumps({"type": "game", "g": "chess", "op": "join"}))
+            got = await recv(d, 0.8)
+            check("an unknown game is refused",
+                  [m for m in got if m.get("ev") == "error"
+                   and m.get("error") == "unknown game"], repr(got)[:200])
+
+            # Party Mode is not a Valley game and has no lobby: it is
+            # short-circuited ahead of every other check (valley.py:1000).
+            await d.send(json.dumps({"type": "game", "g": "party", "op": "view"}))
+            got = await recv(d, 0.8)
+            party = [m for m in got if m.get("g") == "party"]
+            check("party answers without joining any lobby",
+                  party and not [m for m in party if m.get("ev") == "error"],
+                  repr(got)[:300])
+
+        # HQ presence lives in an HQ room, and says so anywhere else.
+        k5 = await ticket(t1)
+        async with websockets.connect(f"{WS}/v1/rooms/hq_{u1}/ws?ticket={k5}") as h:
+            await h.recv()
+            await h.send(json.dumps({"type": "game", "g": "hq", "op": "join"}))
+            got = await recv(h, 1.2)
+            evs = [m.get("ev") for m in got if m.get("g") == "hq"]
+            check("hq: join inside an HQ room answers with a presence snapshot",
+                  "snap" in evs and "lobby" in evs, repr(got)[:300])
+        k6 = await ticket(t1)
+        async with websockets.connect(f"{WS}/v1/rooms/{room}/ws?ticket={k6}") as h2:
+            await h2.recv()
+            await h2.send(json.dumps({"type": "game", "g": "hq", "op": "join"}))
+            got = await recv(h2, 0.8)
+            check("hq: refused outside an HQ room, with Python's wording",
+                  [m for m in got if m.get("error") == "HQ presence lives in an HQ room"],
+                  repr(got)[:200])
+
         # --- the env-gated loadtest route ---------------------------------
         async with httpx.AsyncClient(base_url=BASE) as c:
             r = await c.get("/v1/realtime/stats")
@@ -264,17 +339,17 @@ async def main():
                   f"{r.status_code} {r.text[:120]}")
             r = await c.post("/v1/quickplay/join", json={"game": "golf"},
                              headers={"Authorization": f"Bearer {t1}"})
-            # The one deliberate divergence: Python referees Mini Golf, this
-            # Rust build does not, so it must refuse the queue instead of
-            # matching people into a room where nothing ever starts.
-            if IMPL == "py":
-                check("Quick Play queues Golf on an Arena that runs it",
-                      r.json().get("state") == "waiting", f"{r.status_code} {r.text[:160]}")
-            else:
-                check("Quick Play refuses a game this Arena cannot run",
-                      r.status_code == 200 and r.json().get("state") == "error"
-                      and "Golf" not in r.json().get("error", ""),
-                      f"{r.status_code} {r.text[:160]}")
+            # Both Arenas referee Mini Golf now, so both must queue it. This
+            # was the one deliberate divergence while the Rust Arena had no
+            # golf engine; it is gone.
+            check("Quick Play queues Golf on both Arenas",
+                  r.json().get("state") == "waiting", f"{r.status_code} {r.text[:160]}")
+            r = await c.post("/v1/quickplay/join", json={"game": "chess"},
+                             headers={"Authorization": f"Bearer {t1}"})
+            check("Quick Play still refuses a game nobody runs",
+                  r.json().get("state") == "error"
+                  and r.json().get("error", "").startswith("Quick Play has"),
+                  f"{r.status_code} {r.text[:160]}")
             r = await c.post("/v1/quickplay/join", json={"game": "kart"},
                              headers={"Authorization": f"Bearer {t1}"})
             check("Quick Play still queues a game it can run",

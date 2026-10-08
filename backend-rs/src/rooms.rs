@@ -183,6 +183,22 @@ impl RoomManager {
         }
     }
 
+    /// Python's `{m.user_id: m.public() for m in list(room.members.values())}`
+    /// (valley.py:1611): the ROOM's members keyed by user id, in socket order.
+    /// Someone on two sockets is written once and keeps their FIRST position,
+    /// which is what the dict comprehension does -- a later socket's `public()`
+    /// would overwrite the value but not move the key.
+    pub async fn members_public(&self, room_id: &str) -> Value {
+        let rooms = self.rooms.lock().await;
+        let mut out = serde_json::Map::new();
+        if let Some(room) = rooms.get(room_id) {
+            for (_, m) in &room.members {
+                out.insert(m.user_id.clone(), m.public());
+            }
+        }
+        Value::Object(out)
+    }
+
     /// The room's chat backlog, oldest first, for a joiner's welcome.
     pub async fn chat_history(&self, room_id: &str) -> Value {
         let rooms = self.rooms.lock().await;

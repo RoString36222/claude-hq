@@ -97,7 +97,10 @@
 // that all say the same thing, one module-wide allow with this comment, the way
 // kart.rs:30 and realtime.rs:23 justify theirs. It comes off when main.rs
 // constructs the hub; the engine agents never need to touch it.
-#![allow(dead_code)]
+// Deliberately NO module-wide `#![allow(dead_code)]`. It covered the nine
+// engine files too (a lint attribute nests), which would have hidden an
+// unreachable function in any of 12,000 new lines. Everything unused here is
+// allowed item by item, with its reason.
 
 // The nine engines. Each is one file and touches nothing outside it; the three
 // hooks below, the party short-circuit, the farm tail and golf's two grace
@@ -156,16 +159,30 @@ pub const OURS: [&str; 8] = ["pond", "race", "duel", "mines", "farm", "golf", "h
 
 /// Index into [`RoomValley::lobbies`] for each game. Pinned against
 /// [`GAMES`] by a test, so they cannot drift.
+// The complete set, so [`GAMES`] order and the lobby array stay in step and a
+// reader can find any game's slot. An engine that reaches its lobby through
+// [`RoomValley::lobby_mut`] rather than by index never names its own constant.
+#[allow(dead_code)]
 pub const I_POND: usize = 0;
+#[allow(dead_code)]
 pub const I_RACE: usize = 1;
+#[allow(dead_code)]
 pub const I_DUEL: usize = 2;
+#[allow(dead_code)]
 pub const I_MINES: usize = 3;
+#[allow(dead_code)]
 pub const I_FARM: usize = 4;
+#[allow(dead_code)]
 pub const I_GOLF: usize = 5;
+#[allow(dead_code)]
 pub const I_KART: usize = 6;
+#[allow(dead_code)]
 pub const I_PLAT: usize = 7;
+#[allow(dead_code)]
 pub const I_FPS: usize = 8;
+#[allow(dead_code)]
 pub const I_HQ: usize = 9;
+#[allow(dead_code)]
 pub const I_TYPE: usize = 10;
 
 /// [`GAMES`] position of `g`, or None for a game this Valley does not define --
@@ -190,6 +207,10 @@ pub const MAX_LOBBY: usize = 8;
 
 /// Seconds one socket may take to accept a lobby fan-out. Python's
 /// `SEND_TIMEOUT`. Documentation only: see divergence 3 in the module doc.
+// Nothing reads it: a bounded per-socket queue replaces the per-send timeout
+// (the shared divergences note). Kept because the number is Python's and a
+// reader comparing the two files will look for it.
+#[allow(dead_code)]
 pub const SEND_TIMEOUT: f64 = 0.5;
 
 /// A host back from a socket drop this soon is host again. Python derives it
@@ -400,6 +421,7 @@ pub fn is_true(v: Option<&Value>) -> bool {
 
 /// Centimetres on the wire: `py_round(v * 100.0)`. Identical to the two copies
 /// at platformer.rs:260 and fps.rs:348.
+#[allow(dead_code)] // for kart/plat/fps, which still carry their own copies
 pub fn cm(v: f64) -> i64 {
     py_round(v * 100.0)
 }
@@ -764,6 +786,10 @@ impl Lobby {
 /// Engines reach their own lobby by index, so a dispatcher arm can take two
 /// disjoint `&mut` borrows (`&mut v.lobbies[I_POND]`, `&mut v.pond`).
 pub struct RoomValley {
+    /// Python's `RoomValley.room_id`. Nothing reads it -- every entry point is
+    /// handed the room id already -- but it is what the Python holds, and a
+    /// future engine that needs its own room id will look here first.
+    #[allow(dead_code)]
     pub room_id: String,
     pub lobbies: [Lobby; 11],
     // Python's `RoomValley.__init__` order (valley.py:305-314), minus kart,
@@ -794,10 +820,12 @@ impl RoomValley {
 
     /// Python's `v.lobbies[g]`. Panics on a game outside [`GAMES`], as Python's
     /// dict lookup does; the dispatcher has already rejected one.
+    #[allow(dead_code)] // the named accessor Python's `v.lobbies[g]` maps to
     pub fn lobby(&self, g: &str) -> &Lobby {
         &self.lobbies[game_index(g).expect("lobby for a game outside GAMES")]
     }
 
+    #[allow(dead_code)] // ditto; engines index instead, for disjoint borrows
     pub fn lobby_mut(&mut self, g: &str) -> &mut Lobby {
         &mut self.lobbies[game_index(g).expect("lobby for a game outside GAMES")]
     }
@@ -809,15 +837,15 @@ impl RoomValley {
 /// hub capabilities an engine may use from INSIDE the state lock -- which means
 /// nothing that awaits.
 ///
-/// `t` and `wall` are hoisted once per message (divergence 1).
+/// `t` is hoisted once per message (divergence 1). There is no `wall` here:
+/// the farm is the only game that wants one, and it runs OUTSIDE this lock
+/// through [`After::Farm`], where it asks [`ValleyHub::wall_now`] itself.
 pub struct Ctx<'a> {
     pub room_id: &'a str,
     pub conn: u64,
     pub member: &'a Member,
     /// `valley.now()`, monotonic seconds.
     pub t: f64,
-    /// `valley.wall()`, UTC unix seconds. Only the farm reads it.
-    pub wall: f64,
     /// Python's per-message `_rng()`.
     pub rng: &'a mut StdRng,
     /// For [`ValleyHub::tick_on`] / [`ValleyHub::tick_off`] only -- both are
@@ -864,7 +892,7 @@ pub enum Left {
 /// `out.to(ws, "invited", ..)` is the last statement of its branch (:1088); the
 /// `g == "farm"` arm is `await farm_op(..)` and nothing else (:1135); the join
 /// arm's farm case is the whole tail, pushed after `out.all("lobby", ..)`
-/// (:1047); and `GolfRecheck` pushes nothing. So the invariant is "nothing in
+/// (:1047). So the invariant is "nothing in
 /// `handle` pushes to `out` after an await". That is a property of today's
 /// Python, not a promise it makes.
 pub enum After {
@@ -879,12 +907,6 @@ pub enum After {
     /// -- runs out here with its own database handle and never re-takes the
     /// lock.
     Farm { msg: Value },
-    /// Python's `_golf_recheck_later(room_id, delay)` (valley.py:1495):
-    /// `loop.call_later(max(0.0, delay) + 0.05, ..)`, armed only from
-    /// `on_disconnect` when a golf grace hold is outstanding. It re-takes the
-    /// lock from inside its own task, exactly as `golf_recheck` re-reads
-    /// `_rooms.get(room_id)`.
-    GolfRecheck { delay: f64 },
 }
 
 /// Python's `loop.call_later(max(0.0, delay) + 0.05, ..)` (valley.py:1506): the
@@ -914,7 +936,7 @@ pub struct Tick {
 ///
 /// Only hq (8 Hz) and type (5 Hz) of the nine tick at all. Golf is turn-based
 /// and must NEVER reach realtime.rs -- its only timer is
-/// [`After::GolfRecheck`], a one-shot, not a `Ticker`. pond, race, duel, mines,
+/// [`ValleyHub::arm_recheck`], a one-shot, not a `Ticker`. pond, race, duel, mines,
 /// farm and party have no loop in the Python and must not be given one.
 pub type StepFn = Arc<dyn Fn(&mut RoomValley, f64, bool) -> Tick + Send + Sync>;
 
@@ -997,10 +1019,8 @@ impl ValleyHub {
         (self.inner.dice)()
     }
 
-    pub fn rooms(&self) -> &RoomManager {
-        &self.inner.rooms
-    }
 
+    #[cfg_attr(not(test), allow(dead_code))] // the tests assert on the tickers
     pub fn registry(&self) -> &Arc<Registry> {
         &self.inner.reg
     }
@@ -1112,7 +1132,6 @@ impl ValleyHub {
             // 5. One clock read per message (divergence 1), one fresh rng, as
             // Python draws one whether the op uses it or not.
             let t = self.now();
-            let wall = self.wall_now();
             let mut rng = self.rng();
             let uid = member.user_id.as_str();
             let gi = game_index(g).expect("OURS is a subset of GAMES");
@@ -1122,9 +1141,10 @@ impl ValleyHub {
                 // 6.
                 "join" => {
                     // Python: `reserved = g == "duel" and v.duel.seated(uid)` --
-                    // a seat held past the cap for a duelist mid-match.
-                    // valley/duel.rs lands later; until then nothing reserves.
-                    let reserved = false;
+                    // a seat held past the cap for a duelist mid-match, so
+                    // someone who dropped mid-duel is never shut out of their
+                    // own match by eight spectators.
+                    let reserved = g == duel::GAME && v.duel.seated(uid);
                     let cap = cap(g, room_id);
                     let lobby = &mut v.lobbies[gi];
                     if !lobby.has(uid) && lobby.members.len() >= cap && !reserved {
@@ -1132,10 +1152,20 @@ impl ValleyHub {
                     } else {
                         let fresh = !lobby.has(uid);
                         // Python: `returning = g == "duel" and v.duel.back(uid, out)`
-                        // then `returning = returning or (blip ..)`. duel.rs
-                        // lands later, so only the blip decides today.
+                        // and THEN `returning = returning or (blip ..)`. `back`
+                        // is not a predicate -- it cancels the grace hold and
+                        // pushes the duel's own "back" frame -- so it must run
+                        // on every duel join, before the blip is consulted, and
+                        // its `out` comes first. Hence the split borrow here.
+                        let back = if g == duel::GAME {
+                            v.duel.back(uid, &mut out)
+                        } else {
+                            false
+                        };
+                        let lobby = &mut v.lobbies[gi];
                         let blip = lobby.blips.remove(uid);
-                        let returning = blip.map(|b| t - b < HOST_GRACE).unwrap_or(false);
+                        let returning =
+                            back || blip.map(|b| t - b < HOST_GRACE).unwrap_or(false);
                         lobby.blips.retain(|_, b| t - *b < HOST_GRACE);
                         lobby.put(uid, member.public());
                         let ph = lobby.prev_host.clone();
@@ -1156,7 +1186,7 @@ impl ValleyHub {
                         out.push(To::All, "lobby",
                                  json!({"members": lobby.roster(), "joined": joined,
                                         "name": game_name(g)}));
-                        let mut cx = Ctx { room_id, conn, member, t, wall, rng: &mut rng,
+                        let mut cx = Ctx { room_id, conn, member, t, rng: &mut rng,
                                            hub: self, after: &mut after };
                         Self::joined_tail(v, &mut cx, g, &mut out);
                     }
@@ -1178,7 +1208,7 @@ impl ValleyHub {
                 // 7.
                 _ if !v.lobbies[gi].has(uid) => out.err(conn, "join the lobby first"),
                 _ => {
-                    let mut cx = Ctx { room_id, conn, member, t, wall, rng: &mut rng,
+                    let mut cx = Ctx { room_id, conn, member, t, rng: &mut rng,
                                        hub: self, after: &mut after };
                     Self::engine_op(v, &mut cx, g, op, msg, &mut out);
                 }
@@ -1214,7 +1244,6 @@ impl ValleyHub {
                 After::Farm { msg } => {
                     farm::run(self, room_id, conn, member, &msg, out).await
                 }
-                After::GolfRecheck { delay } => self.arm_recheck(room_id, delay),
             }
         }
     }
@@ -1393,6 +1422,19 @@ impl ValleyHub {
             if matches!(to, To::All | To::Users(..)) {
                 if let Some(g) = crate::results::is_done(&payload) {
                     self.inner.results.record_later(g, &payload);
+                    // Python appends party's message to `out.items` WHILE
+                    // iterating that same list (valley.py:1612), so it goes out
+                    // later in the same flush. This loop took `out.items` by
+                    // value and cannot grow, so the message is sent right here
+                    // instead -- which puts it BEFORE the `done` event rather
+                    // than after it. DIVERGENCE, declared: the page reads the
+                    // two independently (a party standings panel and a game's
+                    // own end screen), and a party frame can only follow a
+                    // `done` it was triggered by, so nothing orders them.
+                    let who = rooms.members_public(room_id).await;
+                    if let Some(pm) = party::on_done(room_id, g, &payload, &who) {
+                        rooms.send_where(room_id, |_| true, pm.to_string()).await;
+                    }
                 }
             }
             let s = payload.to_string();
@@ -2308,9 +2350,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_tick_loop_sends_its_items_and_stops_when_the_step_says_so() {
+        // Deliberately NOT hq: joining hq arms hq's own loop on the same key
+        // (Python's `_hq_tick_on(room.room_id)`, valley.py:1070), and
+        // `Registry::start` answers Some for a key already running -- so this
+        // test's step would be silently dropped and never counted. type arms
+        // its loop on `start`, not on `join`, so "type:r1" is free here.
         let e = env(4, 1);
-        let (a, mut wa) = e.connect("hq_ann", 1, "a").await;
-        e.send("hq_ann", 1, &a, "hq", "join", json!({})).await;
+        let (a, mut wa) = e.connect("r1", 1, "a").await;
+        e.send("r1", 1, &a, "type", "join", json!({})).await;
         let n = Arc::new(Mutex::new(0usize));
         let seen = n.clone();
         let step: StepFn = Arc::new(move |_v, _t, _send| {
@@ -2322,18 +2369,18 @@ mod tests {
                 charge: None, // hq and type never call tk.count
             }
         });
-        assert!(e.hub.tick_on("hq", "hq_ann", 50.0, step));
-        until(&mut wa, "hq", "snap").await;
-        until(&mut wa, "hq", "snap").await;
+        assert!(e.hub.tick_on("type", "r1", 50.0, step));
+        until(&mut wa, "type", "snap").await;
+        until(&mut wa, "type", "snap").await;
         // The second tick returned keep = false, so the loop unregistered itself.
         for _ in 0..50 {
-            if e.hub.registry().get(&tick_key("hq", "hq_ann")).is_none() {
+            if e.hub.registry().get(&tick_key("type", "r1")).is_none() {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
         assert_eq!(*n.lock().unwrap(), 2);
-        e.hub.tick_off("hq", "hq_ann");
+        e.hub.tick_off("type", "r1");
     }
 
     #[tokio::test]

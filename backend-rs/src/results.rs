@@ -11,17 +11,16 @@
 //! The read half -- game XP, boards, profiles -- is already in `progress.rs`,
 //! and until this module existed it was reading a table nothing ever wrote.
 //!
-//! Golf and the Code Typing Race have branches in the Python's
-//! `rows_from_done` and none here: this Arena does not referee either game yet
-//! (`protocol::GAMES`), so it can never raise their "done" event. Port the
-//! branch with the game.
+//! All five of Python's games are here. Golf is the odd one: it is scored from
+//! a `totals` MAP rather than a `results` list, and its places are DENSE --
+//! two players tied on strokes share a place and the next is not skipped.
 
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
-/// The games this module knows how to write down. A subset of the Python's
-/// `results.GAMES` for as long as `protocol::GAMES` is a subset of its games.
-pub const GAMES: [&str; 3] = ["kart", "plat", "fps"];
+/// The games this module knows how to write down. Python's `results.GAMES`
+/// (results.py:25), in its order.
+pub const GAMES: [&str; 5] = ["kart", "plat", "fps", "golf", "type"];
 
 /// One `game_results` row, before it reaches the database.
 #[derive(Debug, Clone, PartialEq)]
@@ -57,6 +56,11 @@ fn int_or_zero(v: Option<&Value>) -> i64 {
     int_or(v, 0)
 }
 
+/// Python's `float(x or 0)`.
+fn float_or_zero(v: Option<&Value>) -> f64 {
+    v.and_then(Value::as_f64).unwrap_or(0.0)
+}
+
 /// Python's `str(x or "")[:n]` -- a *character* clip, and a number or null
 /// becomes the empty string rather than "0" or "None", because `or` tests
 /// truthiness before `str` ever runs.
@@ -84,6 +88,10 @@ fn truthy(v: Option<&Value>) -> bool {
 pub fn rows_from_done(game: &str, data: &Value) -> Vec<Row> {
     if !GAMES.contains(&game) {
         return Vec::new();
+    }
+    // Golf never goes near the `results` list: it is ranked out of `totals`.
+    if game == "golf" {
+        return golf_rows(data);
     }
     let empty: Vec<Value> = Vec::new();
     let res: Vec<&Value> = data
@@ -148,6 +156,16 @@ pub fn rows_from_done(game: &str, data: &Value) -> Vec<Row> {
                         .map(|ms| ms as i64);
                     row.extra = json!({"coins": int_or_zero(r.get("coins"))});
                 }
+                // The typing race: one "all" board, scored on time, with the
+                // words-per-minute and accuracy kept beside it.
+                "type" => {
+                    row.key = "all".to_string();
+                    row.mode = clipped_str(data.get("lang"), 16);
+                    row.value = if dnf { None } else { r.get("ms").and_then(Value::as_f64) }
+                        .map(|ms| ms as i64);
+                    row.extra = json!({"wpm": float_or_zero(r.get("wpm")),
+                                       "acc": float_or_zero(r.get("acc"))});
+                }
                 // Blaster: one "match" board, scored on kills, where higher wins.
                 _ => {
                     let kills = int_or_zero(r.get("kills"));
@@ -157,6 +175,56 @@ pub fn rows_from_done(game: &str, data: &Value) -> Vec<Row> {
                 }
             }
             row
+        })
+        .collect()
+}
+
+/// Golf's rows, from Python's `elif game == "golf"` (results.py:66-75).
+///
+/// Three things here that a rewrite gets wrong. The sort key is `(value, uid)`,
+/// so a tie on strokes breaks on the user id and the row order is stable.
+/// The place is DENSE: `place = i + 1` only when the value CHANGES, so two
+/// players tied for first are both 1 and the next is 3 -- the same shape as a
+/// real golf card, and not what `enumerate` alone gives. And `players` is the
+/// number of RANKED entries, not the size of `totals`, so a malformed entry
+/// lowers it.
+fn golf_rows(data: &Value) -> Vec<Row> {
+    let Some(totals) = data.get("totals").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    // Python's `isinstance(v, (int, float))`. DIVERGENCE, declared: Python also
+    // admits a JSON `true`/`false` there, because `bool` is a subclass of `int`
+    // and `int(True)` is 1. The Arena mints `totals` itself and never puts a
+    // bool in it, so this takes numbers only rather than carrying a branch that
+    // can only be reached by hand-editing the payload.
+    let mut ranked: Vec<(f64, &String)> = totals
+        .iter()
+        .filter_map(|(uid, v)| v.as_f64().map(|n| (n, uid)))
+        .collect();
+    // `sorted()` on (value, uid) tuples: value first, then the id.
+    ranked.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+    let n = ranked.len() as i64;
+    let key = clipped_str(data.get("course"), 40);
+    let mut place = 0i64;
+    let mut prev: Option<f64> = None;
+    ranked
+        .iter()
+        .enumerate()
+        .map(|(i, (v, uid))| {
+            if prev != Some(*v) {
+                place = i as i64 + 1;
+                prev = Some(*v);
+            }
+            Row {
+                user_id: (*uid).clone(),
+                game: "golf".to_string(),
+                key: key.clone(),
+                mode: String::new(),
+                place,
+                players: n,
+                value: Some(*v as i64),
+                extra: json!({}),
+            }
         })
         .collect()
 }
@@ -385,20 +453,74 @@ mod tests {
     }
 
     #[test]
-    fn a_game_this_arena_does_not_referee_writes_nothing() {
-        // Golf and the typing race have Python branches and no Rust ones; they
-        // must produce no rows rather than half a row.
-        for g in ["golf", "type", "pond", ""] {
+    fn a_game_with_no_results_branch_writes_nothing() {
+        // The pond, the race, the duel, the mines and the farm raise no `done`
+        // event and have no branch in Python's rows_from_done either.
+        for g in ["pond", "race", "duel", "mines", "farm", "hq", "party", ""] {
             assert!(done(g, json!({"results": [player("u1", json!({}))]})).is_empty());
         }
         assert!(done("kart", json!({})).is_empty());
+        assert!(done("golf", json!({})).is_empty());
+    }
+
+    #[test]
+    fn the_typing_race_keeps_the_time_the_speed_and_the_accuracy() {
+        let rows = done(
+            "type",
+            json!({"lang": "rust", "results": [
+                player("u1", json!({"place": 1, "ms": 30500, "wpm": 82.4, "acc": 0.97})),
+                player("u2", json!({"dnf": true, "ms": 60000})),
+            ]}),
+        );
+        assert_eq!(rows[0].key, "all");
+        assert_eq!(rows[0].mode, "rust");
+        assert_eq!(rows[0].value, Some(30500));
+        assert_eq!(rows[0].extra, json!({"wpm": 82.4, "acc": 0.97}));
+        assert_eq!((rows[0].place, rows[0].players), (1, 2));
+        // A player who gave up has no time, and no speed to show.
+        assert_eq!(rows[1].value, None);
+        assert_eq!(rows[1].extra, json!({"wpm": 0.0, "acc": 0.0}));
+    }
+
+    #[test]
+    fn golf_ranks_from_totals_with_dense_places() {
+        let rows = done(
+            "golf",
+            json!({"course": "seaside", "totals": {"u3": 41, "u1": 38, "u2": 38, "u4": 45}}),
+        );
+        // Sorted by strokes, then by id: the two 38s are BOTH first, and the
+        // next player is third, not second.
+        assert_eq!(rows.iter().map(|r| r.user_id.as_str()).collect::<Vec<_>>(),
+                   ["u1", "u2", "u3", "u4"]);
+        assert_eq!(rows.iter().map(|r| r.place).collect::<Vec<_>>(), [1, 1, 3, 4]);
+        assert_eq!(rows[0].key, "seaside");
+        assert_eq!(rows[0].mode, "");
+        assert_eq!(rows[0].value, Some(38));
+        assert_eq!(rows[0].extra, json!({}));
+        assert!(rows.iter().all(|r| r.players == 4));
+    }
+
+    #[test]
+    fn golf_counts_only_the_entries_it_could_rank() {
+        // `players` is the number of RANKED entries, not the size of `totals`:
+        // a non-numeric score is dropped and lowers the field.
+        let rows = done("golf", json!({"totals": {"u1": 30, "u2": "nope", "u3": 31.7}}));
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.players == 2));
+        // int() truncates toward zero, as Python's int(31.7) does.
+        assert_eq!(rows[1].value, Some(31));
+        // No course named is the empty string, not "None".
+        assert_eq!(rows[0].key, "");
     }
 
     #[test]
     fn only_a_done_event_for_a_known_game_records() {
         assert_eq!(is_done(&json!({"ev": "done", "g": "kart"})), Some("kart"));
         assert_eq!(is_done(&json!({"ev": "snap", "g": "kart"})), None);
-        assert_eq!(is_done(&json!({"ev": "done", "g": "golf"})), None);
+        assert_eq!(is_done(&json!({"ev": "done", "g": "golf"})), Some("golf"));
+        assert_eq!(is_done(&json!({"ev": "done", "g": "type"})), Some("type"));
+        // The pond and the duel end, but not with a `done` -- nothing to record.
+        assert_eq!(is_done(&json!({"ev": "done", "g": "pond"})), None);
         assert_eq!(is_done(&json!({"ev": "done"})), None);
     }
 

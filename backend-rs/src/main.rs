@@ -61,6 +61,8 @@ pub(crate) struct AppState {
     pub(crate) kart: kart::KartHub,
     pub(crate) plat: platformer::PlatHub,
     pub(crate) fps: fps::FpsHub,
+    /// The other eight Valley games plus Party Mode, behind one dispatcher.
+    pub(crate) valley: valley::ValleyHub,
     pub(crate) conn_seq: Arc<AtomicU64>,
 }
 
@@ -395,6 +397,7 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
     let games = st.kart.clone();
     let plat = st.plat.clone();
     let arena = st.fps.clone();
+    let valley = st.valley.clone();
     let mut inbound = tokio::spawn(async move {
         let mut chat_times: VecDeque<Instant> = VecDeque::with_capacity(rooms::CHAT_RATE_COUNT);
         while let Some(Ok(msg)) = recv.next().await {
@@ -569,7 +572,14 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
                                "data": data}).to_string()).await;
                 }
 
-                Some("game") => games.handle(&rid, conn_id, &me, &v).await,
+                Some("game") if v.get("g").and_then(|g| g.as_str()) == Some(kart::GAME) => {
+                    games.handle(&rid, conn_id, &me, &v).await
+                }
+                // Every other game, and Party Mode, and the "unknown game"
+                // answer for a `g` nothing runs. Python has one dispatcher for
+                // all eleven; here the three real-time hubs still own theirs,
+                // so this arm is what is left after kart, plat and fps.
+                Some("game") => valley.handle(&rid, conn_id, &me, &v).await,
                 // Python answers unknown types rather than dropping them, so a
                 // client talking to an Arena that is too old finds out why.
                 other => {
@@ -593,6 +603,7 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
     st.kart.on_disconnect(&room_id, conn_id, &member).await;
     st.plat.on_disconnect(&room_id, conn_id, &member).await;
     st.fps.on_disconnect(&room_id, conn_id, &member).await;
+    st.valley.on_disconnect(&room_id, conn_id, &member).await;
     st.rooms.leave(&room_id, conn_id).await;
 }
 
@@ -800,7 +811,13 @@ async fn serve() -> anyhow::Result<()> {
     let rec = results::Recorder::new(pool.clone());
     let kart = kart::KartHub::new(rooms.clone(), registry.clone(), clock.clone(), rec.clone());
     let plat = platformer::PlatHub::new(rooms.clone(), registry.clone(), clock.clone(), rec.clone());
-    let fps = fps::FpsHub::new(rooms.clone(), registry, clock, rec);
+    let fps = fps::FpsHub::new(rooms.clone(), registry.clone(), clock.clone(), rec.clone());
+    // Some(pool): the farm is the only Valley game that persists anything, and
+    // with None it would run and silently forget every seed, plant and harvest.
+    let valley = valley::ValleyHub::new(
+        rooms.clone(), registry, clock, valley::system_wall(), valley::entropy_dice(), rec,
+        Some(pool.clone()),
+    );
     let state = AppState {
         pool,
         cfg: Arc::new(cfg),
@@ -808,6 +825,7 @@ async fn serve() -> anyhow::Result<()> {
         kart,
         plat,
         fps,
+        valley,
         conn_seq: Arc::new(AtomicU64::new(1)),
     };
 

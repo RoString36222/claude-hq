@@ -20,6 +20,11 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 pub const MAX_ROOM_MEMBERS: usize = 32;
 pub const MAX_STATE_BYTES: usize = 64 * 1024;
 
+/// The largest frame a socket may send, in characters -- Python's
+/// MAX_FRAME_BYTES, which measures `len(raw)` over a str and so is really a
+/// character count.
+pub const MAX_FRAME_CHARS: usize = 16 * 1024;
+
 // Lobby chat: a room keeps its last CHAT_HISTORY messages in memory, never on
 // disk, for whoever joins next; each connection may send CHAT_RATE_COUNT per
 // CHAT_RATE_WINDOW seconds. Same numbers as backend/app/rooms.py.
@@ -176,6 +181,22 @@ impl RoomManager {
         if let Some(room) = self.rooms.lock().await.get(room_id) {
             let _ = room.tx.send(msg);
         }
+    }
+
+    /// Python's `{m.user_id: m.public() for m in list(room.members.values())}`
+    /// (valley.py:1611): the ROOM's members keyed by user id, in socket order.
+    /// Someone on two sockets is written once and keeps their FIRST position,
+    /// which is what the dict comprehension does -- a later socket's `public()`
+    /// would overwrite the value but not move the key.
+    pub async fn members_public(&self, room_id: &str) -> Value {
+        let rooms = self.rooms.lock().await;
+        let mut out = serde_json::Map::new();
+        if let Some(room) = rooms.get(room_id) {
+            for (_, m) in &room.members {
+                out.insert(m.user_id.clone(), m.public());
+            }
+        }
+        Value::Object(out)
     }
 
     /// The room's chat backlog, oldest first, for a joiner's welcome.

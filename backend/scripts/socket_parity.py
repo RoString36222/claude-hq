@@ -12,7 +12,8 @@ It starts its own server on a throwaway database (schema from the Rust baseline
 migration, which was generated from the Alembic head), makes two users with
 device tokens, and exercises presence, nudges, WebRTC signalling, lobby chat
 (cleaning, the rate limit and the backlog a joiner catches up on), unknown
-message types, the loadtest stats route and the Quick Play queue.
+message types, oversized and malformed frames, every game the Arena\nadvertises, the loadtest stats route
+and the Quick Play queue.
 
 Where the two are deliberately different the check says so and asserts both
 sides: today that is Mini Golf, which Python referees and the Rust Arena does
@@ -167,15 +168,76 @@ async def main():
                 check("a non-string chat message is an error",
                       e == [{"type": "error", "error": "chat: text must be a string"}], repr(e))
 
-                for i in range(9):
+                # str.isprintable() rejects bidi overrides, zero-width spaces
+                # and joiners, the BOM and private-use code points; none of it
+                # may ride along in text people read.
+                sneaky = "hi\u202ereversed\u200b\ufeff\U000f0000 there"
+                await a.send(json.dumps({"type": "say",
+                                         "data": {"kind": "chat", "text": sneaky}}))
+                got_b = await recv(b, 0.6)
+                await recv(a, 0.3)
+                chat = [m for m in got_b if m.get("type") == "say"]
+                check("chat strips invisible format and private-use characters",
+                      chat and chat[0]["data"]["text"] == "hi reversed there",
+                      repr(chat[0]["data"] if chat else got_b))
+
+                # Two chats are already spent, so six of these eight land.
+                for i in range(8):
                     await a.send(json.dumps({"type": "say", "data": {"kind": "chat", "text": f"m{i}"}}))
                 got_a = await recv(a, 0.8)
                 errs = [m for m in got_a if m.get("type") == "error"]
                 check("the ninth message in ten seconds is rate-limited",
                       len(errs) == 2 and errs[0]["error"]
-                      == "chat: slow down — at most 8 messages every 10 seconds",
+                      == "chat: slow down \u2014 at most 8 messages every 10 seconds",
                       repr(errs))
                 await recv(b, 0.4)
+
+                # --- ping --------------------------------------------------
+                await a.send(json.dumps({"type": "ping"}))
+                got_a, got_b = await recv(a, 0.5), await recv(b, 0.4)
+                check("ping answers the asking socket",
+                      got_a == [{"type": "pong"}], repr(got_a))
+                check("pong is not broadcast to the room",
+                      not [m for m in got_b if m.get("type") == "pong"], repr(got_b))
+
+                # --- shared state ------------------------------------------
+                await a.send(json.dumps({"type": "state", "patch": {"turn": 3}}))
+                got_b = await recv(b, 0.6)
+                await recv(a, 0.3)
+                st = [m for m in got_b if m.get("type") == "state"]
+                check("a state patch merges and is broadcast",
+                      st and st[0]["state"] == {"turn": 3}
+                      and st[0]["by"]["userId"] == u1, repr(got_b))
+
+                await a.send(json.dumps({"type": "state", "patch": "nope"}))
+                e = await recv(a, 0.5)
+                check("a non-object state patch is an error",
+                      e == [{"type": "error", "error": "patch must be an object"}], repr(e))
+
+                # 64 KiB of shared state, reached in frames that each fit under
+                # the 16 KiB frame cap, so this tests the state cap and not that one.
+                over = None
+                for i in range(6):
+                    await a.send(json.dumps({"type": "state",
+                                             "patch": {f"k{i}": "x" * 15000}}))
+                    for m in await recv(a, 0.6):
+                        if m.get("type") == "error":
+                            over = m
+                    if over:
+                        break
+                check("a state patch over the cap is an error",
+                      over == {"type": "error", "error": "state too large"}, repr(over))
+                await recv(b, 0.6)
+
+                # --- frame intake ------------------------------------------
+                await a.send(json.dumps({"type": "ping", "pad": "x" * 17000}))
+                e = await recv(a, 0.6)
+                check("an oversized frame is answered, not dropped",
+                      e == [{"type": "error", "error": "frame too large"}], repr(e))
+                await a.send("{not json")
+                e = await recv(a, 0.6)
+                check("malformed json is answered, not dropped",
+                      e == [{"type": "error", "error": "malformed json"}], repr(e))
 
                 # --- unknown type ------------------------------------------
                 await a.send(json.dumps({"type": "wat"}))
@@ -191,7 +253,83 @@ async def main():
                 # Eight: the allowance is 8 per 10s and ten chats were sent,
                 # so the last two were refused and never stored.
                 check("a joiner catches up on the backlog, oldest first",
-                      texts == ["hi there all"] + [f"m{i}" for i in range(7)], repr(texts))
+                      texts == ["hi there all", "hi reversed there"]
+                      + [f"m{i}" for i in range(6)], repr(texts))
+
+        # --- every game the Arena advertises, and a join with each ---------
+        # The welcome's `arena` block is what games/multi.js gates each panel
+        # on: a game missing from it makes the page say "This Arena doesn't run
+        # <game> yet", however well the engine works.
+        GAMES = ["pond", "race", "duel", "mines", "farm", "golf", "kart", "plat",
+                 "fps", "hq", "type"]
+        # The event a join answers with, beyond the shared "lobby" broadcast.
+        # From valley.py:1036-1076. race answers only when a round is already
+        # running, so it has none on a fresh join.
+        SNAP = {"pond": "pond", "duel": "duel", "mines": "mines", "farm": "farm",
+                "golf": "golf", "kart": "kart", "plat": "plat", "fps": "fps",
+                "hq": "snap", "type": "type", "race": None}
+
+        k4 = await ticket(t1)
+        async with websockets.connect(f"{WS}/v1/rooms/{room}/ws?ticket={k4}") as d:
+            w = json.loads(await d.recv())
+            info = w.get("arena") or {}
+            check("the welcome advertises every game, in order",
+                  list((info.get("games") or {}).keys()) == GAMES,
+                  repr(list((info.get("games") or {}).keys())))
+            check("kart is still protocol 2 with its caps",
+                  (info.get("games") or {}).get("kart") == {"v": 2, "caps": ["scale", "tracks"]},
+                  repr((info.get("games") or {}).get("kart")))
+            check("the welcome carries the party playlist",
+                  info.get("party") == {"v": 1, "order": ["kart", "plat", "fps", "golf"]},
+                  repr(info.get("party")))
+
+            for g in GAMES:
+                if g == "hq":
+                    continue        # needs an hq_ room; done separately below
+                await d.send(json.dumps({"type": "game", "g": g, "op": "join"}))
+                got = await recv(d, 1.2)
+                evs = [m.get("ev") for m in got if m.get("g") == g]
+                errs = [m for m in got if m.get("ev") == "error"]
+                check(f"{g}: join is accepted",
+                      not errs and "lobby" in evs, repr(got)[:300])
+                want = SNAP[g]
+                if want:
+                    check(f"{g}: join answers with its {want} snapshot",
+                          want in evs, repr(evs))
+
+            # A game nothing runs is still refused, by name.
+            await d.send(json.dumps({"type": "game", "g": "chess", "op": "join"}))
+            got = await recv(d, 0.8)
+            check("an unknown game is refused",
+                  [m for m in got if m.get("ev") == "error"
+                   and m.get("error") == "unknown game"], repr(got)[:200])
+
+            # Party Mode is not a Valley game and has no lobby: it is
+            # short-circuited ahead of every other check (valley.py:1000).
+            await d.send(json.dumps({"type": "game", "g": "party", "op": "view"}))
+            got = await recv(d, 0.8)
+            party = [m for m in got if m.get("g") == "party"]
+            check("party answers without joining any lobby",
+                  party and not [m for m in party if m.get("ev") == "error"],
+                  repr(got)[:300])
+
+        # HQ presence lives in an HQ room, and says so anywhere else.
+        k5 = await ticket(t1)
+        async with websockets.connect(f"{WS}/v1/rooms/hq_{u1}/ws?ticket={k5}") as h:
+            await h.recv()
+            await h.send(json.dumps({"type": "game", "g": "hq", "op": "join"}))
+            got = await recv(h, 1.2)
+            evs = [m.get("ev") for m in got if m.get("g") == "hq"]
+            check("hq: join inside an HQ room answers with a presence snapshot",
+                  "snap" in evs and "lobby" in evs, repr(got)[:300])
+        k6 = await ticket(t1)
+        async with websockets.connect(f"{WS}/v1/rooms/{room}/ws?ticket={k6}") as h2:
+            await h2.recv()
+            await h2.send(json.dumps({"type": "game", "g": "hq", "op": "join"}))
+            got = await recv(h2, 0.8)
+            check("hq: refused outside an HQ room, with Python's wording",
+                  [m for m in got if m.get("error") == "HQ presence lives in an HQ room"],
+                  repr(got)[:200])
 
         # --- the env-gated loadtest route ---------------------------------
         async with httpx.AsyncClient(base_url=BASE) as c:
@@ -201,17 +339,17 @@ async def main():
                   f"{r.status_code} {r.text[:120]}")
             r = await c.post("/v1/quickplay/join", json={"game": "golf"},
                              headers={"Authorization": f"Bearer {t1}"})
-            # The one deliberate divergence: Python referees Mini Golf, this
-            # Rust build does not, so it must refuse the queue instead of
-            # matching people into a room where nothing ever starts.
-            if IMPL == "py":
-                check("Quick Play queues Golf on an Arena that runs it",
-                      r.json().get("state") == "waiting", f"{r.status_code} {r.text[:160]}")
-            else:
-                check("Quick Play refuses a game this Arena cannot run",
-                      r.status_code == 200 and r.json().get("state") == "error"
-                      and "Golf" not in r.json().get("error", ""),
-                      f"{r.status_code} {r.text[:160]}")
+            # Both Arenas referee Mini Golf now, so both must queue it. This
+            # was the one deliberate divergence while the Rust Arena had no
+            # golf engine; it is gone.
+            check("Quick Play queues Golf on both Arenas",
+                  r.json().get("state") == "waiting", f"{r.status_code} {r.text[:160]}")
+            r = await c.post("/v1/quickplay/join", json={"game": "chess"},
+                             headers={"Authorization": f"Bearer {t1}"})
+            check("Quick Play still refuses a game nobody runs",
+                  r.json().get("state") == "error"
+                  and r.json().get("error", "").startswith("Quick Play has"),
+                  f"{r.status_code} {r.text[:160]}")
             r = await c.post("/v1/quickplay/join", json={"game": "kart"},
                              headers={"Authorization": f"Bearer {t1}"})
             check("Quick Play still queues a game it can run",

@@ -1,6 +1,14 @@
-//! Database access. Shares the schema (and the file) with the Python backend,
-//! so Alembic remains the single owner of migrations -- this never creates or
-//! alters tables, it only reads and writes rows.
+//! Database access, and schema ownership.
+//!
+//! Until now Alembic owned the schema and this only read and wrote rows. For
+//! Python to be deleted, that has to move: `migrations/` here is the owner now,
+//! applied by sqlx at boot.
+//!
+//! The handover is designed to be reversible. `0001_baseline.sql` is the schema
+//! as Alembic built it at revision `3d4e5f6a7b8c`, written entirely with
+//! IF NOT EXISTS, so running this against the live production file changes
+//! nothing -- it simply records that the baseline is present. Only migrations
+//! numbered above it are new ground.
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
@@ -23,6 +31,50 @@ pub fn normalise_url(raw: &str) -> String {
     s
 }
 
+/// The Alembic revision `0001_baseline.sql` was generated from. A database
+/// stamped *past* this knows tables we have never seen, which is the failure
+/// that took the Arena down twice when a rollback left code behind its schema.
+pub const BASELINE_ALEMBIC_REV: &str = "3d4e5f6a7b8c";
+
+/// Refuse to serve a database migrated beyond what this binary understands.
+///
+/// Only meaningful while both backends exist: once Python is gone the table
+/// stops being written and this becomes a no-op. Absent table => a database
+/// Rust created itself, which is fine.
+pub async fn check_alembic_compat(pool: &SqlitePool) -> Result<(), String> {
+    let exists: Option<(String,)> = sqlx::query_as(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='alembic_version'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    if exists.is_none() {
+        return Ok(());
+    }
+    let rev: Option<(String,)> = sqlx::query_as("SELECT version_num FROM alembic_version")
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    match rev {
+        Some(r) if r.0 == BASELINE_ALEMBIC_REV => Ok(()),
+        Some(r) => Err(format!(
+            "database is at Alembic revision {} but this binary was built against {}. \
+             Roll the database back, or rebuild after porting that migration.",
+            r.0, BASELINE_ALEMBIC_REV
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Apply every migration in `migrations/`, then verify Alembic compatibility.
+pub async fn migrate(pool: &SqlitePool) -> Result<(), String> {
+    sqlx::migrate!("./migrations")
+        .run(pool)
+        .await
+        .map_err(|e| format!("migration failed: {e}"))?;
+    check_alembic_compat(pool).await
+}
+
 pub async fn connect(url: &str) -> Result<SqlitePool, sqlx::Error> {
     let opts = SqliteConnectOptions::from_str(&normalise_url(url))?
         // Same pragmas as app/db.py: WAL so readers do not block a publish,
@@ -30,7 +82,7 @@ pub async fn connect(url: &str) -> Result<SqlitePool, sqlx::Error> {
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
         .busy_timeout(std::time::Duration::from_secs(5))
         .foreign_keys(true)
-        .create_if_missing(false);
+        .create_if_missing(true);
     SqlitePoolOptions::new().max_connections(5).connect_with(opts).await
 }
 

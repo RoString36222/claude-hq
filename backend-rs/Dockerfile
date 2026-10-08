@@ -5,6 +5,10 @@ FROM rust:1-slim AS build
 WORKDIR /src
 COPY backend-rs/Cargo.toml backend-rs/Cargo.lock backend-rs/
 COPY backend-rs/src backend-rs/src
+# sqlx::migrate!() is a compile-time macro: it reads migrations/ during
+# `cargo build` and embeds the SQL in the binary. Without this COPY the build
+# fails, and Rust now owns the schema, so there is nothing else to apply it.
+COPY backend-rs/migrations backend-rs/migrations
 COPY backend/app/kart_tracks.json backend/app/platformer_levels.json backend/app/fps_map.json backend/app/
 RUN cd backend-rs && cargo build --release --locked --bin arena
 

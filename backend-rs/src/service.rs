@@ -145,11 +145,22 @@ pub async fn build_board(
         e.rank = i as i64 + 1;
     }
 
+    // Python prefers the active season's name and only falls back to the month:
+    //     seasonName = season.name if season else today.strftime("%B %Y")
+    // `.first()` there means no ORDER BY, so with several active seasons the row
+    // is whichever SQLite yields first; LIMIT 1 with no ORDER BY matches that.
+    let season_name: Option<(String,)> =
+        sqlx::query_as("SELECT name FROM seasons WHERE is_active = 1 LIMIT 1")
+            .fetch_optional(pool)
+            .await?;
+
     Ok(BoardResponse {
         window: window.to_string(),
         starts_on: starts,
         ends_on: ends,
-        season_name: today.format("%B %Y").to_string(),
+        season_name: season_name
+            .map(|r| r.0)
+            .unwrap_or_else(|| today.format("%B %Y").to_string()),
         generated_at: Utc::now().to_rfc3339(),
         entries,
     })

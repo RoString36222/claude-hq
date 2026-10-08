@@ -3,6 +3,10 @@
 !backend-rs/Cargo.toml
 !backend-rs/Cargo.lock
 !backend-rs/src
+# sqlx::migrate!() embeds these at compile time, so they must reach the build
+# context. Without this line the COPY fails with "/backend-rs/migrations": not
+# found -- the file is committed, it just never arrives.
+!backend-rs/migrations
 !backend/app/kart_tracks.json
 !backend/app/platformer_levels.json
 !backend/app/fps_map.json

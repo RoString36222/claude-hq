@@ -4,17 +4,29 @@
 //! alongside the Python one and swapped by changing which port Caddy proxies.
 
 mod auth;
+mod boardstream;
+mod cali;
 mod config;
+mod cosmetics;
+mod crews;
 mod db;
 mod fps;
+mod hq;
 mod kart;
+mod nudges;
+mod pantry;
 mod platformer;
+mod privrooms;
+mod progress;
 mod protocol;
+mod quickplay;
 mod realtime;
 mod rooms;
 mod schemas;
 mod scoring;
+mod server_stats;
 mod service;
+mod sounds;
 
 use axum::{
     extract::{
@@ -37,29 +49,29 @@ use std::sync::{
 };
 
 #[derive(Clone)]
-struct AppState {
-    pool: SqlitePool,
-    cfg: Arc<config::Settings>,
-    rooms: RoomManager,
-    kart: kart::KartHub,
-    plat: platformer::PlatHub,
-    fps: fps::FpsHub,
-    conn_seq: Arc<AtomicU64>,
+pub(crate) struct AppState {
+    pub(crate) pool: SqlitePool,
+    pub(crate) cfg: Arc<config::Settings>,
+    pub(crate) rooms: RoomManager,
+    pub(crate) kart: kart::KartHub,
+    pub(crate) plat: platformer::PlatHub,
+    pub(crate) fps: fps::FpsHub,
+    pub(crate) conn_seq: Arc<AtomicU64>,
 }
 
 /// The authenticated caller, resolved from the bearer token on every request.
 #[derive(Clone, Debug)]
-struct Caller {
-    user_id: String,
-    device_id: String,
-    handle: String,
-    display_name: String,
-    trainer_name: String,
-    avatar_url: String,
-    device_label: String,
+pub(crate) struct Caller {
+    pub(crate) user_id: String,
+    pub(crate) device_id: String,
+    pub(crate) handle: String,
+    pub(crate) display_name: String,
+    pub(crate) trainer_name: String,
+    pub(crate) avatar_url: String,
+    pub(crate) device_label: String,
 }
 
-fn err(code: StatusCode, msg: &str) -> Response {
+pub(crate) fn err(code: StatusCode, msg: &str) -> Response {
     (code, Json(json!({ "detail": msg }))).into_response()
 }
 
@@ -196,7 +208,13 @@ async fn post_stats(State(st): State<AppState>, req: Request) -> Response {
     match service::ingest(&st.pool, &c.user_id, &c.device_id, &payload,
                           st.cfg.max_daily_prompts, st.cfg.max_daily_tools,
                           st.cfg.max_backfill_days).await {
-        Ok(r) => Json(r).into_response(),
+        Ok(r) => {
+            // Wake every open /v1/board/stream so a publish lands on friends'
+            // boards immediately, instead of waiting out the 25s heartbeat.
+            // Python does this from events.board_hub on the same condition.
+            boardstream::publish_if_accepted(r.accepted);
+            Json(r).into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}")),
     }
 }
@@ -518,6 +536,15 @@ async fn serve() -> anyhow::Result<()> {
 
     let cfg = config::Settings::from_env();
     let pool = db::connect(&cfg.database_url).await?;
+
+    // Schema ownership lives here now, not in Alembic. Applying migrations
+    // before anything binds a port means a database this binary cannot serve
+    // stops the process rather than producing confusing 500s at runtime.
+    if let Err(e) = db::migrate(&pool).await {
+        eprintln!("arena: {e}");
+        std::process::exit(1);
+    }
+
     let port: u16 = std::env::var("ARENA_BIND_PORT").ok()
         .and_then(|p| p.parse().ok()).unwrap_or(8081);
     let bind = format!("{}:{}", cfg.bind, port);
@@ -549,6 +576,17 @@ async fn serve() -> anyhow::Result<()> {
         .route("/v1/me", get(me))
         .route("/v1/rooms", get(list_rooms))
         .route("/v1/auth/ticket", post(ticket))
+        .merge(cali::routes())
+        .merge(cosmetics::routes())
+        .merge(crews::routes())
+        .merge(hq::routes())
+        .merge(nudges::routes())
+        .merge(pantry::routes())
+        .merge(privrooms::routes())
+        .merge(progress::routes())
+        .merge(quickplay::routes())
+        .merge(server_stats::routes())
+        .merge(sounds::routes())
         .layer(middleware::from_fn_with_state(state.clone(), require_device));
 
     let public = Router::new()
@@ -556,7 +594,8 @@ async fn serve() -> anyhow::Result<()> {
         .route("/v1/auth/github/start", get(github_start))
         .route("/v1/auth/github/callback", get(github_callback))
         .route("/v1/auth/pair", post(pair))
-        .route("/v1/rooms/:room_id/ws", get(room_ws));
+        .route("/v1/rooms/:room_id/ws", get(room_ws))
+        .merge(boardstream::routes());
 
     let app = Router::new().merge(public).merge(guarded).with_state(state);
 

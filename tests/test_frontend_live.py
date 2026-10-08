@@ -367,36 +367,21 @@ out([a.level, a.hq, b.level, b.hq, b.pct]);""")
 
 
 @unittest.skipUnless(NODE, "node not installed")
-class TalkWhereYouStandTests(unittest.TestCase):
-    """HQ 2.1 talk: the Arena room follows you around the 3D HQ, never drops a call, and
-    goes back to where you were when you leave the HQ view."""
+class OneCallEverywhereTests(unittest.TestCase):
+    """The HQ talk panel is your Arena room's chat and call (one call everywhere): walking the
+    HQ or the city never changes rooms; only a room left over from the old follow behaviour is
+    put back to the Lobby (never mid-call)."""
 
-    PRE = """
-var VIEW="hq", HQ3D={inst:{}, world:"city", visit:null}, HQ_REMOTE={open:true, me:"aaaaaaaa-0000-4000-8000-000000000001"}, VCHAN={on:false};
-var ARENA={roomId:"lobby"}, went=[];
-function hqCityOn(){ return HQ_REMOTE.open && !!HQ_REMOTE.me; }
-function arenaGoRoom(id, info){ went.push(id); ARENA.roomId=id; }
-var TALK={prev:null, refused:null, offer:null};
-"""
-
-    def run_follow(self, body):
-        return run_js(["arenaIsHqRoom", "hqTalkRoom", "hqTalkPlace", "hqTalkFollow"], self.PRE + body)
-
-    def test_follows_city_visit_and_home(self):
-        out = self.run_follow("""
-hqTalkFollow(); var a=ARENA.roomId;
-HQ3D.world="lobby"; hqTalkFollow(); var b=ARENA.roomId;
-HQ3D.visit={userId:"0123abcd-0123-4567-89ab-0123456789ab", trainerName:"Ann"}; hqTalkFollow(); var c=ARENA.roomId, nm=hqTalkPlace(c);
-HQ3D.visit=null; VIEW="live"; hqTalkFollow();
-out([a, b, c, nm, ARENA.roomId]);""")
-        self.assertEqual(out, ["hq_city", "hq_aaaaaaaa-0000-4000-8000-000000000001", "hq_0123abcd-0123-4567-89ab-0123456789ab", "Ann's HQ", "lobby"])
-
-    def test_never_drops_a_call_and_private_means_no_move(self):
-        out = self.run_follow("""
-VCHAN.on=true; hqTalkFollow(); var a=[ARENA.roomId, TALK.offer];
-VCHAN.on=false; HQ_REMOTE.open=false; HQ3D.world="base"; TALK.offer=null; hqTalkFollow();
-out([a, ARENA.roomId, went]);""")
-        self.assertEqual(out, [["lobby", "hq_city"], "lobby", []])
+    def test_panel_uses_the_current_room_and_never_moves_it(self):
+        out = run_js(["arenaIsHqRoom", "hqTalkRoom", "hqTalkPlace", "hqTalkFollow"], """
+var VIEW="hq", VCHAN={on:false}, ARENA={paired:true, roomId:"r_abcdefghijklmnopqrstuv", roomName:"Owls"}, went=[];
+function arenaGoRoom(id){ went.push(id); ARENA.roomId=id; }
+var a=[hqTalkRoom(), hqTalkPlace()]; hqTalkFollow();
+ARENA.roomId="hq_city"; VCHAN.on=true; hqTalkFollow(); var b=ARENA.roomId;
+VCHAN.on=false; hqTalkFollow();
+VIEW="valley"; var c=hqTalkRoom();
+out([a, b, went, c]);""")
+        self.assertEqual(out, [["r_abcdefghijklmnopqrstuv", "Owls"], "hq_city", ["lobby"], None])
 
 
 class TalkPanelMentionsTests(unittest.TestCase):

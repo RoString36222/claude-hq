@@ -636,3 +636,61 @@ class CaliBoardResponse(BaseModel):
     # The non-taco menu, in display order. Its presence tells a client this
     # server records items.
     menu: list[CaliMenuItem] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------- HQ (2.1) --
+# A visitor sees your building, your level and how many crew are working: counts
+# and cosmetics only. These shapes are the boundary, so every field is checked.
+HEX_COLOUR = r"^#[0-9a-fA-F]{6}$"
+
+
+class HqLook(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    paint: str | None = Field(default=None, pattern=HEX_COLOUR)
+    accent: str | None = Field(default=None, pattern=HEX_COLOUR)
+    sign: str | None = Field(default=None, max_length=18)
+
+    @field_validator("sign")
+    @classmethod
+    def _sign(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = " ".join(v.split())          # no control characters, newlines or runs of spaces
+        if not all(c.isalnum() or c in " .,'&!?-·" for c in v):
+            raise ValueError("the sign takes letters, numbers, spaces and . , ' & ! ? -")
+        return v or None
+
+
+class HqCrew(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    working: int = Field(default=0, ge=0, le=64)
+    needs: int = Field(default=0, ge=0, le=64)
+    idle: int = Field(default=0, ge=0, le=64)
+
+
+class HqUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    open: bool | None = None
+    look: HqLook | None = None
+    crew: HqCrew | None = None
+
+
+class HqProfileOut(BaseModel):
+    userId: str
+    handle: str
+    displayName: str
+    trainerName: str | None = None
+    avatarUrl: str
+    level: int
+    open: bool
+    look: HqLook
+    crew: HqCrew
+    updatedAt: str | None = None
+    isYou: bool = False
+
+
+class HqOpenList(BaseModel):
+    hqs: list[HqProfileOut]

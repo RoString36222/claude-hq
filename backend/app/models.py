@@ -362,3 +362,21 @@ class RoomFarm(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class HqProfile(Base):
+    """Your 3D HQ as visitors see it (HQ 2.1): whether it is open to them, how the
+    building looks, and how many of your crew are working / need you / idle.
+    Counts and cosmetics only: no session titles, projects, paths or anything a
+    transcript said ever reach this table. The level is never stored here; it is
+    scored from daily_stats when someone visits."""
+
+    __tablename__ = "hq_profiles"
+
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    open: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    look: Mapped[dict] = mapped_column(JSON, default=dict)
+    crew: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

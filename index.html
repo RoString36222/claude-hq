@@ -499,9 +499,22 @@
     <div class="hq3d-stage" id="hqStage"></div>
     <aside class="hq3d-side" aria-label="Crew">
       <div class="hq3d-where" id="hqWhere" role="group" aria-label="Go to"></div>
+      <div class="hq3d-visiting" id="hqVisiting" hidden></div>
       <div class="hq3d-side-head"><b>Crew</b><span id="hqCrewCount" class="muted"></span></div>
       <div id="hqFilter" class="hq3d-filter" hidden></div>
       <ul id="hqCrew" class="hq3d-crew"></ul>
+      <details class="hq3d-sec" id="hqBuildSec">
+        <summary>Your building</summary>
+        <div class="hq3d-row"><span class="muted">Paint</span><div class="hq3d-swatches" id="hqPaint" role="group" aria-label="Building paint"></div></div>
+        <div class="hq3d-row"><span class="muted">Lights</span><div class="hq3d-swatches" id="hqAccent" role="group" aria-label="Accent lights"></div></div>
+        <label class="hq3d-row" for="hqSign"><span class="muted">Sign</span><input id="hqSign" maxlength="18" placeholder="CLAUDE HQ" autocomplete="off"></label>
+        <label class="hq3d-check" for="hqOpen"><input type="checkbox" id="hqOpen"> <span>Open my HQ to visitors <small class="muted">They see your building, your level and how many crew are working, need you or are idle. Never titles, projects or anything your sessions say.</small></span></label>
+        <div class="hq3d-row"><button class="hbtn" id="hqSave" type="button">Save</button><span id="hqSaveNote" class="muted" aria-live="polite"></span></div>
+      </details>
+      <details class="hq3d-sec" id="hqVisitSec">
+        <summary>Visit a friend</summary>
+        <ul class="hq3d-crew" id="hqOpenList"><li class="muted">Open this to see whose HQ is open.</li></ul>
+      </details>
       <p class="hq3d-help muted">Walk with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or click the ground. Outside, walk to the front door to go in; the lifts in the Lobby go up to Mission Control. Click a crew member for their card, a door to go through it, a project on the table to show only its crew. Drag to turn, scroll to zoom. <kbd>H</kbd> switches to the classic dashboard.</p>
     </aside>
   </section>

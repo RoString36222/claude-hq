@@ -630,7 +630,7 @@ function mount(el, api){
       avatar.x = sp.x; avatar.z = sp.z; avatar.yaw = sp.yaw || 0; walkTo = null; walkDoor = null;
       cur = w; view.span = w.span || 12; view.zoom = w.zoom || 1.45; view.yaw = w.camYaw != null ? w.camYaw : PI/4; view.pitch = w.camPitch || 0.62;
       moveAvatar(0); view.target.copy(view.goal);
-      try { localStorage.setItem("hq_world", name); } catch(e){}
+      if(api.remember !== false){ try { localStorage.setItem("hq_world", name); } catch(e){} }
       if(api.onWorld) api.onWorld(name);
     };
     if(instant || E.calm()){ go(); return; }
@@ -691,6 +691,8 @@ function mount(el, api){
     layoutDesks(); buildStreamsIfChanged(); buildProjects(); drawWall(E.now() - clock0);
     Object.keys(worlds).forEach(function(k){ if(worlds[k].onData) worlds[k].onData(sessions); });
   };
+  // The building's paint/accent/sign changed (customisation): every floor redraws what shows it.
+  inst.lookChanged = function(){ Object.keys(worlds).forEach(function(k){ if(worlds[k].onLook) worlds[k].onLook(); }); };
   inst.goWorld = function(name){ if(scene && cur && cur.name !== name) enterWorld(name, null); };
   var streamKey = "";
   function buildStreamsIfChanged(){

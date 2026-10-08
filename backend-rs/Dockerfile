@@ -9,7 +9,11 @@ COPY backend-rs/src backend-rs/src
 # `cargo build` and embeds the SQL in the binary. Without this COPY the build
 # fails, and Rust now owns the schema, so there is nothing else to apply it.
 COPY backend-rs/migrations backend-rs/migrations
-COPY backend/app/kart_tracks.json backend/app/platformer_levels.json backend/app/fps_map.json backend/app/
+COPY backend/app/kart_tracks.json backend/app/platformer_levels.json \
+     backend/app/fps_map.json backend/app/golf_courses.json backend/app/
+# Its own COPY: the creature data sits a directory deeper, and a single COPY
+# cannot flatten two destinations.
+COPY backend/app/data/pokemon.json backend/app/data/
 RUN cd backend-rs && cargo build --release --locked --bin arena
 
 FROM debian:bookworm-slim

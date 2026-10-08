@@ -30,11 +30,29 @@ class ProtocolTables(unittest.TestCase):
         for g, v in re.findall(r'PROTOCOL\["(\w+)"\] = \{"v": (\d+)', py):
             self.assertTrue(cp[g][0] <= int(v) <= cp[g][1], g)
 
+    def test_rust_advertises_the_same_table_as_python(self):
+        """The two Arenas must offer the same games at the same versions.
+
+        This used to assert Rust ran exactly kart, plat and fps, because that
+        was all it refereed. It runs all eleven now, so the useful invariant is
+        that the two tables agree -- a game added to one and not the other is
+        the bug this catches."""
+        py = read("backend", "app", "valley.py")
+        games = re.findall(r'"(\w+)"', re.search(r"^GAMES = \(([^)]*)\)", py, re.M).group(1))
+        rs = read("backend-rs", "src", "protocol.rs")
+        rows = re.findall(r'\("(\w+)", (\d+), &\[', rs)
+        self.assertEqual([g for g, _ in rows], games)      # same games, same order
+        # Python builds every entry at v1 and overrides only some; the overrides
+        # are what must match Rust's numbers.
+        over = {g: int(v) for g, v in re.findall(r'PROTOCOL\["(\w+)"\] = \{"v": (\d+)', py)}
+        for g, v in rows:
+            self.assertEqual(int(v), over.get(g, 1), g)
+
     def test_client_covers_rust_versions(self):
         rs = read("backend-rs", "src", "protocol.rs")
         cp = client_proto()
         rows = re.findall(r'\("(\w+)", (\d+), &\[', rs)
-        self.assertEqual({g for g, _ in rows}, {"kart", "plat", "fps"})
+        self.assertTrue(rows, "no protocol rows parsed out of protocol.rs")
         for g, v in rows:
             self.assertTrue(cp[g][0] <= int(v) <= cp[g][1], g)
 
@@ -60,7 +78,9 @@ console.log(JSON.stringify(out));
         self.assertEqual(r.returncode, 0, r.stderr)
         out = json.loads(r.stdout)
         self.assertIsNone(out["kart"])                       # in range
-        self.assertEqual(out["golf"]["who"], "arena")        # Rust Arena has no golf
+        # An Arena whose table omits golf -- stubbed above, not the real Rust
+        # one, which runs it now. What is under test is the client's verdict.
+        self.assertEqual(out["golf"]["who"], "arena")
         self.assertIn("Python Arena", out["golf"]["text"])
         self.assertEqual(out["fps"]["who"], "hq")            # server newer than client
         self.assertEqual(out["plat"]["who"], "arena")        # server older than client

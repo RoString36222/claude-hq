@@ -37,6 +37,7 @@ async def room_ws(
         await websocket.close(code=4400, reason="bad room id")
         return
 
+    room_info: dict | None = None
     async with SessionLocal() as db:
         user = await db.get(User, user_id)
         if user is None or not user.is_active:
@@ -65,10 +66,14 @@ async def room_ws(
             if result is None:
                 await websocket.close(code=4404, reason="no such room")
                 return
-            _name, role = result
+            name, role = result
             if role not in ("owner", "member"):
                 await websocket.close(code=4403, reason="join this room first")
                 return
+            # The page checks this before it calls the room open (it names the room and
+            # shows owner controls from it); without it a private room reads as "this
+            # Arena is too old for rooms" and the page falls back to the Lobby.
+            room_info = {"kind": "private", "id": room_id, "name": name, "role": role}
 
     from .. import cosmetics
     async with SessionLocal() as db:
@@ -93,7 +98,7 @@ async def room_ws(
     await websocket.send_json({
         "type": "welcome",
         "room": room_id,
-        "roomInfo": quickplay.room_info(room_id) if room_id.startswith("qp_") else None,
+        "roomInfo": quickplay.room_info(room_id) if room_id.startswith("qp_") else room_info,
         "you": member.public(),
         "members": room.roster(),
         "state": room.state,

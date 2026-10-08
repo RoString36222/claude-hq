@@ -348,3 +348,21 @@ async def test_max_owned(aclient, alice):
         assert "already own" in r.json()["detail"]
     finally:
         pr.MAX_OWNED = old
+
+
+async def test_welcome_names_the_private_room(client, alice, bob):
+    """The page only treats a room as open once the welcome says which private room it is
+    (and your role there); without roomInfo it falls back to the Lobby."""
+    from starlette.websockets import WebSocketDisconnect
+    from app.auth import issue_ws_ticket
+    (aid, atok), (bid, _btok) = alice, bob
+    rid = client.post("/v1/rooms/create", json={"name": "Owls", "password": "secret123"}, headers=auth(atok)).json()["room"]["id"]
+    with client.websocket_connect(f"/v1/rooms/{rid}/ws?ticket={issue_ws_ticket(aid)}") as ws:
+        w = ws.receive_json()
+        assert w["type"] == "welcome"
+        assert w["roomInfo"] == {"kind": "private", "id": rid, "name": "Owls", "role": "owner"}
+    with client.websocket_connect(f"/v1/rooms/lobby/ws?ticket={issue_ws_ticket(aid)}") as ws:
+        assert ws.receive_json()["roomInfo"] is None
+    with pytest.raises(WebSocketDisconnect):                          # not a member: still kept out
+        with client.websocket_connect(f"/v1/rooms/{rid}/ws?ticket={issue_ws_ticket(bid)}") as ws:
+            ws.receive_json()

@@ -105,10 +105,14 @@ def record_later(game: str, data: dict) -> None:
     task.add_done_callback(_pending.discard)
 
 
-async def drain() -> None:
-    """Wait for results still being written (tests, shutdown)."""
-    while _pending:
-        await asyncio.gather(*list(_pending), return_exceptions=True)
+async def drain(timeout: float = 5.0) -> None:
+    """Wait for results still being written (tests, shutdown). Polls rather than
+    awaiting the tasks: they may belong to another event loop (the test client
+    runs the app on its own thread)."""
+    waited = 0.0
+    while _pending and waited < timeout:
+        await asyncio.sleep(0.02)
+        waited += 0.02
 
 
 def xp_for_result(place: int, players: int) -> int:

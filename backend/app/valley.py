@@ -1540,7 +1540,7 @@ async def _flush(room: Room, out: Out) -> None:
         # A finished game's results are kept (progression, leaderboards, profiles),
         # once per game: from the event the server itself sends the lobby.
         if payload.get("ev") == "done" and payload.get("g") in resultsmod.GAMES and kind in ("lobby", "all"):
-            resultsmod.record_later(payload["g"], payload)
+            await resultsmod.record(payload["g"], payload)     # once per game, a few ms; never raises
         if kind == "all":
             await room.broadcast(payload)
         elif kind == "ws":

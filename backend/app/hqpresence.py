@@ -1,7 +1,8 @@
 """HQ 2.1: who is in an HQ right now, and where (g = "hq").
 
 Each HQ has its own Arena room, "hq_<owner user id>" (routes/rooms.py lets in only
-the owner, or anyone while the owner keeps the HQ open). Everyone in it joins the
+the owner, or anyone while the owner keeps the HQ open). Arena City, the street of
+open HQs, is one more room, "hq_city", that anyone paired may walk. Everyone in it joins the
 "hq" lobby and sends where they stand: which floor (base, lobby, mission), x/z in
 centimetres, facing in degrees, and whether they walk. The room's loop sends the
 whole list 8 times a second, so everyone sees everyone else move. Positions only:
@@ -11,7 +12,9 @@ from typing import Any
 
 HZ = 8
 MAX_PEOPLE = 16
-FLOORS = ("base", "lobby", "mission")
+CITY_ROOM = "hq_city"          # Arena City: the street of open HQs, open to anyone paired
+MAX_CITY = 40
+FLOORS = ("base", "lobby", "mission", "city")
 POS_RATE, POS_BURST = 12.0, 24.0       # frames a second per person (clients send 8)
 KEEPALIVE = 2.0                         # resend the list this often even when nobody moved
 
@@ -21,6 +24,16 @@ def _num(v: Any, lo: float, hi: float) -> float | None:
         return None
     v = float(v)
     return v if lo <= v <= hi else None
+
+
+def cap(room_id: str) -> int:
+    return MAX_CITY if room_id == CITY_ROOM else MAX_PEOPLE
+
+
+def _frame(pub: dict) -> str | None:
+    """The name frame they wear (a colour), so everyone draws their name tag in it."""
+    f = (pub.get("cos") or {}).get("frame")
+    return f if isinstance(f, str) and len(f) == 7 and f.startswith("#") else None
 
 
 class Presence:
@@ -63,5 +76,6 @@ class Presence:
 
     def listing(self) -> list[dict]:
         return [{"u": uid, "n": (p["user"].get("displayName") or p["user"].get("handle") or "")[:24],
-                 "w": p["w"], "x": p["x"], "z": p["z"], "r": p["r"], "a": p["a"]}
+                 "w": p["w"], "x": p["x"], "z": p["z"], "r": p["r"], "a": p["a"],
+                 **({"f": _frame(p["user"])} if _frame(p["user"]) else {})}
                 for uid, p in self.people.items()]

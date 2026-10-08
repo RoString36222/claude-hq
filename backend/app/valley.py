@@ -1015,7 +1015,7 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
 
     if op == "join":
         reserved = g == "duel" and v.duel.seated(member.user_id)
-        cap = hqmod.MAX_PEOPLE if g == "hq" else MAX_LOBBY
+        cap = hqmod.cap(room.room_id) if g == "hq" else MAX_LOBBY
         if member.user_id not in lobby.members and len(lobby.members) >= cap and not reserved:
             out.err(member.ws, "this game's lobby is full")
         else:

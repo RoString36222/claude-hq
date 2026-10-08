@@ -660,6 +660,7 @@ function arenaRenderLobby(members){
     } else { chip.appendChild(dot); }
     var t=document.createElement("span"); t.textContent = m.displayName || m.handle;
     chip.appendChild(t);
+    if(typeof cosFrameApply==="function") cosFrameApply(chip, m.cos && m.cos.frame);
     var mine = !!(ARENA.you && m.userId===ARENA.you.userId);
     var st = mine ? (ARENA_SHARE_STATUS ? arenaMyCounts() : null) : ARENA.peerStatus[m.userId];
     if(st) chip.appendChild(arenaStatusEl(st, mine ? "you" : (m.displayName || m.handle)));

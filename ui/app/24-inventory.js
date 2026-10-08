@@ -14,8 +14,19 @@ function invSetWorn(state){
   window.HQ_MYCOS = invWorn(state);
   try { localStorage.setItem("hq_mycos", JSON.stringify(window.HQ_MYCOS)); } catch(e){}
   if(typeof HQ3D!=="undefined" && HQ3D && HQ3D.inst && !HQ3D.visit && HQ3D.inst.lookChanged) HQ3D.inst.lookChanged();
+  cosFrameMine();
 }
+// The name frame (a colour) someone wears, drawn round their avatar and name wherever it shows.
+function cosFrame(v){ return (typeof v==="string" && /^#[0-9a-f]{6}$/i.test(v)) ? v : null; }
+function cosFrameApply(el, v){
+  if(!el) return;
+  var f=cosFrame(v);
+  el.classList.toggle("framed", !!f);
+  if(f) el.style.setProperty("--frame", f); else el.style.removeProperty("--frame");
+}
+function cosFrameMine(){ cosFrameApply($("tcAvatar"), (window.HQ_MYCOS||{}).frame); }
 try { window.HQ_MYCOS = JSON.parse(localStorage.getItem("hq_mycos")||"{}") || {}; } catch(e){}
+cosFrameMine();
 
 function invOpen(){
   var back=$("invBack"); if(!back) return;
@@ -61,6 +72,7 @@ function invRender(cosRes){
   var bySlot={}; INV.cos.items.forEach(function(it){ (bySlot[it.slot]=bySlot[it.slot]||[]).push(it); });
   Object.keys(INV.cos.slots).forEach(function(slot){
     invSection(body, INV.cos.slots[slot], null, function(box){
+      if(INV_WHERE[slot]){ var wh=document.createElement("p"); wh.className="muted inv-where"; wh.textContent=INV_WHERE[slot]; box.parentNode.insertBefore(wh, box); }
       box.classList.add("inv-cos");
       (bySlot[slot]||[]).forEach(function(it){
         var card=document.createElement("div"); card.className="inv-item"+(it.equipped?" on":"");
@@ -107,6 +119,11 @@ function invEquip(slot, id){
     INV.cos=res.j; invSetWorn(res.j); invRender({ok:true}); invMsg(id ? "Wearing it. Everyone sees it in your next game." : "Taken off.");
   }).catch(function(){ INV.busy=false; invMsg("⚠ The Arena didn't answer."); });
 }
+// Where each slot shows, so wearing something is never a mystery.
+var INV_WHERE = {kart:"Your car in Kart Racing, for everyone in the race.", runner:"Your runner in Platformer Rush.",
+  blaster:"Your blaster in Blaster Arena.", ball:"Your ball in Mini Golf.",
+  frame:"Round your avatar and name: your trainer card, the Arena lobby, your name tag in the HQ and Arena City.",
+  decor:"On your building: your Base and your lot in Arena City."};
 // The Valley bag lives in this browser's Valley save: load the Valley's engine to read and change it.
 var INV_SELL_CAT = {fish:"fish", crop:"crop", ore:"ore", gem:"gem", misc:"misc"};
 function invValley(box){

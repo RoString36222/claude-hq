@@ -47,13 +47,13 @@ class HqWiring(unittest.TestCase):
         self.assertIn('hqModeSave("3d")', self.html)
 
     def test_scene_files_are_served(self):
-        for name in ("engine.js", "hq3d.js", "hqlobby.js", "hqbase.js"):
+        for name in ("engine.js", "hq3d.js", "hqlobby.js", "hqbase.js", "hqcity.js"):
             got = dashboard.game_file(name)
             self.assertIsNotNone(got, name)
             self.assertEqual(dashboard.game_cache_control(name), "no-store")
 
     def test_nothing_leaves_the_machine(self):
-        for name in ("hq3d.js", "hqlobby.js", "hqbase.js"):
+        for name in ("hq3d.js", "hqlobby.js", "hqbase.js", "hqcity.js"):
             with open(os.path.join(ROOT, "games", name), encoding="utf-8") as f:
                 src = f.read()
             for bad in ("fetch(", "XMLHttpRequest", "WebSocket", "sendBeacon", "MP.send"):
@@ -66,7 +66,7 @@ class HqWiring(unittest.TestCase):
         self.assertIn('view: "@mission"', src["hqlobby"])
         self.assertIn('view: "@base"', src["hqlobby"])
         self.assertIn('view: "@lobby"', src["hq3d"])
-        self.assertIn('["hq3d","hqlobby","hqbase"]', dashboard.assemble_index())
+        self.assertIn('["hq3d","hqlobby","hqbase","hqcity"]', dashboard.assemble_index())
 
 
 @unittest.skipUnless(shutil.which("node"), "node not installed")
@@ -183,3 +183,47 @@ console.log('END', globalThis.__END__);
             out = self.run_page(mode)
             self.assertIn("END function function function", out, mode + ": " + out[-600:])
             self.assertNotIn("TIMER", out, mode + ": " + out[-600:])
+
+
+CITY = r"""
+const fs = require('fs');
+const window = {HQV: {}};
+new Function('window', fs.readFileSync(process.argv[1], 'utf8'))(window);
+const lay = window.HQV.hqCityLayout, nm = window.HQV.hqCityName;
+const list = [{userId: 'c'}, {userId: 'a', isYou: true}, {userId: 'b'}, null, {userId: 7}];
+const L1 = lay(list), L2 = lay(list.slice().reverse());
+const many = lay(Array.from({length: 60}, (_, i) => ({userId: 'u' + String(i).padStart(2, '0'), isYou: i === 59})));
+const lot = L1.lots[0], dx = lot.door.x - lot.x, dz = lot.door.z - lot.z;
+console.log(JSON.stringify({
+  order: L1.lots.map(l => l.h.userId), same: JSON.stringify(L1) === JSON.stringify(L2), R: L1.R,
+  manyN: many.lots.length, manyYou: many.lots.some(l => l.h.isYou), manyR: Math.round(many.R),
+  doorFacesMiddle: Math.hypot(lot.door.x, lot.door.z) < Math.hypot(lot.x, lot.z) && Math.abs(Math.atan2(dx, dz) - lot.rot) < 1e-9,
+  names: [nm({look: {sign: '  Owl Works '}, trainerName: 'Ann'}), nm({displayName: 'Bob', look: {}}), nm({})]
+}));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class ArenaCity(unittest.TestCase):
+    """HQ 2.1 Arena City: every open HQ on one street, the same layout for everyone."""
+
+    def test_layout(self):
+        r = subprocess.run(["node", "-e", CITY, os.path.join(ROOT, "games", "hqcity.js")], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        got = json.loads(r.stdout)
+        self.assertEqual(got["order"], ["a", "b", "c"])          # by user id, whoever asks
+        self.assertTrue(got["same"])
+        self.assertEqual(got["R"], 24)                            # a small street keeps a usable plaza
+        self.assertEqual(got["manyN"], 40)                        # capped, and you are always on it
+        self.assertTrue(got["manyYou"])
+        self.assertEqual(got["manyR"], 95)
+        self.assertTrue(got["doorFacesMiddle"])
+        self.assertEqual(got["names"], ["Owl Works", "Bob's HQ", "Someone's HQ"])
+
+    def test_page_wiring(self):
+        html = dashboard.assemble_index()
+        self.assertIn('return hqCityOn() ? "city" : "base";', html)
+        self.assertIn('if(HQ3D.world==="city" && hqCityOn()) return "hq_city";', html)
+        self.assertIn('visit: function(uid){ hqVisit(uid, {from:"city"}); }', html)
+        src = open(os.path.join(ROOT, "games", "hq3d.js"), encoding="utf-8").read()
+        self.assertIn('d.view.indexOf("visit:") === 0', src)

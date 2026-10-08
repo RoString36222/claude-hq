@@ -60,6 +60,7 @@ function tcardRender(p){
   var h=document.createElement("h3"); h.textContent=name+(p.isYou?" (you)":"");
   var sub=document.createElement("div"); sub.className="tcard-sub"; sub.textContent="Lv "+pr.level+" · "+(pr.rank||"")+" · @"+p.handle+(p.crew ? " · ["+p.crew.tag+"] "+p.crew.name : "");
   who.appendChild(h); who.appendChild(sub); head.appendChild(av); head.appendChild(who); body.appendChild(head);
+  if(typeof cosFrameApply==="function") cosFrameApply(av, (p.cos||{}).frame);          // the name frame they wear
   var bar=document.createElement("div"); bar.className="tcard-bar"; var fill=document.createElement("i");
   fill.style.width=Math.round(100*(pr.xpIntoLevel||0)/Math.max(1,pr.xpForLevel||1))+"%"; bar.appendChild(fill); body.appendChild(bar);
   var xp=document.createElement("div"); xp.className="tcard-sub"; xp.textContent=(pr.xpIntoLevel|0)+" / "+(pr.xpForLevel|0)+" XP to Lv "+((pr.level|0)+1)+" · "+(pr.sessionXp|0)+" from sessions, "+(pr.gameXp|0)+" from games";

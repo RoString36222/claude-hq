@@ -157,6 +157,7 @@ function mount(el, api){
     rng: rng, hashStr: hashStr, short: short, rr: rr, crewState: crewState,
     character: function(key, cb){ makeCharacter(key, cb); }, anim: function(ch, n, sp){ setAnim(ch, n, sp); },
     avatar: function(){ return avatar ? {x: avatar.x, z: avatar.z} : null; },
+    view: function(){ return {yaw: view.yaw, pitch: view.pitch}; },
     sessions: function(){ return sessions; }, level: function(){ return api.level ? api.level() : 1; },
     look: function(){ return (api.look && api.look()) || {}; }, api: api
   };
@@ -517,8 +518,15 @@ function mount(el, api){
     avatar.g.position.set(avatar.x, 0, avatar.z); scene.add(avatar.g);
     var ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.55, 32), new THREE.MeshBasicMaterial({color: COL.amber, transparent: true, opacity: 0.7, toneMapped: false}));
     ring.rotation.x = -PI/2; ring.position.y = 0.02; avatar.g.add(ring);
-    var tg = label(short(api.name || "You", 14), HEX.amber, 0.5); tg.position.y = 2.3; avatar.g.add(tg);
+    nameTag();
     makeCharacter("you:" + (api.name || ""), function(ch){ avatar.ch = ch; avatar.g.add(ch.o); setAnim(ch, "idle"); });
+  }
+  // Your name tag, in the name frame you wear (HQ 2.1 cosmetics), else amber.
+  function frameHex(v){ return /^#[0-9a-f]{6}$/i.test(v || "") ? v : null; }
+  function nameTag(){
+    if(avatar.tag) avatar.g.remove(avatar.tag);
+    avatar.tag = label(short(api.name || "You", 14), frameHex(api.frame && api.frame()) || HEX.amber, 0.5);
+    avatar.tag.position.y = 2.3; avatar.g.add(avatar.tag);
   }
   function blocked(x, z){ return cur === worlds.mission ? missionBlocked(x, z) : cur.blocked(x, z); }
   function missionBlocked(x, z){
@@ -529,7 +537,7 @@ function mount(el, api){
   }
   // Walking up to a door takes you through it, the same as clicking it. Doors arm only
   // once you have stepped away from them, so arriving through one never bounces you back.
-  var doorsArmed = false, keyMove = false, keyRun = false;
+  var doorsArmed = false, keyMove = false, keyRun = false, movedHere = false;
   function curDoors(){ return cur === worlds.mission ? DOORS : (cur.doors || []); }
   function walkInto(){
     if(fading || walkDoor) return;
@@ -555,7 +563,7 @@ function mount(el, api){
       else { vx = dx/d; vz = dz/d; }
     }
     var sp = (run ? 7 : 4)*dt;
-    keyMove = !!(vx || vz); keyRun = !!run;
+    keyMove = !!(vx || vz); keyRun = !!run; if(keyMove) movedHere = true;
     if(vx || vz){
       var nx = avatar.x + vx*sp, nz = avatar.z + vz*sp;
       if(!blocked(nx, nz)){ avatar.x = nx; avatar.z = nz; }
@@ -622,8 +630,11 @@ function mount(el, api){
   // Through a door: another view of the page, or another floor of the building ("@lobby").
   function through(d){
     if(d.view.charAt(0) === "@") enterWorld(d.view.slice(1), cur.name);
+    else if(d.view.indexOf("visit:") === 0){ if(api.visit) api.visit(d.view.slice(6)); }   // someone's HQ on the city street
     else api.go(d.view);
   }
+  // "Outside" is Arena City when the page says so (not private, paired), else your own Base.
+  function outside(name){ return name === "base" && api.outside && api.outside() === "city" && HQV.hqWorlds.city ? "city" : name; }
   function makeWorld(name){
     if(worlds[name]) return worlds[name];
     var build = HQV.hqWorlds[name]; if(!build) return null;
@@ -636,13 +647,14 @@ function mount(el, api){
   }
   // Fade out, move you to the other scene (at the door you came through), fade in.
   function enterWorld(name, from, instant){
+    name = outside(name);
     var w = name === "mission" ? worlds.mission : makeWorld(name); if(!w || fading) return;
     var go = function(){
       if(avatar.g.parent) avatar.g.parent.remove(avatar.g);
       w.scene.add(avatar.g);
-      var sp = (w.spawnFrom && w.spawnFrom[from]) || w.spawn;
+      var sp = (w.spawnFrom && (w.spawnFrom[from] || (from === "city" && w.spawnFrom.base))) || w.spawn;
       avatar.x = sp.x; avatar.z = sp.z; avatar.yaw = sp.yaw || 0; walkTo = null; walkDoor = null;
-      cur = w; doorsArmed = false; view.span = w.span || 12; view.zoom = w.zoom || 1.45; view.yaw = w.camYaw != null ? w.camYaw : PI/4; view.pitch = w.camPitch || 0.62;
+      cur = w; doorsArmed = false; movedHere = false; view.span = w.span || 12; view.zoom = w.zoom || 1.45; view.yaw = sp.camYaw != null ? sp.camYaw : w.camYaw != null ? w.camYaw : PI/4; view.pitch = w.camPitch || 0.62;
       moveAvatar(0); view.target.copy(view.goal);
       if(api.remember !== false){ try { localStorage.setItem("hq_world", name); } catch(e){} }
       if(api.onWorld) api.onWorld(name);
@@ -712,7 +724,14 @@ function mount(el, api){
   // Focus combo (×1..×2): the holo-table glows brighter and warms from cyan to amber.
   var combo = 1;
   inst.setCombo = function(m){ combo = E.clamp(+m || 1, 1, 2); };
-  inst.lookChanged = function(){ Object.keys(worlds).forEach(function(k){ if(worlds[k].onLook) worlds[k].onLook(); }); };
+  inst.lookChanged = function(){ if(avatar) nameTag(); Object.keys(worlds).forEach(function(k){ if(worlds[k].onLook) worlds[k].onLook(); }); };
+  // The list of open HQs changed: the city street rebuilds.
+  inst.cityChanged = function(){
+    if(!worlds.city || !worlds.city.onCity) return;
+    worlds.city.onCity();
+    // the street filled in after you arrived and you have not moved yet: stand at your door
+    if(cur === worlds.city && !movedHere && cur.spawn){ avatar.x = cur.spawn.x; avatar.z = cur.spawn.z; avatar.yaw = cur.spawn.yaw || 0; if(cur.spawn.camYaw != null) view.yaw = cur.spawn.camYaw; moveAvatar(0); view.target.copy(view.goal); }
+  };
   /* ---------- other people in this HQ (live, from the Arena) ---------- */
   // inst.setPeers([{u, n, w, x, z, r, a}]): x/z in cm, r in degrees, a 0 idle / 1 walk / 2 run.
   // Each shows on its floor as a Kenney character with a name tag, eased toward where it was last seen.
@@ -728,7 +747,7 @@ function mount(el, api){
         P = peers[p.u] = {g: new THREE.Group(), ch: null, x: p.x/100, z: p.z/100, yaw: p.r*PI/180};
         var ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.55, 32), new THREE.MeshBasicMaterial({color: COL.green, transparent: true, opacity: 0.7, toneMapped: false}));
         ring.rotation.x = -PI/2; ring.position.y = 0.02; P.g.add(ring);
-        var tg = label(short(p.n || "Visitor", 14), HEX.green, 0.5); tg.position.y = 2.3; P.g.add(tg);
+        var tg = label(short(p.n || "Visitor", 14), frameHex(p.f) || HEX.green, 0.5); tg.position.y = 2.3; P.g.add(tg);
         makeCharacter("peer:" + p.u, function(ch){ if(peers[p.u] === P){ P.ch = ch; P.g.add(ch.o); } });
       }
       P.w = p.w; P.tx = p.x/100; P.tz = p.z/100; P.tyaw = p.r*PI/180; P.a = p.a | 0;
@@ -751,7 +770,7 @@ function mount(el, api){
 
   inst._place = function(x, z){ if(avatar){ avatar.x = x; avatar.z = z; } };    // for tests
   inst.where = function(){ return avatar ? {world: cur && cur.name, x: avatar.x, z: avatar.z, yaw: avatar.yaw} : null; };
-  inst.goWorld = function(name){ if(scene && cur && cur.name !== name) enterWorld(name, null); };
+  inst.goWorld = function(name){ name = outside(name); if(scene && cur && cur.name !== name) enterWorld(name, null); };
   var streamKey = "";
   function buildStreamsIfChanged(){
     var k = desks.map(function(D){ return D.id + ":" + crewState(D.s); }).join("|");

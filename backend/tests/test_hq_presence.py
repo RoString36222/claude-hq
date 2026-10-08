@@ -74,3 +74,20 @@ def test_position_rules():
     assert not p.pos("u", {"w": "mission", "x": True, "z": 0, "r": 0}, 0.2)
     assert not p.pos("u", {"w": "mission", "x": 0, "z": 0, "r": 0, "a": 7}, 0.3)
     assert not p.pos("nobody", {"w": "base", "x": 0, "z": 0, "r": 0}, 0.4)
+
+
+async def test_arena_city_is_open_to_everyone_and_tags_wear_their_frame(client):
+    from app.db import SessionLocal
+    from app.models import EquippedCosmetics
+    a, _ = await make_user("ann", 1)
+    b, _ = await make_user("bob", 2)
+    async with SessionLocal() as db:
+        db.add(EquippedCosmetics(user_id=b, slots={"frame": "f-brass"}))
+        await db.commit()
+    with client.websocket_connect(url("hq_city", a)) as wa, client.websocket_connect(url("hq_city", b)) as wb:
+        wa.receive_json(); wb.receive_json()
+        send(wa, "join"); send(wb, "join")
+        send(wb, "pos", w="city", x=500, z=-2400, r=0, a=1)
+        snap = until(wa, "snap", where=lambda m: any(p["u"] == b and p["w"] == "city" for p in m["ps"]))
+        bob = next(p for p in snap["ps"] if p["u"] == b)
+        assert bob["f"] == "#d8b34a" and "f" not in next(p for p in snap["ps"] if p["u"] == a)

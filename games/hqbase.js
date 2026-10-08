@@ -214,7 +214,10 @@ HQV.hqWorlds.base = function(c, w){
       }
     });
     if(level >= 15){
-      var bt = c.canvasTex(128, 512, function(g){ g.fillStyle = "#1a1408"; g.fillRect(0, 0, 128, 512); g.fillStyle = HEX.amber; g.fillRect(0, 0, 128, 14); g.fillRect(0, 498, 128, 14); g.save(); g.translate(64, 256); g.rotate(-PI/2); g.textAlign = "center"; g.fillStyle = HEX.amber; g.font = "700 60px system-ui, sans-serif"; g.fillText("LEVEL " + level, 0, 8); g.fillStyle = HEX.ink; g.font = "600 26px ui-monospace, monospace"; g.fillText(c.short((look.sign || "CLAUDE HQ").toUpperCase(), 18), 0, 46); g.restore(); });
+      // the HQ's name (the sign you set when you open it to visitors) on both banners, the level under it
+      var accHex = "#" + accent.toString(16).padStart(6, "0");
+      var bt = c.canvasTex(128, 512, function(g){ g.fillStyle = "#1a1408"; g.fillRect(0, 0, 128, 512); g.fillStyle = accHex; g.fillRect(0, 0, 128, 14); g.fillRect(0, 498, 128, 14); g.save(); g.translate(64, 256); g.rotate(-PI/2); g.textAlign = "center"; g.fillStyle = accHex;
+        var nm = c.short((look.sign || "CLAUDE HQ").toUpperCase(), 16); g.font = "700 " + (nm.length > 11 ? 40 : 54) + "px system-ui, sans-serif"; g.fillText(nm, 0, 6); g.fillStyle = HEX.ink; g.font = "600 28px ui-monospace, monospace"; g.fillText("LEVEL " + level, 0, 46); g.restore(); });
       [-2.9, 2.9].forEach(function(x){ var bn = c.screen(1.3, 5.2, bt.t); bn.material.side = THREE.DoubleSide; var piv = new THREE.Group(); piv.position.set(x, topLow - 0.3, 3.75); baseG.add(piv); bn.position.y = -2.6; piv.add(bn); dyn.banners.push(piv); });
     }
     if(level >= 45 && floorsHigh){
@@ -261,7 +264,12 @@ HQV.hqWorlds.base = function(c, w){
         for(var q = 0; q < 18; q++){ var sp = c.glow([COL.amber, COL.cyan, COL.coral][fw], 0.6, 1); g.add(sp); parts.push({s: sp, a: q/18*PI*2, b: (q % 3 - 1)*0.6}); }
         dyn.fireworks.push({g: g, parts: parts, o: fw/3, x: (fw - 1)*6, y: top + 8 + fw*2}); }
     } else if(look.decor === "neon"){
-      [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function(q){ box(0.08, top - 3.5, 0.08, emis(0x0d1a24, accent, 2.5), q[0]*4.62, 3.5 + (top - 3.5)/2, q[1]*3.62, baseG, true); });
+      // a bright outline on every corner and floor line of the tower, lit by day too
+      var nm = new THREE.MeshBasicMaterial({color: accent, toneMapped: false});
+      [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function(q){ box(0.2, top, 0.2, nm, q[0]*4.66, top/2, q[1]*3.66, baseG, true); });
+      for(var nf = 3.5; nf < topLow; nf += 5.2){ box(9.5, 0.1, 0.1, nm, 0, nf, 3.68, baseG, true); box(9.5, 0.1, 0.1, nm, 0, nf, -3.68, baseG, true); box(0.1, 0.1, 7.5, nm, 4.68, nf, 0, baseG, true); box(0.1, 0.1, 7.5, nm, -4.68, nf, 0, baseG, true); }
+      box(9.6, 0.16, 0.16, nm, 0, top + 0.6, 3.7, baseG, true); box(9.6, 0.16, 0.16, nm, 0, top + 0.6, -3.7, baseG, true);
+      var ng = c.glow(accent, 9, 0.35); ng.position.set(0, top + 1, 0); baseG.add(ng);
     }
     // your crew's banner on the roof (HQ 2.1 crews)
     if(look.crew && /^#[0-9a-f]{6}$/i.test(look.crew.color || "")){

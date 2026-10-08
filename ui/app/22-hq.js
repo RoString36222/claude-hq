@@ -15,7 +15,7 @@ function hqLoadScripts(){
   if(HQ3D.load) return HQ3D.load;
   // The engine (shared with the Valley's 3D games), the HQ host + Mission Control, then the
   // other floors of the building: the Lobby and the Base outside.
-  var files = ((window.HQV && window.HQV.engine) ? [] : ["engine"]).concat(["hq3d","hqlobby","hqbase"]);
+  var files = ((window.HQV && window.HQV.engine) ? [] : ["engine"]).concat(["hq3d","hqlobby","hqbase","hqcity"]);
   HQ3D.load = files.reduce(function(p, name){
     return p.then(function(){ return new Promise(function(res, rej){
       var sc=document.createElement("script"); sc.src="/games/"+name+".js"; sc.async=false;
@@ -37,6 +37,12 @@ function hqApi(){
     look: function(){ return Object.assign({}, hqLook(), {decor: (window.HQ_MYCOS || {}).decor,
                                                           crew: (typeof crewBanner==="function") ? crewBanner() : null}); },
     startWorld: (function(){ try { var w=localStorage.getItem("hq_world"); return w==="base"||w==="lobby"||w==="mission" ? w : "base"; } catch(e){ return "base"; } })(),
+    // HQ 2.1 Arena City: outside is the street of open HQs unless you are private (HQ closed)
+    outside: function(){ return hqCityOn() ? "city" : "base"; },
+    city: function(){ return HQ_CITY.list; },
+    cityReturn: function(){ return HQ_CITY.back; },
+    visit: function(uid){ hqVisit(uid, {from:"city"}); },
+    frame: function(){ return (window.HQ_MYCOS || {}).frame; },
     onWorld: function(name){ HQ3D.world = name; hqRenderWhere(); }
   };
 }
@@ -46,13 +52,57 @@ var HQ_WHERE = [["base","Base"],["lobby","Lobby"],["mission","Mission Control"]]
 function hqRenderWhere(){
   var box=$("hqWhere"); if(!box) return;
   box.textContent="";
+  var city=!HQ3D.visit && hqCityOn();
   HQ_WHERE.forEach(function(w){
-    var b=document.createElement("button"); b.type="button"; b.className="hbtn ghost"; b.textContent=w[1];
-    var on = (HQ3D.world||"")===w[0]; b.setAttribute("aria-pressed", on ? "true" : "false");
+    var b=document.createElement("button"); b.type="button"; b.className="hbtn ghost"; b.textContent = w[0]==="base" && city ? "City" : w[1];
+    var here=HQ3D.world||"", on = here===w[0] || (w[0]==="base" && here==="city"); b.setAttribute("aria-pressed", on ? "true" : "false");
     b.addEventListener("click", function(){ if(HQ3D.inst && HQ3D.inst.goWorld) HQ3D.inst.goWorld(w[0]); });
     box.appendChild(b);
   });
+  if(HQ3D.visit) return;
+  // City / Private: your building on the Arena's street (open to visitors), or just your own HQ
+  var t=document.createElement("button"); t.type="button"; t.className="hbtn hq3d-city"+(city?" on":"");
+  t.textContent = city ? "🏙 City · go private" : "🔒 Private · join the city";
+  t.title = city ? "Close your HQ to visitors and see only your own building" : "Open your HQ to visitors and put your building on the Arena's street";
+  t.setAttribute("aria-pressed", city ? "true" : "false");
+  t.addEventListener("click", function(){ hqCitySet(!city); });
+  box.appendChild(t);
 }
+/* ---- HQ 2.1: Arena City. Everyone who opened their HQ has a building on one round street. ---- */
+// Being in the city is being open to visitors: going private closes your HQ again.
+var HQ_CITY = {list:[], sig:"", at:0, back:null, busy:false};
+function hqCityOn(){ return typeof HQ_REMOTE!=="undefined" && !!(HQ_REMOTE && HQ_REMOTE.open && HQ_REMOTE.me); }
+function hqCitySet(on){
+  if(HQ_CITY.busy) return; HQ_CITY.busy=true;
+  hqArena("POST","/api/arena/hq/me",{open:on, look:hqLook(), crew:true}).then(function(res){
+    HQ_CITY.busy=false;
+    if(!res.ok){ toast("⚠ "+hqArenaWhy(res),"ach"); return; }
+    HQ_REMOTE.open=!!res.j.open; HQ_REMOTE.me=res.j.userId||HQ_REMOTE.me;
+    var o=$("hqOpen"); if(o) o.checked=HQ_REMOTE.open;
+    toast(HQ_REMOTE.open ? "🏙 Your HQ is on the Arena City street, open to visitors" : "🔒 Private: your HQ is closed to visitors","level");
+    hqCityLoad(true);
+    var w=HQ3D.world; if(HQ3D.inst && (w==="base" || w==="city")) HQ3D.inst.goWorld("base");   // "base" = outside: the city or your Base
+    hqRenderWhere();
+  }).catch(function(){ HQ_CITY.busy=false; toast("⚠ The Arena didn't answer","ach"); });
+}
+// Outside follows City / Private: if you are outside, step onto the right one.
+function hqCityOutside(){
+  hqCityLoad(true); hqRenderWhere();
+  var w=HQ3D.world; if(HQ3D.inst && !HQ3D.visit && (w==="base" || w==="city") && w!==(hqCityOn() ? "city" : "base")) HQ3D.inst.goWorld("base");
+}
+function hqCityLoad(force){
+  if(!hqCityOn() || HQ3D.visit) return;
+  if(!force && Date.now()-HQ_CITY.at < 60000) return;
+  HQ_CITY.at=Date.now();
+  hqArena("GET","/api/arena/hq/open").then(function(res){
+    if(!res.ok) return;
+    var list=(res.j.hqs||[]).slice(0,100), sig=JSON.stringify(list);
+    if(sig===HQ_CITY.sig) return;
+    HQ_CITY.sig=sig; HQ_CITY.list=list;
+    if(HQ3D.inst && !HQ3D.visit && HQ3D.inst.cityChanged) HQ3D.inst.cityChanged();
+  }).catch(function(){});
+}
+setInterval(function(){ if(VIEW==="hq" && !document.hidden) hqCityLoad(false); }, 5000);
 // A crew member's card: the same session drawer the classic views open.
 function hqOpen(id){
   var s=((STATE && STATE.sessions) || []).filter(function(x){ return x.sessionId===id; })[0];
@@ -187,6 +237,7 @@ function hqSync(){
     var l=res.j.look||{}, mine=hqLook();
     ["paint","accent","sign"].forEach(function(k){ if(l[k]) mine[k]=l[k]; });
     hqSaveLook(mine); hqRenderBuild(); hqPreview();
+    hqCityOutside();
   }).catch(function(){});
 }
 function hqSave(){
@@ -196,7 +247,7 @@ function hqSave(){
   var open=!!($("hqOpen") && $("hqOpen").checked);
   note.textContent="Saving…";
   hqArena("POST","/api/arena/hq/me",{open:open, look:l, crew:true}).then(function(res){
-    if(res.ok){ HQ_REMOTE.open=!!res.j.open; HQ_REMOTE.me=res.j.userId||HQ_REMOTE.me; note.textContent = HQ_REMOTE.open ? "Saved. Your HQ is open to visitors." : "Saved. Your HQ is closed to visitors."; }
+    if(res.ok){ HQ_REMOTE.open=!!res.j.open; HQ_REMOTE.me=res.j.userId||HQ_REMOTE.me; note.textContent = HQ_REMOTE.open ? "Saved. Your HQ is open to visitors and stands on the Arena City street." : "Saved. Your HQ is closed to visitors (private)."; hqCityOutside(); }
     else note.textContent="Saved here. "+hqArenaWhy(res);
   }).catch(function(){ note.textContent="Saved here. The Arena didn't answer."; });
 }
@@ -240,15 +291,17 @@ function hqMount(api){
   var stage=$("hqStage"); stage.textContent="";
   HQ3D.inst=window.HQV.hq3d.mount(stage, api);
 }
-function hqVisit(userId){
+function hqVisit(userId, opts){
+  var fromCity = !!(opts && opts.from==="city");
   hqArena("GET","/api/arena/hq/visit?u="+encodeURIComponent(userId)).then(function(res){
     if(!res.ok){ toast("⚠ "+hqArenaWhy(res),"ach"); return; }
     var p=res.j, who=p.trainerName||p.displayName||p.handle;
     HQ3D.visit=p;
     hqLoadScripts().then(function(){
       var base=hqApi();
+      if(fromCity) HQ_CITY.back=userId;          // home again: back out on the street at their door
       hqMount({
-        name: base.name, remember:false, startWorld:"base",
+        name: base.name, remember:false, startWorld: fromCity ? "lobby" : "base", frame: base.frame,
         level: function(){ return Math.max(1, p.level|0); },
         look: function(){ return Object.assign({}, p.look||{}, {decor: (p.cos||{}).decor}); },
         openSession: function(){ toast("That's "+who+"'s crew: their sessions stay private.","level"); },
@@ -265,6 +318,7 @@ function hqGoHome(){
   if(!HQ3D.visit) return;
   HQ3D.visit=null;
   hqMount(Object.assign(hqApi(), {startWorld:"base"}));
+  setTimeout(function(){ HQ_CITY.back=null; }, 4000);
   HQ3D.inst.update((STATE && STATE.sessions) || []); HQ3D.inst.resume();
   hqRenderVisiting(); hqRenderCrew();
 }
@@ -298,6 +352,7 @@ var HQNET = {ws:null, room:null, gen:0, sentAt:0, last:"", peers:[], timer:null}
 function hqNetWant(){
   if(VIEW!=="hq" || !HQ3D.inst || document.hidden) return null;
   if(HQ3D.visit) return "hq_"+HQ3D.visit.userId;
+  if(HQ3D.world==="city" && hqCityOn()) return "hq_city";        // everyone on the street sees everyone
   if(HQ_REMOTE.open && HQ_REMOTE.me) return "hq_"+HQ_REMOTE.me;
   return null;
 }
@@ -347,7 +402,7 @@ function hqNetSend(){
 }
 setInterval(function(){ if(VIEW==="hq") hqSync(); hqNetSync(); hqNetSend(); }, 125);
 // "Here now": who else is in this HQ, and on which floor.
-var HQ_FLOOR_NAME = {base:"outside", lobby:"in the Lobby", mission:"in Mission Control"};
+var HQ_FLOOR_NAME = {base:"outside", city:"in Arena City", lobby:"in the Lobby", mission:"in Mission Control"};
 function hqRenderHere(){
   var box=$("hqHere"); if(!box) return;
   var ps=HQNET.peers||[];
@@ -357,6 +412,7 @@ function hqRenderHere(){
   ps.slice(0,12).forEach(function(p){
     var d=document.createElement("button"); d.type="button"; d.className="hq3d-person"; d.textContent=(p.n||"Visitor")+" · "+(HQ_FLOOR_NAME[p.w]||"");
     d.title="Open their trainer card"; d.addEventListener("click", function(){ if(typeof tcardOpen==="function") tcardOpen(p.u); });
+    if(typeof cosFrameApply==="function") cosFrameApply(d, p.f);
     box.appendChild(d);
   });
 }

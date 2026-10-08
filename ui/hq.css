@@ -2020,3 +2020,22 @@ html.hq-calm #confetti{display:none!important}
 .inv-where{margin:-2px 0 6px;font-size:12px}
 .hq3d-city{width:100%;margin-top:6px}
 .hq3d-city.on{border-color:var(--brand)}
+/* HQ 2.1: talk where you stand (ui/app/28-talk.js): chat over the 3D scene */
+#hqStage{grid-column:1;grid-row:1}
+#hqView > .hq3d-side{grid-column:2;grid-row:1}
+.hq3d-talk{grid-column:1;grid-row:1;align-self:end;justify-self:start;z-index:3;margin:12px;width:min(340px,calc(100% - 24px));
+  display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:var(--radius);background:color-mix(in srgb,var(--panel) 90%,transparent);
+  border:1px solid var(--line);box-shadow:var(--shadow-lg);backdrop-filter:blur(6px)}
+.hq3d-talk[hidden]{display:none}
+.talk-top{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px}
+.hq3d-talk.closed .talk-body{display:none}
+.talk-body{display:flex;flex-direction:column;gap:6px}
+.talk-log{max-height:180px;overflow:auto;display:flex;flex-direction:column;gap:3px;font-size:12.5px;overflow-wrap:anywhere}
+.talk-line b{margin-right:6px;color:var(--brand)}
+.talk-line.you b{color:var(--good)}
+.talk-line.sys{color:var(--muted);font-style:italic}
+.talk-empty{margin:0;font-size:12px}
+.talk-row{display:flex;gap:6px}
+.talk-row input{flex:1;min-width:0}
+.talk-voice.on{border-color:var(--good);color:var(--good)}
+@media (max-width:900px){#hqView > .hq3d-side{grid-column:1;grid-row:2}}

@@ -1,5 +1,5 @@
 /* ---- Arena rooms ---- */
-function arenaWantSocket(){ return VIEW==="arena" || VCHAN.on || (ARENA_STAY && ARENA.paired); }
+function arenaWantSocket(){ return VIEW==="arena" || VCHAN.on || (ARENA_STAY && ARENA.paired) || (typeof hqTalkRoom==="function" && !!hqTalkRoom()); }
 // A socket that was working comes back almost at once (a blip should not freeze a game for
 // seconds); after that the wait doubles from 1 s up to 30 s, with jitter so a restarted
 // server is not hit by every page in the same instant.
@@ -17,8 +17,11 @@ window.addEventListener("online", function(){
 });
 // A Quick Play match room (HQ 2.1): made by the Arena's matchmaker, only for the people it matched.
 function arenaIsQp(id){ return typeof id==="string" && /^qp_[0-9a-f]{12}$/.test(id); }
+// A place in the 3D HQ (HQ 2.1 talk): Arena City ("hq_city") or someone's HQ ("hq_<user id>"). The
+// Arena room follows you there while you are in the HQ view, so chat and voice reach whoever stands near you.
+function arenaIsHqRoom(id){ return typeof id==="string" && /^hq_(city|[0-9a-f-]{36})$/.test(id); }
 function arenaRoomRemember(id){
-  if(arenaIsQp(id)) return;
+  if(arenaIsQp(id) || arenaIsHqRoom(id)) return;
   try { if(id==="lobby") localStorage.removeItem("hq_arena_room"); else localStorage.setItem("hq_arena_room", id); } catch(e){}
 }
 function arenaRoomClean(r){
@@ -75,7 +78,7 @@ function arenaRoomsLoad(){
       ARENA.rooms.forEach(function(r){ if(r.role==="owner"||r.role==="member") conf[r.id]=true; });
       ARENA.roomConfirmed = conf;
       arenaRoomNoteHide();
-      if(ARENA.roomId !== "lobby" && !arenaIsQp(ARENA.roomId) && !conf[ARENA.roomId]){
+      if(ARENA.roomId !== "lobby" && !arenaIsQp(ARENA.roomId) && !arenaIsHqRoom(ARENA.roomId) && !conf[ARENA.roomId]){
         var e = null;
         ARENA.rooms.forEach(function(r){ if(r.id===ARENA.roomId) e=r; });
         arenaRoomFallback(ARENA.roomId, e ? 4406 : 4404, e && e.role==="banned" ? "removed from this room" : (e ? "not a member of this room" : "no such room"));
@@ -99,7 +102,7 @@ function arenaRoomsUnsupported(){
 }
 function arenaRoomTarget(){
   if(ARENA.roomId === "lobby" || ARENA.roomsOk === false) return "lobby";
-  if(arenaIsQp(ARENA.roomId)) return ARENA.roomId;
+  if(arenaIsQp(ARENA.roomId) || arenaIsHqRoom(ARENA.roomId)) return ARENA.roomId;
   if(ARENA.roomConfirmed[ARENA.roomId]) return ARENA.roomId;
   return null;
 }
@@ -107,7 +110,7 @@ function arenaRenderRoomBar(){
   var n = $("arenaRoomName"), meta = $("arenaRoomMeta"), bar = $("arenaRoomBar");
   var back = $("arenaRoomBack"), settings = $("arenaRoomSettingsBtn"), scope = $("arenaChatScope");
   if(n) n.textContent = ARENA.roomName || "your room";
-  var mText = ARENA.roomId === "lobby" ? "everyone · who’s online" : arenaIsQp(ARENA.roomId) ? "Quick Play match · who’s here" : "private room · who’s online";
+  var mText = ARENA.roomId === "lobby" ? "everyone · who’s online" : arenaIsQp(ARENA.roomId) ? "Quick Play match · who’s here" : arenaIsHqRoom(ARENA.roomId) ? "in the 3D HQ · who’s here" : "private room · who’s online";
   if(ARENA.roomClose === 4429) mText += " · room is full, retrying";
   if(!ARENA.sock && arenaWantSocket()) mText += " · reconnecting…";
   if(meta) meta.textContent = mText;
@@ -230,7 +233,7 @@ function arenaRoomCloseJoin(form, toggleBtn){
   arenaRenderRooms();
 }
 function arenaGoRoom(id, info){
-  if(id !== "lobby" && !ARENA_ROOM_RE.test(id) && !arenaIsQp(id)) return;
+  if(id !== "lobby" && !ARENA_ROOM_RE.test(id) && !arenaIsQp(id) && !arenaIsHqRoom(id)) return;
   if(id === ARENA.roomId && (ARENA.sock || ARENA.opening)) return;
   if(VCHAN.on){ voiceLeave(); if(!ARENA._fallback) toast("Left voice — voice is per room","ach"); }
   arenaCloseSocket();
@@ -567,9 +570,10 @@ function arenaOpenSocket(){
       var m; try { m = JSON.parse(ev.data); } catch(e){ return; }
       if(!m || typeof m !== "object") return;
       if(m.type==="welcome"){
+        ARENA.welcomedIn = rid;
         // Who we are: the nudge buttons skip us, and our own chat lines are marked.
       var info = (m.roomInfo && typeof m.roomInfo === "object") ? m.roomInfo : null;
-      if(rid !== "lobby" && !(info && (info.kind === "private" || (info.kind === "quickplay" && arenaIsQp(rid))) && info.id === rid)){ arenaRoomsUnsupported(); return; }
+      if(rid !== "lobby" && !arenaIsHqRoom(rid) && !(info && (info.kind === "private" || (info.kind === "quickplay" && arenaIsQp(rid))) && info.id === rid)){ arenaRoomsUnsupported(); return; }
       if(rid === "lobby") ARENA.roomName = "Lobby"; else if(info && typeof info.name === "string" && info.name) ARENA.roomName = info.name.slice(0, 40);
       ARENA.roomRole = (info && (info.role === "owner" || info.role === "member")) ? info.role : null;
       ARENA.roomClose = 0; arenaRenderRoomBar();
@@ -616,6 +620,8 @@ function arenaOpenSocket(){
       ARENA.sock = null;
       arenaLobbyGone();
       var code = ev ? ev.code : 0;
+      // an HQ place we could not enter (closed meanwhile, or an older Arena): back to where you were
+      if(arenaIsHqRoom(rid) && ARENA.welcomedIn !== rid){ if(typeof hqTalkRefused==="function") hqTalkRefused(rid); return; }
       if(arenaIsQp(rid) && code === 4403){ toast("That Quick Play match has ended — you’re back in the Lobby","ach"); arenaGoRoom("lobby"); return; }
       if(rid !== "lobby" && (code === 4404 || code === 4406)){ arenaRoomFallback(rid, code, (ev && ev.reason) || ""); return; }
       ARENA.roomClose = code;
@@ -846,6 +852,7 @@ function arenaChatPush(line){
   ARENA.chat.push(line);
   if(ARENA.chat.length > ARENA_CHAT_KEEP) ARENA.chat.splice(0, ARENA.chat.length - ARENA_CHAT_KEEP);
   arenaRenderChatLine(line);
+  if(typeof hqTalkLine==="function") hqTalkLine(line);
 }
 
 function arenaChatSys(text){ arenaChatPush({sys:true, text:text, at:Date.now()}); }
@@ -873,7 +880,7 @@ function arenaChatReceive(m, historic){
   if(!you && !historic){
     var tg = arenaMessageTags(text);
     if(tg.me || tg.all) arenaTagToast(arenaWho(from), (tg.me ? "you" : "all"));
-    if(VIEW !== "arena") arenaUnreadAdd(tg.me || tg.all);
+    if(VIEW !== "arena" && !(typeof hqTalkShowing==="function" && hqTalkShowing())) arenaUnreadAdd(tg.me || tg.all);
   }
 }
 
@@ -947,6 +954,7 @@ function arenaRenderChatLine(line){
 }
 
 function arenaRenderChat(){
+  if(typeof hqTalkRender==="function") hqTalkRender();
   var log = $("arenaChatLog"); if(!log) return;
   log.innerHTML = "";
   if(!ARENA.chat.length){

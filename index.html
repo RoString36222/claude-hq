@@ -499,6 +499,14 @@
   <div id="valleyView" class="hidden" aria-label="Valley"></div>
   <section id="hqView" class="hq3d hidden" aria-label="3D HQ">
     <div class="hq3d-stage" id="hqStage"></div>
+    <div class="hq3d-talk" id="hqTalk" role="region" aria-label="Chat with the people here" hidden>
+      <div class="talk-top"><b id="hqTalkHead">💬</b><button class="hbtn ghost icon" id="hqTalkToggle" type="button" aria-controls="hqTalkBody" aria-expanded="true">–</button></div>
+      <div id="hqTalkBody" class="talk-body">
+        <div class="talk-log" id="hqTalkLog" aria-live="polite"></div>
+        <div class="talk-row"><label class="sr-only" for="hqTalkInput">Message</label><input id="hqTalkInput" maxlength="500" autocomplete="off"><button class="hbtn" id="hqTalkSend" type="button">Send</button></div>
+        <button class="hbtn ghost talk-voice" id="hqTalkVoice" type="button">🎙 Join voice</button>
+      </div>
+    </div>
     <aside class="hq3d-side" aria-label="Crew">
       <div class="hq3d-where" id="hqWhere" role="group" aria-label="Go to"></div>
       <div class="hq3d-where"><button class="hbtn ghost hq3d-card" id="hqMyCard" type="button">My trainer card</button><button class="hbtn ghost hq3d-card" id="hqInvBtn" type="button">Inventory</button></div>
@@ -1230,6 +1238,7 @@
 //@include ui/app/25-focus.js
 //@include ui/app/26-crews.js
 //@include ui/app/27-play.js
+//@include ui/app/28-talk.js
 </script>
 </body>
 </html>

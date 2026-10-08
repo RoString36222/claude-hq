@@ -357,12 +357,32 @@ function hqNetWant(){
 }
 function hqNetClose(){
   HQNET.gen++; HQNET.room=null; HQNET.peers=[];
-  if(HQNET.ws){ try { HQNET.ws.close(); } catch(e){} HQNET.ws=null; }
+  if(HQNET.ws && !HQNET.shared){ try { HQNET.ws.close(); } catch(e){} }
+  HQNET.ws=null; HQNET.shared=false;
   if(HQ3D.inst && HQ3D.inst.setPeers) HQ3D.inst.setPeers([]);
+  hqRenderHere();
+}
+// The everyone-sees-everyone positions, from either socket.
+function hqNetOnGame(m){
+  if(!m || m.g!=="hq" || m.ev!=="snap" || !Array.isArray(m.ps)) return;
+  if(HQNET.shared && ARENA.roomId!==HQNET.room) return;
+  HQNET.peers=m.ps.filter(function(p){ return p && p.u!==HQNET.me; });
+  if(HQ3D.inst && HQ3D.inst.setPeers) HQ3D.inst.setPeers(HQNET.peers);
   hqRenderHere();
 }
 function hqNetSync(){
   var want=hqNetWant();
+  // When the Arena socket is already in this place (talk follows you: ui/app/28-talk.js), presence rides
+  // it: one socket, so you are one person in the room and chat, voice and positions share it.
+  var A=window.ARENA||{}, shared = !!(want && A.roomId===want && A.sock && A.sock.readyState===1 && A.you);
+  if(shared){
+    if(HQNET.ws===A.sock) return;
+    hqNetClose();
+    HQNET.room=want; HQNET.ws=A.sock; HQNET.shared=true; HQNET.me=A.you.userId;
+    try { A.sock.send(JSON.stringify({type:"game", g:"hq", op:"join"})); } catch(e){}
+    return;
+  }
+  if(HQNET.shared){ hqNetClose(); }
   if(want===HQNET.room) return;
   hqNetClose();
   if(!want) return;
@@ -379,11 +399,7 @@ function hqNetSync(){
       if(!m || typeof m!=="object") return;
       if(m.type==="welcome"){ HQNET.me=(m.you&&m.you.userId)||null; ws.send(JSON.stringify({type:"game", g:"hq", op:"join"})); return; }
       if(m.type!=="game" || m.g!=="hq") return;
-      if(m.ev==="snap" && Array.isArray(m.ps)){
-        HQNET.peers=m.ps.filter(function(p){ return p && p.u!==HQNET.me; });
-        if(HQ3D.inst && HQ3D.inst.setPeers) HQ3D.inst.setPeers(HQNET.peers);
-        hqRenderHere();
-      }
+      hqNetOnGame(m);
     };
     ws.onclose=function(){ if(gen===HQNET.gen){ HQNET.ws=null; HQNET.room=null; HQNET.peers=[]; if(HQ3D.inst && HQ3D.inst.setPeers) HQ3D.inst.setPeers([]); hqRenderHere(); } };
   }).catch(function(){ if(gen===HQNET.gen) HQNET.room=null; });

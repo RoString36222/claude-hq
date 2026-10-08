@@ -150,6 +150,18 @@ HQV.hqWorlds.lobby = function(c, w){
   var mat1 = c.screen(2.6, 1.3, mt.t); mat1.rotation.set(-PI/2, 0, PI/2); mat1.position.set(-R + 1.6, 0.012, 0); S.add(mat1);
   var outTag = c.label("Front door · the Base", c.HEX.green, 0.55); outTag.position.set(-R + 0.4, 7.0, 0); S.add(outTag);
 
+  // a lit path on the floor from the front door to the lifts: walk in further and you reach Mission Control
+  var pathM = new THREE.MeshBasicMaterial({color: c.COL.amber, transparent: true, opacity: 0.55, toneMapped: false});
+  var guide = [[-R + 2.6, 0], [3.5, 0], [9.9, -6], [9.9, -R + 2.4]], dots = [];
+  for(var gi = 1; gi < guide.length; gi++){
+    var a0 = guide[gi - 1], a1 = guide[gi], len = Math.hypot(a1[0] - a0[0], a1[1] - a0[1]), n = Math.floor(len/0.9);
+    for(var k = 0; k < n; k++){
+      var u = k/n, dot = new THREE.Mesh(new THREE.CircleGeometry(0.12, 12), pathM.clone());
+      dot.rotation.x = -PI/2; dot.position.set(a0[0] + (a1[0] - a0[0])*u, 0.02, a0[1] + (a1[1] - a0[1])*u); S.add(dot); dots.push(dot);
+    }
+  }
+  var mcTag = c.label("Mission Control ↑", c.HEX.amber, 0.6); mcTag.position.set(9.9, 3.2, -R + 3.4); S.add(mcTag);
+
   // security gates and a check-in kiosk
   for(var gt = 0; gt < 5; gt++){
     var gz = -2.6 + gt*1.3; box(0.3, 1.05, 0.9, mat(0xd6dde3, {metalness: 0.6, roughness: 0.3}), -9.5, 0.525, gz);
@@ -218,6 +230,7 @@ HQV.hqWorlds.lobby = function(c, w){
     botBody.position.y = Math.sin(t*1.6)*0.08*k; hover.material.opacity = 0.45 + Math.sin(t*3)*0.15;
     arm.rotation.z = near ? 2.4 + Math.sin(t*7)*0.4*k : 0.15;
     if(((t*10) | 0) % 2 === 0) drawFace(t, near);
+    dots.forEach(function(d, i){ d.material.opacity = 0.25 + 0.5*Math.max(0, Math.sin(t*3*k - i*0.45)); });
     holo.rotation.y = t*0.5*k; holo.position.y = 1.9 + Math.sin(t*1.4)*0.1*k;
     lifts.forEach(function(L){
       var want = av && Math.hypot(av.x - L.x, av.z + R - 1.8) < 3.2 ? 1 : 0;

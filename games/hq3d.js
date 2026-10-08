@@ -527,6 +527,18 @@ function mount(el, api){
     for(var i = 0; i < desks.length; i++){ var p = desks[i].root.position; if(Math.hypot(x - p.x, z - p.z) < 1.35) return true; }
     return false;
   }
+  // Walking up to a door takes you through it, the same as clicking it. Doors arm only
+  // once you have stepped away from them, so arriving through one never bounces you back.
+  var doorsArmed = false;
+  function curDoors(){ return cur === worlds.mission ? DOORS : (cur.doors || []); }
+  function walkInto(){
+    if(fading || walkDoor) return;
+    var near = null, nd = 1e9;
+    curDoors().forEach(function(d){ if(!d.front) return; var dd = Math.hypot(avatar.x - d.front.x, avatar.z - d.front.z); if(dd < nd){ nd = dd; near = d; } });
+    if(!near) return;
+    if(nd > 2.6){ doorsArmed = true; return; }
+    if(doorsArmed && nd < 1.5){ doorsArmed = false; walkTo = null; through(near); }
+  }
   function moveAvatar(dt){
     var mx = 0, mz = 0;
     if(keys.KeyW || keys.ArrowUp) mz -= 1; if(keys.KeyS || keys.ArrowDown) mz += 1;
@@ -551,6 +563,7 @@ function mount(el, api){
       else if(walkTo){ walkTo = null; walkDoor = null; }
       avatar.yaw = E.angLerp(avatar.yaw, Math.atan2(vx, vz), Math.min(1, dt*12));
       setAnim(avatar.ch, run ? "sprint" : "walk");
+      walkInto();
     } else setAnim(avatar.ch, "idle");
     avatar.g.position.set(avatar.x, 0, avatar.z); avatar.g.rotation.y = avatar.yaw;
     // the camera follows you, gently
@@ -628,7 +641,7 @@ function mount(el, api){
       w.scene.add(avatar.g);
       var sp = (w.spawnFrom && w.spawnFrom[from]) || w.spawn;
       avatar.x = sp.x; avatar.z = sp.z; avatar.yaw = sp.yaw || 0; walkTo = null; walkDoor = null;
-      cur = w; view.span = w.span || 12; view.zoom = w.zoom || 1.45; view.yaw = w.camYaw != null ? w.camYaw : PI/4; view.pitch = w.camPitch || 0.62;
+      cur = w; doorsArmed = false; view.span = w.span || 12; view.zoom = w.zoom || 1.45; view.yaw = w.camYaw != null ? w.camYaw : PI/4; view.pitch = w.camPitch || 0.62;
       moveAvatar(0); view.target.copy(view.goal);
       if(api.remember !== false){ try { localStorage.setItem("hq_world", name); } catch(e){} }
       if(api.onWorld) api.onWorld(name);
@@ -693,6 +706,8 @@ function mount(el, api){
   };
   // The building's paint/accent/sign changed (customisation): every floor redraws what shows it.
   inst.lookChanged = function(){ Object.keys(worlds).forEach(function(k){ if(worlds[k].onLook) worlds[k].onLook(); }); };
+  inst._place = function(x, z){ if(avatar){ avatar.x = x; avatar.z = z; } };    // for tests
+  inst.where = function(){ return avatar ? {world: cur && cur.name, x: avatar.x, z: avatar.z, yaw: avatar.yaw} : null; };
   inst.goWorld = function(name){ if(scene && cur && cur.name !== name) enterWorld(name, null); };
   var streamKey = "";
   function buildStreamsIfChanged(){

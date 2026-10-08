@@ -173,7 +173,7 @@ HQV.hqWorlds.base = function(c, w){
     var sgn = c.screen(5.4, 0.5, cs.t); sgn.position.set(0, 3.15, 5.92); baseG.add(sgn);
     var cg = c.glow(accent, 4, 0.35); cg.position.set(0, 3.1, 6.2); baseG.add(cg); dyn.glows.push(cg);
     var revolve = cyl(0.9, 0.9, 2.6, new THREE.MeshStandardMaterial({color: 0xbfe3f5, transparent: true, opacity: 0.3, roughness: 0.05, emissive: new THREE.Color(0xffb866), emissiveIntensity: 0.2}), 0, 1.3, 3.5, baseG, 20);
-    var door = {view: "@lobby", label: "Front door", tip: "Front door: into the Lobby", front: new THREE.Vector3(0, 0, 6.6)};
+    var door = {view: "@lobby", label: "Front door", tip: "Front door: into the Lobby", front: new THREE.Vector3(0, 0, 4.8)};   // under the canopy
     [revolve, sgn].forEach(function(o){ o.userData.door = door; hits.push(o); }); doors.push(door);
     var lt = c.label("Front door", HEX.green, 0.5); lt.position.set(0, 4.3, 6.1); baseG.add(lt);
     // the roof

@@ -13,7 +13,9 @@ function hqWebGL(){ try { return !!document.createElement("canvas").getContext("
 
 function hqLoadScripts(){
   if(HQ3D.load) return HQ3D.load;
-  var files = (window.HQV && window.HQV.engine) ? ["hq3d"] : ["engine","hq3d"];
+  // The engine (shared with the Valley's 3D games), the HQ host + Mission Control, then the
+  // other floors of the building: the Lobby and the Base outside.
+  var files = ((window.HQV && window.HQV.engine) ? [] : ["engine"]).concat(["hq3d","hqlobby","hqbase"]);
   HQ3D.load = files.reduce(function(p, name){
     return p.then(function(){ return new Promise(function(res, rej){
       var sc=document.createElement("script"); sc.src="/games/"+name+".js"; sc.async=false;
@@ -28,8 +30,26 @@ function hqApi(){
     name: ((typeof cfg==="function" && cfg().trainerName) || "You"),
     openSession: hqOpen,
     go: function(v){ hqModeSave("classic"); setView(v); },
-    onFilter: function(p){ HQ3D.filter = p || null; hqRenderCrew(); }
+    onFilter: function(p){ HQ3D.filter = p || null; hqRenderCrew(); },
+    // your HQ level is the season level the page already shows (the Base grows with it)
+    level: function(){ var s=(STATE && STATE.season) || {}; return Math.max(1, (s.level|0) || 1); },
+    look: hqLook,
+    startWorld: (function(){ try { var w=localStorage.getItem("hq_world"); return w==="base"||w==="lobby"||w==="mission" ? w : "base"; } catch(e){ return "base"; } })(),
+    onWorld: function(name){ HQ3D.world = name; hqRenderWhere(); }
   };
+}
+// How your building looks (HQ customisation; saved on the Arena in a later step): paint, accent, sign.
+function hqLook(){ try { var j=JSON.parse(localStorage.getItem("hq_look")||"{}"); return (j && typeof j==="object") ? j : {}; } catch(e){ return {}; } }
+var HQ_WHERE = [["base","Base"],["lobby","Lobby"],["mission","Mission Control"]];
+function hqRenderWhere(){
+  var box=$("hqWhere"); if(!box) return;
+  box.textContent="";
+  HQ_WHERE.forEach(function(w){
+    var b=document.createElement("button"); b.type="button"; b.className="hbtn ghost"; b.textContent=w[1];
+    var on = (HQ3D.world||"")===w[0]; b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.addEventListener("click", function(){ if(HQ3D.inst && HQ3D.inst.goWorld) HQ3D.inst.goWorld(w[0]); });
+    box.appendChild(b);
+  });
 }
 // A crew member's card: the same session drawer the classic views open.
 function hqOpen(id){
@@ -52,7 +72,7 @@ function hqEnter(){
     HQ3D.inst.setFilter(HQ3D.filter);
     HQ3D.inst.resume();
   }).catch(function(e){ stage.textContent="The 3D HQ couldn't load: "+e.message; });
-  hqRenderCrew();
+  hqRenderCrew(); hqRenderWhere();
 }
 function hqLeave(){ if(HQ3D.inst) HQ3D.inst.pause(); }
 function hqViewChanged(v){

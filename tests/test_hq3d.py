@@ -47,16 +47,26 @@ class HqWiring(unittest.TestCase):
         self.assertIn('hqModeSave("3d")', self.html)
 
     def test_scene_files_are_served(self):
-        for name in ("engine.js", "hq3d.js"):
+        for name in ("engine.js", "hq3d.js", "hqlobby.js", "hqbase.js"):
             got = dashboard.game_file(name)
             self.assertIsNotNone(got, name)
             self.assertEqual(dashboard.game_cache_control(name), "no-store")
 
     def test_nothing_leaves_the_machine(self):
-        with open(os.path.join(ROOT, "games", "hq3d.js"), encoding="utf-8") as f:
-            src = f.read()
-        for bad in ("fetch(", "XMLHttpRequest", "WebSocket", "sendBeacon", "MP.send"):
-            self.assertNotIn(bad, src, bad)
+        for name in ("hq3d.js", "hqlobby.js", "hqbase.js"):
+            with open(os.path.join(ROOT, "games", name), encoding="utf-8") as f:
+                src = f.read()
+            for bad in ("fetch(", "XMLHttpRequest", "WebSocket", "sendBeacon", "MP.send"):
+                self.assertNotIn(bad, src, name + ": " + bad)
+
+    def test_floors_link_up(self):
+        # Base front door -> Lobby; Lobby lifts -> Mission Control, front door -> Base; Mission Control lift -> Lobby
+        src = {n: open(os.path.join(ROOT, "games", n + ".js"), encoding="utf-8").read() for n in ("hq3d", "hqlobby", "hqbase")}
+        self.assertIn('view: "@lobby"', src["hqbase"])
+        self.assertIn('view: "@mission"', src["hqlobby"])
+        self.assertIn('view: "@base"', src["hqlobby"])
+        self.assertIn('view: "@lobby"', src["hq3d"])
+        self.assertIn('["hq3d","hqlobby","hqbase"]', dashboard.assemble_index())
 
 
 @unittest.skipUnless(shutil.which("node"), "node not installed")

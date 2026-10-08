@@ -47,6 +47,7 @@ from . import fps as fpsmod
 from . import hqpresence as hqmod
 from . import typerace as typemod
 from . import results as resultsmod
+from . import party as partymod
 from . import kart as kartmod
 from . import platformer as platmod
 from . import realtime
@@ -68,7 +69,7 @@ PROTOCOL["kart"] = {"v": 2, "caps": ["scale", "tracks"]}   # v2: geometry scale 
 
 def arena_info() -> dict:
     """What this Arena runs, for the room welcome."""
-    return {"impl": "py", "games": {g: dict(PROTOCOL[g]) for g in GAMES}}
+    return {"impl": "py", "games": {g: dict(PROTOCOL[g]) for g in GAMES}, "party": {"v": 1, "order": list(partymod.ORDER)}}
 GAME_NAMES = {"pond": "Fishing Pond", "race": "Puzzle Race", "duel": "Creature Duel",
               "mines": "Co-op Mines", "farm": "Shared Farm", "golf": "Mini Golf",
               "kart": "Kart Racing", "plat": "Platformer Rush", "fps": "Blaster Arena", "hq": "HQ", "type": "Code Typing Race"}
@@ -996,6 +997,10 @@ def _rng() -> random.Random:
 async def handle(room: Room, member: Member, msg: dict) -> None:
     g, op = msg.get("g"), msg.get("op")
     out = Out(g if isinstance(g, str) else "?")
+    if g == "party" and isinstance(op, str):
+        partymod.op(room.room_id, member, op, out)
+        await _flush(room, out)
+        return
     if g not in GAMES or not isinstance(op, str):
         out.err(member.ws, "unknown game")
         await _flush(room, out)
@@ -1597,6 +1602,10 @@ async def _flush(room: Room, out: Out) -> None:
         # once per game: from the event the server itself sends the lobby.
         if payload.get("ev") == "done" and payload.get("g") in resultsmod.GAMES and kind in ("lobby", "all"):
             await resultsmod.record(payload["g"], payload)     # once per game, a few ms; never raises
+            pm = partymod.on_done(room.room_id, payload["g"], payload,
+                                  {m.user_id: m.public() for m in list(room.members.values())})
+            if pm is not None:
+                out.items.append(("all", None, pm))     # sent after this loop reaches it
         if kind == "all":
             await room.broadcast(payload)
         elif kind == "ws":

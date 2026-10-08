@@ -274,7 +274,14 @@ function hqRenderVisiting(){
   if(!p) return;
   var t=document.createElement("span"); t.textContent="Visiting "+(p.trainerName||p.displayName||p.handle)+"'s HQ · Lv "+p.level;
   var b=document.createElement("button"); b.type="button"; b.className="hbtn"; b.textContent="Back home"; b.addEventListener("click", hqGoHome);
-  v.appendChild(t); v.appendChild(b);
+  // their trophies, and a game with them from here (opens it in the Valley and invites them)
+  var tc=document.createElement("button"); tc.type="button"; tc.className="hbtn ghost"; tc.textContent="🏆 Trainer card";
+  tc.addEventListener("click", function(){ if(typeof tcardOpen==="function") tcardOpen(p.userId); });
+  var sel=document.createElement("select"); sel.className="hbtn ghost"; sel.setAttribute("aria-label","Play a game with them");
+  var o0=document.createElement("option"); o0.value=""; o0.textContent="🎮 Play with them…"; sel.appendChild(o0);
+  (typeof PLAY_GAMES!=="undefined" ? PLAY_GAMES : []).forEach(function(g){ var o=document.createElement("option"); o.value=g[0]; o.textContent=g[1]+" "+g[2]; sel.appendChild(o); });
+  sel.addEventListener("change", function(){ var g=sel.value; sel.value=""; if(g && typeof hqVisitPlay==="function") hqVisitPlay(p, g); });
+  v.appendChild(t); v.appendChild(tc); v.appendChild(sel); v.appendChild(b);
 }
 (function(){
   var sv=$("hqSave"); if(sv) sv.addEventListener("click", hqSave);

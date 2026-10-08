@@ -52,6 +52,13 @@ async def room_ws(
                 await websocket.close(code=4403, reason="that HQ is closed to visitors")
                 return
 
+        if room_id.startswith("qp_"):
+            from .. import quickplay
+            if not quickplay.admits(room_id, user.id):
+                await websocket.accept()      # accept first so the page sees the 4403 (not a bare 1006)
+                await websocket.close(code=4403, reason="that Quick Play match isn't yours")
+                return
+
         if rooms.is_private_id(room_id):
             from .. import private_rooms
             result = await private_rooms.admission(db, room_id, user_id)
@@ -82,9 +89,11 @@ async def room_ws(
         await websocket.close(code=4429, reason=str(exc))
         return
 
+    from .. import quickplay
     await websocket.send_json({
         "type": "welcome",
         "room": room_id,
+        "roomInfo": quickplay.room_info(room_id) if room_id.startswith("qp_") else None,
         "you": member.public(),
         "members": room.roster(),
         "state": room.state,

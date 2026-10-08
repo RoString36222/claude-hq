@@ -1022,3 +1022,24 @@ def crews(action=None, body=None):
     if action == "leave":
         return _request("POST", base + "/v1/crews/leave", token=token, body={})
     return 400, {"error": "unknown crews action"}
+
+
+# ---- HQ 2.1: Quick Play -------------------------------------------------------
+QUICKPLAY_GAMES = ("kart", "plat", "fps", "golf", "type")
+
+
+def quickplay(action, body=None):
+    """Join a game's matchmaking queue, poll it, or leave. Only the game name is sent."""
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    if action == "status":
+        return _request("GET", base + "/v1/quickplay/status", token=token)
+    if action == "join":
+        game = (body or {}).get("game") if isinstance(body, dict) else None
+        if game not in QUICKPLAY_GAMES:
+            return 400, {"error": "unknown game"}
+        return _request("POST", base + "/v1/quickplay/join", token=token, body={"game": game})
+    if action == "leave":
+        return _request("POST", base + "/v1/quickplay/leave", token=token, body={})
+    return 400, {"error": "unknown quickplay action"}

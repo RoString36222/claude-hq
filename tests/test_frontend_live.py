@@ -328,3 +328,25 @@ class FocusComboTests(unittest.TestCase):
         out = run_js(["focusMult"], "var FOCUS_STEP = 30*60*1000, FOCUS_MAX = 2;\n"
                      "out([0, 29, 30, 61, 90, 119, 120, 600].map(function(m){ return focusMult(m*60000); }));")
         self.assertEqual(out, [1, 1, 1.25, 1.5, 1.75, 1.75, 2, 2])
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class QuickPlayPartyTests(unittest.TestCase):
+    """HQ 2.1 Quick Play rooms are recognised; a matched status moves you there and opens the game."""
+
+    def test_qp_room_ids(self):
+        out = run_js(["arenaIsQp"], "out(['qp_0123456789ab','qp_XYZ','r_abc','lobby',null].map(arenaIsQp));")
+        self.assertEqual(out, [True, False, False, False, False])
+
+    def test_matched_moves_room_and_opens_game(self):
+        out = run_js(["arenaIsQp", "playName", "qpApply"], """
+var window={}, PLAY_GAMES=[["kart","k","Kart Racing"]], QP={state:"waiting"}, went=[], opened=[], toasts=[];
+function toast(t){ toasts.push(t); } function qpRender(){} function arenaGoRoom(id, info){ went.push([id, info.name]); }
+function playOpen(g){ opened.push(g); } function playGet(){ throw new Error("no poll after a match"); }
+qpApply({state:"matched", room:"qp_0123456789ab", game:"kart", players:3});
+qpApply({state:"matched", room:"r_evil", game:"kart", players:3});
+out({went:went, opened:opened, state:QP.state, toast:toasts[0]});""")
+        self.assertEqual(out["went"], [["qp_0123456789ab", "Quick Play: Kart Racing"]])
+        self.assertEqual(out["opened"], ["kart"])
+        self.assertEqual(out["state"], "idle")
+        self.assertIn("3 players", out["toast"])

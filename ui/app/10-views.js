@@ -118,8 +118,9 @@ function valleyPillSync(){
 }
 // Valley multiplayer traffic from the Arena room. Join notices and invites work even
 // before the Valley view has ever been opened; everything else goes to games/multi.js.
-var VALLEY_GAME_NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm", golf:"Mini Golf", kart:"Kart Racing", plat:"Platformer Rush", fps:"Blaster Arena"};
+var VALLEY_GAME_NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm", golf:"Mini Golf", kart:"Kart Racing", plat:"Platformer Rush", fps:"Blaster Arena", type:"Code Typing Race"};
 function valleyOnGame(m){
+  if(m && m.g==="party"){ if(typeof partyOnGame==="function") partyOnGame(m); return; }
   if(!m || typeof m.g!=="string" || !VALLEY_GAME_NAMES[m.g]) return;
   var you = ARENA.you && ARENA.you.userId;
   if(m.ev==="invite"){ valleyInvite(m); return; }

@@ -15,7 +15,10 @@ window.addEventListener("online", function(){
   if(!ARENA.retry || ARENA.sock || ARENA.opening) return;
   clearTimeout(ARENA.retry); ARENA.retry = null; arenaOpenSocket();
 });
+// A Quick Play match room (HQ 2.1): made by the Arena's matchmaker, only for the people it matched.
+function arenaIsQp(id){ return typeof id==="string" && /^qp_[0-9a-f]{12}$/.test(id); }
 function arenaRoomRemember(id){
+  if(arenaIsQp(id)) return;
   try { if(id==="lobby") localStorage.removeItem("hq_arena_room"); else localStorage.setItem("hq_arena_room", id); } catch(e){}
 }
 function arenaRoomClean(r){
@@ -72,7 +75,7 @@ function arenaRoomsLoad(){
       ARENA.rooms.forEach(function(r){ if(r.role==="owner"||r.role==="member") conf[r.id]=true; });
       ARENA.roomConfirmed = conf;
       arenaRoomNoteHide();
-      if(ARENA.roomId !== "lobby" && !conf[ARENA.roomId]){
+      if(ARENA.roomId !== "lobby" && !arenaIsQp(ARENA.roomId) && !conf[ARENA.roomId]){
         var e = null;
         ARENA.rooms.forEach(function(r){ if(r.id===ARENA.roomId) e=r; });
         arenaRoomFallback(ARENA.roomId, e ? 4406 : 4404, e && e.role==="banned" ? "removed from this room" : (e ? "not a member of this room" : "no such room"));
@@ -96,6 +99,7 @@ function arenaRoomsUnsupported(){
 }
 function arenaRoomTarget(){
   if(ARENA.roomId === "lobby" || ARENA.roomsOk === false) return "lobby";
+  if(arenaIsQp(ARENA.roomId)) return ARENA.roomId;
   if(ARENA.roomConfirmed[ARENA.roomId]) return ARENA.roomId;
   return null;
 }
@@ -103,7 +107,7 @@ function arenaRenderRoomBar(){
   var n = $("arenaRoomName"), meta = $("arenaRoomMeta"), bar = $("arenaRoomBar");
   var back = $("arenaRoomBack"), settings = $("arenaRoomSettingsBtn"), scope = $("arenaChatScope");
   if(n) n.textContent = ARENA.roomName || "your room";
-  var mText = ARENA.roomId === "lobby" ? "everyone · who’s online" : "private room · who’s online";
+  var mText = ARENA.roomId === "lobby" ? "everyone · who’s online" : arenaIsQp(ARENA.roomId) ? "Quick Play match · who’s here" : "private room · who’s online";
   if(ARENA.roomClose === 4429) mText += " · room is full, retrying";
   if(!ARENA.sock && arenaWantSocket()) mText += " · reconnecting…";
   if(meta) meta.textContent = mText;
@@ -226,7 +230,7 @@ function arenaRoomCloseJoin(form, toggleBtn){
   arenaRenderRooms();
 }
 function arenaGoRoom(id, info){
-  if(id !== "lobby" && !ARENA_ROOM_RE.test(id)) return;
+  if(id !== "lobby" && !ARENA_ROOM_RE.test(id) && !arenaIsQp(id)) return;
   if(id === ARENA.roomId && (ARENA.sock || ARENA.opening)) return;
   if(VCHAN.on){ voiceLeave(); if(!ARENA._fallback) toast("Left voice — voice is per room","ach"); }
   arenaCloseSocket();
@@ -565,7 +569,7 @@ function arenaOpenSocket(){
       if(m.type==="welcome"){
         // Who we are: the nudge buttons skip us, and our own chat lines are marked.
       var info = (m.roomInfo && typeof m.roomInfo === "object") ? m.roomInfo : null;
-      if(rid !== "lobby" && !(info && info.kind === "private" && info.id === rid)){ arenaRoomsUnsupported(); return; }
+      if(rid !== "lobby" && !(info && (info.kind === "private" || (info.kind === "quickplay" && arenaIsQp(rid))) && info.id === rid)){ arenaRoomsUnsupported(); return; }
       if(rid === "lobby") ARENA.roomName = "Lobby"; else if(info && typeof info.name === "string" && info.name) ARENA.roomName = info.name.slice(0, 40);
       ARENA.roomRole = (info && (info.role === "owner" || info.role === "member")) ? info.role : null;
       ARENA.roomClose = 0; arenaRenderRoomBar();
@@ -584,6 +588,7 @@ function arenaOpenSocket(){
         arenaStatusOnLobby();
         if(ARENA.roomAnnounce){ ARENA.roomAnnounce = false; announce("Now in " + ARENA.roomName); }
         pantryLoad();   // "coming online": also where today's coins get auto-collected
+        if(typeof partySync==="function") partySync();
       }
       else if(m.type==="join" || m.type==="leave"){
         arenaRenderLobby(m.members||[]);
@@ -611,6 +616,7 @@ function arenaOpenSocket(){
       ARENA.sock = null;
       arenaLobbyGone();
       var code = ev ? ev.code : 0;
+      if(arenaIsQp(rid) && code === 4403){ toast("That Quick Play match has ended — you’re back in the Lobby","ach"); arenaGoRoom("lobby"); return; }
       if(rid !== "lobby" && (code === 4404 || code === 4406)){ arenaRoomFallback(rid, code, (ev && ev.reason) || ""); return; }
       ARENA.roomClose = code;
       arenaRenderRoomBar();

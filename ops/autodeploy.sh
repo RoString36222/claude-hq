@@ -2,13 +2,37 @@
 #
 # Pull-based continuous deployment for a self-hosted Arena.
 #
-# Checks the tracked branch for new commits; if there are any, rebuilds and
-# restarts, then verifies health. A deploy that fails its health check is
-# rolled back to the previous commit automatically, because an unattended
-# deploy that takes the board down and leaves it down is worse than no
-# automation at all.
+# Checks the tracked branch for new commits and, if there are any, hands the
+# release to ops/release.sh. Install with ops/install-autodeploy.sh. Logs to
+# /var/log/arena-deploy.log.
 #
-# Install with ops/install-autodeploy.sh. Logs to /var/log/arena-deploy.log.
+# WHY THIS DELEGATES RATHER THAN DRIVING COMPOSE ITSELF
+#
+# It used to run `docker compose up -d --build` directly, and that was wrong in
+# two ways once there were two implementations to choose between.
+#
+# 1. It shipped the wrong Arena. ops/release.sh records the implementation in
+#    backend/.release.env and layers it with --env-file; a bare `docker compose`
+#    reads only backend/.env, so it fell back to the defaults in
+#    docker-compose.yml -- claude-hq-arena-py:local, built from
+#    backend/Dockerfile. An Arena released as Rust came back as PYTHON on the
+#    next push, and silently, because the Python Arena is healthy and nothing
+#    alerts on which one is running.
+#
+# 2. Layering the env file would NOT have been enough, and would have been
+#    worse. ARENA_APP_IMAGE in that file is a stamped tag (date + commit), and
+#    `up --build` rebuilds whatever tag it is handed -- so a new commit would
+#    have been built into the PREVIOUS release's tag. `release.sh status` would
+#    then report a version that is not what is running, and `release.sh
+#    rollback`, which restores a previous image by tag without rebuilding,
+#    would restore a tag that now holds the newer code: a rollback that
+#    silently does nothing.
+#
+# So the release belongs to one script. release.sh already pulls ff-only,
+# refuses a dirty tree, gates on GitHub CI for the commit, stamps a fresh
+# version, builds, migrates, waits for health, and on failure rolls back to the
+# last good IMAGE. This script's job is only to notice there is something to
+# deploy, and to keep a log of it.
 set -euo pipefail
 
 DIR="${ARENA_DIR:-/root/claude-hq}"
@@ -29,67 +53,25 @@ REMOTE=$(git rev-parse "origin/$BRANCH")
 log "new commits ${LOCAL:0:7} -> ${REMOTE:0:7}"
 git log --oneline "$LOCAL..$REMOTE" | head -10 | while read -r line; do log "    $line"; done
 
-PREV="$LOCAL"
-git merge --ff-only "origin/$BRANCH" --quiet || { log "ERROR: not a fast-forward, skipping"; exit 1; }
-
-# Health, asked the way the compose healthcheck asks it: from inside the app
-# container.
-#
-# The app is `expose`d and never published, so it has no host port -- and this
-# script runs either from cron on the host or inside the deploy panel's own
-# container, where 127.0.0.1:8080 is the panel itself. A loopback probe cannot
-# succeed in either layout, so it reported every healthy deploy as a failure and
-# rolled it straight back. ops/deploy_panel.py's status() documents the same trap.
-healthy() {
-  ( cd "$DIR/backend" \
-    && docker compose exec -T app sh -c 'command -v arena-health >/dev/null && exec arena-health; \
-         exec python -c "import urllib.request;urllib.request.urlopen(\"http://127.0.0.1:8080/health\")"' \
-  ) >/dev/null 2>&1
-}
-
-# Put the previous commit back and rebuild from it.
-#
-# A rollback only restores the CODE. entrypoint.sh upgrades the database on
-# boot, so by this point a migration has usually already run against the volume,
-# and the older code can meet a database stamped at a revision it has never
-# heard of -- `alembic upgrade head` then fails and the container crash-loops,
-# which is worse than the deploy being undone. Verify, and if that is where we
-# ended up, say so with the way out rather than leaving an operator to read it
-# out of a restart loop.
-rollback() {
-  log "rolling back to ${PREV:0:7}"
-  cd "$DIR" && git reset --hard "$PREV" --quiet
-  cd "$DIR/backend" && docker compose up -d --build >>"$LOG" 2>&1 || true
-  for _ in $(seq 1 6); do
-    sleep 5
-    if healthy; then log "  rolled back OK"; return; fi
-  done
-  log "  ERROR: still unhealthy AFTER the rollback -- the database is probably"
-  log "  ahead of the code (a migration ran before the rollback). Roll FORWARD:"
-  log "    cd $DIR && git merge --ff-only origin/$BRANCH \\"
-  log "      && cd backend && docker compose up -d --build"
-}
-
-cd "$DIR/backend"
-if ! docker compose up -d --build >>"$LOG" 2>&1; then
-  log "ERROR: build failed"
-  rollback
-  exit 1
-fi
-
-# Give migrations and startup a moment before judging health.
-HEALTHY=0
-for _ in $(seq 1 12); do
-  sleep 5
-  if healthy; then HEALTHY=1; break; fi
-done
-
-if [ "$HEALTHY" -eq 1 ]; then
+# Which Arena this ships is NOT decided here: release.sh reads it from
+# backend/.release.env, so whatever was last released stays released. Set
+# ARENA_IMPL only to switch, and do that by hand, not from cron.
+log "releasing with ops/release.sh (impl from backend/.release.env)"
+if ARENA_BRANCH="$BRANCH" "$DIR/ops/release.sh" deploy >>"$LOG" 2>&1; then
   log "deployed ${REMOTE:0:7} OK"
-  [ -n "$DOMAIN" ] && curl -fsS --max-time 10 "https://$DOMAIN/health" >/dev/null 2>&1 \
-    && log "  public endpoint healthy" || true
+  if [ -n "$DOMAIN" ]; then
+    # The public path, through Caddy, which the in-container health check does
+    # not cover: a healthy app behind a broken proxy is still an outage.
+    if curl -fsS --max-time 10 "https://$DOMAIN/health" >/dev/null 2>&1; then
+      log "  public endpoint healthy"
+    else
+      log "  WARNING: app is healthy but https://$DOMAIN/health is not answering"
+    fi
+  fi
 else
-  log "ERROR: unhealthy after deploy"
-  rollback
+  # release.sh has already restored the previous image and said so in the log
+  # above; it only leaves the Arena down if there was no earlier release to go
+  # back to, and says that too.
+  log "ERROR: release failed -- see the ops/release.sh output above"
   exit 1
 fi

@@ -184,7 +184,7 @@ function act(path,btn){
 }
 document.getElementById("deploy").onclick=function(){act("/api/deploy");};
 document.getElementById("rollback").onclick=function(){
-  if(confirm("Roll back to the previous commit and rebuild?"))act("/api/rollback");};
+  if(confirm("Roll back to the previous release?"))act("/api/rollback");};
 document.getElementById("refresh").onclick=function(){location.reload();};
 </script>
 """
@@ -348,12 +348,16 @@ class Handler(BaseHTTPRequestHandler):
                                     "message": "Deployed" if rc == 0 else "Deploy failed — rolled back",
                                     "error": None if rc == 0 else out[-400:]})
         if path == "/api/rollback":
-            prev = git("rev-parse", "HEAD~1")[:7]
-            run(["git", "reset", "--hard", "HEAD~1", "--quiet"], cwd=ARENA_DIR)
-            rc, out = run(["docker", "compose", "up", "-d", "--build"],
-                          cwd=f"{ARENA_DIR}/backend", timeout=900)
+            # Delegated, like /api/deploy. This used to `git reset --hard HEAD~1`
+            # and rebuild with a bare `docker compose`, which had two problems:
+            # compose reads only backend/.env, so it rebuilt as the PYTHON Arena
+            # whatever was actually released, and a rebuild of the previous
+            # commit is not the previous release -- ops/release.sh restores an
+            # earlier stamped IMAGE without rebuilding, which is both faster and
+            # the only version that is known to have been healthy.
+            rc, out = run(["bash", f"{ARENA_DIR}/ops/release.sh", "rollback"], timeout=900)
             return self._json(200, {"ok": rc == 0,
-                                    "message": f"Rolled back to {prev}",
+                                    "message": "Rolled back" if rc == 0 else "Rollback failed",
                                     "error": None if rc == 0 else out[-400:]})
         self._json(404, {"ok": False, "error": "unknown action"})
 

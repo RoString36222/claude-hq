@@ -73,7 +73,21 @@ detect_mode() {
 }
 MODE="${ARENA_MANAGER_MODE:-$(detect_mode)}"
 
-dc() { ( cd "$BACKEND" && docker compose "$@" ); }
+# docker compose with the release state layered over .env, the way
+# ops/release.sh does it. Passing --env-file stops compose auto-loading .env, so
+# BOTH go on the command line, and a missing file is skipped (a dev checkout has
+# neither).
+#
+# Without .release.env compose falls back to the defaults in
+# docker-compose.yml -- claude-hq-arena-py:local, built from backend/Dockerfile
+# -- so `restart` on a host running the RUST Arena would quietly bring back the
+# Python one.
+dc() {
+  local args=()
+  [ -f "$BACKEND/.env" ] && args+=(--env-file "$BACKEND/.env")
+  [ -f "$BACKEND/.release.env" ] && args+=(--env-file "$BACKEND/.release.env")
+  ( cd "$BACKEND" && docker compose "${args[@]}" "$@" )
+}
 
 # ── health ──────────────────────────────────────────────────────────────────
 curl_health() { curl -fsS --max-time 5 "$1" 2>/dev/null || true; }

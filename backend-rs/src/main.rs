@@ -21,6 +21,7 @@ mod progress;
 mod protocol;
 mod quickplay;
 mod realtime;
+mod results;
 mod rooms;
 mod schemas;
 mod scoring;
@@ -39,14 +40,17 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use chrono::{SecondsFormat, Utc};
 use rooms::{Member, RoomManager};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
+use std::collections::VecDeque;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
 };
+use std::time::Instant;
 
 #[derive(Clone)]
 pub(crate) struct AppState {
@@ -262,16 +266,90 @@ async fn room_ws(
     };
     let handle: String = r.get("handle");
     let display: String = r.get("display_name");
+
+    // ---- admission ---------------------------------------------------------
+    // Everything below mirrors routes/rooms.py. Until now this was missing
+    // entirely: a valid ticket got you into ANY room, so private-room
+    // passwords, membership and bans were all bypassed. The guards existed in
+    // privrooms/quickplay and were simply never called.
+    //
+    // Close-before-accept vs accept-then-close is deliberate and copied from
+    // the Python: a close before accept surfaces as an HTTP rejection, while
+    // Quick Play accepts first so the page reads 4403 instead of a bare 1006.
+
+    // Someone's HQ: the owner, or anyone while the owner keeps it open.
+    // hq_city (Arena City) is the one hq_ room open to anyone paired.
+    if room_id.starts_with("hq_") && room_id != "hq_city" {
+        let owner = &room_id[3..];
+        let open: Option<(i64,)> = sqlx::query_as(
+            "SELECT open FROM hq_profiles WHERE user_id = ?1")
+            .bind(owner)
+            .fetch_optional(&st.pool)
+            .await
+            .unwrap_or(None);
+        let is_open = open.map(|o| o.0 != 0).unwrap_or(false);
+        if owner != user_id && !is_open {
+            return err(StatusCode::FORBIDDEN, "that HQ is closed to visitors");
+        }
+    }
+
+    if room_id.starts_with("qp_") && !quickplay::admits(&room_id, &user_id) {
+        // Accept, then close 4403 -- the page distinguishes this from a drop.
+        return ws.on_upgrade(move |socket| async move {
+            close_with(socket, 4403, "that Quick Play match isn't yours").await;
+        });
+    }
+
+    // The page only opens a private room once the welcome says which one it is
+    // (name, and your role for the owner controls); without it the room reads as
+    // "this Arena is too old for rooms" and the page falls back to the Lobby.
+    let mut room_info = Value::Null;
+    if privrooms::is_private_id(&room_id) {
+        match privrooms::admission(&st.pool, &room_id, &user_id).await {
+            Ok(None) => return err(StatusCode::NOT_FOUND, "no such room"),
+            Ok(Some((name, role))) => {
+                let ok = matches!(role.as_deref(), Some("owner") | Some("member"));
+                if !ok {
+                    return err(StatusCode::FORBIDDEN, "join this room first");
+                }
+                room_info = json!({"kind": "private", "id": room_id, "name": name,
+                                   "role": role.unwrap_or_default()});
+            }
+            Err(_) => return err(StatusCode::INTERNAL_SERVER_ERROR, "room lookup failed"),
+        }
+    }
+
+    // Worn cosmetics ride along on the member so the roster can draw them.
+    let cos = cosmetics::equipped_one(&st.pool, &user_id).await;
+
     let member = Member {
         user_id,
         display_name: if display.is_empty() { handle.clone() } else { display },
         handle,
         avatar_url: r.get("avatar_url"),
+        cos,
     };
-    ws.on_upgrade(move |socket| handle_socket(socket, st, room_id, member))
+    ws.on_upgrade(move |socket| handle_socket(socket, st, room_id, member, room_info))
 }
 
-async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member: Member) {
+/// Accept the upgrade only to close it with a specific code, the way Starlette
+/// does when a route accepts before refusing.
+async fn close_with(socket: WebSocket, code: u16, reason: &'static str) {
+    use futures::SinkExt;
+    let (mut tx, _rx) = {
+        use futures::StreamExt;
+        socket.split()
+    };
+    let _ = tx
+        .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+            code,
+            reason: reason.into(),
+        })))
+        .await;
+}
+
+async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member: Member,
+                       room_info: Value) {
     use futures::{SinkExt, StreamExt};
     let conn_id = st.conn_seq.fetch_add(1, Ordering::Relaxed);
     let Some((mut rx, mut direct, roster, state)) =
@@ -282,7 +360,14 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
     let (mut tx, mut recv) = socket.split();
 
     let welcome = json!({"type": "welcome", "room": room_id, "you": member.public(),
+                         // Python sends roomInfo for qp_ rooms and null elsewhere;
+                         // the page reads it to label the match.
+                         "roomInfo": if room_id.starts_with("qp_") {
+                             quickplay::room_info(&room_id).unwrap_or(Value::Null)
+                         } else { room_info },
                          "members": roster, "state": state,
+                         // Recent lobby chat, oldest first, so a joiner catches up.
+                         "chat": st.rooms.chat_history(&room_id).await,
                          "arena": protocol::arena_info()});
     if tx.send(Message::Text(welcome.to_string())).await.is_err() {
         st.rooms.leave(&room_id, conn_id).await;
@@ -310,6 +395,7 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
     let plat = st.plat.clone();
     let arena = st.fps.clone();
     let mut inbound = tokio::spawn(async move {
+        let mut chat_times: VecDeque<Instant> = VecDeque::with_capacity(rooms::CHAT_RATE_COUNT);
         while let Some(Ok(msg)) = recv.next().await {
             let Message::Text(text) = msg else { continue };
             if text.len() > 16 * 1024 {
@@ -318,19 +404,91 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
             let Ok(v) = serde_json::from_str::<Value>(&text) else { continue };
             match v.get("type").and_then(|t| t.as_str()) {
                 Some("say") => {
+                    let data = v.get("data");
+                    // Lobby chat rides the generic "say" relay as {kind: "chat", text},
+                    // so pages that predate chat keep talking to pages that have it.
+                    // Only here does the server clean the text, clip it, rate-limit the
+                    // connection and keep it for whoever joins next.
+                    if data.and_then(|d| d.get("kind")).and_then(|k| k.as_str()) == Some("chat") {
+                        let Some(raw) = data.and_then(|d| d.get("text")).and_then(|t| t.as_str())
+                        else {
+                            rooms.send_conn(&rid, conn_id,
+                                json!({"type": "error",
+                                       "error": "chat: text must be a string"}).to_string()).await;
+                            continue;
+                        };
+                        // Anything str.isprintable() rejects -- control characters, the
+                        // exotic spaces, and invisible format characters such as bidi
+                        // overrides and zero-width spaces -- becomes a space; runs of
+                        // whitespace fold to one.
+                        let cleaned: String = raw
+                            .chars()
+                            .map(|c| if rooms::py_printable(c) { c } else { ' ' })
+                            .collect();
+                        let text: String = cleaned
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                            .chars()
+                            .take(rooms::CHAT_MAX_CHARS)
+                            .collect();
+                        if text.is_empty() {
+                            rooms.send_conn(&rid, conn_id,
+                                json!({"type": "error",
+                                       "error": "chat: empty message"}).to_string()).await;
+                            continue;
+                        }
+                        // Sliding-window flood guard, per socket like the Python's
+                        // Member.chat_times -- two tabs get two allowances.
+                        let now = Instant::now();
+                        let fresh = chat_times.len() < rooms::CHAT_RATE_COUNT
+                            || now.duration_since(chat_times[0]).as_secs_f64()
+                                >= rooms::CHAT_RATE_WINDOW;
+                        if !fresh {
+                            rooms.send_conn(&rid, conn_id,
+                                json!({"type": "error",
+                                       "error": format!(
+                                           "chat: slow down \u{2014} at most {} messages every {} seconds",
+                                           rooms::CHAT_RATE_COUNT,
+                                           rooms::CHAT_RATE_WINDOW as i64)}).to_string()).await;
+                            continue;
+                        }
+                        if chat_times.len() == rooms::CHAT_RATE_COUNT {
+                            chat_times.pop_front();
+                        }
+                        chat_times.push_back(now);
+                        rooms.chat_say(&rid, json!({
+                            "type": "say", "from": me.public(),
+                            "data": {"kind": "chat", "text": text},
+                            "id": hex::encode(rand::random::<[u8; 6]>()),
+                            "at": Utc::now().to_rfc3339_opts(SecondsFormat::Secs, false),
+                        })).await;
+                        continue;
+                    }
                     rooms.broadcast(&rid, json!({"type": "say", "from": me.public(),
-                                                 "data": v.get("data")}).to_string()).await;
+                                                 "data": data}).to_string()).await;
                 }
+                // Python answers a bad patch rather than dropping it.
                 Some("state") => {
-                    if let Some(patch) = v.get("patch").filter(|p| p.is_object()) {
-                        if let Some(merged) = rooms.patch_state(&rid, patch).await {
+                    let Some(patch) = v.get("patch").filter(|p| p.is_object()) else {
+                        rooms.send_conn(&rid, conn_id, json!({"type": "error",
+                            "error": "patch must be an object"}).to_string()).await;
+                        continue;
+                    };
+                    match rooms.patch_state(&rid, patch).await {
+                        Some(merged) => {
                             rooms.broadcast(&rid, json!({"type": "state", "state": merged,
                                                          "by": me.public()}).to_string()).await;
                         }
+                        None => {
+                            rooms.send_conn(&rid, conn_id, json!({"type": "error",
+                                "error": "state too large"}).to_string()).await;
+                        }
                     }
                 }
+                // Python answers the one socket that asked, not the whole room.
                 Some("ping") => {
-                    rooms.broadcast(&rid, json!({"type": "pong"}).to_string()).await;
+                    rooms.send_conn(&rid, conn_id, json!({"type": "pong"}).to_string()).await;
                 }
                 Some("game") if v.get("g").and_then(|g| g.as_str()) == Some(platformer::GAME) => {
                     plat.handle(&rid, conn_id, &me, &v).await
@@ -338,8 +496,72 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
                 Some("game") if v.get("g").and_then(|g| g.as_str()) == Some(fps::GAME) => {
                     arena.handle(&rid, conn_id, &me, &v).await
                 }
+                // A directed "come look at the Arena" ping. Carries no URL and no
+                // command by design -- only who it is from and a short note -- so a
+                // nudge can never make the recipient's machine open or do anything.
+                // The recipient's client just shows a toast.
+                Some("nudge") => {
+                    let target = match v.get("to").and_then(|t| t.as_str()) {
+                        Some(t) if !t.is_empty() => t.to_string(),
+                        _ => {
+                            rooms.send_conn(&rid, conn_id,
+                                json!({"type": "error",
+                                       "error": "nudge needs a target userId"}).to_string()).await;
+                            continue;
+                        }
+                    };
+                    let note: String = v.get("note").and_then(|n| n.as_str()).unwrap_or("")
+                        .chars().filter(|c| rooms::py_printable(*c)).collect::<String>()
+                        .trim().chars().take(120).collect();
+                    let delivered = rooms.send_where_except(
+                        &rid, conn_id, |m| m.user_id == target,
+                        json!({"type": "nudge", "from": me.public(),
+                               "note": note}).to_string()).await;
+                    rooms.send_conn(&rid, conn_id,
+                        json!({"type": "nudge_ack", "to": target,
+                               "delivered": delivered}).to_string()).await;
+                }
+
+                // WebRTC setup for lobby voice: an offer / answer / ICE candidate for
+                // ONE member, relayed only to that member's sockets and never
+                // broadcast -- SDP and ICE candidates carry IP addresses, so only the
+                // people you are actually talking to see yours. The payload is opaque
+                // here; the 16 KiB frame cap bounds it. The audio itself never touches
+                // this server: it flows browser to browser.
+                Some("signal") => {
+                    let target = match v.get("to").and_then(|t| t.as_str()) {
+                        Some(t) if !t.is_empty() => t.to_string(),
+                        _ => {
+                            rooms.send_conn(&rid, conn_id,
+                                json!({"type": "error",
+                                       "error": "signal needs a target userId"}).to_string()).await;
+                            continue;
+                        }
+                    };
+                    let Some(data) = v.get("data").filter(|d| d.is_object()) else {
+                        rooms.send_conn(&rid, conn_id,
+                            json!({"type": "error",
+                                   "error": "signal data must be an object"}).to_string()).await;
+                        continue;
+                    };
+                    rooms.send_where_except(
+                        &rid, conn_id, |m| m.user_id == target,
+                        json!({"type": "signal", "from": me.public(),
+                               "data": data}).to_string()).await;
+                }
+
                 Some("game") => games.handle(&rid, conn_id, &me, &v).await,
-                _ => {}
+                // Python answers unknown types rather than dropping them, so a
+                // client talking to an Arena that is too old finds out why.
+                other => {
+                    let shown = match other {
+                        Some(k) => format!("'{k}'"),
+                        None => "None".to_string(),
+                    };
+                    rooms.send_conn(&rid, conn_id,
+                        json!({"type": "error",
+                               "error": format!("unknown message type: {shown}")}).to_string()).await;
+                }
             }
         }
     });
@@ -555,9 +777,11 @@ async fn serve() -> anyhow::Result<()> {
     let registry = realtime::Registry::new(realtime::MAX_TICKERS);
     // A monotonic game clock in seconds (the Python's time.monotonic()).
     let clock: realtime::Clock = Arc::new(move || 1000.0 + started.elapsed().as_secs_f64());
-    let kart = kart::KartHub::new(rooms.clone(), registry.clone(), clock.clone());
-    let plat = platformer::PlatHub::new(rooms.clone(), registry.clone(), clock.clone());
-    let fps = fps::FpsHub::new(rooms.clone(), registry, clock);
+    // Every game the Arena referees writes its results down through this.
+    let rec = results::Recorder::new(pool.clone());
+    let kart = kart::KartHub::new(rooms.clone(), registry.clone(), clock.clone(), rec.clone());
+    let plat = platformer::PlatHub::new(rooms.clone(), registry.clone(), clock.clone(), rec.clone());
+    let fps = fps::FpsHub::new(rooms.clone(), registry, clock, rec);
     let state = AppState {
         pool,
         cfg: Arc::new(cfg),
@@ -595,7 +819,9 @@ async fn serve() -> anyhow::Result<()> {
         .route("/v1/auth/github/callback", get(github_callback))
         .route("/v1/auth/pair", post(pair))
         .route("/v1/rooms/:room_id/ws", get(room_ws))
-        .merge(boardstream::routes());
+        .merge(boardstream::routes())
+        // Unauthenticated, and only when ARENA_EXPOSE_REALTIME_STATS=1.
+        .merge(server_stats::public_routes());
 
     let app = Router::new().merge(public).merge(guarded).with_state(state);
 

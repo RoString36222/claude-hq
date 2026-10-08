@@ -18,6 +18,12 @@ pub fn version(g: &str) -> i64 {
     GAMES.iter().find(|(n, _, _)| *n == g).map(|(_, v, _)| *v).unwrap_or(1)
 }
 
+/// Does this Arena referee game `g`? The one place anything asks, so a game
+/// landing in [`GAMES`] opens every surface gated on it at once.
+pub fn runs(g: &str) -> bool {
+    GAMES.iter().any(|(n, _, _)| *n == g)
+}
+
 /// What this Arena runs, for the room welcome.
 pub fn arena_info() -> Value {
     let mut games = serde_json::Map::new();

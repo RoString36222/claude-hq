@@ -253,11 +253,32 @@ async fn stats(State(st): State<crate::AppState>) -> Response {
     .into_response()
 }
 
+/// Per-room tick counts, overruns and bytes/s, for `scripts/loadtest.py`. Only
+/// the loop registry -- the heavy `/v1/server/stats` numbers are not wanted
+/// while a load test is running.
+async fn realtime_stats(State(st): State<crate::AppState>) -> Response {
+    // Any hub would do: the three share one registry.
+    Json(st.kart.registry().stats()).into_response()
+}
+
 pub fn routes() -> Router<crate::AppState> {
     // Stamp the uptime origin at boot. main.rs calls this while wiring the
     // router, which is the closest thing to Python's import-time `STARTED`.
     LazyLock::force(&STARTED);
     Router::new().route("/v1/server/stats", get(stats))
+}
+
+/// The loadtest route, which takes no device token -- Python declares it on the
+/// bare app, outside the `require_device` router, and `scripts/loadtest.py`
+/// polls it without one. It is registered inside Python's
+/// `if os.environ.get(...) == "1"`, so an Arena without the flag answers 404
+/// rather than 403; same here, the route only exists when the flag is set.
+pub fn public_routes() -> Router<crate::AppState> {
+    let r = Router::new();
+    if std::env::var("ARENA_EXPOSE_REALTIME_STATS").as_deref() == Ok("1") {
+        return r.route("/v1/realtime/stats", get(realtime_stats));
+    }
+    r
 }
 
 #[cfg(test)]

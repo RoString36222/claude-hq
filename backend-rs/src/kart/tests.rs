@@ -534,7 +534,8 @@ fn env(max_tickers: usize) -> Env {
     let rooms = RoomManager::new();
     let clock = Arc::new(Mutex::new(1000.0));
     let c = clock.clone();
-    let hub = KartHub::new(rooms.clone(), Registry::new(max_tickers), Arc::new(move || *c.lock().unwrap()));
+    let hub = KartHub::new(rooms.clone(), Registry::new(max_tickers), Arc::new(move || *c.lock().unwrap()),
+        crate::results::Recorder::default());
     Env { hub, rooms, clock }
 }
 
@@ -544,7 +545,7 @@ impl Env {
     }
     async fn connect(&self, room: &str, conn: u64, uid: &str) -> (Member, mpsc::Receiver<String>) {
         let m = Member { user_id: uid.into(), handle: uid.into(), display_name: uid.into(),
-                         avatar_url: String::new() };
+                         avatar_url: String::new() , cos: serde_json::Value::Null};
         let (_rx, drx, _, _) = self.rooms.join_direct(room, conn, m.clone()).await.unwrap();
         (m, drx)
     }

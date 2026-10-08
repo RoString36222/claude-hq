@@ -1,11 +1,13 @@
 """Arena load test: bots fill many 8-player rooms across the real-time games
-(Kart Racing, Platformer Rush, Blaster Arena) and report server CPU and memory,
-bandwidth, and late ticks.
+(Kart Racing, Platformer Rush, Blaster Arena, Code Typing Race) and report server
+CPU and memory, bandwidth, and late ticks.
 
     cd backend
     uv run python scripts/loadtest.py                       # Python Arena, 24 rooms x 8 bots, 60 s
     uv run python scripts/loadtest.py --impl rs             # the Rust Arena (cargo build --release first)
     uv run python scripts/loadtest.py --rooms 6 --seconds 20
+    uv run python scripts/loadtest.py --quickplay --party   # the HQ 2.1 gate: rooms come from
+                                                             # Quick Play, each one runs a party
 
 It starts the Arena itself on a throwaway database, seeds one user per bot,
 and puts each room on one game (round-robin). Every bot joins the game's lobby;
@@ -20,6 +22,12 @@ Measured:
            plus SLOW (0.25 s, the server's own overrun threshold) counts as late.
            With the Python Arena, the server's own overrun counters too.
   network  bytes and messages per second received by bots (= sent by the server)
+
+With --quickplay, bots don't get a room: they queue for their game through
+/v1/quickplay and play in whatever room the matchmaker gives them. With --party,
+each room's host also starts a Party Mode playlist. Typing bots type at a human
+8 characters a second and their host starts a new race whenever one ends, so
+results are written to the database all through the run.
 
 Exit status 1 when any room failed to start or the late-tick rate passes --max-late.
 Nothing here touches a real Arena: it only talks to the one it started.
@@ -44,10 +52,11 @@ import websockets
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.dirname(HERE)
 REPO = os.path.dirname(BACKEND)
-GAMES = {"kart": 15, "plat": 15, "fps": 20}          # game -> server tick rate (Hz)
+GAMES = {"kart": 15, "plat": 15, "fps": 20, "type": 5}   # game -> server tick rate (Hz)
+TYPE_CPS = 8                                         # typing bots: a quick human
 SLOW = 0.25                                          # matches realtime.SLOW_TICK
 START = {"kart": {"track": "meadow", "laps": 9}, "plat": {"level": "meadow", "mode": "race"},
-         "fps": {"minutes": 10, "kills": 999}}
+         "fps": {"minutes": 10, "kills": 999}, "type": {}}
 
 
 def free_port() -> int:
@@ -129,14 +138,44 @@ class Stats:
         self.errors: list[str] = []
         self.fixes = 0
         self.sent = 0
+        self.rooms: dict[str, tuple] = {}     # room -> (ready event, joined list), shared by its bots
+        self.queue_secs: list[float] = []
+        self.party: set[str] = set()          # rooms where a party started
+        self.races = 0                        # typing races finished (each one writes results)
 
 
-async def bot(i: int, base: str, token: str, room: str, game: str, host: bool, ready: asyncio.Event,
-              joined: list, players: int, stop_at: float, hz: float, st: Stats) -> None:
+def room_slot(st: Stats, room: str) -> tuple:
+    if room not in st.rooms:
+        st.rooms[room] = (asyncio.Event(), [])
+    return st.rooms[room]
+
+
+async def quickplay(http, token: str, game: str, st: Stats) -> str:
+    """Queue for a game; return the Quick Play room the matchmaker puts this bot in."""
+    h = {"Authorization": f"Bearer {token}"}
+    t0 = time.monotonic()
+    r = (await http.post("/v1/quickplay/join", headers=h, json={"game": game})).json()
+    while r.get("state") != "matched":
+        if r.get("state") not in ("waiting",):
+            raise RuntimeError(f"quickplay: {r}")
+        if time.monotonic() - t0 > 60:
+            raise RuntimeError("quickplay: no match in 60 s")
+        await asyncio.sleep(0.5)
+        r = (await http.get("/v1/quickplay/status", headers=h)).json()
+    st.queue_secs.append(time.monotonic() - t0)
+    return r["room"]
+
+
+async def bot(i: int, base: str, token: str, room: str | None, game: str, host: bool, players: int,
+              stop_at: float, hz: float, st: Stats, party: bool = False) -> None:
     async with httpx.AsyncClient(base_url=base, timeout=10) as http:
+        if room is None:
+            room = await quickplay(http, token, game, st)
         r = await http.post("/v1/auth/ticket", headers={"Authorization": f"Bearer {token}"})
         r.raise_for_status()
         ticket = r.json()["ticket"]
+    ready, joined = room_slot(st, room)
+    text_len = 0
     url = base.replace("http", "ws", 1) + f"/v1/rooms/{room}/ws?ticket={ticket}"
     me = None
     pos = None             # my last server-confirmed position (what the referee holds)
@@ -149,7 +188,7 @@ async def bot(i: int, base: str, token: str, room: str, game: str, host: bool, r
             st.sent += 1
 
         async def reader() -> None:
-            nonlocal me, pos, life, live
+            nonlocal me, pos, life, live, text_len
             last = None
             async for raw in ws:
                 st.bytes += len(raw)
@@ -159,9 +198,30 @@ async def bot(i: int, base: str, token: str, room: str, game: str, host: bool, r
                     me = m["you"]["userId"]
                     await send("join")
                     continue
+                if m.get("type") == "game" and m.get("g") == "party":
+                    if m.get("ev") == "state" and (m.get("party") or {}).get("on"):
+                        st.party.add(room)
+                    elif m.get("ev") == "error":
+                        st.errors.append(f"party/{room}: {m.get('error')}")
+                    continue
                 if m.get("type") != "game" or m.get("g") != game:
                     continue
                 ev = m.get("ev")
+                if game == "type":
+                    if ev == "type" and isinstance(m.get("race"), dict):
+                        text_len = len(m["race"].get("text") or "") or text_len
+                        if m["race"].get("phase") == "countdown":
+                            pos = None
+                            live = "countdown"           # not idle: no restart while it counts down
+                    elif ev == "prog" and live is True:
+                        now = time.monotonic()
+                        if last is not None:
+                            st.gaps[game].append(now - last)
+                        last = now
+                    elif ev == "done":
+                        live, last, pos = False, None, None
+                        st.races += 1
+                        continue
                 if ev == "lobby":
                     roster = m.get("members") or []
                     joined[:] = [p.get("userId") for p in roster]
@@ -174,6 +234,8 @@ async def bot(i: int, base: str, token: str, room: str, game: str, host: bool, r
                 elif ev == "go":
                     live = True
                     st.started.add(room)
+                    if game == "type":
+                        pos = {"pos": 0}
                 elif ev == "fix":
                     st.fixes += 1
                     pos = {k: m[k] for k in ("x", "y", "z", "r") if k in m}
@@ -206,10 +268,28 @@ async def bot(i: int, base: str, token: str, room: str, game: str, host: bool, r
         host = getattr(ready, "host", None) == me      # the game lobby's host starts and ends it
         if host:
             await asyncio.sleep(1.0)
+            if party:
+                await ws.send(json.dumps({"type": "game", "g": "party", "op": "start"}))
             await send("start", **START[game])
         n = 0
+        idle_since = None
         while time.monotonic() < stop_at and not task.done():
             await asyncio.sleep(1.0 / hz)
+            if game == "type":
+                if live is not True:
+                    if live == "countdown":
+                        continue
+                    idle_since = idle_since or time.monotonic()
+                    if host and time.monotonic() - idle_since > 2.0:     # the next race
+                        idle_since = None
+                        await send("start")
+                    continue
+                idle_since = None
+                if pos is None or not text_len:
+                    continue
+                pos["pos"] = min(text_len, pos["pos"] + max(1, round(TYPE_CPS / hz)))
+                await send("prog", pos=pos["pos"], err=0)
+                continue
             if not live or pos is None:
                 continue
             n += 1
@@ -270,15 +350,14 @@ async def run(args) -> int:
                 return 1
         pid = server_pid(proc, args.impl)
         games = [g for g in args.games.split(",") if g in GAMES]
-        stop_at = time.monotonic() + args.seconds + 8          # + join and countdown
+        stop_at = time.monotonic() + args.seconds + 8 + (10 if args.quickplay else 0)   # + queue, join, countdown
         tasks = []
         for r in range(args.rooms):
-            room, game = f"load-{r}", games[r % len(games)]
-            ready, joined = asyncio.Event(), []
+            room, game = (None if args.quickplay else f"load-{r}"), games[r % len(games)]
             for k in range(args.players):
                 i = r * args.players + k
-                tasks.append(bot(i, base, tokens[i], room, game, k == 0, ready, joined, args.players,
-                                 stop_at, args.send_hz, st))
+                tasks.append(bot(i, base, tokens[i], room, game, k == 0, args.players,
+                                 stop_at, args.send_hz if game != "type" else 4.0, st, args.party))
         samples = []
         srv = {"loops": 0, "overruns": {}, "thinned": set()}   # the Python Arena's own counters
 
@@ -331,6 +410,13 @@ async def run(args) -> int:
     mps = [s[3] for s in steady]
     print()
     print(f"rooms started   {len(st.started)}/{args.rooms}")
+    if args.quickplay:
+        print(f"quick play      {len(st.queue_secs)}/{nbots} bots matched into {len(st.rooms)} rooms   "
+              f"wait p50 {pct(st.queue_secs, 50):.1f}s  max {max(st.queue_secs or [0]):.1f}s")
+    if args.party:
+        print(f"party mode      {len(st.party)}/{args.rooms} rooms running a party")
+    if "type" in args.games:
+        print(f"typing races    {st.races // max(1, args.players)} finished (results written each time)")
     if cpu:
         print(f"server CPU      mean {statistics.mean(cpu):.1f}%   p95 {pct(cpu, 95):.1f}%   max {max(cpu):.1f}%  (100% = one core)")
         print(f"server memory   peak {max(rss):.1f} MB")
@@ -354,6 +440,10 @@ async def run(args) -> int:
     if st.errors:
         print(f"errors          {len(st.errors)}: " + "; ".join(sorted(set(st.errors))[:6]))
     failed = len(st.started) < args.rooms or worst_late > args.max_late
+    if args.quickplay and (len(st.queue_secs) < nbots or len(st.rooms) != args.rooms):
+        failed = True
+    if args.party and len(st.party) < args.rooms:
+        failed = True
     print("RESULT          " + ("FAIL" if failed else "PASS"))
     return 1 if failed else 0
 
@@ -365,7 +455,9 @@ def main() -> None:
     ap.add_argument("--players", type=int, default=8)
     ap.add_argument("--seconds", type=int, default=60)
     ap.add_argument("--send-hz", type=float, default=20.0)
-    ap.add_argument("--games", default="kart,plat,fps")
+    ap.add_argument("--games", default="kart,plat,fps,type")
+    ap.add_argument("--quickplay", action="store_true", help="bots find their rooms through Quick Play")
+    ap.add_argument("--party", action="store_true", help="every room also runs a Party Mode playlist")
     ap.add_argument("--max-late", type=float, default=0.01, help="fail above this share of late ticks (0.01 = 1%%)")
     ap.add_argument("-v", "--verbose", action="store_true")
     sys.exit(asyncio.run(run(ap.parse_args())))

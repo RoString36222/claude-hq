@@ -398,10 +398,28 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
         let mut chat_times: VecDeque<Instant> = VecDeque::with_capacity(rooms::CHAT_RATE_COUNT);
         while let Some(Ok(msg)) = recv.next().await {
             let Message::Text(text) = msg else { continue };
-            if text.len() > 16 * 1024 {
+            // Both rejections are answered, not dropped: a client sending frames
+            // into silence has no way to tell a server that hates its message
+            // from one that has gone away. Python answers both too.
+            //
+            // The cap counts characters, as Python's `len(raw)` over a str does,
+            // and only bothers counting when the byte length is already over --
+            // under it there cannot be more characters than bytes.
+            if text.len() > rooms::MAX_FRAME_CHARS
+                && text.chars().count() > rooms::MAX_FRAME_CHARS
+            {
+                rooms.send_conn(&rid, conn_id,
+                    json!({"type": "error", "error": "frame too large"}).to_string()).await;
                 continue;
             }
-            let Ok(v) = serde_json::from_str::<Value>(&text) else { continue };
+            let v = match serde_json::from_str::<Value>(&text) {
+                Ok(v) => v,
+                Err(_) => {
+                    rooms.send_conn(&rid, conn_id,
+                        json!({"type": "error", "error": "malformed json"}).to_string()).await;
+                    continue;
+                }
+            };
             match v.get("type").and_then(|t| t.as_str()) {
                 Some("say") => {
                     let data = v.get("data");

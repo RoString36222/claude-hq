@@ -12,7 +12,8 @@ It starts its own server on a throwaway database (schema from the Rust baseline
 migration, which was generated from the Alembic head), makes two users with
 device tokens, and exercises presence, nudges, WebRTC signalling, lobby chat
 (cleaning, the rate limit and the backlog a joiner catches up on), unknown
-message types, the loadtest stats route and the Quick Play queue.
+message types, oversized and malformed frames, the loadtest stats route
+and the Quick Play queue.
 
 Where the two are deliberately different the check says so and asserts both
 sides: today that is Mini Golf, which Python referees and the Rust Arena does
@@ -167,15 +168,76 @@ async def main():
                 check("a non-string chat message is an error",
                       e == [{"type": "error", "error": "chat: text must be a string"}], repr(e))
 
-                for i in range(9):
+                # str.isprintable() rejects bidi overrides, zero-width spaces
+                # and joiners, the BOM and private-use code points; none of it
+                # may ride along in text people read.
+                sneaky = "hi\u202ereversed\u200b\ufeff\U000f0000 there"
+                await a.send(json.dumps({"type": "say",
+                                         "data": {"kind": "chat", "text": sneaky}}))
+                got_b = await recv(b, 0.6)
+                await recv(a, 0.3)
+                chat = [m for m in got_b if m.get("type") == "say"]
+                check("chat strips invisible format and private-use characters",
+                      chat and chat[0]["data"]["text"] == "hi reversed there",
+                      repr(chat[0]["data"] if chat else got_b))
+
+                # Two chats are already spent, so six of these eight land.
+                for i in range(8):
                     await a.send(json.dumps({"type": "say", "data": {"kind": "chat", "text": f"m{i}"}}))
                 got_a = await recv(a, 0.8)
                 errs = [m for m in got_a if m.get("type") == "error"]
                 check("the ninth message in ten seconds is rate-limited",
                       len(errs) == 2 and errs[0]["error"]
-                      == "chat: slow down — at most 8 messages every 10 seconds",
+                      == "chat: slow down \u2014 at most 8 messages every 10 seconds",
                       repr(errs))
                 await recv(b, 0.4)
+
+                # --- ping --------------------------------------------------
+                await a.send(json.dumps({"type": "ping"}))
+                got_a, got_b = await recv(a, 0.5), await recv(b, 0.4)
+                check("ping answers the asking socket",
+                      got_a == [{"type": "pong"}], repr(got_a))
+                check("pong is not broadcast to the room",
+                      not [m for m in got_b if m.get("type") == "pong"], repr(got_b))
+
+                # --- shared state ------------------------------------------
+                await a.send(json.dumps({"type": "state", "patch": {"turn": 3}}))
+                got_b = await recv(b, 0.6)
+                await recv(a, 0.3)
+                st = [m for m in got_b if m.get("type") == "state"]
+                check("a state patch merges and is broadcast",
+                      st and st[0]["state"] == {"turn": 3}
+                      and st[0]["by"]["userId"] == u1, repr(got_b))
+
+                await a.send(json.dumps({"type": "state", "patch": "nope"}))
+                e = await recv(a, 0.5)
+                check("a non-object state patch is an error",
+                      e == [{"type": "error", "error": "patch must be an object"}], repr(e))
+
+                # 64 KiB of shared state, reached in frames that each fit under
+                # the 16 KiB frame cap, so this tests the state cap and not that one.
+                over = None
+                for i in range(6):
+                    await a.send(json.dumps({"type": "state",
+                                             "patch": {f"k{i}": "x" * 15000}}))
+                    for m in await recv(a, 0.6):
+                        if m.get("type") == "error":
+                            over = m
+                    if over:
+                        break
+                check("a state patch over the cap is an error",
+                      over == {"type": "error", "error": "state too large"}, repr(over))
+                await recv(b, 0.6)
+
+                # --- frame intake ------------------------------------------
+                await a.send(json.dumps({"type": "ping", "pad": "x" * 17000}))
+                e = await recv(a, 0.6)
+                check("an oversized frame is answered, not dropped",
+                      e == [{"type": "error", "error": "frame too large"}], repr(e))
+                await a.send("{not json")
+                e = await recv(a, 0.6)
+                check("malformed json is answered, not dropped",
+                      e == [{"type": "error", "error": "malformed json"}], repr(e))
 
                 # --- unknown type ------------------------------------------
                 await a.send(json.dumps({"type": "wat"}))
@@ -191,7 +253,8 @@ async def main():
                 # Eight: the allowance is 8 per 10s and ten chats were sent,
                 # so the last two were refused and never stored.
                 check("a joiner catches up on the backlog, oldest first",
-                      texts == ["hi there all"] + [f"m{i}" for i in range(7)], repr(texts))
+                      texts == ["hi there all", "hi reversed there"]
+                      + [f"m{i}" for i in range(6)], repr(texts))
 
         # --- the env-gated loadtest route ---------------------------------
         async with httpx.AsyncClient(base_url=BASE) as c:

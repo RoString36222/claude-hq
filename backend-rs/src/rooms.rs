@@ -20,6 +20,11 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 pub const MAX_ROOM_MEMBERS: usize = 32;
 pub const MAX_STATE_BYTES: usize = 64 * 1024;
 
+/// The largest frame a socket may send, in characters -- Python's
+/// MAX_FRAME_BYTES, which measures `len(raw)` over a str and so is really a
+/// character count.
+pub const MAX_FRAME_CHARS: usize = 16 * 1024;
+
 // Lobby chat: a room keeps its last CHAT_HISTORY messages in memory, never on
 // disk, for whoever joins next; each connection may send CHAT_RATE_COUNT per
 // CHAT_RATE_WINDOW seconds. Same numbers as backend/app/rooms.py.

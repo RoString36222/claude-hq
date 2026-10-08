@@ -1894,3 +1894,8 @@ html.hq-calm #confetti{display:none!important}
 #hqModeBtn[aria-pressed="true"]{color:var(--brand)}
 @media (max-width:900px){.hq3d{grid-template-columns:minmax(0,1fr);height:auto}.hq3d-stage{height:62vh;min-height:380px}}
 .hq3d-filter[hidden]{display:none}
+.hq3d-fade{position:absolute;inset:0;background:var(--bg);opacity:0;pointer-events:none;transition:opacity .25s ease}
+.hq3d-fade.on{opacity:1}
+.hq3d-where{display:flex;flex-wrap:wrap;gap:4px}
+.hq3d-where .hbtn{font-size:12px;padding:4px 9px}
+.hq3d-where .hbtn[aria-pressed="true"]{color:var(--brand);border-color:var(--brand-line);background:var(--brand-soft)}

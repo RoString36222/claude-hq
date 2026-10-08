@@ -42,8 +42,12 @@ var DOORS = [
   {view: "store", label: "Shop", wall: "left", at: 5, col: COL.green},
   {view: "pokedex", label: "Trophy Hall", wall: "left", at: 10, col: COL.violet},
   {view: "valley", label: "Valley", wall: "back", at: 8, col: COL.green},
-  {view: "arena", label: "Arena", wall: "back", at: 12, col: COL.cyan}
+  {view: "arena", label: "Arena", wall: "back", at: 12, col: COL.cyan},
+  {view: "@lobby", label: "Lift to Lobby", wall: "left", at: 13.5, col: COL.amber}
 ];
+// The other floors of the building register here (games/hqlobby.js, games/hqbase.js):
+// HQV.hqWorlds[name] = function(ctx){ return world }  (see mount() for ctx and the world shape)
+HQV.hqWorlds = HQV.hqWorlds || {};
 
 function hashStr(s){ var h = 2166136261 >>> 0; s = String(s); for(var i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h >>> 0; }
 function rng(seed){ var a = seed >>> 0 || 1; return function(){ a = (a + 0x6D2B79F5) >>> 0; var t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0)/4294967296; }; }
@@ -78,8 +82,11 @@ function mount(el, api){
   el.appendChild(canvas);
   var tip = document.createElement("div"); tip.className = "hq3d-tip"; tip.hidden = true; el.appendChild(tip);
   var loading = document.createElement("div"); loading.className = "hq3d-loading"; loading.textContent = "Building your HQ…"; el.appendChild(loading);
+  var fadeEl = document.createElement("div"); fadeEl.className = "hq3d-fade"; fadeEl.setAttribute("aria-hidden", "true"); el.appendChild(fadeEl);
 
   var renderer, scene, cam, clock0 = E.now();
+  var tgt = null;                      // where the build helpers add things (a world's scene while it is built)
+  var worlds = {}, cur = null, fading = false;
   var view = {yaw: PI/4, pitch: 0.62, zoom: 1.45, target: null, goal: null, span: 12};
   var desks = [], deskById = {}, clickables = [], doorHits = [], projHits = [];
   var avatar = null, charLib = {}, CH_H = null;
@@ -91,7 +98,7 @@ function mount(el, api){
   /* ---------- helpers ---------- */
   function mat(c, o){ return new THREE.MeshStandardMaterial(Object.assign({color: c, roughness: 0.7, metalness: 0.08}, o || {})); }
   function emis(c, e, ei, o){ var m = mat(c, o); m.emissive = new THREE.Color(e); m.emissiveIntensity = ei; return m; }
-  function add(o, x, y, z, p, noShadow){ o.position.set(x, y, z); if(!noShadow){ o.castShadow = true; o.receiveShadow = true; } (p || scene).add(o); return o; }
+  function add(o, x, y, z, p, noShadow){ o.position.set(x, y, z); if(!noShadow){ o.castShadow = true; o.receiveShadow = true; } (p || tgt).add(o); return o; }
   function box(w, h, d, m, x, y, z, p, ns){ return add(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m), x, y, z, p, ns); }
   function cyl(rt, rb, h, m, x, y, z, p, seg){ return add(new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg || 20), m), x, y, z, p); }
   function sph(r, m, x, y, z, p){ return add(new THREE.Mesh(new THREE.SphereGeometry(r, 14, 10), m), x, y, z, p); }
@@ -129,7 +136,7 @@ function mount(el, api){
     s.scale.set(0.55, 0.55, 1); s.renderOrder = 6; return s;
   }
   function plant(x, z, s, seed){
-    var g = new THREE.Group(); g.position.set(x, 0, z); g.scale.setScalar(s); scene.add(g);
+    var g = new THREE.Group(); g.position.set(x, 0, z); g.scale.setScalar(s); tgt.add(g);
     cyl(0.42, 0.32, 0.72, mat(0xd9d2c3, {roughness: 0.9}), 0, 0.36, 0, g);
     var R = rng(seed), greens = [0x2f7d4a, 0x3c9a5a, 0x276b3e, 0x4caf6a];
     for(var i = 0; i < 9; i++){
@@ -137,6 +144,22 @@ function mount(el, api){
       l.scale.set(0.7, 1.6, 0.5); l.rotation.set((R() - 0.5)*0.8, a, (R() - 0.5)*0.9);
     }
   }
+
+  // What a floor of the building (games/hqlobby.js, games/hqbase.js) builds with.
+  var ctx = {
+    get THREE(){ return THREE; }, get L(){ return L; }, E: E, PI: PI, COL: COL, HEX: HEX, STATE_HEX: STATE_HEX,
+    mat: function(c, o){ return mat(c, o); }, emis: function(c, e, ei, o){ return emis(c, e, ei, o); },
+    add: function(o, x, y, z, p, ns){ return add(o, x, y, z, p, ns); }, box: function(w, h, d, m, x, y, z, p, ns){ return box(w, h, d, m, x, y, z, p, ns); },
+    cyl: function(rt, rb, h, m, x, y, z, p, seg){ return cyl(rt, rb, h, m, x, y, z, p, seg); }, sph: function(r, m, x, y, z, p){ return sph(r, m, x, y, z, p); },
+    canvasTex: function(w, h, d){ return canvasTex(w, h, d); }, screen: function(w, h, t, tr){ return screen(w, h, t, tr); },
+    glow: function(c, sz, op){ return glowSprite(c, sz, op); }, label: function(t, c, sc){ return label(t, c, sc); }, glyph: function(ch, c){ return glyph(ch, c); },
+    plant: function(x, z, sc, seed){ return plant(x, z, sc, seed); }, sky: function(day){ return day ? sky.day : sky.night; },
+    rng: rng, hashStr: hashStr, short: short, rr: rr, crewState: crewState,
+    character: function(key, cb){ makeCharacter(key, cb); }, anim: function(ch, n, sp){ setAnim(ch, n, sp); },
+    avatar: function(){ return avatar ? {x: avatar.x, z: avatar.z} : null; },
+    sessions: function(){ return sessions; }, level: function(){ return api.level ? api.level() : 1; },
+    look: function(){ return (api.look && api.look()) || {}; }, api: api
+  };
 
   /* ---------- day / night from the local clock ---------- */
   function isNight(){ var h = new Date().getHours(); return h < 7 || h >= 19; }
@@ -160,6 +183,7 @@ function mount(el, api){
   function applyTime(){
     var n = isNight(); if(n === night) return; night = n;
     scene.background = new THREE.Color(n ? 0x0a1520 : 0x7fb2d6);
+    Object.keys(worlds).forEach(function(k){ if(worlds[k].setTime) worlds[k].setTime(n); });
     sky.hemi.intensity = n ? 2.2 : 2.6; sky.sun.intensity = n ? 1.0 : 2.2; sky.sun.color.set(n ? 0xa9b8ff : 0xfff2dc);
     lamps.forEach(function(l){ l.intensity = l.userData.base*(n ? 1 : 0.5); });
     winPanes.forEach(function(p){ p.material.map = n ? sky.night : sky.day; p.material.needsUpdate = true; });
@@ -496,7 +520,8 @@ function mount(el, api){
     var tg = label(short(api.name || "You", 14), HEX.amber, 0.5); tg.position.y = 2.3; avatar.g.add(tg);
     makeCharacter("you:" + (api.name || ""), function(ch){ avatar.ch = ch; avatar.g.add(ch.o); setAnim(ch, "idle"); });
   }
-  function blocked(x, z){
+  function blocked(x, z){ return cur === worlds.mission ? missionBlocked(x, z) : cur.blocked(x, z); }
+  function missionBlocked(x, z){
     if(Math.abs(x) > ROOM - 0.8 || Math.abs(z) > ROOM - 0.8) return true;
     if(Math.hypot(x - TABLE.x, z - TABLE.z) < TABLE.r + 0.6) return true;
     for(var i = 0; i < desks.length; i++){ var p = desks[i].root.position; if(Math.hypot(x - p.x, z - p.z) < 1.35) return true; }
@@ -514,7 +539,7 @@ function mount(el, api){
       vx = (mx*c + mz*s)/l; vz = (-mx*s + mz*c)/l;
     } else if(walkTo){
       var dx = walkTo.x - avatar.x, dz = walkTo.z - avatar.z, d = Math.hypot(dx, dz);
-      if(d < 0.25){ walkTo = null; if(walkDoor){ var dd = walkDoor; walkDoor = null; api.go(dd.view); } }
+      if(d < 0.25){ walkTo = null; if(walkDoor){ var dd = walkDoor; walkDoor = null; through(dd); } }
       else { vx = dx/d; vz = dz/d; }
     }
     var sp = (run ? 7 : 4)*dt;
@@ -529,7 +554,8 @@ function mount(el, api){
     } else setAnim(avatar.ch, "idle");
     avatar.g.position.set(avatar.x, 0, avatar.z); avatar.g.rotation.y = avatar.yaw;
     // the camera follows you, gently
-    view.goal.set((avatar.x + TABLE.x)*0.5, 1.4, (avatar.z + TABLE.z)*0.5 + 1);
+    if(cur === worlds.mission) view.goal.set((avatar.x + TABLE.x)*0.5, 1.4, (avatar.z + TABLE.z)*0.5 + 1);
+    else view.goal.set(avatar.x*(cur.follow || 1), cur.camY || 1.4, avatar.z*(cur.follow || 1));
   }
 
   /* ---------- camera + input ---------- */
@@ -558,10 +584,11 @@ function mount(el, api){
       if(drag.moved > 5){ view.yaw = drag.yaw - dx*0.006; view.pitch = E.clamp(drag.pitch + dy*0.004, 0.25, 1.2); tip.hidden = true; }
       return;
     }
-    var h = pick(e, clickables.concat(doorHits, projHits));
+    var h = pick(e, hitList());
     var o = h && h.object.userData, txt = null;
     if(o && o.desk){ var s = o.desk.s; txt = titleOf(s) + " · " + STATE_TXT[crewState(s)] + " · " + projectOf(s); }
-    else if(o && o.door) txt = o.door.label + ": go to " + o.door.view.charAt(0).toUpperCase() + o.door.view.slice(1);
+    else if(o && o.door) txt = o.door.tip || (o.door.label + ": go to " + o.door.view.charAt(0).toUpperCase() + o.door.view.slice(1));
+    else if(o && o.tip) txt = o.tip;
     else if(o && o.project) txt = o.project + ": show only its crew";
     canvas.classList.toggle("hot", !!txt);
     if(txt){ tip.hidden = false; tip.textContent = txt; var r = el.getBoundingClientRect(); tip.style.left = (e.clientX - r.left + 14) + "px"; tip.style.top = (e.clientY - r.top + 10) + "px"; }
@@ -569,13 +596,46 @@ function mount(el, api){
   }
   function onUp(e){
     var d = drag; drag = null; if(!d || d.moved > 5) return;
-    var h = pick(e, clickables.concat(doorHits, projHits));
+    var h = pick(e, hitList());
     var o = h && h.object.userData;
     if(o && o.desk){ api.openSession(o.desk.id); return; }
     if(o && o.project){ inst.setFilter(filter === o.project ? null : o.project); api.onFilter(filter); return; }
     if(o && o.door){ walkTo = {x: o.door.front.x, z: o.door.front.z}; walkDoor = o.door; return; }
-    var f = pick(e, [inst.floor]);
-    if(f){ walkTo = {x: E.clamp(f.point.x, -ROOM + 1, ROOM - 1), z: E.clamp(f.point.z, -ROOM + 1, ROOM - 1)}; walkDoor = null; }
+    var f = pick(e, [cur.floor]), b = cur.bounds;
+    if(f){ walkTo = {x: E.clamp(f.point.x, b[0] + 1, b[1] - 1), z: E.clamp(f.point.z, b[2] + 1, b[3] - 1)}; walkDoor = null; }
+  }
+  function hitList(){ return cur === worlds.mission ? clickables.concat(doorHits, projHits) : (cur.hits || []); }
+  // Through a door: another view of the page, or another floor of the building ("@lobby").
+  function through(d){
+    if(d.view.charAt(0) === "@") enterWorld(d.view.slice(1), cur.name);
+    else api.go(d.view);
+  }
+  function makeWorld(name){
+    if(worlds[name]) return worlds[name];
+    var build = HQV.hqWorlds[name]; if(!build) return null;
+    var w = {scene: new THREE.Scene(), name: name};
+    tgt = w.scene;
+    var got = build(ctx, w) || w;
+    tgt = scene;
+    worlds[name] = got; if(got.setTime) got.setTime(isNight()); if(got.onData) got.onData(sessions);
+    return got;
+  }
+  // Fade out, move you to the other scene (at the door you came through), fade in.
+  function enterWorld(name, from, instant){
+    var w = name === "mission" ? worlds.mission : makeWorld(name); if(!w || fading) return;
+    var go = function(){
+      if(avatar.g.parent) avatar.g.parent.remove(avatar.g);
+      w.scene.add(avatar.g);
+      var sp = (w.spawnFrom && w.spawnFrom[from]) || w.spawn;
+      avatar.x = sp.x; avatar.z = sp.z; avatar.yaw = sp.yaw || 0; walkTo = null; walkDoor = null;
+      cur = w; view.span = w.span || 12; view.zoom = w.zoom || 1.45; view.yaw = w.camYaw != null ? w.camYaw : PI/4; view.pitch = w.camPitch || 0.62;
+      moveAvatar(0); view.target.copy(view.goal);
+      try { localStorage.setItem("hq_world", name); } catch(e){}
+      if(api.onWorld) api.onWorld(name);
+    };
+    if(instant || E.calm()){ go(); return; }
+    fading = true; fadeEl.classList.add("on");
+    setTimeout(function(){ go(); fadeEl.classList.remove("on"); setTimeout(function(){ fading = false; }, 260); }, 260);
   }
   function onWheel(e){ e.preventDefault(); view.zoom = E.clamp(view.zoom*Math.exp(-e.deltaY*0.0012), 0.6, 3.5); }
   var MOVE_KEYS = {KeyW: 1, KeyA: 1, KeyS: 1, KeyD: 1, ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1, ShiftLeft: 1, ShiftRight: 1};
@@ -597,10 +657,12 @@ function mount(el, api){
     moveAvatar(dt);
     var ease = 1 - Math.exp(-dt*4); view.target.lerp(view.goal, ease);
     resize(); placeCam();
-    acc.scr += dt; acc.wall += dt; acc.sky += dt;
+    if(avatar && avatar.ch) avatar.ch.mixer.update(dt);
+    acc.sky += dt; if(acc.sky > 30){ acc.sky = 0; applyTime(); }
+    if(cur !== worlds.mission){ if(cur.update) cur.update(t, dt, k); renderer.render(cur.scene, cam); return; }
+    acc.scr += dt; acc.wall += dt;
     if(acc.scr > 0.18){ acc.scr = 0; desks.forEach(function(D){ if(!filter || projectOf(D.s) === filter) drawScreen(D, t); }); drawLeds(); }
     if(acc.wall > 1){ acc.wall = 0; drawWall(t); }
-    if(acc.sky > 30){ acc.sky = 0; applyTime(); }
     // the table
     holo.rim.material.emissiveIntensity = 2.6 + Math.sin(t*2)*0.5*k;
     holo.stripe.t.offset.y = -t*0.25*k;
@@ -618,7 +680,6 @@ function mount(el, api){
       var hop = st === "needs" ? Math.abs(Math.sin(t*5 + D.root.position.x))*0.25 : st === "working" ? Math.abs(Math.sin(t*2.5 + D.root.position.x))*0.06 : 0;
       D.pet.children[0].position.y = 0.4 + hop*k;
     });
-    if(avatar && avatar.ch) avatar.ch.mixer.update(dt);
     streams.forEach(function(s){ s.dots.forEach(function(d, i){ var u = (t*s.speed*k + i/4) % 1; if(s.dir < 0) u = 1 - u; s.curve.getPoint(u, d.position); d.material.opacity = Math.sin(u*PI); }); });
     renderer.render(scene, cam);
   }
@@ -628,7 +689,9 @@ function mount(el, api){
     sessions = Array.isArray(list) ? list : [];
     if(!scene) return;
     layoutDesks(); buildStreamsIfChanged(); buildProjects(); drawWall(E.now() - clock0);
+    Object.keys(worlds).forEach(function(k){ if(worlds[k].onData) worlds[k].onData(sessions); });
   };
+  inst.goWorld = function(name){ if(scene && cur && cur.name !== name) enterWorld(name, null); };
   var streamKey = "";
   function buildStreamsIfChanged(){
     var k = desks.map(function(D){ return D.id + ":" + crewState(D.s); }).join("|");
@@ -657,13 +720,16 @@ function mount(el, api){
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
-    scene = new THREE.Scene();
+    scene = new THREE.Scene(); tgt = scene;
     cam = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 500);
     view.target = new THREE.Vector3(0, 1.4, 1); view.goal = view.target.clone();
     var gc = document.createElement("canvas"); gc.width = gc.height = 128; var gg = gc.getContext("2d");
     var rg = gg.createRadialGradient(64, 64, 0, 64, 64, 64); rg.addColorStop(0, "rgba(255,255,255,1)"); rg.addColorStop(0.22, "rgba(255,255,255,.55)"); rg.addColorStop(0.6, "rgba(255,255,255,.12)"); rg.addColorStop(1, "rgba(255,255,255,0)");
     gg.fillStyle = rg; gg.fillRect(0, 0, 128, 128); tex.glow = new THREE.CanvasTexture(gc);
     buildRoom(); buildHolo(); buildAvatar();
+    worlds.mission = cur = {scene: scene, name: "mission", span: 12, floor: inst.floor, bounds: [-ROOM, ROOM, -ROOM, ROOM],
+      spawn: {x: 3, z: 9, yaw: PI}, spawnFrom: {lobby: {x: -12.6, z: 13.5, yaw: PI/2}}};
+    enterWorld(HQV.hqWorlds[api.startWorld] || api.startWorld === "mission" ? api.startWorld : "mission", null, true);
     canvas.addEventListener("pointerdown", onDown); canvas.addEventListener("pointermove", onMove); canvas.addEventListener("pointerup", onUp);
     canvas.addEventListener("pointerleave", function(){ tip.hidden = true; });
     canvas.addEventListener("wheel", onWheel, {passive: false});

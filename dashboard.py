@@ -51,7 +51,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import arena
 
-APP_VERSION = "2.0.0"   # HQ 2.0, Wave 0: the 3D HQ, shared engine, split frontend, release pipeline
+APP_VERSION = "2.1.0"   # HQ 2.1: Play Together (walk-in base, live presence, Quick Play, parties, crews, cosmetics)
 
 # --------------------------------------------------------------------------- #
 # Paths / constants

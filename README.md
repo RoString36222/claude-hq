@@ -1,6 +1,26 @@
+<div align="center">
+
 # ⚡ Claude HQ
 
-**Version 2.0.0** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
+**Version 2.1.0** · a **local, private, gamified dashboard** for everything happening across your Claude Code sessions.
+
+Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
+Walk in, see who needs you, and play with friends while they work.
+
+<img src="docs/screenshots/mission.png" alt="Mission Control: every live session is a crew member at a console around the holo-table" width="100%">
+
+<sub>Mission Control. Each live session sits at a console: typing while it works, waving when it needs you, dozing when idle. Screenshots use demo sessions.</sub>
+
+</div>
+
+| Walk up to your base | Through reception | Every tab, live |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/base.png" alt="The base: your tower on a plaza, growing with your level"> | <img src="docs/screenshots/lobby.png" alt="The lobby with reception desk and turnstiles"> | <img src="docs/screenshots/live.png" alt="The classic Live view with session cards"> |
+| **Base**: your tower grows with your HQ level | **Lobby**: walk in through reception | **Live**: Needs you → Working → Idle |
+
+| The Valley: solo and multiplayer games | Kart Racing with friends | 3D Mini Golf |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/valley.png" alt="The Valley game menu"> | <img src="docs/screenshots/game-kart.png" alt="Kart Racing with speedometer and minimap"> | <img src="docs/screenshots/game-golf.png" alt="Mini Golf, Windmill Lane"> |
 
 Claude HQ reads your live sessions (`claude agents --json`) and your session transcripts
 (`~/.claude/projects/**/*.jsonl`) and turns them into a single command center: what every tab is
@@ -12,6 +32,26 @@ computer.** (The one exception is that some creature packs load sprite images fr
 the "pokemon"/"aniimo" packs by creature id, and the "Clash of Clans" pack by troop name + level
 number — never any of your data. Switch to the "monsters" pack for 100% offline. The optional [Arena](#-arena-multiplayer--optional) layer, off unless you turn it on,
 shares daily activity *counts* with friends — never conversation content.)
+
+---
+
+## 🆕 What's new in 2.1: Play Together
+
+- **Walk into your HQ.** Outside is your **Base**, a tower on a plaza that grows with your level
+  (fountain, wings, helipad, kart track, observatory…). Walk through the door into the **Lobby**,
+  then on into **Mission Control**.
+- **Live together.** Open your HQ to visitors and friends walk around it with you in real time.
+  Visit theirs, see their trophies, and start a game with them from their lobby.
+- **Quick Play.** Pick a game; the Arena matches you with whoever else is queued (crewmates first)
+  in a fresh room for up to 8.
+- **Party Mode.** Kart → Platformer → Blaster → Golf in one sitting, one combined score.
+- **Code Typing Race.** Race up to 8 friends to type the same real snippet of code.
+- **Progression.** HQ levels from sessions and games, trainer cards, trophies, and per-game leaderboards.
+- **Crews.** Start one, invite friends with a code, climb the crew board, and fly your banner on your roof.
+- **Cosmetics and one wallet.** Kart paint, ball colours, blaster skins and base decor, bought with Poke
+  Coins or unlocked by level; sell Valley finds at the market.
+- **Focus combo.** An XP multiplier that grows with unbroken work, up to ×2.
+- **Engine sounds per vehicle**, spectating, and **server stats** in Settings.
 
 ---
 
@@ -267,6 +307,26 @@ and feature guide.
 
 ## Changelog
 
+- **2.1.0** — **HQ 2.1: Play Together.**
+  - **Base and walk-in**: the HQ is a building on a plaza; walk through the door into the Lobby
+    (reception) and on into Mission Control. The Base grows with your HQ level and is customisable.
+  - **Live HQ presence**: an HQ open to visitors shows everyone in it walking around in real time;
+    visit friends' HQs, open their trainer card, and start a game with them from there.
+  - **Quick Play** (Arena tab): per-game matchmaking into a private room, crewmates first, up to 8.
+  - **Party Mode**: Kart → Platformer → Blaster → Golf with points by place (10-8-6-5-4-3-2-1),
+    scored by the Arena.
+  - **Code Typing Race**: up to 8 people type the same real code snippet; the Arena times it and
+    rejects impossible speeds.
+  - **Progression**: HQ level from session XP plus game XP (capped daily), level-up unlocks at your
+    Base, trainer cards, trophies, and leaderboards for every multiplayer game.
+  - **Crews**: create or join with an invite code, a crew board, and your banner on your HQ.
+  - **Cosmetics, inventory and market**: one wallet (Poke Coins), 21 cosmetics across kart, golf,
+    runner, blaster and base slots, and selling Valley finds for coins.
+  - **Focus combo**, **spectating** (watch bar in races, chase camera in Blaster), **sound effects**
+    with a volume slider, **distinct engine sounds** per vehicle (V8, diesel, turbo, hot rod,
+    motorbike), and **server stats** (RAM, CPU, disk) in Settings.
+  - Arena: migrations up to `3d4e5f6a7b8c` (game results, equipped cosmetics, ledger ops, crews).
+    The Rust Arena does not have the 2.1 routes yet; run the Python Arena for 2.1.
 - **2.0.0** — **HQ 2.0, Wave 0: HQ becomes a place.**
   - **The 3D HQ** (**HQ** tab, or press **H**): Mission Control as a room you walk around. Every live
     session is a crew member at a console: typing when working, standing and waving when it needs

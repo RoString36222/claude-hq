@@ -125,10 +125,10 @@ function charPreview(){
   }).catch(function(){ var n = $("chNote"); if(n) n.textContent = "The 3D preview couldn't load."; });
 }
 function buildCharBuilder(spec){
-  var row = $("charBuilderRow"), tbRow = $("trainerBuilderRow"), host = $("chControls");
+  var row = $("charBuilderRow"), host = $("chControls");
   var ok = char3dOk();
   if(row) row.hidden = !ok;
-  if(tbRow) tbRow.hidden = ok;          // the 2D trainer is the fallback without WebGL2
+  // (The 2D trainer builder is gone: without WebGL2 the card just keeps your 2D drawing.)
   if(!ok || !host) return;
   CHAR.spec = (charValid(spec) ? spec : charSpec()).slice(0, CHAR_MAX.length);
   host.innerHTML = "";

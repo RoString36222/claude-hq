@@ -412,7 +412,7 @@ function renderTrainerCard(){
   c.addEventListener("click",function(){ setView("pokedex"); });
   c.addEventListener("keydown",function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); setView("pokedex"); } });
   var ed=$("tcEdit");
-  if(ed) ed.addEventListener("click",function(e){ e.stopPropagation(); openSettings(); var r=$("trainerBuilderRow"); if(r&&r.scrollIntoView) r.scrollIntoView({block:"center"}); });
+  if(ed) ed.addEventListener("click",function(e){ e.stopPropagation(); openSettings(); var r=$("charBuilderRow"); if(r&&r.scrollIntoView) r.scrollIntoView({block:"center"}); });
 })();
 loadTrainerDex();
 setInterval(function(){ if(!document.hidden) loadTrainerDex(); }, 60000);

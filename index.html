@@ -71,6 +71,7 @@
 <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></symbol>
 <symbol id="i-keyboard" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/></symbol>
 <symbol id="i-scroll" viewBox="0 0 24 24"><path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/></symbol>
+<symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></symbol>
 <symbol id="i-message" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
 </defs></svg>
 
@@ -90,6 +91,7 @@
       <button class="viewtab" data-view="store" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-store"/></svg><span class="vt-l">Store</span><span class="vt-k" aria-hidden="true">8</span></button>
       <button class="viewtab" data-view="cali" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-utensils"/></svg><span class="vt-l">Cali Tuesdays</span><span class="vt-k" aria-hidden="true">9</span></button>
       <button class="viewtab" data-view="valley" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-sparkles"/></svg><span class="vt-l">Valley</span><span class="vt-k" aria-hidden="true">0</span></button>
+      <button class="viewtab" data-view="music" role="tab" type="button" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-music"/></svg><span class="vt-l">Music</span><span class="vt-k" aria-hidden="true">J</span></button>
     </div>
 
     <div class="side-trainer">
@@ -497,6 +499,73 @@
   </div>
 
   <div id="valleyView" class="hidden" aria-label="Valley"></div>
+  <div id="musicView" class="mu hidden" aria-label="Music">
+    <section class="panel mu-room" id="muRoom" aria-labelledby="muRoomHead">
+      <div class="mu-room-top">
+        <h3 class="mu-h" id="muRoomHead">Listening room</h3>
+        <span class="mu-dj-label hidden" id="muDjLabel" role="status"></span>
+        <button class="mu-btn mu-tune" id="muTune" type="button" aria-pressed="false">Tune in</button>
+      </div>
+      <p class="muted mu-gate hidden" id="muRoomGate" role="status"></p>
+      <div id="muRoomMain" class="mu-room-main hidden">
+        <div class="mu-stage">
+          <div class="mu-viz-wrap" id="muVizWrap">
+            <canvas id="muViz" class="mu-viz" aria-hidden="true"></canvas>
+            <div class="mu-viz-tools" role="group" aria-label="Visualiser">
+              <button class="mu-mode" data-mode="bars" type="button" aria-pressed="true">Bars</button>
+              <button class="mu-mode" data-mode="ring" type="button" aria-pressed="false">Ring</button>
+              <button class="mu-mode" data-mode="wave" type="button" aria-pressed="false">Wave</button>
+              <button class="mu-mode" id="muFull" type="button" title="Full screen" aria-label="Full-screen visualiser"><svg class="i" aria-hidden="true"><use href="#i-expand"/></svg></button>
+            </div>
+          </div>
+          <div class="mu-player" id="muPlayer"></div>
+        </div>
+        <div class="mu-now-room">
+          <div class="mu-cur" id="muCur"></div>
+          <div class="mu-controls">
+            <button class="mu-ctl" id="muPlayPause" type="button" aria-label="Play for everyone">&#9654;</button>
+            <button class="mu-ctl" id="muSkip" type="button" aria-label="Skip for everyone" title="Skip for everyone">&#9197;</button>
+            <div class="mu-prog" id="muProg" role="slider" tabindex="0" aria-label="Song position (arrows jump 10 seconds)" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><i id="muProgFill"></i></div>
+            <span class="mu-time" id="muProgTime"></span>
+            <label class="mu-vol"><span class="sr-only">Your volume</span><span aria-hidden="true">&#128266;</span><input type="range" id="muVol" min="0" max="100" value="80"></label>
+            <label class="mu-check"><input type="checkbox" id="muVideo" checked> Video</label>
+            <button class="mu-btn" id="muDj" type="button" aria-pressed="false" title="Share a tab's or your Mac's sound live: everyone here can press Listen and hear it, browser to browser">Go live</button>
+          </div>
+          <p class="mu-note hidden" id="muNote" role="status"></p>
+          <div class="mu-live hidden" id="muLive" aria-label="Live sets"></div>
+          <div id="muLiveAudio" hidden></div>
+        </div>
+        <div class="mu-cols">
+          <div class="mu-add">
+            <h4 class="mu-h4">Add a song</h4>
+            <form class="mu-add-form" id="muAddForm" autocomplete="off">
+              <label class="sr-only" for="muAddInput">Search YouTube or paste a link</label>
+              <input id="muAddInput" type="text" maxlength="200" placeholder="Search YouTube, or paste a YouTube / YT Music link" spellcheck="false">
+              <button class="mu-btn" type="submit">Search</button>
+            </form>
+            <ul class="mu-results" id="muResults" aria-label="Search results"></ul>
+          </div>
+          <div class="mu-upnext">
+            <h4 class="mu-h4">Up next <span class="mu-count" id="muQueueCount"></span><button class="mu-link-btn" id="muClear" type="button">Clear</button></h4>
+            <ol class="mu-queue" id="muQueue" aria-label="Up next"></ol>
+          </div>
+        </div>
+      </div>
+      <p class="mu-fine">The queue plays YouTube videos: each browser plays its own copy, and the Arena only keeps the queue and the clock in sync. Anyone in the room can play, pause, skip or add. Go live streams your own audio (a Spotify Web Player tab, or your Mac's sound where the browser offers it) straight to listeners' browsers; the Arena only introduces you.</p>
+    </section>
+    <div class="mu-side">
+      <section class="panel mu-mine" aria-labelledby="muMineH">
+        <h3 class="mu-h" id="muMineH">You're playing</h3>
+        <div id="muMine"></div>
+        <label class="mu-share"><input type="checkbox" id="muShare"> Share what I play with the Arena</label>
+        <p class="mu-share-state muted" id="muShareState" role="status"></p>
+      </section>
+      <section class="panel mu-people-p" aria-labelledby="muPeopleH">
+        <h3 class="mu-h" id="muPeopleH">Listening now <span class="mu-count" id="muPeopleCount"></span></h3>
+        <div id="muPeople" class="mu-people"></div>
+      </section>
+    </div>
+  </div>
   <section id="hqView" class="hq3d hidden" aria-label="3D HQ">
     <div class="hq3d-stage" id="hqStage"></div>
     <div class="hq3d-talk" id="hqTalk" role="region" aria-label="Chat with the people here" hidden>
@@ -890,6 +959,7 @@
       <h2>Navigation</h2>
       <ul>
         <li><span class="kbd">1</span>–<span class="kbd">9</span> switch view (Live · Analytics · Pokédex · Gym · Quests · Arena · Village · Store · Cali Tuesdays)</li>
+        <li><span class="kbd">J</span> Music (what everyone's playing, listening rooms) · <span class="kbd">H</span> 3D HQ</li>
         <li><span class="kbd">/</span> focus search · <span class="kbd">R</span> refresh now</li>
         <li><span class="kbd">⌘</span>/<span class="kbd">Ctrl</span>+<span class="kbd">K</span> command palette (jump to any session, run any action)</li>
         <li><span class="kbd">?</span> this help · <span class="kbd">Esc</span> close any overlay</li>
@@ -1068,6 +1138,11 @@
           <span class="hint" id="setFatigueHint">Creatures tire after long unbroken runs. Purely cosmetic: never affects XP or the Arena.</span>
         </div>
         <div class="setrow">
+          <label id="setMusicShareLbl">Music</label>
+          <label class="dex-toggle"><input type="checkbox" id="setMusicShare" aria-describedby="setMusicShareHint"> Share what I play (Spotify, Apple Music, YouTube Music)</label>
+          <span class="hint" id="setMusicShareHint">While paired, the Arena shows friends the song you're playing: title, artist, album and app. Nothing about your sessions.</span>
+        </div>
+        <div class="setrow">
           <label for="setPack">Creature pack</label>
           <select id="setPack">
             <option value="pokemon">Pokémon (animated sprites)</option>
@@ -1240,6 +1315,7 @@
 //@include ui/app/26-crews.js
 //@include ui/app/27-play.js
 //@include ui/app/28-talk.js
+//@include ui/app/29-music.js
 </script>
 </body>
 </html>

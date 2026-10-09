@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.1.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 2.2.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -311,6 +311,24 @@ and feature guide.
 
 ## Changelog
 
+- **2.2.0** — **Music.** A new Music view (key `J`):
+  - **Now Playing**: HQ reads the song this Mac is playing in Spotify, Apple Music or a YouTube
+    Music tab (AppleScript, only apps already running; macOS asks once for permission) and, while
+    paired, shares it with the Arena. On by default; turn it off in Music or Settings. Shared
+    fields: title, artist, album, app, Spotify/YouTube id, length, position. Friends' songs show in
+    *Listening now* and on their lobby chip, with links to open the song in Spotify, Apple Music or
+    YouTube Music.
+  - **Listening rooms**: your Arena room (the Lobby or a private room) gets one shared YouTube
+    queue. The Arena keeps the queue and a clock; every browser plays its own copy and stays within
+    about a second of the room. Anyone can add (search YouTube or paste a link), play, pause, seek or skip.
+  - **Go live**: share a tab's or your Mac's audio and everyone in the room can press *Listen live*,
+    streamed browser to browser over WebRTC (stereo Opus, up to 256 kbps, up to 12 listeners). The
+    Arena only relays the connection setup, as for voice calls.
+  - **Visualiser**: bars, ring or wave, full screen; driven by the real audio when you are live or
+    listening live, by the DJ's spectrum otherwise, or by a beat seeded per song. Calm and
+    reduced-motion get a still picture.
+  - Arena (Rust): `GET/PUT/DELETE /v1/music/now` (memory only, 2-minute expiry) and
+    `{"type":"music"}` room messages; the welcome advertises `music: {v: 1}`.
 - **2.1.2** — **Cursor cards use the chat's own title.** The heading is the name Cursor shows
   for that agent chat (read locally from Cursor's state database on this machine), so a card says
   "Extend chat data support" instead of the opening message. Chats with no saved title still use

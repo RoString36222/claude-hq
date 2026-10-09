@@ -5,6 +5,7 @@
 
 mod auth;
 mod boardstream;
+mod boss;
 mod cali;
 mod config;
 mod cosmetics;
@@ -31,6 +32,7 @@ mod server_stats;
 mod service;
 mod sounds;
 mod valley;
+mod weeks;
 
 use axum::{
     extract::{
@@ -855,6 +857,7 @@ async fn serve() -> anyhow::Result<()> {
         .route("/v1/me", get(me))
         .route("/v1/rooms", get(list_rooms))
         .route("/v1/auth/ticket", post(ticket))
+        .merge(boss::routes())
         .merge(cali::routes())
         .merge(cosmetics::routes())
         .merge(crews::routes())

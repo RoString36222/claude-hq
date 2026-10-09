@@ -54,6 +54,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import arena
 import music
 
+# HQ 2.5 local proxy extension modules (SHIM for world-boss until the scaffold
+# lands: the scaffold imports every ext_* module the same way).
+EXT = []
+for _ext_name in ("ext_boss",):
+    try:
+        EXT.append(__import__(_ext_name))
+    except Exception:
+        pass
+
 APP_VERSION = "2.4.0"   # Your 3D character: builder, portraits, everyone sees it
 
 # --------------------------------------------------------------------------- #
@@ -5119,7 +5128,7 @@ POST_PATHS = (
     "/api/arena/cali/order",
     "/api/arena/sounds",
     "/api/games/state",
-) + ARENA_ROOM_POSTS
+) + ARENA_ROOM_POSTS + tuple(p for m in EXT for p in m.POST)
 
 
 # --------------------------------------------------------------------------- #
@@ -5372,6 +5381,19 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         path = self.path.split("?", 1)[0]
+
+        for _m in EXT:
+            _fn = _m.GET.get(path)
+            if _fn is None:
+                continue
+            import urllib.parse
+            _qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            try:
+                code, resp = _fn(lambda k: (_qs.get(k, [""])[0] or "").strip())
+            except Exception as e:
+                code, resp = 502, {"error": "arena request failed: %s" % e}
+            self._send(code or 502, json.dumps(resp))
+            return
 
         if path == "/":
             try:
@@ -5926,6 +5948,9 @@ class Handler(BaseHTTPRequestHandler):
     def _arena_post(self, path, body):
         """Arena actions. The device token never crosses back to the page."""
         try:
+            for _m in EXT:
+                if path in _m.POST:
+                    return _m.POST[path](body)
             if path in ARENA_ROOM_POSTS:
                 return _room_post(path, body)
             if path == "/api/arena/pair":

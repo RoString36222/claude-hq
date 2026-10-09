@@ -80,7 +80,7 @@ Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
 });
 
 /* ---- Valley minigames: loaded from /games/ on first use (keeps this file from growing) ---- */
-var VALLEY_FILES = ["core","engine","fishart","fishing","garden","bundles","mines","pokedata","pokebattle","battle","puzzle","town","festival","arcade","multi","golf","input","kart","platformer","fps","typerace"];
+var VALLEY_FILES = ["core","engine","fishart","fishing","garden","bundles","mines","pokedata","pokebattle","battle","puzzle","town","festival","arcade","multi","golf","input","kart","platformer","fps","typerace","mapedit"];
 var VALLEY_LOAD = null;
 function valleyLoad(){
   if(VALLEY_LOAD) return VALLEY_LOAD;

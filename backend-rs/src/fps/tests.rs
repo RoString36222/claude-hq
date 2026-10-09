@@ -1218,3 +1218,32 @@ async fn a_custom_match_through_the_room() {
     let done = until(&mut wa, "done").await;
     assert_eq!(done["map"], json!(key));
 }
+
+// The Map Editor's starter maps (games/mapedit.js openYard(32) and the courtyard
+// remix), as its canon() writes them. tests/test_mapedit.py regenerates both under
+// node and checks they still equal these, so the editor's rules and the referee's agree.
+/* MAPEDIT-STARTERS BEGIN */
+const EDITOR_STARTERS: [&str; 2] = [
+    r##"{"bounds":[-16,-1,-16,16,12,16],"theme":{"sky":"#9fd3f0","fog":"#cfe8f2","ground":"#6fb35a"},"boxes":[[-16,-1,-16,16,0,16,"floor"],[-16,0,-16,16,4,-15.5,"wall"],[-16,0,15.5,16,4,16,"wall"],[-16,0,-15.5,-15.5,4,15.5,"wall"],[15.5,0,-15.5,16,4,15.5,"wall"],[-2,0,-2,2,1.5,2,"block"],[2,0,-1,3,0.5,1,"step"],[-3,0,-1,-2,0.5,1,"step"],[-6,0,-11.5,-2,1.1,-10.9,"low"],[2,0,10.9,6,1.1,11.5,"low"],[9.5,0,-10.5,10.7,1.2,-9.3,"crate"],[-10.7,0,9.3,-9.5,1.2,10.5,"crate"],[-10.5,0,-2,-9.5,3,2,"wall"],[9.5,0,-2,10.5,3,2,"wall"],[-6.25,0,-15.5,-5.25,3,-10,"wall"],[-15.5,0,-6.25,-10,3,-5.25,"wall"],[-6.25,0,10,-5.25,3,15.5,"wall"],[-15.5,0,5.25,-10,3,6.25,"wall"],[5.25,0,-15.5,6.25,3,-10,"wall"],[10,0,-6.25,15.5,3,-5.25,"wall"],[5.25,0,10,6.25,3,15.5,"wall"],[10,0,5.25,15.5,3,6.25,"wall"]],"spawns":[[0,0,13,0],[0,0,-13,180],[13,0,0,270],[-13,0,0,90],[11.5,0,11.5,315],[-11.5,0,-11.5,135],[11.5,0,-12.5,223],[-11.5,0,12.5,43]],"pickups":[{"id":"p1","kind":"health","at":[0,1.5,0]},{"id":"p2","kind":"ammo","at":[-8.5,0,0]},{"id":"p3","kind":"ammo","at":[8.5,0,0]}]}"##,
+    r##"{"bounds":[-22,-1,-22,22,12,22],"theme":{"sky":"#9fd3f0","fog":"#cfe8f2","ground":"#6fb35a"},"boxes":[[-22,-1,-22,22,0,22,"floor"],[-22,0,-22,22,5,-21.5,"wall"],[-22,0,21.5,22,5,22,"wall"],[-22,0,-22,-21.5,5,22,"wall"],[21.5,0,-22,22,5,22,"wall"],[-3.5,0,-3.5,3.5,1.5,3.5,"block"],[3.5,0,-1.5,4.5,1,1.5,"step"],[4.5,0,-1.5,5.5,0.5,1.5,"step"],[-4.5,0,-1.5,-3.5,1,1.5,"step"],[-5.5,0,-1.5,-4.5,0.5,1.5,"step"],[-3.5,1.5,-3.5,-1,2.4,-3,"low"],[1,1.5,-3.5,3.5,2.4,-3,"low"],[-3.5,1.5,3,-1,2.4,3.5,"low"],[1,1.5,3,3.5,2.4,3.5,"low"],[14,0,-18,18,2.5,-14,"block"],[13,0,-17,14,2,-15,"step"],[12,0,-17,13,1.5,-15,"step"],[11,0,-17,12,1,-15,"step"],[10,0,-17,11,0.5,-15,"step"],[14.5,2.5,-14.5,18,3.4,-14,"low"],[-18,0,14,-14,2.5,18,"block"],[-14,0,15,-13,2,17,"step"],[-13,0,15,-12,1.5,17,"step"],[-12,0,15,-11,1,17,"step"],[-11,0,15,-10,0.5,17,"step"],[-18,2.5,14,-14.5,3.4,14.5,"low"],[-15,0,-15,-9,3,-14,"wall"],[-15,0,-14,-14,3,-9,"wall"],[9,0,14,15,3,15,"wall"],[14,0,9,15,3,14,"wall"],[-2,0,-12,2,1.1,-11.3,"low"],[-2,0,11.3,2,1.1,12,"low"],[-12,0,-2,-11.3,1.1,2,"low"],[11.3,0,-2,12,1.1,2,"low"],[6,0,6,7.2,1.2,7.2,"crate"],[-7.2,0,-7.2,-6,1.2,-6,"crate"],[6,0,-8,7.2,1.2,-6.8,"crate"],[-7.2,0,6.8,-6,1.2,8,"crate"],[-18,0,-6,-16.8,1.2,-4.8,"crate"],[16.8,0,4.8,18,1.2,6,"crate"],[-17.4,1.2,-5.8,-16.8,1.8,-5.2,"crate"],[-10,0,7,-9,3,8,"wall"],[9,0,-8,10,3,-7,"wall"]],"spawns":[[0,0,-19,180],[0,0,19,0],[-19,0,0,90],[19,0,0,270],[-19,0,-19,135],[19,0,19,315],[19,0,-10,270],[-19,0,10,90],[10,0,19,0],[-10,0,-19,180],[16,2.5,-16,225],[-16,2.5,16,45]],"pickups":[{"id":"p1","kind":"health","at":[0,1.5,0]},{"id":"p2","kind":"health","at":[-20,0,20]},{"id":"p3","kind":"health","at":[20,0,-20]},{"id":"p4","kind":"ammo","at":[-13.5,0,0]},{"id":"p5","kind":"ammo","at":[13.5,0,0]}]}"##,
+];
+/* MAPEDIT-STARTERS END */
+
+#[test]
+fn the_map_editors_starter_maps_pass_as_they_are() {
+    for (i, src) in EDITOR_STARTERS.iter().enumerate() {
+        let data: Value = serde_json::from_str(src).unwrap();
+        let canon = validate_custom(&data).unwrap_or_else(|e| panic!("starter {i}: {e}"));
+        assert_eq!(canon, data, "starter {i} is already canonical");
+        let doc = json!({"kind": "fps", "v": 1, "name": "Starter", "data": data});
+        let c = custom_from_doc(&doc).unwrap();
+        let mut f = Fps::new();
+        assert!(f.set_map(Some(c)));
+        assert_eq!(f.start(&members(8, "u"), &json!(3), &json!(10), 0.0), None);
+        // 8 players, 8 different spawns
+        let mut at: Vec<(i64, i64)> = f.players.iter().map(|(_, p)| (cm(p.x), cm(p.z))).collect();
+        at.sort();
+        at.dedup();
+        assert_eq!(at.len(), 8, "starter {i}");
+    }
+}

@@ -1056,3 +1056,21 @@ async fn a_custom_race_through_the_room_records_the_c_key() {
     assert!(done.get("custom").is_none());
     assert_eq!(crate::results::rows_from_done("plat", &done)[0].key, key);
 }
+
+/// tests/test_leveledit.py pins the same keys from games/leveledit.js's canonical form, so the
+/// editor and the Arena agree byte for byte on what a level is.
+#[test]
+fn custom_keys_are_pinned_for_the_editor() {
+    let mut got = vec![custom_key(&validate_custom(&custom_data()).unwrap())];
+    let file: Value = serde_json::from_str(LEVELS_JSON).unwrap();
+    for lvj in file["levels"].as_array().unwrap() {
+        got.push(custom_key(&validate_custom(lvj).unwrap()));
+    }
+    assert_eq!(got, ["c-ca296b942375", "c-afd79d84fac1", "c-80356f2bd64f", "c-b8253b24bae3"]);
+}
+
+#[test]
+fn the_welcome_tells_the_page_custom_levels_are_taken() {
+    // games/platformer.js and games/leveledit.js offer custom levels only when arena.maps is set.
+    assert_eq!(crate::protocol::arena_info()["maps"], json!({"v": 1}));
+}

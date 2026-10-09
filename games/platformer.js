@@ -117,6 +117,28 @@ function loadData(){
     }, function(e){ DATA_P = null; throw e; });
   return DATA_P;
 }
+// HQ 2.5: a level made in the Level Editor (games/leveledit.js), compiled with the same PL
+// block as the built-in ones. In a room it arrives in the server's view as custom:{name, data}
+// under its c- key; solo (a test run or a 3D preview) it gets a local id.
+function compileCustom(id, name, data){
+  data = data || {};
+  var src = {}; for(var k in data) src[k] = data[k];
+  src.id = id; src.name = String(name || "Custom level").slice(0, 32);
+  var L = PL.compileLevel(src);
+  L.theme = src.theme || {}; L.deco = src.deco || []; L.route = src.route || []; L.src = src; L.custom = true;
+  return L;
+}
+function registerCustom(id, custom){
+  if(!custom || typeof custom !== "object") return null;
+  try { var L = compileCustom(id, custom.name, custom.data); LEVELS[id] = L; return L; } catch(e){ return null; }
+}
+function mapsOn(){ var A = window.ARENA; return !!(A && A.arena && A.arena.maps); }
+function storyNote(ev){ try { if(HQV.story && HQV.story.note) HQV.story.note(ev); } catch(e){} }
+function editorDrafts(){
+  var m = HQV.makers && HQV.makers.plat, out = [];
+  try { out = m && typeof m.drafts === "function" ? (m.drafts() || []) : []; } catch(e){ out = []; }
+  return out.filter(function(d){ return d && d.kind === "plat" && d.data && typeof d.name === "string"; });
+}
 function platLib(){ return E.lib(); }
 function loadGlb(lib, name){ return E.loadGlb(lib, "platformer", name); }
 function psave(){
@@ -134,7 +156,8 @@ function makeGame(host, opts){
     goAt: 0, startAt: 0, ps: {}, order: [], standings: [], results: null, win: null, finishedAt: null,
     sendAt: 0, sentKey: "", note: "", round: null, gotView: false, unsupported: false, map: !!psave().map,
     low: !!psave().low, offline: false, spectate: null, taken: {}, mine: {}, pend: {}, roomCoins: 0, goal: 0, limitMs: 0,
-    respawn: null, simQ: Math.floor(performance.now()/10), camYaw: 0, camPitch: 0.42, camDist: 7, camFar: false, auto: null, lastCoinSay: 0};
+    respawn: null, simQ: Math.floor(performance.now()/10), camYaw: 0, camPitch: 0.42, camDist: 7, camFar: false, auto: null, lastCoinSay: 0,
+    preview: false, onExit: typeof opts.onExit === "function" ? opts.onExit : null, customPick: false};
   function myId(){ return V.mode === "mp" && MP ? MP.me() : "me"; }
   function me(){ return V.ps[myId()] || null; }
 
@@ -256,6 +279,7 @@ function makeGame(host, opts){
       grid.appendChild(card);
     });
     menu.appendChild(grid);
+    renderCustomPicker(mp, host, playMode);
     if(mp){
       if(!host) menu.appendChild(api.mk("p", "vg-muted", "Waiting for the host (★ in the lobby) to pick a level and a mode."));
       if(V.results) menu.appendChild(resultsTable(V.results, "Last run", V.play));
@@ -263,20 +287,68 @@ function makeGame(host, opts){
         menu.appendChild(api.btn("Watch", "primary", function(){ applyView(V.round, true); }));
     }
   }
+  // HQ 2.5: levels from the Level Editor. In a room only the host starts one, and only on an
+  // Arena that takes custom levels (arena.maps); solo they play as a time trial.
+  function startCustom(doc, playMode){
+    if(!MP || !doc) return false;
+    var ok = MP.send("plat", "start", {level: "custom", mode: playMode, custom: {kind: "plat", v: 1, name: doc.name, data: doc.data}});
+    if(ok){ storyNote("race-custom"); say("Starting "+doc.name); }
+    return ok;
+  }
+  function renderCustomPicker(mp, host, playMode){
+    var drafts = editorDrafts(), pend = HQV.platPending && HQV.platPending.doc;
+    if(mp && !mapsOn()) return;
+    if(!mp && !drafts.length) return;
+    if(mp && !host){
+      if(pend) menu.appendChild(api.mk("p", "vg-msg", "Only the host can start “"+pend.name+"”. Ask them, or host a room of your own."));
+      return;
+    }
+    var box = api.mk("div", "vg-plat-custom");
+    if(mp && pend){
+      var go = api.btn("Start your level: "+pend.name, "primary", function(){ if(startCustom(pend, playMode)) HQV.platPending = null; });
+      box.appendChild(go);
+    }
+    var tog = api.btn(V.customPick ? "Custom… ▾" : "Custom…", "", function(){ V.customPick = !V.customPick; renderMenu(); });
+    tog.setAttribute("aria-expanded", V.customPick ? "true" : "false");
+    box.appendChild(tog);
+    if(V.customPick){
+      var list = api.mk("div", "vg-golf-courses");
+      if(!drafts.length){
+        list.appendChild(api.mk("p", "vg-muted", "No levels yet. Build one in the Level Editor."));
+        if(HQV.makers && HQV.makers.plat) list.appendChild(api.btn("Open the Level Editor", "", function(){ api.open(HQV.makers.plat.game || "make-plat"); }));
+      }
+      drafts.forEach(function(d, i){
+        var card = api.mk("button", "vg-card vg-golf-course"); card.type = "button";
+        var ic = api.mk("span", "vg-card-ic", "🛠️"); ic.setAttribute("aria-hidden", "true"); card.appendChild(ic);
+        var tt = api.mk("span", "vg-card-t"); tt.appendChild(api.mk("b", null, d.name));
+        var dd = d.data || {};
+        tt.appendChild(api.mk("span", null, ((dd.solids || []).length)+" platforms · "+((dd.cps || []).length)+" checkpoints · "+((dd.coins || []).length)+" coins"));
+        card.appendChild(tt);
+        card.addEventListener("click", function(){
+          if(mp) startCustom(d, playMode);
+          else { var L = registerCustom("local-"+i, d); if(L) startPractice(L.id); else api.toast("That level doesn't load: open it in the Level Editor"); }
+        });
+        list.appendChild(card);
+      });
+      box.appendChild(list);
+    }
+    menu.appendChild(box);
+  }
   function inRun(view){ return (view.players || []).some(function(p){ return p.user && p.user.userId === myId(); }); }
   function renderTools(){
     tools.textContent = "";
-    tools.appendChild(api.btn(V.mode === "mp" ? "Leave the run" : "Back to levels", "", function(){
+    tools.appendChild(api.btn(V.mode === "mp" ? "Leave the run" : V.onExit ? "Back to the editor" : "Back to levels", "", function(){
       if(V.mode === "mp" && MP && isHost() && (V.phase === "grid" || V.phase === "run")){
         if(!window.confirm("End the run for everyone?")) return;
         MP.send("plat", "end");
       }
+      if(V.onExit && V.mode !== "mp"){ V.onExit(); return; }
       resetRun(); showStage(false); renderMenu();
     }));
     tools.appendChild(api.btn("Camera", "", function(){ V.camFar = !V.camFar; if(canvas) canvas.focus(); }));
   }
   function resetRun(){
-    clearPs(); V.phase = "idle"; V.level = null; V.results = null; V.finishedAt = null; V.taken = {}; V.mine = {}; V.pend = {};
+    clearPs(); V.phase = "idle"; V.level = null; V.preview = false; V.results = null; V.finishedAt = null; V.taken = {}; V.mine = {}; V.pend = {};
     V.roomCoins = 0; V.respawn = null; V.auto = null; V.win = null;
     cardBox.classList.add("hidden"); cdBox.classList.add("hidden"); fade.classList.add("hidden"); if(R3) R3.clearLevel();
   }
@@ -292,10 +364,23 @@ function makeGame(host, opts){
     if(canvas) canvas.focus();
   }
 
+  // HQ 2.5: the Level Editor's 3D preview: the level drawn by this renderer, the runner
+  // standing on spawn 1, the camera turning round it (Q / E / the mouse; still in Calm).
+  function startPreview(id){
+    var L = LEVELS[id]; if(!L) return;
+    resetRun(); V.mode = "practice"; V.play = "race"; V.level = L; V.preview = true;
+    var P = ensureP("me", {name: "You", chr: clamp(psave().char|0, 0, CHARS.length - 1), cos: window.HQ_MYCOS || null});
+    placeOnSpawn(P, 0);
+    V.camYaw = 0.6; V.camFar = true; V.phase = "preview";
+    showStage(true); if(R3) R3.buildLevel();
+  }
+  V.focusAt = function(p){ var P = me(); if(V.preview && P && p) placeAt(P, [+p[0] || 0, +p[1] || 0, +p[2] || 0]); };
+
   /* ---------- multiplayer: the server's view ---------- */
   function requestView(){ if(MP) MP.send("plat", "view"); }
   function applyView(view, force){
     V.round = view; V.gotView = true;
+    if(view && view.custom && typeof view.level === "string" && !LEVELS[view.level]) registerCustom(view.level, view.custom);
     if(!view || !LEVELS[view.level]){ if(V.phase !== "idle" && V.mode === "mp"){ resetRun(); showStage(false); } renderMenu(); return; }
     if(V.mode !== "mp") return;
     var mine = inRun(view);
@@ -335,6 +420,10 @@ function makeGame(host, opts){
       if(!DATA){ V.round = m.run; V.gotView = true; return; }
       applyView(m.run, false);
       if(m.by && m.run && m.run.phase === "grid" && canvas) canvas.focus();
+      if(HQV.platPending && V.mode === "mp" && isHost() && mapsOn() && (!m.run || m.run.phase === "idle" || m.run.phase === "done")){
+        var pd = HQV.platPending; HQV.platPending = null;
+        if(!startCustom(pd.doc, pd.mode === "coop" ? "coop" : "race")) HQV.platPending = pd;
+      }
       return;
     }
     if(V.mode !== "mp" || !V.level) return;
@@ -422,7 +511,8 @@ function makeGame(host, opts){
       else row.appendChild(api.btn("Back to the lobby", "", function(){ resetRun(); showStage(false); renderMenu(); }));
     } else {
       row.appendChild(api.btn("Run again", "primary", function(){ startPractice(V.level.id); }));
-      row.appendChild(api.btn("Levels", "", function(){ resetRun(); showStage(false); renderMenu(); }));
+      if(V.onExit) row.appendChild(api.btn("Back to the editor", "", function(){ V.onExit(); }));
+      else row.appendChild(api.btn("Levels", "", function(){ resetRun(); showStage(false); renderMenu(); }));
     }
     cardBox.appendChild(row); cardBox.classList.remove("hidden");
     try { if(document.pointerLockElement) document.exitPointerLock(); } catch(e){}
@@ -526,7 +616,8 @@ function makeGame(host, opts){
   function finishPractice(P){
     var t = now(), L = V.level; P.fin = (t - V.startAt)*1000; V.finishedAt = t; V.phase = "done";
     var sv = psave(), prev = sv.best[L.id];
-    if(!prev || P.fin < prev){ sv.best[L.id] = Math.round(P.fin); api.persist(); api.toast("🚩 New best on "+L.name+": "+fmt(P.fin)); }
+    if(L.custom) api.toast("🚩 "+L.name+" finished in "+fmt(P.fin));
+    else if(!prev || P.fin < prev){ sv.best[L.id] = Math.round(P.fin); api.persist(); api.toast("🚩 New best on "+L.name+": "+fmt(P.fin)); }
     showResults([{user: {userId: "me", displayName: "You"}, place: 1, ms: P.fin, dnf: false, coins: P.coins}]);
   }
   function sendPos(t){
@@ -627,6 +718,7 @@ function makeGame(host, opts){
     V.camYaw += lk.dx*0.0045; V.camPitch = clamp(V.camPitch + lk.dy*0.003, 0.12, 1.25);
     if(IN && IN.keys){ if(IN.keys.KeyQ) V.camYaw -= 2.2*dt; if(IN.keys.KeyE) V.camYaw += 2.2*dt; }
     var P = me();
+    if(V.preview){ if(!calm() && t - lookAt > 2) V.camYaw += dt*0.25; if(lk.dx || lk.dy || (IN && IN.keys && (IN.keys.KeyQ || IN.keys.KeyE))) lookAt = t; return; }
     if(V.phase === "grid"){
       var left = Math.ceil(V.goAt - t);
       if(left > 0 && left <= 3){ if(cdBox.textContent !== String(left)){ cdShow(String(left)); say(String(left)); } }
@@ -667,7 +759,7 @@ function makeGame(host, opts){
     WB.update();
     if(!V.level){ hudTitle.textContent = ""; return; }
     var P = me(), t = now(), F = P || V.ps[V.spectate] || null, L = V.level, coop = V.play === "coop";
-    var title = (V.mode === "practice" ? "Time trial" : coop ? "Co-op" : "Race")+" · "+L.name+(V.mode === "mp" && !coop && F && F.place ? " · P"+F.place+"/"+V.order.length : "");
+    var title = (V.preview ? "Preview" : V.mode === "practice" ? "Time trial" : coop ? "Co-op" : "Race")+" · "+L.name+(V.mode === "mp" && !coop && F && F.place ? " · P"+F.place+"/"+V.order.length : "");
     if(hudTitle.textContent !== title) hudTitle.textContent = title;
     var el = V.phase === "run" ? (t - V.startAt)*1000 : 0;
     if(P && P.fin != null) el = P.fin;
@@ -848,9 +940,9 @@ function makeGame(host, opts){
       scene.fog = new THREE.Fog(hex(th.fog, 0xcdeeff), V.low ? 40 : 60, V.low ? 110 : 170);
       seaMat.color.setHex(hex(th.sea, 0x5aa9e6)); sea.position.y = L.kill - 1.5;
       sun.color.setHex(hex(th.light, 0xffffff));
-      (DATA.levels || []).forEach(function(lv){
+      (L.src ? [L.src] : (DATA.levels || [])).forEach(function(lv){
         if(lv.id !== L.id) return;
-        lv.solids.forEach(function(b){
+        (lv.solids || []).forEach(function(b){
           var o = model(b.m, true); o.position.set(+b.x, +b.y, +b.z); o.rotation.y = (+b.r || 0)*Math.PI/180;
           if(b.s) o.scale.setScalar(+b.s);
           levelGroup.add(o);
@@ -1007,7 +1099,15 @@ function makeGame(host, opts){
   if(typeof ResizeObserver !== "undefined"){ ro = new ResizeObserver(onResize); ro.observe(host); }
   renderKeys();
   renderMenu();
-  loadData().then(function(){ if(!V.alive) return; renderMenu(); if(V.mode === "mp" && V.gotView) applyView(V.round); else if(V.mode === "mp") requestView(); },
+  loadData().then(function(){
+    if(!V.alive) return; renderMenu();
+    if(opts.custom && V.mode !== "mp"){
+      var L = registerCustom("local-test", opts.custom);
+      if(!L){ V.note = "That level doesn't load."; api.toast(V.note); return; }
+      if(opts.preview) startPreview(L.id); else startPractice(L.id);
+      return;
+    }
+    if(V.mode === "mp" && V.gotView) applyView(V.round); else if(V.mode === "mp") requestView(); },
     function(){ V.note = "Couldn't load the levels."; renderMenu(); });
   if(!raf) raf = requestAnimationFrame(frame);
   V.destroy = function(){
@@ -1055,5 +1155,9 @@ if(MP){
   });
 }
 HQV.platLevel = PL;      // for the browser smoke test
+// HQ 2.5: the Level Editor test-runs and previews its level in this game's renderer, in its own
+// box (opts: {custom: {name, data}, preview?, onExit}); a room start goes through HQV.platPending.
+HQV.platPlay = function(host, opts){ return makeGame(host, {mode: "practice", custom: opts && opts.custom, preview: !!(opts && opts.preview), onExit: opts && opts.onExit}); };
+HQV.platCompileCustom = compileCustom;
 HQV.platDebug = function(){ return CUR; };
 })();

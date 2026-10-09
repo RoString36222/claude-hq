@@ -50,7 +50,7 @@ pub fn arena_info() -> Value {
     json!({"impl": "rs", "games": games,
            "party": {"v": 1, "order": crate::valley::party::ORDER},
            // Now Playing (/v1/music/now) and listen-along rooms ({"type": "music"}).
-           "music": {"v": 1}})
+           "music": {"v": 1}, "maps": {"v": 1}})
 }
 
 #[cfg(test)]

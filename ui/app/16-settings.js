@@ -127,6 +127,7 @@ function openSettings(){
   var lt=$("setLargeText"); if(lt) lt.checked=largePref();
   var cm=$("setCalm"); if(cm) cm.checked=calmPref();
   var fz=$("setFatigue"); if(fz) fz.checked = c.creatureFatigue!==false;
+  var ms=$("setMusicShare"); if(ms) ms.checked = c.musicShare!==false;
   var tn=$("setTrainer"); if(tn) tn.value=trainerPref();
   if(typeof syncAccentControls==="function") syncAccentControls();
   $("settingsBack").classList.add("open");
@@ -157,7 +158,8 @@ function saveSettings(){
     dailyBudgetUSD: Math.max(0, parseFloat($("setBudget").value)||0),
     trainerName: $("setTrainer") ? $("setTrainer").value.trim().slice(0,32) : "",
     trainerAvatar: readTrainerBuilder(),
-    creatureFatigue: $("setFatigue") ? $("setFatigue").checked : true
+    creatureFatigue: $("setFatigue") ? $("setFatigue").checked : true,
+    musicShare: $("setMusicShare") ? $("setMusicShare").checked : true
   };
   // localStorage mirror so the Trainer Card paints instantly on next boot,
   // before the /api/config fetch resolves (resolveTrainerSpec validates it).

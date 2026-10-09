@@ -25,7 +25,8 @@ var VIEW_TITLES = {
   store:["Store","Snacks for your creatures, paid in Poke Coins"],
   cali:["Cali Tuesdays","Taco Tuesday at California Burrito: seat friends, plate their food, check out"],
   valley:["Valley","Minigames to play while your tabs work"],
-  hq:["HQ","Mission Control: your sessions as crew at their desks"]
+  hq:["HQ","Mission Control: your sessions as crew at their desks"],
+  music:["Music","What everyone's playing, and rooms to listen together"]
 };
 // The Clash of Clans pack renames the "Pokédex" collection to "Troops" (nav tab + title).
 function syncPackLabels(){
@@ -54,6 +55,7 @@ function setView(v){
   var cdv=$("caliView"); if(cdv) cdv.classList.toggle("hidden", v!=="cali");
   var vlv=$("valleyView"); if(vlv) vlv.classList.toggle("hidden", v!=="valley");
   var hqv=$("hqView"); if(hqv) hqv.classList.toggle("hidden", v!=="hq");
+  var muv=$("musicView"); if(muv) muv.classList.toggle("hidden", v!=="music");
   Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
     var on = t.getAttribute("data-view")===v;
     t.classList.toggle("active", on); t.setAttribute("aria-selected", on?"true":"false");
@@ -67,10 +69,11 @@ function setView(v){
   if(v==="store") svEnter(); else svLeave();
   if(v==="cali") cdEnter(); else cdLeave();
   if(v==="valley") valleyEnter(); else valleyLeave();
+  if(v==="music") musicEnter(); else musicLeave();
   if(typeof hqViewChanged==="function") hqViewChanged(v);
   valleyPillSync();
   // The lobby socket stays open on other views while you stay in the lobby, or while you're in voice (it carries it).
-  if(v==="arena"){ arenaUnreadClear(); ARENA.nudgeCount={}; loadArena(); } else { arenaRoomFormsClear(); if(!VCHAN.on && !ARENA_STAY) arenaCloseSocket(); }
+  if(v==="arena"){ arenaUnreadClear(); ARENA.nudgeCount={}; loadArena(); } else { arenaRoomFormsClear(); if(!VCHAN.on && !ARENA_STAY && !muWantsSocket()) arenaCloseSocket(); }
 }
 Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
   t.addEventListener("click",function(){ setView(t.getAttribute("data-view")); });

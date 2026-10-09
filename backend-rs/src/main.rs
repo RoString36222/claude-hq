@@ -13,6 +13,7 @@ mod db;
 mod fps;
 mod hq;
 mod kart;
+mod music;
 mod nudges;
 mod pantry;
 mod platformer;
@@ -63,6 +64,8 @@ pub(crate) struct AppState {
     pub(crate) fps: fps::FpsHub,
     /// The other eight Valley games plus Party Mode, behind one dispatcher.
     pub(crate) valley: valley::ValleyHub,
+    /// Now Playing and listen-along rooms (memory only).
+    pub(crate) music: music::MusicHub,
     pub(crate) conn_seq: Arc<AtomicU64>,
 }
 
@@ -398,7 +401,9 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
     let plat = st.plat.clone();
     let arena = st.fps.clone();
     let valley = st.valley.clone();
+    let music = st.music.clone();
     let mut inbound = tokio::spawn(async move {
+        let mut music_lim = music::ConnLimits::new();
         let mut chat_times: VecDeque<Instant> = VecDeque::with_capacity(rooms::CHAT_RATE_COUNT);
         while let Some(Ok(msg)) = recv.next().await {
             let Message::Text(text) = msg else { continue };
@@ -507,6 +512,10 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
                                 "error": "state too large"}).to_string()).await;
                         }
                     }
+                }
+                // Listen-along: the room's shared queue and clock, and the DJ's spectrum.
+                Some("music") => {
+                    music.handle(&rooms, &rid, conn_id, &me, &mut music_lim, &v).await
                 }
                 // Python answers the one socket that asked, not the whole room.
                 Some("ping") => {
@@ -826,6 +835,7 @@ async fn serve() -> anyhow::Result<()> {
         plat,
         fps,
         valley,
+        music: music::MusicHub::default(),
         conn_seq: Arc::new(AtomicU64::new(1)),
     };
 
@@ -841,6 +851,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(cosmetics::routes())
         .merge(crews::routes())
         .merge(hq::routes())
+        .merge(music::routes())
         .merge(nudges::routes())
         .merge(pantry::routes())
         .merge(privrooms::routes())

@@ -48,7 +48,9 @@ pub fn arena_info() -> Value {
         games.insert((*g).to_string(), json!({"v": v, "caps": caps}));
     }
     json!({"impl": "rs", "games": games,
-           "party": {"v": 1, "order": crate::valley::party::ORDER}})
+           "party": {"v": 1, "order": crate::valley::party::ORDER},
+           // Now Playing (/v1/music/now) and listen-along rooms ({"type": "music"}).
+           "music": {"v": 1}})
 }
 
 #[cfg(test)]

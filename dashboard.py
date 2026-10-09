@@ -55,8 +55,9 @@ import arena
 import music
 import worksignals
 
-# HQ 2.5 local proxy extension modules (each in try/except: one broken module
-# never takes the HQ down).
+# HQ 2.5 local proxy extension modules (ext_<feature>.py: GET/POST maps and an
+# optional start(ctx)). Each import is guarded so one broken module never takes
+# the HQ down.
 EXT = []
 for _ext_name in ("ext_skills", "ext_loot", "ext_prestige", "ext_maps", "ext_cups", "ext_boss"):
     try:
@@ -5138,7 +5139,7 @@ POST_PATHS = (
     "/api/arena/cali/order",
     "/api/arena/sounds",
     "/api/games/state",
-) + ARENA_ROOM_POSTS + tuple(p for m in EXT for p in m.POST)
+) + ARENA_ROOM_POSTS + tuple(p for m in EXT for p in getattr(m, "POST", {}))
 
 
 # --------------------------------------------------------------------------- #

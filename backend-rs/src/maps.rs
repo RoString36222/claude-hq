@@ -575,7 +575,7 @@ pub async fn one(pool: &SqlitePool, v: &Viewer, id: &str) -> Result<OneView, Ref
 /// The week before a "YYYY-Www" week.
 pub fn prev_week(week: &str) -> String {
     let (start, _) = crate::weeks::week_bounds(week);
-    let d = chrono::NaiveDate::parse_from_str(&start[..10], "%Y-%m-%d")
+    let d = chrono::NaiveDate::parse_from_str(start.get(..10).unwrap_or(""), "%Y-%m-%d")
         .unwrap_or_default() - chrono::Duration::days(7);
     crate::weeks::iso_week(&d.format("%Y-%m-%d").to_string())
 }

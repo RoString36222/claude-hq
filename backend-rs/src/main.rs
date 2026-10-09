@@ -9,6 +9,7 @@ mod cali;
 mod config;
 mod cosmetics;
 mod crews;
+mod cups;
 mod db;
 mod fps;
 mod hq;
@@ -864,6 +865,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(cali::routes())
         .merge(cosmetics::routes())
         .merge(crews::routes())
+        .merge(cups::routes())
         .merge(hq::routes())
         .merge(loot::routes())
         .merge(maps::routes())

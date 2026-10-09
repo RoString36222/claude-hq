@@ -250,3 +250,16 @@ class DeployEnding(unittest.TestCase):
         """A last poll can read "running" off a log the release has not
         finished flushing, so the ending is fired from the POST's own answer."""
         self.assertIn("finish(j.ok", self.PAGE)
+
+
+class ReleasedShaTests(unittest.TestCase):
+    """The panel's "running" is the released commit, not the checkout's HEAD."""
+
+    def test_reads_the_sha_off_the_release_version(self):
+        env = "# Written by ops/release.sh\nARENA_IMPL=rs\nARENA_VERSION=2026.10.08-dd04883\nARENA_APP_IMAGE=x\n"
+        self.assertEqual(deploy_panel.released_sha(env), "dd04883")
+
+    def test_no_release_yet_is_empty(self):
+        self.assertEqual(deploy_panel.released_sha(""), "")
+        self.assertEqual(deploy_panel.released_sha("ARENA_VERSION=local\n"), "")
+        self.assertEqual(deploy_panel.released_sha(None), "")

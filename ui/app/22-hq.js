@@ -188,9 +188,9 @@ function hqRenderCrew(){
 }
 (function(){
   var b=$("hqModeBtn"); if(b) b.addEventListener("click", hqToggle);
-  // Open where you left off: the 3D HQ if you chose it (and the page can draw it), else the classic view.
-  // After every file of the page script has run (later files add to HQ: progress, inventory).
-  setTimeout(function(){ if(hqModePref()==="3d" && !hqCalm() && hqWebGL()) setView("hq"); else hqViewChanged(VIEW); }, 0);
+  // HQ always opens on the classic dashboard (Live unless you were on another tab); the 3D HQ is one
+  // H key or the header switch away. After every file of the page script has run (later files add to HQ).
+  setTimeout(function(){ hqViewChanged(VIEW); }, 0);
 })();
 
 /* ---- HQ 2.1: customise your building; visit friends' HQs through the Arena ---- */

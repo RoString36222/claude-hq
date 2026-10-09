@@ -54,6 +54,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import arena
 import music
 
+# HQ 2.5 local proxy extension modules (TEMP shim of the scaffold's wiring).
+EXT = []
+for _ext_name in ("ext_loot",):
+    try:
+        EXT.append(__import__(_ext_name))
+    except Exception:
+        pass
+
 APP_VERSION = "2.4.0"   # Your 3D character: builder, portraits, everyone sees it
 
 # --------------------------------------------------------------------------- #
@@ -4035,6 +4043,8 @@ DEFAULT_CONFIG = {
     "musicShare": True,
     # Whose YouTube login yt-dlp may use for room songs ("" = none); see music.COOKIE_BROWSERS.
     "musicCookies": "",
+    "workSignals": False,
+    "workSignalsPRs": False,
 }
 
 _config_lock = threading.Lock()
@@ -4115,6 +4125,9 @@ def _validate_config(raw, base=None):
     for key in ("arenaEnabled", "arenaShareCost", "creatureFatigue", "musicShare"):
         if key in raw:
             cfg[key] = bool(raw.get(key))
+    for key in ("workSignals", "workSignalsPRs"):
+        if isinstance(raw.get(key), bool):
+            cfg[key] = raw[key]
     return cfg
 
 
@@ -5119,7 +5132,7 @@ POST_PATHS = (
     "/api/arena/cali/order",
     "/api/arena/sounds",
     "/api/games/state",
-) + ARENA_ROOM_POSTS
+) + ARENA_ROOM_POSTS + tuple(p for m in EXT for p in m.POST)
 
 
 # --------------------------------------------------------------------------- #
@@ -5372,6 +5385,18 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         path = self.path.split("?", 1)[0]
+
+        for _m in EXT:
+            _fn = _m.GET.get(path)
+            if _fn is not None:
+                import urllib.parse
+                _qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+                try:
+                    code, resp = _fn(lambda k: (_qs.get(k, [""])[0] or "").strip())
+                except Exception as e:
+                    code, resp = 502, {"error": str(e)}
+                self._send(code or 502, json.dumps(resp))
+                return
 
         if path == "/":
             try:
@@ -5925,6 +5950,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _arena_post(self, path, body):
         """Arena actions. The device token never crosses back to the page."""
+        for _m in EXT:
+            _fn = _m.POST.get(path)
+            if _fn is not None:
+                try:
+                    return _fn(body)
+                except Exception as e:
+                    return 502, {"error": str(e)}
         try:
             if path in ARENA_ROOM_POSTS:
                 return _room_post(path, body)
@@ -6152,6 +6184,13 @@ def main():
     # Raise a native macOS notification for an incoming nudge or gift, so it
     # reaches you even with no Arena tab open (as long as this process is running).
     arena.start_nudge_poller(_notify)
+    for _m in EXT:
+        if hasattr(_m, "start"):
+            try:
+                _m.start({"arena": arena, "load_config": load_config, "scan_file": scan_file,
+                          "iter_transcript_paths": iter_transcript_paths, "base_dir": HERE})
+            except Exception:
+                pass
 
     # Warm the per-file scan + search caches in the background so the first
     # /api/search and /api/history are instant instead of a one-time ~1s scan.

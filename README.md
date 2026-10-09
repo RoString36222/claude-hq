@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.2.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 2.2.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -311,6 +311,15 @@ and feature guide.
 
 ## Changelog
 
+- **2.2.1** — **Room songs play from your own HQ.** With `yt-dlp` installed (`brew install yt-dlp ffmpeg`,
+  or the standalone binary in `~/.local/bin`), each listener's HQ fetches the room's current song from
+  YouTube on their own Mac and plays it from 127.0.0.1, on the room's clock: no embedded YouTube
+  player to be blocked, and the visualiser follows the real audio. Songs are cached in `.music-cache/`
+  (about 400 MB at most) and the next song in the queue is fetched ahead. If YouTube answers "confirm
+  you're not a bot", Settings → *Room songs* can let yt-dlp use one browser's YouTube login (cookies read
+  locally per fetch, sent only to youtube.com, never stored by HQ; off by default). Without yt-dlp, rooms
+  use YouTube's player as before. Also: search pops up while you type, a blocked upload is swapped for
+  another upload of the same song, and Go live plays with less delay.
 - **2.2.0** — **Music.** A new Music view (key `J`):
   - **Now Playing**: HQ reads the song this Mac is playing in Spotify, Apple Music or a YouTube
     Music tab (AppleScript, only apps already running; macOS asks once for permission) and, while

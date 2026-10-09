@@ -466,3 +466,150 @@ def search(q, limit=6, verify=True):
         checks = list(ex.map(lambda r: oembed(r["v"]), found))
     # A lookup that failed outright (None) keeps its result: only a known "no" drops one.
     return [r for r, c in zip(found, checks) if not (c and c.get("embeddable") is False)][:limit]
+
+
+# --------------------------------------------------------------------------- #
+# Local room audio: yt-dlp (+ ffmpeg) on THIS machine
+# --------------------------------------------------------------------------- #
+# A listening room's songs are played from this machine when yt-dlp is
+# installed: each listener's own HQ fetches its own copy of the room's current
+# song from YouTube and the page plays it from 127.0.0.1, kept on the room's
+# clock. Nothing is uploaded or shared; the Arena still only syncs the queue.
+# Without yt-dlp the page falls back to YouTube's embedded player.
+
+import os
+import shutil
+
+_TOOL_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", os.path.expanduser("~/.local/bin"))
+
+
+def _tool(name):
+    """A command-line tool's path. launchd runs HQ with a minimal PATH that has no
+    Homebrew, so the usual install places are looked at too."""
+    p = shutil.which(name)
+    if p:
+        return p
+    for d in _TOOL_DIRS:
+        c = os.path.join(d, name)
+        if os.path.isfile(c) and os.access(c, os.X_OK):
+            return c
+    return None
+
+
+# Browsers whose YouTube login yt-dlp may borrow (opt-in, Settings: "musicCookies") when YouTube
+# answers "Sign in to confirm you're not a bot". The cookies are read by yt-dlp on this machine for
+# each fetch and sent only to youtube.com; HQ never stores or forwards them.
+COOKIE_BROWSERS = {
+    "operagx": lambda: "opera:" + os.path.expanduser("~/Library/Application Support/com.operasoftware.OperaGX/Default"),
+    "opera": lambda: "opera", "chrome": lambda: "chrome", "brave": lambda: "brave", "edge": lambda: "edge",
+    "arc": lambda: "chrome:" + os.path.expanduser("~/Library/Application Support/Arc/User Data/Default"),
+    "vivaldi": lambda: "vivaldi", "firefox": lambda: "firefox", "safari": lambda: "safari",
+}
+
+
+def cookie_arg(name):
+    f = COOKIE_BROWSERS.get(name or "")
+    return f() if f else None
+
+
+AUDIO_EXTS = {"m4a": "audio/mp4", "mp4": "audio/mp4", "webm": "audio/webm",
+              "opus": "audio/ogg", "mp3": "audio/mpeg"}
+
+
+class AudioCache:
+    """Songs fetched with yt-dlp, kept in `folder` as <videoId>.<ext>, oldest
+    removed past `cap` bytes. prepare() starts a fetch in the background and
+    returns the song's state: "loading", "ready" or "error"."""
+
+    def __init__(self, folder, cap=400 * 1024 * 1024, timeout=180, cookies=None):
+        self.folder, self.cap, self.timeout = folder, cap, timeout
+        self.cookies = cookies or (lambda: None)   # -> a COOKIE_BROWSERS key, or None
+        self.state = {}
+        self.lock = threading.Lock()
+
+    def available(self):
+        return _tool("yt-dlp") is not None
+
+    def _existing(self, vid):
+        for ext in AUDIO_EXTS:
+            p = os.path.join(self.folder, "%s.%s" % (vid, ext))
+            if os.path.isfile(p) and os.path.getsize(p) > 0:
+                return p, ext
+        return None, None
+
+    def file(self, vid):
+        """(path, content type) of a fetched song, or (None, None)."""
+        if not isinstance(vid, str) or not YT_ID_RE.match(vid):
+            return None, None
+        p, ext = self._existing(vid)
+        if p:
+            try:
+                os.utime(p, None)   # recently played: evicted last
+            except OSError:
+                pass
+            return p, AUDIO_EXTS[ext]
+        return None, None
+
+    def prepare(self, vid):
+        if not self.available():
+            return {"state": "unavailable"}
+        if not isinstance(vid, str) or not YT_ID_RE.match(vid):
+            return {"state": "error", "error": "bad video id"}
+        p, ext = self._existing(vid)
+        if p:
+            return {"state": "ready", "ext": ext}
+        with self.lock:
+            st = self.state.get(vid)
+            if st and st["state"] == "loading":
+                return dict(st)
+            if st and st["state"] == "error" and time.time() - st["at"] < 300:
+                return dict(st)
+            self.state[vid] = {"state": "loading", "at": time.time()}
+        threading.Thread(target=self._fetch, args=(vid,), daemon=True, name="hq-music-fetch").start()
+        return {"state": "loading"}
+
+    def _fetch(self, vid):
+        os.makedirs(self.folder, exist_ok=True)
+        ytdlp, ffmpeg = _tool("yt-dlp"), _tool("ffmpeg")
+        cmd = [ytdlp, "-f", "bestaudio[ext=m4a]/bestaudio", "--no-playlist", "--no-progress",
+               "--quiet", "--no-warnings", "--no-mtime",
+               "-o", os.path.join(self.folder, "%(id)s.%(ext)s")]
+        browser = cookie_arg(self.cookies())
+        if browser:
+            cmd += ["--cookies-from-browser", browser]
+        if ffmpeg:
+            # Always an .m4a (plays in every browser); an m4a source is only remuxed, never re-encoded.
+            cmd += ["--ffmpeg-location", ffmpeg, "-x", "--audio-format", "m4a"]
+        cmd.append("https://www.youtube.com/watch?v=" + vid)
+        err = ""
+        try:
+            # launchd's PATH has no Homebrew: yt-dlp also needs to find deno (YouTube's JS
+            # challenge) and ffmpeg there.
+            env = dict(os.environ)
+            env["PATH"] = os.pathsep.join([env.get("PATH", "")] + list(_TOOL_DIRS))
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout, env=env)
+            if r.returncode != 0:
+                err = (r.stderr or r.stdout or "yt-dlp failed").strip().splitlines()[-1][:200]
+        except Exception as e:
+            err = str(e)[:200]
+        p, ext = self._existing(vid)
+        with self.lock:
+            self.state[vid] = ({"state": "ready", "ext": ext, "at": time.time()} if p and not err
+                               else {"state": "error", "error": err or "no audio", "at": time.time()})
+        self._evict()
+
+    def _evict(self):
+        try:
+            files = [os.path.join(self.folder, f) for f in os.listdir(self.folder)]
+            files = [(os.path.getatime(f), os.path.getsize(f), f) for f in files if os.path.isfile(f)]
+        except OSError:
+            return
+        total = sum(s for _, s, _ in files)
+        for _, size, f in sorted(files):
+            if total <= self.cap:
+                break
+            try:
+                os.remove(f)
+                total -= size
+            except OSError:
+                pass

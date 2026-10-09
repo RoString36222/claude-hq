@@ -1140,6 +1140,19 @@
         <div class="setrow">
           <label id="setMusicShareLbl">Music</label>
           <label class="dex-toggle"><input type="checkbox" id="setMusicShare" aria-describedby="setMusicShareHint"> Share what I play (Spotify, Apple Music, YouTube Music)</label>
+          <label for="setMusicCookies" class="sr-only">YouTube login for room songs</label>
+          <select id="setMusicCookies" aria-describedby="setMusicCookiesHint">
+            <option value="">Room songs: no YouTube login</option>
+            <option value="operagx">Room songs: use my Opera GX YouTube login</option>
+            <option value="opera">Room songs: use my Opera YouTube login</option>
+            <option value="chrome">Room songs: use my Chrome YouTube login</option>
+            <option value="arc">Room songs: use my Arc YouTube login</option>
+            <option value="brave">Room songs: use my Brave YouTube login</option>
+            <option value="edge">Room songs: use my Edge YouTube login</option>
+            <option value="firefox">Room songs: use my Firefox YouTube login</option>
+            <option value="safari">Room songs: use my Safari YouTube login</option>
+          </select>
+          <span class="hint" id="setMusicCookiesHint">When YouTube asks "confirm you're not a bot", yt-dlp on this Mac can use that browser's YouTube login to fetch room songs. Read locally per song, sent only to youtube.com, never stored by HQ.</span>
           <span class="hint" id="setMusicShareHint">While paired, the Arena shows friends the song you're playing: title, artist, album and app. Nothing about your sessions.</span>
         </div>
         <div class="setrow">

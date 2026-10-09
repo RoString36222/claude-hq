@@ -119,6 +119,44 @@ class OldArena(unittest.TestCase):
         self.assertEqual(len(sent), 2)
 
 
+class LocalAudio(unittest.TestCase):
+    def test_no_ytdlp_says_unavailable_before_anything_else(self):
+        import tempfile
+        c = music.AudioCache(tempfile.mkdtemp())
+        orig = music._tool
+        music._tool = lambda name: None
+        try:
+            self.assertEqual(c.prepare("-"), {"state": "unavailable"})
+            self.assertEqual(c.prepare("dQw4w9WgXcQ"), {"state": "unavailable"})
+        finally:
+            music._tool = orig
+
+    def test_a_fetched_file_is_found_and_bad_ids_never_touch_the_disk(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        open(os.path.join(d, "dQw4w9WgXcQ.m4a"), "wb").write(b"x" * 10)
+        c = music.AudioCache(d)
+        self.assertEqual(c.file("dQw4w9WgXcQ")[1], "audio/mp4")
+        self.assertEqual(c.file("../../etc/passwd"), (None, None))
+        orig = music._tool
+        music._tool = lambda name: "/bin/true"
+        try:
+            self.assertEqual(c.prepare("dQw4w9WgXcQ")["state"], "ready")
+            self.assertEqual(c.prepare("../x"), {"state": "error", "error": "bad video id"})
+        finally:
+            music._tool = orig
+
+    def test_cookie_browsers_are_an_allowlist(self):
+        self.assertTrue(music.cookie_arg("operagx").startswith("opera:"))
+        self.assertEqual(music.cookie_arg("chrome"), "chrome")
+        self.assertIsNone(music.cookie_arg("rm -rf"))
+        self.assertIsNone(music.cookie_arg(""))
+        import dashboard
+        self.assertEqual(dashboard.DEFAULT_CONFIG["musicCookies"], "")
+        self.assertEqual(dashboard._validate_config({"musicCookies": "safari"})["musicCookies"], "safari")
+        self.assertEqual(dashboard._validate_config({"musicCookies": "evil"})["musicCookies"], "")
+
+
 class Config(unittest.TestCase):
     def test_music_share_defaults_on_and_validates(self):
         import dashboard

@@ -54,7 +54,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import arena
 import music
 
-APP_VERSION = "2.2.0"   # Music: Now Playing, listening rooms, Go live, visualiser
+APP_VERSION = "2.2.1"   # Music: Now Playing, listening rooms, Go live, visualiser
 
 # --------------------------------------------------------------------------- #
 # Paths / constants
@@ -4026,6 +4026,8 @@ DEFAULT_CONFIG = {
     # Share what you're playing (Spotify / Apple Music / YouTube Music) with the
     # Arena while paired. On by default; Settings and the Music view turn it off.
     "musicShare": True,
+    # Whose YouTube login yt-dlp may use for room songs ("" = none); see music.COOKIE_BROWSERS.
+    "musicCookies": "",
 }
 
 _config_lock = threading.Lock()
@@ -4086,6 +4088,8 @@ def _validate_config(raw, base=None):
         au = au.strip()
         # http/https only: this string becomes an outbound request target.
         cfg["arenaUrl"] = au[:256] if au.startswith(("http://", "https://")) else ""
+    if "musicCookies" in raw and (raw.get("musicCookies") == "" or raw.get("musicCookies") in music.COOKIE_BROWSERS):
+        cfg["musicCookies"] = raw.get("musicCookies")
     for key in ("arenaEnabled", "arenaShareCost", "creatureFatigue", "musicShare"):
         if key in raw:
             cfg[key] = bool(raw.get(key))
@@ -5026,6 +5030,10 @@ def _music_share_on():
     return bool(load_config().get("musicShare")) and arena.status().get("paired")
 
 
+# Room songs fetched on this machine with yt-dlp (git-ignored, ~400 MB at most).
+MUSIC_AUDIO = music.AudioCache(os.path.join(HERE, ".music-cache"),
+                               cookies=lambda: load_config().get("musicCookies"))
+
 MUSIC_SHARE = music.ShareLoop(
     _music_share_on,
     put=lambda t: arena.music_now_put(t)[0],
@@ -5059,6 +5067,11 @@ def music_get(path, raw_path):
                     return 200, json.dumps({"results": [], "error": "That video's owner only lets it play on YouTube itself. Try another upload of the song."})
                 return 200, json.dumps({"results": [one]})
             return 200, json.dumps({"results": music.search(q, verify=arg("quick") != "1")})
+        if path == "/api/music/audio-state":
+            # Starts fetching the song if it isn't here yet; "unavailable" = no yt-dlp.
+            st = MUSIC_AUDIO.prepare(arg("v"))
+            st["ffmpeg"] = music._tool("ffmpeg") is not None
+            return 200, json.dumps(st)
         if path == "/api/music/oembed":
             one = music.oembed(arg("v"))
             return (200, json.dumps(one)) if one else (404, json.dumps({"error": "not found"}))
@@ -5249,6 +5262,47 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         except Exception:
             pass
+
+    def _send_audio(self, vid):
+        fpath, ctype = MUSIC_AUDIO.file(vid)   # validates the id: no path from the URL reaches the disk
+        if not fpath:
+            self._send(404, json.dumps({"error": "not fetched"}))
+            return
+        size = os.path.getsize(fpath)
+        start, end = 0, size - 1
+        m = re.match(r"bytes=(\d*)-(\d*)$", (self.headers.get("Range") or "").strip())
+        partial = bool(m and (m.group(1) or m.group(2)))
+        if partial:
+            if m.group(1):
+                start = int(m.group(1))
+                end = min(int(m.group(2)), size - 1) if m.group(2) else size - 1
+            else:
+                start = max(0, size - int(m.group(2)))
+            if start > end or start >= size:
+                self.send_response(416)
+                self.send_header("Content-Range", "bytes */%d" % size)
+                self.end_headers()
+                return
+        self.send_response(206 if partial else 200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        if partial:
+            self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            with open(fpath, "rb") as f:
+                f.seek(start)
+                left = end - start + 1
+                while left > 0:
+                    chunk = f.read(min(65536, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+        except Exception:
+            pass   # the page seeked or closed mid-file
 
     def _send_download(self, code, body, content_type, filename):
         if isinstance(body, str):
@@ -5524,8 +5578,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send(code or 502, json.dumps(resp))
             return
 
+        if path.startswith("/api/music/audio/"):
+            # A fetched room song, with Range so the page can seek in it.
+            self._send_audio(path[len("/api/music/audio/"):])
+            return
+
         if path in ("/api/music/now", "/api/music/search", "/api/music/oembed",
-                    "/api/arena/music/now"):
+                    "/api/music/audio-state", "/api/arena/music/now"):
             self._send(*music_get(path, self.path))
             return
 

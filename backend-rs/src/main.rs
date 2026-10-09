@@ -15,6 +15,7 @@ mod hq;
 mod kart;
 mod loot;
 mod mapkey;
+mod maps;
 mod music;
 mod nudges;
 mod pantry;
@@ -35,6 +36,7 @@ mod service;
 mod skills;
 mod sounds;
 mod valley;
+mod weeks;
 
 use axum::{
     extract::{
@@ -864,6 +866,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(crews::routes())
         .merge(hq::routes())
         .merge(loot::routes())
+        .merge(maps::routes())
         .merge(music::routes())
         .merge(portraits::routes())
         .merge(nudges::routes())

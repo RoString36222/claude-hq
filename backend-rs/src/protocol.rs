@@ -93,5 +93,6 @@ mod tests {
         // valley.py:72. Without this the page hides Party Mode outright.
         let info = arena_info();
         assert_eq!(info["party"], json!({"v": 1, "order": ["kart", "plat", "fps", "golf"]}));
+        assert_eq!(info["maps"], json!({"v": 1}));
     }
 }

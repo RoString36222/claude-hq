@@ -13,6 +13,9 @@ pub struct Settings {
     pub max_backfill_days: i64,
     pub ws_ticket_ttl_secs: i64,
     pub pair_code_ttl_secs: i64,
+    /// Arena moderators (map gallery hide/delete), by GitHub handle, from the
+    /// comma-separated ARENA_ADMIN_HANDLES. Empty unless set.
+    pub admin_handles: Vec<String>,
 }
 
 fn env_or(key: &str, default: &str) -> String {
@@ -39,6 +42,37 @@ impl Settings {
             max_backfill_days: env_num("ARENA_MAX_BACKFILL_DAYS", 400),
             ws_ticket_ttl_secs: env_num("ARENA_WS_TICKET_TTL_SECS", 60),
             pair_code_ttl_secs: env_num("ARENA_PAIR_CODE_TTL_SECS", 900),
+            admin_handles: parse_handles(&env_or("ARENA_ADMIN_HANDLES", "")),
         }
+    }
+}
+
+/// "alice, Bob ,,carol" -> ["alice", "bob", "carol"] (lowercased, blanks dropped).
+pub fn parse_handles(raw: &str) -> Vec<String> {
+    raw.split(',').map(|h| h.trim().to_ascii_lowercase()).filter(|h| !h.is_empty()).collect()
+}
+
+impl Settings {
+    /// Is this handle an Arena moderator? Case-insensitive, as GitHub handles are.
+    pub fn is_admin(&self, handle: &str) -> bool {
+        let h = handle.trim().to_ascii_lowercase();
+        !h.is_empty() && self.admin_handles.contains(&h)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn admin_handles_parse_and_match_case_insensitively() {
+        assert_eq!(parse_handles(""), Vec::<String>::new());
+        assert_eq!(parse_handles("alice, Bob ,,carol"), vec!["alice", "bob", "carol"]);
+        let mut s = Settings::from_env();
+        s.admin_handles = parse_handles("Alice");
+        assert!(s.is_admin("alice"));
+        assert!(s.is_admin("ALICE"));
+        assert!(!s.is_admin("bob"));
+        assert!(!s.is_admin(""));
     }
 }

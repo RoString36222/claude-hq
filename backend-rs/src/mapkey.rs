@@ -36,4 +36,19 @@ mod tests {
         assert_ne!(a, content_key("kart", &json!({"x": 1})));
         assert!(a.len() == 14 && a.starts_with("c-") && a[2..].chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }
+
+    #[test]
+    fn the_same_input_gives_the_same_key() {
+        let d = json!({"tiles": "FSSRSSRSSRSR", "scenery": "forest"});
+        assert_eq!(content_key("kart", &d), content_key("kart", &d.clone()));
+        assert_ne!(content_key("kart", &d), content_key("plat", &d));
+    }
+
+    #[test]
+    fn the_key_is_c_dash_twelve_hex() {
+        let k = content_key("fps", &json!({}));
+        assert_eq!(k.len(), 14);
+        assert!(k.starts_with("c-"));
+        assert!(k[2..].bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)));
+    }
 }

@@ -88,6 +88,7 @@ function tcardRender(p){
   if(!(p.trophies||[]).length){ var none=document.createElement("span"); none.className="muted"; none.textContent="None yet: finish a multiplayer game in the Valley."; tr.appendChild(none); }
   (p.trophies||[]).forEach(function(x){ var c=document.createElement("span"); c.className="tcard-trophy"; c.textContent="🏆 "+x.name; tr.appendChild(c); });
   body.appendChild(tr);
+  (window.TCARD_EXTRAS||[]).forEach(function(f){ try{ f(body, p); }catch(e){} });
 }
 
 /* ---- per-game leaderboards (Arena view) ---- */

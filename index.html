@@ -1157,6 +1157,12 @@
           <span class="hint" id="setMusicShareHint">While paired, the Arena shows friends the song you're playing: title, artist, album and app. Nothing about your sessions.</span>
         </div>
         <div class="setrow">
+          <label id="setWorkSignalsLbl">Work signals</label>
+          <label class="dex-toggle"><input type="checkbox" id="setWorkSignals" aria-describedby="setWorkSignalsHint"> Work signals (skills, loot): send only category/event counts per day</label>
+          <label class="dex-toggle"><input type="checkbox" id="setWorkSignalsPRs" aria-describedby="setWorkSignalsHint"> …also count my merged GitHub PRs (runs gh locally; only counts are sent)</label>
+          <span class="hint" id="setWorkSignalsHint">While paired, this Mac sorts your sessions into seven kinds of work (testing, refactoring, docs, review, debugging, exploring, building) and sends one number per kind per day. Never commands, files, paths, projects or text.</span>
+        </div>
+        <div class="setrow">
           <label for="setPack">Creature pack</label>
           <select id="setPack">
             <option value="pokemon">Pokémon (animated sprites)</option>
@@ -1331,6 +1337,7 @@
 //@include ui/app/28-talk.js
 //@include ui/app/29-music.js
 //@include ui/app/30-character.js
+//@include ui/app/35-skills.js
 </script>
 </body>
 </html>

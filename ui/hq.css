@@ -2169,3 +2169,49 @@ html.hq-calm .mu-tune.on{animation:none}
 @keyframes mu-blink{50%{opacity:.35}}
 html.hq-calm .mu-live-dot{animation:none}
 @media (prefers-reduced-motion: reduce){ .mu-live-dot{animation:none} }
+/* ---------- HQ 2.5: world boss (ui/app/33-boss.js) ---------- */
+.boss-card{display:grid;gap:10px}
+.boss-head{display:flex;gap:14px;align-items:center}
+.boss-art{flex:none;width:96px;height:96px;display:grid;place-items:center;border-radius:var(--radius);background:var(--panel2);border:1px solid var(--line);overflow:hidden}
+.boss-art img,.boss-art svg{max-width:100%;max-height:100%}
+.boss-id{min-width:0;display:grid;gap:3px}
+.boss-week{color:var(--muted);font-size:12px}
+.boss-name{margin:0;font-size:20px}
+.boss-types{display:flex;gap:4px;flex-wrap:wrap}
+.boss-type{font-size:11px;font-weight:650;padding:1px 8px;border-radius:999px;color:var(--ink);border:1px solid var(--line);
+  background:color-mix(in srgb,hsl(var(--boss-hue,220) 60% 50%) 30%,var(--panel2))}
+.boss-hp{position:relative;height:14px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);overflow:hidden}
+.boss-hp-fill{display:block;height:100%;background:var(--need);transition:width .6s var(--ease)}
+.boss-fight .boss-hp-fill{background:var(--warn);animation:boss-pulse 1.6s var(--ease) infinite}
+.boss-down .boss-hp-fill{background:var(--faint)}
+.boss-hp-mark{position:absolute;top:0;bottom:0;width:2px;background:var(--ink);opacity:.45}
+.boss-hp-num{font:600 12.5px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.boss-phase{margin:0;font-size:13.5px}
+.boss-fight .boss-phase{color:var(--warn);font-weight:600}
+.boss-down .boss-phase{color:var(--good);font-weight:600}
+.boss-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.hbtn.boss-go{background:var(--brand);border-color:var(--brand);color:var(--on-brand);font-weight:650}
+.hbtn.boss-go:hover{background:var(--brand2);border-color:var(--brand2)}
+.hbtn.boss-go:disabled{opacity:.5;cursor:not-allowed}
+.boss-top{margin:0;padding-left:22px;display:grid;gap:3px}
+.boss-top li{display:flex;justify-content:space-between;gap:10px;align-items:center}
+.boss-dmg{font:600 12.5px var(--mono);font-variant-numeric:tabular-nums;color:var(--muted)}
+.boss-last{font-size:12.5px;margin:0}
+.boss-how summary{cursor:pointer;font-weight:600;font-size:13px}
+.boss-how p{margin:6px 0 0;font-size:12.5px;color:var(--muted)}
+.boss-pick{display:grid;gap:10px}
+.boss-team{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
+.boss-mon{display:grid;justify-items:center;gap:2px;padding:6px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--panel2);text-align:center;font-size:12.5px}
+.boss-mon .pkb-spr{position:static;width:64px;height:64px;display:grid;place-items:center;overflow:hidden}
+.boss-mon .pkb-spr img{max-width:64px;max-height:64px;width:auto !important}
+.boss-result{display:grid;gap:6px}
+.boss-result h3{margin:0}
+.boss-back{z-index:79}
+.boss-modal{width:min(760px,100%)}
+.boss-badges{display:grid;gap:6px}
+.boss-slayer{border-color:var(--gold);background:var(--goldbg);color:var(--ink)}
+.boss-open{justify-self:start}
+@keyframes boss-pulse{50%{opacity:.6}}
+html.hq-calm .boss-fight .boss-hp-fill{animation:none}
+html.hq-calm .boss-hp-fill{transition:none}
+@media (prefers-reduced-motion: reduce){ .boss-fight .boss-hp-fill{animation:none} .boss-hp-fill{transition:none} }

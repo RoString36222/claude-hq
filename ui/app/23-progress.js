@@ -2,7 +2,7 @@
 // All three come from the Arena, scored there: your HQ level (session XP + game XP from the
 // multiplayer games it refereed), anyone's trainer card, and per-game boards. Read-only here.
 var PROG = {data:null, at:0, loading:false};
-var PROG_GAMES = [["kart","Kart Racing"],["plat","Platformer Rush"],["golf","Mini Golf"],["fps","Blaster Arena"],["type","Code Typing Race"]];
+var PROG_GAMES = [["kart","Kart Racing"],["plat","Platformer Rush"],["golf","Mini Golf"],["fps","Blaster Arena"],["type","Code Typing Race"],["td","Tower Defense"],["bowl","Bowling"]];
 function progGet(path){
   return fetch(path,{cache:"no-store"}).then(function(r){ return r.json().then(function(j){ return {ok:r.ok, code:r.status, j:j}; }, function(){ return {ok:false, code:r.status, j:{}}; }); });
 }
@@ -103,14 +103,16 @@ function gbLoad(){
     var boards=res.j.boards||[];
     if(!boards.length){ var n=document.createElement("p"); n.className="muted"; n.textContent="No finished games yet. Race, run, putt or blast with friends in the Valley and the times land here."; box.appendChild(n); return; }
     boards.forEach(function(bd){
-      var h=document.createElement("h4"); h.className="gb-key"; h.textContent=bd.key==="match" || bd.key==="all" ? "All races" : bd.key; box.appendChild(h);
+      var h=document.createElement("h4"); h.className="gb-key"; h.textContent=bd.key==="match" || bd.key==="all" ? "All races" : GB.game==="td" ? String(bd.key).replace("-", " · ") : bd.key; box.appendChild(h);
       var tbl=document.createElement("table"); tbl.className="gb-table";
-      var cols = GB.game==="type" ? ["#","Trainer","Best WPM","Accuracy","Wins"] : GB.game==="fps" ? ["#","Trainer","Kills","K/D","Played"] : GB.game==="golf" ? ["#","Trainer","Best (strokes)","Wins","Played"]
+      var cols = GB.game==="td" ? ["#","Trainer","Waves","Played"] : GB.game==="bowl" ? ["#","Trainer","Best","Wins","Played"]
+               : GB.game==="type" ? ["#","Trainer","Best WPM","Accuracy","Wins"] : GB.game==="fps" ? ["#","Trainer","Kills","K/D","Played"] : GB.game==="golf" ? ["#","Trainer","Best (strokes)","Wins","Played"]
                : GB.game==="kart" ? ["#","Trainer","Best race","Best lap","Wins"] : ["#","Trainer","Best time","Wins","Played"];
       var thead=document.createElement("tr"); cols.forEach(function(c){ var th=document.createElement("th"); th.textContent=c; thead.appendChild(th); }); tbl.appendChild(thead);
       bd.entries.forEach(function(e){
         var tr=document.createElement("tr"); if(e.isYou) tr.className="you";
-        var vals = GB.game==="type" ? [e.rank, null, e.wpm, e.acc+"%", e.wins] : GB.game==="fps" ? [e.rank, null, e.kills, e.kd, e.played] : GB.game==="golf" ? [e.rank, null, e.best, e.wins, e.played]
+        var vals = GB.game==="td" ? [e.rank, null, e.best, e.played] : GB.game==="bowl" ? [e.rank, null, e.best, e.wins, e.played]
+                 : GB.game==="type" ? [e.rank, null, e.wpm, e.acc+"%", e.wins] : GB.game==="fps" ? [e.rank, null, e.kills, e.kd, e.played] : GB.game==="golf" ? [e.rank, null, e.best, e.wins, e.played]
                  : GB.game==="kart" ? [e.rank, null, progMs(e.best), progMs(e.bestLap), e.wins] : [e.rank, null, progMs(e.best), e.wins, e.played];
         vals.forEach(function(v, i){
           var td=document.createElement("td");

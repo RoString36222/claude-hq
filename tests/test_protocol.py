@@ -16,6 +16,11 @@ def read(*p):
         return f.read()
 
 
+# Games only the Rust Arena referees (HQ 2.5). The Python Arena is frozen, so
+# these are filtered out of the Rust and client lists before comparing.
+RUST_ONLY = ("td", "bowl")
+
+
 def client_proto():
     m = re.search(r"var CLIENT_PROTO = (\{[^}]*\});", read("games", "multi.js"))
     return json.loads(re.sub(r"(\w+):", r'"\1":', m.group(1)))
@@ -25,7 +30,7 @@ class ProtocolTables(unittest.TestCase):
     def test_client_covers_python_games_and_versions(self):
         py = read("backend", "app", "valley.py")
         games = re.findall(r'"(\w+)"', re.search(r"^GAMES = \(([^)]*)\)", py, re.M).group(1))
-        cp = client_proto()
+        cp = {g: v for g, v in client_proto().items() if g not in RUST_ONLY}
         self.assertEqual(set(cp), set(games))
         for g, v in re.findall(r'PROTOCOL\["(\w+)"\] = \{"v": (\d+)', py):
             self.assertTrue(cp[g][0] <= int(v) <= cp[g][1], g)
@@ -40,7 +45,7 @@ class ProtocolTables(unittest.TestCase):
         py = read("backend", "app", "valley.py")
         games = re.findall(r'"(\w+)"', re.search(r"^GAMES = \(([^)]*)\)", py, re.M).group(1))
         rs = read("backend-rs", "src", "protocol.rs")
-        rows = re.findall(r'\("(\w+)", (\d+), &\[', rs)
+        rows = [r for r in re.findall(r'\("(\w+)", (\d+), &\[', rs) if r[0] not in RUST_ONLY]
         self.assertEqual([g for g, _ in rows], games)      # same games, same order
         # Python builds every entry at v1 and overrides only some; the overrides
         # are what must match Rust's numbers.

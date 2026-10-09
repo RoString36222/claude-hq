@@ -468,3 +468,40 @@ html.hq-calm .vg-fps-vig{display:none}
 .vg-te-drive{display:flex;flex-direction:column;gap:8px}
 .vg-kart-custom{display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:var(--radius-sm);border:1px dashed var(--line)}
 @media (max-width:560px){ .vg-te-field>span,.vg-te-swlabel{min-width:56px} }
+
+/* ---- Tower Defense (games/td.js) ---- */
+.td-wrap{display:flex;flex-direction:column;gap:8px}
+.td-main{display:grid;grid-template-columns:minmax(0,3fr) minmax(220px,1.3fr);gap:12px;align-items:start}
+@media (max-width:820px){.td-main{grid-template-columns:1fr}}
+.td-board{position:relative;width:100%;max-width:720px}
+.td-canvas{max-width:none}
+.td-ov{position:absolute;inset:0;pointer-events:none}
+.td-slot{position:absolute;pointer-events:auto;padding:0;margin:0;border:2px solid transparent;border-radius:var(--radius-sm);
+  background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;overflow:visible}
+.td-slot:hover,.td-slot:focus-visible{border-color:var(--brand);outline:none}
+.td-slot.sel{border-color:var(--gold)}
+.td-slot.mine{box-shadow:inset 0 0 0 1px var(--good)}
+.td-slot .td-spr{width:100%;height:100%;pointer-events:none}
+.td-spr img{width:auto!important;max-width:100%;max-height:100%}
+.td-mult{position:absolute;top:-10px;right:-12px;padding:0 4px;border-radius:999px;font-size:11px;font-weight:800;
+  background:var(--panel);color:var(--ink);border:1px solid var(--line);pointer-events:none;white-space:nowrap}
+.td-mult.good{background:var(--goodbg);color:var(--good);border-color:var(--good)}
+.td-mult.bad{background:var(--needbg);color:var(--need);border-color:var(--need)}
+.td-tip{position:absolute;left:8px;bottom:8px;max-width:min(92%,420px);padding:8px 10px;border-radius:var(--radius-sm);
+  background:var(--panel);color:var(--ink);border:1px solid var(--line);box-shadow:var(--shadow-lg);font-size:12px;pointer-events:none}
+.td-tip-line{margin-top:2px}
+.td-side{display:flex;flex-direction:column;gap:10px}
+.td-panel{padding:8px 10px;border-radius:var(--radius);background:var(--panel);border:1px solid var(--line)}
+.td-panel[hidden]{display:none}
+.td-h{margin:0 0 6px;font-size:13px;color:var(--muted)}
+.td-roster{display:flex;flex-direction:column;gap:6px;max-height:340px;overflow:auto}
+.td-mon{display:flex;align-items:center;gap:8px;padding:4px 8px;text-align:left;border-radius:var(--radius-sm);cursor:pointer;
+  background:var(--panel2);color:var(--ink);border:1px solid var(--line);font:inherit}
+.td-mon:hover,.td-mon:focus-visible{border-color:var(--brand)}
+.td-mon.picked{border-color:var(--brand);box-shadow:inset 0 0 0 1px var(--brand)}
+.td-mon.poor{opacity:.6}
+.td-mon .td-spr{width:40px;height:40px;flex:none}
+.td-mon-t{display:flex;flex-direction:column;gap:2px;min-width:0}
+.td-guide-list{display:flex;flex-wrap:wrap;gap:4px}
+.td-kind{font-size:12px}
+.td-player{font-size:13px;padding:2px 0}

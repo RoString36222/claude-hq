@@ -20,7 +20,7 @@ use sqlx::SqlitePool;
 
 /// The games this module knows how to write down. Python's `results.GAMES`
 /// (results.py:25), in its order.
-pub const GAMES: [&str; 5] = ["kart", "plat", "fps", "golf", "type"];
+pub const GAMES: [&str; 7] = ["kart", "plat", "fps", "golf", "type", "td", "bowl"];
 
 /// One `game_results` row, before it reaches the database.
 #[derive(Debug, Clone, PartialEq)]
@@ -165,6 +165,30 @@ pub fn rows_from_done(game: &str, data: &Value) -> Vec<Row> {
                         .map(|ms| ms as i64);
                     row.extra = json!({"wpm": float_or_zero(r.get("wpm")),
                                        "acc": float_or_zero(r.get("acc"))});
+                }
+                // Tower Defense (HQ 2.5): one board per "<map>-<diff>", scored on
+                // waves cleared, where higher wins. Co-op places nobody, and the
+                // NOT NULL column stores that as 0, which no win or podium counts.
+                "td" => {
+                    let waves = int_or_zero(data.get("waves"));
+                    row.key = clipped_str(data.get("key"), 40);
+                    row.mode = "coop".to_string();
+                    row.place = if r.get("place").and_then(Value::as_i64).is_some() {
+                        int_or(r.get("place"), n)
+                    } else {
+                        0
+                    };
+                    row.value = Some(waves);
+                    row.extra = json!({"waves": waves, "win": truthy(data.get("win")),
+                                       "diff": clipped_str(data.get("diff"), 16)});
+                }
+                // Bowling (HQ 2.5): one board per variant key, scored on pins.
+                "bowl" => {
+                    row.key = clipped_str(data.get("key"), 40);
+                    row.mode = "bowl".to_string();
+                    row.value = Some(int_or_zero(r.get("score")));
+                    row.extra = json!({"strikes": int_or_zero(r.get("strikes")),
+                                       "spares": int_or_zero(r.get("spares"))});
                 }
                 // Blaster: one "match" board, scored on kills, where higher wins.
                 // HQ 2.5: a match on a user map keeps its own board, keyed by
@@ -341,6 +365,33 @@ mod tests {
 
     fn done(game: &str, data: Value) -> Vec<Row> {
         rows_from_done(game, &data)
+    }
+
+    #[test]
+    fn a_td_done_records_coop_rows_with_no_placement() {
+        let rows = done("td", json!({"key": "garden-normal", "map": "garden", "diff": "normal",
+            "mode": "coop", "waves": 7, "win": false,
+            "results": [{"user": {"userId": "a"}, "place": null, "waves": 7, "dnf": false},
+                        {"user": {"userId": "b"}, "place": null, "waves": 7, "dnf": false}]}));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].key, "garden-normal");
+        assert_eq!(rows[0].mode, "coop");
+        assert_eq!(rows[0].place, 0);
+        assert_eq!(rows[0].players, 2);
+        assert_eq!(rows[0].value, Some(7));
+        assert_eq!(rows[0].extra, json!({"waves": 7, "win": false, "diff": "normal"}));
+        assert!(is_done(&json!({"g": "td", "ev": "done"})).is_some());
+    }
+
+    #[test]
+    fn a_bowl_done_keeps_its_places_and_pins() {
+        let rows = done("bowl", json!({"key": "f10", "results": [
+            {"user": {"userId": "a"}, "place": 1, "score": 187, "strikes": 5, "spares": 2}]}));
+        assert_eq!(rows[0].key, "f10");
+        assert_eq!(rows[0].mode, "bowl");
+        assert_eq!(rows[0].place, 1);
+        assert_eq!(rows[0].value, Some(187));
+        assert_eq!(rows[0].extra, json!({"strikes": 5, "spares": 2}));
     }
 
     fn player(id: &str, extra: Value) -> Value {

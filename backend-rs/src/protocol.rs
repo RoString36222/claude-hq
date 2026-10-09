@@ -24,6 +24,8 @@ pub const GAMES: &[(&str, i64, &[&str])] = &[
     ("fps", 1, &[]),
     ("hq", 1, &["ride", "look"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`)
     ("type", 1, &[]),
+    ("td", 1, &[]),
+    ("bowl", 1, &[]),
 ];
 
 /// The protocol version of game `g` (1 for a game this server does not know).
@@ -79,7 +81,7 @@ mod tests {
         let info = arena_info();
         let keys: Vec<&String> = info["games"].as_object().unwrap().keys().collect();
         assert_eq!(keys, ["pond", "race", "duel", "mines", "farm", "golf", "kart",
-                          "plat", "fps", "hq", "type"]
+                          "plat", "fps", "hq", "type", "td", "bowl"]
                        .iter().map(|s| s.to_string()).collect::<Vec<_>>()
                        .iter().collect::<Vec<_>>());
         // Every game this Arena advertises, it referees.

@@ -30,7 +30,12 @@ use std::collections::{HashMap, HashSet};
 
 /// Response order for `games`, and the only games a result row may count
 /// toward. A row naming anything else is skipped by the profile walk.
-const GAMES: [&str; 5] = ["kart", "plat", "fps", "golf", "type"];
+const GAMES: [&str; 7] = ["kart", "plat", "fps", "golf", "type", "td", "bowl"];
+/// Boards where a bigger value is better (waves cleared, pins): keep the max,
+/// sort descending. Every other non-fps board keeps the minimum.
+const HIGHER_BETTER: [&str; 2] = ["td", "bowl"];
+/// The All-rounder trophy stays pinned to the original five games.
+const ALL_ROUNDER: usize = 5;
 /// Indices into the per-game array, for the three games with their own rules.
 const KART: usize = 0;
 const FPS: usize = 2;
@@ -97,6 +102,12 @@ impl Obj {
     /// every time, stroke count and lap on a board.
     fn keep_min(&mut self, key: &str, value: i64) {
         let keep = self.int(key).map_or(value, |cur| cur.min(value));
+        self.set(key, keep.into());
+    }
+
+    /// The same, where more is better (td waves, bowling pins).
+    fn keep_max(&mut self, key: &str, value: i64) {
+        let keep = self.int(key).map_or(value, |cur| cur.max(value));
         self.set(key, keep.into());
     }
 }
@@ -267,6 +278,8 @@ struct GamesView {
     fps: Obj,
     golf: Obj,
     #[serde(rename = "type")] typing: Obj,
+    td: Obj,
+    bowl: Obj,
 }
 
 #[derive(Debug, Serialize)]
@@ -587,7 +600,11 @@ fn fold_board(game: &str, rows: &[sqlx::sqlite::SqliteRow], viewer_id: &str) -> 
             // The Python's `elif` only excludes fps, so the `type` board does
             // carry a real `best` (its lowest race time) that nothing sorts by,
             // and an fps entry's `best` stays null forever. Both are kept.
-            e.best = Some(e.best.map_or(v, |b| b.min(v)));
+            e.best = Some(if HIGHER_BETTER.contains(&game) {
+                e.best.map_or(v, |b| b.max(v))
+            } else {
+                e.best.map_or(v, |b| b.min(v))
+            });
         }
         // Read for every game, not just kart.
         if let Some(lap) = strict_int(&extra, "bestLap") {
@@ -651,6 +668,13 @@ fn finalise(game: &str, mut entries: Vec<Entry>) -> Vec<Entry> {
                     .then_with(|| a.user.handle.cmp(&b.user.handle))
             });
         }
+        // td and bowl: the most waves or pins first.
+        g if HIGHER_BETTER.contains(&g) => {
+            entries.retain(|e| e.best.is_some());
+            entries.sort_by(|a, b| {
+                b.best.cmp(&a.best).then_with(|| a.user.handle.cmp(&b.user.handle))
+            });
+        }
         // kart, plat and golf: a player who only ever DNF'd has nothing to rank.
         _ => {
             entries.retain(|e| e.best.is_some());
@@ -710,12 +734,12 @@ async fn build_boards(
 
 /// Evaluated and emitted in this order; the ids and names are what the client
 /// draws, so neither may be reworded.
-fn trophies(per: &[Obj; 5], games: i64, wins: i64, podiums: i64, streak: i64) -> Vec<TrophyView> {
+fn trophies(per: &[Obj; 7], games: i64, wins: i64, podiums: i64, streak: i64) -> Vec<TrophyView> {
     let kills = per[FPS].int("kills").unwrap_or(0);
     let best_wpm = per[TYPE].float("bestWpm").unwrap_or(0.0);
     // `or 10 ** 9` is a truthiness fallback, so a stored lap of 0 misses out too.
     let best_lap = per[KART].int("bestLap").filter(|v| *v != 0).unwrap_or(1_000_000_000);
-    let every_game = per.iter().all(|p| p.int("played").unwrap_or(0) != 0);
+    let every_game = per[..ALL_ROUNDER].iter().all(|p| p.int("played").unwrap_or(0) != 0);
     [
         ("first-game", "First game", games >= 1),
         ("first-win", "First win", wins >= 1),
@@ -789,7 +813,7 @@ async fn build_profile(
     .fetch_all(pool)
     .await?;
 
-    let mut per: [Obj; 5] = std::array::from_fn(|_| {
+    let mut per: [Obj; 7] = std::array::from_fn(|_| {
         let mut o = Obj::default();
         o.set("played", Value::from(0_i64));
         o.set("wins", Value::from(0_i64));
@@ -824,14 +848,19 @@ async fn build_profile(
         // Golf shares places on a tie, so placing is not dense: two players can
         // both be 2nd and nobody 3rd. `<= 3` tolerates that; a check for an
         // exact place would not.
-        if players >= 2 && place <= 3 {
+        // A co-op td row stores place 0 ("no placement"): never a podium.
+        if players >= 2 && (1..=3).contains(&place) {
             podiums += 1;
         }
         if game == "fps" {
             p.bump("kills", int_of(&extra, "kills"));
             p.bump("deaths", int_of(&extra, "deaths"));
         } else if let Some(v) = value {
-            p.keep_min(&format!("best:{key}"), v);
+            if HIGHER_BETTER.contains(&game.as_str()) {
+                p.keep_max(&format!("best:{key}"), v);
+            } else {
+                p.keep_min(&format!("best:{key}"), v);
+            }
         }
         if game == "type" && value.is_some() {
             best_wpm = best_wpm.max(float_of(&extra, "wpm"));
@@ -853,7 +882,7 @@ async fn build_profile(
     let played_total: i64 = per.iter().map(|p| p.int("played").unwrap_or(0)).sum();
     let wins_total: i64 = per.iter().map(|p| p.int("wins").unwrap_or(0)).sum();
     let trophies = trophies(&per, played_total, wins_total, podiums, streak);
-    let [kart, plat, fps, golf, typing] = per;
+    let [kart, plat, fps, golf, typing, td, bowl] = per;
 
     let slots = sqlx::query("SELECT slots FROM equipped_cosmetics WHERE user_id = ?1")
         .bind(&id)
@@ -891,7 +920,7 @@ async fn build_profile(
         avatar_url: avatar,
         progress: pr,
         streak,
-        games: GamesView { kart, plat, fps, golf, typing },
+        games: GamesView { kart, plat, fps, golf, typing, td, bowl },
         totals: Totals { played: played_total, wins: wins_total, podiums },
         trophies,
         cos,
@@ -1187,6 +1216,25 @@ mod tests {
     }
 
     #[test]
+    fn the_td_board_ranks_the_most_waves_first() {
+        let out = finalise(
+            "td",
+            vec![entry("ana", Some(7), 0, 0, None), entry("bea", Some(20), 0, 0, None),
+                 entry("cal", None, 0, 0, None)],
+        );
+        let names: Vec<&str> = out.iter().map(|e| e.user.handle.as_str()).collect();
+        assert_eq!(names, vec!["bea", "ana"]);
+    }
+
+    #[test]
+    fn a_coop_td_row_is_worth_twenty_xp_and_no_win() {
+        assert_eq!(xp_for_result(0, 3), 20);
+        let xp = game_xp_totals(&[ResultDay { user_id: "u".into(), day: "2026-10-10".into(),
+                                              place: 0, players: 3 }]);
+        assert_eq!(xp["u"], 20);
+    }
+
+    #[test]
     fn the_blaster_board_keeps_everyone_and_carries_a_kd() {
         let out = finalise(
             "fps",
@@ -1232,7 +1280,7 @@ mod tests {
 
     #[test]
     fn trophies_come_out_in_the_declared_order() {
-        let mut per: [Obj; 5] = std::array::from_fn(|_| Obj::default());
+        let mut per: [Obj; 7] = std::array::from_fn(|_| Obj::default());
         for p in per.iter_mut() {
             p.set("played", Value::from(1_i64));
             p.set("wins", Value::from(0_i64));
@@ -1259,7 +1307,7 @@ mod tests {
 
     #[test]
     fn an_empty_profile_earns_nothing() {
-        let per: [Obj; 5] = std::array::from_fn(|_| Obj::default());
+        let per: [Obj; 7] = std::array::from_fn(|_| Obj::default());
         assert!(trophies(&per, 0, 0, 0, 0).is_empty());
         // One game played is the first trophy and nothing else.
         let got: Vec<&str> = trophies(&per, 1, 0, 0, 0).iter().map(|t| t.id).collect();

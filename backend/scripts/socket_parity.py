@@ -262,6 +262,9 @@ async def main():
         # <game> yet", however well the engine works.
         GAMES = ["pond", "race", "duel", "mines", "farm", "golf", "kart", "plat",
                  "fps", "hq", "type"]
+        # Refereed only by the Rust Arena (HQ 2.5): left out of the order check
+        # and the per-game join loop, so both Arenas still compare equal.
+        RUST_ONLY = ("td", "bowl")
         # The event a join answers with, beyond the shared "lobby" broadcast.
         # From valley.py:1036-1076. race answers only when a round is already
         # running, so it has none on a fresh join.
@@ -274,7 +277,7 @@ async def main():
             w = json.loads(await d.recv())
             info = w.get("arena") or {}
             check("the welcome advertises every game, in order",
-                  list((info.get("games") or {}).keys()) == GAMES,
+                  [k for k in (info.get("games") or {}) if k not in RUST_ONLY] == GAMES,
                   repr(list((info.get("games") or {}).keys())))
             check("kart is still protocol 2 with its caps",
                   (info.get("games") or {}).get("kart") == {"v": 2, "caps": ["scale", "tracks"]},
@@ -284,8 +287,8 @@ async def main():
                   repr(info.get("party")))
 
             for g in GAMES:
-                if g == "hq":
-                    continue        # needs an hq_ room; done separately below
+                if g == "hq" or g in RUST_ONLY:
+                    continue        # hq needs an hq_ room; done separately below
                 await d.send(json.dumps({"type": "game", "g": g, "op": "join"}))
                 got = await recv(d, 1.2)
                 evs = [m.get("ev") for m in got if m.get("g") == g]

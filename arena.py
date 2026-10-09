@@ -1006,7 +1006,7 @@ def music_now_clear():
     return _request("DELETE", base + "/v1/music/now", token=token)
 
 # ---- HQ 2.1: progression, leaderboards, trainer profiles (read-only) --------
-_GAMES = ("kart", "plat", "fps", "golf")
+_GAMES = ("kart", "plat", "fps", "golf", "type", "td", "bowl")
 
 
 def progress():

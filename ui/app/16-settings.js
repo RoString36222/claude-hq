@@ -187,6 +187,7 @@ $("settingsBtn").addEventListener("click",openSettings);
 $("settingsClose").addEventListener("click",closeSettings);
 $("settingsCancel").addEventListener("click",closeSettings);
 $("settingsSave").addEventListener("click",saveSettings);
+if($("chSave")) $("chSave").addEventListener("click",saveSettings);   // the same Save, right under the character
 $("settingsBack").addEventListener("click",function(e){ if(e.target===this){ closeSettings(); } });
 $("menuSettings").addEventListener("click",function(){ openSettings(); closeMenu(); });
 

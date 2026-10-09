@@ -41,8 +41,10 @@ class HqWiring(unittest.TestCase):
         self.assertIn('if(typeof hqViewChanged==="function") hqViewChanged(v);', self.html)
         self.assertIn('e.key==="h"||e.key==="H"){ e.preventDefault(); hqToggle(); }', self.html)
 
-    def test_mode_is_remembered_and_calm_opens_classic(self):
-        self.assertIn('hqModePref()==="3d" && !hqCalm() && hqWebGL()', self.html)
+    def test_page_lands_on_the_classic_dashboard(self):
+        # The 3D HQ is never opened on load, whatever was last used: H or the header switch opens it.
+        self.assertNotIn('hqModePref()==="3d" && !hqCalm() && hqWebGL()) setView("hq")', self.html)
+        self.assertIn('setTimeout(function(){ hqViewChanged(VIEW); }, 0);', self.html)
         self.assertIn('hqModeSave("classic")', self.html)
         self.assertIn('hqModeSave("3d")', self.html)
 

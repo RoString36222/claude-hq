@@ -3,22 +3,29 @@
  * inline geometry (no <img>, no CDN/url()); reuses mulberry32/hashStr/calmMode.
  * spec = [skin,hair,hairColor,outfit,outfitColor,hat,accessory,bg,face]. */
 var TR = {SKIN:0,HAIR:1,HAIRC:2,OUTFIT:3,OUTC:4,HAT:5,ACC:6,BG:7,FACE:8};
-var TR_MAX = [5,7,7,7,7,6,4,7,3];   // keep byte-identical to dashboard.py + schemas.py
-var TR_SKIN  = ['#f4d6bb','#e7b892','#cd9269','#a06a45','#6f4a32','#402a20'];
-var TR_HAIRC = ['#241f22','#4a3324','#7a4a26','#c98f3f','#dcd6c8','#a9b0bc','#c14259','#456fa6'];
-var TR_OUTC  = ['#4f6d7a','#bd5638','#3f8a5b','#6a4f9c','#d3a33f','#333a43','#c46f9a','#dadbe2'];
-var TR_BG    = ['','#3b4a6b','#276b68','#6b3b5a','#4a6b3b','#6b5a3b','#39414d','#5a4a6b'];
+var TR_MAX = [6,8,8,8,8,7,5,8,4];   // keep byte-identical to TRAINER_MAX in dashboard.py
+var TR_SKIN  = ['#f4d6bb','#e7b892','#cd9269','#a06a45','#6f4a32','#402a20','#b9c6d4'];
+var TR_HAIRC = ['#241f22','#4a3324','#7a4a26','#c98f3f','#dcd6c8','#a9b0bc','#c14259','#456fa6','#2ff3ff'];
+var TR_OUTC  = ['#4f6d7a','#bd5638','#3f8a5b','#6a4f9c','#d3a33f','#333a43','#c46f9a','#dadbe2','#ff2fb3'];
+var TR_BG    = ['','#3b4a6b','#276b68','#6b3b5a','#4a6b3b','#6b5a3b','#39414d','#5a4a6b','#140d2b'];
+// The two neon accents the cyberpunk choices are lit with. Fixed rather than
+// derived from the chosen colours: half the point of neon is that it does not
+// match the clothes. Glow is an inline drop-shadow, like the shiny sprites at
+// the bottom of this file -- never an SVG <filter>, because a filter needs an
+// id and several avatars render on one page.
+var TR_NEON = '#2ff3ff', TR_NEON2 = '#ff2fb3';
+function _trGlow(c,r){ return ' style="filter:drop-shadow(0 0 '+(r||2)+'px '+c+')"'; }
 // human labels for the builder controls
 var TR_LABELS = {
-  skin:['Fair','Light','Tan','Brown','Deep','Rich'],
-  hair:['Bald','Short','Side part','Spiky','Pulled back','Long','Curly','Top knot'],
-  hairColor:['Black','Dark brown','Brown','Blond','Platinum','Grey','Red','Blue'],
-  outfit:['Collar','Crew','Hoodie','Collar 2','Crew 2','Hoodie 2','Collar 3','Crew 3'],
-  outfitColor:['Teal','Rust','Green','Purple','Gold','Charcoal','Pink','White'],
-  hat:['None','Beanie','Wide brim','Headband','Visor','Hood','Bandana'],
-  accessory:['None','Glasses','Round glasses','Earrings','Face mask'],
-  bg:['Theme','Glow','Chevrons','Dots','Rings','Split','Stripes','Halo'],
-  face:['Neutral','Smile','Wink','Stoic']
+  skin:['Fair','Light','Tan','Brown','Deep','Rich','Chrome'],
+  hair:['Bald','Short','Side part','Spiky','Pulled back','Long','Curly','Top knot','Neon crest'],
+  hairColor:['Black','Dark brown','Brown','Blond','Platinum','Grey','Red','Blue','Neon cyan'],
+  outfit:['Collar','Crew','Hoodie','Collar 2','Crew 2','Hoodie 2','Collar 3','Crew 3','Techwear'],
+  outfitColor:['Teal','Rust','Green','Purple','Gold','Charcoal','Pink','White','Hot magenta'],
+  hat:['None','Beanie','Wide brim','Headband','Visor','Hood','Bandana','Neural halo'],
+  accessory:['None','Glasses','Round glasses','Earrings','Face mask','AR visor'],
+  bg:['Theme','Glow','Chevrons','Dots','Rings','Split','Stripes','Halo','Neon grid'],
+  face:['Neutral','Smile','Wink','Stoic','Lit eyes']
 };
 function _trHx(h){h=String(h||'').replace('#','');if(h.length===3)h=h[0]+h[0]+h[1]+h[1]+h[2]+h[2];return [parseInt(h.slice(0,2),16)||0,parseInt(h.slice(2,4),16)||0,parseInt(h.slice(4,6),16)||0];}
 function _trTo(r,g,b){function c(x){x=Math.max(0,Math.min(255,Math.round(x)));var s=x.toString(16);return s.length<2?'0'+s:s;}return '#'+c(r)+c(g)+c(b);}
@@ -34,12 +41,33 @@ function _trBg(bi){
   else if(bi===4) s+='<g fill="none" stroke="'+lite+'" stroke-width="3" opacity="0.5"><circle cx="50" cy="50" r="20"/><circle cx="50" cy="50" r="33"/><circle cx="50" cy="50" r="46"/></g>';
   else if(bi===5) s+='<polygon points="0,0 100,0 0,100" fill="'+lite+'" opacity="0.4"/><polygon points="100,0 100,100 0,100" fill="'+dark+'" opacity="0.35"/>';
   else if(bi===6) s+='<g fill="'+lite+'" opacity="0.4"><rect x="8" y="0" width="10" height="100"/><rect x="34" y="0" width="10" height="100"/><rect x="60" y="0" width="10" height="100"/><rect x="86" y="0" width="10" height="100"/></g>';
-  else s+='<circle cx="50" cy="46" r="30" fill="'+lite+'" opacity="0.6"/>';
+  else if(bi===7) s+='<circle cx="50" cy="46" r="30" fill="'+lite+'" opacity="0.6"/>';
+  else {
+    // Neon grid: a horizon, rails converging on it, and rungs that widen as
+    // they come forward -- the perspective is in the spacing, so there is no
+    // transform to get wrong at any render size.
+    s+='<rect x="0" y="0" width="100" height="56" fill="'+trShade(base,-0.35)+'"/>';
+    s+='<ellipse cx="50" cy="56" rx="46" ry="12" fill="'+TR_NEON2+'" opacity="0.30"/>';
+    s+='<g stroke="'+TR_NEON+'" stroke-width="0.7" opacity="0.65">';
+    for(var gx=-4;gx<=4;gx++) s+='<line x1="'+(50+gx*5)+'" y1="56" x2="'+(50+gx*26)+'" y2="100"/>';
+    var gy=56; for(var gi2=0;gi2<7;gi2++){ gy+=2.2+gi2*1.6; if(gy<100) s+='<line x1="0" y1="'+gy+'" x2="100" y2="'+gy+'"/>'; }
+    s+='</g>';
+    s+='<line x1="0" y1="56" x2="100" y2="56" stroke="'+TR_NEON+'" stroke-width="1.4" opacity="0.9"/>';
+  }
   return s;
 }
 function _trFace(fi,skin){
   var brow=trShade(skin,-0.4),eye='#2b2b31',s='';
-  if(fi===2){s+='<path d="M37,44 q4,4 8,0" fill="none" stroke="'+eye+'" stroke-width="2.2" stroke-linecap="round"/>';s+='<ellipse cx="59" cy="44" rx="2.4" ry="3" fill="'+eye+'"/>';}
+  if(fi===4){
+    // Lit eyes: an implant ring round a bright core, and a scanline down one
+    // cheek. Drawn under the hair and any accessory, so an AR visor covers it.
+    s+='<g'+_trGlow(TR_NEON,2.5)+'>';
+    s+='<ellipse cx="41" cy="44" rx="3.4" ry="3.6" fill="'+trShade(TR_NEON,-0.55)+'"/><ellipse cx="59" cy="44" rx="3.4" ry="3.6" fill="'+trShade(TR_NEON,-0.55)+'"/>';
+    s+='<ellipse cx="41" cy="44" rx="1.7" ry="2.2" fill="'+TR_NEON+'"/><ellipse cx="59" cy="44" rx="1.7" ry="2.2" fill="'+TR_NEON+'"/>';
+    s+='</g>';
+    s+='<g stroke="'+TR_NEON+'" stroke-width="0.8" opacity="0.55"><line x1="63" y1="50" x2="66" y2="56"/><line x1="61" y1="52" x2="64" y2="58"/></g>';
+  }
+  else if(fi===2){s+='<path d="M37,44 q4,4 8,0" fill="none" stroke="'+eye+'" stroke-width="2.2" stroke-linecap="round"/>';s+='<ellipse cx="59" cy="44" rx="2.4" ry="3" fill="'+eye+'"/>';}
   else {s+='<ellipse cx="41" cy="44" rx="2.4" ry="3" fill="'+eye+'"/><ellipse cx="59" cy="44" rx="2.4" ry="3" fill="'+eye+'"/>';}
   if(fi===3) s+='<g stroke="'+brow+'" stroke-width="2" stroke-linecap="round"><line x1="36" y1="38" x2="46" y2="38"/><line x1="54" y1="38" x2="64" y2="38"/></g>';
   else s+='<g stroke="'+brow+'" stroke-width="2" stroke-linecap="round"><line x1="36" y1="37" x2="46" y2="35.5"/><line x1="54" y1="35.5" x2="64" y2="37"/></g>';
@@ -53,6 +81,9 @@ function _trHairBack(hi,col){
   if(hi===5) return '<path d="M28,40 C24,64 30,86 34,92 L66,92 C70,86 76,64 72,40 Z" fill="'+col+'"/>';
   if(hi===4) return '<path d="M64,40 C78,46 80,70 72,86 L64,84 C70,70 68,52 60,46 Z" fill="'+col+'"/>';
   if(hi===6) return '<circle cx="50" cy="40" r="26" fill="'+col+'"/>';
+  // The crest is shaved at the sides, so the only mass behind the head is a
+  // short nape.
+  if(hi===8) return '<path d="M40,56 C40,66 44,72 50,72 C56,72 60,66 60,56 Z" fill="'+trShade(col,-0.4)+'"/>';
   return '';
 }
 function _trHairFront(hi,col){
@@ -64,7 +95,15 @@ function _trHairFront(hi,col){
   if(hi===4) return '<path d="M32,42 C32,28 41,22 50,22 C59,22 68,28 68,42 C60,34 40,34 32,42 Z" fill="'+col+'"/>';
   if(hi===5) return '<path d="M31,44 C30,27 40,21 50,21 C60,21 70,27 69,44 C66,34 58,30 50,30 C42,30 34,34 31,44 Z" fill="'+col+'"/><path d="M31,44 C29,58 30,72 31,80 L36,80 C34,66 34,54 35,46 Z" fill="'+sh+'"/>';
   if(hi===6) return '<g fill="'+hl+'" opacity="0.45"><circle cx="38" cy="28" r="7"/><circle cx="52" cy="24" r="8"/><circle cx="63" cy="30" r="6"/></g>';
-  return '<path d="M33,42 C33,28 42,22 50,22 C58,22 67,28 67,42 C60,34 40,34 33,42 Z" fill="'+col+'"/><circle cx="50" cy="16" r="7" fill="'+col+'"/><circle cx="50" cy="16" r="3.5" fill="'+hl+'" opacity="0.5"/>';
+  if(hi===7) return '<path d="M33,42 C33,28 42,22 50,22 C58,22 67,28 67,42 C60,34 40,34 33,42 Z" fill="'+col+'"/><circle cx="50" cy="16" r="7" fill="'+col+'"/><circle cx="50" cy="16" r="3.5" fill="'+hl+'" opacity="0.5"/>';
+  // Neon crest: shaved sides with a stubble shadow, a swept fin, and lit tips.
+  // The glow rides the chosen hair colour, not the fixed neon, so the colour
+  // swatches still do something here.
+  var tip = trShade(col,0.45);
+  return '<path d="M34,43 C34,33 40,27 44,25 C42,32 41,38 41,43 Z" fill="'+trShade(col,-0.5)+'" opacity="0.55"/>'
+       + '<path d="M66,43 C66,33 60,27 56,25 C58,32 59,38 59,43 Z" fill="'+trShade(col,-0.5)+'" opacity="0.55"/>'
+       + '<g'+_trGlow(col,2)+'><path d="M43,40 C43,22 47,12 52,9 C55,13 56,21 56,27 C56,33 55,37 55,40 Z" fill="'+col+'"/>'
+       + '<path d="M46,30 C46,20 49,14 52,11 C53,16 53,23 52,30 Z" fill="'+tip+'" opacity="0.75"/></g>';
 }
 function _trHat(hi2,oc){
   var band=trShade(oc,-0.25);
@@ -74,14 +113,30 @@ function _trHat(hi2,oc){
   if(hi2===3) return '<path d="M30,33 C40,29 60,29 70,33 L70,39 C60,35 40,35 30,39 Z" fill="'+oc+'"/>';
   if(hi2===4) return '<path d="M28,33 C40,27 60,27 72,33 L72,37 C60,32 40,32 28,37 Z" fill="'+oc+'"/><path d="M26,37 C40,34 60,34 74,37 L78,42 C60,37 40,37 22,42 Z" fill="'+band+'"/>';
   if(hi2===5) return '<path d="M24,46 C22,24 38,12 50,12 C62,12 78,24 76,46 C66,34 34,34 24,46 Z" fill="'+oc+'"/><path d="M30,44 C32,28 42,20 50,20 C58,20 68,28 70,44 C60,36 40,36 30,44 Z" fill="'+trShade(oc,-0.14)+'"/>';
-  return '<path d="M30,32 C40,27 60,27 70,32 L70,40 C60,35 40,35 30,40 Z" fill="'+oc+'"/><polygon points="66,34 78,40 68,44" fill="'+band+'"/>';
+  if(hi2===6) return '<path d="M30,32 C40,27 60,27 70,32 L70,40 C60,35 40,35 30,40 Z" fill="'+oc+'"/><polygon points="66,34 78,40 68,44" fill="'+band+'"/>';
+  // Neural halo: a band with an implant node at each temple and a thin lit ring
+  // floating above. The ring is drawn in the chosen outfit colour so the
+  // headwear still answers to its swatch; only the nodes are neon.
+  return '<path d="M29,36 C40,31 60,31 71,36 L71,41 C60,36 40,36 29,41 Z" fill="'+trShade(oc,-0.3)+'"/>'
+       + '<g'+_trGlow(TR_NEON,2)+'><circle cx="31" cy="39" r="2.6" fill="'+TR_NEON+'"/><circle cx="69" cy="39" r="2.6" fill="'+TR_NEON+'"/></g>'
+       + '<g'+_trGlow(oc,2)+'><ellipse cx="50" cy="15" rx="21" ry="5" fill="none" stroke="'+trShade(oc,0.3)+'" stroke-width="1.6" opacity="0.95"/></g>'
+       + '<line x1="31" y1="37" x2="34" y2="20" stroke="'+trShade(oc,-0.1)+'" stroke-width="1.2" opacity="0.8"/>';
 }
 function _trAcc(ai){
   if(ai===0) return '';
   if(ai===1) return '<g fill="none" stroke="#2b2b31" stroke-width="2"><rect x="34" y="40" width="12" height="8" rx="2"/><rect x="54" y="40" width="12" height="8" rx="2"/><line x1="46" y1="44" x2="54" y2="44"/></g>';
   if(ai===2) return '<g fill="none" stroke="#2b2b31" stroke-width="2"><circle cx="40" cy="44" r="5.5"/><circle cx="60" cy="44" r="5.5"/><line x1="45.5" y1="44" x2="54.5" y2="44"/></g>';
   if(ai===3) return '<g fill="#d3a33f"><circle cx="32" cy="52" r="2.4"/><circle cx="68" cy="52" r="2.4"/></g>';
-  return '<path d="M36,48 C40,62 60,62 64,48 C60,52 40,52 36,48 Z" fill="#dfe4ea"/><path d="M36,48 L30,45 M64,48 L70,45" stroke="#c2c8d0" stroke-width="1.6"/>';
+  if(ai===4) return '<path d="M36,48 C40,62 60,62 64,48 C60,52 40,52 36,48 Z" fill="#dfe4ea"/><path d="M36,48 L30,45 M64,48 L70,45" stroke="#c2c8d0" stroke-width="1.6"/>';
+  // AR visor: one translucent bar over both eyes, a temple arm to each ear, and
+  // a readout tick at the right edge. Semi-transparent on purpose -- a solid
+  // bar hides the face it is supposed to sit on, including lit eyes.
+  return '<g'+_trGlow(TR_NEON,2.5)+'>'
+       + '<path d="M30,39 L70,39 C71,46 66,50 50,50 C34,50 29,46 30,39 Z" fill="'+TR_NEON+'" opacity="0.26"/>'
+       + '<path d="M30,39 L70,39 C71,46 66,50 50,50 C34,50 29,46 30,39 Z" fill="none" stroke="'+TR_NEON+'" stroke-width="1.5"/>'
+       + '</g>'
+       + '<g stroke="'+trShade(TR_NEON,-0.45)+'" stroke-width="2" stroke-linecap="round"><line x1="30" y1="41" x2="26" y2="44"/><line x1="70" y1="41" x2="74" y2="44"/></g>'
+       + '<g fill="'+TR_NEON2+'"'+_trGlow(TR_NEON2,1.5)+'><rect x="62" y="42" width="5" height="1.4" rx="0.7"/><rect x="62" y="45" width="3" height="1.4" rx="0.7"/></g>';
 }
 // trainerSVG(spec, px, opts) -> self-contained <svg> string. Idle bob only when
 // not in calm mode (opts.animate overrides). Numbers only via trv() -> XSS-safe.
@@ -93,7 +148,18 @@ function trainerSVG(spec, px, opts){
       outfit=TR_OUTC[of],outfitSh=trShade(outfit,-0.2),outfitHl=trShade(outfit,0.16),hatCol=TR_OUTC[oc];
   var b=_trBg(bg);
   b+='<path d="M10,100 C10,80 26,71 50,71 C74,71 90,80 90,100 Z" fill="'+outfit+'"/>';
-  if(of%3===0) b+='<path d="M40,72 L50,84 L60,72 L56,71 L50,79 L44,71 Z" fill="'+outfitSh+'"/>';
+  // Techwear is its own branch rather than another `of%3` pattern: the asymmetric
+  // zip and the lit trim are the whole look, and modulo would have given it the
+  // plain chevron (8 % 3 === 2).
+  if(of===8){
+    b+='<path d="M44,71 L54,72 L52,100 L46,100 Z" fill="'+outfitSh+'"/>';
+    b+='<g'+_trGlow(TR_NEON,1.5)+' stroke="'+TR_NEON+'" stroke-width="1.1" fill="none" opacity="0.9">';
+    b+='<path d="M32,86 L40,86 L44,80"/><path d="M68,86 L60,86 L56,80"/><path d="M26,96 L34,96"/><path d="M74,96 L66,96"/>';
+    b+='</g>';
+    b+='<g fill="'+TR_NEON2+'"'+_trGlow(TR_NEON2,1.5)+'><circle cx="40" cy="86" r="1.5"/><circle cx="60" cy="86" r="1.5"/></g>';
+    b+='<path d="M50,71 C60,71 66,74 68,78 L62,80 C60,76 56,74 50,74 Z" fill="'+outfitHl+'" opacity="0.5"/>';
+  }
+  else if(of%3===0) b+='<path d="M40,72 L50,84 L60,72 L56,71 L50,79 L44,71 Z" fill="'+outfitSh+'"/>';
   else if(of%3===1) b+='<rect x="38" y="72" width="24" height="6" rx="3" fill="'+outfitHl+'" opacity="0.7"/>';
   else b+='<path d="M42,72 L50,80 L58,72" fill="none" stroke="'+outfitSh+'" stroke-width="2.5"/>';
   b+='<path d="M50,71 C74,71 90,80 90,100 L70,100 C70,84 62,76 50,74 Z" fill="'+outfitSh+'" opacity="0.35"/>';

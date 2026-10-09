@@ -9,6 +9,7 @@ mod cali;
 mod config;
 mod cosmetics;
 mod crews;
+mod cups;
 mod db;
 mod fps;
 mod hq;
@@ -31,6 +32,7 @@ mod server_stats;
 mod service;
 mod sounds;
 mod valley;
+mod weeks;
 
 use axum::{
     extract::{
@@ -858,6 +860,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(cali::routes())
         .merge(cosmetics::routes())
         .merge(crews::routes())
+        .merge(cups::routes())
         .merge(hq::routes())
         .merge(music::routes())
         .merge(portraits::routes())

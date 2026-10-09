@@ -16,7 +16,7 @@ var ARENA_STAY = (function(){ try { return localStorage.getItem("hq_arena_stay")
 var ARENA_SHARE_STATUS = (function(){ try { return localStorage.getItem("hq_arena_status") === "1"; } catch(e){ return false; } })();
 // Voice state, also needed by the first setView() (which keeps the lobby socket open while in voice).
 var VCHAN = {on:false, peer:null, stream:null, muted:false, cam:false, screen:false, vidStream:null, vidTile:null, peers:{}, roomId:null, roster:{}, ctx:null, me:null, meter:null};
-var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena"||v==="store"||v==="cali"||v==="valley")?v:"live"; })();
+var VIEW = (function(){ var v=localStorage.getItem("hq_view"); return (v==="analytics"||v==="pokedex"||v==="gym"||v==="quests"||v==="arena"||v==="store"||v==="cali"||v==="valley"||v==="compete")?v:"live"; })();
 var VIEW_TITLES = {
   live:["Live","Every Claude session, right now"], analytics:["Analytics","Usage, cost and rhythm over time"],
   pokedex:["Pokédex","Your creature collection"], gym:["Gym","Active sessions scored as a team"],
@@ -26,7 +26,8 @@ var VIEW_TITLES = {
   cali:["Cali Tuesdays","Taco Tuesday at California Burrito: seat friends, plate their food, check out"],
   valley:["Valley","Minigames to play while your tabs work"],
   hq:["HQ","Mission Control: your sessions as crew at their desks"],
-  music:["Music","What everyone's playing, and rooms to listen together"]
+  music:["Music","What everyone's playing, and rooms to listen together"],
+  compete:["Compete","Weekly cups, the season podium and more"]
 };
 // The Clash of Clans pack renames the "Pokédex" collection to "Troops" (nav tab + title).
 function syncPackLabels(){
@@ -56,6 +57,7 @@ function setView(v){
   var vlv=$("valleyView"); if(vlv) vlv.classList.toggle("hidden", v!=="valley");
   var hqv=$("hqView"); if(hqv) hqv.classList.toggle("hidden", v!=="hq");
   var muv=$("musicView"); if(muv) muv.classList.toggle("hidden", v!=="music");
+  var cpv=$("competeView"); if(cpv) cpv.classList.toggle("hidden", v!=="compete");
   Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
     var on = t.getAttribute("data-view")===v;
     t.classList.toggle("active", on); t.setAttribute("aria-selected", on?"true":"false");
@@ -70,6 +72,7 @@ function setView(v){
   if(v==="cali") cdEnter(); else cdLeave();
   if(v==="valley") valleyEnter(); else valleyLeave();
   if(v==="music") musicEnter(); else musicLeave();
+  if(v==="compete"){ if(typeof competeEnter==="function") competeEnter(); } else if(typeof competeLeave==="function") competeLeave();
   if(typeof hqViewChanged==="function") hqViewChanged(v);
   valleyPillSync();
   // The lobby socket stays open on other views while you stay in the lobby, or while you're in voice (it carries it).

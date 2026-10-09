@@ -259,16 +259,18 @@ _cache = {"at": 0.0, "track": None}
 _cache_lock = threading.Lock()
 
 
-def current(max_age=4.0):
+def current(max_age=4.0, with_age=False):
     """detect(), cached for `max_age` seconds so the page and the share loop
-    asking at once cost one round of AppleScript."""
+    asking at once cost one round of AppleScript. `with_age` also returns how
+    old the reading is (seconds), so a clock can be anchored on it."""
     with _cache_lock:
         if time.time() - _cache["at"] < max_age:
-            return _cache["track"]
+            t, age = _cache["track"], time.time() - _cache["at"]
+            return (t, age) if with_age else t
     t = detect()
     with _cache_lock:
         _cache.update(at=time.time(), track=t)
-    return t
+    return (t, 0.0) if with_age else t
 
 
 def wire_track(t):
@@ -308,6 +310,7 @@ class ShareLoop:
         self.sent = None
         self.sent_at = 0.0
         self.last_error = None
+        self.err_at = 0.0
         self._stop = threading.Event()
 
     def step(self, now=None, track=None, detect_fn=None):
@@ -331,11 +334,13 @@ class ShareLoop:
             return
         if same_song(t, self.sent) and now - self.sent_at < self.refresh:
             return
+        if self.last_error == 404 and now - self.err_at < 600:
+            return   # this Arena has no music routes yet: ask again in 10 minutes, not every tick
         code = self.put(t)
         if code == 200:
             self.sent, self.sent_at, self.last_error = t, now, None
         else:
-            self.last_error = code
+            self.last_error, self.err_at = code, now
 
     def run(self):
         while not self._stop.wait(self.every):

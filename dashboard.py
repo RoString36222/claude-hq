@@ -5041,9 +5041,10 @@ def music_get(path, raw_path):
     try:
         if path == "/api/music/now":
             # This Mac's track (local only), plus whether it is being shared.
-            t = music.current()
+            # Fresh enough that the page's clock re-anchors on the player's own position.
+            t, age = music.current(max_age=1.5, with_age=True)
             return 200, json.dumps({
-                "track": t, "share": bool(load_config().get("musicShare")),
+                "track": t, "ageMs": int(age * 1000), "share": bool(load_config().get("musicShare")),
                 "paired": bool(arena.status().get("paired")),
                 "shared": MUSIC_SHARE.sent is not None,
                 "shareError": MUSIC_SHARE.last_error,

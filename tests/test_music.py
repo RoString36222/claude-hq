@@ -107,6 +107,18 @@ class Share(unittest.TestCase):
         self.assertIsNone(lp.last_error)
 
 
+class OldArena(unittest.TestCase):
+    def test_a_404_backs_off_for_ten_minutes(self):
+        sent = []
+        lp = music.ShareLoop(lambda: True, put=lambda t: sent.append(1) or 404, clear=lambda: 200)
+        t = {"title": "A", "source": "apple", "playing": True}
+        for now in (0, 10, 20, 300):
+            lp.step(now=now, track=t)
+        self.assertEqual(len(sent), 1)
+        lp.step(now=601, track=t)
+        self.assertEqual(len(sent), 2)
+
+
 class Config(unittest.TestCase):
     def test_music_share_defaults_on_and_validates(self):
         import dashboard

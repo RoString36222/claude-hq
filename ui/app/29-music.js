@@ -77,6 +77,7 @@ function muLinks(t){
 function muLoadMine(){
   return fetch("/api/music/now", {cache:"no-store"}).then(function(r){ return r.json(); }).then(function(j){
     MU.now = j && typeof j === "object" ? j : null;
+    if(MU.now && MU.now.track) MU.now.track._at = Date.now() - Math.max(0, Math.min(5000, MU.now.ageMs|0));
     if(MU.now && MU.now.share && MU.now.paired && MU.now.shared && !MU.shareNoted) muShareNotice();
     muRenderMine();
   }).catch(function(){});
@@ -85,6 +86,7 @@ function muLoadPeople(){
   if(!ARENA.paired) { MU.people = []; return Promise.resolve(); }
   return fetch("/api/arena/music/now", {cache:"no-store"}).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
     MU.people = (j && Array.isArray(j.listening)) ? j.listening.filter(function(x){ return x && x.user && x.track; }) : [];
+    var at = Date.now(); MU.people.forEach(function(x){ x.track._at = at; });
     MU.peopleAt = Date.now();
     muRenderPeople();
     if(typeof arenaRerenderLobby === "function") arenaRerenderLobby();
@@ -116,21 +118,55 @@ function muTrackRow(t, opts){
   var src = el("span", "mu-src mu-src-" + (MU_SRC[t.source] ? t.source : "other")); src.textContent = MU_SRC[t.source] || "Music"; meta.appendChild(src);
   if(t.playing === false){ var pz = el("span", "mu-paused"); pz.textContent = "paused"; meta.appendChild(pz); }
   if(t.durationMs){
-    var pr = el("span", "mu-bar"); pr.setAttribute("role", "progressbar"); pr.setAttribute("aria-valuemin", "0");
-    pr.setAttribute("aria-valuemax", String(Math.round(t.durationMs/1000))); pr.setAttribute("aria-valuenow", String(Math.round((t.positionMs||0)/1000)));
+    var pr = el("span", "mu-bar mu-tick"); pr.setAttribute("role", "progressbar"); pr.setAttribute("aria-valuemin", "0");
+    pr.setAttribute("aria-valuemax", String(Math.round(t.durationMs/1000)));
     pr.setAttribute("aria-label", "Position");
-    var fill = el("i"); fill.style.width = Math.min(100, 100 * (t.positionMs||0) / t.durationMs).toFixed(1) + "%"; pr.appendChild(fill);
+    pr.appendChild(el("i"));
     meta.appendChild(pr);
-    var tm = el("span", "mu-time"); tm.textContent = muFmt(t.positionMs||0) + " / " + muFmt(t.durationMs); meta.appendChild(tm);
+    meta.appendChild(el("span", "mu-time"));
+    muAnchor(meta, t);
   }
   body.appendChild(meta);
   row.appendChild(body);
   return row;
 }
+// A track's position, ticking on from when we last heard it (the player's own clock, not our poll's).
+function muTrackPos(t){
+  var p = t.positionMs || 0;
+  if(t.playing !== false && t._at) p += Date.now() - t._at;
+  return t.durationMs ? Math.max(0, Math.min(p, t.durationMs)) : Math.max(0, p);
+}
+// Point a row's bar + time at a (fresh) track, without rebuilding it.
+function muAnchor(meta, t){
+  if(!meta) return;
+  var old = meta._track;
+  // The same song still where we expected (within a second): keep our clock, so it never twitches.
+  if(old && muSongKey(old) === muSongKey(t) && Math.abs(muTrackPos(old) - muTrackPos(t)) < 1000) return;
+  meta._track = t;
+  muTickOne(meta);
+}
+function muTickOne(meta){
+  var t = meta && meta._track; if(!t || !t.durationMs) return;
+  var p = muTrackPos(t), bar = meta.querySelector(".mu-bar"), tm = meta.querySelector(".mu-time");
+  if(bar){ bar.firstChild.style.width = (100 * p / t.durationMs).toFixed(2) + "%"; bar.setAttribute("aria-valuenow", String(Math.round(p/1000))); }
+  if(tm) tm.textContent = muFmt(p) + " / " + muFmt(t.durationMs);
+}
+function muTickAll(){
+  Array.prototype.forEach.call(document.querySelectorAll("#musicView .mu-meta"), muTickOne);
+}
+function muSongKey(t){ return t ? [t.title, t.artist, t.album, t.source, t.playing !== false, t.durationMs].join("|") : ""; }
 function muRenderMine(){
   var box = $("muMine"); if(!box) return;
-  box.textContent = "";
   var n = MU.now;
+  // Same song, same state: just move its clock (rebuilding every poll made the card flicker and jump).
+  var key = n ? [n.platform, muSongKey(n.track), muArenaHas(), muPlace()].join("#") : "";
+  if(key && key === box.getAttribute("data-key")){
+    var meta = box.querySelector(".mu-meta"); if(meta && n.track) muAnchor(meta, n.track);
+    muRenderShareState(n);
+    return;
+  }
+  box.setAttribute("data-key", key);
+  box.textContent = "";
   if(!n){ var p = el("p", "muted"); p.textContent = "Looking for music…"; box.appendChild(p); return; }
   if(n.platform && n.platform !== "darwin"){
     var q = el("p", "muted"); q.textContent = "Now Playing reads Spotify, Apple Music and YouTube Music on macOS. You can still listen along in rooms below."; box.appendChild(q);
@@ -148,12 +184,16 @@ function muRenderMine(){
     }
     box.appendChild(acts);
   }
+  muRenderShareState(n);
+}
+function muRenderShareState(n){
   var share = $("muShare"); if(share) share.checked = !!n.share;
   var st = $("muShareState");
   if(st){
     var txt;
     if(!n.share) txt = "Not sharing. Only you see this.";
     else if(!n.paired) txt = "Pair with the Arena to share it.";
+    else if(n.shareError === 404) txt = "Your Arena doesn’t support music yet. It needs an update; until then only you see this.";
     else if(n.shareError) txt = "Couldn’t reach the Arena (" + n.shareError + "). Retrying.";
     else if(n.shared) txt = "Shared: friends on the Arena see this.";
     else txt = n.track && n.track.playing ? "Sharing in a moment…" : "Shared while something plays.";
@@ -162,6 +202,14 @@ function muRenderMine(){
 }
 function muRenderPeople(){
   var box = $("muPeople"); if(!box) return;
+  var key = [ARENA.paired, muArenaHas()].concat(MU.people.map(function(p){ return p.user.userId + ":" + muSongKey(p.track); })).join("#");
+  if(key === box.getAttribute("data-key")){
+    // Same people, same songs: re-anchor their clocks in place.
+    var metas = box.querySelectorAll(".mu-meta"), others = MU.people.filter(function(p){ return !p.user.isYou; });
+    Array.prototype.forEach.call(metas, function(m, i){ if(others[i]) muAnchor(m, others[i].track); });
+    return;
+  }
+  box.setAttribute("data-key", key);
   box.textContent = "";
   var cnt = $("muPeopleCount");
   var others = MU.people.filter(function(p){ return !p.user.isYou; });
@@ -846,7 +894,8 @@ function musicLeave(){ /* the player keeps playing while you're tuned in; the lo
   document.addEventListener("fullscreenchange", muStartLoop);
   // Drift check while tuned in, and the polls: yours every 5 s on this view, everyone's every 20 s while paired.
   setInterval(function(){ if(MU.tuned) muSyncPlayer(false); }, 2000);
-  setInterval(function(){ if(muOn()) muLoadMine(); }, 5000);
+  setInterval(function(){ if(muOn()) muLoadMine(); }, 2000);
+  setInterval(function(){ if(muOn() && !document.hidden) muTickAll(); }, 250);
   setInterval(function(){ if(ARENA.paired && (muOn() || muSockOk())) muLoadPeople(); }, 20000);
   setInterval(function(){
     muLivePrune();

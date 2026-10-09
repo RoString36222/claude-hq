@@ -196,6 +196,524 @@ pub fn level(id: &str) -> Option<&'static Level> {
     LEVELS.iter().find(|l| l.id == id)
 }
 
+// ----------------------------------------------------------- custom levels --
+// A level made in the Level Editor (games/leveledit.js) reaches a room inline on the
+// host's start op: {op:"start", level:"custom", mode, custom: MapDoc}, where MapDoc is
+// {kind:"plat", v:1, name, data}. `validate_custom` checks `data` without panicking and
+// returns its CANONICAL form (keys in a fixed order, unknown keys dropped, numbers
+// rounded to 0.01, colours lower-case), so the same level always gets the same c- key
+// and a gallery round-trip can never fork a leaderboard.
+//
+// Besides the shape and the caps, it proves the level can be finished: the route (the
+// path bots and the autopilot follow) is walked with the browser character's own jump
+// (games/platformer.js) from every spawn, through every checkpoint in order, to the flag.
+// games/leveledit.js runs the same rules with the same constants for its live check
+// (tests/test_leveledit.py compares them).
+
+pub const LIM: f64 = 200.0;
+pub const MAX_SOLIDS: usize = 64;
+pub const MAX_COINS: usize = 80;
+pub const MAX_CPS: usize = 8;
+pub const MAX_ROUTE: usize = 200;
+pub const MAX_DECO: usize = 64;
+pub const MAX_DATA: usize = 12 * 1024;
+pub const NAME_MAX: usize = 32;
+pub const COOP_SECS_MIN: f64 = 30.0;
+pub const COOP_SECS_MAX: f64 = 600.0;
+pub const SCALE_MIN: f64 = 0.5;
+pub const SCALE_MAX: f64 = 3.0;
+pub const DECO_SCALE_MAX: f64 = 6.0;
+pub const DECO_MODELS: [&str; 3] = ["grass", "grass-small", "cloud"];
+// The browser's character (games/platformer.js): the route is checked against what it can do.
+pub const ROUTE_JUMP: f64 = 8.6;
+pub const ROUTE_DJUMP: f64 = 7.8;
+pub const ROUTE_GRAV: f64 = 26.0;
+/// The fastest a route jump may need to fly sideways (the character runs at 6 m/s).
+pub const ROUTE_SPEED: f64 = 5.6;
+/// A walk steps up or down at most this much (the character's step-up).
+pub const ROUTE_STEP_UP: f64 = 0.3;
+/// Walks are sampled this often for ground underfoot.
+pub const ROUTE_SAMPLE: f64 = 0.25;
+/// Ground counts under a walk sample when its top is this close to the walk's height.
+pub const ROUTE_GROUND: f64 = 0.35;
+/// A route point must have the top of a platform at most this far beneath it.
+pub const ROUTE_LAND: f64 = 0.1;
+/// Points sampled along every jump arc (none may be inside a platform).
+pub const ROUTE_ARC_N: usize = 16;
+/// The route ends this close to the flag.
+pub const ROUTE_FLAG: f64 = 2.0;
+
+/// A custom level running in a room: its c- key, its name, the canonical data (sent in
+/// view and start events, never in snaps) and the compiled geometry.
+#[derive(Clone, Debug)]
+pub struct Custom {
+    pub key: String,
+    pub name: String,
+    pub data: Value,
+    pub lv: Arc<Level>,
+}
+
+/// The level a run is on: a built-in one or a custom one. Clone it out of the Plat
+/// before borrowing a player mutably.
+#[derive(Clone, Debug)]
+pub enum Lv {
+    Builtin(&'static Level),
+    Custom(Arc<Level>),
+}
+
+impl std::ops::Deref for Lv {
+    type Target = Level;
+    fn deref(&self) -> &Level {
+        match self {
+            Lv::Builtin(l) => l,
+            Lv::Custom(l) => l,
+        }
+    }
+}
+
+/// n rounded to 0.01 the way Rust rounds (half away from zero); leveledit.js does the same.
+pub fn round2(n: f64) -> f64 {
+    let r = (n * 100.0).round() / 100.0;
+    if r == 0.0 { 0.0 } else { r }
+}
+
+/// A whole number goes on the wire as an integer, like JSON.stringify writes it.
+fn jnum(n: f64) -> Value {
+    if n.fract() == 0.0 && n.abs() < 1e15 { json!(n as i64) } else { json!(n) }
+}
+
+fn cnum(v: Option<&Value>, what: &str) -> Result<f64, String> {
+    let n = v.and_then(Value::as_number).and_then(|n| n.as_f64())
+        .ok_or_else(|| format!("{what} is not a number"))?;
+    if !n.is_finite() || n.abs() > LIM {
+        return Err(format!("{what} is out of range (±{LIM} m)"));
+    }
+    Ok(round2(n))
+}
+
+fn cpt(v: &Value, what: &str) -> Result<[f64; 3], String> {
+    match v.as_array() {
+        Some(a) if a.len() == 3 => Ok([cnum(a.first(), what)?, cnum(a.get(1), what)?, cnum(a.get(2), what)?]),
+        _ => Err(format!("{what} is not [x, y, z]")),
+    }
+}
+
+fn clist<'a>(data: &'a Value, key: &str, lo: usize, hi: usize) -> Result<&'a Vec<Value>, String> {
+    let a = data.get(key).and_then(Value::as_array).ok_or_else(|| format!("{key} is missing"))?;
+    if a.len() < lo || a.len() > hi {
+        return Err(format!("{key}: {lo} to {hi} allowed, got {}", a.len()));
+    }
+    Ok(a)
+}
+
+/// A level name: 1-32 printable characters once trimmed, no '<' or '>', no links.
+pub fn clean_name(v: Option<&Value>) -> Result<String, String> {
+    let s = v.and_then(Value::as_str).ok_or("the level needs a name")?.trim();
+    let n = s.chars().count();
+    if n == 0 || n > NAME_MAX {
+        return Err(format!("the name must be 1 to {NAME_MAX} characters"));
+    }
+    if !s.chars().all(crate::rooms::py_printable) || s.contains(['<', '>']) || s.to_lowercase().contains("http") {
+        return Err("the name has characters that aren't allowed".into());
+    }
+    Ok(s.to_string())
+}
+
+#[derive(Clone, Debug)]
+struct CSolid {
+    m: &'static str,
+    x: f64,
+    y: f64,
+    z: f64,
+    r: i64,
+    s: f64,
+}
+
+#[derive(Clone, Debug)]
+struct Parsed {
+    kill: f64,
+    goal: i64,
+    secs: f64,
+    theme: [String; 4],
+    spawns: Vec<[f64; 3]>,
+    cps: Vec<[f64; 3]>,
+    flag: [f64; 3],
+    coins: Vec<[f64; 3]>,
+    solids: Vec<CSolid>,
+    route: Vec<([f64; 3], char)>,
+    deco: Vec<(&'static str, f64, f64, f64, i64, f64)>,
+}
+
+const THEME_KEYS: [&str; 4] = ["sky", "fog", "sea", "light"];
+
+fn ccolor(v: Option<&Value>, what: &str) -> Result<String, String> {
+    let s = v.and_then(Value::as_str).unwrap_or("");
+    if s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit()) {
+        Ok(s.to_ascii_lowercase())
+    } else {
+        Err(format!("theme {what} is not a #rrggbb colour"))
+    }
+}
+
+fn crot(v: Option<&Value>, what: &str, right_angles: bool) -> Result<i64, String> {
+    let Some(v) = v else { return Ok(0) };
+    let n = v.as_number().and_then(|n| n.as_f64()).ok_or_else(|| format!("{what} turn is not a number"))?;
+    if !n.is_finite() || n.fract() != 0.0 || !(0.0..360.0).contains(&n) || (right_angles && n % 90.0 != 0.0) {
+        return Err(format!("{what} turn must be {}", if right_angles { "0, 90, 180 or 270" } else { "a whole 0-359" }));
+    }
+    Ok(n as i64)
+}
+
+fn cscale(v: Option<&Value>, what: &str, hi: f64) -> Result<f64, String> {
+    let Some(v) = v else { return Ok(1.0) };
+    let n = cnum(Some(v), what)?;
+    if !(SCALE_MIN..=hi).contains(&n) {
+        return Err(format!("{what} scale must be {SCALE_MIN} to {hi}"));
+    }
+    Ok(n)
+}
+
+fn parse(data: &Value) -> Result<Parsed, String> {
+    if !data.is_object() {
+        return Err("the level data is not an object".into());
+    }
+    let kill = cnum(data.get("kill"), "kill height")?;
+    let secs = cnum(data.get("coopSecs"), "co-op time")?;
+    if !(COOP_SECS_MIN..=COOP_SECS_MAX).contains(&secs) {
+        return Err(format!("co-op time must be {COOP_SECS_MIN} to {COOP_SECS_MAX} seconds"));
+    }
+    let th = data.get("theme").filter(|t| t.is_object()).ok_or("theme is missing")?;
+    let mut theme: [String; 4] = Default::default();
+    for (i, k) in THEME_KEYS.iter().enumerate() {
+        theme[i] = ccolor(th.get(*k), k)?;
+    }
+    let spawns = clist(data, "spawns", 1, MAX_PLAYERS)?.iter().enumerate()
+        .map(|(i, p)| cpt(p, &format!("spawn {}", i + 1))).collect::<Result<Vec<_>, _>>()?;
+    let cps = clist(data, "cps", 0, MAX_CPS)?.iter().enumerate()
+        .map(|(i, p)| cpt(p, &format!("checkpoint {}", i + 1))).collect::<Result<Vec<_>, _>>()?;
+    let flag = cpt(data.get("flag").ok_or("the flag is missing")?, "the flag")?;
+    let coins = clist(data, "coins", 0, MAX_COINS)?.iter().enumerate()
+        .map(|(i, p)| cpt(p, &format!("coin {}", i + 1))).collect::<Result<Vec<_>, _>>()?;
+    let goal = match data.get("coopGoal").and_then(Value::as_number) {
+        Some(n) if n.as_i64().is_some() || n.as_f64().map(|f| f.fract() == 0.0).unwrap_or(false) => n.as_f64().unwrap_or(-1.0),
+        _ => return Err("co-op goal is not a whole number".into()),
+    };
+    if goal < 0.0 || goal > coins.len() as f64 {
+        return Err(format!("co-op goal must be 0 to {} (the coins in the level)", coins.len()));
+    }
+    let mut solids = Vec::new();
+    for (i, b) in clist(data, "solids", 1, MAX_SOLIDS)?.iter().enumerate() {
+        let what = format!("platform {}", i + 1);
+        let name = b.get("m").and_then(Value::as_str).unwrap_or("");
+        let m = MODEL_NAMES.iter().find(|n| **n == name).copied()
+            .ok_or_else(|| format!("{what}: unknown model '{}'", name.chars().take(24).collect::<String>()))?;
+        solids.push(CSolid {
+            m,
+            x: cnum(b.get("x"), &what)?,
+            y: cnum(b.get("y"), &what)?,
+            z: cnum(b.get("z"), &what)?,
+            r: crot(b.get("r"), &what, true)?,
+            s: cscale(b.get("s"), &what, SCALE_MAX)?,
+        });
+    }
+    let mut route = Vec::new();
+    for (i, p) in clist(data, "route", 2, MAX_ROUTE)?.iter().enumerate() {
+        let what = format!("route point {}", i + 1);
+        let a = p.as_array().filter(|a| a.len() == 4).ok_or_else(|| format!("{what} is not [x, y, z, kind]"))?;
+        let k = match a[3].as_str() {
+            Some("w") => 'w',
+            Some("j") => 'j',
+            Some("d") => 'd',
+            _ => return Err(format!("{what}: kind must be w, j or d")),
+        };
+        route.push(([cnum(a.first(), &what)?, cnum(a.get(1), &what)?, cnum(a.get(2), &what)?], k));
+    }
+    let mut deco = Vec::new();
+    for (i, d) in clist(data, "deco", 0, MAX_DECO)?.iter().enumerate() {
+        let what = format!("decoration {}", i + 1);
+        let name = d.get("m").and_then(Value::as_str).unwrap_or("");
+        let m = DECO_MODELS.iter().find(|n| **n == name).copied().ok_or_else(|| format!("{what}: unknown model"))?;
+        deco.push((m, cnum(d.get("x"), &what)?, cnum(d.get("y"), &what)?, cnum(d.get("z"), &what)?,
+                   crot(d.get("r"), &what, false)?, cscale(d.get("s"), &what, DECO_SCALE_MAX)?));
+    }
+    Ok(Parsed { kill, goal: goal as i64, secs, theme, spawns, cps, flag, coins, solids, route, deco })
+}
+
+/// The 7 platform models a level may be built from (the ones `model` knows).
+pub const MODEL_NAMES: [&str; 7] = ["platform", "platform-medium", "platform-large", "platform-falling",
+                                    "platform-grass-large-round", "brick", "block-coin"];
+
+fn canon(p: &Parsed) -> Value {
+    let pt = |a: &[f64; 3]| json!([jnum(a[0]), jnum(a[1]), jnum(a[2])]);
+    let solids: Vec<Value> = p.solids.iter().map(|b| {
+        let mut o = json!({"m": b.m, "x": jnum(b.x), "y": jnum(b.y), "z": jnum(b.z)});
+        if b.r != 0 {
+            o["r"] = json!(b.r);
+        }
+        if b.s != 1.0 {
+            o["s"] = jnum(b.s);
+        }
+        o
+    }).collect();
+    let deco: Vec<Value> = p.deco.iter().map(|d| {
+        let mut o = json!({"m": d.0, "x": jnum(d.1), "y": jnum(d.2), "z": jnum(d.3), "r": d.4});
+        if d.5 != 1.0 {
+            o["s"] = jnum(d.5);
+        }
+        o
+    }).collect();
+    json!({
+        "kill": jnum(p.kill), "coopGoal": p.goal, "coopSecs": jnum(p.secs),
+        "theme": {"sky": p.theme[0], "fog": p.theme[1], "sea": p.theme[2], "light": p.theme[3]},
+        "spawns": p.spawns.iter().map(pt).collect::<Vec<_>>(),
+        "cps": p.cps.iter().map(pt).collect::<Vec<_>>(),
+        "flag": pt(&p.flag),
+        "coins": p.coins.iter().map(pt).collect::<Vec<_>>(),
+        "solids": solids,
+        "route": p.route.iter().map(|(a, k)| json!([jnum(a[0]), jnum(a[1]), jnum(a[2]), k.to_string()])).collect::<Vec<_>>(),
+        "deco": deco,
+    })
+}
+
+fn level_of(p: &Parsed) -> Level {
+    let solids: Vec<Solid> = p.solids.iter().map(|b| {
+        // every m was checked against MODEL_NAMES, which `model` knows
+        let (round, mut w, mut d, h) = model(b.m).unwrap_or((false, 1.0, 1.0, 1.0));
+        if b.r.rem_euclid(180) == 90 {
+            std::mem::swap(&mut w, &mut d);
+        }
+        let s = b.s;
+        Solid { m: b.m.to_string(), x0: b.x - w * s / 2.0, x1: b.x + w * s / 2.0, y0: b.y, y1: b.y + h * s,
+                z0: b.z - d * s / 2.0, z1: b.z + d * s / 2.0, cx: b.x, cz: b.z, r: if round { w * s / 2.0 } else { 0.0 } }
+    }).collect();
+    let top = solids.iter().map(|s| s.y1).fold(f64::MIN, f64::max);
+    let mn = |g: fn(&Solid) -> f64| solids.iter().map(g).fold(f64::MAX, f64::min);
+    let mx = |g: fn(&Solid) -> f64| solids.iter().map(g).fold(f64::MIN, f64::max);
+    Level {
+        id: String::new(),
+        name: String::new(),
+        kill: p.kill,
+        spawns: p.spawns.clone(),
+        cps: p.cps.clone(),
+        coins: p.coins.clone(),
+        flag: p.flag,
+        goal: p.goal,
+        secs: p.secs,
+        bounds: [mn(|s| s.x0) - 12.0, mx(|s| s.x1) + 12.0, p.kill - 6.0, top + 10.0, mn(|s| s.z0) - 12.0, mx(|s| s.z1) + 12.0],
+        route: p.route.clone(),
+        solids,
+    }
+}
+
+/// Seconds in the air for the browser's jump ('j') or jump + double jump at the top
+/// ('d') to land dh higher; None when it can't get that high.
+pub fn route_air(dh: f64, kind: char) -> Option<f64> {
+    if kind == 'j' {
+        let disc = ROUTE_JUMP * ROUTE_JUMP - 2.0 * ROUTE_GRAV * dh;
+        return if disc < 0.0 { None } else { Some((ROUTE_JUMP + disc.sqrt()) / ROUTE_GRAV) };
+    }
+    let h1 = ROUTE_JUMP * ROUTE_JUMP / (2.0 * ROUTE_GRAV);
+    let disc = ROUTE_DJUMP * ROUTE_DJUMP + 2.0 * ROUTE_GRAV * (h1 - dh);
+    if disc < 0.0 { None } else { Some(ROUTE_JUMP / ROUTE_GRAV + (ROUTE_DJUMP + disc.sqrt()) / ROUTE_GRAV) }
+}
+
+/// Height above take-off t seconds into a route jump.
+pub fn route_lift(t: f64, kind: char) -> f64 {
+    let t1 = ROUTE_JUMP / ROUTE_GRAV;
+    if kind == 'j' || t <= t1 {
+        return ROUTE_JUMP * t - ROUTE_GRAV * t * t / 2.0;
+    }
+    let r = t - t1;
+    ROUTE_JUMP * t1 / 2.0 + ROUTE_DJUMP * r - ROUTE_GRAV * r * r / 2.0
+}
+
+fn ground_near(l: &Level, x: f64, y: f64, z: f64) -> bool {
+    l.solids.iter().any(|s| in_foot(s, x, z, 0.0) && (s.y1 - y).abs() <= ROUTE_GROUND)
+}
+
+/// The points one leg of the route passes through: a walk is a straight line, a jump
+/// the arc the browser's character flies.
+pub fn route_leg(a: [f64; 3], b: [f64; 3], kind: char) -> Vec<[f64; 3]> {
+    if kind == 'w' {
+        return vec![a, b];
+    }
+    let t = route_air(b[1] - a[1], kind).unwrap_or(0.0);
+    (0..=ROUTE_ARC_N).map(|j| {
+        let u = j as f64 / ROUTE_ARC_N as f64;
+        if j == ROUTE_ARC_N {
+            return b;
+        }
+        [a[0] + (b[0] - a[0]) * u, a[1] + route_lift(u * t, kind), a[2] + (b[2] - a[2]) * u]
+    }).collect()
+}
+
+/// Why the leg a -> b (b's kind) can't be run, if it can't.
+pub fn leg_problem(l: &Level, a: [f64; 3], b: [f64; 3], kind: char) -> Option<String> {
+    let (dx, dz, dh) = (b[0] - a[0], b[2] - a[2], b[1] - a[1]);
+    let d = (dx * dx + dz * dz).sqrt();
+    if support(l, b[0], b[1], b[2], 0.0, ROUTE_LAND).is_none() {
+        return Some(if kind == 'w' { "walks onto nothing".into() } else { "lands in the air".into() });
+    }
+    if kind == 'w' {
+        if dh.abs() > ROUTE_STEP_UP {
+            return Some("is a walk up or down more than 0.3 m: make it a jump".into());
+        }
+        let n = ((d / ROUTE_SAMPLE).ceil() as usize).max(1);
+        for j in 0..=n {
+            let u = j as f64 / n as f64;
+            let (x, y, z) = (a[0] + dx * u, a[1] + dh * u, a[2] + dz * u);
+            if !ground_near(l, x, y, z) {
+                return Some("walks over a gap: make it a jump".into());
+            }
+            if inside(l, x, y, z) {
+                return Some("walks into a block".into());
+            }
+        }
+        return None;
+    }
+    let Some(t) = route_air(dh, kind) else {
+        return Some(if kind == 'j' { "is too high for a jump: try a double jump".into() } else { "is too high even for a double jump".into() });
+    };
+    if d > ROUTE_SPEED * t {
+        return Some(format!("is too far to {}", if kind == 'j' { "jump: try a double jump" } else { "reach: the gap is too wide" }));
+    }
+    if dh > lift_bound(t) {
+        return Some("climbs faster than the referee allows".into());
+    }
+    let pts = route_leg(a, b, kind);
+    if pts[1..pts.len() - 1].iter().any(|p| inside(l, p[0], p[1], p[2])) {
+        return Some("jumps through a platform".into());
+    }
+    None
+}
+
+/// The reachability check: Err(reason) for the first thing that stops a runner
+/// following the route from finishing.
+pub fn route_check(l: &Level) -> Result<(), String> {
+    let Some(first) = l.route.first() else { return Err("the route is empty".into()) };
+    for (i, s) in l.spawns.iter().enumerate() {
+        if let Some(why) = leg_problem(l, *s, first.0, first.1) {
+            return Err(format!("from spawn {} to route point 1 {why}", i + 1));
+        }
+    }
+    let mut k = 0;
+    let lift = |p: [f64; 3]| [p[0], p[1] + CENTER, p[2]];
+    for i in 0..l.route.len() {
+        let (b, kind) = l.route[i];
+        let a = if i == 0 { l.spawns[0] } else { l.route[i - 1].0 };
+        if i > 0 {
+            if let Some(why) = leg_problem(l, a, b, kind) {
+                return Err(format!("route point {} {why}", i + 1));
+            }
+        }
+        let pts = route_leg(a, b, kind);
+        for w in pts.windows(2) {
+            if k < l.cps.len() && seg_dist(lift(w[0]), lift(w[1]), lift(l.cps[k])) <= CP_R {
+                k += 1;
+            }
+        }
+    }
+    if k < l.cps.len() {
+        return Err(format!("the route misses checkpoint {} (they count in order)", k + 1));
+    }
+    let end = l.route[l.route.len() - 1].0;
+    let (fx, fy, fz) = (end[0] - l.flag[0], end[1] - l.flag[1], end[2] - l.flag[2]);
+    let fd = (fx * fx + fy * fy + fz * fz).sqrt();
+    if fd > ROUTE_FLAG {
+        return Err("the route doesn't end at the flag".into());
+    }
+    Ok(())
+}
+
+fn on_top(l: &Level, p: [f64; 3]) -> bool {
+    support(l, p[0], p[1], p[2], 0.0, ROUTE_LAND).is_some() && !inside(l, p[0], p[1], p[2])
+}
+
+fn check(p: &Parsed, l: &Level) -> Result<(), String> {
+    let low = l.solids.iter().map(|s| s.y0).fold(f64::MAX, f64::min);
+    if p.kill > low - 1.0 {
+        return Err("the kill height must be at least 1 m below the lowest platform".into());
+    }
+    for (i, s) in p.spawns.iter().enumerate() {
+        if !on_top(l, *s) {
+            return Err(format!("spawn {} isn't standing on a platform", i + 1));
+        }
+    }
+    for (i, c) in p.cps.iter().enumerate() {
+        if !on_top(l, *c) {
+            return Err(format!("checkpoint {} isn't on a platform", i + 1));
+        }
+    }
+    if !on_top(l, p.flag) {
+        return Err("the flag isn't on a platform".into());
+    }
+    let b = l.bounds;
+    for (i, c) in p.coins.iter().enumerate() {
+        if inside(l, c[0], c[1], c[2]) || !(b[0] <= c[0] && c[0] <= b[1] && p.kill < c[1] && c[1] <= b[3] && b[4] <= c[2] && c[2] <= b[5]) {
+            return Err(format!("coin {} is inside a block or out of reach", i + 1));
+        }
+    }
+    route_check(l)
+}
+
+fn build(data: &Value) -> Result<(Value, Level), String> {
+    let p = parse(data)?;
+    let l = level_of(&p);
+    check(&p, &l)?;
+    let c = canon(&p);
+    if c.to_string().len() > MAX_DATA {
+        return Err("the level is too big (12 KiB at most)".into());
+    }
+    Ok((c, l))
+}
+
+/// The canonical form of a custom level's data, or why it can't be played. Never panics.
+pub fn validate_custom(data: &Value) -> Result<Value, String> {
+    if data.to_string().len() > MAX_DATA * 2 {
+        return Err("the level is too big (12 KiB at most)".into());
+    }
+    build(data).map(|(c, _)| c)
+}
+
+/// The geometry of a custom level (checked exactly as `validate_custom` checks it).
+pub fn compile_custom(data: &Value) -> Result<Level, String> {
+    if data.to_string().len() > MAX_DATA * 2 {
+        return Err("the level is too big (12 KiB at most)".into());
+    }
+    build(data).map(|(_, l)| l)
+}
+
+/// "c-" + the first 12 hex of sha256("plat:" + the canonical data as compact JSON):
+/// the same rule as the scaffold's mapkey::content_key("plat", ..).
+pub fn custom_key(canonical: &Value) -> String {
+    use sha2::{Digest, Sha256};
+    let hex = hex::encode(Sha256::digest(format!("plat:{canonical}").as_bytes()));
+    format!("c-{}", &hex[..12])
+}
+
+/// A MapDoc from a start op -> the custom level to run, or why not.
+pub fn custom_of(doc: &Value) -> Result<Custom, String> {
+    if !doc.is_object() {
+        return Err("no level sent".into());
+    }
+    if doc.get("kind").and_then(Value::as_str) != Some("plat") {
+        return Err("that isn't a platformer level".into());
+    }
+    if doc.get("v").and_then(Value::as_i64) != Some(1) {
+        return Err("that level is from a newer editor".into());
+    }
+    let name = clean_name(doc.get("name"))?;
+    let data = doc.get("data").ok_or("the level has no data")?;
+    if data.to_string().len() > MAX_DATA * 2 {
+        return Err("the level is too big (12 KiB at most)".into());
+    }
+    let (canonical, mut l) = build(data)?;
+    let key = custom_key(&canonical);
+    l.id = key.clone();
+    l.name = name.clone();
+    Ok(Custom { key, name, data: canonical, lv: Arc::new(l) })
+}
+
 /// (x, z) over the solid's footprint grown by m (shrunk if m < 0).
 pub fn in_foot(s: &Solid, x: f64, z: f64, m: f64) -> bool {
     if s.r > 0.0 {
@@ -318,6 +836,8 @@ pub struct Player {
 #[derive(Debug)]
 pub struct Plat {
     pub level: Option<String>,
+    /// The custom level of the last custom start (cleared by a built-in start).
+    pub custom: Option<Custom>,
     pub mode: String,
     pub phase: Phase,
     pub go_at: f64,
@@ -342,6 +862,7 @@ impl Plat {
     pub fn new() -> Self {
         Self {
             level: None,
+            custom: None,
             mode: "race".into(),
             phase: Phase::Idle,
             go_at: 0.0,
@@ -357,8 +878,13 @@ impl Plat {
         }
     }
 
-    pub fn lv(&self) -> Option<&'static Level> {
-        self.level.as_deref().and_then(level)
+    /// The level of the run: the custom one when its key is the run's level.
+    pub fn lv(&self) -> Option<Lv> {
+        let id = self.level.as_deref()?;
+        if let Some(c) = self.custom.as_ref().filter(|c| c.key == id) {
+            return Some(Lv::Custom(c.lv.clone()));
+        }
+        level(id).map(Lv::Builtin)
     }
 
     pub fn player(&self, uid: &str) -> Option<&Player> {
@@ -427,11 +953,15 @@ impl Plat {
                        "away": p.away, "x": p.x, "y": p.y, "z": p.z, "r": p.r})
             })
             .collect();
-        json!({"level": self.level, "mode": self.mode, "phase": self.phase.as_str(),
+        let mut v = json!({"level": self.level, "mode": self.mode, "phase": self.phase.as_str(),
                "goInMs": if self.phase == Phase::Grid { (((self.go_at - t) * 1000.0) as i64).max(0) } else { 0 },
                "runMs": if self.phase == Phase::Run { self.ms(t) } else { 0 },
                "limitMs": (self.limit() * 1000.0) as i64, "goal": l.goal, "taken": self.taken,
-               "players": players, "results": self.results, "win": self.win, "chars": self.chars})
+               "players": players, "results": self.results, "win": self.win, "chars": self.chars});
+        if let (Lv::Custom(_), Some(c)) = (&l, &self.custom) {
+            v["custom"] = json!({"name": c.name, "data": c.data});
+        }
+        v
     }
 
     // -- ops --
@@ -452,15 +982,40 @@ impl Plat {
     }
 
     pub fn start(&mut self, members: &[(String, Value)], level_id: &Value, mode: &Value, t: f64) -> Option<String> {
+        self.start_with(members, level_id, mode, None, t)
+    }
+
+    /// A start op: a built-in level id, or level "custom" with the MapDoc in `custom`.
+    pub fn start_with(&mut self, members: &[(String, Value)], level_id: &Value, mode: &Value, custom: Option<&Value>,
+                      t: f64) -> Option<String> {
         if matches!(self.phase, Phase::Grid | Phase::Run) {
             return Some("a run is already on: the host can end it first".into());
         }
-        let Some(l) = level_id.as_str().and_then(level) else { return Some("pick a level".into()) };
+        let mut made: Option<Custom> = None;
+        let l: Lv = if level_id.as_str() == Some("custom") {
+            match custom_of(custom.unwrap_or(&Value::Null)) {
+                Ok(c) => {
+                    let l = Lv::Custom(c.lv.clone());
+                    made = Some(c);
+                    l
+                }
+                Err(e) => return Some(format!("bad level: {e}")),
+            }
+        } else {
+            match level_id.as_str().and_then(level) {
+                Some(l) => Lv::Builtin(l),
+                None => return Some("pick a level".into()),
+            }
+        };
         let mode = match mode {
             Value::Null => "race",
             Value::String(s) if s == "race" || s == "coop" => s.as_str(),
             _ => return Some("pick race or co-op".into()),
         };
+        if mode == "coop" && l.goal <= 0 {
+            return Some("this level has no co-op coin goal: race it instead".into());
+        }
+        self.custom = made;
         self.level = Some(l.id.clone());
         self.mode = mode.to_string();
         self.phase = Phase::Grid;
@@ -576,7 +1131,7 @@ impl Plat {
             && ym - py <= MAX_RISE * dt + SLACK_V
             && py - ym <= MAX_FALL * dt + SLACK_V
             && ym - p.base <= lift_bound(tau)
-            && !inside(l, xm, ym, zm);
+            && !inside(&l, xm, ym, zm);
         if !ok {
             p.bad += 1;
             if t - p.fix_at < FIX_GAP {
@@ -587,7 +1142,7 @@ impl Plat {
             Self::place(p, safe);
             return (false, Some(json!({"x": p.x, "y": p.y, "z": p.z})));
         }
-        if let Some(top) = support(l, xm, ym, zm, SUPPORT_M, SUPPORT_TOL) {
+        if let Some(top) = support(&l, xm, ym, zm, SUPPORT_M, SUPPORT_TOL) {
             p.base = top;
             p.air = Some(clock);
             if (ym - top).abs() < 0.08 {
@@ -610,7 +1165,7 @@ impl Plat {
         p.q = q;
         p.at = t;
         self.mark_dirty(uid);
-        self.reach(uid, l, a0, a1, t);
+        self.reach(uid, &l, a0, a1, t);
         (true, None)
     }
 
@@ -743,7 +1298,7 @@ impl Plat {
         let active = self.players.iter().any(|(_, p)| p.fin.is_none() && !p.dnf);
         let mut over = t - self.go_at >= self.limit() || self.players.is_empty() || !active;
         if self.coop() {
-            let win = l.map(|l| self.taken.len() as i64 >= l.goal).unwrap_or(false);
+            let win = l.as_ref().map(|l| self.taken.len() as i64 >= l.goal).unwrap_or(false);
             self.win = Some(win);
             over = over || win;
         } else {
@@ -756,7 +1311,7 @@ impl Plat {
             if self.coop() {
                 done["win"] = json!(self.win.unwrap_or(false));
                 done["total"] = json!(self.taken.len());
-                done["goal"] = json!(l.map(|l| l.goal).unwrap_or(0));
+                done["goal"] = json!(l.as_ref().map(|l| l.goal).unwrap_or(0));
                 done["ms"] = json!(self.ms(t));
             }
             evs.push(("done", done));
@@ -981,8 +1536,8 @@ impl PlatHub {
                 let pm = &mut v.plat;
                 if op == "start" {
                     let null = Value::Null;
-                    let mut err = pm.start(&v.lobby.members, msg.get("level").unwrap_or(&null),
-                                           msg.get("mode").unwrap_or(&null), t);
+                    let mut err = pm.start_with(&v.lobby.members, msg.get("level").unwrap_or(&null),
+                                                msg.get("mode").unwrap_or(&null), msg.get("custom"), t);
                     if err.is_none() && !self.tick_on(room_id) {
                         pm.end();
                         err = Some("the Arena is busy right now: try again in a minute".into());

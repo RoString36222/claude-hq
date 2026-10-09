@@ -172,7 +172,7 @@ struct ItemView {
 }
 
 #[derive(Serialize)]
-struct StateView {
+pub(crate) struct StateView {
     slots: Slots,
     items: Vec<ItemView>,
     coins: i64,
@@ -472,7 +472,7 @@ fn item_views(level: i64, have: &HashSet<String>, on: &Map<String, Value>) -> Ve
         .collect()
 }
 
-async fn build_state(pool: &SqlitePool, uid: &str) -> Result<StateView, sqlx::Error> {
+pub(crate) async fn build_state(pool: &SqlitePool, uid: &str) -> Result<StateView, sqlx::Error> {
     let level = hq_level(pool, uid).await?;
     let have = owned(pool, uid, level).await?;
     let on = equipped_map(pool, uid).await?;

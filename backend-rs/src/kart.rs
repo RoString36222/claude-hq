@@ -20,6 +20,15 @@
 //! Units on the wire: x, z in centimetres, yaw in whole degrees, speed in
 //! decimetres/s, the sender's clock in centiseconds (q).
 //!
+//! User-made tracks (HQ 2.5, the Track Editor): the host may start a race on
+//! `{"op":"start","track":"custom","laps":1-5,"custom":MapDoc}`. The MapDoc's
+//! `data` goes through [`validate_custom`], which returns its CANONICAL form; the
+//! race is then keyed by `mapkey::content_key("kart", canonical)` ("c-" + 12 hex),
+//! so the same track always lands on the same leaderboard and can never pose as a
+//! built-in. The compiled track lives in an `Arc` on the room's Kart (never leaked
+//! to 'static), and its name + canonical data ride along only in the view and
+//! start ("kart") events, never in snapshots.
+//!
 //! Protocol: in `{"type":"game","g":"kart","op":...}`, out
 //! `{"type":"game","g":"kart","ev":...}`. Ops: join, leave, invite, view, car,
 //! start, end, pos. Events: lobby, kart, car, go, snap, fix, finish, dnf, done,
@@ -34,6 +43,7 @@ use crate::results::Recorder;
 use crate::rooms::{Member, RoomManager};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap};
+use std::ops::Deref;
 use std::sync::{Arc, LazyLock, Mutex};
 
 pub const SCALE: f64 = 1.5; // the kit's 10 m pieces drawn 1.5x: a 13.5 m road fits 8 cars
@@ -156,6 +166,152 @@ pub static TRACKS: LazyLock<Vec<Track>> = LazyLock::new(|| {
 
 pub fn track(id: &str) -> Option<&'static Track> {
     TRACKS.iter().find(|t| t.id == id)
+}
+
+// ------------------------------------------------------------ user tracks --
+/// A user-made track: 8 to 80 tiles (shorter loops break the lap maths, which
+/// wraps the track distance at n/2 and allows MAX_STEP_TILES per frame).
+pub const CUSTOM_MIN_TILES: usize = 8;
+pub const CUSTOM_MAX_TILES: usize = 80;
+/// The serialized `data` of a MapDoc (global 2.5 limit).
+pub const CUSTOM_MAX_BYTES: usize = 12 * 1024;
+pub const SCENERY: [&str; 3] = ["forest", "tents", "empty"];
+const THEME_KEYS: [&str; 3] = ["sky", "fog", "ground"];
+
+/// A lowercase "#rrggbb" from any-case input, else None.
+fn hex_colour(v: Option<&Value>) -> Option<String> {
+    let s = v?.as_str()?;
+    let b = s.as_bytes();
+    if b.len() != 7 || b[0] != b'#' || !b[1..].iter().all(u8::is_ascii_hexdigit) {
+        return None;
+    }
+    Some(s.to_ascii_lowercase())
+}
+
+/// The compiled loop for a tiles string, as a Track (id and name left empty).
+fn build_track(tiles: &str) -> Result<Track, String> {
+    let (tiles, cells) = compile_track(tiles)?;
+    Ok(Track { id: String::new(), name: String::new(), laps: 3, n: tiles.len(), tiles, cells })
+}
+
+/// Check a kart MapDoc's `data` and return it CANONICAL: keys in the order
+/// tiles, scenery, theme{sky, fog, ground}, colours lowercased, every other key
+/// (laps included: laps is picked per race, so the key covers geometry only)
+/// dropped. Never panics; the error is a plain-words reason.
+pub fn validate_custom(data: &Value) -> Result<Value, String> {
+    let obj = data.as_object().ok_or("the track data must be an object")?;
+    let size = serde_json::to_string(data).map(|s| s.len()).unwrap_or(usize::MAX);
+    if size > CUSTOM_MAX_BYTES {
+        return Err("the track data is too big (12 KiB at most)".into());
+    }
+    let tiles = obj.get("tiles").and_then(Value::as_str).ok_or("tiles must be a string of F, S, L and R")?;
+    if let Some(i) = tiles.chars().position(|c| !"FSLR".contains(c)) {
+        return Err(format!("tile {i} is not one of F, S, L or R"));
+    }
+    let n = tiles.len(); // ASCII from here on
+    if !(CUSTOM_MIN_TILES..=CUSTOM_MAX_TILES).contains(&n) {
+        return Err(format!("a track has {CUSTOM_MIN_TILES} to {CUSTOM_MAX_TILES} tiles, this one has {n}"));
+    }
+    if !tiles.starts_with('F') {
+        return Err("the first tile must be F, the start line".into());
+    }
+    let tr = build_track(tiles).map_err(|e| {
+        if e.starts_with("bad track at tile") {
+            format!("the loop runs over itself ({})", e.trim_start_matches("bad track at "))
+        } else {
+            "the loop does not close: it must come back to the start line heading the same way".into()
+        }
+    })?;
+    if !grid_fits(&tr) {
+        return Err("the starting grid is off the road: make the tile behind the start line a straight".into());
+    }
+    let scenery = obj
+        .get("scenery")
+        .and_then(Value::as_str)
+        .filter(|s| SCENERY.contains(s))
+        .ok_or("scenery must be forest, tents or empty")?;
+    let theme = obj.get("theme").and_then(Value::as_object).ok_or("theme must have sky, fog and ground colours")?;
+    let mut th = Map::new();
+    for k in THEME_KEYS {
+        let c = hex_colour(theme.get(k)).ok_or_else(|| format!("theme.{k} must be a colour like #7ab0d8"))?;
+        th.insert(k.to_string(), Value::String(c));
+    }
+    Ok(json!({"tiles": tiles, "scenery": scenery, "theme": th}))
+}
+
+/// Every starting-grid slot is on the road. The grid sits behind the line, in
+/// tile 0 and the last tile: a straight there holds all 8 slots, and so does a
+/// right turn into the line, but a left turn puts the outside slots of the back
+/// rows past the barrier.
+pub fn grid_fits(tr: &Track) -> bool {
+    (0..MAX_PLAYERS).all(|k| {
+        let (x, z) = grid_slot(tr, k);
+        on_road(tr, x, z, 0.0)
+    })
+}
+
+/// A MapDoc name: 1-32 printable characters once trimmed, no angle brackets, no links.
+fn doc_name(v: Option<&Value>) -> Result<String, String> {
+    let s = v.and_then(Value::as_str).ok_or("the track needs a name")?.trim();
+    let n = s.chars().count();
+    if n == 0 || n > 32 {
+        return Err("a name has 1 to 32 characters".into());
+    }
+    if s.chars().any(|c| !crate::rooms::py_printable(c) || c == '<' || c == '>') {
+        return Err("the name has a character that isn't allowed".into());
+    }
+    if s.to_lowercase().contains("http") {
+        return Err("no links in the name".into());
+    }
+    Ok(s.to_string())
+}
+
+/// A room's user-made track: compiled once per start and shared by Arc.
+#[derive(Clone, Debug)]
+pub struct CustomTrack {
+    pub track: Arc<Track>,
+    /// "c-" + 12 hex: the race's track id, results key and board.
+    pub key: String,
+    pub name: String,
+    /// The canonical data, as sent back to clients.
+    pub data: Value,
+}
+
+/// A whole MapDoc `{"kind":"kart","v":1,"name","data"}` to a playable track.
+pub fn custom_track(doc: &Value) -> Result<CustomTrack, String> {
+    let d = doc.as_object().ok_or("send the track as a map document")?;
+    if d.get("kind").and_then(Value::as_str) != Some("kart") {
+        return Err("this is not a kart track".into());
+    }
+    if d.get("v").and_then(Value::as_i64) != Some(1) {
+        return Err("this track was made by a newer editor".into());
+    }
+    let name = doc_name(d.get("name"))?;
+    let data = validate_custom(d.get("data").unwrap_or(&Value::Null))?;
+    let tiles = data["tiles"].as_str().unwrap_or_default();
+    let mut track = build_track(tiles)?;
+    let key = crate::mapkey::content_key("kart", &data);
+    track.id = key.clone();
+    track.name = name.clone();
+    Ok(CustomTrack { track: Arc::new(track), key, name, data })
+}
+
+/// The track a race runs on: a built-in, or the room's own (cloned out of the
+/// Kart first, so the referee can borrow its players mutably while it reads it).
+#[derive(Clone, Debug)]
+pub enum TrackRef {
+    Builtin(&'static Track),
+    Custom(Arc<Track>),
+}
+
+impl Deref for TrackRef {
+    type Target = Track;
+    fn deref(&self) -> &Track {
+        match self {
+            TrackRef::Builtin(t) => t,
+            TrackRef::Custom(t) => t,
+        }
+    }
 }
 
 pub fn cell_of(v: f64) -> i64 {
@@ -294,7 +450,10 @@ fn lap_of_u(u: f64, laps: i64, n: usize) -> i64 {
 /// the next one from done or idle.
 #[derive(Debug)]
 pub struct Kart {
+    /// A built-in track id, or a user track's "c-" key.
     pub track: Option<String>,
+    /// The room's user-made track, if the host started one (cleared by a built-in start).
+    pub custom: Option<CustomTrack>,
     pub laps: i64,
     pub phase: Phase,
     pub go_at: f64,
@@ -316,6 +475,7 @@ impl Kart {
     pub fn new() -> Self {
         Self {
             track: None,
+            custom: None,
             laps: 3,
             phase: Phase::Idle,
             go_at: 0.0,
@@ -329,8 +489,18 @@ impl Kart {
     }
 
     // -- views --
-    pub fn tr(&self) -> Option<&'static Track> {
-        self.track.as_deref().and_then(track)
+    pub fn tr(&self) -> Option<TrackRef> {
+        let id = self.track.as_deref()?;
+        match &self.custom {
+            Some(c) if c.key == id => Some(TrackRef::Custom(c.track.clone())),
+            _ => track(id).map(TrackRef::Builtin),
+        }
+    }
+
+    /// The user track this race runs on, for the view.
+    fn custom_view(&self) -> Option<Value> {
+        let c = self.custom.as_ref()?;
+        (self.track.as_deref() == Some(c.key.as_str())).then(|| json!({"name": c.name, "data": c.data}))
     }
 
     pub fn player(&self, uid: &str) -> Option<&Player> {
@@ -378,11 +548,15 @@ impl Kart {
                        "fin": p.fin, "dnf": p.dnf, "away": p.away, "x": p.x, "z": p.z, "r": p.r})
             })
             .collect();
-        json!({"track": track, "laps": self.laps, "phase": self.phase.as_str(),
+        let mut v = json!({"track": track, "laps": self.laps, "phase": self.phase.as_str(),
                "goInMs": if self.phase == Phase::Grid { (((self.go_at - t) * 1000.0) as i64).max(0) } else { 0 },
                "raceMs": if self.phase == Phase::Race { self.ms(t) } else { 0 },
                "players": players, "results": self.results, "cars": self.cars,
-               "scale": SCALE, "tracks": TRACKS.iter().map(|t| t.id.clone()).collect::<Vec<_>>()})
+               "scale": SCALE, "tracks": TRACKS.iter().map(|t| t.id.clone()).collect::<Vec<_>>()});
+        if let Some(c) = self.custom_view() {
+            v["custom"] = c;
+        }
+        v
     }
 
     // -- ops --
@@ -406,22 +580,46 @@ impl Kart {
     pub fn start(&mut self, members: &[(String, Value)], track_id: &Value, laps: &Value, t: f64)
         -> Option<String>
     {
-        if matches!(self.phase, Phase::Grid | Phase::Race) {
+        if self.running() {
             return Some("a race is already on: the host can end it first".into());
         }
         let Some(tr) = track_id.as_str().and_then(track) else {
             return Some("pick a track".into());
         };
+        self.custom = None;
+        self.begin(members, TrackRef::Builtin(tr), tr.id.clone(), laps, tr.laps, t);
+        None
+    }
+
+    /// The host's own track (a kart MapDoc). An error reads "bad track: <why>".
+    pub fn start_custom(&mut self, members: &[(String, Value)], doc: &Value, laps: &Value, t: f64)
+        -> Option<String>
+    {
+        if self.running() {
+            return Some("a race is already on: the host can end it first".into());
+        }
+        let c = match custom_track(doc) {
+            Ok(c) => c,
+            Err(e) => return Some(format!("bad track: {e}")),
+        };
+        let (tr, key) = (TrackRef::Custom(c.track.clone()), c.key.clone());
+        self.custom = Some(c);
+        self.begin(members, tr, key, laps, 3, t);
+        None
+    }
+
+    fn begin(&mut self, members: &[(String, Value)], tr: TrackRef, id: String, laps: &Value,
+             default_laps: i64, t: f64) {
         let n_laps = as_num(Some(laps), MIN_LAPS, MAX_LAPS);
-        self.track = Some(tr.id.clone());
-        self.laps = n_laps.map(|l| l as i64).unwrap_or(tr.laps);
+        self.track = Some(id);
+        self.laps = n_laps.map(|l| l as i64).unwrap_or(default_laps);
         self.phase = Phase::Grid;
         self.go_at = t + COUNTDOWN;
         self.first_at = None;
         self.results = None;
         self.players = Vec::new();
         for (k, (uid, pubv)) in members.iter().take(MAX_PLAYERS).enumerate() {
-            let (gx, gz) = grid_slot(tr, k);
+            let (gx, gz) = grid_slot(&tr, k);
             self.players.push((uid.clone(), Player {
                 user: pubv.clone(),
                 slot: k,
@@ -448,7 +646,6 @@ impl Kart {
         }
         self.dirty = self.players.iter().map(|(u, _)| u.clone()).collect();
         self.order_sig = Vec::new();
-        None
     }
 
     pub fn end(&mut self) {
@@ -509,7 +706,7 @@ impl Kart {
             _ => (t - p.at).max(0.0),
         };
         let (xm, zm) = (x / 100.0, z / 100.0);
-        let loc = locate(tr, xm, zm);
+        let loc = locate(&tr, xm, zm);
         let moved = (xm - p.x as f64 / 100.0).hypot(zm - p.z as f64 / 100.0);
         let mut delta = 0.0;
         let mut ok = dt >= 0.0
@@ -916,8 +1113,12 @@ impl KartHub {
                 let km = &mut v.kart;
                 if op == "start" {
                     let null = Value::Null;
-                    let mut err = km.start(&v.lobby.members, msg.get("track").unwrap_or(&null),
-                                           msg.get("laps").unwrap_or(&null), t);
+                    let laps = msg.get("laps").unwrap_or(&null);
+                    let mut err = if msg.get("track").and_then(Value::as_str) == Some("custom") {
+                        km.start_custom(&v.lobby.members, msg.get("custom").unwrap_or(&null), laps, t)
+                    } else {
+                        km.start(&v.lobby.members, msg.get("track").unwrap_or(&null), laps, t)
+                    };
                     if err.is_none() && !self.tick_on(room_id) {
                         km.end();
                         err = Some("the Arena is busy right now: try again in a minute".into());

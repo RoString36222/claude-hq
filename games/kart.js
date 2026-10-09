@@ -15,6 +15,11 @@
  *
  * The KART-TRACK block mirrors backend/app/kart.py (tests/test_kart_sync.py checks both
  * against each other under node).
+ *
+ * HQ 2.5: tracks made in the Track Editor (games/trackedit.js) race here too, solo as a
+ * time trial or in a room on an Arena that says "maps": the host sends the whole MapDoc
+ * with "start" and the Arena answers with a view keyed by the track's content ("c-" +
+ * 12 hex), carrying custom:{name, data} so every client compiles the same tiles.
  */
 (function(){
 "use strict";
@@ -114,6 +119,41 @@ function compileTracks(){
     var path = LEGACY ? t.legacy : t.path; if(typeof path !== "string") return;
     try { var c = KT.compileTrack(path); c.id = t.id; c.name = t.name; c.laps = t.laps|0 || 3;
       c.theme = t.theme || {}; c.scenery = t.scenery || "forest"; TRACKS[t.id] = c; } catch(e){} });
+  if(!LEGACY) Object.keys(CUSTOM).forEach(compileCustom);   // user tracks race at the new scale only
+}
+
+/* ---------- user-made tracks (HQ 2.5): MapDoc {kind:"kart", v:1, name, data:{tiles, scenery, theme}} ---------- */
+var CUSTOM = {}, CKEY_RE = /^c-[0-9a-f]{12}$/, SCENERY = ["forest", "tents", "empty"], HEX_RE = /^#[0-9a-fA-F]{6}$/;
+var PENDING_SOLO = null, PENDING_ROOM = null;
+// A clean MapDoc (only the keys the Arena reads), or null when it isn't a kart track.
+function cleanDoc(doc){
+  if(!doc || typeof doc !== "object" || doc.kind !== "kart" || !doc.data || typeof doc.data !== "object") return null;
+  var d = doc.data, th = d.theme && typeof d.theme === "object" ? d.theme : {};
+  if(typeof d.tiles !== "string" || !/^F[FSLR]{7,79}$/.test(d.tiles)) return null;
+  return {kind: "kart", v: 1, name: String(doc.name || "").trim().slice(0, 32) || "My track",
+          data: {tiles: d.tiles, scenery: SCENERY.indexOf(d.scenery) >= 0 ? d.scenery : "forest",
+                 theme: {sky: HEX_RE.test(th.sky) ? th.sky : "#9fd3f0", fog: HEX_RE.test(th.fog) ? th.fog : "#cfe8f2",
+                         ground: HEX_RE.test(th.ground) ? th.ground : "#76b85a"}}};
+}
+function compileCustom(id){
+  var d = CUSTOM[id]; if(!d) return null;
+  try {
+    var c = KT.compileTrack(d.data.tiles); c.id = id; c.name = d.name; c.laps = 3; c.custom = true;
+    c.theme = d.data.theme; c.scenery = d.data.scenery; TRACKS[id] = c; return c;
+  } catch(e){ delete CUSTOM[id]; return null; }
+}
+// Compile a user track under an id: the Arena's c- key in a room, a local x- id solo.
+function addCustom(id, doc){
+  var d = cleanDoc(doc); if(!d) return null;
+  CUSTOM[id] = d;
+  return LEGACY ? null : compileCustom(id);
+}
+function localId(d){ return "x-"+(api.hash(JSON.stringify(d.data))>>>0).toString(16); }
+function mapsOk(){ var A = window.ARENA; return !!(A && A.arena && A.arena.maps); }
+// The Track Editor's saved drafts (read only: the editor owns workshop.kart).
+function drafts(){
+  var s = api.save, w = s && s.workshop, a = w && Array.isArray(w.kart) ? w.kart : [];
+  return a.map(cleanDoc).filter(function(d){ return d; });
 }
 // Switch tracks, scale and top speed to match the server (or solo). True if anything changed.
 function useServer(legacy){
@@ -155,6 +195,7 @@ function ksave(){
 var CUR = null;
 
 function makeGame(host, opts){
+  opts = opts || {};
   var V = {mode: opts.mode, ctx: opts.ctx || null, alive: true, paused: false, track: null, laps: 3, phase: "idle",
     goAt: 0, startAt: 0, cars: {}, order: [], standings: [], results: null, finishedAt: null, lapTimes: [], lastLapAt: 0,
     sendAt: 0, sentKey: "", wrongFor: 0, note: "", round: null, gotView: false, unsupported: false, map: !!ksave().map,
@@ -279,6 +320,7 @@ function makeGame(host, opts){
       grid.appendChild(card);
     });
     menu.appendChild(grid);
+    if(mp && host && LEGACY === false && mapsOk()) menu.appendChild(customPicker(lsel));
     if(mp){
       if(!host) menu.appendChild(api.mk("p", "vg-muted", "Waiting for the host (★ in the lobby) to pick a track."));
       if(V.results) menu.appendChild(resultsTable(V.results, "Last race"));
@@ -286,9 +328,41 @@ function makeGame(host, opts){
         menu.appendChild(api.btn("Watch the race", "primary", function(){ applyView(V.round, true); }));
     }
   }
+  // "Custom…": race one of your own tracks (Track Editor drafts, or the one sent from it).
+  function customPicker(lsel){
+    var box = api.mk("div", "vg-kart-custom");
+    box.appendChild(api.mk("h4", "vg-golf-h", "Custom… your own tracks"));
+    var list = drafts(), pend = PENDING_ROOM;
+    if(pend) list = [pend].concat(list.filter(function(d){ return d.data.tiles !== pend.data.tiles || d.name !== pend.name; }));
+    if(!list.length){
+      box.appendChild(api.mk("p", "vg-muted", "No tracks yet. Paint one in the Track Editor, save it, and it shows up here."));
+      return box;
+    }
+    var row = api.mk("div", "vg-row"), sel = api.mk("select", "vg-select"); sel.setAttribute("aria-label", "Your track");
+    list.slice(0, 32).forEach(function(d, i){
+      var o = api.mk("option", null, d.name+" · "+d.data.tiles.length+" tiles"+(pend && i === 0 ? " (from the editor)" : ""));
+      o.value = String(i); sel.appendChild(o);
+    });
+    row.appendChild(sel);
+    row.appendChild(api.btn("Start this track", "primary", function(){
+      var d = list[sel.value|0]; if(!d || !MP) return;
+      if(MP.send("kart", "start", {track: "custom", laps: clamp(+lsel.value || 3, 1, 5), custom: d})){
+        PENDING_ROOM = null;
+        if(HQV.story && HQV.story.note) HQV.story.note("race-custom");
+      }
+    }));
+    box.appendChild(row);
+    box.appendChild(api.mk("p", "vg-muted", "The Arena checks the track and keeps a leaderboard for it."));
+    return box;
+  }
   function inRace(view){ return (view.players || []).some(function(p){ return p.user && p.user.userId === myId(); }); }
   function renderTools(){
     tools.textContent = "";
+    if(opts.onExit && V.mode === "practice"){
+      tools.appendChild(api.btn("Back to the editor", "", function(){ opts.onExit(); }));
+      tools.appendChild(api.btn("Camera", "", function(){ V.cam = (V.cam + 1) % 3; if(canvas) canvas.focus(); }));
+      return;
+    }
     tools.appendChild(api.btn(V.mode === "mp" ? "Leave the race" : "Back to tracks", "", function(){
       if(V.mode === "mp" && MP && isHost() && (V.phase === "grid" || V.phase === "race")){
         if(!window.confirm("End the race for everyone?")) return;
@@ -319,6 +393,9 @@ function makeGame(host, opts){
     if(V.mode === "mp"){
       SERVER_IDS = view && Array.isArray(view.tracks) ? view.tracks.filter(function(x){ return typeof x === "string"; }).slice(0, 64) : null;
       if(useServer(!view || view.scale == null)){ V.track = null; if(R3) R3.clearTrack(); }
+      // a user track: compile what the Arena sends before looking it up
+      if(view && view.custom && typeof view.track === "string" && CKEY_RE.test(view.track) && !TRACKS[view.track])
+        addCustom(view.track, {kind: "kart", name: view.custom.name, data: view.custom.data});
     }
     if(!view || !TRACKS[view.track]){ if(V.phase !== "idle" && V.mode === "mp"){ resetRace(); showStage(false); } renderMenu(); return; }
     if(V.mode !== "mp") return;
@@ -414,8 +491,9 @@ function makeGame(host, opts){
       if(isHost()) row.appendChild(api.btn("Pick the next track", "primary", function(){ resetRace(); showStage(false); renderMenu(); }));
       else row.appendChild(api.btn("Back to the lobby", "", function(){ resetRace(); showStage(false); renderMenu(); }));
     } else {
-      row.appendChild(api.btn("Race again", "primary", function(){ startPractice(V.track.id, V.laps); }));
-      row.appendChild(api.btn("Tracks", "", function(){ resetRace(); showStage(false); renderMenu(); }));
+      row.appendChild(api.btn(opts.onExit ? "Drive again" : "Race again", "primary", function(){ startPractice(V.track.id, V.laps); }));
+      if(opts.onExit) row.appendChild(api.btn("Back to the editor", "", function(){ opts.onExit(); }));
+      else row.appendChild(api.btn("Tracks", "", function(){ resetRace(); showStage(false); renderMenu(); }));
     }
     cardBox.appendChild(row); cardBox.classList.remove("hidden");
     var mine = (rows || []).filter(function(r){ return r.user && r.user.userId === myId(); })[0];
@@ -500,7 +578,8 @@ function makeGame(host, opts){
       var tt = now(), last = (tt - (V.lastLapAt || V.startAt))*1000; V.lapTimes.push(last);
       C.fin = (tt - V.startAt)*1000; V.finishedAt = tt; V.phase = "done";
       var best = Math.min.apply(null, V.lapTimes), sv = ksave(), prev = sv.best[tr.id];
-      if(!prev || best < prev){ sv.best[tr.id] = Math.round(best); api.persist(); api.toast("🏁 New best lap on "+tr.name+": "+fmt(best)); }
+      // user tracks keep no best in the save: every edit is a new track
+      if(!tr.custom && (!prev || best < prev)){ sv.best[tr.id] = Math.round(best); api.persist(); api.toast("🏁 New best lap on "+tr.name+": "+fmt(best)); }
       var lapsAt = [], s = 0; V.lapTimes.forEach(function(x){ s += x; lapsAt.push(Math.round(s)); });
       showResults([{user: {userId: "me", displayName: "You"}, place: 1, ms: C.fin, dnf: false, laps: lapsAt}]);
     }
@@ -935,7 +1014,18 @@ function makeGame(host, opts){
   if(typeof ResizeObserver !== "undefined"){ ro = new ResizeObserver(onResize); ro.observe(host); }
   renderKeys();
   renderMenu();
-  loadData().then(function(){ if(!V.alive) return; renderMenu(); if(V.mode === "mp" && V.gotView) applyView(V.round); else if(V.mode === "mp") requestView(); },
+  loadData().then(function(){
+    if(!V.alive) return;
+    renderMenu();
+    if(V.mode === "mp" && V.gotView) applyView(V.round); else if(V.mode === "mp") requestView();
+    if(V.mode === "practice" && opts.custom){
+      // a solo drive on a user track (Track Editor test drive, or a map from the Workshop)
+      var d = cleanDoc(opts.custom), id = d && localId(d);
+      useServer(false);
+      if(d && addCustom(id, d)){ startPractice(id, clamp(opts.laps|0 || 2, 1, 5)); if(HQV.story && HQV.story.note && !opts.onExit) HQV.story.note("race-custom"); }
+      else { V.note = "That track doesn't close into a loop."; api.toast(V.note); }
+    }
+  },
     function(){ V.note = "Couldn't load the tracks."; renderMenu(); });
   if(!raf) raf = requestAnimationFrame(frame);
   V.destroy = function(){
@@ -960,7 +1050,7 @@ function makeGame(host, opts){
 
 /* ---------- registration: a solo card and a "with friends" card ---------- */
 HQV.register({id: "kart", name: "Kart Racing", icon: "🏎️", desc: "Arcade racing on three tracks: beat your best lap",
-  mount: function(el){ if(CUR) CUR.destroy(); CUR = makeGame(el, {mode: "practice"}); },
+  mount: function(el){ if(CUR) CUR.destroy(); var c = PENDING_SOLO; PENDING_SOLO = null; CUR = makeGame(el, {mode: "practice", custom: c}); },
   unmount: function(){ if(CUR){ CUR.destroy(); CUR = null; } },
   pause: function(){ if(CUR) CUR.paused = true; },
   resume: function(){ if(CUR) CUR.paused = false; }});
@@ -979,6 +1069,22 @@ if(MP){
     ctx.stop = function(){ g.destroy(); if(CUR === g) CUR = null; };
   });
 }
+// User tracks from the Track Editor / Workshop. practice(): a solo drive inside another
+// view (onExit brings it back); solo(): open the kart card on it; room(): open the
+// multiplayer card with it picked, for the host to start.
+HQV.kartCustom = {
+  clean: cleanDoc,
+  practice: function(host, doc, o){
+    o = o || {};
+    if(CUR) CUR.destroy();
+    var g = CUR = makeGame(host, {mode: "practice", custom: doc, onExit: o.onExit, laps: o.laps});
+    var destroy = g.destroy;
+    g.destroy = function(){ destroy(); if(CUR === g) CUR = null; };
+    return g;
+  },
+  solo: function(doc){ PENDING_SOLO = cleanDoc(doc); if(PENDING_SOLO) api.open("kart"); return !!PENDING_SOLO; },
+  room: function(doc){ PENDING_ROOM = cleanDoc(doc); if(PENDING_ROOM && MP) api.open("mp-kart"); return !!(PENDING_ROOM && MP); }
+};
 HQV.kartTrack = KT;      // for the browser smoke test
 HQV.kartDebug = function(){ return CUR; };
 })();

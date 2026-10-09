@@ -437,3 +437,34 @@ html.hq-calm .vg-fps-hitm,html.hq-calm .vg-fps-hurt,html.hq-calm .vg-fps-vig{tra
 html.hq-calm .vg-fps-vig{display:none}
 @media (prefers-reduced-motion:reduce){ .vg-fps-hitm,.vg-fps-hurt,.vg-fps-vig{transition:none} .vg-fps-vig{display:none} }
 @media (max-width:560px){ .vg-fps-hp{width:120px} .vg-fps-hpt{width:60px} .vg-fps-ammo{min-width:100px} .vg-fps-feed{display:none} }
+
+/* HQ 2.5 Track Editor (games/trackedit.js) */
+.vg-te-cols{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+.vg-te-left{flex:1 1 300px;max-width:480px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.vg-te-right{flex:1 1 260px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.vg-te-grid{display:block;max-width:100%;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--panel2);
+  touch-action:none;cursor:crosshair;outline-offset:3px}
+.vg-te-grid:focus-visible{outline:2px solid var(--brand)}
+.vg-te-tool[aria-pressed="true"]{border-color:var(--brand)}
+.vg-te-status{margin:0;padding:8px 10px;border-radius:var(--radius-sm);font-weight:600;font-size:13px;border:1px solid var(--line);background:var(--panel2)}
+.vg-te-status.ok{color:var(--good);background:var(--goodbg);border-color:var(--good)}
+.vg-te-status.bad{color:var(--need);background:var(--needbg);border-color:var(--need)}
+.vg-te-cursor{margin:0;min-height:1.3em}
+.vg-te-keys{margin:0;font-size:12px}
+.vg-te-field{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.vg-te-field>span{min-width:72px}
+.vg-te-input{flex:1;min-width:0;height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);font:inherit}
+.vg-te-input:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+.vg-te-swatches{display:flex;flex-direction:column;gap:6px}
+.vg-te-swrow{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.vg-te-swlabel{min-width:72px;font-size:13px;color:var(--muted)}
+.vg-te-sw{width:24px;height:24px;padding:0;border-radius:6px;border:1px solid var(--line);cursor:pointer}
+.vg-te-sw.on{outline:2px solid var(--ink);outline-offset:1px}
+.vg-te-sw:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.vg-te-preview{width:220px;height:64px;border-radius:var(--radius-sm);border:1px solid var(--line)}
+.vg-te-drafts{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:13px}
+.vg-te-drafts li{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.vg-te-drafts li.on b{color:var(--brand)}
+.vg-te-drive{display:flex;flex-direction:column;gap:8px}
+.vg-kart-custom{display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:var(--radius-sm);border:1px dashed var(--line)}
+@media (max-width:560px){ .vg-te-field>span,.vg-te-swlabel{min-width:56px} }

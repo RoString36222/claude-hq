@@ -14,6 +14,7 @@ mod fps;
 mod hq;
 mod kart;
 mod loot;
+mod mapkey;
 mod music;
 mod nudges;
 mod pantry;

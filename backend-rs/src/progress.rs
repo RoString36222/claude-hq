@@ -170,6 +170,14 @@ const COSMETICS: &[(&str, &str, &str)] = &[
     ("d-gnomes", "decor", "gnomes"),
     ("d-fireworks", "decor", "fireworks"),
     ("d-neon", "decor", "neon"),
+    // 2.5 grant-only (loot, prestige)
+    ("k-prism", "kart", "#b388ff"),
+    ("r-shadow", "runner", "#3a3550"),
+    ("g-plasma", "blaster", "#7df9ff"),
+    ("b-pokeball", "ball", "#e3350d"),
+    ("f-holo", "frame", "#a0f0ff"),
+    ("f-star", "frame", "#f5d76e"),
+    ("d-crown", "decor", "crown"),
 ];
 
 /// `app/cosmetics.py::equipped`: slot -> rendered value, dropping any entry
@@ -1106,7 +1114,7 @@ mod tests {
 
     #[test]
     fn the_catalogue_covers_every_slot() {
-        assert_eq!(COSMETICS.len(), 21);
+        assert_eq!(COSMETICS.len(), 28);
         for s in ["kart", "runner", "blaster", "ball", "frame", "decor"] {
             assert!(COSMETICS.iter().any(|e| e.1 == s), "no item for slot {s}");
         }

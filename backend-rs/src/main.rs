@@ -18,6 +18,7 @@ mod nudges;
 mod pantry;
 mod platformer;
 mod portraits;
+mod prestige;
 mod privrooms;
 mod progress;
 mod protocol;
@@ -864,6 +865,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(nudges::routes())
         .merge(pantry::routes())
         .merge(privrooms::routes())
+        .merge(prestige::routes())
         .merge(progress::routes())
         .merge(quickplay::routes())
         .merge(server_stats::routes())

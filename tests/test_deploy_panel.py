@@ -186,6 +186,72 @@ class DeployProgress(unittest.TestCase):
         self.assertEqual((r["phase"], r["idx"], r["state"]), ("FETCH", 1, "running"))
 
 
+def _media_blocks(css, header):
+    """Every @media rule with this header, joined.
+
+    There is more than one -- each sits next to the rules it modifies -- and a
+    test that reads only the first would check the wrong half. Braces are
+    matched rather than assuming how the block is indented.
+    """
+    out, at = [], 0
+    while True:
+        k = css.find(header, at)
+        if k < 0:
+            break
+        i = css.index("{", k + len(header))
+        depth, j = 0, i
+        while j < len(css):
+            if css[j] == "{":
+                depth += 1
+            elif css[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    out.append(css[i + 1:j])
+                    break
+            j += 1
+        else:
+            raise AssertionError("unterminated @media block")
+        at = j
+    assert out, "no " + header + " block at all"
+    return "\n".join(out)
+
+
+class DeployEnding(unittest.TestCase):
+    """A finished deploy gets a sequence, and the two are nothing alike.
+
+    These are structural checks on the page, not a rendering test -- they exist
+    for the one regression that would be silent and costly: reduced motion must
+    switch the celebration OFF while leaving the RESULT on screen. A blanket
+    `display:none` in that media query would hide whether the deploy worked
+    from exactly the people most likely to have the setting on.
+    """
+
+    PAGE = deploy_panel.PAGE
+
+    def test_success_and_failure_have_separate_sequences(self):
+        for cls in ("done-ok", "done-fail"):
+            self.assertIn(cls, self.PAGE)
+        # Nothing alike: a sweep for one, a vignette alarm and a shake for the
+        # other, and they must not share a keyframe name.
+        for name in ("sweep", "chipflash", "stampin", "alarmv", "stampbad", "hardshake"):
+            self.assertIn("@keyframes " + name, self.PAGE)
+
+    def test_reduced_motion_keeps_the_verdict_visible(self):
+        block = _media_blocks(self.PAGE, "@media (prefers-reduced-motion:reduce)")
+        self.assertIn("animation:none", block)
+        self.assertNotIn(".verdict{display:none", block.replace(" ", ""))
+
+    def test_the_ending_fires_once(self):
+        """paint() runs on every poll and again on the final settle; a sweep
+        that restarts each time reads as a second deploy starting."""
+        self.assertIn("if(ENDED) return; ENDED=true;", self.PAGE)
+
+    def test_the_post_decides_the_outcome_not_the_poll(self):
+        """A last poll can read "running" off a log the release has not
+        finished flushing, so the ending is fired from the POST's own answer."""
+        self.assertIn("finish(j.ok", self.PAGE)
+
+
 class ReleasedShaTests(unittest.TestCase):
     """The panel's "running" is the released commit, not the checkout's HEAD."""
 

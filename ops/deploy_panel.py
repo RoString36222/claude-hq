@@ -382,11 +382,71 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
  .nowline{color:var(--dim);font-size:10px;letter-spacing:.1em;text-align:right;
    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:none}
 
+ /* ------------------------------------------- the ending ----------------- */
+ /* A deploy finishing is the one moment this page exists for, so it gets a
+    sequence rather than a colour change. Two of them, deliberately nothing
+    alike: you must be able to tell them apart from across a room, with the
+    screen in peripheral vision, before reading a word. */
+
+ /* SUCCESS -- a CRT flyback sweep, then the stamp lands. */
+ @keyframes sweep{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+ @keyframes chipflash{0%,100%{background:#1c1c1c}40%{background:var(--green);color:#071a04}}
+ @keyframes stampin{
+   0%{transform:scale(1.6);opacity:0;letter-spacing:.5em}
+   60%{transform:scale(1);opacity:1;letter-spacing:.02em}
+   70%{transform:scale(1.04)}
+   100%{transform:scale(1);opacity:1;letter-spacing:.02em}}
+ @keyframes okglow{0%,100%{text-shadow:none}50%{text-shadow:0 0 22px var(--green)}}
+
+ /* FAILURE -- a vignette alarm, not a full-screen strobe. Two pulses just
+    over two per second: bright enough to pull your eye from the next desk,
+    and deliberately short of the three-per-second flash threshold, which a
+    full-bleed red strobe would have sailed past. */
+ @keyframes alarmv{0%,100%{box-shadow:inset 0 0 0 0 rgba(230,25,25,0)}
+   50%{box-shadow:inset 0 0 120px 24px rgba(230,25,25,.55)}}
+ @keyframes stampbad{
+   0%{transform:scale(1.5) skewX(-14deg);opacity:0}
+   45%{transform:scale(1) skewX(0);opacity:1}
+   55%{text-shadow:-4px 0 #2ff3ff,4px 0 var(--red);transform:translateX(3px)}
+   70%{text-shadow:4px 0 #2ff3ff,-4px 0 var(--red);transform:translateX(-3px)}
+   100%{text-shadow:none;transform:none;opacity:1}}
+ @keyframes hardshake{
+   10%{transform:translateX(-7px)}30%{transform:translateX(7px)}
+   50%{transform:translateX(-5px)}70%{transform:translateX(4px)}
+   90%{transform:translateX(-2px)}100%{transform:none}}
+
+ /* The sweep rides over the whole console, once, and is gone. */
+ .flash{position:fixed;inset:0;pointer-events:none;z-index:12;display:none;overflow:hidden}
+ .flash.go{display:block}
+ .flash.go::before{content:"";position:absolute;top:0;bottom:0;width:45%;
+   background:linear-gradient(90deg,transparent,rgba(74,246,38,.30),rgba(255,255,255,.75),
+     rgba(74,246,38,.30),transparent);
+   animation:sweep .55s cubic-bezier(.4,0,.2,1) 1 both}
+ .flash.bad{animation:alarmv .45s steps(2) 2}
+ .flash.bad::before{display:none}
+
+ .verdict{display:none;margin-top:10px;padding:10px 12px;text-align:center;
+   font:900 clamp(1.3rem,5vw,2.2rem)/1 var(--sans);letter-spacing:.02em;
+   border:2px solid currentColor}
+ .rig.done-ok .verdict,.rig.done-fail .verdict{display:block}
+ .rig.done-ok .verdict{color:var(--green);animation:stampin .5s steps(6) 1 both,
+   okglow 1.1s ease-in-out 2}
+ .rig.done-fail .verdict{color:var(--red);animation:stampbad .6s steps(7) 1 both}
+ .rig.done-ok .chip{animation:chipflash .45s steps(3) 1 both;
+   animation-delay:calc(var(--i,0) * 70ms)}
+ .rig.done-fail{animation:hardshake .4s steps(5) 2}
+ /* The failed run keeps its hazard stripes, stopped: a frozen warning, not a
+    tidy end state. */
+ .rig.done-fail .fill::after{animation:none;opacity:.85}
+
  /* Everything above is ornament on a state the text already gives, so this
     turns all of it off and keeps the bar's width, which is the information. */
  @media (prefers-reduced-motion:reduce){
    .act::after,.act.armed::after,.act.primary:hover>span,.rig,.fill::after,
-   .head,.chip.cur{animation:none!important}
+   .head,.chip.cur,.flash,.flash.go::before,.rig.done-ok .verdict,
+   .rig.done-fail .verdict,.rig.done-ok .chip,.rig.done-fail{animation:none!important}
+   /* The verdict still SHOWS -- it is the result, not the celebration. */
+   .flash.go,.flash.bad{display:none}
    .act::after{transition:none}
    .fill,.head{transition:none}
  }
@@ -403,6 +463,7 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
    .act{flex:1 1 100%}
  }
 </style>
+<div class="flash" id="flash" aria-hidden="true"></div>
 <div class="grain" aria-hidden="true"></div>
 <div class="scan" aria-hidden="true"></div>
 <main class="wrap">
@@ -443,6 +504,7 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
    <div class="head" id="head"></div></div>
   <div class="read"><output class="pct" id="pct">--</output>
    <span class="nowline" id="nowline">standing by</span></div>
+  <div class="verdict" id="verdict"></div>
  </section>
 
  <h2>deploy log <span class="rule"></span> tail 40</h2>
@@ -460,16 +522,36 @@ function msg(t,cls){var m=$id("msg");m.textContent=t;m.className="msg show "+cls
 (function(){
   var c=$id("chips");
   for(var i=0;i<PHASES.length;i++){
-    var d=document.createElement("div");d.className="chip";d.textContent=PHASES[i];c.appendChild(d);
+    var d=document.createElement("div");d.className="chip";d.textContent=PHASES[i];
+    d.style.setProperty("--i",i);   // staggers the success cascade
+    c.appendChild(d);
   }
 })();
+
+// The ending fires ONCE. paint() runs on every poll and again on the final
+// settle, so without this the sweep would restart and the stamp would re-land
+// each time -- which reads as a second deploy starting.
+var ENDED=false;
+function finish(ok,line){
+  if(ENDED) return; ENDED=true;
+  var rig=$id("rig"), fl=$id("flash");
+  rig.classList.add(ok?"done-ok":"done-fail");
+  $id("verdict").textContent = ok ? "live" : "aborted \u00b7 rolled back";
+  fl.className = "flash " + (ok?"go":"bad");
+  // Leave the overlay up only as long as its animation: a fixed, full-bleed
+  // element outlives its purpose fast.
+  setTimeout(function(){fl.className="flash";}, ok?700:1000);
+}
 
 // Paint whatever the server last reported. Never invents a number: with no
 // stage seen yet the rig goes indeterminate and the readout says WAIT, which
 // is the honest state while release.sh is still starting up.
 function paint(j){
   var rig=$id("rig");
-  rig.className="rig on"+(j.state==="ok"?" ok":j.state==="fail"?" fail":"")+(j.idx?"":" wait");
+  // Keep whichever ending has already landed: className is rebuilt here.
+  var ended=(rig.className.match(/done-\\w+/)||[""])[0];
+  rig.className="rig on"+(j.state==="ok"?" ok":j.state==="fail"?" fail":"")
+    +(j.idx?"":" wait")+(ended?" "+ended:"");
   for(var i=0;i<PHASES.length;i++){
     var ch=rig.querySelectorAll(".chip")[i];
     ch.className="chip"+(i<j.idx?" on":"")+(i===j.idx-1&&j.state==="running"?" cur":"");
@@ -500,15 +582,21 @@ function act(path){
      fetch("/api/progress",{headers:{"X-Panel-Token":CSRF}})
       .then(function(r){return r.json();})
       .then(function(pr){ pr.state=j.ok?"ok":"fail"; if(j.ok){pr.idx=pr.total;pr.pct=100;} paint(pr); })
-      .catch(function(){});
+      .catch(function(){})
+      // The POST's own answer decides, not the poll: a last poll can still read
+      // "running" off a log the release has not finished flushing.
+      .then(function(){ finish(j.ok, j.message||j.error||""); });
      msg(j.ok?(j.message||"Done"):(j.error||"Failed"), j.ok?"ok":"err");
      bs.forEach(function(b){b.classList.remove("armed");});
-     setTimeout(function(){location.reload();},2600);
+     // Long enough for the ending to play out. A failure holds longer: there
+     // is something to read, and the reload wipes it.
+     setTimeout(function(){location.reload();}, j.ok?3400:6000);
    })
    .catch(function(){
      clearInterval(POLL);
      msg("Request failed","err");
      $id("rig").className="rig on fail";
+     finish(false,"request failed");
      bs.forEach(function(b){b.disabled=false;b.classList.remove("armed");});
    });
 }

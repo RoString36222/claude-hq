@@ -98,11 +98,32 @@ function makeBuilding(c, opts){
     while(baseG.children.length) baseG.remove(baseG.children[0]);
     hits.length = 0; doors.length = 0;
     dyn = {facades: [], facMats: [], leds: [], lobbyMats: [], beacons: [], beaconGlows: [], banners: [], heli: null, jets: [], karts: [], glows: [], accent: accent,
-           flags: [], fireworks: [], ledges: []};
+           flags: [], fireworks: [], ledges: [], prestige: null};
     var floorsLow = Math.min(8, 1 + Math.floor(level/5)), floorsHigh = level >= 25 ? Math.min(8, 1 + Math.floor((level - 25)/4)) : 0;
     var y = lobbyBlock(0, 0, 9, 7);
     var topLow = tower(0, y, 0, 9, 7, floorsLow, 100 + level % 7, paint), top = topLow;
     if(floorsHigh){ top = tower(0, topLow + 0.5, -0.5, 6, 4.6, floorsHigh, 200 + level % 5, paint); box(9.2, 0.5, 7.2, mat(0x2b3a48), 0, topLow + 0.25, 0, baseG); }
+    // HQ 2.5 prestige: one gold-glass floor per star (up to 5) on the roof, and a beacon.
+    // Only your OWN building passes opts.prestige; city lots and visits never do.
+    var stars = opts.prestige ? Math.max(0, Math.min(5, opts.prestige() | 0)) : 0;
+    if(stars){
+      var pw = floorsHigh ? 5.4 : 7.8, pd = floorsHigh ? 4.0 : 6.0, pz = floorsHigh ? -0.5 : 0;
+      var pm = mat(0xf5d76e, {metalness: 0.6, roughness: 0.25, emissive: new THREE.Color(0xf5d76e), emissiveIntensity: 0.25});
+      var pg = new THREE.MeshStandardMaterial({color: 0xbfe3f5, transparent: true, opacity: 0.55, roughness: 0.05, metalness: 0.3, emissive: new THREE.Color(0xffd36e), emissiveIntensity: 0.35});
+      dyn.facMats.push(pg);
+      for(var ps = 0; ps < stars; ps++){
+        var py = top + 0.3 + ps*2.4;
+        var pf = box(pw, 2.0, pd, pg, 0, py + 1.0, pz, baseG); pf.name = "prestige-floor";
+        box(pw + 0.3, 0.3, pd + 0.3, pm, 0, py + 2.15, pz, baseG);
+      }
+      top += 0.3 + stars*2.4 + 0.3;
+      var bm = new THREE.MeshBasicMaterial({color: 0xffe08a, transparent: true, opacity: 0.35, toneMapped: false, depthWrite: false});
+      var beam = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.9, 16, 16, 1, true), bm); beam.name = "prestige-beacon";
+      beam.position.set(0, top + 9, pz); baseG.add(beam);
+      var bglow = c.glow(0xffd36e, 5, 0.6); bglow.position.set(0, top + 1, pz); baseG.add(bglow);
+      dyn.prestige = {beam: beam, mat: bm, glow: bglow, stars: stars};
+    }
+    built.stars = stars;
     // the front door: canopy, sign, revolving door; walk up to it to go in
     box(5.6, 0.28, 2.6, mat(0x2b3a48, {metalness: 0.5}), 0, 3.15, 4.6, baseG); [-2.5, 2.5].forEach(function(x){ box(0.2, 3.1, 0.2, mat(0x9aa7b5, {metalness: 0.7}), x, 1.55, 5.7, baseG); });
     var cs = c.canvasTex(512, 64, function(g){ g.fillStyle = "#0b1622"; g.fillRect(0, 0, 512, 64); g.fillStyle = "#" + accent.toString(16).padStart(6, "0"); g.font = "700 44px system-ui, sans-serif"; g.textAlign = "center"; g.fillText(c.short((look.sign || "CLAUDE HQ").toUpperCase(), 16), 256, 48); });
@@ -199,6 +220,13 @@ function makeBuilding(c, opts){
       for(var fw = 0; fw < 3; fw++){ var g = new THREE.Group(); baseG.add(g); var parts = [];
         for(var q = 0; q < 18; q++){ var sp = c.glow([COL.amber, COL.cyan, COL.coral][fw], 0.6, 1); g.add(sp); parts.push({s: sp, a: q/18*PI*2, b: (q % 3 - 1)*0.6}); }
         dyn.fireworks.push({g: g, parts: parts, o: fw/3, x: (fw - 1)*6, y: top + 8 + fw*2}); }
+    } else if(look.decor === "crown"){
+      // HQ 2.5 prestige reward (star 3): a gold crown on the roof, seen by everyone (cos decor)
+      var crown = new THREE.Group(); crown.name = "decor-crown"; crown.position.set(0, top, floorsHigh ? -0.5 : 0); baseG.add(crown);
+      var gm = mat(0xf5d76e, {metalness: 0.85, roughness: 0.2, emissive: new THREE.Color(0xd8a43a), emissiveIntensity: 0.25});
+      var band = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.4, 1.0, 32, 1, true), Object.assign(gm.clone(), {side: THREE.DoubleSide})); band.position.y = 0.5; crown.add(band);
+      for(var ci = 0; ci < 8; ci++){ var ca = ci/8*PI*2, pt = new THREE.Mesh(new THREE.ConeGeometry(0.45, 1.4, 4), gm); pt.position.set(Math.cos(ca)*2.5, 1.7, Math.sin(ca)*2.5); crown.add(pt);
+        var gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.22), mat([0xd14a5c, 0x4a7bd1, 0x3fa66a][ci % 3], {metalness: 0.2, roughness: 0.1})); gem.position.set(Math.cos(ca)*2.62, 0.55, Math.sin(ca)*2.62); crown.add(gem); }
     } else if(look.decor === "neon"){
       // a bright outline on every corner and floor line of the tower, lit by day too
       var nm = new THREE.MeshBasicMaterial({color: accent, toneMapped: false});
@@ -229,7 +257,8 @@ function makeBuilding(c, opts){
   B.g = baseG;
   B.top = function(){ return built.top || 10; };
   B.build = build;
-  B.stale = function(){ return Math.max(1, opts.level() | 0) !== built.level || JSON.stringify(opts.look() || {}) !== built.look; };
+  B.stale = function(){ return Math.max(1, opts.level() | 0) !== built.level || JSON.stringify(opts.look() || {}) !== built.look ||
+    (opts.prestige ? Math.max(0, Math.min(5, opts.prestige() | 0)) : 0) !== (built.stars | 0); };
   B.setNight = function(n){ night = n; applyTime(); };
   // more crew at work, more windows lit
   B.setLive = function(live){
@@ -251,6 +280,8 @@ function makeBuilding(c, opts){
     if(dyn.heli){ dyn.heli.rotor.rotation.y = t*14*k; var hv = (t % 24)/24, lift = hv < 0.4 ? 0 : hv < 0.5 ? (hv - 0.4)*10 : hv < 0.9 ? 1 : (1 - hv)*10;
       dyn.heli.g.position.y = dyn.heli.y + lift*6*k; dyn.heli.g.position.x = dyn.heli.x + lift*Math.sin(t*0.4)*3*k; }
     dyn.beacons.forEach(function(b, n){ var on = ((t + n*0.3) % 1.4) < 0.25; b.material.emissiveIntensity = on ? 3 : 0.4; dyn.beaconGlows[n].material.opacity = on ? 1 : 0.1; });
+    // the prestige beacon turns and pulses; under calm (k < 1) it holds still
+    if(dyn.prestige){ var pb = dyn.prestige; if(k >= 1){ pb.beam.rotation.y = t*0.8; pb.mat.opacity = 0.25 + 0.15*Math.sin(t*2.2); } else { pb.beam.rotation.y = 0; pb.mat.opacity = 0.35; } }
     dyn.banners.forEach(function(b, n){ b.rotation.x = Math.sin(t*1.6 + n)*0.06*k; });
     dyn.flags.forEach(function(f){ f.rotation.y = Math.sin(t*2.4 + f.userData.wave)*0.35*k; });
     dyn.fireworks.forEach(function(fw){ var u = (t*0.35*k + fw.o) % 1; fw.g.visible = night && u > 0.15;
@@ -346,6 +377,7 @@ HQV.hqWorlds.base = function(c, w){
   for(var cl = 0; cl < 6; cl++){ var cg = new THREE.Group(); cg.position.set(-40 + cl*16, 34 + (cl % 3)*4, -20 + (cl % 2)*30); clouds.add(cg); [[0, 0, 0, 2.6], [2.4, -0.4, 0.4, 2], [-2.3, -0.5, -0.2, 1.9], [1, 0.9, -0.5, 1.7]].forEach(function(b){ sph(b[3], mat(0xffffff, {roughness: 1}), b[0], b[1], b[2], cg).castShadow = false; }); }
 
   var Bld = makeBuilding(c, {level: function(){ return c.level(); }, look: function(){ return c.look(); }, campus: true,
+    prestige: function(){ return (c.api && typeof c.api.prestige === "function") ? (c.api.prestige() | 0) : 0; },
     live: function(){ return (c.sessions() || []).filter(function(s){ return c.crewState(s) !== "stale"; }).length; }});
   S.add(Bld.g);
   var hits = Bld.hits, doors = Bld.doors, night = true;

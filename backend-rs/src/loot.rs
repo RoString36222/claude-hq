@@ -645,7 +645,7 @@ async fn open_chest(pool: &SqlitePool, uid: &str, id: &str, rid: &str, today: &s
 async fn loot_view(pool: &SqlitePool, uid: &str) -> Result<LootView, Fail> {
     let rows = sqlx::query(
         "SELECT id, source, rarity, created_at FROM loot_chests
-         WHERE user_id = ?1 AND opened_at IS NULL ORDER BY created_at, id LIMIT ?2",
+         WHERE user_id = ?1 AND opened_at IS NULL ORDER BY created_at, rowid LIMIT ?2",
     )
     .bind(uid)
     .bind(MAX_LISTED)

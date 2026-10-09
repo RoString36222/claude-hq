@@ -109,12 +109,18 @@ function fmtTok(n){
 // so we only strip the "-Users-<user>" prefix and keep the rest verbatim.
 function prettyFolder(slug){
   if(!slug) return "~";
-  var m = String(slug).replace(/^-Users-[^-]+-?/, "");
+  var m = String(slug).replace(/^-?Users-[^-]+-?/, "");
   return m ? m : "~ (home)";
 }
-// A project-dir slug looks like "-Users-<user>-…"; live session folders are bare
-// basenames (no leading "-"). /api/project only accepts real slugs, so gate on this.
-function looksLikeSlug(f){ return typeof f==="string" && /^-/.test(f); }
+// A project-dir slug looks like "-Users-<user>-…" (Claude) or "Users-<user>-…"
+// (Cursor). Live Claude folders are bare basenames. /api/project only accepts
+// real slugs, so gate on this.
+function looksLikeSlug(f){
+  return typeof f==="string" && (/^-/.test(f) || /^Users-/.test(f));
+}
+function assistantLabel(s){
+  return (s && s.source==="cursor") ? "Cursor" : "Claude";
+}
 function fmtCost(n){
   n = n||0;
   if(n>=100) return "$"+Math.round(n).toLocaleString();
@@ -194,7 +200,7 @@ var GROUPS = [
 function matches(sess){
   if(!QUERY) return true;
   var q = QUERY.toLowerCase();
-  var hay = [sess.title,sess.firstPrompt,sess.lastPrompt,sess.lastReply,sess.folder,sess.name]
+  var hay = [sess.title,sess.firstPrompt,sess.lastPrompt,sess.lastReply,sess.folder,sess.name,sess.source]
     .concat(sess.tags||[]).concat([sess.note])
     .filter(Boolean).join(" ").toLowerCase();
   return hay.indexOf(q)>=0;
@@ -258,7 +264,7 @@ function partySig(sessions){
   // card: a store flip while every creature is rested rebuilds nothing.
   var store=PANTRY.store==="ok";
   var parts=(sessions||[]).map(function(s){ var c=s.creature||{}, f=fzOf(c);
-    return [s.id,s.status+(s.alertKind||"")+(s.likelyAwaiting?"~":""),s.title,s.alias||"",s.pinned?1:0,(s.tags||[]).join(","),s.note||"",s.folder||"",
+    return [s.id,s.status+(s.alertKind||"")+(s.likelyAwaiting?"~":""),s.title,s.alias||"",s.pinned?1:0,(s.tags||[]).join(","),s.note||"",s.folder||"",s.source||"",
             c.species,creatureStage(c),c.shiny?1:0,(EVO_CHOICE[s.sessionId||s.id]||{}).branchDex||"",(EVO_CHOICE[s.sessionId||s.id]||{}).megaSlug||"",f?(f.state+(f.mayFaint?"!":"")+(store && f.state!=="rested"?"$":"")):""].join(""); });
   // Text that changes every tick (age, prompt count, tokens, the in-flight line...) is patched in
   // place by patchCards; only when a volatile value REORDERS the cards (the Recent/Tokens sorts)
@@ -402,7 +408,9 @@ function buildCard(s){
   var folderHTML = looksLikeSlug(s.folder)
     ? '<span class="proj-openbtn" data-projfolder="'+esc(s.folder)+'" role="button" tabindex="0" title="Open project deep-dive">'+esc(prettyFolder(s.folder))+'</span>'
     : esc(s.folder||"~");
-  sub.innerHTML = folderHTML+' · <span class="handle">'+esc(s.name||s.id||"?")+'</span> · '+
+  var srcName = assistantLabel(s);
+  sub.innerHTML = '<span class="srcpill '+(s.source==="cursor"?"cursor":"claude")+'">'+esc(srcName)+'</span> · '+
+    folderHTML+' · <span class="handle">'+esc(s.name||s.id||"?")+'</span> · '+
     '<span data-role="pc">'+esc(cardPromptsText(s))+'</span> · <span data-role="age">'+esc(cardAgeText(s))+'</span>';
   (function(){ var fb=sub.querySelector("[data-projfolder]"); if(fb){
     var slug=fb.getAttribute("data-projfolder");
@@ -486,8 +494,9 @@ function buildCard(s){
     cb.setAttribute("data-act","care");   // closeDrawer finds it again on the rebuilt card
   }
   mkAct("✏️ Rename",null,function(){ sessRename(s); });
-  mkAct("▶ Resume",null,function(){ sessResume(s.sessionId); });   // works for archived too
-  if(s.kind!=="archived"){ mkAct("📂 Reveal",null,function(){ sessReveal(s.sessionId); }); }
+  // Cursor has no `claude --resume`. Reveal still opens the project folder.
+  if(s.source!=="cursor") mkAct("▶ Resume",null,function(){ sessResume(s.sessionId); });
+  if(s.kind!=="archived" || s.cwd){ mkAct("📂 Reveal",null,function(){ sessReveal(s.sessionId); }); }
   if(s.status==="working"){ mkAct("⤢ Focus",null,function(){ openFocus(s.sessionId); }); }
   if(s.kind==="interactive" && s.pid){ mkAct("✕ Close","danger",function(){ sessClose(s); }); }
   card.appendChild(acts);
@@ -513,12 +522,12 @@ function buildCard(s){
 // ---- the volatile parts of a party card (built by buildCard, refreshed in place by patchCards) ----
 function cardPromptsText(s){ var n=(s&&s.promptCount!=null)?(s.promptCount|0):0; return n+" prompt"+(n===1?"":"s"); }
 function cardAgeText(s){ return fmtAge((s||{}).ageSecs)+" ago"; }
-function cardLinesKey(s){ s=s||{}; return [s.firstPrompt||"", s.lastPrompt||"", s.lastReply||""].join("\u0001"); }
+function cardLinesKey(s){ s=s||{}; return [s.source||"", s.firstPrompt||"", s.lastPrompt||"", s.lastReply||""].join("\u0001"); }
 function fillCardLines(box, s){
   box.innerHTML="";
   if(s.firstPrompt) box.appendChild(mkLine("You",s.firstPrompt,true,false));
   if(s.lastPrompt && s.lastPrompt!==s.firstPrompt) box.appendChild(mkLine("Latest",s.lastPrompt,false,false));
-  if(s.lastReply) box.appendChild(mkLine("Claude",s.lastReply,true,true));
+  if(s.lastReply) box.appendChild(mkLine(assistantLabel(s),s.lastReply,true,true));
 }
 function cardLinksKey(s){ return JSON.stringify(((s||{}).links||[]).map(function(l){ l=l||{}; return [l.type||"", l.url||"", l.label||""]; })); }
 function fillCardLinks(box, s){

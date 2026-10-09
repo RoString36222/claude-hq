@@ -14,7 +14,8 @@ function fillTimeline(wrap, tl){
     var cls = kind==="you"||kind==="user" ? "you" : (kind==="tool"||kind==="tool_use" ? "tool" : "claude");
     var row = el("div","trow "+cls);
     var tk2 = el("div","tk");
-    tk2.textContent = cls==="you"?"You":(cls==="tool"?(ev.tool||ev.name||"tool"):"Claude");
+    var who = (typeof assistantLabel==="function") ? assistantLabel(DRAWER_DETAIL||DRAWER_SESS) : "Claude";
+    tk2.textContent = cls==="you"?"You":(cls==="tool"?(ev.tool||ev.name||"tool"):who);
     var tx = el("div","tx"); tx.textContent = ev.text||ev.detail||ev.summary||"";
     row.appendChild(tk2); row.appendChild(tx); wrap.appendChild(row);
   });
@@ -104,7 +105,7 @@ function renderDrawer(sess, d){
   var tk = d.tokens||sess.tokens||{};
 
   // status line refresh
-  $("dwSub").textContent = ((d.status||sess.status||"")+"")+(tk.model?" · "+tk.model:"");
+  $("dwSub").textContent = assistantLabel(d.source?d:sess)+" · "+((d.status||sess.status||"")+"")+(tk.model?" · "+tk.model:"");
 
   // creature / evolution
   var crD = d.creature || sess.creature || {};

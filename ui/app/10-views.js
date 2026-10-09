@@ -225,7 +225,7 @@ function feedActor(f){
   var who = (f.actor||f.who||f.kind||"").toLowerCase();
   if(who==="you"||who==="user") return {label:"You", cls:"you"};
   if(who==="tool"||who==="tool_use") return {label:(f.tool||f.name||"tool"), cls:"tool"};
-  return {label:"Claude", cls:"claude"};
+  return {label: (f.source==="cursor"?"Cursor":"Claude"), cls:"claude"};
 }
 // Per-section render signatures: render() runs on every SSE tick, so each section below rebuilds
 // its DOM only when its own inputs changed (a rebuild restarts animated sprites and costs layout).
@@ -337,7 +337,7 @@ function renderSearchResults(q, d){
     hit.appendChild(top);
     var meta=el("div","hit-meta");
     var when = h.date||h.ts||h.time||h.lastActivity;
-    meta.textContent = prettyFolder(h.folder||h.slug||"") + " · " + relTime(when);
+    meta.textContent = (h.source==="cursor"?"Cursor":"Claude") + " · " + prettyFolder(h.folder||h.slug||"") + " · " + relTime(when);
     hit.appendChild(meta);
     var snip = h.snippet||h.snip||h.text||"";
     if(snip){ var s=el("div","hit-snip"); s.innerHTML = highlight(snip, q); hit.appendChild(s); }

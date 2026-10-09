@@ -7,7 +7,8 @@ What it does
 ------------
 Serves a small web app that shows your live Claude Code sessions (from
 `claude agents --json`) enriched with data parsed from the JSONL transcript files
-under ~/.claude/projects, plus a gamified "season" panel (XP / level / streak /
+under ~/.claude/projects, plus Cursor agent transcripts under ~/.cursor/projects,
+and a gamified "season" panel (XP / level / streak /
 achievements / 14-day activity calendar) computed from the last 30 days of activity
 across ALL sessions.
 
@@ -40,6 +41,7 @@ import re
 import secrets
 import shlex
 import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -51,7 +53,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import arena
 
-APP_VERSION = "2.1.0"   # HQ 2.1: Play Together (walk-in base, live presence, Quick Play, parties, crews, cosmetics)
+APP_VERSION = "2.1.2"   # Cursor card titles use the chat's own heading
 
 # --------------------------------------------------------------------------- #
 # Paths / constants
@@ -65,6 +67,20 @@ UI_DIR = os.path.join(HERE, "ui")
 # (RareFormLabs, MIT) and flattened to SVG dots on a dark tile.
 ICON_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#111217"/><circle cx="247.3" cy="255" r="2.9" fill="#616161" fill-opacity="0.45"/><circle cx="281.7" cy="255.9" r="2.9" fill="#626262" fill-opacity="0.45"/><circle cx="213.3" cy="257.6" r="2.9" fill="#636363" fill-opacity="0.45"/><circle cx="267" cy="299.5" r="2.9" fill="#646464" fill-opacity="0.45"/><circle cx="258.2" cy="210.6" r="2.9" fill="#646464" fill-opacity="0.45"/><circle cx="233.2" cy="300.2" r="2.9" fill="#646464" fill-opacity="0.45"/><circle cx="224.6" cy="211.9" r="2.9" fill="#656565" fill-opacity="0.45"/><circle cx="291.6" cy="212.3" r="2.9" fill="#656565" fill-opacity="0.45"/><circle cx="314.7" cy="260.2" r="2.9" fill="#666666" fill-opacity="0.45"/><circle cx="300" cy="302.8" r="2.9" fill="#676767" fill-opacity="0.45"/><circle cx="201.2" cy="304.9" r="2.9" fill="#696969" fill-opacity="0.45"/><circle cx="181.8" cy="263.6" r="2.9" fill="#696969" fill-opacity="0.45"/><circle cx="192.6" cy="216.3" r="2.9" fill="#696969" fill-opacity="0.45"/><circle cx="323.4" cy="217" r="2.9" fill="#6a6a6a" fill-opacity="0.45"/><circle cx="245.7" cy="340.4" r="2.9" fill="#6c6c6c" fill-opacity="0.45"/><circle cx="258.2" cy="169.9" r="2.9" fill="#6c6c6c" fill-opacity="0.45"/><circle cx="278.8" cy="341.5" r="2.9" fill="#6d6d6d" fill-opacity="0.45"/><circle cx="344.3" cy="267.7" r="2.9" fill="#6d6d6d" fill-opacity="0.45"/><circle cx="224.6" cy="171.3" r="2.9" fill="#6d6d6d" fill-opacity="0.45"/><circle cx="329.3" cy="309.9" r="2.9" fill="#6e6e6e" fill-opacity="0.45"/><circle cx="291.6" cy="171.7" r="2.9" fill="#6e6e6e" fill-opacity="0.45"/><circle cx="163.4" cy="223.4" r="2.9" fill="#707070" fill-opacity="0.45"/><circle cx="214.1" cy="344.8" r="2.9" fill="#707070" fill-opacity="0.45"/><circle cx="173.7" cy="313.2" r="2.9" fill="#717171" fill-opacity="0.45"/><circle cx="352" cy="224.5" r="2.9" fill="#717171" fill-opacity="0.45"/><circle cx="192.6" cy="175.6" r="2.9" fill="#717171" fill-opacity="0.45"/><circle cx="154.7" cy="272.6" r="2.9" fill="#727272" fill-opacity="0.45"/><circle cx="323.4" cy="176.4" r="2.9" fill="#727272" fill-opacity="0.45"/><circle cx="308.5" cy="347.8" r="2.9" fill="#737373" fill-opacity="0.45"/><circle cx="368.7" cy="278" r="2.9" fill="#777777" fill-opacity="0.45"/><circle cx="352.8" cy="320.3" r="2.9" fill="#777777" fill-opacity="0.45"/><circle cx="163.4" cy="182.8" r="2.9" fill="#787878" fill-opacity="0.45"/><circle cx="250.6" cy="374.4" r="2.9" fill="#787878" fill-opacity="0.45"/><circle cx="189" cy="353.9" r="2.9" fill="#797979" fill-opacity="0.45"/><circle cx="138.7" cy="233" r="3" fill="#797979" fill-opacity="0.45"/><circle cx="247.3" cy="136.4" r="3" fill="#797979" fill-opacity="0.45"/><circle cx="352" cy="183.9" r="3" fill="#797979" fill-opacity="0.45"/><circle cx="281.7" cy="137.3" r="3" fill="#7a7a7a" fill-opacity="0.45"/><circle cx="376.2" cy="234.5" r="3" fill="#7a7a7a" fill-opacity="0.45"/><circle cx="152.8" cy="324.5" r="3" fill="#7b7b7b" fill-opacity="0.45"/><circle cx="213.3" cy="139" r="3.1" fill="#7c7c7c" fill-opacity="0.45"/><circle cx="283.3" cy="378.2" r="3.1" fill="#7c7c7c" fill-opacity="0.45"/><circle cx="133.4" cy="284.1" r="3.1" fill="#7c7c7c" fill-opacity="0.45"/><circle cx="330.1" cy="358.4" r="3.1" fill="#7d7d7d" fill-opacity="0.45"/><circle cx="314.7" cy="141.6" r="3.2" fill="#7e7e7e" fill-opacity="0.45"/><circle cx="221.1" cy="381.4" r="3.2" fill="#7f7f7f" fill-opacity="0.45"/><circle cx="138.7" cy="192.4" r="3.3" fill="#818181" fill-opacity="0.45"/><circle cx="181.8" cy="145" r="3.3" fill="#818181" fill-opacity="0.45"/><circle cx="386.6" cy="290.5" r="3.3" fill="#828282" fill-opacity="0.45"/><circle cx="376.2" cy="193.8" r="3.3" fill="#838383" fill-opacity="0.45"/><circle cx="368.3" cy="332.9" r="3.4" fill="#838383" fill-opacity="0.45"/><circle cx="119.4" cy="244.7" r="3.4" fill="#848484" fill-opacity="0.45"/><circle cx="174" cy="366.5" r="3.4" fill="#848484" fill-opacity="0.45"/><circle cx="344.3" cy="149.1" r="3.5" fill="#858585" fill-opacity="0.45"/><circle cx="394.7" cy="246.3" r="3.5" fill="#858585" fill-opacity="0.45"/><circle cx="140.3" cy="337.8" r="3.6" fill="#888888" fill-opacity="0.45"/><circle cx="300" cy="390.7" r="3.6" fill="#888888" fill-opacity="0.45"/><circle cx="256" cy="398.7" r="3.6" fill="#898989" fill-opacity="0.45"/><circle cx="119.2" cy="297.3" r="3.6" fill="#898989" fill-opacity="0.45"/><circle cx="340.5" cy="371.7" r="3.6" fill="#898989" fill-opacity="0.45"/><circle cx="154.7" cy="154" r="3.6" fill="#8a8a8a" fill-opacity="0.45"/><circle cx="267" cy="112.5" r="3.6" fill="#8a8a8a" fill-opacity="0.45"/><circle cx="233.2" cy="113.3" r="3.7" fill="#8a8a8a" fill-opacity="0.45"/><circle cx="212" cy="395.2" r="3.7" fill="#8c8c8c" fill-opacity="0.45"/><circle cx="119.4" cy="204.1" r="3.7" fill="#8c8c8c" fill-opacity="0.45"/><circle cx="300" cy="115.9" r="3.8" fill="#8d8d8d" fill-opacity="0.45"/><circle cx="394.7" cy="205.7" r="3.8" fill="#8e8e8e" fill-opacity="0.45"/><circle cx="368.7" cy="159.4" r="3.8" fill="#8f8f8f" fill-opacity="0.45"/><circle cx="201.2" cy="118" r="3.8" fill="#8f8f8f" fill-opacity="0.45"/><circle cx="396.9" cy="304.4" r="3.9" fill="#8f8f8f" fill-opacity="0.45"/><circle cx="106.4" cy="257.8" r="3.9" fill="#909090" fill-opacity="0.45"/><circle cx="374.8" cy="347" r="3.9" fill="#909090" fill-opacity="0.45"/><circle cx="171.5" cy="380.4" r="4" fill="#919191" fill-opacity="0.45"/><circle cx="406.7" cy="259.6" r="4" fill="#929292" fill-opacity="0.45"/><circle cx="329.3" cy="123" r="4" fill="#949494" fill-opacity="0.45"/><circle cx="133.4" cy="165.5" r="4.1" fill="#949494" fill-opacity="0.45"/><circle cx="290.9" cy="404.5" r="4.1" fill="#959595" fill-opacity="0.45"/><circle cx="137.2" cy="352" r="4.1" fill="#959595" fill-opacity="0.45"/><circle cx="113" cy="311.7" r="4.1" fill="#969696" fill-opacity="0.45"/><circle cx="338" cy="385.7" r="4.2" fill="#969696" fill-opacity="0.45"/><circle cx="173.7" cy="126.3" r="4.2" fill="#979797" fill-opacity="0.45"/><circle cx="228.7" cy="407.7" r="4.2" fill="#989898" fill-opacity="0.45"/><circle cx="106.4" cy="217.2" r="4.2" fill="#999999" fill-opacity="0.45"/><circle cx="406.7" cy="219" r="4.3" fill="#9a9a9a" fill-opacity="0.45"/><circle cx="386.6" cy="171.9" r="4.3" fill="#9a9a9a" fill-opacity="0.45"/><circle cx="261.4" cy="411.5" r="4.4" fill="#9b9b9b" fill-opacity="0.45"/><circle cx="245.7" cy="100.3" r="4.4" fill="#9d9d9d" fill-opacity="0.45"/><circle cx="399" cy="318.9" r="4.4" fill="#9d9d9d" fill-opacity="0.45"/><circle cx="352.8" cy="133.3" r="4.4" fill="#9d9d9d" fill-opacity="0.45"/><circle cx="100.5" cy="271.8" r="4.4" fill="#9d9d9d" fill-opacity="0.45"/><circle cx="278.8" cy="101.3" r="4.5" fill="#9e9e9e" fill-opacity="0.45"/><circle cx="371.7" cy="361.2" r="4.5" fill="#9e9e9e" fill-opacity="0.45"/><circle cx="181.9" cy="393.7" r="4.5" fill="#9e9e9e" fill-opacity="0.45"/><circle cx="411.7" cy="273.7" r="4.5" fill="#9f9f9f" fill-opacity="0.45"/><circle cx="214.1" cy="104.6" r="4.6" fill="#a1a1a1" fill-opacity="0.45"/><circle cx="119.2" cy="178.8" r="4.6" fill="#a1a1a1" fill-opacity="0.45"/><circle cx="152.8" cy="137.5" r="4.6" fill="#a1a1a1" fill-opacity="0.45"/><circle cx="323" cy="398.2" r="4.6" fill="#a2a2a2" fill-opacity="0.45"/><circle cx="143.7" cy="366" r="4.6" fill="#a2a2a2" fill-opacity="0.45"/><circle cx="308.5" cy="107.6" r="4.7" fill="#a4a4a4" fill-opacity="0.45"/><circle cx="115.1" cy="326.2" r="4.7" fill="#a4a4a4" fill-opacity="0.45"/><circle cx="100.5" cy="231.2" r="4.8" fill="#a6a6a6" fill-opacity="0.45"/><circle cx="411.7" cy="233" r="4.8" fill="#a7a7a7" fill-opacity="0.45"/><circle cx="396.9" cy="185.8" r="4.9" fill="#a8a8a8" fill-opacity="0.45"/><circle cx="203.5" cy="404.4" r="4.9" fill="#a8a8a8" fill-opacity="0.45"/><circle cx="368.3" cy="146" r="4.9" fill="#a9a9a9" fill-opacity="0.45"/><circle cx="189" cy="113.8" r="4.9" fill="#a9a9a9" fill-opacity="0.45"/><circle cx="359.2" cy="374.5" r="5" fill="#aaaaaa" fill-opacity="0.45"/><circle cx="392.8" cy="333.2" r="5" fill="#ababab" fill-opacity="0.45"/><circle cx="297.9" cy="407.4" r="5" fill="#ababab" fill-opacity="0.45"/><circle cx="101.9" cy="286" r="5" fill="#ababab" fill-opacity="0.45"/><circle cx="409.4" cy="287.9" r="5.1" fill="#acacac" fill-opacity="0.45"/><circle cx="330.1" cy="118.3" r="5.1" fill="#aeaeae" fill-opacity="0.45"/><circle cx="140.3" cy="150.8" r="5.1" fill="#aeaeae" fill-opacity="0.45"/><circle cx="233.2" cy="410.7" r="5.4" fill="#aeaeae" fill-opacity="0.51"/><circle cx="159.2" cy="378.7" r="5.1" fill="#aeaeae" fill-opacity="0.45"/><circle cx="113" cy="193.1" r="5.1" fill="#aeaeae" fill-opacity="0.45"/><circle cx="266.3" cy="411.7" r="5.4" fill="#afafaf" fill-opacity="0.5"/><circle cx="250.6" cy="100.5" r="5.2" fill="#b0b0b0" fill-opacity="0.45"/><circle cx="125.4" cy="340.1" r="5.2" fill="#b1b1b1" fill-opacity="0.45"/><circle cx="101.9" cy="245.4" r="5.3" fill="#b3b3b3" fill-opacity="0.45"/><circle cx="283.3" cy="104.3" r="5.3" fill="#b4b4b4" fill-opacity="0.45"/><circle cx="409.4" cy="247.2" r="5.4" fill="#b5b5b5" fill-opacity="0.45"/><circle cx="338.3" cy="385.7" r="5.4" fill="#b5b5b5" fill-opacity="0.45"/><circle cx="174" cy="126.3" r="5.4" fill="#b5b5b5" fill-opacity="0.45"/><circle cx="399" cy="200.3" r="5.4" fill="#b5b5b5" fill-opacity="0.45"/><circle cx="374.8" cy="160" r="5.5" fill="#b6b6b6" fill-opacity="0.45"/><circle cx="221.1" cy="107.5" r="5.5" fill="#b7b7b7" fill-opacity="0.45"/><circle cx="378.6" cy="346.5" r="5.5" fill="#b7b7b7" fill-opacity="0.45"/><circle cx="110.4" cy="299.8" r="5.5" fill="#b8b8b8" fill-opacity="0.45"/><circle cx="182.7" cy="389" r="5.7" fill="#b8b8b8" fill-opacity="0.48"/><circle cx="399.9" cy="301.5" r="5.6" fill="#b9b9b9" fill-opacity="0.45"/><circle cx="340.5" cy="131.6" r="5.6" fill="#bababa" fill-opacity="0.45"/><circle cx="137.2" cy="165" r="5.6" fill="#bbbbbb" fill-opacity="0.45"/><circle cx="115.1" cy="207.6" r="5.7" fill="#bcbcbc" fill-opacity="0.45"/><circle cx="310.8" cy="394" r="5.8" fill="#bdbdbd" fill-opacity="0.48"/><circle cx="143.3" cy="352.6" r="5.7" fill="#bdbdbd" fill-opacity="0.46"/><circle cx="212" cy="396.1" r="6.5" fill="#bfbfbf" fill-opacity="0.59"/><circle cx="300" cy="116.8" r="5.8" fill="#bfbfbf" fill-opacity="0.45"/><circle cx="110.4" cy="259.2" r="5.8" fill="#c0c0c0" fill-opacity="0.45"/><circle cx="278.8" cy="398.7" r="6.6" fill="#c1c1c1" fill-opacity="0.58"/><circle cx="399.9" cy="260.9" r="5.9" fill="#c2c2c2" fill-opacity="0.45"/><circle cx="245" cy="399.5" r="7.1" fill="#c2c2c2" fill-opacity="0.67"/><circle cx="357.3" cy="358" r="5.9" fill="#c2c2c2" fill-opacity="0.45"/><circle cx="171.5" cy="140.3" r="5.9" fill="#c2c2c2" fill-opacity="0.45"/><circle cx="392.8" cy="214.7" r="6" fill="#c3c3c3" fill-opacity="0.45"/><circle cx="256" cy="113.3" r="6" fill="#c3c3c3" fill-opacity="0.45"/><circle cx="125.8" cy="312.4" r="6" fill="#c4c4c4" fill-opacity="0.45"/><circle cx="212" cy="121.3" r="6" fill="#c4c4c4" fill-opacity="0.45"/><circle cx="371.7" cy="174.2" r="6" fill="#c4c4c4" fill-opacity="0.45"/><circle cx="383.7" cy="314" r="6.1" fill="#c5c5c5" fill-opacity="0.45"/><circle cx="167.7" cy="362.9" r="6.4" fill="#c6c6c6" fill-opacity="0.5"/><circle cx="338" cy="145.5" r="6.1" fill="#c7c7c7" fill-opacity="0.45"/><circle cx="143.7" cy="179.1" r="6.2" fill="#c8c8c8" fill-opacity="0.45"/><circle cx="125.4" cy="221.5" r="6.2" fill="#c9c9c9" fill-opacity="0.45"/><circle cx="330.2" cy="367" r="6.4" fill="#cacaca" fill-opacity="0.48"/><circle cx="125.8" cy="271.8" r="6.4" fill="#cccccc" fill-opacity="0.45"/><circle cx="290.9" cy="130.6" r="6.4" fill="#cccccc" fill-opacity="0.45"/><circle cx="383.7" cy="273.3" r="6.4" fill="#cdcdcd" fill-opacity="0.45"/><circle cx="197.3" cy="370.4" r="7.4" fill="#cdcdcd" fill-opacity="0.64"/><circle cx="147.3" cy="323.4" r="6.6" fill="#cecece" fill-opacity="0.48"/><circle cx="181.9" cy="153.6" r="6.5" fill="#cfcfcf" fill-opacity="0.45"/><circle cx="361.6" cy="324.7" r="6.5" fill="#cfcfcf" fill-opacity="0.46"/><circle cx="378.6" cy="227.9" r="6.5" fill="#cfcfcf" fill-opacity="0.45"/><circle cx="228.7" cy="133.8" r="6.8" fill="#cfcfcf" fill-opacity="0.51"/><circle cx="298.7" cy="373" r="7.1" fill="#d0d0d0" fill-opacity="0.58"/><circle cx="359.2" cy="187.5" r="6.5" fill="#d0d0d0" fill-opacity="0.45"/><circle cx="230.3" cy="374.7" r="8.3" fill="#d2d2d2" fill-opacity="0.79"/><circle cx="264.7" cy="375.6" r="8.1" fill="#d2d2d2" fill-opacity="0.75"/><circle cx="323" cy="158.1" r="6.6" fill="#d3d3d3" fill-opacity="0.45"/><circle cx="261.4" cy="137.6" r="8" fill="#d3d3d3" fill-opacity="0.71"/><circle cx="159.2" cy="191.7" r="6.7" fill="#d4d4d4" fill-opacity="0.46"/><circle cx="143.3" cy="234" r="6.8" fill="#d5d5d5" fill-opacity="0.46"/><circle cx="173.8" cy="332.2" r="7.4" fill="#d6d6d6" fill-opacity="0.58"/><circle cx="147.3" cy="282.8" r="6.9" fill="#d6d6d6" fill-opacity="0.49"/><circle cx="334.5" cy="333.1" r="7" fill="#d7d7d7" fill-opacity="0.49"/><circle cx="361.6" cy="284.1" r="6.8" fill="#d7d7d7" fill-opacity="0.46"/><circle cx="203.5" cy="164.2" r="7.3" fill="#d9d9d9" fill-opacity="0.53"/><circle cx="357.3" cy="239.4" r="6.9" fill="#dadada" fill-opacity="0.45"/><circle cx="338.3" cy="198.8" r="7" fill="#dbdbdb" fill-opacity="0.46"/><circle cx="297.9" cy="167.2" r="7.2" fill="#dcdcdc" fill-opacity="0.5"/><circle cx="204.2" cy="338.3" r="8.7" fill="#dcdcdc" fill-opacity="0.78"/><circle cx="303.7" cy="338.9" r="7.8" fill="#dcdcdc" fill-opacity="0.61"/><circle cx="182.7" cy="202.1" r="7.5" fill="#dedede" fill-opacity="0.54"/><circle cx="173.8" cy="291.5" r="7.9" fill="#dedede" fill-opacity="0.61"/><circle cx="167.7" cy="244.3" r="7.5" fill="#dfdfdf" fill-opacity="0.54"/><circle cx="233.2" cy="170.5" r="9.2" fill="#dfdfdf" fill-opacity="0.85"/><circle cx="237" cy="341.6" r="9.5" fill="#dfdfdf" fill-opacity="0.91"/><circle cx="270.7" cy="341.8" r="9" fill="#dfdfdf" fill-opacity="0.81"/><circle cx="334.5" cy="292.5" r="7.4" fill="#dfdfdf" fill-opacity="0.5"/><circle cx="266.3" cy="171.6" r="8.9" fill="#e0e0e0" fill-opacity="0.79"/><circle cx="330.2" cy="248.4" r="7.5" fill="#e2e2e2" fill-opacity="0.49"/><circle cx="310.8" cy="207.1" r="7.6" fill="#e3e3e3" fill-opacity="0.52"/><circle cx="204.2" cy="297.7" r="9.3" fill="#e4e4e4" fill-opacity="0.83"/><circle cx="212" cy="209.2" r="9.1" fill="#e5e5e5" fill-opacity="0.79"/><circle cx="303.7" cy="298.3" r="8.3" fill="#e5e5e5" fill-opacity="0.63"/><circle cx="197.3" cy="251.8" r="9" fill="#e6e6e6" fill-opacity="0.76"/><circle cx="278.8" cy="211.8" r="9" fill="#e7e7e7" fill-opacity="0.76"/><circle cx="237" cy="300.9" r="10.2" fill="#e7e7e7" fill-opacity="0.97"/><circle cx="270.7" cy="301.1" r="9.6" fill="#e7e7e7" fill-opacity="0.86"/><circle cx="245" cy="212.5" r="10.2" fill="#e8e8e8" fill-opacity="0.98"/><circle cx="298.7" cy="254.4" r="8.5" fill="#e8e8e8" fill-opacity="0.65"/><circle cx="230.3" cy="256.1" r="10.3" fill="#eaeaea" fill-opacity="0.98"/><circle cx="264.7" cy="257" r="10" fill="#eaeaea" fill-opacity="0.91"/></svg>')
 PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
+# Cursor agent chats. Parent sessions only:
+#   ~/.cursor/projects/<project-slug>/agent-transcripts/<uuid>/<uuid>.jsonl
+# Subagent transcripts live one directory deeper and are not separate sessions.
+CURSOR_PROJECTS_DIR = os.path.expanduser("~/.cursor/projects")
+# A Cursor transcript still being written is "working". One touched in the last
+# 12 hours stays in Idle, so a chat you had earlier today sits next to Claude
+# instead of inside the collapsed archive. Older files join that archive.
+CURSOR_WORKING_SECS = 120
+CURSOR_IDLE_SECS = 12 * 3600
+# Chat headings ("Extend chat data support") live here, not in the jsonl.
+# composerHeaders is a small table; the rest of this file is Cursor's own state
+# and is never scanned. Read-only, and only on this machine.
+CURSOR_STATE_DB = os.path.expanduser(
+    "~/Library/Application Support/Cursor/User/globalStorage/state.vscdb")
 
 # Soundboard: clips live on the Arena host, but a local ./sounds dir (if it has
 # any audio files) wins -- that's how you audition clips before they're on the
@@ -574,13 +590,22 @@ def tool_label(tool_use):
 # --------------------------------------------------------------------------- #
 
 def find_transcript(session_id):
-    """Locate the JSONL for a session id anywhere under projects. Only a
+    """Locate the JSONL for a session id under Claude or Cursor projects. Only a
     UUID-shaped id is looked up: anything else (glob metacharacters, path
     separators) returns None before it reaches glob."""
     if not isinstance(session_id, str) or not _UUID_RE.fullmatch(session_id):
         return None
-    matches = glob.glob(os.path.join(PROJECTS_DIR, "*", f"{session_id}.jsonl"))
-    return matches[0] if matches else None
+    if PROJECTS_DIR:
+        matches = glob.glob(os.path.join(PROJECTS_DIR, "*", f"{session_id}.jsonl"))
+        if matches:
+            return matches[0]
+    if CURSOR_PROJECTS_DIR:
+        matches = glob.glob(os.path.join(
+            CURSOR_PROJECTS_DIR, "*", "agent-transcripts", session_id,
+            f"{session_id}.jsonl"))
+        if matches:
+            return matches[0]
+    return None
 
 
 def _extract_links_from_text(text, links, seen):
@@ -787,7 +812,10 @@ def scan_file(path):
         cached = _scan_cache.get(path)
         if cached is not None and cached.get("_key") == key:
             return cached
-    agg = _scan_file_uncached(path)
+    if _is_cursor_transcript(path):
+        agg = _scan_cursor_uncached(path)
+    else:
+        agg = _scan_file_uncached(path)
     if agg is not None:
         agg["_key"] = key
         with _scan_lock:
@@ -1089,6 +1117,346 @@ def _scan_file_uncached(path):
              if _permission_gated(open_tool_names.get(k, ""), perm_mode)]
     agg["gated_tool_open"] = min(gated) if gated else None
     agg["permission_mode"] = perm_mode
+    return agg
+
+
+# Cursor agent transcripts are {role, message:{content:[...]}} lines, not Claude
+# Code's {type, timestamp} records. A user turn's clock, when present, is an
+# English phrase inside <timestamp>, and the prompt itself is inside <user_query>.
+_CURSOR_QUERY_RE = re.compile(r"<user_query>\s*(.*?)\s*</user_query>", re.DOTALL)
+_CURSOR_TS_RE = re.compile(r"<timestamp>\s*(.*?)\s*</timestamp>", re.DOTALL)
+_CURSOR_CLOCK_RE = re.compile(
+    r"([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4}),\s*(\d{1,2}):(\d{2})\s*(AM|PM)\b",
+    re.IGNORECASE)
+_CURSOR_TZ_RE = re.compile(r"\((?:UTC|GMT)?([+-])(\d{1,2}):(\d{2})\)\s*$")
+_CURSOR_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+# Injected by Cursor after a background task; not something the user typed.
+_CURSOR_SKIP_QUERIES = (
+    "briefly inform the user about the task result",
+)
+
+
+def _is_cursor_transcript(path):
+    """True for a file under CURSOR_PROJECTS_DIR in an agent-transcripts tree."""
+    if not isinstance(path, str) or not path or not CURSOR_PROJECTS_DIR:
+        return False
+    try:
+        root = os.path.realpath(CURSOR_PROJECTS_DIR)
+        real = os.path.realpath(path)
+    except Exception:
+        return False
+    if real != root and not real.startswith(root + os.sep):
+        return False
+    return (os.sep + "agent-transcripts" + os.sep) in (os.sep + os.path.normpath(path))
+
+
+def _cursor_project_slug(path):
+    """The project-dir slug: the folder directly above agent-transcripts."""
+    parts = os.path.normpath(path or "").split(os.sep)
+    try:
+        i = parts.index("agent-transcripts")
+    except ValueError:
+        return os.path.basename(os.path.dirname(path or ""))
+    return parts[i - 1] if i > 0 else ""
+
+
+def iter_transcript_paths():
+    """Claude Code transcripts plus Cursor parent agent sessions.
+
+    Cursor subagents (`.../agent-transcripts/<id>/subagents/<id>.jsonl`) are one
+    level deeper than this glob, so they stay out of the session list."""
+    if PROJECTS_DIR:
+        for p in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
+            yield p
+    if CURSOR_PROJECTS_DIR:
+        for p in glob.glob(os.path.join(
+                CURSOR_PROJECTS_DIR, "*", "agent-transcripts", "*", "*.jsonl")):
+            yield p
+
+
+def _cursor_message_text(o):
+    msg = o.get("message") if isinstance(o, dict) else None
+    if not isinstance(msg, dict):
+        return ""
+    return _human_text(msg.get("content"))
+
+
+def _cursor_user_query(text):
+    """The human prompt inside a Cursor user record, or None for system turns."""
+    if not text:
+        return None
+    found = _CURSOR_QUERY_RE.findall(text)
+    if not found:
+        return None
+    q = re.sub(r"\s+", " ", found[-1]).strip()
+    if not q:
+        return None
+    low = q.lower()
+    for prefix in _CURSOR_SKIP_QUERIES:
+        if low.startswith(prefix):
+            return None
+    return q
+
+
+def _parse_cursor_clock(text):
+    """<timestamp>Thursday, Sep 24, 2026, 1:44 PM (UTC+5:30)</timestamp> -> UTC.
+
+    Month names are matched in English on purpose: Cursor writes them in
+    English regardless of the machine locale, and strptime('%b') would not."""
+    m = _CURSOR_TS_RE.search(text or "")
+    if not m:
+        return None
+    raw = re.sub(r"^[A-Za-z]+,\s*", "", m.group(1).strip())
+    tz = None
+    zm = _CURSOR_TZ_RE.search(raw)
+    rest = raw
+    if zm:
+        rest = raw[:zm.start()].strip()
+        sign = 1 if zm.group(1) == "+" else -1
+        try:
+            tz = timezone(timedelta(hours=sign * int(zm.group(2)),
+                                    minutes=sign * int(zm.group(3))))
+        except Exception:
+            tz = None
+    cm = _CURSOR_CLOCK_RE.search(rest)
+    if not cm:
+        return None
+    mon = _CURSOR_MONTHS.get(cm.group(1)[:3].lower())
+    if not mon:
+        return None
+    try:
+        hour = int(cm.group(4)) % 12
+        if cm.group(6).upper() == "PM":
+            hour += 12
+        dt = datetime(int(cm.group(3)), mon, int(cm.group(2)),
+                      hour, int(cm.group(5)))
+    except ValueError:
+        return None
+    if tz is None:
+        tz = datetime.now().astimezone().tzinfo or timezone.utc
+    try:
+        return dt.replace(tzinfo=tz).astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _path_from_project_slug(slug):
+    """Best-effort absolute path for a Cursor project slug.
+
+    Cursor replaces every '/' with '-', so a directory name that itself
+    contains '-' is recovered by taking the longest existing directory at
+    each step. Returns '' when the slug does not resolve to a real directory."""
+    if not isinstance(slug, str) or not slug or "/" in slug or "\\" in slug or ".." in slug:
+        return ""
+    raw = slug[1:] if slug.startswith("-") else slug
+    parts = [p for p in raw.split("-") if p]
+    if not parts:
+        return ""
+    cur = os.sep
+    i = 0
+    while i < len(parts):
+        found = None
+        nxt = None
+        for j in range(len(parts), i, -1):
+            name = "-".join(parts[i:j])
+            cand = os.path.join(cur, name) if cur != os.sep else (os.sep + name)
+            if os.path.isdir(cand):
+                found = cand
+                nxt = j
+                break
+        if not found:
+            break
+        cur = found
+        i = nxt
+    if i == len(parts) and cur != os.sep and os.path.isdir(cur):
+        return cur
+    return ""
+
+
+def _scan_cursor_uncached(path):
+    """One Cursor agent transcript, in the same aggregate shape as Claude's."""
+    agg = {
+        "ai_title": None, "last_prompt": None, "last_reply": None, "now_label": None,
+        "first_prompt": None, "prompt_count": 0, "last_activity": None, "links": [],
+        "folder": _cursor_project_slug(path),
+        "per_day": {}, "activity_ts": [], "errors": [], "timeline": [], "files": {},
+        "model": "", "tok_output": 0, "tok_input": 0, "tok_cacheRead": 0,
+        "tok_cacheCreation": 0, "cost": 0.0,
+        "busy_spans": [], "open_tool_since": None,
+        "pending_ask": None, "gated_tool_open": None, "permission_mode": None,
+        "source": "cursor",
+    }
+    try:
+        f = open(path, "r", encoding="utf-8", errors="replace")
+    except Exception:
+        return agg
+
+    seen_links = set()
+    last_assistant_text = None
+    last_assistant_tool = None
+    busy = []
+    turn_ts = None
+    pending = []
+
+    def apply(ts, kind, text=None, tool=None, file_path=None, file_action=None):
+        nonlocal last_assistant_text, last_assistant_tool
+        if ts is None:
+            return
+        t = ts.timestamp()
+        busy.append((t, t))
+        if agg["last_activity"] is None or ts > agg["last_activity"]:
+            agg["last_activity"] = ts
+        diso = ts.date().isoformat()
+        lhour = ts.astimezone().hour
+        d = agg["per_day"].setdefault(diso, _new_day())
+        agg["activity_ts"].append(t)
+        if kind == "you":
+            cleaned = text or ""
+            agg["prompt_count"] += 1
+            if agg["first_prompt"] is None:
+                agg["first_prompt"] = cleaned
+            agg["last_prompt"] = cleaned
+            _extract_links_from_text(cleaned, agg["links"], seen_links)
+            d["prompts"] += 1
+            for _ in _ARTIFACT_RE.finditer(cleaned):
+                d["artifacts"] += 1
+            d["hours"][lhour] = d["hours"].get(lhour, 0) + 1
+            agg["timeline"].append({
+                "t": ts.isoformat(), "kind": "you",
+                "text": truncate(cleaned, 200), "tool": None,
+            })
+        elif kind == "tool":
+            name = tool or "Tool"
+            d["tools"] += 1
+            d["tools_by_name"][name] = d["tools_by_name"].get(name, 0) + 1
+            d["hours"][lhour] = d["hours"].get(lhour, 0) + 1
+            label = text or name
+            agg["timeline"].append({
+                "t": ts.isoformat(), "kind": "tool",
+                "text": truncate(label, 200), "tool": name,
+            })
+            if isinstance(file_path, str) and file_path.strip():
+                fe = agg["files"].setdefault(
+                    file_path, {"path": file_path, "action": file_action or "other",
+                                "count": 0})
+                fe["count"] += 1
+        elif kind == "reply":
+            last_assistant_text = text or ""
+            d["replies"] += 1
+            d["hours"][lhour] = d["hours"].get(lhour, 0) + 1
+            _extract_links_from_text(last_assistant_text, agg["links"], seen_links)
+            for _ in _ARTIFACT_RE.finditer(last_assistant_text):
+                d["artifacts"] += 1
+            agg["timeline"].append({
+                "t": ts.isoformat(), "kind": "claude",
+                "text": truncate(strip_markdown(last_assistant_text), 200),
+                "tool": None,
+            })
+
+    def emit(ts, fn):
+        nonlocal turn_ts
+        if ts is not None and (turn_ts is None or ts >= turn_ts):
+            if turn_ts is None and pending:
+                queued = pending[:]
+                pending.clear()
+                turn_ts = ts
+                for fn0 in queued:
+                    fn0(ts)
+            turn_ts = ts
+        use = ts or turn_ts
+        if use is None:
+            pending.append(fn)
+        else:
+            fn(use)
+
+    with f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                o = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(o, dict):
+                continue
+            try:
+                role = o.get("role")
+                if role == "user":
+                    text = _cursor_message_text(o)
+                    ts = _parse_cursor_clock(text)
+                    query = _cursor_user_query(text)
+                    if query:
+                        emit(ts, lambda t, q=query: apply(t, "you", text=q))
+                    elif ts is not None:
+                        emit(ts, lambda t: None)
+                elif role == "assistant":
+                    blocks = (o.get("message") or {}).get("content")
+                    if isinstance(blocks, str):
+                        blocks = [{"type": "text", "text": blocks}]
+                    if not isinstance(blocks, list):
+                        continue
+                    texts = []
+                    for b in blocks:
+                        if not isinstance(b, dict):
+                            continue
+                        bt = b.get("type")
+                        if bt == "text":
+                            txt = b.get("text") or ""
+                            if txt.strip():
+                                texts.append(txt)
+                        elif bt == "tool_use":
+                            if texts:
+                                joined = "\n".join(texts)
+                                texts = []
+                                emit(None, lambda t, j=joined: apply(t, "reply", text=j))
+                            name = b.get("name") or "Tool"
+                            label = tool_label(b) or name
+                            inp = b.get("input") if isinstance(b.get("input"), dict) else {}
+                            fp = inp.get("path") or inp.get("file_path") or inp.get("target_file")
+                            nl = name.lower()
+                            if nl in ("write",):
+                                action = "write"
+                            elif "edit" in nl or nl in ("strreplace", "delete"):
+                                action = "edit"
+                            elif nl in ("read", "grep", "glob"):
+                                action = "read"
+                            else:
+                                action = "other"
+                            last_assistant_tool = b
+                            emit(None, lambda t, lab=label, nm=name, p=fp, act=action:
+                                 apply(t, "tool", text=lab, tool=nm,
+                                       file_path=p, file_action=act))
+                    if texts:
+                        joined = "\n".join(texts)
+                        emit(None, lambda t, j=joined: apply(t, "reply", text=j))
+            except Exception:
+                continue
+
+    try:
+        mt = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
+    except Exception:
+        mt = None
+    if pending and mt is not None:
+        queued = pending[:]
+        pending.clear()
+        for fn0 in queued:
+            fn0(mt)
+    if mt is not None and (agg["last_activity"] is None or mt > agg["last_activity"]):
+        agg["last_activity"] = mt
+    if last_assistant_text:
+        agg["last_reply"] = strip_markdown(last_assistant_text)
+    if last_assistant_tool is not None:
+        agg["now_label"] = tool_label(last_assistant_tool)
+    if agg["first_prompt"] and not agg["ai_title"]:
+        agg["ai_title"] = truncate(agg["first_prompt"], 80)
+    agg["links"] = agg["links"][:4]
+    if len(agg["timeline"]) > 60:
+        agg["timeline"] = agg["timeline"][-60:]
+    agg["busy_spans"] = _merge_spans(busy, FATIGUE_TAIL_SECS)[-FATIGUE_MAX_SPANS:]
     return agg
 
 
@@ -1505,7 +1873,7 @@ def compute_season():
     hourly = [0] * 24
     night_owl = False
 
-    files = glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl"))
+    files = list(iter_transcript_paths())
     for path in files:
         agg = scan_file(path)
         if agg is None:
@@ -1863,6 +2231,7 @@ def build_session(agent, meals=None, fatigue_on=True):
         "likelyAwaiting": likely_awaiting,
         "tokens": tokens,
         "spark": spark,
+        "source": "claude",
         # session-meta (merged from sessions-meta.json in build_payload)
         "pinned": False,
         "tags": [],
@@ -1899,6 +2268,7 @@ def build_feed(sessions, limit=25):
                 "kind": k,
                 "text": ev.get("text") or "",
                 "tool": ev.get("tool"),
+                "source": s.get("source") or "claude",
             })
         if s.get("alert"):
             events.append({
@@ -1908,6 +2278,7 @@ def build_feed(sessions, limit=25):
                 "kind": "needs",
                 "text": s.get("alert"),
                 "tool": None,
+                "source": s.get("source") or "claude",
             })
     events.sort(key=lambda e: _epoch(e.get("t")), reverse=True)
     return events[:limit]
@@ -1915,9 +2286,93 @@ def build_feed(sessions, limit=25):
 
 _ARCHIVED_CAP = 150  # most-recent archived transcripts to surface as stale cards
 
+_cursor_title_cache = {"key": None, "names": {}}
+_cursor_title_lock = threading.Lock()
 
-def build_archived_session(path, sid, meals=None, fatigue_on=True):
-    """Build a stale 'card' for a past (non-live) transcript, mirroring build_session."""
+
+def _sqlite_ro_uri(path):
+    """file: URI for a read-only sqlite open. Spaces in the path are encoded."""
+    return "file:%s?mode=ro" % path.replace(" ", "%20").replace("#", "%23").replace("?", "%3F")
+
+
+def _read_cursor_composer_names(path):
+    """composerId -> chat title from Cursor's composerHeaders table."""
+    names = {}
+    try:
+        con = sqlite3.connect(_sqlite_ro_uri(path), uri=True, timeout=1.0)
+    except Exception:
+        return names
+    try:
+        try:
+            rows = con.execute("SELECT composerId, value FROM composerHeaders")
+        except sqlite3.Error:
+            return names
+        for cid, val in rows:
+            if isinstance(val, (bytes, bytearray)):
+                val = val.decode("utf-8", "replace")
+            if not isinstance(cid, str) or not cid or not isinstance(val, str) or not val:
+                continue
+            try:
+                obj = json.loads(val)
+            except Exception:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            name = obj.get("name")
+            if not isinstance(name, str):
+                continue
+            name = " ".join(name.split())
+            if name:
+                names[cid] = name
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+    return names
+
+
+def cursor_composer_names():
+    """Cursor's own chat titles, cached until state.vscdb changes.
+
+    Missing, locked, or older databases return {}. Callers then keep the
+    first message as the heading. The lookup never writes and never leaves
+    the machine."""
+    path = CURSOR_STATE_DB
+    try:
+        st = os.stat(path)
+    except OSError:
+        return {}
+    key = (path, getattr(st, "st_mtime_ns", st.st_mtime), st.st_size)
+    with _cursor_title_lock:
+        if _cursor_title_cache["key"] == key:
+            return _cursor_title_cache["names"]
+    names = _read_cursor_composer_names(path)
+    with _cursor_title_lock:
+        _cursor_title_cache["key"] = key
+        _cursor_title_cache["names"] = names
+    return names
+
+
+def session_heading(agg, sid):
+    """Heading for a card. Cursor uses the chat title it stored, when it has one."""
+    fallback = "Untitled session"
+    if isinstance(agg, dict):
+        stored = agg.get("ai_title")
+        if isinstance(stored, str) and stored.strip():
+            fallback = stored
+        if agg.get("source") == "cursor" and sid:
+            named = cursor_composer_names().get(sid)
+            if named:
+                return named
+    return fallback
+
+
+def build_archived_session(path, sid, meals=None, fatigue_on=True, status=None):
+    """Build a card for a transcript that is not a live `claude agents` session.
+
+    `status` "working" or "idle" is a Cursor chat touched recently. Anything
+    else stays a stale archive card."""
     agg = scan_file(path) or {}
     la = agg.get("last_activity")
     age = int((now_utc() - la).total_seconds()) if la else 0
@@ -1931,22 +2386,29 @@ def build_archived_session(path, sid, meals=None, fatigue_on=True):
     creature = creature_for(sid, agg.get("prompt_count", 0))
     if fatigue_on:
         creature["fatigue"] = _fatigue_safe(sid, agg, None, (meals or {}).get(sid, ()))
+    source = agg.get("source") or "claude"
+    fresh = source == "cursor" and status in ("working", "idle")
+    cwd = _path_from_project_slug(agg.get("folder") or "") if source == "cursor" else ""
     return {
         "id": (sid or "")[:8] or "unknown", "sessionId": sid,
-        "name": (sid or "")[:8] or "archived",
-        "title": agg.get("ai_title") or "Untitled session",
-        "cwd": "", "folder": agg.get("folder") or "", "kind": "archived", "pid": None,
-        "status": "stale", "rawStatus": "archived",
+        "name": "cursor" if source == "cursor" else ((sid or "")[:8] or "archived"),
+        "title": session_heading(agg, sid),
+        "cwd": cwd, "folder": agg.get("folder") or "",
+        "kind": "cursor" if fresh else "archived", "pid": None,
+        "status": status if fresh else "stale",
+        "rawStatus": "cursor" if source == "cursor" else "archived",
         "creature": creature,
         "firstPrompt": truncate(agg.get("first_prompt") or "", LIVE_PROMPT_MAX),
         "lastPrompt": truncate(agg.get("last_prompt") or agg.get("first_prompt") or "",
                                LIVE_PROMPT_MAX),
         "lastReply": truncate(agg.get("last_reply") or "", LIVE_REPLY_MAX),
-        "now": None, "promptCount": agg.get("prompt_count", 0),
+        "now": (agg.get("now_label") if status == "working" else None),
+        "promptCount": agg.get("prompt_count", 0),
         "lastActivity": la.isoformat() if la else "", "ageSecs": age,
-        "stale": True, "links": (agg.get("links") or [])[:4],
+        "stale": not fresh, "links": (agg.get("links") or [])[:4],
         "alert": None, "alertKind": None, "tokens": tokens, "spark": spark,
-        "archived": True,
+        "archived": not fresh,
+        "source": source,
     }
 
 
@@ -1975,13 +2437,27 @@ def build_payload():
     try:
         live_ids = set(s.get("sessionId") for s in sessions)
         arch = []
-        for p in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
+        for p in iter_transcript_paths():
             sid = _session_id_from_path(p)
             if not sid or sid in live_ids:
                 continue
             agg = scan_file(p)
             if not agg or agg.get("prompt_count", 0) < 1:
                 continue
+            if agg.get("source") == "cursor":
+                try:
+                    touched = time.time() - os.path.getmtime(p)
+                except Exception:
+                    touched = CURSOR_IDLE_SECS + 1
+                if touched <= CURSOR_IDLE_SECS:
+                    st = "working" if touched <= CURSOR_WORKING_SECS else "idle"
+                    try:
+                        sessions.append(build_archived_session(
+                            p, sid, meals=meals, fatigue_on=fz_on, status=st))
+                    except Exception:
+                        pass
+                    live_ids.add(sid)
+                    continue
             la = agg.get("last_activity")
             arch.append((la.timestamp() if la else 0.0, p, sid))
         arch.sort(key=lambda x: -x[0])
@@ -2178,14 +2654,14 @@ def build_session_detail(sid):
         kind = sess.get("kind", "interactive")
         status = sess.get("status", "idle")
         links = sess.get("links", []) or agg["links"][:4]
-        title = sess.get("title") or (agg["ai_title"] or "Untitled session")
+        title = sess.get("title") or session_heading(agg, sid)
         creature = sess.get("creature") or creature_for(sid, agg["prompt_count"])
     else:
         folder = agg["folder"]
         cwd = ""
         kind = "interactive"
         links = agg["links"][:4]
-        title = agg["ai_title"] or "Untitled session"
+        title = session_heading(agg, sid)
         la = agg["last_activity"]
         age = int((now_utc() - la).total_seconds()) if la else 0
         status = "stale" if age > 86400 else "idle"
@@ -2224,7 +2700,8 @@ def build_session_detail(sid):
         "files": files,
         "links": links,
         "sparkHourly": _buckets_from_ts(agg.get("activity_ts", []), 24, 24 * 3600),
-        "resumeCmd": "claude --resume %s" % sid,
+        "resumeCmd": ("" if (agg.get("source") == "cursor")
+                      else "claude --resume %s" % sid),
         "lastReplyFull": agg["last_reply"] or "",
         "firstPromptFull": agg.get("first_prompt") or "",
         "lastPromptFull": agg.get("last_prompt") or agg.get("first_prompt") or "",
@@ -2234,6 +2711,8 @@ def build_session_detail(sid):
         "activeDays": active_days,
         "promptCount": agg.get("prompt_count", 0),
         "creature": creature,
+        "source": (sess.get("source") if isinstance(sess, dict) and sess.get("source")
+                   else agg.get("source") or "claude"),
     }
 
 
@@ -2277,6 +2756,8 @@ def _session_id_from_path(path):
 
 def _build_search_entry(path):
     """Read one transcript, collecting ai-title + human prompts + assistant text."""
+    if _is_cursor_transcript(path):
+        return _build_cursor_search_entry(path)
     title = None
     last_activity = None
     parts = []
@@ -2335,6 +2816,72 @@ def _build_search_entry(path):
         "lastActivity": last_activity.isoformat() if last_activity else "",
         "text": text,
         "blob": text.lower(),
+        "source": "claude",
+    }
+
+
+def _build_cursor_search_entry(path):
+    """Search blob for one Cursor agent transcript. Same shape as Claude's."""
+    title = None
+    last_activity = None
+    parts = []
+    total = 0
+    try:
+        f = open(path, "r", encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+    with f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                o = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(o, dict):
+                continue
+            try:
+                role = o.get("role")
+                if role == "user":
+                    text = _cursor_message_text(o)
+                    ts = _parse_cursor_clock(text)
+                    if ts and (last_activity is None or ts > last_activity):
+                        last_activity = ts
+                    query = _cursor_user_query(text)
+                    if query and total < _SEARCH_MAX_BLOB:
+                        if title is None:
+                            title = truncate(query, 80)
+                        parts.append(query)
+                        total += len(query)
+                elif role == "assistant" and total < _SEARCH_MAX_BLOB:
+                    blocks = (o.get("message") or {}).get("content")
+                    if isinstance(blocks, str):
+                        blocks = [{"type": "text", "text": blocks}]
+                    if isinstance(blocks, list):
+                        for b in blocks:
+                            if isinstance(b, dict) and b.get("type") == "text":
+                                t = b.get("text") or ""
+                                if t:
+                                    st = strip_markdown(t)
+                                    parts.append(st)
+                                    total += len(st)
+            except Exception:
+                continue
+    if last_activity is None:
+        try:
+            last_activity = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
+        except Exception:
+            last_activity = None
+    text = " \n ".join(parts)[:_SEARCH_MAX_BLOB]
+    return {
+        "sessionId": _session_id_from_path(path),
+        "title": title or "Untitled session",
+        "folder": _cursor_project_slug(path),
+        "lastActivity": last_activity.isoformat() if last_activity else "",
+        "text": text,
+        "blob": text.lower(),
+        "source": "cursor",
     }
 
 
@@ -2403,7 +2950,7 @@ def search_transcripts(q, limit=40):
     # First pass: gather candidate entries + per-term document frequencies.
     entries = []
     df = {t: 0 for t in terms}
-    for path in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
+    for path in iter_transcript_paths():
         entry = get_search_entry(path)
         if entry is None:
             continue
@@ -2439,15 +2986,21 @@ def search_transcripts(q, limit=40):
         if idx < 0:
             idx = 0
         sid = entry["sessionId"]
+        title = entry["title"]
+        if entry.get("source") == "cursor":
+            named = cursor_composer_names().get(sid)
+            if named:
+                title = named
         results.append({
             "sessionId": sid,
-            "title": entry["title"],
+            "title": title,
             "folder": entry["folder"],
             "lastActivity": entry["lastActivity"],
             "live": sid in live_map,
             "status": live_map.get(sid, "archived"),
             "snippet": _snippet_around(text, idx, len(best_t)),
             "matches": int(matches),
+            "source": entry.get("source") or "claude",
             "_score": score,
         })
     results.sort(key=lambda r: (-r["_score"], -_epoch(r["lastActivity"])))
@@ -2493,7 +3046,7 @@ def compute_history():
     model_out, model_cost, model_sess = {}, {}, {}
     folder_cost, folder_out = {}, {}
 
-    files = glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl"))
+    files = list(iter_transcript_paths())
     for path in files:
         agg = scan_file(path)
         if agg is None:
@@ -2513,7 +3066,7 @@ def compute_history():
         folder_out[fol] = folder_out.get(fol, 0) + fout
         hall.append({
             "sessionId": _session_id_from_path(path),
-            "title": agg.get("ai_title") or "Untitled session",
+            "title": session_heading(agg, _session_id_from_path(path)),
             "folder": agg.get("folder") or "",
             "output": int(agg.get("tok_output", 0)),
             "estCostUSD": round(agg.get("cost", 0.0), 4),
@@ -2633,7 +3186,7 @@ def compute_pokedex():
             "_bestOut": -1,
         })
 
-    for path in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
+    for path in iter_transcript_paths():
         sid = _session_id_from_path(path)
         agg = scan_file(path)
         if agg is None:
@@ -2678,8 +3231,13 @@ def _known_folders():
     Used to validate a ?folder= slug (also prevents traversal: we only ever
     match against known dirs, never build a path from the raw slug)."""
     out = set()
-    for p in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
-        out.add(os.path.basename(os.path.dirname(p)))
+    for p in iter_transcript_paths():
+        if _is_cursor_transcript(p):
+            slug = _cursor_project_slug(p)
+        else:
+            slug = os.path.basename(os.path.dirname(p))
+        if slug:
+            out.add(slug)
     return out
 
 
@@ -2702,8 +3260,10 @@ def compute_project(slug):
     tot_cost = 0.0
     n_sessions = 0
 
-    for path in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
-        if os.path.basename(os.path.dirname(path)) != slug:
+    for path in iter_transcript_paths():
+        folder = (_cursor_project_slug(path) if _is_cursor_transcript(path)
+                  else os.path.basename(os.path.dirname(path)))
+        if folder != slug:
             continue
         agg = scan_file(path)
         if agg is None:
@@ -2759,7 +3319,7 @@ def compute_project(slug):
         la = agg.get("last_activity")
         sessions.append({
             "sessionId": _session_id_from_path(path),
-            "title": agg.get("ai_title") or "Untitled session",
+            "title": session_heading(agg, _session_id_from_path(path)),
             "output": int(agg.get("tok_output", 0)),
             "estCostUSD": round(float(agg.get("cost", 0.0)), 4),
             "tools": int(sess_tools),
@@ -2844,7 +3404,7 @@ def _pretty_folder(slug):
     """Turn a project-dir slug into a readable label (lossy, best-effort)."""
     if not slug:
         return "~"
-    m = re.sub(r"^-Users-[^-]+-?", "", str(slug))
+    m = re.sub(r"^-?Users-[^-]+-?", "", str(slug))
     return m if m else "~ (home)"
 
 
@@ -2932,7 +3492,7 @@ def compute_digest(diso, days=1):
 
     entries = []
     tot = {"prompts": 0, "tools": 0, "output": 0, "cost": 0.0}
-    for path in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
+    for path in iter_transcript_paths():
         agg = scan_file(path)
         if agg is None:
             continue
@@ -2954,7 +3514,7 @@ def compute_digest(diso, days=1):
         fp, lr, files = _digest_range_detail(path, date_set)
         entries.append({
             "sessionId": _session_id_from_path(path),
-            "title": agg.get("ai_title") or "Untitled session",
+            "title": session_heading(agg, _session_id_from_path(path)),
             "folder": _pretty_folder(agg.get("folder")),
             "prompts": s_prompts,
             "tools": s_tools,
@@ -2980,7 +3540,7 @@ def compute_digest(diso, days=1):
                  % (start_d.isoformat(), diso), ""]
         empty_span = "%s → %s" % (start_d.isoformat(), diso)
     if not entries:
-        lines.append("_No Claude activity on %s._" % empty_span)
+        lines.append("_No session activity on %s._" % empty_span)
     else:
         lines.append(
             "**%d session%s active** · %d prompts · %d tool calls · ~%s output tokens · ~$%.2f list-price est."
@@ -3030,7 +3590,7 @@ def compute_insights():
         folder_week = {}    # folder -> prompts + tools in last 7d
         hourly = [0] * 24   # local-hour activity over 30d
 
-        for path in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
+        for path in iter_transcript_paths():
             agg = scan_file(path)
             if agg is None:
                 continue
@@ -3271,8 +3831,11 @@ def _find_kitty():
 def action_resume(sid):
     """Open a new kitty window running `claude --resume <sid>` in the session's cwd
     (falls back to Terminal.app if kitty isn't installed)."""
-    if not sid or not _UUID_RE.match(sid) or not find_transcript(sid):
+    path = find_transcript(sid) if isinstance(sid, str) else None
+    if not sid or not _UUID_RE.match(sid) or not path:
         return 400, {"error": "invalid or unknown sessionId"}
+    if _is_cursor_transcript(path):
+        return 400, {"error": "Cursor sessions open in Cursor"}
     cwd = _cwd_for_session(sid)
     if not cwd or not os.path.isdir(cwd):
         cwd = os.path.expanduser("~")
@@ -3994,6 +4557,8 @@ _transcript_lock = threading.Lock()
 def _iter_transcript_events(path):
     """Read one transcript into an ordered list of conversation events:
     {i, t(iso), role in you|claude|tool|system, text(<=1200), tool(str|None)}."""
+    if _is_cursor_transcript(path):
+        return _iter_cursor_events(path)
     events = []
     try:
         f = open(path, "r", encoding="utf-8", errors="replace")
@@ -4088,6 +4653,92 @@ def _iter_transcript_events(path):
     return events
 
 
+def _iter_cursor_events(path):
+    """Cursor agent transcript -> the same event list Claude transcripts produce."""
+    events = []
+    turn_ts = None
+    pending = []
+
+    def add(ts, role, text, tool=None):
+        events.append({
+            "i": len(events),
+            "t": ts.isoformat() if ts else "",
+            "role": role,
+            "text": truncate(text or "", 1200),
+            "tool": tool,
+        })
+
+    def emit(ts, role, text, tool=None):
+        nonlocal turn_ts
+        if ts is not None and (turn_ts is None or ts >= turn_ts):
+            if turn_ts is None and pending:
+                queued = pending[:]
+                pending.clear()
+                turn_ts = ts
+                for role0, text0, tool0 in queued:
+                    add(ts, role0, text0, tool0)
+            turn_ts = ts
+        use = ts or turn_ts
+        if use is None:
+            pending.append((role, text, tool))
+        else:
+            add(use, role, text, tool)
+
+    try:
+        f = open(path, "r", encoding="utf-8", errors="replace")
+    except Exception:
+        return events
+    with f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                o = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(o, dict):
+                continue
+            try:
+                role = o.get("role")
+                if role == "user":
+                    text = _cursor_message_text(o)
+                    query = _cursor_user_query(text)
+                    if query:
+                        emit(_parse_cursor_clock(text), "you", query)
+                elif role == "assistant":
+                    blocks = (o.get("message") or {}).get("content")
+                    if isinstance(blocks, str):
+                        blocks = [{"type": "text", "text": blocks}]
+                    if not isinstance(blocks, list):
+                        continue
+                    texts = []
+                    for b in blocks:
+                        if not isinstance(b, dict):
+                            continue
+                        if b.get("type") == "text" and (b.get("text") or "").strip():
+                            texts.append(b.get("text") or "")
+                        elif b.get("type") == "tool_use":
+                            if texts:
+                                emit(None, "claude", strip_markdown("\n".join(texts)))
+                                texts = []
+                            name = b.get("name") or "Tool"
+                            emit(None, "tool", tool_label(b) or name, name)
+                    if texts:
+                        emit(None, "claude", strip_markdown("\n".join(texts)))
+            except Exception:
+                continue
+    if pending:
+        try:
+            mt = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
+        except Exception:
+            mt = None
+        if mt is not None:
+            for role0, text0, tool0 in pending:
+                add(mt, role0, text0, tool0)
+    return events
+
+
 def get_transcript_events(path):
     """Cached ordered events for one transcript, rebuilt on (mtime,size) change."""
     if not path:
@@ -4111,12 +4762,13 @@ def build_session_markdown(sid, path):
     """Render a whole session as a readable Markdown transcript."""
     agg = scan_file(path)
     events = get_transcript_events(path)
-    title = (agg.get("ai_title") if isinstance(agg, dict) else None) \
-        or "Untitled session"
+    title = session_heading(agg if isinstance(agg, dict) else {}, sid)
     folder = _pretty_folder(agg.get("folder")) if isinstance(agg, dict) else "~"
+    who = "Cursor" if isinstance(agg, dict) and agg.get("source") == "cursor" else "Claude"
     ts_list = [e["t"] for e in events if e.get("t")]
     lines = ["# %s" % title, "",
              "- Folder: %s" % folder,
+             "- Source: %s" % who,
              "- Session: %s" % sid]
     if ts_list:
         lines.append("- Range: %s → %s"
@@ -4129,7 +4781,7 @@ def build_session_markdown(sid, path):
         if role == "you":
             lines.append("**You:** %s" % text)
         elif role == "claude":
-            lines.append("**Claude:** %s" % text)
+            lines.append("**%s:** %s" % (who, text))
         elif role == "tool":
             lines.append("`%s` %s" % (e.get("tool") or "tool", text))
         elif role == "system":
@@ -4901,8 +5553,7 @@ class Handler(BaseHTTPRequestHandler):
                 q = (qs.get("q", [""])[0] or "").strip().lower()
                 events = get_transcript_events(tpath)
                 agg = scan_file(tpath)
-                title = (agg.get("ai_title") if isinstance(agg, dict) else None) \
-                    or "Untitled session"
+                title = session_heading(agg if isinstance(agg, dict) else {}, sid)
                 matched = None
                 if q:
                     events = [e for e in events
@@ -4914,6 +5565,8 @@ class Handler(BaseHTTPRequestHandler):
                     "sessionId": sid, "title": title, "total": len(events),
                     "matched": matched, "query": q,
                     "offset": offset, "limit": limit, "events": page,
+                    "source": (agg.get("source") if isinstance(agg, dict) else None)
+                              or "claude",
                 }))
             except Exception as e:
                 self._send(404, json.dumps({"error": "unknown session: %s" % e}))
@@ -5351,7 +6004,7 @@ def main():
     # /api/search and /api/history are instant instead of a one-time ~1s scan.
     def _prewarm():
         try:
-            for p in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
+            for p in iter_transcript_paths():
                 try:
                     scan_file(p)
                     get_search_entry(p)

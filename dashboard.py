@@ -4002,9 +4002,12 @@ KNOWN_THEMES = ("aurora", "midnight", "forest", "mono")
 KNOWN_CREATURE_PACKS = ("monsters", "pokemon", "pokemon3d", "aniimo", "village", "animals", "faces")
 # Per-cell upper index (inclusive) of the trainer-avatar spec
 # [skin,hair,hairColor,outfit,outfitColor,hat,accessory,bg,face]. MUST stay
-# byte-identical to TR_MAX in index.html (client) and schemas.py (Arena wire).
-# Append-only: raising a max never renumbers existing choices.
-TRAINER_MAX = (5, 7, 7, 7, 7, 6, 4, 7, 3)
+# byte-identical to TR_MAX in ui/app/06-trainer-packs.js, which
+# tests/test_trainer_spec.py checks. The avatar never leaves this machine --
+# schemas.py has no copy, whatever an older comment here said.
+# Append-only: raising a max never renumbers existing choices, so a saved
+# avatar keeps meaning what it meant.
+TRAINER_MAX = (6, 8, 8, 8, 8, 7, 5, 8, 4)
 DEFAULT_CONFIG = {
     "theme": "aurora",
     "creaturePack": "pokemon3d",

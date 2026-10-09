@@ -68,8 +68,12 @@ pub async fn check_alembic_compat(pool: &SqlitePool) -> Result<(), String> {
 
 /// Apply every migration in `migrations/`, then verify Alembic compatibility.
 pub async fn migrate(pool: &SqlitePool) -> Result<(), String> {
-    sqlx::migrate!("./migrations")
-        .run(pool)
+    // A rollback leaves the database with migrations this (older) binary has never
+    // seen. They only ever add tables and columns, so carry on rather than refuse
+    // to boot: without this, rolling back past any new migration takes the Arena down.
+    let mut m = sqlx::migrate!("./migrations");
+    m.set_ignore_missing(true);
+    m.run(pool)
         .await
         .map_err(|e| format!("migration failed: {e}"))?;
     check_alembic_compat(pool).await

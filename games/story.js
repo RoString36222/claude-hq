@@ -316,7 +316,7 @@ function mount(el){
     var n = doneCount();
     var tabs = mk("div", "vg-row vg-tabs"); tabs.setAttribute("aria-label", "Chapters");
     CHAPTERS.forEach(function(c, i){
-      var open = i <= n, b = btn((ssave().done[c.id] ? "✓ " : open ? c.icon+" " : "🔒 ")+(i + 1), i === sel ? "on" : "", function(){ sel = i; line = 0; render(); });
+      var open = i <= n, b = btn((ssave().done[c.id] ? "✓ " : open ? c.icon+" " : "🔒 ")+(i + 1), i === sel ? "primary" : "", function(){ sel = i; line = 0; render(); });
       b.setAttribute("aria-pressed", i === sel ? "true" : "false");
       b.setAttribute("aria-label", "Chapter "+(i + 1)+": "+c.name+(ssave().done[c.id] ? ", complete" : open ? "" : ", locked"));
       tabs.appendChild(b);

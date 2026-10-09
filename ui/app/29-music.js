@@ -832,6 +832,8 @@ function muListen(peer){
   var L = MU.listen = {peer:peer, userId:dj.userId, who:dj.who, pc:pc, audio:null, an:null, buf:null, ice:[], ctx:null};
   pc.onicecandidate = function(e){ if(e.candidate) muLiveSignal(L.userId, {op:"ice", toPeer:peer, candidate:e.candidate.toJSON()}); };
   pc.ontrack = function(e){
+    // Play it as soon as it arrives: the default buffer is sized for calls and adds most of the delay.
+    try { if(e.receiver){ if("jitterBufferTarget" in e.receiver) e.receiver.jitterBufferTarget = 0; e.receiver.playoutDelayHint = 0; } } catch(err){}
     var stream = (e.streams && e.streams[0]) || new MediaStream([e.track]);
     if(!L.audio){
       L.audio = document.createElement("audio"); L.audio.autoplay = true; L.audio.setAttribute("playsinline", "");

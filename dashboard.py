@@ -5058,7 +5058,7 @@ def music_get(path, raw_path):
                 if one.get("embeddable") is False:
                     return 200, json.dumps({"results": [], "error": "That video's owner only lets it play on YouTube itself. Try another upload of the song."})
                 return 200, json.dumps({"results": [one]})
-            return 200, json.dumps({"results": music.search(q)})
+            return 200, json.dumps({"results": music.search(q, verify=arg("quick") != "1")})
         if path == "/api/music/oembed":
             one = music.oembed(arg("v"))
             return (200, json.dumps(one)) if one else (404, json.dumps({"error": "not found"}))

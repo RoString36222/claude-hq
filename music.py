@@ -437,17 +437,31 @@ def parse_search(html, limit=6):
     return out
 
 
-def search(q, limit=6):
+_search_cache = {}
+
+
+def search(q, limit=6, verify=True):
     """Search YouTube for `q` (no API key: reads the public results page),
-    leaving out videos that can't be embedded."""
+    leaving out videos that can't be embedded. `verify=False` skips that
+    per-result check: the fast path for results that pop up while typing."""
     q = clean_text(q, 120)
     if not q:
         return []
-    try:
-        html = _get("https://www.youtube.com/results?search_query=" + urllib.parse.quote_plus(q))
-    except Exception:
-        return []
-    found = parse_search(html, limit * 2)
+    key = q.lower()
+    hit = _search_cache.get(key)
+    if hit and time.time() - hit[0] < 600:
+        found = hit[1]
+    else:
+        try:
+            html = _get("https://www.youtube.com/results?search_query=" + urllib.parse.quote_plus(q))
+        except Exception:
+            return []
+        found = parse_search(html, limit * 2)
+        if len(_search_cache) > 200:
+            _search_cache.clear()
+        _search_cache[key] = (time.time(), found)
+    if not verify:
+        return found[:limit]
     with ThreadPoolExecutor(max_workers=6) as ex:
         checks = list(ex.map(lambda r: oembed(r["v"]), found))
     # A lookup that failed outright (None) keeps its result: only a known "no" drops one.

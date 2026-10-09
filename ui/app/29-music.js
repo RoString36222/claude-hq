@@ -273,6 +273,7 @@ function musicOnMsg(m){
   } else if(m.op === "viz" && Array.isArray(m.b) && m.b.length === MU_BANDS){
     MU.remote = {b: m.b.map(function(x){ return Math.max(0, Math.min(255, x|0)); }), at: Date.now(), from: m.from};
   } else if(m.op === "error" && typeof m.error === "string"){
+    if(m.error.indexOf("unknown op swap") >= 0 && MU.st && MU.st.cur){ muSend("next", {id:MU.st.cur.id}); return; }
     muNote(m.error.slice(0, 140));
   }
 }
@@ -296,7 +297,7 @@ function muPost(func, args){
   if(!MU.frame || !MU.frame.contentWindow) return;
   try { MU.frame.contentWindow.postMessage(JSON.stringify({event:"command", func:func, args:args || [], id:"hqmusic", channel:"widget"}), "*"); } catch(e){}
 }
-function muMakeFrame(v, startS){
+function muMakeFrame(v, startS, host2){
   var host = $("muPlayer"); if(!host) return;
   host.textContent = "";
   var f = document.createElement("iframe");
@@ -304,7 +305,7 @@ function muMakeFrame(v, startS){
   f.title = "Room player";
   f.allow = "autoplay; encrypted-media; picture-in-picture";
   f.referrerPolicy = "strict-origin-when-cross-origin";
-  f.src = "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(v) + "?enablejsapi=1&autoplay=1&playsinline=1&rel=0&modestbranding=1&start=" + Math.max(0, startS|0) + "&origin=" + encodeURIComponent(location.origin);
+  f.src = "https://" + (host2 ? "www.youtube.com" : "www.youtube-nocookie.com") + "/embed/" + encodeURIComponent(v) + "?enablejsapi=1&autoplay=1&playsinline=1&rel=0&modestbranding=1&start=" + Math.max(0, startS|0) + "&origin=" + encodeURIComponent(location.origin);
   f.addEventListener("load", function(){
     // Ask the player to report its time and state to us, again until it answers (it boots after "load").
     var tries = 0;
@@ -351,14 +352,39 @@ function muOnPlayer(){
   // Ended: ask for the next one (the Arena advances once, however many pages ask).
   if(MU.yt.state === 0 && MU.endSent !== s.cur.id){ MU.endSent = s.cur.id; muSend("next", {id:s.cur.id}); }
 }
+// A video that won't play here: try YouTube's main player once, then swap in another upload of the
+// same song (the person who queued it does the looking, so the room gets one swap, not one per page).
 function muOnPlayerError(code){
   var s = MU.st; if(!s || !s.cur) return;
-  if(MU.errV === s.cur.id) return;
-  MU.errV = s.cur.id;
-  var why = (code === 101 || code === 150) ? "This video can’t play outside YouTube. Skipping…" : "This video won’t play. Skipping…";
-  muNote(why);
-  var id = s.cur.id;
-  setTimeout(function(){ if(MU.st && MU.st.cur && MU.st.cur.id === id) muSend("next", {id:id}); }, 2500);
+  var cur = s.cur, key = cur.id + ":" + cur.v;
+  if(MU.errV === key) return;
+  MU.errV = key;
+  if(!MU.altTried) MU.altTried = {};
+  if(!MU.altTried[key]){
+    MU.altTried[key] = 1; MU.errV = null;
+    muMakeFrame(cur.v, muPos() / 1000, true);
+    return;
+  }
+  muMarkBad(cur.v);
+  muNote("That upload can\u2019t play outside YouTube. Finding another\u2026");
+  var mine = !!(cur.by && ARENA.you && cur.by.userId === ARENA.you.userId);
+  setTimeout(function(){ muReplace(cur); }, mine ? 0 : 7000);   // a backstop if whoever queued it isn't listening
+}
+function muReplace(cur){
+  var s = MU.st; if(!s || !s.cur || s.cur.id !== cur.id || s.cur.v !== cur.v) return;   // already handled
+  // Three uploads of one song have failed: it isn't going to play here, move on.
+  if(!MU.swaps) MU.swaps = {};
+  if((MU.swaps[cur.id] = (MU.swaps[cur.id] || 0) + 1) > 3){ muNote("No playable upload found. Skipping\u2026"); muSend("next", {id:cur.id}); return; }
+  var q = cur.title.replace(/\((official|music|video|audio|lyrics?|visuali[sz]er|hd|4k|remaster(ed)?)[^)]*\)/ig, "").replace(/\s+/g, " ").trim();
+  fetch("/api/music/search?q=" + encodeURIComponent((q + " lyrics").slice(0, 200)), {cache:"no-store"})
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      var s2 = MU.st; if(!s2 || !s2.cur || s2.cur.id !== cur.id || s2.cur.v !== cur.v) return;
+      var alt = ((j && j.results) || []).filter(function(r){ return r && r.v !== cur.v && !muIsBad(r.v); })[0];
+      if(alt){ muSend("swap", {id:cur.id, v:alt.v, title:cur.title}); muNote("Playing another upload of " + cur.title); }
+      else { muNote("No playable upload found. Skipping\u2026"); muSend("next", {id:cur.id}); }
+    })
+    .catch(function(){ muSend("next", {id:cur.id}); });
 }
 // Bring the local player in line with the room: right video, play/pause, within ~1.5 s.
 function muSyncPlayer(hard){
@@ -466,18 +492,33 @@ function muRenderQueue(){
 }
 
 /* ---------- adding songs ---------- */
-function muSearch(q){
-  q = (q || "").trim(); if(!q) return;
-  MU.searching = true; muRenderResults();
-  fetch("/api/music/search?q=" + encodeURIComponent(q.slice(0, 200)), {cache:"no-store"})
-    .then(function(r){ return r.json(); })
-    .then(function(j){ MU.results = (j && Array.isArray(j.results)) ? j.results.slice(0, 6) : []; MU.searchErr = j && typeof j.error === "string" ? j.error.slice(0, 160) : ""; })
-    .catch(function(){ MU.results = []; MU.searchErr = ""; })
-    .then(function(){ MU.searching = false; muRenderResults(true); });
+// Videos that wouldn't play here (an owner blocked embedding): remembered so they never come back.
+MU.bad = (function(){ try { var a = JSON.parse(localStorage.getItem("hq_mu_bad") || "[]"); return Array.isArray(a) ? a.filter(function(v){ return /^[A-Za-z0-9_-]{11}$/.test(v); }).slice(-300) : []; } catch(e){ return []; } })();
+function muIsBad(v){ return MU.bad.indexOf(v) >= 0; }
+function muMarkBad(v){
+  if(!v || muIsBad(v)) return;
+  MU.bad.push(v); if(MU.bad.length > 300) MU.bad.shift();
+  try { localStorage.setItem("hq_mu_bad", JSON.stringify(MU.bad)); } catch(e){}
 }
-function muRenderResults(done){
+// quick: the as-you-type search (no per-result check, results show as they come, focus stays in the box).
+function muSearch(q, quick){
+  q = (q || "").trim(); if(!q) return;
+  var seq = MU.searchSeq = (MU.searchSeq || 0) + 1;
+  if(!quick){ MU.searching = true; muRenderResults(); }
+  fetch("/api/music/search?q=" + encodeURIComponent(q.slice(0, 200)) + (quick ? "&quick=1" : ""), {cache:"no-store"})
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if(seq !== MU.searchSeq) return;   // a newer search is on its way
+      MU.results = (j && Array.isArray(j.results)) ? j.results.filter(function(r){ return r && !muIsBad(r.v); }).slice(0, 6) : [];
+      MU.searchErr = j && typeof j.error === "string" ? j.error.slice(0, 160) : "";
+      MU.searching = false; muRenderResults(!quick, quick);
+    })
+    .catch(function(){ if(seq === MU.searchSeq){ MU.results = []; MU.searchErr = ""; MU.searching = false; muRenderResults(!quick, quick); } });
+}
+function muRenderResults(done, quiet){
   var box = $("muResults"); if(!box) return;
   box.textContent = "";
+  if(quiet && !MU.results.length) return;
   if(MU.searching){ var p = el("li", "muted"); p.textContent = "Searching YouTube…"; box.appendChild(p); return; }
   if(done && !MU.results.length){ var e = el("li", "muted"); e.textContent = MU.searchErr || "No videos found. Try other words, or paste a YouTube link."; box.appendChild(e); return; }
   MU.results.forEach(function(r){
@@ -489,7 +530,7 @@ function muRenderResults(done){
     b.addEventListener("click", function(){ muAdd(r); });
     li.appendChild(b); box.appendChild(li);
   });
-  if(done && MU.results.length){ var f = box.querySelector("button"); if(f) f.focus(); }
+  if(done && !quiet && MU.results.length){ var f = box.querySelector("button"); if(f) f.focus(); }
 }
 function muAdd(r){
   if(!r || !/^[A-Za-z0-9_-]{11}$/.test(r.v || "")) return;
@@ -882,7 +923,31 @@ function musicLeave(){ /* the player keeps playing while you're tuned in; the lo
     });
   }
   var f = $("muAddForm");
-  if(f) f.addEventListener("submit", function(e){ e.preventDefault(); var i = $("muAddInput"); muSearch(i ? i.value : ""); });
+  if(f) f.addEventListener("submit", function(e){ e.preventDefault(); clearTimeout(MU.typeT); var i = $("muAddInput"); muSearch(i ? i.value : ""); });
+  var ai = $("muAddInput");
+  if(ai){
+    // Songs pop up as you type (a link waits for Enter / Search).
+    ai.addEventListener("input", function(){
+      clearTimeout(MU.typeT);
+      var q = ai.value.trim();
+      if(q.length < 2){ MU.searchSeq = (MU.searchSeq || 0) + 1; MU.results = []; muRenderResults(); return; }
+      if(/^(https?:\/\/|www\.|youtu)/i.test(q)) return;
+      MU.typeT = setTimeout(function(){ muSearch(q, true); }, 300);
+    });
+    ai.addEventListener("keydown", function(e){
+      if(e.key === "ArrowDown"){ var b = document.querySelector("#muResults .mu-res-btn"); if(b){ e.preventDefault(); b.focus(); } }
+      else if(e.key === "Escape" && MU.results.length){ e.preventDefault(); MU.results = []; muRenderResults(); }
+    });
+  }
+  var rl = $("muResults");
+  if(rl) rl.addEventListener("keydown", function(e){
+    if(e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    var bs = Array.prototype.slice.call(rl.querySelectorAll(".mu-res-btn")), i = bs.indexOf(document.activeElement);
+    if(i < 0) return;
+    e.preventDefault();
+    if(e.key === "ArrowUp" && i === 0){ var inp = $("muAddInput"); if(inp) inp.focus(); return; }
+    var n = bs[Math.max(0, Math.min(bs.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))]; if(n) n.focus();
+  });
   var vol = $("muVol");
   if(vol) vol.addEventListener("input", function(){ MU.volume = Math.max(0, Math.min(100, parseInt(vol.value, 10) || 0)); try { localStorage.setItem("hq_mu_vol", String(MU.volume)); } catch(e){} muPost("setVolume", [MU.volume]); if(MU.listen && MU.listen.audio) MU.listen.audio.volume = MU.volume / 100; });
   var vb = $("muVideo");

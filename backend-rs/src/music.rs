@@ -27,6 +27,8 @@
 //!                             still current, so ten pages saying "ended" at
 //!                             once advance the queue exactly once
 //!   dur   {id, ms}            the first page to learn an item's length says so
+//!   swap  {id, v, title?}     the current item's upload won't play: put another
+//!                             upload of the same song in its place, from the top
 //!   clear                     empty the queue (the current item keeps playing)
 //!   viz   {b: [16 x 0..255]}  the DJ's live spectrum, relayed to everyone else
 //!                             in the room and never stored
@@ -337,6 +339,21 @@ impl RoomMusic {
             "next" => {
                 if !cur_is(self) { return Outcome::Unchanged; }
                 self.advance(now);
+                Outcome::Changed
+            }
+            "swap" => {
+                let Some(v) = msg.get("v").and_then(|v| v.as_str()).filter(|v| is_youtube_id(v)) else {
+                    return Outcome::Refused("that isn't a YouTube video id".into());
+                };
+                if !cur_is(self) { return Outcome::Unchanged; }
+                let title = msg.get("title").and_then(|t| t.as_str())
+                    .map(|t| clean_text(t, TEXT_MAX)).filter(|t| !t.is_empty());
+                let mut item = self.cur.take().expect("cur_is checked it");
+                if item.v == v { self.cur = Some(item); return Outcome::Unchanged; }
+                item.v = v.to_string();
+                item.dur_ms = None;
+                if let Some(t) = title { item.title = t; }
+                self.start(item, now);
                 Outcome::Changed
             }
             "dur" => {
@@ -684,6 +701,23 @@ mod tests {
         assert_eq!(m.apply("clear", &json!({}), &a, 0), Outcome::Changed);
         assert!(m.queue.is_empty());
         assert!(matches!(m.apply("dance", &json!({}), &a, 0), Outcome::Refused(_)));
+    }
+
+    #[test]
+    fn swap_replaces_the_current_upload_in_place() {
+        let mut m = RoomMusic::default();
+        let a = who("a");
+        m.apply("add", &json!({"v": "dQw4w9WgXcQ", "title": "Song"}), &a, 0);
+        m.apply("add", &json!({"v": "bbbbbbbbbbb"}), &a, 0);
+        let id = m.cur.as_ref().unwrap().id.clone();
+        m.apply("dur", &json!({"id": id, "ms": 5000}), &a, 0);
+        assert_eq!(m.apply("swap", &json!({"id": id, "v": "ccccccccccc", "title": "Song (lyrics)"}), &a, 7000), Outcome::Changed);
+        let cur = m.cur.as_ref().unwrap();
+        assert_eq!((cur.id.as_str(), cur.v.as_str(), cur.title.as_str(), cur.dur_ms), (id.as_str(), "ccccccccccc", "Song (lyrics)", None));
+        assert_eq!(m.position(8000), 1000);   // from the top
+        assert_eq!(m.queue.len(), 1);         // the queue keeps its order
+        assert_eq!(m.apply("swap", &json!({"id": "m99", "v": "ddddddddddd"}), &a, 0), Outcome::Unchanged);
+        assert!(matches!(m.apply("swap", &json!({"id": id, "v": "bad"}), &a, 0), Outcome::Refused(_)));
     }
 
     #[test]

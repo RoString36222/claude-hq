@@ -50,7 +50,7 @@ pub fn arena_info() -> Value {
     json!({"impl": "rs", "games": games,
            "party": {"v": 1, "order": crate::valley::party::ORDER},
            // Now Playing (/v1/music/now) and listen-along rooms ({"type": "music"}).
-           "music": {"v": 1}})
+           "music": {"v": 1}, "maps": {"v": 1}})
 }
 
 #[cfg(test)]
@@ -92,5 +92,6 @@ mod tests {
         // valley.py:72. Without this the page hides Party Mode outright.
         let info = arena_info();
         assert_eq!(info["party"], json!({"v": 1, "order": ["kart", "plat", "fps", "golf"]}));
+        assert_eq!(info["maps"], json!({"v": 1}));
     }
 }

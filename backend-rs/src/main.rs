@@ -13,6 +13,7 @@ mod db;
 mod fps;
 mod hq;
 mod kart;
+mod loot;
 mod music;
 mod nudges;
 mod pantry;
@@ -860,6 +861,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(cosmetics::routes())
         .merge(crews::routes())
         .merge(hq::routes())
+        .merge(loot::routes())
         .merge(music::routes())
         .merge(portraits::routes())
         .merge(nudges::routes())

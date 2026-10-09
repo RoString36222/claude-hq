@@ -2206,3 +2206,51 @@ html.hq-calm .mu-live-dot{animation:none}
 .sk-consent-btns{display:flex;justify-content:flex-end;gap:8px}
 html.hq-calm .sk-bar i{transition:none}
 @media (prefers-reduced-motion: reduce){ .sk-bar i{transition:none} }
+/* ===== HQ 2.5 loot: chests and the card binder (ui/app/34-loot.js) ===== */
+.loot-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:6px;width:100%}
+.loot-how,.loot-grid>p.muted{grid-column:1 / -1;margin:0 0 2px;font-size:12px}
+.loot-chest{--loot:var(--line2);display:grid;grid-template-columns:30px minmax(0,1fr);column-gap:8px;align-items:center;text-align:left;
+  background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-left:3px solid var(--loot);border-radius:var(--radius-sm);padding:7px 8px;cursor:pointer;font:inherit}
+.loot-chest:hover{border-color:var(--loot)}
+.loot-chest:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.loot-chest:disabled{opacity:.6;cursor:progress}
+.loot-chest b{font-size:12.5px}
+.loot-chest small{grid-column:2;font-size:11px}
+.loot-chest .loot-box{grid-row:1 / span 2}
+.r-common{--loot:var(--line2)}
+.r-rare{--loot:var(--brand)}
+.r-epic{--loot:var(--gold)}
+/* the chest: a lid over a box, in the rarity colour */
+.loot-box{position:relative;display:block;width:26px;height:20px;border-radius:4px;background:color-mix(in srgb,var(--loot) 55%,var(--panel3));
+  border:1px solid color-mix(in srgb,var(--loot) 70%,var(--ink) 10%)}
+.loot-box::before{content:"";position:absolute;left:-2px;right:-2px;top:-5px;height:7px;border-radius:4px 4px 2px 2px;
+  background:color-mix(in srgb,var(--loot) 80%,var(--panel3));border:1px solid color-mix(in srgb,var(--loot) 70%,var(--ink) 10%)}
+.loot-box::after{content:"";position:absolute;left:50%;top:3px;width:6px;height:6px;margin-left:-3px;border-radius:2px;background:var(--panel)}
+.loot-box.big{width:84px;height:62px;border-radius:10px}
+.loot-box.big::before{top:-14px;height:20px;border-radius:10px 10px 4px 4px;left:-5px;right:-5px}
+.loot-box.big::after{width:16px;height:16px;margin-left:-8px;top:8px;border-radius:4px}
+.loot-box.shake{animation:loot-shake .3s var(--ease) 3}
+@keyframes loot-shake{0%,100%{transform:none}25%{transform:rotate(-7deg)}75%{transform:rotate(7deg)}}
+.loot-recent{grid-column:1 / -1;font-size:12px;margin-top:4px}
+.loot-recent summary{cursor:pointer;color:var(--muted)}
+.loot-recent-row{padding:2px 0 2px 12px}
+.loot-binder{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:6px;width:100%}
+.loot-card{display:grid;justify-items:center;gap:2px;text-align:center;background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius-sm);padding:6px}
+.loot-card b{font-size:12px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.loot-card small{font-size:11px}
+.loot-card .loot-trade{font-size:11px;padding:2px 8px;margin-top:2px}
+.loot-art{display:grid;place-items:center;width:60px;height:60px}
+.loot-art img,.loot-art svg{max-width:100%;max-height:100%}
+.loot-card.holo,.loot-prize.holo{border-color:var(--gold);
+  background:linear-gradient(135deg,color-mix(in srgb,var(--gold) 16%,var(--panel2)),var(--panel2) 45%,color-mix(in srgb,var(--brand) 16%,var(--panel2)));
+  background-size:200% 200%;animation:loot-holo 6s linear infinite}
+@keyframes loot-holo{0%{background-position:0% 0%}50%{background-position:100% 100%}100%{background-position:0% 0%}}
+.loot-reveal{width:min(360px,100%);text-align:center;display:grid;gap:10px;justify-items:center}
+.loot-reveal-title{font-size:15px}
+.loot-stage{--loot:var(--line2);display:grid;place-items:center;min-height:120px;width:100%;border-radius:var(--radius);
+  background:radial-gradient(circle,color-mix(in srgb,var(--loot) 30%,transparent),transparent 70%)}
+.loot-prize{display:grid;place-items:center;font-size:48px;min-width:104px;min-height:104px;border-radius:var(--radius);animation:popin .35s var(--ease)}
+.loot-prize.card{background:var(--panel2);border:1px solid var(--line)}
+.loot-reveal-text{margin:0;font-size:14px}
+html.hq-calm .loot-box.shake,html.hq-calm .loot-card.holo,html.hq-calm .loot-prize,html.hq-calm .loot-prize.holo{animation:none}
+@media (prefers-reduced-motion: reduce){.loot-box.shake,.loot-card.holo,.loot-prize,.loot-prize.holo{animation:none}}

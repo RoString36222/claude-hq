@@ -115,7 +115,18 @@ const CATALOG: &[Entry] = &[
     e("d-gnomes", "decor", "Plaza gnomes", "gnomes", 8, 0),
     e("d-fireworks", "decor", "Fireworks", "fireworks", 25, 0),
     e("d-neon", "decor", "Neon outline", "neon", 0, 30),
+    // 2.5 grant-only (loot, prestige)
+    e("k-prism", "kart", "Prism paint", "#b388ff", 0, 0),
+    e("r-shadow", "runner", "Shadow runner", "#3a3550", 0, 0),
+    e("g-plasma", "blaster", "Plasma blaster", "#7df9ff", 0, 0),
+    e("b-pokeball", "ball", "Poké Ball", "#e3350d", 0, 0),
+    e("f-holo", "frame", "Holo frame", "#a0f0ff", 0, 0),
+    e("f-star", "frame", "Prestige star frame", "#f5d76e", 0, 0),
+    e("d-crown", "decor", "Rooftop crown", "crown", 0, 0),
 ];
+
+/// Grant-only: never sold, never level-unlocked, owned only via a cos: row.
+const GRANT_ONLY: [&str; 7] = ["k-prism", "r-shadow", "g-plasma", "b-pokeball", "f-holo", "f-star", "d-crown"];
 
 /// 200 ledger rows per user per UTC day, counted inclusive of the row just
 /// written, so the 201st op of the day is refused.
@@ -439,6 +450,7 @@ where
 fn item_views(level: i64, have: &HashSet<String>, on: &Map<String, Value>) -> Vec<ItemView> {
     CATALOG
         .iter()
+        .filter(|it| !GRANT_ONLY.contains(&it.id) || have.contains(it.id))
         .map(|it| ItemView {
             id: it.id,
             slot: it.slot,
@@ -874,7 +886,7 @@ mod tests {
 
     #[test]
     fn the_catalogue_matches_the_python() {
-        assert_eq!(CATALOG.len(), 21);
+        assert_eq!(CATALOG.len(), 28);
         let ids: Vec<&str> = CATALOG.iter().map(|it| it.id).collect();
         assert_eq!(ids[0], "k-neon");
         assert_eq!(ids[3], "k-gold");
@@ -883,7 +895,7 @@ mod tests {
             assert!(SLOT_IDS.contains(&it.slot), "{} sits in no slot: {}", it.id, it.slot);
             // The two sentinels are mutually exclusive in the shipped table.
             // Asserted here, not relied on by the flags.
-            assert!((it.price == 0) != (it.level == 0), "{} sets both sentinels", it.id);
+            assert!((it.price == 0) != (it.level == 0) || GRANT_ONLY.contains(&it.id), "{} sets both sentinels", it.id);
             // poke_balances.item is VARCHAR(16) and the key is "cos:" + id.
             assert!(item_key(it.id).len() <= 16, "{} is too long to store", it.id);
         }
@@ -951,7 +963,7 @@ mod tests {
         assert_eq!(at(40), ["k-gold", "r-gold", "b-gold", "f-legend", "d-neon"]);
         // The five unlocks are exactly the unpriced items, and nothing else.
         assert!(at(999).iter().all(|id| find(id).expect("in the catalogue").price == 0));
-        assert_eq!(at(999).len(), CATALOG.iter().filter(|it| it.price == 0).count());
+        assert_eq!(at(999).len(), CATALOG.iter().filter(|it| it.price == 0 && it.level != 0).count());
         // `item_views` reads only the set it is handed: the union happens in
         // `owned()`, against the database.
         assert!(!item_views(40, &HashSet::new(), &Map::new()).iter().any(|v| v.owned));

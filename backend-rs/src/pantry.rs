@@ -52,7 +52,7 @@ use std::collections::HashMap;
 // styles the Nth+1 attempt is the one refused.
 
 const DAILY_COINS: i64 = 5;
-const COIN_CAP: i64 = 30;
+pub(crate) const COIN_CAP: i64 = 30;
 const ITEM_CAP: i64 = 10;
 const BUY_MAX_QTY: i64 = 5;
 const GIFT_MAX_COINS: i64 = 5;

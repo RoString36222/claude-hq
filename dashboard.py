@@ -58,7 +58,7 @@ import worksignals
 # HQ 2.5 local proxy extension modules (each in try/except: one broken module
 # never takes the HQ down).
 EXT = []
-for _ext_name in ("ext_skills",):
+for _ext_name in ("ext_skills", "ext_loot", "ext_prestige", "ext_maps", "ext_cups", "ext_boss"):
     try:
         EXT.append(__import__(_ext_name))
     except Exception:

@@ -53,6 +53,8 @@ function invRender(cosRes){
   var lv=document.createElement("span"); lv.className="muted"; lv.textContent = INV.cos ? "HQ level "+INV.cos.level : "";
   w.appendChild(cb); w.appendChild(lv); body.appendChild(w);
   var msg=document.createElement("div"); msg.id="invMsg"; msg.className="inv-msg"; msg.setAttribute("aria-live","polite"); body.appendChild(msg);
+  // HQ 2.5 loot: Chests and Cards (34-loot.js)
+  if(typeof lootSections==="function") lootSections(body, INV);
   // snacks
   var items=(INV.pantry && INV.pantry.items) || {};
   var sn=Object.keys(items).filter(function(k){ return items[k]>0 && typeof FOOD_UI!=="undefined" && FOOD_UI[k]; });

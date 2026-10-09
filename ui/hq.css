@@ -2254,3 +2254,24 @@ html.hq-calm .sk-bar i{transition:none}
 .loot-reveal-text{margin:0;font-size:14px}
 html.hq-calm .loot-box.shake,html.hq-calm .loot-card.holo,html.hq-calm .loot-prize,html.hq-calm .loot-prize.holo{animation:none}
 @media (prefers-reduced-motion: reduce){.loot-box.shake,.loot-card.holo,.loot-prize,.loot-prize.holo{animation:none}}
+/* ---- HQ 2.5 prestige (ui/app/36-prestige.js) ---- */
+.pr-modal{width:min(520px,100%)}
+.pr-panel{display:grid;gap:10px}
+.pr-head{display:flex;align-items:center;gap:14px}
+.pr-stars{font-size:28px;font-weight:700;color:var(--gold);min-width:64px;text-align:center;padding:6px 10px;border:1px solid var(--gold);border-radius:var(--radius-sm);background:var(--goldbg)}
+.pr-lv{display:grid;gap:2px}
+.pr-lv b{font-size:18px}
+.pr-bar{height:8px;border-radius:999px;background:var(--panel);border:1px solid var(--line);overflow:hidden}
+.pr-bar i{display:block;height:100%;background:var(--gold);transition:width var(--t-med) var(--ease)}
+.pr-how{margin:0;color:var(--muted)}
+.pr-rewards{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.pr-rewards li{font-size:13px;color:var(--faint);padding:3px 8px;border:1px dashed var(--line);border-radius:6px}
+.pr-rewards li.got{color:var(--ink);border-style:solid;border-color:var(--gold);background:var(--goldbg)}
+.pr-claim,.pr-open{justify-self:start}
+.pr-confirm{border:1px solid var(--gold);background:var(--goldbg);border-radius:var(--radius-sm);padding:10px;display:grid;gap:8px}
+.pr-confirm p{margin:0}
+.pr-btns{display:flex;justify-content:flex-end;gap:8px}
+.pr-tcard{display:grid;gap:6px}
+.pr-chip{justify-self:start;border-color:var(--gold);background:var(--goldbg)}
+html.hq-calm .pr-bar i{transition:none}
+@media (prefers-reduced-motion: reduce){ .pr-bar i{transition:none} }

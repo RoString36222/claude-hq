@@ -127,6 +127,9 @@ const CATALOG: &[Entry] = &[
 
 /// Grant-only: never sold, never level-unlocked, owned only via a cos: row.
 const GRANT_ONLY: [&str; 7] = ["k-prism", "r-shadow", "g-plasma", "b-pokeball", "f-holo", "f-star", "d-crown"];
+/// Grant-only rows that can never be traded away.
+#[allow(dead_code)]
+pub(crate) const SOULBOUND: [&str; 2] = ["f-star", "d-crown"];
 
 /// 200 ledger rows per user per UTC day, counted inclusive of the row just
 /// written, so the 201st op of the day is refused.
@@ -169,7 +172,7 @@ struct ItemView {
 }
 
 #[derive(Serialize)]
-struct StateView {
+pub(crate) struct StateView {
     slots: Slots,
     items: Vec<ItemView>,
     coins: i64,
@@ -469,7 +472,7 @@ fn item_views(level: i64, have: &HashSet<String>, on: &Map<String, Value>) -> Ve
         .collect()
 }
 
-async fn build_state(pool: &SqlitePool, uid: &str) -> Result<StateView, sqlx::Error> {
+pub(crate) async fn build_state(pool: &SqlitePool, uid: &str) -> Result<StateView, sqlx::Error> {
     let level = hq_level(pool, uid).await?;
     let have = owned(pool, uid, level).await?;
     let on = equipped_map(pool, uid).await?;

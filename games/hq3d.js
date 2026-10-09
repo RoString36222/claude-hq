@@ -83,6 +83,8 @@ function mount(el, api){
   var tip = document.createElement("div"); tip.className = "hq3d-tip"; tip.hidden = true; el.appendChild(tip);
   var loading = document.createElement("div"); loading.className = "hq3d-loading"; loading.textContent = "Building your HQ…"; el.appendChild(loading);
   var fadeEl = document.createElement("div"); fadeEl.className = "hq3d-fade"; fadeEl.setAttribute("aria-hidden", "true"); el.appendChild(fadeEl);
+  var rideUi = document.createElement("button"); rideUi.type = "button"; rideUi.className = "hq3d-ride"; rideUi.hidden = true;
+  rideUi.addEventListener("click", function(){ rideToggle(); canvas.focus(); }); el.appendChild(rideUi);
 
   var renderer, scene, cam, clock0 = E.now();
   var tgt = null;                      // where the build helpers add things (a world's scene while it is built)
@@ -145,6 +147,60 @@ function mount(el, api){
     }
   }
 
+  // A bicycle: forward is +z, wheels on the ground. {g, wheels:[rear, front], crank, steer}.
+  var BIKE_WR = 0.34, BIKE_WB = 1.04;
+  function tube(a, b, r, m, p){
+    var d = new THREE.Vector3().subVectors(b, a), o = new THREE.Mesh(new THREE.CylinderGeometry(r, r, d.length(), 8), m);
+    o.position.copy(a).addScaledVector(d, 0.5); o.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
+    o.castShadow = true; p.add(o); return o;
+  }
+  function bikeModel(color){
+    var g = new THREE.Group(), WR = BIKE_WR, WB = BIKE_WB;
+    var fm = mat(color, {metalness: 0.55, roughness: 0.32}), dark = mat(0x161a1f, {roughness: 0.65}), steel = mat(0xc4ccd4, {metalness: 0.85, roughness: 0.28});
+    var V = function(x, y, z){ return new THREE.Vector3(x, y, z); };
+    function wheel(z, p){
+      var w = new THREE.Group(); w.position.set(0, WR, z); p.add(w);
+      var tire = new THREE.Mesh(new THREE.TorusGeometry(WR, 0.036, 8, 30), dark); tire.rotation.y = PI/2; tire.castShadow = true; w.add(tire);
+      var rim = new THREE.Mesh(new THREE.TorusGeometry(WR - 0.04, 0.012, 6, 30), steel); rim.rotation.y = PI/2; w.add(rim);
+      for(var i = 0; i < 8; i++){ var sp = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, (WR - 0.04)*2, 4), steel); sp.rotation.x = i/8*PI; w.add(sp); }
+      var hub = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.09, 10), steel); hub.rotation.z = PI/2; w.add(hub);
+      return w;
+    }
+    var R = V(0, WR, -WB/2), BB = V(0, 0.3, -0.06), S = V(0, 0.9, -0.24), H = V(0, 0.93, 0.34), Hb = V(0, 0.7, 0.4);
+    var rear = wheel(-WB/2, g);
+    tube(S, BB, 0.024, fm, g); tube(BB, Hb, 0.028, fm, g); tube(S, H, 0.022, fm, g);
+    tube(BB, V(0.06, WR, -WB/2), 0.014, fm, g); tube(BB, V(-0.06, WR, -WB/2), 0.014, fm, g);
+    tube(S, V(0.06, WR, -WB/2), 0.012, fm, g); tube(S, V(-0.06, WR, -WB/2), 0.012, fm, g);
+    tube(Hb, H, 0.03, fm, g);
+    tube(S, V(0, 0.98, -0.27), 0.016, steel, g);                                   // seat post
+    var seat = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.05, 0.26), dark); seat.position.set(0, 1.01, -0.27); seat.castShadow = true; g.add(seat);
+    // the steering: fork, front wheel and bars turn about the head tube
+    var steer = new THREE.Group(); steer.position.copy(H); g.add(steer);
+    var front = wheel(WB/2 - H.z, steer); front.position.y = WR - H.y;
+    tube(V(0.06, Hb.y - H.y, Hb.z - H.z), V(0.06, WR - H.y, WB/2 - H.z), 0.014, fm, steer);
+    tube(V(-0.06, Hb.y - H.y, Hb.z - H.z), V(-0.06, WR - H.y, WB/2 - H.z), 0.014, fm, steer);
+    tube(V(0, 0, 0), V(0, 0.12, -0.04), 0.018, steel, steer);                    // stem
+    tube(V(-0.26, 0.12, -0.06), V(0.26, 0.12, -0.06), 0.014, steel, steer);      // bars
+    [-0.26, 0.26].forEach(function(x){ var gr = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.1, 8), dark); gr.rotation.z = PI/2; gr.position.set(x*1.05, 0.12, -0.06); steer.add(gr); });
+    // the cranks and pedals turn about the bottom bracket
+    var crank = new THREE.Group(); crank.position.copy(BB); g.add(crank);
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.012, 6, 20), steel); ring.rotation.y = PI/2; ring.position.x = 0.05; crank.add(ring);
+    [[1, 0.075], [-1, -0.075]].forEach(function(sd){
+      var arm = new THREE.Group(); arm.rotation.x = sd[0] > 0 ? 0 : PI; crank.add(arm);
+      var a = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.17, 0.03), steel); a.position.set(sd[1], -0.085, 0); arm.add(a);
+      var pd = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.02, 0.06), dark); pd.position.set(sd[1]*1.6, -0.17, 0); arm.add(pd);
+    });
+    return {g: g, wheels: [rear, front], crank: crank, steer: steer};
+  }
+  // Roll a bike's wheels and cranks forward by `d` metres, its bars turned by `st` (-1..1).
+  function bikeRoll(B, d, st){
+    if(!B) return;
+    B.wheels[0].rotation.x += d/BIKE_WR; B.wheels[1].rotation.x += d/BIKE_WR;
+    B.crank.rotation.x += d/BIKE_WR*0.55;
+    if(st != null) B.steer.rotation.y = st*0.45;
+  }
+  function bikeColor(key){ return [0xff6b5b, 0x5fd3e6, 0xffb347, 0x6fd38a, 0x9b8cf0, 0xf4f4f4, 0xe0559b, 0x3d6fd1][hashStr(key) % 8]; }
+
   // What a floor of the building (games/hqlobby.js, games/hqbase.js) builds with.
   var ctx = {
     get THREE(){ return THREE; }, get L(){ return L; }, E: E, PI: PI, COL: COL, HEX: HEX, STATE_HEX: STATE_HEX,
@@ -154,6 +210,7 @@ function mount(el, api){
     canvasTex: function(w, h, d){ return canvasTex(w, h, d); }, screen: function(w, h, t, tr){ return screen(w, h, t, tr); },
     glow: function(c, sz, op){ return glowSprite(c, sz, op); }, label: function(t, c, sc){ return label(t, c, sc); }, glyph: function(ch, c){ return glyph(ch, c); },
     plant: function(x, z, sc, seed){ return plant(x, z, sc, seed); }, sky: function(day){ return day ? sky.day : sky.night; },
+    bike: function(col){ return bikeModel(col); }, bikeRoll: function(B, d, st){ bikeRoll(B, d, st); }, bikeColor: bikeColor,
     rng: rng, hashStr: hashStr, short: short, rr: rr, crewState: crewState,
     character: function(key, cb){ makeCharacter(key, cb); }, anim: function(ch, n, sp){ setAnim(ch, n, sp); },
     avatar: function(){ return avatar ? {x: avatar.x, z: avatar.z} : null; },
@@ -547,7 +604,81 @@ function mount(el, api){
     if(nd > 2.6){ doorsArmed = true; return; }
     if(doorsArmed && nd < 1.5){ doorsArmed = false; walkTo = null; through(near); }
   }
+  /* ---------- riding a bike (Arena City's bike park: cur.bikes) ---------- */
+  // ride = {idx, B (the bike under you), lean (group you and the bike sit in), speed, steer}.
+  // Getting off puts the bike back in its rack: parked bikes are this page's own props, not shared.
+  var ride = null, RIDE_MAX = 10, RIDE_BOOST = 14;
+  function nearBike(){
+    var bs = cur && cur.bikes; if(!bs || !avatar) return -1;
+    var best = -1, bd = 1.7;
+    bs.forEach(function(b, i){ var d = Math.hypot(avatar.x - b.x, avatar.z - b.z); if(d < bd){ bd = d; best = i; } });
+    return best;
+  }
+  function seatRider(ch, on){
+    if(!ch) return;
+    if(on){ ch.o.position.set(0, 0.56, -0.2); ch.o.rotation.set(0.08, 0, 0); setAnim(ch, "sit", 1); }
+    else { ch.o.position.set(0, 0, 0); ch.o.rotation.set(0, 0, 0); setAnim(ch, "idle"); }
+  }
+  function mount(i){
+    var b = cur.bikes && cur.bikes[i]; if(!b || ride) return;
+    var lean = new THREE.Group(); avatar.g.add(lean);
+    var B = bikeModel(b.color); lean.add(B.g);
+    if(avatar.ch){ lean.add(avatar.ch.o); seatRider(avatar.ch, true); }
+    b.g.visible = false;
+    avatar.airborne = false; avatar.vy = 0; avatar.g.position.y = 0;   // getting on mid-hop lands you on the seat
+    ride = {idx: i, B: B, lean: lean, speed: 0, steer: 0};
+    avatar.yaw = b.yaw; walkTo = null; walkDoor = null;
+    E.sfx("bell");
+    rideUiSync(true);
+  }
+  function dismount(){
+    if(!ride) return;
+    var b = cur && cur.bikes && cur.bikes[ride.idx]; if(b) b.g.visible = true;    // back in the rack
+    if(avatar.ch){ avatar.g.add(avatar.ch.o); seatRider(avatar.ch, false); }
+    avatar.g.remove(ride.lean);
+    ride = null; doorsArmed = false;
+    rideUiSync(true);
+  }
+  function rideMove(dt){
+    var thr = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+    var st = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
+    var boost = keys.ShiftLeft || keys.ShiftRight, top = boost ? RIDE_BOOST : RIDE_MAX;
+    walkTo = null; walkDoor = null;
+    if(thr > 0) ride.speed = Math.min(top, ride.speed + (ride.speed < 0 ? 14 : 7)*dt);
+    else if(thr < 0) ride.speed = Math.max(-2.5, ride.speed - (ride.speed > 0 ? 14 : 4)*dt);
+    else ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - 2*dt) : Math.min(0, ride.speed + 4*dt);
+    if(ride.speed > top) ride.speed = Math.max(top, ride.speed - 6*dt);
+    ride.steer += (st - ride.steer)*Math.min(1, dt*6);
+    var grip = Math.min(1, Math.abs(ride.speed)/2.5);
+    avatar.yaw += ride.steer*grip*(ride.speed >= 0 ? 1.9 : -1.2)*dt;
+    var d = ride.speed*dt, nx = avatar.x + Math.sin(avatar.yaw)*d, nz = avatar.z + Math.cos(avatar.yaw)*d;
+    if(d && !blocked(nx, nz)){ avatar.x = nx; avatar.z = nz; }
+    else if(d){ ride.speed *= -0.2; d = 0; }
+    bikeRoll(ride.B, d, ride.steer);
+    // lean into the turn (and sit up straight in Calm)
+    var lean = E.calm() ? 0 : -ride.steer*Math.min(1, Math.abs(ride.speed)/6)*0.32;
+    ride.lean.rotation.z += (lean - ride.lean.rotation.z)*Math.min(1, dt*8);
+    if(avatar.ch) setAnim(avatar.ch, "sit", 1);
+    keyMove = Math.abs(ride.speed) > 0.3; keyRun = false; if(keyMove){ movedHere = true; walkInto(); }
+    avatar.g.position.set(avatar.x, 0, avatar.z); avatar.g.rotation.y = avatar.yaw;
+    var b = cur.bikes && cur.bikes[ride.idx]; if(b && b.g.visible) b.g.visible = false;   // the street rebuilt under you
+    view.goal.set(avatar.x*(cur.follow || 1), cur.camY || 1.4, avatar.z*(cur.follow || 1));
+  }
+  // The "Ride (E)" / "Get off (E)" button over the scene: shows near a parked bike or while riding.
+  function rideUiSync(force){
+    if(!rideUi) return;
+    var near = ride ? -2 : nearBike(), key = ride ? "on" : near >= 0 ? "near" : "";
+    if(!force && key === rideUi.dataset.k) return;
+    rideUi.dataset.k = key; rideUi.hidden = !key;
+    rideUi.textContent = ride ? "Get off (E)" : "\uD83D\uDEB2 Ride (E)";
+    rideUi.title = ride ? "W / S: pedal and brake · A / D: steer · Shift: faster · E: get off" : "Get on this bike";
+    if(key === "on" && force) tipRide();
+  }
+  function tipRide(){ if(api.announce) api.announce("On the bike. W and S pedal and brake, A and D steer, Shift goes faster, E gets off."); }
+  function rideToggle(){ if(ride) dismount(); else { var i = nearBike(); if(i >= 0) mount(i); } }
+
   function moveAvatar(dt){
+    if(ride){ rideMove(dt); return; }
     var mx = 0, mz = 0;
     if(keys.KeyW || keys.ArrowUp) mz -= 1; if(keys.KeyS || keys.ArrowDown) mz += 1;
     if(keys.KeyA || keys.ArrowLeft) mx -= 1; if(keys.KeyD || keys.ArrowRight) mx += 1;
@@ -662,6 +793,7 @@ function mount(el, api){
     name = outside(name);
     var w = name === "mission" ? worlds.mission : makeWorld(name); if(!w || fading) return;
     var go = function(){
+      dismount();
       if(avatar.g.parent) avatar.g.parent.remove(avatar.g);
       w.scene.add(avatar.g);
       var sp = (w.spawnFrom && (w.spawnFrom[from] || (from === "city" && w.spawnFrom.base))) || w.spawn;
@@ -680,6 +812,8 @@ function mount(el, api){
   function typing(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || (t && t.isContentEditable); }
   // Capture phase, so walking keys win over the page's single-key shortcuts while HQ is open.
   function onKey(e){
+    if(e.code === "KeyE" && e.type === "keydown" && !e.repeat && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey
+       && (ride || nearBike() >= 0)){ e.preventDefault(); rideToggle(); return; }
     if(!inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey || !MOVE_KEYS[e.code]) return;
     keys[e.code] = e.type === "keydown";
     if(e.code.indexOf("Shift") < 0) e.preventDefault();
@@ -693,6 +827,7 @@ function mount(el, api){
     var t = E.now() - clock0, dt = Math.min(0.05, last ? t - last : 0); last = t;
     var k = E.calm() ? 0.25 : 1;
     moveAvatar(dt);
+    rideUiSync(false);
     var ease = 1 - Math.exp(-dt*4); view.target.lerp(view.goal, ease);
     resize(); placeCam();
     if(avatar && avatar.ch) avatar.ch.mixer.update(dt);
@@ -775,10 +910,21 @@ function mount(el, api){
       P.x = jump ? P.tx : P.x + (P.tx - P.x)*k; P.z = jump ? P.tz : P.z + (P.tz - P.z)*k;
       P.yaw = E.angLerp(P.yaw, P.tyaw, k);
       P.g.position.set(P.x, 0, P.z); P.g.rotation.y = P.yaw;
-      if(P.ch){ setAnim(P.ch, P.a === 2 ? "sprint" : P.a === 1 ? "walk" : "idle"); P.ch.mixer.update(dt); }
+      var rides = P.a === 3;
+      if(rides && !P.bike){ P.lean = new THREE.Group(); P.g.add(P.lean); P.bike = bikeModel(bikeColor(u)); P.lean.add(P.bike.g); if(P.ch) P.lean.add(P.ch.o); seatRider(P.ch, true); }
+      else if(!rides && P.bike){ if(P.ch){ P.g.add(P.ch.o); seatRider(P.ch, false); } P.g.remove(P.lean); P.bike = null; P.lean = null; }
+      if(P.bike){
+        if(P.ch && P.ch.o.parent !== P.lean){ P.lean.add(P.ch.o); seatRider(P.ch, true); }   // the character loaded after they got on
+        var mv = Math.hypot(P.x - (P.px == null ? P.x : P.px), P.z - (P.pz == null ? P.z : P.pz));
+        bikeRoll(P.bike, jump ? 0 : mv, null);
+      }
+      P.px = P.x; P.pz = P.z;
+      if(P.ch){ setAnim(P.ch, rides ? "sit" : P.a === 2 ? "sprint" : P.a === 1 ? "walk" : "idle"); P.ch.mixer.update(dt); }
     });
   }
-  inst.moving = function(){ return keyMove ? (keyRun ? 2 : 1) : 0; };
+  // 0 still, 1 walk, 2 run, 3 on a bike (any speed: others draw you riding).
+  inst.moving = function(){ return ride ? 3 : keyMove ? (keyRun ? 2 : 1) : 0; };
+  inst.riding = function(){ return !!ride; };
 
   inst._place = function(x, z){ if(avatar){ avatar.x = x; avatar.z = z; } };    // for tests
   inst.where = function(){ return avatar ? {world: cur && cur.name, x: avatar.x, z: avatar.z, yaw: avatar.yaw} : null; };

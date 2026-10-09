@@ -2023,6 +2023,17 @@ html.hq-calm #confetti{display:none!important}
 .inv-where{margin:-2px 0 6px;font-size:12px}
 .hq3d-city{width:100%;margin-top:6px}
 .hq3d-city.on{border-color:var(--brand)}
+.hq3d-jump{width:100%;margin-bottom:6px;font-weight:700;border-color:var(--brand-line);background:var(--brand-soft);color:var(--brand)}
+.hq3d-jump:hover{background:var(--brand);color:var(--bg)}
+/* the "Ride (E)" / "Get off (E)" button over the 3D scene near a parked bike */
+.hq3d-ride{position:absolute;left:50%;top:16px;z-index:4;transform:translateX(-50%);padding:10px 18px;border-radius:999px;font-weight:750;font-size:14px;
+  color:var(--bg);background:var(--good);border:2px solid color-mix(in srgb,var(--good) 60%,var(--ink));box-shadow:var(--shadow-lg);cursor:pointer}
+.hq3d-ride:hover{filter:brightness(1.08)}
+.hq3d-ride:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+.hq3d-ride:not([hidden]){animation:hq3d-ride-in .25s var(--ease)}
+@keyframes hq3d-ride-in{from{opacity:0;transform:translate(-50%,-8px)}}
+html.hq-calm .hq3d-ride{animation:none}
+@media (prefers-reduced-motion: reduce){.hq3d-ride{animation:none}}
 /* HQ 2.1: talk where you stand (ui/app/28-talk.js): chat over the 3D scene */
 #hqStage{grid-column:1;grid-row:1}
 #hqView > .hq3d-side{grid-column:2;grid-row:1}

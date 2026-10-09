@@ -225,7 +225,16 @@ class ArenaCity(unittest.TestCase):
     def test_page_wiring(self):
         html = dashboard.assemble_index()
         self.assertIn('return hqCityOn() ? "city" : "base";', html)
-        self.assertIn('if(HQ3D.world==="city" && hqCityOn()) return "hq_city";', html)
+        # the street is walkable while private too (Jump to City): presence follows you there when paired
+        self.assertIn('if(HQ3D.world==="city" && (hqCityOn() || (window.ARENA && ARENA.paired))) return "hq_city";', html)
+        self.assertIn('function hqJumpCity(){', html)
+        self.assertIn('label:"Jump to Arena City"', html)
+        # riding is sent as a = 3 only to an Arena that lists the "ride" capability
+        self.assertIn('if(a===3 && !hqNetCan("ride")) a=2;', html)
         self.assertIn('visit: function(uid){ hqVisit(uid, {from:"city"}); }', html)
         src = open(os.path.join(ROOT, "games", "hq3d.js"), encoding="utf-8").read()
         self.assertIn('d.view.indexOf("visit:") === 0', src)
+        self.assertIn('return ride ? 3 : keyMove', src)                 # a rider reports a = 3
+        city = open(os.path.join(ROOT, "games", "hqcity.js"), encoding="utf-8").read()
+        self.assertIn('bikes = bikePark(8.6);', city)                    # the bike park beside the fountain
+        self.assertIn('var calm = c.E.calm(), tt = calm ? 0 : t;', city)  # still water in Calm

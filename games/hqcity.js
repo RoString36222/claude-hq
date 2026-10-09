@@ -65,6 +65,7 @@ HQV.hqWorlds.city = function(c, w){
 
   var streetG = new THREE.Group(); S.add(streetG);
   var city = {R: 24, lots: []}, sig = null, lampGlows = [], cars = [], dyn = {facMats: [], glows: [], beacons: [], flags: [], leds: []};
+  var fount = null, bikes = [];
   var floor = null;
   function flat(geo, m, y){ var o = new THREE.Mesh(geo, m); o.rotation.x = -PI/2; o.position.y = y; o.receiveShadow = true; streetG.add(o); return o; }
 
@@ -113,12 +114,10 @@ HQV.hqWorlds.city = function(c, w){
     paveT.t.repeat.set(R/5, R/5);
     flat(new THREE.CircleGeometry(R - 3.3, 96), new THREE.MeshStandardMaterial({map: paveT.t, roughness: 0.9}), 0.025);
     flat(new THREE.RingGeometry(R + 3.3, R + 6, 128), new THREE.MeshStandardMaterial({map: paveT.t, roughness: 0.9}), 0.025);
-    // the plaza in the middle: a fountain and the city's name
-    var fg = new THREE.Group(); streetG.add(fg);
-    cyl(3.2, 3.3, 0.6, mat(0x9aa7b5, {roughness: 0.6}), 0, 0.3, 0, fg, 36);
-    cyl(3, 3, 0.05, new THREE.MeshStandardMaterial({color: 0x2a7fa8, emissive: new THREE.Color(COL.cyan), emissiveIntensity: 0.35, transparent: true, opacity: 0.85}), 0, 0.55, 0, fg, 36);
-    cyl(0.3, 0.4, 2.4, mat(0x9aa7b5), 0, 1.4, 0, fg, 12);
-    var cityL = c.label("Arena City · " + city.lots.length + " HQ" + (city.lots.length === 1 ? "" : "s"), HEX.amber, 1.3); cityL.position.set(0, 5, 0); streetG.add(cityL);
+    // the plaza in the middle: a fountain, the bike park beside it, and the city's name
+    fount = fountain(); streetG.add(fount.g);
+    bikes = bikePark(8.6);
+    var cityL = c.label("Arena City · " + city.lots.length + " HQ" + (city.lots.length === 1 ? "" : "s"), HEX.amber, 1.3); cityL.position.set(0, 6.4, 0); streetG.add(cityL);
     var tr = c.rng(77);
     for(var p = 0; p < 12; p++){ var pa = p/12*PI*2, px = Math.cos(pa)*(R - 8), pz = Math.sin(pa)*(R - 8); if(R - 8 < 5) break;
       var tg = new THREE.Group(); tg.position.set(px, 0, pz); streetG.add(tg); cyl(0.2, 0.28, 1.2, mat(0x5a3d2a), 0, 0.6, 0, tg, 8); sph(1.2, mat(0x3c8a4f, {roughness: 0.9}), 0, 2.1, 0, tg); }
@@ -150,6 +149,87 @@ HQV.hqWorlds.city = function(c, w){
     applyTime();
   }
 
+  /* ---------- the fountain: a stone basin, two bowls, falling water, a jet on top ---------- */
+  var FOUNT_R = 4.4;
+  function lathe(pts, m, y, p){
+    var o = new THREE.Mesh(new THREE.LatheGeometry(pts.map(function(q){ return new THREE.Vector2(q[0], q[1]); }), 48), m);
+    o.position.y = y || 0; o.castShadow = true; o.receiveShadow = true; p.add(o); return o;
+  }
+  function fountain(){
+    var g = new THREE.Group(), stone = mat(0xb9c2cb, {roughness: 0.7}), stone2 = mat(0x8f9aa6, {roughness: 0.75});
+    // the basin: a low stone wall with a rim to sit on, and a water surface inside
+    lathe([[3.9, 0], [4.4, 0], [4.45, 0.62], [4.3, 0.74], [4.0, 0.74], [3.92, 0.62], [3.9, 0.12], [0, 0.12]], stone, 0, g);
+    var rip = c.canvasTex(256, 256, function(gx){
+      gx.fillStyle = "#1d6f93"; gx.fillRect(0, 0, 256, 256);
+      var R = c.rng(31); for(var i = 0; i < 70; i++){ gx.strokeStyle = "rgba(170,230,255," + (0.08 + R()*0.2) + ")"; gx.lineWidth = 1 + R()*2;
+        gx.beginPath(); gx.ellipse(R()*256, R()*256, 8 + R()*30, 3 + R()*8, 0, 0, 7); gx.stroke(); }
+    });
+    rip.t.wrapS = rip.t.wrapT = THREE.RepeatWrapping; rip.t.repeat.set(3, 3);
+    var waterM = new THREE.MeshStandardMaterial({map: rip.t, color: 0x7fd0f0, emissive: new THREE.Color(COL.cyan), emissiveIntensity: 0.28,
+      transparent: true, opacity: 0.88, roughness: 0.15, metalness: 0.1});
+    var pool = new THREE.Mesh(new THREE.CircleGeometry(3.9, 48), waterM); pool.rotation.x = -PI/2; pool.position.y = 0.52; g.add(pool);
+    // the column and two bowls, each spilling a sheet of water into the one below
+    lathe([[0.85, 0], [0.7, 0.15], [0.5, 0.3], [0.45, 1.2], [0.6, 1.45], [0, 1.45]], stone2, 0.1, g);
+    lathe([[0.35, 0], [1.9, 0.2], [2.05, 0.32], [1.95, 0.38], [1.75, 0.3], [0.3, 0.18]], stone, 1.48, g);
+    var bowl1 = new THREE.Mesh(new THREE.CircleGeometry(1.78, 40), waterM); bowl1.rotation.x = -PI/2; bowl1.position.y = 1.83; g.add(bowl1);
+    lathe([[0.42, 0], [0.3, 0.2], [0.24, 0.85], [0.36, 1.0], [0, 1.0]], stone2, 1.75, g);
+    lathe([[0.2, 0], [1.0, 0.12], [1.1, 0.24], [1.02, 0.29], [0.9, 0.22], [0.18, 0.12]], stone, 2.72, g);
+    var bowl2 = new THREE.Mesh(new THREE.CircleGeometry(0.93, 32), waterM); bowl2.rotation.x = -PI/2; bowl2.position.y = 2.98; g.add(bowl2);
+    lathe([[0.16, 0], [0.12, 0.25], [0.2, 0.4], [0.07, 0.62], [0, 0.66]], stone2, 2.95, g);
+    var sheetT = c.canvasTex(64, 256, function(gx){
+      gx.clearRect(0, 0, 64, 256); var R = c.rng(57);
+      for(var i = 0; i < 26; i++){ var x = R()*64, h = 30 + R()*120, y = R()*256; gx.fillStyle = "rgba(200,240,255," + (0.25 + R()*0.45) + ")"; gx.fillRect(x, y, 1 + R()*2.5, h); gx.fillRect(x, y - 256, 1 + R()*2.5, h); }
+    });
+    sheetT.t.wrapS = sheetT.t.wrapT = THREE.RepeatWrapping; sheetT.t.repeat.set(14, 1);
+    var sheetM = new THREE.MeshBasicMaterial({map: sheetT.t, transparent: true, opacity: 0.75, depthWrite: false, side: THREE.DoubleSide, toneMapped: false});
+    var sheet1 = new THREE.Mesh(new THREE.CylinderGeometry(2.04, 2.22, 1.32, 48, 1, true), sheetM); sheet1.position.y = 1.18; g.add(sheet1);
+    var sheet2 = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.24, 0.96, 40, 1, true), sheetM); sheet2.position.y = 2.53; g.add(sheet2);
+    // the jet: drops thrown up from the top that arc down into the top bowl
+    var NJ = 160, jp = new Float32Array(NJ*3), jr = c.rng(71), jets = [];
+    for(var i = 0; i < NJ; i++) jets.push({a: jr()*PI*2, v: 0.55 + jr()*0.45, o: jr()});
+    var jg = new THREE.BufferGeometry(); jg.setAttribute("position", new THREE.BufferAttribute(jp, 3));
+    var jet = new THREE.Points(jg, new THREE.PointsMaterial({color: 0xcff2ff, size: 0.09, transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false}));
+    g.add(jet);
+    var glow = c.glow(COL.cyan, 7, 0.25); glow.position.y = 1.2; g.add(glow);
+    return {g: g, rip: rip.t, sheet: sheetT.t, jet: jet, jp: jp, jets: jets, glow: glow, waterM: waterM};
+  }
+  function fountainStep(t){
+    var F = fount; if(!F) return;
+    var calm = c.E.calm(), tt = calm ? 0 : t;        // Calm / reduced motion: still water
+    F.rip.offset.set(tt*0.02, tt*0.035);
+    F.sheet.offset.y = tt*0.9;
+    F.jet.visible = !calm;
+    if(calm) return;
+    var p = F.jp;
+    for(var i = 0; i < F.jets.length; i++){
+      var j = F.jets[i], u = (t*0.8 + j.o) % 1, r = u*0.82*j.v, y = 3.6 + u*1.5*j.v - u*u*(1.5*j.v + 0.55);
+      p[i*3] = Math.cos(j.a)*r; p[i*3 + 1] = y; p[i*3 + 2] = Math.sin(j.a)*r;
+    }
+    F.jet.geometry.attributes.position.needsUpdate = true;
+  }
+
+  /* ---------- the bike park: a rack of bikes beside the fountain ---------- */
+  // Walk up to one and press E (hq3d.js does the riding). w.bikes lists them: {g, x, z, yaw, color}.
+  function bikePark(cx){
+    var list = [], g = new THREE.Group(); g.position.set(cx, 0, 0); streetG.add(g);
+    var padT = c.canvasTex(128, 256, function(gx){ gx.fillStyle = "#4a5866"; gx.fillRect(0, 0, 128, 256); gx.strokeStyle = "rgba(255,255,255,.35)"; gx.lineWidth = 3;
+      for(var y = 20; y < 256; y += 39){ gx.beginPath(); gx.moveTo(14, y); gx.lineTo(114, y); gx.stroke(); } });
+    var pad = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 9.6), new THREE.MeshStandardMaterial({map: padT.t, roughness: 0.85}));
+    pad.rotation.x = -PI/2; pad.position.y = 0.035; pad.receiveShadow = true; g.add(pad);
+    var steel = mat(0x9aa7b5, {metalness: 0.8, roughness: 0.3});
+    // the rack: a rail with a hoop per slot, front wheels go in on the fountain side
+    box(0.06, 0.06, 9, steel, -0.7, 0.42, 0, g);
+    var cols = [0xff6b5b, 0x5fd3e6, 0xffb347, 0x6fd38a, 0x9b8cf0, 0xe0559b];
+    for(var i = 0; i < 6; i++){
+      var z = -3.75 + i*1.5;
+      var hoop = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.03, 6, 20, PI), steel); hoop.position.set(-0.7, 0.05, z); hoop.rotation.y = PI/2; hoop.castShadow = true; g.add(hoop);
+      var B = c.bike(cols[i]); B.g.position.set(0, 0, z); B.g.rotation.y = -PI/2; g.add(B.g);   // facing the fountain
+      list.push({g: B.g, x: cx, z: z, yaw: -PI/2, color: cols[i]});
+    }
+    var sign = c.label("\uD83D\uDEB2 Bike park · press E", HEX.green, 0.7); sign.position.set(0.9, 2.6, 0); g.add(sign);
+    return list;
+  }
+
   function applyTime(){
     lotsB.forEach(function(B){ B.setNight(night); });
     lampGlows.forEach(function(g){ g.material.opacity = night ? 0.85 : 0.08; });
@@ -157,7 +237,7 @@ HQV.hqWorlds.city = function(c, w){
   function blocked(x, z){
     var R = city.R;
     if(Math.hypot(x, z) > R + 31) return true;
-    if(Math.hypot(x, z) < 3.6) return true;                       // the fountain
+    if(Math.hypot(x, z) < FOUNT_R + 0.35) return true;            // the fountain
     for(var i = 0; i < city.lots.length; i++){
       var L = city.lots[i], rx = x - L.x, rz = z - L.z, c0 = Math.cos(-L.rot), s0 = Math.sin(-L.rot);
       var lx = rx*c0 + rz*s0, lz = -rx*s0 + rz*c0;              // into the lot's own frame
@@ -169,6 +249,7 @@ HQV.hqWorlds.city = function(c, w){
   build();
   w.hits = hits; w.doors = doors; w.span = 18; w.zoom = 0.8; w.camY = 2.5; w.follow = 1; w.camPitch = 0.72;
   w.blocked = blocked;
+  Object.defineProperty(w, "bikes", {get: function(){ return bikes; }, configurable: true});
   w.onCity = function(){ build(); };
   w.setTime = function(n){ night = n; S.background = n ? skyBg.night : skyBg.day; S.fog = new THREE.Fog(n ? 0x0f1f30 : 0xb8dcf2, 90, 220);
     hemi.intensity = n ? 1.3 : 2.4; sun.intensity = n ? 0.7 : 2.4; sun.color.set(n ? 0xa9b8ff : 0xfff2dc);
@@ -194,6 +275,7 @@ HQV.hqWorlds.city = function(c, w){
   w.update = function(t, dt, k){
     fadeAcc += dt; if(fadeAcc > 0.15){ fadeAcc = 0; cutaway(); }
     lotsB.forEach(function(B){ B.animate(t, dt, k); });
+    fountainStep(t);
     cars.forEach(function(cr){ cr.a += cr.v*dt*k; var x = Math.cos(cr.a)*cr.r, z = Math.sin(cr.a)*cr.r, dx = -Math.sin(cr.a)*cr.v, dz = Math.cos(cr.a)*cr.v;
       cr.g.position.set(x, 0, z); cr.g.rotation.y = Math.atan2(-dz, dx); });
   };

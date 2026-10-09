@@ -24,6 +24,7 @@ import html
 import http.cookies
 import json
 import os
+import re
 import secrets
 import subprocess
 import time
@@ -93,6 +94,62 @@ def run(args, cwd=None, timeout=600):
 
 def git(*args):
     return run(["git", *args], cwd=ARENA_DIR)[1]
+
+
+# The stages ops/release.sh announces, in the order it announces them. The bar
+# counts these rather than running a timer, so it reports where the deploy
+# actually IS -- a progress bar that guesses is worse than none on a console
+# someone watches during an incident.
+PHASES = (
+    ("FETCH", "Fetching"),
+    ("CI GATE", "Checking GitHub CI"),
+    ("BUILD", "Building"),
+    ("MIGRATE", "Migrating the database"),
+    ("START", "Starting"),
+    ("LIVE", "Released"),
+)
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def parse_progress(text):
+    """How far the newest deploy has got, read out of the deploy log.
+
+    `say()` in release.sh colours its output, so the escapes come off first.
+    The log is appended to forever, so only the newest run counts -- it starts
+    at autodeploy's "new commits" line or at release.sh's own first stage.
+
+    A stage that is skipped simply never appears (a Python release runs no
+    migration), so the bar steps over it instead of stalling on it.
+    """
+    lines = [_ANSI.sub("", ln).rstrip() for ln in text.splitlines()]
+    start = 0
+    for i, ln in enumerate(lines):
+        if ln.lstrip().startswith("==> Fetching") or " new commits " in ln:
+            start = i
+    lines = lines[start:]
+
+    idx, phase = 0, None
+    for ln in lines:
+        body = ln.split("==> ", 1)[1] if "==> " in ln else ""
+        for n, (label, marker) in enumerate(PHASES, start=1):
+            if body.startswith(marker) and n > idx:
+                idx, phase = n, label
+
+    state = "running"
+    if any("ERROR" in ln or "\u2717" in ln or "release failed" in ln
+           or "Rolling back" in ln for ln in lines):
+        state = "fail"
+    elif phase == "LIVE":
+        state, idx = "ok", len(PHASES)
+
+    return {
+        "phase": phase, "idx": idx, "total": len(PHASES),
+        # Zero until a stage is seen: an unknown deploy reads as indeterminate,
+        # never as "0% and climbing".
+        "pct": round(100 * idx / len(PHASES)) if idx else 0,
+        "state": state,
+        "line": next((ln for ln in reversed(lines) if ln.strip()), ""),
+    }
 
 
 def status():
@@ -221,6 +278,98 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
    margin-top:26px;padding-top:10px;border-top:1px solid var(--line);
    color:var(--dim);font-size:10px;letter-spacing:.18em}
 
+ /* ------------------------------------------------- motion -------------- */
+ /* Mechanical, not organic: steps() everywhere a consumer UI would ease, so
+    movement reads as a relay closing rather than a spring settling. Every
+    animation here is decoration over a state that is ALSO carried by text, so
+    reduced-motion can switch the lot off without losing information. */
+ @keyframes march{to{background-position:32px 0}}
+ @keyframes blink{50%{opacity:.25}}
+ @keyframes headpulse{50%{box-shadow:0 0 18px 4px rgba(255,255,255,.95);width:3px}}
+ @keyframes shake{25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+ @keyframes powerup{from{transform:scaleY(0);opacity:0}to{transform:scaleY(1);opacity:1}}
+ @keyframes glitch{
+   0%{text-shadow:none;transform:none}
+   20%{text-shadow:-3px 0 var(--red),3px 0 #2ff3ff;transform:translateX(2px)}
+   40%{text-shadow:3px 0 var(--red),-3px 0 #2ff3ff;transform:translateX(-2px)}
+   60%{text-shadow:-2px 0 var(--red),2px 0 #2ff3ff;transform:translateX(1px)}
+   100%{text-shadow:none;transform:none}}
+
+ /* Buttons: a stepped wipe fills from the left, so the hover state lands in
+    five visible frames instead of sliding. */
+ .act{position:relative;overflow:hidden;isolation:isolate}
+ .act>span{position:relative;z-index:1}
+ .act::after{content:"";position:absolute;inset:0;z-index:0;background:var(--ink);
+   transform:scaleX(0);transform-origin:left;transition:transform .14s steps(5)}
+ .act:hover:not(:disabled)::after{transform:scaleX(1)}
+ .act.primary::after{background:var(--red)}
+ .act:hover:not(:disabled){background:var(--panel);color:var(--bg)}
+ .act.primary:hover:not(:disabled){color:var(--bg)}
+ .act:active:not(:disabled){transform:translateY(1px)}
+ .act.primary:hover:not(:disabled)>span{animation:glitch .3s steps(3) 1}
+ /* In flight: hazard stripes march across the face and a block caret blinks. */
+ .act.armed{color:var(--red)}
+ .act.armed::after{transform:scaleX(1);background:
+   repeating-linear-gradient(135deg,rgba(230,25,25,.30) 0 8px,transparent 8px 16px);
+   animation:march .5s linear infinite}
+ .act.armed>span::after{content:" \u258c";animation:blink .6s steps(2) infinite}
+
+ /* ------------------------------------------------- progress ------------- */
+ /* Hidden until a run starts, and driven by ops/release.sh's own stages -- an
+    unknown deploy shows stripes and no number rather than a plausible lie. */
+ .rig{display:none;margin-top:1px;border:1px solid var(--line);background:var(--panel);
+   padding:14px;transform-origin:top;animation:powerup .22s steps(4) 1}
+ .rig.on{display:block}
+ .chips{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);
+   border:1px solid var(--line)}
+ .chip{background:#111;padding:7px 3px;text-align:center;font-size:8.5px;
+   letter-spacing:.1em;color:#4c4c4c;white-space:nowrap;overflow:hidden}
+ .chip.on{color:var(--ink);background:#1c1c1c}
+ .chip.cur{color:var(--red);animation:blink .8s steps(2) infinite}
+ .track{position:relative;height:26px;margin-top:10px;background:#070707;
+   border:1px solid var(--line);overflow:hidden}
+ /* Three unmistakable states, because red has to keep meaning ALARM. A
+    running deploy is machine-white with hazard stripes; only a failure is red,
+    and only success is green. Running and failing looked near-identical when
+    both were red, which is the wrong thing to be subtle about at 3am. */
+ .fill{position:absolute;top:0;bottom:0;left:0;width:0;background:#cfcfcf;
+   transition:width .4s cubic-bezier(.2,.9,.2,1)}
+ .fill::after{content:"";position:absolute;inset:0;
+   background:repeating-linear-gradient(135deg,rgba(0,0,0,.4) 0 8px,transparent 8px 16px);
+   animation:march .5s linear infinite}
+ /* The LED segmentation is an overlay, so the fill underneath stays one box. */
+ .cells{position:absolute;inset:0;pointer-events:none;
+   background:repeating-linear-gradient(90deg,transparent 0 calc(2.5% - 2px),
+     var(--bg) calc(2.5% - 2px) 2.5%)}
+ .head{position:absolute;top:0;bottom:0;left:0;width:2px;background:#fff;
+   box-shadow:0 0 10px 2px rgba(255,255,255,.75);
+   transition:left .4s cubic-bezier(.2,.9,.2,1);animation:headpulse .7s steps(2) infinite}
+ /* Indeterminate: the whole track crawls and the readout says so. */
+ .rig.wait .fill{width:100%;background:transparent}
+ .rig.wait .head{display:none}
+ .rig.ok .fill{background:var(--green)}
+ .rig.ok .head{box-shadow:0 0 14px 3px var(--green);animation:none}
+ .rig.fail .fill{background:var(--red)}
+ .rig.ok .fill::after,.rig.fail .fill::after{animation:none}
+ .rig.fail{animation:shake .18s steps(2) 2}
+ .rig.fail .head{animation:none}
+ .read{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-top:9px}
+ .pct{font:900 clamp(1.6rem,6vw,2.8rem)/1 var(--sans);letter-spacing:-.04em;
+   font-variant-numeric:tabular-nums}
+ .rig.ok .pct{color:var(--green)}
+ .rig.fail .pct{color:var(--red)}
+ .nowline{color:var(--dim);font-size:10px;letter-spacing:.1em;text-align:right;
+   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:none}
+
+ /* Everything above is ornament on a state the text already gives, so this
+    turns all of it off and keeps the bar's width, which is the information. */
+ @media (prefers-reduced-motion:reduce){
+   .act::after,.act.armed::after,.act.primary:hover>span,.rig,.fill::after,
+   .head,.chip.cur{animation:none!important}
+   .act::after{transition:none}
+   .fill,.head{transition:none}
+ }
+
  /* A grid track's default min-width is auto, so a long commit subject or a
     wide log line pushes the whole console past the viewport instead of
     wrapping. This page gets opened on a phone mid-incident, and a horizontal
@@ -262,10 +411,18 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
  </dl>
 
  <nav class="actions">
-  <button class="act primary" id="deploy" __DISABLED__>deploy latest</button>
-  <button class="act" id="rollback">roll back one</button>
-  <button class="act" id="refresh">refresh</button>
+  <button class="act primary" id="deploy" __DISABLED__><span>deploy latest</span></button>
+  <button class="act" id="rollback"><span>roll back one</span></button>
+  <button class="act" id="refresh"><span>refresh</span></button>
  </nav>
+
+ <section class="rig" id="rig" aria-live="polite">
+  <div class="chips" id="chips"></div>
+  <div class="track"><div class="fill" id="fill"></div><div class="cells"></div>
+   <div class="head" id="head"></div></div>
+  <div class="read"><output class="pct" id="pct">--</output>
+   <span class="nowline" id="nowline">standing by</span></div>
+ </section>
 
  <h2>deploy log <span class="rule"></span> tail 40</h2>
  <pre id="log">__LOG__</pre>
@@ -274,22 +431,70 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
 </main>
 <script>
 var CSRF="__CSRF__";
-function msg(t,cls){var m=document.getElementById("msg");m.textContent=t;m.className="msg show "+cls;}
-function act(path,btn){
-  var bs=document.querySelectorAll("button");bs.forEach(function(b){b.disabled=true;});
-  msg("Working\\u2026","ok");
+var PHASES=["fetch","ci gate","build","migrate","start","live"];
+var POLL=null;
+function $id(i){return document.getElementById(i);}
+function msg(t,cls){var m=$id("msg");m.textContent=t;m.className="msg show "+cls;}
+
+(function(){
+  var c=$id("chips");
+  for(var i=0;i<PHASES.length;i++){
+    var d=document.createElement("div");d.className="chip";d.textContent=PHASES[i];c.appendChild(d);
+  }
+})();
+
+// Paint whatever the server last reported. Never invents a number: with no
+// stage seen yet the rig goes indeterminate and the readout says WAIT, which
+// is the honest state while release.sh is still starting up.
+function paint(j){
+  var rig=$id("rig");
+  rig.className="rig on"+(j.state==="ok"?" ok":j.state==="fail"?" fail":"")+(j.idx?"":" wait");
+  for(var i=0;i<PHASES.length;i++){
+    var ch=rig.querySelectorAll(".chip")[i];
+    ch.className="chip"+(i<j.idx?" on":"")+(i===j.idx-1&&j.state==="running"?" cur":"");
+  }
+  $id("fill").style.width=(j.idx?j.pct:100)+"%";
+  $id("head").style.left=j.pct+"%";
+  $id("pct").textContent=j.idx?j.pct+"%":"--";
+  $id("nowline").textContent=j.line||"waiting for the release to start";
+}
+function poll(){
+  fetch("/api/progress",{headers:{"X-Panel-Token":CSRF}})
+   .then(function(r){return r.json();}).then(paint).catch(function(){});
+}
+function act(path){
+  var bs=document.querySelectorAll("button");
+  bs.forEach(function(b){b.disabled=true;b.classList.add("armed");});
+  $id("rig").className="rig on wait";
+  $id("pct").textContent="--";
+  $id("nowline").textContent="opening the release";
+  msg("Working\u2026","ok");
+  poll(); POLL=setInterval(poll,900);
   fetch(path,{method:"POST",headers:{"X-Panel-Token":CSRF}})
    .then(function(r){return r.json();})
    .then(function(j){
+     clearInterval(POLL);
+     // One last read, so the bar settles on the real final stage rather than
+     // wherever the poll happened to leave it.
+     fetch("/api/progress",{headers:{"X-Panel-Token":CSRF}})
+      .then(function(r){return r.json();})
+      .then(function(pr){ pr.state=j.ok?"ok":"fail"; if(j.ok){pr.idx=pr.total;pr.pct=100;} paint(pr); })
+      .catch(function(){});
      msg(j.ok?(j.message||"Done"):(j.error||"Failed"), j.ok?"ok":"err");
-     setTimeout(function(){location.reload();},1800);
+     bs.forEach(function(b){b.classList.remove("armed");});
+     setTimeout(function(){location.reload();},2600);
    })
-   .catch(function(){msg("Request failed","err");bs.forEach(function(b){b.disabled=false;});});
+   .catch(function(){
+     clearInterval(POLL);
+     msg("Request failed","err");
+     $id("rig").className="rig on fail";
+     bs.forEach(function(b){b.disabled=false;b.classList.remove("armed");});
+   });
 }
-document.getElementById("deploy").onclick=function(){act("/api/deploy");};
-document.getElementById("rollback").onclick=function(){
+$id("deploy").onclick=function(){act("/api/deploy");};
+$id("rollback").onclick=function(){
   if(confirm("Roll back to the previous release?"))act("/api/rollback");};
-document.getElementById("refresh").onclick=function(){location.reload();};
+$id("refresh").onclick=function(){location.reload();};
 </script>
 """
 
@@ -416,6 +621,17 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/":
             return self._send(200, render(login, self._csrf(login)))
+        if path == "/api/progress":
+            # Polled while a deploy runs. Safe to read on a GET: it reports the
+            # same log the page already shows, and changes nothing. The server
+            # is a ThreadingHTTPServer, so this answers while /api/deploy is
+            # still blocking in another thread.
+            try:
+                with open(DEPLOY_LOG) as f:
+                    text = "".join(f.readlines()[-160:])
+            except OSError:
+                text = ""
+            return self._json(200, parse_progress(text))
         self._send(404, "<p>Not found.</p>")
 
     def _exchange(self, code):

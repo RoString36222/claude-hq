@@ -103,3 +103,84 @@ class Rejections(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# A colourised line exactly as ops/release.sh's say() prints it.
+def say(text):
+    return "\x1b[1;34m==>\x1b[0m " + text
+
+
+RUN = "\n".join([
+    "2026-10-09T06:50:01Z  new commits 4133b25 -> 843e4c6",
+    "2026-10-09T06:50:01Z  releasing with ops/release.sh (impl from backend/.release.env)",
+    say("Fetching main"),
+    "    \x1b[32m✓\x1b[0m at 843e4c6: Merge pull request #96",
+    say("Checking GitHub CI for 843e4c6"),
+    say("Building rs 2026.10.09-843e4c6"),
+]) + "\n"
+
+
+class DeployProgress(unittest.TestCase):
+    """The progress bar reads release.sh's own stage announcements.
+
+    A bar that runs on a timer is worse than no bar on a console someone
+    watches during an incident: it keeps climbing while the deploy is wedged,
+    and it reaches 100% on a release that failed. Every number here comes from
+    a stage that has actually been announced.
+    """
+
+    def p(self, text):
+        return deploy_panel.parse_progress(text)
+
+    def test_it_counts_the_stages_that_have_happened(self):
+        r = self.p(RUN)
+        self.assertEqual((r["phase"], r["idx"], r["pct"], r["state"]),
+                         ("BUILD", 3, 50, "running"))
+
+    def test_colour_escapes_do_not_hide_a_stage(self):
+        """say() colourises, so an unstripped parser sees no stages at all."""
+        self.assertIn("\x1b[", RUN)
+        self.assertEqual(self.p(RUN)["idx"], 3)
+
+    def test_a_finished_release_reads_as_done(self):
+        r = self.p(RUN + say("Starting rs v") + "\n" + say("Released 2026.10.09-843e4c6 (rs)") + "\n")
+        self.assertEqual((r["state"], r["pct"]), ("ok", 100))
+
+    def test_a_failed_release_freezes_where_it_got_to(self):
+        """The property that matters most: a failure must NOT read as finished."""
+        r = self.p(RUN + "    \x1b[31m✗\x1b[0m build failed\n"
+                   + say("Rolling back to 2026.10.08-4133b25 (rs)") + "\n")
+        self.assertEqual(r["state"], "fail")
+        self.assertEqual(r["pct"], 50)
+        self.assertLess(r["pct"], 100)
+
+    def test_an_earlier_run_in_the_log_does_not_count(self):
+        """The log is appended to forever; only the newest run is the subject."""
+        old = RUN + say("Released 2026.10.08-old (rs)") + "\n"
+        r = self.p(old + RUN)
+        self.assertEqual((r["idx"], r["state"]), (3, "running"))
+
+    def test_nothing_yet_is_indeterminate_rather_than_zero_percent(self):
+        for text in ("", "2026-10-09T06:50:01Z  new commits a -> b\n"):
+            r = self.p(text)
+            self.assertEqual(r["idx"], 0)
+            self.assertEqual(r["pct"], 0)
+            self.assertIsNone(r["phase"])
+
+    def test_a_skipped_stage_does_not_stall_the_bar(self):
+        """A Python release runs no migration, so MIGRATE never appears."""
+        r = self.p(RUN + say("Starting py 2026.10.09-843e4c6") + "\n")
+        self.assertEqual((r["phase"], r["pct"]), ("START", 83))
+
+    def test_an_unrelated_stage_line_does_not_un_advance(self):
+        """release.sh prints ==> lines that are not stages (a rollback banner,
+        the status report). None may drag the bar back."""
+        r = self.p(RUN + say("Rolling back to 2026.10.08-4133b25 (rs)") + "\n")
+        self.assertEqual(r["idx"], 3)
+
+    def test_a_second_fetch_is_a_new_run_and_resets(self):
+        """Not a contradiction of the above: ==> Fetching only ever starts a
+        release, so seeing it again means a SECOND deploy began. The bar has to
+        follow the new one rather than keep showing the old one's progress."""
+        r = self.p(RUN + say("Fetching main") + "\n")
+        self.assertEqual((r["phase"], r["idx"], r["state"]), ("FETCH", 1, "running"))

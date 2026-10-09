@@ -130,6 +130,9 @@ function openSettings(){
   var fz=$("setFatigue"); if(fz) fz.checked = c.creatureFatigue!==false;
   var ms=$("setMusicShare"); if(ms) ms.checked = c.musicShare!==false;
   var mc=$("setMusicCookies"); if(mc) mc.value = c.musicCookies || "";
+  var ws=$("setWorkSignals"), wp=$("setWorkSignalsPRs");
+  if(ws) ws.checked = c.workSignals===true;
+  if(wp){ wp.checked = c.workSignalsPRs===true; wp.disabled = !(ws && ws.checked); }
   var tn=$("setTrainer"); if(tn) tn.value=trainerPref();
   if(typeof syncAccentControls==="function") syncAccentControls();
   $("settingsBack").classList.add("open");
@@ -165,6 +168,7 @@ function saveSettings(){
     musicShare: $("setMusicShare") ? $("setMusicShare").checked : true,
     musicCookies: $("setMusicCookies") ? $("setMusicCookies").value : ""
   };
+  if($("setWorkSignals")){ body.workSignals=!!$("setWorkSignals").checked; body.workSignalsPRs=body.workSignals && !!($("setWorkSignalsPRs") && $("setWorkSignalsPRs").checked); }
   if(body.character===undefined) delete body.character;   // no WebGL2: the 3D character is left as it was
   // localStorage mirror so the Trainer Card paints instantly on next boot,
   // before the /api/config fetch resolves (resolveTrainerSpec validates it).
@@ -381,3 +385,5 @@ function sfxVolumeNow(){
   });
   r.addEventListener("change", function(){ if(window.HQV && HQV.engine) HQV.engine.sfx("coin"); });
 })();
+// Work signals: the PR switch only means something while the main one is on.
+(function(){ var ws=$("setWorkSignals"), wp=$("setWorkSignalsPRs"); if(ws && wp) ws.addEventListener("change", function(){ wp.disabled=!ws.checked; if(!ws.checked) wp.checked=false; }); })();

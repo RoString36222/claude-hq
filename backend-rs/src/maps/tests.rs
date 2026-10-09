@@ -393,8 +393,19 @@ fn reordered_keys_give_the_same_key() {
     assert_eq!(canonical("kart", &ca).unwrap(), ca);
 }
 
+/// The built-in Blaster map as a user map. Its perimeter walls sit one unit
+/// outside its play bounds, which the referee's validator (rightly) refuses
+/// for user maps, so the bounds are widened to enclose them.
 fn fps_data() -> Value {
-    serde_json::from_str(FPS_JSON).unwrap()
+    let mut v: Value = serde_json::from_str(FPS_JSON).unwrap();
+    v["bounds"] = json!([-23, -1, -23, 23, 12, 23]);
+    // User-map pickups are named p1..p16 (the built-in map uses descriptive ids).
+    if let Some(ps) = v["pickups"].as_array_mut() {
+        for (i, p) in ps.iter_mut().enumerate() {
+            p["id"] = json!(format!("p{}", i + 1));
+        }
+    }
+    v
 }
 
 #[test]
@@ -423,7 +434,7 @@ fn every_built_in_map_passes_and_canonicalises_to_a_fixed_point() {
 }
 
 #[test]
-fn shims_refuse_bad_shapes_without_panicking() {
+fn validators_refuse_bad_shapes_without_panicking() {
     let mut f = fps_data();
     f["spawns"] = json!(f["spawns"].as_array().unwrap()[..10]);
     assert!(canonical("fps", &f).is_err(), "10 spawns repeat under k*5 % n");

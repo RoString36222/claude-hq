@@ -66,9 +66,10 @@ var CLS = [
     Hhair: ["#5a6078", "#61677e", "#6d738a", "#71778e", "#797e96", "#7c8199", "#7f849c", "#82879e"],
     Bskin: ["#b36343", "#c06e4c", "#cf7a55", "#d5946d", "#da845d", "#df8760", "#e38b62", "#e6ae87", "#eb9268"],
     Btop: BLUE},
-  /* Leo (male-c): his police cap is part of the model, so there is no hair to recolour */
-                     {Hskin: LIGHT.concat(["#b36343", "#bc6a49", "#c6724f", "#cb7752", "#cf7a55", "#d27d58", "#d6805a", "#df8760", "#eb9268"]),
-    Hhair: [], Bskin: ["#cc875f", "#e6ae87", "#efba94"], Btop: BLUE},
+  /* Leo (male-c): his police cap is part of the model; the ginger under it (hair, beard) is his hair */
+                     {Hskin: LIGHT,
+    Hhair: ["#b36343", "#bc6a49", "#c6724f", "#cb7752", "#cf7a55", "#d27d58", "#d6805a", "#df8760", "#eb9268"],
+    Bskin: ["#cc875f", "#e6ae87", "#efba94"], Btop: BLUE},
   /* Iris (female-e): blue gloves, a white coat */
                      {Hskin: LIGHT, Hhair: GREYS, Bskin: [],
     Btop: ["#c1c1d8", "#c9c9dd", "#dadae7", "#dedeea", "#efeff5", "#f8f8fb"]},
@@ -159,8 +160,11 @@ function classTarget(spec, c, meshInfo, P){
   if(c === SKIN_C) return spec[1] ? hexRgb(SKIN[spec[1]]) : null;
   if(c === HAIR_C){
     if(hairShaved){
-      if(spec[1]) return hexRgb(SKIN[spec[1]]);
-      var hs = P["head-mesh"]; return hs && hs.ref[SKIN_C] != null ? skinRefColor(hs) : null;
+      var hs = P["head-mesh"];
+      var sk = spec[1] ? hexRgb(SKIN[spec[1]]) : (hs && hs.ref[SKIN_C] != null ? skinRefColor(hs) : null);
+      // stubble: the skin with a hint of the chosen hair colour, so the colour still shows
+      if(sk && spec[2]){ var hc = hexRgb(HAIR[spec[2]]); return [sk[0]*0.6 + hc[0]*0.4, sk[1]*0.6 + hc[1]*0.4, sk[2]*0.6 + hc[2]*0.4]; }
+      return sk;
     }
     return spec[2] ? hexRgb(HAIR[spec[2]]) : null;
   }
@@ -374,8 +378,17 @@ function preview(canvas, spec){
   var api = {set: function(s){ if(sig(s) === want && ch) return; want = sig(s); load(clampSpec(s)); },
              destroy: function(){ alive = false; cancelAnimationFrame(raf); if(R) R.r.dispose(); }};
   var R = null;
+  function paintBg(s){
+    try {
+      var c = document.createElement("canvas"); c.width = c.height = 192;
+      bgPaint(c.getContext("2d"), 192, s[8]);
+      canvas.style.backgroundImage = "url(" + c.toDataURL("image/png") + ")";
+      canvas.style.backgroundSize = "cover";
+    } catch(e){}
+  }
   function load(s){
     var my = ++seq;
+    paintBg(s);
     build(s).then(function(c){
       if(!alive || my !== seq) return;
       if(!R){

@@ -42,16 +42,31 @@ function hqApi(){
     cityReturn: function(){ return HQ_CITY.back; },
     visit: function(uid){ hqVisit(uid, {from:"city"}); },
     frame: function(){ return (window.HQ_MYCOS || {}).frame; },
-    onWorld: function(name){ HQ3D.world = name; hqRenderWhere(); }
+    onWorld: function(name){ HQ3D.world = name; hqRenderWhere(); },
+    announce: function(t){ if(typeof announce==="function") announce(t); }
   };
 }
 // How your building looks (HQ customisation; saved on the Arena in a later step): paint, accent, sign.
 function hqLook(){ try { var j=JSON.parse(localStorage.getItem("hq_look")||"{}"); return (j && typeof j==="object") ? j : {}; } catch(e){ return {}; } }
 var HQ_WHERE = [["base","Base"],["lobby","Lobby"],["mission","Mission Control"]];
+// Jump to City: straight onto Arena City's street from anywhere (opens the 3D HQ first if needed).
+// You can walk the street while your HQ is private too; your building only stands on it when it is open.
+function hqJumpCity(){
+  if(HQ3D.visit){ toast("Go back home first, then jump to the city","level"); return; }
+  if(!(window.ARENA && ARENA.paired)){ toast("Pair with the Arena (Arena tab) to visit Arena City","ach"); return; }
+  var go=function(){ if(HQ3D.inst && HQ3D.inst.goWorld){ HQ3D.inst.goWorld("city"); hqCityLoad(true); } };
+  if(VIEW!=="hq"){ hqModeSave("3d"); setView("hq"); }
+  if(HQ3D.inst) go(); else hqLoadScripts().then(function(){ setTimeout(go, 300); }).catch(function(){});
+}
 function hqRenderWhere(){
   var box=$("hqWhere"); if(!box) return;
   box.textContent="";
   var city=!HQ3D.visit && hqCityOn();
+  if(!HQ3D.visit && HQ3D.world!=="city"){
+    var j=document.createElement("button"); j.type="button"; j.className="hbtn hq3d-jump"; j.textContent="\uD83C\uDFD9 Jump to City";
+    j.title="Go straight to Arena City: the street of open HQs, the fountain and the bike park";
+    j.addEventListener("click", hqJumpCity); box.appendChild(j);
+  }
   HQ_WHERE.forEach(function(w){
     var b=document.createElement("button"); b.type="button"; b.className="hbtn ghost"; b.textContent = w[0]==="base" && city ? "City" : w[1];
     var here=HQ3D.world||"", on = here===w[0] || (w[0]==="base" && here==="city"); b.setAttribute("aria-pressed", on ? "true" : "false");
@@ -87,10 +102,12 @@ function hqCitySet(on){
 // Outside follows City / Private: if you are outside, step onto the right one.
 function hqCityOutside(){
   hqCityLoad(true); hqRenderWhere();
-  var w=HQ3D.world; if(HQ3D.inst && !HQ3D.visit && (w==="base" || w==="city") && w!==(hqCityOn() ? "city" : "base")) HQ3D.inst.goWorld("base");
+  // standing outside your own Base while your HQ is on the street: step onto the street (the city
+  // itself you may walk while private, so being there is never undone here)
+  var w=HQ3D.world; if(HQ3D.inst && !HQ3D.visit && w==="base" && hqCityOn()) HQ3D.inst.goWorld("base");
 }
 function hqCityLoad(force){
-  if(!hqCityOn() || HQ3D.visit) return;
+  if((!hqCityOn() && HQ3D.world!=="city") || HQ3D.visit) return;
   if(!force && Date.now()-HQ_CITY.at < 60000) return;
   HQ_CITY.at=Date.now();
   hqArena("GET","/api/arena/hq/open").then(function(res){
@@ -352,7 +369,7 @@ var HQNET = {ws:null, room:null, gen:0, sentAt:0, last:"", peers:[], timer:null}
 function hqNetWant(){
   if(VIEW!=="hq" || !HQ3D.inst || document.hidden) return null;
   if(HQ3D.visit) return "hq_"+HQ3D.visit.userId;
-  if(HQ3D.world==="city" && hqCityOn()) return "hq_city";        // everyone on the street sees everyone
+  if(HQ3D.world==="city" && (hqCityOn() || (window.ARENA && ARENA.paired))) return "hq_city";   // everyone on the street sees everyone
   if(HQ_REMOTE.open && HQ_REMOTE.me) return "hq_"+HQ_REMOTE.me;
   return null;
 }
@@ -398,19 +415,27 @@ function hqNetSync(){
       if(gen!==HQNET.gen) return;
       var m; try { m=JSON.parse(ev.data); } catch(e){ return; }
       if(!m || typeof m!=="object") return;
-      if(m.type==="welcome"){ HQNET.me=(m.you&&m.you.userId)||null; ws.send(JSON.stringify({type:"game", g:"hq", op:"join"})); return; }
+      if(m.type==="welcome"){ HQNET.me=(m.you&&m.you.userId)||null; HQNET.arena=(m.arena && typeof m.arena==="object") ? m.arena : null; ws.send(JSON.stringify({type:"game", g:"hq", op:"join"})); return; }
       if(m.type!=="game" || m.g!=="hq") return;
       hqNetOnGame(m);
     };
     ws.onclose=function(){ if(gen===HQNET.gen){ HQNET.ws=null; HQNET.room=null; HQNET.peers=[]; if(HQ3D.inst && HQ3D.inst.setPeers) HQ3D.inst.setPeers([]); hqRenderHere(); } };
   }).catch(function(){ if(gen===HQNET.gen) HQNET.room=null; });
 }
+// Does the Arena the presence goes to know this hq capability (e.g. "ride": a = 3 for riding a bike)?
+function hqNetCan(cap){
+  var info = HQNET.shared ? (window.ARENA && ARENA.arena) : HQNET.arena;
+  var hq = info && info.games && info.games.hq;
+  return !!(hq && Array.isArray(hq.caps) && hq.caps.indexOf(cap)>=0);
+}
 // Send where you are 8 times a second while you move (once every 2 s when you stand still).
 function hqNetSend(){
   var ws=HQNET.ws; if(!ws || ws.readyState!==1 || !HQ3D.inst || !HQ3D.inst.where) return;
   var w=HQ3D.inst.where(); if(!w || !w.world) return;
+  var a=HQ3D.inst.moving ? HQ3D.inst.moving() : 0;
+  if(a===3 && !hqNetCan("ride")) a=2;   // an Arena without bikes drops a 3 (and you would freeze): send "running"
   var msg={type:"game", g:"hq", op:"pos", w:w.world, x:Math.round(w.x*100), z:Math.round(w.z*100),
-           r:Math.round(((w.yaw*180/Math.PI)%360+360)%360), a:HQ3D.inst.moving ? HQ3D.inst.moving() : 0};
+           r:Math.round(((w.yaw*180/Math.PI)%360+360)%360), a:a};
   var key=[msg.w,msg.x,msg.z,msg.r,msg.a].join(","), now=Date.now();
   if(key===HQNET.last && now-HQNET.sentAt<2000) return;
   HQNET.last=key; HQNET.sentAt=now;
@@ -419,6 +444,7 @@ function hqNetSend(){
 setInterval(function(){ if(VIEW==="hq") hqSync(); hqNetSync(); hqNetSend(); }, 125);
 // "Here now": who else is in this HQ, and on which floor.
 var HQ_FLOOR_NAME = {base:"outside", city:"in Arena City", lobby:"in the Lobby", mission:"in Mission Control"};
+// (riding a bike shows as "on a bike" beside the floor)
 function hqRenderHere(){
   var box=$("hqHere"); if(!box) return;
   var ps=HQNET.peers||[];
@@ -426,7 +452,7 @@ function hqRenderHere(){
   if(!ps.length) return;
   var h=document.createElement("b"); h.textContent="Here now"; box.appendChild(h);
   ps.slice(0,12).forEach(function(p){
-    var d=document.createElement("button"); d.type="button"; d.className="hq3d-person"; d.textContent=(p.n||"Visitor")+" · "+(HQ_FLOOR_NAME[p.w]||"");
+    var d=document.createElement("button"); d.type="button"; d.className="hq3d-person"; d.textContent=(p.n||"Visitor")+" · "+(HQ_FLOOR_NAME[p.w]||"")+(p.a===3 ? " · on a bike" : "");
     d.title="Open their trainer card"; d.addEventListener("click", function(){ if(typeof tcardOpen==="function") tcardOpen(p.u); });
     if(typeof cosFrameApply==="function") cosFrameApply(d, p.f);
     box.appendChild(d);

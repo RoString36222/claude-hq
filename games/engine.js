@@ -153,7 +153,8 @@ var SFX = {
   sink: function(a){ tone(a, "sine", 784, 0, 0.18, 0.12); tone(a, "sine", 1175, 0, 0.3, 0.12, 0.12); },
   finish: function(a){ [523, 659, 784, 1047].forEach(function(f, i){ tone(a, "square", f, 0, 0.16, 0.1, i*0.1); }); },
   levelup: function(a){ [392, 523, 659, 784, 1047].forEach(function(f, i){ tone(a, "triangle", f, 0, 0.22, 0.12, i*0.08); }); },
-  door: function(a){ noise(a, 0.35, 0.18, 600); }
+  door: function(a){ noise(a, 0.35, 0.18, 600); },
+  bell: function(a){ tone(a, "sine", 2093, 2050, 0.35, 0.1); tone(a, "sine", 2637, 2600, 0.3, 0.06); tone(a, "sine", 2093, 2050, 0.35, 0.1, 0.14); }   // a bike bell
 };
 function sfx(name, opt){
   if(sfxVolume() <= 0 || !SFX[name]) return;

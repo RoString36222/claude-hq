@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.2.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 2.3.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -311,6 +311,17 @@ and feature guide.
 
 ## Changelog
 
+- **2.3.0** — **Arena City: bikes and a fountain.**
+  - **Jump to City**: a button at the top of the 3D HQ panel (and "Jump to Arena City" in the
+    command palette) takes you straight onto the street, from the classic dashboard too. You can
+    walk the city while your HQ is private; your building stands on it only while it is open.
+  - **The fountain**: the plinth in the middle of the plaza is now a stone fountain: a basin with a
+    rim, two bowls spilling sheets of water, and a jet on top. Still water in Calm / reduced motion.
+  - **The bike park**: six bikes in a rack beside the fountain. Walk up and press `E` (or the
+    "Ride" button) to get on; `W`/`S` pedal and brake, `A`/`D` steer (you lean into turns),
+    `Shift` goes faster, `E` gets off and the bike goes back to its rack. Everyone in the city sees
+    you riding. Arena (Rust): hq presence accepts `a = 3` (riding) and the welcome lists the `ride`
+    capability; a page only sends it to an Arena that does, so older Arenas still see you (running).
 - **2.2.0** — **Music.** A new Music view (key `J`):
   - **Now Playing**: HQ reads the song this Mac is playing in Spotify, Apple Music or a YouTube
     Music tab (AppleScript, only apps already running; macOS asks once for permission) and, while

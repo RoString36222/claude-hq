@@ -54,6 +54,7 @@ function buildCmdkItems(q){
   items.push({group:"Views", ic:"\uD83C\uDFEA", label:"Store", run:function(){ setView("store"); }});
   items.push({group:"Views", ic:"\uD83C\uDF2E", label:"Cali Tuesdays", run:function(){ setView("cali"); }});
   items.push({group:"Views", ic:"📺", label:"War Room", run:function(){ openWarroom(); }});
+  if(typeof hqJumpCity==="function") items.push({group:"Views", ic:"\uD83C\uDFD9", label:"Jump to Arena City", sub:"the 3D street, the fountain and the bike park", run:function(){ hqJumpCity(); }});
   // actions
   items.push({group:"Actions", ic:"⚙️", label:"Open Settings", run:function(){ openSettings(); }});
   items.push({group:"Actions", ic:"⬇️", label:"Export CSV", run:function(){ downloadExport("csv"); }});

@@ -54,7 +54,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import arena
 import music
 
-APP_VERSION = "2.2.0"   # Music: Now Playing, listening rooms, Go live, visualiser
+APP_VERSION = "2.3.0"   # Arena City: Jump to City, the fountain, the bike park
 
 # --------------------------------------------------------------------------- #
 # Paths / constants

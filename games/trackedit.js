@@ -617,6 +617,12 @@ function makeEditor(host){
   }
   function onResize(){ if(V.alive && !V.drive) draw(); }
   window.addEventListener("resize", onResize);
+  // "Race in room" and "Publish" follow the Arena connection and the Workshop arriving
+  var ctxSig = "";
+  V.timer = setInterval(function(){
+    var sg = (mapsOk() ? 1 : 0)+"|"+(typeof window.workshopPublish)+"|"+(HQV.kartCustom ? 1 : 0);
+    if(sg !== ctxSig){ ctxSig = sg; if(!V.drive) renderStatus(); }
+  }, 2000);
 
   if(PENDING_EDIT){
     var pe = PENDING_EDIT; PENDING_EDIT = null;
@@ -625,6 +631,7 @@ function makeEditor(host){
   syncInputs(); update();
   V.destroy = function(){
     V.alive = false;
+    clearInterval(V.timer);
     if(V.drive){ V.drive.destroy(); V.drive = null; }
     window.removeEventListener("resize", onResize);
     root.remove();

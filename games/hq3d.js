@@ -965,6 +965,8 @@ function mount(el, api){
   inst.riding = function(){ return !!ride; };
 
   inst._place = function(x, z){ if(avatar){ avatar.x = x; avatar.z = z; } };    // for tests
+  // read-only: the scene of the world you stand in (tests and tools traverse it)
+  inst.sceneOf = function(){ return cur ? cur.scene : null; };
   inst.where = function(){ return avatar ? {world: cur && cur.name, x: avatar.x, z: avatar.z, yaw: avatar.yaw} : null; };
   inst.goWorld = function(name){ name = outside(name); if(scene && cur && cur.name !== name) enterWorld(name, null); };
   var streamKey = "";

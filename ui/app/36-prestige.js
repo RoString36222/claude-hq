@@ -122,7 +122,10 @@ function prestigeClaim(box){
         if(typeof toast==="function") toast("⚠ "+(res.j.error||res.j.detail||"Prestige failed"),"ach");
         if(typeof announce==="function") announce("Prestige failed");
       }
-      if(box && box.isConnected) prestigeRender(box);
+      if(box && box.isConnected){ prestigeRender(box);
+        // the confirm step is gone: keep focus inside the dialog or panel
+        var x=$("prestigeClose"), cl=box.querySelector(".pr-claim");
+        if(x && box.closest && box.closest("#prestigeBack")) x.focus(); else if(cl && !cl.disabled) cl.focus(); }
     }).catch(function(){ PRESTIGE.busy=false; if(typeof toast==="function") toast("⚠ The Arena didn't answer","ach"); if(box && box.isConnected) prestigeRender(box); });
 }
 

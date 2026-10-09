@@ -78,7 +78,8 @@
 .vg-pause-box{display:flex;flex-direction:column;gap:8px;max-width:360px;padding:18px;border-radius:var(--radius);background:var(--panel);border:1px solid var(--need);box-shadow:var(--shadow-lg)}
 .vg-pause-box p{margin:0;color:var(--muted)}
 /* Fishing (solo pond + shared dock; scene drawn by fishart.js) */
-.vg-tabs .hbtn.on{border-color:var(--brand);color:var(--brand)}
+.vg-tabs .hbtn.on{border-color:var(--brand);color:var(--brand);background:color-mix(in srgb,var(--brand) 12%,var(--panel))}
+.vg-tabs .hbtn.on:hover{background:color-mix(in srgb,var(--brand) 18%,var(--panel));border-color:var(--brand)}
 .vg-fish-wrap{position:relative;width:100%;max-width:720px}
 .vg-fish-wrap .vg-canvas{touch-action:none;user-select:none;-webkit-user-select:none}
 .vg-fish-card{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:6px;

@@ -65,7 +65,7 @@ for _ext_name in ("ext_skills", "ext_loot", "ext_prestige", "ext_maps", "ext_cup
     except Exception:
         pass
 
-APP_VERSION = "2.4.0"   # Your 3D character: builder, portraits, everyone sees it
+APP_VERSION = "2.5.0"   # Make + compete: editors, gallery, cups, boss, loot, skills
 
 # --------------------------------------------------------------------------- #
 # Paths / constants

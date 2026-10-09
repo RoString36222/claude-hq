@@ -13,6 +13,7 @@ mod db;
 mod fps;
 mod hq;
 mod kart;
+mod mapkey;
 mod music;
 mod nudges;
 mod pantry;

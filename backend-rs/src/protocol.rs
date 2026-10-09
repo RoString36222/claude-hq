@@ -50,7 +50,7 @@ pub fn arena_info() -> Value {
     json!({"impl": "rs", "games": games,
            "party": {"v": 1, "order": crate::valley::party::ORDER},
            // Now Playing (/v1/music/now) and listen-along rooms ({"type": "music"}).
-           "music": {"v": 1}})
+           "music": {"v": 1}, "maps": {"v": 1}})
 }
 
 #[cfg(test)]
@@ -61,6 +61,7 @@ mod tests {
     fn table_matches_python() {
         let info = arena_info();
         assert_eq!(info["impl"], "rs");
+        assert_eq!(info["maps"], json!({"v": 1}));
         assert_eq!(info["games"]["kart"], json!({"v": 2, "caps": ["scale", "tracks"]}));
         assert_eq!(info["games"]["plat"], json!({"v": 1, "caps": []}));
         // HQ presence carries a = 3 (riding a bike in Arena City) only where this is listed.

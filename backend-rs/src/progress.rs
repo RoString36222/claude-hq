@@ -677,8 +677,10 @@ async fn build_boards(
         .filter(|k| !k.is_empty())
         .collect();
     keys.sort();
-    if let Some(want) = key {
-        keys.retain(|k| k.as_str() == want);
+    match key {
+        Some(want) => keys.retain(|k| k.as_str() == want),
+        // User-made maps ("c-" content keys) only on request, so they never flood the default boards.
+        None => keys.retain(|k| !k.starts_with("c-")),
     }
 
     let mut boards = Vec::with_capacity(keys.len());
@@ -1275,5 +1277,26 @@ mod tests {
     fn the_in_clause_is_numbered() {
         assert_eq!(placeholders(1), "?1");
         assert_eq!(placeholders(3), "?1,?2,?3");
+    }
+
+    #[tokio::test]
+    async fn custom_map_boards_show_only_when_asked_for() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users (id, github_id, handle, display_name, avatar_url,
+                     trainer_name, is_active, created_at)
+                     VALUES ('u1', 901, 'u1', '', '', '', 1, datetime('now'))")
+            .execute(&pool).await.unwrap();
+        for key in ["meadow", "c-0123456789ab"] {
+            sqlx::query(r#"INSERT INTO game_results (user_id, game, "key", mode, place, players, value, extra)
+                           VALUES ('u1', 'kart', ?1, '1 laps', 1, 1, 30000, '{}')"#)
+                .bind(key).execute(&pool).await.unwrap();
+        }
+        let all = build_boards(&pool, "kart", None, "u1").await.unwrap();
+        let keys: Vec<&str> = all.boards.iter().map(|b| b.key.as_str()).collect();
+        assert_eq!(keys, ["meadow"]);
+        let one = build_boards(&pool, "kart", Some("c-0123456789ab"), "u1").await.unwrap();
+        assert_eq!(one.boards.len(), 1);
+        assert_eq!(one.boards[0].entries.len(), 1);
     }
 }

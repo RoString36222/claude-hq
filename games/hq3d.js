@@ -571,7 +571,7 @@ function mount(el, api){
 
   /* ---------- you ---------- */
   function buildAvatar(){
-    avatar = {g: new THREE.Group(), x: 3, z: 9, yaw: PI, ch: null, speed: 0};
+    avatar = {g: new THREE.Group(), x: 3, z: 9, yaw: PI, ch: null, speed: 0, vy: 0, airborne: false};
     avatar.g.position.set(avatar.x, 0, avatar.z); scene.add(avatar.g);
     var ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.55, 32), new THREE.MeshBasicMaterial({color: COL.amber, transparent: true, opacity: 0.7, toneMapped: false}));
     ring.rotation.x = -PI/2; ring.position.y = 0.02; avatar.g.add(ring);
@@ -625,6 +625,7 @@ function mount(el, api){
     var B = bikeModel(b.color); lean.add(B.g);
     if(avatar.ch){ lean.add(avatar.ch.o); seatRider(avatar.ch, true); }
     b.g.visible = false;
+    avatar.airborne = false; avatar.vy = 0; avatar.g.position.y = 0;   // getting on mid-hop lands you on the seat
     ride = {idx: i, B: B, lean: lean, speed: 0, steer: 0};
     avatar.yaw = b.yaw; walkTo = null; walkDoor = null;
     E.sfx("bell");
@@ -704,7 +705,19 @@ function mount(el, api){
       setAnim(avatar.ch, run ? "sprint" : "walk");
       walkInto();
     } else setAnim(avatar.ch, "idle");
-    avatar.g.position.set(avatar.x, 0, avatar.z); avatar.g.rotation.y = avatar.yaw;
+    // Space hops: a little gravity so you come back down where you started.
+    // Calm mode keeps feet on the ground (no bouncing for reduced motion).
+    if(E.calm()){ avatar.vy = 0; avatar.airborne = false; avatar.g.position.y = 0; }
+    else{
+      if(keys.Space && !avatar.airborne){ avatar.airborne = true; avatar.vy = 6.2; E.sfx("jump"); }
+      if(avatar.airborne){
+        avatar.vy -= 18*dt;
+        var ny = avatar.g.position.y + avatar.vy*dt;
+        if(ny <= 0){ ny = 0; avatar.vy = 0; avatar.airborne = false; }
+        avatar.g.position.y = ny;
+      }
+    }
+    avatar.g.position.set(avatar.x, avatar.g.position.y, avatar.z); avatar.g.rotation.y = avatar.yaw;
     // the camera follows you, gently
     if(cur === worlds.mission) view.goal.set((avatar.x + TABLE.x)*0.5, 1.4, (avatar.z + TABLE.z)*0.5 + 1);
     else view.goal.set(avatar.x*(cur.follow || 1), cur.camY || 1.4, avatar.z*(cur.follow || 1));
@@ -795,7 +808,7 @@ function mount(el, api){
     setTimeout(function(){ go(); fadeEl.classList.remove("on"); setTimeout(function(){ fading = false; }, 260); }, 260);
   }
   function onWheel(e){ e.preventDefault(); view.zoom = E.clamp(view.zoom*Math.exp(-e.deltaY*0.0012), 0.6, 3.5); }
-  var MOVE_KEYS = {KeyW: 1, KeyA: 1, KeyS: 1, KeyD: 1, ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1, ShiftLeft: 1, ShiftRight: 1};
+  var MOVE_KEYS = {KeyW: 1, KeyA: 1, KeyS: 1, KeyD: 1, ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1, ShiftLeft: 1, ShiftRight: 1, Space: 1};
   function typing(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || (t && t.isContentEditable); }
   // Capture phase, so walking keys win over the page's single-key shortcuts while HQ is open.
   function onKey(e){

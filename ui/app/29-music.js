@@ -386,11 +386,100 @@ function muReplace(cur){
     })
     .catch(function(){ muSend("next", {id:cur.id}); });
 }
+/* ---------- the room song from this machine (yt-dlp) ----------
+   When this HQ has yt-dlp, the room's current song is fetched here and played from 127.0.0.1: no
+   YouTube player, so nothing to be blocked, and the visualiser hears the real audio. */
+MU.ytdlp = null;          // null: not asked yet; true / false
+MU.localFail = {};        // video id -> 1: couldn't be fetched here, use YouTube's player for it
+function muLocalOn(v){ return MU.ytdlp === true && !MU.localFail[v]; }
+function muAudioState(v){
+  return fetch("/api/music/audio-state?v=" + encodeURIComponent(v), {cache:"no-store"}).then(function(r){ return r.json(); });
+}
+function muAudioEl(){
+  if(MU.au) return MU.au;
+  var a = MU.au = document.createElement("audio");
+  a.preload = "auto";
+  a.addEventListener("loadedmetadata", function(){
+    var s = MU.st; if(!s || !s.cur || MU.auV !== s.cur.v) return;
+    MU.auReady = true;
+    if(!s.cur.durMs && a.duration > 0 && isFinite(a.duration) && !MU.durSent[s.cur.id]){ MU.durSent[s.cur.id] = 1; muSend("dur", {id:s.cur.id, ms:Math.round(a.duration*1000)}); }
+    muSyncLocal(true); muRenderPlayerLocal();
+  });
+  a.addEventListener("ended", function(){
+    var s = MU.st; if(s && s.cur && MU.auV === s.cur.v && MU.endSent !== s.cur.id){ MU.endSent = s.cur.id; muSend("next", {id:s.cur.id}); }
+  });
+  a.addEventListener("error", function(){
+    var s = MU.st; if(!s || !s.cur || MU.auV !== s.cur.v) return;
+    MU.localFail[s.cur.v] = 1; MU.auV = null; muSyncPlayer(true);
+  });
+  var host = $("muLiveAudio"); if(host) host.appendChild(a);
+  return a;
+}
+// Our analyser on the room song (made on the Tune in click, so the AudioContext is allowed to start).
+function muAudioGraph(){
+  if(MU.auAn || !MU.au) return;
+  try {
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    MU.auCtx = new Ctx();
+    var src = MU.auCtx.createMediaElementSource(MU.au), an = MU.auCtx.createAnalyser();
+    an.fftSize = 256; an.smoothingTimeConstant = 0.6;
+    src.connect(an); an.connect(MU.auCtx.destination);
+    MU.auAn = an; MU.auBuf = new Uint8Array(an.frequencyBinCount);
+  } catch(e){}
+}
+function muLoadLocal(cur){
+  var a = muAudioEl(), v = cur.v, seq = MU.auSeq = (MU.auSeq || 0) + 1, t0 = Date.now();
+  MU.auV = v; MU.auReady = false;
+  try { a.pause(); a.removeAttribute("src"); a.load(); } catch(e){}
+  muRenderPlayerLocal("Fetching \u201c" + cur.title + "\u201d\u2026");
+  (function poll(){
+    if(seq !== MU.auSeq || !MU.tuned) return;
+    muAudioState(v).then(function(st){
+      if(seq !== MU.auSeq) return;
+      if(st.state === "ready"){ a.src = "/api/music/audio/" + encodeURIComponent(v); a.volume = MU.volume / 100; try { a.load(); } catch(e){} return; }
+      if(st.state === "loading" && Date.now() - t0 < 120000){ setTimeout(poll, 700); return; }
+      MU.localFail[v] = 1; MU.auV = null;
+      muNote("Couldn\u2019t fetch that song here" + (st.error ? " (" + String(st.error).slice(0, 80) + ")" : "") + ". Trying YouTube\u2019s player\u2026");
+      muSyncPlayer(true);
+    }).catch(function(){ if(seq === MU.auSeq) setTimeout(poll, 1500); });
+  })();
+}
+function muDropLocal(){
+  MU.auSeq = (MU.auSeq || 0) + 1; MU.auV = null; MU.auReady = false;
+  if(MU.au){ try { MU.au.pause(); MU.au.removeAttribute("src"); MU.au.load(); } catch(e){} }
+}
+function muSyncLocal(hard){
+  var s = MU.st, a = MU.au; if(!s || !s.cur || !a || !MU.auReady || MU.auV !== s.cur.v) return;
+  var want = muPos() / 1000;
+  if(s.playing){
+    if(hard || Math.abs(a.currentTime - want) > 0.6) a.currentTime = want;
+    if(a.paused){ var p = a.play(); if(p && p.catch) p.catch(function(){ muNote("Press Tune in again to start the sound"); }); }
+  } else {
+    if(!a.paused) a.pause();
+    if(hard) a.currentTime = want;
+  }
+}
+function muRenderPlayerLocal(msg){
+  var host = $("muPlayer"); if(!host) return;
+  host.classList.remove("novideo");
+  host.textContent = "";
+  var p = el("p", "mu-player-empty");
+  p.textContent = msg || "\uD83C\uDFA7 Playing from your HQ (fetched with yt-dlp), in sync with the room.";
+  host.appendChild(p);
+}
 // Bring the local player in line with the room: right video, play/pause, within ~1.5 s.
 function muSyncPlayer(hard){
   var s = MU.st;
-  if(!MU.tuned){ if(MU.frame) muDropFrame(); return; }
-  if(!s || !s.cur){ if(MU.frame) muDropFrame(); muRenderPlayerEmpty(); return; }
+  if(!MU.tuned){ if(MU.frame) muDropFrame(); muDropLocal(); return; }
+  if(!s || !s.cur){ if(MU.frame) muDropFrame(); muDropLocal(); muRenderPlayerEmpty(); return; }
+  if(muLocalOn(s.cur.v)){
+    if(MU.frame) muDropFrame();
+    if(MU.auV !== s.cur.v) muLoadLocal(s.cur); else muSyncLocal(hard);
+    // Fetch the next song ahead, so it starts on time.
+    if(s.queue && s.queue[0] && !MU.localFail[s.queue[0].v] && MU.preV !== s.queue[0].v){ MU.preV = s.queue[0].v; muAudioState(MU.preV).catch(function(){}); }
+    return;
+  }
+  muDropLocal();
   var want = muPos() / 1000;
   if(MU.frameV !== s.cur.v){ muMakeFrame(s.cur.v, want); if(!s.playing) setTimeout(function(){ muPost("pauseVideo"); }, 900); return; }
   if(!MU.frameReady) return;
@@ -404,14 +493,17 @@ function muSyncPlayer(hard){
   }
 }
 function muRenderPlayerEmpty(){
-  var host = $("muPlayer"); if(!host || host.querySelector(".mu-frame")) return;
+  var host = $("muPlayer"); if(!host || host.querySelector(".mu-frame") || (MU.auV && MU.st && MU.st.cur)) return;
   host.textContent = "";
   var p = el("p", "mu-player-empty"); p.textContent = "The queue is empty. Add a song below and everyone here hears it together."; host.appendChild(p);
 }
 function muTune(on){
   MU.tuned = !!on;
-  if(MU.tuned){ if(ARENA.paired) arenaOpenSocket(); muSyncPlayer(true); announce("Tuned in to " + muPlace()); }
-  else { muDropFrame(); announce("Stopped listening"); }
+  if(MU.tuned){
+    if(MU.ytdlp === true){ muAudioEl(); muAudioGraph(); if(MU.auCtx && MU.auCtx.state === "suspended") MU.auCtx.resume().catch(function(){}); }
+    if(ARENA.paired) arenaOpenSocket(); muSyncPlayer(true); announce("Tuned in to " + muPlace());
+  }
+  else { muDropFrame(); muDropLocal(); announce("Stopped listening"); }
   muRenderRoom();
 }
 
@@ -560,6 +652,12 @@ function muLevels(now){
     var bands = muBandsFrom(buf);
     for(i = 0; i < MU_BANDS; i++) out[i] = bands[i] / 255;
     if(now - MU.djSendAt > 100){ MU.djSendAt = now; muSend("viz", {b:bands}); }
+    return out;
+  }
+  if(MU.auAn && MU.tuned && MU.auV && MU.au && !MU.au.paused){
+    MU.auAn.getByteFrequencyData(MU.auBuf);
+    var rb = muBandsFrom(MU.auBuf);
+    for(i = 0; i < MU_BANDS; i++) out[i] = rb[i] / 255;
     return out;
   }
   if(MU.listen && MU.listen.an){
@@ -951,7 +1049,7 @@ function musicLeave(){ /* the player keeps playing while you're tuned in; the lo
     var n = bs[Math.max(0, Math.min(bs.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))]; if(n) n.focus();
   });
   var vol = $("muVol");
-  if(vol) vol.addEventListener("input", function(){ MU.volume = Math.max(0, Math.min(100, parseInt(vol.value, 10) || 0)); try { localStorage.setItem("hq_mu_vol", String(MU.volume)); } catch(e){} muPost("setVolume", [MU.volume]); if(MU.listen && MU.listen.audio) MU.listen.audio.volume = MU.volume / 100; });
+  if(vol) vol.addEventListener("input", function(){ MU.volume = Math.max(0, Math.min(100, parseInt(vol.value, 10) || 0)); try { localStorage.setItem("hq_mu_vol", String(MU.volume)); } catch(e){} muPost("setVolume", [MU.volume]); if(MU.listen && MU.listen.audio) MU.listen.audio.volume = MU.volume / 100; if(MU.au) MU.au.volume = MU.volume / 100; });
   var vb = $("muVideo");
   if(vb) vb.addEventListener("change", function(){ MU.video = vb.checked; try { localStorage.setItem("hq_mu_video", MU.video ? "1" : "0"); } catch(e){} var h = $("muPlayer"); if(h) h.classList.toggle("novideo", !MU.video); });
   var dj = $("muDj"); if(dj) dj.addEventListener("click", muDjStart);
@@ -961,6 +1059,9 @@ function musicLeave(){ /* the player keeps playing while you're tuned in; the lo
   document.addEventListener("fullscreenchange", muStartLoop);
   // Drift check while tuned in, and the polls: yours every 5 s on this view, everyone's every 20 s while paired.
   setInterval(function(){ if(MU.tuned) muSyncPlayer(false); }, 2000);
+  // Does this HQ have yt-dlp? (asked once; a check with a harmless id that is never fetched)
+  fetch("/api/music/audio-state?v=-", {cache:"no-store"}).then(function(r){ return r.json(); })
+    .then(function(j){ MU.ytdlp = !!(j && j.state !== "unavailable"); }).catch(function(){ MU.ytdlp = false; });
   setInterval(function(){ if(muOn()) muLoadMine(); }, 2000);
   setInterval(function(){ if(muOn() && !document.hidden) muTickAll(); }, 250);
   setInterval(function(){ if(ARENA.paired && (muOn() || muSockOk())) muLoadPeople(); }, 20000);

@@ -1,5 +1,5 @@
 /* ---- config + creature packs (v5) ---- */
-var CONFIG_DEFAULTS = {theme:"aurora", creaturePack:"pokemon3d", refreshMs:5000, stuckMinutes:15, dailyBudgetUSD:0, trainerName:"", trainerAvatar:null, creatureFatigue:true, musicShare:true};
+var CONFIG_DEFAULTS = {theme:"aurora", creaturePack:"pokemon3d", refreshMs:5000, stuckMinutes:15, dailyBudgetUSD:0, trainerName:"", trainerAvatar:null, creatureFatigue:true, musicShare:true, musicCookies:""};
 var CONFIG = Object.assign({}, CONFIG_DEFAULTS);
 function cfg(){ return CONFIG; }
 // both Pokémon packs share evolution/type/name logic; only the sprite source differs

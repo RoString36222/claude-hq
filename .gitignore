@@ -39,3 +39,4 @@ backend/.release.env
 backend/.release.env.tmp
 backend/.releases
 .autodeploy-tried
+.music-cache/

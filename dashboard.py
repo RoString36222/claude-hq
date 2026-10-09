@@ -54,7 +54,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import arena
 import music
 
-APP_VERSION = "2.3.0"   # Arena City: Jump to City, the fountain, the bike park
+APP_VERSION = "2.4.0"   # Your 3D character: builder, portraits, everyone sees it
 
 # --------------------------------------------------------------------------- #
 # Paths / constants
@@ -4009,6 +4009,11 @@ KNOWN_CREATURE_PACKS = ("monsters", "pokemon", "pokemon3d", "aniimo", "village",
 # Append-only: raising a max never renumbers existing choices, so a saved
 # avatar keeps meaning what it meant.
 TRAINER_MAX = (6, 8, 8, 8, 8, 7, 5, 8, 4)
+# The 3D character (HQ 2.4): per-axis upper index (inclusive) of
+# [base, skin, hairColor, outfitColor, hairStyle, headwear, accessory, eyes,
+#  background, outfitStyle]. MUST stay identical to MAX in games/avatar3d.js
+# (tests/test_character.py checks). Append-only, like TRAINER_MAX.
+CHARACTER_MAX = (5, 7, 9, 9, 2, 5, 3, 1, 4, 1)
 DEFAULT_CONFIG = {
     "theme": "aurora",
     "creaturePack": "pokemon3d",
@@ -4019,6 +4024,8 @@ DEFAULT_CONFIG = {
     # None = auto-derive from a stable handle (never []/{}: a mutable default
     # would alias across the shallow dict(base) copy in _validate_config).
     "trainerAvatar": None,
+    # None = not built yet: the page derives one from trainerAvatar (once).
+    "character": None,
     "arenaUrl": "",
     "arenaEnabled": False,
     "arenaShareCost": False,
@@ -4083,6 +4090,21 @@ def _validate_config(raw, base=None):
                     v = 0
                 spec.append(v % (m + 1) if v >= 0 else ((v % (m + 1)) + (m + 1)) % (m + 1))
             cfg["trainerAvatar"] = spec
+    if "character" in raw:
+        # Same rule as trainerAvatar: exactly len(CHARACTER_MAX) small ints, each
+        # wrapped into range; anything that isn't a list is ignored; None resets.
+        ch = raw.get("character")
+        if ch is None:
+            cfg["character"] = None
+        elif isinstance(ch, list):
+            spec = []
+            for i, m in enumerate(CHARACTER_MAX):
+                try:
+                    v = int(ch[i]) if i < len(ch) else 0
+                except Exception:
+                    v = 0
+                spec.append(v % (m + 1))
+            cfg["character"] = spec
     au = raw.get("arenaUrl")
     if isinstance(au, str):
         au = au.strip()
@@ -5090,6 +5112,7 @@ POST_PATHS = (
     "/api/arena/pantry/eat", "/api/arena/pantry/give",
     "/api/arena/pantry/reward",
     "/api/arena/hq/me",
+    "/api/arena/portrait",
     "/api/arena/cosmetics/buy", "/api/arena/cosmetics/equip", "/api/arena/market/sell",
     "/api/arena/crews/create", "/api/arena/crews/join", "/api/arena/crews/leave",
     "/api/arena/quickplay/join", "/api/arena/quickplay/leave",
@@ -5930,6 +5953,15 @@ class Handler(BaseHTTPRequestHandler):
                 return arena.cosmetics(path.rsplit("/", 1)[1], body)
             if path == "/api/arena/market/sell":
                 return arena.market_sell(body.get("cat"), body.get("qty"))
+            if path == "/api/arena/portrait":
+                # Your 3D character portrait for everyone's lists (a PNG your page
+                # rendered from your own choices), or {"remove": true}.
+                if body.get("remove") is True:
+                    return arena.portrait_delete()
+                png = arena.portrait_png(body.get("png"))
+                if png is None:
+                    return 400, {"error": "png must be a data:image/png;base64 URL of a small square PNG"}
+                return arena.portrait_put(png)
             if path == "/api/arena/hq/me":
                 # Crew counts come from this process's own view of your sessions,
                 # never from the page: only three numbers can leave.

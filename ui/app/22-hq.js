@@ -15,7 +15,7 @@ function hqLoadScripts(){
   if(HQ3D.load) return HQ3D.load;
   // The engine (shared with the Valley's 3D games), the HQ host + Mission Control, then the
   // other floors of the building: the Lobby and the Base outside.
-  var files = ((window.HQV && window.HQV.engine) ? [] : ["engine"]).concat(["hq3d","hqlobby","hqbase","hqcity"]);
+  var files = ((window.HQV && window.HQV.engine) ? [] : ["engine"]).concat((window.HQV && window.HQV.avatar3d) ? [] : ["avatar3d"], ["hq3d","hqlobby","hqbase","hqcity"]);
   HQ3D.load = files.reduce(function(p, name){
     return p.then(function(){ return new Promise(function(res, rej){
       var sc=document.createElement("script"); sc.src="/games/"+name+".js"; sc.async=false;
@@ -28,6 +28,8 @@ function hqLoadScripts(){
 function hqApi(){
   return {
     name: ((typeof cfg==="function" && cfg().trainerName) || "You"),
+    // your 3D character (ui/app/30-character.js), or null for the hashed look
+    character: function(){ return typeof charSpec==="function" ? charSpec() : null; },
     openSession: hqOpen,
     go: function(v){ hqModeSave("classic"); setView(v); },
     onFilter: function(p){ HQ3D.filter = p || null; hqRenderCrew(); },
@@ -398,6 +400,7 @@ function hqNetSync(){
     hqNetClose();
     HQNET.room=want; HQNET.ws=A.sock; HQNET.shared=true; HQNET.me=A.you.userId;
     try { A.sock.send(JSON.stringify({type:"game", g:"hq", op:"join"})); } catch(e){}
+    HQNET.lookSent=null;
     return;
   }
   if(HQNET.shared){ hqNetClose(); }
@@ -415,7 +418,7 @@ function hqNetSync(){
       if(gen!==HQNET.gen) return;
       var m; try { m=JSON.parse(ev.data); } catch(e){ return; }
       if(!m || typeof m!=="object") return;
-      if(m.type==="welcome"){ HQNET.me=(m.you&&m.you.userId)||null; HQNET.arena=(m.arena && typeof m.arena==="object") ? m.arena : null; ws.send(JSON.stringify({type:"game", g:"hq", op:"join"})); return; }
+      if(m.type==="welcome"){ HQNET.me=(m.you&&m.you.userId)||null; HQNET.arena=(m.arena && typeof m.arena==="object") ? m.arena : null; ws.send(JSON.stringify({type:"game", g:"hq", op:"join"})); HQNET.lookSent=null; return; }
       if(m.type!=="game" || m.g!=="hq") return;
       hqNetOnGame(m);
     };
@@ -432,6 +435,11 @@ function hqNetCan(cap){
 function hqNetSend(){
   var ws=HQNET.ws; if(!ws || ws.readyState!==1 || !HQ3D.inst || !HQ3D.inst.where) return;
   var w=HQ3D.inst.where(); if(!w || !w.world) return;
+  // Your character, once per join and whenever it changes, to an Arena that shows it ("look").
+  var spec = typeof charSpec==="function" ? charSpec() : null, sg = spec ? spec.join(".") : null;
+  if(sg && HQNET.lookSent!==sg && hqNetCan("look")){
+    try { ws.send(JSON.stringify({type:"game", g:"hq", op:"look", c:spec})); HQNET.lookSent=sg; } catch(e){}
+  }
   var a=HQ3D.inst.moving ? HQ3D.inst.moving() : 0;
   if(a===3 && !hqNetCan("ride")) a=2;   // an Arena without bikes drops a 3 (and you would freeze): send "running"
   var msg={type:"game", g:"hq", op:"pos", w:w.world, x:Math.round(w.x*100), z:Math.round(w.z*100),

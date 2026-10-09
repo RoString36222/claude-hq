@@ -119,6 +119,7 @@ function openSettings(){
   rememberOpener();
   var c=CONFIG;
   buildTrainerBuilder();
+  if(typeof buildCharBuilder==="function") buildCharBuilder();
   $("setTheme").value = effectiveTheme();
   $("setPack").value = c.creaturePack||"pokemon";
   $("setRefresh").value = Math.round((c.refreshMs||5000)/1000);
@@ -135,7 +136,7 @@ function openSettings(){
   $("setTheme").focus();
 }
 // revert any live preview back to the persisted display prefs, then close.
-function closeSettings(){ applyDisplayPrefs(); $("settingsBack").classList.remove("open"); restoreOpener(); }
+function closeSettings(){ if(typeof charClosePreview==="function") charClosePreview(); applyDisplayPrefs(); $("settingsBack").classList.remove("open"); restoreOpener(); }
 // change theme -> persist immediately (localStorage is authoritative) so it survives
 // both the every-tick syncConfig re-apply AND a page reload; sync to server if known.
 $("setTheme").addEventListener("change",function(){
@@ -159,10 +160,12 @@ function saveSettings(){
     dailyBudgetUSD: Math.max(0, parseFloat($("setBudget").value)||0),
     trainerName: $("setTrainer") ? $("setTrainer").value.trim().slice(0,32) : "",
     trainerAvatar: readTrainerBuilder(),
+    character: (typeof readCharBuilder==="function" && typeof char3dOk==="function" && char3dOk()) ? readCharBuilder() : undefined,
     creatureFatigue: $("setFatigue") ? $("setFatigue").checked : true,
     musicShare: $("setMusicShare") ? $("setMusicShare").checked : true,
     musicCookies: $("setMusicCookies") ? $("setMusicCookies").value : ""
   };
+  if(body.character===undefined) delete body.character;   // no WebGL2: the 3D character is left as it was
   // localStorage mirror so the Trainer Card paints instantly on next boot,
   // before the /api/config fetch resolves (resolveTrainerSpec validates it).
   try{ localStorage.setItem("hq_trainer", JSON.stringify(body.trainerAvatar)); }catch(e){}
@@ -171,6 +174,7 @@ function saveSettings(){
   if(SERVER_THEMES.indexOf(theme)>=0) body.theme=theme;
   applyConfig(body);      // apply immediately (theme swap + creature repaint)
   applyDisplayPrefs();    // ensure contrast/large/calm applied even if not in body
+  if(body.character && typeof charSaved==="function") charSaved(body.character);
   renderTrainerCard();
   restartPoll();          // new cadence for the poll fallback
   if(STATE) renderHealth(STATE.health);

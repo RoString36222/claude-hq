@@ -17,6 +17,7 @@ mod music;
 mod nudges;
 mod pantry;
 mod platformer;
+mod portraits;
 mod privrooms;
 mod progress;
 mod protocol;
@@ -687,8 +688,15 @@ async fn github_callback(State(st): State<AppState>, Query(q): Query<CallbackQ>)
     let user_id = match existing {
         Some(r) => {
             let id: String = r.get("id");
-            let _ = sqlx::query("UPDATE users SET handle=?1, display_name=?2, avatar_url=?3 WHERE id=?4")
-                .bind(&login).bind(&name).bind(&avatar).bind(&id).execute(&st.pool).await;
+            // With a 3D portrait the shown avatar stays the portrait; the GitHub
+            // picture is refreshed in its keeping place instead (portraits.rs).
+            if portraits::keep_github_avatar(&st.pool, &id, &avatar).await {
+                let _ = sqlx::query("UPDATE users SET handle=?1, display_name=?2 WHERE id=?3")
+                    .bind(&login).bind(&name).bind(&id).execute(&st.pool).await;
+            } else {
+                let _ = sqlx::query("UPDATE users SET handle=?1, display_name=?2, avatar_url=?3 WHERE id=?4")
+                    .bind(&login).bind(&name).bind(&avatar).bind(&id).execute(&st.pool).await;
+            }
             id
         }
         None => {
@@ -852,6 +860,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(crews::routes())
         .merge(hq::routes())
         .merge(music::routes())
+        .merge(portraits::routes())
         .merge(nudges::routes())
         .merge(pantry::routes())
         .merge(privrooms::routes())
@@ -869,7 +878,8 @@ async fn serve() -> anyhow::Result<()> {
         .route("/v1/rooms/:room_id/ws", get(room_ws))
         .merge(boardstream::routes())
         // Unauthenticated, and only when ARENA_EXPOSE_REALTIME_STATS=1.
-        .merge(server_stats::public_routes());
+        .merge(server_stats::public_routes())
+        .merge(portraits::public_routes());
 
     let app = Router::new().merge(public).merge(guarded).with_state(state);
 

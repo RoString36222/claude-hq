@@ -378,7 +378,19 @@ function mount(el, api){
       .sort(function(a, b){ return (a.ageSecs || 1e12) - (b.ageSecs || 1e12); }).slice(0, MAX_STALE);
     return live.concat(stale).slice(0, MAX_DESKS);
   }
-  function makeCharacter(key, onReady){
+  // A person: their own 3D character when they built one (games/avatar3d.js; you, and anyone whose
+  // presence carries `c`), else one of the six looks picked from a hash of the key.
+  function makeCharacter(key, onReady, spec){
+    var A3 = HQV.avatar3d;
+    if(spec && A3 && A3.valid(spec)){
+      A3.build(spec).then(function(ch){
+        if(!inst.alive) return;
+        if(CH_H === null){ var hb = new THREE.Box3().setFromObject(ch.o); CH_H = Math.max(0.3, hb.max.y - hb.min.y); }
+        ch.o.scale.setScalar(1.7/CH_H);
+        onReady(ch);
+      }).catch(function(){ makeCharacter(key, onReady); });
+      return;
+    }
     var name = CHAR_FILES[hashStr(key) % CHAR_FILES.length];
     E.loadGlb(L, "golf", name).then(function(g){
       if(!inst.alive) return;
@@ -576,8 +588,24 @@ function mount(el, api){
     var ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.55, 32), new THREE.MeshBasicMaterial({color: COL.amber, transparent: true, opacity: 0.7, toneMapped: false}));
     ring.rotation.x = -PI/2; ring.position.y = 0.02; avatar.g.add(ring);
     nameTag();
-    makeCharacter("you:" + (api.name || ""), function(ch){ avatar.ch = ch; avatar.g.add(ch.o); setAnim(ch, "idle"); });
+    var mySpec = api.character && api.character();
+    avatar.csig = mySpec ? mySpec.join(".") : "";
+    makeCharacter("you:" + (api.name || ""), function(ch){ avatar.ch = ch; avatar.g.add(ch.o); setAnim(ch, "idle"); }, mySpec);
   }
+  // Your character changed (Settings): swap the model in place, on the bike if you are riding.
+  inst.setCharacter = function(spec){
+    if(!avatar || !spec) return;
+    var s = spec.join(".");
+    if(s === avatar.csig) return;
+    avatar.csig = s;
+    makeCharacter("you:" + (api.name || ""), function(ch){
+      if(avatar.csig !== s) return;
+      var old = avatar.ch, parent = old && old.o.parent ? old.o.parent : avatar.g;
+      if(old) parent.remove(old.o);
+      avatar.ch = ch; parent.add(ch.o);
+      if(ride) seatRider(ch, true); else setAnim(ch, "idle");
+    }, spec);
+  };
   // Your name tag, in the name frame you wear (HQ 2.1 cosmetics), else amber.
   function frameHex(v){ return /^#[0-9a-f]{6}$/i.test(v || "") ? v : null; }
   function nameTag(){
@@ -830,8 +858,8 @@ function mount(el, api){
     rideUiSync(false);
     var ease = 1 - Math.exp(-dt*4); view.target.lerp(view.goal, ease);
     resize(); placeCam();
-    if(avatar && avatar.ch) avatar.ch.mixer.update(dt);
-    placePeers(dt);
+    if(avatar && avatar.ch){ avatar.ch.mixer.update(dt); if(avatar.ch.update) avatar.ch.update(t); }
+    placePeers(dt, t);
     acc.sky += dt; if(acc.sky > 30){ acc.sky = 0; applyTime(); }
     if(cur !== worlds.mission){ if(cur.update) cur.update(t, dt, k); renderer.render(cur.scene, cam); return; }
     acc.scr += dt; acc.wall += dt;
@@ -895,13 +923,23 @@ function mount(el, api){
         var ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.55, 32), new THREE.MeshBasicMaterial({color: COL.green, transparent: true, opacity: 0.7, toneMapped: false}));
         ring.rotation.x = -PI/2; ring.position.y = 0.02; P.g.add(ring);
         var tg = label(short(p.n || "Visitor", 14), frameHex(p.f) || HEX.green, 0.5); tg.position.y = 2.3; P.g.add(tg);
-        makeCharacter("peer:" + p.u, function(ch){ if(peers[p.u] === P){ P.ch = ch; P.g.add(ch.o); } });
+      }
+      // Their character: made on arrival, and made again when they change it (`c`, the "look" capability).
+      var cs = Array.isArray(p.c) ? p.c.join(".") : "";
+      if(P.csig !== cs){
+        P.csig = cs;
+        makeCharacter("peer:" + p.u, function(ch){
+          if(peers[p.u] !== P || P.csig !== cs) return;
+          if(P.ch && P.ch.o.parent) P.ch.o.parent.remove(P.ch.o);
+          P.ch = ch; (P.bike && P.lean ? P.lean : P.g).add(ch.o);
+          if(P.bike) seatRider(ch, true);
+        }, Array.isArray(p.c) ? p.c : null);
       }
       P.w = p.w; P.tx = p.x/100; P.tz = p.z/100; P.tyaw = p.r*PI/180; P.a = p.a | 0;
     });
     Object.keys(peers).forEach(function(u){ if(!seen[u]){ var P = peers[u]; if(P.g.parent) P.g.parent.remove(P.g); delete peers[u]; } });
   };
-  function placePeers(dt){
+  function placePeers(dt, t){
     Object.keys(peers).forEach(function(u){
       var P = peers[u], here = cur && P.w === cur.name;
       if(!here){ if(P.g.parent) P.g.parent.remove(P.g); return; }
@@ -919,7 +957,7 @@ function mount(el, api){
         bikeRoll(P.bike, jump ? 0 : mv, null);
       }
       P.px = P.x; P.pz = P.z;
-      if(P.ch){ setAnim(P.ch, rides ? "sit" : P.a === 2 ? "sprint" : P.a === 1 ? "walk" : "idle"); P.ch.mixer.update(dt); }
+      if(P.ch){ setAnim(P.ch, rides ? "sit" : P.a === 2 ? "sprint" : P.a === 1 ? "walk" : "idle"); P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0); }
     });
   }
   // 0 still, 1 walk, 2 run, 3 on a bike (any speed: others draw you riding).

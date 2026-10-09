@@ -927,6 +927,56 @@ def hq_visit(user_id):
 
 
 
+# ---- 3D character portrait ----------------------------------------------------
+# A small PNG the page renders from the user's own character choices; nothing else
+# rides along. Checked here as well as on the Arena.
+PORTRAIT_MAX_BYTES = 64 * 1024
+
+
+def portrait_png(data_url):
+    """The PNG bytes of a data:image/png;base64 URL, or None if it isn't one we
+    would send (not a PNG, too big, not square 32..256 px)."""
+    import base64
+    if not isinstance(data_url, str) or not data_url.startswith("data:image/png;base64,"):
+        return None
+    try:
+        b = base64.b64decode(data_url.split(",", 1)[1], validate=True)
+    except Exception:
+        return None
+    if len(b) > PORTRAIT_MAX_BYTES or len(b) < 33 or b[:8] != b"\x89PNG\r\n\x1a\n" or b[12:16] != b"IHDR":
+        return None
+    w, h = int.from_bytes(b[16:20], "big"), int.from_bytes(b[20:24], "big")
+    return b if w == h and 32 <= w <= 256 else None
+
+
+def portrait_put(png):
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    req = urllib.request.Request(base + "/v1/me/portrait", data=png, method="PUT")
+    req.add_header("Content-Type", "image/png")
+    req.add_header("Accept", "application/json")
+    req.add_header("Authorization", "Bearer %s" % token)
+    try:
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT, context=_ssl_context()) as resp:
+            raw = resp.read().decode("utf-8")
+            return resp.status, (json.loads(raw) if raw else {})
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, _with_error(json.loads(e.read().decode("utf-8")))
+        except Exception:
+            return e.code, {"error": e.reason}
+    except Exception as e:
+        return 0, {"error": str(e)}
+
+
+def portrait_delete():
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("DELETE", base + "/v1/me/portrait", token=token)
+
+
 # ---- Music: Now Playing ------------------------------------------------------
 # What may leave the machine about your music: the fields music.wire_track()
 # keeps (title, artist, album, app, a Spotify/YouTube id, length, position,

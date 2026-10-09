@@ -381,7 +381,11 @@ function renderTrainerCard(){
   var s=(STATE&&STATE.season)||{};
   var me=(typeof myLevel==="function") ? myLevel() : s;
   var av=$("tcAvatar"), lv="Lv."+(me.level!=null?me.level:"—");
-  if(av && typeof trainerSVG==="function"){
+  var pic = (typeof charPortraitUrl==="function") ? charPortraitUrl() : null;
+  if(av && pic){
+    // your 3D character's portrait (ui/app/30-character.js); a data: URL this page drew itself
+    av.innerHTML = '<img class="tc-portrait" alt="" width="46" height="46" src="'+esc(pic)+'"><span class="tc-lvpip" id="tcLvl">'+esc(lv)+'</span>';
+  } else if(av && typeof trainerSVG==="function"){
     av.innerHTML = trainerSVG(resolveTrainerSpec(), 46) + '<span class="tc-lvpip" id="tcLvl">'+esc(lv)+'</span>';
   } else if($("tcLvl")){ $("tcLvl").textContent = lv; }
   $("tcName").textContent = "Trainer "+trainerName();

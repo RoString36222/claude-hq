@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.3.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 2.4.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -311,6 +311,20 @@ and feature guide.
 
 ## Changelog
 
+- **2.4.0** — **Your 3D character.** The person you walk around as in the 3D HQ and Arena City is
+  now yours to build, and replaces the 2D trainer drawing (which stays as the fallback without WebGL2).
+  - **Settings → Character**: a live 3D preview you can turn, six bodies (the Kenney Mini Characters),
+    skin / hair / outfit colours that keep the model's shading, hair (own, shaved, **Neon crest**),
+    headwear (beanie, cap, headband, party hat, **Neural halo**), accessories (round glasses, shades,
+    **AR visor**), **Lit eyes**, **Techwear** with lit circuit trim, **Chrome** skin, **Neon cyan** /
+    **Hot magenta** colours, and a portrait background (**Neon grid**). Your 2D look is carried over once.
+  - **Everywhere you appear**: the Trainer card shows a portrait of your character; the 3D HQ and the
+    city walk it around; friends in Arena City see your character (`look`, a few small numbers in hq
+    presence). Paired, your HQ uploads the portrait (a small PNG) and the Arena shows it in place of
+    your GitHub picture on the leaderboard, room members, lobby chips, chat and music.
+  - Arena (Rust): hq presence `op: "look"` / `c` (capability `look`); `PUT`/`DELETE /v1/me/portrait`,
+    public `GET /v1/portraits/:user_id`; migration `0002_portraits.sql`. The GitHub picture is kept
+    and comes back if the portrait is removed.
 - **2.3.0** — **Arena City: bikes and a fountain.**
   - **Jump to City**: a button at the top of the 3D HQ panel (and "Jump to Arena City" in the
     command palette) takes you straight onto the street, from the classic dashboard too. You can

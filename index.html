@@ -1104,6 +1104,19 @@
           <input id="setTrainer" type="text" maxlength="32" placeholder="Auto (from session names)">
           <span class="hint">Shown on your Trainer Card. Leave blank for automatic.</span>
         </div>
+        <div class="setrow" id="charBuilderRow" hidden>
+          <label>Character</label>
+          <div class="tb-wrap">
+            <div class="tb-preview"><canvas class="ch-stage" id="chPreview" tabindex="0" aria-label="Your character, in 3D: drag or use the arrow keys to turn"></canvas>
+              <div class="tb-pbtns">
+                <button class="hbtn" id="chRandom" type="button">🎲 Randomize</button>
+                <button class="hbtn" id="chReset" type="button">Reset</button>
+              </div>
+            </div>
+            <div class="tb-controls" id="chControls"></div>
+          </div>
+          <span class="hint" id="chNote">The person you are in the 3D HQ and Arena City, and your portrait on the Trainer card. With the Arena on, friends see it in the city and in place of your GitHub picture on the leaderboard, in rooms and in chat.</span>
+        </div>
         <div class="setrow" id="trainerBuilderRow">
           <label>Trainer look</label>
           <div class="tb-wrap">
@@ -1329,6 +1342,7 @@
 //@include ui/app/27-play.js
 //@include ui/app/28-talk.js
 //@include ui/app/29-music.js
+//@include ui/app/30-character.js
 </script>
 </body>
 </html>

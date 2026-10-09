@@ -86,6 +86,10 @@ struct Person {
     r: i64,
     /// Raw, for the `True == 1` reason in divergence 1.
     a: Value,
+    /// Their 3D character (the `look` op, "look" capability): a short array of
+    /// small integers the page turns into a model, colours and add-ons. None
+    /// until they send one; older pages never do, and get the hashed look.
+    look: Option<Vec<u8>>,
     /// (tokens, when) -- Python's `[POS_BURST, t]` list.
     bucket: (f64, f64),
 }
@@ -119,6 +123,7 @@ impl Hq {
                 z: 1400,
                 r: 0,
                 a: json!(0),
+                look: None,
                 bucket: (POS_BURST, t),
             });
         }
@@ -172,6 +177,25 @@ impl Hq {
         true
     }
 
+    /// The `look` op: spend a token like `pos`, then keep the character only
+    /// if it is an array of 1..=LOOK_LEN whole numbers in 0..=LOOK_MAX. A bad one
+    /// is dropped whole and changes nothing.
+    fn look(&mut self, uid: &str, msg: &Value, t: f64) -> bool {
+        let Some(p) = self.people.get_mut(uid) else { return false };
+        p.bucket.0 = POS_BURST.min(p.bucket.0 + (t - p.bucket.1) * POS_RATE);
+        p.bucket.1 = t;
+        if p.bucket.0 < 1.0 {
+            return false;
+        }
+        p.bucket.0 -= 1.0;
+        let Some(c) = read_look(msg.get("c")) else { return false };
+        if p.look.as_ref() != Some(&c) {
+            p.look = Some(c);
+            self.dirty = true;
+        }
+        true
+    }
+
     /// hqpresence.py:77: the whole street, one object per person, keys in
     /// Python's order -- `u`, `n`, `w`, `x`, `z`, `r`, `a`, and `f` LAST and
     /// only when they wear one.
@@ -190,6 +214,9 @@ impl Hq {
                     m.insert("a".into(), p.a.clone());
                     if let Some(f) = frame_of(&p.user) {
                         m.insert("f".into(), json!(f));
+                    }
+                    if let Some(c) = &p.look {
+                        m.insert("c".into(), json!(c));
                     }
                     Value::Object(m)
                 })
@@ -210,6 +237,19 @@ fn anim_ok(a: &Value) -> bool {
         Value::Number(n) => n.as_f64().is_some_and(|f| f == 0.0 || f == 1.0 || f == 2.0 || f == 3.0),
         _ => false,
     }
+}
+
+/// The longest character array and the largest value in it (the page's spec is
+/// ten small numbers today; room to grow, append-only).
+pub const LOOK_LEN: usize = 16;
+pub const LOOK_MAX: u64 = 31;
+
+fn read_look(v: Option<&Value>) -> Option<Vec<u8>> {
+    let a = v?.as_array()?;
+    if a.is_empty() || a.len() > LOOK_LEN {
+        return None;
+    }
+    a.iter().map(|x| x.as_u64().filter(|n| *n <= LOOK_MAX).map(|n| n as u8)).collect()
 }
 
 /// hqpresence.py:78's `(displayName or handle or "")[:24]`. An `or` chain, so an
@@ -277,6 +317,8 @@ pub fn op(v: &mut RoomValley, cx: &mut Ctx, op: &str, msg: &Value, out: &mut Out
     let _ = out; // hq answers a position frame with silence, never an event
     if op == "pos" {
         v.hq.pos(cx.uid(), msg, cx.t);
+    } else if op == "look" {
+        v.hq.look(cx.uid(), msg, cx.t);
     }
 }
 
@@ -366,6 +408,27 @@ mod tests {
         let first = &p.listing()[0];
         assert_eq!((&first["w"], &first["x"], &first["z"], &first["a"]),
                    (&json!("mission"), &json!(100), &json!(-200), &json!(2)));
+    }
+
+    #[test]
+    fn a_look_is_kept_only_when_valid_and_rides_in_the_listing() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        // No look yet: the listing carries no `c`, as for an older page.
+        assert!(p.listing()[0].get("c").is_none());
+        assert!(p.look("u", &json!({"c": [2, 7, 9, 9, 2, 5, 3, 1, 4, 1]}), 0.1));
+        assert_eq!(p.listing()[0]["c"], json!([2, 7, 9, 9, 2, 5, 3, 1, 4, 1]));
+        p.dirty = false;
+        for bad in [json!({"c": []}), json!({"c": [32]}), json!({"c": [-1]}), json!({"c": [1.5]}),
+                    json!({"c": "1,2"}), json!({"c": vec![1; 17]}), json!({}), json!({"c": [true]})] {
+            assert!(!p.look("u", &bad, 1.0), "accepted {bad}");
+        }
+        assert!(!p.dirty);
+        assert_eq!(p.listing()[0]["c"][1], 7);   // unchanged by the rejects
+        // The same look again is not news.
+        assert!(p.look("u", &json!({"c": [2, 7, 9, 9, 2, 5, 3, 1, 4, 1]}), 2.0));
+        assert!(!p.dirty);
+        assert!(!p.look("nobody", &json!({"c": [1]}), 2.0));
     }
 
     #[test]

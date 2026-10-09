@@ -52,8 +52,9 @@ from datetime import datetime, timezone, timedelta, date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import arena
+import music
 
-APP_VERSION = "2.1.2"   # Cursor card titles use the chat's own heading
+APP_VERSION = "2.2.0"   # Music: Now Playing, listening rooms, Go live, visualiser
 
 # --------------------------------------------------------------------------- #
 # Paths / constants
@@ -4022,6 +4023,9 @@ DEFAULT_CONFIG = {
     "arenaEnabled": False,
     "arenaShareCost": False,
     "creatureFatigue": True,
+    # Share what you're playing (Spotify / Apple Music / YouTube Music) with the
+    # Arena while paired. On by default; Settings and the Music view turn it off.
+    "musicShare": True,
 }
 
 _config_lock = threading.Lock()
@@ -4082,7 +4086,7 @@ def _validate_config(raw, base=None):
         au = au.strip()
         # http/https only: this string becomes an outbound request target.
         cfg["arenaUrl"] = au[:256] if au.startswith(("http://", "https://")) else ""
-    for key in ("arenaEnabled", "arenaShareCost", "creatureFatigue"):
+    for key in ("arenaEnabled", "arenaShareCost", "creatureFatigue", "musicShare"):
         if key in raw:
             cfg[key] = bool(raw.get(key))
     return cfg
@@ -5015,6 +5019,54 @@ def update_and_restart():
                  "count": st["behind"], "restarting": True}
 
 
+# --------------------------------------------------------------------------- #
+# Music: Now Playing + listen-along lookups (music.py does the work)
+# --------------------------------------------------------------------------- #
+def _music_share_on():
+    return bool(load_config().get("musicShare")) and arena.status().get("paired")
+
+
+MUSIC_SHARE = music.ShareLoop(
+    _music_share_on,
+    put=lambda t: arena.music_now_put(t)[0],
+    clear=lambda: arena.music_now_clear()[0],
+)
+
+
+def music_get(path, raw_path):
+    """(code, body) for the Music GET routes."""
+    import urllib.parse
+    qs = urllib.parse.parse_qs(raw_path.split("?", 1)[1] if "?" in raw_path else "")
+    arg = lambda k: (qs.get(k, [""])[0] or "").strip()
+    try:
+        if path == "/api/music/now":
+            # This Mac's track (local only), plus whether it is being shared.
+            # Fresh enough that the page's clock re-anchors on the player's own position.
+            t, age = music.current(max_age=1.5, with_age=True)
+            return 200, json.dumps({
+                "track": t, "ageMs": int(age * 1000), "share": bool(load_config().get("musicShare")),
+                "paired": bool(arena.status().get("paired")),
+                "shared": MUSIC_SHARE.sent is not None,
+                "shareError": MUSIC_SHARE.last_error,
+                "platform": sys.platform,
+            })
+        if path == "/api/music/search":
+            q = arg("q")
+            vid = music.youtube_id_from_url(q)
+            if vid:
+                one = music.oembed(vid) or {"v": vid, "title": "", "author": ""}
+                if one.get("embeddable") is False:
+                    return 200, json.dumps({"results": [], "error": "That video's owner only lets it play on YouTube itself. Try another upload of the song."})
+                return 200, json.dumps({"results": [one]})
+            return 200, json.dumps({"results": music.search(q)})
+        if path == "/api/music/oembed":
+            one = music.oembed(arg("v"))
+            return (200, json.dumps(one)) if one else (404, json.dumps({"error": "not found"}))
+        code, resp = arena.music_now()
+        return (code or 502), json.dumps(resp)
+    except Exception as e:
+        return 502, json.dumps({"error": "music request failed: %s" % e})
+
 POST_PATHS = (
     "/api/update",
     "/api/action", "/api/config", "/api/meta",
@@ -5470,6 +5522,11 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 code, resp = 502, {"error": "arena request failed: %s" % e}
             self._send(code or 502, json.dumps(resp))
+            return
+
+        if path in ("/api/music/now", "/api/music/search", "/api/music/oembed",
+                    "/api/arena/music/now"):
+            self._send(*music_get(path, self.path))
             return
 
         if path in ("/api/arena/hq/me", "/api/arena/hq/open", "/api/arena/hq/visit"):
@@ -5998,6 +6055,8 @@ def main():
     # Arena (multiplayer) stays dormant until the user pairs and enables it.
     arena.init(scan_file, load_config, HERE)
     arena.start_publisher(PROJECTS_DIR)
+    # Now Playing: share the track this Mac plays while paired and musicShare is on.
+    MUSIC_SHARE.start()
 
     # Raise a native macOS notification for an incoming nudge or gift, so it
     # reaches you even with no Arena tab open (as long as this process is running).

@@ -1,5 +1,5 @@
 /* ---- Arena rooms ---- */
-function arenaWantSocket(){ return VIEW==="arena" || VCHAN.on || (ARENA_STAY && ARENA.paired) || (typeof hqTalkRoom==="function" && !!hqTalkRoom()); }
+function arenaWantSocket(){ return VIEW==="arena" || VCHAN.on || (ARENA_STAY && ARENA.paired) || (typeof hqTalkRoom==="function" && !!hqTalkRoom()) || (typeof muWantsSocket==="function" && muWantsSocket()); }
 // A socket that was working comes back almost at once (a blip should not freeze a game for
 // seconds); after that the wait doubles from 1 s up to 30 s, with jitter so a restarted
 // server is not hit by every page in the same instant.
@@ -593,6 +593,7 @@ function arenaOpenSocket(){
         if(ARENA.roomAnnounce){ ARENA.roomAnnounce = false; announce("Now in " + ARENA.roomName); }
         pantryLoad();   // "coming online": also where today's coins get auto-collected
         if(typeof partySync==="function") partySync();
+        if(typeof musicOnWelcome==="function") musicOnWelcome();
       }
       else if(m.type==="join" || m.type==="leave"){
         arenaRenderLobby(m.members||[]);
@@ -602,15 +603,16 @@ function arenaOpenSocket(){
       }
       else if(m.type==="say"){
         var kind = m.data && m.data.kind;
-        if(kind==="voice") voiceOnAnnounce(m); else if(kind==="status") arenaOnStatus(m); else if(kind==="evo") arenaOnEvo(m);
+        if(kind==="voice") voiceOnAnnounce(m); else if(kind==="mudj"){ if(typeof musicOnSay==="function") musicOnSay(m); } else if(kind==="status") arenaOnStatus(m); else if(kind==="evo") arenaOnEvo(m);
         else if(kind==="game"){ if(window.HQV && window.HQV.onSay){ try{ window.HQV.onSay(m); }catch(e){} } }
         else arenaChatReceive(m);
       }
-      else if(m.type==="signal"){ voiceOnSignal(m); }
+      else if(m.type==="signal"){ if(m.data && m.data.kind==="mudj"){ if(typeof musicOnSignal==="function") musicOnSignal(m); } else voiceOnSignal(m); }
       else if(m.type==="nudge"){ arenaOnNudge(m); }
       else if(m.type==="gift"){ arenaOnGift(m); }
       else if(m.type==="room"){ arenaRoomOnMsg(m, rid); }
       else if(m.type==="game"){ valleyOnGame(m); }
+      else if(m.type==="music"){ if(typeof musicOnMsg==="function") musicOnMsg(m); }
       else if(m.type==="nudge_ack"){ toast(m.delivered ? "\uD83D\uDC4B Nudge sent" : "They\u2019re not in this room right now", m.delivered?"level":"ach"); }
       else if(m.type==="error" && typeof m.error==="string" && m.error.indexOf("chat: ")===0){
         arenaChatSys(m.error.slice(6, 120));   // e.g. the server's flood guard: "slow down \u2014 \u2026"
@@ -647,6 +649,7 @@ function arenaLobbyGone(){
   arenaRenderRoomBar();
   voiceOnLobbyLost();
   ARENA.peerStatus = {};
+  if(typeof musicOnLost==="function") musicOnLost();
 }
 
 function arenaRenderLobby(members){
@@ -671,6 +674,7 @@ function arenaRenderLobby(members){
     var mine = !!(ARENA.you && m.userId===ARENA.you.userId);
     var st = mine ? (ARENA_SHARE_STATUS ? arenaMyCounts() : null) : ARENA.peerStatus[m.userId];
     if(st) chip.appendChild(arenaStatusEl(st, mine ? "you" : (m.displayName || m.handle)));
+    var mc = typeof muChipFor==="function" ? muChipFor(m.userId) : null; if(mc) chip.appendChild(mc);
     if(!ARENA.you || m.userId!==ARENA.you.userId){
       var nb=document.createElement("button"); nb.className="arena-nudge"; nb.type="button";
       nb.textContent="\uD83D\uDC4B nudge"; nb.title="Nudge "+(m.displayName||m.handle)+" to check the Arena";

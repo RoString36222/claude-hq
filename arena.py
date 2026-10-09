@@ -926,6 +926,35 @@ def hq_visit(user_id):
     return _request("GET", base + "/v1/hq/" + user_id, token=token)
 
 
+
+# ---- Music: Now Playing ------------------------------------------------------
+# What may leave the machine about your music: the fields music.wire_track()
+# keeps (title, artist, album, app, a Spotify/YouTube id, length, position,
+# playing). Re-filtered here so this module holds its own boundary.
+def music_now():
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("GET", base + "/v1/music/now", token=token)
+
+
+def music_now_put(track):
+    import music
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    body = music.wire_track(track)
+    if body is None:
+        return 400, {"error": "no track"}
+    return _request("PUT", base + "/v1/music/now", token=token, body=body)
+
+
+def music_now_clear():
+    token, base = _authed()
+    if not token:
+        return 400, {"error": "not paired"}
+    return _request("DELETE", base + "/v1/music/now", token=token)
+
 # ---- HQ 2.1: progression, leaderboards, trainer profiles (read-only) --------
 _GAMES = ("kart", "plat", "fps", "golf")
 

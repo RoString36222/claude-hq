@@ -37,6 +37,8 @@ mod server_stats;
 mod service;
 mod skills;
 mod sounds;
+#[cfg(test)]
+mod story_check;
 mod valley;
 mod weeks;
 

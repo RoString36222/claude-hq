@@ -101,3 +101,55 @@ mod tests {
         assert_eq!(normalise_url("sqlite:/data/arena.db"), "sqlite:/data/arena.db");
     }
 }
+
+#[cfg(test)]
+mod migration_order_tests {
+    use super::*;
+
+    async fn file_pool(tag: &str) -> (SqlitePool, std::path::PathBuf) {
+        let p = std::env::temp_dir().join(format!("arena-mig-{tag}-{}.db", uuid::Uuid::new_v4().simple()));
+        // Four slashes: an absolute path in the SQLAlchemy URL form normalise_url takes.
+        let pool = connect(&format!("sqlite:///{}", p.display())).await.unwrap();
+        (pool, p)
+    }
+
+    fn versions() -> Vec<i64> {
+        sqlx::migrate!("./migrations").migrations.iter().map(|m| m.version).collect()
+    }
+
+    async fn applied(pool: &SqlitePool) -> Vec<i64> {
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE success = 1 ORDER BY version")
+            .fetch_all(pool).await.unwrap()
+    }
+
+    #[test]
+    fn migration_numbers_are_unique_and_ascending() {
+        let v = versions();
+        assert!(v.windows(2).all(|w| w[0] < w[1]), "{v:?}");
+        assert_eq!(v.first(), Some(&1));
+    }
+
+    #[tokio::test]
+    async fn every_migration_applies_on_a_fresh_db() {
+        let (pool, p) = file_pool("fresh").await;
+        migrate(&pool).await.unwrap();
+        assert_eq!(applied(&pool).await, versions());
+        // Booting again is a no-op.
+        migrate(&pool).await.unwrap();
+        pool.close().await;
+        let _ = std::fs::remove_file(p);
+    }
+
+    #[tokio::test]
+    async fn a_db_at_0002_upgrades_in_order() {
+        let (pool, p) = file_pool("at2").await;
+        let mut old = sqlx::migrate!("./migrations");
+        old.migrations = old.migrations.iter().filter(|m| m.version <= 2).cloned().collect::<Vec<_>>().into();
+        old.run(&pool).await.unwrap();
+        assert_eq!(applied(&pool).await, vec![1, 2]);
+        migrate(&pool).await.unwrap();
+        assert_eq!(applied(&pool).await, versions());
+        pool.close().await;
+        let _ = std::fs::remove_file(p);
+    }
+}

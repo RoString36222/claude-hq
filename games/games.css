@@ -505,3 +505,46 @@ html.hq-calm .vg-fps-vig{display:none}
 .td-guide-list{display:flex;flex-wrap:wrap;gap:4px}
 .td-kind{font-size:12px}
 .td-player{font-size:13px;padding:2px 0}
+
+/* ---- Bowling (games/bowling.js) ---- */
+.bowl-wrap{display:flex;flex-direction:column;gap:8px}
+.bowl-top{flex-wrap:wrap;align-items:center;gap:8px}
+.bowl-check{display:inline-flex;align-items:center;gap:4px;font-size:13px}
+.bowl-stagebox{width:100%;max-width:880px}
+.bowl-stage{position:relative;width:100%;border-radius:var(--radius);overflow:hidden;background:var(--bg2);border:1px solid var(--line)}
+.bowl-stage:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.bowl-canvas{display:block;width:100%;height:auto;max-width:none}
+.bowl-bowler{position:absolute;left:10px;bottom:6px;width:96px;height:96px;display:flex;align-items:flex-end;justify-content:center;pointer-events:none}
+.bowl-bowler .bowl-spr{width:100%;height:100%;display:flex;align-items:flex-end;justify-content:center}
+.bowl-bowler img{width:auto!important;max-width:100%;max-height:100%}
+.bowl-bowler.throw{animation:bowl-throw .5s ease-out}
+@keyframes bowl-throw{0%{transform:translateX(0)}40%{transform:translateX(18px) rotate(-6deg)}100%{transform:translateX(0)}}
+.bowl-flash{position:absolute;top:12px;right:16px;padding:2px 12px;border-radius:999px;font-weight:900;font-size:28px;
+  color:var(--ink);background:var(--panel);border:1px solid var(--line);opacity:0;pointer-events:none}
+.bowl-flash.on{animation:bowl-flash 1.6s ease-out}
+@keyframes bowl-flash{0%{opacity:0;transform:scale(.7)}15%{opacity:1;transform:scale(1.1)}70%{opacity:1;transform:scale(1)}100%{opacity:0}}
+html.hq-calm .bowl-bowler.throw,html.hq-calm .bowl-flash.on{animation:none}
+html.hq-calm .bowl-flash.on{opacity:1}
+@media (prefers-reduced-motion:reduce){.bowl-bowler.throw{animation:none}.bowl-flash.on{animation:none;opacity:1}}
+.bowl-ctl{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-radius:var(--radius);background:var(--panel);border:1px solid var(--line)}
+.bowl-sliders{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:640px){.bowl-sliders{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.bowl-field{display:flex;flex-direction:column;gap:2px;font-size:12px;padding:4px 6px;border-radius:var(--radius-sm);border:1px solid transparent}
+.bowl-field.live{border-color:var(--brand);background:var(--panel2)}
+.bowl-flabel{color:var(--muted)}
+.bowl-out{font-family:var(--mono);color:var(--ink)}
+.bowl-acts{flex-wrap:wrap;align-items:center;gap:8px}
+.bowl-keys{font-size:12px}
+.bowl-sheet-box{overflow-x:auto}
+.bowl-sheet{border-collapse:collapse;font-size:13px;min-width:100%}
+.bowl-sheet caption{text-align:left;padding-bottom:4px}
+.bowl-sheet th,.bowl-sheet td{border:1px solid var(--line);padding:2px 4px;text-align:center;color:var(--ink)}
+.bowl-sheet th[scope=row]{text-align:left;white-space:nowrap;font-weight:700}
+.bowl-sheet tr.dnf{color:var(--muted)}
+.bowl-f.cur{background:var(--panel2);box-shadow:inset 0 0 0 2px var(--brand)}
+.bowl-balls{display:flex;justify-content:flex-end;gap:2px;min-height:18px}
+.bowl-b{min-width:12px;font-family:var(--mono);font-weight:700}
+.bowl-b.x{color:var(--need)}
+.bowl-b.sp{color:var(--brand)}
+.bowl-cum{font-weight:800;min-height:18px}
+.bowl-tot{font-weight:900}

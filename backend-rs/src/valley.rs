@@ -1317,7 +1317,12 @@ impl ValleyHub {
     /// [`ValleyHub::recheck`] because that is where Python asks -- not a hook
     /// every engine is offered and one answers. valley/golf.rs fills it in.
     fn golf_grace_left(v: &RoomValley, t: f64) -> Option<f64> {
-        golf::grace_left(v, t)
+        // HQ 2.5: bowling holds a dropped bowler's place on the same one-shot
+        // timer, so the recheck lands at the sooner of the two holds.
+        match (golf::grace_left(v, t), bowling::grace_left(v, t)) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
 
     /// The body of Python's `golf_recheck` that runs under the lock
@@ -1353,11 +1358,18 @@ impl ValleyHub {
     pub async fn recheck(&self, room_id: &str) {
         let t = self.now();
         let mut out = Out::new("golf");
+        let mut bowl = Out::new(bowling::GAME);
         let left = {
             let mut st = self.inner.state.lock().unwrap();
             let Some(v) = st.get_mut(room_id) else { return }; // Python's `if v is None`
-            Self::golf_recheck_step(v, &mut out, t)
+            let g = Self::golf_recheck_step(v, &mut out, t);
+            let b = bowling::recheck_step(v, &mut bowl, t);
+            match (g, b) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            }
         };
+        out.items.extend(bowl.items);
         if let Some(d) = left {
             self.arm_recheck(room_id, d);
         }

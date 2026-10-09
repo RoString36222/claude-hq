@@ -186,7 +186,8 @@ pub fn rows_from_done(game: &str, data: &Value) -> Vec<Row> {
                 "bowl" => {
                     row.key = clipped_str(data.get("key"), 40);
                     row.mode = "bowl".to_string();
-                    row.value = Some(int_or_zero(r.get("score")));
+                    // A game someone dropped out of keeps its row but never a score.
+                    row.value = if dnf { None } else { Some(int_or_zero(r.get("score"))) };
                     row.extra = json!({"strikes": int_or_zero(r.get("strikes")),
                                        "spares": int_or_zero(r.get("spares"))});
                 }

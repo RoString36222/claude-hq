@@ -28,4 +28,12 @@ mod tests {
         assert!(a.starts_with("c-"));
         assert!(a[2..].chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }
+
+    #[test]
+    fn other_kinds_never_collide() {
+        let a = content_key("fps", &json!({"x": 1}));
+        assert_eq!(a, content_key("fps", &json!({"x": 1})));
+        assert_ne!(a, content_key("kart", &json!({"x": 1})));
+        assert!(a.len() == 14 && a.starts_with("c-") && a[2..].chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    }
 }

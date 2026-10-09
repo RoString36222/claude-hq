@@ -169,13 +169,26 @@ function fsave(){
 }
 
 /* ---------- map + three.js, loaded on demand ---------- */
-var MAP = null, MAP_P = null;
+// The built-in arena (the courtyard), fetched once. Each game view plays its own CURMAP:
+// this one, or a user map (HQ 2.5 Map Editor) that a room's view carries inline.
+var BUILTIN = null, MAP_P = null;
 function loadMap(){
   if(MAP_P) return MAP_P;
   MAP_P = fetch("/games/fps/map.json").then(function(r){ if(!r.ok) throw new Error("map "+r.status); return r.json(); })
-    .then(function(j){ MAP = FS.compileMap(j); return MAP; }, function(e){ MAP_P = null; throw e; });
+    .then(function(j){ BUILTIN = FS.compileMap(j); return BUILTIN; }, function(e){ MAP_P = null; throw e; });
   return MAP_P;
 }
+// A user map's canonical data (as the server sends it in view.custom) -> a compiled map, or null.
+function compileCustom(data, key, name){
+  if(!data || typeof data !== "object" || !Array.isArray(data.boxes) || !Array.isArray(data.spawns)) return null;
+  try {
+    return FS.compileMap({id: String(key || "custom"), name: String(name || "Custom map").slice(0, 32), bounds: data.bounds,
+                          theme: data.theme || {}, boxes: data.boxes, spawns: data.spawns,
+                          pickups: Array.isArray(data.pickups) ? data.pickups : [], targets: []});
+  } catch(e){ return null; }
+}
+// HQ 2.5: a map the Map Editor asked to play ({doc, room}); taken by the next view that mounts.
+var PENDING = null;
 function fpsLib(){ return E.lib(); }
 function loadGlb(lib, dir, name){ return E.loadGlb(lib, dir, name); }
 
@@ -191,9 +204,34 @@ function makeGame(host, opts){
     players: {}, order: [], slots: {}, mySlot: -1, items: [], feed: [], results: null, minutes: 5, limit: 20,
     goAt: 0, endsAt: 0, deadAt: 0, k: null, kq: 0, off: null, sendAt: 0, sentKey: "", fixAt: 0, score: 0, shots: 0,
     drones: [], startAt: 0, kick: 0, bob: 0, flashAt: -9, hitAt: -9, headAt: -9, hurtAt: -9, hurtDir: 0, board: false,
-    tracers: [], trigWas: false};
+    tracers: [], trigWas: false, walk: false, walkDoc: null, spawnI: 0, pick: null};
   function myId(){ return V.mode === "mp" && MP ? MP.me() : "me"; }
   function W(){ return FS.WEAPONS[V.w]; }
+
+  /* ---------- HQ 2.5: which arena this view plays ---------- */
+  var CURMAP = BUILTIN;                          // the courtyard, or a user map from the room's view
+  var PEND = PENDING; PENDING = null;            // a map the Map Editor sent here: walk it, or host it
+  if(PEND && PEND.room && V.mode === "mp") V.pick = PEND.doc;
+  // Swap the arena; the 3D scene is rebuilt only when it really changed.
+  function useMap(m){ if(!m || m === CURMAP) return false; CURMAP = m; if(R3) R3.buildMap(); return true; }
+  // The room's view names its arena: a user map arrives inline (view.custom), else the courtyard.
+  function syncMap(view){
+    var key = view && typeof view.map === "string" ? view.map : "";
+    if(/^c-[0-9a-f]{12}$/.test(key) && view.custom && typeof view.custom === "object"){
+      if(CURMAP && CURMAP.id === key) return false;
+      var m = compileCustom(view.custom.data, key, view.custom.name);
+      if(m) return useMap(m);
+      V.note = "This room's map couldn't be drawn here."; return false;
+    }
+    return BUILTIN ? useMap(BUILTIN) : false;
+  }
+  function customOn(){ var A = window.ARENA; return !!(A && A.arena && A.arena.maps); }
+  function myDrafts(){
+    var mk = HQV.makers && HQV.makers.fps, out = [];
+    try { out = mk && typeof mk.drafts === "function" ? (mk.drafts() || []) : []; } catch(e){ out = []; }
+    return Array.isArray(out) ? out.filter(function(d){ return d && d.kind === "fps" && d.data; }) : [];
+  }
+  function storyNote(ev){ try { if(HQV.story && typeof HQV.story.note === "function") HQV.story.note(ev); } catch(e){} }
 
   var root = api.mk("div", "vg-golf vg-fps"), menu = api.mk("div", "vg-golf-menu"), stage = api.mk("div", "vg-golf-stage hidden");
   root.appendChild(menu); root.appendChild(stage); host.appendChild(root);
@@ -258,11 +296,11 @@ function makeGame(host, opts){
   function renderMenu(){
     if(!V.alive) return;
     menu.textContent = "";
-    if(!MAP){ menu.appendChild(api.mk("p", "vg-muted", V.note || "Loading the arena…")); return; }
+    if(!CURMAP){ menu.appendChild(api.mk("p", "vg-muted", V.note || "Loading the arena…")); return; }
     var sv = fsave(), mp = V.mode === "mp", host = mp && isHost();
     menu.appendChild(api.mk("p", "vg-muted", mp
-      ? "Free-for-all for up to 8 on "+MAP.name+". Everyone runs and aims on their own screen; the Arena server judges every shot (it rewinds the others to what you saw) and keeps the score."
-      : "The target range on "+MAP.name+": hit as many flying drones as you can in "+PRACTICE_SECS+" seconds. Click the view to aim with the mouse; Esc gives the mouse back."));
+      ? "Free-for-all for up to 8 on "+CURMAP.name+". Everyone runs and aims on their own screen; the Arena server judges every shot (it rewinds the others to what you saw) and keeps the score."
+      : "The target range on "+CURMAP.name+": hit as many flying drones as you can in "+PRACTICE_SECS+" seconds. Click the view to aim with the mouse; Esc gives the mouse back."));
     if(mp && V.unsupported) menu.appendChild(api.mk("p", "vg-msg", "This Arena server doesn't host Blaster Arena yet. You can still use the target range."));
     var top = api.mk("div", "vg-row");
     if(mp) top.appendChild(api.btn("Target range (solo)", "", function(){ V.mode = "practice"; renderMenu(); }));
@@ -299,15 +337,26 @@ function makeGame(host, opts){
         if(first){ V.watch = first.user.userId; applyView(V.round); }
       }));
     }
+    if(V.walk && !mp){
+      menu.appendChild(api.mk("h4", "vg-golf-h", "Walk-through"));
+      var rw = api.mk("div", "vg-row");
+      rw.appendChild(api.btn("Walk "+CURMAP.name+" again", "primary", function(){ startWalk(V.walkDoc); }));
+      rw.appendChild(api.btn("Back to the Map Editor", "", function(){ api.open("make-fps"); }));
+      menu.appendChild(rw);
+    }
     if(mp){
       menu.appendChild(api.mk("h4", "vg-golf-h", host ? "Start a match" : "Match"));
+      menu.appendChild(mapPicker(host));
       var row = api.mk("div", "vg-row");
       var mins = MINUTES.indexOf(sv.minutes|0) >= 0 ? sv.minutes|0 : 5, kl = KILLS.indexOf(sv.kills|0) >= 0 ? sv.kills|0 : 20;
       if(host){
         row.appendChild(select("Length", MINUTES.map(function(m){ return [m, m+" minutes"]; }), mins, function(v){ sv.minutes = v; }));
         row.appendChild(select("First to", KILLS.map(function(k){ return [k, k+" kills"]; }), kl, function(v){ sv.kills = v; }));
         row.appendChild(api.btn("Start the match", "primary", function(){
-          var s = fsave(); if(MP) MP.send("fps", "start", {minutes: MINUTES.indexOf(s.minutes|0) >= 0 ? s.minutes|0 : 5, kills: KILLS.indexOf(s.kills|0) >= 0 ? s.kills|0 : 20});
+          var s = fsave(), msg = {minutes: MINUTES.indexOf(s.minutes|0) >= 0 ? s.minutes|0 : 5, kills: KILLS.indexOf(s.kills|0) >= 0 ? s.kills|0 : 20};
+          // HQ 2.5: a user map rides inline on the start op; the server checks it and names it by content
+          if(V.pick && customOn()){ msg.map = "custom"; msg.custom = {kind: "fps", v: 1, name: String(V.pick.name || "Custom map").slice(0, 32), data: V.pick.data}; storyNote("race-custom"); }
+          if(MP) MP.send("fps", "start", msg);
         }));
       } else row.appendChild(api.mk("span", "vg-muted", "Waiting for the host (★ in the lobby) to start a match."));
       menu.appendChild(row);
@@ -323,6 +372,31 @@ function makeGame(host, opts){
       menu.appendChild(r2);
     }
   }
+  // HQ 2.5: the host picks the arena: the courtyard or one of your Map Editor maps.
+  function mapPicker(host){
+    var box = api.mk("div", "vg-row");
+    if(!host || !customOn()){
+      box.appendChild(api.mk("span", "vg-muted", "Map: "+(CURMAP ? CURMAP.name : "…")));
+      if(!customOn()) V.pick = null;
+      return box;
+    }
+    var drafts = myDrafts(), opts = [["", BUILTIN ? BUILTIN.name : "Sky Courtyard"]], val = "";
+    drafts.forEach(function(d, i){ opts.push(["d"+i, "Your map: "+String(d.name || "Untitled").slice(0, 32)]); if(V.pick === d) val = "d"+i; });
+    if(V.pick && !val){ opts.push(["p", "Your map: "+String(V.pick.name || "Untitled").slice(0, 32)]); val = "p"; }
+    opts.push(["new", "Custom… (open the Map Editor)"]);
+    var l = api.mk("label", "vg-golf-check"), sel = api.mk("select", "vg-select"); sel.setAttribute("aria-label", "Map");
+    opts.forEach(function(o){ var op = api.mk("option", null, o[1]); op.value = o[0]; if(o[0] === val) op.selected = true; sel.appendChild(op); });
+    sel.addEventListener("change", function(){
+      var v = sel.value;
+      if(v === "new"){ api.open("make-fps"); return; }
+      if(v === "") V.pick = null;
+      else if(v.charAt(0) === "d") V.pick = drafts[+v.slice(1)] || null;
+      say(V.pick ? "Next match on "+String(V.pick.name || "your map") : "Next match on the courtyard");
+    });
+    l.appendChild(document.createTextNode("Map ")); l.appendChild(sel); box.appendChild(l);
+    if(CURMAP && CURMAP !== BUILTIN) box.appendChild(api.mk("span", "vg-muted", "Last played: "+CURMAP.name));
+    return box;
+  }
   function renderTools(){
     tools.textContent = "";
     tools.appendChild(api.btn(V.mode === "mp" ? "Leave the match" : "Back to the menu", "", function(){
@@ -334,6 +408,12 @@ function makeGame(host, opts){
       resetMatch(); showStage(false); renderMenu();
     }));
     tools.appendChild(api.btn("Scores", "", function(){ V.board = !V.board; renderBoard(); }));
+    if(V.walk && V.mode === "practice") tools.appendChild(api.btn("Next spawn", "", function(){
+      if(!CURMAP || !CURMAP.spawns.length) return;
+      V.spawnI = (V.spawnI + 1) % CURMAP.spawns.length;
+      var s = CURMAP.spawns[V.spawnI]; placeMe(s[0], s[1], s[2], s[3]);
+      say("Spawn "+(V.spawnI + 1)+" of "+CURMAP.spawns.length); if(canvas) canvas.focus();
+    }));
   }
   function resetMatch(){
     clearPlayers(); V.phase = "idle"; V.results = null; V.feed = []; V.drones = []; V.tracers = [];
@@ -350,15 +430,30 @@ function makeGame(host, opts){
 
   /* ---------- practice: the target range ---------- */
   function startPractice(){
-    if(!MAP) return;
-    resetMatch(); V.mode = "practice"; V.score = 0; V.shots = 0;
-    var s = MAP.spawns[0]; placeMe(s[0], s[1], s[2], s[3]); fullAmmo(); V.hp = 100; V.dead = false;
-    V.drones = MAP.targets.map(function(tg, i){ return {tg: tg, i: i, downUntil: 0, phase: i*1.7}; });
-    V.items = MAP.pickups.map(function(){ return 1; });
+    if(!BUILTIN) return;
+    useMap(BUILTIN);                             // practice drones fly only on the built-in map
+    resetMatch(); V.mode = "practice"; V.score = 0; V.shots = 0; V.walk = false;
+    var s = CURMAP.spawns[0]; placeMe(s[0], s[1], s[2], s[3]); fullAmmo(); V.hp = 100; V.dead = false;
+    V.drones = CURMAP.targets.map(function(tg, i){ return {tg: tg, i: i, downUntil: 0, phase: i*1.7}; });
+    V.items = CURMAP.pickups.map(function(){ return 1; });
     V.phase = "warmup"; V.goAt = now() + 3; V.endsAt = V.goAt + PRACTICE_SECS;
     showStage(true); if(R3) R3.buildMap();
     if(canvas) canvas.focus();
     say("Target range: "+PRACTICE_SECS+" seconds. Click the view to aim with the mouse.");
+  }
+  // HQ 2.5: walk a user map alone (no drones, no clock) to try its spawns, cover and pickups.
+  function startWalk(doc){
+    var m = doc && compileCustom(doc.data, "walk", doc.name);
+    if(!m || !m.spawns.length){ api.toast("That map can't be walked yet: check it in the Map Editor."); return false; }
+    useMap(m);
+    resetMatch(); V.mode = "practice"; V.walk = true; V.walkDoc = doc; V.score = 0; V.shots = 0; V.spawnI = 0;
+    var s = CURMAP.spawns[0]; placeMe(s[0], s[1], s[2], s[3]); fullAmmo(); V.hp = 100; V.dead = false;
+    V.drones = []; V.items = CURMAP.pickups.map(function(){ return 1; });
+    V.phase = "warmup"; V.goAt = now() + 1; V.endsAt = Infinity;
+    showStage(true); if(R3) R3.buildMap();
+    if(canvas) canvas.focus();
+    say("Walk-through of "+CURMAP.name+". Next spawn jumps between the "+CURMAP.spawns.length+" spawns.");
+    return true;
   }
   function dronePos(D, t){ var c = FS.targetAt(D.tg, t + D.phase); return c; }
   function endPractice(){
@@ -382,6 +477,7 @@ function makeGame(host, opts){
   function applyView(view){
     V.round = view; V.gotView = true;
     if(V.mode !== "mp" || !view) { renderMenu(); return; }
+    syncMap(view);
     V.minutes = view.minutes|0 || 5; V.limit = view.limit|0 || 20;
     if(view.phase === "idle"){ V.watch = null; if(V.phase !== "idle"){ resetMatch(); showStage(false); } V.results = view.results || V.results; renderMenu(); return; }
     if(view.phase === "done"){ V.results = view.results; if(V.phase === "warmup" || V.phase === "round") showResults(view.results); V.watch = null; V.phase = "done"; renderMenu(); return; }
@@ -411,7 +507,7 @@ function makeGame(host, opts){
       }
     });
     V.order.slice().forEach(function(uid){ if(!seen[uid]) drop(uid); });
-    V.items = Array.isArray(view.items) ? view.items.slice() : MAP.pickups.map(function(){ return 1; });
+    V.items = Array.isArray(view.items) ? view.items.slice() : CURMAP.pickups.map(function(){ return 1; });
     if(view.phase === "warmup"){ V.phase = "warmup"; V.goAt = now() + (view.goInMs|0)/1000; V.endsAt = V.goAt + V.minutes*60; }
     else if(view.phase === "round"){ V.phase = "round"; V.endsAt = now() + (view.msLeft|0)/1000; }
     showStage(true);
@@ -421,7 +517,7 @@ function makeGame(host, opts){
   function slotUid(s){ return V.slots[s]; }
   function onEvent(m){
     if(m.ev === "fps"){
-      if(!MAP){ V.round = m.match; V.gotView = true; return; }
+      if(!CURMAP){ V.round = m.match; V.gotView = true; return; }
       applyView(m.match);
       if(m.by && m.match && m.match.phase === "warmup" && canvas) canvas.focus();
       return;
@@ -463,7 +559,7 @@ function makeGame(host, opts){
       V.items[m.i|0] = 0;
       if(m.user === myId()){
         V.hp = m.hp|0; if(Array.isArray(m.res)) V.res = [m.res[0]|0, m.res[1]|0];
-        var pk = MAP.pickups[m.i|0]; say(pk && pk.kind === "health" ? "Health pack: "+V.hp : "Ammo pack");
+        var pk = CURMAP.pickups[m.i|0]; say(pk && pk.kind === "health" ? "Health pack: "+V.hp : "Ammo pack");
       }
       return;
     }
@@ -576,7 +672,7 @@ function makeGame(host, opts){
     V.flashAt = t; V.kick = calm() ? 0.15 : 1;
     var sp = FS.spreadOf(V.n, V.w), yawD = V.yaw*180/Math.PI, pitD = V.pitch*180/Math.PI;
     var d = FS.dirOf(yawD + sp[0], clamp(pitD + sp[1], -PITCH_MAX, PITCH_MAX));
-    var reach = FS.rayMap(MAP, e, d, wp.range), end = reach, aimed = null;
+    var reach = FS.rayMap(CURMAP, e, d, wp.range), end = reach, aimed = null;
     if(V.mode === "practice"){
       V.drones.forEach(function(D){
         if(D.downUntil > t) return;
@@ -610,7 +706,7 @@ function makeGame(host, opts){
   /* ---------- the loop ---------- */
   var sendKeyAt = 0;
   function update(dt, t){
-    if(!MAP) return;
+    if(!CURMAP) return;
     if(IN) IN.poll();
     var locked = !!(IN && IN.locked), focused = !!(canvas && document.activeElement === canvas);
     var playing = V.phase === "round" || V.phase === "warmup";
@@ -640,7 +736,7 @@ function makeGame(host, opts){
     var jump = canMove && IN && IN.down("jump");
     if(V.phase !== "idle" && V.phase !== "done" && !V.dead){
       acc += dt;
-      while(acc >= STEP){ FS.move(MAP, V.me, wx, wz, jump, STEP); acc -= STEP; }
+      while(acc >= STEP){ FS.move(CURMAP, V.me, wx, wz, jump, STEP); acc -= STEP; }
     } else acc = 0;
     var spd = Math.sqrt(V.me.vx*V.me.vx + V.me.vz*V.me.vz);
     V.bob += spd*dt*1.6;
@@ -660,7 +756,7 @@ function makeGame(host, opts){
     }
     V.kick = Math.max(0, V.kick - dt*8);
     // pickups (practice: ammo refills locally; in a match the server decides)
-    if(V.mode === "practice" && V.phase === "round") MAP.pickups.forEach(function(pk, i){
+    if(V.mode === "practice" && V.phase === "round") CURMAP.pickups.forEach(function(pk, i){
       if(!V.items[i] || pk.kind !== "ammo") return;
       if(Math.abs(V.me.x - pk.at[0]) < 1.1 && Math.abs(V.me.z - pk.at[2]) < 1.1 && Math.abs(V.me.y - pk.at[1]) < 1.2){
         V.res = [FS.WEAPONS[0].reserve*2, FS.WEAPONS[1].reserve*2]; V.items[i] = 0; V.itemBack = V.itemBack || {}; V.itemBack[i] = t + 15; say("Ammo pack");
@@ -698,7 +794,8 @@ function makeGame(host, opts){
     if(ammoName.textContent !== wp.name) ammoName.textContent = wp.name;
     reloadBar.style.width = V.reloadAt ? Math.round(100*clamp(1 - (V.reloadAt - t)/wp.reload, 0, 1))+"%" : "0";
     var tt;
-    if(V.mode === "practice") tt = (V.phase === "round" ? mmss((V.endsAt - t)*1000) : V.phase === "warmup" ? mmss(PRACTICE_SECS*1000) : "0:00")+" · "+V.score+(V.score === 1 ? " drone" : " drones");
+    if(V.mode === "practice" && V.walk) tt = "Walk-through · "+CURMAP.name+" · spawn "+(V.spawnI + 1)+"/"+CURMAP.spawns.length;
+    else if(V.mode === "practice") tt = (V.phase === "round" ? mmss((V.endsAt - t)*1000) : V.phase === "warmup" ? mmss(PRACTICE_SECS*1000) : "0:00")+" · "+V.score+(V.score === 1 ? " drone" : " drones");
     else {
       var lead = 0; V.order.forEach(function(u){ lead = Math.max(lead, V.players[u].kills|0); });
       tt = (V.phase === "round" ? mmss((V.endsAt - t)*1000) : V.phase === "done" ? "0:00" : mmss(V.minutes*60000))+" · you "+V.kills+" · top "+lead+"/"+V.limit;
@@ -756,7 +853,7 @@ function makeGame(host, opts){
   }
   function showResults(rows){
     cardBox.textContent = "";
-    cardBox.appendChild(resultsTable(rows, "Match over · "+MAP.name));
+    cardBox.appendChild(resultsTable(rows, "Match over · "+CURMAP.name));
     var row = api.mk("div", "vg-row");
     row.appendChild(api.btn(isHost() ? "Set up the next match" : "Back to the lobby", "primary", function(){ resetMatch(); showStage(false); renderMenu(); }));
     cardBox.appendChild(row); cardBox.classList.remove("hidden");
@@ -837,15 +934,15 @@ function makeGame(host, opts){
       if(!cv) return;
       var g = cv.getContext("2d"), Wd = cv.width, Ht = cv.height, T = TOK;
       g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = T.bg2; g.fillRect(0, 0, Wd, Ht);
-      if(!MAP){ g.fillStyle = T.muted; g.font = "14px sans-serif"; g.fillText("Loading…", 16, 24); return; }
+      if(!CURMAP){ g.fillStyle = T.muted; g.font = "14px sans-serif"; g.fillText("Loading…", 16, 24); return; }
       var sc = Math.min(Wd, Ht)/34, M = V.me;
       g.save(); g.translate(Wd/2, Ht/2); g.scale(sc, sc); g.translate(-M.x, -M.z);
-      MAP.boxes.forEach(function(b){
+      CURMAP.boxes.forEach(function(b){
         if(b[4] <= 0) { g.fillStyle = T.panel2; g.fillRect(b[0], b[2], b[3] - b[0], b[5] - b[2]); return; }
         g.globalAlpha = clamp(0.35 + b[4]/5, 0.35, 1); g.fillStyle = b[6] === "wall" ? T.ink : T.muted;
         g.fillRect(b[0], b[2], b[3] - b[0], b[5] - b[2]); g.globalAlpha = 1;
       });
-      MAP.pickups.forEach(function(pk, i){ if(!V.items[i]) return; g.fillStyle = pk.kind === "health" ? T.need : T.gold; g.beginPath(); g.arc(pk.at[0], pk.at[2], 0.4, 0, Math.PI*2); g.fill(); });
+      CURMAP.pickups.forEach(function(pk, i){ if(!V.items[i]) return; g.fillStyle = pk.kind === "health" ? T.need : T.gold; g.beginPath(); g.arc(pk.at[0], pk.at[2], 0.4, 0, Math.PI*2); g.fill(); });
       V.drones.forEach(function(D){ if(D.downUntil > t) return; var c = dronePos(D, (V.phase === "round" ? t - V.startAt : 0)); g.fillStyle = T.need; g.fillRect(c[0] - 0.45, c[2] - 0.45, 0.9, 0.9); });
       V.tracers.forEach(function(tr){ var age = t - tr.at; if(age > 0.12) return; g.strokeStyle = tr.mine ? T.gold : T.need; g.lineWidth = 0.08; g.beginPath(); g.moveTo(tr.a[0], tr.a[2]); g.lineTo(tr.b[0], tr.b[2]); g.stroke(); });
       others().forEach(function(P){
@@ -945,17 +1042,20 @@ function makeGame(host, opts){
     function buildMap(){
       if(mapGroup){ scene.remove(mapGroup); }
       mapGroup = new THREE.Group(); scene.add(mapGroup);
-      var th = MAP.theme || {};
+      var th = CURMAP.theme || {};
       scene.background = new THREE.Color(hex(th.sky, 0x9fd3f0));
       scene.fog = new THREE.Fog(hex(th.fog, 0xcfe8f2), V.low ? 25 : 40, V.low ? 70 : 140);
       var under = new THREE.Mesh(new THREE.PlaneGeometry(400, 400).rotateX(-Math.PI/2), new THREE.MeshLambertMaterial({color: hex(th.ground, 0x6fb35a)}));
       under.position.y = -1.2; mapGroup.add(under);
-      MAP.boxes.forEach(function(b){ mapGroup.add(boxModel(b)); });
+      CURMAP.boxes.forEach(function(b){ mapGroup.add(boxModel(b)); });
       if(!V.low){
         // grass tufts and clouds, placed by a fixed hash so everyone sees the same arena
+        var own = CURMAP !== BUILTIN, bd = CURMAP.bounds || [];
         for(var i = 0; i < 70; i++){
           var x = -20 + hash(i, 7)*40, z = -20 + hash(i, 13)*40;
-          if(FS.overlaps(MAP, x, 0.05, z, 0.2) >= 0) continue;
+          if(own){ x = bd[0] + hash(i, 7)*(bd[3] - bd[0]); z = bd[2] + hash(i, 13)*(bd[5] - bd[2]); }
+          if(FS.overlaps(CURMAP, x, 0.05, z, 0.2) >= 0) continue;
+          if(own && FS.topUnder(CURMAP, x, -0.05, z) !== 0) continue;
           var gr = model("grass"); gr.position.set(x, 0, z); gr.rotation.y = hash(i, 3)*6.28; gr.scale.setScalar(1.4); mapGroup.add(gr);
         }
         for(var c = 0; c < 9; c++){
@@ -965,7 +1065,7 @@ function makeGame(host, opts){
         }
       }
       pickMeshes.forEach(function(p){ scene.remove(p); }); pickMeshes = [];
-      MAP.pickups.forEach(function(pk){
+      CURMAP.pickups.forEach(function(pk){
         var gp = new THREE.Group(), base = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5),
           new THREE.MeshLambertMaterial({color: pk.kind === "health" ? 0xf4f4f4 : 0x3c7a3a}));
         gp.add(base);
@@ -980,7 +1080,7 @@ function makeGame(host, opts){
         gp.position.set(pk.at[0], pk.at[1] + 0.55, pk.at[2]); scene.add(gp); pickMeshes.push(gp);
       });
       droneMeshes.forEach(function(d){ scene.remove(d); }); droneMeshes = [];
-      MAP.targets.forEach(function(){ var d = model("enemy-flying"); d.scale.setScalar(1.5); d.visible = false; scene.add(d); droneMeshes.push(d); });
+      CURMAP.targets.forEach(function(){ var d = model("enemy-flying"); d.scale.setScalar(1.5); d.visible = false; scene.add(d); droneMeshes.push(d); });
     }
     function tag(text, color){
       var c = document.createElement("canvas"), g = c.getContext("2d"); c.width = 256; c.height = 64;
@@ -1047,7 +1147,7 @@ function makeGame(host, opts){
         m.tag.visible = !P.dead;
       });
       // pickups and drones
-      pickMeshes.forEach(function(p, i){ p.visible = !!V.items[i]; if(!quiet) p.rotation.y = t*1.5; p.position.y = MAP.pickups[i].at[1] + 0.55 + (quiet ? 0 : Math.sin(t*2 + i)*0.08); });
+      pickMeshes.forEach(function(p, i){ p.visible = !!V.items[i]; if(!quiet) p.rotation.y = t*1.5; p.position.y = CURMAP.pickups[i].at[1] + 0.55 + (quiet ? 0 : Math.sin(t*2 + i)*0.08); });
       droneMeshes.forEach(function(d, i){
         var D = V.drones[i]; d.visible = !!D && V.mode === "practice" && D.downUntil <= t;
         if(!D) return; var c = dronePos(D, V.phase === "round" ? t - V.startAt : 0); d.position.set(c[0], c[1] - 0.3, c[2]);
@@ -1092,7 +1192,9 @@ function makeGame(host, opts){
   if(typeof ResizeObserver !== "undefined"){ ro = new ResizeObserver(onResize); ro.observe(host); }
   renderKeys();
   renderMenu();
-  loadMap().then(function(){ if(!V.alive) return; renderMenu(); if(V.mode === "mp" && V.gotView) applyView(V.round); else if(V.mode === "mp") requestView(); },
+  loadMap().then(function(){ if(!V.alive) return; if(!CURMAP) CURMAP = BUILTIN;
+    if(PEND && !PEND.room && V.mode === "practice"){ var pd = PEND.doc; PEND = null; if(startWalk(pd)) return; }
+    renderMenu(); if(V.mode === "mp" && V.gotView) applyView(V.round); else if(V.mode === "mp") requestView(); },
     function(){ V.note = "Couldn't load the arena."; renderMenu(); });
   if(!raf) raf = requestAnimationFrame(frame);
   V.destroy = function(){
@@ -1112,6 +1214,8 @@ function makeGame(host, opts){
   };
   // Test hooks (the browser smoke tests; headless browsers can't lock the pointer).
   V.startPractice = startPractice;
+  V.startWalk = startWalk;
+  V.curMap = function(){ return CURMAP; };
   V.rendererKind = function(){ return R3 ? "3d" : R2 && R2.canvas ? "2d" : ""; };
   V.look = function(yawDeg, pitchDeg){ V.yaw = (+yawDeg || 0)*Math.PI/180; V.pitch = clamp(+pitchDeg || 0, -PITCH_MAX, PITCH_MAX)*Math.PI/180; };
   V.aimAt = function(uid){
@@ -1154,6 +1258,14 @@ if(MP){
     ctx.stop = function(){ g.destroy(); if(CUR === g) CUR = null; };
   });
 }
+// HQ 2.5: the Map Editor plays a MapDoc here. room: open the "with friends" card with it
+// picked for the host's next start; else a solo walk-through on the solo card.
+HQV.fpsPlay = function(doc, room){
+  if(!doc || typeof doc !== "object" || !doc.data) return false;
+  PENDING = {doc: doc, room: !!room};
+  api.open(room ? "mp-fps" : "fps");
+  return true;
+};
 HQV.fpsShared = FS;      // for the browser smoke test and tests/test_fps_sync.py
 HQV.fpsDebug = function(){ return CUR; };
 })();

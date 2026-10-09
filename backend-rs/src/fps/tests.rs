@@ -987,3 +987,234 @@ async fn a_dropped_socket_keeps_the_score_and_a_rejoin_drops_back_in() {
     assert_eq!((pb["away"].as_bool(), pb["kills"].as_i64()), (Some(false), Some(3)));
     assert_eq!(e.hub.with_room("blip", |v| v.fps.players.len()), Some(3));
 }
+
+// ------------------------------------------------- HQ 2.5: user-made maps --
+/// A small walled box with a wall down the middle, a raised ledge, 8 spawns.
+fn custom_data() -> Value {
+    json!({
+        "bounds": [-12, -1, -12, 12, 8, 12],
+        "theme": {"sky": "#AABBCC", "fog": "#ddeeff", "ground": "#336633"},
+        "boxes": [
+            [-12, -1, -12, 12, 0, 12, "floor"],
+            [-12, 0, -12, 12, 4, -11.5, "wall"],
+            [-12, 0, 11.5, 12, 4, 12, "wall"],
+            [-12, 0, -11.5, -11.5, 4, 11.5, "wall"],
+            [11.5, 0, -11.5, 12, 4, 11.5, "wall"],
+            [-1, 0, -6, 1, 3, 6, "wall"],
+            [6, 0, 6, 9, 1.5, 9, "block"]
+        ],
+        "spawns": [
+            [-9, 0, -9, 45], [9, 0, -9, 315], [-9, 0, 9, 135], [7.5, 1.5, 7.5, 225],
+            [-9, 0, 0, 90], [9, 0, 0, 270], [0, 0, -9, 180], [0, 0, 9, 0]
+        ],
+        "pickups": [{"id": "p1", "kind": "health", "at": [-5, 0, 5]}, {"id": "p2", "kind": "ammo", "at": [5, 0, -5]}]
+    })
+}
+
+fn custom_doc() -> Value {
+    json!({"kind": "fps", "v": 1, "name": "  Split Yard ", "data": custom_data()})
+}
+
+fn custom_started(n: usize, t0: f64) -> (Fps, f64) {
+    let mut f = Fps::new();
+    assert!(f.set_map(Some(custom_from_doc(&custom_doc()).unwrap())));
+    assert_eq!(f.start(&members(n, "u"), &json!(5), &json!(10), t0), None);
+    f.tick(t0 + COUNTDOWN, true);
+    assert_eq!(f.phase, Phase::Round);
+    (f, t0 + COUNTDOWN)
+}
+
+#[test]
+fn a_user_map_is_canonical_and_keyed_by_its_content() {
+    let canon = validate_custom(&custom_data()).unwrap();
+    // keys in contract order, hex lowercased, whole numbers as integers
+    let keys: Vec<&String> = canon.as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["bounds", "theme", "boxes", "spawns", "pickups"]);
+    assert_eq!(canon["theme"]["sky"], "#aabbcc");
+    assert_eq!(canon["boxes"][1], json!([-12, 0, -12, 12, 4, -11.5, "wall"]));
+    // a round trip is a fixed point, so the gallery can never fork a board
+    assert_eq!(validate_custom(&canon).unwrap(), canon);
+    // rounding, yaw normalising and unknown keys do not change the key
+    let mut noisy = custom_data();
+    noisy["boxes"][6][4] = json!(1.500_000_1);
+    noisy["spawns"][0][3] = json!(405.2);
+    noisy["extra"] = json!({"x": 1});
+    noisy["theme"]["mood"] = json!("dusk");
+    assert_eq!(validate_custom(&noisy).unwrap(), canon);
+    let c = custom_from_doc(&custom_doc()).unwrap();
+    assert_eq!(c.name, "Split Yard");
+    assert_eq!(c.map.id, crate::mapkey::content_key("fps", &canon));
+    assert!(c.map.id.starts_with("c-") && c.map.id.len() == 14);
+    assert_eq!((c.map.boxes.len(), c.map.spawns.len(), c.map.pickups.len(), c.map.targets.len()), (7, 8, 2, 0));
+    // a different map, a different key
+    let mut other = custom_data();
+    other["boxes"][6][0] = json!(5);
+    assert_ne!(crate::mapkey::content_key("fps", &validate_custom(&other).unwrap()), c.map.id);
+}
+
+#[test]
+fn bad_user_maps_are_refused_without_a_panic() {
+    let bad = |f: &dyn Fn(&mut Value), want: &str| {
+        let mut d = custom_data();
+        f(&mut d);
+        let e = validate_custom(&d).expect_err(want);
+        assert!(e.contains(want), "{e:?} should mention {want:?}");
+    };
+    bad(&|d| d["boxes"][2][0] = json!("-12"), "must be a number");
+    bad(&|d| d["spawns"][0][1] = json!("0"), "must be a number");
+    bad(&|d| d["bounds"] = json!([0, 0, 0, 1, 1]), "bounds");
+    bad(&|d| d["boxes"][2][0] = json!(true), "must be a number");
+    bad(&|d| d["boxes"][2][0] = json!(1e300), "out of range");
+    bad(&|d| { d["spawns"].as_array_mut().unwrap().truncate(5); }, "spawns");
+    bad(&|d| { let s = d["spawns"][0].clone(); let a = d["spawns"].as_array_mut().unwrap(); a.push(s.clone()); a.push(json!([-5, 0, -9, 0])); }, "spawns");
+    bad(&|d| d["spawns"][4] = json!([0, 0, 0, 0]), "inside a wall");
+    bad(&|d| d["spawns"][4] = json!([-9, 2, 0, 0]), "not standing");
+    bad(&|d| d["boxes"][6] = json!([6, 0, 6, 6, 1.5, 9, "block"]), "no volume");
+    bad(&|d| d["boxes"][6] = json!([6, 0, 6, 9, 1.5, 9, "lava"]), "unknown kind");
+    bad(&|d| d["boxes"][6] = json!([6, 0, 6, 19, 1.5, 9, "block"]), "outside the bounds");
+    bad(&|d| { let b = d["boxes"][6].clone(); let a = d["boxes"].as_array_mut().unwrap(); while a.len() < 97 { a.push(b.clone()); } }, "too many boxes");
+    bad(&|d| d["pickups"][0]["kind"] = json!("armour"), "health or ammo");
+    bad(&|d| d["pickups"][1]["id"] = json!("p1"), "repeats");
+    bad(&|d| d["pickups"][1]["id"] = json!("p17"), "id p1..p16");
+    bad(&|d| d["pickups"][0]["at"] = json!([0, 0, 0]), "inside a wall");
+    bad(&|d| d["theme"]["sky"] = json!("blue"), "#rrggbb");
+    bad(&|d| *d = json!([1, 2, 3]), "object");
+    // 96 boxes is fine
+    let mut d = custom_data();
+    let b = d["boxes"][6].clone();
+    let a = d["boxes"].as_array_mut().unwrap();
+    while a.len() < 96 { a.push(b.clone()); }
+    assert!(validate_custom(&d).is_ok());
+    // 9, 11 and 16 spawns are fine; the (k*5)%n pick never repeats for 8 players
+    for n in [9usize, 11, 16] {
+        let mut d = custom_data();
+        let a = d["spawns"].as_array_mut().unwrap();
+        let mut x = -9.0;
+        while a.len() < n { a.push(json!([x, 0, -10, 0])); x += 2.0; }
+        assert!(validate_custom(&d).is_ok(), "{n}");
+    }
+    // the doc wrapper
+    for doc in [json!(null), json!({"kind": "kart", "v": 1, "name": "x", "data": custom_data()}),
+                json!({"kind": "fps", "v": 2, "name": "x", "data": custom_data()}),
+                json!({"kind": "fps", "v": 1, "name": "", "data": custom_data()}),
+                json!({"kind": "fps", "v": 1, "name": "<b>", "data": custom_data()}),
+                json!({"kind": "fps", "v": 1, "name": "see http now", "data": custom_data()}),
+                json!({"kind": "fps", "v": 1, "name": "x".repeat(33), "data": custom_data()}),
+                json!({"kind": "fps", "v": 1, "name": 5, "data": custom_data()})] {
+        assert!(custom_from_doc(&doc).is_err(), "{doc}");
+    }
+}
+
+#[test]
+fn a_custom_match_spawns_shoots_respawns_and_ends_on_its_own_map() {
+    let (mut f, mut t) = custom_started(2, 100.0);
+    let key = f.map.id.clone();
+    // everyone starts on the user map's spawns ((k*5) % n)
+    assert_eq!((f.player("u0").unwrap().x, f.player("u0").unwrap().z), (-9.0, -9.0));
+    assert_eq!((f.player("u1").unwrap().x, f.player("u1").unwrap().z), (9.0, 0.0));
+    assert_eq!(f.items.len(), 2);
+    // the middle wall is solid on this map: no hit through it
+    put(&mut f, "u0", -6.0, 0.0, 0.0, t, None);
+    put(&mut f, "u1", 6.0, 0.0, 0.0, t, None);
+    let (s, _) = f.fire("u0", &shot(eye(&f, "u0"), chest(&f, "u1"), (t * 100.0) as i64, 0, 100, 1), t);
+    assert_eq!(s.unwrap()[5], json!(-1));
+    // a move into the middle wall is refused
+    f.player_mut("u0").unwrap().pb = (99.0, t);
+    assert!(!f.pos("u0", &frame(-0.5, 0.0, 0.0, None), t + 0.05).0);
+    // in the open, shots land until the kill
+    put(&mut f, "u0", -6.0, 0.0, 9.0, t, None);
+    put(&mut f, "u1", -6.0, 0.0, 3.0, t, None);
+    let mut n = 1;
+    while !f.player("u1").unwrap().dead {
+        n += 1;
+        t += 0.11;
+        let (s, _) = f.fire("u0", &shot(eye(&f, "u0"), chest(&f, "u1"), (t * 100.0) as i64, 0, 100, n), t);
+        assert_eq!(s.unwrap()[5], json!(slot(&f, "u1")));
+    }
+    // the respawn is one of the user map's spawns, the farthest from u0
+    let evs = f.tick(t + RESPAWN + 0.01, true);
+    let sp = &evs.iter().find(|e| e.0 == "spawn").unwrap().1;
+    let far = f.map.spawns.iter().copied()
+        .max_by(|a, b| dist3([a[0], a[1], a[2]], [-6.0, 0.0, 9.0]).partial_cmp(&dist3([b[0], b[1], b[2]], [-6.0, 0.0, 9.0])).unwrap())
+        .unwrap();
+    assert_eq!((sp["x"].as_i64().unwrap(), sp["z"].as_i64().unwrap()), (cm(far[0]), cm(far[2])));
+    assert!(!MAP.spawns.iter().any(|s| s[0] == far[0] && s[2] == far[2]), "not a courtyard spawn");
+    // the pickup on this map heals
+    let t2 = t + RESPAWN + 0.1;
+    put(&mut f, "u0", -5.0, 0.0, 6.0, t2, None);
+    f.player_mut("u0").unwrap().hp = 40;
+    f.player_mut("u0").unwrap().pb = (99.0, t2);
+    assert!(f.pos("u0", &frame(-5.0, 0.0, 5.2, None), t2 + 0.05).0);
+    assert_eq!(f.player("u0").unwrap().hp, 90);
+    // the kill limit ends it, and the done event names the map
+    f.player_mut("u0").unwrap().kills = 10;
+    let evs = f.tick(t2 + 0.2, true);
+    let done = &evs.last().unwrap();
+    assert_eq!(done.0, "done");
+    assert_eq!(done.1["map"], json!(key));
+    let rows = crate::results::rows_from_done("fps", &done.1);
+    assert_eq!(rows[0].key, key);
+    // the view carries the map, the custom block, and never a snapshot
+    let v = f.view(t2 + 0.3);
+    assert_eq!(v["map"], json!(key));
+    assert_eq!(v["custom"]["name"], "Split Yard");
+    assert_eq!(v["custom"]["data"], validate_custom(&custom_data()).unwrap());
+}
+
+#[test]
+fn a_builtin_start_clears_the_user_map_and_records_match() {
+    let (mut f, t) = custom_started(2, 0.0);
+    assert!(!f.set_map(None), "no map change while a match is on");
+    assert!(f.custom.is_some());
+    f.end();
+    assert!(f.set_map(None));
+    assert!(f.custom.is_none() && Arc::ptr_eq(&f.map, &MAP));
+    f.start(&members(2, "u"), &json!(3), &json!(10), t);
+    let v = f.view(t);
+    assert_eq!(v["map"], "courtyard");
+    assert!(v.get("custom").is_none());
+    f.tick(t + COUNTDOWN, true);
+    f.players[0].1.kills = 10;
+    let done = f.tick(t + COUNTDOWN + 1.0, true).pop().unwrap();
+    assert_eq!(done.1["map"], "courtyard");
+    assert_eq!(crate::results::rows_from_done("fps", &done.1)[0].key, "match");
+}
+
+#[tokio::test]
+async fn a_custom_match_through_the_room() {
+    let e = env(MAX_TICKERS);
+    let (a, mut wa) = e.connect("cmap", 1, "a").await;
+    let (b, mut wb) = e.connect("cmap", 2, "b").await;
+    e.send("cmap", 1, &a, "join", json!({})).await;
+    e.send("cmap", 2, &b, "join", json!({})).await;
+    until(&mut wb, "fps").await;
+    // a broken map is refused by name, and nothing starts
+    let mut broken = custom_doc();
+    broken["data"]["spawns"][4] = json!([0, 0, 0, 0]);
+    e.send("cmap", 1, &a, "start", json!({"map": "custom", "custom": broken})).await;
+    assert!(until(&mut wa, "error").await["error"].as_str().unwrap().starts_with("bad map: spawn 5 is inside a wall"));
+    assert!(e.hub.registry().get("fps:cmap").is_none());
+    e.send("cmap", 1, &a, "start", json!({"minutes": 3, "kills": 10, "map": "custom", "custom": custom_doc()})).await;
+    let m = until_where(&mut wb, "fps", |m| m["match"]["phase"] == "warmup").await["match"].clone();
+    let key = m["map"].as_str().unwrap().to_string();
+    assert!(key.starts_with("c-"));
+    assert_eq!(m["custom"]["name"], "Split Yard");
+    assert_eq!(m["custom"]["data"]["boxes"].as_array().unwrap().len(), 7);
+    // a late view gets it too
+    e.send("cmap", 2, &b, "view", json!({})).await;
+    assert_eq!(until(&mut wb, "fps").await["match"]["map"], json!(key));
+    e.advance(COUNTDOWN + 0.01);
+    until(&mut wa, "go").await;
+    let t = e.now();
+    e.hub.with_room("cmap", |v| {
+        put(&mut v.fps, "a", -6.0, 0.0, 9.0, t, None);
+        put(&mut v.fps, "b", -6.0, 0.0, 3.0, t, None);
+    });
+    e.send("cmap", 1, &a, "fire", shot([-6.0, EYE, 9.0], [-6.0, 1.0, 3.0], 5000, 0, 100, 1)).await;
+    e.advance(0.06);
+    let snap = until_where(&mut wa, "snap", |m| !m["s"].as_array().unwrap().is_empty()).await;
+    assert!(snap.get("custom").is_none(), "a snapshot never repeats the map");
+    e.send("cmap", 2, &b, "leave", json!({})).await;
+    let done = until(&mut wa, "done").await;
+    assert_eq!(done["map"], json!(key));
+}

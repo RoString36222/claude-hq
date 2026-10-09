@@ -120,54 +120,158 @@ def status():
     }
 
 
-PAGE = """<!doctype html><meta charset="utf-8"><title>Arena Deploy</title>
+PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</title>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <style>
- :root{color-scheme:dark;--bg:#0e1117;--card:#161b22;--line:#30363d;--ink:#e6edf3;
-   --muted:#8b949e;--ok:#3fb950;--bad:#f85149;--accent:#58a6ff}
- *{box-sizing:border-box}
- body{margin:0;background:var(--bg);color:var(--ink);padding:16px;
-   font:14px/1.55 ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif}
- .wrap{max-width:46rem;margin:0 auto}
- h1{font-size:19px;margin:0 0 4px}
- .who{color:var(--muted);font-size:12.5px;margin-bottom:18px}
- .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
-   padding:16px;margin-bottom:14px}
- .row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;flex-wrap:wrap}
- .row span:first-child{color:var(--muted)}
- code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace}
- .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
- .up{background:var(--ok)}.down{background:var(--bad)}
- .behind{color:var(--accent);font-weight:600}
- button{font:inherit;font-weight:600;padding:9px 16px;border-radius:7px;
-   border:1px solid var(--line);background:#21262d;color:var(--ink);cursor:pointer}
- button.primary{background:var(--accent);border-color:var(--accent);color:#0b1117}
- button:disabled{opacity:.5;cursor:not-allowed}
- .actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:6px}
- pre{background:#0b0f14;border:1px solid var(--line);border-radius:8px;padding:12px;
-   overflow:auto;max-height:22rem;font:12px ui-monospace,Menlo,monospace;color:#9fb1c1}
- .msg{padding:9px 12px;border-radius:7px;margin-bottom:12px;font-size:13px;display:none}
- .msg.show{display:block}.msg.ok{background:#12261a;color:var(--ok)}
- .msg.err{background:#2d1618;color:var(--bad)}
+ /* Tactical telemetry: a deploy console, not a product page. Dark substrate,
+    monospace telemetry, one hazard red, 90-degree corners everywhere. System
+    font stacks only -- this box has no network and no build step, so a webfont
+    would simply fail to arrive. */
+ :root{color-scheme:dark;
+   --bg:#0a0a0a;--panel:#121212;--line:#2a2a2a;--ink:#eaeaea;--dim:#8a8a8a;
+   --red:#e61919;--green:#4af626;
+   --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+   --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+ *{box-sizing:border-box;border-radius:0}
+ html{background:var(--bg)}
+ body{margin:0;background:var(--bg);color:var(--ink);padding:0;
+   font:13px/1.35 var(--mono);letter-spacing:.06em;text-transform:uppercase}
+ /* Mechanical grain and a CRT sweep. Both inert overlays: pointer-events none,
+    aria-hidden, and no layout cost. The noise is an inline data URI, not a
+    fetch. */
+ .grain,.scan{position:fixed;inset:0;pointer-events:none;z-index:9}
+ .grain{opacity:.035;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E")}
+ /* A sweep you notice only on a flat field. At .22 it greyed the telemetry
+    it lies over, which is the one thing on the page that must stay legible. */
+ .scan{opacity:.5;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.12) 3px,rgba(0,0,0,.12) 4px)}
+ @media (prefers-reduced-motion:reduce){.scan{display:none}}
+ .wrap{max-width:60rem;margin:0 auto;padding:clamp(14px,3vw,34px);position:relative;z-index:1}
+
+ /* Masthead: macro type against dense metadata. */
+ .masthead{display:grid;grid-template-columns:1fr auto;gap:18px;align-items:end;
+   border-bottom:2px solid var(--ink);padding-bottom:10px}
+ h1{font:900 clamp(2.9rem,13vw,8rem)/.84 var(--sans);letter-spacing:-.045em;
+   margin:0;text-transform:uppercase}
+ /* Inherits 900 otherwise, which fills the glyph's counter in and reads as a
+    missing-character box rather than a mark. */
+ h1 .reg{font-weight:400;font-size:.15em;vertical-align:super;letter-spacing:0;
+   margin-left:.12em;color:var(--dim)}
+ .sub{margin:6px 0 0;color:var(--dim);font-size:10.5px;letter-spacing:.14em}
+ .ident{margin:0;display:grid;grid-template-columns:auto auto;gap:2px 10px;
+   font-size:10.5px;letter-spacing:.1em;text-align:right}
+ .ident dt{color:var(--dim)}
+ .ident dd{margin:0}
+
+ /* Grid determinism: a 1px gap over a line-coloured parent draws the hairlines,
+    so no child needs a border of its own. */
+ /* Three explicit columns, not auto-fit: auto-fit sizes tracks to the
+    container and would open a fourth, empty one at wide viewports -- a dead
+    lit panel in a console that is meant to read as fully populated. */
+ .bay{margin:22px 0 0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));
+   gap:1px;background:var(--line);border:1px solid var(--line)}
+ @media (max-width:46rem){.bay{grid-template-columns:1fr}}
+ .cell{background:var(--panel);padding:13px 14px;min-height:4.6rem;
+   display:flex;flex-direction:column;justify-content:space-between;gap:8px}
+ .cell.wide{grid-column:1/-1}
+ .cell dt{color:var(--dim);font-size:10px;letter-spacing:.16em}
+ .cell dd{margin:0;font-size:15px;letter-spacing:.02em}
+ .cell samp{font:inherit;font-size:15px}
+ .subj{font-size:12px;letter-spacing:.04em;text-transform:none;line-height:1.4}
+ .age{color:var(--dim);font-size:10.5px;text-transform:uppercase;letter-spacing:.12em}
+ .dot{display:inline-block;width:7px;height:7px;margin-right:9px;vertical-align:.08em}
+ /* Terminal green is spent here and nowhere else: one indicator, the one fact
+    an operator opens this page to read. */
+ .dot.up{background:var(--green)}
+ .dot.down{background:var(--red)}
+ .health.up{color:var(--green)}
+ .health.down{color:var(--red)}
+ .alert dd{color:var(--red)}
+ .pending{margin:8px 0 0;max-height:7rem}
+
+ /* Controls: ASCII framing from CSS so the brackets stay decorative and out of
+    the accessible name. */
+ .actions{display:flex;flex-wrap:wrap;gap:1px;background:var(--line);
+   border:1px solid var(--line);border-top:0}
+ .act{flex:1 1 11rem;font:inherit;font-size:12px;letter-spacing:.14em;
+   padding:15px 12px;border:0;background:var(--panel);color:var(--ink);
+   cursor:pointer;text-transform:uppercase}
+ .act::before{content:"[ ";color:var(--dim)}
+ .act::after{content:" ]";color:var(--dim)}
+ .act:hover:not(:disabled){background:var(--ink);color:var(--bg)}
+ .act:hover:not(:disabled)::before,.act:hover:not(:disabled)::after{color:var(--bg)}
+ .act:focus-visible{outline:2px solid var(--red);outline-offset:-4px}
+ .act.primary{color:var(--red)}
+ .act.primary:hover:not(:disabled){background:var(--red);color:var(--bg)}
+ .act:disabled{color:#555;cursor:not-allowed}
+ .act:disabled::before,.act:disabled::after{color:#3a3a3a}
+
+ /* Section rules that span the container, per the blueprint grid. */
+ h2{display:flex;align-items:center;gap:12px;font-size:10px;letter-spacing:.2em;
+   color:var(--dim);margin:26px 0 0;font-weight:400}
+ h2 .rule{flex:1;height:1px;background:var(--line)}
+ pre{background:var(--panel);border:1px solid var(--line);margin:8px 0 0;
+   padding:13px;overflow:auto;max-height:22rem;font:11.5px/1.5 var(--mono);
+   color:#b9c0c6;letter-spacing:.02em;text-transform:none;white-space:pre-wrap}
+ .msg{display:none;margin-top:18px;padding:12px 14px;font-size:11.5px;
+   letter-spacing:.12em;border-left:3px solid var(--line);background:var(--panel)}
+ .msg.show{display:block}
+ .msg.ok{border-left-color:var(--green);color:var(--green)}
+ .msg.err{border-left-color:var(--red);color:var(--red)}
+ .foot{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;
+   margin-top:26px;padding-top:10px;border-top:1px solid var(--line);
+   color:var(--dim);font-size:10px;letter-spacing:.18em}
+
+ /* A grid track's default min-width is auto, so a long commit subject or a
+    wide log line pushes the whole console past the viewport instead of
+    wrapping. This page gets opened on a phone mid-incident, and a horizontal
+    scrollbar over telemetry is the worst time to meet one. */
+ .cell,.masthead>*{min-width:0}
+ .subj,samp,pre{overflow-wrap:anywhere}
+ @media (max-width:34rem){
+   .masthead{grid-template-columns:1fr;align-items:start;gap:10px}
+   .ident{text-align:left;grid-template-columns:auto 1fr;gap:2px 14px}
+   .act{flex:1 1 100%}
+ }
 </style>
-<div class="wrap">
- <h1>Arena Deploy</h1>
- <div class="who">__WHO__ &middot; __DOMAIN__</div>
- <div class="msg" id="msg"></div>
- <div class="card">
-  <div class="row"><span>service</span><span><i class="dot __DOTCLS__"></i>__HEALTH__</span></div>
-  <div class="row"><span>running</span><code>__LOCAL__</code></div>
-  <div class="row"><span>latest on __BRANCH__</span><code>__REMOTE__</code></div>
-  <div class="row"><span>last commit</span><span>__SUBJECT__ <span style="color:var(--muted)">__WHEN__</span></span></div>
-  __BEHIND__
-  <div class="actions">
-   <button class="primary" id="deploy" __DISABLED__>Deploy latest</button>
-   <button id="rollback">Roll back one</button>
-   <button id="refresh">Refresh</button>
+<div class="grain" aria-hidden="true"></div>
+<div class="scan" aria-hidden="true"></div>
+<main class="wrap">
+ <header class="masthead">
+  <div>
+   <h1>Deploy<span class="reg">&reg;</span></h1>
+   <p class="sub">/// arena control surface &middot; unit __DOMAIN__</p>
   </div>
- </div>
- <div class="card"><div style="color:var(--muted);margin-bottom:8px">deploy log</div><pre id="log">__LOG__</pre></div>
-</div>
+  <dl class="ident">
+   <dt>operator</dt><dd>__WHO__</dd>
+   <dt>branch</dt><dd>__BRANCH__</dd>
+  </dl>
+ </header>
+
+ <output class="msg" id="msg"></output>
+
+ <dl class="bay">
+  <div class="cell">
+   <dt>service</dt>
+   <dd><i class="dot __DOTCLS__"></i><span class="health __DOTCLS__">__HEALTH__</span></dd>
+  </div>
+  <div class="cell"><dt>running</dt><dd><samp>__LOCAL__</samp></dd></div>
+  <div class="cell"><dt>head &middot; __BRANCH__</dt><dd><samp>__REMOTE__</samp></dd></div>
+  <div class="cell wide"><dt>last commit</dt>
+   <dd class="subj">__SUBJECT__ <span class="age">__WHEN__</span></dd></div>
+  __BEHIND__
+ </dl>
+
+ <nav class="actions">
+  <button class="act primary" id="deploy" __DISABLED__>deploy latest</button>
+  <button class="act" id="rollback">roll back one</button>
+  <button class="act" id="refresh">refresh</button>
+ </nav>
+
+ <h2>deploy log <span class="rule"></span> tail 40</h2>
+ <pre id="log">__LOG__</pre>
+
+ <footer class="foot"><span>+ arena deploy</span><span>rev 2.1</span><span>__DOMAIN__</span></footer>
+</main>
 <script>
 var CSRF="__CSRF__";
 function msg(t,cls){var m=document.getElementById("msg");m.textContent=t;m.className="msg show "+cls;}
@@ -194,9 +298,11 @@ def render(login, csrf):
     s = status()
     behind = ""
     if s["behind"]:
-        behind = ('<div class="row"><span>pending</span><span class="behind">'
-                  f'&uarr; {s["behind"]} commit(s) not deployed</span></div>'
-                  f'<pre style="max-height:8rem">{html.escape(s["pending"])}</pre>')
+        # Inside the <dl>, so it has to be a dt/dd group: a bare <pre> there
+        # would not be valid markup.
+        behind = ('<div class="cell wide alert"><dt>pending</dt>'
+                  f'<dd>&uarr; {s["behind"]} commit(s) not deployed'
+                  f'<pre class="pending">{html.escape(s["pending"])}</pre></dd></div>')
     return (PAGE
             .replace("__WHO__", html.escape(login))
             .replace("__DOMAIN__", html.escape(ARENA_DOMAIN or "arena"))

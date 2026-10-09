@@ -45,13 +45,30 @@ log() { printf '%s  %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" >> "$LOG"; }
 cd "$DIR"
 
 git fetch origin "$BRANCH" --quiet
-LOCAL=$(git rev-parse HEAD)
 REMOTE=$(git rev-parse "origin/$BRANCH")
+# Compare with what is RELEASED (the -<sha7> end of ARENA_VERSION), not the checkout:
+# release.sh fast-forwards the checkout before its CI gate, so a push that arrives
+# while CI is still running used to move HEAD, fail the gate, and then look
+# "up to date" forever while the old image kept serving.
+RELEASED=$(grep -E '^ARENA_VERSION=' backend/.release.env 2>/dev/null | tail -1 | sed -E 's/.*-([0-9a-f]{7,})$/\1/')
+case "$REMOTE" in "${RELEASED:-none}"*) exit 0 ;; esac   # released == main: nothing to do
 
-[ "$LOCAL" = "$REMOTE" ] && exit 0   # nothing to do; stay quiet
+# Not released yet. Try at most every 5 minutes per commit (CI usually needs a few),
+# and log the attempt once rather than on every tick.
+TRIED="$DIR/.autodeploy-tried"
+if [ -f "$TRIED" ] && [ "$(cut -d' ' -f1 "$TRIED")" = "$REMOTE" ] \
+   && [ $(( $(date +%s) - $(cut -d' ' -f2 "$TRIED") )) -lt 300 ]; then
+  exit 0
+fi
+FIRST=1; [ -f "$TRIED" ] && [ "$(cut -d' ' -f1 "$TRIED")" = "$REMOTE" ] && FIRST=0
+echo "$REMOTE $(date +%s)" > "$TRIED"
+LOCAL=$(git rev-parse "${RELEASED:-HEAD}" 2>/dev/null || git rev-parse HEAD)
+[ "$FIRST" = 1 ] || log "retrying release of ${REMOTE:0:7} (released: ${RELEASED:-unknown})"
 
-log "new commits ${LOCAL:0:7} -> ${REMOTE:0:7}"
-git log --oneline "$LOCAL..$REMOTE" | head -10 | while read -r line; do log "    $line"; done
+if [ "$FIRST" = 1 ]; then
+  log "new commits ${LOCAL:0:7} -> ${REMOTE:0:7}"
+  git log --oneline "$LOCAL..$REMOTE" | head -10 | while read -r line; do log "    $line"; done
+fi
 
 # Which Arena this ships is NOT decided here: release.sh reads it from
 # backend/.release.env, so whatever was last released stays released. Set

@@ -152,12 +152,33 @@ def parse_progress(text):
     }
 
 
+def released_sha(state_text):
+    """The commit the running release was built from: the -<sha7> end of
+    ARENA_VERSION in backend/.release.env (written by ops/release.sh), or ""."""
+    ver = ""
+    for line in (state_text or "").splitlines():
+        if line.startswith("ARENA_VERSION="):
+            ver = line.split("=", 1)[1].strip()
+    sha = ver.rsplit("-", 1)[-1] if "-" in ver else ""
+    return sha if len(sha) >= 7 and all(c in "0123456789abcdef" for c in sha) else ""
+
+
 def status():
     run(["git", "fetch", "origin", BRANCH, "--quiet"], cwd=ARENA_DIR, timeout=60)
-    local = git("rev-parse", "HEAD")[:7]
+    # "Running" is what was RELEASED, not where the checkout is: release.sh moves the
+    # checkout before its CI gate, so a release that stopped there left HEAD on the
+    # new commit while the old image kept serving -- and this page said "deployed".
+    try:
+        with open(os.path.join(ARENA_DIR, "backend", ".release.env")) as f:
+            base = released_sha(f.read())
+    except OSError:
+        base = ""
+    if not base or not git("rev-parse", "--verify", "--quiet", base + "^{commit}"):
+        base = "HEAD"
+    local = git("rev-parse", base)[:7]
     remote = git("rev-parse", f"origin/{BRANCH}")[:7]
-    behind = git("rev-list", "--count", f"HEAD..origin/{BRANCH}") or "0"
-    pending = git("log", "--oneline", f"HEAD..origin/{BRANCH}") if behind != "0" else ""
+    behind = git("rev-list", "--count", f"{base}..origin/{BRANCH}") or "0"
+    pending = git("log", "--oneline", f"{base}..origin/{BRANCH}") if behind != "0" else ""
     # Reached over the compose network by service name, not 127.0.0.1: the
     # panel runs in its own container, so loopback is the panel itself (:8090)
     # and never the app. The app is `expose`d, not published, so it has no

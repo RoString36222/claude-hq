@@ -38,3 +38,4 @@ games-save.json
 backend/.release.env
 backend/.release.env.tmp
 backend/.releases
+.autodeploy-tried

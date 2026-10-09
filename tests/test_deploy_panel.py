@@ -184,3 +184,16 @@ class DeployProgress(unittest.TestCase):
         follow the new one rather than keep showing the old one's progress."""
         r = self.p(RUN + say("Fetching main") + "\n")
         self.assertEqual((r["phase"], r["idx"], r["state"]), ("FETCH", 1, "running"))
+
+
+class ReleasedShaTests(unittest.TestCase):
+    """The panel's "running" is the released commit, not the checkout's HEAD."""
+
+    def test_reads_the_sha_off_the_release_version(self):
+        env = "# Written by ops/release.sh\nARENA_IMPL=rs\nARENA_VERSION=2026.10.08-dd04883\nARENA_APP_IMAGE=x\n"
+        self.assertEqual(deploy_panel.released_sha(env), "dd04883")
+
+    def test_no_release_yet_is_empty(self):
+        self.assertEqual(deploy_panel.released_sha(""), "")
+        self.assertEqual(deploy_panel.released_sha("ARENA_VERSION=local\n"), "")
+        self.assertEqual(deploy_panel.released_sha(None), "")

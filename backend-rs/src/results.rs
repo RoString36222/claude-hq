@@ -167,9 +167,11 @@ pub fn rows_from_done(game: &str, data: &Value) -> Vec<Row> {
                                        "acc": float_or_zero(r.get("acc"))});
                 }
                 // Blaster: one "match" board, scored on kills, where higher wins.
+                // HQ 2.5: a match on a user map keeps its own board, keyed by
+                // the map's content key (done.map = "c-" + 12 hex).
                 _ => {
                     let kills = int_or_zero(r.get("kills"));
-                    row.key = "match".to_string();
+                    row.key = custom_map_key(data.get("map")).unwrap_or("match").to_string();
                     row.value = Some(kills);
                     row.extra = json!({"kills": kills, "deaths": int_or_zero(r.get("deaths"))});
                 }
@@ -177,6 +179,13 @@ pub fn rows_from_done(game: &str, data: &Value) -> Vec<Row> {
             row
         })
         .collect()
+}
+
+/// A user map's content key ("c-" + 12 lowercase hex), when `v` is one.
+fn custom_map_key(v: Option<&Value>) -> Option<&str> {
+    let s = v?.as_str()?;
+    let hex = s.strip_prefix("c-")?;
+    (hex.len() == 12 && hex.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))).then_some(s)
 }
 
 /// Golf's rows, from Python's `elif game == "golf"` (results.py:66-75).
@@ -439,6 +448,20 @@ mod tests {
         assert_eq!(rows[0].mode, "");
         assert_eq!(rows[0].value, Some(9));
         assert_eq!(rows[0].extra, json!({"kills": 9, "deaths": 3}));
+    }
+
+    #[test]
+    fn blaster_on_a_user_map_keeps_its_own_board() {
+        let p = || json!({"results": [player("u1", json!({"place": 1, "kills": 4, "deaths": 1}))]});
+        let mut custom = p();
+        custom["map"] = json!("c-0123456789ab");
+        assert_eq!(done("fps", custom)[0].key, "c-0123456789ab");
+        // the built-in courtyard (and anything that is not a content key) is "match"
+        for m in [json!("courtyard"), json!("c-XYZ"), json!("c-0123456789abc"), json!(7), Value::Null] {
+            let mut d = p();
+            d["map"] = m;
+            assert_eq!(done("fps", d)[0].key, "match");
+        }
     }
 
     #[test]

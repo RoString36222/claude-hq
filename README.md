@@ -35,27 +35,33 @@ It runs entirely on your machine and binds to `127.0.0.1` only. **Your conversat
 computer.** (The one exception is that some creature packs load sprite images from a public CDN —
 the "pokemon"/"aniimo" packs by creature id, and the "Clash of Clans" pack by troop name + level
 number — never any of your data. Switch to the "monsters" pack for 100% offline. The optional [Arena](#-arena-multiplayer--optional) layer, off unless you turn it on,
-shares daily activity *counts* with friends — never conversation content.)
+shares daily activity *counts* with friends — never conversation content. Music (Now Playing, on by default while
+paired), published maps and work signals (off by default) add a few listed fields; see [Privacy & security](#-privacy--security) and the changelog.)
 
 ---
 
-## 🆕 What's new in 2.1: Play Together
+## 🆕 What's new in 2.5: Make + compete
 
-- **Walk into your HQ.** Outside is your **Base**, a tower on a plaza that grows with your level
-  (fountain, wings, helipad, kart track, observatory…). Walk through the door into the **Lobby**,
-  then on into **Mission Control**.
-- **Live together.** Open your HQ to visitors and friends walk around it with you in real time.
-  Visit theirs, see their trophies, and start a game with them from their lobby.
-- **Quick Play.** Pick a game; the Arena matches you with whoever else is queued (crewmates first)
-  in a fresh room for up to 8.
-- **Party Mode.** Kart → Platformer → Blaster → Golf in one sitting, one combined score.
-- **Code Typing Race.** Race up to 8 friends to type the same real snippet of code.
-- **Progression.** HQ levels from sessions and games, trainer cards, trophies, and per-game leaderboards.
-- **Crews.** Start one, invite friends with a code, climb the crew board, and fly your banner on your roof.
-- **Cosmetics and one wallet.** Kart paint, ball colours, blaster skins and base decor, bought with Poke
-  Coins or unlocked by level; sell Valley finds at the market.
-- **Focus combo.** An XP multiplier that grows with unbroken work, up to ×2.
-- **Engine sounds per vehicle**, spectating, and **server stats** in Settings.
+- **Workshop.** Build your own **kart tracks**, **Platformer levels** and **Blaster arenas** in editors that
+  check them live, test them, then race or play them with friends in a room.
+- **Map gallery.** Publish to your room or to everyone; browse newest, most liked and hot this week; like,
+  report, remix, "Race in room". Each map keeps its own leaderboard, and a **map of the week** per game.
+- **Compete.** A **weekly cup** per game from your normal multiplayer races, a monthly season podium, and a
+  **world boss** everyone wears down together with merged PRs and wins, then fights with a Pokémon team.
+- **Tower Defense.** Your Pokémon are the towers against twenty bug waves (types matter), solo or co-op.
+- **Bowling.** Ten-pin with Pokémon bowlers on the golf physics, solo or up to 8 in a room.
+- **Progress from real work.** Loot chests from merged PRs, green test runs and long focus sessions; a
+  **skill tree** from how you work; **prestige** stars at level 50; a six-chapter **story campaign**.
+  Work signals are off by default and only counts leave your machine.
+
+### Also new since 2.1
+
+- **2.4: your 3D character.** Build the person you are in the 3D HQ (body, colours, hair, headwear,
+  accessories, a cyberpunk set) with a live preview; it becomes your portrait on the Trainer card and,
+  with the Arena on, on the leaderboard, in rooms and in chat, and friends see your real look in the city.
+- **2.3: Arena City.** Jump to City from anywhere, a fountain in the middle and a **bike park** you can ride.
+- **2.2: Music.** See what friends are playing (Spotify, Apple Music, YouTube Music), **listening rooms**
+  with a shared queue in sync, **Go live** to stream your own audio to the room, and a DJ visualiser.
 
 ---
 

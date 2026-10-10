@@ -263,3 +263,87 @@ class ReleasedShaTests(unittest.TestCase):
         self.assertEqual(deploy_panel.released_sha(""), "")
         self.assertEqual(deploy_panel.released_sha("ARENA_VERSION=local\n"), "")
         self.assertEqual(deploy_panel.released_sha(None), "")
+
+
+class BuildStageProgress(unittest.TestCase):
+    """The build stage is the long one, and it used to be the blind one.
+
+    `/api/progress` read the last 160 lines of the deploy log. A release build
+    compiles hundreds of crates and BuildKit prints a line for each, so
+    `==> Building` scrolled out of that window within seconds -- the parser
+    then saw no stage at all and the bar fell back to indeterminate. It went
+    blank exactly when there was most to wait for.
+    """
+
+    def build_log(self, crates=0, step=(8, 8), secs=None):
+        out = [say("Fetching main"), say("Checking GitHub CI for abc1234"),
+               say("Building rs 2026.10.09-abc1234"),
+               "#9 [app build 4/8] COPY backend-rs/src backend-rs/src",
+               "#%d [app build %d/%d] RUN cd backend-rs && cargo build --release"
+               % (13, step[0], step[1])]
+        for i in range(crates):
+            out.append("#13 %6.2f   Compiling crate%d v1.0.0" % (1.5 * i, i))
+        if secs is not None:
+            out.append("#13 %6.2f   Compiling tail v1.0.0" % secs)
+        return "\n".join(out) + "\n"
+
+    def test_the_stage_survives_a_long_build(self):
+        """The regression: 400 crates of output must not hide the stage."""
+        r = deploy_panel.parse_progress(self.build_log(crates=400))
+        self.assertEqual(r["phase"], "BUILD")
+        self.assertEqual(r["pct"], 50)
+
+    def test_the_old_window_is_what_broke_it(self):
+        """Keeps the cause on record: the same log, cut to 160 lines, is blind."""
+        clipped = "\n".join(self.build_log(crates=400).splitlines()[-160:])
+        r = deploy_panel.parse_progress(clipped)
+        self.assertIsNone(r["phase"])
+        self.assertEqual(r["pct"], 0)
+
+    def test_it_reports_the_build_step(self):
+        r = deploy_panel.parse_progress(self.build_log(step=(6, 8)))
+        self.assertEqual(r["sub"]["pct"], 62)          # 5 of 8 done
+        self.assertIn("step 6 of 8", r["sub"]["note"])
+
+    def test_crates_refine_the_step_when_a_previous_build_sized_it(self):
+        prev = self.build_log(crates=400).replace("Fetching main", "Fetching main") \
+            + say("Starting rs v") + "\n"
+        now = prev + self.build_log(crates=100)
+        r = deploy_panel.parse_progress(now)
+        self.assertIn("100 of ~400 crates", r["sub"]["note"])
+        # 7 of 8 steps done, plus a quarter of the last one.
+        self.assertEqual(r["sub"]["pct"], round(100 * (7 + 0.25) / 8))
+
+    def test_without_a_previous_build_it_counts_but_does_not_guess(self):
+        r = deploy_panel.parse_progress(self.build_log(crates=100))
+        self.assertIn("100 crates compiled", r["sub"]["note"])
+        self.assertNotIn("~", r["sub"]["note"])
+
+    def test_it_reads_seconds_into_the_step_from_buildkit(self):
+        r = deploy_panel.parse_progress(self.build_log(crates=5, secs=127.8))
+        self.assertAlmostEqual(r["sub"]["secs"], 127.8)
+
+    def test_other_stages_have_no_sub_progress(self):
+        r = deploy_panel.parse_progress(
+            self.build_log(crates=20) + say("Migrating the database") + "\n")
+        self.assertEqual(r["phase"], "MIGRATE")
+        self.assertIsNone(r["sub"])
+
+    def test_a_finished_build_reports_no_sub_progress(self):
+        done = self.build_log(crates=50) + say("Released 2026.10.09-abc1234 (rs)") + "\n"
+        r = deploy_panel.parse_progress(done)
+        self.assertEqual(r["state"], "ok")
+        self.assertIsNone(r["sub"])
+
+    def test_the_tail_reader_starts_on_a_line_boundary(self):
+        import tempfile, os as _os
+        fd, path = tempfile.mkstemp()
+        try:
+            with _os.fdopen(fd, "w") as f:
+                f.write("".join("line %04d padding padding padding\n" % i for i in range(5000)))
+            tail = deploy_panel.read_log_tail(path, limit=2000)
+            self.assertTrue(len(tail) <= 2000)
+            # No half-eaten first line.
+            self.assertTrue(tail.startswith("line "), tail[:40])
+        finally:
+            _os.unlink(path)

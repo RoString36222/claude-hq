@@ -108,7 +108,99 @@ PHASES = (
     ("START", "Starting"),
     ("LIVE", "Released"),
 )
+def released_sha(state_text):
+    """The commit the running release was built from: the -<sha7> end of
+    ARENA_VERSION in backend/.release.env (written by ops/release.sh), or ""."""
+    ver = ""
+    for line in (state_text or "").splitlines():
+        if line.startswith("ARENA_VERSION="):
+            ver = line.split("=", 1)[1].strip()
+    sha = ver.rsplit("-", 1)[-1] if "-" in ver else ""
+    return sha if len(sha) >= 7 and all(c in "0123456789abcdef" for c in sha) else ""
+
+
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
+# BuildKit's own progress: "#13 [app build 8/8] RUN ..." names the step and how
+# many there are, and "#13  127.8   Compiling foo v1.2" counts seconds into it.
+_STEP = re.compile(r"^#(\d+) \[[^\]]*?(\d+)/(\d+)\]")
+_TICK = re.compile(r"^#(\d+) +(\d+\.\d+) ")
+_CRATE = re.compile(r"\bCompiling [A-Za-z0-9_.+-]+ v")
+# Enough of the tail to hold a whole build. A release compiles ~400 crates and
+# BuildKit prints a line each, so the 160 lines this used to read were gone
+# seconds into the build -- taking the stage marker with them, which made the
+# bar fall back to indeterminate exactly when it was needed most.
+LOG_TAIL_BYTES = 600_000
+
+
+def read_log_tail(path, limit=LOG_TAIL_BYTES):
+    """The last `limit` bytes of the log, starting at a line boundary."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - limit))
+            raw = f.read()
+    except OSError:
+        return ""
+    text = raw.decode("utf-8", "replace")
+    return text.split("\n", 1)[1] if size > limit and "\n" in text else text
+
+
+def _build_sub(lines, prev_build):
+    """Where the BUILD stage itself has got to.
+
+    Two real signals, no guessing: BuildKit numbers its steps, and within the
+    long one (cargo) it prints a line per crate. The crate total is taken from
+    the PREVIOUS build in this same log -- the only honest denominator
+    available, and labelled as an estimate because a dependency change moves
+    it.
+    """
+    step = total = None
+    secs = None
+    cur_id = None
+    crates = 0
+    for ln in lines:
+        m = _STEP.match(ln)
+        if m:
+            cur_id, step, total = m.group(1), int(m.group(2)), int(m.group(3))
+            crates = 0            # a new step restarts the crate count
+            continue
+        t = _TICK.match(ln)
+        if t:
+            if cur_id is not None and t.group(1) != cur_id:
+                continue
+            secs = float(t.group(2))
+        if _CRATE.search(ln):
+            crates += 1
+
+    if step is None:
+        return None
+    pct = round(100 * (step - 1) / total) if total else None
+    note = "step %d of %d" % (step, total)
+    # Inside the step that is actually slow, the crate count is the finer
+    # signal, so it refines the fraction rather than replacing it.
+    if crates:
+        if prev_build:
+            frac = min(1.0, crates / prev_build)
+            pct = round(100 * ((step - 1) + frac) / total)
+            note = "step %d of %d \u00b7 %d of ~%d crates" % (step, total, crates, prev_build)
+        else:
+            note = "step %d of %d \u00b7 %d crates compiled" % (step, total, crates)
+    return {"label": "build", "pct": pct, "note": note, "secs": secs}
+
+
+def _prev_build_crates(all_lines, run_start):
+    """How many crates the last COMPLETED build compiled, as a denominator."""
+    best, count, inside = 0, 0, False
+    for ln in all_lines[:run_start]:
+        body = ln.split("==> ", 1)[1] if "==> " in ln else ""
+        if body.startswith("Building"):
+            inside, count = True, 0
+        elif inside and (body.startswith("Starting") or body.startswith("Released")):
+            best, inside = max(best, count), False
+        elif inside and _CRATE.search(ln):
+            count += 1
+    return best or None
 
 
 def parse_progress(text):
@@ -126,10 +218,10 @@ def parse_progress(text):
     for i, ln in enumerate(lines):
         if ln.lstrip().startswith("==> Fetching") or " new commits " in ln:
             start = i
-    lines = lines[start:]
+    run = lines[start:]
 
     idx, phase = 0, None
-    for ln in lines:
+    for ln in run:
         body = ln.split("==> ", 1)[1] if "==> " in ln else ""
         for n, (label, marker) in enumerate(PHASES, start=1):
             if body.startswith(marker) and n > idx:
@@ -137,10 +229,17 @@ def parse_progress(text):
 
     state = "running"
     if any("ERROR" in ln or "\u2717" in ln or "release failed" in ln
-           or "Rolling back" in ln for ln in lines):
+           or "Rolling back" in ln for ln in run):
         state = "fail"
     elif phase == "LIVE":
         state, idx = "ok", len(PHASES)
+
+    sub = None
+    if phase == "BUILD" and state == "running":
+        at = max((i for i, ln in enumerate(run)
+                  if "==> " in ln and ln.split("==> ", 1)[1].startswith("Building")),
+                 default=0)
+        sub = _build_sub(run[at:], _prev_build_crates(lines, start))
 
     return {
         "phase": phase, "idx": idx, "total": len(PHASES),
@@ -148,19 +247,9 @@ def parse_progress(text):
         # never as "0% and climbing".
         "pct": round(100 * idx / len(PHASES)) if idx else 0,
         "state": state,
-        "line": next((ln for ln in reversed(lines) if ln.strip()), ""),
+        "sub": sub,
+        "line": next((ln for ln in reversed(run) if ln.strip()), ""),
     }
-
-
-def released_sha(state_text):
-    """The commit the running release was built from: the -<sha7> end of
-    ARENA_VERSION in backend/.release.env (written by ops/release.sh), or ""."""
-    ver = ""
-    for line in (state_text or "").splitlines():
-        if line.startswith("ARENA_VERSION="):
-            ver = line.split("=", 1)[1].strip()
-    sha = ver.rsplit("-", 1)[-1] if "-" in ver else ""
-    return sha if len(sha) >= 7 and all(c in "0123456789abcdef" for c in sha) else ""
 
 
 def status():
@@ -374,6 +463,26 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
  .rig.ok .fill::after,.rig.fail .fill::after{animation:none}
  .rig.fail{animation:shake .18s steps(2) 2}
  .rig.fail .head{animation:none}
+ /* The stage bar. Total progress is always up; this appears only once a stage
+    has been running long enough that "BUILD, 50%" stops being an answer. */
+ .sub{display:none;margin-top:9px;border-top:1px solid var(--line);padding-top:9px}
+ .sub.on{display:block}
+ .subhead{display:flex;justify-content:space-between;gap:10px;font-size:9.5px;
+   letter-spacing:.16em;color:var(--dim)}
+ .subsecs{font-variant-numeric:tabular-nums}
+ .subtrack{position:relative;height:8px;margin-top:5px;background:#070707;
+   border:1px solid var(--line);overflow:hidden}
+ .subfill{position:absolute;top:0;bottom:0;left:0;width:0;background:#8a8a8a;
+   transition:width .4s cubic-bezier(.2,.9,.2,1)}
+ /* No fraction to show yet: crawl, rather than sit at zero looking stuck. */
+ .sub.indet .subfill{width:35%;background:
+   repeating-linear-gradient(135deg,#6a6a6a 0 6px,transparent 6px 12px);
+   animation:crawl 1.1s linear infinite}
+ @keyframes crawl{from{transform:translateX(-120%)}to{transform:translateX(330%)}}
+ .subnote{margin-top:5px;font-size:10px;letter-spacing:.08em;color:var(--dim);
+   text-transform:none}
+ .rig.ok .sub,.rig.fail .sub{display:none}
+
  .read{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-top:9px}
  .pct{font:900 clamp(1.6rem,6vw,2.8rem)/1 var(--sans);letter-spacing:-.04em;
    font-variant-numeric:tabular-nums}
@@ -444,7 +553,10 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
  @media (prefers-reduced-motion:reduce){
    .act::after,.act.armed::after,.act.primary:hover>span,.rig,.fill::after,
    .head,.chip.cur,.flash,.flash.go::before,.rig.done-ok .verdict,
-   .rig.done-fail .verdict,.rig.done-ok .chip,.rig.done-fail{animation:none!important}
+   .rig.done-fail .verdict,.rig.done-ok .chip,.rig.done-fail,
+   .sub.indet .subfill{animation:none!important}
+   /* Still has to read as "no number yet" rather than as 35% done. */
+   .sub.indet .subfill{width:100%;opacity:.35}
    /* The verdict still SHOWS -- it is the result, not the celebration. */
    .flash.go,.flash.bad{display:none}
    .act::after{transition:none}
@@ -502,6 +614,12 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
   <div class="chips" id="chips"></div>
   <div class="track"><div class="fill" id="fill"></div><div class="cells"></div>
    <div class="head" id="head"></div></div>
+  <div class="sub" id="sub">
+   <div class="subhead"><span id="subname">stage</span>
+    <span class="subsecs" id="subsecs"></span></div>
+   <div class="subtrack"><div class="subfill" id="subfill"></div></div>
+   <div class="subnote" id="subnote"></div>
+  </div>
   <div class="read"><output class="pct" id="pct">--</output>
    <span class="nowline" id="nowline">standing by</span></div>
   <div class="verdict" id="verdict"></div>
@@ -546,6 +664,25 @@ function finish(ok,line){
 // Paint whatever the server last reported. Never invents a number: with no
 // stage seen yet the rig goes indeterminate and the readout says WAIT, which
 // is the honest state while release.sh is still starting up.
+// When the current stage started, so a slow one can say how long it has been.
+// The log gives real seconds for the build (BuildKit prints them); everything
+// else is timed here, which is why a reload mid-deploy restarts the clock.
+var STAGE_AT=Date.now(), STAGE_IDX=-1;
+var SLOW_AFTER=10;   // seconds before the stage bar is worth the space
+
+function paintSub(j){
+  var box=$id("sub");
+  if(j.idx!==STAGE_IDX){ STAGE_IDX=j.idx; STAGE_AT=Date.now(); }
+  var secs=(j.sub&&j.sub.secs!=null)?j.sub.secs:(Date.now()-STAGE_AT)/1000;
+  if(j.state!=="running"||!j.idx||secs<SLOW_AFTER){ box.className="sub"; return; }
+  var pct=(j.sub&&j.sub.pct!=null)?j.sub.pct:null;
+  box.className="sub on"+(pct==null?" indet":"");
+  $id("subname").textContent=(j.phase||"stage")+" \u00b7 in progress";
+  $id("subsecs").textContent=Math.round(secs)+"s";
+  $id("subfill").style.width=(pct==null?35:pct)+"%";
+  $id("subnote").textContent=(j.sub&&j.sub.note)?j.sub.note:"no step detail from this stage";
+}
+
 function paint(j){
   var rig=$id("rig");
   // Keep whichever ending has already landed: className is rebuilt here.
@@ -560,6 +697,7 @@ function paint(j){
   $id("head").style.left=j.pct+"%";
   $id("pct").textContent=j.idx?j.pct+"%":"--";
   $id("nowline").textContent=j.line||"waiting for the release to start";
+  paintSub(j);
 }
 function poll(){
   fetch("/api/progress",{headers:{"X-Panel-Token":CSRF}})
@@ -572,6 +710,7 @@ function act(path){
   $id("pct").textContent="--";
   $id("nowline").textContent="opening the release";
   msg("Working\u2026","ok");
+  STAGE_IDX=-1; STAGE_AT=Date.now();
   poll(); POLL=setInterval(poll,900);
   fetch(path,{method:"POST",headers:{"X-Panel-Token":CSRF}})
    .then(function(r){return r.json();})
@@ -735,12 +874,7 @@ class Handler(BaseHTTPRequestHandler):
             # same log the page already shows, and changes nothing. The server
             # is a ThreadingHTTPServer, so this answers while /api/deploy is
             # still blocking in another thread.
-            try:
-                with open(DEPLOY_LOG) as f:
-                    text = "".join(f.readlines()[-160:])
-            except OSError:
-                text = ""
-            return self._json(200, parse_progress(text))
+            return self._json(200, parse_progress(read_log_tail(DEPLOY_LOG)))
         self._send(404, "<p>Not found.</p>")
 
     def _exchange(self, code):

@@ -179,7 +179,7 @@ fn started(n: usize, id: &str, mode: &str) -> (Plat, &'static Level, f64) {
 fn run(g: &mut Plat, uid: &str, t0: f64, until: Option<f64>) -> f64 {
     let l = g.lv().unwrap();
     let slot = g.player(uid).unwrap().slot;
-    let path = Path::new(l, l.spawns[slot], 5.5);
+    let path = Path::new(&l, l.spawns[slot], 5.5);
     let end = until.map(|u| u.min(path.total)).unwrap_or(path.total);
     let mut t = 0.0;
     while g.player(uid).unwrap().fin.is_none() {
@@ -776,4 +776,301 @@ async fn a_full_arena_says_so_to_the_host() {
     e.send("pbusy", 1, &a, "start", json!({"level": "meadow"})).await;
     assert_eq!(until(&mut wa, "error").await["error"], "the Arena is busy right now: try again in a minute");
     assert_eq!(e.hub.with_room("pbusy", |v| v.plat.phase), Some(Phase::Idle));
+}
+
+// ---------------------------------------------------- custom (editor) levels --
+/// Three platforms in a line: walk, jump, walk over the checkpoint, jump, walk to the flag.
+fn custom_data() -> Value {
+    json!({
+        "kill": -6, "coopGoal": 2, "coopSecs": 90,
+        "theme": {"sky": "#8FD3FF", "fog": "#cdeeff", "sea": "#5aa9e6", "light": "#fff6e0"},
+        "spawns": [[-1, 0, 1], [1, 0, 1]],
+        "cps": [[0, 0.5, -6]],
+        "flag": [0, 1, -12],
+        "coins": [[0, 1.6, -3.5], [0, 2.0, -8.5]],
+        "solids": [{"m": "platform-large", "x": 0, "y": -0.5, "z": 0},
+                   {"m": "platform-medium", "x": 0, "y": 0, "z": -6},
+                   {"m": "platform-large", "x": 0, "y": 0.5, "z": -12}],
+        "route": [[0, 0, -2, "w"], [0, 0.5, -5, "j"], [0, 0.5, -7, "w"], [0, 1, -10, "j"], [0, 1, -12, "w"]],
+        "deco": [{"m": "cloud", "x": 8, "y": 6, "z": -6, "r": 0, "s": 3.2}],
+        "junk": "dropped"
+    })
+}
+
+fn doc(data: Value) -> Value {
+    json!({"kind": "plat", "v": 1, "name": "  Three Hops  ", "data": data})
+}
+
+fn custom_started(n: usize, mode: &str) -> (Plat, f64) {
+    let mut g = Plat::new();
+    assert_eq!(g.start_with(&members(n, "u"), &json!("custom"), &json!(mode), Some(&doc(custom_data())), 100.0), None);
+    g.tick(100.0 + COUNTDOWN, true);
+    assert_eq!(g.phase, Phase::Run);
+    (g, 100.0 + COUNTDOWN)
+}
+
+fn with(mut data: Value, f: impl FnOnce(&mut Value)) -> Value {
+    f(&mut data);
+    data
+}
+
+#[test]
+fn the_built_in_levels_pass_the_custom_validator() {
+    let file: Value = serde_json::from_str(LEVELS_JSON).unwrap();
+    for lvj in file["levels"].as_array().unwrap() {
+        let c = validate_custom(lvj).unwrap_or_else(|e| panic!("{}: {e}", lvj["id"]));
+        let l = compile_custom(&c).unwrap();
+        let b = level(lvj["id"].as_str().unwrap()).unwrap();
+        assert_eq!((l.solids.len(), l.coins.len(), l.cps.len(), l.route.len()), (b.solids.len(), b.coins.len(), b.cps.len(), b.route.len()));
+        assert_eq!(l.bounds, b.bounds);
+        // the canonical form is a fixed point
+        assert_eq!(validate_custom(&c).unwrap(), c);
+    }
+}
+
+#[test]
+fn custom_data_comes_back_canonical() {
+    let c = validate_custom(&custom_data()).unwrap();
+    let keys: Vec<&String> = c.as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["kill", "coopGoal", "coopSecs", "theme", "spawns", "cps", "flag", "coins", "solids", "route", "deco"]);
+    assert_eq!(c["theme"]["sky"], "#8fd3ff");
+    assert!(c.get("junk").is_none());
+    assert_eq!(c["solids"][0], json!({"m": "platform-large", "x": 0, "y": -0.5, "z": 0}));
+    assert_eq!(c["deco"][0]["s"], json!(3.2));
+    assert_eq!(c.to_string(), serde_json::to_string(&c).unwrap());
+    // 1.004 and 1.0 are the same level, so the same key
+    let a = with(custom_data(), |d| d["coins"][0][0] = json!(1.004));
+    let b = with(custom_data(), |d| d["coins"][0][0] = json!(1.0));
+    let (ca, cb) = (validate_custom(&a).unwrap(), validate_custom(&b).unwrap());
+    assert_eq!(ca, cb);
+    assert_eq!(custom_key(&ca), custom_key(&cb));
+    let k = custom_key(&ca);
+    assert!(k.len() == 14 && k.starts_with("c-") && k[2..].chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()), "{k}");
+    assert_ne!(custom_key(&c), k);
+    // the documented rule: sha256("plat:" + compact canonical JSON)
+    use sha2::{Digest, Sha256};
+    let hex = hex::encode(Sha256::digest(format!("plat:{}", serde_json::to_string(&ca).unwrap())));
+    assert_eq!(k, format!("c-{}", &hex[..12]));
+    assert_eq!(round2(-0.125), -0.13);
+    assert_eq!(round2(0.125), 0.13);
+    assert_eq!(round2(-0.001).to_string(), "0");
+}
+
+#[test]
+fn bad_custom_levels_are_refused_without_a_panic() {
+    let cases: Vec<(&str, Value, &str)> = vec![
+        ("unknown model", with(custom_data(), |d| d["solids"][1]["m"] = json!("castle")), "unknown model 'castle'"),
+        ("no spawns", with(custom_data(), |d| d["spawns"] = json!([])), "spawns: 1 to 8"),
+        ("9 spawns", with(custom_data(), |d| d["spawns"] = json!(vec![json!([0, 0, 1]); 9])), "spawns: 1 to 8"),
+        ("spawn in the air", with(custom_data(), |d| d["spawns"][1] = json!([1, 3, 1])), "spawn 2 isn't standing"),
+        ("NaN coordinate", with(custom_data(), |d| d["solids"][0]["x"] = json!(f64::NAN)), "not a number"),
+        ("1e9 coordinate", with(custom_data(), |d| d["coins"][0][2] = json!(1e9)), "out of range"),
+        ("65 solids", with(custom_data(), |d| d["solids"] = json!(vec![json!({"m": "brick", "x": 0, "y": -9, "z": 0}); 65])), "solids: 1 to 64"),
+        ("unreachable gap", with(custom_data(), |d| {
+            d["solids"][2]["z"] = json!(-16);
+            d["route"] = json!([[0, 0, -2, "w"], [0, 0.5, -5, "j"], [0, 0.5, -7, "w"], [0, 1, -14, "j"], [0, 1, -16, "w"]]);
+            d["flag"] = json!([0, 1, -16]);
+        }), "too far to jump"),
+        ("w point floating 3 m up", with(custom_data(), |d| d["route"][2] = json!([0, 3.5, -7, "w"])), "walks onto nothing"),
+        ("j landing in the air", with(custom_data(), |d| d["route"][1] = json!([5, 0.5, -5, "j"])), "lands in the air"),
+        ("coopGoal > coins", with(custom_data(), |d| d["coopGoal"] = json!(3)), "co-op goal must be"),
+        ("no flag", with(custom_data(), |d| { d.as_object_mut().unwrap().remove("flag"); }), "flag is missing"),
+        ("route misses the checkpoint", with(custom_data(), |d| d["cps"][0] = json!([2.5, 0, 2])), "misses checkpoint 1"),
+        ("route not at the flag", with(custom_data(), |d| d["flag"] = json!([2, 1, -10.5])), "doesn't end at the flag"),
+        ("bad route kind", with(custom_data(), |d| d["route"][0][3] = json!("x")), "kind must be"),
+        ("one route point", with(custom_data(), |d| d["route"] = json!([[0, 1, -12, "w"]])), "route: 2 to 200"),
+        ("walk across a gap", with(custom_data(), |d| d["route"][1][3] = json!("w")), "more than 0.3 m"),
+        ("co-op secs", with(custom_data(), |d| d["coopSecs"] = json!(10)), "co-op time"),
+        ("theme", with(custom_data(), |d| d["theme"]["sea"] = json!("blue")), "theme sea"),
+        ("rotation", with(custom_data(), |d| d["solids"][0]["r"] = json!(45)), "turn must be"),
+        ("scale", with(custom_data(), |d| d["solids"][0]["s"] = json!(9)), "scale must be"),
+        ("deco model", with(custom_data(), |d| d["deco"][0]["m"] = json!("platform")), "decoration 1"),
+        ("bool number", with(custom_data(), |d| d["kill"] = json!(true)), "kill height is not a number"),
+        ("kill above the floor", with(custom_data(), |d| d["kill"] = json!(0)), "kill height must be"),
+        ("coin in a block", with(custom_data(), |d| d["coins"][0] = json!([0, -0.3, 0])), "coin 1 is inside"),
+        ("walk over a flat gap", with(custom_data(), |d| {
+            d["solids"][1]["y"] = json!(-0.5);
+            d["cps"][0] = json!([0, 0, -6]);
+            d["route"][1] = json!([0, 0, -5, "w"]);
+            d["route"][2] = json!([0, 0, -7, "w"]);
+        }), "walks over a gap"),
+        ("walk into a block", with(custom_data(), |d| {
+            d["solids"].as_array_mut().unwrap().push(json!({"m": "brick", "x": 0, "y": -0.3, "z": -1}));
+        }), "walks into a block"),
+        ("jump through a block", with(custom_data(), |d| {
+            d["solids"].as_array_mut().unwrap().push(json!({"m": "brick", "x": 0, "y": 0.6, "z": -3.5}));
+        }), "jumps through a platform"),
+        ("too high even for a double jump", with(custom_data(), |d| {
+            d["solids"][1]["y"] = json!(3.5);
+            d["cps"][0] = json!([0, 4, -6]);
+            d["route"][1] = json!([0, 4, -5, "d"]);
+            d["route"][2] = json!([0, 4, -7, "w"]);
+        }), "too high even for a double jump"),
+        ("not an object", json!([1, 2, 3]), "not an object"),
+        ("null", Value::Null, "not an object"),
+    ];
+    for (what, data, why) in cases {
+        let r = std::panic::catch_unwind(|| (validate_custom(&data), compile_custom(&data).map(|_| ())));
+        let (v, c) = r.unwrap_or_else(|_| panic!("{what} panicked"));
+        assert!(v.is_err() && c.is_err(), "{what} passed");
+        let e = v.unwrap_err();
+        assert!(e.contains(why), "{what}: {e}");
+    }
+    // the reasons are in plain words
+    let gap = with(custom_data(), |d| {
+        d["solids"][2]["z"] = json!(-16);
+        d["route"] = json!([[0, 0, -2, "w"], [0, 0.5, -5, "j"], [0, 0.5, -7, "w"], [0, 1, -14, "j"], [0, 1, -16, "w"]]);
+        d["flag"] = json!([0, 1, -16]);
+    });
+    assert_eq!(validate_custom(&gap).unwrap_err(), "route point 4 is too far to jump: try a double jump");
+    assert_eq!(validate_custom(&with(custom_data(), |d| d["route"][1] = json!([5, 0.5, -5, "j"]))).unwrap_err(),
+               "route point 2 lands in the air");
+    // a giant blob is refused before any parsing
+    let big = with(custom_data(), |d| d["deco"] = json!(vec![json!({"m": "cloud", "x": 1.23, "y": 4.56, "z": 7.89, "r": 123, "s": 3.21}); 400]));
+    assert!(validate_custom(&big).is_err());
+}
+
+#[test]
+fn custom_level_docs_need_the_right_kind_name_and_version() {
+    let d = doc(custom_data());
+    let c = custom_of(&d).unwrap();
+    assert_eq!(c.name, "Three Hops");
+    assert_eq!(c.lv.id, c.key);
+    for (bad, why) in [
+        (with(d.clone(), |m| m["kind"] = json!("kart")), "that isn't a platformer level"),
+        (with(d.clone(), |m| m["v"] = json!(2)), "that level is from a newer editor"),
+        (with(d.clone(), |m| m["name"] = json!("   ")), "the name must be 1 to 32 characters"),
+        (with(d.clone(), |m| m["name"] = json!("a".repeat(33))), "the name must be 1 to 32 characters"),
+        (with(d.clone(), |m| m["name"] = json!("<b>hi</b>")), "the name has characters that aren't allowed"),
+        (with(d.clone(), |m| m["name"] = json!("see HTTPS site")), "the name has characters that aren't allowed"),
+        (with(d.clone(), |m| m["name"] = json!("tab\there")), "the name has characters that aren't allowed"),
+        (Value::Null, "no level sent"),
+    ] {
+        assert_eq!(custom_of(&bad).unwrap_err(), why);
+    }
+}
+
+#[test]
+fn a_custom_level_races_and_following_its_route_finishes() {
+    let (mut g, t) = custom_started(2, "race");
+    let key = g.level.clone().unwrap();
+    assert!(key.starts_with("c-") && key.len() == 14);
+    let v = g.view(t);
+    assert_eq!(v["level"], json!(key));
+    assert_eq!(v["custom"]["name"], "Three Hops");
+    assert_eq!(v["custom"]["data"], validate_custom(&custom_data()).unwrap());
+    let l = g.lv().unwrap();
+    assert!(matches!(l, Lv::Custom(_)));
+    let t1 = run(&mut g, "u0", t, None);
+    let p = g.player("u0").unwrap();
+    assert!(p.fin.is_some() && p.cp == 1 && p.bad == 0 && p.got.len() == 2, "{:?}", p);
+    let t2 = run(&mut g, "u1", t, None);
+    let evs = g.tick(t1.max(t2) + 0.01, true);
+    assert!(evs.iter().all(|e| e.0 != "snap" || e.1.get("custom").is_none()));
+    let done = &evs.last().unwrap().1;
+    assert_eq!(evs.last().unwrap().0, "done");
+    assert_eq!(done["level"], json!(key));
+    let mut d = done.clone();
+    d["ev"] = json!("done");
+    d["g"] = json!("plat");
+    let rows = crate::results::rows_from_done("plat", &d);
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|r| r.key == key && r.mode == "race"));
+    // respawn goes back to the custom checkpoint
+    let (mut g, t) = custom_started(1, "race");
+    run(&mut g, "u0", t, Some(2.0));
+    assert_eq!(g.player("u0").unwrap().cp, 1);
+    let sp = g.respawn("u0", t + 3.0).unwrap();
+    assert_eq!((sp["x"].clone(), sp["y"].clone(), sp["z"].clone()), (json!(0), json!(50), json!(-600)));
+}
+
+#[test]
+fn a_custom_level_plays_coop_to_its_goal() {
+    let (mut g, t) = custom_started(1, "coop");
+    assert_eq!(g.limit(), 90.0);
+    let t1 = run(&mut g, "u0", t, None);
+    let evs = g.tick(t1 + 0.01, true);
+    assert_eq!(evs.last().unwrap().0, "done");
+    assert_eq!(evs.last().unwrap().1["win"], true);
+    assert_eq!(evs.last().unwrap().1["goal"], 2);
+}
+
+#[test]
+fn custom_starts_are_checked_and_a_built_in_start_clears_the_custom_level() {
+    let mut g = Plat::new();
+    let gap = with(custom_data(), |d| d["route"][1] = json!([5, 0.5, -5, "j"]));
+    assert_eq!(g.start_with(&members(1, "a"), &json!("custom"), &json!("race"), Some(&doc(gap)), 0.0).as_deref(),
+               Some("bad level: route point 2 lands in the air"));
+    assert_eq!(g.start_with(&members(1, "a"), &json!("custom"), &json!("race"), None, 0.0).as_deref(),
+               Some("bad level: no level sent"));
+    assert!(g.custom.is_none() && g.level.is_none());
+    let nocoins = with(custom_data(), |d| { d["coins"] = json!([]); d["coopGoal"] = json!(0); });
+    assert_eq!(g.start_with(&members(1, "a"), &json!("custom"), &json!("coop"), Some(&doc(nocoins.clone())), 0.0).as_deref(),
+               Some("this level has no co-op coin goal: race it instead"));
+    assert_eq!(g.start_with(&members(1, "a"), &json!("custom"), &json!("race"), Some(&doc(nocoins)), 0.0), None);
+    assert!(g.custom.is_some());
+    g.end();
+    assert!(g.start(&members(1, "a"), &json!("meadow"), &json!("race"), 0.0).is_none());
+    assert!(g.custom.is_none());
+    let v = g.view(0.0);
+    assert_eq!(v["level"], "meadow");
+    assert!(v.get("custom").is_none());
+}
+
+#[tokio::test]
+async fn a_custom_race_through_the_room_records_the_c_key() {
+    let e = env(MAX_TICKERS);
+    let (a, mut wa) = e.connect("pcustom", 1, "plat-a").await;
+    let (b, mut wb) = e.connect("pcustom", 2, "plat-b").await;
+    e.send("pcustom", 1, &a, "join", json!({})).await;
+    until(&mut wa, "plat").await;
+    e.send("pcustom", 2, &b, "join", json!({})).await;
+    until(&mut wb, "plat").await;
+    let bad = doc(with(custom_data(), |d| d["solids"][0]["m"] = json!("castle")));
+    e.send("pcustom", 1, &a, "start", json!({"level": "custom", "mode": "race", "custom": bad})).await;
+    assert_eq!(until(&mut wa, "error").await["error"], "bad level: platform 1: unknown model 'castle'");
+    e.send("pcustom", 1, &a, "start", json!({"level": "custom", "mode": "race", "custom": doc(custom_data())})).await;
+    let started = until_where(&mut wb, "plat", |m| m["run"]["phase"] == "grid").await["run"].clone();
+    let key = started["level"].as_str().unwrap().to_string();
+    assert!(key.starts_with("c-"));
+    assert_eq!(started["custom"]["name"], "Three Hops");
+    // a late "view" gets the level too
+    e.send("pcustom", 2, &b, "view", json!({})).await;
+    assert_eq!(until(&mut wb, "plat").await["run"]["custom"]["data"]["flag"], json!([0, 1, -12]));
+    e.advance(COUNTDOWN + 0.01);
+    until(&mut wa, "go").await;
+    let l = compile_custom(&custom_data()).unwrap();
+    let path = Path::new(&l, l.spawns[0], 5.5);
+    let mut rt = 0.0;
+    while rt < path.total {
+        rt = path.total.min(rt + 0.05);
+        e.advance(0.05);
+        e.send("pcustom", 1, &a, "pos", fr(path.at(rt), None)).await;
+    }
+    assert_eq!(until_where(&mut wb, "finish", |m| m["user"] == "plat-a").await["place"], 1);
+    let snap = until(&mut wb, "snap").await;
+    assert!(snap.get("custom").is_none());
+    e.send("pcustom", 2, &b, "leave", json!({})).await;
+    let done = until(&mut wa, "done").await;
+    assert_eq!(done["level"], json!(key));
+    assert!(done.get("custom").is_none());
+    assert_eq!(crate::results::rows_from_done("plat", &done)[0].key, key);
+}
+
+/// tests/test_leveledit.py pins the same keys from games/leveledit.js's canonical form, so the
+/// editor and the Arena agree byte for byte on what a level is.
+#[test]
+fn custom_keys_are_pinned_for_the_editor() {
+    let mut got = vec![custom_key(&validate_custom(&custom_data()).unwrap())];
+    let file: Value = serde_json::from_str(LEVELS_JSON).unwrap();
+    for lvj in file["levels"].as_array().unwrap() {
+        got.push(custom_key(&validate_custom(lvj).unwrap()));
+    }
+    assert_eq!(got, ["c-ca296b942375", "c-afd79d84fac1", "c-80356f2bd64f", "c-b8253b24bae3"]);
+}
+
+#[test]
+fn the_welcome_tells_the_page_custom_levels_are_taken() {
+    // games/platformer.js and games/leveledit.js offer custom levels only when arena.maps is set.
+    assert_eq!(crate::protocol::arena_info()["maps"], json!({"v": 1}));
 }

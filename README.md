@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.4.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 2.5.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -311,6 +311,41 @@ and feature guide.
 
 ## Changelog
 
+- **2.5.0** — **Make + compete.** Build your own maps, share them, and compete on them every week.
+  - **Track Editor**: paint a kart loop on a grid, see a live check, test-drive it, save it and race it
+    with friends (Kart Racing gains a "Custom…" track picker).
+  - **Level Editor**: build a Platformer level, check it, test-run it, then race or co-op it in a room.
+  - **Map Editor**: build a Blaster arena on a top-down grid, checked live against the same rules the
+    Arena uses; a room can play any valid user map.
+  - **Workshop (map gallery)**: publish maps privately, to your room or to everyone; browse newest,
+    most liked and hot this week; like, report, remix and "Race in room". Each custom map keeps its own
+    leaderboard, and likes plus races pick a **map of the week** for each game.
+  - **Tower Defense**: place Pokémon towers against twenty bug waves, solo or co-op in a room (up to 4).
+  - **Bowling**: ten-pin with Pokémon bowlers on the golf physics, solo or up to 8 in a room.
+  - **Tournaments (Compete view)**: a weekly cup per game scored from your normal multiplayer races,
+    a monthly season podium, and cup trophies on your Trainer card.
+  - **World boss**: one boss a week that everyone wears down together (merged PRs and multiplayer wins),
+    then fights with a Pokémon team (three tries a day); the final blow and the fighters earn badges.
+  - **Loot from real work**: a merged PR, a green test run or a long focus session drops a chest; open it
+    for a card in your binder.
+  - **Skill tree**: how you work (tests, refactors, docs, review, debugging, exploring, building) grows
+    seven skill branches and unlocks titles you can show.
+  - **Prestige**: at level 50, reset your shown level for a star (nothing earned is lost); stars show
+    on your Trainer card and light up the HQ skyline, with a star frame and a rooftop crown.
+  - **Story campaign**: six chapters through the HQ and the Valley, with story tracks and levels.
+  - **Trading** (card trades between friends) was planned for 2.5 and is **deferred to 2.5.1**.
+  - **Privacy / egress.** Work signals are **off by default** and ask once for consent (Settings:
+    `workSignals`, and separately `workSignalsPRs` for PRs). They are classified on this machine; only
+    numbers leave it: per UTC day, seven skill counts (`/v1/skills/report`: `{day, counts}`, each 0–200)
+    and loot events (`/v1/loot/events`: `{requestId, type, n, day}`, type one of `tests_green`,
+    `focus_long`, `pr_merged`). PRs are counted by running `gh` locally; titles, URLs, repos and numbers
+    never leave the machine (only salted hashes are kept, locally). Published maps send the map's
+    geometry and the name you typed (`{kind, name, data, scope, roomId?}`, max 12 KB); a boss fight
+    sends your team as species/stage numbers. No command, path, file name, project or transcript text is
+    ever sent.
+  - Arena (Rust): `/v1/skills/*`, `/v1/loot*`, `/v1/prestige*`, `/v1/maps*`, `/v1/cups*`, `/v1/boss*`
+    (all device-authenticated), room games `td` and `bowl`, custom maps in `kart` / `plat` / `fps` rooms;
+    migrations `0003_work_events` to `0010_boss` (0007 is reserved for trading).
 - **2.4.0** — **Your 3D character.** The person you walk around as in the 3D HQ and Arena City is
   now yours to build, and replaces the 2D trainer drawing (which stays as the fallback without WebGL2).
   - **Settings → Character**: a live 3D preview you can turn, six bodies (the Kenney Mini Characters),

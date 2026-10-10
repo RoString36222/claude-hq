@@ -506,6 +506,7 @@ function Scene(host, opts){
   this.root.addEventListener("click", function(e){ if(e.target === self.text && self.skip) self.skip(); });
 }
 pk.Scene = Scene;
+pk.spriteEl = spriteEl; pk.spriteUrls = spriteUrls;
 Scene.prototype.plate = function(which){
   var el = mk("div", "pkb-plate "+which), top = mk("div", "pkb-pl-top");
   var name = mk("b", "pkb-name"), lv = mk("span", "pkb-lv");

@@ -135,7 +135,7 @@ fn drive(k: &mut Kart, uid: &str, u0: f64, u1: f64, t0: f64) -> f64 {
     while u < u1 && k.player(uid).unwrap().fin.is_none() {
         u = u1.min(u + step);
         t += 1.0 / 20.0;
-        let (ok, fix) = k.pos(uid, &frame(t_, u, 0.0, None), t);
+        let (ok, fix) = k.pos(uid, &frame(&t_, u, 0.0, None), t);
         assert!(ok && fix.is_none(), "{uid} {u}");
     }
     t
@@ -765,4 +765,249 @@ async fn snapshots_count_against_the_rooms_bandwidth() {
     assert!(tk.bytes_1s() > 0 && tk.ticks() > 0);
     let stats = e.hub.registry().stats();
     assert_eq!(stats["rooms"]["kart:bw"]["hz"], HZ);
+}
+
+// ------------------------------------------------- user-made tracks (2.5) --
+const RECT: &str = "FSSRSSRSSSSRSSRS"; // a 4 x 6 rectangle, two straights before the line
+
+fn kdata(tiles: &str) -> Value {
+    json!({"tiles": tiles, "scenery": "tents",
+           "theme": {"sky": "#9fd3f0", "fog": "#cfe8f2", "ground": "#76b85a"}})
+}
+
+fn kdoc(tiles: &str) -> Value {
+    json!({"kind": "kart", "v": 1, "name": "Back Lot", "data": kdata(tiles)})
+}
+
+fn is_ckey(k: &str) -> bool {
+    k.len() == 14 && k.starts_with("c-") && k[2..].chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+}
+
+#[test]
+fn a_custom_track_starts_and_a_lap_counts() {
+    let mut k = Kart::new();
+    assert_eq!(k.start_custom(&members(1, "u"), &kdoc(RECT), &json!(1), 100.0), None);
+    let key = k.track.clone().unwrap();
+    assert!(is_ckey(&key), "{key}");
+    let v = k.view(100.0);
+    assert_eq!(v["track"], json!(key));
+    assert_eq!(v["custom"], json!({"name": "Back Lot", "data": kdata(RECT)}));
+    assert_eq!(v["laps"], 1);
+    let evs = k.tick(100.0 + COUNTDOWN, true);
+    assert_eq!(evs[0], ("go", json!({"track": key})));
+    let n = k.tr().unwrap().n as f64;
+    assert_eq!(n, RECT.len() as f64);
+    let u0 = k.player("u0").unwrap().u;
+    let t = drive(&mut k, "u0", u0, 0.5 + n + 0.1, 100.0 + COUNTDOWN);
+    assert!(k.player("u0").unwrap().fin.is_some());
+    let evs = k.tick(t + 0.01, true);
+    let done = evs.iter().find(|e| e.0 == "done").expect("done");
+    assert_eq!(done.1["track"], json!(key)); // results.rs keys the board on this
+    for (ev, data) in &evs {
+        assert!(data.get("custom").is_none(), "{ev} carries the track");
+    }
+}
+
+#[test]
+fn bad_custom_tracks_are_refused_without_a_panic() {
+    let mut big = kdata(RECT);
+    big["pad"] = json!("x".repeat(13 * 1024));
+    let mut bad_hex = kdata(RECT);
+    bad_hex["theme"]["fog"] = json!("#12345g");
+    let mut short_hex = kdata(RECT);
+    short_hex["theme"]["sky"] = json!("#abc");
+    let mut no_theme = kdata(RECT);
+    no_theme.as_object_mut().unwrap().remove("theme");
+    let mut bad_scenery = kdata(RECT);
+    bad_scenery["scenery"] = json!("lava");
+    let cases: Vec<(Value, &str)> = vec![
+        (kdata("FSS"), "tiles"),
+        (kdata("FSSXSSRSSSSRSSRS"), "tile 3"),
+        (kdata("FSSSSSSSSS"), "does not close"),
+        (kdata("FSRSSRSSRSSRS"), "runs over itself"),
+        (kdata("FSLSSLSSLSSL"), "starting grid"), // closes, on a left turn
+        (kdata("SSSRSSRSSSSRSSRF"), "first tile"),
+        (kdata(&"FSSRSSRSSSSRSSRS".repeat(6)), "tiles"),
+        (big, "too big"),
+        (bad_hex, "theme.fog"),
+        (short_hex, "theme.sky"),
+        (no_theme, "theme"),
+        (bad_scenery, "scenery"),
+        (json!({"tiles": 5}), "tiles"),
+        (json!("FSS"), "object"),
+        (Value::Null, "object"),
+        (json!({"tiles": "FSSRSSRSSSSRSSRSé"}), "tile 16"),
+    ];
+    for (data, why) in cases {
+        let e = validate_custom(&data).expect_err(&data.to_string()[..40.min(data.to_string().len())]);
+        assert!(e.contains(why), "{e} / {why}");
+        let doc = json!({"kind": "kart", "v": 1, "name": "x", "data": data});
+        let mut k = Kart::new();
+        let got = k.start_custom(&members(1, "u"), &doc, &json!(3), 0.0).unwrap();
+        assert!(got.starts_with("bad track: "), "{got}");
+        assert_eq!(k.phase, Phase::Idle);
+        assert!(k.custom.is_none());
+    }
+    // the document around the data
+    let bad_docs = [
+        json!({"kind": "plat", "v": 1, "name": "x", "data": kdata(RECT)}),
+        json!({"kind": "kart", "v": 2, "name": "x", "data": kdata(RECT)}),
+        json!({"kind": "kart", "v": 1, "name": "  ", "data": kdata(RECT)}),
+        json!({"kind": "kart", "v": 1, "name": "a".repeat(33), "data": kdata(RECT)}),
+        json!({"kind": "kart", "v": 1, "name": "<b>", "data": kdata(RECT)}),
+        json!({"kind": "kart", "v": 1, "name": "see HTTP x", "data": kdata(RECT)}),
+        json!({"kind": "kart", "v": 1, "name": "tab\there", "data": kdata(RECT)}),
+        json!({"kind": "kart", "v": 1, "data": kdata(RECT)}),
+        json!("nope"),
+    ];
+    for d in bad_docs {
+        let mut k = Kart::new();
+        assert!(k.start_custom(&members(1, "u"), &d, &json!(3), 0.0).unwrap().starts_with("bad track: "), "{d}");
+    }
+}
+
+#[test]
+fn a_loop_may_end_on_a_corner_and_the_grid_check_still_bites() {
+    // A right turn into the start tile: the 8 grid slots still sit on the ring.
+    for tiles in ["FSRSSRSSRSSR", "FRSSRSRSSR"] {
+        let c = validate_custom(&kdata(tiles)).unwrap_or_else(|e| panic!("{tiles}: {e}"));
+        let tr = build_track(c["tiles"].as_str().unwrap()).unwrap();
+        assert_eq!(tr.tiles[tr.n - 1].kind, 'C', "{tiles}");
+        assert!(grid_fits(&tr));
+    }
+    // A left turn into it closes too, but the back row's outside slot is off the road.
+    let e = validate_custom(&kdata("FSLSSLSSLSSL")).unwrap_err();
+    assert!(e.starts_with("the starting grid is off the road"), "{e}");
+    assert!(!grid_fits(&build_track("FSLSSLSSLSSL").unwrap()));
+    // A track with no tile behind the line (never a closed loop) fails it.
+    let mut tr = build_track(RECT).unwrap();
+    let last = tr.tiles.pop().unwrap();
+    tr.cells.remove(&(last.col, last.row));
+    tr.n -= 1;
+    assert!(!grid_fits(&tr));
+}
+
+#[test]
+fn canonical_data_drops_laps_and_unknown_keys_and_lowercases() {
+    let mut d = kdata(RECT);
+    d["laps"] = json!(5);
+    d["theme"]["sky"] = json!("#AABBCC");
+    d["theme"]["deco"] = json!({"mul": "#ffffff"});
+    d["extra"] = json!(true);
+    let c = validate_custom(&d).unwrap();
+    assert_eq!(c, json!({"tiles": RECT, "scenery": "tents",
+                         "theme": {"sky": "#aabbcc", "fog": "#cfe8f2", "ground": "#76b85a"}}));
+    assert!(c.get("laps").is_none());
+    let keys: Vec<&String> = c.as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["tiles", "scenery", "theme"]);
+    // canonical is a fixed point
+    assert_eq!(validate_custom(&c).unwrap(), c);
+}
+
+#[test]
+fn the_key_is_stable_across_case_and_key_order() {
+    let a = kdata(RECT);
+    let mut upper = kdata(RECT);
+    upper["theme"]["sky"] = json!("#9FD3F0");
+    let shuffled: Value = serde_json::from_str(&format!(
+        r##"{{"theme": {{"ground": "#76B85A", "fog": "#cfe8f2", "sky": "#9fd3f0"}}, "laps": 2, "scenery": "tents", "tiles": "{RECT}"}}"##
+    )).unwrap();
+    let ka = crate::mapkey::content_key("kart", &validate_custom(&a).unwrap());
+    assert!(is_ckey(&ka), "{ka}");
+    for d in [upper, shuffled] {
+        assert_eq!(crate::mapkey::content_key("kart", &validate_custom(&d).unwrap()), ka);
+    }
+    // the key is the race's track id, whatever the name
+    let mut doc = kdoc(RECT);
+    doc["name"] = json!("Another name");
+    assert_eq!(custom_track(&doc).unwrap().key, ka);
+    // different geometry, different board
+    assert_ne!(crate::mapkey::content_key("kart", &validate_custom(&kdata("FSSSRSSRSSSSSRSSRS")).unwrap()), ka);
+}
+
+#[test]
+fn a_built_in_start_clears_the_custom_track() {
+    let mut k = Kart::new();
+    k.start_custom(&members(2, "u"), &kdoc(RECT), &Value::Null, 0.0);
+    assert_eq!(k.laps, 3); // no laps given: three
+    assert!(k.custom.is_some());
+    k.end();
+    // between races the view still says what was raced
+    assert!(k.view(1.0).get("custom").is_some());
+    assert_eq!(k.start(&members(2, "u"), &json!("meadow"), &json!(1), 2.0), None);
+    assert!(k.custom.is_none());
+    let v = k.view(2.0);
+    assert_eq!(v["track"], "meadow");
+    assert!(v.get("custom").is_none());
+    // a race in progress refuses a custom start too
+    assert!(k.start_custom(&members(2, "u"), &kdoc(RECT), &json!(1), 3.0).unwrap().contains("already on"));
+    assert_eq!(k.track.as_deref(), Some("meadow"));
+}
+
+#[test]
+fn no_snapshot_carries_the_custom_track() {
+    let mut k = Kart::new();
+    k.start_custom(&members(3, "u"), &kdoc(RECT), &json!(1), 0.0);
+    let tr = k.tr().unwrap();
+    let mut t = COUNTDOWN;
+    let mut snaps = 0;
+    for ev in k.tick(t, true) {
+        assert!(ev.1.get("custom").is_none(), "{}", ev.0);
+    }
+    for step in 0..40 {
+        t += 0.05;
+        for i in 0..3 {
+            let uid = format!("u{i}");
+            let u = k.player(&uid).unwrap().u + 0.05;
+            k.pos(&uid, &frame(&tr, u, 0.0, None), t);
+        }
+        for (ev, data) in k.tick(t, step % 2 == 0) {
+            snaps += (ev == "snap") as usize;
+            assert!(data.get("custom").is_none() && !data.to_string().contains(RECT), "{ev}");
+        }
+    }
+    assert!(snaps > 0);
+}
+
+#[tokio::test]
+async fn a_custom_race_through_the_lobby() {
+    let e = env(MAX_TICKERS);
+    let (a, mut wa) = e.connect("ctrack", 1, "kart-a").await;
+    let (b, mut wb) = e.connect("ctrack", 2, "kart-b").await;
+    e.send("ctrack", 1, &a, "join", json!({})).await;
+    until(&mut wa, "kart").await;
+    e.send("ctrack", 2, &b, "join", json!({})).await;
+    until(&mut wb, "kart").await;
+    // only the host starts, and a bad track says why
+    e.send("ctrack", 2, &b, "start", json!({"track": "custom", "laps": 1, "custom": kdoc(RECT)})).await;
+    assert_eq!(until(&mut wb, "error").await["error"], "only the host can do that");
+    e.send("ctrack", 1, &a, "start", json!({"track": "custom", "laps": 1, "custom": kdoc("FSSSSSSSS")})).await;
+    let err = until(&mut wa, "error").await;
+    assert!(err["error"].as_str().unwrap().starts_with("bad track: the loop does not close"), "{err}");
+    assert!(e.hub.registry().get("kart:ctrack").is_none());
+    e.send("ctrack", 1, &a, "start", json!({"track": "custom", "laps": 1, "custom": kdoc(RECT)})).await;
+    let race = until_where(&mut wb, "kart", |m| m["race"]["phase"] == "grid").await["race"].clone();
+    let key = race["track"].as_str().unwrap().to_string();
+    assert!(is_ckey(&key));
+    assert_eq!(race["custom"]["name"], "Back Lot");
+    assert_eq!(race["custom"]["data"]["tiles"], RECT);
+    // a late "view" (a rejoin) gets the track too
+    e.send("ctrack", 2, &b, "view", json!({})).await;
+    let v = until(&mut wb, "kart").await;
+    assert_eq!(v["race"]["custom"]["data"], kdata(RECT));
+    e.advance(COUNTDOWN + 0.01);
+    assert_eq!(until(&mut wa, "go").await["track"], json!(key));
+    let tr = e.hub.with_room("ctrack", |v| v.kart.tr().unwrap()).unwrap();
+    let mut u = 0.5 - grid_slot(&tr, 0).1 / TILE;
+    while u < 0.5 + tr.n as f64 + 0.1 {
+        u += 0.08;
+        e.advance(0.05);
+        e.send("ctrack", 1, &a, "pos", frame(&tr, u, 0.0, None)).await;
+    }
+    let fin = until_where(&mut wb, "finish", |m| m["user"] == "kart-a").await;
+    assert_eq!(fin["place"], 1);
+    e.send("ctrack", 2, &b, "leave", json!({})).await;
+    let done = until(&mut wa, "done").await;
+    assert_eq!(done["track"], json!(key));
+    assert!(done.get("custom").is_none());
 }

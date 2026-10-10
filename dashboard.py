@@ -53,8 +53,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import arena
 import music
+import worksignals
 
-APP_VERSION = "2.4.0"   # Your 3D character: builder, portraits, everyone sees it
+# HQ 2.5 local proxy extension modules (ext_<feature>.py: GET/POST maps and an
+# optional start(ctx)). Each import is guarded so one broken module never takes
+# the HQ down.
+EXT = []
+for _ext_name in ("ext_skills", "ext_loot", "ext_prestige", "ext_maps", "ext_cups", "ext_boss"):
+    try:
+        EXT.append(__import__(_ext_name))
+    except Exception:
+        pass
+
+APP_VERSION = "2.5.0"   # Make + compete: editors, gallery, cups, boss, loot, skills
 
 # --------------------------------------------------------------------------- #
 # Paths / constants
@@ -854,6 +865,7 @@ def _scan_file_uncached(path):
     turn_ended = True  # the next user record (even an isMeta one) opens a turn
     last_busy = None   # latest busy instant so far (a running max: records can be out of order)
     rest_until = None  # first busy instant after a stretch the page showed as rest
+    ws_state = worksignals.new_state()  # HQ 2.5 work signals: counts only, see worksignals.py
 
     def mark_busy(t):
         """A busy instant at t. When nothing covered the stretch before it for
@@ -884,6 +896,7 @@ def _scan_file_uncached(path):
                 continue
             if not isinstance(o, dict):
                 continue
+            worksignals.observe(o, agg, ws_state)
             try:
                 typ = o.get("type")
                 ts = parse_ts(o.get("timestamp"))
@@ -1100,6 +1113,7 @@ def _scan_file_uncached(path):
                 # never crash on a single record
                 continue
 
+    worksignals.finish(agg, ws_state)
     if last_assistant_text:
         agg["last_reply"] = strip_markdown(last_assistant_text)
     if last_assistant_tool is not None:
@@ -4035,6 +4049,9 @@ DEFAULT_CONFIG = {
     "musicShare": True,
     # Whose YouTube login yt-dlp may use for room songs ("" = none); see music.COOKIE_BROWSERS.
     "musicCookies": "",
+    # HQ 2.5 work signals (skills, loot): consent required, so both start off.
+    "workSignals": False,
+    "workSignalsPRs": False,
 }
 
 _config_lock = threading.Lock()
@@ -4115,6 +4132,9 @@ def _validate_config(raw, base=None):
     for key in ("arenaEnabled", "arenaShareCost", "creatureFatigue", "musicShare"):
         if key in raw:
             cfg[key] = bool(raw.get(key))
+    for key in ("workSignals", "workSignalsPRs"):
+        if isinstance(raw.get(key), bool):
+            cfg[key] = raw[key]
     return cfg
 
 
@@ -5119,7 +5139,7 @@ POST_PATHS = (
     "/api/arena/cali/order",
     "/api/arena/sounds",
     "/api/games/state",
-) + ARENA_ROOM_POSTS
+) + ARENA_ROOM_POSTS + tuple(p for m in EXT for p in getattr(m, "POST", {}))
 
 
 # --------------------------------------------------------------------------- #
@@ -5372,6 +5392,18 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         path = self.path.split("?", 1)[0]
+
+        for _m in EXT:
+            _fn = getattr(_m, "GET", {}).get(path)
+            if _fn is not None:
+                import urllib.parse
+                qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+                try:
+                    code, resp = _fn(lambda k: (qs.get(k, [""])[0] or "").strip())
+                except Exception as e:
+                    code, resp = 502, {"error": "request failed: %s" % e}
+                self._send(code or 502, json.dumps(resp))
+                return
 
         if path == "/":
             try:
@@ -5925,6 +5957,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def _arena_post(self, path, body):
         """Arena actions. The device token never crosses back to the page."""
+        for _m in EXT:
+            _fn = getattr(_m, "POST", {}).get(path)
+            if _fn is not None:
+                try:
+                    code, resp = _fn(body)
+                    return (code or 502), resp
+                except Exception as e:
+                    return 502, {"error": "arena request failed: %s" % e}
         try:
             if path in ARENA_ROOM_POSTS:
                 return _room_post(path, body)
@@ -6146,6 +6186,13 @@ def main():
     # Arena (multiplayer) stays dormant until the user pairs and enables it.
     arena.init(scan_file, load_config, HERE)
     arena.start_publisher(PROJECTS_DIR)
+    for _m in EXT:
+        if hasattr(_m, "start"):
+            try:
+                _m.start({"arena": arena, "load_config": load_config, "scan_file": scan_file,
+                          "iter_transcript_paths": iter_transcript_paths, "base_dir": HERE})
+            except Exception:
+                pass
     # Now Playing: share the track this Mac plays while paired and musicShare is on.
     MUSIC_SHARE.start()
 

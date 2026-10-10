@@ -2169,3 +2169,155 @@ html.hq-calm .mu-tune.on{animation:none}
 @keyframes mu-blink{50%{opacity:.35}}
 html.hq-calm .mu-live-dot{animation:none}
 @media (prefers-reduced-motion: reduce){ .mu-live-dot{animation:none} }
+
+/* ---- HQ 2.5 skill tree (ui/app/35-skills.js) ---- */
+.sk-modal{width:min(760px,100%)}
+.sk-intro{margin:0;font-size:13px}
+.sk-small{font-size:12px}
+.sk-titlerow{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.sk-titlelbl{font-weight:600;font-size:13px}
+.sk-titlesel{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:var(--radius-sm);padding:4px 8px;font:inherit}
+.sk-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px}
+.sk-cat{background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius-sm);padding:8px 10px;display:grid;gap:5px;min-width:0}
+.sk-cat.max{border-color:var(--gold);background:var(--goldbg)}
+.sk-head{display:flex;align-items:center;gap:6px}
+.sk-head b{flex:1;min-width:0}
+.sk-ic{font-size:17px}
+.sk-pips{display:inline-flex;gap:3px;align-items:center}
+.sk-pips i{width:8px;height:8px;border-radius:50%;border:1px solid var(--brand-line);background:transparent;display:block}
+.sk-pips i.on{background:var(--brand);border-color:var(--brand)}
+.sk-bar{height:6px;border-radius:999px;background:var(--panel);border:1px solid var(--line);overflow:hidden}
+.sk-bar i{display:block;height:100%;background:var(--brand);transition:width var(--t-med) var(--ease)}
+.sk-perks{list-style:none;margin:2px 0 0;padding:0;display:grid;gap:2px}
+.sk-perk{font-size:12.5px;color:var(--faint);display:flex;justify-content:space-between;gap:6px;padding:2px 6px;border-radius:6px;border:1px dashed var(--line)}
+.sk-perk small{color:var(--faint);font-size:10.5px;white-space:nowrap}
+.sk-perk.got{color:var(--ink);border-style:solid;background:var(--panel)}
+.sk-perk.got.title{border-color:var(--brand-line);background:var(--brand-soft);font-weight:600}
+.sk-perk.title:not(.got){border-color:var(--brand-line)}
+.sk-share{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;border-top:1px solid var(--line);padding-top:8px}
+.sk-share p{margin:0;flex:1 1 260px;color:var(--muted)}
+.sk-tcard{display:grid;gap:6px}
+.sk-titlechip{justify-self:start;border-color:var(--brand-line);background:var(--brand-soft)}
+.sk-tcrow{display:flex;flex-wrap:wrap;gap:4px 10px}
+.sk-tccell{display:inline-flex;gap:4px;align-items:center;font-size:13px}
+.sk-open{justify-self:start}
+.sk-consent{width:min(480px,100%)}
+.sk-consent p{margin:0 0 6px}
+.sk-consent-btns{display:flex;justify-content:flex-end;gap:8px}
+html.hq-calm .sk-bar i{transition:none}
+@media (prefers-reduced-motion: reduce){ .sk-bar i{transition:none} }
+/* ===== HQ 2.5 loot: chests and the card binder (ui/app/34-loot.js) ===== */
+.loot-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:6px;width:100%}
+.loot-how,.loot-grid>p.muted{grid-column:1 / -1;margin:0 0 2px;font-size:12px}
+.loot-chest{--loot:var(--line2);display:grid;grid-template-columns:30px minmax(0,1fr);column-gap:8px;align-items:center;text-align:left;
+  background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-left:3px solid var(--loot);border-radius:var(--radius-sm);padding:7px 8px;cursor:pointer;font:inherit}
+.loot-chest:hover{border-color:var(--loot)}
+.loot-chest:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.loot-chest:disabled{opacity:.6;cursor:progress}
+.loot-chest b{font-size:12.5px}
+.loot-chest small{grid-column:2;font-size:11px}
+.loot-chest .loot-box{grid-row:1 / span 2}
+.r-common{--loot:var(--line2)}
+.r-rare{--loot:var(--brand)}
+.r-epic{--loot:var(--gold)}
+/* the chest: a lid over a box, in the rarity colour */
+.loot-box{position:relative;display:block;width:26px;height:20px;border-radius:4px;background:color-mix(in srgb,var(--loot) 55%,var(--panel3));
+  border:1px solid color-mix(in srgb,var(--loot) 70%,var(--ink) 10%)}
+.loot-box::before{content:"";position:absolute;left:-2px;right:-2px;top:-5px;height:7px;border-radius:4px 4px 2px 2px;
+  background:color-mix(in srgb,var(--loot) 80%,var(--panel3));border:1px solid color-mix(in srgb,var(--loot) 70%,var(--ink) 10%)}
+.loot-box::after{content:"";position:absolute;left:50%;top:3px;width:6px;height:6px;margin-left:-3px;border-radius:2px;background:var(--panel)}
+.loot-box.big{width:84px;height:62px;border-radius:10px}
+.loot-box.big::before{top:-14px;height:20px;border-radius:10px 10px 4px 4px;left:-5px;right:-5px}
+.loot-box.big::after{width:16px;height:16px;margin-left:-8px;top:8px;border-radius:4px}
+.loot-box.shake{animation:loot-shake .3s var(--ease) 3}
+@keyframes loot-shake{0%,100%{transform:none}25%{transform:rotate(-7deg)}75%{transform:rotate(7deg)}}
+.loot-recent{grid-column:1 / -1;font-size:12px;margin-top:4px}
+.loot-recent summary{cursor:pointer;color:var(--muted)}
+.loot-recent-row{padding:2px 0 2px 12px}
+.loot-binder{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:6px;width:100%}
+.loot-card{display:grid;justify-items:center;gap:2px;text-align:center;background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius-sm);padding:6px}
+.loot-card b{font-size:12px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.loot-card small{font-size:11px}
+.loot-card .loot-trade{font-size:11px;padding:2px 8px;margin-top:2px}
+.loot-art{display:grid;place-items:center;width:60px;height:60px}
+.loot-art img,.loot-art svg{max-width:100%;max-height:100%}
+.loot-card.holo,.loot-prize.holo{border-color:var(--gold);
+  background:linear-gradient(135deg,color-mix(in srgb,var(--gold) 16%,var(--panel2)),var(--panel2) 45%,color-mix(in srgb,var(--brand) 16%,var(--panel2)));
+  background-size:200% 200%;animation:loot-holo 6s linear infinite}
+@keyframes loot-holo{0%{background-position:0% 0%}50%{background-position:100% 100%}100%{background-position:0% 0%}}
+.loot-reveal{width:min(360px,100%);text-align:center;display:grid;gap:10px;justify-items:center}
+.loot-reveal-title{font-size:15px}
+.loot-stage{--loot:var(--line2);display:grid;place-items:center;min-height:120px;width:100%;border-radius:var(--radius);
+  background:radial-gradient(circle,color-mix(in srgb,var(--loot) 30%,transparent),transparent 70%)}
+.loot-prize{display:grid;place-items:center;font-size:48px;min-width:104px;min-height:104px;border-radius:var(--radius);animation:popin .35s var(--ease)}
+.loot-prize.card{background:var(--panel2);border:1px solid var(--line)}
+.loot-reveal-text{margin:0;font-size:14px}
+html.hq-calm .loot-box.shake,html.hq-calm .loot-card.holo,html.hq-calm .loot-prize,html.hq-calm .loot-prize.holo{animation:none}
+@media (prefers-reduced-motion: reduce){.loot-box.shake,.loot-card.holo,.loot-prize,.loot-prize.holo{animation:none}}
+/* ---- HQ 2.5 prestige (ui/app/36-prestige.js) ---- */
+.pr-modal{width:min(520px,100%)}
+.pr-panel{display:grid;gap:10px}
+.pr-head{display:flex;align-items:center;gap:14px}
+.pr-stars{font-size:28px;font-weight:700;color:var(--gold);min-width:64px;text-align:center;padding:6px 10px;border:1px solid var(--gold);border-radius:var(--radius-sm);background:var(--goldbg)}
+.pr-lv{display:grid;gap:2px}
+.pr-lv b{font-size:18px}
+.pr-bar{height:8px;border-radius:999px;background:var(--panel);border:1px solid var(--line);overflow:hidden}
+.pr-bar i{display:block;height:100%;background:var(--gold);transition:width var(--t-med) var(--ease)}
+.pr-how{margin:0;color:var(--muted)}
+.pr-rewards{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.pr-rewards li{font-size:13px;color:var(--faint);padding:3px 8px;border:1px dashed var(--line);border-radius:6px}
+.pr-rewards li.got{color:var(--ink);border-style:solid;border-color:var(--gold);background:var(--goldbg)}
+.pr-claim,.pr-open{justify-self:start}
+.pr-confirm{border:1px solid var(--gold);background:var(--goldbg);border-radius:var(--radius-sm);padding:10px;display:grid;gap:8px}
+.pr-confirm p{margin:0}
+.pr-btns{display:flex;justify-content:flex-end;gap:8px}
+.pr-tcard{display:grid;gap:6px}
+.pr-chip{justify-self:start;border-color:var(--gold);background:var(--goldbg)}
+html.hq-calm .pr-bar i{transition:none}
+@media (prefers-reduced-motion: reduce){ .pr-bar i{transition:none} }
+/* ---------- HQ 2.5: world boss (ui/app/33-boss.js) ---------- */
+.boss-card{display:grid;gap:10px}
+.boss-head{display:flex;gap:14px;align-items:center}
+.boss-art{flex:none;width:96px;height:96px;display:grid;place-items:center;border-radius:var(--radius);background:var(--panel2);border:1px solid var(--line);overflow:hidden}
+.boss-art img,.boss-art svg{max-width:100%;max-height:100%}
+.boss-id{min-width:0;display:grid;gap:3px}
+.boss-week{color:var(--muted);font-size:12px}
+.boss-name{margin:0;font-size:20px}
+.boss-types{display:flex;gap:4px;flex-wrap:wrap}
+.boss-type{font-size:11px;font-weight:650;padding:1px 8px;border-radius:999px;color:var(--ink);border:1px solid var(--line);
+  background:color-mix(in srgb,hsl(var(--boss-hue,220) 60% 50%) 30%,var(--panel2))}
+.boss-hp{position:relative;height:14px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);overflow:hidden}
+.boss-hp-fill{display:block;height:100%;background:var(--need);transition:width .6s var(--ease)}
+.boss-fight .boss-hp-fill{background:var(--warn);animation:boss-pulse 1.6s var(--ease) infinite}
+.boss-down .boss-hp-fill{background:var(--faint)}
+.boss-hp-mark{position:absolute;top:0;bottom:0;width:2px;background:var(--ink);opacity:.45}
+.boss-hp-num{font:600 12.5px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.boss-phase{margin:0;font-size:13.5px}
+.boss-fight .boss-phase{color:var(--warn);font-weight:600}
+.boss-down .boss-phase{color:var(--good);font-weight:600}
+.boss-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.hbtn.boss-go{background:var(--brand);border-color:var(--brand);color:var(--on-brand);font-weight:650}
+.hbtn.boss-go:hover{background:var(--brand2);border-color:var(--brand2)}
+.hbtn.boss-go:disabled{opacity:.5;cursor:not-allowed}
+.boss-top{margin:0;padding-left:22px;display:grid;gap:3px}
+.boss-top li{display:flex;justify-content:space-between;gap:10px;align-items:center}
+.boss-dmg{font:600 12.5px var(--mono);font-variant-numeric:tabular-nums;color:var(--muted)}
+.boss-last{font-size:12.5px;margin:0}
+.boss-how summary{cursor:pointer;font-weight:600;font-size:13px}
+.boss-how p{margin:6px 0 0;font-size:12.5px;color:var(--muted)}
+.boss-pick{display:grid;gap:10px}
+.boss-team{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
+.boss-mon{display:grid;justify-items:center;gap:2px;padding:6px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--panel2);text-align:center;font-size:12.5px}
+.boss-mon .pkb-spr{position:static;width:64px;height:64px;display:grid;place-items:center;overflow:hidden}
+.boss-mon .pkb-spr img{max-width:64px;max-height:64px;width:auto !important}
+.boss-result{display:grid;gap:6px}
+.boss-result h3{margin:0}
+.boss-back{z-index:79}
+.boss-modal{width:min(760px,100%)}
+.boss-badges{display:grid;gap:6px}
+.boss-slayer{border-color:var(--gold);background:var(--goldbg);color:var(--ink)}
+.boss-open{justify-self:start}
+@keyframes boss-pulse{50%{opacity:.6}}
+html.hq-calm .boss-fight .boss-hp-fill{animation:none}
+html.hq-calm .boss-hp-fill{transition:none}
+@media (prefers-reduced-motion: reduce){ .boss-fight .boss-hp-fill{animation:none} .boss-hp-fill{transition:none} }

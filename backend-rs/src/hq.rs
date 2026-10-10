@@ -65,6 +65,14 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("d-gnomes", "decor", "gnomes"),
     ("d-fireworks", "decor", "fireworks"),
     ("d-neon", "decor", "neon"),
+    // 2.5 grant-only (loot, prestige)
+    ("k-prism", "kart", "#b388ff"),
+    ("r-shadow", "runner", "#3a3550"),
+    ("g-plasma", "blaster", "#7df9ff"),
+    ("b-pokeball", "ball", "#e3350d"),
+    ("f-holo", "frame", "#a0f0ff"),
+    ("f-star", "frame", "#f5d76e"),
+    ("d-crown", "decor", "crown"),
 ];
 
 /// Every route here needs a paired device; `main.rs` wraps the whole guarded

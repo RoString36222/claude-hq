@@ -44,6 +44,8 @@ function hqApi(){
     cityReturn: function(){ return HQ_CITY.back; },
     visit: function(uid){ hqVisit(uid, {from:"city"}); },
     frame: function(){ return (window.HQ_MYCOS || {}).frame; },
+    // HQ 2.5 prestige stars: extra floors on YOUR building only (visits pass no prestige)
+    prestige: function(){ return typeof prestigeStars==="function" ? prestigeStars() : 0; },
     onWorld: function(name){ HQ3D.world = name; hqRenderWhere(); },
     announce: function(t){ if(typeof announce==="function") announce(t); }
   };

@@ -19,7 +19,12 @@
 //!
 //! The arena is `backend/app/fps_map.json`, embedded at build time with
 //! `include_str!` -- the file the Python reads (a byte copy of
-//! games/fps/map.json).
+//! games/fps/map.json). HQ 2.5: a host may instead start a match on a map made
+//! in the Map Editor; it arrives inline on the start op, is checked by
+//! [`validate_custom`], and the room holds it as `Fps::map` (an `Arc<Map>`)
+//! until a built-in start or the room empties. Its id is the content key
+//! (`c-` + 12 hex), which the done event carries as `map` so results.rs can
+//! keep a board per user map.
 //!
 //! Units on the wire: x, y, z in centimetres, yaw and pitch in hundredths of a
 //! degree, the sender's clock in centiseconds (q).
@@ -122,6 +127,7 @@ pub const MAP_JSON: &str = include_str!("../../backend/app/fps_map.json");
 
 pub type Box3 = [f64; 6];
 
+#[derive(Debug)]
 pub struct Pickup {
     #[allow(dead_code)] // mirrors the map JSON; read by tests and the client
     pub id: String,
@@ -129,6 +135,7 @@ pub struct Pickup {
     pub at: [f64; 3],
 }
 
+#[derive(Debug)]
 pub struct Map {
     pub id: String,
     pub bounds: Box3,
@@ -167,9 +174,232 @@ pub fn compile_map(d: &Value) -> Result<Map, String> {
     })
 }
 
-pub static MAP: LazyLock<Map> = LazyLock::new(|| {
-    compile_map(&serde_json::from_str(MAP_JSON).expect("fps_map.json parses")).expect("fps_map.json compiles")
+/// The built-in arena (the courtyard). Shared: every room that is not playing a
+/// user-made map holds a clone of this Arc in [`Fps::map`].
+pub static MAP: LazyLock<Arc<Map>> = LazyLock::new(|| {
+    Arc::new(compile_map(&serde_json::from_str(MAP_JSON).expect("fps_map.json parses")).expect("fps_map.json compiles"))
 });
+
+
+// ------------------------------------------------------ user-made maps --
+// HQ 2.5: a host can start a match on a map made in the Map Editor
+// (games/mapedit.js). It arrives inline on the start op as a MapDoc
+// {"kind":"fps","v":1,"name":..,"data":{bounds, theme, boxes, spawns, pickups}},
+// is checked here without a single panic on hostile input, and is held by the
+// room as an `Arc<Map>` for exactly as long as the room plays it (never leaked).
+
+/// The box kinds the client knows how to draw (games/fps.js KIND).
+pub const BOX_KINDS: [&str; 6] = ["floor", "wall", "low", "block", "step", "crate"];
+pub const MAX_BOXES: usize = 96;
+pub const MIN_SPAWNS: usize = 8;
+pub const MAX_SPAWNS: usize = 16;
+pub const MAX_PICKUPS: usize = 16;
+/// Every coordinate of a user map lies within +-COORD_MAX metres.
+pub const COORD_MAX: f64 = 200.0;
+/// The canonical data, serialised, may be at most this many bytes.
+pub const MAX_DATA_BYTES: usize = 12 * 1024;
+pub const NAME_MAX: usize = 32;
+
+/// A user-made map, validated: the compiled geometry (its id is the content
+/// key), the display name and the canonical data that view events carry.
+#[derive(Debug, Clone)]
+pub struct Custom {
+    pub map: Arc<Map>,
+    pub name: String,
+    pub data: Value,
+}
+
+fn r2(n: f64) -> f64 {
+    let r = (n * 100.0).round() / 100.0;
+    if r == 0.0 { 0.0 } else { r } // no "-0.0" on the wire
+}
+
+/// A canonical number: an integer when it is whole, else the 0.01-rounded float.
+fn num_json(n: f64) -> Value {
+    if n.fract() == 0.0 && n.abs() < 1e9 { json!(n as i64) } else { json!(n) }
+}
+
+/// One finite JSON number (not a bool, not a string) within +-COORD_MAX, rounded to 0.01.
+fn coord(v: Option<&Value>, what: &str) -> Result<f64, String> {
+    let f = v.and_then(Value::as_number).and_then(|n| n.as_f64())
+        .ok_or_else(|| format!("{what} must be a number"))?;
+    if !f.is_finite() || f.abs() > COORD_MAX {
+        return Err(format!("{what} is out of range"));
+    }
+    Ok(r2(f))
+}
+
+fn coords<const N: usize>(v: &Value, what: &str) -> Result<[f64; N], String> {
+    let a = v.as_array().filter(|a| a.len() == N).ok_or_else(|| format!("{what} needs {N} numbers"))?;
+    let mut out = [0.0; N];
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = coord(a.get(i), what)?;
+    }
+    Ok(out)
+}
+
+fn hex_colour(v: Option<&Value>, what: &str) -> Result<String, String> {
+    let s = v.and_then(Value::as_str).ok_or_else(|| format!("theme {what} must be a colour"))?;
+    let ok = s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit());
+    if !ok {
+        return Err(format!("theme {what} must be #rrggbb"));
+    }
+    Ok(s.to_ascii_lowercase())
+}
+
+fn inside(b: &Box3, x: f64, y: f64, z: f64) -> bool {
+    b[0] <= x && x <= b[3] && b[1] <= y && y <= b[4] && b[2] <= z && z <= b[5]
+}
+
+/// Validate a user map's `data` and return it CANONICAL (keys in order, unknown
+/// keys dropped, numbers rounded to 0.01, yaw to a whole degree in 0..360, hex
+/// lowercased) together with its compiled geometry. Never panics.
+fn compile_custom(data: &Value) -> Result<(Map, Value), String> {
+    let d = data.as_object().ok_or("the map data must be an object")?;
+    let bounds = coords::<6>(d.get("bounds").unwrap_or(&Value::Null), "bounds")?;
+    if !(bounds[0] < bounds[3] && bounds[1] < bounds[4] && bounds[2] < bounds[5]) {
+        return Err("the bounds have no volume".into());
+    }
+    let th = d.get("theme").and_then(Value::as_object).ok_or("theme must be an object")?;
+    let (sky, fog, ground) = (hex_colour(th.get("sky"), "sky")?, hex_colour(th.get("fog"), "fog")?,
+                              hex_colour(th.get("ground"), "ground")?);
+
+    let raw_boxes = d.get("boxes").and_then(Value::as_array).ok_or("boxes must be a list")?;
+    if raw_boxes.is_empty() {
+        return Err("a map needs at least one box".into());
+    }
+    if raw_boxes.len() > MAX_BOXES {
+        return Err(format!("too many boxes (at most {MAX_BOXES})"));
+    }
+    let mut boxes: Vec<Box3> = Vec::with_capacity(raw_boxes.len());
+    let mut box_json = Vec::with_capacity(raw_boxes.len());
+    for (i, rb) in raw_boxes.iter().enumerate() {
+        let what = format!("box {}", i + 1);
+        let a = rb.as_array().filter(|a| a.len() == 7).ok_or_else(|| format!("{what} needs 6 numbers and a kind"))?;
+        let mut b = [0.0; 6];
+        for (k, o) in b.iter_mut().enumerate() {
+            *o = coord(a.get(k), &what)?;
+        }
+        let kind = a.get(6).and_then(Value::as_str).filter(|k| BOX_KINDS.contains(k))
+            .ok_or_else(|| format!("{what} has an unknown kind"))?;
+        if !(b[0] < b[3] && b[1] < b[4] && b[2] < b[5]) {
+            return Err(format!("{what} has no volume"));
+        }
+        if !(inside(&bounds, b[0], b[1], b[2]) && inside(&bounds, b[3], b[4], b[5])) {
+            return Err(format!("{what} is outside the bounds"));
+        }
+        boxes.push(b);
+        let mut row: Vec<Value> = b.iter().map(|n| num_json(*n)).collect();
+        row.push(json!(kind));
+        box_json.push(Value::Array(row));
+    }
+    let mut map = Map { id: String::new(), bounds, boxes, spawns: Vec::new(), pickups: Vec::new(), targets: Vec::new() };
+
+    let raw_spawns = d.get("spawns").and_then(Value::as_array).ok_or("spawns must be a list")?;
+    let n = raw_spawns.len();
+    if !(MIN_SPAWNS..=MAX_SPAWNS).contains(&n) || n % 5 == 0 {
+        return Err(format!("a map needs {MIN_SPAWNS}-{MAX_SPAWNS} spawns, and not 10 or 15"));
+    }
+    let mut spawn_json = Vec::with_capacity(n);
+    for (i, rs) in raw_spawns.iter().enumerate() {
+        let what = format!("spawn {}", i + 1);
+        let a = rs.as_array().filter(|a| a.len() == 4).ok_or_else(|| format!("{what} needs x, y, z and a yaw"))?;
+        let (x, y, z) = (coord(a.first(), &what)?, coord(a.get(1), &what)?, coord(a.get(2), &what)?);
+        let yaw = a.get(3).and_then(Value::as_number).and_then(|v| v.as_f64()).filter(|f| f.is_finite() && f.abs() <= 3600.0)
+            .ok_or_else(|| format!("{what} needs a yaw in degrees"))?;
+        let yaw = (yaw.round() as i64).rem_euclid(360) as f64;
+        if !inside(&bounds, x, y, z) || y + H > bounds[4] {
+            return Err(format!("{what} is outside the bounds"));
+        }
+        if overlaps(&map, x, y, z, 0.0).is_some() {
+            return Err(format!("{what} is inside a wall"));
+        }
+        if top_under(&map, x, y - 0.05, z).map(|t| (t - y).abs() > 1e-6).unwrap_or(true) {
+            return Err(format!("{what} is not standing on anything"));
+        }
+        map.spawns.push([x, y, z, yaw]);
+        spawn_json.push(json!([num_json(x), num_json(y), num_json(z), num_json(yaw)]));
+    }
+
+    let raw_picks = match d.get("pickups") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(v) => v.as_array().ok_or("pickups must be a list")?.clone(),
+    };
+    if raw_picks.len() > MAX_PICKUPS {
+        return Err(format!("too many pickups (at most {MAX_PICKUPS})"));
+    }
+    let mut pick_json = Vec::with_capacity(raw_picks.len());
+    for (i, rp) in raw_picks.iter().enumerate() {
+        let what = format!("pickup {}", i + 1);
+        let o = rp.as_object().ok_or_else(|| format!("{what} must be an object"))?;
+        let id = o.get("id").and_then(Value::as_str)
+            .filter(|s| s.strip_prefix('p').and_then(|n| n.parse::<usize>().ok())
+                .map(|k| (1..=MAX_PICKUPS).contains(&k) && *s == format!("p{k}")).unwrap_or(false))
+            .ok_or_else(|| format!("{what} needs an id p1..p16"))?;
+        if map.pickups.iter().any(|p| p.id == id) {
+            return Err(format!("{what} repeats the id {id}"));
+        }
+        let kind = o.get("kind").and_then(Value::as_str).filter(|k| *k == "health" || *k == "ammo")
+            .ok_or_else(|| format!("{what} must be health or ammo"))?;
+        let at = coords::<3>(o.get("at").unwrap_or(&Value::Null), &what)?;
+        if !inside(&bounds, at[0], at[1], at[2]) {
+            return Err(format!("{what} is outside the bounds"));
+        }
+        if overlaps(&map, at[0], at[1], at[2], 0.0).is_some() {
+            return Err(format!("{what} is inside a wall"));
+        }
+        map.pickups.push(Pickup { id: id.to_string(), health: kind == "health", at });
+        pick_json.push(json!({"id": id, "kind": kind, "at": [num_json(at[0]), num_json(at[1]), num_json(at[2])]}));
+    }
+
+    let canon = json!({
+        "bounds": bounds.iter().map(|n| num_json(*n)).collect::<Vec<_>>(),
+        "theme": {"sky": sky, "fog": fog, "ground": ground},
+        "boxes": box_json,
+        "spawns": spawn_json,
+        "pickups": pick_json,
+    });
+    if canon.to_string().len() > MAX_DATA_BYTES {
+        return Err("the map is too big".into());
+    }
+    Ok((map, canon))
+}
+
+/// The canonical form of a user map's data (global contract section 7), or why
+/// it is refused. The map gallery stores exactly this.
+#[allow(dead_code)] // also the gallery's validator (maps.rs)
+pub fn validate_custom(data: &Value) -> Result<Value, String> {
+    compile_custom(data).map(|(_, canon)| canon)
+}
+
+/// A MapDoc's name: 1-32 printable characters, trimmed, no angle brackets, no links.
+pub fn clean_name(v: Option<&Value>) -> Result<String, String> {
+    let s = v.and_then(Value::as_str).ok_or("the map needs a name")?;
+    let t = s.trim();
+    let n = t.chars().count();
+    if n == 0 || n > NAME_MAX {
+        return Err(format!("the name must be 1-{NAME_MAX} characters"));
+    }
+    if t.chars().any(|c| !crate::rooms::py_printable(c) || c == '<' || c == '>') || t.to_ascii_lowercase().contains("http") {
+        return Err("the name has characters a map name can't use".into());
+    }
+    Ok(t.to_string())
+}
+
+/// A whole MapDoc from a start op: {"kind":"fps","v":1,"name","data"}.
+pub fn custom_from_doc(doc: &Value) -> Result<Custom, String> {
+    let o = doc.as_object().ok_or("no map was sent")?;
+    if o.get("kind").and_then(Value::as_str) != Some("fps") {
+        return Err("that is not a Blaster map".into());
+    }
+    if o.get("v").and_then(Value::as_i64) != Some(1) {
+        return Err("this map was made by a newer editor".into());
+    }
+    let name = clean_name(o.get("name"))?;
+    let (mut map, data) = compile_custom(o.get("data").unwrap_or(&Value::Null))?;
+    map.id = crate::mapkey::content_key("fps", &data);
+    Ok(Custom { map: Arc::new(map), name, data })
+}
 
 // ------------------------------------------------------- shared geometry --
 /// Index of the first solid box a player standing at (x, y, z) is inside.
@@ -537,6 +767,10 @@ pub struct Fps {
     pub pending: Vec<(&'static str, Value)>,
     pub k: i64,
     pub sent: VecDeque<(i64, f64)>,
+    /// The arena this room plays: the built-in courtyard, or a user map.
+    pub map: Arc<Map>,
+    /// (name, canonical data) while a user map is on; None on the built-in one.
+    pub custom: Option<(String, Value)>,
 }
 
 impl Default for Fps {
@@ -550,8 +784,28 @@ impl Fps {
         Self {
             phase: Phase::Idle, minutes: 5, limit: 20, go_at: 0.0, ends_at: 0.0, players: Vec::new(),
             chars: BTreeMap::new(), results: None, items: Vec::new(), dirty: Vec::new(), shots: Vec::new(),
-            pending: Vec::new(), k: 0, sent: VecDeque::new(),
+            pending: Vec::new(), k: 0, sent: VecDeque::new(), map: MAP.clone(), custom: None,
         }
+    }
+
+    /// Pick the arena for the next match: a user map, or None for the built-in
+    /// one. Refused (false) while a match is on, so a running match never
+    /// changes ground under anyone.
+    pub fn set_map(&mut self, custom: Option<Custom>) -> bool {
+        if self.running() {
+            return false;
+        }
+        match custom {
+            Some(c) => {
+                self.map = c.map;
+                self.custom = Some((c.name, c.data));
+            }
+            None => {
+                self.map = MAP.clone();
+                self.custom = None;
+            }
+        }
+        true
     }
 
     pub fn player(&self, uid: &str) -> Option<&Player> {
@@ -589,11 +843,17 @@ impl Fps {
             "user": p.user, "slot": p.slot, "char": p.ch, "kills": p.kills, "deaths": p.deaths, "hp": p.hp,
             "dead": p.dead, "away": p.away.is_some(), "gone": p.gone, "w": p.w, "x": cm(p.x), "y": cm(p.y),
             "z": cm(p.z), "r": p.r, "e": p.life})).collect();
-        json!({"map": MAP.id, "phase": self.phase.as_str(), "minutes": self.minutes, "limit": self.limit,
+        let mut v = json!({"map": self.map.id, "phase": self.phase.as_str(), "minutes": self.minutes, "limit": self.limit,
                "goInMs": if self.phase == Phase::Warmup { (((self.go_at - t) * 1000.0) as i64).max(0) } else { 0 },
                "msLeft": self.ms_left(t), "players": players,
                "items": self.items.iter().map(|a| if a.is_none() { 1 } else { 0 }).collect::<Vec<_>>(),
-               "results": self.results, "chars": self.chars})
+               "results": self.results, "chars": self.chars});
+        // A user map travels in the view (and so in the start event) only --
+        // never in a snapshot -- so a late joiner or a rejoin can build it.
+        if let Some((name, data)) = &self.custom {
+            v["custom"] = json!({"name": name, "data": data});
+        }
+        v
     }
 
     pub fn order(&self) -> Vec<String> {
@@ -628,15 +888,15 @@ impl Fps {
         self.go_at = t + COUNTDOWN;
         self.results = None;
         self.players = Vec::new();
-        self.items = vec![None; MAP.pickups.len()];
+        self.items = vec![None; self.map.pickups.len()];
         self.shots.clear();
         self.pending.clear();
         self.sent.clear();
-        let n = MAP.spawns.len();
+        let n = self.map.spawns.len();
         for (k, (uid, pubv)) in members.iter().take(MAX_PLAYERS).enumerate() {
             let ch = self.chars.get(uid).copied().unwrap_or(k as i64 % CHARS);
             let mut p = Player::new(pubv.clone(), k as i64, ch, t);
-            p.place(MAP.spawns[(k * 5) % n], t);
+            p.place(self.map.spawns[(k * 5) % n], t);
             self.players.push((uid.clone(), p));
         }
         self.dirty = self.players.iter().map(|(u, _)| u.clone()).collect();
@@ -692,7 +952,7 @@ impl Fps {
         let ch = self.chars.get(uid).copied().unwrap_or(slot % CHARS);
         let mut p = Player::new(pubv, slot, ch, t);
         if phase == Phase::Warmup {
-            p.place(MAP.spawns[(slot as usize * 5) % MAP.spawns.len()], t);
+            p.place(self.map.spawns[(slot as usize * 5) % self.map.spawns.len()], t);
         } else {
             p.dead = true;
             p.respawn_at = t;
@@ -787,13 +1047,13 @@ impl Fps {
             }
         };
         let (xm, ym, zm) = (x / 100.0, y / 100.0, z / 100.0);
-        let b = MAP.bounds;
+        let b = self.map.bounds;
         let mut ok = dt >= 0.0 && b[0] <= xm && xm <= b[3] && b[1] <= ym && ym <= b[4] && b[2] <= zm && zm <= b[5];
         if ok {
             let across = (xm - p.x).hypot(zm - p.z);
             let dy = ym - p.y;
             ok = across <= MAX_SPEED * dt + SLACK && dy <= JUMP_V * dt + STEP_H + SLACK
-                && -dy <= FALL_MAX * dt + SLACK && overlaps(&MAP, xm, ym, zm, SHRINK).is_none();
+                && -dy <= FALL_MAX * dt + SLACK && overlaps(&self.map, xm, ym, zm, SHRINK).is_none();
         }
         let clock = match (q, p.off) {
             (Some(q), Some(off)) => q as f64 / 100.0 + off,
@@ -801,7 +1061,7 @@ impl Fps {
         };
         let mut grounded = false;
         if ok {
-            grounded = overlaps(&MAP, xm, ym - 0.1, zm, 0.0).is_some();
+            grounded = overlaps(&self.map, xm, ym - 0.1, zm, 0.0).is_some();
             if !grounded && clock - p.air_at > MAX_AIR {
                 ok = false;
             }
@@ -840,7 +1100,8 @@ impl Fps {
     }
 
     fn pickups(&mut self, i: usize, t: f64) {
-        for (j, pk) in MAP.pickups.iter().enumerate() {
+        let map = self.map.clone();
+        for (j, pk) in map.pickups.iter().enumerate() {
             if self.items[j].is_some() {
                 continue;
             }
@@ -994,7 +1255,7 @@ impl Fps {
         let t_fire = t.min((t - FIRE_LATE).max(q as f64 / 100.0 + p.off.unwrap_or(t - q as f64 / 100.0)));
         let ip = as_num(msg.get("ip"), 0.0, 1e6).unwrap_or(0.0);
         let t_view = (t_fire - p.rtt.min(RTT_CAP) - (ip / 1000.0).min(IP_CAP)).max(t - HISTORY);
-        let reach = ray_map(&MAP, o, d, wp.range);
+        let reach = ray_map(&self.map, o, d, wp.range);
         (Some((w, o, d, reach, protect_ended)), None, t_view)
     }
 
@@ -1055,12 +1316,12 @@ impl Fps {
     pub fn spawn_for(&self, uid: &str) -> usize {
         let foes: Vec<[f64; 3]> = self.players.iter()
             .filter(|(u, v)| u != uid && !v.dead && !v.gone).map(|(_, v)| [v.x, v.y, v.z]).collect();
-        let n = MAP.spawns.len();
+        let n = self.map.spawns.len();
         let start = self.player(uid).map(|p| p.slot as usize * 5).unwrap_or(0);
         let (mut best, mut best_d) = (0usize, -1.0f64);
         for j in 0..n {
             let i = (start + j) % n;
-            let s = MAP.spawns[i];
+            let s = self.map.spawns[i];
             let dmin = foes.iter().map(|f| dist3([s[0], s[1], s[2]], *f)).fold(1e9, f64::min);
             if dmin > best_d + 1e-9 {
                 best = i;
@@ -1104,7 +1365,7 @@ impl Fps {
                 continue;
             }
             if p.dead && t >= p.respawn_at {
-                let s = MAP.spawns[self.spawn_for(&uid)];
+                let s = self.map.spawns[self.spawn_for(&uid)];
                 let p = &mut self.players[i].1;
                 p.place(s, t);
                 let ev = json!({"user": uid, "x": cm(p.x), "y": cm(p.y), "z": cm(p.z), "r": p.r, "e": p.life});
@@ -1142,7 +1403,7 @@ impl Fps {
             if !self.shots.is_empty() {
                 evs.push(("snap", self.snap(t)));
             }
-            evs.push(("done", json!({"results": self.results})));
+            evs.push(("done", json!({"map": self.map.id, "results": self.results})));
             return evs;
         }
         if send && (!self.dirty.is_empty() || !self.shots.is_empty()) {
@@ -1343,6 +1604,20 @@ impl FpsHub {
                 let fm = &mut v.fps;
                 if op == "start" {
                     let null = Value::Null;
+                    // HQ 2.5: map "custom" carries a MapDoc made in the Map Editor;
+                    // anything else is the built-in courtyard.
+                    let custom = if msg.get("map").and_then(Value::as_str) == Some("custom") {
+                        match custom_from_doc(msg.get("custom").unwrap_or(&null)) {
+                            Ok(c) => Some(c),
+                            Err(e) => {
+                                out.err(conn, &format!("bad map: {e}"));
+                                return;
+                            }
+                        }
+                    } else {
+                        None
+                    };
+                    fm.set_map(custom);
                     let mut err = fm.start(&v.lobby.members, msg.get("minutes").unwrap_or(&null),
                                            msg.get("kills").unwrap_or(&null), t);
                     if err.is_none() && !self.tick_on(room_id) {

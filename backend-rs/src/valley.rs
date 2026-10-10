@@ -105,6 +105,7 @@
 // The nine engines. Each is one file and touches nothing outside it; the three
 // hooks below, the party short-circuit, the farm tail and golf's two grace
 // questions are the whole of their contact with this file.
+pub mod bowling;
 pub mod duel;
 pub mod farm;
 pub mod golf;
@@ -114,6 +115,7 @@ pub mod party;
 pub mod pokebattle;
 pub mod pond;
 pub mod race;
+pub mod td;
 pub mod typerace;
 
 use crate::realtime::{Clock, Registry, Ticker};
@@ -133,14 +135,17 @@ use std::sync::{Arc, Mutex};
 /// load-bearing: [`ValleyHub::on_disconnect`] leaves the lobbies in it, and
 /// `protocol::arena_info` emits the welcome's `games` keys in it (visible only
 /// because serde_json's `preserve_order` is on, Cargo.toml:16).
-pub const GAMES: [&str; 11] =
-    ["pond", "race", "duel", "mines", "farm", "golf", "kart", "plat", "fps", "hq", "type"];
+pub const GAMES: [&str; 13] = [
+    "pond", "race", "duel", "mines", "farm", "golf", "kart", "plat", "fps", "hq", "type", "td",
+    "bowl",
+];
 
 /// Python's `GAME_NAMES` (valley.py:73), in [`GAMES`] order. The human name in
 /// every `lobby` and `invite` event.
-pub const GAME_NAMES: [&str; 11] = [
+pub const GAME_NAMES: [&str; 13] = [
     "Fishing Pond", "Puzzle Race", "Creature Duel", "Co-op Mines", "Shared Farm", "Mini Golf",
-    "Kart Racing", "Platformer Rush", "Blaster Arena", "HQ", "Code Typing Race",
+    "Kart Racing", "Platformer Rush", "Blaster Arena", "HQ", "Code Typing Race", "Tower Defense",
+    "Bowling",
 ];
 
 /// The eight games of [`GAMES`] this hub routes. kart, plat and fps keep their
@@ -155,7 +160,8 @@ pub const GAME_NAMES: [&str; 11] = [
 /// every other check (valley.py:1000), so it needs no lobby and no join. Until
 /// `valley/party.rs` lands, a party frame falls through to "unknown game" --
 /// which is what the Rust Arena answers today. See [`ValleyHub::handle`] step 2.
-pub const OURS: [&str; 8] = ["pond", "race", "duel", "mines", "farm", "golf", "hq", "type"];
+pub const OURS: [&str; 10] =
+    ["pond", "race", "duel", "mines", "farm", "golf", "hq", "type", "td", "bowl"];
 
 /// Index into [`RoomValley::lobbies`] for each game. Pinned against
 /// [`GAMES`] by a test, so they cannot drift.
@@ -184,6 +190,9 @@ pub const I_FPS: usize = 8;
 pub const I_HQ: usize = 9;
 #[allow(dead_code)]
 pub const I_TYPE: usize = 10;
+pub const I_TD: usize = 11;
+#[allow(dead_code)]
+pub const I_BOWL: usize = 12;
 
 /// [`GAMES`] position of `g`, or None for a game this Valley does not define --
 /// Python's `g not in GAMES` test.
@@ -234,6 +243,10 @@ pub const HQ_MAX_CITY: usize = 40;
 pub fn cap(g: &str, room_id: &str) -> usize {
     if g == "hq" {
         if room_id == HQ_CITY_ROOM { HQ_MAX_CITY } else { HQ_MAX_PEOPLE }
+    } else if g == td::GAME {
+        td::MAX_PLAYERS
+    } else if g == bowling::GAME {
+        8
     } else {
         MAX_LOBBY
     }
@@ -791,7 +804,7 @@ pub struct RoomValley {
     /// future engine that needs its own room id will look here first.
     #[allow(dead_code)]
     pub room_id: String,
-    pub lobbies: [Lobby; 11],
+    pub lobbies: [Lobby; 13],
     // Python's `RoomValley.__init__` order (valley.py:305-314), minus kart,
     // plat and fps, which their own hubs still hold.
     pub pond: pond::Pond,
@@ -801,6 +814,8 @@ pub struct RoomValley {
     pub golf: golf::Golf,
     pub hq: hq::Hq,
     pub type_race: typerace::TypeRace,
+    pub td: td::Td,
+    pub bowl: bowling::Bowling,
 }
 
 impl RoomValley {
@@ -815,6 +830,8 @@ impl RoomValley {
             golf: golf::Golf::default(),
             hq: hq::Hq::default(),
             type_race: typerace::TypeRace::default(),
+            td: td::Td::default(),
+            bowl: bowling::Bowling::default(),
         }
     }
 
@@ -1263,6 +1280,8 @@ impl ValleyHub {
             golf::GAME => golf::joined(v, cx, out),
             hq::GAME => hq::joined(v, cx, out),
             typerace::GAME => typerace::joined(v, cx, out),
+            td::GAME => td::joined(v, cx, out),
+            bowling::GAME => bowling::joined(v, cx, out),
             _ => {}
         }
     }
@@ -1287,6 +1306,8 @@ impl ValleyHub {
             golf::GAME => golf::op(v, cx, op, msg, out),
             hq::GAME => hq::op(v, cx, op, msg, out),
             typerace::GAME => typerace::op(v, cx, op, msg, out),
+            td::GAME => td::op(v, cx, op, msg, out),
+            bowling::GAME => bowling::op(v, cx, op, msg, out),
             _ => {}
         }
     }
@@ -1296,7 +1317,12 @@ impl ValleyHub {
     /// [`ValleyHub::recheck`] because that is where Python asks -- not a hook
     /// every engine is offered and one answers. valley/golf.rs fills it in.
     fn golf_grace_left(v: &RoomValley, t: f64) -> Option<f64> {
-        golf::grace_left(v, t)
+        // HQ 2.5: bowling holds a dropped bowler's place on the same one-shot
+        // timer, so the recheck lands at the sooner of the two holds.
+        match (golf::grace_left(v, t), bowling::grace_left(v, t)) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
 
     /// The body of Python's `golf_recheck` that runs under the lock
@@ -1332,11 +1358,18 @@ impl ValleyHub {
     pub async fn recheck(&self, room_id: &str) {
         let t = self.now();
         let mut out = Out::new("golf");
+        let mut bowl = Out::new(bowling::GAME);
         let left = {
             let mut st = self.inner.state.lock().unwrap();
             let Some(v) = st.get_mut(room_id) else { return }; // Python's `if v is None`
-            Self::golf_recheck_step(v, &mut out, t)
+            let g = Self::golf_recheck_step(v, &mut out, t);
+            let b = bowling::recheck_step(v, &mut bowl, t);
+            match (g, b) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            }
         };
+        out.items.extend(bowl.items);
         if let Some(d) = left {
             self.arm_recheck(room_id, d);
         }
@@ -1541,6 +1574,8 @@ fn engine_dropped(
         golf::GAME => golf::dropped(v, uid, who, out, t, disconnected),
         hq::GAME => hq::dropped(v, uid, who, out, t, disconnected),
         typerace::GAME => typerace::dropped(v, uid, who, out, t, disconnected),
+        td::GAME => td::dropped(v, uid, who, out, t, disconnected),
+        bowling::GAME => bowling::dropped(v, uid, who, out, t, disconnected),
         _ => Left::Notice,
     }
 }
@@ -1718,7 +1753,11 @@ mod tests {
         // valley.py:59 and :73, byte for byte and in order.
         assert_eq!(GAMES,
                    ["pond", "race", "duel", "mines", "farm", "golf", "kart", "plat", "fps", "hq",
-                    "type"]);
+                    "type", "td", "bowl"]);
+        assert_eq!(game_name("td"), "Tower Defense");
+        assert_eq!(game_name("bowl"), "Bowling");
+        assert_eq!(cap("td", "r"), 4);
+        assert_eq!(cap("bowl", "r"), 8);
         assert_eq!(game_name("pond"), "Fishing Pond");
         assert_eq!(game_name("race"), "Puzzle Race");
         assert_eq!(game_name("duel"), "Creature Duel");
@@ -1739,7 +1778,8 @@ mod tests {
     fn the_lobby_indexes_match_the_games_table() {
         for (i, g) in [(I_POND, "pond"), (I_RACE, "race"), (I_DUEL, "duel"), (I_MINES, "mines"),
                        (I_FARM, "farm"), (I_GOLF, "golf"), (I_KART, "kart"), (I_PLAT, "plat"),
-                       (I_FPS, "fps"), (I_HQ, "hq"), (I_TYPE, "type")] {
+                       (I_FPS, "fps"), (I_HQ, "hq"), (I_TYPE, "type"),
+                       (I_TD, "td"), (I_BOWL, "bowl")] {
             assert_eq!(GAMES[i], g);
             assert_eq!(game_index(g), Some(i));
         }

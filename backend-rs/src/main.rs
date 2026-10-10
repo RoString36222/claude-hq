@@ -5,19 +5,25 @@
 
 mod auth;
 mod boardstream;
+mod boss;
 mod cali;
 mod config;
 mod cosmetics;
 mod crews;
+mod cups;
 mod db;
 mod fps;
 mod hq;
 mod kart;
+mod loot;
+mod mapkey;
+mod maps;
 mod music;
 mod nudges;
 mod pantry;
 mod platformer;
 mod portraits;
+mod prestige;
 mod privrooms;
 mod progress;
 mod protocol;
@@ -29,8 +35,12 @@ mod schemas;
 mod scoring;
 mod server_stats;
 mod service;
+mod skills;
 mod sounds;
+#[cfg(test)]
+mod story_check;
 mod valley;
+mod weeks;
 
 use axum::{
     extract::{
@@ -855,18 +865,24 @@ async fn serve() -> anyhow::Result<()> {
         .route("/v1/me", get(me))
         .route("/v1/rooms", get(list_rooms))
         .route("/v1/auth/ticket", post(ticket))
+        .merge(boss::routes())
         .merge(cali::routes())
         .merge(cosmetics::routes())
         .merge(crews::routes())
+        .merge(cups::routes())
         .merge(hq::routes())
+        .merge(loot::routes())
+        .merge(maps::routes())
         .merge(music::routes())
         .merge(portraits::routes())
         .merge(nudges::routes())
         .merge(pantry::routes())
         .merge(privrooms::routes())
+        .merge(prestige::routes())
         .merge(progress::routes())
         .merge(quickplay::routes())
         .merge(server_stats::routes())
+        .merge(skills::routes())
         .merge(sounds::routes())
         .layer(middleware::from_fn_with_state(state.clone(), require_device));
 

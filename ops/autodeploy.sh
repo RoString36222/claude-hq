@@ -67,7 +67,10 @@ LOCAL=$(git rev-parse "${RELEASED:-HEAD}" 2>/dev/null || git rev-parse HEAD)
 
 if [ "$FIRST" = 1 ]; then
   log "new commits ${LOCAL:0:7} -> ${REMOTE:0:7}"
-  git log --oneline "$LOCAL..$REMOTE" | head -10 | while read -r line; do log "    $line"; done
+  # -n 10, not "| head -10": under pipefail, head closing the pipe kills git log (SIGPIPE,
+  # exit 141) and set -e then ends this script silently before it ever releases -- which
+  # is what left the Arena stuck whenever more than ten commits were waiting.
+  git log --oneline -n 10 "$LOCAL..$REMOTE" | while read -r line; do log "    $line"; done
 fi
 
 # Which Arena this ships is NOT decided here: release.sh reads it from

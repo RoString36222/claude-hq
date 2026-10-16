@@ -33,7 +33,7 @@ class UpdateTests(unittest.TestCase):
         self._saved = (dashboard.HERE, dashboard._restart_self)
         dashboard.HERE = self.mine
         self.restarts = []
-        dashboard._restart_self = lambda: self.restarts.append(1)
+        dashboard._restart_self = lambda binary=None: self.restarts.append(binary)
         dashboard._update_cache.update(at=0.0, data=None)
 
     def tearDown(self):
@@ -66,11 +66,12 @@ class UpdateTests(unittest.TestCase):
         code, resp = dashboard.update_and_restart()
         self.assertEqual(code, 200)
         self.assertTrue(resp["updated"] and resp["restarting"])
+        self.assertEqual((resp["server"], resp["rustError"]), ("python", "this copy has no dashboard-rs/"))
         with open(os.path.join(self.mine, "a.txt")) as f:
             self.assertEqual(f.read(), "second")
         import time
         time.sleep(1.3)                  # the restart fires on a 1s timer
-        self.assertEqual(self.restarts, [1])
+        self.assertEqual(self.restarts, [None])     # no dashboard-rs/ here: Python again
 
     def test_refuses_local_edits(self):
         self.push_upstream()
@@ -109,7 +110,7 @@ class UpdateTests(unittest.TestCase):
             self.assertEqual((resp["updated"], resp["restarting"]), (False, True))
             import time
             time.sleep(1.3)
-            self.assertEqual(self.restarts, [1])
+            self.assertEqual(self.restarts, [None])     # no dashboard-rs/ here: Python again
         finally:
             dashboard.BOOT_CODE_SIG = saved
 
@@ -123,3 +124,75 @@ class UpdateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RestartIntoRust(unittest.TestCase):
+    """The update button builds dashboard-rs/ and restarts into it; Python again if it can't."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._saved = (dashboard.HERE, os.environ.get("PATH"))
+        dashboard.HERE = self.tmp
+        self.rust = os.path.join(self.tmp, "dashboard-rs")
+        os.makedirs(self.rust)
+        with open(os.path.join(self.rust, "Cargo.toml"), "w") as f:
+            f.write("[package]\n")
+        self.bin = os.path.join(self.tmp, "bin")
+        os.makedirs(self.bin)
+        os.environ["PATH"] = self.bin + os.pathsep + "/usr/bin:/bin"
+
+    def tearDown(self):
+        dashboard.HERE, path = self._saved
+        os.environ["PATH"] = path
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def fake_cargo(self, script):
+        p = os.path.join(self.bin, "cargo")
+        with open(p, "w") as f:
+            f.write("#!/bin/sh\n" + script)
+        os.chmod(p, 0o755)
+
+    def test_builds_the_release_binary(self):
+        out = os.path.join(self.rust, "target", "release")
+        self.fake_cargo('echo "$@" > "%s/args"; mkdir -p "%s"; printf "#!/bin/sh\\n" > "%s/claudehq"; chmod +x "%s/claudehq"\n'
+                        % (self.tmp, out, out, out))
+        binary, why = dashboard.build_rust()
+        self.assertEqual((binary, why), (os.path.join(out, "claudehq"), None))
+        with open(os.path.join(self.tmp, "args")) as f:
+            self.assertTrue(f.read().startswith("build --release --locked --manifest-path "))
+
+    def test_a_failed_build_says_why(self):
+        self.fake_cargo('echo "error[E0308]: mismatched types" >&2; exit 101\n')
+        binary, why = dashboard.build_rust()
+        self.assertIsNone(binary)
+        self.assertIn("mismatched types", why)
+
+    def test_no_cargo(self):
+        saved = dashboard._cargo
+        dashboard._cargo = lambda: None
+        try:
+            self.assertEqual(dashboard.build_rust(), (None, "cargo is not installed (https://rustup.rs)"))
+        finally:
+            dashboard._cargo = saved
+
+    def test_restart_execs_the_rust_binary(self):
+        calls = []
+
+        class Exec(Exception):                                    # a real execv never returns
+            pass
+
+        def execv(path, argv):
+            calls.append((path, argv))
+            raise Exec()
+        saved = (dashboard.os.execv, dashboard.os.getppid, os.environ.pop("XPC_SERVICE_NAME", None))
+        dashboard.os.execv = execv
+        dashboard.os.getppid = lambda: 1                          # an orphan (nohup ... &) is not the LaunchAgent
+        try:
+            with self.assertRaises(Exec):
+                dashboard._restart_self("/x/claudehq")
+        finally:
+            dashboard.os.execv, dashboard.os.getppid = saved[:2]
+            if saved[2] is not None:
+                os.environ["XPC_SERVICE_NAME"] = saved[2]
+        self.assertEqual(calls, [("/x/claudehq", ["/x/claudehq"] + sys.argv[1:])])
+

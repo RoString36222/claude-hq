@@ -23,6 +23,10 @@ function updateWaitForRestart(){
       .catch(function(){ if(tries<90) setTimeout(poll, 1000); else { UPDATE.busy=false; updatePaint(); toast("⚠ Claude HQ didn’t come back. Start it again from a terminal.","ach"); } });
   })();
 }
+// The restart runs the Rust server (dashboard-rs/); say so when it had to stay on Python.
+function updateServerNote(j){
+  if(j && j.server==="python" && j.rustError) toast("⚠ Restarting on Python: "+j.rustError,"ach");
+}
 function updateRun(){
   if(UPDATE.busy) return;
   updateCheck(true).then(function(st){
@@ -33,7 +37,7 @@ function updateRun(){
       fetch("/api/update",{method:"POST",headers:{"Content-Type":"application/json","X-HQ-Token":CSRF},body:"{}"})
         .then(function(r){ return r.json(); })
         .then(function(j){ if(!j.restarting){ UPDATE.busy=false; updatePaint(); toast("⚠ "+(j.error||"Restart failed"),"ach"); return; }
-          toast("↻ Restarting Claude HQ…","level"); setTimeout(updateWaitForRestart, 2500); })
+          toast("↻ Restarting Claude HQ…","level"); updateServerNote(j); setTimeout(updateWaitForRestart, 2500); })
         .catch(function(){ UPDATE.busy=false; updatePaint(); toast("⚠ Restart request failed","ach"); });
       return;
     }
@@ -47,7 +51,7 @@ function updateRun(){
       .then(function(r){ return r.json().then(function(j){ return {ok:r.ok,j:j}; }); })
       .then(function(res){
         if(!res.ok || !res.j.updated){ UPDATE.busy=false; updatePaint(); toast("⚠ "+(res.j.error||"Nothing to update"),"ach"); return; }
-        toast("⬇ Updated "+res.j.from+" → "+res.j.to+". Restarting…","level");
+        toast("⬇ Updated "+res.j.from+" → "+res.j.to+". Restarting…","level"); updateServerNote(res.j);
         setTimeout(updateWaitForRestart, 2500);
       })
       .catch(function(){ UPDATE.busy=false; updatePaint(); toast("⚠ Update request failed","ach"); });

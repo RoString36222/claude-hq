@@ -40,6 +40,7 @@ import os
 import re
 import secrets
 import shlex
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -5021,11 +5022,57 @@ def _update_status_git(force):
         return data
 
 
-def _restart_self():
-    """Replace this process with a fresh one. Under the launchd agent, ask
-    launchd to restart it (KeepAlive brings it back); otherwise re-exec."""
+# The Rust server (dashboard-rs/): the update button builds it and restarts into it.
+def _rust_dir():
+    return os.path.join(HERE, "dashboard-rs")
+
+
+def _cargo():
+    c = shutil.which("cargo")
+    if c:
+        return c
+    c = os.path.expanduser("~/.cargo/bin/cargo")     # rustup's default; launchd's PATH lacks it
+    return c if os.access(c, os.X_OK) else None
+
+
+def build_rust():
+    """Build the Rust server from this checkout. (binary, None) when it built,
+    else (None, why not): the caller then restarts Python as before."""
+    rust = _rust_dir()
+    if not os.path.isfile(os.path.join(rust, "Cargo.toml")):
+        return None, "this copy has no dashboard-rs/"
+    cargo = _cargo()
+    if not cargo:
+        return None, "cargo is not installed (https://rustup.rs)"
     try:
-        if os.getppid() == 1 and sys.platform == "darwin":
+        r = subprocess.run([cargo, "build", "--release", "--locked", "--manifest-path", os.path.join(rust, "Cargo.toml")],
+                           capture_output=True, text=True, timeout=900)
+    except (OSError, subprocess.SubprocessError) as e:
+        return None, "cargo failed: %s" % e
+    binary = os.path.join(rust, "target", "release", "claudehq")
+    if r.returncode != 0 or not os.access(binary, os.X_OK):
+        return None, "cargo build failed: %s" % (r.stderr.strip()[-300:] or "unknown error")
+    return binary, None
+
+
+def _restart_self(binary=None):
+    """Replace this process with a fresh one: the Rust server when binary is
+    given, else Python again. Under the launchd agent, the Rust server's
+    --install points the agent at itself and reloads it; for Python, ask launchd
+    to restart it (KeepAlive brings it back). Otherwise exec."""
+    # launchd names its jobs here; a parent of pid 1 alone is any orphan (nohup ... &)
+    agent = sys.platform == "darwin" and os.environ.get("XPC_SERVICE_NAME") == LAUNCH_LABEL
+    if binary:
+        try:
+            if agent:
+                subprocess.Popen([binary, "--install", "--port", str(SERVER_PORT)],
+                                 start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+            os.execv(binary, [binary] + sys.argv[1:])
+        except OSError:
+            pass                                          # fall back to Python
+    try:
+        if agent:
             subprocess.Popen(["launchctl", "kickstart", "-k", "gui/%d/%s" % (os.getuid(), LAUNCH_LABEL)],
                              start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
@@ -5040,14 +5087,12 @@ def update_and_restart():
     st = update_status(force=True)
     if not st.get("ok"):
         if st.get("stale"):
-            threading.Timer(1.0, _restart_self).start()
-            return 200, {"ok": True, "updated": False, "restarting": True}
+            return 200, dict({"ok": True, "updated": False, "restarting": True}, **_restart_soon())
         return 409, st
     if not st["behind"] and st.get("stale"):
         # Nothing to pull, but the code on disk is newer than this process.
         _update_cache.update(at=0.0, data=None)
-        threading.Timer(1.0, _restart_self).start()
-        return 200, dict(st, updated=False, restarting=True)
+        return 200, dict(st, updated=False, restarting=True, **_restart_soon())
     if st["dirty"]:
         return 409, dict(st, error="you have local changes in the Claude HQ folder; commit or stash them first")
     if st["ahead"] and st["behind"]:
@@ -5060,9 +5105,16 @@ def update_and_restart():
         return 409, dict(st, error="pull failed: %s" % (r.stderr.strip()[:300] or "unknown error"))
     new = _git("rev-parse", "--short", "HEAD").stdout.strip()
     _update_cache.update(at=0.0, data=None)
-    threading.Timer(1.0, _restart_self).start()   # after this response is sent
-    return 200, {"ok": True, "updated": True, "from": old, "to": new, "commits": st["commits"],
-                 "count": st["behind"], "restarting": True}
+    return 200, dict({"ok": True, "updated": True, "from": old, "to": new, "commits": st["commits"],
+                      "count": st["behind"], "restarting": True}, **_restart_soon())
+
+
+def _restart_soon():
+    """Build the Rust server and restart into it once this response is sent;
+    Python again if it could not be built. What the page is told about it."""
+    binary, why = build_rust()
+    threading.Timer(1.0, _restart_self, [binary]).start()
+    return {"server": "rust"} if binary else {"server": "python", "rustError": why}
 
 
 # --------------------------------------------------------------------------- #

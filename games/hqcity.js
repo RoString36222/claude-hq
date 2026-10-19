@@ -268,14 +268,23 @@ HQV.hqWorlds.city = function(c, w){
     city.lots.forEach(building);
     city.views.forEach(viewBuilding);
     w.floor = floor; w.bounds = [-OX + 2, OX - 2, -OZ + 2, OZ - 2];
-    // arriving: at your own door, or the door of the HQ you just visited
-    var mine = city.lots.filter(function(L){ return L.h.isYou; })[0];
-    var back = api.cityReturn && api.cityReturn(), ret = city.lots.filter(function(L){ return L.h.userId === back; })[0];
-    // the camera stands on the street side, looking at the building's front (a little off-axis)
-    function at(L){ return L ? {x: L.door.x + L.dx*2.6, z: L.door.z + L.dz*2.6, yaw: Math.atan2(L.dx, L.dz), camYaw: L.rot + 0.55} : {x: P.x, z: P.z + 7, yaw: 0}; }
-    w.spawn = at(ret || mine); w.spawnFrom = {lobby: at(mine)};
     applyTime();
   }
+  // Arriving: at your own door, or (right after a visit) the door of the HQ you just left. Worked out
+  // when you arrive, not when the street was built: a street built during a visit used to keep
+  // sending you to that HQ's door ever after. The camera stands on the street side, looking at the
+  // building's front (a little off-axis). home: the pavement at your door, while your HQ is on the street.
+  function lotOf(pick){ return city.lots.filter(pick)[0] || null; }
+  function at(L){ return L ? {x: L.door.x + L.dx*2.6, z: L.door.z + L.dz*2.6, yaw: Math.atan2(L.dx, L.dz), camYaw: L.rot + 0.55}
+                           : {x: city.plaza.x, z: city.plaza.z + 7, yaw: 0}; }
+  function mine(){ return lotOf(function(L){ return L.h.isYou; }); }
+  Object.defineProperty(w, "spawn", {get: function(){
+    var back = api.cityReturn && api.cityReturn(), ret = back ? lotOf(function(L){ return L.h.userId === back; }) : null;
+    return at(ret || mine());
+  }, configurable: true});
+  Object.defineProperty(w, "home", {get: function(){ var L = mine(); return L ? at(L) : null; }, configurable: true});
+  w.spawnFrom = {};
+  Object.defineProperty(w.spawnFrom, "lobby", {get: function(){ return at(mine()); }, enumerable: true});
 
   /* ---------- the fountain: a stone basin, two bowls, falling water, a jet on top ---------- */
   var FOUNT_R = 4.4;

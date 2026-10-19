@@ -66,11 +66,23 @@ function hqJumpCity(){
   if(VIEW!=="hq"){ hqModeSave("3d"); setView("hq"); }
   if(HQ3D.inst) go(); else hqLoadScripts().then(function(){ setTimeout(go, 300); }).catch(function(){});
 }
+// Return to HQ: back to your front door in Arena City, your car, motorbike and bicycle back in the
+// garage (games/hq3d.js returnHome; T or Home in the city does the same). From anywhere else: the city, at your door.
+function hqReturnHome(){
+  if(HQ3D.visit){ hqGoHome(); return; }
+  if(HQ3D.world==="city" && HQ3D.inst && HQ3D.inst.returnHome){ HQ3D.inst.returnHome(); return; }
+  hqJumpCity();
+}
 function hqRenderWhere(){
   hqSkateShow();
   var box=$("hqWhere"); if(!box) return;
   box.textContent="";
   var city=!HQ3D.visit && hqCityOn();
+  if(!HQ3D.visit && HQ3D.world==="city"){
+    var r=document.createElement("button"); r.type="button"; r.className="hbtn hq3d-jump"; r.textContent="🏠 Return to HQ";
+    r.title="Back to your front door, with your car, motorbike and bicycle back in the garage (T)";
+    r.addEventListener("click", hqReturnHome); box.appendChild(r);
+  }
   if(!HQ3D.visit && HQ3D.world!=="city"){
     var j=document.createElement("button"); j.type="button"; j.className="hbtn hq3d-jump"; j.textContent="\uD83C\uDFD9 Jump to City";
     j.title="Go straight to Arena City: the street of open HQs, the fountain and the bike park";

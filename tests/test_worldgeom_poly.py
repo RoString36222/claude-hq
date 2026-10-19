@@ -543,6 +543,11 @@ class SourceTest(unittest.TestCase):
         # earcut is inline: no dependency
         self.assertIn("function triangulate(flat)", g)
         self.assertNotRegex(g, r"require\(|importScripts\(")
+        # the earcut port carries its ISC copyright and permission notice, and the notice sits above the ported code
+        for s in ("ISC License", "Copyright (c) 2016, Mapbox",
+                  "provided that the above copyright notice", "THE SOFTWARE IS PROVIDED \"AS IS\""):
+            self.assertIn(s, g)
+        self.assertLess(g.index("Copyright (c) 2016, Mapbox"), g.index("function triangulate(flat)"))
         b = read(BUILD)
         for s in ("waterPhase(", "normal_fragment_maps", "wb.setTier = function", "Gm.tierDiff(", "mergeGeo([T.terrain, T.ground])"):
             self.assertIn(s, b)

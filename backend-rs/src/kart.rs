@@ -9,7 +9,7 @@
 //! move is on the road and no faster than a car can go, counts laps in order
 //! around the track, and times the finish.
 //!
-//! Tracks are compiled from `backend/app/kart_tracks.json`, embedded at build
+//! Tracks are compiled from `backend-rs/data/kart_tracks.json`, embedded at build
 //! time with `include_str!` -- the same file the Python reads (itself a byte
 //! copy of games/kart/tracks.json), so there is no third copy to drift. A track
 //! is a loop of 10 m tiles written as letters from the start line, driving
@@ -82,7 +82,7 @@ pub const MAX_LOBBY: usize = 8;
 /// A host back from a socket drop this soon is host again (valley.HOST_GRACE = golf.GRACE).
 pub const HOST_GRACE: f64 = 15.0;
 
-pub const TRACKS_JSON: &str = include_str!("../../backend/app/kart_tracks.json");
+pub const TRACKS_JSON: &str = include_str!("../data/kart_tracks.json");
 
 // ------------------------------------------------------------------ tracks --
 #[derive(Clone, Debug, PartialEq)]

@@ -1,6 +1,6 @@
 """Blaster Arena: the browser and the Arena server must agree on the arena and the rules.
 
-games/fps/map.json is mirrored byte-for-byte at backend/app/fps_map.json (the server
+games/fps/map.json is mirrored byte-for-byte at backend-rs/data/fps_map.json (the server
 deploys backend/ only), and the shared geometry in games/fps.js (FPS-SHARED block) must
 give the same answers as backend/app/fps.py: the browser predicts its own movement with
 the same collision the server checks, and draws its shots with the same rays and spread
@@ -46,7 +46,7 @@ class FpsSync(unittest.TestCase):
 
     def test_map_file_is_mirrored(self):
         with open(MAP, "rb") as a, open(SERVER_MAP, "rb") as b:
-            self.assertEqual(a.read(), b.read(), "copy games/fps/map.json to backend/app/fps_map.json")
+            self.assertEqual(a.read(), b.read(), "copy games/fps/map.json to backend-rs/data/fps_map.json")
 
     def test_constants_match(self):
         src = block()

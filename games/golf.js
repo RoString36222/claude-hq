@@ -3,7 +3,7 @@
  *
  * Rendering is three.js r186 (MIT), vendored unmodified except import paths under
  * games/vendor/ and imported only when this game opens. The ball physics is integer-only
- * (the GOLF-SIM block below) and mirrors backend/app/golf.py line for line: in a room the
+ * (the GOLF-SIM block below) and mirrors backend-rs/src/valley/golf.rs line for line: in a room the
  * server rolls every shot and this file replays the same simulation to animate it, so all
  * players see the same roll. Only shot integers, course coordinates, a yaw, an animation
  * id and a character id ever travel; nothing transcript-derived.

@@ -1,6 +1,6 @@
 /* ===== Cali Tuesdays: a retro taqueria. Seat friends, drag food from the counter onto their
    plates, check out, watch the hi-score board. The page sends only who ate what; TT, the
-   buy-1-get-1 price and TPP are the Arena server's (backend/app/tacos.py), and caliPaid()
+   buy-1-get-1 price and TPP are the Arena server's (backend-rs/src/cali.rs), and caliPaid()
    only powers the running receipt. ===== */
 // Wire key, name, sprite, shelf. The four tacos are TacoCounts; everything else is an item.
 var CD_FOODS = [
@@ -21,7 +21,7 @@ var CD_FOODS = [
   {key:"icedtea", name:"Iced Tea", sprite:"cd_icedtea", shelf:"extras"}
 ];
 var CD_SHELVES = [["tacos","Tacos · buy 1 get 1"], ["mains","Mains"], ["extras","Sides, sweets & drinks"]];
-// Mirrors backend/app/schemas.py (MAX_DINERS, MAX_PER_VARIANT, MAX_PER_ITEM, DINER_NAME_MAX).
+// Mirrors backend-rs/src/cali.rs (MAX_DINERS, MAX_PER_VARIANT, MAX_PER_ITEM, DINER_NAME_MAX).
 var CD_MAX_PEOPLE = 20, CD_MAX_TACO = 50, CD_MAX_ITEM = 20, CD_NAME_MAX = 40;
 var CD = {built:false, people:[], seq:0, picked:null, drag:null, justDragged:false, window:"season", board:null,
   menuOk:null, menuNames:{}, busy:false, rid:null, sfx:true, prevRows:null, fresh:{}, s:3, W:400, raf:0, anim:false,

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
-pub const APP_VERSION: &str = "2.5.0";
+pub const APP_VERSION: &str = "2.6.1";
 
 pub static UUID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-fA-F-]{36}$").unwrap());
 pub static RID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_-]{16,64}$").unwrap());
@@ -127,8 +127,8 @@ pub struct App {
     pub ext: crate::ext::ExtState,
     /// Replaces `claude agents --json` (tests).
     pub agents_hook: RwLock<Option<AgentsFn>>,
-    /// Replaces the self-restart after an update (tests).
-    pub restart_hook: RwLock<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// Replaces the self-restart after an update (tests); gets the binary just built.
+    pub restart_hook: RwLock<Option<Arc<dyn Fn(Option<PathBuf>) + Send + Sync>>>,
 }
 
 impl App {
@@ -648,6 +648,14 @@ mod tests {
 
     fn v(raw: Value) -> Obj {
         validate_config(&raw, None)
+    }
+
+    #[test]
+    fn readme_version_matches_app_version() {
+        let readme = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../README.md")).unwrap();
+        let head: String = readme.chars().take(2000).collect();
+        let m = Regex::new(r"\*\*Version (\d+\.\d+\.\d+)\*\*").unwrap().captures(&head).expect("README states its version");
+        assert_eq!(&m[1], APP_VERSION);
     }
 
     #[test]

@@ -12,10 +12,10 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NODE = shutil.which("node")
 
-sys.path.insert(0, ROOT)
-import dashboard  # noqa: E402
+sys.path.insert(0, os.path.join(ROOT, "tests"))
+import hq  # noqa: E402
 
-HTML = dashboard.assemble_index()   # index.html with its ui/ parts stitched in, as served
+HTML = hq.assemble_index()   # index.html with its ui/ parts stitched in, as served
 
 
 def js_function(name):
@@ -388,7 +388,7 @@ class TalkPanelMentionsTests(unittest.TestCase):
     """The HQ talk panel has the Arena chat's @mentions: one shared picker, its own list."""
 
     def test_wiring(self):
-        html = dashboard.assemble_index()
+        html = hq.assemble_index()
         self.assertIn('id="hqTalkInput" maxlength="500" autocomplete="off" data-mentions="hqTalkMentions"', html)
         self.assertIn('id="hqTalkMentions" role="listbox"', html)
         self.assertIn('arenaMentionBind(i);          // @mentions, as in the Arena\'s chat', html)

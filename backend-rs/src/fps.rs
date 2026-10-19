@@ -17,7 +17,7 @@
 //! player; the ray is tested against the rewound hit boxes and the arena's
 //! solid boxes (no hits through walls).
 //!
-//! The arena is `backend/app/fps_map.json`, embedded at build time with
+//! The arena is `backend-rs/data/fps_map.json`, embedded at build time with
 //! `include_str!` -- the file the Python reads (a byte copy of
 //! games/fps/map.json). HQ 2.5: a host may instead start a match on a map made
 //! in the Map Editor; it arrives inline on the start op, is checked by
@@ -123,7 +123,7 @@ pub const GAME_NAME: &str = "Blaster Arena";
 pub const MAX_LOBBY: usize = 8;
 pub const HOST_GRACE: f64 = 15.0;
 
-pub const MAP_JSON: &str = include_str!("../../backend/app/fps_map.json");
+pub const MAP_JSON: &str = include_str!("../data/fps_map.json");
 
 pub type Box3 = [f64; 6];
 

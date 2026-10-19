@@ -17,7 +17,7 @@
 # and reports "not installed" when neither is present, so it is safe to run on
 # a fresh clone.
 #
-# Standard tools only (launchctl / docker / git / curl / uv / python3) — no new
+# Standard tools only (launchctl / docker / git / curl / cargo) — no new
 # dependencies, matching the rest of the repo.
 
 # NOTE: added as part of the backend-manager work — a single-entry lifecycle CLI
@@ -79,9 +79,8 @@ MODE="${ARENA_MANAGER_MODE:-$(detect_mode)}"
 # neither).
 #
 # Without .release.env compose falls back to the defaults in
-# docker-compose.yml -- claude-hq-arena-py:local, built from backend/Dockerfile
-# -- so `restart` on a host running the RUST Arena would quietly bring back the
-# Python one.
+# docker-compose.yml -- claude-hq-arena-rs:local, built from backend-rs/ -- so
+# `restart` would rebuild instead of running the released image.
 dc() {
   local args=()
   [ -f "$BACKEND/.env" ] && args+=(--env-file "$BACKEND/.env")
@@ -131,7 +130,7 @@ cmd_status() {
       printf '\n'; info "containers:"; dc ps 2>/dev/null || true ;;
     none)
       printf '\n'; warn "No Arena backend is installed on this machine."
-      info "Set one up:  ./selfhost-wizard.sh   (this Mac)   |   ./deploy-wizard.sh   (Fly.io)"
+      info "Set one up:  ./selfhost-wizard.sh   (this Mac)"
       info "Or on a VM:  ARENA_DOMAIN=... docker compose -f backend/docker-compose.yml up -d" ;;
   esac
   printf '\n'
@@ -196,13 +195,15 @@ cmd_logs() {
 
 cmd_migrate() {
   _need_installed
-  if [[ "$MODE" == mac ]]; then
-    command -v uv >/dev/null 2>&1 || { bad "uv not found on PATH"; exit 1; }
-    ( cd "$BACKEND" && uv run --no-dev alembic upgrade head ) && ok "migrations applied"
-  else
-    info "docker mode runs migrations automatically on boot (entrypoint.sh)."
-    info "Force now:  docker compose -f $BACKEND/docker-compose.yml run --rm app uv run --no-dev alembic upgrade head"
-  fi
+  info "The Arena applies its own migrations (backend-rs/migrations) every time it starts."
+  info "To apply new ones now:  $0 restart"
+}
+
+# mac mode runs the binary from this checkout: rebuild it after a pull.
+build_arena() {
+  local cargo; cargo=$(command -v cargo || echo "$HOME/.cargo/bin/cargo")
+  [[ -x "$cargo" ]] || { bad "cargo not found (https://rustup.rs)"; exit 1; }
+  "$cargo" build --release --locked --manifest-path "$REPO/backend-rs/Cargo.toml" --bin arena && ok "built the Arena"
 }
 
 cmd_update() {
@@ -216,7 +217,7 @@ cmd_update() {
   git -C "$REPO" merge --ff-only "origin/$BRANCH" --quiet \
     || { bad "not a fast-forward — resolve manually (local commits on $BRANCH?)"; exit 1; }
   ok "updated $before → $(git -C "$REPO" rev-parse --short HEAD)"
-  [[ "$MODE" == mac ]] && cmd_migrate
+  [[ "$MODE" == mac ]] && build_arena
   cmd_restart
   printf '\n'; info "verifying health…"
   for _ in 1 2 3 4 5 6; do
@@ -239,8 +240,8 @@ ${BOLD}Arena backend manager${RESET}  (mode: ${MODE})
   restart             restart it
   logs [arena|tunnel|panel]   tail logs (default: arena)
   health              print local + public /health
-  migrate             apply database migrations (alembic upgrade head)
-  update              git pull --ff-only, migrate, restart, verify health
+  migrate             how migrations are applied (the Arena does it on start)
+  update              git pull --ff-only, rebuild (mac), restart, verify health
 
 Detected mode: ${BOLD}${MODE}${RESET}  (override with ARENA_MANAGER_MODE=mac|docker)
 EOF

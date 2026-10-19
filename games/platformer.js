@@ -11,7 +11,7 @@
  *
  * Multiplayer: you run your own character here and send where it is ~20 times a second
  * (x, y, z in cm, yaw, an animation id, your game clock); the Arena server
- * (backend/app/platformer.py) runs a 15 Hz tick that checks every frame (inside the
+ * (backend-rs/src/platformer.rs) runs a 15 Hz tick that checks every frame (inside the
  * level, no faster than a run, no higher than a jump and a double jump allow, never
  * inside a platform), owns the checkpoints, the coins and the flag, and sends one
  * snapshot per tick. Other players are drawn ~100 ms in the past from those snapshots
@@ -19,7 +19,7 @@
  * puts you back on your last checkpoint. Only these numbers and a character tint travel;
  * nothing transcript-derived.
  *
- * The PLAT-LEVEL block mirrors backend/app/platformer.py (tests/test_platformer_sync.py
+ * The PLAT-LEVEL block mirrors backend-rs/src/platformer.rs (tests/test_platformer_sync.py
  * checks both against each other under node).
  */
 (function(){

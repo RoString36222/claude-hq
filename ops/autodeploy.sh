@@ -8,29 +8,17 @@
 #
 # WHY THIS DELEGATES RATHER THAN DRIVING COMPOSE ITSELF
 #
-# It used to run `docker compose up -d --build` directly, and that was wrong in
-# two ways once there were two implementations to choose between.
-#
-# 1. It shipped the wrong Arena. ops/release.sh records the implementation in
-#    backend/.release.env and layers it with --env-file; a bare `docker compose`
-#    reads only backend/.env, so it fell back to the defaults in
-#    docker-compose.yml -- claude-hq-arena-py:local, built from
-#    backend/Dockerfile. An Arena released as Rust came back as PYTHON on the
-#    next push, and silently, because the Python Arena is healthy and nothing
-#    alerts on which one is running.
-#
-# 2. Layering the env file would NOT have been enough, and would have been
-#    worse. ARENA_APP_IMAGE in that file is a stamped tag (date + commit), and
-#    `up --build` rebuilds whatever tag it is handed -- so a new commit would
-#    have been built into the PREVIOUS release's tag. `release.sh status` would
-#    then report a version that is not what is running, and `release.sh
-#    rollback`, which restores a previous image by tag without rebuilding,
-#    would restore a tag that now holds the newer code: a rollback that
-#    silently does nothing.
+# It used to run `docker compose up -d --build` directly. That is wrong:
+# ARENA_APP_IMAGE in backend/.release.env is a stamped tag (date + commit), and
+# `up --build` rebuilds whatever tag it is handed -- so a new commit would be
+# built into the PREVIOUS release's tag. `release.sh status` would then report a
+# version that is not what is running, and `release.sh rollback`, which
+# restores a previous image by tag without rebuilding, would restore a tag that
+# now holds the newer code: a rollback that silently does nothing.
 #
 # So the release belongs to one script. release.sh already pulls ff-only,
 # refuses a dirty tree, gates on GitHub CI for the commit, stamps a fresh
-# version, builds, migrates, waits for health, and on failure rolls back to the
+# version, builds, waits for health, and on failure rolls back to the
 # last good IMAGE. This script's job is only to notice there is something to
 # deploy, and to keep a log of it.
 set -euo pipefail
@@ -73,10 +61,7 @@ if [ "$FIRST" = 1 ]; then
   git log --oneline -n 10 "$LOCAL..$REMOTE" | while read -r line; do log "    $line"; done
 fi
 
-# Which Arena this ships is NOT decided here: release.sh reads it from
-# backend/.release.env, so whatever was last released stays released. Set
-# ARENA_IMPL only to switch, and do that by hand, not from cron.
-log "releasing with ops/release.sh (impl from backend/.release.env)"
+log "releasing with ops/release.sh"
 if ARENA_BRANCH="$BRANCH" "$DIR/ops/release.sh" deploy >>"$LOG" 2>&1; then
   log "deployed ${REMOTE:0:7} OK"
   if [ -n "$DOMAIN" ]; then

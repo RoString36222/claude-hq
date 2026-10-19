@@ -1,6 +1,6 @@
 /* ================= HQ 2.5: loot from real work ================= */
 // A merged PR, a green test run or a long focus session drops a chest on the Arena. Your HQ notices the
-// work on this machine (ext_loot.py) and sends only the event TYPE, a small count and the UTC day; a
+// work on this machine (dashboard-rs/src/ext.rs) and sends only the event TYPE, a small count and the UTC day; a
 // chest opens once into Poke Coins, a cosmetic only chests (or prestige) give, or a Pokémon card.
 // Everything here is DOM built with textContent, except the card art, which is pokeImgFor()/monsterSVG()
 // output (both esc() what they take); every data-derived value placed in innerHTML goes through esc().

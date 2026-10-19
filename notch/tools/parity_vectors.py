@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Ground-truth vectors for the notch's creature logic, taken from HQ itself:
-species / stage / shiny from dashboard.py's creature_for() + shiny_for_species(), and the
+species / stage / shiny from the server's creature_for() + shiny_for_species() (dashboard-rs,
+via its creature_vectors binary), and the
 drawn form (dex) from ui/app/06-trainer-packs.js's pokeDexFor() run under node.
 
     python3 notch/tools/parity_vectors.py > vectors.json
@@ -13,9 +14,6 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-sys.path.insert(0, REPO)
-
-import dashboard  # noqa: E402
 
 SALT = "0123456789abcdef"
 PROMPTS = [0, 2, 3, 11, 12, 29, 30, 69, 70, 400, 75, 120]   # several Apex, so Megas get checked
@@ -45,12 +43,12 @@ def session_ids():
 
 
 def main():
-    rows = []
-    for i, sid in enumerate(session_ids()):
-        pc = PROMPTS[i % len(PROMPTS)]
-        cr = dashboard.creature_for(sid, pc)
-        rows.append({"sid": sid, "prompts": pc, "species": cr["species"], "stage": cr["stage"],
-                     "shiny": dashboard.shiny_for_species(cr["species"], SALT)})
+    rows = [{"sid": sid, "prompts": PROMPTS[i % len(PROMPTS)]} for i, sid in enumerate(session_ids())]
+    rs = subprocess.run(["cargo", "run", "--quiet", "--release", "--manifest-path", "dashboard-rs/Cargo.toml",
+                         "--bin", "creature_vectors", "--", SALT],
+                        input=json.dumps(rows), capture_output=True, text=True, cwd=REPO, check=True)
+    for r, c in zip(rows, json.loads(rs.stdout)):
+        r.update(c)
     js = subprocess.run(["node", "-e", JS], input=json.dumps(rows), capture_output=True, text=True,
                         cwd=REPO, check=True)
     for r, j in zip(rows, json.loads(js.stdout)):

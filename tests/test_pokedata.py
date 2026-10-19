@@ -1,4 +1,4 @@
-"""Vendored Pokemon battle data (games/pokedata.js + backend/app/data/pokemon.json):
+"""Vendored Pokemon battle data (games/pokedata.js + backend-rs/data/pokemon.json):
 the two copies match, every creature the app can show has an entry, every referenced
 move exists and only uses effects the engines implement, and the license ships with it."""
 import json
@@ -9,7 +9,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JS = os.path.join(ROOT, "games", "pokedata.js")
-PY = os.path.join(ROOT, "backend", "app", "data", "pokemon.json")
+PY = os.path.join(ROOT, "backend-rs", "data", "pokemon.json")
 PREFIX = "window.HQV_POKEDATA = "
 
 
@@ -21,9 +21,9 @@ def load_js():
 
 
 def index_html():
-    sys.path.insert(0, ROOT)
-    import dashboard
-    return dashboard.assemble_index()
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    import hq
+    return hq.assemble_index()
 
 
 class PokedataTests(unittest.TestCase):

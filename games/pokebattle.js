@@ -6,7 +6,7 @@
  * a Pokemon by (species index, evolution stage) exactly like the sprite packs do; its stage
  * also sets the battle level (8/18/30/42/55).
  *
- * The engine (HQV.pk.resolveTurn and friends) is pure and mirrors backend/app/pokebattle.py
+ * The engine (HQV.pk.resolveTurn and friends) is pure and mirrors backend-rs/src/valley/pokebattle.rs
  * line for line: both draw randomness only through rng() in the same order, so a duel the
  * server referees plays out exactly like a solo battle would. Keep the two in step;
  * tests/test_pokebattle_parity.py runs both on the same random stream.

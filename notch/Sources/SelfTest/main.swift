@@ -227,7 +227,7 @@ if CommandLine.arguments.count > 1 {
         if c.megaForm(sessionId: sid, pack: .threeD) != nil { megas += 1 }
     }
     expect(megas > 0, "vectors include Mega forms")
-    print("parity: \(rows.count) sessions (\(megas) Megas) checked against dashboard.py + 06-trainer-packs.js, 2D and 3D")
+    print("parity: \(rows.count) sessions (\(megas) Megas) checked against dashboard-rs creature.rs + 06-trainer-packs.js, 2D and 3D")
 }
 
 print(failures == 0 ? "OK: \(checks) checks" : "FAILED: \(failures) of \(checks) checks")

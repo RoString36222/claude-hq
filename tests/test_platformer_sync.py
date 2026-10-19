@@ -1,6 +1,6 @@
 """Platformer Rush: the browser and the Arena server must agree on the levels.
 
-games/platformer/levels.json is mirrored byte-for-byte at backend/app/platformer_levels.json
+games/platformer/levels.json is mirrored byte-for-byte at backend-rs/data/platformer_levels.json
 (the server deploys backend/ only), and the level geometry in games/platformer.js
 (PLAT-LEVEL block) must give the same answers as backend/app/platformer.py: the browser
 lands, collects and counts checkpoints with the same shapes the server checks them with.
@@ -51,7 +51,7 @@ class PlatformerSync(unittest.TestCase):
 
     def test_level_file_is_mirrored(self):
         with open(LEVELS, "rb") as a, open(SERVER_LEVELS, "rb") as b:
-            self.assertEqual(a.read(), b.read(), "copy games/platformer/levels.json to backend/app/platformer_levels.json")
+            self.assertEqual(a.read(), b.read(), "copy games/platformer/levels.json to backend-rs/data/platformer_levels.json")
 
     def test_shared_constants_and_models_match(self):
         b = block()

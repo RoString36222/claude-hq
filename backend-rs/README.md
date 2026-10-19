@@ -1,39 +1,45 @@
-# arena-rs
+# arena (backend-rs)
 
-A Rust port of the Arena backend, built **alongside** the Python one rather
-than replacing it. Both read the same SQLite file and serve the same endpoints,
-so you can switch which one Caddy proxies to and switch back.
+The Claude HQ Arena server: a shared leaderboard, seasons, pantry, crews, and
+websocket rooms for the Valley games. axum + sqlx on SQLite. It applies
+`migrations/` itself when it starts, and every game's data file in `data/`
+(tracks, maps, courses, levels, creatures) is compiled in with `include_str!`.
 
-This exists to learn Rust on something real. The Python backend is fine:
-measured at 69 MB and 0.25% CPU under load, so this is not a performance fix.
-
-## Why parallel, not a rewrite
-
-Upstream merged 69 commits in one recent week, 61 of them touching `backend/`.
-A replacement stops receiving that work. Running side by side means the Python
-one keeps getting chat, voice and nudges from the other contributors while this
-one catches up at its own pace — and abandoning it costs nothing.
-
-## Correctness
-
-The scoring must agree with the Python exactly, or the same user sees a
-different level depending on which backend answered. `src/bin/crosscheck.rs`
-prints scoring output as JSON for diffing against `app/scoring.py`:
+How to deploy it (compose + Caddy, the self-host wizard, `ops/release.sh`) is in
+[`backend/README.md`](../backend/README.md).
 
 ```bash
-cargo run --bin crosscheck > /tmp/rust.txt
-# compare with the equivalent Python output
+cargo build --release            # target/release/arena
+cargo test
+cargo clippy --locked --all-targets -- -D warnings
 ```
 
-Currently byte-identical across 13 cases spanning level 1 to 126.
+`arena --health` asks the running server's `/health` and exits 0 or 1 (the
+container healthcheck).
 
-## Where Rust improves on the original
+## Where to find things
 
-**The tool allowlist is a type.** In Python, `mcp__acme_internal__query`
-arrives as a string that a validator must remember to bucket. Here it
-deserialises to `Tool::Other` and the original text is dropped — there is no
-representable value that carries an MCP server name, so no code path can store
-one.
+| Path | What |
+|---|---|
+| `src/main.rs` | Startup, routes, ingest and board endpoints. |
+| `src/schemas.rs` | The wire allowlist. The privacy boundary. |
+| `src/scoring.rs` | XP / level / rank / streak. |
+| `src/service.rs` | Ingest (upsert per day) and leaderboard queries. |
+| `src/auth.rs` | Device tokens, OAuth, pairing codes, websocket tickets. |
+| `src/db.rs` | SQLite connection (WAL, busy timeout, foreign keys) and migrations. |
+| `src/rooms.rs`, `src/realtime.rs` | Websocket rooms; the fixed-rate per-room tick and its budgets. |
+| `src/valley.rs`, `src/valley/` | The Valley lobby and the turn-based / small games (pond, race, duel, mines, farm, golf, pokebattle, typerace, td, bowling, party, hq). |
+| `src/kart.rs`, `src/platformer.rs`, `src/fps.rs`, `src/strike.rs` | The real-time games' referees. Each mirrors a shared block in its `games/*.js` client; `tests/test_*_sync.py` check the two agree. |
+| `src/protocol.rs` | Protocol version + capabilities per game. |
+| `src/pantry.rs`, `src/cali.rs`, `src/crews.rs`, `src/cosmetics.rs`, ... | The rest of the API, one module per area. |
+| `data/` | Game data. Each file mirrors the client copy under `games/`, and a test checks they match. |
+| `migrations/` | The schema. Migrations only ever add. |
+
+## Design notes
+
+**The tool allowlist is a type.** `mcp__acme_internal__query` deserialises to
+`Tool::Other` and the original text is dropped — there is no representable value
+that carries an MCP server name, so no code path can store one.
 
 **`deny_unknown_fields` is generated code**, not a runtime setting, so a client
 that grows a field fails to parse rather than relying on config being right.
@@ -41,25 +47,5 @@ that grows a field fails to parse rather than relying on config being right.
 **`Option<f64>` for cost** makes "did not share" and "spent nothing" different
 types rather than a nullable column you must remember to check.
 
-## Status
-
-| | |
-|---|---|
-| `scoring.rs` | done, cross-checked against Python |
-| `schemas.rs` | done, privacy tests ported |
-| `db.rs` | next — sqlx against the existing schema |
-| `service.rs` | ingest + board queries |
-| `auth.rs` | device tokens, OAuth, WS tickets |
-| `rooms.rs` | websocket rooms; room-wide broadcast plus a bounded direct queue per connection (one socket / one user / a lobby) |
-| `realtime.rs` | done: fixed-rate per-room tick (tokio), process-wide ticker budget, per-room bytes/s budget with snapshot thinning, overrun counting, token `Bucket` — port of `app/realtime.py` |
-| `kart.rs` | done: Kart Racing — track compile/geometry, referee (grid → race → done, laps, sender-clock speed check, fixes, drop/restore), the kart lobby and its tick loop — port of `app/kart.py` + the kart branch of `app/valley.py`. Kart and the platformer are the only Valley games here; any other `g` gets `unknown game` |
-| `platformer.rs` | done: Platformer Rush — level compile/geometry, referee (grid → run → done; race and co-op; sender-clock speed, rise/fall and jump-envelope checks, never inside a platform, checkpoints in order, coins once per player / once per room, the flag, fixes, respawns, drop/restore), the plat lobby and its tick loop (sharing the process-wide `realtime::Registry` with kart) — port of `app/platformer.py` + the plat branch of `app/valley.py` |
-
-Kart tracks are read from `backend/app/kart_tracks.json` with `include_str!`
-at build time, so both backends race on the same file; a test checks the
-embedded copy against it.
-Platformer levels come from `backend/app/platformer_levels.json` the same way.
-
-```bash
-cargo test    # 97 tests
-```
+`src/bin/crosscheck.rs` prints the scoring for a fixed set of cases as JSON, for
+diffing when the formula changes.

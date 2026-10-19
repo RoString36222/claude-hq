@@ -11,7 +11,7 @@
  *   hairStyle    own hair / shaved / Neon crest      headwear  none / beanie / cap / headband / party hat / Neural halo
  *   accessory    none / round glasses / shades / AR visor     eyes  normal / Lit eyes
  *   background   (portrait only) theme / sunset / mint / night / Neon grid     outfitStyle  plain / Techwear
- * MAX below is mirrored by CHARACTER_MAX in dashboard.py and pinned by tests/test_character.py.
+ * MAX below is mirrored by CHARACTER_MAX in dashboard-rs/src/app.rs and pinned by tests/test_character.py.
  *
  * Colours: the six models share one palette atlas (colormap.png) with their shading baked into
  * neighbouring swatches. Each vertex's atlas colour is looked up once per model, sorted into a

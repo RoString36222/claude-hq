@@ -1,6 +1,6 @@
 """Kart Racing: the browser and the Arena server must agree on the tracks.
 
-games/kart/tracks.json is mirrored byte-for-byte at backend/app/kart_tracks.json (the
+games/kart/tracks.json is mirrored byte-for-byte at backend-rs/data/kart_tracks.json (the
 server deploys backend/ only), and the track geometry in games/kart.js (KART-TRACK
 block) must give the same answers as backend/app/kart.py: the browser keeps its car on
 the road and counts its laps with the same rules the server checks them with. The
@@ -40,7 +40,7 @@ class KartSync(unittest.TestCase):
 
     def test_track_file_is_mirrored(self):
         with open(TRACKS, "rb") as a, open(SERVER_TRACKS, "rb") as b:
-            self.assertEqual(a.read(), b.read(), "copy games/kart/tracks.json to backend/app/kart_tracks.json")
+            self.assertEqual(a.read(), b.read(), "copy games/kart/tracks.json to backend-rs/data/kart_tracks.json")
 
     def test_constants_match(self):
         block = re.search(r"/\* KART-TRACK BEGIN \*/(.*?)/\* KART-TRACK END \*/", read(KART_JS), re.S).group(1)

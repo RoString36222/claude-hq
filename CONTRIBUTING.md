@@ -1,44 +1,46 @@
 # Contributing to Claude HQ
 
-Claude HQ is a **local-first, privacy-sensitive** dashboard that reads your own Claude Code sessions (`claude agents --json` + `~/.claude/projects/**/*.jsonl`) and renders them as a live command center with a creature-collection game layer on top. It runs entirely on `127.0.0.1`, has **no dependencies**, and has **no build step**.
+Claude HQ is a **local-first, privacy-sensitive** dashboard that reads your own Claude Code sessions (`claude agents --json` + `~/.claude/projects/**/*.jsonl`) and renders them as a live command center with a creature-collection game layer on top. It runs entirely on `127.0.0.1` on a small Rust server (`dashboard-rs/`, binary `claudehq`), and the frontend has **no build step**.
 
-These standards are load-bearing. Several of them (privacy, XSS discipline, the IP rule, no-build-step) are non-negotiable invariants — a PR that violates one will not be merged regardless of how nice the feature is. Read the whole document before your first change.
+These standards are load-bearing. Several of them (privacy, XSS discipline, the IP rule, the frontend's no-build-step rule) are non-negotiable invariants — a PR that violates one will not be merged regardless of how nice the feature is. Read the whole document before your first change.
 
 ---
 
 ## 1. Architecture & the no-build-step constraint
 
-Two files do everything:
+Two parts do everything:
 
-| File | Role |
+| Path | Role |
 |---|---|
-| `dashboard.py` | Stdlib-only HTTP server (`http.server.ThreadingHTTPServer`). Reads live agents + transcripts, computes cost/creature/season data, serves the JSON API and the page. **No `pip install`, ever.** |
-| `index.html` + `ui/` | The frontend: `index.html` is the markup template, `ui/` holds its CSS and script split by area; the server stitches them into one page (§2). |
+| `dashboard-rs/` | The local HQ server (Rust, binary `claudehq`). Reads live agents + transcripts, computes cost/creature/season data, serves the JSON API and the page on `127.0.0.1`. Module map in [`dashboard-rs/README.md`](./dashboard-rs/README.md). Dependencies are pinned in `Cargo.lock` and builds use `--locked`. |
+| `index.html` + `ui/` + `games/` | The frontend: `index.html` is the markup template, `ui/` holds its CSS and script split by area, `games/` the Valley games; the server stitches the page together (§2) and serves the rest as files. |
+| `dashboard.py` | A forwarding stub for older installs (it builds `dashboard-rs` and execs `claudehq` with the same arguments); not a server; do not add code to it. |
 
-Optional, and out of scope for most contributions: `arena.py` (opt-in multiplayer client, also stdlib-only), `backend/` + `backend-rs/` (the Arena server someone self-hosts), and the `*-wizard.sh` / `ops/` deploy tooling.
+Optional, and out of scope for most contributions: `backend-rs/` (the Arena server someone self-hosts; `backend/` holds only its compose/Caddy deploy files), and the `selfhost-wizard.sh` / `ops/` deploy tooling.
 
-**The no-build-step rule is absolute.** The LaunchAgent and `python3 dashboard.py` serve files *as they are on disk*. There is no bundler, transpiler, minifier, or `node_modules`. This means:
+**The no-build-step rule is absolute — for the frontend.** The server reads `index.html`, `ui/` and `games/` *as they are on disk*. There is no bundler, transpiler, minifier, or `node_modules`. (The servers themselves are Rust and are compiled with `cargo`; that is the only build in the repo.) This means:
 
-- **No npm, no package.json, no build/watch scripts.** If a change would require a build step to run, it does not belong here.
+- **No npm, no package.json, no build/watch scripts.** If a frontend change would require a build step to run, it does not belong here.
 - **No TypeScript, JSX, SCSS, or any dialect that needs compilation.** Plain `.js`, plain `.css`, plain `.html`.
 - **No external JS/CSS libraries.** No React, no jQuery, no Tailwind, no icon fonts, no Chart.js. Charts are hand-drawn SVG; icons are an inline SVG sprite (Lucide geometry, MIT). Keep it that way.
   - **One library exception (the 3D games):** games/vendor/ holds vendored MIT three.js (r186, unminified, only its import paths rewritten, reproducible with tools/vendor_three.py), served only from 127.0.0.1, loaded lazily by the 3D games (Mini Golf, Kart Racing, Platformer Rush, Blaster Arena), never fetched from a third party at runtime. It is not a precedent for other libraries. Game assets are covered in §7: each 3D game keeps its models in its own folder (`games/golf/`, `games/kart/`, `games/platformer/`, `games/fps/`). The `/games/` route serves only `vendor/<name>.js` and `<game>/<name>.glb|json|png` for those folders (tests in `tests/test_games.py`).
 - **No import maps requiring a server rewrite, no bare specifiers.** ES module imports must be relative paths (`./foo.js`) that the plain static server can resolve directly.
-- Backend Python targets **3.x standard library only** (see the imports block at the top of `dashboard.py`: `argparse, glob, hashlib, json, os, re, secrets, shlex, signal, subprocess, sys, threading, time, webbrowser, datetime, http.server`). Adding an import that isn't stdlib is a bug.
+- **New Rust dependencies need a reason.** Prefer the standard library and the crates already in `Cargo.toml`; a new crate is called out in the PR and reviewed like any other change to the trust boundary.
 
-`GET /` re-assembles `index.html` + `ui/` from disk on every change (frontend edits are live on refresh). After editing `dashboard.py` under the LaunchAgent, reload the backend:
+`GET /` re-assembles `index.html` + `ui/` from disk on every change (frontend edits are live on refresh). After changing Rust code, rebuild and restart the server:
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.claudehq.dashboard
+cargo build --release --manifest-path dashboard-rs/Cargo.toml
+launchctl kickstart -k gui/$(id -u)/com.claudehq.dashboard   # under the LaunchAgent; otherwise restart claudehq
 ```
 
 ### Backend security model (do not weaken)
 
-Every request is gated by the loopback + CSRF machinery already in `dashboard.py`; preserve all of it when adding endpoints:
+Every request is gated by the loopback + CSRF machinery in `dashboard-rs/src/server.rs`; preserve all of it when adding endpoints:
 
-- Server binds to `127.0.0.1` **only** — never `0.0.0.0`.
-- `_host_ok()` rejects any request whose `Host` header isn't `127.0.0.1`/`localhost`/empty with **403**. Every `do_GET`/`do_POST` calls it first.
-- All state-changing requests are **POST** and require the per-process CSRF token (`X-HQ-Token`, checked with `secrets.compare_digest`-style equality) **plus** an Origin / `Sec-Fetch-Site` same-site check. The token is minted per process (`CSRF_TOKEN = secrets.token_hex(16)`) and injected into the page by replacing the `__HQ_CSRF__` placeholder — so only a same-origin page can read and echo it.
+- Server binds to `127.0.0.1` **only** (`dashboard-rs/src/main.rs`) — never `0.0.0.0`.
+- `host_ok()` rejects any request whose `Host` header isn't `127.0.0.1`/`localhost`/empty with **403**. `handle()` calls it before any route.
+- All state-changing requests are **POST** and require the per-process CSRF token (`X-HQ-Token`, checked with constant-time equality, `constant_eq()`) **plus** an Origin / `Sec-Fetch-Site` same-site check (`origin_ok()`). The token is minted per process (`App::csrf_token`) and injected into the page by replacing the `__HQ_CSRF__` placeholder — so only a same-origin page can read and echo it.
 - File lookups are validated against UUID / known-folder allowlists — **no path traversal**. Any new endpoint that takes a path or id must validate it the same way.
 - **Reads are GET, mutations are POST.** Never mutate state on a GET.
 
@@ -46,7 +48,7 @@ Every request is gated by the loopback + CSRF machinery already in `dashboard.py
 
 ## 2. File & module layout
 
-`index.html` is a template: markup, plus `@include` lines for its CSS and script, which live in `ui/`. `dashboard.py` (`assemble_index()`) stitches them back in, in order, every time the page is served, so the browser still gets one page with one inline script (same globals, hoisting and `"use strict"` as before the split). There is no build step: edit a file in `ui/` and reload.
+`index.html` is a template: markup, plus `@include` lines for its CSS and script, which live in `ui/`. The server (`assemble_index()` in `dashboard-rs/src/server.rs`) stitches them back in, in order, every time the page is served, so the browser still gets one page with one inline script (same globals, hoisting and `"use strict"` as before the split). There is no build step: edit a file in `ui/` and reload.
 
 ```
 index.html             # markup + //@include lines (template)
@@ -58,14 +60,14 @@ ui/app/02-store-art.js … 21-arena-controls.js   # one file per area of the pag
 games/*.js             # Valley minigames, loaded on first use
 ```
 
-The files run as ONE script in name order, so a top-level function in a later file is still hoisted for code in an earlier one. Tests read the stitched page with `dashboard.assemble_index()`.
+The files run as ONE script in name order, so a top-level function in a later file is still hoisted for code in an earlier one. Tests read the stitched page with `tests/hq.py`'s `assemble_index()`, which asks the server for it (`claudehq --print-index`).
 
 Rules for where new code goes:
 
 - **New pure helper** (formatting, hashing, seeding, escaping) → `ui/app/00-core.js`. Keep it small and side-effect-free.
 - **Anything touching creatures, sprites, evolution, packs** → `ui/app/01-creatures.js`. This is the single home for the `creature*`, `poke*`, `monster*`, `troop*`, `animo*` families.
 - **A new view** → its own `ui/app/NN-<view>.js` plus an `//@include` line in `index.html`, wired into the view switcher (`ui/app/10-views.js`). Add the tab button with proper `role="tab"` + `aria-selected` (see §7) and map its number key.
-- **A new API endpoint** → add the handler branch in `dashboard.py` next to the existing routes, gated by `_host_ok()`; document it in the README's HTTP API line.
+- **A new API endpoint** → add the route in `dashboard-rs/src/server.rs` (`do_get` / `post_route`, plus `post_paths()` for a POST) next to the existing routes, behind the same gates; document it in the README's HTTP API line.
 - **Styles** → `ui/hq.css` (tokens at the top). Never inline a hex color (see §4).
 
 During the refactor, when you touch a region that is still inline, **extract that region** rather than adding more inline code beside it. Don't start new inline `<style>`/`<script>` content.
@@ -90,7 +92,7 @@ This codebase has a deliberate, consistent house style. Match it — do not "mod
   function creatureSeed(cr){ cr=cr||{}; return hashStr((cr.species||cr.name||"")+"|"+creatureIndex(cr)); }
   var rng = mulberry32(seed);
   ```
-  The backend mirrors this determinism (`species_seed`, `shiny_for_species` use `sha256` over a fixed string). Shiny and species are **stable per-species** so the Pokédex and live cards always agree — do not introduce per-session randomness into anything catalog-facing.
+  The backend mirrors this determinism (`species_seed`, `shiny_for_species` in `dashboard-rs/src/creature.rs` use `sha256` over a fixed string). Shiny and species are **stable per-species** so the Pokédex and live cards always agree — do not introduce per-session randomness into anything catalog-facing.
 
 ### XSS discipline — `esc()` on every interpolation (mandatory)
 
@@ -149,7 +151,7 @@ Claude HQ's entire value proposition is that **your conversations never leave yo
 
 Concretely:
 
-- **All same-origin traffic is fine and is the norm.** Every `fetch()` and the `EventSource('/api/stream')` in the frontend targets local `/api/...` paths served by `dashboard.py` on `127.0.0.1`. That is not egress. Keep it that way — never point a `fetch` at an external host.
+- **All same-origin traffic is fine and is the norm.** Every `fetch()` and the `EventSource('/api/stream')` in the frontend targets local `/api/...` paths served by the HQ server on `127.0.0.1`. That is not egress. Keep it that way — never point a `fetch` at an external host.
 - **The only outbound requests to the public internet are `<img src>` sprite loads** (see §6) and the **opt-in Arena** channel. Nothing else may leave the machine.
 - **Sprite CDNs are privacy-safe by construction:** an `<img>` request carries only a **Pokédex number / creature slug** in the URL path — a value derived from `hash(sessionId) % 48`, which is not reversible into any session content and reveals nothing about what you were doing. No query params, no headers with your data, no beacons. That's why the "pokemon" packs are acceptable. The "monsters" (and Village troop) packs are 100% locally generated SVG and send nothing at all — they exist precisely so a fully-offline user leaks zero bytes.
 - **Arena is off by default** and, when enabled, publishes **daily counts only** (prompts, tool calls, artifacts, tokens) — never prompt text, replies, file paths, project/folder names, session ids, or titles. Tool names are allowlisted (anything not a built-in Claude Code tool — e.g. `mcp__<server>__<tool>`, which often carries an employer/client name — is bucketed as `Other` before the wire). Cost sharing and live status are separately opt-in. The Arena device token lives in `arena-link.json`, **outside** `config.json`, so it is never served to the page. The wire format rejects unknown fields so a future change can't silently start leaking one.
@@ -204,17 +206,19 @@ Accessibility is a shipped feature, not an afterthought. Maintain:
 
 ## 8. Testing & manual verification
 
-Tests live in `tests/` and are **stdlib `unittest` only** (to keep the no-`pip` promise). Run:
+Three suites, all run by CI (`.github/workflows/tests.yml`) on every push to `main` and every PR. Run them before you open one:
 
 ```bash
-python3 -m unittest discover -s tests -v
+cd dashboard-rs && cargo test && cargo clippy --locked --all-targets -- -D warnings   # the local HQ server
+cd backend-rs && cargo test && cargo clippy --locked --all-targets -- -D warnings     # the Arena server
+python3 -m unittest discover -s tests -v                                               # frontend + tooling
 ```
 
-CI (`.github/workflows/tests.yml`) runs exactly this on Python 3.12 for every push to `main` and every PR — nothing is installed.
+`tests/` is stdlib `unittest` (plus `node` for the JS checks); nothing is `pip install`ed. The page it checks is assembled by the server itself (`tests/hq.py` runs `claudehq --print-index`), so it needs Rust too.
 
-- **Add/extend tests for backend logic you change**, especially the cost model, config validation, creature/stage math, and any parsing of transcript JSONL. Existing suites (`test_dashboard.py`, `test_arena.py`, `test_arena_nudge.py`) show the style: import `dashboard`/`arena` directly, assert on pure functions (`_price_for`, `_usage_cost`, `stage_for`, …). Prefer testing pure functions — that's another reason to keep logic in small pure helpers.
-- Backend defaults must be safe on garbage input (see `_price_for(None) → sonnet`, `_usage_cost("opus", None) → zeros`). New parsers should be tested against `None`, `""`, and non-dict inputs.
-- **Frontend has no automated harness** (no build = no bundled test runner). Verify manually: run `python3 dashboard.py`, exercise the changed view, and check:
+- **Add/extend tests for server logic you change**, especially the cost model, config validation, creature/stage math, and any parsing of transcript JSONL. Unit tests sit next to the code (`#[cfg(test)]` in `dashboard-rs/src/*.rs`); route-level tests live in `dashboard-rs/tests/`. Prefer testing pure functions (`cost::price_for`, `cost::usage_cost`, `creature::stage_for`, …) — that's another reason to keep logic in small pure helpers.
+- Server defaults must be safe on garbage input (an unknown model prices as sonnet, a missing usage block costs zero). New parsers should be tested against missing fields, `null`, `""`, and non-object JSON.
+- **The frontend has no browser test runner** (no build = no bundled harness; `tests/` covers its static rules and shared logic). Verify manually: run `dashboard-rs/target/release/claudehq`, exercise the changed view, and check:
   - every theme (aurora/midnight/forest/mono/contrast), light and dark;
   - Calm mode on (animations stop) and Large-text on (layout holds);
   - keyboard-only navigation of the changed area;
@@ -231,16 +235,16 @@ CI (`.github/workflows/tests.yml`) runs exactly this on Python 3.12 for every pu
   - `Fix sprite flicker + 3D pack Gen-8 only + bump SW cache`
   - `Keep analytics trend-chart labels a fixed size at any width`
 - Keep commits focused; explain *why* in the body when the subject can't. Reference issues/PRs (`#30`) where relevant.
-- **Do not commit runtime state or secrets:** `config.json`, `sessions-meta.json`, `arena-link.json`, `claude-hq*.log`, `verify_*.png`, `__pycache__/` are all git-ignored — keep them so.
-- **PRs:** state what changed and why, call out anything touching **privacy, network egress, security (Host/CSRF), or third-party assets** explicitly (these get the closest review), list how you verified (tests run + manual checks from §8), and attach screenshots for visual changes. Bump `APP_VERSION` in `dashboard.py` and add a Changelog entry in `README.md` for user-facing releases (patch = fixes/polish, minor = features). Credit external contributors in the README, as the existing entries do.
-- CI must be green (the unittest workflow) before merge.
+- **Do not commit runtime state or secrets:** `config.json`, `sessions-meta.json`, `arena-link.json`, `claude-hq*.log`, `verify_*.png`, `target/`, `__pycache__/` are all git-ignored — keep them so.
+- **PRs:** state what changed and why, call out anything touching **privacy, network egress, security (Host/CSRF), or third-party assets** explicitly (these get the closest review), list how you verified (tests run + manual checks from §8), and attach screenshots for visual changes. Bump `APP_VERSION` in `dashboard-rs/src/app.rs` (and `version` in `dashboard-rs/Cargo.toml`) and add a Changelog entry in `README.md` for user-facing releases (patch = fixes/polish, minor = features). Credit external contributors in the README, as the existing entries do.
+- CI must be green (all three jobs of the tests workflow) before merge.
 
 ---
 
 ## 10. Performance norms
 
 - **`partySig` gating to prevent sprite flicker.** The live view rebuilds `#party` only when a *card-relevant* signature changes. `partySig()` hashes only fields that affect the rendered card (id, status, title, alias, pinned, tags, note, folder, species, stage, shiny, plus the active query/sort/filter/pack) — **deliberately excluding volatile fields** (`now`, `ageSecs`, `tokens`) that tick on every SSE frame. If they were included, every animated sprite would restart on each tick. **When you add data to a card, decide consciously whether it belongs in the signature.** Add it only if a change to it should force a re-render; keep high-frequency, non-structural values out. Never rebuild the whole party for a value that changes every second.
-- **`scan_file` mtime/size caching.** `scan_file(path)` is the single per-file transcript scan feeding both the session view and the season/analytics computations. It caches the rich aggregate keyed by `(st_mtime, st_size)` in `_scan_cache` and re-reads a `.jsonl` only when that key changes. **Route any new per-transcript computation through `scan_file`'s single pass** — add fields to the aggregate rather than opening and re-parsing the file in a second pass. Re-reading every transcript on every request would make the dashboard unusable once history accumulates.
+- **`scan_file` mtime/size caching.** `scan_file(path)` is the single per-file transcript scan feeding both the session view and the season/analytics computations. It lives in `dashboard-rs/src/app.rs` (`App::scan_file`, the walk itself in `dashboard-rs/src/scan.rs`), caches the rich aggregate keyed by the file's mtime and size in `scan_cache`, and re-reads a `.jsonl` only when that key changes. **Route any new per-transcript computation through `scan_file`'s single pass** — add fields to the aggregate rather than opening and re-parsing the file in a second pass. Re-reading every transcript on every request would make the dashboard unusable once history accumulates.
 - **General:** the SSE stream is the live path; keep per-frame work cheap. Large lists (archived/stale history can be huge) should be lazily built/collapsed as the stale group already is. Prefer incremental DOM updates over full re-renders. Use `loading="lazy"` on off-screen images. Keep the backend O(changed files), not O(all files), per request wherever the cache allows.
 
 ---

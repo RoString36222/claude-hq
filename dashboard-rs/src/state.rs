@@ -86,6 +86,12 @@ pub fn atomic_write_prefixed(path: &Path, dir: &Path, prefix: &str, text: &str) 
 /// exists but does not parse is renamed to <name>.corrupt-<ms>, unless it was
 /// swapped for another between the read and the check.
 pub fn load_json_guarded(path: &Path) -> Option<Value> {
+    load_json_guarded_then(path, || ())
+}
+
+/// load_json_guarded with `between` run after the read and before the
+/// quarantine check (tests use it to race a save in).
+fn load_json_guarded_then(path: &Path, between: impl FnOnce()) -> Option<Value> {
     let mut f = fs::File::open(path).ok()?;
     let mut raw = Vec::new();
     use std::io::Read;
@@ -96,6 +102,7 @@ pub fn load_json_guarded(path: &Path) -> Option<Value> {
     if parsed.is_some() {
         return parsed;
     }
+    between();
     let now = fs::metadata(path).ok()?;
     let key = |m: &fs::Metadata| (m.ino(), m.dev(), m.size(), m.mtime(), m.mtime_nsec());
     if key(&now) != key(&seen) {
@@ -178,6 +185,19 @@ mod tests {
             fs::remove_file(&q[0]).unwrap();
         }
         assert_eq!(load_json_guarded(&d.path().join("absent.json")), None);
+    }
+
+    #[test]
+    fn a_good_file_saved_mid_read_is_not_quarantined() {
+        // A reader parses corrupt bytes while a concurrent save swaps a valid
+        // file in: the reader must not move the fresh file aside.
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("race.json");
+        fs::write(&p, "{corrupt").unwrap();
+        let got = load_json_guarded_then(&p, || atomic_write_json(&p, &json!({"theme": "forest"}), 0o600).unwrap());
+        assert_eq!(got, None);
+        assert_eq!(fs::read_dir(d.path()).unwrap().count(), 1); // no .corrupt-* file
+        assert_eq!(load_json_guarded(&p), Some(json!({"theme": "forest"})));
     }
 
     #[test]

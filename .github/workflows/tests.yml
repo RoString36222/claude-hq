@@ -6,6 +6,9 @@ on:
   pull_request:
 
 jobs:
+  # Frontend and tooling tests (stdlib Python + node). The page they check is
+  # assembled by the HQ server itself (tests/hq.py runs `claudehq --print-index`),
+  # so this job needs Rust too.
   unittest:
     runs-on: ubuntu-latest
     steps:
@@ -13,35 +16,33 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # Stdlib only — nothing to install.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: dashboard-rs
       - name: Run unit tests
         run: python3 -m unittest discover -s tests -v
 
-  backend:
+  # The local HQ server (claudehq).
+  dashboard:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: backend
+        working-directory: dashboard-rs
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          # Matches the Dockerfile's base image.
-          python-version: "3.12"
-      # Installs pyproject.toml's dependencies plus the dev group (pytest).
-      - name: Install dependencies
-        run: uv sync
-      - name: Run backend tests
-        run: uv run pytest -q
-      # The container runs `alembic upgrade head` at start, which fails outright
-      # if two revisions both claim to follow the same parent.
-      - name: Single alembic head
-        run: test "$(uv run alembic heads | grep -c '(head)')" = "1"
-      # A small load test: 6 rooms x 8 bots across kart, platformer and Blaster
-      # for 15 s; fails on a room that cannot start or >1% late ticks.
-      - name: Arena load test (small)
-        run: uv run python scripts/loadtest.py --rooms 6 --seconds 15
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: dashboard-rs
+      - name: Run Rust tests
+        run: cargo test --locked
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --locked --all-targets -- -D warnings
 
+  # The Arena server.
   rust:
     runs-on: ubuntu-latest
     defaults:

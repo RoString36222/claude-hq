@@ -222,5 +222,5 @@ fn stream_sends_a_data_frame() {
     }
     let text = String::from_utf8_lossy(&buf);
     assert!(text.to_lowercase().contains("content-type: text/event-stream; charset=utf-8"));
-    assert!(text.contains("\"version\": \"2.5.0\""));
+    assert!(text.contains(&format!("\"version\": \"{}\"", claudehq::app::APP_VERSION)));
 }

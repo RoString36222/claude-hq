@@ -25,7 +25,7 @@
 //! rewind is needed - the bot is on the server). Bots never send network
 //! frames and never have clocks of their own.
 //!
-//! The arena is `backend/app/strike_map.json`, embedded at build time with
+//! The arena is `backend-rs/data/strike_map.json`, embedded at build time with
 //! `include_str!` -- the file the Python reads (a byte copy of
 //! games/strike/map.json).
 //!
@@ -214,7 +214,7 @@ pub const GAME_NAME: &str = "Strikezone";
 pub const MAX_LOBBY: usize = 8;
 pub const HOST_GRACE: f64 = 15.0;
 
-pub const MAP_JSON: &str = include_str!("../../backend/app/strike_map.json");
+pub const MAP_JSON: &str = include_str!("../data/strike_map.json");
 
 pub type Box3 = [f64; 6];
 

@@ -673,4 +673,157 @@ mod tests {
         assert_eq!(splitext(".hidden"), (".hidden".to_string(), String::new()));
         assert_eq!(splitext("a.b.mp3"), ("a.b".to_string(), ".mp3".to_string()));
     }
+
+    // ---- ported from tests/test_pantry_proxy.py PantryEatTests (these need the
+    // payload memo, which is crate-private; the off-payload cases live in
+    // tests/py_pantry_cali.rs) ---------------------------------------------------
+
+    fn memo_session(app: &App, creature: Value) {
+        let mut g = app.payload_memo.lock().unwrap();
+        g.data = Some(Arc::new(json!({"sessions": [{"sessionId": SID, "kind": "interactive", "rawStatus": "idle", "creature": creature}]})));
+        g.at = Some(std::time::Instant::now() + std::time::Duration::from_secs(3600));
+    }
+
+    fn eat(app: &App, kind: &str, sid: &str, rid: &str, extra: Value) -> Resp {
+        let mut b = json!({"sessionId": sid, "kind": kind, "requestId": rid});
+        for (k, v) in extra.as_object().unwrap() {
+            b[k] = v.clone();
+        }
+        app.pantry_eat(&b)
+    }
+
+    #[test]
+    fn eat_bad_input_and_the_rest_of_the_gate_make_no_request() {
+        let (_d, app, sent, _r) = eat_setup("tired");
+        assert_eq!(eat(&app, "berry", &format!("{}\n", SID), RID, json!({})).0, 400);
+        assert_eq!(eat(&app, "berry", SID, "bad id", json!({})).0, 400);
+        assert_eq!(eat(&app, "pizza", SID, RID, json!({})).0, 400);
+        assert!(sent.lock().unwrap().is_empty());
+        for (state, kind, want) in [("unconscious", "bento", "fainted"), ("fatigued", "tonic", "not_fainted"), ("tired", "elixir", "not_fainted")] {
+            let (_d, app, sent, _r) = eat_setup(state);
+            let (code, resp) = eat(&app, kind, SID, RID, json!({}));
+            assert_eq!((code, resp["code"].as_str().unwrap()), (409, want));
+            assert!(!resp["error"].as_str().unwrap().is_empty());
+            assert!(sent.lock().unwrap().is_empty());
+            assert!(app.load_meals(None).is_empty());
+        }
+    }
+
+    #[test]
+    fn eat_fainted_takes_any_revive_item() {
+        let (_d, app, sent, reply) = eat_setup("unconscious");
+        for (i, kind) in ["tonic", "elixir"].iter().enumerate() {
+            let rid = format!("{}{}", &RID[..RID.len() - 1], i);
+            memo_session(&app, json!({"species": 3, "fatigue": {"state": "unconscious"}}));
+            *reply.lock().unwrap() = server_eat(kind, py::now_ts() - 30.0);
+            let (code, resp) = eat(&app, kind, SID, &rid, json!({}));
+            assert_eq!(code, 200, "{}", resp);
+            assert_eq!(sent.lock().unwrap().last().unwrap().3, Some(json!({"requestId": rid, "kind": kind})));
+            assert_eq!(resp["meal"]["revives"], true);
+        }
+        let mut kinds: Vec<String> = app.load_meals(None)[SID].iter().map(|m| m.1.clone()).collect();
+        kinds.sort();
+        assert_eq!(kinds, ["elixir", "tonic"]);
+    }
+
+    #[test]
+    fn eat_with_fatigue_off_is_refused_locally() {
+        let (_d, app, sent, _r) = eat_setup("tired");
+        memo_session(&app, json!({"species": 3}));
+        let (code, resp) = eat(&app, "berry", SID, RID, json!({}));
+        assert_eq!((code, resp["code"].as_str()), (409, Some("fatigue_off")));
+        assert!(sent.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn eat_success_bumps_the_payload_and_replays_locally() {
+        let (_d, app, sent, reply) = eat_setup("tired");
+        let at = (py::now_ts() as i64 - 42) as f64;
+        *reply.lock().unwrap() = server_eat("berry", at);
+        let gen = app.payload_memo.lock().unwrap().gen;
+        let (code, resp) = eat(&app, "berry", SID, RID, json!({"title": "secret", "path": "/Users/me/x"}));
+        assert_eq!(code, 200);
+        assert_eq!(resp["sessionId"], SID);
+        assert!(resp.get("fatigue").is_some());
+        assert!(app.payload_memo.lock().unwrap().gen > gen);
+        let (code, resp) = eat(&app, "berry", SID, RID, json!({}));
+        assert_eq!(code, 200);
+        assert_eq!((resp["op"].as_str(), resp["replayed"].as_bool(), resp["kind"].as_str()), (Some("eat"), Some(true), Some("berry")));
+        assert_eq!(resp["meal"]["at"], json!(py::iso_from_ts(at)));
+        assert!(resp.get("coins").is_none());
+        assert_eq!(eat(&app, "berry", OTHER, RID, json!({})).1["code"], "rid_reused");
+        assert_eq!(sent.lock().unwrap().len(), 1);
+        assert_eq!(app.load_meals(None)[SID].len(), 1);
+        for (_, _, _, b) in sent.lock().unwrap().iter() {
+            assert_eq!(b, &Some(json!({"requestId": RID, "kind": "berry"})));
+        }
+    }
+
+    #[test]
+    fn eat_server_time_in_the_future_is_clamped_to_now() {
+        let (_d, app, _sent, reply) = eat_setup("tired");
+        *reply.lock().unwrap() = server_eat("bento", py::now_ts() + 3600.0);
+        let before = py::now_ts();
+        assert_eq!(eat(&app, "bento", SID, RID, json!({})).0, 200);
+        let meals = app.load_meals(None)[SID].clone();
+        assert_eq!(meals.len(), 1);
+        assert_eq!(meals[0].1, "bento");
+        assert!(before - 1.0 <= meals[0].0 && meals[0].0 <= py::now_ts());
+    }
+
+    #[test]
+    fn eat_retry_skips_the_gate_and_keeps_the_original_time() {
+        let (_d, app, sent, reply) = eat_setup("rested");
+        let original = (py::now_ts() as i64 - 600) as f64;
+        *reply.lock().unwrap() = server_eat("riceball", original);
+        assert_eq!(eat(&app, "riceball", SID, RID, json!({"retry": true})).0, 200);
+        assert_eq!(app.load_meals(None)[SID], vec![(original, "riceball".to_string())]);
+        assert_eq!(eat(&app, "riceball", SID, RID, json!({"retry": "yes"})).0, 200, "now a local replay");
+        assert_eq!(sent.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn eat_server_refusals_pass_through_exactly() {
+        let (_d, app, _sent, reply) = eat_setup("tired");
+        for r in [(409, json!({"detail": "you have no Berries left", "error": "you have no Berries left"})), (404, json!({"detail": "Not Found", "error": "Not Found"}))] {
+            *reply.lock().unwrap() = r.clone();
+            assert_eq!(eat(&app, "berry", SID, RID, json!({})), r);
+        }
+        assert!(app.load_meals(None).is_empty());
+    }
+
+    #[test]
+    fn eat_ledger_write_failure_is_pending_then_recorded_once() {
+        let (d, base) = app();
+        let mut p = base.paths.clone();
+        p.meals = d.path().join("later/meals.json");
+        let app = App::new(p);
+        let reply = Arc::new(Mutex::new(server_eat("berry", py::now_ts() - 30.0)));
+        let sent = stub(&app, "https://arena.example", reply);
+        memo_session(&app, json!({"species": 3, "fatigue": {"state": "tired"}}));
+        let (code, resp) = eat(&app, "berry", SID, RID, json!({}));
+        assert_eq!((code, resp["pending"].clone()), (202, json!(true)));
+        assert!(app.load_meals(None).is_empty());
+        std::fs::create_dir_all(d.path().join("later")).unwrap();
+        memo_session(&app, json!({"species": 3, "fatigue": {"state": "rested"}}));
+        assert_eq!(eat(&app, "berry", SID, RID, json!({"retry": true})).0, 200);
+        assert_eq!(eat(&app, "berry", SID, RID, json!({"retry": true})).0, 200);
+        assert_eq!(app.load_meals(None)[SID].len(), 1);
+        assert_eq!(sent.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn eat_old_server_replay_is_recorded_but_outside_the_walk() {
+        let (_d, app, _sent, reply) = eat_setup("tired");
+        let old = (py::now_ts() as i64 - 30 * 3600) as f64;
+        let mut r = server_eat("bento", old);
+        r.1["replayed"] = json!(true);
+        *reply.lock().unwrap() = r;
+        assert_eq!(eat(&app, "bento", SID, RID, json!({"retry": true})).0, 200);
+        let meals = app.load_meals(None)[SID].clone();
+        assert_eq!(meals, vec![(old, "bento".to_string())]);
+        let now = py::now_ts();
+        let spans = [[now - 2.0 * 3600.0, now]];
+        assert_eq!(fatigue::fatigue_for(SID, &spans, now, None, &meals), fatigue::fatigue_for(SID, &spans, now, None, &[]));
+    }
 }

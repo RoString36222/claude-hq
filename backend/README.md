@@ -1,54 +1,56 @@
-# Claude HQ Arena
+# Claude HQ Arena: deploying it
 
 The multiplayer backend for [Claude HQ](../README.md): a shared leaderboard,
-seasons, and websocket rooms for minigames.
+seasons, and websocket rooms for minigames. The server is the Rust one in
+[`backend-rs/`](../backend-rs/README.md) (binary `arena`); this folder holds only
+what you need to run it somewhere:
+
+| File | What |
+|---|---|
+| `docker-compose.yml` | The Arena (built from `backend-rs/Dockerfile`) behind Caddy, plus the optional deploy panel. |
+| `Caddyfile` | TLS, websockets, SSE, security headers. |
+| `.env.example` | The settings the Arena reads from its environment. Copy to `.env`. |
+
+The Arena applies `backend-rs/migrations/` itself when it starts, so there is no
+separate migration step, and its game data (`backend-rs/data/`) is compiled into
+the binary.
 
 ## What crosses the network
 
 Claude HQ reads your transcripts. This backend never sees them.
 
-The local client (`arena.py`) sends **daily counts only** — prompts, tool calls,
-artifacts, tokens. It never sends prompt text, replies, file paths, project or
-folder names, session ids, or titles. Two details worth knowing:
+The local client (the HQ server's `dashboard-rs/src/arena.rs`) sends **daily
+counts only** — prompts, tool calls, artifacts, tokens. It never sends prompt
+text, replies, file paths, project or folder names, session ids, or titles. Two
+details worth knowing:
 
 - **Tool names are allowlisted.** MCP tools are named `mcp__<server>__<tool>` and
   routinely carry an employer's or client's name, so anything that isn't a
-  built-in Claude Code tool is bucketed as `Other` before it can reach the wire.
+  built-in Claude Code tool is bucketed as `Other` before it can reach the wire,
+  and the server's `Tool` type (`backend-rs/src/schemas.rs`) has no value that
+  could carry the original name.
 - **Cost is opt-in and off by default.** Spend is salary- and employer-adjacent.
 
-`StatPayload` uses `extra="forbid"`, so a client that grows a new field cannot
-silently start leaking it — the server rejects the whole submission until that
-field is added to `app/schemas.py` deliberately.
+The stat payload is parsed with `deny_unknown_fields`, so a client that grows a
+new field cannot silently start leaking it — the server rejects the whole
+submission until that field is added to `backend-rs/src/schemas.rs` deliberately.
 
-Poke Coins and snacks (`app/pantry.py`) are the one other thing the server
-stores. A pantry request carries a food kind, an amount, a recipient handle and
-an optional note. It never says which session ate a snack: that stays on your
-machine. Coins are cosmetic and never touch XP or the board.
+Poke Coins and snacks (`backend-rs/src/pantry.rs`) are the one other thing the
+server stores. A pantry request carries a food kind, an amount, a recipient
+handle and an optional note. It never says which session ate a snack: that stays
+on your machine. Coins are cosmetic and never touch XP or the board.
 
 ## Scoring is the server's job
 
 Clients submit raw activity, never a score. XP, levels, ranks and streaks are
-derived in `app/scoring.py`. That means the formula can change without a client
-release, and faking a score means faking plausible daily activity rather than
-POSTing `{"xp": 999999}`.
+derived in `backend-rs/src/scoring.rs`. That means the formula can change without
+a client release, and faking a score means faking plausible daily activity rather
+than POSTing `{"xp": 999999}`.
 
 There is no anti-cheat beyond sanity clamps (`ARENA_MAX_DAILY_*`), and that's
 deliberate: the client runs on your friends' machines. The clamps exist so a
 client bug or a prank can't permanently distort the board, not to stop a
 determined faker.
-
-## Layout
-
-| Path | What |
-|---|---|
-| `app/schemas.py` | The wire allowlist. The privacy boundary. |
-| `app/scoring.py` | XP / level / rank / streak. Mirrors `dashboard.py`. |
-| `app/service.py` | Ingest (upsert per day) and leaderboard queries. |
-| `app/pantry.py` | Poke Coins, snacks and gifts: the rules, caps and `CATALOG`. The server is the authority. |
-| `app/routes/pantry.py` | The thin pantry routes. |
-| `app/rooms.py` | In-process websocket rooms: presence, broadcast, shared state. |
-| `app/auth.py` | Device tokens, pairing codes, websocket tickets. |
-| `alembic/` | Migrations. |
 
 `daily_stats` is **upserted** per (user, day), never summed — the client rescans
 whole transcripts, so each submission is authoritative for that day.
@@ -58,47 +60,36 @@ the scoring rules change.
 ## Running locally
 
 ```bash
-cd backend
-uv sync
-cp .env.example .env          # defaults to SQLite; no Postgres needed
-uv run uvicorn app.main:app --reload --port 8080
-uv run pytest                 # 56 tests
+cp backend/.env.example backend/.env       # SQLite; fill in GitHub OAuth to pair
+cargo build --release --manifest-path backend-rs/Cargo.toml
+(cd backend && set -a && . ./.env && set +a && ../backend-rs/target/release/arena)
 ```
 
-### Seeding fake friends
-
-A leaderboard with one row tells you nothing, so there's a seeder. It creates
-users and device tokens directly, then publishes their stats **over HTTP through
-the real API**, exercising auth and the schema allowlist rather than just the ORM:
-
-```bash
-uv run python scripts/seed_demo.py --reset --friends 6
-```
-
-It prints the resulting board and each device token, so you can curl as any of
-them:
-
-```bash
-curl -s localhost:8080/v1/board?window=30d -H "Authorization: Bearer hqd_..." | jq
-```
-
-Point it at a local server only — it writes users it invented.
+It listens on `ARENA_BIND_HOST:ARENA_BIND_PORT` (default `0.0.0.0:8081`; set
+`ARENA_BIND_PORT=8080` to match the example's `ARENA_PUBLIC_BASE_URL`). Tests:
+`cd backend-rs && cargo test`.
 
 ## Deploying
 
-Two supported shapes, both driven by a wizard from the repo root:
+### On your own Mac: `./selfhost-wizard.sh`
 
-| | `./selfhost-wizard.sh` | `./deploy-wizard.sh` |
-|---|---|---|
-| Runs on | your own Mac | Fly.io |
-| Database | SQLite (one file) | Neon Postgres |
-| Reachable via | Cloudflare Tunnel | `*.fly.dev` |
-| Cost | free | ~$5/mo |
-| Up when | your Mac is awake | always |
+From the repo root. It builds the Arena with `cargo` (install Rust from
+https://rustup.rs), writes `backend/.env` (SQLite at `backend/arena.db`), sets up
+a Cloudflare Tunnel to your hostname, and installs LaunchAgents for the Arena and
+the tunnel. It stops and tells you when a step needs a browser.
 
-Both stop and tell you when a step needs a browser.
+| | |
+|---|---|
+| Database | SQLite (one file) |
+| Reachable via | Cloudflare Tunnel |
+| Cost | free |
+| Up when | your Mac is awake |
 
-### Or any VM with Docker
+Your Mac sleeping is not destructive: publishes retry every 5 minutes and each
+one carries a 30-day window, so nothing is lost. The board is simply
+unreachable until the machine is back.
+
+### On any VM with Docker
 
 `docker-compose.yml` runs the app behind Caddy, which obtains and renews TLS
 automatically — no certbot cron to forget. Works on Hetzner, DigitalOcean,
@@ -107,83 +98,54 @@ Oracle's free ARM tier, or anything else with Docker.
 ```bash
 # point your domain's A record at the VM, then:
 cp .env.example .env            # fill in the GitHub OAuth values
-ARENA_DOMAIN=arena.example.com docker compose up -d
+ARENA_DOMAIN=arena.example.com docker compose up -d --build
 ```
 
 The app is only reachable through Caddy (`expose`, not `ports`), the database
 lives on the `arena-data` volume so it survives a redeploy, and `caddy-data`
-holds the certificates — keep both.
+holds the certificates — keep both. The container's healthcheck is
+`arena --health`.
 
 You still need a domain: Let's Encrypt will not issue for a bare IP, and the
 game rooms want `wss://`.
 
-### Self-hosting notes
+### Database notes
 
-SQLite is the primary database when self-hosting, so `app/db.py` sets WAL
-(readers don't block while a publish writes), a 5s busy timeout, and foreign
-keys. Back it up by copying `backend/arena.db`.
+SQLite is the database. The Arena opens it in WAL mode (readers don't block
+while a publish writes) with a busy timeout and foreign keys on. Back it up by
+copying the file (`backend/arena.db` on a Mac, the `arena-data` volume on a VM).
 
-Two things are anchored to absolute paths on purpose, because launchd starts
-the service from a different working directory and relative paths would fail
-*silently* rather than loudly:
-
-- `ARENA_DATABASE_URL` uses the four-slash form (`sqlite+aiosqlite:////abs/path`)
-  — a relative path would create a second, empty database elsewhere.
-- `env_file` in `app/config.py` is resolved against the package directory —
-  otherwise the service would load no config at all and quietly fall back to
-  defaults with no OAuth configured.
-
-Your Mac sleeping is not destructive: publishes retry every 5 minutes and each
-one carries a 30-day window, so nothing is lost. The board is simply
-unreachable until the machine is back.
+`ARENA_DATABASE_URL` should be an absolute path, in the four-slash form
+(`sqlite+aiosqlite:////abs/path/arena.db`; `sqlite:/abs/path/arena.db` works
+too). launchd starts the service from a different working directory, and a
+relative path would quietly create a second, empty database elsewhere.
 
 ## Releasing
 
-`ops/release.sh` is the one command for shipping the Arena once it is deployed:
+`ops/release.sh` is the one command for shipping the Arena once it is deployed
+on a VM:
 
 ```bash
 ops/release.sh check                  # every test suite, locally, before you merge
 ops/release.sh deploy                 # on the host: pull main, check CI, build, ship, verify
-ARENA_IMPL=rs ops/release.sh deploy   # the same, running the Rust Arena (migrates with Alembic first)
 ops/release.sh rollback               # back to the previous release, no rebuild
 ops/release.sh status                 # what runs now, history, kept images
 ```
 
 Each release is an image tagged with the UTC date and commit (`2026.10.07-76ee057`),
-shown by `/health` as `version`. The last three per implementation are kept, so a
-rollback just starts the previous image. A deploy refuses a commit whose GitHub CI
-has not passed, and rolls itself back if the new build is not healthy within two
-minutes. CI runs the whole thing on every backend PR (`release-smoke.yml`).
+shown by `/health` as `version`. The last three are kept, so a rollback just
+starts the previous image. A deploy refuses a commit whose GitHub CI has not
+passed, and rolls itself back if the new build is not healthy within two minutes.
+CI runs the whole thing on every backend PR (`release-smoke.yml`).
 
-## Load test
-
-`scripts/loadtest.py` starts an Arena on a throwaway database and fills 8-player
-rooms with bots across Kart Racing, Platformer Rush and Blaster Arena, then
-reports server CPU and memory, bandwidth, and late ticks:
-
-```bash
-uv run python scripts/loadtest.py                    # Python Arena, 24 rooms x 8 bots, 60 s
-uv run python scripts/loadtest.py --impl rs          # Rust Arena (cargo build --release first)
-uv run python scripts/loadtest.py --rooms 48 -v      # up to the 48-loop process cap
-```
-
-Measured on an M-series laptop (October 2026), 0 late ticks in every run:
-
-| Arena | Players | CPU (one core) | Memory | Out |
-|---|---|---|---|---|
-| Python | 192 (24 rooms) | 39% mean, 49% max | 114 MB | 21 Mbit/s |
-| Python | 384 (48 rooms, the cap) | 67% mean, 82% max | 143 MB | 42 Mbit/s |
-| Rust | 192 (24 rooms) | 21% mean, 25% max | 27 MB | 21 Mbit/s |
-
-CI runs a small one (6 rooms, 15 s) on every backend change.
+A rollback restores code, not data: migrations only ever add, and an older build
+skips ones it has not seen.
 
 ## Scale note
 
 Rooms hold presence and shared state **in process memory**, so this service must
-run as exactly one machine (`fly.toml` sets `min_machines_running = 1` and
-`auto_stop_machines = false`). For a group of friends that is the right trade.
-Scaling out means putting rooms behind Redis pub/sub first — `app/rooms.py` is
-the only file that changes.
+run as exactly one process. For a group of friends that is the right trade.
+Scaling out means putting rooms behind a pub/sub first (`backend-rs/src/rooms.rs`).
 
 ## API
 

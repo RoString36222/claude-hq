@@ -1,6 +1,5 @@
-# The Rust Arena. Built from the REPO ROOT (it embeds backend/app/*.json at
-# compile time):  docker build -f backend-rs/Dockerfile .
-# ops/release.sh does this for you with ARENA_IMPL=rs.
+# The Arena. Built from the REPO ROOT:  docker build -f backend-rs/Dockerfile .
+# ops/release.sh does this for you.
 FROM rust:1-slim AS build
 WORKDIR /src
 COPY backend-rs/Cargo.toml backend-rs/Cargo.lock backend-rs/
@@ -9,11 +8,9 @@ COPY backend-rs/src backend-rs/src
 # `cargo build` and embeds the SQL in the binary. Without this COPY the build
 # fails, and Rust now owns the schema, so there is nothing else to apply it.
 COPY backend-rs/migrations backend-rs/migrations
-COPY backend/app/kart_tracks.json backend/app/platformer_levels.json \
-     backend/app/fps_map.json backend/app/golf_courses.json backend/app/strike_map.json backend/app/
-# Its own COPY: the creature data sits a directory deeper, and a single COPY
-# cannot flatten two destinations.
-COPY backend/app/data/pokemon.json backend/app/data/
+# Every game's data file (tracks, maps, courses, creatures) is embedded at
+# compile time with include_str!.
+COPY backend-rs/data backend-rs/data
 RUN cd backend-rs && cargo build --release --locked --bin arena
 
 FROM debian:bookworm-slim

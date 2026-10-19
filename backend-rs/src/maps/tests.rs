@@ -6,9 +6,9 @@ use serde_json::json;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use std::str::FromStr;
 
-const KART_JSON: &str = include_str!("../../../backend/app/kart_tracks.json");
-const PLAT_JSON: &str = include_str!("../../../backend/app/platformer_levels.json");
-const FPS_JSON: &str = include_str!("../../../backend/app/fps_map.json");
+const KART_JSON: &str = include_str!("../../data/kart_tracks.json");
+const PLAT_JSON: &str = include_str!("../../data/platformer_levels.json");
+const FPS_JSON: &str = include_str!("../../data/fps_map.json");
 
 async fn pool() -> SqlitePool {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();

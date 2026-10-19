@@ -9,7 +9,7 @@
  *
  * Multiplayer: you run and aim here (your own movement is predicted, your shots show at
  * once) and send where you are ~20 times a second (x, y, z in cm, yaw/pitch, your clock);
- * the Arena server (backend/app/fps.py) runs a 20 Hz tick that checks every move and
+ * the Arena server (backend-rs/src/fps.rs) runs a 20 Hz tick that checks every move and
  * judges every shot with lag compensation: a shot carries your clock, the last snapshot
  * you had and how far behind you were drawing the others, and the server rewinds them to
  * what you saw (the round trip it measures itself; your claimed delay is capped). Others
@@ -17,7 +17,7 @@
  * markers, damage and kills come from the server. Only these numbers, a weapon and a
  * character id travel; nothing transcript-derived.
  *
- * The FPS-SHARED block mirrors backend/app/fps.py (tests/test_fps_sync.py runs both under
+ * The FPS-SHARED block mirrors backend-rs/src/fps.rs (tests/test_fps_sync.py runs both under
  * node and checks they agree).
  */
 (function(){

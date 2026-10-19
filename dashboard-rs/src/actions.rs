@@ -223,15 +223,43 @@ impl App {
         d
     }
 
-    fn schedule_restart(&self) {
+    /// Rebuild this server from the checkout so the restart runs the code just
+    /// pulled. Ok(None) when the checkout has no dashboard-rs/ (restart as is).
+    fn build_self(&self) -> Result<Option<PathBuf>, String> {
+        let dir = self.paths.here.join("dashboard-rs");
+        if !dir.join("Cargo.toml").is_file() {
+            return Ok(None);
+        }
+        let cargo = cargo_path().ok_or("cargo is not installed (https://rustup.rs)")?;
+        let mut cmd = Command::new(cargo);
+        cmd.args(["build", "--release", "--locked", "--manifest-path"]).arg(dir.join("Cargo.toml"));
+        let bin = dir.join("target/release/claudehq");
+        match run_timeout(&mut cmd, 900) {
+            Ok((0, _, _)) if bin.is_file() => Ok(Some(bin)),
+            Ok((_, _, err)) => {
+                // the end of cargo's output is the error
+                let tail: String = py::strip(&err).chars().rev().take(300).collect::<Vec<_>>().into_iter().rev().collect();
+                Err(format!("cargo build failed: {}", if tail.is_empty() { "unknown error".into() } else { tail }))
+            }
+            Err(crate::payload::RunErr::NotFound) => Err("cargo not found".into()),
+            Err(crate::payload::RunErr::Timeout) => Err("cargo build timed out".into()),
+            Err(crate::payload::RunErr::Other(e)) => Err(format!("cargo failed: {}", e)),
+        }
+    }
+
+    /// Rebuild, then restart once this response is sent. Err when the build
+    /// failed: this server keeps running.
+    fn rebuild_and_restart(&self) -> Result<(), String> {
+        let bin = self.build_self()?;
         let hook = self.restart_hook.read().unwrap().clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(1));
             match hook {
-                Some(h) => h(),
-                None => restart_self(),
+                Some(h) => h(bin),
+                None => restart_self(bin),
             }
         });
+        Ok(())
     }
 
     /// Fast-forward to the upstream and restart; refuses local edits and
@@ -246,8 +274,10 @@ impl App {
         };
         if st["ok"] != true {
             if st["stale"] == true {
-                self.schedule_restart();
-                return (200, json!({"ok": true, "updated": false, "restarting": true}));
+                return match self.rebuild_and_restart() {
+                    Ok(()) => (200, json!({"ok": true, "updated": false, "restarting": true, "server": "rust"})),
+                    Err(e) => (409, json!({"ok": false, "error": e})),
+                };
             }
             return (409, st);
         }
@@ -255,8 +285,10 @@ impl App {
         let ahead = st["ahead"].as_i64().unwrap_or(0);
         if behind == 0 && st["stale"] == true {
             *self.update_cache.lock().unwrap() = (0.0, None);
-            self.schedule_restart();
-            return (200, with(st, json!({"updated": false, "restarting": true})));
+            return match self.rebuild_and_restart() {
+                Ok(()) => (200, with(st, json!({"updated": false, "restarting": true, "server": "rust"}))),
+                Err(e) => (409, with(st, json!({"error": e}))),
+            };
         }
         if st["dirty"] == true {
             return (409, with(st, json!({"error": "you have local changes in the Claude HQ folder; commit or stash them first"})));
@@ -279,8 +311,10 @@ impl App {
         }
         let new = self.git(&["rev-parse", "--short", "HEAD"], 30).map(|r| py::strip(&r.1).to_string()).unwrap_or_default();
         *self.update_cache.lock().unwrap() = (0.0, None);
-        self.schedule_restart();
-        (200, json!({"ok": true, "updated": true, "from": old, "to": new, "commits": st["commits"], "count": behind, "restarting": true}))
+        if let Err(e) = self.rebuild_and_restart() {
+            return (409, with(st, json!({"error": format!("pulled {} → {}, but this server keeps running the old build: {}", old.as_str().unwrap_or(""), new, e)})));
+        }
+        (200, json!({"ok": true, "updated": true, "from": old, "to": new, "commits": st["commits"], "count": behind, "restarting": true, "server": "rust"}))
     }
 
     // ---- stats ---------------------------------------------------------------
@@ -329,10 +363,24 @@ impl App {
     }
 }
 
+fn cargo_path() -> Option<PathBuf> {
+    let on_path = std::env::var_os("PATH")
+        .and_then(|p| std::env::split_paths(&p).map(|d| d.join("cargo")).find(|c| c.is_file()));
+    // rustup's default; launchd's PATH lacks it
+    on_path.or_else(|| Some(PathBuf::from(home()).join(".cargo/bin/cargo")).filter(|c| c.is_file()))
+}
+
+/// Whether this process runs as the LaunchAgent: launchd names its jobs in
+/// XPC_SERVICE_NAME; a parent of pid 1 alone is any orphan (nohup ... &).
+pub fn is_launch_agent(xpc_service_name: Option<&str>) -> bool {
+    xpc_service_name == Some(LAUNCH_LABEL)
+}
+
 /// Replace this process with a fresh one: under launchd ask it to restart us
-/// (KeepAlive brings it back), otherwise re-exec.
-pub fn restart_self() {
-    if unsafe { libc::getppid() } == 1 && cfg!(target_os = "macos") {
+/// (KeepAlive brings it back), otherwise exec `bin` (the binary just built)
+/// or this one again.
+pub fn restart_self(bin: Option<PathBuf>) {
+    if is_launch_agent(std::env::var("XPC_SERVICE_NAME").ok().as_deref()) && cfg!(target_os = "macos") {
         let uid = unsafe { libc::getuid() };
         if Command::new("launchctl")
             .args(["kickstart", "-k", &format!("gui/{}/{}", uid, LAUNCH_LABEL)])
@@ -345,7 +393,7 @@ pub fn restart_self() {
         }
     }
     use std::os::unix::process::CommandExt;
-    if let Ok(exe) = std::env::current_exe() {
+    if let Some(exe) = bin.or_else(|| std::env::current_exe().ok()) {
         let args: Vec<String> = std::env::args().skip(1).collect();
         let e = Command::new(exe).args(args).exec();
         eprintln!("restart failed: {}", e);
@@ -529,7 +577,7 @@ mod tests {
         let app = App::new(paths);
         let restarts = std::sync::Arc::new(std::sync::Mutex::new(0));
         let r2 = restarts.clone();
-        *app.restart_hook.write().unwrap() = Some(std::sync::Arc::new(move || *r2.lock().unwrap() += 1));
+        *app.restart_hook.write().unwrap() = Some(std::sync::Arc::new(move |_| *r2.lock().unwrap() += 1));
         let st = app.update_status(true);
         assert_eq!((st["behind"].clone(), st["ahead"].clone(), st["dirty"].clone(), st["stale"].clone()), (json!(0), json!(0), json!(false), json!(false)));
         assert_eq!(app.update_and_restart().1["updated"], false);

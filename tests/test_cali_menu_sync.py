@@ -1,84 +1,67 @@
-"""The cali menu is mirrored by hand in three places; this catches drift.
+"""The cali menu is mirrored by hand; this catches drift.
 
-backend app/tacos.py CALI_MENU is the authority (keys and display names),
-app/schemas.py `MenuItem = Literal[...]` lists its keys for request validation,
-and arena.CALI_ITEM_KEYS is the local allowlist. dashboard.CALI_MAX_PER_ITEM
-mirrors schemas.MAX_PER_ITEM. The backend files are read with `ast`, so no
-backend dependency is imported. Stdlib only.
+backend-rs/src/cali.rs CALI_MENU is the authority (keys and display names) and
+its order validation looks keys up in CALI_MENU itself. The local server's
+allowlist is dashboard-rs/src/arena.rs CALI_ITEM_KEYS, its item cap
+dashboard-rs/src/handlers.rs CALI_MAX_PER_ITEM mirrors cali.rs MAX_PER_ITEM,
+and its board windows (arena.rs CALI_WINDOWS) are the Arena's: service.rs
+WINDOWS plus "lastseason". The Rust is read as text. Stdlib only.
 """
-import ast
 import os
 import re
 import sys
 import unittest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import arena  # noqa: E402
-import dashboard  # noqa: E402
+from rsconst import read, rs_block, rs_int, rs_path, rs_strings  # noqa: E402
 
-TACOS_PY = os.path.join(ROOT, "backend", "app", "tacos.py")
-SCHEMAS_PY = os.path.join(ROOT, "backend", "app", "schemas.py")
-
-
-def _module_assign(path, name):
-    """The value node of a module-level `name = ...` in path."""
-    with open(path, encoding="utf-8") as f:
-        tree = ast.parse(f.read(), path)
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(
-                isinstance(t, ast.Name) and t.id == name for t in node.targets):
-            return node.value
-    raise AssertionError("no module-level %s in %s" % (name, os.path.relpath(path, ROOT)))
+CALI_RS = rs_path("backend-rs", "src", "cali.rs")
+SERVICE_RS = rs_path("backend-rs", "src", "service.rs")
+ARENA_RS = rs_path("dashboard-rs", "src", "arena.rs")
+HANDLERS_RS = rs_path("dashboard-rs", "src", "handlers.rs")
 
 
 def load_menu():
-    return ast.literal_eval(_module_assign(TACOS_PY, "CALI_MENU"))
-
-
-def load_menu_item_literal():
-    """The strings in schemas.py's `MenuItem = Literal[...]`, in order."""
-    node = _module_assign(SCHEMAS_PY, "MenuItem")
-    if not (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
-            and node.value.id == "Literal"):
-        raise AssertionError("MenuItem is not a Literal[...]")
-    elts = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
-    return tuple(ast.literal_eval(e) for e in elts)
+    """key -> display name, in menu order."""
+    return dict(re.findall(r'\("([^"]+)",\s*"([^"]*)"\)', rs_block(CALI_RS, "CALI_MENU")))
 
 
 class CaliMenuSyncTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        for path in (TACOS_PY, SCHEMAS_PY):
+        for path in (CALI_RS, SERVICE_RS, ARENA_RS, HANDLERS_RS):
             if not os.path.exists(path):
-                raise AssertionError(os.path.relpath(path, ROOT) + " is missing")
+                raise AssertionError(path + " is missing")
         cls.menu = load_menu()
 
     def test_allowlist_matches_the_menu_in_order(self):
-        self.assertEqual(tuple(self.menu), arena.CALI_ITEM_KEYS)
+        self.assertEqual(len(self.menu), 11)
+        self.assertEqual(tuple(self.menu), tuple(rs_strings(ARENA_RS, "CALI_ITEM_KEYS")))
 
-    def test_schema_literal_matches_the_menu_in_order(self):
-        self.assertEqual(load_menu_item_literal(), tuple(self.menu))
+    def test_the_arena_validates_against_the_menu_itself(self):
+        self.assertIn('CALI_MENU.iter().position(|(key, _)| *key == k.as_str())', read(CALI_RS))
 
     def test_keys_are_short_lowercase_words(self):
         for k, name in self.menu.items():
             with self.subTest(kind=k):
                 self.assertRegex(k, r"^[a-z]{1,16}$")
-                self.assertTrue(isinstance(name, str) and name.strip())
+                self.assertTrue(name.strip())
 
     def test_no_menu_key_collides_with_a_taco_variant(self):
         """The board's `favorite` is either kind of key, so they must not overlap."""
-        self.assertFalse(set(self.menu) & set(arena.CALI_TACO_KEYS))
+        tacos = set(rs_strings(ARENA_RS, "CALI_TACO_KEYS"))
+        self.assertEqual(tacos, {"mildHard", "mildSoft", "wildHard", "wildSoft"})
+        self.assertFalse(set(self.menu) & tacos)
 
     def test_item_cap_matches(self):
-        cap = ast.literal_eval(_module_assign(SCHEMAS_PY, "MAX_PER_ITEM"))
-        self.assertEqual(dashboard.CALI_MAX_PER_ITEM, cap)
+        self.assertEqual(rs_int(HANDLERS_RS, "CALI_MAX_PER_ITEM"), rs_int(CALI_RS, "MAX_PER_ITEM"))
 
     def test_windows_include_lastseason_both_sides(self):
-        self.assertIn("lastseason", arena.CALI_WINDOWS)
-        with open(TACOS_PY, encoding="utf-8") as f:
-            self.assertTrue(re.search(r'CALI_WINDOWS = WINDOWS \+ \("lastseason",\)', f.read()))
+        local = rs_strings(ARENA_RS, "CALI_WINDOWS")
+        self.assertIn("lastseason", local)
+        self.assertIn('w.push("lastseason");', read(CALI_RS))
+        self.assertEqual(local, rs_strings(SERVICE_RS, "WINDOWS") + ["lastseason"])
 
 
 if __name__ == "__main__":

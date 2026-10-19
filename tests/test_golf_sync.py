@@ -1,6 +1,6 @@
 """Mini Golf: the browser and the Arena server must roll every shot identically.
 
-games/golf/courses.json is mirrored byte-for-byte at backend/app/golf_courses.json (the
+games/golf/courses.json is mirrored byte-for-byte at backend-rs/data/golf_courses.json (the
 server deploys backend/ only); the JS simulation in games/golf.js (GOLF-SIM block) uses
 the same constants as backend/app/golf.py and, when node is available, reproduces every
 golden vector exactly. Stdlib only."""
@@ -15,7 +15,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GOLF_JS = os.path.join(ROOT, "games", "golf.js")
 GOLF_PY = os.path.join(ROOT, "backend", "app", "golf.py")
-GOLDEN = os.path.join(ROOT, "backend", "tests", "golf_golden.json")
+GOLDEN = os.path.join(ROOT, "backend-rs", "tests", "golf_golden.json")
 CONSTS = ("R", "CUP", "VS", "TICK", "VMIN", "VMAX", "DRAG_NUM", "DRAG_DEN", "ROLL", "STOP", "REST_NUM",
           "REST_DEN", "CAPTURE", "SUBSTEP", "MAX_TICKS", "MAX_STROKES", "OOB_PENALTY", "AIM_MAX", "SAND_DRAG",
           "SAND_ROLL", "ICE_DRAG", "ICE_ROLL", "BUMP_NUM", "BUMP_DEN", "CLOCK", "BLADE_GAP", "BLADE_HIT", "Z_SAND",

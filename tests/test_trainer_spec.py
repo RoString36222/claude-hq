@@ -1,12 +1,13 @@
 """The trainer-avatar spec: the client and the dashboard must agree on its bounds.
 
 A saved avatar is nine small integers. ui/app/06-trainer-packs.js renders them
-and dashboard.py clamps them on the way into the config, so if the two disagree
+and the server (dashboard-rs/src/app.rs, TRAINER_MAX) clamps them on the way
+into the config, so if the two disagree
 the symptom is quiet and confusing: the builder offers a choice the server
 clamps away, and the avatar changes by itself on the next save.
 
-Nothing checked that before -- dashboard.py's comment even claimed schemas.py
-held a third copy, which it never did; the avatar does not leave the machine.
+There is no third copy (schemas.py never held one); the avatar does not leave
+the machine.
 
 The spec is APPEND-ONLY. Raising a max must never renumber an existing choice,
 because the numbers are what is stored: inserting a hair style in the middle
@@ -58,8 +59,8 @@ class TrainerSpecBounds(unittest.TestCase):
         self.tr_max = js_int_list(self.js, "TR_MAX")
 
     def test_the_client_and_the_dashboard_agree(self):
-        py = read(os.path.join(ROOT, "dashboard.py"))
-        m = re.search(r"^TRAINER_MAX = \(([^)]*)\)", py, re.M)
+        rs = read(os.path.join(ROOT, "dashboard-rs", "src", "app.rs"))
+        m = re.search(r"^pub const TRAINER_MAX: \[i64; \d+\] = \[([^\]]*)\]", rs, re.M)
         server = [int(x) for x in m.group(1).split(",")]
         self.assertEqual(self.tr_max, server,
                          "TR_MAX and TRAINER_MAX have drifted; the builder and the "

@@ -296,15 +296,7 @@ impl App {
         let mut alert: Option<String> = None;
         let mut alert_kind: Option<&str> = None;
         let mut waiting_since: Option<String> = None;
-        let cutoff = py::now_ts() - 6.0 * 3600.0;
-        let mut recent: Option<(f64, &str)> = None;
-        if let Some(a) = a {
-            for (ts, sig) in &a.errors {
-                if *ts >= cutoff && recent.map(|r| *ts > r.0).unwrap_or(true) {
-                    recent = Some((*ts, sig));
-                }
-            }
-        }
+        let recent = a.and_then(|a| scan::recent_unrecovered_error(&a.errors, a.last_good_reply, py::now_ts()));
         let ask = a.and_then(|a| a.pending_ask.as_ref());
         if let (Some(ask), true) = (ask, status != "stale") {
             status = "needs";
@@ -838,8 +830,9 @@ impl App {
             title = Value::from(self.session_heading(Some(&agg), sid));
             let age = agg.last_activity.map(|la| ((py::now_utc() - la).num_microseconds().unwrap_or(0) as f64 / 1e6) as i64).unwrap_or(0);
             let mut st = if age > 86400 { "stale" } else { "idle" };
-            let cutoff = py::now_ts() - 6.0 * 3600.0;
-            if agg.errors.iter().any(|(ts, _)| *ts >= cutoff) {
+            // as in the session list: an error the session already answered past
+            // is recovered and stops flagging, even inside the 6 h window
+            if scan::recent_unrecovered_error(&agg.errors, agg.last_good_reply, py::now_ts()).is_some() {
                 st = "needs";
             }
             status = json!(st);

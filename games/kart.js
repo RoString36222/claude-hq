@@ -6,14 +6,14 @@
  * original re-implementation in the spirit of the kit's (no Godot code is used).
  *
  * Multiplayer: you drive your own car here and send where it is ~20 times a second
- * (x, z in cm, yaw, speed, your clock); the Arena server (backend/app/kart.py) runs a
+ * (x, z in cm, yaw, speed, your clock); the Arena server (backend-rs/src/kart.rs) runs a
  * 15 Hz tick that checks every frame (on the road, not faster than a car, laps in order),
  * keeps the standings and sends one snapshot per tick. Other cars are drawn ~100 ms in
  * the past from those snapshots (plus measured jitter), extrapolated briefly across gaps.
  * A frame the server refuses comes back as a "fix" and your car is put back. Only these
  * numbers, a car id and your lap travel; nothing transcript-derived.
  *
- * The KART-TRACK block mirrors backend/app/kart.py (tests/test_kart_sync.py checks both
+ * The KART-TRACK block mirrors backend-rs/src/kart.rs (tests/test_kart_sync.py checks both
  * against each other under node).
  *
  * HQ 2.5: tracks made in the Track Editor (games/trackedit.js) race here too, solo as a

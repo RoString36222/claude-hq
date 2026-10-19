@@ -1,6 +1,6 @@
 /* ================= Music: Now Playing, listen-along rooms, DJ visualiser ================= */
 // Three parts, one view:
-//   - Now Playing: dashboard.py reads what this Mac plays (Spotify, Apple Music, a YouTube Music tab)
+//   - Now Playing: the HQ server (dashboard-rs/src/music.rs) reads what this Mac plays (Spotify, Apple Music, a YouTube Music tab)
 //     and, while paired and "Share what I play" is on, puts it on the Arena. Everyone listening right
 //     now is listed here and shows on their lobby chip. Links open the same song in your own app.
 //   - Listen room: your Arena room (the Lobby, or the private room you're in) plays one shared queue

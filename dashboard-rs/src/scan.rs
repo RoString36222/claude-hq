@@ -326,6 +326,8 @@ pub struct Agg {
     pub per_day: IndexMap<String, Day>,
     pub activity_ts: Vec<f64>,
     pub errors: Vec<(f64, String)>,
+    /// Timestamp of the newest assistant record that is not an API error.
+    pub last_good_reply: Option<f64>,
     pub timeline: Vec<TimelineEv>,
     pub files: IndexMap<String, FileTouch>,
     pub model: String,
@@ -595,8 +597,12 @@ pub fn scan_claude(path: &Path) -> Agg {
                     if !model.is_empty() {
                         cx.agg.model = model.clone();
                     }
-                    if let (Some(sig), Some(t)) = (record_error_sig(&rec), t) {
-                        cx.agg.errors.push((t, sig));
+                    match (record_error_sig(&rec), t) {
+                        (Some(sig), Some(t)) => cx.agg.errors.push((t, sig)),
+                        // a real reply (not the synthetic error message itself): the
+                        // session recovered, so its error alert may clear
+                        (None, Some(t)) => cx.agg.last_good_reply = Some(t),
+                        _ => {}
                     }
                     if let Some(diso) = &diso {
                         cx.agg.per_day.entry(diso.clone()).or_insert_with(new_day);
@@ -947,6 +953,23 @@ pub fn parse_cursor_clock(text: &str) -> Option<Dt> {
             Some(tz.from_local_datetime(&naive).single()?.with_timezone(&chrono::Utc))
         }
         None => py::local_to_utc(&naive),
+    }
+}
+
+/// (ts, sig) of the newest error inside the 6 h window that the session has not
+/// answered past, else None. An error followed by a successful assistant reply
+/// (strictly later) is recovered and clears instead of lingering out the window.
+pub fn recent_unrecovered_error(errors: &[(f64, String)], last_good_reply: Option<f64>, now_ts: f64) -> Option<(f64, &str)> {
+    let cutoff = now_ts - 6.0 * 3600.0;
+    let mut recent: Option<(f64, &str)> = None;
+    for (ts, sig) in errors {
+        if *ts >= cutoff && recent.map(|r| *ts > r.0).unwrap_or(true) {
+            recent = Some((*ts, sig));
+        }
+    }
+    match (recent, last_good_reply) {
+        (Some(r), Some(g)) if g > r.0 => None,
+        _ => recent,
     }
 }
 

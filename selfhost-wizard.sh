@@ -202,7 +202,13 @@ stage "Preflight"
 say "This Mac will run the Arena server; Cloudflare will publish it safely."
 note "No port forwarding, no router changes, no inbound holes in your firewall."
 printf '\n'
-for tool in uv python3 curl; do
+CARGO_BIN="$(command -v cargo || echo "$HOME/.cargo/bin/cargo")"
+if [[ -x "$CARGO_BIN" ]]; then
+  printf '  %s✓%s cargo\n' "$GREEN" "$RESET"
+else
+  printf '  %s✗%s cargo — install Rust from https://rustup.rs, then re-run\n' "$RED" "$RESET"; exit 1
+fi
+for tool in python3 curl; do
   if command -v "$tool" >/dev/null 2>&1; then
     printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$tool"
   else
@@ -227,9 +233,9 @@ else
 fi
 
 printf '\n'
-say "Installing backend dependencies."
-( cd backend && uv sync --quiet )
-printf '  %s✓%s dependencies ready\n' "$GREEN" "$RESET"
+say "Building the Arena server (a few minutes the first time)."
+"$CARGO_BIN" build --release --locked --quiet --manifest-path backend-rs/Cargo.toml --bin arena
+printf '  %s✓%s built backend-rs/target/release/arena\n' "$GREEN" "$RESET"
 pause "Press Enter to continue"
 
 # ── 2 ─────────────────────────────────────────────────────────────────────
@@ -324,6 +330,9 @@ DB_PATH="$REPO/backend/arena.db"
 # the service with a different working directory, so a relative path would
 # silently create a second, empty database.
 write_env ARENA_DATABASE_URL "sqlite+aiosqlite:////${DB_PATH#/}"
+# Only the tunnel reaches it: listen on this Mac alone.
+write_env ARENA_BIND_HOST "127.0.0.1"
+write_env ARENA_BIND_PORT "8080"
 
 ARENA_SECRET_KEY=$(_existing ARENA_SECRET_KEY || true)
 if [[ -n "$ARENA_SECRET_KEY" ]]; then
@@ -336,10 +345,7 @@ write_env ARENA_SECRET_KEY "$ARENA_SECRET_KEY"
 chmod 600 "$ENV_FILE"
 printf '  %s✓%s %s is readable only by you\n' "$GREEN" "$RESET" "$ENV_FILE"
 
-say "Creating the database schema."
-( cd backend && uv run --no-dev alembic upgrade head >/dev/null 2>&1 ) && \
-  printf '  %s✓%s migrations applied\n' "$GREEN" "$RESET" || \
-  warn "Migrations failed — check: cd backend && uv run alembic upgrade head"
+note "The server creates the database schema itself when it first starts."
 pause "Press Enter to continue"
 
 # ── 6 ─────────────────────────────────────────────────────────────────────
@@ -348,12 +354,11 @@ say "Two launchd agents: the Arena server, and the Cloudflare tunnel."
 note "Both restart automatically if they crash or when you log back in."
 mkdir -p "$AGENTS" "$LOG_DIR"
 
-UV_BIN="$(command -v uv)"
 CFD_BIN="$(command -v cloudflared)"
 
-python3 - "$AGENTS" "$REPO" "$UV_BIN" "$CFD_BIN" "$LOG_DIR" "$ARENA_LABEL" "$TUNNEL_LABEL" <<'PY'
+python3 - "$AGENTS" "$REPO" "$CFD_BIN" "$LOG_DIR" "$ARENA_LABEL" "$TUNNEL_LABEL" <<'PY'
 import pathlib, sys
-agents, repo, uv, cfd, logs, arena_label, tunnel_label = sys.argv[1:8]
+agents, repo, cfd, logs, arena_label, tunnel_label = sys.argv[1:7]
 
 def plist(label, program_args, workdir):
     args = "\n".join(f"    <string>{a}</string>" for a in program_args)
@@ -378,10 +383,10 @@ def plist(label, program_args, workdir):
 """
 
 a = pathlib.Path(agents)
+# The server reads its settings from the environment: load backend/.env first.
 (a / f"{arena_label}.plist").write_text(plist(
     arena_label,
-    [uv, "run", "--no-dev", "uvicorn", "app.main:app",
-     "--host", "127.0.0.1", "--port", "8080"],
+    ["/bin/sh", "-c", f'set -a; . ./.env; set +a; exec "{repo}/backend-rs/target/release/arena"'],
     f"{repo}/backend"))
 (a / f"{tunnel_label}.plist").write_text(plist(
     tunnel_label,

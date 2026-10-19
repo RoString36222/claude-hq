@@ -1,5 +1,5 @@
 {
-  "note": "Platformer Rush levels. solids: Kenney Starter Kit 3D Platformer models placed with x, z the footprint centre, y the bottom, r a quarter turn in degrees, s a uniform scale (footprints in backend/app/platformer.py MODELS). spawns, cps (checkpoints, in order), coins, flag: [x, y, z] with y the ground or the coin centre. route: [x, y, z, w|j|d] waypoints the bots and the autopilot follow (walk, jump, double jump onto). backend/app/platformer_levels.json is a byte copy (tests/test_platformer_sync.py).",
+  "note": "Platformer Rush levels. solids: Kenney Starter Kit 3D Platformer models placed with x, z the footprint centre, y the bottom, r a quarter turn in degrees, s a uniform scale (footprints in backend-rs/src/platformer.rs model()). spawns, cps (checkpoints, in order), coins, flag: [x, y, z] with y the ground or the coin centre. route: [x, y, z, w|j|d] waypoints the bots and the autopilot follow (walk, jump, double jump onto). backend-rs/data/platformer_levels.json is a byte copy (tests/test_platformer_sync.py).",
   "levels": [
     {
       "id": "meadow",

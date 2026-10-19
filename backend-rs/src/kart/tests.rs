@@ -49,8 +49,8 @@ fn tracks_compile_and_close() {
 
 #[test]
 fn the_tracks_file_is_the_python_one() {
-    // Embedded at build time from backend/app/kart_tracks.json: one file, two backends.
-    let py = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../backend/app/kart_tracks.json"))
+    // Embedded at build time from backend-rs/data/kart_tracks.json: one file, two backends.
+    let py = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/data/kart_tracks.json"))
         .unwrap();
     assert_eq!(py, TRACKS_JSON);
 }

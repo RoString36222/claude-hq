@@ -4,7 +4,7 @@ import Foundation
 /// The Pokémon a Claude session wears: the same one Claude HQ shows on its live card.
 ///
 /// Source of truth is HQ's `/api/sessions` (`creature.species/stage/shiny`). When HQ is not
-/// running, `Creature.local` reproduces `dashboard.py`'s `creature_for()` (sha256 species,
+/// running, `Creature.local` reproduces `creature_for()` in dashboard-rs/src/creature.rs (sha256 species,
 /// prompt-count stage, per-install salted shiny). The sprite form follows the evolution line
 /// exactly like `pokeDexFor()` in `ui/app/06-trainer-packs.js`, including the hashed
 /// branch default (Eevee/Ralts/Slowpoke). A branch or Mega you picked in HQ comes back from
@@ -58,7 +58,7 @@ public struct Creature: Equatable, Sendable {
             (o["shiny"] as? Bool) == true ? (o["species"] as? Int).map { (($0 % 48) + 48) % 48 } : nil })
     }
 
-    /// HQ's evolution thresholds on promptCount (dashboard.py STAGE_THRESHOLDS).
+    /// HQ's evolution thresholds on promptCount (STAGE_THRESHOLDS in dashboard-rs/src/creature.rs).
     public static let stageThresholds = [0, 3, 12, 30, 70]
 
     public static func stage(forPrompts count: Int) -> Int {
@@ -74,7 +74,7 @@ public struct Creature: Equatable, Sendable {
         return r
     }
 
-    /// dashboard.py `shiny_for_species`: 1/6 roll, else a second 1/10 roll (total 1/4).
+    /// dashboard-rs/src/creature.rs `shiny_for_species`: 1/6 roll, else a second 1/10 roll (total 1/4).
     public static func shiny(species: Int, salt: String) -> Bool {
         let sp = ((species % 48) + 48) % 48
         if sha256Mod("nymonster:shiny:\(salt):\(sp)", 6) == 0 { return true }

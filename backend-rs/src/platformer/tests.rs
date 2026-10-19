@@ -93,7 +93,7 @@ fn dist(a: [f64; 3], b: [f64; 3]) -> f64 {
 // ------------------------------------------------------------------ levels --
 #[test]
 fn the_levels_file_is_the_python_one() {
-    let py = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../backend/app/platformer_levels.json"))
+    let py = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/data/platformer_levels.json"))
         .unwrap();
     assert_eq!(py, LEVELS_JSON);
 }

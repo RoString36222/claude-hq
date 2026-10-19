@@ -142,13 +142,14 @@ paired), published maps and work signals (off by default) add a few listed field
 ## 📦 Requirements
 
 - **macOS** (uses `launchctl` for auto-start, `open`/AppleScript/`kitty` for actions).
-- **Python 3** (standard library only — no `pip install` needed).
+- **Rust** ([rustup.rs](https://rustup.rs)): HQ's server is a small Rust program (`dashboard-rs/`,
+  binary `claudehq`) that you build once from this checkout.
 - **Claude Code** installed and on your `PATH` (`claude`).
 - Optional: [`kitty`](https://sw.kovidgoyal.net/kitty/) terminal (Resume opens a kitty window; falls
   back to Terminal.app).
 
-No third-party Python or JS dependencies. Two parts do everything: `dashboard.py` + the frontend (`index.html` with its `ui/` files)
-(plus `arena.py`, also stdlib-only, if you turn on Arena).
+No JS dependencies and no frontend build: the server plus the frontend (`index.html` with its `ui/`
+files) do everything, and the server is also the Arena client if you turn Arena on.
 
 ---
 
@@ -157,33 +158,45 @@ No third-party Python or JS dependencies. Two parts do everything: `dashboard.py
 ```bash
 git clone <your-repo-url> claude-hq
 cd claude-hq
-python3 dashboard.py
+cargo build --release --manifest-path dashboard-rs/Cargo.toml   # a few minutes the first time
+dashboard-rs/target/release/claudehq
 ```
 
 That starts the server on <http://127.0.0.1:8765> and opens it in your browser.
 
 ### Flags
 ```
-python3 dashboard.py [--port 8765] [--no-open]
+dashboard-rs/target/release/claudehq [--port 8765] [--no-open] [--root DIR]
 ```
 
 ### Run it always-on (auto-start at login)
 ```bash
-python3 dashboard.py --install     # registers a launchd LaunchAgent (starts at login, self-heals)
-python3 dashboard.py --uninstall   # removes it
-python3 dashboard.py --print-plist # preview the LaunchAgent, no side effects
+dashboard-rs/target/release/claudehq --install     # registers a launchd LaunchAgent (starts at login, self-heals)
+dashboard-rs/target/release/claudehq --uninstall   # removes it
+dashboard-rs/target/release/claudehq --print-plist # preview the LaunchAgent, no side effects
 ```
-Once installed you never start it by hand again — just open <http://127.0.0.1:8765>.
+Once installed you never start it by hand again — just open <http://127.0.0.1:8765>. The in-app
+**Update** button pulls, rebuilds (`cargo build --release --locked`) and restarts into the new binary.
 
-> **Note:** the LaunchAgent runs the code as it is on disk. Frontend (`index.html`, `ui/`) changes are picked
-> up on refresh; after editing `dashboard.py`, reload the backend with:
+> **Note:** the LaunchAgent runs the binary you built. Frontend (`index.html`, `ui/`, `games/`) changes
+> are picked up on refresh; after changing anything in `dashboard-rs/`, rebuild and reload it:
 > ```bash
+> cargo build --release --manifest-path dashboard-rs/Cargo.toml
 > launchctl kickstart -k gui/$(id -u)/com.claudehq.dashboard
 > ```
 
+### Upgrading from a Python install (before 2.7.0)
+HQ used to run as `python3 dashboard.py`. That server is gone; the `dashboard.py` left in the repo is a
+forwarding stub for older installs (it builds `dashboard-rs` and starts `claudehq` with the same
+arguments); not a server; do not add code to it. So an old LaunchAgent, alias or Update button keeps
+working once Rust is installed, but move over for good with:
+```bash
+dashboard-rs/target/release/claudehq --install     # re-points the LaunchAgent at the binary
+```
+
 ### Optional shell alias
 ```bash
-echo 'alias claude-hq="python3 ~/Documents/Claude/claude-dashboard/dashboard.py"' >> ~/.zshrc
+echo 'alias claude-hq="~/Documents/Claude/claude-dashboard/dashboard-rs/target/release/claudehq"' >> ~/.zshrc
 ```
 
 ### Optional: HQ Notch (macOS)
@@ -226,11 +239,12 @@ See [`notch/README.md`](notch/README.md). `--uninstall` removes it all again.
 
 | File | What |
 |---|---|
-| `dashboard.py` | Stdlib-only HTTP server: reads live agents + transcripts, serves the JSON API and the page. |
+| `dashboard-rs/` | The HQ server (Rust, binary `claudehq`): reads live agents + transcripts, serves the JSON API and the page, and is the optional Arena client. |
 | `index.html` + `ui/` | The frontend: the page template and its CSS and script, split by area in `ui/` and stitched into one page by the server (no build step). |
-| `arena.py` | Optional Arena client: builds + publishes the shared-stats payload. |
+| `games/` | The Valley games and their assets, loaded on first use. |
+| `dashboard.py` | A forwarding stub for older installs (builds `dashboard-rs` and execs `claudehq`); not a server; do not add code to it. |
 | `notch/` | Optional macOS notch companion (SwiftUI app + stdlib hook relay + installer). |
-| `backend/` | Optional Arena server (FastAPI). Only needed by whoever hosts it. |
+| `backend-rs/` + `backend/` | Optional Arena server (Rust) and its deploy files. Only needed by whoever hosts it. |
 | `arena-link.json` | Your Arena device token. *(git-ignored)* |
 | `config.json` | Your settings (theme, pack, budget, …). Created on first save. *(git-ignored)* |
 | `sessions-meta.json` | Per-session pins / tags / notes / rename aliases. *(git-ignored)* |
@@ -268,7 +282,7 @@ replies, file paths, project or folder names, session ids, or titles.
 - **Cost sharing is off by default.** Spend is salary- and employer-adjacent.
 - **The skate board is two numbers.** When a combo in Arena City's skatepark beats your
   best for the week, the page sends its total and how many tricks it chained (checked
-  by `ext_skate.py`, then by the Arena). Nothing about where, when or from which session.
+  by your HQ server, then by the Arena). Nothing about where, when or from which session.
 - **Chat is only what you type.** Messages in the lobby chat go to everyone in
   the lobby, relayed by the server. It keeps the last 50 in memory (never on
   disk) so people who join can catch up; they're gone when the lobby empties or
@@ -302,25 +316,21 @@ so the formula can change without a client release.
 
 ### Connecting
 
-One person hosts the backend once. Either on their own Mac:
+One person hosts the backend (`backend-rs/`) once. Either on their own Mac:
 
 ```bash
 ./selfhost-wizard.sh    # this Mac + SQLite + a Cloudflare Tunnel
 ```
 
-or in the cloud, if you'd rather it stay up when that Mac sleeps:
-
-```bash
-./deploy-wizard.sh      # Fly.io + Neon Postgres
-```
-
-Both set up the GitHub OAuth app and print exactly what to send your friends.
+or on any VM with Docker, if you'd rather it stay up when that Mac sleeps: `backend/docker-compose.yml`
+runs it behind Caddy, and `ops/release.sh` ships updates. The wizard sets up the GitHub OAuth app and
+prints exactly what to send your friends; [`backend/README.md`](backend/README.md) covers the VM.
 
 Everyone else just points their own Claude HQ at it: **🏆 Arena → server URL →
 Sign in with GitHub → paste the pairing code**. Your device token is stored in
 `arena-link.json` (git-ignored) and is never exposed to the page.
 
-Backend source, API and design notes: [`backend/README.md`](backend/README.md).
+Deploy, API and design notes: [`backend/README.md`](backend/README.md); the server itself: [`backend-rs/README.md`](backend-rs/README.md).
 
 ---
 
@@ -334,6 +344,14 @@ and feature guide.
 
 ## Changelog
 
+- **2.7.0 — The Python servers are gone.** HQ runs on the Rust server (`claudehq`, in `dashboard-rs/`)
+  and the Arena on `backend-rs/`, so there is one implementation of each. Install Rust
+  ([rustup.rs](https://rustup.rs)) to run HQ: `cargo build --release --manifest-path dashboard-rs/Cargo.toml`,
+  then `dashboard-rs/target/release/claudehq` (or `--install` for the LaunchAgent). The Update button moves
+  an older install over: it pulls, builds the Rust server and restarts into it, and the `dashboard.py` left
+  behind only forwards an old LaunchAgent or alias to the binary. Arena hosts: `ops/release.sh deploy` and
+  `selfhost-wizard.sh` run the Rust Arena; the Fly.io wizard is gone (any VM with Docker works, see
+  `backend/README.md`).
 - **2.6.1 — Reopen the HQ Notch dialog.** Closed the "New: HQ Notch" dialog without reading it? Open it
   again any time from **Settings > HQ Notch** or the command palette (Cmd-K, "HQ Notch"). When the notch
   is already installed it says so and offers **Reinstall**. Closing a reopened dialog keeps your earlier choice.
@@ -681,7 +699,7 @@ and feature guide.
   - **Pokémon-style battles.** Creature Battles (solo) and the live Creature Duel now use real
     Pokémon data: species, types, base stats, level-up movesets and the type chart, generated from
     Pokémon Showdown (MIT) by `tools/build_pokedata.mjs` into `games/pokedata.js` and
-    `backend/app/data/pokemon.json`. A battle screen with HP bars, move menus, switching,
+    `backend-rs/data/pokemon.json`. A battle screen with HP bars, move menus, switching,
     animated attacks and a battle log. In a duel the Arena runs the same damage engine
     (`backend/app/pokebattle.py`, parity-tested against the browser) and both players pick at
     once: your pick shows at once, the other player's "is ready" appears as soon as they choose,
@@ -887,7 +905,7 @@ Pokémon names and sprites are the property of Nintendo / Game Freak / The Poké
 for personal use only. Use the built-in original "monsters" pack to avoid third-party assets entirely.
 
 Valley battle data (species, types, base stats, level-up moves and the type chart in
-`games/pokedata.js` and `backend/app/data/pokemon.json`) is generated by `tools/build_pokedata.mjs`
+`games/pokedata.js` and `backend-rs/data/pokemon.json`) is generated by `tools/build_pokedata.mjs`
 from [Pokémon Showdown](https://github.com/smogon/pokemon-showdown) (MIT,
 © 2011-2026 Guangcong Luo and other contributors; see `LICENSES/pokemon-showdown-MIT.txt`).
 Battle sprites use the same PokéAPI sprite library (repository CC0; image content © The Pokémon

@@ -1,6 +1,6 @@
 /* ---------- "New: HQ Notch" -- shown once when you next open HQ on a Mac without it ----------
    HQ Notch (notch/) puts your party in the Mac's notch, with approvals from there. This asks
-   once, the next time HQ opens on a Mac where it is not installed: Install now (ext_notch.py runs
+   once, the next time HQ opens on a Mac where it is not installed: Install now (the HQ server runs
    notch/tools/install.py), Copy the command, Not now (again in 3 days), or Don't show again.
    It never opens over another dialog, and nothing here leaves the machine. Settings > HQ Notch
    and the command palette reopen it any time (openNotchInvite), installed or not. */

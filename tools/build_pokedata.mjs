@@ -7,8 +7,8 @@
 // LICENSES/pokemon-showdown-MIT.txt) into a temp dir, keeps only the species reachable
 // through index.html's POKE_EVO / POKE_BRANCH / MEGA_FORMS, picks a canonical 4-move
 // level-up set per evolution stage, and writes two byte-identical payloads:
-//   games/pokedata.js               window.HQV_POKEDATA = {...}   (served by dashboard.py)
-//   backend/app/data/pokemon.json   the same JSON                 (the Arena duel referee)
+//   games/pokedata.js               window.HQV_POKEDATA = {...}   (served by the HQ server, dashboard-rs)
+//   backend-rs/data/pokemon.json   the same JSON                 (the Arena duel referee)
 // tests/test_pokedata.py checks the two match and that every referenced id exists.
 import fs from "node:fs";
 import os from "node:os";

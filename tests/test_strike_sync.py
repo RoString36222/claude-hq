@@ -1,6 +1,6 @@
 """Strikezone: the browser and the Arena server must agree on the dock and the rules.
 
-games/strike/map.json is mirrored byte-for-byte at backend/app/strike_map.json (the server
+games/strike/map.json is mirrored byte-for-byte at backend-rs/data/strike_map.json (the server
 deploys backend/ only), and the shared geometry in games/strike.js (STRIKE-SHARED block) must
 give the same answers as backend/app/strike.py: the browser predicts its own movement with
 the same collision the server checks, and draws its shots with the same rays and spread
@@ -46,7 +46,7 @@ class StrikeSync(unittest.TestCase):
 
     def test_map_file_is_mirrored(self):
         with open(MAP, "rb") as a, open(SERVER_MAP, "rb") as b:
-            self.assertEqual(a.read(), b.read(), "copy games/strike/map.json to backend/app/strike_map.json")
+            self.assertEqual(a.read(), b.read(), "copy games/strike/map.json to backend-rs/data/strike_map.json")
 
     def test_totem_clock_drops_and_the_mole_needs_a_bot(self):
         f = self.strike

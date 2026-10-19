@@ -166,7 +166,7 @@ function arenaLoadBoard(){
 
 /* ---- Arena pantry: Poke Coins, snacks and gifts ----
    All of it lives on the Arena server under your GitHub account (every paired device shares one
-   wallet); the page reaches it only through dashboard.py's /api/arena/pantry proxy, which forwards
+   wallet); the page reaches it only through the HQ server's /api/arena/pantry proxy (dashboard-rs/src/arena.rs), which forwards
    an allowlist of fields (kind, qty, coins, recipient, note, requestId) and never a session.
    A server without these routes answers a bare 404: then it's "not supported yet", re-checked
    every 10 minutes, and rest alone still restores every creature. */
@@ -198,7 +198,7 @@ function pantrySetStore(st){
   if(pantryGoneMsg(st) && GIFT.handle){ giftClose(); announce("Gift closed: "+pantryGoneMsg(st)); }
   pantryChanged();
 }
-// dashboard.py refused this page's token (pantryLocalReject): every POST from here will be refused
+// The HQ server refused this page's token (pantryLocalReject): every POST from here will be refused
 // the same way, so the store says "reload" until one happens. GETs still work, but loading and
 // retrying stop: nothing could be done with them.
 function pantryStale(){ PANTRY.stale=true; pantrySetStore("reload"); }
@@ -263,7 +263,7 @@ function pantryClaim(manual){
   PANTRY.claiming=true; renderStore();
   arenaPost("/api/arena/pantry/claim", {}).then(function(res){
     PANTRY.claiming=false;
-    // Turned away by dashboard.py itself: no claim was made, so today stays open for the next try.
+    // Turned away by the HQ server itself: no claim was made, so today stays open for the next try.
     if(pantryLocalReject(res)){
       pantryStale();
       if(manual) toast("\u26a0 Claude HQ restarted since this page loaded. Reload the page to collect today\u2019s coins.", "ach");
@@ -319,7 +319,7 @@ function storeRetrySet(kind, rid, qty){
 }
 // Buy qty (1-5) of one snack. {ok, replayed, qty} | {ok:false, lost:true, rid} (couldn't confirm:
 // retry with the SAME rid, which replays the saved quantity) | {ok:false, stale:true} (refused by
-// dashboard.py itself: nothing sent) | {ok:false, msg}. replayed: that rid had already bought it
+// the HQ server itself: nothing sent) | {ok:false, msg}. replayed: that rid had already bought it
 // earlier (a lost buy that had landed), so nothing was bought now; the balances in the answer are
 // today's. quiet: the caller reports errors itself (no toast).
 function pantryBuy(kind, rid, qty, quiet){
@@ -549,7 +549,7 @@ function giftSend(){
     }
     if(pantryUnsure(res)){ giftUnsure(h, name, body); return; }
     if(pantryLocalReject(res)){
-      // Turned away by dashboard.py itself (this page is older than its last start): no answer
+      // Turned away by the HQ server itself (this page is older than its last start): no answer
       // from the Arena. A replay stays saved, since its first try may have landed; a new gift
       // simply didn't go out.
       if(!replay) giftUnsureSet(h, null);

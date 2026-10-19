@@ -17,7 +17,7 @@
 //! than a jump plus a double jump can reach in the time since. A failing frame gets
 //! a "fix" back to the last place the player stood on solid ground.
 //!
-//! Levels come from `backend/app/platformer_levels.json`, embedded with
+//! Levels come from `backend-rs/data/platformer_levels.json`, embedded with
 //! `include_str!` (the same file the Python reads, itself a byte copy of
 //! games/platformer/levels.json).
 //!
@@ -82,7 +82,7 @@ pub const GAME_NAME: &str = "Platformer Rush";
 pub const MAX_LOBBY: usize = 8;
 pub const HOST_GRACE: f64 = 15.0;
 
-pub const LEVELS_JSON: &str = include_str!("../../backend/app/platformer_levels.json");
+pub const LEVELS_JSON: &str = include_str!("../data/platformer_levels.json");
 
 /// name -> (round?, width x, depth z, height) before scale and rotation.
 pub fn model(name: &str) -> Option<(bool, f64, f64, f64)> {

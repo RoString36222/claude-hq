@@ -197,7 +197,7 @@ function questClaimsPrune(obj){
 }
 
 function todayStr(){ return new Date().toISOString().slice(0,10); }
-// Species that reached Apex (stage index 4, STAGE_NAMES in dashboard.py), from the backend
+// Species that reached Apex (stage index 4, STAGE_NAMES in dashboard-rs/src/creature.rs), from the backend
 // Pokédex shape {species:[{caught, maxStage}]}.
 function dexApexCount(dex){
   var list=(dex && Array.isArray(dex.species)) ? dex.species : [], n=0;

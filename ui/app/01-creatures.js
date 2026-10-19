@@ -4,7 +4,7 @@ var CONFIG = Object.assign({}, CONFIG_DEFAULTS);
 function cfg(){ return CONFIG; }
 // both Pokémon packs share evolution/type/name logic; only the sprite source differs
 function isPokePack(){ var p=cfg().creaturePack; return p==="pokemon"||p==="pokemon3d"; }
-// backend creature name order (index-stable). See CREATURES in dashboard.py.
+// backend creature name order (index-stable). See CREATURES in dashboard-rs/src/creature.rs.
 var POKE_NAMES = ["Pikachu","Charmander","Squirtle","Bulbasaur","Dragonite","Psyduck","Umbreon","Geodude"];
 var CREATURE_PACKS = {
   pokemon:["⚡🐭","🔥🦎","💧🐢","🌱🐸","💨🐉","💦🦆","🌙🦊","🪨🐛"],
@@ -77,10 +77,10 @@ function creatureNextStageName(cr){ cr=cr||{};
 function creatureStagePct(cr){ cr=cr||{}; var p=cr.stagePct!=null?cr.stagePct:0; if(p<=1) p=p*100; /* backend sends 0..1 */ return Math.max(0,Math.min(100,Math.round(p))); }
 
 /* ---- creature energy (fatigue) + the Poke Coins pantry: shared state + helpers ----
-   s.creature.fatigue is computed locally by dashboard.py from transcript activity. It is
+   s.creature.fatigue is computed locally by the HQ server (dashboard-rs/src/fatigue.rs) from transcript activity. It is
    cosmetic: never XP, never the Arena board. Coins and snacks live on the Arena server and
    reach the page only through the local /api/arena/pantry proxy. The two FZ_ lines mirror
-   dashboard.py FATIGUE_CERTAIN_SECS / FATIGUE_TIRED_SECS (a test greps them). */
+   CERTAIN_SECS / TIRED_SECS in dashboard-rs/src/fatigue.rs (a test greps them). */
 var FZ_SCALE_MINS = 240;
 var FZ_TIRED_MINS = 60;
 var FZ_STATES = ["rested","tired","fatigued","unconscious"];
@@ -134,24 +134,24 @@ var FOOD_UI = {
 };
 function isFood(k){ return typeof k==="string" && Object.prototype.hasOwnProperty.call(FOOD_UI, k); }
 // store: "unknown" | "ok" | "unsupported" (an older Arena server) | "unpaired" | "error"
-//      | "restart" (the running dashboard.py predates the store: this page is newer than it)
-//      | "reload" (this page predates dashboard.py's last start: see pantryLocalReject)
-// stale: set for good once dashboard.py has refused this page's token; only a page load cures it.
+//      | "restart" (the running HQ server predates the store: this page is newer than it)
+//      | "reload" (this page predates the HQ server's last start: see pantryLocalReject)
+// stale: set for good once the HQ server has refused this page's token; only a page load cures it.
 var PANTRY = {store:"unknown", j:null, at:0, rev:0, claiming:false, offAt:0, loading:false, bump:false, stale:false, retrying:false};
 // Two different 404s. An Arena server without the store answers a bare "Not Found" (FastAPI's
 // {"detail":"Not Found"}, or the HTTP reason phrase for an empty body; a missing person is "no such
-// person"). dashboard.py's own route miss is a lowercase {"error":"not found"}: after an update,
-// index.html is re-read on refresh but the dashboard.py process keeps running the old code until
+// person"). The HQ server's own route miss is a lowercase {"error":"not found"}: after an update,
+// index.html is re-read on refresh but the HQ server process keeps running the old code until
 // it restarts, and that old process has no pantry routes. The case tells them apart.
 function pantryIsBare404(res){ return res.status===404 && /^Not Found$/.test(String((res.j&&(res.j.error||res.j.detail))||"")); }
 function pantryIsLocalMiss(res){ return res.status===404 && !!res.j && res.j.error==="not found"; }
 // The store state a 404 means, or null when it's an ordinary error ("no such person", ...).
 function pantryMissState(res){ return pantryIsBare404(res) ? "unsupported" : (pantryIsLocalMiss(res) ? "restart" : null); }
-// dashboard.py turned the POST away itself, so it never reached the Arena: that's no answer.
-// Usually the CSRF token: dashboard.py mints a new one each time it starts, and this page only
+// The HQ server turned the POST away itself, so it never reached the Arena: that's no answer.
+// Usually the CSRF token: the HQ server mints a new one each time it starts, and this page only
 // picks it up when it loads. Whatever the request was retrying (a lost gift, buy or snack) stays
 // saved with its requestId, and the page asks for a reload. Its own 403s say "error" (an Arena
-// refusal relayed by dashboard.py also carries "detail"), optionally tagged code "csrf".
+// refusal relayed by the HQ server also carries "detail"), optionally tagged code "csrf".
 function pantryLocalReject(res){
   var j=res && res.j;
   return !!j && res.status===403 && typeof j.error==="string" && !("detail" in j) &&

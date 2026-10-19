@@ -59,29 +59,18 @@ class RustBuildContext(unittest.TestCase):
         df = read(RS, "Dockerfile")
         # Line continuations first, so a wrapped COPY reads as one line.
         df = df.replace("\\\n", " ")
-        copied = " ".join(l for l in df.splitlines() if l.startswith("COPY "))
+        # The sources of every COPY: all but the last word (the destination).
+        sources = [w for l in df.splitlines() if l.startswith("COPY ") for w in l.split()[1:-1]]
         for p in sorted(embedded_paths()):
-            self.assertIn(p, copied, f"{p} is embedded but never COPYed into the image")
+            # A directory COPY covers everything under it.
+            covered = any(p == a or p.startswith(a.rstrip("/") + "/") for a in sources)
+            self.assertTrue(covered, f"{p} is embedded but never COPYed into the image")
 
-    def test_the_games_data_still_lives_in_the_python_tree(self):
-        """A cutover note, pinned so it is not forgotten.
-
-        Six games read their data out of backend/app at COMPILE time, which is
-        deliberate -- one copy, shared with the Python Arena, so the two can
-        never disagree about a track or a creature. It also means deleting
-        backend/ stops the Rust Arena from BUILDING. Those files move into
-        backend-rs/ as part of the cutover, and this test is what will fail
-        first and say so.
-        """
-        in_python_tree = sorted(p for p in embedded_paths() if p.startswith("backend/"))
-        self.assertEqual(in_python_tree, [
-            "backend/app/data/pokemon.json",
-            "backend/app/fps_map.json",
-            "backend/app/golf_courses.json",
-            "backend/app/kart_tracks.json",
-            "backend/app/platformer_levels.json",
-            "backend/app/strike_map.json",
-        ])
+    def test_everything_embedded_lives_in_backend_rs(self):
+        """The Python Arena is gone: the games' data moved into backend-rs/data,
+        and nothing the Arena compiles in may reach outside backend-rs/ again."""
+        outside = sorted(p for p in embedded_paths() if not p.startswith("backend-rs/"))
+        self.assertEqual(outside, [])
 
 
 if __name__ == "__main__":

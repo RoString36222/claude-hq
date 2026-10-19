@@ -3,7 +3,7 @@
  * inline geometry (no <img>, no CDN/url()); reuses mulberry32/hashStr/calmMode.
  * spec = [skin,hair,hairColor,outfit,outfitColor,hat,accessory,bg,face]. */
 var TR = {SKIN:0,HAIR:1,HAIRC:2,OUTFIT:3,OUTC:4,HAT:5,ACC:6,BG:7,FACE:8};
-var TR_MAX = [6,8,8,8,8,7,5,8,4];   // keep byte-identical to TRAINER_MAX in dashboard.py
+var TR_MAX = [6,8,8,8,8,7,5,8,4];   // keep byte-identical to TRAINER_MAX in dashboard-rs/src/app.rs
 var TR_SKIN  = ['#f4d6bb','#e7b892','#cd9269','#a06a45','#6f4a32','#402a20','#b9c6d4'];
 var TR_HAIRC = ['#241f22','#4a3324','#7a4a26','#c98f3f','#dcd6c8','#a9b0bc','#c14259','#456fa6','#2ff3ff'];
 var TR_OUTC  = ['#4f6d7a','#bd5638','#3f8a5b','#6a4f9c','#d3a33f','#333a43','#c46f9a','#dadbe2','#ff2fb3'];

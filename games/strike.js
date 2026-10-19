@@ -10,13 +10,13 @@
  * the spirit of the kit's (no Godot code is used).
  *
  * Multiplayer: you run and aim here (your own movement is predicted, your shots show at
- * once) and send where you are ~20 times a second; the Arena server (backend/app/strike.py)
+ * once) and send where you are ~20 times a second; the Arena server (backend-rs/src/strike.rs)
  * runs a 20 Hz tick that checks every move and judges every shot with lag compensation.
  * Team-mates can't be hit. The team score is any member's kill; the round ends at the
  * kill limit, the clock, or when a side empties. Only numbers, a weapon and a character
  * id travel; nothing transcript-derived.
  *
- * The STRIKE-SHARED block mirrors backend/app/strike.py (tests/test_strike_sync.py runs
+ * The STRIKE-SHARED block mirrors backend-rs/src/strike.rs (tests/test_strike_sync.py runs
  * both under node and checks they agree).
  */
 (function(){

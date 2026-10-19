@@ -55,7 +55,7 @@ fn slot(s: &Strike, uid: &str) -> i64 {
 // --------------------------------------------------------------------- map --
 #[test]
 fn the_map_file_is_the_python_one() {
-    let py = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../backend/app/strike_map.json")).unwrap();
+    let py = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/data/strike_map.json")).unwrap();
     assert_eq!(py, MAP_JSON);
 }
 

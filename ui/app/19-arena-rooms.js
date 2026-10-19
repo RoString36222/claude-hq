@@ -546,7 +546,7 @@ function arenaRoomFormsClear(){
 })();
 
 
-/* Websocket lobby. The page never sees the device token: dashboard.py mints a
+/* Websocket lobby. The page never sees the device token: the HQ server mints a
    short-lived ticket and we connect with that. */
 function arenaOpenSocket(){
   if(ARENA.sock || ARENA.opening) return;

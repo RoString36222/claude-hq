@@ -1,6 +1,6 @@
 /* ---- Cali: California Burrito taco Tuesdays (the diner lives in the "cali" view) ----
    Three different things go wrong here and only one of them is the host's fault, so say which.
-   The pantry's helpers tell the shapes apart: dashboard.py's own refusals carry "error" and no
+   The pantry's helpers tell the shapes apart: the HQ server's own refusals carry "error" and no
    "detail" (pantryLocalReject), a stale local proxy 404s with {"error":"not found"} and an Arena
    without the routes 404s with a bare "Not Found" (pantryMissState). */
 var CALI_RELOAD_MSG = "Claude HQ restarted since this page loaded. Reload the page to log the dinner — the plates stay as they are.";

@@ -556,7 +556,7 @@ function pantryRetryPending(){
   if(PANTRY.stale) return;   // they'd be turned away: they wait for the page to be reloaded
   keep.forEach(function(p){ if(!EAT_INFLIGHT[p.rid]) pantryEat(p.sid, p.kind, null, p.rid, true, true); });
 }
-// dashboard.py turning a RETRY down before asking the Arena: energy turned off in Settings, or
+// The HQ server turning a RETRY down before asking the Arena: energy turned off in Settings, or
 // no transcript with that id any more. The first try may already have been eaten on the Arena,
 // so it stays pending: the next load retries it, and it's dropped after 15 min like any other.
 function eatLocalRefusal(res){
@@ -589,7 +589,7 @@ function pantryEat(sid, kind, btn, rid, isRetry, quiet){
       if(!isRetry) setTimeout(function(){ pantryEat(sid, kind, null, rid, true, true); }, 2000);
     }
     else if(pantryLocalReject(res)){
-      // Turned away by dashboard.py itself (this page is older than its last start): a retry stays
+      // Turned away by the HQ server itself (this page is older than its last start): a retry stays
       // pending for after the reload (its first try may have landed); a new snack just didn't go out.
       if(!isRetry) pendingEatDrop(rid);
       pantryStale();

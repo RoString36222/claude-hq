@@ -14,12 +14,12 @@
 //! the same roll: the server simulates each shot from {ax, az, power} and
 //! broadcasts the result, and the clients replay the same simulation
 //! (games/golf.js, between the GOLF-SIM markers) only to animate it. Keep the
-//! three in lock-step. `backend/tests/golf_golden.json` pins 350 shots across
+//! three in lock-step. `backend-rs/tests/golf_golden.json` pins 350 shots across
 //! all five courses and `the_golden_vectors_roll_exactly_as_python_does` drives
 //! that same file, so a divergence of one unit in one substep fails here.
 //!
 //! Units: 1 tile = 10000. Velocity is units/tick x [`VS`], [`TICK`] ticks per
-//! second. Courses come from `backend/app/golf_courses.json`, embedded with
+//! second. Courses come from `backend-rs/data/golf_courses.json`, embedded with
 //! `include_str!` -- the same file the Python reads (itself a byte copy of
 //! games/golf/courses.json), so there is no third copy to drift, exactly as
 //! kart.rs:75 and fps.rs:121 do it.
@@ -181,7 +181,7 @@ fn i_of(v: Option<&Value>) -> i64 {
 // ------------------------------------------------------------------ courses --
 /// The course file, embedded at build time: the same bytes the Python reads
 /// (golf.py:106-108), so the two cannot drift.
-pub const COURSES_JSON: &str = include_str!("../../../backend/app/golf_courses.json");
+pub const COURSES_JSON: &str = include_str!("../../data/golf_courses.json");
 
 /// Python's module-level `DATA`.
 pub static DATA: LazyLock<Value> =
@@ -1413,13 +1413,13 @@ mod tests {
 
     // ------------------------------------------------------------ physics --
 
-    /// THE port's proof: `backend/tests/golf_golden.json`, the same 350 vectors
+    /// THE port's proof: `backend-rs/tests/golf_golden.json`, the same 350 vectors
     /// `test_golden_vectors_match` feeds the Python, read at run time from the
     /// repo rather than copied into this file so the two cannot drift.
     #[test]
     fn the_golden_vectors_roll_exactly_as_python_does() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../backend/tests/golf_golden.json");
-        let raw = std::fs::read_to_string(path).expect("golf_golden.json is in backend/tests");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golf_golden.json");
+        let raw = std::fs::read_to_string(path).expect("golf_golden.json is in backend-rs/tests");
         let vecs: Vec<Value> = serde_json::from_str(&raw).unwrap();
         assert!(vecs.len() >= 150, "the Python asserts at least 150 vectors");
         for v in &vecs {

@@ -1,6 +1,6 @@
 /* ================= HQ 2.5: the skill tree ================= */
 // Perks and titles earned from HOW you work. This machine classifies your own transcripts
-// (tool use and file kinds, worksignals.py) into seven per-day counts; only those seven
+// (tool use and file kinds, dashboard-rs/src/worksignals.rs) into seven per-day counts; only those seven
 // integers per UTC day reach the Arena, and only after you say yes (config workSignals).
 // The Arena turns them into tiers, perks and titles. Other trainers see tiers and the title
 // you wear, never counts. Panels: the Compete view (order 30), skillsOpen() (a modal), and

@@ -11,13 +11,14 @@ struct Args {
     port: u16,
     no_open: bool,
     print_plist: bool,
+    print_index: bool,
     install: bool,
     uninstall: bool,
     root: Option<PathBuf>,
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { port: 8765, no_open: false, print_plist: false, install: false, uninstall: false, root: None };
+    let mut a = Args { port: 8765, no_open: false, print_plist: false, print_index: false, install: false, uninstall: false, root: None };
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     let die = |msg: &str| -> ! {
@@ -38,7 +39,7 @@ fn parse_args() -> Args {
         };
         match flag.as_str() {
             "-h" | "--help" => {
-                println!("{}\n\nLocal Claude sessions dashboard (Rust).\n\noptions:\n  --port PORT    port on 127.0.0.1 (default 8765)\n  --no-open      do not open a browser\n  --print-plist  print the launchd LaunchAgent plist and exit\n  --install      install a launchd LaunchAgent so Claude HQ starts at login\n  --uninstall    remove the launchd LaunchAgent\n  --root DIR     the Claude HQ folder (index.html, ui/, games/, state files)", USAGE);
+                println!("{}\n\nLocal Claude sessions dashboard (Rust).\n\noptions:\n  --port PORT    port on 127.0.0.1 (default 8765)\n  --no-open      do not open a browser\n  --print-plist  print the launchd LaunchAgent plist and exit\n  --print-index  print the assembled page (index.html + ui/) and exit; the frontend tests read it\n  --install      install a launchd LaunchAgent so Claude HQ starts at login\n  --uninstall    remove the launchd LaunchAgent\n  --root DIR     the Claude HQ folder (index.html, ui/, games/, state files)", USAGE);
                 std::process::exit(0);
             }
             "--port" => {
@@ -48,6 +49,7 @@ fn parse_args() -> Args {
             "--root" => a.root = Some(PathBuf::from(value("--root"))),
             "--no-open" => a.no_open = true,
             "--print-plist" => a.print_plist = true,
+            "--print-index" => a.print_index = true,
             "--install" => a.install = true,
             "--uninstall" => a.uninstall = true,
             other => die(&format!("unrecognized arguments: {}", other)),
@@ -122,6 +124,16 @@ async fn main() {
 
     let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()));
     let app = Arc::new(App::new(Paths::new(&here, &home)));
+    if args.print_index {
+        match app.assemble_index() {
+            Ok(html) => print!("{}", html),
+            Err(_) => {
+                eprintln!("could not assemble the page from {}", here.display());
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     app.port.store(args.port, std::sync::atomic::Ordering::Relaxed);
     let listener = match tokio::net::TcpListener::bind(("127.0.0.1", args.port)).await {
         Ok(l) => l,

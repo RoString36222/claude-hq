@@ -4,10 +4,13 @@
 //! alongside the Python one and swapped by changing which port Caddy proxies.
 
 mod accounts;
+mod archipelago;
 mod auth;
 mod boardstream;
 mod boss;
 mod cali;
+// Stand-in for cities.rs (srv-economy) until the branches meet: who may see a city.
+mod cities_vis;
 mod config;
 mod cosmetics;
 mod crews;
@@ -987,6 +990,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(cali::routes())
         .merge(cosmetics::routes())
         .merge(accounts::routes())
+        .merge(archipelago::routes())
         .merge(crews::routes())
         .merge(cups::routes())
         .merge(hq::routes())

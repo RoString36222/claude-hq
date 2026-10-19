@@ -20,7 +20,7 @@ fn commons() -> &'static WorldDoc {
 /// The fingerprint of the Commons. Everyone's tower (and every HQ's lot) is stored
 /// against this world, so a change here MOVES THINGS FOR EVERYONE: only update it on
 /// purpose, with a new generator version once the world is live.
-const CLAUDE_HQ_2: &str = "d6b34968d4792572";
+const CLAUDE_HQ_2: &str = "d1f5776de13117f9";
 
 const ISLAND: &str = "user:0b6f2a3c-1d4e-4f5a-9b8c-7d6e5f4a3b2c@2";
 

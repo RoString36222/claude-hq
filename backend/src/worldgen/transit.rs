@@ -10,7 +10,9 @@
 //!   tram  (tier 4) one line per tram street: its stops in order along it, end to end
 //!         (trams run back and forth), on the arterials only, keeping to its street.
 //!
-//! A stop is served at the nearer end of the street its door is on.
+//! A stop is served on the street its door is on (the city street nearest it): the line
+//! drives that street end to end, entering from the end nearer the call before, so it
+//! passes the door whatever class of street the stop stands on.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
@@ -105,6 +107,35 @@ impl<'a> Net<'a> {
         self.nearest(q, ok).map(|e| if d2(q, self.pos(e.a)) <= d2(q, self.pos(e.b)) { e.a } else { e.b })
     }
 
+    /// The nodes a line must pass, in calling order: a waypoint's node, or both ends of a
+    /// stop's street, entered from the end nearer the node before (the first call: from
+    /// the end farther from the next call), so the line drives past the door.
+    fn via(&self, calls: &[Call]) -> Vec<u32> {
+        let at = |c: &Call| match *c {
+            Call::Node(n) => self.pos(n),
+            Call::Street(a, b) => {
+                let (pa, pb) = (self.pos(a), self.pos(b));
+                ((pa.0 + pb.0) / 2, (pa.1 + pb.1) / 2)
+            }
+        };
+        let mut out: Vec<u32> = Vec::new();
+        for (k, c) in calls.iter().enumerate() {
+            match *c {
+                Call::Node(n) => out.push(n),
+                Call::Street(a, b) => {
+                    let a_first = match (out.last(), calls.get(k + 1)) {
+                        (Some(&p), _) => d2(self.pos(p), self.pos(a)) <= d2(self.pos(p), self.pos(b)),
+                        (None, Some(next)) => d2(at(next), self.pos(a)) >= d2(at(next), self.pos(b)),
+                        (None, None) => true,
+                    };
+                    out.extend(if a_first { [a, b] } else { [b, a] });
+                }
+            }
+        }
+        out.dedup();
+        out
+    }
+
     /// The cheapest way from a to b: `cost(e)` per mille of each street's length, None
     /// where it may not go. Nodes from a to b inclusive.
     fn path(&self, a: u32, b: u32, cost: &impl Fn(&Edge) -> Option<i64>) -> Option<Vec<u32>> {
@@ -143,11 +174,15 @@ impl<'a> Net<'a> {
         Some(out)
     }
 
-    /// The path through `via` in order, the legs joined end to start.
+    /// The path through `via` in order, the legs joined end to start. Nodes a street
+    /// joins (a stop's street) take that street.
     fn through(&self, via: &[u32], cost: &impl Fn(&Edge) -> Option<i64>) -> Vec<u32> {
         let mut out: Vec<u32> = via.first().copied().into_iter().collect();
         for w in via.windows(2) {
-            if let Some(leg) = self.path(w[0], w[1], cost) {
+            let street = self.adj[w[0] as usize].iter().map(|&e| &self.r.edges[e as usize]).any(|e| (e.a == w[1] || e.b == w[1]) && cost(e).is_some());
+            if street {
+                out.push(w[1]);
+            } else if let Some(leg) = self.path(w[0], w[1], cost) {
                 out.extend_from_slice(&leg[1..]);
             }
         }
@@ -162,11 +197,12 @@ pub fn door(s: &Site) -> P {
     (s.x + f[0] * back / ONE, s.z + f[1] * back / ONE)
 }
 
-/// The road node a stop (or the hub) is served at: the nearer end of the arterial
-/// nearest its door.
-pub fn stop_node(r: &Roads, s: &Site) -> Option<u32> {
-    Net::new(r).node_at(door(s), |e| e.class == "arterial")
+/// A call on a line: a waypoint node, or a stop's street (its two end nodes).
+enum Call {
+    Node(u32),
+    Street(u32, u32),
 }
+
 
 pub fn generate(r: &Roads, sites: &[Site], lots: &[Lot]) -> Transit {
     let net = Net::new(r);
@@ -177,7 +213,7 @@ pub fn generate(r: &Roads, sites: &[Site], lots: &[Lot]) -> Transit {
     let hub = sites.iter().find(|s| s.kind == "transit");
     let stops: Vec<&Site> = sites.iter().filter(|s| s.kind == "busstop").collect();
     if !stops.is_empty() {
-        let at = |s: &Site| net.node_at(door(s), |e| e.class == "arterial");
+        let at = |s: &Site| net.nearest(door(s), |_| true).map(|e| Call::Street(e.a, e.b));
         let start = hub.map_or(angle(door(stops[0])), |h| angle(door(h)));
         let mut rs: Vec<i64> = stops.iter().map(|s| d2(door(s), (0, 0))).collect();
         rs.sort();
@@ -192,7 +228,7 @@ pub fn generate(r: &Roads, sites: &[Site], lots: &[Lot]) -> Transit {
         for inner in [true, false] {
             let side = |q: P| (d2(q, (0, 0)) <= split) == inner;
             // (compass order from the hub, a stop's id or none for a waypoint, the node)
-            let mut calls: Vec<(i64, Option<&str>, u32)> = Vec::new();
+            let mut calls: Vec<(i64, Option<&str>, Call)> = Vec::new();
             for s in stops.iter().filter(|s| side(door(s))) {
                 if let Some(n) = at(s) {
                     calls.push(((angle(door(s)) - start).rem_euclid(4 << 20), Some(s.id.as_str()), n));
@@ -203,20 +239,21 @@ pub fn generate(r: &Roads, sites: &[Site], lots: &[Lot]) -> Transit {
             }
             for &c in centres.iter().filter(|&&c| side(c)) {
                 if let Some(n) = net.node_at(c, |_| true) {
-                    calls.push(((angle(c) - start).rem_euclid(4 << 20), None, n));
+                    calls.push(((angle(c) - start).rem_euclid(4 << 20), None, Call::Node(n)));
                 }
             }
-            calls.sort();
+            calls.sort_by_key(|c| (c.0, c.1));
             let mut ids: Vec<String> = Vec::new();
-            let mut via: Vec<u32> = Vec::new();
-            if let Some(n) = hub.and_then(at) {
+            let mut order: Vec<Call> = Vec::new();
+            if let Some(c) = hub.and_then(at) {
                 ids.push(hub.unwrap().id.clone());
-                via.push(n);
+                order.push(c);
             }
-            for &(_, id, n) in &calls {
+            for (_, id, c) in calls {
                 ids.extend(id.map(str::to_string));
-                via.push(n);
+                order.push(c);
             }
+            let mut via = net.via(&order);
             via.push(via[0]);
             via.dedup();
             lines.push(Line { id: format!("bus:{}", lines.len()), kind: "bus", tier: BUS_TIER, stops: ids, path: net.through(&via, &bus) });
@@ -247,8 +284,8 @@ pub fn generate(r: &Roads, sites: &[Site], lots: &[Lot]) -> Transit {
         }
         let on_street = |e: &Edge| e.name == name;
         let tram = |e: &Edge| (e.class == "arterial").then_some(if e.name == name { 1000 } else { 4000 });
-        let mut via: Vec<u32> = order.iter().filter_map(|s| net.node_at(door(s), on_street)).collect();
-        via.dedup();
+        let calls: Vec<Call> = order.iter().filter_map(|s| net.nearest(door(s), on_street)).map(|e| Call::Street(e.a, e.b)).collect();
+        let via = net.via(&calls);
         lines.push(Line {
             id: format!("tram:{n}"), kind: "tram", tier: TRAM_TIER,
             stops: order.iter().map(|s| s.id.clone()).collect(),

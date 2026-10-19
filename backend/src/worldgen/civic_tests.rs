@@ -315,6 +315,22 @@ fn zones_export_their_jobs() {
     assert!(goods.len() > 1, "every island makes {goods:?}");
 }
 
+/// How near a line's path comes to a stop's door, and how near it should: as near as the
+/// door's own street (the city street nearest it, any class) plus KERB_SLACK. The path
+/// must drive along that street past the door, not just reach a node near it.
+fn kerb(r: &Roads, s: &Site, path: &[u32]) -> (i64, i64) {
+    let d = transit::door(s);
+    let at = |n: u32| (r.nodes[n as usize].x, r.nodes[n as usize].z);
+    let near = |a: u32, b: u32| isqrt(nearest_on(d, at(a), at(b)).1);
+    let own = r.edges.iter().filter(|e| !is_graded(e.class)).min_by_key(|e| near(e.a, e.b)).unwrap();
+    let pass = path.windows(2).map(|q| near(q[0], q[1])).min().unwrap_or(i64::MAX);
+    (pass, near(own.a, own.b) + KERB_SLACK)
+}
+
+/// 3 m: integer rounding, and a door by a corner, where the crossing street is about as
+/// near as its own and the line may turn there instead.
+const KERB_SLACK: i64 = 300;
+
 #[test]
 fn transit_lines_run_on_the_streets() {
     for w in worlds() {
@@ -339,8 +355,8 @@ fn transit_lines_run_on_the_streets() {
             }
             for id in &l.stops {
                 let s = by_id.get(id.as_str()).unwrap_or_else(|| panic!("{}: {} calls at {id}, no such site", w.id, l.id));
-                let n = transit::stop_node(r, s).unwrap();
-                assert!(l.path.contains(&n), "{}: {} passes {id} by", w.id, l.id);
+                let (d, far) = kerb(r, s, &l.path);
+                assert!(d <= far, "{}: {} comes no nearer {id} than {} m (kerb {} m)", w.id, l.id, d / 100, far / 100);
                 served.insert(id.as_str());
             }
             match l.kind {

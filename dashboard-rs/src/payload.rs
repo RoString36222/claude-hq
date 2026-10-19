@@ -28,10 +28,9 @@ const STREAK_WINDOW: usize = 7;
 const STREAK_MAX_MISSES: usize = 2;
 
 /// _epoch(iso): parse_ts(iso).timestamp() or 0.0
-/// (ts, sig) of the newest error inside the 6 h window that the session has
-/// not answered past, else None. An error a session recovered from -- a
-/// successful assistant reply landed strictly after it -- clears with the
-/// recovery instead of lingering out the window.
+/// _recent_unrecovered_error: (ts, sig) of the newest error inside the 6 h
+/// window that the session has not answered past (a good reply strictly
+/// after it clears it), else None.
 pub fn recent_unrecovered_error(errors: &[(f64, String)], last_good_reply: Option<f64>, now_ts: f64) -> Option<(f64, &str)> {
     let cutoff = now_ts - 6.0 * 3600.0;
     let mut recent: Option<(f64, &str)> = None;
@@ -41,7 +40,7 @@ pub fn recent_unrecovered_error(errors: &[(f64, String)], last_good_reply: Optio
         }
     }
     match (recent, last_good_reply) {
-        (Some(r), Some(g)) if g > r.0 => None,
+        (Some(r), Some(good)) if good > r.0 => None,
         _ => recent,
     }
 }
@@ -667,7 +666,8 @@ impl App {
             if sid.is_empty() || live_ids.contains(&sid) {
                 continue;
             }
-            // every creature reachable (the Overflow Vial needs it): only the cap gates
+            // prompt-less transcripts are listed too (Python 2.5.2): the Overflow Vial
+            // needs every creature reachable, so the cap (not the floor) is the gate.
             let Some(agg) = self.scan_file(&p) else { continue };
             if agg.cursor {
                 let touched = std::fs::metadata(&p)
@@ -749,8 +749,7 @@ impl App {
             "dailyCostUSD": py::round(daily_cost, 4), "dailyBudgetUSD": budget,
             "overBudget": over_budget, "budgetPct": budget_pct, "warnings": warnings,
         });
-        // Overflow Vial: half of every Apex creature's surplus drips into the shared bank
-        let vial = self.vial_for_payload(&mut sessions);
+        let vial = self.payload_vial(&mut sessions);
         let mut payload = json!({
             "updated": py::iso(&py::now_utc()),
             "version": crate::app::APP_VERSION,
@@ -850,8 +849,7 @@ impl App {
             title = Value::from(self.session_heading(Some(&agg), sid));
             let age = agg.last_activity.map(|la| ((py::now_utc() - la).num_microseconds().unwrap_or(0) as f64 / 1e6) as i64).unwrap_or(0);
             let mut st = if age > 86400 { "stale" } else { "idle" };
-            // as in the session list: an error the session already answered past
-            // is a recovered error -- it stops flagging, even inside the 6 h window
+            // as in the session list: an error the session already answered past stops flagging
             if recent_unrecovered_error(&agg.errors, agg.last_good_reply, py::now_ts()).is_some() {
                 st = "needs";
             }

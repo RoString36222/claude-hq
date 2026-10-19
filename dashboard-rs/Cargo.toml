@@ -2,7 +2,7 @@
 name = "claudehq"
 version = "2.7.0"
 edition = "2021"
-description = "Claude HQ local server"
+description = "Claude HQ local server (Rust port of dashboard.py and the modules it imports)"
 
 [[bin]]
 name = "claudehq"
@@ -16,8 +16,8 @@ path = "src/lib.rs"
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
-# preserve_order: serde_json::Map iterates in insertion order, so every payload
-# keeps a stable key order (the one the old Python server produced).
+# preserve_order: serde_json::Map iterates in insertion order, like a Python
+# dict, so every payload keeps the key order dashboard.py produces.
 serde_json = { version = "1", features = ["preserve_order"] }
 indexmap = "2"
 regex = "1"

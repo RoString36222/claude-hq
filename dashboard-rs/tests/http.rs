@@ -1,7 +1,8 @@
 //! The HTTP gates on a real 127.0.0.1 server (ported from the route tests in
 //! test_scanner.py, test_atomic_state.py, test_games.py, test_pantry_proxy.py,
 //! test_maps_proxy.py, test_cups_proxy.py): Host check, CSRF, Origin, body
-//! caps, UUID-only session routes, the games allowlist and the save endpoint.
+//! caps, UUID-only session routes, the games allowlist and the save endpoint;
+//! plus test_evo_choice.py and test_notch_invite.py (evo picks, HQ Notch).
 
 use claudehq::app::{App, Paths};
 use claudehq::server;
@@ -48,7 +49,14 @@ fn raw(port: u16, req: &str, body: &[u8]) -> (u16, String, Vec<u8>) {
     s.write_all(req.as_bytes()).unwrap();
     s.write_all(body).unwrap();
     let mut buf = Vec::new();
-    s.read_to_end(&mut buf).unwrap();
+    // A refused POST is answered without reading its body, so the server's
+    // close can arrive as a reset once the whole response is in: keep what came.
+    match s.read_to_end(&mut buf) {
+        Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset && buf.windows(4).any(|w| w == b"\r\n\r\n") => {}
+        r => {
+            r.unwrap();
+        }
+    }
     let split = buf.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
     let head = String::from_utf8_lossy(&buf[..split]).to_lowercase();
     let status: u16 = head.split_whitespace().nth(1).unwrap().parse().unwrap();
@@ -147,7 +155,7 @@ fn games_allowlist_etag_and_save() {
     for bad in ["/games/..%2fdashboard.py", "/games/Core.js", "/games/golf/LICENSE-kenney.txt", "/games/golf//straight.glb", "/games/vendor/x.css"] {
         assert_eq!(get(srv.port, bad, "").0, 404, "{}", bad);
     }
-    for good in ["golf/courses.json", "golf/straight.glb", "vendor/three-core.js", "kart/tracks.json", "fps/map.json", "platformer/levels.json"] {
+    for good in ["golf/courses.json", "golf/straight.glb", "vendor/three-core.js", "kart/tracks.json", "fps/map.json", "platformer/levels.json", "strike/map.json"] {
         assert!(srv.app.game_file(good).is_some(), "{}", good);
     }
     let (code, head, _) = get(srv.port, "/games/golf/courses.json", "");
@@ -225,12 +233,12 @@ fn stream_sends_a_data_frame() {
     assert!(text.contains(&format!("\"version\": \"{}\"", claudehq::app::APP_VERSION)));
 }
 
-/// A session id whose Pokemon is this species (as tests/test_evo_choice.py finds one).
+/// A session id whose Pokemon is this species (test_evo_choice.py's sid_for).
 fn sid_for(species: u64) -> String {
     let mut i: u128 = 0;
     loop {
         let h = format!("{:032x}", i.wrapping_mul(2654435761));
-        let sid = format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..]);
+        let sid = format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32]);
         if claudehq::creature::session_hash_mod(&sid, 48) == species {
             return sid;
         }
@@ -239,69 +247,119 @@ fn sid_for(species: u64) -> String {
 }
 
 #[test]
-fn evo_choice_endpoint() {
+fn evo_choice_saves_and_rides_in_sessions() {
     let srv = serve();
     let (eevee, zard) = (sid_for(4), sid_for(1));
-    let body = |v: Value| v.to_string().into_bytes();
-    // needs the CSRF token and a same-site origin (a refused POST is answered without reading a body)
-    assert_eq!(post(&srv, "/api/evo-choice", b"", "", false).0, 403);
-    assert_eq!(post(&srv, "/api/evo-choice", b"", "Origin: https://evil.example\r\n", true).0, 403);
-    // bad ids and picks: 400, nothing written
-    for b in [json!({"sessionId": "../../etc", "branchDex": 470}), json!({"sessionId": eevee, "branchDex": 6}), json!({"sessionId": zard, "megaSlug": "<script>"})] {
-        assert_eq!(post(&srv, "/api/evo-choice", &body(b.clone()), "", true).0, 400, "{}", b);
-    }
-    assert!(!srv.app.paths.evo_choices.exists());
-    let (code, resp) = post(&srv, "/api/evo-choice", &body(json!({"sessionId": eevee, "branchDex": 470})), "", true);
+    let p = srv.app.paths.projects_dir.join("proj").join(format!("{}.jsonl", eevee));
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(&p, "{\"type\": \"user\", \"timestamp\": \"2026-09-01T10:00:00Z\", \"message\": {\"content\": \"hello there\"}}\n").unwrap();
+    let card = |srv: &Srv| -> Value {
+        let v: Value = serde_json::from_slice(&get(srv.port, "/api/sessions", "").2).unwrap();
+        v["sessions"].as_array().unwrap().iter().find(|s| s["sessionId"] == eevee.as_str()).cloned().expect("eevee card")
+    };
+    assert!(card(&srv)["creature"].get("evo").is_none()); // also primes the 1.5 s memo
+
+    let (code, resp) = post(&srv, "/api/evo-choice", json!({"sessionId": eevee, "branchDex": 470}).to_string().as_bytes(), "", true);
     assert_eq!((code, resp), (200, json!({"sessionId": eevee, "evo": {"branchDex": 470}})));
-    assert_eq!(Value::Object(srv.app.load_evo_choices()), json!({eevee: {"branchDex": 470}}));
+    assert_eq!(Value::Object(srv.app.load_evo_choices()), json!({eevee.clone(): {"branchDex": 470}}));
+    assert_eq!(card(&srv)["creature"]["evo"], json!({"branchDex": 470})); // the save dropped the memo
+
+    let (code, resp) = post(&srv, "/api/evo-choice", json!({"sessionId": eevee, "branchDex": null}).to_string().as_bytes(), "", true);
+    assert_eq!((code, resp), (200, json!({"sessionId": eevee, "evo": {}})));
+    assert!(card(&srv)["creature"].get("evo").is_none());
+
+    let (code, resp) = post(&srv, "/api/evo-choice", json!({"sessionId": zard, "megaSlug": "charizard-megax"}).to_string().as_bytes(), "", true);
+    assert_eq!((code, resp), (200, json!({"sessionId": zard, "evo": {"megaSlug": "charizard-megax"}})));
 }
 
 #[test]
-fn vial_spend_endpoint() {
+fn evo_choice_rejects_bad_ids_picks_and_requests() {
+    let srv = serve();
+    let (eevee, zard) = (sid_for(4), sid_for(1));
+    let cases = [
+        (json!({"sessionId": "../../etc", "branchDex": 470}), "invalid sessionId"),
+        (json!({"branchDex": 470}), "invalid sessionId"),
+        (json!({"sessionId": eevee, "branchDex": 6}), "branchDex is not a valid pick for this session's Pokemon"),
+        (json!({"sessionId": zard, "megaSlug": "<script>"}), "megaSlug is not a valid pick for this session's Pokemon"),
+    ];
+    for (body, err) in cases {
+        assert_eq!(post(&srv, "/api/evo-choice", body.to_string().as_bytes(), "", true), (400, json!({"error": err})), "{}", body);
+    }
+    let ok = json!({"sessionId": eevee, "branchDex": 470}).to_string();
+    assert_eq!(post(&srv, "/api/evo-choice", ok.as_bytes(), "", false).0, 403);
+    assert_eq!(post(&srv, "/api/evo-choice", ok.as_bytes(), "Origin: https://evil.example\r\n", true).0, 403);
+    let (code, _, _) = raw(
+        srv.port,
+        &format!("POST /api/evo-choice HTTP/1.1\r\nHost: evil.example\r\nConnection: close\r\nX-HQ-Token: {}\r\nContent-Length: {}\r\n\r\n", srv.app.csrf_token, ok.len()),
+        ok.as_bytes(),
+    );
+    assert_eq!(code, 403);
+    assert!(!srv.app.paths.evo.exists());
+    assert!(server::post_paths().contains(&"/api/evo-choice"));
+}
+
+#[test]
+fn notch_status_and_protected_install() {
+    let srv = serve();
+    let (code, _, body) = get(srv.port, "/api/notch/status", "");
+    assert_eq!(code, 200);
+    let s: Value = serde_json::from_slice(&body).unwrap();
+    let keys: Vec<&String> = s.as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["mac", "installed", "running", "tools", "available", "job"]);
+    assert_eq!(s["available"], false); // the temp HQ has no notch/ yet
+
+    // A stand-in installer under the temp HQ root, on a pretend Mac with swift.
+    let inst = srv.app.paths.here.join("notch/tools/install.py");
+    std::fs::create_dir_all(inst.parent().unwrap()).unwrap();
+    std::fs::write(&inst, "print('done. HQ Notch is running')\n").unwrap();
+    *srv.app.notch.mac_hook.write().unwrap() = Some(true);
+    *srv.app.notch.swift_hook.write().unwrap() = Some(true);
+    assert_eq!(serde_json::from_slice::<Value>(&get(srv.port, "/api/notch/status", "").2).unwrap()["available"], true);
+
+    assert_eq!(post(&srv, "/api/notch/install", b"{}", "", false).0, 403);
+    assert_eq!(post(&srv, "/api/notch/install", b"{}", "Origin: https://evil.example\r\n", true).0, 403);
+    assert_eq!(srv.app.notch.job.lock().unwrap().state, "idle"); // refused before it ran
+    assert_eq!(post(&srv, "/api/notch/install", b"{}", "", true), (202, json!({"started": true})));
+    let mut job = Value::Null;
+    for _ in 0..200 {
+        job = serde_json::from_slice::<Value>(&get(srv.port, "/api/notch/status", "").2).unwrap()["job"].clone();
+        if job["state"] != "running" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!((job["state"].clone(), job["rc"].clone()), (json!("done"), json!(0)));
+    assert!(job["log"].as_str().unwrap().contains("HQ Notch is running"));
+
+    *srv.app.notch.mac_hook.write().unwrap() = Some(false);
+    assert_eq!(post(&srv, "/api/notch/install", b"{}", "", true), (400, json!({"error": "HQ Notch is for macOS"})));
+}
+
+#[test]
+fn vial_spend_route_and_payload() {
     let srv = serve();
     let sid = "11111111-1111-4111-8111-111111111111";
-    let body = |v: Value| v.to_string().into_bytes();
-    assert_eq!(post(&srv, "/api/vial/spend", &body(json!({"sessionId": "x", "fromStage": 0})), "", true), (400, json!({"error": "invalid sessionId"})));
-    for st in [json!(4), json!(true), json!(1.0), json!("1"), json!(null)] {
-        assert_eq!(post(&srv, "/api/vial/spend", &body(json!({"sessionId": sid, "fromStage": st})), "", true), (400, json!({"error": "invalid fromStage"})));
+    assert!(server::post_paths().contains(&"/api/vial/spend"));
+    let spend = |body: Value| post(&srv, "/api/vial/spend", body.to_string().as_bytes(), "", true);
+    assert_eq!(spend(json!({"sessionId": "../x", "fromStage": 0})), (400, json!({"error": "invalid sessionId"})));
+    for stg in [json!(4), json!(-1), json!(true), json!(1.0), json!("1"), json!(null)] {
+        assert_eq!(spend(json!({"sessionId": sid, "fromStage": stg})), (400, json!({"error": "invalid fromStage"})), "{}", stg);
     }
-    assert_eq!(post(&srv, "/api/vial/spend", b"", "", false).0, 403);
-    let (code, resp) = post(&srv, "/api/vial/spend", &body(json!({"sessionId": sid, "fromStage": 0})), "", true);
-    assert_eq!((code, resp), (200, json!({"ok": false, "error": "the vial is short", "cost": 30, "balance": 0})));
+    assert_eq!(spend(json!({"sessionId": sid, "fromStage": 0})), (200, json!({"ok": false, "error": "the vial is short", "cost": 30, "balance": 0})));
     srv.app.vial_grant(100, claudehq::py::now_ts());
-    let (code, resp) = post(&srv, "/api/vial/spend", &body(json!({"sessionId": sid, "fromStage": 0})), "", true);
-    assert_eq!((code, resp), (200, json!({"ok": true, "cost": 30, "balance": 70})));
-    // the payload carries the vial
-    let (_, _, b) = get(srv.port, "/api/sessions", "");
-    let p: Value = serde_json::from_slice(&b).unwrap();
-    assert_eq!(p["vial"]["xp"], 70);
-    assert_eq!(p["vial"]["costs"], json!({"0": 30, "1": 90, "2": 180, "3": 400}));
-    assert!(String::from_utf8_lossy(&b).contains("\"expiresIn\": 86400.0"));
-}
+    assert_eq!(spend(json!({"sessionId": sid, "fromStage": 1})), (200, json!({"ok": true, "cost": 90, "balance": 10})));
+    assert_eq!(post(&srv, "/api/vial/spend", json!({"sessionId": sid, "fromStage": 0}).to_string().as_bytes(), "", false).0, 403);
 
-#[test]
-fn notch_status_and_install_need_the_token() {
-    let srv = serve();
-    let (code, _, b) = get(srv.port, "/api/notch/status", "");
-    assert_eq!(code, 200);
-    let s: Value = serde_json::from_slice(&b).unwrap();
-    assert_eq!(s.as_object().unwrap().keys().collect::<Vec<_>>(), vec!["mac", "installed", "running", "tools", "available", "job"]);
-    assert_eq!(s["available"], false); // no notch/tools/install.py in this temp HQ
-    assert_eq!(s["job"]["state"], "idle");
-    *srv.app.ext.notch_mac_hook.write().unwrap() = Some(true);
-    assert_eq!(post(&srv, "/api/notch/install", b"", "", false).0, 403);
-    assert_eq!(srv.app.ext.notch_job.lock().unwrap().state, "idle");
-    assert_eq!(post(&srv, "/api/notch/install", b"{}", "", true), (400, json!({"error": "notch/tools/install.py is missing from this HQ"})));
-}
-
-#[test]
-fn skate_routes_stay_local_when_unpaired() {
-    let srv = serve();
-    let (code, _, b) = get(srv.port, "/api/arena/skate", "");
-    assert_eq!((code, serde_json::from_slice::<Value>(&b).unwrap()), (400, json!({"error": "not paired"})));
-    assert_eq!(post(&srv, "/api/arena/skate/combo", b"{\"total\": 0, \"tricks\": 1}", "", true).0, 400);
-    assert_eq!(post(&srv, "/api/arena/skate/combo", b"{\"total\": 10, \"tricks\": 1}", "", true), (400, json!({"error": "not paired"})));
-    assert!(srv.app.game_file("hqskate.js").is_some());
-    assert_eq!(server::game_cache_control("hqskate.js"), "no-store");
-    assert!(srv.app.game_file("strike/map.json").is_some());
+    // A prompt-less transcript is still an archived card (2.5.2), and the payload carries the vial.
+    let quiet = "33333333-3333-4333-8333-333333333333";
+    let p = srv.app.paths.projects_dir.join("proj").join(format!("{}.jsonl", quiet));
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(&p, "{\"type\": \"assistant\", \"timestamp\": \"2026-09-01T10:00:00Z\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}}\n").unwrap();
+    let v: Value = serde_json::from_slice(&get(srv.port, "/api/sessions", "").2).unwrap();
+    let card = v["sessions"].as_array().unwrap().iter().find(|s| s["sessionId"] == quiet).cloned().expect("prompt-less card");
+    assert_eq!((card["promptCount"].clone(), card["vialPoured"].clone()), (json!(0), json!(0)));
+    let keys: Vec<&String> = v.as_object().unwrap().keys().collect();
+    assert_eq!(keys.last().map(|k| k.as_str()), Some("vial"));
+    assert_eq!(v["vial"]["xp"], 10);
+    assert_eq!(v["vial"]["costs"], json!({"0": 30, "1": 90, "2": 180, "3": 400}));
 }

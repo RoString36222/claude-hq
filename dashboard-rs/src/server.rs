@@ -733,6 +733,7 @@ async fn do_post(app: Arc<App>, headers: HeaderMap, path: String, body: Body) ->
     if !post_paths().contains(&path.as_str()) {
         return refuse(body, Reply::json(404, &json!({"error": "not found"}))).await;
     }
+
     let cl = headers.get("content-length").and_then(|v| v.to_str().ok()).map(|s| py::strip(s).to_string()).unwrap_or_default();
     if cl.is_empty() || !cl.bytes().all(|b| b.is_ascii_digit()) {
         let mut r = Reply::json(if cl.is_empty() { 411 } else { 400 }, &json!({"error": "a valid Content-Length is required"}));
@@ -772,7 +773,7 @@ fn constant_eq(a: &[u8], b: &[u8]) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-fn post_route(app: &App, path: &str, body: &Value) -> Reply {
+fn post_route(app: &Arc<App>, path: &str, body: &Value) -> Reply {
     let b = body.as_object().unwrap();
     if path.starts_with("/api/arena/") {
         let (code, resp) = arena_post(app, path, body);
@@ -793,29 +794,29 @@ fn post_route(app: &App, path: &str, body: &Value) -> Reply {
             Err(crate::app::SaveError::Io(e)) => Reply::json(500, &json!({"error": format!("could not write save: {}", e)})),
         },
         "/api/notch/install" => {
-            // HQ Notch from HQ: the same install as `python3 notch/tools/install.py`
+            // HQ Notch from HQ (ext_notch.py): the same install as `python3 notch/tools/install.py`
             let (c, r) = app.notch_install();
             Reply::json(c, &r)
         }
         "/api/vial/spend" => {
-            let sid = b.get("sessionId").filter(|v| v.as_str().map(is_uuid).unwrap_or(false));
-            let Some(sid) = sid else { return Reply::json(400, &json!({"error": "invalid sessionId"})) };
-            let Some(stg) = b.get("fromStage").filter(|v| py::strict_int(v).map(|i| (0..=3).contains(&i)).unwrap_or(false)) else {
+            let sid = b.get("sessionId").unwrap_or(&Value::Null);
+            let stg = b.get("fromStage").unwrap_or(&Value::Null);
+            if !matches!(sid, Value::String(s) if is_uuid(s)) {
+                return Reply::json(400, &json!({"error": "invalid sessionId"}));
+            }
+            if !matches!(py::strict_int(stg), Some(0..=3)) {
                 return Reply::json(400, &json!({"error": "invalid fromStage"}));
-            };
+            }
             Reply::json(200, &app.vial_spend(sid, stg, py::now_ts()))
         }
-        "/api/evo-choice" => {
-            let sid = b.get("sessionId");
-            match app.save_evo_choice(sid, body) {
-                Ok(entry) => {
-                    app.invalidate_payload_memo(); // the next /api/sessions carries it
-                    Reply::json(200, &json!({"sessionId": sid, "evo": entry}))
-                }
-                Err(crate::evo::EvoError::Bad(e)) => Reply::json(400, &json!({"error": e})),
-                Err(crate::evo::EvoError::Io(e)) => Reply::json(500, &json!({"error": format!("could not save the pick: {}", e)})),
+        "/api/evo-choice" => match app.save_evo_choice(b.get("sessionId"), b) {
+            Ok(entry) => {
+                app.invalidate_payload_memo(); // the next /api/sessions carries it
+                Reply::json(200, &json!({"sessionId": b.get("sessionId"), "evo": entry}))
             }
-        }
+            Err(crate::evo::EvoError::Bad(e)) => Reply::json(400, &json!({"error": e})),
+            Err(crate::evo::EvoError::Io(e)) => Reply::json(500, &json!({"error": format!("could not save the pick: {}", e)})),
+        },
         "/api/meta" => {
             let sid = b.get("sessionId").and_then(|v| v.as_str()).filter(|s| crate::app::is_uuid_match(s));
             let Some(sid) = sid else { return Reply::json(400, &json!({"error": "invalid sessionId"})) };

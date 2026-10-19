@@ -14,6 +14,7 @@ pub mod ext;
 pub mod fatigue;
 pub mod handlers;
 pub mod music;
+pub mod notch;
 pub mod payload;
 pub mod py;
 pub mod pyjson;

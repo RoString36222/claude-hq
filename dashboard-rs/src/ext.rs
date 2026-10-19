@@ -1,8 +1,7 @@
-//! HQ 2.5+ local extensions (ext_skills / ext_loot / ext_prestige / ext_maps /
-//! ext_cups / ext_boss / ext_skate / ext_notch). The Arena proxies forward
-//! only a validated id or an allowlisted body to the paired Arena; the skill
-//! and loot reporters send counts only, and only when the user opted in
-//! (config workSignals). ext_notch never talks to the network.
+//! HQ 2.5 local proxy extensions (ext_skills / ext_loot / ext_prestige /
+//! ext_maps / ext_cups / ext_boss). Each forwards only a validated id or an
+//! allowlisted body to the paired Arena; the skill and loot reporters send
+//! counts only, and only when the user opted in (config workSignals).
 
 use crate::app::{is_rid, App};
 use crate::arena::{valid_user_id, USER_ID_RE};
@@ -38,7 +37,7 @@ pub const GET: &[(&str, GetFn)] = &[
     ("/api/arena/boss", boss_state),
     ("/api/arena/boss/badges", boss_badges),
     ("/api/arena/skate", skate_board),
-    ("/api/notch/status", notch_status),
+    ("/api/notch/status", crate::notch::get_status),
 ];
 
 pub const POST: &[(&str, PostFn)] = &[
@@ -67,11 +66,6 @@ pub struct ExtState {
     pub day_counts_hook: RwLock<Option<DayCountsFn>>,
     pub gh_hook: RwLock<Option<GhFn>>,
     pub gh_which_hook: RwLock<Option<bool>>,
-    /// The HQ Notch install job, shared with its background thread.
-    pub notch_job: Arc<Mutex<NotchJob>>,
-    /// Test seams for ext_notch: sys.platform == "darwin" / shutil.which("swift").
-    pub notch_mac_hook: RwLock<Option<bool>>,
-    pub notch_swift_hook: RwLock<Option<bool>>,
 }
 
 fn not_paired() -> Resp {
@@ -842,27 +836,26 @@ fn boss_fight(app: &App, body: &Value) -> Resp {
 }
 
 // ---------------------------------------------------------------------------
-// skate (Arena City skatepark): the weekly board, and a combo's score. The only
-// thing that leaves is a combo's total and trick count, two checked whole numbers.
+// skate (ext_skate.py): the Arena City skatepark's weekly board. The only
+// thing that leaves the machine is a combo's score: two whole numbers.
 // ---------------------------------------------------------------------------
 
-const SKATE_MAX_TOTAL: i64 = 200000;
-const SKATE_MAX_TRICKS: i64 = 10;
+pub const SKATE_MAX_TOTAL: i64 = 200000;
+pub const SKATE_MAX_TRICKS: i64 = 10;
 
-/// A whole number in [lo, hi] (an integral float counts; a bool does not).
-fn whole(v: Option<&Value>, lo: i64, hi: i64) -> Option<i64> {
+/// _whole(v, lo, hi): an int, or an integral float, inside [lo, hi]; never a bool.
+pub fn whole(v: Option<&Value>, lo: i64, hi: i64) -> Option<i64> {
     let Some(Value::Number(n)) = v else { return None };
-    let v = match n.as_i64() {
-        Some(i) => i,
-        None => {
-            let f = n.as_f64()?;
-            if !f.is_finite() || f.fract() != 0.0 || f.abs() > 9.0e18 {
-                return None;
-            }
-            f as i64
+    let x = if let Some(i) = n.as_i64() {
+        i as f64
+    } else {
+        let f = n.as_f64()?;
+        if f.is_nan() || f.fract() != 0.0 {
+            return None;
         }
+        f
     };
-    (lo..=hi).contains(&v).then_some(v)
+    (lo as f64 <= x && x <= hi as f64).then_some(x as i64)
 }
 
 fn skate_board(app: &App, _arg: &dyn Fn(&str) -> String) -> Resp {
@@ -880,116 +873,6 @@ fn skate_combo(app: &App, body: &Value) -> Resp {
     app.arena_request("POST", &format!("{}/v1/skate", b), Some(&t), Some(&json!({"total": total, "tricks": tricks})))
 }
 
-// ---------------------------------------------------------------------------
-// notch (HQ Notch, from HQ): is it on this Mac, and install it with one click.
-// The install is the same as running `python3 notch/tools/install.py`; it only
-// ever runs because the page POSTed /api/notch/install with HQ's CSRF token.
-// ---------------------------------------------------------------------------
-
-/// How much of the installer's output the page may show.
-pub const NOTCH_LOG_MAX: usize = 2000;
-/// A first build takes a minute or two; never hang forever.
-const NOTCH_TIMEOUT: u64 = 900;
-
-#[derive(Debug, Clone)]
-pub struct NotchJob {
-    pub state: &'static str,
-    pub started: Option<f64>,
-    pub rc: Option<i32>,
-    pub log: String,
-}
-
-impl Default for NotchJob {
-    fn default() -> Self {
-        NotchJob { state: "idle", started: None, rc: None, log: String::new() }
-    }
-}
-
-impl NotchJob {
-    pub fn view(&self) -> Value {
-        json!({"state": self.state, "started": self.started, "rc": self.rc, "log": py::last_chars(&self.log, NOTCH_LOG_MAX)})
-    }
-}
-
-impl App {
-    fn notch_mac(&self) -> bool {
-        self.ext.notch_mac_hook.read().unwrap().unwrap_or(cfg!(target_os = "macos"))
-    }
-
-    fn notch_swift(&self) -> bool {
-        self.ext
-            .notch_swift_hook
-            .read()
-            .unwrap()
-            .unwrap_or_else(|| crate::actions::which("swift", &std::env::var("PATH").unwrap_or_default()).is_some())
-    }
-
-    fn notch_running(&self) -> bool {
-        if !self.notch_mac() {
-            return false;
-        }
-        let mut cmd = std::process::Command::new("pgrep");
-        cmd.args(["-x", "HQNotch"]);
-        matches!(crate::payload::run_timeout(&mut cmd, 3), Ok((0, _, _)))
-    }
-
-    /// Start the installer once: 202 started, 409 already running, 400 when it cannot run here.
-    pub fn notch_install(&self) -> Resp {
-        if !self.notch_mac() {
-            return bad("HQ Notch is for macOS");
-        }
-        let installer = self.paths.notch_installer.clone();
-        if !installer.is_file() {
-            return bad("notch/tools/install.py is missing from this HQ");
-        }
-        if !self.notch_swift() {
-            return bad("needs the Xcode Command Line Tools: run xcode-select --install, then try again");
-        }
-        {
-            let mut j = self.ext.notch_job.lock().unwrap();
-            if j.state == "running" {
-                return (409, json!({"error": "already installing"}));
-            }
-            *j = NotchJob { state: "running", started: Some(py::now_ts()), rc: None, log: String::new() };
-        }
-        let job = self.ext.notch_job.clone();
-        let here = self.paths.here.clone();
-        let spawned = std::thread::Builder::new().name("hq-notch-install".into()).spawn(move || {
-            let python = crate::actions::which("python3", &std::env::var("PATH").unwrap_or_default()).unwrap_or_else(|| "/usr/bin/python3".into());
-            let mut cmd = std::process::Command::new(python);
-            cmd.arg(&installer).current_dir(&here);
-            let (out, rc) = match crate::payload::run_timeout(&mut cmd, NOTCH_TIMEOUT) {
-                Ok((rc, so, se)) => (so + &se, rc),
-                Err(crate::payload::RunErr::Timeout) => (format!("the install took longer than {} s and was stopped", NOTCH_TIMEOUT), -1),
-                Err(crate::payload::RunErr::NotFound) => ("could not run the installer: python3 not found".to_string(), -1),
-                Err(crate::payload::RunErr::Other(e)) => (format!("could not run the installer: {}", e), -1),
-            };
-            let mut j = job.lock().unwrap();
-            j.state = if rc == 0 { "done" } else { "failed" };
-            j.rc = Some(rc);
-            j.log = py::last_chars(&out, NOTCH_LOG_MAX).to_string();
-        });
-        if let Err(e) = spawned {
-            let mut j = self.ext.notch_job.lock().unwrap();
-            *j = NotchJob { state: "failed", started: j.started, rc: Some(-1), log: format!("could not run the installer: {}", e) };
-        }
-        (202, json!({"started": true}))
-    }
-}
-
-fn notch_status(app: &App, _arg: &dyn Fn(&str) -> String) -> Resp {
-    let mac = app.notch_mac();
-    let job = app.ext.notch_job.lock().unwrap().view();
-    (200, json!({
-        "mac": mac,
-        "installed": mac && app.paths.notch_app.is_dir(),
-        "running": app.notch_running(),
-        "tools": app.notch_swift(),
-        "available": app.paths.notch_installer.is_file(),
-        "job": job,
-    }))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1002,130 +885,6 @@ mod tests {
     }
 
     const UID: &str = "0f8fad5b-d9cb-469f-a165-70867728950e";
-
-    // ---- SkateProxy (tests/test_hq3d.py) ----
-
-    #[test]
-    fn skate_post_sends_two_numbers_only() {
-        let (_d, app) = app();
-        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({"ok": true})))));
-        let (code, _) = skate_combo(&app, &json!({"total": 800, "tricks": 2, "where": "rail", "session": "abc"}));
-        assert_eq!(code, 200);
-        assert_eq!(skate_combo(&app, &json!({"total": 5.0, "tricks": 1})).0, 200); // an integral float is whole
-        let s = sent.lock().unwrap();
-        assert_eq!((s[0].0.as_str(), s[0].1.as_str(), s[0].3.clone()), ("POST", "https://arena.example/v1/skate", Some(json!({"total": 800, "tricks": 2}))));
-        assert_eq!(s[1].3, Some(json!({"total": 5, "tricks": 1})));
-    }
-
-    #[test]
-    fn skate_bad_combos_never_leave() {
-        let (_d, app) = app();
-        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({"ok": true})))));
-        for b in [json!({"total": 0, "tricks": 1}), json!({"total": 200001, "tricks": 1}), json!({"total": 5, "tricks": 11}),
-                  json!({"total": 1.5, "tricks": 1}), json!({"total": true, "tricks": 1}), json!({"total": "9", "tricks": 1}),
-                  json!({"tricks": 1}), json!([]), json!(null)] {
-            assert_eq!(skate_combo(&app, &b), (400, json!({"error": "a combo is a total (1-200000) and a trick count (1-10)"})), "{}", b);
-        }
-        assert!(sent.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn skate_board_is_a_plain_get_and_unpaired_sends_nothing() {
-        let (_d, app) = app();
-        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({"ok": true})))));
-        assert_eq!(skate_board(&app, &arg(&[])).0, 200);
-        assert_eq!(sent.lock().unwrap().clone(), vec![("GET".to_string(), "https://arena.example/v1/skate".to_string(), Some("T".to_string()), None)]);
-        sent.lock().unwrap().clear();
-        app.save_link(&json!({"url": "https://arena.example"})).unwrap(); // a link with no device token
-        assert_eq!(skate_combo(&app, &json!({"total": 10, "tricks": 1})).0, 400);
-        assert_eq!(skate_board(&app, &arg(&[])).0, 400);
-        assert!(sent.lock().unwrap().is_empty());
-        assert!(GET.iter().any(|(p, _)| *p == "/api/arena/skate") && POST.iter().any(|(p, _)| *p == "/api/arena/skate/combo"));
-    }
-
-    // ---- HQ Notch (tests/test_notch_invite.py); the real installer is never run ----
-
-    fn notch_app(script: Option<&str>) -> (tempfile::TempDir, Arc<App>) {
-        let (d, app) = app();
-        if let Some(body) = script {
-            let p = app.paths.notch_installer.clone();
-            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-            std::fs::write(&p, body).unwrap();
-        }
-        *app.ext.notch_mac_hook.write().unwrap() = Some(true);
-        *app.ext.notch_swift_hook.write().unwrap() = Some(true);
-        (d, app)
-    }
-
-    fn wait(app: &App) -> NotchJob {
-        for _ in 0..200 {
-            let j = app.ext.notch_job.lock().unwrap().clone();
-            if j.state != "running" {
-                return j;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        panic!("installer never finished");
-    }
-
-    #[test]
-    fn notch_status_shape() {
-        let (_d, app) = notch_app(Some("print('x')\n"));
-        let (code, s) = notch_status(&app, &arg(&[]));
-        assert_eq!(code, 200);
-        assert_eq!(s.as_object().unwrap().keys().collect::<Vec<_>>(), vec!["mac", "installed", "running", "tools", "available", "job"]);
-        assert_eq!((s["available"].clone(), s["installed"].clone()), (json!(true), json!(false)));
-        assert_eq!(s["job"], json!({"state": "idle", "started": null, "rc": null, "log": ""}));
-        // the real HQ ships its installer
-        let real = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../notch/tools/install.py");
-        assert!(real.is_file());
-    }
-
-    #[test]
-    fn notch_not_a_mac_or_no_tools() {
-        let (_d, app) = notch_app(Some("print('x')\n"));
-        *app.ext.notch_mac_hook.write().unwrap() = Some(false);
-        assert_eq!(app.notch_install(), (400, json!({"error": "HQ Notch is for macOS"})));
-        std::fs::create_dir_all(app.paths.notch_app.clone()).unwrap();
-        assert_eq!(notch_status(&app, &arg(&[])).1["installed"], false);
-        *app.ext.notch_mac_hook.write().unwrap() = Some(true);
-        assert_eq!(notch_status(&app, &arg(&[])).1["installed"], true);
-        *app.ext.notch_swift_hook.write().unwrap() = Some(false);
-        let (code, resp) = app.notch_install();
-        assert_eq!(code, 400);
-        assert!(resp["error"].as_str().unwrap().contains("xcode-select --install"));
-    }
-
-    #[test]
-    fn notch_install_success_and_failure() {
-        let (_d, app) = notch_app(Some("print('done. HQ Notch is running')\n"));
-        assert_eq!(app.notch_install(), (202, json!({"started": true})));
-        let j = wait(&app);
-        assert_eq!((j.state, j.rc), ("done", Some(0)));
-        assert!(j.log.contains("HQ Notch is running"));
-        std::fs::write(&app.paths.notch_installer, "import sys; print('swift build failed'); sys.exit(3)\n").unwrap();
-        app.notch_install();
-        let j = wait(&app);
-        assert_eq!((j.state, j.rc), ("failed", Some(3)));
-    }
-
-    #[test]
-    fn notch_never_twice_at_once_and_log_is_capped() {
-        let (_d, app) = notch_app(Some("import time; time.sleep(1)\n"));
-        assert_eq!(app.notch_install().0, 202);
-        assert_eq!(app.notch_install(), (409, json!({"error": "already installing"})));
-        wait(&app);
-        std::fs::write(&app.paths.notch_installer, "print('x' * 50000)\n").unwrap();
-        app.notch_install();
-        assert!(wait(&app).log.chars().count() <= NOTCH_LOG_MAX);
-        assert!(notch_status(&app, &arg(&[])).1["job"]["log"].as_str().unwrap().chars().count() <= NOTCH_LOG_MAX);
-    }
-
-    #[test]
-    fn notch_missing_installer() {
-        let (_d, app) = notch_app(None);
-        assert_eq!(app.notch_install(), (400, json!({"error": "notch/tools/install.py is missing from this HQ"})));
-    }
 
     #[test]
     fn skills_report_is_exactly_seven_counts() {
@@ -1410,5 +1169,28 @@ mod tests {
             assert_eq!(boss_badges(&app, &arg(&[("u", b)])).0, 400);
         }
         assert_eq!(sent.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn skate_sends_two_whole_numbers_only() {
+        let (_d, app) = app();
+        assert_eq!(skate_board(&app, &arg(&[])), (400, json!({"error": "not paired"})));
+        assert_eq!(skate_combo(&app, &json!({"total": 800, "tricks": 2})), (400, json!({"error": "not paired"})));
+        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({"ok": true})))));
+        assert_eq!(skate_board(&app, &arg(&[])).0, 200);
+        assert_eq!(skate_combo(&app, &json!({"total": 800.0, "tricks": 2, "where": "/secret", "sessionId": UID})).0, 200);
+        assert_eq!(skate_combo(&app, &json!({"total": SKATE_MAX_TOTAL, "tricks": SKATE_MAX_TRICKS})).0, 200);
+        let err = json!({"error": "a combo is a total (1-200000) and a trick count (1-10)"});
+        for b in [json!({}), json!(null), json!({"total": 0, "tricks": 1}), json!({"total": 200001, "tricks": 1}), json!({"total": 5, "tricks": 11}),
+                  json!({"total": 5.5, "tricks": 1}), json!({"total": true, "tricks": 1}), json!({"total": "5", "tricks": 1}), json!({"total": 5, "tricks": 0})] {
+            assert_eq!(skate_combo(&app, &b), (400, err.clone()), "{}", b);
+        }
+        let s = sent.lock().unwrap();
+        assert_eq!(s.len(), 3);
+        assert_eq!((s[0].0.as_str(), s[0].1.as_str(), s[0].3.clone()), ("GET", "https://arena.example/v1/skate", None));
+        assert_eq!((s[1].0.as_str(), s[1].1.as_str()), ("POST", "https://arena.example/v1/skate"));
+        assert_eq!(s[1].3, Some(json!({"total": 800, "tricks": 2})));
+        assert!(GET.iter().any(|(p, _)| *p == "/api/arena/skate"));
+        assert!(POST.iter().any(|(p, _)| *p == "/api/arena/skate/combo"));
     }
 }

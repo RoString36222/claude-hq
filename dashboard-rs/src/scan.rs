@@ -336,6 +336,9 @@ pub struct Agg {
     pub cost: f64,
     pub busy_spans: Vec<[f64; 2]>,
     pub open_tool_since: Option<f64>,
+    /// Epoch of the newest assistant record that is NOT itself an API-error
+    /// reply; an error alert clears once the session got a good reply after it.
+    pub last_good_reply: Option<f64>,
     pub pending_ask: Option<PendingAsk>,
     pub gated_tool_open: Option<(f64, String)>,
     pub permission_mode: Option<String>,
@@ -595,8 +598,12 @@ pub fn scan_claude(path: &Path) -> Agg {
                     if !model.is_empty() {
                         cx.agg.model = model.clone();
                     }
-                    if let (Some(sig), Some(t)) = (record_error_sig(&rec), t) {
-                        cx.agg.errors.push((t, sig));
+                    match (record_error_sig(&rec), t) {
+                        (Some(sig), Some(t)) => cx.agg.errors.push((t, sig)),
+                        // a real reply (not the synthetic error message itself): the
+                        // session recovered, so its error alert may clear
+                        (None, Some(t)) => cx.agg.last_good_reply = Some(t),
+                        _ => {}
                     }
                     if let Some(diso) = &diso {
                         cx.agg.per_day.entry(diso.clone()).or_insert_with(new_day);

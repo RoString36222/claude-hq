@@ -3,7 +3,7 @@
 A Rust port of the local Claude HQ server: `dashboard.py` and everything it
 imports (`arena.py`, `music.py`, `worksignals.py`, `ext_skills.py`,
 `ext_loot.py`, `ext_prestige.py`, `ext_maps.py`, `ext_cups.py`,
-`ext_boss.py`). Same routes, same gates, same JSON, same state files, same
+`ext_boss.py`, `ext_skate.py`, `ext_notch.py`), as of HQ 2.6.1. Same routes, same gates, same JSON, same state files, same
 Arena privacy boundary. The frontend (`index.html`, `ui/`, `games/`) is
 unchanged and served from the repo as before.
 
@@ -39,7 +39,7 @@ dashboard-rs/target/release/claudehq --install
 
 ```bash
 cd dashboard-rs
-~/.cargo/bin/cargo test                                  # 124 tests
+~/.cargo/bin/cargo test                                  # 165 tests
 ~/.cargo/bin/cargo clippy --all-targets -- -D warnings   # clean
 ```
 
@@ -48,8 +48,9 @@ validation, atomic state and quarantine, the meal ledger, the fatigue contract
 vectors, needs-you detection, slim cards, the payload memo, flexible streaks,
 Cursor transcripts and titles, work-signal classification, music parsing and
 the share loop, the Arena wire allowlists (pantry, cali, rooms, portrait,
-gifts, nudges), every ext proxy (skills, loot, prestige, maps, cups, boss),
-the pantry eat flow, close/resume guards and the self-update (on throwaway git
+gifts, nudges), every ext proxy (skills, loot, prestige, maps, cups, boss,
+skate), the HQ Notch status and one-click install (on a stand-in installer),
+evolution picks, the Overflow Vial ledger, error recovery, the pantry eat flow, close/resume guards and the self-update (on throwaway git
 repos). `tests/http.rs` checks the gates on a real 127.0.0.1 server, and
 `tests/scanner.rs` the transcript pass, busy spans and work signals.
 
@@ -59,9 +60,9 @@ repos). `tests/http.rs` checks the gates on a real 127.0.0.1 server, and
 ports (never 8765) against **one** temp copy of the Claude HQ folder: code
 symlinked, state files copied, no `arena-link.json`, the Arena URL blanked and
 work signals off, so nothing can pair or leave the machine. It GETs every
-route on both (107 GET/HEAD checks), diffs status, headers and normalized
-JSON, then replays 50 safe POSTs on each (resetting the temp state between
-servers), diffs the state files they leave, and runs 9 checks on the POST
+route on both (109 GET/HEAD checks), diffs status, headers and normalized
+JSON, then replays 63 safe POSTs on each (resetting the temp state between
+servers), diffs the state files they leave, and runs 10 checks on the POST
 gates (CSRF, Origin, Host, body caps, bad bodies).
 
 ```bash
@@ -76,11 +77,14 @@ It deliberately skips `/api/music/now` (AppleScript to music apps),
 `/api/music/search` / `oembed` with real input (YouTube) and `POST /api/update`
 (git fetch + restart).
 
-**Current result (frozen, 153 sessions, ~430 MB of transcripts):** 166 checks,
-**165 identical**; 135 of 142 JSON bodies byte-identical, the other 7 differing
+**Current result (frozen, 153 sessions, ~430 MB of transcripts):** 182 checks,
+**181 identical**; 151 of 158 JSON bodies byte-identical, the other 7 differing
 only in values that must differ between two processes (`updated`, `generated`,
 `boot`, `pid`, uptime, CPU/RSS). `/api/sessions` matches with every
-clock-driven value (fatigue, sparks, ages) included. The one remaining diff is
+clock-driven value (fatigue, sparks, ages) included, except the Overflow
+Vial's `vial.src[].ttl` (seconds until a deposit dies, measured against each
+server's own clock: both servers share one `vial.json`, the first build drips,
+the second only ticks). The one remaining diff is
 the first known gap below. In a live run, the only extra differences come from
 sessions being written between the two servers' reads.
 
@@ -100,9 +104,14 @@ Rough numbers on the same frozen data (M-series Mac, release build):
 - **Status 0 from the Arena** on POST routes that pass the code through
   (publish, ticket, nudge, quickplay, crews, cosmetics, market, portrait, HQ):
   Python writes a literal `HTTP/1.0 0` status line; Rust sends `502`.
-- `/api/server-stats`: `"python"` reads `n/a (Rust 2.5.0)`, there is an extra
+- `/api/server-stats`: `"python"` reads `n/a (Rust 2.6.1)`, there is an extra
   `"impl": "rust"`, and `threads` is the OS thread count (`ps -M`).
-- HTTP/1.1 with keep-alive instead of Python's HTTP/1.0; `Server: ClaudeHQ/2.5.0 Rust`.
+- HTTP/1.1 with keep-alive instead of Python's HTTP/1.0; `Server: ClaudeHQ/2.6.1 Rust`.
+- `POST /api/notch/install` runs `notch/tools/install.py` with the first
+  `python3` on `PATH` (else `/usr/bin/python3`); Python uses its own
+  interpreter (`sys.executable`).
+- `vial.json` hand-edited to hold `NaN`/`Infinity` reads as an empty vial here
+  (serde_json rejects the literals); Python drops just those entries.
 - `POST /api/update` "stale" compares the running **binary's** mtime (Python
   watches `dashboard.py`); the restart re-execs the binary, or kickstarts
   launchd when launchd started it.
@@ -125,7 +134,8 @@ Rough numbers on the same frozen data (M-series Mac, release build):
 |---|---|
 | `src/scan.rs` | `_scan_file_uncached`, the Cursor scanner, prompt/markdown/error helpers |
 | `src/app.rs` | paths, caches, `scan_file`, config / meta / meals / game save, dex salt |
-| `src/payload.rs` | `build_session`, archived cards, season, feed, payload memo + stream signature, session detail |
+| `src/payload.rs` | `build_session`, archived cards, season, feed, payload memo + stream signature, session detail, `_recent_unrecovered_error` |
+| `src/evo.rs`, `src/vial.rs` | evolution picks (`evo-choices.json`, `creature.evo`), the Overflow Vial ledger (`vial.json`) |
 | `src/analytics.rs` | search, history, Pokédex, project, digest, insights, transcript events, exports |
 | `src/fatigue.rs`, `src/creature.rs`, `src/cost.rs` | fatigue walk, creatures/levels, prices |
 | `src/handlers.rs` | pantry bodies + eat flow, quest rewards, cali orders, room bodies, soundboard |

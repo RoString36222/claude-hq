@@ -28,6 +28,24 @@ const STREAK_WINDOW: usize = 7;
 const STREAK_MAX_MISSES: usize = 2;
 
 /// _epoch(iso): parse_ts(iso).timestamp() or 0.0
+/// (ts, sig) of the newest error inside the 6 h window that the session has
+/// not answered past, else None. An error a session recovered from -- a
+/// successful assistant reply landed strictly after it -- clears with the
+/// recovery instead of lingering out the window.
+pub fn recent_unrecovered_error(errors: &[(f64, String)], last_good_reply: Option<f64>, now_ts: f64) -> Option<(f64, &str)> {
+    let cutoff = now_ts - 6.0 * 3600.0;
+    let mut recent: Option<(f64, &str)> = None;
+    for (ts, sig) in errors {
+        if *ts >= cutoff && recent.map(|r| *ts > r.0).unwrap_or(true) {
+            recent = Some((*ts, sig));
+        }
+    }
+    match (recent, last_good_reply) {
+        (Some(r), Some(g)) if g > r.0 => None,
+        _ => recent,
+    }
+}
+
 pub fn epoch(v: Option<&Value>) -> f64 {
     v.and_then(|v| v.as_str()).and_then(py::parse_iso_utc).map(|d| py::ts(&d)).unwrap_or(0.0)
 }
@@ -296,15 +314,7 @@ impl App {
         let mut alert: Option<String> = None;
         let mut alert_kind: Option<&str> = None;
         let mut waiting_since: Option<String> = None;
-        let cutoff = py::now_ts() - 6.0 * 3600.0;
-        let mut recent: Option<(f64, &str)> = None;
-        if let Some(a) = a {
-            for (ts, sig) in &a.errors {
-                if *ts >= cutoff && recent.map(|r| *ts > r.0).unwrap_or(true) {
-                    recent = Some((*ts, sig));
-                }
-            }
-        }
+        let recent = a.and_then(|a| recent_unrecovered_error(&a.errors, a.last_good_reply, py::now_ts()));
         let ask = a.and_then(|a| a.pending_ask.as_ref());
         if let (Some(ask), true) = (ask, status != "stale") {
             status = "needs";
@@ -657,10 +667,8 @@ impl App {
             if sid.is_empty() || live_ids.contains(&sid) {
                 continue;
             }
+            // every creature reachable (the Overflow Vial needs it): only the cap gates
             let Some(agg) = self.scan_file(&p) else { continue };
-            if agg.prompt_count < 1 {
-                continue;
-            }
             if agg.cursor {
                 let touched = std::fs::metadata(&p)
                     .ok()
@@ -698,6 +706,7 @@ impl App {
         let season = self.compute_season();
         let feed = self.build_feed(&sessions, 25);
         let meta = self.load_meta();
+        crate::evo::merge_evo_choices(&mut sessions, &self.load_evo_choices());
         let stuck_secs = config.get("stuckMinutes").and_then(py::py_int).unwrap_or(15) * 60;
         let mut stuck_ids: Vec<Value> = Vec::new();
         for s in sessions.iter_mut() {
@@ -740,6 +749,8 @@ impl App {
             "dailyCostUSD": py::round(daily_cost, 4), "dailyBudgetUSD": budget,
             "overBudget": over_budget, "budgetPct": budget_pct, "warnings": warnings,
         });
+        // Overflow Vial: half of every Apex creature's surplus drips into the shared bank
+        let vial = self.vial_for_payload(&mut sessions);
         let mut payload = json!({
             "updated": py::iso(&py::now_utc()),
             "version": crate::app::APP_VERSION,
@@ -749,6 +760,7 @@ impl App {
             "feed": feed,
             "health": health,
             "config": config,
+            "vial": vial,
         });
         if let Some(e) = error {
             payload["error"] = Value::from(e);
@@ -838,8 +850,9 @@ impl App {
             title = Value::from(self.session_heading(Some(&agg), sid));
             let age = agg.last_activity.map(|la| ((py::now_utc() - la).num_microseconds().unwrap_or(0) as f64 / 1e6) as i64).unwrap_or(0);
             let mut st = if age > 86400 { "stale" } else { "idle" };
-            let cutoff = py::now_ts() - 6.0 * 3600.0;
-            if agg.errors.iter().any(|(ts, _)| *ts >= cutoff) {
+            // as in the session list: an error the session already answered past
+            // is a recovered error -- it stops flagging, even inside the 6 h window
+            if recent_unrecovered_error(&agg.errors, agg.last_good_reply, py::now_ts()).is_some() {
                 st = "needs";
             }
             status = json!(st);

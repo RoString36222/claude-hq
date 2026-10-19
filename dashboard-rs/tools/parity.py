@@ -19,6 +19,7 @@ query and /api/music/oembed with a real id (YouTube), and POST /api/update
 """
 import argparse
 import base64
+import hashlib
 import http.client
 import json
 import os
@@ -37,16 +38,21 @@ CRATE = os.path.dirname(HERE)
 REPO = os.path.dirname(CRATE)
 
 CODE_FILES = ("dashboard.py", "arena.py", "music.py", "worksignals.py", "ext_boss.py", "ext_cups.py",
-              "ext_loot.py", "ext_maps.py", "ext_prestige.py", "ext_skills.py", "index.html")
-CODE_DIRS = ("ui", "games")
-STATE_FILES = ("config.json", "sessions-meta.json", "meals.json", "games-save.json", ".dex-seed")
+              "ext_loot.py", "ext_maps.py", "ext_prestige.py", "ext_skills.py", "ext_skate.py", "ext_notch.py",
+              "index.html")
+# notch/: so /api/notch/status sees the installer on both (POST /api/notch/install is only
+# ever sent without the CSRF token here: the real install must never run).
+CODE_DIRS = ("ui", "games", "notch")
+STATE_FILES = ("config.json", "sessions-meta.json", "meals.json", "games-save.json", ".dex-seed",
+               "evo-choices.json", "vial.json")
 
 # Values that legitimately differ between two processes or two instants.
 VOLATILE_KEYS = {"updated", "generated", "boot", "pid", "uptimeSecs", "cpuPct", "rssMb", "threads",
                  "load", "python", "impl", "ageSecs"}
 # Time-driven values (fatigue is recomputed against the wall clock on every build).
 CLOCK_KEYS = {"energy", "loadMins", "restInMins", "restMins", "streakMins", "phase", "state", "spark",
-              "sparkHourly", "stuck", "stuckReason", "mayFaint"}
+              "sparkHourly", "stuck", "stuckReason", "mayFaint",
+              "ttl"}   # vial.src[].ttl: seconds until a deposit dies, against each server's clock
 
 
 def log(*a):
@@ -458,7 +464,7 @@ def run_gets(root):
               "/api/session/00000000-0000-4000-8000-000000000000", "/api/project?folder=../etc",
               "/api/search?q=", "/api/search?q=%20%20", "/api/digest?date=2026-09-01",
               "/api/digest?date=2026-10-10&days=7", "/api/digest?date=bad&days=x", "/api/history",
-              "/api/pokedex", "/api/insights"]
+              "/api/pokedex", "/api/insights", "/api/notch/status", "/api/arena/skate"]
     for p in simple:
         compare_json("GET " + p, *both(get, p))
     compare_json("GET /api/server-stats (shape)", *both(get, "/api/server-stats"),
@@ -493,10 +499,22 @@ def post(port, path, body, token=True, headers=None):
     return request(port, "POST", path, body=data, headers=h)
 
 
+def sid_for(species):
+    """A session id whose Pokemon is this species (sha256(sid) % 48), as tests/test_evo_choice.py."""
+    i = 0
+    while True:
+        h = "%032x" % (i * 2654435761 % (1 << 128))
+        sid = "%s-%s-%s-%s-%s" % (h[:8], h[8:12], h[12:16], h[16:20], h[20:])
+        if int(hashlib.sha256(sid.encode()).hexdigest(), 16) % 48 == species:
+            return sid
+        i += 1
+
+
 def run_posts(root):
     log("\n== POST (state reset between servers) ==")
     base = snapshot(root)
     sid = "11111111-1111-4111-8111-111111111111"
+    eevee, zard = sid_for(4), sid_for(1)
     rid = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
     wav = base64.b64encode(b"RIFF....WAVEfmt ").decode()
     cases = [
@@ -550,6 +568,19 @@ def run_posts(root):
         ("/api/arena/boss/fight", {"team": []}),
         ("/api/arena/sounds", {"name": "ding.wav", "data": wav}),
         ("/api/arena/sounds", {"name": "x.exe", "data": wav}),
+        ("/api/evo-choice", {"sessionId": eevee, "branchDex": 197}),
+        ("/api/evo-choice", {"sessionId": zard, "megaSlug": "charizard-megay"}),
+        ("/api/evo-choice", {"sessionId": eevee, "branchDex": 6}),
+        ("/api/evo-choice", {"sessionId": zard, "megaSlug": "<script>"}),
+        ("/api/evo-choice", {"sessionId": "../../etc", "branchDex": 197}),
+        ("/api/evo-choice", {"sessionId": eevee, "branchDex": None}),
+        ("/api/vial/spend", {"sessionId": sid, "fromStage": 0}),
+        ("/api/vial/spend", {"sessionId": sid, "fromStage": 4}),
+        ("/api/vial/spend", {"sessionId": sid, "fromStage": True}),
+        ("/api/vial/spend", {"sessionId": "nope", "fromStage": 0}),
+        ("/api/arena/skate/combo", {"total": 800, "tricks": 2}),
+        ("/api/arena/skate/combo", {"total": 1.5, "tricks": 1}),
+        ("/api/arena/skate/combo", {"total": 0, "tricks": 11}),
         ("/api/nope", {}),
     ]
     for path, body in cases:
@@ -568,9 +599,13 @@ def run_posts(root):
                 continue
             try:
                 ja, jb = json.loads(a), json.loads(b)
-                d = diff(normalize(ja), normalize(jb))
+                # a vial spend stamps its own clock on the audit row
+                d = diff(normalize(ja), normalize(jb), ignore=frozenset({"at"}) if k == "vial.json" else frozenset())
+                at_re = re.compile(rb'"at": [0-9.e+-]+')
                 if d:
                     notes += ["%s%s: py=%s rs=%s" % (k, p, short(x), short(y)) for p, x, y in d]
+                elif k == "vial.json" and at_re.sub(b"AT", a) == at_re.sub(b"AT", b):
+                    pass                                    # byte-identical but for the spend's clock
                 else:
                     notes.append("%s: same JSON, different bytes" % k)
             except (TypeError, ValueError):
@@ -581,6 +616,7 @@ def run_posts(root):
     restore(root, base)
     # The gates.
     compare_json("POST without the CSRF token", *both(lambda p: post(p, "/api/config", {}, token=False)))
+    compare_json("POST /api/notch/install without the CSRF token", *both(lambda p: post(p, "/api/notch/install", {}, token=False)))
     compare_json("POST from a foreign Origin", *both(lambda p: post(p, "/api/config", {}, headers={"Origin": "https://evil.example"})))
     compare_json("POST with Sec-Fetch-Site: cross-site", *both(lambda p: post(p, "/api/config", {}, headers={"Sec-Fetch-Site": "cross-site"})))
     compare_json("POST with a foreign Host", *both(lambda p: post(p, "/api/config", {}, headers={"Host": "evil.example"})))

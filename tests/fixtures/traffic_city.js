@@ -1,8 +1,10 @@
 // A synthetic organic-style WorldDoc v2 for tests/test_traffic.py (games/traffic.js): a jittered 7 x 7 road
 // grid, 200 m apart (cm, integer), arterials on the even rows and columns, the outer ring only from tier 3;
 // a tier-2 bus loop round the centre and a tier-4 tram out and back along row 4, with their stops; fire,
-// clinic and police stations. city(seed, n) -> doc; n (odd, default 7) grows the grid for the 200-car load test.
-function city(seed, n){
+// clinic and police stations. city(seed, n, hub) -> doc; n (odd, default 7) grows the grid for the 200-car load
+// test; hub adds lines that share lanes with those two: B2 out and back along row 2 (over B1's lanes and stops),
+// B3 a loop through the transit hub (B1's first lane, then side streets), and T2 out and back over T1's east track.
+function city(seed, n, hub){
   seed = seed | 0;
   function jit(i, k){ var h = Math.imul(i*7919 + k*104729 + seed*31337, 2654435761) >>> 0; return (h % 3001) - 1500; }
   var N = n > 7 ? n | 1 : 7, S = 20000, M = (N - 1) >> 1, nodes = [], edges = [], sites = [];
@@ -41,10 +43,18 @@ function city(seed, n){
   sites.push({id: "clinic:0", kind: "clinic", tier: 1, x: nodes[id(5, 5)].x - 1500, y: 0, z: nodes[id(5, 5)].z - 1500, w: 2000, d: 2000});
   sites.push({id: "police:0", kind: "police", tier: 2, x: nodes[id(1, 5)].x - 1500, y: 0, z: nodes[id(1, 5)].z + 1500, w: 2000, d: 2000});
   sites.push({id: "transit:0", kind: "transit", tier: 2, x: nodes[id(3, 3)].x, y: 0, z: nodes[id(3, 3)].z, w: 3000, d: 3000});
+  var lines = [{id: "B1", kind: "bus", tier: 2, stops: bstops, path: loop},
+               {id: "T1", kind: "tram", tier: 4, stops: tstops, path: tpath}];
+  if(hub){
+    lines.push({id: "B2", kind: "bus", tier: 2, stops: ["busstop:0", "busstop:1"], path: [id(2, 1), id(2, 2), id(2, 3), id(2, 4), id(2, 5)]});
+    lines.push({id: "B3", kind: "bus", tier: 3, stops: ["busstop:0", "transit:0"], path: [id(2, 2), id(2, 3), id(3, 3), id(3, 2), id(2, 2)]});
+    var e = mid(id(4, 5), id(4, 6), 0);
+    sites.push({id: "tramstop:5", kind: "tramstop", tier: 4, x: e.x, y: 0, z: e.z, w: 300, d: 2000});
+    lines.push({id: "T2", kind: "tram", tier: 4, stops: ["tramstop:2", "tramstop:5"], path: [id(4, 3), id(4, 4), id(4, 5), id(4, 6)]});
+  }
   return {id: "test:traffic@2", seed: "traffic", version: 2, profile: "commons", size_cm: 160000,
           layers: {roads: {nodes: nodes, edges: edges}, sites: sites,
-                   transit: {lines: [{id: "B1", kind: "bus", tier: 2, stops: bstops, path: loop},
-                                     {id: "T1", kind: "tram", tier: 4, stops: tstops, path: tpath}]}},
+                   transit: {lines: lines}},
           hashes: {world: "test"}};
 }
 if(typeof module !== "undefined") module.exports = city;

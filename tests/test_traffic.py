@@ -2,8 +2,8 @@
 
 traffic.js's sim is pure, so node loads it against a stub `window` with the synthetic WorldDoc v2 in
 tests/fixtures/traffic_city.js (a jittered 7 x 7 grid: arterials, a tier-2 bus loop, a tier-4
-out-and-back tram, stations) and runs the scenarios below in one process; the Python side checks the
-numbers. The view is built against the vendored three.js. Skipped when node is not installed.
+out-and-back tram, stations; its hub variant adds lines that share lanes and stops with those) and
+runs the scenarios below in one process; the Python side checks the numbers. The view is built against the vendored three.js. Skipped when node is not installed.
 Stdlib only."""
 import json
 import os
@@ -41,12 +41,12 @@ function sim(tier, o){ return T.create(o && o.doc || city(1), Object.assign({tie
   out.det = {same: same, diff: diff, n: n, obstacles: so, incidents: JSON.stringify(a.incidents(5e6)) === JSON.stringify(b.incidents(5e6))};
 })();
 
-// ---- no two vehicles overlap: oriented boxes, every 0.5 s for 30 minutes, every tier ----
+// ---- no two vehicles overlap: oriented boxes, every 0.5 s for 30 minutes, every tier, every kind ----
 function boxes(list){
   var b = [];
   list.forEach(function(v){
     if(v.kind === "tram") v.parts.forEach(function(p, j){ b.push({id: v.id + "/" + j, veh: v.id, kind: "tram", x: p.x, z: p.z, yaw: p.yaw, len: T.SPEC.tram.sec, wid: T.SPEC.tram.wid}); });
-    else if(T.SPEC[v.kind]) b.push({id: v.id, veh: v.id, kind: v.kind, x: v.x, z: v.z, yaw: v.yaw, len: T.SPEC[v.kind].len, wid: T.SPEC[v.kind].wid});
+    else if(T.SPEC[v.kind]) b.push({id: v.id, veh: v.id, kind: v.kind, x: v.x, z: v.z, yaw: v.yaw, len: T.SPEC[v.kind].len, wid: T.SPEC[v.kind].wid, ev: !!v.siren});
   });
   return b;
 }
@@ -60,23 +60,61 @@ function overlap(a, b, shrink){
   }
   return true;
 }
+// pairs of boxes that overlap in one sample: cars against cars exactly; a long body on a bend cuts
+// the corner of its lane by a few cm (the yaw is the chord over its wheelbase), so 10 cm a side of
+// slack for the rest. evOnly: only pairs with an emergency vehicle in them.
+function clashes(all, evOnly){
+  var B = boxes(all), hits = [];
+  for(var i = 0; i < B.length; i++) for(var j = i + 1; j < B.length; j++){
+    if(B[i].veh === B[j].veh || (evOnly && !B[i].ev && !B[j].ev)) continue;
+    var cars = B[i].kind === "car" && B[j].kind === "car";
+    if(overlap(B[i], B[j], cars ? 0 : 0.2)) hits.push([B[i].id, B[j].id, cars]);
+  }
+  return hits;
+}
+function sweep(s, t0, t1, evOnly){
+  var o = {cars: 0, any: 0, first: null, maxCars: 0, samples: 0};
+  for(var t = t0; t < t1; t += 0.5){
+    var all = s.at(t*1000, ALL, FAR);
+    if(evOnly && !all.some(function(v){ return v.siren; })) continue;
+    o.samples++;
+    o.maxCars = Math.max(o.maxCars, all.filter(function(v){ return v.kind === "car"; }).length);
+    clashes(all, evOnly).forEach(function(h){ o.any++; if(h[2]) o.cars++; o.first = o.first || [t, h[0], h[1]]; });
+  }
+  return o;
+}
 out.overlap = {};
 [1, 2, 3, 4, 5].forEach(function(tier){
-  var s = sim(tier), cc = 0, any = 0, first = null, maxCars = 0;
-  for(var t = 0; t < 1800; t += 0.5){
-    var all = s.at(t*1000, ALL, FAR), B = boxes(all.filter(function(v){ return v.kind === "car" || v.kind === "bus" || v.kind === "tram"; }));
-    maxCars = Math.max(maxCars, all.filter(function(v){ return v.kind === "car"; }).length);
-    for(var i = 0; i < B.length; i++) for(var j = i + 1; j < B.length; j++){
-      if(B[i].veh === B[j].veh) continue;
-      var cars = B[i].kind === "car" && B[j].kind === "car";
-      if(cars && overlap(B[i], B[j], 0)){ cc++; first = first || [t, B[i].id, B[j].id]; }
-      // a long body on a bend cuts the corner of its lane by a few cm (the yaw is the chord over
-      // its wheelbase): 10 cm a side of slack for the rest
-      if(overlap(B[i], B[j], 0.2)){ any++; first = first || [t, B[i].id, B[j].id]; }
-    }
-  }
-  out.overlap[tier] = {cars: cc, any: any, first: first, maxCars: maxCars, info: s.info()};
+  var s = sim(tier), o = sweep(s, 0, 1800, false);
+  o.info = s.info();
+  out.overlap[tier] = o;
 });
+// emergency vehicles against everything, through every run in four hours
+out.evOverlap = {};
+[3, 5].forEach(function(tier){ var s = sim(tier); out.evOverlap[tier] = sweep(s, 0, 4*3600, true); out.evOverlap[tier].runs = 0; for(var t = 0; t < 4*3600; t += 30) out.evOverlap[tier].runs = Math.max(out.evOverlap[tier].runs, +((s.incidents(t*1000).slice(-1)[0] || {id: "e0"}).id.slice(1))); });
+
+// ---- the hub: lines sharing lanes and stops (buses through the hub, trams on one track) ----
+out.hub = {};
+[2, 3, 4, 5].forEach(function(tier){
+  var s = sim(tier, {doc: city(1, 7, true)}), o = sweep(s, 0, 3600, false), ev = sweep(s, 3600, 4*3600, true);
+  out.hub[tier] = {any: o.any, cars: o.cars, first: o.first, ev: ev.any, evFirst: ev.first, evSamples: ev.samples, info: s.info(),
+                   lines: s.lines().map(function(l){ return {id: l.id, vehicles: l.vehicles, lap: l.lap}; })};
+});
+(function(){
+  // every line keeps its timetable on shared lanes too
+  var s = sim(5, {doc: city(1, 7, true)}), errs = [];
+  s.lines().forEach(function(l){
+    l.stops.forEach(function(st){
+      var na = s.nextArrival(st.id, 500000, l.id), seen = null, a = na.arrive/1000, rest = find(s.at((a + 3)*1000, ALL, FAR), na.vehicle);
+      for(var t = a - 6; t <= a + 6; t += 0.1){
+        var v = find(s.at(t*1000, ALL, FAR), na.vehicle);
+        if(v && v.speed < 0.05 && Math.hypot(v.x - rest.x, v.z - rest.z) < 0.3){ seen = t; break; }
+      }
+      errs.push(seen == null ? 99 : Math.abs(seen - a));
+    });
+  });
+  out.hubTimetable = {checked: errs.length, worst: Math.max.apply(null, errs)};
+})();
 
 // ---- tier gating ----
 out.tiers = {};
@@ -215,6 +253,34 @@ class Traffic(unittest.TestCase):
             self.assertEqual(o["any"], 0, "tier %s: vehicles overlap: %s" % (tier, o["first"]))
             self.assertGreater(o["maxCars"], 20, "tier %s has traffic" % tier)
             self.assertEqual(o["info"]["errors"], [])
+            self.assertEqual(o["info"]["dropped"], 0)
+
+    def test_emergency_vehicles_overlap_nothing(self):
+        # in the junction boxes and along the roads, on the way out, on scene and back
+        for tier, o in self.r["evOverlap"].items():
+            self.assertGreater(o["samples"], 500, "tier %s: emergency runs to check" % tier)
+            self.assertEqual(o["any"], 0, "tier %s: an emergency vehicle overlaps: %s" % (tier, o["first"]))
+
+    def test_lines_sharing_lanes_take_them_in_turn(self):
+        h = self.r["hub"]
+        self.assertEqual([l["id"] for l in h["2"]["lines"]], ["B1", "B2"])
+        self.assertEqual([l["id"] for l in h["5"]["lines"]], ["B1", "T1", "B2", "B3", "T2"])
+        for tier, o in h.items():
+            self.assertEqual(o["any"], 0, "tier %s: vehicles on shared lanes overlap: %s" % (tier, o["first"]))
+            self.assertEqual(o["ev"], 0, "tier %s: an emergency vehicle overlaps: %s" % (tier, o["evFirst"]))
+            self.assertEqual(o["info"]["errors"], [])
+            self.assertEqual(o["info"].get("dropped"), 0, "tier %s: every line runs" % tier)
+            for line in o["lines"]:
+                self.assertGreater(line["vehicles"], 0, "tier %s: %s has vehicles" % (tier, line["id"]))
+        # the lines that share lanes keep laps with a long common period
+        laps = {l["id"]: l["lap"] for l in h["5"]["lines"]}
+        for line in ("B1", "B2"):
+            k = round(laps[line] / laps["B3"])
+            self.assertAlmostEqual(laps[line], k * laps["B3"], 3, "%s's lap is a multiple of B3's" % line)
+        self.assertAlmostEqual(laps["T1"], laps["T2"], 3)
+        tt = self.r["hubTimetable"]
+        self.assertGreaterEqual(tt["checked"], 15)
+        self.assertLessEqual(tt["worst"], 1.0, "arrivals within 1 s of the timetable on shared lanes")
 
     def test_tier_gating(self):
         t = self.r["tiers"]

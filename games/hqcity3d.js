@@ -138,10 +138,42 @@ HQV.hqWorlds.city3d = function(c, w){
   var hemi = new THREE.HemisphereLight(0xbcd7ff, 0x223322, 2.2); S.add(hemi);
   var sun = new THREE.DirectionalLight(0xffffff, 2.2); sun.position.set(40, 70, 30); sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048); S.add(sun); S.add(sun.target);
-  var skyBg = {
-    night: c.canvasTex(512, 512, function(g){ var gr = g.createLinearGradient(0, 0, 0, 512); gr.addColorStop(0, "#040a12"); gr.addColorStop(0.6, "#0b1826"); gr.addColorStop(1, "#16304a"); g.fillStyle = gr; g.fillRect(0, 0, 512, 512); var R = c.rng(9); for(var i = 0; i < 220; i++){ g.fillStyle = "rgba(255,255,255," + (0.25 + R()*0.7) + ")"; g.fillRect(R()*512, R()*330, 1, 1); } }).t,
-    day: c.canvasTex(512, 512, function(g){ var gr = g.createLinearGradient(0, 0, 0, 512); gr.addColorStop(0, "#5ea6dc"); gr.addColorStop(1, "#cfe8f7"); g.fillStyle = gr; g.fillRect(0, 0, 512, 512); }).t
-  };
+  // The sky is a dome centred on the camera every frame: it moves with the camera but never turns with
+  // it, so the stars keep their place in the sky as you look around. (It was a flat S.background, which
+  // is pinned to the screen: turning swept the world past stars that stayed put, and looked trippy.)
+  // Drawn first, behind everything (no depth test or write), never fogged.
+  var SKY = {night: [0x040a12, 0x0b1826, 0x16304a], day: [0x4a92d4, 0x7fb6e2, 0xcfe8f7]};   // zenith, mid, horizon
+  var skyGeo = new THREE.SphereGeometry(1, 32, 16), skyCol = new Float32Array(skyGeo.attributes.position.count*3);
+  skyGeo.setAttribute("color", new THREE.BufferAttribute(skyCol, 3));
+  var sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({vertexColors: true, side: THREE.BackSide,
+    depthWrite: false, depthTest: false, fog: false, toneMapped: false}));
+  sky.renderOrder = -1000; sky.frustumCulled = false; S.add(sky);
+  var stars = (function(){
+    var R = c.rng(9), n = 900, pos = new Float32Array(n*3), col = new Float32Array(n*3);
+    for(var i = 0; i < n; i++){
+      var y = 0.06 + 0.94*R(), a = R()*Math.PI*2, r = Math.sqrt(1 - y*y), b = 0.3 + 0.7*R()*R(), warm = R() < 0.15;
+      pos[i*3] = r*Math.cos(a)*0.98; pos[i*3 + 1] = y*0.98; pos[i*3 + 2] = r*Math.sin(a)*0.98;
+      col[i*3] = b; col[i*3 + 1] = b*(warm ? 0.9 : 1); col[i*3 + 2] = b*(warm ? 0.78 : 1);
+    }
+    var g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3)); g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    var p = new THREE.Points(g, new THREE.PointsMaterial({size: 1.7, sizeAttenuation: false, vertexColors: true,
+      depthWrite: false, depthTest: false, fog: false, toneMapped: false}));
+    p.renderOrder = -999; p.frustumCulled = false; sky.add(p);
+    return p;
+  })();
+  // vertex colours by height: horizon -> mid by 0.35 up, mid -> zenith above that; below the horizon stays horizon
+  function paintSky(n){
+    var cs = SKY[n ? "night" : "day"].map(function(h){ return new THREE.Color(h); }), tmp = new THREE.Color();
+    var P = skyGeo.attributes.position;
+    for(var i = 0; i < P.count; i++){
+      var y = Math.max(0, P.getY(i));
+      if(y < 0.35) tmp.copy(cs[2]).lerp(cs[1], y/0.35); else tmp.copy(cs[1]).lerp(cs[0], (y - 0.35)/0.65);
+      skyCol[i*3] = tmp.r; skyCol[i*3 + 1] = tmp.g; skyCol[i*3 + 2] = tmp.b;
+    }
+    skyGeo.attributes.color.needsUpdate = true;
+    stars.visible = !!n;
+  }
   var fog = new THREE.Fog(0x0f1f30, 300, 1600);
   var paveT = c.canvasTex(256, 256, function(g){ g.fillStyle = "#3b4c5c"; g.fillRect(0, 0, 256, 256); g.strokeStyle = "rgba(255,255,255,.08)"; g.lineWidth = 2;
     for(var i = 0; i <= 256; i += 32){ g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 256); g.stroke(); g.beginPath(); g.moveTo(0, i); g.lineTo(256, i); g.stroke(); } });
@@ -326,7 +358,7 @@ HQV.hqWorlds.city3d = function(c, w){
       if(o.geometry) keep[o.geometry.uuid] = 1;
       mats(o).forEach(function(m){ keep[m.uuid] = 1; texOf(m).forEach(function(t){ keep[t.uuid] = 1; }); });
     });
-    [paveT.t, freeT.t, skyBg.night, skyBg.day, slabM].forEach(function(t){ keep[t.uuid] = 1; });
+    [paveT.t, freeT.t, slabM].forEach(function(t){ keep[t.uuid] = 1; });
     function drop(x){ if(x && !keep[x.uuid]) gone[x.uuid] = x; }
     g.traverse(function(o){
       if(o.geometry && !o.isSprite) drop(o.geometry);          // a sprite's geometry is three's shared quad
@@ -554,7 +586,7 @@ HQV.hqWorlds.city3d = function(c, w){
     return {roads: W ? WD.roadLabels(W) : [],
       hqs: hqs.map(function(E){ return {userId: E.h.userId, name: E.name, x: E.lot.x/100, y: E.y, z: E.lot.z/100, you: !!E.h.isYou}; })};
   };
-  w.setTime = function(n){ night = n; S.background = n ? skyBg.night : skyBg.day; fog.color.set(n ? 0x0f1f30 : 0xb8dcf2);
+  w.setTime = function(n){ night = n; S.background = null; paintSky(n); fog.color.set(n ? 0x0f1f30 : 0xb8dcf2);
     hemi.intensity = n ? 1.3 : 2.4; sun.intensity = n ? 0.7 : 2.4; sun.color.set(n ? 0xa9b8ff : 0xfff2dc);
     if(wb) wb.setNight(n); applyTime(); };
   // Fading: in classic the buildings between you and hq3d's orthographic view (as hqbase.js
@@ -571,6 +603,8 @@ HQV.hqWorlds.city3d = function(c, w){
   var fadeAcc = 0, lastMode = null, shadowKey = "", SUN_DIR = {x: 0.45, y: 0.79, z: 0.34};
   w.update = function(t, dt, k, cam){
     var mode = (cam && cam.mode) || "classic";
+    // the sky dome sits on the camera (position only), just inside its far plane
+    if(cam){ sky.position.set(cam.x || 0, cam.y || 0, cam.z || 0); sky.scale.setScalar(Math.min(2400, (cam.far || 500)*0.9)); }
     if(mode !== lastMode){
       if(lastMode === "classic") hqs.concat(views).forEach(function(E){ fadeGoal(E, false); });
       if(mode === "classic") w.setFaded([]);

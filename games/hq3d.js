@@ -2027,7 +2027,7 @@ function mount(el, api){
   function camInfo(){
     var c = curCam();
     c.updateMatrixWorld(); projM.multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse); frustum.setFromProjectionMatrix(projM);
-    return {x: c.position.x, y: c.position.y, z: c.position.z, fov: c.isPerspectiveCamera ? c.fov : 0, mode: rig ? rig.mode : "classic",
+    return {x: c.position.x, y: c.position.y, z: c.position.z, fov: c.isPerspectiveCamera ? c.fov : 0, far: c.far, mode: rig ? rig.mode : "classic",
             frustum: frustum, avatar: {x: avatar.x, y: avatar.g.position.y, z: avatar.z}};
   }
   // Every frame in a rig world: held keys into the rig, step it, put the perspective camera on its pose.

@@ -347,7 +347,10 @@ and feature guide.
   keys) shows while you ride. Fixes: the wrong vehicle after the street rebuilt, a 50 m teleport while
   sitting in the car, other players seated in the bicycle pose, the car clipping through walls and
   being entered through the garage wall, a parked car jumping back to its garage, the garage roof
-  hiding you, and character sizes that varied by load order.
+  hiding you, and character sizes that varied by load order. **Return to HQ** (the button over
+  the street, T or Home, the side panel, the command palette) takes you to your front door and puts
+  your car, motorbike and bicycle back in the garage; the city no longer keeps sending you to the
+  door of the last HQ you visited.
 - **2.8.0 — Valley Rally.** Point-to-point off-road stages in a cel-shaded forest, dry hills and snow,
   by day or night: 20 gates per stage with split times against your best, a road-ahead map, and a
   rally HUD (segmented tachometer, gear, big speed, handbrake / clutch / TC lamps). A detailed car

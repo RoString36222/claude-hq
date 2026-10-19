@@ -1049,7 +1049,10 @@ function mount(el, api){
   function syncProps(){
     var bs = cur && cur.bikes; if(!bs || bs === propsSeen) return;
     propsSeen = bs;
-    bs.forEach(function(b){ var p = b.id && parked[b.id]; if(p) placeProp(b, p.x, p.z, p.yaw); });
+    bs.forEach(function(b){
+      if(!b.home) b.home = {x: b.x, z: b.z, yaw: b.yaw};                  // its bay (Return to HQ puts it back)
+      var p = b.id && parked[b.id]; if(p) placeProp(b, p.x, p.z, p.yaw);
+    });
   }
   /* Skate poses, built from the rig's bones (the characters have no trick clips): a crouch
      (legs bent; your own rider also sits lower), arms out for balance, and the torso twisting into a spin.
@@ -1452,9 +1455,9 @@ function mount(el, api){
   };
   // the one-line version under the driving HUD
   var RIDE_HINT = {
-    bike: "W pedal · S brake · A/D steer · Shift pedal harder · E get off",
-    moto: "W throttle · S brake · A/D steer · Shift+steer slide · Space handbrake · E get off",
-    car: "W go · S brake · A/D steer · Shift+steer powerslide · Space handbrake · E get out"
+    bike: "W pedal · S brake · A/D steer · Shift pedal harder · E get off · T home",
+    moto: "W throttle · S brake · A/D steer · Shift+steer slide · Space handbrake · E get off · T home",
+    car: "W go · S brake · A/D steer · Shift+steer powerslide · Space handbrake · E get out · T home"
   };
   function tipRide(){ if(!api.announce || !ride) return;
     if(ride.kind === "skate") return;                                 // the skate HUD says how
@@ -1472,9 +1475,7 @@ function mount(el, api){
   function driveHud(kind){
     if(hud){ if(hud.el.parentNode) hud.el.parentNode.removeChild(hud.el); hud = null; }
     if(!kind || !HUD_MAX[kind]) return;
-    if(!document.getElementById("valleyCss")){      // its styles live with the games' (the Valley loads the same sheet)
-      var l = document.createElement("link"); l.id = "valleyCss"; l.rel = "stylesheet"; l.href = "/games/games.css"; document.head.appendChild(l);
-    }
+    gamesCss();
     var d = document.createElement("div"); d.className = "hq3d-drive hq3d-drive-" + kind; d.setAttribute("aria-hidden", "true");
     var slide = document.createElement("span"); slide.className = "hq3d-drive-slide"; slide.textContent = kind === "moto" ? "Slide" : "Powerslide";
     var cv = document.createElement("canvas"); cv.className = "hq3d-drive-dial";
@@ -1483,6 +1484,11 @@ function mount(el, api){
     [slide, cv, read, hint].forEach(function(n){ d.appendChild(n); });
     ((rideUi && rideUi.parentNode) || el).appendChild(d);
     hud = {el: d, cv: cv, read: read, kind: kind, tok: null, tokAt: -9, at: -9, txt: "", sl: false};
+  }
+  // the HUD's and the Return to HQ button's styles live with the games' (the Valley loads the same sheet)
+  function gamesCss(){
+    if(document.getElementById("valleyCss")) return;
+    var l = document.createElement("link"); l.id = "valleyCss"; l.rel = "stylesheet"; l.href = "/games/games.css"; document.head.appendChild(l);
   }
   function gearTxt(g){ return g < 0 ? "R" : g === 0 ? "N" : String(g); }
   function driveHudDraw(t){
@@ -1704,15 +1710,61 @@ function mount(el, api){
     worlds[name] = got; if(got.setTime) got.setTime(isNight()); if(got.onData) got.onData(sessions);
     return got;
   }
+  /* Where you arrive in Arena City. Out of your own door (the Lobby) or back from a visit: at that
+     door. Otherwise (Jump to City, the City button, opening the page): where you last stood on the
+     street, if that is still a sensible place, near home (within HOME_NEAR m of your door, on an HQ's
+     block, not inside anything now built there, the street laid out again meanwhile); else at your door. */
+  var lastCity = null, HOME_NEAR = 60;
+  function cityAnchor(w){ var a = anchorOf(w, avatar.x, avatar.z); if(a) a.yaw = avatar.yaw; return a; }
+  function citySpot(w){
+    if(!lastCity || (api.cityReturn && api.cityReturn())) return null;
+    var p = anchorAt(w, lastCity), h = w.home;
+    if(!p || !h || Math.hypot(p.x - h.x, p.z - h.z) > HOME_NEAR || (w.blocked && w.blocked(p.x, p.z))) return null;
+    return {x: p.x, z: p.z, yaw: lastCity.yaw || 0, camYaw: h.camYaw};
+  }
+  /* Return to HQ (the button over the street, T or Home, the side panel, the command palette): off
+     whatever you ride, onto the pavement at your front door facing it, the camera behind you, and
+     a fresh garage: every vehicle you parked somewhere back in its bay, parked straight. A short
+     fade (none in Calm). Your HQ not on the street (private): your own Base. */
+  function returnHome(){
+    if(!scene || fading) return false;
+    var C = worlds.city;
+    if(!C || cur !== C || !C.home){ inst.goWorld("base"); return true; }
+    var go = function(){
+      dismount(true);
+      Object.keys(parked).forEach(function(id){ delete parked[id]; });
+      (C.bikes || []).forEach(function(b){ if(b.home){ placeProp(b, b.home.x, b.home.z, b.home.yaw); b.g.visible = true; } });
+      var h = C.home;
+      avatar.x = h.x; avatar.z = h.z; avatar.yaw = (h.yaw || 0) + PI;     // facing your door
+      avatar.vy = 0; avatar.airborne = false; avatar.g.position.y = 0;
+      walkTo = null; walkDoor = null; doorsArmed = false; movedHere = false; keys = {};
+      if(h.camYaw != null) view.yaw = h.camYaw;
+      view.pitch = C.camPitch || view.pitch;
+      moveAvatar(0); view.target.copy(view.goal);
+      rideUiSync(true);
+      if(api.announce) api.announce("Back at your HQ. Your car, motorbike and bicycle are in the garage.");
+    };
+    if(E.calm()){ go(); return true; }
+    fading = true; fadeEl.classList.add("on"); E.sfx("door");
+    setTimeout(function(){ go(); fadeEl.classList.remove("on"); setTimeout(function(){ fading = false; }, 260); }, 260);
+    return true;
+  }
+  inst.returnHome = function(){ return returnHome(); };
+  // The "Return to HQ" button over the street: shown in Arena City.
+  var homeUi = document.createElement("button"); homeUi.type = "button"; homeUi.className = "hq3d-home"; homeUi.hidden = true;
+  homeUi.textContent = "🏠 Return to HQ (T)"; homeUi.title = "Back to your front door, your car, motorbike and bicycle back in the garage";
+  homeUi.addEventListener("click", function(){ returnHome(); canvas.focus(); }); el.appendChild(homeUi);
+  function homeUiSync(){ var on = !!(cur && cur === worlds.city); if(homeUi.hidden === on){ homeUi.hidden = !on; if(on) gamesCss(); } }
   // Fade out, move you to the other scene (at the door you came through), fade in.
   function enterWorld(name, from, instant){
     name = outside(name);
     var w = name === "mission" ? worlds.mission : makeWorld(name); if(!w || fading) return;
     var go = function(){
       dismount(true);
+      if(cur && cur === worlds.city && avatar) lastCity = cityAnchor(cur);   // where you were on the street
       if(avatar.g.parent) avatar.g.parent.remove(avatar.g);
       w.scene.add(avatar.g);
-      var sp = (w.spawnFrom && (w.spawnFrom[from] || (from === "city" && w.spawnFrom.base))) || w.spawn;
+      var sp = (w.spawnFrom && (w.spawnFrom[from] || (from === "city" && w.spawnFrom.base))) || (name === "city" && !from && citySpot(w)) || w.spawn;
       avatar.x = sp.x; avatar.z = sp.z; avatar.yaw = sp.yaw || 0; walkTo = null; walkDoor = null;
       cur = w; doorsArmed = false; movedHere = false; view.span = w.span || 12; view.zoom = w.zoom || 1.45; view.yaw = sp.camYaw != null ? sp.camYaw : w.camYaw != null ? w.camYaw : PI/4; view.pitch = w.camPitch || 0.62;
       moveAvatar(0); view.target.copy(view.goal);
@@ -1731,6 +1783,8 @@ function mount(el, api){
   function onKey(e){
     if(e.code === "KeyE" && e.type === "keydown" && !e.repeat && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey
        && (ride || nearBike() >= 0)){ e.preventDefault(); rideToggle(); return; }
+    if((e.code === "KeyT" || e.code === "Home") && e.type === "keydown" && !e.repeat && inst.running && cur === worlds.city && !typing(e.target)
+       && !e.metaKey && !e.ctrlKey && !e.altKey){ e.preventDefault(); returnHome(); return; }
     if(!inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
     if(!MOVE_KEYS[e.code] && !(SKATE_KEYS[e.code] && ride && ride.kind === "skate")) return;
     keys[e.code] = e.type === "keydown";
@@ -1751,7 +1805,7 @@ function mount(el, api){
     if(use && !padUse && (ride || nearBike() >= 0)) rideToggle();
     padUse = use;
     moveAvatar(dt);
-    rideUiSync(false);
+    rideUiSync(false); homeUiSync();
     // the camera keeps up better the faster you go (a car at full speed stays on screen)
     var ease = 1 - Math.exp(-dt*(ride ? 4 + Math.min(6, Math.abs(ride.speed)*0.3) : 4)); view.target.lerp(view.goal, ease);
     resize(); placeCam();

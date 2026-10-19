@@ -76,6 +76,15 @@ const COS_SLOTS: [&str; 6] = ["kart", "runner", "blaster", "ball", "frame", "dec
 const MARKET_CATS: [&str; 5] = ["fish", "crop", "ore", "gem", "misc"];
 pub const QUICKPLAY_GAMES: [&str; 6] = ["kart", "plat", "fps", "golf", "type", "rally"];
 
+/// Cities (HQ 3.x): the owner-scoped POSTs under /api/arena/city/:owner/.
+pub const CITY_POSTS: [&str; 4] = ["build", "transfer", "privacy", "fare"];
+const CITY_PRIVACY: [&str; 3] = ["arena", "friends", "closed"];
+const CITY_FARES: [&str; 3] = ["bus", "tram", "fast"];
+/// An upgrade or a good: a short lowercase key, never free text.
+static CITY_KEY_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9_]{0,31}$").unwrap());
+pub const CITY_MAX_AMOUNT: i64 = 1_000_000_000;
+pub const MARKET_MAX_QTY: i64 = 1000;
+
 /// A generated world's id, `<name>@<version>` (e.g. `claude-hq@1`).
 pub static WORLD_ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_:-]{1,64}@[0-9]{1,9}$").unwrap());
 
@@ -116,6 +125,50 @@ pub fn valid_room_id(v: &Value) -> bool {
 
 pub fn valid_user_id(s: &str) -> bool {
     USER_ID_RE.is_match(s)
+}
+
+/// A city's owner in a proxied path: a user id, or the Commons.
+pub fn valid_city_owner(s: &str) -> bool {
+    s == "commons" || valid_user_id(s)
+}
+
+/// Rebuild a city POST body from its allowlisted keys, each value checked:
+/// nothing the page sends beyond these reaches the Arena.
+pub fn city_body(action: &str, body: &Value) -> Result<Value, &'static str> {
+    let s = |k: &str| body.get(k).and_then(|v| v.as_str());
+    match action {
+        "build" => match s("upgrade").filter(|u| CITY_KEY_RE.is_match(u)) {
+            Some(u) => Ok(json!({"upgrade": u})),
+            None => Err("unknown upgrade"),
+        },
+        "transfer" => {
+            let amount = body.get("amount").and_then(py::strict_int).filter(|a| (1..=CITY_MAX_AMOUNT).contains(a));
+            match (amount, s("dir").filter(|d| ["in", "out"].contains(d))) {
+                (Some(a), Some(d)) => Ok(json!({"amount": a, "dir": d})),
+                (None, _) => Err("amount must be a whole number of coins"),
+                _ => Err("dir must be in or out"),
+            }
+        }
+        "privacy" => match s("mode").filter(|m| CITY_PRIVACY.contains(m)) {
+            Some(m) => Ok(json!({"mode": m})),
+            None => Err("mode must be arena, friends or closed"),
+        },
+        "fare" => match s("kind").filter(|k| CITY_FARES.contains(k)) {
+            Some(k) => Ok(json!({"kind": k})),
+            None => Err("kind must be bus, tram or fast"),
+        },
+        "trade" => {
+            let good = s("good").filter(|g| CITY_KEY_RE.is_match(g));
+            let qty = body.get("qty").and_then(py::strict_int).filter(|q| (1..=MARKET_MAX_QTY).contains(q));
+            match (good, qty, s("side").filter(|d| ["buy", "sell"].contains(d))) {
+                (Some(g), Some(q), Some(d)) => Ok(json!({"good": g, "qty": q, "side": d})),
+                (None, _, _) => Err("unknown good"),
+                (_, None, _) => Err("qty must be a whole number from 1 to 1000"),
+                _ => Err("side must be buy or sell"),
+            }
+        }
+        _ => Err("unknown city action"),
+    }
 }
 
 /// (method, url, token, json body) -> (status, body). 0 = no answer.
@@ -996,6 +1049,56 @@ impl App {
             _ => (400, json!({"error": "unknown quickplay action"})),
         }
     }
+
+    // ---- cities (HQ 3.x) -------------------------------------------------------
+    // Egress: the owner id (a UUID or "commons", checked here) and the rebuilt
+    // body from city_body; nothing transcript-derived.
+
+    /// GET /v1/city/:owner (a CityState, or the Arena's 404 when it is hidden).
+    pub fn arena_city(&self, owner: &str) -> (u16, Value) {
+        if !valid_city_owner(owner) {
+            return (400, json!({"error": "bad owner id"}));
+        }
+        self.authed_get(&format!("/v1/city/{}", owner))
+    }
+
+    /// POST /v1/city/:owner/{build,transfer,privacy,fare}.
+    pub fn arena_city_post(&self, owner: &str, action: &str, body: &Value) -> (u16, Value) {
+        if !valid_city_owner(owner) {
+            return (400, json!({"error": "bad owner id"}));
+        }
+        if !CITY_POSTS.contains(&action) {
+            return (404, json!({"error": "not found"}));
+        }
+        match city_body(action, body) {
+            Ok(clean) => self.authed_send("POST", &format!("/v1/city/{}/{}", owner, action), clean),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
+    /// GET /v1/market/:owner: a city's goods, prices and stock.
+    pub fn arena_market(&self, owner: &str) -> (u16, Value) {
+        if !valid_city_owner(owner) {
+            return (400, json!({"error": "bad owner id"}));
+        }
+        self.authed_get(&format!("/v1/market/{}", owner))
+    }
+
+    /// POST /v1/market/:owner/trade, open to any visitor.
+    pub fn arena_market_trade(&self, owner: &str, body: &Value) -> (u16, Value) {
+        if !valid_city_owner(owner) {
+            return (400, json!({"error": "bad owner id"}));
+        }
+        match city_body("trade", body) {
+            Ok(clean) => self.authed_send("POST", &format!("/v1/market/{}/trade", owner), clean),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
+    /// GET /v1/archipelago: the Commons and the islands this user may see.
+    pub fn arena_archipelago(&self) -> (u16, Value) {
+        self.authed_get("/v1/archipelago")
+    }
 }
 
 /// Background: publish every PUBLISH_INTERVAL_SECS while enabled and paired.
@@ -1245,6 +1348,64 @@ pub(crate) mod tests {
                     "a b@1", "a%40@1", "claude-hq@1/preview", &format!("{}@1", "x".repeat(65)), "a@1\n", "é@1"] {
             assert!(!WORLD_ID_RE.is_match(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn city_bodies_are_rebuilt_from_allowlisted_keys() {
+        let leak = json!({"sessionId": "s", "path": "/Users/me", "title": "t"});
+        let with = |extra: Value| {
+            let mut b = leak.clone();
+            b.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            b
+        };
+        assert_eq!(city_body("build", &with(json!({"upgrade": "tax_office"}))), Ok(json!({"upgrade": "tax_office"})));
+        assert_eq!(city_body("transfer", &with(json!({"amount": 50, "dir": "out"}))), Ok(json!({"amount": 50, "dir": "out"})));
+        assert_eq!(city_body("privacy", &with(json!({"mode": "friends"}))), Ok(json!({"mode": "friends"})));
+        assert_eq!(city_body("fare", &with(json!({"kind": "tram"}))), Ok(json!({"kind": "tram"})));
+        assert_eq!(city_body("trade", &with(json!({"good": "tech", "qty": 3, "side": "sell"}))), Ok(json!({"good": "tech", "qty": 3, "side": "sell"})));
+        for (a, b) in [
+            ("build", json!({"upgrade": "Tax Office"})), ("build", json!({"upgrade": "../x"})), ("build", json!({"upgrade": 1})),
+            ("transfer", json!({"amount": 0, "dir": "in"})), ("transfer", json!({"amount": -5, "dir": "in"})),
+            ("transfer", json!({"amount": 1.5, "dir": "in"})), ("transfer", json!({"amount": "5", "dir": "in"})),
+            ("transfer", json!({"amount": true, "dir": "in"})), ("transfer", json!({"amount": CITY_MAX_AMOUNT + 1, "dir": "in"})),
+            ("transfer", json!({"amount": 5, "dir": "sideways"})), ("privacy", json!({"mode": "public"})), ("fare", json!({"kind": "taxi"})),
+            ("trade", json!({"good": "tech", "qty": 0, "side": "buy"})), ("trade", json!({"good": "tech", "qty": 1001, "side": "buy"})),
+            ("trade", json!({"good": "tech", "qty": 1, "side": "steal"})), ("trade", json!({"good": "<b>", "qty": 1, "side": "buy"})),
+            ("demolish", json!({})),
+        ] {
+            assert!(city_body(a, &b).is_err(), "{a} {b}");
+        }
+    }
+
+    #[test]
+    fn city_owner_is_a_uuid_or_the_commons() {
+        let (_d, app) = app();
+        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({})))));
+        let me = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+        assert_eq!(app.arena_city(me).0, 200);
+        assert_eq!(app.arena_city("commons").0, 200);
+        assert_eq!(app.arena_market("commons").0, 200);
+        assert_eq!(app.arena_city_post(me, "transfer", &json!({"amount": 10, "dir": "in", "note": "x"})).0, 200);
+        assert_eq!(app.arena_market_trade(me, &json!({"good": "fish", "qty": 2, "side": "buy"})).0, 200);
+        assert_eq!(app.arena_archipelago().0, 200);
+        for bad in ["Commons", "A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D", "../v1/admin", "me", "", "commons/x", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5"] {
+            assert_eq!(app.arena_city(bad), (400, json!({"error": "bad owner id"})), "{bad}");
+            assert_eq!(app.arena_market(bad).0, 400, "{bad}");
+            assert_eq!(app.arena_city_post(bad, "build", &json!({"upgrade": "park"})).0, 400, "{bad}");
+            assert_eq!(app.arena_market_trade(bad, &json!({"good": "fish", "qty": 1, "side": "buy"})).0, 400, "{bad}");
+        }
+        assert_eq!(app.arena_city_post(me, "demolish", &json!({})).0, 404);
+        assert_eq!(app.arena_city_post(me, "privacy", &json!({"mode": "public"})).0, 400);
+        let s = sent.lock().unwrap();
+        let urls: Vec<&str> = s.iter().map(|x| x.1.as_str()).collect();
+        assert_eq!(urls, vec![
+            format!("https://arena.example/v1/city/{me}").as_str(), "https://arena.example/v1/city/commons",
+            "https://arena.example/v1/market/commons", format!("https://arena.example/v1/city/{me}/transfer").as_str(),
+            format!("https://arena.example/v1/market/{me}/trade").as_str(), "https://arena.example/v1/archipelago",
+        ]);
+        assert_eq!(s[3].3, Some(json!({"amount": 10, "dir": "in"})));
+        assert_eq!(s[4].3, Some(json!({"good": "fish", "qty": 2, "side": "buy"})));
+        assert!(s.iter().all(|x| x.2.as_deref() == Some("T")));
     }
 
     #[test]

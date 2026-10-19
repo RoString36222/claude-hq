@@ -216,12 +216,16 @@ pub(crate) async fn ensure_city(conn: &mut SqliteConnection, owner: &str, now: i
     city_row(conn, owner).await
 }
 
+/// Every catalogue upgrade with its built level, 0 when unbuilt, so a client
+/// learns the keys it may POST to /build from CityState alone.
 pub(crate) async fn upgrades(conn: &mut SqliteConnection, owner: &str) -> Result<BTreeMap<String, i64>, sqlx::Error> {
     let rows: Vec<(String, i64)> = sqlx::query_as("SELECT upgrade, level FROM city_upgrade WHERE owner = ?1")
         .bind(owner)
         .fetch_all(conn)
         .await?;
-    Ok(rows.into_iter().collect())
+    let mut out: BTreeMap<String, i64> = UPGRADES.iter().map(|u| (u.key.to_string(), 0)).collect();
+    out.extend(rows);
+    Ok(out)
 }
 
 // ------------------------------------------------------------- money --

@@ -264,6 +264,19 @@ async fn transfers_cost_ten_percent_each_way_to_the_commons() {
 }
 
 #[tokio::test]
+async fn a_new_city_lists_every_upgrade_at_level_zero() {
+    let d = db().await;
+    let s = city_state(&d.pool, A, NOW).await.unwrap().unwrap();
+    let keys: Vec<&str> = s.upgrades.keys().map(String::as_str).collect();
+    let mut want: Vec<&str> = UPGRADES.iter().map(|u| u.key).collect();
+    want.sort();
+    assert_eq!(keys, want);
+    assert!(s.upgrades.values().all(|&l| l == 0));
+    let json = serde_json::to_value(&s).unwrap();
+    assert_eq!(json["upgrades"]["depot"], 0);
+}
+
+#[tokio::test]
 async fn upgrades_cost_their_level_and_respect_tier_and_max() {
     let d = db().await;
     fund(&d.pool, A, 10_000).await;
@@ -279,6 +292,7 @@ async fn upgrades_cost_their_level_and_respect_tier_and_max() {
     let s = city_state(&d.pool, A, NOW).await.unwrap().unwrap();
     assert_eq!(s.upgrades.get("tax_office"), Some(&3));
     assert_eq!(s.upgrades.get("workshop"), Some(&1));
+    assert_eq!(s.upgrades.get("depot"), Some(&0));
     assert_eq!(s.treasury, 10_000 - 150 - 600 - 2_400 - 300);
     // Too poor.
     assert!(matches!(build(&d.pool, B, "tax_office", NOW).await, Err(Refuse::Say(StatusCode::CONFLICT, _))));

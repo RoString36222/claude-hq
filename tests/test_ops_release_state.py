@@ -1,17 +1,13 @@
 """No ops script may start or rebuild the Arena without the release state.
 
-ops/release.sh records which implementation is live in backend/.release.env and
-layers it with --env-file. Compose reads only backend/.env on its own, so a bare
-`docker compose up` falls back to the defaults in docker-compose.yml --
-claude-hq-arena-py:local, built from backend/Dockerfile. On a host running the
-Rust Arena that silently brings the Python one back, and nothing alerts, because
-the Python Arena is healthy too.
-
-That is exactly what ops/autodeploy.sh did: every push to main undid a Rust
-release. Layering the env file is not sufficient either -- ARENA_APP_IMAGE is a
-stamped tag, and `up --build` would build a new commit into the previous
-release's tag, which makes `release.sh status` lie and `release.sh rollback`
-restore a tag that already holds the newer code.
+ops/release.sh records the released image in backend/.release.env and layers
+it with --env-file. Compose reads only backend/.env on its own, so a bare
+`docker compose up --build` falls back to the defaults in docker-compose.yml and
+builds a fresh image instead of running the release. Layering the env file is
+not sufficient either -- ARENA_APP_IMAGE is a stamped tag, and `up --build`
+would build a new commit into the previous release's tag, which makes
+`release.sh status` lie and `release.sh rollback` restore a tag that already
+holds the newer code. (ops/autodeploy.sh once did exactly this on every push.)
 
 So: either delegate to ops/release.sh, or pass both --env-files, or name
 services that are not `app`. This test allows those three and nothing else.

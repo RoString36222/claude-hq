@@ -1,6 +1,6 @@
 //! Kart Racing for the Valley (g = "kart"): the tracks, the grid, the race
-//! referee and the game's lobby. A port of `backend/app/kart.py` plus the kart
-//! branch of `backend/app/valley.py` (Rust has no other Valley games yet).
+//! referee and the game's lobby. Ported from the (since removed) Python Arena's
+//! kart.py and the kart branch of its valley.py.
 //!
 //! Each player drives their own car in the browser (games/kart.js) and streams
 //! where it is; the server runs a fixed-rate tick (`realtime.rs`) that checks

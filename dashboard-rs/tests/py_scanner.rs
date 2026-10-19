@@ -68,7 +68,7 @@ fn an_error_following_the_last_reply_stays_flagged() {
     let agg = scan(&[asst("working on it", "m1", TS, false), asst("API Error: Overloaded", "m2", LATER, true)]);
     assert_eq!(agg.errors.len(), 1);
     let now = agg.errors[0].0 + 60.0;
-    assert!(scan::recent_unrecovered_error(&agg.errors, agg.last_good_reply, now).is_some());
+    assert!(claudehq::payload::recent_unrecovered_error(&agg.errors, agg.last_good_reply, now).is_some());
 }
 
 #[test]
@@ -76,21 +76,21 @@ fn a_good_reply_after_the_error_marks_recovery() {
     let agg = scan(&[asst("API Error: Overloaded", "m1", TS, true), asst("sorry, here is the answer", "m2", LATER, false)]);
     assert_eq!(agg.errors.len(), 1);
     let now = agg.errors[0].0 + 60.0;
-    assert!(scan::recent_unrecovered_error(&agg.errors, agg.last_good_reply, now).is_none());
+    assert!(claudehq::payload::recent_unrecovered_error(&agg.errors, agg.last_good_reply, now).is_none());
 }
 
 #[test]
 fn recovery_does_not_reach_back_in_time() {
     let agg = scan(&[asst("earlier good turn", "m0", TS, false), asst("API Error: Overloaded", "m1", LATER, true)]);
     let now = agg.errors[0].0 + 60.0;
-    assert!(scan::recent_unrecovered_error(&agg.errors, agg.last_good_reply, now).is_some());
+    assert!(claudehq::payload::recent_unrecovered_error(&agg.errors, agg.last_good_reply, now).is_some());
 }
 
 #[test]
 fn the_six_hour_window_still_expires_an_unanswered_error() {
     let agg = scan(&[asst("API Error: Overloaded", "m1", TS, true)]);
     let now = agg.errors[0].0 + 6.0 * 3600.0 + 1.0;
-    assert!(scan::recent_unrecovered_error(&agg.errors, agg.last_good_reply, now).is_none());
+    assert!(claudehq::payload::recent_unrecovered_error(&agg.errors, agg.last_good_reply, now).is_none());
 }
 
 #[test]
@@ -105,7 +105,9 @@ fn a_recovered_error_stops_flagging_live_and_detail() {
     let err = asst("API Error: Overloaded", "m1", &ago(120.0), true);
     for (recs, want) in [(vec![err.clone()], "needs"), (vec![err, asst("here it is", "m2", &ago(60.0), false)], "idle")] {
         let app = new_app(d.path()); // cold scan cache: the rewritten transcript is re-read
-        *app.agents_hook.write().unwrap() = Some(std::sync::Arc::new(|| (Vec::new(), None)));
+        // live (as claude agents lists it), so the detail reads the live card, not an archived one
+        let live = agent.clone();
+        *app.agents_hook.write().unwrap() = Some(std::sync::Arc::new(move || (vec![Value::Object(live.clone())], None)));
         write(&app.paths.projects_dir.join("proj").join(format!("{}.jsonl", sid)), &recs);
         assert_eq!(app.build_session(&agent, &HashMap::new(), false)["status"], want);
         assert_eq!(app.build_session_detail(sid).unwrap()["status"], want);

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
-pub const APP_VERSION: &str = "2.6.1";
+pub const APP_VERSION: &str = "2.7.0";
 
 pub static UUID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-fA-F-]{36}$").unwrap());
 pub static RID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_-]{16,64}$").unwrap());
@@ -56,6 +56,11 @@ pub struct Paths {
     pub music_cache: PathBuf,
     pub arena_link: PathBuf,
     pub loot_state: PathBuf,
+    pub evo_choices: PathBuf,
+    pub vial: PathBuf,
+    /// HQ Notch (ext_notch.py): its installer, and where it installs the app.
+    pub notch_installer: PathBuf,
+    pub notch_app: PathBuf,
 }
 
 impl Paths {
@@ -79,6 +84,10 @@ impl Paths {
             music_cache: here.join(".music-cache"),
             arena_link: here.join("arena-link.json"),
             loot_state: here.join("loot-state.json"),
+            evo_choices: here.join("evo-choices.json"),
+            vial: here.join("vial.json"),
+            notch_installer: here.join("notch").join("tools").join("install.py"),
+            notch_app: home.join("Applications").join("HQ Notch.app"),
         }
     }
 }
@@ -121,6 +130,9 @@ pub struct App {
     pub(crate) meals_lock: Mutex<HashSet<String>>,
     pub(crate) games_lock: Mutex<()>,
     pub(crate) dex_salt: Mutex<Option<String>>,
+    pub(crate) evo_tables: std::sync::OnceLock<crate::evo::EvoTables>,
+    pub(crate) evo_lock: Mutex<()>,
+    pub(crate) vial_lock: Mutex<()>,
     pub(crate) update_cache: Mutex<(f64, Option<Value>)>,
     pub arena: crate::arena::ArenaState,
     pub music: Arc<crate::music::MusicState>,
@@ -152,6 +164,9 @@ impl App {
             meals_lock: Mutex::new(HashSet::new()),
             games_lock: Mutex::new(()),
             dex_salt: Mutex::new(None),
+            evo_tables: std::sync::OnceLock::new(),
+            evo_lock: Mutex::new(()),
+            vial_lock: Mutex::new(()),
             update_cache: Mutex::new((0.0, None)),
             arena: crate::arena::ArenaState::default(),
             music: Arc::new(crate::music::MusicState::default()),

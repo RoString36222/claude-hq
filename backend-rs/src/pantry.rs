@@ -86,10 +86,9 @@ const BUSY: &str = "busy, try again";
 ///
 /// The 21-row order below is load-bearing three times over: it drives `items`'
 /// key order, the `catalog` array's order, and `special_of`'s pool index. The
-/// client's tests/test_catalog_sync.py AST-parses the Python literal this
-/// mirrors, and arena.py FOOD_KINDS / dashboard.py FOOD_EFFECTS mirror it too,
-/// so a name, plural, price, restoreMins or season changed here and not there
-/// diverges silently.
+/// local HQ server mirrors it (dashboard-rs FOOD_KINDS / FOOD_LABELS /
+/// FOOD_EFFECTS), and tests/test_catalog_sync.py compares the two, so a name,
+/// plural, price, restoreMins or season changed here and not there fails it.
 ///
 /// `season` is when the *store* stocks it ("all" = year-round); food you
 /// already hold can be eaten or gifted in any season. A revive item wakes a

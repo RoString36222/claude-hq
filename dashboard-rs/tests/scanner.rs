@@ -392,3 +392,54 @@ fn a_warm_cache_and_an_mtime_bump_give_identical_totals() {
     assert!(!Arc::ptr_eq(&a1, &a3));
     assert_eq!(ws_counts(&[&a1], &[DAY]), ws_counts(&[&a3], &[DAY]));
 }
+
+// ---- RecoveryTests: an error alert clears once a good reply lands after it ----
+
+const LATER: &str = "2026-09-01T10:05:00.000Z"; // 5 minutes after TS
+
+fn api_error(mid: &str, ts: &str) -> Value {
+    let mut r = asst(json!([text("API Error: Overloaded")]), Some(mid), None, ts);
+    r["isApiErrorMessage"] = json!(true);
+    r
+}
+
+fn unrecovered(agg: &scan::Agg, now: f64) -> bool {
+    claudehq::payload::recent_unrecovered_error(&agg.errors, agg.last_good_reply, now).is_some()
+}
+
+#[test]
+fn a_good_reply_sets_last_good_reply() {
+    let agg = scan(&[asst(json!([text("hello")]), Some("m1"), None, TS)]);
+    assert_eq!(agg.last_good_reply, Some(Utc.with_ymd_and_hms(2026, 9, 1, 10, 0, 0).unwrap().timestamp() as f64));
+}
+
+#[test]
+fn the_error_record_itself_does_not_recover_it() {
+    assert_eq!(scan(&[api_error("m1", TS)]).last_good_reply, None);
+}
+
+#[test]
+fn an_error_following_the_last_reply_stays_flagged() {
+    let agg = scan(&[asst(json!([text("working on it")]), Some("m1"), None, TS), api_error("m2", LATER)]);
+    assert_eq!(agg.errors.len(), 1);
+    assert!(unrecovered(&agg, agg.errors[0].0 + 60.0));
+}
+
+#[test]
+fn a_good_reply_after_the_error_marks_recovery() {
+    let agg = scan(&[api_error("m1", TS), asst(json!([text("sorry, here is the answer")]), Some("m2"), None, LATER)]);
+    assert_eq!(agg.errors.len(), 1);
+    assert!(!unrecovered(&agg, agg.errors[0].0 + 60.0));
+}
+
+#[test]
+fn recovery_does_not_reach_back_in_time() {
+    let agg = scan(&[asst(json!([text("earlier good turn")]), Some("m0"), None, TS), api_error("m1", LATER)]);
+    assert!(unrecovered(&agg, agg.errors[0].0 + 60.0));
+}
+
+#[test]
+fn the_six_hour_window_still_expires_an_unanswered_error() {
+    let agg = scan(&[api_error("m1", TS)]);
+    assert!(!unrecovered(&agg, agg.errors[0].0 + 6.0 * 3600.0 + 1.0));
+}

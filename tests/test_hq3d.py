@@ -293,52 +293,6 @@ class Skatepark(unittest.TestCase):
         self.assertIn('id="hqSkateSec" hidden', html)
 
 
-@unittest.skip("ext_skate (/api/arena/skate, /api/arena/skate/combo) has no Rust port yet; "
-               "port the routes and these cases to dashboard-rs before deleting this")
-class SkateProxy(unittest.TestCase):
-    """ext_skate.py: the only things that leave are a combo's total and trick count, both checked."""
-
-    def setUp(self):
-        import arena
-        import ext_skate
-        self.arena, self.ext = arena, ext_skate
-        self._req, self._link = arena._request, arena.load_link
-        arena.load_link = lambda: {"token": "T", "url": "https://arena.example"}
-        self.sent = []
-        arena._request = lambda m, u, token=None, body=None: (self.sent.append((m, u, body)) or (200, {"ok": True}))
-
-    def tearDown(self):
-        self.arena._request, self.arena.load_link = self._req, self._link
-
-    def test_post_sends_two_numbers_only(self):
-        code, _ = self.ext.post_combo({"total": 800, "tricks": 2, "where": "rail", "session": "abc"})
-        self.assertEqual(code, 200)
-        self.assertEqual(self.sent, [("POST", "https://arena.example/v1/skate", {"total": 800, "tricks": 2})])
-
-    def test_bad_combos_never_leave(self):
-        for bad in ({"total": 0, "tricks": 1}, {"total": 200001, "tricks": 1}, {"total": 5, "tricks": 11},
-                    {"total": 1.5, "tricks": 1}, {"total": True, "tricks": 1}, {"total": "9", "tricks": 1},
-                    {"tricks": 1}, [], None, {"total": float("nan"), "tricks": 1}):
-            code, _ = self.ext.post_combo(bad)
-            self.assertEqual(code, 400, bad)
-        self.assertEqual(self.sent, [])
-
-    def test_board_is_a_plain_get(self):
-        code, _ = self.ext.get_board(lambda k: "")
-        self.assertEqual(code, 200)
-        self.assertEqual(self.sent, [("GET", "https://arena.example/v1/skate", None)])
-
-    def test_unpaired_sends_nothing(self):
-        self.arena.load_link = lambda: {"url": "https://arena.example"}     # a link with no device token
-        self.assertEqual(self.ext.post_combo({"total": 10, "tricks": 1})[0], 400)
-        self.assertEqual(self.ext.get_board(lambda k: "")[0], 400)
-        self.assertEqual(self.sent, [])
-
-    def test_registered(self):
-        import dashboard
-        self.assertIn(self.ext, dashboard.EXT)
-
-
 @unittest.skipUnless(shutil.which("node"), "node not installed")
 class ArenaCity(unittest.TestCase):
     """Arena City: every open HQ and every tab's building on a grid of blocks, the same layout for everyone."""

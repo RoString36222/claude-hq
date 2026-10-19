@@ -20,7 +20,7 @@ function protoCheck(g){
   var info = A().arena;
   if(!info) return null;                         // an Arena from before 2.0: each game copes on its own
   var gi = info.games[g], want = CLIENT_PROTO[g] || [1,1], name = NAMES[g] || g;
-  if(!gi) return {who:"arena", text:"This Arena doesn't run " + name + " yet. Ask its owner to update it" + (info.impl === "rs" ? " (or use the Python Arena, which runs every game)." : ".")};
+  if(!gi) return {who:"arena", text:"This Arena doesn't run " + name + " yet. Ask its owner to update it."};
   var v = gi.v|0;
   if(v < want[0]) return {who:"arena", text:"This Arena runs an older " + name + " than Claude HQ speaks. Ask its owner to update the Arena."};
   if(v > want[1]) return {who:"hq", text:"This Arena runs a newer " + name + ". Update Claude HQ to play it."};

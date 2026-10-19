@@ -1,7 +1,5 @@
-//! Arena backend in Rust — a parallel implementation of `backend/`.
-//!
-//! Serves the same endpoints against the same SQLite file, so it can be run
-//! alongside the Python one and swapped by changing which port Caddy proxies.
+//! The Arena server. Deployed with backend/docker-compose.yml (Caddy in front)
+//! by ops/release.sh, or on a Mac by selfhost-wizard.sh.
 
 mod auth;
 mod boardstream;

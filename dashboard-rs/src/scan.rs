@@ -956,23 +956,6 @@ pub fn parse_cursor_clock(text: &str) -> Option<Dt> {
     }
 }
 
-/// (ts, sig) of the newest error inside the 6 h window that the session has not
-/// answered past, else None. An error followed by a successful assistant reply
-/// (strictly later) is recovered and clears instead of lingering out the window.
-pub fn recent_unrecovered_error(errors: &[(f64, String)], last_good_reply: Option<f64>, now_ts: f64) -> Option<(f64, &str)> {
-    let cutoff = now_ts - 6.0 * 3600.0;
-    let mut recent: Option<(f64, &str)> = None;
-    for (ts, sig) in errors {
-        if *ts >= cutoff && recent.map(|r| *ts > r.0).unwrap_or(true) {
-            recent = Some((*ts, sig));
-        }
-    }
-    match (recent, last_good_reply) {
-        (Some(r), Some(g)) if g > r.0 => None,
-        _ => recent,
-    }
-}
-
 /// Best-effort absolute path for a Cursor project slug (longest existing
 /// directory at each step, since '-' is ambiguous).
 pub fn path_from_project_slug(slug: &str) -> String {

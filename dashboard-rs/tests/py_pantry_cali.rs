@@ -147,6 +147,9 @@ fn off_payload_session_keeps_the_gate() {
     let (code, resp) = app.pantry_eat(&json!({"sessionId": OTHER_SID, "kind": "berry", "requestId": RID}));
     assert_eq!((code, resp["code"].as_str()), (409, Some("not_hungry")));
     app.save_config(&json!({"creatureFatigue": false})).unwrap();
+    // The payload memo would carry the old fatigue until it expires (as in the
+    // Python server); expire it now, as the next rebuild would.
+    app.invalidate_payload_memo();
     assert!(app.build_session_detail(OTHER_SID).unwrap()["creature"].get("fatigue").is_none());
     let (code, resp) = app.pantry_eat(&json!({"sessionId": OTHER_SID, "kind": "berry", "requestId": RID}));
     assert_eq!((code, resp["code"].as_str()), (409, Some("fatigue_off")));

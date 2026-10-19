@@ -49,12 +49,12 @@ pub fn post_body_limit(path: &str) -> usize {
 /// Every state-changing route; anything else 404s locally.
 pub fn post_paths() -> Vec<&'static str> {
     let mut v = vec![
-        "/api/update", "/api/action", "/api/config", "/api/meta", "/api/arena/pair", "/api/arena/unpair", "/api/arena/publish",
+        "/api/update", "/api/action", "/api/config", "/api/meta", "/api/evo-choice", "/api/arena/pair", "/api/arena/unpair", "/api/arena/publish",
         "/api/arena/ticket", "/api/arena/nudge", "/api/arena/pantry/claim", "/api/arena/pantry/buy", "/api/arena/pantry/eat",
         "/api/arena/pantry/give", "/api/arena/pantry/reward", "/api/arena/hq/me", "/api/arena/portrait", "/api/arena/cosmetics/buy",
         "/api/arena/cosmetics/equip", "/api/arena/market/sell", "/api/arena/crews/create", "/api/arena/crews/join",
         "/api/arena/crews/leave", "/api/arena/quickplay/join", "/api/arena/quickplay/leave", "/api/arena/cali/order",
-        "/api/arena/sounds", "/api/games/state",
+        "/api/arena/sounds", "/api/games/state", "/api/vial/spend", "/api/notch/install",
     ];
     v.extend(ARENA_ROOM_POSTS);
     v.extend(ext::POST.iter().map(|(p, _)| *p));
@@ -294,7 +294,7 @@ impl App {
 
 static GAME_FILE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9_-]{0,40}\.(js|css)$").unwrap());
 static GAME_ASSET_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart|platformer|fps)/[a-z][a-z0-9-]{0,40}\.(glb|json|png))$").unwrap()
+    Regex::new(r"^(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart|platformer|fps|strike)/[a-z][a-z0-9-]{0,40}\.(glb|json|png))$").unwrap()
 });
 
 fn game_type(ext: &str) -> &'static str {
@@ -709,20 +709,29 @@ fn music_get(app: &App, path: &str, arg: &dyn Fn(&str) -> String) -> (u16, Value
 // POST
 // ---------------------------------------------------------------------------
 
+/// A refused POST: read (and drop) a small body first. Closing with request bytes
+/// still unread makes the OS reset the connection, and the reset can destroy the
+/// answer before the client reads it -- a page with a stale token would see a
+/// network error instead of the 403 that tells it to reload.
+async fn refuse(body: Body, r: Reply) -> Response {
+    let _ = axum::body::to_bytes(body, 1 << 20).await;
+    into_response(r, false)
+}
+
 async fn do_post(app: Arc<App>, headers: HeaderMap, path: String, body: Body) -> Response {
     let reply = |r: Reply| into_response(r, false);
     if !host_ok(&headers) {
-        return reply(Reply::json(403, &json!({"error": "local access only"})));
+        return refuse(body, Reply::json(403, &json!({"error": "local access only"}))).await;
     }
     let token = headers.get("x-hq-token").and_then(|v| v.to_str().ok()).unwrap_or("");
     if token.is_empty() || !constant_eq(token.as_bytes(), app.csrf_token.as_bytes()) {
-        return reply(Reply::json(403, &json!({"error": "bad or missing CSRF token"})));
+        return refuse(body, Reply::json(403, &json!({"error": "bad or missing CSRF token"}))).await;
     }
     if !origin_ok(&headers) {
-        return reply(Reply::json(403, &json!({"error": "cross-site request rejected"})));
+        return refuse(body, Reply::json(403, &json!({"error": "cross-site request rejected"}))).await;
     }
     if !post_paths().contains(&path.as_str()) {
-        return reply(Reply::json(404, &json!({"error": "not found"})));
+        return refuse(body, Reply::json(404, &json!({"error": "not found"}))).await;
     }
     let cl = headers.get("content-length").and_then(|v| v.to_str().ok()).map(|s| py::strip(s).to_string()).unwrap_or_default();
     if cl.is_empty() || !cl.bytes().all(|b| b.is_ascii_digit()) {
@@ -783,6 +792,30 @@ fn post_route(app: &App, path: &str, body: &Value) -> Reply {
             Err(crate::app::SaveError::Bad(e)) => Reply::json(400, &json!({"error": format!("bad save: {}", e)})),
             Err(crate::app::SaveError::Io(e)) => Reply::json(500, &json!({"error": format!("could not write save: {}", e)})),
         },
+        "/api/notch/install" => {
+            // HQ Notch from HQ: the same install as `python3 notch/tools/install.py`
+            let (c, r) = app.notch_install();
+            Reply::json(c, &r)
+        }
+        "/api/vial/spend" => {
+            let sid = b.get("sessionId").filter(|v| v.as_str().map(is_uuid).unwrap_or(false));
+            let Some(sid) = sid else { return Reply::json(400, &json!({"error": "invalid sessionId"})) };
+            let Some(stg) = b.get("fromStage").filter(|v| py::strict_int(v).map(|i| (0..=3).contains(&i)).unwrap_or(false)) else {
+                return Reply::json(400, &json!({"error": "invalid fromStage"}));
+            };
+            Reply::json(200, &app.vial_spend(sid, stg, py::now_ts()))
+        }
+        "/api/evo-choice" => {
+            let sid = b.get("sessionId");
+            match app.save_evo_choice(sid, body) {
+                Ok(entry) => {
+                    app.invalidate_payload_memo(); // the next /api/sessions carries it
+                    Reply::json(200, &json!({"sessionId": sid, "evo": entry}))
+                }
+                Err(crate::evo::EvoError::Bad(e)) => Reply::json(400, &json!({"error": e})),
+                Err(crate::evo::EvoError::Io(e)) => Reply::json(500, &json!({"error": format!("could not save the pick: {}", e)})),
+            }
+        }
         "/api/meta" => {
             let sid = b.get("sessionId").and_then(|v| v.as_str()).filter(|s| crate::app::is_uuid_match(s));
             let Some(sid) = sid else { return Reply::json(400, &json!({"error": "invalid sessionId"})) };

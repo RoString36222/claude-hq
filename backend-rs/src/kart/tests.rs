@@ -1011,3 +1011,56 @@ async fn a_custom_race_through_the_lobby() {
     assert_eq!(done["track"], json!(key));
     assert!(done.get("custom").is_none());
 }
+
+// ------------------------------------------------------- golden vectors --
+
+/// `backend-rs/tests/kart_golden.json`: every built-in track's tiles and a
+/// spread of point_at / locate probes, generated once from the last Python
+/// Arena's kart.py and fixed by design. tests/test_kart_sync.py replays the
+/// same file through the browser's KART-TRACK block. Read at run time (not
+/// `include_str!`) so the Docker build context never needs it.
+#[test]
+fn the_track_geometry_matches_the_golden_vectors() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/kart_golden.json");
+    let gold: Value = serde_json::from_str(&std::fs::read_to_string(path).expect("kart_golden.json")).unwrap();
+    let f = |v: &Value| v.as_f64().unwrap();
+    let close = |a: f64, b: f64, what: &str| assert!((a - b).abs() < 1e-6, "{what}: {a} vs {b}");
+    let gtracks = gold["tracks"].as_array().unwrap();
+    assert_eq!(gtracks.len(), TRACKS.len(), "a track was added or removed: the golden pins the old set");
+    let mut probes = 0;
+    for g in gtracks {
+        let id = g["id"].as_str().unwrap();
+        let tr = track(id).unwrap_or_else(|| panic!("no track {id}"));
+        let tiles: Vec<Value> = tr
+            .tiles
+            .iter()
+            .map(|t| {
+                json!([t.col, t.row, t.kind.to_string(), t.d, t.o,
+                       t.pivot.map(|(x, z)| json!([x, z])).unwrap_or(Value::Null)])
+            })
+            .collect();
+        assert_eq!(Value::Array(tiles), g["tiles"], "{id} tiles");
+        for p in g["probes"].as_array().unwrap() {
+            let (u, lat) = (f(&p[0]), f(&p[1]));
+            let what = format!("{id} u={u} lat={lat}");
+            let (x, z, yaw) = point_at(tr, u, lat);
+            close(x, f(&p[2][0]), &what);
+            close(z, f(&p[2][1]), &what);
+            close(yaw, f(&p[2][2]), &what);
+            match (locate(tr, f(&p[2][0]) + 0.37, f(&p[2][1]) - 0.21), p[3].as_array()) {
+                (None, None) => {}
+                (Some((i, along, off)), Some(w)) => {
+                    assert_eq!(i as u64, w[0].as_u64().unwrap(), "{what}");
+                    close(along, f(&w[1]), &what);
+                    close(off, f(&w[2]), &what);
+                }
+                (got, _) => panic!("{what}: locate {got:?} vs {}", p[3]),
+            }
+            probes += 1;
+        }
+    }
+    assert!(probes > 1000);
+    for (k, w) in gold["grid"].as_array().unwrap().iter().enumerate() {
+        assert_eq!(grid_slot(&TRACKS[0], k), (f(&w[0]), f(&w[1])), "grid_slot({k})");
+    }
+}

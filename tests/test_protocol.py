@@ -1,6 +1,7 @@
 """Arena protocol versions (Wave 0): the client's CLIENT_PROTO in games/multi.js must
-cover both servers' tables, and protoCheck must tell "update the Arena" from
-"update Claude HQ". The JS runs in node (piped on stdin); skipped without node."""
+cover the Rust Arena's table (backend-rs/src/protocol.rs), game for game, and protoCheck
+must tell "update the Arena" from "update Claude HQ". The JS runs in node (piped on
+stdin); skipped without node."""
 import json
 import os
 import re
@@ -16,56 +17,29 @@ def read(*p):
         return f.read()
 
 
-# Games only the Rust Arena referees (HQ 2.5). The Python Arena is frozen, so
-# these are filtered out of the Rust and client lists before comparing.
-RUST_ONLY = ("td", "bowl")
-# The one game where the two referees run different protocol versions: the Rust
-# Arena is ahead of the frozen Python one — v2 flies the launcher's rockets,
-# v3 also allows the sprint flag on pos; Python judges hitscan-only v1. The
-# tables must agree everywhere else.
-VERSION_DRIFT = {"strike": (1, 4)}  # v2 rockets, v3 sprint flag, v4 parachute drops (Python judges hitscan-only v1)
-
-
 def client_proto():
     m = re.search(r"var CLIENT_PROTO = (\{[^}]*\});", read("games", "multi.js"))
     return json.loads(re.sub(r"(\w+):", r'"\1":', m.group(1)))
 
 
+def rust_rows():
+    rows = [(g, int(v)) for g, v in re.findall(r'\("(\w+)", (\d+), &\[', read("backend-rs", "src", "protocol.rs"))]
+    assert rows, "no protocol rows parsed out of protocol.rs"
+    return rows
+
+
 class ProtocolTables(unittest.TestCase):
-    def test_client_covers_python_games_and_versions(self):
-        py = read("backend", "app", "valley.py")
-        games = re.findall(r'"(\w+)"', re.search(r"^GAMES = \(([^)]*)\)", py, re.M).group(1))
-        cp = {g: v for g, v in client_proto().items() if g not in RUST_ONLY}
-        self.assertEqual(set(cp), set(games))
-        for g, v in re.findall(r'PROTOCOL\["(\w+)"\] = \{"v": (\d+)', py):
-            self.assertTrue(cp[g][0] <= int(v) <= cp[g][1], g)
-
-    def test_rust_advertises_the_same_table_as_python(self):
-        """The two Arenas must offer the same games at the same versions.
-
-        This used to assert Rust ran exactly kart, plat and fps, because that
-        was all it refereed. It runs all eleven now, so the useful invariant is
-        that the two tables agree -- a game added to one and not the other is
-        the bug this catches."""
-        py = read("backend", "app", "valley.py")
-        games = re.findall(r'"(\w+)"', re.search(r"^GAMES = \(([^)]*)\)", py, re.M).group(1))
-        rs = read("backend-rs", "src", "protocol.rs")
-        rows = [r for r in re.findall(r'\("(\w+)", (\d+), &\[', rs) if r[0] not in RUST_ONLY]
-        self.assertEqual([g for g, _ in rows], games)      # same games, same order
-        # Python builds every entry at v1 and overrides only some; the overrides
-        # are what must match Rust's numbers.
-        over = {g: int(v) for g, v in re.findall(r'PROTOCOL\["(\w+)"\] = \{"v": (\d+)', py)}
-        for g, v in rows:
-            lo, hi = VERSION_DRIFT.get(g, (int(v), int(v)))
-            self.assertTrue(lo <= over.get(g, 1) <= hi, f"{g}: python {over.get(g, 1)} not in {lo}..{hi}")
+    def test_client_knows_exactly_the_rust_games(self):
+        """A game the Arena referees but the client has no range for (or the reverse) is
+        the drift this catches."""
+        rows = rust_rows()
+        self.assertEqual(len({g for g, _ in rows}), len(rows), "a game is listed twice in protocol.rs")
+        self.assertEqual(set(client_proto()), {g for g, _ in rows})
 
     def test_client_covers_rust_versions(self):
-        rs = read("backend-rs", "src", "protocol.rs")
         cp = client_proto()
-        rows = re.findall(r'\("(\w+)", (\d+), &\[', rs)
-        self.assertTrue(rows, "no protocol rows parsed out of protocol.rs")
-        for g, v in rows:
-            self.assertTrue(cp[g][0] <= int(v) <= cp[g][1], g)
+        for g, v in rust_rows():
+            self.assertTrue(cp[g][0] <= v <= cp[g][1], f"{g}: Rust v{v} not in the client's {cp[g]}")
 
 
 @unittest.skipUnless(shutil.which("node"), "node not installed")
@@ -92,7 +66,7 @@ console.log(JSON.stringify(out));
         # An Arena whose table omits golf -- stubbed above, not the real Rust
         # one, which runs it now. What is under test is the client's verdict.
         self.assertEqual(out["golf"]["who"], "arena")
-        self.assertIn("Python Arena", out["golf"]["text"])
+        self.assertIn("doesn't run", out["golf"]["text"])
         self.assertEqual(out["fps"]["who"], "hq")            # server newer than client
         self.assertEqual(out["plat"]["who"], "arena")        # server older than client
         self.assertIsNone(out["legacy"])                     # pre-2.0 Arena: games cope alone

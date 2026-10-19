@@ -1247,3 +1247,83 @@ fn the_map_editors_starter_maps_pass_as_they_are() {
         assert_eq!(at.len(), 8, "starter {i}");
     }
 }
+
+// ------------------------------------------------------- golden vectors --
+
+/// `backend-rs/tests/fps_golden.json`: rays, runs, spread and overlap probes
+/// generated once from the last Python Arena's fps.py and fixed by design.
+/// tests/test_fps_sync.py replays the same file through the browser's
+/// FPS-SHARED block, so browser and server answer alike. Read at run time (not
+/// `include_str!`) so the Docker build context never needs it.
+#[test]
+fn the_shared_geometry_matches_the_golden_vectors() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fps_golden.json");
+    let gold: Value = serde_json::from_str(&std::fs::read_to_string(path).expect("fps_golden.json")).unwrap();
+    let close = |a: f64, b: f64, eps: f64, what: &str| assert!((a - b).abs() < eps, "{what}: {a} vs {b}");
+    // Bit-exact. serde_json here is built without float_roundtrip, so a 17-digit
+    // golden can parse one ulp off; the computed value takes the same text -> parser
+    // trip (shortest repr is unique per f64), so equal Values mean the digits Python wrote.
+    let exact = |a: f64, b: &Value, what: &str| {
+        let a = serde_json::from_str::<Value>(&serde_json::to_string(&a).unwrap()).unwrap();
+        assert_eq!(&a, b, "{what}");
+    };
+    let v3 = |v: &Value| [v[0].as_f64().unwrap(), v[1].as_f64().unwrap(), v[2].as_f64().unwrap()];
+    let m: &Map = &MAP;
+
+    let rays = gold["rays"].as_array().unwrap();
+    assert_eq!(rays.len(), 160);
+    for r in rays {
+        let d = dir_of(r["yaw"].as_f64().unwrap(), r["pitch"].as_f64().unwrap());
+        let want = v3(&r["dir"]);
+        for k in 0..3 {
+            close(d[k], want[k], 1e-9, "dir_of");
+        }
+        let (o, t) = (v3(&r["o"]), v3(&r["target"]));
+        close(ray_map(m, o, d, 80.0), r["map"].as_f64().unwrap(), 1e-6, "ray_map");
+        match (ray_player(o, d, t[0], t[1], t[2], 80.0), r["player"].as_array()) {
+            (None, None) => {}
+            (Some((dist, head)), Some(p)) => {
+                close(dist, p[0].as_f64().unwrap(), 1e-6, "ray_player");
+                assert_eq!(head, p[1].as_bool().unwrap(), "{r}");
+            }
+            (got, _) => panic!("ray_player {got:?} vs {}", r["player"]),
+        }
+    }
+
+    for run in gold["runs"].as_array().unwrap() {
+        let st = v3(&run["start"]);
+        let mut s = Body { x: st[0], y: st[1], z: st[2], vx: 0.0, vy: 0.0, vz: 0.0, g: true };
+        let mut trace = Vec::new();
+        for (j, step_in) in run["steps"].as_array().unwrap().iter().enumerate() {
+            let (wx, wz) = (step_in[0].as_f64().unwrap(), step_in[1].as_f64().unwrap());
+            step(m, &mut s, wx, wz, step_in[2].as_i64().unwrap() != 0, 1.0 / 120.0);
+            if j % 30 == 0 {
+                trace.push((s.x, s.y, s.z, s.g));
+            }
+        }
+        let want = run["trace"].as_array().unwrap();
+        assert_eq!(trace.len(), want.len());
+        for (got, w) in trace.iter().zip(want) {
+            close(got.0, w[0].as_f64().unwrap(), 1e-6, "run x");
+            close(got.1, w[1].as_f64().unwrap(), 1e-6, "run y");
+            close(got.2, w[2].as_f64().unwrap(), 1e-6, "run z");
+            assert_eq!(got.3, w[3].as_bool().unwrap(), "run g");
+        }
+    }
+
+    for v in gold["spread"].as_array().unwrap() {
+        let n = v["n"].as_i64().unwrap();
+        for (w, key) in [(0usize, "w0"), (1, "w1")] {
+            let (a, b) = spread_of(n, w);
+            exact(a, &v[key][0], &format!("spread_of({n}, {w}) yaw"));
+            exact(b, &v[key][1], &format!("spread_of({n}, {w}) pitch"));
+        }
+        exact(mb32((n * 7919) as u32), &v["mb"], &format!("mb32({})", n * 7919));
+    }
+
+    for v in gold["over"].as_array().unwrap() {
+        let (x, z) = (v[0].as_f64().unwrap(), v[2].as_i64().unwrap());
+        let got = overlaps(m, x, 0.2, v[1].as_f64().unwrap(), 0.05).map_or(-1, |i| i as i64);
+        assert_eq!(got, z, "overlaps at {v}");
+    }
+}

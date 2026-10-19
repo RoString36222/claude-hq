@@ -47,3 +47,25 @@ def rs_int(path, name):
     if not m:
         raise AssertionError("no integer %s in %s" % (name, os.path.relpath(path, ROOT)))
     return int(m.group(1).replace("_", ""))
+
+
+def rs_num(path, name, _seen=None):
+    """A numeric const (`NAME: f64 = 0.35;`, `HALF: i64 = TILE / 2;`, `V: f64 = 4.5 * SCALE;`):
+    a literal, or simple arithmetic over literals and other consts of the same file."""
+    m = re.search(r"\bconst\s+%s\s*:\s*([iuf](?:64|32|size))\s*=\s*([^;]+);" % re.escape(name), read(path))
+    if not m:
+        raise AssertionError("no numeric const %s in %s" % (name, os.path.relpath(path, ROOT)))
+    ty, expr = m.group(1), re.sub(r"\bas\s+[iuf](?:64|32|size)\b", "", m.group(2))
+    seen = (_seen or set()) | {name}
+    env = {}
+    for ref in set(re.findall(r"\b[A-Z][A-Z0-9_]*\b", expr)):
+        if ref in seen:
+            raise AssertionError("const cycle at %s" % ref)
+        env[ref] = rs_num(path, ref, seen)
+    expr = re.sub(r"(?<=\d)_(?=\d)", "", expr)
+    expr = re.sub(r"(\d)(?:f64|f32|i64|i32|u32|u64|usize)\b", r"\1", expr)
+    if not re.fullmatch(r"[\s\w.+\-*/()]*", expr):
+        raise AssertionError("const %s is not simple arithmetic: %s" % (name, expr))
+    if ty.startswith("f"):
+        return float(eval(expr, {"__builtins__": {}}, env))
+    return int(eval(expr.replace("/", "//"), {"__builtins__": {}}, env))

@@ -804,3 +804,95 @@ fn the_teleport_totem_plants_the_taker_on_open_ground() {
     let (ok, fix) = s.pos("u0", &json!({"x": cm(tx), "y": 0, "z": cm(tz), "r": 0, "p": 0, "q": 100}), t + 2.1);
     assert!(ok && fix.is_none(), "the next frame starts from the destination: {fix:?}");
 }
+
+// ------------------------------------------------------------ golden vectors --
+/// The shared geometry against `backend-rs/tests/strike_golden.json`: vectors
+/// generated once from the last Python Arena (strike.py at a1eda91~1) and fixed by
+/// design. tests/test_strike_sync.py replays the same file through games/strike.js,
+/// so the browser and this referee agree ray for ray and step for step. Read at run
+/// time (not include_str!) so the Docker build context never needs backend-rs/tests.
+#[test]
+fn the_shared_geometry_matches_the_golden_vectors() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/strike_golden.json");
+    let g: Value = serde_json::from_str(&std::fs::read_to_string(path).expect("strike_golden.json")).unwrap();
+    let f = |v: &Value| v.as_f64().unwrap();
+    let p3 = |v: &Value| [f(&v[0]), f(&v[1]), f(&v[2])];
+    let close = |a: f64, b: f64, tol: f64, what: &str| assert!((a - b).abs() <= tol, "{what}: {a} vs {b}");
+    let rays = g["rays"].as_array().unwrap();
+    assert!(rays.len() >= 200);
+    let mut hits = 0;
+    for r in rays {
+        let (o, tp) = (p3(&r["o"]), p3(&r["target"]));
+        let d = dir_of(f(&r["yaw"]), f(&r["pitch"]));
+        for (a, b) in d.iter().zip(p3(&r["dir"])) {
+            close(*a, b, 1e-9, "dir_of");
+        }
+        close(ray_map(&MAP, o, d, 80.0), f(&r["map"]), 1e-6, "ray_map");
+        match (ray_player(o, d, tp[0], tp[1], tp[2], 80.0), r["player"].as_array()) {
+            (None, None) => {}
+            (Some((t, head)), Some(w)) => {
+                hits += 1;
+                close(t, f(&w[0]), 1e-6, "ray_player distance");
+                assert_eq!(head, w[1].as_bool().unwrap(), "ray_player head? {r}");
+            }
+            (got, want) => panic!("ray_player {got:?} vs {want:?} for {r}"),
+        }
+    }
+    assert!(hits > 0 && hits < rays.len());
+    for rn in g["runs"].as_array().unwrap() {
+        let st = p3(&rn["start"]);
+        let mut s = Body { x: st[0], y: st[1], z: st[2], g: true, ..Body::default() };
+        let mut trace = Vec::new();
+        for (j, step_in) in rn["steps"].as_array().unwrap().iter().enumerate() {
+            step(&MAP, &mut s, f(&step_in[0]), f(&step_in[1]), step_in[2].as_bool().unwrap(), 1.0 / 120.0);
+            if j % 30 == 0 {
+                trace.push(s);
+            }
+        }
+        let want = rn["trace"].as_array().unwrap();
+        assert_eq!(trace.len(), want.len());
+        for (a, b) in trace.iter().zip(want) {
+            close(a.x, f(&b[0]), 1e-6, "run x");
+            close(a.y, f(&b[1]), 1e-6, "run y");
+            close(a.z, f(&b[2]), 1e-6, "run z");
+            assert_eq!(a.g, b[3].as_bool().unwrap(), "run on-ground");
+        }
+    }
+    // Bit-exact, but serde_json's default float parser is not correctly rounded (a
+    // 17-digit golden can land one ulp off), so a computed value is sent through the
+    // same text -> parser trip: shortest repr is unique per f64, so equal Values here
+    // mean the very digits Python wrote.
+    let exact = |a: f64| serde_json::from_str::<Value>(&serde_json::to_string(&a).unwrap()).unwrap();
+    for (n, row) in g["spread"].as_array().unwrap().iter().enumerate() {
+        for (w, want) in row.as_array().unwrap().iter().enumerate() {
+            let (a, b) = spread_of(n as i64, w);
+            assert_eq!((exact(a), exact(b)), (want[0].clone(), want[1].clone()), "spread_of({n}, {w})");
+        }
+    }
+    for p in g["mb32"].as_array().unwrap() {
+        assert_eq!(exact(mb32(p[0].as_u64().unwrap() as u32)), p[1], "mb32({})", p[0]);
+    }
+    for p in g["overlaps"].as_array().unwrap() {
+        let got = overlaps(&MAP, f(&p[0]), 0.2, f(&p[1]), 0.05).map_or(-1, |i| i as i64);
+        assert_eq!(got, p[2].as_i64().unwrap(), "overlaps at {p}");
+    }
+}
+
+/// The leap and speed takes open their windows for exactly their durations, and a
+/// teleport rebuilds the position history at the destination (the Python referee's
+/// test_the_movement_totems_... / test_the_teleport_totem_... checks the tests
+/// above do not already make).
+#[test]
+fn the_leap_and_speed_takes_open_their_windows_and_a_teleport_resets_history() {
+    let (mut s, t) = started(2, 2, 0.0);
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "leap", t + 1.0), "leap applies to its taker");
+    let p = s.player("u0").unwrap();
+    assert!(p.leap_until > t + 1.0 && p.leap_until <= t + 1.0 + LEAP, "leap opens a window of LEAP");
+    assert!(s.take_totem(i0, "speed", t + 1.0), "speed applies to its taker");
+    let p = s.player("u0").unwrap();
+    assert!(p.speed_until > t + 1.0 && p.speed_until <= t + 1.0 + SPEED, "speed opens a window of SPEED");
+    assert!(s.take_totem(i0, "teleport", t + 2.0));
+    let p = s.player("u0").unwrap();
+    assert_eq!(p.hist.back().copied(), Some((t + 2.0, p.x, 0.0, p.z)), "history points at the destination");
+}

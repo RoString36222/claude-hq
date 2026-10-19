@@ -1531,4 +1531,107 @@ mod tests {
         assert_eq!(fail["side"], 0); // the USER's side, with the user's name
         assert_eq!(fail["name"], "Charizard");
     }
+
+    // ------------------------------------------------- the golden battles --
+
+    /// JSON equality where numbers compare by value: the golden was written by
+    /// Python, which says `2.0` where serde_json says `2`.
+    fn same(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
+            (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(p, q)| same(p, q)),
+            (Value::Object(x), Value::Object(y)) => {
+                x.len() == y.len() && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| same(v, w)))
+            }
+            _ => a == b,
+        }
+    }
+
+    /// A battler in the shape of the Python engine's `build_mon` dict.
+    fn mon_json(m: &Mon) -> Value {
+        let s = &m.stats;
+        let boosts: Map<String, Value> = BOOSTS.iter().zip(m.boosts).map(|(k, v)| (k.to_string(), json!(v))).collect();
+        json!({"name": m.name, "id": m.id, "dex": m.dex, "sprite": m.sprite, "mega": m.mega, "shiny": m.shiny,
+               "sp": m.sp, "st": m.st, "lvl": m.lvl, "types": m.types,
+               "stats": {"hp": s.hp, "atk": s.atk, "def": s.def, "spa": s.spa, "spd": s.spd, "spe": s.spe},
+               "hp": m.hp, "max": m.max, "status": m.status, "slp": m.slp, "tox": m.tox, "flinch": m.flinch,
+               "boosts": boosts,
+               "moves": m.moves.iter().map(|x| json!({"id": x.id, "pp": x.pp, "max": x.max})).collect::<Vec<_>>()})
+    }
+
+    fn battle_json(st: &Battle) -> Value {
+        let sides: Vec<Value> = st
+            .sides
+            .iter()
+            .map(|s| json!({"team": s.team.iter().map(mon_json).collect::<Vec<_>>(), "active": s.active}))
+            .collect();
+        json!({"sides": sides, "turn": st.turn, "over": st.over, "winner": st.winner})
+    }
+
+    /// `backend-rs/tests/pokebattle_golden.json`: 40 seeded battles generated once
+    /// from the last Python Arena (pokebattle.py at a1eda91~1) and fixed by design.
+    /// games/pokebattle.js replays the same file in tests/test_pokebattle_parity.py,
+    /// so this is the JS <-> Rust parity proof. Read at run time, never embedded.
+    #[test]
+    fn the_golden_battles_replay_exactly() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pokebattle_golden.json");
+        let raw = std::fs::read_to_string(path).expect("pokebattle_golden.json is in backend-rs/tests");
+        let g: Value = serde_json::from_str(&raw).unwrap();
+        let team = |v: &Value| -> Vec<Mon> {
+            v.as_array().unwrap().iter().map(|x| build_mon(&clean_spec(x).expect("a clean spec"))).collect()
+        };
+        let mut turns = 0;
+        for game in g["games"].as_array().unwrap() {
+            let seed = &game["seed"];
+            // Each draw is stored as the integer k of k / 2^53 (all random.random() values are),
+            // because serde_json without float_roundtrip can parse a decimal 1 ulp off and a
+            // shifted draw could flip a threshold. k / 2^53 is exact in an f64.
+            let floats: Vec<f64> = game["draws53"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|k| k.as_u64().unwrap() as f64 / (1u64 << 53) as f64)
+                .collect();
+            let mut i = 0usize;
+            let mut rng = || {
+                let v = floats[i % floats.len()];
+                i += 1;
+                v
+            };
+            let mut st = new_battle(team(&game["a"]), team(&game["b"]));
+            let script = game["script"].as_array().unwrap();
+            let want = game["steps"].as_array().unwrap();
+            assert_eq!(script.len(), want.len());
+            for (n, (s, w)) in script.iter().zip(want).enumerate() {
+                let ev = if s["k"] == "turn" {
+                    let a = legal(&st, 0, Some(&s["a"])).expect("a legal act");
+                    let b = legal(&st, 1, Some(&s["b"])).expect("a legal act");
+                    resolve_turn(&mut st, a, b, &mut rng)
+                } else {
+                    let side = s["side"].as_u64().unwrap() as usize;
+                    replace(&mut st, side, s["slot"].as_u64().unwrap() as usize)
+                };
+                let got = Value::Array(ev);
+                assert!(same(&got, w), "seed {seed} step {n}:\n rust   {got}\n golden {w}");
+                turns += 1;
+            }
+            assert_eq!(i as u64, game["draws"].as_u64().unwrap(), "seed {seed}: rng draws");
+            let got = battle_json(&st);
+            assert!(same(&got, &game["state"]), "seed {seed} final state:\n rust   {got}\n golden {}", game["state"]);
+        }
+        assert!(turns > 200);
+
+        let v = &g["vector"];
+        let c = build_mon(&clean_spec(&v["att"]).unwrap());
+        let d = build_mon(&clean_spec(&v["def"]).unwrap());
+        assert!(same(&json!([c.stats.spa, d.stats.spd, d.max]), &v["stats"]));
+        let mv = move_of(v["move"].as_str().unwrap());
+        let dmg = json!([damage(&c, &d, mv, false, 85), damage(&c, &d, mv, false, 100)]);
+        assert!(same(&dmg, &v["damage"]), "{dmg}");
+        for (n, row) in g["evo_pos"].as_object().unwrap() {
+            let n: usize = n.parse().unwrap();
+            let got: Vec<usize> = (0..5).map(|s| evo_pos(s, n)).collect();
+            assert!(same(&json!(got), row), "evo_pos length {n}");
+        }
+    }
 }

@@ -1,9 +1,12 @@
 """Mini Golf: the browser and the Arena server must roll every shot identically.
 
 games/golf/courses.json is mirrored byte-for-byte at backend-rs/data/golf_courses.json (the
-server deploys backend/ only); the JS simulation in games/golf.js (GOLF-SIM block) uses
-the same constants as backend/app/golf.py and, when node is available, reproduces every
-golden vector exactly. Stdlib only."""
+Rust Arena embeds that copy; tools/golf_walls.py writes both); the JS simulation in
+games/golf.js (GOLF-SIM block) uses the same constants as backend-rs/src/valley/golf.rs
+and, when node is available, reproduces every vector of backend-rs/tests/golf_golden.json
+exactly. Those vectors were generated once from the last Python Arena (golf.py) and are
+fixed by design; golf.rs's the_golden_vectors_roll_exactly_as_python_does replays the
+same file through the Rust Arena. Stdlib only."""
 import json
 import os
 import re
@@ -12,9 +15,13 @@ import subprocess
 import sys
 import unittest
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from rsconst import rs_num  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GOLF_JS = os.path.join(ROOT, "games", "golf.js")
-GOLF_PY = os.path.join(ROOT, "backend", "app", "golf.py")
+GOLF_RS = os.path.join(ROOT, "backend-rs", "src", "valley", "golf.rs")
 GOLDEN = os.path.join(ROOT, "backend-rs", "tests", "golf_golden.json")
 CONSTS = ("R", "CUP", "VS", "TICK", "VMIN", "VMAX", "DRAG_NUM", "DRAG_DEN", "ROLL", "STOP", "REST_NUM",
           "REST_DEN", "CAPTURE", "SUBSTEP", "MAX_TICKS", "MAX_STROKES", "OOB_PENALTY", "AIM_MAX", "SAND_DRAG",
@@ -47,7 +54,7 @@ def const_value(src, name):
 class GolfSync(unittest.TestCase):
     def test_course_file_is_mirrored_for_the_server(self):
         with open(os.path.join(ROOT, "games", "golf", "courses.json"), "rb") as a, \
-                open(os.path.join(ROOT, "backend", "app", "golf_courses.json"), "rb") as b:
+                open(os.path.join(ROOT, "backend-rs", "data", "golf_courses.json"), "rb") as b:
             self.assertEqual(a.read(), b.read(), "run python3 tools/golf_walls.py")
 
     def test_course_walls_match_the_models(self):
@@ -56,9 +63,9 @@ class GolfSync(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
 
     def test_constants_match(self):
-        js, py = sim_block(), read(GOLF_PY)
+        js = sim_block()
         for name in CONSTS:
-            self.assertEqual(const_value(js, name), const_value(py, name), name)
+            self.assertEqual(const_value(js, name), rs_num(GOLF_RS, name), name)
 
     def test_courses_reference_known_pieces(self):
         data = json.loads(read(os.path.join(ROOT, "games", "golf", "courses.json")))

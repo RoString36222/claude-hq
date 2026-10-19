@@ -1074,3 +1074,105 @@ fn the_welcome_tells_the_page_custom_levels_are_taken() {
     // games/platformer.js and games/leveledit.js offer custom levels only when arena.maps is set.
     assert_eq!(crate::protocol::arena_info()["maps"], json!({"v": 1}));
 }
+
+/// THE parity proof: `backend-rs/tests/platformer_golden.json`, generated once from the
+/// last Python Arena (backend/app/platformer.py at a1eda91~1) and replayed through
+/// games/platformer.js by tests/test_platformer_sync.py. Read at run time, so the
+/// Docker build context never needs it.
+#[test]
+fn the_platformer_golden_replays_exactly() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/platformer_golden.json");
+    let raw = std::fs::read_to_string(path).expect("platformer_golden.json is in backend-rs/tests");
+    let g: Value = serde_json::from_str(&raw).unwrap();
+    let fv = |v: &Value| v.as_f64().unwrap();
+    let opt = |v: Option<f64>| v.map_or(Value::Null, |x| json!(x));
+    let close = |a: f64, b: f64, what: &str| assert!((a - b).abs() < 5e-10, "{what}: {a} vs {b}");
+    // "Exact" for a float read back from the golden: serde_json here has no
+    // float_roundtrip, so a 16-17 digit number can come back 1 ulp off.
+    let ulp = |a: f64, b: f64| (a - b).abs() <= 4.0 * f64::EPSILON * a.abs().max(b.abs());
+
+    // the model footprints, every name the referee knows
+    let models = g["models"].as_object().unwrap();
+    assert_eq!(models.len(), MODEL_NAMES.len());
+    for (name, m) in models {
+        let want = (m[0] == "round", fv(&m[1]), fv(&m[2]), fv(&m[3]));
+        assert_eq!(model(name), Some(want), "{name}");
+        assert!(MODEL_NAMES.contains(&name.as_str()), "{name}");
+    }
+    assert!(ulp(lift_max(T_APEX), fv(&g["h_apex"])), "H_APEX");
+
+    // compiled levels
+    for gl in g["levels"].as_array().unwrap() {
+        let id = gl["id"].as_str().unwrap();
+        let l = lv(id);
+        close(l.kill, fv(&gl["kill"]), "kill");
+        assert_eq!(l.goal, gl["goal"].as_i64().unwrap(), "{id} goal");
+        close(l.secs, fv(&gl["secs"]), "secs");
+        let pts = |k: &str| -> Vec<[f64; 3]> {
+            gl[k].as_array().unwrap().iter().map(|p| [fv(&p[0]), fv(&p[1]), fv(&p[2])]).collect()
+        };
+        for k in ["spawns", "cps"] {
+            let mine = if k == "spawns" { &l.spawns } else { &l.cps };
+            assert_eq!(mine.len(), pts(k).len(), "{id} {k}");
+            for (a, b) in mine.iter().zip(pts(k)) {
+                (0..3).for_each(|i| close(a[i], b[i], k));
+            }
+        }
+        for (a, b) in l.flag.iter().zip(gl["flag"].as_array().unwrap()) {
+            close(*a, fv(b), "flag");
+        }
+        for (a, b) in l.bounds.iter().zip(gl["bounds"].as_array().unwrap()) {
+            close(*a, fv(b), "bounds");
+        }
+        let solids = gl["solids"].as_array().unwrap();
+        assert_eq!(l.solids.len(), solids.len(), "{id} solids");
+        for (s, w) in l.solids.iter().zip(solids) {
+            assert_eq!(s.m, w["m"].as_str().unwrap());
+            for (k, v) in [("x0", s.x0), ("x1", s.x1), ("y0", s.y0), ("y1", s.y1), ("z0", s.z0), ("z1", s.z1),
+                           ("cx", s.cx), ("cz", s.cz), ("r", s.r)] {
+                close(v, fv(&w[k]), k);
+            }
+        }
+    }
+
+    // probes: support (two ways), inside, in_foot per solid -- exactly
+    let probes = g["probes"].as_array().unwrap();
+    let outs = g["out"].as_array().unwrap();
+    assert_eq!(probes.len(), outs.len());
+    assert!(probes.len() >= 300);
+    // That 1 ulp matters for the probes: one sitting on an edge (y0 + 0.1 < y) then flips. So rebuild each probe exactly as
+    // the generator did -- solid centre/top plus the same offsets, same IEEE arithmetic --
+    // and only check it against the stored one to within a few ulp.
+    const OFFS: [(f64, f64, f64); 6] = [(0.0, 0.0, 0.0), (0.9, 0.2, -0.4), (f64::NAN, 0.0, 0.1), (-2.6, 0.55, 2.4),
+                                        (0.3, -0.2, 0.3), (0.0, -0.4, 0.0)];
+    let mut rebuilt = Vec::new();
+    for gl in g["levels"].as_array().unwrap() {
+        let id = gl["id"].as_str().unwrap();
+        for s in &lv(id).solids {
+            for &(dx, dy, dz) in &OFFS {
+                let dx = if dx.is_nan() { s.x1 - s.cx + 0.25 } else { dx };
+                rebuilt.push((id, s.cx + dx, s.y1 + dy, s.cz + dz));
+            }
+        }
+    }
+    assert_eq!(rebuilt.len(), probes.len());
+    for ((id, x, y, z), (p, want)) in rebuilt.into_iter().zip(probes.iter().zip(outs)) {
+        assert_eq!(id, p[0].as_str().unwrap());
+        assert!(ulp(x, fv(&p[1])) && ulp(y, fv(&p[2])) && ulp(z, fv(&p[3])), "{p} vs ({x}, {y}, {z})");
+        let l = lv(id);
+        // the supports to within the parse's ulp (see above); the booleans exactly
+        for (k, got) in [support(l, x, y, z, PR + 0.2, 0.6), support(l, x, y, z, -PR, 0.01)].into_iter().enumerate() {
+            match (got, want[k].as_f64()) {
+                (Some(a), Some(b)) => assert!(ulp(a, b), "{p} support {k}: {a} vs {b}"),
+                (a, _) => assert_eq!(opt(a), want[k], "{p} support {k}"),
+            }
+        }
+        let feet: Vec<bool> = l.solids.iter().map(|s| in_foot(s, x, z, 0.3)).collect();
+        assert_eq!(json!([inside(l, x, y, z), feet]), json!([want[2], want[3]]), "{p}");
+    }
+
+    for (s, want) in g["segs"].as_array().unwrap().iter().zip(g["seg"].as_array().unwrap()) {
+        let v3 = |v: &Value| [fv(&v[0]), fv(&v[1]), fv(&v[2])];
+        close(seg_dist(v3(&s[0]), v3(&s[1]), v3(&s[2])), fv(want), "seg_dist");
+    }
+}

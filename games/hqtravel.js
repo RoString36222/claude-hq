@@ -279,6 +279,9 @@ function start(mode, from, to, hooks){
             function(e){ if(!ended) err = e || new Error("load failed"); });
   }
   function fail(why){
+    // the fade as it stood (fast travel may be mid fade-out): the failed pose fades back in from there
+    trip.failFade = trip.pose().fade;
+    trip.failedAt = clock();
     ended = true;
     trip.phase = "failed";
     trip.message = failMsg(mode, to, why);
@@ -320,6 +323,9 @@ function start(mode, from, to, hooks){
   trip.pose = function(){
     var now = clock();
     if(trip.phase === "arriving" || trip.phase === "done") return arrivePose(mode, trip.spawn, (now - trip.arrivedAt)/1000);
+    // back at the origin terminal: no cinematic, and any fade lifts
+    if(trip.phase === "failed") return {frame: "from", camera: false, pos: null, look: null, up: v3(0, 1, 0), fov: 65,
+                                        fade: trip.failFade*(1 - smootherstep((now - trip.failedAt)/1000/FADE)), vehicle: null};
     var t = trip.departAt != null && trip.phase !== "boarding" ? (now - trip.departAt)/1000 : 0;
     return ridePose(mode, trip.frame, trip.seconds, t);
   };

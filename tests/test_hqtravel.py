@@ -151,9 +151,9 @@ async function main(){
     if(how === "build"){ r.docD.res(DEST); r.cityD.res({}); await flush(); await flush(); r.buildD.rej(new Error("oom")); }
     await flush(); await flush(); await flush();
     await tick(r, trip, how === "hang" ? trip.seconds + H.LOAD_TIMEOUT + 1 : 1);
-    var a = r.arrived[0] || {sp: {}};
+    var a = r.arrived[0] || {sp: {}}, ps = trip.pose();
     return {phase: trip.phase, n: r.arrived.length, site: a.sp.site, world: a.sp.world, failed: !!a.sp.failed,
-            message: a.sp.message, tripMsg: trip.message};
+            message: a.sp.message, tripMsg: trip.message, camera: ps.camera, fade: ps.fade, frame: ps.frame};
   }
   out.fail = {doc: await failCase("rail", "doc"), baddoc: await failCase("rail", "baddoc"),
               build: await failCase("rail", "build"), hang: await failCase("rail", "hang"),
@@ -186,6 +186,19 @@ async function main(){
   out.fastDeclined = {phase: trip.phase, log: r.log.map(function(l){ return l[0]; }), n: r.arrived.length,
                       failed: r.arrived[0] && r.arrived[0].sp.failed, world: r.arrived[0] && r.arrived[0].sp.world,
                       message: trip.message};
+  // a failed fast travel, after the screen has gone black: the fade lifts at the origin, no jump, no cinematic
+  r = rig(); trip = H.start("fast", city(A, 1, FULL), city(B, 1, null), r.hooks);
+  r.fareD.res(); await flush(); await flush();
+  await tick(r, trip, 1);
+  var black = trip.pose().fade;
+  r.docD.rej(new Error("503")); await flush(); await flush(); await flush();
+  await tick(r, trip, 0.25);
+  var p0 = trip.pose();
+  await tick(r, trip, 2);
+  var p1 = trip.pose();
+  out.fastFailed = {black: black, phase: trip.phase, n: r.arrived.length, failed: r.arrived[0] && r.arrived[0].sp.failed,
+                    world: r.arrived[0] && r.arrived[0].sp.world, message: trip.message,
+                    fade0: p0.fade, camera0: p0.camera, fade1: p1.fade, camera1: p1.camera, frame: p1.frame};
   out.visitedAfter = H.visited();
 
   // other refusals
@@ -343,6 +356,25 @@ class HqTravel(unittest.TestCase):
         self.assertEqual(self.o["fail"]["doc"]["site"], "st1")       # the origin station
         self.assertEqual(self.o["fail"]["ferry"]["site"], "air1")    # a plane: the origin airport
         self.assertIn("Isle", self.o["fail"]["doc"]["message"])
+        for k, f in self.o["fail"].items():
+            # the camera is handed back at the origin: no ride cinematic, no fade
+            self.assertFalse(f["camera"], k)
+            self.assertEqual(f["fade"], 0, k)
+            self.assertEqual(f["frame"], "from", k)
+
+    def test_failed_fast_travel_lifts_the_fade(self):
+        f = self.o["fastFailed"]
+        self.assertEqual(f["black"], 1)                             # the fade-out had finished
+        self.assertEqual(f["phase"], "failed")
+        self.assertEqual(f["n"], 1)
+        self.assertTrue(f["failed"])
+        self.assertEqual(f["world"], "user:11111111-2222-4333-8444-555555555555@2")
+        self.assertIn("back at the", f["message"])
+        self.assertFalse(f["camera0"])
+        self.assertGreater(f["fade0"], 0.5)                         # fades back in from black, no jump cut
+        self.assertFalse(f["camera1"])
+        self.assertEqual(f["fade1"], 0)                             # never a permanent black screen
+        self.assertEqual(f["frame"], "from")
 
     def test_fast_travel_fee_only_when_unlocked(self):
         l = self.o["fastLocked"]

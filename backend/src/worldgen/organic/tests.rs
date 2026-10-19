@@ -20,7 +20,7 @@ fn commons() -> &'static WorldDoc {
 /// The fingerprint of the Commons. Everyone's tower (and every HQ's lot) is stored
 /// against this world, so a change here MOVES THINGS FOR EVERYONE: only update it on
 /// purpose, with a new generator version once the world is live.
-const CLAUDE_HQ_2: &str = "fa336a1653e219ec";
+const CLAUDE_HQ_2: &str = "d6b34968d4792572";
 
 const ISLAND: &str = "user:0b6f2a3c-1d4e-4f5a-9b8c-7d6e5f4a3b2c@2";
 
@@ -327,16 +327,18 @@ fn check(w: &WorldDoc) {
         assert!(rise(&base, &poly) <= p.site_flat_cm * 2, "{id}: HQ lot {k} is on a slope");
     }
 
-    // sites: every one the profile reserves, inside its block, flat, apart
+    // sites: every one the profile reserves, inside its block, flat, apart; a tier each.
+    // The shore's sites and the airport stand outside the city (civic.rs)
     for s in &p.sites {
         assert_eq!(l.sites.iter().filter(|x| x.kind == s.kind).count() as i64, s.count, "{id}: {} placed", s.kind);
     }
     for (k, s) in l.sites.iter().enumerate() {
         let poly = pts(s.poly.as_ref().unwrap());
         let block = pts(l.blocks[s.block as usize].poly.as_ref().unwrap());
-        assert!(poly.iter().all(|&q| inside(q, &block)), "{id}: {} leaves its block", s.id);
-        assert_eq!(s.tier, Some(1));
-        assert!(rise(&base, &poly) <= p.site_flat_cm, "{id}: {} is on a slope", s.id);
+        let off = matches!(s.kind, "dock" | "port" | "airport" | "stadium");
+        assert!(off || poly.iter().all(|&q| inside(q, &block)), "{id}: {} leaves its block", s.id);
+        assert!(s.tier.is_some_and(|t| (1..=5).contains(&t)), "{id}: {} has tier {:?}", s.id, s.tier);
+        assert!(off || rise(&base, &poly) <= p.site_flat_cm, "{id}: {} is on a slope", s.id);
         for o in &l.sites[k + 1..] {
             let other = pts(o.poly.as_ref().unwrap());
             let apart = !poly.iter().any(|&q| inside(q, &other)) && !other.iter().any(|&q| inside(q, &poly));

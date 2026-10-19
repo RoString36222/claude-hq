@@ -95,6 +95,9 @@ pub struct Site {
     pub poly: Option<Vec<[i64; 2]>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub front: Option<[i64; 2]>,
+    /// Organic worlds (@2): the HQ tab its door opens ("store", "analytics", ...).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub view: Option<&'static str>,
 }
 
 /// The grid's line positions: line `i` runs between block columns i and i+1.
@@ -280,7 +283,7 @@ fn sites(p: &Profile, t: &Terrain, blocks: &[Block]) -> Result<Vec<Site>, String
             };
             out.push(Site {
                 id: format!("{}:{n}", s.kind), kind: s.kind, block: b.id,
-                x, y: t.height_at(x, z), z, w: s.w_cm, d: s.d_cm, facing: Facing::North, tier: None, poly: None, front: None,
+                x, y: t.height_at(x, z), z, w: s.w_cm, d: s.d_cm, facing: Facing::North, tier: None, poly: None, front: None, view: None,
             });
         }
     }

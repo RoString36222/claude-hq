@@ -189,9 +189,8 @@ fn plaza_sites() -> Vec<SiteSpec> {
 /// their own character, the 64-lot HQ pool downtown. The same land, on a gently
 /// rolling plateau for the streets to follow.
 pub fn commons() -> Profile {
-    let mut sites = plaza_sites();
-    // one per HQ tab, on the civic lots nearest the plaza (two to a block at most)
-    sites.push(SiteSpec { kind: "view-building", count: 16, w_cm: 1_600, d_cm: 2_200, place: Place::Slots { district: district::CIVIC, per_block: 2 } });
+    // the HQ tabs' doors are civic sites here (civic.rs VIEWS), not view-building slots
+    let sites = plaza_sites();
     Profile {
         name: "commons",
         legend: &district::NAMES2,

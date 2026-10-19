@@ -15,7 +15,10 @@
 //! swaps the grid for an organic city (see organic/): arterials traced through a
 //! tensor field, local streets grown between them, blocks as the faces of the road
 //! graph, lots split from the blocks. Highways, the ring and the rest of the
-//! pipeline are shared, so version 1 is untouched.
+//! pipeline are shared, so version 1 is untouched. Version 2 adds the civic sites
+//! (civic.rs: services on lots taken before the HQ pool, then the shore's and the
+//! airport once the highways are laid), the industry zones (zones.rs) and the bus
+//! and tram lines (transit.rs).
 //!
 //! Layout (where roads, blocks, lots and sites are) comes from the seed and the
 //! profile only; terrain edits change heights, never layout. The result is a
@@ -26,6 +29,7 @@
 //! world id and edits give a byte-identical document on every platform.
 
 pub mod city;
+pub mod civic;
 pub mod districts;
 pub mod noise;
 pub mod organic;
@@ -33,6 +37,8 @@ pub mod profile;
 pub mod rng;
 pub mod roads;
 pub mod terrain;
+pub mod transit;
+pub mod zones;
 
 #[cfg(test)]
 mod tests;
@@ -77,6 +83,11 @@ pub struct Layers {
     pub blocks: Vec<city::Block>,
     pub lots: Vec<city::Lot>,
     pub sites: Vec<city::Site>,
+    /// Organic worlds (@2): the industry zones and the transit lines.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zones: Option<Vec<zones::Zone>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transit: Option<transit::Transit>,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -87,6 +98,8 @@ pub struct Hashes {
     pub blocks: String,
     pub lots: String,
     pub sites: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transit: Option<String>,
     pub edits: String,
     /// Of all the above: the world's one fingerprint.
     pub world: String,
@@ -124,6 +137,12 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
     } else {
         organic::generate(seed, &p, &base)?
     };
+    let (zones, transit) = if version == 1 {
+        (None, None)
+    } else {
+        civic::outside(&p, &base, &roads, &mut city);
+        (Some(zones::layer(seed, &city.blocks)), Some(transit::generate(&roads, &city.sites, &city.lots)))
+    };
 
     let mut terrain = base;
     terrain.apply(edits)?;
@@ -131,7 +150,7 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
     roads.carve(&mut terrain);
     city.seat(&terrain);
 
-    let layers = Layers { terrain, districts, roads, blocks: city.blocks, lots: city.lots, sites: city.sites };
+    let layers = Layers { terrain, districts, roads, blocks: city.blocks, lots: city.lots, sites: city.sites, zones, transit };
     let mut hashes = Hashes {
         terrain: hash(&layers.terrain),
         districts: hash(&layers.districts),
@@ -139,6 +158,7 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         blocks: hash(&layers.blocks),
         lots: hash(&layers.lots),
         sites: hash(&layers.sites),
+        transit: layers.transit.as_ref().map(hash),
         edits: hash(&edits),
         world: String::new(),
     };

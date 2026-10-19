@@ -115,7 +115,9 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain) -> Result<(City, Roads, 
         }
     }
 
-    let sites = sites(p, base, &blocks, &mut lots)?;
+    let mut sites = sites(p, base, &blocks, &mut lots)?;
+    // the civic sites take their lots before the HQ pool is drawn: never a member's
+    super::civic::place(seed, p, base, &g, &mut blocks, &mut lots, &mut sites)?;
     hq_pool(p, base, &mut lots)?;
     let mut by_core: Vec<(i64, usize)> = lots.iter().enumerate().map(|(k, l)| (l.x * l.x + l.z * l.z, k)).collect();
     by_core.sort();
@@ -245,7 +247,7 @@ fn sites(p: &Profile, t: &Terrain, blocks: &[Block], lots: &mut Vec<Lot>) -> Res
             out.push(Site {
                 id: format!("{}:{n}", s.kind), kind: s.kind, block, x: c.0, y: t.height_at(c.0, c.1), z: c.1, w: s.w_cm, d: s.d_cm,
                 facing: if front.1 >= 0 { Facing::North } else { Facing::South },
-                tier: Some(1), poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()), front: Some([front.0, front.1]),
+                tier: Some(1), poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()), front: Some([front.0, front.1]), view: None,
             });
         }
     }
@@ -253,7 +255,7 @@ fn sites(p: &Profile, t: &Terrain, blocks: &[Block], lots: &mut Vec<Lot>) -> Res
 }
 
 /// A w x d rectangle centred on c, its front (a w side) facing the Q16 unit `front`: CCW.
-fn rect(c: P, front: P, w: i64, d: i64) -> Vec<P> {
+pub(super) fn rect(c: P, front: P, w: i64, d: i64) -> Vec<P> {
     let along = left(front);
     let at = |s: i64, t: i64| (c.0 + (along.0 * s + front.0 * t) / ONE / 2, c.1 + (along.1 * s + front.1 * t) / ONE / 2);
     let r = vec![at(-w, -d), at(w, -d), at(w, d), at(-w, d)];
@@ -262,7 +264,7 @@ fn rect(c: P, front: P, w: i64, d: i64) -> Vec<P> {
 
 /// Where a w x d site stands on lot `l`: a metre back from its door, square to its
 /// front, wholly inside it on flat ground. None if it does not fit.
-fn fit(t: &Terrain, p: &Profile, l: &Lot, w: i64, d: i64) -> Option<P> {
+pub(super) fn fit(t: &Terrain, p: &Profile, l: &Lot, w: i64, d: i64) -> Option<P> {
     let f = l.front?;
     let poly: Vec<P> = l.poly.as_ref()?.iter().map(|q| (q[0], q[1])).collect();
     let back = d / 2 + 100;

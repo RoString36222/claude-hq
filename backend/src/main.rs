@@ -45,7 +45,9 @@ mod sounds;
 mod story_check;
 mod valley;
 mod weeks;
-// The world generator (HQ 3.0). Not served yet: GET /v1/world/:id lands in P2.
+mod world;
+// The world generator (HQ 3.0), served by world.rs. Parts (queries the City
+// and server checks will use) have no caller yet.
 #[allow(dead_code)]
 mod worldgen;
 
@@ -921,7 +923,9 @@ async fn serve() -> anyhow::Result<()> {
         .merge(boardstream::routes())
         // Unauthenticated, and only when ARENA_EXPOSE_REALTIME_STATS=1.
         .merge(server_stats::public_routes())
-        .merge(portraits::public_routes());
+        .merge(portraits::public_routes())
+        // GET /v1/world/:id; the preview and viewer only when ARENA_WORLD_PREVIEW=1.
+        .merge(world::public_routes());
 
     let app = Router::new().merge(public).merge(guarded).with_state(state);
 

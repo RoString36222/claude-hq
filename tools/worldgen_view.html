@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>World Viewer</title>
+<style>
+:root{--bg:#0d1014;--panel:#151a20;--line:#262e38;--ink:#e6ebf0;--dim:#8b96a3;--acc:#ffb000;--ok:#4af626;--bad:#ff5d5d;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:13px/1.4 var(--sans)}
+#app{display:grid;grid-template-columns:300px 1fr;height:100%}
+aside{background:var(--panel);border-right:1px solid var(--line);padding:14px;overflow:auto}
+h1{font-size:15px;margin:0 0 2px}
+.sub{color:var(--dim);font-size:11.5px;margin-bottom:12px}
+h2{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin:16px 0 6px;font-weight:600}
+label{display:flex;align-items:center;gap:8px;margin:3px 0;cursor:pointer}
+input[type=text],input[type=number],select{background:var(--bg);color:var(--ink);border:1px solid var(--line);padding:5px 7px;font:12px var(--mono);border-radius:4px}
+input[type=text]{width:100%}
+.row{display:flex;gap:6px;align-items:center}
+button{background:#222a34;color:var(--ink);border:1px solid var(--line);padding:5px 9px;border-radius:4px;cursor:pointer;font:12px var(--sans)}
+button:hover{border-color:var(--acc)}
+button.on{background:var(--acc);color:#111;border-color:var(--acc)}
+.stat{font:11.5px/1.6 var(--mono);color:var(--dim);white-space:pre-wrap}
+.stat b{color:var(--ink);font-weight:500}
+#hover{font:11.5px/1.6 var(--mono);white-space:pre-wrap;min-height:6em}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+#legend{display:grid;grid-template-columns:1fr 1fr;gap:2px 8px;font-size:11.5px}
+main{position:relative;overflow:hidden}
+canvas{display:block;width:100%;height:100%;cursor:grab}
+canvas.brush{cursor:crosshair}
+#msg{position:absolute;left:12px;bottom:12px;background:rgba(13,16,20,.85);border:1px solid var(--line);padding:6px 10px;border-radius:4px;font:12px var(--mono);pointer-events:none}
+#msg.err{color:var(--bad);border-color:var(--bad)}
+.edit{display:flex;justify-content:space-between;font:11px var(--mono);color:var(--dim);padding:2px 0;border-bottom:1px solid var(--line)}
+</style>
+</head>
+<body>
+<div id="app">
+<aside>
+  <h1>World Viewer</h1>
+  <div class="sub">The world generator's output, layer by layer (dev Arena only).</div>
+
+  <h2>World</h2>
+  <div class="row"><input id="wid" type="text" value="claude-hq@1" spellcheck="false"><button id="load">Load</button></div>
+  <div class="stat" id="stats" style="margin-top:8px">loading…</div>
+
+  <h2>Layers</h2>
+  <div id="layers"></div>
+
+  <h2>Terrain brush</h2>
+  <div class="row" style="margin-bottom:6px"><button id="brushBtn">Brush: off</button>
+    <select id="op"><option value="raise">raise</option><option value="lower">lower</option><option value="flatten">flatten</option><option value="smooth">smooth</option></select></div>
+  <div class="row">r <input id="rad" type="number" value="60" min="1" max="400" style="width:62px"> m
+    &nbsp;amt <input id="amt" type="number" value="8" style="width:62px"> m</div>
+  <div class="sub" style="margin-top:6px">Click the map to apply. Edits are previewed, never saved. Flatten uses the height under the cursor.</div>
+  <div class="row"><button id="undo">Undo</button><button id="clear">Clear</button></div>
+  <div id="edits" style="margin-top:6px"></div>
+
+  <h2>Under the cursor</h2>
+  <div id="hover">—</div>
+
+  <h2>Districts</h2>
+  <div id="legend"></div>
+</aside>
+<main><canvas id="cv"></canvas><div id="msg"></div></main>
+</div>
+<script>
+"use strict";
+var DCOL = {wild:"#3d5a3a", farmland:"#a8b56a", forest:"#2f6b3a", plaza:"#e8d9a8", civic:"#7fb3e0", hq:"#ffb000",
+  commercial:"#d97a8b", residential:"#c9b79c", park:"#66c46a", industrial:"#8d8f99", street:"#5a6270"};
+var LAYERS = [["terrain","Terrain (hill shade)",true],["districts","Districts",true],["roads","Roads",true],["names","Street names",true],
+  ["lots","Lots",true],["hq","HQ lot pool (rank)",true],["sites","Sites",true]];
+var on = {}; LAYERS.forEach(function(l){ on[l[0]] = l[2]; });
+var cv = document.getElementById("cv"), g = cv.getContext("2d");
+var W = null, terrainImg = null, districtImg = null, edits = [], brush = false;
+var view = {s: 0, x: 0, z: 0};   // pixels per cm, world point at the canvas centre
+function $(id){ return document.getElementById(id); }
+function msg(t, err){ var m = $("msg"); m.textContent = t || ""; m.className = err ? "err" : ""; m.style.display = t ? "" : "none"; }
+
+// ---- UI ----------------------------------------------------------------------
+$("layers").innerHTML = LAYERS.map(function(l){ return '<label><input type="checkbox" data-l="'+l[0]+'"'+(l[2]?" checked":"")+'> '+l[1]+'</label>'; }).join("");
+$("layers").addEventListener("change", function(e){ on[e.target.dataset.l] = e.target.checked; draw(); });
+$("legend").innerHTML = Object.keys(DCOL).map(function(k){ return '<span><i class="sw" style="background:'+DCOL[k]+'"></i>'+k+'</span>'; }).join("");
+$("load").onclick = function(){ edits = []; load(); };
+$("wid").addEventListener("keydown", function(e){ if(e.key === "Enter"){ edits = []; load(); } });
+$("brushBtn").onclick = function(){ brush = !brush; this.textContent = "Brush: " + (brush ? "on" : "off"); this.classList.toggle("on", brush); cv.classList.toggle("brush", brush); };
+$("undo").onclick = function(){ edits.pop(); load(); };
+$("clear").onclick = function(){ edits = []; load(); };
+
+// ---- data --------------------------------------------------------------------
+function load(){
+  var id = $("wid").value.trim();
+  msg("generating " + id + "…");
+  var req = edits.length
+    ? fetch("/v1/world/" + encodeURIComponent(id) + "/preview", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({edits: edits})})
+    : fetch("/v1/world/" + encodeURIComponent(id));
+  var t0 = performance.now();
+  req.then(function(r){ return r.json().then(function(j){ if(!r.ok) throw new Error(j.detail || r.status); return j; }); })
+    .then(function(w){
+      var first = !W; W = w; rasterise(); stats(performance.now() - t0); renderEdits();
+      if(first) fit(); draw(); msg("");
+    })
+    .catch(function(e){ if(edits.length) edits.pop(); renderEdits(); msg(String(e.message || e), true); });
+}
+function stats(ms){
+  var L = W.layers, by = {};
+  L.blocks.forEach(function(b){ var k = L.districts.legend[b.district]; by[k] = (by[k] || 0) + 1; });
+  var cls = {}; L.roads.edges.forEach(function(e){ cls[e.class] = (cls[e.class] || 0) + 1; });
+  var hs = L.terrain.heights, lo = Infinity, hi = -Infinity; for(var i = 0; i < hs.length; i++){ if(hs[i] < lo) lo = hs[i]; if(hs[i] > hi) hi = hs[i]; }
+  $("stats").innerHTML = "<b>" + W.id + "</b>  " + Math.round(ms) + " ms\nfingerprint <b>" + W.hashes.world + "</b>\n" +
+    "size " + W.size_cm/100 + " m · heights " + (lo/100).toFixed(0) + "…" + (hi/100).toFixed(0) + " m\n" +
+    "blocks " + L.blocks.length + " · lots " + L.lots.length + " (" + L.lots.filter(function(l){ return l.kind === "hq"; }).length + " HQ)\n" +
+    "roads " + Object.keys(cls).map(function(k){ return cls[k] + " " + k; }).join(", ") + "\nsites " + L.sites.length;
+}
+function renderEdits(){
+  $("edits").innerHTML = edits.map(function(e, i){
+    var v = e.op === "raise" ? (e.cm/100) + " m" : e.op === "flatten" ? "to " + (e.y/100).toFixed(1) + " m" : e.passes + "×";
+    return '<div class="edit"><span>' + (i+1) + ". " + e.op + " r " + e.r/100 + " m</span><span>" + v + "</span></div>";
+  }).join("");
+}
+
+// ---- rasters (once per world) -------------------------------------------------
+function rasterise(){
+  var T = W.layers.terrain, n = T.n, hs = T.heights;
+  var lo = Infinity, hi = -Infinity; for(var i = 0; i < hs.length; i++){ if(hs[i] < lo) lo = hs[i]; if(hs[i] > hi) hi = hs[i]; }
+  var c = document.createElement("canvas"); c.width = c.height = n;
+  var img = c.getContext("2d").createImageData(n, n), d = img.data;
+  for(var z = 0; z < n; z++) for(var x = 0; x < n; x++){
+    var h = hs[z*n + x], hl = hs[z*n + Math.max(0, x-1)], hu = hs[Math.max(0, z-1)*n + x];
+    // light from the north-west; slope in cm per 8 m cell
+    var shade = Math.max(0.35, Math.min(1.35, 1 + ((hl - h) + (hu - h))/220));
+    var t = (h - lo)/Math.max(1, hi - lo);
+    var r = 70 + 120*t, gg = 105 + 70*t - 30*t*t, b = 70 + 60*t*t;
+    var k = (z*n + x)*4; d[k] = r*shade; d[k+1] = gg*shade; d[k+2] = b*shade; d[k+3] = 255;
+  }
+  c.getContext("2d").putImageData(img, 0, 0); terrainImg = c;
+  var D = W.layers.districts, dn = D.n, dc = document.createElement("canvas"); dc.width = dc.height = dn;
+  var di = dc.getContext("2d").createImageData(dn, dn), dd = di.data;
+  var rgb = D.legend.map(function(k){ var h = DCOL[k] || "#000"; return [parseInt(h.substr(1,2),16), parseInt(h.substr(3,2),16), parseInt(h.substr(5,2),16)]; });
+  for(var q = 0; q < dn*dn; q++){ var col = rgb[D.kinds[q]]; dd[q*4] = col[0]; dd[q*4+1] = col[1]; dd[q*4+2] = col[2]; dd[q*4+3] = 255; }
+  dc.getContext("2d").putImageData(di, 0, 0); districtImg = dc;
+}
+
+// ---- view ---------------------------------------------------------------------
+function size(){ var r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1; cv.width = r.width*dpr; cv.height = r.height*dpr; g.setTransform(dpr, 0, 0, dpr, 0, 0); return r; }
+function fit(){ var r = cv.getBoundingClientRect(); view.s = Math.min(r.width, r.height)/W.size_cm*0.96; view.x = 0; view.z = 0; }
+function sx(x){ return cv.clientWidth/2 + (x - view.x)*view.s; }
+function sz(z){ return cv.clientHeight/2 + (z - view.z)*view.s; }   // +z is drawn down the screen
+function wx(px){ return view.x + (px - cv.clientWidth/2)/view.s; }
+function wz(py){ return view.z + (py - cv.clientHeight/2)/view.s; }
+
+function draw(){
+  size(); g.fillStyle = "#0d1014"; g.fillRect(0, 0, cv.clientWidth, cv.clientHeight);
+  if(!W) return;
+  var L = W.layers, half = W.size_cm/2, m = view.s; // px per cm
+  g.imageSmoothingEnabled = true;
+  if(on.terrain) g.drawImage(terrainImg, sx(-half), sz(-half), W.size_cm*m, W.size_cm*m);
+  if(on.districts){ g.globalAlpha = on.terrain ? 0.45 : 1; g.imageSmoothingEnabled = false;
+    g.drawImage(districtImg, sx(-half), sz(-half), W.size_cm*m, W.size_cm*m); g.globalAlpha = 1; g.imageSmoothingEnabled = true; }
+  if(on.lots){
+    L.lots.forEach(function(l){
+      if(l.kind === "hq") return;
+      g.fillStyle = "rgba(20,24,30,0.35)"; g.fillRect(sx(l.x - l.w/2) + 0.5, sz(l.z - l.d/2) + 0.5, Math.max(1, l.w*m - 1), Math.max(1, l.d*m - 1));
+    });
+  }
+  if(on.roads){
+    var col = {avenue: "#f3f1ea", street: "#c9ced6", country: "#e9c46a"};
+    ["country","street","avenue"].forEach(function(cls){
+      g.strokeStyle = col[cls]; g.lineCap = "round"; g.lineJoin = "round";
+      L.roads.edges.forEach(function(e){
+        if(e.class !== cls) return;
+        g.lineWidth = Math.max(cls === "country" ? 1.6 : 0.8, e.width*m);
+        g.beginPath(); e.points.forEach(function(p, i){ i ? g.lineTo(sx(p[0]), sz(p[2])) : g.moveTo(sx(p[0]), sz(p[2])); }); g.stroke();
+      });
+    });
+  }
+  if(on.hq){
+    L.lots.forEach(function(l){
+      if(l.kind !== "hq") return;
+      var a = l.tier === 0 ? 0.95 : l.tier === 1 ? 0.75 : l.tier === 2 ? 0.55 : 0.4;
+      g.fillStyle = "rgba(255,176,0," + a + ")"; g.fillRect(sx(l.x - l.w/2), sz(l.z - l.d/2), l.w*m, l.d*m);
+      g.fillStyle = "#111"; g.fillRect(sx(l.door[0]) - 2, sz(l.door[2]) - 2, 4, 4);
+      if(l.w*m > 22){ g.fillStyle = "#111"; g.font = "600 " + Math.min(14, l.w*m/3) + "px " + getComputedStyle(document.body).fontFamily;
+        g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("#" + l.rank, sx(l.x), sz(l.z)); }
+    });
+  }
+  if(on.sites){
+    L.sites.forEach(function(s){
+      g.strokeStyle = "#5fd3e6"; g.lineWidth = 1.5; g.fillStyle = "rgba(95,211,230,0.25)";
+      g.fillRect(sx(s.x - s.w/2), sz(s.z - s.d/2), s.w*m, s.d*m); g.strokeRect(sx(s.x - s.w/2), sz(s.z - s.d/2), s.w*m, s.d*m);
+      if(m*s.w > 30){ g.fillStyle = "#e6f9fc"; g.font = "11px " + getComputedStyle(document.body).fontFamily; g.textAlign = "center"; g.textBaseline = "middle";
+        g.fillText(s.kind === "view-building" ? "view " + s.id.split(":")[1] : s.kind, sx(s.x), sz(s.z)); }
+    });
+  }
+  if(on.roads){
+    // gates and ring junctions
+    L.roads.nodes.forEach(function(nd){
+      var deg = 0; L.roads.edges.forEach(function(e){ if(e.class === "country" && (e.a === nd.id || e.b === nd.id)) deg++; });
+      if(!deg) return;
+      g.fillStyle = "#e9c46a"; g.beginPath(); g.arc(sx(nd.x), sz(nd.z), 3.5, 0, 7); g.fill();
+    });
+  }
+  if(on.names && m > 0.02){
+    g.font = "10.5px " + getComputedStyle(document.body).fontFamily; g.textAlign = "center"; g.textBaseline = "middle";
+    var seen = {};
+    L.roads.edges.forEach(function(e){
+      if(e.class === "country"){ if(m < 0.004 || seen[e.name]) return; }
+      var mid = e.points[Math.floor(e.points.length/2)], a = e.points[0], b = e.points[e.points.length - 1];
+      if(e.class !== "country"){ var k = e.name + Math.round(mid[0]/20000) + "," + Math.round(mid[2]/20000); if(seen[k]) return; seen[k] = 1; } else seen[e.name] = 1;
+      var px = sx(e.class === "country" ? mid[0] : (a[0] + b[0])/2), pz = sz(e.class === "country" ? mid[2] : (a[2] + b[2])/2);
+      if(px < 0 || pz < 0 || px > cv.clientWidth || pz > cv.clientHeight) return;
+      g.save(); g.translate(px, pz); if(a[0] === b[0]) g.rotate(-Math.PI/2);
+      var t = e.name, tw = g.measureText(t).width;
+      g.fillStyle = "rgba(13,16,20,0.75)"; g.fillRect(-tw/2 - 3, -7, tw + 6, 14); g.fillStyle = "#f3f1ea"; g.fillText(t, 0, 0); g.restore();
+    });
+  }
+  // scale bar
+  var meters = [10,20,50,100,200,500,1000].find(function(v){ return v*100*m > 80; }) || 1000;
+  g.fillStyle = "#e6ebf0"; g.fillRect(cv.clientWidth - 20 - meters*100*m, cv.clientHeight - 24, meters*100*m, 3);
+  g.font = "11px " + getComputedStyle(document.body).fontFamily; g.textAlign = "right"; g.fillText(meters + " m", cv.clientWidth - 20, cv.clientHeight - 32);
+}
+
+// ---- queries (the same maths as worldgen's Rust, for the readout) ----------------
+function heightAt(x, z){
+  var T = W.layers.terrain, n = T.n, c = T.cell_cm, max = (n - 1)*c;
+  var lx = Math.min(max, Math.max(0, x - T.origin_cm)), lz = Math.min(max, Math.max(0, z - T.origin_cm));
+  var ix = Math.floor(lx/c), iz = Math.floor(lz/c), ix1 = Math.min(ix + 1, n - 1), iz1 = Math.min(iz + 1, n - 1);
+  var fx = (lx % c)/c, fz = (lz % c)/c, H = T.heights;
+  var a = H[iz*n+ix] + (H[iz*n+ix1] - H[iz*n+ix])*fx, b = H[iz1*n+ix] + (H[iz1*n+ix1] - H[iz1*n+ix])*fx;
+  return a + (b - a)*fz;
+}
+function districtAt(x, z){
+  var D = W.layers.districts, f = function(v){ return Math.min(D.n - 1, Math.max(0, Math.floor((v - D.origin_cm)/D.cell_cm))); };
+  return D.legend[D.kinds[f(z)*D.n + f(x)]];
+}
+function nearestRoad(x, z){
+  var best = null, bd = Infinity;
+  W.layers.roads.edges.forEach(function(e){
+    for(var i = 1; i < e.points.length; i++){
+      var a = e.points[i-1], b = e.points[i], dx = b[0]-a[0], dz = b[2]-a[2], l2 = dx*dx + dz*dz || 1;
+      var t = Math.max(0, Math.min(1, ((x-a[0])*dx + (z-a[2])*dz)/l2)), px = a[0] + dx*t, pz = a[2] + dz*t, d = Math.hypot(x-px, z-pz);
+      if(d < bd){ bd = d; best = e; }
+    }
+  });
+  return {e: best, d: bd};
+}
+function inRect(o, x, z){ return Math.abs(x - o.x) <= o.w/2 && Math.abs(z - o.z) <= o.d/2; }
+
+// ---- input --------------------------------------------------------------------
+var drag = null;
+cv.addEventListener("mousedown", function(e){ drag = {x: e.clientX, y: e.clientY, vx: view.x, vz: view.z, moved: false}; });
+window.addEventListener("mouseup", function(e){
+  if(drag && !drag.moved && brush && W) apply(e);
+  drag = null;
+});
+window.addEventListener("mousemove", function(e){
+  if(drag){ var dx = e.clientX - drag.x, dy = e.clientY - drag.y; if(Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    if(drag.moved && !brush){ view.x = drag.vx - dx/view.s; view.z = drag.vz - dy/view.s; draw(); } }
+  if(!W) return;
+  var r = cv.getBoundingClientRect(); if(e.clientX < r.left || e.clientY < r.top || e.clientX > r.right || e.clientY > r.bottom) return;
+  var x = wx(e.clientX - r.left), z = wz(e.clientY - r.top), L = W.layers;
+  var road = nearestRoad(x, z), lot = L.lots.find(function(l){ return inRect(l, x, z); }), site = L.sites.find(function(s){ return inRect(s, x, z); });
+  $("hover").textContent = "x " + (x/100).toFixed(1) + " m  z " + (z/100).toFixed(1) + " m\n" +
+    "height " + (heightAt(x, z)/100).toFixed(2) + " m · " + districtAt(x, z) + "\n" +
+    (road.e ? (road.d < 2000 ? "on/near " : "nearest ") + road.e.name + " (" + road.e.class + ", " + (road.d/100).toFixed(0) + " m)\n" : "") +
+    (lot ? (lot.kind === "hq" ? "HQ lot #" + lot.rank + " · tier " + lot.tier : "lot " + lot.id + " · " + lot.floors + " floors") + " · door " + (lot.door[1]/100).toFixed(2) + " m\n" : "") +
+    (site ? "site " + site.id + "\n" : "");
+});
+cv.addEventListener("wheel", function(e){
+  e.preventDefault(); if(!W) return;
+  var r = cv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top, x = wx(px), z = wz(py);
+  view.s = Math.min(0.2, Math.max(Math.min(r.width, r.height)/W.size_cm*0.5, view.s*Math.exp(-e.deltaY*0.0015)));
+  view.x = x - (px - r.width/2)/view.s; view.z = z - (py - r.height/2)/view.s; draw();
+}, {passive: false});
+window.addEventListener("resize", draw);
+
+function apply(e){
+  var r = cv.getBoundingClientRect(), x = Math.round(wx(e.clientX - r.left)), z = Math.round(wz(e.clientY - r.top));
+  var op = $("op").value, rad = Math.round(+$("rad").value*100), amt = Math.round(+$("amt").value*100);
+  var ed = op === "raise" ? {op: "raise", x: x, z: z, r: rad, cm: amt}
+    : op === "lower" ? {op: "raise", x: x, z: z, r: rad, cm: -amt}
+    : op === "flatten" ? {op: "flatten", x: x, z: z, r: rad, y: Math.round(heightAt(x, z))}
+    : {op: "smooth", x: x, z: z, r: rad, passes: Math.max(1, Math.min(8, Math.round(+$("amt").value)))};
+  edits.push(ed); load();
+}
+load();
+</script>
+</body>
+</html>

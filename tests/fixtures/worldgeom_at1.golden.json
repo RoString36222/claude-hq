@@ -1,0 +1,90 @@
+{
+ "comment": "claude-hq@1 through games/worldgeom.js + games/worldbuild.js as they were before cl-mesh (feat/cities eefac6b): per-tile digests of every product and terrain LOD, and worldbuild draw calls / triangles at fixed cameras. tests/test_worldgeom_poly.py checks the code still matches.",
+ "digests": {
+  "all": "5b7c7f0f77e765d27e7f0afa1d17df2429f5641d",
+  "tiles": {
+   "0,0": "18546b325db14b8289b5a992cc90ccd4232426f4",
+   "0,1": "12878054f49d2958427f8f999ef703c6556a9266",
+   "0,2": "0491e7c10348b08c313c735b1e00e2d4eced734c",
+   "0,3": "84c5c256ea1393c4190ed8ccc130427715ee4391",
+   "0,4": "7fa89d9f18260c543b3c3dbb8bb0a375a4a29068",
+   "0,5": "0a257b013843aaf4dcfe471e3a7cf9a83ce78748",
+   "0,6": "c057115557946d81bdbf6d4e9be28f31e86cb124",
+   "0,7": "a09b0b68278c9a46de9502ce13f7e8daf59645ec",
+   "1,0": "0f6ccb4b18af5f6d78e3296e74d199bb3d7b0976",
+   "1,1": "f660b7f5e45f08e8169bc0a1387c052532a3ddda",
+   "1,2": "ca787d7d6e6731cc60e63580dd29139b10519282",
+   "1,3": "a10a9963608a4717fa256be5a59b72a74b1f79e3",
+   "1,4": "16d2c3bf8b2a08865476baf702397edd76e0d1df",
+   "1,5": "14bb12c1dc1f304c050e6df8d99cf297af107a45",
+   "1,6": "9561c90c9549e05eb42f3e9febf9cf0e7667f1a7",
+   "1,7": "39e60f58018549a721fc8484dcd33b7783997821",
+   "2,0": "e5ebd43257b424e671c4e12269dc0638398cdc00",
+   "2,1": "996076bc8990890157523fdae1e6595f35cf5ebc",
+   "2,2": "f6ac9afc00f07450b7373867f06c14fe0b689591",
+   "2,3": "da3e92f0bae3c791944a84f979db9f6da5301a45",
+   "2,4": "f07c2cce0dbd0ffdc588e8ea8534ccaf3cdb0b90",
+   "2,5": "5d6ed84d446e49197af57a6127d7199355f73432",
+   "2,6": "fe61e1c532809205be95a869fc8a9a19d7a062fa",
+   "2,7": "47e17c78523dc97f6612b311c4c05dff9baf8221",
+   "3,0": "a34d2cfbe5917f0d2754e0e0543f01eca98cbeac",
+   "3,1": "2b40e3c3fda125dc7cf01686a534928ca0f98e56",
+   "3,2": "2b84e078d8e872531515212cbc85a2b802d33015",
+   "3,3": "7c3652ec86031e05abb9c7374daa7420ce7d040c",
+   "3,4": "cfc76b921ed6d1fd249c83cfad0b5ef8888ef5b4",
+   "3,5": "fd3f5cb96bdd5e52d8ba1ecb482d232ad3472aab",
+   "3,6": "00b83662916c8a9f6940114dad693cdb2f2b44d0",
+   "3,7": "0df3aaf400d6b41876f7061b9bc9280667f999ff",
+   "4,0": "696e549428921bb5e5aa9375b314d274c555e714",
+   "4,1": "c6caa581ecb0fa3556129fd9fba8724a0fd830d0",
+   "4,2": "5ece232e7acfddb3b61fca96b806a7f69a946aa2",
+   "4,3": "2620d77f4d2c0654e0cecb05245ffb4e1d3594fe",
+   "4,4": "80f90b10e21381a46e4db240500086e4d1039931",
+   "4,5": "4d895db71c728aabcd675bccfd8b7d32b23ed98f",
+   "4,6": "051bea18f58c74169797405ce72b386071960b84",
+   "4,7": "57cf7bbfc9641c4f845b74bbb1aae7a69e6bd487",
+   "5,0": "22f11ac59eab8d78ed9533c8087c05d493bc2fe5",
+   "5,1": "fe145bb765767181213326ba6022ec5ed71a9ca8",
+   "5,2": "17442a7ef6c15db113a32a173abab9b2dfe10cb5",
+   "5,3": "7e9706268af5631b400c15b3beb05305ff05e643",
+   "5,4": "5a13ee01c3a7470f6b0931f0df6e53f11140b11b",
+   "5,5": "074d4bd1d603bd84ffcfc1204b9cd60dfff6a039",
+   "5,6": "3adaa4bb3e6f51e99c617c0b3a5feef2e5f3627d",
+   "5,7": "2707cbbf1bc6ae38c05ab52da5d2ad529b6f44cc",
+   "6,0": "a222a7276e0fdc226dd51ad43279da0d2dfd9017",
+   "6,1": "98f55288fe73f13dc2fe86a5364f7449db5b41f1",
+   "6,2": "75d94b43c183ff22d66de7b69c0c85cf85bd3abd",
+   "6,3": "3b9e6b584f69051429dcb36ee303cd8dab2036b7",
+   "6,4": "32f0e879ace0e464174504ea2367b2904394645a",
+   "6,5": "210591ddeaeaa552e53ecda012296c7905ca5872",
+   "6,6": "a10eb20298d5e18312de28bbad4e61bf51e43d63",
+   "6,7": "0402b79f47a0eeeb1f92e4fb05591e6af16661d4",
+   "7,0": "613c97b57b69fe6e8747693f47b33f8e8f14bb05",
+   "7,1": "b44a013378f03d6ac3745ff39aa9563e93ec433c",
+   "7,2": "fbb91eb5000a630789f182d0f299e082bec81ea1",
+   "7,3": "9e6cdac66a3b50f8145a278ed0919bec505228bf",
+   "7,4": "d40334ec56731625b96752e839cf33903b98c802",
+   "7,5": "6688ba790010c4e3e4fe6c619189fea602afc7a9",
+   "7,6": "c391411d2e22de79e8a7d5a1b3e1505be11e504c",
+   "7,7": "27aeed703e685e5094a8ede94c6fccc096de2f74"
+  }
+ },
+ "drawCalls": {
+  "-1000,-1000": {
+   "drawCalls": 129,
+   "triangles": 138530
+  },
+  "0,0": {
+   "drawCalls": 185,
+   "triangles": 430638
+  },
+  "320,-706": {
+   "drawCalls": 158,
+   "triangles": 241418
+  },
+  "600,600": {
+   "drawCalls": 150,
+   "triangles": 255418
+  }
+ }
+}

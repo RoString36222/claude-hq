@@ -1,16 +1,23 @@
-/* Claude HQ: geometry of the generated world (Arena City, claude-hq@1), pure.
+/* Claude HQ: geometry of the generated world (Arena City claude-hq@1, organic claude-hq@2 and islands), pure.
  *
  * HQV.worldgeom turns the packed WorldDoc W (games/world.js) into plain objects of typed arrays
  * (metres) that games/worldbuild.js wraps in THREE meshes, in a worker or on the main thread.
  *   tileOf/tileKey        the world (2048 m) = 8 x 8 tiles of 256 m = 32 x 32 chunks of 64 m
  *   terrainTile           per chunk LOD 0|1|2 (8, 16, 32 m grid), skirts as deep as the LOD gap (>= 2 m), every
- *                         vertex pushed under every ribbon its cells reach (no triangle covers a road at any LOD)
+ *                         vertex pushed under every ribbon, pavement and beach its cells reach (no triangle covers
+ *                         a road at any LOD); on an island, terrain below sea_cm + 0.1 m sinks 0.5 m under the water
  *   roadTile              asphalt / marks / kerb / walk ribbons by class, junction patches, zebra crossings
- *   buildingTile          one low-poly building per building lot (detail 0 full, detail 1 a box)
+ *   groundTile            (v2 docs) polygon block pavements with kerbs, lot pads, plaza pads, the beach strip along
+ *                         Layers.island.coast; polygons are triangulated by `triangulate` (earcut, inline)
+ *   buildingTile          one low-poly building per building lot (detail 0 full, detail 1 a box), turned to the
+ *                         lot's `front` (Q16, else its `facing`) and fitted inside its `poly` when it has one;
+ *                         a lot with neither is axis-aligned in its rect (@1)
  *   props                 trees, lamps, parked cars, street-name signs, route gantries
  *   routes                graded routes (highway/ring chains) the gantries are placed along
  *   nameAtlasLayout       the cells of the sign/gantry text atlas (drawn by worldbuild)
- *   buildTile             one worker job: {tx, tz, lods, want} -> the tile message
+ *   view/tierDiff         min_tier: the world as a city tier shows it, and the tiles (per product) two tiers differ in
+ *   buildTile             one worker job: {tx, tz, lods, want, tier?} -> the tile message
+ * A @1 doc (no poly, front, min_tier or island) takes the original paths and builds byte-identically.
  * Geo = {pos, nrm, col (rgb 0..1), idx: Uint32Array, bid? (lot id per vertex), lit? (0|1 per vertex)}.
  * Every face is wound counter-clockwise seen from the side its normal points to.
  * Frames: +y up, yaw 0 faces +z, facing (sin yaw, cos yaw); the left of a direction (dx, dz) is (dz, -dx).
@@ -26,19 +33,31 @@ var HQV = root.HQV = root.HQV || {};
 var ORIGIN = -1024, TILE = 256, CHUNK = 64, NT = 8, CPT = 4, FLOOR_H = 3.5, SKIRT = 2;
 var LOD_STEP = [8, 16, 32];
 var LIFT = 0.04, MARK_LIFT = 0.06, KERB = 0.15, FLAT = 0.005, SEAM = 0.02, MINSEG = 3;
+// v2 ground: pads sit PAD over their block's pavement; the beach runs BEACH_IN inland and BEACH_OUT out to sea from
+// the coast in steps of <= BEACH_STEP; terrain below sea + SEA_SHORE sinks to at least SEA_HIDE under the water
+var PAD = 0.04, BEACH_IN = 14, BEACH_OUT = 8, BEACH_STEP = 8, BEACH_WET = 0.4, SEA_SHORE = 0.1, SEA_HIDE = 0.5;
 var UP = [0, 1, 0];
 
 var COL = {
   asphalt: [0.16, 0.165, 0.18], shoulder: [0.24, 0.24, 0.25], white: [0.92, 0.92, 0.88], yellow: [0.95, 0.74, 0.22],
-  kerb: [0.68, 0.68, 0.66], walk: [0.56, 0.55, 0.52], walkAve: [0.62, 0.58, 0.52], verge: [0.33, 0.30, 0.25]
+  kerb: [0.68, 0.68, 0.66], walk: [0.56, 0.55, 0.52], walkAve: [0.62, 0.58, 0.52], verge: [0.33, 0.30, 0.25],
+  pave: [0.60, 0.59, 0.56], lawn: [0.38, 0.55, 0.30], plaza: [0.70, 0.66, 0.58], concrete: [0.56, 0.56, 0.55],
+  sand: [0.86, 0.80, 0.62], wetSand: [0.62, 0.57, 0.45]
 };
-// terrain tint per district (legend name); unknown names fall back to "wild"
+// terrain tint per district (legend name); unknown names fall back to "wild". The second row is @2's district list.
 var TINT = {
   wild: [0.42, 0.55, 0.30], farmland: [0.62, 0.61, 0.36], forest: [0.22, 0.40, 0.22], plaza: [0.62, 0.60, 0.56],
   civic: [0.55, 0.57, 0.52], hq: [0.50, 0.52, 0.50], commercial: [0.48, 0.50, 0.48], residential: [0.42, 0.55, 0.34],
-  park: [0.36, 0.58, 0.30], industrial: [0.47, 0.45, 0.40], street: [0.45, 0.47, 0.44]
+  park: [0.36, 0.58, 0.30], industrial: [0.47, 0.45, 0.40], street: [0.45, 0.47, 0.44],
+  oldtown: [0.52, 0.52, 0.44], downtown: [0.50, 0.51, 0.50], suburb: [0.42, 0.55, 0.34], office: [0.49, 0.51, 0.49],
+  tech: [0.44, 0.54, 0.38], studio: [0.50, 0.49, 0.43], finance: [0.50, 0.51, 0.52], biotech: [0.45, 0.54, 0.42],
+  media: [0.49, 0.50, 0.47], logistics: [0.47, 0.45, 0.40], farm: [0.62, 0.61, 0.36], water: [0.30, 0.42, 0.46]
 };
-var STYLE = {residential: "res", commercial: "com", industrial: "ind", civic: "civ"};
+var STYLE = {residential: "res", commercial: "com", industrial: "ind", civic: "civ",
+             oldtown: "res", downtown: "com", suburb: "res", office: "com", tech: "com", studio: "ind", finance: "com",
+             biotech: "civ", media: "com", logistics: "ind", farm: "ind"};
+// block pavements in these districts are lawn (gardens, parks, fields); every other block is paved
+var GREEN = {residential: 1, suburb: 1, park: 1, forest: 1, wild: 1, farmland: 1, farm: 1, tech: 1};
 var WALLS = {
   res: [[0.80, 0.66, 0.52], [0.86, 0.76, 0.60], [0.72, 0.52, 0.42], [0.90, 0.84, 0.72], [0.76, 0.70, 0.62]],
   com: [[0.62, 0.66, 0.72], [0.70, 0.72, 0.74], [0.52, 0.56, 0.62], [0.78, 0.76, 0.70], [0.58, 0.62, 0.60]],
@@ -110,9 +129,13 @@ function fin(g){
 function emptyGeo(){ return fin(geo()); }
 
 /* ---------- per-W cache: edges in metres, arms per node, trims ---------- */
-var cacheW = null, cache = null;
+// one entry per W; the tier views of one world (view below) share the list, so switching tiers keeps both warm.
+// A W that is not a view of the same world empties it.
+var CACHES = [];
 function prep(W){
-  if(cacheW === W && cache) return cache;
+  for(var ci = CACHES.length - 1; ci >= 0; ci--) if(CACHES[ci].W === W) return CACHES[ci].C;
+  var baseW = W.tierBase || W;
+  CACHES = CACHES.filter(function(c){ return (c.W.tierBase || c.W) === baseW; }).slice(-3);
   var nodes = {}, inc = {}, E = [], byId = {};
   (W.nodes || []).forEach(function(n){ nodes[n.id] = {id: n.id, x: n.x/100, y: n.y/100, z: n.z/100}; });
   (W.edges || []).forEach(function(e, ei){
@@ -158,8 +181,8 @@ function prep(W){
     });
     arms.sort(function(p, q){ return p.yaw - q.yaw || p.E.id - q.E.id; });
   });
-  cacheW = W;
-  cache = {nodes: nodes, inc: inc, E: E, byId: byId, nodeIds: nodeIds, props: null, routes: null, segs: null};
+  var cache = {nodes: nodes, inc: inc, E: E, byId: byId, nodeIds: nodeIds, props: null, routes: null, segs: null};
+  CACHES.push({W: W, C: cache});
   return cache;
 }
 function deg(C, id){ return (C.inc[id] || []).length; }
@@ -282,6 +305,17 @@ function clampPieces(W){
       }
     });
   }
+  // v2 ground: every pavement, pad and beach triangle as drawn (none in a @1 doc)
+  groundItems(W).forEach(function(it){
+    for(var t = 0; t < it.tri.length; t += 3){
+      var a = it.V[it.tri[t]], b = it.V[it.tri[t+1]], c = it.V[it.tri[t+2]];
+      var ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+      var nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+      if(!(Math.abs(ny) > 0.5*Math.sqrt(nx*nx + ny*ny + nz*nz))) continue;
+      var gx = -nx/ny, gz = -nz/ny;
+      add([[a[0], a[2]], [b[0], b[2]], [c[0], c[2]]], a[1] - gx*a[0] - gz*a[2] - LIFT - 0.05, gx, gz);
+    }
+  });
   C.pieces = {grid: grid, n: 0};
   return C.pieces;
 }
@@ -316,6 +350,8 @@ function terrainY(W, x, z, step){
         y = Math.min(y, o.y0 + o.gx*x + o.gz*z);
       }
     }
+  var sea = seaY(W);
+  if(sea != null && y < sea + SEA_SHORE) y = Math.min(y, sea - SEA_HIDE);
   return (memo[key] = y);
 }
 // the terrain mesh height at (x, z) for a uniform lod (the grid's two triangles per cell, as terrainTile splits them)
@@ -410,15 +446,18 @@ function skirtQuad(g, ia, ib, ta, tb, out, depth){
 }
 
 /* ---------- roads ---------- */
+// @2's classes: a local road is marked and furnished like a street, an arterial like an avenue
+function streetish(cls){ return cls === "street" || cls === "local"; }
+function aveish(cls){ return cls === "avenue" || cls === "arterial"; }
 function markLines(E){
   var cw = E.cw;
-  if(E.cls === "street") return [{o: 0, w: 0.12, dash: true, c: COL.white}];
-  if(E.cls === "avenue") return [{o: -0.15, w: 0.1, c: COL.yellow}, {o: 0.15, w: 0.1, c: COL.yellow}];
+  if(streetish(E.cls)) return [{o: 0, w: 0.12, dash: true, c: COL.white}];
+  if(aveish(E.cls)) return [{o: -0.15, w: 0.1, c: COL.yellow}, {o: 0.15, w: 0.1, c: COL.yellow}];
   if(E.cls === "ring") return [{o: 0, w: 0.12, dash: true, c: COL.white}, {o: -(cw - 1), w: 0.15, c: COL.white}, {o: cw - 1, w: 0.15, c: COL.white}];
   return [{o: -0.15, w: 0.1, c: COL.yellow}, {o: 0.15, w: 0.1, c: COL.yellow}, {o: -(cw - 1), w: 0.15, c: COL.white}, {o: cw - 1, w: 0.15, c: COL.white}];
 }
 function graded(E){ return E.cls === "highway" || E.cls === "ring"; }
-function crossed(C, E, end){ return (E.cls === "street" || E.cls === "avenue") && deg(C, end ? E.b : E.a) >= 3; }
+function crossed(C, E, end){ return (streetish(E.cls) || aveish(E.cls)) && deg(C, end ? E.b : E.a) >= 3; }
 
 // a flat strip between offsets o0..o1 over the stations; only the pieces whose centre is in the tile
 function strip(g, W, E, st, o0, o1, lift, c, tx, tz, walkY){
@@ -466,7 +505,7 @@ function roadTile(W, tx, tz, flat){
       strip(asph, W, E, st, cw - 1, cw, LIFT, COL.shoulder, tx, tz);
     } else strip(asph, W, E, st, -cw, cw, LIFT, COL.asphalt, tx, tz);
     if(E.walk > 0){
-      var wc = E.cls === "avenue" ? COL.walkAve : COL.walk;
+      var wc = aveish(E.cls) ? COL.walkAve : COL.walk;
       [-1, 1].forEach(function(sg){
         strip(walk, W, E, st, sg*cw, sg*E.half, LIFT, wc, tx, tz, true);
         if(flat) return;
@@ -544,7 +583,7 @@ function junction(W, C, n, arms, asph, marks, kerb, walk){
   // zebra crossings on street/avenue arms of real junctions, 2 m back from the patch
   if(arms.length >= 3) arms.forEach(function(a){
     var E = a.E;
-    if(E.cls !== "street" && E.cls !== "avenue") return;
+    if(!streetish(E.cls) && !aveish(E.cls)) return;
     var c0 = a.t + 2, c1 = a.t + 5;
     if(c1 > E.len - 1) return;
     var st = a.end ? stations(E, E.len - c1, E.len - c0) : stations(E, c0, c1);
@@ -554,6 +593,338 @@ function junction(W, C, n, arms, asph, marks, kerb, walk){
       strip(marks, W, E, st, o - 0.25, o + 0.25, MARK_LIFT, COL.white, null, null);
     }
   });
+}
+
+/* ---------- polygons: earcut (concave rings, no holes) ---------- */
+// An inline port of mapbox/earcut's ear clipping (ISC licence) without holes or the z-order hash (block, lot and site
+// rings are small). flat = [x0, z0, x1, z1, ...]; returns vertex indices, 3 per triangle, that tile the ring exactly.
+// Rings that defeat plain clipping (repeats, collinear runs, self-touching corners) are filtered, cured, then split,
+// as earcut does.
+function triangulate(flat){
+  var tris = [];
+  if(!flat || flat.length < 6) return tris;
+  var last = ringList(flat);
+  if(!last || last.next === last.prev) return tris;
+  earLinked(last, tris, 0);
+  return tris;
+}
+function ENode(i, x, y){ this.i = i; this.x = x; this.y = y; this.prev = null; this.next = null; }
+function insertNode(i, x, y, last){
+  var p = new ENode(i, x, y);
+  if(!last){ p.prev = p; p.next = p; }
+  else { p.next = last.next; p.prev = last; last.next.prev = p; last.next = p; }
+  return p;
+}
+function removeNode(p){ p.next.prev = p.prev; p.prev.next = p.next; }
+function ringArea(d){
+  var s = 0;
+  for(var i = 0, j = d.length - 2; i < d.length; i += 2){ s += (d[j] - d[i])*(d[i+1] + d[j+1]); j = i; }
+  return s;
+}
+// the ring as a circular list, wound so that an ear has ear-area < 0
+function ringList(d){
+  var last = null, i;
+  if(ringArea(d) > 0) for(i = 0; i < d.length; i += 2) last = insertNode(i/2, d[i], d[i+1], last);
+  else for(i = d.length - 2; i >= 0; i -= 2) last = insertNode(i/2, d[i], d[i+1], last);
+  if(last && eqPt(last, last.next)){ removeNode(last); last = last.next; }
+  return last;
+}
+function eqPt(p, q){ return p.x === q.x && p.y === q.y; }
+function triArea(p, q, r){ return (q.y - p.y)*(r.x - q.x) - (q.x - p.x)*(r.y - q.y); }
+function inTri(ax, ay, bx, by, cx, cy, px, py){
+  return (cx - px)*(ay - py) >= (ax - px)*(cy - py) && (ax - px)*(by - py) >= (bx - px)*(ay - py) && (bx - px)*(cy - py) >= (cx - px)*(by - py);
+}
+// drop repeated and collinear points
+function filterPts(start, end){
+  if(!start) return start;
+  if(!end) end = start;
+  var p = start, again;
+  do {
+    again = false;
+    if(eqPt(p, p.next) || triArea(p.prev, p, p.next) === 0){
+      removeNode(p);
+      p = end = p.prev;
+      if(p === p.next) break;
+      again = true;
+    } else p = p.next;
+  } while(again || p !== end);
+  return end;
+}
+function earLinked(ear, tris, pass){
+  if(!ear) return;
+  var stop = ear, prev, next;
+  while(ear.prev !== ear.next){
+    prev = ear.prev; next = ear.next;
+    if(isEar(ear)){
+      tris.push(prev.i, ear.i, next.i);
+      removeNode(ear);
+      ear = next.next; stop = next.next;   // skipping the next vertex gives fewer slivers
+      continue;
+    }
+    ear = next;
+    if(ear === stop){
+      // no ear left: filter the ring, then cure small self-intersections, then split it in two
+      if(!pass) earLinked(filterPts(ear), tris, 1);
+      else if(pass === 1) earLinked(cureLocal(filterPts(ear), tris), tris, 2);
+      else splitEar(ear, tris);
+      break;
+    }
+  }
+}
+// a convex corner with no reflex vertex of the ring inside its triangle
+function isEar(ear){
+  var a = ear.prev, b = ear, c = ear.next;
+  if(triArea(a, b, c) >= 0) return false;
+  var x0 = Math.min(a.x, b.x, c.x), x1 = Math.max(a.x, b.x, c.x), y0 = Math.min(a.y, b.y, c.y), y1 = Math.max(a.y, b.y, c.y);
+  for(var p = c.next; p !== a; p = p.next){
+    if(p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1 && inTri(a.x, a.y, b.x, b.y, c.x, c.y, p.x, p.y) &&
+       triArea(p.prev, p, p.next) >= 0) return false;
+  }
+  return true;
+}
+function cureLocal(start, tris){
+  var p = start;
+  do {
+    var a = p.prev, b = p.next.next;
+    if(!eqPt(a, b) && segsCross(a, p, p.next, b) && locIn(a, b) && locIn(b, a)){
+      tris.push(a.i, p.i, b.i);
+      removeNode(p); removeNode(p.next);
+      p = start = b;
+    }
+    p = p.next;
+  } while(p !== start);
+  return filterPts(p);
+}
+function splitEar(start, tris){
+  var a = start;
+  do {
+    var b = a.next.next;
+    while(b !== a.prev){
+      if(a.i !== b.i && validDiag(a, b)){
+        var c = splitRing(a, b);
+        a = filterPts(a, a.next); c = filterPts(c, c.next);
+        earLinked(a, tris, 0); earLinked(c, tris, 0);
+        return;
+      }
+      b = b.next;
+    }
+    a = a.next;
+  } while(a !== start);
+}
+function validDiag(a, b){
+  return a.next.i !== b.i && a.prev.i !== b.i && !crossesRing(a, b) &&
+         (locIn(a, b) && locIn(b, a) && midIn(a, b) && !!(triArea(a.prev, a, b.prev) || triArea(a, b.prev, b)) ||
+          eqPt(a, b) && triArea(a.prev, a, a.next) > 0 && triArea(b.prev, b, b.next) > 0);
+}
+function sgn(v){ return v > 0 ? 1 : (v < 0 ? -1 : 0); }
+function onSeg(p, q, r){ return q.x <= Math.max(p.x, r.x) && q.x >= Math.min(p.x, r.x) && q.y <= Math.max(p.y, r.y) && q.y >= Math.min(p.y, r.y); }
+function segsCross(p1, q1, p2, q2){
+  var o1 = sgn(triArea(p1, q1, p2)), o2 = sgn(triArea(p1, q1, q2)), o3 = sgn(triArea(p2, q2, p1)), o4 = sgn(triArea(p2, q2, q1));
+  if(o1 !== o2 && o3 !== o4) return true;
+  return (o1 === 0 && onSeg(p1, p2, q1)) || (o2 === 0 && onSeg(p1, q2, q1)) || (o3 === 0 && onSeg(p2, p1, q2)) || (o4 === 0 && onSeg(p2, q1, q2));
+}
+function crossesRing(a, b){
+  var p = a;
+  do {
+    if(p.i !== a.i && p.next.i !== a.i && p.i !== b.i && p.next.i !== b.i && segsCross(p, p.next, a, b)) return true;
+    p = p.next;
+  } while(p !== a);
+  return false;
+}
+function locIn(a, b){
+  return triArea(a.prev, a, a.next) < 0 ? triArea(a, b, a.next) >= 0 && triArea(a, a.prev, b) >= 0
+                                        : triArea(a, b, a.prev) < 0 || triArea(a, a.next, b) < 0;
+}
+function midIn(a, b){
+  var p = a, inside = false, px = (a.x + b.x)/2, py = (a.y + b.y)/2;
+  do {
+    if(((p.y > py) !== (p.next.y > py)) && p.next.y !== p.y && px < (p.next.x - p.x)*(py - p.y)/(p.next.y - p.y) + p.x) inside = !inside;
+    p = p.next;
+  } while(p !== a);
+  return inside;
+}
+// cut the ring along a-b into two rings (a-b and a copy b2-a2); returns b2
+function splitRing(a, b){
+  var a2 = new ENode(a.i, a.x, a.y), b2 = new ENode(b.i, b.x, b.y), an = a.next, bp = b.prev;
+  a.next = b; b.prev = a;
+  a2.next = an; an.prev = a2;
+  b2.next = a2; a2.prev = b2;
+  bp.next = b2; b2.prev = bp;
+  return b2;
+}
+
+/* ---------- v2 ground: block pavements, lot and plaza pads, the beach ---------- */
+// a doc polygon [[x, z] cm, ...] in metres, repeats and the closing point dropped, wound with positive area (CCW
+// with x right and z up: the interior lies on (-dz, dx) of each edge)
+function polyM(poly){
+  var P = [];
+  (poly || []).forEach(function(p){
+    if(!p || p.length < 2 || !isFinite(p[0]) || !isFinite(p[1])) return;
+    var q = [p[0]/100, p[1]/100], L = P[P.length - 1];
+    if(!L || L[0] !== q[0] || L[1] !== q[1]) P.push(q);
+  });
+  if(P.length > 1 && P[0][0] === P[P.length - 1][0] && P[0][1] === P[P.length - 1][1]) P.pop();
+  return polyArea(P) < 0 ? P.reverse() : P;
+}
+function polyArea(P){
+  var s = 0;
+  for(var k = 0; k < P.length; k++){ var a = P[k], b = P[(k + 1) % P.length]; s += a[0]*b[1] - b[0]*a[1]; }
+  return s/2;
+}
+function flatOf(P){ var f = []; P.forEach(function(p){ f.push(p[0], p[1]); }); return f; }
+function polyCentroid(P){
+  var A = 0, x = 0, z = 0, k;
+  for(k = 0; k < P.length; k++){
+    var a = P[k], b = P[(k + 1) % P.length], cr = a[0]*b[1] - b[0]*a[1];
+    A += cr; x += (a[0] + b[0])*cr; z += (a[1] + b[1])*cr;
+  }
+  if(Math.abs(A) > 1e-9) return [x/(3*A), z/(3*A)];
+  x = 0; z = 0;
+  for(k = 0; k < P.length; k++){ x += P[k][0]/P.length; z += P[k][1]/P.length; }
+  return [x, z];
+}
+function inPoly(P, x, z){
+  var inside = false;
+  for(var k = 0, j = P.length - 1; k < P.length; j = k++){
+    var a = P[k], b = P[j];
+    if((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0])*(z - a[1])/(b[1] - a[1]) + a[0]) inside = !inside;
+  }
+  return inside;
+}
+function coastOf(W){ var I = W && W.island; return I && I.coast && I.coast.length >= 3 && seaY(W) != null ? I : null; }
+function seaY(W){ var I = W && W.island; return I && I.sea_cm != null && isFinite(+I.sea_cm) ? +I.sea_cm/100 : null; }
+// does this doc draw any v2 ground (the same answer at every tier)?
+function hasGround(W){
+  var B = (W && W.tierBase) || W || {};
+  function any(L){ for(var i = 0; i < (L || []).length; i++) if(L[i] && L[i].poly) return true; return false; }
+  return any(B.blocks) || any(B.lots) || any(B.sites) || !!coastOf(B);
+}
+// the least-squares plane y = a + gx (x - cx) + gz (z - cz) through the raw terrain (heightAt: the same at every tier)
+// at the corners and the centroid
+function fitPlane(W, P){
+  var Q = WQ(), c = polyCentroid(P), pts = P.concat([c]), n = pts.length, cx = 0, cz = 0;
+  pts.forEach(function(p){ cx += p[0]/n; cz += p[1]/n; });
+  var sxx = 0, sxz = 0, szz = 0, sxy = 0, szy = 0, sy = 0;
+  pts.forEach(function(p){
+    var dx = p[0] - cx, dz = p[1] - cz, y = Q.heightAt(W, p[0], p[1]);
+    sxx += dx*dx; sxz += dx*dz; szz += dz*dz; sxy += dx*y; szy += dz*y; sy += y;
+  });
+  var det = sxx*szz - sxz*sxz, gx = 0, gz = 0;
+  if(det > 1e-6*(sxx*szz + 1e-9)){ gx = (sxy*szz - szy*sxz)/det; gz = (szy*sxx - sxy*sxz)/det; }
+  return {a: sy/n, gx: gx, gz: gz, cx: cx, cz: cz};
+}
+function planeY(pl, x, z){ return pl.a + pl.gx*(x - pl.cx) + pl.gz*(z - pl.cz); }
+function unit(v){ var l = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]) || 1; return [v[0]/l, v[1]/l, v[2]/l]; }
+// Every ground piece of W (a tier view) as {kind, P (xz ring), V (drawn [x, y, z]), tri, col, nrm, walls, tx, tz},
+// assigned to the tile of its centroid. Blocks are paved (lawn in green districts) KERB over their fitted plane with a
+// kerb round them; lots and sites with a poly are pads PAD over their block's plane (their own plane, with a kerb,
+// when the block has none). The terrain clamp pushes the terrain under all of it.
+function groundItems(W){
+  var C = prep(W);
+  if(C.ground) return C.ground;
+  var Q = WQ(), out = [], B = W.tierBase || W, planes = {}, polys = {}, leg = (W.districts && W.districts.legend) || [];
+  (B.blocks || []).forEach(function(b){ if(b && b.poly) polys[b.id] = b.poly; });
+  function blockPlane(id){
+    if(!Object.prototype.hasOwnProperty.call(planes, id)){
+      var P = Object.prototype.hasOwnProperty.call(polys, id) ? polyM(polys[id]) : null;
+      planes[id] = P && P.length >= 3 && Math.abs(polyArea(P)) > 1e-6 ? fitPlane(W, P) : null;
+    }
+    return planes[id];
+  }
+  function fill(P, pl, up, col, kind, walls){
+    if(P.length < 3) return;
+    var tri = triangulate(flatOf(P));
+    if(!tri.length) return;
+    var c = polyCentroid(P), t = tileOf(c[0], c[1]);
+    out.push({kind: kind, P: P, V: P.map(function(p){ return [p[0], planeY(pl, p[0], p[1]) + up, p[1]]; }), tri: tri, col: col,
+              nrm: unit([-pl.gx, 1, -pl.gz]), walls: walls, tx: t.tx, tz: t.tz});
+  }
+  (W.blocks || []).forEach(function(b){
+    if(!b || !b.poly) return;
+    var P = polyM(b.poly), pl = blockPlane(b.id);
+    if(!pl) return;
+    var c = polyCentroid(P), dn = Q.districtAt(W, c[0], c[1]).name;
+    fill(P, pl, KERB + LIFT, GREEN[dn] ? tint(dn) : COL.pave, "block", true);
+  });
+  (W.lots || []).forEach(function(l){
+    if(!l || !l.poly) return;
+    var P = polyM(l.poly), bp = blockPlane(l.block);
+    if(P.length < 3) return;
+    var st = STYLE[leg[l.district]] || "com";
+    var col = l.kind === "park" ? COL.lawn : (l.kind === "building" ? (st === "res" ? COL.lawn : COL.concrete) : COL.plaza);
+    fill(P, bp || fitPlane(W, P), KERB + LIFT + PAD, col, "lot", !bp);
+  });
+  (W.sites || []).forEach(function(s){
+    if(!s || !s.poly) return;
+    var P = polyM(s.poly), bp = blockPlane(s.block);
+    if(P.length < 3) return;
+    fill(P, bp || fitPlane(W, P), KERB + LIFT + PAD, COL.plaza, "site", !bp);
+  });
+  if(coastOf(B)) beach(W, polyM(B.island.coast), seaY(B), out);
+  C.ground = out;
+  return out;
+}
+// The beach: a dry strip from BEACH_IN inland down to just over the waterline and a wet one on to BEACH_OUT out,
+// BEACH_WET under the water, sampled every <= BEACH_STEP m along the coast and mitred at its corners. Heights come
+// from the raw terrain, so it is the same at every tier. One item per quad, so each lands in its own tile.
+function beach(W, P, sea, out){
+  var Q = WQ(), n = P.length, S = [];
+  if(n < 3) return;
+  function inward(k){
+    var a = P[k], b = P[(k + 1) % n], dx = b[0] - a[0], dz = b[1] - a[1], l = hypot(dx, dz) || 1;
+    return [-dz/l, dx/l];
+  }
+  for(var k = 0; k < n; k++){
+    var a = P[k], b = P[(k + 1) % n], m = Math.max(1, Math.ceil(hypot(b[0] - a[0], b[1] - a[1])/BEACH_STEP)), n1 = inward(k);
+    for(var j = 0; j < m; j++){
+      var nv = n1;
+      if(j === 0){
+        var n0 = inward((k + n - 1) % n), mx = n0[0] + n1[0], mz = n0[1] + n1[1], ml = hypot(mx, mz) || 1;
+        mx /= ml; mz /= ml;
+        var s = 1/Math.max(0.5, mx*n1[0] + mz*n1[1]);
+        nv = [mx*s, mz*s];
+      }
+      var x = a[0] + (b[0] - a[0])*j/m, z = a[1] + (b[1] - a[1])*j/m, ix = x + nv[0]*BEACH_IN, iz = z + nv[1]*BEACH_IN;
+      S.push({dry: [ix, Math.max(Q.heightAt(W, ix, iz), sea + 0.1) + LIFT, iz], shore: [x, sea + 0.05, z],
+              wet: [x - nv[0]*BEACH_OUT, sea - BEACH_WET, z - nv[1]*BEACH_OUT]});
+    }
+  }
+  for(k = 0; k < S.length; k++){
+    var A = S[k], B = S[(k + 1) % S.length];
+    [[A.dry, B.dry, B.shore, A.shore, COL.sand], [A.shore, B.shore, B.wet, A.wet, COL.wetSand]].forEach(function(q){
+      var V = [q[0], q[1], q[2], q[3]], cx = (V[0][0] + V[1][0] + V[2][0] + V[3][0])/4, cz = (V[0][2] + V[1][2] + V[2][2] + V[3][2])/4;
+      var t = tileOf(cx, cz), nr = newell(V);
+      if(nr[1] < 0) nr = [-nr[0], -nr[1], -nr[2]];
+      out.push({kind: "beach", P: V.map(function(v){ return [v[0], v[2]]; }), V: V, tri: [0, 1, 2, 0, 2, 3], col: q[4],
+                nrm: unit(nr), walls: false, tx: t.tx, tz: t.tz});
+    });
+  }
+}
+// a kerb round a block: from the pavement's edge straight down to 0.3 m under the lowest terrain mesh along it (any lod)
+function kerbWalls(W, g, it){
+  var V = it.V, n = V.length;
+  for(var k = 0; k < n; k++){
+    var a = V[k], b = V[(k + 1) % n], dx = b[0] - a[0], dz = b[2] - a[2];
+    if(!(hypot(dx, dz) > 1e-6)) continue;
+    var lo = meshMin(W, a, b) - 0.3;
+    face(g, [[a[0], Math.min(a[1] - 0.5, lo), a[2]], [b[0], Math.min(b[1] - 0.5, lo), b[2]], b.slice(), a.slice()], COL.kerb, [dz, 0, -dx]);
+  }
+}
+function groundTile(W, tx, tz){
+  var g = geo();
+  groundItems(W).forEach(function(it){
+    if(it.tx !== tx || it.tz !== tz) return;
+    var base = g.p.length/3, V = it.V;
+    V.forEach(function(v){ vert(g, v[0], v[1], v[2], it.nrm, it.col); });
+    // wind every triangle to face up
+    for(var t = 0; t < it.tri.length; t += 3){
+      var a = it.tri[t], b = it.tri[t+1], c = it.tri[t+2], A = V[a], B = V[b], C2 = V[c];
+      if((B[2] - A[2])*(C2[0] - A[0]) - (B[0] - A[0])*(C2[2] - A[2]) >= 0) g.i.push(base + a, base + b, base + c);
+      else g.i.push(base + a, base + c, base + b);
+    }
+    if(it.walls) kerbWalls(W, g, it);
+  });
+  return fin(g);
 }
 
 /* ---------- buildings ---------- */
@@ -597,10 +968,99 @@ function windowQuad(g, wl, u0, u1, y0, y1, c, bid, lit){
   face(g, [[ax, y0, az], [bx, y0, bz], [bx, y1, bz], [ax, y1, az]], c, [wl.out[0], 0, wl.out[1]], bid, lit);
 }
 
+// A lot with a `front` (Q16 unit vector its door faces) gets a building turned to it (oriented below), a lot with
+// only a `poly` one fitted in its ring facing `facing`; every other lot the axis-aligned building of its rect, its
+// portico on the `facing` side (the @1 path).
+var FACING = {north: {x: 0, z: 1}, south: {x: 0, z: -1}, east: {x: 1, z: 0}, west: {x: -1, z: 0}};
 function building(W, lot, detail, body, win){
-  var Q = WQ(), R = Q.buildingRect(lot);
+  var Q = WQ(), F = frontOf(lot) || (lot.poly ? FACING[lot.facing] || FACING.north : null);
+  if(F){ oriented(W, lot, detail, body, win, F); return; }
+  var R = Q.buildingRect(lot);
   if(!(R.x1 - R.x0 > 0.5 && R.z1 - R.z0 > 0.5)) return;
   var ys = [Q.groundAt(W, R.x0, R.z0), Q.groundAt(W, R.x1, R.z0), Q.groundAt(W, R.x0, R.z1), Q.groundAt(W, R.x1, R.z1)];
+  shell(W, lot, detail, body, win, R, ys, lot.facing);
+}
+function frontOf(lot){
+  var f = lot && lot.front;
+  if(!f || !(f.length >= 2) || !isFinite(f[0]) || !isFinite(f[1])) return null;
+  var x = f[0]/65536, z = f[1]/65536, l = hypot(x, z);
+  return l > 1e-6 ? {x: x/l, z: z/l} : null;
+}
+// The lot's frame turned to F: local +z along F (the door's way), local +x to its right (F.z, -F.x), so local
+// (u, v) is world (o.x + u F.z + v F.x, o.z - u F.x + v F.z), a pure rotation. The building is the largest centred
+// rect (1 m inside the ring, as buildingRect keeps 1 m inside the @1 rect) found by shrinking from the ring's extent
+// around its centroid and its biggest triangles' centroids: a concave lot keeps its building out of the notch.
+function fitRect(lot, F){
+  var P = lot.poly ? polyM(lot.poly) : null;
+  if(!P || P.length < 3){
+    var R0 = {x0: ((lot.x || 0) - (lot.w || 0)/2)/100, x1: ((lot.x || 0) + (lot.w || 0)/2)/100, z0: ((lot.z || 0) - (lot.d || 0)/2)/100, z1: ((lot.z || 0) + (lot.d || 0)/2)/100};
+    P = [[R0.x0, R0.z0], [R0.x1, R0.z0], [R0.x1, R0.z1], [R0.x0, R0.z1]];
+  }
+  if(!(Math.abs(polyArea(P)) > 1)) return null;
+  var tri = triangulate(flatOf(P)), cand = [polyCentroid(P)], ts = [];
+  for(var t = 0; t < tri.length; t += 3){
+    var a = P[tri[t]], b = P[tri[t+1]], c = P[tri[t+2]];
+    ts.push({c: [(a[0] + b[0] + c[0])/3, (a[1] + b[1] + c[1])/3], A: Math.abs(polyArea([a, b, c])), k: t});
+  }
+  ts.sort(function(p, q){ return q.A - p.A || p.k - q.k; });
+  ts.slice(0, 4).forEach(function(s){ cand.push(s.c); });
+  var best = null;
+  cand.forEach(function(o){
+    var L = P.map(function(p){ var dx = p[0] - o[0], dz = p[1] - o[1]; return [dx*F.z - dz*F.x, dx*F.x + dz*F.z]; });
+    if(!inPoly(L, 0, 0)) return;
+    var u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    L.forEach(function(p){ u0 = Math.min(u0, p[0]); u1 = Math.max(u1, p[0]); v0 = Math.min(v0, p[1]); v1 = Math.max(v1, p[1]); });
+    var hu = Math.min(-u0, u1) - 1, hv = Math.min(-v0, v1) - 1;
+    for(var k = 0; k < 40 && hu > 0.25 && hv > 0.25 && !rectIn(L, hu + 1, hv + 1); k++){ hu *= 0.94; hv *= 0.94; }
+    if(!(hu > 0.25 && hv > 0.25) || !rectIn(L, hu + 1, hv + 1)) return;
+    if(!best || hu*hv > best.hu*best.hv) best = {o: {x: o[0], z: o[1]}, hu: hu, hv: hv};
+  });
+  return best;
+}
+// is the centred rect [-hu, hu] x [-hv, hv] inside ring L: its corners inside and no edge of L entering it
+function rectIn(L, hu, hv){
+  var C = [[-hu, -hv], [hu, -hv], [hu, hv], [-hu, hv]];
+  for(var k = 0; k < 4; k++) if(!inPoly(L, C[k][0], C[k][1])) return false;
+  for(k = 0; k < L.length; k++){
+    var a = L[k], b = L[(k + 1) % L.length], t0 = 0, t1 = 1, d = [b[0] - a[0], b[1] - a[1]];
+    // Liang-Barsky clip of a-b against the open rect (1 mm inside it)
+    var ok = [[-d[0], a[0] + hu - 1e-3], [d[0], hu - 1e-3 - a[0]], [-d[1], a[1] + hv - 1e-3], [d[1], hv - 1e-3 - a[1]]].every(function(pq){
+      if(pq[0] === 0) return pq[1] > 0;
+      var r = pq[1]/pq[0];
+      if(pq[0] < 0){ if(r > t1) return false; if(r > t0) t0 = r; }
+      else { if(r < t0) return false; if(r < t1) t1 = r; }
+      return true;
+    });
+    if(ok && t1 - t0 > 1e-9) return false;
+  }
+  return true;
+}
+function oriented(W, lot, detail, body, win, F){
+  var Q = WQ(), fit = fitRect(lot, F);
+  if(!fit) return;
+  var o = fit.o, R = {x0: -fit.hu, x1: fit.hu, z0: -fit.hv, z1: fit.hv};
+  function wx(u, v){ return [o.x + u*F.z + v*F.x, o.z - u*F.x + v*F.z]; }
+  var ys = [wx(R.x0, R.z0), wx(R.x1, R.z0), wx(R.x0, R.z1), wx(R.x1, R.z1)].map(function(p){ return Q.groundAt(W, p[0], p[1]); });
+  var tb = geo(true), tw = geo(true, true);
+  shell(W, lot, detail, tb, tw, R, ys, "north");
+  place(tb, body, o, F); place(tw, win, o, F);
+}
+// append geo s (built in the lot frame) to d, turned and moved into the world
+function place(s, d, o, F){
+  var base = d.p.length/3, k;
+  for(k = 0; k < s.p.length; k += 3){
+    var u = s.p[k], v = s.p[k+2], nu = s.n[k], nv = s.n[k+2];
+    d.p.push(o.x + u*F.z + v*F.x, s.p[k+1], o.z - u*F.x + v*F.z);
+    d.n.push(nu*F.z + nv*F.x, s.n[k+1], -nu*F.x + nv*F.z);
+    d.c.push(s.c[k], s.c[k+1], s.c[k+2]);
+  }
+  if(d.b) for(k = 0; k < s.p.length/3; k++) d.b.push(s.b ? s.b[k] : 0);
+  if(d.l) for(k = 0; k < s.p.length/3; k++) d.l.push(s.l ? s.l[k] : 0);
+  for(k = 0; k < s.i.length; k++) d.i.push(s.i[k] + base);
+}
+// one building in the frame of R (world axes for @1, the lot frame for an oriented lot); ys = the ground at R's corners
+function shell(W, lot, detail, body, win, R, ys, facing){
+  var Q = WQ();
   var gy = Math.max.apply(null, ys), yb = Math.min.apply(null, ys) - 1;
   var floors = Math.max(1, lot.floors|0), yt = gy + floors*FLOOR_H, bid = +lot.id || 0;
   var style = styleOf(W, lot), r = rng(Q.hash32(W.hash + ":lot:" + lot.id));
@@ -628,7 +1088,7 @@ function building(W, lot, detail, body, win){
     flatRoof(body, R, yt, rc, bid);
     if(style === "civ"){
       // a portico on the door side: columns and a lintel, inside the lot
-      var front = lot.facing === "south" ? -1 : 1, zf = front > 0 ? R.z1 : R.z0, zc = zf + front*0.75;
+      var front = facing === "south" ? -1 : 1, zf = front > 0 ? R.z1 : R.z0, zc = zf + front*0.75;
       var ch = Math.min(floors*FLOOR_H, 7), nC = Math.max(4, Math.floor((R.x1 - R.x0)/3)), dx = (R.x1 - R.x0 - 1)/(nC - 1);
       for(var ci = 0; ci < nC; ci++){
         var cx = R.x0 + 0.5 + ci*dx;
@@ -832,7 +1292,7 @@ function allProps(W){
   }
   Q.trees(W).forEach(function(t){ put("trees", {x: t.x, y: Q.groundAt(W, t.x, t.z), z: t.z, s: t.s, kind: t.kind}); });
   C.E.forEach(function(E){
-    if(E.walk > 0 && (E.cls === "street" || E.cls === "avenue")){
+    if(E.walk > 0 && (streetish(E.cls) || aveish(E.cls))){
       // lamps every 30 m on both sidewalks, staggered by 15 m
       [1, -1].forEach(function(sg){
         for(var s = E.tA + 6 + (sg < 0 ? 15 : 0); s < E.len - E.tB - 6; s += 30){
@@ -841,7 +1301,7 @@ function allProps(W){
         }
       });
     }
-    if(E.walk > 0 && E.cls === "street"){
+    if(E.walk > 0 && streetish(E.cls)){
       // parked cars: 7 m slots, both kerbs, residential/commercial frontage, never near a junction or an HQ lot
       for(var k = 0, s2; (s2 = 12 + 3.5 + 7*k) <= E.len - 12 - 3.5; k++){
         [1, -1].forEach(function(sg){
@@ -876,7 +1336,7 @@ function allProps(W){
       }
       put("signs", {x: x, y: Q.groundAt(W, x, z), z: z, yaw: Math.atan2(S.dx, S.dz), name: E.name, ref: E.ref, edge: E.id, node: id});
       // corner lamp between this arm and the next (this arm's left side)
-      if(E.walk > 0 && (E.cls === "street" || E.cls === "avenue")){
+      if(E.walk > 0 && (streetish(E.cls) || aveish(E.cls))){
         var C2 = armStation(E, a.end, Math.min(a.t + 0.8, E.len/2)), lo = E.half - 0.35;
         var lx = C2.x + C2.lx*lo, lz = C2.z + C2.lz*lo;
         put("lamps", {x: lx, y: Q.groundAt(W, lx, lz), z: lz, yaw: Math.atan2(-C2.lx, -C2.lz)});
@@ -904,12 +1364,123 @@ function nameAtlasLayout(names){
   return {cols: cols, rows: Math.max(1, Math.ceil(n/cols)), cell: {w: 256, h: 48}, index: index};
 }
 
+/* ---------- min_tier: the world as a city tier shows it ---------- */
+// the first tier an item exists in (0: every tier). Lots, blocks and edges carry min_tier; a site carries tier
+// (@1 sites carry neither, and a lot's own `tier` field is not this)
+function minTier(o, site){
+  var t = o && o.min_tier != null ? o.min_tier : (site && o ? o.tier : null);
+  return t != null && isFinite(+t) ? +t : 0;
+}
+function shown(tier){ return function(o){ return minTier(o) <= tier; }; }
+// view(W, tier): W without the edges, blocks, lots and sites whose first tier is above `tier` (W itself when nothing is
+// hidden, e.g. any @1 doc, or when tier is null). A view is a shallow copy with its own lazy index (world.js) and keeps
+// W as tierBase: block planes, the beach and the per-W caches of the views of one world stay shared and comparable.
+var VIEWS = [];
+function view(W, tier){
+  var B = (W && W.tierBase) || W;
+  if(!B || tier == null || !isFinite(+tier)) return B;
+  tier = Math.floor(+tier);
+  for(var k = 0; k < VIEWS.length; k++) if(VIEWS[k].B === B && VIEWS[k].t === tier) return VIEWS[k].V;
+  function keep(L, site){ return (L || []).filter(function(o){ return minTier(o, site) <= tier; }); }
+  var edges = (B.edges || []).filter(shown(tier)), blocks = keep(B.blocks), lots = keep(B.lots), sites = keep(B.sites, true), V = B;
+  if(edges.length !== (B.edges || []).length || blocks.length !== (B.blocks || []).length ||
+     lots.length !== (B.lots || []).length || sites.length !== (B.sites || []).length){
+    V = {};
+    for(var key in B) if(Object.prototype.hasOwnProperty.call(B, key)) V[key] = B[key];
+    V.edges = edges; V.blocks = blocks; V.lots = lots; V.sites = sites; V.index = null; V.tierBase = B; V.tier = tier;
+  }
+  VIEWS = VIEWS.filter(function(v){ return v.B === B; }).slice(-5);
+  VIEWS.push({B: B, t: tier, V: V});
+  return V;
+}
+// Which tiles (per product) differ between tiers a and b: a sound, cheap superset found from the items whose first
+// tier lies between them, without building anything. Each changed item is a box (an edge with every edge sharing its
+// nodes: their junctions and trims move); a product's tiles are those its pieces can reach from a box:
+//   roads     the edge boxes themselves (ribbons and junction patches of those edges)
+//   terrain   the boxes + TERRAIN_REACH (a vertex reads every piece its star overlaps, <= 32 m, plus the 4 m pad blend)
+//   ground    the centroid tiles of the ground items within TERRAIN_REACH (their kerbs reach down to the terrain)
+//   buildings the centre tiles of the building lots within BLEND_REACH (their bases read groundAt)
+//   props     the boxes + PROP_REACH (lamps, signs, parked cars, tree clearance); every gantry tile if a graded edge changed
+// -> {terrain, roads, ground, buildings, props: ["tx,tz", ...]}, sorted; all empty when a and b show the same world
+var TERRAIN_REACH = 40, BLEND_REACH = 5, PROP_REACH = 12;
+function tierDiff(W, a, b){
+  var B = (W && W.tierBase) || W, out = {terrain: [], roads: [], ground: [], buildings: [], props: []};
+  if(!B || a == null || b == null || !isFinite(+a) || !isFinite(+b)) return out;
+  var lo = Math.min(Math.floor(+a), Math.floor(+b)), hi = Math.max(Math.floor(+a), Math.floor(+b));
+  if(lo === hi) return out;
+  function moved(o, site){ var t = minTier(o, site); return t > lo && t <= hi; }
+  var boxes = [], graded = false, inc = {};
+  function box(x0, x1, z0, z1){ return {x0: x0, x1: x1, z0: z0, z1: z1}; }
+  function edgeBox(e){
+    var p = e.pts, h = e.width/200, R = box(Infinity, -Infinity, Infinity, -Infinity);
+    for(var j = 0; j < p.length; j += 3){
+      R.x0 = Math.min(R.x0, p[j]/100 - h); R.x1 = Math.max(R.x1, p[j]/100 + h);
+      R.z0 = Math.min(R.z0, p[j+2]/100 - h); R.z1 = Math.max(R.z1, p[j+2]/100 + h);
+    }
+    return R;
+  }
+  function polyBox(o){
+    var R = box((o.x - o.w/2)/100, (o.x + o.w/2)/100, (o.z - o.d/2)/100, (o.z + o.d/2)/100);
+    (o.poly || []).forEach(function(p){
+      R.x0 = Math.min(R.x0, p[0]/100); R.x1 = Math.max(R.x1, p[0]/100); R.z0 = Math.min(R.z0, p[1]/100); R.z1 = Math.max(R.z1, p[1]/100);
+    });
+    return R;
+  }
+  (B.edges || []).forEach(function(e){ (inc[e.a] = inc[e.a] || []).push(e); (inc[e.b] = inc[e.b] || []).push(e); });
+  (B.edges || []).forEach(function(e){
+    if(!moved(e)) return;
+    if(e.cls === "highway" || e.cls === "ring") graded = true;
+    var R = edgeBox(e);
+    R.road = true; boxes.push(R);
+    (inc[e.a] || []).concat(inc[e.b] || []).forEach(function(f){ if(f !== e){ var F = edgeBox(f); F.road = true; boxes.push(F); } });
+  });
+  (B.blocks || []).forEach(function(o){ if(moved(o) && o.poly) boxes.push(polyBox(o)); });
+  (B.lots || []).forEach(function(o){ if(moved(o)) boxes.push(polyBox(o)); });
+  (B.sites || []).forEach(function(o){ if(moved(o, true)) boxes.push(polyBox(o)); });
+  if(!boxes.length) return out;
+  var sets = {terrain: {}, roads: {}, ground: {}, buildings: {}, props: {}};
+  function near(R, x0, x1, z0, z1, m){ return R.x0 - m <= x1 && R.x1 + m >= x0 && R.z0 - m <= z1 && R.z1 + m >= z0; }
+  function cover(set, R, m){
+    var t0 = tileOf(R.x0 - m, R.z0 - m), t1 = tileOf(R.x1 + m, R.z1 + m);
+    for(var tz = t0.tz; tz <= t1.tz; tz++) for(var tx = t0.tx; tx <= t1.tx; tx++) set[tileKey(tx, tz)] = 1;
+  }
+  boxes.forEach(function(R){ if(R.road) cover(sets.roads, R, 0); cover(sets.terrain, R, TERRAIN_REACH); cover(sets.props, R, PROP_REACH); });
+  // ground and buildings land in the tile of their centroid / centre: the union of both tiers' items
+  [view(B, lo), view(B, hi)].forEach(function(V){
+    groundItems(V).forEach(function(it){
+      var x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+      it.P.forEach(function(p){ x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[1]); z1 = Math.max(z1, p[1]); });
+      if(boxes.some(function(R){ return near(R, x0, x1, z0, z1, TERRAIN_REACH); })) sets.ground[tileKey(it.tx, it.tz)] = 1;
+    });
+  });
+  (B.lots || []).forEach(function(l){
+    if(l.kind !== "building") return;
+    var R = polyBox(l);
+    if(boxes.some(function(Q){ return near(Q, R.x0, R.x1, R.z0, R.z1, BLEND_REACH); })){ var t = tileOf(l.x/100, l.z/100); sets.buildings[tileKey(t.tx, t.tz)] = 1; }
+  });
+  if(graded) [view(B, lo), view(B, hi)].forEach(function(V){
+    var P = allProps(V);
+    Object.keys(P).forEach(function(k){ if(P[k].gantries.length) sets.props[k] = 1; });
+  });
+  Object.keys(sets).forEach(function(p){
+    out[p] = Object.keys(sets[p]).sort(function(x, y){
+      var X = x.split(","), Y = y.split(",");
+      return (+X[1] - +Y[1]) || (+X[0] - +Y[0]);
+    });
+  });
+  return out;
+}
+
 /* ---------- one worker job ---------- */
+// m.tier (optional) builds the tile as that city tier shows it (view above); "ground" is the v2 ground (groundTile)
 function buildTile(W, m){
   m = m || {};
+  if(m.tier != null) W = view(W, m.tier);
   var tx = clamp(m.tx|0, 0, NT - 1), tz = clamp(m.tz|0, 0, NT - 1), want = m.want || [], out = {op: "tile", id: m.id, tx: tx, tz: tz};
+  if(m.tier != null) out.tier = m.tier;
   if(want.indexOf("terrain") >= 0){ out.terrain = terrainTile(W, tx, tz, m.lods || []); out.lods = (m.lods || []).slice(); }
   if(want.indexOf("roads") >= 0) out.roads = roadTile(W, tx, tz);
+  if(want.indexOf("ground") >= 0) out.ground = groundTile(W, tx, tz);
   if(want.indexOf("buildings0") >= 0) out.buildings0 = buildingTile(W, tx, tz, 0);
   if(want.indexOf("buildings1") >= 0) out.buildings1 = buildingTile(W, tx, tz, 1);
   if(want.indexOf("props") >= 0) out.props = props(W, tx, tz);
@@ -929,6 +1500,9 @@ HQV.worldgeom = {
   ORIGIN: ORIGIN, TILE: TILE, CHUNK: CHUNK, NT: NT, LOD_STEP: LOD_STEP, FLOOR_H: FLOOR_H, LIFT: LIFT, MARK_LIFT: MARK_LIFT,
   tileOf: tileOf, tileKey: tileKey, terrainTile: terrainTile, roadTile: roadTile, buildingTile: buildingTile,
   props: props, routes: routes, nameAtlasLayout: nameAtlasLayout, buildTile: buildTile, transferables: transferables,
-  emptyGeo: emptyGeo, CAR_COLORS: CAR_COLORS, GANTRY_POST: GANTRY_POST, GANTRY_SINK: GANTRY_SINK
+  emptyGeo: emptyGeo, CAR_COLORS: CAR_COLORS, GANTRY_POST: GANTRY_POST, GANTRY_SINK: GANTRY_SINK,
+  groundTile: groundTile, groundItems: groundItems, triangulate: triangulate, hasGround: hasGround, seaY: seaY, view: view,
+  tierDiff: tierDiff,
+  SEA_HIDE: SEA_HIDE
 };
 })();

@@ -332,6 +332,48 @@ function cineRun(seed){
   r.bobHz = {slow: phaseRate(4), fast: phaseRate(30)};
   out.review2 = r;
 })();
+// walking on foot with the keys, the way hq3d moves the avatar: the walk direction is locked from the
+// rig's heading when the keys are pressed, the avatar turns toward it, the rig turns round behind it.
+function walk(mode, mx, mz, secs){
+  var s = C.create({mode: mode}), t = T({x: 0, z: 0, yaw: 0}), dt = 1/60, p = run(s, t, 3);
+  function hd(){ return s.moveYaw != null ? s.moveYaw : s.lookYaw; }   // older rigs had only lookYaw
+  var h0 = hd(), dirs = [], maxStep = 0, prev = hd(), PI = Math.PI, ref0 = hd() + PI, late = null;
+  function wrap(a){ while(a > PI) a -= 2*PI; while(a < -PI) a += 2*PI; return a; }
+  for(var i = 0; i < Math.round(secs/dt); i++){
+    var ref = ref0, sn = Math.sin(ref), cs = Math.cos(ref), l = Math.hypot(mx, mz);
+    var vx = (mx*cs + mz*sn)/l, vz = (-mx*sn + mz*cs)/l, want = Math.atan2(vx, vz);
+    t.yaw = t.yaw + wrap(want - t.yaw)*Math.min(1, dt*12);
+    t.x += vx*4*dt; t.z += vz*4*dt; t.speed = 4; t.moving = true;
+    p = C.step(s, t, dt, FLAT);
+    maxStep = Math.max(maxStep, Math.abs(wrap(hd() - prev))); prev = hd();
+    dirs.push(want);
+    if(i === Math.round((secs - 1)/dt)) late = hd();
+  }
+  var spread = 0; for(var k = 1; k < dirs.length; k++) spread = Math.max(spread, Math.abs(wrap(dirs[k] - dirs[0])));
+  return {turn: Math.abs(wrap(hd() - h0)), maxStep: maxStep, dirSpread: spread, lastSecond: Math.abs(wrap(hd() - late))};
+}
+out.walk = {};
+["far", "chase", "near"].forEach(function(m){
+  out.walk[m] = {W: walk(m, 0, -1, 4), A: walk(m, -1, 0, 4), D: walk(m, 1, 0, 4), S: walk(m, 0, 1, 4), WD: walk(m, 1, -1, 4)};
+});
+// after a swing, stepping back (S) facing the camera's way must hold the camera: the swing becomes the
+// heading instead of an offset that was added again every frame
+(function(){
+  var s = C.create({mode: "chase"}), t = T({x: 0, z: 0, yaw: 0}), dt = 1/60, PI = Math.PI, i;
+  function wrap(a){ while(a > PI) a -= 2*PI; while(a < -PI) a += 2*PI; return a; }
+  run(s, t, 2);
+  C.input(s, {swing: 1}); run(s, t, 0.5); C.input(s, {swing: 0}); run(s, t, 1);
+  var start = null, late = null;
+  for(i = 0; i < 300; i++){
+    var ref = s.moveYaw + PI;
+    t.yaw = t.yaw + wrap(s.moveYaw - t.yaw)*Math.min(1, dt*8);          // face the camera's way
+    t.x += Math.sin(ref)*2.6*dt; t.z += Math.cos(ref)*2.6*dt; t.speed = 2.6; t.moving = true;
+    C.step(s, t, dt, FLAT);
+    if(i === 60) start = s.moveYaw;                                      // after the 1 s settle
+    if(i === 240) late = s.moveYaw;
+  }
+  out.swingThenBack = {total: Math.abs(wrap(s.moveYaw - start)), lastSecond: Math.abs(wrap(s.moveYaw - late))};
+})();
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -661,6 +703,26 @@ class CamRig(unittest.TestCase):
 
     def test_reverse_cycle_enters_car_fp_at_bonnet(self):
         self.assertEqual(self.o["review2"]["reverseCar"], [["fp", "bonnet"], ["fp", "seat"], ["near", "seat"]])
+
+    def test_walking_with_the_keys_turns_the_camera_smoothly(self):
+        """The walk direction is locked while the keys are held, so the camera turns round behind you and
+        then stops: A/D a quarter turn, W+D an eighth, settled within the threshold and at rest in the
+        last second; walking at the camera and straight on hold it; nothing ever jumps in one frame."""
+        for m, w in self.o["walk"].items():
+            for key, goal in (("A", math.pi/2), ("D", math.pi/2), ("WD", math.pi/4)):
+                self.assertLess(abs(w[key]["turn"] - goal), 0.06, "%s %s turned %.2f rad, wants %.2f" % (m, key, w[key]["turn"], goal))
+                self.assertLess(w[key]["lastSecond"], 0.01, "%s %s still turning %.3f rad in the last second" % (m, key, w[key]["lastSecond"]))
+                self.assertLess(w[key]["dirSpread"], 1e-9, "%s %s: the walk direction moved" % (m, key))
+            self.assertLess(w["S"]["turn"], 0.02, "%s walking at the camera turned it" % m)
+            self.assertLess(w["W"]["turn"], 0.02, "%s W" % m)
+            for key in ("A", "D", "S", "W", "WD"):
+                self.assertLess(w[key]["maxStep"], 0.03, "%s %s jumped %.3f rad in one frame" % (m, key, w[key]["maxStep"]))
+
+    def test_swing_then_step_back_holds_the_camera(self):
+        # the facing and the heading ease together once (a few hundredths), then the camera is at rest
+        d = self.o["swingThenBack"]
+        self.assertLess(d["total"], 0.03, "camera drifted %.3f rad stepping back after a swing" % d["total"])
+        self.assertLess(d["lastSecond"], 0.002, "camera still drifting %.4f rad/s" % d["lastSecond"])
 
     def test_bob_rate_capped(self):
         r = self.o["review2"]["bobHz"]

@@ -47,7 +47,7 @@ var VEHICLE = {
 var SPAN_MIN = 44, SPAN_MAX = 2048, HALF = 1024, MAP_TAN = Math.tan(5*DEG);
 var LOOK_H = 1.3;          // chase look point above the target's feet (the "head" the camera frames)
 var FAR = 3000, BLEND = 0.5, BLEND_RED = 0.3, DIVE = 1.2, DIVE_RED = 0.6, FLY_MAP = 0.8;
-var RECENTRE = 2, SWING = 1.6, LIFT = 2, ORBIT_K = 0.006, LOOK_K = 0.0022, ZOOM_K = 0.0015;
+var FOLLOW = 2.4, FOLLOW_ON = 0.17, FOLLOW_OFF = 0.035, RECENTRE = 2, SWING = 1.6, LIFT = 2, ORBIT_K = 0.006, LOOK_K = 0.0022, ZOOM_K = 0.0015;
 var CINE_SHOT = 12;
 
 /* ---------- small maths ---------- */
@@ -114,7 +114,7 @@ function create(o){
 // per-mode state, cleared on every mode change
 function resetMode(s){
   var _ = s._;
-  _.cam = null; _.orbitYaw = 0; _.orbitPitch = 0; _.idle = 0; _.upOff = 0; _.backScale = 1;
+  _.cam = null; _.head = null; _.headV = 0; _.follow = false; _.orbitYaw = 0; _.orbitPitch = 0; _.idle = 0; _.upOff = 0; _.backScale = 1;
   _.colFrac = null; _.colV = 0; _.fov = null; _.fovV = 0;
   _.fp = null; _.fpOff = 0; _.bobPhase = 0; _.bobAmp = 0; _.bobV = 0;
   _.photo = null; _.cineT = 0; _.cinePivot = null; s.wake = false;
@@ -311,8 +311,30 @@ function chasePose(s, mode, T, dt, q){
     var ry = spring(_.orbitYaw, _.oyV || 0, 0, 2, dt), rp = spring(_.orbitPitch, _.opV || 0, 0, 2, dt);
     _.orbitYaw = ry[0]; _.oyV = ry[1]; _.orbitPitch = rp[0]; _.opV = rp[1];
   } else { _.oyV = 0; _.opV = 0; }
-  // turn lag: the camera yaw springs after the target yaw
-  var goalYaw = T.yaw + _.orbitYaw;
+  // The heading the camera holds. In a vehicle it is the vehicle's (they drive forward). On foot the
+  // camera turns to get behind you: once your facing is FOLLOW_ON (~10 deg) off it, it keeps turning on a
+  // critically damped spring (eases in and out) until it is within FOLLOW_OFF (~2 deg), then holds.
+  // The host locks the walk direction in the world while the same keys are held, so this turn never
+  // feeds back into where the keys point. It never turns toward you when you face the camera (S steps
+  // back facing forward).
+  if(_.head == null || V){ _.head = T.yaw; _.headV = 0; }
+  else if(T.moving && _.orbitYaw){
+    // walking: a swing (Q/R, right-drag) becomes the heading itself. Kept as an offset, it was added
+    // again every frame once you faced the camera's way (S/A/D), and the camera drifted on its own.
+    _.head = wrap(_.head + _.orbitYaw); _.orbitYaw = 0; _.oyV = 0;
+  }
+  if(!V){
+    var dh = wrap(T.yaw - _.head), al = Math.cos(dh), hw = 0;
+    if(T.moving && T.speed > 0.3 && al > -0.5){
+      if(Math.abs(dh) > FOLLOW_ON) _.follow = true;
+      else if(Math.abs(dh) < FOLLOW_OFF) _.follow = false;
+      if(_.follow) hw = FOLLOW;
+    } else if(!T.moving && _.idle > RECENTRE) hw = 1.5;   // standing still: settle behind the facing (the 2 s recentre)
+    if(hw > 0){ var hh = spring(_.head, _.headV, _.head + wrap(T.yaw - _.head), hw, dt); _.head = wrap(hh[0]); _.headV = hh[1]; }
+    else _.headV = 0;
+  }
+  // turn lag: the camera yaw springs after that heading
+  var goalYaw = _.head + _.orbitYaw;
   if(!_.cam) _.cam = {yaw: goalYaw, yawV: 0, hy: null, hyV: 0};
   var c = _.cam, ys = spring(c.yaw, c.yawV, c.yaw + wrap(goalYaw - c.yaw), M.lag, dt);
   c.yaw = wrap(ys[0]); c.yawV = ys[1];
@@ -324,7 +346,9 @@ function chasePose(s, mode, T, dt, q){
   var hs = spring(c.hy, c.hyV, baseY, M.lag, dt); c.hy = hs[0]; c.hyV = hs[1];
   var want = v3(px, c.hy + h, pz);
   // look-ahead along the facing plus a lead into the turn
-  var ahead = Math.min(4, T.speed*0.35), lead = clamp(_.yawRate*0.8, -1.5, 1.5)*Math.min(1, T.speed/3);
+  // only while moving away from the camera: walking toward it must not swing the aim round
+  var fwd = V ? 1 : Math.max(0, Math.cos(wrap(T.yaw - c.yaw)));
+  var ahead = Math.min(4, T.speed*0.35)*fwd, lead = clamp(_.yawRate*0.8, -1.5, 1.5)*Math.min(1, T.speed/3)*fwd;
   var f = rotYaw(0, 1, T.yaw), left = rotYaw(1, 0, T.yaw);
   var lk = v3(T.x + f.x*ahead + left.x*lead, T.y + LOOK_H, T.z + f.z*ahead + left.z*lead);
   // collision along the target head -> camera ray (not the look-ahead point, which can sit inside a wall)
@@ -336,6 +360,7 @@ function chasePose(s, mode, T, dt, q){
   p.roll = red || !V ? 0 : V.roll*T.lean*0.5;
   s.lookYaw = Math.atan2(lk.x - pos.x, lk.z - pos.z);
   s.lookPitch = Math.atan2(lk.y - pos.y, Math.sqrt((lk.x - pos.x)*(lk.x - pos.x) + (lk.z - pos.z)*(lk.z - pos.z)));
+  s.moveYaw = c.yaw;   // the steady camera heading the host moves the avatar by (lookYaw wobbles with look-ahead)
   return p;
 }
 

@@ -1714,25 +1714,42 @@ function mount(el, api){
   }
   function rideToggle(){ if(ride) dismount(); else { var i = nearBike(); if(i >= 0) mount(i); } }
 
+  var moveLatch = {sig: "", yaw: 0}, lastOrbit = 0;   // the locked walk direction (chase cameras), last camera swing
   function moveAvatar(dt){
     if(ride){ if(ride.kind === "skate") skateMove(dt); else rideMove(dt); return; }
     var mx = 0, mz = 0;
     if(keys.KeyW || keys.ArrowUp) mz -= 1; if(keys.KeyS || keys.ArrowDown) mz += 1;
     if(keys.KeyA || keys.ArrowLeft) mx -= 1; if(keys.KeyD || keys.ArrowRight) mx += 1;
-    var vx = 0, vz = 0, run = keys.ShiftLeft || keys.ShiftRight;
+    var vx = 0, vz = 0, run = keys.ShiftLeft || keys.ShiftRight, back = false, pace = 1;
+    if(!(mx || mz)) moveLatch.sig = "";
     if(mx || mz){
       walkTo = null; walkDoor = null;
       // relative to the camera: "up" walks away from it. view.yaw points target -> camera (Classic);
       // the rig's lookYaw points camera -> target, so W = (sin lookYaw, cos lookYaw) in every rig mode.
-      var ref = rigOn() && rig.mode !== "classic" ? rig.lookYaw + PI : view.yaw;
+      // Chase family: the walk direction is LOCKED in the world while the same keys are held (taken from
+      // the camera's heading when they were pressed), so the camera can turn round behind you without
+      // changing where the keys point. A new key combination, or swinging the camera (Q/R, right-drag),
+      // takes the heading again. fp and photo stay look-relative; Classic keeps today's view.yaw.
+      var ref;
+      if(rigOn() && rig.mode !== "classic"){
+        var chaseRig = /^(far|chase|near)$/.test(rig.mode) && rig.moveYaw != null, head = chaseRig ? rig.moveYaw : rig.lookYaw;
+        var sig = mx + "," + mz, steer = keys.KeyQ || keys.KeyR || performance.now() - lastOrbit < 150;
+        if(!chaseRig || sig !== moveLatch.sig || steer){ moveLatch.sig = sig; moveLatch.yaw = head; }
+        ref = moveLatch.yaw + PI;
+      } else ref = view.yaw;
       var s = Math.sin(ref), c = Math.cos(ref), l = Math.hypot(mx, mz);
       vx = (mx*c + mz*s)/l; vz = (-mx*s + mz*c)/l;
+      // Chase cameras on foot: W/A/D turn you to walk that way and the camera swings round behind you;
+      // S (and S+A/D) steps back while you keep facing the camera's way. Turning to face S spun you round
+      // to walk at the camera, and the camera then swung 180 degrees to get behind you.
+      if(mz > 0 && rigOn() && /^(far|chase|near)$/.test(rig.mode)){ back = true; pace = 0.65; }
     } else if(walkTo){
+      moveLatch.sig = "";
       var dx = walkTo.x - avatar.x, dz = walkTo.z - avatar.z, d = Math.hypot(dx, dz);
       if(d < 0.25){ walkTo = null; if(walkDoor){ var dd = walkDoor; walkDoor = null; through(dd); } }
       else { vx = dx/d; vz = dz/d; }
     }
-    var sp = (run ? 7 : 4)*dt;
+    var sp = (run ? 7 : 4)*dt*pace;
     if((vx || vz) && cur.camModes) sp *= slopeFactor(slopeAlong(avatar.x, avatar.z, Math.atan2(vx, vz), 1.5), "foot");
     avatar.speed = (vx || vz) && dt > 0 ? sp/dt : 0;
     keyMove = !!(vx || vz); keyRun = !!run; if(keyMove) movedHere = true;
@@ -1744,8 +1761,9 @@ function mount(el, api){
       else if(!blocked(nx, avatar.z)) avatar.x = nx;
       else if(!blocked(avatar.x, nz)) avatar.z = nz;
       else if(walkTo){ walkTo = null; walkDoor = null; }
-      avatar.yaw = E.angLerp(avatar.yaw, Math.atan2(vx, vz), Math.min(1, dt*12));
-      setAnim(avatar.ch, run ? "sprint" : "walk");
+      var face = back ? (rig.moveYaw != null ? rig.moveYaw : rig.lookYaw) : Math.atan2(vx, vz);
+      avatar.yaw = E.angLerp(avatar.yaw, face, Math.min(1, dt*(back ? 8 : 10)));
+      setAnim(avatar.ch, run ? "sprint" : "walk", back && mz > 0 ? -1 : 1);   // stepping back plays the walk backwards
       walkInto();
     } else setAnim(avatar.ch, "idle");
     // Space hops: a little gravity so you come back down where you started.
@@ -2004,7 +2022,7 @@ function mount(el, api){
       if(p.cycle) camCycle(p.cycle);
       if(p.map) mapToggle();
       var lx = p.look[0]*900*dt, ly = p.look[1]*900*dt;
-      if(lx || ly){ if(rig.mode === "fp" || rig.mode === "photo") HQV.camrig.input(rig, {look: [lx, ly]}); else if(CHASE[rig.mode]) HQV.camrig.input(rig, {orbit: [lx, ly]}); }
+      if(lx || ly){ if(rig.mode === "fp" || rig.mode === "photo") HQV.camrig.input(rig, {look: [lx, ly]}); else if(CHASE[rig.mode]){ HQV.camrig.input(rig, {orbit: [lx, ly]}); lastOrbit = performance.now(); } }
     }
     if(p.use) useKey();
   }
@@ -2040,7 +2058,7 @@ function mount(el, api){
         var ix = e.clientX - drag.lx, iy = e.clientY - drag.ly; drag.lx = e.clientX; drag.ly = e.clientY;
         if(drag.moved > 5 && rig){
           if(drag.map) HQV.camrig.input(rig, {pan: [-ix, -iy]});              // grab the map: it follows the pointer
-          else if(drag.orbit) HQV.camrig.input(rig, {orbit: [ix, iy]});
+          else if(drag.orbit){ HQV.camrig.input(rig, {orbit: [ix, iy]}); lastOrbit = performance.now(); }
           tip.hidden = true; noteInput();
         }
         return;
@@ -2507,7 +2525,11 @@ function mount(el, api){
   }
   if(SMOKE && SMOKE.on){
     window.HQ3D_DEBUG = {mode: function(m){ smokeCam(m); }, teleport: function(x, z, yaw){ smokeTeleport(+x || 0, +z || 0, yaw == null ? null : +yaw); },
-                         ride: function(kind){ smokeRide(kind); }, stats: function(){ return smokeStats(); }};
+                         ride: function(kind){ smokeRide(kind); }, stats: function(){ return smokeStats(); },
+                         // avatar + camera, for tools that drive the keys and record motion
+                         probe: function(){ var c = curCam(); return {x: avatar.x, z: avatar.z, yaw: avatar.yaw, speed: avatar.speed || 0,
+                           mode: rig && rig.mode, moveYaw: rig && rig.moveYaw, lookYaw: rig && rig.lookYaw,
+                           cam: c ? {x: c.position.x, y: c.position.y, z: c.position.z} : null, t: performance.now()}; }};
   }
 
   inst._place = function(x, z){ if(avatar){ avatar.x = x; avatar.z = z; } };    // for tests

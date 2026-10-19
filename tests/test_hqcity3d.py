@@ -38,6 +38,17 @@ const HQV = window.HQV;
 for (const f of ["hqbase", "hqskate", "world", "hqcityparts", "hqcity", "hqcity3d"])
   new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
 const doc = JSON.parse(zlib.gunzipSync(fs.readFileSync(%(fixture)s)).toString("utf8"));
+// games/hqmerge.js when it is there, else a stand-in that merges nothing; either way every call
+// is recorded with the meshes its keep() let through (what would be merged)
+if (fs.existsSync(root + "/games/hqmerge.js")) new Function(fs.readFileSync(root + "/games/hqmerge.js", "utf8"))();
+else HQV.hqMerge = {mergeStatic(T, g){ return {group: g, before: 0, after: 0}; }, mat(T, k, make){ return make(); }};
+const mergeCalls = [], realMerge = HQV.hqMerge.mergeStatic;
+HQV.hqMerge.mergeStatic = function(T, g, opts){
+  var merged = []; g.traverse(o => { if(o.isMesh && !(opts && opts.keep && opts.keep(o))){ var m = o.material;   // its material as it is now (fading makes it transparent later)
+    merged.push({o: o, live: Array.isArray(m) || m.transparent || !!m.map || !!(m.emissive && m.emissiveIntensity > 0 && m.emissive.getHex())}); } });
+  var call = {g: g, merged: merged}; mergeCalls.push(call);
+  var res = realMerge.apply(this, arguments); call.res = res; return res;
+};
 const WD = HQV.world, W = WD.pack(doc), C3 = HQV.hqCity3d, X = HQV.hqLotExtras, SP = HQV.hqSkatePark;
 const out = {};
 
@@ -210,6 +221,87 @@ out.city3d.stale = [staleBefore, staleSame, w3.stale];
   }
   out.city3d.traffic = {n: traffic.length, maxStep: maxStep, maxYaw: maxYaw, turned: turned};
 })();
+// the HQ group (a child of the City's HQ group) of a user's building, from its door
+function hqGroup(uid){
+  var h = w3.hits.filter(o => o.userData.door && o.userData.door.userId === uid)[0];
+  for(var o = h; o; o = o.parent) if(o.parent && o.parent.parent === S3) return o;
+  return null;
+}
+// crew counts change: no building is rebuilt, the line under the name is
+(function(){
+  var before = {}; LIST.forEach(h => { before[h.userId] = hqGroup(h.userId); });
+  var hitsN = w3.hits.length;
+  LIST = LIST.map(h => Object.assign({}, h, {crew: {working: 4, needs: 2}})); w3.onCity();
+  var same = LIST.every(h => hqGroup(h.userId) === before[h.userId]);
+  var sub = before.c0.children.some(o => o.name === "label:4 working · 2 need them");
+  var subOld = before.c0.children.some(o => o.name === "label:1 working · 0 need them");
+  // c0's look changes: only c0 is rebuilt, and what its old building used is disposed
+  var disposed = 0; before.c0.traverse(o => { if(o.geometry && !o.isSprite) o.geometry.addEventListener("dispose", () => { disposed++; }); });
+  LIST = LIST.map(h => h.userId === "c0" ? Object.assign({}, h, {look: {paint: "#884422", accent: "#00ff88"}}) : h); w3.onCity();
+  out.city3d.selective = {crewSame: same, sub: sub, subOld: subOld, c0New: hqGroup("c0") !== before.c0, c0Gone: before.c0.parent === null,
+    othersSame: LIST.filter(h => h.userId !== "c0").every(h => hqGroup(h.userId) === before[h.userId]), disposed: disposed, hits: [hitsN, w3.hits.length]};
+})();
+// fading eases (no snap), with no shader recompile or shadow toggle; under Calm it is instant
+(function(){
+  var g = hqGroup(you.h.userId), door = w3.hits.filter(o => o.userData.door && o.userData.door.userId === you.h.userId)[0], bg = door.parent, m = null, mesh = null;
+  bg.traverse(o => { if(!m && o.isMesh && !Array.isArray(o.material) && o.material.opacity === 1){ m = o.material; mesh = o; } });
+  var ver = m.version, shadow = mesh.castShadow, camAt = {x: you.lot.x/100, y: 20, z: you.lot.z/100 + 20, fov: 60, mode: "chase", frustum: frustum, avatar: {x: ydoor.x, y: 0, z: ydoor.z}};
+  var step = (dt, k) => w3.update(100, dt, k === undefined ? 1 : k, camAt);
+  w3.setFaded(["hq:" + you.h.userId]); step(1/60);
+  var first = m.opacity;
+  for(var i = 0; i < 30; i++) step(1/60);
+  var half = m.opacity;
+  for(var i = 0; i < 60; i++) step(1/60);
+  var faded = m.opacity, dwFaded = m.depthWrite;
+  w3.setFaded([]); for(var i = 0; i < 90; i++) step(1/60);
+  var back = m.opacity;
+  w3.setFaded(["hq:" + you.h.userId]); step(1/60, 0.25);
+  var calm = m.opacity; w3.setFaded([]); step(1/60, 0.25);
+  // another HQ's materials are not touched by your fade
+  var other = hqGroup("c0"), otherOp = []; w3.setFaded(["hq:" + you.h.userId]); step(1/60, 0.25);
+  other.traverse(o => { if(o.isMesh && !Array.isArray(o.material)) otherOp.push(o.material.opacity); });
+  w3.setFaded([]); step(1/60, 0.25);
+  out.city3d.fade = {first: first, half: half, faded: faded, back: back, calm: calm, transparent: m.transparent, versionSame: m.version === ver,
+    shadowSame: mesh.castShadow === shadow, dwFaded: dwFaded, dwBack: m.depthWrite, otherMin: Math.min.apply(null, otherOp)};
+})();
+// far HQs are not drawn; the map shows them all; the sun's shadow box sits on its texel grid
+(function(){
+  var g = hqGroup(you.h.userId), at = {x: you.lot.x/100, y: 30, z: you.lot.z/100 + 30, fov: 60, frustum: frustum, avatar: {x: ydoor.x + 0.37, y: 0.2, z: ydoor.z - 0.71}};
+  w3.update(1, 0.016, 1, Object.assign({mode: "chase"}, at)); var near = g.visible;
+  var sun = null; S3.traverse(o => { if(o.isDirectionalLight) sun = o; });
+  var want = C3.snapShadow({x: at.avatar.x, y: at.avatar.y, z: at.avatar.z}, {x: 0.45, y: 0.79, z: 0.34}, 120/sun.shadow.mapSize.x);
+  var tgt = sun.target.position, sunOff = [sun.position.x - tgt.x, sun.position.y - tgt.y, sun.position.z - tgt.z];
+  var farAt = Object.assign({}, at, {x: at.x + 600}); w3.update(1, 0.016, 1, Object.assign({mode: "chase"}, farAt)); var far = g.visible;
+  w3.update(1, 0.016, 1, Object.assign({mode: "map"}, farAt)); var map = g.visible;
+  w3.update(1, 0.016, 1, Object.assign({mode: "chase"}, at));
+  out.city3d.cull = {near: near, far: far, map: map, back: g.visible};
+  out.city3d.sun = {target: [tgt.x, tgt.y, tgt.z], want: [want.x, want.y, want.z], off: sunOff};
+})();
+// snapShadow: light-space x, y on the texel grid, depth along the light kept, never further than half a texel diagonal
+(function(){
+  var dir = {x: 0.45, y: 0.79, z: 0.34}, L = Math.hypot(0.45, 0.79, 0.34), z = [0.45/L, 0.79/L, 0.34/L], xl = Math.hypot(z[2], z[0]), x = [z[2]/xl, 0, -z[0]/xl];
+  var y = [z[1]*x[2] - z[2]*x[1], z[2]*x[0] - z[0]*x[2], z[0]*x[1] - z[1]*x[0]], texel = 120/2048, worst = {grid: 0, depth: 0, move: 0};
+  for(var i = 0; i < 200; i++){
+    var p = {x: Math.sin(i*1.7)*400, y: Math.cos(i*0.3)*20, z: Math.cos(i*2.3)*400}, q = C3.snapShadow(p, dir, texel);
+    var dot = (v, a) => v.x*a[0] + v.y*a[1] + v.z*a[2];
+    [x, y].forEach(a => { var u = dot(q, a)/texel; worst.grid = Math.max(worst.grid, Math.abs(u - Math.round(u))); });
+    worst.depth = Math.max(worst.depth, Math.abs(dot(q, z) - dot(p, z)));
+    worst.move = Math.max(worst.move, Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z));
+  }
+  out.snap = worst; out.snapTexel = texel;
+})();
+// what mergeStatic was asked to merge: never a door, a rideable, the traffic, or a material that changes later
+(function(){
+  var ride = w3.bikes.map(b => b.g), bad = [];
+  mergeCalls.forEach(c => c.merged.forEach(r => {
+    var o = r.o, under = q => { for(var p = o; p; p = p.parent) if(p === q) return true; return false; };
+    if(o.userData.door) bad.push("door");
+    if(ride.some(under)) bad.push("ride");
+    if(r.live) bad.push("material");
+  }));
+  out.city3d.merge = {calls: mergeCalls.length, merged: mergeCalls.reduce((n, c) => n + c.merged.length, 0), bad: bad.slice(0, 5),
+    keepDoor: C3.keepMesh(w3.hits[0]), keepPlain: C3.keepMesh(new THREE.Mesh(new THREE.BoxGeometry(), mat(0x888888)))};
+})();
 // the list changes: rebuilt without piling up doors or hits
 var doorsBefore = w3.doors.length, hitsBefore = w3.hits.length;
 w3.onLook(); LIST = cityOf(6, 2); w3.onCity();
@@ -229,6 +321,20 @@ out.city3d.rebuilt = {doors: [doorsBefore, w3.doors.length], hits: [hitsBefore, 
   function ray(lx, lz, dz){ var f = C3.toWorld(p, lx, lz), t = C3.toWorld(p, lx, lz + dz), y = p.y + 1.5;
     return {blocked: w3.blocked(f.x, f.z), t: w3.camHit({x: f.x, y: y, z: f.z}, {x: t.x, y: y + 4, z: t.z})}; }
   out.city3d.wing = {right: ray(8, 0, 8), between: ray(-6, 0, 8), front: ray(0, 12, -24)};
+})();
+// a level-25 HQ (helipad, heli): its building merges through its sub-groups, and what animate()
+// moves (rotor, heli) is never folded into a merged mesh
+(function(){
+  var n0 = mergeCalls.length; LIST = cityOf(6, 2); LIST[0].level = 60; LIST[0].look = {paint: "#224466", accent: "#ff8800", decor: "crown"}; w3.onCity();
+  var g = hqGroup("c0"), calls = mergeCalls.slice(n0).filter(cl => { for(var p = cl.g; p; p = p.parent) if(p === g) return true; return false; });
+  var bld = calls.filter(cl => cl.g !== g)[0], a = C3.assign(LIST, W).filter(a => a.h.userId === "c0")[0];
+  var at = {x: a.lot.x/100, y: 30, z: a.lot.z/100 + 30, fov: 60, mode: "chase", frustum: frustum, avatar: {x: a.lot.x/100, y: 0, z: a.lot.z/100 + 12}};
+  function poses(){ var m = new Map(); g.updateMatrixWorld(true); g.traverse(o => { if(o.isMesh) m.set(o, o.matrixWorld.toArray().map(v => v.toFixed(4)).join()); }); return m; }
+  w3.update(3, 0.016, 1, at); var p0 = poses(); w3.update(9.5, 0.016, 1, at); var p1 = poses(), movedMerged = 0, moved = 0;
+  p0.forEach((v, o) => { if(p1.get(o) !== v){ moved++; if(/^hqmerge:/.test(o.name)) movedMerged++; } });
+  var ba = cl => cl && cl.res ? [cl.res.before, cl.res.after] : [0, 0];
+  var plaza = mergeCalls.slice(0, n0).reduce((a, cl) => !a || ba(cl)[0] > ba(a)[0] ? cl : a, null);   // the biggest: the plaza, civic plazas
+  out.city3d.hqMerge = {visible: g.visible, building: ba(bld), lot: ba(calls.filter(cl => cl.g === g)[0]), plaza: ba(plaza), moved: moved, movedMerged: movedMerged};
 })();
 // hq3d gives up before the world loads: nothing gets built; after it loads: the tiles go
 var made = wbMade, release;
@@ -425,6 +531,72 @@ class HqCity3dTest(unittest.TestCase):
         self.assertEqual(d["madeLate"], 0)                 # a late load builds nothing
         self.assertEqual(d["gone"], 0)
         self.assertEqual(d["goneAfter"], 1)                # destroyed after it loaded: its worldbuild goes too
+
+    def test_city3d_rebuilds_only_what_changed(self):
+        s = self.out["city3d"]["selective"]
+        self.assertTrue(s["crewSame"])                     # crew counts: no building rebuilt
+        self.assertTrue(s["sub"])                          # ... the line under the name is new
+        self.assertFalse(s["subOld"])
+        self.assertTrue(s["c0New"])                        # a look change rebuilds that HQ
+        self.assertTrue(s["c0Gone"])
+        self.assertTrue(s["othersSame"])                   # ... and no other
+        self.assertGreater(s["disposed"], 0)               # its old geometry is freed
+        self.assertEqual(s["hits"][0], s["hits"][1])
+
+    def test_city3d_fade_eases_without_recompiles(self):
+        f = self.out["city3d"]["fade"]
+        self.assertLess(f["first"], 1)
+        self.assertGreater(f["first"], 0.75)               # one frame in: barely started, no snap
+        self.assertLess(f["half"], f["first"])
+        self.assertAlmostEqual(f["faded"], 0.16, places=3)  # there by ~0.25 s
+        self.assertFalse(f["dwFaded"])
+        self.assertAlmostEqual(f["back"], 1, places=3)
+        self.assertTrue(f["dwBack"])
+        self.assertAlmostEqual(f["calm"], 0.16, places=3)   # Calm: instant
+        self.assertTrue(f["transparent"])                  # transparent for good
+        self.assertTrue(f["versionSame"])                  # no needsUpdate (no shader recompile)
+        self.assertTrue(f["shadowSame"])                   # no castShadow toggle
+        self.assertGreater(f["otherMin"], 0.16)            # fading yours leaves the others solid
+
+    def test_city3d_far_hqs_hidden(self):
+        c = self.out["city3d"]["cull"]
+        self.assertEqual((c["near"], c["far"], c["map"], c["back"]), (True, False, True, True))
+
+    def test_shadow_box_on_its_texel_grid(self):
+        sn, t = self.out["snap"], self.out["snapTexel"]
+        self.assertLess(sn["grid"], 1e-6)
+        self.assertLess(sn["depth"], 1e-6)
+        self.assertLessEqual(sn["move"], t * 0.7072)
+        sun = self.out["city3d"]["sun"]
+        for a, b in zip(sun["target"], sun["want"]):
+            self.assertAlmostEqual(a, b, places=6)
+        for a, b in zip(sun["off"], [0.45 * 120, 0.79 * 120, 0.34 * 120]):
+            self.assertAlmostEqual(a, b, places=6)
+
+    def test_city3d_merges_only_static_meshes(self):
+        m = self.out["city3d"]["merge"]
+        self.assertGreaterEqual(m["calls"], 13 + 1 + 2 * 5)   # each view building, the plaza, each HQ (building + lot)
+        self.assertGreater(m["merged"], 0)
+        self.assertEqual(m["bad"], [])
+        self.assertTrue(m["keepDoor"])
+        self.assertFalse(m["keepPlain"])
+
+    def test_city3d_hq_building_merges_through_sub_groups(self):
+        m = self.out["city3d"]["hqMerge"]
+        self.assertTrue(m["visible"])
+        for k in ("building", "lot", "plaza"):            # meshes in sub-groups merge too (a group above
+            before, after = m[k]                          # a mesh is never kept just for being a group)
+            self.assertGreater(before, 0, k)
+            self.assertLess(after, before, k)
+        self.assertLess(m["plaza"][1], m["plaza"][0] - 20)
+        self.assertGreater(m["moved"], 0)                 # the heli and rotor still move
+        self.assertEqual(m["movedMerged"], 0)             # and none of it was baked into a merged mesh
+
+    def test_load_order_has_hqmerge_before_hqcity3d(self):
+        src = read(os.path.join(ROOT, "ui", "app", "22-hq.js"))
+        order = json.loads(re.search(r"var HQ_SCRIPTS = (\[[^\]]*\]);", src).group(1))
+        self.assertLess(order.index("hqmerge"), order.index("hqcity3d"))
+        self.assertIn("hqmerge:1", src)                    # optional: the City runs without it
 
     def test_city3d_map_pick_and_info(self):
         o = self.out["city3d"]

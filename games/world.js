@@ -133,21 +133,36 @@ function proj(e, s, x, z){
   S.d = Math.sqrt(qx*qx + qz*qz);
 }
 
-// the road under (x, z): 0 none, 1 carriageway, 2 sidewalk; the surface y (m) lands in ROAD.y
-var ROAD = {y: 0};
+// the road under (x, z): 0 none, 1 carriageway, 2 sidewalk; the surface y (m) lands in ROAD.y.
+// Each edge within its half contributes its nearest segment's y (bendY, so bends inside an edge are already
+// blended by arc position); where edges overlap (junctions) their ys are blended with weights that fall to 0 at
+// each edge's outer line, so the surface no longer jumps where the nearest edge switches. Off every carriageway the
+// sidewalk sits SIDEWALK_UP higher with a real kerb step, matching the drawn walk ribbon (the camera pivot spring
+// smooths the step for the view).
+var ROAD = {y: 0}, CE = [], CS = [], CD = [], CT = [], CY = [];
 function roadUnder(W, x, z){
-  var I = index(W), nb = I.nb, L = I.segs[bOf(W, z, nb)*nb + bOf(W, x, nb)];
-  var bestRoad = Infinity, ry = 0, bestWalk = Infinity, wy = 0;
-  for(var i = 0; i < L.length; i += 2){
+  var I = index(W), nb = I.nb, L = I.segs[bOf(W, z, nb)*nb + bOf(W, x, nb)], n = 0, gap = Infinity, i, k;
+  for(i = 0; i < L.length; i += 2){
     var e = W.edges[L[i]];
     proj(e, L[i+1], x, z);
-    var half = e.width/200, car = (e.width - 2*e.walk)/200;
-    if(S.d <= car){ if(S.d < bestRoad){ bestRoad = S.d; ry = bendY(e, L[i+1], x, z, S.t, S.y); } }
-    else if(S.d <= half && S.d < bestWalk){ bestWalk = S.d; wy = bendY(e, L[i+1], x, z, S.t, S.y); }
+    gap = Math.min(gap, S.d - (e.width - 2*e.walk)/200);   // every carriageway counts (a highway beside a sidewalk too)
+    if(S.d > e.width/200) continue;
+    for(k = 0; k < n && CE[k] !== L[i]; k++);
+    if(k === n){ n++; CE[k] = L[i]; CD[k] = Infinity; }
+    if(S.d < CD[k]){ CD[k] = S.d; CS[k] = L[i+1]; CT[k] = S.t; CY[k] = S.y; }
   }
-  if(bestRoad < Infinity){ ROAD.y = ry; return 1; }
-  if(bestWalk < Infinity){ ROAD.y = wy + SIDEWALK_UP; return 2; }
-  return 0;
+  if(!n) return 0;
+  var sw = 0, sy = 0, best = 0;
+  for(k = 0; k < n; k++){
+    var ek = W.edges[CE[k]], hk = ek.width/200, y = bendY(ek, CS[k], x, z, CT[k], CY[k]);
+    var w = hk > 0 ? smoothstep(1 - CD[k]/hk) : 0;
+    sw += w; sy += w*y; CY[k] = y;
+    if(CD[k] < CD[best]) best = k;
+  }
+  ROAD.y = sw > 0 ? sy/sw : CY[best];
+  if(gap <= 0) return 1;
+  ROAD.y += SIDEWALK_UP;
+  return 2;
 }
 // raw (unclamped) projection parameter of (x, z) on segment s, and its horizontal length (m)
 function rawT(p, s, x, z){
@@ -351,9 +366,14 @@ function rayGround(W, from, to, step){
   step = step > 0 ? +step : 2;
   var dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
   var n = Math.max(1, Math.ceil(Math.sqrt(dx*dx + dy*dy + dz*dz)/step));
+  function under(t){ return from.y + dy*t < groundAt(W, from.x + dx*t, from.z + dz*t) + 0.25; }
   for(var i = 0; i <= n; i++){
-    var t = i/n;
-    if(from.y + dy*t < groundAt(W, from.x + dx*t, from.z + dz*t) + 0.25) return t;
+    if(!under(i/n)) continue;
+    if(i === 0) return 0;
+    // bisect between the last clear sample and this one, so the hit is not quantised to `step`
+    var lo = (i - 1)/n, hi = i/n;
+    for(var k = 0; k < 6; k++){ var m = (lo + hi)/2; if(under(m)) hi = m; else lo = m; }
+    return hi;
   }
   return 1;
 }
@@ -534,7 +554,7 @@ function current(){ return state.cur; }
 function cacheMs(){ return state.cacheMs; }
 
 var api = HQV.world = {
-  ID: ID, URL: URL, IDB: IDB, PACK_V: PACK_V,
+  ID: ID, URL: URL, IDB: IDB, PACK_V: PACK_V, SIDEWALK_UP: SIDEWALK_UP,
   pack: pack, hash32: hash32,
   heightCm: heightCm, heightAt: heightAt, districtAt: districtAt, lotAt: lotAt, siteAt: siteAt,
   nearestRoad: nearestRoad, roadY: roadY, surfaceAt: surfaceAt, padOf: padOf, groundAt: groundAt,

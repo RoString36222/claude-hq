@@ -23,7 +23,11 @@ var VIEW_BACK = 7;          // a view building's middle, this far behind its sit
 var VIEW_DOOR = 4.7;        // a view building's door, in front of its middle (hqbase.js VB_D/2 + 1.2)
 var PAD_UP = 0.05;          // an HQ lot's paved slab stands this far above the ground; its buildings on top
 var BUCKET = 64;            // the building index (camHit, occluderItems), metres
-var FADE_EVERY = 0.15;      // classic mode: hqCutaway this often (s), as hqcity.js
+var FADE_EVERY = 0.15;      // classic mode: which buildings hide you, this often (s), as hqcity.js
+var FADE_OP = 0.16;         // a faded building's opacity (as hqbase.js)
+var FADE_TAU = 0.083;       // the fade's time constant (s): ~95% of the way in 0.25 s
+var HQ_FAR = 250;           // an HQ (and its lot extras) further than this from the camera is not drawn (m)
+var HQ_FAR_HYST = 10;       // ... and comes back inside HQ_FAR - this (no flicker on the edge)
 // an HQ lot's paving tint by its district (legend name), over the paving texture; others plain
 var PAVE = {hq: 0xffffff, plaza: 0xf2ece2, civic: 0xe8ecef, commercial: 0xdde4ec, residential: 0xefe2d0, industrial: 0xd2d0cb};
 
@@ -82,15 +86,46 @@ function segBox(from, to, b){
   }
   return t0;
 }
+// The sun's shadow box centred on p, moved onto its own texel grid: p's light-space x and y (the
+// shadow camera looks along -dir, up +y, as three's lookAt) snapped to multiples of texel, so the
+// shadow map samples the same world points as the box follows you (no crawl). dir: towards the sun.
+function snapShadow(p, dir, texel){
+  p = p || {}; var px = +p.x || 0, py = +p.y || 0, pz = +p.z || 0;
+  var dl = Math.hypot(dir.x, dir.y, dir.z) || 1, zx = dir.x/dl, zy = dir.y/dl, zz = dir.z/dl;
+  var xl = Math.hypot(zz, zx) || 1, xx = zz/xl, xz = -zx/xl;                   // x = up x z (up = +y): (z.z, 0, -z.x)
+  var yx = zy*xz, yy = zz*xx - zx*xz, yz = -zy*xx;                              // y = z x x
+  var a = px*xx + pz*xz, b = px*yx + py*yy + pz*yz, d = px*zx + py*zy + pz*zz;
+  if(texel > 0){ a = Math.round(a/texel)*texel; b = Math.round(b/texel)*texel; }
+  return {x: a*xx + b*yx + d*zx, y: b*yy + d*zy, z: a*xz + b*yz + d*zz};
+}
+// what is part of an HQ's look (its building is rebuilt when it changes); crew counts are not
+function hqKey(E){ var h = E.h || {}; return JSON.stringify([h.userId, (E.lot || {}).id, h.level, h.look, h.cos, !!h.isYou]); }
+function crewText(h){ var crew = (h && h.crew) || {}; return (h && h.isYou ? "You · " : "") + (crew.working | 0) + " working · " + (crew.needs | 0) + " need them"; }
+// A mesh mergeStatic must leave alone: doors and anything tagged animated or fading, materials
+// something changes later (lit by night, blinking, scrolling, a canvas), see-through ones, and
+// several materials on one mesh. Plain opaque stone, steel and paint merge.
+function keepMesh(o){
+  if(!o || !o.isMesh || o.isInstancedMesh || o.isSkinnedMesh) return true;
+  var u = o.userData || {}; if(u.door || u.anim || u.fade || u.wave != null) return true;
+  var m = o.material; if(!m || Array.isArray(m)) return true;
+  if(m.transparent || m.map || m.emissiveMap || m.alphaMap) return true;
+  return !!(m.emissive && m.emissiveIntensity > 0 && (m.emissive.r || m.emissive.g || m.emissive.b));
+}
+// o lies under one of roots ({uuid: 1}), looking up to (not past) top
+function under(o, roots, top){ for(var p = o; p && p !== top; p = p.parent) if(roots[p.uuid]) return true; return false; }
 HQV.hqCity3d = {assign: assign, placeLot: placeLot, placeView: placeView, toWorld: toWorld, pickAt: pickAt, segBox: segBox,
-  HQ_DOOR: HQ_DOOR, VIEW_DOOR: VIEW_DOOR};
+  snapShadow: snapShadow, hqKey: hqKey, keepMesh: keepMesh, HQ_DOOR: HQ_DOOR, VIEW_DOOR: VIEW_DOOR, HQ_FAR: HQ_FAR};
 
-// a building fades the way games/hqbase.js hqCutaway fades it (same state, so the two agree)
-function fade(L, on){
-  if(!L.fade || L.fade.on === on) return; L.fade.on = on;
-  L.fade.g.traverse(function(o){ if(!o.isMesh) return; (Array.isArray(o.material) ? o.material : [o.material]).forEach(function(m){
-    if(m.userData.op == null){ m.userData.op = m.opacity; m.userData.tr = m.transparent; }
-    m.transparent = on || m.userData.tr; m.opacity = on ? 0.16 : m.userData.op; m.depthWrite = !on; m.needsUpdate = true; }); o.castShadow = !on; });
+// Fading, eased: a fading building's materials stay transparent for good (set once, before they
+// are first drawn), so going see-through is an opacity tween, never a shader recompile
+// (needsUpdate) or a shadow toggle. L.fade: {g, on (the goal), a (0 solid .. 1 faded), mats}.
+function fadeGoal(L, on){ if(L.fade) L.fade.on = on; }
+function fadeStep(L, dt, k){
+  var F = L.fade; if(!F || !F.mats) return;
+  var goal = F.on ? 1 : 0; if(F.a === goal) return;
+  F.a = k < 1 || !(dt > 0) ? goal : goal + (F.a - goal)*Math.exp(-dt/FADE_TAU);   // Calm: no tween
+  if(Math.abs(F.a - goal) < 0.004) F.a = goal;
+  F.mats.forEach(function(r){ r.m.opacity = r.op + (Math.min(r.op, FADE_OP) - r.op)*F.a; r.m.depthWrite = F.a < 0.05 ? r.dw : false; });
 }
 
 HQV.hqWorlds.city3d = function(c, w){
@@ -180,6 +215,7 @@ HQV.hqWorlds.city3d = function(c, w){
       var V = HQV.hqViewBuilding(c, v, {doorFront: function(){ return new THREE.Vector3(dw.x, p.y, dw.z); }});
       V.g.position.set(p.x, p.y, p.z); V.g.rotation.y = p.rot; staticG.add(V.g); V.setNight(night);
       V.hits.forEach(function(o){ hits.push(o); }); V.doors.forEach(function(d){ doors.push(d); });
+      merge(V.g, null, V);
       views.push({kind: "view", oid: "view:" + v.view, x: p.x, y: p.y, z: p.z, rot: p.rot, B: V, H: V.top() + 2, fade: {g: V.g, on: false},
         boxes: [aabbOf(p, 0, 0, 5, 4, V.top())]});
     });
@@ -210,6 +246,15 @@ HQV.hqWorlds.city3d = function(c, w){
       cars.push({g: k, pts: pts, len: len, s: (n*0.37 % 1)*len[len.length - 1], dir: n % 2 ? -1 : 1, v: v, lane: lane,
         turn: 0, T: Math.max(0.6, PI*lane/v)});
     });
+    // the plaza parts, civic plazas: one mesh per material; never the view buildings (they fade),
+    // the bikes and boards (you ride them) or the traffic
+    var roots = {};
+    views.forEach(function(V){ roots[V.fade.g.uuid] = 1; });
+    parkBikes.forEach(function(b){ roots[b.g.uuid] = 1; });
+    if(skate) skate.boards.forEach(function(b){ roots[b.g.uuid] = 1; });
+    cars.forEach(function(cr){ roots[cr.g.uuid] = 1; });
+    merge(staticG, roots);
+    views.forEach(tagFade); fadePrep(views);
   }
   // Up and down one street. At each end the car U-turns on a half circle round the end point,
   // from its lane to the other one, at its own speed (no snap).
@@ -225,13 +270,74 @@ HQV.hqWorlds.city3d = function(c, w){
     cr.g.rotation.y = yaw;
   }
 
-  /* ---------- the HQs: rebuilt when the list of open HQs changes ---------- */
+  /* ---------- the HQs: one rebuilt only when its look, level, cos or isYou changes ---------- */
   var slabM = new THREE.MeshStandardMaterial({map: paveT.t, roughness: 0.9});
   var freeT = c.canvasTex(256, 64, function(g){ g.fillStyle = "#0b1622"; g.fillRect(0, 0, 256, 64); g.fillStyle = "#e9eff3"; g.font = "700 34px system-ui, sans-serif";
     g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("FREE LOT", 128, 34); });
+  var lotsG = null, lotsSig = null, forceYou = false;
+  // HQV.hqMerge.mergeStatic (games/hqmerge.js) on g, sub-groups and all, when it is loaded.
+  // roots: what stays as it is (with everything under it); B: a building whose animate() moves
+  // parts of g (rotor, karts, banners, icon): those stay too.
+  function merge(g, roots, B){
+    var M = HQV.hqMerge; if(!M || typeof M.mergeStatic !== "function") return;
+    roots = Object.assign({}, roots || {}, B ? moving(B, g) : {});
+    // keep() is asked of each mesh and of each group above it: a group is kept only as a root or a moving part
+    M.mergeStatic(THREE, g, {keep: function(o){ return (o.isMesh && keepMesh(o)) || under(o, roots, g); }});
+  }
+  // {uuid: 1} of what B.animate moves under g: its pose at two times, compared (dt 0: no twinkle)
+  function moving(B, g){
+    if(typeof B.animate !== "function") return {};
+    function pose(){ var s = {}; g.traverse(function(o){ s[o.uuid] = o.position.toArray().concat(o.quaternion.toArray(), o.scale.toArray(), [o.visible ? 1 : 0]).join(","); }); return s; }
+    var a = pose(); B.animate(3.7, 0, 1); var b = pose(); B.animate(11.3, 0, 1); var d = pose(), out = {};
+    Object.keys(a).forEach(function(id){ if(a[id] !== b[id] || a[id] !== d[id]) out[id] = 1; });
+    return out;
+  }
+  // Ready the faders in list (each L.fade.g) for fading: a material used outside its building is
+  // copied for it first (so fading one building never fades another), then every one is made
+  // transparent once and remembers its opacity and depth write.
+  function fadePrep(list){
+    var use = {};                                      // material uuid -> {who uses it: 1}
+    function note(o, who){ (Array.isArray(o.material) ? o.material : [o.material]).forEach(function(m){
+      if(!m) return; var u = use[m.uuid] = use[m.uuid] || {}; u[who] = 1; }); }
+    [hqG, staticG].forEach(function(R){ R.traverse(function(o){ if(o.isMesh) note(o, o.userData.fadeOid || "-"); }); });
+    list.forEach(function(L){
+      if(!L.fade || L.fade.mats) return;
+      var mats = [], seen = {};
+      L.fade.g.traverse(function(o){
+        if(!o.isMesh) return;
+        var arr = Array.isArray(o.material) ? o.material.slice() : [o.material];
+        arr.forEach(function(m, i){
+          if(!m) return;
+          if(Object.keys(use[m.uuid] || {}).length > 1){ m = m.clone(); arr[i] = m; }
+          if(seen[m.uuid]) return; seen[m.uuid] = 1;
+          mats.push({m: m, op: m.opacity, dw: m.depthWrite}); m.transparent = true;
+        });
+        o.material = Array.isArray(o.material) ? arr : arr[0];
+      });
+      L.fade.mats = mats; L.fade.a = 0;
+    });
+  }
+  function tagFade(L){ L.fade.g.traverse(function(o){ if(o.isMesh) o.userData.fadeOid = L.oid; }); }
+  // Dispose what g (just taken out of the scene) used and nothing in the scene still does.
+  function disposeTree(g){
+    var keep = {}, gone = {};
+    function mats(o){ return Array.isArray(o.material) ? o.material : o.material ? [o.material] : []; }
+    S.traverse(function(o){
+      if(o.geometry) keep[o.geometry.uuid] = 1;
+      mats(o).forEach(function(m){ keep[m.uuid] = 1; texOf(m).forEach(function(t){ keep[t.uuid] = 1; }); });
+    });
+    [paveT.t, freeT.t, skyBg.night, skyBg.day, slabM].forEach(function(t){ keep[t.uuid] = 1; });
+    function drop(x){ if(x && !keep[x.uuid]) gone[x.uuid] = x; }
+    g.traverse(function(o){
+      if(o.geometry && !o.isSprite) drop(o.geometry);          // a sprite's geometry is three's shared quad
+      mats(o).forEach(function(m){ drop(m); texOf(m).forEach(drop); });
+    });
+    Object.keys(gone).forEach(function(id){ if(typeof gone[id].dispose === "function") gone[id].dispose(); });
+  }
+  function texOf(m){ var out = []; ["map", "emissiveMap", "alphaMap", "normalMap", "roughnessMap", "metalnessMap", "aoMap", "bumpMap"].forEach(function(k){ if(m[k] && m[k].isTexture) out.push(m[k]); }); return out; }
   function building(E){
     var h = E.h, cos = h.cos || {}, crew = h.crew || {}, name = HQV.hqCityName(h), p = E;
-    var g = new THREE.Group(); g.position.set(p.x, p.y + PAD_UP, p.z); g.rotation.y = p.rot; hqG.add(g);
+    var g = new THREE.Group(); g.position.set(p.x, p.y + PAD_UP, p.z); g.rotation.y = p.rot; hqG.add(g); E.g = g;
     var pad = new THREE.Mesh(new THREE.PlaneGeometry(30, 15), new THREE.MeshStandardMaterial({map: paveT.t, roughness: 0.9}));
     pad.rotation.x = -PI/2; pad.position.set(0, 0.02, 1.5); pad.receiveShadow = true; g.add(pad);
     if(h.isYou){ var ring = new THREE.Mesh(new THREE.RingGeometry(14.6, 15.1, 64), new THREE.MeshBasicMaterial({color: COL.amber, transparent: true, opacity: 0.5, toneMapped: false}));
@@ -246,33 +352,71 @@ HQV.hqWorlds.city3d = function(c, w){
       doorFront: function(){ return new THREE.Vector3(E.door.x, p.y, E.door.z); }
     });
     g.add(B.g); B.setLive((crew.working | 0) + (crew.needs | 0)); B.setNight(night);
-    var sub = c.label((h.isYou ? "You · " : "") + (crew.working | 0) + " working · " + (crew.needs | 0) + " need them", HEX.green, 0.7);
-    sub.position.set(0, B.top() + 5.6, 0); g.add(sub);
+    E.subText = crewText(h);
+    E.sub = c.label(E.subText, HEX.green, 0.7); E.sub.position.set(0, B.top() + 5.6, 0); g.add(E.sub);
     B.hits.forEach(function(o){ hits.push(o); }); B.doors.forEach(function(d){ doors.push(d); });
     E.B = B; E.H = B.top() + 2; E.fade = {g: B.g, on: false}; E.name = name;
     E.boxes = hqBoxes(p, B);
     // the garage apron stops at the lot's front edge (the building stands HQ_DZ in front of the lot's middle)
     var X = parts.lotExtras(c, g, HQV.hqLotColors(h.look), p.rot, function(x, z){ return toWorld(p, x, z); }, Math.min(11, (E.lot.d || 0)/200 - HQ_DZ), h.userId);
-    X.glows.forEach(function(gl){ lampGlows.push(gl); }); E.car = X.car; E.garage = X.garage;
-    X.items.forEach(function(b){ bikes.push(b); });
+    E.glows = X.glows; E.car = X.car; E.items = X.items;
+    // the building (its own meshes: it fades), then the lot round it: pad, garage, apron; never
+    // the car, motorbike and bicycle (you ride them)
+    merge(B.g, null, B);
+    var roots = {}; roots[B.g.uuid] = 1; X.items.forEach(function(b){ roots[b.g.uuid] = 1; });
+    merge(g, roots);
+    tagFade(E);
+  }
+  // an HQ's crew changed: its windows and the line under its name, not its building
+  function crewUpdate(E, h){
+    E.h = h; var crew = h.crew || {}, t = crewText(h);
+    E.B.setLive((crew.working | 0) + (crew.needs | 0));
+    if(t === E.subText) return;
+    var old = E.sub; E.subText = t;
+    E.sub = c.label(t, HEX.green, 0.7); E.sub.position.copy(old.position); E.g.add(E.sub);
+    E.g.remove(old); disposeTree(old);
+  }
+  function unbuild(E){
+    E.B.hits.forEach(function(o){ var i = hits.indexOf(o); if(i >= 0) hits.splice(i, 1); });
+    E.B.doors.forEach(function(d){ var i = doors.indexOf(d); if(i >= 0) doors.splice(i, 1); });
+    hqG.remove(E.g); disposeTree(E.g);
   }
   function build(){
     if(!W) return;
     var list = (api.city && api.city()) || [];
     var key = JSON.stringify(list.map(function(h){ return [h.userId, h.level, h.look, h.cos, h.crew, !!h.isYou]; }));
-    if(key === sig) return; sig = key;
-    hqs.forEach(function(E){ E.B.hits.forEach(function(o){ var i = hits.indexOf(o); if(i >= 0) hits.splice(i, 1); });
-      E.B.doors.forEach(function(d){ var i = doors.indexOf(d); if(i >= 0) doors.splice(i, 1); }); });
-    while(hqG.children.length) hqG.remove(hqG.children[0]);
-    lampGlows.length = 0; hqs = []; freeLots = [];
-    bikes = parkBikes.slice(); if(skate) skate.boards.forEach(function(b){ bikes.push(b); });
-    var taken = {};
+    if(key === sig && !forceYou) return; sig = key;
+    var old = {}; hqs.forEach(function(E){ old[E.oid] = E; });
+    var next = [], made = [];
     assign(list, W).forEach(function(a){
       var p = placeLot(a.lot), d = toWorld(p, 0, HQ_DOOR);
       var E = {kind: "hq", oid: "hq:" + a.h.userId, lot: a.lot, h: a.h, x: p.x, y: p.y, z: p.z, rot: p.rot, door: {x: d.x, z: d.z}};
-      taken[a.lot.id] = 1; hqs.push(E); building(E);
+      var O = old[E.oid];
+      if(O && hqKey(O) === hqKey(E) && !(forceYou && a.h.isYou)){ delete old[E.oid]; crewUpdate(O, a.h); next.push(O); return; }
+      next.push(E); made.push(E);
     });
-    // every HQ lot gets its paved slab (one draw call); the empty ones a "Free lot" sign
+    forceYou = false;
+    Object.keys(old).forEach(function(id){ unbuild(old[id]); });
+    hqs = next;
+    made.forEach(building);
+    fadePrep(made);
+    lampGlows = []; bikes = parkBikes.slice(); if(skate) skate.boards.forEach(function(b){ bikes.push(b); });
+    hqs.forEach(function(E){ E.glows.forEach(function(gl){ lampGlows.push(gl); }); E.items.forEach(function(b){ bikes.push(b); }); });
+    buildLots();
+    // arriving: at your own door, or the door of the HQ you just visited; else the plaza's spawn
+    var mine = hqs.filter(function(E){ return E.h.isYou; })[0];
+    var back = api.cityReturn && api.cityReturn(), ret = hqs.filter(function(E){ return E.h.userId === back; })[0];
+    w.spawn = at(ret || mine); w.spawnFrom = {lobby: at(mine)};
+    applyTime();
+  }
+  // every HQ lot's paved slab (one draw call), the empty ones' "Free lot" signs and the City's
+  // name: rebuilt when which lots are taken changes
+  function buildLots(){
+    var taken = {}; hqs.forEach(function(E){ taken[E.lot.id] = 1; });
+    var ls = JSON.stringify(Object.keys(taken).sort());
+    if(ls === lotsSig && lotsG) return; lotsSig = ls;
+    if(lotsG){ hqG.remove(lotsG); disposeTree(lotsG); }
+    lotsG = new THREE.Group(); hqG.add(lotsG); freeLots = [];
     var lots = hqLots(W);
     var slabs = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), slabM, Math.max(1, lots.length));
     var m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1), tint = new THREE.Color();
@@ -283,7 +427,7 @@ HQV.hqWorlds.city3d = function(c, w){
       slabs.setColorAt(n, tint.setHex(pv != null ? pv : 0xffffff));
       if(!taken[l.id]) freeLots.push(l);
     });
-    slabs.count = lots.length; slabs.receiveShadow = true; hqG.add(slabs);
+    slabs.count = lots.length; slabs.receiveShadow = true; lotsG.add(slabs);
     if(freeLots.length){
       var plate = new THREE.InstancedMesh(new THREE.BoxGeometry(2.4, 0.6, 0.08), new THREE.MeshBasicMaterial({map: freeT.t, toneMapped: false}), freeLots.length);
       var post = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 6), mat(0x2b3a48, {metalness: 0.6}), freeLots.length);
@@ -294,15 +438,10 @@ HQV.hqWorlds.city3d = function(c, w){
         m4.compose(new THREE.Vector3(l.x/100, y + 1.05, zf), q, one); plate.setMatrixAt(n, m4);
         m4.compose(new THREE.Vector3(l.x/100, y + 0.45, zf), q, one); post.setMatrixAt(n, m4);
       });
-      hqG.add(plate); hqG.add(post);
+      lotsG.add(plate); lotsG.add(post);
     }
     var nb = hqs.length;
-    var cityL = c.label("Arena City · " + nb + " HQ" + (nb === 1 ? "" : "s"), HEX.amber, 1.3); cityL.position.set(plaza.x, plaza.y + 6.4, plaza.z); hqG.add(cityL);
-    // arriving: at your own door, or the door of the HQ you just visited; else the plaza's spawn
-    var mine = hqs.filter(function(E){ return E.h.isYou; })[0];
-    var back = api.cityReturn && api.cityReturn(), ret = hqs.filter(function(E){ return E.h.userId === back; })[0];
-    w.spawn = at(ret || mine); w.spawnFrom = {lobby: at(mine)};
-    applyTime();
+    var cityL = c.label("Arena City · " + nb + " HQ" + (nb === 1 ? "" : "s"), HEX.amber, 1.3); cityL.position.set(plaza.x, plaza.y + 6.4, plaza.z); lotsG.add(cityL);
   }
   // where you stand arriving at an HQ (on the street side, looking at its front, a little off-axis)
   function at(E){
@@ -385,7 +524,7 @@ HQV.hqWorlds.city3d = function(c, w){
   w.setQuality = function(q){ if(wb) wb.setQuality(q); };
   w.stats = function(){ return wb ? wb.stats() : {}; };
   w.onCity = function(){ build(); };
-  w.onLook = function(){ sig = null; build(); };
+  w.onLook = function(){ forceYou = true; build(); };      // your own look: your building again
   w.camHit = function(from, to){
     if(!W) return 1;
     var t = WD.rayGround(W, from, to);
@@ -404,7 +543,7 @@ HQV.hqWorlds.city3d = function(c, w){
   w.setFaded = function(ids){
     ids = ids || [];
     if(wb) wb.setFaded(ids.filter(function(id){ return typeof id === "number"; }).slice(0, 8));
-    hqs.concat(views).forEach(function(E){ fade(E, ids.indexOf(E.oid) >= 0); });
+    hqs.concat(views).forEach(function(E){ fadeGoal(E, ids.indexOf(E.oid) >= 0); });
   };
   w.mapPick = function(x, z){
     var E = pickAt(hqs, x, z);
@@ -418,27 +557,43 @@ HQV.hqWorlds.city3d = function(c, w){
   w.setTime = function(n){ night = n; S.background = n ? skyBg.night : skyBg.day; fog.color.set(n ? 0x0f1f30 : 0xb8dcf2);
     hemi.intensity = n ? 1.3 : 2.4; sun.intensity = n ? 0.7 : 2.4; sun.color.set(n ? 0xa9b8ff : 0xfff2dc);
     if(wb) wb.setNight(n); applyTime(); };
-  // Fading: hqCutaway (it reads hq3d's orthographic view) in classic only; in every rig mode hq3d
-  // passes the occluders to w.setFaded. Switching between the two clears the other's fades.
-  var fadeAcc = 0, lastMode = null, shadowKey = "";
+  // Fading: in classic the buildings between you and hq3d's orthographic view (as hqbase.js
+  // hqCutaway decides it); in every rig mode hq3d passes the occluders to w.setFaded. Switching
+  // between the two clears the other's fades. Either way the fade itself eases (fadeStep).
+  function cutawayGoals(){
+    var me = c.avatar(), v = c.view && c.view(); if(!me || !v) return;
+    var ux = Math.sin(v.yaw), uz = Math.cos(v.yaw), tp = Math.max(0.2, Math.tan(v.pitch));
+    hqs.concat(views).forEach(function(L){
+      var vx = L.x - me.x, vz = L.z - me.z, along = vx*ux + vz*uz, side = Math.abs(vx*uz - vz*ux);
+      fadeGoal(L, along > 2 && side < (L.side || 14) && along < L.H/tp + 8);
+    });
+  }
+  var fadeAcc = 0, lastMode = null, shadowKey = "", SUN_DIR = {x: 0.45, y: 0.79, z: 0.34};
   w.update = function(t, dt, k, cam){
     var mode = (cam && cam.mode) || "classic";
     if(mode !== lastMode){
-      if(lastMode === "classic") hqs.concat(views).forEach(function(E){ fade(E, false); });
+      if(lastMode === "classic") hqs.concat(views).forEach(function(E){ fadeGoal(E, false); });
       if(mode === "classic") w.setFaded([]);
       lastMode = mode;
     }
-    if(mode === "classic"){ fadeAcc += dt; if(fadeAcc > FADE_EVERY){ fadeAcc = 0; HQV.hqCutaway(c, hqs.concat(views)); } }
+    if(mode === "classic"){ fadeAcc += dt; if(fadeAcc > FADE_EVERY){ fadeAcc = 0; cutawayGoals(); } }
+    hqs.concat(views).forEach(function(E){ fadeStep(E, dt, k); });
     if(wb && cam && cam.frustum) wb.update(cam);
     S.fog = mode === "map" ? null : fog;
-    // the sun's shadow box follows you (the whole map in map mode)
+    // HQs far from the camera are not drawn (the map shows them all)
+    if(cam && cam.x != null) hqs.forEach(function(E){
+      var d = Math.hypot(E.x - cam.x, E.z - cam.z), vis = mode === "map" || (E.g.visible ? d < HQ_FAR : d < HQ_FAR - HQ_FAR_HYST);
+      if(E.g.visible !== vis) E.g.visible = vis;
+    });
+    // the sun's shadow box follows you (the whole map in map mode), on its texel grid
     var me = (cam && cam.avatar) || c.avatar() || {x: 0, z: 0}, map = mode === "map", R = map ? 1024 : 60, D = map ? 1500 : 120;
     var ay = me.y != null ? me.y : groundY(me.x, me.z);
-    sun.target.position.set(map ? 0 : me.x, map ? 0 : ay, map ? 0 : me.z);
-    sun.position.set(sun.target.position.x + 0.45*D, sun.target.position.y + 0.79*D, sun.target.position.z + 0.34*D);
+    var sp = map ? {x: 0, y: 0, z: 0} : snapShadow({x: me.x, y: ay, z: me.z}, SUN_DIR, 2*R/(sun.shadow.mapSize.x || 2048));
+    sun.target.position.set(sp.x, sp.y, sp.z);
+    sun.position.set(sp.x + SUN_DIR.x*D, sp.y + SUN_DIR.y*D, sp.z + SUN_DIR.z*D);
     var key = R + ":" + D;
     if(key !== shadowKey){ shadowKey = key; var sc = sun.shadow.camera; sc.left = -R; sc.right = R; sc.top = R; sc.bottom = -R; sc.near = 1; sc.far = 2*D + 200; sc.updateProjectionMatrix(); }
-    hqs.concat(views).forEach(function(E){ if(E.B) E.B.animate(t, dt, k); });
+    hqs.concat(views).forEach(function(E){ if(E.B && (!E.g || E.g.visible)) E.B.animate(t, dt, k); });
     if(fount) fount.step(t);
     cars.forEach(function(cr){ carStep(cr, dt, k); });
   };

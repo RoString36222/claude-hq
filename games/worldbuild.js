@@ -3,14 +3,14 @@
  * HQV.worldbuild.create(c, W, opts) -> wb builds the 8 x 8 tiles of games/worldgeom.js in a worker
  * (games/worldbuild-worker.js), or on the main thread in idle slices when no worker can start, and
  * keeps them at the right detail for the camera:
- *   terrain   per 64 m chunk: lod0 < 160 m, lod1 < 480 m, lod2 beyond (x lodScale); map mode lod2 everywhere
- *   roads     near (< 300 m): asphalt, marks, kerb+walk; beyond: asphalt with marks merged, kerb+walk
+ *   terrain   per 64 m chunk: lod0 < 160 m, lod1 < 480 m, lod2 beyond (x lodScale, fixed at create); map mode lod2 everywhere
+ *   roads     near (< 300 m): asphalt, marks, kerb+walk; beyond: asphalt with marks merged only
  *   buildings detail 0 (window quads) < 350 m, else detail 1 (a box); window bands come from the body
  *             shader (fract(worldY / 3.5)), lit at night; faded lots get a screen-door dither
  *   props     instanced trees + lamps per tile (< 300 m); world-wide instanced parked cars, sign plates,
  *             gantry frames and gantry plates (refilled with what is within 300 m; hidden in map mode)
- * Draw calls: <= 8 per tile within 300 m, <= 5 beyond, + 4 world-wide.
- * HQV.worldbuild.governor is pure (node-tested): frame times -> quality level, pixel ratio, shadows, LOD scale.
+ * Draw calls: <= 8 per tile within 300 m, <= 4 beyond, + 4 world-wide.
+ * HQV.worldbuild.governor is pure (node-tested): frame times -> quality level, pixel ratio, shadows (LOD scale stays fixed).
  * No THREE, no DOM at load time: THREE comes from c.THREE inside create().
  */
 (function(){
@@ -30,12 +30,15 @@ function linArray(a){ var o = new Float32Array(a.length); for(var i = 0; i < a.l
 /* ---------- quality governor (pure) ---------- */
 // level 2 = pixel ratio min(dpr, 1.5); 1 = 1; 0 = 0.75 and no shadows. Rolling mean over 90 frames:
 // above 19 ms for 2 s of frames -> one level down; below 13 ms for 6 s -> one level up, never above the start.
+// A level that failed this session needs 60 s of fast frames before it is tried again, so alternating load
+// cannot make it oscillate. lodScale is always 1: quality changes pixel ratio and shadows only (a LOD change
+// would re-request tiles and churn the worker exactly when the frame budget is short).
 var governor = {
   create: function(o){
     o = o || {};
     var dpr = o.dpr > 0 ? +o.dpr : ((root && root.devicePixelRatio) || 1);
     var start = o.start != null ? clamp(o.start|0, 0, 2) : 2;
-    return {target: o.target > 0 ? +o.target : 16.7, start: start, level: start, dpr: dpr, buf: [], sum: 0, slow: 0, fast: 0};
+    return {target: o.target > 0 ? +o.target : 16.7, start: start, level: start, dpr: dpr, buf: [], sum: 0, slow: 0, fast: 0, failed: [false, false, false]};
   },
   step: function(gov, frameMs){
     var ms = +frameMs;
@@ -45,15 +48,15 @@ var governor = {
       var mean = gov.sum/gov.buf.length;
       gov.slow = mean > 19 ? gov.slow + ms : 0;
       gov.fast = mean < 13 ? gov.fast + ms : 0;
-      if(gov.slow >= 2000 && gov.level > 0){ gov.level--; governor.reset(gov); }
-      else if(gov.fast >= 6000 && gov.level < gov.start){ gov.level++; governor.reset(gov); }
+      if(gov.slow >= 2000 && gov.level > 0){ gov.failed[gov.level] = true; gov.level--; governor.reset(gov); }
+      else if(gov.level < gov.start && gov.fast >= (gov.failed[gov.level + 1] ? 60000 : 6000)){ gov.level++; governor.reset(gov); }
     }
     return governor.out(gov);
   },
   reset: function(gov){ gov.buf = []; gov.sum = 0; gov.slow = 0; gov.fast = 0; },
   out: function(gov){
     var l = gov.level;
-    return {level: l, pixelRatio: l === 2 ? Math.min(gov.dpr, 1.5) : (l === 1 ? 1 : 0.75), shadows: l > 0, lodScale: LOD_SCALE[l]};
+    return {level: l, pixelRatio: l === 2 ? Math.min(gov.dpr, 1.5) : (l === 1 ? 1 : 0.75), shadows: l > 0, lodScale: 1};
   }
 };
 
@@ -577,6 +580,7 @@ function create(c, W, opts){
       var near = !map && d < NEAR, useB0 = b0 && !!T.b0;
       if(m.asphalt) m.asphalt.visible = near;
       if(m.marks) m.marks.visible = near;
+      if(m.kerbwalk) m.kerbwalk.visible = near;
       if(m.roadfar) m.roadfar.visible = !near;
       if(m.body0) m.body0.visible = useB0;
       if(m.win0) m.win0.visible = useB0;
@@ -610,10 +614,8 @@ function create(c, W, opts){
     for(; k < 8; k++) v[k] = -1;
   };
   wb.terrainMeshes = function(){ return tiles.map(function(T){ return T.m.terrain; }).filter(Boolean); };
-  wb.setQuality = function(q){
-    quality = clamp(q|0, 0, 2); lodScale = LOD_SCALE[quality]; shadowsOn = quality > 0;
-    tiles.forEach(applyDensity);
-  };
+  // runtime quality (governor or Settings pin) toggles shadows only; LOD scale and tree density stay as created
+  wb.setQuality = function(q){ shadowsOn = clamp(q|0, 0, 2) > 0; };
   wb.stats = function(){ return {drawCalls: stats.drawCalls, triangles: stats.triangles, tiles: stats.tiles, pending: queue.length + nIn, worker: useWorker}; };
   wb.destroy = function(){
     if(destroyed) return;

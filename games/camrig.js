@@ -7,9 +7,12 @@
  * the far end for see-through (occluders(pose.pos, pose.focus, ...)): the target's head in the
  * chase family, cine and classic; the camera itself in fp, photo and map, so nothing fades there.
  *   map      straight down, span 44..2048 m (altitude derived), pan, wheel zoom, flyMap
- *   far, chase, near   the chase family: look-ahead, turn lag, speed FOV kick, horizon kept
- *            level, vehicle roll, recentre after 2 s, Q/R swing, Z/C height, wheel distance,
- *            collision pull-in through q.hit, never under the ground
+ *   far, chase, near   the chase family: the heading follows where you are headed (travelYaw:
+ *            S steps back facing forward and the camera swings round to look where you go), its
+ *            spring tighter the faster you turn; a pivot that trails your head, a smoothed look-ahead,
+ *            speed FOV kick, horizon kept level, vehicle roll, Q/R eased swing and right-drag orbit
+ *            offset (eases back after 2 s), Z/C height, wheel distance, eased collision pull-in through
+ *            q.hit, never under the ground. Every smoother is a closed-form spring (frame-rate independent).
  *   fp       eye or vehicle seat (car: seat or bonnet), pointer look, head bob
  *   classic  the host's orthographic camera; the rig only reports the mode
  *   photo    detached free camera; cine  deterministic idle orbits and fly-bys
@@ -47,7 +50,15 @@ var VEHICLE = {
 var SPAN_MIN = 44, SPAN_MAX = 2048, HALF = 1024, MAP_TAN = Math.tan(5*DEG);
 var LOOK_H = 1.3;          // chase look point above the target's feet (the "head" the camera frames)
 var FAR = 3000, BLEND = 0.5, BLEND_RED = 0.3, DIVE = 1.2, DIVE_RED = 0.6, FLY_MAP = 0.8;
-var FOLLOW = 2.4, FOLLOW_ON = 0.17, FOLLOW_OFF = 0.035, RECENTRE = 2, SWING = 1.6, LIFT = 2, ORBIT_K = 0.006, LOOK_K = 0.0022, ZOOM_K = 0.0015;
+// chase family: heading spring omega = clamp(HEAD_MIN + HEAD_K |turnRate|, HEAD_MIN, HEAD_MAX); HEAD_HOLD decays its
+// velocity when you stand still; VEH_LAG the vehicle rotation lag; SWING rad/s eased in over SWING_HL s; the pivot
+// springs at PIVOT_W within PIVOT_MAX m of the head; look-ahead min(AHEAD_MAX, speed AHEAD_K) at AHEAD_W;
+// collision pull-in COL_IN, push-out COL_OUT, COL_HYST m of hysteresis
+var HEAD_MIN = 1.6, HEAD_K = 1.1, HEAD_MAX = 6, HEAD_HOLD = 4, VEH_LAG = 7, SWING_HL = 0.08, PIVOT_W = 12, PIVOT_MAX = 1.5;
+// HEAD_BIAS/HEAD_BIAS_MAX pick the side of a near-PI goal; HEAD_AGAINST makes the camera wait for a goal turning toward it
+var HEAD_BIAS = 0.3, HEAD_BIAS_MAX = 0.7, HEAD_AGAINST = 10;
+var AHEAD_W = 4, AHEAD_MAX = 3, AHEAD_K = 0.3, COL_IN = 25, COL_OUT = 3, COL_HYST = 0.3;
+var RECENTRE = 2, SWING = 1.9, LIFT = 2, ORBIT_K = 0.006, LOOK_K = 0.0022, ZOOM_K = 0.0015;
 var CINE_SHOT = 12;
 
 /* ---------- small maths ---------- */
@@ -66,6 +77,12 @@ function smoothFactor(t, linear){ return linear ? clamp(t, 0, 1) : smootherstep(
 function spring(x, v, goal, omega, dt){
   var c1 = x - goal, c2 = v + omega*c1, e = Math.exp(-omega*dt);
   return [goal + (c1 + c2*dt)*e, (c2 - omega*(c1 + c2*dt))*e];
+}
+// The same spring after a goal moving at rate r that ends the frame at `goal` (exact for a steady ramp, so a
+// turning goal is followed the same at any frame rate; r = 0 is spring()).
+function springRamp(x, v, goal, r, omega, dt){
+  var lagSS = 2*r/omega, c1 = x - (goal - r*dt) + lagSS, c2 = (v - r) + omega*c1, e = Math.exp(-omega*dt);
+  return [goal - lagSS + (c1 + c2*dt)*e, r + (c2 - omega*(c1 + c2*dt))*e];
 }
 // model-local (lx, lz) rotated by yaw onto world (x, z)
 function rotYaw(lx, lz, yaw){
@@ -106,7 +123,7 @@ function create(o){
            settings: normSettings(o.settings), seed: num(o.seed, 1) | 0, wake: false,
            lookYaw: 0, lookPitch: 0, fpView: "seat", mapCentre: {x: 0, z: 0}, mapSpan: span};
   s._ = {t: 0, blend: null, path: null, last: null, tgt: null, viewH: 800,
-         yawPrev: null, yawRate: 0, swing: 0, lift: 0, fly: {x: 0, y: 0, z: 0}, fast: false,
+         swing: 0, lift: 0, fly: {x: 0, y: 0, z: 0}, fast: false,
          map: {cx: 0, cz: 0, span: span, vx: 0, vz: 0, vs: 0, fly: null}};
   resetMode(s);
   return s;
@@ -114,8 +131,9 @@ function create(o){
 // per-mode state, cleared on every mode change
 function resetMode(s){
   var _ = s._;
-  _.cam = null; _.head = null; _.headV = 0; _.follow = false; _.orbitYaw = 0; _.orbitPitch = 0; _.idle = 0; _.upOff = 0; _.backScale = 1;
-  _.colFrac = null; _.colV = 0; _.fov = null; _.fovV = 0;
+  _.head = null; _.headV = 0; _.piv = null; _.ahead = null; _.gnd = null; _.swingV = 0;
+  _.orbitYaw = 0; _.orbitPitch = 0; _.oyV = 0; _.opV = 0; _.idle = 0; _.upOff = 0; _.backScale = 1;
+  _.colFrac = null; _.colV = 0; _.colG = null; _.fov = null; _.fovV = 0;
   _.fp = null; _.fpOff = 0; _.bobPhase = 0; _.bobAmp = 0; _.bobV = 0;
   _.photo = null; _.cineT = 0; _.cinePivot = null; s.wake = false;
 }
@@ -270,7 +288,10 @@ function input(s, ev){
 function normTgt(t){
   t = t || {};
   return {x: num(t.x, 0), y: num(t.y, 0), z: num(t.z, 0), yaw: num(t.yaw, 0), pitch: num(t.pitch, 0), roll: num(t.roll, 0),
-          speed: Math.abs(num(t.speed, 0)), vehicle: VEHICLE[t.vehicle] ? t.vehicle : null, lean: num(t.lean, 0), moving: !!t.moving};
+          speed: Math.abs(num(t.speed, 0)), vehicle: VEHICLE[t.vehicle] ? t.vehicle : null, lean: num(t.lean, 0), moving: !!t.moving,
+          // where you are headed (null when still); a host without it: the facing while moving
+          travelYaw: t.travelYaw === undefined ? (t.moving ? num(t.yaw, 0) : null) : (t.travelYaw == null ? null : num(t.travelYaw, null)),
+          turnRate: num(t.turnRate, 0)};
 }
 function basePose(mode){
   var M = MODES[mode];
@@ -286,7 +307,7 @@ function fovSpring(s, goal, dt){
 function fovOff(s){ return s.settings.fov - 65; }
 
 // Collision: t = q.hit(from, want); pull in at once to t*len - radius (min 0.6 m from `from`),
-// ease back out (omega 3); never below ground + 0.3. Shared by the chase family and cine.
+// ease back out (omega 3); never below ground + 0.3. Cine's (the chase family eases in too: chaseCollide).
 function pullIn(s, from, want, radius, dt, q){
   var _ = s._, vec = v3(want.x - from.x, want.y - from.y, want.z - from.z), len = vlen(vec) || 1e-6;
   var t = clamp(num(q.hit(from, want), 1), 0, 1), frac = 1;
@@ -297,62 +318,87 @@ function pullIn(s, from, want, radius, dt, q){
   pos.y = Math.max(pos.y, q.ground(pos.x, pos.z) + 0.3);
   return pos;
 }
+// Chase collision along pivot -> wanted camera, as a fraction of that ray: pull in on a spring (COL_IN), ease
+// back out (COL_OUT); while blocked the goal only moves out once the room has grown COL_HYST m.
+function chaseCollide(s, from, want, radius, dt, q){
+  var _ = s._, vec = v3(want.x - from.x, want.y - from.y, want.z - from.z), len = vlen(vec) || 1e-6;
+  var t = clamp(num(q.hit(from, want), 1), 0, 1), goal = 1;
+  if(t < 1){
+    var d = Math.min(len, Math.max(0.6, t*len - radius));
+    if(_.colG == null || d < _.colG || d > _.colG + COL_HYST) _.colG = d;
+    goal = Math.min(1, _.colG/len);
+  } else _.colG = null;
+  if(_.colFrac == null){ _.colFrac = goal; _.colV = 0; }
+  else {
+    var cs = spring(_.colFrac, _.colV, goal, goal < _.colFrac ? COL_IN : COL_OUT, dt);
+    _.colFrac = cs[0]; _.colV = cs[1];
+    if(_.colFrac > 1){ _.colFrac = 1; _.colV = Math.min(0, _.colV); }
+  }
+  var pos = v3(from.x + vec.x*_.colFrac, from.y + vec.y*_.colFrac, from.z + vec.z*_.colFrac);
+  pos.y = Math.max(pos.y, q.ground(pos.x, pos.z) + 0.3);
+  return pos;
+}
 function chasePose(s, mode, T, dt, q){
-  var _ = s._, M = MODES[mode], V = T.vehicle ? VEHICLE[T.vehicle] : null, red = s.settings.reduced;
+  var _ = s._, M = MODES[mode], V = T.vehicle ? VEHICLE[T.vehicle] : null, red = s.settings.reduced, k;
   var back = M.back*(V ? V.backMul : 1)*_.backScale, baseUp = M.up*(V ? V.upMul : 1), side = M.side*(V ? V.sideMul : 1);
   _.upOff = clamp(_.upOff + _.lift*LIFT*dt, 0.6 - baseUp, 2*baseUp);
   var up = baseUp + _.upOff;
-  // orbit: Q/R swing, recentre after 2 s without orbit input
-  if(_.swing){ _.orbitYaw = wrap(_.orbitYaw + _.swing*SWING*dt); _.idle = 0; }
-  else _.idle += dt;
+  // The orbit offset on top of the heading: Q/R swing eased in and out (exact exponential), right-drag adds
+  // to it directly (input()); after RECENTRE s without either it springs back to 0.
+  var sg = _.swing*SWING, sk = Math.LN2/SWING_HL, se = Math.exp(-sk*dt);
+  _.orbitYaw = wrap(_.orbitYaw + sg*dt + (_.swingV - sg)*(1 - se)/sk);
+  _.swingV = sg + (_.swingV - sg)*se;
+  if(_.swing) _.idle = 0; else _.idle += dt;
   var e0 = Math.atan2(up, back);
   _.orbitPitch = clamp(_.orbitPitch, -0.2 - e0, 1.2 - e0);
   if(_.idle > RECENTRE){
-    var ry = spring(_.orbitYaw, _.oyV || 0, 0, 2, dt), rp = spring(_.orbitPitch, _.opV || 0, 0, 2, dt);
+    var ry = spring(_.orbitYaw, _.oyV, 0, 2, dt), rp = spring(_.orbitPitch, _.opV, 0, 2, dt);
     _.orbitYaw = ry[0]; _.oyV = ry[1]; _.orbitPitch = rp[0]; _.opV = rp[1];
   } else { _.oyV = 0; _.opV = 0; }
-  // The heading the camera holds. In a vehicle it is the vehicle's (they drive forward). On foot the
-  // camera turns to get behind you: once your facing is FOLLOW_ON (~10 deg) off it, it keeps turning on a
-  // critically damped spring (eases in and out) until it is within FOLLOW_OFF (~2 deg), then holds.
-  // The host locks the walk direction in the world while the same keys are held, so this turn never
-  // feeds back into where the keys point. It never turns toward you when you face the camera (S steps
-  // back facing forward).
-  if(_.head == null || V){ _.head = T.yaw; _.headV = 0; }
-  else if(T.moving && _.orbitYaw){
-    // walking: a swing (Q/R, right-drag) becomes the heading itself. Kept as an offset, it was added
-    // again every frame once you faced the camera's way (S/A/D), and the camera drifted on its own.
-    _.head = wrap(_.head + _.orbitYaw); _.orbitYaw = 0; _.oyV = 0;
+  // The heading: where you are headed. On foot it follows travelYaw (S: facing + PI, so the camera swings
+  // round to show where you are going) on a critically damped spring that tightens the faster you turn. Of the
+  // goal's two sides (+-2 PI) it takes the one nearer where the heading's momentum is carrying it (head +
+  // headV/omega, less HEAD_BIAS turnRate up to HEAD_BIAS_MAX, so a near-PI tie goes to the side the turning goal
+  // is coming round from), so a goal near the far side never flips sides mid-swing; the goal turns with you at
+  // turnRate through the frame (springRamp), so a held turn is followed alike at any frame rate. Standing still the
+  // heading holds (its velocity dies away, never cut). A vehicle's heading is its yaw through a rotation lag.
+  if(_.head == null){ _.head = T.yaw; _.headV = 0; }
+  var goal = V ? T.yaw : T.travelYaw;
+  if(goal != null){
+    var tr = V ? 0 : T.turnRate, w = V ? VEH_LAG : clamp(HEAD_MIN + HEAD_K*Math.abs(tr), HEAD_MIN, HEAD_MAX);
+    var ref = _.headV/w - clamp(HEAD_BIAS*tr, -HEAD_BIAS_MAX, HEAD_BIAS_MAX), err = wrap(goal - _.head - ref) + ref;
+    // pull: where the spring heads (the goal less its steady turning lag). With the goal on the far side of the
+    // turn (coming round to meet the camera, e.g. A after S) both the pull and the goal's turn are kept only by
+    // g = 1/(1 + HEAD_AGAINST |turnRate err|), so the camera waits for the body instead of swinging against
+    // the key; g is 1 at turnRate 0 and once the goal is ahead in the turn, so it never switches.
+    var pull = err - 2*tr/w, g = err*tr < 0 ? 1/(1 + HEAD_AGAINST*Math.abs(tr*err)) : 1;
+    var rr = V ? T.turnRate : tr*g, hh = springRamp(0, _.headV, pull*g + 2*rr/w, rr, w, dt);
+    _.head = wrap(_.head + hh[0]); _.headV = hh[1];
+  } else {
+    var he = Math.exp(-HEAD_HOLD*dt);
+    _.head = wrap(_.head + _.headV*(1 - he)/HEAD_HOLD); _.headV *= he;
   }
-  if(!V){
-    var dh = wrap(T.yaw - _.head), al = Math.cos(dh), hw = 0;
-    if(T.moving && T.speed > 0.3 && al > -0.5){
-      if(Math.abs(dh) > FOLLOW_ON) _.follow = true;
-      else if(Math.abs(dh) < FOLLOW_OFF) _.follow = false;
-      if(_.follow) hw = FOLLOW;
-    } else if(!T.moving && _.idle > RECENTRE) hw = 1.5;   // standing still: settle behind the facing (the 2 s recentre)
-    if(hw > 0){ var hh = spring(_.head, _.headV, _.head + wrap(T.yaw - _.head), hw, dt); _.head = wrap(hh[0]); _.headV = hh[1]; }
-    else _.headV = 0;
-  }
-  // turn lag: the camera yaw springs after that heading
-  var goalYaw = _.head + _.orbitYaw;
-  if(!_.cam) _.cam = {yaw: goalYaw, yawV: 0, hy: null, hyV: 0};
-  var c = _.cam, ys = spring(c.yaw, c.yawV, c.yaw + wrap(goalYaw - c.yaw), M.lag, dt);
-  c.yaw = wrap(ys[0]); c.yawV = ys[1];
+  var camYaw = wrap(_.head + _.orbitYaw);
+  // The pivot trails the head (one spring, kept within PIVOT_MAX m); everything below aims at it.
+  var H = v3(T.x, T.y + LOOK_H, T.z);
+  if(!_.piv) _.piv = {x: H.x, y: H.y, z: H.z, vx: 0, vy: 0, vz: 0};
+  var P = _.piv;
+  ["x", "y", "z"].forEach(function(a){ var r = spring(P[a], P["v" + a], H[a], PIVOT_W, dt); P[a] = r[0]; P["v" + a] = r[1]; });
+  var dx = P.x - H.x, dy = P.y - H.y, dz = P.z - H.z, dl = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  if(dl > PIVOT_MAX){ k = PIVOT_MAX/dl; P.x = H.x + dx*k; P.y = H.y + dy*k; P.z = H.z + dz*k; }
+  // the look-ahead: a vector along the heading, min(3, 0.3 speed) long, on its own spring
+  var al = Math.min(AHEAD_MAX, T.speed*AHEAD_K), hf = rotYaw(0, 1, _.head);
+  if(!_.ahead) _.ahead = {x: hf.x*al, z: hf.z*al, vx: 0, vz: 0};
+  var A = _.ahead, ax = spring(A.x, A.vx, hf.x*al, AHEAD_W, dt), az = spring(A.z, A.vz, hf.z*al, AHEAD_W, dt);
+  A.x = ax[0]; A.vx = ax[1]; A.z = az[0]; A.vz = az[1];
+  // the camera: behind the pivot along camYaw; height over max(pivot feet, ground under the camera (sprung))
   var el = e0 + _.orbitPitch, r = Math.sqrt(back*back + up*up), horiz = r*Math.cos(el), h = r*Math.sin(el);
-  var off = rotYaw(-side, -horiz, c.yaw), px = T.x + off.x, pz = T.z + off.z;
-  // horizon levelling: height follows max(target, ground under the camera), world up kept
-  var baseY = Math.max(T.y, q.ground(px, pz));
-  if(c.hy == null) c.hy = baseY;
-  var hs = spring(c.hy, c.hyV, baseY, M.lag, dt); c.hy = hs[0]; c.hyV = hs[1];
-  var want = v3(px, c.hy + h, pz);
-  // look-ahead along the facing plus a lead into the turn
-  // only while moving away from the camera: walking toward it must not swing the aim round
-  var fwd = V ? 1 : Math.max(0, Math.cos(wrap(T.yaw - c.yaw)));
-  var ahead = Math.min(4, T.speed*0.35)*fwd, lead = clamp(_.yawRate*0.8, -1.5, 1.5)*Math.min(1, T.speed/3)*fwd;
-  var f = rotYaw(0, 1, T.yaw), left = rotYaw(1, 0, T.yaw);
-  var lk = v3(T.x + f.x*ahead + left.x*lead, T.y + LOOK_H, T.z + f.z*ahead + left.z*lead);
-  // collision along the target head -> camera ray (not the look-ahead point, which can sit inside a wall)
-  var H = v3(T.x, T.y + LOOK_H, T.z), pos = pullIn(s, H, want, M.collide, dt, q);
+  var off = rotYaw(-side, -horiz, camYaw), px = P.x + off.x, pz = P.z + off.z, g = q.ground(px, pz);
+  if(_.gnd == null) _.gnd = {y: g, v: 0};
+  var gs = spring(_.gnd.y, _.gnd.v, g, M.lag, dt); _.gnd.y = gs[0]; _.gnd.v = gs[1];
+  var want = v3(px, Math.max(P.y - LOOK_H, _.gnd.y) + h, pz);
+  var pv = v3(P.x, P.y, P.z), pos = chaseCollide(s, pv, want, M.collide, dt, q);
+  var lk = v3(P.x + A.x, P.y, P.z + A.z);
   var kick = red ? 0 : Math.min(10, T.speed*0.5)*(V ? V.fovSpeedKick : 1);
   var p = basePose(mode);
   p.pos = pos; p.look = lk; p.focus = H;
@@ -360,7 +406,7 @@ function chasePose(s, mode, T, dt, q){
   p.roll = red || !V ? 0 : V.roll*T.lean*0.5;
   s.lookYaw = Math.atan2(lk.x - pos.x, lk.z - pos.z);
   s.lookPitch = Math.atan2(lk.y - pos.y, Math.sqrt((lk.x - pos.x)*(lk.x - pos.x) + (lk.z - pos.z)*(lk.z - pos.z)));
-  s.moveYaw = c.yaw;   // the steady camera heading the host moves the avatar by (lookYaw wobbles with look-ahead)
+  s.moveYaw = camYaw;   // the camera heading (classic and older hosts move by it)
   return p;
 }
 
@@ -509,9 +555,7 @@ function step(s, tgt, dt, q){
   var Q = {ground: typeof q.ground === "function" ? function(x, z){ return num(q.ground(x, z), T.y); } : function(){ return T.y; },
            hit: typeof q.hit === "function" ? q.hit : function(){ return 1; }};
   if(q.viewH) _.viewH = q.viewH;
-  // the target's yaw rate (for the turn lead), smoothed
-  if(_.yawPrev != null && dt > 0) _.yawRate += (wrap(T.yaw - _.yawPrev)/dt - _.yawRate)*(1 - Math.exp(-8*dt));
-  _.yawPrev = T.yaw; _.tgt = T; _.t += dt;
+  _.tgt = T; _.t += dt;
   var pose, settle = null;
   if(_.path){
     var P = _.path;

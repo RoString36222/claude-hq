@@ -404,7 +404,7 @@ function terrainAt(lk, lod, x, z){
                dense: vals.every(function(v, i){ return v === i; }), proto: G.nameAtlasLayout(["constructor", "toString", "constructor"]).index};
 })();
 
-// ---- draw calls with all 64 tiles visible (2.4: <= 8 per tile within 300 m, <= 5 beyond, + 4 world-wide) ----
+// ---- draw calls with all 64 tiles visible (2.4: <= 8 per tile within 300 m, <= 4 beyond (no kerbwalk), + 4 world-wide) ----
 (function(){
   function nz(g){ return g && g.idx.length ? 1 : 0; }
   function est(cx, cz){
@@ -417,7 +417,7 @@ function terrainAt(lk, lod, x, z){
         near++;
         dc += nz(t.t0) + nz(t.r.asphalt) + nz(t.r.marks) + kw + nz(t.d0.body) + nz(t.d0.win) + (t.p.trees.length ? 1 : 0) + (t.p.lamps.length ? 1 : 0);
       } else {
-        dc += nz(t.t2) + (nz(t.r.asphalt) || nz(t.r.marks)) + kw + (d < 350 ? nz(t.d0.body) + nz(t.d0.win) : nz(t.d1.body));
+        dc += nz(t.t2) + (nz(t.r.asphalt) || nz(t.r.marks)) + (d < 350 ? nz(t.d0.body) + nz(t.d0.win) : nz(t.d1.body));
       }
     });
     return {dc: dc, near: near};
@@ -431,13 +431,21 @@ function terrainAt(lk, lod, x, z){
   var start = B.governor.out(gov);
   for(var i = 1; i <= 80; i++){ q = B.governor.step(gov, 25); if(q.level < 2 && firstDown < 0) firstDown = i; }
   var afterDown = q;
-  for(i = 1; i <= 1200; i++){ q = B.governor.step(gov, 10); maxLevel = Math.max(maxLevel, q.level); if(q.level > afterDown.level && firstUp < 0) firstUp = i; }
+  for(i = 1; i <= 7000; i++){ q = B.governor.step(gov, 10); maxLevel = Math.max(maxLevel, q.level); if(q.level > afterDown.level && firstUp < 0) firstUp = i; }
   var gov2 = B.governor.create({dpr: 1, start: 1}), top = 0;
   for(i = 0; i < 3000; i++) top = Math.max(top, B.governor.step(gov2, 8).level);
   var gov3 = B.governor.create({dpr: 1});
   for(i = 0; i < 2000; i++) q = B.governor.step(gov3, 40);
-  out.governor = {start: start, firstDown: firstDown, afterDown: afterDown, firstUp: firstUp, maxLevel: maxLevel, capped: top, floor: q,
-                  noisy: B.governor.step(B.governor.create({}), NaN).level};
+  // alternating load: 3 s at 25 ms then 7 s at 10 ms, for 10 minutes -> steps down only, never back up
+  var gov4 = B.governor.create({dpr: 2}), lv = 2, ups = 0, lods = {};
+  for(var t = 0; t < 600000; ){
+    var ms = (t % 10000) < 3000 ? 25 : 10;
+    q = B.governor.step(gov4, ms); t += ms;
+    if(q.level > lv) ups++; lv = q.level;
+    lods[q.lodScale] = 1;
+  }
+  out.governor = {start: start, firstDown: firstDown, afterDown: afterDown, firstUp: firstUp, maxLevel: maxLevel, capped: top, floor: B.governor.out(gov3),
+                  noisy: B.governor.step(B.governor.create({}), NaN).level, alt: {ups: ups, level: lv, lodScales: Object.keys(lods)}};
   out.lod = [B.lodFor(100, 1, null), B.lodFor(200, 1, null), B.lodFor(500, 1, null), B.lodFor(165, 1, 0), B.lodFor(175, 1, 0), B.lodFor(97, 0.6, null), B.lodFor(95, 0.6, null)];
   var m = B.mergeGeo([tiles["3,3"].r.kerb, tiles["3,3"].r.walk]);
   check("merged", m);
@@ -586,11 +594,14 @@ class WorldGeomTest(unittest.TestCase):
         self.assertEqual(g["firstDown"], 80)                   # 2 s of 25 ms frames
         self.assertEqual(g["afterDown"]["level"], 1)
         self.assertEqual(g["afterDown"]["pixelRatio"], 1)
-        self.assertEqual(g["firstUp"], 600)                    # 6 s of 10 ms frames
+        self.assertEqual(g["firstUp"], 6000)                   # level 2 failed: 60 s of 10 ms frames
         self.assertEqual(g["maxLevel"], 2)                     # never above the start
         self.assertEqual(g["capped"], 1)
-        self.assertEqual(g["floor"], {"level": 0, "pixelRatio": 0.75, "shadows": False, "lodScale": 0.6})
+        self.assertEqual(g["floor"], {"level": 0, "pixelRatio": 0.75, "shadows": False, "lodScale": 1})
         self.assertEqual(g["noisy"], 2)
+        # alternating load never oscillates; lodScale never changes
+        self.assertEqual(g["alt"]["ups"], 0, g["alt"])
+        self.assertEqual(g["alt"]["lodScales"], ["1"])
 
     def test_lod_choice_and_merge(self):
         self.assertEqual(self.out["lod"], [0, 1, 2, 0, 1, 1, 0])

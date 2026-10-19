@@ -142,6 +142,19 @@ out.sfFlat = ["foot", "bike", "skate", "car", "moto"].map(function(k){ return H.
 out.ray = {clear: H.rayGround(W, {x: -30, y: 20, z: -30}, {x: 30, y: 20, z: 30}),
   hit: H.rayGround(W, {x: -50, y: 20, z: 40}, {x: -50, y: -20, z: 40}, 1),
   under: H.rayGround(W, {x: -50, y: -10, z: 40}, {x: -40, y: -10, z: 40})};
+// rayGround bisects inside the step: the hit matches a 0.0005 scan however coarse the step
+function rayExact(a, b){
+  for(var t = 0; t <= 1; t += 0.0005) if(a.y + (b.y - a.y)*t < H.groundAt(W, a.x + (b.x - a.x)*t, a.z + (b.z - a.z)*t) + 0.25) return t;
+  return 1;
+}
+out.rayFine = [[{x: -50, y: 20, z: 40}, {x: -50, y: -20, z: 40}, 8], [{x: -50, y: 20, z: 40}, {x: -40, y: -20, z: 40}, 2],
+               [{x: -70, y: 3, z: 40}, {x: -30, y: -2, z: 40}, 2]].map(function(r){
+  return [H.rayGround(W, r[0], r[1], r[2]), rayExact(r[0], r[1]), 1/Math.ceil(Math.hypot(r[1].x - r[0].x, r[1].y - r[0].y, r[1].z - r[0].z)/r[2])];
+});
+// the kerb: across Elm Street (carriage half 2.5 m, half 4 m) the sidewalk is a 0.15 m step, flat like the drawn ribbon
+out.kerb = [];
+for(var kz = 2.0; kz <= 4.0001; kz += 0.01) out.kerb.push([+kz.toFixed(2), H.roadY(W, 20, kz), H.surfaceAt(W, 20, kz)]);
+out.kerbCentre = H.nearestRoad(W, 20, 2).y;
 out.labels = H.roadLabels(W).map(function(l){ return {name: l.name, cls: l.cls, ref: l.ref, n: l.pts.length, first: l.pts[0], last: l.pts[l.pts.length - 1], len: l.len}; });
 out.junctions = H.junctions(W);
 out.hash = [H.hash32(""), H.hash32("a"), H.hash32("foobar"), H.hash32("é")];
@@ -287,6 +300,23 @@ done(out);
         self.assertGreater(r["hit"], 0.4)
         self.assertLess(r["hit"], 0.6)
         self.assertEqual(r["under"], 0)
+
+    def test_ray_ground_bisects(self):
+        for got, exact, interval in self.out["rayFine"]:
+            self.assertLess(exact, 1)
+            self.assertAlmostEqual(got, exact, delta=max(interval / 64, 0.0005) + 0.0005)
+            self.assertLess(interval / 64, 0.01)    # the old result was only good to one whole step
+
+    def test_kerb_step(self):
+        # physics matches the drawn walk ribbon: flat road, a vertical 0.15 m kerb, flat sidewalk
+        k, c = self.out["kerb"], self.out["kerbCentre"]
+        for z, y, srf in k:
+            if z <= 2.5:
+                self.assertEqual(srf, "road")
+                self.assertAlmostEqual(y, c, places=9)
+            else:
+                self.assertEqual(srf, "sidewalk")
+                self.assertAlmostEqual(y, c + 0.15, places=9)
 
     def test_labels_and_junctions(self):
         labels = {l["name"]: l for l in self.out["labels"]}
@@ -608,6 +638,25 @@ hq.forEach(function(l){
   var r = H.nearestRoad(W, l.door[0]/100, l.door[2]/100, 30);
   if(r && r.dist < r.half - 1e-6) out.doorsOnRoad.push(l.id);
 });
+// junctions: where two edges' carriageways overlap, the surface must not jump where the nearest edge switches;
+// 10 cm steps along x and z lines through a 24 m box around every junction, each step a 1 cm bisected check
+out.junc = {checked: 0, worst: 0, at: null};
+H.junctions(W).forEach(function(j){
+  for(var o = -12; o <= 12; o += 3) [0, 1].forEach(function(ax){
+    var prev = null;
+    for(var u = -12; u <= 12; u += 0.1){
+      var x = j.x + (ax ? u : o + 0.37), z = j.z + (ax ? o + 0.37 : u), y = H.roadY(W, x, z);
+      if(y !== null && prev !== null){
+        out.junc.checked++;
+        var x1 = x - (ax ? 0.01 : 0), z1 = z - (ax ? 0 : 0.01), y1 = H.roadY(W, x1, z1);
+        // the kerb is a deliberate step; only compare samples on the same kind of surface
+        var d = y1 === null || H.surfaceAt(W, x, z) !== H.surfaceAt(W, x1, z1) ? 0 : Math.abs(y - y1);
+        if(d > out.junc.worst){ out.junc.worst = d; out.junc.at = [j.node, x, z]; }
+      }
+      prev = y;
+    }
+  });
+});
 out.labels = H.roadLabels(W).length; out.junctions = H.junctions(W).length;
 done(out);
 """
@@ -686,6 +735,11 @@ class RealWorld(unittest.TestCase):
         x = self.out["xsec"]
         self.assertGreater(x["checked"], 10000)
         self.assertEqual(x["bad"], 0, "ground jumps %.2f m across a road at %s (edge, x, z); see B1 request: hairpin arms overlap" % (x["worst"], x["at"]))
+
+    def test_junction_surface_continuous(self):
+        j = self.out["junc"]
+        self.assertGreater(j["checked"], 5000)
+        self.assertLess(j["worst"], 0.02, "roadY jumps %.3f m per 1 cm at %s (node, x, z)" % (j["worst"], j["at"]))
 
     def test_hq_pad_cells(self):
         c = self.out["hqPadCells"]

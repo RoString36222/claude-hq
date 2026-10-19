@@ -13,10 +13,10 @@ function hqWebGL(){ try { return !!document.createElement("canvas").getContext("
 
 // Script load order (3D city spec, section 1): the engine, the HQ host + Mission Control, the other
 // floors (Lobby, Base, the skate sim), then the 3D City: world data, geometry, meshes, camera rig, HUD,
-// the City's shared parts, the classic City and the generated one.
-var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqlobby","hqbase","hqskate","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqcity3d"];
+// the City's shared parts, the classic City, the static-mesh merger (hqmerge) and the generated one.
+var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqlobby","hqbase","hqskate","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge","hqcity3d"];
 // The 3D City's own files: if one fails, the classic City still works (games/hq3d.js falls back to it).
-var HQ_SCRIPTS_3D = {world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqcity3d:1};
+var HQ_SCRIPTS_3D = {world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1};
 // ?hqsmoke=1 (tools/ui_smoke.py, tools/hq_shots.py): HQ opens straight into the City with three synthetic HQs.
 var HQ_SMOKE = /[?&]hqsmoke=1(&|$)/.test(location.search);
 function hqLoadScripts(){

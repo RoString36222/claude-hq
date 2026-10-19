@@ -11,6 +11,12 @@
 //!        into the land -> lots and sites re-seated on the final ground
 //!     -> district map
 //!
+//! Version 2 (`claude-hq@2`, the Commons; `user:<uuid>@2`, a personal island)
+//! swaps the grid for an organic city (see organic/): arterials traced through a
+//! tensor field, local streets grown between them, blocks as the faces of the road
+//! graph, lots split from the blocks. Highways, the ring and the rest of the
+//! pipeline are shared, so version 1 is untouched.
+//!
 //! Layout (where roads, blocks, lots and sites are) comes from the seed and the
 //! profile only; terrain edits change heights, never layout. The result is a
 //! WorldDoc of plain data layers; features read the layers they need. Every
@@ -22,6 +28,7 @@
 pub mod city;
 pub mod districts;
 pub mod noise;
+pub mod organic;
 pub mod profile;
 pub mod rng;
 pub mod roads;
@@ -34,11 +41,21 @@ use serde::Serialize;
 
 pub use terrain::Edit;
 
-/// The generator's version. Bump it when a change would alter an existing
+/// The generator's versions. Add one when a change would alter an existing
 /// world, and keep the old behaviour reachable: things are stored against a
 /// world id (lots, maps, scores), so `claude-hq@1` must keep generating the
-/// same world forever.
-pub const VERSION: u32 = 1;
+/// same world forever. 1 is the grid city, 2 the organic one.
+pub const VERSION: [u32; 2] = [1, 2];
+
+/// The profile a world id's seed and version select: the grid city at @1; at @2
+/// a personal island for a `user:` seed, else the Commons.
+pub fn profile_for(seed: &str, version: u32) -> profile::Profile {
+    match version {
+        1 => profile::city(),
+        _ if seed.starts_with("user:") => profile::island(),
+        _ => profile::commons(),
+    }
+}
 
 #[derive(Serialize)]
 pub struct WorldDoc {
@@ -82,8 +99,8 @@ pub fn parse_id(id: &str) -> Result<(&str, u32), String> {
         return Err("a seed is 1-64 letters, digits, '-', '_' or ':'".into());
     }
     let v: u32 = ver.parse().map_err(|_| "the version must be a number")?;
-    if v != VERSION {
-        return Err(format!("unknown generator version {v} (this server generates {VERSION})"));
+    if !VERSION.contains(&v) {
+        return Err(format!("unknown generator version {v} (this server generates {VERSION:?})"));
     }
     Ok((seed, v))
 }
@@ -96,12 +113,17 @@ fn hash<T: Serialize>(v: &T) -> String {
 pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
     let (seed_str, version) = parse_id(id)?;
     let seed = rng::fnv1a64(seed_str.as_bytes());
-    let p = profile::city();
+    let p = profile_for(seed_str, version);
 
     let base = terrain::generate(seed, &p);
-    let mut city = city::generate(seed, &p, &base)?;
-    let mut roads = roads::generate(seed, &p, &base, &city.blocks)?;
-    let districts = districts::generate(seed, &p, &base, &city.blocks);
+    let (mut city, mut roads, districts) = if version == 1 {
+        let city = city::generate(seed, &p, &base)?;
+        let roads = roads::generate(seed, &p, &base, &city.blocks)?;
+        let districts = districts::generate(seed, &p, &base, &city.blocks);
+        (city, roads, districts)
+    } else {
+        organic::generate(seed, &p, &base)?
+    };
 
     let mut terrain = base;
     terrain.apply(edits)?;

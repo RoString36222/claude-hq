@@ -48,6 +48,9 @@ pub struct Edge {
     /// The centre line, from a to b: [x, y, z] cm. City edges are resampled into
     /// equal steps of at most `STEP_CM`; graded edges have a point per terrain vertex.
     pub points: Vec<[i64; 3]>,
+    /// Island worlds: the city tier the road appears at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_tier: Option<u8>,
 }
 
 #[derive(Serialize, Clone)]
@@ -65,7 +68,7 @@ pub fn is_graded(class: &str) -> bool {
 }
 
 /// Original names, coding-themed (the IP rule: nothing borrowed).
-const NAMES: [&str; 72] = [
+pub const NAMES: [&str; 72] = [
     "Commit", "Merge", "Rebase", "Branch", "Patch", "Refactor", "Opus", "Sonnet", "Haiku", "Prompt", "Token", "Context",
     "Cache", "Kernel", "Lambda", "Vector", "Tensor", "Socket", "Packet", "Daemon", "Thread", "Mutex", "Async", "Await",
     "Closure", "Compile", "Runtime", "Pixel", "Shader", "Sprite", "Cursor", "Terminal", "Shell", "Script", "Query", "Index",
@@ -133,9 +136,33 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, blocks: &[Block]) -> Res
         .map(|((a, b), (class, width, name))| {
             let (na, nb) = (&nodes[a as usize], &nodes[b as usize]);
             let walk = if class == "avenue" { p.avenue_walk_cm } else { p.street_walk_cm };
-            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)) }
+            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None }
         })
         .collect();
+    graded(&mut rng, p, base, blocks, &mut nodes, &mut edges, &mut it)?;
+    Ok(Roads { nodes, edges })
+}
+
+/// The graded roads round a city whose `nodes` and street `edges` are laid: a
+/// highway from the city node nearest each seeded gate out to it, and the ring
+/// joining the highways. Appends them (split into junctions where they meet) and
+/// numbers every edge. `names` gives each highway its name. No gates, no roads.
+pub fn graded<'a>(
+    rng: &mut Rng,
+    p: &Profile,
+    base: &Terrain,
+    blocks: &[Block],
+    nodes: &mut Vec<Node>,
+    edges: &mut Vec<Edge>,
+    it: &mut impl Iterator<Item = &'a str>,
+) -> Result<(), String> {
+    if p.gates == 0 {
+        for (k, e) in edges.iter_mut().enumerate() {
+            e.id = k as u32;
+        }
+        return Ok(());
+    }
+    let city_nodes = nodes.len();
 
     // gates: seeded points round the world's edge, a highway from the city to each
     let half = (base.n as i64 - 1) * base.cell_cm / 2 - base.cell_cm;
@@ -162,14 +189,14 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, blocks: &[Block]) -> Res
     }
 
     // the blocks and streets: graded roads keep their full width off them
-    let keep = Keep::new(base, blocks, &edges, p.highway_cm.max(p.ring_cm) / 2);
+    let keep = Keep::new(base, blocks, edges, p.highway_cm.max(p.ring_cm) / 2);
     let mut graded: Vec<Edge> = Vec::new();
     let mut junctions = Vec::new();
     // the highways laid so far: a highway that would touch one pays for every point it
     // shares, so two highways cross (a junction) but never run along each other
     let mut laid = Taken::default();
     for (k, &(gx, gz)) in gates.iter().enumerate() {
-        let from = nodes.iter().take(node_of.len()).min_by_key(|n| ((n.x - gx).pow(2) + (n.z - gz).pow(2), n.id)).unwrap().id;
+        let from = nodes.iter().take(city_nodes).min_by_key(|n| ((n.x - gx).pow(2) + (n.z - gz).pow(2), n.id)).unwrap().id;
         let (fx, fz) = (nodes[from as usize].x, nodes[from as usize].z);
         let mut path = route(base, p, (fx, fz), (gx, gz), p.city_r_cm, &keep, &[], true);
         if path.as_ref().is_some_and(|q| (1..q.len()).any(|i| laid.hits(q[i - 1], q[i], i + 1 == q.len()))) {
@@ -188,8 +215,8 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, blocks: &[Block]) -> Res
             .filter(|&q| !(q - 1..=q + 1).any(spike) && !crowded(q))
             .min_by_key(|&q| ((isqrt(path[q].0.pow(2) + path[q].1.pow(2)) - p.ring_r_cm).abs(), q))
             .unwrap_or(path.len() / 2);
-        let jn = push_node(&mut nodes, base, path[cut]);
-        let gate = push_node(&mut nodes, base, (gx, gz));
+        let jn = push_node(nodes, base, path[cut]);
+        let gate = push_node(nodes, base, (gx, gz));
         let name = format!("{} Way", it.next().unwrap());
         let route_ref = Some(format!("H{}", number[k]));
         for (a, b, part) in [(from, jn, &path[..=cut]), (jn, gate, &path[cut..])] {
@@ -215,12 +242,12 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, blocks: &[Block]) -> Res
         ring.add(&path, base);
         graded.push(Edge { route: Some("R1".to_string()), ..graded_edge(a, b, &path, &format!("Ring Road {}", k + 1), "ring", p.ring_cm) });
     }
-    edges.extend(split_contacts(&mut nodes, base, graded)?);
+    edges.extend(split_contacts(nodes, base, graded)?);
 
     for (k, e) in edges.iter_mut().enumerate() {
         e.id = k as u32;
     }
-    Ok(Roads { nodes, edges })
+    Ok(())
 }
 
 /// The gates' compass order from integers only (no trig): the angle atan2(x, z)
@@ -233,7 +260,7 @@ fn gate_order(a: (i64, i64), b: (i64, i64)) -> std::cmp::Ordering {
 
 /// A straight city edge from `a` to `b` in `n = ceil(len / STEP_CM)` equal steps
 /// (truncating division, so steps differ by at most 1 cm). Heights come in `seat`.
-fn resample(a: (i64, i64), b: (i64, i64)) -> Vec<[i64; 3]> {
+pub fn resample(a: (i64, i64), b: (i64, i64)) -> Vec<[i64; 3]> {
     let (dx, dz) = (b.0 - a.0, b.1 - a.1);
     let n = ((isqrt(dx * dx + dz * dz) + STEP_CM - 1) / STEP_CM).max(1);
     (0..=n).map(|i| [a.0 + dx * i / n, 0, a.1 + dz * i / n]).collect()
@@ -246,7 +273,7 @@ fn push_node(nodes: &mut Vec<Node>, t: &Terrain, (x, z): (i64, i64)) -> u32 {
 }
 
 fn graded_edge(a: u32, b: u32, path: &[(i64, i64)], name: &str, class: &'static str, width: i64) -> Edge {
-    Edge { id: 0, a, b, class, width, walk: 0, lanes: 1, route: None, name: name.to_string(), points: path.iter().map(|&(x, z)| [x, 0, z]).collect() }
+    Edge { id: 0, a, b, class, width, walk: 0, lanes: 1, route: None, name: name.to_string(), points: path.iter().map(|&(x, z)| [x, 0, z]).collect(), min_tier: None }
 }
 
 /// Where two graded roads meet.

@@ -26,6 +26,10 @@ pub struct Block {
     pub w: i64,
     pub d: i64,
     pub district: u8,
+    /// Organic worlds (@2): the block's footprint, [x, z] cm, counter-clockwise
+    /// (positive area in x, z); x, z, w, d are then its bounding box and i, j are 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poly: Option<Vec<[i64; 2]>>,
 }
 
 /// Which side of its rectangle a lot's door is on.
@@ -57,6 +61,18 @@ pub struct Lot {
     pub rank: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tier: Option<u32>,
+    /// Organic worlds (@2): the lot's footprint ([x, z] cm, counter-clockwise; x, z
+    /// are then its centroid, w its frontage and d its depth); `front`, the Q16 unit
+    /// vector its door faces, out to its road; `grow`, its growth rank (0 = nearest
+    /// the core: lots appear in this order); `min_tier`, the first city tier it exists in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poly: Option<Vec<[i64; 2]>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub front: Option<[i64; 2]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grow: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_tier: Option<u8>,
 }
 
 #[derive(Serialize, Clone)]
@@ -71,6 +87,14 @@ pub struct Site {
     pub w: i64,
     pub d: i64,
     pub facing: Facing,
+    /// Organic worlds (@2): the first city tier the site exists in, its footprint
+    /// ([x, z] cm, counter-clockwise) and the Q16 unit vector its door faces.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tier: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poly: Option<Vec<[i64; 2]>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub front: Option<[i64; 2]>,
 }
 
 /// The grid's line positions: line `i` runs between block columns i and i+1.
@@ -172,7 +196,7 @@ pub fn generate(seed: u64, p: &Profile, t: &Terrain) -> Result<City, String> {
         } else {
             district::RESIDENTIAL
         };
-        blocks.push(Block { id: k as u32, i: i as i32, j: j as i32, x: bx, z: bz, w: bw, d: bd, district: d });
+        blocks.push(Block { id: k as u32, i: i as i32, j: j as i32, x: bx, z: bz, w: bw, d: bd, district: d, poly: None });
     }
 
     let lots = lots(seed, p, t, &blocks);
@@ -196,7 +220,7 @@ fn lots(seed: u64, p: &Profile, t: &Terrain, blocks: &[Block]) -> Vec<Lot> {
                 out.push(Lot {
                     id: 0, block: b.id, kind: "hq", district: b.district, x: b.x, z: b.z, w: b.w, d: b.d, facing: f,
                     door: door(t, b.x, b.z, b.d, f), floors: 0,
-                    rank: Some(rank), tier: Some(rank / p.hq_tier as u32),
+                    rank: Some(rank), tier: Some(rank / p.hq_tier as u32), poly: None, front: None, grow: None, min_tier: None,
                 });
                 rank += 1;
             }
@@ -220,7 +244,7 @@ fn lots(seed: u64, p: &Profile, t: &Terrain, blocks: &[Block]) -> Vec<Lot> {
                         };
                         out.push(Lot {
                             id: 0, block: b.id, kind: "building", district: b.district, x, z, w, d, facing: f,
-                            door: door(t, x, z, d, f), floors, rank: None, tier: None,
+                            door: door(t, x, z, d, f), floors, rank: None, tier: None, poly: None, front: None, grow: None, min_tier: None,
                         });
                     }
                 }
@@ -256,7 +280,7 @@ fn sites(p: &Profile, t: &Terrain, blocks: &[Block]) -> Result<Vec<Site>, String
             };
             out.push(Site {
                 id: format!("{}:{n}", s.kind), kind: s.kind, block: b.id,
-                x, y: t.height_at(x, z), z, w: s.w_cm, d: s.d_cm, facing: Facing::North,
+                x, y: t.height_at(x, z), z, w: s.w_cm, d: s.d_cm, facing: Facing::North, tier: None, poly: None, front: None,
             });
         }
     }

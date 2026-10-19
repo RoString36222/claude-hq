@@ -45,6 +45,9 @@ mod sounds;
 mod story_check;
 mod valley;
 mod weeks;
+// The world generator (HQ 3.0). Not served yet: GET /v1/world/:id lands in P2.
+#[allow(dead_code)]
+mod worldgen;
 
 use axum::{
     extract::{

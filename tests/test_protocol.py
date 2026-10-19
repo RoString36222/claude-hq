@@ -23,7 +23,7 @@ RUST_ONLY = ("td", "bowl")
 # Arena is ahead of the frozen Python one — v2 flies the launcher's rockets,
 # v3 also allows the sprint flag on pos; Python judges hitscan-only v1. The
 # tables must agree everywhere else.
-VERSION_DRIFT = {"strike": (1, 4)}  # v2 rockets, v3 sprint flag, v4 parachute drops (Python judges hitscan-only v1)
+VERSION_DRIFT = {"strike": (1, 9)}  # v2 rockets, v3 sprint flag, v4 parachute drops, v5 map pick, v6 Wave C totems, v7 Wave D disasters, v8 Wave E disaster drop ring + di[4] countdown, v9 Wave F/G visual+impact disasters (Python judges hitscan-only v1)
 
 
 def client_proto():

@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.8.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 2.8.3** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -330,6 +330,28 @@ and feature guide.
 
 ## Changelog
 
+- **2.8.3 — Strikezone: every disaster hits, and it hits what you see.** Arena Disasters used to
+  play as theatre: Meteor Shower streaked pretty fire while impact rings scattered at random,
+  Toxic Fog painted green clouds at map centre while damage re-rolled somewhere else every second,
+  and Hurricane only shoved. Now **every one of the 10 disasters has a real impact on every player
+  and bot** (damage, knock, pull, or a 1-per-second chip), and **the hazard you see is the hazard
+  that hurts you** — toxic clouds, the sinkhole pit, the wind column and impact marks are frozen
+  once at start and shared by the 3D painter and the judge (solo and MP). Impact marks are aimed
+  at live fighters often enough to connect. Protocol `strike` v9: snap `di` carries the frozen
+  seed / cloud centres / pit, `dm` rows carry damage. Hurricane now chips 3 hp/s while it shoves.
+  No new network, no new assets.
+  Also in this entry: **disaster polish.** Lightning is a hashed zig-zag bolt (core + halo +
+  a side fork), not a straight line; standing under a strike hurts more than standing at the
+  rim (proximity crush in both judges). Fitting non-HP hits on every body: thunder / meteor /
+  shockring blind (white-out veil), quake / toxic / sink / wind slow your step, sand / hurricane /
+  EMP scatter every shot, hurricane wild-aim on bots too. MP carries the blind / slow windows on
+  the player flags (`FLAG_BLIND` / `FLAG_SLOW`). Local only, no new network, no new assets.
+  Also in this entry: **a fall out of the map is no longer an endless free-fall.** A body
+  that leaves the arena (kicked out, knocked past the bounds, a floor gap on the Sandbar)
+  gets a 10-second void clock, then a parachute back in — player and bot alike. Nothing
+  out there can kill you and you can't shoot yourself, so the clock is the way home;
+  the HUD counts it down (`Out of bounds — back in 7s`). Solo the client runs it; in MP
+  the Arena referee does and emits the same `spawn` drop a respawn uses. Local only.
 - **2.8.2 — Account standings.** The Arena's **Standings** has a **Players / Accounts** switch next to
   its title. Accounts mode ranks Claude accounts for the chosen window (Season, 30 days, 7 days, All
   time): one row per account with everyone's combined numbers, expandable to each member's own row and
@@ -403,8 +425,56 @@ and feature guide.
   **Install now** (HQ runs `notch/tools/install.py` for you; it needs the Xcode Command Line Tools), copy the
   command, ask again in 3 days, or never. Local only: `GET /api/notch/status`, `POST /api/notch/install`
   (CSRF-protected), `ext_notch.py`.
-
-- **Unreleased (2.5.2): the Overflow Vial.** A creature that is already Apex keeps earning past
+- **Unreleased — Strikezone (maps, totems, disasters).** Prior Strikezone waves, folded into one
+  entry (they were never separate HQ versions, and their old "2.5.x–2.9.0" labels collided with
+  real HQ releases):
+  - **Harbor Dockyard 2× + scattered drops.** The yard is twice as big on each edge (84×60 floor)
+    with the same container / crate / catwalk / step sizes and full north/south and east/west
+    symmetry. **No drop has a fixed pad:** every health kit, ammo pack and totem lands on a fresh
+    open ground spot across the arena bounds, and a returning pack re-rolls its spot too.
+  - **Dune Compound.** A second arena: an indoor desert compound of sealed adobe rooms and
+    passages. The host (and the solo menu) picks the map before a match. Harbor Dockyard is
+    unchanged. Bots walk the room/passage graph. The kill feed shows the weapon (smg / marksman /
+    revolver / launcher).
+  - **Climbable high grounds + 3D bot nav.** Dockyard edges, midfield lookouts, warehouse roof and
+    container tops are reachable via real non-overlapping stairs; bots walk those stairs and
+    facing spawn pairs sit in known lanes 20–32 m apart so a filled 2v2 opens fire.
+  - **Wave C warzone.** 28 new totems (Rift, Mirror Army, Gravity Flip, Time Rewind, Shockwave,
+    Bullet Magnet, Chain Lightning, Trapmaster, Hunter's Mark, Blink Dash, Bubble Fortress, Wall
+    Runner, Second Wind, Fake Death, Ghost Bullets, Cluster Shot, Overclock, Ricochet, Infinite
+    Chamber, Body Swap, Rally, Meteor Call, Chaos Core, Phoenix, Pocket Universe, Fate Splitter,
+    Kingmaker, Radar Jammer) plus five drop mechanics (Hot Drop, Totem Fusion, Cursed Drop, Arena
+    Events, Contested Capture) and a small top-down radar. Protocol `strike` → 6.
+  - **Wave D: Arena Disasters.** Ten arena-wide Disaster totems — Sandstorm, Meteor Shower,
+    Hurricane, Thunder Apocalypse, Earthquake, Shockwave Apocalypse, Toxic Fog, Absolute Zero,
+    Sinkhole, EMP Apocalypse. Warn (2 s banner) → impact/hold → clear. A solid roof overhead
+    stops Meteor Shower and Thunder Apocalypse; any live shield makes you immune to every
+    disaster. Environment kills name the disaster in the feed. Three open-air sheds on the Dune
+    Compound give real roof cover on both arenas.
+  - **Wave E: Disaster totems on their own ring, and a top-bar auto-disaster clock.** Disaster
+    totems land on their own drop ring (2 recycled slots) on their own clock (first at 12 s,
+    then every 16 s). The auto-disaster clock starts at 30 s and repeats every 45 s, counted
+    down in the top bar. Protocol `strike` → 8 (`di` grew a 5th field: ms until the next
+    automatic disaster).
+  - **Wave F: every disaster is a map-wide event.** The 3D layer paints big, obvious world
+    spectacle for all 10 disasters (dust wall, fireballs, walking hurricane column, lightning +
+    full-map flash, earthquake shake, expanding shockwave ring, rolling toxic clouds, Absolute
+    Zero snow / frost / ice shards, sinkhole pit with debris, EMP blackout). Impact marks paint
+    as 3D ground warning rings; `V.booms` render as blasts; the hold banner names what is
+    happening. The 2D map fallback washes and rings the same events. Calm / reduced-motion keeps
+    the colour and stills the motion. Also fixed: the auto-disaster / Disaster-totem kind roll
+    actually varies (`disKind`/`dis_kind` mix the hash now, JS and Rust twins); Disaster totems
+    are pickable; and ground drops are reachable from Wave B high grounds.
+  - **Wave G: every disaster is visual AND impact, and the two "nothing happened" totems are on
+    screen.** Sandstorm / Absolute Zero / EMP chip once a second (3 / 4 / 2 hp). Sandstorm is
+    denser. The Rift totem paints two violet openings plus a link beam; the Shockwave totem
+    paints an expanding ground ring. Hurricane shoves solo bots too. The game-info card explains
+    what each of the 10 disasters does.
+  **Privacy / egress:** still zero transcript data off-box; no new network call — all disaster
+  theatre is local three.js primitives and generated canvas textures.
+  **Third-party assets:** none; every effect is original three.js geometry / materials and
+  canvas gradients drawn in code.
+- **Unreleased — the Overflow Vial.** A creature that is already Apex keeps earning past
   70 prompts, and HQ now banks half of that surplus (5 XP per prompt) into a shared local ledger
   (`vial.json`, 0600). Each drop dies 24 h after it lands, spends eat the soonest-to-die drop
   first, and one spend lifts a species a single stage — Egg→Hatchling 30 XP, Hatchling→Adult 90,

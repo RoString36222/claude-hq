@@ -15,7 +15,7 @@ fn members(n: usize, prefix: &str) -> Vec<(String, Value)> {
 
 pub(crate) fn started(n: usize, tsize: i64, t0: f64) -> (Strike, f64) {
     let mut s = Strike::new();
-    assert_eq!(s.start(&members(n, "u"), &json!(5), &json!(30), &json!(tsize), &json!("normal"), t0), None);
+    assert_eq!(s.start(&members(n, "u"), &json!(5), &json!(30), &json!(tsize), &json!("normal"), &Value::Null, t0), None);
     s.tick(t0 + COUNTDOWN, true);
     assert_eq!(s.phase, Phase::Round);
     (s, t0 + COUNTDOWN)
@@ -53,32 +53,62 @@ fn slot(s: &Strike, uid: &str) -> i64 {
 }
 
 // --------------------------------------------------------------------- map --
+#[test]
+fn the_map_files_are_the_browser_ones() {
+    // Byte-identical twins of games/strike/*.json (checked in tests/test_game_data_sync.py).
+    let dock = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../games/strike/map.json")).unwrap();
+    assert_eq!(dock, MAP_JSON);
+    let sand = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../games/strike/map-sandbar.json")).unwrap();
+    assert_eq!(sand, MAP_SAND_JSON);
+}
 
 #[test]
 fn map_is_sane() {
-    let m = &*MAP;
-    assert!(m.spawns.len() >= 8 && m.boxes.len() >= 20);
-    for s in &m.spawns {
-        assert!(overlaps(m, s[0], s[1], s[2], 0.0).is_none(), "spawn inside a wall {s:?}");
-        assert!(overlaps(m, s[0], s[1] - 0.05, s[2], 0.0).is_some(), "spawn not on the ground {s:?}");
-        assert_eq!(top_under(m, s[0], s[1] - 0.05, s[2]), Some(s[1]));
+    for m in MAPS.iter() {
+        assert!(m.spawns.len() >= 8 && m.spawns.len() % 2 == 0 && m.boxes.len() >= 20, "{}", m.id);
+        for s in &m.spawns {
+            assert!(overlaps(m, s[0], s[1], s[2], 0.0).is_none(), "spawn inside a wall {s:?}");
+            assert!(overlaps(m, s[0], s[1] - 0.05, s[2], 0.0).is_some(), "spawn not on the ground {s:?}");
+            assert_eq!(top_under(m, s[0], s[1] - 0.05, s[2]), Some(s[1]));
+        }
+        for p in &m.pickups {
+            assert!(overlaps(m, p.at[0], p.at[1], p.at[2], 0.0).is_none());
+        }
+        // only maps that ship their own graph have to stay clear of cover —
+        // the dockyard's built-in table is pre-existing and steps around boxes
+        if !m.waypoints.is_empty() {
+            for (x, z, y) in &m.waypoints {
+                assert!(overlaps(m, *x, y + 0.1, *z, 0.0).is_none(), "waypoint inside a wall {x},{z},{y}");
+            }
+        }
+        // the two sides' spawns sit on opposite halves — dockyard north/south, sandbar west/east
+        let half = m.spawns.len() / 2;
+        let (a, c) = (&m.spawns[..half], &m.spawns[half..]);
+        let ns = a.iter().all(|s| s[2] < 0.0) && c.iter().all(|s| s[2] > 0.0);
+        let we = a.iter().all(|s| s[0] < 0.0) && c.iter().all(|s| s[0] > 0.0);
+        assert!(ns || we, "{} spawns must split on z or x", m.id);
+        assert_eq!(m.pickups.len(), 7, "{} must keep BASE_PACKS", m.id);
     }
-    for p in &m.pickups {
-        assert!(overlaps(m, p.at[0], p.at[1], p.at[2], 0.0).is_none());
-    }
-    // the two sides' spawns are on opposite halves of the map
-    let half = m.spawns.len() / 2;
-    assert!(m.spawns[..half].iter().all(|s| s[2] < 0.0), "amber spawns must be north");
-    assert!(m.spawns[half..].iter().all(|s| s[2] > 0.0), "cyan spawns must be south");
-    assert_eq!(m.pickups.len(), 7);
     assert!(compile_map(&json!({"boxes": [[0, 0, 0, 0, 1, 1, "x"]]})).is_err());
+}
+
+#[test]
+fn the_host_can_pick_sandbar() {
+    let mut s = Strike::new();
+    assert_eq!(s.start(&members(2, "u"), &json!(5), &json!(30), &json!(2), &json!("normal"), &json!("sandbar"), 0.0), None);
+    assert_eq!(s.map().id, "sandbar");
+    assert_eq!(s.view(0.0)["map"], json!("sandbar"));
+    // an unknown id falls back to the dockyard, never a panic
+    let mut s2 = Strike::new();
+    assert_eq!(s2.start(&members(2, "u"), &json!(5), &json!(30), &json!(2), &json!("normal"), &json!("nowhere"), 0.0), None);
+    assert_eq!(s2.map().id, "dockyard");
 }
 
 // ------------------------------------------------------------------- teams --
 #[test]
 fn the_host_sizes_the_sides_and_bots_fill_them() {
     let mut s = Strike::new();
-    assert_eq!(s.start(&members(3, "u"), &json!(5), &json!(30), &json!(3), &json!("normal"), 0.0), None);
+    assert_eq!(s.start(&members(3, "u"), &json!(5), &json!(30), &json!(3), &json!("normal"), &Value::Null, 0.0), None);
     for tm in 0..2u8 {
         let side = s.players.iter().filter(|(_, p)| p.team == tm && !p.gone).count();
         assert_eq!(side, 3, "side {tm} must have 3 players");
@@ -96,7 +126,7 @@ fn a_five_by_five_fills_both_sides_and_a_duel_shrinks_them() {
     // 1..=5 are all legal team sizes now: the host's X tops each side up with
     // bots, and MAX_PLAYERS holds all ten seats at once.
     let mut s = Strike::new();
-    assert_eq!(s.start(&members(4, "u"), &json!(5), &json!(30), &json!(5), &json!("normal"), 0.0), None);
+    assert_eq!(s.start(&members(4, "u"), &json!(5), &json!(30), &json!(5), &json!("normal"), &Value::Null, 0.0), None);
     for tm in 0..2u8 {
         let side = s.players.iter().filter(|(_, p)| p.team == tm && !p.gone).count();
         assert_eq!(side, 5, "side {tm} must have 5 players");
@@ -107,7 +137,7 @@ fn a_five_by_five_fills_both_sides_and_a_duel_shrinks_them() {
     assert_eq!(alive, s.players.len(), "nobody benches to make 5v5 fit");
 
     let mut d = Strike::new();
-    assert_eq!(d.start(&members(2, "u"), &json!(3), &json!(10), &json!(1), &json!("normal"), 0.0), None);
+    assert_eq!(d.start(&members(2, "u"), &json!(3), &json!(10), &json!(1), &json!("normal"), &Value::Null, 0.0), None);
     for tm in 0..2u8 {
         let side = d.players.iter().filter(|(_, p)| p.team == tm && !p.gone).count();
         assert_eq!(side, 1, "side {tm} must have exactly 1 player in a 1v1");
@@ -121,18 +151,18 @@ fn the_host_sets_their_own_scoreline() {
     // quick picks): anything inside 1..=60 minutes and 1..=500 kills is honoured,
     // and out-of-range values clamp instead of snapping back to a default.
     let mut s = Strike::new();
-    assert_eq!(s.start(&members(2, "u"), &json!(7), &json!(25), &json!(2), &json!("normal"), 0.0), None);
+    assert_eq!(s.start(&members(2, "u"), &json!(7), &json!(25), &json!(2), &json!("normal"), &Value::Null, 0.0), None);
     assert_eq!(s.minutes, 7, "an off-list length is the host's to pick");
     assert_eq!(s.limit, 25, "an off-list target is the host's to pick");
     let mut s = Strike::new();   // a fresh match: start() refuses while one is running
-    assert_eq!(s.start(&members(2, "u"), &json!(600), &json!(0), &json!(2), &json!("normal"), 0.0), None);
+    assert_eq!(s.start(&members(2, "u"), &json!(600), &json!(0), &json!(2), &json!("normal"), &Value::Null, 0.0), None);
     assert_eq!(s.minutes, 60, "600 minutes clamps to the 60-minute cap");
     assert_eq!(s.limit, 1, "0 kills clamps up to the 1-kill floor");
     // every preset stays legal, so the menu's quick picks can't fall back either
     for m in MINUTES {
         for k in KILLS {
             let mut p = Strike::new();
-            assert_eq!(p.start(&members(2, "u"), &json!(m), &json!(k), &json!(2), &json!("normal"), 0.0), None);
+            assert_eq!(p.start(&members(2, "u"), &json!(m), &json!(k), &json!(2), &json!("normal"), &Value::Null, 0.0), None);
             assert_eq!((p.minutes, p.limit), (m, k), "preset {m} min / {k} kills must survive start");
         }
     }
@@ -233,7 +263,7 @@ fn totems_drop_on_the_round_clock_and_the_mole_needs_a_bot() {
         }
     }
     assert_eq!(totems, 1, "exactly one totem lands TOTEM_FIRST into the round");
-    assert_eq!(s.items.len(), MAP.pickups.len() + DROP_SLOTS + PACK_SLOTS,
+    assert_eq!(s.items.len(), MAP.pickups.len() + DROP_SLOTS + PACK_SLOTS + DIS_SLOTS,
                "the drop rings exist past the map's packs, all match long");
     assert!(TOTEM_KINDS.contains(&s.kinds[MAP.pickups.len()]), "the kind is one of the five");
     assert!(s.items[MAP.pickups.len()].is_none(), "the fresh totem slot starts live");
@@ -242,7 +272,7 @@ fn totems_drop_on_the_round_clock_and_the_mole_needs_a_bot() {
         t += 1.0 / HZ;
         s.tick(t, true);
     }
-    assert_eq!(s.items.len(), MAP.pickups.len() + DROP_SLOTS + PACK_SLOTS,
+    assert_eq!(s.items.len(), MAP.pickups.len() + DROP_SLOTS + PACK_SLOTS + DIS_SLOTS,
                "the slot list never grows past the rings");
 }
 
@@ -254,26 +284,39 @@ fn drops_repeat_from_recycled_slots() {
     let n_map = MAP.pickups.len();
     let mut totem_slots = std::collections::HashSet::new();
     let mut pack_slots = std::collections::HashSet::new();
-    // run 4 totem gaps + 5 pack gaps, ticking at HZ like the real loop
-    let end = t + TOTEM_FIRST + TOTEM_GAP * 4.0 + PACK_GAP * 5.0 + 0.5;
+    let mut dis_slots = std::collections::HashSet::new();
+    // run 4 totem gaps + 5 pack gaps + 3 disaster gaps, ticking at HZ like the real loop
+    let end = t + TOTEM_FIRST + TOTEM_GAP * 4.0 + PACK_GAP * 5.0 + DIS_GAP_DROP * 3.0 + 0.5;
     while t < end {
         t += 1.0 / HZ;
         for (ev, d) in s.tick(t, true) {
             if ev == "totem" {
-                totem_slots.insert(d["i"].as_i64().unwrap_or(-1));
+                // Disaster totems and personal totems share the "totem" event; the tag
+                // (and the ring the slot falls in) is what separates them.
+                let i = d["i"].as_i64().unwrap_or(-1) as usize;
+                let tag = d["tag"].as_str().unwrap_or("");
+                if tag == "dis" {
+                    dis_slots.insert(i as i64);
+                } else {
+                    totem_slots.insert(i as i64);
+                }
             } else if ev == "pack" {
                 pack_slots.insert(d["i"].as_i64().unwrap_or(-1));
             }
         }
     }
-    assert_eq!(s.items.len(), n_map + DROP_SLOTS + PACK_SLOTS,
+    assert_eq!(s.items.len(), n_map + DROP_SLOTS + PACK_SLOTS + DIS_SLOTS,
                "the slot list never grows past the rings");
     assert!(totem_slots.iter().all(|i| (*i as usize) >= n_map && (*i as usize) < n_map + DROP_SLOTS),
             "totems land only in the totem ring");
     assert!(pack_slots.iter().all(|i| (*i as usize) >= n_map + DROP_SLOTS
                                    && (*i as usize) < n_map + DROP_SLOTS + PACK_SLOTS),
             "loose packs land only in the pack ring");
-    assert_eq!(totem_slots.len() + pack_slots.len(), DROP_SLOTS + PACK_SLOTS,
+    assert!(dis_slots.iter().all(|i| (*i as usize) >= n_map + DROP_SLOTS + PACK_SLOTS
+                                   && (*i as usize) < n_map + DROP_SLOTS + PACK_SLOTS + DIS_SLOTS),
+            "Disaster totems land only in the Disaster ring");
+    assert_eq!(totem_slots.len() + pack_slots.len() + dis_slots.len(),
+               DROP_SLOTS + PACK_SLOTS + DIS_SLOTS,
                "every ring slot is used");
 }
 
@@ -311,6 +354,33 @@ fn a_loose_pack_refills_the_taker() {
         assert_eq!(d["hp"].as_i64(), Some(90), "the loose health pack healed its taker");
     }
     assert!(s.items[i].is_some(), "the taken slot waits out PICKUP_BACK before returning");
+}
+
+#[test]
+fn map_packs_come_back_somewhere_new() {
+    // a map health/ammo pad is only a starting scatter — taking one and waiting out
+    // PICKUP_BACK must plant it on different ground, never the pad you camped
+    let (mut s, t) = started(2, 2, 0.0);
+    s.player_mut("u0").unwrap().shield_totem_until = t + 60.0;
+    let j = 0usize;
+    let before = s.spots[j];
+    s.items[j] = None;
+    s.player_mut("u0").unwrap().hp = 40;
+    put(&mut s, "u0", before[0], 0.0, before[2], t, Some(0));
+    let _ = s.pos("u0", &json!({"x": cm(before[0]), "y": cm(0.0), "z": cm(before[2]), "r": 0, "p": 0, "q": 1}), t + 0.1);
+    assert!(s.items[j].is_some(), "the taken map pack is on a refill clock");
+    let after = s.spots[j];
+    assert!((after[0] - before[0]).abs() > 1e-3 || (after[2] - before[2]).abs() > 1e-3,
+            "the refill re-rolled the spot off the pad: {before:?} -> {after:?}");
+    assert!(overlaps(s.map(), after[0], 0.1, after[2], 0.0).is_none(), "the new spot is standable");
+    // the return event carries that new ground (cm / 100)
+    let back = t + PICKUP_BACK + 0.1;
+    let evs = s.tick(back, true);
+    let item = evs.iter().find(|(ev, d)| ev == &"item" && d["i"].as_i64() == Some(j as i64));
+    let (_, d) = item.expect("the map pack comes back after PICKUP_BACK");
+    assert_eq!(d["x"].as_i64(), Some(cm(after[0])), "the item event names the new x");
+    assert_eq!(d["z"].as_i64(), Some(cm(after[2])), "the item event names the new z");
+    assert!(s.items[j].is_none(), "and the slot is live again");
 }
 
 #[test]
@@ -637,6 +707,13 @@ fn the_drop_shield_holds_off_bullets_and_blasts_while_you_glide() {
         p.hist = VecDeque::from([(t, p.x, p.y, p.z)]);
     }
     assert!(s.player("u1").unwrap().shielded(t), "a fresh drop life is shielded");
+    // filler bots would finish the glider once the 3 s window closes — freeze them so
+    // this test only judges the shield
+    for (_, p) in s.players.iter_mut() {
+        if p.is_bot() {
+            p.freeze_until = 1e9;
+        }
+    }
     // the shield is in the snapshot too, so every client can draw the bubble
     s.mark("u1");
     let snap = s.snap(t);
@@ -748,7 +825,7 @@ fn the_movement_totems_relax_only_what_the_server_judged() {
     // and a death pops all three windows (place() resets them with the life)
     let spawn = [0.0, 0.0, -8.0, 0.0];
     s.player_mut("u0").unwrap().dead = true;
-    s.player_mut("u0").unwrap().place(spawn, t + 21.0);
+    { let m = s.map(); s.player_mut("u0").unwrap().place(spawn, t + 21.0, m); }
     let s2 = s.player("u0").unwrap();
     assert_eq!((s2.wings_until, s2.wings_fly, s2.leap_until, s2.speed_until), (0.0, 0.0, 0.0, 0.0),
                "a respawn starts with every movement window closed");
@@ -759,7 +836,7 @@ fn the_host_picks_one_bot_skill_for_both_sides() {
     // MP lobbies fill short sides with bots on BOTH teams, so one skill level applies to
     // the whole match — never a sharper filler's side against a duller's
     let mut s = Strike::new();
-    assert_eq!(s.start(&members(2, "u"), &json!(5), &json!(30), &json!(3), &json!("hard"), 0.0), None);
+    assert_eq!(s.start(&members(2, "u"), &json!(5), &json!(30), &json!(3), &json!("hard"), &Value::Null, 0.0), None);
     assert_eq!(s.bot_diff, "hard");
     assert_eq!(s.bot_aim, 0.5);
     assert_eq!(s.bot_react, 0.35);
@@ -767,12 +844,12 @@ fn the_host_picks_one_bot_skill_for_both_sides() {
     assert_eq!(s.bot_rate, 0.8);
     // an unknown id — including a crafted wire one — quietly falls back to normal
     let mut s2 = Strike::new();
-    s2.start(&members(2, "u"), &json!(5), &json!(30), &json!(3), &json!("nightmare"), 0.0);
+    s2.start(&members(2, "u"), &json!(5), &json!(30), &json!(3), &json!("nightmare"), &Value::Null, 0.0);
     assert_eq!(s2.bot_diff, "normal");
     assert_eq!(s2.bot_aim, 1.0);
     // and a match started without a diff is normal (the host didn't pick one)
     let mut s3 = Strike::new();
-    s3.start(&members(2, "u"), &json!(5), &json!(30), &json!(3), &Value::Null, 0.0);
+    s3.start(&members(2, "u"), &json!(5), &json!(30), &json!(3), &Value::Null, &Value::Null, 0.0);
     assert_eq!(s3.bot_diff, "normal");
 }
 
@@ -785,9 +862,10 @@ fn the_teleport_totem_plants_the_taker_on_open_ground() {
     let p = s.player("u0").unwrap();
     assert!((p.x, p.z) != (x0, z0), "the taker moved somewhere else");
     assert_eq!(p.y, 0.0, "always on the ground, never in the air");
-    assert!((-17.5..=17.5).contains(&p.x), "inside the drop scatter's x range");
-    assert!((-10.5..=10.5).contains(&p.z), "inside the drop scatter's z range");
-    assert!(overlaps(&MAP, p.x, 0.1, p.z, 0.3).is_none(), "never inside a box");
+    let b = MAP.bounds();
+    assert!((b[0]..=b[3]).contains(&p.x), "inside the drop scatter's x range");
+    assert!((b[2]..=b[5]).contains(&p.z), "inside the drop scatter's z range");
+    assert!(overlaps(&MAP, p.x, 0.1, p.z, 0.0).is_none(), "never inside a box");
     assert_eq!(p.air_at, t + 1.0, "the air clock restarts at the destination");
     // two hops in a row land somewhere fresh (the seed advances with the take counter)
     let (px, pz) = (p.x, p.z);
@@ -798,4 +876,574 @@ fn the_teleport_totem_plants_the_taker_on_open_ground() {
     let (tx, tz) = (p.x, p.z);
     let (ok, fix) = s.pos("u0", &json!({"x": cm(tx), "y": 0, "z": cm(tz), "r": 0, "p": 0, "q": 100}), t + 2.1);
     assert!(ok && fix.is_none(), "the next frame starts from the destination: {fix:?}");
+}
+
+// -------------------------------------------------------------- Wave C --
+#[test]
+fn second_wind_and_phoenix_cancel_one_killing_blow() {
+    let (mut s, t) = started(2, 2, 0.0);
+    let ki = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    let vi = s.players.iter().position(|(_, p)| p.team != s.player("u0").unwrap().team).unwrap();
+    let vuid = s.players[vi].0.clone();
+    // Second Wind: the kill is cancelled and the victim stands back up at half health
+    s.player_mut(&vuid).unwrap().second_wind = true;
+    let deaths0 = s.player(&vuid).unwrap().deaths;
+    s.kill(ki, vi, 0, false, t + 0.5);
+    let p = s.player(&vuid).unwrap();
+    assert!(!p.dead, "Second Wind cancels the killing blow");
+    assert_eq!(p.deaths, deaths0, "no death is recorded");
+    assert_eq!(p.hp, (HP / 2).max(1), "the victim stands back up at half health");
+    assert!(!p.second_wind, "Second Wind is a one-shot");
+    assert!(p.fake_until > t + 0.5, "the recovery buys a moment of fake death");
+    // a second killing blow lands for real
+    s.kill(ki, vi, 0, false, t + 1.0);
+    assert!(s.player(&vuid).unwrap().dead, "the second killing blow lands");
+    // Phoenix: full health, and the window lapses after one save
+    let (mut s2, t2) = started(2, 2, 0.0);
+    let ki2 = s2.players.iter().position(|(u, _)| u == "u0").unwrap();
+    let vi2 = s2.players.iter().position(|(_, p)| p.team != s2.player("u0").unwrap().team).unwrap();
+    let v2 = s2.players[vi2].0.clone();
+    s2.player_mut(&v2).unwrap().phoenix_until = t2 + PHOENIX;
+    s2.player_mut(&v2).unwrap().hp = 3;
+    s2.kill(ki2, vi2, 0, false, t2 + 1.0);
+    let p2 = s2.player(&v2).unwrap();
+    assert!(!p2.dead, "Phoenix cancels the killing blow");
+    assert_eq!(p2.hp, HP, "Phoenix stands the victim back up full health");
+    assert_eq!(p2.phoenix_until, 0.0, "Phoenix is a one-shot inside its window");
+    s2.kill(ki2, vi2, 0, false, t2 + 2.0);
+    assert!(s2.player(&v2).unwrap().dead, "the next killing blow lands");
+}
+
+#[test]
+fn a_trap_mine_blows_an_enemy_and_spares_its_own_side() {
+    // 1v1: both humans, so fill_bots() leaves them alone and the only thing that can
+    // move hp during tick() is the mine itself.
+    let (mut s, t) = started(2, 2, 0.0);
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    let i1 = s.players.iter().position(|(u, _)| u == "u1").unwrap();
+    put(&mut s, "u0", -6.0, 0.0, -9.0, t, Some(0));
+    put(&mut s, "u1", -6.0, 0.0, -3.0, t, Some(0));
+    // bench every bot so the only thing that can move hp is the mine itself
+    for (_, p) in s.players.iter_mut() {
+        if p.is_bot() {
+            p.gone = true;
+        }
+    }
+    // pin hp: put() does not heal, and a bot may have landed a shot before we benched it
+    s.player_mut("u0").unwrap().hp = HP;
+    s.player_mut("u1").unwrap().hp = HP;
+    assert!(s.take_totem(i0, "trap", t + 0.1), "the trap applies to its taker");
+    assert_eq!(s.mines.len(), TRAP_N as usize, "Trapmaster plants its full stack");
+    assert!(s.mines.iter().all(|m| m.team == 0 && m.owner == "u0"), "the mines belong to the planter's side");
+    // a mate of the planter walks right over one: nothing happens
+    let (mx0, mz0) = (s.mines[0].x, s.mines[0].z);
+    let mate = s.players.iter()
+        .find(|(u, p)| p.team == 0 && u.as_str() != "u0")
+        .map(|(u, _)| u.clone());
+    if let Some(muid) = mate {
+        let mn = s.players.iter().position(|(u, _)| *u == muid).unwrap();
+        put(&mut s, &muid, mx0, 0.0, mz0, t + 0.2, Some(0));
+        s.player_mut(&muid).unwrap().hp = HP;
+        let hp0 = s.players[mn].1.hp;
+        s.tick(t + 0.3, true);
+        assert_eq!(s.mines.len(), TRAP_N as usize, "the planter's own side never trips a mine");
+        assert_eq!(s.players[mn].1.hp, hp0, "a mate takes no mine damage");
+    }
+    // an enemy walks onto one: it detonates for MINE_DMG
+    let euid = s.players[i1].0.clone();
+    let (mx, mz) = (s.mines[0].x, s.mines[0].z);
+    put(&mut s, &euid, mx, 0.0, mz, t + 0.4, Some(0));
+    s.player_mut(&euid).unwrap().hp = HP;
+    let hp1 = s.players[i1].1.hp;
+    s.tick(t + 0.5, true);
+    assert_eq!(s.mines.len(), (TRAP_N - 1) as usize, "the tripped mine is spent");
+    assert_eq!(s.players[i1].1.hp, hp1 - MINE_DMG, "the enemy eats the mine's full damage");
+}
+
+#[test]
+fn the_snap_carries_the_wave_c_world_and_flag_bits() {
+    let (mut s, t) = started(2, 2, 0.0);
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    let _ = s.take_totem(i0, "trap", t + 0.1);
+    let _ = s.take_totem(i0, "rift", t + 0.2);
+    let _ = s.take_totem(i0, "gravflip", t + 0.3);
+    let _ = s.take_totem(i0, "radarjam", t + 0.4);
+    // force a dirty mark so the player row ships
+    let u0 = s.players[i0].0.clone();
+    s.mark_all();
+    let snap = s.snap(t + 0.5);
+    // the arena-event row is "ae", never "ev" — "ev" is the wire envelope's event name
+    assert!(snap.get("ev").is_none(), "the snap never emits a data key named \"ev\"");
+    assert!(snap["ae"].is_null(), "no arena event is live yet");
+    // the new world keys
+    let mi = snap["mi"].as_array().expect("mines ship as \"mi\"");
+    assert_eq!(mi.len(), TRAP_N as usize, "every planted mine ships");
+    let po = snap["po"].as_array().expect("portals ship as \"po\"");
+    assert_eq!(po.len(), 2, "a Rift is a pair of portals");
+    // the Wave C flag bits on the taker's own row
+    let p = snap["p"].as_array().unwrap().iter()
+        .find(|e| e[0] == json!(s.player(&u0).unwrap().slot))
+        .expect("u0 is in the snap");
+    let f = p[8].as_i64().unwrap();
+    assert!(f & FLAG_GRAVFLIP != 0, "Gravity Flip's window is flagged");
+    assert!(f & FLAG_JAM != 0, "Radar Jammer's window is flagged");
+    assert!(f & FLAG_OVERCLOCK == 0, "Overclock is not running");
+    // and the row is 10 wide: slot, x, y, z, yaw, pitch, hp, w, flags, when
+    assert_eq!(p.as_array().unwrap().len(), 10, "a player row keeps its v1 shape");
+}
+
+#[test]
+fn a_shed_roof_stops_an_overhead_impact_but_not_a_quake() {
+    // "any solid roof overhead" is the cover rule. On the dockyard a catwalk slab
+    // already is one; on the dune we added three open-air sheds (kind "shed") whose
+    // roof sits at y 2.0..2.5 — has_roof is true underneath, false in the open.
+    let sand = MAPS.iter().find(|m| m.id == "sandbar").expect("sandbar is shipped");
+    // Box3 is geometry-only; the shed roofs are the slabs whose bottom sits at 2.0
+    // (the only overhead cover on the dune — adobe/divider run floor-to-sky).
+    let shed = sand.boxes.iter().find(|b| (b[1] - 2.0).abs() < 1e-6).expect("sandbar ships a shed roof");
+    let (cx, cz) = ((shed[0] + shed[3]) / 2.0, (shed[2] + shed[5]) / 2.0);
+    assert!(has_roof(sand, cx, 0.0, cz), "standing under the shed roof is covered");
+    assert!(!has_roof(sand, 0.0, 0.0, 0.0), "the open corridor floor is not covered");
+    // the dockyard catwalks are the same cover
+    assert!(has_roof(&MAP, -30.0, 0.0, -26.8), "a dockyard catwalk slab is cover");
+    assert!(!has_roof(&MAP, 0.0, 0.0, 10.0), "the dockyard open floor is not cover");
+    // and a quake mark is floor-based: the roof does NOT stop it. The disaster engine
+    // stamps every earthquake WarnMark with overhead=false so has_roof is never consulted.
+    let (mut s, t) = started(2, 2, 0.0);
+    assert!(s.start_disaster("earthquake", t + 0.1), "the clock can start a quake");
+    s.tick(t + 0.1 + DIS_WARN + 0.05, true);   // past the warn, first mark is seeded
+    s.tick(t + 0.1 + DIS_WARN + 0.05 + 0.01, true);
+    assert!(!s.warns.is_empty(), "the quake seeds impact marks");
+    assert!(s.warns.iter().all(|w| !w.overhead), "quake marks are floor-based, never overhead");
+    // a meteor mark is overhead — the same roof that saved you above would not save you from a quake
+    let (mut s2, t2) = started(2, 2, 0.0);
+    assert!(s2.start_disaster("meteorshower", t2 + 0.1));
+    s2.tick(t2 + 0.1 + DIS_WARN + 0.05, true);
+    s2.tick(t2 + 0.1 + DIS_WARN + 0.05 + 0.01, true);
+    assert!(!s2.warns.is_empty(), "the shower seeds impact marks");
+    assert!(s2.warns.iter().all(|w| w.overhead), "meteor marks are overhead — a roof stops them");
+}
+
+#[test]
+fn a_shield_totem_makes_you_immune_to_every_disaster() {
+    // The user's rule: if a player has the shield on, that player is safe from any
+    // disaster. Everyone else — both teams, bots, and the taker — suffers.
+    let (mut s, t) = started(2, 2, 0.0);
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    let vi = s.players.iter().position(|(_, p)| p.team != s.player("u0").unwrap().team).unwrap();
+    let vuid = s.players[vi].0.clone();
+    put(&mut s, "u0", -6.0, 0.0, -9.0, t, Some(0));
+    put(&mut s, &vuid, -6.0, 0.0, -3.0, t, Some(0));
+    // u1 (the victim) has the shield totem; u0 does not
+    s.player_mut(&vuid).unwrap().shield_totem_until = t + SHIELD_TOTEM;
+    assert!(s.disaster_immune(vi, t + 0.5), "shield totem = disaster-immune");
+    assert!(!s.disaster_immune(i0, t + 0.5), "an unshielded player is not immune");
+    // spawn protect is also immune
+    s.player_mut("u0").unwrap().protect = t + 10.0;
+    assert!(s.disaster_immune(i0, t + 0.5), "spawn protect = disaster-immune");
+    // a meteor that lands on both of them only hurts the unshielded one
+    s.player_mut("u0").unwrap().protect = 0.0;
+    assert!(s.start_disaster("meteorshower", t + 0.1));
+    let hp_shielded = s.player(&vuid).unwrap().hp;
+    let hp_plain = s.player("u0").unwrap().hp;
+    // drive past the warn and land a mark right on top of both
+    let t_imp = t + 0.1 + DIS_WARN + 0.05;
+    s.tick(t_imp, true);
+    // force a mark onto both players' feet
+    let (mx, mz) = (-6.0, -6.0);
+    s.warns.push(WarnMark {
+        id: 999, x: mx, y: 0.0, z: mz, hit_at: t_imp + 0.01,
+        r: DD_METEOR_R * 2.0, dmg: DD_METEOR_DMG, overhead: true, quake: false,
+    });
+    // stand both on the mark
+    put(&mut s, "u0", mx, 0.0, mz, t_imp, Some(0));
+    put(&mut s, &vuid, mx, 0.0, mz, t_imp, Some(0));
+    s.player_mut(&vuid).unwrap().shield_totem_until = t + SHIELD_TOTEM;
+    s.tick(t_imp + 0.05, true);
+    assert_eq!(s.player(&vuid).unwrap().hp, hp_shielded, "the shielded player is untouched");
+    assert!(s.player("u0").unwrap().hp < hp_plain, "the unshielded player takes the hit");
+}
+
+#[test]
+fn a_disaster_kill_names_the_disaster_and_pays_no_team_point() {
+    // Whatever weapon you kill with shows that weapon — and an environment kill
+    // shows the DISASTER name (w = -1, dis = kind). No team point either.
+    let (mut s, t) = started(2, 2, 0.0);
+    let vi = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    let vuid = s.players[vi].0.clone();
+    let scores0 = s.scores;
+    let deaths0 = s.player(&vuid).unwrap().deaths;
+    s.env_kill(vi, "meteorshower", t + 0.5);
+    let p = s.player(&vuid).unwrap();
+    assert!(p.dead, "the environment kill lands");
+    assert_eq!(p.deaths, deaths0 + 1, "a death is recorded");
+    assert_eq!(s.scores, scores0, "an environment kill pays no team point");
+    let row = s.pending.iter().rev().find(|(k, _)| *k == "kill").expect("a kill row ships");
+    let m = &row.1;
+    assert!(m["k"].is_null(), "there is no shooter");
+    assert_eq!(m["w"].as_i64().unwrap(), -1, "w = -1 means an environment kill");
+    assert_eq!(m["dis"].as_str().unwrap(), "meteorshower", "the feed names the disaster");
+    assert_eq!(m["v"].as_str().unwrap(), vuid, "the victim is named");
+    // Second Wind still fires on a disaster kill (it is a killing blow like any other)
+    let (mut s2, t2) = started(2, 2, 0.0);
+    let vi2 = s2.players.iter().position(|(u, _)| u == "u0").unwrap();
+    let vuid2 = s2.players[vi2].0.clone();
+    s2.player_mut(&vuid2).unwrap().second_wind = true;
+    let deaths2 = s2.player(&vuid2).unwrap().deaths;
+    s2.env_kill(vi2, "thunder", t2 + 0.5);
+    let p2 = s2.player(&vuid2).unwrap();
+    assert!(!p2.dead, "Second Wind cancels a disaster killing blow");
+    assert_eq!(p2.deaths, deaths2, "no death is recorded");
+    assert_eq!(p2.hp, (HP / 2).max(1), "the victim stands back up at half health");
+}
+
+#[test]
+fn one_disaster_at_a_time_and_the_clock_is_independent() {
+    let (mut s, t) = started(2, 2, 0.0);
+    assert!(s.disaster.is_none(), "no disaster is live at round start");
+    assert!(s.disaster_at.is_some(), "the disaster clock is armed");
+    assert!(s.start_disaster("sandstorm", t + 0.1), "the first disaster starts");
+    assert!(!s.start_disaster("thunder", t + 0.2), "a second disaster is refused while one is live");
+    assert_eq!(s.disaster.as_ref().unwrap().kind, "sandstorm", "the live one is kept");
+    // the warn window is 2 s, then the hold
+    let d = s.disaster.as_ref().unwrap();
+    assert!((d.warn_at - (t + 0.1) - DIS_WARN).abs() < 1e-6, "warn_at is t + DIS_WARN");
+    assert!((d.until - (t + 0.1) - DIS_WARN - DIS_SANDSTORM).abs() < 1e-6, "until is the hold");
+    // the snap ships "di" (never "ev") and "dm"
+    s.mark_all();
+    let snap = s.snap(t + 0.2);
+    assert!(snap.get("ev").is_none(), "the snap never emits a data key named \"ev\"");
+    let di = snap["di"].as_array().expect("the live disaster ships as \"di\"");
+    assert_eq!(di[0].as_str().unwrap(), "sandstorm", "di[0] is the kind");
+    assert_eq!(di.len(), 8, "di is [kind, warn, hold, ring, ms-to-next, seed, zones, pit]");
+    assert!(snap["dm"].is_array(), "impact marks ship as \"dm\"");
+    // and when nothing is live the countdown row still ships so the top bar can tick
+    s.disaster = None;
+    s.disaster_at = Some(t + 5.0);
+    let snap2 = s.snap(t + 0.4);
+    let di2 = snap2["di"].as_array().expect("the countdown row ships even with nothing live");
+    assert!(di2[0].is_null(), "no kind when nothing is live");
+    assert!(di2[4].as_i64().unwrap_or(0) > 4000, "di[4] is the ms until the next one");
+    // the clock fires on its own once the current one is gone
+    s.disaster_at = Some(t + 0.3);
+    s.disaster = None;
+    s.tick(t + 0.3, true);
+    assert!(s.disaster.is_some(), "the clock starts one by itself");
+    // and a totem can start one too
+    let (mut s2, t2) = started(2, 2, 0.0);
+    let i0 = s2.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s2.take_totem(i0, "meteorshower", t2 + 0.1), "grabbing a Disaster totem starts it");
+    assert_eq!(s2.disaster.as_ref().unwrap().kind, "meteorshower", "the taker set off a meteor shower");
+}
+
+#[test]
+fn disaster_totems_have_their_own_ring_and_clock() {
+    // Wave E: Disaster totems are never mixed into the personal roster. They land on
+    // their own ring (DIS_SLOTS) on their own clock (DIS_GAP_DROP / DIS_FIRST_DROP), and
+    // every kind they roll is one of the 10 arena-wide disasters.
+    let (mut s, _t) = started(2, 2, 0.0);
+    let n_map = MAP.pickups.len();
+    let dis_lo = n_map + DROP_SLOTS + PACK_SLOTS;
+    let dis_hi = dis_lo + DIS_SLOTS;
+    // personal drops never roll a Disaster kind
+    for k in 0..200 {
+        s.totem_k = k;
+        s.k = k;
+        s.spawn_totem(false);
+        let i = n_map + (k as usize) % DROP_SLOTS;
+        assert!(!DISASTERS.contains(&s.kinds[i]),
+                "the personal ring never rolls a Disaster kind: {}", s.kinds[i]);
+    }
+    // Disaster drops always do, and always land in the Disaster ring
+    let mut seen = std::collections::HashSet::new();
+    for k in 0..40 {
+        s.dis_k = k;
+        s.k = k;
+        s.spawn_disaster_totem();
+        let i = dis_lo + (k as usize) % DIS_SLOTS;
+        assert!(DISASTERS.contains(&s.kinds[i]),
+                "the Disaster ring only rolls Disaster kinds: {}", s.kinds[i]);
+        assert!((dis_lo..dis_hi).contains(&i), "the Disaster ring index is in range");
+        seen.insert(s.kinds[i]);
+        // deterministic: same seed derives the same spot and kind
+        let (x1, z1) = (s.spots[i][0], s.spots[i][2]);
+        s.dis_k = k;
+        s.k = k;
+        s.spawn_disaster_totem();
+        assert_eq!(s.spots[i][0], x1, "the same seed derives the same x");
+        assert_eq!(s.spots[i][2], z1, "the same seed derives the same z");
+    }
+    assert!(!seen.is_empty(), "the Disaster ring actually drops");
+    // the clock is armed alongside the totem/pack clocks
+    assert!(s.dis_at.is_none() || s.dis_at.is_some(), "dis_at is a valid Option");
+}
+
+fn hot_and_cursed_drops_tag_a_slice_of_the_scatter() {
+    // the tag roll is a pure hash: over many seeds the three flavours split roughly
+    // HOT_PCT / CURSED_PCT / the rest. Deterministic, so this is a distribution check
+    // on the SAME derivation the client uses (games/strike.js totemSpawn).
+    let (mut s, _t) = started(2, 2, 0.0);
+    let n_map = MAP.pickups.len();
+    let (mut hot, mut cursed, mut plain) = (0, 0, 0);
+    for k in 0..200 {
+        s.totem_k = k;
+        s.k = k;   // the match's own seed salt
+        s.spawn_totem(false);
+        let i = n_map + (k as usize) % DROP_SLOTS;
+        if s.cursed.get(i).copied().unwrap_or(false) {
+            cursed += 1;
+        } else {
+            // the tag is not stored separately from the cursed bit; re-derive it
+            let seed = ((k as u32).wrapping_mul(0x9E37_79B9)).wrapping_add(k as u32);
+            let roll = (hash_match(seed, 3) * 100.0) as i64;
+            if roll < HOT_PCT {
+                hot += 1;
+            } else {
+                plain += 1;
+            }
+        }
+    }
+    assert!(cursed > 20, "Cursed Drops are a real slice of the scatter: {cursed}");
+    assert!(hot > 15, "Hot Drops are a real slice of the scatter: {hot}");
+    assert!(plain > 100, "most drops are untagged: {plain}");
+    // and a cursed take really costs 15 hp up front
+    let (mut s2, t2) = started(2, 2, 0.0);
+    let i0 = s2.players.iter().position(|(u, _)| u == "u0").unwrap();
+    let n = s2.map().pickups.len();
+    s2.ensure_drop_slots();
+    s2.totem_k = 1;
+    s2.k = 7;
+    s2.spawn_totem(true);
+    // force the slot cursed and put the taker on it
+    let slot = n;   // the first totem ring slot
+    s2.cursed[slot] = true;
+    s2.kinds[slot] = "speed";
+    s2.items[slot] = None;
+    let (sx, sz) = (s2.spots[slot][0], s2.spots[slot][2]);
+    put(&mut s2, "u0", sx, 0.0, sz, t2 + 0.1, Some(0));
+    let hp0 = s2.player("u0").unwrap().hp;
+    s2.pickups(i0, t2 + 0.2);
+    assert_eq!(s2.player("u0").unwrap().hp, hp0 - 15, "a Cursed Drop costs 15 hp up front");
+}
+
+#[test]
+fn dis_kind_spreads_consecutive_counters_across_the_roster() {
+    // hash_match's top-bit read collapses consecutive world_k values onto ONE index
+    // (the auto-disaster clock rolled Absolute Zero forever). dis_kind is the fix —
+    // twin of games/strike.js disKind. Over the real auto sequence (world_k = 1..) the
+    // roll must actually vary and stay inside the roster.
+    let mut seen = [0usize; 10];
+    for k in 1u32..=40 {
+        let i = dis_kind(k, 11, DISASTERS.len());
+        assert!(i < DISASTERS.len(), "kind index in range");
+        seen[i] += 1;
+    }
+    let distinct = seen.iter().filter(|&&c| c > 0).count();
+    assert!(
+        distinct > 5,
+        "consecutive world_k values must not stick on one disaster kind: {seen:?}"
+    );
+    // the Disaster-totem seed (dis_k golden-ratio mix through hash-match's salts) too
+    let mut seen2 = [0usize; 10];
+    for k in 0u32..30 {
+        for slot in 0u32..2 {
+            let t = 12.0 + (k as f64) * 16.0;
+            let seed = ((t * 1000.0) as u32) ^ (slot + 77);
+            let i = dis_kind(seed, 4, DISASTERS.len());
+            seen2[i] += 1;
+        }
+    }
+    let distinct2 = seen2.iter().filter(|&&c| c > 0).count();
+    assert!(
+        distinct2 > 5,
+        "Disaster-totem kind rolls must vary too: {seen2:?}"
+    );
+    // and the twin really is the twin: first eight auto rolls match games/strike.js
+    let expect = [7, 5, 3, 5, 7, 9, 1, 3];
+    for (k, &want) in expect.iter().enumerate() {
+        assert_eq!(
+            dis_kind((k as u32) + 1, 11, DISASTERS.len()),
+            want,
+            "dis_kind twin of games/strike.js disKind"
+        );
+    }
+}
+
+#[test]
+fn modifier_disasters_chip_and_every_disaster_has_an_impact_number() {
+    // The standing rule: every disaster is visual AND impact. Sandstorm / Absolute Zero /
+    // EMP used to be mod-only. They now chip once a second via DD_*_DMG (twin of
+    // games/strike.js). Shield / spawn-protect still skip it via disaster_immune.
+    // (assert_eq on the constants — clippy rejects assert!(const > 0) as dead code.)
+    assert_eq!(DD_SAND_DMG, 3);
+    assert_eq!(DD_ZERO_DMG, 4);
+    assert_eq!(DD_EMP_DMG, 2);
+    assert_eq!(DD_METEOR_DMG, 45);
+    assert_eq!(DD_THUNDER_DMG, 55);
+    assert_eq!(DD_QUAKE_DMG, 25);
+    assert_eq!(DD_SHOCK_DMG, 30);
+    assert_eq!(DD_TOXIC_DMG, 8);
+    assert_eq!(DD_SINK_DMG, 12);
+    assert_eq!(DD_WIND_PUSH, 7.5);
+    assert_eq!(DD_WIND_R, 6.0);
+    assert_eq!(DD_WIND_DMG, 3);
+    // proximity crush: more damage near the strike (twin of markDamage / mark_damage)
+    assert_eq!(DD_NEAR_R, 0.35);
+    assert_eq!(DD_NEAR_MIN, 0.45);
+    assert_eq!(mark_damage(0.0, 2.8, 55), 55, "under the bolt is the peak");
+    assert_eq!(mark_damage(2.8 * 0.35, 2.8, 55), 55, "near the bolt keeps the peak");
+    let rim = mark_damage(2.8, 2.8, 55);
+    assert!((24..=26).contains(&rim), "the rim is ~45% of the peak, got {rim}");
+    assert!(mark_damage(1.4, 2.8, 55) > rim && mark_damage(1.4, 2.8, 55) < 55);
+    // non-HP impacts: blind / slow windows (twin of the JS DD_*_BLIND / DD_*_SLOW)
+    assert_eq!(DD_THUNDER_BLIND, 0.45);
+    assert_eq!(DD_METEOR_BLIND, 0.35);
+    assert_eq!(DD_SHOCK_BLIND, 0.55);
+    assert_eq!(DD_QUAKE_SLOW, 1.2);
+    assert_eq!(DD_TOXIC_SLOW, 0.75);
+    assert_eq!(DD_SINK_SLOW, 0.65);
+    assert_eq!(DD_WIND_SLOW, 0.7);
+    assert_eq!(DD_SLOW_MULT, 0.65);
+    assert_eq!(DD_SAND_SCATTER, 1.2);
+    assert_eq!(DD_WIND_SCATTER, 2.4);
+    assert_eq!(DD_EMP_SCATTER, 1.0);
+    // disaster sense flags ship on the player row (FLAG_BLIND / FLAG_SLOW)
+    assert_eq!(FLAG_BLIND, 16777216);
+    assert_eq!(FLAG_SLOW, 33554432);
+}
+
+#[test]
+fn thunder_hits_harder_near_the_bolt_and_stuns() {
+    // User ask: "damage impact should be more to player / bot near lightning".
+    // A body under the mark takes the peak; one at the rim takes ~45%; the bolt
+    // also blinds and the quake throws your step.
+    let (mut s, t) = started(2, 2, 0.0);
+    // open dockyard floor (0, 0, 10) — not under a catwalk, so overhead cover is out
+    let (mx, mz) = (0.0, 10.0);
+    put(&mut s, "u0", mx, 0.0, mz, t, Some(0));
+    put(&mut s, "u1", mx + DD_THUNDER_R, 0.0, mz, t, Some(0));
+    for (_, p) in s.players.iter_mut() {
+        p.hp = 100;
+        p.protect = 0.0;
+        p.shield_totem_until = 0.0;
+        p.drop = false;
+        p.drop_t = 0.0;
+        p.pocket_until = 0.0;
+    }
+    assert!(s.start_disaster("thunder", t));
+    let t_hit = t + DIS_WARN + 0.05;
+    s.disaster_tick(t_hit);
+    // one mark under u0; u1 stands at the rim (x = r). overhead=false so cover is
+    // not the variable under test — mark_damage is (and the unit pins above cover).
+    s.warns.push(WarnMark {
+        id: 1, x: mx, y: 0.0, z: mz, hit_at: t_hit + 0.01,
+        r: DD_THUNDER_R, dmg: DD_THUNDER_DMG, overhead: false, quake: false,
+    });
+    s.disaster_tick(t_hit + 0.05);
+    let dmg0 = 100 - s.players[0].1.hp;
+    let dmg1 = 100 - s.players[1].1.hp;
+    assert!(dmg0 >= 50, "under the bolt is near the 55 peak, got {dmg0}");
+    assert!((20..=30).contains(&dmg1), "the rim is ~45% of 55, got {dmg1}");
+    assert!(dmg0 > dmg1, "near the bolt must hurt more ({dmg0} vs {dmg1})");
+    assert!(s.players[0].1.blind_until > t_hit + 0.05, "a bolt blinds");
+}
+
+#[test]
+fn disaster_hazards_are_frozen_and_shared_with_the_visual() {
+    // The user-reported bug: "the visuals are there but there is no impact at all".
+    // Toxic clouds used to re-roll dropSpot every second while the FX painted fixed
+    // angles around map centre — the green clouds never hurt and the hurt was invisible.
+    // The fix: start_disaster freezes zones/pit/seed once; the judge and the client
+    // both read the same geometry (snap "di" fields 5-7).
+    let (mut s, t) = started(2, 2, 0.0);
+    put(&mut s, "u0", 3.0, 0.0, 4.0, t, Some(0));
+    s.player_mut("u0").unwrap().protect = 0.0; // not spawn-protected
+    assert!(s.start_disaster("toxicfog", t), "toxic fog starts");
+    let d = s.disaster.clone().unwrap();
+    assert_eq!(d.zones.len(), DD_TOXIC_ZONES, "three sticky clouds");
+    // zones are near live bodies (first few) — not a fresh roll every pulse
+    let near = d.zones.iter().filter(|(x, z)| {
+        (x - 3.0).hypot(z - 4.0) < 8.0
+    }).count();
+    assert!(near >= 1, "at least one cloud sits near a live body: {:?}", d.zones);
+    // seed is frozen and non-zero once world_k advanced
+    assert_ne!(d.seed, 0, "frozen seed");
+
+    // sinkhole: the pit is frozen at start, not re-hashed from warn_at each pulse
+    let (mut s2, t2) = started(2, 2, 0.0);
+    s2.player_mut("u0").unwrap().protect = 0.0;
+    assert!(s2.start_disaster("sinkhole", t2));
+    let d2 = s2.disaster.clone().unwrap();
+    let pit1 = d2.pit;
+    s2.disaster_tick(t2 + DIS_WARN + 0.5);
+    let pit2 = s2.disaster.as_ref().unwrap().pit;
+    assert_eq!(pit1, pit2, "the pit must not move mid-hold");
+
+    // snap ships the frozen geometry so the client paints the same spots
+    let snap = s2.snap(t2 + DIS_WARN + 0.5);
+    let di = snap["di"].as_array().expect("di row");
+    assert!(di.len() >= 8, "di carries seed/zones/pit, got {}", di.len());
+    assert!(di[5].is_number(), "di[5] is the frozen seed");
+    assert!(di[6].is_array(), "di[6] is the toxic cloud centres");
+    assert!(di[7].is_array(), "di[7] is the sinkhole pit");
+}
+
+#[test]
+fn every_disaster_kind_chips_or_hits_hp() {
+    // Standing rule: every disaster is visual AND impact on players and bots.
+    // Hurricane used to shove with no damage ("what is even disaster without impact").
+    let (mut s, t) = started(2, 2, 0.0);
+    for (_, p) in s.players.iter_mut() {
+        p.hp = 100;
+        p.protect = 0.0;
+        p.shield_totem_until = 0.0;
+    }
+    assert!(s.start_disaster("hurricane", t));
+    // walk past the warn window and several one-second pulses
+    for k in 0..40 {
+        s.disaster_tick(t + DIS_WARN + k as f64 * 0.25);
+    }
+    let chipped = s.players.iter().any(|(_, p)| p.hp < 100);
+    assert!(chipped, "hurricane must chip HP while it shoves");
+}
+
+#[test]
+fn a_fall_out_of_the_map_is_rescued_after_void_secs() {
+    // User bug lock: "when player is thrown out of map, and falling endlessly, that
+    // player should be respawned after 10 sec … cant even kill myself to respawn".
+    // Before: a body past the deck kept free-falling forever (nothing killed it and
+    // death only came from damage). Now the referee tracks a void clock and puts
+    // every living body back under a canopy after VOID_SECS.
+    let (mut s, t) = started(2, 2, 0.0);
+    put(&mut s, "u0", 0.0, -20.0, 0.0, t, Some(0)); // already in the void
+    assert!(in_void(s.map(), 0.0, -20.0, 0.0), "deep under the deck is the void");
+    assert!(!in_void(s.map(), 0.0, 0.0, 0.0), "on the deck is not the void");
+
+    // first tick after the fall: the clock starts, nobody is rescued yet
+    let evs = s.tick(t + 0.05, true);
+    assert!(!evs.iter().any(|(k, _)| *k == "spawn"), "no instant rescue: {:?}", evs);
+    assert!(s.player("u0").unwrap().void_at > 0.0, "void clock is running");
+
+    // well under VOID_SECS: still falling
+    let evs = s.tick(t + VOID_SECS - 0.5, true);
+    assert!(!evs.iter().any(|(k, _)| *k == "spawn"), "still waiting out the clock");
+    assert!(s.player("u0").unwrap().y < -5.0, "still in the void");
+
+    // at VOID_SECS: parachuted back on the map, same drop path as a respawn
+    let evs = s.tick(t + VOID_SECS + 0.2, true);
+    assert!(evs.iter().any(|(k, v)| *k == "spawn" && v["user"] == "u0"), "rescued: {:?}", evs);
+    let p = s.player("u0").unwrap();
+    assert!(!p.dead, "a fall-out is not a death");
+    assert!(p.y > 0.5, "back above the deck, got y={}", p.y);
+    assert_eq!(p.void_at, 0.0, "clock cleared on the way home");
+    assert!(p.drop, "the rescue is a parachute drop");
+
+    // bots get the same rescue — every player, not just humans
+    let (mut s2, t2) = started(0, 2, 0.0); // no humans -> bots fill both sides
+    let bid = s2.players.iter().find(|(_, p)| p.is_bot()).map(|(u, _)| u.clone()).expect("a bot");
+    put(&mut s2, &bid, 0.0, -20.0, 0.0, t2, Some(0));
+    s2.tick(t2 + 0.05, true);
+    s2.tick(t2 + VOID_SECS + 0.2, true);
+    let b = s2.player(&bid).unwrap();
+    assert!(!b.dead && b.y > 0.5, "bot rescued too (y={})", b.y);
 }

@@ -17,6 +17,11 @@ verify.png
 __pycache__/
 *.pyc
 
+# Cargo build output — never commit (backend/, dashboard-rs/, any crate)
+target/
+# Pre-rename crate dir: after backend-rs → backend, only stale build junk is left here
+backend-rs/
+
 # OS
 .DS_Store
 

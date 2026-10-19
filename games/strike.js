@@ -1,5 +1,6 @@
-/* Valley: Strikezone. A team shooter (amber vs cyan) on a tight harbour dockyard:
- * container lanes, a warehouse with a doorway chokepoint, catwalks along the walls.
+/* Valley: Strikezone. A team shooter (amber vs cyan) on tight arena maps — Harbor
+ * Dockyard (container lanes, warehouse chokepoint) and Dune Compound (desert rooms
+ * and passages). The host picks the map; bots patrol its waypoint graph.
  * The host picks the side size (X vs X); when a side is short of players the Arena
  * server fills it with bots that patrol, chase and shoot.
  *
@@ -40,6 +41,10 @@ var FS = (function(){
   // relaxes its action-air guard while a drop still has legs)
   var DROP_HEIGHT = 11.0, DROP_TIME = 3.0, DROP_SINK = 2.8, DROP_DRIFT = 4.5;
   var JUMP_V = 6.5, FALL_MAX = 25.0, BODY_R = 0.4, BODY_H = 1.4, HEAD_R = 0.25, HEAD_TOP = 1.9;
+  // the void: below the deck (or off the map box) with nothing to stand on. A fall-out
+  // used to be an endless free-fall with no way back — VOID_SECS later the judge puts
+  // you back under a canopy (that wait IS the penalty).
+  var VOID_Y = -2.0, VOID_SECS = 10.0;
   // the wings/leap/speed totems' movement numbers, shared with both Arena referees so
   // the caps they enforce and the physics the browser runs stay the same numbers
   var LEAP_MULT = 3.0, SPEED_MULT = 2.0, WING_TOP = 9.0, WING_RISE = 4.0, WING_SINK = 2.0, WING_DRIFT = 6.0;
@@ -62,12 +67,26 @@ var FS = (function(){
     if(dist >= BLAST_R) return 0;
     return Math.round(75 - (75 - 25)*(dist/BLAST_R));
   }
+  // proximity crush for disaster marks (Meteor / Thunder / Quake): the blast you stand
+  // under is the one that hurts. Full peak inside 0.35 of the radius, falling to 0.45 of
+  // the peak at the rim. Twin: mark_damage in backend/src/strike.rs (DD_NEAR_R / DD_NEAR_MIN).
+  function markDamage(dist, r, dmg){
+    r = +r; if(!(r > 0)) r = 1;
+    dist = Math.max(0, +dist);
+    var u = Math.min(1, dist / r), near = 0.35, min = 0.45;
+    var k = u <= near ? 1 : min + (1 - min) * (1 - (u - near) / (1 - near));
+    return Math.max(1, Math.round((dmg|0) * k));
+  }
   function compileMap(d){
     d = d || {};
     var boxes = (d.boxes || []).map(function(b){ return [+b[0], +b[1], +b[2], +b[3], +b[4], +b[5], String(b[6] || "block")]; });
     boxes.forEach(function(b){ if(!(b[0] < b[3] && b[1] < b[4] && b[2] < b[5])) throw new Error("box with no volume"); });
-    return {id: d.id, name: d.name, bounds: (d.bounds || []).map(Number), boxes: boxes, theme: d.theme || {},
-            spawns: (d.spawns || []).map(function(s){ return s.map(Number); }), pickups: d.pickups || [], targets: d.targets || []};
+    var out = {id: d.id, name: d.name, bounds: (d.bounds || []).map(Number), boxes: boxes, theme: d.theme || {},
+            spawns: (d.spawns || []).map(function(s){ return s.map(Number); }), pickups: d.pickups || [], targets: d.targets || [],
+            // [x, z, standY] — the stand height is 0 when the map ships a bare [x, z]
+            waypoints: (d.waypoints || []).map(function(w){ return [+w[0], +w[1], w[2] != null ? +w[2] : 0]; }), nav: []};
+    out.nav = buildNav(out);
+    return out;
   }
   // index of the first solid box a player standing at (x, y, z) is inside, else -1
   function overlaps(m, x, y, z, shrink){
@@ -87,17 +106,30 @@ var FS = (function(){
     }
     return best;
   }
+  // true when this body is in the void: off the map box, under the deck with no slab
+  // to land on, or already past VOID_Y. (A gap in the floor — Sandbar's water — counts.)
+  function inVoid(m, x, y, z){
+    if(x !== x || y !== y || z !== z) return true;
+    if(y < VOID_Y) return true;
+    var b = m.bounds;
+    if(x < b[0] - 2 || x > b[3] + 2 || z < b[2] - 2 || z > b[5] + 2) return true;
+    if(y < 0.05 && topUnder(m, x, y - 0.2, z) === null) return true;
+    return false;
+  }
   // one step of the runner: s = {x, y, z, vx, vy, vz, g}; (wx, wz) the wished direction.
   // sprint scales the speed you accelerate toward (omitted/false everywhere but the v3 hold).
   // topMult/jumpMult: the speed and leap totems' multipliers (default 1 — every other
   // caller passes nothing, so the shared numbers below stay the referee's word).
-  function move(m, s, wx, wz, jump, dt, sprint, topMult, jumpMult){
+  function move(m, s, wx, wz, jump, dt, sprint, topMult, jumpMult, gravMult){
     var top = RUN*(sprint ? SPRINT : 1)*(topMult || 1);
     var k = Math.min(1, dt*(s.g ? ACCEL : AIR_ACCEL));
     s.vx += (wx*top - s.vx)*k;
     s.vz += (wz*top - s.vz)*k;
     if(jump && s.g){ s.vy = JUMP_V*(jumpMult || 1); s.g = false; }
-    s.vy = Math.max(-FALL_MAX, s.vy - GRAVITY*dt);
+    // gravMult (default 1) is the Gravity Flip / low-gravity arena event — the frozen
+    // Python twin and the parity test call move() without it, so its default is the
+    // same GRAVITY*dt it always was
+    s.vy = Math.max(-FALL_MAX, s.vy - GRAVITY*(gravMult != null ? gravMult : 1)*dt);
     ["x", "z"].forEach(function(ax){
       var old = s[ax];
       s[ax] = old + s["v"+ax]*dt;
@@ -156,6 +188,93 @@ var FS = (function(){
     return [[x - BODY_R, y, z - BODY_R, x + BODY_R, y + BODY_H, z + BODY_R],
             [x - HEAD_R, y + BODY_H, z - HEAD_R, x + HEAD_R, y + HEAD_TOP, z + HEAD_R]];
   }
+  // walkable adjacency over the patrol points (rooms + passages). Built once per map so
+  // bots can path around adobe instead of pressing a wall forever.
+  function losMap(m, a, b){
+    var d = [b[0]-a[0], b[1]-a[1], b[2]-a[2]], ln = Math.sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+    if(ln < 1e-6) return true;
+    d = [d[0]/ln, d[1]/ln, d[2]/ln];
+    return rayMap(m, a, d, ln - 0.001) >= ln - 0.001;
+  }
+  function wpY(w){ return (w && w[2] != null) ? +w[2] : 0; }
+  function buildNav(m){
+    // m.waypoints only — the dockyard fallback table lives outside this block.
+    // Each point is [x, z, standY]. A hop is walkable when the rise is a step-up
+    // (<= STEP_H) and the eye-to-eye ray is clear at each point's own height, so
+    // stair chains link ground to deck and a deck never bridges straight down.
+    var wps = (m && m.waypoints) ? m.waypoints : [];
+    var n = wps.length, adj = [], i, j;
+    for(i = 0; i < n; i++) adj.push([]);
+    for(i = 0; i < n; i++){
+      for(j = i + 1; j < n; j++){
+        var dx = wps[i][0] - wps[j][0], dz = wps[i][1] - wps[j][1];
+        if(dx*dx + dz*dz > 12.0*12.0) continue;
+        var yi = wpY(wps[i]), yj = wpY(wps[j]);
+        if(Math.abs(yi - yj) > STEP_H) continue;
+        if(losMap(m, [wps[i][0], yi + 0.9, wps[i][1]], [wps[j][0], yj + 0.9, wps[j][1]])){
+          adj[i].push(j); adj[j].push(i);
+        }
+      }
+    }
+    return adj;
+  }
+  function nearestWp(m, wps, x, z, y){
+    // prefer the nearest waypoint we can actually see at our own height — through a
+    // wall the Euclidean nearest lives in the next room, and a deck point under our
+    // feet is not a hop we can walk
+    y = y != null ? y : 0;
+    var best = 0, bd = 1e18, vis = -1, bvd = 1e18;
+    for(var i = 0; i < wps.length; i++){
+      var wy = wpY(wps[i]);
+      var d = (wps[i][0] - x)*(wps[i][0] - x) + (wps[i][1] - z)*(wps[i][1] - z) + (wy - y)*(wy - y);
+      if(d < bd){ bd = d; best = i; }
+      if(d < bvd && Math.abs(wy - y) <= STEP_H + 0.05 &&
+         losMap(m, [x, y + 0.9, z], [wps[i][0], wy + 0.9, wps[i][1]])){ bvd = d; vis = i; }
+    }
+    return vis >= 0 ? vis : best;
+  }
+  function bfsWp(adj, a, b){
+    if(a === b) return [a];
+    var prev = new Array(adj.length), q = [a], head = 0, i;
+    for(i = 0; i < adj.length; i++) prev[i] = -1;
+    prev[a] = a;
+    while(head < q.length){
+      var u = q[head++];
+      if(u === b){
+        var path = [], cur = b;
+        for(;;){
+          path.push(cur);
+          var p = prev[cur];
+          if(p < 0 || p === cur) break;
+          cur = p;
+        }
+        return path.reverse();
+      }
+      for(i = 0; i < adj[u].length; i++){
+        var v = adj[u][i];
+        if(prev[v] < 0){ prev[v] = u; q.push(v); }
+      }
+    }
+    return null;
+  }
+  // next walkable hop toward (tx, tz): follow the room/passage graph, or go straight
+  // when the destination is already visible. y/ty are stand heights (default 0).
+  function navNext(m, x, z, tx, tz, wps, nav, y, ty){
+    wps = wps || (m && m.waypoints) || [];
+    nav = nav || (m && m.nav) || [];
+    y = y != null ? y : 0;
+    ty = ty != null ? ty : 0;
+    if(!wps.length || nav.length !== wps.length) return [tx, tz];
+    // only cut to the destination when THIS body can see it at our height — a hop
+    // that sees it is not enough, or the bot walks the wall between here and there
+    if(Math.abs(y - ty) <= STEP_H && losMap(m, [x, y + 0.9, z], [tx, ty + 0.9, tz])) return [tx, tz];
+    var a = nearestWp(m, wps, x, z, y), b = nearestWp(m, wps, tx, tz, ty);
+    var path = bfsWp(nav, a, b);
+    if(!path || path.length < 2) return [tx, tz];
+    var hop = 1;
+    while(hop + 1 < path.length && Math.hypot(wps[path[hop]][0] - x, wps[path[hop]][1] - z) < 1.4) hop++;
+    return [wps[path[hop]][0], wps[path[hop]][1]];
+  }
   // [distance, head?] where the ray first meets a player at (x, y, z) nearer than maxd, else null
   function rayPlayer(o, d, x, y, z, maxd){
     var hb = hitBoxes(x, y, z), tb = rayBox(o, d, hb[0]), th = rayBox(o, d, hb[1]), best = null;
@@ -174,8 +293,11 @@ var FS = (function(){
           STAMINA_MAX: STAMINA_MAX, STAMINA_DRAIN: STAMINA_DRAIN, STAMINA_REGEN: STAMINA_REGEN, SPRINT_SLOW: SPRINT_SLOW,
           DROP_HEIGHT: DROP_HEIGHT, DROP_TIME: DROP_TIME, DROP_SINK: DROP_SINK, DROP_DRIFT: DROP_DRIFT,
           FALL_MAX: FALL_MAX, BODY_R: BODY_R, BODY_H: BODY_H, HEAD_R: HEAD_R, HEAD_TOP: HEAD_TOP, WEAPONS: WEAPONS,
+          VOID_Y: VOID_Y, VOID_SECS: VOID_SECS, inVoid: inVoid,
+          markDamage: markDamage,
           compileMap: compileMap, overlaps: overlaps, topUnder: topUnder, move: move, dirOf: dirOf, mb32: mb32,
           spreadOf: spreadOf, rayBox: rayBox, rayMap: rayMap, hitBoxes: hitBoxes, rayPlayer: rayPlayer, targetAt: targetAt,
+          buildNav: buildNav, navNext: navNext, losMap: losMap,
           LAUNCH: LAUNCH, MISSILE_V: MISSILE_V, MISSILE_G: MISSILE_G, MISSILE_TTL: MISSILE_TTL,
           BLAST_R: BLAST_R, DIRECT_R: DIRECT_R, blastDamage: blastDamage};
 })();
@@ -185,6 +307,7 @@ var FS = (function(){
 var STEP = 1/120, SEND_EVERY = 0.05, KEEPALIVE = 0.5, SWITCH = 0.25, RESPAWN = 3, PRACTICE_SECS = 60;
 // offline bot brains (solo bot match) — mirrored from backend/src/strike.rs
 var BOT_THINK = 0.25, BOT_TURN = 9.0, BOT_AIM = 0.04, BOT_RANGE = 45.0, BOT_REACT = 0.35;
+var STORM_RANGE = 22.0;   // a sandstorm arena event halves how far a bot can see
 // solo difficulty: scales the offline bots' aim error, reaction, turn speed, refire pause and
 // close-range mercy (the Arena server keeps its own tuned bots — these only shape the match
 // you play alone). `rate` > 1 forces a gap BETWEEN shots (beyond the weapon's own interval).
@@ -203,12 +326,340 @@ function diffOf(){
   return DIFFS[1];
 }
 var WAYPOINTS = [
-  [0.0, -9.0], [0.0, 0.0], [0.0, 9.0], [-7.0, 0.0], [7.0, 0.0],
-  [-7.0, -9.0], [7.0, -9.0], [-7.0, 9.0], [7.0, 9.0],
-  [-14.2, 0.0], [14.2, 0.0], [-11.0, -6.0], [11.0, 6.0],
-  [-9.0, -12.8], [9.0, -12.8], [-9.0, 12.8], [9.0, 12.8],
-  [-5.5, -5.2], [5.5, 5.2], [-5.5, 5.2], [5.5, -5.2],
-  [0.0, -6.0], [0.0, 6.0]];
+  [-28.0, -24.0, 0.0],
+  [-20.0, -24.0, 0.0],
+  [-12.0, -24.0, 0.0],
+  [-4.0, -24.0, 0.0],
+  [4.0, -24.0, 0.0],
+  [12.0, -24.0, 0.0],
+  [20.0, -24.0, 0.0],
+  [28.0, -24.0, 0.0],
+  [-36.0, -16.0, 0.0],
+  [-28.0, -16.0, 0.0],
+  [-20.0, -16.0, 0.0],
+  [-12.0, -16.0, 0.0],
+  [-4.0, -16.0, 0.0],
+  [4.0, -16.0, 0.0],
+  [12.0, -16.0, 0.0],
+  [20.0, -16.0, 0.0],
+  [28.0, -16.0, 0.0],
+  [36.0, -16.0, 0.0],
+  [-36.0, -8.0, 0.0],
+  [-28.0, -8.0, 0.0],
+  [-20.0, -8.0, 0.0],
+  [-4.0, -8.0, 0.0],
+  [4.0, -8.0, 0.0],
+  [20.0, -8.0, 0.0],
+  [28.0, -8.0, 0.0],
+  [36.0, -8.0, 0.0],
+  [-28.0, 0.0, 0.0],
+  [-20.0, 0.0, 0.0],
+  [-12.0, 0.0, 0.0],
+  [12.0, 0.0, 0.0],
+  [20.0, 0.0, 0.0],
+  [28.0, 0.0, 0.0],
+  [-36.0, 8.0, 0.0],
+  [-28.0, 8.0, 0.0],
+  [-20.0, 8.0, 0.0],
+  [-4.0, 8.0, 0.0],
+  [4.0, 8.0, 0.0],
+  [20.0, 8.0, 0.0],
+  [28.0, 8.0, 0.0],
+  [36.0, 8.0, 0.0],
+  [-36.0, 16.0, 0.0],
+  [-28.0, 16.0, 0.0],
+  [-20.0, 16.0, 0.0],
+  [-12.0, 16.0, 0.0],
+  [-4.0, 16.0, 0.0],
+  [4.0, 16.0, 0.0],
+  [12.0, 16.0, 0.0],
+  [20.0, 16.0, 0.0],
+  [28.0, 16.0, 0.0],
+  [36.0, 16.0, 0.0],
+  [-28.0, 24.0, 0.0],
+  [-20.0, 24.0, 0.0],
+  [-12.0, 24.0, 0.0],
+  [-4.0, 24.0, 0.0],
+  [4.0, 24.0, 0.0],
+  [12.0, 24.0, 0.0],
+  [20.0, 24.0, 0.0],
+  [28.0, 24.0, 0.0],
+  [0.0, -20.0, 0.0],
+  [0.0, 20.0, 0.0],
+  [-30.0, -10.0, 0.0],
+  [30.0, 10.0, 0.0],
+  [-30.0, 10.0, 0.0],
+  [30.0, -10.0, 0.0],
+  [0.0, -8.0, 0.0],
+  [0.0, 8.0, 0.0],
+  [0.0, -16.0, 0.0],
+  [0.0, 16.0, 0.0],
+  [-36.0, -20.2, 0.0],
+  [-36.0, 20.2, 0.0],
+  [36.0, -20.2, 0.0],
+  [36.0, 20.2, 0.0],
+  [-36.0, -21.75, 0.5],
+  [-36.0, 21.75, 0.5],
+  [36.0, -21.75, 0.5],
+  [36.0, 21.75, 0.5],
+  [-36.0, -22.85, 1.0],
+  [-36.0, 22.85, 1.0],
+  [36.0, -22.85, 1.0],
+  [36.0, 22.85, 1.0],
+  [-36.0, -23.95, 1.5],
+  [-36.0, 23.95, 1.5],
+  [36.0, -23.95, 1.5],
+  [36.0, 23.95, 1.5],
+  [-36.0, -25.05, 2.0],
+  [-36.0, 25.05, 2.0],
+  [36.0, -25.05, 2.0],
+  [36.0, 25.05, 2.0],
+  [-36.0, -25.95, 2.5],
+  [-36.0, 25.95, 2.5],
+  [36.0, -25.95, 2.5],
+  [36.0, 25.95, 2.5],
+  [-24.0, -20.2, 0.0],
+  [-24.0, 20.2, 0.0],
+  [24.0, -20.2, 0.0],
+  [24.0, 20.2, 0.0],
+  [-24.0, -21.75, 0.5],
+  [-24.0, 21.75, 0.5],
+  [24.0, -21.75, 0.5],
+  [24.0, 21.75, 0.5],
+  [-24.0, -22.85, 1.0],
+  [-24.0, 22.85, 1.0],
+  [24.0, -22.85, 1.0],
+  [24.0, 22.85, 1.0],
+  [-24.0, -23.95, 1.5],
+  [-24.0, 23.95, 1.5],
+  [24.0, -23.95, 1.5],
+  [24.0, 23.95, 1.5],
+  [-24.0, -25.05, 2.0],
+  [-24.0, 25.05, 2.0],
+  [24.0, -25.05, 2.0],
+  [24.0, 25.05, 2.0],
+  [-24.0, -25.95, 2.5],
+  [-24.0, 25.95, 2.5],
+  [24.0, -25.95, 2.5],
+  [24.0, 25.95, 2.5],
+  [-14.0, -20.2, 0.0],
+  [-14.0, 20.2, 0.0],
+  [14.0, -20.2, 0.0],
+  [14.0, 20.2, 0.0],
+  [-14.0, -21.75, 0.5],
+  [-14.0, 21.75, 0.5],
+  [14.0, -21.75, 0.5],
+  [14.0, 21.75, 0.5],
+  [-14.0, -22.85, 1.0],
+  [-14.0, 22.85, 1.0],
+  [14.0, -22.85, 1.0],
+  [14.0, 22.85, 1.0],
+  [-14.0, -23.95, 1.5],
+  [-14.0, 23.95, 1.5],
+  [14.0, -23.95, 1.5],
+  [14.0, 23.95, 1.5],
+  [-14.0, -25.05, 2.0],
+  [-14.0, 25.05, 2.0],
+  [14.0, -25.05, 2.0],
+  [14.0, 25.05, 2.0],
+  [-14.0, -25.95, 2.5],
+  [-14.0, 25.95, 2.5],
+  [14.0, -25.95, 2.5],
+  [14.0, 25.95, 2.5],
+  [-2.0, -20.2, 0.0],
+  [-2.0, 20.2, 0.0],
+  [2.0, -20.2, 0.0],
+  [2.0, 20.2, 0.0],
+  [-2.0, -21.75, 0.5],
+  [-2.0, 21.75, 0.5],
+  [2.0, -21.75, 0.5],
+  [2.0, 21.75, 0.5],
+  [-2.0, -22.85, 1.0],
+  [-2.0, 22.85, 1.0],
+  [2.0, -22.85, 1.0],
+  [2.0, 22.85, 1.0],
+  [-2.0, -23.95, 1.5],
+  [-2.0, 23.95, 1.5],
+  [2.0, -23.95, 1.5],
+  [2.0, 23.95, 1.5],
+  [-2.0, -25.05, 2.0],
+  [-2.0, 25.05, 2.0],
+  [2.0, -25.05, 2.0],
+  [2.0, 25.05, 2.0],
+  [-2.0, -25.95, 2.5],
+  [-2.0, 25.95, 2.5],
+  [2.0, -25.95, 2.5],
+  [2.0, 25.95, 2.5],
+  [-30.0, -26.8, 2.5],
+  [-30.0, 26.8, 2.5],
+  [30.0, -26.8, 2.5],
+  [30.0, 26.8, 2.5],
+  [-8.0, -26.8, 2.5],
+  [-8.0, 26.8, 2.5],
+  [8.0, -26.8, 2.5],
+  [8.0, 26.8, 2.5],
+  [-19.0, -26.8, 2.5],
+  [-19.0, 26.8, 2.5],
+  [19.0, -26.8, 2.5],
+  [19.0, 26.8, 2.5],
+  [0.0, -26.8, 2.5],
+  [0.0, 26.8, 2.5],
+  [10.0, 16.0, 0.0],
+  [10.0, -16.0, 0.0],
+  [-10.0, 16.0, 0.0],
+  [-10.0, -16.0, 0.0],
+  [10.0, 14.5, 0.5],
+  [10.0, -14.5, 0.5],
+  [-10.0, 14.5, 0.5],
+  [-10.0, -14.5, 0.5],
+  [10.0, 13.5, 1.0],
+  [10.0, -13.5, 1.0],
+  [-10.0, 13.5, 1.0],
+  [-10.0, -13.5, 1.0],
+  [10.0, 12.5, 1.5],
+  [10.0, -12.5, 1.5],
+  [-10.0, 12.5, 1.5],
+  [-10.0, -12.5, 1.5],
+  [10.0, 11.65, 1.5],
+  [10.0, -11.65, 1.5],
+  [-10.0, 11.65, 1.5],
+  [-10.0, -11.65, 1.5],
+  [10.0, 10.0, 1.5],
+  [10.0, -10.0, 1.5],
+  [-10.0, 10.0, 1.5],
+  [-10.0, -10.0, 1.5],
+  [11.4, 0.0, 0.0],
+  [-11.4, 0.0, 0.0],
+  [9.94, 0.0, 0.5],
+  [-9.94, 0.0, 0.5],
+  [9.03, 0.0, 1.0],
+  [-9.03, 0.0, 1.0],
+  [8.11, 0.0, 1.5],
+  [-8.11, 0.0, 1.5],
+  [7.2, 0.0, 2.0],
+  [-7.2, 0.0, 2.0],
+  [6.29, 0.0, 2.5],
+  [-6.29, 0.0, 2.5],
+  [5.37, 0.0, 3.0],
+  [-5.37, 0.0, 3.0],
+  [4.46, 0.0, 3.5],
+  [-4.46, 0.0, 3.5],
+  [3.65, 0.0, 3.5],
+  [-3.65, 0.0, 3.5],
+  [0.0, 0.0, 3.5],
+  [0.0, -2.0, 3.5],
+  [0.0, 2.0, 3.5],
+  [2.2, 0.0, 3.5],
+  [-2.2, 0.0, 3.5],
+  [40.0, 0.0, 0.0],
+  [-40.0, 0.0, 0.0],
+  [38.55, 0.0, 0.5],
+  [-38.55, 0.0, 0.5],
+  [37.65, 0.0, 1.0],
+  [-37.65, 0.0, 1.0],
+  [36.75, 0.0, 1.5],
+  [-36.75, 0.0, 1.5],
+  [35.85, 0.0, 2.0],
+  [-35.85, 0.0, 2.0],
+  [35.05, 0.0, 2.5],
+  [-35.05, 0.0, 2.5],
+  [34.2, 0.0, 2.5],
+  [-34.2, 0.0, 2.5],
+  [14.2, 15.5, 0.0],
+  [14.2, -15.5, 0.0],
+  [-14.2, 15.5, 0.0],
+  [-14.2, -15.5, 0.0],
+  [14.2, 14.0, 0.5],
+  [14.2, -14.0, 0.5],
+  [-14.2, 14.0, 0.5],
+  [-14.2, -14.0, 0.5],
+  [14.2, 13.0, 1.0],
+  [14.2, -13.0, 1.0],
+  [-14.2, 13.0, 1.0],
+  [-14.2, -13.0, 1.0],
+  [14.2, 12.0, 1.5],
+  [14.2, -12.0, 1.5],
+  [-14.2, 12.0, 1.5],
+  [-14.2, -12.0, 1.5],
+  [14.2, 11.0, 2.0],
+  [14.2, -11.0, 2.0],
+  [-14.2, 11.0, 2.0],
+  [-14.2, -11.0, 2.0],
+  [14.2, 10.15, 2.5],
+  [14.2, -10.15, 2.5],
+  [-14.2, 10.15, 2.5],
+  [-14.2, -10.15, 2.5],
+  [14.2, 7.5, 2.5],
+  [14.2, -7.5, 2.5],
+  [-14.2, 7.5, 2.5],
+  [-14.2, -7.5, 2.5],
+  [34.2, 15.5, 0.0],
+  [34.2, -15.5, 0.0],
+  [-34.2, 15.5, 0.0],
+  [-34.2, -15.5, 0.0],
+  [34.2, 14.0, 0.5],
+  [34.2, -14.0, 0.5],
+  [-34.2, 14.0, 0.5],
+  [-34.2, -14.0, 0.5],
+  [34.2, 13.0, 1.0],
+  [34.2, -13.0, 1.0],
+  [-34.2, 13.0, 1.0],
+  [-34.2, -13.0, 1.0],
+  [34.2, 12.0, 1.5],
+  [34.2, -12.0, 1.5],
+  [-34.2, 12.0, 1.5],
+  [-34.2, -12.0, 1.5],
+  [34.2, 11.0, 2.0],
+  [34.2, -11.0, 2.0],
+  [-34.2, 11.0, 2.0],
+  [-34.2, -11.0, 2.0],
+  [34.2, 10.15, 2.5],
+  [34.2, -10.15, 2.5],
+  [-34.2, 10.15, 2.5],
+  [-34.2, -10.15, 2.5],
+  [34.2, 7.5, 2.5],
+  [34.2, -7.5, 2.5],
+  [-34.2, 7.5, 2.5],
+  [-34.2, -7.5, 2.5],
+  [23.0, 18.5, 0.0],
+  [23.0, -18.5, 0.0],
+  [-23.0, 18.5, 0.0],
+  [-23.0, -18.5, 0.0],
+  [21.55, 18.5, 0.5],
+  [21.55, -18.5, 0.5],
+  [-21.55, 18.5, 0.5],
+  [-21.55, -18.5, 0.5],
+  [20.65, 18.5, 1.0],
+  [20.65, -18.5, 1.0],
+  [-20.65, 18.5, 1.0],
+  [-20.65, -18.5, 1.0],
+  [19.75, 18.5, 1.5],
+  [19.75, -18.5, 1.5],
+  [-19.75, 18.5, 1.5],
+  [-19.75, -18.5, 1.5],
+  [18.85, 18.5, 2.0],
+  [18.85, -18.5, 2.0],
+  [-18.85, 18.5, 2.0],
+  [-18.85, -18.5, 2.0],
+  [18.05, 18.5, 2.5],
+  [18.05, -18.5, 2.5],
+  [-18.05, 18.5, 2.5],
+  [-18.05, -18.5, 2.5],
+  [17.2, 18.5, 2.5],
+  [17.2, -18.5, 2.5],
+  [-17.2, 18.5, 2.5],
+  [-17.2, -18.5, 2.5],
+  [14.2, 0.0, 2.5],
+  [-14.2, 0.0, 2.5],
+  [14.2, 3.75, 2.5],
+  [14.2, -3.75, 2.5],
+  [-14.2, 3.75, 2.5],
+  [-14.2, -3.75, 2.5],
+  [34.2, 3.75, 2.5],
+  [34.2, -3.75, 2.5],
+  [-34.2, 3.75, 2.5],
+  [-34.2, -3.75, 2.5],
+];
 var INTERP = 0.1, JIT_MAX = 0.25, SNAPS = 12, LOOK = 0.0022, PITCH_MAX = 89;
 var CHARS = [{f: "character-female-a", n: "Ada"}, {f: "character-male-a", n: "Abe"}, {f: "character-female-c", n: "Cleo"},
              {f: "character-male-c", n: "Cal"}, {f: "character-female-e", n: "Eve"}, {f: "character-male-e", n: "Eli"}];
@@ -232,7 +683,47 @@ var TOTEMS = {mole:   {hue: "#e0b325", n: "Mole",      dur: 8,  c: 0xe0b325},
               leap:   {hue: "#ff922b", n: "Leap",      dur: 10, c: 0xff922b},
               speed:  {hue: "#ffe066", n: "Speed",     dur: 6,  c: 0xffe066},
               // the hop is the whole effect: no window, the taker is just somewhere else
-              teleport: {hue: "#ff7ab6", n: "Teleport", dur: 0, c: 0xff7ab6}};
+              teleport: {hue: "#ff7ab6", n: "Teleport", dur: 0, c: 0xff7ab6},
+              // ---- Wave C: the unique set (Time Freeze ≈ Paralyser, Clone Army ≈ Decoy skipped) ----
+              rift:      {hue: "#9d6bff", n: "Rift",         dur: 6,  c: 0x9d6bff},
+              mirror:    {hue: "#bfeef7", n: "Mirror Army",  dur: 10, c: 0xbfeef7},
+              gravflip:  {hue: "#74c0fc", n: "Gravity Flip", dur: 8,  c: 0x74c0fc},
+              rewind:    {hue: "#a9e34b", n: "Time Rewind",  dur: 8,  c: 0xa9e34b},
+              shock:     {hue: "#ff6b6b", n: "Shockwave",    dur: 0,  c: 0xff6b6b},
+              magnet:    {hue: "#ffd43b", n: "Bullet Magnet",dur: 8,  c: 0xffd43b},
+              chain:     {hue: "#66d9e8", n: "Chain Lightning", dur: 0, c: 0x66d9e8},
+              trap:      {hue: "#fab005", n: "Trapmaster",   dur: 0,  c: 0xfab005},
+              mark:      {hue: "#f03e3e", n: "Hunter's Mark",dur: 12, c: 0xf03e3e},
+              blink:     {hue: "#da77f2", n: "Blink Dash",   dur: 0,  c: 0xda77f2},
+              bubble:    {hue: "#63e6be", n: "Bubble Fortress", dur: 8, c: 0x63e6be},
+              wallrun:   {hue: "#ffe066", n: "Wall Runner",  dur: 10, c: 0xffe066},
+              secondwind:{hue: "#69db7c", n: "Second Wind",  dur: 0,  c: 0x69db7c},
+              fakedeath: {hue: "#868e96", n: "Fake Death",   dur: 6,  c: 0x868e96},
+              ghost:     {hue: "#c0c0ff", n: "Ghost Bullets",dur: 0,  c: 0xc0c0ff},
+              cluster:   {hue: "#ff922b", n: "Cluster Shot", dur: 0,  c: 0xff922b},
+              overclock: {hue: "#ff8787", n: "Overclock",    dur: 8,  c: 0xff8787},
+              ricochet:  {hue: "#4dabf7", n: "Ricochet",     dur: 0,  c: 0x4dabf7},
+              infchamber:{hue: "#20c997", n: "Infinite Chamber", dur: 10, c: 0x20c997},
+              bodyswap:  {hue: "#e599f7", n: "Body Swap",    dur: 0,  c: 0xe599f7},
+              rally:     {hue: "#ffd8a8", n: "Rally",        dur: 10, c: 0xffd8a8},
+              meteor:    {hue: "#d9480f", n: "Meteor Call",  dur: 0,  c: 0xd9480f},
+              chaos:     {hue: "#e64980", n: "Chaos Core",   dur: 12, c: 0xe64980},
+              phoenix:   {hue: "#ff922b", n: "Phoenix",      dur: 12, c: 0xff922b},
+              pocket:    {hue: "#99e9f2", n: "Pocket Universe", dur: 5, c: 0x99e9f2},
+              fate:      {hue: "#f783ac", n: "Fate Splitter",dur: 8,  c: 0xf783ac},
+              king:      {hue: "#ffe066", n: "Kingmaker",    dur: 15, c: 0xffe066},
+              radarjam:  {hue: "#495057", n: "Radar Jammer", dur: 10, c: 0x495057},
+              // ---- Wave D: Arena Disasters (both sides suffer, the taker too) ----
+              sandstorm:   {hue: "#d8bc8c", n: "Sandstorm",       dur: 12, c: 0xd8bc8c},
+              meteorshower:{hue: "#d9480f", n: "Meteor Shower",   dur: 10, c: 0xd9480f},
+              hurricane:   {hue: "#74c0fc", n: "Hurricane",       dur: 10, c: 0x74c0fc},
+              thunder:     {hue: "#ffe066", n: "Thunder Apocalypse", dur: 8, c: 0xffe066},
+              earthquake:  {hue: "#8a7458", n: "Earthquake",      dur: 8,  c: 0x8a7458},
+              shockring:   {hue: "#ff6b6b", n: "Shockwave Apocalypse", dur: 5, c: 0xff6b6b},
+              toxicfog:    {hue: "#69db7c", n: "Toxic Fog",       dur: 12, c: 0x69db7c},
+              absolutezero:{hue: "#a5d8ff", n: "Absolute Zero",   dur: 10, c: 0xa5d8ff},
+              sinkhole:    {hue: "#5c4033", n: "Sinkhole",        dur: 8,  c: 0x5c4033},
+              emp:         {hue: "#4dabf7", n: "EMP Apocalypse",  dur: 5,  c: 0x4dabf7}};
 // the item guide card (press I) reads these — one line per totem, kept next to TOTEMS
 var TOTEM_HELP = {mole:   "Charms an enemy bot for 8s: it shoots its own team, and its kills pay YOUR team. Only drops when a side has a bot.",
                   freeze: "Pins the nearest enemy bot for 5s: it can't move or fire.",
@@ -242,14 +733,153 @@ var TOTEM_HELP = {mole:   "Charms an enemy bot for 8s: it shoots its own team, a
                   wings:  "Fly for 10s: the totem lifts you up to a rooftop height by itself; WASD glides you, then it lands you automatically. You're easy to spot from below.",
                   leap:   "For 10s your Space-bar jumps launch you three times as high.",
                   speed:  "For 6s plain WASD runs at twice sprint pace — no Shift, no stamina spent.",
-                  teleport: "Instant: you're somewhere else on the map — always on the ground, always somewhere open."};
+                  teleport: "Instant: you're somewhere else on the map — always on the ground, always somewhere open.",
+                  rift: "Opens a linked pair of rifts ahead of you for 6s. Rockets that fly in one opening come out the other.",
+                  mirror: "Spawns three ghost copies of you in a fan for 10s — enemy bots shoot the ghosts.",
+                  gravflip: "For 8s your jumps are floaty low-gravity hops. Big air, easy to spot.",
+                  rewind: "Instant: you rewind 3s of movement, and for 8s the next killing blow just fails.",
+                  shock: "Instant: a shockwave ring blasts out of you — knocks enemies within 6m back and tags them for 35.",
+                  magnet: "For 8s bullets that land near you curve into you instead of a nearer mate.",
+                  chain: "Your next 2 hits arc Chain Lightning into another enemy within 8m.",
+                  trap: "Drops 2 proximity mines at your feet. Your side is immune.",
+                  mark: "For 12s every enemy is painted for your side — they can't hide.",
+                  blink: "Your next 3 jumps are Blink Dashes: you reappear 6m ahead of where you were.",
+                  bubble: "Drops a Bubble Fortress sphere for 8s. Your side inside takes no bullets.",
+                  wallrun: "For 10s you hug walls and can hop the 0.55 m ledges without a stair.",
+                  secondwind: "The next killing blow just fails — you stand back up at half health.",
+                  fakedeath: "For 6s you play dead: bots stop seeing you, and the first shot at you misses.",
+                  ghost: "Your next 3 shots pierce through and hit a body behind the first.",
+                  cluster: "Your next shot splits: a miss still tags up to 2 enemies near the impact.",
+                  overclock: "For 8s your gun fires much faster. The reload is unchanged.",
+                  ricochet: "Your next 3 hits bounce into a second enemy within 7m of the first.",
+                  infchamber: "For 10s your mag never runs dry — reload becomes a free refill.",
+                  bodyswap: "Instant: you and the nearest enemy swap places. 8s cooldown.",
+                  rally: "Drops a Rally beacon for 10s. Your side near it reloads faster and heals slowly.",
+                  meteor: "Calls a meteor on the nearest enemy (or dead ahead). 1.6s warning, then 80 in a 5m crater.",
+                  chaos: "For 12s the Chaos Core pulses a free blast around you every 1.5s.",
+                  phoenix: "For 12s the first killing blow just fails — you stand back up full health.",
+                  pocket: "For 5s a Pocket Universe wraps you: nothing hurts you, and you can't hurt anyone.",
+                  fate: "For 8s you and the nearest other player share every wound 50/50.",
+                  king: "For 15s your whole side is marked as royalty: more reserve ammo and faster reloads.",
+                  radarjam: "For 10s your team vanishes from the enemy radar and plants fake blips.",
+                  // ---- Wave D: Arena Disasters (one line each; everyone suffers) ----
+                  sandstorm: "DISASTER: 12s dust wall. The whole map disappears into a sandstorm — sprint drains twice as fast, bots lose half their vision, shots scatter in the grit, and it chips 3 hp a second.",
+                  meteorshower: "DISASTER: 10s fire from the sky. Meteors streak down across the map; a glowing circle warns 1s ahead. Get under a shed roof — overhead cover stops it. Near the crater it bites harder and the flash blinds.",
+                  hurricane: "DISASTER: 10s. A giant wind column walks the whole map and shoves anyone it reaches. Loose footing (you slow), wild aim (you and bots spray), and it chips 3 hp a second.",
+                  thunder: "DISASTER: 8s. Zig-zag lightning bolts slam the map from the sky — flash, then a blast. Stand under one and it hits harder and blinds you. Shed roofs stop it.",
+                  earthquake: "DISASTER: 8s. The whole arena shakes and the floor erupts in cracks and dust. Near a crack it hits harder and throws your step (you slow).",
+                  shockring: "DISASTER: one huge expanding ring from the centre, visible across the map. It knocks, hurts and briefly blinds everyone it crosses once. Jumping or cover softens it.",
+                  toxicfog: "DISASTER: 12s. Giant toxic clouds roll across the map and choke anyone standing in them (damage and a crawl while you stay).",
+                  absolutezero: "DISASTER: 10s ice storm over the whole map — snow, frost fog, frozen light. No sprint, crawling reloads, sliding acceleration, frostbite chips 4 hp a second.",
+                  sinkhole: "DISASTER: 8s. A huge pit opens in the ground and pulls everyone toward it. Near the rim you stumble (slow) and it bites 12 hp a second.",
+                  emp: "DISASTER: 5s. The whole arena goes dark and blue — lights fail, HUD tracking cuts out, bots can't aim and every shot scatters. Overload chips 2 hp a second. You can still shoot and move."};
+// Wave D: the 10 arena-wide disasters. Everyone suffers — both teams, bots included,
+// and whoever set one off. A Shield totem holder is the one exception (see meShielded).
+var DISASTERS = ["sandstorm", "meteorshower", "hurricane", "thunder", "earthquake",
+                 "shockring", "toxicfog", "absolutezero", "sinkhole", "emp"];
+var DIS_GAP = 45, DIS_FIRST = 30, DIS_WARN = 2.0;   // the auto-disaster clock (first at 30s, then every 45s)
+var DIS_HOLD = {sandstorm: 12, meteorshower: 10, hurricane: 10, thunder: 8, earthquake: 8,
+                shockring: 5, toxicfog: 12, absolutezero: 10, sinkhole: 8, emp: 5};
+// what the banner says WHILE the disaster is tearing up the map (warn already says INCOMING)
+var DIS_LIVE = {sandstorm: "DUST WALL — visibility crushed",
+                meteorshower: "FIRE FROM THE SKY — get under a roof",
+                hurricane: "WIND COLUMN — it will shove you",
+                thunder: "LIGHTNING STRIKES — roofs stop it",
+                earthquake: "THE FLOOR IS BREAKING",
+                shockring: "SHOCKWAVE EXPANDING",
+                toxicfog: "TOXIC CLOUDS SPREADING",
+                absolutezero: "ICE STORM — no sprint, crawling reloads",
+                sinkhole: "THE GROUND IS OPENING",
+                emp: "HUD DOWN — lights failing"};
+var DIS_MARK = {sandstorm: 12, meteorshower: 10, hurricane: 10, thunder: 8, earthquake: 8,
+                shockring: 5, toxicfog: 12, absolutezero: 10, sinkhole: 8, emp: 5};
+var DD_METEOR_R = 3.5, DD_METEOR_DMG = 45, DD_METEOR_WARN = 1.0, DD_METEOR_GAP = 0.55;
+var DD_THUNDER_R = 2.8, DD_THUNDER_DMG = 55, DD_THUNDER_WARN = 0.7, DD_THUNDER_GAP = 0.45;
+var DD_QUAKE_R = 2.5, DD_QUAKE_DMG = 25, DD_QUAKE_WARN = 0.8, DD_QUAKE_GAP = 0.7;
+var DD_SHOCK_R = 28, DD_SHOCK_DMG = 30, DD_SHOCK_KNOCK = 12;
+var DD_TOXIC_R = 5, DD_TOXIC_DMG = 8, DD_TOXIC_ZONES = 3;
+var DD_SINK_R = 4.5, DD_SINK_DMG = 12, DD_SINK_PULL = 4;
+var DD_WIND_R = 6, DD_WIND_PUSH = 7.5, DD_WIND_DMG = 3;
+// exposure bites for the three "modifier" disasters — every disaster must have a
+// visual AND an impact (sandstorm grit / frostbite / EMP overload / hurricane blast).
+	// Twin: DD_*_DMG in strike.rs.
+var DD_SAND_DMG = 3, DD_ZERO_DMG = 4, DD_EMP_DMG = 2;
+// proximity crush (shared markDamage): peak at the centre, DD_NEAR_MIN of the peak at the rim
+var DD_NEAR_R = 0.35, DD_NEAR_MIN = 0.45;
+// non-HP disaster impacts (seconds). Twin: the same windows in backend/src/strike.rs.
+var DD_THUNDER_BLIND = 0.45;   // a bolt under your feet whites out the view
+var DD_METEOR_BLIND = 0.35;    // the crater flash
+var DD_SHOCK_BLIND = 0.55;     // the ring knocks the wind out of you
+var DD_QUAKE_SLOW = 1.2;       // the floor throws your step
+var DD_TOXIC_SLOW = 0.75;      // choking inside a cloud (speed × this)
+var DD_SINK_SLOW = 0.65;       // stumbling toward the pit
+var DD_WIND_SLOW = 0.7;        // loose footing in the wind column
+var DD_SAND_SCATTER = 1.2;     // grit in the sights (extra shot scatter, degrees)
+var DD_WIND_SCATTER = 2.4;     // wild aim in the column
+var DD_EMP_SCATTER = 1.0;      // electronic sights haywire
+var DD_SLOW_MULT = 0.65;       // walk speed while a disaster slow is on (quake / toxic / sink / wind)
+// True when a solid slab sits overhead — a shed roof, a container top, a catwalk.
+// This is the cover that keeps an overhead impact (Meteor Shower, Thunder) off you.
+function hasRoof(x, y, z){
+    var m = MAP; if(!m || !m.boxes) return false;
+    for(var i = 0; i < m.boxes.length; i++){
+      var b = m.boxes[i];
+      if(b[1] > y + 1.45 && b[1] <= y + 5.0
+         && x + 0.25 > b[0] && x - 0.25 < b[3]
+         && z + 0.25 > b[2] && z - 0.25 < b[5]) return true;
+    }
+    return false;
+  }
 // the deterministic rng used by the server + solo client so everyone sees the same drop
 function hashMatch(seed, salt){ var x = (seed ^ (salt*0x9e3779b9))|0; return ((x >>> 0) / 4294967295); }
+// a deterministic zig-zag lightning path from (x0,y0,z0) to the ground mark (x1,y1,z1).
+// Kinks come from hashMatch over the frozen disaster seed — never Math.random — so every
+// observer paints the same bolt. Ends snap to the sky entry and the strike point.
+function boltPts(seed, salt, x0, y0, z0, x1, y1, z1, segs, jitter){
+  segs = Math.max(3, segs|0 || 9);
+  jitter = jitter != null ? +jitter : 1.7;
+  seed = seed|0; salt = salt|0;
+  var pts = [], i, u, wob, kx, kz;
+  for(i = 0; i <= segs; i++){
+    u = i / segs;
+    wob = Math.sin(Math.PI * u);          // kinks fade out at both ends
+    kx = (hashMatch(seed, salt + i * 2 + 1) - 0.5) * 2 * jitter * wob;
+    kz = (hashMatch(seed, salt + i * 2 + 2) - 0.5) * 2 * jitter * wob;
+    pts.push([x0 + (x1 - x0) * u + kx, y0 + (y1 - y0) * u, z0 + (z1 - z0) * u + kz]);
+  }
+  pts[0] = [x0, y0, z0];
+  pts[pts.length - 1] = [x1, y1, z1];
+  return pts;
+}
+// one short fork off the main bolt (side branch), same hashed grid
+function boltBranch(pts, seed, salt, at){
+  if(!pts || pts.length < 3) return null;
+  at = at|0; if(at < 1 || at >= pts.length - 1) at = Math.max(1, (pts.length / 2)|0);
+  var a = pts[at], len = 2.5 + hashMatch(seed, salt) * 3.5;
+  var dx = (hashMatch(seed, salt + 1) - 0.5) * 2, dz = (hashMatch(seed, salt + 2) - 0.5) * 2, dy = -0.55 - hashMatch(seed, salt + 3) * 0.5;
+  var ln = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
+  var b = [a[0] + (dx/ln)*len, Math.max(0.2, a[1] + (dy/ln)*len), a[2] + (dz/ln)*len];
+  return boltPts(seed, salt + 40, a[0], a[1], a[2], b[0], b[1], b[2], 4, 0.7);
+}
+// pick one of n kinds from a small counter/seed. hashMatch's /2^32 output reads the TOP
+// bits, so consecutive worldK values (1,2,3,…) collapse onto one index — the auto-disaster
+// clock rolled Absolute Zero forever. Math.imul is the golden-ratio mix (totemSpawn's
+// pattern) plus a xor-fold so the low bits survive; deterministic, never Math.random.
+// Twin: dis_kind in backend-rs/src/strike.rs.
+function disKind(seed, salt, n){
+  n = n > 0 ? n|0 : 1;
+  var x = ((Math.imul(seed|0, 0x9e3779b9) ^ Math.imul(salt|0, 0x85ebca6b)) >>> 0);
+  x = (x ^ (x >>> 15)) >>> 0;
+  return (x % n) | 0;
+}
 // the live-drop rings, shared by all three impls: past the map's own packs sit a fixed
 // pool of totem slots and pack slots. Both drop clocks REUSE them round-robin — a new
 // drop (fresh kind, fresh spot, repetitions allowed) replaces the oldest one, taken or
 // not — so slot indices stay stable all match while the drops themselves never stop.
 var DROP_SLOTS = 3, PACK_SLOTS = 2, PACK_GAP = 8, TOTEM_GAP = 10, TOTEM_FIRST = 8, PACK_FIRST = 6, BASE_PACKS = 7;
+// Wave D: Disaster totems are NOT mixed into the personal roster — they have their own
+// ring and their own clock, same "somewhere random, recycled slots" rule as the others.
+var DIS_SLOTS = 2, DIS_GAP_DROP = 16, DIS_FIRST_DROP = 12;
 var KEYS = [["W A S D / stick", "move"], ["mouse / right stick", "look"], ["click / RT / F", "fire"], ["R / X", "reload"],
             ["Shift / stick click", "sprint"], ["Q / E", "lean to peek"], ["right-click or `~ / LT", "scope in"], ["1 2 3 4 / wheel / Tab", "weapon"], ["Space / A", "jump"],
             ["B / Back", "scores"], ["I", "item guide"], ["H", "hide these keys"], ["Esc", "release the mouse"]];
@@ -263,6 +893,13 @@ var BUTTONS = {w1: {keys: ["Digit1"]}, w2: {keys: ["Digit2"]}, w3: {keys: ["Digi
 // weapon "wheel" (hold Tab): emoji glyphs for the 4 slots, in FS.WEAPONS order
 // (cannot hotlink real art: IP rule; these are system emoji the OS renders).
 var WHEEL_ICONS = ["\u{1F4A8}", "\u{1F3AF}", "\u{1F52B}", "\u{1F680}"];
+// short kill-feed labels, same index order as FS.WEAPONS / the wheel (0 rapid, 1 marksman,
+// 2 revolver, 3 launcher) — the feed used to collapse everything to rifle/smg
+var WSHORT = ["smg", "marksman", "revolver", "launcher"];
+function wLabel(w){
+  var i = w|0;
+  return WSHORT[i] || WSHORT[0];
+}
 // lean: how far your eyes slide sideways, how much the camera rolls (radians), how fast it settles
 var PEEK_SIDE = 0.55, PEEK_ROLL = 0.16, PEEK_SPEED = 9.0;
 // the drop shield's light blue: one constant for the 3D bubble, the 2D-map halo and the
@@ -284,12 +921,45 @@ function ssave(){
 }
 
 /* ---------- map + three.js, loaded on demand ---------- */
-var MAP = null, MAP_P = null;
-function loadMap(){
-  if(MAP_P) return MAP_P;
-  MAP_P = fetch("/games/strike/map.json").then(function(r){ if(!r.ok) throw new Error("map "+r.status); return r.json(); })
-    .then(function(j){ MAP = FS.compileMap(j); return MAP; }, function(e){ MAP_P = null; throw e; });
+var MAP = null, MAP_P = null, MAP_ID = "dockyard";
+// every playable arena; the files sit next to map.json and are served from 127.0.0.1 only
+var MAP_FILES = {dockyard: "/games/strike/map.json", sandbar: "/games/strike/map-sandbar.json"};
+var MAP_OPTS = [["dockyard", "Harbor Dockyard"], ["sandbar", "Dune Compound"]];
+var MAP_CACHE = {};
+function mapIdOf(sv){
+  sv = sv || ssave();
+  return MAP_FILES[sv.mapId] ? sv.mapId : "dockyard";
+}
+function loadMap(id){
+  id = MAP_FILES[id] ? id : "dockyard";
+  if(MAP && MAP.id === id) return Promise.resolve(MAP);
+  if(MAP_P && MAP_ID === id) return MAP_P;
+  MAP_ID = id;
+  if(MAP_CACHE[id]){ MAP = MAP_CACHE[id]; MAP_P = Promise.resolve(MAP); return MAP_P; }
+  MAP_P = fetch(MAP_FILES[id]).then(function(r){ if(!r.ok) throw new Error("map "+r.status); return r.json(); })
+    .then(function(j){
+      MAP = FS.compileMap(j);
+      MAP_CACHE[id] = MAP;
+      return MAP;
+    }, function(e){ MAP_P = null; throw e; });
   return MAP_P;
+}
+// patrol graph: the map's own waypoints when it ships them, else the dockyard fallback
+function mapWps(){
+  return (MAP && MAP.waypoints && MAP.waypoints.length) ? MAP.waypoints : WAYPOINTS;
+}
+// walkable adjacency over that graph (rooms + passages). Rebuilt when the waypoint
+// list changes; dockyard gets a built nav too so bots stop walking into crates.
+function mapNav(){
+  var wps = mapWps();
+  if(!MAP) return [];
+  if(!MAP.nav || MAP.nav.length !== wps.length){
+    MAP.nav = FS.buildNav({boxes: MAP.boxes, waypoints: wps});
+  }
+  return MAP.nav;
+}
+function mapNavNext(x, z, tx, tz, y, ty){
+  return MAP ? FS.navNext(MAP, x, z, tx, tz, mapWps(), mapNav(), y, ty) : [tx, tz];
 }
 
 /* =============================== the game view =============================== */
@@ -305,10 +975,16 @@ function makeGame(host, opts){
     players: {}, order: [], slots: {}, mySlot: -1, items: [], feed: [], results: null, minutes: 5, limit: 30, tsize: 2, scores: [0, 0],
     goAt: 0, endsAt: 0, deadAt: 0, k: null, kq: 0, off: null, sendAt: 0, sentKey: "", fixAt: 0, score: 0, shots: 0,
     drones: [], startAt: 0, kick: 0, bob: 0, flashAt: -9, hitAt: -9, headAt: -9, hurtAt: -9, hurtDir: 0, board: false, ads: false,
+    slowUntil: 0, blindUntil: 0,
     tracers: [], trigWas: false, protUntil: 0, itemBack: null, dmgNums: [], peek: 0, nextLaunchAt: 0, sprinting: false, slideK: 0, slideRoll: 0,
     wheelOpen: false, wheelSel: -1, wheelLook: null, stamina: 100, drag: false, dropUntil: 0, shieldTotemUntil: 0, killCam: null,
+    voidAt: 0,
     wingsUntil: 0, leapUntil: 0, speedUntil: 0,
-    totemAt: null, packAt: null, dropRing: 0};
+    totemAt: null, packAt: null, disAt: null, dropRing: 0,
+    // ---- Wave D: Arena Disasters ----
+    disaster: "", disasterWarnAt: 0, disasterUntil: 0, disasterHitAt: 0,
+    disasterRing: 0, disasterHit: {}, disasterMarks: [], disasterAt: 0,
+    disasterSeed: 0, disasterZones: [], disasterPit: null, disasterMarkK: 0};
   function myId(){ return V.mode === "mp" && MP ? MP.me() : "me"; }
   var LAUNCH_W = 3;  // the launcher's index in the 4-strong roster every impl now shares
   // the chosen tier belongs to the ENEMIES you want to beat — your own bots are always Easy,
@@ -331,6 +1007,12 @@ function makeGame(host, opts){
     var gi = window.ARENA && window.ARENA.arena && window.ARENA.arena.games && window.ARENA.arena.games.strike;
     return !!(gi && (gi.v|0) >= 3);
   }
+  // v5 arenas take a host "map" id on start and name it in the roster view
+  function mapsOK(){
+    if(V.mode !== "mp") return true;
+    var gi = window.ARENA && window.ARENA.arena && window.ARENA.arena.games && window.ARENA.arena.games.strike;
+    return !!(gi && (((gi.caps || []).indexOf("maps") >= 0) || (gi.v|0) >= 5));
+  }
   // v4 arenas accept parachute drops; solo always does (local physics are our own)
   function dropOK(){
     if(V.mode !== "mp") return true;
@@ -342,15 +1024,68 @@ function makeGame(host, opts){
   // (or the DROP_TIME window closing) ends it. Solo: V.dropUntil / P.ai.dropUntil are the
   // glide clocks; MP: the snapshot's shield flag (bit 32) is the server's word.
   function meShielded(t){
+    if(V.pocketUntil && t < V.pocketUntil) return true;
+    if(V.shieldTotemUntil && t < V.shieldTotemUntil) return true;   // Wave D: a disaster cannot touch a shielded player
     if(V.mode === "mp") return !!(V.prot & 32);
     return !!((V.dropUntil && t < V.dropUntil && !V.me.g) || (V.shieldTotemUntil && t < V.shieldTotemUntil));
   }
   function botShielded(P, t){
     if(!P) return false;
+    if(P.pocketUntil === Infinity || (P.pocketUntil && t < P.pocketUntil)) return true;
+    if(P.shieldTotemUntil && t < P.shieldTotemUntil) return true;   // Wave D: a disaster cannot touch a shielded player
     if(V.mode === "mp") return !!(P.prot & 32);
     return !!(P.ai && P.ai.dropUntil && t < P.ai.dropUntil);
   }
   function mate(uid){ var P = V.players[uid]; return !!P && P.team === V.team; }
+
+  // a disaster cannot touch this player (Shield totem / drop shield / Pocket Universe / spawn cover)
+  function disImmune(P, t){
+    if(!P) return false;
+    if(P.dead || P.gone) return true;
+    if(P.protUntil && t < P.protUntil) return true;
+    return botShielded(P, t) || meShielded(t);
+  }
+  // start (or re-announce) an arena-wide disaster. The taker is just as exposed.
+  function disStart(kind, t){
+    if(!TOTEMS[kind]) return;
+    var hold = DIS_HOLD[kind] || 10;
+    V.disaster = kind;
+    V.disasterWarnAt = t + DIS_WARN;
+    V.disasterUntil = t + DIS_WARN + hold;
+    V.disasterHitAt = t + DIS_WARN;
+    V.disasterRing = 0;
+    V.disasterHit = {};
+    V.disasterMarks = [];
+    V.disasterMarkK = 0;
+    // Freeze the hazard geometry ONCE so the FX and the judge share it (twin of
+    // start_disaster in strike.rs). Toxic clouds / the sinkhole pit / impact marks
+    // all come from this seed — never re-rolled mid-hold.
+    V.disasterSeed = ((Math.imul(V.worldK|0, 0x9e3779b9) + 17) >>> 0);
+    V.disasterZones = kind === "toxicfog"
+      ? disZonesNear(V.disasterSeed, DD_TOXIC_ZONES, liveSpots()) : [];
+    V.disasterPit = kind === "sinkhole"
+      ? disSpot((Math.imul(V.disasterSeed, 2654435761) + 47) >>> 0, 5) : null;
+    flashCenter("⚠ "+TOTEMS[kind].n.toUpperCase()+" INCOMING");
+    say(TOTEMS[kind].n + " incoming — everyone is in it");
+    if(R3 && R3.disaster) R3.disaster(kind, true);
+  }
+  function disClear(t){
+    V.disaster = ""; V.disasterWarnAt = 0; V.disasterUntil = 0;
+    V.disasterHitAt = 0; V.disasterRing = 0; V.disasterHit = {}; V.disasterMarks = [];
+    V.disasterSeed = 0; V.disasterZones = []; V.disasterPit = null; V.disasterMarkK = 0;
+    if(R3 && R3.disaster) R3.disaster("", false);
+  }
+  function disLive(t){
+    return !!(V.disaster && t >= (V.disasterWarnAt || 0) && t < (V.disasterUntil || 0));
+  }
+  // extra shot scatter (degrees of yaw) while a disaster is chewing the sights
+  function disAimScatter(t){
+    if(!disLive(t)) return 0;
+    if(V.disaster === "hurricane") return DD_WIND_SCATTER;
+    if(V.disaster === "sandstorm") return DD_SAND_SCATTER;
+    if(V.disaster === "emp") return DD_EMP_SCATTER;
+    return 0;
+  }
 
   var root = api.mk("div", "vg-golf vg-fps vg-strike"), menu = api.mk("div", "vg-golf-menu"), stage = api.mk("div", "vg-golf-stage hidden");
   root.style.setProperty("--fps-shield-rim", "color-mix(in srgb, "+SHIELD_COLOR+" 35%, transparent)");
@@ -367,6 +1102,7 @@ function makeGame(host, opts){
   ammoBox.appendChild(ammoNum); ammoBox.appendChild(ammoName); ammoBox.appendChild(reloadBar);
   var topBox = api.mk("div", "vg-fps-top"), feedBox = api.mk("ol", "vg-fps-feed"), center = api.mk("div", "vg-fps-center hidden");
   var vignette = api.mk("div", "vg-fps-vig"), scope = api.mk("div", "vg-fps-scope");
+  var blindOv = api.mk("div", "vg-fps-blind-ov");
   var stamBox = api.mk("div", "vg-fps-stam hidden"), stamBar = api.mk("i");
   stamBox.appendChild(stamBar);
   // your own drop shield, seen from inside: a rim glow over the view (an overlay ABOVE the
@@ -375,10 +1111,24 @@ function makeGame(host, opts){
   var shOv = api.mk("div", "vg-fps-shield-ov"), shPill = api.mk("div", "vg-fps-shld hidden"), shBar = api.mk("b");
   shPill.appendChild(document.createTextNode("🛡 Shield "));
   var shTrack = api.mk("i"); shTrack.appendChild(shBar); shPill.appendChild(shTrack);
+  // a simple top-down radar: me as a wedge, allies as friendly dots, enemies as red
+  // dots (the Radar Jammer blanks the enemy team and plants a few fake blips). Decorative
+  // only — the real fight is still the 3D view — so it is aria-hidden with the rest of
+  // the HUD and every colour comes from the theme tokens in games.css.
+  var radarWrap = api.mk("div", "vg-fps-radar");
+  var radarCv = api.mk("canvas", "vg-fps-radar-cv");
+  radarCv.width = 120; radarCv.height = 120;
+  radarWrap.appendChild(radarCv);
+  var radarCtx = radarCv.getContext ? radarCv.getContext("2d") : null;
+  var radarAt = 0;
   // cloak (unseen by enemy bots) reads the same way: a grey rim over the view, colour from TOTEMS
   var clOv = api.mk("div", "vg-fps-cloak-ov");
   root.style.setProperty("--fps-cloak-rim", "color-mix(in srgb, "+TOTEMS.cloak.hue+" 30%, transparent)");
-  [vignette, shOv, clOv, scope, cross, hitm, hurt, hpBox, ammoBox, topBox, feedBox, center, stamBox, shPill].forEach(function(n){ hud.appendChild(n); });
+  // Wave D: the disaster overlay (fog / flash / ice tint / EMP blue) sits under the HUD
+  var disOv = api.mk("div", "vg-fps-dis-ov");
+  var disOvIn = api.mk("div", "vg-fps-dis-ov-in");
+  disOv.appendChild(disOvIn);
+  [disOv, blindOv, vignette, shOv, clOv, scope, cross, hitm, hurt, hpBox, ammoBox, topBox, feedBox, center, stamBox, shPill, radarWrap].forEach(function(n){ hud.appendChild(n); });
   var board = api.mk("div", "vg-golf-card vg-fps-board hidden"); board.setAttribute("role", "dialog"); board.setAttribute("aria-label", "Scoreboard");
   // the item guide (press I): what each light column on the map hands you
   var guide = api.mk("div", "vg-golf-card vg-fps-board hidden"); guide.setAttribute("role", "dialog"); guide.setAttribute("aria-label", "Item guide");
@@ -400,7 +1150,7 @@ function makeGame(host, opts){
     var P = V.players[uid];
     if(!P){
       P = V.players[uid] = {uid: uid, slot: -1, team: 0, bot: false, name: "", ch: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, hp: 100, w: 0, dead: false,
-        prot: false, away: false, gone: false, kills: 0, deaths: 0, snaps: [], last: -1, jit: 0, seen: 0, mesh: null, moving: 0};
+        prot: false, away: false, gone: false, kills: 0, deaths: 0, snaps: [], last: -1, jit: 0, seen: 0, mesh: null, moving: 0, slowUntil: 0, blindUntil: 0};
       V.order.push(uid);
     }
     if(info){ for(var k in info) P[k] = info[k]; }
@@ -464,6 +1214,7 @@ function makeGame(host, opts){
     ar.appendChild(api.mk("b", null, "The rules"));
     [["🎯", "First to the kill target wins — or whichever side is ahead when the clock runs out."],
      ["🛡", "Respawns fall from the sky under a parachute shield: steer the glide with WASD, untouchable until your boots touch."],
+     ["🕳", "Fall off the map and you get 10s in the void, then a parachute back in — there is no endless free-fall."],
      ["⚡", "Fresh drops keep landing mid-match — totems and loose health/ammo packs, somewhere random, on their own clocks."]]
       .forEach(function(r){ var l = api.mk("div", "vg-sz-lin"); l.appendChild(ico("transparent")); l.children[0].textContent = r[0];
         var s = api.mk("span"); s.appendChild(document.createTextNode(r[1])); l.appendChild(s); ar.appendChild(l); });
@@ -486,20 +1237,50 @@ function makeGame(host, opts){
     var dr = api.mk("div", "vg-sz-sec");
     dr.appendChild(api.mk("b", null, "Drops on the map"));
     var msg = api.mk("p", "vg-muted");
-    msg.appendChild(document.createTextNode("Every "+TOTEM_GAP+" s a fresh totem lands somewhere random; every "+PACK_GAP+" s a loose health or ammo pack does the same — repetitions allowed, watch the light columns in the sky."));
+    msg.appendChild(document.createTextNode("Every "+TOTEM_GAP+" s a fresh totem lands somewhere random; every "+PACK_GAP+" s a loose health or ammo pack does the same; every "+DIS_GAP_DROP+" s a Disaster totem lands on its own ring. The arena also erupts on its own every "+DIS_GAP+" s (counted down in the top bar). Repetitions allowed, watch the light columns in the sky."));
     dr.appendChild(msg);
-    var drow = api.mk("div", "vg-sz-grid");
-    Object.keys(TOTEMS).forEach(function(k){
-      var tm = TOTEMS[k], t2 = api.mk("div", "vg-sz-pill");
+    function pillRow(kind){
+      var tm = TOTEMS[kind], t2 = api.mk("div", "vg-sz-pill");
       var gem = api.mk("i", "vg-sz-gem"); gem.style.background = tm.hue; gem.setAttribute("aria-hidden", "true");
       t2.appendChild(gem);
       var b = api.mk("span", "vg-sz-pn");
       var nm = api.mk("span"); nm.style.color = tm.hue; nm.appendChild(document.createTextNode(tm.n));
       b.appendChild(nm);
-      b.appendChild(api.mk("small", "vg-muted", (tm.dur > 0 ? tm.dur+" s · " : "")+TOTEM_HELP[k].split(/[:.]/)[0].toLowerCase()));
-      t2.appendChild(b); drow.appendChild(t2);
+      b.appendChild(api.mk("small", "vg-muted", (tm.dur > 0 ? tm.dur+" s · " : "")+TOTEM_HELP[kind].split(/[:.]/)[0].toLowerCase()));
+      t2.appendChild(b);
+      return t2;
+    }
+    var nh = api.mk("div", "vg-muted"); nh.appendChild(document.createTextNode("Totems"));
+    dr.appendChild(nh);
+    var drow = api.mk("div", "vg-sz-grid");
+    Object.keys(TOTEMS).filter(function(k){ return DISASTERS.indexOf(k) < 0; }).forEach(function(k){
+      drow.appendChild(pillRow(k));
     });
     dr.appendChild(drow);
+    var dh = api.mk("div", "vg-muted"); dh.appendChild(document.createTextNode("Disaster totems"));
+    dr.appendChild(dh);
+    var dmsg = api.mk("p", "vg-muted");
+    dmsg.appendChild(document.createTextNode("These land on their own ring. Grab one and the disaster fires for everyone — a shield is the only way out."));
+    dr.appendChild(dmsg);
+    var dgrow = api.mk("div", "vg-sz-grid");
+    DISASTERS.forEach(function(k){ dgrow.appendChild(pillRow(k)); });
+    dr.appendChild(dgrow);
+    // what each disaster actually does — the pills above only name them, players need
+    // to know what to expect when the top-bar clock hits zero (textContent / createTextNode)
+    var dexp = api.mk("div", "vg-sz-sec");
+    dexp.appendChild(api.mk("b", null, "What each disaster does"));
+    DISASTERS.forEach(function(k){
+      var line = api.mk("div", "vg-sz-lin");
+      var gem = api.mk("i", "vg-sz-gem"); gem.style.background = TOTEMS[k].hue; gem.setAttribute("aria-hidden", "true");
+      line.appendChild(gem);
+      var sp = api.mk("span");
+      var nm = api.mk("b"); nm.style.color = TOTEMS[k].hue; nm.appendChild(document.createTextNode(TOTEMS[k].n));
+      sp.appendChild(nm);
+      sp.appendChild(document.createTextNode(" — " + String(TOTEM_HELP[k] || "").replace(/^DISASTER:\s*/, "")));
+      line.appendChild(sp);
+      dexp.appendChild(line);
+    });
+    dr.appendChild(dexp);
     card.appendChild(dr);
     // the controls, straight from the same KEYS table the in-game overlay reads
     var ks = api.mk("div", "vg-sz-sec");
@@ -518,9 +1299,9 @@ function makeGame(host, opts){
     if(!V.alive) return;
     menu.textContent = "";
     if(!MAP){
-      menu.appendChild(api.mk("p", "vg-muted", V.note || "Loading the dock…"));
+      menu.appendChild(api.mk("p", "vg-muted", V.note || "Loading the arena…"));
       if(V.note) menu.appendChild(api.btn("Try again", "primary", function(){ V.note = ""; renderMenu();
-        loadMap().then(function(){ if(V.alive) renderMenu(); }, function(){ if(V.alive){ V.note = "Couldn't load the dock."; renderMenu(); } }); }));
+        loadMap(mapIdOf()).then(function(){ if(V.alive) renderMenu(); }, function(){ if(V.alive){ V.note = "Couldn't load the arena."; renderMenu(); } }); }));
       return;
     }
     var sv = ssave(), mp = V.mode === "mp", host = mp && isHost();
@@ -576,6 +1357,10 @@ function makeGame(host, opts){
         // applies it to its fillers when the match starts
         row.appendChild(select("Bot skill", DIFFS.map(function(d){ return [d.id, d.n]; }), (diffOf() || DIFFS[1]).id,
           function(v){ sv.diff = v; }));
+        if(mapsOK()) row.appendChild(select("Map", MAP_OPTS, mapIdOf(sv), function(v){
+          sv.mapId = v;
+          loadMap(v).then(function(){ if(V.alive) renderMenu(); }, function(){ if(V.alive){ V.note = "Couldn't load that map."; renderMenu(); } });
+        }));
         row.appendChild(numField("Custom min", 1, 60, sv.minutes|0 || 5, function(v){ sv.minutes = v; }));
         row.appendChild(numField("Custom kills", 1, 500, sv.kills|0 || 30, function(v){ sv.kills = v; }));
         row.appendChild(api.btn("Start the match", "primary", function(){
@@ -583,7 +1368,8 @@ function makeGame(host, opts){
           // not just MINUTES/KILLS) — the lists above are just quick presets
           var s = ssave(), m = clamp(Math.round(s.minutes|0 || 5), 1, 60), k = clamp(Math.round(s.kills|0 || 30), 1, 500);
           if(MP) MP.send("strike", "start", {minutes: m, kills: k, tsize: TEAM_SIZES.indexOf(s.tsize|0) >= 0 ? s.tsize|0 : 2,
-            diff: DIFFS.some(function(d){ return d.id === s.diff; }) ? s.diff : "normal"});
+            diff: DIFFS.some(function(d){ return d.id === s.diff; }) ? s.diff : "normal",
+            map: mapIdOf(s)});
         }));
       } else row.appendChild(api.mk("span", "vg-muted", "Waiting for the host (★ in the lobby) to start a match — any side short of humans is filled with bots at the host's chosen skill, the same on both teams."));
       menu.appendChild(row);
@@ -600,6 +1386,10 @@ function makeGame(host, opts){
       soloRow.appendChild(select("Teams", TEAM_SIZES.map(function(t){ return [t, t+" vs "+t]; }), soloTs, function(v){ sv.tsize = v; }));
       soloRow.appendChild(select("Bot skill", DIFFS.map(function(d){ return [d.id, d.n]; }), (diffOf() || DIFFS[DIFFS.length - 1]).id,
         function(v){ sv.diff = v; }));
+      soloRow.appendChild(select("Map", MAP_OPTS, mapIdOf(sv), function(v){
+        sv.mapId = v;
+        loadMap(v).then(function(){ if(V.alive) renderMenu(); }, function(){ if(V.alive){ V.note = "Couldn't load that map."; renderMenu(); } });
+      }));
       menu.appendChild(soloRow);
       // the scoreline is yours too: any length and any target, not just the server's list
       var soloCfg = api.mk("div", "vg-row");
@@ -631,8 +1421,14 @@ function makeGame(host, opts){
   function resetMatch(){
     // drop slots appended to MAP.pickups during a match are match-local: trim them so the
     // next match (and the server's shorter slot list) sees only the map's own packs
-    MAP.pickups.length = 7;
-    totemCount = 0; packCount = 0; V.totemAt = null; V.packAt = null;
+    MAP.pickups.length = BASE_PACKS;
+    totemCount = 0; packCount = 0; disCount = 0; V.totemAt = null; V.packAt = null; V.disAt = null;
+    V.eventAt = 0; V.fuseAt = 0; V.crateAt = 0; V.worldK = 0;
+    V.captureAt = null; V.captureProg = 0; V.captureWho = null; V.captureSince = 0;
+    V.arenaEvent = ""; V.arenaEventUntil = 0; V.fateUid = null; V.fateUntil = 0;
+    V.disaster = ""; V.disasterWarnAt = 0; V.disasterUntil = 0; V.disasterHitAt = 0;
+    V.disasterRing = 0; V.disasterHit = {}; V.disasterMarks = []; V.disasterAt = 0;
+    V.disasterSeed = 0; V.disasterZones = []; V.disasterPit = null; V.disasterMarkK = 0;
     (V.missiles || []).forEach(function(m){ if(m.o && R3) R3.rocket(null, m); }); V.missiles = [];
     clearPlayers(); V.phase = "idle"; V.results = null; V.feed = []; V.drones = []; V.tracers = []; V.dmgNums = []; V.killCam = null;
     cardBox.classList.add("hidden"); board.classList.add("hidden"); guide.classList.add("hidden"); center.classList.add("hidden"); V.board = false; V.guide = false;
@@ -640,12 +1436,20 @@ function makeGame(host, opts){
     // totems die with the old match; the slot "kind" memory resets too
     V.kinds = []; V.decoys = []; V.cloakUntil = 0; V.shieldTotemUntil = 0;
     V.wingsUntil = 0; V.leapUntil = 0; V.speedUntil = 0;
+    V.gravUntil = 0; V.magnetUntil = 0; V.wallrunUntil = 0; V.overclockUntil = 0;
+    V.infUntil = 0; V.fakeUntil = 0; V.pocketUntil = 0; V.phoenixUntil = 0;
+    V.chaosUntil = 0; V.rallyUntil = 0; V.kingUntil = 0; V.fateUntil = 0; V.jamUntil = 0;
+    V.secondWind = false; V.chainLeft = 0; V.blinkLeft = 0; V.ghostLeft = 0;
+    V.clusterLeft = 0; V.ricoLeft = 0; V.hist = [];
+    V.rifts = []; V.mines = []; V.meteors = []; V.beacons = []; V.bubbles = []; V.cursed = {}; V.rings = [];
     others().forEach(function(P){ P.charmUntil = 0; P.freezeUntil = 0; clearMarks(P); });
   }
 
   /* ---------- me ---------- */
   function placeMe(x, y, z, yawDeg){
+    V.slowUntil = 0; V.blindUntil = 0;
     var M = V.me; M.x = x; M.y = y; M.z = z; M.vx = 0; M.vy = 0; M.vz = 0; M.g = true;
+    V.voidAt = 0;  // a place is back on the map
     if(yawDeg != null){ V.yaw = yawDeg*Math.PI/180; V.pitch = 0; }
     V.dropUntil = 0;  // a plain ground spawn isn't a drop; dropSpawns set this explicitly
   }
@@ -668,6 +1472,7 @@ function makeGame(host, opts){
     placeMe(sp[0], FS.DROP_HEIGHT, sp[2], sp[3]);
     V.dropUntil = now() + FS.DROP_TIME;
     V.me.g = false;
+    V.voidAt = 0;
     return sp;
   }
   function fullAmmo(){ V.mag = FS.WEAPONS.map(function(wp){ return wp.mag; }); V.res = FS.WEAPONS.map(function(wp){ return wp.reserve; }); V.magX = [FS.LAUNCH.mag]; V.resX = [FS.LAUNCH.reserve]; V.reloadAt = 0; V.n = 0; if(V.w >= weaponCount()) V.w = 0; }
@@ -675,9 +1480,20 @@ function makeGame(host, opts){
   /* ---------- practice: the target range ---------- */
   function startPractice(){
     if(!MAP) return;
+    var wantP = mapIdOf();
+    if(MAP.id !== wantP){
+      loadMap(wantP).then(function(){ if(V.alive) startPractice(); }, function(){ if(V.alive){ V.note = "Couldn't load that map."; renderMenu(); } });
+      return;
+    }
     resetMatch(); V.mode = "practice"; V.score = 0; V.shots = 0; V.team = 0; V.kinds = [];
     var s = MAP.spawns[0]; placeMe(s[0], s[1], s[2], s[3]); fullAmmo(); V.hp = 100; V.dead = false;
     V.drones = MAP.targets.map(function(tg, i){ return {tg: tg, i: i, downUntil: 0, phase: i*1.7}; });
+    // the range's packs land somewhere random this visit — the JSON pads are only a
+    // fallback, never a campable spawn
+    var pseed = ((((now()*1000)|0) ^ 0x5f356495) >>> 0);
+    for(var pi = 0; pi < BASE_PACKS && pi < MAP.pickups.length; pi++){
+      MAP.pickups[pi].at = dropSpot((pseed + (pi+1)*2654435761) >>> 0);
+    }
     V.items = MAP.pickups.map(function(){ return 1; });
     V.phase = "warmup"; V.goAt = now() + 3; V.endsAt = V.goAt + PRACTICE_SECS;
     showStage(true); if(R3) R3.buildMap();
@@ -691,6 +1507,7 @@ function makeGame(host, opts){
   /* ---------- solo bot match: the same teams/bots as the server, judged locally ---------- */
   var BOT_NAMES = ["Bolt", "Havoc", "Rook", "Vista", "Onyx", "Slate", "Drift", "Crane"];
   function botPlace(P, sp, t){
+    P.slowUntil = 0;
     P.x = sp[0]; P.y = sp[1]; P.z = sp[2]; P.yaw = (sp[3]|0)*Math.PI/180; P.pitch = 0;
     P.hp = 100; P.dead = false;
     // solo bots can draw the launcher too — local only, never leaves your machine.
@@ -701,10 +1518,24 @@ function makeGame(host, opts){
     P.res = FS.WEAPONS.map(function(wp){ return wp.reserve; });
     P.reloadAt = 0; P.protUntil = t + 1.5; // PROTECT (strike.py): 1.5 s of spawn cover, gone once they fire
     P.ai.body = {x: sp[0], y: sp[1], z: sp[2], vx: 0, vy: 0, vz: 0, g: true};
+    P.ai.voidAt = 0;   // a place is back on the map
     // v4: a spawn from the sky (initial join comes from a ground spawn list, respawns don't)
     P.ai.dropUntil = sp[1] > 0.5 ? t + FS.DROP_TIME : 0;
     P.ai.aim_y = sp[3]|0; P.ai.aim_p = 0; P.ai.goal = null; P.ai.target = null; P.ai.seenAt = null; P.ai.fireAt = -1e9; P.ai.thinkAt = t + BOT_THINK;
     P.ai.errAt = 0; P.ai.err_y = 0; P.ai.err_p = 0;
+    P.ai.stuckAt = 0; P.ai.stuck_x = sp[0]; P.ai.stuck_z = sp[2];
+    P.ai.slideUntil = 0;
+    // hunt: where the last target vanished, and until when we still bother to look
+    P.ai.lostPos = null; P.ai.lostUntil = 0; P.ai.lostY = 0; P.ai.targetY = 0;
+    P.ai.huntHold = 10;
+    // patrol starts at the waypoint nearest this spawn (same rule as the Arena bots)
+    var wps = mapWps(), best = 0, bd = 1e18;
+    for(var wi = 0; wi < wps.length; wi++){
+      var dwx = wps[wi][0] - sp[0], dwz = wps[wi][1] - sp[2], d2 = dwx*dwx + dwz*dwz;
+      if(d2 < bd){ bd = d2; best = wi; }
+    }
+    // a small per-bot offset so a squad does not all stack on the same first stop
+    P.ai.wpi = wps.length ? (best + (P.slot|0)) % wps.length : 0;
   }
   function botSpawnFor(P){
     var half = Math.floor(MAP.spawns.length/2);
@@ -716,7 +1547,7 @@ function makeGame(host, opts){
       ch: clamp(slot + team*3, 0, CHARS.length - 1)});
     P.ai = {body: {x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, g: true}};
     P.n = 0;
-    P.charmUntil = 0; P.freezeUntil = 0; P.decoyAt = 0;
+    P.charmUntil = 0; P.freezeUntil = 0; P.decoyAt = 0; P.slowUntil = 0; P.blindUntil = 0;
     botPlace(P, botSpawnFor(P), t);
     return P;
   }
@@ -840,6 +1671,18 @@ function makeGame(host, opts){
       var m = V.missiles[i], stopped = false;
       if(m.srv) continue;  // the server flies this one; the snapshot places it
       m.vy -= FS.MISSILE_G*dt;
+      // Rift: a projectile entering one opening exits the other (6s pair)
+      if(V.rifts && V.rifts.length && (m.at|0) < (t - 0.05)){
+        for(var rq = 0; rq < V.rifts.length; rq++){
+          var R = V.rifts[rq];
+          if(t >= (R.until || 0)) continue;
+          var dR = Math.hypot((m.px - R.x), (m.pz - R.z), (m.py - 0.9)*0.5);
+          if(dR > 0.9) continue;
+          m.px = m.x = R.x2; m.pz = m.z = R.z2; m.py = m.y = 0.9;
+          m.at = t;   // a fresh ttl from the exit
+          break;
+        }
+      }
       var sp = Math.sqrt(m.vx*m.vx + m.vy*m.vy + m.vz*m.vz) || 1;
       var nx = m.px + m.vx*dt, ny = m.py + m.vy*dt, nz = m.pz + m.vz*dt;
       var d3 = [nx - m.px, ny - m.py, nz - m.pz], ln = Math.sqrt(d3[0]*d3[0] + d3[1]*d3[1] + d3[2]*d3[2]) || 1e-6;
@@ -874,6 +1717,17 @@ function makeGame(host, opts){
                  x: K.x, y: K.y, z: K.z, yaw: K.yaw || 0, pitch: K.pitch || 0, ref: K};
   }
   function endBotLife(killer, vic, t, head){
+    // Second Wind / Phoenix / Fake Death: the first killing blow just fails
+    if(vic){
+      if(vic.fakeUntil && t < vic.fakeUntil){ vic.fakeUntil = 0; say("Fake Death: the shot missed"); return; }
+      if(vic.secondWind){ vic.secondWind = false; vic.hp = 50; if(R3) R3.charm(vic, "fake"); say("Second Wind: "+vic.name+" stands back up"); return; }
+      if(vic.phoenixUntil && t < vic.phoenixUntil){ vic.phoenixUntil = 0; vic.hp = 100; if(R3) R3.charm(vic, "fake"); say("Phoenix: "+vic.name+" burns back to life"); return; }
+    }
+    if(!vic){
+      if(V.fakeUntil && t < V.fakeUntil){ V.fakeUntil = 0; say("Fake Death: the shot missed"); return; }
+      if(V.secondWind){ V.secondWind = false; V.hp = 50; say("Second Wind: you stand back up at half health"); return; }
+      if(V.phoenixUntil && t < V.phoenixUntil){ V.phoenixUntil = 0; V.hp = 100; say("Phoenix: you burn back to life"); return; }
+    }
     // kill cam: your own death is worth one snapshot of the shooter — where they stood,
     // where they looked — replayed from their eyes while "Respawning in X" counts down
     if(!vic && killer && killer.uid !== myId()) snapKillCam(killer, killer.w|0, !!head);
@@ -897,6 +1751,7 @@ function makeGame(host, opts){
   }
   // the four totem effects, shared shape between solo (judge local) and MP (mirror the server)
   function totemApply(kind, uid, t){
+    var best = null, bd = 1e9;   // one function-scoped picker (var is not block-scoped)
     if(!TOTEMS[kind]) return null;
     var foes = others().filter(function(P){ return !P.bot || P.dead || P.gone ? false : P.team !== V.team; });
     if(!foes.length && kind === "mole") return "Mole — no enemy bots to turn";
@@ -908,7 +1763,7 @@ function makeGame(host, opts){
       return "Mole: "+tar.name+" turned against their own team for "+TOTEMS.mole.dur+"s";
     }
     if(kind === "freeze"){
-      var best = null, bd = 1e9;
+      best = null; bd = 1e9;
       foes.forEach(function(P){ var d = Math.hypot(P.x - V.me.x, P.z - V.me.z); if(d < bd){ bd = d; best = P; } });
       if(!best) return "Paralyser — no enemy bots nearby";
       best.freezeUntil = t + TOTEMS.freeze.dur;
@@ -961,6 +1816,134 @@ function makeGame(host, opts){
       V.dropUntil = 0; V.wingsUntil = 0;   // a hop cancels a glide/flight — you land standing
       return "Teleport: you're somewhere else now";
     }
+    // ---- Wave C ----
+    if(kind === "rift"){
+      V.rifts = V.rifts || [];
+      var rx = V.me.x + Math.sin(V.yaw)*2, rz = V.me.z - Math.cos(V.yaw)*2;
+      var rx2 = V.me.x + Math.sin(V.yaw)*8, rz2 = V.me.z - Math.cos(V.yaw)*8;
+      var rf = {x: rx, z: rz, x2: rx2, z2: rz2, until: t + TOTEMS.rift.dur};
+      V.rifts.push(rf);
+      if(R3 && R3.addRift) R3.addRift(rf);
+      return "Rift: a linked pair opens ahead for "+TOTEMS.rift.dur+"s — rockets that fly in come out the other";
+    }
+    if(kind === "mirror"){
+      V.decoys = V.decoys || [];
+      for(var mi = 0; mi < 3; mi++){
+        var a = V.yaw + (mi - 1)*0.7;
+        var mx = V.me.x + Math.sin(a)*3.5, mz = V.me.z - Math.cos(a)*3.5;
+        V.decoys.push({x: mx, y: 0, z: mz, hp: 60, until: t + TOTEMS.mirror.dur, mirror: 1});
+        if(R3) R3.addDecoy({x: mx, y: 0, z: mz, until: t + TOTEMS.mirror.dur});
+      }
+      return "Mirror Army: three ghosts fan out for "+TOTEMS.mirror.dur+"s";
+    }
+    if(kind === "gravflip"){
+      V.gravUntil = t + TOTEMS.gravflip.dur;
+      return "Gravity Flip: floaty hops for "+TOTEMS.gravflip.dur+"s";
+    }
+    if(kind === "rewind"){
+      if(V.hist && V.hist.length > 2){
+        var rh = V.hist[Math.max(0, V.hist.length - 3)];
+        if(rh){ V.me.x = rh[0]; V.me.y = rh[1]; V.me.z = rh[2]; V.me.vx = 0; V.me.vy = 0; V.me.vz = 0; }
+      }
+      V.secondWind = true;
+      return "Time Rewind: you snap back, and the next killing blow fails";
+    }
+    if(kind === "shock"){
+      V.booms = V.booms || [];
+      V.booms.push({x: V.me.x, y: V.me.y + 0.5, z: V.me.z, at: t});
+      // a ground shock ring so an empty detonation still reads as "a shockwave just went off"
+      V.rings = V.rings || [];
+      V.rings.push({x: V.me.x, y: (V.me.y || 0) + 0.08, z: V.me.z, at: t, r: 8, dur: 0.55});
+      if(R3 && R3.ring) R3.ring(V.me.x, (V.me.y || 0) + 0.08, V.me.z, 8, 0.55, t);
+      others().forEach(function(P){
+        if(P.dead || P.gone || P.team === V.team) return;
+        var d = Math.hypot(P.x - V.me.x, P.z - V.me.z);
+        if(d > 6) return;
+        P.hp -= 35;
+        var ln = d > 0.01 ? d : 1;
+        P.x += ((P.x - V.me.x)/ln)*3; P.z += ((P.z - V.me.z)/ln)*3;
+        if(P.hp <= 0 && !P.dead) endBotLife({uid: myId(), kills: V.kills, team: V.team, w: V.w, name: "You"}, P, t, false);
+      });
+      return "Shockwave: nearby enemies take 35 and get knocked back";
+    }
+    if(kind === "magnet"){ V.magnetUntil = t + TOTEMS.magnet.dur; return "Bullet Magnet: fire near me lands on me for "+TOTEMS.magnet.dur+"s"; }
+    if(kind === "chain"){ V.chainLeft = (V.chainLeft|0) + 2; return "Chain Lightning: your next 2 hits arc to another enemy"; }
+    if(kind === "trap"){
+      V.mines = V.mines || [];
+      for(var ti = 0; ti < 2; ti++){
+        var ta = (V.n|0)*2.399 + ti*1.7;
+        V.mines.push({x: V.me.x + Math.cos(ta)*1.5, z: V.me.z + Math.sin(ta)*1.5, team: V.team, owner: myId(), at: t});
+      }
+      return "Trapmaster: 2 mines drop at your feet";
+    }
+    if(kind === "mark"){
+      others().forEach(function(P){ if(P.team !== V.team && !P.dead && !P.gone) P.hunterUntil = t + TOTEMS.mark.dur; });
+      return "Hunter's Mark: every enemy is painted for "+TOTEMS.mark.dur+"s";
+    }
+    if(kind === "blink"){ V.blinkLeft = (V.blinkLeft|0) + 3; return "Blink Dash: 3 short hops — press again to blink 6m ahead"; }
+    if(kind === "bubble"){
+      V.bubbles = V.bubbles || [];
+      V.bubbles.push({x: V.me.x, y: V.me.y + 0.9, z: V.me.z, r: 4, team: V.team, until: t + TOTEMS.bubble.dur});
+      return "Bubble Fortress: a sphere covers your side for "+TOTEMS.bubble.dur+"s";
+    }
+    if(kind === "wallrun"){ V.wallrunUntil = t + TOTEMS.wallrun.dur; return "Wall Runner: hop the ledges for "+TOTEMS.wallrun.dur+"s"; }
+    if(kind === "secondwind"){ V.secondWind = true; return "Second Wind: the next killing blow just fails"; }
+    if(kind === "fakedeath"){ V.fakeUntil = t + TOTEMS.fakedeath.dur; return "Fake Death: play dead for "+TOTEMS.fakedeath.dur+"s"; }
+    if(kind === "ghost"){ V.ghostLeft = (V.ghostLeft|0) + 3; return "Ghost Bullets: your next 3 shots pierce through"; }
+    if(kind === "cluster"){ V.clusterLeft = (V.clusterLeft|0) + 5; return "Cluster Shot: your next shot splits on impact"; }
+    if(kind === "overclock"){ V.overclockUntil = t + TOTEMS.overclock.dur; return "Overclock: fire much faster for "+TOTEMS.overclock.dur+"s"; }
+    if(kind === "ricochet"){ V.ricoLeft = (V.ricoLeft|0) + 3; return "Ricochet: your next 3 hits bounce into a second enemy"; }
+    if(kind === "infchamber"){ V.infUntil = t + TOTEMS.infchamber.dur; return "Infinite Chamber: the mag never runs dry for "+TOTEMS.infchamber.dur+"s"; }
+    if(kind === "bodyswap"){
+      best = null; bd = 1e9;
+      others().forEach(function(P){ if(P.dead || P.gone || P.team === V.team) return; var d = Math.hypot(P.x - V.me.x, P.z - V.me.z); if(d < bd){ bd = d; best = P; } });
+      if(!best) return "Body Swap — no enemy to swap with";
+      var tx = best.x, ty = best.y, tz = best.z;
+      best.x = V.me.x; best.y = V.me.y; best.z = V.me.z;
+      V.me.x = tx; V.me.y = ty; V.me.z = tz; V.me.vx = 0; V.me.vy = 0; V.me.vz = 0;
+      return "Body Swap: you and "+best.name+" traded places";
+    }
+    if(kind === "rally"){
+      V.beacons = V.beacons || [];
+      V.beacons.push({x: V.me.x, z: V.me.z, kind: "rally", team: V.team, until: t + TOTEMS.rally.dur});
+      return "Rally: a beacon boosts your side for "+TOTEMS.rally.dur+"s";
+    }
+    if(kind === "meteor"){
+      var mx = V.me.x + Math.sin(V.yaw)*8, mz = V.me.z - Math.cos(V.yaw)*8, bd2 = 1e9;
+      others().forEach(function(P){ if(P.dead || P.gone || P.team === V.team) return; var d = Math.hypot(P.x - V.me.x, P.z - V.me.z); if(d < bd2){ bd2 = d; mx = P.x; mz = P.z; } });
+      V.meteors = V.meteors || [];
+      V.meteors.push({x: mx, z: mz, team: V.team, owner: myId(), hitAt: t + 1.6});
+      return "Meteor Call: impact in 1.6s";
+    }
+    if(kind === "chaos"){ V.chaosUntil = t + TOTEMS.chaos.dur; V.chaosNext = t + 1.5; return "Chaos Core: free blasts around you for "+TOTEMS.chaos.dur+"s"; }
+    if(kind === "phoenix"){ V.phoenixUntil = t + TOTEMS.phoenix.dur; return "Phoenix: the first killing blow fails for "+TOTEMS.phoenix.dur+"s"; }
+    if(kind === "pocket"){ V.pocketUntil = t + TOTEMS.pocket.dur; return "Pocket Universe: nothing hurts, nothing hurts back, for "+TOTEMS.pocket.dur+"s"; }
+    if(kind === "fate"){
+      best = null; bd = 1e9;
+      others().forEach(function(P){ if(P.dead || P.gone) return; var d = Math.hypot(P.x - V.me.x, P.z - V.me.z); if(d < bd){ bd = d; best = P; } });
+      if(!best) return "Fate Splitter — nobody nearby to link with";
+      V.fateUntil = t + TOTEMS.fate.dur; best.fateUntil = t + TOTEMS.fate.dur; V.fateUid = best.uid;
+      return "Fate Splitter: you and "+best.name+" share every wound for "+TOTEMS.fate.dur+"s";
+    }
+    if(kind === "king"){
+      V.kingUntil = t + TOTEMS.king.dur;
+      others().forEach(function(P){ if(P.team === V.team && !P.dead && !P.gone) P.kingUntil = t + TOTEMS.king.dur; });
+      V.beacons = V.beacons || [];
+      V.beacons.push({x: V.me.x, z: V.me.z, kind: "king", team: V.team, until: t + TOTEMS.king.dur});
+      return "Kingmaker: your whole side is royalty for "+TOTEMS.king.dur+"s";
+    }
+    if(kind === "radarjam"){
+      V.jamUntil = t + TOTEMS.radarjam.dur;
+      others().forEach(function(P){ if(P.team === V.team) P.jamUntil = t + TOTEMS.radarjam.dur; });
+      return "Radar Jammer: your team vanishes from the enemy radar for "+TOTEMS.radarjam.dur+"s";
+    }
+    // ---- Wave D: Arena Disasters. The totem unleashes the map-wide hazard and
+    // the taker is just as exposed as everyone else. A Shield totem holder is the
+    // one person a disaster cannot touch (meShielded/botShielded read the window).
+    if(DISASTERS.indexOf(kind) >= 0){
+      disStart(kind, t);
+      return TOTEMS[kind].n + " — the whole arena is in it now";
+    }
     return null;
   }
   // drop slots: past the map's own packs (BASE_PACKS) sit DROP_SLOTS totem slots then
@@ -968,36 +1951,124 @@ function makeGame(host, opts){
   // the server, a mid-match joiner and the solo client. Both drop clocks reuse them
   // round-robin. (BASE_PACKS, not MAP.pickups.length: the slots append past it.)
   function dropPlan(){
-    return {base: BASE_PACKS, totems: [BASE_PACKS, BASE_PACKS + DROP_SLOTS], packs: [BASE_PACKS + DROP_SLOTS, BASE_PACKS + DROP_SLOTS + PACK_SLOTS]};
+    return {base: BASE_PACKS,
+            totems: [BASE_PACKS, BASE_PACKS + DROP_SLOTS],
+            packs: [BASE_PACKS + DROP_SLOTS, BASE_PACKS + DROP_SLOTS + PACK_SLOTS],
+            dis:   [BASE_PACKS + DROP_SLOTS + PACK_SLOTS, BASE_PACKS + DROP_SLOTS + PACK_SLOTS + DIS_SLOTS]};
   }
   function ensureDropSlots(){
     // the slot entries exist (kind "" = empty) for the whole match; drops rewrite them
     var pl = dropPlan();
-    while(MAP.pickups.length < pl.packs[1]){
+    while(MAP.pickups.length < pl.dis[1]){
       var j = MAP.pickups.length;
-      MAP.pickups.push({id: j < pl.packs[0] ? "totem-"+j : "pack-"+j, kind: "", at: [0, 0, 0]});
+      MAP.pickups.push({id: j < pl.totems[1] ? "totem-"+j : (j < pl.packs[1] ? "pack-"+j : "dis-"+j), kind: "", at: [0, 0, 0]});
     }
   }
   // the drop rng: a fresh kind and a fresh open spot from the drop counter (not the wall
   // clock — epoch-ms seeds differ only in their low bits between drops, and hashMatch's
   // /2^32 output reads the top ones, which stacked every drop on the same spot)
   var totemCount = 0, packCount = 0;
+  // Any drop (totem, loose pack, or a map pack coming back) lands on a fresh open
+  // ground spot across the arena — never a fixed pad you can camp. Seeded from the
+  // drop counter / clock, not Math.random, so a replay of the same seeds repeats.
   function dropSpot(tok){
-    var x = -17 + hashMatch(tok, 1)*34, z = -10 + hashMatch(tok, 2)*20;
-    for(var j = 0; j < 60 && FS.overlaps(MAP, x, 0.1, z, 0.3) >= 0; j++){
-      x = -17 + hashMatch(tok ^ (j*2654435761), 1)*34; z = -10 + hashMatch(tok ^ (j*2654435761), 2)*20;
+    var b = (MAP && MAP.bounds && MAP.bounds.length === 6) ? MAP.bounds : [-42, -1, -30, 42, 12, 30];
+    var pad = 2.0;
+    var x0 = b[0] + pad, z0 = b[2] + pad;
+    var w = Math.max(1, (b[3] - pad) - x0), d = Math.max(1, (b[5] - pad) - z0);
+    var x = x0 + hashMatch(tok, 1)*w, z = z0 + hashMatch(tok, 2)*d;
+    for(var j = 0; j < 60 && FS.overlaps(MAP, x, 0.1, z, 0) >= 0; j++){
+      var s2 = (tok + (j+1)*2654435761) >>> 0;
+      x = x0 + hashMatch(s2, 1)*w; z = z0 + hashMatch(s2, 2)*d;
     }
     return [x, 0, z];
+  }
+  // A disaster hazard spot (toxic cloud, sinkhole pit, impact mark) hashed from the
+  // disaster's own frozen seed. Twin: dis_spot in backend-rs/src/strike.rs. The FX
+  // paints THIS point and the judge damages THIS point — one geometry, both sides.
+  function disSpot(seed, salt){
+    seed = seed|0; salt = salt|0;
+    var b = (MAP && MAP.bounds && MAP.bounds.length === 6) ? MAP.bounds : [-42, -1, -30, 42, 12, 30];
+    var pad = 2.0;
+    var x0 = b[0] + pad, z0 = b[2] + pad;
+    var w = Math.max(1, (b[3] - pad) - x0), d = Math.max(1, (b[5] - pad) - z0);
+    var x = x0 + hashMatch(seed, salt)*w, z = z0 + hashMatch(seed, salt + 100)*d;
+    for(var j = 0; j < 60 && FS.overlaps(MAP, x, 0.1, z, 0) >= 0; j++){
+      var s2 = (seed + (j+1)*2654435761) >>> 0;
+      x = x0 + hashMatch(s2, salt)*w; z = z0 + hashMatch(s2, salt + 100)*d;
+    }
+    return [x, 0, z];
+  }
+  // Sticky hazard spots near live bodies so a disaster can actually connect: the first
+  // few sit on players (offset by the seed, never Math.random), the rest scatter.
+  // Frozen at disStart — the clouds you see are the clouds that hurt.
+  function disZonesNear(seed, n, pts){
+    var out = [], i, p, s;
+    for(i = 0; i < n; i++){
+      if(pts && pts.length && i < pts.length + 2){
+        p = pts[i % pts.length];
+        out.push([
+          p[0] + (hashMatch(seed|0, 200 + i) - 0.5) * 5,
+          p[1] + (hashMatch(seed|0, 300 + i) - 0.5) * 5
+        ]);
+      } else {
+        s = disSpot(seed, 40 + i);
+        out.push([s[0], s[2]]);
+      }
+    }
+    return out;
+  }
+  // live bodies as [x,z] — me plus every bot/remote still in the round
+  function liveSpots(){
+    var pts = [];
+    if(!V.dead) pts.push([V.me.x, V.me.z]);
+    others().forEach(function(P){
+      if(P.dead || P.gone) return;
+      pts.push([P.x, P.z]);
+    });
+    return pts;
+  }
+  // put a live pack/totem slot somewhere new and repaint its mesh
+  function placeDrop(idx, tok){
+    if(!MAP || !MAP.pickups[idx]) return;
+    MAP.pickups[idx].at = dropSpot(tok);
+    if(!R3) return;
+    var k = MAP.pickups[idx].kind;
+    if(k === "health" || k === "ammo") R3.addPack(idx, MAP.pickups[idx]);
+    else if(TOTEMS[k]) R3.addTotem(idx, MAP.pickups[idx]);
   }
   function totemSpawn(seed, canMole){
     ensureDropSlots();
     var pl = dropPlan();
     var tok = ((seed ^ (totemCount = (totemCount + 1)) * 0x9e3779b9) >>> 0);
-    var toks = canMole ? ["mole", "freeze", "decoy", "cloak", "shield", "wings", "leap", "speed", "teleport"]
-                       : ["freeze", "decoy", "cloak", "shield", "wings", "leap", "speed", "teleport"];
+    var ALL = ["mole","freeze","decoy","cloak","shield","wings","leap","speed","teleport",
+      "rift","mirror","gravflip","rewind","shock","magnet","chain","trap","mark","blink","bubble",
+      "wallrun","secondwind","fakedeath","ghost","cluster","overclock","ricochet","infchamber",
+      "bodyswap","rally","meteor","chaos","phoenix","pocket","fate","king","radarjam"];
+    var toks = canMole ? ALL : ALL.filter(function(k){ return k !== "mole"; });
+    // personal roster only — Disaster totems live in disasterSpawn() on their own ring
     var kind = toks[((tok % toks.length) + toks.length) % toks.length];
     var idx = pl.totems[0] + (totemCount - 1) % DROP_SLOTS;
-    MAP.pickups[idx] = {id: kind+"-"+((tok >>> 0)%99991), kind: kind, at: dropSpot(tok)};
+    // Hot Drop / Cursed Drop: same scatter, a visible tag so the client can beam it
+    var roll = ((tok >>> 16) % 100);
+    var tag = roll < 12 ? "hot" : (roll < 27 ? "cursed" : "");
+    MAP.pickups[idx] = {id: kind+"-"+((tok >>> 0)%99991), kind: kind, at: dropSpot(tok), tag: tag};
+    V.cursed = V.cursed || {};
+    V.cursed[idx] = tag === "cursed";
+    return idx;
+  }
+  // Disaster totems: their own ring, their own clock, never mixed into the personal
+  // roster. Tagged "dis" so the beacon reads as an arena-wide event, not a power-up.
+  var disCount = 0;
+  function disasterSpawn(seed){
+    ensureDropSlots();
+    var pl = dropPlan();
+    var tok = ((seed ^ (disCount = (disCount + 1)) * 0x9e3779b9) >>> 0);
+    var kind = DISASTERS[disKind(seed, 4, DISASTERS.length)];
+    var idx = pl.dis[0] + (disCount - 1) % DIS_SLOTS;
+    MAP.pickups[idx] = {id: kind+"-"+((tok >>> 0)%99991), kind: kind, at: dropSpot(tok), tag: "dis"};
+    V.cursed = V.cursed || {};
+    V.cursed[idx] = false;
     return idx;
   }
   function packSpawn(seed){
@@ -1014,7 +2085,7 @@ function makeGame(host, opts){
     if(P.freezeUntil && t < P.freezeUntil) return;   // the Paralyser pins a bot in place
     // -- decide a goal (at most every BOT_THINK) --
     if(t >= ai.thinkAt){
-      var foes = botEnemies(P), pick = null, pickPos = null, pool = [], wts = [], wt = 0, cur = ai.target;
+      var foes = botEnemies(P), pick = null, pickPos = null, pickY = 0, pool = [], wts = [], wt = 0, cur = ai.target;
       // a stable handle for "me" this tick, so a bot chasing the player keeps the same object
       // to compare targets against — a fresh wrapper every call would reset its lock every frame
       for(i = 0; i < foes.length; i++){ if(foes[i].__me){ foes[i].__uid = "me"; } else foes[i].__uid = foes[i].uid; }
@@ -1023,7 +2094,10 @@ function makeGame(host, opts){
         // a shielded glider isn't worth a bullet — bots hold fire until the canopy's packed
         if(V2.__me ? meShielded(t) : botShielded(V2, t)) continue;
         var dd = Math.hypot(V2.x - x, (V2.y - P.ai.body.y) || 0, V2.z - z);  // 3D: a ledge above is genuinely far
-        if(dd <= BOT_RANGE && los([x, P.ai.body.y + FS.EYE, z], [V2.x, V2.y + FS.EYE, V2.z])){
+        // a sandstorm arena event halves how far a bot can see (the dust is up)
+        var botRange = ((V.arenaEvent === "storm" && t < (V.arenaEventUntil || 0))
+          || (V.disaster === "sandstorm" && disLive(t))) ? STORM_RANGE : BOT_RANGE;
+        if(dd <= botRange && los([x, P.ai.body.y + FS.EYE, z], [V2.x, V2.y + FS.EYE, V2.z])){
           // every visible foe is a candidate, nearer likelier; whoever we already chase gets a bonus
           var w2 = 1/(0.2 + dd) * (cur && foes[i].__uid === cur.__uid ? 2.2 : 1);
           pool.push(V2); wts.push(w2); wt += w2;
@@ -1033,33 +2107,64 @@ function makeGame(host, opts){
         var roll = FS.mb32((P.slot*131 + ((t*1000)|0)) & 0xFFFF)*wt;
         for(i = 0; i < pool.length; i++){ roll -= wts[i]; if(roll <= 0){ pick = pool[i]; break; } }
         if(!pick) pick = pool[pool.length - 1];
-        pickPos = [pick.x, pick.z];
+        pickPos = [pick.x, pick.z]; pickY = pick.y || 0;
       }
       ai.thinkAt = t + BOT_THINK;
       if(pick){
         var same = cur && pick.__uid === cur.__uid;
         if(!same) ai.seenAt = t; ai.target = pick;
         ai.targetPos = pickPos.slice();        // remember where I last saw them, for a chase
-        ai.lostPos = null;
+        ai.targetY = pickY;
+        ai.lostY = pickY; ai.lostPos = null; ai.lostUntil = 0;
       } else {
-        if(ai.target){ ai.lostPos = ai.targetPos ? ai.targetPos.slice() : null; ai.target = null; ai.seenAt = null; }
+        if(ai.target){
+          ai.lostPos = ai.targetPos ? ai.targetPos.slice() : null;
+          ai.lostY = ai.targetY != null ? ai.targetY : 0;
+          ai.lostUntil = t + 10.0;             // hunt the trail longer (Wave C)
+          ai.target = null; ai.seenAt = null;
+        }
       }
-      if(!ai.target){
-        // hunt: walk to where the last target went; only fall back to patrol once that's searched
-        if(ai.lostPos && Math.hypot(ai.lostPos[0] - x, ai.lostPos[1] - z) > 2.0){
-          ai.goal = ai.lostPos.slice();
+      // a pending sidestep owns the goal — the next think tick must not yank it back
+      // into the wall it is peeling off of
+      if(ai.slideUntil && t < ai.slideUntil){
+        // keep ai.goal
+      } else if(!ai.target){
+        // hunt: walk the room/passage graph to where the target vanished, then search
+        if(ai.lostPos && t < ai.lostUntil){
+          var near = Math.hypot(ai.lostPos[0] - x, ai.lostPos[1] - z) <= 2.0;
+          if(!near){
+            ai.goal = mapNavNext(x, z, ai.lostPos[0], ai.lostPos[1], P.ai.body.y, ai.lostY != null ? ai.lostY : 0);
+          } else {
+            // arrived: sweep a little around the last sighting (deterministic per bot)
+            var ang = ((P.slot|0)*2.399 + t*0.7), rad = 2.5 + ((P.slot|0)%3);
+            ai.goal = mapNavNext(x, z, ai.lostPos[0] + Math.cos(ang)*rad, ai.lostPos[1] + Math.sin(ang)*rad, P.ai.body.y, ai.lostY != null ? ai.lostY : 0);
+            if(t >= ai.lostUntil - 0.25) ai.lostPos = null;
+          }
         } else {
-          ai.lostPos = null;
-          // push toward the middle of the map when idle, not the spawn corner
-          var w = WAYPOINTS[ai.wpi % WAYPOINTS.length];
-          if(Math.hypot(x - w[0], z - w[1]) < 1.5) ai.wpi++;
-          ai.goal = w.slice();
+          ai.lostPos = null; ai.lostUntil = 0;
+          // walk the room/passage graph — never aim straight through adobe
+          var wps = mapWps();
+          if(wps.length){
+            var w = wps[(ai.wpi|0) % wps.length];
+            var wStand = w[2] != null ? w[2] : 0;
+            if(Math.hypot(x - w[0], z - w[1]) < 1.5 && Math.abs((P.ai.body.y|0) - wStand) < 0.7) ai.wpi++;
+            w = wps[(ai.wpi|0) % wps.length];
+            // if a squad-mate already owns this stop, take the next one so they fan out
+            var guard = 0;
+            while(guard++ < 4 && others().some(function(Q){
+              return Q !== P && Q.ai && Q.ai.goal && Math.hypot(Q.ai.goal[0] - w[0], Q.ai.goal[1] - w[1]) < 1.2;
+            })){
+              ai.wpi = (ai.wpi|0) + 1;
+              w = wps[(ai.wpi|0) % wps.length];
+            }
+            ai.goal = mapNavNext(x, z, w[0], w[1], P.ai.body.y, (w[2] != null ? w[2] : 0));
+          }
         }
       } else {
         // stalkers close on a seen target — do NOT freeze at 18 m and wait under fire like a
         // shooting-gallery duck. Easy/Normal hold ground until ~18 m; Hard presses to ~10 m.
         var pressTo = diffFor(P).id === "hard" ? 10 : diffFor(P).id === "sweaty" ? 6 : 18;
-        ai.goal = pickPos && Math.hypot(pickPos[0] - x, pickPos[1] - z) > pressTo ? pickPos.slice() : null;
+        ai.goal = pickPos && Math.hypot(pickPos[0] - x, pickPos[1] - z) > pressTo ? mapNavNext(x, z, pickPos[0], pickPos[1], P.ai.body.y, pickY || 0) : null;
       }
     }
     // -- turn and aim: track the target's current position, not the last think tick's --
@@ -1082,8 +2187,14 @@ function makeGame(host, opts){
       if(t - ai.errAt >= BOT_THINK){
         ai.errAt = t;
         var seed = ((t*1000)|0) & 0xFFFF;
-        ai.err_y = (FS.mb32(seed)*2 - 1)*BOT_AIM*df.aim*180/Math.PI;
-        ai.err_p = (FS.mb32((seed + 7919) & 0xFFFF)*2 - 1)*BOT_AIM*df.aim*180/Math.PI;
+        // EMP Apocalypse: electronic sights go haywire, so bots spray.
+        // Hurricane: the wind shreds their sights too ("wild aim").
+        // A bolt / flash also blinds them (×4 spray).
+        var aimX = (V.disaster === "emp" && disLive(t)) ? 3
+                 : (V.disaster === "hurricane" && disLive(t)) ? 2 : 1;
+        if(P.blindUntil && t < P.blindUntil) aimX = Math.max(aimX, 1) * 4;
+        ai.err_y = (FS.mb32(seed)*2 - 1)*BOT_AIM*df.aim*aimX*180/Math.PI;
+        ai.err_p = (FS.mb32((seed + 7919) & 0xFFFF)*2 - 1)*BOT_AIM*df.aim*aimX*180/Math.PI;
         // close-range mercy, by distance: inside df.cqc metres the aim is pushed PAST the
         // target's angular size (a body spans several degrees up close), so the shot
         // physically cannot hit; fades out by cqc+12 m. Easy whiffs point-blank,
@@ -1118,7 +2229,7 @@ function makeGame(host, opts){
           var ldir = FS.dirOf(aim_y, clamp(aim_p, -89, 89));
           spawnMissile(t, [x, P.ai.body.y + FS.EYE, z], ldir, P);
           E.sfx("shot", {w: 3});
-          if(P.mag[3] <= 0 && (P.res[3]|0) > 0) P.reloadAt = t + FS.LAUNCH.reload;
+          if(P.mag[3] <= 0 && (P.res[3]|0) > 0) P.reloadAt = t + FS.LAUNCH.reload * ((V.disaster === "absolutezero" && disLive(t)) ? 1.5 : 1);
         }
       } else if(clearNow && ai.seenAt != null && t - ai.seenAt >= BOT_REACT*df.react && t >= ai.fireAt + Math.max(wp.interval, wp.interval*(df.rate || 1)) - 0.01 && P.mag[P.w] > 0 && !P.reloadAt){
         ai.fireAt = t; P.mag[P.w]--; P.n++; P.protUntil = 0;
@@ -1126,9 +2237,9 @@ function makeGame(host, opts){
         var eyeAt = [x, P.ai.body.y + FS.EYE, z];
         var reach = FS.rayMap(MAP, eyeAt, dir, wp.range);
         botJudge(P, t, eyeAt, dir, reach);
-        if(P.mag[P.w] <= 0 && P.res[P.w] > 0 && !P.reloadAt) P.reloadAt = t + wp.reload;
+        if(P.mag[P.w] <= 0 && P.res[P.w] > 0 && !P.reloadAt) P.reloadAt = t + wp.reload * ((V.disaster === "absolutezero" && disLive(t)) ? 1.5 : 1);
       }
-      if(clearNow) ai.targetPos = [txNow, tzNow];  // keep the trail fresh while they're still exposed
+      if(clearNow){ ai.targetPos = [txNow, tzNow]; ai.targetY = tyNow; }
     } else if(ai.goal){
       var want_yaw2 = Math.atan2(ai.goal[0] - x, -(ai.goal[1] - z))*180/Math.PI;
       var step2 = BOT_TURN*diffFor(P).turn*180/Math.PI*(1/60);
@@ -1147,6 +2258,28 @@ function makeGame(host, opts){
       var dx = ai.goal[0] - x, dz = ai.goal[1] - z, ln2 = Math.hypot(dx, dz);
       ai.wx = ln2 > 0.3 ? dx/ln2 : 0; ai.wz = ln2 > 0.3 ? dz/ln2 : 0;
     } else { ai.wx = 0; ai.wz = 0; }
+    // stuck against a wall/corner? aim a sidestep goal and hop the patrol
+    if(!ai.dropUntil || t >= ai.dropUntil){
+      var moved = Math.hypot(x - (ai.stuck_x || 0), z - (ai.stuck_z || 0));
+      if(Math.abs(ai.wx || 0) + Math.abs(ai.wz || 0) > 0.1){
+        if(!ai.stuckAt){ ai.stuckAt = t; ai.stuck_x = x; ai.stuck_z = z; }
+        else if(moved < 0.12 && t - ai.stuckAt > 0.40){
+          // a fixed side per bot: two mates peeling off the same wall go opposite ways
+          var side = ((P.slot|0) % 2) ? 1 : -1;
+          var ox = ai.wx || 0, oz = ai.wz || 0;
+          var sx2 = x + (-oz)*side*3.5, sz2 = z + ox*side*3.5;
+          ai.goal = [sx2, sz2];
+          ai.slideUntil = t + 1.1;   // hold this peel through the next think ticks
+          var lnS = Math.hypot(sx2 - x, sz2 - z);
+          ai.wx = lnS > 0.3 ? (sx2 - x)/lnS : 0;
+          ai.wz = lnS > 0.3 ? (sz2 - z)/lnS : 0;
+          ai.stuckAt = t; ai.stuck_x = x; ai.stuck_z = z;
+          ai.wpi = (ai.wpi|0) + 1;   // always hop the patrol graph (same as the Rust peel)
+        }
+      } else {
+        ai.stuckAt = 0; ai.stuck_x = x; ai.stuck_z = z;
+      }
+    }
     P.yaw = ai.aim_y*Math.PI/180; P.pitch = ai.aim_p*Math.PI/180;
     // write-through to the snap-sampled mesh position
     P.snaps.length = 0; P.snaps.push({t: t, x: ai.body.x, y: ai.body.y, z: ai.body.z, yaw: P.yaw, pitch: P.pitch});
@@ -1162,11 +2295,43 @@ function makeGame(host, opts){
       var ai = P.ai, acc = dt;
       if(ai.dropUntil && t < ai.dropUntil){
         var floor = FS.topUnder(MAP, ai.body.x, ai.body.z, ai.body.y);
+        if(floor == null) floor = -1e9;   // a gap under the canopy: keep sinking into the void clock
         ai.body.y = Math.max(floor, ai.body.y - FS.DROP_SINK*dt);
-        if(ai.body.y <= floor){ ai.dropUntil = 0; P.protUntil = t + 1.5; }
+        if(ai.body.y <= floor && floor > -1e8){ ai.dropUntil = 0; P.protUntil = t + 1.5; }
       } else {
         if(ai.dropUntil) ai.dropUntil = 0;
-        while(acc >= STEP){ FS.move(MAP, ai.body, ai.wx || 0, ai.wz || 0, false, STEP); acc -= STEP; }
+        var bG = (P.gravUntil && t < P.gravUntil) ? 0.42 : 1;
+        var bJ = (P.wallrunUntil && t < P.wallrunUntil) ? 1.2 : 1;
+        var botTop = (ai.body && P.slowUntil && t < P.slowUntil) ? DD_SLOW_MULT : 1;
+        while(acc >= STEP){ FS.move(MAP, ai.body, ai.wx || 0, ai.wz || 0, false, STEP, false, botTop, bJ, bG); acc -= STEP; }
+        // Void rescue for bots too — same 10s clock, same canopy drop
+        if(FS.inVoid(MAP, ai.body.x, ai.body.y, ai.body.z)){
+          if(!ai.voidAt) ai.voidAt = t;
+          else if(t - ai.voidAt >= FS.VOID_SECS){
+            ai.voidAt = 0;
+            var dspB = dropOK() ? randomDropSpot(t, P.slot, P.team) : botSpawnFor(P);
+            var spB = dspB.slice(); spB[1] = dropOK() ? FS.DROP_HEIGHT : spB[1];
+            botPlace(P, spB, t);
+          }
+        } else if(ai.voidAt){ ai.voidAt = 0; }
+        // Hurricane: the walking wind column shoves bots too (everyone suffers — see me)
+        if(V.disaster === "hurricane" && disLive(t) && !botShielded(P, t)){
+          var spanHB = Math.max(0.1, (V.disasterUntil - V.disasterWarnAt));
+          var uHB = clamp((t - V.disasterWarnAt) / spanHB, 0, 1);
+          var bHB = MAP.bounds;
+          var wxHB = (bHB[0] + hashMatch(V.disasterSeed|0, 21) * (bHB[3] - bHB[0])) * (1 - uHB) +
+                     (bHB[0] + hashMatch(V.disasterSeed|0, 23) * (bHB[3] - bHB[0])) * uHB;
+          var wzHB = (bHB[2] + hashMatch(V.disasterSeed|0, 22) * (bHB[5] - bHB[2])) * (1 - uHB) +
+                     (bHB[2] + hashMatch(V.disasterSeed|0, 24) * (bHB[5] - bHB[2])) * uHB;
+          var ddxHB = ai.body.x - wxHB, ddzHB = ai.body.z - wzHB, ddHB = Math.hypot(ddxHB, ddzHB);
+          if(ddHB < DD_WIND_R){
+            var lnHB = Math.max(0.05, ddHB);
+            var shoveHB = DD_WIND_PUSH * (1 - ddHB / DD_WIND_R) * dt;
+            ai.body.x += (ddxHB / lnHB) * shoveHB;
+            ai.body.z += (ddzHB / lnHB) * shoveHB;
+            P.slowUntil = Math.max(P.slowUntil|0, t + DD_WIND_SLOW);   // loose footing
+          }
+        }
       }
       P.x = ai.body.x; P.y = ai.body.y; P.z = ai.body.z; P.moving = 1;
     });
@@ -1210,6 +2375,12 @@ function makeGame(host, opts){
   }
   function startBotMatch(){
     if(!MAP) return;
+    // honour the menu's Map select even if the fetch is still in flight
+    var want = mapIdOf();
+    if(MAP.id !== want){
+      loadMap(want).then(function(){ if(V.alive) startBotMatch(); }, function(){ if(V.alive){ V.note = "Couldn't load that map."; renderMenu(); } });
+      return;
+    }
     var svb = ssave(), ts = TEAM_SIZES.indexOf(svb.tsize|0) >= 0 ? svb.tsize|0 : 3,
         mins = clamp(Math.round(svb.minutes|0 || 3), 1, 60), lim = clamp(Math.round(svb.kills|0 || 10), 1, 500);
     resetMatch(); V.mode = "bots"; V.off = null; V.k = null; V.watch = null;
@@ -1218,6 +2389,12 @@ function makeGame(host, opts){
     // (totems every TOTEM_GAP, health/ammo packs every PACK_GAP — each regardless of
     // whether the previous drop was taken). Practice keeps the range's fixed packs.
     V.items = MAP.pickups.map(function(){ return 0; }); V.itemBack = null;
+    // scatter the map's own pack pads too — they stay dark until a drop/refill lights one,
+    // and when they come back it must not be a pad you can camp
+    var bseed = ((((now()*1000)|0) ^ 0x2545F491) >>> 0);
+    for(var bi = 0; bi < BASE_PACKS && bi < MAP.pickups.length; bi++){
+      MAP.pickups[bi].at = dropSpot((bseed + (bi+1)*2654435761) >>> 0);
+    }
     ensureDropSlots();
     while(V.items.length < MAP.pickups.length) V.items.push(0);   // the drop slots exist, empty, all match
     var s = botSpawnFor({team: 0, slot: 0});
@@ -1227,7 +2404,7 @@ function makeGame(host, opts){
     for(var e = 1; e <= ts; e++) addBot(1, e, t);
     renderBoard();
     V.phase = "warmup"; V.goAt = t + 3; V.endsAt = V.goAt + V.minutes*60;
-    V.totemAt = t + 3; V.packAt = t + 3; V.kinds = [];  // set at warmup; the round's start re-anchors both (+8 s / +6 s)
+    V.totemAt = t + 3; V.packAt = t + 3; V.disAt = t + 3; V.kinds = [];  // set at warmup; the round's start re-anchors them
     showStage(true); if(R3) R3.buildMap();
     // straight in: the Play click is the gesture pointer lock needs, so grab the mouse now
     // instead of leaving the player on the "click here to play" pause card
@@ -1257,6 +2434,12 @@ function makeGame(host, opts){
   function applyView(view){
     V.round = view; V.gotView = true;
     if(V.mode !== "mp" || !view) { renderMenu(); return; }
+    // snap to the roster's map before anything reads MAP geometry
+    var want = (view.map && MAP_FILES[view.map]) ? view.map : "dockyard";
+    if(!MAP || MAP.id !== want){
+      loadMap(want).then(function(){ if(V.alive) applyView(view); }, function(){ if(V.alive){ V.note = "Couldn't load the arena."; renderMenu(); } });
+      return;
+    }
     V.minutes = view.minutes|0 || 5; V.limit = view.limit|0 || 30; V.tsize = view.tsize|0 || 2;
     if(Array.isArray(view.scores)) V.scores = [view.scores[0]|0, view.scores[1]|0];
     if(view.phase === "idle"){ V.watch = null; if(V.phase !== "idle"){ resetMatch(); showStage(false); } V.results = view.results || V.results; renderMenu(); return; }
@@ -1292,10 +2475,20 @@ function makeGame(host, opts){
     while(V.items.length < MAP.pickups.length) V.items.push(0);
     V.kinds = Array.isArray(view.kinds) ? view.kinds.slice() : [];
     while(V.kinds.length < MAP.pickups.length) V.kinds.push("");
-    // a joiner mid-round can't rebuild meshes for live drops from the view alone (spots
-    // aren't in it), so the drop slots start dark; the next totem/pack event lights them
-    for(var di = dropPlan().totems[0]; fresh && di < MAP.pickups.length; di++){
-      V.items[di] = 0;
+    // live drop / pack spots ride along as cm/100 so a joiner paints them where they
+    // actually sit (they are re-rolled every drop and every map-pack refill)
+    if(Array.isArray(view.spots)){
+      for(var si = 0; si < view.spots.length && si < MAP.pickups.length; si++){
+        var sp = view.spots[si];
+        if(Array.isArray(sp) && MAP.pickups[si]){
+          MAP.pickups[si].at = [(+sp[0] || 0)/100, (+sp[1] || 0)/100, (+sp[2] || 0)/100];
+          MAP.pickups[si].kind = V.kinds[si] || MAP.pickups[si].kind || "";
+          if(R3 && V.items[si]){
+            if(TOTEMS[MAP.pickups[si].kind]) R3.addTotem(si, MAP.pickups[si]);
+            else if(MAP.pickups[si].kind === "health" || MAP.pickups[si].kind === "ammo") R3.addPack(si, MAP.pickups[si]);
+          }
+        }
+      }
     }
     if(view.phase === "warmup"){ V.phase = "warmup"; V.goAt = now() + (view.goInMs|0)/1000; V.endsAt = V.goAt + V.minutes*60; }
     else if(view.phase === "round"){ V.phase = "round"; V.endsAt = now() + (view.msLeft|0)/1000; }
@@ -1324,15 +2517,16 @@ function makeGame(host, opts){
       var K = V.players[m.k], D = V.players[m.v];
       if(K) K.kills = m.kills|0; if(D){ D.deaths = m.deaths|0; D.dead = true; D.deadAt = t; }
       if(Array.isArray(m.scores)) V.scores = [m.scores[0]|0, m.scores[1]|0];
-      V.feed.unshift({k: K ? K.name : (m.k === myId() ? "You" : "?"), kt: K ? K.team : V.team,
+      V.feed.unshift({k: K ? K.name : (m.k === myId() ? "You" : (m.dis ? "The map" : "?")), kt: K ? K.team : V.team,
         v: D ? D.name : (m.v === myId() ? "You" : "?"), vt: D ? D.team : V.team, w: m.w|0, hs: !!m.hs, at: t,
-        mine: m.k === myId() || m.v === myId()});
+        dis: m.dis ? String(m.dis) : "", mine: m.k === myId() || m.v === myId()});
       if(m.k === myId()) E.sfx("hit");
       if(V.feed.length > 5) V.feed.length = 5;
       if(m.v === myId()){ V.dead = true; V.deadAt = t; V.deaths = m.deaths|0; V.hp = 0;
         V.wingsUntil = 0; V.leapUntil = 0; V.speedUntil = 0;   // a death pops the movement totems too
         if(K && K.uid !== myId()) snapKillCam(K, m.w|0, !!m.hs);
-        say((K ? K.name : "Someone")+" got you. Respawning in "+RESPAWN+" seconds."); }
+        if(!K && m.dis) say((TOTEMS[m.dis] ? TOTEMS[m.dis].n : "A disaster")+" got you. Respawning in "+RESPAWN+" seconds.");
+        else say((K ? K.name : "Someone")+" got you. Respawning in "+RESPAWN+" seconds."); }
       if(m.k === myId()){ V.kills = m.kills|0; say("You got "+(D ? D.name : "someone")+(m.hs ? " with a headshot" : "")+". "+TEAMS[0].n+" "+V.scores[0]+" — "+V.scores[1]+" "+TEAMS[1].n+"."); }
       renderFeed(); renderBoard(); return;
     }
@@ -1340,6 +2534,7 @@ function makeGame(host, opts){
       var S = V.players[m.user];
       if(m.user === myId()){
         placeMe((+m.x || 0)/100, (+m.y || 0)/100, (+m.z || 0)/100, (+m.r || 0)/100); V.life = m.e|0; V.dead = false; V.hp = 100; V.killCam = null;
+        V.voidAt = 0;
         if(m.drop && dropOK()){ V.dropUntil = t + FS.DROP_TIME; V.me.g = false; }
         fullAmmo(); center.classList.add("hidden"); say("You're back in.");
       } else if(S){ S.dead = false; S.snaps.length = 0; S.last = -1; S.x = (+m.x || 0)/100; S.y = (+m.y || 0)/100; S.z = (+m.z || 0)/100; S.yaw = (+m.r || 0)*Math.PI/18000; S.hp = 100; }
@@ -1362,6 +2557,7 @@ function makeGame(host, opts){
       feedItem(pname, picker ? picker.team : V.team, knd, t);
       if(m.user === myId()){
         V.hp = m.hp|0; if(Array.isArray(m.res)) V.res = m.res.map(function(n){ return n|0; });
+        if(V.cursed && V.cursed[m.i|0] && TOTEMS[knd]) say("Cursed Drop: -15 hp");
         if(knd === "health") say("Health pack: "+V.hp);
         else if(knd === "ammo") say("Ammo pack");
         else if(TOTEMS[knd]){
@@ -1372,6 +2568,33 @@ function makeGame(host, opts){
           if(knd === "wings"){ V.wingsUntil = t + TOTEMS.wings.dur; }
           if(knd === "leap"){ V.leapUntil = t + TOTEMS.leap.dur; }
           if(knd === "speed"){ V.speedUntil = t + TOTEMS.speed.dur; }
+          // Wave C local clocks (the server judged the effect; this is the HUD window)
+          if(knd === "gravflip") V.gravUntil = t + TOTEMS.gravflip.dur;
+          if(knd === "magnet") V.magnetUntil = t + TOTEMS.magnet.dur;
+          if(knd === "wallrun") V.wallrunUntil = t + TOTEMS.wallrun.dur;
+          if(knd === "overclock") V.overclockUntil = t + TOTEMS.overclock.dur;
+          if(knd === "infchamber") V.infUntil = t + TOTEMS.infchamber.dur;
+          if(knd === "fakedeath") V.fakeUntil = t + TOTEMS.fakedeath.dur;
+          if(knd === "pocket") V.pocketUntil = t + TOTEMS.pocket.dur;
+          if(knd === "phoenix") V.phoenixUntil = t + TOTEMS.phoenix.dur;
+          if(knd === "chaos") V.chaosUntil = t + TOTEMS.chaos.dur;
+          if(knd === "rally") V.rallyUntil = t + TOTEMS.rally.dur;
+          if(knd === "king") V.kingUntil = t + TOTEMS.king.dur;
+          if(knd === "fate") V.fateUntil = t + TOTEMS.fate.dur;
+          if(knd === "radarjam") V.jamUntil = t + TOTEMS.radarjam.dur;
+          if(knd === "rewind") V.secondWind = true;
+          if(knd === "secondwind") V.secondWind = true;
+          if(knd === "shock"){
+            // MP: the server already judged the knock; this is the visual the taker sees
+            V.rings = V.rings || [];
+            V.rings.push({x: V.me.x, y: (V.me.y || 0) + 0.08, z: V.me.z, at: t, r: 8, dur: 0.55});
+            if(R3 && R3.ring) R3.ring(V.me.x, (V.me.y || 0) + 0.08, V.me.z, 8, 0.55, t);
+          }
+          if(knd === "chain") V.chainLeft = (V.chainLeft|0) + 2;
+          if(knd === "blink") V.blinkLeft = (V.blinkLeft|0) + 3;
+          if(knd === "ghost") V.ghostLeft = (V.ghostLeft|0) + 3;
+          if(knd === "cluster") V.clusterLeft = (V.clusterLeft|0) + 5;
+          if(knd === "ricochet") V.ricoLeft = (V.ricoLeft|0) + 3;
           if(knd === "teleport" && m.tx != null && m.tz != null){
             // the server moved us: snap the prediction to where it put us (ground, standing)
             placeMe((+m.tx)/100, 0, (+m.tz)/100, null);
@@ -1383,13 +2606,90 @@ function makeGame(host, opts){
       }
       return;
     }
+    if(m.ev === "cheat"){
+      say("Second Wind / Phoenix: a killing blow just failed");
+      return;
+    }
+    if(m.ev === "rift"){
+      // a linked pair of openings the server just planted (MP). Solo plants them in
+      // totemApply; both feeds the same V.rifts list the rocket step teleports through.
+      V.rifts = V.rifts || [];
+      var rx = (+m.x || 0)/100, rz = (+m.z || 0)/100, rx2 = (+m.x2 || 0)/100, rz2 = (+m.z2 || 0)/100;
+      var rfMP = {x: rx, z: rz, x2: rx2, z2: rz2, until: t + TOTEMS.rift.dur};
+      V.rifts.push(rfMP);
+      if(R3 && R3.addRift) R3.addRift(rfMP);
+      say("Rift opened");
+      return;
+    }
+    if(m.ev === "fused"){
+      // two unclaimed totems merged into one stronger drop
+      var fi = m.i|0, fk = String(m.kind || "chaos");
+      if(!TOTEMS[fk]) return;
+      ensureDropSlots();
+      if(MAP.pickups[fi]){
+        V.kinds = V.kinds || [];
+        while(V.kinds.length < MAP.pickups.length) V.kinds.push("");
+        V.kinds[fi] = fk;
+        MAP.pickups[fi].kind = fk;
+        MAP.pickups[fi].id = fk + "-" + fi;
+        if(R3) R3.addTotem(fi, MAP.pickups[fi]);
+      }
+      say("Totem Fusion: a Chaos Core just formed");
+      return;
+    }
+    if(m.ev === "disaster"){
+      var dk = String(m.kind || "");
+      if(dk === "clear"){ disClear(t); say("Disaster over"); return; }
+      if(!TOTEMS[dk]) return;
+      V.disaster = dk;
+      V.disasterWarnAt = t + ((+m.warn || 2000)/1000);
+      V.disasterUntil = t + ((+m.warn || 2000)/1000) + ((+m.dur || 10000)/1000);
+      V.disasterHitAt = V.disasterWarnAt;
+      V.disasterRing = 0; V.disasterHit = {}; V.disasterMarks = []; V.disasterMarkK = 0;
+      flashCenter("⚠ "+TOTEMS[dk].n.toUpperCase()+" INCOMING");
+      say(TOTEMS[dk].n + " incoming — everyone is in it");
+      if(R3 && R3.disaster) R3.disaster(dk, true);
+      return;
+    }
+    if(m.ev === "crate"){
+      // a Contested Capture crate landed somewhere on the deck
+      V.captureAt = [(+m.x || 0)/100, (+m.z || 0)/100];
+      V.captureProg = 0;
+      say("Capture crate dropped — stand on it for 3s to claim it");
+      return;
+    }
+    if(m.ev === "captured"){
+      var ci = m.i|0;
+      var cu = V.slots && V.slots[ci];
+      var cP = cu ? V.players[cu] : null;
+      V.captureAt = null; V.captureProg = 0;
+      say((cP ? cP.name : "Someone") + " claimed the capture crate");
+      return;
+    }
+    if(m.ev === "event"){
+      var ek = String(m.kind || "");
+      if(ek === "clear"){
+        V.arenaEvent = ""; V.arenaEventUntil = 0;
+        say("Arena event over");
+      } else {
+        var ew = (+m.warn || 0)/1000, ed = (+m.dur || 0)/1000;
+        V.arenaEvent = ek;
+        V.arenaEventUntil = t + ew + ed;
+        var eNames = {lowg: "Low Gravity", storm: "Sandstorm", nosprint: "No Sprint"};
+        say((eNames[ek] || ek) + " in " + Math.ceil(ew) + "s — lasts " + Math.ceil(ed) + "s");
+      }
+      return;
+    }
     if(m.ev === "totem"){
       // a fresh totem the server dropped (a recycled slot): same bookkeeping the solo
       // spawner does — rewrite the slot, kill any pending refill, show the new gem
       var ti = m.i|0, tk = String(m.kind || "");
       if(!TOTEMS[tk]) return;
       ensureDropSlots();
-      MAP.pickups[ti] = {id: tk+"-"+ti, kind: tk, at: [(+m.x || 0)/100, 0, (+m.z || 0)/100]};
+      var ttag = String(m.tag || "");
+      MAP.pickups[ti] = {id: tk+"-"+ti, kind: tk, at: [(+m.x || 0)/100, 0, (+m.z || 0)/100], tag: ttag};
+      V.cursed = V.cursed || {};
+      V.cursed[ti] = ttag === "cursed";
       V.kinds = V.kinds || [];
       while(V.kinds.length < MAP.pickups.length) V.kinds.push("");
       V.kinds[ti] = tk;
@@ -1413,7 +2713,16 @@ function makeGame(host, opts){
       if(R3) R3.addPack(pi, MAP.pickups[pi]);
       return;
     }
-    if(m.ev === "item"){ V.items[m.i|0] = 1; return; }
+    if(m.ev === "item"){
+      var ii = m.i|0;
+      V.items[ii] = 1;
+      // a map pack that came back arrives with its new spot (cm / 100)
+      if(m.x != null && MAP && MAP.pickups[ii]){
+        MAP.pickups[ii].at = [(+m.x || 0)/100, 0, (+m.z || 0)/100];
+        if(R3 && (MAP.pickups[ii].kind === "health" || MAP.pickups[ii].kind === "ammo")) R3.addPack(ii, MAP.pickups[ii]);
+      }
+      return;
+    }
     if(m.ev === "gone"){ var G = V.players[m.user]; if(G){ G.gone = true; renderBoard(); } return; }
     if(m.ev === "done"){ V.results = m.results; V.phase = "done"; showResults(m.results); if(IN) IN.unlock(); return; }
   }
@@ -1436,6 +2745,29 @@ function makeGame(host, opts){
       else if(P.charmUntil){ clearMarks(P); P.charmUntil = 0; }
       if(f & 128){ if(!P.freezeUntil && R3) R3.charm(P, "freeze"); P.freezeUntil = Infinity; }
       else if(P.freezeUntil){ clearMarks(P, "freeze"); P.freezeUntil = 0; }
+      // Wave C marks (bits 2048+). JS bitwise is 32-bit, so use a 64-bit safe test.
+      var has = function(bit){ return (f & bit) !== 0; };
+      P.gravUntil = has(2048) ? Infinity : 0;
+      P.overclockUntil = has(4096) ? Infinity : 0;
+      P.infUntil = has(8192) ? Infinity : 0;
+      P.magnetUntil = has(16384) ? Infinity : 0;
+      P.wallrunUntil = has(32768) ? Infinity : 0;
+      P.fakeUntil = has(65536) ? Infinity : 0;
+      P.pocketUntil = has(131072) ? Infinity : 0;
+      P.rallyUntil = has(262144) ? Infinity : 0;
+      P.kingUntil = has(524288) ? Infinity : 0;
+      P.hunterUntil = has(1048576) ? Infinity : 0;
+      P.fateUntil = has(2097152) ? Infinity : 0;
+      P.phoenixUntil = has(4194304) ? Infinity : 0;
+      P.jamUntil = has(8388608) ? Infinity : 0;
+      // disaster sense (FLAG_BLIND / FLAG_SLOW): Infinity while flagged so the
+      // clock checks read "still on", exactly like jam / freeze above
+      P.blindUntil = has(16777216) ? Infinity : 0;
+      P.slowUntil = has(33554432) ? Infinity : 0;
+      if(uid === myId()){
+        V.blindUntil = P.blindUntil;
+        V.slowUntil = P.slowUntil;
+      }
       // bits 256/512/1024: the movement totems' windows (wings/leap/speed) — Infinity while
       // flagged so the solo clock checks read "still on", exactly like charm/freeze above
       if(uid === myId()){
@@ -1509,7 +2841,8 @@ function makeGame(host, opts){
       if(rm.srv && t - (rm.lastSrv || t) > 0.3){ if(rm.o && R3) R3.rocket(null, rm); V.missiles.splice(ri, 1); }
     }
     // "b": a blast the server resolved — the boom, the shake and the hurt flash, minus the damage
-    // (hp already came in the same snapshot's "p" rows / shot echoes)
+    // (hp already came in the same snapshot's "p" rows / shot echoes). Disaster booms also
+    // blind (thunder / meteor flash, shockring) or throw your step (quake) near the strike.
     (m.b || []).forEach(function(bm){
       if(!Array.isArray(bm) || bm.length < 3) return;
       var x = bm[0]/100, y = bm[1]/100, z = bm[2]/100;
@@ -1519,8 +2852,80 @@ function makeGame(host, opts){
       if(!V.dead && near < FS.BLAST_R + 6){
         V.shakeAt = t;
         if(near < FS.BLAST_R){ V.hurtAt = t; V.hurtDir = Math.atan2(x - V.me.x, -(z - V.me.z)) - V.yaw; }
+        if(!meShielded(t)){
+          if(V.disaster === "thunder" && near < DD_THUNDER_R + 2) V.blindUntil = Math.max(V.blindUntil|0, t + DD_THUNDER_BLIND);
+          else if(V.disaster === "meteorshower" && near < DD_METEOR_R + 2) V.blindUntil = Math.max(V.blindUntil|0, t + DD_METEOR_BLIND);
+          else if(V.disaster === "earthquake" && near < DD_QUAKE_R + 2) V.slowUntil = Math.max(V.slowUntil|0, t + DD_QUAKE_SLOW);
+        }
       }
     });
+    // Wave C world extras (additive keys — an older client simply never reads them)
+    V.rifts = V.rifts || []; V.mines = V.mines || []; V.meteors = V.meteors || [];
+    V.beacons = V.beacons || []; V.bubbles = V.bubbles || [];
+    if(Array.isArray(m.po)){
+      // snapshot is the source of truth for live rift pairs — repaint so a missed
+      // "rift" event still shows the openings (and a replaced pair drops its mesh)
+      if(R3 && R3.clearRifts) R3.clearRifts();
+      V.rifts = [];
+      for(var pi2 = 0; pi2 + 1 < m.po.length; pi2 += 2){
+        var rfSnap = {x: (+m.po[pi2][1] || 0)/100, z: (+m.po[pi2][2] || 0)/100,
+                      x2: (+m.po[pi2+1][1] || 0)/100, z2: (+m.po[pi2+1][2] || 0)/100,
+                      until: t + ((+m.po[pi2][3] || 0)/1000)};
+        V.rifts.push(rfSnap);
+        if(R3 && R3.addRift) R3.addRift(rfSnap);
+      }
+    }
+    if(Array.isArray(m.mi)){
+      V.mines = m.mi.map(function(r){ return {id: r[0], x: (+r[1]||0)/100, z: (+r[2]||0)/100, team: r[3]|0}; });
+    }
+    if(Array.isArray(m.me)){
+      V.meteors = m.me.map(function(r){ return {id: r[0], x: (+r[1]||0)/100, z: (+r[2]||0)/100, hitAt: t + ((+r[3]||0)/1000)}; });
+    }
+    if(Array.isArray(m.bc)){
+      V.beacons = m.bc.map(function(r){ return {id: r[0], x: (+r[1]||0)/100, z: (+r[2]||0)/100, kind: String(r[3]||""), team: r[4]|0, until: t + ((+r[5]||0)/1000)}; });
+    }
+    if(Array.isArray(m.bu)){
+      V.bubbles = m.bu.map(function(r){ return {id: r[0], x: (+r[1]||0)/100, y: (+r[2]||0)/100, z: (+r[3]||0)/100, r: (+r[4]||0)/100, team: r[5]|0, until: t + ((+r[6]||0)/1000)}; });
+    }
+    // "fa"/"ae" durations are milliseconds left on the clock (not the clock itself)
+    if(Array.isArray(m.fa)){ V.fateUntil = t + ((+m.fa[0] || 0)/1000); }
+    if(Array.isArray(m.ae)){
+      V.arenaEvent = String(m.ae[0] || "");
+      V.arenaEventUntil = t + ((+m.ae[1] || 0)/1000);
+    } else { V.arenaEvent = ""; V.arenaEventUntil = 0; }
+    // "di"/"dm": the live disaster and its pending impact marks (ms left)
+    // di[4] is always the ms until the NEXT automatic disaster — the top-bar clock —
+    // even when no disaster is live (the row is then [null,…, ms-to-next]).
+    if(Array.isArray(m.di) && m.di.length > 4){
+      V.disasterAt = t + Math.max(0, ((+m.di[4] || 0)/1000));
+    }
+    if(Array.isArray(m.di)){
+      var dk2 = String(m.di[0] || "");
+      if(dk2 && TOTEMS[dk2]){
+        if(V.disaster !== dk2){ V.disaster = dk2; V.disasterHit = {}; if(R3 && R3.disaster) R3.disaster(dk2, true); }
+        V.disasterWarnAt = t + ((+m.di[1] || 0)/1000);
+        V.disasterUntil = t + ((+m.di[1] || 0)/1000) + ((+m.di[2] || 0)/1000);
+        V.disasterRing = (+m.di[3] || 0)/100;
+        V.disasterHitAt = V.disasterWarnAt;
+        // v9: the frozen hazard geometry the judge uses — paint these exact spots
+        if(m.di.length > 5) V.disasterSeed = (+m.di[5] || 0) >>> 0;
+        if(m.di.length > 6 && Array.isArray(m.di[6])){
+          V.disasterZones = m.di[6].map(function(z){
+            return Array.isArray(z) ? [(+z[0]||0)/100, (+z[1]||0)/100] : [0, 0];
+          });
+        } else { V.disasterZones = []; }
+        if(m.di.length > 7 && Array.isArray(m.di[7])){
+          V.disasterPit = [(+m.di[7][0]||0)/100, (+m.di[7][1]||0)/100];
+        } else { V.disasterPit = null; }
+      } else { disClear(t); }
+    } else if(V.mode === "mp"){ disClear(t); }
+    V.disasterMarks = Array.isArray(m.dm) ? m.dm.map(function(r){
+      return {id: r[0]|0, x: (+r[1]||0)/100, z: (+r[2]||0)/100, hitAt: t + ((+r[3]||0)/1000),
+              r: (+r[4]||0)/100, oh: !!(r[5]|0), dmg: (r[6]|0) || 0, dis: dk2 || V.disaster, quake: !!(r[7]|0)};
+    }) : [];
+    if(Array.isArray(m.cr)){
+      V.captureAt = [(+m.cr[0]||0)/100, (+m.cr[1]||0)/100]; V.captureProg = m.cr[2]|0;
+    } else { V.captureAt = null; V.captureProg = 0; }
     // "d": the decoy ghosts the server owns in MP — one row per live ghost, reconciled by
     // id; the render pass drops a ghost whose window closed (same meshes a solo drop uses)
     if(Array.isArray(m.d)){
@@ -1593,8 +2998,10 @@ function makeGame(host, opts){
   }
   function startReload(t){
     var w = V.w, wp = W(), mag = magOf(w), res = resOf(w), i = w === LAUNCH_W ? 0 : w;
+    if(V.infUntil && t < V.infUntil){ mag[i] = wp.mag; return; }
     if(V.reloadAt || mag[i] >= wp.mag || res[i] <= 0 || V.dead) return;
-    V.reloadAt = t + wp.reload;
+    // Absolute Zero: fingers are numb, every reload crawls
+    V.reloadAt = t + wp.reload * ((V.disaster === "absolutezero" && disLive(t)) ? 1.5 : 1);
     if(V.mode === "mp" && MP) MP.send("strike", "reload", {q: myClock(), e: V.life});
     say("Reloading");
   }
@@ -1616,7 +3023,11 @@ function makeGame(host, opts){
   function fire(t){
     var wp = W(), e = eye();
     E.sfx("shot", {w: V.w});
-    var mag = magOf(V.w); mag[V.w === LAUNCH_W ? 0 : V.w]--; V.nextShot = t + wp.interval; V.n++; V.shots++;
+    var mag = magOf(V.w);
+    if(!(V.infUntil && t < V.infUntil)) mag[V.w === LAUNCH_W ? 0 : V.w]--;
+    else mag[V.w === LAUNCH_W ? 0 : V.w] = wp.mag;
+    var ivl = (V.overclockUntil && t < V.overclockUntil) ? wp.interval * 0.55 : wp.interval;
+    V.nextShot = t + ivl; V.n++; V.shots++;
     V.flashAt = t; V.kick = calm() ? 0.15 : 1;
     V.protUntil = V.protUntil || 0; if(V.protUntil) V.protUntil = 0; // any shot drops your own spawn cover (strike.py:772)
     if(V.w === LAUNCH_W){
@@ -1637,7 +3048,9 @@ function makeGame(host, opts){
       return;
     }
     var sp = FS.spreadOf(V.n, V.w), yawD = V.yaw*180/Math.PI, pitD = V.pitch*180/Math.PI;
-    var d = FS.dirOf(yawD + sp[0], clamp(pitD + sp[1], -PITCH_MAX, PITCH_MAX));
+    // disaster scatter: grit in the sights / wild wind / EMP electronics — shared rule
+    var scatterD = disAimScatter(t);
+    var d = FS.dirOf(yawD + sp[0] + scatterD, clamp(pitD + sp[1] + scatterD * 0.6, -PITCH_MAX, PITCH_MAX));
     var reach = FS.rayMap(MAP, e, d, wp.range), end = reach, aimed = null, aimedHead = false;
     if(V.mode === "practice"){
       V.drones.forEach(function(D){
@@ -1655,14 +3068,70 @@ function makeGame(host, opts){
         if(h && h[0] < end){ end = h[0]; aimed = P; aimedHead = h[1]; }
       });
       if(aimed){
-        var dmg = aimedHead ? wp.head : wp.damage;
-        aimed.hp -= dmg;
-        V.hitAt = t; if(aimedHead) V.headAt = t;
-        // the number floats where the shot landed: white for body, red and bigger for a headshot
-        V.dmgNums.push({x: aimed.x, y: aimed.y + (aimedHead ? 1.75 : 1.2), z: aimed.z, n: dmg, head: aimedHead, at: t, o: null});
-        if(V.dmgNums.length > 12) V.dmgNums.shift();
-        if(aimed.hp <= 0 && !aimed.dead) endBotLife({uid: myId(), kills: V.kills, team: V.team, w: V.w, name: "You"}, aimed, t, aimedHead);
-        else say((aimedHead ? "Headshot" : "Hit")+" — "+aimed.name+" ("+Math.max(0, aimed.hp|0)+" hp)");
+        var victims = [aimed], vh = [aimedHead];
+        // Ghost Bullets: the shot keeps going and may hit one more body behind
+        if((V.ghostLeft|0) > 0){
+          V.ghostLeft--;
+          var second = null, secondHead = false, secondEnd = end;
+          others().forEach(function(P){
+            if(P === aimed || !P.bot || P.dead || P.gone || P.team === V.team) return;
+            if(botShielded(P, t)) return;
+            var h2 = FS.rayPlayer(e, d, P.x, P.y, P.z, secondEnd);
+            if(h2 && h2[0] < secondEnd){ secondEnd = h2[0]; second = P; secondHead = h2[1]; }
+          });
+          if(second){ victims.push(second); vh.push(secondHead); }
+        }
+        // Chain Lightning: one extra enemy near the impact
+        if((V.chainLeft|0) > 0){
+          V.chainLeft--;
+          var near = null, nd = 1e9;
+          others().forEach(function(P){
+            if(victims.indexOf(P) >= 0 || !P.bot || P.dead || P.gone || P.team === V.team) return;
+            var d2 = Math.hypot(P.x - aimed.x, P.z - aimed.z);
+            if(d2 <= 8 && d2 < nd){ nd = d2; near = P; }
+          });
+          if(near){ victims.push(near); vh.push(false); }
+        }
+        // Ricochet: a second victim near the first
+        if((V.ricoLeft|0) > 0){
+          V.ricoLeft--;
+          var near2 = null, nd2 = 1e9;
+          others().forEach(function(P){
+            if(victims.indexOf(P) >= 0 || !P.bot || P.dead || P.gone || P.team === V.team) return;
+            var d2 = Math.hypot(P.x - aimed.x, P.z - aimed.z);
+            if(d2 <= 7 && d2 < nd2){ nd2 = d2; near2 = P; }
+          });
+          if(near2){ victims.push(near2); vh.push(false); }
+        }
+        // Cluster Shot: a miss still tags up to 2 enemies near the impact
+        if((V.clusterLeft|0) > 0 && victims.length === 0){
+          V.clusterLeft--;
+          var ex = e[0] + d[0]*end, ey = e[1] + d[1]*end, ez = e[2] + d[2]*end, got = 0;
+          others().forEach(function(P){
+            if(got >= 2 || !P.bot || P.dead || P.gone || P.team === V.team) return;
+            if(Math.hypot(P.x - ex, P.z - ez) < 4.5){ victims.push(P); vh.push(false); got++; }
+          });
+        } else if((V.clusterLeft|0) > 0) V.clusterLeft--;
+        for(var vi = 0; vi < victims.length; vi++){
+          var tv = victims[vi], th = vh[vi];
+          var dmg = th ? wp.head : wp.damage;
+          // Fate Splitter: half the wound lands on the partner
+          if(tv.fateUntil && t < tv.fateUntil && V.fateUid){
+            var mateP = V.players[V.fateUid];
+            if(mateP && mateP !== tv && !mateP.dead){
+              var half = dmg/2|0;
+              dmg -= half;
+              mateP.hp -= half;
+              if(mateP.hp <= 0 && !mateP.dead) endBotLife({uid: myId(), kills: V.kills, team: V.team, w: V.w, name: "You"}, mateP, t, false);
+            }
+          }
+          tv.hp -= dmg;
+          V.hitAt = t; if(th) V.headAt = t;
+          V.dmgNums.push({x: tv.x, y: tv.y + (th ? 1.75 : 1.2), z: tv.z, n: dmg, head: th, at: t, o: null});
+          if(V.dmgNums.length > 12) V.dmgNums.shift();
+          if(tv.hp <= 0 && !tv.dead) endBotLife({uid: myId(), kills: V.kills, team: V.team, w: V.w, name: "You"}, tv, t, th);
+          else say((th ? "Headshot" : "Hit")+" — "+tv.name+" ("+Math.max(0, tv.hp|0)+" hp)");
+        }
       }
     } else {
       others().forEach(function(P){
@@ -1716,6 +3185,9 @@ function makeGame(host, opts){
         flashCenter(goTxt); say(goTxt + ". Enemy names are red.");
         if(V.mode === "bots" && V.totemAt != null) V.totemAt = t + TOTEM_FIRST;   // the round's own clock: first totem in 8 s
         if(V.mode === "bots" && V.packAt != null) V.packAt = t + PACK_FIRST;      // …and the first loose pack in 6 s
+        if(V.mode === "bots") V.disAt = t + DIS_FIRST_DROP;             // …and the first Disaster totem in 12 s
+        V.eventAt = t + 45; V.fuseAt = t + 30; V.crateAt = t + 22;   // the 5 drop mechanics' own clocks
+        V.disasterAt = t + DIS_FIRST;                                 // Wave D: auto-disaster in 30 s (counted down in the top bar)
       }
     }
     if((V.mode === "practice" || V.mode === "bots") && V.phase === "round"){
@@ -1766,9 +3238,15 @@ function makeGame(host, opts){
     // Stamina drains while sprinting; an empty tank keeps Shift moving at a crawl (SPRINT_SLOW)
     // and refills while you're not sprinting. Client-side only — the server sees raw speed.
     var moving = wl > 0.01;
-    var sprintHold = canMove && !V.watch && IN && IN.down("sprint") && sprintOK();
+    var nosprint = V.arenaEvent === "nosprint" && t < (V.arenaEventUntil || 0);
+    // Wave D: Absolute Zero freezes the boots (no sprint, sliding acceleration),
+    // Sandstorm doubles the stamina burn
+    var zeroNow = (V.disaster === "absolutezero" && disLive(t));
+    var sandNow = (V.disaster === "sandstorm" && disLive(t));
+    if(zeroNow) nosprint = true;
+    var sprintHold = canMove && !V.watch && IN && IN.down("sprint") && sprintOK() && !nosprint;
     var sprinting = !!(sprintHold && moving && V.stamina > 0);
-    if(sprinting) V.stamina = Math.max(0, V.stamina - FS.STAMINA_DRAIN*dt);
+    if(sprinting) V.stamina = Math.max(0, V.stamina - FS.STAMINA_DRAIN * (sandNow ? 2 : 1) * dt);
     else V.stamina = Math.min(FS.STAMINA_MAX, V.stamina + FS.STAMINA_REGEN*dt);
     // the speed totem needs none of the tank: while it runs, plain movement key IS a dash
     if(boosting){ sprinting = true; V.stamina = Math.min(FS.STAMINA_MAX, V.stamina + FS.STAMINA_REGEN*dt); }
@@ -1806,8 +3284,9 @@ function makeGame(host, opts){
       }
       if(dropping){
         var floor = FS.topUnder(MAP, V.me.x, V.me.z, V.me.y);
+        if(floor == null) floor = -1e9;   // a gap under the canopy: keep sinking into the void clock
         V.me.y = Math.max(floor, V.me.y - FS.DROP_SINK*dt);
-        if(V.me.y <= floor){ V.me.g = true; V.dropUntil = 0; V.protUntil = t + 1.5; }
+        if(V.me.y <= floor && floor > -1e8){ V.me.g = true; V.dropUntil = 0; V.protUntil = t + 1.5; }
         else {
           V.me.x += (wx * FS.DROP_DRIFT)*dt;
           V.me.z += (wz * FS.DROP_DRIFT)*dt;
@@ -1823,7 +3302,62 @@ function makeGame(host, opts){
           if(dSpd > dTop){ V.me.vx *= dTop/dSpd; V.me.vz *= dTop/dSpd; }  // bite: drop to the crawl AT the drain
         }
         var mwx = dragging ? wx*FS.SPRINT_SLOW : wx, mwz = dragging ? wz*FS.SPRINT_SLOW : wz;
-        while(acc >= STEP){ FS.move(MAP, V.me, mwx, mwz, jump, STEP, sprinting, boosting ? FS.SPEED_MULT : 1, leaping ? FS.LEAP_MULT : 1); acc -= STEP; }
+        // Blink Dash: the next few jumps are a 6 m hop instead of a jump
+        if(jump && (V.blinkLeft|0) > 0){
+          V.blinkLeft--;
+          jump = false;
+          var bx = V.me.x + Math.sin(V.yaw)*6, bz = V.me.z - Math.cos(V.yaw)*6;
+          if(FS.overlaps(MAP, bx, V.me.y, bz, 0) < 0){ V.me.x = bx; V.me.z = bz; V.me.vx = 0; V.me.vz = 0; }
+        }
+        var lowg = V.arenaEvent === "lowg" && t < (V.arenaEventUntil || 0);
+        var gMult = ((V.gravUntil && t < V.gravUntil) || lowg) ? 0.42 : 1;
+        // Absolute Zero: the ground is ice — acceleration crawls and you keep sliding.
+        // Slowness from a disaster (quake throw, toxic choke, pit stumble, wind footing)
+        // stacks the same way: the slowest wins.
+        var slowNow = !!(V.slowUntil && t < V.slowUntil);
+        var topMult = zeroNow ? 0.55 : (slowNow ? DD_SLOW_MULT : 1);
+        // Hurricane: a wind column shoves anyone it reaches (both teams, bots too)
+        if(V.disaster === "hurricane" && disLive(t) && !meShielded(t)){
+          var spanH = Math.max(0.1, (V.disasterUntil - V.disasterWarnAt));
+          var uH = clamp((t - V.disasterWarnAt) / spanH, 0, 1);
+          var bH = MAP.bounds;
+          var wxH = (bH[0] + hashMatch(V.disasterSeed|0, 21) * (bH[3] - bH[0])) * (1 - uH) +
+                    (bH[0] + hashMatch(V.disasterSeed|0, 23) * (bH[3] - bH[0])) * uH;
+          var wzH = (bH[2] + hashMatch(V.disasterSeed|0, 22) * (bH[5] - bH[2])) * (1 - uH) +
+                    (bH[2] + hashMatch(V.disasterSeed|0, 24) * (bH[5] - bH[2])) * uH;
+          var ddxH = V.me.x - wxH, ddzH = V.me.z - wzH, ddH = Math.hypot(ddxH, ddzH);
+          if(ddH < DD_WIND_R){
+            var lnH = Math.max(0.05, ddH);
+            var shoveH = DD_WIND_PUSH * (1 - ddH / DD_WIND_R) * dt;
+            V.me.x += (ddxH / lnH) * shoveH;
+            V.me.z += (ddzH / lnH) * shoveH;
+            V.slowUntil = Math.max(V.slowUntil|0, t + DD_WIND_SLOW);   // loose footing
+          }
+        }
+        var jMult = leaping ? FS.LEAP_MULT : ((V.wallrunUntil && t < V.wallrunUntil) ? 1.35 : 1);
+        while(acc >= STEP){ FS.move(MAP, V.me, mwx, mwz, jump, STEP, sprinting, (boosting ? FS.SPEED_MULT : 1) * topMult, jMult, gMult); acc -= STEP; }
+        // Void rescue: fell off the map / through a floor gap / wings flew past the
+        // bounds. Nothing can kill you out here (and you can't shoot yourself), so the
+        // clock is the only way home: VOID_SECS later you parachute back in. Solo the
+        // client is the judge; MP the Arena runs the same clock and emits the spawn.
+        if(FS.inVoid(MAP, V.me.x, V.me.y, V.me.z)){
+          if(!V.voidAt){ V.voidAt = t; say("Out of bounds — back in "+FS.VOID_SECS+"s"); }
+          else if(t - V.voidAt >= FS.VOID_SECS && V.mode !== "mp"){
+            V.voidAt = 0;
+            if(dropOK()) dropSpawn(V.mySlot != null ? V.mySlot : 0);
+            else {
+              var spV = botSpawnFor({team: V.team, slot: V.mySlot != null ? V.mySlot : 0});
+              placeMe(spV[0], spV[1], spV[2], spV[3]);
+            }
+            V.dead = false; V.hp = 100; fullAmmo(); V.killCam = null;
+            V.protUntil = (V.dropUntil && V.dropUntil > t) ? 0 : t + 1.5;
+            say("Back in — soft landing under the canopy.");
+          }
+        } else if(V.voidAt){ V.voidAt = 0; }
+        // a short trail for Time Rewind (and the kill cam already samples hist on bots)
+        V.hist = V.hist || [];
+        V.hist.push([V.me.x, V.me.y, V.me.z]);
+        if(V.hist.length > 40) V.hist.shift();
       }
     } else acc = 0;
     var spd = Math.sqrt(V.me.vx*V.me.vx + V.me.vz*V.me.vz);
@@ -1852,7 +3386,10 @@ function makeGame(host, opts){
     // pickups (offline: refilled locally; online the server decides)
     if((V.mode === "practice" || V.mode === "bots") && V.phase === "round") MAP.pickups.forEach(function(pk, i){
       if(!V.items[i]) return;
-      if(Math.abs(V.me.x - pk.at[0]) > 1.1 || Math.abs(V.me.z - pk.at[2]) > 1.1 || Math.abs(V.me.y - pk.at[1]) > 1.2) return;
+      // horizontal only: drops land at y=0 and a ledge/crate taker is still standing over it
+      // (the old 1.2 m Y window rejected every ground drop from Wave B high grounds)
+      if(Math.abs(V.me.x - pk.at[0]) > 1.1 || Math.abs(V.me.z - pk.at[2]) > 1.1) return;
+      if(pk.at[1] > 1.5 && Math.abs(V.me.y - pk.at[1]) > 2.2) return;
       var knd = (V.kinds && V.kinds[i]) || (pk.kind === "health" || pk.kind === "ammo" ? pk.kind : (pk.id && pk.id[0] === "h" ? "health" : "ammo"));
       if(knd === "ammo"){
         var full = FS.WEAPONS.every(function(wp, wi){ return resOf(wi)[wi === LAUNCH_W ? 0 : wi] >= wp.reserve*2; }); if(full) return;
@@ -1864,20 +3401,30 @@ function makeGame(host, opts){
       } else if(TOTEMS[knd]){
         // totem effects are one-shot; the solo client applies them right here, MP comes
         // via the server's "pick" event (same shape, judged server-side)
+        // Cursed Drop: the power is the same, but the taker pays 15 hp up front
+        if(V.cursed && V.cursed[i]){
+          V.hp = Math.max(1, V.hp - 15);
+          say("Cursed Drop: -15 hp");
+        }
         var msg = totemApply(knd, myId(), t);
         if(!msg) return; // nothing eligible (e.g. a mole with no enemy bots left)
         say(msg);
       } else return;
       feedItem("You", V.team, knd, t);
-      // the map's own packs respawn at their spot; a taken drop slot doesn't (the drop
-      // clock replaces it with a fresh drop within one gap)
+      // a taken drop slot doesn't come back in place (the drop clock replaces it);
+      // a map pack does come back — but on a fresh random spot, never the pad you took
       V.items[i] = 0;
       if(i < BASE_PACKS){ V.itemBack = V.itemBack || {}; V.itemBack[i] = t + 15; }
     });
     // taken packs come back: practice refills them all, bot matches refill the map's own
-    // packs (the drop-ring slots never respawn in place — the drop clocks replace them)
+    // packs (the drop-ring slots never respawn in place — the drop clocks replace them).
+    // Every return re-rolls the spot so camping a pad pays nothing.
     if(V.itemBack) Object.keys(V.itemBack).forEach(function(i){
-      if(t >= V.itemBack[i] && (V.mode === "practice" || (+i < BASE_PACKS))){ V.items[i] = 1; delete V.itemBack[i]; }
+      if(t >= V.itemBack[i] && (V.mode === "practice" || (+i < BASE_PACKS))){
+        var ii = +i;
+        if(ii < BASE_PACKS) placeDrop(ii, ((((t*1000)|0) * 2654435761) + (ii+1)*0x9e3779b9 + 17) >>> 0);
+        V.items[ii] = 1; delete V.itemBack[i];
+      }
     });
     // the two drop clocks, independent of each other: a fresh random totem every TOTEM_GAP
     // (mole only with bots) and a fresh random health/ammo pack every PACK_GAP. Each new
@@ -1890,6 +3437,15 @@ function makeGame(host, opts){
       V.items[idx] = 1; if(V.itemBack) delete V.itemBack[idx];
       V.kinds[idx] = MAP.pickups[idx].kind;
       if(R3) R3.addTotem(idx, MAP.pickups[idx]);
+    }
+    if(V.mode === "bots" && V.phase === "round" && V.disAt != null && t >= V.disAt){
+      V.disAt = t + DIS_GAP_DROP;
+      var dseed = ((Math.floor(t*1000) ^ ((V.mySlot|0) + 77)) >>> 0);
+      var didx = disasterSpawn(dseed);
+      V.items[didx] = 1; if(V.itemBack) delete V.itemBack[didx];
+      V.kinds[didx] = MAP.pickups[didx].kind;
+      if(R3) R3.addTotem(didx, MAP.pickups[didx]);
+      say("A Disaster totem just landed — grab it and the whole arena is in it");
     }
     if(V.mode === "bots" && V.phase === "round" && V.packAt != null && t >= V.packAt){
       V.packAt = t + PACK_GAP;
@@ -1906,6 +3462,12 @@ function makeGame(host, opts){
       var rl = Math.max(0, Math.ceil(V.deadAt + RESPAWN - t)); var txt = rl > 0 ? "Respawning in "+rl : "Respawning…";
       if(V.killCam && V.killCam.name) txt = V.killCam.name+"'s view — "+txt;
       if(center.textContent !== txt){ center.textContent = txt; center.classList.remove("hidden"); center.dataset.until = ""; } }
+    // a free-fall past the map is not a death — it's a 10s void clock, then a parachute back
+    if(!V.dead && V.mode !== "mp" && V.voidAt && V.phase === "round"){
+      var vl = Math.max(0, Math.ceil(V.voidAt + FS.VOID_SECS - t));
+      var vtxt = vl > 0 ? "Out of bounds — back in "+vl+"s" : "Pulling you back…";
+      if(center.textContent !== vtxt){ center.textContent = vtxt; center.classList.remove("hidden"); center.dataset.until = ""; }
+    }
     if(V.dead && V.mode === "bots" && t >= (V.deadAt || 0) + RESPAWN){
       var dropping = false;
       if(dropOK()){ dropping = !!dropSpawn(V.mySlot != null ? V.mySlot : 0); }
@@ -1935,9 +3497,380 @@ function makeGame(host, opts){
   }
   function flashCenter(txt){ center.textContent = txt; center.classList.remove("hidden"); center.dataset.until = String(now() + 1.0); }
 
+  // Wave C solo world upkeep: chaos pulses, mines, meteors, and the fate link expiry.
+  // In MP the server judges all of this and the snapshot carries the result; here the
+  // local client is the referee, so the same windows fire the same blasts.
+  function worldTick(dt, t){
+    if(V.mode === "mp") return;   // the server's tick owns these; the snapshot carries them
+    // Chaos Core: a free blast every 1.5s
+    if(V.chaosUntil && t < V.chaosUntil && t >= (V.chaosNext|0)){
+      V.chaosNext = t + 1.5;
+      V.booms = V.booms || [];
+      V.booms.push({x: V.me.x, y: V.me.y + 0.5, z: V.me.z, at: t});
+      others().forEach(function(P){
+        if(P.dead || P.gone || P.team === V.team) return;
+        if(Math.hypot(P.x - V.me.x, P.z - V.me.z) > 3.5) return;
+        P.hp -= 20;
+        if(P.hp <= 0 && !P.dead) endBotLife({uid: myId(), kills: V.kills, team: V.team, w: V.w, name: "You"}, P, t, false);
+      });
+    }
+    // Trapmaster mines
+    if(V.mines && V.mines.length){
+      for(var mi = V.mines.length - 1; mi >= 0; mi--){
+        var Mn = V.mines[mi];
+        var tripped = false;
+        others().forEach(function(P){
+          if(tripped || P.dead || P.gone || P.team === Mn.team) return;
+          if(Math.hypot(P.x - Mn.x, P.z - Mn.z) < 1.3){ tripped = true; P.hp -= 60;
+            if(P.hp <= 0 && !P.dead) endBotLife({uid: myId(), kills: V.kills, team: V.team, w: V.w, name: "You"}, P, t, false); }
+        });
+        if(tripped){
+          V.booms = V.booms || []; V.booms.push({x: Mn.x, y: 0.1, z: Mn.z, at: t});
+          V.mines.splice(mi, 1);
+        }
+      }
+    }
+    // Meteor Call: warn, then hit
+    if(V.meteors && V.meteors.length){
+      for(var ei = V.meteors.length - 1; ei >= 0; ei--){
+        var M = V.meteors[ei];
+        if(t < (M.hitAt || 0)) continue;
+        V.booms = V.booms || []; V.booms.push({x: M.x, y: 0.3, z: M.z, at: t});
+        others().forEach(function(P){
+          if(P.dead || P.gone) return;
+          if(P.uid === M.owner) return;
+          if(Math.hypot(P.x - M.x, P.z - M.z) > 5) return;
+          P.hp -= 80;
+          if(P.hp <= 0 && !P.dead) endBotLife({uid: myId(), kills: V.kills, team: V.team, w: V.w, name: "You"}, P, t, false);
+        });
+        V.meteors.splice(ei, 1);
+      }
+    }
+    // ---- the 5 drop mechanics the server owns in MP; solo runs them right here ----
+    if(V.mode === "bots" && V.phase === "round"){
+      // Arena Events: warn then hold (lowg / storm / nosprint), every 45s
+      V.eventAt = V.eventAt || 0;
+      if(t >= V.eventAt){
+        V.eventAt = t + 45;
+        V.worldK = (V.worldK|0) + 1;
+        var ePick = ((V.worldK * 2654435761) >>> 0) % 3;
+        var eKind = ["lowg", "storm", "nosprint"][ePick];
+        V.arenaEvent = eKind; V.arenaEventUntil = t + 3 + 12;
+        var eN2 = {lowg: "Low Gravity", storm: "Sandstorm", nosprint: "No Sprint"};
+        say(eN2[eKind] + " in 3s — lasts 12s");
+      }
+      if(V.arenaEvent && t >= V.arenaEventUntil){ V.arenaEvent = ""; V.arenaEventUntil = 0; say("Arena event over"); }
+      // Totem Fusion: two unclaimed totems within 3m merge into one Chaos Core
+      V.fuseAt = V.fuseAt || 0;
+      if(t >= V.fuseAt){
+        V.fuseAt = t + 18;
+        var plF = dropPlan();
+        var fused = false;
+        for(var fx = 0; fx < DROP_SLOTS && !fused; fx++){
+          var fxI = plF.totems[0] + fx;
+          if(!V.items[fxI] || !V.kinds || !V.kinds[fxI]) continue;
+          for(var fy = fx + 1; fy < DROP_SLOTS && !fused; fy++){
+            var fyI = plF.totems[0] + fy;
+            if(!V.items[fyI] || !V.kinds[fyI]) continue;
+            var aF = MAP.pickups[fxI] && MAP.pickups[fxI].at, bF = MAP.pickups[fyI] && MAP.pickups[fyI].at;
+            if(!aF || !bF) continue;
+            if(Math.hypot(aF[0] - bF[0], aF[2] - bF[2]) > 3) continue;
+            V.kinds[fxI] = "chaos"; MAP.pickups[fxI].kind = "chaos"; MAP.pickups[fxI].id = "chaos-" + fxI;
+            V.kinds[fyI] = ""; V.items[fyI] = 0;
+            if(R3) R3.addTotem(fxI, MAP.pickups[fxI]);
+            fused = true; say("Totem Fusion: a Chaos Core just formed");
+          }
+        }
+      }
+      // ---- Wave D: Arena Disasters (solo runs them; MP the server judges) ----
+      // Only an ARMED clock fires: 0/null means "not scheduled yet", never "fire now".
+      // (V.disasterAt is set at round start to t + DIS_FIRST, and refreshed by di[4] in MP.)
+      if(!V.disaster && V.disasterAt != null && V.disasterAt > 0 && t >= V.disasterAt){
+        V.disasterAt = t + DIS_GAP;
+        V.worldK = (V.worldK|0) + 1;
+        disStart(DISASTERS[disKind(V.worldK|0, 11, DISASTERS.length)], t);
+      }
+      if(V.disaster && t >= (V.disasterUntil || 0)) disClear(t);
+      if(V.disaster && disLive(t)){
+        var dis = V.disaster, dHitAt = V.disasterHitAt || 0;
+        // impact system: warning marker, then a radial hit. Meteor / Thunder come from
+        // the sky and a shed roof stops them; a quake is the floor.
+        if(dis === "meteorshower" || dis === "thunder" || dis === "earthquake"){
+          var gapD = dis === "meteorshower" ? DD_METEOR_GAP : (dis === "thunder" ? DD_THUNDER_GAP : DD_QUAKE_GAP);
+          var warnD = dis === "meteorshower" ? DD_METEOR_WARN : (dis === "thunder" ? DD_THUNDER_WARN : DD_QUAKE_WARN);
+          var rD = dis === "meteorshower" ? DD_METEOR_R : (dis === "thunder" ? DD_THUNDER_R : DD_QUAKE_R);
+          var dmgD = dis === "meteorshower" ? DD_METEOR_DMG : (dis === "thunder" ? DD_THUNDER_DMG : DD_QUAKE_DMG);
+          var ohD = (dis !== "earthquake");
+          if(t >= dHitAt){
+            V.disasterHitAt = t + gapD;
+            V.disasterMarkK = (V.disasterMarkK|0) + 1;
+            // Aim every 3rd mark at a live body (hashed offset) so a shower can connect;
+            // the rest scatter from the frozen disaster seed. Twin: disaster_tick in strike.rs.
+            var ptsD = liveSpots(), spotD;
+            if(ptsD.length && (V.disasterMarkK % 3) === 1){
+              var bpD = ptsD[V.disasterMarkK % ptsD.length];
+              spotD = [
+                bpD[0] + (hashMatch(V.disasterSeed|0, 500 + V.disasterMarkK) - 0.5) * 4,
+                0,
+                bpD[1] + (hashMatch(V.disasterSeed|0, 600 + V.disasterMarkK) - 0.5) * 4
+              ];
+            } else {
+              spotD = disSpot((Math.imul(V.disasterSeed|0, 2654435761) + 13) >>> 0, 7 + V.disasterMarkK);
+            }
+            V.disasterMarks.push({id: (V.worldK|0) + V.disasterMarkK, x: spotD[0], z: spotD[2], hitAt: t + warnD, r: rD, oh: ohD, dmg: dmgD, dis: dis});
+          }
+          for(var dmI = V.disasterMarks.length - 1; dmI >= 0; dmI--){
+            var Mk = V.disasterMarks[dmI];
+            if(t < (Mk.hitAt || 0)) continue;
+            V.booms = V.booms || []; V.booms.push({x: Mk.x, y: 0.3, z: Mk.z, at: t});
+            V.shakeAt = t;   // the ground jumps under the blast
+            // the local player — proximity crush (markDamage): more damage near the strike
+            var ddMe = Math.hypot(V.me.x - Mk.x, V.me.z - Mk.z);
+            if(!meShielded(t) && ddMe <= Mk.r
+               && !(Mk.oh && hasRoof(V.me.x, V.me.y, V.me.z))){
+              V.hp -= FS.markDamage(ddMe, Mk.r, Mk.dmg|0);
+              if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false);
+              // the flash and the blast: a bolt under your feet whites out the view
+              if(Mk.dis === "thunder"){ V.blindUntil = Math.max(V.blindUntil|0, t + DD_THUNDER_BLIND); }
+              else if(Mk.dis === "meteorshower"){ V.blindUntil = Math.max(V.blindUntil|0, t + DD_METEOR_BLIND); }
+              else if(Mk.dis === "earthquake"){ V.slowUntil = Math.max(V.slowUntil|0, t + DD_QUAKE_SLOW); }
+            }
+            // bots
+            others().forEach(function(P){
+              if(P.dead || P.gone || botShielded(P, t)) return;
+              var ddP = Math.hypot(P.x - Mk.x, P.z - Mk.z);
+              if(ddP > Mk.r) return;
+              if(Mk.oh && hasRoof(P.x, P.y, P.z)) return;
+              P.hp -= FS.markDamage(ddP, Mk.r, Mk.dmg|0);
+              if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false);
+              if(Mk.dis === "thunder") P.blindUntil = Math.max(P.blindUntil|0, t + DD_THUNDER_BLIND);
+              else if(Mk.dis === "meteorshower") P.blindUntil = Math.max(P.blindUntil|0, t + DD_METEOR_BLIND);
+              else if(Mk.dis === "earthquake") P.slowUntil = Math.max(P.slowUntil|0, t + DD_QUAKE_SLOW);
+            });
+            V.disasterMarks.splice(dmI, 1);
+          }
+        }
+        // Shockwave Apocalypse: one expanding wave from the centre, knocks and hurts once each
+        if(dis === "shockring"){
+          var spanS = Math.max(0.1, (V.disasterUntil - V.disasterWarnAt));
+          var uS = clamp((t - V.disasterWarnAt) / spanS, 0, 1);
+          V.disasterRing = DD_SHOCK_R * uS;
+          var bS = MAP.bounds, oxS = (bS[0] + bS[3]) / 2, ozS = (bS[2] + bS[5]) / 2;
+          var ddS = Math.hypot(V.me.x - oxS, V.me.z - ozS);
+          if(!V.disasterHit["me"] && meShielded(t) === false && Math.abs(ddS - V.disasterRing) <= 1.6){
+            V.disasterHit["me"] = 1;
+            var lnS = Math.max(0.05, ddS);
+            V.me.x += ((V.me.x - oxS) / lnS) * DD_SHOCK_KNOCK;
+            V.me.z += ((V.me.z - ozS) / lnS) * DD_SHOCK_KNOCK;
+            V.hp -= DD_SHOCK_DMG;
+            V.shakeAt = t;
+            V.blindUntil = Math.max(V.blindUntil|0, t + DD_SHOCK_BLIND);   // the blast knocks the wind out of you
+            if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false);
+          }
+          others().forEach(function(P){
+            if(P.dead || P.gone || botShielded(P, t) || V.disasterHit[P.uid]) return;
+            var ddP = Math.hypot(P.x - oxS, P.z - ozS);
+            if(Math.abs(ddP - V.disasterRing) > 1.6) return;
+            V.disasterHit[P.uid] = 1;
+            var lnP = Math.max(0.05, ddP);
+            P.x += ((P.x - oxS) / lnP) * DD_SHOCK_KNOCK;
+            P.z += ((P.z - ozS) / lnP) * DD_SHOCK_KNOCK;
+            P.hp -= DD_SHOCK_DMG;
+            P.blindUntil = Math.max(P.blindUntil|0, t + DD_SHOCK_BLIND);   // the blast knocks the wind out of you
+            if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false);
+          });
+        }
+        // Toxic Fog / Sinkhole: standing zones that pulse once a second
+        if((dis === "toxicfog" || dis === "sinkhole") && t >= dHitAt){
+          V.disasterHitAt = t + 1.0;
+          if(dis === "toxicfog"){
+            // sticky clouds frozen at disStart — the same centres R.disaster paints
+            var zonesT = V.disasterZones && V.disasterZones.length
+              ? V.disasterZones
+              : disZonesNear(V.disasterSeed|0, DD_TOXIC_ZONES, liveSpots());
+            for(var tz = 0; tz < zonesT.length; tz++){
+              var zspot = zonesT[tz];
+              if(!meShielded(t) && Math.hypot(V.me.x - zspot[0], V.me.z - zspot[1]) <= DD_TOXIC_R){
+                V.hp -= DD_TOXIC_DMG;
+                V.slowUntil = Math.max(V.slowUntil|0, t + DD_TOXIC_SLOW);   // choking
+                if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false);
+              }
+              others().forEach(function(P){
+                if(P.dead || P.gone || botShielded(P, t)) return;
+                if(Math.hypot(P.x - zspot[0], P.z - zspot[1]) > DD_TOXIC_R) return;
+                P.hp -= DD_TOXIC_DMG;
+                P.slowUntil = Math.max(P.slowUntil|0, t + DD_TOXIC_SLOW);
+                if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false);
+              });
+            }
+          } else {
+            // the pit the FX painted is the pit that pulls
+            var sspot = (V.disasterPit && V.disasterPit.length === 2)
+              ? V.disasterPit
+              : disSpot((Math.imul(V.disasterSeed|0, 2654435761) + 47) >>> 0, 5);
+            var ddxS = sspot[0] - V.me.x, ddzS = sspot[1] - V.me.z, ddSS = Math.hypot(ddxS, ddzS);
+            if(!meShielded(t) && ddSS < DD_SINK_R * 1.4){
+              var lnSS = Math.max(0.05, ddSS);
+              var pullS = DD_SINK_PULL * (1 - Math.min(1, ddSS / (DD_SINK_R * 1.4))) * dt;
+              V.me.x += (ddxS / lnSS) * pullS;
+              V.me.z += (ddzS / lnSS) * pullS;
+              V.slowUntil = Math.max(V.slowUntil|0, t + DD_SINK_SLOW);   // stumbling toward the pit
+              if(ddSS < DD_SINK_R){
+                V.hp -= DD_SINK_DMG;
+                if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false);
+              }
+            }
+            others().forEach(function(P){
+              if(P.dead || P.gone || botShielded(P, t)) return;
+              var ddxP = sspot[0] - P.x, ddzP = sspot[1] - P.z, ddPP = Math.hypot(ddxP, ddzP);
+              if(ddPP > DD_SINK_R * 1.4) return;
+              var lnPP = Math.max(0.05, ddPP);
+              var pullP = DD_SINK_PULL * (1 - Math.min(1, ddPP / (DD_SINK_R * 1.4))) * dt;
+              P.x += (ddxP / lnPP) * pullP;
+              P.z += (ddzP / lnPP) * pullP;
+              P.slowUntil = Math.max(P.slowUntil|0, t + DD_SINK_SLOW);   // stumbling toward the pit
+              if(ddPP < DD_SINK_R){
+                P.hp -= DD_SINK_DMG;
+                if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false);
+              }
+            });
+          }
+        }
+        // Sandstorm / Absolute Zero / EMP / Hurricane: every disaster has a visual AND
+        // an impact. These four used to be mod-only (vision / movement / HUD / shove).
+        // Exposure now chips once a second — shield / spawn-protect still skip it.
+        if((dis === "sandstorm" || dis === "absolutezero" || dis === "emp" || dis === "hurricane") && t >= dHitAt){
+          V.disasterHitAt = t + 1.0;
+          var chipD = dis === "sandstorm" ? DD_SAND_DMG
+            : (dis === "absolutezero" ? DD_ZERO_DMG
+            : (dis === "hurricane" ? DD_WIND_DMG : DD_EMP_DMG));
+          if(!meShielded(t) && !(V.protUntil && t < V.protUntil)){
+            V.hp -= chipD;
+            if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false);
+          }
+          others().forEach(function(P){
+            if(P.dead || P.gone || botShielded(P, t) || (P.protUntil && t < P.protUntil)) return;
+            P.hp -= chipD;
+            if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false);
+          });
+        }
+      }
+      // Contested Capture crate: every 50s, hold it 3s for +20 reserve and +25 hp
+      V.crateAt = V.crateAt || 0;
+      if(!V.captureAt && t >= V.crateAt){
+        V.crateAt = t + 50;
+        V.worldK = (V.worldK|0) + 1;
+        var cSpot = dropSpot(((V.worldK * 2654435761) >>> 0) + 9);
+        V.captureAt = [cSpot[0], cSpot[2]];
+        V.captureProg = 0; V.captureWho = null; V.captureSince = 0;
+        say("Capture crate dropped — stand on it for 3s to claim it");
+      }
+      if(V.captureAt){
+        var dC = Math.hypot(V.me.x - V.captureAt[0], V.me.z - V.captureAt[1]);
+        if(dC < 2.0){
+          if(V.captureWho !== myId()){ V.captureWho = myId(); V.captureSince = t; }
+          V.captureProg = Math.min(100, Math.round((t - V.captureSince) / 3 * 100));
+          if(V.captureProg >= 100){
+            V.res = (V.res || []).map(function(n, wi){ return Math.min(200, (n|0) + 20); });
+            V.resX = [Math.min(200, (V.resX ? V.resX[0] : 0) + 20)];
+            V.hp = Math.min(100, V.hp + 25);
+            say("Capture claimed: +20 reserve, +25 hp");
+            V.captureAt = null; V.captureProg = 0; V.captureWho = null;
+          }
+        } else if(V.captureWho === myId()){
+          V.captureWho = null; V.captureSince = 0; V.captureProg = 0;   // leaving resets the hold
+        }
+      }
+    }
+  }
+
   /* ---------- HUD ---------- */
   function hudUpdate(t){
     if(WB) WB.update();
+    // Wave D: the disaster overlay (fog / flash / ice tint / EMP blue), gated on the live window
+    if(disOv){
+      var disNow = V.disaster || "";
+      var disOn = !!(disNow && t < (V.disasterUntil || 0));
+      var warnOn = !!(disNow && t < (V.disasterWarnAt || 0));
+      disOv.classList.toggle("hidden", !disOn && !warnOn);
+      if(disOn || warnOn){
+        disOv.dataset.dis = warnOn ? "warn" : disNow;
+        disOvIn.textContent = warnOn ? ("⚠ " + (TOTEMS[disNow] ? TOTEMS[disNow].n : disNow).toUpperCase() + " INCOMING")
+          : (DIS_LIVE[disNow] || (TOTEMS[disNow] ? TOTEMS[disNow].n.toUpperCase() : "DISASTER"));
+      } else {
+        disOv.dataset.dis = "";
+        disOvIn.textContent = "";
+      }
+    }
+    // the little radar: me as a wedge, allies blue-ish, enemies red (Radar Jammer blanks
+    // the enemy team and plants a couple of fake blips). 4 Hz is plenty for a glance map.
+    if(radarCtx && t - radarAt > 0.25){
+      radarAt = t;
+      try {
+        var S = radarCv.width, half = S/2, mx = V.me.x, mz = V.me.z, span = 48;
+        radarCtx.clearRect(0, 0, S, S);
+        radarCtx.fillStyle = getComputedStyle(root).getPropertyValue("--panel") || "#333";
+        radarCtx.globalAlpha = 0.72; radarCtx.fillRect(0, 0, S, S); radarCtx.globalAlpha = 1;
+        radarCtx.strokeStyle = getComputedStyle(root).getPropertyValue("--line") || "#666";
+        radarCtx.strokeRect(0.5, 0.5, S - 1, S - 1);
+        var toXY = function(x, z){ return [half + ((x - mx)/span)*half, half + ((z - mz)/span)*half]; };
+        // my facing as a wedge
+        radarCtx.save();
+        radarCtx.translate(half, half);
+        radarCtx.rotate(V.yaw);
+        radarCtx.fillStyle = getComputedStyle(root).getPropertyValue("--brand") || "#fc0";
+        radarCtx.beginPath();
+        radarCtx.moveTo(0, -10); radarCtx.lineTo(5, 4); radarCtx.lineTo(-5, 4);
+        radarCtx.closePath(); radarCtx.fill();
+        radarCtx.restore();
+        // Wave D: disaster marks on the radar (impact circles + the storm eye / pit)
+        if(V.disaster && t < (V.disasterUntil || 0)){
+          (V.disasterMarks || []).forEach(function(Mk){
+            var xy = toXY(Mk.x, Mk.z);
+            radarCtx.beginPath();
+            radarCtx.arc(xy[0], xy[1], Math.max(2, (Mk.r/span)*half), 0, 6.2832);
+            radarCtx.strokeStyle = getComputedStyle(root).getPropertyValue("--need") || "crimson";
+            radarCtx.lineWidth = 2; radarCtx.stroke(); radarCtx.lineWidth = 1;
+          });
+          if(V.disaster === "shockring"){
+            var xy2 = toXY((MAP.bounds[0]+MAP.bounds[3])/2, (MAP.bounds[2]+MAP.bounds[5])/2);
+            radarCtx.beginPath();
+            radarCtx.arc(xy2[0], xy2[1], Math.max(1, (V.disasterRing/span)*half), 0, 6.2832);
+            radarCtx.strokeStyle = getComputedStyle(root).getPropertyValue("--gold") || "goldenrod";
+            radarCtx.lineWidth = 2; radarCtx.stroke(); radarCtx.lineWidth = 1;
+          }
+        }
+        // the OTHER side running a jammer: their blips vanish from my radar
+        var theyJam = others().some(function(P){
+          return P.team !== V.team && P.jamUntil && t < P.jamUntil && !P.dead && !P.gone;
+        });
+        var empNow = (V.disaster === "emp" && disLive(t));
+        others().forEach(function(P){
+          if(P.dead || P.gone) return;
+          if(empNow) return;   // EMP Apocalypse: the tracking display is dead
+          var xy = toXY(P.x, P.z);
+          if(xy[0] < 0 || xy[0] > S || xy[1] < 0 || xy[1] > S) return;
+          var foe = P.team !== V.team;
+          // enemy jammer: their team is a blank on my radar, and I plant decoy dots
+          if(foe && theyJam) return;
+          radarCtx.fillStyle = foe
+            ? (getComputedStyle(root).getPropertyValue("--need") || "#f44")
+            : (getComputedStyle(root).getPropertyValue("--good") || "#4a4");
+          radarCtx.beginPath(); radarCtx.arc(xy[0], xy[1], 3, 0, 6.283); radarCtx.fill();
+        });
+        if(theyJam){
+          // the jammer plants a couple of decoy dots so the blank isn't obvious
+          for(var fi = 0; fi < 2; fi++){
+            var fx = mx + Math.sin(t*0.7 + fi*3)*18, fz = mz + Math.cos(t*0.5 + fi*2)*18;
+            var fxy = toXY(fx, fz);
+            radarCtx.fillStyle = getComputedStyle(root).getPropertyValue("--need") || "#f44";
+            radarCtx.globalAlpha = 0.5;
+            radarCtx.beginPath(); radarCtx.arc(fxy[0], fxy[1], 3, 0, 6.283); radarCtx.fill();
+            radarCtx.globalAlpha = 1;
+          }
+        }
+      } catch(e){ /* a blocked canvas is fine — the rest of the HUD still works */ }
+    }
     var wp = W(), hp = V.mode === "practice" ? 100 : clamp(V.hp, 0, 100); // bots mode uses V.hp too (damage taken)
     hpBar.style.width = hp+"%"; hpBox.classList.toggle("low", hp <= 30);
     var ht = String(hp); if(hpNum.textContent !== ht) hpNum.textContent = ht;
@@ -1952,6 +3885,13 @@ function makeGame(host, opts){
       V.order.forEach(function(u){ var P = V.players[u]; if(!P || P.gone) return; if(P.team === V.team) mine++; else foes++; });
       tt = (V.phase === "round" ? mmss((V.endsAt - t)*1000) : V.phase === "done" ? "0:00" : mmss(V.minutes*60000))
         +" · "+TEAMS[0].n+" "+V.scores[0]+" — "+V.scores[1]+" "+TEAMS[1].n+" · "+mine+"v"+foes+" · first to "+V.limit;
+      // Wave D/E: the auto-disaster clock, among score and time remaining. A live one wins.
+      if(V.phase === "round" && disLive(t)){
+        tt += " · ⚠ "+(TOTEMS[V.disaster] ? TOTEMS[V.disaster].n : "DISASTER");
+      } else if(V.phase === "round" && V.disasterAt != null){
+        var dleft = Math.max(0, Math.ceil(V.disasterAt - t));
+        tt += " · ⚠ disaster in "+dleft+"s";
+      }
     }
     if(topBox.textContent !== tt) topBox.textContent = tt;
     hitm.classList.toggle("on", t - V.hitAt < 0.15); hitm.classList.toggle("head", t - V.headAt < 0.15);
@@ -1959,6 +3899,8 @@ function makeGame(host, opts){
     hurt.classList.toggle("on", hurtOn);
     if(hurtOn) hurt.style.transform = "translate(-50%,-50%) rotate("+Math.round(V.hurtDir*180/Math.PI)+"deg)";
     vignette.classList.toggle("on", !calm() && t - V.hurtAt < 0.25);
+    // disaster white-out: a bolt / crater flash / shock blast washes the view (calm: a soft veil)
+    root.classList.toggle("vg-fps-blind", !!(V.blindUntil && t < V.blindUntil));
     var stamOn = !V.watch && !V.dead && !V.paused && V.stamina < FS.STAMINA_MAX - 0.5;
     stamBox.classList.toggle("hidden", !stamOn);
     if(stamOn){
@@ -1969,9 +3911,12 @@ function makeGame(host, opts){
     var adsCls = V.ads && ADS[V.w] ? ADS[V.w].cls : "";
     cross.classList.toggle("ads", adsCls === "reddot");
     cross.classList.toggle("sniper", adsCls === "sniper");
-    scope.classList.toggle("on", adsCls !== "");
-    scope.classList.toggle("reddot", adsCls === "reddot");
-    scope.classList.toggle("sniper", adsCls === "sniper");
+    var empHud = (V.disaster === "emp" && t >= (V.disasterWarnAt || 0) && t < (V.disasterUntil || 0));
+    scope.classList.toggle("on", adsCls !== "" && !empHud);
+    scope.classList.toggle("reddot", adsCls === "reddot" && !empHud);
+    scope.classList.toggle("sniper", adsCls === "sniper" && !empHud);
+    cross.classList.toggle("hidden", empHud);
+    root.classList.toggle("vg-fps-emp", empHud);
     root.classList.toggle("vg-fps-dead", V.dead);
     // the cloak veil: bots stop seeing me for the window; I see the same rim so it reads
     root.classList.toggle("vg-fps-cloak", !!(V.cloakUntil && t < V.cloakUntil));
@@ -2002,9 +3947,11 @@ function makeGame(host, opts){
         return;
       }
       li.appendChild(api.mk("b", null, f.k));
-      li.appendChild(api.mk("span", "vg-fps-w", " "+(f.w ? "rifle" : "smg")+(f.hs ? " · head" : "")+" "));
+      // a disaster kill names the disaster instead of a weapon (w = -1)
+      var wTxt = f.dis ? (TOTEMS[f.dis] ? TOTEMS[f.dis].n : "Disaster") : wLabel(f.w|0);
+      li.appendChild(api.mk("span", "vg-fps-w", " "+wTxt+(f.hs ? " · head" : "")+" "));
       li.appendChild(api.mk("b", null, f.v)); feedBox.appendChild(li);
-      li.style.borderLeft = "3px solid "+TEAMS[f.vt|0].c;
+      li.style.borderLeft = "3px solid "+(f.dis ? (TOTEMS[f.dis] ? TOTEMS[f.dis].c : "#888") : TEAMS[f.vt|0].c);
     });
   }
   // one pickup into the top-right feed: name (their team colour in the dot) + the item,
@@ -2023,14 +3970,18 @@ function makeGame(host, opts){
     if(!V.guide) return;
     guide.textContent = "";
     guide.appendChild(api.mk("b", null, "Items on the map"));
-    guide.appendChild(api.mk("p", null, "Fresh totems drop every "+TOTEM_GAP+"s and fresh health/ammo packs every "+PACK_GAP+"s — each somewhere random on the map. Repetitions allowed."));
+    guide.appendChild(api.mk("p", null, "Fresh totems drop every "+TOTEM_GAP+"s, fresh health/ammo packs every "+PACK_GAP+"s, and Disaster totems every "+DIS_GAP_DROP+"s — each somewhere random on the map. The arena also erupts every "+DIS_GAP+"s (counted down in the top bar). Repetitions allowed."));
     var tb = api.mk("table", "vg-golf-table"), hr = api.mk("tr");
     ["", "Item", "Effect"].forEach(function(h){ hr.appendChild(api.mk("th", null, h)); }); tb.appendChild(hr);
     // rows: the map's base packs first, then the totems; colours come straight from the
     // constants the 3D gems/beams use, so the legend can never drift from what you see
     var rows = [{c: "#f4f4f4", n: "Health kit", d: "Pick up to raise your health by 50."},
-                {c: "#e0b325", n: "Ammo box", d: "Pick up to reload any gun that is running empty."}]
-      .concat(Object.keys(TOTEMS).map(function(k){ return {c: TOTEMS[k].hue, n: TOTEMS[k].n, d: TOTEM_HELP[k]}; }));
+                {c: "#e0b325", n: "Ammo box", d: "Pick up to reload any gun that is running empty."},
+                {c: "currentColor", n: "— Totems —", d: "drop every "+TOTEM_GAP+"s, anywhere"}]
+      .concat(Object.keys(TOTEMS).filter(function(k){ return DISASTERS.indexOf(k) < 0; })
+        .map(function(k){ return {c: TOTEMS[k].hue, n: TOTEMS[k].n, d: TOTEM_HELP[k]}; }));
+    rows.push({c: "currentColor", n: "— Disaster totems —", d: "drop every "+DIS_GAP_DROP+"s · also auto every "+DIS_GAP+"s"});
+    rows = rows.concat(DISASTERS.map(function(k){ return {c: TOTEMS[k].hue, n: TOTEMS[k].n, d: TOTEM_HELP[k]}; }));
     rows.forEach(function(r){
       var tr = api.mk("tr");
       var sw = api.mk("td"); sw.style.color = r.c; sw.appendChild(document.createTextNode("●"));
@@ -2165,6 +4116,7 @@ function makeGame(host, opts){
       if(t - tokAt > 2){ TOK = tokens(); tokAt = t; }
       var tn = now();
       update(dt, tn);
+      worldTick(dt, tn);
       if(R3) R3.render(dt, tn); else if(R2) R2.render(tn);
       if(t - hudAt > 0.05){ hudAt = t; hudUpdate(tn); }
     } catch(e){ if(window.console) console.error("strike frame", e); }
@@ -2214,10 +4166,51 @@ function makeGame(host, opts){
       g.save(); g.translate(Wd/2, Ht/2); g.scale(sc, sc); g.translate(-M.x, -M.z);
       MAP.boxes.forEach(function(b){
         if(b[4] <= 0) { g.fillStyle = T.panel2; g.fillRect(b[0], b[2], b[3] - b[0], b[5] - b[2]); return; }
-        g.globalAlpha = clamp(0.35 + b[4]/5, 0.35, 1); g.fillStyle = b[6] === "wall" ? T.ink : T.muted;
+        g.globalAlpha = clamp(0.35 + b[4]/5, 0.35, 1);
+        g.fillStyle = (b[6] === "wall" || b[6] === "adobe" || b[6] === "divider") ? T.ink : T.muted;
         g.fillRect(b[0], b[2], b[3] - b[0], b[5] - b[2]); g.globalAlpha = 1;
       });
+      // Wave F: disasters paint on the flat map too (wash + impact rings + shock ring)
+      if(V.disaster && t < (V.disasterUntil || 0)){
+        var disW = V.disaster;
+        g.globalAlpha = 0.22;
+        g.fillStyle = (disW === "sandstorm") ? T.gold
+          : (disW === "meteorshower" || disW === "shockring") ? T.need
+          : (disW === "toxicfog") ? T.good
+          : (disW === "thunder") ? T.gold
+          : (disW === "absolutezero") ? T.brand
+          : (disW === "emp") ? T.brand
+          : T.panel2;
+        g.fillRect(MAP.bounds[0], MAP.bounds[2], MAP.bounds[3] - MAP.bounds[0], MAP.bounds[5] - MAP.bounds[2]);
+        g.globalAlpha = 1;
+        (V.disasterMarks || []).forEach(function(Mk){
+          g.beginPath(); g.arc(Mk.x, Mk.z, Math.max(0.3, Mk.r), 0, Math.PI*2);
+          g.strokeStyle = (Mk.dis === "thunder") ? T.gold : T.need; g.lineWidth = 0.12; g.stroke(); g.lineWidth = 1;
+        });
+        if(disW === "shockring"){
+          var oxS = (MAP.bounds[0] + MAP.bounds[3]) / 2, ozS = (MAP.bounds[2] + MAP.bounds[5]) / 2;
+          g.beginPath(); g.arc(oxS, ozS, Math.max(0.4, V.disasterRing || 0), 0, Math.PI*2);
+          g.strokeStyle = T.gold; g.lineWidth = 0.18; g.stroke(); g.lineWidth = 1;
+        }
+      }
       MAP.pickups.forEach(function(pk, i){ if(!V.items[i] || !pk.kind) return; g.fillStyle = pk.kind === "health" ? T.need : T.gold; g.beginPath(); g.arc(pk.at[0], pk.at[2], 0.4, 0, Math.PI*2); g.fill(); });
+      // Rift pairs: two violet blips and the link between them (projectiles hop through)
+      (V.rifts || []).forEach(function(Rf){
+        if(!Rf || t >= (Rf.until || 0)) return;
+        g.strokeStyle = TOTEMS.rift.hue; g.lineWidth = 0.12;
+        g.beginPath(); g.moveTo(Rf.x, Rf.z); g.lineTo(Rf.x2, Rf.z2); g.stroke(); g.lineWidth = 1;
+        g.fillStyle = TOTEMS.rift.hue;
+        g.beginPath(); g.arc(Rf.x, Rf.z, 0.55, 0, Math.PI*2); g.fill();
+        g.beginPath(); g.arc(Rf.x2, Rf.z2, 0.55, 0, Math.PI*2); g.fill();
+      });
+      // Shockwave totem: an expanding ground ring (reads even when nobody is in range)
+      (V.rings || []).forEach(function(rg){
+        if(!rg) return;
+        var aR = (t - (rg.at || 0)) / (rg.dur || 0.55);
+        if(aR < 0 || aR > 1) return;
+        g.beginPath(); g.arc(rg.x, rg.z, Math.max(0.3, (rg.r || 8) * (0.15 + 0.85 * aR)), 0, Math.PI*2);
+        g.strokeStyle = T.need; g.lineWidth = 0.18 * (1 - aR * 0.6); g.stroke(); g.lineWidth = 1;
+      });
       if(V.mode === "practice") V.drones.forEach(function(D){ if(D.downUntil > t) return; var c = dronePos(D, (V.phase === "round" ? t - V.startAt : 0)); g.fillStyle = T.need; g.fillRect(c[0] - 0.45, c[2] - 0.45, 0.9, 0.9); });
       V.tracers.forEach(function(tr){ var age = t - tr.at; if(age > 0.12) return; g.strokeStyle = tr.mine ? T.gold : T.need; g.lineWidth = 0.08; g.beginPath(); g.moveTo(tr.a[0], tr.a[2]); g.lineTo(tr.b[0], tr.b[2]); g.stroke(); });
       others().forEach(function(P){
@@ -2370,9 +4363,14 @@ function makeGame(host, opts){
     }
     function bbox(name){ var g = GL[name]; return g ? new THREE.Box3().setFromObject(g.scene) : new THREE.Box3(new THREE.Vector3(-0.5, 0, -0.5), new THREE.Vector3(0.5, 1, 0.5)); }
     var BB = {};
-    // A solid box drawn as kit pieces, tiled so they keep their proportions roughly.
+    // Dockyard kit: solid boxes drawn as the harbour pieces, tiled so they keep proportions.
     var KIND = {floor: ["platform-large-grass", 8.8], block: ["platform", 2.2], step: ["platform", 1.0], crate: ["platform", 1.2],
                 low: ["wall-low", 2.2], wall: ["wall-high", 1.5], catwalk: ["wall-low", 2.2]};
+    // Dune Compound kit: adobe architecture only — no dockyard containers/crates.
+    // Each kind is [mode, accent?] where mode picks the mesh builder below.
+    var DUNE_KIND = {sand: 1, rock: 1, adobe: 1, divider: 1, silo: 1, dome: 1,
+                     pillar: 1, curb: 1, crate: 1, step: 1, ledge: 1, block: 1, shed: 1};
+    function isDuneKind(k){ return DUNE_KIND[k] === 1 && k !== "container" && k !== "catwalk"; }
     // One material finish everywhere so the dock reads as one place: PBR when we have it, Lambert
     // when we don't, with an optional emissive pulse over the theme's accent. Colors come from the
     // theme and the box kind; only the surface response changes.
@@ -2390,17 +4388,91 @@ function makeGame(host, opts){
       if(k === "container"){ var cs = th.container || ["#a8534a", "#4a7d8c"]; return hex(cs[i % cs.length], 0x4a7d8c); }
       if(k === "catwalk") return hex(th.catwalk || "#5d6873", 0x5d6873);
       if(k === "crate") return hex(th.crate || "#8c734a", 0x8c734a);
+      if(k === "adobe"){ var as = th.adobe || ["#d2b078", "#c8a468"]; return hex(as[i % as.length], 0xd2b078); }
+      if(k === "divider") return hex(th.divider || "#c4a06a", 0xc4a06a);
+      if(k === "silo") return hex(th.silo || "#e8d4a8", 0xe8d4a8);
+      if(k === "dome") return hex(th.dome || "#e0c898", 0xe0c898);
+      if(k === "pillar") return hex(th.pillar || "#b89860", 0xb89860);
+      if(k === "curb") return hex(th.curb || "#a88850", 0xa88850);
+      if(k === "step") return hex(th.step || "#d8bc8c", 0xd8bc8c);
+      if(k === "ledge") return hex(th.ledge || "#e8d4a8", 0xe8d4a8);
+      if(k === "rock") return hex(th.rock || "#8a7458", 0x8a7458);
+      if(k === "sand") return hex(th.sand || "#d8bc8c", 0xd8bc8c);
+      if(k === "shed") return hex(th.shed || "#b89860", 0xb89860);
       return null;    // the rest keeps the kit's own look
     }
+    // Original desert architecture meshes (procedural three.js geometry — no third-party assets).
+    function duneBox(sx, sy, sz, col, rough){
+      return new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat({color: col != null ? col : 0xd2b078, rough: rough != null ? rough : 0.92, metal: 0.0}));
+    }
+    function duneCyl(rt, rb, h, col, seg){
+      return new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg || 16), mat({color: col != null ? col : 0xe8d4a8, rough: 0.88, metal: 0.0}));
+    }
+    function duneModel(k, sx, sy, sz, col, acc){
+      var g = new THREE.Group();
+      if(k === "silo"){
+        var r = Math.max(sx, sz)*0.5;
+        var body = duneCyl(r, r*1.06, sy, col, 18); body.position.y = sy/2; g.add(body);
+        var cap = duneCyl(r*0.92, r, Math.min(0.35, sy*0.12), acc != null ? acc : 0xf0e0b8, 18); cap.position.y = sy + Math.min(0.18, sy*0.06); g.add(cap);
+        return g;
+      }
+      if(k === "dome"){
+        var base = duneBox(sx, sy*0.55, sz, col); base.position.y = sy*0.275; g.add(base);
+        var dome = new THREE.Mesh(new THREE.SphereGeometry(Math.max(sx, sz)*0.48, 16, 10, 0, Math.PI*2, 0, Math.PI/2),
+          mat({color: acc != null ? acc : 0xe0c898, rough: 0.85, metal: 0}));
+        dome.position.y = sy*0.55; g.add(dome);
+        return g;
+      }
+      if(k === "pillar"){
+        var col2 = duneCyl(Math.min(sx, sz)*0.5, Math.min(sx, sz)*0.55, sy, col, 10); col2.position.y = sy/2; g.add(col2);
+        var capP = duneBox(sx*1.15, Math.min(0.18, sy*0.08), sz*1.15, acc != null ? acc : 0xc8a468); capP.position.y = sy - Math.min(0.09, sy*0.04); g.add(capP);
+        return g;
+      }
+      if(k === "crate"){
+        var body = duneBox(sx, sy, sz, col, 0.8);
+        var band = duneBox(sx*1.04, Math.min(0.1, sy*0.12), sz*1.04, acc != null ? acc : 0xa88850, 0.8);
+        band.position.y = sy*0.55; g.add(body); g.add(band);
+        return g;
+      }
+      if(k === "curb" || k === "step" || k === "ledge"){
+        var slab = duneBox(sx, sy, sz, col, 0.9);
+        if(k === "ledge"){
+          var lip = duneBox(sx, Math.min(0.1, sy*0.15), sz, acc != null ? acc : 0xf0e0b8, 0.85);
+          lip.position.y = sy/2 + 0.02; g.add(lip);
+        }
+        g.add(slab);
+        return g;
+      }
+      if(k === "rock"){
+        var rock = duneBox(sx, sy, sz, col, 0.98);
+        rock.rotation.y = 0.04;
+        g.add(rock);
+        return g;
+      }
+      // adobe / divider / sand / block: a flat mass with a slightly lighter cap band
+      var wall = duneBox(sx, sy, sz, col, 0.93); g.add(wall);
+      if(k === "adobe" || k === "divider"){
+        var band2 = duneBox(sx*1.02, Math.min(0.16, sy*0.1), sz*1.02, acc != null ? acc : 0xe8d4a8, 0.88);
+        band2.position.y = sy*0.82; g.add(band2);
+      }
+      return g;
+    }
     function boxModel(b, idx){
-      var k = KIND[b[6]] || KIND.block, name = k[0], bb = BB[name] || (BB[name] = bbox(name));
+      var kind = String(b[6] || "block");
       var sx = b[3] - b[0], sy = b[4] - b[1], sz = b[5] - b[2], g = new THREE.Group();
+      var kc = kindColor(kind, idx);
+      if(isDuneKind(kind)){
+        var dg = duneModel(kind, sx, sy, sz, kc, kindColor(kind === "adobe" ? "ledge" : "adobe", idx + 1));
+        g.add(dg);
+        g.position.set((b[0] + b[3])/2, b[1], (b[2] + b[5])/2);
+        return g;
+      }
+      var k = KIND[kind] || KIND.block, name = k[0], bb = BB[name] || (BB[name] = bbox(name));
       var along = name.indexOf("wall") === 0 && sz > sx;           // walls: the long side runs along x in the model
       var L = along ? sz : sx, D = along ? sx : sz;
       var nL = Math.max(1, Math.round(L/k[1])), nD = name.indexOf("wall") === 0 ? 1 : Math.max(1, Math.round(D/k[1]));
       var mw = bb.max.x - bb.min.x, mh = bb.max.y - bb.min.y, md = bb.max.z - bb.min.z;
       // containers, catwalks and crates get one flat colour so the lanes read at a glance
-      var kc = kindColor(b[6], idx);
       for(var i = 0; i < nL; i++) for(var j = 0; j < nD; j++){
         var o = model(name), tl = L/nL, td = D/nD, ov = name.indexOf("wall") === 0 ? 1.12 : 1.04;
         if(kc != null) o.traverse(function(n){ if(n.isMesh){ n.material = n.material.clone(); n.material.color.setHex(kc); } });
@@ -2444,10 +4516,12 @@ function makeGame(host, opts){
         skyd.renderOrder = -1; mapGroup.add(skyd);
       }
       MAP.boxes.forEach(function(b, i){ mapGroup.add(boxModel(b, i)); });
-      // one glowing strip per container top edge (the theme's accent): harbour cranes and deck lights
+      // one glowing strip per long top edge (the theme's accent): dock cranes on the harbour,
+      // doorway lintels along the compound walls
       var acc = hex(th.accent || "#ffb86b", 0xffb86b);
       MAP.boxes.forEach(function(b, idx){
-        if(b[6] !== "container" && b[6] !== "catwalk") return;
+        var kk = String(b[6] || "");
+        if(kk !== "container" && kk !== "catwalk" && kk !== "adobe" && kk !== "divider") return;
         var sx = b[3] - b[0], sz = b[5] - b[2], horiz = sx >= sz;
         var strip = new THREE.Mesh(new THREE.BoxGeometry(horiz ? sx : 0.08, 0.1, horiz ? 0.08 : sz), mat({color: 0x0a0e14, em: acc, emMax: 1.05}));
         strip.position.set((b[0] + b[3])/2, b[4] + 0.06, (b[2] + b[5])/2); mapGroup.add(strip);
@@ -2576,7 +4650,10 @@ function makeGame(host, opts){
       if(hitMat && !V.low){ var p = new THREE.Sprite(hitMat.clone()); p.position.set(b[0], b[1], b[2]); p.scale.setScalar(0.35); dyn.add(p); puffs.push({o: p, at: now()}); }
       if(tracers.length > 30){ var x = tracers.shift(); dyn.remove(x.o); x.o.geometry.dispose(); }
     }
-    function clearDynamic(){ tracers.concat(puffs).forEach(function(x){ dyn.remove(x.o); }); tracers = []; puffs = [];
+    function clearDynamic(){ if(typeof fxStop === "function") fxStop();
+      tracers.concat(puffs).forEach(function(x){ dyn.remove(x.o); }); tracers = []; puffs = [];
+      (riftGroups || []).forEach(function(g){ scene.remove(g); }); riftGroups = [];
+      (ringMeshes || []).forEach(function(r){ dyn.remove(r.o); }); ringMeshes = [];
       (V.dmgNums || []).forEach(function(D){ if(D.o){ dyn.remove(D.o); D.o.material.map.dispose(); D.o.material.dispose(); D.o = null; } }); V.dmgNums = [];
       V.order.forEach(function(u){ removePlayer(V.players[u]); }); }
     var R = {};
@@ -2641,7 +4718,13 @@ function makeGame(host, opts){
       var ring = new THREE.Mesh(new THREE.RingGeometry(0.34, 0.44, 20).rotateX(-Math.PI/2),
         new THREE.MeshBasicMaterial({color: c, transparent: true, opacity: 0.55, side: THREE.DoubleSide}));
       ring.position.y = 0.03; gp.add(ring);
-      gp.add(beacon(c));
+      // Hot Drop / Cursed Drop: the tag is its own beam so you can see the flavour
+      // from across the deck (hot = taller gold, cursed = purple)
+      var tag = pk.tag || "";
+      var bc = tag === "hot" ? 0xffd43b : (tag === "cursed" ? 0x9d6bff : (tag === "dis" ? 0xff6b6b : c));
+      var beam = beacon(bc);
+      if(tag === "hot" || tag === "cursed" || tag === "dis") beam.scale.y = 1.8;
+      gp.add(beam);
       gp.position.set(pk.at[0], pk.at[1] + 0.55, pk.at[2]); scene.add(gp); pickMeshes[idx] = gp;
     };
     // a loose pack (the PACK_GAP drop ring) is the same crate the map's fixed packs use,
@@ -2690,7 +4773,480 @@ function makeGame(host, opts){
       });
       scene.add(cl); dc.mesh = cl;
     };
+    // ---- Wave G: visible Rift pair + Shockwave ground ring ----
+    // A rift used to plant V.rifts and hop rockets through with NO mesh and NO 2D blip,
+    // so "nothing happened" was literally true on screen. Two violet openings + a link
+    // beam make the 6s pair obvious from anywhere on the map. R.ring is the shockwave
+    // totem's expanding ground circle (reads even when the 6m knock hits nobody).
+    var riftGroups = [], ringMeshes = [];
+    function riftOpening(x, z, c){
+      var gp = new THREE.Group();
+      var disc = new THREE.Mesh(new THREE.CircleGeometry(0.55, 22).rotateX(-Math.PI/2),
+        new THREE.MeshBasicMaterial({color: c, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false, fog: false}));
+      disc.position.y = 0.05; gp.add(disc);
+      var rim = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.72, 24).rotateX(-Math.PI/2),
+        new THREE.MeshBasicMaterial({color: c, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false, fog: false}));
+      rim.position.y = 0.07; gp.add(rim);
+      var arch = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.06, 8, 20, Math.PI),
+        new THREE.MeshBasicMaterial({color: c, transparent: true, opacity: 0.85, depthWrite: false, fog: false}));
+      arch.position.y = 0.1; arch.rotation.y = Math.PI/2; gp.add(arch);
+      var beam = beacon(c); beam.scale.y = 0.55; gp.add(beam);
+      gp.position.set(x, 0, z); return gp;
+    }
+    R.addRift = function(rf){
+      if(!rf) return;
+      var c = TOTEMS.rift.c;
+      // two world-positioned openings under one group so dispose is one call
+      var a = riftOpening(0, 0, c), b = riftOpening(0, 0, c);
+      a.position.set(rf.x, 0, rf.z); b.position.set(rf.x2, 0, rf.z2);
+      var midx = (rf.x + rf.x2) / 2, midz = (rf.z + rf.z2) / 2;
+      var span = Math.hypot(rf.x2 - rf.x, rf.z2 - rf.z) || 1;
+      var link = new THREE.Mesh(new THREE.BoxGeometry(span, 0.05, 0.08),
+        new THREE.MeshBasicMaterial({color: c, transparent: true, opacity: 0.45, depthWrite: false, fog: false}));
+      link.position.set(midx, 0.12, midz);
+      link.rotation.y = Math.atan2(rf.x2 - rf.x, rf.z2 - rf.z) + Math.PI/2;
+      var g2 = new THREE.Group(); g2.add(a); g2.add(b); g2.add(link);
+      g2.userData.until = rf.until || 0; g2.userData.rift = rf;
+      scene.add(g2); riftGroups.push(g2); rf.mesh = g2;
+    };
+    R.ring = function(x, y, z, r, dur, t){
+      var rg = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.85, 40).rotateX(-Math.PI/2),
+        new THREE.MeshBasicMaterial({color: TOTEMS.shock.c, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false, fog: false}));
+      rg.position.set(x, y != null ? y : 0.1, z); rg.scale.setScalar(0.4);
+      dyn.add(rg); ringMeshes.push({o: rg, at: t != null ? t : 0, r: r || 8, dur: dur || 0.55});
+      if(ringMeshes.length > 8){ var old = ringMeshes.shift(); dyn.remove(old.o); }
+    };
+    R.clearRifts = function(){
+      (riftGroups || []).forEach(function(g){ scene.remove(g); });
+      riftGroups = [];
+    };
 
+    /* ===================== Wave F: Disaster Theatre =====================
+       Every arena-wide disaster paints big, map-wide, ORIGINAL three.js spectacle so
+       both teams SEE that something is happening (Absolute Zero used to be invisible
+       numbers). Geometry + generated canvas textures only — no third-party assets, no
+       egress. Motion is gated on calm(); under Calm / reduced-motion the still frame
+       keeps the colour, fog and light change and just stops moving.
+       R.disaster(kind, on) is what disStart / disClear / the MP "di" snap already call. */
+    var fxKind = "", fxGroup = null, fxBits = [], fxPool = [], fxRing = null, fxCol = null,
+        fxPit = null, fxWarn = null, fxMarkSeen = {}, fxBoomSeen = {}, fxBase = null,
+        fxSpan = 1, fxBoltAt = -9, fxBolt = null, fxBoltHalo = null, fxBoltBranch = null,
+        fxSnow = null, fxDust = null, fxClouds = [];
+    function fxTex(kind){
+      var c = document.createElement("canvas"), g = c.getContext("2d"); c.width = 32; c.height = 32;
+      var gr = g.createRadialGradient(16, 16, 1, 16, 16, 15);
+      if(kind === "snow"){ gr.addColorStop(0, "rgba(240,250,255,1)"); gr.addColorStop(0.5, "rgba(200,230,255,0.85)"); gr.addColorStop(1, "rgba(160,200,255,0)"); }
+      else if(kind === "dust"){ gr.addColorStop(0, "rgba(220,190,140,0.9)"); gr.addColorStop(0.5, "rgba(180,140,90,0.55)"); gr.addColorStop(1, "rgba(140,100,60,0)"); }
+      else if(kind === "toxic"){ gr.addColorStop(0, "rgba(160,255,120,0.75)"); gr.addColorStop(0.45, "rgba(80,200,60,0.45)"); gr.addColorStop(1, "rgba(40,120,30,0)"); }
+      else if(kind === "rock"){ gr.addColorStop(0, "rgba(90,70,50,1)"); gr.addColorStop(0.5, "rgba(60,45,30,0.8)"); gr.addColorStop(1, "rgba(30,20,10,0)"); }
+      else if(kind === "fire"){ gr.addColorStop(0, "rgba(255,240,180,1)"); gr.addColorStop(0.35, "rgba(255,140,40,0.9)"); gr.addColorStop(1, "rgba(180,40,10,0)"); }
+      else if(kind === "frost"){ gr.addColorStop(0, "rgba(220,245,255,1)"); gr.addColorStop(0.5, "rgba(140,200,240,0.7)"); gr.addColorStop(1, "rgba(80,140,200,0)"); }
+      else { gr.addColorStop(0, "rgba(255,255,255,1)"); gr.addColorStop(1, "rgba(255,255,255,0)"); }
+      g.fillStyle = gr; g.fillRect(0, 0, 32, 32);
+      var t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+    }
+    var TEX_SNOW = null, TEX_DUST = null, TEX_TOXIC = null, TEX_ROCK = null, TEX_FIRE = null, TEX_FROST = null;
+    function fxEnsureTex(){
+      if(!TEX_SNOW) TEX_SNOW = fxTex("snow");
+      if(!TEX_DUST) TEX_DUST = fxTex("dust");
+      if(!TEX_TOXIC) TEX_TOXIC = fxTex("toxic");
+      if(!TEX_ROCK) TEX_ROCK = fxTex("rock");
+      if(!TEX_FIRE) TEX_FIRE = fxTex("fire");
+      if(!TEX_FROST) TEX_FROST = fxTex("frost");
+    }
+    function fxPart(tex, x, y, z, s, op){
+      var sp = new THREE.Sprite(new THREE.SpriteMaterial({map: tex, transparent: true, depthWrite: false, opacity: op != null ? op : 0.85}));
+      sp.position.set(x, y, z); sp.scale.setScalar(s || 0.5);
+      fxGroup.add(sp); fxBits.push(sp); return sp;
+    }
+    function fxStop(){
+      if(fxGroup){ dyn.remove(fxGroup); fxGroup = null; }
+      fxBits = []; fxPool = []; fxRing = null; fxCol = null; fxPit = null; fxWarn = null;
+      fxSnow = null; fxDust = null; fxClouds = []; fxBolt = null; fxBoltHalo = null; fxBoltBranch = null;
+      fxMarkSeen = {}; fxBoomSeen = {};
+      if(fxBase){
+        if(scene.fog){ scene.fog.near = fxBase.fogN; scene.fog.far = fxBase.fogF; if(fxBase.fogC != null) scene.fog.color.set(fxBase.fogC); }
+        if(scene.background && scene.background.set && fxBase.sky != null) scene.background.set(fxBase.sky);
+        sun.intensity = fxBase.sunI; hemi.intensity = fxBase.hemiI;
+        if(fill) fill.intensity = fxBase.fillI;
+        fxBase = null;
+      }
+      fxKind = "";
+    }
+    function fxStart(kind){
+      fxStop();
+      if(!kind || !TOTEMS[kind]) return;
+      fxKind = kind; fxEnsureTex();
+      fxGroup = new THREE.Group(); dyn.add(fxGroup);
+      var b = MAP.bounds || [-40, -1, -30, 40, 12, 30];
+      var ox = (b[0] + b[3]) / 2, oz = (b[2] + b[5]) / 2;
+      fxSpan = Math.max(8, Math.min(b[3] - b[0], b[5] - b[2]) * 0.5);
+      fxBase = {
+        fogN: scene.fog ? scene.fog.near : 36,
+        fogF: scene.fog ? scene.fog.far : 120,
+        fogC: scene.fog ? scene.fog.color.getHex() : null,
+        sky: (scene.background && scene.background.getHex) ? scene.background.getHex() : null,
+        sunI: sun.intensity, hemiI: hemi.intensity, fillI: fill ? fill.intensity : 0
+      };
+      var i, n, sp, x, y, z, ang;
+      if(kind === "sandstorm"){
+        if(scene.fog){ scene.fog.near = 1.2; scene.fog.far = 22; scene.fog.color.set(0xb08a55); }
+        if(scene.background && scene.background.set) scene.background.set(0x8a6a40);
+        sun.intensity = fxBase.sunI * 0.25; hemi.intensity = fxBase.hemiI * 0.4;
+        // denser wall of grit: 320 sprites (was 140), fatter and more opaque, fog crushed
+        for(i = 0, n = 320; i < n; i++){
+          ang = FS.mb32((i * 97 + 3) & 0xFFFF) * 6.283;
+          x = ox + Math.cos(ang) * (1.5 + FS.mb32((i * 31 + 11) & 0xFFFF) * (b[3] - b[0]) * 0.6);
+          z = oz + Math.sin(ang) * (1.5 + FS.mb32((i * 53 + 7) & 0xFFFF) * (b[5] - b[2]) * 0.6);
+          y = 0.15 + FS.mb32((i * 71 + 13) & 0xFFFF) * 8;
+          sp = fxPart(TEX_DUST, x, y, z, 0.9 + FS.mb32((i * 17) & 0xFFFF) * 1.8, 0.45 + FS.mb32((i * 23) & 0xFFFF) * 0.45);
+          sp.userData.vx = 5.5 + FS.mb32((i * 41) & 0xFFFF) * 4; sp.userData.vy = 0.15; sp.userData.vz = 0.9;
+        }
+      } else if(kind === "meteorshower"){
+        if(scene.fog){ scene.fog.near = 18; scene.fog.far = 90; scene.fog.color.set(0x6a3a28); }
+        if(scene.background && scene.background.set) scene.background.set(0x4a2018);
+        sun.intensity = fxBase.sunI * 0.55;
+        for(i = 0, n = 26; i < n; i++){
+          ang = FS.mb32((i * 89 + 5) & 0xFFFF) * 6.283;
+          x = ox + Math.cos(ang) * (3 + FS.mb32((i * 29 + 3) & 0xFFFF) * (b[3] - b[0]) * 0.5);
+          z = oz + Math.sin(ang) * (3 + FS.mb32((i * 59 + 9) & 0xFFFF) * (b[5] - b[2]) * 0.5);
+          y = 18 + FS.mb32((i * 13) & 0xFFFF) * 14;
+          sp = fxPart(TEX_FIRE, x, y, z, 1.2 + FS.mb32((i * 19) & 0xFFFF) * 1.6, 0.95);
+          sp.userData.vy = -(10 + FS.mb32((i * 37) & 0xFFFF) * 8);
+          sp.userData.vx = (FS.mb32((i * 43) & 0xFFFF) - 0.5) * 2;
+          sp.userData.vz = (FS.mb32((i * 47) & 0xFFFF) - 0.5) * 2;
+          sp.userData.ttl = 1.4 + FS.mb32((i * 53) & 0xFFFF) * 1.2;
+          sp.userData.age = 0;
+        }
+      } else if(kind === "hurricane"){
+        if(scene.fog){ scene.fog.near = 10; scene.fog.far = 70; scene.fog.color.set(0x4a6a8a); }
+        if(scene.background && scene.background.set) scene.background.set(0x2a4060);
+        sun.intensity = fxBase.sunI * 0.5;
+        var colGeo = new THREE.CylinderGeometry(DD_WIND_R * 1.1, DD_WIND_R * 0.7, 16, 18, 1, true);
+        fxCol = new THREE.Mesh(colGeo, new THREE.MeshBasicMaterial({
+          color: 0xb8d4f0, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false, fog: false
+        }));
+        fxCol.position.set(ox, 7, oz); fxGroup.add(fxCol);
+        for(i = 0, n = 60; i < n; i++){
+          ang = (i / 60) * 6.283;
+          sp = fxPart(TEX_DUST, ox + Math.cos(ang) * DD_WIND_R, 0.5 + FS.mb32((i * 17) & 0xFFFF) * 10, oz + Math.sin(ang) * DD_WIND_R,
+                      0.5 + FS.mb32((i * 29) & 0xFFFF) * 0.8, 0.55);
+          sp.userData.ang = ang; sp.userData.rad = DD_WIND_R * (0.6 + FS.mb32((i * 41) & 0xFFFF) * 0.55);
+          sp.userData.vy = 1.2 + FS.mb32((i * 53) & 0xFFFF) * 2.5;
+        }
+      } else if(kind === "thunder"){
+        if(scene.fog){ scene.fog.near = 14; scene.fog.far = 80; scene.fog.color.set(0x2a3040); }
+        if(scene.background && scene.background.set) scene.background.set(0x1a2030);
+        sun.intensity = fxBase.sunI * 0.4;
+        // zig-zag bolt + a dimmer halo path + one side branch — all hashed (boltPts)
+        fxBolt = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 20, 0), new THREE.Vector3(0, 0, 0)]),
+          new THREE.LineBasicMaterial({color: 0xe8f4ff, transparent: true, opacity: 0, fog: false})
+        );
+        fxBolt.visible = false; fxGroup.add(fxBolt);
+        fxBoltHalo = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 20, 0), new THREE.Vector3(0, 0, 0)]),
+          new THREE.LineBasicMaterial({color: 0x7ec8ff, transparent: true, opacity: 0, fog: false})
+        );
+        fxBoltHalo.visible = false; fxGroup.add(fxBoltHalo);
+        fxBoltBranch = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 20, 0), new THREE.Vector3(0, 0, 0)]),
+          new THREE.LineBasicMaterial({color: 0xc8e8ff, transparent: true, opacity: 0, fog: false})
+        );
+        fxBoltBranch.visible = false; fxGroup.add(fxBoltBranch);
+      } else if(kind === "earthquake"){
+        if(scene.fog){ scene.fog.near = 16; scene.fog.far = 85; scene.fog.color.set(0x5a4a3a); }
+        if(scene.background && scene.background.set) scene.background.set(0x3a3028);
+        sun.intensity = fxBase.sunI * 0.6;
+        for(i = 0, n = 50; i < n; i++){
+          ang = FS.mb32((i * 83 + 1) & 0xFFFF) * 6.283;
+          x = ox + Math.cos(ang) * FS.mb32((i * 31 + 7) & 0xFFFF) * (b[3] - b[0]) * 0.5;
+          z = oz + Math.sin(ang) * FS.mb32((i * 57 + 3) & 0xFFFF) * (b[5] - b[2]) * 0.5;
+          sp = fxPart(TEX_DUST, x, 0.2 + FS.mb32((i * 11) & 0xFFFF) * 1.5, z, 0.6 + FS.mb32((i * 23) & 0xFFFF) * 1.1, 0.4);
+          sp.userData.vy = 0.6 + FS.mb32((i * 37) & 0xFFFF) * 1.4;
+          sp.userData.age = 0;
+        }
+      } else if(kind === "shockring"){
+        if(scene.fog){ scene.fog.near = 20; scene.fog.far = 110; }
+        sun.intensity = fxBase.sunI * 0.8;
+        fxRing = new THREE.Mesh(
+          new THREE.RingGeometry(0.9, 1.1, 64).rotateX(-Math.PI/2),
+          new THREE.MeshBasicMaterial({color: 0xff6b6b, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false, fog: false})
+        );
+        fxRing.position.set(ox, 0.15, oz); fxGroup.add(fxRing);
+      } else if(kind === "toxicfog"){
+        if(scene.fog){ scene.fog.near = 4; scene.fog.far = 40; scene.fog.color.set(0x3a6a30); }
+        if(scene.background && scene.background.set) scene.background.set(0x2a4a28);
+        sun.intensity = fxBase.sunI * 0.4;
+        // paint the SAME sticky clouds the judge damages (frozen at disStart / shiped in di[6])
+        var toxZones = (V.disasterZones && V.disasterZones.length) ? V.disasterZones : null;
+        for(i = 0; i < DD_TOXIC_ZONES; i++){
+          if(toxZones && toxZones[i]){
+            x = toxZones[i][0]; z = toxZones[i][1];
+          } else {
+            ang = (i / 3) * 6.283 + 0.4;
+            x = ox + Math.cos(ang) * fxSpan * 0.55; z = oz + Math.sin(ang) * fxSpan * 0.4;
+          }
+          sp = fxPart(TEX_TOXIC, x, 1.2, z, DD_TOXIC_R * 2.4, 0.55);
+          fxClouds.push(sp);
+          for(var j = 0; j < 10; j++){
+            var ja = FS.mb32((i * 97 + j * 31) & 0xFFFF) * 6.283;
+            fxPart(TEX_TOXIC, x + Math.cos(ja) * DD_TOXIC_R * 0.7, 0.4 + FS.mb32((j * 17) & 0xFFFF) * 2.2, z + Math.sin(ja) * DD_TOXIC_R * 0.7,
+                   0.8 + FS.mb32((j * 23) & 0xFFFF) * 1.2, 0.4);
+          }
+        }
+      } else if(kind === "absolutezero"){
+        if(scene.fog){ scene.fog.near = 6; scene.fog.far = 48; scene.fog.color.set(0xa8c8e8); }
+        if(scene.background && scene.background.set) scene.background.set(0x6a8ab0);
+        sun.intensity = fxBase.sunI * 0.45; hemi.intensity = fxBase.hemiI * 0.7;
+        if(fill) fill.intensity = 0.15;
+        for(i = 0, n = 180; i < n; i++){
+          x = b[0] + FS.mb32((i * 97 + 5) & 0xFFFF) * (b[3] - b[0]);
+          z = b[2] + FS.mb32((i * 31 + 11) & 0xFFFF) * (b[5] - b[2]);
+          y = 0.5 + FS.mb32((i * 53 + 3) & 0xFFFF) * 14;
+          sp = fxPart(i % 3 === 0 ? TEX_FROST : TEX_SNOW, x, y, z,
+                      0.25 + FS.mb32((i * 17) & 0xFFFF) * 0.55, 0.55 + FS.mb32((i * 23) & 0xFFFF) * 0.4);
+          sp.userData.vy = -(1.1 + FS.mb32((i * 41) & 0xFFFF) * 1.6);
+          sp.userData.vx = (FS.mb32((i * 47) & 0xFFFF) - 0.5) * 1.2;
+          sp.userData.vz = (FS.mb32((i * 59) & 0xFFFF) - 0.5) * 1.2;
+        }
+        // ice shards poking out of the floor so the freeze reads from any angle
+        for(i = 0, n = 24; i < n; i++){
+          ang = FS.mb32((i * 71 + 9) & 0xFFFF) * 6.283;
+          x = ox + Math.cos(ang) * (2 + FS.mb32((i * 29 + 1) & 0xFFFF) * (b[3] - b[0]) * 0.45);
+          z = oz + Math.sin(ang) * (2 + FS.mb32((i * 43 + 7) & 0xFFFF) * (b[5] - b[2]) * 0.45);
+          if(FS.overlaps(MAP, x, 0.1, z, 0.2) >= 0) continue;
+          var shard = new THREE.Mesh(new THREE.ConeGeometry(0.18 + FS.mb32((i * 13) & 0xFFFF) * 0.2, 0.8 + FS.mb32((i * 19) & 0xFFFF) * 1.4, 5),
+            new THREE.MeshLambertMaterial({color: 0xb8e0ff, emissive: 0x6aa0d0, transparent: true, opacity: 0.85}));
+          shard.position.set(x, 0.2, z);
+          shard.rotation.set((FS.mb32((i * 37) & 0xFFFF) - 0.5) * 0.6, ang, (FS.mb32((i * 41) & 0xFFFF) - 0.5) * 0.6);
+          fxGroup.add(shard);   // still art — do NOT push into fxBits (that list is for drifting particles)
+        }
+      } else if(kind === "sinkhole"){
+        if(scene.fog){ scene.fog.near = 8; scene.fog.far = 55; scene.fog.color.set(0x2a2018); }
+        if(scene.background && scene.background.set) scene.background.set(0x1a1410);
+        sun.intensity = fxBase.sunI * 0.4;
+        fxPit = new THREE.Group();
+        var disc = new THREE.Mesh(new THREE.CircleGeometry(DD_SINK_R, 28).rotateX(-Math.PI/2),
+          new THREE.MeshBasicMaterial({color: 0x0a0806, transparent: true, opacity: 0.88, depthWrite: false}));
+        disc.position.y = 0.06; fxPit.add(disc);
+        var lip = new THREE.Mesh(new THREE.RingGeometry(DD_SINK_R * 0.85, DD_SINK_R * 1.15, 32).rotateX(-Math.PI/2),
+          new THREE.MeshBasicMaterial({color: 0x5c4033, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false}));
+        lip.position.y = 0.08; fxPit.add(lip);
+        var sspotFx = (V.disasterPit && V.disasterPit.length === 2)
+          ? [V.disasterPit[0], 0, V.disasterPit[1]]
+          : ((typeof disSpot === "function") ? disSpot(((Math.imul(V.disasterSeed|0, 2654435761) + 47) >>> 0), 5) : [ox, 0, oz]);
+        fxPit.position.set(sspotFx[0], 0, sspotFx[2]); fxGroup.add(fxPit);
+        for(i = 0, n = 40; i < n; i++){
+          ang = FS.mb32((i * 89 + 3) & 0xFFFF) * 6.283;
+          sp = fxPart(TEX_ROCK, ox + Math.cos(ang) * DD_SINK_R * 1.6, 0.3 + FS.mb32((i * 17) & 0xFFFF) * 3, oz + Math.sin(ang) * DD_SINK_R * 1.6,
+                      0.3 + FS.mb32((i * 29) & 0xFFFF) * 0.5, 0.8);
+          sp.userData.ang = ang; sp.userData.rad = DD_SINK_R * (1.1 + FS.mb32((i * 41) & 0xFFFF) * 0.8);
+          sp.userData.vy = -0.8 - FS.mb32((i * 53) & 0xFFFF) * 1.2;
+        }
+      } else if(kind === "emp"){
+        if(scene.fog){ scene.fog.near = 12; scene.fog.far = 60; scene.fog.color.set(0x1a2840); }
+        if(scene.background && scene.background.set) scene.background.set(0x0a1428);
+        sun.intensity = 0.08; hemi.intensity = fxBase.hemiI * 0.15;
+        if(fill) fill.intensity = 0.05;
+        // strobing warning pylons so the blackout is still readable in the world
+        for(i = 0, n = 18; i < n; i++){
+          ang = (i / 18) * 6.283;
+          x = ox + Math.cos(ang) * fxSpan * 0.7; z = oz + Math.sin(ang) * fxSpan * 0.55;
+          sp = fxPart(TEX_FROST, x, 0.4, z, 1.4, 0.35);
+          sp.userData.strobe = 1;
+        }
+      }
+      // warn ring: a bright ground circle that pulses for the 2s warn and then sits under the hold
+      fxWarn = new THREE.Mesh(new THREE.RingGeometry(0.7, 1.0, 48).rotateX(-Math.PI/2),
+        new THREE.MeshBasicMaterial({color: 0xffd43b, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false, fog: false}));
+      fxWarn.position.set(ox, 0.12, oz); fxWarn.scale.setScalar(fxSpan * 1.2); fxGroup.add(fxWarn);
+    }
+    // per-frame: move particles, walk the storm column, expand the shock ring, paint marks
+    function fxTick(dt, t, quiet){
+      // V.booms are pushed by the judge (meteor / quake / mine / chaos) — paint each once in 3D
+      if(V.booms && V.booms.length){
+        for(var bi = 0; bi < V.booms.length; bi++){
+          var B = V.booms[bi];
+          if(R.boom) R.boom(B.x, B.y != null ? B.y : 0.3, B.z, t);
+        }
+        V.booms = [];
+      }
+      // impact marks become 3D ground warning rings (they used to be radar-only)
+      if(V.disasterMarks && V.disasterMarks.length && fxGroup){
+        for(var mi = 0; mi < V.disasterMarks.length; mi++){
+          var Mk = V.disasterMarks[mi], mk = String(Mk.id != null ? Mk.id : mi);
+          if(fxMarkSeen[mk]) continue;
+          fxMarkSeen[mk] = 1;
+          var rGeo = new THREE.RingGeometry(Math.max(0.2, Mk.r * 0.55), Math.max(0.3, Mk.r), 28).rotateX(-Math.PI/2);
+          var rMat = new THREE.MeshBasicMaterial({
+            color: (Mk.dis === "thunder" ? 0xffd43b : (Mk.dis === "earthquake" ? 0xb08060 : 0xff6b6b)),
+            transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, fog: false
+          });
+          var rg = new THREE.Mesh(rGeo, rMat);
+          rg.position.set(Mk.x, 0.1, Mk.z);
+          rg.userData.hitAt = Mk.hitAt || (t + 1);
+          fxGroup.add(rg); fxPool.push(rg);
+        }
+      }
+      if(!fxKind || !fxGroup) return;
+      var warnOn = t < (V.disasterWarnAt || 0);
+      var i, sp, u;
+      if(fxWarn){
+        var ws = warnOn ? (0.85 + 0.15 * Math.sin(t * 10)) : 1;
+        fxWarn.scale.setScalar(fxSpan * 1.2 * ws);
+        fxWarn.material.opacity = warnOn ? 0.65 : 0.18;
+      }
+      // mark rings pulse before they hit, then vanish (the boom itself is R.boom)
+      for(i = fxPool.length - 1; i >= 0; i--){
+        var rgp = fxPool[i], left = (rgp.userData.hitAt || 0) - t;
+        if(left <= 0){ if(fxGroup) fxGroup.remove(rgp); fxPool.splice(i, 1); continue; }
+        var pulse = warnOn ? 1 : (0.7 + 0.3 * Math.sin(t * 14));
+        rgp.material.opacity = clamp(0.35 + left * 0.45, 0.2, 0.85) * pulse;
+        if(!quiet){ rgp.rotation.y = t * 0.6; }
+      }
+      if(fxKind === "sandstorm" || fxKind === "earthquake" || fxKind === "meteorshower" || fxKind === "absolutezero" || fxKind === "hurricane" || fxKind === "sinkhole"){
+        for(i = 0; i < fxBits.length; i++){
+          sp = fxBits[i]; if(!sp || !sp.userData || sp.userData.staticFx) continue;
+          u = sp.userData;
+          if(fxKind === "sandstorm"){
+            if(!quiet){ sp.position.x += (u.vx || 4) * dt; sp.position.z += (u.vz || 0) * dt; }
+            if(sp.position.x > MAP.bounds[3] + 4) sp.position.x = MAP.bounds[0] - 4;
+          } else if(fxKind === "meteorshower"){
+            sp.position.y += (u.vy || -12) * dt;
+            sp.position.x += (u.vx || 0) * dt; sp.position.z += (u.vz || 0) * dt;
+            u.age = (u.age || 0) + dt;
+            if(sp.position.y < 0.2 || u.age > (u.ttl || 2)){
+              if(R.boom) R.boom(sp.position.x, 0.3, sp.position.z, t);
+              sp.position.y = 16 + FS.mb32(((t * 977 + i) | 0) & 0xFFFF) * 12;
+              u.age = 0;
+            }
+          } else if(fxKind === "hurricane"){
+            u.ang = (u.ang || 0) + dt * 3.2;
+            u.rad = Math.max(1, (u.rad || 6) + (quiet ? 0 : Math.sin(t * 3 + i) * 0.02));
+            var cX = fxCol ? fxCol.position.x : 0, cZ = fxCol ? fxCol.position.z : 0;
+            sp.position.set(cX + Math.cos(u.ang) * u.rad, sp.position.y, cZ + Math.sin(u.ang) * u.rad);
+            if(!quiet) sp.position.y += (u.vy || 1.5) * dt;
+            if(sp.position.y > 14) sp.position.y = 0.4;
+          } else if(fxKind === "absolutezero"){
+            if(!quiet){
+              sp.position.y += (u.vy || -1.5) * dt;
+              sp.position.x += (u.vx || 0) * dt; sp.position.z += (u.vz || 0) * dt;
+            }
+            if(sp.position.y < 0.1){ sp.position.y = 12 + FS.mb32(((t * 613 + i) | 0) & 0xFFFF) * 3; }
+          } else if(fxKind === "earthquake"){
+            if(!quiet){
+              sp.position.y += (u.vy || 0.8) * dt;
+              sp.position.x += Math.sin(t * 9 + i) * dt * 0.4;
+            }
+            if(sp.position.y > 3.5) sp.position.y = 0.15;
+          } else if(fxKind === "sinkhole"){
+            u.ang = (u.ang || 0) - dt * 1.8;
+            u.rad = Math.max(0.4, (u.rad || 4) - dt * 0.9);
+            var pX = fxPit ? fxPit.position.x : 0, pZ = fxPit ? fxPit.position.z : 0;
+            sp.position.set(pX + Math.cos(u.ang) * u.rad, sp.position.y, pZ + Math.sin(u.ang) * u.rad);
+            if(!quiet) sp.position.y += (u.vy || -1) * dt;
+            if(sp.position.y < 0.1 || u.rad < 0.5){ sp.position.y = 2 + FS.mb32(((t * 331 + i) | 0) & 0xFFFF) * 2; u.rad = DD_SINK_R * 1.5; }
+          }
+        }
+      }
+      if(fxKind === "toxicfog"){
+        for(i = 0; i < fxClouds.length; i++){
+          sp = fxClouds[i]; if(!sp) continue;
+          // keep the painted cloud on the judge's sticky centre (snap may correct it)
+          if(V.disasterZones && V.disasterZones[i]){
+            sp.position.x = V.disasterZones[i][0];
+            sp.position.z = V.disasterZones[i][1];
+          }
+          if(!quiet){ sp.scale.setScalar(DD_TOXIC_R * (2.2 + 0.35 * Math.sin(t * 1.3 + i))); sp.position.y = 1.1 + 0.25 * Math.sin(t * 0.9 + i); }
+        }
+      }
+      if(fxKind === "sinkhole" && fxPit && V.disasterPit && V.disasterPit.length === 2){
+        fxPit.position.x = V.disasterPit[0];
+        fxPit.position.z = V.disasterPit[1];
+      }
+      if(fxKind === "hurricane" && fxCol){
+        // the column walks the same hashed diagonal the judge pushes bodies along
+        // (frozen disaster seed — worldK moves every tick and desyncs the column)
+        var spanH = Math.max(0.1, (V.disasterUntil || 0) - (V.disasterWarnAt || 0));
+        var uH = clamp((t - (V.disasterWarnAt || 0)) / spanH, 0, 1);
+        var bH = MAP.bounds;
+        var wxH = (bH[0] + hashMatch(V.disasterSeed|0, 21) * (bH[3] - bH[0])) * (1 - uH) +
+                  (bH[0] + hashMatch(V.disasterSeed|0, 23) * (bH[3] - bH[0])) * uH;
+        var wzH = (bH[2] + hashMatch(V.disasterSeed|0, 22) * (bH[5] - bH[2])) * (1 - uH) +
+                  (bH[2] + hashMatch(V.disasterSeed|0, 24) * (bH[5] - bH[2])) * uH;
+        fxCol.position.set(wxH, 7, wzH);
+        if(!quiet) fxCol.rotation.y = t * 4;
+        fxCol.material.opacity = 0.18 + 0.08 * Math.sin(t * 5);
+      }
+      if(fxKind === "shockring" && fxRing){
+        var rr = Math.max(0.5, V.disasterRing || 0);
+        fxRing.scale.set(rr, 1, rr);
+        fxRing.material.opacity = 0.35 + 0.35 * Math.sin(t * 8);
+      }
+      if(fxKind === "thunder"){
+        // a zig-zag bolt slams a live impact mark (or a hashed spot) every DD_THUNDER_GAP-ish
+        if(fxBolt && t >= fxBoltAt){
+          fxBoltAt = t + 0.45;
+          var mx = (MAP.bounds[0] + hashMatch((t * 10|0) + (V.disasterSeed|0), 31) * (MAP.bounds[3] - MAP.bounds[0]));
+          var mz = (MAP.bounds[2] + hashMatch((t * 10|0) + (V.disasterSeed|0), 33) * (MAP.bounds[5] - MAP.bounds[2]));
+          if(V.disasterMarks && V.disasterMarks.length){
+            var pick = V.disasterMarks[(t * 7|0) % V.disasterMarks.length];
+            if(pick){ mx = pick.x; mz = pick.z; }
+          }
+          var seedB = (V.disasterSeed|0) ^ ((t * 10|0) * 2654435761);
+          var skyX = mx + (hashMatch(seedB, 41) - 0.5) * 3;
+          var skyZ = mz + (hashMatch(seedB, 43) - 0.5) * 3;
+          // hashed kinks (never Math.random) so every observer sees the same bolt
+          var path = boltPts(seedB, 7, skyX, 22, skyZ, mx, 0.2, mz, 9, 1.8);
+          var v3 = path.map(function(p){ return new THREE.Vector3(p[0], p[1], p[2]); });
+          fxBolt.geometry.dispose();
+          fxBolt.geometry = new THREE.BufferGeometry().setFromPoints(v3);
+          fxBolt.visible = true; fxBolt.material.opacity = 0.98;
+          if(fxBoltHalo){
+            var v3h = boltPts(seedB, 7, skyX, 22, skyZ, mx, 0.2, mz, 9, 1.8).map(function(p){
+              return new THREE.Vector3(p[0], p[1], p[2]);
+            });
+            fxBoltHalo.geometry.dispose();
+            fxBoltHalo.geometry = new THREE.BufferGeometry().setFromPoints(v3h);
+            fxBoltHalo.visible = true; fxBoltHalo.material.opacity = 0.35;
+          }
+          if(fxBoltBranch){
+            var br = boltBranch(path, seedB, 90);
+            if(br){
+              fxBoltBranch.geometry.dispose();
+              fxBoltBranch.geometry = new THREE.BufferGeometry().setFromPoints(
+                br.map(function(p){ return new THREE.Vector3(p[0], p[1], p[2]); }));
+              fxBoltBranch.visible = true; fxBoltBranch.material.opacity = 0.7;
+            }
+          }
+          sun.intensity = (fxBase ? fxBase.sunI : 1.8) * 1.8;
+          if(R.boom) R.boom(mx, 0.3, mz, t);
+        }
+        if(fxBolt && fxBolt.visible){
+          fxBolt.material.opacity = Math.max(0, fxBolt.material.opacity - dt * 4);
+          if(fxBoltHalo) fxBoltHalo.material.opacity = Math.max(0, fxBoltHalo.material.opacity - dt * 3);
+          if(fxBoltBranch) fxBoltBranch.material.opacity = Math.max(0, fxBoltBranch.material.opacity - dt * 6);
+          if(fxBolt.material.opacity <= 0.02) fxBolt.visible = false;
+          if(fxBoltHalo && fxBoltHalo.material.opacity <= 0.02) fxBoltHalo.visible = false;
+          if(fxBoltBranch && fxBoltBranch.material.opacity <= 0.02) fxBoltBranch.visible = false;
+          if(fxBase) sun.intensity += ((fxBase.sunI * 0.4) - sun.intensity) * clamp(dt * 6, 0, 1);
+        }
+      }
+      if(fxKind === "emp"){
+        // lights stutter: mostly dark, with a hard blue kick every ~0.7s
+        var strobe = (!quiet && (Math.sin(t * 9) > 0.7)) ? 1 : 0;
+        sun.intensity = 0.08 + strobe * 0.6;
+        hemi.intensity = (fxBase ? fxBase.hemiI : 1.1) * (0.12 + strobe * 0.35);
+        for(i = 0; i < fxBits.length; i++){
+          sp = fxBits[i]; if(sp && sp.material) sp.material.opacity = strobe ? 0.7 : 0.2;
+        }
+      }
+    }
+    R.disaster = function(kind, on){
+      if(on){ if(fxKind && fxKind === kind && fxGroup) return; fxStart(kind || ""); }
+      else fxStop();
+    };
     R.boomsTick = boomsTick;
     R.size = function(w, h){ renderer.setSize(w, h, false); camera.aspect = w/h; camera.updateProjectionMatrix(); vCam.aspect = w/h; vCam.updateProjectionMatrix(); };
     R.camera = camera;
@@ -2718,7 +5274,9 @@ function makeGame(host, opts){
       pickMeshes.forEach(function(p, i){
         p.visible = !!V.items[i] && !!(MAP.pickups[i] && MAP.pickups[i].kind);
         if(!quiet) p.rotation.y = t*1.5;
-        p.position.y = (MAP.pickups[i] ? MAP.pickups[i].at[1] : 0) + 0.55 + (quiet ? 0 : Math.sin(t*2 + i)*0.08);
+        var at = MAP.pickups[i] ? MAP.pickups[i].at : null;
+        if(at){ p.position.x = at[0]; p.position.z = at[2]; }
+        p.position.y = (at ? at[1] : 0) + 0.55 + (quiet ? 0 : Math.sin(t*2 + i)*0.08);
       });
       // totem slots: the old map-drop plays out the same but the gem colours say what it is
       // and a fading decoy must clear its mesh the moment the window ends
@@ -2727,6 +5285,24 @@ function makeGame(host, opts){
         if(dc.until > t){ if(dc.mesh && !quiet) dc.mesh.rotation.y = t*0.4; continue; }
         if(dc.mesh){ scene.remove(dc.mesh); dc.mesh = null; }
         V.decoys.splice(dci, 1);
+      }
+      // Rift openings: spin the arch while they live, then drop the mesh with the pair
+      for(var ri = (riftGroups || []).length - 1; ri >= 0; ri--){
+        var rgp2 = riftGroups[ri];
+        if(rgp2.userData.until > t){
+          if(!quiet) rgp2.children.forEach(function(ch, ci){ if(ci < 2) ch.rotation.y = t * 0.6; });
+          continue;
+        }
+        scene.remove(rgp2); riftGroups.splice(ri, 1);
+        if(rgp2.userData.rift) rgp2.userData.rift.mesh = null;
+      }
+      // Shockwave ground rings: expand and fade over dur seconds
+      for(var rgi = (ringMeshes || []).length - 1; rgi >= 0; rgi--){
+        var Rg = ringMeshes[rgi], aRg = (t - Rg.at) / (Rg.dur || 0.55);
+        if(aRg >= 1){ dyn.remove(Rg.o); ringMeshes.splice(rgi, 1); continue; }
+        if(aRg < 0) continue;
+        Rg.o.scale.setScalar(0.4 + aRg * (Rg.r || 8) * 0.35);
+        Rg.o.material.opacity = 0.85 * (1 - aRg * 0.85);
       }
       droneMeshes.forEach(function(d, i){
         var D = V.drones[i]; d.visible = !!D && V.mode === "practice" && D.downUntil <= t;
@@ -2737,6 +5313,7 @@ function makeGame(host, opts){
       for(var i = tracers.length - 1; i >= 0; i--){ var a = t - tracers[i].at; if(a > 0.09){ dyn.remove(tracers[i].o); tracers[i].o.geometry.dispose(); tracers.splice(i, 1); } else tracers[i].o.material.opacity = 1 - a/0.09; }
       for(var j = puffs.length - 1; j >= 0; j--){ var b = t - puffs[j].at; if(b > 0.25){ dyn.remove(puffs[j].o); puffs.splice(j, 1); } else { puffs[j].o.material.opacity = 1 - b/0.25; if(!quiet) puffs[j].o.scale.setScalar(0.35 + b*1.6); } }
       if(R3.boomsTick) R3.boomsTick(t, quiet);
+      if(fxTick) fxTick(dt, t, quiet);
       // damage numbers: one pass, in-place removal, o===null means "spawn this frame"
       for(var dn = V.dmgNums.length - 1; dn >= 0; dn--){
         var D2 = V.dmgNums[dn], age = t - D2.at;
@@ -2827,6 +5404,7 @@ function makeGame(host, opts){
     };
     R.dispose = function(){
       cv.removeEventListener("webglcontextlost", lost);
+      if(typeof fxStop === "function") fxStop();
       clearDynamic(); renderer.dispose();
       try { var ext = renderer.getContext().getExtension("WEBGL_lose_context"); if(ext) ext.loseContext(); } catch(e){}
     };
@@ -2837,8 +5415,8 @@ function makeGame(host, opts){
   if(typeof ResizeObserver !== "undefined"){ ro = new ResizeObserver(onResize); ro.observe(host); }
   renderKeys();
   renderMenu();
-  loadMap().then(function(){ if(!V.alive) return; renderMenu(); if(V.mode === "mp" && V.gotView) applyView(V.round); else if(V.mode === "mp") requestView(); },
-    function(){ V.note = "Couldn't load the dock — refresh the page and try again."; renderMenu(); });
+  loadMap(mapIdOf()).then(function(){ if(!V.alive) return; renderMenu(); if(V.mode === "mp" && V.gotView) applyView(V.round); else if(V.mode === "mp") requestView(); },
+    function(){ V.note = "Couldn't load the arena — refresh the page and try again."; renderMenu(); });
   if(!raf) raf = requestAnimationFrame(frame);
   V.destroy = function(){
     if(WB){ WB.destroy(); WB = null; }
@@ -2908,5 +5486,8 @@ if(MP){
   });
 }
 HQV.strikeShared = FS;    // for tests/test_strike_sync.py
+FS.hashMatch = hashMatch;
+FS.boltPts = boltPts;
+FS.boltBranch = boltBranch;
 HQV.strikeDebug = function(){ return CUR; };
 })();

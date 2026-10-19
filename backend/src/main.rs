@@ -745,14 +745,9 @@ async fn github_callback(State(st): State<AppState>, Query(q): Query<CallbackQ>)
         }
     };
 
-    let code = auth::new_pair_code();
-    let expires = chrono::Utc::now() + chrono::Duration::seconds(st.cfg.pair_code_ttl_secs);
-    if sqlx::query("INSERT INTO pair_codes (code, user_id, expires_at) VALUES (?1,?2,?3)")
-        .bind(&code).bind(&user_id).bind(expires.format("%Y-%m-%d %H:%M:%S").to_string())
-        .execute(&st.pool).await.is_err()
-    {
+    let Some(code) = mint_pair_code(&st.pool, &user_id, st.cfg.pair_code_ttl_secs).await else {
         return err(StatusCode::INTERNAL_SERVER_ERROR, "could not mint a pairing code");
-    }
+    };
 
     let mins = st.cfg.pair_code_ttl_secs / 60;
     Html(format!(
@@ -768,6 +763,103 @@ letter-spacing:.12em}}p{{color:#8b949e}}</style>
 <code>{code}</code><p>It expires in {mins} minutes and can be used once.</p></div>"#
     ))
     .into_response()
+}
+
+/// A fresh one-use pairing code for `user_id`, valid for `ttl_secs`. The GitHub
+/// callback and the dev login both hand one out; `/v1/auth/pair` redeems it.
+async fn mint_pair_code(pool: &SqlitePool, user_id: &str, ttl_secs: i64) -> Option<String> {
+    let code = auth::new_pair_code();
+    let expires = chrono::Utc::now() + chrono::Duration::seconds(ttl_secs);
+    sqlx::query("INSERT INTO pair_codes (code, user_id, expires_at) VALUES (?1,?2,?3)")
+        .bind(&code).bind(user_id).bind(expires.format("%Y-%m-%d %H:%M:%S").to_string())
+        .execute(pool).await.ok()?;
+    Some(code)
+}
+
+// --- dev login (local runs only) --------------------------------------------
+//
+// POST /v1/auth/dev-login mints a pairing code for a local test user without
+// GitHub, so a dashboard can pair to a local Arena headlessly. The route exists
+// ONLY when ARENA_DEV_LOGIN=1 AND the Arena binds a loopback address; anywhere
+// else axum answers 404. Never set in the Dockerfile or compose.
+
+/// FNV-1a, 32-bit.
+fn fnv1a32(s: &str) -> u32 {
+    s.bytes().fold(0x811c_9dc5u32, |h, b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193))
+}
+
+/// A dev user's GitHub id: negative, so it never collides with a real one, and
+/// distinct per handle, so `ix_users_github_id` keeps one row per handle.
+fn dev_github_id(handle: &str) -> i64 {
+    -(1 + i64::from(fnv1a32(handle) % 2_147_483_647))
+}
+
+/// The flag must be exactly "1" and the bind a loopback address.
+fn dev_login_allowed(flag: Option<&str>, bind: &str) -> bool {
+    flag == Some("1") && matches!(bind, "127.0.0.1" | "localhost" | "::1")
+}
+
+/// `[a-z0-9-]{1,32}`.
+fn dev_handle_ok(h: &str) -> bool {
+    (1..=32).contains(&h.len()) && h.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// The user row for a dev handle, created on first use (one row per handle).
+async fn dev_user(pool: &SqlitePool, handle: &str) -> Option<String> {
+    let gh_id = dev_github_id(handle);
+    let row = sqlx::query("SELECT id FROM users WHERE github_id = ?1")
+        .bind(gh_id).fetch_optional(pool).await.ok()?;
+    if let Some(r) = row {
+        return Some(r.get("id"));
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO users (id, github_id, handle, display_name, avatar_url,
+                 trainer_name, is_active, created_at)
+                 VALUES (?1,?2,?3,?3,'','',1,datetime('now'))")
+        .bind(&id).bind(gh_id).bind(handle).execute(pool).await.ok()?;
+    Some(id)
+}
+
+#[derive(Clone)]
+struct DevLogin {
+    pool: SqlitePool,
+    ttl_secs: i64,
+    /// ARENA_DEV_HANDLE, default "dev": the handle of a body-less request.
+    default_handle: String,
+}
+
+/// The dev-login route, or no route at all when not `allowed`.
+fn dev_routes<S: Clone + Send + Sync + 'static>(allowed: bool, dl: DevLogin) -> Router<S> {
+    if !allowed {
+        return Router::new();
+    }
+    Router::new().route("/v1/auth/dev-login", post(dev_login)).with_state(dl)
+}
+
+/// Raw bytes, not axum's `Json`, which answers 415 to a body-less POST.
+async fn dev_login(State(dl): State<DevLogin>, body: axum::body::Bytes) -> Response {
+    let handle = if body.iter().all(u8::is_ascii_whitespace) {
+        dl.default_handle.clone()
+    } else {
+        match serde_json::from_slice::<Value>(&body) {
+            Ok(Value::Object(m)) => match m.get("handle") {
+                None => dl.default_handle.clone(),
+                Some(Value::String(h)) => h.clone(),
+                Some(_) => return err(StatusCode::BAD_REQUEST, "handle must be [a-z0-9-]{1,32}"),
+            },
+            _ => return err(StatusCode::BAD_REQUEST, "body must be a JSON object"),
+        }
+    };
+    if !dev_handle_ok(&handle) {
+        return err(StatusCode::BAD_REQUEST, "handle must be [a-z0-9-]{1,32}");
+    }
+    let Some(user_id) = dev_user(&dl.pool, &handle).await else {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "could not create user");
+    };
+    let Some(code) = mint_pair_code(&dl.pool, &user_id, dl.ttl_secs).await else {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "could not mint a pairing code");
+    };
+    Json(json!({"code": code, "handle": handle, "expiresInSecs": dl.ttl_secs})).into_response()
 }
 
 #[derive(Deserialize)]
@@ -927,10 +1019,148 @@ async fn serve() -> anyhow::Result<()> {
         // GET /v1/world/:id; the preview and viewer only when ARENA_WORLD_PREVIEW=1.
         .merge(world::public_routes());
 
-    let app = Router::new().merge(public).merge(guarded).with_state(state);
+    let dev = dev_login_allowed(std::env::var("ARENA_DEV_LOGIN").ok().as_deref(), &state.cfg.bind);
+    if dev {
+        tracing::warn!("ARENA_DEV_LOGIN=1: POST /v1/auth/dev-login mints pairing codes without GitHub (local runs only)");
+    }
+    let dev_state = DevLogin {
+        pool: state.pool.clone(),
+        ttl_secs: state.cfg.pair_code_ttl_secs,
+        default_handle: std::env::var("ARENA_DEV_HANDLE").unwrap_or_else(|_| "dev".into()),
+    };
+    if dev && !dev_handle_ok(&dev_state.default_handle) {
+        anyhow::bail!("ARENA_DEV_HANDLE must match [a-z0-9-]{{1,32}}, got {:?}", dev_state.default_handle);
+    }
+
+    let app = Router::new().merge(public).merge(guarded).merge(dev_routes(dev, dev_state))
+        .with_state(state);
 
     tracing::info!("arena-rs listening on {bind}");
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod dev_login_tests {
+    use super::*;
+
+    async fn pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        db::migrate(&pool).await.unwrap();
+        pool
+    }
+
+    /// The router on a real loopback port; returns its base URL.
+    async fn serve(allowed: bool, pool: SqlitePool) -> String {
+        let dl = DevLogin { pool, ttl_secs: 600, default_handle: "dev".into() };
+        let app: Router = Router::new().route("/health", get(|| async { "ok" }))
+            .merge(dev_routes(allowed, dl));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}")
+    }
+
+    fn code_ok(c: &str) -> bool {
+        // ^HQ-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$
+        let ok = |p: &str| p.len() == 4 && p.bytes().all(|b| matches!(b, b'A'..=b'H' | b'J'..=b'N' | b'P'..=b'Z' | b'2'..=b'9'));
+        let parts: Vec<&str> = c.split('-').collect();
+        parts.len() == 3 && parts[0] == "HQ" && ok(parts[1]) && ok(parts[2])
+    }
+
+    #[test]
+    fn the_allow_matrix() {
+        for bind in ["127.0.0.1", "localhost", "::1"] {
+            assert!(dev_login_allowed(Some("1"), bind), "{bind}");
+            assert!(!dev_login_allowed(None, bind));
+            for flag in ["0", "", "true", "yes", " 1", "1 "] {
+                assert!(!dev_login_allowed(Some(flag), bind), "{flag:?} {bind}");
+            }
+        }
+        for bind in ["0.0.0.0", "::", "192.168.1.5", "127.0.0.2", "LOCALHOST", ""] {
+            assert!(!dev_login_allowed(Some("1"), bind), "{bind}");
+        }
+    }
+
+    #[test]
+    fn dev_github_ids_are_negative_and_distinct() {
+        let (a, b) = (dev_github_id("dev"), dev_github_id("dev2"));
+        assert!(a < 0 && b < 0 && a != b);
+        assert_eq!(a, dev_github_id("dev"));
+        // the extremes stay in range
+        assert!((-2_147_483_647..=-1).contains(&a));
+        assert_eq!(fnv1a32(""), 0x811c_9dc5);
+        assert_eq!(fnv1a32("a"), 0xe40c_292c);
+        assert!(dev_handle_ok("dev-2") && dev_handle_ok(&"a".repeat(32)));
+        for bad in ["", "Dev", "a_b", "a b", "é", &"a".repeat(33)] {
+            assert!(!dev_handle_ok(bad), "{bad:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn dev_user_is_one_row_per_handle() {
+        let pool = pool().await;
+        let a1 = dev_user(&pool, "dev").await.unwrap();
+        let a2 = dev_user(&pool, "dev").await.unwrap();
+        assert_eq!(a1, a2);
+        let b = dev_user(&pool, "b").await.unwrap();
+        assert_ne!(a1, b);
+        let rows = sqlx::query("SELECT handle, github_id FROM users ORDER BY handle")
+            .fetch_all(&pool).await.unwrap();
+        let got: Vec<(String, i64)> = rows.iter().map(|r| (r.get("handle"), r.get("github_id"))).collect();
+        assert_eq!(got, vec![("b".to_string(), dev_github_id("b")), ("dev".to_string(), dev_github_id("dev"))]);
+        assert!(got.iter().all(|(_, g)| *g < 0));
+    }
+
+    #[tokio::test]
+    async fn mint_pair_code_leaves_an_unused_row() {
+        let pool = pool().await;
+        let uid = dev_user(&pool, "dev").await.unwrap();
+        let code = mint_pair_code(&pool, &uid, 600).await.unwrap();
+        assert!(code_ok(&code), "{code}");
+        let r = sqlx::query("SELECT user_id, used_at FROM pair_codes WHERE code = ?1")
+            .bind(&code).fetch_one(&pool).await.unwrap();
+        assert_eq!(r.get::<String, _>("user_id"), uid);
+        assert!(r.get::<Option<String>, _>("used_at").is_none());
+    }
+
+    #[tokio::test]
+    async fn the_route_takes_an_empty_body_or_a_handle() {
+        let pool = pool().await;
+        let base = serve(true, pool.clone()).await;
+        let c = reqwest::Client::new();
+        let url = format!("{base}/v1/auth/dev-login");
+        // No body, no content type: the default handle (not a 415).
+        let r = c.post(&url).send().await.unwrap();
+        assert_eq!(r.status(), 200);
+        let v: Value = r.json().await.unwrap();
+        assert_eq!(v["handle"], "dev");
+        assert_eq!(v["expiresInSecs"], 600);
+        assert!(code_ok(v["code"].as_str().unwrap()), "{v}");
+        let r = c.post(&url).header("Content-Type", "application/json").body(r#"{"handle":"b"}"#)
+            .send().await.unwrap();
+        assert_eq!(r.status(), 200);
+        let w: Value = r.json().await.unwrap();
+        assert_eq!(w["handle"], "b");
+        assert_ne!(w["code"], v["code"]);
+        assert_eq!(c.post(&url).body("{}").send().await.unwrap().status(), 200);
+        for bad in [r#"{"handle":"Bad"}"#, r#"{"handle":""}"#, r#"{"handle":7}"#, "[1]", "nope"] {
+            assert_eq!(c.post(&url).body(bad).send().await.unwrap().status(), 400, "{bad}");
+        }
+        let n: i64 = sqlx::query("SELECT COUNT(*) AS n FROM users").fetch_one(&pool).await.unwrap().get("n");
+        assert_eq!(n, 2);
+    }
+
+    #[tokio::test]
+    async fn the_route_is_absent_unless_allowed() {
+        let pool = pool().await;
+        let base = serve(false, pool.clone()).await;
+        let c = reqwest::Client::new();
+        assert_eq!(c.get(format!("{base}/health")).send().await.unwrap().status(), 200);
+        let r = c.post(format!("{base}/v1/auth/dev-login")).body(r#"{"handle":"b"}"#).send().await.unwrap();
+        assert_eq!(r.status(), 404);
+        let n: i64 = sqlx::query("SELECT COUNT(*) AS n FROM pair_codes").fetch_one(&pool).await.unwrap().get("n");
+        assert_eq!(n, 0);
+    }
 }

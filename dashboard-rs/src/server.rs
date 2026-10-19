@@ -438,6 +438,9 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
         }
         return Reply::new(200, data, if ct.is_empty() { ctype } else { &ct });
     }
+    if let Some(raw) = path.strip_prefix("/api/arena/world/") {
+        return world_reply(app, &py::unquote(raw), headers);
+    }
     let qs = |k: &str| py::qs_first(query, k);
     match path {
         "/api/arena/preview" => {
@@ -607,6 +610,23 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
             Reply::json(200, &data)
         }
         _ => Reply::json(404, &json!({"error": "not found"})),
+    }
+}
+
+/// GET /api/arena/world/:id: the Arena's answer passed through (status incl.
+/// 304 and 404, Content-Type, ETag), revalidated by the page on every load.
+fn world_reply(app: &App, id: &str, headers: &HeaderMap) -> Reply {
+    let inm = headers.get("if-none-match").and_then(|v| v.to_str().ok()).unwrap_or("");
+    match app.arena_world(id, inm) {
+        Err((code, v)) => Reply::json(code, &v),
+        Ok(w) => {
+            let ctype = if w.ctype.is_empty() { JSON.to_string() } else { w.ctype };
+            let mut r = Reply { code: w.code, body: w.body, headers: vec![("Content-Type", ctype), ("Cache-Control", "no-cache".into())] };
+            if !w.etag.is_empty() {
+                r.headers.push(("ETag", w.etag));
+            }
+            r
+        }
     }
 }
 

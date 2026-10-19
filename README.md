@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.8.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 2.9.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -330,6 +330,16 @@ and feature guide.
 
 ## Changelog
 
+- **2.9.0 — The 3D Arena City.** Arena City is now a 3D city built from the Arena's generated world
+  (`claude-hq@1`), with camera modes, a map, and a local dev Arena (`tools/local_arena.sh`);
+  `?world=old` still loads the legacy City.
+  **Privacy/egress:** `GET /api/arena/world/:id` sends only the fixed, regex-validated world id and the
+  page's `If-None-Match` ETag to the configured Arena; no device token, no transcript-derived data.
+  **Dev login:** `POST /v1/auth/dev-login` exists only with `ARENA_DEV_LOGIN=1` and a loopback bind.
+  **`tools/local_arena.sh`:** `build start` chains; stop the preview with `stop-tmp 8767`; `restore`
+  takes an optional port; `pair` refuses a git root that does not ignore `*.prod-bak` (the backups hold
+  the production device token); `stop`/`stop-tmp`/`start` only kill our own arena or claudehq binaries.
+  The `install-agent` plist holds `ARENA_SECRET_KEY` (written 0600).
 - **2.8.2 — Account standings.** The Arena's **Standings** has a **Players / Accounts** switch next to
   its title. Accounts mode ranks Claude accounts for the chosen window (Season, 30 days, 7 days, All
   time): one row per account with everyone's combined numbers, expandable to each member's own row and

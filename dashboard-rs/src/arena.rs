@@ -76,6 +76,40 @@ const COS_SLOTS: [&str; 6] = ["kart", "runner", "blaster", "ball", "frame", "dec
 const MARKET_CATS: [&str; 5] = ["fish", "crop", "ore", "gem", "misc"];
 pub const QUICKPLAY_GAMES: [&str; 6] = ["kart", "plat", "fps", "golf", "type", "rally"];
 
+/// A generated world's id, `<name>@<version>` (e.g. `claude-hq@1`).
+pub static WORLD_ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_:-]{1,64}@[0-9]{1,9}$").unwrap());
+
+/// What the Arena answered for a world: passed through to the page as is.
+pub struct WorldReply {
+    pub code: u16,
+    pub ctype: String,
+    pub etag: String,
+    pub body: Vec<u8>,
+}
+
+/// GET a world with an optional `If-None-Match`, no device token (the route is
+/// public and holds no one's data). Any status comes back as (code, headers,
+/// body), 304 and 404 included; 0 = the Arena did not answer.
+fn http_world(url: &str, inm: &str) -> WorldReply {
+    let mut req = agent().get(url);
+    if !inm.is_empty() {
+        req = req.set("If-None-Match", inm);
+    }
+    let r = match req.call() {
+        Ok(r) | Err(ureq::Error::Status(_, r)) => r,
+        Err(_) => return WorldReply { code: 0, ctype: String::new(), etag: String::new(), body: Vec::new() },
+    };
+    let code = r.status();
+    let ctype = r.header("Content-Type").unwrap_or("").to_string();
+    let etag = r.header("ETag").unwrap_or("").to_string();
+    let mut body = Vec::new();
+    use std::io::Read;
+    if r.into_reader().read_to_end(&mut body).is_err() {
+        return WorldReply { code: 0, ctype: String::new(), etag: String::new(), body: Vec::new() };
+    }
+    WorldReply { code, ctype, etag, body }
+}
+
 pub fn valid_room_id(v: &Value) -> bool {
     v.as_str().map(|s| ROOM_ID_RE.is_match(s)).unwrap_or(false)
 }
@@ -378,6 +412,34 @@ impl App {
             return None;
         }
         Some((token, base))
+    }
+
+    /// `<link url | config arenaUrl>/v1/world/<id>`, or None when no Arena is
+    /// configured. The id must already match [`WORLD_ID_RE`]; it goes in
+    /// unencoded (`py::quote` would turn its `@` into `%40`).
+    pub fn world_url(&self, id: &str) -> Option<String> {
+        let link = self.load_link();
+        let base = match link.get("url").filter(|v| py::truthy(v)).and_then(|v| v.as_str()) {
+            Some(u) => u.trim_end_matches('/').to_string(),
+            None => self.base_url(),
+        };
+        (!base.is_empty()).then(|| format!("{}/v1/world/{}", base, id))
+    }
+
+    /// GET /api/arena/world/:id. Egress: the fixed world id and the page's
+    /// ETag, to the configured Arena only; nothing transcript-derived.
+    pub fn arena_world(&self, id: &str, inm: &str) -> Result<WorldReply, (u16, Value)> {
+        if !WORLD_ID_RE.is_match(id) {
+            return Err((404, json!({"error": "no such world"})));
+        }
+        let Some(url) = self.world_url(id) else {
+            return Err((400, json!({"error": "no Arena configured"})));
+        };
+        let r = http_world(&url, inm);
+        if r.code == 0 {
+            return Err((502, json!({"error": "Arena unreachable"})));
+        }
+        Ok(r)
     }
 
     pub fn is_paired(&self) -> bool {
@@ -1172,6 +1234,31 @@ pub(crate) mod tests {
         let s = sent.lock().unwrap();
         assert_eq!(s[0].1, "https://arena.example/v1/pantry");
         assert_eq!(s[1].1, "https://other.example/v1/pantry");
+    }
+
+    #[test]
+    fn world_ids_are_allowlisted() {
+        for ok in ["claude-hq@1", "a@0", "Arena_City:2-b@123456789", &format!("{}@1", "x".repeat(64))] {
+            assert!(WORLD_ID_RE.is_match(ok), "{ok}");
+        }
+        for bad in ["claude-hq", "@1", "claude-hq@", "claude-hq@1a", "claude-hq@1234567890", "../x@1", "a/b@1",
+                    "a b@1", "a%40@1", "claude-hq@1/preview", &format!("{}@1", "x".repeat(65)), "a@1\n", "é@1"] {
+            assert!(!WORLD_ID_RE.is_match(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn world_link_url_wins_over_config_and_no_token_is_needed() {
+        let (_d, app) = app();
+        app.clear_link();
+        assert_eq!(app.world_url("claude-hq@1"), None);
+        assert_eq!(app.arena_world("claude-hq@1", "").err(), Some((400, json!({"error": "no Arena configured"}))));
+        app.save_config(&json!({"arenaUrl": "https://other.example/"})).unwrap();
+        assert_eq!(app.world_url("claude-hq@1").as_deref(), Some("https://other.example/v1/world/claude-hq@1"));
+        // A link url (paired or not) wins.
+        app.save_link(&json!({"url": "http://127.0.0.1:8080/"})).unwrap();
+        assert_eq!(app.world_url("claude-hq@1").as_deref(), Some("http://127.0.0.1:8080/v1/world/claude-hq@1"));
+        assert_eq!(app.arena_world("../etc@1", "").err().map(|e| e.0), Some(404));
     }
 
     #[test]

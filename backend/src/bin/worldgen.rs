@@ -3,7 +3,10 @@
 //!   cargo run --release --bin worldgen -- claude-hq@1             summary
 //!   cargo run --release --bin worldgen -- claude-hq@1 --json > w.json
 //!   cargo run --release --bin worldgen -- claude-hq@1 --edits edits.json --json
+//!   cargo run --release --bin worldgen -- claude-hq@1 --samples       probe points for client tests
 use std::time::Instant;
+
+use serde::Serialize;
 
 #[path = "../worldgen/mod.rs"]
 #[allow(dead_code)] // the server uses parts this tool does not
@@ -32,6 +35,10 @@ fn main() {
         println!("{}", serde_json::to_string(&w).unwrap());
         return;
     }
+    if args.iter().any(|a| a == "--samples") {
+        println!("{}", serde_json::to_string(&samples(&w)).unwrap());
+        return;
+    }
     let l = &w.layers;
     let hs = &l.terrain.heights;
     let count = |k: &str| l.roads.edges.iter().filter(|e| e.class == k).count();
@@ -44,9 +51,65 @@ fn main() {
         *by.entry(l.districts.legend[b.district as usize]).or_insert(0) += 1;
     }
     println!("            {by:?}");
-    println!("  roads     {} nodes, {} edges ({} avenue, {} street, {} country)", l.roads.nodes.len(), l.roads.edges.len(),
-             count("avenue"), count("street"), count("country"));
+    println!("  roads     {} nodes, {} edges ({} avenue, {} street, {} highway, {} ring)", l.roads.nodes.len(), l.roads.edges.len(),
+             count("avenue"), count("street"), count("highway"), count("ring"));
     println!("  lots      {} ({} HQ in the pool)", l.lots.len(), l.lots.iter().filter(|x| x.kind == "hq").count());
     println!("  sites     {}", l.sites.iter().map(|s| s.id.as_str()).collect::<Vec<_>>().join(" "));
     println!("  json      {} KB", serde_json::to_vec(&w).unwrap().len() / 1024);
+}
+
+#[derive(Serialize)]
+struct Samples {
+    world: String,
+    samples: Vec<Sample>,
+}
+
+/// What the generator says is at one point: for clients that must agree with it.
+#[derive(Serialize)]
+struct Sample {
+    x: i64,
+    z: i64,
+    height: i64,
+    /// The district's index into `layers.districts.legend`, and its name.
+    district: u8,
+    #[serde(rename = "districtName")]
+    district_name: &'static str,
+    /// Ids of the first lot / site (by id) whose rectangle holds the point, edges included.
+    lot: Option<u32>,
+    site: Option<String>,
+}
+
+/// Probe points: a 20 x 20 grid over the world (37 cm off the terrain lattice),
+/// every 25th lot's centre, the first 3 points of every 20th road edge, every site's centre.
+fn samples(w: &worldgen::WorldDoc) -> Samples {
+    let l = &w.layers;
+    let cell = w.size_cm / 20;
+    let mut at: Vec<(i64, i64)> = Vec::new();
+    for j in 0..20 {
+        for i in 0..20 {
+            at.push((-w.size_cm / 2 + i * cell + cell / 2 + 37, -w.size_cm / 2 + j * cell + cell / 2 + 37));
+        }
+    }
+    at.extend(l.lots.iter().step_by(25).map(|o| (o.x, o.z)));
+    at.extend(l.roads.edges.iter().step_by(20).flat_map(|e| e.points.iter().take(3).map(|q| (q[0], q[2]))));
+    at.extend(l.sites.iter().map(|s| (s.x, s.z)));
+    let inside = |x: i64, z: i64, ox: i64, oz: i64, ow: i64, od: i64| 2 * (x - ox).abs() <= ow && 2 * (z - oz).abs() <= od;
+    Samples {
+        world: w.hashes.world.clone(),
+        samples: at
+            .into_iter()
+            .map(|(x, z)| {
+                let district = l.districts.at(x, z);
+                Sample {
+                    x,
+                    z,
+                    height: l.terrain.height_at(x, z),
+                    district,
+                    district_name: l.districts.legend[district as usize],
+                    lot: l.lots.iter().find(|o| inside(x, z, o.x, o.z, o.w, o.d)).map(|o| o.id),
+                    site: l.sites.iter().find(|s| inside(x, z, s.x, s.z, s.w, s.d)).map(|s| s.id.clone()),
+                }
+            })
+            .collect(),
+    }
 }

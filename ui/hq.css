@@ -2400,3 +2400,52 @@ html.hq-calm .pr-bar i{transition:none}
 html.hq-calm .boss-fight .boss-hp-fill{animation:none}
 html.hq-calm .boss-hp-fill{transition:none}
 @media (prefers-reduced-motion: reduce){ .boss-fight .boss-hp-fill{animation:none} .boss-hp-fill{transition:none} }
+/* 3D city HUD (games/hqhud.js) */
+/* The top centre belongs to hq3d's ride/skate overlays, so the HUD stacks bottom centre: compass, prompt, chip. */
+.hqhud{position:absolute;inset:0;z-index:2;pointer-events:none;font-family:var(--font);color:var(--ink)}
+.hqhud [hidden],.hqhud[hidden]{display:none !important}
+.hqhud-labels{position:absolute;inset:0;width:100%;height:100%}
+.hqhud-vignette{position:absolute;inset:0;opacity:0;background:radial-gradient(ellipse at center,transparent 52%,var(--scrim) 100%);transition:opacity .3s var(--ease)}
+.hqhud-chip{position:absolute;bottom:96px;left:50%;transform:translate(-50%,6px);opacity:0;padding:5px 14px;border-radius:999px;
+  background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);font:600 13px var(--font);color:var(--ink);white-space:nowrap;
+  transition:opacity var(--t-med) var(--ease),transform var(--t-med) var(--ease)}
+.hqhud-chip.on{opacity:1;transform:translate(-50%,0)}
+.hqhud-chip:empty{visibility:hidden}
+.hqhud-cross{position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px}
+.hqhud-cross::before,.hqhud-cross::after{content:"";position:absolute;background:var(--ink);box-shadow:0 0 0 1px var(--bg);border-radius:1px}
+.hqhud-cross::before{left:7px;top:0;width:2px;height:16px}
+.hqhud-cross::after{top:7px;left:0;height:2px;width:16px}
+.hqhud-prompt{position:absolute;left:50%;top:calc(50% + 26px);transform:translateX(-50%);display:flex;gap:8px;align-items:center;
+  padding:5px 12px;border-radius:var(--radius-sm);background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);font-size:13px;white-space:nowrap}
+.hqhud-cross[hidden] ~ .hqhud-prompt{top:auto;bottom:52px}
+.hqhud-prompt kbd{font:700 11px var(--mono);border:1px solid var(--line2);border-bottom-width:2px;border-radius:4px;padding:0 5px;background:var(--panel2);color:var(--ink)}
+.hqhud-speed{position:absolute;right:16px;bottom:14px;display:flex;align-items:baseline;gap:5px;padding:4px 12px;border-radius:var(--radius-sm);
+  background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow)}
+.hqhud-speed b{font:700 26px var(--mono);font-variant-numeric:tabular-nums;color:var(--ink)}
+.hqhud-speed span{font:600 11px var(--mono);color:var(--muted)}
+.hqhud-compass{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);width:min(320px,60%,calc(100% - 250px));height:28px;border-radius:var(--radius-sm);
+  background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);overflow:hidden;
+  -webkit-mask-image:linear-gradient(90deg,transparent,var(--ink) 18%,var(--ink) 82%,transparent);mask-image:linear-gradient(90deg,transparent,var(--ink) 18%,var(--ink) 82%,transparent)}
+.hqhud-tick{position:absolute;bottom:0;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:1px;
+  font:700 11px/1 var(--mono);color:var(--ink)}
+.hqhud-tick::after{content:"";width:1px;height:5px;background:var(--faint)}
+.hqhud-tick.hqhud-mid::after{height:8px}
+.hqhud-tick.hqhud-card::after{width:2px;height:7px;background:var(--ink)}
+.hqhud-needle{position:absolute;left:50%;top:0;margin-left:-4px;width:0;height:0;border:4px solid transparent;border-top-color:var(--brand)}
+.hqhud-gear{position:absolute;top:10px;right:10px;pointer-events:auto;width:32px;height:32px;display:grid;place-items:center;font-size:17px;line-height:1;
+  border-radius:var(--radius-sm);background:var(--panel);border:1px solid var(--line);color:var(--ink);box-shadow:var(--shadow);cursor:pointer}
+.hqhud-gear:hover{border-color:var(--line2)}
+.hqhud-gear:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.hqhud-gear[aria-expanded="true"]{border-color:var(--brand);background:var(--brand-soft)}
+.hqhud-settings{position:absolute;top:48px;right:10px;pointer-events:auto;width:250px;max-height:calc(100% - 60px);overflow:auto;display:grid;gap:8px;
+  padding:12px;border-radius:var(--radius);background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow-lg);font-size:12.5px;color:var(--ink)}
+.hqhud-set-title{margin:0;font-size:13px;font-weight:650}
+.hqhud-set-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 8px}
+.hqhud-set-row label{color:var(--muted)}
+.hqhud-set-row input[type="range"]{grid-column:1 / -1;grid-row:2;width:100%;accent-color:var(--brand)}
+.hqhud-set-row input[type="checkbox"]{accent-color:var(--brand)}
+.hqhud-set-row select{font:inherit;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:2px 6px}
+.hqhud-set-row :focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+.hqhud-set-val{font:600 11.5px var(--mono);color:var(--ink);font-variant-numeric:tabular-nums}
+html.hq-calm .hqhud-chip,html.hq-calm .hqhud-vignette{transition:none}
+@media (prefers-reduced-motion: reduce){ .hqhud-chip,.hqhud-vignette{transition:none} }

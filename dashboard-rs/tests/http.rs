@@ -371,3 +371,100 @@ fn vial_spend_route_and_payload() {
     assert_eq!(v["vial"]["xp"], 10);
     assert_eq!(v["vial"]["costs"], json!({"0": 30, "1": 90, "2": 180, "3": 400}));
 }
+
+/// A one-route fake Arena: GET /v1/world/claude-hq@1 answers the world with an
+/// ETag (304 when If-None-Match matches), anything else 404 with a JSON body.
+/// Returns its base URL and every request line + If-None-Match it saw.
+fn fake_arena() -> (String, Arc<std::sync::Mutex<Vec<(String, String)>>>) {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://127.0.0.1:{}", l.local_addr().unwrap().port());
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let s2 = seen.clone();
+    std::thread::spawn(move || {
+        for conn in l.incoming() {
+            let Ok(mut c) = conn else { continue };
+            let mut buf = Vec::new();
+            let mut b = [0u8; 1024];
+            while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                match c.read(&mut b) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => buf.extend_from_slice(&b[..n]),
+                }
+            }
+            let head = String::from_utf8_lossy(&buf).to_string();
+            let line = head.lines().next().unwrap_or("").to_string();
+            let inm = head.lines().find_map(|l| {
+                let (k, v) = l.split_once(':')?;
+                k.eq_ignore_ascii_case("if-none-match").then(|| v.trim().to_string())
+            }).unwrap_or_default();
+            let auth = head.to_lowercase().contains("authorization:");
+            s2.lock().unwrap().push((line.clone(), if auth { "AUTH".into() } else { inm.clone() }));
+            let resp = if line.starts_with("GET /v1/world/claude-hq@1 ") {
+                if inm == "\"w1\"" {
+                    "HTTP/1.1 304 Not Modified\r\nETag: \"w1\"\r\nConnection: close\r\n\r\n".to_string()
+                } else {
+                    let body = r#"{"id":"claude-hq@1","version":1}"#;
+                    format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nETag: \"w1\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body)
+                }
+            } else {
+                let body = r#"{"detail":"no such world"}"#;
+                format!("HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body)
+            };
+            let _ = c.write_all(resp.as_bytes());
+        }
+    });
+    (base, seen)
+}
+
+#[test]
+fn arena_world_passes_etag_and_304_through() {
+    let srv = serve();
+    // Unconfigured: 400, nothing sent anywhere.
+    let (code, _, _) = get(srv.port, "/api/arena/world/claude-hq@1", "");
+    assert_eq!(code, 400);
+    let (base, seen) = fake_arena();
+    srv.app.save_config(&json!({"arenaUrl": base})).unwrap();
+    let (code, head, body) = get(srv.port, "/api/arena/world/claude-hq@1", "");
+    assert_eq!(code, 200);
+    assert!(head.contains("content-type: application/json"), "{head}");
+    assert!(head.contains("etag: \"w1\""), "{head}");
+    assert!(head.contains("cache-control: no-cache"), "{head}");
+    assert_eq!(body, br#"{"id":"claude-hq@1","version":1}"#);
+    // The page revalidates: a matching tag is a 304 with no body.
+    let (code, head, body) = get(srv.port, "/api/arena/world/claude-hq@1", "If-None-Match: \"w1\"\r\n");
+    assert_eq!(code, 304);
+    assert!(head.contains("etag: \"w1\""), "{head}");
+    assert!(body.is_empty());
+    // A stale tag gets the full world again.
+    assert_eq!(get(srv.port, "/api/arena/world/claude-hq@1", "If-None-Match: \"old\"\r\n").0, 200);
+    // The Arena's 404 and its body pass through.
+    let (code, _, body) = get(srv.port, "/api/arena/world/other@2", "");
+    assert_eq!(code, 404);
+    assert_eq!(body, br#"{"detail":"no such world"}"#);
+    // A bad id never leaves the machine (an encoded @ is decoded first).
+    assert_eq!(get(srv.port, "/api/arena/world/claude-hq%401", "").0, 200);
+    for bad in ["/api/arena/world/..%2Fx@1", "/api/arena/world/a@1/x", "/api/arena/world/nope", "/api/arena/world/"] {
+        assert_eq!(get(srv.port, bad, "").0, 404, "{bad}");
+    }
+    let s = seen.lock().unwrap().clone();
+    assert_eq!(s.iter().map(|(l, i)| (l.split(' ').nth(1).unwrap().to_string(), i.clone())).collect::<Vec<_>>(), vec![
+        ("/v1/world/claude-hq@1".to_string(), String::new()),
+        ("/v1/world/claude-hq@1".to_string(), "\"w1\"".to_string()),
+        ("/v1/world/claude-hq@1".to_string(), "\"old\"".to_string()),
+        ("/v1/world/other@2".to_string(), String::new()),
+        ("/v1/world/claude-hq@1".to_string(), String::new()),
+    ]);
+}
+
+#[test]
+fn arena_world_link_url_wins_and_unreachable_is_502() {
+    let srv = serve();
+    let (base, seen) = fake_arena();
+    srv.app.save_config(&json!({"arenaUrl": "http://127.0.0.1:9"})).unwrap();
+    // Port 9 (discard) is closed here: the Arena did not answer.
+    assert_eq!(get(srv.port, "/api/arena/world/claude-hq@1", "").0, 502);
+    // A paired link's url wins over config, and its device token is NOT sent.
+    srv.app.save_link(&json!({"token": "secret-device-token", "url": base})).unwrap();
+    assert_eq!(get(srv.port, "/api/arena/world/claude-hq@1", "").0, 200);
+    assert_eq!(seen.lock().unwrap().clone().last().unwrap().1, "");
+}

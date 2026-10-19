@@ -39,6 +39,9 @@ pub struct Profile {
     pub road_cm: i64,
     pub avenue_cm: i64,
     pub avenue_every: i64,
+    /// Sidewalk width (cm) each side of a street and an avenue, taken out of the road's width.
+    pub street_walk_cm: i64,
+    pub avenue_walk_cm: i64,
     /// Blocks whose centre is within this radius (cm) of the plaza are city.
     pub city_r_cm: i64,
     /// How many HQ lots (the pool new members are assigned from) and lots per tier.
@@ -46,10 +49,13 @@ pub struct Profile {
     pub hq_tier: i64,
     pub commercial_r_cm: i64,
     pub park_pm: u32,
-    /// Roads out of the city to the world's edge, and the country ring that links them.
+    /// Highways out of the city to the world's edge (one per gate), and the ring road that links them.
     pub gates: i64,
     pub ring_r_cm: i64,
-    /// Steepest a road may be (per mille), in the city and in the country.
+    /// Full widths (cm) of a highway and of the ring: no sidewalk, a shoulder painted inside.
+    pub highway_cm: i64,
+    pub ring_cm: i64,
+    /// Steepest a road may be (per mille), in the city and on the graded roads (highways, ring).
     pub city_grade_pm: i64,
     pub country_grade_pm: i64,
     /// Steepest ground a site or lot may stand on (cm of rise across its footprint).
@@ -90,6 +96,8 @@ pub fn city() -> Profile {
         road_cm: 800,
         avenue_cm: 1_200,
         avenue_every: 4,
+        street_walk_cm: 150,
+        avenue_walk_cm: 200,
         city_r_cm: 48_000,
         hq_lots: 64,
         hq_tier: 16,
@@ -97,6 +105,8 @@ pub fn city() -> Profile {
         park_pm: 120,
         gates: 6,
         ring_r_cm: 78_000,
+        highway_cm: 1_000,
+        ring_cm: 900,
         city_grade_pm: 80,
         country_grade_pm: 140,
         site_flat_cm: 150,

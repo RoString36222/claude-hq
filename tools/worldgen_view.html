@@ -66,6 +66,10 @@ canvas.brush{cursor:crosshair}
 </div>
 <script>
 "use strict";
+// road classes: city grid pale, ring yellow, highways orange (widest); min stroke px when zoomed out
+var RCOL = {street: "#c9ced6", avenue: "#f3f1ea", ring: "#ffd84a", highway: "#ff8c2a", country: "#ff8c2a"};
+var RMIN = {street: 0.8, avenue: 1.1, ring: 2.2, highway: 3, country: 3};
+var GRADED = {highway: 1, ring: 1, country: 1};
 var DCOL = {wild:"#3d5a3a", farmland:"#a8b56a", forest:"#2f6b3a", plaza:"#e8d9a8", civic:"#7fb3e0", hq:"#ffb000",
   commercial:"#d97a8b", residential:"#c9b79c", park:"#66c46a", industrial:"#8d8f99", street:"#5a6270"};
 var LAYERS = [["terrain","Terrain (hill shade)",true],["districts","Districts",true],["roads","Roads",true],["names","Street names",true],
@@ -164,12 +168,12 @@ function draw(){
     });
   }
   if(on.roads){
-    var col = {avenue: "#f3f1ea", street: "#c9ced6", country: "#e9c46a"};
-    ["country","street","avenue"].forEach(function(cls){
-      g.strokeStyle = col[cls]; g.lineCap = "round"; g.lineJoin = "round";
+    // draw order: city grid, then the ring, then highways on top (widest); "country" = a pre-3D-city doc
+    ["street","avenue","ring","country","highway"].forEach(function(cls){
+      g.strokeStyle = RCOL[cls]; g.lineCap = "round"; g.lineJoin = "round";
       L.roads.edges.forEach(function(e){
         if(e.class !== cls) return;
-        g.lineWidth = Math.max(cls === "country" ? 1.6 : 0.8, e.width*m);
+        g.lineWidth = Math.max(RMIN[cls], e.width*m);
         g.beginPath(); e.points.forEach(function(p, i){ i ? g.lineTo(sx(p[0]), sz(p[2])) : g.moveTo(sx(p[0]), sz(p[2])); }); g.stroke();
       });
     });
@@ -193,25 +197,40 @@ function draw(){
     });
   }
   if(on.roads){
-    // gates and ring junctions
+    // junctions where graded roads meet (yellow), and the gates on the world's edge (orange, numbered)
+    var deg = {}, gref = {};
+    L.roads.edges.forEach(function(e){
+      if(!GRADED[e.class]) return;
+      [e.a, e.b].forEach(function(n){ deg[n] = (deg[n] || 0) + 1; if(e.ref) gref[n] = e.ref; });
+    });
+    g.font = "600 11px " + getComputedStyle(document.body).fontFamily; g.textBaseline = "middle";
     L.roads.nodes.forEach(function(nd){
-      var deg = 0; L.roads.edges.forEach(function(e){ if(e.class === "country" && (e.a === nd.id || e.b === nd.id)) deg++; });
-      if(!deg) return;
-      g.fillStyle = "#e9c46a"; g.beginPath(); g.arc(sx(nd.x), sz(nd.z), 3.5, 0, 7); g.fill();
+      if(!deg[nd.id]) return;
+      var gate = Math.max(Math.abs(nd.x), Math.abs(nd.z)) >= half - 1600;
+      if(!gate && deg[nd.id] < 2) return;
+      g.fillStyle = gate ? RCOL.highway : RCOL.ring; g.strokeStyle = "#111"; g.lineWidth = 1.2;
+      g.beginPath(); g.arc(sx(nd.x), sz(nd.z), gate ? 5.5 : 3.5, 0, 7); g.fill(); g.stroke();
+      if(gate && gref[nd.id]){
+        var t = "Gate " + gref[nd.id].slice(1), px = sx(nd.x), pz = sz(nd.z), right = px < cv.clientWidth/2;
+        g.textAlign = right ? "left" : "right"; g.fillStyle = "#f3f1ea"; g.fillText(t, px + (right ? 9 : -9), pz);
+      }
     });
   }
   if(on.names && m > 0.02){
     g.font = "10.5px " + getComputedStyle(document.body).fontFamily; g.textAlign = "center"; g.textBaseline = "middle";
     var seen = {};
     L.roads.edges.forEach(function(e){
-      if(e.class === "country"){ if(m < 0.004 || seen[e.name]) return; }
+      var graded = GRADED[e.class];
+      if(graded){ if(m < 0.004 || seen[e.name]) return; }
       var mid = e.points[Math.floor(e.points.length/2)], a = e.points[0], b = e.points[e.points.length - 1];
-      if(e.class !== "country"){ var k = e.name + Math.round(mid[0]/20000) + "," + Math.round(mid[2]/20000); if(seen[k]) return; seen[k] = 1; } else seen[e.name] = 1;
-      var px = sx(e.class === "country" ? mid[0] : (a[0] + b[0])/2), pz = sz(e.class === "country" ? mid[2] : (a[2] + b[2])/2);
+      if(!graded){ var k = e.name + Math.round(mid[0]/20000) + "," + Math.round(mid[2]/20000); if(seen[k]) return; seen[k] = 1; } else seen[e.name] = 1;
+      var px = sx(graded ? mid[0] : (a[0] + b[0])/2), pz = sz(graded ? mid[2] : (a[2] + b[2])/2);
       if(px < 0 || pz < 0 || px > cv.clientWidth || pz > cv.clientHeight) return;
       g.save(); g.translate(px, pz); if(a[0] === b[0]) g.rotate(-Math.PI/2);
-      var t = e.name, tw = g.measureText(t).width;
-      g.fillStyle = "rgba(13,16,20,0.75)"; g.fillRect(-tw/2 - 3, -7, tw + 6, 14); g.fillStyle = "#f3f1ea"; g.fillText(t, 0, 0); g.restore();
+      var t = e.name, tw = g.measureText(t).width, ref = e.ref || "", rw = ref ? g.measureText(ref).width + 8 : 0, x0 = -(tw + rw + (ref ? 4 : 0))/2;
+      g.fillStyle = "rgba(13,16,20,0.75)"; g.fillRect(x0 - 3, -7, tw + rw + (ref ? 4 : 0) + 6, 14);
+      if(ref){ g.fillStyle = RCOL[e.class]; g.fillRect(x0, -6, rw, 12); g.fillStyle = "#111"; g.fillText(ref, x0 + rw/2, 0); }
+      g.fillStyle = "#f3f1ea"; g.fillText(t, x0 + rw + (ref ? 4 : 0) + tw/2, 0); g.restore();
     });
   }
   // scale bar
@@ -262,7 +281,8 @@ window.addEventListener("mousemove", function(e){
   var road = nearestRoad(x, z), lot = L.lots.find(function(l){ return inRect(l, x, z); }), site = L.sites.find(function(s){ return inRect(s, x, z); });
   $("hover").textContent = "x " + (x/100).toFixed(1) + " m  z " + (z/100).toFixed(1) + " m\n" +
     "height " + (heightAt(x, z)/100).toFixed(2) + " m · " + districtAt(x, z) + "\n" +
-    (road.e ? (road.d < 2000 ? "on/near " : "nearest ") + road.e.name + " (" + road.e.class + ", " + (road.d/100).toFixed(0) + " m)\n" : "") +
+    (road.e ? (road.d < 2000 ? "on/near " : "nearest ") + (road.e.ref ? road.e.ref + " " : "") + road.e.name + " (" + road.e.class + ", " +
+      (road.e.width/100) + " m" + (road.e.walk ? ", walks " + (road.e.walk/100) + " m" : "") + ", " + (road.d/100).toFixed(0) + " m away)\n" : "") +
     (lot ? (lot.kind === "hq" ? "HQ lot #" + lot.rank + " · tier " + lot.tier : "lot " + lot.id + " · " + lot.floors + " floors") + " · door " + (lot.door[1]/100).toFixed(2) + " m\n" : "") +
     (site ? "site " + site.id + "\n" : "");
 });

@@ -30,7 +30,8 @@ pub const GAMES: &[(&str, i64, &[&str])] = &[
     // seconds before the usual MAX_AIR guard kicks in (a v4 client that never drops is
     // exactly the v1-v3 shape it always was).
     ("strike", 4, &[]),
-    ("hq", 1, &["ride", "look", "skate", "drive"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`; "drive": a = 5 (a car), 6 (a motorbike)
+    // v2: the generated 3D City. "alt": pos may carry h (feet height, cm) and p (pitch, deg); x/z span +-102_400 cm; floor "city3d"
+    ("hq", 2, &["ride", "look", "skate", "drive", "alt"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`; "drive": a = 5 (a car), 6 (a motorbike)
     ("type", 1, &[]),
     ("td", 1, &[]),
     ("bowl", 1, &[]),
@@ -77,7 +78,8 @@ mod tests {
         assert_eq!(info["games"]["kart"], json!({"v": 2, "caps": ["scale", "tracks"]}));
         assert_eq!(info["games"]["plat"], json!({"v": 1, "caps": []}));
         // HQ presence carries a = 3 (a bike), 4 (skating), 5 / 6 (a car / a motorbike) only where these are listed.
-        assert_eq!(info["games"]["hq"], json!({"v": 1, "caps": ["ride", "look", "skate", "drive"]}));
+        // "alt" (v2): h / p ride along, x / z span the 2 km world, floor "city3d".
+        assert_eq!(info["games"]["hq"], json!({"v": 2, "caps": ["ride", "look", "skate", "drive", "alt"]}));
         assert_eq!(version("fps"), 1);
         assert_eq!(version("pond"), 1);
         // An unknown game still answers 1, as Python's PROTOCOL.get(g, {}) does.

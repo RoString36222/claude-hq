@@ -29,7 +29,22 @@ pub const GAMES: &[(&str, i64, &[&str])] = &[
     // the spawn event, and the referee lets that life ride above the floor for DROP_TIME
     // seconds before the usual MAX_AIR guard kicks in (a v4 client that never drops is
     // exactly the v1-v3 shape it always was).
-    ("strike", 4, &[]),
+    // v5 + "maps": the host names an arena on start (`map`); the roster view carries it back.
+    // v6 Wave C: 28 new totems, the 5 drop mechanics (hot / fused / cursed / arena events /
+    // contested capture), the radar world extras, and the `cheat` event for Second Wind / Phoenix.
+    // v7 Wave D: 10 arena-wide Disaster totems (Sandstorm … EMP Apocalypse), the disaster
+    // clock, snap keys "di" (the live disaster) and "dm" (pending impact marks), and the
+    // `disaster` event (warn/hold in ms, or {kind:"clear"}).
+    // v8 Wave E: Disaster totems get their own drop ring and clock (`DIS_SLOTS` /
+    // `DIS_GAP_DROP`); `di` grew a 5th field — ms until the next automatic disaster —
+    // always present (row is [null,0,0,0,ms] when nothing is live) so the top bar can
+    // count "⚠ disaster in Xs" down among score and time remaining.
+    // v9 Wave F/G: every disaster is visual AND impact on one shared geometry.
+    // `di` grows fields 5-7 (frozen seed, toxic cloud centres, sinkhole pit) so the
+    // client paints the same clouds/pit the judge damages; `dm` rows grow dmg + quake
+    // so impact marks carry their hit; hurricane chips DD_WIND_DMG while it shoves.
+    // Player flags grow FLAG_BLIND / FLAG_SLOW (white-out veil / disaster crawl).
+    ("strike", 9, &["maps"]),
     ("hq", 1, &["ride", "look", "skate", "drive"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`; "drive": a = 5 (a car), 6 (a motorbike)
     ("type", 1, &[]),
     ("td", 1, &[]),

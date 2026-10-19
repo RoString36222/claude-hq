@@ -1072,7 +1072,6 @@ pub fn scan_cursor(path: &Path) -> Agg {
                 if turn_ts.map(|tt| ts >= tt).unwrap_or(true) {
                     if turn_ts.is_none() && !pending.is_empty() {
                         let queued: Vec<CursorAct> = std::mem::take(&mut pending);
-                        turn_ts = Some(ts);
                         for a in &queued {
                             apply(agg, ts, a, last_text);
                         }

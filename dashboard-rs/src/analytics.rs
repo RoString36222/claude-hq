@@ -1021,7 +1021,6 @@ fn cursor_events(path: &Path) -> Vec<Value> {
                 if turn_ts.map(|tt| ts >= tt).unwrap_or(true) {
                     if turn_ts.is_none() && !pending.is_empty() {
                         let queued = std::mem::take(&mut pending);
-                        turn_ts = Some(ts);
                         for (r, t, tl) in queued {
                             add(events, Some(ts), &r, &t, tl.as_deref());
                         }

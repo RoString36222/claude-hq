@@ -331,6 +331,25 @@ mod tests {
         assert!(cities::can_view(&p, "a", "c").await.unwrap());
     }
 
+    #[tokio::test]
+    async fn archipelago_lists_only_what_can_view_allows() {
+        let p = pool().await;
+        user(&p, "a", 1).await;
+        user(&p, "b", 2).await;
+        user(&p, "c", 3).await;
+        let owners = |v: serde_json::Value| -> Vec<String> {
+            v["islands"].as_array().unwrap().iter().map(|i| i["owner"].as_str().unwrap().to_string()).collect()
+        };
+        assert_eq!(owners(archipelago(&p, "a").await.unwrap()), ["a", "b", "c"]);
+        // every owner is active, so only can_view keeps these out
+        let v = archipelago(&p, "stranger").await.unwrap();
+        assert!(owners(v.clone()).is_empty(), "someone from outside this Arena sees no island");
+        assert_eq!(v["commons"]["world"], COMMONS, "but still the Commons");
+        deactivate(&p, "c").await;
+        assert!(owners(archipelago(&p, "c").await.unwrap()).is_empty(), "nor does a disabled member");
+        assert_eq!(owners(archipelago(&p, "b").await.unwrap()), ["a", "b"]);
+    }
+
     #[test]
     fn the_assign_route_sits_beside_the_world_routes() {
         // axum panics on an overlapping route when the router is built, i.e. at boot

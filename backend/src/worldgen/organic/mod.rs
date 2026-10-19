@@ -84,7 +84,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain) -> Result<(City, Roads, 
         let d = if rank == -1 { district::PLAZA } else { zoning.district(c).unwrap_or(district::SUBURB) };
         blocks.push(Block {
             id: id as u32, i: 0, j: 0, x: (x0 + x1) / 2, z: (z0 + z1) / 2, w: x1 - x0, d: z1 - z0, district: d,
-            poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()),
+            poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()), min_tier: None,
         });
         holes.push(&faces[k].holes);
     }

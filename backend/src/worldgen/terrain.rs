@@ -49,7 +49,12 @@ pub fn generate(seed: u64, p: &Profile) -> Terrain {
             heights.push((plateau + (hills - plateau) * t / ONE) as i32);
         }
     }
-    Terrain { cell_cm: p.cell_cm, origin_cm: origin, n, heights }
+    let mut t = Terrain { cell_cm: p.cell_cm, origin_cm: origin, n, heights };
+    // an island's coast: the sea round it (island.rs)
+    if let Some(coast) = super::island::Coast::new(seed, p) {
+        coast.shape(&mut t);
+    }
+    t
 }
 
 impl Terrain {

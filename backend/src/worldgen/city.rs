@@ -30,6 +30,9 @@ pub struct Block {
     /// (positive area in x, z); x, z, w, d are then its bounding box and i, j are 0.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub poly: Option<Vec<[i64; 2]>>,
+    /// Island worlds: the first city tier the block exists in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_tier: Option<u8>,
 }
 
 /// Which side of its rectangle a lot's door is on.
@@ -199,7 +202,7 @@ pub fn generate(seed: u64, p: &Profile, t: &Terrain) -> Result<City, String> {
         } else {
             district::RESIDENTIAL
         };
-        blocks.push(Block { id: k as u32, i: i as i32, j: j as i32, x: bx, z: bz, w: bw, d: bd, district: d, poly: None });
+        blocks.push(Block { id: k as u32, i: i as i32, j: j as i32, x: bx, z: bz, w: bw, d: bd, district: d, poly: None, min_tier: None });
     }
 
     let lots = lots(seed, p, t, &blocks);

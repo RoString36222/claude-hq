@@ -52,7 +52,7 @@ var VEHICLE = {
 };
 var SPAN_MIN = 44, SPAN_MAX = 2048, HALF = 1024, MAP_TAN = Math.tan(5*DEG);
 var LOOK_H = 1.3;          // chase look point above the target's feet (the "head" the camera frames)
-var FAR = 3000, BLEND = 0.5, BLEND_RED = 0.3, DIVE = 1.2, DIVE_RED = 0.6, FLY_MAP = 0.8;
+var FAR = 6000, BLEND = 0.5, BLEND_RED = 0.3, DIVE = 1.2, DIVE_RED = 0.6, FLY_MAP = 0.8;
 // chase family: heading spring omega = clamp(HEAD_MIN + HEAD_K |turnRate|, HEAD_MIN, HEAD_MAX); HEAD_HOLD decays its
 // velocity when you stand still; VEH_LAG the vehicle rotation lag; SWING rad/s eased in over SWING_HL s; the pivot
 // springs at PIVOT_W within PIVOT_MAX m of the head; look-ahead min(AHEAD_MAX, speed AHEAD_K) at AHEAD_W;

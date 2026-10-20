@@ -456,7 +456,7 @@ class CamRig(unittest.TestCase):
             self.close(st[mode]["fov65"], self.o["modes"][mode]["fov"], 0.01)
             self.close(st[mode]["fov80"], self.o["modes"][mode]["fov"] + 15, 0.01)
             self.close(st[mode]["near"], 0.3, 1e-9)
-            self.close(st[mode]["far"], 3000, 1e-9)
+            self.close(st[mode]["far"], 6000, 1e-9)   # planes 3 km off at 600 m, airways higher (games/hqair.js)
         # near sits to the right: model-local -x
         right = rot((-1, 0), 0.7)
         off = st["near"]["off"]

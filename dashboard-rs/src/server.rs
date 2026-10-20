@@ -454,6 +454,10 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
         }
         return Reply::new(200, data, if ct.is_empty() { ctype } else { &ct });
     }
+    if path == "/api/arena/world/claude-hq@2/assign" {
+        let (c, r) = app.arena_commons_assign();
+        return Reply::json(c, &r);
+    }
     if let Some(raw) = path.strip_prefix("/api/arena/world/") {
         return world_reply(app, &py::unquote(raw), headers);
     }

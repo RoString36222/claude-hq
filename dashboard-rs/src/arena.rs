@@ -96,13 +96,23 @@ pub struct WorldReply {
     pub body: Vec<u8>,
 }
 
-/// GET a world with an optional `If-None-Match`, no device token (the route is
-/// public and holds no one's data). Any status comes back as (code, headers,
-/// body), 304 and 404 included; 0 = the Arena did not answer.
-fn http_world(url: &str, inm: &str) -> WorldReply {
+/// A personal island's world id, `user:<user id>@2`: the only non-fixed world the
+/// page asks for, and the only one that carries the device token.
+pub static ISLAND_WORLD_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@2$").unwrap());
+
+/// GET a world with an optional `If-None-Match`. The fixed worlds go without a
+/// device token (the route is public and holds no one's data); an island carries
+/// it, because the Arena serves an island only to those who may visit it. Any
+/// status comes back as (code, headers, body), 304 and 404 included; 0 = the
+/// Arena did not answer.
+fn http_world(url: &str, inm: &str, token: Option<&str>) -> WorldReply {
     let mut req = agent().get(url);
     if !inm.is_empty() {
         req = req.set("If-None-Match", inm);
+    }
+    if let Some(t) = token {
+        req = req.set("Authorization", &format!("Bearer {t}"));
     }
     let r = match req.call() {
         Ok(r) | Err(ureq::Error::Status(_, r)) => r,
@@ -173,6 +183,8 @@ pub fn city_body(action: &str, body: &Value) -> Result<Value, &'static str> {
 
 /// (method, url, token, json body) -> (status, body). 0 = no answer.
 pub type Transport = Arc<dyn Fn(&str, &str, Option<&str>, Option<&Value>) -> (u16, Value) + Send + Sync>;
+/// (url, If-None-Match, token) -> the world reply (tests).
+pub type WorldTransport = Arc<dyn Fn(&str, &str, Option<&str>) -> WorldReply + Send + Sync>;
 
 pub struct ArenaState {
     pub last: Mutex<Value>,
@@ -180,6 +192,8 @@ pub struct ArenaState {
     pub link_lock: Mutex<()>,
     /// Replaces the network (tests).
     pub transport: RwLock<Option<Transport>>,
+    /// Replaces the network for GET /v1/world/:id (tests).
+    pub world_transport: RwLock<Option<WorldTransport>>,
 }
 
 impl Default for ArenaState {
@@ -189,6 +203,7 @@ impl Default for ArenaState {
             gift_off_until: Mutex::new(0.0),
             link_lock: Mutex::new(()),
             transport: RwLock::new(None),
+            world_transport: RwLock::new(None),
         }
     }
 }
@@ -479,16 +494,28 @@ impl App {
         (!base.is_empty()).then(|| format!("{}/v1/world/{}", base, id))
     }
 
-    /// GET /api/arena/world/:id. Egress: the fixed world id and the page's
-    /// ETag, to the configured Arena only; nothing transcript-derived.
+    /// GET /api/arena/world/:id. Egress: the world id (a fixed one, or an island's
+    /// `user:<user id>@2`) and the page's ETag, to the configured Arena only, plus
+    /// the paired device token for an island; nothing transcript-derived.
     pub fn arena_world(&self, id: &str, inm: &str) -> Result<WorldReply, (u16, Value)> {
-        if !WORLD_ID_RE.is_match(id) {
+        if !WORLD_ID_RE.is_match(id) || (id.starts_with("user:") && !ISLAND_WORLD_RE.is_match(id)) {
             return Err((404, json!({"error": "no such world"})));
         }
+        let token = if ISLAND_WORLD_RE.is_match(id) {
+            match self.authed() {
+                Some((t, _)) => Some(t),
+                None => return Err(not_paired()),
+            }
+        } else {
+            None
+        };
         let Some(url) = self.world_url(id) else {
             return Err((400, json!({"error": "no Arena configured"})));
         };
-        let r = http_world(&url, inm);
+        let r = match self.arena.world_transport.read().unwrap().clone() {
+            Some(t) => t(&url, inm, token.as_deref()),
+            None => http_world(&url, inm, token.as_deref()),
+        };
         if r.code == 0 {
             return Err((502, json!({"error": "Arena unreachable"})));
         }
@@ -1099,6 +1126,12 @@ impl App {
     pub fn arena_archipelago(&self) -> (u16, Value) {
         self.authed_get("/v1/archipelago")
     }
+
+    /// GET /v1/world/claude-hq@2/assign: which Commons HQ lot (a rank) each open
+    /// HQ's tower stands on. Egress: the device token and the fixed path only.
+    pub fn arena_commons_assign(&self) -> (u16, Value) {
+        self.authed_get("/v1/world/claude-hq@2/assign")
+    }
 }
 
 /// Background: publish every PUBLISH_INTERVAL_SECS while enabled and paired.
@@ -1420,6 +1453,47 @@ pub(crate) mod tests {
         app.save_link(&json!({"url": "http://127.0.0.1:8080/"})).unwrap();
         assert_eq!(app.world_url("claude-hq@1").as_deref(), Some("http://127.0.0.1:8080/v1/world/claude-hq@1"));
         assert_eq!(app.arena_world("../etc@1", "").err().map(|e| e.0), Some(404));
+    }
+
+    #[test]
+    fn an_island_world_carries_the_device_token_and_a_fixed_one_does_not() {
+        let (_d, app) = app();
+        let seen: Arc<Mutex<Vec<(String, Option<String>)>>> = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        *app.arena.world_transport.write().unwrap() = Some(Arc::new(move |url: &str, _inm: &str, tok: Option<&str>| {
+            log.lock().unwrap().push((url.to_string(), tok.map(str::to_string)));
+            WorldReply { code: 200, ctype: "application/json".into(), etag: "\"e\"".into(), body: b"{}".to_vec() }
+        }));
+        let me = "0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c";
+        let island = format!("user:{me}@2");
+        // unpaired: an island is refused before anything is sent; a fixed world still goes
+        app.clear_link();
+        app.save_config(&json!({"arenaUrl": "https://arena.example"})).unwrap();
+        assert_eq!(app.arena_world(&island, "").err(), Some(not_paired()));
+        assert!(app.arena_world("claude-hq@2", "").is_ok());
+        app.save_link(&json!({"token": "T", "url": "https://arena.example"})).unwrap();
+        assert!(app.arena_world(&island, "").is_ok());
+        assert!(app.arena_world("claude-hq@1", "").is_ok());
+        let s = seen.lock().unwrap();
+        assert_eq!(s[0], ("https://arena.example/v1/world/claude-hq@2".to_string(), None));
+        assert_eq!(s[1], (format!("https://arena.example/v1/world/{island}"), Some("T".to_string())));
+        assert_eq!(s[2].1, None, "the fixed worlds never carry the token");
+        drop(s);
+        // anything user:-shaped that is not exactly an island id is no world, and sends nothing
+        for bad in [format!("user:{me}@1"), format!("user:{}@2", me.to_uppercase()), "user:me@2".into(), format!("user:{me}x@2")] {
+            assert_eq!(app.arena_world(&bad, "").err().map(|e| e.0), Some(404), "{bad}");
+        }
+        assert_eq!(seen.lock().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn the_commons_assignment_is_an_authed_get() {
+        let (_d, app) = app();
+        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!([{"user": "u", "lot_rank": 0}])))));
+        assert_eq!(app.arena_commons_assign(), (200, json!([{"user": "u", "lot_rank": 0}])));
+        let s = sent.lock().unwrap();
+        assert_eq!(s[0].1, "https://arena.example/v1/world/claude-hq@2/assign");
+        assert_eq!(s[0].2.as_deref(), Some("T"));
     }
 
     #[test]

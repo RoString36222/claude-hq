@@ -589,8 +589,8 @@ function bar(g, A, B, o0, o1, y0a, y0b, y1a, y1b, c, caps){
 // carriageway with no walk) with a rail on posts; over the water (wetRuns) a deck slab DECK_T deep under the ribbons,
 // fascias down its sides, and at each end an abutment wall facing the water, from the slab down under the bank's
 // terrain mesh. Pieces belong to the tile of their midpoint, posts to their own.
-function bridgeTile(g, W, E, tx, tz){
-  var s0 = E.tA, s1 = E.len - E.tB;
+function bridgeTile(g, W, E, tx, tz, r0, r1){
+  var s0 = r0 != null ? r0 : E.tA, s1 = r1 != null ? r1 : E.len - E.tB;
   if(s1 - s0 < 0.05) return;
   var edge = E.walk > 0 ? E.half : E.cw, ho = edge + PARA_W, mid = edge + PARA_W/2;
   // the deck's top at the outer edge of side sg, as the ribbon there draws it
@@ -641,11 +641,19 @@ function bridgeTile(g, W, E, tx, tz){
 }
 
 // flat: only the upward asphalt / sidewalk pieces (what the terrain clamp needs; no walls, no marks, no bridges)
-function roadTile(W, tx, tz, flat){
+// gap: leave out every bridge edge's pieces over the water (bridgeGaps: games/hqbridges.js draws its moving spans
+// there); the terrain clamp (flat) never gaps, so the terrain is the same either way
+function roadTile(W, tx, tz, flat, gap){
   var C = prep(W), asph = geo(), marks = geo(), kerb = geo(), walk = geo(), br = C.E.some(function(E){ return E.bridge; }) ? geo() : null;
   C.E.forEach(function(E){
-    var s0 = E.tA, s1 = E.len - E.tB;
-    if(s1 - s0 < 0.05) return;
+    var e0 = E.tA, e1 = E.len - E.tB;
+    if(e1 - e0 < 0.05) return;
+    if(gap && E.bridge && !flat) dryRuns(W, E, e0, e1).forEach(function(r){ ribbon(E, r[0], r[1]); });
+    else ribbon(E, e0, e1);
+  });
+  // one edge's pieces over [s0, s1] (the whole edge, or a dry run of a gapped bridge: its cut ends get no caps)
+  function ribbon(E, s0, s1){
+    var endA = s0 === E.tA, endB = s1 === E.len - E.tB;
     var st = stations(E, s0, s1), cw = E.cw;
     // quick reject: no station pair in this tile
     var any = false;
@@ -665,7 +673,7 @@ function roadTile(W, tx, tz, flat){
         wallStrip(walk, W, E, st, sg*E.half, "walkout", COL.verge, tx, tz, sg);
       });
       // end caps of the raised sidewalk where it stops at a junction
-      if(!flat) [[E.tA, s0, -1], [E.tB, s1, 1]].forEach(function(cp){
+      if(!flat) [[endA ? E.tA : 0, s0, -1], [endB ? E.tB : 0, s1, 1]].forEach(function(cp){
         if(!(cp[0] > 0)) return;
         var S = pointAt(E, cp[1]);
         if(!inTile(S.x, S.z, tx, tz)) return;
@@ -678,9 +686,9 @@ function roadTile(W, tx, tz, flat){
       [-1, 1].forEach(function(sg){ wallStrip(walk, W, E, st, sg*cw, "verge", COL.verge, tx, tz, sg); });
     }
     if(flat) return;
-    if(E.bridge && br) bridgeTile(br, W, E, tx, tz);
+    if(E.bridge && br) bridgeTile(br, W, E, tx, tz, s0, s1);
     // markings, stopped short of junction patches and crossings
-    var m0 = s0 + (crossed(C, E, 0) ? 5.5 : 0.5), m1 = s1 - (crossed(C, E, 1) ? 5.5 : 0.5);
+    var m0 = s0 + (endA && crossed(C, E, 0) ? 5.5 : 0.5), m1 = s1 - (endB && crossed(C, E, 1) ? 5.5 : 0.5);
     if(m1 - m0 > 0.5) markLines(E).forEach(function(ln){
       if(!ln.dash){ strip(marks, W, E, stations(E, m0, m1), ln.o - ln.w/2, ln.o + ln.w/2, MARK_LIFT, ln.c, tx, tz); return; }
       for(var d = Math.ceil(m0/9)*9; d < m1; d += 9){
@@ -688,7 +696,7 @@ function roadTile(W, tx, tz, flat){
         if(b - a > 0.2) strip(marks, W, E, stations(E, a, b), ln.o - ln.w/2, ln.o + ln.w/2, MARK_LIFT, ln.c, tx, tz);
       }
     });
-  });
+  }
   // junction patches, corner sidewalks, zebra crossings: by the tile holding the node
   C.nodeIds.forEach(function(id){
     var arms = C.inc[id] || [], n = C.nodes[id];
@@ -1700,18 +1708,32 @@ function tierDiff(W, a, b){
 }
 
 /* ---------- one worker job ---------- */
-// m.tier (optional) builds the tile as that city tier shows it (view above); "ground" is the v2 ground (groundTile)
+// m.tier (optional) builds the tile as that city tier shows it (view above); "ground" is the v2 ground (groundTile);
+// m.gap leaves the bridges' pieces over the water out of "roads" (roadTile's gap)
 function buildTile(W, m){
   m = m || {};
   if(m.tier != null) W = view(W, m.tier);
   var tx = clamp(m.tx|0, 0, NT - 1), tz = clamp(m.tz|0, 0, NT - 1), want = m.want || [], out = {op: "tile", id: m.id, tx: tx, tz: tz};
   if(m.tier != null) out.tier = m.tier;
   if(want.indexOf("terrain") >= 0){ out.terrain = terrainTile(W, tx, tz, m.lods || []); out.lods = (m.lods || []).slice(); }
-  if(want.indexOf("roads") >= 0) out.roads = roadTile(W, tx, tz);
+  if(want.indexOf("roads") >= 0) out.roads = roadTile(W, tx, tz, false, !!m.gap);
   if(want.indexOf("ground") >= 0) out.ground = groundTile(W, tx, tz);
   if(want.indexOf("buildings0") >= 0) out.buildings0 = buildingTile(W, tx, tz, 0);
   if(want.indexOf("buildings1") >= 0) out.buildings1 = buildingTile(W, tx, tz, 1);
   if(want.indexOf("props") >= 0) out.props = props(W, tx, tz);
+  return out;
+}
+// every bridge edge's runs over the water (m along it, each grown ABUT into the banks, trimmed to the edge's ribbon):
+// what roadTile(.., gap) leaves out -> [{id (edge id), half, cw, walk, len, runs: [[a, b], ...]}], none without bridges
+function bridgeGaps(W){
+  var out = [];
+  prep(W).E.forEach(function(E){
+    if(!E.bridge) return;
+    var s0 = E.tA, s1 = E.len - E.tB, runs = [];
+    if(s1 - s0 < 0.05) return;
+    wetRuns(W, E).forEach(function(r){ var a = Math.max(r[0], s0), b = Math.min(r[1], s1); if(b - a >= 0.05) runs.push([a, b]); });
+    if(runs.length) out.push({id: E.id, half: E.half, cw: E.cw, walk: E.walk, len: E.len, runs: runs});
+  });
   return out;
 }
 // every typed-array buffer in a tile message (for postMessage transfer)
@@ -1730,7 +1752,7 @@ HQV.worldgeom = {
   props: props, routes: routes, nameAtlasLayout: nameAtlasLayout, buildTile: buildTile, transferables: transferables,
   emptyGeo: emptyGeo, CAR_COLORS: CAR_COLORS, GANTRY_POST: GANTRY_POST, GANTRY_SINK: GANTRY_SINK,
   groundTile: groundTile, groundItems: groundItems, triangulate: triangulate, hasGround: hasGround, seaY: seaY, view: view,
-  tierDiff: tierDiff, footprint: footprint, riverWater: riverWater, riverRing: riverRing,
+  tierDiff: tierDiff, footprint: footprint, riverWater: riverWater, riverRing: riverRing, bridgeGaps: bridgeGaps,
   BRIDGE: {DECK_T: DECK_T, PARA_W: PARA_W, PARA_H: PARA_H, RAIL_H: RAIL_H, ABUT: ABUT}, RIVER_LIFT: RIVER_LIFT,
   SEA_HIDE: SEA_HIDE, meshY: meshY
 };

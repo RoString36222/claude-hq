@@ -202,6 +202,7 @@ pub(crate) async fn ensure_city(conn: &mut SqliteConnection, owner: &str, now: i
         format!("user:{owner}@2")
     };
     let tax = if owner == COMMONS { 0 } else { TAX_PM };
+    let specialty = market::specialty_for(&seed).await;
     sqlx::query(
         "INSERT OR IGNORE INTO city (owner, seed, treasury, tax_pm, specialty, privacy, created, last_accrual)
          VALUES (?1, ?2, 0, ?3, ?4, 'arena', ?5, ?5)",
@@ -209,7 +210,7 @@ pub(crate) async fn ensure_city(conn: &mut SqliteConnection, owner: &str, now: i
     .bind(owner)
     .bind(&seed)
     .bind(tax)
-    .bind(market::specialty_for(&seed))
+    .bind(specialty)
     .bind(now)
     .execute(&mut *conn)
     .await?;

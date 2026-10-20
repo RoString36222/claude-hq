@@ -50,17 +50,18 @@ pub(crate) struct Good {
     pub(crate) mult_pm: i64,
 }
 
-/// One good per district kind that makes something (the comment names it).
+/// One good per district kind that makes something (the comment names it). The keys
+/// are the world's own (worldgen::zones, `layers.zones[].good`), plus fish for the sea.
 pub(crate) const GOODS: [Good; 9] = [
-    Good { key: "grain", gate: 1, base: 2, inputs: &[], mult_pm: 1000 }, // farm
+    Good { key: "food", gate: 1, base: 2, inputs: &[], mult_pm: 1000 }, // farm
     Good { key: "fish", gate: 1, base: 2, inputs: &[], mult_pm: 1000 }, // water
-    Good { key: "crates", gate: 2, base: 3, inputs: &[], mult_pm: 1100 }, // logistics
-    Good { key: "reports", gate: 3, base: 5, inputs: &["crates"], mult_pm: 1150 }, // office
-    Good { key: "chips", gate: 3, base: 8, inputs: &["crates"], mult_pm: 1300 }, // tech
-    Good { key: "medicine", gate: 4, base: 9, inputs: &["grain"], mult_pm: 1250 }, // biotech
-    Good { key: "news", gate: 4, base: 6, inputs: &["chips"], mult_pm: 1150 }, // media
-    Good { key: "films", gate: 4, base: 12, inputs: &["chips"], mult_pm: 1200 }, // studio
-    Good { key: "bonds", gate: 4, base: 10, inputs: &["reports"], mult_pm: 1300 }, // finance
+    Good { key: "freight", gate: 2, base: 3, inputs: &[], mult_pm: 1100 }, // logistics
+    Good { key: "services", gate: 3, base: 5, inputs: &["freight"], mult_pm: 1150 }, // office
+    Good { key: "tech", gate: 3, base: 8, inputs: &["freight"], mult_pm: 1300 }, // tech
+    Good { key: "medicine", gate: 4, base: 9, inputs: &["food"], mult_pm: 1250 }, // biotech
+    Good { key: "content", gate: 4, base: 6, inputs: &["tech"], mult_pm: 1150 }, // media
+    Good { key: "film", gate: 4, base: 12, inputs: &["tech"], mult_pm: 1200 }, // studio
+    Good { key: "capital", gate: 4, base: 10, inputs: &["services"], mult_pm: 1300 }, // finance
 ];
 
 /// Prices are kept in thousandths of a coin.
@@ -82,8 +83,23 @@ pub(crate) fn good(key: &str) -> Option<&'static Good> {
     GOODS.iter().find(|g| g.key == key)
 }
 
-/// The specialty a seed gets; the same seed always gets the same good.
-pub(crate) fn specialty_for(seed: &str) -> &'static str {
+/// The specialty a seed gets; the same seed always gets the same good: the one its
+/// world's specialty zone makes (`layers.zones[].good` where `specialty`), so the
+/// market sells what the island visibly produces; else (no such world) by hash.
+pub(crate) async fn specialty_for(seed: &str) -> &'static str {
+    let id = seed.to_string();
+    let world = if cfg!(test) { None } else { tokio::task::spawn_blocking(move || world_good(&id)).await.ok().flatten() };
+    world.unwrap_or_else(|| hashed_specialty(seed))
+}
+
+/// The good a world's specialty zone makes, from the generator (a few hundred ms).
+pub(crate) fn world_good(id: &str) -> Option<&'static str> {
+    let doc = crate::worldgen::generate(id, &[]).ok()?;
+    let z = doc.layers.zones?.into_iter().find(|z| z.specialty)?;
+    good(z.good).map(|g| g.key)
+}
+
+pub(crate) fn hashed_specialty(seed: &str) -> &'static str {
     GOODS[(cities::seed_hash(seed) % GOODS.len() as u64) as usize].key
 }
 
@@ -451,30 +467,30 @@ mod tests {
     #[test]
     fn production_without_its_inputs_runs_at_a_quarter() {
         // chips need crates. Population 600: output 8, needing 4 crates.
-        let e = econ("chips", 600);
-        let mut starved = opening("chips");
-        let before = starved.iter().find(|r| r.good == "chips").unwrap().stock;
+        let e = econ("tech", 600);
+        let mut starved = opening("tech");
+        let before = starved.iter().find(|r| r.good == "tech").unwrap().stock;
         assert_eq!(produce(&mut starved, &e), 2);
-        assert_eq!(starved.iter().find(|r| r.good == "chips").unwrap().stock, before + 2);
+        assert_eq!(starved.iter().find(|r| r.good == "tech").unwrap().stock, before + 2);
 
-        let mut fed = opening("chips");
-        fed.iter_mut().find(|r| r.good == "crates").unwrap().stock = 10;
+        let mut fed = opening("tech");
+        fed.iter_mut().find(|r| r.good == "freight").unwrap().stock = 10;
         assert_eq!(produce(&mut fed, &e), 8);
-        assert_eq!(fed.iter().find(|r| r.good == "crates").unwrap().stock, 6);
-        assert_eq!(fed.iter().find(|r| r.good == "chips").unwrap().stock, before + 8);
+        assert_eq!(fed.iter().find(|r| r.good == "freight").unwrap().stock, 6);
+        assert_eq!(fed.iter().find(|r| r.good == "tech").unwrap().stock, before + 8);
 
         // Short by one crate is still short.
-        let mut short = opening("chips");
-        short.iter_mut().find(|r| r.good == "crates").unwrap().stock = 3;
+        let mut short = opening("tech");
+        short.iter_mut().find(|r| r.good == "freight").unwrap().stock = 3;
         assert_eq!(produce(&mut short, &e), 2);
-        assert_eq!(short.iter().find(|r| r.good == "crates").unwrap().stock, 3);
+        assert_eq!(short.iter().find(|r| r.good == "freight").unwrap().stock, 3);
     }
 
     #[test]
     fn a_raw_good_needs_nothing_and_the_workshop_adds_a_quarter() {
-        let mut rows = opening("grain");
-        assert_eq!(produce(&mut rows, &econ("grain", 600)), 8);
-        let e = Economy { specialty: "grain", population: 600, workshop: 2, depot: 0 };
+        let mut rows = opening("food");
+        assert_eq!(produce(&mut rows, &econ("food", 600)), 8);
+        let e = Economy { specialty: "food", population: 600, workshop: 2, depot: 0 };
         assert_eq!(produce(&mut rows, &e), 12);
     }
 
@@ -488,20 +504,32 @@ mod tests {
         assert!(rows.iter().all(|r| r.stock <= e.stock_cap() && r.stock >= 0));
         // A glut of its specialty sits at the floor; what it never makes, at the ceiling.
         let fish = rows.iter().find(|r| r.good == "fish").unwrap();
-        let films = rows.iter().find(|r| r.good == "films").unwrap();
+        let film = rows.iter().find(|r| r.good == "film").unwrap();
         assert_eq!(fish.price, 2 * MILLI * FLOOR_PM / 1000);
-        assert_eq!(films.price, 12 * MILLI * CEIL_PM / 1000);
+        assert_eq!(film.price, 12 * MILLI * CEIL_PM / 1000);
     }
 
     #[test]
     fn the_specialty_follows_the_seed() {
-        let a = specialty_for("user:00000000-0000-4000-8000-000000000001@2");
-        assert_eq!(a, specialty_for("user:00000000-0000-4000-8000-000000000001@2"));
+        let a = hashed_specialty("user:00000000-0000-4000-8000-000000000001@2");
+        assert_eq!(a, hashed_specialty("user:00000000-0000-4000-8000-000000000001@2"));
         let all: std::collections::BTreeSet<&str> =
-            (0..200).map(|i| specialty_for(&format!("user:{i}@2"))).collect();
+            (0..200).map(|i| hashed_specialty(&format!("user:{i}@2"))).collect();
         assert_eq!(all.len(), GOODS.len(), "every good is someone's specialty");
-        assert_eq!(district_pm("chips", 2), 1000);
-        assert_eq!(district_pm("chips", 3), 1300);
+        assert_eq!(district_pm("tech", 2), 1000);
+        assert_eq!(district_pm("tech", 3), 1300);
+    }
+
+    #[test]
+    fn the_market_sells_what_the_world_makes() {
+        // every zone good of the generator is a market good, and a world's specialty is its zone's
+        for z in crate::worldgen::zones::INDUSTRY.iter() {
+            assert!(good(z.good).is_some(), "the market has no {}", z.good);
+        }
+        let doc = crate::worldgen::generate("claude-hq@2", &[]).unwrap();
+        let made = doc.layers.zones.unwrap().into_iter().find(|z| z.specialty).unwrap().good;
+        assert_eq!(world_good("claude-hq@2"), Some(made));
+        assert_eq!(world_good("not a world"), None);
     }
 
     #[test]

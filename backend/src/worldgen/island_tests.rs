@@ -423,3 +423,19 @@ fn version_1_is_untouched() {
     }
     assert!(Coast::new(1, &profile::city()).is_none());
 }
+
+/// Every road keeps its half width and 15 m inside the coast: none runs into the sea
+/// (the Commons' ring road is routed inside the coast's nearest reach, roads::graded).
+#[test]
+fn the_roads_stay_on_the_island() {
+    for w in worlds() {
+        let c = coast_of(w);
+        for e in &w.layers.roads.edges {
+            for q in &e.points {
+                let q = (q[0], q[2]);
+                let clear = c.radius_at(q) - len(q);
+                assert!(clear >= e.width / 2 + 1_500, "{}: {} ({}) is {} m from the coast at {:?}", w.id, e.name, e.class, clear / 100, q);
+            }
+        }
+    }
+}

@@ -629,9 +629,10 @@ BUILD.police = function(k){
 BUILD.school = function(k){
   var T = k.tier, fl = 2 + (T >= 4), w = Math.min(k.W*0.9, 40), d = Math.min(k.D*0.3, 12), side = k.R() < 0.5 ? -1 : 1;
   var zc = -k.D/2 + d/2 + 1, M = k.mass("brick", 0, zc, w, d, fl);
-  var ww = Math.min(10, k.W*0.25), wd = Math.min(k.D*0.6, 22);
+  var ww = Math.min(10, k.W*0.25), wd = Math.max(2, Math.min(k.D*0.6, 22, k.D/2 - 1 - (zc + d/2)));   // kept inside the site
   k.mass("brick", side*(w/2 - ww/2), zc + d/2 + wd/2, ww, wd, fl - (T < 3));
-  if(T >= 3) k.barrel(-side*(w/2 - 7), zc + d/2 + 6, 12, 5, PLINTH, k.m(0x7d8a96, {metalness: 0.4, roughness: 0.5}), true);   // the gym
+  var gl = Math.min(12, k.D/2 - 1 - (zc + d/2));
+  if(T >= 3 && gl >= 6) k.barrel(-side*(w/2 - 7), zc + d/2 + gl/2, gl, 5, PLINTH, k.m(0x7d8a96, {metalness: 0.4, roughness: 0.5}), true);   // the gym
   // the yard: asphalt, court lines, hoops, a fence
   var yx = -side*(ww/2), yw = Math.min(k.W - ww - 4, 28), yz = zc + d/2 + 2 + Math.min(k.D - d - 6, 18)/2, yd = Math.min(k.D - d - 6, 18);
   k.box(yw, 0.04, yd, k.m(0x4a525b, {roughness: 0.95}), yx, PLINTH + 0.02, yz);
@@ -651,7 +652,9 @@ BUILD.university = function(k){
   var T = k.tier, stone = k.m(0xd8d0bf, {roughness: 0.75}), w = Math.min(k.W*0.7, 44), d = Math.min(k.D*0.3, 16);
   var zc = -k.D/2 + d/2 + 1, fl = 3 + (T >= 4), M = k.mass("stone", 0, zc, w, d, fl, {roof: false});
   k.gable(0, zc, w, d, M.top, 4, k.m(0x4a4f5a, {roughness: 0.7}));
-  if(T >= 3) [-1, 1].forEach(function(s){ k.mass("brick", s*(w/2 - 5), zc + d/2 + 9, 10, 14, fl - 1); });
+  // the wings, either side of the quad: as deep as the site leaves in front of the hall, the walk to its door clear
+  var ww = Math.min(10, w/2 - 5), wd = Math.min(14, k.D/2 - 1 - (zc + d/2 + 2));
+  if(T >= 3 && ww >= 3 && wd >= 4) [-1, 1].forEach(function(s){ k.mass("brick", s*(w/2 - ww/2), zc + d/2 + 2 + wd/2, ww, wd, fl - 1); });
   // the quad
   var qd = Math.min(k.D - d - 6, 22);
   k.box(Math.min(w - 22, 30), 0.06, qd, k.m(0x5a9a4f, {roughness: 0.95}), 0, PLINTH + 0.03, zc + d/2 + 2 + qd/2);
@@ -1115,11 +1118,13 @@ BUILD.farm = function(k){
   k.box(4, 3.8, 0.12, trim, bx, PLINTH + 1.9, bz + bd/2 + 0.07);
   k.box(3.6, 3.4, 0.14, red, bx, PLINTH + 1.9, bz + bd/2 + 0.1);
   // silos
-  var ns = 1 + (T >= 3) + (T >= 5), sm = k.m(0xc4ccd4, {metalness: 0.6, roughness: 0.4});
+  // as many as stand between the barn and the farmhouse (hx, 9 m wide)
+  var ns = 1 + (T >= 3) + (T >= 5), sm = k.m(0xc4ccd4, {metalness: 0.6, roughness: 0.4}), hx = k.W/4;
+  while(ns > 0 && bx + bw/2 + 3 + (ns - 1)*4.4 + 2 > hx - 5) ns--;
   for(i = 0; i < ns; i++){ var sx = bx + bw/2 + 3 + i*4.4, sh = 10 + T*2;
     k.cyl(1.9, 1.9, sh, sm, sx, PLINTH + sh/2, bz - 1, 16); k.dome(1.95, sx, PLINTH + sh, bz - 1, sm); k.note(sx, bz - 1, 4, 4, 0, sh + 2); }
   // the farmhouse
-  var hx = k.W/4, hz = k.D/2 - 7, H = k.mass("white", hx, hz, 9, 7, 2, {fh: 3, roof: false});
+  var hz = k.D/2 - 7, H = k.mass("white", hx, hz, 9, 7, 2, {fh: 3, roof: false});
   k.gable(hx, hz, 9, 7, H.top, 2.4, k.m(0x6a3a2a, {roughness: 0.7}));
   k.vehicle("tractor", 0, k.D/2 - 4, PI/2);
   k.tree(hx + 6, hz, 1);

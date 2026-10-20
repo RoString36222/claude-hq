@@ -96,6 +96,14 @@ fn wobble(seed: u64, i: usize, n: usize) -> i64 {
     sum / weight
 }
 
+/// The nearest the coast of a profile with a coast comes to the plaza (cm): 15 m clear
+/// of the city's streets and of the ring road's radius plus a tenth. The ring road is
+/// routed inside it (roads::graded), so it never runs into the sea.
+pub fn lo_of(p: &Profile) -> Option<i64> {
+    let (c, _) = (p.coast_r_cm?, p.sea_cm?);
+    Some((p.city_r_cm.max(p.ring_r_cm * 11 / 10) + 1_500).min(c - 2_500))
+}
+
 impl Coast {
     /// The coast of a profile with `coast_r_cm` (the farthest it reaches, plus 25 m:
     /// the generator's "past the coast" circle is always at sea) and `sea_cm`. It keeps
@@ -103,8 +111,7 @@ impl Coast {
     /// for its wander) and wobbles between that and its farthest.
     pub fn new(seed: u64, p: &Profile) -> Option<Coast> {
         let (c, sea_cm) = (p.coast_r_cm?, p.sea_cm?);
-        let hi = c - 2_500;
-        let lo = (p.city_r_cm.max(p.ring_r_cm * 11 / 10) + 1_500).min(hi);
+        let (lo, hi) = (lo_of(p)?, c - 2_500);
         let (mid, amp) = ((lo + hi) / 2, (hi - lo) / 2);
         let poly = directions().iter().enumerate().map(|(i, &d)| along((0, 0), d, mid + amp * wobble(seed, i, COAST_N) / 32768)).collect();
         Some(Coast { poly, sea_cm, lo, hi })

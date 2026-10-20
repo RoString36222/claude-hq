@@ -149,6 +149,27 @@ function roadHits(test, W){
 }
 out.roads = {commonsWorld: roadHits(function(x, z){ return WD.blockedAt(CW, x, z); }, CW),
              islandWorld: roadHits(function(x, z){ return WD.blockedAt(IW, x, z); }, IW)};
+
+/* ---------- civic models stand inside their sites: no solid mass reaches a road, at any tier ---------- */
+out.civicOnRoad = [];
+[["commons", CW], ["island", IW]].forEach(function(D){
+  D[1].sites.forEach(function(st){
+    if(!HQV.hqCivic.KINDS[st.kind]) return;
+    [1, 3, 5].forEach(function(tier){
+      if(st.tier != null && st.tier > tier) return;
+      var B = HQV.hqCivic.build(c, st, {tier: tier, night: false}), worst = 0;
+      B.boxes.forEach(function(b){ var o = b.o; if(!o || o.y0 > 2.4) return;     // a roof clear of the ground blocks nothing
+        var cr = Math.cos(o.rot), sr = Math.sin(o.rot);
+        [[1, 1], [1, -1], [-1, 1], [-1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function(q){
+          var lx = q[0]*o.hw, lz = q[1]*o.hd, x = o.x + lx*cr + lz*sr, z = o.z - lx*sr + lz*cr;
+          D[1].edges.forEach(function(e){ var p = e.pts, m = p.length/3, hw = e.width/200;
+            for(var s = 0; s + 1 < m; s++){ var ax = p[3*s]/100, az = p[3*s+2]/100, dx = p[3*s+3]/100 - ax, dz = p[3*s+5]/100 - az, L2 = dx*dx + dz*dz;
+              var t = L2 ? Math.max(0, Math.min(1, ((x - ax)*dx + (z - az)*dz)/L2)) : 0, d = Math.hypot(x - ax - dx*t, z - az - dz*t);
+              if(d < hw) worst = Math.max(worst, hw - d); } }); }); });
+      if(worst > 0.05) out.civicOnRoad.push([D[0], st.id, tier, +worst.toFixed(1)]);
+    });
+  });
+});
 /* ---------- the Commons ---------- */
 ROWS = [{user: "c1", lot_rank: 3}, {user: "c0", lot_rank: 0}];
 LIST = [{userId: "c0", level: 2, look: {}}, {userId: "c1", level: 3, look: {}}, {userId: "c2", level: 1, look: {}}];
@@ -161,7 +182,11 @@ out.commons = {world: wc.world(), net: wc.net, tierOpt: wbOpts[0], civic: wc.doo
   viewDoors: wc.doors.filter(d => d.view && !d.userId && !/^visit:|^@/.test(d.view)).map(d => d.view).sort(),
   towers: hqHits.map(o => o.userData.door.userId).filter((u, i, a) => a.indexOf(u) === i).sort(),
   boats: wc.bikes.filter(b => b.kind === "rowboat" || b.kind === "jetski").map(b => b.kind).sort(),
-  seaBlocked: wc.blocked(900, 0), plazaOpen: !wc.blocked(3, 9),
+  // open sea: 40 m out past the coast vertex farthest from every dock (no pier there)
+  seaBlocked: (function(){ var I = CW.island, docks = CW.sites.filter(s => s.kind === "dock" || s.kind === "port"), best = null;
+    I.coast.forEach(function(q){ var d = Math.min.apply(null, docks.map(s => Math.hypot(q[0] - s.x, q[1] - s.z))); if(!best || d > best.d) best = {q: q, d: d}; });
+    var r = Math.hypot(best.q[0], best.q[1]), k = (r + 4000)/r; return wc.blocked(best.q[0]*k/100, best.q[1]*k/100); })(),
+  plazaOpen: !wc.blocked(3, 9),
   seaY: wc.sea && wc.sea.y, gets: calls.get.slice()};
 ISLES = false; out.commons.netOld = wc.net; ISLES = true;
 // the town hall's door: the Town Hall panel for the Commons, no owner controls
@@ -177,7 +202,7 @@ out.commons.ashore = land && [wc.sea.land(land.x, land.z), wc.boatLand({x: berth
   // from its land end (the ferry office stands across it: you come on round its side) out to its head, down the middle
   for(var a = 0.5; a <= len - 0.3; a += 1){ var x = P.head[0] - dx*(len - a), z = P.head[1] - dz*(len - a); walk.push([wc.blocked(x, z), wc.groundY(x, z)]); }
   var onPier = walk, ax = P.head[0] - dx*(len - 1), az = P.head[1] - dz*(len - 1);
-  out.pier = {deckY: P.y, seaY: wc.sea.y, walkBlocked: walk.filter(q => q[0]).length, deckYs: onPier.map(q => q[1]),
+  out.pier = {deckY: P.y, siteY: site.y/100, seaY: wc.sea.y, walkBlocked: walk.filter(q => q[0]).length, deckYs: onPier.map(q => q[1]),
     besideBlocked: [1, -1].map(sg => wc.blocked(P.head[0] - dx*3 + dz*(P.w/2 + 1.5)*sg, P.head[1] - dz*3 - dx*(P.w/2 + 1.5)*sg)),
     landY: land && wc.groundY(land.x, land.z), berthOnDeck: HQV.hqCivic.deckAt([P], berth.x, berth.z),
     // the way on: off the paving beside the land end
@@ -276,6 +301,8 @@ var islandTowers = wi.hits.filter(o => o.userData.door && o.userData.door.userId
 out.roads.island = roadHits(function(x, z){ return wi.blocked(x, z); }, IW);
 out.pure.stats = [1, 3, 5].map(function(t){ var K = C3.cityStats(IW, t, {population: 120, grow: 400, treasury: 55, specialty: "fish"}); return [K.happiness, K.parts.map(p => p.key), K.homes, K.population, K.tierName]; });
 out.pure.statsNone = C3.cityStats(null, 2, null);
+out.pure.garages = IW.lots.filter(l => l.kind === "hq").concat(CW.lots.filter(l => l.kind === "hq").slice(0, 40)).map(function(l){
+  var p = C3.placeLot(l); return [2, 0].map(function(wings){ var g = C3.garagePlace(l, p, wings); return g ? [g.s, +(Math.hypot(g.x, g.z)).toFixed(1)] : null; }); });
 out.island = {world: wi.world(), net: wi.net, tierOpt: wbOpts[wbOpts.length - 1], towers: islandTowers,
   townDoor: wi.doors.filter(d => d.kind === "townhall").length,
   spawnAtDock: spawn && Math.hypot(wi.spawn.x - spawn.x, wi.spawn.z - spawn.z) < 0.01,
@@ -351,6 +378,18 @@ class CitiesTest(unittest.TestCase):
         # and on an island nothing else does either (civic masses, the HQ's garage, the sea)
         self.assertEqual(r["island"][1], 0)
 
+    def test_civic_buildings_stay_off_the_road(self):
+        self.assertEqual(self.out["civicOnRoad"], [], "a civic building's wall stands on a road (world, site, tier, metres in)")
+
+    def test_every_island_hq_has_a_garage(self):
+        # a v2 lot is narrower than an @1 lot: the garage finds a spot inside it, with or without the HQ's wings
+        g = self.out["pure"]["garages"]
+        self.assertGreater(len(g), 3)
+        for both in g:
+            for spot in both:
+                self.assertIsNotNone(spot, "an HQ lot with no room for its garage")
+                self.assertIn(spot[0], (1, -1))
+
     def test_city_stats(self):
         s = self.out["pure"]["stats"]
         for happy, keys, homes, pop, name in s:
@@ -391,7 +430,8 @@ class CitiesTest(unittest.TestCase):
 
     def test_the_pier(self):
         p = self.out["pier"]
-        self.assertAlmostEqual(p["deckY"] - p["seaY"], 1.81, 2, "the deck stands over the sea")
+        self.assertAlmostEqual(p["deckY"] - p["siteY"], 0.72, 6, "the deck: the dock's plinth and 0.6 m (hqcivic PIERS)")
+        self.assertGreater(p["deckY"] - p["seaY"], 1.0, "the deck stands over the sea")
         self.assertEqual(p["walkBlocked"], 0, "you walk out along the pier to its head")
         self.assertTrue(p["deckYs"])
         for y in p["deckYs"]:

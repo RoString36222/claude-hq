@@ -155,14 +155,15 @@ function lamplit(gr){ gr.traverse(function(o){ var m = o.material; if(m && m.col
 // HQ's colours col {paint, accent}, from HQV.hqLotExtras. rot is the lot's turn and toWorld(lx, lz)
 // -> {x, z} maps the lot's frame to the world. Returns {items: the car, motorbike and bicycle for
 // w.bikes (hq3d.js drives and rides them), glows: the garage's lamp glows, car: {g}}. apronEnd:
-// the lot-local z the apron runs to (default 11, the legacy City's road). side: 1 (default) the garage on the
-// HQ's +x side, -1 mirrored to its -x side (a v2 lot too narrow on the +x side).
-function lotExtras(c, g, col, rot, toWorld, apronEnd, uid, side){
+// the lot-local z the apron runs to (default 11, the legacy City's road). at: where the garage stands on a v2 lot
+// {x, z, s} (its middle; s -1: the car and bikes mirrored to its other side), else the legacy spot.
+function lotExtras(c, g, col, rot, toWorld, apronEnd, uid, at){
   var THREE = c.THREE, PI = c.PI, mat = c.mat, emis = c.emis, box = c.box, sph = c.sph;
   var X = HQV.hqLotExtras, G = X.garage, K = X.car, Bk = X.bike, items = [], glows = [];
-  var AE = apronEnd != null ? apronEnd : 11, sx = side === -1 ? -1 : 1;
+  var AE = apronEnd != null ? apronEnd : 11, sx = at && at.s === -1 ? -1 : 1, ox = at ? at.x - sx*G.x : 0, oz = at ? at.z - G.z : 0;
+  function lx(x){ return ox + sx*x; }                  // a legacy x (the garage's frame) on this lot
   var wallM = mat(col.paint, {roughness: 0.8}), trimM = emis(col.accent, col.accent, 0.35);
-  var gg = new THREE.Group(); gg.position.set(sx*G.x, 0, G.z); g.add(gg);
+  var gg = new THREE.Group(); gg.position.set(lx(G.x), 0, oz + G.z); g.add(gg);
   // the garage: a floor, three walls, a flat roof, the roller door rolled up under the lintel
   box(G.w, 0.06, G.d, emis(0x4a545e, 0xfff1d6, 0.05, {roughness: 0.9}), 0, 0.03, 0, gg);   // the floor, lit by its lamp
   // the walls, and the top (roof, lintel, rolled-up door): the top fades while you are inside,
@@ -182,21 +183,21 @@ function lotExtras(c, g, col, rot, toWorld, apronEnd, uid, side){
   var gl = c.glow(0xffd9a0, 2.2, 0.7); gl.position.set(0, G.h - 0.2, G.d/2 + 0.45); gg.add(gl); glows.push(gl);
   var inside = c.glow(0xfff1d6, 3.0, 0.35); inside.position.set(0, G.h - 0.4, 0); gg.add(inside); glows.push(inside);
   // the apron from the door to the road
-  var apron = new THREE.Mesh(new THREE.PlaneGeometry(G.w - 0.4, AE - (G.z + G.d/2)), mat(0x323a43, {roughness: 0.9}));
-  apron.rotation.x = -PI/2; apron.position.set(sx*G.x, 0.03, (G.z + G.d/2 + AE)/2); apron.receiveShadow = true; g.add(apron);
+  var apron = new THREE.Mesh(new THREE.PlaneGeometry(G.w - 0.4, Math.max(0.1, AE - (oz + G.z + G.d/2))), mat(0x323a43, {roughness: 0.9}));
+  apron.rotation.x = -PI/2; apron.position.set(lx(G.x), 0.03, (oz + G.z + G.d/2 + AE)/2); apron.receiveShadow = true; g.add(apron);
   // the car, parked inside, nose out: its body in the HQ's paint with stripes in its accent
-  var Cm = c.car(col.paint, col.accent); Cm.g.position.set(sx*K.x, 0, K.z); Cm.g.rotation.y = K.yaw; g.add(Cm.g);
+  var Cm = c.car(col.paint, col.accent); Cm.g.position.set(lx(K.x), 0, oz + K.z); Cm.g.rotation.y = K.yaw; g.add(Cm.g);
   lamplit(Cm.g);
-  var kp = toWorld(sx*K.x, K.z), car = {g: Cm.g};
+  var kp = toWorld(lx(K.x), oz + K.z), car = {g: Cm.g};
   // (id: the same prop after a rebuild; stay: hq3d.js parks it wherever you get off)
   uid = "lot:" + uid + ":";
   items.push({g: Cm.g, x: kp.x, z: kp.z, yaw: K.yaw + rot, color: col.paint, accent: col.accent, kind: "car", id: uid + "car", stay: true});
   // its motorbike and its bicycle beside the car, in the HQ's accent
-  var Mo = X.moto, Mm = c.moto(col.accent, col.paint); Mm.g.position.set(sx*Mo.x, 0, Mo.z); Mm.g.rotation.y = Mo.yaw; g.add(Mm.g);
-  var mp = toWorld(sx*Mo.x, Mo.z);
+  var Mo = X.moto, Mm = c.moto(col.accent, col.paint); Mm.g.position.set(lx(Mo.x), 0, oz + Mo.z); Mm.g.rotation.y = Mo.yaw; g.add(Mm.g);
+  var mp = toWorld(lx(Mo.x), oz + Mo.z);
   lamplit(Mm.g); items.push({g: Mm.g, x: mp.x, z: mp.z, yaw: Mo.yaw + rot, color: col.accent, accent: col.paint, kind: "moto", id: uid + "moto", stay: true});
-  var Bm = c.bike(col.accent, col.paint); Bm.g.position.set(sx*Bk.x, 0, Bk.z); Bm.g.rotation.y = Bk.yaw; g.add(Bm.g);
-  var bp = toWorld(sx*Bk.x, Bk.z); lamplit(Bm.g);
+  var Bm = c.bike(col.accent, col.paint); Bm.g.position.set(lx(Bk.x), 0, oz + Bk.z); Bm.g.rotation.y = Bk.yaw; g.add(Bm.g);
+  var bp = toWorld(lx(Bk.x), oz + Bk.z); lamplit(Bm.g);
   items.push({g: Bm.g, x: bp.x, z: bp.z, yaw: Bk.yaw + rot, color: col.accent, accent: col.paint, id: uid + "bike", stay: true});   // a bicycle: no kind, as hq3d.js expects
   return {items: items, glows: glows, car: car, garage: {top: top, walls: walls, on: 0}};
 }

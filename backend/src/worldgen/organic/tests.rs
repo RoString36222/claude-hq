@@ -20,8 +20,9 @@ fn commons() -> &'static WorldDoc {
 /// The fingerprint of the Commons. Everyone's tower (and every HQ's lot) is stored
 /// against this world, so a change here MOVES THINGS FOR EVERYONE: only update it on
 /// purpose, with a new generator version once the world is live.
-// re-pinned 2026-10 for the island (island.rs): the coast and the sea, the highways ending at the ring, a dock and a port
-const CLAUDE_HQ_2: &str = "773b791eda30ed90";
+// re-pinned 2026-10 for the island (island.rs): the coast and the sea, the highways ending at the ring, a dock and a port;
+// again for the ring road kept inside the coast (roads::graded out_r)
+const CLAUDE_HQ_2: &str = "3c81cef30fc4182e";
 
 const ISLAND: &str = "user:0b6f2a3c-1d4e-4f5a-9b8c-7d6e5f4a3b2c@2";
 

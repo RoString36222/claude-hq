@@ -198,9 +198,9 @@ pub fn graded<'a>(
     for (k, &(gx, gz)) in gates.iter().enumerate() {
         let from = nodes.iter().take(city_nodes).min_by_key(|n| ((n.x - gx).pow(2) + (n.z - gz).pow(2), n.id)).unwrap().id;
         let (fx, fz) = (nodes[from as usize].x, nodes[from as usize].z);
-        let mut path = route(base, p, (fx, fz), (gx, gz), p.city_r_cm, &keep, &[], true);
+        let mut path = route(base, p, (fx, fz), (gx, gz), p.city_r_cm, i64::MAX, &keep, &[], true);
         if path.as_ref().is_some_and(|q| (1..q.len()).any(|i| laid.hits(q[i - 1], q[i], i + 1 == q.len()))) {
-            path = route(base, p, (fx, fz), (gx, gz), p.city_r_cm, &keep, std::slice::from_ref(&laid), true);
+            path = route(base, p, (fx, fz), (gx, gz), p.city_r_cm, i64::MAX, &keep, std::slice::from_ref(&laid), true);
         }
         let path = path.ok_or_else(|| format!("no highway from the city to gate {k}"))?;
         laid.add(&path, base);
@@ -231,13 +231,15 @@ pub fn graded<'a>(
     // only then for itself too; `split_contacts` makes junctions where it meets them.
     let mut ring = Taken::default();
     let n = junctions.len();
+    // on an island the ring keeps 15 m and its half width inside the coast's nearest reach
+    let out_r = super::island::lo_of(p).map_or(i64::MAX, |lo| lo - 1_500 - p.ring_cm / 2);
     for k in 0..n {
         let (a, b) = (junctions[k], junctions[(k + 1) % n]);
         let (pa, pb) = ((nodes[a as usize].x, nodes[a as usize].z), (nodes[b as usize].x, nodes[b as usize].z));
         let forbid = |t: &Taken, f: bool| Taken { forbid: f, ..t.clone() };
         let path = [(true, true), (false, true), (false, false)]
             .into_iter()
-            .find_map(|(h, r)| route(base, p, pa, pb, p.ring_r_cm * 4 / 5, &keep, &[forbid(&laid, h), forbid(&ring, r)], false))
+            .find_map(|(h, r)| route(base, p, pa, pb, p.ring_r_cm * 4 / 5, out_r, &keep, &[forbid(&laid, h), forbid(&ring, r)], false))
             .ok_or_else(|| format!("no ring road from junction {k}"))?;
         ring.add(&path, base);
         graded.push(Edge { route: Some("R1".to_string()), ..graded_edge(a, b, &path, &format!("Ring Road {}", k + 1), "ring", p.ring_cm) });
@@ -665,7 +667,8 @@ fn clear_of(a: (i64, i64), b: (i64, i64), r: (i64, i64, i64, i64), c: i64) -> bo
 }
 
 /// A* over the terrain's vertices from `a` to `b` (cm), paying for length and
-/// slope, avoiding the inside of `avoid_r` (the city, or the ring's inside), any
+/// slope, avoiding the inside of `avoid_r` (the city, or the ring's inside), never past
+/// `out_r`, any
 /// step that comes within half a road's width of a block or street (`keep`, tested
 /// on the real segment: the path's ends are `a` and `b`, not their vertices; a
 /// `city_start` road may flare over the streets at `a`) and the points and diagonals
@@ -673,7 +676,7 @@ fn clear_of(a: (i64, i64), b: (i64, i64), r: (i64, i64, i64, i64), c: i64) -> bo
 /// taken, others are paid for; when every set forbids (and there is one), so are steps
 /// near a block or street. Returns the path's points, `a` and `b` exact.
 #[allow(clippy::too_many_arguments)] // the ends, and one per thing a road avoids
-fn route(t: &Terrain, p: &Profile, a: (i64, i64), b: (i64, i64), avoid_r: i64, keep: &Keep, taken: &[Taken], city_start: bool) -> Option<Vec<(i64, i64)>> {
+fn route(t: &Terrain, p: &Profile, a: (i64, i64), b: (i64, i64), avoid_r: i64, out_r: i64, keep: &Keep, taken: &[Taken], city_start: bool) -> Option<Vec<(i64, i64)>> {
     let n = t.n;
     let strict = !taken.is_empty() && taken.iter().all(|k| k.forbid);
     let (s, g) = (t.vertex_of(a.0, a.1), t.vertex_of(b.0, b.1));
@@ -716,6 +719,9 @@ fn route(t: &Terrain, p: &Profile, a: (i64, i64), b: (i64, i64), avoid_r: i64, k
             let len = if dx != 0 && dz != 0 { cell * 1414 / 1000 } else { cell };
             let grade = (h(v) - h((ux, uz))).abs() * 1000 / len;
             let (wx, wz) = t.vertex_pos(v.0, v.1);
+            if wx * wx + wz * wz > out_r.saturating_mul(out_r) {
+                continue; // past the coast's nearest reach (the ring road on an island)
+            }
             let inside = wx * wx + wz * wz < avoid_r * avoid_r;
             let mut step = len * (1000 + 25 * grade) / 1000;
             if grade > p.country_grade_pm {

@@ -86,8 +86,10 @@ function placeLot(lot){
   var f = turn(lot);
   return {x: (lot.x || 0)/100, y: (door[1] || 0)/100, z: (lot.z || 0)/100 + HQ_DZ*f.s, rot: f.rot};
 }
-// Which side of an HQ its garage, car and apron go (hqcityparts lotExtras): 1 (its +x side, as on @1), -1 (mirrored)
-// on a v2 lot whose polygon only holds them there, 0 when neither side does (no garage: it would stand in the street).
+// Where an HQ's garage goes (hqcityparts lotExtras): {x, z} its middle and s (1: the car and bikes on its +x
+// side, as on @1; -1 mirrored), all in the HQ's frame. An @1 lot: the legacy spot. A v2 lot: the first spot,
+// nearest the legacy one, where the garage stands inside the lot's polygon, clear of the HQ (and its wings) and
+// of the walk to its door; null when there is none.
 function inRing(P, x, z){
   var inside = false;
   for(var i = 0, j = P.length - 1; i < P.length; j = i++){
@@ -96,14 +98,26 @@ function inRing(P, x, z){
   }
   return inside;
 }
-function garageSide(lot, p){
-  if(!lot || !lot.poly || lot.poly.length < 3) return 1;
-  var G = HQV.hqLotExtras.garage, P = lot.poly.map(function(q){ return [q[0]/100, q[1]/100]; });
-  var x0 = G.x - G.w/2, x1 = G.x + G.w/2, z0 = G.z - G.d/2, z1 = G.z + G.d/2;   // the garage (the apron is paint)
-  function fits(sd){
-    return [[x0, z0], [x1, z0], [x0, z1], [x1, z1]].every(function(q){ var w = toWorld(p, sd*q[0], q[1]); return inRing(P, w.x, w.z); });
+function garagePlace(lot, p, wings){
+  var G = HQV.hqLotExtras.garage;
+  if(!lot || !lot.poly || lot.poly.length < 3) return {x: G.x, z: G.z, s: 1};
+  var P = lot.poly.map(function(q){ return [q[0]/100, q[1]/100]; }), hw = G.w/2 + 0.3, hd = G.d/2 + 0.3;
+  // the HQ's footprint (hqBoxes: the tower, then each wing) and the walk from its door to the front
+  var keep = [[0, 0, 4.8, 3.8], [0, HQ_DOOR + 6, 1.6, 6]];
+  if(wings >= 1) keep.push([-10.5, 0.5, 3, 2.8]);
+  if(wings >= 2) keep.push([10.5, 0.5, 3, 2.8]);
+  function fits(x, z){
+    for(var k = 0; k < keep.length; k++){ var K = keep[k]; if(Math.abs(x - K[0]) < hw + K[2] && Math.abs(z - K[1]) < hd + K[3]) return false; }
+    for(var i = -1; i <= 1; i++) for(var j = -1; j <= 1; j++){ var w = toWorld(p, x + i*hw, z + j*hd); if(!inRing(P, w.x, w.z)) return false; }
+    return true;
   }
-  return fits(1) ? 1 : fits(-1) ? -1 : 0;
+  var best = null;
+  for(var gx = -30; gx <= 30; gx += 0.5) for(var gz = -16; gz <= 16; gz += 0.5){
+    if(!fits(gx, gz)) continue;
+    var d = (Math.abs(gx) - G.x)*(Math.abs(gx) - G.x) + (gz - G.z)*(gz - G.z) + (gz < 0 ? 400 : 0);   // in front of the HQ first
+    if(!best || d < best.d) best = {x: gx, z: gz, s: gx < 0 ? -1 : 1, d: d};
+  }
+  return best && {x: best.x, z: best.z, s: best.s};
 }
 // A view building on its site (m): set back so its door and steps stay on the site.
 function placeView(site){
@@ -294,7 +308,7 @@ function netRoom(world, isles){ return isles && worldOk(world) ? "city3d:" + wor
 HQV.hqCity3d = {assign: assign, placeLot: placeLot, placeView: placeView, toWorld: toWorld, pickAt: pickAt, segBox: segBox,
   snapShadow: snapShadow, hqKey: hqKey, keepMesh: keepMesh, HQ_DOOR: HQ_DOOR, VIEW_DOOR: VIEW_DOOR, HQ_FAR: HQ_FAR,
   COMMONS: COMMONS, ownerOf: ownerOf, islandOf: islandOf, worldOk: worldOk, frontOf: frontOf, assignRanks: assignRanks,
-  assignIsland: assignIsland, civicSites: civicSites, doorOf: doorOf, terminalAt: terminalAt, stopMenu: stopMenu,
+  assignIsland: assignIsland, garagePlace: garagePlace, civicSites: civicSites, doorOf: doorOf, terminalAt: terminalAt, stopMenu: stopMenu,
   waitText: waitText, travelPlaces: travelPlaces, netRoom: netRoom, simZones: simZones, cityStats: cityStats};
 // Which world the next City is built on, and where you arrive in it (games/hq3d.js goCity). A trip
 // that is still landing (a plane) rides across the rebuild in NAV.trip.
@@ -588,9 +602,9 @@ HQV.hqWorlds.city3d = function(c, w){
     E.boxes = hqBoxes(p, B);
     // the garage apron stops at the lot's front edge (the building stands HQ_DZ in front of the lot's middle)
     var ae = Math.min(11, (E.lot.d || 0)/200 - HQ_DZ);
-    E.side = garageSide(E.lot, p);
-    var X = E.side ? parts.lotExtras(c, g, HQV.hqLotColors(h.look), p.rot, function(x, z){ return toWorld(p, x, z); }, ae, h.userId, E.side)
-                   : {glows: [], car: null, items: []};
+    E.garage = garagePlace(E.lot, p, B.wings);
+    var X = E.garage ? parts.lotExtras(c, g, HQV.hqLotColors(h.look), p.rot, function(x, z){ return toWorld(p, x, z); }, ae, h.userId, E.garage)
+                     : {glows: [], car: null, items: []};
     E.glows = X.glows; E.car = X.car; E.items = X.items;
     // the building (its own meshes: it fades), then the lot round it: pad, garage, apron; never
     // the car, motorbike and bicycle (you ride them)
@@ -716,9 +730,12 @@ HQV.hqWorlds.city3d = function(c, w){
       var c0 = Math.cos(-L.rot), s0 = Math.sin(-L.rot), lx = rx*c0 + rz*s0, lz = -rx*s0 + rz*c0;   // into its own frame
       if(L.B && L.B.blockedLocal(lx, lz)) return true;
       // its garage, and its car (where it stands: you may have parked it in the street) unless you drive it
-      // (mirrored into the +x side's frame when the garage stands on the HQ's -x side; none when it has no garage)
-      var sd = L.side == null ? 1 : L.side;
-      if(L.kind === "hq" && sd && HQV.hqLotExtraBlocked(lx*sd, lz, !L.car || L.car.g.visible, L.car && {x: L.car.g.position.x*sd, z: L.car.g.position.z, yaw: L.car.g.rotation.y*sd})) return true;
+      // (moved into the legacy garage's frame when it stands elsewhere on a v2 lot; none when it has no garage)
+      var GP = L.garage, G0 = HQV.hqLotExtras.garage;
+      if(L.kind === "hq" && GP){
+        var gl = function(x, z){ return {x: G0.x + GP.s*(x - GP.x), z: G0.z + (z - GP.z)}; }, q = gl(lx, lz), k = L.car && gl(L.car.g.position.x, L.car.g.position.z);
+        if(HQV.hqLotExtraBlocked(q.x, q.z, !L.car || L.car.g.visible, k && {x: k.x, z: k.z, yaw: L.car.g.rotation.y*GP.s})) return true;
+      }
     }
     for(var j = 0; j < civic.length; j++){
       var C = civic[j];

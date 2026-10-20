@@ -131,12 +131,19 @@ function index(W){
   if(W.index) return W.index;
   var nb = bucketsOf(W), n = nb*nb;
   var I = {nb: nb, lots: lists(n), sites: lists(n), bld: lists(n), pads: lists(n), segs: lists(n), trees: null, treeList: null,
-           bldRect: new Float64Array(4*W.lots.length), padList: []};
+           bldRect: new Float64Array(4*W.lots.length), bldBox: [], padList: []};
   W.lots.forEach(function(l, i){
     var R = rectM(l);
     eachBucket(W, nb, R.x0, R.x1, R.z0, R.z1, function(b){ I.lots[b].push(i); });
     if(l.kind === "building"){
-      var B = buildingRect(l);
+      // a v2 lot's building is a box turned to its door, fitted inside the lot's polygon (worldgeom
+      // footprint): block that box, not the lot's axis-aligned bounds, which reach over the road
+      var fp = (l.poly || l.front) && HQV.worldgeom ? HQV.worldgeom.footprint(l) : null, B;
+      if(fp){
+        var ex = Math.abs(fp.F.z)*fp.hu + Math.abs(fp.F.x)*fp.hv, ez = Math.abs(fp.F.x)*fp.hu + Math.abs(fp.F.z)*fp.hv;
+        B = {x0: fp.o.x - ex, x1: fp.o.x + ex, z0: fp.o.z - ez, z1: fp.o.z + ez};
+        I.bldBox[i] = fp;
+      } else B = buildingRect(l);
       I.bldRect[4*i] = B.x0; I.bldRect[4*i+1] = B.x1; I.bldRect[4*i+2] = B.z0; I.bldRect[4*i+3] = B.z1;
       eachBucket(W, nb, B.x0, B.x1, B.z0, B.z1, function(b){ I.bld[b].push(i); });
     }
@@ -394,7 +401,11 @@ function blockedAt(W, x, z){
   var I = index(W), nb = I.nb, b = bOf(W, z, nb)*nb + bOf(W, x, nb), L = I.bld[b], R = I.bldRect, i, k;
   for(i = 0; i < L.length; i++){
     k = 4*L[i];
-    if(x >= R[k] && x <= R[k+1] && z >= R[k+2] && z <= R[k+3]) return true;
+    if(!(x >= R[k] && x <= R[k+1] && z >= R[k+2] && z <= R[k+3])) continue;
+    var fp = I.bldBox[L[i]];
+    if(!fp) return true;
+    var dx = x - fp.o.x, dz = z - fp.o.z;
+    if(Math.abs(dx*fp.F.z - dz*fp.F.x) <= fp.hu && Math.abs(dx*fp.F.x + dz*fp.F.z) <= fp.hv) return true;
   }
   if(!I.treeList) trees(W);
   var T = I.trees[b], xz = I.treeXZ;

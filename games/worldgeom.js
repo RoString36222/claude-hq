@@ -1054,6 +1054,15 @@ function rectIn(L, hu, hv){
   }
   return true;
 }
+// The building a lot with a `front` or a `poly` stands as (null for an @1 lot, or a lot too small to build on):
+// its centre o, door direction F and half extents hu (across F) and hv (along F), in metres, as oriented() draws it.
+// world.js blocks movement with exactly this box.
+function footprint(lot){
+  var F = frontOf(lot) || (lot && lot.poly ? FACING[lot.facing] || FACING.north : null);
+  if(!F) return null;
+  var f = fitRect(lot, F);
+  return f ? {o: f.o, F: F, hu: f.hu, hv: f.hv} : {o: {x: 0, z: 0}, F: F, hu: 0, hv: 0};
+}
 function oriented(W, lot, detail, body, win, F){
   var Q = WQ(), fit = fitRect(lot, F);
   if(!fit) return;
@@ -1521,7 +1530,7 @@ HQV.worldgeom = {
   props: props, routes: routes, nameAtlasLayout: nameAtlasLayout, buildTile: buildTile, transferables: transferables,
   emptyGeo: emptyGeo, CAR_COLORS: CAR_COLORS, GANTRY_POST: GANTRY_POST, GANTRY_SINK: GANTRY_SINK,
   groundTile: groundTile, groundItems: groundItems, triangulate: triangulate, hasGround: hasGround, seaY: seaY, view: view,
-  tierDiff: tierDiff,
+  tierDiff: tierDiff, footprint: footprint,
   SEA_HIDE: SEA_HIDE
 };
 })();

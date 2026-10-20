@@ -86,6 +86,25 @@ function placeLot(lot){
   var f = turn(lot);
   return {x: (lot.x || 0)/100, y: (door[1] || 0)/100, z: (lot.z || 0)/100 + HQ_DZ*f.s, rot: f.rot};
 }
+// Which side of an HQ its garage, car and apron go (hqcityparts lotExtras): 1 (its +x side, as on @1), -1 (mirrored)
+// on a v2 lot whose polygon only holds them there, 0 when neither side does (no garage: it would stand in the street).
+function inRing(P, x, z){
+  var inside = false;
+  for(var i = 0, j = P.length - 1; i < P.length; j = i++){
+    var xi = P[i][0], zi = P[i][1], xj = P[j][0], zj = P[j][1];
+    if((zi > z) !== (zj > z) && x < (xj - xi)*(z - zi)/(zj - zi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function garageSide(lot, p){
+  if(!lot || !lot.poly || lot.poly.length < 3) return 1;
+  var G = HQV.hqLotExtras.garage, P = lot.poly.map(function(q){ return [q[0]/100, q[1]/100]; });
+  var x0 = G.x - G.w/2, x1 = G.x + G.w/2, z0 = G.z - G.d/2, z1 = G.z + G.d/2;   // the garage (the apron is paint)
+  function fits(sd){
+    return [[x0, z0], [x1, z0], [x0, z1], [x1, z1]].every(function(q){ var w = toWorld(p, sd*q[0], q[1]); return inRing(P, w.x, w.z); });
+  }
+  return fits(1) ? 1 : fits(-1) ? -1 : 0;
+}
 // A view building on its site (m): set back so its door and steps stay on the site.
 function placeView(site){
   site = site || {}; var f = turn(site);
@@ -182,6 +201,41 @@ function civicSites(W, tier, kinds){
     return s && !NOT_CIVIC[s.kind] && (!kinds || kinds.indexOf(s.kind) >= 0) && (s.tier == null || (s.tier | 0) <= tier);
   });
 }
+// The city's numbers for the stats panel: the CityState's (population, tier, growth, treasury, specialty) and a
+// happiness index, 0..100: the share of homes and workplaces at this tier within reach (straight line) of each
+// service and of a park, averaged. Buses count from tier 2, when they start running. The generator keeps the
+// services in reach as a city grows, so in practice the parks move it: a big city that has outgrown its parks.
+var SERVICES = [
+  {key: "safety", label: "Fire cover", kinds: {fire: 1}, r: 800},
+  {key: "police", label: "Police", kinds: {police: 1}, r: 800},
+  {key: "health", label: "Clinics", kinds: {clinic: 1, hospital: 1}, r: 600},
+  {key: "schools", label: "Schools", kinds: {school: 1, university: 1}, r: 1000},
+  {key: "transit", label: "Transit", kinds: {busstop: 1, tramstop: 1, transit: 1}, r: 250, tier: 2},
+  {key: "green", label: "Parks", districts: {3: 1, 8: 1}, r: 300}          // a park block or the plaza
+];
+var TIER_NAMES = ["Village", "Town", "City", "Metropolis", "Capital"];     // as the Town Hall panel (38-townhall.js)
+function cityStats(W, tier, st){
+  tier = Math.max(1, Math.min(5, tier | 0 || 1));
+  var lots = ((W && W.lots) || []).filter(function(l){ return l && (l.min_tier == null || (l.min_tier | 0) <= tier); });
+  var sites = ((W && W.sites) || []).filter(function(s){ return s && (s.tier == null || (s.tier | 0) <= tier); });
+  var parts = [], sum = 0;
+  SERVICES.forEach(function(S){
+    if(!lots.length || (S.tier && tier < S.tier)) return;
+    var at = S.districts ? ((W && W.blocks) || []).filter(function(b){ return b && S.districts[b.district]; })
+                         : sites.filter(function(s){ return S.kinds[s.kind]; });
+    var r2 = S.r*S.r*1e4, n = 0;   // cm
+    lots.forEach(function(l){
+      for(var i = 0; i < at.length; i++){ var dx = l.x - at[i].x, dz = l.z - at[i].z; if(dx*dx + dz*dz <= r2){ n++; return; } }
+    });
+    var share = n/lots.length;
+    parts.push({key: S.key, label: S.label, pct: Math.round(share*100)}); sum += share;
+  });
+  st = st && typeof st === "object" ? st : {};
+  var num = function(v){ return typeof v === "number" && isFinite(v) ? v : null; };
+  return {tier: tier, tierName: TIER_NAMES[tier - 1], grow: Math.max(0, Math.min(1000, num(st.grow) || 0)),
+          population: num(st.population), treasury: num(st.treasury), specialty: typeof st.specialty === "string" ? st.specialty : null,
+          happiness: parts.length ? Math.round(sum/parts.length*100) : null, parts: parts, homes: lots.length};
+}
 // where a site's door is (m): its centre, out along its front past its depth
 function doorOf(s){ var f = frontOf(s), r = (s.d || 0)/200 + 1; return {x: s.x/100 + f[0]*r, z: s.z/100 + f[1]*r, yaw: Math.atan2(f[0], f[1])}; }
 // the travel terminal (dock, port, transit hub, airport) whose door is within reach of (x, z), else null
@@ -241,7 +295,7 @@ HQV.hqCity3d = {assign: assign, placeLot: placeLot, placeView: placeView, toWorl
   snapShadow: snapShadow, hqKey: hqKey, keepMesh: keepMesh, HQ_DOOR: HQ_DOOR, VIEW_DOOR: VIEW_DOOR, HQ_FAR: HQ_FAR,
   COMMONS: COMMONS, ownerOf: ownerOf, islandOf: islandOf, worldOk: worldOk, frontOf: frontOf, assignRanks: assignRanks,
   assignIsland: assignIsland, civicSites: civicSites, doorOf: doorOf, terminalAt: terminalAt, stopMenu: stopMenu,
-  waitText: waitText, travelPlaces: travelPlaces, netRoom: netRoom, simZones: simZones};
+  waitText: waitText, travelPlaces: travelPlaces, netRoom: netRoom, simZones: simZones, cityStats: cityStats};
 // Which world the next City is built on, and where you arrive in it (games/hq3d.js goCity). A trip
 // that is still landing (a plane) rides across the rebuild in NAV.trip.
 var NAV = {world: null, spawn: null, trip: null};
@@ -322,7 +376,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var me = (api.me && api.me()) || null, owner = "commons", tier = 5, grow = 1000, cityState = null, assignRows = null;
   var civics = [], civicG = new THREE.Group(), boatG = new THREE.Group(), boats = [], civicLod = null, decks = [];
   var oc = null, sea = null, arch = null, tsim = null, tview = null, nsim = null, ndraw = null;
-  var bus = null, menu = null, menuKey = null, talkL = null, ui = null, fadeEl = null, landing = false, npcSkip = 0;
+  var bus = null, menu = null, menuKey = null, talkL = null, ui = null, statsEl = null, statsAt = 0, fadeEl = null, landing = false, npcSkip = 0;
 
   function ground(x, z){ return W ? WD.groundAt(W, x, z) : 0; }
   function site(id){ for(var i = 0; i < W.sites.length; i++) if(W.sites[i].id === id) return W.sites[i]; return null; }
@@ -533,7 +587,10 @@ HQV.hqWorlds.city3d = function(c, w){
     E.B = B; E.H = B.top() + 2; E.fade = {g: B.g, on: false}; E.name = name;
     E.boxes = hqBoxes(p, B);
     // the garage apron stops at the lot's front edge (the building stands HQ_DZ in front of the lot's middle)
-    var X = parts.lotExtras(c, g, HQV.hqLotColors(h.look), p.rot, function(x, z){ return toWorld(p, x, z); }, Math.min(11, (E.lot.d || 0)/200 - HQ_DZ), h.userId);
+    var ae = Math.min(11, (E.lot.d || 0)/200 - HQ_DZ);
+    E.side = garageSide(E.lot, p);
+    var X = E.side ? parts.lotExtras(c, g, HQV.hqLotColors(h.look), p.rot, function(x, z){ return toWorld(p, x, z); }, ae, h.userId, E.side)
+                   : {glows: [], car: null, items: []};
     E.glows = X.glows; E.car = X.car; E.items = X.items;
     // the building (its own meshes: it fades), then the lot round it: pad, garage, apron; never
     // the car, motorbike and bicycle (you ride them)
@@ -659,7 +716,9 @@ HQV.hqWorlds.city3d = function(c, w){
       var c0 = Math.cos(-L.rot), s0 = Math.sin(-L.rot), lx = rx*c0 + rz*s0, lz = -rx*s0 + rz*c0;   // into its own frame
       if(L.B && L.B.blockedLocal(lx, lz)) return true;
       // its garage, and its car (where it stands: you may have parked it in the street) unless you drive it
-      if(L.kind === "hq" && HQV.hqLotExtraBlocked(lx, lz, !L.car || L.car.g.visible, L.car && {x: L.car.g.position.x, z: L.car.g.position.z, yaw: L.car.g.rotation.y})) return true;
+      // (mirrored into the +x side's frame when the garage stands on the HQ's -x side; none when it has no garage)
+      var sd = L.side == null ? 1 : L.side;
+      if(L.kind === "hq" && sd && HQV.hqLotExtraBlocked(lx*sd, lz, !L.car || L.car.g.visible, L.car && {x: L.car.g.position.x*sd, z: L.car.g.position.z, yaw: L.car.g.rotation.y*sd})) return true;
     }
     for(var j = 0; j < civic.length; j++){
       var C = civic[j];
@@ -683,6 +742,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var CIVIC_NEAR = 180;      // m (camera height counts): a civic building nearer than this is drawn in full, the
                              // rest as their masses' boxes, every one in one InstancedMesh (hqcivic's lod)
   var PROP_FAR = 200;        // m: a bike, board or boat further than this from the camera is not drawn
+  var CLEAR_UNDER = 2.4;     // m: a civic mass whose underside is higher than this off its site's ground does not block
   var BOAT_SIDE = 3;         // m: the two boats moored either side of a berth (a dock with no pier drawn)
   var NPC_BUDGET = 3;        // ms: residents whose update took longer than this update every other frame
   var TALK_SHOW = 5;         // s a resident's line stays over their head
@@ -770,7 +830,15 @@ HQV.hqWorlds.city3d = function(c, w){
   function civicBlocked(x, z){
     for(var i = 0; i < civics.length; i++){
       var bx = civics[i].boxes || [];
-      for(var j = 0; j < bx.length; j++){ var b = bx[j]; if(x >= b.min.x && x <= b.max.x && z >= b.min.z && z <= b.max.z) return true; }
+      for(var j = 0; j < bx.length; j++){
+        var b = bx[j]; if(!(x >= b.min.x && x <= b.max.x && z >= b.min.z && z <= b.max.z)) continue;
+        // a turned mass's AABB reaches past its walls (onto the road): test the mass itself; a roof or canopy
+        // standing clear of the ground (a market hall's, a station's) leaves the ground under it open
+        var o = b.o; if(!o) return true;
+        if(o.y0 > CLEAR_UNDER) continue;
+        var dx = x - o.x, dz = z - o.z, cr = Math.cos(o.rot), sr = Math.sin(o.rot);
+        if(Math.abs(dx*cr - dz*sr) <= o.hw && Math.abs(dx*sr + dz*cr) <= o.hd) return true;
+      }
     }
     return false;
   }
@@ -1034,15 +1102,40 @@ HQV.hqWorlds.city3d = function(c, w){
     ui.addEventListener("click", function(){ if(NAV.trip || bus) return; if(c.goCity) c.goCity(to, null); });
     c.el.appendChild(ui);
   }
+  // the city's stats, top right: name, tier and growth, population, happiness (and what it is made of), treasury
+  function statsUi(){
+    if(!V2 || !c.el || typeof document === "undefined") return;
+    if(!statsEl) statsAt = Date.now();
+    else if(statsEl.parentNode) statsEl.parentNode.removeChild(statsEl);
+    statsEl = document.createElement("div"); statsEl.className = "hq3d-stats"; c.el.appendChild(statsEl);
+    var K = cityStats(W, tier, cityState), fmt = function(v){ return v == null ? "–" : Math.round(v).toLocaleString(); };
+    var name = island() ? String((cityState && cityState.name) || "An island").slice(0, 32) : "The Commons";
+    function row(label, value, title){
+      var r = document.createElement("div"); r.className = "hq3d-stat";
+      var a = document.createElement("span"); a.textContent = label; var b = document.createElement("b"); b.textContent = value;
+      r.appendChild(a); r.appendChild(b); if(title) r.title = title; statsEl.appendChild(r); return r;
+    }
+    var h = document.createElement("div"); h.className = "hq3d-stats-name"; h.textContent = name; statsEl.appendChild(h);
+    row("Tier", K.tier + " · " + K.tierName, K.tier < 5 ? Math.round(K.grow/10) + "% of the way to the next tier" : "Fully grown");
+    var bar = document.createElement("div"); bar.className = "hq3d-stats-bar"; var fill = document.createElement("i");
+    fill.style.width = (K.tier < 5 ? K.grow/10 : 100) + "%"; bar.appendChild(fill); statsEl.appendChild(bar);
+    row("Population", fmt(K.population));
+    var hp = row("Happiness", K.happiness == null ? "–" : K.happiness + " / 100",
+                 K.parts.map(function(p){ return p.label + ": " + p.pct + "% of buildings in reach"; }).join("\n"));
+    hp.setAttribute("data-mood", K.happiness == null ? "" : K.happiness >= 75 ? "good" : K.happiness >= 50 ? "ok" : "low");
+    row("Treasury", K.treasury == null ? "–" : fmt(K.treasury) + " coins");
+    if(K.specialty) row("Specialty", K.specialty.charAt(0).toUpperCase() + K.specialty.slice(1));
+  }
   function citiesSetup(){
     buildCivic(); S.add(civicG);
-    setupSea(); setupLife(); buildUi();
+    setupSea(); setupLife(); buildUi(); statsUi();
     if(worldId === COMMONS) getJson("/api/arena/world/" + COMMONS + "/assign").then(function(rows){
       if(dead || !Array.isArray(rows)) return; assignRows = rows; sig = null; build();
     }, function(){});
   }
   function citiesUpdate(t, dt, k, cam){
     var nowMs = Date.now();
+    if(statsEl && nowMs - statsAt > 60000){ statsAt = nowMs; fetchCity().then(function(){ if(!dead) statsUi(); }); }
     // civic buildings near the camera are drawn in full, the rest (the map's too, from up there) as boxes
     civics.forEach(function(B){
       if(cam && cam.x != null){
@@ -1090,6 +1183,7 @@ HQV.hqWorlds.city3d = function(c, w){
   function citiesDestroy(){
     closeMenu();
     if(ui && ui.parentNode) ui.parentNode.removeChild(ui);
+    if(statsEl && statsEl.parentNode) statsEl.parentNode.removeChild(statsEl);
     if(fadeEl && fadeEl.parentNode) fadeEl.parentNode.removeChild(fadeEl);
     if(tview){ try { tview.dispose(); } catch(e){} }
     if(ndraw){ try { ndraw.dispose(); } catch(e){} }

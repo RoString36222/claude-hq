@@ -18,7 +18,7 @@
  *       building has at least one. live doors (a site with a view, and the town hall's, kind
  *       "townhall") are the ones a click or a walk-in goes through; their meshes are in hits with
  *       userData.door. The rest are entrances for people and stops to wait at.
- *     glows: the lamp glows (sprites) a night shows. boxes: world AABBs of the masses.
+ *     glows: the lamp glows (sprites) a night shows. boxes: world AABBs of the masses (o: each mass turned).
  *     lod: the masses as turned boxes {x, z, w, d, rot, y0, y1} (world, m), tint: their colour: what
  *       the City draws far off, every building's boxes in one InstancedMesh. decks: pierOf(site)'s, for
  *       the City to walk on.
@@ -286,7 +286,8 @@ KP.note = function(cx, cz, w, d, y0, y1, noLod){
   if(!noLod) this.lod.push({x: o.x, z: o.z, w: w, d: d, rot: this.F.rot, y0: this.F.y + y0, y1: this.F.y + y1});
   var a = this.world(cx - w/2, cz - d/2), b = this.world(cx + w/2, cz + d/2), e = this.world(cx - w/2, cz + d/2), f = this.world(cx + w/2, cz - d/2), Y = this.F.y;
   this.boxes.push({min: {x: Math.min(a.x, b.x, e.x, f.x), y: Y + y0, z: Math.min(a.z, b.z, e.z, f.z)},
-                   max: {x: Math.max(a.x, b.x, e.x, f.x), y: Y + y1, z: Math.max(a.z, b.z, e.z, f.z)}});
+                   max: {x: Math.max(a.x, b.x, e.x, f.x), y: Y + y1, z: Math.max(a.z, b.z, e.z, f.z)},
+                   o: {x: o.x, z: o.z, hw: w/2, hd: d/2, rot: this.F.rot, y0: y0}});   // the mass itself, turned (what blocks you)
   this.top = Math.max(this.top, y1);
 };
 
@@ -674,6 +675,7 @@ BUILD.market = function(k){
   for(var ix = 0; ix <= nx; ix++) for(var iz = 0; iz <= nz; iz++){
     if(ix && ix < nx && iz && iz < nz) continue;
     k.box(0.4, h, 0.4, steel, -hw/2 + hw*ix/nx, PLINTH + h/2, zc - hd/2 + hd*iz/nz);
+    k.note(-hw/2 + hw*ix/nx, zc - hd/2 + hd*iz/nz, 0.4, 0.4, 0, PLINTH + h, true);   // a post blocks; the hall under the roof is open
   }
   k.gable(0, zc, hw, hd, PLINTH + h, 3 + T*0.4, k.m(0x6b8fa3, {roughness: 0.4, metalness: 0.4}), false);
   k.box(hw, 0.04, hd, k.m(0xa59a88, {roughness: 0.9}), 0, PLINTH + 0.02, zc);
@@ -683,7 +685,7 @@ BUILD.market = function(k){
   for(var i = 0; i < stalls; i++){
     var row = i % 2, j = i >> 1, per = Math.ceil(stalls/2), x = -hw/2 + 2.4 + (hw - 4.8)*(per > 1 ? j/(per - 1) : 0.5), z = zc + (row ? hd/2 - 2.6 : -hd/2 + 2.6);
     var face = row ? 1 : -1;
-    k.box(2.6, 0.9, 1.2, wood, x, PLINTH + 0.45, z);
+    k.box(2.6, 0.9, 1.2, wood, x, PLINTH + 0.45, z); k.note(x, z, 2.6, 1.2, 0, PLINTH + 1.1, true);   // the table blocks
     k.box(2.4, 0.2, 1, produce[i % 3], x, PLINTH + 1, z);
     k.box(0.8, 0.6, 0.8, crate, x + 1.6, PLINTH + 0.3, z - face*0.4);
     var a = k.box(2.9, 0.08, 1.6, awn[Math.floor(k.R()*awn.length)], x, PLINTH + 2.5, z + face*0.5); a.rotation.x = face*0.25;

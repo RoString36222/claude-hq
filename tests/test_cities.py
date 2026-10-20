@@ -48,7 +48,7 @@ globalThis.document = {createElement: t => new El(t), pointerLockElement: null};
 globalThis.window = {HQV: {}, addEventListener(t, f){ winKeys.push(f); }, removeEventListener(t, f){ var i = winKeys.indexOf(f); if(i >= 0) winKeys.splice(i, 1); }};
 const HQV = window.HQV;
 var NOW = 1760000000000; const realNow = Date.now; Date.now = () => NOW;
-for (const f of ["hqbase", "hqskate", "world", "hqcityparts", "hqcity", "hqmerge", "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqtravel", "hqcity3d"])
+for (const f of ["hqbase", "hqskate", "world", "worldgeom", "hqcityparts", "hqcity", "hqmerge", "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqtravel", "hqcity3d"])
   new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
 const gz = p => JSON.parse(zlib.gunzipSync(fs.readFileSync(p)).toString("utf8"));
 const WD = HQV.world, C3 = HQV.hqCity3d;
@@ -137,6 +137,18 @@ out.pure = {
 var dock = IW.sites.filter(s => s.kind === "dock")[0], dd = C3.doorOf(dock);
 out.pure.terminal = [(C3.terminalAt(IW, 1, dd.x, dd.z) || {}).kind, C3.terminalAt(IW, 1, dd.x + 200, dd.z) == null];
 
+
+/* ---------- roads: nothing you can't see blocks a road (a v2 building blocks by the box it is drawn as) ---------- */
+function roadHits(test, W){
+  var n = 0, hit = 0;
+  W.edges.forEach(function(e){ var p = e.pts, m = p.length/3, hw = e.width/200;
+    for(var s = 0; s + 1 < m; s++){ var ax = p[3*s]/100, az = p[3*s+2]/100, bx = p[3*s+3]/100, bz = p[3*s+5]/100, L = Math.hypot(bx - ax, bz - az); if(!L) continue;
+      var nx = -(bz - az)/L, nz = (bx - ax)/L;
+      for(var t = 0; t < L; t += 2) [0, hw*0.45, -hw*0.45].forEach(function(o){ n++; if(test(ax + (bx - ax)*t/L + nx*o, az + (bz - az)*t/L + nz*o)) hit++; }); } });
+  return [n, hit];
+}
+out.roads = {commonsWorld: roadHits(function(x, z){ return WD.blockedAt(CW, x, z); }, CW),
+             islandWorld: roadHits(function(x, z){ return WD.blockedAt(IW, x, z); }, IW)};
 /* ---------- the Commons ---------- */
 ROWS = [{user: "c1", lot_rank: 3}, {user: "c0", lot_rank: 0}];
 LIST = [{userId: "c0", level: 2, look: {}}, {userId: "c1", level: 3, look: {}}, {userId: "c2", level: 1, look: {}}];
@@ -252,6 +264,8 @@ await new Promise(r => setTimeout(r, 10));
 for(var i = 0; i < 400 && !calls.goCity.length; i++){ NOW += 1000; frame(wc, avatar.x, avatar.z); await new Promise(r => setTimeout(r, 0)); }
 out.ferry.arrived = calls.goCity.map(g => [g[0], !!g[1] && isFinite(g[1].x) && isFinite(g[1].z)]);
 out.ferry.camPose = (function(){ var p = wc.camPose(); return p ? p.frame : null; })();
+var statsEl = root2d.children.filter(e => e.className === "hq3d-stats")[0];
+out.commons.stats = statsEl ? statsEl.children.map(e => e.children.length ? e.children.map(k => k.textContent) : e.textContent) : null;
 var spawn = calls.goCity.length ? calls.goCity[0][1] : null;
 
 /* ---------- my island, tier 1, arriving by the ferry ---------- */
@@ -259,6 +273,9 @@ var wi = city("user:" + ME + "@2", spawn);
 await wi.whenReady; await new Promise(r => setTimeout(r, 0));
 frame(wi, 0, 0, 2);
 var islandTowers = wi.hits.filter(o => o.userData.door && o.userData.door.userId).map(o => o.userData.door.userId).filter((u, i, a) => a.indexOf(u) === i);
+out.roads.island = roadHits(function(x, z){ return wi.blocked(x, z); }, IW);
+out.pure.stats = [1, 3, 5].map(function(t){ var K = C3.cityStats(IW, t, {population: 120, grow: 400, treasury: 55, specialty: "fish"}); return [K.happiness, K.parts.map(p => p.key), K.homes, K.population, K.tierName]; });
+out.pure.statsNone = C3.cityStats(null, 2, null);
 out.island = {world: wi.world(), net: wi.net, tierOpt: wbOpts[wbOpts.length - 1], towers: islandTowers,
   townDoor: wi.doors.filter(d => d.kind === "townhall").length,
   spawnAtDock: spawn && Math.hypot(wi.spawn.x - spawn.x, wi.spawn.z - spawn.z) < 0.01,
@@ -323,6 +340,34 @@ class CitiesTest(unittest.TestCase):
         self.assertEqual(z["first"], [raw["job"], raw["start_min"]/60, raw["end_min"]/60, raw["share_pm"]])
         self.assertEqual(z["read"], z["first"], "npcsim reads the converted table as it is")
         self.assertTrue(0 < z["read"][1] < z["read"][2] <= 24, "a day shift in hours")
+
+    def test_roads_are_not_blocked_by_what_is_not_there(self):
+        r = self.out["roads"]
+        # the world's buildings and trees never stand on a road (a v2 building blocks by its drawn, turned box)
+        for k in ("commonsWorld", "islandWorld"):
+            n, hit = r[k]
+            self.assertGreater(n, 1000)
+            self.assertEqual(hit, 0, k + ": road points blocked by a building's or tree's footprint")
+        # and on an island nothing else does either (civic masses, the HQ's garage, the sea)
+        self.assertEqual(r["island"][1], 0)
+
+    def test_city_stats(self):
+        s = self.out["pure"]["stats"]
+        for happy, keys, homes, pop, name in s:
+            self.assertTrue(0 <= happy <= 100)
+            self.assertEqual(pop, 120)
+            self.assertIn("green", keys)
+        self.assertNotIn("transit", s[0][1], "no buses at tier 1, so transit does not count")
+        self.assertIn("transit", s[1][1])
+        self.assertLess(s[0][2], s[2][2], "a bigger city has more buildings")
+        self.assertEqual([x[4] for x in s], ["Village", "City", "Capital"])
+        none = self.out["pure"]["statsNone"]
+        self.assertIsNone(none["happiness"]); self.assertIsNone(none["population"])
+        rows = self.out["commons"]["stats"]
+        self.assertEqual(rows[0], "The Commons")
+        labels = [r[0] for r in rows if isinstance(r, list) and len(r) == 2]
+        for want in ("Tier", "Population", "Happiness", "Treasury"):
+            self.assertIn(want, labels)
 
     def test_the_commons(self):
         c = self.out["commons"]

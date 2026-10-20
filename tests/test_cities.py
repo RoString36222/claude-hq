@@ -158,6 +158,46 @@ wc.townHall(); out.commons.townHall = calls.townHall.slice();
 var berth = wc.sea.docks[0], land = wc.boatLand({x: berth.x, z: berth.z, yaw: berth.yaw});
 out.commons.ashore = land && [wc.sea.land(land.x, land.z), wc.boatLand({x: berth.x + 400, z: berth.z + 400, yaw: 0}) == null];
 
+/* ---------- the pier: walked on at its deck, the boats moored in sight beside it ---------- */
+(function(){
+  var site = CW.sites.filter(s => s.id === berth.id)[0], P = HQV.hqCivic.pierOf(site)[0], dx = P.dir[0], dz = P.dir[1];
+  var len = (P.head[0] - P.poly[0][0])*dx + (P.head[1] - P.poly[0][1])*dz, walk = [];
+  // from its land end (the ferry office stands across it: you come on round its side) out to its head, down the middle
+  for(var a = 0.5; a <= len - 0.3; a += 1){ var x = P.head[0] - dx*(len - a), z = P.head[1] - dz*(len - a); walk.push([wc.blocked(x, z), wc.groundY(x, z)]); }
+  var onPier = walk, ax = P.head[0] - dx*(len - 1), az = P.head[1] - dz*(len - 1);
+  out.pier = {deckY: P.y, seaY: wc.sea.y, walkBlocked: walk.filter(q => q[0]).length, deckYs: onPier.map(q => q[1]),
+    besideBlocked: [1, -1].map(sg => wc.blocked(P.head[0] - dx*3 + dz*(P.w/2 + 1.5)*sg, P.head[1] - dz*3 - dx*(P.w/2 + 1.5)*sg)),
+    landY: land && wc.groundY(land.x, land.z), berthOnDeck: HQV.hqCivic.deckAt([P], berth.x, berth.z),
+    // the way on: off the paving beside the land end
+    access: [1, -1].map(sg => wc.blocked(ax + dz*(P.w/2 + 1)*sg, az - dx*(P.w/2 + 1)*sg))};
+  // the boats at this berth: none under the deck, clear of it beam and all, each in reach (4 m) of its edge
+  var V = HQV.hqboat.VEHICLES;
+  out.pier.boats = wc.bikes.filter(b => /^boat:/.test(b.id || "") && b.id.indexOf(berth.id + ":") === 5).map(function(b){
+    var rx = b.x - P.head[0], rz = b.z - P.head[1], along = rx*dx + rz*dz, side = Math.abs(rx*dz - rz*dx);
+    return {kind: b.kind, under: HQV.hqCivic.deckAt([P], b.x, b.z) != null, clear: side - V[b.kind].beam/2 - P.w/2,
+      reach: Math.hypot(side - (P.w/2 - 0.3), Math.max(0, along)), alongside: along < 0 && along > -len, y: b.g.position.y};
+  });
+})();
+
+/* ---------- what is drawn: civic buildings in full near the camera, boxes beyond; props near only ---------- */
+function frameCam(w, x, y, z, mode, n){ for(var i = 0; i < (n || 1); i++) w.update(i*0.05, 0.05, 1, {x: x, y: y, z: z, fov: 60, mode: mode, frustum: frustum, avatar: {x: avatar.x, y: 0, z: avatar.z}}); }
+function drawnNow(w, cx, cy, cz){
+  var full = [], lod = null, props = 0;
+  w.scene.traverse(function(o){
+    if(/^civic:/.test(o.name) && o.parent && o.name !== "civic:lod" && !/^civic:/.test(o.parent.name) && o.isGroup){
+      if(o.visible) full.push(Math.hypot(o.position.x - cx, o.position.z - cz, o.position.y - cy));
+    }
+    if(o.name === "civic:lod") lod = {visible: o.visible, count: o.count, shown: (function(){ var n = 0, m = o.instanceMatrix.array; for(var i = 0; i < o.count; i++) if(m[i*16] !== 0 || m[i*16 + 10] !== 0) n++; return n; })()};
+  });
+  w.bikes.forEach(function(b){ var vis = !b.inner || b.inner.visible, q = b.g; while(q){ if(!q.visible) vis = false; q = q.parent; } if(vis) props++; });
+  return {full: full.length, farthest: full.length ? Math.max.apply(null, full) : 0, lod: lod, props: props};
+}
+avatar = {x: 0, z: 10};
+frameCam(wc, 0, 4, 18, "chase", 2); out.drawn = {chase: drawnNow(wc, 0, 4, 18)};
+frameCam(wc, 0, 900, 10, "map", 2); out.drawn.map = drawnNow(wc, 0, 900, 10);
+frameCam(wc, 0, 4, 18, "chase", 2); out.drawn.back = drawnNow(wc, 0, 4, 18);
+out.drawn.civics = wc.scene.getObjectByName("civic:lod") ? wc.scene.getObjectByName("civic:lod").count : 0;
+
 /* ---------- a stop: wait, board, pay, ride, step off ---------- */
 (function(){
   // at tier 5 on the Commons every line runs; stand at the first stop a line calls at
@@ -303,6 +343,42 @@ class CitiesTest(unittest.TestCase):
         self.assertIn("/api/arena/world/claude-hq@2/assign", c["gets"])
         self.assertEqual(c["townHall"], [["commons", False]])
         self.assertEqual(c["ashore"], [True, True])
+
+    def test_the_pier(self):
+        p = self.out["pier"]
+        self.assertAlmostEqual(p["deckY"] - p["seaY"], 1.81, 2, "the deck stands over the sea")
+        self.assertEqual(p["walkBlocked"], 0, "you walk out along the pier to its head")
+        self.assertTrue(p["deckYs"])
+        for y in p["deckYs"]:
+            self.assertAlmostEqual(y, p["deckY"], 6, "on the deck, not on the seabed under it")
+        self.assertEqual(p["besideBlocked"], [True, True], "the water either side of it is still the sea")
+        self.assertIn(False, p["access"], "a way onto the pier beside the ferry office")
+        self.assertAlmostEqual(p["landY"], p["deckY"], 6, "stepping ashore from the berth: up onto the pier's head")
+        self.assertIsNone(p["berthOnDeck"])
+        self.assertEqual(sorted(b["kind"] for b in p["boats"]), ["jetski", "rowboat"])
+        for b in p["boats"]:
+            self.assertFalse(b["under"], b)
+            self.assertGreater(b["clear"], 0.1, b)
+            self.assertLess(b["reach"], 4, b)
+            self.assertTrue(b["alongside"], b)
+            self.assertEqual(b["y"], p["seaY"])
+
+    def test_what_is_drawn(self):
+        d = self.out["drawn"]
+        self.assertGreater(d["civics"], 50, "every civic building has boxes for far off")
+        c = d["chase"]
+        self.assertGreater(c["full"], 0)
+        self.assertLess(c["farthest"], 180, "in full only near the camera")
+        self.assertTrue(c["lod"]["visible"])
+        self.assertGreater(c["lod"]["shown"], 0)
+        self.assertLess(c["lod"]["shown"], d["civics"], "a building drawn in full hides its boxes")
+        m = d["map"]
+        self.assertEqual(m["full"], 0, "the map, from high up: boxes only")
+        self.assertEqual(m["lod"]["shown"], d["civics"])
+        self.assertEqual(m["props"], 0, "no bikes, boards or boats drawn from up there")
+        self.assertGreater(c["props"], 0, "the plaza's bikes are drawn from the street")
+        self.assertEqual(d["back"]["full"], c["full"])
+        self.assertEqual(d["back"]["lod"]["shown"], c["lod"]["shown"])
 
     def test_a_bus_ride(self):
         b = self.out["bus"]

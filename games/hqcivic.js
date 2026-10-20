@@ -8,7 +8,7 @@
  * (palette, roof, which side the wing goes, the company on the sign) comes from the site id, so
  * every client builds the same building.
  *
- *   build(c, site, opts) -> {g, doors, hits, glows, setNight(n), animate(t, dt, k), top, boxes, kind, tier}
+ *   build(c, site, opts) -> {g, doors, hits, glows, setNight(n), animate(t, dt, k), top, boxes, lod, tint, decks, kind, tier}
  *     c: the hq3d ctx (THREE, mat, emis, box, cyl, sph, canvasTex, glow, label, rng, hashStr, ...).
  *     site: {id, kind, tier, x, y, z (cm), poly: [[x, z], ...] (cm, CCW) | w, d (cm, world axes),
  *            front: [fx, fz] (Q16 unit vector the door faces), view?: "<tab>", name?}.
@@ -19,9 +19,16 @@
  *       "townhall") are the ones a click or a walk-in goes through; their meshes are in hits with
  *       userData.door. The rest are entrances for people and stops to wait at.
  *     glows: the lamp glows (sprites) a night shows. boxes: world AABBs of the masses.
+ *     lod: the masses as turned boxes {x, z, w, d, rot, y0, y1} (world, m), tint: their colour: what
+ *       the City draws far off, every building's boxes in one InstancedMesh. decks: pierOf(site)'s, for
+ *       the City to walk on.
  *   Static parts are merged per material (HQV.hqMerge.mergeStatic, when it is loaded): a building
  *   costs under 40 draw calls, lit and at night.
  *   fit(poly) -> {cx, cz, w, d}: the largest centred axis-aligned rectangle found inside poly.
+ *   pierOf(site) -> [{poly: [[x, z] x 4], y, head: [x, z], dir: [dx, dz], w}] (world, m): the pier a dock
+ *     or a port lays out over the water (empty for any other kind): its deck (y: its top), the middle of
+ *     its far end, the way it points (out to sea) and its width. games/ocean.js puts the berth off its head.
+ *   deckAt(decks, x, z) -> the deck's top y under (x, z), or null.
  *   KINDS: every kind build() knows, with its sign name and default footprint.
  * Nothing touches THREE until build() is called; tests/test_hqcivic.py runs it under node against
  * the vendored three.js and a stub ctx.
@@ -35,6 +42,12 @@ var Q16 = 65536;
 var PLINTH = 0.12;          // the paved base every building stands on (m)
 var DOOR_OUT = 1.2;         // a door's front: where you stand to go in, this far out of the wall (m)
 var SETBACK = 4;            // a building's front wall stands this far behind the site's front edge (m)
+// The pier a dock or a port runs out over the water, in its frame (+z out to sea): centred on x = 0,
+// from z0 to z1, w wide, its deck's top y. BUILD lays it; pierOf() gives it to the City and the sea.
+var PIERS = {
+  dock: function(W, D){ return {z0: -D/2 + 6, z1: D/2 + 6, w: Math.min(W*0.5, 6), y: PLINTH + 0.6}; },
+  port: function(W, D){ return {z0: D/2 - Math.min(16, D*0.3), z1: D/2 + 30, w: 10, y: PLINTH + 0.6}; }
+};
 
 // Window walls: one canvas texture per style, a cell per bay (u) and floor (v); emissiveMap is
 // the windows lit at night. wall/win: paint; bay: [bay width, floor height] (m); fw/fh: window
@@ -232,7 +245,7 @@ function Kit(c, site, opts){
   this.g = new THREE.Group(); this.g.name = "civic:" + this.kind;
   this.g.position.set(F.x, F.y, F.z); this.g.rotation.y = F.rot;
   this.mats = {}; this.night = []; this.walls = {}; this.doors = []; this.hits = []; this.glows = [];
-  this.anims = []; this.boxes = []; this.top = 1; this.live = [];
+  this.anims = []; this.boxes = []; this.lod = []; this.top = 1; this.live = [];
   this.cr = Math.cos(F.rot); this.sr = Math.sin(F.rot);
   this.u0 = Math.floor(this.R()*8);
   this.firm = FIRMS[Math.floor(this.R()*FIRMS.length)];
@@ -268,7 +281,9 @@ KP.mesh = function(geo, m, x, y, z, p){
 // the front edge of a d-deep thing set back from the site's front, kept inside the site
 KP.back = function(d, set){ return Math.max(-this.D/2 + d/2, this.D/2 - (set != null ? set : SETBACK) - d/2); };
 // note a mass for the camera boxes and the building's top
-KP.note = function(cx, cz, w, d, y0, y1){
+KP.note = function(cx, cz, w, d, y0, y1, noLod){
+  var o = this.world(cx, cz);
+  if(!noLod) this.lod.push({x: o.x, z: o.z, w: w, d: d, rot: this.F.rot, y0: this.F.y + y0, y1: this.F.y + y1});
   var a = this.world(cx - w/2, cz - d/2), b = this.world(cx + w/2, cz + d/2), e = this.world(cx - w/2, cz + d/2), f = this.world(cx + w/2, cz - d/2), Y = this.F.y;
   this.boxes.push({min: {x: Math.min(a.x, b.x, e.x, f.x), y: Y + y0, z: Math.min(a.z, b.z, e.z, f.z)},
                    max: {x: Math.max(a.x, b.x, e.x, f.x), y: Y + y1, z: Math.max(a.z, b.z, e.z, f.z)}});
@@ -469,6 +484,7 @@ KP.containers = function(cx, cz, w, d, high){
 KP.pier = function(cx, z0, z1, w, y){
   var len = Math.abs(z1 - z0), zc = (z0 + z1)/2, wood = this.m(0x8a6a4a, {roughness: 0.9}), pile = this.m(0x4e4034, {roughness: 0.9});
   this.box(w, 0.4, len, wood, cx, y - 0.2, zc);
+  var o = this.world(cx, zc); this.lod.push({x: o.x, z: o.z, w: w, d: len, rot: this.F.rot, y0: this.F.y + y - 0.4, y1: this.F.y + y});   // the deck, far off
   var n = Math.max(2, Math.round(len/6));
   for(var i = 0; i <= n; i++){ var z = Math.min(z0, z1) + len*i/n;
     this.cyl(0.25, 0.25, y + 3, pile, cx - w/2 + 0.3, (y - 3)/2, z, 8); this.cyl(0.25, 0.25, y + 3, pile, cx + w/2 - 0.3, (y - 3)/2, z, 8); }
@@ -485,7 +501,7 @@ KP.crane = function(x, z, h, col){
   this.box(2.2, 2, 2.6, cab, x, PLINTH + h - 1.2, z + 6);
   this.box(3, 2.2, 4, this.m(0x59636e, {roughness: 0.8}), x, PLINTH + h + 2.3, z - 10);   // the counterweight
   this.box(0.3, 0.3, 0.3, this.n(0x400000, 0xff3030, 0.3, 2.5), x, PLINTH + h + 1.4, z + 22.8);
-  this.note(x, z + 6, s + 1, 36, 0, h + 3.4);
+  this.note(x, z + 6, s + 1, 36, 0, h + 3.4, true);              // a lattice: no solid box far off
 };
 
 /* ---------- the kinds ---------- */
@@ -792,9 +808,9 @@ BUILD.tramstop = function(k){
 };
 
 BUILD.port = function(k){
-  var T = k.tier, qz = k.D/2 - Math.min(16, k.D*0.3);           // the quay's edge; the pier runs out from it (+z: the water)
+  var T = k.tier, P = PIERS.port(k.W, k.D), qz = P.z0;           // the quay's edge; the pier runs out from it (+z: the water)
   k.box(k.W, 0.04, k.D/2 - qz, k.m(0x6b737b, {roughness: 0.95}), 0, PLINTH + 0.02, (qz + k.D/2)/2);
-  k.pier(0, qz, k.D/2 + 30, 10, PLINTH + 0.6);
+  k.pier(0, P.z0, P.z1, P.w, P.y);
   var n = 1 + (T >= 3) + (T >= 5), cols = [0xe0a33a, 0xc43a2a, 0x3f6fae];
   for(var i = 0; i < n; i++) k.crane(-k.W/2 + 10 + i*Math.min(16, (k.W - 20)/Math.max(1, n)), qz - 2, 18 + T*2, cols[i % 3]);
   var yd = Math.max(10, qz + k.D/2 - 16);
@@ -805,19 +821,19 @@ BUILD.port = function(k){
   k.sign(k.title, 8, 1, sx, S.top - 1, sz + sd/2 + 0.06, 0, "#ffffff", "#0e5f7a");
   k.lamp(4, qz - 1, 6); k.lamp(-4, k.D/2 + 20, 6, null, true);
   k.door(sx, sz + sd/2, {w: 2.4, kind: "entrance"});
-  k.door(0, k.D/2 + 30 - DOOR_OUT - 0.6, {kind: "port", main: true, noMesh: true});   // where the ferries tie up
+  k.door(0, P.z1 - DOOR_OUT - 0.6, {kind: "port", main: true, noMesh: true});   // where the ferries tie up
 };
 
 BUILD.dock = function(k){
-  var pw = Math.min(k.W*0.5, 6);
-  k.pier(0, -k.D/2 + 6, k.D/2 + 6, pw, PLINTH + 0.6);
+  var P = PIERS.dock(k.W, k.D), pw = P.w;
+  k.pier(0, P.z0, P.z1, pw, P.y);
   var bw = Math.min(k.W*0.8, 6), bz = -k.D/2 + 3;
   var M = k.mass("white", 0, bz, bw, 4, 1, {roofCol: 0x2f6fb8});
   k.sign(k.title, bw*0.8, 0.7, 0, M.top + 0.6, bz + 2.06, 0, "#ffffff", "#0e5f7a");
   k.lamp(-pw/2 + 0.4, 2, 4); k.lamp(pw/2 - 0.4, k.D/2, 4);
   k.box(1.6, 0.05, 1.6, k.m(0xffd34a, {roughness: 0.6}), 0, PLINTH + 0.63, k.D/2 + 4);
   k.door(0, bz + 2, {w: 1.8, h: 2.4, kind: "entrance"});
-  k.door(0, k.D/2 + 6 - DOOR_OUT - 0.4, {kind: "dock", main: true, noMesh: true});     // the boats come in here
+  k.door(0, P.z1 - DOOR_OUT - 0.4, {kind: "dock", main: true, noMesh: true});     // the boats come in here
 };
 
 BUILD.airport = function(k){
@@ -1109,6 +1125,18 @@ BUILD.farm = function(k){
   k.door(hx, hz + 3.5, {w: 1.2, h: 2.3, kind: "entrance"});
 };
 
+/* ---------- piers ---------- */
+function pierOf(site){
+  var mk = site && PIERS[site.kind]; if(!mk) return [];
+  var F = frame(site), P = mk(F.w, F.d), cr = Math.cos(F.rot), sr = Math.sin(F.rot);
+  function w(lx, lz){ return [F.x + lx*cr + lz*sr, F.z - lx*sr + lz*cr]; }      // as KP.world
+  return [{poly: [w(-P.w/2, P.z0), w(P.w/2, P.z0), w(P.w/2, P.z1), w(-P.w/2, P.z1)], y: F.y + P.y, head: w(0, P.z1), dir: [sr, cr], w: P.w}];
+}
+function deckAt(decks, x, z){
+  for(var i = 0; i < (decks || []).length; i++) if(inPoly(decks[i].poly, x, z)) return decks[i].y;
+  return null;
+}
+
 /* ---------- build ---------- */
 function build(c, site, opts){
   site = site || {}; opts = opts || {};
@@ -1135,7 +1163,8 @@ function build(c, site, opts){
   var night = opts.night != null ? !!opts.night : true;
   function apply(){ k.night.forEach(function(r){ r.m.emissiveIntensity = night ? r.night : r.day; }); k.glows.forEach(function(gl){ gl.visible = night; }); }
   apply();
-  return {g: k.g, doors: k.doors, hits: k.hits, glows: k.glows, boxes: k.boxes, top: k.top, kind: k.kind, tier: k.tier,
+  return {g: k.g, doors: k.doors, hits: k.hits, glows: k.glows, boxes: k.boxes, lod: k.lod, tint: k.tint, decks: pierOf(site),
+    top: k.top, kind: k.kind, tier: k.tier,
     x: k.F.x, y: k.F.y, z: k.F.z, rot: k.F.rot, w: k.W, d: k.D,
     setNight: function(n){ night = !!n; apply(); },
     // the police lamps blink in turn, the airport radar turns; k (0..1) is the motion scale (Calm: 0)
@@ -1146,5 +1175,5 @@ function build(c, site, opts){
     }};
 }
 
-HQV.hqCivic = {build: build, fit: fit, frame: frame, KINDS: KINDS, STYLES: STYLES};
+HQV.hqCivic = {build: build, fit: fit, frame: frame, pierOf: pierOf, deckAt: deckAt, KINDS: KINDS, STYLES: STYLES};
 })();

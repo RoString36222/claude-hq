@@ -125,6 +125,10 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   d2.update(t, cam, null, 1/60);
   var bodies2 = d2.group.children.filter(function(c){ return c.isInstancedMesh; })[0];
   out.pending = {count: bodies2.count, near: d2.stats.near, loading: d2.stats.loading, visible: D.split(dsim.at(t, cam, 150), {}).near.length + D.split(dsim.at(t, cam, 150), {}).far.length};
+  // the camera high over the same crowd (the map): its height counts, so nobody near and nobody skinned
+  draw.update(t, {x: cam.x, y: 600, z: cam.z}, null, 0.1);
+  out.high = {near: draw.stats.near, far: draw.stats.far, chars: draw.group.children.filter(function(c){ return !c.isInstancedMesh && c.visible; }).length};
+  draw.update(t, {x: cam.x, y: 3, z: cam.z}, null, 0.1); out.high.lowNear = draw.stats.near;
   draw.dispose(); out.disposed = scene.children.length;
 
   // microbenchmark: 150 visible residents (a whole-town radius, the 150 nearest), a frame's work
@@ -236,6 +240,11 @@ class NpcDrawTest(unittest.TestCase):
         self.assertTrue(isinstance(d["spoken"]["text"], str) and len(d["spoken"]["text"]) > 5)
         self.assertIsNone(d["nobody"])
         self.assertEqual(self.r["disposed"], 0)
+
+    def test_camera_height_counts(self):
+        h = self.r["high"]
+        self.assertEqual([h["near"], h["far"], h["chars"]], [0, 0, 0], "a map camera 600 m up draws no residents")
+        self.assertGreater(h["lowNear"], 0, "back at street level the crowd is near again")
 
     def test_loading_characters_drawn_as_bodies(self):
         p = self.r["pending"]

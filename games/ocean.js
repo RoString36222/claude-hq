@@ -132,13 +132,22 @@ function landTest(polys){
     return false;
   };
 }
-// The dock sites' berths: off the site's edge on whichever side of its front is water, 4 m out, facing out.
+// The dock sites' berths: BERTH_OFF m off the head of the pier games/hqcivic.js lays (pierOf), facing out
+// along it: a moored hull (3.6 m at most) lies in open water just clear of the deck, in reach from its
+// edge. Without hqcivic (no pier is drawn): off the site's edge on whichever side of its front is
+// water, 4 m out, facing out.
+var BERTH_OFF = 2.4;
 function docksOf(doc, land){
   var L = (doc && doc.layers) || {}, I = L.island || {}, ids = {}, out = [];
   (I.docks || []).forEach(function(id){ ids[id] = 1; });
   land = land || landTest([coastOf(doc)]);
   (L.sites || []).forEach(function(s){
     if(!s || !ids[s.id]) return;
+    var pier = HQV.hqCivic && HQV.hqCivic.pierOf ? HQV.hqCivic.pierOf(s)[0] : null;
+    if(pier){
+      out.push({id: s.id, x: pier.head[0] + pier.dir[0]*BERTH_OFF, z: pier.head[1] + pier.dir[1]*BERTH_OFF, yaw: Math.atan2(pier.dir[0], pier.dir[1])});
+      return;
+    }
     var fr = s.front || [0, 65536], fx = (+fr[0] || 0)/65536, fz = (+fr[1] || 0)/65536, fl = Math.hypot(fx, fz) || 1;
     fx /= fl; fz /= fl;
     var cx = (+s.x || 0)/100, cz = (+s.z || 0)/100, reach = Math.max(+s.w || 0, +s.d || 0)/200 + 4;

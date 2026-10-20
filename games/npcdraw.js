@@ -1,6 +1,7 @@
 /* Claude HQ: drawing the City's residents (Cities spec, task cl-npc), on top of games/npcsim.js.
  *
- * HQV.npcDraw.create(THREE, parent, sim, opts) -> draw. Levels of detail by distance from the camera:
+ * HQV.npcDraw.create(THREE, parent, sim, opts) -> draw. Levels of detail by distance from the camera
+ * (its height too, when cam.y is given: the map's camera high over the plaza draws nobody skinned):
  *   under NEAR (40 m)   up to MAX_NEAR (30) skinned Kenney characters (the six of hq3d.js, look.char picks
  *                       one, the outfit tints their material) playing walk / idle, nudged around the
  *                       player and each other (avoid: a spring toward a capped push, so the pure sim
@@ -11,7 +12,7 @@
  *   over FAR            not drawn (sim.at is asked for FAR only).
  * A near resident whose character is still loading is drawn as a body until it is ready. Drivers
  * (anim "drive") are inside their cars, which games/traffic.js draws; riders on a bus are not in sim.at.
- *   draw.update(tMs, cam {x, z}, player {x, z} | null, dt)   once a frame; tMs is the City's local clock
+ *   draw.update(tMs, cam {x, y?, z}, player {x, z} | null, dt)   once a frame; tMs is the City's local clock
  *   draw.talk(player {x, z}, tMs) -> {id, text, x, y, z} | null   E on a resident: the nearest drawn one
  *                       within TALK_REACH says a line from its job and the time (sim.speak; plain text,
  *                       show it with textContent)
@@ -319,7 +320,9 @@ function create(THREE, parent, sim, opts){
     var t0 = Date.now(); dt = Math.max(0, +dt || 0);
     cam = cam || {}; clock = (clock + dt) % 3600; U.uNpcTime.value = clock;
     sim.warm(tMs, WARM_MS);
-    var sp = split(sim.at(tMs, {x: +cam.x || 0, z: +cam.z || 0}, FAR), nearIds);
+    var list = sim.at(tMs, {x: +cam.x || 0, z: +cam.z || 0}, FAR), cy = cam.y != null ? +cam.y : NaN;
+    if(isFinite(cy)) list.forEach(function(r){ var dy = cy - (+r.y || 0); r.d2 = (r.d2 || 0) + dy*dy; });   // sim.at's rows are fresh
+    var sp = split(list, nearIds);
     avoid(sp.near, player, avoidSt, dt);
     var keep = {}, far = sp.far, lo = [], need = {};
     nearIds = {};

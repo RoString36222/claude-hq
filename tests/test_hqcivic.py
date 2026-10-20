@@ -24,7 +24,7 @@ HARNESS = r"""
 var fs = require("fs"), url = require("url"), crypto = require("crypto"), root = %(root)s, KINDS = %(kinds)s;
 import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(function(THREE){
   global.window = {HQV: {}};
-  ["hqmerge", "hqcivic"].forEach(function(f){ new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))(); });
+  ["hqmerge", "hqcivic", "ocean"].forEach(function(f){ new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))(); });
   var HQV = window.HQV, C = HQV.hqCivic, out = {};
 
   /* ---------- a stub hq3d ctx (as tests/test_hqcity3d.py), labels and glows as sprites ---------- */
@@ -102,6 +102,9 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
       var P = site.poly ? site.poly.map(function(p){ return [p[0]/100, p[1]/100]; }) : null, outside = 0;
       if(P) B.boxes.forEach(function(bx){ var cx = (bx.min.x + bx.max.x)/2, cz = (bx.min.z + bx.max.z)/2; if(!inside(P, cx, cz)) outside++; });
       r.boxesOutside = outside; r.boxes = B.boxes.length;
+      // the far-off boxes: finite, upright, and only from this building's own masses (and pier)
+      r.lod = B.lod.length; r.lodOk = B.lod.every(function(b){ return [b.x, b.z, b.w, b.d, b.rot, b.y0, b.y1].every(isFinite) && b.w > 0 && b.d > 0 && b.y1 > b.y0; });
+      r.tint = typeof B.tint === "number";
     } catch(e){ errors.push(kind + "@" + tier + ":" + n + " " + (e && e.stack || e)); }
     rows.push(r);
   } });
@@ -148,6 +151,23 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   // a rotated polygon site: the frame's footprint matches the unrotated rectangle
   var fr = C.frame({kind: "office", poly: rectPoly(5000, 7000, 3000, 2000, 0.5), front: [Math.round(-Math.sin(0.5)*Q), Math.round(Math.cos(0.5)*Q)]});
   out.frame = {x: fr.x, z: fr.z, w: fr.w, d: fr.d, rot: fr.rot};
+  /* ---------- piers: the deck you walk, and the berth off its head ---------- */
+  out.piers = [];
+  ["dock", "port"].forEach(function(kind){ for(var n = 0; n < 4; n++){
+    var site = siteFor(kind, 3, n, n < 2), B = C.build(c, site), P = C.pierOf(site)[0];
+    var doc = {layers: {sites: [site], island: {docks: [site.id], coast: [], sea_cm: -1500}}}, berth = HQV.ocean.docksOf(doc, function(){ return true; })[0];
+    var main = B.doors.filter(function(d){ return d.kind === kind; })[0];
+    // the deck's top, from its mesh: the highest wood box over the pier's middle
+    var mid = [(P.poly[0][0] + P.poly[2][0])/2, (P.poly[0][1] + P.poly[2][1])/2];
+    out.piers.push({kind: kind, n: n, decks: B.decks.length, y: P.y, siteY: site.y/100, w: P.w,
+      onDeck: [C.deckAt(B.decks, mid[0], mid[1]), C.deckAt(B.decks, main.x, main.z), C.deckAt(B.decks, P.head[0] - P.dir[0]*0.5, P.head[1] - P.dir[1]*0.5)],
+      berthOff: C.deckAt(B.decks, berth.x, berth.z), berthAhead: (berth.x - P.head[0])*P.dir[0] + (berth.z - P.head[1])*P.dir[1],
+      berthSide: Math.abs((berth.x - P.head[0])*P.dir[1] - (berth.z - P.head[1])*P.dir[0]),
+      berthYaw: Math.abs(Math.atan2(Math.sin(berth.yaw - Math.atan2(P.dir[0], P.dir[1])), Math.cos(berth.yaw - Math.atan2(P.dir[0], P.dir[1])))),
+      // the pier points the way the site faces (out to sea)
+      dirDot: P.dir[0]*site.front[0]/Q + P.dir[1]*site.front[1]/Q});
+  } });
+  out.noPier = [C.pierOf({kind: "office", x: 0, z: 0}).length, C.pierOf(null).length, C.deckAt([], 0, 0)];
   process.stdout.write(JSON.stringify(out));
 }).catch(function(e){ console.error(e && e.stack || e); process.exit(1); });
 """
@@ -169,6 +189,30 @@ class TestHqCivic(unittest.TestCase):
         for row in self.r["rows"]:
             self.assertTrue(row["finite"], row["kind"])
             self.assertGreater(row["top"], 1.5, row["kind"])
+
+    def test_far_boxes(self):
+        for row in self.r["rows"]:
+            self.assertTrue(row["lodOk"], row["kind"])
+            self.assertTrue(row["tint"], row["kind"])
+            if row["kind"] not in ("busstop", "tramstop"):
+                self.assertGreater(row["lod"], 0, row["kind"] + ": nothing to draw far off")
+
+    def test_piers(self):
+        self.assertEqual(len(self.r["piers"]), 8)
+        for p in self.r["piers"]:
+            tag = "%s:%d" % (p["kind"], p["n"])
+            self.assertEqual(p["decks"], 1, tag)
+            self.assertAlmostEqual(p["y"], p["siteY"] + 0.72, 6, msg=tag)
+            # you stand on the deck at its middle, at its main door (the boats' and ferries') and at its head
+            for y in p["onDeck"]:
+                self.assertAlmostEqual(y, p["y"], 6, msg=tag)
+            # the berth is open water just off the head, straight out, facing out
+            self.assertIsNone(p["berthOff"], tag)
+            self.assertAlmostEqual(p["berthAhead"], 2.4, 6, msg=tag)
+            self.assertLess(p["berthSide"], 1e-6, tag)
+            self.assertLess(p["berthYaw"], 1e-6, tag)
+            self.assertGreater(p["dirDot"], 0.999, tag)
+        self.assertEqual(self.r["noPier"], [0, 0, None])
 
     def test_under_40_draw_calls(self):
         worst = {}

@@ -19,14 +19,16 @@
  *   tier, grow    from GET /api/arena/city/<owner> (the Commons: owner "commons", fully grown); worldbuild
  *                 shows the world at that tier (min_tier) and so does everything below.
  *   civic         every civic and zone site from games/hqcivic.js; a door with a view opens its tab, the
- *                 town hall's opens HQV.townHall (ui/app/38-townhall.js).
+ *                 town hall's opens HQV.townHall (ui/app/38-townhall.js). In full within CIVIC_NEAR of the
+ *                 camera, beyond it (and from the map's height) as boxes in one InstancedMesh.
  *   HQs           the Commons: each open HQ on the lot GET /api/arena/world/claude-hq@2/assign gives it
  *                 (by rank; else sorted by user id as on @1); an island: its owner's, by the town hall.
  *   residents     games/npcsim.js + npcdraw.js, ticked each frame inside NPC_BUDGET; E on one: its line.
  *   traffic       games/traffic.js (cars, buses, trams); E at a stop: pick a stop, wait, ride (the fare
  *                 goes through POST /api/arena/city/<owner>/fare).
  *   the sea       games/ocean.js (the water, the other islands from /api/arena/archipelago) and the boats
- *                 of games/hqboat.js at every dock; a boat that reaches another island lands you there.
+ *                 of games/hqboat.js moored alongside every dock's pier (its deck is walked on, and the
+ *                 sea's land for the boats); a boat that reaches another island lands you there.
  *   travel        E at a dock, port, station or airport: games/hqtravel.js trips (ferry, rail, plane, fast
  *                 travel), the ride's camera through w.camPose; the "My island" / "The Commons" button.
  *   net room      city3d:<world id> where the Arena's presence lists "isles" (protocol v3), else city3d.
@@ -318,7 +320,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var want = NAV.world || COMMONS, arriveAt = NAV.spawn, worldId = LEGACY, V2 = false;
   NAV.spawn = null;
   var me = (api.me && api.me()) || null, owner = "commons", tier = 5, grow = 1000, cityState = null, assignRows = null;
-  var civics = [], civicG = new THREE.Group(), boatG = new THREE.Group(), boats = [];
+  var civics = [], civicG = new THREE.Group(), boatG = new THREE.Group(), boats = [], civicLod = null, decks = [];
   var oc = null, sea = null, arch = null, tsim = null, tview = null, nsim = null, ndraw = null;
   var bus = null, menu = null, menuKey = null, talkL = null, ui = null, fadeEl = null, landing = false, npcSkip = 0;
 
@@ -669,7 +671,8 @@ HQV.hqWorlds.city3d = function(c, w){
   function groundY(x, z){
     if(!W) return 0;
     if(skate && SP.inPark(x - skate.cx, z - skate.cz)) return skate.y;      // the park's flat pad; the skater adds its ramps
-    return WD.groundAt(W, x, z);
+    var dy = decks.length ? HQV.hqCivic.deckAt(decks, x, z) : null;        // a pier's deck, over the water
+    return dy != null ? dy : WD.groundAt(W, x, z);
   }
 
   /* ---------- Cities: a v2 world's civic buildings, residents, traffic, sea, boats and travel ---------- */
@@ -677,7 +680,10 @@ HQV.hqWorlds.city3d = function(c, w){
     "display:grid;gap:6px;padding:12px 14px;border-radius:12px;color:var(--ink);background:color-mix(in srgb,var(--panel) 94%,transparent);" +
     "border:1px solid var(--line);box-shadow:var(--shadow-lg);font-size:13px";
   var ITEM_CSS = "text-align:left;padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel2,var(--panel));color:var(--ink);cursor:pointer;font:inherit";
-  var CIVIC_FAR = 320;       // m: a civic building further than this from the camera is not drawn
+  var CIVIC_NEAR = 180;      // m (camera height counts): a civic building nearer than this is drawn in full, the
+                             // rest as their masses' boxes, every one in one InstancedMesh (hqcivic's lod)
+  var PROP_FAR = 200;        // m: a bike, board or boat further than this from the camera is not drawn
+  var BOAT_SIDE = 3;         // m: the two boats moored either side of a berth (a dock with no pier drawn)
   var NPC_BUDGET = 3;        // ms: residents whose update took longer than this update every other frame
   var TALK_SHOW = 5;         // s a resident's line stays over their head
   function island(){ return worldId !== COMMONS && worldId !== LEGACY; }
@@ -734,6 +740,32 @@ HQV.hqWorlds.city3d = function(c, w){
       B.hits.forEach(function(o){ hits.push(o); });
       B.doors.forEach(function(d){ if(d.live) doors.push(d); });
     });
+    decks = []; civics.forEach(function(B){ (B.decks || []).forEach(function(d){ decks.push(d); }); });
+    buildLod();
+  }
+  // every civic building's masses as tinted boxes in one InstancedMesh; a building drawn in full hides its own
+  function buildLod(){
+    if(civicLod){ civicG.remove(civicLod); civicLod.geometry.dispose(); civicLod.material.dispose(); civicLod = null; }
+    var n = 0;
+    civics.forEach(function(B){ B.lod0 = n; n += (B.lod || []).length; B.far = null; });
+    if(!n) return;
+    var geo = new THREE.BoxGeometry(1, 1, 1); geo.translate(0, 0.5, 0);
+    civicLod = new THREE.InstancedMesh(geo, mat(0xc4cad1, {roughness: 0.85}), n);
+    civicLod.name = "civic:lod"; civicLod.receiveShadow = true; civicLod.frustumCulled = false;
+    var col = new THREE.Color();
+    civics.forEach(function(B){ (B.lod || []).forEach(function(b, i){ civicLod.setColorAt(B.lod0 + i, col.setHex(B.tint != null ? B.tint : 0xffffff)); }); });
+    civicG.add(civicLod);
+  }
+  var lodM = new THREE.Matrix4(), lodQ = new THREE.Quaternion(), lodP = new THREE.Vector3(), lodS = new THREE.Vector3(), lodUp = new THREE.Vector3(0, 1, 0);
+  function lodShow(B, on){
+    B.far = on;
+    if(!civicLod) return;
+    (B.lod || []).forEach(function(b, i){
+      lodQ.setFromAxisAngle(lodUp, b.rot); lodP.set(b.x, b.y0, b.z);
+      if(on) lodS.set(b.w, Math.max(0.01, b.y1 - b.y0), b.d); else lodS.set(0, 0, 0);
+      civicLod.setMatrixAt(B.lod0 + i, lodM.compose(lodP, lodQ, lodS));
+    });
+    civicLod.instanceMatrix.needsUpdate = true;
   }
   function civicBlocked(x, z){
     for(var i = 0; i < civics.length; i++){
@@ -747,12 +779,18 @@ HQV.hqWorlds.city3d = function(c, w){
     if(!W.island || !HQV.ocean) return;
     var doc = WD.docOf(W);
     sea = HQV.ocean.seaOf(doc); w.sea = sea;
+    // the piers stand on the water: you walk them, and a boat comes up against them as against the shore
+    var coast = sea.land;
+    sea.land = function(x, z){ return coast(x, z) || (decks.length > 0 && HQV.hqCivic.deckAt(decks, x, z) != null); };
     try { oc = HQV.ocean.mount(c, S); oc.g.position.y = sea.y; if(wb && wb.sea) wb.sea.visible = false; } catch(e){ oc = null; }
     S.add(boatG);
     if(HQV.hqboat) sea.docks.forEach(function(d, n){
       var site = siteById(d.id); if(site && site.tier != null && (site.tier | 0) > tier) return;
+      // moored alongside the pier, a boat each side near its head: in reach of the deck's edge, in sight from it
+      var P = site && HQV.hqCivic && HQV.hqCivic.pierOf ? HQV.hqCivic.pierOf(site)[0] : null;
       ["rowboat", "jetski"].forEach(function(kind, j){
-        var side = j ? 3 : -3, x = d.x + Math.cos(d.yaw)*side, z = d.z - Math.sin(d.yaw)*side;
+        var sg = j ? 1 : -1, x = d.x + Math.cos(d.yaw)*BOAT_SIDE*sg, z = d.z - Math.sin(d.yaw)*BOAT_SIDE*sg;
+        if(P){ var lat = (P.w/2 + 1)*sg; x = P.head[0] - P.dir[0]*2.5 + P.dir[1]*lat; z = P.head[1] - P.dir[1]*2.5 - P.dir[0]*lat; }
         var col = [0x2f6f9f, 0xc8323c, 0x2f8f5b, 0xe8b730][(n*2 + j) % 4], B = HQV.hqboat.model(c, kind, col, 0xf2f2f2);
         B.g.position.set(x, sea.y, z); B.g.rotation.y = d.yaw; boatG.add(B.g);
         boats.push({g: B.g, x: x, z: z, yaw: d.yaw, color: col, accent: 0xf2f2f2, kind: kind, id: "boat:" + d.id + ":" + kind, stay: true});
@@ -948,7 +986,11 @@ HQV.hqWorlds.city3d = function(c, w){
     if(!sea || !st) return null;
     var best = null, bd = 12;
     sea.docks.forEach(function(d){ var dd = Math.hypot(st.x - d.x, st.z - d.z); if(dd < bd){ bd = dd; best = d; } });
-    if(best){ var s = siteById(best.id); if(s){ var f = frontOf(s); return {x: s.x/100 - f[0]*2, z: s.z/100 - f[1]*2, yaw: Math.atan2(-f[0], -f[1])}; } }
+    if(best){
+      var s = siteById(best.id), P = s && HQV.hqCivic && HQV.hqCivic.pierOf ? HQV.hqCivic.pierOf(s)[0] : null;
+      if(P) return {x: P.head[0] - P.dir[0]*1.5, z: P.head[1] - P.dir[1]*1.5, yaw: Math.atan2(-P.dir[0], -P.dir[1])};   // up onto its pier's head
+      if(s){ var f = frontOf(s); return {x: s.x/100 - f[0]*2, z: s.z/100 - f[1]*2, yaw: Math.atan2(-f[0], -f[1])}; }
+    }
     var sx = Math.sin(st.yaw), sz = Math.cos(st.yaw);
     if(sea.land(st.x + sx*2.5, st.z + sz*2.5) && sea.land(st.x + sx*4, st.z + sz*4)) return {x: st.x + sx*4, z: st.z + sz*4, yaw: st.yaw};
     return null;
@@ -1001,13 +1043,26 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   function citiesUpdate(t, dt, k, cam){
     var nowMs = Date.now();
-    // civic buildings far from the camera are not drawn (the map shows them all), as the HQs
+    // civic buildings near the camera are drawn in full, the rest (the map's too, from up there) as boxes
     civics.forEach(function(B){
       if(cam && cam.x != null){
-        var d = Math.hypot(B.x - cam.x, B.z - cam.z), vis = (cam.mode === "map") || (B.g.visible ? d < CIVIC_FAR : d < CIVIC_FAR - HQ_FAR_HYST);
-        if(B.g.visible !== vis) B.g.visible = vis;
+        var d = Math.hypot(B.x - cam.x, B.z - cam.z, (+cam.y || 0) - B.y), full = B.g.visible ? d < CIVIC_NEAR : d < CIVIC_NEAR - HQ_FAR_HYST;
+        if(B.g.visible !== full || B.far !== !full){ B.g.visible = full; lodShow(B, !full); }
       }
       if(B.g.visible) B.animate(t, dt, k);
+    });
+    // bikes, boards and boats far from the camera are not drawn: their meshes sit in an inner group, as
+    // hq3d hides the prop itself (g.visible) while you ride it
+    if(cam && cam.x != null) bikes.forEach(function(b){
+      var gp = b.g.position, P = b.g.parent, wx = b.x != null ? b.x : gp.x, wz = b.z != null ? b.z : gp.z, wy = P ? P.position.y + gp.y : gp.y;
+      var vis = Math.hypot(wx - cam.x, wz - cam.z, (+cam.y || 0) - wy) < PROP_FAR, inner = b.inner;
+      if(!inner){
+        if(vis) return;
+        inner = b.inner = new THREE.Group(); inner.name = "prop-near";
+        while(b.g.children.length) inner.add(b.g.children[0]);
+        b.g.add(inner);
+      }
+      if(inner.visible !== vis) inner.visible = vis;
     });
     var me0 = (cam && cam.avatar) || c.avatar() || {x: 0, z: 0};
     if(oc && cam){
@@ -1022,7 +1077,7 @@ HQV.hqWorlds.city3d = function(c, w){
       if(npcSkip > 0) npcSkip--;
       else {
         var t0 = typeof performance !== "undefined" ? performance.now() : 0;
-        ndraw.update(npcMs(), {x: cam.x, z: cam.z}, me0, dt);
+        ndraw.update(npcMs(), {x: cam.x, y: cam.y, z: cam.z}, me0, dt);
         var used = typeof performance !== "undefined" ? performance.now() - t0 : 0;
         if(used > NPC_BUDGET) npcSkip = 1;
       }

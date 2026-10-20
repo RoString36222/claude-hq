@@ -78,6 +78,10 @@ function find(W, tier){
                 half: g.half, cw: g.cw, walk: g.walk, cls: e.cls === "country" ? "highway" : (e.cls || "street"), edgeO: edge, waterY: waterY});
     });
   });
+  // every city gets all three kinds: dealt round in id order, from a start the world's id picks
+  out.sort(function(p, q){ return p.id < q.id ? -1 : p.id > q.id ? 1 : 0; });
+  var k0 = hashStr(String(W.id || W.seed || ""));
+  out.forEach(function(B, i){ B.kind = KINDS[(k0 + i) % KINDS.length]; });
   return out;
 }
 

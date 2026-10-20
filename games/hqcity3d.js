@@ -1150,7 +1150,7 @@ HQV.hqWorlds.city3d = function(c, w){
       }).slice(0, FERRY_MAX);
     while(ferryPool.length < shown.length){ var F = ferryModel(); ferryG.add(F.g); ferryPool.push(F); }
     ferryPool.forEach(function(F, i){ if(i < shown.length) placeShip(F, shown[i], t, dt); else F.g.visible = false; });
-    if(c.active && c.active(w)) HQV.hqCity3d.ferry = w.ferry;
+    if(c.active && c.active(w)){ HQV.hqCity3d.ferry = w.ferry; HQV.hqCity3d.__bridges = bridges; }   // for tools
     voyStep(t, dt);
   }
 

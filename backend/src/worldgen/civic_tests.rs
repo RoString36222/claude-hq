@@ -174,10 +174,21 @@ fn every_tier_2_lot_is_within_250_m_of_a_bus_stop() {
         }
         // most stops are on the arterials
         let stops = sites(w, "busstop");
-        assert!(stops.iter().all(|s| s.tier == Some(2)));
+        assert!(stops.iter().all(|s| at_tier(w, s, 2)));
         let on = stops.iter().filter(|s| on_arterial(w, s)).count();
-        assert!(on * 4 >= stops.len() * 3, "{}: {on} of {} bus stops on arterials", w.id, stops.len());
+        // (a full-size personal island is mostly suburb, its lanes reached from their own streets: 3 in 5)
+        let share = if w.profile == "island" { (3, 5) } else { (3, 4) };
+        assert!(on * share.1 >= stops.len() * share.0, "{}: {on} of {} bus stops on arterials", w.id, stops.len());
     }
+}
+
+/// Is the site at the table's tier? On a personal island a site opens at its ring's
+/// tier if that is later (island.rs checks the exact rule).
+fn at_tier(w: &WorldDoc, s: &Site, tier: u8) -> bool {
+    if w.profile != "island" {
+        return s.tier == Some(tier);
+    }
+    s.tier.is_some_and(|t| t >= tier)
 }
 
 /// Is the site's door at an arterial's kerb?
@@ -233,15 +244,18 @@ fn every_civic_kind_is_placed_by_its_rule() {
             let got = sites(w, row.kind);
             let want = match row.place {
                 Place::Shore => p.coast_r_cm.or(p.sea_cm).is_some(),
+                // a personal island's city fills it at full size: no open land is left for a runway
+                Place::Edge if w.profile == "island" => !got.is_empty(),
                 _ => true,
             };
             assert_eq!(!got.is_empty(), want, "{}: {} placed: {}", w.id, row.kind, got.len());
             for s in got {
-                assert_eq!(s.tier, Some(row.tier), "{}: {}", w.id, s.id);
+                assert!(at_tier(w, s, row.tier), "{}: {} at tier {:?}", w.id, s.id, s.tier);
             }
         }
         for kind in ["townhall", "police", "library", "post", "market", "school", "transit", "bank", "hospital", "mall", "university", "power", "water", "stadium", "airport"] {
-            assert_eq!(sites(w, kind).len(), 1, "{}: {kind}", w.id);
+            let n = sites(w, kind).len();
+            assert!(n == 1 || (kind == "airport" && n == 0 && w.profile == "island"), "{}: {n} {kind}", w.id);
         }
         let th = sites(w, "townhall")[0];
         let f = th.front.unwrap();
@@ -303,7 +317,8 @@ fn zones_export_their_jobs() {
             let zb = sites(w, z.kind);
             assert!(!zb.is_empty(), "{}: no {} building", w.id, z.kind);
             for s in zb {
-                assert_eq!((w.layers.blocks[s.block as usize].district, s.tier), (z.district, Some(z.tier)), "{}: {}", w.id, s.id);
+                assert_eq!(w.layers.blocks[s.block as usize].district, z.district, "{}: {}", w.id, s.id);
+                assert!(at_tier(w, s, z.tier), "{}: {} at tier {:?}", w.id, s.id, s.tier);
             }
         }
     }
@@ -359,15 +374,16 @@ fn transit_lines_run_on_the_streets() {
                 assert!(d <= far, "{}: {} comes no nearer {id} than {} m (kerb {} m)", w.id, l.id, d / 100, far / 100);
                 served.insert(id.as_str());
             }
+            // (on a personal island a line runs from the tier all its stops and streets exist in: island.rs)
             match l.kind {
                 "bus" => {
-                    assert_eq!(l.tier, 2);
+                    assert!(l.tier == 2 || (w.profile == "island" && l.tier > 2), "{}: {} at tier {}", w.id, l.id, l.tier);
                     assert_eq!(l.stops[0], "transit:0", "{}: {} does not start at the hub", w.id, l.id);
                     assert_eq!(l.path.first(), l.path.last(), "{}: {} is not a loop", w.id, l.id);
                     assert!(l.stops[1..].iter().all(|s| s.starts_with("busstop:")));
                 }
                 _ => {
-                    assert_eq!(l.tier, 4);
+                    assert!(l.tier == 4 || (w.profile == "island" && l.tier > 4), "{}: {} at tier {}", w.id, l.id, l.tier);
                     assert!(l.stops.iter().all(|s| s.starts_with("tramstop:")));
                 }
             }

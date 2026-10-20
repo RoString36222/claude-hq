@@ -82,8 +82,9 @@ pub struct Profile {
     pub art_ring_pm: i64,
     pub hq_districts: &'static [u8],
     pub hq_min_m2: i64,
-    /// An island's coast (radius, cm) and sea level (cm): no road or lot goes past the
-    /// coast or below the sea. None for a world on land.
+    /// An island's coast and sea level (cm): no road or lot goes past the coast or below
+    /// the sea. `coast_r_cm` is the farthest the seeded coast reaches, plus 25 m (island.rs).
+    /// None for a world on land.
     pub coast_r_cm: Option<i64>,
     pub sea_cm: Option<i64>,
 }
@@ -212,25 +213,28 @@ pub fn commons() -> Profile {
         art_ring_pm: 560,
         hq_districts: &[district::DOWNTOWN, district::OFFICE],
         hq_min_m2: 350,
+        // an island too: the coast wobbles between the ring road and 975 m
+        coast_r_cm: Some(100_000),
+        sea_cm: Some(-1_500),
         ..city()
     }
 }
 
 /// A personal city (`user:<uuid>@2`): a 1.8 km island, the sea round a coast at
-/// about 850 m. The commons algorithm on a smaller core for now: the island's own
-/// coast, docks and growth tiers come later (gen-island). No highways or ring road
-/// (nowhere to drive to: ferries and boats leave from the docks); one HQ, its owner's.
+/// about 850 m (815 to 885). The city is generated at full size, 800 m out, and grows
+/// into it by tier (island.rs). No highways or ring road (nowhere to drive to: ferries
+/// and boats leave from the docks); one HQ, its owner's.
 pub fn island() -> Profile {
     Profile {
         name: "island",
         legend: &district::NAMES2,
         size_cm: 180_000,
-        core_r_cm: 34_000,
+        core_r_cm: 70_000,
         blend_cm: 14_000,
         rise_pm: 40,
         hills: &[(40_000, 2_500), (20_000, 1_000), (10_000, 400), (5_000, 150)],
         plateau: &[(30_000, 600), (12_800, 100)],
-        city_r_cm: 30_000,
+        city_r_cm: 80_000,
         hq_lots: 1,
         hq_tier: 1,
         gates: 0,
@@ -246,7 +250,7 @@ pub fn island() -> Profile {
         radials: (4, 4),
         art_ring_pm: 580,
         hq_districts: &[district::DOWNTOWN, district::OLDTOWN],
-        coast_r_cm: Some(85_000),
+        coast_r_cm: Some(91_000),
         sea_cm: Some(-400),
         ..commons()
     }

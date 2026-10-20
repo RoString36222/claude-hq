@@ -20,7 +20,8 @@ fn commons() -> &'static WorldDoc {
 /// The fingerprint of the Commons. Everyone's tower (and every HQ's lot) is stored
 /// against this world, so a change here MOVES THINGS FOR EVERYONE: only update it on
 /// purpose, with a new generator version once the world is live.
-const CLAUDE_HQ_2: &str = "d1f5776de13117f9";
+// re-pinned 2026-10 for the island (island.rs): the coast and the sea, the highways ending at the ring, a dock and a port
+const CLAUDE_HQ_2: &str = "773b791eda30ed90";
 
 const ISLAND: &str = "user:0b6f2a3c-1d4e-4f5a-9b8c-7d6e5f4a3b2c@2";
 
@@ -189,6 +190,8 @@ fn check(w: &WorldDoc) {
     let base = terrain::generate(rng::fnv1a64(seed.as_bytes()), &p);
     let l = &w.layers;
     let r = &l.roads;
+    // a personal island grows by tier (island.rs); the Commons is always fully grown
+    let grows = |t: Option<u8>| if p.name == "island" { t.is_some_and(|t| (1..=5).contains(&t)) } else { t.is_none() };
 
     // classes and widths
     for e in &r.edges {
@@ -200,7 +203,7 @@ fn check(w: &WorldDoc) {
             c => panic!("{id}: edge {} has class {c}", e.id),
         };
         assert_eq!((e.width, e.walk), (width, walk), "{id}: edge {}", e.id);
-        assert!(!e.name.is_empty() && e.min_tier.is_none());
+        assert!(!e.name.is_empty() && grows(e.min_tier), "{id}: edge {} at tier {:?}", e.id, e.min_tier);
         let (na, nb) = (&r.nodes[e.a as usize], &r.nodes[e.b as usize]);
         assert_eq!((e.points[0], e.points[e.points.len() - 1]), ([na.x, na.y, na.z], [nb.x, nb.y, nb.z]), "{id}: edge {} ends", e.id);
     }
@@ -289,7 +292,8 @@ fn check(w: &WorldDoc) {
         let n = poly.len();
         for s in near(centroid(&poly), 30_000) {
             for k in 0..n {
-                assert!(seg_dist2(poly[k], poly[(k + 1) % n], s.0, s.1) >= (s.3 / 2).pow(2), "{id}: lot {} is on edge {}", lot.id, s.2);
+                // (less a centimetre or two: an edge's resampled points are rounded off its straight line)
+                assert!(seg_dist2(poly[k], poly[(k + 1) % n], s.0, s.1) >= (s.3 / 2 - 2).pow(2), "{id}: lot {} is on edge {}", lot.id, s.2);
             }
         }
         let f = lot.front.unwrap_or_else(|| panic!("{id}: lot {} has no front", lot.id));
@@ -301,7 +305,7 @@ fn check(w: &WorldDoc) {
             d2 <= r * r && (q.0 - door.0) * f[0] + (q.1 - door.1) * f[1] > 0
         });
         assert!(front.is_some(), "{id}: lot {} has no road frontage at {door:?}", lot.id);
-        assert!(lot.grow.is_some() && lot.min_tier.is_none());
+        assert!(lot.grow.is_some() && grows(lot.min_tier), "{id}: lot {} at tier {:?}", lot.id, lot.min_tier);
     }
 
     // growth: every lot a rank, nearest the core first

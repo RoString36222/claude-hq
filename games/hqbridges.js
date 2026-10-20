@@ -75,7 +75,7 @@ function find(W, tier){
       var edge = g.walk > 0 ? g.half : g.cw;
       out.push({id: id, edge: g.id, kind: KINDS[hashStr(id) % KINDS.length], a: {x: a.x, y: y, z: a.z}, b: {x: b.x, y: y, z: b.z},
                 axis: [dx/len, dz/len], left: [dz/len, -dx/len], len: len, y: y, width: 2*(edge + PARA_W),
-                half: g.half, cw: g.cw, walk: g.walk, edgeO: edge, waterY: waterY});
+                half: g.half, cw: g.cw, walk: g.walk, cls: e.cls === "country" ? "highway" : (e.cls || "street"), edgeO: edge, waterY: waterY});
     });
   });
   return out;
@@ -172,7 +172,11 @@ function deck(P, b, z0, z1, y0){
   P.span(COL.asphalt, -cw, cw, y0 - 0.5, y0, z0, z1);
   if(b.walk > 0){ P.span(COL.walk, cw, e, y0 - 0.5, y0 + KERB, z0, z1); P.span(COL.walk, -e, -cw, y0 - 0.5, y0 + KERB, z0, z1); }
   P.span(COL.under, -ho, ho, y0 - DECK_T, y0 - 0.5, z0, z1);
-  [-0.15, 0.15].forEach(function(o){ P.span(COL.yellow, o - 0.05, o + 0.05, y0, y0 + 0.012, z0 + 0.3, z1 - 0.3); });
+  if(b.cls === "ring" || b.cls === "highway"){      // a graded road: a dashed white centre line and white edge lines
+    var za = Math.min(z0, z1), zb = Math.max(z0, z1);
+    for(var q = za + 0.5; q + 3 < zb; q += 9) P.span(COL.white, -0.06, 0.06, y0, y0 + 0.012, q, q + 3);
+    [-1, 1].forEach(function(sg){ P.span(COL.white, sg*(cw - 1.075), sg*(cw - 0.925), y0, y0 + 0.012, za + 0.3, zb - 0.3); });
+  } else [-0.15, 0.15].forEach(function(o){ P.span(COL.yellow, o - 0.05, o + 0.05, y0, y0 + 0.012, z0 + 0.3, z1 - 0.3); });
   [-1, 1].forEach(function(sg){
     P.span(COL.deck, sg*e, sg*ho, y0 - DECK_T, y0 + et + PARA_H, z0, z1);
     var mid = sg*(e + PARA_W/2);

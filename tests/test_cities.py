@@ -80,7 +80,7 @@ function key(target, code, name, type){
 const HQV = window.HQV;
 var NOW = 1760000000000; const realNow = Date.now; Date.now = () => NOW;
 for (const f of ["hqbase", "hqskate", "world", "worldgeom", "hqcityparts", "hqcity", "hqmerge", "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqtravel",
-                 "hqnav", "hqminimap", "hqroutefx", "hqnavui", "hqcity3d"])
+                 "hqbridges", "hqnav", "hqminimap", "hqroutefx", "hqnavui", "hqcity3d"])
   new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
 const gz = p => JSON.parse(zlib.gunzipSync(fs.readFileSync(p)).toString("utf8"));
 const WD = HQV.world, C3 = HQV.hqCity3d;
@@ -221,6 +221,16 @@ out.commons = {world: wc.world(), net: wc.net, tierOpt: wbOpts[0], civic: wc.doo
     var r = Math.hypot(best.q[0], best.q[1]), k = (r + 4000)/r; return wc.blocked(best.q[0]*k/100, best.q[1]*k/100); })(),
   plazaOpen: !wc.blocked(3, 9),
   seaY: wc.sea && wc.sea.y, seaCm: CW.island.sea_cm, gets: calls.get.slice()};
+// the opening bridges (games/hqbridges.js): the decks over the water are theirs; a closed one is walkable, an open one not
+out.commons.bridges = (function(){
+  var B = wc.bridges; if(!B) return null;
+  var b = B.list()[0], mx = (b.a.x + b.b.x)/2, mz = (b.a.z + b.b.z)/2, open0 = !wc.blocked(mx, mz);
+  var ship = {x: mx - b.left[0]*30, z: mz - b.left[1]*30, yaw: Math.atan2(b.left[0], b.left[1]), speed: 0};
+  for(var i = 0; i < 20*30; i++) B.update(1/30, [ship]);
+  var shut = wc.blocked(mx, mz);
+  for(var j = 0; j < 30*30; j++) B.update(1/30, []);
+  return {n: B.list().length, gap: wbOpts[0].gap, walkClosed: open0, blockedOpen: shut, walkAgain: !wc.blocked(mx, mz)};
+})();
 ISLES = false; out.commons.netOld = wc.net; ISLES = true;
 // the town hall's door: the Town Hall panel for the Commons, no owner controls
 wc.townHall(); out.commons.townHall = calls.townHall.slice();
@@ -520,6 +530,7 @@ class CitiesTest(unittest.TestCase):
         self.assertIn("/api/arena/world/claude-hq@2/assign", c["gets"])
         self.assertEqual(c["townHall"], [["commons", False]])
         self.assertEqual(c["ashore"], [True, True])
+        self.assertEqual(c["bridges"], {"n": 4, "gap": True, "walkClosed": True, "blockedOpen": True, "walkAgain": True})
 
     def test_the_pier(self):
         p = self.out["pier"]

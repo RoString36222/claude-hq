@@ -659,6 +659,7 @@ HQV.hqWorlds.city3d = function(c, w){
     buildLots();
     // arriving: at your own door, or the door of the HQ you just visited; else the plaza's spawn
     var mine = hqs.filter(function(E){ return E.h.isYou; })[0];
+    if(air) air.props(mine).forEach(function(b){ bikes.push(b); });       // air: the helicopters (and your own, by your HQ)
     var back = api.cityReturn && api.cityReturn(), ret = hqs.filter(function(E){ return E.h.userId === back; })[0];
     w.spawn = at(ret || mine); w.spawnFrom = {lobby: at(mine)};
     if(V2){
@@ -730,6 +731,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(bridges && bridges.blockedAt(x, z)) return true;                      // an opening bridge's gap or barrier
     if(sea && !sea.land(x, z)) return true;                                    // the sea: take a boat
     if(civics.length && civicBlocked(x, z)) return true;
+    if(air && air.blocked(x, z)) return true;                              // air: hangars, the tower, the base's fence
     if(fount && Math.hypot(x - fount.g.position.x, z - fount.g.position.z) < fount.R + 0.35) return true;   // the fountain
     if(skate && SP.walkBlocked(x - skate.cx, z - skate.cz)) return true;      // its ramps (on foot or wheels; boards ride them)
     var all = hqs.concat(views);
@@ -757,6 +759,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(!W) return 0;
     if(skate && SP.inPark(x - skate.cx, z - skate.cz)) return skate.y;      // the park's flat pad; the skater adds its ramps
     var dy = decks.length ? HQV.hqCivic.deckAt(decks, x, z) : null;        // a pier's deck, over the water
+    var ay = air ? air.groundAt(x, z) : null; if(ay != null) return ay;    // air: the helipads, the base's apron
     return dy != null ? dy : WD.groundAt(W, x, z);
   }
 
@@ -1743,6 +1746,60 @@ HQV.hqWorlds.city3d = function(c, w){
     return null;
   };
 
+  /* ========== AIR: helicopters, helipads, the air base, the carrier, the jets (games/hqheli.js, games/hqair.js) ==========
+     Everything of theirs is in this block; elsewhere in this file the hooks are single lines marked "// air:". */
+  var air = null, heliGo = null;
+  function airSetup(){
+    if(!HQV.hqAirbase || !HQV.hqheli || !W) return;
+    try { air = HQV.hqAirbase.create(c, S, {W: W, sea: sea, commons: worldId === COMMONS, civics: civics, blocked: blocked, groundY: groundY, night: night}); }
+    catch(e){ air = null; HQV.hqAirbase.err = String((e && e.stack) || e); if(window.console) console.warn("hqair:", e); }
+  }
+  // what a helicopter lands on or runs into here: the ground, the water, every roof (the world's buildings, the HQs,
+  // the civic masses: their camera boxes), the air base and the carrier's deck
+  w.heliFloor = function(x, z){
+    var off = !W || Math.abs(x) > W.half || Math.abs(z) > W.half, y = off ? (sea ? sea.y : 0) : groundY(x, z);
+    if(sea && !off && !sea.land(x, z)) y = Math.max(y, sea.y + 0.3);
+    if(!off){
+      buildingsIn(x, x, z, z).concat(placedIn(x, x, z, z)).forEach(function(b){
+        if(x >= b.min.x && x <= b.max.x && z >= b.min.z && z <= b.max.z && b.max.y > y) y = b.max.y; });
+    }
+    var a = air ? air.floor(x, z) : null;
+    return a != null && a > y ? a : y;
+  };
+  // stepping out of a helicopter that has landed: beside it on land, a roof pad's building's door; never at sea
+  w.heliLand = function(st){
+    if(air) return air.landSpot(st);
+    return st && st.ground && (!sea || sea.land(st.x + 3*Math.cos(st.yaw), st.z - 3*Math.sin(st.yaw))) ? {x: st.x + 3*Math.cos(st.yaw), z: st.z - 3*Math.sin(st.yaw), yaw: st.yaw} : null;
+  };
+  // Flying on: out over the sea toward another island, its City is built while you fly (hq3d's prebuildCity) and you
+  // fly into it once you are nearer it than this one (swapCity, keeping the helicopter: no loading screen); if it
+  // cannot be built that way, HQV.hqTravel.arrive lands you there (the loading screen) as a boat does.
+  w.onHeli = function(h){
+    if(!h || !V2 || !HQV.ocean || landing || !arch) return;
+    var st = h.st, dh = Math.hypot(st.x, st.z);
+    if(!heliGo){
+      if(dh < (island() ? HQV.ocean.COAST_R.island : HQV.ocean.COAST_R.commons) + 150) return;
+      var q = HQV.ocean.nearestIsland(st.x, st.z);
+      if(!q || !worldOk(q.world) || q.shore > 1600) return;
+      heliGo = {world: q.world, x: q.x, z: q.z, d0: q.dist, name: q.name || "the island", built: !!(c.prebuildCity && c.prebuildCity(q.world))};
+      say("Flying on to " + heliGo.name + "…");
+      return;
+    }
+    var dn = Math.hypot(st.x - heliGo.x, st.z - heliGo.z);
+    if(dn > heliGo.d0 + 600){ heliGo = null; return; }                    // turned away: another island, or home
+    if(heliGo.built && dn < dh && c.cityBuilt && c.cityBuilt(heliGo.world)){
+      var G = heliGo; heliGo = null; landing = true;
+      if(c.swapCity && c.swapCity(G.world, {dx: G.x, dz: G.z})){ if(HQV.hqTravel && HQV.hqTravel.markVisited) HQV.hqTravel.markVisited(G.world); }
+      else { landing = false; heliGo = G; G.built = false; }
+      return;
+    }
+    if(!heliGo.built && dn < HQV.ocean.COAST_R.island + 300 && HQV.hqTravel){
+      landing = true; say("Landing on " + heliGo.name + "…");
+      HQV.hqTravel.arrive(heliGo.world, null, travelHooks()).then(function(sp){ if(sp && sp.failed) landing = false; });
+    }
+  };
+  /* ========== end AIR ========== */
+
   // E: a resident's line, a stop's lines, a terminal's trips (and E again cancels a wait)
   w.use = function(p){
     if(!V2 || !p) return false;
@@ -1816,6 +1873,7 @@ HQV.hqWorlds.city3d = function(c, w){
   function citiesSetup(){
     buildCivic(); S.add(civicG);
     setupSea(); bridgesSetup(); setupLife(); buildUi(); statsUi(); setupFerries(); setupBigShips(); setupAir();
+    airSetup();                                                            // air: helipads, the air base, the carrier, jets
     if(worldId === COMMONS) getJson("/api/arena/world/" + COMMONS + "/assign").then(function(rows){
       if(dead || !Array.isArray(rows)) return; assignRows = rows; sig = null; build();
     }, function(){});
@@ -1865,6 +1923,7 @@ HQV.hqWorlds.city3d = function(c, w){
     }
     if(talkL && nowMs > talkL.until){ S.remove(talkL.o); disposeTree(talkL.o); talkL = null; }
     busStep();
+    if(air) air.update(t, dt, k, cam);                                     // air: jets, the radar
     var tp = tripStep();
     fadeTo(tp && (tp.frame === "from" ? NAV.trip && NAV.trip.from === worldId : true) ? tp.fade || 0 : 0);
   }
@@ -1877,6 +1936,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(ndraw){ try { ndraw.dispose(); } catch(e){} }
     if(oc){ try { oc.dispose(); } catch(e){} }
     S.remove(civicG); S.remove(boatG);
+    if(air){ air.destroy(); air = null; }                                  // air:
     ferryPool.forEach(function(F){ F.dispose(); }); ferryPool = []; if(myFerry){ myFerry.dispose(); myFerry = null; }
     if(ferryT){ ferryT.dispose(); ferryT = null; } if(ferryG){ S.remove(ferryG); ferryG = null; }
     bridgesDestroy();
@@ -2129,7 +2189,8 @@ HQV.hqWorlds.city3d = function(c, w){
   w.setTime = function(n){ night = n; S.background = null; paintSky(n); fog.color.set(n ? 0x0f1f30 : 0xb8dcf2);
     hemi.intensity = n ? 1.3 : 2.4; sun.intensity = n ? 0.7 : 2.4; sun.color.set(n ? 0xa9b8ff : 0xfff2dc);
     if(wb) wb.setNight(n); applyTime();
-    civics.forEach(function(B){ B.setNight(n); }); if(oc) oc.setTime(n); };
+    civics.forEach(function(B){ B.setNight(n); }); if(oc) oc.setTime(n);
+    if(air) air.setNight(n); };                                            // air:
   // Fading: in classic the buildings between you and hq3d's orthographic view (as hqbase.js
   // hqCutaway decides it); in every rig mode hq3d passes the occluders to w.setFaded. Switching
   // between the two clears the other's fades. Either way the fade itself eases (fadeStep).

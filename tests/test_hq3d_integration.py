@@ -58,7 +58,8 @@ class LoadOrderAndProtocol(unittest.TestCase):
                          ["engine", "avatar3d", "hq3d", "hqlobby", "hqbase", "hqskate", "world", "worldgeom",
                           "worldbuild", "camrig", "hqhud", "hqcityparts", "hqcity", "hqmerge",
                           # Cities (3.0): the civic kit, residents, traffic, the sea, boats, travel
-                          "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqtravel", "hqvoyage", "hqships", "hqbridges", "hqair", "hqaircraft",
+                          "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqheli", "hqtravel", "hqvoyage", "hqships", "hqbridges",
+                          "hqair", "hqaircraft", "hqairbase",
                           # navigation (3.1): the router, the minimap, the route's chevrons, the Go to panel
                           "hqnav", "hqminimap", "hqroutefx", "hqnavui", "hqcity3d"])
 

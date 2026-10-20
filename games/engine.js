@@ -172,7 +172,9 @@ var ENGINES = {
   // Valley Rally: a turbo four with its whistle, a straight six, a high-revving four
   turbo4: {lo: 34, hi: 158, a: "sawtooth", b: "triangle", ratio: 2.0, cut: 1250, q: 5, gain: 0.05,  whistle: 2300, lope: [11, 0.08]},
   six:    {lo: 30, hi: 140, a: "sawtooth", b: "sawtooth", ratio: 1.5, cut: 1050, q: 6, gain: 0.055},
-  four:   {lo: 38, hi: 176, a: "square",   b: "sawtooth", ratio: 2.0, cut: 1600, q: 4, gain: 0.045, lope: [16, 0.1]}
+  four:   {lo: 38, hi: 176, a: "square",   b: "sawtooth", ratio: 2.0, cut: 1600, q: 4, gain: 0.045, lope: [16, 0.1]},
+  // a helicopter (games/hqheli.js): a low turbine note under the blades' slap
+  rotor:  {lo: 22, hi: 44,  a: "sawtooth", b: "triangle", ratio: 3.0, cut: 420,  q: 2, gain: 0.08,  lope: [14, 0.75], whistle: 3200}
 };
 function engineSound(kind){
   var P = ENGINES[kind] || ENGINES.v8;

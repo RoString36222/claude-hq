@@ -23,6 +23,8 @@ COMMONS = os.path.join(FIX, "claude-hq@2.json.gz")
 ISLAND = os.path.join(FIX, "island@2.json.gz")
 NODE = shutil.which("node")
 ME = "0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c"
+# hqcity3d's LOD hysteresis (m): a civic building out of full view comes back inside CIVIC_NEAR - this
+HYST = float(re.search(r"var HQ_FAR_HYST = ([\d.]+);", open(os.path.join(ROOT, "games", "hqcity3d.js"), encoding="utf-8").read()).group(1))
 
 
 def read(*p):
@@ -187,13 +189,17 @@ out.commons = {world: wc.world(), net: wc.net, tierOpt: wbOpts[0], civic: wc.doo
     I.coast.forEach(function(q){ var d = Math.min.apply(null, docks.map(s => Math.hypot(q[0] - s.x, q[1] - s.z))); if(!best || d > best.d) best = {q: q, d: d}; });
     var r = Math.hypot(best.q[0], best.q[1]), k = (r + 4000)/r; return wc.blocked(best.q[0]*k/100, best.q[1]*k/100); })(),
   plazaOpen: !wc.blocked(3, 9),
-  seaY: wc.sea && wc.sea.y, gets: calls.get.slice()};
+  seaY: wc.sea && wc.sea.y, seaCm: CW.island.sea_cm, gets: calls.get.slice()};
 ISLES = false; out.commons.netOld = wc.net; ISLES = true;
 // the town hall's door: the Town Hall panel for the Commons, no owner controls
 wc.townHall(); out.commons.townHall = calls.townHall.slice();
 // stepping ashore from a boat at a berth lands on the dock, on land
 var berth = wc.sea.docks[0], land = wc.boatLand({x: berth.x, z: berth.z, yaw: berth.yaw});
-out.commons.ashore = land && [wc.sea.land(land.x, land.z), wc.boatLand({x: berth.x + 400, z: berth.z + 400, yaw: 0}) == null];
+// out in the open sea (100 m past the coast vertex farthest from every dock), its bow out to sea: no land in reach
+var openSea = (function(){ var I = CW.island, docks = CW.sites.filter(s => s.kind === "dock" || s.kind === "port"), best = null;
+  I.coast.forEach(function(q){ var d = Math.min.apply(null, docks.map(s => Math.hypot(q[0] - s.x, q[1] - s.z))); if(!best || d > best.d) best = {q: q, d: d}; });
+  var r = Math.hypot(best.q[0], best.q[1]), k = (r + 10000)/r; return {x: best.q[0]*k/100, z: best.q[1]*k/100, yaw: Math.atan2(best.q[0], best.q[1])}; })();
+out.commons.ashore = land && [wc.sea.land(land.x, land.z), wc.boatLand(openSea) == null];
 
 /* ---------- the pier: walked on at its deck, the boats moored in sight beside it ---------- */
 (function(){
@@ -227,7 +233,7 @@ function drawnNow(w, cx, cy, cz){
     if(o.name === "civic:lod") lod = {visible: o.visible, count: o.count, shown: (function(){ var n = 0, m = o.instanceMatrix.array; for(var i = 0; i < o.count; i++) if(m[i*16] !== 0 || m[i*16 + 10] !== 0) n++; return n; })()};
   });
   w.bikes.forEach(function(b){ var vis = !b.inner || b.inner.visible, q = b.g; while(q){ if(!q.visible) vis = false; q = q.parent; } if(vis) props++; });
-  return {full: full.length, farthest: full.length ? Math.max.apply(null, full) : 0, lod: lod, props: props};
+  return {full: full.length, ds: full, farthest: full.length ? Math.max.apply(null, full) : 0, lod: lod, props: props};
 }
 avatar = {x: 0, z: 10};
 frameCam(wc, 0, 4, 18, "chase", 2); out.drawn = {chase: drawnNow(wc, 0, 4, 18)};
@@ -422,7 +428,7 @@ class CitiesTest(unittest.TestCase):
         self.assertEqual(c["boats"], ["jetski", "jetski", "rowboat", "rowboat"])
         self.assertTrue(c["seaBlocked"], "the open sea is not walkable")
         self.assertTrue(c["plazaOpen"])
-        self.assertEqual(c["seaY"], -15)
+        self.assertEqual(c["seaY"], c["seaCm"]/100, "the sea at the doc's sea level")
         self.assertIn("/api/arena/city/commons", c["gets"])
         self.assertIn("/api/arena/world/claude-hq@2/assign", c["gets"])
         self.assertEqual(c["townHall"], [["commons", False]])
@@ -462,8 +468,10 @@ class CitiesTest(unittest.TestCase):
         self.assertEqual(m["lod"]["shown"], d["civics"])
         self.assertEqual(m["props"], 0, "no bikes, boards or boats drawn from up there")
         self.assertGreater(c["props"], 0, "the plaza's bikes are drawn from the street")
-        self.assertEqual(d["back"]["full"], c["full"])
-        self.assertEqual(d["back"]["lod"]["shown"], c["lod"]["shown"])
+        # back from the map: in full again, bar those in the hysteresis band (they wait until nearer)
+        near = len([x for x in c["ds"] if x < 180 - HYST])
+        self.assertEqual(d["back"]["full"], near)
+        (self.assertEqual if near == c["full"] else self.assertGreater)(d["back"]["lod"]["shown"], c["lod"]["shown"])
 
     def test_a_bus_ride(self):
         b = self.out["bus"]

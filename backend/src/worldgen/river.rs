@@ -255,10 +255,11 @@ impl River {
                 let h = t.heights[k] as i64;
                 let h = if s < 0 {
                     h.min((sea - 100 + s * BED_PM / 1000).max(sea - DEPTH_CM))
-                } else if h > floor {
+                } else if h > sea {
+                    // up from a metre over the sea at the water's edge (low land too: no sea shows past the bank)
                     floor + (h - floor) * smoothstep(s * ONE / SLOPE_CM) / ONE
                 } else {
-                    h
+                    h // the sea's own floor, out past the coast
                 };
                 t.heights[k] = h as i32;
             }

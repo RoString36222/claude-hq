@@ -346,28 +346,40 @@ pub(super) fn fit(t: &Terrain, p: &Profile, l: &Lot, w: i64, d: i64) -> Option<P
     (r.iter().all(|&q| inside(q, &poly)) && geom::rise(t, &r) <= p.site_flat_cm).then_some(c)
 }
 
+/// An HQ with both its wings (cm): the box a lot holds square behind its door to be
+/// first choice for the pool, so a long thin or skewed lot still has room for the garage.
+const HQ_BOX_CM: (i64, i64) = (2_800, 1_200);
+
 /// The HQ pool: the profile's count of lots, from its HQ districts (then any) big
-/// and flat enough, nearest the plaza first, ranked and tiered in that order.
+/// and flat enough, those that hold an HQ's box first, nearest the plaza first, ranked
+/// and tiered in that order.
 fn hq_pool(p: &Profile, t: &Terrain, lots: &mut [Lot]) -> Result<(), String> {
     let ok = |l: &Lot| {
         let poly: Vec<P> = l.poly.as_ref().unwrap().iter().map(|q| (q[0], q[1])).collect();
         area2(&poly) >= 2 * p.hq_min_m2 * 10_000 && geom::rise(t, &poly) <= p.site_flat_cm * 2
     };
+    let roomy = |l: &Lot| {
+        let (Some(f), Some(poly)) = (l.front, l.poly.as_ref()) else { return true };
+        let poly: Vec<P> = poly.iter().map(|q| (q[0], q[1])).collect();
+        let (w, d) = HQ_BOX_CM;
+        let c = (l.door[0] - f[0] * (d / 2 + 100) / ONE, l.door[2] - f[1] * (d / 2 + 100) / ONE);
+        rect(c, (f[0], f[1]), w, d).iter().all(|&q| inside(q, &poly))
+    };
     // A personal island's one HQ is the owner's, next to the town hall on the plaza:
     // the nearest lot that holds it, whatever its district. The Commons' 64 prefer
     // their downtown and office districts, nearest first.
     let by_hall = p.hq_lots == 1;
-    let mut cand: Vec<(bool, i64, usize)> = lots
+    let mut cand: Vec<(bool, bool, i64, usize)> = lots
         .iter()
         .enumerate()
         .filter(|(_, l)| ok(l))
-        .map(|(k, l)| (!by_hall && !p.hq_districts.contains(&l.district), l.x * l.x + l.z * l.z, k))
+        .map(|(k, l)| (!by_hall && !p.hq_districts.contains(&l.district), !roomy(l), l.x * l.x + l.z * l.z, k))
         .collect();
     cand.sort();
     if (cand.len() as i64) < p.hq_lots {
         return Err(format!("profile {}: {} lots can hold an HQ, the pool needs {}", p.name, cand.len(), p.hq_lots));
     }
-    let mut pool: Vec<(i64, usize)> = cand[..p.hq_lots as usize].iter().map(|&(_, d, k)| (d, k)).collect();
+    let mut pool: Vec<(i64, usize)> = cand[..p.hq_lots as usize].iter().map(|&(_, _, d, k)| (d, k)).collect();
     pool.sort();
     for (rank, &(_, k)) in pool.iter().enumerate() {
         let l = &mut lots[k];

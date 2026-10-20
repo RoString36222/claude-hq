@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
+use super::noise::ONE;
 use super::profile::{district, Place, Profile};
 use super::rng::{sub, Rng};
 use super::terrain::Terrain;
@@ -297,7 +298,19 @@ impl City {
             l.door[1] = t.height_at(l.door[0], l.door[2]);
         }
         for s in &mut self.sites {
-            s.y = t.height_at(s.x, s.z);
+            let (x, z) = s.foot();
+            s.y = t.height_at(x, z);
+        }
+    }
+}
+
+impl Site {
+    /// Where the site stands for its height: its middle, but a dock's or a port's back (on
+    /// land), since its front half reaches out over the water.
+    pub fn foot(&self) -> (i64, i64) {
+        match self.front {
+            Some(f) if matches!(self.kind, "dock" | "port") => (self.x - f[0] * self.d / 2 / ONE, self.z - f[1] * self.d / 2 / ONE),
+            _ => (self.x, self.z),
         }
     }
 }

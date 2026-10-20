@@ -641,11 +641,14 @@ pub fn outside(p: &Profile, t: &Terrain, roads: &Roads, city: &mut City, river: 
         // outside the city its block is the nearest one
         let block = city.blocks.iter().min_by_key(|b| (dist2((b.x, b.z), c), b.id)).map_or(0, |b| b.id);
         let n = city.sites.iter().filter(|s| s.kind == row.kind).count();
-        city.sites.push(Site {
-            id: format!("{}:{n}", row.kind), kind: row.kind, block, x: c.0, y: t.height_at(c.0, c.1), z: c.1, w: row.w_cm, d: row.d_cm,
+        let mut site = Site {
+            id: format!("{}:{n}", row.kind), kind: row.kind, block, x: c.0, y: 0, z: c.1, w: row.w_cm, d: row.d_cm,
             facing: if f.1 >= 0 { Facing::North } else { Facing::South },
             tier: Some(row.tier), poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()), front: Some([f.0, f.1]), view: None,
-        });
+        };
+        let foot = site.foot();
+        site.y = t.height_at(foot.0, foot.1);
+        city.sites.push(site);
     }
     for (view, kind) in VIEWS {
         if let Some(s) = city.sites.iter_mut().find(|s| s.kind == kind) {

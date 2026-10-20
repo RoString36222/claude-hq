@@ -133,6 +133,7 @@ function draws(W, tier, o){
 out.fx = {
   at1: draws(at1, null, {}),
   at2: draws(at2, 5, {}),
+  noRiver: draws(Object.assign(Object.create(at2), {river: null}), 5, {}),
   isl1: draws(isl, 1, {}),
   isl5: draws(isl, 5, {}),
   river: draws(at2, 5, {river}),
@@ -308,7 +309,8 @@ class MinimapTest(unittest.TestCase):
         self.assertEqual(fx["at1"]["places"], 0)           # @1 has no civic sites
         self.assertGreater(fx["at2"]["places"], 10)        # the Commons' civic sites
         self.assertEqual(fx["at1"]["water"], 0)
-        self.assertEqual(fx["at2"]["water"], 0)
+        self.assertEqual(fx["at2"]["water"], 1)            # the generated river (W.river)
+        self.assertEqual(fx["noRiver"]["water"], 0)
         self.assertEqual(fx["river"]["water"], 1)
         self.assertEqual(fx["riverOnW"]["water"], 1)       # W.river when the host passes none
         self.assertGreaterEqual(fx["at2"]["land"], 1)

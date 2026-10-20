@@ -1,4 +1,4 @@
-/* Claude HQ: the generated world as THREE meshes (Arena City, claude-hq@1).
+/* Claude HQ: the generated world as THREE meshes (Arena City claude-hq@1, organic claude-hq@2 and islands).
  *
  * HQV.worldbuild.create(c, W, opts) -> wb builds the 8 x 8 tiles of games/worldgeom.js in a worker
  * (games/worldbuild-worker.js), or on the main thread in idle slices when no worker can start, and
@@ -9,7 +9,12 @@
  *             shader (fract(worldY / 3.5)), lit at night; faded lots get a screen-door dither
  *   props     instanced trees + lamps per tile (< 300 m); world-wide instanced parked cars, sign plates,
  *             gantry frames and gantry plates (refilled with what is within 300 m; hidden in map mode)
- * Draw calls: <= 8 per tile within 300 m, <= 4 beyond, + 4 world-wide.
+ *   ground    (v2 docs) block pavements, lot / plaza pads and the beach, merged into the tile's terrain mesh
+ *   sea       (island docs) one water plane at Layers.island.sea_cm, its normals rippled by waterPhase(clock):
+ *             a pure function of the clock (cam.time s, else performance.now), so it is frame-rate independent
+ * Tiers: opts.tier / wb.setTier(t) show the world as city tier t shows it (worldgeom view); a tier change rebuilds
+ * only the tiles and products worldgeom.tierDiff names, and a job that finishes at a stale tier is redone.
+ * Draw calls: <= 8 per tile within 300 m, <= 4 beyond, + 4 world-wide (+ 1 sea on an island).
  * HQV.worldbuild.governor is pure (node-tested): frame times -> quality level, pixel ratio, shadows (LOD scale stays fixed).
  * No THREE, no DOM at load time: THREE comes from c.THREE inside create().
  */
@@ -21,6 +26,8 @@ var HQV = root.HQV = root.HQV || {};
 var NEAR = 300, PROPS_NEAR = 300, B0_NEAR = 350, LOD0 = 160, LOD1 = 480, SHADOW_NEAR = 120, HYST = 12;
 var LOD_SCALE = [0.6, 0.8, 1], TREE_DENSITY = [0.5, 0.8, 1], MAX_INFLIGHT = 2;
 var TREE_COL = {pine: [0.17, 0.36, 0.20], round: [0.30, 0.52, 0.24]};
+// the sea plane spans the world three times over; its ripples repeat every WATER_LOOP s (integer wave speeds below)
+var SEA_SPAN = 3, WATER_LOOP = 600, ALL_TIERS = 1e9;
 
 function clamp(v, a, b){ return v < a ? a : (v > b ? b : v); }
 // worldgeom colours are sRGB 0..1; vertex colours are read in linear space
@@ -91,6 +98,15 @@ function lodFor(d, s, cur){
   }
   return want;
 }
+// the water's phase (radians, 0..2 pi) at clock `sec`: every ripple speed is a whole number of turns per WATER_LOOP,
+// so the wrap is seamless, and the phase depends on the clock only (never on frame times)
+function waterPhase(sec){
+  var t = +sec;
+  if(!isFinite(t)) t = 0;
+  return (((t % WATER_LOOP) + WATER_LOOP) % WATER_LOOP)/WATER_LOOP*2*Math.PI;
+}
+function tierOf(t){ return t != null && t !== "" && isFinite(+t) ? Math.floor(+t) : null; }
+function now(){ return root.performance && root.performance.now ? root.performance.now() : Date.now(); }
 function idle(fn){
   if(root.requestIdleCallback) return root.requestIdleCallback(fn, {timeout: 200});
   return setTimeout(function(){ fn({timeRemaining: function(){ return 8; }}); }, 1);
@@ -103,7 +119,9 @@ function create(c, W, opts){
   var quality = opts.quality != null ? clamp(opts.quality|0, 0, 2) : 2, lodScale = LOD_SCALE[quality], shadowsOn = quality > 0;
   var wb = {root: new THREE.Group()}, destroyed = false, nextId = 1, readyLeft = NT*NT;
   wb.root.name = "worldbuild";
-  var U = {uNight: {value: 0}, uFade: {value: [-1, -1, -1, -1, -1, -1, -1, -1]}, uPostUv: {value: new THREE.Vector2(0, 0)}};
+  var U = {uNight: {value: 0}, uFade: {value: [-1, -1, -1, -1, -1, -1, -1, -1]}, uPostUv: {value: new THREE.Vector2(0, 0)}, uWaterT: {value: 0}};
+  // tier: null shows every item (ALL_TIERS in tierDiff); ground and sea only exist in v2 / island docs
+  var tier = tierOf(opts.tier), hasGround = Gm.hasGround(W), seaY = Gm.seaY(W), diffs = {};
   var M = materials();
   var resolveReady, rejectReady;
   wb.ready = new Promise(function(res, rej){ resolveReady = res; rejectReady = rej; });
@@ -183,7 +201,26 @@ function create(c, W, opts){
       sh.fragmentShader = rep(sh.fragmentShader, "emissivemap_fragment", "totalEmissiveRadiance *= vLit * uNight;");
     });
     m.cars = std({roughness: 0.45, metalness: 0.2});
+    if(seaY != null) m.water = waterMat();
     m.frame = new THREE.MeshStandardMaterial({color: 0x8a9096, roughness: 0.5, metalness: 0.5});
+    return m;
+  }
+  // the sea: a plain colour (no vertex colours on the plane); the normal is tilted by a few travelling cosines of the
+  // world position, phase uWaterT (waterPhase), with whole-number speeds so the pattern loops every WATER_LOOP s
+  function waterMat(){
+    var m = new THREE.MeshStandardMaterial({color: 0x23667f, roughness: 0.22, metalness: 0.05});
+    m.onBeforeCompile = function(sh){
+      sh.uniforms.uWaterT = U.uWaterT;
+      sh.vertexShader = rep(sh.vertexShader, "common", "varying vec3 vWPos;");
+      sh.vertexShader = rep(sh.vertexShader, "begin_vertex", "vWPos = (modelMatrix * vec4(position, 1.0)).xyz;");
+      sh.fragmentShader = rep(sh.fragmentShader, "common", "uniform float uWaterT;\nvarying vec3 vWPos;");
+      sh.fragmentShader = rep(sh.fragmentShader, "normal_fragment_maps",
+        "vec2 hqW = vWPos.xz;\n" +
+        "float hqDx = 0.035*cos(hqW.x*0.21 + uWaterT*86.0) + 0.02*cos((hqW.x + hqW.y)*0.37 + uWaterT*124.0);\n" +
+        "float hqDz = 0.035*cos(hqW.y*0.17 - uWaterT*67.0) + 0.02*cos((hqW.x - hqW.y)*0.33 + uWaterT*105.0);\n" +
+        "normal = normalize(normal + (viewMatrix * vec4(-hqDx, 0.0, -hqDz, 0.0)).xyz);");
+    };
+    m.customProgramCacheKey = function(){ return "hq-wb-water"; };
     return m;
   }
   // sign/gantry plates: one atlas, per-instance uv offset (aUvo); aPost vertices use the plain atlas cell
@@ -329,7 +366,13 @@ function create(c, W, opts){
                .sort(function(a, b){ return a.h - b.h; }).map(function(a){ return a.o; });
   }
   function apply(T, m){
-    if(m.terrain){ set(T, "terrain", mesh(m.terrain, M.terrain, T)); T.lods = m.lods || null; if(T.m.terrain) T.m.terrain.userData.tile = T.tx + "," + T.tz; }
+    if(m.ground) T.ground = m.ground;
+    if(m.terrain){ T.terrain = hasGround ? m.terrain : null; T.lods = m.lods || null; }
+    // v2 ground rides in the terrain mesh (no extra draw call); a @1 tile keeps its terrain buffers as they came
+    if(m.terrain || (m.ground && T.terrain)){
+      set(T, "terrain", mesh(hasGround ? mergeGeo([T.terrain, T.ground]) : m.terrain, M.terrain, T));
+      if(T.m.terrain) T.m.terrain.userData.tile = T.tx + "," + T.tz;
+    }
     if(m.roads){
       set(T, "asphalt", mesh(m.roads.asphalt, M.asphalt, T));
       set(T, "marks", mesh(m.roads.marks, M.marks, T));
@@ -345,12 +388,13 @@ function create(c, W, opts){
         return {yaw: (o.x*7.13 + o.z*3.71) % 6.283, sx: s*(pine ? 0.75 : 1.15), sy: s*(pine ? 1.3 : 0.85), sz: s*(pine ? 0.75 : 1.15), c: c};
       }, T, "trees");
       instanced(P.lamp, M.lamps, m.props.lamps, function(o){ return {yaw: o.yaw}; }, T, "lamps");
+      T.pp = {parked: m.props.parked, signs: m.props.signs, gantries: m.props.gantries};
       if(!T.propsIn){
         T.propsIn = true;
         world.parked = world.parked.concat(m.props.parked);
         world.signs = world.signs.concat(m.props.signs);
         world.gantries = world.gantries.concat(m.props.gantries);
-      }
+      } else world.stale = true;   // a tier change: the world-wide lists are rebuilt once every tile's props are in
       applyDensity(T);
     }
     if(T.ylo < Infinity){ T.box.min.y = T.ylo - 1; T.box.max.y = T.yhi + 1; }
@@ -415,6 +459,19 @@ function create(c, W, opts){
     world.meshes.plates = wwMesh(plateGeo(6.0, 1.125, 4.95, 0.25, false, cell), plateMat, world.gantries.length, true);
     world.refillAt = null;
   }
+  // the world-wide props again, from every tile's current props (after a tier change)
+  function rebuildWorldProps(){
+    Object.keys(world.meshes).forEach(function(k){ var im = world.meshes[k]; if(im){ wb.root.remove(im); im.geometry.dispose(); if(im.dispose) im.dispose(); } });
+    if(world.plateMat) world.plateMat.dispose();
+    if(world.tex && world.tex.t) world.tex.t.dispose();
+    world.parked = []; world.signs = []; world.gantries = [];
+    tiles.forEach(function(T){
+      if(!T.pp) return;
+      world.parked = world.parked.concat(T.pp.parked); world.signs = world.signs.concat(T.pp.signs); world.gantries = world.gantries.concat(T.pp.gantries);
+    });
+    world.meshes = {}; world.built = false; world.stale = false;
+    buildWorldProps();
+  }
   function refillWorld(cx, cz, map){
     var mm = world.meshes;
     if(!mm.parked) return;
@@ -447,10 +504,26 @@ function create(c, W, opts){
 
   /* ----- jobs: worker first, main thread in idle slices as the fallback ----- */
   var worker = null, workerUp = false, useWorker = false, queue = [], inflight = {}, nIn = 0, idleOn = false;
-  function done(T, m){
+  // the tiles (per product) that differ between two tiers, cached per pair
+  function diffOf(a, b){
+    var k = a + ">" + b;
+    return diffs[k] || (diffs[k] = Gm.tierDiff(W, a == null ? ALL_TIERS : a, b == null ? ALL_TIERS : b));
+  }
+  var PRODUCT = {terrain: "terrain", roads: "roads", ground: "ground", buildings0: "buildings", buildings1: "buildings", props: "props"};
+  function markDirty(T, p){ (T.dirty = T.dirty || {})[p] = true; }
+  function done(T, m, job){
     T.pending = false;
     if(destroyed) return;
     apply(T, m);
+    var jt = job ? job.tier : tier, key = T.tx + "," + T.tz;
+    if(jt !== tier){
+      // built at a tier that is no longer shown: redo whatever this tile shows differently now
+      var d = diffOf(jt, tier);
+      Object.keys(d).forEach(function(p){ if(d[p].indexOf(key) >= 0) markDirty(T, p); });
+    } else if(T.dirty){
+      Object.keys(PRODUCT).forEach(function(k){ if(m[k] && (k !== "buildings1" || m.buildings0 || !T.b0)) delete T.dirty[PRODUCT[k]]; });
+      if(!Object.keys(T.dirty).length) T.dirty = null;
+    }
     if(T.initial){
       T.initial = false;
       if(--readyLeft === 0){ buildWorldProps(); resolveReady(wb); }
@@ -466,7 +539,7 @@ function create(c, W, opts){
     if(!job) return;
     delete inflight[m.id]; nIn--;
     if(m.op === "error"){ toMain("worker job: " + m.message, job); return; }
-    done(job.T, m);
+    done(job.T, m, job);
     pump();
   }
   // move everything to the main thread (the worker died or cannot build)
@@ -499,7 +572,7 @@ function create(c, W, opts){
     if(useWorker){
       if(!workerUp) return false;
       inflight[job.id] = job; nIn++;
-      try { worker.postMessage({op: "tile", id: job.id, tx: job.tx, tz: job.tz, lods: job.lods, want: job.want}); }
+      try { worker.postMessage({op: "tile", id: job.id, tx: job.tx, tz: job.tz, lods: job.lods, want: job.want, tier: job.tier}); }
       catch(e){ toMain("post " + e.message); }
       return true;
     }
@@ -521,14 +594,14 @@ function create(c, W, opts){
         var job = queue.shift(), m;
         n++;
         try { m = Gm.buildTile(W, job); } catch(err){ job.T.pending = false; warn(err); fail(err); continue; }
-        done(job.T, m);
+        done(job.T, m, job);
       }
       pump();
     });
   }
   function request(T, want, lods){
     T.pending = true;
-    queue.push({id: nextId++, T: T, tx: T.tx, tz: T.tz, lods: lods, want: want});
+    queue.push({id: nextId++, T: T, tx: T.tx, tz: T.tz, lods: lods, want: want, tier: tier});
   }
 
   /* ----- per frame ----- */
@@ -571,9 +644,13 @@ function create(c, W, opts){
       // what this tile should be built at
       var lods = wantLods(T, x, z, map), b0 = !map && d < B0_NEAR*lodScale;
       if(!T.pending){
-        var want = [];
-        if(!same(lods, T.lods)) want.push("terrain");
-        if(b0 && !T.b0) want.push("buildings0");
+        var want = [], dirty = T.dirty || {};
+        if(!same(lods, T.lods) || dirty.terrain) want.push("terrain");
+        if(dirty.roads) want.push("roads");
+        if(dirty.ground && hasGround) want.push("ground");
+        if(dirty.buildings) want.push("buildings1");
+        if((b0 && !T.b0) || (dirty.buildings && T.b0)) want.push("buildings0");
+        if(dirty.props) want.push("props");
         if(want.length) req.push({T: T, want: want, lods: lods, d: d});
       }
       if(!b0 && T.b0 && d > 2*B0_NEAR){ drop(T, "body0"); drop(T, "win0"); T.b0 = false; }   // free far detail
@@ -598,15 +675,35 @@ function create(c, W, opts){
     // requests: nearest first
     req.sort(function(a, b){ return a.d - b.d; }).forEach(function(r){ if(!r.T.pending) request(r.T, r.want, r.lods); });
     pump();
-    // world-wide props within 300 m (refill when the camera moved 15 m or the mode changed)
+    // world-wide props within 300 m (refill when the camera moved 15 m or the mode changed); after a tier change
+    // they are rebuilt once no tile still owes its props
+    if(world.built && world.stale && tiles.every(function(T){ return !(T.dirty && T.dirty.props); })){ rebuildWorldProps(); world.refillAt = null; }
     var rf = world.refillAt;
     if(world.built && (!rf || rf.map !== map || Math.abs(rf.x - x) > 15 || Math.abs(rf.z - z) > 15)) refillWorld(x, z, map);
     ["parked", "signs", "frames", "plates"].forEach(function(k){
       var im = world.meshes[k];
       if(im && im.visible && im.count > 0){ dc++; tri += tris(im); }
     });
+    if(sea){
+      U.uWaterT.value = waterPhase(isFinite(+cam.time) && cam.time != null ? +cam.time : now()/1000);
+      sea.visible = !fr || fr.intersectsObject(sea);
+      if(sea.visible){ dc++; tri += tris(sea); }
+    }
     stats = {drawCalls: dc, triangles: Math.round(tri), tiles: nt, pending: queue.length + nIn, worker: useWorker};
   };
+  // show the world as city tier t: only the tiles (and products) tierDiff names are rebuilt; -> how many tiles
+  wb.setTier = function(t){
+    t = tierOf(t);
+    if(destroyed || t === tier) return 0;
+    var d = diffOf(tier, t), n = {};
+    tier = t;
+    tiles.forEach(function(T){
+      var key = T.tx + "," + T.tz;
+      Object.keys(d).forEach(function(p){ if(d[p].indexOf(key) >= 0){ markDirty(T, p); n[key] = 1; } });
+    });
+    return Object.keys(n).length;
+  };
+  wb.tier = function(){ return tier; };
   wb.setNight = function(on){ U.uNight.value = on ? 1 : 0; };
   wb.setFaded = function(ids){
     var v = U.uFade.value, k = 0;
@@ -624,6 +721,7 @@ function create(c, W, opts){
     queue = []; inflight = {};
     tiles.forEach(function(T){ Object.keys(T.m).forEach(function(k){ var me = T.m[k]; if(me && !me.isInstancedMesh && me.geometry) me.geometry.dispose(); if(me && me.isInstancedMesh && me.dispose) me.dispose(); }); });
     Object.keys(world.meshes).forEach(function(k){ var im = world.meshes[k]; if(im){ im.geometry.dispose(); if(im.dispose) im.dispose(); } });
+    if(sea) sea.geometry.dispose();
     Object.keys(proto).forEach(function(k){ proto[k].dispose(); });
     Object.keys(M).forEach(function(k){ M[k].dispose(); });
     if(world.plateMat) world.plateMat.dispose();
@@ -632,17 +730,29 @@ function create(c, W, opts){
     fail(new Error("worldbuild destroyed"));
   };
 
-  // first pass: every tile at lod 2 with roads, far buildings and props, nearest the centre first
+  // the sea: one plane at sea level, SEA_SPAN times the world across
+  var sea = null;
+  if(seaY != null){
+    var span = SEA_SPAN*NT*TILE;
+    sea = new THREE.Mesh(new THREE.PlaneGeometry(span, span, 1, 1), M.water);
+    sea.name = "sea"; sea.rotation.x = -Math.PI/2; sea.position.y = seaY; sea.receiveShadow = true;
+    sea.updateMatrix(); sea.matrixAutoUpdate = false;
+    wb.root.add(sea);
+  }
+  wb.sea = sea;
+
+  // first pass: every tile at lod 2 with roads, far buildings and props (and the v2 ground), nearest the centre first
   tiles.slice().sort(function(a, b){
     return Math.hypot(a.x0 + TILE/2, a.z0 + TILE/2) - Math.hypot(b.x0 + TILE/2, b.z0 + TILE/2);
   }).forEach(function(T){
-    request(T, ["terrain", "roads", "buildings1", "props"], [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]);
+    request(T, hasGround ? ["terrain", "roads", "ground", "buildings1", "props"] : ["terrain", "roads", "buildings1", "props"],
+            [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]);
   });
   startWorker();
   pump();
   return wb;
 }
 
-HQV.worldbuild = {create: create, governor: governor, mergeGeo: mergeGeo, lodFor: lodFor,
+HQV.worldbuild = {create: create, governor: governor, mergeGeo: mergeGeo, lodFor: lodFor, waterPhase: waterPhase,
                   LIMITS: {near: NEAR, props: PROPS_NEAR, b0: B0_NEAR, lod0: LOD0, lod1: LOD1, shadow: SHADOW_NEAR}};
 })();

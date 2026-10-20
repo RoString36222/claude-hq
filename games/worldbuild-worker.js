@@ -1,7 +1,8 @@
 /* Claude HQ: builds world tiles off the main thread (classic worker; see games/worldbuild.js).
  *   -> {op:"init", W}                                        <- {op:"ready", hash}
- *   -> {op:"tile", id, tx, tz, lods, want:[...]}             <- {op:"tile", id, tx, tz, terrain?, roads?, buildings0?, buildings1?, props?}
+ *   -> {op:"tile", id, tx, tz, lods, want:[...], tier?}      <- {op:"tile", id, tx, tz, tier?, terrain?, roads?, ground?, buildings0?, buildings1?, props?}
  *                                                            <- {op:"error", id, message}
+ * `tier` builds the tile as that city tier shows the world (HQV.worldgeom.view; each tier's view is cached here).
  * Typed arrays are transferred back. Nothing here leaves the machine.
  */
 importScripts("/games/world.js", "/games/worldgeom.js");

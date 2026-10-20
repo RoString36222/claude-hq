@@ -509,7 +509,7 @@ fn fake_city_arena() -> (String, Seen) {
             let mut parts = head.lines().next().unwrap_or("").split(' ');
             let (method, path) = (parts.next().unwrap_or("").to_string(), parts.next().unwrap_or("").to_string());
             s2.lock().unwrap().push((method, path.clone(), hdr("authorization"), serde_json::from_slice(&body).unwrap_or(Value::Null)));
-            let known = ["/v1/city/", "/v1/market/", "/v1/archipelago"].iter().any(|p| path.starts_with(p));
+            let known = ["/v1/city/", "/v1/market/", "/v1/archipelago", "/v1/rail"].iter().any(|p| path.starts_with(p));
             let (status, out) = if path.starts_with(&format!("/v1/city/{}", HIDDEN)) || !known {
                 ("404 Not Found", json!({"detail": "no such city"}).to_string())
             } else {
@@ -544,13 +544,14 @@ fn city_market_and_archipelago_gets_are_proxied_with_the_device_token() {
         (format!("/api/arena/market/{}", OWNER), format!("/v1/market/{}", OWNER)),
         ("/api/arena/market/commons".to_string(), "/v1/market/commons".to_string()),
         ("/api/arena/archipelago".to_string(), "/v1/archipelago".to_string()),
+        ("/api/arena/rail".to_string(), "/v1/rail".to_string()),
     ] {
         assert_eq!(get_json(&srv, &route), (200, json!({"ok": true, "path": upstream})), "{route}");
     }
     // A city hidden from the caller: the Arena's 404 passes through, as "error".
     assert_eq!(get_json(&srv, &format!("/api/arena/city/{}", HIDDEN)), (404, json!({"detail": "no such city", "error": "no such city"})));
     let s = seen.lock().unwrap();
-    assert_eq!(s.len(), 6);
+    assert_eq!(s.len(), 7);
     assert!(s.iter().all(|(m, _, auth, body)| m == "GET" && auth == "Bearer dev-token" && body.is_null()));
 }
 
@@ -586,6 +587,27 @@ fn city_and_market_posts_forward_only_the_allowlisted_body() {
         cases.iter().map(|(a, b)| ("POST".to_string(), format!("/v1/city/{}/{}", OWNER, a), b.clone())).collect();
     want.push(("POST".into(), "/v1/market/commons/trade".into(), trade));
     assert_eq!(got, want);
+    assert!(s.iter().all(|x| x.2 == "Bearer dev-token"));
+}
+
+#[test]
+fn rail_build_is_proxied_with_only_the_world_id() {
+    let srv = serve();
+    let (base, seen) = fake_city_arena();
+    srv.app.save_link(&json!({"token": "dev-token", "url": base})).unwrap();
+    let isl = format!("user:{}@2", OWNER);
+    let body = json!({"to": isl, "sessionId": "s1", "path": "/Users/me/secret"}).to_string();
+    assert_eq!(post(&srv, "/api/arena/rail/build", body.as_bytes(), "", true), (200, json!({"ok": true, "path": "/v1/rail/build"})));
+    assert_eq!(post(&srv, "/api/arena/rail/build", b"{}", "", true).0, 200);
+    for bad in [r#"{"to":"claude-hq@1"}"#, r#"{"to":"user:../admin@2"}"#, r#"{"to":7}"#] {
+        assert_eq!(post(&srv, "/api/arena/rail/build", bad.as_bytes(), "", true).0, 400, "{bad}");
+    }
+    assert_eq!(post(&srv, "/api/arena/rail/build", br#"{"to":"claude-hq@2"}"#, "", false).0, 403, "CSRF gate");
+    assert_eq!(post(&srv, "/api/arena/rail", b"{}", "", true).0, 404, "the list is GET only");
+    let s = seen.lock().unwrap();
+    let got: Vec<(String, String, Value)> = s.iter().map(|(m, p, _, b)| (m.clone(), p.clone(), b.clone())).collect();
+    assert_eq!(got, vec![("POST".to_string(), "/v1/rail/build".to_string(), json!({"to": isl})),
+                         ("POST".to_string(), "/v1/rail/build".to_string(), json!({}))]);
     assert!(s.iter().all(|x| x.2 == "Bearer dev-token"));
 }
 

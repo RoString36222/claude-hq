@@ -727,6 +727,7 @@ HQV.hqWorlds.city3d = function(c, w){
   function blocked(x, z){
     if(!W) return true;
     if(WD.blockedAt(W, x, z)) return true;
+    if(bridges && bridges.blockedAt(x, z)) return true;                      // an opening bridge's gap or barrier
     if(sea && !sea.land(x, z)) return true;                                    // the sea: take a boat
     if(civics.length && civicBlocked(x, z)) return true;
     if(fount && Math.hypot(x - fount.g.position.x, z - fount.g.position.z) < fount.R + 0.35) return true;   // the fountain
@@ -1219,6 +1220,30 @@ HQV.hqWorlds.city3d = function(c, w){
     voyEl.children[2].firstChild.style.width = (Math.max(0, Math.min(1, tt/V.R.T))*100).toFixed(1) + "%";
     voyEl.children[3].textContent = tt < 0 ? "E: get off before it sails" : (c.held && c.held("Space")) ? "Full ahead!" : "Hold Space: full ahead · drag to look around";
   }
+
+  /* ---- opening bridges (games/hqbridges.js) ----
+     The bridges over the river open for the ferries: worldbuild leaves their decks over the water out (opts.gap) and
+     hqbridges draws the approach and the moving spans; the ferries' poses (the pool and yours) drive them, blocked()
+     keeps you and your car off a gap, and traffic.js cars brake at a lowered barrier (its obstacles). */
+  var bridges = null;
+  function bridgesSetup(){
+    if(!HQV.hqBridges || !W || !W.river) return;
+    try { bridges = HQV.hqBridges.create(c, W, S, {tier: tier}); w.bridges = bridges; } catch(e){ bridges = null; }
+  }
+  function bridgesStep(dt){
+    if(!bridges) return;
+    var ships = [];
+    ferryPool.concat(myFerry ? [myFerry] : []).forEach(function(F){
+      var p = F.g.position, v = 0;
+      if(!F.g.visible){ F.brPos = null; return; }
+      if(F.brPos && dt > 0) v = Math.hypot(p.x - F.brPos.x, p.z - F.brPos.z)/dt;
+      F.brPos = {x: p.x, z: p.z};
+      ships.push({x: p.x, z: p.z, yaw: F.g.rotation.y, speed: v < 200 ? v : 0});
+    });
+    bridges.update(dt, ships);
+  }
+  function bridgesDestroy(){ if(bridges){ try { bridges.dispose(); } catch(e){} bridges = null; w.bridges = null; } }
+  /* ---- end opening bridges ---- */
   // a boat that reaches another island lands you on its dock; the wake behind yours
   var boatNow = null;
   w.onBoat = function(b){
@@ -1314,7 +1339,7 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   function citiesSetup(){
     buildCivic(); S.add(civicG);
-    setupSea(); setupLife(); buildUi(); statsUi(); setupFerries();
+    setupSea(); bridgesSetup(); setupLife(); buildUi(); statsUi(); setupFerries();
     if(worldId === COMMONS) getJson("/api/arena/world/" + COMMONS + "/assign").then(function(rows){
       if(dead || !Array.isArray(rows)) return; assignRows = rows; sig = null; build();
     }, function(){});
@@ -1350,6 +1375,7 @@ HQV.hqWorlds.city3d = function(c, w){
     }
     if(tsim && tview){
       var obs = boatNow ? [] : [{x: me0.x, z: me0.z, r: 1}];
+      if(bridges) obs = obs.concat(bridges.obstacles());
       try { tview.update(tsim.at(nowMs, {x: cam ? cam.x : me0.x, z: cam ? cam.z : me0.z}, 320, obs), nowMs); } catch(e){}
     }
     if(ndraw && cam){
@@ -1377,6 +1403,7 @@ HQV.hqWorlds.city3d = function(c, w){
     S.remove(civicG); S.remove(boatG);
     ferryPool.forEach(function(F){ F.dispose(); }); ferryPool = []; if(myFerry){ myFerry.dispose(); myFerry = null; }
     if(ferryT){ ferryT.dispose(); ferryT = null; } if(ferryG){ S.remove(ferryG); ferryG = null; }
+    bridgesDestroy();
   }
 
   /* ---------- navigation (HQ 3.1): the minimap, the Go to panel, the route banner, chevrons and the pillar ---------- */
@@ -1542,7 +1569,7 @@ HQV.hqWorlds.city3d = function(c, w){
   function setup(doc){
     if(dead) throw new Error("world unavailable: closed");     // hq3d gave up on us (timeout): build nothing
     W = doc; indexBuildings();
-    wb = HQV.worldbuild.create(c, W, V2 ? {scene: S, quality: 2, tier: tier} : {scene: S, quality: 2});
+    wb = HQV.worldbuild.create(c, W, V2 ? {scene: S, quality: 2, tier: tier, gap: !!(HQV.hqBridges && W.river)} : {scene: S, quality: 2});
     S.add(wb.root); S.add(staticG); S.add(hqG);
     buildStatic();
     if(V2) citiesSetup();
@@ -1667,6 +1694,7 @@ HQV.hqWorlds.city3d = function(c, w){
     cars.forEach(function(cr){ carStep(cr, dt, k); });
     if(V2) citiesUpdate(t, dt, k, cam);
     if(V2) ferryStep(t, dt);
+    if(V2) bridgesStep(dt);
     navStep(dt, cam);
   };
   w.setTime(night);

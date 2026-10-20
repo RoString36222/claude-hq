@@ -14,7 +14,8 @@
  *             a pure function of the clock (cam.time s, else performance.now), so it is frame-rate independent
  *   river     (island docs with Layers.river) one mesh for the world: worldgeom riverWater, calm water RIVER_LIFT over
  *             sea level in the mounted ocean's calm material (games/ocean.js riverMaterial()), else the plane's
- *   bridges   per tile, one mesh of deck slabs, fascias, abutments and railings (worldgeom roadTile's `bridge`)
+ *   bridges   per tile, one mesh of deck slabs, fascias, abutments and railings (worldgeom roadTile's `bridge`);
+ *             opts.gap leaves every bridge's pieces over the water out (games/hqbridges.js draws opening spans there)
  * Tiers: opts.tier / wb.setTier(t) show the world as city tier t shows it (worldgeom view); a tier change rebuilds
  * only the tiles and products worldgeom.tierDiff names, and a job that finishes at a stale tier is redone.
  * Draw calls: <= 8 per tile within 300 m, <= 4 beyond, + 4 world-wide (+ 1 sea on an island); a river adds 1 world-wide
@@ -578,7 +579,7 @@ function create(c, W, opts){
     if(useWorker){
       if(!workerUp) return false;
       inflight[job.id] = job; nIn++;
-      try { worker.postMessage({op: "tile", id: job.id, tx: job.tx, tz: job.tz, lods: job.lods, want: job.want, tier: job.tier}); }
+      try { worker.postMessage({op: "tile", id: job.id, tx: job.tx, tz: job.tz, lods: job.lods, want: job.want, tier: job.tier, gap: job.gap}); }
       catch(e){ toMain("post " + e.message); }
       return true;
     }
@@ -607,7 +608,9 @@ function create(c, W, opts){
   }
   function request(T, want, lods){
     T.pending = true;
-    queue.push({id: nextId++, T: T, tx: T.tx, tz: T.tz, lods: lods, want: want, tier: tier});
+    var job = {id: nextId++, T: T, tx: T.tx, tz: T.tz, lods: lods, want: want, tier: tier};
+    if(opts.gap) job.gap = true;
+    queue.push(job);
   }
 
   /* ----- per frame ----- */

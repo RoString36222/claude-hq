@@ -16,8 +16,15 @@
  *   horizon(cx, cz, out)         per-frame impostor placement for a camera at (cx, cz): every other
  *                                island at its bearing, pulled in to HORIZON m (scaled to keep its size
  *                                in view) when further; -> count, out = [x, z, scale, yaw, tier] per island
- *   seaOf(doc, wave)             a WorldDoc v2 (layers.island) as hqboat's sea: {land, docks, y, wave}
+ *   seaOf(doc, wave, tier)       a WorldDoc v2 (layers.island) as hqboat's sea: {land, docks, y, wave, boat}.
+ *                                land(x, z) is the coast polygon minus the river's water (layers.river.poly), plus
+ *                                the bridge decks over it (edges with bridge: true, within half their width; with
+ *                                `tier`, only those open at that tier): you walk and drive to the bank or over a
+ *                                bridge. boat = the same sea for a hull: a bridge deck is not land to it (it
+ *                                passes under), everything else is sea.land as it is then (piers added by the City)
+ *   riverOf(doc)                 the river's water polygon (metres) and its bridge decks, or null
  *   wakePush / wakeStrip         a boat's wake as a trail of points, and the strip that draws it
+ * material()                    the sea material of the mounted ocean (null when none is), for other water at sea level
  * mount(c, parent) -> {g, step(t, dt, cam), setTime(night), setSun(dir), wake(boats), dispose, drawCalls}: a polar-grid
  * sea plane that follows the camera (a shader: waves, fresnel sky, sun or moon glint, day/night tint,
  * the scene's fog), island impostors as seven InstancedMeshes (one silhouette, a skyline per tier and one
@@ -140,7 +147,7 @@ var BERTH_OFF = 2.4;
 function docksOf(doc, land){
   var L = (doc && doc.layers) || {}, I = L.island || {}, ids = {}, out = [];
   (I.docks || []).forEach(function(id){ ids[id] = 1; });
-  land = land || landTest([coastOf(doc)]);
+  land = land || landOf(doc);
   (L.sites || []).forEach(function(s){
     if(!s || !ids[s.id]) return;
     var pier = HQV.hqCivic && HQV.hqCivic.pierOf ? HQV.hqCivic.pierOf(s)[0] : null;
@@ -157,14 +164,55 @@ function docksOf(doc, land){
   });
   return out;
 }
+// the river (layers.river, cm) in metres: {poly, inWater(x, z), decks: [{a: [x, z], b: [x, z], h (half width), y, tier}],
+// onDeck(x, z, tier)} -- or null when the doc has none. A deck is a bridge edge's segments: within h of one is on it.
+function riverOf(doc){
+  var L = (doc && doc.layers) || {}, R = L.river;
+  if(!R || !Array.isArray(R.poly) || R.poly.length < 3) return null;
+  var poly = R.poly.filter(function(p){ return Array.isArray(p) && num(p[0]) != null && num(p[1]) != null; })
+                   .map(function(p){ return [+p[0]/100, +p[1]/100]; });
+  if(poly.length < 3) return null;
+  var inWater = landTest([poly]), decks = [];
+  ((L.roads && L.roads.edges) || []).forEach(function(e){
+    if(!e || !e.bridge || !Array.isArray(e.points)) return;
+    var h = (+e.width || 0)/200, t = e.min_tier != null && isFinite(+e.min_tier) ? +e.min_tier : 0;
+    for(var i = 0; i + 1 < e.points.length; i++){
+      var p = e.points[i], q = e.points[i + 1];
+      decks.push({a: [(+p[0] || 0)/100, (+p[2] || 0)/100], b: [(+q[0] || 0)/100, (+q[2] || 0)/100], h: h, y: (+p[1] || 0)/100, tier: t});
+    }
+  });
+  function onDeck(x, z, tier){
+    for(var i = 0; i < decks.length; i++){
+      var d = decks[i]; if(tier != null && d.tier > tier) continue;
+      var ax = d.a[0], az = d.a[1], dx = d.b[0] - ax, dz = d.b[1] - az, L2 = dx*dx + dz*dz;
+      var u = L2 > 0 ? Math.max(0, Math.min(1, ((x - ax)*dx + (z - az)*dz)/L2)) : 0;
+      if(Math.hypot(x - ax - dx*u, z - az - dz*u) <= d.h) return true;
+    }
+    return false;
+  }
+  return {poly: poly, inWater: inWater, decks: decks, onDeck: onDeck};
+}
 function coastOf(doc){
   var I = ((doc && doc.layers) || {}).island || {};
   return (I.coast || []).map(function(p){ return [(+p[0] || 0)/100, (+p[1] || 0)/100]; });
 }
-// -> hqboat's sea for this island: {land, docks, y, wave}
-function seaOf(doc, wave){
-  var I = ((doc && doc.layers) || {}).island || {}, land = landTest([coastOf(doc)]);
-  return {land: land, docks: docksOf(doc, land), y: (+I.sea_cm || 0)/100, wave: wave || waveAt};
+// land(x, z) of a doc: its coast, less the river's water, plus the bridge decks (open at `tier`, or every one)
+function landOf(doc, tier, R){
+  var coast = landTest([coastOf(doc)]);
+  R = R === undefined ? riverOf(doc) : R;
+  if(!R) return coast;
+  return function(x, z){ return coast(x, z) && (!R.inWater(x, z) || R.onDeck(x, z, tier)); };
+}
+// -> hqboat's sea for this island: {land, docks, y, wave, boat}; tier (optional): the bridges open at that city tier
+function seaOf(doc, wave, tier){
+  var I = ((doc && doc.layers) || {}).island || {}, R = riverOf(doc);
+  tier = tier != null && isFinite(+tier) ? +tier : null;
+  var land = landOf(doc, tier, R), sea = {land: land, docks: docksOf(doc, land), y: (+I.sea_cm || 0)/100, wave: wave || waveAt};
+  // the hull's view: sea.land as it is when asked (the City adds its piers to it), but a bridge deck over the water
+  // is open water underneath
+  sea.boat = {docks: sea.docks, y: sea.y, wave: sea.wave,
+              land: function(x, z){ return sea.land(x, z) && !(R && R.inWater(x, z) && R.onDeck(x, z, tier)); }};
+  return sea;
 }
 
 /* ---------- wakes ---------- */
@@ -284,9 +332,13 @@ function skylineGeo(THREE, t){
   return pieces(THREE, list);
 }
 
+// the sea material of the ocean mounted now (null when none is): other water at sea level (the river, games/worldbuild.js)
+// wears it, so it shows exactly the waves, tint and glint of the sea it meets
+var LIVE = {mat: null};
 function mount(c, parent){
   var THREE = c.THREE, g = new THREE.Group(); g.name = "ocean"; parent.add(g);
   var seaM = seaMaterial(THREE), sea = new THREE.Mesh(seaGeo(THREE), seaM); sea.frustumCulled = false; sea.renderOrder = -10; g.add(sea);
+  LIVE.mat = seaM;
   var impM = impostorMaterial(THREE), cap = 0, sil = null, sky = [], buf = null, seen = -1;
   var night = 0, nightGoal = 0, tmp = {d: new THREE.Color(), n: new THREE.Color()};
   function tint(){
@@ -368,6 +420,7 @@ function mount(c, parent){
     dispose: function(){
       parent.remove(g);
       g.traverse(function(m){ if(m.geometry) m.geometry.dispose(); });
+      if(LIVE.mat === seaM) LIVE.mat = null;
       seaM.dispose(); impM.dispose(); wakeM.dispose();
     }};
   tint();
@@ -376,7 +429,8 @@ function mount(c, parent){
 
 HQV.ocean = {WAVES: WAVES, COAST_R: COAST_R, SKY_R: SKY_R, ARRIVE: ARRIVE, HORIZON: HORIZON, WAKE: WAKE,
   waveAt: waveAt, waveGlsl: waveGlsl, setArchipelago: setArchipelago, nearestIsland: nearestIsland, horizon: horizon,
-  inPoly: inPoly, landTest: landTest, coastOf: coastOf, docksOf: docksOf, seaOf: seaOf,
+  inPoly: inPoly, landTest: landTest, coastOf: coastOf, docksOf: docksOf, seaOf: seaOf, riverOf: riverOf,
+  material: function(){ return LIVE.mat; },
   wakePush: wakePush, wakeStrip: wakeStrip, mount: mount,
   current: function(){ return {world: ARCH.cur, x: ARCH.ox, z: ARCH.oz, count: ARCH.list.length}; }};
 })();

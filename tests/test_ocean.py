@@ -129,6 +129,14 @@ for(var k = 0; k < 60*400; k++){
 }
 out.trip = {events: events, streamed: streamed, dock: st.dock, at: [st.x, st.z], goal: goal, t: t, maxFromHome: maxShore,
             beached: events.some(function(e){ return e[1] === "beach"; })};
+
+// the river (tests/fixtures/river_island.json): its water is not land, a bridge deck is (but not to a hull), only once open
+var rdoc = JSON.parse(fs.readFileSync(root + "/tests/fixtures/river_island.json", "utf8")), rs = O.seaOf(rdoc), RV = O.riverOf(rdoc);
+var mid = rdoc.layers.river.center[40], be = rdoc.layers.roads.edges.filter(function(e){ return e.bridge; })[0], bp = be.points[be.points.length >> 1];
+out.river = {water: rs.land(mid[0]/100, mid[1]/100), boatWater: rs.boat.land(mid[0]/100, mid[1]/100), inWater: RV.inWater(mid[0]/100, mid[1]/100),
+             deck: rs.land(bp[0]/100, bp[2]/100), boatDeck: rs.boat.land(bp[0]/100, bp[2]/100),
+             closed: O.seaOf(rdoc, null, (be.min_tier || 0) - 1).land(bp[0]/100, bp[2]/100),
+             berths: rs.docks.map(function(d){ return RV.inWater(d.x, d.z) && !rs.land(d.x, d.z); }), none: O.riverOf({layers: {}})};
 console.log(JSON.stringify(out));
 """
 
@@ -205,6 +213,17 @@ class OceanTest(unittest.TestCase):
         self.assertEqual(w["after"], 0)
         self.assertEqual(w["calls"], 9)
         self.assertEqual(w["disposed"], 0)
+
+    def test_river(self):
+        r = self.o["river"]
+        self.assertTrue(r["inWater"])
+        self.assertFalse(r["water"])            # walking and driving stop at the bank
+        self.assertFalse(r["boatWater"])
+        self.assertTrue(r["deck"])              # a bridge deck is land
+        self.assertFalse(r["boatDeck"])         # a hull passes under it
+        self.assertFalse(r["closed"])           # not before the tier it opens in
+        self.assertEqual(r["berths"], [True, True])
+        self.assertIsNone(r["none"])
 
     def test_dock_to_dock_open_sea(self):
         tr = self.o["trip"]

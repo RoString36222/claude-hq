@@ -8,7 +8,12 @@
  *                         a road at any LOD); on an island, terrain below sea_cm + 0.1 m sinks 0.5 m under the water
  *   roadTile              asphalt / marks / kerb / walk ribbons by class, junction patches, zebra crossings
  *   groundTile            (v2 docs) polygon block pavements with kerbs, lot pads, plaza pads, the beach strip along
- *                         Layers.island.coast; polygons are triangulated by `triangulate` (earcut, inline)
+ *                         Layers.island.coast (not across the river's mouth) and the shaded banks along Layers.river.poly;
+ *                         polygons are triangulated by `triangulate` (earcut, inline)
+ *   riverWater            the river's water surface: Layers.river.poly at sea level, one mesh for the world
+ *   bridges               a bridge edge (bridge: true) is a deck: roadTile adds `bridge` (slab, fascias, abutments and
+ *                         railings) for the tiles it crosses and drops the ribbon's verge walls over the water, so no
+ *                         curtain hangs down to the riverbed
  *   buildingTile          one low-poly building per building lot (detail 0 full, detail 1 a box), turned to the
  *                         lot's `front` (Q16, else its `facing`) and fitted inside its `poly` when it has one;
  *                         a lot with neither is axis-aligned in its rect (@1)
@@ -36,13 +41,22 @@ var LIFT = 0.04, MARK_LIFT = 0.06, KERB = 0.15, FLAT = 0.005, SEAM = 0.02, MINSE
 // v2 ground: pads sit PAD over their block's pavement; the beach runs BEACH_IN inland and BEACH_OUT out to sea from
 // the coast in steps of <= BEACH_STEP; terrain below sea + SEA_SHORE sinks to at least SEA_HIDE under the water
 var PAD = 0.04, BEACH_IN = 14, BEACH_OUT = 8, BEACH_STEP = 8, BEACH_WET = 0.4, SEA_SHORE = 0.1, SEA_HIDE = 0.5;
+// the river: its banks run BANK_IN up the land and BANK_OUT into the water (inside the 4 m the generator keeps clear of
+// streets, lots and sites), and stop BANK_MOUTH m short of the coast, where the beach takes over; the water sits
+// RIVER_LIFT over sea level (over the sea plane it meets at the mouth). A bridge's deck is DECK_T deep with a parapet
+// PARA_W wide and PARA_H high outside its walk, a rail on posts every POST_STEP m RAIL_H up, abutments ABUT m into each
+// bank from the water's edge; WET_STEP m sampling finds where the edge is over the water
+var BANK_IN = 3, BANK_OUT = 3, BANK_MOUTH = BEACH_IN + 2, RIVER_LIFT = 0.02;
+var DECK_T = 0.9, PARA_W = 0.25, PARA_H = 0.35, RAIL_H = 1.05, RAIL_T = 0.08, POST_STEP = 3, POST_W = 0.1, ABUT = 1.5, WET_STEP = 0.5;
 var UP = [0, 1, 0];
 
 var COL = {
   asphalt: [0.16, 0.165, 0.18], shoulder: [0.24, 0.24, 0.25], white: [0.92, 0.92, 0.88], yellow: [0.95, 0.74, 0.22],
   kerb: [0.68, 0.68, 0.66], walk: [0.56, 0.55, 0.52], walkAve: [0.62, 0.58, 0.52], verge: [0.33, 0.30, 0.25],
   pave: [0.60, 0.59, 0.56], lawn: [0.38, 0.55, 0.30], plaza: [0.70, 0.66, 0.58], concrete: [0.56, 0.56, 0.55],
-  sand: [0.86, 0.80, 0.62], wetSand: [0.62, 0.57, 0.45]
+  sand: [0.86, 0.80, 0.62], wetSand: [0.62, 0.57, 0.45],
+  bank: [0.56, 0.52, 0.40], wetBank: [0.40, 0.37, 0.29], water: [0.14, 0.40, 0.50],
+  deck: [0.64, 0.63, 0.60], deckUnder: [0.42, 0.42, 0.41], rail: [0.34, 0.37, 0.41]
 };
 // terrain tint per district (legend name); unknown names fall back to "wild". The second row is @2's district list.
 var TINT = {
@@ -160,6 +174,7 @@ function prep(W){
     var walk = (e.walk || 0)/100, cls = e.cls === "country" ? "highway" : (e.cls || "street");
     var o = {id: e.id, i: ei, cls: cls, a: e.a, b: e.b, name: e.name || "", ref: e.ref != null ? e.ref : null,
              half: e.width/200, cw: (e.width - 2*(e.walk || 0))/200, walk: walk, P: P, S: S, K: K, len: S[S.length - 1], tA: 0, tB: 0};
+    if(e.bridge) o.bridge = true;
     E.push(o); byId[o.id] = o;
     (inc[e.a] = inc[e.a] || []).push({E: o, end: 0});
     (inc[e.b] = inc[e.b] || []).push({E: o, end: 1});
@@ -213,6 +228,7 @@ function pointAt(E, s){
 // (interior points closer than MINSEG to the last kept station, and hairpin points, are skipped: they fold the ribbon)
 function stations(E, s0, s1){
   var P = E.P, S = E.S, first = pointAt(E, s0), last = pointAt(E, s1), keep = [], ls = s0, prev = first;
+  first.s = s0; last.s = s1;
   for(var j = 1; j < P.length - 1; j++){
     if(S[j] <= s0 + 0.01 || S[j] >= s1 - 0.01 || (E.K && !E.K[j])) continue;
     if(S[j] - ls < MINSEG || s1 - S[j] < MINSEG/2) continue;
@@ -229,7 +245,7 @@ function stations(E, s0, s1){
     var mx = l1x + l2x, mz = l1z + l2z, ml = hypot(mx, mz) || 1;
     mx /= ml; mz /= ml;
     var k = 1/Math.max(0.5, mx*l1x + mz*l1z);
-    out.push({x: b.x, y: b.y, z: b.z, dx: (c.x - a.x)/(d1 + d2), dz: (c.z - a.z)/(d1 + d2), lx: mx*k, lz: mz*k});
+    out.push({x: b.x, y: b.y, z: b.z, dx: (c.x - a.x)/(d1 + d2), dz: (c.z - a.z)/(d1 + d2), lx: mx*k, lz: mz*k, s: S[j]});
   });
   out.push(last);
   return out;
@@ -472,6 +488,15 @@ function strip(g, W, E, st, o0, o1, lift, c, tx, tz, walkY){
 // a vertical strip at offset o: a kerb from road up to walk, else a verge from the ribbon edge down 0.5 m, or
 // further, to 0.3 m under the lowest terrain mesh (any lod) along that edge, so no gap opens under the ribbon
 function wallStrip(g, W, E, st, o, mode, c, tx, tz, outSign){
+  if(E.bridge && mode !== "kerb" && !st.dry){
+    // a bridge: the verge walls stand on the banks only (the deck's fascias close it over the water)
+    dryRuns(W, E, st[0].s, st[st.length - 1].s).forEach(function(r){
+      var sub = stations(E, r[0], r[1]);
+      sub.dry = true;
+      wallStrip(g, W, E, sub, o, mode, c, tx, tz, outSign);
+    });
+    return;
+  }
   for(var k = 0; k + 1 < st.length; k++){
     var A = st[k], B = st[k + 1];
     if(!inTile((A.x + B.x)/2, (A.z + B.z)/2, tx, tz)) continue;
@@ -488,9 +513,105 @@ function wallStrip(g, W, E, st, o, mode, c, tx, tz, outSign){
   }
 }
 
-// flat: only the upward asphalt / sidewalk pieces (what the terrain clamp needs; no walls, no marks)
+/* ---------- bridges ---------- */
+// the arc runs (m along E) where any of a bridge edge's deck is over the river's water, each grown ABUT into the banks,
+// merged (sampled every <= WET_STEP m at its centreline and both outer edges; cached on the edge, per W)
+function wetRuns(W, E){
+  if(E.wet) return E.wet;
+  var Q = WQ(), n = Math.max(1, Math.ceil(E.len/WET_STEP)), raw = [], run = null, out = [], ho = E.half + PARA_W;
+  for(var k = 0; k <= n; k++){
+    // across the whole deck: an oblique crossing reaches the water at one side first
+    var s = E.len*k/n, p = pointAt(E, s);
+    if(Q.riverAt(W, p.x, p.z) || Q.riverAt(W, p.x + p.lx*ho, p.z + p.lz*ho) || Q.riverAt(W, p.x - p.lx*ho, p.z - p.lz*ho)){ if(!run) run = [s, s]; run[1] = s; }
+    else if(run){ raw.push(run); run = null; }
+  }
+  if(run) raw.push(run);
+  raw.forEach(function(r){
+    var a = Math.max(0, r[0] - ABUT), b = Math.min(E.len, r[1] + ABUT), L = out[out.length - 1];
+    if(L && a <= L[1]) L[1] = Math.max(L[1], b); else out.push([a, b]);
+  });
+  return (E.wet = out);
+}
+// the rest of [a, b]: where the bridge stands on its banks (pieces under 5 cm dropped)
+function dryRuns(W, E, a, b){
+  var out = [], s = a;
+  wetRuns(W, E).forEach(function(r){
+    if(r[1] <= s || r[0] >= b) return;
+    if(r[0] - s > 0.05) out.push([s, r[0]]);
+    s = Math.max(s, r[1]);
+  });
+  if(b - s > 0.05) out.push([s, b]);
+  return out;
+}
+// a box-section bar along stations A -> B between offsets o0, o1 (m, + = left), bottom y0a/y0b, top y1a/y1b; its four
+// long faces, and its end faces where caps[0] / caps[1]
+function bar(g, A, B, o0, o1, y0a, y0b, y1a, y1b, c, caps){
+  var sg = o1 > o0 ? 1 : -1, lx = (A.lx + B.lx)/2, lz = (A.lz + B.lz)/2;
+  face(g, [at(A, o0, y1a), at(B, o0, y1b), at(B, o1, y1b), at(A, o1, y1a)], c, UP);
+  face(g, [at(A, o0, y0a), at(B, o0, y0b), at(B, o1, y0b), at(A, o1, y0a)], c, [0, -1, 0]);
+  face(g, [at(A, o0, y0a), at(B, o0, y0b), at(B, o0, y1b), at(A, o0, y1a)], c, [-lx*sg, 0, -lz*sg]);
+  face(g, [at(A, o1, y0a), at(B, o1, y0b), at(B, o1, y1b), at(A, o1, y1a)], c, [lx*sg, 0, lz*sg]);
+  if(caps && caps[0]) face(g, [at(A, o0, y0a), at(A, o1, y0a), at(A, o1, y1a), at(A, o0, y1a)], c, [-A.dx, 0, -A.dz]);
+  if(caps && caps[1]) face(g, [at(B, o0, y0b), at(B, o1, y0b), at(B, o1, y1b), at(B, o0, y1b)], c, [B.dx, 0, B.dz]);
+}
+// A bridge edge's structure in tile (tx, tz): over its whole length a parapet PARA_W wide just outside the walk (the
+// carriageway with no walk) with a rail on posts; over the water (wetRuns) a deck slab DECK_T deep under the ribbons,
+// fascias down its sides, and at each end an abutment wall facing the water, from the slab down under the bank's
+// terrain mesh. Pieces belong to the tile of their midpoint, posts to their own.
+function bridgeTile(g, W, E, tx, tz){
+  var s0 = E.tA, s1 = E.len - E.tB;
+  if(s1 - s0 < 0.05) return;
+  var edge = E.walk > 0 ? E.half : E.cw, ho = edge + PARA_W, mid = edge + PARA_W/2;
+  // the deck's top at the outer edge of side sg, as the ribbon there draws it
+  function top(st, sg){ return (E.walk > 0 ? yWalk(W, E, st, sg*edge) : yRoad(W, E, st, sg*edge)) + LIFT; }
+  function mine(A, B){ return inTile((A.x + B.x)/2, (A.z + B.z)/2, tx, tz); }
+  var st = stations(E, s0, s1);
+  for(var k = 0; k + 1 < st.length; k++){
+    var A = st[k], B = st[k + 1];
+    if(!mine(A, B)) continue;
+    [-1, 1].forEach(function(sg){
+      var ya = top(A, sg), yb = top(B, sg), caps = [k === 0, k + 2 === st.length];
+      bar(g, A, B, sg*edge, sg*ho, ya, yb, ya + PARA_H, yb + PARA_H, COL.deck, caps);
+      bar(g, A, B, sg*(mid - RAIL_T/2), sg*(mid + RAIL_T/2), ya + RAIL_H - RAIL_T, yb + RAIL_H - RAIL_T, ya + RAIL_H, yb + RAIL_H, COL.rail, caps);
+    });
+  }
+  var np = Math.max(1, Math.round((s1 - s0)/POST_STEP));
+  for(var j = 0; j <= np; j++){
+    var s = clamp(s0 + (s1 - s0)*j/np, s0 + POST_W, s1 - POST_W), P0 = pointAt(E, s - POST_W/2), P1 = pointAt(E, s + POST_W/2);
+    if(!inTile((P0.x + P1.x)/2, (P0.z + P1.z)/2, tx, tz)) continue;
+    [-1, 1].forEach(function(sg){
+      var y0 = top(P0, sg) + PARA_H, y1 = top(P1, sg) + PARA_H;
+      bar(g, P0, P1, sg*(mid - POST_W/2), sg*(mid + POST_W/2), y0, y1, y0 - PARA_H + RAIL_H - RAIL_T, y1 - PARA_H + RAIL_H - RAIL_T, COL.rail, [true, true]);
+    });
+  }
+  wetRuns(W, E).forEach(function(r){
+    var a = Math.max(r[0], s0), b = Math.min(r[1], s1);
+    if(b - a < 0.05) return;
+    var ws = stations(E, a, b);
+    function under(S){ return Math.min(top(S, -1), top(S, 1)) - DECK_T; }
+    for(var k = 0; k + 1 < ws.length; k++){
+      var A = ws[k], B = ws[k + 1];
+      if(!mine(A, B)) continue;
+      var ua = under(A), ub = under(B);
+      face(g, [at(A, -ho, ua), at(B, -ho, ub), at(B, ho, ub), at(A, ho, ua)], COL.deckUnder, [0, -1, 0]);
+      [-1, 1].forEach(function(sg){
+        var lx = (A.lx + B.lx)/2*sg, lz = (A.lz + B.lz)/2*sg;
+        face(g, [at(A, sg*ho, ua), at(B, sg*ho, ub), at(B, sg*ho, top(B, sg)), at(A, sg*ho, top(A, sg))], COL.deck, [lx, 0, lz]);
+      });
+    }
+    // the abutments: the water lies ahead (+d) of the run's start and behind (-d) its end
+    [[ws[0], 1], [ws[ws.length - 1], -1]].forEach(function(e){
+      var S = e[0], d = e[1];
+      if(!inTile(S.x, S.z, tx, tz)) return;
+      var u = under(S), lo = Math.min(u - 0.5, meshMin(W, at(S, -ho, 0), at(S, ho, 0)) - 0.3);
+      face(g, [at(S, -ho, lo), at(S, ho, lo), at(S, ho, u), at(S, -ho, u)], COL.deck, [S.dx*d, 0, S.dz*d]);
+    });
+  });
+}
+
+// flat: only the upward asphalt / sidewalk pieces (what the terrain clamp needs; no walls, no marks, no bridges)
 function roadTile(W, tx, tz, flat){
-  var C = prep(W), asph = geo(), marks = geo(), kerb = geo(), walk = geo();
+  var C = prep(W), asph = geo(), marks = geo(), kerb = geo(), walk = geo(), br = C.E.some(function(E){ return E.bridge; }) ? geo() : null;
   C.E.forEach(function(E){
     var s0 = E.tA, s1 = E.len - E.tB;
     if(s1 - s0 < 0.05) return;
@@ -526,6 +647,7 @@ function roadTile(W, tx, tz, flat){
       [-1, 1].forEach(function(sg){ wallStrip(walk, W, E, st, sg*cw, "verge", COL.verge, tx, tz, sg); });
     }
     if(flat) return;
+    if(E.bridge && br) bridgeTile(br, W, E, tx, tz);
     // markings, stopped short of junction patches and crossings
     var m0 = s0 + (crossed(C, E, 0) ? 5.5 : 0.5), m1 = s1 - (crossed(C, E, 1) ? 5.5 : 0.5);
     if(m1 - m0 > 0.5) markLines(E).forEach(function(ln){
@@ -542,7 +664,9 @@ function roadTile(W, tx, tz, flat){
     if(arms.length < 2 || !n || !inTile(n.x, n.z, tx, tz)) return;
     junction(W, C, n, arms, asph, flat ? geo() : marks, kerb, walk);
   });
-  return {asphalt: fin(asph), marks: fin(marks), kerb: fin(kerb), walk: fin(walk)};
+  var out = {asphalt: fin(asph), marks: fin(marks), kerb: fin(kerb), walk: fin(walk)};
+  if(br && !flat) out.bridge = fin(br);   // only in a doc with bridges: every other doc builds as before
+  return out;
 }
 
 function armStation(E, end, t){
@@ -812,6 +936,37 @@ function inPoly(P, x, z){
 }
 function coastOf(W){ var I = W && W.island; return I && I.coast && I.coast.length >= 3 && seaY(W) != null ? I : null; }
 function seaY(W){ var I = W && W.island; return I && I.sea_cm != null && isFinite(+I.sea_cm) ? +I.sea_cm/100 : null; }
+// the river's water outline in metres (CCW), on an island doc only (it is water at sea level), or null
+function riverRing(W){
+  var B = (W && W.tierBase) || W, R = B && B.river;
+  if(!R || !R.poly || seaY(B) == null) return null;
+  var P = polyM(R.poly);
+  return P.length >= 3 && Math.abs(polyArea(P)) > 1e-6 ? P : null;
+}
+// distance (m) from (x, z) to the nearest edge of ring P
+function ringDist(P, x, z){
+  var d = Infinity;
+  for(var k = 0; k < P.length; k++){
+    var a = P[k], b = P[(k + 1) % P.length], dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx*dx + dz*dz;
+    var t = L2 > 0 ? clamp(((x - a[0])*dx + (z - a[1])*dz)/L2, 0, 1) : 0;
+    d = Math.min(d, hypot(x - a[0] - dx*t, z - a[1] - dz*t));
+  }
+  return d;
+}
+// The river's water surface: its outline at sea level + RIVER_LIFT, triangulated, every face up. One geo for the
+// world (games/worldbuild.js draws it as one mesh in the sea's material); empty without a river or a sea.
+function riverWater(W){
+  var P = riverRing(W), g = geo();
+  if(!P) return fin(g);
+  var B = W.tierBase || W, y = seaY(B) + RIVER_LIFT, tri = triangulate(flatOf(P));
+  P.forEach(function(p){ vert(g, p[0], y, p[1], UP, COL.water); });
+  for(var t = 0; t < tri.length; t += 3){
+    var a = P[tri[t]], b = P[tri[t+1]], c = P[tri[t+2]];
+    if((b[1] - a[1])*(c[0] - a[0]) - (b[0] - a[0])*(c[1] - a[1]) >= 0) g.i.push(tri[t], tri[t+1], tri[t+2]);
+    else g.i.push(tri[t], tri[t+2], tri[t+1]);
+  }
+  return fin(g);
+}
 // does this doc draw any v2 ground (the same answer at every tier)?
 function hasGround(W){
   var B = (W && W.tierBase) || W || {};
@@ -879,19 +1034,32 @@ function groundItems(W){
     if(P.length < 3) return;
     fill(P, bp || fitPlane(W, P), KERB + LIFT + PAD, COL.plaza, "site", !bp);
   });
-  if(coastOf(B)) beach(W, polyM(B.island.coast), seaY(B), out);
+  if(coastOf(B)){
+    var coast = polyM(B.island.coast), R = riverRing(B);
+    if(!R) beach(W, coast, seaY(B), out);
+    else {
+      // the beach stops where the river runs out to sea; the banks run along the river up to BANK_MOUTH from the coast
+      beach(W, coast, seaY(B), out, {keep: function(p){ return !Q.riverAt(B, p[0], p[2]); }});
+      beach(W, R, seaY(B), out, {kind: "bank", inW: BANK_IN, outW: BANK_OUT, sign: -1, dry: COL.bank, wet: COL.wetBank,
+                                 keep: function(p){ return inPoly(coast, p[0], p[2]) && ringDist(coast, p[0], p[2]) > BANK_MOUTH; }});
+    }
+  }
   C.ground = out;
   return out;
 }
 // The beach: a dry strip from BEACH_IN inland down to just over the waterline and a wet one on to BEACH_OUT out,
 // BEACH_WET under the water, sampled every <= BEACH_STEP m along the coast and mitred at its corners. Heights come
 // from the raw terrain, so it is the same at every tier. One item per quad, so each lands in its own tile.
-function beach(W, P, sea, out){
+// o (optional): {kind, inW, outW, dry, wet (colours), sign (-1: P's interior is the water, as a river's outline),
+// keep(point): a quad is laid only where all four of its dry and shore corners keep}
+function beach(W, P, sea, out, o){
   var Q = WQ(), n = P.length, S = [];
+  o = o || {};
+  var IN = o.inW != null ? o.inW : BEACH_IN, OUT = o.outW != null ? o.outW : BEACH_OUT, sg = o.sign || 1;
   if(n < 3) return;
   function inward(k){
     var a = P[k], b = P[(k + 1) % n], dx = b[0] - a[0], dz = b[1] - a[1], l = hypot(dx, dz) || 1;
-    return [-dz/l, dx/l];
+    return [-dz/l*sg, dx/l*sg];
   }
   for(var k = 0; k < n; k++){
     var a = P[k], b = P[(k + 1) % n], m = Math.max(1, Math.ceil(hypot(b[0] - a[0], b[1] - a[1])/BEACH_STEP)), n1 = inward(k);
@@ -903,18 +1071,19 @@ function beach(W, P, sea, out){
         var s = 1/Math.max(0.5, mx*n1[0] + mz*n1[1]);
         nv = [mx*s, mz*s];
       }
-      var x = a[0] + (b[0] - a[0])*j/m, z = a[1] + (b[1] - a[1])*j/m, ix = x + nv[0]*BEACH_IN, iz = z + nv[1]*BEACH_IN;
+      var x = a[0] + (b[0] - a[0])*j/m, z = a[1] + (b[1] - a[1])*j/m, ix = x + nv[0]*IN, iz = z + nv[1]*IN;
       S.push({dry: [ix, Math.max(Q.heightAt(W, ix, iz), sea + 0.1) + LIFT, iz], shore: [x, sea + 0.05, z],
-              wet: [x - nv[0]*BEACH_OUT, sea - BEACH_WET, z - nv[1]*BEACH_OUT]});
+              wet: [x - nv[0]*OUT, sea - BEACH_WET, z - nv[1]*OUT]});
     }
   }
   for(k = 0; k < S.length; k++){
     var A = S[k], B = S[(k + 1) % S.length];
-    [[A.dry, B.dry, B.shore, A.shore, COL.sand], [A.shore, B.shore, B.wet, A.wet, COL.wetSand]].forEach(function(q){
+    if(o.keep && !(o.keep(A.dry) && o.keep(B.dry) && o.keep(A.shore) && o.keep(B.shore))) continue;
+    [[A.dry, B.dry, B.shore, A.shore, o.dry || COL.sand], [A.shore, B.shore, B.wet, A.wet, o.wet || COL.wetSand]].forEach(function(q){
       var V = [q[0], q[1], q[2], q[3]], cx = (V[0][0] + V[1][0] + V[2][0] + V[3][0])/4, cz = (V[0][2] + V[1][2] + V[2][2] + V[3][2])/4;
       var t = tileOf(cx, cz), nr = newell(V);
       if(nr[1] < 0) nr = [-nr[0], -nr[1], -nr[2]];
-      out.push({kind: "beach", P: V.map(function(v){ return [v[0], v[2]]; }), V: V, tri: [0, 1, 2, 0, 2, 3], col: q[4],
+      out.push({kind: o.kind || "beach", P: V.map(function(v){ return [v[0], v[2]]; }), V: V, tri: [0, 1, 2, 0, 2, 3], col: q[4],
                 nrm: unit(nr), walls: false, tx: t.tx, tz: t.tz});
     });
   }
@@ -1530,7 +1699,8 @@ HQV.worldgeom = {
   props: props, routes: routes, nameAtlasLayout: nameAtlasLayout, buildTile: buildTile, transferables: transferables,
   emptyGeo: emptyGeo, CAR_COLORS: CAR_COLORS, GANTRY_POST: GANTRY_POST, GANTRY_SINK: GANTRY_SINK,
   groundTile: groundTile, groundItems: groundItems, triangulate: triangulate, hasGround: hasGround, seaY: seaY, view: view,
-  tierDiff: tierDiff, footprint: footprint,
+  tierDiff: tierDiff, footprint: footprint, riverWater: riverWater, riverRing: riverRing,
+  BRIDGE: {DECK_T: DECK_T, PARA_W: PARA_W, PARA_H: PARA_H, RAIL_H: RAIL_H, ABUT: ABUT}, RIVER_LIFT: RIVER_LIFT,
   SEA_HIDE: SEA_HIDE
 };
 })();

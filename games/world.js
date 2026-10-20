@@ -12,8 +12,11 @@
  *                        one memo, cache and onChange per world id
  *   docOf(W)             a WorldDoc-shaped view of a packed W (layers.roads with points, zones,
  *                        transit, island) for the modules that read docs: npcsim, traffic, ocean, hqtravel
- * v2 docs (@2) also pack each edge's min_tier (only when present, so @1 packs as it always did) and
- * the island, transit and zones layers, plus the doc's version, profile and seed.
+ * v2 docs (@2) also pack each edge's min_tier and bridge flag (only when present, so @1 packs as it always did)
+ * and the island, transit, zones and river layers, plus the doc's version, profile and seed.
+ * The river (layers.river, cm): riverAt(W, x, z) is true on its water (river.poly, metres in, a bounding box
+ * first). A bridge edge's points carry its deck height, so roadY/groundAt on a bridge are the deck; no tree
+ * stands in the water.
  * Widths: `half` and `carriage` from nearestRoad are HALF widths (m from the centreline):
  * half = width/200, carriage = (width - 2*walk)/200. A point is "road" within `carriage`,
  * "sidewalk" within `half`.
@@ -33,7 +36,7 @@ var ID = "claude-hq@1", URL = "/api/arena/world/claude-hq@1", IDB = {db: "hq-wor
 var COMMONS = "claude-hq@2";
 // the worlds the client may ask for: the fixed ones and a personal island (the dashboard checks again)
 var WORLD_RE = /^(claude-hq@[12]|user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@2)$/;
-var PACK_V = 2;   // bump whenever pack()'s output changes; cached records with another v are refetched
+var PACK_V = 3;   // bump whenever pack()'s output changes; cached records with another v are refetched
 var ONE = 65536, BUCKET = 64, TRUNK = 0.45, CLEAR = 2, BLEND = 4, SIDEWALK_UP = 0.15;
 var TREE_P = {forest: 0.55, park: 0.18, residential: 0.04};
 var WALK_OLD = {street: 150, avenue: 200};   // sidewalk (cm, each side) for docs older than the walk field
@@ -71,6 +74,7 @@ function pack(doc){
             ref: old ? null : (e.ref != null ? String(e.ref) : null),
             name: e.name != null ? String(e.name) : "", pts: pts};
     if(e.min_tier != null) o.min_tier = e.min_tier|0;      // v2 islands: the tier the road opens in
+    if(e.bridge) o.bridge = true;                           // it crosses the river on a deck at its points' y
     return o;
   });
   var W = {
@@ -89,6 +93,7 @@ function pack(doc){
   if(L.island) W.island = L.island;
   if(L.transit) W.transit = L.transit;
   if(L.zones) W.zones = L.zones;
+  if(L.river) W.river = L.river;
   return W;
 }
 
@@ -103,6 +108,7 @@ function docOf(W){
     var o = {id: e.id, a: e.a, b: e.b, "class": e.cls, width: e.width, walk: e.walk, lanes: e.lanes, name: e.name, points: pts};
     if(e.ref != null) o.ref = e.ref;
     if(e.min_tier != null) o.min_tier = e.min_tier;
+    if(e.bridge) o.bridge = true;
     return o;
   });
   var D = W.districts, layers = {roads: {nodes: W.nodes, edges: edges},
@@ -111,6 +117,7 @@ function docOf(W){
   if(W.zones) layers.zones = W.zones;
   if(W.transit) layers.transit = W.transit;
   if(W.island) layers.island = W.island;
+  if(W.river) layers.river = W.river;
   var doc = {id: W.id, seed: W.seed || W.id, version: W.v || 1, profile: W.profile || "city", size_cm: W.sizeCm, layers: layers};
   try { Object.defineProperty(W, "docView", {value: doc, enumerable: false, configurable: true, writable: true}); } catch(e){}
   return doc;
@@ -369,6 +376,28 @@ function buildingRect(lot){
   return {x0: R.x0 + 1, x1: R.x1 - 1, z0: R.z0 + 1, z1: R.z1 - 1};
 }
 
+// the river's water outline in metres with its bounding box (built once per W, on the index), or null
+function riverOf(W){
+  var I = index(W);
+  if(I.river !== undefined) return I.river;
+  var R = W.river, P = [];
+  (R && R.poly || []).forEach(function(p){ if(p && isFinite(p[0]) && isFinite(p[1])) P.push([p[0]/100, p[1]/100]); });
+  var b = [Infinity, Infinity, -Infinity, -Infinity];
+  P.forEach(function(q){ b[0] = Math.min(b[0], q[0]); b[1] = Math.min(b[1], q[1]); b[2] = Math.max(b[2], q[0]); b[3] = Math.max(b[3], q[1]); });
+  return (I.river = P.length >= 3 ? {P: P, b: b} : null);
+}
+// is (x, z) on the river's water (inside river.poly)? false in a doc without a river
+function riverAt(W, x, z){
+  var R = riverOf(W);
+  if(!R || x < R.b[0] || x > R.b[2] || z < R.b[1] || z > R.b[3]) return false;
+  var P = R.P, inside = false;
+  for(var i = 0, j = P.length - 1; i < P.length; j = i++){
+    var a = P[i], c = P[j];
+    if((a[1] > z) !== (c[1] > z) && x < (c[0] - a[0])*(z - a[1])/(c[1] - a[1]) + a[0]) inside = !inside;
+  }
+  return inside;
+}
+
 function trees(W){
   var I = index(W);
   if(I.treeList) return I.treeList;
@@ -383,6 +412,7 @@ function trees(W){
     var z = (D.origin + iz*D.cell)/100 + 1 + (h2 & 0xff)/255*(D.cell/100 - 2);
     if(Math.abs(x) > W.half - CLEAR || Math.abs(z) > W.half - CLEAR) continue;
     if(roadNear(W, x, z, CLEAR) || lotAt(W, x, z) || siteAt(W, x, z)) continue;
+    if(W.river && (riverAt(W, x, z) || riverAt(W, x + CLEAR, z) || riverAt(W, x - CLEAR, z) || riverAt(W, x, z + CLEAR) || riverAt(W, x, z - CLEAR))) continue;
     var pine = ((h2 >>> 16) & 3) === 0;
     out.push({x: x, z: z, s: 0.8 + ((h2 >>> 8) & 0xff)/255*0.6, kind: (name === "forest" ? !pine : pine) ? "pine" : "round"});
   }
@@ -620,7 +650,7 @@ var api = HQV.world = {
   heightCm: heightCm, heightAt: heightAt, districtAt: districtAt, lotAt: lotAt, siteAt: siteAt,
   nearestRoad: nearestRoad, roadY: roadY, surfaceAt: surfaceAt, padOf: padOf, groundAt: groundAt,
   normalAt: normalAt, slopeAlong: slopeAlong, slopeFactor: slopeFactor, buildingRect: buildingRect,
-  blockedAt: blockedAt, trees: trees, rayGround: rayGround, roadLabels: roadLabels, junctions: junctions,
+  blockedAt: blockedAt, trees: trees, riverAt: riverAt, rayGround: rayGround, roadLabels: roadLabels, junctions: junctions,
   load: load, onChange: onChange, current: current, cacheMs: cacheMs
 };
 })();

@@ -12,9 +12,13 @@
  *   ground    (v2 docs) block pavements, lot / plaza pads and the beach, merged into the tile's terrain mesh
  *   sea       (island docs) one water plane at Layers.island.sea_cm, its normals rippled by waterPhase(clock):
  *             a pure function of the clock (cam.time s, else performance.now), so it is frame-rate independent
+ *   river     (island docs with Layers.river) one mesh for the world: worldgeom riverWater, at sea level in the sea's
+ *             material (the mounted ocean's, games/ocean.js material(), when there is one, else the plane's)
+ *   bridges   per tile, one mesh of deck slabs, fascias, abutments and railings (worldgeom roadTile's `bridge`)
  * Tiers: opts.tier / wb.setTier(t) show the world as city tier t shows it (worldgeom view); a tier change rebuilds
  * only the tiles and products worldgeom.tierDiff names, and a job that finishes at a stale tier is redone.
- * Draw calls: <= 8 per tile within 300 m, <= 4 beyond, + 4 world-wide (+ 1 sea on an island).
+ * Draw calls: <= 8 per tile within 300 m, <= 4 beyond, + 4 world-wide (+ 1 sea on an island); a river adds 1 world-wide
+ * and 1 per tile a bridge crosses.
  * HQV.worldbuild.governor is pure (node-tested): frame times -> quality level, pixel ratio, shadows (LOD scale stays fixed).
  * No THREE, no DOM at load time: THREE comes from c.THREE inside create().
  */
@@ -203,6 +207,7 @@ function create(c, W, opts){
     m.cars = std({roughness: 0.45, metalness: 0.2});
     if(seaY != null) m.water = waterMat();
     m.frame = new THREE.MeshStandardMaterial({color: 0x8a9096, roughness: 0.5, metalness: 0.5});
+    m.bridge = std({roughness: 0.8});
     return m;
   }
   // the sea: a plain colour (no vertex colours on the plane); the normal is tilted by a few travelling cosines of the
@@ -378,6 +383,7 @@ function create(c, W, opts){
       set(T, "marks", mesh(m.roads.marks, M.marks, T));
       set(T, "kerbwalk", mesh(mergeGeo([m.roads.kerb, m.roads.walk]), M.walk, T));
       set(T, "roadfar", mesh(mergeGeo([m.roads.asphalt, lifted(m.roads.marks, FAR_MARK_LIFT)]), M.asphalt, T));
+      set(T, "bridge", mesh(m.roads.bridge, M.bridge, T));   // none in a doc without bridges
     }
     if(m.buildings1) set(T, "body1", mesh(m.buildings1.body, M.body, T));
     if(m.buildings0){ set(T, "body0", mesh(m.buildings0.body, M.body0, T)); set(T, "win0", mesh(m.buildings0.win, M.win, T)); T.b0 = true; }
@@ -666,7 +672,7 @@ function create(c, W, opts){
       if(m.trees) m.trees.visible = pr;
       if(m.lamps) m.lamps.visible = pr;
       var cast = shadowsOn && !map && d < SHADOW_NEAR;
-      ["body0", "body1", "trees", "lamps"].forEach(function(k){ if(m[k]) m[k].castShadow = cast; });
+      ["body0", "body1", "trees", "lamps", "bridge"].forEach(function(k){ if(m[k]) m[k].castShadow = cast; });
       if(vis){
         nt++;
         for(var k in m){ var me = m[k]; if(me && me.visible && (!me.isInstancedMesh || me.count > 0)){ dc++; tri += tris(me); } }
@@ -686,8 +692,15 @@ function create(c, W, opts){
     });
     if(sea){
       U.uWaterT.value = waterPhase(isFinite(+cam.time) && cam.time != null ? +cam.time : now()/1000);
-      sea.visible = !fr || fr.intersectsObject(sea);
+      // never frustum-toggled: it spans every view, and its owner may hide it for good (the City does, under the ocean)
       if(sea.visible){ dc++; tri += tris(sea); }
+    }
+    if(river){
+      // the ocean's own material while one is mounted (its waves, tint and glint), else the sea plane's
+      var om = HQV.ocean && HQV.ocean.material ? HQV.ocean.material() : null;
+      river.material = om || M.water;
+      river.visible = !fr || fr.intersectsObject(river);
+      if(river.visible){ dc++; tri += tris(river); }
     }
     stats = {drawCalls: dc, triangles: Math.round(tri), tiles: nt, pending: queue.length + nIn, worker: useWorker};
   };
@@ -722,6 +735,7 @@ function create(c, W, opts){
     tiles.forEach(function(T){ Object.keys(T.m).forEach(function(k){ var me = T.m[k]; if(me && !me.isInstancedMesh && me.geometry) me.geometry.dispose(); if(me && me.isInstancedMesh && me.dispose) me.dispose(); }); });
     Object.keys(world.meshes).forEach(function(k){ var im = world.meshes[k]; if(im){ im.geometry.dispose(); if(im.dispose) im.dispose(); } });
     if(sea) sea.geometry.dispose();
+    if(river) river.geometry.dispose();
     Object.keys(proto).forEach(function(k){ proto[k].dispose(); });
     Object.keys(M).forEach(function(k){ M[k].dispose(); });
     if(world.plateMat) world.plateMat.dispose();
@@ -740,6 +754,14 @@ function create(c, W, opts){
     wb.root.add(sea);
   }
   wb.sea = sea;
+  // the river's water: one mesh over Layers.river.poly at sea level (worldgeom riverWater; none without a sea)
+  var river = null, rg = seaY != null && W.river ? bufGeo(Gm.riverWater(W)) : null;
+  if(rg){
+    river = new THREE.Mesh(rg, M.water);
+    river.name = "river"; river.receiveShadow = true; river.matrixAutoUpdate = false;
+    wb.root.add(river);
+  }
+  wb.river = river;
 
   // first pass: every tile at lod 2 with roads, far buildings and props (and the v2 ground), nearest the centre first
   tiles.slice().sort(function(a, b){

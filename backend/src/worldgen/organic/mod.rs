@@ -280,8 +280,16 @@ fn hq_pool(p: &Profile, t: &Terrain, lots: &mut [Lot]) -> Result<(), String> {
         let poly: Vec<P> = l.poly.as_ref().unwrap().iter().map(|q| (q[0], q[1])).collect();
         area2(&poly) >= 2 * p.hq_min_m2 * 10_000 && geom::rise(t, &poly) <= p.site_flat_cm * 2
     };
-    let mut cand: Vec<(bool, i64, usize)> =
-        lots.iter().enumerate().filter(|(_, l)| ok(l)).map(|(k, l)| (!p.hq_districts.contains(&l.district), l.x * l.x + l.z * l.z, k)).collect();
+    // A personal island's one HQ is the owner's, next to the town hall on the plaza:
+    // the nearest lot that holds it, whatever its district. The Commons' 64 prefer
+    // their downtown and office districts, nearest first.
+    let by_hall = p.hq_lots == 1;
+    let mut cand: Vec<(bool, i64, usize)> = lots
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| ok(l))
+        .map(|(k, l)| (!by_hall && !p.hq_districts.contains(&l.district), l.x * l.x + l.z * l.z, k))
+        .collect();
     cand.sort();
     if (cand.len() as i64) < p.hq_lots {
         return Err(format!("profile {}: {} lots can hold an HQ, the pool needs {}", p.name, cand.len(), p.hq_lots));

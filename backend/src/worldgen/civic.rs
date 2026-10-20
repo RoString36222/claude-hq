@@ -301,16 +301,27 @@ impl Civ<'_> {
             .unwrap_or(i64::MAX)
     }
 
+    /// On a personal island, whether lot k stands outside the ring a `tier` site opens
+    /// in (island::RADII_CM): a tier-1 service out there would only open at a later tier.
+    /// Never on the Commons, which is fully grown.
+    fn out_of_ring(&self, tier: u8, k: usize) -> bool {
+        // 20 m in from the ring: the site's centre is not the lot's, and its door road must be in too
+        let r = super::island::RADII_CM[(tier.clamp(1, 5) - 1) as usize] - 2_000;
+        self.p.name == "island" && self.plaza_d2[k] > r * r
+    }
+
     fn lots_place(&mut self, c: &Civic, districts: &[u8], arterial: bool, park: bool, far: bool, strict: bool) -> Result<(), String> {
         for n in 0..c.count {
+            // the group (the lots tried a size at a time) is the ring first, then the district rank
             let mut order: Vec<(usize, i64, i64, usize)> = (0..self.lots.len())
                 .filter(|&k| self.free(k) && (!arterial || self.art[k]) && self.apart(c.kind, c.apart_cm, k))
                 .map(|k| {
                     let rank = if districts.is_empty() { 0 } else { districts.iter().position(|&d| d == self.lots[k].district).unwrap_or(districts.len()) };
                     let pd = if park { self.park_d(k) } else { 0 };
-                    (rank, pd, if far { -self.plaza_d2[k] } else { self.plaza_d2[k] }, k)
+                    let ring = if !far && self.out_of_ring(c.tier, k) { districts.len() + 1 } else { 0 };
+                    (ring * 100 + rank, pd, if far { -self.plaza_d2[k] } else { self.plaza_d2[k] }, k)
                 })
-                .filter(|o| !strict || o.0 < districts.len())
+                .filter(|o| !strict || o.0 % 100 < districts.len())
                 .collect();
             order.sort();
             let order: Vec<(usize, usize)> = order.into_iter().map(|o| (o.0, o.3)).collect();
@@ -345,19 +356,21 @@ impl Civ<'_> {
             .filter(|&n| g.adj[n].iter().filter(|&&e| g.edges[e as usize].kind == Kind::Arterial).count() >= 3)
             .map(|n| g.nodes[n])
             .collect();
-        let mut order: Vec<(bool, i64, i64, usize)> = (0..self.lots.len())
+        // (group: outside the tier's ring on an island, then away from any junction)
+        let mut order: Vec<(usize, i64, i64, usize)> = (0..self.lots.len())
             .filter(|&k| self.free(k) && self.art[k])
             .map(|k| {
                 let door = self.door(k);
+                let ring = 2 * usize::from(self.out_of_ring(c.tier, k));
                 let j = joins.iter().map(|&j| (dist2(j, door), dist2(j, (0, 0)))).filter(|j| j.0 <= 6_000 * 6_000).min_by_key(|j| (j.1, j.0));
                 match j {
-                    Some((dj, jp)) => (false, jp, dj, k),
-                    None => (true, self.plaza_d2[k], 0, k),
+                    Some((dj, jp)) => (ring, jp, dj, k),
+                    None => (ring + 1, self.plaza_d2[k], 0, k),
                 }
             })
             .collect();
         order.sort();
-        let order: Vec<(usize, usize)> = order.into_iter().map(|o| (o.0 as usize, o.3)).collect();
+        let order: Vec<(usize, usize)> = order.into_iter().map(|o| (o.0, o.3)).collect();
         if self.first(c.kind, c.tier, &order, c.w_cm, c.d_cm) { Ok(()) } else { Err(format!("profile {}: no lot for the {} hub", self.p.name, c.kind)) }
     }
 
@@ -376,6 +389,16 @@ impl Civ<'_> {
                 }
             }
         };
+        // a personal island's first one stands inside the ring its tier opens in (the
+        // tier-1 town has a clinic and a fire station), on an arterial when one has room
+        if self.p.name == "island" && !self.sites.iter().any(|s| s.kind == c.kind) {
+            let mut order: Vec<(usize, usize)> = (0..n)
+                .filter(|&k| self.free(k) && !self.out_of_ring(c.tier, k))
+                .map(|k| (usize::from(along_arterial && !self.art[k]), k))
+                .collect();
+            order.sort_by_key(|&(a, k)| (a, self.plaza_d2[k], k));
+            self.first(c.kind, c.tier, &order, c.w_cm, c.d_cm);
+        }
         let existing: Vec<At> = self.doors.iter().filter(|(&s, _)| self.sites[s].kind == c.kind).map(|(_, &a)| a).collect();
         for at in existing {
             cover(&mut best, at, &self.at, &self.taken);

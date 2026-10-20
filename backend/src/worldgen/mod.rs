@@ -154,7 +154,9 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
             island::trim(&mut roads);
         }
         civic::outside(&p, &base, &roads, &mut city);
-        let mut transit = transit::generate(&roads, &city.sites, &city.lots);
+        // a personal island's first bus loop keeps to its tier-2 town (20 m in from the ring)
+        let inner = (p.name == "island").then(|| island::RADII_CM[1] - 2_000);
+        let mut transit = transit::generate(&roads, &city.sites, &city.lots, inner);
         let island = coast.map(|c| island::grow(&p, &c, &mut roads, &mut city, &mut transit));
         (Some(zones::layer(seed, &city.blocks)), Some(transit), island)
     };

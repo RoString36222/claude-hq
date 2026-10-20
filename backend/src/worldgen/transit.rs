@@ -204,11 +204,14 @@ enum Call {
 }
 
 
-pub fn generate(r: &Roads, sites: &[Site], lots: &[Lot]) -> Transit {
+/// `inner_cm`: a personal island's town at tier 2 (island::RADII_CM[1]); its first bus
+/// loop keeps inside it, so the island has a bus from tier 2 while the city grows.
+pub fn generate(r: &Roads, sites: &[Site], lots: &[Lot], inner_cm: Option<i64>) -> Transit {
     let net = Net::new(r);
     let mut lines = Vec::new();
 
-    // bus loops
+    // bus loops; an inner loop pays heavily for a street that leaves its town
+    let out = |e: &Edge| inner_cm.is_some_and(|r| [e.a, e.b].iter().any(|&n| d2(net.pos(n), (0, 0)) > r * r));
     let bus = |e: &Edge| Some(if e.class == "arterial" { 1000 } else { 1500 });
     let hub = sites.iter().find(|s| s.kind == "transit");
     let stops: Vec<&Site> = sites.iter().filter(|s| s.kind == "busstop").collect();
@@ -217,7 +220,11 @@ pub fn generate(r: &Roads, sites: &[Site], lots: &[Lot]) -> Transit {
         let start = hub.map_or(angle(door(stops[0])), |h| angle(door(h)));
         let mut rs: Vec<i64> = stops.iter().map(|s| d2(door(s), (0, 0))).collect();
         rs.sort();
-        let split = if stops.len() >= 12 { rs[rs.len() / 2] } else { i64::MAX };
+        let split = match inner_cm {
+            Some(r) => r * r,
+            None if stops.len() >= 12 => rs[rs.len() / 2],
+            None => i64::MAX,
+        };
         // the districts' centres: the mean of their lots' doors
         let mut sum: BTreeMap<u8, (i64, i64, i64)> = BTreeMap::new();
         for l in lots {
@@ -256,7 +263,12 @@ pub fn generate(r: &Roads, sites: &[Site], lots: &[Lot]) -> Transit {
             let mut via = net.via(&order);
             via.push(via[0]);
             via.dedup();
-            lines.push(Line { id: format!("bus:{}", lines.len()), kind: "bus", tier: BUS_TIER, stops: ids, path: net.through(&via, &bus) });
+            let path = if inner && inner_cm.is_some() {
+                net.through(&via, &|e: &Edge| bus(e).map(|c| if out(e) { c * 50 } else { c }))
+            } else {
+                net.through(&via, &bus)
+            };
+            lines.push(Line { id: format!("bus:{}", lines.len()), kind: "bus", tier: BUS_TIER, stops: ids, path });
         }
     }
 

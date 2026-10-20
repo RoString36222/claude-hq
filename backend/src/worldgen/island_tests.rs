@@ -195,6 +195,17 @@ fn transit_runs_on_what_exists() {
     }
 }
 
+/// Buses from tier 2 (the product decision): an island's first loop keeps to the tier-2
+/// town, its hub included, so it runs as soon as the city is a Town.
+#[test]
+fn an_island_has_a_bus_from_tier_2() {
+    for w in islands() {
+        let lines = &w.layers.transit.as_ref().unwrap().lines;
+        let first = lines.iter().filter(|l| l.kind == "bus").map(|l| l.tier).min();
+        assert_eq!(first, Some(transit::BUS_TIER), "{}: the first bus runs from tier {first:?}", w.id);
+    }
+}
+
 /// The tier-1 city as the rule gives it today: the town hall and the dock, a tier-1
 /// road from the plaza to the town hall, and every other tier-1 lot inside the first ring.
 #[test]
@@ -217,12 +228,9 @@ fn the_tier_1_city() {
 }
 
 /// The rest of the task's tier-1 city: a clinic, a market and the owner's HQ lot (rank 0)
-/// at tier 1. By the rule they need to stand in the first ring (150 m), and today the
-/// first clinic stands up to 410 m out (gen-civic's cover), the market up to 190 m and
-/// the HQ lot 250 to 330 m (gen-organic's `hq_pool`; the spec puts it next to the town
-/// hall). Un-ignore once those land.
+/// at tier 1. civic.rs puts an island's tier-1 services inside the first ring (150 m)
+/// and `hq_pool` takes the HQ lot nearest the plaza, by the town hall.
 #[test]
-#[ignore = "waits on gen-civic (tier-1 services in the first ring) and gen-organic (the HQ next to the town hall)"]
 fn the_tier_1_city_has_its_services_and_hq() {
     for w in islands() {
         let id = &w.id;

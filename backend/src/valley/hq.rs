@@ -61,6 +61,24 @@ pub const HZ: f64 = 8.0;
 /// City page and a 3D one never draw each other on the wrong map.
 pub const FLOORS: [&str; 5] = ["base", "lobby", "mission", "city", "city3d"];
 
+/// A per-world room of the 3D City (protocol v3, "isles"): `city3d:<world id>`,
+/// the Commons (`claude-hq@2`, or `claude-hq@1` on an Arena without it) or a
+/// personal island `user:<user id>@2`, so people on different islands never draw
+/// each other. Checked exactly: anything else drops the frame like an unknown floor.
+pub fn floor_ok(w: &str) -> bool {
+    if FLOORS.contains(&w) {
+        return true;
+    }
+    let Some(id) = w.strip_prefix("city3d:") else { return false };
+    if id == "claude-hq@1" || id == "claude-hq@2" {
+        return true;
+    }
+    id.strip_prefix("user:").and_then(|r| r.strip_suffix("@2")).is_some_and(|u| {
+        u.len() == 36
+            && u.bytes().enumerate().all(|(i, b)| if matches!(i, 8 | 13 | 18 | 23) { b == b'-' } else { b.is_ascii_digit() || (b'a'..=b'f').contains(&b) })
+    })
+}
+
 /// How far x and z may reach, in cm: the generated world is 2048 m across
 /// (+-1024 m). One bound for every floor and every client version; it used to be
 /// +-6000 (60 m), which silently dropped every frame past the first block.
@@ -186,7 +204,7 @@ impl Hq {
         // null does not and fails the membership test below.
         let a = msg.get("a").cloned().unwrap_or_else(|| json!(0));
         let (Some(w), Some(x), Some(z), Some(r)) = (w, x, z, r) else { return false };
-        if !FLOORS.contains(&w) || !anim_ok(&a) {
+        if !floor_ok(w) || !anim_ok(&a) {
             return false;
         }
         // On a board, its trick and height ride along: absent means 0, and a bad
@@ -423,6 +441,24 @@ mod tests {
     const HQ: &str = "hq_ann";
 
     // ------------------------------------------------------- the catalogues --
+
+    #[test]
+    fn a_world_room_is_a_floor_only_for_a_real_world_id() {
+        for ok in ["city3d", "city3d:claude-hq@2", "city3d:claude-hq@1", "city3d:user:0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c@2"] {
+            assert!(floor_ok(ok), "{ok}");
+        }
+        for bad in ["city3d:", "city3d:claude-hq@3", "city3d:user:0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c@1",
+                    "city3d:user:0B8E4C1A-3F2D-4E5B-9A6C-7D8E9F0A1B2C@2", "city3d:user:0b8e4c1a/3f2d-4e5b-9a6c-7d8e9f0a1b2c@2",
+                    "city3d:user:@2", "city:claude-hq@2", "city3dx", "base:claude-hq@2"] {
+            assert!(!floor_ok(bad), "{bad}");
+        }
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        let isl = "city3d:user:0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c@2";
+        assert!(p.pos("u", &json!({"w": isl, "x": 0, "z": 0, "r": 0}), 0.1));
+        assert_eq!(p.listing()[0]["w"], isl);
+        assert!(!p.pos("u", &json!({"w": "city3d:elsewhere@2", "x": 0, "z": 0, "r": 0}), 0.2));
+    }
 
     #[test]
     fn the_rates_and_the_floors_are_pythons() {

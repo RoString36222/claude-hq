@@ -31,7 +31,8 @@ pub const GAMES: &[(&str, i64, &[&str])] = &[
     // exactly the v1-v3 shape it always was).
     ("strike", 4, &[]),
     // v2: the generated 3D City. "alt": pos may carry h (feet height, cm) and p (pitch, deg); x/z span +-102_400 cm; floor "city3d"
-    ("hq", 2, &["ride", "look", "skate", "drive", "alt"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`; "drive": a = 5 (a car), 6 (a motorbike)
+    // v3: Cities. "isles": the floor may be a world's own room, "city3d:<world id>" (valley/hq.rs floor_ok)
+    ("hq", 3, &["ride", "look", "skate", "drive", "alt", "isles"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`; "drive": a = 5 (a car), 6 (a motorbike)
     ("type", 1, &[]),
     ("td", 1, &[]),
     ("bowl", 1, &[]),
@@ -79,7 +80,8 @@ mod tests {
         assert_eq!(info["games"]["plat"], json!({"v": 1, "caps": []}));
         // HQ presence carries a = 3 (a bike), 4 (skating), 5 / 6 (a car / a motorbike) only where these are listed.
         // "alt" (v2): h / p ride along, x / z span the 2 km world, floor "city3d".
-        assert_eq!(info["games"]["hq"], json!({"v": 2, "caps": ["ride", "look", "skate", "drive", "alt"]}));
+        // "isles" (v3): the floor may be a world's own room, city3d:<world id>.
+        assert_eq!(info["games"]["hq"], json!({"v": 3, "caps": ["ride", "look", "skate", "drive", "alt", "isles"]}));
         assert_eq!(version("fps"), 1);
         assert_eq!(version("pond"), 1);
         // An unknown game still answers 1, as Python's PROTOCOL.get(g, {}) does.

@@ -1534,6 +1534,8 @@ function mount(el, api){
     ride.gear = ride.speed < -0.3 ? -1 : g;
     var top = G[g - 1], tgt = 900 + 6600*E.clamp(v/top, 0, 1) + (thr > 0 ? 500*thr : 0) + (ride.drift ? 900 : 0);
     ride.rpm += (Math.min(7800, tgt) - ride.rpm)*(1 - Math.exp(-dt*8));
+    // stopped with the throttle off: no note (without set() each frame, engineSound fades out)
+    if(v < 0.3 && !(thr > 0)) return;
     if(!ride.eng && E.engineSound) ride.eng = E.engineSound(V.eng);
     if(ride.eng) ride.eng.set(ride.rpm);
   }

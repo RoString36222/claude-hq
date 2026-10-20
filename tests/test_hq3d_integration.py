@@ -60,7 +60,9 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           # Cities (3.0): the civic kit, residents, traffic, the sea, boats, travel
                           "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqtravel", "hqvoyage", "hqships",
                           # navigation (3.1): the router, the minimap, the route's chevrons, the Go to panel
-                          "hqnav", "hqminimap", "hqroutefx", "hqnavui", "hqcity3d"])
+                          "hqnav", "hqminimap", "hqroutefx", "hqnavui",
+                          # rail (3.x): the lines between cities, their trains
+                          "hqrail", "hqcity3d"])
 
     def test_multi_hq_range_covers_server(self):
         m = re.search(r"\bhq:\[(\d+),(\d+)\]", read(MULTI))

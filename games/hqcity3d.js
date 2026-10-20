@@ -996,6 +996,7 @@ HQV.hqWorlds.city3d = function(c, w){
   w.carry = function(){
     if(bus && bus.phase === "ride"){ var p = bus.trip.pose(Date.now()); return {x: p.x, y: p.y + 0.5, z: p.z, yaw: p.yaw}; }
     if(mine(NAV.voy) && VOY) return seatPose(NAV.voy);
+    if(rail && rail.riding()) return rail.carry();        // rail
     var T = NAV.trip;
     if(T && T.from === worldId && (T.phase === "boarding" || T.phase === "paying" || T.phase === "riding" || T.phase === "holding") && T.hold) return T.hold;
     return null;
@@ -1013,7 +1014,7 @@ HQV.hqWorlds.city3d = function(c, w){
       var from = here(), items = [];
       travelPlaces(a, worldId, me).forEach(function(to){
         HQV.hqTravel.options(from, to, Date.now()).forEach(function(o){
-          if(o.self) return;
+          if(o.self || (o.mode === "rail" && rail && rail.has(to.world))) return;     // rail: the real train instead
           var txt = MODE_NAME[o.mode] + " to " + to.name + " · " + Math.round(o.seconds) + " s" + (o.fee ? " · " + o.fee + " coin" : "");
           if(o.departs) txt += " · sails in " + waitText(o.departs - Date.now());
           if(o.mode === "ferry" && ferryOn()){
@@ -1026,6 +1027,7 @@ HQV.hqWorlds.city3d = function(c, w){
           items.push({text: txt, fn: function(){ startTrip(o.mode, from, to, site); }});
         });
       });
+      if(rail && site.kind === "transit") items = rail.rows(a).concat(items);      // rail
       openMenu(siteTitle(site), items.slice(0, 9));
     }, function(){ say("The Arena didn't answer: no trips right now."); });
   }
@@ -1219,6 +1221,24 @@ HQV.hqWorlds.city3d = function(c, w){
     voyEl.children[2].firstChild.style.width = (Math.max(0, Math.min(1, tt/V.R.T))*100).toFixed(1) + "%";
     voyEl.children[3].textContent = tt < 0 ? "E: get off before it sails" : (c.held && c.held("Space")) ? "Full ahead!" : "Hold Space: full ahead · drag to look around";
   }
+  /* ---------- rail (games/hqrail.js): built lines, their viaducts, stations and trains; ride one between cities ----------
+     GET /api/arena/rail lists the built lines; each one touching this city is drawn (elevated over the streets, on piers
+     across the sea) with its trains on the shared timetable. At the station (E) the menu offers a ride on each line and,
+     for your own island, building a line (POST /api/arena/rail/build, paid from your island's treasury). Riding works as
+     the ferry: a seat in the second car (w.carry), the next city built on the way and swapped in mid-sea, Space for the
+     express. Everything lives in HQV.hqRail.mount; this block only wires it to the City. */
+  var rail = null;
+  function setupRail(){
+    if(!HQV.hqRail || !HQV.hqRail.mount || !W || !HQV.hqRail.stationOf(W)) return;
+    try {
+      rail = HQV.hqRail.mount(c, w, {W: W, world: worldId, tier: tier, me: me, sea: sea ? sea.y : 0, night: night, here: hereArch, arch: getArch, get: getJson, post: postJson,
+        say: say, places: function(a){ return travelPlaces(a, worldId, me); }, ground: groundY,
+        spawnAt: function(wid, s){ return HQV.hqTravel && HQV.hqTravel.spawnAt ? HQV.hqTravel.spawnAt(wid, s) : null; }});
+      w.rail = rail.tools;
+    } catch(e){ rail = null; }
+  }
+  /* ---------- end rail ---------- */
+
   // a boat that reaches another island lands you on its dock; the wake behind yours
   var boatNow = null;
   w.onBoat = function(b){
@@ -1255,10 +1275,12 @@ HQV.hqWorlds.city3d = function(c, w){
       else say("You're at sea. Sit back, or hold Space for full ahead.");
       return true;
     }
+    if(rail && rail.use()) return true;                  // rail: off the train before it leaves
     if(ndraw){
       var line = ndraw.talk({x: p.x, z: p.z}, npcMs());
       if(line && line.text){ showTalk(line); return true; }
     }
+    var rs = rail && rail.station(p.x, p.z); if(rs){ openTravelMenu(rs); return true; }   // rail: at the station's door, before its bus bay
     if(tsim){ var st = tsim.stopsNear(p.x, p.z, STOP_R)[0]; if(st){ openStopMenu(st); return true; } }
     var tm = HQV.hqTravel ? terminalAt(W, tier, p.x, p.z) : null;
     if(tm){ if(route && route.travel) navClear(); openTravelMenu(tm); return true; }     // the ferry you were routed to
@@ -1314,7 +1336,7 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   function citiesSetup(){
     buildCivic(); S.add(civicG);
-    setupSea(); setupLife(); buildUi(); statsUi(); setupFerries();
+    setupSea(); setupLife(); buildUi(); statsUi(); setupFerries(); setupRail();
     if(worldId === COMMONS) getJson("/api/arena/world/" + COMMONS + "/assign").then(function(rows){
       if(dead || !Array.isArray(rows)) return; assignRows = rows; sig = null; build();
     }, function(){});
@@ -1377,6 +1399,7 @@ HQV.hqWorlds.city3d = function(c, w){
     S.remove(civicG); S.remove(boatG);
     ferryPool.forEach(function(F){ F.dispose(); }); ferryPool = []; if(myFerry){ myFerry.dispose(); myFerry = null; }
     if(ferryT){ ferryT.dispose(); ferryT = null; } if(ferryG){ S.remove(ferryG); ferryG = null; }
+    if(rail){ rail.destroy(); rail = null; }                // rail
   }
 
   /* ---------- navigation (HQ 3.1): the minimap, the Go to panel, the route banner, chevrons and the pillar ---------- */
@@ -1623,7 +1646,7 @@ HQV.hqWorlds.city3d = function(c, w){
   w.setTime = function(n){ night = n; S.background = null; paintSky(n); fog.color.set(n ? 0x0f1f30 : 0xb8dcf2);
     hemi.intensity = n ? 1.3 : 2.4; sun.intensity = n ? 0.7 : 2.4; sun.color.set(n ? 0xa9b8ff : 0xfff2dc);
     if(wb) wb.setNight(n); applyTime();
-    civics.forEach(function(B){ B.setNight(n); }); if(oc) oc.setTime(n); };
+    civics.forEach(function(B){ B.setNight(n); }); if(oc) oc.setTime(n); if(rail) rail.setNight(n); };
   // Fading: in classic the buildings between you and hq3d's orthographic view (as hqbase.js
   // hqCutaway decides it); in every rig mode hq3d passes the occluders to w.setFaded. Switching
   // between the two clears the other's fades. Either way the fade itself eases (fadeStep).
@@ -1667,6 +1690,7 @@ HQV.hqWorlds.city3d = function(c, w){
     cars.forEach(function(cr){ carStep(cr, dt, k); });
     if(V2) citiesUpdate(t, dt, k, cam);
     if(V2) ferryStep(t, dt);
+    if(rail) rail.update(t, dt, cam);                     // rail
     navStep(dt, cam);
   };
   w.setTime(night);

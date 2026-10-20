@@ -70,7 +70,7 @@ pub fn post_paths() -> Vec<&'static str> {
         "/api/arena/pantry/give", "/api/arena/pantry/reward", "/api/arena/hq/me", "/api/arena/portrait", "/api/arena/cosmetics/buy",
         "/api/arena/cosmetics/equip", "/api/arena/market/sell", "/api/arena/crews/create", "/api/arena/crews/join",
         "/api/arena/crews/leave", "/api/arena/quickplay/join", "/api/arena/quickplay/leave", "/api/arena/cali/order",
-        "/api/arena/sounds", "/api/games/state", "/api/vial/spend", "/api/notch/install",
+        "/api/arena/sounds", "/api/arena/rail/build", "/api/games/state", "/api/vial/spend", "/api/notch/install",
     ];
     v.extend(ARENA_ROOM_POSTS);
     v.extend(ext::POST.iter().map(|(p, _)| *p));
@@ -473,6 +473,10 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
     }
     if path == "/api/arena/archipelago" {
         let (c, r) = app.arena_archipelago();
+        return Reply::json(c, &r);
+    }
+    if path == "/api/arena/rail" {
+        let (c, r) = app.arena_rail();
         return Reply::json(c, &r);
     }
     let qs = |k: &str| py::qs_first(query, k);
@@ -918,6 +922,7 @@ fn arena_post(app: &App, path: &str, body: &Value) -> (u16, Value) {
             (200, json!({"ok": true}))
         }
         "/api/arena/publish" => app.arena_publish(),
+        "/api/arena/rail/build" => app.arena_rail_build(body),
         "/api/arena/ticket" => app.arena_ws_ticket(),
         "/api/arena/nudge" => match b.get("toHandle").and_then(|v| v.as_str()).filter(|t| !py::strip(t).is_empty()) {
             Some(to) => app.arena_send_nudge(py::strip(to), b.get("note")),

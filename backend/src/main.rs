@@ -33,6 +33,7 @@ mod privrooms;
 mod progress;
 mod protocol;
 mod quickplay;
+mod rail;
 mod rally;
 mod realtime;
 mod results;
@@ -994,6 +995,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(cosmetics::routes())
         .merge(accounts::routes())
         .merge(archipelago::routes())
+        .merge(rail::routes())
         .merge(crews::routes())
         .merge(cups::routes())
         .merge(hq::routes())

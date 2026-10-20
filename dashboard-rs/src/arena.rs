@@ -101,6 +101,16 @@ pub struct WorldReply {
 pub static ISLAND_WORLD_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@2$").unwrap());
 
+/// A rail build's body: `{to}` when `to` is the Commons or an island's world id,
+/// `{}` (the Commons) when it is absent; any other field is dropped.
+pub fn rail_body(body: &Value) -> Result<Value, &'static str> {
+    match body.get("to") {
+        None | Some(Value::Null) => Ok(json!({})),
+        Some(Value::String(s)) if s == "claude-hq@2" || ISLAND_WORLD_RE.is_match(s) => Ok(json!({"to": s})),
+        _ => Err("to must be claude-hq@2 or an island's world id"),
+    }
+}
+
 /// GET a world with an optional `If-None-Match`. The fixed worlds go without a
 /// device token (the route is public and holds no one's data); an island carries
 /// it, because the Arena serves an island only to those who may visit it. Any
@@ -1127,6 +1137,20 @@ impl App {
         self.authed_get("/v1/archipelago")
     }
 
+    /// GET /v1/rail: the rail lines built between the cities this user may see.
+    pub fn arena_rail(&self) -> (u16, Value) {
+        self.authed_get("/v1/rail")
+    }
+
+    /// POST /v1/rail/build: build a line from the caller's island, paid from its
+    /// treasury. Egress: only `to`, a world id (the Commons or an island), else nothing.
+    pub fn arena_rail_build(&self, body: &Value) -> (u16, Value) {
+        match rail_body(body) {
+            Ok(clean) => self.authed_send("POST", "/v1/rail/build", clean),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
     /// GET /v1/world/claude-hq@2/assign: which Commons HQ lot (a rank) each open
     /// HQ's tower stands on. Egress: the device token and the fixed path only.
     pub fn arena_commons_assign(&self) -> (u16, Value) {
@@ -1439,6 +1463,26 @@ pub(crate) mod tests {
         assert_eq!(s[3].3, Some(json!({"amount": 10, "dir": "in"})));
         assert_eq!(s[4].3, Some(json!({"good": "fish", "qty": 2, "side": "buy"})));
         assert!(s.iter().all(|x| x.2.as_deref() == Some("T")));
+    }
+
+    #[test]
+    fn rail_build_forwards_only_a_world_id() {
+        let isl = "user:a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d@2";
+        assert_eq!(rail_body(&json!({})), Ok(json!({})));
+        assert_eq!(rail_body(&json!({"to": "claude-hq@2", "path": "/secret"})), Ok(json!({"to": "claude-hq@2"})));
+        assert_eq!(rail_body(&json!({"to": isl})), Ok(json!({"to": isl})));
+        for bad in [json!({"to": "claude-hq@1"}), json!({"to": "user:../x@2"}), json!({"to": 5}), json!({"to": "USER:A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D@2"})] {
+            assert!(rail_body(&bad).is_err(), "{bad}");
+        }
+        let (_d, app) = app();
+        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({})))));
+        assert_eq!(app.arena_rail().0, 200);
+        assert_eq!(app.arena_rail_build(&json!({"to": isl, "note": "x"})).0, 200);
+        assert_eq!(app.arena_rail_build(&json!({"to": "../admin"})).0, 400);
+        let s = sent.lock().unwrap();
+        let urls: Vec<&str> = s.iter().map(|x| x.1.as_str()).collect();
+        assert_eq!(urls, vec!["https://arena.example/v1/rail", "https://arena.example/v1/rail/build"]);
+        assert_eq!(s[1].3, Some(json!({"to": isl})));
     }
 
     #[test]

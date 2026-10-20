@@ -4,11 +4,13 @@
 //! counter-clockwise ones are blocks, the clockwise ones holes in them (streets
 //! inside the block, whose land has blocks of its own). A block's footprint is its
 //! loop inset by half the width of the road along each side: the land between the kerbs.
+//! A side along a river's wall is no road (no lot fronts it), and a loop of nothing but
+//! wall and bridges is the river itself, not a block.
 
 use std::collections::{BTreeMap, HashMap};
 
 use super::geom::{area2, cross, dot, left, simple, sub, unit, P};
-use super::graph::Graph;
+use super::graph::{Graph, Kind};
 use super::super::noise::ONE;
 
 /// How far (cm) a block keeps back from a road's edge, past its half-width.
@@ -21,6 +23,8 @@ pub struct Face {
     pub poly: Vec<P>,
     /// Loops of street inside it (centre lines): their land is not this block's.
     pub holes: Vec<Vec<P>>,
+    /// Side k (poly[k] to poly[k + 1]) is on a road (false: on a river's bank).
+    pub fronts: Vec<bool>,
 }
 
 /// The blocks of `g`; `half(e)` is graph edge e's half-width (cm).
@@ -45,15 +49,18 @@ pub fn blocks(g: &Graph, half: impl Fn(u32) -> i64) -> Vec<Face> {
         }
         for l in loops {
             let n = l.len();
-            let sides: Vec<(P, i64)> = (0..n)
-                .map(|k| {
-                    let (a, b) = (l[k], l[(k + 1) % n]);
-                    (g.nodes[a as usize], half(between[&(a.min(b), a.max(b))]) + KERB_CM)
-                })
+            let edges: Vec<u32> = (0..n).map(|k| between[&(l[k].min(l[(k + 1) % n]), l[k].max(l[(k + 1) % n]))]).collect();
+            if edges.iter().all(|&e| g.edges[e as usize].kind == Kind::Water || g.edges[e as usize].bridge) {
+                continue; // the river
+            }
+            let sides: Vec<(P, i64, bool)> = (0..n)
+                .map(|k| (g.nodes[l[k] as usize], half(edges[k]) + KERB_CM, g.edges[edges[k] as usize].kind != Kind::Water))
                 .collect();
-            let Some(poly) = inset(&straighten(sides)) else { continue };
+            let sides = straighten(sides);
+            let fronts: Vec<bool> = sides.iter().map(|s| s.2).collect();
+            let Some(poly) = inset(&sides.iter().map(|s| (s.0, s.1)).collect::<Vec<_>>()) else { continue };
             if area2(&poly) >= 2 * MIN_BLOCK_CM2 {
-                out.push(Face { poly, holes: holes.clone() });
+                out.push(Face { poly, holes: holes.clone(), fronts });
             }
         }
     }
@@ -82,15 +89,16 @@ fn split_loops(cyc: &[u32]) -> Vec<Vec<u32>> {
     out
 }
 
-/// Drop corners where the road runs on straight (under 2 degrees) at the same width:
-/// a street is a chain of short segments, a block's side is one edge.
-fn straighten(mut s: Vec<(P, i64)>) -> Vec<(P, i64)> {
+/// Drop corners where the road runs on straight (under 2 degrees) at the same width
+/// (and both sides roads, or both wall): a street is a chain of short segments, a
+/// block's side is one edge.
+fn straighten(mut s: Vec<(P, i64, bool)>) -> Vec<(P, i64, bool)> {
     let mut k = 0;
     while s.len() > 3 && k < s.len() {
         let n = s.len();
         let (prev, cur, next) = (s[(k + n - 1) % n], s[k], s[(k + 1) % n]);
         let (u, v) = (unit(sub(cur.0, prev.0)), unit(sub(next.0, cur.0)));
-        if prev.1 == cur.1 && dot(u, v) > 0 && cross(u, v).abs() < (ONE * ONE / 30) as i128 {
+        if prev.1 == cur.1 && prev.2 == cur.2 && dot(u, v) > 0 && cross(u, v).abs() < (ONE * ONE / 30) as i128 {
             s.remove(k);
         } else {
             k += 1;

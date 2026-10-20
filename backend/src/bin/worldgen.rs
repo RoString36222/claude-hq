@@ -60,6 +60,11 @@ fn main() {
     };
     println!("  roads     {} nodes, {} edges ({classes}, {} highway, {} ring)", l.roads.nodes.len(), l.roads.edges.len(),
              count("highway"), count("ring"));
+    if let Some(r) = &l.river {
+        let bridges = l.roads.edges.iter().filter(|e| e.bridge.is_some()).count();
+        println!("  river     {} m wide, {} points, basin r {} m at ({}, {}) m, {} bridges", r.width_cm / 100, r.center.len(), r.basin.r / 100,
+                 r.basin.x / 100, r.basin.z / 100, bridges);
+    }
     println!("  lots      {} ({} HQ in the pool)", l.lots.len(), l.lots.iter().filter(|x| x.kind == "hq").count());
     println!("  sites     {}", l.sites.iter().map(|s| s.id.as_str()).collect::<Vec<_>>().join(" "));
     println!("  json      {} KB", serde_json::to_vec(&w).unwrap().len() / 1024);

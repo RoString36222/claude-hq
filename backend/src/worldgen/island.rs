@@ -10,9 +10,10 @@
 //!   grow     a personal city is generated at full size once, and every lot, site
 //!            and road gets the first city tier it exists in (`min_tier`; a site's
 //!            `tier`): its ring, `radius_by_tier`, out from the plaza, and never
-//!            before its spec tier or its road. The shore's sites stand outside the
-//!            rings and keep their spec tiers. A transit line runs from the tier all
-//!            its stops and streets exist in. Growth only adds: nothing moves between tiers
+//!            before its spec tier or its road. The shore's sites (the dock and the
+//!            port, on the river: river.rs) keep their spec tiers. A transit line
+//!            runs from the tier all its stops and streets exist in. Growth only
+//!            adds: nothing moves between tiers
 //!
 //! `layers.island` carries the coast, the sea level, the docks (the dock and port
 //! sites, where ferries and boats tie up) and the tiers' radii. The Commons is always
@@ -74,7 +75,7 @@ pub struct Coast {
 }
 
 /// The coast's directions: DIR16, each gap halved three times (Q16 units, counter-clockwise).
-fn directions() -> Vec<P> {
+pub(super) fn directions() -> Vec<P> {
     let mut dirs = DIR16.to_vec();
     while dirs.len() < COAST_N {
         let n = dirs.len();
@@ -230,8 +231,9 @@ fn road_at(r: &Roads, q: P, reach: i64) -> Option<usize> {
         .map(|(_, k)| k)
 }
 
-/// Are these the shore's sites? They stand on the coast, outside every ring: they open
-/// at their spec tier (the dock 1, the port 3) and are reached by sea.
+/// Are these the shore's sites, where ferries and boats tie up? They open at their spec
+/// tier (the dock 1, the port 3): the dock on the river's bank inside the first ring (its
+/// quay a tier-1 street), the port on the river's basin.
 pub fn shore(kind: &str) -> bool {
     matches!(kind, "dock" | "port")
 }

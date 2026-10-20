@@ -16,12 +16,15 @@
 //! tensor field, local streets grown between them, blocks as the faces of the road
 //! graph, lots split from the blocks. Highways, the ring and the rest of the
 //! pipeline are shared, so version 1 is untouched. Version 2 adds the civic sites
-//! (civic.rs: services on lots taken before the HQ pool, then the shore's and the
-//! airport once the highways are laid), the industry zones (zones.rs) and the bus
+//! (civic.rs: services on lots taken before the HQ pool, then the dock and port on the
+//! river and the airport once the highways are laid), the industry zones (zones.rs) and the bus
 //! and tram lines (transit.rs). Both version 2 worlds are islands (island.rs): a
 //! seeded coast with the sea round it (shaped into the base terrain), the highways
 //! ending at the ring, and a personal city generated at full size once, every lot,
-//! site, road and transit line given the first city tier it exists in.
+//! site, road and transit line given the first city tier it exists in. And both have a
+//! river (river.rs): from the sea to a harbour basin in town, carved into the land
+//! before any street grows, bridged by the arterials and the graded roads, the dock on
+//! its bank near the plaza and the port on its basin.
 //!
 //! Layout (where roads, blocks, lots and sites are) comes from the seed and the
 //! profile only; terrain edits change heights, never layout. The result is a
@@ -38,6 +41,7 @@ pub mod island;
 pub mod noise;
 pub mod organic;
 pub mod profile;
+pub mod river;
 pub mod rng;
 pub mod roads;
 pub mod terrain;
@@ -95,6 +99,9 @@ pub struct Layers {
     /// Island worlds (@2): the coast, the sea, the docks and the growth tiers' radii.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub island: Option<island::Island>,
+    /// Organic worlds (@2): the river, from the sea to its harbour basin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub river: Option<river::River>,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -109,6 +116,8 @@ pub struct Hashes {
     pub transit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub island: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub river: Option<String>,
     pub edits: String,
     /// Of all the above: the world's one fingerprint.
     pub world: String,
@@ -137,14 +146,15 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
     let seed = rng::fnv1a64(seed_str.as_bytes());
     let p = profile_for(seed_str, version);
 
-    let base = terrain::generate(seed, &p);
+    let river = river::River::new(seed, &p)?;
+    let base = terrain::generate_with(seed, &p, river.as_ref());
     let (mut city, mut roads, districts) = if version == 1 {
         let city = city::generate(seed, &p, &base)?;
         let roads = roads::generate(seed, &p, &base, &city.blocks)?;
         let districts = districts::generate(seed, &p, &base, &city.blocks);
         (city, roads, districts)
     } else {
-        organic::generate(seed, &p, &base)?
+        organic::generate(seed, &p, &base, river.as_ref())?
     };
     let (zones, transit, island) = if version == 1 {
         (None, None, None)
@@ -153,7 +163,7 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         if coast.is_some() {
             island::trim(&mut roads);
         }
-        civic::outside(&p, &base, &roads, &mut city);
+        civic::outside(&p, &base, &roads, &mut city, river.as_ref());
         // a personal island's first bus loop keeps to its tier-2 town (20 m in from the ring)
         let inner = (p.name == "island").then(|| island::RADII_CM[1] - 2_000);
         let mut transit = transit::generate(&roads, &city.sites, &city.lots, inner);
@@ -167,7 +177,7 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
     roads.carve(&mut terrain);
     city.seat(&terrain);
 
-    let layers = Layers { terrain, districts, roads, blocks: city.blocks, lots: city.lots, sites: city.sites, zones, transit, island };
+    let layers = Layers { terrain, districts, roads, blocks: city.blocks, lots: city.lots, sites: city.sites, zones, transit, island, river };
     let mut hashes = Hashes {
         terrain: hash(&layers.terrain),
         districts: hash(&layers.districts),
@@ -177,6 +187,7 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         sites: hash(&layers.sites),
         transit: layers.transit.as_ref().map(hash),
         island: layers.island.as_ref().map(hash),
+        river: layers.river.as_ref().map(hash),
         edits: hash(&edits),
         world: String::new(),
     };

@@ -1,11 +1,14 @@
 //! The organic city (world version 2: the Commons and the personal islands).
 //!
 //!   zoning (district seeds round the plaza, each with a character)
+//!     -> the river's bank laid in as a wall (river.rs): streets meet it and stop
 //!     -> arterials traced through a tensor field (radial, the districts' grids,
 //!        the slope of the land, the coast), then local streets grown off them
 //!        L-system style, every district in its own way (streets.rs)
+//!        (arterials bridge the river; a quay street runs to the dock's bank)
 //!     -> the network pruned: no road steeper than the city's grade, one network
-//!     -> blocks: the faces of the planar road graph, inset to the kerbs (blocks.rs)
+//!     -> blocks: the faces of the planar road graph, inset to the kerbs (blocks.rs);
+//!        the river's faces are no blocks, and the wall comes down
 //!     -> lots: blocks split down to their district's lot size, every lot on a road (lots.rs)
 //!     -> sites on the plaza and the civic lots, the HQ pool on the lots nearest
 //!        the plaza, a growth rank for every lot
@@ -29,6 +32,7 @@ use super::city::{Block, City, Facing, Lot, Site};
 use super::districts::{Districts, CELL_CM};
 use super::noise::{isqrt, value, ONE};
 use super::profile::{district, Place, Profile};
+use super::river::River;
 use super::rng::{sub, Rng};
 use super::roads::{self, Edge, Node, Roads};
 use super::terrain::Terrain;
@@ -37,11 +41,11 @@ use graph::{Graph, Kind};
 use streets::{Ctx, Street};
 use zoning::{character, Zoning};
 
-/// Generate the city, its roads and the district map.
-pub fn generate(seed: u64, p: &Profile, base: &Terrain) -> Result<(City, Roads, Districts), String> {
+/// Generate the city, its roads and the district map, round the river if it has one.
+pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>) -> Result<(City, Roads, Districts), String> {
     let zoning = Zoning::new(seed, p);
     let field = tensor::Field { terrain: base, grids: zoning.grids(), radial_r: p.city_r_cm * 6 / 10, coast_r: p.coast_r_cm };
-    let ctx = Ctx { p, t: base, field, zoning: &zoning };
+    let ctx = Ctx { p, t: base, field, zoning: &zoning, river };
 
     // names: the highways' first (roads::graded draws them), then the arterials', and
     // the local streets go round the rest, so no highway shares a street's name
@@ -54,15 +58,64 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain) -> Result<(City, Roads, 
     let mut g = Graph::default();
     let mut streets = Vec::new();
     let mut grow = Rng::new(sub(seed, "streets", 0, 0));
-    let chains = streets::arterials(&mut g, &ctx, &mut grow, &mut streets, art_names)?;
+    // the river's bank, a loop of wall: its first node, and the one behind the dock
+    // (where the dock's quay street ends)
+    let wall = river.map(|r| {
+        let road = streets.len() as u32;
+        streets.push(Street { name: "River".to_string(), kind: Kind::Water });
+        let first = g.nodes.len() as u32;
+        let n = r.bank.poly.len() as u32;
+        for &q in &r.bank.poly {
+            g.node(q);
+        }
+        for k in 0..n {
+            g.link(first + k, first + (k + 1) % n, Kind::Water, road);
+        }
+        (first, first + r.quay as u32)
+    });
+    let mut chains = streets::arterials(&mut g, &ctx, &mut grow, &mut streets, art_names)?;
+    // the dock's quay: a street to the bank behind the dock from the nearest arterial,
+    // else (once the local streets have grown) from the nearest street; none if a street
+    // already ends on the bank there (within 15 m)
+    let mut quay = None;
+    if let Some((first, to)) = wall {
+        // bridges where the arterials left the river unbridged, from the far end of the names
+        let rev: Vec<&str> = local_names.iter().rev().copied().collect();
+        chains.extend(streets::bridges(&mut g, &ctx, first, &mut streets, &rev));
+        let road = streets.len() as u32;
+        streets.push(Street { name: format!("{} Quay", local_names[0]), kind: Kind::Local });
+        quay = Some((to, road));
+    }
+    let laid = |g: &Graph, to: u32| {
+        let q = g.nodes[to as usize];
+        g.edges.iter().any(|e| e.alive && e.kind != Kind::Water && [e.a, e.b].iter().any(|&n| dist2(g.nodes[n as usize], q) <= 1_500 * 1_500))
+    };
+    let quay = quay.filter(|&(to, road)| !laid(&g, to) && !g.spur(to, 12_000, streets::MIN_CM, Kind::Local, road));
     streets::locals(&mut g, &ctx, &mut grow, &chains, &mut streets, local_names);
-    prune(&mut g, p, base);
+    if let Some((to, road)) = quay {
+        if !laid(&g, to) && !g.spur(to, 12_000, streets::MIN_CM, Kind::Local, road) {
+            return Err(format!("profile {}: no road reaches the dock", p.name));
+        }
+    }
+    prune(&mut g, p, base, chains[0][0]);
+    if wall.is_some_and(|(_, to)| !laid(&g, to)) {
+        return Err(format!("profile {}: the dock's road was pruned", p.name));
+    }
 
-    let width = |k: Kind| if k == Kind::Arterial { p.avenue_cm } else { p.road_cm };
+    let width = |k: Kind| match k {
+        Kind::Arterial => p.avenue_cm,
+        Kind::Local => p.road_cm,
+        Kind::Water => 0,
+    };
+
+    // blocks, the plaza first, then nearest it first; then the river's wall comes down
+    let faces = blocks::blocks(&g, |e: u32| width(g.edges[e as usize].kind) / 2);
+    for k in 0..g.edges.len() {
+        if g.edges[k].alive && g.edges[k].kind == Kind::Water {
+            g.kill(k as u32);
+        }
+    }
     let half = |e: u32| width(g.edges[e as usize].kind) / 2;
-
-    // blocks, the plaza first, then nearest it first
-    let faces = blocks::blocks(&g, half);
     let mut order: Vec<(i64, P, usize)> = faces
         .iter()
         .enumerate()
@@ -77,6 +130,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain) -> Result<(City, Roads, 
     }
     let mut blocks = Vec::with_capacity(order.len());
     let mut holes = Vec::with_capacity(order.len());
+    let mut fronts = Vec::with_capacity(order.len());
     for (id, &(rank, c, k)) in order.iter().enumerate() {
         let poly = &faces[k].poly;
         let (x0, x1) = (poly.iter().map(|q| q.0).min().unwrap(), poly.iter().map(|q| q.0).max().unwrap());
@@ -87,19 +141,20 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain) -> Result<(City, Roads, 
             poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()),
         });
         holes.push(&faces[k].holes);
+        fronts.push(&faces[k].fronts);
     }
 
     // lots: every block of a district that builds, split to its lot size; a lot must
     // be clear of every road, outside the block's holes, with its door on a road
     let mut lots: Vec<Lot> = Vec::new();
-    for (b, hs) in blocks.iter().zip(&holes) {
+    for ((b, hs), fs) in blocks.iter().zip(&holes).zip(&fronts) {
         let ch = character(b.district);
         if !ch.grows || b.district == district::PLAZA {
             continue;
         }
-        let poly: Vec<P> = b.poly.as_ref().unwrap().iter().map(|q| (q[0], q[1])).collect();
+        let sides: Vec<(P, bool)> = b.poly.as_ref().unwrap().iter().zip(fs.iter()).map(|(q, &f)| ((q[0], q[1]), f)).collect();
         let mut rng = Rng::new(sub(seed, "lots", b.id as i64, 0));
-        for cut in lots::split(&poly, ch.lot_m2 * 10_000, &mut rng) {
+        for cut in lots::split_sides(&sides, ch.lot_m2 * 10_000, &mut rng) {
             let c = centroid(&cut.poly);
             if hs.iter().any(|h| inside(c, h)) || !clear_of_roads(&g, &cut.poly, half) || !on_a_road(&g, cut.door, half) {
                 continue;
@@ -147,10 +202,11 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain) -> Result<(City, Roads, 
             Edge {
                 id: 0, a: renum[e.a as usize], b: renum[e.b as usize], class, width: width(e.kind), walk, lanes: 1, route: None,
                 name: name.clone(), points: roads::resample(g.nodes[e.a as usize], g.nodes[e.b as usize]), min_tier: None,
+                bridge: e.bridge.then_some(true),
             }
         })
         .collect();
-    roads::graded(&mut rng, p, base, &blocks, &mut nodes, &mut edges, &mut ways.iter().copied())?;
+    roads::graded(&mut rng, p, base, &blocks, &mut nodes, &mut edges, &mut ways.iter().copied(), river)?;
     let roads = Roads { nodes, edges };
 
     let districts = district_map(seed, p, base, &ctx, &g, &blocks);
@@ -158,11 +214,13 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain) -> Result<(City, Roads, 
 }
 
 /// Drop every road steeper than the city's grade (measured as the world will be:
-/// the ground under each 8 m step), then every road the plaza cannot reach.
-fn prune(g: &mut Graph, p: &Profile, t: &Terrain) {
+/// the ground under each 8 m step; a bridge is level), then every road the plaza (its
+/// ring's node `start`) cannot reach. The river's wall is no road: never dropped, never
+/// a way through.
+fn prune(g: &mut Graph, p: &Profile, t: &Terrain, start: u32) {
     for k in 0..g.edges.len() {
         let e = &g.edges[k];
-        if !e.alive {
+        if !e.alive || e.kind == Kind::Water || e.bridge {
             continue;
         }
         let pts = roads::resample(g.nodes[e.a as usize], g.nodes[e.b as usize]);
@@ -174,12 +232,14 @@ fn prune(g: &mut Graph, p: &Profile, t: &Terrain) {
             g.kill(k as u32);
         }
     }
-    // node 0 is on the plaza's ring
     let mut seen = vec![false; g.nodes.len()];
-    let mut stack = vec![0u32];
-    seen[0] = true;
+    let mut stack = vec![start];
+    seen[start as usize] = true;
     while let Some(n) = stack.pop() {
         for &e in &g.adj[n as usize] {
+            if g.edges[e as usize].kind == Kind::Water {
+                continue;
+            }
             let m = g.other(e, n);
             if !seen[m as usize] {
                 seen[m as usize] = true;
@@ -188,8 +248,21 @@ fn prune(g: &mut Graph, p: &Profile, t: &Terrain) {
         }
     }
     for k in 0..g.edges.len() {
-        if g.edges[k].alive && !seen[g.edges[k].a as usize] {
+        if g.edges[k].alive && g.edges[k].kind != Kind::Water && !(seen[g.edges[k].a as usize] && seen[g.edges[k].b as usize]) {
             g.kill(k as u32);
+        }
+    }
+    // a bridge leads somewhere: none left with a bank no road meets
+    let road = |g: &Graph, n: u32, e: u32| g.adj[n as usize].iter().any(|&x| x != e && g.edges[x as usize].kind != Kind::Water);
+    loop {
+        let dead: Vec<u32> = (0..g.edges.len() as u32)
+            .filter(|&e| g.edges[e as usize].alive && g.edges[e as usize].bridge && !(road(g, g.edges[e as usize].a, e) && road(g, g.edges[e as usize].b, e)))
+            .collect();
+        if dead.is_empty() {
+            break;
+        }
+        for e in dead {
+            g.kill(e);
         }
     }
 }

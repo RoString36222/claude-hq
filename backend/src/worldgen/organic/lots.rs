@@ -40,9 +40,16 @@ fn front_edge(f: &[(P, bool)]) -> Option<(P, P)> {
 
 /// Cut `block` (counter-clockwise, every side on a road) into lots of about
 /// `target_cm2`. The cut positions wobble by `rng`.
+#[cfg(test)]
 pub fn split(block: &[P], target_cm2: i64, rng: &mut Rng) -> Vec<Cut> {
+    split_sides(&block.iter().map(|&q| (q, true)).collect::<Vec<_>>(), target_cm2, rng)
+}
+
+/// As `split`, for a block whose sides say whether they are on a road (side k runs
+/// from point k to point k + 1): a lot fronts only a road.
+pub fn split_sides(block: &[(P, bool)], target_cm2: i64, rng: &mut Rng) -> Vec<Cut> {
     let mut pieces = Vec::new();
-    go(block.iter().map(|&q| (q, true)).collect(), target_cm2, rng, &mut pieces, 0);
+    go(block.to_vec(), target_cm2, rng, &mut pieces, 0);
     pieces
         .into_iter()
         .filter_map(|f| {

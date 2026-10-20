@@ -4,10 +4,15 @@
 //! a junction or a road within reach of its end, and is refused when it would meet
 //! a road at a sliver angle or run alongside one. Faces of the finished graph are
 //! the city's blocks.
+//!
+//! A river's bank is laid in first as a wall (`Kind::Water` edges): streets meet it
+//! like a road and stop there, faces form against it, and before the lots are cut the
+//! wall is taken down. A bridge (`GEdge::bridge`) spans the water between two of its
+//! nodes; no street joins a bridge part way over.
 
 use std::collections::HashMap;
 
-use super::geom::{crossing, cross, dist2, dot, lerp, nearest_on, unit, COS30, P};
+use super::geom::{crossing, cross, dist2, dot, lerp, nearest_on, sub, unit, COS30, P};
 use super::super::noise::ONE;
 use super::super::roads::segments_touch;
 
@@ -18,6 +23,8 @@ const CELL: i64 = 4_000;
 pub enum Kind {
     Arterial,
     Local,
+    /// A river's bank: a wall, not a road.
+    Water,
 }
 
 #[derive(Clone)]
@@ -28,6 +35,8 @@ pub struct GEdge {
     /// The street it is part of (an index into the generator's street list).
     pub road: u32,
     pub alive: bool,
+    /// A bridge over the river: straight from bank to bank.
+    pub bridge: bool,
 }
 
 /// What became of a segment: it ended at a new node (the street can grow on from
@@ -64,7 +73,7 @@ impl Graph {
 
     pub fn link(&mut self, a: u32, b: u32, kind: Kind, road: u32) -> u32 {
         let id = self.edges.len() as u32;
-        self.edges.push(GEdge { a, b, kind, road, alive: true });
+        self.edges.push(GEdge { a, b, kind, road, alive: true, bridge: false });
         self.adj[a as usize].push(id);
         self.adj[b as usize].push(id);
         let (pa, pb) = (self.nodes[a as usize], self.nodes[b as usize]);
@@ -87,11 +96,12 @@ impl Graph {
 
     /// Split edge `e` at `p` (a new node), keeping its kind and street.
     pub fn split(&mut self, e: u32, p: P) -> u32 {
-        let GEdge { a, b, kind, road, .. } = self.edges[e as usize];
+        let GEdge { a, b, kind, road, bridge, .. } = self.edges[e as usize];
         self.kill(e);
         let n = self.node(p);
-        self.link(a, n, kind, road);
-        self.link(n, b, kind, road);
+        let (x, y) = (self.link(a, n, kind, road), self.link(n, b, kind, road));
+        self.edges[x as usize].bridge = bridge;
+        self.edges[y as usize].bridge = bridge;
         n
     }
 
@@ -143,7 +153,7 @@ impl Graph {
     }
 
     /// Does every edge at `n` make at least 30 degrees with the way from `n` to `toward`?
-    fn angle_ok(&self, n: u32, toward: P) -> bool {
+    pub fn angle_ok(&self, n: u32, toward: P) -> bool {
         let o = self.nodes[n as usize];
         let d = unit((toward.0 - o.0, toward.1 - o.1));
         self.adj[n as usize].iter().all(|&e| {
@@ -195,6 +205,9 @@ impl Graph {
             }
         }
         if let Some((num, den, e)) = first {
+            if self.edges[e as usize].bridge {
+                return Fit::Refused;
+            }
             let x = lerp(a, p, num, den);
             let (ea, eb) = (self.edges[e as usize].a, self.edges[e as usize].b);
             for end in [ea, eb] {
@@ -212,7 +225,7 @@ impl Graph {
         let mut near: Option<(i64, u32, P)> = None;
         for e in self.edges_in((p.0 - snap, p.1 - snap), (p.0 + snap, p.1 + snap)) {
             let g = &self.edges[e as usize];
-            if self.touches(e, u) {
+            if self.touches(e, u) || g.bridge {
                 continue;
             }
             let (q, d) = nearest_on(p, self.nodes[g.a as usize], self.nodes[g.b as usize]);
@@ -270,6 +283,49 @@ impl Graph {
         let n = self.split(e, x);
         self.link(u, n, kind, road);
         Fit::Joined(n, met)
+    }
+
+    /// Could nodes a and b be joined straight, crossing no road (or wall) but those at them?
+    pub fn clear_between(&self, a: u32, b: u32) -> bool {
+        self.clear(self.nodes[a as usize], self.nodes[b as usize], &[a, b], None)
+    }
+
+    /// A straight street of `kind` to node `to` from the nearest point (within `reach`
+    /// cm) of a road that can reach it: crossing nothing, at least `min_len` long, meeting
+    /// the roads at both ends at a fair angle. Bridges and walls are not roads to start
+    /// from. False if no road can.
+    pub fn spur(&mut self, to: u32, reach: i64, min_len: i64, kind: Kind, road: u32) -> bool {
+        let d = self.nodes[to as usize];
+        let mut near: Vec<(i64, u32, P)> = self
+            .edges_in((d.0 - reach, d.1 - reach), (d.0 + reach, d.1 + reach))
+            .into_iter()
+            .filter(|&e| self.edges[e as usize].kind != Kind::Water && !self.edges[e as usize].bridge && !self.touches(e, to))
+            .map(|e| {
+                let g = &self.edges[e as usize];
+                let (q, d2) = nearest_on(d, self.nodes[g.a as usize], self.nodes[g.b as usize]);
+                (d2, e, q)
+            })
+            .filter(|&(d2, _, _)| d2 <= reach * reach && d2 >= min_len * min_len)
+            .collect();
+        near.sort();
+        for (_, e, q) in near {
+            let (ea, eb) = (self.edges[e as usize].a, self.edges[e as usize].b);
+            let end = [ea, eb].into_iter().find(|&n| self.nodes[n as usize] == q);
+            let ok = match end {
+                Some(n) => self.clear(q, d, &[n, to], None) && self.angle_ok(n, d),
+                None => {
+                    let (s, r) = (unit(sub(self.nodes[eb as usize], self.nodes[ea as usize])), unit(sub(d, q)));
+                    self.clear(q, d, &[to], Some(e)) && dot(s, r).abs() <= (COS30 * ONE) as i128
+                }
+            };
+            if !ok || !self.angle_ok(to, q) {
+                continue;
+            }
+            let n = end.unwrap_or_else(|| self.split(e, q));
+            self.link(n, to, kind, road);
+            return true;
+        }
+        false
     }
 
     /// The bounded faces of the (planar) graph: node cycles, counter-clockwise.

@@ -34,7 +34,14 @@ pub enum Edit {
 pub const MAX_EDITS: usize = 512;
 pub const MAX_RADIUS_CM: i64 = 40_000;
 
+/// The base terrain of world `seed` with profile `p`, its river (if any) shaped in.
 pub fn generate(seed: u64, p: &Profile) -> Terrain {
+    let river = super::river::River::new(seed, p).ok().flatten();
+    generate_with(seed, p, river.as_ref())
+}
+
+/// The base terrain, with the coast's sea and then `river` (already generated) shaped in.
+pub fn generate_with(seed: u64, p: &Profile, river: Option<&super::river::River>) -> Terrain {
     let n = (p.size_cm / p.cell_cm) as usize + 1;
     let origin = -p.size_cm / 2;
     let (hs, ps) = (sub(seed, "terrain", 0, 0), sub(seed, "plateau", 0, 0));
@@ -53,6 +60,10 @@ pub fn generate(seed: u64, p: &Profile) -> Terrain {
     // an island's coast: the sea round it (island.rs)
     if let Some(coast) = super::island::Coast::new(seed, p) {
         coast.shape(&mut t);
+    }
+    // and the river running into it (river.rs)
+    if let Some(r) = river {
+        r.shape(&mut t);
     }
     t
 }

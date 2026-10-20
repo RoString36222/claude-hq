@@ -13,11 +13,14 @@
 //!                   road from arterial lots, then from any for the lots still out of reach
 //!   tramstop        every ~200 m along the tram streets: the arterials most lots front (tier 4)
 //!   power, water    industrial lots farthest out (tier 3)
-//!   stadium         in the park nearest downtown, else downtown's biggest lot, else
-//!                   open land past the city's edge nearest downtown (tier 5)
+//!   stadium         in the park nearest downtown, else downtown's biggest lot (then any
+//!                   district's), else open land past the city's edge nearest downtown (tier 5)
 //!   zone buildings  on their industry's lots, at its tier (zones.rs)
-//!   dock, port      on the shore, facing the sea (tier 1 and 3); airport on the flattest
-//!                   open land outside the city (tier 5): `outside`, once the highways are laid
+//!   dock, port      on the river (tier 1 and 3): the dock on the bank of its bay near the
+//!                   plaza, the port on the harbour basin's, each out over the water; with
+//!                   no river, on the shore facing the sea. The airport on the flattest open
+//!                   land outside the city, off the river (tier 5): `outside`, once the
+//!                   highways are laid
 //!
 //! `place` runs inside the organic generator after the plaza's sites and BEFORE the HQ
 //! pool is drawn, so a service never takes a member's lot. A site takes its lot (the
@@ -38,6 +41,7 @@ use super::organic::geom::{self, along, centroid, dist2, inside, left, len, near
 use super::organic::graph::{Graph, Kind};
 use super::organic::{fit, rect};
 use super::profile::{district, Profile};
+use super::river::River;
 use super::roads::Roads;
 use super::terrain::Terrain;
 use super::zones;
@@ -57,10 +61,10 @@ pub enum Place {
     Coverage { radius_cm: i64, along_arterial: bool },
     /// Every `every_cm` along the arterials, or (`tram`) along the tram streets only.
     Along { every_cm: i64, tram: bool },
-    /// In the park nearest downtown (else downtown's biggest lot; else, in `outside`,
-    /// on open land nearest downtown).
+    /// In the park nearest downtown (else downtown's biggest lot, else any district's;
+    /// else, in `outside`, on open land nearest downtown).
     Park,
-    /// On the shore, its front to the sea (`outside`).
+    /// On the water, its front out over it: the river's, else the sea's (`outside`).
     Shore,
     /// On the flattest open land just outside the city (`outside`).
     Edge,
@@ -409,9 +413,11 @@ impl Civ<'_> {
             let Some(u) = u else { break };
             let from = [self.at[u].unwrap()];
             let du = spread(g, &from, radius);
+            // apart where the site would stand, not where its lot's middle is
+            let apart = |q: P| self.sites.iter().filter(|s| s.kind == c.kind).all(|s| dist2((s.x, s.z), q) >= c.apart_cm * c.apart_cm);
             let mut cands: Vec<(i64, usize)> = (0..n)
-                .filter(|&k| self.free(k) && (!along_arterial || self.art[k]) && self.apart(c.kind, c.apart_cm, k))
-                .filter(|&k| fit(self.t, self.p, &self.lots[k], c.w_cm, c.d_cm).is_some())
+                .filter(|&k| self.free(k) && (!along_arterial || self.art[k]))
+                .filter(|&k| fit(self.t, self.p, &self.lots[k], c.w_cm, c.d_cm).is_some_and(apart))
                 .filter_map(|k| {
                     let r = reach(g, &du, &from, self.at[k].as_ref().unwrap());
                     (r <= radius).then_some((r, k))
@@ -501,7 +507,7 @@ impl Civ<'_> {
 
     /// The stadium: in the park block nearest downtown (by block centres), square to
     /// its box, flat and clear of the roads (smaller if it must be); else downtown's
-    /// biggest lot that holds it (or 3/4 of it).
+    /// biggest lot that holds it (or 3/4 or 1/2 of it), then any district's.
     fn park(&mut self, c: &Civic) {
         let downtown: Vec<P> = self.blocks.iter().filter(|b| b.district == district::DOWNTOWN).map(|b| (b.x, b.z)).collect();
         let mut parks: Vec<(i64, usize)> = self
@@ -538,17 +544,16 @@ impl Civ<'_> {
                 }
             }
         }
-        // no park will do: the biggest lot downtown, else (in `outside`) open land past downtown's edge
-        let mut order: Vec<(i64, usize)> = (0..self.lots.len())
-            .filter(|&k| self.free(k) && self.lots[k].district == district::DOWNTOWN)
-            .map(|k| (-geom::area2(&pts(self.lots[k].poly.as_ref().unwrap())), k))
+        // no park will do: the biggest lot downtown (else any district's, where a river
+        // took the parks' room) that holds it, or 3/4 or 1/2 of it; else (in `outside`)
+        // open land past downtown's edge
+        let mut order: Vec<(bool, i64, usize)> = (0..self.lots.len())
+            .filter(|&k| self.free(k))
+            .map(|k| (self.lots[k].district != district::DOWNTOWN, -geom::area2(&pts(self.lots[k].poly.as_ref().unwrap())), k))
             .collect();
         order.sort();
-        for (_, k) in order {
-            if self.put(c.kind, c.tier, k, c.w_cm, c.d_cm) || self.put(c.kind, c.tier, k, c.w_cm * 3 / 4, c.d_cm * 3 / 4) {
-                break;
-            }
-        }
+        let order: Vec<(usize, usize)> = order.into_iter().map(|o| (o.0 as usize, o.2)).collect();
+        self.first(c.kind, c.tier, &order, c.w_cm, c.d_cm);
     }
 }
 
@@ -612,19 +617,22 @@ pub fn place(seed: u64, p: &Profile, t: &Terrain, g: &Graph, blocks: &mut [Block
 }
 
 /// The sites off the city's lots, once every road is laid: the dock and the port on
-/// the shore (a world with a coast or a sea), the airport on the flattest open land
-/// outside the city, and the stadium (if no park or lot held it) on open land nearest
-/// downtown. Then the HQ tabs' doors: the first site of each kind in `VIEWS`.
-pub fn outside(p: &Profile, t: &Terrain, roads: &Roads, city: &mut City) {
+/// the river (else on the shore of a world with a coast or a sea), the airport on the
+/// flattest open land outside the city, and the stadium (if no park or lot held it) on
+/// open land nearest downtown. Then the HQ tabs' doors: the first site of each kind in `VIEWS`.
+pub fn outside(p: &Profile, t: &Terrain, roads: &Roads, city: &mut City, river: Option<&River>) {
     let downtown: Vec<&Block> = city.blocks.iter().filter(|b| b.district == district::DOWNTOWN).collect();
     let n = downtown.len().max(1) as i64;
     let mid = (downtown.iter().map(|b| b.x).sum::<i64>() / n, downtown.iter().map(|b| b.z).sum::<i64>() / n);
     for row in CIVIC {
         let spot = match row.place {
-            Place::Shore => shore(p, t, roads, city, row),
-            Place::Edge => edge(p, t, roads, city, row, |rise, r, k, _| (rise, r, k as i64)),
+            Place::Shore => match river {
+                Some(r) => on_river(r, roads, city, row),
+                None => shore(p, t, roads, city, row),
+            },
+            Place::Edge => edge(p, t, roads, city, river, row, |rise, r, k, _| (rise, r, k as i64)),
             Place::Park if !city.sites.iter().any(|s| s.kind == row.kind) => {
-                edge(p, t, roads, city, row, |rise, _, k, c| ((rise > 2 * p.site_flat_cm) as i64, dist2(c, mid), rise * 16 + k as i64))
+                edge(p, t, roads, city, river, row, |rise, _, k, c| ((rise > 2 * p.site_flat_cm) as i64, dist2(c, mid), rise * 16 + k as i64))
             }
             _ => continue,
         };
@@ -710,10 +718,21 @@ fn shore(p: &Profile, t: &Terrain, roads: &Roads, city: &City, row: &Civic) -> O
     })
 }
 
+/// On the river: the dock at its bay, the port on its apron by the basin, each where
+/// the river says its back goes, its front out over the water; clear of the roads,
+/// blocks and sites (the river's bank keeps them off), else stepped up to 8 m further
+/// out over the water, clear of a road that ends at the bank behind it.
+fn on_river(r: &River, roads: &Roads, city: &City, row: &Civic) -> Option<(P, P)> {
+    let (back, f) = if row.kind == "dock" { r.dock } else { r.port };
+    (0..=4).map(|k| along(back, f, row.d_cm / 2 + k * 200)).find(|&c| open(roads, city, &rect(c, f, row.w_cm, row.d_cm))).map(|c| (c, f))
+}
+
 /// Open land outside the city: a ring of candidates every 22.5 degrees, from just
 /// past the city out toward the world's edge, each long side pointing out from the
-/// plaza, its front to the plaza; the least by `key(rise, radius, direction, centre)`.
-fn edge(p: &Profile, t: &Terrain, roads: &Roads, city: &City, row: &Civic, key: impl Fn(i64, i64, usize, P) -> (i64, i64, i64)) -> Option<(P, P)> {
+/// plaza, its front to the plaza, off the river; the least by `key(rise, radius,
+/// direction, centre)`.
+#[allow(clippy::too_many_arguments)] // what it must keep clear of, and how to choose
+fn edge(p: &Profile, t: &Terrain, roads: &Roads, city: &City, river: Option<&River>, row: &Civic, key: impl Fn(i64, i64, usize, P) -> (i64, i64, i64)) -> Option<(P, P)> {
     let lim = p.size_cm / 2 - row.d_cm / 2 - 2_000;
     let mut best: Option<((i64, i64, i64), usize, P)> = None;
     for (k, &f) in DIR16.iter().enumerate() {
@@ -723,7 +742,8 @@ fn edge(p: &Profile, t: &Terrain, roads: &Roads, city: &City, row: &Civic, key: 
             let poly = rect(c, (-f.0, -f.1), row.w_cm, row.d_cm);
             let score = key(geom::rise(t, &poly), r, k, c);
             let in_world = poly.iter().all(|q| q.0.abs() < p.size_cm / 2 && q.1.abs() < p.size_cm / 2);
-            if best.is_none_or(|b| score < b.0) && in_world && !poly.iter().any(|&q| wet(p, t, q)) && open(roads, city, &poly) {
+            let dry = !poly.iter().any(|&q| wet(p, t, q)) && !river.is_some_and(|r| r.bank.meets(&poly));
+            if best.is_none_or(|b| score < b.0) && in_world && dry && open(roads, city, &poly) {
                 best = Some((score, k, c));
             }
             r += 4_000;

@@ -21,8 +21,10 @@ fn commons() -> &'static WorldDoc {
 /// against this world, so a change here MOVES THINGS FOR EVERYONE: only update it on
 /// purpose, with a new generator version once the world is live.
 // re-pinned 2026-10 for the island (island.rs): the coast and the sea, the highways ending at the ring, a dock and a port;
-// again for the ring road kept inside the coast (roads::graded out_r)
-const CLAUDE_HQ_2: &str = "3c81cef30fc4182e";
+// again for the ring road kept inside the coast (roads::graded out_r);
+// again (HQ 3.1) for the river (river.rs): its water and banks carved before the streets grow, the
+// bridges, the dock on its bank by the plaza and the port on its basin, the sea 4 m down as an island's
+const CLAUDE_HQ_2: &str = "d2b4eee1a34b78f0";
 
 const ISLAND: &str = "user:0b6f2a3c-1d4e-4f5a-9b8c-7d6e5f4a3b2c@2";
 

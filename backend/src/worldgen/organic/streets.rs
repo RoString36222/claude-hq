@@ -4,12 +4,15 @@
 //! the field's other family. Then local streets grow off them L-system style (Parish
 //! & Muller 2001): each step extends a street, may branch at 60-120 degrees, snaps
 //! to a junction within 12 m, and stops at steep ground or water, every district
-//! growing in its own character.
+//! growing in its own character. A river's bank is a wall in the graph: a local street
+//! meets it and stops; an arterial that runs into the river crosses it on a bridge,
+//! straight over from bank to bank, wherever the crossing is short and square enough.
 
 use std::collections::VecDeque;
 
-use super::geom::{add, along, dot, left, len, sub, turn, unit, DIR16, P};
+use super::geom::{add, along, crossing, dist2, dot, left, len, lerp, nearest_on, sub, turn, unit, DIR16, P};
 use super::graph::{Fit, Graph, Kind};
+use super::super::river::{River, BANK_CM};
 use super::super::noise::ONE;
 use super::super::profile::Profile;
 use super::super::rng::Rng;
@@ -26,7 +29,7 @@ pub struct Street {
 /// A junction within this reach (cm) of a street's end is taken: the 12 m snap.
 pub const SNAP_CM: i64 = 1_200;
 /// The shortest segment (cm), and how near another road a new one's middle may come.
-const MIN_CM: i64 = 800;
+pub const MIN_CM: i64 = 800;
 const GAP_CM: i64 = 1_200;
 /// An arterial's step (cm).
 const ART_STEP_CM: i64 = 2_400;
@@ -38,6 +41,7 @@ pub struct Ctx<'a> {
     pub t: &'a Terrain,
     pub field: Field<'a>,
     pub zoning: &'a Zoning,
+    pub river: Option<&'a River>,
 }
 
 impl Ctx<'_> {
@@ -64,9 +68,9 @@ impl Ctx<'_> {
         true
     }
 
-    /// Inside the city, on dry land.
+    /// Inside the city, on dry land, off the river's bank.
     fn open(&self, q: P) -> bool {
-        len(q) <= self.p.city_r_cm && !self.wet(q)
+        len(q) <= self.p.city_r_cm && !self.wet(q) && !self.river.is_some_and(|r| r.zone(q))
     }
 }
 
@@ -82,13 +86,14 @@ pub fn arterials(g: &mut Graph, c: &Ctx, rng: &mut Rng, streets: &mut Vec<Street
     let mut name = |suffix: &str| format!("{} {suffix}", names.next().expect("street names"));
 
     // the plaza: an octagon of arterial round it
+    let circus = streets.len() as u32;
     streets.push(Street { name: name("Circus"), kind: Kind::Arterial });
     let corners: Vec<u32> = (0..8).map(|k| {
         let d = DIR16[2 * k + 1];
         g.node((d.0 * p.plaza_cm / ONE, d.1 * p.plaza_cm / ONE))
     }).collect();
     for k in 0..8 {
-        g.link(corners[k], corners[(k + 1) % 8], Kind::Arterial, 0);
+        g.link(corners[k], corners[(k + 1) % 8], Kind::Arterial, circus);
     }
     let mut chains = vec![corners.iter().copied().chain(std::iter::once(corners[0])).collect::<Vec<u32>>()];
 
@@ -143,12 +148,32 @@ fn trace(g: &mut Graph, c: &Ctx, from: u32, h: P, road: u32, ring: Option<i64>, 
             let out = unit(pos);
             want = unit(add(want, (out.0 * k / ONE, out.1 * k / ONE)));
         }
-        // straight on if the land allows, else bend toward the contour
-        let next = [0, 15, -15, 30, -30, 45, -45].into_iter().map(|deg| {
+        // the river ahead: over it on a bridge where one can stand
+        let ahead = |k: i64| along(pos, want, ART_STEP_CM * k / 2);
+        let river = c.river.is_some_and(|r| (1..=3).any(|k| r.zone(ahead(k))));
+        if river {
+            if let Some(b) = [0, 15, -15, 30, -30].into_iter().find_map(|deg| bridge(g, c, u, turn(want, deg), road)) {
+                (u, h) = crossed(&mut chain, u, b);
+                continue;
+            }
+        }
+        // straight on if the land allows, else bend toward the contour (or, at the river
+        // with no bridge to be had, along its bank)
+        let bends: &[i64] = if river { &[0, 15, -15, 30, -30, 45, -45, 60, -60, 75, -75, 90, -90] } else { &[0, 15, -15, 30, -30, 45, -45] };
+        let next = bends.iter().map(|&deg| {
             let dir = turn(want, deg);
             (dir, along(pos, dir, ART_STEP_CM))
         }).find(|&(_, q)| c.open(q) && c.gentle(pos, q));
-        let Some((dir, q)) = next else { break };
+        let Some((dir, q)) = next else {
+            // held up at the river: straight across it, if a bridge can stand here
+            match across(g, c, u, road) {
+                Some(b) => {
+                    (u, h) = crossed(&mut chain, u, b);
+                    continue;
+                }
+                None => break,
+            }
+        };
         match g.fit(u, q, Kind::Arterial, road, SNAP_CM, MIN_CM, GAP_CM) {
             Fit::Free(v) => {
                 chain.push(v);
@@ -156,6 +181,17 @@ fn trace(g: &mut Graph, c: &Ctx, from: u32, h: P, road: u32, ring: Option<i64>, 
             }
             Fit::Joined(v, met) => {
                 chain.push(v);
+                // met the river's bank: over it from there, or stop
+                let wall = g.adj[v as usize].iter().any(|&e| g.edges[e as usize].kind == Kind::Water);
+                if wall {
+                    match across(g, c, v, road) {
+                        Some(b) => {
+                            (u, h) = crossed(&mut chain, v, b);
+                            continue;
+                        }
+                        None => break,
+                    }
+                }
                 if ring.is_none() || met == road {
                     break;
                 }
@@ -165,6 +201,148 @@ fn trace(g: &mut Graph, c: &Ctx, from: u32, h: P, road: u32, ring: Option<i64>, 
         }
     }
     chain
+}
+
+/// Is a bridge's middle `q` clear of the dock's bay and the port's apron (70 m from both)?
+fn clear_of_docks(r: &River, q: P) -> bool {
+    [r.dock.0, r.port.0].iter().all(|&d| dist2(q, d) >= 7_000 * 7_000)
+}
+
+/// How far apart (cm) the bridges in town stand, at most, where the arterials leave gaps.
+const BRIDGE_EVERY_CM: i64 = 15_000;
+
+/// Bridges along the river in town, wherever no bridge stands within `BRIDGE_EVERY_CM`
+/// (the river's crossings nearest the plaza first): square across from bank to bank
+/// between the river wall's own nodes (`wall`: the first's id), dry land past both, and
+/// an arterial traced out from each end until it meets the city's roads. Each is a
+/// street of its own, named from `names`. Returns the arterials' chains.
+pub fn bridges(g: &mut Graph, c: &Ctx, wall: u32, streets: &mut Vec<Street>, names: &[&str]) -> Vec<Vec<u32>> {
+    let Some(r) = c.river else { return Vec::new() };
+    let mut order: Vec<(i64, usize)> = r.crossings.iter().enumerate().map(|(k, x)| (dist2(x.at, (0, 0)), k)).collect();
+    order.sort();
+    let mut chains = Vec::new();
+    for (_, k) in order {
+        let x = &r.crossings[k];
+        let (l, rt) = (wall + x.left as u32, wall + x.right as u32);
+        let (pl, pr) = (g.nodes[l as usize], g.nodes[rt as usize]);
+        let near = g.edges.iter().any(|e| {
+            e.alive && e.bridge && dist2(lerp(g.nodes[e.a as usize], g.nodes[e.b as usize], 1, 2), x.at) < BRIDGE_EVERY_CM * BRIDGE_EVERY_CM
+        });
+        let out = |q: P, n: P| along(q, n, BANK_CM);
+        let ok = !near
+            && c.open(out(pl, x.normal))
+            && c.open(out(pr, neg(x.normal)))
+            && clear_of_docks(r, x.at)
+            && g.clear_between(l, rt)
+            && g.angle_ok(l, pr)
+            && g.angle_ok(rt, pl);
+        if !ok {
+            continue;
+        }
+        let road = streets.len() as u32;
+        streets.push(Street { name: format!("{} Bridge", names[chains.len() / 2 % names.len()]), kind: Kind::Arterial });
+        let b = g.link(l, rt, Kind::Arterial, road);
+        g.edges[b as usize].bridge = true;
+        let steps = c.p.city_r_cm / ART_STEP_CM * 2;
+        let (left, right) = (trace(g, c, l, x.normal, road, None, steps), trace(g, c, rt, neg(x.normal), road, None, steps));
+        // a bridge no road leaves on one side is no bridge (what was laid stays, a street to the bank)
+        if left.len() < 2 || right.len() < 2 {
+            g.kill(b);
+        }
+        chains.extend([left, right]);
+    }
+    chains
+}
+
+/// A bridge laid from node `u`: its nodes onto the chain; the far node and the heading.
+fn crossed(chain: &mut Vec<u32>, u: u32, (near, far, dir): (u32, u32, P)) -> (u32, P) {
+    if near != u {
+        chain.push(near);
+    }
+    chain.push(far);
+    (far, dir)
+}
+
+/// A bridge from node `u` square across the river nearby (within a step and its bank of
+/// the water): toward the nearest stretch of its centre line, or up to 30 degrees off.
+fn across(g: &mut Graph, c: &Ctx, u: u32, road: u32) -> Option<(u32, u32, P)> {
+    let r = c.river?;
+    let pos = g.nodes[u as usize];
+    let center: Vec<P> = r.center.iter().map(|q| (q[0], q[1])).collect();
+    let (k, (foot, d2)) = (1..center.len()).map(|k| (k, nearest_on(pos, center[k - 1], center[k]))).min_by_key(|&(k, (_, d2))| (d2, k))?;
+    let reach = ART_STEP_CM + BANK_CM + r.width_cm / 2 + BAY_REACH_CM;
+    if d2 > reach * reach || foot == pos {
+        return None;
+    }
+    // square to the river: along its normal, the way to the water
+    let t = unit(sub(center[k], center[k - 1]));
+    let n = if dot(left(t), sub(foot, pos)) > 0 { left(t) } else { neg(left(t)) };
+    [0, 15, -15, 30, -30].into_iter().find_map(|deg| bridge(g, c, u, turn(n, deg), road))
+}
+
+/// How far (cm) the dock's bay widens the river: a bridge may start this much farther off.
+const BAY_REACH_CM: i64 = 1_400;
+/// cos 45 degrees (Q16): a bridge meets each bank at least this square.
+const COS45: i64 = 46341;
+
+/// A bridge from node `u` heading `dir`, if the river's bank is within a step ahead, the
+/// water beyond it is crossed in under 1.6 times its width and banks (square to within
+/// 45 degrees at both banks), away from the dock's bay and the port's apron, with open land
+/// past the far bank.
+/// Lays the approach to the near bank and the bridge to the far one, both ends on the
+/// river's wall: (near node, far node, the heading).
+fn bridge(g: &mut Graph, c: &Ctx, u: u32, dir: P, road: u32) -> Option<(u32, u32, P)> {
+    let r = c.river?;
+    if g.adj[u as usize].iter().any(|&e| g.edges[e as usize].bridge) {
+        return None; // one bridge from a bank node
+    }
+    let a = g.nodes[u as usize];
+    let span = (r.width_cm + 2 * BANK_CM) * 16 / 10;
+    let far = along(a, dir, ART_STEP_CM + span);
+    let mut hits: Vec<(i128, i128, u32)> = g
+        .edges_in((a.0.min(far.0), a.1.min(far.1)), (a.0.max(far.0), a.1.max(far.1)))
+        .into_iter()
+        .filter(|&e| g.edges[e as usize].a != u && g.edges[e as usize].b != u)
+        .filter_map(|e| {
+            let x = &g.edges[e as usize];
+            crossing(a, far, g.nodes[x.a as usize], g.nodes[x.b as usize]).map(|(num, den)| (num, den, e))
+        })
+        .collect();
+    hits.sort_by(|x, y| (x.0 * y.1).cmp(&(y.0 * x.1)).then(x.2.cmp(&y.2)));
+    let wall = |e: u32| g.edges[e as usize].kind == Kind::Water;
+    // from a node on the bank itself the first wall met is the far bank's
+    let on_wall = g.adj[u as usize].iter().find(|&&e| wall(e)).copied();
+    let ((x1, e1), (n2, d2, e2)) = match (on_wall, &hits[..]) {
+        (Some(e), [h, ..]) => ((a, e), *h),
+        (None, [(n1, d1, e1), h, ..]) => ((lerp(a, far, *n1, *d1), *e1), *h),
+        _ => return None,
+    };
+    let x2 = lerp(a, far, n2, d2);
+    let mid = ((x1.0 + x2.0) / 2, (x1.1 + x2.1) / 2);
+    let square = |e: u32| {
+        let x = &g.edges[e as usize];
+        dot(unit(sub(g.nodes[x.b as usize], g.nodes[x.a as usize])), dir).abs() <= (COS45 * ONE) as i128
+    };
+    let ok = wall(e1) && wall(e2) && e1 != e2 && x1 != x2
+        && len(sub(x1, a)) <= ART_STEP_CM + BANK_CM && len(sub(x2, x1)) <= span
+        && r.wet(mid) && square(e1) && square(e2)
+        && clear_of_docks(r, mid)
+        && c.open(along(x2, dir, BANK_CM));
+    if !ok {
+        return None;
+    }
+    let at = |g: &mut Graph, e: u32, x: P| {
+        let (ea, eb) = (g.edges[e as usize].a, g.edges[e as usize].b);
+        [ea, eb].into_iter().find(|&n| g.nodes[n as usize] == x).unwrap_or_else(|| g.split(e, x))
+    };
+    let near = if on_wall.is_some() { u } else { at(g, e1, x1) };
+    let farn = at(g, e2, x2);
+    if near != u {
+        g.link(u, near, Kind::Arterial, road);
+    }
+    let b = g.link(near, farn, Kind::Arterial, road);
+    g.edges[b as usize].bridge = true;
+    Some((near, farn, dir))
 }
 
 struct Grow {

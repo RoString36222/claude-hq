@@ -87,6 +87,9 @@ pub struct Profile {
     /// None for a world on land.
     pub coast_r_cm: Option<i64>,
     pub sea_cm: Option<i64>,
+    /// The river's width (cm), from the sea to a harbour basin in town (river.rs). None:
+    /// no river (a world without a coast has nowhere for one to run).
+    pub river_cm: Option<i64>,
 }
 
 pub mod district {
@@ -172,6 +175,7 @@ pub fn city() -> Profile {
         hq_min_m2: 0,
         coast_r_cm: None,
         sea_cm: None,
+        river_cm: None,
     }
 }
 
@@ -215,7 +219,10 @@ pub fn commons() -> Profile {
         hq_min_m2: 350,
         // an island too: the coast wobbles between the ring road and 975 m
         coast_r_cm: Some(100_000),
-        sea_cm: Some(-1_500),
+        // the sea (and the river's water) 4 m down, as a personal island's: the river's
+        // banks are an embankment, not a gorge through the plateau
+        sea_cm: Some(-400),
+        river_cm: Some(3_600),
         ..city()
     }
 }
@@ -252,6 +259,7 @@ pub fn island() -> Profile {
         hq_districts: &[district::DOWNTOWN, district::OLDTOWN],
         coast_r_cm: Some(91_000),
         sea_cm: Some(-400),
+        river_cm: Some(2_400),
         ..commons()
     }
 }

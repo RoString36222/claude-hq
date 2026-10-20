@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::OnceLock;
 
+use super::super::noise::ONE;
 use super::super::organic::geom::{area2, centroid, len, simple, P};
 use super::super::profile::district;
 use super::super::*;
@@ -207,7 +208,8 @@ fn an_island_has_a_bus_from_tier_2() {
 }
 
 /// The tier-1 city as the rule gives it today: the town hall and the dock, a tier-1
-/// road from the plaza to the town hall, and every other tier-1 lot inside the first ring.
+/// road from the plaza to each (the dock's quay, on the river's bank by the plaza), and
+/// every other tier-1 lot inside the first ring.
 #[test]
 fn the_tier_1_city() {
     for w in islands() {
@@ -220,6 +222,10 @@ fn the_tier_1_city() {
         assert!(e.min_tier == Some(1) && (net.contains(&e.a) || net.contains(&e.b)), "{id}: no tier-1 road to the town hall");
         let dock = l.sites.iter().find(|s| s.kind == "dock" && s.tier == Some(1)).unwrap_or_else(|| panic!("{id}: no dock at tier 1"));
         assert!(isl.docks.contains(&dock.id), "{id}: {} is not in the docks", dock.id);
+        let f = dock.front.unwrap();
+        let back = (dock.x - f[0] * (dock.d / 2 + 100) / ONE, dock.z - f[1] * (dock.d / 2 + 100) / ONE);
+        let e = &l.roads.edges[road_at(&l.roads, back, river::BANK_CM).unwrap_or_else(|| panic!("{id}: no road behind the dock"))];
+        assert!(e.min_tier == Some(1) && net.contains(&e.a) && net.contains(&e.b), "{id}: no tier-1 road to the dock ({}, tier {:?})", e.name, e.min_tier);
         let r1 = isl.radius_by_tier[0];
         for x in l.lots.iter().filter(|x| x.min_tier == Some(1)) {
             assert!(len(centroid(&pts(x.poly.as_ref().unwrap()))) <= r1, "{id}: tier-1 lot {} is {} m out", x.id, len((x.x, x.z)) / 100);
@@ -294,18 +300,24 @@ fn the_coast_is_a_simple_polygon() {
 }
 
 /// The base terrain: above the sea inside the coast, below it outside; the district
-/// map's water is the sea (cells more than 16 m from the coast either way).
+/// map's water is the sea (cells more than 16 m from the coast either way). The river
+/// and its bank are the river's own (river_tests.rs).
 #[test]
 fn the_sea_is_water() {
     for w in worlds() {
         let id = &w.id;
         let (seed, v) = parse_id(id).unwrap();
-        let base = terrain::generate(rng::fnv1a64(seed.as_bytes()), &profile_for(seed, v));
+        let (seed, p) = (rng::fnv1a64(seed.as_bytes()), profile_for(seed, v));
+        let base = terrain::generate(seed, &p);
+        let river = river::River::new(seed, &p).unwrap().unwrap();
         let c = coast_of(w);
         for iz in 0..base.n {
             for ix in 0..base.n {
                 let q = base.vertex_pos(ix, iz);
                 let h = base.heights[iz * base.n + ix] as i64;
+                if river.zone(q) {
+                    continue;
+                }
                 if c.land(q) {
                     assert!(h >= c.sea_cm + 100, "{id}: land at {q:?} is {h} cm");
                 } else {
@@ -321,6 +333,9 @@ fn the_sea_is_water() {
                 let q = (d.origin_cm + ix as i64 * d.cell_cm + d.cell_cm / 2, d.origin_cm + iz as i64 * d.cell_cm + d.cell_cm / 2);
                 let off = len(q) - c.radius_at(q);
                 let k = d.kinds[iz * d.n + ix];
+                if river.zone(q) {
+                    continue;
+                }
                 if off > 1_600 {
                     assert_eq!(k, district::WATER, "{id}: sea cell {q:?}");
                     sea += 1;
@@ -359,10 +374,11 @@ fn everything_is_on_land() {
     }
 }
 
-/// Docks: a dock (tier 1) and the port (tier 3) on the shore, half in the water, on the
-/// coast nearest the city; `island.docks` lists them.
+/// Docks: a dock (tier 1) and the port (tier 3), each once, at their spec tiers;
+/// `island.docks` lists them. They stand on the river now, the dock by the plaza and the
+/// port on the basin, inside the island (river_tests.rs checks where).
 #[test]
-fn docks_are_on_the_shore() {
+fn the_docks_keep_their_tiers() {
     for w in worlds() {
         let id = &w.id;
         let c = coast_of(w);
@@ -371,14 +387,11 @@ fn docks_are_on_the_shore() {
         let want: Vec<&str> = l.sites.iter().filter(|s| matches!(s.kind, "dock" | "port")).map(|s| s.id.as_str()).collect();
         assert_eq!(isl.docks, want, "{id}: the docks");
         for (kind, tier) in [("dock", 1), ("port", 3)] {
-            let s = l.sites.iter().find(|s| s.kind == kind).unwrap_or_else(|| panic!("{id}: no {kind}"));
-            assert_eq!(s.tier, Some(tier), "{id}: {}", s.id);
-            let poly = pts(s.poly.as_ref().unwrap());
-            assert!(poly.iter().any(|&q| c.land(q)) && poly.iter().any(|&q| !c.land(q)), "{id}: {} is not on the shore", s.id);
+            let of: Vec<_> = l.sites.iter().filter(|s| s.kind == kind).collect();
+            assert_eq!(of.len(), 1, "{id}: {} {kind}", of.len());
+            assert_eq!(of[0].tier, Some(tier), "{id}: {}", of[0].id);
+            assert!(c.land((of[0].x, of[0].z)), "{id}: {} stands out at sea", of[0].id);
         }
-        // near the core: the dock's stretch of coast is no farther out than the coast's middle
-        let dock = l.sites.iter().find(|s| s.kind == "dock").unwrap();
-        assert!(c.radius_at((dock.x, dock.z)) <= (c.lo + c.hi) / 2 + 2_000, "{id}: the dock is on a far shore");
     }
 }
 

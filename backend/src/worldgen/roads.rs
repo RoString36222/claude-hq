@@ -7,6 +7,11 @@
 //! Routes are planned on the BASE terrain; heights come from the edited
 //! terrain in `seat`. An edit reshapes the ground a road sits on, it never
 //! moves the road.
+//!
+//! Where a road crosses a river (river.rs) it does so on a bridge: an edge straight
+//! from bank to bank, level a metre over the higher bank, the city streets that meet
+//! it ramping up to its deck. A graded road's run over the river and its bank is
+//! replaced by one.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
@@ -16,6 +21,7 @@ use serde::Serialize;
 use super::city::{Block, Grid};
 use super::noise::{isqrt, smoothstep, ONE};
 use super::profile::Profile;
+use super::river::River;
 use super::rng::{sub, Rng};
 use super::terrain::Terrain;
 
@@ -51,6 +57,9 @@ pub struct Edge {
     /// Island worlds: the city tier the road appears at.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_tier: Option<u8>,
+    /// Some(true) on a bridge over a river: straight, and level across.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bridge: Option<bool>,
 }
 
 #[derive(Serialize, Clone)]
@@ -136,17 +145,19 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, blocks: &[Block]) -> Res
         .map(|((a, b), (class, width, name))| {
             let (na, nb) = (&nodes[a as usize], &nodes[b as usize]);
             let walk = if class == "avenue" { p.avenue_walk_cm } else { p.street_walk_cm };
-            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None }
+            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None, bridge: None }
         })
         .collect();
-    graded(&mut rng, p, base, blocks, &mut nodes, &mut edges, &mut it)?;
+    graded(&mut rng, p, base, blocks, &mut nodes, &mut edges, &mut it, None)?;
     Ok(Roads { nodes, edges })
 }
 
 /// The graded roads round a city whose `nodes` and street `edges` are laid: a
 /// highway from the city node nearest each seeded gate out to it, and the ring
 /// joining the highways. Appends them (split into junctions where they meet) and
-/// numbers every edge. `names` gives each highway its name. No gates, no roads.
+/// numbers every edge. `names` gives each highway its name. No gates, no roads. A
+/// road crosses the `river` (if any) quickly, on a bridge.
+#[allow(clippy::too_many_arguments)] // the city the roads join, and the river they cross
 pub fn graded<'a>(
     rng: &mut Rng,
     p: &Profile,
@@ -155,6 +166,7 @@ pub fn graded<'a>(
     nodes: &mut Vec<Node>,
     edges: &mut Vec<Edge>,
     it: &mut impl Iterator<Item = &'a str>,
+    river: Option<&River>,
 ) -> Result<(), String> {
     if p.gates == 0 {
         for (k, e) in edges.iter_mut().enumerate() {
@@ -198,9 +210,9 @@ pub fn graded<'a>(
     for (k, &(gx, gz)) in gates.iter().enumerate() {
         let from = nodes.iter().take(city_nodes).min_by_key(|n| ((n.x - gx).pow(2) + (n.z - gz).pow(2), n.id)).unwrap().id;
         let (fx, fz) = (nodes[from as usize].x, nodes[from as usize].z);
-        let mut path = route(base, p, (fx, fz), (gx, gz), p.city_r_cm, i64::MAX, &keep, &[], true);
+        let mut path = route(base, p, (fx, fz), (gx, gz), p.city_r_cm, i64::MAX, &keep, &[], true, river);
         if path.as_ref().is_some_and(|q| (1..q.len()).any(|i| laid.hits(q[i - 1], q[i], i + 1 == q.len()))) {
-            path = route(base, p, (fx, fz), (gx, gz), p.city_r_cm, i64::MAX, &keep, std::slice::from_ref(&laid), true);
+            path = route(base, p, (fx, fz), (gx, gz), p.city_r_cm, i64::MAX, &keep, std::slice::from_ref(&laid), true, river);
         }
         let path = path.ok_or_else(|| format!("no highway from the city to gate {k}"))?;
         laid.add(&path, base);
@@ -211,8 +223,9 @@ pub fn graded<'a>(
         let cheb = |u: (i64, i64), v: (i64, i64)| (u.0 - v.0).abs().max((u.1 - v.1).abs());
         let spike = |q: usize| q > 0 && q + 1 < path.len() && cheb(path[q - 1], path[q + 1]) <= base.cell_cm;
         let crowded = |q: usize| junctions.iter().any(|&j: &u32| cheb(path[q], (nodes[j as usize].x, nodes[j as usize].z)) < 2 * base.cell_cm);
+        let wet = |q: usize| river.is_some_and(|r| r.zone(path[q]));
         let cut = (1..path.len() - 1)
-            .filter(|&q| !(q - 1..=q + 1).any(spike) && !crowded(q))
+            .filter(|&q| !(q - 1..=q + 1).any(spike) && !crowded(q) && !wet(q))
             .min_by_key(|&q| ((isqrt(path[q].0.pow(2) + path[q].1.pow(2)) - p.ring_r_cm).abs(), q))
             .unwrap_or(path.len() / 2);
         let jn = push_node(nodes, base, path[cut]);
@@ -239,12 +252,16 @@ pub fn graded<'a>(
         let forbid = |t: &Taken, f: bool| Taken { forbid: f, ..t.clone() };
         let path = [(true, true), (false, true), (false, false)]
             .into_iter()
-            .find_map(|(h, r)| route(base, p, pa, pb, p.ring_r_cm * 4 / 5, out_r, &keep, &[forbid(&laid, h), forbid(&ring, r)], false))
+            .find_map(|(h, r)| route(base, p, pa, pb, p.ring_r_cm * 4 / 5, out_r, &keep, &[forbid(&laid, h), forbid(&ring, r)], false, river))
             .ok_or_else(|| format!("no ring road from junction {k}"))?;
         ring.add(&path, base);
         graded.push(Edge { route: Some("R1".to_string()), ..graded_edge(a, b, &path, &format!("Ring Road {}", k + 1), "ring", p.ring_cm) });
     }
-    edges.extend(split_contacts(nodes, base, graded)?);
+    let graded = split_contacts(nodes, base, graded)?;
+    edges.extend(match river {
+        Some(r) => bridged(nodes, base, graded, r),
+        None => graded,
+    });
 
     for (k, e) in edges.iter_mut().enumerate() {
         e.id = k as u32;
@@ -275,7 +292,54 @@ fn push_node(nodes: &mut Vec<Node>, t: &Terrain, (x, z): (i64, i64)) -> u32 {
 }
 
 fn graded_edge(a: u32, b: u32, path: &[(i64, i64)], name: &str, class: &'static str, width: i64) -> Edge {
-    Edge { id: 0, a, b, class, width, walk: 0, lanes: 1, route: None, name: name.to_string(), points: path.iter().map(|&(x, z)| [x, 0, z]).collect(), min_tier: None }
+    Edge {
+        id: 0, a, b, class, width, walk: 0, lanes: 1, route: None, name: name.to_string(), points: path.iter().map(|&(x, z)| [x, 0, z]).collect(),
+        min_tier: None, bridge: None,
+    }
+}
+
+/// Bridge the graded roads over the river: each run of a road's points on the river or
+/// its bank whose straight line crosses the water becomes a bridge, straight from the
+/// last point before it to the first after it (a node at each). A run reaching an end of
+/// its road (a tail out to sea, which `island::trim` drops) is left.
+fn bridged(nodes: &mut Vec<Node>, t: &Terrain, paths: Vec<Edge>, river: &River) -> Vec<Edge> {
+    let mut out = Vec::new();
+    for e in paths {
+        let mut rest = e;
+        let mut from = 0;
+        loop {
+            let at = |k: usize| (rest.points[k][0], rest.points[k][2]);
+            let last = rest.points.len() - 1;
+            let Some(i) = (from..=last).find(|&k| river.zone(at(k))) else { break };
+            let Some(j) = (i..=last).find(|&k| !river.zone(at(k))) else { break };
+            if i == 0 || !(river.water.crosses(at(i - 1), at(j)) || river.wet(lerp2(at(i - 1), at(j)))) {
+                from = j;
+                continue;
+            }
+            let (pa, pb) = (at(i - 1), at(j));
+            let na = if i - 1 == 0 { rest.a } else { push_node(nodes, t, pa) };
+            let nb = if j == last { rest.b } else { push_node(nodes, t, pb) };
+            if i - 1 > 0 {
+                out.push(Edge { b: na, points: rest.points[..i].to_vec(), ..rest.clone() });
+            }
+            out.push(Edge { a: na, b: nb, points: resample(pa, pb), bridge: Some(true), ..rest.clone() });
+            if j == last {
+                rest.points.clear();
+                break;
+            }
+            rest = Edge { a: nb, points: rest.points[j..].to_vec(), ..rest };
+            from = 0;
+        }
+        if !rest.points.is_empty() {
+            out.push(rest);
+        }
+    }
+    out
+}
+
+/// The midpoint of ab.
+fn lerp2(a: (i64, i64), b: (i64, i64)) -> (i64, i64) {
+    ((a.0 + b.0) / 2, (a.1 + b.1) / 2)
 }
 
 /// Where two graded roads meet.
@@ -444,28 +508,61 @@ const JUNCTION_FLAT: i64 = 150;
 /// How far either side of a road's edge the land is blended into it (cm).
 const SHOULDER_CM: i64 = 400;
 
+/// A bridge's deck stands this far (cm) over the higher of its two banks, and a city
+/// street climbs to it no steeper than this (per mille).
+const DECK_CM: i64 = 100;
+const RAMP_PM: i64 = 60;
+
+/// Each point's distance (cm) along a road from its first.
+fn along_road(points: &[[i64; 3]]) -> Vec<i64> {
+    let mut at = vec![0i64; points.len()];
+    for q in 1..points.len() {
+        let (a, b) = (points[q - 1], points[q]);
+        at[q] = at[q - 1] + isqrt((b[0] - a[0]).pow(2) + (b[2] - a[2]).pow(2));
+    }
+    at
+}
+
 impl Roads {
     /// Heights from (possibly edited) terrain. City roads lie on the ground (the
     /// plateau keeps them gentle). A highway or the ring is GRADED: the profile closest to
     /// the land that never exceeds its class's grade, pinned to its nodes at both
     /// ends -- cut into hills and filled over dips, as a real road is built. A road
     /// that cannot be graded at all is an error (and so is an edit that causes one).
+    /// A bridge is level, its deck a metre over the higher bank; a city street meeting
+    /// one ramps up to it (`lift`).
     pub fn seat(&mut self, t: &Terrain, p: &Profile) -> Result<(), String> {
         for n in &mut self.nodes {
             n.y = t.height_at(n.x, n.z);
         }
+        self.lift();
         let mut degree = vec![0usize; self.nodes.len()];
+        let mut deck = vec![false; self.nodes.len()];
         for e in &self.edges {
             degree[e.a as usize] += 1;
             degree[e.b as usize] += 1;
+            if e.bridge == Some(true) {
+                deck[e.a as usize] = true;
+                deck[e.b as usize] = true;
+            }
         }
         for e in &mut self.edges {
             let len = e.points.len();
             let (ya, yb) = (self.nodes[e.a as usize].y, self.nodes[e.b as usize].y);
             let raw: Vec<i64> = e.points.iter().map(|q| t.height_at(q[0], q[2])).collect();
-            if !is_graded(e.class) {
+            if e.bridge == Some(true) {
+                // `lift` set both ends to the deck
+                for pt in e.points.iter_mut() {
+                    pt[1] = ya.max(yb);
+                }
+            } else if !is_graded(e.class) {
+                // on the ground, or on a ramp down from a lifted end
+                let at = along_road(&e.points);
+                let (la, lb) = (ya > raw[0], yb > raw[len - 1]);
                 for (q, pt) in e.points.iter_mut().enumerate() {
-                    pt[1] = raw[q];
+                    let from_a = if la { ya - at[q] * RAMP_PM / 1000 } else { i64::MIN };
+                    let from_b = if lb { yb - (at[len - 1] - at[q]) * RAMP_PM / 1000 } else { i64::MIN };
+                    pt[1] = raw[q].max(from_a).max(from_b);
                 }
             } else {
                 let g = p.country_grade_pm;
@@ -477,13 +574,25 @@ impl Roads {
                 }
                 // how far it may climb by each point (summed per step, so the bounds below
                 // agree to the cm): nothing within JUNCTION_FLAT widths of a junction, so
-                // roads meeting there share one level where their carriageways overlap
+                // roads meeting there share one level where their carriageways overlap (but
+                // a road off a bridge climbs off its deck straight away, all its length)
                 let flat = e.width * JUNCTION_FLAT / 100;
-                let (fa, fb) = ((degree[e.a as usize] > 1) as i64 * flat, (degree[e.b as usize] > 1) as i64 * flat);
-                let mut climb = vec![0i64; len];
-                for q in 1..len {
-                    let level = at[q] <= fa || at[len - 1] - at[q - 1] <= fb;
-                    climb[q] = climb[q - 1] + if level { 0 } else { (at[q] - at[q - 1]) * g / 1000 };
+                let off_deck = deck[e.a as usize] || deck[e.b as usize];
+                let level = |n: u32| (degree[n as usize] > 1 && !off_deck) as i64 * flat;
+                let (fa, fb) = (level(e.a), level(e.b));
+                let budget = |fa: i64, fb: i64| {
+                    let mut climb = vec![0i64; len];
+                    for q in 1..len {
+                        let level = at[q] <= fa || at[len - 1] - at[q - 1] <= fb;
+                        climb[q] = climb[q - 1] + if level { 0 } else { (at[q] - at[q - 1]) * g / 1000 };
+                    }
+                    climb
+                };
+                let mut climb = budget(fa, fb);
+                // a short piece between two junctions a river's bridges lifted apart climbs
+                // its whole length (no world without a bridge has one)
+                if (yb - ya).abs() > climb[len - 1] && deck.iter().any(|&d| d) {
+                    climb = budget(0, 0);
                 }
                 let (total, most) = (at[len - 1], climb[len - 1]);
                 // the land, lightly smoothed: a road follows the lie of the land, not every bump
@@ -517,12 +626,69 @@ impl Roads {
         Ok(())
     }
 
+    /// Bridges: each deck a metre over the higher of its banks (the ground at its ends),
+    /// both ends lifted to it; then every city street's node as high as a ramp of
+    /// `RAMP_PM` down from a lifted node along the streets needs it (graded roads grade
+    /// themselves to their ends). Repeated until the decks agree with the ramps (a
+    /// ramp from one bridge may lift another's end). Nothing to do without a bridge.
+    fn lift(&mut self) {
+        let bridges: Vec<usize> = (0..self.edges.len()).filter(|&k| self.edges[k].bridge == Some(true)).collect();
+        if bridges.is_empty() {
+            return;
+        }
+        let ground: Vec<i64> = self.nodes.iter().map(|n| n.y).collect();
+        let mut adj: Vec<Vec<(u32, i64)>> = vec![Vec::new(); self.nodes.len()];
+        for e in self.edges.iter().filter(|e| e.bridge.is_none() && !is_graded(e.class)) {
+            let l = along_road(&e.points)[e.points.len() - 1];
+            adj[e.a as usize].push((e.b, l));
+            adj[e.b as usize].push((e.a, l));
+        }
+        let mut y = ground.clone();
+        for &k in &bridges {
+            let (a, b) = (self.edges[k].a as usize, self.edges[k].b as usize);
+            let deck = ground[a].max(ground[b]) + DECK_CM;
+            y[a] = y[a].max(deck);
+            y[b] = y[b].max(deck);
+        }
+        for _ in 0..8 {
+            // the highest first: a node's height is final once popped
+            let mut heap: BinaryHeap<(i64, u32)> = (0..y.len()).filter(|&n| y[n] > ground[n]).map(|n| (y[n], n as u32)).collect();
+            while let Some((h, n)) = heap.pop() {
+                if h < y[n as usize] {
+                    continue;
+                }
+                for &(m, l) in &adj[n as usize] {
+                    let up = h - l * RAMP_PM / 1000;
+                    if up > y[m as usize] {
+                        y[m as usize] = up;
+                        heap.push((up, m));
+                    }
+                }
+            }
+            let mut level = true;
+            for &k in &bridges {
+                let (a, b) = (self.edges[k].a as usize, self.edges[k].b as usize);
+                if y[a] != y[b] {
+                    (y[a], y[b]) = (y[a].max(y[b]), y[a].max(y[b]));
+                    level = false;
+                }
+            }
+            if level {
+                break;
+            }
+        }
+        for (n, h) in self.nodes.iter_mut().zip(y) {
+            n.y = h;
+        }
+    }
+
     /// Cut and fill: bring the land under every road (city roads too) to the road's
     /// height at the terrain's vertices, blending over a shoulder either side, so the
     /// ground under a road follows the road. The road's surface is still its centre
-    /// line: between vertices the bilinear ground can differ from it.
+    /// line: between vertices the bilinear ground can differ from it. Never under a
+    /// bridge: the river runs on beneath it.
     pub fn carve(&self, t: &mut Terrain) {
-        for e in &self.edges {
+        for e in self.edges.iter().filter(|e| e.bridge.is_none()) {
             let reach = e.width / 2 + SHOULDER_CM;
             for q in e.points.windows(2) {
                 let (a, b) = (q[0], q[1]);
@@ -667,7 +833,7 @@ fn clear_of(a: (i64, i64), b: (i64, i64), r: (i64, i64, i64, i64), c: i64) -> bo
 }
 
 /// A* over the terrain's vertices from `a` to `b` (cm), paying for length and
-/// slope, avoiding the inside of `avoid_r` (the city, or the ring's inside), never past
+/// slope (and dearly for steps on a `river`), avoiding the inside of `avoid_r` (the city, or the ring's inside), never past
 /// `out_r`, any
 /// step that comes within half a road's width of a block or street (`keep`, tested
 /// on the real segment: the path's ends are `a` and `b`, not their vertices; a
@@ -676,7 +842,18 @@ fn clear_of(a: (i64, i64), b: (i64, i64), r: (i64, i64, i64, i64), c: i64) -> bo
 /// taken, others are paid for; when every set forbids (and there is one), so are steps
 /// near a block or street. Returns the path's points, `a` and `b` exact.
 #[allow(clippy::too_many_arguments)] // the ends, and one per thing a road avoids
-fn route(t: &Terrain, p: &Profile, a: (i64, i64), b: (i64, i64), avoid_r: i64, out_r: i64, keep: &Keep, taken: &[Taken], city_start: bool) -> Option<Vec<(i64, i64)>> {
+fn route(
+    t: &Terrain,
+    p: &Profile,
+    a: (i64, i64),
+    b: (i64, i64),
+    avoid_r: i64,
+    out_r: i64,
+    keep: &Keep,
+    taken: &[Taken],
+    city_start: bool,
+    river: Option<&River>,
+) -> Option<Vec<(i64, i64)>> {
     let n = t.n;
     let strict = !taken.is_empty() && taken.iter().all(|k| k.forbid);
     let (s, g) = (t.vertex_of(a.0, a.1), t.vertex_of(b.0, b.1));
@@ -729,6 +906,10 @@ fn route(t: &Terrain, p: &Profile, a: (i64, i64), b: (i64, i64), avoid_r: i64, o
             }
             if inside {
                 step += len * 20;
+            }
+            // across a river, not along it: every step on its water or bank is dear
+            if river.is_some_and(|r| r.zone((wx, wz))) {
+                step += len * 30;
             }
             let hit: Vec<bool> = taken.iter().filter(|k| k.hits(t.vertex_pos(ux, uz), (wx, wz), v == g)).map(|k| k.forbid).collect();
             if hit.contains(&true) {

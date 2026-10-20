@@ -232,7 +232,11 @@ class Hq3dSource(unittest.TestCase):
         fr = func_body(self.src, "frame")
         self.assertIn("ts/1000", fr)
         self.assertEqual(fr.count("nearBike()"), 1)
-        self.assertIn("nearIdx", func_body(self.src, "hudPrompt"))
+        # one E prompt per vehicle: the ride pill; the HUD prompt is for doors only (and never scans for bikes)
+        hp = func_body(self.src, "hudPrompt")
+        self.assertNotIn("nearBike", hp)
+        self.assertNotIn("Ride the", hp)
+        self.assertIn("doorUnderCrosshair", hp)
 
     def test_quality_never_recompiles(self):
         q = func_body(self.src, "setQuality")

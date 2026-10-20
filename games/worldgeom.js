@@ -5,7 +5,8 @@
  *   tileOf/tileKey        the world (2048 m) = 8 x 8 tiles of 256 m = 32 x 32 chunks of 64 m
  *   terrainTile           per chunk LOD 0|1|2 (8, 16, 32 m grid), skirts as deep as the LOD gap (>= 2 m), every
  *                         vertex pushed under every ribbon, pavement and beach its cells reach (no triangle covers
- *                         a road at any LOD); on an island, terrain below sea_cm + 0.1 m sinks 0.5 m under the water
+ *                         a road at any LOD); on an island, terrain below sea_cm + 0.1 m (or on the river's water)
+ *                         sinks 0.5 m under the sea, and under a bridge it is the ground, never the deck
  *   roadTile              asphalt / marks / kerb / walk ribbons by class, junction patches, zebra crossings
  *   groundTile            (v2 docs) polygon block pavements with kerbs, lot pads, plaza pads, the beach strip along
  *                         Layers.island.coast (not across the river's mouth) and the shaded banks along Layers.river.poly;
@@ -43,10 +44,11 @@ var LIFT = 0.04, MARK_LIFT = 0.06, KERB = 0.15, FLAT = 0.005, SEAM = 0.02, MINSE
 var PAD = 0.04, BEACH_IN = 14, BEACH_OUT = 8, BEACH_STEP = 8, BEACH_WET = 0.4, SEA_SHORE = 0.1, SEA_HIDE = 0.5;
 // the river: its banks run BANK_IN up the land and BANK_OUT into the water (inside the 4 m the generator keeps clear of
 // streets, lots and sites), and stop BANK_MOUTH m short of the coast, where the beach takes over; the water sits
-// RIVER_LIFT over sea level (over the sea plane it meets at the mouth). A bridge's deck is DECK_T deep with a parapet
-// PARA_W wide and PARA_H high outside its walk, a rail on posts every POST_STEP m RAIL_H up, abutments ABUT m into each
-// bank from the water's edge; WET_STEP m sampling finds where the edge is over the water
-var BANK_IN = 3, BANK_OUT = 3, BANK_MOUTH = BEACH_IN + 2, RIVER_LIFT = 0.02;
+// RIVER_LIFT over sea level: the river is calm water (games/ocean.js RIVER_Y, the same number), over the sea's highest
+// crest, so the waving sea plane under it never shows through; the banks meet it there. A bridge's deck is DECK_T deep
+// with a parapet PARA_W wide and PARA_H high outside its walk, a rail on posts every POST_STEP m RAIL_H up, abutments
+// ABUT m into each bank from the water's edge; WET_STEP m sampling finds where the edge is over the water
+var BANK_IN = 3, BANK_OUT = 3, BANK_MOUTH = BEACH_IN + 2, RIVER_LIFT = 0.3;
 var DECK_T = 0.9, PARA_W = 0.25, PARA_H = 0.35, RAIL_H = 1.05, RAIL_T = 0.08, POST_STEP = 3, POST_W = 0.1, ABUT = 1.5, WET_STEP = 0.5;
 var UP = [0, 1, 0];
 
@@ -286,14 +288,14 @@ function clampPieces(W){
   var C = prep(W);
   if(C.pieces) return C.pieces;
   var grid = {}, all = [];
-  function add(P, y0, gx, gz){   // P: convex [[x, z], ...]; plane y = y0 + gx*x + gz*z (margin already in y0)
+  function add(P, y0, gx, gz, own){   // P: convex [[x, z], ...]; plane y = y0 + gx*x + gz*z (margin already in y0)
     var x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, A = [];
     P.forEach(function(q){ x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); z0 = Math.min(z0, q[1]); z1 = Math.max(z1, q[1]); });
     for(var k = 0; k < P.length; k++){
       var p = P[k], q = P[(k + 1) % P.length], nx = q[1] - p[1], nz = p[0] - q[0], l = hypot(nx, nz);
       if(l > 1e-9) A.push([nx/l, nz/l]);
     }
-    var o = {P: P, A: A, y0: y0, gx: gx, gz: gz, x0: x0, x1: x1, z0: z0, z1: z1, seen: -1};
+    var o = {P: P, A: A, y0: y0, gx: gx, gz: gz, x0: x0, x1: x1, z0: z0, z1: z1, seen: -1, own: !!own};
     all.push(o);
     for(var j = Math.floor(z0/CELL); j <= Math.floor(z1/CELL); j++)
       for(var i = Math.floor(x0/CELL); i <= Math.floor(x1/CELL); i++) (grid[i + "," + j] = grid[i + "," + j] || []).push(o);
@@ -321,7 +323,11 @@ function clampPieces(W){
       }
     });
   }
-  // v2 ground: every pavement, pad and beach triangle as drawn (none in a @1 doc)
+  // v2 ground: every pavement, pad and beach triangle as drawn (none in a @1 doc). A river bank's pieces are `own`: at
+  // the finest lod they push down only the land vertices inside them (terrainY). A bank is a 3 m strip on a slope
+  // steeper than it, and its plane carried out over a land vertex's whole 8 m star dug the land beside the river under
+  // the water and left the strip afloat. The coarse lods keep the star test: a 16 or 32 m triangle from the land into
+  // the river must stay under the water, and from afar a trench does not show.
   groundItems(W).forEach(function(it){
     for(var t = 0; t < it.tri.length; t += 3){
       var a = it.V[it.tri[t]], b = it.V[it.tri[t+1]], c = it.V[it.tri[t+2]];
@@ -329,7 +335,7 @@ function clampPieces(W){
       var nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
       if(!(Math.abs(ny) > 0.5*Math.sqrt(nx*nx + ny*ny + nz*nz))) continue;
       var gx = -nx/ny, gz = -nz/ny;
-      add([[a[0], a[2]], [b[0], b[2]], [c[0], c[2]]], a[1] - gx*a[0] - gz*a[2] - LIFT - 0.05, gx, gz);
+      add([[a[0], a[2]], [b[0], b[2]], [c[0], c[2]]], a[1] - gx*a[0] - gz*a[2] - LIFT - 0.05, gx, gz, it.kind === "bank");
     }
   });
   C.pieces = {grid: grid, n: 0};
@@ -348,12 +354,36 @@ function starHits(o, x, z, s){
   for(k = 0; k < o.A.length; k++) if(apart(o.A[k])) return false;
   return true;
 }
+// is (x, z) within half the width of a bridge edge (bounding boxes first)? groundAt there is the deck, not the ground
+function onBridge(W, x, z){
+  var C = prep(W);
+  if(!C.bridges){
+    C.bridges = C.E.filter(function(E){ return E.bridge; }).map(function(E){
+      var b = [Infinity, Infinity, -Infinity, -Infinity];
+      E.P.forEach(function(q){ b[0] = Math.min(b[0], q.x); b[1] = Math.min(b[1], q.z); b[2] = Math.max(b[2], q.x); b[3] = Math.max(b[3], q.z); });
+      return {E: E, b: [b[0] - E.half, b[1] - E.half, b[2] + E.half, b[3] + E.half]};
+    });
+  }
+  for(var i = 0; i < C.bridges.length; i++){
+    var o = C.bridges[i], P = o.E.P, h = o.E.half;
+    if(x < o.b[0] || z < o.b[1] || x > o.b[2] || z > o.b[3]) continue;
+    for(var j = 0; j + 1 < P.length; j++){
+      var a = P[j], c = P[j + 1], dx = c.x - a.x, dz = c.z - a.z, L2 = dx*dx + dz*dz;
+      var t = L2 > 0 ? clamp(((x - a.x)*dx + (z - a.z)*dz)/L2, 0, 1) : 0;
+      if(hypot(x - a.x - dx*t, z - a.z - dz*t) <= h) return true;
+    }
+  }
+  return false;
+}
 // the terrain height of a grid vertex with spacing `step`: the ground, pushed under the plane of every road piece
-// its star overlaps (memoised per W: tiles, skirts and road verges all read the same vertices)
+// its star overlaps (memoised per W: tiles, skirts and road verges all read the same vertices). Under a bridge the
+// ground is the raw terrain (heightAt), never the deck groundAt reports there: the terrain must not rise to the deck
+// over the river (a wedge out of the water) or at its ends (a mound on the low bank).
 function terrainY(W, x, z, step){
   var C = prep(W), memo = C.ty || (C.ty = {}), key = step + ":" + x + "," + z;
   if(key in memo) return memo[key];
-  var S = clampPieces(W), y = WQ().groundAt(W, x, z), stamp = ++S.n;
+  var S = clampPieces(W), y = onBridge(W, x, z) ? WQ().heightAt(W, x, z) : WQ().groundAt(W, x, z), stamp = ++S.n;
+  var B = W.tierBase || W, wet = !!(B.river && WQ().riverAt(B, x, z)), fine = step === LOD_STEP[0] && !wet;
   for(var j = Math.floor((z - step)/CELL); j <= Math.floor((z + step)/CELL); j++)
     for(var i = Math.floor((x - step)/CELL); i <= Math.floor((x + step)/CELL); i++){
       var L = S.grid[i + "," + j];
@@ -362,12 +392,13 @@ function terrainY(W, x, z, step){
         var o = L[k];
         if(o.seen === stamp) continue;
         o.seen = stamp;
-        if(o.x1 < x - step || o.x0 > x + step || o.z1 < z - step || o.z0 > z + step || !starHits(o, x, z, step)) continue;
+        if(o.x1 < x - step || o.x0 > x + step || o.z1 < z - step || o.z0 > z + step) continue;
+        if(o.own && fine ? !inPoly(o.P, x, z) : !starHits(o, x, z, step)) continue;
         y = Math.min(y, o.y0 + o.gx*x + o.gz*z);
       }
     }
   var sea = seaY(W);
-  if(sea != null && y < sea + SEA_SHORE) y = Math.min(y, sea - SEA_HIDE);
+  if(sea != null && (y < sea + SEA_SHORE || wet)) y = Math.min(y, sea - SEA_HIDE);   // the river's water too
   return (memo[key] = y);
 }
 // the terrain mesh height at (x, z) for a uniform lod (the grid's two triangles per cell, as terrainTile splits them)
@@ -1040,7 +1071,7 @@ function groundItems(W){
     else {
       // the beach stops where the river runs out to sea; the banks run along the river up to BANK_MOUTH from the coast
       beach(W, coast, seaY(B), out, {keep: function(p){ return !Q.riverAt(B, p[0], p[2]); }});
-      beach(W, R, seaY(B), out, {kind: "bank", inW: BANK_IN, outW: BANK_OUT, sign: -1, dry: COL.bank, wet: COL.wetBank,
+      beach(W, R, seaY(B) + RIVER_LIFT, out, {kind: "bank", inW: BANK_IN, outW: BANK_OUT, sign: -1, dry: COL.bank, wet: COL.wetBank,
                                  keep: function(p){ return inPoly(coast, p[0], p[2]) && ringDist(coast, p[0], p[2]) > BANK_MOUTH; }});
     }
   }
@@ -1701,6 +1732,6 @@ HQV.worldgeom = {
   groundTile: groundTile, groundItems: groundItems, triangulate: triangulate, hasGround: hasGround, seaY: seaY, view: view,
   tierDiff: tierDiff, footprint: footprint, riverWater: riverWater, riverRing: riverRing,
   BRIDGE: {DECK_T: DECK_T, PARA_W: PARA_W, PARA_H: PARA_H, RAIL_H: RAIL_H, ABUT: ABUT}, RIVER_LIFT: RIVER_LIFT,
-  SEA_HIDE: SEA_HIDE
+  SEA_HIDE: SEA_HIDE, meshY: meshY
 };
 })();

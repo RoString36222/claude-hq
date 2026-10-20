@@ -325,11 +325,14 @@ function mount(el, opts){
     if(dprChanged && W) atlas = buildAtlas(doc, dpr);
     return true;
   }
-  var ro = null;
+  // A resize only marks the canvas stale; the next frame() resizes it. Sizing the canvas inside the observer's own
+  // callback is a layout change in the observed box, which Chrome reports as a "ResizeObserver loop" error.
+  var stale = false, ro = null;
+  function markStale(){ stale = true; }
   if(typeof window.ResizeObserver === "function"){
-    try { ro = new window.ResizeObserver(function(){ measure(); }); ro.observe(root); } catch(e){ ro = null; }
+    try { ro = new window.ResizeObserver(markStale); ro.observe(root); } catch(e){ ro = null; }
   }
-  if(window.addEventListener){ window.addEventListener("resize", measure); domL.push([window, "resize", measure]); }
+  if(window.addEventListener){ window.addEventListener("resize", markStale); domL.push([window, "resize", markStale]); }
   measure();
 
   // ---- input ----
@@ -420,6 +423,7 @@ function mount(el, opts){
   }
   function frame(f){
     if(!alive || !g) return;
+    if(stale){ stale = false; measure(); }
     f = f || {};
     var now = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
     var dt = f.dt != null ? num(f.dt, 0) : (lastT == null ? 0 : (now - lastT)/1000);

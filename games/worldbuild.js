@@ -12,8 +12,8 @@
  *   ground    (v2 docs) block pavements, lot / plaza pads and the beach, merged into the tile's terrain mesh
  *   sea       (island docs) one water plane at Layers.island.sea_cm, its normals rippled by waterPhase(clock):
  *             a pure function of the clock (cam.time s, else performance.now), so it is frame-rate independent
- *   river     (island docs with Layers.river) one mesh for the world: worldgeom riverWater, at sea level in the sea's
- *             material (the mounted ocean's, games/ocean.js material(), when there is one, else the plane's)
+ *   river     (island docs with Layers.river) one mesh for the world: worldgeom riverWater, calm water RIVER_LIFT over
+ *             sea level in the mounted ocean's calm material (games/ocean.js riverMaterial()), else the plane's
  *   bridges   per tile, one mesh of deck slabs, fascias, abutments and railings (worldgeom roadTile's `bridge`)
  * Tiers: opts.tier / wb.setTier(t) show the world as city tier t shows it (worldgeom view); a tier change rebuilds
  * only the tiles and products worldgeom.tierDiff names, and a job that finishes at a stale tier is redone.
@@ -696,8 +696,8 @@ function create(c, W, opts){
       if(sea.visible){ dc++; tri += tris(sea); }
     }
     if(river){
-      // the ocean's own material while one is mounted (its waves, tint and glint), else the sea plane's
-      var om = HQV.ocean && HQV.ocean.material ? HQV.ocean.material() : null;
+      // the mounted ocean's calm water (its tint, glint and ripples, no waves), else the sea plane's
+      var om = HQV.ocean && HQV.ocean.riverMaterial ? HQV.ocean.riverMaterial() : null;
       river.material = om || M.water;
       river.visible = !fr || fr.intersectsObject(river);
       if(river.visible){ dc++; tri += tris(river); }
@@ -754,7 +754,7 @@ function create(c, W, opts){
     wb.root.add(sea);
   }
   wb.sea = sea;
-  // the river's water: one mesh over Layers.river.poly at sea level (worldgeom riverWater; none without a sea)
+  // the river's water: one mesh over Layers.river.poly just over sea level (worldgeom riverWater; none without a sea)
   var river = null, rg = seaY != null && W.river ? bufGeo(Gm.riverWater(W)) : null;
   if(rg){
     river = new THREE.Mesh(rg, M.water);

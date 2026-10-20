@@ -17,6 +17,8 @@
  *                                island at its bearing, pulled in to HORIZON m (scaled to keep its size
  *                                in view) when further; -> count, out = [x, z, scale, yaw, tier] per island
  *   seaOf(doc, wave, tier)       a WorldDoc v2 (layers.island) as hqboat's sea: {land, docks, y, wave, boat}.
+ *                                wave (default) is waveAt at sea and RIVER_Y on the river's water: the river is
+ *                                calm, its surface RIVER_Y m over sea level, so a hull floats level on it.
  *                                land(x, z) is the coast polygon minus the river's water (layers.river.poly), plus
  *                                the bridge decks over it (edges with bridge: true, within half their width; with
  *                                `tier`, only those open at that tier): you walk and drive to the bank or over a
@@ -25,7 +27,13 @@
  *   riverOf(doc)                 the river's water polygon (metres) and its bridge decks, or null
  *   wakePush / wakeStrip         a boat's wake as a trail of points, and the strip that draws it
  * material()                    the sea material of the mounted ocean (null when none is), for other water at sea level
- * mount(c, parent) -> {g, step(t, dt, cam), setTime(night), setSun(dir), wake(boats), dispose, drawCalls}: a polar-grid
+ * riverMaterial()               the mounted ocean's calm-water material (null when none is): the sea's own uniforms,
+ *                               tint, glint and ripples, but no waves in its vertices. The river wears it RIVER_Y m
+ *                               over sea level, over the highest crest, so the sea plane under it never shows through
+ *                               (a river drawn with waves on its few, far-apart outline vertices had the sea plane's
+ *                               crests poke through it in stripes)
+ * mount(c, parent) -> {g, step(t, dt, cam), setTime(night), setSun(dir), setRiver(R), wake(boats), dispose, drawCalls}:
+ * setRiver(riverOf(doc)) lays wakes on the river's calm surface; a polar-grid
  * sea plane that follows the camera (a shader: waves, fresnel sky, sun or moon glint, day/night tint,
  * the scene's fog), island impostors as seven InstancedMeshes (one silhouette, a skyline per tier and one
  * for the Commons: the draw calls stay seven for any number of islands) and a fading foam V behind each boat.
@@ -38,6 +46,8 @@ var PI = Math.PI, G = 9.81;
 /* ---------- the waves ---------- */
 // [direction (rad, 0 = toward +z), wavelength m, amplitude m, phase]; the speed is deep water's sqrt(g L / 2 pi)
 var WAVES = [[0.6, 38, 0.16, 0.0], [2.1, 21, 0.08, 1.3], [-0.9, 11, 0.035, 2.6]];
+// the calm river's surface over sea level (m): over the sum of the amplitudes above (0.275 m)
+var RIVER_Y = 0.3;
 var WK = WAVES.map(function(w){ var k = 2*PI/w[1]; return {dx: Math.sin(w[0])*k, dz: Math.cos(w[0])*k, w: Math.sqrt(G*k), a: w[2], p: w[3]}; });
 function waveAt(x, z, t){
   var h = 0; t = +t || 0;
@@ -207,7 +217,8 @@ function landOf(doc, tier, R){
 function seaOf(doc, wave, tier){
   var I = ((doc && doc.layers) || {}).island || {}, R = riverOf(doc);
   tier = tier != null && isFinite(+tier) ? +tier : null;
-  var land = landOf(doc, tier, R), sea = {land: land, docks: docksOf(doc, land), y: (+I.sea_cm || 0)/100, wave: wave || waveAt};
+  var calmWave = R ? function(x, z, t){ return R.inWater(x, z) ? RIVER_Y : waveAt(x, z, t); } : waveAt;
+  var land = landOf(doc, tier, R), sea = {land: land, docks: docksOf(doc, land), y: (+I.sea_cm || 0)/100, wave: wave || calmWave};
   // the hull's view: sea.land as it is when asked (the City adds its piers to it), but a bridge deck over the water
   // is open water underneath
   sea.boat = {docks: sea.docks, y: sea.y, wave: sea.wave,
@@ -264,8 +275,10 @@ function seaGeo(THREE){
   g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx);
   return g;
 }
-function seaMaterial(THREE){
-  var U = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
+// sea: the waves displace the vertices; calm (the river): a flat surface with the sea's ripples, tint and glint,
+// sharing the sea's uniforms object (pass U), so every per-frame update of the sea's reaches it too
+function seaMaterial(THREE, calm, U){
+  U = U || THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
     uTime: {value: 0}, uNight: {value: 0}, uCam: {value: new THREE.Vector3()},
     uDeep: {value: new THREE.Color()}, uShallow: {value: new THREE.Color()}, uSky: {value: new THREE.Color()}, uSun: {value: new THREE.Color()},
     uSunDir: {value: new THREE.Vector3(0.4, 0.6, 0.3).normalize()}}]);
@@ -273,7 +286,8 @@ function seaMaterial(THREE){
     vertexShader: waveGlsl() +
       "uniform float uTime; uniform vec3 uCam; varying vec3 vW;\n#include <fog_pars_vertex>\n" +
       "void main(){ vec4 w = modelMatrix*vec4(position, 1.0); float fade = 1.0 - smoothstep(150.0, 600.0, distance(w.xz, uCam.xz));\n" +
-      "  w.y += waveH(w.xz, uTime)*fade; vW = w.xyz; vec4 mvPosition = viewMatrix*w; gl_Position = projectionMatrix*mvPosition;\n" +
+      (calm ? "" : "  w.y += waveH(w.xz, uTime)*fade;\n") +
+      "  vW = w.xyz; vec4 mvPosition = viewMatrix*w; gl_Position = projectionMatrix*mvPosition;\n" +
       "  #include <fog_vertex>\n}",
     fragmentShader: waveGlsl() +
       "uniform float uTime; uniform float uNight; uniform vec3 uCam; uniform vec3 uDeep; uniform vec3 uShallow; uniform vec3 uSky; uniform vec3 uSun; uniform vec3 uSunDir;\n" +
@@ -332,13 +346,14 @@ function skylineGeo(THREE, t){
   return pieces(THREE, list);
 }
 
-// the sea material of the ocean mounted now (null when none is): other water at sea level (the river, games/worldbuild.js)
-// wears it, so it shows exactly the waves, tint and glint of the sea it meets
-var LIVE = {mat: null};
+// the sea material of the ocean mounted now (null when none is), and its calm twin the river wears (games/worldbuild.js):
+// the same uniforms, so the river shows the tint and glint of the sea it meets, without its waves
+var LIVE = {mat: null, river: null};
 function mount(c, parent){
   var THREE = c.THREE, g = new THREE.Group(); g.name = "ocean"; parent.add(g);
   var seaM = seaMaterial(THREE), sea = new THREE.Mesh(seaGeo(THREE), seaM); sea.frustumCulled = false; sea.renderOrder = -10; g.add(sea);
-  LIVE.mat = seaM;
+  var riverM = seaMaterial(THREE, true, seaM.uniforms), river = null;
+  LIVE.mat = seaM; LIVE.river = riverM;
   var impM = impostorMaterial(THREE), cap = 0, sil = null, sky = [], buf = null, seen = -1;
   var night = 0, nightGoal = 0, tmp = {d: new THREE.Color(), n: new THREE.Color()};
   function tint(){
@@ -390,6 +405,8 @@ function mount(c, parent){
   }
   var o = {g: g, sea: sea, sil: function(){ return sil; }, sky: function(){ return sky; },
     setTime: function(n){ nightGoal = n ? 1 : 0; },
+    // the river (riverOf(doc), or null): wakes on it lie on its calm surface
+    setRiver: function(R){ river = R || null; },
     // the direction toward the sun (or the moon by night) for the glint: {x, y, z}
     setSun: function(d){ if(d && isFinite(d.x) && isFinite(d.y) && isFinite(d.z)) seaM.uniforms.uSunDir.value.set(d.x, d.y, d.z).normalize(); },
     // boats = [{id, x, z, yaw, speed, beam}]: push each trail; a boat no longer listed lets its wake fade then goes
@@ -409,7 +426,7 @@ function mount(c, parent){
         var w = wakes[id], S = wakeStrip(w.trail, clock), P = w.m.geometry.attributes.position, C = w.m.geometry.attributes.color;
         for(var i = 0; i < S.n*6; i++){
           var x = S.pos[i*2], z = S.pos[i*2 + 1];
-          P.array[i*3] = x; P.array[i*3 + 1] = 0.03 + (calm ? 0 : waveAt(x, z, clock)); P.array[i*3 + 2] = z;
+          P.array[i*3] = x; P.array[i*3 + 1] = 0.03 + (river && river.inWater(x, z) ? RIVER_Y : calm ? 0 : waveAt(x, z, clock)); P.array[i*3 + 2] = z;
           C.array[i*4] = C.array[i*4 + 1] = C.array[i*4 + 2] = 1; C.array[i*4 + 3] = S.alpha[i]*0.8;
         }
         P.needsUpdate = true; C.needsUpdate = true; w.m.geometry.setDrawRange(0, Math.max(0, S.n - 1)*30);
@@ -421,7 +438,8 @@ function mount(c, parent){
       parent.remove(g);
       g.traverse(function(m){ if(m.geometry) m.geometry.dispose(); });
       if(LIVE.mat === seaM) LIVE.mat = null;
-      seaM.dispose(); impM.dispose(); wakeM.dispose();
+      if(LIVE.river === riverM) LIVE.river = null;
+      seaM.dispose(); riverM.dispose(); impM.dispose(); wakeM.dispose();
     }};
   tint();
   return o;
@@ -430,7 +448,7 @@ function mount(c, parent){
 HQV.ocean = {WAVES: WAVES, COAST_R: COAST_R, SKY_R: SKY_R, ARRIVE: ARRIVE, HORIZON: HORIZON, WAKE: WAKE,
   waveAt: waveAt, waveGlsl: waveGlsl, setArchipelago: setArchipelago, nearestIsland: nearestIsland, horizon: horizon,
   inPoly: inPoly, landTest: landTest, coastOf: coastOf, docksOf: docksOf, seaOf: seaOf, riverOf: riverOf,
-  material: function(){ return LIVE.mat; },
+  material: function(){ return LIVE.mat; }, riverMaterial: function(){ return LIVE.river; }, RIVER_Y: RIVER_Y,
   wakePush: wakePush, wakeStrip: wakeStrip, mount: mount,
   current: function(){ return {world: ARCH.cur, x: ARCH.ox, z: ARCH.oz, count: ARCH.list.length}; }};
 })();

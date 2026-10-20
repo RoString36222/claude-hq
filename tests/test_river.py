@@ -140,7 +140,12 @@ var out = {};
   for(var v = 1; v < g.pos.length; v += 3) ys[g.pos[v].toFixed(3)] = 1;
   var pa = 0; for(k = 0; k < poly.length; k++){ var q0 = poly[k], q1 = poly[(k + 1) %% poly.length]; pa += q0[0]*q1[1] - q1[0]*q0[1]; }
   r.waterMesh = {tris: g.idx.length/3, verts: g.pos.length/3, polyN: poly.length, area: area, polyArea: Math.abs(pa)/2, down: down,
-                 ys: Object.keys(ys), seaY: seaY, lift: G.RIVER_LIFT, none: G.riverWater(Q.pack({layers: {}})).idx.length};
+                 ys: Object.keys(ys), seaY: seaY, lift: G.RIVER_LIFT, none: G.riverWater(Q.pack({layers: {}})).idx.length,
+                 riverY: O.RIVER_Y, crest: O.WAVES.reduce(function(a, w){ return a + w[2]; }, 0)};
+  // the calm river: a hull floats level on it at RIVER_Y, at sea it rides the waves
+  var c0 = Rv.center[Math.floor(Rv.center.length/2)], cx = c0[0]/100, cz = c0[1]/100;
+  r.calm = {river: [sea.wave(cx, cz, 0), sea.wave(cx, cz, 7.3)], boat: sea.boat.wave(cx, cz, 3.1), atSea: sea.wave(5000, 5000, 1.7) === O.waveAt(5000, 5000, 1.7),
+            own: O.seaOf(D, function(){ return 9; }).wave(cx, cz, 0)};
   // the roads over the water: every asphalt / walk / kerb vertex on the water stands at the deck, not on the riverbed;
   // the bridge structure: a slab under the deck, railings over it, abutments into the banks
   var low = 0, onWater = 0, br = {tiles: 0, tris: 0, under: 0, rail: 0, abut: 0, bad: 0}, NT = G.NT;
@@ -184,8 +189,76 @@ var out = {};
     }
   });
   r.ground = {kinds: kinds, mouthBeach: mouthBeach, bankFar: bankFar};
+  // the terrain under and beside the bridges: never up out of the water (groundAt there is the deck, the terrain is
+  // the riverbed), and at the decks' ends never raised over the raw ground (a mound on the low bank)
+  var wedge = 0, mound = 0, wet = 0, dry = 0;
+  bridges.forEach(function(e){
+    var p = e.pts, m = p.length/3, half = e.width/200;
+    for(var j = 0; j + 1 < m; j++){
+      var ax = p[3*j]/100, az = p[3*j+2]/100, dx = p[3*j+3]/100 - ax, dz = p[3*j+5]/100 - az, l = Math.hypot(dx, dz);
+      if(l < 1e-6) continue;
+      for(var t = 0; t <= l; t += 1) for(var o = -half - 6; o <= half + 6; o += 1){
+        var x = ax + dx*t/l + dz/l*o, z = az + dz*t/l - dx/l*o;
+        if(Q.riverAt(W, x, z)){ wet++; if(Math.max(G.meshY(W, x, z, 0), G.meshY(W, x, z, 1), G.meshY(W, x, z, 2)) > seaY + G.RIVER_LIFT + 0.1) wedge++; }
+        // the 8 m grid vertex nearest: the terrain there is the raw ground at most (pushed under the roads)
+        var vx = Math.round(x/8)*8, vz = Math.round(z/8)*8;
+        if(Math.abs(o) <= half){ dry++; if(G.meshY(W, vx, vz, 0) > Q.heightAt(W, vx, vz) + 1e-6 && Q.groundAt(W, vx, vz) > Q.heightAt(W, vx, vz) + 0.5) mound++; }
+      }
+    }
+  });
+  r.terrain = {wet: wet, wedge: wedge, dry: dry, mound: mound};
   out[name] = r;
 });
+// the whole Commons and island (their fixtures): the terrain beside every bridge stays under the water (a cut window
+// missed the wedge that rose 3.8 m out of the river at one of them); no lod but the finest reaches over the water at
+// all, and that one only a bank's width (the 8 m grid cannot follow a steep bank exactly); and the land along the
+// river is not dug under the water (the banks' planes, carried over a whole 8 m star, once sank it into trenches the
+// sea showed through, with the bank strip left afloat over them)
+var zlib = require("zlib");
+out.full = {};
+["claude-hq@2", "island@2"].forEach(function(name){
+  var doc = JSON.parse(zlib.gunzipSync(fs.readFileSync(root + "/tests/fixtures/" + name + ".json.gz"))), W = Q.pack(doc);
+  var top = doc.layers.island.sea_cm/100 + G.RIVER_LIFT, P = G.riverRing(W), b = [Infinity, Infinity, -Infinity, -Infinity];
+  P.forEach(function(p){ b[0] = Math.min(b[0], p[0]); b[1] = Math.min(b[1], p[1]); b[2] = Math.max(b[2], p[0]); b[3] = Math.max(b[3], p[1]); });
+  function edge(x, z){
+    var d = Infinity;
+    for(var k = 0; k < P.length; k++){ var a = P[k], c = P[(k + 1) %% P.length], dx = c[0] - a[0], dz = c[1] - a[1], L2 = dx*dx + dz*dz,
+      t = L2 > 0 ? Math.max(0, Math.min(1, ((x - a[0])*dx + (z - a[1])*dz)/L2)) : 0; d = Math.min(d, Math.hypot(x - a[0] - dx*t, z - a[1] - dz*t)); }
+    return d;
+  }
+  var reach = [0, 0, 0], x, z;
+  for(x = b[0]; x <= b[2]; x += 2) for(z = b[1]; z <= b[3]; z += 2){
+    if(!Q.riverAt(W, x, z)) continue;
+    for(var l = 0; l < 3; l++) if(G.meshY(W, x, z, l) > top) reach[l] = Math.max(reach[l], edge(x, z));
+  }
+  var near = 0, dug = 0;
+  for(x = Math.floor((b[0] - 16)/8)*8; x <= b[2] + 16; x += 8) for(z = Math.floor((b[1] - 16)/8)*8; z <= b[3] + 16; z += 8){
+    if(Q.riverAt(W, x, z)) continue;
+    var by = false; for(var a2 = 0; a2 < 16 && !by; a2++) by = Q.riverAt(W, x + Math.sin(a2/16*2*Math.PI)*12, z + Math.cos(a2/16*2*Math.PI)*12);
+    if(!by) continue;
+    near++;
+    if(Q.heightAt(W, x, z) > top + 0.5 && G.meshY(W, x, z, 0) < top) dug++;
+  }
+  out.full[name] = {reach: reach, near: near, dug: dug, top: top};
+});
+(function(){
+  var doc = JSON.parse(zlib.gunzipSync(fs.readFileSync(root + "/tests/fixtures/claude-hq@2.json.gz")));
+  var W = Q.pack(doc), seaY = doc.layers.island.sea_cm/100 + G.RIVER_LIFT, wet = 0, wedge = 0, top = -Infinity;
+  W.edges.filter(function(e){ return e.bridge; }).forEach(function(e){
+    var p = e.pts, m = p.length/3, half = e.width/200;
+    for(var j = 0; j + 1 < m; j++){
+      var ax = p[3*j]/100, az = p[3*j+2]/100, dx = p[3*j+3]/100 - ax, dz = p[3*j+5]/100 - az, l = Math.hypot(dx, dz);
+      if(l < 1e-6) continue;
+      for(var t = 0; t <= l; t += 1) for(var o = -half - 6; o <= half + 6; o += 1){
+        var x = ax + dx*t/l + dz/l*o, z = az + dz*t/l - dx/l*o;
+        if(!Q.riverAt(W, x, z)) continue;
+        var y = Math.max(G.meshY(W, x, z, 0), G.meshY(W, x, z, 1), G.meshY(W, x, z, 2));
+        wet++; top = Math.max(top, y); if(y > seaY + 0.1) wedge++;
+      }
+    }
+  });
+  out.commonsBridges = {wet: wet, wedge: wedge, top: top, seaY: seaY};
+})();
 // a doc without a river: the sea and the ground as before
 var plain = JSON.parse(fs.readFileSync(root + "/tests/fixtures/cities_island@2.json", "utf8")), Wp = Q.pack(plain), Dp = Q.docOf(Wp), sp = O.seaOf(Dp);
 var coastOnly = O.landTest([O.coastOf(Dp)]), same = 0, n = 0;
@@ -232,10 +305,12 @@ out.build = {settled: a.ok && b.ok, dc: a.stats.drawCalls, dcPlain: b.stats.draw
 // with the ocean mounted the river wears its material; after it goes, the sea plane's again
 var scene = new THREE.Scene(), oc = O.mount(c, scene);
 a.wb.update(cam);
-out.ocean = {mounted: a.wb.river.material === O.material(), isShader: !!a.wb.river.material.isShaderMaterial};
+var rm = a.wb.river.material;
+out.ocean = {mounted: rm === O.riverMaterial() && !!rm, isShader: !!rm.isShaderMaterial, shared: rm.uniforms === O.material().uniforms,
+             flat: rm.vertexShader.indexOf("w.y +=") < 0 && O.material().vertexShader.indexOf("w.y +=") >= 0};
 oc.dispose();
 a.wb.update(cam);
-out.ocean.after = a.wb.river.material === a.wb.sea.material && O.material() === null;
+out.ocean.after = a.wb.river.material === a.wb.sea.material && O.material() === null && O.riverMaterial() === null;
 a.wb.destroy(); b.wb.destroy();
 out.warns = warns;
 console.warn = warn0;
@@ -324,7 +399,15 @@ class RiverPureTest(unittest.TestCase):
             self.assertAlmostEqual(m["area"], m["polyArea"], delta=1e-6*m["polyArea"])
             self.assertEqual(m["down"], 0)                    # every face up
             self.assertEqual(m["ys"], ["%.3f" % (m["seaY"] + m["lift"])])
-            self.assertLess(m["lift"], 0.05)
+            # calm water over the sea's highest crest, so the waving sea plane under it never pokes through in stripes
+            self.assertGreater(m["lift"], m["crest"])
+            self.assertLess(m["lift"], 0.5)
+            self.assertEqual(m["lift"], m["riverY"])          # worldgeom and ocean agree on the river's surface
+            c = r["calm"]
+            self.assertEqual(c["river"], [m["riverY"], m["riverY"]])
+            self.assertEqual(c["boat"], m["riverY"])
+            self.assertTrue(c["atSea"])
+            self.assertEqual(c["own"], 9)                     # a wave the caller passes still wins
             self.assertEqual(m["none"], 0)
 
     def test_bridges_are_decks_not_ribbons_on_the_riverbed(self):
@@ -338,6 +421,23 @@ class RiverPureTest(unittest.TestCase):
             self.assertGreater(b["under"], 0, b)              # the slab's underside over the water
             self.assertGreater(b["rail"], 0, b)               # railings
             self.assertGreater(b["abut"], 0, b)               # abutments down into the banks
+
+    def test_terrain_stays_under_the_water_at_bridges(self):
+        for name, r in self.each():
+            t = r["terrain"]
+            self.assertGreater(t["wet"], 100, t)
+            self.assertEqual(t["wedge"], 0, t)                # no grey wedge out of the river beside a deck
+            self.assertEqual(t["mound"], 0, t)                # no grass mound under a deck's end
+        c = self.out["commonsBridges"]
+        self.assertGreater(c["wet"], 500, c)
+        self.assertEqual(c["wedge"], 0, c)
+
+    def test_terrain_along_the_river(self):
+        for name, f in self.out["full"].items():
+            self.assertEqual(f["reach"][1:], [0, 0], (name, f))        # the coarse lods never over the water
+            self.assertLessEqual(f["reach"][0], 4.5, (name, f))        # the finest only within a bank's width
+            self.assertGreater(f["near"], 200, (name, f))
+            self.assertLess(f["dug"], 0.05*f["near"], (name, f))     # was 21% of the Commons' (98 of 459)
 
     def test_banks_and_mouth(self):
         for name, r in self.each():
@@ -383,7 +483,9 @@ class RiverBuildTest(unittest.TestCase):
     def test_river_wears_the_sea(self):
         b, o = self.out["build"], self.out["ocean"]
         self.assertTrue(b["riverMat"])                        # the sea plane's material without an ocean
-        self.assertTrue(o["mounted"])                         # the mounted ocean's own material
+        self.assertTrue(o["mounted"])                         # the mounted ocean's calm material
+        self.assertTrue(o["shared"])                          # the sea's uniforms: its tint, glint and clock
+        self.assertTrue(o["flat"])                            # no waves in its vertices
         self.assertTrue(o["isShader"])
         self.assertTrue(o["after"])
 

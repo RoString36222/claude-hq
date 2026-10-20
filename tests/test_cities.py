@@ -249,7 +249,8 @@ out.commons.ashore = land && [wc.sea.land(land.x, land.z), wc.boatLand(openSea) 
   out.pier.boats = wc.bikes.filter(b => /^boat:/.test(b.id || "") && b.id.indexOf(berth.id + ":") === 5).map(function(b){
     var rx = b.x - P.head[0], rz = b.z - P.head[1], along = rx*dx + rz*dz, side = Math.abs(rx*dz - rz*dx);
     return {kind: b.kind, under: HQV.hqCivic.deckAt([P], b.x, b.z) != null, clear: side - V[b.kind].beam/2 - P.w/2,
-      reach: Math.hypot(side - (P.w/2 - 0.3), Math.max(0, along)), alongside: along < 0 && along > -len, y: b.g.position.y};
+      reach: Math.hypot(side - (P.w/2 - 0.3), Math.max(0, along)), alongside: along < 0 && along > -len, y: b.g.position.y,
+      river: HQV.world.riverAt(CW, b.x, b.z), riverY: HQV.ocean.RIVER_Y};
   });
 })();
 
@@ -538,7 +539,8 @@ class CitiesTest(unittest.TestCase):
             self.assertGreater(b["clear"], 0.1, b)
             self.assertLess(b["reach"], 4, b)
             self.assertTrue(b["alongside"], b)
-            self.assertEqual(b["y"], p["seaY"])
+            # afloat: at sea level, or on the river's calm surface RIVER_Y over it
+            self.assertAlmostEqual(b["y"], p["seaY"] + (b["riverY"] if b["river"] else 0), 6, b)
 
     def test_navigation_mounts(self):
         n = self.out["nav"]

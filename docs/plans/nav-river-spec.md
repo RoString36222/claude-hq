@@ -58,9 +58,14 @@ near the city's middle.
 
 ## Client: the river (worldgeom/worldbuild/ocean)
 
-- Water surface over `river.poly` at sea level (the ocean's material/colour, one mesh), banks
-  shaded; bridges drawn as decks with railings over the water (the bridge edges), not ribbons on
-  the riverbed.
+- Water surface over `river.poly` (one mesh), banks shaded; bridges drawn as decks with railings
+  over the water (the bridge edges), not ribbons on the riverbed. The river is calm water: its
+  surface stands `RIVER_Y` = 0.3 m over sea level (`worldgeom.RIVER_LIFT`, `ocean.RIVER_Y`), over
+  the sea's highest crest, in the ocean's calm material (`ocean.riverMaterial()`: the sea's uniforms,
+  tint and ripples, no waves in its vertices), so the waving sea plane under it never shows through.
+  A hull on it floats level at that height (`seaOf(doc).wave`), and the banks meet it there.
+- The terrain under a bridge is the ground (`heightAt`), never the deck; at the finest lod a bank's
+  pieces push down only the land vertices inside them (no trenches beside the river).
 - `HQV.ocean.seaOf(doc)`: `land(x, z)` is false on the river's water too (boats sail up it, walking
   and driving stop at its bank), except on a bridge deck. `groundAt` on a bridge is the deck.
 - Boats moored at the river dock and port berths exactly as at a coast dock.
@@ -117,7 +122,9 @@ HQV.hqminimap = {
 - Click / tap sets a waypoint there (`onPick`, snapped by the host). Wheel / +/- buttons zoom.
   A button toggles heading-up / north-up; another (or the existing M key) opens the full map.
 - The driving dials (`.hq3d-drive`) move left of the minimap; nothing overlaps at 1280x800 or at
-  700 px wide.
+  700 px wide. In a stage under 830 px wide (1280x800 with the dashboard's side panel: 706 px) the
+  dials left of the map would cover the chat (`.hq3d-talk`, 340 px at the bottom left), so there they
+  stand above the minimap instead.
 
 ## Client: the route in 3D (games/hqroutefx.js)
 
@@ -131,8 +138,12 @@ HQV.hqroutefx = {
 }
 ```
 
-One InstancedMesh for chevrons (every 4 m, lifted 6 cm over the road, depth-tested, the brand
-colour, unlit glow), one mesh for the pillar; at most 3 draw calls.
+One InstancedMesh for chevrons (every 4 m, 3 m wide, lifted 12 cm over the road (over its 6 cm lane
+marks) with a polygon offset, depth-tested, the brand colour, unlit, normal blending: additive purple
+did not read on asphalt and went white on a light plaza; they fade in and out by scale), one mesh for
+the pillar (with a disc at its foot, sized by the full 3D distance, so it is a pin from straight
+above), and on the map (`cam.mode` "map") one ribbon of the whole route drawn over everything instead
+of the chevrons; at most 3 draw calls.
 
 ## Client: the navigation UI (games/hqnavui.js)
 

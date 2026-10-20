@@ -2092,11 +2092,11 @@ function mount(el, api){
     if(a.act === "dive"){ dismount(true); placeAvatar(a.x, a.z, a.yaw); C.dive(rig, rigTarget()); }
     else { C.flyMap(rig, a.x, a.z, a.span); if(a.name && api.announce) api.announce(a.name); }
   }
+  // The HUD's E prompt: a door under the crosshair only. A vehicle near you already has its own E pill (rideUi:
+  // "Drive (E)", "Row (E)"), so the HUD never offers it a second time (it once said "E  Ride the bike" by a rowboat).
   function hudPrompt(){
     if(rig.mode === "fp" && !ride && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d) return "E  Enter " + (d.label || d.tip || "the door"); }
-    var i = ride ? -1 : nearIdx, b = i >= 0 && cur.bikes ? cur.bikes[i] : null;
-    if(!b) return null;
-    return b.kind === "car" ? "E  Drive the car" : b.kind === "moto" ? "E  Ride the motorbike" : b.kind === "skate" ? "E  Skate" : "E  Ride the bike";
+    return null;
   }
   function project(x, y, z){
     projV.set(x, y, z).project(curCam());

@@ -6,15 +6,19 @@
  *     fx.setWaypoint({x, y, z}|null)         a light pillar standing at the destination
  *     fx.update(dt, player {x, z}, cam)      chevrons from you to 250 m ahead, flowing forward; the
  *                                   pillar widens with distance from cam (a camera, or {x, y, z}) so
- *                                   it still reads from across the city
- *     fx.state() -> {count, phase, along, pillar}   for tests and the debug probe
- *     fx.dispose()                  removes both meshes and frees their geometry and materials
- * Chevrons: one InstancedMesh, one every SPACING m along the route, lifted LIFT m over the road and
- * tilted with it, depth-tested, the brand colour, unlit and additive (an instance's colour is its
- * glow, so black is invisible: that is how they fade in far ahead and out as you reach them).
- * The pillar: one open cylinder, additive, its vertex colours fading to nothing at the top. Two
- * draw calls in all. The flow is a phase that is a function of the time added up (FLOW m/s, mod
- * SPACING) and the pillar's pulse a function of that same clock, so 30 Hz and 144 Hz agree.
+ *                                   it still reads from across the city; on the map (cam.mode "map")
+ *                                   the whole route is a line instead, as wide as the view needs
+ *     fx.state() -> {count, phase, along, pillar, line}   for tests and the debug probe
+ *     fx.dispose()                  removes the meshes and frees their geometry and materials
+ * Chevrons: one InstancedMesh, one every SPACING m along the route, CHEV_W m wide, lifted LIFT m over
+ * the road (over its lane marks, polygon offset on top) and tilted with it, depth-tested, opaque-ish
+ * in the brand colour, unlit. They fade in far ahead and out as you reach them by scale (a chevron
+ * grows from nothing), so they read on dark asphalt and on a light plaza alike.
+ * The pillar: one open cylinder, additive, its vertex colours fading to nothing at the top, with a
+ * disc at its foot so it is a pin from straight above. The route line (map only): one ribbon mesh over
+ * the whole route, drawn over everything. Three draw calls at most. The flow is a phase that is a
+ * function of the time added up (FLOW m/s, mod SPACING) and the pillar's pulse a function of that same
+ * clock, so 30 Hz and 144 Hz agree.
  * Where you are on the route is tracked, not searched afresh: after the first frame only the stretch
  * from BACK m behind to SEEK m ahead of the last fix is searched, so on a route that doubles back on a
  * nearby street a little sideways drift cannot snap the window onto the later leg (and, as nav's
@@ -26,11 +30,15 @@
 "use strict";
 var HQV = window.HQV = window.HQV || {};
 
-var SPACING = 4, LIFT = 0.06, AHEAD = 250, FLOW = 3;          // m, m, m, m/s
+var SPACING = 4, LIFT = 0.12, AHEAD = 250, FLOW = 3;          // m, m, m, m/s
+var CHEV_W = 3;                                                 // m: a chevron's width (a lane's)
 var NEAR_FADE = 8, FAR_FADE = 60;                               // m over which a chevron fades in/out
 var BACK = 15, SEEK = 60, LOST = 25;                            // m: the tracked search stretch, and when to give up on it
 var MAX = Math.ceil(AHEAD/SPACING) + 1;                         // instances ever shown at once
 var PILLAR_H = 160, PILLAR_R = 1.4, PILLAR_SEEN = 220;          // m; past PILLAR_SEEN it widens with distance
+var DISC_R = 2.6;                                               // m: the pin disc at the pillar's foot
+var LINE_FRAC = 0.012, LINE_LIFT = 0.5, LINE_STEP = 1.25;       // map line: width as a share of the view's
+                                                                // height, m over the ground, rebuild ratio
 var BRAND = "#7c6cf0";                                          // the --brand fallback (avatar3d.js)
 
 function smooth(e0, e1, x){ var t = Math.max(0, Math.min(1, (x - e0)/(e1 - e0))); return t*t*(3 - 2*t); }
@@ -46,9 +54,9 @@ function brandColor(THREE, c){
   return col;
 }
 
-// A flat chevron in the xz plane pointing +z: two arms meeting at the tip, 1.6 m wide, 0.8 m deep.
+// A flat chevron in the xz plane pointing +z: two arms meeting at the tip, CHEV_W wide, half that deep.
 function chevronGeometry(THREE){
-  var W = 0.8, T = 0.45, B = -0.35, K = 0.38;                  // half width, tip z, arm-end z, stroke
+  var W = CHEV_W/2, T = 0.85, B = -0.65, K = 0.7;              // half width, tip z, arm-end z, stroke
   var p = [ -W, B, 0, T, 0, T - K, -W, B - K,                   // left arm: outer end, tip, inner tip, inner end
              W, B, 0, T, 0, T - K,  W, B - K ];                 // right arm
   var pos = new Float32Array(8*3), nor = new Float32Array(8*3);
@@ -60,23 +68,62 @@ function chevronGeometry(THREE){
   return g;
 }
 
-// The pillar: an open cylinder standing on y = 0, bright at the foot and gone at the top.
+// The pillar: an open cylinder standing on y = 0, bright at the foot and gone at the top, and a disc on
+// the ground round its foot (full colour) so that from straight above it is a pin, not a thin ring.
 function pillarGeometry(THREE, col){
-  var g = new THREE.CylinderGeometry(PILLAR_R, PILLAR_R, PILLAR_H, 18, 6, true);
-  g.translate(0, PILLAR_H/2, 0);
-  var pos = g.getAttribute("position"), n = pos.count, cols = new Float32Array(n*3);
-  for(var i = 0; i < n; i++){
-    var f = Math.pow(1 - pos.getY(i)/PILLAR_H, 1.6);
+  var cyl = new THREE.CylinderGeometry(PILLAR_R, PILLAR_R, PILLAR_H, 18, 6, true);
+  cyl.translate(0, PILLAR_H/2, 0);
+  var cp = cyl.getAttribute("position"), ci = cyl.getIndex(), nc = cp.count, SEG = 24;
+  var pos = new Float32Array((nc + SEG + 1)*3), cols = new Float32Array((nc + SEG + 1)*3), idx = [];
+  for(var i = 0; i < nc; i++){
+    var f = Math.pow(1 - cp.getY(i)/PILLAR_H, 1.6);
+    pos[i*3] = cp.getX(i); pos[i*3 + 1] = cp.getY(i); pos[i*3 + 2] = cp.getZ(i);
     cols[i*3] = col.r*f; cols[i*3 + 1] = col.g*f; cols[i*3 + 2] = col.b*f;
   }
+  for(i = 0; i < ci.count; i++) idx.push(ci.getX(i));
+  for(i = 0; i <= SEG; i++){                                    // the disc: a fan, centre last
+    var k = nc + i, a = i/SEG*Math.PI*2, r = i < SEG ? DISC_R : 0;
+    pos[k*3] = i < SEG ? Math.sin(a)*r : 0; pos[k*3 + 1] = 0.08; pos[k*3 + 2] = i < SEG ? Math.cos(a)*r : 0;
+    cols[k*3] = col.r; cols[k*3 + 1] = col.g; cols[k*3 + 2] = col.b;
+  }
+  for(i = 0; i < SEG; i++) idx.push(nc + SEG, nc + i, nc + (i + 1) % SEG);
+  cyl.dispose();
+  var g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
   g.setAttribute("color", new THREE.BufferAttribute(cols, 3));
+  g.setIndex(idx);
+  return g;
+}
+
+// The route line for the map: a flat ribbon w m wide along pts (m), y from ground + LINE_LIFT, mitred at
+// the corners (the mitre capped at 2 widths so a hairpin does not spike).
+function lineGeometry(THREE, pts, ground, w){
+  var n = pts.length >> 1, pos = new Float32Array(n*2*3), idx = [], h = w/2;
+  for(var i = 0; i < n; i++){
+    var x = pts[i*2], z = pts[i*2 + 1], a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1);
+    var ux = pts[i*2] - pts[a*2], uz = pts[i*2 + 1] - pts[a*2 + 1], vx = pts[b*2] - pts[i*2], vz = pts[b*2 + 1] - pts[i*2 + 1];
+    var ul = Math.hypot(ux, uz) || 1, vl = Math.hypot(vx, vz) || 1;
+    if(i === 0){ ux = vx; uz = vz; ul = vl; }
+    if(i === n - 1){ vx = ux; vz = uz; vl = ul; }
+    var nx = uz/ul + vz/vl, nz = -ux/ul - vx/vl, nl = Math.hypot(nx, nz);
+    if(nl < 1e-9){ nx = uz/ul; nz = -ux/ul; nl = 1; }
+    nx /= nl; nz /= nl;
+    var m = Math.min(2, 1/Math.max(0.5, nx*uz/ul - nz*ux/ul)), y = ground(x, z) + LINE_LIFT;
+    pos[i*6] = x + nx*h*m; pos[i*6 + 1] = y; pos[i*6 + 2] = z + nz*h*m;
+    pos[i*6 + 3] = x - nx*h*m; pos[i*6 + 4] = y; pos[i*6 + 5] = z - nz*h*m;
+    if(i) idx.push(i*2 - 2, i*2 - 1, i*2, i*2, i*2 - 1, i*2 + 1);
+  }
+  var g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  g.setIndex(idx);
   return g;
 }
 
 function create(c, scene){
   var THREE = c.THREE, brand = brandColor(THREE, c);
-  var chevMat = new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending,
-    depthTest: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false});
+  var chevMat = new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: 0.92,
+    depthTest: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4});
   var chev = new THREE.InstancedMesh(chevronGeometry(THREE), chevMat, MAX);
   chev.name = "routefx:chevrons"; chev.count = 0; chev.frustumCulled = false; chev.renderOrder = 2;
   chev.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -86,12 +133,16 @@ function create(c, scene){
     blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false, toneMapped: false});
   var pillar = new THREE.Mesh(pillarGeometry(THREE, brand), pillMat);
   pillar.name = "routefx:pillar"; pillar.visible = false; pillar.renderOrder = 2;
-  scene.add(chev); scene.add(pillar);
+  var lineMat = new THREE.MeshBasicMaterial({color: brand.clone(), transparent: true, opacity: 0.95, depthTest: false,
+    depthWrite: false, side: THREE.DoubleSide, fog: false, toneMapped: false});
+  var line = new THREE.Mesh(new THREE.BufferGeometry(), lineMat);
+  line.name = "routefx:line"; line.visible = false; line.renderOrder = 3; line.frustumCulled = false;
+  scene.add(chev); scene.add(pillar); scene.add(line);
 
   var pts = null, cum = null, len = 0, ground = function(){ return 0; };
-  var clock = 0, along = 0, tracked = false, dead = false;
+  var clock = 0, along = 0, tracked = false, dead = false, lineW = 0;
   var m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(0, 0, 0, "YXZ"),
-      v = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), tint = new THREE.Color();
+      v = new THREE.Vector3(), sc = new THREE.Vector3(1, 1, 1);
 
   // The point s m along the route, with the segment it lies on.
   var at = {x: 0, z: 0, i: 0};
@@ -141,6 +192,19 @@ function create(c, scene){
     }
     if(!pts || len <= 0){ pts = null; cum = null; len = 0; }
     chev.count = 0; chev.visible = false;
+    lineW = 0; line.visible = false;                            // rebuilt by the next map frame
+  }
+  // the map's route line, rebuilt only when the width it needs moves by over LINE_STEP
+  function mapLine(cam){
+    var alt = Math.max(1, (+cam.y || 0) - ground(+cam.x || 0, +cam.z || 0));
+    var fov = (+cam.fov || 0) > 0 ? +cam.fov : 10;
+    var w = Math.max(2, 2*alt*Math.tan(fov*Math.PI/360)*LINE_FRAC);
+    if(!(lineW > 0 && w < lineW*LINE_STEP && w > lineW/LINE_STEP)){
+      lineW = w;
+      line.geometry.dispose();
+      line.geometry = lineGeometry(THREE, pts, ground, w);
+    }
+    line.visible = true;
   }
 
   function setWaypoint(w){
@@ -152,8 +216,9 @@ function create(c, scene){
   function update(dt, player, cam){
     if(dead) return;
     clock += Math.max(0, +dt || 0);
-    var phase = (clock*FLOW) % SPACING;
-    if(pts && player){
+    var phase = (clock*FLOW) % SPACING, map = !!(cam && cam.mode === "map");
+    if(pts && map) mapLine(cam); else line.visible = false;
+    if(pts && player && !map){
       along = track(+player.x || 0, +player.z || 0);
       var end = Math.min(len, along + AHEAD), k = Math.ceil((along - phase)/SPACING), n = 0;
       for(var s = k*SPACING + phase; s <= end && n < MAX; s += SPACING){
@@ -164,10 +229,10 @@ function create(c, scene){
         e.set(-Math.atan2(rise, 2), Math.atan2(dx, dz), 0);
         q.setFromEuler(e);
         v.set(x, y + LIFT, z);
-        m4.compose(v, q, one);
-        chev.setMatrixAt(n, m4);
         var d = s - along, f = smooth(0, NEAR_FADE, d)*(1 - smooth(AHEAD - FAR_FADE, AHEAD, d));
-        chev.setColorAt(n, tint.copy(brand).multiplyScalar(f));
+        m4.compose(v, q, sc.set(Math.max(f, 1e-3), 1, Math.max(f, 1e-3)));   // never 0: it keeps its turn
+        chev.setMatrixAt(n, m4);
+        chev.setColorAt(n, brand);
         n++;
       }
       chev.count = n; chev.visible = n > 0;
@@ -175,28 +240,33 @@ function create(c, scene){
       if(chev.instanceColor) chev.instanceColor.needsUpdate = true;
     } else { chev.count = 0; chev.visible = false; }
     if(pillar.visible){
+      // by the full distance, so the pin also grows on the map, straight above it
       var cp = cam && (cam.position || cam), w = 1;
-      if(cp) w = Math.max(1, Math.hypot((+cp.x || 0) - pillar.position.x, (+cp.z || 0) - pillar.position.z)/PILLAR_SEEN);
+      if(cp) w = Math.max(1, Math.hypot((+cp.x || 0) - pillar.position.x, cp.y != null ? (+cp.y || 0) - pillar.position.y : 0,
+                                        (+cp.z || 0) - pillar.position.z)/PILLAR_SEEN);
       pillar.scale.set(w, 1, w);
       pillMat.opacity = 0.75 + 0.15*Math.sin(clock*2.4);
     }
   }
 
-  function state(){ return {count: chev.count, phase: (clock*FLOW) % SPACING, along: along, pillar: pillar.visible}; }
+  function state(){ return {count: chev.count, phase: (clock*FLOW) % SPACING, along: along, pillar: pillar.visible,
+                             line: line.visible ? lineW : 0}; }
 
   function dispose(){
     if(dead) return;
     dead = true;
     if(chev.parent) chev.parent.remove(chev);
     if(pillar.parent) pillar.parent.remove(pillar);
+    if(line.parent) line.parent.remove(line);
     chev.geometry.dispose(); chevMat.dispose(); chev.dispose();
     pillar.geometry.dispose(); pillMat.dispose();
+    line.geometry.dispose(); lineMat.dispose();
     pts = null; cum = null;
   }
 
   return {setRoute: setRoute, setWaypoint: setWaypoint, update: update, state: state, dispose: dispose,
-          chevrons: chev, pillar: pillar};
+          chevrons: chev, pillar: pillar, line: line};
 }
 
-HQV.hqroutefx = {create: create, SPACING: SPACING, LIFT: LIFT, AHEAD: AHEAD, FLOW: FLOW, MAX: MAX};
+HQV.hqroutefx = {create: create, SPACING: SPACING, LIFT: LIFT, AHEAD: AHEAD, FLOW: FLOW, MAX: MAX, CHEV_W: CHEV_W, DISC_R: DISC_R};
 })();

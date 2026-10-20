@@ -366,6 +366,11 @@ class NavUiSourceTests(unittest.TestCase):
         for tok in ("--panel", "--ink", "--line", "--brand", "--muted"):
             self.assertIn("var(" + tok, sec)
 
+    def test_banner_instruction_wraps_not_cut(self):
+        road = re.search(r"\.hqnavui-road\{([^}]*)\}", self.css).group(1)
+        self.assertNotIn("nowrap", road, "a cut-off 'Turn left onto Stash Av...' hides the road")
+        self.assertIn("-webkit-line-clamp:2", road)
+
     def test_css_motion_gated(self):
         sec = re.sub(r"/\*.*?\*/", "", self.css, flags=re.S)
         animated = []

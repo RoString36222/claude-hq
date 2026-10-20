@@ -110,6 +110,10 @@ const river = {center: [[89113, 0], [60000, 3000], [30000, 5000]], width_cm: 360
   poly: [[95000, -1800], [95000, 1800], [37000, 6800]].concat(basin.slice(4, 13)).concat([[37000, 3200]])};
 
 // ---- mounted ----
+// a ResizeObserver that hands its callback out, so a test can fire it (Chrome's loop error comes from sizing the
+// canvas inside that callback)
+const roCbs = [];
+window.ResizeObserver = class { constructor(cb){ roCbs.push(cb); } observe(){} disconnect(){} };
 const stage = new El('div');
 const picks = [], said = []; let expanded = 0;
 const mm = M.mount(stage, {onPick: (x, z) => picks.push([x, z]), onExpand: () => expanded++, announce: t => said.push(t)});
@@ -231,6 +235,14 @@ mm2.setWorld(isl, 3, {});
 mm2.frame({x: 0, z: 0, yaw: 0});
 const cv2 = r2.all().find(e => e.tagName === 'CANVAS');
 out.dpr = [cv2.width, cv2.height, mm2.view().w, mm2.layers().atlas.height];
+
+// a resize: the observer callback writes nothing (no layout change inside it); the next frame() sizes the canvas
+r2.clientWidth = 200; r2.clientHeight = 200;
+const roW = cv2.width;
+roCbs.forEach(cb => cb([]));
+const inCb = cv2.width;
+mm2.frame({x: 0, z: 0, yaw: 0});
+out.ro = {observers: roCbs.length, before: roW, inCallback: inCb, afterFrame: cv2.width, w: mm2.view().w};
 
 // destroy: gone from the stage, listeners off
 mm.destroy(); mm2.destroy();
@@ -356,6 +368,12 @@ class MinimapTest(unittest.TestCase):
 
     def test_dpr(self):
         self.assertEqual(self.o["dpr"], [320, 320, 160, 40])
+
+    def test_resize_observer_never_sizes_in_its_callback(self):
+        ro = self.o["ro"]
+        self.assertEqual(ro["observers"], 2)
+        self.assertEqual(ro["inCallback"], ro["before"], "no canvas write inside the ResizeObserver callback")
+        self.assertEqual([ro["afterFrame"], ro["w"]], [400, 200], "the next frame sizes it (DPR 2)")
 
     def test_destroy(self):
         self.assertEqual(self.o["destroyed"], {"children": 0, "clickL": 0, "resize": 0})

@@ -875,7 +875,8 @@ HQV.hqWorlds.city3d = function(c, w){
     // the piers stand on the water: you walk them, and a boat comes up against them as against the shore
     var coast = sea.land;
     sea.land = function(x, z){ return coast(x, z) || (decks.length > 0 && HQV.hqCivic.deckAt(decks, x, z) != null); };
-    try { oc = HQV.ocean.mount(c, S); oc.g.position.y = sea.y; if(wb && wb.sea) wb.sea.visible = false; } catch(e){ oc = null; }
+    var river = HQV.ocean.riverOf(doc), riverY = HQV.ocean.RIVER_Y || 0;     // the river is calm water, RIVER_Y up
+    try { oc = HQV.ocean.mount(c, S); oc.g.position.y = sea.y; if(oc.setRiver) oc.setRiver(river); if(wb && wb.sea) wb.sea.visible = false; } catch(e){ oc = null; }
     S.add(boatG);
     if(HQV.hqboat) sea.docks.forEach(function(d, n){
       var site = siteById(d.id); if(site && site.tier != null && (site.tier | 0) > tier) return;
@@ -885,7 +886,7 @@ HQV.hqWorlds.city3d = function(c, w){
         var sg = j ? 1 : -1, x = d.x + Math.cos(d.yaw)*BOAT_SIDE*sg, z = d.z - Math.sin(d.yaw)*BOAT_SIDE*sg;
         if(P){ var lat = (P.w/2 + 1)*sg; x = P.head[0] - P.dir[0]*2.5 + P.dir[1]*lat; z = P.head[1] - P.dir[1]*2.5 - P.dir[0]*lat; }
         var col = [0x2f6f9f, 0xc8323c, 0x2f8f5b, 0xe8b730][(n*2 + j) % 4], B = HQV.hqboat.model(c, kind, col, 0xf2f2f2);
-        B.g.position.set(x, sea.y, z); B.g.rotation.y = d.yaw; boatG.add(B.g);
+        B.g.position.set(x, sea.y + (river && river.inWater(x, z) ? riverY : 0), z); B.g.rotation.y = d.yaw; boatG.add(B.g);
         boats.push({g: B.g, x: x, z: z, yaw: d.yaw, color: col, accent: 0xf2f2f2, kind: kind, id: "boat:" + d.id + ":" + kind, stay: true});
       });
     });

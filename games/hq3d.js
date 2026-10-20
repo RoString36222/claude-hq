@@ -683,7 +683,14 @@ function mount(el, api){
     // Cities: put you somewhere in this world (off a bus, back at a dock), or build the City again on
     // another world (an island, the Commons) and arrive at spawn
     teleport: function(x, z, yaw){ if(avatar){ if(ride) dismount(true); placeAvatar(x, z, yaw); } },
-    goCity: function(world, spawn){ return inst.goCity ? inst.goCity(world, spawn) : false; }
+    goCity: function(world, spawn){ return inst.goCity ? inst.goCity(world, spawn) : false; },
+    // navigation (HQ 3.1, games/hqcity3d.js): where you face and how fast, and what you ride (kind, a boat or not);
+    // the other players in this world; is world w the one you are in; the full map (M)
+    motion: function(){ return avatar ? {yaw: avatar.yaw || 0, speed: Math.abs(ride ? (ride.speed || 0) : (avatar.speed || 0)),
+                                         ride: ride ? ride.kind || null : null, boat: !!(ride && ride.boat)} : null; },
+    others: function(){ var out = []; Object.keys(peers).forEach(function(u){ var P = peers[u]; if(cur && P.g.parent === cur.scene) out.push({x: P.x, z: P.z, col: bikeColor(u)}); }); return out; },
+    active: function(w){ return !!(inst.running && cur && cur === w); },
+    toggleMap: function(){ if(rigOn()) mapToggle(); }
   };
 
   /* ---------- day / night from the local clock ---------- */
@@ -1802,7 +1809,7 @@ function mount(el, api){
     if(gp){ thr = E.clamp(thr + gp.thr, -1, 1); steer = E.clamp(steer - gp.x, -1, 1); }
     walkTo = null; walkDoor = null;
     var inp = {thr: thr, steer: steer}, yaw0 = avatar.yaw;
-    var evs = cur.sea ? H.step(st, inp, dt, cur.sea) : [];
+    var evs = cur.sea ? H.step(st, inp, dt, cur.sea.boat || cur.sea) : [];   // the hull's sea: under a bridge is water
     (evs || []).forEach(function(ev){ var k = ev && (ev.type || ev); if(k === "beach" || k === "dock") E.sfx(k === "dock" ? "door" : "hit"); });
     ride.speed = st.speed != null ? st.speed : ride.speed; ride.steer = steer;
     avatar.x = st.x; avatar.z = st.z; avatar.yaw = st.yaw;
@@ -2067,7 +2074,8 @@ function mount(el, api){
     walkTo = null; walkDoor = null; doorsArmed = false; movedHere = true;
     moveAvatar(0); view.target.copy(view.goal);
   }
-  // A click on the City map (w.mapPick): your HQ dives in at its door; another HQ or anywhere else flies the map.
+  // A click on the City map (w.mapPick): your HQ dives in at its door; another HQ flies the map there; the ground
+  // sets a waypoint where the world takes one (w.mapWaypoint), else flies the map there too.
   function mapClick(e){
     var x, z, f = pick(e, [].concat(cur.floor || []));
     if(f){ x = f.point.x; z = f.point.z; }
@@ -2075,7 +2083,9 @@ function mount(el, api){
       var r = canvas.getBoundingClientRect(), kk = (rig.mapSpan || 2048)/(r.height || 1), c = rig.mapCentre || {x: 0, z: 0};
       x = c.x + (e.clientX - r.left - r.width/2)*kk; z = c.z + (e.clientY - r.top - r.height/2)*kk;
     }
-    var a = mapClickAction(cur.mapPick ? cur.mapPick(x, z) : {kind: "point", x: x, z: z}), C = HQV.camrig;
+    var p = cur.mapPick ? cur.mapPick(x, z) : {kind: "point", x: x, z: z};
+    if(p && p.kind === "point" && cur.mapWaypoint && cur.mapWaypoint(x, z)) return;     // the ground: a waypoint (HQ 3.1)
+    var a = mapClickAction(p), C = HQV.camrig;
     if(!a) return;
     if(a.act === "dive"){ dismount(true); placeAvatar(a.x, a.z, a.yaw); C.dive(rig, rigTarget()); }
     else { C.flyMap(rig, a.x, a.z, a.span); if(a.name && api.announce) api.announce(a.name); }
@@ -2355,6 +2365,8 @@ function mount(el, api){
       cur = w; if(w === worlds.mission && missionDirty) refreshMission(); doorsArmed = false; movedHere = false; view.span = w.span || 12; view.zoom = w.zoom || 1.45; view.yaw = sp.camYaw != null ? sp.camYaw : w.camYaw != null ? w.camYaw : PI/4; view.pitch = w.camPitch || 0.62;
       moveAvatar(0); view.target.copy(view.goal);
       if(w.camModes) rigEnter(w);
+      if(prev && prev !== w && prev.onLeave){ try { prev.onLeave(); } catch(e){} }
+      if(w.onEnter){ try { w.onEnter(); } catch(e){} }
       if(api.remember !== false){ try { localStorage.setItem("hq_world", name); } catch(e){} }
       if(api.onWorld) api.onWorld(name);
       if(prev && prev.swapOut && prev !== w && prev.destroy){ try { prev.destroy(); } catch(e){} }   // the island you left
@@ -2399,6 +2411,7 @@ function mount(el, api){
   // Capture phase, so walking keys win over the page's single-key shortcuts while HQ is open.
   function onKey(e){
     if(HQV.townHall && HQV.townHall.isOpen && HQV.townHall.isOpen()){ keys = {}; return; }   // the Town Hall has the keys
+    if(HQV.hqnavui && HQV.hqnavui.owns && HQV.hqnavui.owns(e)) return;                      // the Go to panel's, the banner's
     if(cur && cur.menuOpen && cur.menuOpen()){ keys = {}; return; }                         // a stop's or a dock's menu too
     if(e.type === "keydown" && inst.running && rigOn() && !typing(e.target)) noteInput();
     if(e.code === "KeyE" && e.type === "keydown" && !e.repeat && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey

@@ -37,20 +37,50 @@ import fs from "fs";
 import zlib from "zlib";
 const root = %(root)s, ME = %(me)s;
 const THREE = await import(root + "/games/vendor/three-module.js");
-/* a tiny DOM: elements that remember children, text, listeners (the City's menus and buttons) */
-function El(tag){ this.tagName = tag; this.children = []; this.style = {}; this.attrs = {}; this.on = {}; this.textContent = ""; this.parentNode = null; this.disabled = false; }
+/* a tiny DOM: elements that remember children, text, listeners (the City's menus and buttons, the minimap, the Go to
+   panel); a canvas draws on the no-op 2D context */
+function El(tag){ this.tagName = tag; this.children = []; this.style = {}; this.attrs = {}; this.on = {}; this.ls = {}; this.textContent = ""; this.parentNode = null;
+  this.disabled = false; this.hidden = false; this.className = ""; var self = this;
+  this.classList = {add(k){ if(!this.contains(k)) self.className = (self.className + " " + k).trim(); },
+    remove(k){ self.className = self.className.split(" ").filter(x => x && x !== k).join(" "); },
+    contains(k){ return self.className.split(" ").indexOf(k) >= 0; }, toggle(k, on){ if(on === undefined) on = !this.contains(k); if(on) this.add(k); else this.remove(k); return on; }}; }
 El.prototype.appendChild = function(c){ c.parentNode = this; this.children.push(c); return c; };
 El.prototype.removeChild = function(c){ var i = this.children.indexOf(c); if(i >= 0) this.children.splice(i, 1); c.parentNode = null; return c; };
 El.prototype.setAttribute = function(k, v){ this.attrs[k] = String(v); };
-El.prototype.addEventListener = function(t, f){ this.on[t] = f; };
-El.prototype.focus = function(){};
+El.prototype.getAttribute = function(k){ return k in this.attrs ? this.attrs[k] : null; };
+El.prototype.removeAttribute = function(k){ delete this.attrs[k]; };
+El.prototype.addEventListener = function(t, f){ this.on[t] = f; (this.ls[t] = this.ls[t] || []).push(f); };
+El.prototype.removeEventListener = function(t, f){ this.ls[t] = (this.ls[t] || []).filter(x => x !== f); if(this.on[t] === f) delete this.on[t]; };
+El.prototype.focus = function(){ document.activeElement = this; };
+El.prototype.blur = function(){ if(document.activeElement === this) document.activeElement = null; };
 El.prototype.click = function(){ if(this.on.click) this.on.click({}); };
+El.prototype.contains = function(n){ for(; n; n = n.parentNode) if(n === this) return true; return false; };
+El.prototype.closest = function(sel){ var ks = sel.split(",").map(x => x.trim().replace(/^\./, ""));
+  for(var n = this; n; n = n.parentNode) if(String(n.className || "").split(" ").some(k => ks.indexOf(k) >= 0)) return n; return null; };
+El.prototype.getContext = function(){ return noop2d; };
+El.prototype.getBoundingClientRect = function(){ return {left: 0, top: 0, width: 200, height: 200}; };
+El.prototype.all = function(){ var o = [this]; this.children.forEach(k => { o = o.concat(k.all()); }); return o; };
 const winKeys = [];
-globalThis.document = {createElement: t => new El(t), pointerLockElement: null};
-globalThis.window = {HQV: {}, addEventListener(t, f){ winKeys.push(f); }, removeEventListener(t, f){ var i = winKeys.indexOf(f); if(i >= 0) winKeys.splice(i, 1); }};
+globalThis.document = {createElement: t => new El(t), pointerLockElement: null, activeElement: null};
+globalThis.window = {HQV: {}, document: globalThis.document, devicePixelRatio: 1, getComputedStyle: () => ({getPropertyValue: () => ""}),
+  setTimeout(f, ms){ var t = setTimeout(f, ms); if(t.unref) t.unref(); return t; }, clearTimeout(t){ clearTimeout(t); },
+  addEventListener(t, f, cap){ winKeys.push({t: t, f: f}); }, removeEventListener(t, f){ var i = winKeys.findIndex(l => l.t === t && l.f === f); if(i >= 0) winKeys.splice(i, 1); }};
+/* a key, as the browser sends it: the window's capture listeners (hq3d's, the City's), then the target and up (the
+   panels' own), then the page's shortcuts (ui/app/09-drawer.js: a document listener that skips a prevented key) */
+const pageKeys = [];
+function key(target, code, name, type){
+  var ev = {type: type || "keydown", code: code, key: name, target: target, repeat: false, defaultPrevented: false, stopped: false,
+    metaKey: false, ctrlKey: false, altKey: false, shiftKey: false,
+    preventDefault(){ this.defaultPrevented = true; }, stopPropagation(){ this.stopped = true; }};
+  winKeys.filter(l => l.t === ev.type).slice().forEach(l => l.f(ev));
+  for(var n = target; n && !ev.stopped; n = n.parentNode) (n.ls[ev.type] || []).slice().forEach(f => f(ev));
+  var leaked = !ev.stopped && !ev.defaultPrevented; if(leaked) pageKeys.push(code);
+  return leaked;
+}
 const HQV = window.HQV;
 var NOW = 1760000000000; const realNow = Date.now; Date.now = () => NOW;
-for (const f of ["hqbase", "hqskate", "world", "worldgeom", "hqcityparts", "hqcity", "hqmerge", "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqtravel", "hqcity3d"])
+for (const f of ["hqbase", "hqskate", "world", "worldgeom", "hqcityparts", "hqcity", "hqmerge", "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqtravel",
+                 "hqnav", "hqminimap", "hqroutefx", "hqnavui", "hqcity3d"])
   new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
 const gz = p => JSON.parse(zlib.gunzipSync(fs.readFileSync(p)).toString("utf8"));
 const WD = HQV.world, C3 = HQV.hqCity3d;
@@ -141,9 +171,10 @@ out.pure.terminal = [(C3.terminalAt(IW, 1, dd.x, dd.z) || {}).kind, C3.terminalA
 
 
 /* ---------- roads: nothing you can't see blocks a road (a v2 building blocks by the box it is drawn as) ---------- */
-function roadHits(test, W){
+function roadHits(test, W, tier){
   var n = 0, hit = 0;
   W.edges.forEach(function(e){ var p = e.pts, m = p.length/3, hw = e.width/200;
+    if(tier != null && (e.min_tier | 0) > tier) return;            // not built yet: a bridge to come is still the river
     for(var s = 0; s + 1 < m; s++){ var ax = p[3*s]/100, az = p[3*s+2]/100, bx = p[3*s+3]/100, bz = p[3*s+5]/100, L = Math.hypot(bx - ax, bz - az); if(!L) continue;
       var nx = -(bz - az)/L, nz = (bx - ax)/L;
       for(var t = 0; t < L; t += 2) [0, hw*0.45, -hw*0.45].forEach(function(o){ n++; if(test(ax + (bx - ax)*t/L + nx*o, az + (bz - az)*t/L + nz*o)) hit++; }); } });
@@ -276,6 +307,61 @@ out.drawn.civics = wc.scene.getObjectByName("civic:lod") ? wc.scene.getObjectByN
   out.talk.newLabel = labels.length - before;
 })();
 
+/* ---------- navigation: the minimap, the Go to panel (N), the route to the dock, arrival, the ferry ---------- */
+(function(){
+  var nv = wc.nav(), btns = root2d.children.filter(e => e.tagName === "button").map(e => e.textContent);
+  out.nav = {mounted: [!!nv.minimap, !!nv.ui, !!nv.fx], minimapOn: !!nv.minimap && nv.minimap.el.parentNode === root2d,
+             minimapPlaces: nv.minimap ? nv.minimap.layers().places : 0, goBtn: btns.filter(t => /Go to/.test(t)).length};
+  // N (on the stage, not typing) opens the panel; while it is open nothing reaches the page or moves you
+  avatar = {x: wc.spawn.x, z: wc.spawn.z};
+  out.nav.nLeak = key(root2d, "KeyN", "n"); out.nav.nOpen = nv.ui.isOpen(); out.nav.holds = wc.menuOpen();
+  out.nav.stageLeaks = [["KeyW", "w"], ["KeyW", "w", "keyup"], ["Digit2", "2"], ["KeyH", "h"], ["Space", " "]].map(k => key(root2d, k[0], k[1], k[2]));
+  var q = nv.ui.root.all().filter(e => e.tagName === "input")[0];
+  out.nav.typedLeaks = q ? [["KeyW", "w"], ["Digit3", "3"], ["KeyR", "r"]].map(k => key(q, k[0], k[1])) : null;
+  key(root2d, "Escape", "Escape"); out.nav.escClosed = !nv.ui.isOpen(); out.nav.heldAfter = wc.menuOpen();
+  out.nav.wFree = key(root2d, "KeyW", "w");              // closed: W is the page's again (hq3d's own onKey takes it there)
+  // the places: the dock (its door on the land behind it) and the ferry to my island
+  var P = nv.places(), dock = P.filter(p => p.kind === "dock")[0], ferry = P.filter(p => p.kind === "travel")[0];
+  out.nav.kinds = P.map(p => p.kind).filter((k, i, a) => a.indexOf(k) === i).sort();
+  out.nav.ferry = ferry ? [ferry.label, ferry.world] : null;
+  out.nav.dockDoorLand = dock ? wc.sea.land(dock.door.x, dock.door.z) : null;
+  // a route from spawn to the dock: on the roads, ending at its door
+  nv.goTo({x: dock.door.x, z: dock.door.z, label: dock.label, kind: dock.kind});
+  var r = wc.nav().route, R = r && r.R, n = R ? R.pts.length : 0;
+  out.nav.route = R ? {len: R.len, straight: Math.hypot(dock.door.x - avatar.x, dock.door.z - avatar.z), mode: r.mode, steps: R.steps.length,
+    end: [R.pts[n - 2] - dock.door.x, R.pts[n - 1] - dock.door.z], lastLeg: Math.hypot(R.pts[n - 2] - R.pts[n - 4], R.pts[n - 1] - R.pts[n - 3])} : null;
+  frame(wc, avatar.x, avatar.z, 2);
+  if(out.nav.route) out.nav.route.fx = nv.fx.state();
+  var bn = nv.ui.root.all().filter(e => e.className === "hqnavui-banner")[0];
+  out.nav.banner = bn ? !bn.hidden : null;
+  // walk it: along the route to its end, and the card says you have arrived
+  if(R){ for(var i = 0; i + 1 < n; i += 2){ avatar = {x: R.pts[i], z: R.pts[i + 1]}; frame(wc, avatar.x, avatar.z); } }
+  var card = nv.ui.root.all().filter(e => e.className === "hqnavui-arrived")[0];
+  out.nav.arrived = [wc.nav().route, card ? !card.hidden : null, bn ? bn.hidden : null];
+  // the ferry: routed to the dock's land side; there the banner says to press E, and E opens the dock's menu
+  nv.goTo({x: ferry.door.x, z: ferry.door.z, label: ferry.label, kind: ferry.kind});
+  avatar = {x: ferry.door.x + 1, z: ferry.door.z}; frame(wc, avatar.x, avatar.z, 2);
+  var hint = nv.ui.root.all().filter(e => e.className === "hqnavui-hint")[0];
+  out.nav.ferryDone = [wc.nav().route && wc.nav().route.done, hint ? [hint.hidden, hint.textContent] : null];
+  out.nav.ferryE = wc.use({x: avatar.x, z: avatar.z});
+})();
+await new Promise(r => setTimeout(r, 10));
+(function(){
+  // the dock's menu: its keys never reach the page; its digits and Esc still work
+  var items = menuItems();
+  out.nav.dockMenu = {open: wc.menuOpen(), items: items.length, routeCleared: wc.nav().route == null,
+    leaks: [["KeyW", "w"], ["KeyW", "w", "keyup"], ["KeyC", "c"], ["Digit0", "0"], ["KeyH", "h"]].map(k => key(items[0] || root2d, k[0], k[1], k[2]))};
+  key(items[0] || root2d, "Escape", "Escape"); out.nav.dockMenu.escClosed = !wc.menuOpen();
+  out.nav.pageKeys = pageKeys.slice();
+})();
+/* the island's first tier: a road all the way to the dock (it stands inside the tier-1 ring) */
+(function(){
+  var G = HQV.hqnav.graph(IW, 1), dock = HQV.hqnav.places(IW, 1, {}).filter(p => p.kind === "dock")[0], sp = {x: 0, z: 10};
+  var R = dock && HQV.hqnav.route(G, sp, dock.door, "walk"), n = R ? R.pts.length : 0;
+  out.nav.island = R ? {len: R.len, straight: Math.hypot(dock.door.x - sp.x, dock.door.z - sp.z), firstLeg: Math.hypot(R.pts[2] - R.pts[0], R.pts[3] - R.pts[1]),
+    lastLeg: Math.hypot(R.pts[n - 2] - R.pts[n - 4], R.pts[n - 1] - R.pts[n - 3]), land: HQV.ocean.seaOf(WD.docOf(IW), null, 1).land(dock.door.x, dock.door.z)} : null;
+})();
+
 /* ---------- a dock: the ferry to my island ---------- */
 (function(){
   var d = CW.sites.filter(s => s.kind === "dock")[0], door = C3.doorOf(d);
@@ -304,7 +390,7 @@ var wi = city("user:" + ME + "@2", spawn);
 await wi.whenReady; await new Promise(r => setTimeout(r, 0));
 frame(wi, 0, 0, 2);
 var islandTowers = wi.hits.filter(o => o.userData.door && o.userData.door.userId).map(o => o.userData.door.userId).filter((u, i, a) => a.indexOf(u) === i);
-out.roads.island = roadHits(function(x, z){ return wi.blocked(x, z); }, IW);
+out.roads.island = roadHits(function(x, z){ return wi.blocked(x, z); }, IW, 1);
 out.pure.stats = [1, 3, 5].map(function(t){ var K = C3.cityStats(IW, t, {population: 120, grow: 400, treasury: 55, specialty: "fish"}); return [K.happiness, K.parts.map(p => p.key), K.homes, K.population, K.tierName]; });
 out.pure.statsNone = C3.cityStats(null, 2, null);
 out.pure.garages = IW.lots.filter(l => l.kind === "hq").concat(CW.lots.filter(l => l.kind === "hq").slice(0, 40)).map(function(l){
@@ -453,6 +539,60 @@ class CitiesTest(unittest.TestCase):
             self.assertLess(b["reach"], 4, b)
             self.assertTrue(b["alongside"], b)
             self.assertEqual(b["y"], p["seaY"])
+
+    def test_navigation_mounts(self):
+        n = self.out["nav"]
+        self.assertEqual(n["mounted"], [True, True, True], "minimap, Go to panel / banner, route chevrons")
+        self.assertTrue(n["minimapOn"])
+        self.assertGreater(n["minimapPlaces"], 5)
+        self.assertEqual(n["goBtn"], 1, "a Go to button under the island / Commons button")
+        for k in ("dock", "port", "travel", "townhall", "hq"):     # the Commons' HQs here are c0's and c1's
+            self.assertIn(k, n["kinds"])
+        self.assertEqual(n["ferry"], ["My island (ferry)", "user:" + ME + "@2"])
+        self.assertTrue(n["dockDoorLand"], "the dock's door (where a route ends) is on land")
+
+    def test_go_to_panel_keys_do_not_leak(self):
+        n = self.out["nav"]
+        self.assertFalse(n["nLeak"]); self.assertTrue(n["nOpen"], "N opens the Go to panel")
+        self.assertTrue(n["holds"], "hq3d stands still while the panel is open (w.menuOpen)")
+        self.assertEqual(n["stageLeaks"], [False]*5, "W, 2, H, Space: not the page's shortcuts while the panel is open")
+        self.assertEqual(n["typedLeaks"], [False]*3, "typed into the search box: never the page's")
+        self.assertTrue(n["escClosed"]); self.assertFalse(n["heldAfter"])
+        self.assertTrue(n["wFree"], "the panel closed, W goes on as before")
+
+    def test_route_from_spawn_to_the_dock(self):
+        n = self.out["nav"]
+        r = n["route"]
+        self.assertIsNotNone(r, "no route from spawn to the dock on the Commons")
+        self.assertEqual(r["mode"], "walk")
+        self.assertGreaterEqual(r["len"], r["straight"] - 1)
+        self.assertLess(r["len"], r["straight"]*3, "along the roads, not round the island")
+        self.assertLess(max(abs(r["end"][0]), abs(r["end"][1])), 1e-6, "it ends at the dock's door")
+        self.assertLess(r["lastLeg"], 30, "the dock's quay street comes up to its door")
+        self.assertGreaterEqual(r["steps"], 2)
+        self.assertGreater(r["fx"]["count"], 0, "chevrons along it")
+        self.assertTrue(r["fx"]["pillar"], "the pillar at the dock")
+        self.assertTrue(n["banner"], "the route banner shows")
+        self.assertEqual(n["arrived"], [None, True, True], "walked to its end: the route clears, the card shows, the banner hides")
+
+    def test_the_ferry_and_its_dock_menu(self):
+        n = self.out["nav"]
+        self.assertEqual(n["ferryDone"], [True, [False, "Press E for the ferry"]])
+        self.assertTrue(n["ferryE"], "E on the dock's land side opens its menu")
+        m = n["dockMenu"]
+        self.assertTrue(m["open"]); self.assertGreater(m["items"], 0)
+        self.assertTrue(m["routeCleared"], "on the way: the route is done with")
+        self.assertEqual(m["leaks"], [False]*5, "W (Workshop), C, 0, H: not the page's while a dock's menu is open")
+        self.assertTrue(m["escClosed"])
+        self.assertEqual(n["pageKeys"], ["KeyW"], "only the W pressed with nothing open reached the page")
+
+    def test_route_to_the_dock_on_a_tier1_island(self):
+        r = self.out["nav"]["island"]
+        self.assertIsNotNone(r, "no road route to the dock on a tier-1 island")
+        self.assertLess(r["lastLeg"], 30, "the dock stands inside the tier-1 ring, its quay street on a tier-1 road")
+        self.assertLess(r["firstLeg"], 30)
+        self.assertLess(r["len"], r["straight"]*3)
+        self.assertTrue(r["land"])
 
     def test_what_is_drawn(self):
         d = self.out["drawn"]

@@ -1,6 +1,10 @@
 /* Valley minigames. Colours come only from index.html's semantic tokens so every theme
    (aurora / midnight / forest / mono / contrast, light and dark) works; pixel art is drawn
    on canvases and only scaled here. */
+/* The 3D City's navigation (HQ 3.1): the minimap (which also moves the driving dials left of it) and the
+   Go to panel, route banner and arrival card. */
+@import url("hqminimap.css");
+@import url("hqnavui.css");
 .vg-shell{display:flex;flex-direction:column;gap:14px;position:relative}
 .vg-wait{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;border-radius:var(--radius);
   background:var(--panel);border:1px solid var(--line);color:var(--muted);font-weight:600}

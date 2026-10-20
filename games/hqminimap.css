@@ -12,10 +12,10 @@
 .hq3d-minimap-btn:hover{border-color:var(--brand);color:var(--brand)}
 .hq3d-minimap-btn:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
 .hq3d-minimap-mode[aria-pressed="true"]{color:var(--on-brand);background:var(--brand);border-color:var(--brand)}
-*:has(> .hq3d-minimap) > .hq3d-drive{right:224px}
+*:has(> .hq3d-minimap:not([hidden])) > .hq3d-drive{right:224px}
 @media (max-width:699.98px){
   .hq3d-minimap{width:160px;height:160px;border-radius:14px}
   .hq3d-minimap-btn{width:22px;height:22px;font-size:13px}
-  *:has(> .hq3d-minimap) > .hq3d-drive{right:184px}
+  *:has(> .hq3d-minimap:not([hidden])) > .hq3d-drive{right:184px}
 }
 /* ==== end of the 3D City minimap ==== */

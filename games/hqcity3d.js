@@ -32,6 +32,9 @@
  *   travel        E at a dock, port, station or airport: games/hqtravel.js trips (ferry, rail, plane, fast
  *                 travel), the ride's camera through w.camPose; the "My island" / "The Commons" button.
  *   net room      city3d:<world id> where the Arena's presence lists "isles" (protocol v3), else city3d.
+ * Navigation (3.1, every 3D City, v1 too): the minimap (games/hqminimap.js), the Go to panel and the route banner
+ * (hqnavui.js, N or the Go to button), chevrons and a pillar (hqroutefx.js) along hqnav.js's road route; while a
+ * menu or the panel is open no key reaches the page's shortcuts or moves you.
  * The helpers below the first block (ownerOf .. travelPlaces) are pure and node-tested too.
  */
 (function(){
@@ -252,12 +255,16 @@ function cityStats(W, tier, st){
 }
 // where a site's door is (m): its centre, out along its front past its depth
 function doorOf(s){ var f = frontOf(s), r = (s.d || 0)/200 + 1; return {x: s.x/100 + f[0]*r, z: s.z/100 + f[1]*r, yaw: Math.atan2(f[0], f[1])}; }
-// the travel terminal (dock, port, transit hub, airport) whose door is within reach of (x, z), else null
+// a site's back, a metre out (m): a dock's or a port's land side, where its front reaches out over the water
+function backOf(s){ var f = frontOf(s), r = (s.d || 0)/200 + 1; return {x: s.x/100 - f[0]*r, z: s.z/100 - f[1]*r}; }
+// the travel terminal (dock, port, transit hub, airport) whose door is within reach of (x, z), else null; a dock
+// or a port from its land side too (where navigation brings you: hqnav's door for it)
 function terminalAt(W, tier, x, z){
   var best = null, bd = TERMINAL_R;
   ((W && W.sites) || []).forEach(function(s){
     if(!TERMINALS[s.kind] || (s.tier != null && (s.tier | 0) > tier)) return;
     var d = doorOf(s), dd = Math.hypot(x - d.x, z - d.z);
+    if(s.kind === "dock" || s.kind === "port"){ var b = backOf(s); dd = Math.min(dd, Math.hypot(x - b.x, z - b.z)); }
     if(dd < bd){ bd = dd; best = s; }
   });
   return best;
@@ -308,7 +315,7 @@ function netRoom(world, isles){ return isles && worldOk(world) ? "city3d:" + wor
 HQV.hqCity3d = {assign: assign, placeLot: placeLot, placeView: placeView, toWorld: toWorld, pickAt: pickAt, segBox: segBox,
   snapShadow: snapShadow, hqKey: hqKey, keepMesh: keepMesh, HQ_DOOR: HQ_DOOR, VIEW_DOOR: VIEW_DOOR, HQ_FAR: HQ_FAR,
   COMMONS: COMMONS, ownerOf: ownerOf, islandOf: islandOf, worldOk: worldOk, frontOf: frontOf, assignRanks: assignRanks,
-  assignIsland: assignIsland, garagePlace: garagePlace, civicSites: civicSites, doorOf: doorOf, terminalAt: terminalAt, stopMenu: stopMenu,
+  assignIsland: assignIsland, garagePlace: garagePlace, civicSites: civicSites, doorOf: doorOf, backOf: backOf, terminalAt: terminalAt, stopMenu: stopMenu,
   waitText: waitText, travelPlaces: travelPlaces, netRoom: netRoom, simZones: simZones, cityStats: cityStats};
 // Which world the next City is built on, and where you arrive in it (games/hq3d.js goCity). A trip
 // that is still landing (a plane) rides across the rebuild in NAV.trip.
@@ -660,6 +667,7 @@ HQV.hqWorlds.city3d = function(c, w){
       if(arriveAt){ var ax = +arriveAt.x || 0, az = +arriveAt.z || 0, ay = +arriveAt.yaw || 0;
         w.spawn = {x: ax, y: groundY(ax, az), z: az, yaw: ay, camYaw: ay + PI + 0.55}; }
     }
+    navRefresh();
     applyTime();
   }
   // who stands on which HQ lot: v1 as ever; the Commons by the Arena's ranks; an island, its owner
@@ -863,7 +871,7 @@ HQV.hqWorlds.city3d = function(c, w){
   function setupSea(){
     if(!W.island || !HQV.ocean) return;
     var doc = WD.docOf(W);
-    sea = HQV.ocean.seaOf(doc); w.sea = sea;
+    sea = HQV.ocean.seaOf(doc, null, tier); w.sea = sea;     // the bridges open at this tier are decks over the river
     // the piers stand on the water: you walk them, and a boat comes up against them as against the shore
     var coast = sea.land;
     sea.land = function(x, z){ return coast(x, z) || (decks.length > 0 && HQV.hqCivic.deckAt(decks, x, z) != null); };
@@ -1093,10 +1101,11 @@ HQV.hqWorlds.city3d = function(c, w){
     }
     if(tsim){ var st = tsim.stopsNear(p.x, p.z, STOP_R)[0]; if(st){ openStopMenu(st); return true; } }
     var tm = HQV.hqTravel ? terminalAt(W, tier, p.x, p.z) : null;
-    if(tm){ openTravelMenu(tm); return true; }
+    if(tm){ if(route && route.travel) navClear(); openTravelMenu(tm); return true; }     // the ferry you were routed to
     return false;
   };
-  w.menuOpen = function(){ return !!menu; };
+  // a stop's or a terminal's menu, or the Go to panel: hq3d's keys stand still (the keys are theirs)
+  w.menuOpen = function(){ return !!menu || !!(nui && nui.isOpen()); };
   function showTalk(line){
     if(talkL){ S.remove(talkL.o); disposeTree(talkL.o); }
     var o = c.label(String(line.text).slice(0, 90), HEX.green, 0.55); o.position.set(line.x, (line.y || groundY(line.x, line.z)) + 2.4, line.z); S.add(o);
@@ -1208,6 +1217,160 @@ HQV.hqWorlds.city3d = function(c, w){
     S.remove(civicG); S.remove(boatG);
   }
 
+  /* ---------- navigation (HQ 3.1): the minimap, the Go to panel, the route banner, chevrons and the pillar ---------- */
+  // games/hqnav.js routes on the roads open at this tier (v1's too); hqminimap, hqroutefx and hqnavui draw it. A
+  // waypoint comes from the panel (N, the Go to button), a minimap click or a click on the ground on the map (M);
+  // the route starts from you: "drive" on a car, motorbike or bicycle, a straight line on a boat, else "walk".
+  // Rerouted when you stray (needsReroute), cleared on arrival (the card) or by the banner's X. A travel place
+  // (the ferry) routes to its dock's land side, and there the banner says "Press E for the ferry".
+  var NAV_SNAP = 40;           // m: a picked point snaps to a road this near, else stays where it was picked
+  var NAV_BOAT_V = 6;          // m/s: a boat's ETA, straight across the water
+  var NAV_BOAT_ARRIVE = 15;    // m: a boat arrives this near its waypoint
+  var NAV_REROUTE_MS = 3000;   // at most one reroute this often
+  var mm = null, nui = null, fx = null, goBtn = null, navKeyFn = null, route = null, navTier = 5, navSig = null;
+  function navMode(){
+    var m = c.motion ? c.motion() : null;
+    return m && m.boat ? "boat" : m && (m.ride === "car" || m.ride === "moto" || m.ride === "bike") ? "drive" : "walk";
+  }
+  function navGraph(){ return HQV.hqnav.graph(W, navTier); }
+  function navPlaces(){
+    var me0 = c.avatar() || {x: 0, z: 0};
+    return HQV.hqnav.places(W, navTier, {x: me0.x, z: me0.z, me: me, island: V2 && island(),
+      hqs: hqs.map(function(E){ return {userId: E.h.userId, name: E.name || E.h.name, lot: E.lot}; })});
+  }
+  function fmtM(m){ return HQV.hqnavui ? HQV.hqnavui.fmtDist(m) : Math.round(m) + " m"; }
+  // dest: {x, z, label, kind}
+  function navTo(dest){
+    route = {x: dest.x, z: dest.z, label: dest.label || "the pin", kind: dest.kind || "pin", travel: dest.kind === "travel",
+             R: null, mode: null, at: 0, done: false};
+    navRoute();
+    say("Route to " + route.label + (route.R ? ", " + fmtM(route.R.len) : "") + ".");
+  }
+  function navRoute(){
+    var me0 = c.avatar(); if(!route || !me0) return;
+    route.mode = navMode(); route.at = Date.now();
+    route.R = route.mode === "boat" ? null : HQV.hqnav.route(navGraph(), {x: me0.x, z: me0.z}, {x: route.x, z: route.z}, route.mode);
+    if(fx){ fx.setRoute(route.R ? route.R.pts : null, groundY); fx.setWaypoint({x: route.x, y: groundY(route.x, route.z), z: route.z}); }
+  }
+  function navClear(){
+    route = null;
+    if(fx){ fx.setRoute(null, groundY); fx.setWaypoint(null); }
+    if(nui) nui.banner(null);
+  }
+  // a minimap click or a click on the map: the nearest road within NAV_SNAP, else the point itself
+  function navPick(x, z){
+    if(!W || !HQV.hqnav) return false;
+    var p = HQV.hqnav.snap(navGraph(), x, z), e = p && p.d < NAV_SNAP ? W.edges[p.ei] : null;
+    navTo(e ? {x: p.x, z: p.z, label: e.name || "the pin", kind: "pin"} : {x: x, z: z, label: "the pin", kind: "pin"});
+    return true;
+  }
+  function navArrive(){
+    if(route.travel){ route.done = true; return; }     // the banner stays on the quay: E for the ferry
+    var label = route.label; navClear();
+    if(nui) nui.arrived(label);
+  }
+  function navStep(dt, cam){
+    var me0 = c.avatar(); if(!me0 || (!mm && !fx && !nui)) return;
+    var m = c.motion ? c.motion() : null, pts = null, info = null;
+    if(route && !route.done){
+      var mode = navMode();
+      if(mode !== route.mode) navRoute();                 // on or off a vehicle: the route for the new way
+      if(route.R){
+        var P = HQV.hqnav.progress(route.R, me0.x, me0.z);
+        if(P.arrived) navArrive();
+        else {
+          if(HQV.hqnav.needsReroute(P, mode) && Date.now() - route.at > NAV_REROUTE_MS){ navRoute(); if(api.announce) api.announce("Rerouting"); }
+          if(route.R) P = HQV.hqnav.progress(route.R, me0.x, me0.z);
+          pts = route.R ? route.R.pts : null;
+          info = {step: P.next, toNext: P.toNext, left: P.left, eta_s: route.R && route.R.len > 0 ? route.R.eta_s*P.left/route.R.len : 0};
+        }
+      } else {
+        // a boat, or no road goes there: straight for it
+        var d = Math.hypot(route.x - me0.x, route.z - me0.z), boat = mode === "boat";
+        if(d < (boat ? NAV_BOAT_ARRIVE : HQV.hqnav.ARRIVE.walk)) navArrive();
+        else {
+          pts = new Float64Array([me0.x, me0.z, route.x, route.z]);
+          info = {step: {kind: "straight", road: boat ? "Across the water" : "Off the road"}, toNext: d, left: d, eta_s: d/(boat ? NAV_BOAT_V : HQV.hqnav.SPEED.walk)};
+        }
+      }
+    }
+    if(route && route.done) info = {step: {kind: "arrive", road: route.label}, toNext: 0, left: 0, eta_s: 0, hint: "Press E for the ferry"};
+    if(info) info.dest = route.label;
+    if(nui) nui.banner(info);
+    if(fx) fx.update(dt, me0, cam);
+    if(mm) mm.frame({x: me0.x, z: me0.z, yaw: m ? m.yaw : 0, speed: m ? m.speed : 0, route: pts,
+                     waypoint: route ? {x: route.x, z: route.z} : null, others: c.others ? c.others() : [], dt: dt});
+  }
+  // the minimap's places: civic sites and the HQs as they are placed now (redrawn only when the HQs change)
+  function navRefresh(){
+    if(!mm) return;
+    var key = hqs.map(function(E){ return E.h.userId + ":" + (E.lot && E.lot.id); }).join(",");
+    if(key === navSig) return; navSig = key;
+    try { mm.setWorld(W, navTier, {places: navPlaces()}); } catch(e){}
+  }
+  function typingIn(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || !!(t && t.isContentEditable); }
+  // While a stop's or a terminal's menu or the Go to panel is open, no key reaches the page's shortcuts (W is not
+  // the Workshop) or moves you (hq3d stands still on w.menuOpen); the panel stops its own. Else N opens the panel.
+  function navKey(e){
+    if(dead || (c.active && !c.active(w))) return;
+    if(menu || (nui && nui.isOpen())){
+      if(HQV.hqnavui && HQV.hqnavui.owns(e)) return;
+      e.stopPropagation();
+      var t = e.target, onItem = !!(menu && t && t.tagName === "BUTTON" && menu.contains && menu.contains(t));
+      if(e.key !== "Tab" && !(onItem && (e.key === "Enter" || e.key === " "))) e.preventDefault();
+      if(e.type === "keydown" && e.key === "Escape" && !menu && nui) nui.close();
+      return;
+    }
+    if(nui && e.type === "keydown" && e.code === "KeyN" && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !typingIn(e.target)){
+      e.preventDefault(); e.stopPropagation(); nui.open();
+    }
+  }
+  function navSetup(){
+    if(!HQV.hqnav || !W || !c.el || typeof document === "undefined") return;
+    navTier = V2 ? tier : 5;
+    var announce = function(t){ if(api.announce) api.announce(t); };
+    if(HQV.hqroutefx){ try { fx = HQV.hqroutefx.create(c, S); } catch(e){ fx = null; } }
+    if(HQV.hqminimap){
+      try { mm = HQV.hqminimap.mount(c.el, {onPick: navPick, onExpand: function(){ if(c.toggleMap) c.toggleMap(); }, announce: announce}); navRefresh(); }
+      catch(e){ if(mm){ try { mm.destroy(); } catch(e2){} } mm = null; }
+    }
+    if(HQV.hqnavui){
+      try {
+        nui = HQV.hqnavui.mount(c.el, {places: navPlaces, onClear: navClear, announce: announce,
+          onGo: function(p){ navTo({x: p.door.x, z: p.door.z, label: p.label, kind: p.kind}); }});
+      } catch(e){ nui = null; }
+    }
+    if(nui){
+      // under the My island / The Commons button (or under Return to HQ where there is none)
+      goBtn = document.createElement("button"); goBtn.type = "button"; goBtn.className = "hq3d-home hq3d-goto";
+      goBtn.style.top = ui ? "92px" : "52px"; goBtn.textContent = "🧭 Go to (N)"; goBtn.title = "Find a place and get directions";
+      goBtn.addEventListener("click", function(){ nui.toggle(); });
+      c.el.appendChild(goBtn);
+    }
+    navKeyFn = navKey;
+    window.addEventListener("keydown", navKeyFn, true); window.addEventListener("keyup", navKeyFn, true);
+    overlays(!c.active || c.active(w));                    // built before you arrive: shown by onEnter
+  }
+  // in another floor (the Lobby, your Base) the City's overlays are hidden
+  function overlays(on){
+    [mm && mm.el, nui && nui.root, goBtn, ui, statsEl].forEach(function(el){ if(el && el.style){ el.hidden = !on; el.style.display = on ? "" : "none"; } });
+    if(!on){ closeMenu(); if(nui) nui.close(); }
+  }
+  w.onLeave = function(){ overlays(false); };
+  w.onEnter = function(){ overlays(true); };
+  w.mapWaypoint = function(x, z){ return navPick(x, z); };
+  // for tests and tools: the route as it stands
+  w.nav = function(){ return {route: route ? {x: route.x, z: route.z, label: route.label, kind: route.kind, mode: route.mode, done: route.done, R: route.R} : null,
+                              minimap: mm, ui: nui, fx: fx, places: W && HQV.hqnav ? navPlaces : null, goTo: navTo, clear: navClear, step: navStep}; };
+  function navDestroy(){
+    if(navKeyFn){ window.removeEventListener("keydown", navKeyFn, true); window.removeEventListener("keyup", navKeyFn, true); navKeyFn = null; }
+    if(mm){ try { mm.destroy(); } catch(e){} mm = null; }
+    if(nui){ try { nui.destroy(); } catch(e){} nui = null; }
+    if(fx){ try { fx.dispose(); } catch(e){} fx = null; }
+    if(goBtn && goBtn.parentNode) goBtn.parentNode.removeChild(goBtn);
+    goBtn = null; route = null;
+  }
+
   /* ---------- loading: the world doc, then every tile drawable ---------- */
   function setup(doc){
     if(dead) throw new Error("world unavailable: closed");     // hq3d gave up on us (timeout): build nothing
@@ -1217,6 +1380,7 @@ HQV.hqWorlds.city3d = function(c, w){
     buildStatic();
     if(V2) citiesSetup();
     build();
+    navSetup();
     wb.setNight(night);
     return wb.ready;
   }
@@ -1235,6 +1399,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(wb){ wb.destroy(); wb = null; }
     S.remove(staticG); S.remove(hqG);
     citiesDestroy();
+    navDestroy();
   };
 
   /* ---------- the world contract ---------- */
@@ -1333,6 +1498,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(fount) fount.step(t);
     cars.forEach(function(cr){ carStep(cr, dt, k); });
     if(V2) citiesUpdate(t, dt, k, cam);
+    navStep(dt, cam);
   };
   w.setTime(night);
   return w;

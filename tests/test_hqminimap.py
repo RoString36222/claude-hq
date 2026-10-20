@@ -246,6 +246,7 @@ out.ro = {observers: roCbs.length, before: roW, inCallback: inCb, afterFrame: cv
 
 // the big map (M): grows north-up over the whole world, a drag pans without a waypoint, Escape closes it
 const scrim = stage.children[1];
+clock += 16; mm.frame(Object.assign({speed: 0}, P));
 const sm = mm.view().span, rotSmall = mm.view().rot;
 mm.expand(true);
 const clsOpen = root.className, scrimOpen = scrim.className;

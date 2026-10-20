@@ -57,9 +57,10 @@
 /* In the 3D City's stage (games.css: the "hq3d" container) the panel, the banner and the card keep to the band
    between the top-left stack (Return to HQ, My island / The Commons, Go to: 168 px wide) and the city's stats
    (202 px from the right); in a stage too narrow for that band they drop below the stack (12, 52, 92 px). */
-/* hq3d's "Get out (E)" pill and the skate HUD stand top-centre too: under the banner while it shows */
-.hq3d-stage:has(.hqnavui-banner:not([hidden])) > .hq3d-ride{top:84px}
-.hq3d-stage:has(.hqnavui-banner:not([hidden])) > .hq3d-skate{top:132px}
+/* hq3d's "Get out (E)" pill and the skate HUD stand top-centre too: under the banner while it shows (clear
+   of it when its instruction wraps to two lines) */
+.hq3d-stage:has(.hqnavui-banner:not([hidden])) > .hq3d-ride{top:96px}
+.hq3d-stage:has(.hqnavui-banner:not([hidden])) > .hq3d-skate{top:144px}
 @container hq3d (max-width: 700px){
   .hq3d-stage:has(.hqnavui-banner:not([hidden])) > .hq3d-ride{top:16px}
   .hqnavui-banner,.hqnavui-panel{top:140px;left:12px;max-width:none}

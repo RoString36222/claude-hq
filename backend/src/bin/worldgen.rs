@@ -4,6 +4,8 @@
 //!   cargo run --release --bin worldgen -- claude-hq@1 --json > w.json
 //!   cargo run --release --bin worldgen -- claude-hq@1 --edits edits.json --json
 //!   cargo run --release --bin worldgen -- claude-hq@1 --samples       probe points for client tests
+//!   cargo run --release --bin worldgen -- claude-hq@2                 the Commons (organic)
+//!   cargo run --release --bin worldgen -- user:<uuid>@2               a personal island
 use std::time::Instant;
 
 use serde::Serialize;
@@ -51,8 +53,13 @@ fn main() {
         *by.entry(l.districts.legend[b.district as usize]).or_insert(0) += 1;
     }
     println!("            {by:?}");
-    println!("  roads     {} nodes, {} edges ({} avenue, {} street, {} highway, {} ring)", l.roads.nodes.len(), l.roads.edges.len(),
-             count("avenue"), count("street"), count("highway"), count("ring"));
+    let classes = if w.version == 1 {
+        format!("{} avenue, {} street", count("avenue"), count("street"))
+    } else {
+        format!("{} arterial, {} local", count("arterial"), count("local"))
+    };
+    println!("  roads     {} nodes, {} edges ({classes}, {} highway, {} ring)", l.roads.nodes.len(), l.roads.edges.len(),
+             count("highway"), count("ring"));
     println!("  lots      {} ({} HQ in the pool)", l.lots.len(), l.lots.iter().filter(|x| x.kind == "hq").count());
     println!("  sites     {}", l.sites.iter().map(|s| s.id.as_str()).collect::<Vec<_>>().join(" "));
     println!("  json      {} KB", serde_json::to_vec(&w).unwrap().len() / 1024);
@@ -74,7 +81,8 @@ struct Sample {
     district: u8,
     #[serde(rename = "districtName")]
     district_name: &'static str,
-    /// Ids of the first lot / site (by id) whose rectangle holds the point, edges included.
+    /// Ids of the first lot / site (by id) whose footprint holds the point: its polygon
+    /// in an organic world, else its rectangle, edges included.
     lot: Option<u32>,
     site: Option<String>,
 }
@@ -93,7 +101,11 @@ fn samples(w: &worldgen::WorldDoc) -> Samples {
     at.extend(l.lots.iter().step_by(25).map(|o| (o.x, o.z)));
     at.extend(l.roads.edges.iter().step_by(20).flat_map(|e| e.points.iter().take(3).map(|q| (q[0], q[2]))));
     at.extend(l.sites.iter().map(|s| (s.x, s.z)));
-    let inside = |x: i64, z: i64, ox: i64, oz: i64, ow: i64, od: i64| 2 * (x - ox).abs() <= ow && 2 * (z - oz).abs() <= od;
+    // a footprint polygon (@2) by the generator's crossing rule, else the rectangle, edges included
+    let inside = |x: i64, z: i64, poly: &Option<Vec<[i64; 2]>>, ox: i64, oz: i64, ow: i64, od: i64| match poly {
+        Some(p) => worldgen::organic::geom::inside((x, z), &p.iter().map(|q| (q[0], q[1])).collect::<Vec<_>>()),
+        None => 2 * (x - ox).abs() <= ow && 2 * (z - oz).abs() <= od,
+    };
     Samples {
         world: w.hashes.world.clone(),
         samples: at
@@ -106,8 +118,8 @@ fn samples(w: &worldgen::WorldDoc) -> Samples {
                     height: l.terrain.height_at(x, z),
                     district,
                     district_name: l.districts.legend[district as usize],
-                    lot: l.lots.iter().find(|o| inside(x, z, o.x, o.z, o.w, o.d)).map(|o| o.id),
-                    site: l.sites.iter().find(|s| inside(x, z, s.x, s.z, s.w, s.d)).map(|s| s.id.clone()),
+                    lot: l.lots.iter().find(|o| inside(x, z, &o.poly, o.x, o.z, o.w, o.d)).map(|o| o.id),
+                    site: l.sites.iter().find(|s| inside(x, z, &s.poly, s.x, s.z, s.w, s.d)).map(|s| s.id.clone()),
                 }
             })
             .collect(),

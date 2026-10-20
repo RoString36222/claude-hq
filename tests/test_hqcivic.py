@@ -1,0 +1,304 @@
+"""Civic and zone buildings for the Cities (games/hqcivic.js, HQV.hqCivic).
+
+node imports the vendored three.js, loads games/hqmerge.js and games/hqcivic.js against a stub
+`window` and a stub hq3d ctx (real THREE objects, no DOM), builds every site kind at every tier
+from polygon and w/d sites, and reports draw calls, doors, hits, night state, footprints and
+digests; the Python side checks them (cities build spec, task cl-civic). One node process for the
+whole file. Skipped when node is not installed. Stdlib only."""
+import json
+import os
+import re
+import shutil
+import subprocess
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC = os.path.join(ROOT, "games", "hqcivic.js")
+NODE = shutil.which("node")
+
+KINDS = ["townhall", "clinic", "hospital", "fire", "police", "school", "university", "market", "mall", "bank",
+         "library", "post", "transit", "busstop", "tramstop", "port", "dock", "airport", "power", "water",
+         "stadium", "office", "campus", "studio", "finance", "biotech", "media", "warehouse", "farm"]
+
+HARNESS = r"""
+var fs = require("fs"), url = require("url"), crypto = require("crypto"), root = %(root)s, KINDS = %(kinds)s;
+import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(function(THREE){
+  global.window = {HQV: {}};
+  ["hqmerge", "hqcivic"].forEach(function(f){ new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))(); });
+  var HQV = window.HQV, C = HQV.hqCivic, out = {};
+
+  /* ---------- a stub hq3d ctx (as tests/test_hqcity3d.py), labels and glows as sprites ---------- */
+  function hashStr(s){ var h = 2166136261 >>> 0; s = String(s); for(var i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h >>> 0; }
+  function rng(seed){ var a = seed >>> 0 || 1; return function(){ a = (a + 0x6D2B79F5) >>> 0; var t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0)/4294967296; }; }
+  function mat(c, o){ return new THREE.MeshStandardMaterial(Object.assign({color: c, roughness: 0.7, metalness: 0.08}, o || {})); }
+  function emis(c, e, ei, o){ var m = mat(c, o); m.emissive = new THREE.Color(e); m.emissiveIntensity = ei; return m; }
+  function add(o, x, y, z, p, ns){ o.position.set(x, y, z); if(!ns){ o.castShadow = true; o.receiveShadow = true; } p.add(o); return o; }
+  var texts = [];
+  var noop2d = new Proxy({}, {get(t, k){ return k === "measureText" ? function(){ return {width: 10}; } : k === "fillText" ? function(s){ texts.push(String(s)); }
+    : (k === "createLinearGradient" || k === "createRadialGradient") ? function(){ return {addColorStop(){}}; } : function(){}; }, set(){ return true; }});
+  var c = {THREE: THREE, PI: Math.PI, COL: {amber: 0xffb347, cyan: 0x5fd3e6, green: 0x6fd38a}, HEX: {green: "#6fd38a", amber: "#ffb347", cyan: "#5fd3e6"},
+    E: {calm(){ return false; }}, rng: rng, hashStr: hashStr, mat: mat, emis: emis, add: add,
+    box(w, h, d, m, x, y, z, p, ns){ return add(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m), x, y, z, p, ns); },
+    cyl(rt, rb, h, m, x, y, z, p, seg){ return add(new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg || 20), m), x, y, z, p); },
+    sph(r, m, x, y, z, p){ return add(new THREE.Mesh(new THREE.SphereGeometry(r, 14, 10), m), x, y, z, p); },
+    canvasTex(w, h, draw){ if(draw) draw(noop2d, w, h); return {c: null, g: noop2d, t: new THREE.Texture()}; },
+    glow(col, s, o){ return new THREE.Sprite(new THREE.SpriteMaterial({color: col, opacity: o, transparent: true})); },
+    label(t){ var s = new THREE.Sprite(new THREE.SpriteMaterial({transparent: true})); s.name = "label:" + t; return s; },
+    short(s, n){ s = String(s || ""); return s.length > n ? s.slice(0, n) : s; },
+    api: {viewTitle(v){ return v === "store" ? ["Store", "buy things"] : null; }}};
+
+  /* ---------- sites ---------- */
+  var Q = 65536;
+  function rectPoly(cx, cz, w, d, a){   // cm, CCW, turned by a
+    var ca = Math.cos(a), sa = Math.sin(a);
+    return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(function(s){ var x = s[0]*w/2, z = s[1]*d/2; return [Math.round(cx + x*ca - z*sa), Math.round(cz + x*sa + z*ca)]; });
+  }
+  function siteFor(kind, tier, n, poly){
+    var K = C.KINDS[kind], w = K.size[0]*100, d = K.size[1]*100, a = [0, 0.5, -1.1, Math.PI][n %% 4];
+    var f = [Math.round(-Math.sin(a)*Q), Math.round(Math.cos(a)*Q)], cx = 120000 + n*5000, cz = -80000 + n*3000;
+    var s = {id: kind + ":" + n, kind: kind, tier: tier, y: 250, front: f};
+    if(poly) s.poly = rectPoly(cx, cz, w, d, a); else { s.x = cx; s.z = cz; s.w = w; s.d = d; s.front = [0, n %% 2 ? -Q : Q]; }
+    return s;
+  }
+  function finite(g){ var ok = true; g.traverse(function(o){ var P = o.geometry && o.geometry.attributes && o.geometry.attributes.position;
+    if(P) for(var i = 0; i < P.array.length; i++) if(!isFinite(P.array[i])){ ok = false; break; } }); return ok; }
+  function digest(B){
+    var h = crypto.createHash("sha1"); B.g.updateMatrixWorld(true);
+    B.g.traverse(function(o){
+      h.update(o.type + "|" + o.name + "|" + o.matrixWorld.elements.map(function(v){ return v.toFixed(5); }).join(","));
+      var P = o.geometry && o.geometry.attributes.position; if(P) h.update(Buffer.from(P.array.buffer, P.array.byteOffset, P.array.byteLength));
+      var m = o.material; if(m && m.color) h.update(m.color.getHexString() + (m.emissive ? m.emissive.getHexString() + m.emissiveIntensity : ""));
+    });
+    h.update(JSON.stringify(B.doors.map(function(d){ return [d.x, d.z, d.kind, d.view || null, d.live]; })));
+    return h.digest("hex");
+  }
+  function inside(P, x, z){ var ins = false; for(var i = 0, j = P.length - 1; i < P.length; j = i++){ var a = P[i], b = P[j];
+    if((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0])*(z - a[1])/(b[1] - a[1]) + a[0]) ins = !ins; } return ins; }
+
+  /* ---------- every kind, every tier, polygon and w/d sites ---------- */
+  var rows = [], errors = [];
+  KINDS.forEach(function(kind){ for(var tier = 1; tier <= 5; tier++) for(var n = 0; n < 4; n++){
+    var site = siteFor(kind, tier, n, n < 2), r = {kind: kind, tier: tier, n: n, poly: n < 2};
+    try {
+      var B = C.build(c, site);
+      r.digest = digest(B);
+      if(tier === 3 && n === 0) r.digest2 = digest(C.build(c, site));
+      B.setNight(true); r.drawsNight = HQV.hqMerge.drawCount(B.g);
+      B.setNight(false); r.drawsDay = HQV.hqMerge.drawCount(B.g);
+      B.animate(1.3, 0.016, 1); B.animate(1.3, 0.016, 0);
+      r.finite = finite(B.g);
+      r.doors = B.doors.map(function(d){ return {x: d.x, z: d.z, y: d.y, kind: d.kind, view: d.view || null, live: d.live,
+        fx: d.front.x, fz: d.front.z, tip: d.tip}; });
+      r.hits = B.hits.length; r.hitDoors = B.hits.every(function(o){ return o.userData.door && o.userData.door.live; });
+      r.top = B.top; r.merged = 0; B.g.traverse(function(o){ if(o.userData.merged) r.merged++; });
+      // every door's front point is clear of the building's masses (axis-aligned sites: exact boxes)
+      r.doorBlocked = site.poly ? [] : B.doors.filter(function(d){ return B.boxes.some(function(bx){
+        return d.x > bx.min.x && d.x < bx.max.x && d.z > bx.min.z && d.z < bx.max.z && d.y < bx.max.y && d.y + 1.5 > bx.min.y; }); }).map(function(d){ return d.kind; });
+      // the front door faces the site's front: its front point is further along front than the wall it is in
+      var f = [site.front[0]/Q, site.front[1]/Q];
+      r.facing = B.doors.every(function(d){ return d.kind !== kind || ((d.x - B.x)*f[0] + (d.z - B.z)*f[1]) > -B.d/2; });
+      r.y = B.y; r.g = [B.g.position.x, B.g.position.y, B.g.position.z];
+      // masses within the site (m, 1.5 m slack): the polygon for poly sites
+      var P = site.poly ? site.poly.map(function(p){ return [p[0]/100, p[1]/100]; }) : null, outside = 0;
+      if(P) B.boxes.forEach(function(bx){ var cx = (bx.min.x + bx.max.x)/2, cz = (bx.min.z + bx.max.z)/2; if(!inside(P, cx, cz)) outside++; });
+      r.boxesOutside = outside; r.boxes = B.boxes.length;
+    } catch(e){ errors.push(kind + "@" + tier + ":" + n + " " + (e && e.stack || e)); }
+    rows.push(r);
+  } });
+  out.rows = rows; out.errors = errors;
+
+  /* ---------- views, the town hall, night ---------- */
+  var store = C.build(c, {id: "v:store", kind: "market", tier: 2, x: 0, z: 0, y: 0, front: [0, Q], view: "store"});
+  out.store = {doors: store.doors.map(function(d){ return [d.kind, d.view || null, d.live, d.tip]; }), hits: store.hits.length,
+    hitView: store.hits.map(function(o){ return o.userData.door && o.userData.door.view; }),
+    label: store.g.children.filter(function(o){ return /^label:/.test(o.name); }).map(function(o){ return o.name; })};
+  var th = C.build(c, {id: "th", kind: "townhall", tier: 1, x: 0, z: 0, front: [0, Q]});
+  out.townhall = {doors: th.doors.map(function(d){ return [d.kind, d.view || null, d.live]; }), hits: th.hits.length};
+  var cl = C.build(c, {id: "cl", kind: "clinic", tier: 1, x: 0, z: 0, front: [0, Q]});
+  out.clinic = {live: cl.doors.filter(function(d){ return d.live; }).length, hits: cl.hits.length, doors: cl.doors.length};
+  var off = C.build(c, {id: "o", kind: "transit", tier: 5, x: 0, z: 0, front: [0, Q]}, {night: false});
+  function nightState(B){ var walls = [], glows = B.glows.map(function(g){ return g.visible; });
+    B.g.traverse(function(o){ if(/^civic:walls:/.test(o.name)) walls.push(o.material.emissiveIntensity); }); return {walls: walls, glows: glows}; }
+  out.night = {day: nightState(off)}; off.setNight(true); out.night.night = nightState(off);
+  var pol = C.build(c, {id: "p", kind: "police", tier: 3, x: 0, z: 0, front: [0, Q]});
+  var lamps = []; pol.g.traverse(function(o){ if(o.material && o.material.emissive && o.material.emissive.getHex() >= 0x3f7b00 && o.material.emissive.getHex() <= 0x3f7cff) lamps.push(o.material); });
+  var uniq = lamps.filter(function(m, i){ return lamps.indexOf(m) === i; });
+  pol.animate(0.1, 0.016, 1); var a1 = uniq.map(function(m){ return m.emissiveIntensity; });
+  pol.animate(0.45, 0.016, 1); var a2 = uniq.map(function(m){ return m.emissiveIntensity; });
+  out.police = {mats: uniq.length, a1: a1, a2: a2};
+  // an unknown kind builds as an office block; opts.tier overrides the site's tier
+  var unk = C.build(c, {id: "u", kind: "nope", x: 0, z: 0});
+  out.unknown = {kind: unk.kind, doors: unk.doors.length};
+  out.tierOpt = [C.build(c, {id: "t", kind: "office", tier: 1, x: 0, z: 0}).top, C.build(c, {id: "t", kind: "office", tier: 1, x: 0, z: 0}, {tier: 5}).top];
+  // variants: the same kind and tier from other ids
+  out.variants = KINDS.map(function(kind){ var ds = {}; for(var i = 0; i < 6; i++) ds[digest(C.build(c, {id: "var" + i, kind: kind, tier: 3, x: 0, z: 0, front: [0, Q]}))] = 1; return Object.keys(ds).length; });
+  // sign text: what the canvases were asked to draw
+  texts.length = 0; C.build(c, {id: "n", kind: "library", tier: 2, x: 0, z: 0, name: "<b>Old Stacks</b>"}); out.texts = texts.slice();
+
+  /* ---------- fit ---------- */
+  var L = [[0, 0], [20, 0], [20, 8], [8, 8], [8, 20], [0, 20]], R = C.fit(L);
+  var corners = [[R.cx - R.w/2, R.cz - R.d/2], [R.cx + R.w/2, R.cz - R.d/2], [R.cx + R.w/2, R.cz + R.d/2], [R.cx - R.w/2, R.cz + R.d/2]];
+  out.fitL = {r: R, inside: corners.every(function(q){ return inside(L, q[0] + (q[0] > R.cx ? -1e-6 : 1e-6), q[1] + (q[1] > R.cz ? -1e-6 : 1e-6)); })};
+  var sq = C.fit([[0, 0], [10, 0], [10, 6], [0, 6]]);
+  out.fitSq = sq;
+  var tri = [[0, 0], [30, 0], [0, 30]], RT = C.fit(tri);
+  out.fitTri = {r: RT, inside: [[RT.cx - RT.w/2, RT.cz - RT.d/2], [RT.cx + RT.w/2, RT.cz - RT.d/2], [RT.cx + RT.w/2, RT.cz + RT.d/2], [RT.cx - RT.w/2, RT.cz + RT.d/2]]
+    .every(function(q){ return q[0] + q[1] <= 30 + 1e-6 && q[0] >= -1e-6 && q[1] >= -1e-6; })};
+  out.fitBad = C.fit(null);
+  // a rotated polygon site: the frame's footprint matches the unrotated rectangle
+  var fr = C.frame({kind: "office", poly: rectPoly(5000, 7000, 3000, 2000, 0.5), front: [Math.round(-Math.sin(0.5)*Q), Math.round(Math.cos(0.5)*Q)]});
+  out.frame = {x: fr.x, z: fr.z, w: fr.w, d: fr.d, rot: fr.rot};
+  process.stdout.write(JSON.stringify(out));
+}).catch(function(e){ console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class TestHqCivic(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        js = HARNESS % {"root": json.dumps(ROOT), "kinds": json.dumps(KINDS)}
+        p = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=300)
+        if p.returncode != 0:
+            raise AssertionError("node harness failed:\n" + p.stderr)
+        cls.r = json.loads(p.stdout)
+
+    def test_every_kind_builds_at_every_tier(self):
+        self.assertEqual(self.r["errors"], [])
+        self.assertEqual(len(self.r["rows"]), len(KINDS)*5*4)
+        for row in self.r["rows"]:
+            self.assertTrue(row["finite"], row["kind"])
+            self.assertGreater(row["top"], 1.5, row["kind"])
+
+    def test_under_40_draw_calls(self):
+        worst = {}
+        for row in self.r["rows"]:
+            k = row["kind"]
+            worst[k] = max(worst.get(k, 0), row["drawsNight"], row["drawsDay"])
+            self.assertGreaterEqual(row["drawsNight"], row["drawsDay"])
+        over = {k: v for k, v in worst.items() if v >= 40}
+        self.assertEqual(over, {}, worst)
+        # and the merge did something: every kind has merged meshes (at least at its top tier)
+        for k in KINDS:
+            self.assertGreater(max(row["merged"] for row in self.r["rows"] if row["kind"] == k and row["tier"] == 5), 0, k)
+
+    def test_deterministic(self):
+        for row in self.r["rows"]:
+            if "digest2" in row:
+                self.assertEqual(row["digest"], row["digest2"], row["kind"])
+        # identical sites in the sweep give identical digests; ids give variants
+        for k, n in zip(KINDS, self.r["variants"]):
+            self.assertGreaterEqual(n, 2, k)
+
+    def test_tiers_grow(self):
+        tops = {}
+        for row in self.r["rows"]:
+            if row["n"] == 0:
+                tops.setdefault(row["kind"], {})[row["tier"]] = row["top"]
+        for k, t in tops.items():
+            self.assertGreaterEqual(t[5], t[1], k)
+        for k in ["office", "finance", "hospital", "media", "power", "stadium", "townhall"]:
+            self.assertGreater(tops[k][5], tops[k][1] + 2, k)
+        a, b = self.r["tierOpt"]
+        self.assertGreater(b, a)
+
+    def test_doors_present_and_facing_front(self):
+        for row in self.r["rows"]:
+            self.assertGreaterEqual(len(row["doors"]), 1, row["kind"])
+            for d in row["doors"]:
+                for v in ("x", "z", "y", "fx", "fz"):
+                    self.assertTrue(isinstance(d[v], (int, float)), (row["kind"], v))
+                self.assertAlmostEqual(d["x"], d["fx"], places=6)
+                self.assertAlmostEqual(d["y"], row["y"] + 0.12, places=6)
+            # you can stand at every door, and the doors are within the footprint's depth
+            self.assertEqual(row["doorBlocked"], [], (row["kind"], row["tier"], row["n"]))
+            self.assertTrue(row["facing"], (row["kind"], row["n"]))
+            self.assertAlmostEqual(row["y"], 2.5, places=6)
+        # without a view only the town hall has a live door, kind "townhall"
+        for row in self.r["rows"]:
+            live = [d for d in row["doors"] if d["live"]]
+            if row["kind"] == "townhall":
+                self.assertEqual([d["kind"] for d in live], ["townhall"])
+                self.assertGreaterEqual(row["hits"], 2)
+                self.assertTrue(row["hitDoors"])
+            else:
+                self.assertEqual(live, [], row["kind"])
+                self.assertEqual(row["hits"], 0, row["kind"])
+
+    def test_view_door(self):
+        s = self.r["store"]
+        live = [d for d in s["doors"] if d[2]]
+        self.assertEqual(len(live), 1)
+        self.assertEqual(live[0][1], "store")
+        self.assertEqual(live[0][3], "Store: buy things")
+        self.assertGreaterEqual(s["hits"], 1)
+        self.assertTrue(all(v == "store" for v in s["hitView"]))
+        self.assertEqual(s["label"], ["label:Store"])
+        t = self.r["townhall"]
+        self.assertIn(["townhall", None, True], t["doors"])
+        c = self.r["clinic"]
+        self.assertEqual((c["live"], c["hits"]), (0, 0))
+        self.assertGreaterEqual(c["doors"], 1)
+
+    def test_masses_stand_on_the_site(self):
+        for row in self.r["rows"]:
+            if row["poly"] and row["kind"] not in ("port", "dock"):   # cranes and piers reach out over the water
+                self.assertEqual(row["boxesOutside"], 0, (row["kind"], row["tier"], row["n"]))
+            self.assertGreater(row["boxes"], 0, row["kind"])
+
+    def test_night(self):
+        n = self.r["night"]
+        self.assertTrue(n["day"]["walls"] and all(v == 0 for v in n["day"]["walls"]))
+        self.assertTrue(all(v == 1 for v in n["night"]["walls"]))
+        self.assertTrue(n["night"]["glows"] and all(n["night"]["glows"]))
+        self.assertFalse(any(n["day"]["glows"]))
+
+    def test_police_lamps_blink_in_turn(self):
+        p = self.r["police"]
+        self.assertEqual(p["mats"], 2)
+        self.assertNotEqual(p["a1"], p["a2"])
+        self.assertEqual(sorted(p["a1"]), sorted(p["a2"]))
+
+    def test_unknown_kind_and_sign_text(self):
+        self.assertEqual(self.r["unknown"], {"kind": "office", "doors": 1})
+        # site names reach the sign as canvas text (never markup)
+        self.assertIn("<B>OLD STACKS</B>", self.r["texts"])
+
+    def test_fit(self):
+        f = self.r["fitL"]
+        self.assertTrue(f["inside"])
+        self.assertGreater(f["r"]["w"]*f["r"]["d"], 40)
+        sq = self.r["fitSq"]
+        self.assertAlmostEqual(sq["w"], 10, places=6)
+        self.assertAlmostEqual(sq["d"], 6, places=6)
+        t = self.r["fitTri"]
+        self.assertTrue(t["inside"])
+        self.assertGreater(t["r"]["w"]*t["r"]["d"], 100)
+        self.assertEqual(self.r["fitBad"]["w"], 0)
+        fr = self.r["frame"]
+        self.assertAlmostEqual(fr["x"], 50, places=1)
+        self.assertAlmostEqual(fr["z"], 70, places=1)
+        self.assertAlmostEqual(fr["w"], 30, delta=0.1)
+        self.assertAlmostEqual(fr["d"], 20, delta=0.1)
+        self.assertAlmostEqual(fr["rot"], -0.5, places=3)
+
+
+class TestHqCivicSource(unittest.TestCase):
+    def setUp(self):
+        with open(SRC, encoding="utf-8") as f:
+            self.src = f.read()
+
+    def test_house_rules(self):
+        self.assertNotIn("Math.random", self.src)
+        self.assertNotIn("innerHTML", self.src)
+        self.assertIsNone(re.search(r"Math\.min\(\s*1\s*,\s*dt", self.src))
+        self.assertIn("HQV.hqCivic", self.src)
+
+    def test_every_kind_has_a_builder(self):
+        for k in KINDS:
+            self.assertRegex(self.src, r"BUILD\.%s = function" % k)
+            self.assertRegex(self.src, r"\n  %s: \{name:" % k)
+
+
+if __name__ == "__main__":
+    unittest.main()

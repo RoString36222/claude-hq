@@ -690,7 +690,13 @@ function mount(el, api){
                                          ride: ride ? ride.kind || null : null, boat: !!(ride && ride.boat)} : null; },
     others: function(){ var out = []; Object.keys(peers).forEach(function(u){ var P = peers[u]; if(cur && P.g.parent === cur.scene) out.push({x: P.x, z: P.z, col: bikeColor(u)}); }); return out; },
     active: function(w){ return !!(inst.running && cur && cur === w); },
-    toggleMap: function(){ if(rigOn()) mapToggle(); }
+    toggleMap: function(){ if(rigOn()) mapToggle(); },
+    // voyages (games/hqcity3d.js, games/hqvoyage.js): the next city built while you sail, then moved into with no fade
+    prebuildCity: function(world){ return inst.prebuildCity ? inst.prebuildCity(world) : false; },
+    cityBuilt: function(world){ return !!(nextCity && nextCity.world === world && nextCity.ready); },
+    swapCity: function(world){ return inst.swapCity ? inst.swapCity(world) : false; },
+    night: function(){ return isNight(); },
+    held: function(code){ return !!keys[code]; }
   };
 
   /* ---------- day / night from the local clock ---------- */
@@ -2727,6 +2733,36 @@ function mount(el, api){
     enterWorld("city", null);
     return true;
   };
+  // A voyage's destination, built in its own scene while you are still in this City (its tiles build on their own,
+  // its overlays stay hidden until it is the one you are in); swapCity then moves you in without a fade or a
+  // loading screen, mid-sea, where both cities are far behind the haze.
+  var nextCity = null;
+  function dropNext(){ if(!nextCity) return; var w = nextCity.w; nextCity = null; if(w && w !== cur && w.destroy){ try { w.destroy(); } catch(e){} } }
+  inst.prebuildCity = function(world){
+    if(!scene || !HQV.hqCity3d || !HQV.hqWorlds.city3d) return false;
+    if(nextCity && nextCity.world === world) return true;
+    dropNext();
+    HQV.hqCity3d.go(world, null);
+    var w = {scene: new THREE.Scene(), name: "city"}, got = null;
+    tgt = w.scene;
+    try { got = HQV.hqWorlds.city3d(ctx, w) || w; } catch(err){ got = null; }
+    tgt = scene;
+    if(!got) return false;
+    if(got.setTime) got.setTime(isNight()); if(got.onData) got.onData(sessions);
+    var N = nextCity = {world: world, w: got, ready: false};
+    (got.whenReady || Promise.resolve()).then(function(){ if(nextCity === N){ N.ready = true; got.isReady = true; } },
+                                              function(){ if(nextCity === N) dropNext(); });
+    return true;
+  };
+  inst.swapCity = function(world){
+    if(!nextCity || nextCity.world !== world || !nextCity.ready || !scene) return false;
+    var C = worlds.city;
+    if(C){ delete worlds.city; C.swapOut = true; }
+    worlds.city = nextCity.w; nextCity = null;
+    lastCity = null; entering = null;
+    enterWorld("city", null, true);
+    return true;
+  };
   var streamKey = "";
   function buildStreamsIfChanged(){
     var k = desks.map(function(D){ return D.id + ":" + crewState(D.s); }).join("|");
@@ -2740,7 +2776,7 @@ function mount(el, api){
     inst.running = true; last = 0; applyTime(); raf = requestAnimationFrame(frame);
   };
   inst.destroy = function(){
-    inst.alive = false; inst.pause(); driveHud(null); exitLock(); rigLeave();
+    inst.alive = false; inst.pause(); driveHud(null); exitLock(); rigLeave(); dropNext();
     window.removeEventListener("keydown", onKey, true); window.removeEventListener("keyup", onKey, true); window.removeEventListener("blur", onBlur);
     window.removeEventListener("gamepadconnected", onPadOn); window.removeEventListener("gamepaddisconnected", onPadOff);
     if(SMOKE && SMOKE.on){ window.removeEventListener("error", smokeErr); window.removeEventListener("unhandledrejection", smokeErr); }

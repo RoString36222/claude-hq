@@ -766,3 +766,15 @@ html.hq-calm .hq3d-drive-read{display:block}
 .hq3d-stats-bar{height:4px;border-radius:999px;background:var(--line);overflow:hidden}
 .hq3d-stats-bar i{display:block;height:100%;background:var(--brand)}
 
+/* ==== the ferry voyage panel (games/hqcity3d.js voyHud): top centre while you are aboard ==== */
+.hq3d-voyage{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:6;display:grid;grid-template-columns:auto 1fr;
+  column-gap:12px;row-gap:6px;align-items:center;min-width:min(440px,calc(100% - 380px));max-width:560px;padding:10px 16px 10px 12px;
+  border-radius:var(--radius);background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow-lg);pointer-events:none}
+.hq3d-voyage[hidden]{display:none}
+.hq3d-voyage-icon{grid-row:1 / span 3;width:44px;height:44px;display:grid;place-items:center;border-radius:12px;font-size:26px;
+  background:var(--brand);color:var(--on-brand)}
+.hq3d-voyage-main{font:700 14px/1.25 var(--font);color:var(--ink)}
+.hq3d-voyage-bar{height:6px;border-radius:999px;background:var(--line);overflow:hidden}
+.hq3d-voyage-bar > span{display:block;height:100%;width:0;border-radius:inherit;background:var(--brand);transition:width .4s linear}
+.hq3d-voyage-hint{font:500 12px/1.2 var(--font);color:var(--muted)}
+@container hq3d (max-width: 700px){ .hq3d-voyage{top:140px;left:12px;right:12px;transform:none;min-width:0;max-width:none} }

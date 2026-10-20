@@ -995,6 +995,7 @@ HQV.hqWorlds.city3d = function(c, w){
   // where you stand while a trip holds you: the bus seat, or the terminal you leave from
   w.carry = function(){
     if(bus && bus.phase === "ride"){ var p = bus.trip.pose(Date.now()); return {x: p.x, y: p.y + 0.5, z: p.z, yaw: p.yaw}; }
+    if(mine(NAV.voy) && VOY) return seatPose(NAV.voy);
     var T = NAV.trip;
     if(T && T.from === worldId && (T.phase === "boarding" || T.phase === "paying" || T.phase === "riding" || T.phase === "holding") && T.hold) return T.hold;
     return null;
@@ -1015,6 +1016,13 @@ HQV.hqWorlds.city3d = function(c, w){
           if(o.self) return;
           var txt = MODE_NAME[o.mode] + " to " + to.name + " · " + Math.round(o.seconds) + " s" + (o.fee ? " · " + o.fee + " coin" : "");
           if(o.departs) txt += " · sails in " + waitText(o.departs - Date.now());
+          if(o.mode === "ferry" && ferryOn()){
+            var dep = VOY.nextSailing(worldId, to.world, Date.now());
+            if(dep - Date.now() < 8000) dep += VOY.EVERY;
+            txt = "⛴ Ferry to " + to.name + " · sails in " + waitText(dep - Date.now()) + " · you ride it across";
+            items.push({text: txt, fn: function(){ boardFerry(to); }});
+            return;
+          }
           items.push({text: txt, fn: function(){ startTrip(o.mode, from, to, site); }});
         });
       });
@@ -1065,6 +1073,152 @@ HQV.hqWorlds.city3d = function(c, w){
     fadeEl.style.opacity = String(Math.max(0, Math.min(1, a || 0)));
   }
 
+
+  /* ---------- ferries (games/hqvoyage.js routes, games/hqships.js ships) ----------
+     Every route from here to another city has a ferry each way every VOY.EVERY ms, the same on every client: they
+     wait at the berth before sailing, steam down the river and out to sea. Board one at the dock (E): you sit on its
+     sun deck (w.carry) for the whole crossing; the next city is built while you sail and you move into it mid-sea
+     (hq3d's swapCity) with no loading screen, then sail up its river and step off at its dock. Hold Space for full ahead. */
+  var VOY = HQV.hqVoyage, SHIPS = HQV.hqShips;
+  var ferryT = null, ferryPool = [], ferryRoutes = null, ferryG = null, myFerry = null;
+  var FERRY_SHOW = 3200, FERRY_MAX = 8;
+  function ferryOn(){ return !!(V2 && VOY && SHIPS && HQV.hqboat && sea && W && VOY.berthOf(W)); }
+  function hereArch(){ var h = here(); return {x: h.x, z: h.z}; }
+  function shipSfx(n){ if(HQV.engine && HQV.engine.sfx) HQV.engine.sfx(n); }
+  function setupFerries(){
+    if(!ferryOn()) return;
+    ferryG = new THREE.Group(); ferryG.name = "ferries"; S.add(ferryG);
+    getArch().then(function(a){
+      if(dead || !a) return;
+      var hp = hereArch(), A = {world: worldId, x: hp.x, z: hp.z, W: W};
+      ferryRoutes = travelPlaces(a, worldId, me).slice(0, 6).map(function(to){
+        var B = {world: to.world, x: to.x, z: to.z, W: null};
+        return {to: to, out: VOY.route(A, B), inb: VOY.route(B, A)};
+      });
+    }, function(){});
+  }
+  function ferryModel(name){
+    if(!ferryT) ferryT = SHIPS.ferry(c, {name: name || (worldId === COMMONS ? "Commons Star" : "Island Star")});
+    return ferryT.clone();
+  }
+  function waterY(x, z, t){
+    if(!sea) return 0;
+    var v = sea.wave ? sea.wave(x, z, t) : 0;
+    return sea.y + (isFinite(v) ? v*0.35 : 0);
+  }
+  // a ship at an archipelago pose, drawn in this city's frame
+  function placeShip(F, p, t, dt){
+    var hp = hereArch(), x = p.x - hp.x, z = p.z - hp.z;
+    F.g.position.set(x, waterY(x, z, t), z);
+    F.g.rotation.set(Math.sin(t*0.6 + x*0.01)*0.012, p.yaw, Math.sin(t*0.45 + z*0.01)*0.02);
+    F.update(dt, p.speed, night);
+    F.g.visible = true;
+  }
+  function ferryStep(t, dt){
+    if(!ferryG) return;
+    var now = Date.now(), hp = hereArch(), shown = [], V = NAV.voy, docked = null;
+    (ferryRoutes || []).forEach(function(r){
+      VOY.sailings(worldId, r.to.world, now, r.out.T*1000, 60000).forEach(function(dep){
+        if(V && V.dep === dep && V.from === worldId && V.to === r.to.world) return;          // yours: drawn on its own
+        var tt = (now - dep)/1000;
+        if(tt < 0){ if(!docked || dep < docked.dep) docked = {dep: dep, p: VOY.poseAt(r.out, 0)}; return; }
+        if(tt <= r.out.T) shown.push(VOY.poseAt(r.out, tt));
+      });
+      VOY.sailings(r.to.world, worldId, now, r.inb.T*1000, 0).forEach(function(dep){
+        var tt = (now - dep)/1000; if(tt < 0 || tt > r.inb.T) return;
+        var p = VOY.poseAt(r.inb, tt);
+        if(r.inb.len - p.along < 160) return;                                                // tied up: its passengers are ashore
+        shown.push(p);
+      });
+    });
+    if(docked && !(V && V.from === worldId && (now - V.dep) < 0)) shown.push(docked.p);     // the next sailing waits at the berth
+    shown = shown.filter(function(p){ return Math.hypot(p.x - hp.x, p.z - hp.z) < FERRY_SHOW; }).slice(0, FERRY_MAX);
+    while(ferryPool.length < shown.length){ var F = ferryModel(); ferryG.add(F.g); ferryPool.push(F); }
+    ferryPool.forEach(function(F, i){ if(i < shown.length) placeShip(F, shown[i], t, dt); else F.g.visible = false; });
+    if(c.active && c.active(w)) HQV.hqCity3d.ferry = w.ferry;
+    voyStep(t, dt);
+  }
+
+  // your voyage: NAV.voy = {R, dep (ms), warp (s), from, to, name, seat}; both cities (the one you left until the
+  // swap, the one you are bound for after it) draw your ferry and seat you on it
+  function voyT(V){ return Math.min(V.R.T, (Date.now() - V.dep)/1000 + V.warp); }
+  function mine(V){ return V && (V.from === worldId || V.to === worldId); }
+  function voyPose(V){ return VOY.poseAt(V.R, Math.max(0, voyT(V))); }
+  function seatPose(V){
+    var p = voyPose(V), hp = hereArch(), x = p.x - hp.x, z = p.z - hp.z, cy = Math.cos(p.yaw), sy = Math.sin(p.yaw);
+    var S0 = myFerry && myFerry.seats[V.seat % myFerry.seats.length], sx = S0 ? S0.position.x : 2.2, sh = S0 ? S0.position.y : SHIPS.SUN_DECK + 0.8, sz = S0 ? S0.position.z : -9.5;
+    return {x: x + sx*cy + sz*sy, y: waterY(x, z, Date.now()/1000) + sh - 0.35, z: z - sx*sy + sz*cy, yaw: p.yaw};
+  }
+  function boardFerry(to){
+    if(!ferryOn()){ say("No ferry runs from here."); return; }
+    say("Checking the timetable to " + to.name + "…");
+    WD.load({id: to.world}).then(function(W2){
+      if(dead) return;
+      var hp = hereArch(), now = Date.now();
+      var R = VOY.route({world: worldId, x: hp.x, z: hp.z, W: W}, {world: to.world, x: to.x, z: to.z, W: W2 && W2.v >= 2 ? W2 : null});
+      var dep = VOY.nextSailing(worldId, to.world, now);
+      if(dep - now < 8000) dep += VOY.EVERY;                                                // too late for this one: the next
+      NAV.voy = {R: R, dep: dep, warp: 0, from: worldId, to: to.world, name: to.name, seat: Math.floor(now/1000) % 6, swapped: false, built: false};
+      shipSfx("door");
+      say("Aboard the ferry to " + to.name + ". It sails in " + waitText(dep - now) + ". E gets you off before it sails.");
+    }, function(){ say("The timetable didn't load: no ferry right now."); });
+  }
+  // for tools (headless shots, tests): board the ferry to a world (or the first route), the voyage's state, a skip ahead
+  w.ferry = {
+    board: function(world){ return getArch().then(function(a){ var L = travelPlaces(a, worldId, me), to = L.filter(function(p){ return p.world === world; })[0] || L[0]; if(to) boardFerry(to); return to ? to.world : null; }); },
+    state: function(){ var V = NAV.voy; return V ? {t: voyT(V), T: V.R.T, hand: V.R.hand, len: V.R.len, from: V.from, to: V.to, swapped: V.swapped, here: worldId,
+                                                    ships: ferryPool.filter(function(F){ return F.g.visible; }).length} : {here: worldId, ships: ferryPool.filter(function(F){ return F.g.visible; }).length}; },
+    skip: function(s){ var V = NAV.voy; if(V){ if(Date.now() < V.dep){ V.warp += (V.dep - Date.now())/1000; } V.warp += +s || 0; } }
+  };
+  function voyLeave(){ NAV.voy = null; voyHud(null); if(myFerry) myFerry.g.visible = false; }
+  function voyStep(t, dt){
+    var V = NAV.voy;
+    if(!mine(V)){ if(myFerry) myFerry.g.visible = false; if(!V) voyHud(null); return; }
+    if(!myFerry){ myFerry = ferryModel(V.to === worldId ? "Island Star" : null); ferryG.add(myFerry.g); }
+    var tt = (Date.now() - V.dep)/1000 + V.warp;
+    if(tt > 0 && c.held && c.held("Space")) V.warp += dt*7;                                  // full ahead: eight times as fast
+    tt = voyT(V);
+    var p = voyPose(V);
+    placeShip(myFerry, p, t, dt);
+    if(tt >= 0 && !V.built && V.from === worldId){ V.built = true; if(c.prebuildCity) c.prebuildCity(V.to); shipSfx("go"); say("All aboard! Sailing for " + V.name + "."); }
+    // mid-sea, once the next city is built: move into it (nothing on screen changes but the city ahead)
+    if(V.from === worldId && tt >= V.R.hand && !V.swapped && c.cityBuilt && c.cityBuilt(V.to)){ V.swapped = true; if(!(c.swapCity && c.swapCity(V.to))) V.swapped = false; }
+    if(V.to === worldId && tt >= V.R.T){
+      var dock = VOY.berthOf(W), s = dock && siteById(dock.site), sp = s ? HQV.hqTravel.spawnAt(worldId, s) : null;
+      voyLeave();
+      if(HQV.hqTravel.markVisited) HQV.hqTravel.markVisited(worldId);
+      if(sp && c.teleport) c.teleport(sp.x, sp.z, sp.yaw);
+      shipSfx("levelup");
+      say("Welcome to " + (cityState && cityState.name ? cityState.name : V.name || "the city") + ".");
+      return;
+    }
+    voyHud(V, tt, p);
+  }
+  // one panel for the whole voyage (NAV.hud), shared by the city you left and the one you sail into
+  function voyHud(V, tt, p){
+    if(!c.el || typeof document === "undefined") return;
+    var voyEl = NAV.hud;
+    if(!V){ if(voyEl){ if(voyEl.parentNode) voyEl.parentNode.removeChild(voyEl); NAV.hud = null; NAV.hudKey = ""; } return; }
+    if(voyEl && voyEl.parentNode !== c.el){ c.el.appendChild(voyEl); }
+    if(!voyEl){
+      voyEl = document.createElement("div"); voyEl.className = "hq3d-voyage"; voyEl.setAttribute("role", "status");
+      ["icon", "main", "bar", "hint"].forEach(function(k){ var d = document.createElement("div"); d.className = "hq3d-voyage-" + k; voyEl.appendChild(d); });
+      voyEl.children[0].textContent = "⛴";
+      var fill = document.createElement("span"); voyEl.children[2].appendChild(fill);
+      c.el.appendChild(voyEl);
+      NAV.hud = voyEl; NAV.hudKey = "";
+    }
+    voyEl.hidden = false;
+    var left = Math.max(0, V.R.T - tt), where = tt < 0 ? "At the berth" : p.leg === "sea" ? "At sea" : p.u < 0.5 ? "Down the river" : "Up the river to the dock";
+    var main = tt < 0 ? "Ferry to " + V.name + " · sails in " + waitText(-tt*1000)
+             : "Ferry to " + V.name + " · " + where + " · " + waitText(left*1000/((c.held && c.held("Space")) ? 8 : 1)) + " to go";
+    var key = main + "|" + Math.round(Math.max(0, tt)/Math.max(1, V.R.T)*200);
+    if(key === NAV.hudKey) return;
+    NAV.hudKey = key;
+    voyEl.children[1].textContent = main;
+    voyEl.children[2].firstChild.style.width = (Math.max(0, Math.min(1, tt/V.R.T))*100).toFixed(1) + "%";
+    voyEl.children[3].textContent = tt < 0 ? "E: get off before it sails" : (c.held && c.held("Space")) ? "Full ahead!" : "Hold Space: full ahead · drag to look around";
+  }
   // a boat that reaches another island lands you on its dock; the wake behind yours
   var boatNow = null;
   w.onBoat = function(b){
@@ -1096,6 +1250,11 @@ HQV.hqWorlds.city3d = function(c, w){
     if(menu){ closeMenu(); return true; }
     if(bus){ if(bus.phase === "wait"){ bus = null; say("You stopped waiting."); } return true; }
     if(NAV.trip && NAV.trip.phase === "boarding"){ NAV.trip = null; say("You stayed ashore."); return true; }
+    if(mine(NAV.voy)){
+      if(Date.now() < NAV.voy.dep && NAV.voy.from === worldId){ var b = VOY.berthOf(W), bs = b && siteById(b.site), sp = bs && HQV.hqTravel.spawnAt(worldId, bs); voyLeave(); if(sp && c.teleport) c.teleport(sp.x, sp.z, sp.yaw); say("You stayed ashore."); }
+      else say("You're at sea. Sit back, or hold Space for full ahead.");
+      return true;
+    }
     if(ndraw){
       var line = ndraw.talk({x: p.x, z: p.z}, npcMs());
       if(line && line.text){ showTalk(line); return true; }
@@ -1155,7 +1314,7 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   function citiesSetup(){
     buildCivic(); S.add(civicG);
-    setupSea(); setupLife(); buildUi(); statsUi();
+    setupSea(); setupLife(); buildUi(); statsUi(); setupFerries();
     if(worldId === COMMONS) getJson("/api/arena/world/" + COMMONS + "/assign").then(function(rows){
       if(dead || !Array.isArray(rows)) return; assignRows = rows; sig = null; build();
     }, function(){});
@@ -1216,6 +1375,8 @@ HQV.hqWorlds.city3d = function(c, w){
     if(ndraw){ try { ndraw.dispose(); } catch(e){} }
     if(oc){ try { oc.dispose(); } catch(e){} }
     S.remove(civicG); S.remove(boatG);
+    ferryPool.forEach(function(F){ F.dispose(); }); ferryPool = []; if(myFerry){ myFerry.dispose(); myFerry = null; }
+    if(ferryT){ ferryT.dispose(); ferryT = null; } if(ferryG){ S.remove(ferryG); ferryG = null; }
   }
 
   /* ---------- navigation (HQ 3.1): the minimap, the Go to panel, the route banner, chevrons and the pillar ---------- */
@@ -1505,6 +1666,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(fount) fount.step(t);
     cars.forEach(function(cr){ carStep(cr, dt, k); });
     if(V2) citiesUpdate(t, dt, k, cam);
+    if(V2) ferryStep(t, dt);
     navStep(dt, cam);
   };
   w.setTime(night);

@@ -270,7 +270,9 @@ class Chrome:
             os.dup2(a, 3)
             os.dup2(b, 4)
 
-        flags = ["--headless=new", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--no-first-run",
+        # HQ_GL=metal draws WebGL on the GPU (still headless: no window); the default stays software (swiftshader)
+        gl = ["--use-angle=metal"] if os.environ.get("HQ_GL") == "metal" else ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
+        flags = ["--headless=new"] + gl + ["--no-first-run",
                  "--no-default-browser-check", "--disable-background-timer-throttling",
                  "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
                  "--remote-debugging-pipe", "--user-data-dir=" + profile,

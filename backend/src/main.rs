@@ -8,6 +8,7 @@ mod auth;
 mod boardstream;
 mod boss;
 mod cali;
+mod cities;
 mod config;
 mod cosmetics;
 mod crews;
@@ -20,6 +21,7 @@ mod kart;
 mod loot;
 mod mapkey;
 mod maps;
+mod market;
 mod music;
 mod nudges;
 mod pantry;
@@ -961,6 +963,8 @@ async fn serve() -> anyhow::Result<()> {
         rooms.clone(), registry, clock, valley::system_wall(), valley::entropy_dice(), rec,
         Some(pool.clone()),
     );
+    // City tax and market ticks (HQ 3.x); reads also catch up lazily.
+    cities::spawn_hourly(pool.clone());
     let state = AppState {
         pool,
         cfg: Arc::new(cfg),
@@ -985,6 +989,7 @@ async fn serve() -> anyhow::Result<()> {
         .route("/v1/auth/ticket", post(ticket))
         .merge(boss::routes())
         .merge(cali::routes())
+        .merge(cities::routes())
         .merge(cosmetics::routes())
         .merge(accounts::routes())
         .merge(crews::routes())
@@ -992,6 +997,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(hq::routes())
         .merge(loot::routes())
         .merge(maps::routes())
+        .merge(market::routes())
         .merge(music::routes())
         .merge(portraits::routes())
         .merge(nudges::routes())

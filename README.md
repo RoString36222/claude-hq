@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.0.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.1.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -330,6 +330,21 @@ and feature guide.
 
 ## Changelog
 
+- **3.1.0 — Navigation and rivers.** Finding your way round the cities.
+  - **A river through every city:** from the sea past the plaza to a harbour basin in town. The
+    **dock** stands on its bank by the plaza (on a tier-1 island too, with a road to it) and the
+    **port** on the basin, so neither is out on the edge of the city any more. Arterials, the ring
+    road and the highways cross on bridges; boats sail up the river and under them.
+  - **A minimap** in the bottom-right corner: the coast, the river, the roads, the civic buildings,
+    HQs, other players and your route. Heading-up or north-up, zoom with the wheel or +/-, click it
+    to set a waypoint, open the full map (M) from it; it zooms out as you speed up.
+  - **Waypoints and turn-by-turn directions along the roads:** press **N** or **Go to** for a
+    searchable list of places (the dock, the port, the town hall, your HQ, the ferry to your island
+    or the Commons...), or click the minimap or the ground on the map. A banner shows the next turn,
+    the distance and the ETA; chevrons on the road and a light pillar at the destination lead the
+    way; it reroutes when you go another way, and says "Press E for the ferry" at the dock.
+  - Keys pressed in a stop's, a dock's or the Go to menu no longer reach the dashboard's shortcuts
+    (W no longer switches to the Workshop while a menu is open).
 - **3.0.0 — Cities.** Arena City grows into a world of cities.
   - **The Commons** (`claude-hq@2`) replaces the gridded street for everyone: an organic city on an
     island, with arterial and local streets, districts (old town, downtown, suburbs, office, tech, film

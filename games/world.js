@@ -1,4 +1,5 @@
-/* Claude HQ: the generated world (Arena City, claude-hq@1) on the client.
+/* Claude HQ: the generated worlds on the client: Arena City (claude-hq@1), the Commons
+ * (claude-hq@2) and the personal islands (user:<id>@2).
  *
  * HQV.world turns the Arena's WorldDoc (integer cm, +y up, +z north) into a packed,
  * structured-clone-friendly object W and answers every ground question the 3D City asks
@@ -7,7 +8,12 @@
  *   heightCm/heightAt    bit-exact port of backend/src/worldgen/terrain.rs Terrain::height_at
  *   roadY/groundAt       the ONE road surface ribbons, terrain clamping and the avatar share
  *   blockedAt, trees     through a 64 m bucket index (never a linear scan)
- *   load()               IndexedDB copy by ETag first, then GET /api/arena/world/claude-hq@1
+ *   load({id})           IndexedDB copy by ETag first, then GET /api/arena/world/<id> (default claude-hq@1);
+ *                        one memo, cache and onChange per world id
+ *   docOf(W)             a WorldDoc-shaped view of a packed W (layers.roads with points, zones,
+ *                        transit, island) for the modules that read docs: npcsim, traffic, ocean, hqtravel
+ * v2 docs (@2) also pack each edge's min_tier (only when present, so @1 packs as it always did) and
+ * the island, transit and zones layers, plus the doc's version, profile and seed.
  * Widths: `half` and `carriage` from nearestRoad are HALF widths (m from the centreline):
  * half = width/200, carriage = (width - 2*walk)/200. A point is "road" within `carriage`,
  * "sidewalk" within `half`.
@@ -24,7 +30,10 @@ var root = typeof window !== "undefined" ? window : self;
 var HQV = root.HQV = root.HQV || {};
 
 var ID = "claude-hq@1", URL = "/api/arena/world/claude-hq@1", IDB = {db: "hq-world", store: "docs"};
-var PACK_V = 1;   // bump whenever pack()'s output changes; cached records with another v are refetched
+var COMMONS = "claude-hq@2";
+// the worlds the client may ask for: the fixed ones and a personal island (the dashboard checks again)
+var WORLD_RE = /^(claude-hq@[12]|user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@2)$/;
+var PACK_V = 2;   // bump whenever pack()'s output changes; cached records with another v are refetched
 var ONE = 65536, BUCKET = 64, TRUNK = 0.45, CLEAR = 2, BLEND = 4, SIDEWALK_UP = 0.15;
 var TREE_P = {forest: 0.55, park: 0.18, residential: 0.04};
 var WALK_OLD = {street: 150, avenue: 200};   // sidewalk (cm, each side) for docs older than the walk field
@@ -56,13 +65,15 @@ function pack(doc){
     var old = e.class === "country";
     var pts = new Int32Array(3*((e.points || []).length));
     (e.points || []).forEach(function(p, i){ pts[3*i] = p[0]|0; pts[3*i+1] = p[1]|0; pts[3*i+2] = p[2]|0; });
-    return {id: e.id, a: e.a, b: e.b, cls: cls, width: e.width|0,
+    var o = {id: e.id, a: e.a, b: e.b, cls: cls, width: e.width|0,
             walk: old ? 0 : (e.walk != null ? e.walk|0 : (WALK_OLD[cls] || 0)),
             lanes: old ? 1 : (e.lanes != null ? e.lanes|0 : 1),
             ref: old ? null : (e.ref != null ? String(e.ref) : null),
             name: e.name != null ? String(e.name) : "", pts: pts};
+    if(e.min_tier != null) o.min_tier = e.min_tier|0;      // v2 islands: the tier the road opens in
+    return o;
   });
-  return {
+  var W = {
     id: doc.id || ID, etag: null, hash: String((doc.hashes && doc.hashes.world) || ""), sizeCm: sizeCm, half: sizeCm/2/100,
     terrain: {cell: t.cell_cm || 800, origin: t.origin_cm != null ? t.origin_cm : -sizeCm/2, n: t.n|0, h: Int32Array.from(t.heights || [])},
     districts: {cell: d.cell_cm || 800, origin: d.origin_cm != null ? d.origin_cm : -sizeCm/2, n: d.n|0,
@@ -71,6 +82,38 @@ function pack(doc){
     blocks: L.blocks || [], lots: L.lots || [], sites: L.sites || [],
     index: null
   };
+  // v2: the layers the Cities modules read, and what the doc is
+  if(doc.version != null) W.v = doc.version|0;
+  if(doc.profile != null) W.profile = String(doc.profile);
+  if(doc.seed != null) W.seed = String(doc.seed);
+  if(L.island) W.island = L.island;
+  if(L.transit) W.transit = L.transit;
+  if(L.zones) W.zones = L.zones;
+  return W;
+}
+
+// A WorldDoc-shaped view of W (cm, the generator's field names), built once per W and never stored:
+// npcsim, traffic, ocean and hqtravel read docs, the 3D City keeps the packed W.
+function docOf(W){
+  if(!W) return null;
+  if(W.docView) return W.docView;
+  var edges = W.edges.map(function(e){
+    var pts = [], p = e.pts;
+    for(var i = 0; i + 2 < p.length; i += 3) pts.push([p[i], p[i+1], p[i+2]]);
+    var o = {id: e.id, a: e.a, b: e.b, "class": e.cls, width: e.width, walk: e.walk, lanes: e.lanes, name: e.name, points: pts};
+    if(e.ref != null) o.ref = e.ref;
+    if(e.min_tier != null) o.min_tier = e.min_tier;
+    return o;
+  });
+  var D = W.districts, layers = {roads: {nodes: W.nodes, edges: edges},
+    districts: {cell_cm: D.cell, origin_cm: D.origin, n: D.n, legend: D.legend},
+    blocks: W.blocks, lots: W.lots, sites: W.sites};
+  if(W.zones) layers.zones = W.zones;
+  if(W.transit) layers.transit = W.transit;
+  if(W.island) layers.island = W.island;
+  var doc = {id: W.id, seed: W.seed || W.id, version: W.v || 1, profile: W.profile || "city", size_cm: W.sizeCm, layers: layers};
+  try { Object.defineProperty(W, "docView", {value: doc, enumerable: false, configurable: true, writable: true}); } catch(e){}
+  return doc;
 }
 
 /* ---------- the 64 m bucket index (built on first use) ---------- */
@@ -440,7 +483,9 @@ function junctions(W){
 }
 
 /* ---------- load (browser): IndexedDB copy by ETag, then the Arena via the dashboard ---------- */
-var state = {cur: null, listeners: [], pending: null, cacheMs: null};
+// one per world id: the newest packed W, onChange listeners, the memoised load, the cache read time
+var STATES = {};
+function stateOf(id){ return STATES[id] || (STATES[id] = {cur: null, listeners: [], pending: null, cacheMs: null}); }
 function now(){ return root.performance && root.performance.now ? root.performance.now() : Date.now(); }
 function log(msg){ try { if(typeof console !== "undefined" && console.log) console.log(msg); } catch(e){} }
 function defaultIdb(){
@@ -470,20 +515,20 @@ function defaultIdb(){
   return {get: function(k){ return run("readonly", function(s){ return s.get(k); }); },
           put: function(k, v){ return run("readwrite", function(s){ return s.put(v, k); }); }};
 }
-function idbGet(idb, ms){
+function idbGet(idb, ms, id){
   if(!idb) return Promise.resolve(null);
-  if(idb === PRE.idb && PRE.rec) return PRE.rec;   // read already started at script load
+  if(idb === PRE.idb && PRE.recs[id]) return PRE.recs[id];   // read already started at script load
   return new Promise(function(res){
     var done = false, t = setTimeout(function(){ done = true; res(null); }, ms);   // only guards a hung IDB
     try {
-      Promise.resolve(idb.get(ID)).then(function(v){ if(!done){ clearTimeout(t); res(v || null); } },
+      Promise.resolve(idb.get(id)).then(function(v){ if(!done){ clearTimeout(t); res(v || null); } },
                                         function(){ if(!done){ clearTimeout(t); res(null); } });
     } catch(e){ clearTimeout(t); res(null); }
   });
 }
-function idbPut(idb, rec){
+function idbPut(idb, rec, id){
   if(!idb) return;
-  try { Promise.resolve(idb.put(ID, rec)).catch(function(){}); } catch(e){}
+  try { Promise.resolve(idb.put(id, rec)).catch(function(){}); } catch(e){}
 }
 function deadline(p, ms, ctl){
   // settles with p, or rejects "world unavailable: timeout" (and aborts the request) once ms run out
@@ -492,11 +537,12 @@ function deadline(p, ms, ctl){
     Promise.resolve(p).then(function(v){ clearTimeout(t); res(v); }, function(e){ clearTimeout(t); rej(e); });
   });
 }
-function revalidate(f, idb, cached, timeoutMs){
+function revalidate(f, idb, cached, timeoutMs, id){
   // the whole request, body read included, runs under one timeoutMs deadline
+  var state = stateOf(id), url = id === ID ? URL : "/api/arena/world/" + id;
   var t0 = now(), ctl = null, opts = {cache: "no-cache", headers: cached && cached.etag ? {"If-None-Match": cached.etag} : {}}, p;
   try { if(root.AbortController){ ctl = new root.AbortController(); opts.signal = ctl.signal; } } catch(e){ ctl = null; }
-  try { p = f(URL, opts); } catch(e){ p = Promise.reject(e); }
+  try { p = f(url, opts); } catch(e){ p = Promise.reject(e); }
   p = Promise.resolve(p).then(null, function(){ throw new Error("world unavailable: network"); });
   return deadline(p, timeoutMs, ctl).then(function(r){
     var status = r && r.status;
@@ -508,7 +554,7 @@ function revalidate(f, idb, cached, timeoutMs){
     return deadline(body, timeoutMs - (now() - t0), ctl).then(function(json){
       var W = api.pack(json);
       W.etag = (r.headers && r.headers.get && r.headers.get("ETag")) || null;
-      idbPut(idb, {v: PACK_V, etag: W.etag, packed: Object.assign({}, W, {index: null})});   // the index is rebuilt on use
+      idbPut(idb, {v: PACK_V, etag: W.etag, packed: Object.assign({}, W, {index: null})}, id);   // the index is rebuilt on use
       state.cur = W;
       if(cached && cached.hash !== W.hash) state.listeners.slice().forEach(function(cb){ try { cb(W); } catch(e){} });
       return W;
@@ -519,14 +565,17 @@ function revalidate(f, idb, cached, timeoutMs){
   });
 }
 function load(opts){
+  opts = opts || {};
+  var id = opts.id != null ? String(opts.id) : ID;
+  if(!WORLD_RE.test(id)) return Promise.reject(new Error("world unavailable: bad id"));
+  var state = stateOf(id);
   // memoised, but always hands out the newest world (a background 200 replaces state.cur)
   if(state.pending) return state.pending.then(function(W){ return state.cur || W; });
-  opts = opts || {};
   var f = opts.fetch || (root.fetch ? root.fetch.bind(root) : null);
   var idb = opts.idb !== undefined ? opts.idb : (PRE.idb || defaultIdb());
   var timeoutMs = opts.timeoutMs > 0 ? opts.timeoutMs : 6000, t0 = now();
   // IndexedDB first, always: the network is only asked once the cache read has settled
-  var p = idbGet(idb, timeoutMs).then(function(rec){
+  var p = idbGet(idb, timeoutMs, id).then(function(rec){
     if(!f) f = function(){ return Promise.reject(new Error("no fetch")); };
     if(rec && rec.v === PACK_V && rec.packed && rec.packed.terrain){   // other v: packed by older code, refetch
       var W = rec.packed;
@@ -534,10 +583,10 @@ function load(opts){
       state.cur = W;
       state.cacheMs = Math.round(now() - t0);
       log("hq-world cache " + state.cacheMs);
-      revalidate(f, idb, W, timeoutMs);
+      revalidate(f, idb, W, timeoutMs, id);
       return W;
     }
-    return revalidate(f, idb, null, timeoutMs);
+    return revalidate(f, idb, null, timeoutMs, id);
   });
   state.pending = p;
   p.catch(function(){ if(state.pending === p) state.pending = null; });
@@ -545,17 +594,18 @@ function load(opts){
 }
 // on a page (not the build worker), start the IndexedDB read as soon as this script runs, so a late
 // load() finds the record already in memory instead of racing the (HTTP-cached) world fetch
-var PRE = {idb: null, rec: null};
+// (the Commons, the world the City opens on, and claude-hq@1, where an Arena without @2 sends it)
+var PRE = {idb: null, recs: {}};
 try {
-  if(root.document && root.indexedDB){ PRE.idb = defaultIdb(); if(PRE.idb) PRE.rec = idbGet(PRE.idb, 6000); }
-} catch(e){ PRE.idb = null; PRE.rec = null; }
-function onChange(cb){ if(typeof cb === "function") state.listeners.push(cb); }
-function current(){ return state.cur; }
-function cacheMs(){ return state.cacheMs; }
+  if(root.document && root.indexedDB){ PRE.idb = defaultIdb(); if(PRE.idb) [COMMONS, ID].forEach(function(id){ PRE.recs[id] = idbGet(PRE.idb, 6000, id); }); }
+} catch(e){ PRE.idb = null; PRE.recs = {}; }
+function onChange(cb, id){ if(typeof cb === "function") stateOf(id || ID).listeners.push(cb); }
+function current(id){ return stateOf(id || ID).cur; }
+function cacheMs(id){ return stateOf(id || ID).cacheMs; }
 
 var api = HQV.world = {
-  ID: ID, URL: URL, IDB: IDB, PACK_V: PACK_V, SIDEWALK_UP: SIDEWALK_UP,
-  pack: pack, hash32: hash32,
+  ID: ID, URL: URL, IDB: IDB, PACK_V: PACK_V, SIDEWALK_UP: SIDEWALK_UP, COMMONS: COMMONS, WORLD_RE: WORLD_RE,
+  pack: pack, docOf: docOf, hash32: hash32,
   heightCm: heightCm, heightAt: heightAt, districtAt: districtAt, lotAt: lotAt, siteAt: siteAt,
   nearestRoad: nearestRoad, roadY: roadY, surfaceAt: surfaceAt, padOf: padOf, groundAt: groundAt,
   normalAt: normalAt, slopeAlong: slopeAlong, slopeFactor: slopeFactor, buildingRect: buildingRect,

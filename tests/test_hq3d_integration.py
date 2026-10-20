@@ -56,13 +56,15 @@ class LoadOrderAndProtocol(unittest.TestCase):
         self.assertTrue(m, "HQ_SCRIPTS list in 22-hq.js")
         self.assertEqual(json.loads(m.group(1)),
                          ["engine", "avatar3d", "hq3d", "hqlobby", "hqbase", "hqskate", "world", "worldgeom",
-                          "worldbuild", "camrig", "hqhud", "hqcityparts", "hqcity", "hqmerge", "hqcity3d"])
+                          "worldbuild", "camrig", "hqhud", "hqcityparts", "hqcity", "hqmerge",
+                          # Cities (3.0): the civic kit, residents, traffic, the sea, boats, travel
+                          "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqtravel", "hqcity3d"])
 
     def test_multi_hq_range_covers_server(self):
         m = re.search(r"\bhq:\[(\d+),(\d+)\]", read(MULTI))
         self.assertTrue(m)
         lo, hi = int(m.group(1)), int(m.group(2))
-        self.assertEqual((lo, hi), (1, 2))
+        self.assertEqual((lo, hi), (1, 3))   # v3: Cities, a presence room per world ("isles")
         p = re.search(r'\("hq",\s*(\d+),', read(PROTOCOL))
         self.assertTrue(p, "hq row in protocol.rs")
         self.assertGreaterEqual(hi, int(p.group(1)))

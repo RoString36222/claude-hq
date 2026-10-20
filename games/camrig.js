@@ -45,7 +45,10 @@ var VEHICLE = {
   car:   {backMul: 1.35, upMul: 0.85, sideMul: 1,   fovSpeedKick: 1,   fpAnchor: {seat: [-0.38, 1.15, 0.1], bonnet: [0, 1.05, 1.6]}, roll: 0},
   moto:  {backMul: 1.0,  upMul: 0.75, sideMul: 1,   fovSpeedKick: 1,   fpAnchor: {seat: [0, 1.35, -0.1]}, roll: 1.0},
   bike:  {backMul: 0.9,  upMul: 0.85, sideMul: 1,   fovSpeedKick: 1,   fpAnchor: {seat: [0, 1.55, -0.2]}, roll: 0.6},
-  skate: {backMul: 1.1,  upMul: 0.55, sideMul: 1.4, fovSpeedKick: 1.6, fpAnchor: {seat: [0, 1.5, 0]}, roll: 0.3}
+  skate: {backMul: 1.1,  upMul: 0.55, sideMul: 1.4, fovSpeedKick: 1.6, fpAnchor: {seat: [0, 1.5, 0]}, roll: 0.3},
+  // the boats at the docks (games/hqboat.js): low on the water, the jet ski banks into its turns
+  rowboat: {backMul: 1.2, upMul: 0.8, sideMul: 1,  fovSpeedKick: 0.5, fpAnchor: {seat: [0, 1.1, -0.1]}, roll: 0},
+  jetski:  {backMul: 1.1, upMul: 0.7, sideMul: 1,  fovSpeedKick: 1,   fpAnchor: {seat: [0, 1.25, -0.2]}, roll: 0.3}
 };
 var SPAN_MIN = 44, SPAN_MAX = 2048, HALF = 1024, MAP_TAN = Math.tan(5*DEG);
 var LOOK_H = 1.3;          // chase look point above the target's feet (the "head" the camera frames)

@@ -80,6 +80,30 @@ Layers += transit: { lines: [ { id, kind: "bus"|"tram", tier, stops: [site id], 
 Hashes += transit, island (only when present)
 ```
 
+Recorded at integration (3.0.0):
+- A **block** has no tier of its own: it shows with its first lot or site (no `Block.min_tier`).
+- Island tiers: a road edge opens at the first tier in which the plaza reaches one of its ends through
+  nodes inside that tier's ring (`radius_by_tier`); a **lot** opens at the later of its ring and its
+  door road; a **site** at the latest of its civic tier, its ring and its door road. The **dock** (tier 1)
+  and the **port** (tier 3) stand on the shore, outside every ring, and keep their civic tiers (reached
+  by sea). A **transit line** runs from the latest of its kind's tier (bus 2, tram 4), its stops' tiers
+  and its path streets' tiers; an island's first bus loop keeps to the tier-2 town so buses run from tier 2.
+- On an island the owner's HQ lot (rank 0) is the lot nearest the plaza that holds it, by the town
+  hall, and the tier-1 services (town hall, police, library, post, market, school, the first clinic
+  and fire station) stand inside the first ring: the tier-1 city has them all.
+- The Commons is an island too (`layers.island`, fully grown: no `min_tier`, civic tiers as the table).
+- **Airports:** a full-size island has no open land left for one, so islands have no airport in 3.0;
+  the Commons has one. (Planes therefore only fly where both ends have an airport.)
+- `Site.view` carries the HQ tab a site's door opens. The town hall's door opens the Town Hall panel,
+  not its tab.
+- `GET /v1/archipelago` x and z are **cm** (the client divides by 100). `island_slot` is created by
+  `0014_archipelago.sql` (with `created_at`), not 0013.
+- Market goods carry the generator's names (food, freight, services, tech, medicine, content, film,
+  capital, plus fish); a city's specialty is the good its world's specialty zone makes.
+- HQ presence **v3** ("isles"): the floor may be `city3d:<world id>` (the Commons or `user:<id>@2`),
+  checked exactly by the server, so each world is its own room.
+
+
 **District ids** (new values only; 0-10 unchanged):
 - 11 OLDTOWN
 - 12 DOWNTOWN
@@ -152,7 +176,7 @@ CityState = { owner, name, world: "user:<uuid>@2", tier: 1..5, xp, tier_xp: [t1.
 | Key | Owns | Consumes |
 | --- | --- | --- |
 | gen-organic | `backend/src/worldgen/organic/*` (new), `mod.rs` version + profile dispatch, `profile.rs` commons + island profiles (data only), `bin/worldgen.rs` | this contract |
-| gen-civic | `backend/src/worldgen/civic.rs`, `zones.rs`, `transit.rs` (new) | gen-organic's branch |
+| gen-civic | `backend/src/worldgen/civic.rs`, `zones.rs`, `transit.rs`, `civic_tests.rs` (new), their `mod.rs` wiring | gen-organic's branch |
 | gen-island | `backend/src/worldgen/island.rs` (new): coast, docks, growth ranks, `min_tier` | gen-civic's branch |
 | srv-economy | `backend/src/cities.rs`, `market.rs`, migration 0013, route registration in `main.rs` | contract only |
 | srv-archipelago | `backend/src/archipelago.rs`, `world.rs` LIVE ids, privacy and visibility checks, server-side Commons HQ lot assignment | contract only |

@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.9.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.0.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -330,6 +330,36 @@ and feature guide.
 
 ## Changelog
 
+- **3.0.0 — Cities.** Arena City grows into a world of cities.
+  - **The Commons** (`claude-hq@2`) replaces the gridded street for everyone: an organic city on an
+    island, with arterial and local streets, districts (old town, downtown, suburbs, office, tech, film
+    and more), every open HQ's tower on the lot the Arena assigns it, and civic buildings you can walk
+    into: the HQ tabs open from the library, the market, the post office and the rest, and the **town
+    hall** opens the **Town Hall** panel (the city's tier, growth, population, treasury, tax, specialty
+    and its market).
+  - **Your own island** (`user:<you>@2`): a personal city with your HQ next to the town hall. It grows
+    with your XP through five tiers (Village, Town, City, Metropolis, Capital): new streets, lots,
+    services, buses from tier 2 and trams from tier 4 appear as you climb. Owners don't place
+    buildings; you upgrade the city, move coins in and out (10% fee) and choose who may visit:
+    everyone in your Arena (the default), your crew only, or nobody. Visitors walk, ride, shop and trade.
+  - **Economy:** passive tax into the city treasury, upgrades, a specialty good per city (the one its
+    industry zone visibly makes), supply chains, and a market whose prices move every hour inside a band.
+  - **People and traffic:** residents who commute, work, lunch and go home on a schedule (press **E**
+    on one to hear them), cars, buses, trams and emergency runs. Press **E** at a stop, pick where to
+    go, wait for the bus or tram and ride it (2 coins to that city's treasury).
+  - **The sea:** the other islands on the horizon; a rowboat and a jet ski at every dock you can
+    drive (E), and land on another island's dock. Press **E** at a dock, port, station or airport for
+    ferries, trains, planes and fast travel (1 coin; ferries, rail and boats are free); the **My
+    island** / **The Commons** button goes straight between your island and the Commons.
+  - **Multiplayer:** each world has its own presence room (`city3d:<world id>`, HQ presence v3); an
+    Arena without @2 still gets the 3D City on `claude-hq@1`, and `?world=old` still loads the legacy City.
+  **Privacy/egress:** the new dashboard proxies (`GET /api/arena/city/:owner`, `/api/arena/market/:owner`,
+  `/api/arena/archipelago`, `/api/arena/world/claude-hq@2/assign`; `POST /api/arena/city/:owner/{build,
+  transfer,privacy,fare}` and `/api/arena/market/:owner/trade`) send only the regex-validated owner id
+  (a user id or `commons`) and bodies rebuilt from allowlisted, value-checked keys, with the paired device
+  token, to the configured Arena. `GET /api/arena/world/user:<id>@2` adds the device token because the
+  Arena serves an island only to those who may visit it; the fixed worlds still go without one. Nothing
+  transcript-derived is sent.
 - **2.9.0 — The 3D Arena City.** Arena City is now a 3D city built from the Arena's generated world
   (`claude-hq@1`), with camera modes, a map, and a local dev Arena (`tools/local_arena.sh`);
   `?world=old` still loads the legacy City.

@@ -125,6 +125,8 @@ if(!E){ return; }
 
 var PI = Math.PI;
 var CHAR_FILES = ["character-female-a", "character-male-a", "character-female-c", "character-male-c", "character-female-e", "character-male-e"];
+// the six characters and their model height, for the City's residents (games/npcdraw.js keeps copies)
+HQV.hq3dPure.CHAR_FILES = CHAR_FILES; HQV.hq3dPure.CH_H = 0.72;
 var COL = {cyan: 0x5fd3e6, coral: 0xff6b5b, violet: 0x9b8cf0, amber: 0xffb347, green: 0x6fd38a};
 var HEX = {cyan: "#5fd3e6", coral: "#ff6b5b", violet: "#9b8cf0", amber: "#ffb347", green: "#6fd38a", ink: "#e9eff3", muted: "#93a7b7", stale: "#5b6b78"};
 var STATE_COL = {working: COL.cyan, needs: COL.coral, idle: COL.violet, stale: 0x3a4652};
@@ -283,7 +285,8 @@ function mount(el, api){
     if(rx || ry || rz) m.rotation.set(rx || 0, ry || 0, rz || 0);
     p.add(m); return m;
   }
-  function rig(p, name, x, y, z){ var g = new THREE.Group(); g.name = name; g.userData.rigid = true; g.position.set(x || 0, y || 0, z || 0); p.add(g); return g; }
+  // (not "rig": that is the camera rig below, and a var of that name would shadow this function)
+  function rigidPart(p, name, x, y, z){ var g = new THREE.Group(); g.name = name; g.userData.rigid = true; g.position.set(x || 0, y || 0, z || 0); p.add(g); return g; }
   function anchor(p, name, x, y, z){ var o = new THREE.Object3D(); o.name = name; o.position.set(x, y, z); p.add(o); return o; }
   function rrShape(w, h, r){                      // a rounded rectangle, centred
     var s = new THREE.Shape(), x = -w/2, y = -h/2; r = Math.max(0.001, Math.min(r, w/2, h/2));
@@ -388,7 +391,7 @@ function mount(el, api){
   function buildBike(){
     var g = new THREE.Group(), WR = BIKE_WR, WB = BIKE_WB, CR = BIKE_CR;
     function wheel(p, name, x, y, z){
-      var w = rig(p, name, x, y, z);
+      var w = rigidPart(p, name, x, y, z);
       ring("tyre", WR - 0.024, 0.024, w, 0, 0, 0, 40);
       ring("rim", WR - 0.052, 0.011, w, 0, 0, 0, 40);
       disc("chrome", 0.024, 0.08, w, 0, 0, 0, 10);
@@ -416,7 +419,7 @@ function mount(el, api){
     vpart("seat", sideGeo(sad, 0.13, 0.018), g);
     slab("tail", 0.05, 0.03, 0.012, 0.01, g, 0, 0.55, -0.24, 0, 0, 0, 0.003);
     // the steering: fork, front wheel, bars, a light and a bell turn about the head tube
-    var steer = rig(g, "steer", H.x, H.y, H.z);
+    var steer = rigidPart(g, "steer", H.x, H.y, H.z);
     wheel(steer, "wheel-1", 0, WR - H.y, WB/2 - H.z);
     [0.045, -0.045].forEach(function(x){ rod("paint", V3(x, Hb.y - H.y, Hb.z - H.z), V3(x, WR - H.y, WB/2 - H.z), 0.012, steer, 8); });
     slab("paint", 0.12, 0.03, 0.05, 0.01, steer, 0, Hb.y - H.y - 0.01, Hb.z - H.z, 0, 0, 0, 0.008);   // fork crown
@@ -427,7 +430,7 @@ function mount(el, api){
     vpart("chrome", new THREE.CylinderGeometry(0.018, 0.022, 0.016, 12), steer, 0.13, 0.13, 0.02);   // the bell
     anchor(steer, "a-grip-l", 0.254, 0.118, 0.005); anchor(steer, "a-grip-r", -0.254, 0.118, 0.005);
     // the cranks, the chainring and the pedals turn about the bottom bracket (left pedal on +x: the rider faces +z)
-    var crank = rig(g, "crank", BB.x, BB.y, BB.z);
+    var crank = rigidPart(g, "crank", BB.x, BB.y, BB.z);
     ring("chrome", 0.072, 0.009, crank, 0.05, 0, 0, 30); disc("dark", 0.064, 0.008, crank, 0.05, 0, 0, 20);
     [[1, 0.06], [-1, -0.06]].forEach(function(sd){
       var arm = new THREE.Group(); arm.rotation.x = sd[0] > 0 ? 0 : PI; crank.add(arm);
@@ -513,7 +516,7 @@ function mount(el, api){
     slab("dark", 1.48, 0.14, 0.36, 0.05, g, 0, 1.0, 0.6, 0.18);
     var col = new THREE.Group(); col.position.set(-0.38, 0.99, 0.07); col.rotation.x = -0.6; g.add(col);   // tilted to face the driver
     rod("dark", V3(0, 0, 0.02), V3(0, 0, 0.3), 0.025, col, 8);
-    var spin = rig(col, "spin");
+    var spin = rigidPart(col, "spin");
     vpart("dark", new THREE.TorusGeometry(0.16, 0.022, 8, 28), spin);
     [0, 2.1, -2.1].forEach(function(a){ slab("chrome", 0.026, 0.15, 0.02, 0.008, spin, Math.sin(a)*0.075, -Math.cos(a)*0.075, 0, 0, 0, a, 0.005); });
     vpart("chrome", new THREE.CylinderGeometry(0.04, 0.04, 0.04, 14), spin, 0, 0, 0, PI/2, 0, 0);
@@ -523,7 +526,7 @@ function mount(el, api){
     // the wheels: chunky tyres round dark alloys with five bright spokes; the front ones steer
     [[-CAR_WX, CAR_WZ, "steer-l"], [CAR_WX, CAR_WZ, "steer-r"], [-CAR_WX, -CAR_WZ, null], [CAR_WX, -CAR_WZ, null]].forEach(function(p, i){
       var hold = new THREE.Group(); hold.position.set(p[0], CAR_WR, p[1]); if(p[2]) hold.name = p[2]; g.add(hold);
-      var w = rig(hold, "wheel-" + i);
+      var w = rigidPart(hold, "wheel-" + i);
       ring("tyre", CAR_WR - 0.1, 0.1, w, 0, 0, 0, 28);
       disc("trim", CAR_WR - 0.12, 0.16, w, 0, 0, 0, 22);
       [1, -1].forEach(function(sx){
@@ -558,7 +561,7 @@ function mount(el, api){
     var g = new THREE.Group(), m = new THREE.Group(), WR = MOTO_WR, WB = MOTO_WB;
     m.scale.setScalar(MOTO_S); g.add(m);
     function wheel(p, name, x, y, z){
-      var w = rig(p, name, x, y, z);
+      var w = rigidPart(p, name, x, y, z);
       ring("tyre", WR - 0.07, 0.07, w, 0, 0, 0, 32);
       ring("rim", WR - 0.145, 0.018, w, 0, 0, 0, 30);                             // the rim; the spokes in the accent
       for(var k = 0; k < 5; k++){ var a = k/5*PI*2, L = WR - 0.165, rc = 0.02 + L/2; slab("accent", 0.026, L, 0.022, 0.008, w, 0, Math.cos(a)*rc, Math.sin(a)*rc, a, 0, 0, 0.006); }
@@ -608,7 +611,7 @@ function mount(el, api){
     [0.2, -0.2].forEach(function(x){ rod("trim", V3(x*0.6, 0.56, -0.12), V3(x, 0.56, -0.12), 0.016, m, 6); });
     anchor(m, "a-foot-l", 0.2, 0.58, -0.1); anchor(m, "a-foot-r", -0.2, 0.58, -0.1);
     // the steering: forks, front wheel, mudguard, bars and the headlight cowl turn about the head
-    var steer = rig(m, "steer", 0, 0.98, 0.5), FW = V3(0, WR - 0.98, WB/2 - 0.5);
+    var steer = rigidPart(m, "steer", 0, 0.98, 0.5), FW = V3(0, WR - 0.98, WB/2 - 0.5);
     wheel(steer, "wheel-1", FW.x, FW.y, FW.z);
     [0.09, -0.09].forEach(function(x){
       rod("chrome", V3(x, 0.04, 0.0), V3(x, -0.3, 0.1), 0.026, steer, 10);
@@ -661,7 +664,7 @@ function mount(el, api){
 
   // What a floor of the building (games/hqlobby.js, games/hqbase.js) builds with.
   var ctx = {
-    get THREE(){ return THREE; }, get L(){ return L; }, E: E, PI: PI, COL: COL, HEX: HEX, STATE_HEX: STATE_HEX,
+    get THREE(){ return THREE; }, get L(){ return L; }, get el(){ return el; }, E: E, PI: PI, COL: COL, HEX: HEX, STATE_HEX: STATE_HEX,
     mat: function(c, o){ return mat(c, o); }, emis: function(c, e, ei, o){ return emis(c, e, ei, o); },
     add: function(o, x, y, z, p, ns){ return add(o, x, y, z, p, ns); }, box: function(w, h, d, m, x, y, z, p, ns){ return box(w, h, d, m, x, y, z, p, ns); },
     cyl: function(rt, rb, h, m, x, y, z, p, seg){ return cyl(rt, rb, h, m, x, y, z, p, seg); }, sph: function(r, m, x, y, z, p){ return sph(r, m, x, y, z, p); },
@@ -676,7 +679,11 @@ function mount(el, api){
     avatar: function(){ return avatar ? {x: avatar.x, z: avatar.z} : null; },
     view: function(){ return {yaw: view.yaw, pitch: view.pitch}; },
     sessions: function(){ return sessions; }, level: function(){ return api.level ? api.level() : 1; },
-    look: function(){ return (api.look && api.look()) || {}; }, api: api
+    look: function(){ return (api.look && api.look()) || {}; }, api: api,
+    // Cities: put you somewhere in this world (off a bus, back at a dock), or build the City again on
+    // another world (an island, the Commons) and arrive at spawn
+    teleport: function(x, z, yaw){ if(avatar){ if(ride) dismount(true); placeAvatar(x, z, yaw); } },
+    goCity: function(world, spawn){ return inst.goCity ? inst.goCity(world, spawn) : false; }
   };
 
   /* ---------- day / night from the local clock ---------- */
@@ -1122,6 +1129,8 @@ function mount(el, api){
            slide: {min: 7, turn: 1.3, grip: 2.2, max: 0.62, bleed: 3.4}},
     skate: {top: 9, acc: 5.5, rev: 0, lean: 0, box: [0, 0], skate: true}     // its physics: games/hqskate.js
   };
+  // the boats at the docks (games/hqboat.js: a rowboat and a jet ski; their physics is its own)
+  if(HQV.hqboat) Object.keys(HQV.hqboat.VEHICLES).forEach(function(k){ VEHICLES[k] = HQV.hqboat.VEHICLES[k]; });
   var ride = null, nearIdx = -1;                                      // nearIdx: nearBike(), once per frame
   function nearBike(){
     var bs = cur && cur.bikes; if(!bs || !avatar) return -1;
@@ -1133,7 +1142,8 @@ function mount(el, api){
         d = Math.hypot(avatar.x - (b.x + hx*u), avatar.z - (b.z + hz*u)) - 0.9;
         if(d > 1.2) return;                       // close by its door, not through the garage wall
       }
-      if(d < 1.7 && d < bd){ bd = d; best = i; } });
+      var reach = VEHICLES[b.kind] && VEHICLES[b.kind].boat ? 4 : 1.7;   // a boat lies off the quay
+      if(d < reach && d < bd){ bd = d; best = i; } });
     return best;
   }
   // the parked prop you are riding: found by its id, so a rebuilt street (someone opened their HQ
@@ -1325,17 +1335,18 @@ function mount(el, api){
   // b: a parked {g, x, z, yaw, color, roof?, kind}; i: its index in cur.bikes (-1: not parked anywhere)
   function mountOn(b, i){
     var lean = new THREE.Group(); avatar.g.add(lean);
-    var kind = VEHICLES[b.kind] ? b.kind : "bike", car = kind === "car";
-    var B = car ? carModel(b.color, b.accent) : kind === "moto" ? motoModel(b.color, b.accent) : kind === "skate" ? boardModel(b.color) : bikeModel(b.color, b.accent); lean.add(B.g);
+    var kind = VEHICLES[b.kind] ? b.kind : "bike", car = kind === "car", boat = !!VEHICLES[kind].boat && !!HQV.hqboat;
+    var B = boat ? HQV.hqboat.model(ctx, kind, b.color, b.accent) : car ? carModel(b.color, b.accent) : kind === "moto" ? motoModel(b.color, b.accent) : kind === "skate" ? boardModel(b.color) : bikeModel(b.color, b.accent); lean.add(B.g);
     if(avatar.ch){ lean.add(avatar.ch.o); seatAny(avatar.ch, kind, B); }
     b.g.visible = false;
     avatar.airborne = false; avatar.vy = 0; avatar.hop = 0;   // getting on mid-hop lands you on the seat
     // you take its place: the seat is where it stands (a car is long, so this matters most there)
     if(kind !== "skate"){ avatar.x = b.x; avatar.z = b.z; }
-    settleY(0); avatar.g.position.y = avatar.hy;
+    settleY(0); if(boat) avatar.hy = cur.sea ? cur.sea.y : 0; avatar.g.position.y = avatar.hy;
     avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0;
     ride = {idx: i, id: b.id || null, B: B, lean: lean, speed: 0, steer: 0, head: b.yaw, slip: 0, drift: false, gear: 1, rpm: 900,
-            kind: kind, V: VEHICLES[kind], car: car, eng: null, pitch: 0, pv: 0, roll: 0, rv: 0};
+            kind: kind, V: VEHICLES[kind], car: car, eng: null, pitch: 0, pv: 0, roll: 0, rv: 0,
+            boat: boat ? HQV.hqboat.newState(kind, b.x, b.z, b.yaw) : null};
     if(kind === "skate") skateStart(b);
     avatar.yaw = b.yaw; avatar.rideYaw = null; walkTo = null; walkDoor = null;
     movedHere = true;                       // you are somewhere now: a street rebuild must not put you back at your door
@@ -1346,6 +1357,26 @@ function mount(el, api){
   }
   function dismount(force){
     if(!ride) return;
+    if(ride.boat){
+      // ashore only at a dock or where the bow touches the beach (the world says where you step);
+      // forced (another world, Return to HQ) the boat goes back to its berth
+      var spot = cur && cur.boatLand ? cur.boatLand(ride.boat) : null;
+      if(!spot && !force){ if(api.announce) api.announce("Steer to a dock or onto a beach to step ashore."); return; }
+      var bp = rideProp();
+      if(bp){
+        if(spot && !force){ parked[bp.id] = {x: ride.boat.x, z: ride.boat.z, yaw: ride.boat.yaw}; placeProp(bp, ride.boat.x, ride.boat.z, ride.boat.yaw); }
+        bp.g.visible = true;
+      }
+      if(avatar.ch){ poseUndo(avatar.ch); avatar.g.add(avatar.ch.o); seatOn(avatar.ch, null); }
+      avatar.g.rotation.x = 0; avatar.g.rotation.z = 0;
+      if(spot){ avatar.x = spot.x; avatar.z = spot.z; if(spot.yaw != null) avatar.yaw = spot.yaw; }
+      avatar.g.remove(ride.lean);
+      if(ride.eng){ ride.eng.stop(); ride.eng = null; }
+      ride = null; doorsArmed = false; stopFeet(); settleY(0);
+      avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
+      driveHud(null); rideUiSync(true);
+      return;
+    }
     if(ride.kind === "skate"){
       var st = ride.sk && ride.sk.st;
       if(st && (st.air || st.grind) && !force) return;               // finish the trick first (E mid-air does nothing)
@@ -1598,9 +1629,9 @@ function mount(el, api){
     if(!force && key === rideUi.dataset.k) return;
     rideUi.dataset.k = key; rideUi.hidden = !key;
     var kind = ride ? ride.kind : (nb && VEHICLES[nb.kind] ? nb.kind : "bike");
-    rideUi.textContent = ride ? (kind === "car" ? "Get out (E)" : kind === "skate" ? "Step off (E)" : "Get off (E)")
-      : kind === "car" ? "\uD83D\uDE97 Drive (E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride (E)" : kind === "skate" ? "\uD83D\uDEF9 Skate (E)" : "\uD83D\uDEB2 Ride (E)";
-    rideUi.title = ride ? RIDE_HELP[kind] : kind === "car" ? "Get in this car" : kind === "moto" ? "Get on this motorbike"
+    rideUi.textContent = ride ? (kind === "car" ? "Get out (E)" : kind === "skate" ? "Step off (E)" : VEHICLES[kind].boat ? "Step ashore (E)" : "Get off (E)")
+      : kind === "rowboat" ? "\uD83D\uDEA3 Row (E)" : kind === "jetski" ? "\uD83C\uDF0A Ride the jet ski (E)" : kind === "car" ? "\uD83D\uDE97 Drive (E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride (E)" : kind === "skate" ? "\uD83D\uDEF9 Skate (E)" : "\uD83D\uDEB2 Ride (E)";
+    rideUi.title = ride ? RIDE_HELP[kind] : VEHICLES[kind].boat ? "Take the helm" : kind === "car" ? "Get in this car" : kind === "moto" ? "Get on this motorbike"
       : kind === "skate" ? "Step on this skateboard" : "Get on this bike";
     if(key === "on" && force) tipRide();
   }
@@ -1608,7 +1639,9 @@ function mount(el, api){
     bike: "W / S: pedal and brake · A / D: steer · Shift: pedal harder · E: get off",
     moto: "W: throttle (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Shift + steer: slide the back wheel · Space: handbrake · E: get off",
     car: "W: accelerator (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Shift + steer: powerslide · Space: handbrake · E: get out",
-    skate: "W: push · S: brake · A / D: carve (in the air: spin) · Space: ollie · F: kickflip · G: shove-it · E: step off"
+    skate: "W: push · S: brake · A / D: carve (in the air: spin) · Space: ollie · F: kickflip · G: shove-it · E: step off",
+    rowboat: "W: row · S: back water · A / D: steer · E: step ashore at a dock or a beach",
+    jetski: "W: throttle · S: astern · A / D: steer (it needs way on to turn) · E: step ashore at a dock or a beach"
   };
   // the one-line version under the driving HUD
   var RIDE_HINT = {
@@ -1757,6 +1790,31 @@ function mount(el, api){
   // The visual ground height: springs (omega 18) toward the ground under you, so a kerb or a road's
   // height change is a step, not a snap. dt 0 (a teleport) or a jump over 3 m lands at once.
   // The raw ground (groundAt) stays the physics: hops and collisions measure from it.
+  // A boat (games/hqboat.js): its own water physics against the world's sea (cur.sea, games/ocean.js
+  // seaOf): W / S throttle and astern, A / D steer (A turns left, as rideMove), a pad's stick too.
+  function boatMove(dt){
+    var gp = padNow(), H = HQV.hqboat, st = ride.boat;
+    var thr = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+    var steer = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
+    if(gp){ thr = E.clamp(thr + gp.thr, -1, 1); steer = E.clamp(steer - gp.x, -1, 1); }
+    walkTo = null; walkDoor = null;
+    var inp = {thr: thr, steer: steer}, yaw0 = avatar.yaw;
+    var evs = cur.sea ? H.step(st, inp, dt, cur.sea) : [];
+    (evs || []).forEach(function(ev){ var k = ev && (ev.type || ev); if(k === "beach" || k === "dock") E.sfx(k === "dock" ? "door" : "hit"); });
+    ride.speed = st.speed != null ? st.speed : ride.speed; ride.steer = steer;
+    avatar.x = st.x; avatar.z = st.z; avatar.yaw = st.yaw;
+    avatar.rate += ((dt > 0 ? wrapPi(avatar.yaw - yaw0)/dt : 0) - avatar.rate)*ease(10, dt); avatar.rideYaw = avatar.yaw;
+    avatar.travelYaw = Math.abs(ride.speed) > 0.05 ? (ride.speed < 0 ? wrapPi(avatar.yaw + PI) : avatar.yaw) : null;
+    avatar.hy = st.y != null ? st.y : (cur.sea ? cur.sea.y : 0); avatar.hyV = 0;
+    ride.pitch = st.pitch || 0; ride.roll = st.roll || 0;
+    H.animate(ride.B, st, inp, dt);
+    engineStep(dt, thr);
+    keyMove = Math.abs(ride.speed) > 0.3; keyRun = false; if(keyMove) movedHere = true;
+    avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
+    avatar.g.rotation.y = avatar.yaw; avatar.g.rotation.x = -ride.pitch; avatar.g.rotation.z = ride.roll;
+    var b = rideProp(); if(b && b.g.visible) b.g.visible = false;
+    view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
+  }
   function settleY(dt){
     var gy = groundAt(avatar.x, avatar.z);
     if(!(dt > 0) || Math.abs(gy - avatar.hy) > 3){ avatar.hy = gy; avatar.hyV = 0; }
@@ -1766,7 +1824,17 @@ function mount(el, api){
   // a teleport: standing still where you land, at the ground's height (no spring from where you were)
   function stopFeet(){ avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0; avatar.travelYaw = null; avatar.hy = 1e9; }
   function moveAvatar(dt){
-    if(ride){ if(ride.kind === "skate") skateMove(dt); else rideMove(dt); return; }
+    if(ride){ if(ride.kind === "skate") skateMove(dt); else if(ride.boat) boatMove(dt); else rideMove(dt); return; }
+    // on a bus or a tram (games/hqcity3d.js w.carry): the vehicle's seat, its timetable's pose
+    var cp = cur && cur.carry ? cur.carry() : null;
+    if(cp){
+      walkTo = null; walkDoor = null; keyMove = false; movedHere = true;
+      avatar.x = cp.x; avatar.z = cp.z; avatar.yaw = cp.yaw; avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.travelYaw = cp.yaw;
+      avatar.hy = cp.y; avatar.hyV = 0; setAnim(avatar.ch, "idle");
+      avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
+      view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
+      return;
+    }
     var fwd = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
     var side = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
     var run = !!(keys.ShiftLeft || keys.ShiftRight), base = run ? FOOT.run : FOOT.walk;
@@ -2063,6 +2131,18 @@ function mount(el, api){
       vehicle: ride ? ride.kind : null, prompt: hudPrompt(), crosshair: rig.mode === "fp", vignette: pose.vignette || 0,
       mapSpan: rig.mapSpan, project: project, peers: peerDots(), ground: groundAt});
   }
+  // A trip between islands (games/hqtravel.js through hqcity3d's w.camPose): while its pose has a
+  // camera, it is the shot (a perspective one: classic and the map hand over to chase first).
+  function tripCam(){
+    var cp = cur && cur.camPose ? cur.camPose() : null;
+    if(!cp || !cp.camera || !cp.pos || !cp.look || !rigOn()) return;
+    if(rig.mode === "classic" || rig.mode === "map" || rig.mode === "photo") HQV.camrig.setMode(rig, "chase", {instant: true});
+    pcam.position.set(cp.pos.x, cp.pos.y, cp.pos.z);
+    if(cp.up) pcam.up.set(cp.up.x, cp.up.y, cp.up.z);
+    pcam.lookAt(cp.look.x, cp.look.y, cp.look.z);
+    pcam.fov = cp.fov || 60; pcam.far = Math.max(pcam.far, 3000); pcam.updateProjectionMatrix(); pcam.updateMatrixWorld();
+    showAvatar(false);
+  }
   // Gamepad: polled only after a gamepadconnected (and until a gamepaddisconnected).
   function onPadOn(){ pad.on = true; }
   function onPadOff(){ pad.on = false; pad.st = null; pad.prev = []; }
@@ -2151,6 +2231,7 @@ function mount(el, api){
   function hitList(){ return cur === worlds.mission ? clickables.concat(doorHits, projHits) : (cur.hits || []); }
   // Through a door: another view of the page, or another floor of the building ("@lobby").
   function through(d){
+    if(!d.view){ if(d.kind === "townhall" && cur && cur.townHall) cur.townHall(); return; }   // games/hqcivic.js: the town hall
     if(d.view.charAt(0) === "@") enterWorld(d.view.slice(1), cur.name);
     else if(d.view.indexOf("visit:") === 0){ if(api.visit) api.visit(d.view.slice(6)); }   // someone's HQ on the city street
     else api.go(d.view);
@@ -2262,6 +2343,7 @@ function mount(el, api){
     var go = function(){
       dismount(true);
       rigLeave();
+      var prev = cur;
       if(cur && cur === worlds.city && avatar) lastCity = cityAnchor(cur);   // where you were on the street
       if(avatar.g.parent) avatar.g.parent.remove(avatar.g);
       w.scene.add(avatar.g);
@@ -2272,6 +2354,7 @@ function mount(el, api){
       if(w.camModes) rigEnter(w);
       if(api.remember !== false){ try { localStorage.setItem("hq_world", name); } catch(e){} }
       if(api.onWorld) api.onWorld(name);
+      if(prev && prev.swapOut && prev !== w && prev.destroy){ try { prev.destroy(); } catch(e){} }   // the island you left
     };
     if(instant || E.calm()){ go(); return; }
     fading = true; fadeEl.classList.add("on"); E.sfx("door");
@@ -2292,6 +2375,8 @@ function mount(el, api){
   function useKey(){
     if(ride || nearBike() >= 0){ rideToggle(); return true; }
     if(rigOn() && rig.mode === "fp" && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d){ through(d); return true; } }
+    // the world's own (games/hqcity3d.js): talk to a resident, a bus stop, a dock, a station
+    if(cur && cur.use && avatar && cur.use({x: avatar.x, z: avatar.z, yaw: avatar.yaw})) return true;
     return false;
   }
   // V / Shift+V, M, P, Q / R, Z / C (and Enter in photo mode); only while a rig world (cur.camModes) is up.
@@ -2310,9 +2395,11 @@ function mount(el, api){
   }
   // Capture phase, so walking keys win over the page's single-key shortcuts while HQ is open.
   function onKey(e){
+    if(HQV.townHall && HQV.townHall.isOpen && HQV.townHall.isOpen()){ keys = {}; return; }   // the Town Hall has the keys
+    if(cur && cur.menuOpen && cur.menuOpen()){ keys = {}; return; }                         // a stop's or a dock's menu too
     if(e.type === "keydown" && inst.running && rigOn() && !typing(e.target)) noteInput();
     if(e.code === "KeyE" && e.type === "keydown" && !e.repeat && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey
-       && (ride || nearBike() >= 0 || (rigOn() && rig.mode === "fp"))){ if(useKey()) e.preventDefault(); return; }
+       && (ride || nearBike() >= 0 || (rigOn() && rig.mode === "fp") || (cur && cur.use))){ if(useKey()) e.preventDefault(); return; }
     if((e.code === "KeyT" || e.code === "Home") && e.type === "keydown" && !e.repeat && inst.running && cur === worlds.city && !typing(e.target)
        && !e.metaKey && !e.ctrlKey && !e.altKey){ e.preventDefault(); returnHome(); return; }
     if(camKey(e)) return;
@@ -2337,10 +2424,12 @@ function mount(el, api){
     var kb = keys, kp = withPad();
     keys = rigOn() && (rig.mode === "map" || rig.mode === "photo" || rig.mode === "cine") ? {} : kp;
     moveAvatar(dt);
+    if(cur && cur.onBoat) cur.onBoat(ride && ride.boat ? {st: ride.boat, kind: ride.kind, beam: ride.V.beam || 1} : null);   // the City's wake, landings
     nearIdx = ride ? -1 : nearBike();
     rideUiSync(false); homeUiSync();
     keys = kp;
     if(rigOn()) rigFrame(t, dt);
+    tripCam();
     keys = kb;
     // the camera keeps up better the faster you go (a car at full speed stays on screen)
     var ease = 1 - Math.exp(-dt*(ride ? 4 + Math.min(6, Math.abs(ride.speed)*0.3) : 4)); view.target.lerp(view.goal, ease);
@@ -2526,7 +2615,8 @@ function mount(el, api){
   // 0 still, 1 walk, 2 run, 3 on a bike (any speed: others draw you riding), 4 on a skateboard,
   // 5 driving a car, 6 on a motorbike (the page sends 5 / 6 only where the Arena lists "drive").
   var RIDE_A = {bike: 3, skate: 4, car: 5, moto: 6};
-  inst.moving = function(){ return ride ? (RIDE_A[ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
+  // (a boat has no presence animation of its own yet: others see you standing, or walking while it moves)
+  inst.moving = function(){ return ride ? (ride.boat ? (keyMove ? 1 : 0) : RIDE_A[ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
   // on a board: what others should see you doing ({k, y}); null otherwise
   inst.skate = function(){ return ride && ride.kind === "skate" ? skateNet() : null; };
   inst.riding = function(){ return !!ride; };
@@ -2605,6 +2695,17 @@ function mount(el, api){
             h: rigW ? avatar.g.position.y : null, pitch: rigW && ride ? ride.pitch || 0 : 0};
   };
   inst.goWorld = function(name){ name = outside(name); if(scene && cur && cur.name !== name) enterWorld(name, null); };
+  // Another island (or back to the Commons): the City is built again for that world (games/hqcity3d.js
+  // HQV.hqCity3d.go picks it and where you arrive), behind the loading overlay while the old one draws.
+  inst.goCity = function(world, spawn){
+    if(!scene || !HQV.hqCity3d || !HQV.hqCity3d.go) return false;
+    HQV.hqCity3d.go(world, spawn || null);
+    var C = worlds.city;
+    if(C){ delete worlds.city; C.swapOut = true; if(C !== cur && C.destroy){ try { C.destroy(); } catch(e){} } }
+    lastCity = null; entering = null;
+    enterWorld("city", null);
+    return true;
+  };
   var streamKey = "";
   function buildStreamsIfChanged(){
     var k = desks.map(function(D){ return D.id + ":" + crewState(D.s); }).join("|");
@@ -2632,7 +2733,7 @@ function mount(el, api){
   // Outside is the 3D City: start reading its world (IndexedDB, then the Arena) while three.js loads,
   // a quiet moment; games/world.js hands the same promise to the City when it is built.
   if(api.outside && api.outside() === "city" && cityImpl() !== "old" && HQV.hqWorlds && HQV.hqWorlds.city3d && HQV.world && HQV.world.load){
-    try { HQV.world.load().catch(function(){}); } catch(e){}
+    try { HQV.world.load({id: HQV.world.COMMONS || "claude-hq@1"}).catch(function(){}); } catch(e){}
   }
   E.lib().then(function(lib){
     if(!inst.alive) return;

@@ -694,7 +694,7 @@ function mount(el, api){
     // voyages (games/hqcity3d.js, games/hqvoyage.js): the next city built while you sail, then moved into with no fade
     prebuildCity: function(world){ return inst.prebuildCity ? inst.prebuildCity(world) : false; },
     cityBuilt: function(world){ return !!(nextCity && nextCity.world === world && nextCity.ready); },
-    swapCity: function(world){ return inst.swapCity ? inst.swapCity(world) : false; },
+    swapCity: function(world, keep){ return inst.swapCity ? inst.swapCity(world, keep) : false; },
     night: function(){ return isNight(); },
     held: function(code){ return !!keys[code]; }
   };
@@ -1144,6 +1144,8 @@ function mount(el, api){
   };
   // the boats at the docks (games/hqboat.js: a rowboat and a jet ski; their physics is its own)
   if(HQV.hqboat) Object.keys(HQV.hqboat.VEHICLES).forEach(function(k){ VEHICLES[k] = HQV.hqboat.VEHICLES[k]; });
+  // the helicopters on the pads (games/hqheli.js: their flight model is their own; heliMove below)
+  if(HQV.hqheli) Object.keys(HQV.hqheli.VEHICLES).forEach(function(k){ VEHICLES[k] = HQV.hqheli.VEHICLES[k]; });
   var ride = null, nearIdx = -1;                                      // nearIdx: nearBike(), once per frame
   function nearBike(){
     var bs = cur && cur.bikes; if(!bs || !avatar) return -1;
@@ -1155,7 +1157,8 @@ function mount(el, api){
         d = Math.hypot(avatar.x - (b.x + hx*u), avatar.z - (b.z + hz*u)) - 0.9;
         if(d > 1.2) return;                       // close by its door, not through the garage wall
       }
-      var reach = VEHICLES[b.kind] && VEHICLES[b.kind].boat ? 4 : 1.7;   // a boat lies off the quay
+      var reach = VEHICLES[b.kind] && VEHICLES[b.kind].reach ? VEHICLES[b.kind].reach : VEHICLES[b.kind] && VEHICLES[b.kind].boat ? 4 : 1.7;   // a boat lies off the quay
+      if(b.y != null && Math.abs(b.y - avatar.hy) > 3) return;                  // a helicopter up on a roof
       if(d < reach && d < bd){ bd = d; best = i; } });
     return best;
   }
@@ -1348,8 +1351,8 @@ function mount(el, api){
   // b: a parked {g, x, z, yaw, color, roof?, kind}; i: its index in cur.bikes (-1: not parked anywhere)
   function mountOn(b, i){
     var lean = new THREE.Group(); avatar.g.add(lean);
-    var kind = VEHICLES[b.kind] ? b.kind : "bike", car = kind === "car", boat = !!VEHICLES[kind].boat && !!HQV.hqboat;
-    var B = boat ? HQV.hqboat.model(ctx, kind, b.color, b.accent) : car ? carModel(b.color, b.accent) : kind === "moto" ? motoModel(b.color, b.accent) : kind === "skate" ? boardModel(b.color) : bikeModel(b.color, b.accent); lean.add(B.g);
+    var kind = VEHICLES[b.kind] ? b.kind : "bike", car = kind === "car", boat = !!VEHICLES[kind].boat && !!HQV.hqboat, heli = !!VEHICLES[kind].heli && !!HQV.hqheli;
+    var B = heli ? HQV.hqheli.model(ctx, kind, b.color, b.accent) : boat ? HQV.hqboat.model(ctx, kind, b.color, b.accent) : car ? carModel(b.color, b.accent) : kind === "moto" ? motoModel(b.color, b.accent) : kind === "skate" ? boardModel(b.color) : bikeModel(b.color, b.accent); lean.add(B.g);
     if(avatar.ch){ lean.add(avatar.ch.o); seatAny(avatar.ch, kind, B); }
     b.g.visible = false;
     avatar.airborne = false; avatar.vy = 0; avatar.hop = 0;   // getting on mid-hop lands you on the seat
@@ -1359,7 +1362,9 @@ function mount(el, api){
     avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0;
     ride = {idx: i, id: b.id || null, B: B, lean: lean, speed: 0, steer: 0, head: b.yaw, slip: 0, drift: false, gear: 1, rpm: 900,
             kind: kind, V: VEHICLES[kind], car: car, eng: null, pitch: 0, pv: 0, roll: 0, rv: 0,
-            boat: boat ? HQV.hqboat.newState(kind, b.x, b.z, b.yaw) : null};
+            boat: boat ? HQV.hqboat.newState(kind, b.x, b.z, b.yaw) : null,
+            heli: heli ? HQV.hqheli.newState(kind, b.x, b.y != null ? b.y : groundAt(b.x, b.z), b.z, b.yaw) : null};
+    if(ride.heli){ avatar.hy = ride.heli.y; avatar.g.position.y = avatar.hy; }
     if(kind === "skate") skateStart(b);
     if(ride.boat) ride.boat.y = cur.sea ? cur.sea.y : 0;            // afloat where it lies (no spring down from 0)
     avatar.yaw = b.yaw; avatar.rideYaw = null; walkTo = null; walkDoor = null;
@@ -1371,6 +1376,27 @@ function mount(el, api){
   }
   function dismount(force){
     if(!ride) return;
+    if(ride.heli){
+      // out only once it is down, and on land: the world says where you stand (a roof pad: its building's door);
+      // forced (another world, Return to HQ) it stays where it was parked
+      var hs = ride.heli, hspot = hs.ground && cur && cur.heliLand ? cur.heliLand(hs) : null;
+      if(!hs.ground && !force){ if(api.announce) api.announce("Land first: hold Shift to come down, then E."); return; }
+      if(!hspot && !force){ if(api.announce) api.announce("You can't step out here: land on the ground or on a helipad."); return; }
+      var hp = rideProp();
+      if(hp){
+        if(hspot && !force){ parked[hp.id] = {x: hs.x, z: hs.z, yaw: hs.yaw}; placeProp(hp, hs.x, hs.z, hs.yaw); hp.g.position.y = hs.y; hp.y = hs.y; }
+        hp.g.visible = true;
+      }
+      if(avatar.ch){ poseUndo(avatar.ch); avatar.g.add(avatar.ch.o); seatOn(avatar.ch, null); }
+      avatar.g.rotation.x = 0; avatar.g.rotation.z = 0;
+      if(hspot){ avatar.x = hspot.x; avatar.z = hspot.z; if(hspot.yaw != null) avatar.yaw = hspot.yaw; }
+      avatar.g.remove(ride.lean);
+      if(ride.eng){ ride.eng.stop(); ride.eng = null; }
+      ride = null; doorsArmed = false; stopFeet(); settleY(0);
+      avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
+      driveHud(null); rideUiSync(true);
+      return;
+    }
     if(ride.boat){
       // ashore only at a dock or where the bow touches the beach (the world says where you step);
       // forced (another world, Return to HQ) the boat goes back to its berth
@@ -1645,9 +1671,9 @@ function mount(el, api){
     if(!force && key === rideUi.dataset.k) return;
     rideUi.dataset.k = key; rideUi.hidden = !key;
     var kind = ride ? ride.kind : (nb && VEHICLES[nb.kind] ? nb.kind : "bike");
-    rideUi.textContent = ride ? (kind === "car" ? "Get out (E)" : kind === "skate" ? "Step off (E)" : VEHICLES[kind].boat ? "Step ashore (E)" : "Get off (E)")
-      : kind === "rowboat" ? "\uD83D\uDEA3 Row (E)" : kind === "jetski" ? "\uD83C\uDF0A Ride the jet ski (E)" : kind === "car" ? "\uD83D\uDE97 Drive (E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride (E)" : kind === "skate" ? "\uD83D\uDEF9 Skate (E)" : "\uD83D\uDEB2 Ride (E)";
-    rideUi.title = ride ? RIDE_HELP[kind] : VEHICLES[kind].boat ? "Take the helm" : kind === "car" ? "Get in this car" : kind === "moto" ? "Get on this motorbike"
+    rideUi.textContent = ride ? (kind === "car" || VEHICLES[kind].heli ? "Get out (E)" : kind === "skate" ? "Step off (E)" : VEHICLES[kind].boat ? "Step ashore (E)" : "Get off (E)")
+      : VEHICLES[kind].heli ? "\uD83D\uDE81 Fly (E)" : kind === "rowboat" ? "\uD83D\uDEA3 Row (E)" : kind === "jetski" ? "\uD83C\uDF0A Ride the jet ski (E)" : kind === "car" ? "\uD83D\uDE97 Drive (E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride (E)" : kind === "skate" ? "\uD83D\uDEF9 Skate (E)" : "\uD83D\uDEB2 Ride (E)";
+    rideUi.title = ride ? RIDE_HELP[kind] : VEHICLES[kind].heli ? "Take the controls" : VEHICLES[kind].boat ? "Take the helm" : kind === "car" ? "Get in this car" : kind === "moto" ? "Get on this motorbike"
       : kind === "skate" ? "Step on this skateboard" : "Get on this bike";
     if(key === "on" && force) tipRide();
   }
@@ -1657,7 +1683,9 @@ function mount(el, api){
     car: "W: accelerator (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Shift + steer: powerslide · Space: handbrake · E: get out",
     skate: "W: push · S: brake · A / D: carve (in the air: spin) · Space: ollie · F: kickflip · G: shove-it · E: step off",
     rowboat: "W: row · S: back water · A / D: steer · E: step ashore at a dock or a beach",
-    jetski: "W: throttle · S: astern · A / D: steer (it needs way on to turn) · E: step ashore at a dock or a beach"
+    jetski: "W: throttle · S: astern · A / D: steer (it needs way on to turn) · E: step ashore at a dock or a beach",
+    heli: "Space: climb (hold it to take off) · Shift: descend · W / S: nose down to fly forward, nose up to slow · A / D: turn · E: get out once landed",
+    attack: "Space: climb (hold it to take off) · Shift: descend · W / S: nose down to fly forward, nose up to slow · A / D: turn · E: get out once landed"
   };
   // the one-line version under the driving HUD
   var RIDE_HINT = {
@@ -1665,10 +1693,13 @@ function mount(el, api){
     moto: "W throttle · S brake · A/D steer · Shift+steer slide · Space handbrake · E get off · T home",
     car: "W go · S brake · A/D steer · Shift+steer powerslide · Space handbrake · E get out · T home",
     rowboat: "W row · S back water · A/D steer · E step ashore at a dock or a beach",
-    jetski: "W throttle · S astern · A/D steer · E step ashore at a dock or a beach"
+    jetski: "W throttle · S astern · A/D steer · E step ashore at a dock or a beach",
+    heli: "Space climb · Shift descend · W/S forward/back · A/D turn · E get out (landed)",
+    attack: "Space climb · Shift descend · W/S forward/back · A/D turn · E get out (landed)"
   };
   function tipRide(){ if(!api.announce || !ride) return;
     if(ride.kind === "skate") return;                                 // the skate HUD says how
+    if(ride.heli){ api.announce("At the controls. Hold Space to lift off and climb, Shift to come down, W and S tilt forward and back, A and D turn. Land, then E to get out."); return; }
     api.announce(ride.kind === "car" ? "In the car. Hold W to accelerate, S brakes and reverses, A and D steer, hold Shift while steering to powerslide, Space is the handbrake, E gets out."
       : ride.kind === "moto" ? "On the motorbike. Hold W for throttle, S brakes, A and D steer, hold Shift while steering to slide, Space is the handbrake, E gets off."
       : "On the bike. W and S pedal and brake, A and D steer, Shift pedals harder, E gets off."); }
@@ -1679,7 +1710,7 @@ function mount(el, api){
   // reduced motion) the moving dials give way to a plain readout. Decorative to screen readers:
   // tipRide() announces the keys, and the speed is not worth a running commentary.
   var dhud = null;                      // (not "hud": that is the camera HUD, hqhud)
-  var HUD_MAX = {bike: [60, 10, 5], moto: [120, 20, 10], car: [120, 20, 10], rowboat: [20, 5, 1], jetski: [80, 10, 5]};   // the speed dial: max, major, minor
+  var HUD_MAX = {bike: [60, 10, 5], moto: [120, 20, 10], car: [120, 20, 10], rowboat: [20, 5, 1], jetski: [80, 10, 5], heli: [200, 40, 10], attack: [200, 40, 10]};   // the speed dial: max, major, minor
   function driveHud(kind){
     if(dhud){ if(dhud.el.parentNode) dhud.el.parentNode.removeChild(dhud.el); dhud = null; }
     if(!kind || !HUD_MAX[kind]) return;
@@ -1703,7 +1734,7 @@ function mount(el, api){
     if(!dhud || !ride || t - dhud.at < 1/30) return;
     dhud.at = t;
     var kmh = Math.abs(ride.speed)*3.6, motor = !!ride.V.motor, gear = motor ? (Math.abs(ride.speed) < 0.3 && ride.gear > 0 ? 0 : ride.gear) : 0;
-    var txt = Math.round(kmh) + " km/h" + (motor ? "  ·  gear " + gearTxt(gear) : "");
+    var txt = Math.round(kmh) + " km/h" + (motor ? "  ·  gear " + gearTxt(gear) : "") + (ride.heli ? "  ·  " + Math.round(ride.heli.agl) + " m up" + (ride.heli.ground ? " (landed)" : "") : "");
     if(txt !== dhud.txt){ dhud.txt = txt; dhud.read.textContent = txt; }
     if(!!ride.drift !== dhud.sl){ dhud.sl = !!ride.drift; dhud.el.classList.toggle("sliding", dhud.sl); }
     if(E.calm()) return;                              // no moving needles (CSS shows the readout instead)
@@ -1833,6 +1864,41 @@ function mount(el, api){
     var b = rideProp(); if(b && b.g.visible) b.g.visible = false;
     view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
   }
+  // A helicopter (games/hqheli.js): Space climbs, Shift descends, W / S tilt it forward and back, A / D turn
+  // (a pad: left stick turns, the triggers tilt, A climbs, B descends). The world's floor (cur.heliFloor: terrain,
+  // roofs, the sea, a carrier's deck) is what it lands on and what stops it.
+  function heliMove(dt){
+    var gp = padNow(), Hh = HQV.hqheli, st = ride.heli;
+    var fwd = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+    var turn = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
+    var lift = (keys.Space ? 1 : 0) - (keys.ShiftLeft || keys.ShiftRight ? 1 : 0);
+    if(gp){ fwd = E.clamp(fwd + gp.thr, -1, 1); turn = E.clamp(turn - gp.x, -1, 1); lift = E.clamp(lift + (gp.hand ? 1 : 0) - (gp.slide ? 1 : 0), -1, 1); }
+    walkTo = null; walkDoor = null;
+    var yaw0 = avatar.yaw, floor = cur && cur.heliFloor ? cur.heliFloor : groundAt;
+    var evs = Hh.step(st, {fwd: fwd, turn: turn, lift: lift}, dt, {floor: floor});
+    evs.forEach(function(ev){
+      if(ev.type === "land") E.sfx(ev.hard ? "hit" : "putt");
+      else if(ev.type === "bump") E.sfx("hit");
+      else if(ev.type === "takeoff") E.sfx("go");
+    });
+    ride.speed = st.speed; ride.steer = turn;
+    avatar.x = st.x; avatar.z = st.z; avatar.yaw = st.yaw;
+    avatar.rate += ((dt > 0 ? wrapPi(avatar.yaw - yaw0)/dt : 0) - avatar.rate)*ease(10, dt); avatar.rideYaw = avatar.yaw;
+    avatar.travelYaw = st.speed > 0.5 ? Math.atan2(st.vx, st.vz) : null;
+    avatar.hy = st.y; avatar.hyV = 0;
+    ride.pitch = st.pitch; ride.roll = st.roll;
+    Hh.animate(ride.B, st, dt, isNight());
+    // the rotor's note: the blades spooling up, harder with the collective and the speed (set() every frame or it fades)
+    if(st.rpm > 0.02 && E.engineSound){
+      if(!ride.eng) ride.eng = E.engineSound(ride.V.eng);
+      ride.eng.set(900 + 6700*E.clamp(st.rpm*0.55 + Math.max(0, lift)*0.25 + st.speed/ride.V.top*0.2, 0, 1));
+    }
+    keyMove = st.speed > 0.3 || !st.ground; keyRun = false; if(keyMove) movedHere = true;
+    avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
+    avatar.g.rotation.y = avatar.yaw; avatar.g.rotation.x = -ride.pitch; avatar.g.rotation.z = ride.roll;
+    var b = rideProp(); if(b && b.g.visible) b.g.visible = false;
+    view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
+  }
   function settleY(dt){
     var gy = groundAt(avatar.x, avatar.z);
     if(!(dt > 0) || Math.abs(gy - avatar.hy) > 3){ avatar.hy = gy; avatar.hyV = 0; }
@@ -1842,7 +1908,7 @@ function mount(el, api){
   // a teleport: standing still where you land, at the ground's height (no spring from where you were)
   function stopFeet(){ avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0; avatar.travelYaw = null; avatar.hy = 1e9; }
   function moveAvatar(dt){
-    if(ride){ if(ride.kind === "skate") skateMove(dt); else if(ride.boat) boatMove(dt); else rideMove(dt); return; }
+    if(ride){ if(ride.kind === "skate") skateMove(dt); else if(ride.boat) boatMove(dt); else if(ride.heli) heliMove(dt); else rideMove(dt); return; }
     // on a bus or a tram (games/hqcity3d.js w.carry): the vehicle's seat, its timetable's pose
     var cp = cur && cur.carry ? cur.carry() : null;
     if(cp){
@@ -2362,8 +2428,9 @@ function mount(el, api){
     }
     if(entering){ entering = null; loading.remove(); }               // going somewhere else instead
     exitLock();
+    var keep = keepRide && instant && ride && ride.heli;
     var go = function(){
-      dismount(true);
+      if(!keep) dismount(true);
       rigLeave();
       var prev = cur;
       if(cur && cur === worlds.city && avatar) lastCity = cityAnchor(cur);   // where you were on the street
@@ -2372,6 +2439,7 @@ function mount(el, api){
       var sp = (w.spawnFrom && (w.spawnFrom[from] || (from === "city" && w.spawnFrom.base))) || (name === "city" && !from && citySpot(w)) || w.spawn;
       avatar.x = sp.x; avatar.z = sp.z; avatar.yaw = sp.yaw || 0; avatar.hop = 0; avatar.airborne = false; walkTo = null; walkDoor = null; stopFeet();
       cur = w; if(w === worlds.mission && missionDirty) refreshMission(); doorsArmed = false; movedHere = false; view.span = w.span || 12; view.zoom = w.zoom || 1.45; view.yaw = sp.camYaw != null ? sp.camYaw : w.camYaw != null ? w.camYaw : PI/4; view.pitch = w.camPitch || 0.62;
+      if(keep){ ride.idx = -1; ride.id = null; avatar.hy = ride.heli.y; movedHere = true; }   // flying in: the helicopter is yours now
       moveAvatar(0); view.target.copy(view.goal);
       if(w.camModes) rigEnter(w);
       if(prev && prev !== w && prev.onLeave){ try { prev.onLeave(); } catch(e){} }
@@ -2450,6 +2518,7 @@ function mount(el, api){
     keys = rigOn() && (rig.mode === "map" || rig.mode === "photo" || rig.mode === "cine") ? {} : kp;
     moveAvatar(dt);
     if(cur && cur.onBoat) cur.onBoat(ride && ride.boat ? {st: ride.boat, kind: ride.kind, beam: ride.V.beam || 1} : null);   // the City's wake, landings
+    if(cur && cur.onHeli) cur.onHeli(ride && ride.heli ? {st: ride.heli, kind: ride.kind} : null);                          // flying on to another island
     nearIdx = ride ? -1 : nearBike();
     rideUiSync(false); homeUiSync();
     keys = kp;
@@ -2641,7 +2710,7 @@ function mount(el, api){
   // 5 driving a car, 6 on a motorbike (the page sends 5 / 6 only where the Arena lists "drive").
   var RIDE_A = {bike: 3, skate: 4, car: 5, moto: 6};
   // (a boat has no presence animation of its own yet: others see you standing, or walking while it moves)
-  inst.moving = function(){ return ride ? (ride.boat ? (keyMove ? 1 : 0) : RIDE_A[ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
+  inst.moving = function(){ return ride ? (ride.boat || ride.heli ? (keyMove ? 1 : 0) : RIDE_A[ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
   // on a board: what others should see you doing ({k, y}); null otherwise
   inst.skate = function(){ return ride && ride.kind === "skate" ? skateNet() : null; };
   inst.riding = function(){ return !!ride; };
@@ -2702,6 +2771,10 @@ function mount(el, api){
   if(SMOKE && SMOKE.on){
     window.HQ3D_DEBUG = {mode: function(m){ smokeCam(m); }, teleport: function(x, z, yaw){ smokeTeleport(+x || 0, +z || 0, yaw == null ? null : +yaw); },
                          ride: function(kind){ smokeRide(kind); }, stats: function(){ return smokeStats(); },
+                         // in a helicopter (ride('heli') first): put it in the air at x, y, z, rotor up to speed
+                         fly: function(x, y, z, yaw){ var h = ride && ride.heli; if(!h) return false; h.x = +x; h.y = +y; h.z = +z; if(yaw != null) h.yaw = +yaw;
+                           h.ground = false; h.rpm = 1; h.vx = h.vy = h.vz = 0; return true; },
+                         heli: function(){ var h = ride && ride.heli; return h ? {x: h.x, y: h.y, z: h.z, yaw: h.yaw, speed: h.speed, agl: h.agl, ground: h.ground, rpm: h.rpm} : null; },
                          // the City's navigation (route, minimap, panel), for tools that follow a route
                          nav: function(){ return cur && cur.nav ? cur.nav() : null; },
                          // avatar + camera, for tools that drive the keys and record motion
@@ -2736,7 +2809,7 @@ function mount(el, api){
   // A voyage's destination, built in its own scene while you are still in this City (its tiles build on their own,
   // its overlays stay hidden until it is the one you are in); swapCity then moves you in without a fade or a
   // loading screen, mid-sea, where both cities are far behind the haze.
-  var nextCity = null;
+  var nextCity = null, keepRide = false;
   function dropNext(){ if(!nextCity) return; var w = nextCity.w; nextCity = null; if(w && w !== cur && w.destroy){ try { w.destroy(); } catch(e){} } }
   inst.prebuildCity = function(world){
     if(!scene || !HQV.hqCity3d || !HQV.hqWorlds.city3d) return false;
@@ -2754,13 +2827,16 @@ function mount(el, api){
                                               function(){ if(nextCity === N) dropNext(); });
     return true;
   };
-  inst.swapCity = function(world){
+  // keep = {dx, dz}: you fly on in the helicopter you are in, moved by the new island's offset (games/hqcity3d.js)
+  inst.swapCity = function(world, keep){
     if(!nextCity || nextCity.world !== world || !nextCity.ready || !scene) return false;
     var C = worlds.city;
     if(C){ delete worlds.city; C.swapOut = true; }
     worlds.city = nextCity.w; nextCity = null;
     lastCity = null; entering = null;
+    if(keep && ride && ride.heli){ ride.heli.x -= +keep.dx || 0; ride.heli.z -= +keep.dz || 0; keepRide = true; }
     enterWorld("city", null, true);
+    keepRide = false;
     return true;
   };
   var streamKey = "";

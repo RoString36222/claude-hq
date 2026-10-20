@@ -1253,7 +1253,7 @@ HQV.hqWorlds.city3d = function(c, w){
   function airSetup(){
     if(!HQV.hqair || !HQV.hqheli || !W) return;
     try { air = HQV.hqair.create(c, S, {W: W, sea: sea, commons: worldId === COMMONS, civics: civics, blocked: blocked, groundY: groundY, night: night}); }
-    catch(e){ air = null; if(window.console) console.warn("hqair:", e); }
+    catch(e){ air = null; HQV.hqair.err = String((e && e.stack) || e); if(window.console) console.warn("hqair:", e); }
   }
   // what a helicopter lands on or runs into here: the ground, the water, every roof (the world's buildings, the HQs,
   // the civic masses: their camera boxes), the air base and the carrier's deck

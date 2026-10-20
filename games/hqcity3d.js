@@ -355,6 +355,9 @@ HQV.hqWorlds.city3d = function(c, w){
     var out = [];
     hqs.concat(views).forEach(function(E){ (E.boxes || []).forEach(function(b){
       if(b.max.x >= x0 && b.min.x <= x1 && b.max.z >= z0 && b.min.z <= z1) out.push({id: E.oid, min: b.min, max: b.max}); }); });
+    // civic buildings (v2): the camera keeps out of them too
+    civics.forEach(function(B, n){ (B.boxes || []).forEach(function(b){
+      if(b.max.x >= x0 && b.min.x <= x1 && b.max.z >= z0 && b.min.z <= z1) out.push({id: "civic:" + n, min: b.min, max: b.max}); }); });
     return out;
   }
   // the box (lot-local centre cx, cz, half sizes hw, hd, height top) in world coordinates

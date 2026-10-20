@@ -1348,6 +1348,7 @@ function mount(el, api){
             kind: kind, V: VEHICLES[kind], car: car, eng: null, pitch: 0, pv: 0, roll: 0, rv: 0,
             boat: boat ? HQV.hqboat.newState(kind, b.x, b.z, b.yaw) : null};
     if(kind === "skate") skateStart(b);
+    if(ride.boat) ride.boat.y = cur.sea ? cur.sea.y : 0;            // afloat where it lies (no spring down from 0)
     avatar.yaw = b.yaw; avatar.rideYaw = null; walkTo = null; walkDoor = null;
     movedHere = true;                       // you are somewhere now: a street rebuild must not put you back at your door
     avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
@@ -1647,7 +1648,9 @@ function mount(el, api){
   var RIDE_HINT = {
     bike: "W pedal · S brake · A/D steer · Shift pedal harder · E get off · T home",
     moto: "W throttle · S brake · A/D steer · Shift+steer slide · Space handbrake · E get off · T home",
-    car: "W go · S brake · A/D steer · Shift+steer powerslide · Space handbrake · E get out · T home"
+    car: "W go · S brake · A/D steer · Shift+steer powerslide · Space handbrake · E get out · T home",
+    rowboat: "W row · S back water · A/D steer · E step ashore at a dock or a beach",
+    jetski: "W throttle · S astern · A/D steer · E step ashore at a dock or a beach"
   };
   function tipRide(){ if(!api.announce || !ride) return;
     if(ride.kind === "skate") return;                                 // the skate HUD says how
@@ -1660,10 +1663,10 @@ function mount(el, api){
   // plus the keys. The dials are drawn in the theme's colours (engine.js tokens); in Calm (and with
   // reduced motion) the moving dials give way to a plain readout. Decorative to screen readers:
   // tipRide() announces the keys, and the speed is not worth a running commentary.
-  var hud = null;
-  var HUD_MAX = {bike: [60, 10, 5], moto: [120, 20, 10], car: [120, 20, 10]};   // the speed dial: max, major, minor
+  var dhud = null;                      // (not "hud": that is the camera HUD, hqhud)
+  var HUD_MAX = {bike: [60, 10, 5], moto: [120, 20, 10], car: [120, 20, 10], rowboat: [20, 5, 1], jetski: [80, 10, 5]};   // the speed dial: max, major, minor
   function driveHud(kind){
-    if(hud){ if(hud.el.parentNode) hud.el.parentNode.removeChild(hud.el); hud = null; }
+    if(dhud){ if(dhud.el.parentNode) dhud.el.parentNode.removeChild(dhud.el); dhud = null; }
     if(!kind || !HUD_MAX[kind]) return;
     gamesCss();
     var d = document.createElement("div"); d.className = "hq3d-drive hq3d-drive-" + kind; d.setAttribute("aria-hidden", "true");
@@ -1673,7 +1676,7 @@ function mount(el, api){
     var hint = document.createElement("div"); hint.className = "hq3d-drive-hint"; hint.textContent = RIDE_HINT[kind];
     [slide, cv, read, hint].forEach(function(n){ d.appendChild(n); });
     ((rideUi && rideUi.parentNode) || el).appendChild(d);
-    hud = {el: d, cv: cv, read: read, kind: kind, tok: null, tokAt: -9, at: -9, txt: "", sl: false};
+    dhud = {el: d, cv: cv, read: read, kind: kind, tok: null, tokAt: -9, at: -9, txt: "", sl: false};
   }
   // the HUD's and the Return to HQ button's styles live with the games' (the Valley loads the same sheet)
   function gamesCss(){
@@ -1682,19 +1685,19 @@ function mount(el, api){
   }
   function gearTxt(g){ return g < 0 ? "R" : g === 0 ? "N" : String(g); }
   function driveHudDraw(t){
-    if(!hud || !ride || t - hud.at < 1/30) return;
-    hud.at = t;
+    if(!dhud || !ride || t - dhud.at < 1/30) return;
+    dhud.at = t;
     var kmh = Math.abs(ride.speed)*3.6, motor = !!ride.V.motor, gear = motor ? (Math.abs(ride.speed) < 0.3 && ride.gear > 0 ? 0 : ride.gear) : 0;
     var txt = Math.round(kmh) + " km/h" + (motor ? "  ·  gear " + gearTxt(gear) : "");
-    if(txt !== hud.txt){ hud.txt = txt; hud.read.textContent = txt; }
-    if(!!ride.drift !== hud.sl){ hud.sl = !!ride.drift; hud.el.classList.toggle("sliding", hud.sl); }
+    if(txt !== dhud.txt){ dhud.txt = txt; dhud.read.textContent = txt; }
+    if(!!ride.drift !== dhud.sl){ dhud.sl = !!ride.drift; dhud.el.classList.toggle("sliding", dhud.sl); }
     if(E.calm()) return;                              // no moving needles (CSS shows the readout instead)
-    if(!hud.tok || t - hud.tokAt > 2){ hud.tok = E.tokens(); hud.tokAt = t; }
-    var cv = hud.cv, dpr = Math.min(window.devicePixelRatio || 1, 2), W = motor ? 236 : 124, H = 124;
+    if(!dhud.tok || t - dhud.tokAt > 2){ dhud.tok = E.tokens(); dhud.tokAt = t; }
+    var cv = dhud.cv, dpr = Math.min(window.devicePixelRatio || 1, 2), W = motor ? 236 : 124, H = 124;
     if(cv.width !== Math.round(W*dpr)){ cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr); }
-    var g = cv.getContext("2d"), M = HUD_MAX[hud.kind]; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
-    driveDial(g, hud.tok, 62, 64, 54, kmh, M[0], M[1], M[2], "km/h", Math.round(kmh), null);
-    if(motor) driveDial(g, hud.tok, 174, 64, 54, ride.rpm/1000, 8, 1, 0.5, "×1000 rpm", gearTxt(gear), 6.5, "GEAR");
+    var g = cv.getContext("2d"), M = HUD_MAX[dhud.kind]; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    driveDial(g, dhud.tok, 62, 64, 54, kmh, M[0], M[1], M[2], "km/h", Math.round(kmh), null);
+    if(motor) driveDial(g, dhud.tok, 174, 64, 54, ride.rpm/1000, 8, 1, 0.5, "×1000 rpm", gearTxt(gear), 6.5, "GEAR");
   }
   // one round dial: Kart Racing's (games/kart.js dial()), the label under the needle's hub
   function driveDial(g, T, cx, cy, r, val, max, major, minor, unit, label, red, cap){

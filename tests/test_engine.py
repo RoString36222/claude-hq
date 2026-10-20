@@ -39,6 +39,36 @@ E.loadGlb({}, 'nope', 'x').then(() => { out.kit = 'loaded'; }, e => { out.kit = 
 """
 
 
+# The engine note's dead man's switch: a fake AudioContext records every gain event.
+AUDIO = r"""
+const fs = require('fs');
+let now = 0; const gains = [];
+function param(v){ const p = {value: v, ev: [], setTargetAtTime(x, t){ p.ev.push([x, t]); },
+  cancelScheduledValues(t){ p.ev = p.ev.filter(e => e[1] < t); }, setValueAtTime(){}, exponentialRampToValueAtTime(){}}; return p; }
+function node(){ return {connect(){}, start(){}, stop(){}, frequency: param(0), Q: param(0), type: ''}; }
+class AC { constructor(){ this.state = 'running'; this.sampleRate = 8000; this.destination = {}; }
+  get currentTime(){ return now; } resume(){ return Promise.resolve(); }
+  createGain(){ const n = node(); n.gain = param(1); gains.push(n.gain); return n; }
+  createOscillator(){ return node(); } createBiquadFilter(){ return node(); } createBufferSource(){ return node(); }
+  createBuffer(c, n){ return {getChannelData: () => new Float32Array(n)}; } }
+const window = {HQV: {}, matchMedia: () => ({matches: false}), AudioContext: AC};
+const document = {documentElement: {classList: {contains: () => false}}};
+global.localStorage = {getItem: () => '0.5', setItem(){}};
+global.performance = {now: () => 0};
+new Function('window', 'document', fs.readFileSync(process.argv[2], 'utf8'))(window, document);
+const E = window.HQV.engine, out = {};
+const n0 = gains.length, eng = E.engineSound('v8');
+const silentBy = p => { const e = p.ev[p.ev.length - 1]; return e && e[0] === 0 ? e[1] : null; };
+now = 1.0; eng.set(3000);
+const g = gains.slice(n0).find(p => p.ev.length);              // the note's output gain
+out.first = silentBy(g);
+now = 1.1; eng.set(3000); out.next = silentBy(g); out.events = g.ev.filter(e => e[1] >= 1.1).length;
+eng.stop(); out.stopped = g.ev.filter(e => e[1] > 1.1).length;
+const nl = E.noiseLoop(1000, 1), ng = gains[gains.length - 1];
+now = 2.0; nl.set(0.05, 900); out.noise = silentBy(ng);
+console.log(JSON.stringify(out));
+"""
+
 @unittest.skipUnless(shutil.which("node"), "node not installed")
 class EngineTests(unittest.TestCase):
     def test_engine(self):
@@ -60,6 +90,17 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(o["fmt"], ["1:23.46", "–"])
         self.assertAlmostEqual(abs(o["ang"]), 3.142, places=2)    # the short way round, through pi
         self.assertEqual(o["kit"], "bad model name")
+
+    def test_engine_note_falls_silent_when_frames_stop(self):
+        r = subprocess.run(["node", "-", os.path.join(ROOT, "games", "engine.js")], input=AUDIO,
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        o = json.loads(r.stdout)
+        self.assertAlmostEqual(o["first"], 1.25)      # no next frame: silent 0.25 s on
+        self.assertAlmostEqual(o["next"], 1.35)       # each frame pushes the fade back...
+        self.assertEqual(o["events"], 2)              # ...replacing the old one, not stacking
+        self.assertEqual(o["stopped"], 0)             # stop(): nothing left scheduled
+        self.assertAlmostEqual(o["noise"], 2.25)      # the tyre / gravel loops too
 
     def test_games_use_the_engine(self):
         for name in ("kart", "platformer", "fps"):

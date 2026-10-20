@@ -18,4 +18,22 @@
   .hq3d-minimap-btn{width:22px;height:22px;font-size:13px}
   *:has(> .hq3d-minimap:not([hidden])) > .hq3d-drive{right:184px}
 }
+/* A stage too narrow for the dials beside the dashboard's chat (.hq3d-talk, 340 px at the bottom left) puts them
+   above the map when it is tall enough (compact on the way down), else compact beside it, over the chat's top. */
+@container hq3d (max-width: 830px) and (min-height: 640px){
+  *:has(> .hq3d-minimap:not([hidden])) > .hq3d-drive{right:12px;bottom:224px}
+}
+@container hq3d (max-width: 830px) and (min-height: 605px) and (max-height: 639.98px){
+  *:has(> .hq3d-minimap:not([hidden])) > .hq3d-drive{right:12px;bottom:224px}
+  .hq3d-drive .hq3d-drive-dial{width:170px;height:89px} .hq3d-drive.hq3d-drive-bike .hq3d-drive-dial{width:89px}
+}
+@container hq3d (max-width: 830px) and (min-height: 440.02px) and (max-height: 604.98px){
+  *:has(> .hq3d-minimap:not([hidden])) > .hq3d-drive{bottom:186px}
+  .hq3d-drive .hq3d-drive-dial{width:170px;height:89px} .hq3d-drive.hq3d-drive-bike .hq3d-drive-dial{width:89px}
+}
+/* a short stage (the dashboard's narrow layout, 380 px at least): the small map, clear of the city's stats */
+@container hq3d (max-height: 440px){
+  .hq3d-minimap{width:160px;height:160px;border-radius:14px}
+  *:has(> .hq3d-minimap:not([hidden])) > .hq3d-drive{right:184px}
+}
 /* ==== end of the 3D City minimap ==== */

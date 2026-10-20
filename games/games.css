@@ -727,6 +727,9 @@ html.hq-calm .bowl-flash.on{opacity:1}
 /* ==== Arena City driving HUD (games/hq3d.js driveHud): while in a car or on a bike ====
    Kart Racing's speed + rev dials (drawn from the theme tokens), a "Powerslide" chip while
    sliding, and the keys. In Calm / reduced motion the moving dials give way to a plain readout. */
+/* the 3D City's stage is a size container: its overlays (the minimap, the navigation panel and banner) lay out by
+   its size, not the window's (the dashboard's side panel takes part of the width) */
+.hq3d-stage{container:hq3d / size}
 .hq3d-drive{position:absolute;right:12px;bottom:12px;z-index:4;display:flex;flex-direction:column;align-items:flex-end;gap:6px;
   pointer-events:none;max-width:calc(100% - 24px)}
 .hq3d-drive-dial{display:block;width:236px;height:124px}
@@ -742,6 +745,7 @@ html.hq-calm .hq3d-drive-dial{display:none}
 html.hq-calm .hq3d-drive-read{display:block}
 @media (prefers-reduced-motion: reduce){ .hq3d-drive-dial{display:none} .hq3d-drive-read{display:block} }
 @media (max-width:560px){ .hq3d-drive-dial{width:170px;height:89px} .hq3d-drive-bike .hq3d-drive-dial{width:89px} .hq3d-drive-hint{font-size:11px} }
+@container hq3d (max-height: 440px){ .hq3d-drive-dial{width:170px;height:89px} .hq3d-drive-bike .hq3d-drive-dial{width:89px} .hq3d-drive-hint{font-size:11px} }
 /* ==== end of the Arena City driving HUD ==== */
 /* ==== Arena City "Return to HQ" button (games/hq3d.js returnHome): top left over the street ==== */
 .hq3d-home{position:absolute;left:12px;top:12px;z-index:4;padding:8px 14px;border-radius:999px;font-weight:700;font-size:13px;

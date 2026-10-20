@@ -2693,6 +2693,8 @@ function mount(el, api){
   if(SMOKE && SMOKE.on){
     window.HQ3D_DEBUG = {mode: function(m){ smokeCam(m); }, teleport: function(x, z, yaw){ smokeTeleport(+x || 0, +z || 0, yaw == null ? null : +yaw); },
                          ride: function(kind){ smokeRide(kind); }, stats: function(){ return smokeStats(); },
+                         // the City's navigation (route, minimap, panel), for tools that follow a route
+                         nav: function(){ return cur && cur.nav ? cur.nav() : null; },
                          // avatar + camera, for tools that drive the keys and record motion
                          probe: function(){ var c = curCam(); return {x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: avatar.yaw, speed: avatar.speed || 0,
                            travelYaw: avatar.travelYaw, turnRate: avatar.rate || 0, heading: rig && rig.moveYaw != null ? rig.moveYaw : null,

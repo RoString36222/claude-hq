@@ -15,6 +15,11 @@
  * The pillar: one open cylinder, additive, its vertex colours fading to nothing at the top. Two
  * draw calls in all. The flow is a phase that is a function of the time added up (FLOW m/s, mod
  * SPACING) and the pillar's pulse a function of that same clock, so 30 Hz and 144 Hz agree.
+ * Where you are on the route is tracked, not searched afresh: after the first frame only the stretch
+ * from BACK m behind to SEEK m ahead of the last fix is searched, so on a route that doubles back on a
+ * nearby street a little sideways drift cannot snap the window onto the later leg (and, as nav's
+ * progress(), it never jumps back more than BACK m). Only when you are over LOST m from that stretch
+ * (a teleport, a long frame) is the whole route searched again.
  * Frames as the 3D city's: metres, y up, yaw 0 faces +z.
  */
 (function(){
@@ -23,6 +28,7 @@ var HQV = window.HQV = window.HQV || {};
 
 var SPACING = 4, LIFT = 0.06, AHEAD = 250, FLOW = 3;          // m, m, m, m/s
 var NEAR_FADE = 8, FAR_FADE = 60;                               // m over which a chevron fades in/out
+var BACK = 15, SEEK = 60, LOST = 25;                            // m: the tracked search stretch, and when to give up on it
 var MAX = Math.ceil(AHEAD/SPACING) + 1;                         // instances ever shown at once
 var PILLAR_H = 160, PILLAR_R = 1.4, PILLAR_SEEN = 220;          // m; past PILLAR_SEEN it widens with distance
 var BRAND = "#7c6cf0";                                          // the --brand fallback (avatar3d.js)
@@ -83,7 +89,7 @@ function create(c, scene){
   scene.add(chev); scene.add(pillar);
 
   var pts = null, cum = null, len = 0, ground = function(){ return 0; };
-  var clock = 0, along = 0, dead = false;
+  var clock = 0, along = 0, tracked = false, dead = false;
   var m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(0, 0, 0, "YXZ"),
       v = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), tint = new THREE.Color();
 
@@ -96,24 +102,40 @@ function create(c, scene){
     at.x = pts[lo*2] + (pts[hi*2] - pts[lo*2])*t; at.z = pts[lo*2 + 1] + (pts[hi*2 + 1] - pts[lo*2 + 1])*t; at.i = lo;
     return at;
   }
-  // m along the route nearest (x, z)
-  function nearest(x, z){
-    var best = Infinity, bs = 0;
+  // m along the route nearest (x, z), looking only between lo and hi m along; near.d is how far off (m).
+  var near = {s: 0, d: Infinity};
+  function nearest(x, z, lo, hi){
+    near.s = 0; near.d = Infinity;
     for(var i = 0; i + 1 < cum.length; i++){
-      var ax = pts[i*2], az = pts[i*2 + 1], dx = pts[i*2 + 2] - ax, dz = pts[i*2 + 3] - az, l2 = dx*dx + dz*dz;
-      var t = l2 > 0 ? Math.max(0, Math.min(1, ((x - ax)*dx + (z - az)*dz)/l2)) : 0;
-      var px = ax + dx*t - x, pz = az + dz*t - z, d = px*px + pz*pz;
-      if(d < best){ best = d; bs = cum[i] + Math.sqrt(l2)*t; }
+      if(cum[i + 1] < lo || cum[i] > hi) continue;
+      var ax = pts[i*2], az = pts[i*2 + 1], dx = pts[i*2 + 2] - ax, dz = pts[i*2 + 3] - az, l = cum[i + 1] - cum[i];
+      var t0 = Math.max(0, (lo - cum[i])/l), t1 = Math.min(1, (hi - cum[i])/l);   // segments are never 0 m (setRoute)
+      var t = Math.max(t0, Math.min(t1, ((x - ax)*dx + (z - az)*dz)/(l*l)));
+      var px = ax + dx*t - x, pz = az + dz*t - z, d = Math.hypot(px, pz);
+      if(d < near.d){ near.d = d; near.s = cum[i] + l*t; }
     }
-    return bs;
+    return near;
+  }
+  // Where you are along the route: tracked from the last fix, the whole route on the first frame or once lost.
+  function track(x, z){
+    if(tracked && nearest(x, z, along - BACK, along + SEEK).d <= LOST) return near.s;
+    tracked = true;
+    return nearest(x, z, 0, len).s;
   }
 
   function setRoute(p, groundY){
     ground = typeof groundY === "function" ? groundY : function(){ return 0; };
-    pts = null; cum = null; len = 0; along = 0;
+    pts = null; cum = null; len = 0; along = 0; tracked = false;
     var n = p ? (p.length >> 1) : 0;
     if(n >= 2){
-      pts = Float64Array.from(p); cum = new Float64Array(n);
+      // Repeated points are dropped (a 0 m end leg, say): a 0 m segment has no direction to point along.
+      var keep = [p[0], p[1]];
+      for(var j = 1; j < n; j++){
+        var lx = keep[keep.length - 2], lz = keep[keep.length - 1];
+        if(Math.hypot(p[j*2] - lx, p[j*2 + 1] - lz) > 1e-6) keep.push(p[j*2], p[j*2 + 1]);
+      }
+      n = keep.length >> 1;
+      pts = Float64Array.from(keep); cum = new Float64Array(n);
       for(var i = 1; i < n; i++) cum[i] = cum[i - 1] + Math.hypot(pts[i*2] - pts[i*2 - 2], pts[i*2 + 1] - pts[i*2 - 1]);
       len = cum[n - 1];
     }
@@ -132,7 +154,7 @@ function create(c, scene){
     clock += Math.max(0, +dt || 0);
     var phase = (clock*FLOW) % SPACING;
     if(pts && player){
-      along = nearest(+player.x || 0, +player.z || 0);
+      along = track(+player.x || 0, +player.z || 0);
       var end = Math.min(len, along + AHEAD), k = Math.ceil((along - phase)/SPACING), n = 0;
       for(var s = k*SPACING + phase; s <= end && n < MAX; s += SPACING){
         var a = pointAt(s), x = a.x, z = a.z, i = a.i;

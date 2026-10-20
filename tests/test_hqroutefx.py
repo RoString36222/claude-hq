@@ -68,6 +68,30 @@ function meshes(scene){ var n = 0; scene.traverse(o => { if(o.isMesh) n++; }); r
   fx.dispose();
 })();
 
+// ---- a U-turn: east 200 m, back west on a street 10 m away; drifting sideways keeps your leg ----
+(function(){
+  var scene = new THREE.Scene(), fx = R.create(ctx, scene), r = {};
+  fx.setRoute(new Float64Array([0, 0, 200, 0, 200, 10, 0, 10]), slope);
+  fx.update(0, {x: 20, z: 0}, null); r.start = fx.state().along;
+  fx.update(0, {x: 20, z: 5.1}, null); r.drift = fx.state(); r.driftCs = chevrons(fx, slope);
+  fx.update(0, {x: 20, z: 1}, null); r.back = fx.state().along;
+  fx.update(0, {x: 18, z: 1}, null); r.reverse = fx.state().along;
+  fx.update(0, {x: 120, z: 9}, null); r.lost = fx.state().along;       // a teleport onto the return leg
+  fx.setRoute(new Float64Array([0, 0, 200, 0, 200, 10, 0, 10]), slope);
+  fx.update(0, {x: 20, z: 9}, null); r.fresh = fx.state().along;       // a new route searches it all
+  fx.dispose();
+  out.uturn = r;
+})();
+
+// ---- a repeated last point (a 0 m end leg): the last chevron still points along the road ----
+(function(){
+  var scene = new THREE.Scene(), fx = R.create(ctx, scene);
+  fx.setRoute(new Float64Array([0, 0, 100, 0, 100, 0]), slope);
+  fx.update(0, {x: 96, z: 0}, null);
+  out.dup = chevrons(fx, slope);
+  fx.dispose();
+})();
+
 // ---- the flow: forward, and the same at 30 Hz and 144 Hz ----
 (function(){
   var r = {};
@@ -174,6 +198,23 @@ class RouteFxTest(unittest.TestCase):
                 self.assertAlmostEqual(c["x"], 100, places=6)
                 self.assertGreater(c["fwd"][2], 0.99, "round the corner, pointing north")
         self.assertTrue(any(c["z"] > 100 for c in ell))
+
+    def test_a_u_turn_keeps_your_leg(self):
+        u = self.out["uturn"]
+        self.assertAlmostEqual(u["start"], 20, places=6)
+        self.assertAlmostEqual(u["drift"]["along"], 20, places=6, msg="5.1 m off, still on the leg you are on")
+        self.assertEqual(u["drift"]["count"], 63, "the full window, not the last 10 m")
+        self.assertTrue(any(abs(c["z"]) < 1e-6 and c["fwd"][0] > 0.99 for c in u["driftCs"]))
+        self.assertAlmostEqual(u["back"], 20, places=6)
+        self.assertAlmostEqual(u["reverse"], 18, places=6, msg="a little backwards is followed")
+        self.assertAlmostEqual(u["lost"], 210 + 80, places=6, msg="far off the tracked stretch: searched again")
+        self.assertAlmostEqual(u["fresh"], 210 + 180, places=6, msg="setRoute forgets the old fix")
+
+    def test_a_repeated_end_point_still_points_along(self):
+        dup = self.out["dup"]
+        self.assertTrue(any(abs(c["x"] - 100) < 1e-6 for c in dup), "a chevron lands on the end")
+        for c in dup:
+            self.assertGreater(c["fwd"][0], 0.99, "east, like the road, never +z")
 
     def test_fades_near_and_far(self):
         cs, brand = self.out["straight"]["cs"], self.out["straight"]["brand"]

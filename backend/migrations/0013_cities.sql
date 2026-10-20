@@ -18,5 +18,3 @@ CREATE TABLE IF NOT EXISTS city_tiers (tier INTEGER PRIMARY KEY, xp INTEGER NOT 
 INSERT OR IGNORE INTO city_tiers (tier, xp, population) VALUES (1, 0, 50), (2, 2000, 200), (3, 10000, 600), (4, 40000, 1200), (5, 120000, 2000);
 -- price is in thousandths of a coin; updated is the last market tick applied.
 CREATE TABLE IF NOT EXISTS market_price (owner VARCHAR(36) NOT NULL, good VARCHAR(16) NOT NULL, price INTEGER NOT NULL, stock INTEGER NOT NULL CHECK (stock >= 0), updated INTEGER NOT NULL, PRIMARY KEY (owner, good));
--- Island slots on the archipelago spiral, handed out in join order; never move.
-CREATE TABLE IF NOT EXISTS island_slot (owner VARCHAR(36) PRIMARY KEY, slot INTEGER NOT NULL UNIQUE, x INTEGER NOT NULL, z INTEGER NOT NULL);

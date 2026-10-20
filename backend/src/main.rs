@@ -4,6 +4,7 @@
 //! alongside the Python one and swapped by changing which port Caddy proxies.
 
 mod accounts;
+mod archipelago;
 mod auth;
 mod boardstream;
 mod boss;
@@ -992,6 +993,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(cities::routes())
         .merge(cosmetics::routes())
         .merge(accounts::routes())
+        .merge(archipelago::routes())
         .merge(crews::routes())
         .merge(cups::routes())
         .merge(hq::routes())

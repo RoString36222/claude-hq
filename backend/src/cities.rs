@@ -576,15 +576,7 @@ pub(crate) async fn city_state(pool: &SqlitePool, owner: &str, now: i64) -> Resu
     accrue(pool, &snap, now).await?;
     let mut conn = pool.acquire().await?;
     let row = city_row(&mut conn, owner).await?.unwrap_or(snap.row.clone());
-    let name = if owner == COMMONS {
-        "The Commons".to_string()
-    } else {
-        let n: Option<(String, String)> = sqlx::query_as("SELECT handle, display_name FROM users WHERE id = ?1")
-            .bind(owner)
-            .fetch_optional(&mut *conn)
-            .await?;
-        n.map(|(h, d)| if d.is_empty() { h } else { d }).unwrap_or_default()
-    };
+    let name = name_of(&mut conn, owner).await?;
     Ok(Some(CityState {
         owner: owner.to_string(),
         name,
@@ -600,6 +592,32 @@ pub(crate) async fn city_state(pool: &SqlitePool, owner: &str, now: i64) -> Resu
         privacy: row.privacy,
         population: snap.population,
     }))
+}
+
+/// A city's display name: the owner's display name, else their handle.
+async fn name_of(conn: &mut SqliteConnection, owner: &str) -> Result<String, sqlx::Error> {
+    if owner == COMMONS {
+        return Ok("The Commons".to_string());
+    }
+    let n: Option<(String, String)> = sqlx::query_as("SELECT handle, display_name FROM users WHERE id = ?1")
+        .bind(owner)
+        .fetch_optional(&mut *conn)
+        .await?;
+    Ok(n.map(|(h, d)| if d.is_empty() { h } else { d }).unwrap_or_default())
+}
+
+/// The name and tier the archipelago lists for a city, the same figures
+/// CityState shows, without creating the city or accruing its tax.
+pub(crate) async fn name_and_tier(pool: &SqlitePool, owner: &str) -> Result<(String, u8), sqlx::Error> {
+    let mut conn = pool.acquire().await?;
+    let name = name_of(&mut conn, owner).await?;
+    if owner == COMMONS {
+        return Ok((name, 5));
+    }
+    let tiers = tiers(&mut conn).await?;
+    drop(conn);
+    let xp = crate::progress::progress(pool, &[owner]).await?.get(owner).map(|p| p.xp).unwrap_or(0);
+    Ok((name, tier_of(xp, &tiers).clamp(1, 5) as u8))
 }
 
 // ------------------------------------------------------------ bodies --

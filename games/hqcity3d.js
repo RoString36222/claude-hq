@@ -1322,6 +1322,11 @@ HQV.hqWorlds.city3d = function(c, w){
       if(e.type === "keydown" && e.key === "Escape" && !menu && nui) nui.close();
       return;
     }
+    if(mm && mm.isBig() && e.key === "Escape" && !typingIn(e.target)){
+      e.stopPropagation(); e.preventDefault();
+      if(e.type === "keydown") mm.expand(false);
+      return;
+    }
     if(nui && e.type === "keydown" && e.code === "KeyN" && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !typingIn(e.target)){
       e.preventDefault(); e.stopPropagation(); nui.open();
     }
@@ -1332,7 +1337,7 @@ HQV.hqWorlds.city3d = function(c, w){
     var announce = function(t){ if(api.announce) api.announce(t); };
     if(HQV.hqroutefx){ try { fx = HQV.hqroutefx.create(c, S); } catch(e){ fx = null; } }
     if(HQV.hqminimap){
-      try { mm = HQV.hqminimap.mount(c.el, {onPick: navPick, onExpand: function(){ if(c.toggleMap) c.toggleMap(); }, announce: announce}); navRefresh(); }
+      try { mm = HQV.hqminimap.mount(c.el, {onPick: navPick, onExpand: function(){ mm.expand(); }, announce: announce}); navRefresh(); }
       catch(e){ if(mm){ try { mm.destroy(); } catch(e2){} } mm = null; }
     }
     if(HQV.hqnavui){
@@ -1411,7 +1416,8 @@ HQV.hqWorlds.city3d = function(c, w){
   w.hits = hits; w.doors = doors; w.span = 18; w.zoom = 0.8; w.camY = 2.5; w.follow = 1; w.camPitch = 0.72;
   w.bounds = [-1018, 1018, -1018, 1018];
   w.camModes = ["map", "far", "chase", "near", "fp", "classic", "photo", "cine"];
-  w.startMode = "map";
+  w.startMode = "chase";           // the full 3D map view is heavy: M grows the minimap instead (w.bigMap)
+  w.bigMap = function(){ if(!mm) return false; mm.expand(); return true; };
   if(arriveAt) w.startMode = "chase";            // off a ferry, a train, a boat: on the ground, not over the map
   w.skateBase = 0; w.skatepark = null;
   w.spawn = {x: 0, y: 0, z: 10, yaw: 0, camYaw: 0.55}; w.spawnFrom = {lobby: w.spawn};

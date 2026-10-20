@@ -39,6 +39,8 @@ var WALK_V = 1.6, DRIVE_V = 60/3.6;           // m/s
 var ZOOM_STEP = 1.5, ZOOM_MIN = -3, ZOOM_MAX = 3;
 var SPAN_K = 3;                               // 1/s: how fast the span eases to its target
 var HEAD_AY = 0.62;                           // heading-up: you sit 62% of the way down
+var BIG_FILL = 0.8;                           // the big map (M): the world's width fills 80% of the box at first
+var SWING_K = 6, PAN_K = 10;                  // 1/s: the big map swings north-up / glides to a pan
 var BITMAP_MAX = 3072, BITMAP_PX_M = 2;       // the static bitmap: device px at most, px per m at most
 var MARGIN = 60;                              // m of sea round the world in the bitmap
 var ICON = 18;                                // CSS px: a POI icon's disc
@@ -272,6 +274,9 @@ function mount(el, opts){
   var mode = "heading", level = 0, span = null, lastT = null, W = null, tier = null;
   var stat = null, atlas = null, places = [], pal = PAL.dark;
   var cssW = 200, cssH = 200, dpr = 1, V = viewFor(mode, 0, 0, 0, WALK_SPAN, cssW, cssH);
+  // the big map (M): the same canvas grown to most of the stage, north-up over the whole world, with a pan
+  // (m, from you) you drag; rot/ay ease between heading-up and north-up so the map swings round as it grows
+  var big = false, bigLevel = 0, pan = {x: 0, z: 0}, panTo = {x: 0, z: 0}, swing = 0, drag = null;
 
   function mk(tag, cls, parent){
     var n = doc.createElement(tag);
@@ -294,6 +299,9 @@ function mount(el, opts){
   root.setAttribute("role", "group");
   root.setAttribute("aria-label", "Minimap");
   el.appendChild(root);
+  var scrim = doc.createElement("div");           // the big map's backdrop (under it by z-index); a click closes it
+  scrim.className = "hq3d-minimap-scrim";
+  el.appendChild(scrim);
   var cv = mk("canvas", "hq3d-minimap-canvas");
   cv.setAttribute("aria-label", "Minimap: click to set a waypoint");
   cv.setAttribute("role", "img");
@@ -302,7 +310,9 @@ function mount(el, opts){
   var bIn = btn("hq3d-minimap-in", "+", "Zoom in");
   var bOut = btn("hq3d-minimap-out", "−", "Zoom out");
   var bMode = btn("hq3d-minimap-mode", "↑", "North up");
-  var bExp = btn("hq3d-minimap-expand", "⤢", "Open the full map");
+  var bExp = btn("hq3d-minimap-expand", "⤢", "Open the big map (M)");
+  var legend = mk("div", "hq3d-minimap-legend");
+  legend.textContent = "Click to set a waypoint · drag to pan · wheel to zoom · M or Esc to close";
   function syncMode(){
     var north = mode === "north";
     bMode.textContent = north ? "N" : "↑";
@@ -337,6 +347,7 @@ function mount(el, opts){
 
   // ---- input ----
   function zoom(d){
+    if(big){ bigLevel = clamp(bigLevel + (d > 0 ? 1 : d < 0 ? -1 : 0), -1, 5); return bigLevel; }
     var nl = clamp(level + (d > 0 ? 1 : d < 0 ? -1 : 0), ZOOM_MIN, ZOOM_MAX);
     if(nl === level) return level;
     level = nl;
@@ -350,6 +361,22 @@ function mount(el, opts){
     announce(mode === "north" ? "Minimap: north up" : "Minimap: heading up");
     return mode;
   }
+  function flag(n, c, on){
+    var L = String(n.className || "").split(/\s+/).filter(function(x){ return x && x !== c; });
+    if(on) L.push(c);
+    n.className = L.join(" ");
+  }
+  function expand(on){
+    on = on == null ? !big : !!on;
+    if(on === big) return big;
+    big = on; bigLevel = 0; pan = {x: 0, z: 0}; panTo = {x: 0, z: 0}; drag = null;
+    flag(root, "hq3d-minimap-big", big); flag(scrim, "hq3d-minimap-scrim-on", big);
+    bExp.textContent = big ? "✕" : "⤢";
+    bExp.setAttribute("aria-label", big ? "Close the big map (M)" : "Open the big map (M)");
+    bExp.setAttribute("title", big ? "Close the big map (M)" : "Open the big map (M)");
+    announce(big ? "Big map open: click to set a waypoint, M or Escape closes it" : "Big map closed");
+    return big;
+  }
   function pick(e){
     var r = cv.getBoundingClientRect ? cv.getBoundingClientRect() : {left: 0, top: 0, width: cssW, height: cssH};
     var px = (num(e.clientX, 0) - num(r.left, 0))*cssW/(num(r.width, cssW) || cssW);
@@ -359,7 +386,18 @@ function mount(el, opts){
     try { onPick(p[0], p[1]); } catch(err){ if(window.console) console.error(err); }
   }
   function stop(e){ if(e.stopPropagation) e.stopPropagation(); }
-  on(cv, "click", function(e){ stop(e); if(e.preventDefault) e.preventDefault(); pick(e); });
+  on(cv, "click", function(e){ stop(e); if(e.preventDefault) e.preventDefault(); if(drag && drag.moved){ drag = null; return; } drag = null; pick(e); });
+  // the big map pans with a drag (a click that moved over 4 px is a drag, not a waypoint)
+  on(cv, "pointerdown", function(e){ if(big && e.button === 0) drag = {x: num(e.clientX, 0), y: num(e.clientY, 0), moved: false}; });
+  on(cv, "pointermove", function(e){
+    if(!big || !drag || !(e.buttons & 1)) return;
+    var dx = num(e.clientX, 0) - drag.x, dy = num(e.clientY, 0) - drag.y;
+    if(!drag.moved && dx*dx + dy*dy < 16) return;
+    drag.moved = true; drag.x = num(e.clientX, 0); drag.y = num(e.clientY, 0);
+    var m = V.span/cssW;                         // north-up: right = -x, down = -z
+    panTo.x += dx*m; panTo.z += dy*m; pan.x = panTo.x; pan.z = panTo.z;
+  });
+  on(scrim, "click", function(e){ stop(e); expand(false); });
   on(root, "wheel", function(e){
     stop(e); if(e.preventDefault) e.preventDefault();
     var d = num(e.deltaY, 0); if(d) zoom(d < 0 ? 1 : -1);
@@ -382,6 +420,7 @@ function mount(el, opts){
         if((t === bIn || t === bOut || t === bMode || t === bExp) && t.click) t.click();
       } else if(k === "+" || k === "=") zoom(1);
       else if(k === "-" || k === "_") zoom(-1);
+      else if((k === "Escape" || k === "Esc") && big) expand(false);
       else if((k === "Escape" || k === "Esc") && e.target && e.target.blur) e.target.blur();
     }
     if(k !== "Tab" && e.preventDefault) e.preventDefault();
@@ -406,7 +445,7 @@ function mount(el, opts){
     src.forEach(function(p){
       if(!p || atlas.idx[p.kind] == null) return;
       var x = num(p.x, NaN), z = num(p.z, NaN);
-      if(isFinite(x) && isFinite(z)) places.push({kind: p.kind, x: x, z: z, i: atlas.idx[p.kind]});
+      if(isFinite(x) && isFinite(z)) places.push({kind: p.kind, x: x, z: z, i: atlas.idx[p.kind], label: typeof p.label === "string" ? p.label.slice(0, 40) : ""});
     });
     // the higher-priority icons are drawn last, on top
     places.sort(function(a, b){ return a.i - b.i; });
@@ -421,6 +460,11 @@ function mount(el, opts){
     g.lineWidth = 2; g.strokeStyle = pal.youEdge; g.stroke();
     g.restore();
   }
+  // m across for the big map: the whole world (the static bitmap's box) fits the shorter side
+  function bigSpan(){
+    var wm = stat && stat.k ? stat.n/stat.k : 2400;
+    return wm/BIG_FILL*Math.max(1, cssW/Math.max(1, cssH));
+  }
   function frame(f){
     if(!alive || !g) return;
     if(stale){ stale = false; measure(); }
@@ -429,9 +473,19 @@ function mount(el, opts){
     var dt = f.dt != null ? num(f.dt, 0) : (lastT == null ? 0 : (now - lastT)/1000);
     lastT = now;
     dt = clamp(dt, 0, 0.25);
-    var target = zoomFor(f.speed)*Math.pow(ZOOM_STEP, -level);
-    span = span == null ? target : span + (target - span)*ease(SPAN_K, dt);
+    var target = big ? bigSpan()*Math.pow(ZOOM_STEP, -bigLevel) : zoomFor(f.speed)*Math.pow(ZOOM_STEP, -level);
+    span = span == null ? target : span + (target - span)*ease(SPAN_K*(big ? 1.6 : 1), dt);
     V = viewFor(mode, f.x, f.z, f.yaw, span, cssW, cssH);
+    // swing (0 small .. 1 big) eases, so the map turns north-up as it grows and back to your heading as it shrinks
+    swing += ((big ? 1 : 0) - swing)*ease(SWING_K, dt);
+    if(!big && swing < 1e-3) swing = 0;
+    if(swing > 0){
+      V.rot = Math.atan2(Math.sin(V.rot), Math.cos(V.rot))*(1 - swing);
+      V.ay += (0.5 - V.ay)*swing;
+    }
+    if(!big){ panTo.x = panTo.z = 0; }
+    pan.x += (panTo.x - pan.x)*ease(PAN_K, dt); pan.z += (panTo.z - pan.z)*ease(PAN_K, dt);
+    V.x += pan.x; V.z += pan.z;
     var s = cssW/span, c = Math.cos(V.rot), n = Math.sin(V.rot), ax = cssW/2, ay = cssH*V.ay;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.fillStyle = pal.sea; g.fillRect(0, 0, cssW, cssH);
@@ -471,6 +525,11 @@ function mount(el, opts){
         var P = places[p], uu = -(P.x - V.x)*s, vv = -(P.z - V.z)*s, qx = ax + uu*c + vv*n, qy = ay - uu*n + vv*c;
         if(qx < -half || qy < -half || qx > lim + half || qy > lim + half) continue;
         g.drawImage(atlas.cv, P.i*cell, 0, cell, cell, qx - half, qy - half, 2*half, 2*half);
+        if(big && P.label){                        // the big map names its places
+          g.font = "600 11px system-ui, sans-serif"; g.textAlign = "left"; g.textBaseline = "middle";
+          g.lineWidth = 3; g.strokeStyle = pal.casing; g.strokeText(P.label, qx + half + 3, qy);
+          g.fillStyle = pal.rim; g.fillText(P.label, qx + half + 3, qy);
+        }
       }
     }
     // other players
@@ -524,12 +583,14 @@ function mount(el, opts){
     domL = [];
     if(ro){ try { ro.disconnect(); } catch(e){} ro = null; }
     if(root.parentNode) root.parentNode.removeChild(root);
+    if(scrim.parentNode) scrim.parentNode.removeChild(scrim);
     stat = null; atlas = null; W = null; places = [];
   }
 
   return {
     el: root, canvas: cv,
-    setWorld: setWorld, frame: frame, setMode: setMode, zoom: zoom, destroy: destroy,
+    setWorld: setWorld, frame: frame, setMode: setMode, zoom: zoom, expand: expand, destroy: destroy,
+    isBig: function(){ return big; },
     mode: function(){ return mode; },
     view: function(){ return {x: V.x, z: V.z, rot: V.rot, span: V.span, w: V.w, h: V.h, ay: V.ay}; },
     // for tests and the integrator: the cached static layer (null before setWorld)

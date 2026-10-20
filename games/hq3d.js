@@ -2051,6 +2051,7 @@ function mount(el, api){
     if(rig.mode === lastMode && rig.fpView !== lastFpView){ lastFpView = rig.fpView; if(hud) hud.setMode(rig.mode, rig.fpView === "bonnet" ? "Bonnet camera" : "Seat camera"); }
   }
   function mapToggle(){
+    if(cur && cur.bigMap && rig.mode !== "map" && cur.bigMap()) return;   // the 3D City: M grows its minimap
     var C = HQV.camrig;
     if(rig.mode === "map") C.dive(rig, rigTarget()); else C.rise(rig);
   }

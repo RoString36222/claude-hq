@@ -456,7 +456,7 @@ class HqCity3dTest(unittest.TestCase):
         self.assertTrue(o["ready"])
         self.assertEqual(o["net"], "city3d")
         self.assertEqual(o["camModes"], ["map", "far", "chase", "near", "fp", "classic", "photo", "cine"])
-        self.assertEqual(o["startMode"], "map")
+        self.assertEqual(o["startMode"], "chase")
         self.assertEqual(o["bounds"], [-1018, 1018, -1018, 1018])
         self.assertEqual(o["floor"], 1)
         self.assertEqual(o["wbNight"], True)

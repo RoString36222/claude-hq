@@ -244,6 +244,28 @@ const inCb = cv2.width;
 mm2.frame({x: 0, z: 0, yaw: 0});
 out.ro = {observers: roCbs.length, before: roW, inCallback: inCb, afterFrame: cv2.width, w: mm2.view().w};
 
+// the big map (M): grows north-up over the whole world, a drag pans without a waypoint, Escape closes it
+const scrim = stage.children[1];
+const sm = mm.view().span, rotSmall = mm.view().rot;
+mm.expand(true);
+const clsOpen = root.className, scrimOpen = scrim.className;
+root.clientWidth = 900; root.clientHeight = 600; roCbs.forEach(cb => cb([]));
+for(let i = 0; i < 300; i++){ clock += 16; mm.frame(Object.assign({speed: 0}, P)); }
+const VB = mm.view();
+cv._rect = {left: 0, top: 0, width: 900, height: 600};
+const nPick = picks.length;
+cv.fire('pointerdown', {button: 0, clientX: 400, clientY: 300});
+cv.fire('pointermove', {buttons: 1, clientX: 500, clientY: 300});
+cv.fire('click', {clientX: 500, clientY: 300});
+for(let i = 0; i < 300; i++){ clock += 16; mm.frame(Object.assign({speed: 0}, P)); }
+const VP = mm.view();
+cv.fire('pointerdown', {button: 0, clientX: 450, clientY: 300}); cv.fire('click', {clientX: 450, clientY: 300});
+const esc = root.fire('keydown', {key: 'Escape', target: cv});
+for(let i = 0; i < 300; i++){ clock += 16; mm.frame(Object.assign({speed: 0}, P)); }
+out.big = {cls: clsOpen, scrim: scrimOpen, small: sm, span: VB.span, w: VB.w, rot: VB.rot, ay: VB.ay,
+           dragPick: picks.length - nPick, panDx: VP.x - VB.x, pickAfter: picks.length - nPick, esc: esc.stopped,
+           after: [mm.isBig(), Math.round(mm.view().rot*1000)/1000, mm.view().ay, Math.round(rotSmall*1000)/1000, root.className]};
+
 // destroy: gone from the stage, listeners off
 mm.destroy(); mm2.destroy();
 out.destroyed = {children: stage.children.length, clickL: (cv.listeners.click || []).length, resize: (winL.resize || []).length};
@@ -357,6 +379,23 @@ class MinimapTest(unittest.TestCase):
         self.assertEqual(self.o["bogusMode"], "heading")
         self.assertEqual(self.o["expanded"], 1)
         self.assertIn("Minimap: north up", self.o["said"])
+
+    def test_big_map(self):
+        b = self.o["big"]
+        self.assertIn("hq3d-minimap-big", b["cls"].split())
+        self.assertIn("hq3d-minimap-scrim-on", b["scrim"].split())
+        self.assertEqual(b["w"], 900)                       # the canvas follows the grown box
+        self.assertGreater(b["span"], 2000)                 # the whole world (2048 m and its sea margin)
+        self.assertAlmostEqual(b["rot"], 0, places=3)       # swung north-up
+        self.assertAlmostEqual(b["ay"], 0.5, places=3)
+        self.assertEqual(b["dragPick"], 1)                  # the drag set no waypoint; the later plain click did
+        self.assertAlmostEqual(b["panDx"], 100*b["span"]/900, delta=1)    # grab and drag right: the view moves west (+x)
+        self.assertTrue(b["esc"])
+        isBig, rot, ay, rotSmall, cls = b["after"]
+        self.assertFalse(isBig)
+        self.assertEqual(rot, rotSmall)                     # back to heading-up
+        self.assertEqual(ay, 0.62)
+        self.assertNotIn("hq3d-minimap-big", cls.split())
 
     def test_keys_never_leak(self):
         k = self.o["keys"]

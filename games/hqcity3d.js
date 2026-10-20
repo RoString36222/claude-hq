@@ -1282,11 +1282,12 @@ HQV.hqWorlds.city3d = function(c, w){
       if(dh < (island() ? HQV.ocean.COAST_R.island : HQV.ocean.COAST_R.commons) + 150) return;
       var q = HQV.ocean.nearestIsland(st.x, st.z);
       if(!q || !worldOk(q.world) || q.shore > 1600) return;
-      heliGo = {world: q.world, x: q.x, z: q.z, name: q.name || "the island", built: !!(c.prebuildCity && c.prebuildCity(q.world))};
+      heliGo = {world: q.world, x: q.x, z: q.z, d0: q.dist, name: q.name || "the island", built: !!(c.prebuildCity && c.prebuildCity(q.world))};
       say("Flying on to " + heliGo.name + "…");
       return;
     }
     var dn = Math.hypot(st.x - heliGo.x, st.z - heliGo.z);
+    if(dn > heliGo.d0 + 600){ heliGo = null; return; }                    // turned away: another island, or home
     if(heliGo.built && dn < dh && c.cityBuilt && c.cityBuilt(heliGo.world)){
       var G = heliGo; heliGo = null; landing = true;
       if(c.swapCity && c.swapCity(G.world, {dx: G.x, dz: G.z})){ if(HQV.hqTravel && HQV.hqTravel.markVisited) HQV.hqTravel.markVisited(G.world); }

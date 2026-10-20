@@ -7,12 +7,12 @@
 //!            it and lifts it a beach above the sea inside it (the terrain hook)
 //!   trim     on an island a highway ends at the ring: its tail out to the world's
 //!            edge would run into the sea
-//!   grow     a personal city is generated at full size once, and every lot, site,
-//!            block and road gets the first city tier it exists in (`min_tier`;
-//!            a site's `tier`): its ring, `radius_by_tier`, out from the plaza. A
-//!            city's first site of each kind (the town hall, the clinic, the dock...)
-//!            opens at its spec tier wherever it stands, with the road to it. Growth
-//!            only adds: nothing moves between tiers
+//!   grow     a personal city is generated at full size once, and every lot, site
+//!            and road gets the first city tier it exists in (`min_tier`; a site's
+//!            `tier`): its ring, `radius_by_tier`, out from the plaza, and never
+//!            before its spec tier or its road. The shore's sites stand outside the
+//!            rings and keep their spec tiers. A transit line runs from the tier all
+//!            its stops and streets exist in. Growth only adds: nothing moves between tiers
 //!
 //! `layers.island` carries the coast, the sea level, the docks (the dock and port
 //! sites, where ferries and boats tie up) and the tiers' radii. The Commons is always
@@ -20,8 +20,7 @@
 //!
 //! Integer arithmetic only (cm, Q16, no trig), as the rest of the generator.
 
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
 use serde::Serialize;
 
@@ -32,7 +31,7 @@ use super::profile::Profile;
 use super::rng;
 use super::roads::Roads;
 use super::terrain::Terrain;
-use super::transit::door;
+use super::transit::{door, Transit};
 
 #[derive(Serialize)]
 pub struct Island {
@@ -206,52 +205,6 @@ pub fn trim(roads: &mut Roads) {
     roads.nodes = nodes;
 }
 
-/// The road graph's lengths and adjacency (edge, other node).
-struct Net {
-    pos: Vec<P>,
-    adj: Vec<Vec<(usize, usize)>>,
-    len: Vec<i64>,
-    ends: Vec<(usize, usize)>,
-}
-
-impl Net {
-    fn new(r: &Roads) -> Net {
-        let mut adj = vec![Vec::new(); r.nodes.len()];
-        for (k, e) in r.edges.iter().enumerate() {
-            adj[e.a as usize].push((k, e.b as usize));
-            adj[e.b as usize].push((k, e.a as usize));
-        }
-        Net {
-            pos: r.nodes.iter().map(|n| (n.x, n.z)).collect(),
-            adj,
-            len: r.edges.iter().map(|e| e.points.windows(2).map(|s| len((s[1][0] - s[0][0], s[1][2] - s[0][2]))).sum()).collect(),
-            ends: r.edges.iter().map(|e| (e.a as usize, e.b as usize)).collect(),
-        }
-    }
-
-    /// From `start`, the shortest way by road to every node: its distance and the edge it came in by.
-    fn dijkstra(&self, start: usize) -> (Vec<i64>, Vec<usize>) {
-        let n = self.pos.len();
-        let (mut dist, mut via) = (vec![i64::MAX; n], vec![usize::MAX; n]);
-        let mut heap = BinaryHeap::new();
-        dist[start] = 0;
-        heap.push(Reverse((0, start)));
-        while let Some(Reverse((d, u))) = heap.pop() {
-            if d > dist[u] {
-                continue;
-            }
-            for &(e, v) in &self.adj[u] {
-                if d + self.len[e] < dist[v] {
-                    dist[v] = d + self.len[e];
-                    via[v] = e;
-                    heap.push(Reverse((dist[v], v)));
-                }
-            }
-        }
-        (dist, via)
-    }
-}
-
 /// The road a door opens onto: the edge nearest it within `reach` cm (ties to the lower edge).
 fn road_at(r: &Roads, q: P, reach: i64) -> Option<usize> {
     r.edges
@@ -270,21 +223,24 @@ fn road_at(r: &Roads, q: P, reach: i64) -> Option<usize> {
         .map(|(_, k)| k)
 }
 
-/// The island layer, and on a personal island every thing's first tier. Runs once
-/// every road and site is laid (after `civic::outside`).
-pub fn grow(p: &Profile, coast: &Coast, roads: &mut Roads, city: &mut City) -> Island {
-    let radii = radius_by_tier(p);
-    let docks = city.sites.iter().filter(|s| matches!(s.kind, "dock" | "port")).map(|s| s.id.clone()).collect();
-    let island = Island { coast: coast.poly.iter().map(|q| [q.0, q.1]).collect(), sea_cm: coast.sea_cm, docks, radius_by_tier: radii };
-    if p.name != "island" {
-        return island;
-    }
+/// Are these the shore's sites? They stand on the coast, outside every ring: they open
+/// at their spec tier (the dock 1, the port 3) and are reached by sea.
+pub fn shore(kind: &str) -> bool {
+    matches!(kind, "dock" | "port")
+}
 
-    // roads: an edge exists from the first tier the plaza reaches one of its ends
-    // through nodes no farther out than that tier's ring
-    let net = Net::new(roads);
-    let n = net.pos.len();
-    let start = (0..n).min_by_key(|&k| (dist2(net.pos[k], (0, 0)), k)).unwrap_or(0);
+/// Each road edge's first tier: the first tier in which the plaza reaches one of its
+/// ends through nodes no farther out than that tier's ring (so an edge leading out of
+/// a ring opens with it, and the roads present at a tier are one network).
+fn edge_tiers(radii: &[i64; 5], r: &Roads) -> Vec<u8> {
+    let n = r.nodes.len();
+    let pos: Vec<P> = r.nodes.iter().map(|n| (n.x, n.z)).collect();
+    let mut adj = vec![Vec::new(); n];
+    for e in &r.edges {
+        adj[e.a as usize].push(e.b as usize);
+        adj[e.b as usize].push(e.a as usize);
+    }
+    let start = (0..n).min_by_key(|&k| (dist2(pos[k], (0, 0)), k)).unwrap_or(0);
     let mut reached = vec![5u8; n];
     let mut seen = vec![false; n];
     for t in 1..=5u8 {
@@ -295,8 +251,8 @@ pub fn grow(p: &Profile, coast: &Coast, roads: &mut Roads, city: &mut City) -> I
             queue.push_back(start);
         }
         while let Some(u) = queue.pop_front() {
-            for &(_, v) in &net.adj[u] {
-                if !seen[v] && ring(&radii, net.pos[v]) <= t {
+            for &v in &adj[u] {
+                if !seen[v] && ring(radii, pos[v]) <= t {
                     seen[v] = true;
                     reached[v] = t;
                     queue.push_back(v);
@@ -304,63 +260,55 @@ pub fn grow(p: &Profile, coast: &Coast, roads: &mut Roads, city: &mut City) -> I
             }
         }
     }
-    let mut edge_t: Vec<u8> = net.ends.iter().map(|&(a, b)| reached[a].min(reached[b])).collect();
+    r.edges.iter().map(|e| reached[e.a as usize].min(reached[e.b as usize])).collect()
+}
 
-    // the city's first site of each kind (the shore's among them) opens at its spec
-    // tier: so do the owner's HQ lot (tier 1) and the shortest road from the plaza to
-    // the road nearest each, however far (a dock stands past the streets' end)
-    let mut first: BTreeMap<&str, (i64, usize)> = BTreeMap::new();
-    for (k, s) in city.sites.iter().enumerate() {
-        let d = dist2((s.x, s.z), (0, 0));
-        if first.get(s.kind).is_none_or(|f| (d, k) < *f) {
-            first.insert(s.kind, (d, k));
-        }
+/// The island layer, and on a personal island every thing's first tier. Runs once
+/// every road, site and transit line is laid (after `civic::outside` and `transit`).
+///
+///   road edge  `edge_tiers`
+///   lot        its ring, or its door's road's tier if later
+///   site       its spec tier, its ring or its door's road's tier, whichever is
+///              latest; the shore's (`shore`) their spec tier
+///   line       its spec tier, or the latest of its stops and its path's streets:
+///              a line runs only once all it calls at and drives along exists
+///
+/// Every tier is a number on a thing generated once at full size: growth only adds,
+/// nothing moves. A block has no tier of its own (the contract has none): it shows
+/// with the first lot or site on it.
+pub fn grow(p: &Profile, coast: &Coast, roads: &mut Roads, city: &mut City, transit: &mut Transit) -> Island {
+    let radii = radius_by_tier(p);
+    let docks = city.sites.iter().filter(|s| shore(s.kind)).map(|s| s.id.clone()).collect();
+    let island = Island { coast: coast.poly.iter().map(|q| [q.0, q.1]).collect(), sea_cm: coast.sea_cm, docks, radius_by_tier: radii };
+    if p.name != "island" {
+        return island;
     }
-    let firsts: BTreeSet<usize> = first.values().map(|f| f.1).collect();
-    let mut anchors: Vec<(P, u8)> = firsts.iter().map(|&k| (door(&city.sites[k]), city.sites[k].tier.unwrap_or(1))).collect();
-    anchors.extend(city.lots.iter().filter(|l| l.kind == "hq" && l.rank == Some(0)).map(|l| ((l.door[0], l.door[2]), 1)));
-    let (dist, via) = net.dijkstra(start);
-    for (q, t) in anchors {
-        let Some(e) = road_at(roads, q, p.size_cm) else { continue };
-        edge_t[e] = edge_t[e].min(t);
-        let (a, b) = net.ends[e];
-        let mut u = if dist[a] <= dist[b] { a } else { b };
-        while u != start && via[u] != usize::MAX {
-            let e = via[u];
-            edge_t[e] = edge_t[e].min(t);
-            u = if net.ends[e].0 == u { net.ends[e].1 } else { net.ends[e].0 };
-        }
-    }
+
+    let edge_t = edge_tiers(&radii, roads);
     for (e, t) in roads.edges.iter_mut().zip(&edge_t) {
         e.min_tier = Some(*t);
     }
-
-    // lots: their ring, or their road's tier if later; sites likewise, but never before their spec tier
     let on_road = |q: P| road_at(roads, q, REACH_CM).map_or(1, |e| edge_t[e]);
     for l in &mut city.lots {
         let poly: Vec<P> = l.poly.as_ref().map_or(vec![(l.x, l.z)], |v| v.iter().map(|q| (q[0], q[1])).collect());
-        let t = ring(&radii, centroid(&poly)).max(on_road((l.door[0], l.door[2])));
-        l.min_tier = Some(if l.kind == "hq" && l.rank == Some(0) { 1 } else { t });
+        l.min_tier = Some(ring(&radii, centroid(&poly)).max(on_road((l.door[0], l.door[2]))));
     }
-    for (k, s) in city.sites.iter_mut().enumerate() {
+    for s in &mut city.sites {
         let spec = s.tier.unwrap_or(1);
-        if !firsts.contains(&k) {
-            s.tier = Some(spec.max(ring(&radii, (s.x, s.z))).max(on_road(door(s))));
-        }
+        s.tier = Some(if shore(s.kind) { spec } else { spec.max(ring(&radii, (s.x, s.z))).max(on_road(door(s))) });
     }
 
-    // blocks: the first tier anything on them stands in (an empty block: its ring)
-    let mut by_block: BTreeMap<u32, u8> = BTreeMap::new();
-    // (the shore's sites and the airport stand outside the city: their block is only the nearest)
-    let inside = city.sites.iter().filter(|s| !matches!(s.kind, "dock" | "port" | "airport"));
-    let things = city.lots.iter().map(|l| (l.block, l.min_tier.unwrap_or(5))).chain(inside.map(|s| (s.block, s.tier.unwrap_or(5))));
-    for (b, t) in things {
-        let e = by_block.entry(b).or_insert(t);
-        *e = (*e).min(t);
+    // a hop of a line's path exists once any street joining its two nodes does
+    let mut hop: BTreeMap<(u32, u32), u8> = BTreeMap::new();
+    for (e, &t) in roads.edges.iter().zip(&edge_t) {
+        let h = hop.entry((e.a.min(e.b), e.a.max(e.b))).or_insert(t);
+        *h = (*h).min(t);
     }
-    for b in &mut city.blocks {
-        let c = b.poly.as_ref().map_or((b.x, b.z), |v| centroid(&v.iter().map(|q| (q[0], q[1])).collect::<Vec<P>>()));
-        b.min_tier = Some(by_block.get(&b.id).copied().unwrap_or_else(|| ring(&radii, c)));
+    let site_t: BTreeMap<&str, u8> = city.sites.iter().map(|s| (s.id.as_str(), s.tier.unwrap_or(1))).collect();
+    for line in &mut transit.lines {
+        let stops = line.stops.iter().map(|id| site_t.get(id.as_str()).copied().unwrap_or(5));
+        let path = line.path.windows(2).map(|w| hop.get(&(w[0].min(w[1]), w[0].max(w[1]))).copied().unwrap_or(5));
+        line.tier = stops.chain(path).fold(line.tier, u8::max);
     }
     island
 }

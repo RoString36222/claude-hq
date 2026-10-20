@@ -21,7 +21,7 @@
 //! and tram lines (transit.rs). Both version 2 worlds are islands (island.rs): a
 //! seeded coast with the sea round it (shaped into the base terrain), the highways
 //! ending at the ring, and a personal city generated at full size once, every lot,
-//! site, block and road given the first city tier it exists in.
+//! site, road and transit line given the first city tier it exists in.
 //!
 //! Layout (where roads, blocks, lots and sites are) comes from the seed and the
 //! profile only; terrain edits change heights, never layout. The result is a
@@ -154,8 +154,8 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
             island::trim(&mut roads);
         }
         civic::outside(&p, &base, &roads, &mut city);
-        let transit = transit::generate(&roads, &city.sites, &city.lots);
-        let island = coast.map(|c| island::grow(&p, &c, &mut roads, &mut city));
+        let mut transit = transit::generate(&roads, &city.sites, &city.lots);
+        let island = coast.map(|c| island::grow(&p, &c, &mut roads, &mut city, &mut transit));
         (Some(zones::layer(seed, &city.blocks)), Some(transit), island)
     };
 

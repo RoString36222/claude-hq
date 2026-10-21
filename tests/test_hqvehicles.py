@@ -23,7 +23,8 @@ LAYOUTS = {"single", "parallel-twin", "v-twin", "boxer-twin", "inline-3", "inlin
 ASPIRATION = {"na", "turbo", "twin-turbo", "quad-turbo", "electric"}
 SOUNDS = {"single", "twin", "vtwin", "boxer", "four", "six", "v8", "w16", "v16", "electric"}
 DRIVES = {"rwd", "fwd", "awd"}
-# coins per class tier (the spec's Economy); tier 0 is the free starters
+# coins per class tier (the spec's Economy) for when prices are set; tier 0 is the free starters.
+# FREE FOR ALL FOR NOW: every price is 0 (allowed in any tier) and every class's minLevel is 0.
 PRICE = {0: (0, 0), 1: (800, 1500), 2: (2500, 5000), 3: (8000, 15000), 4: (25000, 40000), 5: (100000, 500000)}
 
 
@@ -49,12 +50,17 @@ class Catalogue(unittest.TestCase):
         for cid, c in self.classes.items():
             if cid == "starter":
                 self.assertEqual(c["tier"], 0)
+                self.assertEqual(c["minLevel"], 0)
                 continue
             kind, typ, band = cid.split(".")
             self.assertEqual((c["kind"], c["type"], c["band"]), (kind, typ, band), cid)
             self.assertIn(typ, BIKE_TYPES if kind == "bike" else CAR_TYPES, cid)
             self.assertIn(band, BIKE_BANDS if kind == "bike" else CAR_BANDS, cid)
             self.assertIn(c["tier"], (1, 2, 3, 4, 5), cid)
+            # the player level a class needs (configurable here; the Arena enforces it).
+            # 0 = no gate (every class for now).
+            self.assertIsInstance(c["minLevel"], int, cid)
+            self.assertTrue(0 <= c["minLevel"] <= 100, cid)
             self.assertTrue(c["label"].strip(), cid)
             if typ == "hyper":
                 self.assertIn(band, ("over5000", "ev"), "a hypercar is over 5000 cc or electric")
@@ -143,7 +149,8 @@ class Catalogue(unittest.TestCase):
                     self.assertRegex(p["hex"], HEX_RE)
                     self.assertTrue(p["name"].strip())
                 lo, hi = PRICE[self.classes[v["class"]]["tier"]]
-                self.assertTrue(lo <= v["price"] <= hi, f"{v['price']} not in tier band {lo}-{hi}")
+                self.assertIsInstance(v["price"], int)
+                self.assertTrue(v["price"] == 0 or lo <= v["price"] <= hi, f"{v['price']} not 0 or in tier band {lo}-{hi}")
 
     def test_model3d_when_present_is_credited(self):
         for v in self.vehicles:

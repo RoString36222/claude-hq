@@ -49,6 +49,7 @@ mod sounds;
 #[cfg(test)]
 mod story_check;
 mod valley;
+mod vehicles;
 mod weeks;
 mod world;
 // The world generator (HQ 3.0), served by world.rs. Parts (queries the City
@@ -1016,6 +1017,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(skate::routes())
         .merge(skills::routes())
         .merge(sounds::routes())
+        .merge(vehicles::routes())
         .layer(middleware::from_fn_with_state(state.clone(), require_device));
 
     let public = Router::new()

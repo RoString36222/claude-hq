@@ -358,7 +358,7 @@ fn game_xp_from_rows(rows: &[(String, i64, i64)]) -> i64 {
 
 /// The caller's HQ level: session XP + game XP, the same walk
 /// `results.progress()` does.
-async fn hq_level(pool: &SqlitePool, uid: &str) -> Result<i64, sqlx::Error> {
+pub(crate) async fn hq_level(pool: &SqlitePool, uid: &str) -> Result<i64, sqlx::Error> {
     let row = sqlx::query(
         "SELECT COALESCE(SUM(prompts),0)   AS prompts,
                 COALESCE(SUM(tools),0)     AS tools,

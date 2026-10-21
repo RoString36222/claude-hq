@@ -19,11 +19,11 @@ function hqWebGL(){ try { return !!document.createElement("canvas").getContext("
 // before the City that wires them (games/hqcity3d.js). Navigation (3.1): the road router, the minimap, the
 // route's chevrons and the Go to panel / route banner, also before the City.
 var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqlobby","hqbase","hqskate","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
-                  "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqshowroom","hqtravel","hqvoyage","hqships","hqbridges","hqair","hqaircraft","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcity3d"];
+                  "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqshowroom","hqgarage","hqtravel","hqvoyage","hqships","hqbridges","hqair","hqaircraft","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcity3d"];
 // The 3D City's own files: if one fails, the classic City still works (games/hq3d.js falls back to it);
 // a Cities part that fails only takes its own feature out of the 3D City.
 var HQ_SCRIPTS_3D = {world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
-                     hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqshowroom:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqair:1, hqaircraft:1, hqairbase:1,
+                     hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqshowroom:1, hqgarage:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqair:1, hqaircraft:1, hqairbase:1,
                      hqnav:1, hqminimap:1, hqroutefx:1, hqnavui:1, hqrail:1};
 // ?hqsmoke=1 (tools/ui_smoke.py, tools/hq_shots.py): HQ opens straight into the City with three synthetic HQs.
 var HQ_SMOKE = /[?&]hqsmoke=1(&|$)/.test(location.search);
@@ -513,7 +513,10 @@ function hqNetSend(){
   // "alt": your feet height (cm) and pitch (degrees) on the 3D city's hills
   // (h is clamped to the Arena's +-500 m: a helicopter above that would get the whole frame dropped)
   if(alt && w.h!=null){ msg.h=Math.max(-50000, Math.min(50000, Math.round(w.h*100))); msg.p=Math.round(Math.max(-90, Math.min(90, (+w.pitch||0)*180/Math.PI))); }
-  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.k,msg.y,msg.h,msg.p].join(","), now=Date.now();
+  // "vehicles": the catalogue car or bike you drive (v) and its paint (vp), so others see the real one
+  var veh = (a===5 || a===6) && HQ3D.inst.vehicle && hqNetCan("vehicles") ? HQ3D.inst.vehicle() : null;
+  if(veh && /^[a-z0-9-]{1,48}$/.test(veh.v)){ msg.v=veh.v; msg.vp=Math.max(0, Math.min(63, veh.vp|0)); }
+  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp].join(","), now=Date.now();
   if(key===HQNET.last && now-HQNET.sentAt<2000) return;
   HQNET.last=key; HQNET.sentAt=now;
   try { ws.send(JSON.stringify(msg)); } catch(e){}

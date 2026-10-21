@@ -127,6 +127,10 @@ struct Person {
     /// Feet height (cm) and pitch (degrees), the "alt" capability. Per frame: a
     /// frame without either clears it. None until a v2 page sends one.
     alt: Option<(i64, i64)>,
+    /// Driving a catalogue vehicle (a = 5 / 6, the "vehicles" capability): its catalogue
+    /// id (`v`, one the Arena knows) and paint index (`vp`), so others see the real car
+    /// or bike. None whenever a is not 5 or 6, or the page sent no `v`.
+    veh: Option<(String, u8)>,
     /// (tokens, when) -- Python's `[POS_BURST, t]` list.
     bucket: (f64, f64),
 }
@@ -163,6 +167,7 @@ impl Hq {
                 look: None,
                 skate: None,
                 alt: None,
+                veh: None,
                 bucket: (POS_BURST, t),
             });
         }
@@ -228,6 +233,18 @@ impl Hq {
                 Some((super::py_trunc(h), super::py_trunc(pt)))
             }
         };
+        // A catalogue vehicle, only while driving or riding: absent is the starter;
+        // an unknown id or a bad paint drops the whole frame.
+        let veh = match (a.as_f64(), msg.get("v")) {
+            (Some(f), Some(v)) if f == 5.0 || f == 6.0 => {
+                let zero = json!(0);
+                let (Some(id), Some(vp)) = (v.as_str().filter(|id| crate::vehicles::is_vehicle(id)),
+                                            small_int(Some(msg.get("vp").unwrap_or(&zero)), VEH_PAINT_MAX))
+                else { return false };
+                Some((id.to_string(), vp))
+            }
+            _ => None,
+        };
         p.w = w.to_string();
         p.x = super::py_trunc(x); // Python's int(x): toward zero
         p.z = super::py_trunc(z);
@@ -235,6 +252,7 @@ impl Hq {
         p.a = a;
         p.skate = skate;
         p.alt = alt;
+        p.veh = veh;
         self.dirty = true;
         true
     }
@@ -291,6 +309,11 @@ impl Hq {
                         m.insert("h".into(), json!(h));
                         m.insert("p".into(), json!(pt));
                     }
+                    // only while driving a catalogue vehicle ("vehicles" capability)
+                    if let Some((v, vp)) = &p.veh {
+                        m.insert("v".into(), json!(v));
+                        m.insert("vp".into(), json!(vp));
+                    }
                     Value::Object(m)
                 })
                 .collect(),
@@ -318,6 +341,8 @@ fn anim_ok(a: &Value) -> bool {
 /// A skater's trick id (games/hqskate.js `K`) and height (decimetres) top out here.
 const SKATE_K_MAX: u8 = 15;
 const SKATE_Y_MAX: u8 = 60;
+/// A catalogue vehicle's paint index tops out here.
+const VEH_PAINT_MAX: u8 = 63;
 
 /// A whole number in 0..=max, or 0 when absent; None (drop the frame) for
 /// anything else -- a fraction, a bool, a string, out of range.
@@ -515,6 +540,28 @@ mod tests {
         let first = &p.listing()[0];
         assert_eq!((&first["w"], &first["x"], &first["z"], &first["a"]),
                    (&json!("mission"), &json!(100), &json!(-200), &json!(2)));
+    }
+
+    #[test]
+    fn a_catalogue_vehicle_rides_in_the_listing_only_while_driving() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 5, "v": "bmw-m3-competition", "vp": 2}), 0.1));
+        let l = p.listing();
+        assert_eq!((l[0]["v"].clone(), l[0]["vp"].clone()), (json!("bmw-m3-competition"), json!(2)));
+        // on foot: no vehicle, whatever the page sends
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 1, "v": "bmw-m3-competition"}), 0.2));
+        assert!(p.listing()[0].get("v").is_none());
+        // an unknown id or a bad paint drops the whole frame
+        for bad in [json!({"v": "not-a-car"}), json!({"v": 7}), json!({"v": "bmw-m2", "vp": 64}), json!({"v": "bmw-m2", "vp": -1})] {
+            let mut m = json!({"w": "city", "x": 900, "z": 0, "r": 0, "a": 6});
+            m.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+            assert!(!p.pos("u", &m, 2.0), "{bad}");
+        }
+        assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
+        // driving with no `v` (the starter, or an older page): no vehicle in the listing
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 5}), 3.0));
+        assert!(p.listing()[0].get("v").is_none());
     }
 
     #[test]

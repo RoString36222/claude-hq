@@ -82,6 +82,7 @@ class RustBuildContext(unittest.TestCase):
             "data/pokemon.json",
             "data/strike_map.json",
             "data/strike_map_sandbar.json",
+            "data/vehicles.json",
         ])
         self.assertEqual([p for p in embedded_paths() if "app/" in p], [],
                          "embeds must not reach the deleted Python tree")

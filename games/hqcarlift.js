@@ -304,8 +304,9 @@ function mesh(ctx, opts){
       var here = basement ? state.floor === "B1" : state.floor === "G"; if(!here) open = 0;
     }
     platform.position.y = y;
-    var slide = clamp(open, 0, 1)*doors.w*0.92;
-    doorL.position.x = -doors.w/2 - slide; doorR.position.x = doors.w/2 + slide;
+    // telescoping leaves: they fold into the side pockets, so an open door never sticks out past the frame
+    var o = clamp(open, 0, 1), lw = Math.max(0.04, doors.w*(1 - 0.94*o)), edge = w/2 - post/2;
+    doorL.scale.x = lw; doorR.scale.x = lw; doorL.position.x = -edge + lw/2; doorR.position.x = edge - lw/2;
     drawScreen(floor, moving);
     // the chase: a band of light runs round the frame while the lift moves (steady when Calm or at rest)
     k = num(k, 1); t = num(t, 0);

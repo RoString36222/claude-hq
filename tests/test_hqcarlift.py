@@ -83,9 +83,9 @@ out.mesh = {hasG: !!M.g, platform: !!M.platform, doors: !!(M.doors.L && M.doors.
 const r = L.create({dir: "down"}); for(let i = 0; i < 120; i++) L.step(r, 1/60);   // into the ride
 M.update(r, 1, 1); out.platY = M.platform.position.y; out.platYState = r.y;
 Mb.update(r, 1, 1); out.platYB = Mb.platform.position.y;
-const r0 = L.create({dir: "down"}); M.update(r0, 0, 0); const openX = M.doors.R.position.x;
+const r0 = L.create({dir: "down"}); M.update(r0, 0, 0); const openX = M.doors.R.position.x, openW = M.doors.R.scale.x;
 const r1 = L.create({dir: "down"}); while(r1.phase !== "moving") L.step(r1, 1/60); M.update(r1, 0, 0); const shutX = M.doors.R.position.x;
-out.doorsSlide = openX > shutX;
+out.doorsSlide = openX > shutX && openW < M.doors.w/4 && openX + openW/2 <= M.size.w/2 + 1e-6;
 M.setNight(true); M.dispose();
 out.nullCtx = L.mesh(null) === null || true;
 console.log(JSON.stringify(out));

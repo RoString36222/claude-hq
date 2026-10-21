@@ -769,7 +769,7 @@ var TOTEM_HELP = {mole:   "Charms an enemy bot for 8s: it shoots its own team, a
                   thunder: "DISASTER: 8s. Zig-zag lightning bolts slam the map from the sky — flash, then a blast. Stand under one and it hits harder and blinds you. Shed roofs stop it.",
                   earthquake: "DISASTER: 8s. The whole arena shakes and the floor erupts in cracks and dust. Near a crack it hits harder and throws your step (you slow).",
                   shockring: "DISASTER: one huge expanding ring from the centre, visible across the map. It knocks, hurts and briefly blinds everyone it crosses once. Jumping or cover softens it.",
-                  toxicfog: "DISASTER: 12s. Giant toxic clouds roll across the map and choke anyone standing in them (damage and a crawl while you stay).",
+                  toxicfog: "DISASTER: 12s. The whole arena fills with green gas — it chips everyone out in it. The thick clouds that roll through hit harder and choke you to a crawl while you stay.",
                   absolutezero: "DISASTER: 10s ice storm over the whole map — snow, frost fog, frozen light. No sprint, crawling reloads, sliding acceleration, frostbite chips 4 hp a second.",
                   sinkhole: "DISASTER: 8s. A huge pit opens in the ground and pulls everyone toward it. Near the rim you stumble (slow) and it bites 12 hp a second.",
                   emp: "DISASTER: 5s. The whole arena goes dark and blue — lights fail, HUD tracking cuts out, bots can't aim and every shot scatters. Overload chips 2 hp a second. You can still shoot and move."};
@@ -798,6 +798,8 @@ var DD_THUNDER_R = 2.8, DD_THUNDER_DMG = 55, DD_THUNDER_WARN = 0.7, DD_THUNDER_G
 var DD_QUAKE_R = 2.5, DD_QUAKE_DMG = 25, DD_QUAKE_WARN = 0.8, DD_QUAKE_GAP = 0.7;
 var DD_SHOCK_R = 28, DD_SHOCK_DMG = 30, DD_SHOCK_KNOCK = 12;
 var DD_TOXIC_R = 5, DD_TOXIC_DMG = 8, DD_TOXIC_ZONES = 3;
+var DD_TOXIC_CHIP_DMG = 3;   // the green gas fills the arena — everyone chips
+
 var DD_SINK_R = 4.5, DD_SINK_DMG = 12, DD_SINK_PULL = 4;
 var DD_WIND_R = 6, DD_WIND_PUSH = 7.5, DD_WIND_DMG = 3;
 // exposure bites for the three "modifier" disasters — every disaster must have a
@@ -818,6 +820,80 @@ var DD_SAND_SCATTER = 1.2;     // grit in the sights (extra shot scatter, degree
 var DD_WIND_SCATTER = 2.4;     // wild aim in the column
 var DD_EMP_SCATTER = 1.0;      // electronic sights haywire
 var DD_SLOW_MULT = 0.65;       // walk speed while a disaster slow is on (quake / toxic / sink / wind)
+	// ---- The Warden (mid-match boss) — twin of backend/src/strike.rs WARDEN_* ----
+	var WARDEN_TRIGGER = 0.5;
+	var WARDEN_HP_PER = 2000;
+	var WARDEN_MIN_HP = 4000;
+	var WARDEN_MAX_HP = 24000;
+	var WARDEN_SLAB_R = 3.2;
+	var WARDEN_SLAB_ARM = 1.2;
+	var WARDEN_SLAB_R_HIT = 4.5;
+	var WARDEN_SLAB_KNOCK = 10.0;
+	var WARDEN_SLAB_KNOCK_PUSH = 8.0;
+	var WARDEN_SLAB_BLAST_DMG = 25;
+	var WARDEN_SLAB_CD = 7.0;
+	var WARDEN_LOOT_R0 = 18.0;
+	var WARDEN_LOOT_RSPAN = 12.0;
+	var WARDEN_LOOT_RMIN = 16.0;
+	var WARDEN_LASER_WARN = 1.0;
+	var WARDEN_LASER_HOLD = 4.0;
+	var WARDEN_LASER_CD = 9.0;
+	var WARDEN_LASER_YAW0 = 0.35;
+	var WARDEN_LASER_W = 0.55;
+	var WARDEN_DIS_CD = 14.0;
+	var WARDEN_CKPT = 3;
+	// silhouette scale: the boss (and its hit volumes) are 3× the first cut
+	var WARDEN_SCALE = 3.0;
+	// hit volumes: (half-width, half-depth, y0, y1) — already × WARDEN_SCALE
+	var WARDEN_BOX_WAIST = [5.4, 3.6, 0.0, 4.8];
+	var WARDEN_BOX_CHEST = [6.6, 3.9, 4.8, 11.4];
+	var WARDEN_BOX_HEAD = [2.7, 2.7, 11.4, 15.6];
+	var WARDEN_BOX_ARM = [1.8, 1.8, 5.4, 15.0];
+	var WARDEN_ARM_X = 8.7;
+	var WARDEN_ARM_DMG_MULT = 0.35;
+	var WARDEN_ARM_HP = 2000;
+	// Exposed Core: torso is plated until a slam (or checkpoint II) opens the chest
+	var WARDEN_CORE_EXPOSE = 3.0;
+	var WARDEN_CORE_COVER_MULT = 0.2;
+	var WARDEN_CORE_HIT_MULT = 3.0;
+	var WARDEN_CK2_EXPOSE = 6.0;
+	// Gravity Grip: open-hand pull toward the torso (cover / sprint breaks it)
+	var WARDEN_GRIP_CD = 16.0;
+	var WARDEN_GRIP_WARN = 1.0;
+	var WARDEN_GRIP_HOLD = 2.0;
+	var WARDEN_GRIP_PULL = 5.0;
+	var WARDEN_GRIP_R = 28.0;
+	var WARDEN_GRIP_MIN = 2.2;
+	var WARDEN_GRIP_SWEEP_DMG = 18;
+	var WARDEN_CK1_PUSH = 12.0;
+	var WARDEN_SLAB_WIRE = 0.9;
+	var WARDEN_CHECK_NAMES = ["", "I", "II", "III"];
+	// aim / LOS probe heights (arm, chest, waist) and the laser-eye origin.
+	// Never prefer the head — it is no weak point and must not be the default aim.
+	var WARDEN_SEE_HEAD = 13.5;
+	var WARDEN_SEE_CHEST = 7.8;
+	var WARDEN_SEE_WAIST = 3.6;
+	var WARDEN_SEE_ARM = 10.2;
+	// kill feed: keep causes readable long enough to see how you died
+	var FEED_TTL = 8;
+	var FEED_MAX = 6;
+	// env kill causes that are not totems (twin of the Rust `dis` strings)
+	var ENV_NAMES = {
+	  "warden": "The Warden",
+	  "warden-slam": "arm slam",
+	  "warden-laser": "laser eyes",
+  "warden-grip": "gravity grip",
+	  "sandstorm": "Sandstorm",
+	  "meteorshower": "Meteorshower",
+	  "hurricane": "Hurricane",
+	  "thunder": "Thunder",
+	  "earthquake": "Earthquake",
+	  "shockring": "Shockring",
+	  "toxicfog": "Toxic Fog",
+	  "absolutezero": "Absolute Zero",
+	  "sinkhole": "Sinkhole",
+	  "emp": "EMP"
+	};
 // True when a solid slab sits overhead — a shed roof, a container top, a catwalk.
 // This is the cover that keeps an overhead impact (Meteor Shower, Thunder) off you.
 function hasRoof(x, y, z){
@@ -832,6 +908,17 @@ function hasRoof(x, y, z){
   }
 // the deterministic rng used by the server + solo client so everyone sees the same drop
 function hashMatch(seed, salt){ var x = (seed ^ (salt*0x9e3779b9))|0; return ((x >>> 0) / 4294967295); }
+// How far a ground beam can run before it leaves the arena (never off the map).
+// Twin: map_laser_run in backend/src/strike.rs.
+function mapLaserRun(wx, wz, yaw){
+    var b = (MAP && MAP.bounds && MAP.bounds.length === 6) ? MAP.bounds : [-42, -1, -30, 42, 12, 30];
+    var dx = Math.cos(yaw||0), dz = Math.sin(yaw||0), run = 200;
+    if(dx > 1e-6) run = Math.min(run, (b[3] - 0.5 - (wx||0)) / dx);
+    else if(dx < -1e-6) run = Math.min(run, (b[0] + 0.5 - (wx||0)) / dx);
+    if(dz > 1e-6) run = Math.min(run, (b[5] - 0.5 - (wz||0)) / dz);
+    else if(dz < -1e-6) run = Math.min(run, (b[2] + 0.5 - (wz||0)) / dz);
+    return Math.max(4, Math.min(run, 80));
+}
 // a deterministic zig-zag lightning path from (x0,y0,z0) to the ground mark (x1,y1,z1).
 // Kinks come from hashMatch over the frozen disaster seed — never Math.random — so every
 // observer paints the same bolt. Ends snap to the sky entry and the strike point.
@@ -984,7 +1071,12 @@ function makeGame(host, opts){
     // ---- Wave D: Arena Disasters ----
     disaster: "", disasterWarnAt: 0, disasterUntil: 0, disasterHitAt: 0,
     disasterRing: 0, disasterHit: {}, disasterMarks: [], disasterAt: 0,
-    disasterSeed: 0, disasterZones: [], disasterPit: null, disasterMarkK: 0};
+    disasterSeed: 0, disasterZones: [], disasterPit: null, disasterMarkK: 0,
+    // ---- The Warden ----
+    // Summon the Warden is ON by default (only an explicit off / 0 keeps it off)
+    wardenOn: (sv.wardenOn === undefined || sv.wardenOn === null) ? true : (sv.wardenOn !== false && sv.wardenOn !== 0),
+    warden: null, wardenDone: false};
+  if(sv.wardenOn === undefined || sv.wardenOn === null){ sv.wardenOn = true; }
   function myId(){ return V.mode === "mp" && MP ? MP.me() : "me"; }
   var LAUNCH_W = 3;  // the launcher's index in the 4-strong roster every impl now shares
   // the chosen tier belongs to the ENEMIES you want to beat — your own bots are always Easy,
@@ -1128,7 +1220,11 @@ function makeGame(host, opts){
   var disOv = api.mk("div", "vg-fps-dis-ov");
   var disOvIn = api.mk("div", "vg-fps-dis-ov-in");
   disOv.appendChild(disOvIn);
-  [disOv, blindOv, vignette, shOv, clOv, scope, cross, hitm, hurt, hpBox, ammoBox, topBox, feedBox, center, stamBox, shPill, radarWrap].forEach(function(n){ hud.appendChild(n); });
+  var wardenBar = api.mk("div", "vg-warden-bar hidden");
+  var wardenHp = api.mk("div", "vg-warden-hp");
+  var wardenLock = api.mk("div", "vg-warden-lock hidden");
+  wardenBar.appendChild(wardenHp);
+  [disOv, blindOv, vignette, shOv, clOv, scope, cross, hitm, hurt, hpBox, ammoBox, topBox, feedBox, center, stamBox, shPill, radarWrap, wardenBar, wardenLock].forEach(function(n){ hud.appendChild(n); });
   var board = api.mk("div", "vg-golf-card vg-fps-board hidden"); board.setAttribute("role", "dialog"); board.setAttribute("aria-label", "Scoreboard");
   // the item guide (press I): what each light column on the map hands you
   var guide = api.mk("div", "vg-golf-card vg-fps-board hidden"); guide.setAttribute("role", "dialog"); guide.setAttribute("aria-label", "Item guide");
@@ -1219,6 +1315,26 @@ function makeGame(host, opts){
       .forEach(function(r){ var l = api.mk("div", "vg-sz-lin"); l.appendChild(ico("transparent")); l.children[0].textContent = r[0];
         var s = api.mk("span"); s.appendChild(document.createTextNode(r[1])); l.appendChild(s); ar.appendChild(l); });
     card.appendChild(ar);
+    // The Warden — the mid-match boss, spelled out so nobody meets it cold
+    var wsec = api.mk("div", "vg-sz-sec");
+    wsec.appendChild(api.mk("b", null, "The Warden"));
+    var wlead = api.mk("p", "vg-muted");
+    wlead.appendChild(document.createTextNode(
+      "Summon the Warden is ticked by default in the menu (next to Map view). Halfway to the kill limit a giant torso-only totem-golem (head to waist, no legs) rises at map centre and turns to face the arena. Practice never summons it. Its health bar has three checkpoints (I / II / III at 75 / 50 / 25%) — each one scatters every non-disaster totem plus a health pack far from its body so you can grab them mid-fight."
+    ));
+    wsec.appendChild(wlead);
+    [["🗿", "While it lives nobody can hurt each other — you and every bot shoot only the Warden. The round clock and team scores freeze."],
+     ["💪", "Hit volumes: head (no crit), waist, chest core, and two separate arms. Arms soak the least damage on their own pool — disable one and that arm skips its next slam. The kill feed always names how you died (arm slam, laser eyes, gravity grip) — never a mystery."],
+     ["✊", "Heavy-arm slam: the torso bends down and the forearms hinge at the elbow into the floor. A red ring warns the ground first. Anything under the fist when it lands dies instantly; just outside that, the smash blows dust and knocks everyone away with damage."],
+     ["👁", "Laser eyes: he looks down and a ground beam sweeps the floor across the arena (it stops at the map edge, never off into the void). Touch it and you are out — run or hide behind cover."],
+     ["🔥", "Exposed Core: the chest is plated (body shots soak). A slam cracks it open for a few seconds — hit the glowing core for triple damage. Checkpoint II also opens it."],
+     ["🌀", "Gravity Grip: an open hand hauls everyone toward the torso. Sprint or duck behind cover to break free; too close and the free arm sweeps you out."],
+     ["💥", "Checkpoint identities: I shoves every fighter clear of the body (dust + push, not a slam kill). II opens the core. III drops the next loot burst farther out. Each checkpoint still scatters boosts + a health pack."],
+     ["🌪", "Only the Warden calls disasters (including Toxic Fog’s green gas, which chips everyone out in it). The usual totem / pack / disaster drops stop until it falls."],
+     ["🏁", "Kill it and the match is back to the normal rules you see above."]]
+      .forEach(function(r){ var l = api.mk("div", "vg-sz-lin"); l.appendChild(ico("transparent")); l.children[0].textContent = r[0];
+        var s = api.mk("span"); s.appendChild(document.createTextNode(r[1])); l.appendChild(s); wsec.appendChild(l); });
+    card.appendChild(wsec);
     // the arsenal
     var al = api.mk("div", "vg-sz-sec");
     al.appendChild(api.mk("b", null, "The arsenal"));
@@ -1315,6 +1431,10 @@ function makeGame(host, opts){
       l.appendChild(cb); l.appendChild(document.createTextNode(" "+label)); top.appendChild(l);
     }
     check("Map view (2D)", V.map, function(v){ V.map = v; sv.map = v; });
+    // default ON — practice still never summons (see wardenTick), but the box shows your preference
+    check("Summon the Warden", V.wardenOn, function(v){
+      V.wardenOn = v; sv.wardenOn = v;
+    });
     check("Low detail (faster on older laptops)", V.low, function(v){ V.low = v; sv.low = v; });
     var sl = api.mk("label", "vg-golf-check"), sr = api.mk("input"); sr.type = "range"; sr.min = "0.2"; sr.max = "3"; sr.step = "0.1"; sr.value = String(V.sens);
     sr.setAttribute("aria-label", "Mouse sensitivity");
@@ -1369,7 +1489,7 @@ function makeGame(host, opts){
           var s = ssave(), m = clamp(Math.round(s.minutes|0 || 5), 1, 60), k = clamp(Math.round(s.kills|0 || 30), 1, 500);
           if(MP) MP.send("strike", "start", {minutes: m, kills: k, tsize: TEAM_SIZES.indexOf(s.tsize|0) >= 0 ? s.tsize|0 : 2,
             diff: DIFFS.some(function(d){ return d.id === s.diff; }) ? s.diff : "normal",
-            map: mapIdOf(s)});
+            map: mapIdOf(s), warden: V.wardenOn ? 1 : 0});
         }));
       } else row.appendChild(api.mk("span", "vg-muted", "Waiting for the host (★ in the lobby) to start a match — any side short of humans is filled with bots at the host's chosen skill, the same on both teams."));
       menu.appendChild(row);
@@ -1429,6 +1549,7 @@ function makeGame(host, opts){
     V.disaster = ""; V.disasterWarnAt = 0; V.disasterUntil = 0; V.disasterHitAt = 0;
     V.disasterRing = 0; V.disasterHit = {}; V.disasterMarks = []; V.disasterAt = 0;
     V.disasterSeed = 0; V.disasterZones = []; V.disasterPit = null; V.disasterMarkK = 0;
+    V.warden = null; V.wardenDone = false;
     (V.missiles || []).forEach(function(m){ if(m.o && R3) R3.rocket(null, m); }); V.missiles = [];
     clearPlayers(); V.phase = "idle"; V.results = null; V.feed = []; V.drones = []; V.tracers = []; V.dmgNums = []; V.killCam = null;
     cardBox.classList.add("hidden"); board.classList.add("hidden"); guide.classList.add("hidden"); center.classList.add("hidden"); V.board = false; V.guide = false;
@@ -1563,7 +1684,383 @@ function makeGame(host, opts){
       }
     }
   }
+  /* ---------- The Warden (mid-match boss) ---------- */
+  function wardenBoxes(W){
+    var cx = (W && W.x) || 0, wz = (W && W.z) || 0;
+    function vol(t, ox){
+      return [cx + (ox||0) - t[0], t[2], wz - t[1], cx + (ox||0) + t[0], t[3], wz + t[1]];
+    }
+    // 0 waist, 1 chest, 2 head (crit), 3 left arm, 4 right arm
+    return [vol(WARDEN_BOX_WAIST), vol(WARDEN_BOX_CHEST), vol(WARDEN_BOX_HEAD),
+            vol(WARDEN_BOX_ARM, -WARDEN_ARM_X), vol(WARDEN_BOX_ARM, WARDEN_ARM_X)];
+  }
+  function wardenHitIndex(boxes, o, d, reach){
+    var best = -1, end = reach == null ? 1e9 : reach;
+    for(var i = 0; i < boxes.length; i++){
+      if(i === 3 && !(V.warden && V.warden.armL > 0)) continue;
+      if(i === 4 && !(V.warden && V.warden.armR > 0)) continue;
+      var h = FS.rayBox(o, d, boxes[i]);
+      if(h !== null && h < end){ end = h; best = i; }
+    }
+    return best;
+  }
+  // Torso damage while the core is plated vs exposed (arms use their own mult).
+  // Twin: warden_body_mult in backend/src/strike.rs.
+  function wardenBodyMult(W, vol, t){
+    if(!W) return 1;
+    var open = !!(W.coreUntil && t < W.coreUntil);
+    if(!open) return WARDEN_CORE_COVER_MULT;
+    return (vol === 1) ? WARDEN_CORE_HIT_MULT : 1;
+  }
+  function wardenHit(W, vol, dmg, t){
+    if(!W || !dmg) return;
+    // The Warden has no weak point: the head volume is not a crit. Arms are the
+    // preferred (least-damage) target and soak on their own pool. The chest core
+    // is plated until a slam opens it — covered torso soaks, an open core bites.
+    var head = false, arm = (vol === 3) ? 0 : (vol === 4) ? 1 : -1;
+    var base = dmg;
+    var dealt = 0;
+    if(arm >= 0){
+      dealt = Math.round(base * WARDEN_ARM_DMG_MULT);
+      if(arm === 0) W.armL = Math.max(0, (W.armL|0) - dealt);
+      else W.armR = Math.max(0, (W.armR|0) - dealt);
+    } else {
+      dealt = Math.round(base * wardenBodyMult(W, vol, t));
+      W.hp = Math.max(0, (W.hp|0) - dealt);
+    }
+    V.hitAt = t;
+    V.dmgNums = V.dmgNums || [];
+    V.dmgNums.push({x: W.x, y: (arm >= 0 ? 3.0 : 2.2), z: W.z, n: dealt, head: head, at: t, o: null});
+    if(V.dmgNums.length > 12) V.dmgNums.shift();
+    wardenAfterDamage(W, t);
+  }
+  function wardenBlast(W, at, t){
+    if(!W || !at) return;
+    // twin of Rust warden_blast: the nearest live volume takes the blast
+    var boxes = wardenBoxes(W), BLAST_R = FS.BLAST_R || 5.0, DIRECT_R = FS.DIRECT_R || 1.5;
+    var best = -1, bestDmg = 0;
+    for(var i = 0; i < boxes.length; i++){
+      if(i === 3 && !(W.armL > 0)) continue;
+      if(i === 4 && !(W.armR > 0)) continue;
+      var b = boxes[i];
+      var px = clamp(at[0], b[0], b[3]), py = clamp(at[1], b[1], b[4]), pz = clamp(at[2], b[2], b[5]);
+      var dx = at[0]-px, dy = at[1]-py, dz = at[2]-pz;
+      var dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      if(dist > BLAST_R) continue;
+      var dmg = FS.blastDamage(dist, dist < DIRECT_R);
+      if(dmg > bestDmg){ bestDmg = dmg; best = i; }
+    }
+    if(best < 0 || bestDmg <= 0) return;
+    if(best === 3) W.armL = Math.max(0, (W.armL|0) - bestDmg);
+    else if(best === 4) W.armR = Math.max(0, (W.armR|0) - bestDmg);
+    else W.hp = Math.max(0, (W.hp|0) - Math.round(bestDmg * wardenBodyMult(W, best, t)));
+    wardenAfterDamage(W, t);
+  }
+  var WARDEN_FRACS = [0.75, 0.50, 0.25];
+  function wardenAfterDamage(W, t){
+    if(!W) return;
+    if(!W.max) W.max = 1;
+    for(var i = 0; i < WARDEN_CKPT; i++){
+      if(W.ck[i]) continue;
+      var thr = W.max * WARDEN_FRACS[i];
+      if(W.hp <= thr){
+        W.ck[i] = true;
+        var name = WARDEN_CHECK_NAMES[i+1] || String(i+1);
+        onEvent({ev: "warden", phase: "ckpt", ck: i+1, name: name, hp: W.hp, max: W.max, x: Math.round(W.x*100), z: Math.round(W.z*100), armL: W.armL|0, armR: W.armR|0});
+        wardenLoot(i, t);
+        // checkpoint identities: I shoves everyone clear, II cracks the core open
+        if(i === 0) wardenShock(t);
+        else if(i === 1) W.coreUntil = Math.max(W.coreUntil || 0, t + WARDEN_CK2_EXPOSE);
+      }
+    }
+    if(W.hp <= 0) wardenDeath(t);
+  }
+  // Checkpoint I: a shockwave shoves every fighter clear of the body (not a slam).
+  function wardenShock(t){
+    var W = V.warden; if(!W) return;
+    [{__me: 1}].concat(others()).forEach(function(Q){
+      var qx = Q.__me ? V.me.x : Q.x, qz = Q.__me ? V.me.z : Q.z, qdead = Q.__me ? V.dead : Q.dead;
+      if(qdead) return;
+      if(Q.__me ? meShielded(t) : botShielded(Q, t)) return;
+      var dx = qx - W.x, dz = qz - W.z, d = Math.max(0.15, Math.hypot(dx, dz));
+      var kx = dx / d, kz = dz / d, push = WARDEN_CK1_PUSH;
+      if(Q.__me){ V.me.x += kx * push; V.me.z += kz * push; V.shakeAt = t; }
+      else { Q.x += kx * push; Q.z += kz * push; }
+    });
+    if(R3 && R3.wardenShock) R3.wardenShock(t);
+  }
+  function wardenLoot(ckpt, t){
+    // one of each non-disaster totem + one health pack, scattered away from the body
+    // (twin of Rust warden_loot: seed = born*0x9E3779B9 + 0x57A71001 + ckpt*64)
+    ensureDropSlots();
+    var ALL = ["mole","freeze","decoy","cloak","shield","wings","leap","speed","teleport",
+      "rift","mirror","gravflip","rewind","shock","magnet","chain","trap","mark","blink","bubble",
+      "wallrun","secondwind","fakedeath","ghost","cluster","overclock","ricochet","infchamber",
+      "bodyswap","rally","meteor","chaos","phoenix","pocket","fate","king","radarjam"];
+    var W = V.warden; if(!W) return;
+    var born = (W.born|0) || 1;
+    var seed = (((born * 0x9E3779B9) + 0x57A71001 + ((ckpt|0) * 64)) >>> 0);
+    var base = MAP.pickups.length;
+    var kinds = ALL.concat(["health"]);
+    for(var i = 0; i < kinds.length; i++){
+      var salt = 200 + (ckpt|0)*64 + i;
+      // scatter clear of the body (fists land at |x|≈8.7, chest half-width 6.6) —
+      // even slots bias +Z, odd −Z so the burst fans both ways
+      var sideZ = ((i % 2) === 0) ? 1 : -1;
+      var ang = sideZ * (Math.PI * 0.5) + (hashMatch(seed, salt) - 0.5) * Math.PI * 1.4;
+      var rad = WARDEN_LOOT_R0 + hashMatch(seed, salt + 17) * WARDEN_LOOT_RSPAN;
+      var x = W.x + Math.cos(ang) * rad, z = W.z + Math.sin(ang) * rad;
+      for(var k = 0; k < 24 && (Math.hypot(x - W.x, z - W.z) < WARDEN_LOOT_RMIN || FS.overlaps(MAP, x, 0.1, z, 0) >= 0); k++){
+        var s2 = (seed + (k+1)*2654435761 + i) >>> 0;
+        ang = sideZ * (Math.PI * 0.5) + (hashMatch(s2, salt) - 0.5) * Math.PI * 1.4;
+        rad = WARDEN_LOOT_R0 + hashMatch(s2, salt + 17) * WARDEN_LOOT_RSPAN;
+        x = W.x + Math.cos(ang) * rad; z = W.z + Math.sin(ang) * rad;
+      }
+      var kind = kinds[i];
+      var idx = base + i;
+      MAP.pickups[idx] = {id: kind+"-w"+ckpt+"-"+i, kind: kind, at: [x, 0, z], tag: kind === "health" ? "warden-pack" : "warden"};
+      V.items[idx] = 1; if(V.itemBack) delete V.itemBack[idx];
+      V.kinds[idx] = kind === "health" ? "" : kind;
+      if(R3){
+        if(kind === "health" || kind === "ammo") R3.addPack(idx, MAP.pickups[idx]);
+        else R3.addTotem(idx, MAP.pickups[idx]);
+      }
+    }
+  }
+  function wardenDeath(t){
+    var W = V.warden; if(!W) return;
+    var max = W.max|0 || 1;
+    V.warden = null; V.wardenDone = true;
+    onEvent({ev: "warden", phase: "dead", hp: 0, max: max});
+    // restore the match clocks the boss had paused
+    V.totemAt = t + TOTEM_GAP;
+    V.packAt = t + PACK_GAP;
+    V.disAt = t + DIS_GAP_DROP;
+    V.disasterAt = t + DIS_FIRST;
+    if(V.endsAt != null && W.pausedMs){ V.endsAt = t + W.pausedMs/1000; }
+    if(R3 && R3.wardenClear) R3.wardenClear();
+  }
+  function wardenSummon(t){
+    if(V.warden || V.wardenDone || V.mode === "practice") return;
+    var fighters = 1 + others().filter(function(P){ return !P.dead && !P.gone; }).length;
+    var max = clamp(WARDEN_HP_PER * fighters, WARDEN_MIN_HP, WARDEN_MAX_HP);
+    var b = (MAP && MAP.bounds && MAP.bounds.length === 6) ? MAP.bounds : [-42, -1, -30, 42, 12, 30];
+    var cx = (b[0] + b[3]) / 2, cz = (b[2] + b[5]) / 2;
+    var nowMs = Math.max(0, Math.round(Math.max(0, (V.endsAt || 0) - t) * 1000));
+    V.warden = {
+      hp: max, max: max, phase: "live", x: cx, z: cz, yaw: 0,
+      slabAt: t + 2.5, slabArm: 0, slabLand: 0, slamArm: 0,
+      laserAt: t + WARDEN_LASER_CD, laserWarn: 0, laserOn: 0, laserYaw: 0,
+      disAt: t + WARDEN_DIS_CD,
+      ck: [false, false, false],
+      armL: WARDEN_ARM_HP, armR: WARDEN_ARM_HP,
+      born: t, pausedMs: nowMs, wdArmWarn: false,
+      coreUntil: 0, gripWarn: 0, gripOn: 0, gripAt: t + 8.0
+    };
+    V.wdArmWarn = false;
+    // suspend normal drops + auto-disaster; only the boss may call disasters / drop loot
+    V.totemAt = null; V.packAt = null; V.disAt = null; V.disasterAt = null;
+    onEvent({ev: "warden", phase: "rise", hp: max, max: max, x: Math.round(cx*100), z: Math.round(cz*100), armL: WARDEN_ARM_HP, armR: WARDEN_ARM_HP});
+    if(R3 && R3.wardenRise) R3.wardenRise(V.warden);
+  }
+  function wardenTick(dt, t){
+    if(V.mode === "practice") return;
+    if(!V.warden){
+      if(!V.wardenOn || V.wardenDone || V.phase !== "round") return;
+      var lim = V.limit || 30, half = Math.ceil(lim * WARDEN_TRIGGER);
+      if((V.scores[0]|0) >= half || (V.scores[1]|0) >= half) wardenSummon(t);
+      return;
+    }
+    var W = V.warden;
+    // ---- body turn: the torso faces around the arena (twin of Rust warden_tick) ----
+    if(W.laserOn > 0 && t >= W.laserWarn){
+      W.yaw = W.laserYaw || 0;
+    } else {
+      var turnN = ((t - W.born) / 6) | 0;
+      var tYaw = hashMatch((W.born|0) ^ 0xB0D9, 40 + turnN) * Math.PI * 2;
+      var y0 = W.yaw || 0;
+      var yd = ((tYaw - y0 + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      W.yaw = y0 + yd * Math.min(1, dt / 2);
+    }
+    // ---- arm slam (twin: telegraph and land share WARDEN_SLAB_ARM) ----
+    if(W.slabArm > 0 && t >= W.slabArm){
+      W.slabArm = 0; W.slabLand = 0;
+      var pts = [];
+      if((W.slamArm === 0 || W.slamArm === 2) && W.armL > 0) pts.push({x: W.x - WARDEN_ARM_X, z: W.z});
+      if((W.slamArm === 1 || W.slamArm === 2) && W.armR > 0) pts.push({x: W.x + WARDEN_ARM_X, z: W.z});
+      for(var pi = 0; pi < pts.length; pi++){
+        var p = pts[pi];
+        [{__me: 1}].concat(others()).forEach(function(Q){
+          var qx = Q.__me ? V.me.x : Q.x, qz = Q.__me ? V.me.z : Q.z, qdead = Q.__me ? V.dead : Q.dead;
+          if(qdead) return;
+          var dsl = Math.hypot(qx - p.x, qz - p.z);
+          if(dsl <= WARDEN_SLAB_R_HIT){
+            endBotLife(null, Q.__me ? null : Q, t, false, "warden-slam");
+          } else if(dsl <= WARDEN_SLAB_KNOCK){
+            // the blast blows everyone near the smash away and hurts
+            var lnsl = Math.max(0.05, dsl);
+            var kxs = (qx - p.x) / lnsl, kzs = (qz - p.z) / lnsl;
+            if(Q.__me){
+              V.me.x += kxs * WARDEN_SLAB_KNOCK_PUSH;
+              V.me.z += kzs * WARDEN_SLAB_KNOCK_PUSH;
+              V.hp -= WARDEN_SLAB_BLAST_DMG;
+              V.shakeAt = t;
+              if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false, "warden-slam");
+            } else {
+              Q.x += kxs * WARDEN_SLAB_KNOCK_PUSH;
+              Q.z += kzs * WARDEN_SLAB_KNOCK_PUSH;
+              Q.hp -= WARDEN_SLAB_BLAST_DMG;
+              if(Q.hp <= 0 && !Q.dead) endBotLife(null, Q, t, false, "warden-slam");
+            }
+          }
+        });
+      }
+      // the slam staggers the torso and cracks the chest core open
+      W.coreUntil = t + WARDEN_CORE_EXPOSE;
+      if(R3 && R3.wardenSlam) R3.wardenSlam(t);
+    }
+    if(!(W.slabArm > 0) && !(W.slabLand > 0) && t >= (W.slabAt || 0)){
+      var slamN = ((t - W.born) / WARDEN_SLAB_CD) | 0;
+      var arm = (((slamN + 1) % 3) === 0) ? 2 : (hashMatch((W.born|0) ^ 0x57A9, 90 + slamN) < 0.5 ? 0 : 1);
+      if(arm === 0 && !(W.armL > 0)) arm = W.armR > 0 ? 1 : 9;
+      else if(arm === 1 && !(W.armR > 0)) arm = W.armL > 0 ? 0 : 9;
+      else if(arm === 2){
+        if(!(W.armL > 0) && !(W.armR > 0)) arm = 9;
+        else if(!(W.armL > 0)) arm = 1;
+        else if(!(W.armR > 0)) arm = 0;
+      }
+      if(arm === 9){ W.slabAt = t + 1.0; }
+      else {
+        W.slamArm = arm;
+        W.slabArm = t + WARDEN_SLAB_ARM;
+        W.slabLand = t + WARDEN_SLAB_ARM;
+        W.slabAt = t + WARDEN_SLAB_ARM + WARDEN_SLAB_CD;
+        if(R3 && R3.wardenSlamArm) R3.wardenSlamArm(arm, t);
+      }
+    }
+    // ---- laser eyes (twin of Rust warden_tick) ----
+    if(W.laserOn > 0 && t >= W.laserOn){ W.laserWarn = 0; W.laserOn = 0; }
+    if(W.laserOn > 0 && t >= W.laserWarn){
+      W.laserYaw = (W.laserYaw + WARDEN_LASER_YAW0 * dt) % (Math.PI * 2);
+    } else if(!(W.laserOn > 0) && t >= (W.laserAt || 0)){
+      var flip = hashMatch((W.born|0) ^ 0x1A5E, 80 + ((t - W.born)|0));
+      W.laserYaw = flip < 0.5 ? 0 : Math.PI;
+      W.laserWarn = t + WARDEN_LASER_WARN;
+      W.laserOn = t + WARDEN_LASER_WARN + WARDEN_LASER_HOLD;
+      W.laserAt = t + WARDEN_LASER_WARN + WARDEN_LASER_HOLD + WARDEN_LASER_CD;
+    }
+    if(W.laserOn > t && t >= W.laserWarn){
+      // ground laser: the eye looks down and the beam slants to the floor —
+      // anyone in that ground band (and not behind cover) dies
+      var ox = W.x, oy = WARDEN_SEE_HEAD, oz = W.z;
+      var dx = Math.cos(W.laserYaw), dz = Math.sin(W.laserYaw);
+      [{__me: 1}].concat(others()).forEach(function(Q){
+        var qx = Q.__me ? V.me.x : Q.x, qy = Q.__me ? V.me.y : Q.y, qz = Q.__me ? V.me.z : Q.z, qdead = Q.__me ? V.dead : Q.dead;
+        if(qdead) return;
+        if(Q.__me && V.protUntil && t < V.protUntil) return;
+        var px = qx - ox, pz = qz - oz;
+        var along = px * dx + pz * dz;
+        var runK = mapLaserRun(ox, oz, W.laserYaw || 0);
+        if(along < 0 || along > runK) return;
+        var lat = Math.abs(px * (-dz) + pz * dx);
+        // ground laser: stripe along laserYaw from the body; anyone in it (with a clear
+        // eye-to-fighter line) dies — cover still saves. The beam stops at the map edge.
+        if(lat > WARDEN_LASER_W + 0.3) return;
+        if(!los([ox, oy, oz], [qx, qy + 0.9, qz])) return;
+        endBotLife(null, Q.__me ? null : Q, t, false, "warden-laser");
+      });
+    }
+    // ---- disaster call ----
+    if(t >= (W.disAt || 0)){
+      W.disAt = t + WARDEN_DIS_CD;
+      V.worldK = (V.worldK|0) + 1;
+      if(!V.disaster) disStart(DISASTERS[disKind(((W.born|0) ^ 0xD15A) >>> 0, V.worldK|0, DISASTERS.length)], t);
+    }
+    // ---- Gravity Grip: open-hand pull toward the torso (cover / sprint breaks it) ----
+    if(W.gripWarn > 0 && t >= W.gripWarn){
+      W.gripWarn = 0;
+      W.gripOn = t + WARDEN_GRIP_HOLD;
+      if(R3 && R3.wardenGrip) R3.wardenGrip(t);
+    }
+    if(W.gripOn > 0 && t >= W.gripOn) W.gripOn = 0;
+    if(W.gripOn > 0){
+      [{__me: 1}].concat(others()).forEach(function(Q){
+        var qx = Q.__me ? V.me.x : Q.x, qy = Q.__me ? V.me.y : Q.y, qz = Q.__me ? V.me.z : Q.z;
+        var qdead = Q.__me ? V.dead : Q.dead;
+        if(qdead) return;
+        if(Q.__me ? meShielded(t) : botShielded(Q, t)) return;
+        // sprint / dash breaks the pull; cover does too
+        if(Q.__me && V.sprinting) return;
+        if(!Q.__me && Q.speedUntil && t < Q.speedUntil) return;
+        if(!los([W.x, WARDEN_SEE_CHEST, W.z], [qx, qy + 0.9, qz])) return;
+        var dx = W.x - qx, dz = W.z - qz, d = Math.hypot(dx, dz);
+        if(d > WARDEN_GRIP_R) return;
+        if(d <= WARDEN_GRIP_MIN){
+          // too close: the free arm sweeps you out (hurt + shove, not a slam kill)
+          var sx = (qx - W.x), sz = (qz - W.z), sl = Math.max(0.15, Math.hypot(sx, sz));
+          var kx = sx / sl, kz = sz / sl;
+          if(Q.__me){
+            V.me.x += kx * 6.0; V.me.z += kz * 6.0;
+            V.hp -= WARDEN_GRIP_SWEEP_DMG; V.shakeAt = t;
+            if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false, "warden-grip");
+          } else {
+            Q.x += kx * 6.0; Q.z += kz * 6.0;
+            Q.hp -= WARDEN_GRIP_SWEEP_DMG;
+            if(Q.hp <= 0 && !Q.dead) endBotLife(null, Q, t, false, "warden-grip");
+          }
+          return;
+        }
+        var step = Math.min(d, WARDEN_GRIP_PULL * dt);
+        var px = dx / d * step, pz = dz / d * step;
+        if(Q.__me){ V.me.x += px; V.me.z += pz; }
+        else { Q.x += px; Q.z += pz; }
+      });
+    }
+    if(!(W.gripWarn > 0) && !(W.gripOn > 0) && t >= (W.gripAt || 0)){
+      W.gripWarn = t + WARDEN_GRIP_WARN;
+      W.gripAt = t + WARDEN_GRIP_WARN + WARDEN_GRIP_CD;
+    }
+    if(R3 && R3.wardenSync) R3.wardenSync(W);
+  }
+
+  // The Warden is huge and centre cover hides its chest — bots (and LOS checks)
+  // must use whichever hit height they can actually see. Prefer the arm (least
+  // damage); never the head — it is no weak point.
+  function wardenAim(W, slot){
+    // open core: every bot focuses the exposed chest (still never the head)
+    if(W && W.coreUntil && now() < W.coreUntil){
+      return {x: ((W && W.x) || 0), y: WARDEN_SEE_CHEST, z: ((W && W.z) || 0), side: 0, core: 1};
+    }
+    var side = ((((slot|0) % 2) + 2) % 2) === 0 ? -1 : 1;
+    return {x: ((W && W.x) || 0) + side * WARDEN_ARM_X, y: WARDEN_SEE_ARM, z: ((W && W.z) || 0), side: side};
+  }
+  function wardenSee(ox, oy, oz, wx, wz, slot){
+    var side = ((((slot|0) % 2) + 2) % 2) === 0 ? -1 : 1;
+    var open = !!(V.warden && V.warden.coreUntil && now() < V.warden.coreUntil);
+    var pts = open ? [
+      [wx, WARDEN_SEE_CHEST, wz],
+      [wx + side * WARDEN_ARM_X, WARDEN_SEE_ARM, wz],
+      [wx - side * WARDEN_ARM_X, WARDEN_SEE_ARM, wz],
+      [wx, WARDEN_SEE_WAIST, wz]
+    ] : [
+      [wx + side * WARDEN_ARM_X, WARDEN_SEE_ARM, wz],
+      [wx - side * WARDEN_ARM_X, WARDEN_SEE_ARM, wz],
+      [wx, WARDEN_SEE_CHEST, wz],
+      [wx, WARDEN_SEE_WAIST, wz]
+    ], i;
+    for(i = 0; i < pts.length; i++){
+      if(los([ox, oy, oz], pts[i])) return pts[i][1];
+    }
+    return null;
+  }
   function botEnemies(P){
+    // while The Warden lives, every fighter targets only the boss — no player-vs-player
+    if(V.warden){
+      var W = V.warden, slot = (P && P.n) || 0;
+      var aim = wardenAim(W, slot);
+      var seeY = (P && P.ai && P.ai.body) ? wardenSee(P.ai.body.x, P.ai.body.y + FS.EYE, P.ai.body.z, W.x, W.z, slot) : wardenSee(0, FS.EYE, 0, W.x, W.z, slot);
+      return [{x: aim.x, z: aim.z, y: seeY != null ? seeY : WARDEN_SEE_ARM, __warden: 1, __seeY: seeY != null ? seeY : WARDEN_SEE_ARM, vx: 0, vz: 0}];
+    }
     var px = Math.cos(V.yaw)*PEEK_SIDE*(V.peek || 0), pz = Math.sin(V.yaw)*PEEK_SIDE*(V.peek || 0);
     var out = others().concat([{__me: 1}]).filter(function(q){
       if(q.__me){
@@ -1588,6 +2085,17 @@ function makeGame(host, opts){
   }
   function botJudge(P, t, e, d, reach){
     var foes = botEnemies(P), end = reach, vic = null, head = false;
+    if(V.warden){
+      // only the Warden can be hit; arms take reduced damage and can be disabled
+      var W = V.warden, boxes = wardenBoxes(W), hit = wardenHitIndex(boxes, e, d, end);
+      if(hit < 0){ addTracer(muzzleOf(P), [e[0] + d[0]*end, e[1] + d[1]*end, e[2] + d[2]*end], P.w, t, false); return; }
+      var vol = hit, hb = boxes[vol];
+      var tHit = FS.rayBox(e, d, hb);
+      end = (tHit != null && tHit < end) ? tHit : end;
+      addTracer(muzzleOf(P), [e[0] + d[0]*end, e[1] + d[1]*end, e[2] + d[2]*end], P.w, t, false);
+      wardenHit(W, vol, FS.WEAPONS[P.w].damage, t);
+      return;
+    }
     foes.forEach(function(V2){
       var h = FS.rayPlayer(e, d, V2.x, V2.y, V2.z, end);
       if(h && h[0] < end){ end = h[0]; vic = V2; head = h[1]; }
@@ -1628,6 +2136,11 @@ function makeGame(host, opts){
     E.sfx("boom");
     V.shakeAt = t;
     var shooter = miss.owner; // null: the local player; else a bot
+    // while The Warden lives, blasts only bruise the boss — players and bots take nothing
+    if(V.warden){
+      wardenBlast(V.warden, [x, y, z], t);
+      return;
+    }
     // every living thing in radius takes falloff; the shooter is NOT safe (honest rockets, friendlies included)
     others().forEach(function(P){
       if(P.gone || P.dead) return;
@@ -1691,6 +2204,13 @@ function makeGame(host, opts){
       if(reach < ln){ stopped = true; m.x = m.px + d3[0]*reach/ln; m.y = m.py + d3[1]*reach/ln; m.z = m.pz + d3[2]*reach/ln; }
       else { m.x = nx; m.y = ny; m.z = nz; }
       // a body?
+      if(!stopped && V.warden){
+        var wbx = wardenBoxes(V.warden);
+        for(var wb = 0; wb < wbx.length; wb++){
+          var wh = FS.rayBox([m.px, m.py, m.pz], [d3[0]/ln, d3[1]/ln, d3[2]/ln], wbx[wb]);
+          if(wh !== null && wh <= ln){ stopped = true; m.x = m.px + d3[0]*wh/ln; m.y = m.py + d3[1]*wh/ln; m.z = m.pz + d3[2]*wh/ln; break; }
+        }
+      }
       if(!stopped) others().forEach(function(P){
         if(stopped || P.gone || P.dead || P.team === V.team) return;
         if(botShielded(P, t)) return;  // the drop shield: a rocket passes a glider by
@@ -1716,7 +2236,7 @@ function makeGame(host, opts){
     V.killCam = {uid: K.uid, name: K.name || "Killer", team: K.team|0, w: w|0, hs: !!head,
                  x: K.x, y: K.y, z: K.z, yaw: K.yaw || 0, pitch: K.pitch || 0, ref: K};
   }
-  function endBotLife(killer, vic, t, head){
+  function endBotLife(killer, vic, t, head, dis){
     // Second Wind / Phoenix / Fake Death: the first killing blow just fails
     if(vic){
       if(vic.fakeUntil && t < vic.fakeUntil){ vic.fakeUntil = 0; say("Fake Death: the shot missed"); return; }
@@ -1732,22 +2252,24 @@ function makeGame(host, opts){
     // where they looked — replayed from their eyes while "Respawning in X" counts down
     if(!vic && killer && killer.uid !== myId()) snapKillCam(killer, killer.w|0, !!head);
     if(killer) killer.kills = (killer.kills|0) + 1;
-    if(killer && killer.team != null){
+    if(killer && killer.team != null && !V.warden){
       // a mole kill still pays the real shooter's side? no — the charm DELIBERATELY turns
       // friend\-to\-foe aim points back at the charmer's team, so the credit goes there
       var charm = killer.charmUntil && killer.charmUntil > t;
       V.scores[(charm ? 1 - killer.team : killer.team) === 0 ? 0 : 1]++;
     }
+    var cause = dis ? String(dis) : "";
     if(vic){ vic.dead = true; vic.deaths = (vic.deaths|0) + 1; vic.deadAt = t; vic.hp = 0; }
-    if(!vic){ // the local player died
-      if(killer) V.deaths = (V.deaths|0) + 1;
-      V.dead = true; V.deadAt = t; V.hp = 0;   // endBotLife is also the bots-mode death site
+    if(!vic){ // the local player died (endBotLife is also the bots-mode / env death site)
+      V.deaths = (V.deaths|0) + 1;
+      V.dead = true; V.deadAt = t; V.hp = 0;
       V.wingsUntil = 0; V.leapUntil = 0; V.speedUntil = 0;   // a death pops the movement totems too
-      onEvent({ev: "kill", k: killer.uid, v: myId(), w: killer.w, hs: !!head, kills: killer.kills, deaths: V.deaths, scores: V.scores});
+      onEvent({ev: "kill", k: killer ? killer.uid : null, v: myId(), w: killer ? killer.w|0 : -1,
+               hs: !!head, kills: killer ? killer.kills|0 : 0, deaths: V.deaths, scores: V.scores, dis: cause});
       return;
     }
-    onEvent({ev: "kill", k: killer ? killer.uid : null, v: vic.uid, w: killer ? killer.w : 0, hs: !!head,
-             kills: killer ? killer.kills|0 : 0, deaths: vic.deaths|0, scores: V.scores});
+    onEvent({ev: "kill", k: killer ? killer.uid : null, v: vic.uid, w: killer ? killer.w|0 : -1, hs: !!head,
+             kills: killer ? killer.kills|0 : 0, deaths: vic.deaths|0, scores: V.scores, dis: cause});
   }
   // the four totem effects, shared shape between solo (judge local) and MP (mirror the server)
   function totemApply(kind, uid, t){
@@ -2038,6 +2560,7 @@ function makeGame(host, opts){
     else if(TOTEMS[k]) R3.addTotem(idx, MAP.pickups[idx]);
   }
   function totemSpawn(seed, canMole){
+    if(V.warden) return -1;
     ensureDropSlots();
     var pl = dropPlan();
     var tok = ((seed ^ (totemCount = (totemCount + 1)) * 0x9e3779b9) >>> 0);
@@ -2061,6 +2584,7 @@ function makeGame(host, opts){
   // roster. Tagged "dis" so the beacon reads as an arena-wide event, not a power-up.
   var disCount = 0;
   function disasterSpawn(seed){
+    if(V.warden) return -1;
     ensureDropSlots();
     var pl = dropPlan();
     var tok = ((seed ^ (disCount = (disCount + 1)) * 0x9e3779b9) >>> 0);
@@ -2072,6 +2596,7 @@ function makeGame(host, opts){
     return idx;
   }
   function packSpawn(seed){
+    if(V.warden) return -1;
     ensureDropSlots();
     var pl = dropPlan();
     var tok = ((seed ^ (packCount = (packCount + 1)) * 0x9e3779b9 + 0x5f356495) >>> 0);
@@ -2085,6 +2610,38 @@ function makeGame(host, opts){
     if(P.freezeUntil && t < P.freezeUntil) return;   // the Paralyser pins a bot in place
     // -- decide a goal (at most every BOT_THINK) --
     if(t >= ai.thinkAt){
+      // The Warden: lock it as the only target (no PVP) and walk to a firing lane
+      if(V.warden){
+        var Wd = V.warden;
+        ai.thinkAt = t + BOT_THINK;
+        ai.decoyAt = 0;
+        var seeH = wardenSee(x, P.ai.body.y + FS.EYE, z, Wd.x, Wd.z, P.n || 0);
+        var aimH = wardenAim(Wd, P.n || 0);
+        var stub = {x: aimH.x, z: aimH.z, y: seeH != null ? seeH : WARDEN_SEE_ARM, __warden: 1, __seeY: seeH != null ? seeH : WARDEN_SEE_ARM, vx: 0, vz: 0};
+        stub.__uid = "warden";
+        // keep the first sighting: restamping seenAt every think starves the
+        // BOT_REACT gate and the bot never opens fire
+        if(!ai.target || !ai.target.__warden) ai.seenAt = t;
+        ai.target = stub;
+        ai.targetPos = [Wd.x, Wd.z];
+        ai.targetY = stub.y;
+        ai.lostY = stub.y; ai.lostPos = null; ai.lostUntil = 0;
+        var ddW = Math.hypot(Wd.x - x, Wd.z - z);
+        if(ai.slideUntil && t < ai.slideUntil){
+          // keep ai.goal
+        } else if(seeH == null){
+          // hidden by cover — close in and circle until a lane opens (head/chest/waist)
+          if(ddW > 12.0){
+            ai.goal = mapNavNext(x, z, Wd.x, Wd.z, P.ai.body.y, 2.5);
+          } else {
+            var angW = ((P.slot|0)*2.399 + t*0.7), radW = 8.0 + ((P.slot|0)%3);
+            ai.goal = mapNavNext(x, z, Wd.x + Math.cos(angW)*radW, Wd.z + Math.sin(angW)*radW, P.ai.body.y, 2.5);
+          }
+        } else {
+          var pressW = diffFor(P).id === "hard" ? 10 : diffFor(P).id === "sweaty" ? 6 : 18;
+          ai.goal = ddW > pressW ? mapNavNext(x, z, Wd.x, Wd.z, P.ai.body.y, 2.5) : null;
+        }
+      } else {
       var foes = botEnemies(P), pick = null, pickPos = null, pickY = 0, pool = [], wts = [], wt = 0, cur = ai.target;
       // a stable handle for "me" this tick, so a bot chasing the player keeps the same object
       // to compare targets against — a fresh wrapper every call would reset its lock every frame
@@ -2097,7 +2654,8 @@ function makeGame(host, opts){
         // a sandstorm arena event halves how far a bot can see (the dust is up)
         var botRange = ((V.arenaEvent === "storm" && t < (V.arenaEventUntil || 0))
           || (V.disaster === "sandstorm" && disLive(t))) ? STORM_RANGE : BOT_RANGE;
-        if(dd <= botRange && los([x, P.ai.body.y + FS.EYE, z], [V2.x, V2.y + FS.EYE, V2.z])){
+        var seeAt = V2.__warden ? [V2.x, (V2.__seeY != null ? V2.__seeY : WARDEN_SEE_ARM), V2.z] : [V2.x, V2.y + FS.EYE, V2.z];
+        if(dd <= botRange && los([x, P.ai.body.y + FS.EYE, z], seeAt)){
           // every visible foe is a candidate, nearer likelier; whoever we already chase gets a bonus
           var w2 = 1/(0.2 + dd) * (cur && foes[i].__uid === cur.__uid ? 2.2 : 1);
           pool.push(V2); wts.push(w2); wt += w2;
@@ -2166,11 +2724,13 @@ function makeGame(host, opts){
         var pressTo = diffFor(P).id === "hard" ? 10 : diffFor(P).id === "sweaty" ? 6 : 18;
         ai.goal = pickPos && Math.hypot(pickPos[0] - x, pickPos[1] - z) > pressTo ? mapNavNext(x, z, pickPos[0], pickPos[1], P.ai.body.y, pickY || 0) : null;
       }
+      }
     }
     // -- turn and aim: track the target's current position, not the last think tick's --
     var aim_y = ai.aim_y, aim_p = ai.aim_p, tgt2 = ai.target, targetAlive = false, txNow = 0, tyNow = 0, tzNow = 0, tvx = 0, tvz = 0;
     if(tgt2){
-      targetAlive = !!(tgt2.__me ? !V.dead : !tgt2.dead);
+      if(tgt2.__warden && !V.warden) targetAlive = false;
+      else targetAlive = !!(tgt2.__me ? !V.dead : !tgt2.dead);
       var cur = tgt2.__me ? {x: V.me.x + Math.cos(V.yaw)*PEEK_SIDE*(V.peek || 0), y: V.me.y, z: V.me.z + Math.sin(V.yaw)*PEEK_SIDE*(V.peek || 0), vx: V.me.vx || 0, vz: V.me.vz || 0} : tgt2;
       txNow = cur.x; tyNow = cur.y; tzNow = cur.z; tvx = cur.vx || 0; tvz = cur.vz || 0;
     }
@@ -2180,7 +2740,9 @@ function makeGame(host, opts){
       // lead and pitch must both see the true 3D range — a target on a ledge above is
       // genuinely farther than its shadow on the floor, so it earns more lead time
       var lead = Math.min(0.25, Math.hypot(txNow - x, (tyNow - P.ai.body.y) || 0, tzNow - z)/wp.range);
-      var tx = txNow + tvx*lead, tz = tzNow + tvz*lead, ty = tyNow + ((P.n + 1) % 3 === 0 ? 1.35 : 0.9);
+      var tx = txNow + tvx*lead, tz = tzNow + tvz*lead,
+          ty = (tgt2 && tgt2.__warden) ? ((tgt2.__seeY != null ? tgt2.__seeY : WARDEN_SEE_ARM))
+              : tyNow + ((P.n + 1) % 3 === 0 ? 1.35 : 0.9);
       var want_yaw = Math.atan2(tx - x, -(tz - z))*180/Math.PI;
       var flat = Math.max(0.1, Math.hypot(tx - x, tz - z));
       var want_pitch = Math.atan2(ty - (P.ai.body.y + FS.EYE), flat)*180/Math.PI;
@@ -2220,7 +2782,9 @@ function makeGame(host, opts){
       // -- fire: only when the target is actually in the sights right now (visible this frame) --
       // Aim the body, not the eyes (EYE is your head): eye-level LOS false-negatives when a
       // target is crouched or over a slope — the bot thinks it can't fire, plainly staring at you
-      var clearNow = los([x, P.ai.body.y + FS.EYE, z], [txNow, tyNow + 0.9, tzNow]);
+      var clearNow = (tgt2 && tgt2.__warden)
+        ? wardenSee(x, P.ai.body.y + FS.EYE, z, txNow, tzNow) != null
+        : los([x, P.ai.body.y + FS.EYE, z], [txNow, tyNow + 0.9, tzNow]);
       // launcher bots: a real missile with their aim; one in the air at a time, like the player
       if(P.w === 3){
         if(clearNow && ai.seenAt != null && t - ai.seenAt >= BOT_REACT*df.react && t >= ai.fireAt + 1.2 - 0.01 &&
@@ -2357,6 +2921,11 @@ function makeGame(host, opts){
       if(gone) return;
       (team === 0 ? a0 : a1).push(P);
     });
+    if(V.warden){
+      // only a side emptying ends the round while the boss is up — clock and score are frozen
+      if(!a0.length || !a1.length) endBotMatch(t);
+      return;
+    }
     if(V.scores[0] >= lim || V.scores[1] >= lim || time || !a0.length || !a1.length){
       endBotMatch(t);
     }
@@ -2384,6 +2953,7 @@ function makeGame(host, opts){
     var svb = ssave(), ts = TEAM_SIZES.indexOf(svb.tsize|0) >= 0 ? svb.tsize|0 : 3,
         mins = clamp(Math.round(svb.minutes|0 || 3), 1, 60), lim = clamp(Math.round(svb.kills|0 || 10), 1, 500);
     resetMatch(); V.mode = "bots"; V.off = null; V.k = null; V.watch = null;
+    V.warden = null; V.wardenDone = false;
     V.minutes = mins; V.limit = lim; V.tsize = ts; V.scores = [0, 0]; V.kills = 0; V.deaths = 0; V.team = 0;
     // nothing is on the map at the start: every item arrives mid-match from a drop clock
     // (totems every TOTEM_GAP, health/ammo packs every PACK_GAP — each regardless of
@@ -2498,6 +3068,35 @@ function makeGame(host, opts){
   }
   function slotUid(s){ return V.slots[s]; }
   function onEvent(m){
+    if(m.ev === "warden"){
+      if(!m || !m.phase) return;
+      if(m.phase === "rise"){
+        V.warden = V.warden || {};
+        V.warden.hp = +m.hp || 0; V.warden.max = +m.max || 1;
+        V.warden.x = (+m.x || 0)/100; V.warden.z = (+m.z || 0)/100;
+        V.warden.armL = +m.armL || WARDEN_ARM_HP; V.warden.armR = +m.armR || WARDEN_ARM_HP;
+        V.warden.phase = "live"; V.warden.born = now();
+        say("The Warden rises at the center of the map!");
+        flashCenter("THE WARDEN");
+        if(R3 && R3.wardenRise) R3.wardenRise(V.warden);
+        return;
+      }
+      if(m.phase === "ckpt"){
+        var ck = clamp(m.ck|0, 1, 3);
+        if(V.warden){ V.warden.hp = +m.hp || V.warden.hp; V.warden.ck = V.warden.ck || [false, false, false]; V.warden.ck[ck-1] = true; }
+        say("The Warden's checkpoint "+(WARDEN_CHECK_NAMES[ck] || String(ck))+" breaks — boosts scatter!");
+        flashCenter("CHECKPOINT "+(WARDEN_CHECK_NAMES[ck] || String(ck)));
+        return;
+      }
+      if(m.phase === "dead"){
+        V.warden = null; V.wardenDone = true;
+        say("The Warden is down — the match is back on!");
+        flashCenter("WARDEN DOWN");
+        if(R3 && R3.wardenClear) R3.wardenClear();
+        return;
+      }
+      return;
+    }
     if(m.ev === "strike"){
       if(!MAP){ V.round = m.match; V.gotView = true; return; }
       applyView(m.match);
@@ -2517,15 +3116,17 @@ function makeGame(host, opts){
       var K = V.players[m.k], D = V.players[m.v];
       if(K) K.kills = m.kills|0; if(D){ D.deaths = m.deaths|0; D.dead = true; D.deadAt = t; }
       if(Array.isArray(m.scores)) V.scores = [m.scores[0]|0, m.scores[1]|0];
-      V.feed.unshift({k: K ? K.name : (m.k === myId() ? "You" : (m.dis ? "The map" : "?")), kt: K ? K.team : V.team,
-        v: D ? D.name : (m.v === myId() ? "You" : "?"), vt: D ? D.team : V.team, w: m.w|0, hs: !!m.hs, at: t,
+      var kName = K ? K.name : (m.k === myId() ? "You" : (m.dis ? envKiller(m.dis) : "Someone"));
+      var vName = D ? D.name : (m.v === myId() ? "You" : "Someone");
+      V.feed.unshift({k: kName, kt: K ? K.team : V.team,
+        v: vName, vt: D ? D.team : V.team, w: m.w|0, hs: !!m.hs, at: t,
         dis: m.dis ? String(m.dis) : "", mine: m.k === myId() || m.v === myId()});
       if(m.k === myId()) E.sfx("hit");
-      if(V.feed.length > 5) V.feed.length = 5;
+      if(V.feed.length > FEED_MAX) V.feed.length = FEED_MAX;
       if(m.v === myId()){ V.dead = true; V.deadAt = t; V.deaths = m.deaths|0; V.hp = 0;
         V.wingsUntil = 0; V.leapUntil = 0; V.speedUntil = 0;   // a death pops the movement totems too
         if(K && K.uid !== myId()) snapKillCam(K, m.w|0, !!m.hs);
-        if(!K && m.dis) say((TOTEMS[m.dis] ? TOTEMS[m.dis].n : "A disaster")+" got you. Respawning in "+RESPAWN+" seconds.");
+        if(!K && m.dis) say(envKiller(m.dis)+" · "+envLabel(m.dis)+" got you. Respawning in "+RESPAWN+" seconds.");
         else say((K ? K.name : "Someone")+" got you. Respawning in "+RESPAWN+" seconds."); }
       if(m.k === myId()){ V.kills = m.kills|0; say("You got "+(D ? D.name : "someone")+(m.hs ? " with a headshot" : "")+". "+TEAMS[0].n+" "+V.scores[0]+" — "+V.scores[1]+" "+TEAMS[1].n+"."); }
       renderFeed(); renderBoard(); return;
@@ -2728,6 +3329,40 @@ function makeGame(host, opts){
   }
   function onSnap(m, t){
     if(typeof m.ts === "number"){ var o = t - m.ts/1000; if(V.off === null || o < V.off) V.off = o; }
+    // snap "wd": [hp, max, cm_x, cm_z, ms_slab_arm, ms_slab_land, ms_laser_warn,
+    //             laser_on_ms, laser_yaw_cdeg, ms_dis, ck_bits, yaw_cdeg,
+    //             ms_core, ms_grip_warn, ms_grip_on, ms_grip_at]
+    if(Array.isArray(m.wd)){
+      var wd = m.wd;
+      if(!V.warden) V.warden = {ck: [false, false, false], phase: "live", born: now(), yaw: 0};
+      V.warden.hp = +wd[0] || 0; V.warden.max = +wd[1] || 1;
+      V.warden.x = (+wd[2] || 0)/100; V.warden.z = (+wd[3] || 0)/100;
+      V.warden.yaw = (wd.length > 11 ? (+wd[11] || 0) : 0)/100 * Math.PI/180;
+      // snap packs remaining ms-to-event (0 = idle) — convert to a clock, never |0 a float
+      var tSnap = now();
+      V.warden.slabArm = (+wd[4] > 0) ? tSnap + (+wd[4])/1000 : 0;
+      V.warden.slabLand = (+wd[5] > 0) ? tSnap + (+wd[5])/1000 : 0;
+      V.warden.laserWarn = (+wd[6] > 0) ? tSnap + (+wd[6])/1000 : 0;
+      V.warden.laserOn = (+wd[7] > 0) ? tSnap + (+wd[7])/1000 : 0;
+      V.warden.laserYaw = (+wd[8] || 0)/100 * Math.PI/180;
+      V.warden.disAt = (+wd[9] > 0) ? tSnap + (+wd[9])/1000 : 0;
+      var ckb = +wd[10] || 0;
+      V.warden.ck = [!!(ckb & 1), !!(ckb & 2), !!(ckb & 4)];
+      // additive core / gravity-grip clocks (absent on an older Arena)
+      V.warden.coreUntil = (wd.length > 12 && +wd[12] > 0) ? tSnap + (+wd[12])/1000 : 0;
+      V.warden.gripWarn = (wd.length > 13 && +wd[13] > 0) ? tSnap + (+wd[13])/1000 : 0;
+      V.warden.gripOn = (wd.length > 14 && +wd[14] > 0) ? tSnap + (+wd[14])/1000 : 0;
+      V.warden.gripAt = (wd.length > 15 && +wd[15] > 0) ? tSnap + (+wd[15])/1000 : 0;
+      if(V.warden.slabArm > 0 && !V.wdArmWarn){
+        V.wdArmWarn = true;
+        if(R3 && R3.wardenSlamArm) R3.wardenSlamArm(2, tSnap);
+      }
+      if(!V.warden.slabArm && V.wdArmWarn){
+        V.wdArmWarn = false;
+        if(R3 && R3.wardenSlam) R3.wardenSlam(tSnap);
+      }
+      if(R3 && R3.wardenSync) R3.wardenSync(V.warden, tSnap);
+    } else if(V.warden && m.wd === 0) V.warden = null;
     if(typeof m.k === "number" && (V.k === null || m.k > V.k)){ V.k = m.k; V.kq = myClock(); }
     if(typeof m.ms === "number") V.endsAt = t + m.ms/1000;
     if(Array.isArray(m.sc)) V.scores = [m.sc[0]|0, m.sc[1]|0];
@@ -3061,6 +3696,17 @@ function makeGame(host, opts){
       if(aimed){ aimed.downUntil = t + 1.5; V.score++; V.hitAt = t; }
     } else if(V.mode === "bots"){
       if(V.protUntil) V.protUntil = 0; // firing drops your own spawn cover (strike.py:772)
+      if(V.warden){
+        var Wb = V.warden, boxesW = wardenBoxes(Wb), volW = wardenHitIndex(boxesW, e, d, end);
+        if(volW >= 0){
+          var hW = FS.rayBox(e, d, boxesW[volW]);
+          if(hW != null && hW < end) end = hW;
+          wardenHit(Wb, volW, wp.damage, t);
+        }
+        addTracer(e, [e[0] + d[0]*end, e[1] + d[1]*end, e[2] + d[2]*end], V.w, t, false);
+        if(R3 && R3.kick) R3.kick();
+        return;
+      }
       others().forEach(function(P){
         if(!P.bot || P.dead || P.gone || P.team === V.team) return;
         if(botShielded(P, t)) return;  // the drop shield: your bullets bounce off a glider
@@ -3183,7 +3829,7 @@ function makeGame(host, opts){
         V.phase = "round"; V.startAt = t;
         var goTxt = (V.mode === "bots" ? "Fight! " : "Go! ") + "Team " + TEAMS[V.team|0].n;
         flashCenter(goTxt); say(goTxt + ". Enemy names are red.");
-        if(V.mode === "bots" && V.totemAt != null) V.totemAt = t + TOTEM_FIRST;   // the round's own clock: first totem in 8 s
+        if(!V.warden && V.mode === "bots" && V.totemAt != null) V.totemAt = t + TOTEM_FIRST;   // the round's own clock: first totem in 8 s
         if(V.mode === "bots" && V.packAt != null) V.packAt = t + PACK_FIRST;      // …and the first loose pack in 6 s
         if(V.mode === "bots") V.disAt = t + DIS_FIRST_DROP;             // …and the first Disaster totem in 12 s
         V.eventAt = t + 45; V.fuseAt = t + 30; V.crateAt = t + 22;   // the 5 drop mechanics' own clocks
@@ -3429,7 +4075,7 @@ function makeGame(host, opts){
     // the two drop clocks, independent of each other: a fresh random totem every TOTEM_GAP
     // (mole only with bots) and a fresh random health/ammo pack every PACK_GAP. Each new
     // drop replaces the oldest slot of its ring — taken or not, drops keep coming.
-    if(V.mode === "bots" && V.phase === "round" && V.totemAt != null && t >= V.totemAt){
+    if(!V.warden && V.mode === "bots" && V.phase === "round" && V.totemAt != null && t >= V.totemAt){
       V.totemAt = t + TOTEM_GAP;
       var anyBot = others().some(function(P){ return P.bot && !P.gone; });
       var seed = ((Math.floor(t*1000) ^ (V.mySlot|0)) >>> 0);
@@ -3438,7 +4084,7 @@ function makeGame(host, opts){
       V.kinds[idx] = MAP.pickups[idx].kind;
       if(R3) R3.addTotem(idx, MAP.pickups[idx]);
     }
-    if(V.mode === "bots" && V.phase === "round" && V.disAt != null && t >= V.disAt){
+    if(!V.warden && V.mode === "bots" && V.phase === "round" && V.disAt != null && t >= V.disAt){
       V.disAt = t + DIS_GAP_DROP;
       var dseed = ((Math.floor(t*1000) ^ ((V.mySlot|0) + 77)) >>> 0);
       var didx = disasterSpawn(dseed);
@@ -3447,7 +4093,7 @@ function makeGame(host, opts){
       if(R3) R3.addTotem(didx, MAP.pickups[didx]);
       say("A Disaster totem just landed — grab it and the whole arena is in it");
     }
-    if(V.mode === "bots" && V.phase === "round" && V.packAt != null && t >= V.packAt){
+    if(!V.warden && V.mode === "bots" && V.phase === "round" && V.packAt != null && t >= V.packAt){
       V.packAt = t + PACK_GAP;
       var pseed = ((Math.floor(t*1000)*31 ^ (V.mySlot|0)) >>> 0);
       var pidx = packSpawn(pseed);
@@ -3502,6 +4148,7 @@ function makeGame(host, opts){
   // local client is the referee, so the same windows fire the same blasts.
   function worldTick(dt, t){
     if(V.mode === "mp") return;   // the server's tick owns these; the snapshot carries them
+    wardenTick(dt, t);
     // Chaos Core: a free blast every 1.5s
     if(V.chaosUntil && t < V.chaosUntil && t >= (V.chaosNext|0)){
       V.chaosNext = t + 1.5;
@@ -3585,7 +4232,7 @@ function makeGame(host, opts){
       // ---- Wave D: Arena Disasters (solo runs them; MP the server judges) ----
       // Only an ARMED clock fires: 0/null means "not scheduled yet", never "fire now".
       // (V.disasterAt is set at round start to t + DIS_FIRST, and refreshed by di[4] in MP.)
-      if(!V.disaster && V.disasterAt != null && V.disasterAt > 0 && t >= V.disasterAt){
+      if(!V.warden && !V.disaster && V.disasterAt != null && V.disasterAt > 0 && t >= V.disasterAt){
         V.disasterAt = t + DIS_GAP;
         V.worldK = (V.worldK|0) + 1;
         disStart(DISASTERS[disKind(V.worldK|0, 11, DISASTERS.length)], t);
@@ -3629,7 +4276,7 @@ function makeGame(host, opts){
             if(!meShielded(t) && ddMe <= Mk.r
                && !(Mk.oh && hasRoof(V.me.x, V.me.y, V.me.z))){
               V.hp -= FS.markDamage(ddMe, Mk.r, Mk.dmg|0);
-              if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false);
+              if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false, Mk.dis);
               // the flash and the blast: a bolt under your feet whites out the view
               if(Mk.dis === "thunder"){ V.blindUntil = Math.max(V.blindUntil|0, t + DD_THUNDER_BLIND); }
               else if(Mk.dis === "meteorshower"){ V.blindUntil = Math.max(V.blindUntil|0, t + DD_METEOR_BLIND); }
@@ -3642,7 +4289,7 @@ function makeGame(host, opts){
               if(ddP > Mk.r) return;
               if(Mk.oh && hasRoof(P.x, P.y, P.z)) return;
               P.hp -= FS.markDamage(ddP, Mk.r, Mk.dmg|0);
-              if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false);
+              if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false, Mk.dis);
               if(Mk.dis === "thunder") P.blindUntil = Math.max(P.blindUntil|0, t + DD_THUNDER_BLIND);
               else if(Mk.dis === "meteorshower") P.blindUntil = Math.max(P.blindUntil|0, t + DD_METEOR_BLIND);
               else if(Mk.dis === "earthquake") P.slowUntil = Math.max(P.slowUntil|0, t + DD_QUAKE_SLOW);
@@ -3665,7 +4312,7 @@ function makeGame(host, opts){
             V.hp -= DD_SHOCK_DMG;
             V.shakeAt = t;
             V.blindUntil = Math.max(V.blindUntil|0, t + DD_SHOCK_BLIND);   // the blast knocks the wind out of you
-            if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false);
+            if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false, dis);
           }
           others().forEach(function(P){
             if(P.dead || P.gone || botShielded(P, t) || V.disasterHit[P.uid]) return;
@@ -3677,13 +4324,23 @@ function makeGame(host, opts){
             P.z += ((P.z - ozS) / lnP) * DD_SHOCK_KNOCK;
             P.hp -= DD_SHOCK_DMG;
             P.blindUntil = Math.max(P.blindUntil|0, t + DD_SHOCK_BLIND);   // the blast knocks the wind out of you
-            if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false);
+            if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false, dis);
           });
         }
         // Toxic Fog / Sinkhole: standing zones that pulse once a second
         if((dis === "toxicfog" || dis === "sinkhole") && t >= dHitAt){
           V.disasterHitAt = t + 1.0;
           if(dis === "toxicfog"){
+            // the green gas fills the whole arena — everyone out in it chips
+            if(!meShielded(t) && !(V.protUntil && t < V.protUntil)){
+              V.hp -= DD_TOXIC_CHIP_DMG;
+              if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false, dis);
+            }
+            others().forEach(function(Pc){
+              if(Pc.dead || Pc.gone || botShielded(Pc, t) || (Pc.protUntil && t < Pc.protUntil)) return;
+              Pc.hp -= DD_TOXIC_CHIP_DMG;
+              if(Pc.hp <= 0 && !Pc.dead) endBotLife(null, Pc, t, false, dis);
+            });
             // sticky clouds frozen at disStart — the same centres R.disaster paints
             var zonesT = V.disasterZones && V.disasterZones.length
               ? V.disasterZones
@@ -3693,14 +4350,14 @@ function makeGame(host, opts){
               if(!meShielded(t) && Math.hypot(V.me.x - zspot[0], V.me.z - zspot[1]) <= DD_TOXIC_R){
                 V.hp -= DD_TOXIC_DMG;
                 V.slowUntil = Math.max(V.slowUntil|0, t + DD_TOXIC_SLOW);   // choking
-                if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false);
+                if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false, dis);
               }
               others().forEach(function(P){
                 if(P.dead || P.gone || botShielded(P, t)) return;
                 if(Math.hypot(P.x - zspot[0], P.z - zspot[1]) > DD_TOXIC_R) return;
                 P.hp -= DD_TOXIC_DMG;
                 P.slowUntil = Math.max(P.slowUntil|0, t + DD_TOXIC_SLOW);
-                if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false);
+                if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false, dis);
               });
             }
           } else {
@@ -3717,7 +4374,7 @@ function makeGame(host, opts){
               V.slowUntil = Math.max(V.slowUntil|0, t + DD_SINK_SLOW);   // stumbling toward the pit
               if(ddSS < DD_SINK_R){
                 V.hp -= DD_SINK_DMG;
-                if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false);
+                if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false, dis);
               }
             }
             others().forEach(function(P){
@@ -3731,7 +4388,7 @@ function makeGame(host, opts){
               P.slowUntil = Math.max(P.slowUntil|0, t + DD_SINK_SLOW);   // stumbling toward the pit
               if(ddPP < DD_SINK_R){
                 P.hp -= DD_SINK_DMG;
-                if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false);
+                if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false, dis);
               }
             });
           }
@@ -3746,12 +4403,12 @@ function makeGame(host, opts){
             : (dis === "hurricane" ? DD_WIND_DMG : DD_EMP_DMG));
           if(!meShielded(t) && !(V.protUntil && t < V.protUntil)){
             V.hp -= chipD;
-            if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false);
+            if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false, dis);
           }
           others().forEach(function(P){
             if(P.dead || P.gone || botShielded(P, t) || (P.protUntil && t < P.protUntil)) return;
             P.hp -= chipD;
-            if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false);
+            if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false, dis);
           });
         }
       }
@@ -3893,6 +4550,17 @@ function makeGame(host, opts){
         tt += " · ⚠ disaster in "+dleft+"s";
       }
     }
+    if(V.warden){
+      var wNow = V.warden, wPct = Math.max(0, Math.min(1, (wNow.hp|0) / Math.max(1, wNow.max|0)));
+      wardenBar.classList.remove("hidden");
+      wardenLock.classList.remove("hidden");
+      wardenHp.style.width = Math.round(wPct * 100) + "%";
+      wardenBar.setAttribute("aria-label", "The Warden " + (wNow.hp|0) + " of " + (wNow.max|0));
+      tt += " · WARDEN " + (wNow.hp|0) + "/" + (wNow.max|0);
+    } else {
+      wardenBar.classList.add("hidden");
+      wardenLock.classList.add("hidden");
+    }
     if(topBox.textContent !== tt) topBox.textContent = tt;
     hitm.classList.toggle("on", t - V.hitAt < 0.15); hitm.classList.toggle("head", t - V.headAt < 0.15);
     var hurtOn = t - V.hurtAt < 0.8;
@@ -3932,7 +4600,23 @@ function makeGame(host, opts){
         : clamp((V.shieldTotemUntil > t ? (V.shieldTotemUntil - t)/TOTEMS.shield.dur : (V.dropUntil - t)/FS.DROP_TIME), 0, 1);
       shBar.style.width = Math.round(shLeft*100)+"%";
     }
-    if(V.feed.length && t - V.feed[V.feed.length - 1].at > 6){ V.feed = V.feed.filter(function(f){ return t - f.at <= 6; }); renderFeed(); }
+    if(V.feed.length && t - V.feed[V.feed.length - 1].at > FEED_TTL){ V.feed = V.feed.filter(function(f){ return t - f.at <= FEED_TTL; }); renderFeed(); }
+  }
+  // how someone died: never "?" and never a bare "Disaster"
+  function envKiller(dis){
+    dis = dis ? String(dis) : "";
+    if(dis === "warden-slam" || dis === "warden-laser" || dis === "warden-grip" || dis === "warden") return "The Warden";
+    return "The map";
+  }
+  function envLabel(dis){
+    dis = dis ? String(dis) : "";
+    if(dis === "warden-slam") return "arm slam";
+    if(dis === "warden-laser") return "laser eyes";
+    if(dis === "warden-grip") return "gravity grip";
+    if(dis === "warden") return "The Warden";
+    if(TOTEMS[dis] && TOTEMS[dis].n) return TOTEMS[dis].n;
+    if(ENV_NAMES[dis]) return ENV_NAMES[dis];
+    return dis.charAt(0).toUpperCase() + dis.slice(1);
   }
   function renderFeed(){
     feedBox.textContent = "";
@@ -3947,11 +4631,12 @@ function makeGame(host, opts){
         return;
       }
       li.appendChild(api.mk("b", null, f.k));
-      // a disaster kill names the disaster instead of a weapon (w = -1)
-      var wTxt = f.dis ? (TOTEMS[f.dis] ? TOTEMS[f.dis].n : "Disaster") : wLabel(f.w|0);
+      // a disaster / Warden kill names the cause instead of a weapon (w = -1)
+      var wTxt = f.dis ? envLabel(f.dis) : wLabel(f.w|0);
       li.appendChild(api.mk("span", "vg-fps-w", " "+wTxt+(f.hs ? " · head" : "")+" "));
       li.appendChild(api.mk("b", null, f.v)); feedBox.appendChild(li);
-      li.style.borderLeft = "3px solid "+(f.dis ? (TOTEMS[f.dis] ? TOTEMS[f.dis].c : "#888") : TEAMS[f.vt|0].c);
+      var bc = f.dis ? (TOTEMS[f.dis] && TOTEMS[f.dis].c) || (f.dis.indexOf("warden") === 0 ? "#c9a227" : "#888") : TEAMS[f.vt|0].c;
+      li.style.borderLeft = "3px solid "+bc;
     });
   }
   // one pickup into the top-right feed: name (their team colour in the dot) + the item,
@@ -3960,7 +4645,7 @@ function makeGame(host, opts){
     var hue = kind === "health" ? "#f4f4f4" : kind === "ammo" ? "#e0b325" : (TOTEMS[kind] && TOTEMS[kind].hue) || TEAMS[team|0].c;
     var label = kind === "health" ? "a health kit" : kind === "ammo" ? "an ammo box" : (TOTEMS[kind] && TOTEMS[kind].n) || kind;
     V.feed.unshift({k: name, item: label, hue: hue, at: t, mine: name === "You"});
-    if(V.feed.length > 5) V.feed.length = 5;
+    if(V.feed.length > FEED_MAX) V.feed.length = FEED_MAX;
     renderFeed();
   }
   // the item guide card (press I): one row per thing that drops on the map, each tinted with
@@ -4170,6 +4855,32 @@ function makeGame(host, opts){
         g.fillStyle = (b[6] === "wall" || b[6] === "adobe" || b[6] === "divider") ? T.ink : T.muted;
         g.fillRect(b[0], b[2], b[3] - b[0], b[5] - b[2]); g.globalAlpha = 1;
       });
+      // The Warden on the 2D map: totem-golem silhouette (skirt, torso, head, two heavy arms)
+      if(V.warden){
+        var w2 = V.warden, wS = WARDEN_SCALE;
+        g.fillStyle = T.muted;
+        g.fillRect(w2.x - 3.2*wS, w2.z - 1.6*wS, 6.4*wS, 3.2*wS);          // rubble skirt
+        g.fillStyle = T.need;
+        g.fillRect(w2.x - 2.3*wS, w2.z - 1.3*wS, 4.6*wS, 2.6*wS);          // chest
+        g.fillRect(w2.x - WARDEN_ARM_X - 0.6*wS, w2.z - 0.5*wS, 1.2*wS, 1.4*wS); // left arm
+        g.fillRect(w2.x + WARDEN_ARM_X - 0.6*wS, w2.z - 0.5*wS, 1.2*wS, 1.4*wS); // right arm
+        g.fillStyle = (w2.coreUntil && t < w2.coreUntil) ? T.need : T.gold;
+        g.fillRect(w2.x - 0.8*wS, w2.z - 0.8*wS, 1.6*wS, 1.6*wS);          // head / totem mark (core when open)
+        if(w2.slabArm || w2.slabLand){
+          g.beginPath(); g.arc(w2.x - WARDEN_ARM_X, w2.z, WARDEN_SLAB_R, 0, Math.PI*2);
+          g.strokeStyle = T.need; g.lineWidth = 0.14; g.stroke();
+          g.beginPath(); g.arc(w2.x + WARDEN_ARM_X, w2.z, WARDEN_SLAB_R, 0, Math.PI*2);
+          g.stroke(); g.lineWidth = 1;
+        }
+        if(w2.laserWarn && w2.laserOn){
+          g.save();
+          g.translate(w2.x, w2.z);
+          g.rotate(w2.laserYaw || 0);
+          g.fillStyle = T.need;
+          g.fillRect(0, -0.3, 80, 0.6);
+          g.restore();
+        }
+      }
       // Wave F: disasters paint on the flat map too (wash + impact rings + shock ring)
       if(V.disaster && t < (V.disasterUntil || 0)){
         var disW = V.disaster;
@@ -4655,7 +5366,310 @@ function makeGame(host, opts){
       (riftGroups || []).forEach(function(g){ scene.remove(g); }); riftGroups = [];
       (ringMeshes || []).forEach(function(r){ dyn.remove(r.o); }); ringMeshes = [];
       (V.dmgNums || []).forEach(function(D){ if(D.o){ dyn.remove(D.o); D.o.material.map.dispose(); D.o.material.dispose(); D.o = null; } }); V.dmgNums = [];
+      if(wardenGroup){ dyn.remove(wardenGroup); wardenGroup = null; wardenParts = null; }
       V.order.forEach(function(u){ removePlayer(V.players[u]); }); }
+    var wardenGroup = null, wardenParts = null, wardenLaser = null, wardenRings = [], wardenDust = [];
+    function wardenDustTex(){
+      if(wardenDustTex._t) return wardenDustTex._t;
+      var c = document.createElement("canvas"), g = c.getContext("2d");
+      c.width = 32; c.height = 32;
+      var gr = g.createRadialGradient(16, 16, 1, 16, 16, 15);
+      gr.addColorStop(0, "rgba(220,190,140,0.9)");
+      gr.addColorStop(0.5, "rgba(180,140,90,0.55)");
+      gr.addColorStop(1, "rgba(140,100,60,0)");
+      g.fillStyle = gr; g.fillRect(0, 0, 32, 32);
+      wardenDustTex._t = new THREE.CanvasTexture(c);
+      wardenDustTex._t.colorSpace = THREE.SRGBColorSpace;
+      return wardenDustTex._t;
+    }
+    function wardenDustBurst(pts, t0){
+      if(!pts || !pts.length) return;
+      var tex = wardenDustTex(), pi, i;
+      for(pi = 0; pi < pts.length; pi++){
+        var p = pts[pi];
+        for(i = 0; i < 14; i++){
+          var ja = (i / 14) * Math.PI * 2 + (pi * 0.4);
+          var sp = new THREE.Sprite(new THREE.SpriteMaterial({map: tex, transparent: true, depthWrite: false, opacity: 0.7, fog: false}));
+          sp.position.set(p.x, 0.25, p.z);
+          sp.scale.setScalar(1.2 + (i % 4) * 0.3);
+          dyn.add(sp);
+          wardenDust.push({o: sp, at: t0, x: p.x, z: p.z,
+            vx: Math.cos(ja) * (6 + (i % 3) * 2), vz: Math.sin(ja) * (6 + (i % 3) * 2),
+            s0: 1.2 + (i % 4) * 0.3});
+        }
+      }
+    }
+    function wardenDustTick(t, quiet){
+      for(var di = wardenDust.length - 1; di >= 0; di--){
+        var D = wardenDust[di], da = (t - D.at) / 0.7;
+        if(da >= 1){ dyn.remove(D.o); wardenDust.splice(di, 1); continue; }
+        if(!quiet){
+          D.o.position.x = D.x + D.vx * (da * 0.7);
+          D.o.position.z = D.z + D.vz * (da * 0.7);
+          D.o.position.y = 0.25 + da * 1.5;
+        }
+        D.o.scale.setScalar(D.s0 * (1 + da * 2.2));
+        if(D.o.material) D.o.material.opacity = 0.7 * (1 - da);
+      }
+    }
+    function wardenDustClear(){
+      for(var di = 0; di < wardenDust.length; di++){ dyn.remove(wardenDust[di].o); }
+      wardenDust = [];
+    }
+    function wmat(c, e){ return new THREE.MeshLambertMaterial({color: c, emissive: e || 0x000000}); }
+    function wardenBuild(W){
+      if(wardenGroup){ dyn.remove(wardenGroup); wardenGroup = null; wardenParts = null; }
+      if(wardenLaser){ dyn.remove(wardenLaser); wardenLaser = null; }
+      wardenRings.forEach(function(r){ dyn.remove(r.o); }); wardenRings = [];
+      wardenDustClear();
+      if(!W) return;
+      // Giant carved totem-golem: waist-to-head only (no legs), fused to a rubble skirt.
+      // Silhouette follows the hit volumes (waist / chest / head / two heavy arms).
+      var g = new THREE.Group();
+      var stone = 0x3a4150, iron = 0x252b36, trim = 0xc9a227, glow = 0xff2a3a, dark = 0x1a1f28;
+      function part(w, h, d, x, y, z, c, e){
+        var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wmat(c, e));
+        m.position.set(x || 0, y || 0, z || 0);
+        return m;
+      }
+      var skirt = part(18.6, 2.4, 12.0, 0, 1.2, 0, iron);
+      var skirt2 = part(15.0, 1.8, 9.6, 0, 3.0, 0.3, stone);
+      var waist = part(12.6, 4.5, 8.4, 0, 5.1, 0, stone);
+      var chest = part(15.6, 6.9, 9.0, 0, 9.0, 0, stone);
+      var plate = part(10.2, 5.1, 0.9, 0, 9.0, 4.65, iron);
+      var sigil = part(2.4, 2.4, 0.45, 0, 9.3, 5.25, trim, 0x332200);
+      var paulL = part(5.4, 3.6, 6.0, -9.3, 11.7, 0, iron);
+      var paulR = part(5.4, 3.6, 6.0, 9.3, 11.7, 0, iron);
+      var head = part(6.6, 4.8, 6.0, 0, 14.1, 0.45, stone);
+      var brow = part(7.2, 1.2, 1.65, 0, 16.05, 2.25, iron);
+      var jawM = part(5.1, 1.5, 3.9, 0, 12.15, 1.2, dark);
+      var crest = part(1.65, 1.8, 4.5, 0, 16.8, 0, trim, 0x221100);
+      var eyeL = part(1.2, 0.72, 0.54, -1.5, 14.55, 3.3, glow, 0x440000);
+      var eyeR = part(1.2, 0.72, 0.54, 1.5, 14.55, 3.3, glow, 0x440000);
+      // heavy arms: shoulder + elbow so the slam is a hinge from elbow to fist
+      function heavyArm(side){
+        var piv = new THREE.Group();
+        piv.position.set(side * WARDEN_ARM_X, 11.7, 0);
+        var delt = part(5.4, 2.4, 5.4, 0, -0.6, 0, stone);
+        var upper = part(4.2, 7.8, 4.3, 0, -3.9, 0, iron);
+        var elbow = new THREE.Group();
+        elbow.position.set(0, -8.1, 0);
+        var hinge = part(3.6, 1.8, 3.9, 0, 0, 0, trim, 0x221100);
+        var fore = part(3.6, 6.6, 3.9, 0, -3.6, 0.4, stone);
+        var fist = part(4.8, 3.6, 5.1, 0, -7.5, 0.7, iron);
+        var knuckle = part(3.9, 1.35, 4.2, 0, -9.1, 1.1, trim, 0x221100);
+        elbow.add(hinge); elbow.add(fore); elbow.add(fist); elbow.add(knuckle);
+        piv.add(delt); piv.add(upper); piv.add(elbow);
+        return {piv: piv, elbow: elbow};
+      }
+      var armL = heavyArm(-1), armR = heavyArm(1);
+      g.add(skirt); g.add(skirt2); g.add(waist); g.add(chest); g.add(plate); g.add(sigil);
+      g.add(paulL); g.add(paulR); g.add(head); g.add(brow); g.add(jawM); g.add(crest);
+      g.add(eyeL); g.add(eyeR); g.add(armL.piv); g.add(armR.piv);
+      g.traverse(function(n){ if(n.isMesh){ n.castShadow = !V.low; n.frustumCulled = false; } });
+      g.position.set(W.x, 0, W.z);
+      g.scale.setScalar(1);
+      dyn.add(g);
+      wardenGroup = g;
+      wardenParts = {armL: armL, armR: armR, eyeL: eyeL, eyeR: eyeR, head: head, chest: chest, sigil: sigil, jaw: jawM, group: g};
+    }
+    function wardenClear(){
+      if(wardenGroup){ dyn.remove(wardenGroup); wardenGroup = null; wardenParts = null; }
+      if(wardenLaser){ dyn.remove(wardenLaser); wardenLaser = null; }
+      wardenRings.forEach(function(r){ dyn.remove(r.o); }); wardenRings = [];
+      wardenDustClear();
+    }
+    function wardenSync(W, t){
+      if(!W){ wardenClear(); return; }
+      if(!wardenGroup) wardenBuild(W);
+      if(!wardenParts) return;
+      if(t == null) t = now();
+      var quiet = calm();
+      wardenGroup.position.x = W.x; wardenGroup.position.z = W.z;
+      wardenGroup.rotation.y = W.yaw || 0;
+      // rise out of the ground over 0.8s (deterministic ease)
+      var born = (W.born != null) ? W.born : t;
+      var u = clamp((t - born) / 0.8, 0, 1);
+      var pop = u * u * (3 - 2 * u);
+      wardenGroup.scale.setScalar(Math.max(0.02, pop));
+      wardenGroup.position.y = quiet ? 0 : Math.sin(t * 1.3) * 0.08;
+      // arms: idle sway → telegraph lift → bend-down slam; a disabled arm hangs limp
+      var lift = 0, slamK = 0, slamAt = wardenParts.slamAt || 0;
+      if(W.slabArm > 0 && t < W.slabArm){
+        lift = clamp(1 - (W.slabArm - t) / Math.max(0.05, WARDEN_SLAB_ARM), 0, 1) * 1.35;
+      } else if(slamAt > 0 && t >= slamAt && t < slamAt + 0.35){
+        // downswing: arms fall from full lift to the floor over 0.35s
+        slamK = 1 - (t - slamAt) / 0.35;
+        lift = 1.35 * slamK * slamK;
+      }
+      // torso hinge: rear back on the wind-up, then bend down into the slam
+      var bend = 0;
+      if(W.slabArm > 0 && t < W.slabArm) bend = -0.16 * (lift / 1.35);
+      else if(slamAt > 0 && t >= slamAt && t < slamAt + 0.45) bend = Math.sin(((t - slamAt) / 0.45) * Math.PI) * 0.42;
+      wardenGroup.rotation.x = quiet ? (bend * 0.5) : bend;
+      if(!quiet){
+        wardenParts.head.rotation.y = Math.sin(t * 0.7) * 0.06;
+        wardenParts.sigil.rotation.z = Math.sin(t * 2.1) * 0.1;
+        wardenParts.jaw.rotation.x = 0.04 + Math.sin(t * 1.6) * 0.04;
+      }
+      // Exposed Core: the sigil is the chest core — it glows / sparks while open
+      if(wardenParts.sigil && wardenParts.sigil.material){
+        var coreOpen = !!(W.coreUntil && t < W.coreUntil);
+        var sm = wardenParts.sigil.material;
+        if(coreOpen){
+          sm.emissive.setHex(0xff2a3a);
+          sm.color.setHex(0xff6a4a);
+          if(!quiet){
+            var pk = 0.55 + 0.45 * Math.sin(t * 9.0);
+            sm.emissiveIntensity = 0.4 + pk * 0.8;
+            wardenParts.sigil.scale.setScalar(1 + pk * 0.08);
+          }
+        } else {
+          sm.emissive.setHex(0x332200);
+          sm.color.setHex(0xc9a227);
+          sm.emissiveIntensity = 1;
+          wardenParts.sigil.scale.setScalar(1);
+        }
+      }
+      function poseArm(arm, alive, side){
+        if(!arm || !arm.piv) return;
+        var piv = arm.piv, elbow = arm.elbow;
+        if(!alive){
+          // limp: hang, twist outward, and droop
+          piv.rotation.x = 0.55;
+          piv.rotation.y = side * 0.35;
+          piv.rotation.z = side * 0.85;
+          piv.position.x = side * WARDEN_ARM_X;
+          piv.position.y = 11.7;
+          piv.position.z = 0;
+          if(elbow){ elbow.rotation.x = -0.35; elbow.rotation.y = 0; elbow.rotation.z = 0; }
+          return;
+        }
+        var use = 0;
+        if(W.slamArm === 2) use = lift;
+        else if(W.slamArm === 0 && side < 0) use = lift;
+        else if(W.slamArm === 1 && side > 0) use = lift;
+        else if(slamAt > 0 && t >= slamAt && t < slamAt + 0.35) use = lift;
+        // multi-axis idle so the arms swing in all directions, not just top-down
+        var idleX = quiet ? 0 : Math.sin(t * 1.1 + side) * 0.06;
+        var idleY = quiet ? 0 : Math.sin(t * 0.85 + side * 1.7) * 0.18;
+        var idleZ = quiet ? 0 : Math.cos(t * 0.95 + side * 0.6) * 0.05;
+        var swayX = quiet ? 0 : Math.sin(t * 0.55 + side * 2.1) * 0.14;
+        var swayZ = quiet ? 0 : Math.cos(t * 0.7 + side * 1.3) * 0.12;
+        // hanging arm is -Y; negative x-rot raises the fist overhead
+        piv.rotation.x = -use * 1.2 + (use <= 0.02 ? 0.08 : 0) + idleX;
+        piv.rotation.y = idleY + (use > 0.02 ? side * use * 0.15 : 0);
+        piv.rotation.z = side * (0.12 + use * 0.22) + idleZ;
+        piv.position.x = side * WARDEN_ARM_X + (quiet ? 0 : swayX);
+        piv.position.y = 11.7;
+        piv.position.z = quiet ? 0 : swayZ;
+        // elbow: cocked on the wind-up, then uncocks so the forearm-to-hand segment slams.
+        // Hanging arm is -Y; NEGATIVE x-rot folds the forearm toward the face (human elbow).
+        var eK = 0.12 + idleX * 0.4;
+        if(use > 0.02 && !(slamAt > 0 && t >= slamAt)) eK = 1.05 * (use / 1.35);
+        else if(slamAt > 0 && t >= slamAt && t < slamAt + 0.35) eK = 1.05 * slamK;
+        if(elbow){
+          elbow.rotation.x = -eK;
+          elbow.rotation.y = idleY * 0.35;
+          elbow.rotation.z = side * 0.08 + idleZ * 0.5;
+        }
+      }
+      poseArm(wardenParts.armL, W.armL > 0, -1);
+      poseArm(wardenParts.armR, W.armR > 0, 1);
+      // expire ground warn / slam rings (a ring may grow outward while it fades)
+      for(var ri = wardenRings.length - 1; ri >= 0; ri--){
+        var ra = t - wardenRings[ri].at;
+        if(ra > wardenRings[ri].dur){ dyn.remove(wardenRings[ri].o); wardenRings.splice(ri, 1); continue; }
+        if(wardenRings[ri].o.material) wardenRings[ri].o.material.opacity = 0.8 * (1 - ra / Math.max(0.05, wardenRings[ri].dur));
+        if(wardenRings[ri].grow){
+          var gk = ra / Math.max(0.05, wardenRings[ri].dur);
+          wardenRings[ri].o.scale.setScalar(1 + gk * 0.35);
+        }
+      }
+      wardenDustTick(t, quiet);
+      // laser eyes: amber warn, then a sweeping beam along laserYaw (kill band = same dir)
+      var firing = (W.laserOn > 0 && W.laserWarn > 0 && t >= W.laserWarn && t < W.laserOn);
+      var preWarn = (W.laserWarn > 0 && W.laserOn > 0 && t < W.laserWarn);
+      var eyeC = firing ? 0xff6677 : (preWarn ? 0xffbb33 : 0xff2a3a);
+      var eyeE = firing ? 0xcc0022 : (preWarn ? 0x664400 : 0x330000);
+      if(wardenParts.eyeL && wardenParts.eyeL.material){
+        wardenParts.eyeL.material.color.setHex(eyeC);
+        if(wardenParts.eyeL.material.emissive) wardenParts.eyeL.material.emissive.setHex(eyeE);
+      }
+      if(wardenParts.eyeR && wardenParts.eyeR.material){
+        wardenParts.eyeR.material.color.setHex(eyeC);
+        if(wardenParts.eyeR.material.emissive) wardenParts.eyeR.material.emissive.setHex(eyeE);
+      }
+      if(firing || preWarn){
+        // he looks down at the floor while the eyes run
+        wardenParts.head.rotation.x = 0.55;
+      } else {
+        wardenParts.head.rotation.x = quiet ? 0 : Math.sin(t * 1.6) * 0.04;
+      }
+      if(firing){
+        if(!wardenLaser){
+          var geo = new THREE.CylinderGeometry(0.16, 0.32, 1, 8, 1, true);
+          geo.translate(0, 0.5, 0);
+          geo.rotateX(Math.PI/2); // length along +Z
+          wardenLaser = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+            color: 0xff2040, transparent: true, opacity: 0.7, depthWrite: false, fog: false, side: THREE.DoubleSide
+          }));
+          dyn.add(wardenLaser);
+        }
+        var yaw = W.laserYaw || 0;
+        var eyeY = WARDEN_SEE_HEAD;
+        // stay on the map: the beam stops at the arena edge, never off into the void
+        var runLen = mapLaserRun(W.x, W.z, yaw);
+        // ground laser: slant from the eyes down to the floor along laserYaw
+        var pitchDown = Math.atan2(eyeY, runLen);
+        var slant = Math.sqrt(runLen * runLen + eyeY * eyeY);
+        wardenLaser.visible = true;
+        wardenLaser.position.set(W.x, eyeY, W.z);
+        // +Z is the beam: yaw around Y, then pitch it down onto the ground
+        wardenLaser.rotation.set(pitchDown, Math.PI/2 - yaw, 0);
+        var beamW = WARDEN_SCALE * (1 + (quiet ? 0 : Math.sin(t * 28) * 0.15));
+        wardenLaser.scale.set(beamW, beamW, slant);
+      } else if(wardenLaser){
+        wardenLaser.visible = false;
+      }
+    }
+    function wardenRise(W){ wardenBuild(W); }
+    function wardenSlamArm(arm, t){
+      // ground telegraph rings under the arm(s) that will slam
+      if(!arm && arm !== 0) return;
+      var W = V.warden; if(!W) return;
+      var pts = [];
+      if(arm === 0 || arm === 2) pts.push(W.x - WARDEN_ARM_X);
+      if(arm === 1 || arm === 2) pts.push(W.x + WARDEN_ARM_X);
+      pts.forEach(function(px){
+        var rg = new THREE.Mesh(new THREE.RingGeometry(WARDEN_SLAB_R - 0.25, WARDEN_SLAB_R, 36).rotateX(-Math.PI/2),
+          new THREE.MeshBasicMaterial({color: 0xff3344, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false, fog: false}));
+        rg.position.set(px, 0.08, W.z);
+        dyn.add(rg);
+        wardenRings.push({o: rg, at: now(), dur: WARDEN_SLAB_ARM + 0.2});
+      });
+    }
+    function wardenSlam(t){
+      if(!V.warden) return;
+      var W = V.warden, pts = [], t0 = t || now();
+      if(wardenParts) wardenParts.slamAt = t0;
+      if(W.slamArm === 0 || W.slamArm === 2) pts.push({x: W.x - WARDEN_ARM_X, z: W.z});
+      if(W.slamArm === 1 || W.slamArm === 2) pts.push({x: W.x + WARDEN_ARM_X, z: W.z});
+      pts.forEach(function(p){
+        var rg = new THREE.Mesh(new THREE.RingGeometry(WARDEN_SLAB_R_HIT - 0.35, WARDEN_SLAB_R_HIT, 40).rotateX(-Math.PI/2),
+          new THREE.MeshBasicMaterial({color: 0xff3344, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false, fog: false}));
+        rg.position.set(p.x, 0.1, p.z);
+        dyn.add(rg);
+        wardenRings.push({o: rg, at: t0, dur: 0.4});
+        // wider shock ring — the blast that blows people away
+        var rg2 = new THREE.Mesh(new THREE.RingGeometry(WARDEN_SLAB_KNOCK - 0.3, WARDEN_SLAB_KNOCK, 40).rotateX(-Math.PI/2),
+          new THREE.MeshBasicMaterial({color: 0xffaa66, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, fog: false}));
+        rg2.position.set(p.x, 0.08, p.z);
+        dyn.add(rg2);
+        wardenRings.push({o: rg2, at: t0, dur: 0.55});
+      });
+      wardenDustBurst(pts, t0);
+    }
     var R = {};
     /* launcher visuals: the flying rocket and its blast, both correlations of the missiles list */
     var rockets = [], booms = [];
@@ -4705,6 +5719,26 @@ function makeGame(host, opts){
       }
     }
     R.buildMap = buildMap; R.removePlayer = removePlayer; R.tracer = tracer; R.clearDynamic = clearDynamic;
+    R.wardenRise = wardenRise; R.wardenSync = wardenSync; R.wardenClear = wardenClear;
+    R.wardenSlamArm = wardenSlamArm; R.wardenSlam = wardenSlam;
+    R.wardenShock = function(t){
+      var W = V.warden; if(!W) return;
+      var t0 = t || now();
+      var rg = new THREE.Mesh(new THREE.RingGeometry(2.0, 2.4, 40).rotateX(-Math.PI/2),
+        new THREE.MeshBasicMaterial({color: 0xffcc66, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false, fog: false}));
+      rg.position.set(W.x, 0.1, W.z);
+      dyn.add(rg);
+      wardenRings.push({o: rg, at: t0, dur: 0.7, grow: WARDEN_CK1_PUSH});
+    };
+    R.wardenGrip = function(t){
+      var W = V.warden; if(!W) return;
+      var t0 = t || now();
+      var rg = new THREE.Mesh(new THREE.RingGeometry(WARDEN_GRIP_R - 0.5, WARDEN_GRIP_R, 48).rotateX(-Math.PI/2),
+        new THREE.MeshBasicMaterial({color: 0x9b6bff, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, fog: false}));
+      rg.position.set(W.x, 0.08, W.z);
+      dyn.add(rg);
+      wardenRings.push({o: rg, at: t0, dur: WARDEN_GRIP_HOLD});
+    };
     // a totem slot is one small rotating gem: gold mole, violet paralyser, pale-cyan decoy,
     // grey cloak. Kept together with pickups under pickMeshes ([] never shrinks this match,
     // totems just claim the next index) so the bob/spin/mipmap loop covers them too
@@ -5252,6 +6286,7 @@ function makeGame(host, opts){
     R.camera = camera;
     R.render = function(dt, t){
       var quiet = calm();
+      if(V.warden && R3 && R3.wardenSync) R3.wardenSync(V.warden, t);
       // others (a new look or team re-renders the whole mesh)
       others().forEach(function(P){
         // rebuild also when the friend/foe relation flips: the red-vs-ally name tag is baked

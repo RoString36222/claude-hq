@@ -59,11 +59,13 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           "worldbuild", "camrig", "hqhud", "hqcityparts", "hqcity", "hqmerge",
                           # Cities (3.0): the civic kit, residents, traffic, the sea, boats, travel
                           "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqheli", "hqtravel", "hqvoyage", "hqships", "hqbridges",
-                          "hqair", "hqaircraft", "hqairbase",
+                          "hqair", "hqaircraft", "hqplane", "hqairbase",   # (3.2: the planes you fly)
                           # navigation (3.1): the router, the minimap, the route's chevrons, the Go to panel
                           "hqnav", "hqminimap", "hqroutefx", "hqnavui",
                           # rail (3.x): the lines between cities, their trains
-                          "hqrail", "hqcity3d"])
+                          "hqrail",
+                          # City 3.2: the weather, the landmarks and the amusement park
+                          "hqweather", "hqspectacle", "hqcity3d"])
 
     def test_multi_hq_range_covers_server(self):
         m = re.search(r"\bhq:\[(\d+),(\d+)\]", read(MULTI))
@@ -97,7 +99,10 @@ class LoadOrderAndProtocol(unittest.TestCase):
         place = func_body(src, "placePeers")
         self.assertIn("P.w === (cur.net || cur.name)", place)
         self.assertIn("cur.skateBase", place)
-        self.assertRegex(place, r"Math\.hypot\(P\.tx - P\.x, P\.tz - P\.z, [^)]*\) > 6")
+        # a teleport (over 6 m from where they are drawn) lands at once; otherwise dead reckoning + a spring (HQ 3.2)
+        self.assertRegex(place, r"Math\.hypot\(gx - P\.x, gz - P\.z, [^)]*\) > 6")
+        self.assertIn("spring(P.x, P.sx || 0, gx, 10, dt)", place)
+        self.assertIn("locomote(P.ch, P.fs, P.fr, dt)", place)
         where = assigned_body(src, "inst.where")
         self.assertIn("cur.net || cur.name", where)
         self.assertIn("h: rigW ? avatar.g.position.y : null", where)
@@ -111,11 +116,23 @@ class LoadOrderAndProtocol(unittest.TestCase):
         self.assertIn('if((a===7 || a===8) && !hqNetCan("fly")) a = 0;', send)
         self.assertLess(send.index('hqNetCan("fly")'), send.index("var msg="))
         # others see them in it: the helicopter model at the height they send, its rotors turning
-        self.assertIn('var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack"};', src)
+        self.assertIn('var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop"};', src)
         place = func_body(src, "placePeers")
         self.assertIn("HQV.hqheli.model(ctx, vk, bikeColor(u))", place)
         self.assertIn("HQV.hqheli.animate(P.bike, P.hst, dt, isNight())", place)
         self.assertIn("if(vk && !VEHICLES[vk]) vk = null;", place)   # a page without games/hqheli.js
+
+    def test_presence_plane(self):
+        # HQ 3.2: flying a plane you send a = 9 (the seaplane) / 10 (the prop plane), only to an Arena that lists "plane"
+        src = read(HQ3D)
+        moving = assigned_body(src, "inst.moving")
+        self.assertIn('ride.plane ? (ride.kind === "seaplane" ? 9 : 10)', moving)
+        send = func_body(read(HQ_UI), "hqNetSend")
+        self.assertIn('if((a===9 || a===10) && !hqNetCan("plane")) a = 0;', send)
+        self.assertLess(send.index('hqNetCan("plane")'), send.index("var msg="))
+        place = func_body(src, "placePeers")
+        self.assertIn("HQV.hqplane.model(ctx, vk, bikeColor(u))", place)
+        self.assertIn("HQV.hqplane.animate(P.bike, P.pst, dt, isNight())", place)
 
 
 class Hq3dSource(unittest.TestCase):
@@ -163,9 +180,13 @@ class Hq3dSource(unittest.TestCase):
         self.assertIn("[].concat(cur.floor", func_body(self.src, "mapClick"))
         self.assertIn("ray.setFromCamera(ptr, curCam())", func_body(self.src, "pick"))
 
-    def test_orbit_right_button_and_contextmenu(self):
+    def test_orbit_left_or_right_drag_and_contextmenu(self):
         down = func_body(self.src, "onDown")
-        self.assertIn("orbit: !!CHASE[m] && e.button === 2", down)
+        # left- or right-drag orbits in the chase cameras (trackpads have no right-drag)
+        self.assertIn("orbit: !!CHASE[m] && (e.button === 0 || e.button === 2)", down)
+        # a left click that barely moved still walks / picks
+        # (a drag on a ride, d.trip, looks around: never a click either)
+        self.assertIn("if(!d || d.trip || d.moved > 5) return;", func_body(self.src, "onUp"))
         ctx = func_body(self.src, "onContext")
         self.assertIn("if(rigOn() && CHASE[rig.mode]) e.preventDefault();", ctx)
         # the only contextmenu listener is onContext (no unconditional preventDefault anywhere)
@@ -235,11 +256,19 @@ class Hq3dSource(unittest.TestCase):
         self.assertIn("footStep(", mv)
         self.assertNotIn("back = true", mv)
         self.assertNotIn("rig.moveYaw", mv)           # never walk along anything that follows you
-        # the walk plays at your signed pace (S plays it backwards)
-        self.assertIn('setAnim(avatar.ch, "walk", avatar.speed/FOOT.walk)', mv)
+        # idle / walk / sprint blended by your signed pace (S plays it backwards), and the lean into turns (HQ 3.2)
+        self.assertIn("locomote(avatar.ch, avatar.speed, avatar.rate, dt)", mv)
+        self.assertIn("leanStep(avatar.ch,", mv)
+        # walking with a dragged camera turns you to face where it looks (camrig absorb)
+        self.assertIn("HQV.camrig.absorb(rig, FOOT.steer*dt)", mv)
         self.assertIn("settleY(dt);", mv)
         self.assertIn("avatar.g.position.set(avatar.x, avatar.hy + avatar.hop, avatar.z)", mv)
         self.assertIn("spring(avatar.hy, avatar.hyV, gy, 18, dt)", func_body(self.src, "settleY"))
+
+    def test_minimap_turns_with_the_camera(self):
+        # HQ 3.2: the heading-up minimap turns by the camera's heading (camHeading), not the body's facing alone
+        self.assertIn("view: camHeading()", self.src)
+        self.assertIn("CHASE[rig.mode] ? rig.moveYaw : rig.lookYaw", func_body(self.src, "camHeading"))
 
     def test_rig_target_contract(self):
         rt = func_body(self.src, "rigTarget")
@@ -325,12 +354,22 @@ out.wFirst = H.footStep(z, {fwd: 1}, 1/60).speed;
 out.w = [run(z, {fwd: 1}, 0.1, 60).speed, run(z, {fwd: 1}, 1, 60).speed, run(z, {fwd: 1, run: true}, 1, 60).speed];
 var back = run({yaw: 0.7, rate: 0, rateV: 0, speed: 0, speedV: 0}, {fwd: -1}, 1, 60);
 out.back = [back.speed, back.yaw, back.travelYaw];
+// S turns you round (HQ 3.3): the most it ever turns past the half turn, a tap's end, and W cancelling it
+(function(){ var st = {yaw: 0}, most = 0; for(var i = 0; i < 120; i++){ st = H.footStep(st, {fwd: -1}, 1/60);
+  var d = st.yaw < 0 ? st.yaw + 2*Math.PI : st.yaw; most = Math.max(most, d); } out.aboutMost = most; })();
+var tap = run(run({yaw: 0}, {fwd: -1}, 0.1, 60), {}, 1, 60);
+out.tap = [tap.yaw, tap.speed, tap.about];
+var cancel = run(run({yaw: 0}, {fwd: -1}, 0.15, 60), {fwd: 1}, 0.5, 60);
+out.cancel = [cancel.about, cancel.speed];
 var turn = run(z, {turn: 1}, 1, 60);
 out.turn = [turn.rate, turn.yaw, turn.travelYaw];
 out.turnR = run(z, {turn: -1}, 1, 60).rate;
 var a30 = run(z, {fwd: 1, turn: 1}, 1, 30), a120 = run(z, {fwd: 1, turn: 1}, 1, 120);
 out.fps = [a30.yaw, a120.yaw, a30.speed, a120.speed];
-out.still = [run(z, {}, 1, 60).travelYaw, H.travelYawOf(1, 0, 0), H.travelYawOf(1, 2, 0), H.travelYawOf(0, -1, 0)];
+out.still = [run(z, {}, 1, 60).travelYaw, H.travelYawOf(1, 0, 0), H.travelYawOf(1, 2, 0), H.travelYawOf(0, -1, 0),
+             H.travelYawOf(1, 0, 0, 1.1), H.travelYawOf(1, 0, 0, 1 + Math.PI), run(turn, {}, 1, 60).travelYaw];
+out.loco = [0, 0.5, 2, 4, 5.6, 7, -2.6].map(function(v){ return H.locoWeights(v, 0); });
+out.locoShuffle = H.locoWeights(0, 3.6);
 out.stop = run(run(z, {fwd: 1}, 1, 60), {}, 0.05, 60).speed;
 process.stdout.write(JSON.stringify(out));
 """
@@ -412,29 +451,59 @@ class Hq3dPure(unittest.TestCase):
         self.assertLess(self.o["stop"], 4)                    # eases down, not a hard stop
         self.assertGreater(self.o["stop"], 1)
 
-    def test_s_steps_back_facing_forward(self):
+    def test_s_turns_you_round_and_walks_on(self):
+        # HQ 3.3: S no longer steps back facing away; it turns you round (a half turn on a critically damped
+        # spring) and, held, walks you forward out of it, toward where the camera was.
         speed, yaw, travel = self.o["back"]
-        self.assertAlmostEqual(speed, -4*0.65, delta=0.01)
-        self.assertAlmostEqual(yaw, 0.7, places=9)           # no turning
-        self.assertAlmostEqual(travel, 0.7 - math.pi, places=6)
+        self.assertAlmostEqual(speed, 4, delta=0.15)                                   # walking forward
+        self.assertAlmostEqual(math.cos(yaw - (0.7 + math.pi)), 1, delta=1e-3)          # facing the other way
+        self.assertAlmostEqual(travel, yaw, places=9)                                   # headed where you face
+        self.assertLessEqual(self.o["aboutMost"], math.pi + 0.01)                       # never overshoots
+        tyaw, tspeed, tabout = self.o["tap"]
+        self.assertAlmostEqual(math.cos(tyaw - math.pi), 1, delta=1e-3)                 # a tap still turns you round
+        self.assertAlmostEqual(tspeed, 0, delta=0.05)
+        self.assertIsNone(tabout)
+        cabout, cspeed = self.o["cancel"]
+        self.assertIsNone(cabout)                                                       # W cancels the half turn
+        self.assertGreater(cspeed, 3)
 
     def test_turn_rate_springs(self):
         rate, yaw, travel = self.o["turn"]
-        self.assertAlmostEqual(rate, 2.4, delta=0.01)
-        self.assertGreater(yaw, 1.5)                          # A turns left: yaw grows
-        self.assertLess(yaw, 2.4)                             # the rate eased in
+        # HQ 3.2: 3.6 rad/s (was 2.4) on a snappier spring (omega 18, was 10)
+        self.assertAlmostEqual(rate, 3.6, delta=0.01)
+        self.assertGreater(yaw % (2*math.pi), 3.0)           # A turns left: yaw grows (~3.5 rad: wrapped past PI)
         self.assertAlmostEqual(travel, yaw, places=9)         # turning on the spot: headed where you face
-        self.assertAlmostEqual(self.o["turnR"], -2.4, delta=0.01)
+        self.assertAlmostEqual(self.o["turnR"], -3.6, delta=0.01)
 
     def test_foot_step_frame_rate_independent(self):
         y30, y120, s30, s120 = self.o["fps"]
         self.assertAlmostEqual(y30, y120, delta=0.02)
         self.assertAlmostEqual(s30, s120, places=6)
 
-    def test_travel_yaw_null_when_still(self):
-        self.assertEqual(self.o["still"][:2], [None, None])
+    def test_travel_yaw_when_still(self):
+        self.assertEqual(self.o["still"][:2], [None, None])   # from a standstill: none (the camera holds)
         self.assertEqual(self.o["still"][2], 1)
         self.assertAlmostEqual(self.o["still"][3], math.pi, places=9)
+        # standing still after heading where you face: still your facing (the camera settles behind you, HQ 3.2);
+        # after a back-step (last headed facing + PI): none, the camera holds where it swung to
+        self.assertEqual(self.o["still"][4], 1)
+        self.assertIsNone(self.o["still"][5])
+        self.assertIsNotNone(self.o["still"][6])
+
+    def test_locomotion_blend(self):
+        L = self.o["loco"]
+        for w in L:
+            self.assertAlmostEqual(w["idle"] + w["walk"] + w["sprint"], 1, places=9)
+        self.assertEqual((L[0]["idle"], L[0]["walk"]), (1, 0))       # still: idle
+        self.assertGreater(L[1]["idle"], 0.4); self.assertGreater(L[1]["walk"], 0.4)   # setting off: a crossfade
+        self.assertEqual(L[3]["walk"], 1)                              # walking pace
+        self.assertGreater(L[4]["sprint"], 0); self.assertGreater(L[4]["walk"], 0)   # speeding up: both
+        self.assertEqual(L[5]["sprint"], 1)
+        # the playback rate follows the ground speed (no gliding), backwards when stepping back
+        self.assertAlmostEqual(L[3]["walkTs"] / L[2]["walkTs"], 2, places=9)
+        self.assertLess(L[6]["walkTs"], 0)
+        sh = self.o["locoShuffle"]                                     # turning on the spot: a shuffle
+        self.assertGreater(sh["walk"], 0.3); self.assertGreater(sh["walkTs"], 0)
 
 if __name__ == "__main__":
     unittest.main()

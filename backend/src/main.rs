@@ -22,6 +22,7 @@ mod kart;
 mod loot;
 mod mapkey;
 mod maps;
+mod metrics;
 mod market;
 mod music;
 mod nudges;
@@ -385,6 +386,7 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
                        room_info: Value) {
     use futures::{SinkExt, StreamExt};
     let conn_id = st.conn_seq.fetch_add(1, Ordering::Relaxed);
+    let _ws = metrics::ws_open();
     let Some((mut rx, mut direct, roster, state)) =
         st.rooms.join_direct(&room_id, conn_id, member.clone()).await
     else {
@@ -1042,8 +1044,20 @@ async fn serve() -> anyhow::Result<()> {
         anyhow::bail!("ARENA_DEV_HANDLE must match [a-z0-9-]{{1,32}}, got {:?}", dev_state.default_handle);
     }
 
+    // Prometheus metrics on their own listener (never routed by Caddy); off when unset.
+    metrics::init();
+    if let Some(mb) = std::env::var("ARENA_METRICS_BIND").ok().filter(|v| !v.is_empty()) {
+        let ml = tokio::net::TcpListener::bind(&mb).await?;
+        let mr = metrics::router(state.clone());
+        tracing::info!("metrics on {mb}/metrics");
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(ml, mr).await { tracing::error!("metrics listener: {e}"); }
+        });
+    }
+
     let app = Router::new().merge(public).merge(guarded).merge(dev_routes(dev, dev_state))
-        .with_state(state);
+        .with_state(state)
+        .layer(middleware::from_fn(metrics::track));
 
     tracing::info!("arena-rs listening on {bind}");
     let listener = tokio::net::TcpListener::bind(&bind).await?;

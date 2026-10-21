@@ -16,6 +16,53 @@ cargo test --locked && cargo clippy --locked --all-targets -- -D warnings
 - `Dockerfile` builds from this folder alone; `docker-compose.yml` + `Caddyfile` run it
   on a VPS behind Caddy (`../deploy-vps.sh` first, then `../ops/release.sh deploy`).
 
+## Monitoring (Prometheus + Grafana)
+
+The Arena serves Prometheus metrics on its own port when `ARENA_METRICS_BIND` is set
+(`docker-compose.yml` sets `0.0.0.0:9091`). Caddy only proxies `app:8080`, so `/metrics`
+is never public. Labels are the method, the route template (`/v1/rooms/:room_id/ws`,
+never a raw path) and the status, so no room, user or handle ends up in a series.
+
+On the VPS: add an A record for the dashboard's domain pointing at the VPS, then from the repo:
+
+```bash
+sudo GRAFANA_DOMAIN=grafana.example.com ARENA_DOMAIN=arena.example.com bash ops/install-monitoring.sh
+```
+
+It adds the Grafana site to the Caddyfile (HTTPS with an automatic certificate),
+generates a strong admin password into `.env` and prints it once, sets
+`COMPOSE_PROFILES=monitoring`, and starts Prometheus, node-exporter and Grafana.
+Re-running is safe. Then open `https://grafana.example.com` and log in as `admin`.
+Grafana also listens on `127.0.0.1:3000` of the VPS, if you'd rather use an SSH tunnel
+(`ssh -L 3000:127.0.0.1:3000 <you>@<vps>`).
+
+- **Prometheus** (`monitoring/prometheus.yml`) scrapes the Arena and node-exporter every
+  15 s and keeps 30 days (at most 2 GB). It is not published on the host.
+- **node-exporter** reads the VPS's CPU, memory, disk and load from the host's `/proc`,
+  `/sys` and root filesystem (read-only). It is not published on the host.
+- **Grafana** is served by Caddy on `GRAFANA_DOMAIN` behind its own login (sign-up and
+  anonymous access off, secure cookies, brute-force login protection on). It opens
+  on the provisioned **Arena backend** dashboard (`monitoring/grafana/dashboards/arena.json`):
+  - overview: up, version, uptime, requests/s, 5xx rate, p95 latency, open websockets, people in rooms
+  - traffic and latency (p50/p95/p99) per route, a route table, 4xx and 5xx per route
+  - websockets, rooms, game loops and tick overruns
+  - the Arena process (CPU, RSS, threads, fds, SQLite and WAL size, DB pool)
+  - the VPS (CPU, memory, disk, disk I/O)
+  - restarts (deploys) as annotations
+- `ops/release.sh` only restarts `app`, so deploys leave the monitoring containers running.
+  Grafana's update checks and usage reporting are off.
+
+| metric | type | what |
+|---|---|---|
+| `arena_http_requests_total{method,route,status}` | counter | requests |
+| `arena_http_request_duration_seconds{method,route}` | histogram | time to the response head |
+| `arena_http_requests_in_flight` | gauge | requests being handled |
+| `arena_ws_connections`, `arena_ws_connections_total` | gauge, counter | room websockets |
+| `arena_rooms{kind}`, `arena_room_members{kind}` | gauge | public/private rooms and people |
+| `arena_game_loops`, `arena_game_loops_max`, `arena_game_loop_overruns` | gauge | real-time game ticks |
+| `arena_db_pool_connections{state}`, `arena_db_size_bytes{file}` | gauge | SQLite |
+| `arena_build_info{version}`, `arena_uptime_seconds`, `process_*` | gauge, counter | the process |
+
 ## Where Rust improves on the original
 
 **The tool allowlist is a type.** In Python, `mcp__acme_internal__query`

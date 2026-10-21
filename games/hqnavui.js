@@ -40,7 +40,7 @@ var OWN = ".hqnavui-panel, .hqnavui-banner, .hqnavui-arrived";
 var GLYPH = {
   start: "↑", straight: "↑", left: "←", right: "→",
   "slight-left": "↖", "slight-right": "↗", "sharp-left": "↙", "sharp-right": "↘",
-  uturn: "↶", bridge: "⌒", arrive: "◎"
+  uturn: "↶", bridge: "⌒", arrive: "◎", fly: "↑"
 };
 // Fallback icons per place kind, when a Place carries no icon of its own.
 var KIND_ICON = {
@@ -83,6 +83,7 @@ function maneuverText(step, toNext){
   var onto = road ? " onto " + road : "", act;
   switch(kind){
     case "start": return road ? "Head along " + road : "Head to the route";
+    case "fly": return road || "Fly to the waypoint";              // in the air (HQ 3.2): road is the whole instruction
     case "arrive": act = "arrive at your destination"; break;
     case "left": case "right": act = "turn " + kind + onto; break;
     case "slight-left": case "slight-right": act = "bear " + kind.slice(7) + onto; break;

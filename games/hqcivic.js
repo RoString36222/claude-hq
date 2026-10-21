@@ -491,6 +491,32 @@ KP.pier = function(cx, z0, z1, w, y){
     this.cyl(0.25, 0.25, y + 3, pile, cx - w/2 + 0.3, (y - 3)/2, z, 8); this.cyl(0.25, 0.25, y + 3, pile, cx + w/2 - 0.3, (y - 3)/2, z, 8); }
   var bol = this.m(0x2b3440, {metalness: 0.5, roughness: 0.5});
   for(i = 0; i < n; i++){ var bz = Math.min(z0, z1) + len*(i + 0.5)/n; this.cyl(0.18, 0.22, 0.6, bol, cx - w/2 + 0.4, y + 0.3, bz, 8); this.cyl(0.18, 0.22, 0.6, bol, cx + w/2 - 0.4, y + 0.3, bz, 8); }
+  // HQ 3.2, a finished pier: planks across the deck in two tones (on top of it, never in its plane: no flicker), a
+  // dark fascia along each side, the piles' tops standing up as posts with caps, a yellow safety line along both
+  // edges, cleats between the bollards, rubber fenders down the sides of the head, a ladder into the water each side
+  // of it, and two small lamps on the head. All merged with the building by material: a handful of draw calls.
+  var zl = Math.min(z0, z1), zh = Math.max(z0, z1), pa = this.m(0x9a7a56, {roughness: 0.92}), pb = this.m(0x7d5f42, {roughness: 0.92});
+  var np = Math.max(4, Math.round(len/0.55));
+  for(i = 0; i < np; i++) this.box(w - 0.02, 0.03, len/np - 0.04, i % 2 ? pa : pb, cx, y + 0.015, zl + len*(i + 0.5)/np);
+  var fas = this.m(0x3a2e24, {roughness: 0.95});
+  this.box(0.12, 0.3, len, fas, cx - w/2 - 0.06, y - 0.15, zc); this.box(0.12, 0.3, len, fas, cx + w/2 + 0.06, y - 0.15, zc);
+  var yel = this.m(0xffd34a, {roughness: 0.6});
+  this.box(0.12, 0.01, len - 0.4, yel, cx - w/2 + 0.12, y + 0.035, zc); this.box(0.12, 0.01, len - 0.4, yel, cx + w/2 - 0.12, y + 0.035, zc);
+  for(i = 0; i <= n; i++){ var pz = zl + len*i/n;
+    this.cyl(0.27, 0.27, 0.42, pile, cx - w/2 + 0.3, y + 0.21, pz, 8); this.cyl(0.27, 0.27, 0.42, pile, cx + w/2 - 0.3, y + 0.21, pz, 8);
+    this.cyl(0.3, 0.3, 0.06, fas, cx - w/2 + 0.3, y + 0.45, pz, 8); this.cyl(0.3, 0.3, 0.06, fas, cx + w/2 - 0.3, y + 0.45, pz, 8); }
+  var steel = this.m(0x9aa3ad, {metalness: 0.7, roughness: 0.35});
+  for(i = 0; i < n; i++){ var cz = zl + len*(i + 0.25)/n;
+    this.box(0.12, 0.08, 0.5, steel, cx - w/2 + 0.45, y + 0.07, cz); this.box(0.12, 0.08, 0.5, steel, cx + w/2 - 0.45, y + 0.07, cz); }
+  var rub = this.m(0x16191c, {roughness: 0.95}), head = z1 > z0 ? zh : zl, back = z1 > z0 ? -1 : 1;
+  for(i = 0; i < 4; i++){ var fz = head + back*(1 + i*2.6);
+    this.cyl(0.22, 0.22, 1.4, rub, cx - w/2 - 0.2, y - 0.85, fz, 10); this.cyl(0.22, 0.22, 1.4, rub, cx + w/2 + 0.2, y - 0.85, fz, 10); }
+  [-1, 1].forEach(function(sd){
+    var lx = cx + sd*(w/2 + 0.08), lz = head + back*12.5;
+    this.box(0.05, 2.6, 0.05, steel, lx, y - 0.9, lz - 0.22); this.box(0.05, 2.6, 0.05, steel, lx, y - 0.9, lz + 0.22);
+    for(var r = 0; r < 6; r++) this.box(0.05, 0.04, 0.44, steel, lx, y + 0.2 - r*0.42, lz);
+    this.box(0.18, 0.12, 0.18, this.n(0x303030, 0xffe7a8, 0.2, 2.2), cx + sd*(w/2 - 0.25), y + 0.06, head + back*0.25);   // the head's lamps
+  }, this);
 };
 // a gantry crane over the quay at (x, z), its boom out over the water (+z), h tall
 KP.crane = function(x, z, h, col){

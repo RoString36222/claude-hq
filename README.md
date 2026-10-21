@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.1.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.3.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -187,6 +187,10 @@ dashboard-rs/target/release/claudehq
 
 That starts the server on <http://127.0.0.1:8765> and opens it in your browser.
 
+> **macOS tip:** clone it **outside** `~/Documents`, `~/Desktop` and `~/Downloads` (for example `~/claude-hq`).
+> macOS asks before a new program reads those folders, and every rebuild of `claudehq` counts as a new program,
+> so a clone there makes the login item wait on a permission prompt after each update.
+
 ### Flags
 ```
 dashboard-rs/target/release/claudehq [--port 8765] [--no-open] [--root DIR]
@@ -208,7 +212,7 @@ Once installed you never start it by hand again — just open <http://127.0.0.1:
 
 ### Optional shell alias
 ```bash
-echo 'alias claude-hq="~/Documents/Claude/claude-dashboard/dashboard-rs/target/release/claudehq"' >> ~/.zshrc
+echo 'alias claude-hq="$HOME/claude-hq/dashboard-rs/target/release/claudehq"' >> ~/.zshrc   # your clone's path
 ```
 
 ### Optional: HQ Notch (macOS)
@@ -453,6 +457,18 @@ and feature guide.
   out there can kill you and you can't shoot yourself, so the clock is the way home;
   the HUD counts it down (`Out of bounds — back in 7s`). Solo the client runs it; in MP
   the Arena referee does and emits the same `spawn` drop a respawn uses. Local only.
+  Also in this entry: **The Warden.** Halfway to the score limit a giant torso-only boss rises at
+  the map centre — heavy arms that slam the ground (ground warning + arm raise first; anything
+  under the arm dies) and laser eyes that sweep the arena (warn, then a beam you hide from).
+  While it lives **nobody can hurt each other** — players and bots all shoot the Warden, bots
+  retarget it automatically, the round clock and team scores freeze, and only the Warden calls
+  disasters and drops loot. Three health checkpoints each spill every non-disaster totem plus a
+  health pack in a ring around it. Kill it and the match is back to normal. The boss silhouette
+  and its hit volumes were first cut at **2.5×** (retuned to 3× in 2.8.4; totem-golem: rubble skirt, fused torso, heavy
+  arms, glowing sigil), and the Strikezone welcome card has a **Warden** section that spells out
+  every rule above before you drop in. Menu checkbox
+  **Summon the Warden** (next to Map view) turns the fight on or off. Local only, no new
+  egress, no new third-party assets.
 - **2.8.2 — Account standings.** The Arena's **Standings** has a **Players / Accounts** switch next to
   its title. Accounts mode ranks Claude accounts for the chosen window (Season, 30 days, 7 days, All
   time): one row per account with everyone's combined numbers, expandable to each member's own row and
@@ -1101,7 +1117,8 @@ Thanks to everyone who has contributed to Claude HQ:
   seasons and game rooms; self-hosting and ops (docker-compose + Caddy, VPS bootstrap, the
   containerized deploy panel, pull-based auto-deploy and the deploy console, #23–#38, #94–#111);
   Cali Tuesdays (#36); the Rust Arena (#90–#93) and the Rust HQ server `dashboard-rs` (#109);
-  Arena City on a grid (#110); and the Rust-only backend restructure (#117, #119)
+  Arena City on a grid (#110); the Rust-only backend restructure (#117, #119); and HQ 3: the 3D Arena
+  City, Cities with your own island, navigation and rivers, and the transport network (#125, #126)
 - [@SwastikTripathi](https://github.com/SwastikTripathi) — editable Trainer name (#1); Arena
   fixes for the blank-dashboard crash, SSL on python.org Python and browser-shortcut hijacking
   (#3, #4); nudges, chat @-mentions and the publish-health dot (#7–#24); unit tests + CI (#5);
@@ -1112,9 +1129,9 @@ Thanks to everyone who has contributed to Claude HQ:
   sidebar-shell redesign with the sessions-first Live view and thinking orbs (#30), and the
   "haan yeaaah" button (#39)
 - [@MustafaAsad198](https://github.com/MustafaAsad198) — Cursor sessions (#95), the space-jump
-  avatar in the HQ (#101) and Strikezone (#105, #113)
-- [@J-Karthikeyan](https://github.com/J-Karthikeyan) — the soundboard with browser uploads (#40)
-  and the account board (#116)
+  avatar in the HQ (#101), Strikezone (#105, #113), its disasters (#124) and the strike zone warden (#127)
+- [@J-Karthikeyan](https://github.com/J-Karthikeyan) — the soundboard with browser uploads (#40),
+  the account board (#116) and account standings (#122)
 
 Made with [Claude Code](https://claude.com/claude-code).
 

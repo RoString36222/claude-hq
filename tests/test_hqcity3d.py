@@ -433,7 +433,7 @@ class HqCity3dTest(unittest.TestCase):
     def test_legacy_lot_extras_caller(self):
         src = read(os.path.join(GAMES, "hqcity.js"))
         body = src[src.index("function building(L)"):src.index("function viewBuilding(L)")]
-        self.assertIn("HQV.hqCityParts.lotExtras(c, g, lotColors(h.look), L.rot,", body)
+        self.assertIn("HQV.hqCityParts.lotExtras(c, g, plated(lotColors(h.look), h), L.rot,", body)
         self.assertRegex(body, r"X\.glows\.forEach\(function\(gl\)\{ lampGlows\.push\(gl\); \}\)")
         self.assertIn("L.car = X.car;", body)
         self.assertIn("X.items.forEach(function(b){ bikes.push(b); });", body)

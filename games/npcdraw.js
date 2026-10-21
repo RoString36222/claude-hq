@@ -369,7 +369,7 @@ function create(THREE, parent, sim, opts){
 }
 
 HQV.npcDraw = {create: create, split: split, avoid: avoid, packFar: packFar, farBuffers: farBuffers, colours: colours,
-               bodyGeometry: bodyGeometry, pickTalk: pickTalk, lin: lin, spring: spring, ease: ease,
+               bodyGeometry: bodyGeometry, bodyMaterial: bodyMaterial, pickTalk: pickTalk, lin: lin, spring: spring, ease: ease,
                NEAR: NEAR, NEAR_OUT: NEAR_OUT, FAR: FAR, MAX_NEAR: MAX_NEAR, MAX_FAR: MAX_FAR, AV: AV,
                TALK_REACH: TALK_REACH, CHAR_FILES: CHAR_FILES};
 })();

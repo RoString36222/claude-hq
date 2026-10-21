@@ -92,6 +92,9 @@ function nameOf(h){
   return s || ((h.trainerName || h.displayName || h.handle || "Someone") + "'s HQ");
 }
 HQV.hqCityName = nameOf;
+// the lot's colours plus its plate text: the HQ's name, on its car's and motorbike's number plates
+function plated(col, h){ col.plate = nameOf(h); return col; }
+HQV.hqPlated = plated;
 
 HQV.hqWorlds.city = function(c, w){
   var THREE = c.THREE, PI = c.PI, S = w.scene, COL = c.COL, HEX = c.HEX;
@@ -143,7 +146,7 @@ HQV.hqWorlds.city = function(c, w){
     B.hits.forEach(function(o){ hits.push(o); }); B.doors.forEach(function(d){ doors.push(d); });
     L.B = B; L.H = B.top() + 2; L.fade = {g: B.g, on: false}; lotsB.push(B);
     var cr = Math.cos(L.rot), sr = Math.sin(L.rot);                               // the lot's frame -> the street's
-    var X = HQV.hqCityParts.lotExtras(c, g, lotColors(h.look), L.rot, function(x, z){ return {x: L.x + x*cr + z*sr, z: L.z - x*sr + z*cr}; }, null, h.userId);
+    var X = HQV.hqCityParts.lotExtras(c, g, plated(lotColors(h.look), h), L.rot, function(x, z){ return {x: L.x + x*cr + z*sr, z: L.z - x*sr + z*cr}; }, null, h.userId);
     X.glows.forEach(function(gl){ lampGlows.push(gl); }); L.car = X.car; L.garage = X.garage;
     X.items.forEach(function(b){ bikes.push(b); });
   }

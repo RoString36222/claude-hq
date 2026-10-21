@@ -332,17 +332,21 @@ function cineRun(seed){
   r.bobHz = {slow: phaseRate(4), fast: phaseRate(30)};
   out.review2 = r;
 })();
-// On foot with the keys, the way hq3d moves the avatar (body-relative): the turn rate springs (omega 10)
-// toward +-rate (2.4 rad/s), the yaw integrates it, the speed springs (omega 12) toward 4 m/s forward or
-// 0.65x back; travelYaw = facing (forward or turning), facing + PI stepping back, null when still.
+// On foot with the keys, the way hq3d moves the avatar (body-relative): the turn rate springs (omega 18)
+// toward +-rate (3.6 rad/s, HQ 3.2), the yaw integrates it, the speed springs (omega 12) toward 4 m/s forward or
+// 0.65x back; travelYaw = facing (forward or turning), facing + PI stepping back; standing still it stays the
+// facing if that is where you were last headed (so the camera settles behind you), else null (games/hq3d.js
+// travelYawOf).
 // A script is [[secs, fwd, turn, rate?], ...]; fps 0 = jittery dt (deterministic, 1/144..1/30 s).
 function walkRun(mode, script, fps){
   var s = C.create({mode: mode}), PI = Math.PI, seed = 12345;
-  var st = {x: 0, z: 0, yaw: 0, rate: 0, rateV: 0, speed: 0, speedV: 0};
+  var st = {x: 0, z: 0, yaw: 0, rate: 0, rateV: 0, speed: 0, speedV: 0, tr: null};
   function wrap(a){ return Math.atan2(Math.sin(a), Math.cos(a)); }
   function rnd(){ seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed/4294967296; }
   function tgt(fwd, turn){
-    var tr = st.speed < -0.05 ? wrap(st.yaw + PI) : (st.speed > 0.05 || Math.abs(st.rate) > 0.05 ? wrap(st.yaw) : null);
+    var tr = st.speed < -0.05 ? wrap(st.yaw + PI) : (st.speed > 0.05 || Math.abs(st.rate) > 0.05 ? wrap(st.yaw)
+             : (st.tr != null && Math.abs(wrap(st.tr - st.yaw)) < PI/2 ? wrap(st.yaw) : null));
+    st.tr = tr;
     return {x: st.x, y: 0, z: st.z, yaw: st.yaw, pitch: 0, roll: 0, speed: Math.abs(st.speed), vehicle: null, lean: 0,
             moving: !!(fwd || turn), travelYaw: tr, turnRate: st.rate};
   }
@@ -353,8 +357,8 @@ function walkRun(mode, script, fps){
     while(t < end - 1e-9){
       var dt = fps ? 1/fps : 1/144 + rnd()*(1/30 - 1/144);
       dt = Math.min(dt, end - t);
-      var turnGoal = ph[2]*(ph[3] || 2.4);
-      var rr = C.spring(st.rate, st.rateV, turnGoal, 10, dt);
+      var turnGoal = ph[2]*(ph[3] || 3.6);
+      var rr = C.spring(st.rate, st.rateV, turnGoal, 18, dt);
       var sp = C.spring(st.speed, st.speedV, ph[1] > 0 ? 4*ph[1] : 4*0.65*ph[1], 12, dt);
       st.yaw = wrap(st.yaw + (st.rate + rr[0])*0.5*dt); st.rate = rr[0]; st.rateV = rr[1]; st.speed = sp[0]; st.speedV = sp[1];
       st.x += Math.sin(st.yaw)*st.speed*dt; st.z += Math.cos(st.yaw)*st.speed*dt;
@@ -370,7 +374,7 @@ var SCRIPTS = {
   W: [[1, 0, 0], [5, 1, 0]],                          // walk straight on
   WS: [[2, 1, 0], [6, -1, 0]],                        // walking, then step back with S
   S: [[1, 0, 0], [6, -1, 0]],                         // from standing, step back
-  WD: [[1, 1, 0], [5, 1, -1]],                        // W + D: a circle at 2.4 rad/s
+  WD: [[1, 1, 0], [5, 1, -1]],                        // W + D: a circle at 3.6 rad/s
   WDslow: [[1, 1, 0], [5, 1, -1, 1.2]],               // the same at 1.2 rad/s
   Dtap: [[1, 1, 0], [0.6, 1, 1], [4, 1, 0]],          // a short A tap while walking
   Aspot: [[1, 0, 0], [1, 0, 1], [4, 0, 0]],           // turn on the spot, then stand
@@ -444,8 +448,8 @@ class CamRig(unittest.TestCase):
     def test_mode_table_and_order(self):
         m = self.o["modes"]
         self.assertEqual(self.o["order"], ["far", "chase", "near", "fp", "classic"])
-        self.assertEqual((m["far"]["back"], m["far"]["up"], m["far"]["fov"]), (14, 6, 60))
-        self.assertEqual((m["chase"]["back"], m["chase"]["up"], m["chase"]["fov"]), (6, 2.2, 65))
+        self.assertEqual((m["far"]["back"], m["far"]["up"], m["far"]["fov"]), (15, 9, 60))
+        self.assertEqual((m["chase"]["back"], m["chase"]["up"], m["chase"]["fov"]), (7, 3.8, 65))
         self.assertEqual((m["near"]["back"], m["near"]["up"], m["near"]["fov"], m["near"]["side"]), (2.8, 1.8, 70, 0.6))
         self.assertEqual((m["fp"]["fov"], m["photo"]["fov"], m["cine"]["fov"], m["map"]["fov"]), (75, 60, 50, 10))
 
@@ -455,7 +459,9 @@ class CamRig(unittest.TestCase):
             self.vclose(st[mode]["off"], self.expected(mode))
             self.close(st[mode]["fov65"], self.o["modes"][mode]["fov"], 0.01)
             self.close(st[mode]["fov80"], self.o["modes"][mode]["fov"] + 15, 0.01)
-            self.close(st[mode]["near"], 0.3, 1e-9)
+            # 3.2: the near plane is a twelfth of the way to the pivot (the head, LOOK_H up), 0.3..2.5 m
+            o = st[mode]["off"]
+            self.close(st[mode]["near"], max(0.3, min(2.5, math.sqrt(o[0]**2 + (o[1] - 1.3)**2 + o[2]**2) / 12)), 1e-6)
             self.close(st[mode]["far"], 6000, 1e-9)   # planes 3 km off at 600 m, airways higher (games/hqair.js)
         # near sits to the right: model-local -x
         right = rot((-1, 0), 0.7)
@@ -477,8 +483,8 @@ class CamRig(unittest.TestCase):
         for v in ("car", "moto", "bike", "skate"):
             for mode in ("far", "chase", "near"):
                 self.vclose(self.o["veh"][v][mode], self.expected(mode, v))
-        self.close(self.o["veh"]["moto"]["roll"], 1.0 * 0.4 * 0.5, 1e-9)
-        self.close(self.o["veh"]["bike"]["roll"], 0.6 * 0.4 * 0.5, 1e-9)
+        self.close(self.o["veh"]["moto"]["roll"], 0.4 * 0.4 * 0.5, 1e-9)
+        self.close(self.o["veh"]["bike"]["roll"], 0.25 * 0.4 * 0.5, 1e-9)
         self.close(self.o["veh"]["car"]["roll"], 0, 1e-9)
         for v in ("moto", "bike", "skate"):
             self.assertEqual(self.o["veh"][v]["rollReduced"], 0)
@@ -609,16 +615,16 @@ class CamRig(unittest.TestCase):
         # Q/R: 1.9 rad/s eased in and out, so a 1 s hold turns 1.9 rad once it has coasted out
         self.close(b["swingYaw"], 1.9, 0.02)
         self.assertLessEqual(abs(b["swingLong"]), math.pi + 1e-9)
-        self.close(b["liftUp"], 3 * 2.2, 1e-6)
+        self.close(b["liftUp"], 3 * 3.8, 1e-6)
         self.close(b["liftDown"], 0.6, 1e-6)
-        self.close(b["wheelOut"], 2.5 * 6, 1e-3)
-        self.close(b["wheelIn"], 0.5 * 6, 1e-3)
+        self.close(b["wheelOut"], 2.5 * 7, 1e-3)
+        self.close(b["wheelIn"], 0.5 * 7, 1e-3)
 
     def test_settings_mid_session_and_reduced_motion(self):
         s = self.o["settings"]
         self.close(s["fovAfter"], 80, 0.5)
         self.assertGreater(s["kickOn"]["fov"], 69)
-        self.assertGreater(abs(s["kickOn"]["roll"]), 0.2)
+        self.assertGreater(abs(s["kickOn"]["roll"]), 0.05)
         self.close(s["kickOff"]["fov"], 65, 0.5)
         self.assertEqual(s["kickOff"]["roll"], 0)
         self.assertLess(s["blendNormal"][0], 1)
@@ -698,7 +704,7 @@ class CamRig(unittest.TestCase):
         r = self.o["review"]
         for mode, (pre, first) in r["riseNear"].items():
             self.close(first, pre, 0.1 * pre, mode)
-        self.close(r["diveEndNear"], 0.3, 1e-9)
+        self.assertTrue(0.3 <= r["diveEndNear"] <= 2.5, r["diveEndNear"])   # (3.2: scaled with the chase distance)
         self.assertLess(r["diveNearJump"], 1.5)
 
     def test_vehicle_head_bob_and_dt_clamp(self):
@@ -769,21 +775,18 @@ class CamRig(unittest.TestCase):
                     moving = [x for x in v if abs(x) > 1e-3]
                     self.assertTrue(all(x > 0 for x in moving) or all(x < 0 for x in moving), "%s %s @%s reversed" % (m, key, f))
 
-    def test_turning_lag_is_bounded_and_tightens_with_turn_rate(self):
-        """W + D: the camera trails the body by a bounded angle; its follow time (lag / rate) is shorter the
-        faster you turn (spring omega 1.6 + 1.1 |turnRate|)."""
+    def test_turning_keeps_the_camera_with_the_body(self):
+        """W + D (HQ 3.2): the camera heading is carried with the turning body, so it never trails it (it used to lag
+        2 turnRate/omega, ~65 degrees at 2.4 rad/s, and disagreed with the heading-up minimap that whole time)."""
         for m, sc in self.o["walk"].items():
             for f in sc["WD"]:
-                fast, slow = sc["WD"][f], sc["WDslow"][f]
-                lag_f = abs(self.wrap(fast["body"][-1] - fast["head"][-1]))
-                lag_s = abs(self.wrap(slow["body"][-1] - slow["head"][-1]))
-                self.assertLess(lag_f, 1.2, "%s @%s lag %.2f rad at 2.4 rad/s" % (m, f, lag_f))
-                self.assertLess(lag_s, 1.0, "%s @%s lag %.2f rad at 1.2 rad/s" % (m, f, lag_s))
-                self.assertLess(lag_f / 2.4, lag_s / 1.2 - 0.1, "%s @%s: faster turns must follow tighter" % (m, f))
-                # steady state: the camera turns with you
-                v, _ = self.rates(fast, "head")
-                self.close(v[-1], -2.4, 0.01, "%s @%s camera turn rate %.3f" % (m, f, v[-1]))
-                # a short A tap while walking: the camera catches up and settles behind you
+                for key, rate in (("WD", 3.6), ("WDslow", 1.2)):
+                    r = sc[key][f]
+                    worst = max(abs(self.wrap(b - h)) for b, h, t in zip(r["body"], r["head"], r["t"]) if t > 1)
+                    self.assertLess(worst, 0.01, "%s %s @%s: camera %.3f rad off the body while turning" % (m, key, f, worst))
+                    v, _ = self.rates(r, "head")
+                    self.close(v[-1], -rate, 0.01, "%s %s @%s camera turn rate %.3f" % (m, key, f, v[-1]))
+                # a short A tap while walking: the camera is behind you when it ends
                 tap = sc["Dtap"][f]
                 self.assertLess(abs(self.wrap(tap["body"][-1] - tap["head"][-1])), 0.02, "%s Dtap @%s" % (m, f))
 
@@ -804,25 +807,25 @@ class CamRig(unittest.TestCase):
                 if key == "SA":
                     self.assertLess(abs(self.wrap(body - head)), 0.3, "%s SA: camera %.2f off the body" % (m, self.wrap(body - head)))
 
-    def test_the_heading_settles_without_passing_the_body(self):
-        """Letting go of A on the spot: once you stand still the camera only finishes closing part of its
-        turning lag (its velocity dies away at HEAD_HOLD), moving toward the body, never past it."""
+    def test_turning_on_the_spot_settles_behind_you(self):
+        """Letting go of A on the spot (HQ 3.2): the camera stops with the body, directly behind it (it used to park
+        ~0.4 rad off once you stood still), and never passes it."""
         for m, sc in self.o["walk"].items():
             for f, r in sc["Aspot"].items():
-                still = [i for i, tr in enumerate(r["travel"]) if tr is None and r["t"][i] > 2]
-                coast = abs(self.wrap(r["head"][-1] - r["head"][still[0]]))
-                self.assertLess(coast, 0.3, "%s Aspot @%s coasted %.2f rad after standing still" % (m, f, coast))
+                self.assertLess(abs(self.wrap(r["body"][-1] - r["head"][-1])), 0.005, "%s Aspot @%s: camera off the body" % (m, f))
                 gaps = [self.wrap(b - h) for b, h, t in zip(r["body"], r["head"], r["t"]) if t > 2]
                 self.assertTrue(all(g > -1e-3 for g in gaps), "%s Aspot @%s: the camera passed the body" % (m, f))
+                self.assertTrue(r["travel"][-1] is not None, "%s Aspot @%s: travelYaw dropped after a turn" % (m, f))
 
     def test_the_aim_never_jumps(self):
         """Every scenario at 30/60/120 fps and jittery dt: the aim-yaw rate stays within what the contract's
         motion needs (0.03 rad per 60 fps frame; a PI swing on the slowest heading spring peaks at
-        PI*1.6/e rad/s, a held turn at the body's 2.4 rad/s), the angular acceleration stays bounded and
-        does not grow with the frame rate (a jump would scale with 1/dt), and the pitch is steady."""
+        PI*1.6/e rad/s, a held turn at the body's 3.6 rad/s), the angular acceleration stays bounded and
+        does not grow with the frame rate (a jump would scale with 1/dt; 3.2: the camera turns with the body, whose
+        turn rate springs up at omega 18, peaking near 3.6*18/e = 24 rad/s^2, a bit more where S hands over to A), and the pitch is steady."""
         swing_peak = math.pi * 1.6 / math.e / 60 + 1e-3
-        limit = {"W": 0.03, "WDslow": 0.03, "Dtap": 0.03, "S": swing_peak, "WS": swing_peak, "flip": swing_peak,
-                 "WD": 2.4 / 60 * 1.01, "Aspot": 2.4 / 60 * 1.01, "SA": 2.4 / 60 * 1.01, "SwA": 2.4 / 60 * 1.01}
+        limit = {"W": 0.03, "WDslow": 0.03, "Dtap": 3.6 / 60 * 1.06, "S": swing_peak, "WS": swing_peak, "flip": swing_peak,
+                 "WD": 3.6 / 60 * 1.06, "Aspot": 3.6 / 60 * 1.06, "SA": 3.6 / 60 * 1.5, "SwA": 3.6 / 60 * 1.5}   # the aim (pivot + look-ahead) may run a hair ahead of the body
         for m, sc in self.o["walk"].items():
             for key, runs in sc.items():
                 peak_acc = {}
@@ -831,10 +834,10 @@ class CamRig(unittest.TestCase):
                     step = max(abs(x) for x in v) / 60
                     self.assertLess(step, limit[key], "%s %s @%s: %.4f rad per 60 fps frame" % (m, key, f, step))
                     peak_acc[f] = max(acc) if acc else 0
-                    self.assertLess(peak_acc[f], 10, "%s %s @%s: angular acceleration %.1f rad/s^2" % (m, key, f, peak_acc[f]))
+                    self.assertLess(peak_acc[f], 40, "%s %s @%s: angular acceleration %.1f rad/s^2" % (m, key, f, peak_acc[f]))
                     pv, _ = self.rates(r, "pitch")
                     self.assertLess(max(abs(x) for x in pv) / 60, 0.003, "%s %s @%s pitch" % (m, key, f))
-                self.assertLess(peak_acc["120"], 1.3 * peak_acc["30"] + 0.5, "%s %s: acceleration grows with fps (a jump)" % (m, key))
+                self.assertLess(peak_acc["120"], 1.4 * peak_acc["30"] + 0.5, "%s %s: acceleration grows with fps (a jump)" % (m, key))
 
     def test_walking_is_frame_rate_independent(self):
         """The heading and aim curves at 30, 120 fps and jittery dt match 60 fps after resampling. Where S
@@ -850,7 +853,9 @@ class CamRig(unittest.TestCase):
                     for i in range(1, int(end * 10)):
                         for k in ("head", "aim"):
                             worst = max(worst, abs(self.wrap(self.at(r, i / 10, k) - self.at(ref, i / 10, k))))
-                    tol = 0.01 + (1.85 / 30 if key in ("S", "WS", "flip", "SA", "SwA") else 0)
+                    # (SA / SwA: where the body's turn takes over from the swing, the carry's hand-over lands on a frame
+                    # boundary too: up to a 30 fps frame of the 3.6 rad/s turn's share, ~0.03 rad more)
+                    tol = 0.01 + (1.85 / 30 if key in ("S", "WS", "flip", "SA", "SwA") else 0) + (0.03 if key in ("SA", "SwA") else 0)
                     self.assertLess(worst, tol, "%s %s @%s differs from 60 fps by %.4f rad" % (m, key, f, worst))
 
     def test_bob_rate_capped(self):

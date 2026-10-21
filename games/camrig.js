@@ -31,8 +31,8 @@ var PI = Math.PI, DEG = PI/180;
 // distances metres, angles degrees; side > 0 = to the right (model-local -x)
 var MODES = {
   map:     {fov: 10, lag: 6, collide: 0},
-  far:     {back: 14, up: 6, fov: 60, side: 0, lag: 5, collide: 0.4, near: 0.3, chase: true},
-  chase:   {back: 6, up: 2.2, fov: 65, side: 0, lag: 6, collide: 0.35, near: 0.3, chase: true},
+  far:     {back: 15, up: 9, fov: 60, side: 0, lag: 5, collide: 0.4, near: 0.3, chase: true},
+  chase:   {back: 7, up: 3.8, fov: 65, side: 0, lag: 6, collide: 0.35, near: 0.3, chase: true},
   near:    {back: 2.8, up: 1.8, fov: 70, side: 0.6, lag: 8, collide: 0.3, near: 0.3, chase: true},
   fp:      {back: 0, up: 1.65, fov: 75, side: 0, lag: 30, collide: 0.15, near: 0.15},
   classic: {ortho: true},
@@ -43,29 +43,38 @@ var ORDER = ["far", "chase", "near", "fp", "classic"];
 // anchors in the model-local frame (+z forward, +x LEFT), metres
 var VEHICLE = {
   car:   {backMul: 1.35, upMul: 0.85, sideMul: 1,   fovSpeedKick: 1,   fpAnchor: {seat: [-0.38, 1.15, 0.1], bonnet: [0, 1.05, 1.6]}, roll: 0},
-  moto:  {backMul: 1.0,  upMul: 0.75, sideMul: 1,   fovSpeedKick: 1,   fpAnchor: {seat: [0, 1.35, -0.1]}, roll: 1.0},
-  bike:  {backMul: 0.9,  upMul: 0.85, sideMul: 1,   fovSpeedKick: 1,   fpAnchor: {seat: [0, 1.55, -0.2]}, roll: 0.6},
+  moto:  {backMul: 1.0,  upMul: 0.75, sideMul: 1,   fovSpeedKick: 1,   fpAnchor: {seat: [0, 1.35, -0.1]}, roll: 0.4, headLag: 3.5},
+  bike:  {backMul: 0.9,  upMul: 0.85, sideMul: 1,   fovSpeedKick: 1,   fpAnchor: {seat: [0, 1.55, -0.2]}, roll: 0.25, headLag: 3},
   skate: {backMul: 1.1,  upMul: 0.55, sideMul: 1.4, fovSpeedKick: 1.6, fpAnchor: {seat: [0, 1.5, 0]}, roll: 0.3},
   // the boats at the docks (games/hqboat.js): low on the water, the jet ski banks into its turns
   rowboat: {backMul: 1.2, upMul: 0.8, sideMul: 1,  fovSpeedKick: 0.5, fpAnchor: {seat: [0, 1.1, -0.1]}, roll: 0},
   jetski:  {backMul: 1.1, upMul: 0.7, sideMul: 1,  fovSpeedKick: 1,   fpAnchor: {seat: [0, 1.25, -0.2]}, roll: 0.3},
   // helicopters (games/hqheli.js): further back and higher, the horizon tilting a little with the bank
   heli:    {backMul: 2.6, upMul: 1.7, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [-0.4, 1.75, 1.0]}, roll: 0.35},
-  attack:  {backMul: 2.8, upMul: 1.8, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [0, 1.95, 2.1]}, roll: 0.35}
+  attack:  {backMul: 2.8, upMul: 1.8, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [0, 1.95, 2.1]}, roll: 0.35},
+  // planes (games/hqplane.js, HQ 3.2): well behind and above (the seaplane is 16 m long), the horizon banking a little;
+  // first person is the pilot's eye in the cockpit, looking out over the nose
+  seaplane: {backMul: 3.4, upMul: 1.5, sideMul: 1, fovSpeedKick: 0.4, fpAnchor: {seat: [0.35, 2.95, 5.6]}, roll: 0.3},
+  prop:     {backMul: 2.2, upMul: 1.15, sideMul: 1, fovSpeedKick: 0.5, fpAnchor: {seat: [0.28, 2.05, 0.95]}, roll: 0.3}
 };
 var SPAN_MIN = 44, SPAN_MAX = 2048, HALF = 1024, MAP_TAN = Math.tan(5*DEG);
 var LOOK_H = 1.3;          // chase look point above the target's feet (the "head" the camera frames)
 var FAR = 6000, BLEND = 0.5, BLEND_RED = 0.3, DIVE = 1.2, DIVE_RED = 0.6, FLY_MAP = 0.8;
-// chase family: heading spring omega = clamp(HEAD_MIN + HEAD_K |turnRate|, HEAD_MIN, HEAD_MAX); HEAD_HOLD decays its
-// velocity when you stand still; VEH_LAG the vehicle rotation lag; SWING rad/s eased in over SWING_HL s; the pivot
+// chase family: on foot the heading is carried with the turning goal (no lag; 3.2: it used to trail a held turn by
+// 2 turnRate/omega, ~65 degrees at 2.4 rad/s, so the body, the camera and the heading-up minimap disagreed while you
+// turned) and a spring, omega = clamp(HEAD_MIN + HEAD_K |turnRate|, HEAD_MIN, HEAD_MAX), closes any offset (the swing
+// after S); CARRY_MAX rad: a goal moving more than this in one frame flipped and is swung, not carried; HEAD_HOLD decays its
+// velocity when you stand still; VEH_LAG the vehicle rotation lag (two-wheelers turn sharply, so they use a softer
+// VEHICLE[v].headLag and a small horizon roll: the camera swings and tilts gently instead of whipping round); SWING rad/s eased in over SWING_HL s; the pivot
 // springs at PIVOT_W within PIVOT_MAX m of the head; look-ahead min(AHEAD_MAX, speed AHEAD_K) at AHEAD_W;
 // collision pull-in COL_IN, push-out COL_OUT, COL_HYST m of hysteresis
-var HEAD_MIN = 1.6, HEAD_K = 1.1, HEAD_MAX = 6, HEAD_HOLD = 4, VEH_LAG = 7, SWING_HL = 0.08, PIVOT_W = 12, PIVOT_MAX = 1.5;
+var HEAD_MIN = 1.6, HEAD_K = 1.1, HEAD_MAX = 6, HEAD_HOLD = 4, CARRY_MAX = 0.5, VEH_LAG = 7, SWING_HL = 0.08, PIVOT_W = 12, PIVOT_MAX = 1.5;
 // HEAD_BIAS/HEAD_BIAS_MAX pick the side of a near-PI goal; HEAD_AGAINST makes the camera wait for a goal turning toward it
 var HEAD_BIAS = 0.3, HEAD_BIAS_MAX = 0.7, HEAD_AGAINST = 10;
 var AHEAD_W = 4, AHEAD_MAX = 3, AHEAD_K = 0.3, COL_IN = 25, COL_OUT = 3, COL_HYST = 0.3;
 var RECENTRE = 2, SWING = 1.9, LIFT = 2, ORBIT_K = 0.006, LOOK_K = 0.0022, ZOOM_K = 0.0015;
 var CINE_SHOT = 12;
+var NEAR_MAX = 2.5;        // m: the chase family's near plane grows with its distance up to this (3.2)
 
 /* ---------- small maths ---------- */
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
@@ -137,7 +146,7 @@ function create(o){
 // per-mode state, cleared on every mode change
 function resetMode(s){
   var _ = s._;
-  _.head = null; _.headV = 0; _.piv = null; _.ahead = null; _.gnd = null; _.swingV = 0;
+  _.head = null; _.headV = 0; _.lastGoal = null; _.gs = null; _.carryV = 0; _.piv = null; _.ahead = null; _.gnd = null; _.swingV = 0;
   _.orbitYaw = 0; _.orbitPitch = 0; _.oyV = 0; _.opV = 0; _.idle = 0; _.upOff = 0; _.backScale = 1;
   _.colFrac = null; _.colV = 0; _.colG = null; _.fov = null; _.fovV = 0;
   _.fp = null; _.fpOff = 0; _.bobPhase = 0; _.bobAmp = 0; _.bobV = 0;
@@ -290,6 +299,19 @@ function input(s, ev){
   }
 }
 
+// Walking with the camera dragged round (hq3d footStep's caller): move up to `max` rad of the chase orbit offset into
+// the heading, so the camera stays where it looks while the body turns that much to face it. -> the rad moved
+// (+ = left); 0 outside the chase family, while Q / R swing, or with no offset.
+function absorb(s, max){
+  var _ = s && s._; max = Math.max(0, num(max, 0));
+  if(!_ || !chaseFamily(s.mode) || _.swing || _.head == null || !max) return 0;
+  var a = clamp(_.orbitYaw, -max, max);
+  if(Math.abs(a) < 1e-9) return 0;
+  _.orbitYaw = wrap(_.orbitYaw - a); _.head = wrap(_.head + a);
+  if(_.lastGoal != null) _.lastGoal = wrap(_.lastGoal + a);      // the body turns by a too: not carried twice
+  return a;
+}
+
 /* ---------- the solvers, one per mode family ---------- */
 function normTgt(t){
   t = t || {};
@@ -361,29 +383,41 @@ function chasePose(s, mode, T, dt, q){
     var ry = spring(_.orbitYaw, _.oyV, 0, 2, dt), rp = spring(_.orbitPitch, _.opV, 0, 2, dt);
     _.orbitYaw = ry[0]; _.oyV = ry[1]; _.orbitPitch = rp[0]; _.opV = rp[1];
   } else { _.oyV = 0; _.opV = 0; }
-  // The heading: where you are headed. On foot it follows travelYaw (S: facing + PI, so the camera swings
-  // round to show where you are going) on a critically damped spring that tightens the faster you turn. Of the
-  // goal's two sides (+-2 PI) it takes the one nearer where the heading's momentum is carrying it (head +
-  // headV/omega, less HEAD_BIAS turnRate up to HEAD_BIAS_MAX, so a near-PI tie goes to the side the turning goal
-  // is coming round from), so a goal near the far side never flips sides mid-swing; the goal turns with you at
-  // turnRate through the frame (springRamp), so a held turn is followed alike at any frame rate. Standing still the
-  // heading holds (its velocity dies away, never cut). A vehicle's heading is its yaw through a rotation lag.
+  // The heading: where you are headed. On foot it follows travelYaw (S: facing + PI, so the camera swings round to
+  // show where you are going). HQ 3.2: it turns WITH the body: each frame the heading is carried by however far the
+  // goal itself turned (a held A / D turns camera, body and minimap together, no lag and no overshoot when you let
+  // go), and a critically damped spring (tighter the faster you turn) closes whatever offset is left: the swing
+  // round after S, a jump. A goal that moved more than CARRY_MAX in one frame flipped (S): that is swung, not carried.
+  // Of the goal's two sides (+-2 PI) the spring takes the one nearer where the heading's momentum is carrying it
+  // (head + headV/omega, less HEAD_BIAS turnRate up to HEAD_BIAS_MAX, so a near-PI tie goes to the side the turning
+  // goal is coming round from), so a goal near the far side never flips sides mid-swing. Standing still with no goal
+  // the heading holds (its velocity dies away, never cut). A vehicle's heading is its yaw through a rotation lag.
   if(_.head == null){ _.head = T.yaw; _.headV = 0; }
   var goal = V ? T.yaw : T.travelYaw;
   if(goal != null){
-    var tr = V ? 0 : T.turnRate, w = V ? VEH_LAG : clamp(HEAD_MIN + HEAD_K*Math.abs(tr), HEAD_MIN, HEAD_MAX);
+    var tr = V ? 0 : T.turnRate, w = V ? (V.headLag || VEH_LAG) : clamp(HEAD_MIN + HEAD_K*Math.abs(tr), HEAD_MIN, HEAD_MAX);
     var ref = _.headV/w - clamp(HEAD_BIAS*tr, -HEAD_BIAS_MAX, HEAD_BIAS_MAX), err = wrap(goal - _.head - ref) + ref;
-    // pull: where the spring heads (the goal less its steady turning lag). With the goal on the far side of the
-    // turn (coming round to meet the camera, e.g. A after S) both the pull and the goal's turn are kept only by
-    // g = 1/(1 + HEAD_AGAINST |turnRate err|), so the camera waits for the body instead of swinging against
-    // the key; g is 1 at turnRate 0 and once the goal is ahead in the turn, so it never switches.
-    var pull = err - 2*tr/w, g = err*tr < 0 ? 1/(1 + HEAD_AGAINST*Math.abs(tr*err)) : 1;
-    var rr = V ? T.turnRate : tr*g, hh = springRamp(0, _.headV, pull*g + 2*rr/w, rr, w, dt);
-    _.head = wrap(_.head + hh[0]); _.headV = hh[1];
+    // With the goal on the far side of the turn (coming round to meet the camera, e.g. A after S) both the carry
+    // and the pull are kept only by g = 1/(1 + HEAD_AGAINST |turnRate err|), so the camera waits for the body
+    // instead of swinging against the key; g is 1 at turnRate 0 and once the goal is ahead in the turn.
+    var g = err*tr < 0 ? 1/(1 + HEAD_AGAINST*Math.abs(tr*err)) : 1, hh;
+    if(V){ hh = springRamp(0, _.headV, err + 2*T.turnRate/w, T.turnRate, w, dt); _.head = wrap(_.head + hh[0]); _.headV = hh[1]; }
+    else {
+      // the carry's share eases toward g (no step in the camera's rate when g switches); a frame that cannot carry
+      // (the goal flipped) hands the carry's rate to the spring, so the camera's rate never jumps either
+      _.gs = _.gs == null ? g : _.gs + (g - _.gs)*(1 - Math.exp(-12*dt));
+      var d = _.lastGoal == null ? null : wrap(goal - _.lastGoal), carry = 0;
+      if(d != null && Math.abs(d) <= CARRY_MAX){ carry = d*_.gs; _.carryV = dt > 0 ? carry/dt : 0; }
+      else { if(_.carryV){ _.headV += _.carryV; _.carryV = 0; } if(d != null) _.gs = 0; }   // a flip: the carry eases back in
+      _.head = wrap(_.head + carry); err -= carry;
+      hh = spring(0, _.headV, err*g, w, dt); _.head = wrap(_.head + hh[0]); _.headV = hh[1];
+    }
   } else {
+    if(_.carryV){ _.headV += _.carryV; _.carryV = 0; }
     var he = Math.exp(-HEAD_HOLD*dt);
     _.head = wrap(_.head + _.headV*(1 - he)/HEAD_HOLD); _.headV *= he;
   }
+  _.lastGoal = V || goal == null ? null : goal;
   var camYaw = wrap(_.head + _.orbitYaw);
   // The pivot trails the head (one spring, kept within PIVOT_MAX m); everything below aims at it.
   var H = v3(T.x, T.y + LOOK_H, T.z);
@@ -408,6 +442,10 @@ function chasePose(s, mode, T, dt, q){
   var kick = red ? 0 : Math.min(10, T.speed*0.5)*(V ? V.fovSpeedKick : 1);
   var p = basePose(mode);
   p.pos = pos; p.look = lk; p.focus = H;
+  // the near plane: a twelfth of the way to the pivot (never under the mode's, at most NEAR_MAX m): a camera far
+  // behind a plane or a ship gets the depth precision that stops the shore and the water flickering far off (3.2)
+  var pd = Math.sqrt((pos.x - P.x)*(pos.x - P.x) + (pos.y - P.y)*(pos.y - P.y) + (pos.z - P.z)*(pos.z - P.z));
+  p.near = clamp(pd/12, M.near, NEAR_MAX);
   p.fov = fovSpring(s, M.fov + fovOff(s) + kick, dt);
   p.roll = red || !V ? 0 : V.roll*T.lean*0.5;
   s.lookYaw = Math.atan2(lk.x - pos.x, lk.z - pos.z);
@@ -628,7 +666,7 @@ function occluders(pos, lookAt, items){
 }
 
 HQV.camrig = {MODES: MODES, ORDER: ORDER, VEHICLE: VEHICLE, create: create, setSettings: setSettings, setMode: setMode,
-  cycle: cycle, dive: dive, rise: rise, flyMap: flyMap, input: input, step: step, occluders: occluders,
+  cycle: cycle, dive: dive, rise: rise, flyMap: flyMap, input: input, absorb: absorb, step: step, occluders: occluders,
   fpAnchorWorld: fpAnchorWorld, spring: spring, smootherstep: smootherstep,
   consts: {SPAN_MIN: SPAN_MIN, SPAN_MAX: SPAN_MAX, HALF: HALF, LOOK_H: LOOK_H, MAP_TAN: MAP_TAN}};
 })();

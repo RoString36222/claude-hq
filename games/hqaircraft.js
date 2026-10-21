@@ -192,10 +192,56 @@ function seaplane(c, opts){
   var S = build(c, "seaplane", P, null, 0, lights, opts, [-0.6, yc - 0.1, 1.0], M2);
   var props = [];
   [1, -1].forEach(function(sx){ var d = new THREE.Mesh(g2, M2.prop); d.position.set(sx*3.0, yc + 1.05, 3.4); S.g.add(d); props.push(d); });
+  S.props = props; S.discM = M2.prop;          // (the pilotable seaplane, games/hqplane.js, spins them up)
   var upd = S.update;
   S.update = function(dt, t, night, gear, speed){ upd(dt, t, night, gear, speed); };
   var disp = S.dispose;
   S.dispose = function(){ disp(); if(S.own){ g2.dispose(); M2.prop.dispose(); } };
+  return S;
+}
+
+/* ---------- the prop plane (HQ 3.2: one you fly) ---------- */
+// A small high-wing single (original design): 7.6 m long, 10.4 m span, a two-blade propeller, retractable tricycle gear.
+// P.prop (the spinning blades), P.disc (their blur), P.seat; the gear retracts with update(..., gear).
+var PROP_YC = 1.5;
+function propPlane(c, opts){
+  opts = opts || {};
+  var THREE = c.THREE, P = Parts(THREE), yc = PROP_YC, yw = yc + 0.74;
+  P.geo("body", fuselage(THREE, [[-4.4, 0.1], [-3.2, 0.3], [-1.4, 0.58], [0.2, 0.68], [1.7, 0.64], [2.6, 0.5], [3.05, 0.34], [3.2, 0]], yc, -1.6, 0.1));
+  [1, -1].forEach(function(sx){
+    P.box("brand", 0.04, 0.16, 5.6, sx*0.6, yc - 0.12, -0.9);                          // the cheatline
+    P.box("win", 0.05, 0.36, 0.9, sx*0.62, yc + 0.3, 0.2);                             // the cabin's side windows
+    P.box("win", 0.05, 0.3, 0.6, sx*0.55, yc + 0.28, -0.75);
+    // the wing strut, fuselage to wing
+    P.add("gear", new THREE.CylinderGeometry(0.035, 0.035, 2.3), sx*1.25, yc + 0.18, 0.15, 0, 0, -sx*1.05);
+  });
+  P.box("win", 1.0, 0.42, 0.06, 0, yc + 0.42, 1.1, -0.75, 0, 0);                      // the windscreen
+  // the wing (high, on top of the cabin), its brand tips; the tail
+  P.slab("wing", [[5.2, yw, 1.05], [-5.2, yw, 1.05], [-5.2, yw, -0.45], [5.2, yw, -0.45]], 0.16);
+  [1, -1].forEach(function(sx){ P.box("brand", 0.5, 0.17, 1.52, sx*4.95, yw - 0.08, 0.3); });
+  P.slab("brand", [[0, yc + 0.3, -2.9], [0, yc + 1.75, -3.95], [0, yc + 1.75, -4.45], [0, yc + 0.3, -4.4]], 0.12, true);
+  P.slab("wing", [[1.75, yc + 0.2, -3.75], [-1.75, yc + 0.2, -3.75], [-1.75, yc + 0.2, -4.4], [1.75, yc + 0.2, -4.4]], 0.08);
+  // the cowling and the spinner
+  P.tube("dark", 0.5, 0.55, 0.3, 0, yc, 2.8, 16);
+  P.add("brand", new THREE.ConeGeometry(0.2, 0.42, 14), 0, yc, 3.35, PI/2);
+  // the gear: its own mesh, scaled up into the belly (origin at the belly) to retract
+  var GP = Parts(THREE), gTop = yc - 0.55, wr = 0.24;
+  GP.add("gear", new THREE.CylinderGeometry(0.05, 0.05, gTop - wr), 0, -(gTop - wr)/2, 2.1);
+  GP.add("gear", new THREE.CylinderGeometry(wr*0.85, wr*0.85, 0.14, 14), 0, -(gTop - wr*0.85), 2.1, 0, 0, PI/2);
+  [1, -1].forEach(function(sx){
+    GP.add("gear", new THREE.CylinderGeometry(0.05, 0.05, gTop - wr), sx*1.0, -(gTop - wr)/2, -0.15, 0, 0, sx*0.35);
+    GP.add("gear", new THREE.CylinderGeometry(wr, wr, 0.16, 14), sx*1.3, -(gTop - wr), -0.15, 0, 0, PI/2);
+  });
+  var lights = [{k: "red", p: [5.25, yw - 0.05, 0.3]}, {k: "green", p: [-5.25, yw - 0.05, 0.3]}, {k: "white", p: [0, yc + 1.8, -4.45]},
+                {k: "strobe", p: [5.3, yw - 0.05, 0.0]}, {k: "strobe", p: [-5.3, yw - 0.05, 0.0]}, {k: "beacon", p: [0, yc + 0.7, -1.4]}];
+  var M2 = {prop: new THREE.MeshBasicMaterial({color: 0x222222, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, fog: false})};
+  var S = build(c, "propplane", P, GP, gTop, lights, opts, [0.3, yc - 0.35, 0.6], M2);
+  // the propeller: two blades (they turn) and a blur disc (it shows as they spin up)
+  var prop = new THREE.Group(); prop.position.set(0, yc, 3.12); S.g.add(prop);
+  var bladeM = c.mat(0x1c2026, {roughness: 0.5});
+  [1, -1].forEach(function(s){ var b = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.95, 0.04), bladeM); b.position.y = s*0.5; b.rotation.y = s*0.25; prop.add(b); });
+  var disc = new THREE.Mesh(new THREE.CircleGeometry(1.0, 24), M2.prop); disc.position.set(0, yc, 3.16); S.g.add(disc);
+  S.prop = prop; S.disc = disc; S.discM = M2.prop;
   return S;
 }
 
@@ -367,5 +413,5 @@ function airport(c, end, o){
   return A;
 }
 
-HQV.hqAircraft = {airliner: airliner, seaplane: seaplane, contrails: contrails, airport: airport, brandHex: brandHex};
+HQV.hqAircraft = {airliner: airliner, seaplane: seaplane, propPlane: propPlane, contrails: contrails, airport: airport, brandHex: brandHex, PROP_YC: PROP_YC};
 })();

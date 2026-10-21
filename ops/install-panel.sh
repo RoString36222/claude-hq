@@ -97,9 +97,13 @@ fi
 # PYTHON Arena -- on a host that may be running the Rust one. The panel is new
 # and Caddy needs the Caddyfile this installer just wrote; `app` is none of this
 # installer's business.
-docker compose --profile panel up -d --build panel caddy
+# --no-deps: Caddy depends on `app`, and compose would otherwise recreate it from the
+# default image instead of the release in .release.env (see install-monitoring.sh).
+ENVS=(--env-file .env)
+[ -f .release.env ] && ENVS+=(--env-file .release.env)
+docker compose "${ENVS[@]}" --profile panel up -d --build --no-deps panel caddy
 sleep 6
-docker compose --profile panel ps
+docker compose "${ENVS[@]}" --profile panel ps
 
 echo
 echo "  1. DNS: A record  $PANEL_DOMAIN  ->  this server"

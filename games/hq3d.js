@@ -1789,6 +1789,15 @@ function mount(el, api){
   }
 
   // The "Ride (E)" / "Get off (E)" button over the scene: shows near a parked bike or while riding.
+  // The Get out / Get on pill sits under the route banner whatever its height (a two- or three-line
+  // banner on final approach is taller than the stylesheet's fixed top:96px); without a banner, CSS places it.
+  var rideTopPx = -1;
+  function placeRideUi(){
+    if(!rideUi || rideUi.hidden) return;
+    var bn = el.querySelector(".hqnavui-banner"), top = bn && !bn.hidden && bn.offsetHeight ? bn.offsetTop + bn.offsetHeight + 10 : 0;
+    if(top === rideTopPx) return;
+    rideTopPx = top; rideUi.style.top = top ? top + "px" : "";
+  }
   function rideUiSync(force){
     if(!rideUi) return;
     var near = ride ? -2 : force ? nearBike() : nearIdx, nb = near >= 0 && cur && cur.bikes ? cur.bikes[near] : null;
@@ -2838,6 +2847,7 @@ function mount(el, api){
     if(cur !== worlds.mission){
       if(rigOn()){ qualityStep(ms); perfLog(ms); }
       if(cur.update){ if(cur.camModes) cur.update(t, dt, k, camInfo()); else cur.update(t, dt, k); }
+      placeRideUi();
       renderer.render(cur.scene, curCam());
       smokeFrame();
       return;

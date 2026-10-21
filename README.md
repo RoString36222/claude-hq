@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.2.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.2.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -336,6 +336,9 @@ and feature guide.
 
 ## Changelog
 
+- **3.2.1 — The Get out pill stays clear of the route banner.** On the ground with a route set (taxiing a
+  plane, or in a car or on a bike), the Get out / Get on pill now sits just under the navigation banner at
+  whatever height it is, instead of a fixed 96 px that a two- or three-line banner overlapped.
 - **3.2.0 — Planes, air navigation, and in-sync turning.**
   - **Fly a seaplane or a prop plane.** A seaplane is moored down the river from every city's main dock, and a
     small prop plane (an original design) stands by every airport's runway (the Commons always, an island at

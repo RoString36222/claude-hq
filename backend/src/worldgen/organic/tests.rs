@@ -26,8 +26,10 @@ fn commons() -> &'static WorldDoc {
 // bridges, the dock on its bank by the plaza and the port on its basin, the sea 4 m down as an island's;
 // the bank rising to a metre over the sea at the water's edge, the dock and the port at their backs' height,
 // the HQ pool taking the lots that hold an HQ's box first;
-// again (HQ 3.2) for the multi-storey vehicle garage (civic "carpark", placed last of the services)
-const CLAUDE_HQ_2: &str = "b990b7b1c17ecdd9";
+// again (HQ 3.2) for the multi-storey vehicle garage (civic "carpark", placed last of the services);
+// again (HQ 3.10) for wider roads (organic/widen.rs): the same lots, ranks and sites (wider_roads_move_no_lot),
+// the streets paved wider into the blocks' and lots' road-side strip, highways and the ring wider
+const CLAUDE_HQ_2: &str = "b0d9fec9d1d46c1e";
 
 const ISLAND: &str = "user:0b6f2a3c-1d4e-4f5a-9b8c-7d6e5f4a3b2c@2";
 
@@ -141,6 +143,51 @@ fn an_island_generates() {
     }
 }
 
+/// HQ 3.10 (widen.rs): the roads are paved wider than the layout, and nothing the
+/// layout placed moves: the same lots (ids, blocks, districts, kinds, HQ ranks, growth
+/// ranks, centres, fronts) as at the layout widths, each lot's door at most 2.5 m back
+/// and every site at most 2.5 m; most roads at least 30% wider.
+#[test]
+fn wider_roads_move_no_lot() {
+    for id in ["claude-hq@2", ISLAND] {
+        let (seed_str, version) = parse_id(id).unwrap();
+        let seed = rng::fnv1a64(seed_str.as_bytes());
+        let p = profile_for(seed_str, version);
+        let mut laid = profile_for(seed_str, version);
+        (laid.paved_road_cm, laid.paved_avenue_cm) = (laid.road_cm, laid.avenue_cm);
+        assert!(p.paved_road_cm * 100 >= p.road_cm * 130 && p.paved_avenue_cm * 100 >= p.avenue_cm * 125, "{id}: not much wider");
+        let run = |p: &profile::Profile| {
+            let river = river::River::new(seed, p).unwrap();
+            let base = terrain::generate_with(seed, p, river.as_ref());
+            super::generate(seed, p, &base, river.as_ref()).unwrap()
+        };
+        let ((was, r0, _), (now, r1, _)) = (run(&laid), run(&p));
+        assert_eq!(was.lots.len(), now.lots.len(), "{id}: lots");
+        for (a, b) in was.lots.iter().zip(&now.lots) {
+            assert_eq!(
+                (a.id, a.block, a.district, a.kind, a.rank, a.grow, a.x, a.z, a.front, a.floors),
+                (b.id, b.block, b.district, b.kind, b.rank, b.grow, b.x, b.z, b.front, b.floors),
+                "{id}: lot {} changed",
+                a.id
+            );
+            let back = isqrt((a.door[0] - b.door[0]).pow(2) + (a.door[2] - b.door[2]).pow(2));
+            assert!(back <= 250, "{id}: lot {}'s door moved {back} cm", a.id);
+        }
+        assert_eq!(was.sites.len(), now.sites.len(), "{id}: sites");
+        for (a, b) in was.sites.iter().zip(&now.sites) {
+            assert_eq!((&a.id, a.block, a.front), (&b.id, b.block, b.front), "{id}: site {}", a.id);
+            let moved = isqrt((a.x - b.x).pow(2) + (a.z - b.z).pow(2));
+            assert!(moved <= 250, "{id}: {} moved {moved} cm", a.id);
+        }
+        // the same streets, paved wider: all but a few (kept at the layout width where a lot
+        // could not give way) at the profile's paved width
+        assert_eq!(r0.edges.len(), r1.edges.len(), "{id}: roads");
+        let city = r1.edges.iter().filter(|e| matches!(e.class, "local" | "arterial")).count();
+        let wide = r1.edges.iter().filter(|e| e.width == if e.class == "arterial" { p.paved_avenue_cm } else { p.paved_road_cm }).count();
+        assert!(wide * 100 >= city * 90, "{id}: {wide} of {city} streets paved wide");
+    }
+}
+
 #[test]
 fn edits_move_the_ground_not_the_layout() {
     let w0 = commons();
@@ -202,13 +249,19 @@ fn check(w: &WorldDoc) {
     // classes and widths
     for e in &r.edges {
         let (width, walk) = match e.class {
-            "arterial" => (p.avenue_cm, p.avenue_walk_cm),
-            "local" => (p.road_cm, p.street_walk_cm),
+            "arterial" => (p.paved_avenue_cm, p.avenue_walk_cm),
+            "local" => (p.paved_road_cm, p.street_walk_cm),
             "highway" => (p.highway_cm, 0),
             "ring" => (p.ring_cm, 0),
             c => panic!("{id}: edge {} has class {c}", e.id),
         };
-        assert_eq!((e.width, e.walk), (width, walk), "{id}: edge {}", e.id);
+        // (a road a lot could not give way to keeps its layout width, organic/widen.rs)
+        let layout = match e.class {
+            "arterial" => p.avenue_cm,
+            "local" => p.road_cm,
+            _ => width,
+        };
+        assert!((e.width, e.walk) == (width, walk) || (e.width, e.walk) == (layout, walk * layout / width), "{id}: edge {}", e.id);
         assert!(!e.name.is_empty() && grows(e.min_tier), "{id}: edge {} at tier {:?}", e.id, e.min_tier);
         let (na, nb) = (&r.nodes[e.a as usize], &r.nodes[e.b as usize]);
         assert_eq!((e.points[0], e.points[e.points.len() - 1]), ([na.x, na.y, na.z], [nb.x, nb.y, nb.z]), "{id}: edge {} ends", e.id);

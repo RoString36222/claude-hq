@@ -979,3 +979,49 @@ html.hq-calm .hq3d-drive-read{display:block}
 .hq3d-voyage-bar > span{display:block;height:100%;width:0;border-radius:inherit;background:var(--brand);transition:width .4s linear}
 .hq3d-voyage-hint{font:500 12px/1.2 var(--font);color:var(--muted)}
 @container hq3d (max-width: 830px){ .hq3d-voyage{top:196px;left:12px;right:12px;transform:none;min-width:0;max-width:none} }
+
+/* ==== the casino (games/hqcasinoui.js, E at a game on the casino floor; games/hqcasino.js) ==== */
+.hqcasino{position:absolute;z-index:7;top:10px;left:50%;transform:translateX(-50%);width:min(820px,calc(100% - 20px));max-height:calc(100% - 20px);
+  display:grid;grid-template-rows:auto auto auto auto;color:var(--ink);background:color-mix(in srgb,var(--panel) 96%,transparent);
+  border:1px solid color-mix(in srgb,var(--brand) 45%,var(--line));border-radius:16px;box-shadow:var(--shadow-lg);font-size:13px;overflow:auto;outline:none}
+.hqcasino[hidden]{display:none}
+.hqcasino-head{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.hqcasino-title{font-weight:900;font-size:15px;letter-spacing:.02em}
+.hqcasino-wallet{font-weight:800;color:var(--brand);font-variant-numeric:tabular-nums}
+.hqcasino-close{border:0;background:none;color:var(--muted);font-size:16px;cursor:pointer;padding:4px 8px;border-radius:8px}
+.hqcasino-close:hover{color:var(--ink);background:var(--line)}
+.hqcasino-stage{position:relative;margin:10px 14px 0;border-radius:12px;overflow:hidden;background:var(--bg);aspect-ratio:760/400}
+.hqcasino-canvas{display:block;width:100%;height:100%;touch-action:none}
+.hqcasino-banner{position:absolute;left:10px;right:10px;bottom:10px;padding:8px 12px;border-radius:10px;font-weight:800;font-size:14px;text-align:center;
+  color:var(--ink);background:color-mix(in srgb,var(--panel) 88%,transparent);border:1px solid var(--line)}
+.hqcasino-banner:empty{display:none}
+.hqcasino-banner.good{border-color:var(--good,var(--brand));color:var(--good,var(--brand))}
+.hqcasino-banner.bad{border-color:var(--bad,var(--line));color:var(--bad,var(--ink))}
+.hqcasino-controls{display:grid;gap:8px;padding:10px 14px}
+.hqcasino-bets,.hqcasino-actions,.hqcasino-seg{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.hqcasino-picks{display:grid;gap:8px}
+.hqcasino-lbl{font-size:12px;color:var(--muted);font-weight:700;margin-right:4px}
+.hqcasino-chip{min-width:40px;height:34px;border-radius:999px;border:2px dashed color-mix(in srgb,var(--ink) 35%,transparent);background:var(--bg);color:var(--ink);font-weight:900;cursor:pointer}
+.hqcasino-chip.on{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.hqcasino-opt{padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:none;color:var(--ink);font-weight:700;cursor:pointer}
+.hqcasino-opt.on{background:color-mix(in srgb,var(--brand) 20%,transparent);border-color:var(--brand)}
+.hqcasino-btn{padding:8px 16px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-weight:800;cursor:pointer}
+.hqcasino-btn.go{background:var(--brand);border-color:var(--brand);color:var(--on-brand);font-size:14px;padding:9px 22px}
+.hqcasino-btn:disabled{opacity:.5;cursor:default}
+.hqcasino-chip:focus-visible,.hqcasino-opt:focus-visible,.hqcasino-btn:focus-visible,.hqcasino-close:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.hqcasino-num{display:flex;align-items:center;gap:6px;font-weight:700}
+.hqcasino-num input{width:84px;padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font:inherit}
+.hqcasino-cage{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--line);border-radius:10px}
+.hqcasino-cage>.hqcasino-lbl,.hqcasino-cage>.hqcasino-seg,.hqcasino-cage>.hqcasino-duel{flex-basis:100%}
+.hqcasino-duel{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0;border-top:1px dashed var(--line)}
+.hqcasino-duel.won{color:var(--good,var(--brand))}
+.hqcasino-duel.lost{color:var(--muted)}
+.hqcasino-horses{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+.hqcasino-foot{padding:0 14px 12px;font-size:12px;color:var(--muted)}
+.hqcasino-prompt{position:absolute;z-index:6;left:50%;bottom:72px;transform:translateX(-50%);padding:8px 16px;border-radius:999px;font-weight:800;
+  color:var(--ink);background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid color-mix(in srgb,var(--brand) 55%,var(--line));box-shadow:var(--shadow-lg);cursor:pointer;font:inherit;font-weight:800}
+.hqcasino-prompt:hover{border-color:var(--brand)}
+.hqcasino-prompt:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.hqcasino-prompt[hidden],.hqcasino-toast[hidden]{display:none}
+.hqcasino-toast{position:absolute;z-index:6;left:50%;top:14px;transform:translateX(-50%);max-width:min(620px,calc(100% - 40px));padding:10px 16px;border-radius:12px;
+  font-weight:700;text-align:center;color:var(--ink);background:color-mix(in srgb,var(--panel) 94%,transparent);border:1px solid var(--line);box-shadow:var(--shadow-lg)}

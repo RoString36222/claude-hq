@@ -162,8 +162,9 @@ function lotExtras(c, g, col, rot, toWorld, apronEnd, uid, at, mine){
   var THREE = c.THREE, PI = c.PI, mat = c.mat, emis = c.emis, box = c.box;
   var X = HQV.hqLotExtras, G = X.garage, glows = [], hits = [];
   var AE = apronEnd != null ? apronEnd : 11, sx = at && at.s === -1 ? -1 : 1, ox = at ? at.x - sx*G.x : 0, oz = at ? at.z - G.z : 0;
+  var fz = at && at.f === -1 ? -1 : 1;     // the way its door faces: the road (+z), or away from the HQ (a bay behind it)
   function lx(x){ return ox + sx*x; }
-  var gg = new THREE.Group(); gg.position.set(lx(G.x), 0, oz + G.z); g.add(gg);
+  var gg = new THREE.Group(); gg.position.set(lx(G.x), 0, oz + G.z); if(fz < 0) gg.rotation.y = PI; g.add(gg);
   var walls = new THREE.Group(), top = new THREE.Group(); gg.add(walls); gg.add(top);
   var frameM = mat(0x2a3139, {metalness: 0.85, roughness: 0.3}), trimM = emis(col.accent, col.accent, 0.6);
   var glassM = mat(0x9fd6ee, {transparent: true, opacity: 0.22, roughness: 0.05, metalness: 0.2});
@@ -193,10 +194,12 @@ function lotExtras(c, g, col, rot, toWorld, apronEnd, uid, at, mine){
   var gl = c.glow(0xffd9a0, 2.2, 0.7); gl.position.set(0, G.h - 0.2, G.d/2 + 0.45); gg.add(gl); glows.push(gl);
   var inside = c.glow(0xbfe9ff, 3.0, 0.35); inside.position.set(0, G.h - 0.4, 0); gg.add(inside); glows.push(inside);
   // the apron from the bay to the road, with two guide lines in the accent
-  var apron = new THREE.Mesh(new THREE.PlaneGeometry(G.w - 0.4, Math.max(0.1, AE - (oz + G.z + G.d/2))), mat(0x323a43, {roughness: 0.9}));
-  apron.rotation.x = -PI/2; apron.position.set(lx(G.x), 0.03, (oz + G.z + G.d/2 + AE)/2); apron.receiveShadow = true; g.add(apron);
+  // (facing away from the HQ: a short apron behind it, the lot's back)
+  var a0 = oz + G.z + fz*G.d/2, a1 = fz > 0 ? AE : a0 - 3.2;
+  var apron = new THREE.Mesh(new THREE.PlaneGeometry(G.w - 0.4, Math.max(0.1, Math.abs(a1 - a0))), mat(0x323a43, {roughness: 0.9}));
+  apron.rotation.x = -PI/2; apron.position.set(lx(G.x), 0.03, (a0 + a1)/2); apron.receiveShadow = true; g.add(apron);
   // the door: drive (or walk) onto the platform. Yours goes down; anyone else's is their HQ, as a visitor
-  var fp = toWorld(lx(G.x), oz + G.z + 0.4);
+  var fp = toWorld(lx(G.x), oz + G.z + fz*0.4);
   var door = {view: mine ? "@basement" : "visit:" + uid, kind: "carlift", userId: uid, label: "Car lift",
               tip: mine ? "Car lift: down to your B1 basement garage (drive on, or walk on)" : "Their car lift: visit their HQ",
               front: new THREE.Vector3(fp.x, 0, fp.z)};

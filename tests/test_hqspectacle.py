@@ -152,6 +152,55 @@ class ClaimTests(unittest.TestCase):
         self.assertTrue(self.o["island"]["shown"])
 
 
+FW_SCRIPT = r"""
+const fs = require('fs'), path = require('path'), R0 = process.argv[1];
+global.window = {HQV: {}}; global.self = window;
+for (const f of ['world.js', 'hqnav.js', 'hqspectacle.js']) eval(fs.readFileSync(path.join(R0, 'games', f), 'utf8'));
+const SP = window.HQV.hqSpectacle, a = 38.5, b = 59.5, out = {};
+const S0 = 1792000000 - (1792000000 % SP.SHOW_EVERY), day = SP.shells(a, b, S0 - 10, S0 + 2*SP.SHOW_EVERY);
+out.same = JSON.stringify(day) === JSON.stringify(SP.shells(a, b, S0 - 10, S0 + 2*SP.SHOW_EVERY));
+// windowed reads agree with one long read (a frame asks for a few seconds at a time)
+let pieces = []; for (let t = S0 - 10; t < S0 + 2*SP.SHOW_EVERY; t += 3.7) pieces = pieces.concat(SP.shells(a, b, t, Math.min(t + 3.7, S0 + 2*SP.SHOW_EVERY)));
+out.windows = JSON.stringify(pieces.map(s => s.t + ':' + s.i)) === JSON.stringify(day.map(s => s.t + ':' + s.i));
+out.n = day.length;
+out.inShow = day.every(s => { const t = s.t - SP.FW_RISE, k = ((t % SP.SHOW_EVERY) + SP.SHOW_EVERY) % SP.SHOW_EVERY; return k < SP.SHOW_LEN; });
+// a slot holds one shell from its launch to its last spark
+const bySlot = {}; let clash = 0; day.forEach(s => { const k = s.show + ':' + s.slot; if (bySlot[k] != null && s.t - bySlot[k] < SP.FW_LIVE + SP.FW_RISE) clash++; bySlot[k] = s.t; });
+out.clash = clash;
+out.over = day.every(s => Math.abs(s.burst.x) < a && Math.abs(s.burst.z) < b && s.burst.y > 30 && s.slot < SP.FW_SLOTS && SP.FW_KINDS[s.k] === s.kind);
+const first = day.filter(s => s.show === day[0].show), fin = first.filter(s => s.t - s.show*SP.SHOW_EVERY - SP.FW_RISE >= SP.SHOW_LEN - 14);
+out.finaleRate = fin.length/14; out.mainRate = (first.length - fin.length)/(SP.SHOW_LEN - 16);
+out.kinds = [...new Set(day.map(s => s.kind))].length;
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class FireworksTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        r = subprocess.run([NODE, "-e", FW_SCRIPT, ROOT], capture_output=True, text=True, timeout=60)
+        if r.returncode:
+            raise AssertionError(r.stderr)
+        cls.o = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_everyone_sees_the_same_show(self):
+        self.assertTrue(self.o["same"])
+        self.assertTrue(self.o["windows"])
+
+    def test_shells_fly_only_in_a_show_and_over_the_park(self):
+        self.assertGreater(self.o["n"], 100)
+        self.assertTrue(self.o["inShow"])
+        self.assertTrue(self.o["over"])
+        self.assertEqual(self.o["kinds"], 5)
+
+    def test_no_two_shells_share_a_slot_while_either_is_alive(self):
+        self.assertEqual(self.o["clash"], 0)
+
+    def test_the_finale_fires_several_times_as_fast(self):
+        self.assertGreater(self.o["finaleRate"], 2.5 * self.o["mainRate"])
+
+
 class SourceTests(unittest.TestCase):
     def setUp(self):
         self.js = open(os.path.join(ROOT, "games", "hqspectacle.js"), encoding="utf-8").read()
@@ -165,10 +214,23 @@ class SourceTests(unittest.TestCase):
         self.assertRegex(self.js, r"camPose: function\(\)\{[\s\S]{0,200}if\(E\.calm\(\)\)")
         self.assertIn("up: {x: 0, y: 1, z: 0}, fov: 55", self.js)
 
-    def test_the_ticket_is_the_arenas_park_fare(self):
-        self.assertIn('"/fare", {kind: "park"}', self.js)
-        # nothing on the page grants a pass: only a CityState from the Arena or a paid fare sets it
-        self.assertEqual(len(re.findall(r"\bpass = true\b", self.js)), 2)
+    def test_landmarks_block_their_own_outline_not_a_circle_round_it(self):
+        # a circle round a three-lobed or finned tower stopped you metres short of its walls: each builder returns
+        # its base rings and you are blocked inside those polygons only
+        self.assertNotIn("circles", self.js)
+        self.assertIn("inPoly(pp.P, x, z)", self.js)
+        builders = self.js[self.js.index("var BUILD = {"):self.js.index("var HMUL = ")]
+        returns = re.findall(r"\n      return ([^;]+);\n    \}", builders)
+        self.assertEqual(len(returns), 6, returns)
+        for r in returns:
+            self.assertRegex(r, r"^\[|^feet$", r)
+
+    def test_the_park_is_free_for_everyone(self):
+        # no tickets since HQ 3.4: nothing is bought, nothing gates a ride, the turnstile is always open
+        self.assertNotIn('"/fare"', self.js)
+        self.assertNotIn("function ticket(", self.js)
+        self.assertNotIn("day pass", self.js.lower())
+        self.assertIn("return park.blockedL(L.x, L.z, true);", self.js)
 
     def test_every_texture_is_vendored_and_licensed(self):
         folder = os.path.join(ROOT, "games", "city")
@@ -195,16 +257,22 @@ class SourceTests(unittest.TestCase):
         seat = seat[seat.index("seat: function(sec){"):][:400]
         self.assertIn("applyMatrix4(M)", seat)
         self.assertIn("transformDirection(M)", seat)
-        for rid in ("wheel", "drop", "carousel", "swing"):
+        for rid in ("wheel", "drop", "carousel", "swing", "galleon"):
             body = self.js[self.js.index('id: "%s"' % rid):]
             body = body[body.index("seat: function"):][:420]
             self.assertIn("localToWorld", body, rid)
 
-    def test_a_refused_ticket_never_opens_the_gate(self):
-        # the page's arenaPost resolves {ok, status, j} whatever the status
-        buy = self.js[self.js.index("function buy()"):][:1600]
-        self.assertIn("if(!r || r.ok !== true){ refused(j.detail || j.error); return; }", buy)
-        self.assertLess(buy.index("r.ok !== true"), buy.index("pass = true"))
+    def test_fireworks_only_by_night_and_never_in_calm(self):
+        self.assertIn("on = night && !calm && (showAt(sec) || showAt(sec - FW_LIVE))", self.js)
+        self.assertIn("F.fwPts.visible = !!on;", self.js)
+
+    def test_the_starswing_chairs_have_their_backs(self):
+        line = [l for l in self.js.splitlines() if "bk.position.set(0, -LC + 0.3, -0.3)" in l][0]
+        self.assertLess(line.index("hang.add(bk);"), line.index("//"))
+
+    def test_the_grounds_keep_off_the_walkers_loops(self):
+        self.assertIn("var loops = walkPts.map(loopOf);", self.js)
+        self.assertIn("for(i = 0; i < walkPts.length; i++)", self.js)
 
     def test_sites_name_ground_without_flattening_it(self):
         self.assertEqual(self.js.count("pad: false"), 2)

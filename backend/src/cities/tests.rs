@@ -322,31 +322,19 @@ async fn fares_go_from_the_rider_to_the_city() {
 }
 
 #[tokio::test]
-async fn a_park_pass_is_bought_once_a_day() {
+async fn the_park_is_free_for_everyone() {
     let d = db().await;
     set_coins(&d.pool, B, 25).await;
-    // Any tier sells one; the price goes to that city's treasury, and the pass is recorded.
-    assert_eq!(fare(&d.pool, A, B, "park", NOW).await.unwrap(), 10);
-    assert_eq!((coins(&d.pool, B).await, treasury(&d.pool, A).await), (15, 10));
-    let mut c = d.pool.acquire().await.unwrap();
-    assert!(has_pass(&mut c, A, B, NOW).await.unwrap());
-    // Bought again the same UTC day (a retry, another device): still good, nothing charged.
-    assert_eq!(fare(&d.pool, A, B, "park", NOW + 3600).await.unwrap(), 0);
-    assert_eq!(coins(&d.pool, B).await, 15);
-    // It is that city's pass only, and it ends with the day.
-    assert!(!has_pass(&mut c, COMMONS, B, NOW).await.unwrap());
-    let tomorrow = (NOW.div_euclid(86_400) + 1) * 86_400;
-    assert!(!has_pass(&mut c, A, B, tomorrow).await.unwrap());
-    assert_eq!(fare(&d.pool, A, B, "park", tomorrow).await.unwrap(), 10);
-    // An owner walks into their own park free, and holds a pass without buying one.
-    assert!(has_pass(&mut c, A, A, NOW).await.unwrap());
-    assert_eq!(fare(&d.pool, A, A, "park", NOW).await.unwrap(), 0);
-    // Too few coins: refused, nothing written, no pass.
-    set_coins(&d.pool, B, 9).await;
-    assert!(matches!(fare(&d.pool, COMMONS, B, "park", NOW).await, Err(Refuse::Say(StatusCode::CONFLICT, _))));
-    assert!(!has_pass(&mut c, COMMONS, B, NOW).await.unwrap());
-    assert_eq!(coins(&d.pool, B).await, 9);
-    drop(c);
+    // A visitor, any city, any day, any number of times: nothing charged, nothing written.
+    for (owner, at) in [(A, NOW), (A, NOW + 3600), (COMMONS, NOW), (A, NOW + 86_400)] {
+        assert_eq!(fare(&d.pool, owner, B, "park", at).await.unwrap(), 0);
+    }
+    assert_eq!((coins(&d.pool, B).await, treasury(&d.pool, A).await), (25, 0));
+    // Even with no coins at all.
+    set_coins(&d.pool, B, 0).await;
+    assert_eq!(fare(&d.pool, COMMONS, B, "park", NOW).await.unwrap(), 0);
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM park_pass").fetch_one(&d.pool).await.unwrap();
+    assert_eq!(n, 0);
     assert_ledgers_balance(&d.pool).await;
 }
 

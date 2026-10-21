@@ -1737,6 +1737,8 @@ HQV.hqWorlds.city3d = function(c, w){
     layout: function(){ return airfield(); },
     plan: function(){ return apP; },
     traffic: function(){ return apTr; },
+    // the airfield's traffic at any time (pure: the schedule is a function of the clock), for checks that sample a whole cycle
+    trafficAt: function(ms){ return apL && apCtx ? AIR.traffic(AF, apCtx, +ms) : null; },
     level: function(){ return apL ? apLevel : null; },
     modules: function(){ return {ground: ap3, buildings: apB, vehicles: apV, fleet: apFleet}; },
     perf: function(){ return {avg: apPerf.n ? apPerf.ms/apPerf.n : 0, last: apPerf.last, n: apPerf.n}; },

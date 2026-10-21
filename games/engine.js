@@ -272,5 +272,8 @@ HQV.engine = {now: now, clamp: clamp, hex: hex, angLerp: angLerp, calm: calm, sa
               fmtTime: fmtTime, dist3: dist3, lib: lib, loadGlb: loadGlb, hasWebGL2: hasWebGL2,
               senderTime: senderTime, jitter: jitter, pushSnap: pushSnap, bracket: bracket,
               sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES), watchBar: watchBar,
-              noiseLoop: noiseLoop};
+              noiseLoop: noiseLoop,
+              // the shared AudioContext and its master gain (the SFX volume), or null when sound is off:
+              // for a game that shapes its own sound (the City's thunder) instead of a named sfx
+              audioOut: function(){ var a = sfxVolume() > 0 ? audio() : null; return a && SND.master ? {ctx: a, out: SND.master} : null; }};
 })();

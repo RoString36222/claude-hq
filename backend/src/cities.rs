@@ -5,7 +5,7 @@
 //!   POST /v1/city/:owner/build     {upgrade}                 owner only
 //!   POST /v1/city/:owner/transfer  {amount, dir:"in"|"out"}  owner only
 //!   POST /v1/city/:owner/privacy   {mode:"arena"|"friends"|"closed"}  owner only
-//!   POST /v1/city/:owner/fare      {kind:"bus"|"tram"|"fast"}  the rider pays
+//!   POST /v1/city/:owner/fare      {kind:"bus"|"tram"|"fast"|"park"}  the rider pays
 //!
 //! `:owner` is a user id, `me`, or `commons`. Every POST answers
 //! `{city: CityState, coins: <the caller's Poke Coins>}`.
@@ -23,8 +23,11 @@
 //! paid only up to 24 h past the owner's last sign of life (a device seen), so
 //! an abandoned city stops earning. 2% of every accrual goes to the Commons.
 //! Moving coins between wallet and treasury costs 10% each way, paid to the
-//! Commons; fares (2 bus or tram, 1 fast travel) go from the rider's wallet to
-//! the city's treasury.
+//! Commons; fares (2 bus or tram, 1 fast travel, 10 a day pass to the amusement
+//! park) go from the rider's wallet to the city's treasury. A park pass is bought
+//! once per UTC day per city (`park_pass`); buying it again that day is free, so a
+//! retry or a second device never pays twice. `GET /v1/city/:owner` carries the
+//! caller's `park: {price, pass}`.
 //!
 //! Visibility ([`can_view`]): the owner always; "arena" (the default) anyone
 //! paired with this Arena, which is the arena the owner is in; "friends" the
@@ -64,6 +67,8 @@ const TAX_PM: i64 = 50;
 const TRANSFER_MAX: i64 = 100_000;
 const FARE_BUS: i64 = 2;
 const FARE_FAST: i64 = 1;
+const FARE_PARK: i64 = 10;
+const DAY_SECS: i64 = 86_400;
 const BUS_TIER: i64 = 2;
 const TRAM_TIER: i64 = 4;
 const MAX_BODY: usize = 1024;
@@ -743,11 +748,26 @@ async fn get_city(State(st): State<AppState>, Path(raw): Path<String>, req: Requ
         Ok(o) => o,
         Err(r) => return r.response(),
     };
-    match city_state(&st.pool, &owner, now_secs()).await {
-        Ok(Some(s)) => Json(s).into_response(),
-        Ok(None) => err(StatusCode::NOT_FOUND, "no such city"),
-        Err(r) => r.response(),
+    let now = now_secs();
+    let state = match city_state(&st.pool, &owner, now).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return err(StatusCode::NOT_FOUND, "no such city"),
+        Err(r) => return r.response(),
+    };
+    // the caller's own amusement-park pass rides along (additive: older clients ignore it)
+    let mut conn = match st.pool.acquire().await {
+        Ok(c) => c,
+        Err(e) => return Refuse::Db(e).response(),
+    };
+    let pass = match has_pass(&mut conn, &owner, &c.user_id, now).await {
+        Ok(p) => p,
+        Err(e) => return Refuse::Db(e).response(),
+    };
+    let mut v = serde_json::to_value(&state).unwrap_or_else(|_| json!({}));
+    if let Some(o) = v.as_object_mut() {
+        o.insert("park".into(), json!({"price": FARE_PARK, "pass": pass}));
     }
+    Json(v).into_response()
 }
 
 /// Buy the next level of an upgrade from the treasury.
@@ -886,6 +906,7 @@ pub(crate) fn fare_of(kind: &str, tier: i64) -> Result<i64, &'static str> {
         "bus" => Err("this city has no buses yet"),
         "tram" if tier >= TRAM_TIER => Ok(FARE_BUS),
         "tram" => Err("this city has no tram yet"),
+        "park" => Ok(FARE_PARK),
         _ => Ok(FARE_FAST),
     }
 }
@@ -899,12 +920,40 @@ pub(crate) async fn fare(pool: &SqlitePool, owner: &str, rider: &str, kind: &str
         return Ok(0);
     }
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // a park pass already bought today is still good: checked inside the write lock, so two
+    // racing purchases cannot both pay
+    if kind == "park" && has_pass(&mut tx, owner, rider, now).await? {
+        return Ok(0);
+    }
     if !wallet_debit(&mut tx, rider, "coins", price).await? {
         return Err(Refuse::say(StatusCode::CONFLICT, format!("the fare is {price} Poke Coins")));
     }
     post_entry(&mut tx, owner, "fare", price, kind, now).await?;
+    if kind == "park" {
+        sqlx::query("INSERT INTO park_pass (user_id, owner, day, paid) VALUES (?, ?, ?, ?)")
+            .bind(rider)
+            .bind(owner)
+            .bind(now.div_euclid(DAY_SECS))
+            .bind(price)
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
     Ok(price)
+}
+
+/// Whether `rider` holds today's (UTC) pass to `owner`'s amusement park. An owner always does.
+pub(crate) async fn has_pass(conn: &mut SqliteConnection, owner: &str, rider: &str, now: i64) -> Result<bool, sqlx::Error> {
+    if owner == rider {
+        return Ok(true);
+    }
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM park_pass WHERE user_id = ? AND owner = ? AND day = ?")
+        .bind(rider)
+        .bind(owner)
+        .bind(now.div_euclid(DAY_SECS))
+        .fetch_one(&mut *conn)
+        .await?;
+    Ok(n > 0)
 }
 
 async fn post_fare(State(st): State<AppState>, Path(raw): Path<String>, req: Request) -> Response {
@@ -917,7 +966,7 @@ async fn post_fare(State(st): State<AppState>, Path(raw): Path<String>, req: Req
         Ok(b) => b,
         Err(r) => return r.response(),
     };
-    let kind = match body_obj(&bytes, &["kind"]).and_then(|o| str_field(&o, "kind", &["bus", "tram", "fast"]).map(String::from)) {
+    let kind = match body_obj(&bytes, &["kind"]).and_then(|o| str_field(&o, "kind", &["bus", "tram", "fast", "park"]).map(String::from)) {
         Ok(k) => k,
         Err(m) => return err(StatusCode::UNPROCESSABLE_ENTITY, &m),
     };

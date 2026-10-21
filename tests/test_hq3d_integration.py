@@ -63,7 +63,9 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           # navigation (3.1): the router, the minimap, the route's chevrons, the Go to panel
                           "hqnav", "hqminimap", "hqroutefx", "hqnavui",
                           # rail (3.x): the lines between cities, their trains
-                          "hqrail", "hqcity3d"])
+                          "hqrail",
+                          # City 3.2: the weather, the landmarks and the amusement park
+                          "hqweather", "hqspectacle", "hqcity3d"])
 
     def test_multi_hq_range_covers_server(self):
         m = re.search(r"\bhq:\[(\d+),(\d+)\]", read(MULTI))

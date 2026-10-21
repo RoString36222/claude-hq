@@ -2796,6 +2796,9 @@ function mount(el, api){
                          heli: function(){ var h = ride && ride.heli; return h ? {x: h.x, y: h.y, z: h.z, yaw: h.yaw, speed: h.speed, agl: h.agl, ground: h.ground, rpm: h.rpm} : null; },
                          // the City's navigation (route, minimap, panel), for tools that follow a route
                          nav: function(){ return cur && cur.nav ? cur.nav() : null; },
+                         // the City's park and landmarks (games/hqspectacle.js) and its weather (games/hqweather.js)
+                         spectacle: function(){ return cur && cur.spectacle ? cur.spectacle() : null; },
+                         weather: function(){ return cur && cur.weather ? cur.weather() : null; },
                          // avatar + camera, for tools that drive the keys and record motion
                          probe: function(){ var c = curCam(); return {x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: avatar.yaw, speed: avatar.speed || 0,
                            travelYaw: avatar.travelYaw, turnRate: avatar.rate || 0, heading: rig && rig.moveYaw != null ? rig.moveYaw : null,

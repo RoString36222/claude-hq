@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.1.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.2.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -335,6 +335,38 @@ and feature guide.
 ---
 
 ## Changelog
+
+- **3.2.0 — Skyline: landmarks, an amusement park and weather.** The cities got a skyline and a day out.
+  - **Six landmark towers** stand over the busiest districts, each its own design: **The Helix** (a glass
+    tower turning a quarter turn as it rises), **Aurora Spire** (three-lobed setbacks to a long spire),
+    **The Lantern** (a glass bullet in a steel diagrid), **Gemini Towers** (twin towers with a skybridge),
+    **Beacon Tower** (an observation tower with a glowing sky-deck) and **The Regent** (art deco stone up to
+    a lit sunburst crown). Real PBR facades reflect a real sky; by night their windows light up, floodlights
+    wash their feet and aviation lights blink on top. Each is in **Go to**.
+  - **Skyline Park**, an amusement park on the city's largest clear park block: a neon gate and marquee, a
+    ticket booth, lamp-lit paths, string lights, food stalls and five rides — **Comet**, a roller coaster
+    with a lift hill, a banked first drop, a vertical loop and airtime hills, ridden **first person**;
+    **Skywheel**, a Ferris wheel with 24 gondolas and a chasing rim of lights; **Freefall**, a drop tower
+    with a pause at the top over the whole city; the **Carousel**; and **Starswing**, a wave swinger. Walk
+    up to a ride and press **E**. Rides run on the shared clock, so everyone sees the same train; residents
+    visit the park too.
+  - **A day pass** is a new `park` fare: **10 Poke Coins**, once per UTC day per city, paid into that city's
+    treasury. On an Arena that doesn't sell passes yet the gate opens as a free preview.
+  - **Weather**: clear skies, overcast, rain, thunderstorms (lightning, thunder after the flash), snow and
+    fog, in 15-minute spells eased in over 90 s; the same for everyone in a city. The city stats panel's
+    forecast and an announcement say what is coming.
+  - *Accessibility:* in Calm and with reduced motion, rides are watched from the platform instead of ridden
+    first person, nothing falls, and there are no lightning flashes, blinking or chasing lights.
+  - *Security:* the pass is server-authoritative. `POST /v1/city/:owner/fare {kind:"park"}` debits the
+    rider and writes a `park_pass` row (migration 0016) in the same transaction as the ledger entry, so a
+    pass always means the coins were paid and a second purchase that day charges nothing.
+    `GET /v1/city/:owner` gains the caller's `park: {price, pass}`. The page can't grant itself a pass.
+  - *Privacy:* no new egress. The ticket sends `{kind: "park"}` to the existing fare route; weather and
+    rides are computed locally from the clock and the world doc.
+  - *Third-party assets:* CC0 surface materials from [ambientCG](https://ambientcg.com) (Facade001,
+    Facade006, Facade015, Facade018A, MetalPlates006) and a CC0 sky from [Poly Haven](https://polyhaven.com)
+    ("Kloofendal 48d Partly Cloudy (Pure Sky)"), resampled JPEGs vendored in `games/city/` with
+    `LICENSE-assets.txt`, 3.2 MB, served only from 127.0.0.1 (`.jpg` only; the licence is not served).
 
 - **3.1.1 — City camera and plates.** The chase camera sits higher and further back (the far camera
   higher still), so you see the street around you instead of the ground at your feet. Left-drag now

@@ -69,10 +69,10 @@ Specs are approximate maker figures, to be checked when each vehicle is built.
 | `bike.naked.400` | KTM 390 Duke: 399 cc single, 45 PS, ~165 kg, ~170 km/h | BMW G 310 R: 313 cc single, 34 PS, ~164 kg, ~145 km/h |
 | `bike.naked.950` | KTM 990 Duke: 947 cc twin, 123 PS, ~179 kg, ~230 km/h | BMW F 900 R: 895 cc twin, 105 PS, ~211 kg, ~225 km/h |
 | `bike.naked.over950` | KTM 1390 Super Duke R: 1350 cc V-twin, 190 PS, ~200 kg, ~290 km/h | BMW S 1000 R: 999 cc four, 165 PS, ~199 kg, ~250 km/h |
-| `bike.sport.400` | BMW G 310 RR: 313 cc single, 34 PS, ~174 kg, ~160 km/h | open (KTM RC 390 fits; KTM is a picked brand, the RC is not a Duke) |
+| `bike.sport.400` | BMW G 310 RR: 313 cc single, 34 PS, ~174 kg, ~160 km/h | KTM RC 390: 373 cc single, 43 PS, ~172 kg, ~170 km/h (KTM is a picked brand; the RC is not a Duke) |
 | `bike.sport.over950` | BMW S 1000 RR: 999 cc four, 210 PS, ~197 kg, ~300 km/h | BMW M 1000 RR: 999 cc four, 212 PS, ~192 kg, ~306 km/h |
-| `bike.adventure.400` | BMW G 310 GS: 313 cc single, 34 PS, ~175 kg, ~145 km/h | open (KTM 390 Adventure fits) |
-| `bike.adventure.over950` | BMW R 1300 GS: 1300 cc boxer, 145 PS, ~237 kg, ~220 km/h | open (KTM 1390 Super Adventure fits) |
+| `bike.adventure.400` | BMW G 310 GS: 313 cc single, 34 PS, ~175 kg, ~145 km/h | KTM 390 Adventure: 399 cc single, 45 PS, ~182 kg, ~165 km/h |
+| `bike.adventure.over950` | BMW R 1300 GS: 1300 cc boxer, 145 PS, ~237 kg, ~220 km/h | KTM 1390 Super Adventure S Evo: 1350 cc V-twin, 173 PS, ~238 kg, ~240 km/h |
 
 The Duke line fills every naked band; BMW fills the rest. Today's motorbike stays as the free
 starter, outside the classes.
@@ -88,39 +88,75 @@ starter, outside the classes.
 | `car.coupe.3000` | BMW M2 (G87): 2993 cc twin-turbo six, 480 PS, ~1.7 t, RWD, 285 km/h | BMW M4 CSL: 2993 cc twin-turbo six, 550 PS, ~1.6 t, RWD, 307 km/h |
 | `car.suv.3000` | BMW X5 xDrive40i: 2998 cc turbo six, 381 PS, ~2.2 t, AWD, 250 km/h | BMW X3 M50: 2998 cc turbo six, 398 PS, ~2.0 t, AWD, 250 km/h |
 | `car.suv.5000` | BMW X5 M Competition: 4395 cc twin-turbo V8, 625 PS, ~2.4 t, AWD, 290 km/h | BMW XM: 4395 cc twin-turbo V8 plug-in hybrid, 653 PS, ~2.7 t, AWD, 270 km/h |
-| `car.hyper.over5000` | Bugatti Chiron Super Sport: 7993 cc quad-turbo W16, 1600 PS, ~2.0 t, AWD, 440 km/h | Bugatti Tourbillon: 8300 cc V16 hybrid, 1800 PS, ~2.0 t, AWD, 445 km/h |
+| `car.hyper.over5000` | Bugatti Chiron Super Sport: 7993 cc quad-turbo W16, 1600 PS, ~2.0 t, AWD, 440 km/h | Bugatti Tourbillon: 8355 cc V16 hybrid, 1800 PS, ~2.0 t, AWD, 445 km/h |
 | `car.sedan.ev` | BMW i4 M50: two motors, 544 PS, ~2.3 t, AWD, 225 km/h | BMW i7 M70: two motors, 660 PS, ~2.7 t, AWD, 250 km/h |
 
 Reserve: Bugatti Veyron 16.4 (7993 cc W16, 1001 PS, 407 km/h), waiting for a third hyper slot or
 a `car.hyper.over5000` swap. Today's hatchback stays as the free starter.
 
-**Status after player 1:** 10 classes on sale (both slots filled), 6 with one open slot.
+**Status after player 1:** 13 classes on sale (both slots filled; the three KTM bikes above fill
+the bike classes' second slots), 3 car classes with one open slot (`car.hatch.2000`, `car.sedan.2000`,
+`car.sedan.5000`). The catalogue is `games/vehicles/catalogue.json`.
 
-## The catalogue (`games/hqvehicles.json`, data only)
+## The catalogue (`games/vehicles/catalogue.json`, data only)
+
+It sits in `games/vehicles/` (not `games/` itself) because the dashboard serves data and models only
+from a game's own folder (dashboard-rs `GAME_ASSET_RE`, which lists `vehicles/` for `.json` and `.glb`).
+`games/hqvehicles.js` (`HQV.hqVehicles`) loads it and has the pure helpers:
+`load()`, `bandOf(kind, cc, electric)`, `classes(cat)`, `byClass(cat, classId)`, `onSale(cat)`, `get(cat, id)`.
 
 ```text
-{ "classes": [{ "id": "bike.naked.400", "kind": "bike", "type": "naked", "band": "400",
-                "label": "Naked · up to 400 cc", "tier": 1 }],
+{ "version": 1,
+  "classes": [{ "id": "bike.naked.400", "kind": "bike", "type": "naked", "band": "400",
+                "label": "Naked · up to 400 cc", "tier": 1 },
+              { "id": "starter", "kind": "any", "type": "starter", "band": "starter", "tier": 0, ... }],
   "vehicles": [{
-    "id": "ktm-390-duke",                     // [a-z0-9-], stable forever (owned vehicles point at it)
-    "class": "bike.naked.400", "slot": 1,   // slot 1 | 2 | "reserve"
+    "id": "ktm-390-duke",                    // [a-z0-9-], at most 48, stable forever (owned vehicles point at it)
+    "class": "bike.naked.400",
+    "slot": 1,                               // 1 | 2 | "reserve" | "starter" (the free starters only)
     "brand": "KTM", "model": "390 Duke", "year": 2024,
-    "pickedBy": ["<user id>"],                // whose preference brought it in
-    "spec": { "cc": 399, "cyl": 1, "layout": "single", "aspiration": "na", "electric": false,
-              "powerKw": 33, "torqueNm": 39, "massKg": 165, "drive": "rwd" | "fwd" | "awd",
-              "topKmh": 170, "zeroTo100s": null, "gears": 6 },
-    "price": 1200,                            // coins (see Economy)
-    "paints": ["#ff6a00", "#1b1b1b", "#f2f2f2"],
-    "model3d": { "file": "vehicles/ktm-390-duke.glb", "licence": "CC-BY-4.0",
-                 "author": "...", "source": "https://...", "lengthM": 2.0 },
-    "sound": "single" }]}                    // a voice of games/engine.js (below)
+    "pickedBy": ["owner"],                   // whose preference brought it in ("owner": the first player)
+    "spec": { "cc": 399,                     // 0 for an electric drivetrain
+              "cyl": 1,                      // 0 for electric
+              "layout": "single",            // single | parallel-twin | v-twin | boxer-twin | inline-3 | inline-4 |
+                                             // inline-6 | v8 | w16 | v16 | electric
+              "aspiration": "na",            // na | turbo | twin-turbo | quad-turbo | electric
+              "electric": false, "hybrid": false,
+              "powerKw": 33, "torqueNm": 39, // torqueNm may be null (not published)
+              "massKg": 171,                 // kerb / ready-to-ride
+              "drive": "rwd",                // rwd | fwd | awd (bikes: always rwd)
+              "topKmh": 170, "zeroTo100s": null, "gears": 6 },   // electric: 1 gear
+    "dims": { "lengthM": 2.0, "widthM": 0.85, "heightM": 1.1, "wheelbaseM": 1.357 },
+    "body": "naked",                         // the stand-in model's shape: the class type (hatch | sedan |
+                                             // coupe | suv | hyper; naked | sport | adventure ...)
+    "price": 1000,                           // coins, inside the class tier's band (see Economy)
+    "paints": [{ "name": "Electronic Orange", "hex": "#ff5a00" }, ...],   // 4-6 real factory colours
+    "model3d": null,                         // or { "file": "vehicles/<id>.glb", "licence", "author",
+                                             //      "source": "https://...", "lengthM" } once fetched
+    "sound": "single",                       // a games/engine.js voice: single | twin | vtwin | boxer | four |
+                                             // six | v8 | w16 | v16 | electric
+    "note": "..." }]}                        // optional: why it is here, what is approximate
 ```
 
-- `tests/test_hqvehicles.py` checks it: ids unique and stable, every vehicle's class exists,
-  the band matches `cc`/`electric`, at most 2 slots per class (slots 1 and 2, no duplicates),
-  every on-sale vehicle has a model with a licence, author and source, specs in sane ranges.
+- The two **starters** (`starter-car`, `starter-moto`: today's hatchback and motorbike) are in class
+  `starter` (tier 0, price 0, never on sale): their specs reproduce hq3d.js `VEHICLES.car` / `.moto`.
+- `tests/test_hqvehicles.py` checks it: class ids match kind/type/band and labels give the band in cc;
+  ids unique and stable in form; each vehicle's class exists and its band matches `cc`/`electric`;
+  `body` is the class type; at most 2 slot vehicles per class, no slot taken twice, slot 1 before 2;
+  specs, dimensions and paints (hex) in sane ranges; prices inside the tier band; a `model3d` carries
+  its licence, author and https source; and the loader's helpers under node.
 - Names live only here, so renaming a model (for example to parody names, if the game is ever
   distributed publicly) is a data change.
+
+### Adding a vehicle
+
+1. Add one entry to `vehicles` in `games/vehicles/catalogue.json` (one object per line), with the
+   maker's specs and dimensions, 4-6 factory paints, `model3d: null`, and `pickedBy` the player who
+   asked for it. Its class is `<kind>.<type>.<bandOf(cc)>`: if that class is not in `classes` yet,
+   add it too (label "Type · band in cc", tier from the band).
+2. Slot: `1` or `2` if the class has room, else `"reserve"`.
+3. `python3 -m unittest tests.test_hqvehicles`. Nothing else changes: the dealership and the physics
+   read the catalogue.
 
 ## Handling from the specs (`games/hqvehiclephys.js`, pure, node-tested)
 
@@ -150,7 +186,7 @@ HQV.hqVehiclePhys = {
 `w16`, `v16`, `electric` (a whine that rises with speed, no gears). Each is the existing synth
 with its own firing pattern and filter, so no audio files.
 
-## Models (`games/vehicles/*.glb`)
+## Models (`games/vehicles/<id>.glb`)
 
 - Source: low-poly models of each real vehicle under a licence that allows use (CC0 or CC-BY
   preferred), credited in the catalogue and on an in-game credits card. No ripped game assets.
@@ -175,7 +211,7 @@ POST /v1/vehicles/:id/park {world, x, z, yaw}
 ```
 
 - The Arena keeps its own copy of the catalogue's ids, classes, tiers and prices
-  (`backend/data/vehicles.json`, a byte copy checked by tests/test_game_data_sync.py, as the
+  (`backend/data/vehicles.json`, a byte copy of `games/vehicles/catalogue.json` checked by tests/test_game_data_sync.py, as the
   game data already is). The server sets the price, never the client.
 - Paid in Poke Coins. Class price bands: tier 1 800-1500, 2 2500-5000, 3 8000-15000,
   4 25000-40000, 5 (hypercars) 100000+. To be tuned against what players actually earn.

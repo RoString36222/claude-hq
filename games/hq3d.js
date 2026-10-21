@@ -2545,9 +2545,20 @@ function mount(el, api){
   }
   // A trip between islands (games/hqtravel.js through hqcity3d's w.camPose): while its pose has a
   // camera, it is the shot (a perspective one: classic and the map hand over to chase first).
+  // your own look while a trip holds the camera (a ride, a flight): yaw about its up, pitch about its right
+  var tripLook = {yaw: 0, pitch: 0}, tripV = null;
+  function wrapA(a){ return Math.atan2(Math.sin(a), Math.cos(a)); }
+  function tripHeld(){ var cp = cur && cur.camPose ? cur.camPose() : null; return !!(cp && cp.camera && rigOn()); }
   function tripCam(){
     var cp = cur && cur.camPose ? cur.camPose() : null;
-    if(!cp || !cp.camera || !cp.pos || !cp.look || !rigOn()) return;
+    if(!cp || !cp.camera || !cp.pos || !cp.look || !rigOn()){ tripLook.yaw = 0; tripLook.pitch = 0; return; }
+    if(tripLook.yaw || tripLook.pitch){
+      if(!tripV) tripV = {d: new THREE.Vector3(), u: new THREE.Vector3(), r: new THREE.Vector3()};
+      var D = tripV.d.set(cp.look.x - cp.pos.x, cp.look.y - cp.pos.y, cp.look.z - cp.pos.z), Uu = tripV.u.set(cp.up ? cp.up.x : 0, cp.up ? cp.up.y : 1, cp.up ? cp.up.z : 0).normalize();
+      D.applyAxisAngle(Uu, tripLook.yaw);
+      var Rr = tripV.r.copy(D).cross(Uu).normalize(); if(Rr.lengthSq() > 0.5) D.applyAxisAngle(Rr, tripLook.pitch);
+      cp = {camera: true, pos: cp.pos, up: cp.up, fov: cp.fov, look: {x: cp.pos.x + D.x, y: cp.pos.y + D.y, z: cp.pos.z + D.z}};
+    }
     if(rig.mode === "classic" || rig.mode === "map" || rig.mode === "photo") HQV.camrig.setMode(rig, "chase", {instant: true});
     pcam.position.set(cp.pos.x, cp.pos.y, cp.pos.z);
     if(cp.up) pcam.up.set(cp.up.x, cp.up.y, cp.up.z);
@@ -2587,6 +2598,8 @@ function mount(el, api){
 
   function onDown(e){
     noteInput();
+    // on a ride (or any trip that holds the camera: w.camPose): a drag looks around from your seat
+    if(tripHeld()){ drag = {x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, moved: 0, trip: true}; canvas.setPointerCapture(e.pointerId); return; }
     if(rigOn() && rig.mode !== "classic"){
       var m = rig.mode;
       // first person and photo: a click captures the mouse for looking (Esc gives it back); no picking while locked
@@ -2604,6 +2617,11 @@ function mount(el, api){
     if(locked()){ if(rig){ HQV.camrig.input(rig, {look: [e.movementX || 0, e.movementY || 0]}); noteInput(); } return; }
     if(drag){
       var dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.moved = Math.max(drag.moved, Math.abs(dx) + Math.abs(dy));
+      if(drag.trip){
+        tripLook.yaw = wrapA(tripLook.yaw - (e.clientX - drag.lx)*0.004);
+        tripLook.pitch = E.clamp(tripLook.pitch - (e.clientY - drag.ly)*0.004, -1.3, 1.3);
+        drag.lx = e.clientX; drag.ly = e.clientY; tip.hidden = true; return;
+      }
       if(drag.rig){
         var ix = e.clientX - drag.lx, iy = e.clientY - drag.ly; drag.lx = e.clientX; drag.ly = e.clientY;
         if(drag.moved > 5 && rig){
@@ -2629,7 +2647,7 @@ function mount(el, api){
     else tip.hidden = true;
   }
   function onUp(e){
-    var d = drag; drag = null; if(!d || d.moved > 5) return;
+    var d = drag; drag = null; if(!d || d.trip || d.moved > 5) return;
     if(d.rig && rigOn() && rig.mode === "map"){ if(d.button === 0) mapClick(e); return; }
     if(d.rig && d.button !== 0) return;                                 // a right click only orbits
     var h = pick(e, hitList());
@@ -3149,6 +3167,9 @@ function mount(el, api){
                          heli: function(){ var h = ride && ride.heli; return h ? {x: h.x, y: h.y, z: h.z, yaw: h.yaw, speed: h.speed, agl: h.agl, ground: h.ground, rpm: h.rpm} : null; },
                          // the City's navigation (route, minimap, panel), for tools that follow a route
                          nav: function(){ return cur && cur.nav ? cur.nav() : null; },
+                         // the City's park and landmarks (games/hqspectacle.js) and its weather (games/hqweather.js)
+                         spectacle: function(){ return cur && cur.spectacle ? cur.spectacle() : null; },
+                         weather: function(){ return cur && cur.weather ? cur.weather() : null; },
                          // avatar + camera, for tools that drive the keys and record motion
                          probe: function(){ var c = curCam(); return {x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: avatar.yaw, speed: avatar.speed || 0,
                            travelYaw: avatar.travelYaw, turnRate: avatar.rate || 0, heading: rig && rig.moveYaw != null ? rig.moveYaw : null,

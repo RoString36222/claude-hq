@@ -341,6 +341,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var WD = HQV.world, parts = HQV.hqCityParts, SP = HQV.hqSkatePark;
   var api = c.api || {};
   var hits = [], doors = [], night = true, W = null, wb = null, dead = false;
+  var spx = null, wx = null, wxKey = "";       // the landmarks and the park (games/hqspectacle.js); the weather (games/hqweather.js)
 
   var hemi = new THREE.HemisphereLight(0xbcd7ff, 0x223322, 2.2); S.add(hemi);
   var sun = new THREE.DirectionalLight(0xffffff, 2.2); sun.position.set(40, 70, 30); sun.castShadow = true;
@@ -370,8 +371,13 @@ HQV.hqWorlds.city3d = function(c, w){
     return p;
   })();
   // vertex colours by height: horizon -> mid by 0.35 up, mid -> zenith above that; below the horizon stays horizon
-  function paintSky(n){
+  function paintSky(n, wl){
     var cs = SKY[n ? "night" : "day"].map(function(h){ return new THREE.Color(h); }), tmp = new THREE.Color();
+    if(wl && wl.tintK > 0){                       // weather (games/hqweather.js): overcast, darker by night
+      var tc = new THREE.Color(n ? HQV.hqWeather.lerpHex(wl.tint, 0, 0.84) : wl.tint);
+      cs.forEach(function(cc, i){ cc.lerp(tc, wl.tintK*(i === 0 ? 0.8 : 1)); });
+    }
+    if(wl && wl.flash > 0.05){ var fl = new THREE.Color(0xdfe8ff); cs.forEach(function(cc){ cc.lerp(fl, wl.flash*0.6); }); }
     var P = skyGeo.attributes.position;
     for(var i = 0; i < P.count; i++){
       var y = Math.max(0, P.getY(i));
@@ -379,7 +385,7 @@ HQV.hqWorlds.city3d = function(c, w){
       skyCol[i*3] = tmp.r; skyCol[i*3 + 1] = tmp.g; skyCol[i*3 + 2] = tmp.b;
     }
     skyGeo.attributes.color.needsUpdate = true;
-    stars.visible = !!n;
+    stars.visible = !!n && !(wl && wl.cloud > 0.75);
   }
   var fog = new THREE.Fog(0x0f1f30, 300, 1600);
   var paveT = c.canvasTex(256, 256, function(g){ g.fillStyle = "#3b4c5c"; g.fillRect(0, 0, 256, 256); g.strokeStyle = "rgba(255,255,255,.08)"; g.lineWidth = 2;
@@ -732,6 +738,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(bridges && bridges.blockedAt(x, z)) return true;                      // an opening bridge's gap or barrier
     if(sea && !sea.land(x, z)) return true;                                    // the sea: take a boat
     if(civics.length && civicBlocked(x, z)) return true;
+    if(spx && spx.blocked(x, z)) return true;                               // landmarks, the park's fence, gate and rides
     if(air && air.blocked(x, z)) return true;                              // air: hangars, the tower, the base's fence
     if(fount && Math.hypot(x - fount.g.position.x, z - fount.g.position.z) < fount.R + 0.35) return true;   // the fountain
     if(skate && SP.walkBlocked(x - skate.cx, z - skate.cz)) return true;      // its ramps (on foot or wheels; boards ride them)
@@ -2082,6 +2089,9 @@ HQV.hqWorlds.city3d = function(c, w){
     hp.setAttribute("data-mood", K.happiness == null ? "" : K.happiness >= 75 ? "good" : K.happiness >= 50 ? "ok" : "low");
     row("Treasury", K.treasury == null ? "–" : fmt(K.treasury) + " coins");
     if(K.specialty) row("Specialty", K.specialty.charAt(0).toUpperCase() + K.specialty.slice(1));
+    // the forecast (games/hqweather.js): now, and what the next spell brings and when
+    if(wx){ var fc = wx.forecast(1), mins = Math.max(1, Math.round((fc[1].at - Date.now())/60000));
+      row("Weather", fc[0].icon + " " + fc[0].name, fc[1].kind === fc[0].kind ? "Staying " + fc[0].name.toLowerCase() + " for now" : fc[1].name + " in " + mins + " min"); }
   }
   function citiesSetup(){
     buildCivic(); S.add(civicG);
@@ -2346,9 +2356,27 @@ HQV.hqWorlds.city3d = function(c, w){
   /* ---------- loading: the world doc, then every tile drawable ---------- */
   function setup(doc){
     if(dead) throw new Error("world unavailable: closed");     // hq3d gave up on us (timeout): build nothing
-    W = doc; indexBuildings();
+    W = doc;
+    // landmarks and the park claim their lots and block before anything indexes or builds the world
+    if(V2 && HQV.hqSpectacle) try { HQV.hqSpectacle.claim(W, tier); } catch(e){}
+    indexBuildings();
     wb = HQV.worldbuild.create(c, W, V2 ? {scene: S, quality: 2, tier: tier, gap: !!(HQV.hqBridges && W.river)} : {scene: S, quality: 2});
     S.add(wb.root); S.add(staticG); S.add(hqG);
+    // the landmarks, the park and the weather: built just after the City is ready, so they never hold up its
+    // first frame (a slow machine's 15 s budget in hq3d.js is the world's alone)
+    var extrasOn = false;
+    function extras(){
+      if(dead || extrasOn) return; extrasOn = true;
+      if(V2 && HQV.hqSpectacle && W.spectacle) try {
+        spx = HQV.hqSpectacle.create(c, W, {scene: S, ground: groundY, owner: owner, night: night, say: say, avatar: function(){ return c.avatar(); },
+          city: function(){ return cityState; }, post: postJson});
+      } catch(e){ spx = null; }
+      if(V2 && HQV.hqWeather) try { wx = HQV.hqWeather.create(c, {scene: S, world: worldId, say: say, ground: groundY}); wx.setNight(night); } catch(e){ wx = null; }
+      // the park and the landmarks take the snow and the wet like the rest of the city
+      if(spx && wb.settle) spx.g.traverse(function(o){ if(o.isMesh) [].concat(o.material).forEach(function(m){ if(m && m.isMeshStandardMaterial) wb.settle(m); }); });
+      if(spx) spx.setNight(night);
+    }
+    wb.ready.then(function(){ setTimeout(extras, 0); }, function(){});
     buildStatic();
     if(V2) citiesSetup();
     build();
@@ -2368,6 +2396,8 @@ HQV.hqWorlds.city3d = function(c, w){
   // hq3d's fallback to the legacy City (timeout, rejection) drops this world: stop the tiles and their worker
   w.destroy = function(){
     dead = true;
+    if(spx){ spx.destroy(); spx = null; }
+    if(wx){ wx.destroy(); wx = null; }
     if(wb){ wb.destroy(); wb = null; }
     S.remove(staticG); S.remove(hqG);
     citiesDestroy();
@@ -2379,6 +2409,16 @@ HQV.hqWorlds.city3d = function(c, w){
   Object.defineProperty(w, "net", {get: function(){ return V2 ? netRoom(worldId, !!(api.netCan && api.netCan("isles"))) : "city3d"; },
     configurable: true});
   w.world = function(){ return worldId; };
+  // Riding in the park (games/hqspectacle.js) comes first: it holds you in your seat and owns the camera.
+  (function(){
+    var carry0 = w.carry, cam0 = w.camPose, use0 = w.use;
+    w.carry = function(){ var p = spx && spx.carry(); return p || (carry0 ? carry0.apply(w, arguments) : null); };
+    w.camPose = function(){ var p = spx && spx.camPose(); return p || (cam0 ? cam0.apply(w, arguments) : null); };
+    w.use = function(p){ if(spx && spx.use(p)) return true; return use0 ? use0.apply(w, arguments) : false; };
+    // for tools and tests: what the park and the weather are doing
+    w.spectacle = function(){ return spx; };
+    w.weather = function(){ return wx; };
+  })();
   w.hits = hits; w.doors = doors; w.span = 18; w.zoom = 0.8; w.camY = 2.5; w.follow = 1; w.camPitch = 0.72;
   w.bounds = [-1018, 1018, -1018, 1018];
   w.camModes = ["map", "far", "chase", "near", "fp", "classic", "photo", "cine"];
@@ -2429,7 +2469,8 @@ HQV.hqWorlds.city3d = function(c, w){
     hemi.intensity = n ? 1.3 : 2.4; sun.intensity = n ? 0.7 : 2.4; sun.color.set(n ? 0xa9b8ff : 0xfff2dc);
     if(wb) wb.setNight(n); applyTime();
     civics.forEach(function(B){ B.setNight(n); }); if(oc) oc.setTime(n); if(rail) rail.setNight(n);
-    if(air) air.setNight(n); };                                            // air:
+    if(air) air.setNight(n);                                               // air:
+    if(spx) spx.setNight(n); if(wx) wx.setNight(n); wxKey = ""; };
   // Fading: in classic the buildings between you and hq3d's orthographic view (as hqbase.js
   // hqCutaway decides it); in every rig mode hq3d passes the occluders to w.setFaded. Switching
   // between the two clears the other's fades. Either way the fade itself eases (fadeStep).
@@ -2477,8 +2518,24 @@ HQV.hqWorlds.city3d = function(c, w){
     if(V2) airStep(t, dt);                                                                // AIR
     if(V2) bigStep(t, dt);                                                                              // big ships
     if(rail) rail.update(t, dt, cam);                     // rail
+    if(spx) spx.update(t, dt, cam);
+    if(wx) weatherApply(wx.update(t, dt, cam));
     navStep(dt, cam);
   };
+  // The weather dims the sun and the sky light, pulls the fog in and tints it, leans the sky to its overcast and
+  // lights everything for a moment under lightning; the sky is repainted only when how it looks changes.
+  function weatherApply(wl){
+    if(!wl) return;
+    if(wb && wb.setGround && wl.ground) wb.setGround(wl.ground.snow, wl.ground.wet);   // snow lying, wet streets
+    var f = wl.flash || 0, base = night ? 0x0f1f30 : 0xb8dcf2, tint = night ? HQV.hqWeather.lerpHex(wl.tint, 0, 0.84) : wl.tint;
+    hemi.intensity = (night ? 1.3 : 2.4)*(1 - wl.dim*0.45) + f*3.5;
+    sun.intensity = (night ? 0.7 : 2.4)*(1 - wl.dim*0.85) + f*1.2;
+    fog.near = wl.fogNear; fog.far = Math.max(wl.fogFar, wl.fogNear + 40);
+    fog.color.setHex(HQV.hqWeather.lerpHex(base, tint, wl.tintK));
+    if(f > 0.05) fog.color.lerp(new THREE.Color(0xdfe8ff), f*0.45);
+    var key = (night ? "n" : "d") + Math.round(wl.tintK*40) + ":" + wl.tint + ":" + Math.round(f*10) + ":" + (wl.cloud > 0.75 ? 1 : 0);
+    if(key !== wxKey){ wxKey = key; paintSky(night, wl); }
+  }
   w.setTime(night);
   return w;
 };

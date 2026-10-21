@@ -36,7 +36,8 @@ var ID = "claude-hq@1", URL = "/api/arena/world/claude-hq@1", IDB = {db: "hq-wor
 var COMMONS = "claude-hq@2";
 // the worlds the client may ask for: the fixed ones and a personal island (the dashboard checks again)
 var WORLD_RE = /^(claude-hq@[12]|user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@2)$/;
-var PACK_V = 3;   // bump whenever pack()'s output changes; cached records with another v are refetched
+var PACK_V = 4;   // bump whenever pack()'s output changes; cached records with another v are refetched
+                  // (4: v3 records could hold the 3D City's client-side claims, see cacheCopy)
 var ONE = 65536, BUCKET = 64, TRUNK = 0.45, CLEAR = 2, BLEND = 4, SIDEWALK_UP = 0.15;
 var TREE_P = {forest: 0.55, park: 0.18, residential: 0.04};
 var WALK_OLD = {street: 150, avenue: 200};   // sidewalk (cm, each side) for docs older than the walk field
@@ -159,7 +160,9 @@ function index(W){
   W.sites.forEach(function(s, i){
     var R = rectM(s);
     eachBucket(W, nb, R.x0, R.x1, R.z0, R.z1, function(b){ I.sites[b].push(i); });
-    I.padList.push({y: (s.y || 0)/100, rect: R});
+    // a site is a level pad you walk on at its y, unless it says otherwise (games/hqspectacle.js's park and
+    // landmarks only name ground and keep trees off it: you walk the terrain there)
+    if(s.pad !== false) I.padList.push({y: (s.y || 0)/100, rect: R});
   });
   I.padList.forEach(function(p, i){
     var R = p.rect;
@@ -567,6 +570,25 @@ function idbGet(idb, ms, id){
     } catch(e){ clearTimeout(t); res(null); }
   });
 }
+// What the cache keeps: W as pack() made it. The client claims ground on a packed W after it is loaded
+// (games/hqspectacle.js: a site marked `claimed`, a lot's kind with its own in `was`, W.spectacle), and the
+// IndexedDB write clones later, asynchronously: so the record gets its own copies of the lots and sites now,
+// and a cached W is cleaned of claims on the way out, else a claim made by older code would be read back and
+// trusted forever.
+function cacheCopy(W){
+  var o = Object.assign({}, W, {index: null, docView: null});
+  delete o.spectacle;
+  o.lots = (W.lots || []).map(function(l){ var c = Object.assign({}, l); if(c.was != null){ c.kind = c.was; delete c.was; } return c; });
+  o.sites = (W.sites || []).filter(function(s){ return s && !s.claimed; }).map(function(s){ return Object.assign({}, s); });
+  return o;
+}
+// a cached W read back: cleaned of claims in place (it is the record's own object, handed out as is)
+function unclaim(W){
+  delete W.spectacle; W.index = null; W.docView = null;
+  (W.lots || []).forEach(function(l){ if(l && l.was != null){ l.kind = l.was; delete l.was; } });
+  if(W.sites) W.sites = W.sites.filter(function(s){ return s && !s.claimed; });
+  return W;
+}
 function idbPut(idb, rec, id){
   if(!idb) return;
   try { Promise.resolve(idb.put(id, rec)).catch(function(){}); } catch(e){}
@@ -595,7 +617,7 @@ function revalidate(f, idb, cached, timeoutMs, id){
     return deadline(body, timeoutMs - (now() - t0), ctl).then(function(json){
       var W = api.pack(json);
       W.etag = (r.headers && r.headers.get && r.headers.get("ETag")) || null;
-      idbPut(idb, {v: PACK_V, etag: W.etag, packed: Object.assign({}, W, {index: null})}, id);   // the index is rebuilt on use
+      idbPut(idb, {v: PACK_V, etag: W.etag, packed: cacheCopy(W)}, id);   // the index is rebuilt on use
       state.cur = W;
       if(cached && cached.hash !== W.hash) state.listeners.slice().forEach(function(cb){ try { cb(W); } catch(e){} });
       return W;
@@ -619,7 +641,7 @@ function load(opts){
   var p = idbGet(idb, timeoutMs, id).then(function(rec){
     if(!f) f = function(){ return Promise.reject(new Error("no fetch")); };
     if(rec && rec.v === PACK_V && rec.packed && rec.packed.terrain){   // other v: packed by older code, refetch
-      var W = rec.packed;
+      var W = unclaim(rec.packed);
       W.etag = rec.etag || W.etag || null;
       state.cur = W;
       state.cacheMs = Math.round(now() - t0);
@@ -646,7 +668,7 @@ function cacheMs(id){ return stateOf(id || ID).cacheMs; }
 
 var api = HQV.world = {
   ID: ID, URL: URL, IDB: IDB, PACK_V: PACK_V, SIDEWALK_UP: SIDEWALK_UP, COMMONS: COMMONS, WORLD_RE: WORLD_RE,
-  pack: pack, docOf: docOf, hash32: hash32,
+  pack: pack, docOf: docOf, hash32: hash32, cacheCopy: cacheCopy,
   heightCm: heightCm, heightAt: heightAt, districtAt: districtAt, lotAt: lotAt, siteAt: siteAt,
   nearestRoad: nearestRoad, roadY: roadY, surfaceAt: surfaceAt, padOf: padOf, groundAt: groundAt,
   normalAt: normalAt, slopeAlong: slopeAlong, slopeFactor: slopeFactor, buildingRect: buildingRect,

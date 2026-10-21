@@ -777,4 +777,4 @@ html.hq-calm .hq3d-drive-read{display:block}
 .hq3d-voyage-bar{height:6px;border-radius:999px;background:var(--line);overflow:hidden}
 .hq3d-voyage-bar > span{display:block;height:100%;width:0;border-radius:inherit;background:var(--brand);transition:width .4s linear}
 .hq3d-voyage-hint{font:500 12px/1.2 var(--font);color:var(--muted)}
-@container hq3d (max-width: 700px){ .hq3d-voyage{top:140px;left:12px;right:12px;transform:none;min-width:0;max-width:none} }
+@container hq3d (max-width: 830px){ .hq3d-voyage{top:196px;left:12px;right:12px;transform:none;min-width:0;max-width:none} }

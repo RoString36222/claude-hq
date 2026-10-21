@@ -2194,6 +2194,8 @@ HQV.hqWorlds.city3d = function(c, w){
   /* ========== end AIR ========== */
 
   /* ========== PLANES (HQ 3.2): the seaplane at the dock and the prop plane at the airport (games/hqplane.js) ==========
+     (HQ 3.6: and the airliners: the narrow-body and the regional jet on remote stands at the Commons, the regional jet
+     beside an island's runway; out only at a stand or on the apron, w.planeStand)
      A seaplane moors off the main berth (the Commons' dock, your island's), facing out over the water; a prop plane
      stands at every airport (the Commons always, an island at tier 5) on the runway's apron by the threshold. hq3d flies
      them over w.planeEnv: the floor (w.heliFloor, plus the runway decks out over the water), open water and its
@@ -2212,6 +2214,10 @@ HQV.hqWorlds.city3d = function(c, w){
       runways.push({thr: E0.thr, dir: E0.dir, len: E0.len || L.runway.len, y: ly, a0: -pad, a1: (E0.len || L.runway.len) + pad, hw: (L.runway.w || 45)/2});
       var px = E0.thr[0] - E0.dir[0]*pad*0.55, pz = E0.thr[1] - E0.dir[1]*pad*0.55;
       addPlane("prop", px, ly, pz, ry0, 0x2f6f9f, 0xf2f2f2, "plane:prop:" + (ap ? ap.id : "airfield"), null);
+      // the airliners you fly (HQ 3.6): remote stands across the runway from the terminal (hqplane.commonsStands)
+      HQV.hqplane.commonsStands(L, AF).forEach(function(q){
+        addPlane(q.kind, q.x, ly, q.z, q.yaw, null, null, "plane:" + q.kind + ":" + (ap ? ap.id : "airfield"), null);
+      });
     } else if(ap && AIR){
       var end = AIR.airportEnd(ap, 0, 0, airRunwayY(W, ap)), u = end.dir, thr = end.thr, ry = Math.atan2(u[0], u[1]);
       runways.push({thr: thr, dir: u, len: end.len, y: end.y, a0: -20, a1: end.len + 25, hw: 15});
@@ -2227,6 +2233,11 @@ HQV.hqWorlds.city3d = function(c, w){
       });
       if(!spot) spot = {x: thr[0] + u[0]*60 + u[1]*12, y: end.y, z: thr[1] + u[1]*60 - u[0]*12};
       addPlane("prop", spot.x, spot.y, spot.z, ry, 0x2f6f9f, 0xf2f2f2, "plane:prop:" + ap.id, null);
+      // the regional jet (HQ 3.6; the island's 500 m runway is too short for the narrow-body): beside the runway
+      // further along, 38+ m off the centreline (its wingtips 25 m clear of the airliners' takeoff roll), facing the
+      // runway, on flat land its whole footprint long, 30 m clear of the prop plane; none if the island has no room
+      var jspot = HQV.hqplane.standBeside(thr, u, end.y, spot, function(x, z){ return (sea && !sea.land(x, z)) || blocked(x, z) ? null : groundY(x, z); });
+      if(jspot) addPlane("regional", jspot.x, jspot.y, jspot.z, jspot.yaw, null, null, "plane:regional:" + ap.id, null);
     }
     // the seaplane: on the water down the river from the main berth (the way the airline's seaplanes taxi out,
     // hqvoyage.inland), past where they tie up (45 m), facing down-river toward the sea; the clearest spot 60..200 m on
@@ -2273,9 +2284,19 @@ HQV.hqWorlds.city3d = function(c, w){
   };
   w.planeEnv = {
     floor: function(x, z){ var R0 = runwayAt(x, z), f = w.heliFloor(x, z); return R0 ? Math.max(R0.y, R0.y > f - 2 ? R0.y : f) : f; },
-    water: function(x, z){ if(runwayAt(x, z)) return false; var off = !W || Math.abs(x) > W.half || Math.abs(z) > W.half; return !!sea && (off || !sea.boat.land(x, z)); },
+    water: function(x, z){ if(runwayAt(x, z)) return false; var L0 = AF && airfield(); if(L0 && AF.floorAt(L0, x, z) != null) return false;   // (the airfield's platform: 3.6)
+      var off = !W || Math.abs(x) > W.half || Math.abs(z) > W.half; return !!sea && (off || !sea.boat.land(x, z)); },
     waterY: function(x, z){ return sea && sea.surface ? sea.surface(x, z) : (sea ? sea.y : 0); },
     runway: function(x, z){ return !!runwayAt(x, z); }
+  };
+  // an airliner may be left only at a stand (within 45 m of one of the airliners' here) or on the Commons' apron (3.6)
+  w.planeStand = function(x, z){
+    for(var i = 0; i < planeProps.length; i++){
+      var p = planeProps[i], V = HQV.hqplane && HQV.hqplane.VEHICLES[p.kind];
+      if(V && V.airliner && Math.hypot(p.home0.x - x, p.home0.z - z) < 45) return true;
+    }
+    var L = AF && airfield();
+    return !!(L && AF.onPavement && AF.onPavement(L, x, z) === "apron");
   };
   // where a crashed plane goes back to: the nearest of its kind's places here (else null: where you took it from)
   w.planeHome = function(kind, x, z){
@@ -2715,10 +2736,10 @@ HQV.hqWorlds.city3d = function(c, w){
     if(m && m.air) return airNavPlaces(m, me0).concat(list);
     // the planes you can fly (HQ 3.2): their own places, where they stand now, so Go to finds them
     planeProps.forEach(function(p){
-      var sea = p.kind !== "prop", dx = Math.sin(p.yaw + Math.PI/2)*(sea ? 0 : 7), dz = Math.cos(p.yaw + Math.PI/2)*(sea ? 0 : 7);
-      var door = {x: p.x + dx, z: p.z + dz};
-      list.push({id: p.id, kind: "plane", label: sea ? "Seaplane (fly it)" : "Prop plane (fly it)", icon: sea ? "\uD83D\uDEEB" : "\u2708\uFE0F",
-                 x: p.x, z: p.z, door: door, dist: Math.hypot(door.x - me0.x, door.z - me0.z)});
+      var sea = p.kind === "seaplane", jet = p.kind === "airliner" || p.kind === "regional", dx = Math.sin(p.yaw + Math.PI/2)*(sea ? 0 : 7), dz = Math.cos(p.yaw + Math.PI/2)*(sea ? 0 : 7);
+      var door = jet && HQV.hqplane ? HQV.hqplane.exitSpot({kind: p.kind, x: p.x, z: p.z, yaw: p.yaw}) : {x: p.x + dx, z: p.z + dz};
+      list.push({id: p.id, kind: "plane", label: sea ? "Seaplane (fly it)" : p.kind === "airliner" ? "Airliner (fly it)" : p.kind === "regional" ? "Regional airliner (fly it)" : "Prop plane (fly it)",
+                 icon: sea ? "\uD83D\uDEEB" : "\u2708\uFE0F", x: p.x, z: p.z, door: {x: door.x, z: door.z}, dist: Math.hypot(door.x - me0.x, door.z - me0.z)});
     });
     return list.sort(function(a, b){ return a.dist - b.dist; });
   }

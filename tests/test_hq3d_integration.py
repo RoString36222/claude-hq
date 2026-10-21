@@ -123,7 +123,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         self.assertIn('if((a===7 || a===8) && !hqNetCan("fly")) a = 0;', send)
         self.assertLess(send.index('hqNetCan("fly")'), send.index("var msg="))
         # others see them in it: the helicopter model at the height they send, its rotors turning
-        self.assertIn('var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop"};', src)
+        self.assertIn('var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop", 11: "regional", 12: "airliner"};', src)
         place = func_body(src, "placePeers")
         self.assertIn("HQV.hqheli.model(ctx, vk, bikeColor(u))", place)
         self.assertIn("HQV.hqheli.animate(P.bike, P.hst, dt, isNight())", place)
@@ -133,10 +133,14 @@ class LoadOrderAndProtocol(unittest.TestCase):
         # HQ 3.2: flying a plane you send a = 9 (the seaplane) / 10 (the prop plane), only to an Arena that lists "plane"
         src = read(HQ3D)
         moving = assigned_body(src, "inst.moving")
-        self.assertIn('ride.plane ? (ride.kind === "seaplane" ? 9 : 10)', moving)
+        self.assertIn('ride.plane ? (ride.kind === "seaplane" ? 9 : ride.kind === "regional" ? 11 : ride.kind === "airliner" ? 12 : 10)', moving)
         send = func_body(read(HQ_UI), "hqNetSend")
         self.assertIn('if((a===9 || a===10) && !hqNetCan("plane")) a = 0;', send)
         self.assertLess(send.index('hqNetCan("plane")'), send.index("var msg="))
+        # HQ 3.6: the airliners (11 the regional jet, 12 the narrow-body) go only to an Arena that lists "airliner",
+        # else as the prop plane (10), which the "plane" check then drops to 0 where planes are unknown too
+        self.assertIn('if((a===11 || a===12) && !hqNetCan("airliner")) a = 10;', send)
+        self.assertLess(send.index('hqNetCan("airliner")'), send.index('hqNetCan("plane")'))
         place = func_body(src, "placePeers")
         self.assertIn("HQV.hqplane.model(ctx, vk, bikeColor(u))", place)
         self.assertIn("HQV.hqplane.animate(P.bike, P.pst, dt, isNight())", place)

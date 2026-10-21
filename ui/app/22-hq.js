@@ -506,6 +506,7 @@ function hqNetSend(){
   // a car (5) or a motorbike (6) needs "drive"; without it, show a bike where bikes are known
   if((a===5 || a===6) && !hqNetCan("drive")) a = hqNetCan("ride") ? 3 : 2;
   if((a===7 || a===8) && !hqNetCan("fly")) a = 0;   // a helicopter (7 / 8) needs "fly": else you stand where it is
+  if((a===11 || a===12) && !hqNetCan("airliner")) a = 10;   // an airliner (11 the regional jet, 12 the narrow-body, HQ 3.6) needs "airliner": else a plane
   if((a===9 || a===10) && !hqNetCan("plane")) a = 0;   // a plane (9 the seaplane, 10 the prop plane, HQ 3.2) needs "plane" likewise
   var msg={type:"game", g:"hq", op:"pos", w:w.world, x:Math.round(w.x*100), z:Math.round(w.z*100),
            r:Math.round(((w.yaw*180/Math.PI)%360+360)%360), a:a};

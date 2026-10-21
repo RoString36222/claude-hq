@@ -72,6 +72,13 @@ const g5 = gains[gm]; out.on = g5.ev[g5.ev.length - 2][1];
 vol = '0'; now += 0.1; e5.set(4000, {thr: 1}); out.muted = g5.ev[g5.ev.length - 2][1];
 vol = '0.5'; now += 0.1; e5.set(4000, {thr: 1, dist: 0}); const near = g5.ev[g5.ev.length - 2][1];
 now += 0.1; e5.set(4000, {thr: 1, dist: 60}); out.far = [near, g5.ev[g5.ev.length - 2][1]];
+// an airliner's turbofans (HQ 3.6): one graph; the whine climbs with N1, the roar with the thrust
+const mj = made, oj = oscs.length, gj = gains.length, jet = E.engineSound('jet'); out.jetMade = made - mj;
+const lastV = p => { const e = p.ev.filter(x => x[0] === 'T'); return e.length ? e[e.length - 1][1] : p.value; };
+function jetAt(rpm, thr, n){ for (let i = 0; i < n; i++){ now += 1/60; jet.set(rpm, {thr}); }
+  return {fan: Math.max(...oscs.slice(oj).map(o => lastV(o.frequency))), layers: gains.slice(gj + 1).reduce((a, p) => a + lastV(p), 0)}; }
+const mj1 = made; out.jetIdle = jetAt(900, 0, 60); out.jetFull = jetAt(7600, 1, 60); out.jetPerFrame = made - mj1;
+jet.stop();
 // the catalogue's vehicles on their voices
 const cat = JSON.parse(fs.readFileSync(process.argv[4], 'utf8'));
 out.cat = {}; cat.vehicles.forEach(v => { out.cat[v.id] = [v.sound, P.voiceFor(v.spec, String(v['class']).split('.')[0] === 'bike' ? 'bike' : 'car')]; });
@@ -132,6 +139,15 @@ class EngineSound(unittest.TestCase):
         for vid, (snd, derived) in c.items():
             if not vid.startswith("starter"):
                 self.assertEqual(snd, derived, vid)          # the catalogue agrees with voiceFor
+
+    def test_jet(self):
+        o = self.o
+        self.assertGreater(o["jetMade"], 10)
+        self.assertEqual(o["jetPerFrame"], 0)                            # nodes made once
+        self.assertGreater(o["jetFull"]["fan"], o["jetIdle"]["fan"]*2.5)   # the spool whine climbs with N1
+        self.assertGreater(o["jetFull"]["layers"], o["jetIdle"]["layers"]*1.5)   # the roar grows with the thrust
+        with open(os.path.join(ROOT, "games", "hqplane.js"), encoding="utf-8") as f:
+            self.assertEqual(f.read().count('eng: "jet"'), 2)            # the narrow-body and the regional jet
 
     def test_planes_get_a_prop(self):
         with open(os.path.join(ROOT, "games", "hq3d.js"), encoding="utf-8") as f:

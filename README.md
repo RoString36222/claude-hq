@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.5.7** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.6.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -57,6 +57,13 @@ paired), published maps and work signals (off by default) add a few listed field
 - **Air.** Book a jet between airports, or a seaplane between any two docks. Fly a **helicopter** from the
   pad by your HQ, a hospital roof or the air base: **Space** climbs, **Shift** descends, **W/S** tilt,
   **A/D** turn, **E** gets in or out once landed. Other players see you flying.
+- **Fly an airliner (3.6).** A narrow-body airliner and a regional jet in your HQ's livery stand on remote
+  stands across the runway at the Commons (the regional jet also beside an island airport's runway at tier 5):
+  walk up and press **E**. **W/S** thrust (the jets take a few seconds to spool up), **A/D** steer, then bank,
+  **Up/Down** the nose (it lifts off from a runway only, past 202 km/h, 166 km/h for the regional jet),
+  **G** gear (assisted: up and down by itself), **F** flaps, **Space** brakes and, in the air, speed brakes
+  (the ground spoilers deploy by themselves on landing), **X** assisted/manual, **K** autopilot, **N** go to.
+  Land on a runway, taxi back to a stand or the apron, stop, then **E** to get out.
 - **The Commons air base.** Hangars, a radar, an attack helicopter, an aircraft carrier offshore and
   fighter jets flying over.
 - **A real airport.** An offshore airfield for the Commons: a 1.6 km runway with full markings and lights,
@@ -364,6 +371,7 @@ and feature guide.
 
 ## Changelog
 
+- **3.6.0 — Fly the airliners.** Two airliners you fly yourself: a narrow-body (the airport's 38 m twin-jet) and a regional jet (the same at 0.72), in your HQ's own livery, on remote stands on the seaward side of the Commons' runway near the 36 end (clear of the passenger jets' stands, taxiways, line-up and roll, and of the prop plane's blast pad), and the regional jet beside a tier-5 island airport's runway (its 500 m runway is too short for the narrow-body). Walk up and press E (✈ Fly the airliner); Go to lists them as Airliner (fly it) / Regional airliner (fly it). A heavy flight model in hqplane.js: slow, damped controls, jets that spool up (about 5 s from idle for the narrow-body), a long takeoff roll that lifts off from a runway only, past 202 km/h (166 km/h regional; about 580 m of the Commons' runway), gear on G and by itself when assisted, flaps, Space for the brakes on the ground and speed brakes in the air, ground spoilers on landing, runway landings only, the autopilot (K) and air navigation (N) as the prop plane, a cockpit view from the captain's seat over a glareshield, and a crash puts you back on the stand. Out only stopped at a stand or on the apron. A new `jet` engine voice: a turbofan's spool whine on N1 (it lags the thrust levers as the engines spool) under broadband roar that grows with the thrust. Others see you in it (presence a = 11 / 12) where the Arena lists the new `airliner` capability; elsewhere you show as the prop plane. Needs the Arena backend release for the new codes.
 - **3.5.7 — Engines that sound like engines.** Every engine note is now built like the real thing (still pure WebAudio, no audio files): its pitch is the firing frequency (rpm/60 × cylinders/2) of the engine it models, with its own harmonic recipe, a detuned twin for body, a half-order sub for the lumpy ones and a waveshaper for grit, behind a low-pass that opens with the revs and the throttle. A KTM 390 thumps as a single, the 1390 lopes as a V-twin, the R 1300 GS burbles as a boxer, the S 1000 RR screams to 14,000 rpm, BMW's turbo fours and sixes and twin-turbo V8s whistle and blow off when you lift, the Bugattis roar (W16) or shriek (V16) and the EVs whine. On the throttle it is louder and brighter, off it softer with crackle on the overrun for the sporty ones (deterministic, not under Calm); upshifts cut for a moment, downshifts blip; a lumpy, uneven idle; intake roar, road rumble with speed and a tyre squeal in a powerslide. Planes get a flat-six with a two-blade prop's buzz. Every engine is one node graph made once (nothing per frame) into a shared compressor, at about the old volume; muted means silent.
 - **3.5.6 — Dealership vehicles, the next layer of detail.** Look through a catalogue car's (lighter) glass and you see a cabin: stitched seats with headrests, a glowing instrument cluster and centre screen, the console and a steering wheel with spokes. Headlights get projector lenses and a DRL strip, tail lights become LED light bars, grilles and intakes a honeycomb mesh, and there are generic round badges, lettered tyre sidewalls, quad, twin or centre exhaust tips by type, side skirts, chrome or black window trim, mirror indicators, a fuel flap and lettered plates. Bikes get a full exhaust (headers, collector, end can with cap and mouth), a sprung shock with its reservoir, swingarm pivot and chain adjusters, gear and brake pedals, brake hoses and cables, fork caps, bar-end weights, knee pads, rim tape, a plate hanger and extra trellis tubes. Nearly all of it is one shared canvas texture, so draw calls are unchanged (14 a car, 8-10 a bike); sizes, seats and the rider's fit are exactly as before.
 - **3.5.5 — Dealership vehicles at full size, with more detail.** The catalogue's bikes and cars used to look toy-sized

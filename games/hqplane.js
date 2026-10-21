@@ -1,5 +1,8 @@
 /* Claude HQ: aircraft you fly (HQV.hqplane, HQ 3.2): a seaplane (the twin on floats of games/hqaircraft.js) and a small
- * prop plane (hqaircraft propPlane), registered into games/hq3d.js VEHICLES as the helicopters are (games/hqheli.js).
+ * prop plane (hqaircraft propPlane), registered into games/hq3d.js VEHICLES as the helicopters are (games/hqheli.js);
+ * HQ 3.6: two airliners (hqaircraft's twin-jet: "airliner" full size, "regional" at 0.72), heavy, spooling jets, off a
+ * runway only, auto gear and spoilers; toggleGear(st), canExit(st, atStand), exitSpot(st), and where they stand
+ * (commonsStands(L, AF), standBeside(...)).
  *
  * The physics is pure, so tests/test_hqplane.py runs it under node: no THREE, no DOM, no clock.
  *   VEHICLES        how each one flies, the shape of hq3d's VEHICLES (top, acc, lean, box, reach) plus the flight model
@@ -40,9 +43,22 @@ var VEHICLES = {
              waterDrag: 0.9, steer: 0.45, len: 16, span: 20, ceil: 1400, draft: 0.25},
   prop:     {plane: true, water: false, top: 66, acc: 7, rev: 0, lean: 0, box: [1.4, 3.6], eng: "six", reach: 5.5,
              stall: 21, vr: 24, rollMax: 0.7, rollRate: 1.7, pitchRate: 0.65, sinkMax: 4.5, groundMax: 30, gear: true,
-             brake: 5, steer: 0.9, len: 7.6, span: 10.4, ceil: 1400}
+             brake: 5, steer: 0.9, len: 7.6, span: 10.4, ceil: 1400},
+  // the airliners (HQ 3.6): hqaircraft's twin-jet, full size (the narrow-body) and at 0.72 (the regional jet). Heavy:
+  // slow springs (agile), a gentle nose (pitchTop), the jets spooling up slowly (spool), a long roll on the runway only
+  // (runwayOnly, rollQ: little rolling drag) to rotate at vr (the narrow-body 56 m/s = 202 km/h, the regional 48 m/s =
+  // 166 km/h: a real 140 / 115 kt rotate at the prop plane's scale, its 86 km/h for a real ~60 kt), landing on a runway
+  // only (groundMax 0), the gear raised and lowered by itself when assisted (autoGear), spoilers (spoil, m/s² of drag)
+  airliner: {plane: true, water: false, airliner: true, top: 120, acc: 3.6, rev: 0, lean: 0, box: [2, 19], eng: "jet", reach: 19,
+             stall: 47, vr: 56, rollMax: 0.45, rollRate: 0.6, pitchRate: 0.26, sinkMax: 3.4, groundMax: 0, gear: true, autoGear: true,
+             brake: 3.4, steer: 0.45, len: 38, span: 36, ceil: 2400, scale: 1, spool: 0.6, agile: 0.45, pitchTop: 0.2, rollQ: 0.00005,
+             runwayOnly: true, spoil: 1.4},
+  regional: {plane: true, water: false, airliner: true, top: 108, acc: 4.4, rev: 0, lean: 0, box: [1.5, 14], eng: "jet", reach: 15,
+             stall: 40, vr: 46, rollMax: 0.5, rollRate: 0.75, pitchRate: 0.3, sinkMax: 3.6, groundMax: 0, gear: true, autoGear: true,
+             brake: 3.6, steer: 0.5, len: 27.4, span: 25.9, ceil: 2400, scale: 0.72, spool: 0.75, agile: 0.55, pitchTop: 0.24, rollQ: 0.00006,
+             runwayOnly: true, spoil: 1.3}
 };
-var KINDS = ["seaplane", "prop"];
+var KINDS = ["seaplane", "prop", "airliner", "regional"];
 var H = 1/120;            // the sub-step (s)
 var GE = 9;               // m: ground effect below this height
 var STEP = 1.2;           // m: a rise in what is under you bigger than this is something solid in the way
@@ -61,7 +77,7 @@ function newState(kind, x, y, z, yaw){
   kind = VEHICLES[kind] ? kind : "prop";
   return {kind: kind, x: +x || 0, y: +y || 0, z: +z || 0, yaw: wrapPi(yaw), speed: 0, vx: 0, vy: 0, vz: 0, gamma: 0, gV: 0,
           pitch: 0, pV: 0, roll: 0, rV: 0, cmd: 0, thr: 0, rpm: 0, ground: true, water: !!VEHICLES[kind].water, agl: 0,
-          gear: 1, gearUp: false, flaps: 0, stall: false, crashed: null, acc: 0, t: 0, rate: 0};
+          gear: 1, gearUp: false, gearMan: false, spoil: 0, flaps: 0, stall: false, crashed: null, acc: 0, t: 0, rate: 0};
 }
 
 // one step of dt in whole sub-steps -> events
@@ -84,17 +100,24 @@ function sub(st, inp, env, ev){
   st.t += h;
   // the throttle you set, the engine spooling after it; the gear travels in 3 s
   st.thr = clamp(st.thr + thrIn*0.8*h, 0, 1);
-  st.rpm += (Math.max(0.12, st.thr) - st.rpm)*(1 - Math.exp(-2.2*h));
+  // (a jet spools up slowly, slowest from idle: about 5 s from idle to 90% for the narrow-body, against the prop's 1)
+  st.rpm += (Math.max(0.12, st.thr) - st.rpm)*(1 - Math.exp(-(V.spool ? V.spool*(0.35 + st.rpm) : 2.2)*h));
   st.gear = clamp(st.gear + (st.gearUp && V.gear ? -h/3 : h/3), 0, 1);
   if(!V.gear) st.gear = 1;
   var thrust = V.acc*clamp((st.rpm - 0.12)/0.88, 0, 1), k = V.acc/(V.top*V.top);
   var dragX = 1 + 0.25*st.flaps + (V.gear ? 0.15*st.gear : 0);
+  // spoilers (airliners): Space in the air is the speed brake; on the ground they deploy by themselves at idle (the
+  // ground spoilers after touchdown) and stow when you open the throttle
+  if(V.spoil){
+    var sGoal = st.ground ? (st.thr < 0.3 && st.speed > 3 ? 1 : 0) : (inp.brake ? 1 : 0);
+    st.spoil = clamp(st.spoil + (sGoal > st.spoil ? 1.5 : -1)*h, 0, 1);
+  } else st.spoil = 0;
   if(st.ground) return groundSub(st, V, env, ev, thrIn, pIn, rIn, assist, thrust, k*dragX, floor, water, runway, waterY, inp);
 
   // (over open water the surface is the water itself, less the floats' draft: not the floor, which keeps helicopters a
   // little above the waves)
   var dr = V.draft || 0, f0 = floor(st.x, st.z), wet = water(st.x, st.z), surf = wet ? waterY(st.x, st.z) - dr : f0;
-  var agl = st.y - surf, vs = stallOf(V, st, agl), s = st.speed, eff = liftShare(s, vs);
+  var agl = st.y - surf, vs = stallOf(V, st, agl), s = st.speed, eff = liftShare(s, vs), ag = V.agile || 1;
   // the stall: below stall speed the nose drops of itself (gently) until the speed comes back
   var stalled = s < vs;
   if(stalled && !st.stall) ev.push({type: "stall"});
@@ -102,7 +125,7 @@ function sub(st, inp, env, ev){
   // bank: assisted holds what A / D ask (up to rollMax), level when let go; manual rolls at rollRate
   if(assist){
     st.roll = wrapPi(st.roll);                                       // (rolled over in manual: it rights itself)
-    var rs = spring(st.roll, st.rV, -rIn*V.rollMax, 3.2, h);
+    var rs = spring(st.roll, st.rV, -rIn*V.rollMax, 3.2*ag, h);
     st.roll = rs[0]; st.rV = rs[1];
   } else { st.roll = wrapPi(st.roll - rIn*V.rollRate*h); st.rV = 0; }
   // pitch: assisted moves an attitude command with Up / Down and eases it back to level flight (the attitude that holds
@@ -111,22 +134,22 @@ function sub(st, inp, env, ev){
   // nose low enough to hold 1.15 stall speed: stall protection)
   var level = clamp(0.05 + (1 - eff)*0.42/Math.max(eff, 0.25), 0.05, 0.4) + 0.06*Math.abs(Math.sin(st.roll));
   if(assist){
-    var top = 0.1 + 0.45*clamp((s - vs*1.15)/(vs*0.7), 0, 1);
+    var top = 0.1 + (V.pitchTop != null ? V.pitchTop : 0.45)*clamp((s - vs*1.15)/(vs*0.7), 0, 1);
     if(pIn) st.cmd = clamp(st.cmd + pIn*V.pitchRate*h, -0.45, Math.max(top, Math.min(st.cmd, 0.55)));
     else st.cmd += (level - st.cmd)*(1 - Math.exp(-0.9*h));
     if(st.cmd > top) st.cmd += (top - st.cmd)*(1 - Math.exp(-1.5*h));
   } else st.cmd = clamp(st.pitch + pIn*V.pitchRate*h*3, -1.3, 1.3);
   var pGoal = stalled ? Math.min(st.cmd, -0.18) : st.cmd;
-  var ps = spring(st.pitch, st.pV, pGoal, stalled ? 1.6 : (assist ? 3 : 8), h); st.pitch = ps[0]; st.pV = ps[1];
+  var ps = spring(st.pitch, st.pV, pGoal, (stalled ? 1.6 : (assist ? 3 : 8))*ag, h); st.pitch = ps[0]; st.pV = ps[1];
   // the flight path follows the nose as far as lift allows; without lift it sags; ground effect cushions it
   var gGoal = (st.pitch - 0.05)*eff - (1 - eff)*0.42;
   if(agl < GE && gGoal < 0) gGoal *= 0.35 + 0.65*agl/GE;
-  var gs = spring(st.gamma, st.gV, gGoal, 2.6, h); st.gamma = gs[0]; st.gV = gs[1];
+  var gs = spring(st.gamma, st.gV, gGoal, 2.6*(ag < 1 ? 0.5 + 0.5*ag : 1), h); st.gamma = gs[0]; st.gV = gs[1];
   // turning: coordinated with the bank, as lift allows
   st.rate = -G*Math.sin(st.roll)/Math.max(s, 12)*eff;
   st.yaw = wrapPi(st.yaw + st.rate*h);
   // airspeed: thrust, drag, and the slope you fly
-  s = Math.max(0, s + (thrust - k*dragX*s*s - G*Math.sin(st.gamma))*h);
+  s = Math.max(0, s + (thrust - k*dragX*s*s - (V.spoil ? V.spoil*0.6*st.spoil : 0) - G*Math.sin(st.gamma))*h);
   st.speed = s;
   var cg = Math.cos(st.gamma);
   st.vx = s*cg*Math.sin(st.yaw); st.vz = s*cg*Math.cos(st.yaw); st.vy = s*Math.sin(st.gamma);
@@ -139,11 +162,19 @@ function sub(st, inp, env, ev){
     var gentle = sink < V.sinkMax && Math.abs(wrapPi(st.roll)) < 0.4 && st.pitch > -0.2;
     var ok = gentle && (V.water ? (wn || s < V.groundMax) : (!wn && st.gear > 0.95 && (runway(nx, nz) || (s < V.groundMax && flat))));
     if(!ok){ crash(st, ev, !gentle ? "hard" : wn ? "water" : st.gear < 0.95 ? "gear" : "rough"); return; }
-    st.y = sn; st.ground = true; st.water = wn; st.vy = 0; st.gamma = 0; st.gV = 0; st.stall = false; st.cmd = 0;
+    st.y = sn; st.ground = true; st.water = wn; st.vy = 0; st.gamma = 0; st.gV = 0; st.stall = false; st.cmd = 0; st.gearMan = false;
     ev.push({type: "land", hard: sink > 2.5, water: wn, v: s});
     if(wn) ev.push({type: "splash"});
   }
   st.agl = st.y - sn;
+  // assisted, an airliner's gear comes up once it climbs away (30 m, climbing) and down on the way in (under 150 m and
+  // descending, or slow); G takes it over until the next landing (toggleGear)
+  if(V.autoGear && assist && !st.gearMan){
+    var want = st.gearUp;
+    if(st.gearUp && st.agl < 150 && (st.vy < -0.5 || s < V.stall*1.2)) want = false;
+    else if(!st.gearUp && st.agl > 30 && st.vy > 1.5) want = true;
+    if(want !== st.gearUp){ st.gearUp = want; ev.push({type: "gear", up: want, auto: true}); }
+  }
 }
 // rolling on wheels or floats: steer, brake, accelerate; past vr Up lifts off
 function groundSub(st, V, env, ev, thrIn, pIn, rIn, assist, thrust, kd, floor, water, runway, waterY, inp){
@@ -152,7 +183,8 @@ function groundSub(st, V, env, ev, thrIn, pIn, rIn, assist, thrust, kd, floor, w
   var steer = rIn*V.steer*clamp(s/4, 0.3, 1)*(1 - clamp((s - 18)/24, 0, 0.75));
   st.rate = steer; st.yaw = wrapPi(st.yaw + steer*h);
   var brake = (inp.brake || (thrIn < 0 && st.thr <= 0)) && !wet && V.brake ? V.brake : 0;
-  var roll = wet ? V.waterDrag*(s > 3 ? 1 - clamp((s - 12)/20, 0, 0.7) : 1) + 0.002*s*s : 0.25 + 0.0015*s*s;   // floats get on the step
+  var roll = wet ? V.waterDrag*(s > 3 ? 1 - clamp((s - 12)/20, 0, 0.7) : 1) + 0.002*s*s : 0.25 + (V.rollQ != null ? V.rollQ : 0.0015)*s*s;   // floats get on the step
+  if(V.spoil) roll += V.spoil*st.spoil*clamp(s/30, 0, 1);                       // the ground spoilers
   s = Math.max(0, s + (thrust - kd*s*s - roll - brake)*h);
   var nx = st.x + Math.sin(st.yaw)*s*h, nz = st.z + Math.cos(st.yaw)*s*h, wn = water(nx, nz), fn = floor(nx, nz);
   var here = wet ? waterY(st.x, st.z) : floor(st.x, st.z);
@@ -170,6 +202,9 @@ function groundSub(st, V, env, ev, thrIn, pIn, rIn, assist, thrust, kd, floor, w
   var pp = spring(st.pitch, st.pV, rot + (wet ? 0.03*clamp(s/12, 0, 1) : 0), 6, h); st.pitch = pp[0]; st.pV = pp[1];
   var rr = spring(st.roll, st.rV, 0, 6, h); st.roll = rr[0]; st.rV = rr[1];
   var vr = V.vr*(1 - 0.06*st.flaps);
+  // an airliner lifts off from a runway only: past vr anywhere else it just keeps rolling (and says so, once)
+  if(V.runwayOnly && s > vr && !runway(st.x, st.z)){ if(!st.noRunway){ st.noRunway = true; ev.push({type: "norunway"}); } return; }
+  st.noRunway = false;
   if(s > vr && (pIn > 0 || (assist && s > vr + 5))){
     st.ground = false; st.water = false; st.gamma = 0.05; st.gV = 0; st.cmd = Math.max(ROT, st.pitch); st.y += 0.05;
     ev.push({type: "takeoff"});
@@ -188,11 +223,74 @@ function autopilot(st, ap){
   return {pitch: clamp(pitchErr*4, -1, 1), roll: Math.abs(e) < 0.01 ? 0 : roll*(V.rollMax > 0 ? 1 : 0)};
 }
 
+// G (HQ 3.6): the gear up or down -> {ok, up, why}. Not on the ground; with auto gear (assisted airliners) a G press
+// takes it over until the next landing.
+function toggleGear(st){
+  var V = st && (VEHICLES[st.kind] || VEHICLES.prop);
+  if(!st || !V.gear) return {ok: false, why: "floats"};
+  if(st.ground && !st.gearUp) return {ok: false, why: "ground"};
+  st.gearUp = !st.gearUp; st.gearMan = true;
+  return {ok: true, up: st.gearUp};
+}
+// may you get out? stopped on the ground (or the water); an airliner also only at a stand or on the apron (atStand,
+// from the world: hqcity3d's w.planeStand)
+function canExit(st, atStand){
+  if(!st || !st.ground || st.speed >= 2) return false;
+  var V = VEHICLES[st.kind] || VEHICLES.prop;
+  return !V.airliner || !!atStand;
+}
+// where you step out of an airliner: down by its forward left door, 3 m out from the fuselage (model +x is LEFT)
+function exitSpot(st){
+  var V = VEHICLES[st.kind] || VEHICLES.prop, k = V.scale || 1, lx = (1.95 + 3)*k, lz = 14.6*k, c = Math.cos(st.yaw), sn = Math.sin(st.yaw);
+  return {x: st.x + lx*c + lz*sn, z: st.z - lx*sn + lz*c, yaw: st.yaw};
+}
+
+/* ---------- where the airliners stand (HQ 3.6; pure, so the tests check them against the real airfield) ---------- */
+// The Commons (games/hqairfield.js layout L): remote stands across the runway from the terminal, on the platform's
+// seaward strip near the 36 end, parked parallel to the runway facing the 36 departure way (frame u = RU + 50: the
+// wingtips at RU + 32 and RU + 68, outside the runway's shoulder at RU + 30 and inside the platform's edge at RU + 70).
+// The scheduled jets never come here: their stands, taxiways, holds and line-up are on the terminal's side, they roll
+// on the centreline (wingtips at RU + 18, 14 m off ours), the prop plane waits on the blast pad behind the threshold
+// (v -833) and the 36 glideslope aerial stands at v -480. -> [{kind, x, z, yaw}] (none without a layout)
+var COMMONS_STANDS = [["airliner", 50, -725], ["regional", 50, -650]];
+function commonsStands(L, AF){
+  var f = L && L.frame, RU = f && f.RU, E0 = L && L.runway && L.runway.ends && L.runway.ends[0];
+  if(RU == null || !E0 || !AF || !AF.toWorld) return [];
+  var yaw = Math.atan2(E0.dir[0], E0.dir[1]);
+  return COMMONS_STANDS.map(function(q){ var o = AF.toWorld(L, RU + q[1], q[2]); return {kind: q[0], x: o[0], z: o[1], yaw: yaw}; });
+}
+// An island's regional jet (its 500 m runway is too short for the narrow-body): beside the runway (threshold thr,
+// unit u along it, deck height y) 60..210 m along and 38..46 m off the centreline (its wingtips 25 m clear of the
+// airliners' takeoff roll, all of it well past their stand 25 m behind the threshold), on the side away from the prop
+// plane (prop {x, z}) first and 30 m clear of it, facing the runway; its nose, tail, wingtips and between on usable
+// ground within 1.2 m of y: ground(x, z) -> its height, or null (water, a building). -> {x, y, z, yaw} or null
+function standBeside(thr, u, y, prop, ground){
+  var V = VEHICLES.regional, hl = V.len/2, hs = V.span/2, n = [u[1], -u[0]], out = null;
+  var ps = prop ? ((prop.x - thr[0])*n[0] + (prop.z - thr[1])*n[1] < 0 ? -1 : 1) : 1;
+  [60, 110, 160, 210].some(function(a){
+    return [-ps, ps].some(function(sg){
+      return [38, 42, 46].some(function(off){
+        var x = thr[0] + u[0]*a + n[0]*off*sg, z = thr[1] + u[1]*a + n[1]*off*sg, f = [-n[0]*sg, -n[1]*sg];
+        if(prop && Math.hypot(x - prop.x, z - prop.z) < 30 + hl) return false;
+        var ok = [[0, 0], [hl, 0], [-hl, 0], [0, hs], [0, -hs], [hl*0.7, hs*0.6], [-hl*0.7, -hs*0.6]].every(function(d){
+          var gy = ground(x + f[0]*d[0] + f[1]*d[1], z + f[1]*d[0] - f[0]*d[1]);
+          return gy != null && Math.abs(gy - y) < 1.2;
+        });
+        if(ok) out = {x: x, y: ground(x, z), z: z, yaw: Math.atan2(f[0], f[1])};
+        return ok;
+      });
+    });
+  });
+  return out;
+}
+
 /* ---------- the meshes (THREE only from here on) ---------- */
 // hqaircraft's model with the pilot's anchors; g's origin is the surface under it (the water at the floats' bottom,
 // the ground under the wheels)
+var panelGeo = null, panelMat = null;
 function model(c, kind, color, accent){
   var CR = HQV.hqAircraft, THREE = c.THREE;
+  if(VEHICLES[kind] && VEHICLES[kind].airliner) return jetModel(c, kind, color, accent);
   var brand = color != null ? color : (kind === "seaplane" ? 0xd0262b : 0x2f6f9f);
   var P = kind === "seaplane" ? CR.seaplane(c, {brand: brand}) : CR.propPlane(c, {brand: brand}), g = P.g;
   function anchor(x, y, z){ var o = new THREE.Object3D(); o.position.set(x, y, z); g.add(o); return o; }
@@ -203,6 +301,22 @@ function model(c, kind, color, accent){
            feet: [anchor(sx + 0.12, sy - 0.1, sz + 0.85), anchor(sx - 0.12, sy - 0.1, sz + 0.85)], lean: 0, riderK: 0.82, hats: false,
            phase: 0, brake: function(){}};
   return B;
+}
+// an airliner: hqaircraft's twin-jet in the HQ's livery (its --brand; a tail colour when given), scaled for the
+// regional jet; the pilot in the left seat up in the nose, a glareshield in front of them for the cockpit view
+function jetModel(c, kind, color, accent){
+  var CR = HQV.hqAircraft, THREE = c.THREE, V = VEHICLES[kind], k = V.scale || 1;
+  var brand = color != null ? color : CR.brandHex(), P = CR.airliner(c, {brand: brand}), g = P.g;
+  if(accent != null && accent !== brand && P.setLivery) P.setLivery(brand, accent);
+  g.scale.setScalar(k);
+  var yc = 3.4;
+  if(!panelGeo){ panelGeo = new THREE.BoxGeometry(1.3, 0.22, 0.42); panelMat = new THREE.MeshStandardMaterial({color: 0x15181d, roughness: 0.8}); }
+  var pan = new THREE.Mesh(panelGeo, panelMat); pan.position.set(0, yc + 0.28, 17.95); pan.name = kind + "-glareshield"; g.add(pan);
+  function anchor(x, y, z){ var o = new THREE.Object3D(); o.position.set(x, y, z); g.add(o); return o; }
+  var sx = 0.5, sy = yc - 0.55, sz = 17.0;
+  return {g: g, kind: kind, P: P, seat: anchor(sx, sy, sz), grips: [anchor(sx + 0.18, sy + 0.42, sz + 0.5), anchor(sx - 0.18, sy + 0.42, sz + 0.5)],
+          feet: [anchor(sx + 0.12, sy - 0.1, sz + 0.75), anchor(sx - 0.12, sy - 0.1, sz + 0.75)], lean: 0, riderK: 0.82, hats: false,
+          phase: 0, brake: function(){}, jet: true};
 }
 function animate(B, st, dt, night){
   if(!B || !B.P) return;
@@ -216,5 +330,6 @@ function animate(B, st, dt, night){
 }
 
 HQV.hqplane = {VEHICLES: VEHICLES, KINDS: KINDS, H: H, GE: GE, newState: newState, step: step, liftShare: liftShare,
-               autopilot: autopilot, model: model, animate: animate, spring: spring};
+               autopilot: autopilot, toggleGear: toggleGear, canExit: canExit, exitSpot: exitSpot, commonsStands: commonsStands,
+               standBeside: standBeside, COMMONS_STANDS: COMMONS_STANDS, model: model, animate: animate, spring: spring};
 })();

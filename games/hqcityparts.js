@@ -150,56 +150,58 @@ function bikePark(c, parent, cx, y, cz, rot){
 function lamplit(gr){ gr.traverse(function(o){ var m = o.material; if(m && m.color && m.emissive && !(m.emissiveIntensity > 0.5)){
   m.emissive.copy(m.color); m.emissiveIntensity = 0.28; } }); }
 
-/* ---------- beside every HQ: the garage, its car, motorbike and bicycle ---------- */
-// Built into g (the HQ's group, the lot's frame: the door faces +z, the road is at z 11) in the
-// HQ's colours col {paint, accent}, from HQV.hqLotExtras. rot is the lot's turn and toWorld(lx, lz)
-// -> {x, z} maps the lot's frame to the world. Returns {items: the car, motorbike and bicycle for
-// w.bikes (hq3d.js drives and rides them), glows: the garage's lamp glows, car: {g}}. apronEnd:
-// the lot-local z the apron runs to (default 11, the legacy City's road). at: where the garage stands on a v2 lot
-// {x, z, s} (its middle; s -1: the car and bikes mirrored to its other side), else the legacy spot.
-function lotExtras(c, g, col, rot, toWorld, apronEnd, uid, at){
-  var THREE = c.THREE, PI = c.PI, mat = c.mat, emis = c.emis, box = c.box, sph = c.sph;
-  var X = HQV.hqLotExtras, G = X.garage, K = X.car, Bk = X.bike, items = [], glows = [];
+/* ---------- beside every HQ: the car-lift bay down to its B1 basement garage [basement 3.4] ---------- */
+// Built into g (the HQ's group, the lot's frame: the door faces +z, the road is at z 11) in the HQ's colours
+// col {paint, accent}, on the old garage's footprint (HQV.hqLotExtras.garage). rot is the lot's turn and
+// toWorld(lx, lz) -> {x, z} maps the lot's frame to the world. apronEnd: the lot-local z the apron runs to
+// (default 11). at: where the bay stands on a v2 lot {x, z, s}, else the legacy spot. mine: your own HQ (its
+// door goes down to "@basement"; anyone else's is a visit). The car, motorbike and bicycle moved down to the
+// basement's showcase (games/hqbasement.js): items is []. Returns {items, glows, car: null, garage: {top,
+// walls, on}, hits, doors, door, lift}: lift is HQV.hqCarLift.mesh's {update(state)} when that is loaded.
+function lotExtras(c, g, col, rot, toWorld, apronEnd, uid, at, mine){
+  var THREE = c.THREE, PI = c.PI, mat = c.mat, emis = c.emis, box = c.box;
+  var X = HQV.hqLotExtras, G = X.garage, glows = [], hits = [];
   var AE = apronEnd != null ? apronEnd : 11, sx = at && at.s === -1 ? -1 : 1, ox = at ? at.x - sx*G.x : 0, oz = at ? at.z - G.z : 0;
-  function lx(x){ return ox + sx*x; }                  // a legacy x (the garage's frame) on this lot
-  var wallM = mat(col.paint, {roughness: 0.8}), trimM = emis(col.accent, col.accent, 0.35);
+  function lx(x){ return ox + sx*x; }
   var gg = new THREE.Group(); gg.position.set(lx(G.x), 0, oz + G.z); g.add(gg);
-  // the garage: a floor, three walls, a flat roof, the roller door rolled up under the lintel
-  box(G.w, 0.06, G.d, emis(0x4a545e, 0xfff1d6, 0.05, {roughness: 0.9}), 0, 0.03, 0, gg);   // the floor, lit by its lamp
-  // the walls, and the top (roof, lintel, rolled-up door): the top fades while you are inside,
-  // the whole garage while it stands between you and the camera (fadeGarages in hqcity.js)
   var walls = new THREE.Group(), top = new THREE.Group(); gg.add(walls); gg.add(top);
-  box(G.w, G.h, 0.2, wallM, 0, G.h/2, -G.d/2 + 0.1, walls);
-  box(0.2, G.h, G.d, wallM, -G.w/2 + 0.1, G.h/2, 0, walls);
-  box(0.2, G.h, G.d, wallM, G.w/2 - 0.1, G.h/2, 0, walls);
-  box(G.w + 0.3, 0.2, G.d + 0.3, mat(0x3a4552, {roughness: 0.7}), 0, G.h + 0.1, 0, top);
-  box(G.w, 0.45, 0.2, mat(col.paint, {roughness: 0.8}), 0, G.h - 0.22, G.d/2 - 0.1, top);   // the lintel over the opening
-  box(G.w + 0.3, 0.12, 0.06, trimM, 0, G.h - 0.06, G.d/2 + 0.02, top);              // accent strip
-  var slats = c.canvasTex(64, 32, function(gx){ gx.fillStyle = "#c9d1d9"; gx.fillRect(0, 0, 64, 32); gx.fillStyle = "rgba(0,0,0,.3)";
-    for(var y = 3; y < 32; y += 6) gx.fillRect(0, y, 64, 2); });
-  var roll = new THREE.Mesh(new THREE.BoxGeometry(G.w - 0.45, 0.38, 0.4), new THREE.MeshStandardMaterial({map: slats.t, roughness: 0.6, metalness: 0.3}));
-  roll.position.set(0, G.h - 0.62, G.d/2 - 0.35); roll.castShadow = true; top.add(roll);              // the door, rolled up
-  sph(0.1, emis(0xfff1d6, 0xffd9a0, 2), 0, G.h - 0.12, G.d/2 + 0.2, gg);
+  var frameM = mat(0x2a3139, {metalness: 0.85, roughness: 0.3}), trimM = emis(col.accent, col.accent, 0.6);
+  var glassM = mat(0x9fd6ee, {transparent: true, opacity: 0.22, roughness: 0.05, metalness: 0.2});
+  var lift = null, CL = HQV.hqCarLift;
+  if(CL && typeof CL.mesh === "function"){
+    try { lift = CL.mesh(c, {w: G.w, d: G.d, h: G.h, col: col}); } catch(e){ lift = null; }
+    if(lift && lift.g) walls.add(lift.g); else lift = null;
+  }
+  if(!lift){
+    // the shaft (no car lift module): a sunk platform with chevrons, glass sides and back, steel posts
+    var chev = c.canvasTex(128, 128, function(gx){ gx.fillStyle = "#1b2128"; gx.fillRect(0, 0, 128, 128); gx.fillStyle = "#f2b234";
+      for(var k = -1; k < 5; k++){ gx.beginPath(); gx.moveTo(0, k*32); gx.lineTo(64, k*32 + 24); gx.lineTo(128, k*32); gx.lineTo(128, k*32 + 10); gx.lineTo(64, k*32 + 34); gx.lineTo(0, k*32 + 10); gx.fill(); } });
+    var plat = new THREE.Mesh(new THREE.BoxGeometry(G.w - 0.6, 0.08, G.d - 0.4), new THREE.MeshStandardMaterial({map: chev.t, roughness: 0.55, metalness: 0.4}));
+    plat.position.set(0, 0.04, 0); plat.receiveShadow = true; walls.add(plat);
+    box(G.w, 0.14, 0.2, frameM, 0, 0.07, G.d/2 - 0.1, walls);                     // the sill
+    box(0.06, G.h, G.d - 0.2, glassM, -G.w/2 + 0.1, G.h/2, 0, walls);
+    box(0.06, G.h, G.d - 0.2, glassM, G.w/2 - 0.1, G.h/2, 0, walls);
+    box(G.w - 0.2, G.h, 0.06, glassM, 0, G.h/2, -G.d/2 + 0.1, walls);
+    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function(q){ box(0.2, G.h, 0.2, frameM, q[0]*(G.w/2 - 0.1), G.h/2, q[1]*(G.d/2 - 0.1), walls); });
+  }
+  // the canopy over it: a slab with an accent edge and the CAR LIFT sign (the same either way)
+  box(G.w + 0.4, 0.22, G.d + 0.4, mat(0x1f262e, {roughness: 0.6, metalness: 0.4}), 0, G.h + 0.11, 0, top);
+  box(G.w + 0.42, 0.08, 0.06, trimM, 0, G.h + 0.02, G.d/2 + 0.2, top);
+  var sign = c.canvasTex(512, 96, function(gx){ gx.fillStyle = "#0a1016"; gx.fillRect(0, 0, 512, 96); gx.fillStyle = "#f2b234"; gx.font = "800 52px system-ui, sans-serif";
+    gx.textAlign = "center"; gx.fillText(mine ? "\u25bc CAR LIFT \u00b7 B1" : "CAR LIFT", 256, 66); });
+  var sg = c.screen(G.w*0.62, 0.62, sign.t); sg.position.set(0, G.h + 0.55, G.d/2 + 0.22); top.add(sg);
   var gl = c.glow(0xffd9a0, 2.2, 0.7); gl.position.set(0, G.h - 0.2, G.d/2 + 0.45); gg.add(gl); glows.push(gl);
-  var inside = c.glow(0xfff1d6, 3.0, 0.35); inside.position.set(0, G.h - 0.4, 0); gg.add(inside); glows.push(inside);
-  // the apron from the door to the road
+  var inside = c.glow(0xbfe9ff, 3.0, 0.35); inside.position.set(0, G.h - 0.4, 0); gg.add(inside); glows.push(inside);
+  // the apron from the bay to the road, with two guide lines in the accent
   var apron = new THREE.Mesh(new THREE.PlaneGeometry(G.w - 0.4, Math.max(0.1, AE - (oz + G.z + G.d/2))), mat(0x323a43, {roughness: 0.9}));
   apron.rotation.x = -PI/2; apron.position.set(lx(G.x), 0.03, (oz + G.z + G.d/2 + AE)/2); apron.receiveShadow = true; g.add(apron);
-  // the car, parked inside, nose out: its body in the HQ's paint with stripes in its accent
-  var Cm = c.car(col.paint, col.accent, col.plate); Cm.g.position.set(lx(K.x), 0, oz + K.z); Cm.g.rotation.y = K.yaw; g.add(Cm.g);
-  lamplit(Cm.g);
-  var kp = toWorld(lx(K.x), oz + K.z), car = {g: Cm.g};
-  // (id: the same prop after a rebuild; stay: hq3d.js parks it wherever you get off)
-  uid = "lot:" + uid + ":";
-  items.push({g: Cm.g, x: kp.x, z: kp.z, yaw: K.yaw + rot, color: col.paint, accent: col.accent, kind: "car", id: uid + "car", stay: true, plate: col.plate});
-  // its motorbike and its bicycle beside the car, in the HQ's accent
-  var Mo = X.moto, Mm = c.moto(col.accent, col.paint, col.plate); Mm.g.position.set(lx(Mo.x), 0, oz + Mo.z); Mm.g.rotation.y = Mo.yaw; g.add(Mm.g);
-  var mp = toWorld(lx(Mo.x), oz + Mo.z);
-  lamplit(Mm.g); items.push({g: Mm.g, x: mp.x, z: mp.z, yaw: Mo.yaw + rot, color: col.accent, accent: col.paint, kind: "moto", id: uid + "moto", stay: true, plate: col.plate});
-  var Bm = c.bike(col.accent, col.paint); Bm.g.position.set(lx(Bk.x), 0, oz + Bk.z); Bm.g.rotation.y = Bk.yaw; g.add(Bm.g);
-  var bp = toWorld(lx(Bk.x), oz + Bk.z); lamplit(Bm.g);
-  items.push({g: Bm.g, x: bp.x, z: bp.z, yaw: Bk.yaw + rot, color: col.accent, accent: col.paint, id: uid + "bike", stay: true});   // a bicycle: no kind, as hq3d.js expects
-  return {items: items, glows: glows, car: car, garage: {top: top, walls: walls, on: 0}};
+  // the door: drive (or walk) onto the platform. Yours goes down; anyone else's is their HQ, as a visitor
+  var fp = toWorld(lx(G.x), oz + G.z + 0.4);
+  var door = {view: mine ? "@basement" : "visit:" + uid, kind: "carlift", userId: uid, label: "Car lift",
+              tip: mine ? "Car lift: down to your B1 basement garage (drive on, or walk on)" : "Their car lift: visit their HQ",
+              front: new THREE.Vector3(fp.x, 0, fp.z)};
+  [sg].forEach(function(o){ o.userData.door = door; hits.push(o); });
+  return {items: [], glows: glows, car: null, garage: {top: top, walls: walls, on: 0}, hits: hits, doors: [door], door: door, lift: lift};
 }
 
 HQV.hqCityParts = {fountain: fountain, bikePark: bikePark, skatePark: skatePark, lotExtras: lotExtras, lamplit: lamplit, FOUNT_R: FOUNT_R};

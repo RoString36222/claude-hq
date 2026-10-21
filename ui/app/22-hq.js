@@ -18,11 +18,11 @@ function hqWebGL(){ try { return !!document.createElement("canvas").getContext("
 // pure sim before its drawing), traffic and transit, the sea and the boats, and island travel, all
 // before the City that wires them (games/hqcity3d.js). Navigation (3.1): the road router, the minimap, the
 // route's chevrons and the Go to panel / route banner, also before the City.
-var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqlobby","hqbase","hqskate","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
+var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqlobby","hqcarlift","hqgaragemgr","hqbasementfx","hqbasement","hqbase","hqskate","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
                   "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqshowroom","hqgarage", "hqdealer","hqcall","hqtravel","hqvoyage","hqships","hqbridges","hqair","hqaircraft","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcarpark","hqcity3d"];
 // The 3D City's own files: if one fails, the classic City still works (games/hq3d.js falls back to it);
 // a Cities part that fails only takes its own feature out of the 3D City.
-var HQ_SCRIPTS_3D = {world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
+var HQ_SCRIPTS_3D = {hqcarlift:1, hqgaragemgr:1, hqbasementfx:1, hqbasement:1, world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
                      hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqshowroom:1, hqgarage:1, hqdealer:1, hqcall:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqair:1, hqaircraft:1, hqairbase:1,
                      hqnav:1, hqminimap:1, hqroutefx:1, hqnavui:1, hqrail:1, hqcarpark:1};
 // ?hqsmoke=1 (tools/ui_smoke.py, tools/hq_shots.py): HQ opens straight into the City with three synthetic HQs.
@@ -107,7 +107,7 @@ function hqRenderWhere(){
   var city=!HQ3D.visit && hqCityOn();
   if(!HQ3D.visit && HQ3D.world==="city"){
     var r=document.createElement("button"); r.type="button"; r.className="hbtn hq3d-jump"; r.textContent="🏠 Return to HQ";
-    r.title="Back to your front door, with your car, motorbike and bicycle back in the garage (T)";
+    r.title="Back to your front door, with your car, motorbike and bicycle back in your basement garage (B1) (T)";
     r.addEventListener("click", hqReturnHome); box.appendChild(r);
   }
   if(!HQ3D.visit && HQ3D.world!=="city"){

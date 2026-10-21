@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.2.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.4.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -339,6 +339,14 @@ and feature guide.
 
 ## Changelog
 
+- **3.4.0 — HQ 3.4 — Basement Garage.** Every HQ now sits on a lavish B1 basement garage: the old garage beside
+  the tower is a glass **car lift** (drive on and you go down with your car; drive onto the pad down there and you
+  come up on the street in it), and a new **B1 lift** in the lobby takes you down on foot. Your starter car,
+  motorbike and bicycle live on turntable showcase plinths; your bought vehicles get numbered bays (more as your HQ
+  levels up). The **garage manager** (kiosks in B1 and at the common multi-storey) transfers each vehicle between
+  your private basement and the common carpark; calling a B1 vehicle (C) brings it up the car lift. Return to HQ (T)
+  puts the starters back in B1. Fixes: an owned vehicle's paint (an index), its carpark bay, and its parked spot cleared
+  once it is home.
 - **3.2.0 — The dealership.** Real cars and bikes, a dealership to get them, a garage to keep them.
   - **Real vehicles, in classes.** 32 vehicles from the first player's brands: BMW and Bugatti cars, BMW and
     KTM Duke bikes, from the KTM 390 Duke to the Bugatti Tourbillon. Every vehicle sits in a class by type

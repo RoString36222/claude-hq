@@ -141,7 +141,17 @@ function makeBuilding(c, opts){
       box(0.12, 5, 0.12, mat(0x9aa7b5), 2.2, top + 2.5, -2, baseG); beacon(2.2, top + 5.1, -2);
     } else {
       var rx = 0, rz = floorsHigh ? -0.5 : 0, rw = floorsHigh ? 6 : 9, rd = floorsHigh ? 4.6 : 7;
-      [[-rw*0.25, -rd*0.2], [rw*0.05, -rd*0.25], [rw*0.28, rd*0.15]].forEach(function(q){ box(1.1, 0.7, 0.9, mat(0x8e9aa6, {metalness: 0.5}), rx + q[0], top + 0.35, rz + q[1], baseG); });
+      if(level < 10) [[-rw*0.25, -rd*0.2], [rw*0.05, -rd*0.25], [rw*0.28, rd*0.15]].forEach(function(q){ box(1.1, 0.7, 0.9, mat(0x8e9aa6, {metalness: 0.5}), rx + q[0], top + 0.35, rz + q[1], baseG); });
+      else {   // [basement 3.4] level 10+: a rooftop helipad (a disc, its H decal, eight edge lights in one instanced mesh)
+        var hr = Math.min(rw, rd)*0.3, hx = rx + rw*0.02, hpM = mat(0x2f3740, {roughness: 0.6});
+        c.add(new THREE.Mesh(new THREE.CylinderGeometry(hr, hr, 0.08, 32), hpM), hx, top + 0.04, rz, baseG);
+        var hT = c.canvasTex(128, 128, function(g){ g.fillStyle = "#2f3740"; g.fillRect(0, 0, 128, 128); g.strokeStyle = "#f2b234"; g.lineWidth = 6; g.beginPath(); g.arc(64, 64, 56, 0, PI*2); g.stroke();
+          g.fillStyle = "#f4f6f8"; g.font = "900 78px system-ui, sans-serif"; g.textAlign = "center"; g.fillText("H", 64, 92); });
+        var hD = c.screen(hr*1.9, hr*1.9, hT.t); hD.rotation.x = -PI/2; hD.position.set(hx, top + 0.09, rz); baseG.add(hD);
+        var hL = new THREE.InstancedMesh(new THREE.SphereGeometry(0.08, 6, 4), new THREE.MeshBasicMaterial({color: 0x7fd8ff, toneMapped: false}), 8), hm = new THREE.Matrix4();
+        for(var hi = 0; hi < 8; hi++){ hm.makeTranslation(hx + Math.cos(hi*PI/4)*hr, top + 0.12, rz + Math.sin(hi*PI/4)*hr); hL.setMatrixAt(hi, hm); }
+        baseG.add(hL);
+      }
       cyl(0.7, 0.7, 1.2, mat(0x8a5a35, {roughness: 0.8}), rx - rw*0.28, top + 1.6, rz + rd*0.22, baseG, 16);
       box(0.14, 5, 0.14, mat(0x9aa7b5, {metalness: 0.6}), rx + rw*0.32, top + 2.5, rz - rd*0.3, baseG); beacon(rx + rw*0.32, top + 5.1, rz - rd*0.3);
     }

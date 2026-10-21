@@ -39,7 +39,7 @@ let RU0 = null; for(let ru = 355; ru <= 455 && RU0 == null; ru += 10) if(fits(ru
 if(RU0 == null) throw new Error('no runway fits');
 const RU = RU0, LEN = 1600, HALF = LEN/2, RW_W = 45, SH = 7.5, PAD = 60;
 const UA = RU - 110, UB = RU - 152, U_HOLD = RU - 50, U_HOLDPT = U_HOLD - 19, U_STAND = RU - 193, U_NOSE = U_STAND - 19;
-const U_CONC0 = RU - 241, U_CONC1 = RU - 223, U_SVC1 = RU - 216, V_LINK = HALF + 15, R_TURN = 40, R_LEAD = 30, R_EXIT = 300, R_JOIN = 150;
+const U_CONC0 = RU - 241, U_CONC1 = RU - 223, U_SVC = RU - 218, U_LANE_N = RU - 175, U_LANE_S = RU - 168.5, GATE_FLOOR = 5.0, V_LINK = HALF + 15, R_TURN = 40, R_LEAD = 30, R_EXIT = 300, R_JOIN = 150;
 // ---- fillets
 function arc(c, r, a0, a1, out){ const n = Math.max(2, Math.ceil(Math.abs(a1 - a0)*r/2)); for(let i = 0; i <= n; i++){ const a = a0 + (a1 - a0)*i/n; out.push([c[0] + r*Math.cos(a), c[1] + r*Math.sin(a)]); } return out; }
 // a fillet (frame coords) at corner P between incoming unit d1 and outgoing unit d2, radius R -> points from tangent-in to tangent-out
@@ -79,7 +79,7 @@ exitDefs.forEach(e => {
 });
 // ---- stands
 const stands = [];
-for(let k = 1; k <= 7; k++) stands.push({id: String(k), kind: 'contact', v: -132 + 44*(k - 1), span: 36, len: 38, nose: 19.05});
+for(let k = 1; k <= 6; k++) stands.push({id: String(k), kind: 'contact', v: -110 + 44*(k - 1), span: 36, len: 38, nose: 19.05});   // boxes inside v ±132: a vehicle lane at v ±141
 [[21, -172], [22, -198], [23, -224]].forEach(s => stands.push({id: String(s[0]), kind: 'commuter', v: s[1], span: 16, len: 16, nose: 8}));
 stands.forEach(s => {
   const u = s.kind === 'contact' ? U_STAND : RU - 183;               // commuters: nose stop at RU - 191 (inside the apron's south notch)
@@ -130,9 +130,13 @@ const out = {
     nose: wp(s.u - s.nose, s.v), stop: [wp(s.u - s.nose, s.v - 3), wp(s.u - s.nose, s.v + 3)], box: rect(s.u - s.nose - 3, s.u - s.nose + s.len + 3, s.v - s.span/2 - 4, s.v + s.span/2 + 4),
     lead: {'36': 'S' + s.id + '/36', '18': 'S' + s.id + '/18'}})),
   apron: air.apron, platform: air.apron.concat(air.main, Object.values(air.service)), service: air.service,
-  concourse: rect(U_CONC0, U_CONC1, -150, 150), serviceRoad: [wp(U_CONC1 + 3.5, -245), wp(U_CONC1 + 3.5, 245)],
+  concourse: rect(U_CONC0, U_CONC1, -150, 150),
+  // the apron service road (6 m, on the platform, outside every stand box): head-of-stand along the concourse (rotunda
+  // columns at u = concourse face + 1.2 stay clear of it), round the stand row at v ±141, north into the depot, south
+  // along the commuter stands' tails (between their boxes and B's shoulder)
+  serviceRoad: W2([[U_LANE_S, -240], [U_LANE_S, -141], [U_SVC, -141], [U_SVC, 141], [U_LANE_N, 141], [U_LANE_N, 240]]), serviceRoadW: 6,
   landside: {
-    terminal: rect(-66, 66, -18, 18), canopy: rect(-80, -66, -22, 22), skybridge: {a: wp(66, 0), b: wp(U_CONC0, 0), w: 8, floor: 6.0},
+    terminal: rect(-66, 66, -18, 18), canopy: rect(-80, -66, -19.5, 19.5), skybridge: {a: wp(66, 0), b: wp(U_CONC0, 0), w: 8, floor: GATE_FLOOR},
     forecourt: W2([[-88, -62], [-88, 62], [-120, 62], [-120, -62], [-88, -62]]), access: W2([[-146, -8], [-120, -8]]), roadW: 8,
     curb: {dropoff: W2([[-88, -20], [-88, 20]]), taxi: W2([[-88, 24], [-88, 56]]), bus: W2([[-88, -56], [-88, -24]])},
     carpark: rect(-60, -4, 30, 86), carparkBridge: W2([[-40, 18], [-40, 30]]),

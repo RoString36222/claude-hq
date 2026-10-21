@@ -27,7 +27,7 @@ static STARTED: LazyLock<Instant> = LazyLock::new(Instant::now);
 
 /// A room id prefix that marks a room as private (`PRIVATE_PREFIX`,
 /// app/rooms.py:23).
-const PRIVATE_PREFIX: &str = "r_";
+pub(crate) const PRIVATE_PREFIX: &str = "r_";
 
 struct CpuMark {
     t: f64,
@@ -92,7 +92,7 @@ fn parse_vm_rss(status: &str) -> Option<f64> {
 /// need libc, which is not a declared dependency -- the kernel reports these
 /// in USER_HZ, which is 100 on every Linux target Rust supports whatever
 /// CONFIG_HZ the kernel was built with.
-fn parse_cpu_ticks(stat: &str) -> Option<f64> {
+pub(crate) fn parse_cpu_ticks(stat: &str) -> Option<f64> {
     let fields: Vec<&str> = stat[stat.rfind(')')? + 1..].split_whitespace().collect();
     let utime: u64 = fields.get(11)?.parse().ok()?;
     let stime: u64 = fields.get(12)?.parse().ok()?;
@@ -135,7 +135,7 @@ fn cpu_pct() -> Option<f64> {
 /// Deliberately not `db::normalise_url`: that rewrites `sqlite:///./arena.db`
 /// to `sqlite:./arena.db`, after which there is no `///` left to split and
 /// `dbMb` would be permanently null.
-fn sqlite_path(url: &str) -> &str {
+pub(crate) fn sqlite_path(url: &str) -> &str {
     url.split_once("///").map(|(_, p)| p).unwrap_or(url)
 }
 

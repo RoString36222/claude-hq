@@ -1315,7 +1315,7 @@ function mount(el, api){
         d = Math.hypot(avatar.x - (b.x + hx*u), avatar.z - (b.z + hz*u)) - 0.9;
         if(d > 1.2) return;                       // close by its door, not through the garage wall
       }
-      var reach = VEHICLES[b.kind] && VEHICLES[b.kind].reach ? VEHICLES[b.kind].reach : VEHICLES[b.kind] && VEHICLES[b.kind].boat ? 4 : 1.7;   // a boat lies off the quay
+      var reach = b.reach || (VEHICLES[b.kind] && VEHICLES[b.kind].reach ? VEHICLES[b.kind].reach : VEHICLES[b.kind] && VEHICLES[b.kind].boat ? 4 : 1.7);   // a boat lies off the quay; b.reach: a B1 showcase plinth [basement 3.5.1]
       if(b.y != null && !b.float && Math.abs(b.y - avatar.hy) > 3) return;      // a helicopter up on a roof (not a hull: the quay stands over it)
       if(d < reach && d < bd){ bd = d; best = i; } });
     return best;
@@ -3337,7 +3337,15 @@ function mount(el, api){
       var old = propOf(o.key, w); if(old) propRemove(old);
       o.world = worldKey(w); o.stored = false; o.x = sp.x; o.z = sp.z; o.yaw = sp.yaw || 0;
       b = propMake(o, w, sp.x, sp.z, sp.yaw || 0); if(b) ownMoved(b, true);
-    } else if(carry.b && api.announce) api.announce("Your starters stay in the B1 showcase.");
+    } else if(carry.b && carry.b.plinth != null && w.bikes){
+      // [basement 3.5.1] a starter ridden onto the lift comes up with you: off its plinth, out of B1, onto the
+      // street at the apron (as calling it with C does); Return to HQ (T) puts it back on its plinth
+      var s1 = carry.b, sp1 = (w.spawnFrom && w.spawnFrom.basement) || {x: avatar.x, z: avatar.z, yaw: avatar.yaw};
+      var bs1 = worlds.basement && worlds.basement.bikes, i1 = bs1 ? bs1.indexOf(s1) : -1; if(i1 >= 0) bs1.splice(i1, 1);
+      if(s1.g.parent) s1.g.parent.remove(s1.g);
+      (w.scene || scene).add(s1.g); w.bikes.push(s1); s1.world = w; s1.returnAt = 0;
+      placeProp(s1, sp1.x, sp1.z, sp1.yaw || 0); s1.g.visible = true; b = s1;
+    }
     if(nearBike() >= 0) rideToggle();
     return b;
   }

@@ -381,7 +381,8 @@ HQV.hqWorlds.basement = function(c, w){
   function addStarter(model, kind, n, extra){
     var p = L.plinths[n], yaw = p.yaw; model.g.position.set(p.x, 0, p.z); model.g.rotation.y = yaw; S.add(model.g);
     model.g.traverse(function(o){ if(o.isMesh){ o.castShadow = true; } });
-    var b = Object.assign({g: model.g, x: p.x, z: p.z, yaw: yaw, id: "lot:" + me + ":" + kind, stay: true, home: {x: p.x, z: p.z, yaw: yaw}, plinth: n}, extra);
+    var b = Object.assign({g: model.g, x: p.x, z: p.z, yaw: yaw, id: "lot:" + me + ":" + kind, stay: true, home: {x: p.x, z: p.z, yaw: yaw}, plinth: n,
+                             reach: PLINTH_R + 0.8}, extra);   // reach: get on from the plinth's edge (on foot the plinth keeps you PLINTH_R - 0.2 away) [3.5.1]
     if(kind !== "bike") b.kind = kind;            // a bicycle: no kind, as hq3d.js expects
     bikes.push(b); return b;
   }

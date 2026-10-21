@@ -36,8 +36,8 @@ var ID = "claude-hq@1", URL = "/api/arena/world/claude-hq@1", IDB = {db: "hq-wor
 var COMMONS = "claude-hq@2";
 // the worlds the client may ask for: the fixed ones and a personal island (the dashboard checks again)
 var WORLD_RE = /^(claude-hq@[12]|user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@2)$/;
-var PACK_V = 4;   // bump whenever pack()'s output changes; cached records with another v are refetched
-                  // (4: v3 records could hold the 3D City's client-side claims, see cacheCopy)
+var PACK_V = 5;   // bump whenever pack()'s output changes; cached records with another v are refetched
+                  // (4: v3 records could hold the 3D City's client-side claims, see cacheCopy; 5: dirt tracks)
 var ONE = 65536, BUCKET = 64, TRUNK = 0.45, CLEAR = 2, BLEND = 4, SIDEWALK_UP = 0.15;
 var TREE_P = {forest: 0.55, park: 0.18, residential: 0.04};
 var WALK_OLD = {street: 150, avenue: 200};   // sidewalk (cm, each side) for docs older than the walk field
@@ -69,13 +69,23 @@ function pack(doc){
     var old = e.class === "country";
     var pts = new Int32Array(3*((e.points || []).length));
     (e.points || []).forEach(function(p, i){ pts[3*i] = p[0]|0; pts[3*i+1] = p[1]|0; pts[3*i+2] = p[2]|0; });
+    // a dirt track (HQ 3.2, the outskirts) has no pavements: its whole corridor is the road's, at the road's height
+    var dirt = !old && e.surface === "dirt";
     var o = {id: e.id, a: e.a, b: e.b, cls: cls, width: e.width|0,
-            walk: old ? 0 : (e.walk != null ? e.walk|0 : (WALK_OLD[cls] || 0)),
+            walk: old || dirt ? 0 : (e.walk != null ? e.walk|0 : (WALK_OLD[cls] || 0)),
             lanes: old ? 1 : (e.lanes != null ? e.lanes|0 : 1),
             ref: old ? null : (e.ref != null ? String(e.ref) : null),
             name: e.name != null ? String(e.name) : "", pts: pts};
     if(e.min_tier != null) o.min_tier = e.min_tier|0;      // v2 islands: the tier the road opens in
     if(e.bridge) o.bridge = true;                           // it crosses the river on a deck at its points' y
+    if(dirt){                                               // the line its track wanders, [x, z] cm, a to b
+      o.surface = "dirt";
+      if(Array.isArray(e.track) && e.track.length >= 2){
+        var tr = new Int32Array(2*e.track.length);
+        e.track.forEach(function(q, i){ tr[2*i] = q[0]|0; tr[2*i+1] = q[1]|0; });
+        o.track = tr;
+      }
+    }
     return o;
   });
   var W = {
@@ -110,6 +120,8 @@ function docOf(W){
     if(e.ref != null) o.ref = e.ref;
     if(e.min_tier != null) o.min_tier = e.min_tier;
     if(e.bridge) o.bridge = true;
+    if(e.surface) o.surface = e.surface;
+    if(e.track){ var tk = []; for(var k = 0; k + 1 < e.track.length; k += 2) tk.push([e.track[k], e.track[k+1]]); o.track = tk; }
     return o;
   });
   var D = W.districts, layers = {roads: {nodes: W.nodes, edges: edges},

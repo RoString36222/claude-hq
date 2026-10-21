@@ -249,8 +249,17 @@ function create(c, W, o){
     corr: pbr("corr", {metal: 0.75, rough: 1, env: 0.7})
   };
   var TILE = {glass: 10, grid: 12, office: 14, stone: 12, steel: 4, pave: 3, deck: 2.4, roof: 2.6, corr: 2.2};
-  function plain(col, o2){ o2 = o2 || {}; return new THREE.MeshStandardMaterial({color: col, roughness: o2.rough != null ? o2.rough : 0.55, metalness: o2.metal || 0, envMap: o2.env ? env : null, envMapIntensity: o2.env || 0}); }
-  function glowMat(col){ var m = new THREE.MeshStandardMaterial({color: col, emissive: col, emissiveIntensity: 0.25, roughness: 0.4}); nightMats.push({m: m, day: 0.25, night: 2.2, envDay: 0}); return m; }
+  // materials are shared by colour and settings, so pieces of one colour merge into one draw call (mergeInto)
+  var MATS = {};
+  function plain(col, o2){
+    o2 = o2 || {}; var key = "p" + col + ":" + (o2.rough != null ? o2.rough : 0.55) + ":" + (o2.metal || 0) + ":" + (o2.env || 0);
+    return MATS[key] || (MATS[key] = new THREE.MeshStandardMaterial({color: col, roughness: o2.rough != null ? o2.rough : 0.55, metalness: o2.metal || 0, envMap: o2.env ? env : null, envMapIntensity: o2.env || 0}));
+  }
+  function glowMat(col){
+    var key = "g" + col; if(MATS[key]) return MATS[key];
+    var m = new THREE.MeshStandardMaterial({color: col, emissive: col, emissiveIntensity: 0.25, roughness: 0.4}); nightMats.push({m: m, day: 0.25, night: 2.2, envDay: 0});
+    return (MATS[key] = m);
+  }
 
   /* geometry: a loft of closed sections, UVs in metres so a facade tiles evenly whatever the shape */
   function loft(rings, tile, cap){
@@ -309,13 +318,48 @@ function create(c, W, o){
     }
     var m = new THREE.Mesh(geo, mat); m.castShadow = true; m.receiveShadow = true; return m;
   }
+  // Merge the meshes under `group` into one mesh per material, in the group's own frame (a draw call each instead
+  // of one per piece). `deep`: every mesh below it (a static group: a station, a kiosk); else only its own
+  // children, so a moving part inside (a horse that bobs, a chair that swings) keeps moving. Instanced and
+  // skinned meshes, lines and plain Object3Ds (riders' anchors) are left as they are.
+  function mergeInto(group, deep, skip){
+    group.updateMatrixWorld(true);
+    var inv = new THREE.Matrix4().copy(group.matrixWorld).invert(), by = new Map(), drop = [], m = new THREE.Matrix4();
+    function take(o){
+      if(!o.isMesh || o.isInstancedMesh || o.isSkinnedMesh || o.children.length) return false;
+      var g0 = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+      m.multiplyMatrices(inv, o.matrixWorld); g0.applyMatrix4(m);
+      if(!g0.attributes.normal) g0.computeVertexNormals();
+      var mats = Array.isArray(o.material) ? o.material : [o.material], groups = Array.isArray(o.material) && g0.groups.length ? g0.groups : [{start: 0, count: g0.attributes.position.count, materialIndex: 0}];
+      groups.forEach(function(gr){
+        var mt = mats[gr.materialIndex | 0]; if(!mt) return;
+        var e = by.get(mt) || {mat: mt, p: [], n: [], u: [], shadow: o.castShadow}; by.set(mt, e);
+        var P = g0.attributes.position.array, N = g0.attributes.normal.array, U = g0.attributes.uv ? g0.attributes.uv.array : null;
+        for(var v = gr.start; v < gr.start + gr.count; v++){
+          e.p.push(P[3*v], P[3*v + 1], P[3*v + 2]); e.n.push(N[3*v], N[3*v + 1], N[3*v + 2]);
+          if(U) e.u.push(U[2*v], U[2*v + 1]); else e.u.push(0, 0);
+        }
+      });
+      g0.dispose(); drop.push(o); return true;
+    }
+    function walk(o){ if(skip && skip(o)) return; if(!take(o)) o.children.slice().forEach(walk); }
+    if(deep) group.children.slice().forEach(walk); else group.children.slice().forEach(take);
+    drop.forEach(function(o){ if(o.parent) o.parent.remove(o); });
+    by.forEach(function(e){
+      var geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(e.p, 3)); geo.setAttribute("normal", new THREE.Float32BufferAttribute(e.n, 3));
+      geo.setAttribute("uv", new THREE.Float32BufferAttribute(e.u, 2)); geo.computeBoundingSphere();
+      var mesh = new THREE.Mesh(geo, e.mat); mesh.castShadow = e.shadow !== false; mesh.receiveShadow = true; group.add(mesh);
+    });
+    return group;
+  }
   function cone(r0, r1, h, mat, y, seg){ var m = new THREE.Mesh(new THREE.CylinderGeometry(r1, r0, h, seg || 16), mat); m.position.y = y + h/2; m.castShadow = true; return m; }
 
   /* ---------- landmarks ---------- */
   var beacons = [], marks = [], landG = new THREE.Group(); landG.name = "landmarks"; g.add(landG);
   function beacon(gp, y){
     var b = new THREE.Mesh(new THREE.SphereGeometry(0.8, 10, 8), new THREE.MeshBasicMaterial({color: 0xff2a2a}));
-    b.position.y = y; gp.add(b);
+    b.position.y = y; b.userData.keep = true; gp.add(b);
     var gl = c.glow ? c.glow(0xff3030, 26, 0.9) : null; if(gl){ gl.position.y = y; gp.add(gl); }
     beacons.push({m: b, gl: gl});
   }
@@ -421,6 +465,7 @@ function create(c, W, o){
     gp.position.set(m.x, ground(m.x, m.z) - 0.2, m.z); gp.rotation.y = m.rot; gp.name = "landmark:" + m.type;
     var foot = BUILD[m.type](gp, s, H);
     landG.add(gp);
+    mergeInto(gp, true, function(o){ return o.userData.keep; });
     var cr = Math.cos(m.rot), sr = Math.sin(m.rot);
     var circles = (Array.isArray(foot) ? foot : [{x: 0, z: 0, r: foot}]).map(function(f){ return {x: m.x + f.x*cr + f.z*sr, z: m.z - f.x*sr + f.z*cr, r: f.r}; });
     marks.push({m: m, g: gp, H: H, circles: circles});
@@ -436,7 +481,7 @@ function create(c, W, o){
     function toW(lx, lz){ return {x: P.x + lx*cr + lz*sr, z: P.z - lx*sr + lz*cr}; }
     function toL(x, z){ var dx = x - P.x, dz = z - P.z; return {x: dx*cr - dz*sr, z: dx*sr + dz*cr}; }
     function ly(lx, lz){ var w = toW(lx, lz); return ground(w.x, w.z) - gy; }
-    var hits = [], segs = [], bulbs = [], glows = [], rides = [];
+    var hits = [], segs = [], bulbs = [], glows = [], rides = [], statics = [], movers = [], dynRoots = [];
     var hm = clamp(Math.min(P.w, P.d)*0.42, 26, 46);
 
     // the paths, paved, laid over the ground as it lies (a flat slab floats or sinks on a slope)
@@ -531,7 +576,7 @@ function create(c, W, o){
     function hexOf(css){ return parseInt(String(css).slice(1), 16); }
     // a group placed in the park's frame at x, z facing yaw (its +z), and its own frame -> the park's
     function framed(x, z, yaw){
-      var gp = new THREE.Group(); gp.position.set(x, 0, z); gp.rotation.y = yaw; pg.add(gp);
+      var gp = new THREE.Group(); gp.position.set(x, 0, z); gp.rotation.y = yaw; pg.add(gp); statics.push(gp);
       var cc = Math.cos(yaw), ss = Math.sin(yaw);
       return {g: gp, L: function(lx, lz){ return {x: x + lx*cc + lz*ss, z: z - lx*ss + lz*cc}; }};
     }
@@ -613,8 +658,9 @@ function create(c, W, o){
       [-1, 1].forEach(function(sd){
         var slab = mbox(rw, 0.14, rd/2/Math.cos(pitch) + 0.15, M.roof, TILE.roof);
         slab.position.set(0, roofY + Math.tan(pitch)*rd/4, rz + sd*rd/4); slab.rotation.x = sd*pitch; sg.add(slab);
-        var gable = new THREE.Mesh(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(sd*rw/2, roofY, rz - rd/2), new THREE.Vector3(sd*rw/2, roofY, rz + rd/2), new THREE.Vector3(sd*rw/2, roofY + Math.tan(pitch)*rd/2, rz)]), plain(acc, {rough: 0.5}));
-        gable.material.side = THREE.DoubleSide; gable.geometry.computeVertexNormals(); sg.add(gable);
+        var gm = MATS["gable" + acc] || (MATS["gable" + acc] = new THREE.MeshStandardMaterial({color: acc, roughness: 0.5, side: THREE.DoubleSide}));
+        var gable = new THREE.Mesh(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(sd*rw/2, roofY, rz - rd/2), new THREE.Vector3(sd*rw/2, roofY, rz + rd/2), new THREE.Vector3(sd*rw/2, roofY + Math.tan(pitch)*rd/2, rz)]), gm);
+        gable.geometry.computeVertexNormals(); sg.add(gable);
       });
       var ridge = mbox(rw + 0.1, 0.2, 0.3, M.steel, TILE.steel); ridge.position.set(0, roofY + Math.tan(pitch)*rd/2 + 0.05, rz); sg.add(ridge);
       var eave = new THREE.Mesh(new THREE.BoxGeometry(rw, 0.08, 0.08), glowMat(acc)); eave.position.set(0, roofY - 0.02, rz + rd/2); sg.add(eave);
@@ -723,7 +769,7 @@ function create(c, W, o){
         var mesh = new THREE.Mesh(geo, mat); mesh.castShadow = true; return mesh;
       }
       var railM = plain(0xe8304a, {metal: 0.5, rough: 0.35, env: 0.6}), spineM = plain(0xf4f1ea, {metal: 0.4, rough: 0.45, env: 0.5});
-      var cg = new THREE.Group(); cg.name = "coaster"; pg.add(cg);
+      var cg = new THREE.Group(); cg.name = "coaster"; pg.add(cg); dynRoots.push(cg);
       cg.add(sweep([0.55, 0], 0.09, railM)); cg.add(sweep([-0.55, 0], 0.09, railM)); cg.add(sweep([0, -0.45], 0.22, spineM));
       var led = sweep([0, -0.72], 0.05, glowMat(0x4fd1ff)); cg.add(led);
       var nT = Math.floor(N/2.4), ties = new THREE.InstancedMesh(new THREE.BoxGeometry(1.3, 0.12, 0.16), spineM, nT), mx = new THREE.Matrix4(), bas = new THREE.Matrix4();
@@ -767,7 +813,7 @@ function create(c, W, o){
           nose.rotation.x = PI/2; nose.position.set(0, 0.42, 1.18); car.add(nose);
           [-0.4, 0.4].forEach(function(hx){ var hl = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), glowMat(0xfff6d8)); hl.position.set(hx, 0.5, 1.75); car.add(hl); });
         }
-        cg.add(car); cars.push(car);
+        cg.add(car); cars.push(car); movers.push(car);
       }
       var CAR_GAP = 2.7/ds, LAP_NAME = "Comet";
       var stP = {x: st0.x - 2.6, z: st0.z - 4};
@@ -794,18 +840,18 @@ function create(c, W, o){
     }
     // the Ferris wheel: 24 gondolas that stay level, a rim of lights
     function wheel(o3){
-      var R = o3.R, hub = R + 4.5, wg = new THREE.Group(); wg.position.set(o3.x, ly(o3.x, o3.z), o3.z); pg.add(wg);
+      var R = o3.R, hub = R + 4.5, wg = new THREE.Group(); wg.position.set(o3.x, ly(o3.x, o3.z), o3.z); pg.add(wg); dynRoots.push(wg);
       var rimM = plain(0xf5f5f5, {metal: 0.6, rough: 0.3, env: 0.8}), rot = new THREE.Group(); rot.position.y = hub; wg.add(rot);
       [-1.6, 1.6].forEach(function(x){ var rim = new THREE.Mesh(new THREE.TorusGeometry(R, 0.28, 8, 96), rimM); rim.rotation.y = PI/2; rim.position.x = x; rot.add(rim);
         for(var i = 0; i < 24; i++){ var an = i/24*TAU, sp = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, R, 4), rimM); sp.position.set(x, Math.cos(an)*R/2, Math.sin(an)*R/2); sp.rotation.x = an; rot.add(sp); } });
-      var hubM = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 4, 16), rimM); hubM.rotation.z = PI/2; rot.add(hubM);
+      var hubM = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 4, 16), rimM); hubM.rotation.z = PI/2; rot.add(hubM); movers.push(rot);
       [-1, 1].forEach(function(sd){ [-1, 1].forEach(function(fz){ wg.add(tube([[sd*3.2, 0, fz*R*0.5], [sd*2.1, hub, 0]], 0.35, rimM, 6)); hits.push({x: o3.x + sd*3.2, z: o3.z + fz*R*0.5, r: 0.6}); }); });
       var gonds = [], gcols = [0xff4f6d, 0xffd23f, 0x3bceac, 0x5f6bff, 0xff8c42, 0xc86bfa];
       for(var i = 0; i < 24; i++){
         var gd = new THREE.Group(), cab = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.0, 1.7, 12), plain(gcols[i % 6], {rough: 0.35, metal: 0.2, env: 0.5}));
         cab.position.y = -1.6; gd.add(cab);
         var gr = new THREE.Mesh(new THREE.ConeGeometry(1.25, 0.6, 12), rimM); gr.position.y = -0.5; gd.add(gr);
-        wg.add(gd); gonds.push(gd);
+        wg.add(gd); gonds.push(gd); movers.push(gd);
       }
       var rimBulbs = [];
       for(i = 0; i < 72; i++){ var an2 = i/72*TAU; rimBulbs.push({x: 0, y: Math.cos(an2)*(R + 0.35), z: Math.sin(an2)*(R + 0.35), k: i/72}); }
@@ -839,7 +885,7 @@ function create(c, W, o){
     }
     // the drop tower: up slowly, a pause with the whole city below, then a free fall
     function drop(o3){
-      var H = o3.H, dg = new THREE.Group(); dg.position.set(o3.x, ly(o3.x, o3.z), o3.z); pg.add(dg);
+      var H = o3.H, dg = new THREE.Group(); dg.position.set(o3.x, ly(o3.x, o3.z), o3.z); pg.add(dg); dynRoots.push(dg);
       dg.add(tower(rrect(3.2, 3.2, 0.4, 2), 0, H, 6, null, null, M.steel, TILE.steel));
       var crownM = glowMat(0xff3d7f), crown = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.0, 3, 16), crownM); crown.position.y = H + 1.5; dg.add(crown);
       beacon(dg, H + 3.6);
@@ -848,7 +894,7 @@ function create(c, W, o){
       var dropAnchors = [];
       for(var i = 0; i < 12; i++){ var an = i/12*TAU, s2 = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.2, 0.7), plain(0x22252b)); s2.position.set(Math.cos(an)*3.9, -0.3, Math.sin(an)*3.9); s2.rotation.y = -an; ringG.add(s2);
         if(i % 4){ var da = new THREE.Object3D(); da.position.set(Math.cos(an)*4.25, 0.3 - 0.8, Math.sin(an)*4.25); da.rotation.y = Math.atan2(Math.cos(an), Math.sin(an)); ringG.add(da); dropAnchors.push(da); } }
-      hits.push({x: o3.x, z: o3.z, r: 2.6});
+      hits.push({x: o3.x, z: o3.z, r: 2.6}); movers.push(ringG);
       var CYC = 48, top = H - 5, low = 1.4, BR = 26, tf = Math.sqrt(2*(top - BR)/G);
       function yAt(sec){
         var t = ((sec % CYC) + CYC) % CYC;
@@ -872,7 +918,7 @@ function create(c, W, o){
     }
     // the carousel: horses that rise and fall under a striped canopy edged in bulbs
     function carousel(o3){
-      var r = o3.r, cg2 = new THREE.Group(); cg2.position.set(o3.x, ly(o3.x, o3.z), o3.z); pg.add(cg2);
+      var r = o3.r, cg2 = new THREE.Group(); cg2.position.set(o3.x, ly(o3.x, o3.z), o3.z); pg.add(cg2); dynRoots.push(cg2);
       var gold = plain(0xd4a52c, {metal: 0.9, rough: 0.25, env: 1}), white = plain(0xfaf7f0, {rough: 0.4});
       var basem = new THREE.Mesh(new THREE.CylinderGeometry(r + 0.4, r + 0.6, 0.5, 40), plain(0x7a1f3d)); basem.position.y = 0.25; cg2.add(basem);
       var spin = new THREE.Group(); cg2.add(spin);
@@ -893,7 +939,7 @@ function create(c, W, o){
         var head = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.28, 0.58), torso.material); head.position.set(0, 0.78, 0.72); body.add(head);
         var saddle = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.1, 0.5), plain([0xd7263d, 0x1b998b, 0x5f6bff][i % 3])); saddle.position.y = 0.28; body.add(saddle);
         [[-0.18, 0.4], [0.18, 0.4], [-0.18, -0.4], [0.18, -0.4]].forEach(function(lg){ var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.7, 5), torso.material); leg.position.set(lg[0], -0.55, lg[1]); leg.rotation.x = lg[1] > 0 ? -0.5 : 0.4; body.add(leg); });
-        spin.add(h); horses.push({g: h, body: body, ph: i*0.9});
+        spin.add(h); horses.push({g: h, body: body, ph: i*0.9}); movers.push(body);
         if(i !== 6 && i % 3 !== 1){ var ca = new THREE.Object3D(); ca.position.set(0, 0.33 - 0.8, -0.05); body.add(ca); carAnchors.push(ca); }
       }
       var edge = [];
@@ -918,7 +964,7 @@ function create(c, W, o){
     }
     // the wave swinger: chairs flung out on chains under a spinning, tilting crown
     function swinger(o3){
-      var rt = o3.r, LC = 6, sg2 = new THREE.Group(); sg2.position.set(o3.x, ly(o3.x, o3.z), o3.z); pg.add(sg2);
+      var rt = o3.r, LC = 6, sg2 = new THREE.Group(); sg2.position.set(o3.x, ly(o3.x, o3.z), o3.z); pg.add(sg2); dynRoots.push(sg2);
       var MH = LC + 1.6, mast = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.2, MH, 16), plain(0x3d5afe, {metal: 0.5, rough: 0.35, env: 0.6})); mast.position.y = MH/2; mast.castShadow = true; sg2.add(mast);
       var top = new THREE.Group(); top.position.y = MH; sg2.add(top);
       var crownT = c.canvasTex(256, 32, function(gx){ for(var s2 = 0; s2 < 16; s2++){ gx.fillStyle = s2 % 2 ? "#ffe066" : "#7b2ff7"; gx.fillRect(s2*16, 0, 16, 32); } }).t;
@@ -933,7 +979,7 @@ function create(c, W, o){
         var bk = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.6, 0.1), ch.material); bk.position.set(0, -LC + 0.3, -0.3); // the back, behind a rider facing the way it travels (+z) hang.add(bk);
         var cgeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-0.3, 0, 0), new THREE.Vector3(-0.3, -LC, 0), new THREE.Vector3(0.3, 0, 0), new THREE.Vector3(0.3, -LC, 0)]);
         hang.add(new THREE.LineSegments(cgeo, chainM));
-        chairs.push({arm: arm, hang: hang});
+        chairs.push({arm: arm, hang: hang}); movers.push(hang);
         if(i){ var sa = new THREE.Object3D(); sa.position.set(0, -LC + 0.06 - 0.8, 0); hang.add(sa); swingAnchors.push(sa); }
       }
       hits.push({x: o3.x, z: o3.z, r: 1.4});
@@ -957,6 +1003,12 @@ function create(c, W, o){
         watch: {x: o3.x + rt + LC + 14, z: o3.z - 8, y: 5}
       };
     }
+
+    // fewer draw calls: every static group to a mesh per material, every moving part merged within itself
+    pg.updateMatrixWorld(true);
+    movers.forEach(function(mv){ mergeInto(mv, false); });
+    var dyn = new Set(dynRoots.concat(balloons));
+    mergeInto(pg, true, function(o){ return dyn.has(o); });
 
     // The crowd: the City's own resident body (games/npcdraw.js: six boxes, the gait in its vertex shader) in one
     // instanced mesh. Walkers stroll three loops (the boulevard both ways, the ring, a tour of the stations), people
@@ -1031,6 +1083,7 @@ function create(c, W, o){
       function release(k){ var ch = held[k]; if(!ch) return; delete held[k]; g.remove(ch.o); (free[ch.k] = free[ch.k] || []).push(ch); }
       var nearAcc = 1;
       return {mesh: mesh, n: n, members: members, near: function(){ return Object.keys(held).length; }, update: function(sec, dt, cam){
+        if(!cam || cam.x == null){ Object.keys(held).forEach(release); return; }      // out of range: nothing to pose
         U.uNpcTime.value = sec % 600;
         var k, m;
         // everyone's pose in the world
@@ -1195,9 +1248,17 @@ function create(c, W, o){
       beacons.forEach(function(b){ if(b.m){ b.m.visible = night; if(b.gl) b.gl.material.opacity = on ? 0.9 : 0; } });
       marks.forEach(function(M2){ var r2 = M2.g.userData.ring; if(r2 && night && !calm) r2.material.emissive.setHSL((sec*0.05) % 1, 0.9, 0.5); });
       if(!park) return;
+      // distance: the park's small things (crowd, bulbs, balloons) only near it, the park itself only in sight
+      var pc = spec.park, dc = cam && cam.x != null ? Math.hypot(cam.x - pc.x, cam.z - pc.z) : 0, far = !riding && dc > 1100, mid = !riding && dc > 250;
+      park.g.visible = !far;
+      if(park.crowd) park.crowd.mesh.visible = !mid;
+      park.bulbI.visible = !mid;
+      park.balloons.forEach(function(bl){ bl.visible = !mid; });
+      if(far){ promptUi(null); return; }
       park.g.updateMatrixWorld();
       park.rides.forEach(function(r){ r.update(sec, night, calm); });
-      if(park.crowd){ park.g.updateMatrixWorld(true); park.crowd.update(sec, dt, cam); }
+      if(park.crowd && !mid){ park.g.updateMatrixWorld(true); park.crowd.update(sec, dt, cam); }
+      else if(park.crowd) park.crowd.update(sec, dt, null);             // let its detailed characters go
       // the bulbs: warm white by day, chasing colours by night (steady in Calm)
       var key = night ? (calm ? "n" : "c" + Math.floor(sec*6)) : "d";
       if(key !== lastNightKey){

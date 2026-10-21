@@ -203,6 +203,8 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>) -
                 id: 0, a: renum[e.a as usize], b: renum[e.b as usize], class, width: width(e.kind), walk, lanes: 1, route: None,
                 name: name.clone(), points: roads::resample(g.nodes[e.a as usize], g.nodes[e.b as usize]), min_tier: None,
                 bridge: e.bridge.then_some(true),
+                surface: None,
+                track: None,
             }
         })
         .collect();

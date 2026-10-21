@@ -58,8 +58,11 @@ var COL = {
   pave: [0.60, 0.59, 0.56], lawn: [0.38, 0.55, 0.30], plaza: [0.70, 0.66, 0.58], concrete: [0.56, 0.56, 0.55],
   sand: [0.86, 0.80, 0.62], wetSand: [0.62, 0.57, 0.45],
   bank: [0.56, 0.52, 0.40], wetBank: [0.40, 0.37, 0.29], water: [0.14, 0.40, 0.50],
-  deck: [0.64, 0.63, 0.60], deckUnder: [0.42, 0.42, 0.41], rail: [0.34, 0.37, 0.41]
+  deck: [0.64, 0.63, 0.60], deckUnder: [0.42, 0.42, 0.41], rail: [0.34, 0.37, 0.41],
+  // a dirt track (HQ 3.2, the outskirts): packed earth, darker wheel ruts, a grassy crown down the middle
+  dirt: [0.47, 0.37, 0.26], rut: [0.31, 0.24, 0.16], crown: [0.39, 0.45, 0.25]
 };
+var DIRT_HALF = 1.75;   // a track's half width (m): the generator's shape.rs TRACK_HALF_CM
 // terrain tint per district (legend name); unknown names fall back to "wild". The second row is @2's district list.
 var TINT = {
   wild: [0.42, 0.55, 0.30], farmland: [0.62, 0.61, 0.36], forest: [0.22, 0.40, 0.22], plaza: [0.62, 0.60, 0.56],
@@ -177,6 +180,23 @@ function prep(W){
     var o = {id: e.id, i: ei, cls: cls, a: e.a, b: e.b, name: e.name || "", ref: e.ref != null ? e.ref : null,
              half: e.width/200, cw: (e.width - 2*(e.walk || 0))/200, walk: walk, P: P, S: S, K: K, len: S[S.length - 1], tA: 0, tB: 0};
     if(e.bridge) o.bridge = true;
+    if(e.surface === "dirt" && e.track && e.track.length >= 4){
+      // the track it is drawn as: its own line through the corridor (heights: the corridor's, by share of length)
+      var TP = [], TS = [];
+      for(var t = 0; t + 1 < e.track.length; t += 2){
+        var tq = {x: e.track[t]/100, y: 0, z: e.track[t+1]/100};
+        if(TP.length){ var TL = TP[TP.length - 1], td = hypot(tq.x - TL.x, tq.z - TL.z); if(td < 1e-6) continue; TS.push(TS[TS.length - 1] + td); }
+        else TS.push(0);
+        TP.push(tq);
+      }
+      if(TP.length >= 2){
+        var tlen = TS[TS.length - 1];
+        TP.forEach(function(q, j){ q.y = pointAt(o, TS[j]/tlen*o.len).y; });
+        o.dirt = true;
+        o.D = {id: e.id, i: ei, cls: cls, a: e.a, b: e.b, name: o.name, ref: null, half: DIRT_HALF, cw: DIRT_HALF, walk: 0,
+               P: TP, S: TS, K: TP.map(function(){ return true; }), len: tlen, tA: 0, tB: 0, dirt: true};
+      }
+    }
     E.push(o); byId[o.id] = o;
     (inc[e.a] = inc[e.a] || []).push({E: o, end: 0});
     (inc[e.b] = inc[e.b] || []).push({E: o, end: 1});
@@ -652,7 +672,21 @@ function roadTile(W, tx, tz, flat, gap){
     else ribbon(E, e0, e1);
   });
   // one edge's pieces over [s0, s1] (the whole edge, or a dry run of a gapped bridge: its cut ends get no caps)
+  // a dirt edge: its track, the junction trims carried over by share of length; earth, ruts and crown, no
+  // kerbs, pavements or markings, a verge either side
+  function dirtRibbon(E, s0, s1){
+    var D = E.D, k = D.len/E.len, st = stations(D, s0*k, s1*k), cw = D.cw, any = false;
+    for(var j = 0; j + 1 < st.length && !any; j++) any = inTile((st[j].x + st[j+1].x)/2, (st[j].z + st[j+1].z)/2, tx, tz);
+    if(!any) return;
+    strip(asph, W, D, st, -cw, cw, LIFT, COL.dirt, tx, tz);
+    if(flat) return;
+    strip(marks, W, D, st, -1.0, -0.6, MARK_LIFT, COL.rut, tx, tz);
+    strip(marks, W, D, st, 0.6, 1.0, MARK_LIFT, COL.rut, tx, tz);
+    strip(marks, W, D, st, -0.2, 0.2, MARK_LIFT, COL.crown, tx, tz);
+    [-1, 1].forEach(function(sg){ wallStrip(walk, W, D, st, sg*cw, "verge", COL.verge, tx, tz, sg); });
+  }
   function ribbon(E, s0, s1){
+    if(E.D){ dirtRibbon(E, s0, s1); return; }
     var endA = s0 === E.tA, endB = s1 === E.len - E.tB;
     var st = stations(E, s0, s1), cw = E.cw;
     // quick reject: no station pair in this tile
@@ -714,11 +748,11 @@ function armStation(E, end, t){
   return S;
 }
 function junction(W, C, n, arms, asph, marks, kerb, walk){
-  var Q = WQ(), ring = [];
+  var Q = WQ(), ring = [], allDirt = arms.every(function(a){ return a.E.dirt; }), jc = allDirt ? COL.dirt : COL.asphalt;
   arms.forEach(function(a){
-    var S = armStation(a.E, a.end, a.t);
+    var S = armStation(a.E, a.end, a.t), hw = a.E.dirt ? DIRT_HALF : a.E.cw;      // a dirt arm meets it at its track's width
     a.S = S;
-    ring.push(at(S, -a.E.cw, 0), at(S, a.E.cw, 0));
+    ring.push(at(S, -hw, 0), at(S, hw, 0));
   });
   function yAt(p, up){
     var y = Q.roadY(W, p[0], p[2]);
@@ -729,7 +763,7 @@ function junction(W, C, n, arms, asph, marks, kerb, walk){
   ring.forEach(function(p){ p[1] = yAt(p) + LIFT; });
   for(var k = 0; k < ring.length; k++){
     var p = ring[k], q = ring[(k + 1) % ring.length];
-    face(asph, [[n.x, cy, n.z], p, q], COL.asphalt, UP);
+    face(asph, [[n.x, cy, n.z], p, q], jc, UP);
   }
   // corner sidewalks between consecutive arms (a's left faces b, b's right faces a)
   for(k = 0; k < arms.length; k++){
@@ -746,7 +780,7 @@ function junction(W, C, n, arms, asph, marks, kerb, walk){
   // zebra crossings on street/avenue arms of real junctions, 2 m back from the patch
   if(arms.length >= 3) arms.forEach(function(a){
     var E = a.E;
-    if(!streetish(E.cls) && !aveish(E.cls)) return;
+    if((!streetish(E.cls) && !aveish(E.cls)) || E.dirt) return;
     var c0 = a.t + 2, c1 = a.t + 5;
     if(c1 > E.len - 1) return;
     var st = a.end ? stations(E, E.len - c1, E.len - c0) : stations(E, c0, c1);

@@ -1137,7 +1137,7 @@ function mount(el, api){
     curDoors().forEach(function(d){ if(!d.front) return; var dd = Math.hypot(avatar.x - d.front.x, avatar.z - d.front.z); if(dd < nd){ nd = dd; near = d; } });
     if(!near) return;
     if(nd > 2.6){ doorsArmed = true; return; }
-    if(doorsArmed && nd < 1.5){ doorsArmed = false; walkTo = null; through(near); }
+    if(doorsArmed && nd < 1.5){ doorsArmed = false; walkTo = null; if(HQV.hqCarLift && HQV.hqCarLift.arm){ try { HQV.hqCarLift.arm(near); } catch(e){} } through(near); }   // [basement 3.4] which door (the car lift carries you)
   }
   /* ---------- riding a bike or driving a car (Arena City: cur.bikes) ---------- */
   // cur.bikes lists what you can get on: {g, x, z, yaw, color, kind: "car" | "moto" | "skate" (else a
@@ -2366,6 +2366,7 @@ function mount(el, api){
   function hitList(){ return cur === worlds.mission ? clickables.concat(doorHits, projHits) : (cur.hits || []); }
   // Through a door: another view of the page, or another floor of the building ("@lobby").
   function through(d){
+    if(d.view === "garage:open"){ if(HQV.hqGarageMgr && HQV.hqGarageMgr.open){ keys = {}; HQV.hqGarageMgr.open({from: d.from}); } return; }   // [basement 3.4] the garage manager
     if(!d.view){ if(d.kind === "townhall" && cur && cur.townHall) cur.townHall(); else if(d.kind === "dealer") dealerOpen(); return; }   // games/hqcivic.js: the town hall; games/hqdealer.js: the dealership
     if(d.view.charAt(0) === "@") enterWorld(d.view.slice(1), cur.name);
     else if(d.view.indexOf("visit:") === 0){ if(api.visit) api.visit(d.view.slice(6)); }   // someone's HQ on the city street
@@ -2411,6 +2412,12 @@ function mount(el, api){
   function returnHome(){
     if(!scene || fading) return false;
     var C = worlds.city;
+    if(cur && worlds.basement && cur === worlds.basement){   // [basement 3.4] in B1: the starters back on their plinths
+      var gb = function(){ dismount(true); (cur.bikes || []).forEach(function(b){ if(b.stay && b.home && !b.own){ placeProp(b, b.home.x, b.home.z, b.home.yaw); b.g.visible = true; b.returnAt = 0; delete parked[b.id]; } });
+        if(api.announce) api.announce("Your car, motorbike and bicycle are back in your basement garage (B1)."); };
+      if(E.calm()) gb(); else { fading = true; fadeEl.classList.add("on"); setTimeout(function(){ gb(); fadeEl.classList.remove("on"); setTimeout(function(){ fading = false; }, 260); }, 260); }
+      return true;
+    }
     if(!C || cur !== C || !C.home){ inst.goWorld("base"); return true; }
     var go = function(){
       dismount(true);
@@ -2425,7 +2432,7 @@ function mount(el, api){
       view.pitch = C.camPitch || view.pitch;
       moveAvatar(0); view.target.copy(view.goal);
       rideUiSync(true);
-      if(api.announce) api.announce("Back at your HQ. Your car, motorbike and bicycle are in the garage.");
+      if(api.announce) api.announce("Back at your HQ. Your car, motorbike and bicycle are back in your basement garage (B1).");   // [basement 3.4]
     };
     if(E.calm()){ go(); return true; }
     fading = true; fadeEl.classList.add("on"); E.sfx("door");
@@ -2435,7 +2442,7 @@ function mount(el, api){
   inst.returnHome = function(){ return returnHome(); };
   // The "Return to HQ" button over the street: shown in Arena City.
   var homeUi = document.createElement("button"); homeUi.type = "button"; homeUi.className = "hq3d-home"; homeUi.hidden = true;
-  homeUi.textContent = "🏠 Return to HQ (T)"; homeUi.title = "Back to your front door, your car, motorbike and bicycle back in the garage";
+  homeUi.textContent = "🏠 Return to HQ (T)"; homeUi.title = "Back to your front door, your car, motorbike and bicycle back in your basement garage (B1)";   // [basement 3.4]
   homeUi.addEventListener("click", function(){ returnHome(); canvas.focus(); }); el.appendChild(homeUi);
   function homeUiSync(){
     var on = !!(cur && cur === worlds.city); if(homeUi.hidden === on){ homeUi.hidden = !on; if(on) gamesCss(); }
@@ -2561,25 +2568,37 @@ function mount(el, api){
       propMake(o, C, o.x, o.z, o.yaw);
     });
   }
+  // [basement 3.4] a paint (the Arena's index into the catalogue entry's paints, or an old "#rrggbb") -> 0xrrggbb, or null
+  function paintColor(vid, p){
+    if(typeof p === "string") return /^#[0-9a-fA-F]{6}$/.test(p) ? parseInt(p.slice(1), 16) : null;
+    var V = VEHICLES[vid], P = V && V.cat && V.cat.paints, q = P && P[Math.max(0, p | 0)];
+    return q && /^#[0-9a-fA-F]{6}$/.test(String(q.hex || "")) ? parseInt(String(q.hex).slice(1), 16) : null;
+  }
+  inst.paintColor = paintColor;
   function ownRefresh(){
     if(!HQV.hqGarage || !HQV.hqGarage.mine) return Promise.resolve();
     return Promise.resolve(HQV.hqGarage.mine()).then(function(L){
       (L || []).forEach(function(v){
         if(!v || v.id == null || typeof v.vehicle_id !== "string") return;
         var k = "own:" + v.id, o = own[k] || (own[k] = {key: k, ownId: v.id, stored: true});
-        o.vehicleId = v.vehicle_id; o.color = /^#[0-9a-fA-F]{6}$/.test(v.paint || "") ? parseInt(v.paint.slice(1), 16) : null;
+        o.vehicleId = v.vehicle_id; o.color = paintColor(v.vehicle_id, v.paint);   // [basement 3.4] an index into its paints (defect 1)
         var p = v.parked; if(p && !propOf(k) && !tripOf(propOf(k))){ o.world = String(p.world || ""); o.x = +p.x; o.z = +p.z; o.yaw = +p.yaw || 0; o.stored = false; }
       });
       ownPlace(cur);
     }, function(){});
   }
   // the city's carpark (HQV.hqCarpark): {cp, site}, or null (none here, or not built yet)
-  function carpark(C){
+  function carpark(C, o){
+    // [basement 3.4] a B1 vehicle comes up the car lift by your HQ instead (HQV.hqCarLift.liftSite: the carpark's duck type)
+    if(o && o.ownId != null && HQV.hqGarageMgr && HQV.hqGarageMgr.homeOf && HQV.hqGarageMgr.homeOf(o.ownId) === "basement" && HQV.hqCarLift && HQV.hqCarLift.liftSite){
+      try { var LS = HQV.hqCarLift.liftSite(C, api.me ? api.me() : null); if(LS && LS.cp && LS.site){ LS.lift = true; return LS; } } catch(e){}
+    }
     var cp = HQV.hqCarpark, RD = C && C.callRoad; if(!cp || !cp.find || !RD || !RD.W) return null;
     try { var site = cp.find(RD.W()); return site ? {cp: cp, site: site} : null; } catch(e){ return null; }
   }
   function cpBay(K, key){
-    try { var L = K.cp.bays ? K.cp.bays(K.site) : null; return L && L.length ? L[hashStr(String(key)) % L.length] : null; } catch(e){ return null; }
+    try { if(K.cp.bayFor){ var bf = K.cp.bayFor(K.site, "me", String(key)); if(bf) return bf; }   // [basement 3.4] the carpark's own bay (defect 2)
+      var L = K.cp.bays ? K.cp.bays(K.site) : null; return L && L.length ? L[hashStr(String(key)) % L.length] : null; } catch(e){ return null; }
   }
   function cpEntrance(K){ try { var e = K.cp.entrance ? K.cp.entrance(K.site) : null; return e && isFinite(e.x) && isFinite(e.z) ? e : null; } catch(x){ return null; } }
   function cpPath(K, which, bay){ try { return K.cp[which] && bay ? HQV.hqCall.poly(K.cp[which](bay, K.site)) : null; } catch(e){ return null; } }
@@ -2605,7 +2624,7 @@ function mount(el, api){
     return callList().map(function(it){
       var b = it.b, T = b && tripOf(b), sub;
       if(T && T.mode === "call") sub = "On its way · " + Math.max(0, Math.round(T.run.len - T.run.s)) + " m";
-      else if(T) sub = "Going back to " + (T.K ? "the carpark" : "your garage");
+      else if(T) sub = "Going back to " + (T.K ? (T.K.lift ? "your basement (B1)" : "the carpark") : "your garage");   // [basement 3.4]
       else if(b){ var d = Math.hypot(b.x - avatar.x, b.z - avatar.z); sub = d < 12 ? "Right here" : (d < H.CALL_R ? Math.round(d) + " m away · ~" + H.eta(d*1.3) + " s" : "Far away · arrives in ~20 s"); }
       else if(K) sub = "In the carpark";
       else sub = "Parked elsewhere · arrives in ~20 s";
@@ -2651,7 +2670,7 @@ function mount(el, api){
       R = roadRoute(RD, {x: b.x, z: b.z}, to, 4000);
     }
     // 2. it is in the carpark (or nowhere here): out of its bay, down the ramps, from the entrance to you
-    if(!R && !b && it.o && (K = carpark(C))){
+    if(!R && !b && it.o && (K = carpark(C, it.o))){   // [basement 3.4] o: B1's come up the car lift
       bay = cpBay(K, key); var ex = cpPath(K, "exitPath", bay), ent = cpEntrance(K);
       var Re = ex && ent ? roadRoute(RD, {x: ent.x, z: ent.z}, to, 6000) : null;
       if(Re){ R = Re; head = ex; }
@@ -2684,7 +2703,7 @@ function mount(el, api){
   // back to the carpark (its bay, up entryPath) or, with none, to its place by your HQ's garage
   function goBack(b){
     var H = HQV.hqCall, C = cur, RD = C && C.callRoad, o = b && b.own; if(!H || !RD || !o || b.world !== C) return false;
-    var K = carpark(C), R = null, path = null, ys = null, bay = null, title = callTitle({o: o});
+    var K = carpark(C, o), R = null, path = null, ys = null, bay = null, title = callTitle({o: o});   // [basement 3.4] o
     if(K){
       bay = cpBay(K, o.key); var en = cpPath(K, "entryPath", bay), ent = cpEntrance(K);
       R = en && ent ? roadRoute(RD, {x: b.x, z: b.z}, {x: ent.x, z: ent.z}, 6000) : null;
@@ -2748,6 +2767,7 @@ function mount(el, api){
         if(T.K){                                                           // in its bay: the carpark shows it from here
           tripEnd(T, false, true);
           var o = T.b.own; o.stored = true; o.world = worldKey(T.C); o.bay = T.bay && T.bay.id != null ? T.bay.id : null; ownSave(o);
+          if(o.ownId != null && HQV.hqGarage && HQV.hqGarage.park){ clearTimeout(parkTimer[o.key]); try { Promise.resolve(HQV.hqGarage.park(o.ownId, null)).catch(function(){}); } catch(e){} }   // [basement 3.4] home in its bay (defect 3)
           try { if(T.K.cp.stored) T.K.cp.stored(T.K.site, T.bay, {key: o.key, vehicleId: o.vehicleId, color: o.color}); } catch(e){}
           if(T.b === showProp) showProp = null;
           propRemove(T.b);
@@ -2901,6 +2921,30 @@ function mount(el, api){
   }
   // Fade out, move you to the other scene (at the door you came through), fade in. A world with
   // whenReady (the 3D City) is awaited first behind the loading overlay; the world you are in keeps drawing.
+  /* [basement 3.4] the car lift (games/hqcarlift.js) and the B1 basement (games/hqbasement.js): drive onto the bay
+     by your HQ and you go down with the vehicle (the basement adopts it onto its pad), drive onto the pad down there
+     and you come up on the street apron in it. All guarded: with the modules absent it is an ordinary door. */
+  function liftCarry(from, name){
+    var CL = HQV.hqCarLift, armed = null; if(!ride || !CL || !CL.carries) return null;
+    try { armed = CL.armed ? CL.armed() : null; if(!CL.carries(from, name, ride, armed)) return null; } catch(e){ return null; }
+    var b = rideProp(); return {id: ride.id, kind: ride.kind, own: b && b.own || null, b: b, from: from};
+  }
+  function liftLand(w, name, carry){
+    var b = null;
+    if(name === "basement"){
+      if(carry.b && carry.b.world && carry.b.world !== w && carry.b.own) propRemove(carry.b);   // it leaves the street
+      try { if(HQV.hqBasement && HQV.hqBasement.adopt) b = HQV.hqBasement.adopt(w, {id: carry.id, kind: carry.kind, own: carry.own, b: carry.b}); } catch(e){ b = null; }
+    } else if(carry.own && w.bikes){
+      // up to the street: its prop moves into the City at the apron, the rider still on it
+      var o = carry.own, sp = (w.spawnFrom && w.spawnFrom.basement) || {x: avatar.x, z: avatar.z, yaw: avatar.yaw};
+      if(carry.b) propRemove(carry.b);
+      var old = propOf(o.key, w); if(old) propRemove(old);
+      o.world = worldKey(w); o.stored = false; o.x = sp.x; o.z = sp.z; o.yaw = sp.yaw || 0;
+      b = propMake(o, w, sp.x, sp.z, sp.yaw || 0); if(b) ownMoved(b, true);
+    } else if(carry.b && api.announce) api.announce("Your starters stay in the B1 showcase.");
+    if(nearBike() >= 0) rideToggle();
+    return b;
+  }
   function enterWorld(name, from, instant){
     name = outside(name);
     if(entering === name) return;                                   // already on the way there
@@ -2929,6 +2973,7 @@ function mount(el, api){
     if(entering){ entering = null; loading.remove(); }               // going somewhere else instead
     exitLock();
     var keep = keepRide && instant && ride && ride.heli;
+    var carry = liftCarry(from, name);   // [basement 3.4] down (or up) the car lift on what you ride
     var go = function(){
       if(!keep) dismount(true);
       rigLeave();
@@ -2944,6 +2989,7 @@ function mount(el, api){
       if(w.camModes) rigEnter(w);
       if(prev && prev !== w && prev.onLeave){ try { prev.onLeave(); } catch(e){} }
       if(w.onEnter){ try { w.onEnter(); } catch(e){} }
+      if(carry) liftLand(w, name, carry);   // [basement 3.4] your ride arrives with you
       if(api.remember !== false){ try { localStorage.setItem("hq_world", name); } catch(e){} }
       if(api.onWorld) api.onWorld(name);
       if(prev && prev.swapOut && prev !== w && prev.destroy){ try { prev.destroy(); } catch(e){} }   // the island you left

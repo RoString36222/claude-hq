@@ -55,7 +55,10 @@ class LoadOrderAndProtocol(unittest.TestCase):
         m = re.search(r"var HQ_SCRIPTS = (\[[^\]]*\]);", read(HQ_UI))
         self.assertTrue(m, "HQ_SCRIPTS list in 22-hq.js")
         self.assertEqual(json.loads(m.group(1)),
-                         ["engine", "avatar3d", "hq3d", "hqlobby", "hqbase", "hqskate", "world", "worldgeom",
+                         ["engine", "avatar3d", "hq3d", "hqlobby",
+                          # the basement garage (3.4): the car lift, the garage manager, its effects, B1 itself
+                          "hqcarlift", "hqgaragemgr", "hqbasementfx", "hqbasement",
+                          "hqbase", "hqskate", "world", "worldgeom",
                           "worldbuild", "camrig", "hqhud", "hqcityparts", "hqcity", "hqmerge",
                           # Cities (3.0): the civic kit, residents, traffic, the sea, boats, travel
                           "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqheli",

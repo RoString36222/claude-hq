@@ -611,9 +611,11 @@ HQV.hqWorlds.city3d = function(c, w){
     // the garage apron stops at the lot's front edge (the building stands HQ_DZ in front of the lot's middle)
     var ae = Math.min(11, (E.lot.d || 0)/200 - HQ_DZ);
     E.garage = garagePlace(E.lot, p, B.wings);
-    var X = E.garage ? parts.lotExtras(c, g, HQV.hqPlated ? HQV.hqPlated(HQV.hqLotColors(h.look), h) : HQV.hqLotColors(h.look), p.rot, function(x, z){ return toWorld(p, x, z); }, ae, h.userId, E.garage)
+    var X = E.garage ? parts.lotExtras(c, g, HQV.hqPlated ? HQV.hqPlated(HQV.hqLotColors(h.look), h) : HQV.hqLotColors(h.look), p.rot, function(x, z){ return toWorld(p, x, z); }, ae, h.userId, E.garage, h.isYou)
                      : {glows: [], car: null, items: []};
-    E.glows = X.glows; E.car = X.car; E.items = X.items;
+    E.glows = X.glows; E.car = X.car; E.items = X.items; E.lift = X.lift || null;
+    (X.hits || []).forEach(function(o){ hits.push(o); B.hits.push(o); });          // [basement 3.4] the car-lift bay (unbuild drops them with B's)
+    (X.doors || []).forEach(function(d){ if(d.front) d.front.y = p.y || 0; doors.push(d); B.doors.push(d); });
     // the building (its own meshes: it fades), then the lot round it: pad, garage, apron; never
     // the car, motorbike and bicycle (you ride them)
     merge(B.g, null, B);
@@ -663,6 +665,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(air) air.props(mine).forEach(function(b){ bikes.push(b); });       // air: the helicopters (and your own, by your HQ)
     var back = api.cityReturn && api.cityReturn(), ret = hqs.filter(function(E){ return E.h.userId === back; })[0];
     w.spawn = at(ret || mine); w.spawnFrom = {lobby: at(mine)};
+    w.spawnFrom.basement = (mine && HQV.hqCarLift && HQV.hqCarLift.streetSpot && (function(){ try { return HQV.hqCarLift.streetSpot({home: at(mine), garage: mine.garage, rot: mine.rot, x: mine.x, y: mine.y, z: mine.z, lot: mine.lot, toWorld: function(x, z){ return toWorld(mine, x, z); }}); } catch(e){ return null; } })()) || at(mine);   // [basement 3.4] up the car lift
     if(V2){
       w.home = mine ? at(mine) : null;                  // Return to HQ (T): your door, on this world
       // arriving by a trip, a boat or the island button: where it lands you (a dock, a station, the plaza)
@@ -1929,6 +1932,7 @@ HQV.hqWorlds.city3d = function(c, w){
     var s = CP.find(W); if(!s || (s.tier != null && (s.tier | 0) > tier)) return;
     var B; try { B = CP.build(c, s, {night: night, catalogue: c.catalogue}); } catch(e){ return; }
     S.add(B.g); cp = {site: s, B: B, y: null, rows: [], drv: null};
+    try { var ke = CP.entrance && CP.entrance(s), KM = HQV.hqGarageMgr, KI = ke && KM && KM.kiosk && KM.kiosk(c, "carpark"); if(KI && KI.g){ KI.g.position.set(ke.x + 3.2, ke.y || 0, ke.z); S.add(KI.g); (KI.hits || []).forEach(function(o){ hits.push(o); }); if(KI.door){ if(!KI.door.front) KI.door.front = new THREE.Vector3(ke.x + 3.2, ke.y || 0, ke.z + 1.6); doors.push(KI.door); } } } catch(e){}   // [basement 3.4] the garage manager's kiosk
     carparkFleet();
   }
   function carparkEntry(id){
@@ -1944,7 +1948,7 @@ HQV.hqWorlds.city3d = function(c, w){
     var G = HQV.hqGarage;
     if(G && G.mine){
       Promise.resolve(G.mine()).then(function(rows){
-        apply((rows || []).filter(function(r){ return r && !r.parked; }).map(function(r){ return {key: who + ":" + r.id, entry: carparkEntry(r.vehicle_id), paint: r.paint}; }));
+        apply((rows || []).filter(function(r){ return r && !r.parked && !(HQV.hqGarageMgr && HQV.hqGarageMgr.homeOf && HQV.hqGarageMgr.homeOf(r.id) === "basement"); }).map(function(r){ return {key: who + ":" + r.id, entry: carparkEntry(r.vehicle_id), paint: r.paint}; }));   // [basement 3.4] B1's are downstairs
       }, function(){});
     } else {
       var p = c.showroomPick && c.showroomPick();

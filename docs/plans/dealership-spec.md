@@ -31,7 +31,8 @@ Class labels say it the same way: "Naked · up to 400 cc", "SUV · 2001-3000 cc"
 ### Bike types
 
 `naked` (no fairing, upright), `sport` (full fairing, tucked), `adventure` (long travel, tall,
-on and off road), `cruiser`, `scooter`, `dirt` (off road only).
+on and off road), `cruiser` (low seat, feet forward, wide bars), `classic` (a retro roadster, sat upright),
+`hypersport` (the long, fast faired bikes: the H2, the Hayabusa), `scooter`, `dirt` (off road only).
 
 ### Car bands (cc)
 
@@ -47,12 +48,14 @@ A plug-in hybrid is banded by its engine's cc (the BMW M5's 4395 cc V8 is `5000`
 
 ### Car types
 
-`hatch`, `sedan`, `coupe`, `suv`, `pickup`, `hyper` (hypercars: always `over5000` or `ev`).
+`hatch`, `sedan`, `coupe`, `suv`, `pickup`, `super` (mid-engined supercars, banded by cc like the rest; 3.9),
+`hyper` (hypercars: always `over5000` or `ev`).
 
 ### Rules
 
 - A class exists when at least one vehicle in the catalogue belongs to it. It **is on sale**
-  only with exactly 2 vehicles. A third candidate waits as a `reserve` until a slot is free.
+  with 1 to 4 listed vehicles (slots 1-4, filled in order; HQ 3.9, the owner's "sell them all" —
+  before 3.9 it took exactly 2). A fifth candidate waits as a `reserve` until a slot is free.
 - Class tier sets the price band, and the tier you need to buy (see Economy). Tiers:
   bikes `400` 1, `950` 2, `over950` 3; cars `2000` 1, `3000` 2, `5000` 3, `over5000` 4, `ev` by power
   (under 300 kW 2, under 500 kW 3, else 4), `hyper` always 5.
@@ -93,6 +96,21 @@ starter, outside the classes.
 
 Reserve: Bugatti Veyron 16.4 (7993 cc W16, 1001 PS, 407 km/h), waiting for a third hyper slot or
 a `car.hyper.over5000` swap. Today's hatchback stays as the free starter.
+
+### Added in 3.9 (Lamborghini, new bikes)
+
+| class | slot 1 | slot 2 |
+|---|---|---|
+| `car.super.5000` | Lamborghini Temerario: 3995 cc twin-turbo V8 hybrid, 920 CV | Lamborghini Countach LP400 (1974): 3929 cc V12, 375 CV |
+| `car.super.over5000` | Lamborghini Revuelto: 6498 cc V12 hybrid, 1015 CV | Lamborghini Huracán STO: 5204 cc V10, 640 CV |
+| `bike.hypersport.over950` | Kawasaki Ninja H2: 998 cc supercharged four, 231 PS | Suzuki Hayabusa: 1340 cc four, 190 PS |
+| `bike.classic.400` | Royal Enfield Classic 350: 349 cc single | open |
+| `bike.classic.950` | Royal Enfield Interceptor 650: 648 cc twin | open |
+| `bike.cruiser.over950` | Harley-Davidson Fat Boy 114: 1868 cc 45° V-twin | open |
+
+Also listed (slots 3-4, 3.9): Lamborghini Urus Performante (`car.suv.5000` slot 3), Ducati Panigale V4 S and
+Yamaha R1 (`bike.sport.over950` slots 3, 4), Triumph Street Triple 765 RS (`bike.naked.950` slot 3). The
+one-vehicle classes above are on sale too. The Bugatti Veyron stays a reserve.
 
 **Status after player 1:** 13 classes on sale (both slots filled; the three KTM bikes above fill
 the bike classes' second slots), 3 car classes with one open slot (`car.hatch.2000`, `car.sedan.2000`,
@@ -154,7 +172,7 @@ from a game's own folder (dashboard-rs `GAME_ASSET_RE`, which lists `vehicles/` 
    maker's specs and dimensions, 4-6 factory paints, `model3d: null`, and `pickedBy` the player who
    asked for it. Its class is `<kind>.<type>.<bandOf(cc)>`: if that class is not in `classes` yet,
    add it too (label "Type · band in cc", tier from the band).
-2. Slot: `1` or `2` if the class has room, else `"reserve"`.
+2. Slot: the next of `1`-`4` if the class has room, else `"reserve"`.
 3. `python3 -m unittest tests.test_hqvehicles`. Nothing else changes: the dealership and the physics
    read the catalogue.
 

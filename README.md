@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.8.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.9.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -370,6 +370,49 @@ and feature guide.
 ---
 
 ## Changelog
+
+- **3.9.0 — Lamborghinis, new bikes and redesigned vehicles.** Thirteen new vehicles in the catalogue (`games/vehicles/catalogue.json`, its
+  Arena copy `backend/data/vehicles.json`), each with its maker's real specs, size and factory paints, its own stand-in
+  body and engine voice. Every vehicle is free for now, as before.
+  - **Lamborghini, a new Supercar type:** `car.super.over5000` (Revuelto: 6.5 L V12 plug-in hybrid, 1015 CV;
+    Huracán STO: 5.2 L V10, 640 CV, rwd) and `car.super.5000` (Temerario: 4.0 L twin-turbo V8 hybrid, 920 CV; the
+    1974 Countach LP400: 3.9 L V12) are on sale at every dealership. The Urus Performante waits as a `car.suv.5000`
+    reserve (both slots are BMWs). A wedge body: the windscreen's foot over the front axle, an engine cover sloping
+    to the tail, trapezoid arches, slim Y-signature headlights, hexagonal tail rings, tips and a generic hexagonal
+    badge, big side intakes, scissor-door shut lines, louvres on the engine glass, the STO's wing and roof scoop;
+    the Urus as an SUV with the same cues and a sharp shoulder crease. New voices: a naturally aspirated V10 (8,700
+    rpm) and V12 (9,500 rpm).
+  - **Bikes, three new types:** Hypersport (`bike.hypersport.over950`: Kawasaki Ninja H2, Suzuki Hayabusa, on sale),
+    Classic (Royal Enfield Classic 350 and Interceptor 650) and Cruiser (Harley-Davidson Fat Boy 114); the Ducati
+    Panigale V4 S and Yamaha R1 wait as `bike.sport.over950` reserves and the Triumph Street Triple 765 RS as a
+    `bike.naked.950` reserve, and the classic and cruiser classes go on sale once each has a second bike (the
+    two-per-class rule) — superseded below: everything is on sale. Each looks like itself: the Panigale's single-sided swingarm, biplane winglets and two
+    cans stacked under the seat; the H2's green trellis, chrome-mirror flanks and ram-air duct; the Classic's round
+    lamp under its nacelle, teardrop tank, chrome, spoked wheels and sprung saddle; the Interceptor's twin
+    peashooters; the Fat Boy's disc wheels, V-twin, floorboards and wide pull-back bars; the Triumph's bug eyes; the
+    R1's M1 face; the Hayabusa's long round nose and stacked headlight. Two new rider poses ride on the same seat,
+    grip and foot anchors: upright on a classic, and low, feet forward, arms out on a cruiser. Seven new voices: a
+    twin-pulse V4, an inline triple, a crossplane four, a supercharged four (its whine, a chirp on a lift), a
+    long-stroke single, a 270-degree twin and a 45-degree V-twin.
+  - **Every existing stand-in redesigned to look like its model:** car bodies have rounded shoulders and draw in at
+    the nose and tail in plan; BMW grilles by model (the M3/M4's tall kidneys with horizontal slats, the 3 Series'
+    wide ones, the M5's and the XM/i7's lit outlines, the M2's frameless pair, the X5's XXL, the X3's diagonal slats,
+    the i4's closed panel), lights by model (angel eyes, slim lamps with a vertical DRL, the M2's square lamps, the
+    XM/i7's split lamps, the X5's hexagonal DRLs), the M cars' power dome and gills, the M4 CSL's ducktail, laser
+    tails and gold wheels, wheel spokes by model; Bugatti's three noses (the Chiron's wide horseshoe and LED row, the
+    Tourbillon's tall one and LED columns, the Veyron's round one and projectors), the Chiron and Tourbillon spine,
+    the Veyron's roof scoops and round tails, and a hypercar roof. Bikes: KTM's 390/990/1390 Duke faces, the RC's
+    single lamp, the Adventures' vertical split lamps, the 1390's single-sided swingarm; BMW's F 900 R and S 1000 R
+    lamps, the S 1000 RR's asymmetric pair and winglets, the M 1000 RR's stripes, the G 310 GS's asymmetric lamps.
+    Sizes, display scale, rider anchors, collision and the detail atlas are unchanged; cars stay at 14 draw calls
+    and under 6k triangles, bikes at 8-10 draw calls and under 6k.
+  - **Sell them all: a class is on sale with 1 to 4 vehicles** (it took exactly 2). Every new vehicle is buyable:
+    the Urus is `car.suv.5000`'s third, the Panigale and R1 `bike.sport.over950`'s third and fourth, the Street
+    Triple `bike.naked.950`'s third, and the one-bike classes (Classic 350, Interceptor 650, Fat Boy) and the
+    one-car BMW classes (M135, 330Li, M5) are on sale too. The Bugatti Veyron stays a reserve. The Arena checks
+    the same rule (`backend/src/vehicles.rs`); the flagship's forecourt is shallower so its hall shows all 42.
+  - **Arena:** the catalogue is server data, so the Arena needs a deploy (`ops/release.sh deploy`) before these
+    can be bought.
 
 - **3.8.0 — Fly the airliners.** Two airliners you fly yourself: a narrow-body (the airport's 38 m twin-jet) and a regional jet (the same at 0.72), in your HQ's own livery, on remote stands on the seaward side of the Commons' runway near the 36 end (clear of the passenger jets' stands, taxiways, line-up and roll, and of the prop plane's blast pad), and the regional jet beside a tier-5 island airport's runway (its 500 m runway is too short for the narrow-body). Walk up and press E (✈ Fly the airliner); Go to lists them as Airliner (fly it) / Regional airliner (fly it). A heavy flight model in hqplane.js: slow, damped controls, jets that spool up (about 5 s from idle for the narrow-body), a long takeoff roll that lifts off from a runway only, past 202 km/h (166 km/h regional; about 580 m of the Commons' runway), gear on G and by itself when assisted, flaps, Space for the brakes on the ground and speed brakes in the air, ground spoilers on landing, runway landings only, the autopilot (K) and air navigation (N) as the prop plane, a cockpit view from the captain's seat over a glareshield, and a crash puts you back on the stand. Out only stopped at a stand or on the apron. A new `jet` engine voice: a turbofan's spool whine on N1 (it lags the thrust levers as the engines spool) under broadband roar that grows with the thrust. Others see you in it (presence a = 11 / 12) where the Arena lists the new `airliner` capability; elsewhere you show as the prop plane. Needs the Arena backend release for the new codes.
 - **3.7.0 — The Lucky Byte: a casino, with games against other players.** Every city from tier 3 gets a casino.

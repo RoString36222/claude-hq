@@ -8,7 +8,7 @@
  *                          "5000" | "over5000"; "ev" for an electric drivetrain
  *   classes(cat)           -> the classes, starter excluded, bikes before cars, each kind by type then band
  *   byClass(cat, classId)  -> that class's vehicles: slot 1, slot 2, then reserves
- *   onSale(cat)            -> the classes with both slots filled (exactly 2 slot vehicles): the dealership's
+ *   onSale(cat)            -> the classes with 1 to 4 listed vehicles (slots 1-4; HQ 3.9): the dealership's
  *   get(cat, id)           -> a vehicle by id, or null
  */
 (function(){
@@ -45,7 +45,10 @@ function classes(cat){
   });
 }
 
-function slotRank(v){ return v.slot === 1 ? 0 : v.slot === 2 ? 1 : 2; }
+// [3.9] a class lists 1 to 4 vehicles (slots 1-4); a reserve waits outside them
+var MAX_SLOTS = 4;
+function isSlot(v){ return v && typeof v.slot === "number" && v.slot >= 1 && v.slot <= MAX_SLOTS && v.slot % 1 === 0; }
+function slotRank(v){ return isSlot(v) ? v.slot - 1 : MAX_SLOTS; }
 
 function byClass(cat, classId){
   return ((cat && cat.vehicles) || []).filter(function(v){ return v.class === classId; })
@@ -54,8 +57,8 @@ function byClass(cat, classId){
 
 function onSale(cat){
   return classes(cat).filter(function(c){
-    var s = byClass(cat, c.id).filter(function(v){ return v.slot === 1 || v.slot === 2; });
-    return s.length === 2;
+    var s = byClass(cat, c.id).filter(isSlot);
+    return s.length >= 1 && s.length <= MAX_SLOTS;
   });
 }
 
@@ -65,5 +68,5 @@ function get(cat, id){
   return null;
 }
 
-HQV.hqVehicles = {load: load, bandOf: bandOf, classes: classes, byClass: byClass, onSale: onSale, get: get, URL: URL};
+HQV.hqVehicles = {load: load, bandOf: bandOf, classes: classes, byClass: byClass, onSale: onSale, isSlot: isSlot, MAX_SLOTS: MAX_SLOTS, get: get, URL: URL};
 })();

@@ -35,7 +35,12 @@ out.voices = {single: P.voiceFor({cyl: 1}, 'bike'), twin: P.voiceFor({cyl: 2, la
   four: P.voiceFor({cyl: 4}, 'bike'), six: P.voiceFor({cyl: 6}, 'car'), v8: P.voiceFor({cyl: 8, layout: 'v'}, 'car'),
   w16: P.voiceFor({cyl: 16, layout: 'w16'}, 'car'), v16: P.voiceFor({cyl: 16, layout: 'v'}, 'car'),
   electric: P.voiceFor({electric: true}, 'car'), turbo4: P.voiceFor({cyl: 4, aspiration: 'turbo'}, 'car'),
-  turbo6: P.voiceFor({cyl: 6, aspiration: 'twin-turbo'}, 'car'), v8tt: P.voiceFor({cyl: 8, layout: 'v8', aspiration: 'twin-turbo'}, 'car')};
+  turbo6: P.voiceFor({cyl: 6, aspiration: 'twin-turbo'}, 'car'), v8tt: P.voiceFor({cyl: 8, layout: 'v8', aspiration: 'twin-turbo'}, 'car'),
+  v10: P.voiceFor({cyl: 10, layout: 'v10', aspiration: 'na'}, 'car'), v12: P.voiceFor({cyl: 12, layout: 'v12', aspiration: 'na'}, 'car'),
+  v4: P.voiceFor({cyl: 4, layout: 'v4'}, 'bike'), triple: P.voiceFor({cyl: 3, layout: 'inline-3'}, 'bike'),
+  crossplane: P.voiceFor({cyl: 4, layout: 'crossplane-4'}, 'bike'), supercharged: P.voiceFor({cyl: 4, layout: 'inline-4', aspiration: 'supercharged'}, 'bike'),
+  longstroke: P.voiceFor({cyl: 1, layout: 'single', cc: 349, powerKw: 15}, 'bike'), twin270: P.voiceFor({cyl: 2, layout: 'parallel-twin', cc: 648, powerKw: 35}, 'bike'),
+  vtwin45: P.voiceFor({cyl: 2, layout: 'v-twin-45'}, 'bike')};
 console.log(JSON.stringify(out));
 """
 
@@ -105,7 +110,7 @@ TODAY = {
     "starter_moto": {"top": 24, "acc": 9, "rev": 3, "lean": 0.42, "box": [0, 0.8], "gears": [6.5, 11.5, 16, 20.5, 25],
                      "slide": {"min": 8, "turn": 1.35, "grip": 3.2, "max": 0.32, "bleed": 3}},
 }
-VOICES = ["single", "twin", "vtwin", "boxer", "four", "six", "v8", "w16", "v16", "electric", "turbo4", "turbo6", "v8tt"]
+VOICES = ["single", "twin", "vtwin", "boxer", "four", "six", "v8", "w16", "v16", "electric", "turbo4", "turbo6", "v8tt", "v10", "v12", "v4", "triple", "crossplane", "supercharged", "longstroke", "twin270", "vtwin45"]
 
 
 def near(a, b, tol):
@@ -218,6 +223,11 @@ class Voices(unittest.TestCase):
         self.assertGreater(o["electric"]["idle"], o["v8"]["red"])       # a motor's whine sits above any engine
         self.assertEqual(o["electric"]["osc"], "sine")
         self.assertLess(o["w16"]["idle"], o["v16"]["idle"])             # the W16's roar under the V16's shriek
+        self.assertGreater(o["v12"]["red"], o["v10"]["red"])            # [3.9] the V12 screams over the V10...
+        self.assertGreater(o["v10"]["red"], o["v8tt"]["red"])           # ...which wails over a twin-turbo V8
+        self.assertLess(o["longstroke"]["red"], o["single"]["idle"]*5)  # the long-stroke single thumps low...
+        self.assertLess(o["vtwin45"]["idle"], o["vtwin"]["idle"])       # ...and the 45-degree V-twin lopes lowest of the twins
+        self.assertGreater(o["v4"]["red"], o["crossplane"]["red"])      # the V4 screams highest of the fours
 
     def test_hq3d_uses_the_new_fields(self):
         with open(os.path.join(ROOT, "games", "hq3d.js"), encoding="utf-8") as f:

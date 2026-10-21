@@ -17,8 +17,8 @@
 //! catalogue, so buying is claiming. Prices and level gates are data: set them in the
 //! catalogue and these checks apply unchanged (the tests run them on fixtures).
 //!
-//! Buying: only a vehicle in slot 1 or 2 of a class that is on sale (both slots
-//! filled); `paint` is an index into its paints. The class's `minLevel` is checked
+//! Buying: only a listed vehicle (slot 1 to 4) of a class that is on sale (1 to 4
+//! listed vehicles, HQ 3.9); `paint` is an index into its paints. The class's `minLevel` is checked
 //! against the caller's HQ level (cosmetics::hq_level, the level the Trainer card
 //! shows). Paid in Poke Coins from poke_balances in the same transaction as the
 //! owned_vehicles row, which records the price (poke_ledger's op CHECK has no
@@ -26,7 +26,7 @@
 //! [`MAX_OWNED`].
 //!
 //! Errors: 422 a bad body; 404 an unknown vehicle (or not yours, for park); 409 not
-//! on sale (a starter, a reserve, a class still missing a slot) or the garage is
+//! on sale (a starter, a reserve, a class listing more than 4) or the garage is
 //! full; 403 the class needs a higher level; 402 not enough Poke Coins.
 //!
 //! PRIVACY: catalogue ids, paint indexes, prices, times and world coordinates only.
@@ -47,6 +47,8 @@ use crate::cities::{self, Refuse};
 
 /// Most vehicles one player may own.
 pub const MAX_OWNED: i64 = 20;
+/// The most vehicles a class lists (slots 1 to 4, HQ 3.9); a class is on sale with 1 to 4.
+const MAX_SLOTS: usize = 4;
 /// |x|, |z| a parked vehicle may stand at (m): every world fits well inside.
 const MAX_COORD: f64 = 20_000.0;
 
@@ -68,7 +70,7 @@ pub(crate) fn parse_catalogue(src: &str) -> HashMap<String, Model> {
         .flatten()
         .filter_map(|c| Some((c["id"].as_str()?, c["minLevel"].as_i64().unwrap_or(0))))
         .collect();
-    let in_slot = |s: &Value| s.as_i64().is_some_and(|n| n == 1 || n == 2);
+    let in_slot = |s: &Value| s.as_i64().is_some_and(|n| (1..=MAX_SLOTS as i64).contains(&n));
     let mut slots: HashMap<&str, usize> = HashMap::new();
     for m in v["vehicles"].as_array().into_iter().flatten() {
         if in_slot(&m["slot"]) {
@@ -84,7 +86,8 @@ pub(crate) fn parse_catalogue(src: &str) -> HashMap<String, Model> {
             Some((
                 m["id"].as_str()?.to_string(),
                 Model {
-                    on_sale: in_slot(&m["slot"]) && slots.get(class.as_str()) == Some(&2),
+                    on_sale: in_slot(&m["slot"])
+                        && slots.get(class.as_str()).is_some_and(|n| (1..=MAX_SLOTS).contains(n)),
                     price: m["price"].as_i64().unwrap_or(0),
                     min_level: *min_level.get(class.as_str()).unwrap_or(&0),
                     paints: m["paints"].as_array().map_or(0, Vec::len),
@@ -417,17 +420,24 @@ mod tests {
         {"id": "mid-a", "class": "bike.naked.950", "slot": 1, "price": 5000, "paints": [{}]},
         {"id": "mid-b", "class": "bike.naked.950", "slot": 2, "price": 4000, "paints": [{}]},
         {"id": "lonely", "class": "car.sedan.5000", "slot": 1, "price": 100, "paints": [{}]},
+        {"id": "p1", "class": "car.suv.5000", "slot": 1, "price": 0, "paints": [{}]},
+        {"id": "p2", "class": "car.suv.5000", "slot": 2, "price": 0, "paints": [{}]},
+        {"id": "p3", "class": "car.suv.5000", "slot": 3, "price": 0, "paints": [{}]},
+        {"id": "p4", "class": "car.suv.5000", "slot": 4, "price": 0, "paints": [{}]},
+        {"id": "p5", "class": "car.suv.5000", "slot": 5, "price": 0, "paints": [{}]},
         {"id": "spare", "class": "bike.naked.400", "slot": "reserve", "price": 100, "paints": [{}]},
         {"id": "starter-x", "class": "starter", "slot": "starter", "price": 0, "paints": [{}]}]}"#;
 
     #[test]
-    fn the_catalogue_sells_full_classes_only() {
+    fn the_catalogue_sells_classes_of_one_to_four() {
         let c = parse_catalogue(FIXTURE);
         assert!(c["small-a"].on_sale);
         assert_eq!((c["small-a"].price, c["small-a"].min_level, c["small-a"].class.as_str()), (1000, 1, "bike.naked.400"));
         assert!(!c["starter-x"].on_sale, "starters are in every garage, not sold");
         assert!(!c["spare"].on_sale, "a reserve waits for a slot");
-        assert!(!c["lonely"].on_sale, "a class missing its second slot isn't on sale");
+        assert!(c["lonely"].on_sale, "a class listing one vehicle is on sale (3.9)");
+        assert!(["p1", "p2", "p3", "p4"].iter().all(|k| c[*k].on_sale), "slots 1 to 4 are listed");
+        assert!(!c["p5"].on_sale, "there is no slot 5");
         assert_eq!(c["mid-a"].min_level, 10);
     }
 

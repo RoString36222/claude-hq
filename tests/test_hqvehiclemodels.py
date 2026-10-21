@@ -29,6 +29,17 @@ ENTRIES = [
     {"id": "t-naked-big", "class": "bike.naked.over950", "brand": "BMW", "model": "S 1000 R", "spec": {"cc": 999}},
     {"id": "t-sport", "class": "bike.sport.over950", "brand": "BMW", "model": "S 1000 RR", "spec": {"cc": 999}},
     {"id": "t-adv", "class": "bike.adventure.over950", "brand": "BMW", "model": "R 1300 GS", "spec": {"cc": 1300, "layout": "boxer"}},
+    {"id": "t-classic", "class": "bike.classic.400", "brand": "Royal Enfield", "model": "Classic 350", "spec": {"cc": 349, "cyl": 1}},
+    {"id": "t-classic-twin", "class": "bike.classic.950", "brand": "Royal Enfield", "model": "Interceptor 650", "spec": {"cc": 648, "cyl": 2}},
+    {"id": "t-cruiser", "class": "bike.cruiser.over950", "brand": "Harley-Davidson", "model": "Fat Boy 114", "spec": {"cc": 1868, "cyl": 2, "layout": "v-twin-45"}},
+    {"id": "t-hypersport", "class": "bike.hypersport.over950", "brand": "Kawasaki", "model": "Ninja H2", "spec": {"cc": 998, "cyl": 4}},
+    {"id": "t-busa", "class": "bike.hypersport.over950", "brand": "Suzuki", "model": "Hayabusa", "spec": {"cc": 1340, "cyl": 4}},
+    {"id": "t-v4", "class": "bike.sport.over950", "brand": "Ducati", "model": "Panigale V4 S", "spec": {"cc": 1103, "cyl": 4, "layout": "v4"}},
+    {"id": "t-r1", "class": "bike.sport.over950", "brand": "Yamaha", "model": "R1", "spec": {"cc": 998, "cyl": 4}},
+    {"id": "t-triple", "class": "bike.naked.950", "brand": "Triumph", "model": "Street Triple 765 RS", "spec": {"cc": 765, "cyl": 3}},
+    {"id": "t-super", "class": "car.super.over5000", "brand": "Lamborghini", "model": "Revuelto"},
+    {"id": "t-sto", "class": "car.super.over5000", "brand": "Lamborghini", "model": "Huracán STO"},
+    {"id": "t-urus", "class": "car.suv.5000", "brand": "Lamborghini", "model": "Urus Performante"},
 ]
 
 HARNESS = r"""
@@ -55,7 +66,7 @@ for (const e of ENTRIES){
     tyreW: tb.max.x - tb.min.x, dims: V.dims(e), shown: V.shown(e), scale: r.scale, radii: r.radii, R: r.R,
     wheels: r.wheels.map(w => ({name: w.name, p: wpos(w)})),
     anchors: ["a-seat", "a-grip-l", "a-grip-r", "a-foot-l", "a-foot-r"].map(n => !!r.g.getObjectByName(n)),
-    seat: r.seat ? wpos(r.seat) : null, grips: r.grips.map(g => g ? wpos(g) : null),
+    seat: r.seat ? wpos(r.seat) : null, grips: r.grips.map(g => g ? wpos(g) : null), feetPos: r.feet.map(f => f ? wpos(f) : null),
     steer: Array.isArray(r.steer) ? r.steer.map(h => h && h.name) : r.steer && r.steer.name, spin: !!r.spin,
     steerY: Array.isArray(r.steer) ? r.steer[0].rotation.y : r.steer.rotation.y, spinZ: r.spin ? r.spin.rotation.z : null,
     rolled: r.wheels[0].rotation.x - w0,
@@ -163,13 +174,16 @@ class VehicleModels(unittest.TestCase):
             self.assertAlmostEqual(med/size(self.STARTER[kind]), 1, delta=0.15, msg=(kind, med))
         self.assertGreaterEqual(by["bike"]["bmw-s-1000-rr"], size(self.STARTER["bike"]))
         for i, s in by["car"].items():
-            self.assertGreaterEqual(s, size(self.STARTER["car"])*0.98, i)
+            # [3.9] the one exception: the 1974 Countach (4.14 x 1.89 x 1.07 m), drawn at its real size under the hatch
+            self.assertGreaterEqual(s, size(self.STARTER["car"])*(0.92 if i == "lamborghini-countach-lp400" else 0.98), i)
         self.assertGreater(by["car"]["bmw-x5-40i"], by["car"]["bmw-m135-xdrive"]*1.1)      # an SUV still over a hatch
         self.assertGreater(by["bike"]["bmw-r-1300-gs"], by["bike"]["ktm-rc-390"]*1.1)
         # the rider's seat at the starters' height: a bike's about the starter motorbike's (1.06 m)
         for r in self.o["cat"]:
             if r["kind"] == "bike":
-                self.assertTrue(0.9 <= r["seatY"] <= 1.25, (r["id"], r["seatY"]))
+                # [3.9] a cruiser's seat is low by design (the Fat Boy's 675 mm): it may sit down to 0.8 m as drawn
+                lo = 0.8 if r["id"] == "harley-davidson-fat-boy-114" else 0.9
+                self.assertTrue(lo <= r["seatY"] <= 1.25, (r["id"], r["seatY"]))
 
     def test_bays_and_turntables_fit_the_largest(self):
         # the car park, the basement and the dealer's turntables hold the biggest vehicle as drawn
@@ -229,6 +243,20 @@ class VehicleModels(unittest.TestCase):
         # a lower car seats a smaller driver (the Mini characters' heads stay under the roof)
         self.assertLess(self.rows["t-hyper"]["riderK"], self.rows["t-suv"]["riderK"])
         self.assertGreater(self.rows["t-sport"]["lean"], self.rows["t-adv"]["lean"])
+        # [3.9] the new poses: a classic sits upright, a cruiser leans back a touch with its feet forward of the hips,
+        # low, its hands out wide; a classic's feet sit under its hips
+        R = self.rows
+        self.assertLess(R["t-classic"]["lean"], R["t-adv"]["lean"])
+        self.assertLess(R["t-cruiser"]["lean"], 0)
+        for k in ("t-cruiser",):
+            feet = [a for a in R[k]["feetPos"]]
+            self.assertGreater(min(f[2] for f in feet), R[k]["seat"][2] + 0.6, k)          # forward controls
+            self.assertLess(R[k]["seat"][1], R["t-classic"]["seat"][1] - 0.1, k)           # a low seat
+            span = lambda r: sum((a - b)**2 for a, b in zip(r["grips"][0], r["grips"][1])) ** 0.5
+            self.assertGreater(span(R[k]), span(R["t-classic"]) + 0.1, k)                     # wide bars
+        for k in ("t-classic", "t-classic-twin"):
+            self.assertLess(abs(R[k]["feetPos"][0][2] - R[k]["seat"][2]), 0.25, k)       # hips over the pegs
+            self.assertGreater(R[k]["grips"][0][1], R["t-v4"]["grips"][0][1], k)           # hands up, not tucked
 
     def test_paint_and_brakes(self):
         for r in self.o["rows"]:

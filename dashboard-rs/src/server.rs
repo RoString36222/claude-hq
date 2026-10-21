@@ -67,6 +67,11 @@ pub fn vehicle_park_target(path: &str) -> Option<&str> {
     path.strip_prefix("/api/arena/vehicles/")?.strip_suffix("/park").filter(|id| !id.is_empty() && !id.contains('/'))
 }
 
+/// The owned vehicle in `/api/arena/vehicles/<id>/home`; arena.rs validates the id. [basement 3.4]
+pub fn vehicle_home_target(path: &str) -> Option<&str> {
+    path.strip_prefix("/api/arena/vehicles/")?.strip_suffix("/home").filter(|id| !id.is_empty() && !id.contains('/'))
+}
+
 /// Every state-changing route; anything else 404s locally.
 pub fn post_paths() -> Vec<&'static str> {
     let mut v = vec![
@@ -484,6 +489,7 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
         let (c, r) = app.arena_rail();
         return Reply::json(c, &r);
     }
+    if path == "/api/arena/garages/mine" { let (c, r) = app.arena_garages_mine(); return Reply::json(c, &r); } // [basement 3.4]
     if path == "/api/arena/vehicles/mine" {
         let (c, r) = app.arena_vehicles_mine();
         return Reply::json(c, &r);
@@ -800,7 +806,9 @@ async fn do_post(app: Arc<App>, headers: HeaderMap, path: String, body: Body) ->
     if !origin_ok(&headers) {
         return reply(Reply::json(403, &json!({"error": "cross-site request rejected"})));
     }
-    if !post_paths().contains(&path.as_str()) && city_post_target(&path).is_none() && vehicle_park_target(&path).is_none() {
+    if !post_paths().contains(&path.as_str()) && city_post_target(&path).is_none() && vehicle_park_target(&path).is_none()
+        && vehicle_home_target(&path).is_none() // [basement 3.4]
+    {
         return reply(Reply::json(404, &json!({"error": "not found"})));
     }
     let cl = headers.get("content-length").and_then(|v| v.to_str().ok()).map(|s| py::strip(s).to_string()).unwrap_or_default();
@@ -921,6 +929,7 @@ fn arena_post(app: &App, path: &str, body: &Value) -> (u16, Value) {
     if let Some(id) = vehicle_park_target(path) {
         return app.arena_vehicle_park(id, body);
     }
+    if let Some(id) = vehicle_home_target(path) { return app.arena_vehicle_home(id, body); } // [basement 3.4]
     if let Some((owner, action)) = city_post_target(path) {
         return if action == "trade" { app.arena_market_trade(&owner, body) } else { app.arena_city_post(&owner, action, body) };
     }

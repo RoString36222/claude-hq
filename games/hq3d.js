@@ -2945,7 +2945,8 @@ function mount(el, api){
         var cat = VEHICLES[v.vehicle_id] && VEHICLES[v.vehicle_id].cat, ph = v.paint;
         if(typeof ph === "number") ph = cat && cat.paints && cat.paints[ph] ? cat.paints[ph].hex : null;
         o.vehicleId = v.vehicle_id; o.color = /^#[0-9a-fA-F]{6}$/.test(ph || "") ? parseInt(ph.slice(1), 16) : null;
-        var p = v.parked; if(p && !propOf(k) && !tripOf(propOf(k))){ o.world = String(p.world || ""); o.x = +p.x; o.z = +p.z; o.yaw = +p.yaw || 0; o.stored = false; }
+        // [3.5.2] a vehicle just stored in B1 keeps no street pose
+        var p = v.parked; if(p && !(o.b1 && o.stored) && !propOf(k) && !tripOf(propOf(k))){ o.world = String(p.world || ""); o.x = +p.x; o.z = +p.z; o.yaw = +p.yaw || 0; o.stored = false; }
       });
       ownPlace(cur);
     }, function(){});
@@ -3337,9 +3338,11 @@ function mount(el, api){
       // [3.5.2] adopt() moved the prop's position into B1 but not its model: a starter's mesh stayed in the City's
       // scene, so it vanished on arrival. Move the mesh into B1's scene with it.
       if(cb && cb.g && !cb.own){ if(cb.g.parent !== (w.scene || scene)){ if(cb.g.parent) cb.g.parent.remove(cb.g); (w.scene || scene).add(cb.g); } cb.world = w; cb.g.visible = true; }
-      // [3.5.2] an owned vehicle already homed in B1 came back from a drive: clear its street pose so B1 redraws it in its bay
-      if(cb && cb.own && cb.own.ownId != null && HQV.hqGarageMgr && HQV.hqGarageMgr.homeOf && HQV.hqGarageMgr.homeOf(cb.own.ownId) === "basement" && HQV.hqGarage && HQV.hqGarage.park){
-        try { Promise.resolve(HQV.hqGarage.park(cb.own.ownId, null)).then(function(){ if(HQV.hqGarage.mine) HQV.hqGarage.mine(true); }).catch(function(){}); } catch(e){}
+      // [3.5.2] an owned vehicle driven down is stored in B1 now: forget its street pose (here and on the Arena, and a
+      // pending debounced trip save) or ownPlace() parks a copy of it back on the street when you come up
+      if(cb && cb.own){
+        cb.own.stored = true; cb.own.b1 = true; ownSave(cb.own);
+        if(HQV.hqGarage && HQV.hqGarage.mine) setTimeout(function(){ try { HQV.hqGarage.mine(true); } catch(e){} }, 400);
       }
     } else if(carry.own && w.bikes){
       // up to the street: its prop moves into the City at the apron, the rider still on it

@@ -19,7 +19,7 @@
  *   plaqueLayout(uid, bests)     -> [{x, y, w, h, title, line, tier}]   pure
  *   lounge(ctx, g, at)           -> {update(t, dt, k)}   a fishtank: fish swim on fixed loops (Calm: still)
  *   lighting(w, {night, weather}) -> {warm, sheen, exposure}   warmer at night, a wet sheen when it rains
- *   photoSpot(ctx, g, at)        -> {g, door}   a backdrop and a tip "Press P for photo mode"
+ *   photoSpot(ctx, g, at)        -> {g, hit, spot, tip}   a backdrop; hit.userData.tip "Press P for photo mode"
  *   sound(name)                     through HQV.engine.sfx when present; silent otherwise
  *   enter(ctx, w) / update(t, dt, k) / setTime(night, weather) / leave()   B's world hooks
  *   _reset()                        test hook
@@ -311,8 +311,8 @@ function lighting(w, o){
 /* ---------- photo spot ---------- */
 function photoSpot(ctx, g, at){
   var THREE = T(ctx); at = at || {};
-  var door = {view: "tip", kind: "photo", tip: "Press P for photo mode", label: "Photo spot", front: {x: num(at.x, 0), z: num(at.z, 0) + 2}};
-  if(!THREE || !g || !g.add) return {g: null, door: door};
+  var spot = {tip: "Press P for photo mode", label: "Photo spot", front: {x: num(at.x, 0), z: num(at.z, 0) + 2}};   // a tip, not a door: P is hq3d's own key
+  if(!THREE || !g || !g.add) return {g: null, spot: spot, tip: spot.tip};
   var s = new THREE.Group(); s.position.set(num(at.x, 0), 0, num(at.z, 0)); s.rotation.y = num(at.yaw, 0);
   var tx = tex(ctx, 512, 256, function(c){
     var gr = c.createLinearGradient ? c.createLinearGradient(0, 0, 0, 256) : null;
@@ -323,9 +323,9 @@ function photoSpot(ctx, g, at){
   });
   var back = new THREE.Mesh(new THREE.PlaneGeometry(6, 3), tx && tx.t ? new THREE.MeshBasicMaterial({map: tx.t}) : new THREE.MeshBasicMaterial({color: 0x1b1424}));
   back.position.set(0, 1.5, 0); s.add(back);
-  back.userData = {door: door, tip: door.tip};
+  back.userData = {tip: spot.tip, label: spot.label};
   g.add(s);
-  return {g: s, door: door, hit: back};
+  return {g: s, spot: spot, tip: spot.tip, hit: back};
 }
 
 /* ---------- world hooks for B ---------- */

@@ -575,7 +575,9 @@ class CitiesTest(unittest.TestCase):
             self.assertLess(b["reach"], 4, b)
             self.assertTrue(b["alongside"], b)
             # afloat: at sea level, or on the river's calm surface RIVER_Y over it
-            self.assertAlmostEqual(b["y"], p["seaY"] + (b["riverY"] if b["river"] else 0), 6, b)
+            # (3.2) moored at its draft below the water it floats on, as the boat physics floats it: no pop on boarding
+            draft = {"rowboat": 0.12, "jetski": 0.08}[b["kind"]]
+            self.assertAlmostEqual(b["y"], p["seaY"] + (b["riverY"] if b["river"] else 0) - draft, 6, b)
 
     def test_navigation_mounts(self):
         n = self.out["nav"]

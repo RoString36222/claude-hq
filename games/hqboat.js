@@ -161,8 +161,11 @@ function step(st, inp, dt, sea){
 function settle(st, V, sea, wave, dt){
   st.t += dt;
   var t = st.t, sy = Math.sin(st.yaw), cy = Math.cos(st.yaw), h = V.len*0.4, b = V.beam*0.45;
-  var hc = wave(st.x, st.z, t), hf = wave(st.x + sy*h, st.z + cy*h, t), hb = wave(st.x - sy*h, st.z - cy*h, t);
-  var hl = wave(st.x + cy*b, st.z - sy*b, t), hr = wave(st.x - cy*b, st.z + sy*b, t);   // model-local +x is left
+  // the water's surface (games/ocean.js sea.surface: the same clock and the same Calm as the drawn sea); a sea
+  // without one (tests): sea level plus wave() on the boat's own clock
+  var surf = typeof sea.surface === "function" ? function(x, z){ return sea.surface(x, z, t) - (+sea.y || 0); } : function(x, z){ return wave(x, z, t); };
+  var hc = surf(st.x, st.z), hf = surf(st.x + sy*h, st.z + cy*h), hb = surf(st.x - sy*h, st.z - cy*h);
+  var hl = surf(st.x + cy*b, st.z - sy*b), hr = surf(st.x - cy*b, st.z + sy*b);   // model-local +x is left
   var sl = clamp(Math.abs(st.speed)/V.top, 0, 1);
   var yGoal = (+sea.y || 0) + 0.25*(hc*2 + hf + hb) - V.draft + V.plane*sl*0.8;
   var pGoal = Math.atan2(hf - hb, 2*h) + V.plane*sl*(st.speed > 0 ? 1 : 0);

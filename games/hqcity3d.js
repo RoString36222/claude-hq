@@ -1908,6 +1908,13 @@ HQV.hqWorlds.city3d = function(c, w){
     }
     return null;
   }
+  // the camera's floor (hq3d rigFrame): the ground, and over open water the water's surface plus 0.5 m, so a chase
+  // camera behind a boat or low over the sea never dips under the waves (it used to follow the sea bed) (3.2)
+  w.camGround = function(x, z){
+    var g = groundY(x, z);
+    if(sea && sea.surface && (!W || Math.abs(x) > W.half || Math.abs(z) > W.half || !sea.boat.land(x, z))) g = Math.max(g, sea.surface(x, z) + 0.5);
+    return g;
+  };
   w.planeEnv = {
     floor: function(x, z){ var R0 = runwayAt(x, z), f = w.heliFloor(x, z); return R0 ? Math.max(R0.y, R0.y > f - 2 ? R0.y : f) : f; },
     water: function(x, z){ if(runwayAt(x, z)) return false; var off = !W || Math.abs(x) > W.half || Math.abs(z) > W.half; return !!sea && (off || !sea.boat.land(x, z)); },

@@ -2483,7 +2483,8 @@ function mount(el, api){
     if(m === "map" && (fwd || side)){ var pv = 600*dt; ev.pan = [-side*pv, -fwd*pv]; }
     C.input(rig, ev);
     var T = rigTarget();
-    pose = C.step(rig, T, dt, {ground: groundAt, hit: cur.camHit || function(){ return 1; }, viewH: inst.h || 600, aspect: (inst.w || 1)/(inst.h || 1)});
+    // (the camera's floor: the ground, and over water its surface, so it never dips under the waves: cur.camGround)
+    pose = C.step(rig, T, dt, {ground: cur.camGround || groundAt, hit: cur.camHit || function(){ return 1; }, viewH: inst.h || 600, aspect: (inst.w || 1)/(inst.h || 1)});
     if(rig.mode === "cine" && rig.wake) C.setMode(rig, rig.prev && rig.prev !== "cine" ? rig.prev : rig.preferred || "chase");
     if(rig.mode !== lastMode) modeChanged(lastMode, rig.mode);
     if(pose && !pose.ortho){

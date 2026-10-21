@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.1.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.2.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -336,6 +336,37 @@ and feature guide.
 
 ## Changelog
 
+- **3.2.0 — Planes, air navigation, and in-sync turning.**
+  - **Fly a seaplane or a prop plane.** A seaplane is moored down the river from every city's main dock, and a
+    small prop plane (an original design) stands by every airport's runway (the Commons always, an island at
+    tier 5). Walk up and press E. W / S set the throttle, A / D bank (steer on the ground or the water), the Up /
+    Down arrows or a vertical drag raise and lower the nose; past rotation speed Up lifts off. Assisted flying (the
+    default) levels the wings and the nose when you let go, keeps you above stall speed and cannot roll over; X
+    switches to manual. G gear, F flaps, Space brakes, K autopilot (holds your height and heading, or flies to
+    the waypoint). Lift grows with airspeed, a stall drops the nose gently, ground effect cushions the flare. Land
+    the seaplane on any water and the prop plane on a runway (or, slowly, on flat ground with the gear down); a
+    crash is a bump and you are back at the dock or the stand. The flight HUD has airspeed and altitude dials, a
+    readout with heading, throttle, gear and flaps, and a stall warning. Chase and cockpit cameras, gamepad
+    support, an engine note. Other players see your plane where the Arena supports it (the new plane presence
+    capability, a = 9 / 10; older Arenas show you standing, as for helicopters).
+  - **Air navigation.** While you fly (planes and helicopters), Go to (N) lists the runways, the seaplane's
+    landing lane off the river mouth, helipads and the other islands; a minimap click sets a free waypoint. The
+    route is a straight line on the minimap, the light pillar marks the destination, and the HUD shows an arrow to
+    it with its distance, time at your speed and the height to fly. A runway or a landing lane gets its approach:
+    rings down a 3° glideslope from the final approach fix, a touchdown marker, and a glideslope indicator on final.
+    At a dock in a city with an airport, the travel menu now says flights leave from the airport (N takes you there).
+  - **Turning in sync.** On foot the chase camera used to trail a held turn by up to ~60° and park ~23° off once
+    you stopped, while the heading-up minimap turned with your facing at once; dragging the camera turned only the
+    camera. Now the camera turns with you (no lag, no overshoot), the minimap turns with the camera, walking with a
+    dragged camera steers you toward where it looks, and you turn faster (3.6 rad/s) on a smoother spring.
+  - **Smoother walking.** Idle, walk and run blend by speed, played at the rate your stride needs; you lean into
+    turns and with the pace, turn your head into the turn and shuffle when turning on the spot; other players are
+    dead-reckoned between presence updates and animate the same way.
+  - **Water and docks.** Boats, ferries and the seaplane float on one water surface that runs on the drawn sea's
+    clock (they used to bob out of step with the waves), moored boats ride the swell instead of sitting flat while
+    waves pass through them, a ferry no longer sits 0.2 m deep in the river, boarding a moored boat no longer pops,
+    the camera no longer dips under the water, and a far chase camera has the depth precision to stop the shore
+    flickering. Piers are finished: planks, posts, a safety line, cleats, fenders, ladders and lamps on the head.
 - **3.1.1 — City camera and plates.** The chase camera sits higher and further back (the far camera
   higher still), so you see the street around you instead of the ground at your feet. Left-drag now
   turns the camera too (trackpads have no right-drag); a click still walks. On a motorbike or a bicycle

@@ -459,7 +459,9 @@ class CamRig(unittest.TestCase):
             self.vclose(st[mode]["off"], self.expected(mode))
             self.close(st[mode]["fov65"], self.o["modes"][mode]["fov"], 0.01)
             self.close(st[mode]["fov80"], self.o["modes"][mode]["fov"] + 15, 0.01)
-            self.close(st[mode]["near"], 0.3, 1e-9)
+            # 3.2: the near plane is a twelfth of the way to the pivot (the head, LOOK_H up), 0.3..2.5 m
+            o = st[mode]["off"]
+            self.close(st[mode]["near"], max(0.3, min(2.5, math.sqrt(o[0]**2 + (o[1] - 1.3)**2 + o[2]**2) / 12)), 1e-6)
             self.close(st[mode]["far"], 6000, 1e-9)   # planes 3 km off at 600 m, airways higher (games/hqair.js)
         # near sits to the right: model-local -x
         right = rot((-1, 0), 0.7)
@@ -702,7 +704,7 @@ class CamRig(unittest.TestCase):
         r = self.o["review"]
         for mode, (pre, first) in r["riseNear"].items():
             self.close(first, pre, 0.1 * pre, mode)
-        self.close(r["diveEndNear"], 0.3, 1e-9)
+        self.assertTrue(0.3 <= r["diveEndNear"] <= 2.5, r["diveEndNear"])   # (3.2: scaled with the chase distance)
         self.assertLess(r["diveNearJump"], 1.5)
 
     def test_vehicle_head_bob_and_dt_clamp(self):

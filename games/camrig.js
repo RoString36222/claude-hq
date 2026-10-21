@@ -74,6 +74,7 @@ var HEAD_BIAS = 0.3, HEAD_BIAS_MAX = 0.7, HEAD_AGAINST = 10;
 var AHEAD_W = 4, AHEAD_MAX = 3, AHEAD_K = 0.3, COL_IN = 25, COL_OUT = 3, COL_HYST = 0.3;
 var RECENTRE = 2, SWING = 1.9, LIFT = 2, ORBIT_K = 0.006, LOOK_K = 0.0022, ZOOM_K = 0.0015;
 var CINE_SHOT = 12;
+var NEAR_MAX = 2.5;        // m: the chase family's near plane grows with its distance up to this (3.2)
 
 /* ---------- small maths ---------- */
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
@@ -441,6 +442,10 @@ function chasePose(s, mode, T, dt, q){
   var kick = red ? 0 : Math.min(10, T.speed*0.5)*(V ? V.fovSpeedKick : 1);
   var p = basePose(mode);
   p.pos = pos; p.look = lk; p.focus = H;
+  // the near plane: a twelfth of the way to the pivot (never under the mode's, at most NEAR_MAX m): a camera far
+  // behind a plane or a ship gets the depth precision that stops the shore and the water flickering far off (3.2)
+  var pd = Math.sqrt((pos.x - P.x)*(pos.x - P.x) + (pos.y - P.y)*(pos.y - P.y) + (pos.z - P.z)*(pos.z - P.z));
+  p.near = clamp(pd/12, M.near, NEAR_MAX);
   p.fov = fovSpring(s, M.fov + fovOff(s) + kick, dt);
   p.roll = red || !V ? 0 : V.roll*T.lean*0.5;
   s.lookYaw = Math.atan2(lk.x - pos.x, lk.z - pos.z);

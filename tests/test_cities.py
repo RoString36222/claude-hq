@@ -60,6 +60,7 @@ El.prototype.closest = function(sel){ var ks = sel.split(",").map(x => x.trim().
 El.prototype.getContext = function(){ return noop2d; };
 El.prototype.getBoundingClientRect = function(){ return {left: 0, top: 0, width: 200, height: 200}; };
 El.prototype.all = function(){ var o = [this]; this.children.forEach(k => { o = o.concat(k.all()); }); return o; };
+Object.defineProperty(El.prototype, "firstChild", {get(){ return this.children[0] || null; }});
 const winKeys = [];
 globalThis.document = {createElement: t => new El(t), pointerLockElement: null, activeElement: null};
 globalThis.window = {HQV: {}, document: globalThis.document, devicePixelRatio: 1, getComputedStyle: () => ({getPropertyValue: () => ""}),
@@ -93,7 +94,7 @@ function rng(seed){ var a = seed >>> 0 || 1; return function(){ a = (a + 0x6D2B7
 function mat(c, o){ return new THREE.MeshStandardMaterial(Object.assign({color: c, roughness: 0.7, metalness: 0.08}, o || {})); }
 function emis(c, e, ei, o){ var m = mat(c, o); m.emissive = new THREE.Color(e); m.emissiveIntensity = ei; return m; }
 function add(o, x, y, z, p, ns){ o.position.set(x, y, z); if(!ns){ o.castShadow = true; o.receiveShadow = true; } p.add(o); return o; }
-var noop2d = new Proxy({}, {get(t, k){ return k === "measureText" ? function(){ return {width: 10}; } : (k === "createLinearGradient" || k === "createRadialGradient") ? function(){ return {addColorStop(){}}; } : function(){}; }, set(){ return true; }});
+var noop2d = new Proxy({}, {get(t, k){ return k === "measureText" ? function(){ return {width: 10}; } : k === "createImageData" ? function(w, h){ return {data: new Uint8ClampedArray(w*h*4)}; } : (k === "createLinearGradient" || k === "createRadialGradient") ? function(){ return {addColorStop(){}}; } : function(){}; }, set(){ return true; }});
 function tagged(name){ var g = new THREE.Group(); g.name = name; return g; }
 var avatar = {x: 0, z: 0}, LIST = [], calls = {get: [], post: [], townHall: [], goCity: [], teleport: []}, ISLES = true, ARENA_UP = true;
 var STATE = {commons: {owner: "commons", tier: 5, grow: 1000, name: "The Commons"}};
@@ -416,6 +417,27 @@ calls.goCity = [];
 var btn = root2d.children.filter(e => e.tagName === "button" && /Commons/.test(e.textContent))[0];
 if(btn) btn.click();
 out.island.buttonGo = calls.goCity.map(g => [g[0], g[1]]);
+/* ---------- riding a cargo ship (the cruise ship's boarding, seat and going ashore) ---------- */
+// (the voyage and ship modules load only here: with them the dock's ferry above sails instead of landing you at once)
+for (const f of ["hqvoyage", "hqships"]) new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
+var wv = city("user:" + ME + "@2", spawn);
+await wv.whenReady; await new Promise(r => setTimeout(r, 10));
+out.cargo = (function(){
+  var wi = wv, S = wi.ships, sh = S && (S.state().ships || []).filter(s => s.kind === "cargo")[0];
+  if(!sh) return null;
+  var o = {boarded: S.board(sh.k, "cargo")};
+  frame(wi, avatar.x, avatar.z, 2);
+  var C = S.state().cruise, hud = root2d.all().filter(e => /hq3d-cruise/.test(e.className))[0];
+  o.kind = C && [C.phase, C.kind, C.k === sh.k]; o.seat = !!wi.carry(); o.icon = hud ? hud.children[0].textContent : null;
+  o.atSea = S.ashore() && !!S.state().cruise;             // at sea, E only says a word
+  var u = S.until(sh.k, wi.world(), "cargo");
+  if(u != null){
+    S.skip(u + 20); frame(wi, avatar.x, avatar.z, 2);
+    var n = calls.teleport.length; o.ashore = S.ashore(); o.landed = calls.teleport.length === n + 1 && !S.state().cruise && !wi.carry();
+  }
+  return o;
+})();
+wv.destroy(); delete HQV.hqVoyage; delete HQV.hqShips;
 wi.destroy(); wc.destroy();
 out.leftover = root2d.children.filter(e => e.tagName === "button" || e.attrs.role === "dialog").length;
 
@@ -652,6 +674,18 @@ class CitiesTest(unittest.TestCase):
         self.assertTrue(any("Ferry to My island" in i for i in f["items"]), f["items"])
         self.assertTrue(f["held"], "boarding: you wait at the dock")
         self.assertEqual(f["arrived"], [["user:" + ME + "@2", True]])
+
+    def test_ride_a_cargo_ship(self):
+        o = self.out["cargo"]
+        self.assertIsNotNone(o, "a cargo ship sails the archipelago")
+        self.assertTrue(o["boarded"])
+        self.assertEqual(o["kind"], ["aboard", "cargo", True])
+        self.assertTrue(o["seat"], "a seat on the bridge wing (w.carry)")
+        self.assertEqual(o["icon"], "📦")
+        self.assertTrue(o["atSea"], "E at sea keeps you aboard")
+        if "ashore" in o:
+            self.assertTrue(o["ashore"])
+            self.assertTrue(o["landed"], "at anchor off this city, E lands you at its port")
 
     def test_my_island(self):
         i = self.out["island"]

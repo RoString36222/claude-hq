@@ -88,6 +88,11 @@ const r1 = L.create({dir: "down"}); while(r1.phase !== "moving") L.step(r1, 1/60
 out.doorsSlide = openX > shutX && openW < M.doors.w/4 && openX + openW/2 <= M.size.w/2 + 1e-6;
 M.setNight(true); M.dispose();
 out.nullCtx = L.mesh(null) === null || true;
+// a bay behind the tower facing away from it (f -1): out of its door away from the tower, never through it
+out.awayBay = [1, -1].map(function(f){
+  const E = {x: 0, z: 0, rot: 0, garage: {x: 4.5, z: -9.5, s: 1, f: f}}, s = L.streetSpot({}, E), ls = L.liftSite({}, "me", E), path = ls.cp.exitPath(null, ls.site);
+  return {z: +s.z.toFixed(2), yaw: +s.yaw.toFixed(2), into: path.some(p => Math.abs(p.x) < 4.8 && Math.abs(p.z) < 3.8)};
+});
 console.log(JSON.stringify(out));
 """
 
@@ -166,6 +171,22 @@ class CarLiftTest(unittest.TestCase):
         self.assertAlmostEqual(self.o["platY"], self.o["platYState"])
         self.assertAlmostEqual(self.o["platYB"], self.o["platYState"] + 6)
         self.assertTrue(self.o["doorsSlide"])
+
+
+class AwayFacingBayTests(unittest.TestCase):
+    """A bay facing away from the HQ (its f -1) sends a vehicle out of its door away from the tower."""
+    @classmethod
+    def setUpClass(cls):
+        if not NODE:
+            raise unittest.SkipTest("node is not installed")
+        cls.o = run(["hqmerge.js", "world.js", "hqnav.js", "hqcarpark.js", "hqcall.js", "hqcity.js", "hqcarlift.js"])
+
+    def test_out_of_the_door_not_into_the_tower(self):
+        road, away = self.o["awayBay"]
+        self.assertTrue(road["into"])                      # the same bay facing the road: its way out is the tower
+        self.assertFalse(away["into"])
+        self.assertLess(away["z"], -12)
+        self.assertAlmostEqual(abs(away["yaw"]), 3.14, places=2)
 
 
 if __name__ == "__main__":

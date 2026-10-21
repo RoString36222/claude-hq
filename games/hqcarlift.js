@@ -104,19 +104,20 @@ function lotOf(C, E){
     var r = num(h.yaw, 0), fx = Math.sin(r), fz = Math.cos(r), back = HQ_DOOR + SPAWN_OUT;
     p = {x: h.x - fx*back, z: h.z - fz*back, rot: r};
   }
-  if(!gar || !isFinite(gar.x) || !isFinite(gar.z)) gar = {x: P.x, z: P.z, s: 1};
-  return {p: p, gar: {x: +gar.x, z: +gar.z, s: gar.s === -1 ? -1 : 1}, P: P, y: num(C && C.home && C.home.y, 0)};
+  if(!gar || !isFinite(gar.x) || !isFinite(gar.z)) gar = {x: P.x, z: P.z, s: 1, f: 1};
+  return {p: p, gar: {x: +gar.x, z: +gar.z, s: gar.s === -1 ? -1 : 1, f: gar.f === -1 ? -1 : 1}, P: P, y: num(C && C.home && C.home.y, 0)};
 }
 function pose(x, y, z, yaw){ return {x: x, y: y, z: z, yaw: yaw, camYaw: yaw + 0.55}; }
-// lot-frame points of the bay: its middle, its door line and the apron's far end
+// lot-frame points of the bay: its middle, its door line and the apron's far end (the way its door faces: f), and the
+// heading out of it (the lot's +z, or its -z for a bay facing away from the HQ)
 function lotPoints(F){
-  var g = F.gar, d = F.P.d;
-  return {pad: toWorld(F.p, g.x, g.z), door: toWorld(F.p, g.x, g.z + d/2), apron: toWorld(F.p, g.x, g.z + d/2 + APRON)};
+  var g = F.gar, d = F.P.d, f = g.f === -1 ? -1 : 1;
+  return {pad: toWorld(F.p, g.x, g.z), door: toWorld(F.p, g.x, g.z + f*d/2), apron: toWorld(F.p, g.x, g.z + f*(d/2 + APRON)), out: F.p.rot + (f < 0 ? Math.PI : 0)};
 }
 function streetSpot(C, E){
   var F = lotOf(C, E); if(!F) return null;
   var Q = lotPoints(F);
-  return pose(Q.apron.x, F.y, Q.apron.z, F.p.rot);          // the lot's +z: out of the bay, away from the tower
+  return pose(Q.apron.x, F.y, Q.apron.z, Q.out);            // out of the bay's door, away from the tower
 }
 function padSpot(L){
   var P = (L && L.pad) || BASE_PAD, yaw = num(P.yaw, BASE_PAD.yaw);
@@ -183,7 +184,7 @@ var CP = {
 };
 function liftSite(C, uid, E){
   var F = lotOf(C, E); if(!F) return null;
-  var Q = lotPoints(F), r = F.p.rot;
+  var Q = lotPoints(F), r = Q.out;
   var site = {id: "carlift:" + String(uid == null ? "me" : uid), kind: "carlift", uid: uid, rot: r, w: F.P.w, d: F.P.d,
               pad: {x: Q.pad.x, z: Q.pad.z, yaw: r}, door: Q.door, apron: Q.apron};
   return {cp: CP, site: site};

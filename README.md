@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.5.7** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.5.8** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -364,6 +364,12 @@ and feature guide.
 
 ## Changelog
 
+- **3.5.8 — Your car lift's gate no longer faces your building.** On a third of the Commons' lots an HQ with its
+  wings (level 30 and up) had its car-lift bay right behind a wing with the gate facing the wing's back wall: a car,
+  motorbike or bicycle brought up from B1 came out against the building, so you could not take it out, and the bay was
+  in the way coming and going. A bay now only stands where there are 8 m clear in front of its gate; where only the
+  back of the lot has room, the bay faces away from the building and you ride out to the back. Lots whose bay was fine
+  keep it exactly where it was.
 - **3.5.7 — Engines that sound like engines.** Every engine note is now built like the real thing (still pure WebAudio, no audio files): its pitch is the firing frequency (rpm/60 × cylinders/2) of the engine it models, with its own harmonic recipe, a detuned twin for body, a half-order sub for the lumpy ones and a waveshaper for grit, behind a low-pass that opens with the revs and the throttle. A KTM 390 thumps as a single, the 1390 lopes as a V-twin, the R 1300 GS burbles as a boxer, the S 1000 RR screams to 14,000 rpm, BMW's turbo fours and sixes and twin-turbo V8s whistle and blow off when you lift, the Bugattis roar (W16) or shriek (V16) and the EVs whine. On the throttle it is louder and brighter, off it softer with crackle on the overrun for the sporty ones (deterministic, not under Calm); upshifts cut for a moment, downshifts blip; a lumpy, uneven idle; intake roar, road rumble with speed and a tyre squeal in a powerslide. Planes get a flat-six with a two-blade prop's buzz. Every engine is one node graph made once (nothing per frame) into a shared compressor, at about the old volume; muted means silent.
 - **3.5.6 — Dealership vehicles, the next layer of detail.** Look through a catalogue car's (lighter) glass and you see a cabin: stitched seats with headrests, a glowing instrument cluster and centre screen, the console and a steering wheel with spokes. Headlights get projector lenses and a DRL strip, tail lights become LED light bars, grilles and intakes a honeycomb mesh, and there are generic round badges, lettered tyre sidewalls, quad, twin or centre exhaust tips by type, side skirts, chrome or black window trim, mirror indicators, a fuel flap and lettered plates. Bikes get a full exhaust (headers, collector, end can with cap and mouth), a sprung shock with its reservoir, swingarm pivot and chain adjusters, gear and brake pedals, brake hoses and cables, fork caps, bar-end weights, knee pads, rim tape, a plate hanger and extra trellis tubes. Nearly all of it is one shared canvas texture, so draw calls are unchanged (14 a car, 8-10 a bike); sizes, seats and the rider's fit are exactly as before.
 - **3.5.5 — Dealership vehicles at full size, with more detail.** The catalogue's bikes and cars used to look toy-sized

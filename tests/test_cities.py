@@ -407,6 +407,17 @@ out.pure.stats = [1, 3, 5].map(function(t){ var K = C3.cityStats(IW, t, {populat
 out.pure.statsNone = C3.cityStats(null, 2, null);
 out.pure.garages = IW.lots.filter(l => l.kind === "hq").concat(CW.lots.filter(l => l.kind === "hq").slice(0, 40)).map(function(l){
   var p = C3.placeLot(l); return [2, 0].map(function(wings){ var g = C3.garagePlace(l, p, wings); return g ? [g.s, +(Math.hypot(g.x, g.z)).toFixed(1)] : null; }); });
+// every HQ lot's car-lift bay (an HQ with both wings, level 30+): the 8 m out of its door never runs into the HQ (a bay
+// behind a wing once faced it, its gate against the wing's back wall)
+out.pure.bays = (function(){
+  var G = window.HQV.hqLotExtras.garage, keep = [[0, 0, 4.8, 3.8], [-10.5, 0.5, 3, 2.8], [10.5, 0.5, 3, 2.8]], n = 0, none = 0, into = 0, away = 0;
+  IW.lots.concat(CW.lots).filter(l => l.kind === "hq").forEach(function(l){
+    var g = C3.garagePlace(l, C3.placeLot(l), 2); n++; if(!g){ none++; return; } if(g.f === -1) away++;
+    var a0 = g.f === -1 ? g.z - G.d/2 - 8 : g.z + G.d/2, a1 = a0 + 8;    // room to drive out and turn: 8 m
+    if(keep.some(function(K){ return Math.abs(g.x - K[0]) < G.w/2 + K[2] && a1 > K[1] - K[3] && a0 < K[1] + K[3]; })) into++;
+  });
+  return {n: n, none: none, into: into, away: away};
+})();
 out.island = {world: wi.world(), net: wi.net, tierOpt: wbOpts[wbOpts.length - 1], towers: islandTowers,
   townDoor: wi.doors.filter(d => d.kind === "townhall").length,
   spawnAtDock: spawn && Math.hypot(wi.spawn.x - spawn.x, wi.spawn.z - spawn.z) < 0.01,
@@ -507,6 +518,15 @@ class CitiesTest(unittest.TestCase):
 
     def test_civic_buildings_stay_off_the_road(self):
         self.assertEqual(self.out["civicOnRoad"], [], "a civic building's wall stands on a road (world, site, tier, metres in)")
+
+    def test_no_car_lift_bay_faces_into_its_hq(self):
+        # a bay behind the tower faced it: its gate against the back wall, a bike brought up from B1 driven into the
+        # building. Every bay's apron now runs clear of the HQ; where only the back has room, the bay faces away.
+        b = self.out["pure"]["bays"]
+        self.assertGreater(b["n"], 60)
+        self.assertEqual(b["none"], 0)
+        self.assertEqual(b["into"], 0)
+        self.assertGreater(b["away"], 0)
 
     def test_every_island_hq_has_a_garage(self):
         # a v2 lot is narrower than an @1 lot: the garage finds a spot inside it, with or without the HQ's wings

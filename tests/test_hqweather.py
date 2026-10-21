@@ -41,16 +41,6 @@ for (let w = 0; w < 500; w++) {
   s1.forEach(s => { if (s.t < w*X.STRIKE_WIN || s.t > (w + 1)*X.STRIKE_WIN) inside = false; });
 }
 Object.assign(out, {maxN, inside, sameS});
-// puddles: where they lie on the Commons (dirt ruts often, paved kerbs now and then), the same every time;
-// how wet it is lingers after the rain
-const zlib = require('zlib');
-eval(fs.readFileSync(path.join(R0, 'games', 'world.js'), 'utf8'));
-const W = window.HQV.world.pack(JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(R0, 'tests/fixtures/claude-hq@2.json.gz')))));
-const sp1 = X.puddleSpots(W), sp2 = X.puddleSpots(W), dirtIds = new Set(W.edges.filter(e => e.surface === 'dirt').map(e => e.id));
-out.pud = {n: sp1.length, same: JSON.stringify(sp1) === JSON.stringify(sp2), onRoad: sp1.every(p => window.HQV.world.surfaceAt(W, p.x, p.z) === 'road' || window.HQV.world.surfaceAt(W, p.x, p.z) === 'sidewalk'),
-  dirtEdges: dirtIds.size, tracks: W.edges.filter(e => e.surface === 'dirt' && e.track && e.track.length >= 4).length, noWalk: W.edges.filter(e => e.surface === 'dirt').every(e => e.walk === 0)};
-let dry = null; for (let s = 0; s < 4000 && dry == null; s++) { const a = X.at('w', s*X.SLOT); if (a.kind === 'rain' && X.at('w', (s + 1)*X.SLOT).kind === 'clear') dry = (s + 1)*X.SLOT; }
-out.linger = dry == null ? null : [X.wetness('w', dry + X.EASE + 60000) > 0.2, X.wetness('w', dry + 12*60000) < 0.05];
 const f = X.forecast('w', t0, 3); out.forecast = [f.length, f[0].at === t0, f[1].at - f[0].at, !!f[0].name, !!f[0].icon];
 console.log(JSON.stringify(out));
 """
@@ -91,33 +81,6 @@ class ForecastTests(unittest.TestCase):
 
     def test_the_forecast_runs_slot_by_slot(self):
         self.assertEqual(self.o["forecast"], [4, True, 15 * 60 * 1000, True, True])
-
-
-class PuddleTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.o = ForecastTests.o if hasattr(ForecastTests, "o") else None
-
-    def setUp(self):
-        if self.o is None:
-            ForecastTests.setUpClass()
-            type(self).o = ForecastTests.o
-
-    def test_puddles_lie_on_the_roads_the_same_every_time(self):
-        p = self.o["pud"]
-        self.assertGreater(p["n"], 100)
-        self.assertTrue(p["same"])
-        self.assertTrue(p["onRoad"])
-
-    def test_the_outskirts_have_dirt_tracks_without_pavements(self):
-        p = self.o["pud"]
-        self.assertGreater(p["dirtEdges"], 20)
-        self.assertEqual(p["tracks"], p["dirtEdges"])
-        self.assertTrue(p["noWalk"])
-
-    def test_puddles_linger_after_the_rain_then_dry(self):
-        self.assertIsNotNone(self.o["linger"])
-        self.assertEqual(self.o["linger"], [True, True])
 
 
 class SourceTests(unittest.TestCase):

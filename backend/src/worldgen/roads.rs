@@ -60,13 +60,6 @@ pub struct Edge {
     /// Some(true) on a bridge over a river: straight, and level across.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bridge: Option<bool>,
-    /// Version 2: Some("dirt") on an outskirts track (shape.rs); a paved road has none.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub surface: Option<&'static str>,
-    /// Version 2, a dirt road only: the track drawn inside its corridor ([x, z] cm, a to b), which wanders
-    /// within it (shape.rs); `points` stays the corridor's centre line.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub track: Option<Vec<[i64; 2]>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -152,7 +145,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, blocks: &[Block]) -> Res
         .map(|((a, b), (class, width, name))| {
             let (na, nb) = (&nodes[a as usize], &nodes[b as usize]);
             let walk = if class == "avenue" { p.avenue_walk_cm } else { p.street_walk_cm };
-            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None, bridge: None, surface: None, track: None }
+            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None, bridge: None }
         })
         .collect();
     graded(&mut rng, p, base, blocks, &mut nodes, &mut edges, &mut it, None)?;
@@ -302,8 +295,6 @@ fn graded_edge(a: u32, b: u32, path: &[(i64, i64)], name: &str, class: &'static 
     Edge {
         id: 0, a, b, class, width, walk: 0, lanes: 1, route: None, name: name.to_string(), points: path.iter().map(|&(x, z)| [x, 0, z]).collect(),
         min_tier: None, bridge: None,
-        surface: None,
-        track: None,
     }
 }
 

@@ -365,21 +365,10 @@ and feature guide.
   - **Weather**: clear skies, overcast, rain, thunderstorms (lightning, thunder after the flash), snow and
     fog, in 15-minute spells eased in over 90 s; the same for everyone in a city. The city stats panel's
     forecast and an announcement say what is coming.
-  - **Offroad outskirts:** the outskirts' local streets are dirt tracks now, packed earth with wheel ruts
-    and a grassy crown, wandering in gentle curves between their junctions instead of running dead straight
-    (from 86% of the city's radius out, and a ragged band before that). Arterials, the ring and the
-    highways stay paved. In rain, **puddles** gather in the tracks' ruts and by the kerbs, rippling while
-    it rains and drying off over a few minutes after.
   - **Faster:** the park and the landmarks merge their pieces by material (about half the draw calls
-    looking into the park), its crowd, bulbs and balloons rest when you are far off, and puddles are one
-    instanced mesh of the nearest few hundred, re-picked only as you move.
-  - *World generator:* the Commons and islands (`@2`) gain dirt tracks in the **roads layer only**: an
-    additive `surface: "dirt"` and a `track` line per edge; every road's centre line and node, and the
-    blocks, lots, sites, terrain and transit layers are byte-identical, so nothing stored against the
-    world moves (a test now pins those layers' hashes). Paved streets keep their straight lines: their
-    pavements run right up to the lots, so bending them needs a new world version.
+    looking into the park), and its crowd, bulbs and balloons rest when you are far off.
   - *Accessibility:* in Calm and with reduced motion, rides are watched from the platform instead of ridden
-    first person, nothing falls, and there are no lightning flashes, ripples, blinking or chasing lights.
+    first person, nothing falls, and there are no lightning flashes, blinking or chasing lights.
   - *Security:* the pass is server-authoritative. `POST /v1/city/:owner/fare {kind:"park"}` debits the
     rider and writes a `park_pass` row (migration 0016) in the same transaction as the ledger entry, so a
     pass always means the coins were paid and a second purchase that day charges nothing.

@@ -25,7 +25,6 @@ var root = typeof window !== "undefined" ? window : globalThis;
 var HQV = root.HQV = root.HQV || {};
 
 var SLOT = 15*60*1000, EASE = 90*1000, STRIKE_WIN = 10;
-var PUDDLE_NEAR = 130, PUDDLE_MAX = 420, PUDDLE_CELL = 64;    // drawn within PUDDLE_NEAR m, at most PUDDLE_MAX
 var KINDS = ["clear", "cloudy", "rain", "storm", "snow", "fog"];
 var WEIGHT = [34, 20, 18, 9, 8, 11];                      // per 100 slots
 // dim: how far the sun and the sky darken; fog in metres; tint: the overcast sky the day sky leans to (tintK);
@@ -84,43 +83,6 @@ function strikes(world, sec){
     out.push({t: win*STRIKE_WIN + (((h2 >>> 8) & 1023)/1023)*STRIKE_WIN,
               x: (((h2 >>> 18) & 1023)/1023 - 0.5)*1800, z: ((hash32(h2 + "z") & 1023)/1023 - 0.5)*1800, seed: h2});
   }
-  return out;
-}
-// How wet the ground is (0..1): the rain now, or what fell in the last minutes drying off, so puddles stay a
-// while after a shower. Snow lies; it makes no puddles.
-function wetness(world, ms){
-  var w = look(world, ms).rain;
-  [[2, 0.8], [5, 0.5], [9, 0.25]].forEach(function(b){ w = Math.max(w, look(world, ms - b[0]*60000).rain*b[1]); });
-  return clamp(w, 0, 1);
-}
-// Where puddles lie on a packed world (games/world.js), each {x, z, r (m), yaw, ax (elongation), ph}: in a dirt
-// track's ruts every few metres (its potholes), by a paved street's kerbs now and then. Pure and deterministic.
-function puddleSpots(W){
-  var out = [];
-  if(!W || !W.edges) return out;
-  var seed = String(W.hash || W.id || "");
-  W.edges.forEach(function(e){
-    if(e.cls === "highway" || e.cls === "ring" || e.bridge) return;
-    var dirt = e.surface === "dirt", P = [];
-    if(dirt && e.track){ for(var t = 0; t + 1 < e.track.length; t += 2) P.push([e.track[t]/100, e.track[t+1]/100]); }
-    else for(var j = 0; j + 2 < e.pts.length; j += 3) P.push([e.pts[j]/100, e.pts[j+2]/100]);
-    var step = dirt ? 7 : 24, carry = 0, n = 0, half = dirt ? 1.75 : Math.max(1, (e.width - 2*(e.walk || 0))/200);
-    for(var k = 0; k + 1 < P.length; k++){
-      var ax = P[k][0], az = P[k][1], dx = P[k+1][0] - ax, dz = P[k+1][1] - az, L = Math.sqrt(dx*dx + dz*dz);
-      if(L < 1e-6) continue;
-      var ux = dx/L, uz = dz/L;
-      for(var d = step - carry; d < L; d += step){
-        var h = hash32("pud:" + seed + ":" + e.id + ":" + (n++));
-        if((h % 100) >= (dirt ? 55 : 22)) continue;
-        // a rut either side or the crown on a track; by either kerb on a paved street
-        var side = (h >>> 8) & 1 ? 1 : -1, off = dirt ? (((h >>> 9) % 3) - 1)*0.8 : side*(half - 0.45);
-        var x = ax + ux*d - uz*off, z = az + uz*d + ux*off;
-        out.push({x: x, z: z, r: dirt ? 0.7 + ((h >>> 12) % 100)/100*1.3 : 0.45 + ((h >>> 12) % 100)/100*0.6,
-                  yaw: Math.atan2(ux, uz), ax: dirt ? 1.4 + ((h >>> 20) % 50)/50 : 1.8, ph: ((h >>> 4) % 628)/100});
-      }
-      carry = (carry + L) % step;
-    }
-  });
   return out;
 }
 function forecast(world, ms, n){
@@ -240,58 +202,6 @@ function create(c, o){
     } catch(e){}
   }
 
-  // puddles: the world's spots, bucketed; the nearest drawn as one instanced, sky-reflecting mesh
-  var spots = o.W ? puddleSpots(o.W) : [], grid = {};
-  spots.forEach(function(p, i){ var k = Math.floor(p.x/PUDDLE_CELL) + ":" + Math.floor(p.z/PUDDLE_CELL); (grid[k] = grid[k] || []).push(i); });
-  var blobT = c.canvasTex(128, 128, function(gx){
-    var r = c.rng(31); gx.clearRect(0, 0, 128, 128);
-    for(var b = 0; b < 9; b++){ var bx = 64 + (r() - 0.5)*44, by = 64 + (r() - 0.5)*30, br = 22 + r()*20, gr = gx.createRadialGradient(bx, by, 0, bx, by, br);
-      gr.addColorStop(0, "rgba(255,255,255,1)"); gr.addColorStop(0.7, "rgba(255,255,255,0.9)"); gr.addColorStop(1, "rgba(255,255,255,0)");
-      gx.fillStyle = gr; gx.beginPath(); gx.arc(bx, by, br, 0, Math.PI*2); gx.fill(); }
-  }).t;
-  var skyT = (c.L && c.L.tex ? c.L.tex : new THREE.TextureLoader()).load("/games/city/sky.jpg");
-  skyT.mapping = THREE.EquirectangularReflectionMapping; skyT.colorSpace = THREE.SRGBColorSpace;
-  var PU = {uRain: {value: 0}, uT: {value: 0}};
-  var pudM = new THREE.MeshStandardMaterial({color: 0x20262d, roughness: 0.04, metalness: 0.6, envMap: skyT, envMapIntensity: 1.1,
-    alphaMap: blobT, transparent: true, depthWrite: false, opacity: 0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2});
-  pudM.onBeforeCompile = function(sh){                // rings spreading where drops land, while it rains
-    sh.uniforms.uRain = PU.uRain; sh.uniforms.uT = PU.uT;
-    sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nvarying vec2 vPud;\nvarying float vPh;")
-      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvPud = uv;\nvPh = instanceMatrix[3][0]*0.37 + instanceMatrix[3][2]*0.61;");
-    sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nuniform float uRain;\nuniform float uT;\nvarying vec2 vPud;\nvarying float vPh;")
-      .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n" +
-        "float pr = 0.0;\nfor(int i = 0; i < 3; i++){ float fi = float(i); vec2 c0 = vec2(0.5) + 0.25*vec2(sin(vPh + fi*2.1), cos(vPh*1.3 + fi*1.7));\n" +
-        " float t0 = fract(uT*0.9 + fi*0.33 + vPh); float d = length(vPud - c0); pr += (1.0 - t0)*smoothstep(0.02, 0.0, abs(d - t0*0.35)); }\n" +
-        "totalEmissiveRadiance += vec3(0.55)*pr*uRain;");
-  };
-  pudM.customProgramCacheKey = function(){ return "hq-puddle"; };
-  var pudG = new THREE.CircleGeometry(1, 20); pudG.rotateX(-Math.PI/2);
-  var pud = new THREE.InstancedMesh(pudG, pudM, PUDDLE_MAX); pud.count = 0; pud.frustumCulled = false; pud.renderOrder = 2; pud.receiveShadow = true;
-  pud.visible = false; g.add(pud);
-  var pudAt = {x: 1e9, z: 1e9, wet: -1, t: 0}, pm4 = new THREE.Matrix4(), pq = new THREE.Quaternion(), pp = new THREE.Vector3(), ps = new THREE.Vector3(), pY = new THREE.Vector3(0, 1, 0);
-  function puddles(cx, cz, wet, show, calm, t){
-    pud.visible = show && wet > 0.03 && spots.length > 0;
-    if(!pud.visible) return;
-    PU.uRain.value = calm ? 0 : look(world, Date.now()).rain; PU.uT.value = t % 1000;
-    pudM.opacity = 0.9*Math.min(1, wet*1.4);
-    // re-pick the nearest only when you have moved or it has got wetter or drier: nothing per frame otherwise
-    if(Math.hypot(cx - pudAt.x, cz - pudAt.z) < 8 && Math.abs(wet - pudAt.wet) < 0.04) return;
-    pudAt.x = cx; pudAt.z = cz; pudAt.wet = wet;
-    var near = [], R = PUDDLE_NEAR, c0x = Math.floor((cx - R)/PUDDLE_CELL), c1x = Math.floor((cx + R)/PUDDLE_CELL), c0z = Math.floor((cz - R)/PUDDLE_CELL), c1z = Math.floor((cz + R)/PUDDLE_CELL);
-    for(var ix = c0x; ix <= c1x; ix++) for(var iz = c0z; iz <= c1z; iz++){
-      var L2 = grid[ix + ":" + iz]; if(!L2) continue;
-      for(var q = 0; q < L2.length; q++){ var sp = spots[L2[q]], d2 = (sp.x - cx)*(sp.x - cx) + (sp.z - cz)*(sp.z - cz); if(d2 < R*R) near.push([d2, L2[q]]); }
-    }
-    near.sort(function(a2, b2){ return a2[0] - b2[0] || a2[1] - b2[1]; });
-    var n = Math.min(near.length, PUDDLE_MAX), grow = 0.35 + 0.65*wet;
-    for(var k2 = 0; k2 < n; k2++){
-      var p2 = spots[near[k2][1]], y = o.ground ? o.ground(p2.x, p2.z) : 0;
-      pp.set(p2.x, y + 0.07, p2.z); pq.setFromAxisAngle(pY, p2.yaw); ps.set(p2.r*grow, 1, p2.r*p2.ax*grow);
-      pm4.compose(pp, pq, ps); pud.setMatrixAt(k2, pm4);
-    }
-    pud.count = n; pud.instanceMatrix.needsUpdate = true;
-  }
-
   var hiss = null, said = null, lastStrike = -1, pending = [], flash = 0, boltLeft = 0, cur = null, night = false;
   function amt(v){ return Math.max(0, Math.min(1, v)); }
   var inst = {
@@ -300,9 +210,6 @@ function create(c, o){
     name: function(k){ return NAME[k || (cur && cur.kind) || "clear"]; },
     icon: function(k){ return ICON[k || (cur && cur.kind) || "clear"]; },
     forecast: function(n){ return forecast(world, Date.now(), n); },
-    // for tools and tests: what the puddles are drawing
-    puddles: function(){ var out = []; for(var i = 0; i < Math.min(pud.count, 8); i++){ pud.getMatrixAt(i, pm4); pm4.decompose(pp, pq, ps); out.push([+pp.x.toFixed(1), +pp.y.toFixed(2), +pp.z.toFixed(1), +ps.x.toFixed(2)]); }
-      return {visible: pud.visible, count: pud.count, opacity: +pudM.opacity.toFixed(2), first: out, spots: spots.length}; },
     update: function(t, dt, cam){
       var nowMs = Date.now(), L = look(world, nowMs), calm = E.calm(), mode = (cam && cam.mode) || "classic";
       cur = L;
@@ -354,15 +261,12 @@ function create(c, o){
       } else if(boltLeft <= 0) bolt.visible = false;
       pending = pending.filter(function(p){ if(p.at <= sec){ thunder(p.dist, p.seed); return false; } return true; });
       L.flash = calm ? 0 : flash;
-      L.wet = wetness(world, nowMs);
-      puddles(cx, cz, L.wet, show, calm, t);
       return L;
     },
     destroy: function(){
       if(hiss){ hiss.stop(); hiss = null; }
       S.remove(g);
       rg.dispose(); rain.material.dispose(); sg.dispose(); snow.material.dispose(); boltG.dispose(); boltM.dispose();
-      pudG.dispose(); pudM.dispose(); blobT.dispose();
       clouds.forEach(function(cl){ cl.material.dispose(); }); CT.forEach(function(tx){ tx.dispose(); });
     }
   };
@@ -370,6 +274,5 @@ function create(c, o){
 }
 
 HQV.hqWeather = {SLOT: SLOT, EASE: EASE, KINDS: KINDS, WEIGHT: WEIGHT, LOOK: LOOK, NAME: NAME, ICON: ICON, STRIKE_WIN: STRIKE_WIN,
-  hash32: hash32, kindAt: kindAt, at: at, look: look, strikes: strikes, forecast: forecast, lerpHex: lerpHex, wetness: wetness,
-  puddleSpots: puddleSpots, PUDDLE_NEAR: PUDDLE_NEAR, PUDDLE_MAX: PUDDLE_MAX, create: create};
+  hash32: hash32, kindAt: kindAt, at: at, look: look, strikes: strikes, forecast: forecast, lerpHex: lerpHex, create: create};
 })();

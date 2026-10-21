@@ -44,7 +44,6 @@ pub mod profile;
 pub mod river;
 pub mod rng;
 pub mod roads;
-pub mod shape;
 pub mod terrain;
 pub mod transit;
 pub mod zones;
@@ -197,13 +196,6 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         let island = coast.map(|c| island::grow(&p, &c, &mut roads, &mut city, &mut transit));
         (Some(zones::layer(seed, &city.blocks)), Some(transit), island)
     };
-
-    // version 2: the outskirts' streets are dirt tracks wandering in their corridors (shape.rs), once
-    // everything else is laid; their corridors (`points`) stay as they are
-    if version >= 2 {
-        shape::surfaces(&mut roads, &p, seed);
-        shape::tracks(&mut roads, seed);
-    }
 
     let mut terrain = base;
     terrain.apply(edits)?;

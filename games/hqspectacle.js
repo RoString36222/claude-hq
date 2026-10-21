@@ -111,6 +111,8 @@ function claim(W, tier, Q){
   (W.lots || []).forEach(function(l){ if(l) used[l.block] = 1; });
   (W.sites || []).forEach(function(s){ if(s) used[s.block] = 1; });
   function shown(o){ return o.min_tier == null || (o.min_tier | 0) <= tier; }
+  // a site's y is its ground in cm (residents and traffic read it); the terrain's, since these sites are no pads
+  function hCm(x, z){ return Q && Q.heightCm ? Q.heightCm(W, Math.round(x*100), Math.round(z*100)) | 0 : 0; }
 
   // the park: the largest empty park block
   var best = null;
@@ -136,7 +138,7 @@ function claim(W, tier, Q){
       var rot = Math.atan2(-pick[0], -pick[1]);       // local -z points at the gate
       out.park = {x: cx, z: cz, w: lw, d: ld, rot: rot, block: b.id,
                   gate: {x: cx + pick[0]*ld/2, z: cz + pick[1]*ld/2}};
-      W.sites.push({id: "funpark:" + b.id, kind: "funpark", name: PARK_NAME, block: b.id, x: Math.round(cx*100), y: 0, z: Math.round(cz*100),
+      W.sites.push({id: "funpark:" + b.id, kind: "funpark", name: PARK_NAME, block: b.id, pad: false, x: Math.round(cx*100), y: hCm(cx, cz), z: Math.round(cz*100),
                     w: Math.round((longZ ? lw : ld)*100), d: Math.round((longZ ? ld : lw)*100),
                     facing: "north", tier: 1, front: [Math.round(pick[0]*65536), Math.round(pick[1]*65536)]});
     }
@@ -158,7 +160,7 @@ function claim(W, tier, Q){
   (W.lots || []).forEach(function(l){ if(l) byId[l.id] = l; });
   out.marks.forEach(function(m){
     var l = byId[m.lot]; l.kind = "landmark";
-    W.sites.push({id: "landmark:" + m.lot, kind: "landmark", name: m.name, block: l.block, x: l.x, y: 0, z: l.z,
+    W.sites.push({id: "landmark:" + m.lot, kind: "landmark", name: m.name, block: l.block, pad: false, x: l.x, y: hCm(l.x/100, l.z/100), z: l.z,
                   w: l.w, d: l.d, facing: l.facing, front: l.front, tier: 1});
   });
   W.index = null; W.docView = null;       // world.js rebuilds both with the new sites and lot kinds

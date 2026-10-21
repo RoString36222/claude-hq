@@ -159,7 +159,9 @@ function index(W){
   W.sites.forEach(function(s, i){
     var R = rectM(s);
     eachBucket(W, nb, R.x0, R.x1, R.z0, R.z1, function(b){ I.sites[b].push(i); });
-    I.padList.push({y: (s.y || 0)/100, rect: R});
+    // a site is a level pad you walk on at its y, unless it says otherwise (games/hqspectacle.js's park and
+    // landmarks only name ground and keep trees off it: you walk the terrain there)
+    if(s.pad !== false) I.padList.push({y: (s.y || 0)/100, rect: R});
   });
   I.padList.forEach(function(p, i){
     var R = p.rect;

@@ -41,6 +41,10 @@ for (let i = 0; i <= 40; i++) for (let j = 0; j <= 40; j++) {
 WD.trees(W).forEach(t => { const dx = t.x - P.x, dz = t.z - P.z, lx = dx*cr - dz*sr, lz = dx*sr + dz*cr; if (Math.abs(lx) < P.w/2 && Math.abs(lz) < P.d/2) trees++; });
 const site = W.sites.filter(s => s.kind === 'funpark')[0];
 Object.assign(out, {roads, trees, siteName: site && site.name, siteFront: site && site.front});
+// you walk the terrain in the park and on a landmark's lot: their sites name ground, they don't flatten it
+out.walk = [[P.x, P.z], [P.x + P.w/3, P.z + P.d/3]].concat(S.marks.map(m => [m.x, m.z]))
+  .map(([x, z]) => Math.abs(WD.groundAt(W, x, z) - WD.heightAt(W, x, z)));
+out.siteY = [site.y, WD.heightCm(W, site.x, site.z)];
 // the gate is at the park's local -z end
 out.gateEnd = Math.hypot(P.gate.x - (P.x - Math.sin(P.rot)*P.d/2), P.gate.z - (P.z - Math.cos(P.rot)*P.d/2));
 // landmarks: their lots stop being generic buildings (and stop blocking in world.js), each has a named site
@@ -90,6 +94,11 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(self.o["roads"], 0)
         self.assertEqual(self.o["trees"], 0)
         self.assertGreaterEqual(min(self.o["park"]["w"], self.o["park"]["d"]), 56)
+
+    def test_you_walk_the_terrain_not_a_floor_at_zero(self):
+        # a site is a level pad at its y unless pad is false; at y 0 the park sank you ~1 m underground
+        self.assertTrue(all(d < 1e-9 for d in self.o["walk"]), self.o["walk"])
+        self.assertEqual(self.o["siteY"][0], self.o["siteY"][1])
 
     def test_the_park_is_a_named_site_with_its_front_at_the_gate(self):
         self.assertEqual(self.o["siteName"], "Skyline Park")

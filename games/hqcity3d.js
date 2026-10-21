@@ -2055,7 +2055,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(info) info.dest = route.label;
     if(nui) nui.banner(info);
     if(fx) fx.update(dt, me0, cam);
-    if(mm) mm.frame({x: me0.x, z: me0.z, yaw: m ? m.yaw : 0, speed: m ? m.speed : 0, route: pts,
+    if(mm) mm.frame({x: me0.x, z: me0.z, yaw: m ? m.yaw : 0, view: m && m.view != null ? m.view : null, speed: m ? m.speed : 0, route: pts,
                      waypoint: route ? {x: route.x, z: route.z} : null, others: c.others ? c.others() : [], dt: dt});
   }
   // the minimap's places: civic sites and the HQs as they are placed now (redrawn only when the HQs change)

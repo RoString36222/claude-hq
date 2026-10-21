@@ -95,17 +95,24 @@ function spring(x, v, goal, omega, dt){
 // The share of the way to a goal to cover this frame at rate k: 1 - exp(-k dt) (frame-rate independent).
 function ease(k, dt){ return 1 - Math.exp(-Math.max(0, +k || 0)*Math.max(0, +dt || 0)); }
 function wrapPi(a){ a = +a || 0; return Math.atan2(Math.sin(a), Math.cos(a)); }
-// On foot in the chase cameras: m/s, the back-step share, rad/s, and the springs' omegas.
-var FOOT = {walk: 4, run: 7, back: 0.65, turn: 2.4, turnW: 10, speedW: 12};
-// Where you are headed: facing while going forward or turning, facing + PI while stepping back, null when still.
-function travelYawOf(yaw, speed, rate){
+// On foot in the chase cameras: m/s, the back-step share, rad/s, and the springs' omegas. steer: rad/s at which
+// walking forward turns you to face where a dragged (orbited) camera looks (HQ 3.2: the mouse steers while you walk).
+// 3.2 turns faster (3.6 rad/s, was 2.4) on a snappier spring (omega 18, was 10): the old turn read as sluggish
+// next to the minimap, which turned with your facing at once.
+var FOOT = {walk: 4, run: 7, back: 0.65, turn: 3.6, turnW: 18, speedW: 12, steer: 6};
+// Where you are headed: facing while going forward or turning, facing + PI while stepping back. Standing still it
+// stays your facing if that is where you were last headed (prev: the last travelYaw), so the camera finishes
+// swinging in behind you after you turn on the spot; after a back-step (prev ~ facing + PI) or from a standstill: null
+// (the camera holds).
+function travelYawOf(yaw, speed, rate, prev){
   speed = +speed || 0; rate = +rate || 0;
   if(speed < -0.05) return wrapPi(yaw + Math.PI);
-  return speed > 0.05 || Math.abs(rate) > 0.05 ? wrapPi(yaw) : null;
+  if(speed > 0.05 || Math.abs(rate) > 0.05) return wrapPi(yaw);
+  return prev != null && isFinite(prev) && Math.abs(wrapPi(prev - yaw)) < Math.PI/2 ? wrapPi(yaw) : null;
 }
-// One body-relative step on foot (chase family). st = {yaw, rate, rateV, speed (signed), speedV};
+// One body-relative step on foot (chase family). st = {yaw, rate, rateV, speed (signed), speedV, travelYaw?};
 // inp = {fwd: -1..1 (W +, S -), turn: -1..1 (A +, turns left), run}. The turn rate springs toward
-// +-2.4 rad/s and the yaw integrates it; the speed springs toward 4 / 7 m/s forward or 0.65x back.
+// +-FOOT.turn rad/s and the yaw integrates it; the speed springs toward 4 / 7 m/s forward or 0.65x back.
 // -> a new state plus travelYaw.
 function footStep(st, inp, dt){
   st = st || {}; inp = inp || {}; dt = Math.max(0, +dt || 0);
@@ -114,11 +121,28 @@ function footStep(st, inp, dt){
   var r = spring(rate0, st.rateV, turn*FOOT.turn, FOOT.turnW, dt);
   var s = spring(st.speed, st.speedV, fwd > 0 ? fwd*base : fwd*base*FOOT.back, FOOT.speedW, dt);
   var yaw = wrapPi((+st.yaw || 0) + (rate0 + r[0])*0.5*dt);          // trapezoid over the frame
-  return {yaw: yaw, rate: r[0], rateV: r[1], speed: s[0], speedV: s[1], travelYaw: travelYawOf(yaw, s[0], r[0])};
+  return {yaw: yaw, rate: r[0], rateV: r[1], speed: s[0], speedV: s[1], travelYaw: travelYawOf(yaw, s[0], r[0], st.travelYaw)};
+}
+// Locomotion (HQ 3.2): idle, walk and sprint play together, weighted by speed, so nothing pops; each clip's playback
+// rate is the ground speed over the ground its stride covers at rate 1 (STRIDE, m/s, fitted to the Mini Characters'
+// clips: leg 0.40 m, walk swing +-1.04 rad over 0.672 s, sprint +-1.56 rad over 0.536 s; the rate that least slides
+// the foot swinging back across the ground is 1.3x at 4 m/s, 1.2x at 7 m/s), so the planted foot keeps up instead of
+// gliding. Turning on the spot shuffles (the walk at a small weight, its
+// rate from the turn rate). speed: m/s (signed: < 0 steps back, the clips run backwards); rate: rad/s.
+// -> {idle, walk, sprint (weights, sum 1), walkTs, sprintTs}
+var STRIDE = {walk: 3.1, sprint: 5.8, shuffle: 0.9};
+function locoWeights(speed, rate){
+  speed = +speed || 0; rate = +rate || 0;
+  var v = Math.abs(speed), dir = speed < 0 ? -1 : 1;
+  var shuffle = v < 0.8 ? Math.min(1, Math.abs(rate)/2.5)*(1 - v/0.8)*0.6 : 0;
+  var sprint = Math.max(0, Math.min(1, (v - 4.6)/2)), still = Math.max(0, 1 - v/1.1)*(1 - shuffle);
+  var walk = Math.max(0, 1 - sprint - still);
+  var wv = Math.max(v, shuffle > 0 ? Math.abs(rate)*STRIDE.shuffle : 0);
+  return {idle: still, walk: walk, sprint: sprint, walkTs: dir*wv/STRIDE.walk, sprintTs: dir*v/STRIDE.sprint};
 }
 HQV.hq3dPure = {cityImplOf: cityImplOf, shotName: shotName, padToInput: padToInput, doorUnderCrosshair: doorUnderCrosshair,
                 mapClickAction: mapClickAction, spring: spring, ease: ease, footStep: footStep, travelYawOf: travelYawOf,
-                FOOT: FOOT, CHASE: CHASE, MODE_LABEL: MODE_LABEL};
+                locoWeights: locoWeights, STRIDE: STRIDE, FOOT: FOOT, CHASE: CHASE, MODE_LABEL: MODE_LABEL};
 
 var E = HQV.engine;
 if(!E){ return; }
@@ -698,7 +722,8 @@ function mount(el, api){
     goCity: function(world, spawn){ return inst.goCity ? inst.goCity(world, spawn) : false; },
     // navigation (HQ 3.1, games/hqcity3d.js): where you face and how fast, and what you ride (kind, a boat or not);
     // the other players in this world; is world w the one you are in; the full map (M)
-    motion: function(){ return avatar ? {yaw: avatar.yaw || 0, speed: Math.abs(ride ? (ride.speed || 0) : (avatar.speed || 0)),
+    // view: the camera's heading (the heading-up minimap turns with it, so map, camera and compass agree)
+    motion: function(){ return avatar ? {yaw: avatar.yaw || 0, view: camHeading(), speed:Math.abs(ride ? (ride.speed || 0) : (avatar.speed || 0)),
                                          ride: ride ? ride.kind || null : null, boat: !!(ride && ride.boat)} : null; },
     others: function(){ var out = []; Object.keys(peers).forEach(function(u){ var P = peers[u]; if(cur && P.g.parent === cur.scene) out.push({x: P.x, z: P.z, col: bikeColor(u)}); }); return out; },
     active: function(w){ return !!(inst.running && cur && cur === w); },
@@ -892,14 +917,72 @@ function mount(el, api){
       onReady({o: o, mixer: mixer, acts: acts, cur: null, base: 1.7/CH_H});
     }).catch(function(){});
   }
+  var LOCO = ["idle", "walk", "sprint"];
   function setAnim(ch, n, speed){
     if(!ch || !ch.acts[n]) return;
     if(ch.cur !== n){
-      var next = ch.acts[n]; next.reset().fadeIn(0.25).play();
-      if(ch.cur && ch.acts[ch.cur]) ch.acts[ch.cur].fadeOut(0.25);
+      var next = ch.acts[n];
+      if(ch.cur === "loco"){                                  // out of the blend: its clips fade, the one wanted carries on
+        LOCO.forEach(function(k){ var a = ch.acts[k]; if(a && a !== next) a.fadeOut(0.25); });
+        if(ch.loco && ch.loco[n] > 0.05) next.setEffectiveWeight(ch.loco[n]).fadeIn(0.25);
+        else next.reset().fadeIn(0.25).play();
+        ch.loco = null;
+      } else {
+        next.reset().fadeIn(0.25).play();
+        if(ch.cur && ch.acts[ch.cur]) ch.acts[ch.cur].fadeOut(0.25);
+      }
       ch.cur = n;
     }
     ch.acts[n].timeScale = speed == null ? 1 : speed;
+  }
+  // On foot: the locomotion blend (locoWeights), its weights eased (omega 10) so a change of pace crossfades, the
+  // sprint's phase locked to the walk's so the two never fight. A character with no walk clip: setAnim as before.
+  function locomote(ch, speed, rate, dt){
+    if(!ch) return;
+    if(!ch.acts.walk || !ch.acts.idle){ setAnim(ch, Math.abs(speed) > 0.3 ? "walk" : "idle", Math.abs(speed) > 0.3 ? speed/FOOT.walk : 1); return; }
+    var W = locoWeights(speed, rate);
+    if(ch.cur !== "loco"){
+      var was = ch.cur, start = {idle: 0, walk: 0, sprint: 0};
+      if(was && LOCO.indexOf(was) >= 0) start[was] = 1;        // the clip already playing keeps its weight and its place
+      Object.keys(ch.acts).forEach(function(k){ if(LOCO.indexOf(k) < 0 && k === was) ch.acts[k].fadeOut(0.25); });
+      LOCO.forEach(function(k){ var a = ch.acts[k]; if(!a) return; if(k !== was) a.reset(); a.enabled = true; a.setEffectiveWeight(start[k]); a.play(); });
+      ch.loco = start; ch.cur = "loco";
+    }
+    var L = ch.loco, k = ease(10, dt), wa = ch.acts.walk, sa = ch.acts.sprint;
+    LOCO.forEach(function(n){
+      var a = ch.acts[n], goal = n === "walk" && !sa ? W.walk + W.sprint : W[n];
+      if(!a) return;
+      L[n] += (goal - L[n])*k; a.setEffectiveWeight(L[n]);
+    });
+    wa.timeScale = W.walkTs;
+    if(sa){
+      sa.timeScale = W.sprintTs;
+      var wd = wa.getClip().duration || 1, sd = sa.getClip().duration || 1;
+      if(L.walk > 0.02 && L.sprint > 0.02) sa.time = ((wa.time/wd) % 1 + 1) % 1*sd;   // in step with the walk while both show
+    }
+    ch.acts.idle.timeScale = 1;
+  }
+  // Leaning into a turn and a little forward with the pace, the head turned into the turn (HQ 3.2): small offsets on
+  // the character model and its head bone, sprung (omega 9: no snap), none in Calm. lean = {r, rv, p, pv, h, hv}.
+  function leanStep(ch, lean, speed, rate, accel, dt, on){
+    if(!ch || !lean) return;
+    var v = Math.abs(speed || 0), rg = 0, pg = 0, hg = 0;
+    if(on && !E.calm()){
+      rg = E.clamp(-0.35*Math.atan(v*(rate || 0)/9.8), -0.14, 0.14);            // left turn (rate > 0): left side down
+      pg = E.clamp(0.012*v + 0.018*(accel || 0), -0.06, 0.12)*(speed < 0 ? -0.5 : 1);
+      hg = E.clamp(0.09*(rate || 0), -0.3, 0.3);
+    }
+    var a = spring(lean.r, lean.rv, rg, 9, dt), b = spring(lean.p, lean.pv, pg, 9, dt), c = spring(lean.h, lean.hv, hg, 9, dt);
+    lean.r = a[0]; lean.rv = a[1]; lean.p = b[0]; lean.pv = b[1]; lean.h = c[0]; lean.hv = c[1];
+    ch.o.rotation.x = lean.p; ch.o.rotation.z = lean.r;
+  }
+  // the head's turn, put on after the clips have run and taken off again before they next run
+  function headUndo(ch){ var R = ch && ch._hd; if(R && R.bone){ R.bone.rotation.y -= R.off; R.off = 0; } }
+  function headApply(ch, yaw){
+    if(!ch) return;
+    if(!ch._hd){ ch._hd = {bone: ch.o.getObjectByName("head") || null, off: 0}; }
+    var R = ch._hd; if(!R.bone || !yaw) return;
+    R.bone.rotation.y += yaw; R.off = yaw;
   }
   function buildDesk(s, at){
     var root = new THREE.Group(); root.position.set(at[0], 0, at[1]); root.lookAt(TABLE.x, 0, TABLE.z); scene.add(root);
@@ -1935,11 +2018,16 @@ function mount(el, api){
     var side = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
     var run = !!(keys.ShiftLeft || keys.ShiftRight), base = run ? FOOT.run : FOOT.walk;
     if(fwd || side){ walkTo = null; walkDoor = null; }
-    var yaw0 = avatar.yaw, dx = 0, dz = 0;
+    var yaw0 = avatar.yaw, sp0 = avatar.speed || 0, dx = 0, dz = 0;
     if(rigOn() && CHASE[rig.mode] && !walkTo){
       // Chase cameras: the keys are the BODY's. W walks along your facing, S steps back without turning
       // (the camera swings round to show where you are headed), A / D turn you on a spring.
-      var f = footStep({yaw: avatar.yaw, rate: avatar.rate, rateV: avatar.rv, speed: avatar.speed, speedV: avatar.sv},
+      // Walking forward with the camera dragged round (left- or right-drag, a pad's right stick): you turn to face
+      // where it looks, at FOOT.steer rad/s, the camera keeping still meanwhile (camrig absorb moves the offset into
+      // its heading): the mouse steers while you walk, as in most third-person games. Standing still a drag only
+      // looks round you.
+      if(fwd > 0 && HQV.camrig.absorb){ var ab = HQV.camrig.absorb(rig, FOOT.steer*dt); if(ab) avatar.yaw = wrapPi(avatar.yaw + ab); }
+      var f = footStep({yaw: avatar.yaw, rate: avatar.rate, rateV: avatar.rv, speed: avatar.speed, speedV: avatar.sv, travelYaw: avatar.travelYaw},
                        {fwd: fwd, turn: side, run: run}, dt);
       avatar.yaw = f.yaw; avatar.rate = f.rate; avatar.rv = f.rateV; avatar.speed = f.speed; avatar.sv = f.speedV;
       dx = Math.sin(avatar.yaw); dz = Math.cos(avatar.yaw);
@@ -1963,11 +2051,13 @@ function mount(el, api){
       var sp = spring(avatar.speed, avatar.sv, want, FOOT.speedW, dt);
       avatar.speed = Math.max(0, sp[0]); avatar.sv = avatar.speed > 0 ? sp[1] : 0;
       dx = avatar.mdx; dz = avatar.mdz;
-      if(avatar.speed > 0.05) avatar.yaw = E.angLerp(avatar.yaw, Math.atan2(dx, dz), ease(10, dt));
+      // turn to face where you go on a critically damped spring (omega 14: about 0.2 s, the short way round; no snap)
+      if(avatar.speed > 0.05){ var ty = spring(0, avatar.yv || 0, wrapPi(Math.atan2(dx, dz) - avatar.yaw), 14, dt); avatar.yaw = wrapPi(avatar.yaw + ty[0]); avatar.yv = ty[1]; }
+      else avatar.yv = 0;
       avatar.rate += ((dt > 0 ? wrapPi(avatar.yaw - yaw0)/dt : 0) - avatar.rate)*ease(12, dt);
       avatar.rv = 0;
     }
-    avatar.travelYaw = travelYawOf(avatar.yaw, avatar.speed, avatar.rate);
+    avatar.travelYaw = travelYawOf(avatar.yaw, avatar.speed, avatar.rate, avatar.travelYaw);
     var step = Math.abs(avatar.speed)*dt;
     if(step && cur.camModes) step *= slopeFactor(slopeAlong(avatar.x, avatar.z, Math.atan2(dx, dz), 1.5), "foot");
     keyMove = Math.abs(avatar.speed) > 0.3; keyRun = keyMove && run; if(keyMove) movedHere = true;
@@ -1980,9 +2070,11 @@ function mount(el, api){
       else if(!blocked(avatar.x, nz)) avatar.z = nz;
       else { avatar.speed = 0; avatar.sv = 0; keyMove = false; if(walkTo){ walkTo = null; walkDoor = null; } }   // a wall stops you
     }
-    // the walk plays at your pace, backwards while you step back
-    if(keyMove){ if(keyRun && avatar.speed > 0) setAnim(avatar.ch, "sprint", avatar.speed/FOOT.run); else setAnim(avatar.ch, "walk", avatar.speed/FOOT.walk); walkInto(); }
-    else setAnim(avatar.ch, "idle");
+    // idle, walk and sprint blended by your pace, each at the rate your stride needs (backwards while you step back);
+    // a lean into the turn and with the pace, the head into the turn
+    locomote(avatar.ch, avatar.speed, avatar.rate, dt);
+    if(keyMove) walkInto();
+    leanStep(avatar.ch, avatar.lean || (avatar.lean = {r: 0, rv: 0, p: 0, pv: 0, h: 0, hv: 0}), avatar.speed, avatar.rate, dt > 0 ? (avatar.speed - sp0)/dt : 0, dt, true);
     // Space hops: a little gravity so you come back down where you started.
     // Calm mode keeps feet on the ground (no bouncing for reduced motion).
     // The hop is measured from the ground under you (the 3D city's hills; 0 on every flat floor).
@@ -2028,6 +2120,13 @@ function mount(el, api){
   // A rig world is one whose world object lists camModes (the generated City); everything else keeps
   // the orthographic `cam` and today's controls.
   function rigOn(){ return !!(rig && cur && cur.camModes); }
+  // the way the camera faces on the ground (rad, yaw convention): the chase heading (with any drag offset), the look
+  // in first person and photo mode; null on the map, in Classic or with no rig (the minimap then follows your facing)
+  function camHeading(){
+    if(!rigOn() || rig.mode === "map" || rig.mode === "classic") return null;
+    var y = CHASE[rig.mode] ? rig.moveYaw : rig.lookYaw;
+    return y != null && isFinite(y) ? y : null;
+  }
   // The camera that draws and picks: the perspective one in every rig mode but Classic.
   function curCam(){ return rigOn() && rig.mode !== "classic" && pcam ? pcam : cam; }
   function groundAt(x, z){ return cur && cur.camModes && cur.groundY ? cur.groundY(x, z) : 0; }
@@ -2544,9 +2643,11 @@ function mount(el, api){
     if(avatar && avatar.ch){
       var skp = ride && ride.kind === "skate" && ride.sk ? ride.sk.pose : null;
       if(skp || avatar.ch._po) poseUndo(avatar.ch);
+      headUndo(avatar.ch);
       avatar.ch.mixer.update(dt); if(avatar.ch.update) avatar.ch.update(t);
       if(ride && ride.kind !== "skate" && avatar.ch.o.parent === ride.lean) ridePose(avatar.ch, ride.B, ride.steer, avatar.g);
       if(skp) poseApply(avatar.ch, skp);                               // Calm: no pose (skp is null)
+      if(!ride && avatar.lean) headApply(avatar.ch, avatar.lean.h);     // on foot: the head into the turn
     }
     placePeers(dt, t);
     fxStep(t, dt); driveHudDraw(t);
@@ -2646,7 +2747,17 @@ function mount(el, api){
         }, Array.isArray(p.c) ? p.c : null);
       }
       P.n = p.n; P.th = typeof p.h === "number" ? p.h/100 : null; P.tp = typeof p.p === "number" ? p.p*PI/180 : 0;
-      P.w = p.w; P.tx = p.x/100; P.tz = p.z/100; P.tyaw = p.r*PI/180; P.a = p.a | 0; P.k = p.k | 0; P.y = Math.max(0, Math.min(60, p.y | 0));
+      // their velocity from the last two reports (presence comes ~8 times a second while they move), so between
+      // reports they carry on along it (placePeers) instead of stopping and lurching to each new spot
+      var nowS = E.now(), nx = p.x/100, nz = p.z/100;
+      if(P.at != null && P.tx != null && nowS - P.at > 0.02 && nowS - P.at < 1){
+        var ia = 1/(nowS - P.at), vx = (nx - P.tx)*ia, vz = (nz - P.tz)*ia;
+        if(Math.hypot(vx, vz) > 120){ vx = 0; vz = 0; }                       // a teleport, not a speed
+        P.vx = vx; P.vz = vz;
+      } else if(P.at == null || nowS - P.at >= 1){ P.vx = 0; P.vz = 0; }
+      if((p.a | 0) === 0 && !(p.h != null && Math.abs(nx - (P.tx || nx)) > 0.01)){ P.vx = 0; P.vz = 0; }
+      P.at = nowS;
+      P.w = p.w; P.tx = nx; P.tz = nz; P.tyaw = p.r*PI/180; P.a = p.a | 0; P.k = p.k | 0; P.y = Math.max(0, Math.min(60, p.y | 0));
     });
     Object.keys(peers).forEach(function(u){ if(!seen[u]){ var P = peers[u]; if(P.g.parent) P.g.parent.remove(P.g); delete peers[u]; } });
   };
@@ -2660,11 +2771,17 @@ function mount(el, api){
       if(P.g.parent !== cur.scene){ cur.scene.add(P.g); P.x = P.tx; P.z = P.tz; P.yaw = P.tyaw; P.hy = null; P.pitch = P.tp; }
       // their height: the h they send, else the ground under them (0 on flat floors)
       var ty = P.th != null && cur.camModes ? P.th : groundAt(P.tx, P.tz);
-      var k = ease(8, dt), jump = Math.hypot(P.tx - P.x, P.tz - P.z, P.hy == null ? 0 : ty - P.hy) > 6;
-      P.x = jump ? P.tx : P.x + (P.tx - P.x)*k; P.z = jump ? P.tz : P.z + (P.tz - P.z)*k;
+      // Where they are now: their last report carried on along their velocity for up to 0.3 s (dead reckoning), and
+      // the drawn position on a critically damped spring (omega 10) toward that: smooth between reports, no lurch,
+      // no overshoot; a jump of over 6 m (a teleport, a new world) lands at once. Yaw the short way round.
+      var k = ease(8, dt), lead = Math.min(0.3, Math.max(0, E.now() - (P.at || 0)));
+      var gx = P.tx + (P.vx || 0)*lead, gz = P.tz + (P.vz || 0)*lead;
+      var jump = Math.hypot(gx - P.x, gz - P.z, P.hy == null ? 0 : ty - P.hy) > 6;
+      if(jump){ P.x = gx; P.z = gz; P.sx = 0; P.sz = 0; }
+      else { var sx = spring(P.x, P.sx || 0, gx, 10, dt), sz = spring(P.z, P.sz || 0, gz, 10, dt); P.x = sx[0]; P.sx = sx[1]; P.z = sz[0]; P.sz = sz[1]; }
       P.hy = jump || P.hy == null ? ty : P.hy + (ty - P.hy)*k;
       P.pitch = jump ? P.tp : P.pitch + (P.tp - P.pitch)*k;
-      P.yaw = E.angLerp(P.yaw, P.tyaw, k);
+      var yw = spring(0, P.yv || 0, wrapPi(P.tyaw - P.yaw), 12, dt); P.yaw = wrapPi(P.yaw + yw[0]); P.yv = jump ? 0 : yw[1];
       P.g.position.set(P.x, P.hy, P.z); P.g.rotation.y = P.yaw; P.g.rotation.x = -P.pitch;
       var skates = P.a === 4;
       // on a board: stood on it side-on, lifted to the height they send, the trick they send played here
@@ -2717,10 +2834,18 @@ function mount(el, api){
         if(P.pv != null && dt > 0 && (P.pv - v)/dt > 3 && v > 0.5) P.brakeT = 0.4; else P.brakeT = (P.brakeT || 0) - dt;
         P.pv = v; if(P.bike.brake) P.bike.brake(P.brakeT > 0);
       }
+      // on foot: their pace from how fast they really move (smoothed), so the same blend as yours and no gliding
+      var fv = dt > 0 && !jump ? Math.hypot(P.x - (P.px == null ? P.x : P.px), P.z - (P.pz == null ? P.z : P.pz))/dt : 0;
+      var fr = dt > 0 && P.pyaw != null && !jump ? wrapPi(P.yaw - P.pyaw)/dt : 0;
+      P.fs = (P.fs || 0) + ((P.a === 0 && fv < 0.5 ? 0 : Math.min(fv, 12)) - (P.fs || 0))*ease(8, dt);
+      P.fr = (P.fr || 0) + (fr - (P.fr || 0))*ease(8, dt);
       P.px = P.x; P.pz = P.z; P.pyaw = P.yaw;
       if(P.ch){
-        setAnim(P.ch, vk ? "idle" : P.a === 2 ? "sprint" : P.a === 1 ? "walk" : "idle"); P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0);
+        headUndo(P.ch);
+        if(vk) setAnim(P.ch, "idle"); else locomote(P.ch, P.fs, P.fr, dt);
+        P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0);
         if(P.bike && P.ch.o.parent === P.lean) ridePose(P.ch, P.bike, P.steer, P.g);
+        else if(!vk){ leanStep(P.ch, P.lean2 || (P.lean2 = {r: 0, rv: 0, p: 0, pv: 0, h: 0, hv: 0}), P.fs, P.fr, 0, dt, true); headApply(P.ch, P.lean2.h); }
       }
     });
   }

@@ -110,6 +110,19 @@ for(const [name, file, tier] of [["commons", "claude-hq@2", 5], ["island", "isla
   const R2 = Bd.rows(), st = R2.find(r => r.key === "me:car-7");
   o.stored = back && !!st && st.bay === free && R2.length === rows.length + (full ? 0 : 1) && new Set(R2.map(r => r.bay)).size === R2.length; o.storedUnknown = C.stored(s, B[free], {key: "me:z", vehicleId: "nope"});
   o.storedElsewhere = C.stored(Object.assign({}, s, {id: "carpark:9"}), B[free], {key: "me:z", vehicleId: "x"});
+  // the calling part: bayOf is the drawn bay (by the fleet key or the caller's alias); release hides that one while
+  // every other vehicle keeps its bay; stored shows it again in the same bay
+  const L2 = [{key: "me:a", alias: "own:a", entry, paint: 0}, {key: "me:b", alias: "own:b", entry: bike, paint: 0}, {key: "me:c", entry, paint: 0}];
+  const r0 = Bd.fleet(L2), bayA = r0.find(r => r.key === "me:a").bay, bo = C.bayOf(s, "own:a");
+  o.bayOfAlias = !!bo && bo.i === bayA && C.bayOf(s, "me:a").i === bayA && C.bayOf(s, "own:nope") === null;
+  const others0 = JSON.stringify(Bd.rows().filter(r => r.key !== "me:a"));
+  o.release = C.release(s, "own:a");
+  const r1 = Bd.rows();
+  o.releasedHidden = !r1.some(r => r.key === "me:a") && JSON.stringify(r1) === others0 && C.bayOf(s, "own:a").i === bayA;
+  Bd.fleet(L2);   // a refresh of the list (the garage list changed) keeps it away
+  o.releasedStays = !Bd.rows().some(r => r.key === "me:a");
+  o.storedBack = C.stored(s, C.bayOf(s, "own:a"), {key: "own:a", vehicleId: "x", color: "#1f4fbf"});
+  const r2 = Bd.rows(); o.storedSameBay = r2.some(r => r.key === "me:a" && r.bay === bayA) && r2.length === 3;
 }
 console.log(JSON.stringify(out));
 """
@@ -180,6 +193,15 @@ class CarparkTest(unittest.TestCase):
             self.assertTrue(o["stored"], "a vehicle put back is parked in that bay")
             self.assertFalse(o["storedUnknown"])
             self.assertFalse(o["storedElsewhere"], "a garage that is not drawn")
+
+    def test_called_away_and_back(self):
+        for _, o in self.each():
+            self.assertTrue(o["bayOfAlias"], "the bay it is drawn in, by fleet key or the caller's alias")
+            self.assertTrue(o["release"])
+            self.assertTrue(o["releasedHidden"], "called away: not drawn, and nobody else moves")
+            self.assertTrue(o["releasedStays"], "a refresh of the fleet keeps it away")
+            self.assertTrue(o["storedBack"])
+            self.assertTrue(o["storedSameBay"], "back in its own bay")
 
     def test_draw_calls(self):
         for _, o in self.each():

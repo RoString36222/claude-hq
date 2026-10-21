@@ -79,7 +79,8 @@ pub const QUICKPLAY_GAMES: [&str; 6] = ["kart", "plat", "fps", "golf", "type", "
 /// Cities (HQ 3.x): the owner-scoped POSTs under /api/arena/city/:owner/.
 pub const CITY_POSTS: [&str; 4] = ["build", "transfer", "privacy", "fare"];
 const CITY_PRIVACY: [&str; 3] = ["arena", "friends", "closed"];
-const CITY_FARES: [&str; 3] = ["bus", "tram", "fast"];
+/// "park": a day pass to that city's amusement park (the Arena sells it once per UTC day).
+const CITY_FARES: [&str; 4] = ["bus", "tram", "fast", "park"];
 /// An upgrade or a good: a short lowercase key, never free text.
 static CITY_KEY_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9_]{0,31}$").unwrap());
 pub const CITY_MAX_AMOUNT: i64 = 1_000_000_000;
@@ -224,7 +225,7 @@ pub fn city_body(action: &str, body: &Value) -> Result<Value, &'static str> {
         },
         "fare" => match s("kind").filter(|k| CITY_FARES.contains(k)) {
             Some(k) => Ok(json!({"kind": k})),
-            None => Err("kind must be bus, tram or fast"),
+            None => Err("kind must be bus, tram, fast or park"),
         },
         "trade" => {
             let good = s("good").filter(|g| CITY_KEY_RE.is_match(g));
@@ -1512,6 +1513,7 @@ pub(crate) mod tests {
         assert_eq!(city_body("transfer", &with(json!({"amount": 50, "dir": "out"}))), Ok(json!({"amount": 50, "dir": "out"})));
         assert_eq!(city_body("privacy", &with(json!({"mode": "friends"}))), Ok(json!({"mode": "friends"})));
         assert_eq!(city_body("fare", &with(json!({"kind": "tram"}))), Ok(json!({"kind": "tram"})));
+        assert_eq!(city_body("fare", &with(json!({"kind": "park"}))), Ok(json!({"kind": "park"})));
         assert_eq!(city_body("trade", &with(json!({"good": "tech", "qty": 3, "side": "sell"}))), Ok(json!({"good": "tech", "qty": 3, "side": "sell"})));
         for (a, b) in [
             ("build", json!({"upgrade": "Tax Office"})), ("build", json!({"upgrade": "../x"})), ("build", json!({"upgrade": 1})),

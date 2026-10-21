@@ -97,11 +97,14 @@ function siteById(doc, id){
   return null;
 }
 // Does this city have a mode's terminal? From its doc when we have it; otherwise presumed from the
-// profile: every island has docks, a station from tier 4 and an airport at tier 5; the Commons has all.
+// profile: every island has docks and a station from tier 4; the Commons has all. Only the Commons is presumed
+// to have an airport: the generator never fits one on an island (docs/plans/airport-spec.md 1.4), so an island
+// needs its doc to show one.
 function hasTerminal(c, mode){
   var M = MODES[mode], tier = tierOf(c);
   if(M.tier && !isCommons(c.world) && tier < M.tier) return false;
   if(c.doc) return !!findSite(c.doc, M.kinds, isCommons(c.world) ? 5 : tier);
+  if(mode === "plane") return isCommons(c.world);
   return isCommons(c.world) || isIsland(c.world);
 }
 

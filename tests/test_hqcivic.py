@@ -6,6 +6,7 @@ from polygon and w/d sites, and reports draw calls, doors, hits, night state, fo
 digests; the Python side checks them (cities build spec, task cl-civic). One node process for the
 whole file. Skipped when node is not installed. Stdlib only."""
 import json
+import math
 import os
 import re
 import shutil
@@ -168,6 +169,37 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
       dirDot: P.dir[0]*site.front[0]/Q + P.dir[1]*site.front[1]/Q});
   } });
   out.noPier = [C.pierOf({kind: "office", x: 0, z: 0}).length, C.pierOf(null).length, C.deckAt([], 0, 0)];
+
+  /* ---------- the Commons airport on its real site (airport spec, sections 5 and 11) ---------- */
+  new Function(fs.readFileSync(root + "/games/world.js", "utf8"))();
+  var Wd = HQV.world.pack(JSON.parse(require("zlib").gunzipSync(fs.readFileSync(root + "/tests/fixtures/claude-hq@2.json.gz"))));
+  var asite = Wd.sites.filter(function(s){ return s.kind === "airport"; })[0];
+  var AP = C.build(c, asite, {tier: 5}), SP = asite.poly.map(function(p){ return [p[0]/100, p[1]/100]; });
+  function segD(p, a, b){ var dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx*dx + dz*dz, t = L2 ? Math.max(0, Math.min(1, ((p[0] - a[0])*dx + (p[1] - a[1])*dz)/L2)) : 0; return Math.hypot(p[0] - a[0] - dx*t, p[1] - a[1] - dz*t); }
+  function onSite(x, z){ if(inside(SP, x, z)) return true; for(var i = 0; i < SP.length; i++) if(segD([x, z], SP[i], SP[(i + 1) %% SP.length]) < 0.05) return true; return false; }
+  AP.g.updateMatrixWorld(true);
+  var apOut = [], maxY = -1e9, v3 = new THREE.Vector3();
+  AP.g.traverse(function(o){
+    if(!o.isMesh) return;
+    var P = o.geometry.attributes.position;
+    for(var i = 0; i < P.count; i++){ v3.fromBufferAttribute(P, i).applyMatrix4(o.matrixWorld); maxY = Math.max(maxY, v3.y);
+      if(!onSite(v3.x, v3.z) && apOut.length < 6) apOut.push([o.name, v3.x, v3.y, v3.z]); }
+  });
+  var g0 = AP.g.position, fr = [asite.front[0]/Q, asite.front[1]/Q], Bv = [-fr[0], -fr[1]], Tv = [Bv[1], -Bv[0]];
+  function siteW(u, v){ return [g0.x + u*Bv[0] + v*Tv[0], g0.z + u*Bv[1] + v*Tv[1]]; }
+  // the City's civicBlocked (hqcity3d.js): a mass with its underside above 2.4 m does not block
+  function blockedCivic(x, z){ return AP.boxes.some(function(b){ var o = b.o; if(!o || o.y0 > 2.4) return false;
+    var dx = x - o.x, dz = z - o.z, cr = Math.cos(o.rot), sr = Math.sin(o.rot); return Math.abs(dx*cr - dz*sr) <= o.hw && Math.abs(dx*sr + dz*cr) <= o.hd; }); }
+  var naveHit = [], massHit = 0;
+  for(var u = -67.2; u <= 66; u += 0.5) [-1.5, 0, 1.5].forEach(function(v){ var w = siteW(u, v); if(blockedCivic(w[0], w[1]) && naveHit.length < 5) naveHit.push([u, v]); });
+  [-12, 12].forEach(function(v){ var w = siteW(0, v); if(blockedCivic(w[0], w[1])) massHit++; });
+  var isl = 0; [-3.25, 3.25].forEach(function(v){ var w = siteW(-46, v); if(blockedCivic(w[0], w[1])) isl++; });
+  texts.length = 0; AP.setBoard(["09:10 HQ-ABC to Isle", ["09:30", "<i>y</i>"]]);
+  var apDay = C.build(c, asite, {tier: 5, night: false});
+  out.airport = {size: C.KINDS.airport.size, outside: apOut, top: AP.top, y: AP.y, maxY: maxY, naveHit: naveHit, massHit: massHit, islands: isl,
+    roofNote: AP.boxes.map(function(b){ return b.max.y - AP.y; }).reduce(function(a, b){ return Math.max(a, b); }, 0),
+    draws: [HQV.hqMerge.drawCount(AP.g), HQV.hqMerge.drawCount(apDay.g)], nave: AP.nave, doors: AP.doors.map(function(d){ return [d.kind, d.x, d.z]; }),
+    board: texts.slice(), center: [g0.x, g0.z], boxesOutside: AP.boxes.filter(function(b){ return !onSite(b.o.x, b.o.z); }).length};
   process.stdout.write(JSON.stringify(out));
 }).catch(function(e){ console.error(e && e.stack || e); process.exit(1); });
 """
@@ -307,6 +339,38 @@ class TestHqCivic(unittest.TestCase):
         self.assertEqual(self.r["unknown"], {"kind": "office", "doors": 1})
         # site names reach the sign as canvas text (never markup)
         self.assertIn("<B>OLD STACKS</B>", self.r["texts"])
+
+    def test_airport_terminal_on_its_site(self):
+        a = self.r["airport"]
+        self.assertEqual(a["size"], [40, 160])                 # matches the backend's site
+        self.assertEqual(a["outside"], [])                      # every vertex (canopy, roof, skirt) on the site polygon
+        self.assertEqual(a["boxesOutside"], 0)
+        self.assertEqual(a["center"], [-620, 0])
+        # note() records the real tops: the wave roof at 14..16 m
+        self.assertAlmostEqual(a["top"], a["maxY"] - a["y"], delta=0.02)
+        self.assertAlmostEqual(a["roofNote"], a["top"], delta=1e-6)
+        self.assertTrue(15.8 <= a["top"] <= 16.05, a["top"])
+        self.assertTrue(a["draws"][0] < 40 and a["draws"][1] < 40, a["draws"])
+        self.assertLessEqual(max(a["draws"]), 30, a["draws"])
+
+    def test_airport_nave_walks_through(self):
+        a = self.r["airport"]
+        # the centre aisle from the door to u = 0 (and on up the ramp) has no blocking mass below 2.4 m ...
+        self.assertEqual(a["naveHit"], [])
+        # ... while the side masses and the check-in islands do block
+        self.assertEqual(a["massHit"], 2)
+        self.assertEqual(a["islands"], 2)
+        n = a["nave"]
+        self.assertAlmostEqual(n["y1"] - n["y0"], 5.0 - 0.12, places=6)
+        self.assertLess(math.dist(n["door"], [-554, 0]), 0.01)
+        self.assertLess(math.dist(n["a"], [-620, 0]), 0.01)
+        self.assertLess(math.dist(n["b"], [-676, 0]), 0.01)
+        self.assertLess(math.dist(n["mez"], [-686, 0]), 0.01)
+        main = [d for d in a["doors"] if d[0] == "airport"]
+        self.assertEqual(len(main), 1)
+        self.assertAlmostEqual(main[0][1], -552.8, places=6)     # 1.2 m out of the front wall (u -66)
+        self.assertIn("DEPARTURES", a["board"])
+        self.assertIn("09:30  <i>y</i>", a["board"])
 
     def test_fit(self):
         f = self.r["fitL"]

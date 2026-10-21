@@ -1,0 +1,26 @@
+Third-party assets in games/city/ (the 3D City's landmarks and amusement park)
+==========================================================================
+
+All files here are CC0 1.0 Universal (public domain dedication):
+https://creativecommons.org/publicdomain/zero/1.0/
+
+They are vendored, served only from 127.0.0.1 by the HQ server, and never
+hotlinked at runtime. Each was resampled and re-encoded as JPEG; nothing else
+was changed.
+
+Surface materials -- ambientCG (https://ambientcg.com), CC0
+  glass-col.jpg  glass-nrm.jpg  glass-rgh.jpg              Facade001 (1K)
+  grid-col.jpg   grid-nrm.jpg   grid-rgh.jpg               Facade006 (1K)
+  office-col.jpg office-nrm.jpg office-rgh.jpg office-emi.jpg   Facade015 (1K; normal/roughness 512)
+  stone-col.jpg  stone-nrm.jpg  stone-rgh.jpg  stone-emi.jpg    Facade018A (1K; normal/roughness 512)
+  steel-col.jpg  steel-nrm.jpg  steel-rgh.jpg              MetalPlates006 (1K; normal 512)
+  pave-col.jpg   pave-nrm.jpg   pave-rgh.jpg               PavingStones128 (1K; normal/roughness 512)
+  deck-col.jpg   deck-nrm.jpg   deck-rgh.jpg               WoodFloor043 (1K; normal/roughness 512)
+  roof-col.jpg   roof-nrm.jpg   roof-rgh.jpg               RoofingTiles012A (1K; normal/roughness 512)
+  corr-col.jpg   corr-nrm.jpg   corr-rgh.jpg               CorrugatedSteel005 (1K; normal/roughness 512)
+  ("-col" Color, "-nrm" NormalGL, "-rgh" Roughness, "-emi" Emission)
+
+Sky -- Poly Haven (https://polyhaven.com), CC0
+  sky.jpg   "Kloofendal 48d Partly Cloudy (Pure Sky)" by Greg Zaal (original)
+            and Jarod Guest (sky edits); the tone-mapped JPG, resampled from
+            8192x4096 to 2048x1024. Used only as a reflection map.

@@ -58,7 +58,9 @@ var STYLES = {
   brick:  {wall: "#9a5a44", win: "#36434f", bay: [3, 3.4], fw: 0.42, fh: 0.52, lit: 0.45, glow: "#ffd9a0"},
   stone:  {wall: "#d8d0bf", win: "#3f4d5a", bay: [3.5, 4.2], fw: 0.36, fh: 0.6, lit: 0.5, glow: "#ffe3b0"},
   white:  {wall: "#eceff2", win: "#62829e", bay: [3, 3.6], fw: 0.56, fh: 0.5, lit: 0.6, glow: "#f4fbff"},
-  plain:  {wall: "#b5b1a8", win: "#46505a", bay: [6, 4.5], fw: 0.3, fh: 0.22, lit: 0.35, glow: "#ffe0a8"}
+  plain:  {wall: "#b5b1a8", win: "#46505a", bay: [6, 4.5], fw: 0.3, fh: 0.22, lit: 0.35, glow: "#ffe0a8"},
+  // the airport terminal's side halls: bands of glazing, every window lit (a terminal never sleeps)
+  terminal: {wall: "#56708a", win: "#9cc0da", bay: [3, 3.6], fw: 0.96, fh: 0.62, lit: 1, glow: "#ffeac0"}
 };
 var TEX = {};               // style -> {map, emi}: shared by every building
 
@@ -82,7 +84,7 @@ var KINDS = {
   tramstop: {name: "Tram", size: [14, 4], col: 0x9b8cf0},
   port: {name: "Port", size: [80, 60], col: 0x5fd3e6},
   dock: {name: "Ferry", size: [14, 30], col: 0x5fd3e6},
-  airport: {name: "Airport", size: [240, 160], col: 0x5fd3e6},
+  airport: {name: "Airport", size: [40, 160], col: 0x5fd3e6},
   power: {name: "Power Plant", size: [60, 44], col: 0xffb347},
   water: {name: "Water", size: [16, 16], col: 0x5fd3e6},
   stadium: {name: "Stadium", size: [110, 90], col: 0x6fd38a},
@@ -491,6 +493,32 @@ KP.pier = function(cx, z0, z1, w, y){
     this.cyl(0.25, 0.25, y + 3, pile, cx - w/2 + 0.3, (y - 3)/2, z, 8); this.cyl(0.25, 0.25, y + 3, pile, cx + w/2 - 0.3, (y - 3)/2, z, 8); }
   var bol = this.m(0x2b3440, {metalness: 0.5, roughness: 0.5});
   for(i = 0; i < n; i++){ var bz = Math.min(z0, z1) + len*(i + 0.5)/n; this.cyl(0.18, 0.22, 0.6, bol, cx - w/2 + 0.4, y + 0.3, bz, 8); this.cyl(0.18, 0.22, 0.6, bol, cx + w/2 - 0.4, y + 0.3, bz, 8); }
+  // HQ 3.2, a finished pier: planks across the deck in two tones (on top of it, never in its plane: no flicker), a
+  // dark fascia along each side, the piles' tops standing up as posts with caps, a yellow safety line along both
+  // edges, cleats between the bollards, rubber fenders down the sides of the head, a ladder into the water each side
+  // of it, and two small lamps on the head. All merged with the building by material: a handful of draw calls.
+  var zl = Math.min(z0, z1), zh = Math.max(z0, z1), pa = this.m(0x9a7a56, {roughness: 0.92}), pb = this.m(0x7d5f42, {roughness: 0.92});
+  var np = Math.max(4, Math.round(len/0.55));
+  for(i = 0; i < np; i++) this.box(w - 0.02, 0.03, len/np - 0.04, i % 2 ? pa : pb, cx, y + 0.015, zl + len*(i + 0.5)/np);
+  var fas = this.m(0x3a2e24, {roughness: 0.95});
+  this.box(0.12, 0.3, len, fas, cx - w/2 - 0.06, y - 0.15, zc); this.box(0.12, 0.3, len, fas, cx + w/2 + 0.06, y - 0.15, zc);
+  var yel = this.m(0xffd34a, {roughness: 0.6});
+  this.box(0.12, 0.01, len - 0.4, yel, cx - w/2 + 0.12, y + 0.035, zc); this.box(0.12, 0.01, len - 0.4, yel, cx + w/2 - 0.12, y + 0.035, zc);
+  for(i = 0; i <= n; i++){ var pz = zl + len*i/n;
+    this.cyl(0.27, 0.27, 0.42, pile, cx - w/2 + 0.3, y + 0.21, pz, 8); this.cyl(0.27, 0.27, 0.42, pile, cx + w/2 - 0.3, y + 0.21, pz, 8);
+    this.cyl(0.3, 0.3, 0.06, fas, cx - w/2 + 0.3, y + 0.45, pz, 8); this.cyl(0.3, 0.3, 0.06, fas, cx + w/2 - 0.3, y + 0.45, pz, 8); }
+  var steel = this.m(0x9aa3ad, {metalness: 0.7, roughness: 0.35});
+  for(i = 0; i < n; i++){ var cz = zl + len*(i + 0.25)/n;
+    this.box(0.12, 0.08, 0.5, steel, cx - w/2 + 0.45, y + 0.07, cz); this.box(0.12, 0.08, 0.5, steel, cx + w/2 - 0.45, y + 0.07, cz); }
+  var rub = this.m(0x16191c, {roughness: 0.95}), head = z1 > z0 ? zh : zl, back = z1 > z0 ? -1 : 1;
+  for(i = 0; i < 4; i++){ var fz = head + back*(1 + i*2.6);
+    this.cyl(0.22, 0.22, 1.4, rub, cx - w/2 - 0.2, y - 0.85, fz, 10); this.cyl(0.22, 0.22, 1.4, rub, cx + w/2 + 0.2, y - 0.85, fz, 10); }
+  [-1, 1].forEach(function(sd){
+    var lx = cx + sd*(w/2 + 0.08), lz = head + back*12.5;
+    this.box(0.05, 2.6, 0.05, steel, lx, y - 0.9, lz - 0.22); this.box(0.05, 2.6, 0.05, steel, lx, y - 0.9, lz + 0.22);
+    for(var r = 0; r < 6; r++) this.box(0.05, 0.04, 0.44, steel, lx, y + 0.2 - r*0.42, lz);
+    this.box(0.18, 0.12, 0.18, this.n(0x303030, 0xffe7a8, 0.2, 2.2), cx + sd*(w/2 - 0.25), y + 0.06, head + back*0.25);   // the head's lamps
+  }, this);
 };
 // a gantry crane over the quay at (x, z), its boom out over the water (+z), h tall
 KP.crane = function(x, z, h, col){
@@ -841,35 +869,138 @@ BUILD.dock = function(k){
   k.door(0, P.z1 - DOOR_OUT - 0.4, {kind: "dock", main: true, noMesh: true});     // the boats come in here
 };
 
+// The airport's landside terminal (airport spec, section 5). The airfield, skybridge, concourse, tower and the
+// rest are games/hqairbldg.js, drawn from the airfield layout. Site frame: u = -z (local) runs from the curb
+// (u -80) out toward the airfield (u +80), v = -x. A 36 x 132 hall: two blocking side masses (2 floors, 12 m to
+// the eaves) either side of a walk-through nave (|v| <= 6): flat from the door to u 0, then a ramp up to the gate
+// level at u 56 and a mezzanine to the skybridge at u 66. A wave roof at 14..16 m, the curb canopy, the sign.
+var AIRPORT_NAVE = {halfW: 6, ramp0: 0, ramp1: 56, mez1: 66, y0: PLINTH, y1: 5.0};   // = HQV.hqAirbldg.NAVE
+var AIRPORT_HALL = {halfW: 18, halfD: 66, eaves: 12, roof0: 14, crown: 1.2, wave: 0.45, waveLen: 44, thick: 0.35,
+                    canopy: {u0: -80, u1: -66, halfW: 19.5, y: 5.0}, islands: [[-50, -42], [-39, -31], [-28, -20]], skyW: 8, skyTop: 9.5};
 BUILD.airport = function(k){
-  var T = k.tier, tw = Math.min(k.W*0.6, 60 + T*20), td = Math.min(k.D*0.18, 30), tz = k.D/2 - SETBACK - td/2;
-  var M = k.mass("glass", 0, tz, tw, td, 2, {fh: 5, roof: false});
-  var rf = k.barrel(0, tz, tw + 2, td/2 + 1.5, M.top, k.m(0xd8dde2, {roughness: 0.4, metalness: 0.4})); rf.scale.y = 0.35;
-  k.sign(k.title, Math.min(tw*0.3, 16), 1.6, 0, PLINTH + 7, tz + td/2 + 0.06, 0, "#ffffff", "#0e5f7a");
-  // jet bridges out the back to the apron
-  var jb = k.m(0xb7c0c9, {metalness: 0.5, roughness: 0.4}), nb = 1 + Math.min(3, T);
-  for(var i = 0; i < nb; i++) k.box(2.6, 2.6, 12, jb, -tw/2 + tw*(i + 0.5)/nb, PLINTH + 4.2, tz - td/2 - 6);
-  var az = tz - td/2 - 22, ad = 30;
-  k.box(tw + 20, 0.04, ad, k.m(0x8d969e, {roughness: 0.95}), 0, PLINTH + 0.02, az);
-  k.vehicle("plane", -tw/2 + tw*0.5/nb, az + 2, PI);
-  // the runway: across the site's back, with its markings and edge lights
-  var rw = k.W*0.94, rd = Math.min(45, Math.max(20, k.D*0.22)), rz = -k.D/2 + rd/2 + 4, white = k.m(0xf2f2f2, {roughness: 0.8});
-  k.box(rw, 0.05, rd, k.m(0x2e3338, {roughness: 0.95}), 0, PLINTH + 0.03, rz);
-  for(var x = -rw/2 + 30; x < rw/2 - 30; x += 24) k.box(12, 0.02, 0.9, white, x, PLINTH + 0.07, rz);
-  [-1, 1].forEach(function(s){ for(var j = 0; j < 6; j++) k.box(9, 0.02, 1.2, white, s*(rw/2 - 8), PLINTH + 0.07, rz - rd/2 + 4 + j*(rd - 8)/5); });
-  var edge = k.n(0x404040, 0xfff1c8, 0, 2.2);
-  for(x = -rw/2 + 4; x <= rw/2 - 4; x += Math.max(20, rw/16)){ k.box(0.4, 0.2, 0.4, edge, x, PLINTH + 0.1, rz - rd/2 - 1); k.box(0.4, 0.2, 0.4, edge, x, PLINTH + 0.1, rz + rd/2 + 1); }
-  // the control tower, its radar turning
-  var cx = tw/2 + 14, ch = 24 + T*4, cz = tz - 4;
-  k.cyl(2, 2.6, ch, k.m(0xd8dde2, {roughness: 0.6}), cx, PLINTH + ch/2, cz, 16);
-  k.cyl(4.2, 3.4, 3.4, k.n(0x1c3a52, 0x9ad8ff, 0.1, 0.9), cx, PLINTH + ch + 1.7, cz, 12);
-  k.cyl(4.6, 4.6, 0.5, k.m(0x56606b, {roughness: 0.8}), cx, PLINTH + ch + 3.65, cz, 12);
-  var rad = new k.THREE.Group(); rad.position.set(cx, PLINTH + ch + 4.4, cz); rad.userData.anim = true; k.g.add(rad);
-  k.box(3.4, 0.9, 0.2, k.m(0xeceff2, {roughness: 0.5}), 0, 0.6, 0, rad); k.box(0.2, 0.8, 0.2, k.m(0x56606b), 0, 0, 0, rad);
-  k.radar = rad; k.note(cx, cz, 9, 9, 0, ch + 5);
-  k.box(0.3, 0.3, 0.3, k.n(0x400000, 0xff3030, 0.3, 2.5), cx, PLINTH + ch + 4.1, cz + 2);
-  k.lamp(-tw/4, tz + td/2 + 3, 6); k.lamp(tw/4, tz + td/2 + 3, 6);
-  k.door(0, tz + td/2, {w: 5, h: 3.6, main: true, kind: "airport"});
+  var THREE = k.THREE, N = AIRPORT_NAVE, H = AIRPORT_HALL, sx = k.W/40, sz = k.D/160;
+  function Z(u){ return -u*sz; }                                   // local z of frame u
+  var hw = H.halfW*sx, hd = H.halfD*sz, nw = N.halfW*sx;
+  var pave = k.m(0x8d969e, {roughness: 0.92}), stone = k.m(0xd9d4c8, {roughness: 0.6}), frameM = k.m(0x3a4652, {metalness: 0.6, roughness: 0.35});
+  var white = k.m(0xeef1f3, {roughness: 0.45, metalness: 0.2}), desk = k.m(0xcfd6dc, {roughness: 0.5}), dark = k.m(0x23292f, {roughness: 0.7});
+  var ramp = k.m(0xb39c80, {roughness: 0.7});                    // warm stone: the ramp reads against the floor
+  // glass: built with a stand-in opaque material in its own group, merged there, then given the real (transparent) one
+  var gl = new THREE.Group(); k.g.add(gl);
+  var tmp = k.m(0x10fe03), glass = new THREE.MeshStandardMaterial({color: 0x9cc6dc, roughness: 0.08, metalness: 0.35, transparent: true, opacity: 0.36,
+    depthWrite: false, emissive: new THREE.Color(0xffd9a0), emissiveIntensity: 0});
+  k.night.push({m: glass, day: 0, night: 0.3});
+  function pane(w, h, d, x, y, z){ return k.box(w, h, d, tmp, x, y, z, gl); }
+  // the skirt: down from the plinth past the ground (it falls to -0.6 m under the site's back)
+  k.box(k.W, 1.3, k.D, pave, 0, -0.65, 0).castShadow = false;
+  // side masses: blocking, two floors to the eaves
+  // (their nave sides are plain panelled walls: a window facade 132 m long seen end-on from the nave shimmers)
+  [-1, 1].forEach(function(s){
+    k.mass("terminal", s*(nw + hw)/2, 0, hw - nw, 2*hd, 2, {fh: (H.eaves - PLINTH)/2, roofCol: 0x6b7680, sides: [[0, 1], [s, 0], [0, -1]]});
+    k.box(0.2, H.eaves - PLINTH, 2*hd, stone, s*(nw + 0.1), (H.eaves + PLINTH)/2, 0);
+  });
+  // the wave roof: a closed slab over the hall, its underside 14 m at the eaves rising to the crown, waving along u
+  function under(x, z){ var a = x/(hw + 1), w = 0.5 - 0.5*Math.cos(2*PI*(z/sz)/H.waveLen); return H.roof0 + H.crown*(1 - a*a) + H.wave*w; }
+  (function(){
+    var NX = 16, NZ = 66, x0 = -hw - 1, x1 = hw + 1, z0 = -hd - 1, z1 = hd + 1, pos = [], idx = [], i, j;
+    function vtx(x, y, z){ pos.push(x, y, z); return pos.length/3 - 1; }
+    var top = [], bot = [];
+    for(j = 0; j <= NZ; j++) for(i = 0; i <= NX; i++){
+      var x = x0 + (x1 - x0)*i/NX, z = z0 + (z1 - z0)*j/NZ, y = under(x, z);
+      top.push(vtx(x, y + H.thick, z)); bot.push(vtx(x, y, z));
+    }
+    var ceil = [];                                                // the underside: its own, softly lit, material
+    function q(a, b, c2, d, out){ (out || idx).push(a, b, c2, a, c2, d); }
+    for(j = 0; j < NZ; j++) for(i = 0; i < NX; i++){
+      var a = j*(NX + 1) + i, b = a + 1, c2 = a + NX + 2, d = a + NX + 1;
+      q(top[a], top[d], top[c2], top[b]); q(bot[a], bot[b], bot[c2], bot[d], ceil);
+    }
+    for(i = 0; i < NX; i++){ q(top[i], top[i + 1], bot[i + 1], bot[i]); var e = NZ*(NX + 1) + i; q(top[e + 1], top[e], bot[e], bot[e + 1]); }
+    for(j = 0; j < NZ; j++){ var l = j*(NX + 1), r = l + NX; q(top[l + NX + 1], top[l], bot[l], bot[l + NX + 1]); q(top[r], top[r + NX + 1], bot[r + NX + 1], bot[r]); }
+    function geoOf(ix){
+      var g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(ix);
+      g = g.toNonIndexed(); g.computeVertexNormals(); g.computeBoundingBox(); g.computeBoundingSphere(); return g;
+    }
+    var geo = geoOf(idx);
+    k.mesh(geo, k.m(0xe4e8ec, {roughness: 0.4, metalness: 0.35}), 0, 0, 0);
+    k.mesh(geoOf(ceil), k.m(0xe9ecee, {roughness: 0.85, emissive: 0x5a5f66}), 0, 0, 0);
+    k.note(0, 0, x1 - x0, z1 - z0, H.roof0, geo.boundingBox.max.y);   // the real top of the wave
+  })();
+  // glazing: the clerestory over the side masses, the nave's curtain walls front and back (the door, the skybridge)
+  var eave = H.eaves + 0.4;
+  [-1, 1].forEach(function(s){
+    pane(0.08, under(s*hw, 0) - eave, 2*hd, s*hw, (eave + under(s*hw, 0))/2, 0);
+    [-1, 1].forEach(function(f){ pane(hw - nw, under(s*(nw + hw)/2, f*hd) - eave, 0.08, s*(nw + hw)/2, (eave + under(s*(nw + hw)/2, f*hd))/2, f*hd); });
+  });
+  var PW = 1.5, doorW = 2.6, doorH = 3.8, sbw = H.skyW/2*sx, sbt = H.skyTop;
+  [hd, -hd].forEach(function(z, fi){
+    for(var x = -nw; x < nw - 1e-6; x += PW){
+      var xc = x + PW/2, top = under(xc, z) - 0.05, y0 = PLINTH;
+      if(fi === 0 && Math.abs(xc) < doorW){ y0 = PLINTH + doorH; }                              // over the door
+      if(fi === 1 && Math.abs(xc) < sbw){ pane(PW, N.y1 - PLINTH, 0.08, xc, (PLINTH + N.y1)/2, z); y0 = sbt; }   // the skybridge's way in
+      pane(PW, top - y0, 0.08, xc, (top + y0)/2, z);
+      // the mullion: none across the door's opening (over it only), nor across the skybridge's way in
+      if(fi === 0 && Math.abs(x) < doorW) k.box(0.1, top - PLINTH - doorH, 0.18, frameM, x, (top + PLINTH + doorH)/2, z);
+      else if(fi === 1 && Math.abs(x) < sbw){ k.box(0.1, N.y1 - PLINTH, 0.18, frameM, x, (N.y1 + PLINTH)/2, z); k.box(0.1, top - sbt, 0.18, frameM, x, (top + sbt)/2, z); }
+      else k.box(0.1, top - PLINTH, 0.18, frameM, x, (top + PLINTH)/2, z);
+    }
+    k.box(0.1, under(nw, z) - PLINTH, 0.18, frameM, nw, (under(nw, z) + PLINTH)/2, z);
+    [doorH + PLINTH, 8.4, 12].forEach(function(y){ k.box(2*nw, 0.1, 0.16, frameM, 0, y, z); });
+  });
+  // the automatic door: its glass leaves slid open, a lit lintel
+  [-1, 1].forEach(function(s){ pane(doorW, doorH - 0.1, 0.06, s*(doorW + doorW/2), PLINTH + doorH/2, hd - 0.2); });
+  k.box(2*doorW + 0.4, 0.22, 0.24, k.n(0x1b2530, 0xfff1d6, 0.1, 1.6), 0, PLINTH + doorH + 0.05, hd + 0.08);
+  k.door(0, hd, {w: 2*doorW, h: doorH, main: true, kind: "airport", noMesh: true});
+  [-1, 1].forEach(function(s){ k.door(s*(nw + hw)/2, hd, {w: 2.4, h: 3, kind: "entrance"}); });
+  // the nave: the floor, check-in islands (low, blocking, 2 m aisles), the ramp and the mezzanine
+  k.box(2*nw, 0.02, hd, stone, 0, PLINTH + 0.01, hd/2);
+  H.islands.forEach(function(r){
+    var zc = (Z(r[0]) + Z(r[1]))/2, len = Math.abs(Z(r[1]) - Z(r[0]));
+    [-1, 1].forEach(function(s){
+      var xc = s*3.25*sx;
+      k.box(1.5*sx, 1.1, len, desk, xc, PLINTH + 0.55, zc);
+      k.box(0.5*sx, 0.06, len, dark, xc + s*0.45*sx, PLINTH + 1.13, zc);
+      k.box(0.15, 1.2, len, k.n(0x0d1a24, 0x5fd3e6, 0.25, 1.1), xc + s*0.68*sx, PLINTH + 1.7, zc);
+      k.note(xc, zc, 1.5*sx, len, 0, 2.3, true);
+    });
+  });
+  (function(){
+    var sh = new THREE.Shape(), r0 = N.ramp0*sz, r1 = N.ramp1*sz;           // in (u, y): extruded across the nave
+    sh.moveTo(r0, PLINTH); sh.lineTo(r1, PLINTH); sh.lineTo(r1, N.y1); sh.lineTo(r0, PLINTH);
+    var geo = new THREE.ExtrudeGeometry(sh, {depth: 2*nw - 0.02, bevelEnabled: false});
+    geo.rotateY(PI/2);                                                       // shape x (u) -> -z, extrusion -> +x
+    k.mesh(geo, ramp, -nw + 0.01, 0, 0);
+  })();
+  k.box(2*nw - 0.02, N.y1 - PLINTH, (N.mez1 - N.ramp1)*sz - 0.2, ramp, 0, (N.y1 + PLINTH)/2, Z((N.ramp1 + N.mez1)/2) + 0.1);
+  [-1, 1].forEach(function(s){
+    var len = Math.hypot((N.ramp1 - N.ramp0)*sz, N.y1 - PLINTH), rail = k.box(0.08, 0.08, len, frameM, s*(nw - 0.25), (PLINTH + N.y1)/2 + 1.0, Z((N.ramp0 + N.ramp1)/2));
+    rail.rotation.x = Math.atan2(N.y1 - PLINTH, (N.ramp1 - N.ramp0)*sz);    // up toward -z
+  });
+  // the departures board over the aisle, facing the door
+  var BW = 512, BH = 144, T = k.c.canvasTex(BW, BH, null);
+  var bm = new THREE.Mesh(new THREE.PlaneGeometry(8, 2.25), new THREE.MeshBasicMaterial({map: T.t, toneMapped: false}));
+  bm.position.set(0, 6.2, Z(-8)); k.g.add(bm);
+  k.board = function(lines){
+    var g = T.g; if(!g) return;
+    g.fillStyle = "#0b1622"; g.fillRect(0, 0, BW, BH);
+    g.fillStyle = "#ffb347"; g.font = "700 22px system-ui, sans-serif"; g.textAlign = "left"; g.textBaseline = "top"; g.fillText("DEPARTURES", 14, 8);
+    g.fillStyle = "#e9eff3"; g.font = "600 17px ui-monospace, monospace";
+    (lines || []).slice(0, 5).forEach(function(l, i){ g.fillText(k.c.short(Array.isArray(l) ? l.join("  ") : String(l == null ? "" : l), 40), 14, 40 + i*20); });
+    if(T.t) T.t.needsUpdate = true;
+  };
+  k.board([]);
+  // the curb canopy (does not block), its downlights and columns, the sign over it, lamps
+  var C = H.canopy, cz0 = Z(C.u1), cz1 = Math.min(Z(C.u0), k.D/2) - 0.15, czc = (cz0 + cz1)/2, cd = cz1 - cz0, cw = C.halfW*sx;
+  k.box(2*cw, 0.35, cd, white, 0, C.y + 0.175, czc); k.note(0, czc, 2*cw, cd, C.y, C.y + 0.35);
+  for(var dx = -15; dx <= 15; dx += 6) [0.3, 0.75].forEach(function(f){ k.box(1.2, 0.05, 1.2, k.n(0xf6efe0, 0xfff1d6, 0.15, 1.8), dx*sx, C.y - 0.02, cz0 + cd*f); });
+  [-17, -9, 9, 17].forEach(function(x){ k.cyl(0.2, 0.24, C.y - PLINTH, frameM, x*sx, PLINTH + (C.y - PLINTH)/2, cz1 - 1.2, 12); });
+  k.sign(k.title, 16*sx, 1.6, 0, C.y + 1.3, cz1 - 0.12, 0, "#ffffff", "#0e5f7a");
+  k.box(16*sx + 0.4, 2, 0.2, white, 0, C.y + 1.3, cz1 - 0.24); k.note(0, cz1 - 0.24, 16*sx + 0.4, 0.2, C.y + 0.35, C.y + 2.3, true);
+  k.lamp(-cw + 0.5, cz1 - 0.6, 4.3); k.lamp(cw - 0.5, cz1 - 0.6, 4.3);
+  // the nave as the City walks it (world): the door, the ramp's foot and top, the mezzanine's end
+  var a = k.world(0, Z(N.ramp0)), b = k.world(0, Z(N.ramp1)), m = k.world(0, Z(N.mez1)), d0 = k.world(0, hd);
+  k.nave = {halfW: nw, door: [d0.x, d0.z], a: [a.x, a.z], b: [b.x, b.z], mez: [m.x, m.z], y0: k.F.y + N.y0, y1: k.F.y + N.y1};
+  if(HQV.hqMerge && HQV.hqMerge.mergeStatic) HQV.hqMerge.mergeStatic(THREE, gl);
+  gl.traverse(function(o){ if(o.material === tmp) o.material = glass; });
 };
 
 BUILD.power = function(k){
@@ -1171,16 +1302,17 @@ function build(c, site, opts){
   function apply(){ k.night.forEach(function(r){ r.m.emissiveIntensity = night ? r.night : r.day; }); k.glows.forEach(function(gl){ gl.visible = night; }); }
   apply();
   return {g: k.g, doors: k.doors, hits: k.hits, glows: k.glows, boxes: k.boxes, lod: k.lod, tint: k.tint, decks: pierOf(site),
-    top: k.top, kind: k.kind, tier: k.tier,
+    top: k.top, kind: k.kind, tier: k.tier, nave: k.nave || null,
+    // the airport's departures board: lines of text (canvas fillText, never markup)
+    setBoard: function(lines){ if(k.board) k.board(Array.isArray(lines) ? lines : []); },
     x: k.F.x, y: k.F.y, z: k.F.z, rot: k.F.rot, w: k.W, d: k.D,
     setNight: function(n){ night = !!n; apply(); },
-    // the police lamps blink in turn, the airport radar turns; k (0..1) is the motion scale (Calm: 0)
+    // the police lamps blink in turn; k (0..1) is the motion scale (Calm: 0)
     animate: function(t, dt, kk){
       kk = kk == null ? 1 : kk;
       if(k.blink){ var on = kk > 0 ? ((t*1.6) % 1) < 0.5 : true; k.blink[0].emissiveIntensity = on ? 2.6 : 0.3; k.blink[1].emissiveIntensity = on ? 0.3 : 2.6; }
-      if(k.radar) k.radar.rotation.y = kk > 0 ? t*1.2 : 0;
     }};
 }
 
-HQV.hqCivic = {build: build, fit: fit, frame: frame, pierOf: pierOf, deckAt: deckAt, KINDS: KINDS, STYLES: STYLES};
+HQV.hqCivic = {build: build, fit: fit, frame: frame, pierOf: pierOf, deckAt: deckAt, KINDS: KINDS, STYLES: STYLES, AIRPORT_NAVE: AIRPORT_NAVE};
 })();

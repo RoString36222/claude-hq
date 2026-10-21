@@ -164,6 +164,13 @@ fn games_allowlist_etag_and_save() {
     for bad in ["rally/tools/tune.js", "rally/../core.js", "rally/Physics.js", "rally/x.glb", "rally/missing.js", "kart/x.js", "golf/x.js", "vehicles/x.js", "vehicles/sub/x.glb"] {
         assert!(srv.app.game_file(bad).is_none(), "{}", bad);
     }
+    // the 3D City's CC0 textures: JPEGs only, never its licence text, a script or anything deeper
+    for bad in ["city/LICENSE-assets.txt", "city/x.js", "city/x.png", "city/../core.js", "city/a/glass-col.jpg", "city/Glass-col.jpg"] {
+        assert!(srv.app.game_file(bad).is_none(), "{}", bad);
+    }
+    let (code, head, _) = get(srv.port, "/games/city/glass-col.jpg", "");
+    assert_eq!(code, 200);
+    assert!(head.contains("image/jpeg"));
     let (code, head, _) = get(srv.port, "/games/rally/physics.js", "");
     assert_eq!(code, 200);
     assert!(head.contains("application/javascript"));

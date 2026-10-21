@@ -34,11 +34,21 @@ if ! grep -q '^GRAFANA_ADMIN_PASSWORD=.\+' .env; then
   chmod 600 .env
 fi
 
+# The Caddyfile Caddy actually reads: a docker-compose.override.yml may mount another
+# one (e.g. /etc/caddy-local/Caddyfile shared with other sites) over the repo's copy.
 CADDY="$DIR/backend/Caddyfile"
-if ! grep -q 'GRAFANA_DOMAIN' "$CADDY"; then
-  cat >> "$CADDY" <<'CADDYCFG'
+CID=$(docker compose ps -q caddy 2>/dev/null | head -1 || true)
+if [ -n "$CID" ]; then
+  SRC=$(docker inspect "$CID" --format '{{range .Mounts}}{{if eq .Destination "/etc/caddy/Caddyfile"}}{{.Source}}{{end}}{{end}}')
+  [ -n "$SRC" ] && [ -f "$SRC" ] && CADDY="$SRC"
+fi
+echo "  Caddyfile: $CADDY"
+if ! grep -qE 'GRAFANA_DOMAIN|^'"$GRAFANA_DOMAIN"' ' "$CADDY"; then
+  cp -p "$CADDY" "$CADDY.bak-$(date +%s)"
+  cat >> "$CADDY" <<CADDYCFG
 
-{$GRAFANA_DOMAIN} {
+# >>> grafana >>>
+$GRAFANA_DOMAIN {
 	encode zstd gzip
 	reverse_proxy grafana:3000
 	header {
@@ -47,27 +57,41 @@ if ! grep -q 'GRAFANA_DOMAIN' "$CADDY"; then
 		Referrer-Policy "no-referrer"
 	}
 }
+# <<< grafana <<<
 CADDYCFG
   echo "  appended the Grafana block to the Caddyfile"
 else
   echo "  Caddyfile already has the Grafana block"
 fi
 
-# Validate before restarting: an invalid config must not take the Arena down.
-PANEL_DOMAIN=$(grep -E '^PANEL_DOMAIN=' .env | cut -d= -f2- || true)
-PANEL_UPSTREAM=$(grep -E '^PANEL_UPSTREAM=' .env | cut -d= -f2- || true)
-if ! docker run --rm -v "$DIR/backend":/cfg:ro \
+# Validate before restarting: an invalid config must not take the Arena down. Inside
+# the running Caddy when there is one (its environment has every site's variables).
+if [ -n "$CID" ]; then
+  VALID() { docker exec "$CID" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; }
+else
+  PANEL_DOMAIN=$(grep -E '^PANEL_DOMAIN=' .env | cut -d= -f2- || true)
+  PANEL_UPSTREAM=$(grep -E '^PANEL_UPSTREAM=' .env | cut -d= -f2- || true)
+  VALID() { docker run --rm -v "$CADDY":/cfg/Caddyfile:ro \
      -e ARENA_DOMAIN="$ARENA_DOMAIN" -e GRAFANA_DOMAIN="$GRAFANA_DOMAIN" \
      -e PANEL_DOMAIN="$PANEL_DOMAIN" -e PANEL_UPSTREAM="$PANEL_UPSTREAM" caddy:2-alpine \
-     caddy validate --config /cfg/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+     caddy validate --config /cfg/Caddyfile --adapter caddyfile >/dev/null 2>&1; }
+fi
+if ! VALID; then
   echo "  ERROR: the Caddyfile is not valid; not restarting Caddy. Arena stays up."
   echo "  Inspect: $CADDY"; exit 1
 fi
 
-# Named services only (see install-panel.sh): `app` is not this script's business.
-docker compose --profile monitoring up -d prometheus node-exporter grafana caddy
+# Named services, and --no-deps: Caddy depends on `app`, and without --no-deps compose
+# recreates `app` too -- from the compose default image (claude-hq-arena:local) instead
+# of the release ops/release.sh records in .release.env. `app` is not this script's
+# business. The release file is passed anyway so the project's config matches a release.
+ENVS=(--env-file .env)
+[ -f .release.env ] && ENVS+=(--env-file .release.env)
+docker compose "${ENVS[@]}" --profile monitoring up -d --no-deps prometheus node-exporter grafana caddy
+# `up` leaves an unchanged Caddy running on its old config: reload it in place.
+docker compose "${ENVS[@]}" exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || true
 sleep 6
-docker compose --profile monitoring ps prometheus node-exporter grafana caddy
+docker compose "${ENVS[@]}" --profile monitoring ps
 
 echo
 echo "  Open https://$GRAFANA_DOMAIN  (user: admin)"

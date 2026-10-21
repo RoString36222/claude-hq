@@ -2099,7 +2099,10 @@ html.hq-calm #confetti{display:none!important}
 .hq3d-jump:hover{background:var(--brand);color:var(--bg)}
 /* the "Ride (E)" / "Get off (E)" button over the 3D scene near a parked bike */
 .hq3d-ride{position:absolute;left:50%;top:16px;z-index:4;transform:translateX(-50%);padding:10px 18px;border-radius:999px;font-weight:750;font-size:14px;
-  color:var(--bg);background:var(--good);border:2px solid color-mix(in srgb,var(--good) 60%,var(--ink));box-shadow:var(--shadow-lg);cursor:pointer}
+  color:var(--bg);background:var(--good);border:2px solid color-mix(in srgb,var(--good) 60%,var(--ink));box-shadow:var(--shadow-lg);cursor:pointer;
+  /* centred between the top-left buttons and the city's stats (214 px each side at most); a long vehicle name
+     ends in an ellipsis (its full name is the title) */
+  max-width:max(200px,calc(100% - 428px));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hq3d-ride:hover{filter:brightness(1.08)}
 .hq3d-ride:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
 /* the skate HUD over the 3D scene while on a board: the running combo, trick popups, the keys */

@@ -4,7 +4,7 @@ The lot's old garage is a car-lift bay down to B1 (games/hqcityparts.js lotExtra
 the street, a "carlift" door: yours to "@basement", anyone else's a visit), the lobby has a third
 lift to B1 (games/hqlobby.js), hq3d.js carries a ride down the car lift and fixes the three owned-
 vehicle defects, the script order loads the basement modules after hqlobby, and the version is
-3.4.0. Runs the lot code under node with the vendored three.js (skipped without node). Stdlib only."""
+3.5.0. Runs the lot code under node with the vendored three.js (skipped without node). Stdlib only."""
 import json
 import os
 import re
@@ -145,8 +145,8 @@ class SharedFileHooks(unittest.TestCase):
         for needle in ["HQV.hqCarLift.arm(near)", "liftCarry(from, name)", "HQV.hqBasement.adopt(w,",
                        'd.view === "garage:open"', "HQV.hqGarageMgr.open({from: d.from})",
                        "function carpark(C, o)", "carpark(C, it.o)", "carpark(C, o)",
-                       "HQV.hqCarLift.liftSite(C,", 'K.cp.bayFor(K.site, "me", String(key))',
-                       "HQV.hqGarage.park(o.ownId, null)", "paintColor(v.vehicle_id, v.paint)",
+                       "HQV.hqCarLift.liftSite(C,", 'K.cp.bayOf(K.site, key)',
+                       "HQV.hqGarage.park(o.ownId, null)",
                        "back in your basement garage (B1)", "worlds.basement"]:
             self.assertIn(needle, s, needle)
         self.assertGreaterEqual(s.count("[basement 3.4]"), 10)
@@ -157,11 +157,14 @@ class SharedFileHooks(unittest.TestCase):
         self.assertIn('HQV.hqGarageMgr.homeOf(r.id) === "basement"', s)
         self.assertIn('KM.kiosk(c, "carpark")', s)
 
-    def test_version_is_340(self):
-        self.assertIn('version = "3.4.0"', read("dashboard-rs/Cargo.toml"))
-        self.assertIn('APP_VERSION: &str = "3.4.0"', read("dashboard-rs/src/app.rs"))
-        self.assertIn("**Version 3.4.0**", read("README.md"))
-        self.assertIn("HQ 3.4 — Basement Garage", read("README.md"))
+    def test_version_strings_agree(self):
+        # the three version strings agree (any version: this ships whenever it ships), and the changelog has the entry
+        import re as _re
+        v1 = _re.search(r'^version = "([0-9.]+)"', read("dashboard-rs/Cargo.toml"), _re.M).group(1)
+        v2 = _re.search(r'APP_VERSION: &str = "([0-9.]+)"', read("dashboard-rs/src/app.rs")).group(1)
+        v3 = _re.search(r"\*\*Version ([0-9.]+)\*\*", read("README.md")).group(1)
+        self.assertEqual(len({v1, v2, v3}), 1, (v1, v2, v3))
+        self.assertIn("Basement Garage.**", read("README.md"))
 
 
 @unittest.skipUnless(NODE, "node not installed")

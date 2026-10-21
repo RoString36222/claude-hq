@@ -140,7 +140,7 @@ function pointAt(R, s){
   if(R.Y){ var y0 = R.Y[i], y1 = R.Y[i + 1]; y = y0 === y0 && y1 === y1 ? y0 + (y1 - y0)*t : (t < 0.5 ? y0 : y1); }
   return {x: P[2*i] + (P[2*i + 2] - P[2*i])*t, z: P[2*i + 1] + (P[2*i + 3] - P[2*i + 1])*t, y: y, i: i};
 }
-var RAMP_V = 4;          // m/s inside the carpark (a path with heights: its ramps and aisles)
+var RAMP_V = 7;          // m/s inside the carpark (a path with heights: its ramps and aisles)
 function headingAt(R, s){
   var i = seg(R, s), P = R.P;
   if(R.C.length < 2) return R.yaw || 0;

@@ -58,8 +58,11 @@ JS_ERRORS = ("Uncaught", "SyntaxError", "ReferenceError", "TypeError")
 # how long a page may take to load the world and draw 30 frames: the cold whole-map load is ~37 s on a
 # fast Mac under SwiftShader and slower on CI's shared macOS runners (the budgets below are the real checks)
 SMOKE_TIMEOUT = 180.0
-MAX_DRAW_CALLS = 400
+MAX_DRAW_CALLS = 400            # the world's tiles (HQ3D_DEBUG.stats().worldDrawCalls)
 MAX_TRIANGLES = 1_500_000
+# the whole frame (stats().drawCalls: the renderer's own count, the shadow pass included): the synthetic city's spawn
+# drew 536 when this was first measured, the Commons spawn ~550 before its airport
+MAX_FRAME_CALLS = 700
 
 
 def free_port():
@@ -555,11 +558,15 @@ def run_3d(chrome_exe, tmp, root, base, arena, world):
                                             ("hill", sp["hill"], {"yaw": sp["hill_yaw"]})]):
             s = one(name, smoke_url(base, "classic", at, **ex))
             dc, tri = s.get("drawCalls"), s.get("triangles")
-            if not isinstance(dc, (int, float)) or not isinstance(tri, (int, float)):
-                fail(f"{name}: no drawCalls/triangles in {s}")
-            if dc >= MAX_DRAW_CALLS or tri >= MAX_TRIANGLES:
-                fail(f"{name}: over budget: {dc} draw calls (< {MAX_DRAW_CALLS}), {tri} triangles (< {MAX_TRIANGLES})")
-            print(f"ok  cam=classic at {name} {at or ''}: {dc} draw calls, {tri} triangles, worker {s.get('worker')}")
+            wdc = s.get("worldDrawCalls") if s.get("worldDrawCalls") is not None else dc
+            wtri = s.get("worldTriangles") if s.get("worldTriangles") is not None else tri
+            if not all(isinstance(v, (int, float)) and v > 0 for v in (dc, tri, wdc, wtri)):
+                fail(f"{name}: no drawCalls/triangles in {s} (a 0 is a failed measurement)")
+            if wdc >= MAX_DRAW_CALLS or wtri >= MAX_TRIANGLES:
+                fail(f"{name}: over budget: the world's {wdc} draw calls (< {MAX_DRAW_CALLS}), {wtri} triangles (< {MAX_TRIANGLES})")
+            if dc >= MAX_FRAME_CALLS or tri >= MAX_TRIANGLES:
+                fail(f"{name}: over budget: the frame's {dc} draw calls (< {MAX_FRAME_CALLS}), {tri} triangles (< {MAX_TRIANGLES})")
+            print(f"ok  cam=classic at {name} {at or ''}: frame {dc} draw calls / {tri} triangles, world {wdc} / {wtri}, worker {s.get('worker')}")
             if i == 0:
                 cache = s.get("cache")
                 if not isinstance(cache, (int, float)) or cache >= 100:

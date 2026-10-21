@@ -18,7 +18,7 @@
  *   carries(from, to, ride, door) -> bool: you keep your ride through this door (a carlift door, riding a car,
  *     motorbike or bicycle; never a board, a boat or an aircraft).
  *   arm(door) / armed(): the door walkInto used (arm(null) clears it).
- *   liftSite(C, uid, E?) -> {cp, site}: the carpark's duck type (find/bays/bayFor/assign/exitPath/entryPath/
+ *   liftSite(C, uid, E?) -> {cp, site}: the carpark's duck type (find/bays/bayFor/bayOf/assign/exitPath/entryPath/
  *     entrance/stored/groundAt/blockedAt/camHit/layout) for a vehicle that lives in your basement: called, it
  *     rises out of the bay (rise(): a create({dir: "up"}) state for the caller to play) and drives off the apron;
  *     sent back, it drives onto the pad and sinks. stored() fires onStored(fn) listeners.
@@ -153,6 +153,8 @@ var CP = {
   layout: function(site){ return {levels: 1, W: site ? site.w : PAD0.w, D: site ? site.d : PAD0.d, base: 0, H: 0}; },
   bays: function(site){ return site && site.pad ? [siteBay(site)] : []; },
   bayFor: function(site){ return site && site.pad ? siteBay(site) : null; },
+  bayOf: function(site){ return site && site.pad ? siteBay(site) : null; },   // the carpark's newer name (#135)
+  release: function(){},   // one pad, nothing reserved: matches the carpark's release(site, key)
   assign: function(site, keys){ var o = {}; (keys || []).slice(0, 1).forEach(function(k){ o[String(k)] = 0; }); return o; },
   // from the pad, out of the door, to the end of the apron (all at y 0: the rise is played before, rise())
   exitPath: function(bay, site){

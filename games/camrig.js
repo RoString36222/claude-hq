@@ -120,7 +120,11 @@ function normSettings(o, base){
           headBob: o.headBob == null ? base.headBob : !!o.headBob};
 }
 function spanClamp(v){ return clamp(num(v, 1024), SPAN_MIN, SPAN_MAX); }
-function centreLim(span){ return Math.max(0, HALF - span/2); }
+// how far the map may pan (m from the origin): the world's half, or more where the City draws past it (setReach:
+// the Commons' airfield and its approach piers reach |x|, |z| 1220)
+var reach = HALF;
+function setReach(r){ reach = Math.max(HALF, +r || HALF); return reach; }
+function centreLim(span){ return Math.max(0, reach - span/2); }
 function altOf(span){ return span/(2*MAP_TAN); }
 
 function create(o){
@@ -145,6 +149,8 @@ function resetMode(s){
   _.photo = null; _.cineT = 0; _.cinePivot = null; s.wake = false;
 }
 function setSettings(s, o){ s.settings = normSettings(o, s.settings); }
+// a teleport: the chase family starts over behind the target's new heading (no swing round from the old one)
+function snap(s){ if(s && s._){ resetMode(s); s._.blend = null; } }
 
 /* ---------- mode changes ---------- */
 function clonePose(p){
@@ -628,7 +634,7 @@ function occluders(pos, lookAt, items){
   return out;
 }
 
-HQV.camrig = {MODES: MODES, ORDER: ORDER, VEHICLE: VEHICLE, create: create, setSettings: setSettings, setMode: setMode,
+HQV.camrig = {snap: snap, setReach: setReach, MODES: MODES, ORDER: ORDER, VEHICLE: VEHICLE, create: create, setSettings: setSettings, setMode: setMode,
   cycle: cycle, dive: dive, rise: rise, flyMap: flyMap, input: input, step: step, occluders: occluders,
   fpAnchorWorld: fpAnchorWorld, spring: spring, smootherstep: smootherstep,
   consts: {SPAN_MIN: SPAN_MIN, SPAN_MAX: SPAN_MAX, HALF: HALF, LOOK_H: LOOK_H, MAP_TAN: MAP_TAN}};

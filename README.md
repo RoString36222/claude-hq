@@ -50,7 +50,8 @@ paired), published maps and work signals (off by default) add a few listed field
 - **Economy and life.** Tax, upgrades, a specialty good per city, supply chains and an hourly market; residents
   who commute, work and go home on a schedule.
 - **Getting around.** A river through every city with bridges and boats, a **minimap**, waypoints and
-  **turn-by-turn directions** (N / Go to), ferries, rail, helicopters and cargo ships you can ride.
+  **turn-by-turn directions** (N / Go to), ferries, rail, helicopters and cargo ships you can ride, and a
+  **real airport** on the Commons with airliners on a shared timetable and the Isle Hopper to the islands.
 - **Real cars and bikes.** A **dealership** in every city with real vehicles from the brands players pick
   (BMW, Bugatti, KTM so far), grouped in classes by type and engine size, two per class, all free. They drive
   like their real specs, live in a **multi-storey garage**, and drive themselves to you when you press **C**.
@@ -339,7 +340,8 @@ and feature guide.
 
 ## Changelog
 
-- **3.2.0 — The dealership.** Real cars and bikes, a dealership to get them, a garage to keep them.
+- **3.2.0 — The dealership and the airport.** Real cars and bikes with a dealership and a garage, and a real
+  airport for the Commons.
   - **Real vehicles, in classes.** 32 vehicles from the first player's brands: BMW and Bugatti cars, BMW and
     KTM Duke bikes, from the KTM 390 Duke to the Bugatti Tourbillon. Every vehicle sits in a class by type
     (naked, sport, adventure; hatch, sedan, coupe, SUV, hypercar, electric) and engine size in cc (bikes up
@@ -354,8 +356,7 @@ and feature guide.
     vehicles turning on display. Press E for the panel: both vehicles of each class side by side with their
     real specs and factory paints, a 3-minute **test drive**, and **Get it**. Everything is free and unlocked.
   - **The garage.** A multi-storey garage where your vehicles live, each in its own bay: six levels on the
-    Commons, three on an island at tier 5. Away from a garage, a called vehicle arrives from just out of sight. Open sides let you see the
-    cars, and a helix ramp you can drive up.
+    Commons, three on an island at tier 5. Open sides let you see the cars, and a helix ramp you can drive up.
   - **Call your vehicle (C).** Pick one and it drives out of its bay, down the ramps and along the roads to
     you, with hazard lights and its ETA on the minimap, and parks at the kerb beside you. Get out and, five
     seconds later, it drives itself back to the garage. Far from a garage it arrives from just out of sight.
@@ -363,6 +364,19 @@ and feature guide.
     v4, the `vehicles` capability; older clients still see the starter car or motorbike).
   - The vehicles use built-in 3D bodies drawn to each one's real size for now; licensed models will replace
     them (`tools/vehicle_fetch.py`).
+  - **A real airport for the Commons.** The old glass box with a runway patch painted across
+    it is gone. The Commons now has an offshore airfield on a reclaimed platform west of the coast: a
+    1.6 km runway (18/36) with blast pads, piano keys, touchdown-zone and centreline markings, two
+    parallel taxiways with rapid exits, edge, centreline, approach and PAPI lights, a rabbit at night,
+    windsocks that follow the wind, signs, fences and a sea wall. A landside terminal with a walk-through
+    hall and a ramp leads over a skybridge across Ring Road 5 to a glazed concourse with six jet bridges;
+    there are a 66 m control tower with a rotating beacon, an approach radar, a fire station, hangars,
+    a fuel farm and a multi-storey car park. Airliners in four invented liveries fly a timetable that is
+    the same for everyone (push back, taxi, hold, line up, take off; land, leave by a rapid exit, taxi
+    in), with tugs, baggage trains, belt loaders, fuel and catering trucks and a follow-me car working
+    the stands. From the terminal you can take the **Isle Hopper**, an amphibian, to an island (and
+    back from the island's dock); island to island is still a seaplane. The minimap and the big map
+    show the airfield, and ships, ferries, the carrier and the air base keep clear of it.
   **Privacy/egress:** the new dashboard proxies (`GET /api/arena/vehicles/mine`, `POST /api/arena/vehicles/buy`
   and `/api/arena/vehicles/<id>/park`) send only a validated vehicle id, paint and position with the paired
   device token. Presence adds the driven vehicle's catalogue id and paint index. Nothing transcript-derived

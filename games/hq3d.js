@@ -715,7 +715,21 @@ function mount(el, api){
     night: function(){ return isNight(); },
     // the dealership (games/hqdealer.js via games/hqcity3d.js): its door or forecourt opens the dealer panel
     dealer: {open: function(){ return dealerOpen(); }},
-    held: function(code){ return !!keys[code]; }
+    held: function(code){ return !!keys[code]; },
+    // compile a group's shaders now, hidden parts too (a level of detail switched on later costs no frame then)
+    prewarm: function(root){
+      if(!renderer || !root || !cur || !cur.scene) return false;
+      var shown = [];
+      root.traverse(function(o){ if(!o.visible){ o.visible = true; shown.push(o); } });
+      try {
+        renderer.compile(root, curCam(), cur.scene);
+        var seen = {};                                               // and upload its textures
+        root.traverse(function(o){ (Array.isArray(o.material) ? o.material : o.material ? [o.material] : []).forEach(function(m){
+          ["map", "emissiveMap", "alphaMap", "normalMap", "roughnessMap"].forEach(function(k){ var t = m[k]; if(t && t.isTexture && !seen[t.uuid]){ seen[t.uuid] = 1; renderer.initTexture(t); } }); }); });
+      } catch(e){}
+      shown.forEach(function(o){ o.visible = false; });
+      return true;
+    }
   };
 
   /* ---------- day / night from the local clock ---------- */
@@ -1709,16 +1723,19 @@ function mount(el, api){
   function rideUiSync(force){
     if(!rideUi) return;
     var near = ride ? -2 : force ? nearBike() : nearIdx, nb = near >= 0 && cur && cur.bikes ? cur.bikes[near] : null;
-    var key = ride ? "on" : nb ? "near-" + (nb.kind || "bike") : "";
+    // a helicopter set down where you can't step out (a roof without stairs, the sea): say so instead of "Get out"
+    var hs = ride && ride.heli, noOut = !!(hs && hs.ground && cur && cur.heliLand && !cur.heliLand(hs));
+    var key = ride ? (noOut ? "on-noout" : "on") : nb ? "near-" + (nb.kind || "bike") : "";
     if(!force && key === rideUi.dataset.k) return;
     rideUi.dataset.k = key; rideUi.hidden = !key;
     var kind0 = ride ? ride.kind : (nb && VEHICLES[nb.kind] ? nb.kind : "bike"), Vc = VEHICLES[kind0].cat, kind = baseKind(kind0);
     // a catalogue vehicle by name, without its generation ("M3 Competition", not "M3 Competition (G80)"): the pill
     // stands between the top-left buttons and the city's stats
     var vn = Vc ? "the " + Vc.brand + " " + String(Vc.model).replace(/\s*\([^)]*\)\s*$/, "") + " " : "";
-    rideUi.textContent = ride ? (kind === "car" || VEHICLES[kind0].heli ? "Get out (E)" : kind === "skate" ? "Step off (E)" : VEHICLES[kind0].boat ? "Step ashore (E)" : "Get off (E)")
+    rideUi.textContent = noOut ? "Can't get out here"
+      : ride ? (kind === "car" || VEHICLES[kind0].heli ? "Get out (E)" : kind === "skate" ? "Step off (E)" : VEHICLES[kind0].boat ? "Step ashore (E)" : "Get off (E)")
       : VEHICLES[kind0].heli ? "\uD83D\uDE81 Fly (E)" : kind === "rowboat" ? "\uD83D\uDEA3 Row (E)" : kind === "jetski" ? "\uD83C\uDF0A Ride the jet ski (E)" : kind === "car" ? "\uD83D\uDE97 Drive " + vn + "(E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride " + vn + "(E)" : kind === "skate" ? "\uD83D\uDEF9 Skate (E)" : "\uD83D\uDEB2 Ride (E)";
-    rideUi.title = ride ? RIDE_HELP[kind] : VEHICLES[kind0].heli ? "Take the controls" : VEHICLES[kind0].boat ? "Take the helm" : kind === "car" ? (Vc ? "Get in the " + Vc.brand + " " + Vc.model : "Get in this car") : kind === "moto" ? (Vc ? "Get on the " + Vc.brand + " " + Vc.model : "Get on this motorbike")
+    rideUi.title = noOut ? "Land on the ground or on a helipad, then E" : ride ? RIDE_HELP[kind] : VEHICLES[kind0].heli ? "Take the controls" : VEHICLES[kind0].boat ? "Take the helm" : kind === "car" ? (Vc ? "Get in the " + Vc.brand + " " + Vc.model : "Get in this car") : kind === "moto" ? (Vc ? "Get on the " + Vc.brand + " " + Vc.model : "Get on this motorbike")
       : kind === "skate" ? "Step on this skateboard" : "Get on this bike";
     if(key === "on" && force) tipRide();
   }
@@ -1925,6 +1942,7 @@ function mount(el, api){
     walkTo = null; walkDoor = null;
     var yaw0 = avatar.yaw, floor = cur && cur.heliFloor ? cur.heliFloor : groundAt;
     var evs = Hh.step(st, {fwd: fwd, turn: turn, lift: lift}, dt, {floor: floor});
+    if(evs.length || st.ground) rideUiSync(false);                // "Get out" only where you can
     evs.forEach(function(ev){
       if(ev.type === "land") E.sfx(ev.hard ? "hit" : "putt");
       else if(ev.type === "bump") E.sfx("hit");
@@ -2197,6 +2215,7 @@ function mount(el, api){
     avatar.hop = 0; avatar.vy = 0; avatar.airborne = false; stopFeet();
     walkTo = null; walkDoor = null; doorsArmed = false; movedHere = true;
     moveAvatar(0); view.target.copy(view.goal);
+    if(rig && yaw != null && HQV.camrig.snap) HQV.camrig.snap(rig);     // the chase camera behind your new heading
   }
   // A click on the City map (w.mapPick): your HQ dives in at its door; another HQ flies the map there; the ground
   // sets a waypoint where the world takes one (w.mapWaypoint), else flies the map there too.
@@ -2218,6 +2237,7 @@ function mount(el, api){
   // "Drive (E)", "Row (E)"), so the HUD never offers it a second time (it once said "E  Ride the bike" by a rowboat).
   function hudPrompt(){
     if(rig.mode === "fp" && !ride && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d) return "E  Enter " + (d.label || d.tip || "the door"); }
+    if(!ride && cur && cur.prompt && avatar) return cur.prompt({x: avatar.x, z: avatar.z}) || null;    // the world's (a terminal's door)
     return null;
   }
   function project(x, y, z){
@@ -2997,6 +3017,8 @@ function mount(el, api){
   function typing(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || (t && t.isContentEditable) || !!(t && t.closest && t.closest(".hqhud-gear, .hqhud-settings")); }
   // E (and a pad's X): get on or off what is near you; in first person also the door under the crosshair.
   function useKey(){
+    // held by a trip (a booked ferry, flight or cruise seat: cur.carry): E is the trip's (get off), not a bike beside it
+    if(!ride && cur && cur.use && cur.carry && avatar && cur.carry() && cur.use({x: avatar.x, z: avatar.z, yaw: avatar.yaw})) return true;
     if(ride || nearBike() >= 0){ rideToggle(); return true; }
     if(rigOn() && rig.mode === "fp" && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d){ through(d); return true; } }
     // the world's own (games/hqcity3d.js): talk to a resident, a bus stop, a dock, a station
@@ -3308,8 +3330,11 @@ function mount(el, api){
   }
   function smokeStats(){
     var w = cur || {}, s = w.stats ? w.stats() : w.wb && w.wb.stats ? w.wb.stats() : {}, ri = renderer && renderer.info.render;
-    // the renderer's own counts of the last frame when the world reports none
-    if(ri && s.drawCalls == null) s = Object.assign({drawCalls: ri.calls, triangles: ri.triangles}, s);
+    // drawCalls / triangles: the renderer's own counts of the last frame (shadow pass included), so the budgets see
+    // everything drawn (the airport, aircraft, ships, the HUD's 3D bits), not only the world's tiles; those stay as
+    // worldDrawCalls / worldTriangles
+    s = Object.assign({}, s, {worldDrawCalls: s.drawCalls != null ? s.drawCalls : null, worldTriangles: s.triangles != null ? s.triangles : null});
+    if(ri && ri.calls > 0){ s.drawCalls = ri.calls; s.triangles = ri.triangles; }
     return Object.assign({}, s, {labels: hud && hud.labelCounts ? hud.labelCounts() : null, mode: rig ? rig.mode : "classic",
       cache: HQV.world && typeof HQV.world.cacheMs === "function" ? HQV.world.cacheMs() : null,
       vehicle: ride ? {pitch: ride.pitch || 0, roll: ride.roll || 0} : null, world: w.net || w.name || null});
@@ -3353,7 +3378,7 @@ function mount(el, api){
     try { document.documentElement.dataset.hqSmoke = "ok " + JSON.stringify(smokeStats()); } catch(e){ smokeErr(e); }
   }
   if(SMOKE && SMOKE.on){
-    window.HQ3D_DEBUG = {mode: function(m){ smokeCam(m); }, teleport: function(x, z, yaw){ smokeTeleport(+x || 0, +z || 0, yaw == null ? null : +yaw); },
+    window.HQ3D_DEBUG = {mode: function(m){ smokeCam(m); }, scene: function(){ return cur && cur.scene; }, teleport: function(x, z, yaw){ smokeTeleport(+x || 0, +z || 0, yaw == null ? null : +yaw); },
                          ride: function(kind){ smokeRide(kind); }, stats: function(){ return smokeStats(); },
                          // other players as drawn: what they ride (a, the catalogue vehicle v + paint vp) and the model shown
                          peers: function(){ return Object.keys(peers).map(function(u){ var P = peers[u]; return {u: u, a: P.a, v: P.v, vp: P.vp, drawn: P.vkind || null, x: P.g ? P.g.position.x : null, z: P.g ? P.g.position.z : null}; }); },

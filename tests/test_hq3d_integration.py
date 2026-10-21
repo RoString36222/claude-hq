@@ -62,7 +62,8 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           # vehicles (3.2): the catalogue, handling from specs, their bodies, the (temporary) Showroom
                           "hqvehicles", "hqvehiclephys", "hqvehiclemodels", "hqshowroom", "hqgarage", "hqdealer", "hqcall",
                           "hqtravel", "hqvoyage", "hqships", "hqbridges",
-                          "hqair", "hqaircraft", "hqairbase",
+                          # the airport: the airfield layout before the flights, its ground, buildings, vehicles
+                          "hqairfield", "hqair", "hqaircraft", "hqairport3d", "hqairbldg", "hqairground", "hqairbase",
                           # navigation (3.1): the router, the minimap, the route's chevrons, the Go to panel
                           "hqnav", "hqminimap", "hqroutefx", "hqnavui",
                           # rail (3.x): the lines between cities, their trains

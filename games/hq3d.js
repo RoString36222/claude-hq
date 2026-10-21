@@ -714,7 +714,12 @@ function mount(el, api){
       if(!renderer || !root || !cur || !cur.scene) return false;
       var shown = [];
       root.traverse(function(o){ if(!o.visible){ o.visible = true; shown.push(o); } });
-      try { renderer.compile(root, curCam(), cur.scene); } catch(e){}
+      try {
+        renderer.compile(root, curCam(), cur.scene);
+        var seen = {};                                               // and upload its textures
+        root.traverse(function(o){ (Array.isArray(o.material) ? o.material : o.material ? [o.material] : []).forEach(function(m){
+          ["map", "emissiveMap", "alphaMap", "normalMap", "roughnessMap"].forEach(function(k){ var t = m[k]; if(t && t.isTexture && !seen[t.uuid]){ seen[t.uuid] = 1; renderer.initTexture(t); } }); }); });
+      } catch(e){}
       shown.forEach(function(o){ o.visible = false; });
       return true;
     }

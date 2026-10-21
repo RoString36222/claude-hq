@@ -334,3 +334,18 @@ fn the_bank_is_round_the_water() {
         assert!(dot((r.dock.1 .0, r.dock.1 .1), (r.dock.0 .0 - q.0, r.dock.0 .1 - q.1)) > 0, "{}: the quay is not behind the dock", w.id);
     }
 }
+
+/// The archipelago's river mouth (the big ships anchor off it): the centre line's first
+/// point, and a way out that leads to sea (away from the island's middle).
+#[test]
+fn the_river_mouth_is_listed_with_its_way_out_to_sea() {
+    for w in worlds() {
+        let m = river_mouth(&w.id).unwrap_or_else(|| panic!("{}: no mouth", w.id));
+        let c0 = river_of(w).center[0];
+        assert_eq!([m[0], m[1]], c0, "{}: the mouth is the centre line's first point", w.id);
+        let l = ((m[2] * m[2] + m[3] * m[3]) as f64).sqrt();
+        assert!((990.0..=1010.0).contains(&l), "{}: the way out is a unit vector ({l})", w.id);
+        assert!(m[0] * m[2] + m[1] * m[3] > 0, "{}: the way out leads away from the island", w.id);
+    }
+    assert_eq!(river_mouth("claude-hq@1"), None, "Arena City has no river");
+}

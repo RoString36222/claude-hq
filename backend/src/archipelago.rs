@@ -1,6 +1,8 @@
 //! Cities (HQ 3.x): the sea everyone's island sits on, and the Commons' HQ lots.
 //!
-//!   GET /v1/archipelago                -> {commons:{world,x,z}, islands:[{owner,name,world,x,z,tier}]}
+//!   GET /v1/archipelago                -> {commons:{world,x,z,mouth?}, islands:[{owner,name,world,x,z,tier,mouth?}]}
+//!                                         mouth: [x, z, dx, dz], the river's mouth in the world's own
+//!                                         frame (cm) and the way out to sea there (per mille)
 //!   GET /v1/world/claude-hq@2/assign   -> [{user, lot_rank}]
 //!
 //! The Commons (claude-hq@2) is at the origin. Every active member's island gets
@@ -140,9 +142,21 @@ async fn archipelago(pool: &SqlitePool, viewer: &str) -> Result<serde_json::Valu
     let mut islands = Vec::new();
     for (owner, x, z) in visible(rows, &seen) {
         let (name, tier) = cities::name_and_tier(pool, &owner).await?;
-        islands.push(json!({"owner": owner, "name": name, "world": island_world(&owner), "x": x, "z": z, "tier": tier}));
+        let world = island_world(&owner);
+        let mut row = json!({"owner": owner, "name": name, "world": world, "x": x, "z": z, "tier": tier});
+        with_mouth(&mut row, &world);
+        islands.push(row);
     }
-    Ok(json!({"commons": {"world": COMMONS, "x": 0, "z": 0}, "islands": islands}))
+    let mut commons = json!({"world": COMMONS, "x": 0, "z": 0});
+    with_mouth(&mut commons, COMMONS);
+    Ok(json!({"commons": commons, "islands": islands}))
+}
+
+/// The world's river mouth on its row (`mouth`, see worldgen::river_mouth), when it has a river.
+fn with_mouth(row: &mut serde_json::Value, world: &str) {
+    if let Some(m) = crate::worldgen::river_mouth(world) {
+        row["mouth"] = json!(m);
+    }
 }
 
 // --- Commons HQ lots ------------------------------------------------------
@@ -289,7 +303,11 @@ mod tests {
         let first = v["islands"].clone();
         assert_eq!((first[0]["x"].as_i64().unwrap(), first[0]["z"].as_i64().unwrap()), slot_pos(0));
         assert_eq!(first[0]["world"], "user:a@2");
-        assert_eq!(v["commons"], json!({"world": "claude-hq@2", "x": 0, "z": 0}));
+        assert_eq!((&v["commons"]["world"], &v["commons"]["x"], &v["commons"]["z"]), (&json!("claude-hq@2"), &json!(0), &json!(0)));
+        let m = v["commons"]["mouth"].as_array().expect("the Commons' river mouth");
+        let (dx, dz) = (m[2].as_i64().unwrap(), m[3].as_i64().unwrap());
+        assert!((990..=1010).contains(&(((dx * dx + dz * dz) as f64).sqrt() as i64)), "the way out is a unit vector");
+        assert!(first[0]["mouth"].as_array().is_some_and(|m| m.len() == 4), "an island's river mouth");
 
         // a newcomer, and someone leaving: nobody else's island moves
         user(&p, "0-early-id-late-join", 3).await;

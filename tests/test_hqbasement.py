@@ -56,7 +56,22 @@ out.starters = w1.bikes.map(b => ({id: b.id, stay: b.stay, kind: b.kind || null,
 // 2. deterministic layout, bays inside bounds and free
 const L1 = B.layout(12), L2 = B.layout(12);
 out.layoutSame = JSON.stringify(L1) === JSON.stringify(L2);
-out.baysBad = L1.bays.filter(b => b.x < -32 || b.x > 32 || b.z < -20 || b.z > 20 || B.blockedAt(L1, b.x, b.z, true) || B.blockedAt(L1, b.x, b.z, false)).length;
+out.baysBad = L1.bays.filter(b => b.x < -32 || b.x > 32 || b.z < -20 || b.z > 20 || B.blockedAt(L1, b.x, b.z, true) || !B.blockedAt(L1, b.x, b.z, false)).length;
+// 3.5.5: the gallery, one plinth per vehicle; bay i is slot 3 + i; sized at the cap, none touch, none on the lift, doors, kiosk, lounge, columns
+const PL = L1.plinths, RM = B.R_MAX;
+out.gallery = {n: PL.length, starters: PL.slice(0, 3).map(p => p.kind), bayMap: L1.bays.every(b => PL[3 + b.i].x === b.x && PL[3 + b.i].z === b.z && PL[3 + b.i].bay === b.i),
+  minGap: Math.min(...PL.flatMap((p, i) => PL.slice(i + 1).map(q => Math.hypot(p.x - q.x, p.z - q.z) - 2*RM))), rMax: RM,
+  inRoom: PL.every(p => p.x - RM > -31.3 && p.x + RM < 31.3 && p.z - RM > -19.3 && p.z + RM < 18),
+  clearPad: PL.every(p => Math.max(Math.abs(p.x - L1.pad.x) - L1.pad.d/2, Math.abs(p.z - L1.pad.z) - L1.pad.w/2) > RM + 0.3),
+  clearSpots: [w1.arrive, w1.spawnFrom.lobby, L1.kiosk, L1.lift.front].concat(w1.doors.map(d => d.front).filter(Boolean)).every(s => PL.every(p => Math.hypot(s.x - p.x, s.z - p.z) > RM + 1)),
+  clearCols: PL.every(p => L1.cols.every(cc => Math.hypot(cc.x - p.x, cc.z - p.z) > RM + 0.6)),
+  clearLounge: PL.every(p => p.x - RM > L1.lounge.x1 + 0.3 || p.z - RM > L1.lounge.z1 + 0.3),
+  locked: B.layout(3).plinths.filter(p => !p.lit).map(p => [p.bay, p.unlock])};
+// the lounge: an open doorway in the hall-side glass, the glass either side still blocks
+const LD = L1.lounge.door, dz = (LD.z0 + LD.z1)/2;
+out.lounge = {door: LD.z1 - LD.z0, walkIn: [-23.5, -22.6, -21.8].map(x => B.blockedAt(L1, x, dz, false)), glassA: B.blockedAt(L1, -22.6, LD.z0 - 1, false), glassB: B.blockedAt(L1, -22.6, LD.z1 + 0.8, false),
+  inside: B.blockedAt(L1, -25, -9.5, false), sideGlass: B.blockedAt(L1, -27, -6, false), sofa: B.blockedAt(L1, -27.5, -12.5, false),
+  doorClear: PL.every(p => Math.hypot(-21.5 - p.x, dz - p.z) > RM + 1)};
 out.spawnBlocked = ["city", "lobby"].filter(k => w1.blocked(w1.spawnFrom[k].x, w1.spawnFrom[k].z));
 out.doorFrontsBlocked = w1.doors.filter(d => d.front && w1.blocked(d.front.x, d.front.z)).length;
 out.plinthBlockedWalk = B.blockedAt(L1, L1.plinths[0].x, L1.plinths[0].z, false);
@@ -79,7 +94,13 @@ H.hqGarageMgr = {homes: () => Promise.resolve(homes), onChange: f => { mgrSubs.p
 H.hqVehicleModels = {build: (c, e, hex) => { const g = new THREE.Group(); g.userData.hex = hex; return {g}; }};
 const w2 = build("user-a", 12);
 await new Promise(r => setTimeout(r, 20));
-out.ownProps = w2.bikes.filter(b => /^own:/.test(b.id)).map(b => ({id: b.id, bay: b.bay, hex: b.rig.g.userData.hex, ownId: b.own.ownId, stay: b.stay}));
+out.ownProps = w2.bikes.filter(b => /^own:/.test(b.id)).map(b => ({id: b.id, bay: b.bay, hex: b.rig.g.userData.hex, ownId: b.own.ownId, stay: b.stay,
+  onPlinth: b.gallery === 3 + b.bay && b.x === w2.layout().plinths[3 + b.bay].x && b.z === w2.layout().plinths[3 + b.bay].z, reach: b.reach > w2.layout().r}));
+// the turntables turn every vehicle at home on its plinth (normal motion), and none in Calm
+const y0 = w2.bikes.map(b => b.yaw); for(let i = 0; i < 3; i++) w2.update(i*0.1, 0.1, 1);
+out.turned = w2.bikes.map((b, i) => b.yaw !== y0[i]);
+const y1 = w2.bikes.map(b => b.yaw); for(let i = 0; i < 3; i++) w2.update(i*0.1, 0.1, 0);
+out.calmAll = w2.bikes.every((b, i) => b.yaw === y1[i]);
 // the manager moves v1 to the carpark: its prop goes
 mgrSubs.forEach(f => f({available: true, homes: {v4: {home: "basement", bay: 3}}, basement: {max: 8, used: 1}}));
 out.afterMove = w2.bikes.filter(b => /^own:/.test(b.id)).map(b => b.id);
@@ -133,6 +154,27 @@ class BasementTest(unittest.TestCase):
         self.assertEqual(o["doorFrontsBlocked"], 0)
         self.assertTrue(o["plinthBlockedWalk"])
         self.assertFalse(o["plinthBlockedRide"])
+        g = o["gallery"]
+        self.assertEqual(g["n"], 15)
+        self.assertEqual(g["starters"], ["car", "moto", "bike"])
+        self.assertTrue(g["bayMap"])
+        self.assertGreater(g["minGap"], 0.3)        # at the largest radius, neighbours never touch
+        self.assertGreater(g["rMax"], 3.0)          # fits a 5.4 m saloon turning on it
+        for k in ("inRoom", "clearPad", "clearSpots", "clearCols", "clearLounge"):
+            self.assertTrue(g[k], k)
+        self.assertEqual(g["locked"][0], [4, 5])
+        self.assertEqual(len(g["locked"]), 8)
+
+    def test_lounge_doorway(self):
+        lo = self.o["lounge"]
+        self.assertGreaterEqual(lo["door"], 2.3)
+        self.assertEqual(lo["walkIn"], [False, False, False])
+        self.assertTrue(lo["glassA"])
+        self.assertTrue(lo["glassB"])
+        self.assertFalse(lo["inside"])
+        self.assertTrue(lo["sideGlass"])
+        self.assertTrue(lo["sofa"])
+        self.assertTrue(lo["doorClear"])
 
     def test_starters(self):
         s = self.o["starters"]
@@ -152,6 +194,9 @@ class BasementTest(unittest.TestCase):
         self.assertEqual(props["own:v1"]["hex"], 0x22AA33)
         self.assertEqual(props["own:v1"]["ownId"], "v1")
         self.assertEqual(o["afterMove"], ["own:v4"])
+        self.assertTrue(all(p["onPlinth"] and p["reach"] for p in o["ownProps"]))
+        self.assertTrue(all(o["turned"]))
+        self.assertTrue(o["calmAll"])
 
     def test_locked_bays(self):
         o = self.o

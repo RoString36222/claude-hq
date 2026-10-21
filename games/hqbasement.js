@@ -2,9 +2,10 @@
  *
  * A lavish private garage, entered by the car lift from the street (drive on, drive down) or by the person lift
  * from the Lobby: polished dark epoxy with mirrored light strips, instanced columns with uplights, continuous LED
- * ceiling strips, your HQ's name in neon on the back wall, 12 numbered bays (only the ones your level has
- * unlocked are lit; the rest read "Unlocks at level N"), three showcase turntables S1-S3 for the starter car,
- * motorbike and bicycle, an EV charging corner, a lounge behind glass, the car-lift platform, the person-lift
+ * ceiling strips, your HQ's name in neon on the back wall, a showcase gallery of fifteen turntable plinths [3.5.4]:
+ * S1-S3 for the starter car, motorbike and bicycle, then one per bay (bay i on slot 3 + i; only the bays your level
+ * has unlocked are lit, the rest are dim plinths reading "Unlocks at level N"), each with a spot, a halo and a
+ * placard naming what stands on it, an EV charging corner, a lounge behind glass (with an open doorway), the car-lift platform, the person-lift
  * doors and the garage-manager kiosk. Everything decorative is seeded from hashStr(uid), so your basement looks
  * the same every visit and different from a friend's.
  *
@@ -16,7 +17,7 @@
  *   HQV.hqBasementFx liftArrival / lobbyRide / plinths / trophyWall / lounge / lighting / photoSpot
  *   HQV.hqGarage    mine(), onChange(fn)      HQV.hqVehicleModels build(c, entry, paint)
  *
- * Pure helpers (HQV.hqBasement): layout(level|{max}), bayPose(i), nameFor(h), basementMax(level), lockLevel(i),
+ * Pure helpers (HQV.hqBasement): layout(level|{max, r}, r), slotPose(s), bayPose(i), fitR(r), nameFor(h), basementMax(level), lockLevel(i),
  * paintHex(entry, paint), basementRows(list, homes), blockedAt(L, x, z, riding), adopt(w, ride), toast(c, msg).
  */
 (function(){
@@ -27,12 +28,22 @@ HQV.hqWorlds = HQV.hqWorlds || {};
 var PI = Math.PI;
 var HW = 32, HD = 20;            // half width (x) and half depth (z), metres: a 64 x 40 floor
 var CEIL = 4.6, CAM_CEIL = 4.2;  // the slab, and where the camera stops under it
-var NBAYS = 12, BAY_W = 4.6, BAY_X0 = -17, ROW_Z = 13;
+var NBAYS = 12, NSTART = 3, NSLOTS = NSTART + NBAYS;
 var PAD = {x: 24.5, z: 6.5, w: 7, d: 6.2, yaw: -PI/2};          // the car-lift platform (the city bay's footprint)
-var PLINTH_R = 2.3, PLINTHS = [{x: 12, z: -13}, {x: 19, z: -13}, {x: 26, z: -13}];
+// [3.5.4] one showcase gallery: every B1 vehicle on its own plinth. Slots 0-2 the starters (S1-S3, by the walnut
+// wall), 3-14 the twelve bays (bay i = slot 3 + i, so the Arena's bay index maps 1:1). Two rows of turntables: eight
+// along the back wall (right to left), seven down the front (left to right), on one pitch. The radius fits the
+// largest vehicle (fitted at runtime from the catalogue dims and the built models' bounding boxes), capped so
+// neighbours never touch.
+var GAL = {back: -15.6, front: 14.4, x0: -19, x1: 28.1, nBack: 8};
+GAL.pitch = (GAL.x1 - GAL.x0)/(GAL.nBack - 1);                   // 6.73 m
+var R_MIN = 2.3, R_DEF = 3.0, R_MAX = Math.round((GAL.pitch - 0.35)/2*100)/100, CARD_OFF = R_MAX + 0.45;
+var PLINTH_R = R_DEF;
 var LIFT = {x: -HW + 0.3, z: 9};                                 // the person-lift doors, on the left wall
 var KIOSK = {x: -24.5, z: 3.2};
 var LOUNGE = {x0: -HW, x1: -22.6, z0: -HD, z1: -6};              // behind glass, back left
+var LDOOR = {z0: -10.7, z1: -8.3};                               // [3.5.4] the lounge's open doorway in its hall-side glass
+var LFURN = [[-27.5, -12.6, 2.2, 0.7], [-29.9, -10.9, 0.65, 1.7], [-27.4, -10.6, 1.2, 0.65], [-27.2, -18.4, 2.9, 0.5]];   // sofas, table, bar: [x, z, half w, half d]
 var EV = {x: 13, z: 16.4};                                       // the charging corner, front right
 var COLS = [];
 [-19.3, -10.1, -0.9, 8.3].forEach(function(x){ COLS.push({x: x, z: -8.4}, {x: x, z: 8.4}); });
@@ -41,19 +52,32 @@ COLS.push({x: 16, z: -6.5}, {x: 16, z: 1.2});
 function basementMax(level){ var l = Math.max(0, Math.floor(+level || 0)); return Math.min(NBAYS, 4 + Math.floor(l/5)); }
 // the level a bay unlocks at: max > i  <=>  floor(level/5) >= i - 3
 function lockLevel(i){ return Math.max(0, (i - 3)*5); }
-function bayPose(i){
-  i = i | 0; var row = i < 6 ? 0 : 1, k = row ? i - 6 : i;
-  return {i: i, x: BAY_X0 + k*BAY_W, z: row ? ROW_Z : -ROW_Z, yaw: row ? PI : 0, w: 3.4, d: 5.6, label: String(i + 1)};
+// a gallery slot's pose: the back row runs right to left from the walnut wall, the front row left to right
+function slotPose(s){
+  s = Math.max(0, Math.min(NSLOTS - 1, s | 0));
+  var back = s < GAL.nBack, k = back ? GAL.nBack - 1 - s : s - GAL.nBack;
+  return {slot: s, x: Math.round((GAL.x0 + k*GAL.pitch)*100)/100, z: back ? GAL.back : GAL.front, yaw: back ? PI/6 : PI + PI/6, face: back ? 1 : -1};
 }
-function layout(level){
+function bayPose(i){
+  i = i | 0; var P = slotPose(NSTART + i);
+  return {i: i, x: P.x, z: P.z, yaw: P.yaw, w: 2*R_MAX, d: 2*R_MAX, label: String(i + 1), slot: P.slot};
+}
+function fitR(r){ r = +r; return isFinite(r) && r > 0 ? Math.max(R_MIN, Math.min(R_MAX, r)) : R_DEF; }
+function layout(level, r){
   var max = level && typeof level === "object" ? Math.max(0, Math.min(NBAYS, level.max | 0)) : basementMax(level);
-  var bays = [];
+  r = fitR(r != null ? r : level && typeof level === "object" ? level.r : null);
+  var bays = [], plinths = [];
   for(var i = 0; i < NBAYS; i++){ var b = bayPose(i); b.lit = i < max; b.unlock = lockLevel(i); bays.push(b); }
-  return {W: 2*HW, D: 2*HD, ceil: CEIL, max: max, bays: bays,
-          plinths: PLINTHS.map(function(p, n){ return {x: p.x, z: p.z, r: PLINTH_R, yaw: PI/6, label: "S" + (n + 1), kind: ["car", "moto", "bike"][n]}; }),
+  for(var s = 0; s < NSLOTS; s++){
+    var P = slotPose(s), bay = s >= NSTART ? s - NSTART : null;
+    plinths.push({slot: s, x: P.x, z: P.z, r: r, yaw: P.yaw, face: P.face, bay: bay, lit: bay == null || bay < max, unlock: bay == null ? 0 : lockLevel(bay),
+      label: bay == null ? "S" + (s + 1) : String(bay + 1), kind: bay == null ? ["car", "moto", "bike"][s] : null,
+      card: {x: P.x, z: P.z + P.face*CARD_OFF}});
+  }
+  return {W: 2*HW, D: 2*HD, ceil: CEIL, max: max, r: r, bays: bays, plinths: plinths,
           pad: {x: PAD.x, z: PAD.z, w: PAD.w, d: PAD.d, yaw: PAD.yaw},
           lift: {x: LIFT.x, z: LIFT.z, front: {x: LIFT.x + 2.2, z: LIFT.z, yaw: PI/2}},
-          kiosk: {x: KIOSK.x, z: KIOSK.z}, lounge: LOUNGE, ev: EV, cols: COLS.slice()};
+          kiosk: {x: KIOSK.x, z: KIOSK.z}, lounge: {x0: LOUNGE.x0, x1: LOUNGE.x1, z0: LOUNGE.z0, z1: LOUNGE.z1, door: {z0: LDOOR.z0, z1: LDOOR.z1}}, ev: EV, cols: COLS.slice()};
 }
 function nameFor(h){
   if(HQV.hqCityName && h) try { return String(HQV.hqCityName(h)); } catch(e){}
@@ -87,8 +111,16 @@ function basementRows(list, homes, max){
 function blockedAt(L, x, z, riding){
   if(x < -HW + 0.7 || x > HW - 0.7 || z < -HD + 0.7 || z > HD - 0.7) return true;
   for(var i = 0; i < COLS.length; i++) if(Math.abs(x - COLS[i].x) < 0.65 && Math.abs(z - COLS[i].z) < 0.65) return true;
-  if(x < LOUNGE.x1 + 0.35 && z < LOUNGE.z1 + 0.35) return true;                               // the lounge glass
-  if(!riding) for(var p = 0; p < PLINTHS.length; p++) if(Math.hypot(x - PLINTHS[p].x, z - PLINTHS[p].z) < PLINTH_R - 0.2) return true;
+  // the lounge glass [3.5.5: with an open doorway in the hall-side wall], and its furniture on foot
+  if(Math.abs(x - LOUNGE.x1) < 0.35 && z < LOUNGE.z1 + 0.35 && !(z > LDOOR.z0 + 0.3 && z < LDOOR.z1 - 0.3)) return true;
+  if(Math.abs(z - LOUNGE.z1) < 0.35 && x < LOUNGE.x1 + 0.35) return true;
+  if(!riding) for(var f = 0; f < LFURN.length; f++) if(Math.abs(x - LFURN[f][0]) < LFURN[f][2] + 0.25 && Math.abs(z - LFURN[f][1]) < LFURN[f][3] + 0.25) return true;
+  // every gallery plinth (and its placard post) on foot; riding drives on and off them
+  var PL = (L && L.plinths) || layout(0).plinths;
+  if(!riding) for(var p = 0; p < PL.length; p++){
+    if(Math.hypot(x - PL[p].x, z - PL[p].z) < (PL[p].r || PLINTH_R) - 0.2) return true;
+    if(PL[p].card && Math.hypot(x - PL[p].card.x, z - PL[p].card.z) < 0.3) return true;
+  }
   if(Math.hypot(x - KIOSK.x, z - KIOSK.z) < 0.6) return true;
   if(Math.abs(x - EV.x) < 4.2 && z > EV.z + 1.6) return true;                                  // the chargers against the front wall
   return false;
@@ -158,9 +190,9 @@ function quadGeo(THREE, list){
   return g;
 }
 
-HQV.hqBasement = {layout: layout, quadGeo: quadGeo, bayPose: bayPose, nameFor: nameFor, basementMax: basementMax, lockLevel: lockLevel,
+HQV.hqBasement = {layout: layout, quadGeo: quadGeo, bayPose: bayPose, slotPose: slotPose, fitR: fitR, nameFor: nameFor, basementMax: basementMax, lockLevel: lockLevel,
   paintHex: paintHex, basementRows: basementRows, blockedAt: blockedAt, adopt: adopt, toast: toast,
-  PAD: PAD, NBAYS: NBAYS, CEIL: CEIL, CAM_CEIL: CAM_CEIL, BOUNDS: [-HW, HW, -HD, HD]};
+  PAD: PAD, NBAYS: NBAYS, NSLOTS: NSLOTS, R_MAX: R_MAX, CEIL: CEIL, CAM_CEIL: CAM_CEIL, BOUNDS: [-HW, HW, -HD, HD]};
 
 /* ---------------------------------------------------------------------------------------------- the world */
 HQV.hqWorlds.basement = function(c, w){
@@ -236,21 +268,13 @@ HQV.hqWorlds.basement = function(c, w){
       if(gr){ gr.addColorStop(0, "rgba(255,236,206,0)"); gr.addColorStop(0.5, "rgba(255,236,206,.22)"); gr.addColorStop(1, "rgba(255,236,206,0)"); g.fillStyle = gr; }
       else g.fillStyle = "rgba(255,236,206,.16)";
       g.fillRect(X(-HW + 2), zz - 10, X(HW - 2) - X(-HW + 2), 20); }
-    L.bays.forEach(function(b){
-      var x0 = X(b.x - b.w/2), x1 = X(b.x + b.w/2), zf = Z(b.z + (b.z < 0 ? b.d/2 : -b.d/2)), zb = Z(b.z - (b.z < 0 ? b.d/2 : -b.d/2));
-      g.strokeStyle = b.lit ? "rgba(44,38,32,.9)" : "rgba(90,82,72,.45)"; g.lineWidth = 7;   // [3.5.3] dark on the light stone
-      g.beginPath(); g.moveTo(x0, zf); g.lineTo(x0, zb); g.lineTo(x1, zb); g.lineTo(x1, zf); g.stroke();
-      if(b.lit){ g.fillStyle = "rgba(255,179,71,.12)"; g.fillRect(x0, Math.min(zf, zb), x1 - x0, Math.abs(zb - zf)); }
-      g.textAlign = "center"; g.font = "800 64px system-ui, sans-serif";
-      g.lineWidth = 6; g.strokeStyle = "rgba(44,38,32,.75)"; if(g.strokeText) g.strokeText(b.label, X(b.x), Z(b.z) + 22);
-      g.fillStyle = b.lit ? (HEX.amber || "#ffb347") : "rgba(110,100,88,.75)"; g.fillText(b.label, X(b.x), Z(b.z) + 22);
-      if(!b.lit){ g.font = "600 22px system-ui, sans-serif"; g.fillStyle = "rgba(70,62,54,.85)"; g.fillText("Unlocks at level " + b.unlock, X(b.x), Z(b.z) + 64); }
-    });
+    // [3.5.4] no painted bays any more: each vehicle has a plinth; a faint bronze ring on the stone round each one
+    L.plinths.forEach(function(p){ g.strokeStyle = p.lit ? "rgba(120,86,48,.45)" : "rgba(110,100,88,.25)"; g.lineWidth = 4;
+      g.beginPath(); g.arc(X(p.x), Z(p.z), (R_MAX + 0.2)*u, 0, 2*PI); g.stroke(); });
     // aisle chevrons toward the car lift, and the lift pad's hatching
     g.fillStyle = "rgba(214,128,30,.6)";
     for(var ax = -22; ax < 18; ax += 6){ var cx = X(ax), cz = Z(0); g.beginPath(); g.moveTo(cx, cz - 26); g.lineTo(cx + 26, cz); g.lineTo(cx, cz + 26); g.lineTo(cx + 10, cz); g.fill(); }
     g.strokeStyle = "rgba(214,160,20,.9)"; g.lineWidth = 8; g.strokeRect(X(PAD.x - PAD.d/2 - 0.3), Z(PAD.z - PAD.w/2 - 0.3), (PAD.d + 0.6)*u, (PAD.w + 0.6)*u);
-    PLINTHS.forEach(function(p, n){ g.fillStyle = "rgba(60,50,40,.75)"; g.font = "800 40px system-ui, sans-serif"; g.textAlign = "center"; g.fillText("S" + (n + 1), X(p.x), Z(p.z + PLINTH_R + 0.7)); });
     mk.t.needsUpdate = true;
   }
 
@@ -322,14 +346,14 @@ HQV.hqWorlds.basement = function(c, w){
   COLS.forEach(function(p, i){ m4.compose(v1.set(p.x, CEIL/2, p.z), q.identity(), v2.set(1, 1, 1)); colI.setMatrixAt(i, m4);
     m4.compose(v1.set(p.x, 0.8, p.z), q.identity(), v2.set(1, 1, 1)); upI.setMatrixAt(i, m4); });
   colI.castShadow = true; colI.receiveShadow = true; colI.name = "basement:columns"; upI.name = "basement:uplights"; S.add(colI); S.add(upI);
-  // a light bar over every bay, lit in amber when unlocked (instance colours)
-  var barI = new THREE.InstancedMesh(new THREE.BoxGeometry(2.8, 0.05, 0.16), basic(0xffffff), NBAYS), tint = new THREE.Color();
+  // [3.5.4] a round ceiling spot over every gallery plinth, warm when its slot is unlocked (instance colours)
+  var barI = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.34, 0.34, 0.08, 20), basic(0xffffff), NSLOTS), tint = new THREE.Color();
   function drawBars(){
-    L.bays.forEach(function(b, i){ m4.compose(v1.set(b.x, CEIL - 0.05, b.z + (b.z < 0 ? -1.2 : 1.2)), q.identity(), v2.set(1, 1, 1)); barI.setMatrixAt(i, m4);
-      barI.setColorAt(i, tint.setHex(b.lit ? 0xffc979 : 0x5a5046)); });
+    L.plinths.forEach(function(p, i){ m4.compose(v1.set(p.x, CEIL - 0.04, p.z), q.identity(), v2.set(1, 1, 1)); barI.setMatrixAt(i, m4);
+      barI.setColorAt(i, tint.setHex(p.lit ? 0xffd9a0 : 0x5a5046)); });
     barI.instanceMatrix.needsUpdate = true; if(barI.instanceColor) barI.instanceColor.needsUpdate = true;
   }
-  barI.name = "basement:baybars"; S.add(barI);
+  barI.name = "basement:spots"; S.add(barI);
 
   // your HQ's name in neon on the back wall
   var nameTex = c.canvasTex(1024, 256), name = nameFor(h);
@@ -342,25 +366,74 @@ HQV.hqWorlds.basement = function(c, w){
   var sign = c.screen(13, 3.25, nameTex.t, true); sign.position.set(-6, 2.7, -HD + 0.16); dyn.add(sign);
   if(c.glow){ var sgl = c.glow(neon, 16, 0.22); sgl.position.set(-6, 2.7, -HD + 0.6); dyn.add(sgl); anims.push(function(t, k){ sgl.material.opacity = 0.18 + 0.05*Math.sin(t*2.3*k); }); }
 
-  // the showcase turntables S1-S3 with spot cones; the starters stand on them
-  var plinthM = mat(0x1c1612, {roughness: 0.22, metalness: 0.65}), ringM = basic(accent);
-  var discs = [], cones = [];
-  L.plinths.forEach(function(p){
-    var base = new THREE.Mesh(new THREE.CylinderGeometry(p.r, p.r + 0.1, 0.06, 48), plinthM); base.position.set(p.x, 0.03, p.z); base.receiveShadow = true; st.add(base);
-    var ring = new THREE.Mesh(new THREE.TorusGeometry(p.r + 0.02, 0.025, 6, 64), ringM); ring.rotation.x = -PI/2; ring.position.set(p.x, 0.065, p.z); dyn.add(ring);
-    var disc = new THREE.Mesh(new THREE.CylinderGeometry(p.r - 0.12, p.r - 0.12, 0.02, 48), mat(0x3a2f26, {roughness: 0.25, metalness: 0.6})); disc.position.set(p.x, 0.07, p.z); disc.userData.anim = 1; dyn.add(disc);
-    discs.push(disc);
-    var cone = new THREE.Mesh(new THREE.CylinderGeometry(0.25, p.r, CEIL - 0.1, 32, 1, true), basic(0xffd9a0, {transparent: true, opacity: 0.11, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide}));
-    cone.position.set(p.x, (CEIL - 0.1)/2, p.z); dyn.add(cone); cones.push(cone);
-    var tag = c.label ? c.label(p.label + " · Showcase", HEX.amber || "#ffb347", 0.42) : null; if(tag){ tag.position.set(p.x, 3.4, p.z); dyn.add(tag); }
-  });
-
-  // [3.5.3] warm light spilling from under each plinth onto the stone: one additive mesh for all three
+  // [3.5.4] the showcase gallery: a plinth for every B1 vehicle (the starters and all twelve bays). Each is a bronze
+  // base, a dark turntable disc, an accent ring, a warm spot cone and an under-plinth halo; each part is ONE
+  // InstancedMesh over all fifteen slots (a constant handful of draws), scaled to the fitted radius. A locked slot
+  // is a dim empty plinth (no cone, a faint halo) whose placard reads "Unlocks at level N".
+  var bronzeM = mat(0x8a6238, {roughness: 0.3, metalness: 0.85});
+  var baseG = new THREE.CylinderGeometry(1, 1.04, 0.06, 48), discG = new THREE.CylinderGeometry(1, 1, 0.02, 48);
+  var ringG = new THREE.TorusGeometry(1, 0.012, 6, 64); ringG.rotateX(-PI/2);
+  var coneG = new THREE.CylinderGeometry(0.08, 1, CEIL - 0.1, 32, 1, true), haloG = new THREE.PlaneGeometry(2, 2); haloG.rotateX(-PI/2);
+  var baseI = new THREE.InstancedMesh(baseG, bronzeM, NSLOTS), discI = new THREE.InstancedMesh(discG, mat(0x3a2f26, {roughness: 0.25, metalness: 0.6}), NSLOTS);
+  var ringI = new THREE.InstancedMesh(ringG, basic(0xffffff), NSLOTS);
+  var coneI = new THREE.InstancedMesh(coneG, basic(0xffd9a0, {transparent: true, opacity: 0.1, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide}), NSLOTS);
+  baseI.receiveShadow = true; discI.receiveShadow = true;
+  baseI.name = "basement:plinths"; discI.name = "basement:discs"; ringI.name = "basement:rings"; coneI.name = "basement:cones";
+  [baseI, discI, ringI, coneI].forEach(function(o){ o.frustumCulled = false; dyn.add(o); });
   var pHaloT = c.canvasTex(128, 128, function(g){ if(!g || !g.createRadialGradient) return; g.clearRect(0, 0, 128, 128);
     var rg = g.createRadialGradient(64, 64, 30, 64, 64, 64); rg.addColorStop(0, "rgba(255,206,150,.85)"); rg.addColorStop(0.35, "rgba(255,190,120,.35)"); rg.addColorStop(1, "rgba(255,190,120,0)");
     g.fillStyle = rg; g.fillRect(0, 0, 128, 128); });
-  if(pHaloT && pHaloT.t){ var ph = new THREE.Mesh(quadGeo(THREE, L.plinths.map(function(p){ var R2 = p.r*1.75; return {c: [p.x, 0.02, p.z], u: [R2, 0, 0], v: [0, 0, -R2]}; })),
-      addM(pHaloT.t, 0.9)); ph.name = "basement:plinthHalo"; ph.renderOrder = 2; dyn.add(ph); }
+  var haloI = pHaloT && pHaloT.t ? new THREE.InstancedMesh(haloG, addM(pHaloT.t, 0.9), NSLOTS) : null;
+  if(haloI){ haloI.name = "basement:plinthHalo"; haloI.renderOrder = 2; haloI.frustumCulled = false; dyn.add(haloI); }
+  var accentC = new THREE.Color(accent), dimC = new THREE.Color(0x3a332c), fullC = new THREE.Color(0xffffff), lowC = new THREE.Color(0x5a5046);
+  function drawPlinths(){
+    L.plinths.forEach(function(p, i){
+      var r = p.r, lit = p.lit;
+      m4.compose(v1.set(p.x, 0.03, p.z), q.identity(), v2.set(r, 1, r)); baseI.setMatrixAt(i, m4);
+      baseI.setColorAt(i, lit ? fullC : lowC);
+      m4.compose(v1.set(p.x, 0.07, p.z), q.identity(), v2.set(r - 0.12, 1, r - 0.12)); discI.setMatrixAt(i, m4);
+      discI.setColorAt(i, lit ? fullC : lowC);
+      m4.compose(v1.set(p.x, 0.065, p.z), q.identity(), v2.set(r + 0.02, 1, r + 0.02)); ringI.setMatrixAt(i, m4);
+      ringI.setColorAt(i, lit ? accentC : dimC);
+      m4.compose(v1.set(p.x, (CEIL - 0.1)/2, p.z), q.identity(), lit ? v2.set(r, 1, r) : v2.set(1e-4, 1e-4, 1e-4)); coneI.setMatrixAt(i, m4);
+      if(haloI){ m4.compose(v1.set(p.x, 0.02, p.z), q.identity(), v2.set(r*1.75, 1, r*1.75)); haloI.setMatrixAt(i, m4);
+        haloI.setColorAt(i, tint.setScalar(lit ? 1 : 0.18)); }
+    });
+    [baseI, discI, ringI, coneI, haloI].forEach(function(o){ if(!o) return; o.instanceMatrix.needsUpdate = true; if(o.instanceColor) o.instanceColor.needsUpdate = true; });
+  }
+
+  // a small museum placard on a brushed post in front of every plinth, facing the aisle: one atlas, one quad mesh
+  // (4 x 4 cells of 512 x 256), redrawn only when what it says changes
+  var CW = 0.6, CH = 0.3, cardT = c.canvasTex(2048, 1024), cardSig = "";
+  if(cardT && cardT.t){
+    var cardM = new THREE.Mesh(quadGeo(THREE, L.plinths.map(function(p, i){ var f = p.face, cx = i % 4, cy = Math.floor(i/4);
+      return {c: [p.card.x, 0.86, p.card.z], u: [f*CW, 0, 0], v: [0, CH*0.8, -f*CH*0.6], uv: [cx/4, 1 - (cy + 1)/4, (cx + 1)/4, 1 - cy/4]}; })),
+      new THREE.MeshBasicMaterial({map: cardT.t, toneMapped: false, color: 0xf2e8da}));
+    cardM.name = "basement:placards"; dyn.add(cardM);
+  }
+  L.plinths.forEach(function(p){ box(0.06, 0.7, 0.06, metalM, p.card.x, 0.35, p.card.z, st, true); });
+  function drawCards(rows){
+    var g = cardT && cardT.g; if(!g || !g.fillRect) return;
+    var info = L.plinths.map(function(p, i){
+      if(p.bay == null) return {t: ["Car", "Motorbike", "Bicycle"][i] || "Starter", s: "Your starter \u00b7 S" + (i + 1), lit: true};
+      var r = rows[p.bay];
+      if(r){ var e = r.entry || {}, nm = ((e.brand || "") + " " + (e.model || r.vehicle_id || "")).trim();
+        return {t: nm || String(r.vehicle_id || "Vehicle"), s: (e.year ? e.year + " \u00b7 " : "") + "Bay " + (p.bay + 1), lit: true}; }
+      return p.lit ? {t: "Bay " + (p.bay + 1), s: "Free \u00b7 drive one down", lit: true} : {t: "Bay " + (p.bay + 1), s: "Unlocks at level " + p.unlock, lit: false};
+    });
+    var sig = JSON.stringify(info); if(sig === cardSig) return; cardSig = sig;
+    g.clearRect(0, 0, 2048, 1024); g.textAlign = "center";
+    info.forEach(function(it, i){
+      var x0 = (i % 4)*512, y0 = Math.floor(i/4)*256;
+      g.fillStyle = it.lit ? "#1d1611" : "#2a2622"; g.fillRect(x0 + 6, y0 + 6, 500, 244);
+      g.strokeStyle = it.lit ? "#b8894f" : "#5a5046"; g.lineWidth = 6; g.strokeRect(x0 + 16, y0 + 16, 480, 224);
+      g.fillStyle = it.lit ? "#f4e6d0" : "#8a8076"; g.font = "800 50px system-ui, sans-serif";
+      g.fillText(c.short ? c.short(it.t, 18) : String(it.t).slice(0, 18), x0 + 256, y0 + 118);
+      g.fillStyle = it.lit ? (HEX.amber || "#ffb347") : "#8a8076"; g.font = "600 30px system-ui, sans-serif";
+      g.fillText(c.short ? c.short(it.s, 30) : String(it.s).slice(0, 30), x0 + 256, y0 + 182);
+    });
+    cardT.t.needsUpdate = true;
+  }
 
   // the EV charging corner: three chargers with glowing rings and a green floor glyph
   for(var e = 0; e < 3; e++){
@@ -375,7 +448,13 @@ HQV.hqWorlds.basement = function(c, w){
   // the lounge behind glass: sofas, a bar with a back-lit shelf, a screen
   var glass = mat(0x3a2818, {transparent: true, opacity: 0.32, roughness: 0.04, metalness: 0.35});   // [3.5.3] smoked bronze
   var gx = LOUNGE.x1, gz = LOUNGE.z1;
-  var gw1 = new THREE.Mesh(new THREE.BoxGeometry(0.06, CEIL - 0.1, gz - LOUNGE.z0), glass); gw1.position.set(gx, (CEIL - 0.1)/2, (gz + LOUNGE.z0)/2); dyn.add(gw1);
+  // [3.5.4] the hall-side glass has an open doorway (LDOOR, 2.4 m) between bronze posts under a bronze header
+  var GH = CEIL - 0.1, gw1 = new THREE.Mesh(new THREE.BoxGeometry(0.06, GH, LDOOR.z0 - LOUNGE.z0), glass); gw1.position.set(gx, GH/2, (LDOOR.z0 + LOUNGE.z0)/2); dyn.add(gw1);
+  var gw3 = new THREE.Mesh(new THREE.BoxGeometry(0.06, GH, gz - LDOOR.z1), glass); gw3.position.set(gx, GH/2, (gz + LDOOR.z1)/2); dyn.add(gw3);
+  var DOOR_H = 2.7;
+  box(0.08, GH - DOOR_H, LDOOR.z1 - LDOOR.z0, glass, gx, DOOR_H + (GH - DOOR_H)/2, (LDOOR.z0 + LDOOR.z1)/2, dyn);   // a transom of glass over it
+  [LDOOR.z0, LDOOR.z1].forEach(function(z){ box(0.14, DOOR_H, 0.1, bronzeM, gx, DOOR_H/2, z, st, true); });
+  box(0.16, 0.12, LDOOR.z1 - LDOOR.z0 + 0.1, bronzeM, gx, DOOR_H + 0.06, (LDOOR.z0 + LDOOR.z1)/2, st, true);
   var gw2 = new THREE.Mesh(new THREE.BoxGeometry(gx - LOUNGE.x0, CEIL - 0.1, 0.06), glass); gw2.position.set((gx + LOUNGE.x0)/2, (CEIL - 0.1)/2, gz); dyn.add(gw2);
   var frameM = metalM;
   box(0.1, 0.1, gz - LOUNGE.z0, frameM, gx, CEIL - 0.05, (gz + LOUNGE.z0)/2, st); box(gx - LOUNGE.x0, 0.1, 0.1, frameM, (gx + LOUNGE.x0)/2, CEIL - 0.05, gz, st);
@@ -400,7 +479,7 @@ HQV.hqWorlds.basement = function(c, w){
     for(var i = 0; i < 6; i++){ var y = 144 + Math.sin(t*0.6 + i)*60; g.fillStyle = "hsla(" + ((i*50 + t*12) % 360) + ",80%,60%,.6)"; g.beginPath(); g.arc(80 + i*70, y, 18, 0, 7); g.fill(); }
     g.fillStyle = HEX.amber || "#ffb347"; g.font = "700 30px system-ui, sans-serif"; g.fillText("B1 LOUNGE", 20, 40); lsTex.t.needsUpdate = true; }
   if(c.label){ var lTag = c.label("Lounge", HEX.amber || "#ffb347", 0.45); lTag.position.set(-27, 3.6, -6.2); dyn.add(lTag); }
-  hits.push(gw1, gw2); gw1.userData.tip = gw2.userData.tip = "The B1 lounge: a sofa, a bar and a screen, behind glass";
+  hits.push(gw1, gw2, gw3); gw1.userData.tip = gw2.userData.tip = gw3.userData.tip = "The B1 lounge: a sofa, a bar and a screen; walk in through the doorway";
 
   // the car-lift platform (games/hqcarlift.js when it is there, else a plain chevroned pad), door up to the street
   var liftDoor = {view: "@base", kind: "carlift", label: "Car lift", tip: "Car lift: drive on to go up to the street (G)",
@@ -463,8 +542,9 @@ HQV.hqWorlds.basement = function(c, w){
   // a few plants, seeded
   // [3.5.3] more of them, and they go into the static group so they merge (a pot + four greens, not ten draws a plant)
   if(c.plant){ var pr = c.rng ? c.rng(seed ^ 0x9e3) : R, kids0 = S.children.slice();
-    [[-21.5, -18.5], [9.5, -18.6], [30.6, -18.4], [-21.4, 18.4], [30.6, 18.4],
-     [13.4, -18.6], [31, -3.2], [-31, -3.5], [-31, 15.5], [-31.1, -15.6], [-8.5, 18.5]].forEach(function(p, n){
+    // [3.5.4] the back-wall ones stand between the gallery plinths, against the wall
+    [[-21.5, -18.5], [11.3, -18.8], [30.6, -18.4], [-21.4, 18.4], [30.6, 18.4],
+     [-2.2, -18.8], [31, -3.2], [-31, -3.5], [-31, 15.5], [-31.1, -15.6], [-8.9, 18.8]].forEach(function(p, n){
       try { c.plant(p[0], p[1], 0.9 + pr()*0.4, (seed + n) % 997); } catch(e){} });
     S.children.slice().forEach(function(o){ if(kids0.indexOf(o) < 0 && o !== st && o !== dyn && o.isGroup) st.add(o); }); }
 
@@ -502,17 +582,46 @@ HQV.hqWorlds.basement = function(c, w){
   // the experience layer (games/hqbasementfx.js): each optional
   var fxPl = null, fxLounge = null, fxPhoto = null, fxTrophy = null, fxArr = null;
   function fx(name){ var a = Array.prototype.slice.call(arguments, 1); try { return Fx && typeof Fx[name] === "function" ? Fx[name].apply(Fx, a) : null; } catch(e){ return null; } }
-  fxPl = fx("plinths", c, dyn, L.plinths.map(function(p, i){ return {x: p.x, z: p.z, r: p.r, turn: discs[i], disc: discs[i], cone: cones[i], label: p.label}; }));
+  // the turntables' discs are instanced and round (their turn is invisible): the fx hook gets a pivot per slot to keep time with
+  fxPl = fx("plinths", c, dyn, L.plinths.map(function(p){ return {x: p.x, z: p.z, r: p.r, turn: new THREE.Object3D(), label: p.label}; }));
   fxTrophy = fx("trophyWall", c, dyn, {x: 9.5, y: 2.2, z: -HD + 0.2, yaw: 0, w: 8});
   fxLounge = fx("lounge", c, dyn, {x: -27, z: -14, screen: lsScreen});
   fxPhoto = fx("photoSpot", c, dyn, {x: 19, z: -6.8, yaw: PI});
 
-  /* -------- the vehicles: the starters on their turntables, and your basement-homed owned vehicles in their bays */
+  /* -------- the vehicles: every one on its gallery plinth, the starters on S1-S3, your basement-homed owned vehicles
+     on their bay's plinth (slot 3 + bay) */
+  // [3.5.4] the plinths fit the largest vehicle: the catalogue's dims (HQV.hqVehicleModels.dims), and the bounding box of
+  // every model actually built here (so a model rescaled elsewhere still fits); capped at R_MAX so neighbours never touch
+  var need = 0, bbA = new THREE.Box3(), bbB = new THREE.Box3();
+  function halfDiag(root){
+    if(!root || !root.traverse) return 0;
+    try {
+      bbA.makeEmpty(); root.updateMatrixWorld(true);
+      var inv = new THREE.Matrix4().copy(root.matrixWorld).invert(), rel = new THREE.Matrix4();
+      root.traverse(function(o){ if(!o.isMesh || o.isSprite || !o.geometry || o.visible === false) return;
+        if(!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+        rel.multiplyMatrices(inv, o.matrixWorld); bbB.copy(o.geometry.boundingBox).applyMatrix4(rel); bbA.union(bbB); });
+      if(bbA.isEmpty()) return 0;
+      return Math.hypot(bbA.max.x - bbA.min.x, bbA.max.z - bbA.min.z)/2;
+    } catch(e){ return 0; }
+  }
+  function catList(){ var C = (c.catalogue && c.catalogue()) || HQV.hqVehicleCatalogue || null, vs = C && (C.vehicles || C); return Array.isArray(vs) ? vs : []; }
+  (function(){ var VM = HQV.hqVehicleModels; if(!VM || !VM.dims) return;
+    catList().forEach(function(e){ try { var d = VM.dims(e); if(d && d.lengthM > 0) need = Math.max(need, Math.hypot(d.lengthM, d.widthM || 0)/2); } catch(err){} }); })();
+  function fit(h){
+    if(h > need) need = h;
+    var r = need > 0 ? fitR(need + 0.2) : R_DEF;
+    if(Math.abs(r - L.r) < 0.01) return;
+    L = layout({max: L.max, r: r}); drawPlinths(); drawMarks();
+    bikes.forEach(function(b){ if(b.gallery != null) b.reach = r + 0.8; });
+  }
+  function measure(root){ var h = halfDiag(root); if(h > 0) fit(h); }
+  fit(0);
   function addStarter(model, kind, n, extra){
-    var p = L.plinths[n], yaw = p.yaw; model.g.position.set(p.x, 0, p.z); model.g.rotation.y = yaw; S.add(model.g);
+    var p = L.plinths[n], yaw = p.yaw; measure(model.g); model.g.position.set(p.x, 0, p.z); model.g.rotation.y = yaw; S.add(model.g);
     model.g.traverse(function(o){ if(o.isMesh){ o.castShadow = true; } });
-    var b = Object.assign({g: model.g, x: p.x, z: p.z, yaw: yaw, id: "lot:" + me + ":" + kind, stay: true, home: {x: p.x, z: p.z, yaw: yaw}, plinth: n,
-                             reach: PLINTH_R + 0.8}, extra);   // reach: get on from the plinth's edge (on foot the plinth keeps you PLINTH_R - 0.2 away) [3.5.1]
+    var b = Object.assign({g: model.g, x: p.x, z: p.z, yaw: yaw, id: "lot:" + me + ":" + kind, stay: true, home: {x: p.x, z: p.z, yaw: yaw}, plinth: n, gallery: n,
+                             reach: L.r + 0.8}, extra);   // reach: get on from the plinth's edge (on foot the plinth keeps you r - 0.2 away) [3.5.1]
     if(kind !== "bike") b.kind = kind;            // a bicycle: no kind, as hq3d.js expects
     bikes.push(b); return b;
   }
@@ -522,48 +631,41 @@ HQV.hqWorlds.basement = function(c, w){
 
   var ownProps = {}, homesNow = null, listNow = null;
   function catEntry(id){
-    var C = (c.catalogue && c.catalogue()) || HQV.hqVehicleCatalogue || null, vs = C && (C.vehicles || C);
-    if(!Array.isArray(vs)) return null;
+    var vs = catList();
     for(var i = 0; i < vs.length; i++) if(vs[i] && vs[i].id === id) return vs[i];
     return null;
-  }
-  var poolMat = null;
-  function bayPool(){
-    if(!poolMat){ var pt = c.canvasTex(128, 128, function(g){ var gr = g.createRadialGradient ? g.createRadialGradient(64, 64, 4, 64, 64, 62) : null;
-        if(gr){ gr.addColorStop(0, "rgba(255,214,160,.55)"); gr.addColorStop(0.6, "rgba(255,190,120,.16)"); gr.addColorStop(1, "rgba(255,190,120,0)"); g.fillStyle = gr; } else g.fillStyle = "rgba(255,200,140,.2)";
-        g.fillRect(0, 0, 128, 128); });
-      poolMat = new THREE.MeshBasicMaterial({map: pt && pt.t, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false}); }
-    var m = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 5.6), poolMat); m.rotation.x = -PI/2; m.renderOrder = 2; return m;
   }
   function riddenOff(b){ return b && b.g && b.g.parent && b.g.parent !== S; }       // hq3d has it under you
   function rebuildOwn(){
     if(dead) return;
     var max = homesNow && homesNow.available !== false && homesNow.basement ? homesNow.basement.max : L.max;
-    if(max !== L.max){ L = layout({max: max}); drawMarks(); drawBars(); }
-    var rows = homesNow && homesNow.available !== false ? basementRows(listNow, homesNow, max) : [], want = {};
-    rows.forEach(function(r){ want["own:" + r.id] = r; });
+    if(max !== L.max){ L = layout({max: max, r: L.r}); drawMarks(); drawBars(); drawPlinths(); }
+    var rows = homesNow && homesNow.available !== false ? basementRows(listNow, homesNow, max) : [], want = {}, byBay = {};
+    rows.forEach(function(r){ want["own:" + r.id] = r; r.entry = catEntry(r.vehicle_id); byBay[r.bay] = r; });
     Object.keys(ownProps).forEach(function(k){
       var b = ownProps[k], r = want[k];
       if(r && b.bay === r.bay && b.vehicle_id === r.vehicle_id && b.paintIdx === r.paint) return;
       if(riddenOff(b)) return;
       var i = bikes.indexOf(b); if(i >= 0) bikes.splice(i, 1);
       if(b.g.parent) b.g.parent.remove(b.g);
-      if(b.pool && b.pool.parent) b.pool.parent.remove(b.pool);
       delete ownProps[k];
     });
     rows.forEach(function(r){
       var k = "own:" + r.id; if(ownProps[k]) return;
-      var entry = catEntry(r.vehicle_id); if(!entry || !HQV.hqVehicleModels || !HQV.hqVehicleModels.build) return;
-      var hex = paintHex(entry, r.paint), P = bayPose(r.bay), rig;
+      var entry = r.entry; if(!entry || !HQV.hqVehicleModels || !HQV.hqVehicleModels.build) return;
+      var hex = paintHex(entry, r.paint), P = L.plinths[NSTART + r.bay] || bayPose(r.bay), rig;
       try { rig = HQV.hqVehicleModels.build(c, entry, hex); } catch(e){ return; }
       if(!rig || !rig.g) return;
+      measure(rig.g);
+      if(rig.ready && rig.ready.then) rig.ready.then(function(){ if(!dead) measure(rig.g); }, function(){});   // a model3d swapped in: measure again
       var g = new THREE.Group(); g.add(rig.g); g.position.set(P.x, 0, P.z); g.rotation.y = P.yaw; S.add(g);
-      var pool = bayPool(); pool.position.set(P.x, 0.02, P.z); pool.rotation.z = P.yaw; S.add(pool);   // a warm downlight pool on the bay: one additive quad, no real light
+      g.traverse(function(o){ if(o.isMesh) o.castShadow = true; });
       var o = {key: k, ownId: r.id, vehicleId: r.vehicle_id, color: hex, world: "basement", x: P.x, z: P.z, yaw: P.yaw, home: {x: P.x, z: P.z, yaw: P.yaw}, stored: false, basement: true, bay: r.bay};
       var b = {g: g, x: P.x, z: P.z, yaw: P.yaw, color: hex, paint: Math.max(0, r.paint | 0), paintIdx: r.paint, kind: r.vehicle_id, vehicle_id: r.vehicle_id, id: k, stay: true,
-               world: w, rig: rig, own: o, home: {x: P.x, z: P.z, yaw: P.yaw}, bay: r.bay, pool: pool};
+               world: w, rig: rig, own: o, home: {x: P.x, z: P.z, yaw: P.yaw}, bay: r.bay, gallery: NSTART + r.bay, reach: L.r + 0.8};
       bikes.push(b); ownProps[k] = b;
     });
+    drawCards(byBay);
   }
   var dead = false, unsubs = [];
   function refresh(fresh){
@@ -575,7 +677,7 @@ HQV.hqWorlds.basement = function(c, w){
   try { if(HQV.hqGarage && HQV.hqGarage.onChange) unsubs.push(HQV.hqGarage.onChange(function(l){ listNow = l; rebuildOwn(); })); } catch(e){}
   try { if(Mgr && Mgr.onChange) unsubs.push(Mgr.onChange(function(H){ homesNow = H; rebuildOwn(); })); } catch(e){}
 
-  drawMarks(); drawBars(); drawLounge(0);
+  drawMarks(); drawBars(); drawPlinths(); drawCards({}); drawLounge(0);
   // merge the static group: a few draw calls for walls, slats, sofas, bar and plinth bases
   var merged = null;
   try { if(HQV.hqMerge && HQV.hqMerge.mergeStatic) merged = HQV.hqMerge.mergeStatic(THREE, st); } catch(e){}
@@ -659,13 +761,13 @@ HQV.hqWorlds.basement = function(c, w){
     anims.forEach(function(f){ try { f(t, k); } catch(e){} });
     // the turntables: 0.25 rad/s, scaled by k (still in Calm); a starter at home turns with its disc
     var dTurn = 0.25*k*dt; turn += dTurn;
-    if(fxPl && fxPl.update) fxPl.update(t, dt, k); else discs.forEach(function(d){ d.rotation.y = turn; });
-    if(dTurn) bikes.forEach(function(b){
-      if(b.plinth == null || riddenOff(b) || !b.home) return;
+    if(fxPl && fxPl.update) fxPl.update(t, dt, k);
+    if(dTurn) bikes.forEach(function(b){   // [3.5.4] every vehicle at home on its gallery plinth turns, not only the starters
+      if(b.gallery == null || riddenOff(b) || !b.home) return;
       if(Math.hypot(b.x - b.home.x, b.z - b.home.z) > 0.05) return;
       b.yaw += dTurn; b.g.rotation.y = b.yaw;
     });
-    cones.forEach(function(cn, i){ cn.material.opacity = 0.07 + 0.025*Math.sin(t*1.3*k + i); });
+    coneI.material.opacity = 0.08 + 0.02*Math.sin(t*1.3*k);
     // the person-lift doors open as you come near
     var av = c.avatar && c.avatar();
     var want = av && Math.hypot(av.x - LIFT.x, av.z - LIFT.z) < 3.4 ? 1 : 0;

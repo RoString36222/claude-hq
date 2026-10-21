@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.5.3** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.5.4** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -364,6 +364,14 @@ and feature guide.
 
 ## Changelog
 
+- **3.5.4 — B1 showcase gallery.** Every vehicle in your basement now stands on its own display plinth, not just the
+  three starters: fifteen turntables in two rows (eight along the back wall, the starters S1–S3 by the walnut wall,
+  then seven down the front), each with a bronze base, a warm spot cone, a halo spilling onto the stone, a slow
+  turn (still in Calm) and a placard naming what stands on it from the catalogue. Bay *i* is plinth 3 + *i*, so
+  transfers and bay picking are unchanged; locked bays are dim empty plinths reading "Unlocks at level N". The
+  plinths are sized at runtime to the largest vehicle (catalogue dims and the built models' bounding boxes) and capped
+  so neighbours never touch; every part of every plinth is one instanced mesh, so fifteen cost a constant six draws.
+  You get on from any plinth's edge, and the B1 lounge finally has an open doorway (2.4 m, bronze frame) in its glass.
 - **3.5.3 — B1 as a lavish showroom.** The basement garage was mostly black; now it is bright and warm (~3000 K): a
   strong warm fill, warm cove strips along every wall-ceiling edge and under a floating oak ceiling panel, scalloped
   wall-washer pools, polished warm-stone floor slabs (seeded canvas) with the bay lines and numbers in dark ink, dark-

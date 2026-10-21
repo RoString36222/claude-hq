@@ -80,7 +80,8 @@ pub fn post_paths() -> Vec<&'static str> {
         "/api/arena/pantry/give", "/api/arena/pantry/reward", "/api/arena/hq/me", "/api/arena/portrait", "/api/arena/cosmetics/buy",
         "/api/arena/cosmetics/equip", "/api/arena/market/sell", "/api/arena/crews/create", "/api/arena/crews/join",
         "/api/arena/crews/leave", "/api/arena/quickplay/join", "/api/arena/quickplay/leave", "/api/arena/cali/order",
-        "/api/arena/sounds", "/api/arena/rail/build", "/api/arena/vehicles/buy", "/api/games/state", "/api/vial/spend", "/api/notch/install",
+        "/api/arena/sounds", "/api/arena/rail/build", "/api/arena/vehicles/buy",
+        "/api/arena/casino/cage", "/api/arena/casino/play", "/api/arena/casino/blackjack", "/api/arena/casino/duel", "/api/games/state", "/api/vial/spend", "/api/notch/install",
     ];
     v.extend(ARENA_ROOM_POSTS);
     v.extend(ext::POST.iter().map(|(p, _)| *p));
@@ -492,6 +493,8 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
         return Reply::json(c, &r);
     }
     if path == "/api/arena/garages/mine" { let (c, r) = app.arena_garages_mine(); return Reply::json(c, &r); } // [basement 3.4]
+    if path == "/api/arena/casino/me" { let (c, r) = app.arena_casino_me(); return Reply::json(c, &r); } // HQ 3.7
+    if path == "/api/arena/casino/duels" { let (c, r) = app.arena_casino_duels(); return Reply::json(c, &r); }
     if path == "/api/arena/vehicles/mine" {
         let (c, r) = app.arena_vehicles_mine();
         return Reply::json(c, &r);
@@ -947,6 +950,7 @@ fn arena_post(app: &App, path: &str, body: &Value) -> (u16, Value) {
         "/api/arena/publish" => app.arena_publish(),
         "/api/arena/rail/build" => app.arena_rail_build(body),
         "/api/arena/vehicles/buy" => app.arena_vehicle_buy(body),
+        "/api/arena/casino/cage" | "/api/arena/casino/play" | "/api/arena/casino/blackjack" | "/api/arena/casino/duel" => app.arena_casino_post(path.rsplit('/').next().unwrap_or(""), body),
         "/api/arena/ticket" => app.arena_ws_ticket(),
         "/api/arena/nudge" => match b.get("toHandle").and_then(|v| v.as_str()).filter(|t| !py::strip(t).is_empty()) {
             Some(to) => app.arena_send_nudge(py::strip(to), b.get("note")),

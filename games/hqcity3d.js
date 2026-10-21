@@ -402,6 +402,7 @@ HQV.hqWorlds.city3d = function(c, w){
   NAV.spawn = null;
   var me = (api.me && api.me()) || null, owner = "commons", tier = 5, grow = 1000, cityState = null, assignRows = null;
   var dealerSite = null, dealerB = null;          // the dealership (games/hqdealer.js): its site and building
+  var casinoSite = null, casinoB = null;          // the casino (games/hqcasino.js): its site and the building on the street
   var civics = [], civicG = new THREE.Group(), boatG = new THREE.Group(), boats = [], civicLod = null, decks = [];
   var oc = null, sea = null, arch = null, tsim = null, tview = null, nsim = null, ndraw = null;
   var bus = null, menu = null, menuKey = null, talkL = null, ui = null, statsEl = null, statsAt = 0, fadeEl = null, landing = false, npcSkip = 0;
@@ -672,6 +673,7 @@ HQV.hqWorlds.city3d = function(c, w){
     planeProps.forEach(function(b){ bikes.push(b); });                     // planes: the seaplane at the dock, the prop plane at the airport
     var back = api.cityReturn && api.cityReturn(), ret = hqs.filter(function(E){ return E.h.userId === back; })[0];
     w.spawn = at(ret || mine); w.spawnFrom = {lobby: at(mine)};
+    if(casinoB) w.spawnFrom.casino = {x: casinoB.door.x, z: casinoB.door.z, yaw: casinoB.door.yaw};   // out of the casino: its red carpet
     if(mine) w.homeLot = {x: mine.x, z: mine.z, rot: mine.rot, garage: mine.garage};   // [basement 3.4] the car lift's exact lot frame (streetSpot/liftSite)
     w.spawnFrom.basement = (mine && HQV.hqCarLift && HQV.hqCarLift.streetSpot && (function(){ try { return HQV.hqCarLift.streetSpot({home: at(mine), garage: mine.garage, rot: mine.rot, x: mine.x, y: mine.y, z: mine.z, lot: mine.lot, toWorld: function(x, z){ return toWorld(mine, x, z); }}, w.homeLot); } catch(e){ return null; } })()) || at(mine);   // [basement 3.4] up the car lift
     if(V2){
@@ -855,6 +857,16 @@ HQV.hqWorlds.city3d = function(c, w){
         civicG.add(DB.g); civics.push(DB); dealerB = DB;
         DB.hits.forEach(function(o){ hits.push(o); }); DB.doors.forEach(function(d){ doors.push(d); });
       } catch(e){ dealerB = null; }
+    }
+    casinoB = null;
+    if(casinoSite && HQV.hqCasino && (casinoSite.tier == null || (casinoSite.tier | 0) <= tier)){
+      try {
+        var KB = HQV.hqCasino.build(c, casinoSite, {tier: tier, night: night});
+        civicG.add(KB.g); civics.push(KB); casinoB = KB;
+        KB.hits.forEach(function(o){ hits.push(o); }); KB.doors.forEach(function(d){ doors.push(d); });
+        // back out of the casino: on the red carpet, facing the street
+        if(w.spawnFrom) w.spawnFrom.casino = {x: KB.door.x, z: KB.door.z, yaw: KB.door.yaw};
+      } catch(e){ casinoB = null; }
     }
     decks = []; civics.forEach(function(B){ (B.decks || []).forEach(function(d){ decks.push(d); }); });
     buildLod();
@@ -2637,6 +2649,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(oc){ try { oc.dispose(); } catch(e){} }
     S.remove(civicG); S.remove(boatG);
     if(dealerB){ dealerB.dispose(); dealerB = null; }
+    if(casinoB){ casinoB.dispose(); casinoB = null; }
     if(air){ air.destroy(); air = null; }                                  // air:
     carparkDestroy();                                                      // carpark
     ferryPool.forEach(function(F){ F.dispose(); }); ferryPool = []; if(myFerry){ myFerry.dispose(); myFerry = null; }
@@ -2888,6 +2901,8 @@ HQV.hqWorlds.city3d = function(c, w){
     if(V2 && HQV.hqSpectacle) try { HQV.hqSpectacle.claim(W, tier); } catch(e){}
     // the dealership (games/hqdealer.js) takes one of the city's building lots, before anything draws or indexes them
     if(V2 && HQV.hqDealer){ try { dealerSite = HQV.hqDealer.place(W, tier); } catch(e){ dealerSite = null; } }
+    // the casino (games/hqcasino.js) likewise, after the dealership has taken its lot
+    if(V2 && HQV.hqCasino){ try { casinoSite = HQV.hqCasino.place(W, tier); } catch(e){ casinoSite = null; } }
     indexBuildings();
     wb = HQV.worldbuild.create(c, W, V2 ? {scene: S, quality: 2, tier: tier, gap: !!(HQV.hqBridges && W.river)} : {scene: S, quality: 2});
     S.add(wb.root); S.add(staticG); S.add(hqG);

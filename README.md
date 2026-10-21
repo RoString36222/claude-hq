@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.6.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.7.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -364,6 +364,38 @@ and feature guide.
 
 ## Changelog
 
+- **3.7.0 — The Lucky Byte: a casino, with games against other players.** Every city from tier 3 gets a casino.
+  - **On the street:** a black-glass hall with gold fins under a hotel tower, a marquee of chasing bulbs, the name in
+    neon on the roof beside a pair of giant turning dice, a red carpet between brass stanchions and palms. It is in
+    **Go to**. Walk through the doors onto the casino floor.
+  - **The floor:** a loud casino carpet, chandeliers, a bar with back-lit bottles, two banks of slot machines, roulette,
+    two blackjack tables, the dice pit, the Race Book's wall of screens, Plinko, the Lucky Wheel, a Rocket cabinet, the
+    Scratch-O-Matic, a giant Coin Toss coin, and the cashier's cage. Dealers wear waistcoats and bow ties; the crowd
+    plays the machines. The wheel spins, the Plinko ball drops and the dealer nods when you win.
+  - **Eleven games, played with Poke Coins:** buy chips at the cage (10 chips a coin; cash them back the same way, so a
+    win too big for your 30-coin wallet stays on the rack, never lost), walk up to a game and press E (or click its
+    prompt). Slots, roulette, blackjack (3:2, the dealer stands on 17s, double down), horse racing (six runners with
+    live commentary), Plinko, the Lucky Wheel, Rocket (pick your cash-out; it crashes when it crashes), dice, scratch
+    cards (scratch with the mouse) and the coin. Every game keeps a few percent; the golden asterisk by the door shows
+    the honest odds.
+  - **Player against player:** the Duel Table. Post a challenge (high card, a dice duel, a coin duel, or rock paper
+    scissors with hidden moves), and anyone in any casino can take it; it is settled on the spot, the winner taking
+    the pot less 5%. You hear about it when someone takes yours, wherever you are on the floor.
+  - **The house has opinions:** lose and it roasts your luck (never you): near misses, the zero, your horse last, a bust
+    at 22, a big bet, a losing streak, a rival who read your rock, each with a picture (a stamp, a falling chart, the
+    world's smallest violin, the house's yacht, a flatlining wallet, a tumbleweed) and a sad trombone. Win and it
+    complains.
+  - **Things to find:** a duck, a door marked Staff Only, a machine out of order since forever, a cat on a bar stool,
+    a money tree, a ghost who plays machine 13 at 3:33 a.m., and an old cheat code.
+  - *Security:* every outcome is drawn on the Arena (`backend/src/casino.rs`, the OS-seeded thread RNG) before the
+    stake is taken, in one transaction with the payout; the page only animates it. New routes `GET /v1/casino/me`,
+    `GET /v1/casino/duels`, `POST /v1/casino/{cage,play,blackjack,duel}` (migration 0019: `casino_play`, `casino_hand`,
+    `casino_duel`); the HQ server proxies them as `/api/arena/casino/...`, POST + CSRF, with every field checked
+    against an allowlist (a game, a bet, a known pick word or a small number, a duel's uuid). Six plays per 2 s at most.
+  - *Privacy:* the only new egress is the game, the bet and the pick (and a duel's id) to the paired Arena. Duels show
+    each player's display name, as the Arena's other boards do. No transcript data is involved.
+  - *Accessibility:* in Calm and with reduced motion the animations are short and nothing flashes or shakes; every
+    control is a button with a label, Space or Enter plays, Escape leaves the table.
 - **3.6.0 — Skyline Park after dark: fireworks, a dancing fountain and a sixth ride.**
   - **Free for everyone.** Skyline Park no longer charges a day pass: walk straight in, ride everything. The Arena
     stops charging the `park` fare and stops sending a price, so pages from before 3.6 open the gate free too. The

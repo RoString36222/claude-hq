@@ -161,6 +161,65 @@ pub fn vehicle_park_body(body: &Value) -> Result<Value, &'static str> {
     }
 }
 
+/// The Casino (HQ 3.7): its one-shot games and the shapes a play may take. The Arena checks every field again
+/// and draws every outcome; these only keep anything else from leaving the machine.
+pub const CASINO_GAMES: [&str; 9] = ["slots", "roulette", "horses", "plinko", "wheel", "rocket", "dice", "scratch", "coin"];
+pub const CASINO_MAX_BET: i64 = 500;
+static CASINO_PICK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(red|black|odd|even|low|high|dozen[123]|col[123]|n:(?:[0-9]|[12][0-9]|3[0-6])|over|under|seven|doubles|heads|tails)$").unwrap()
+});
+
+/// A casino play's body: `{game, bet, pick?}`; pick a short known word or a small number. Other fields dropped.
+pub fn casino_play_body(body: &Value) -> Result<Value, &'static str> {
+    let game = body.get("game").and_then(Value::as_str).filter(|g| CASINO_GAMES.contains(g)).ok_or("game must be a casino game")?;
+    let bet = body.get("bet").and_then(Value::as_i64).filter(|n| (1..=CASINO_MAX_BET).contains(n)).ok_or("bet must be 1 to 500 chips")?;
+    match body.get("pick") {
+        None | Some(Value::Null) => Ok(json!({"game": game, "bet": bet})),
+        Some(Value::String(p)) if CASINO_PICK_RE.is_match(p) => Ok(json!({"game": game, "bet": bet, "pick": p})),
+        Some(p) => match p.as_i64().filter(|n| (0..=10_000).contains(n)) {
+            Some(n) => Ok(json!({"game": game, "bet": bet, "pick": n})),
+            None => Err("pick must be a known word or a number"),
+        },
+    }
+}
+
+/// A duel's body: `{action: "open", game, bet, move?}`, `{action: "join", id, move?}` or `{action: "cancel", id}`.
+pub fn casino_duel_body(body: &Value) -> Result<Value, &'static str> {
+    let action = body.get("action").and_then(Value::as_str).filter(|a| matches!(*a, "open" | "join" | "cancel")).ok_or("action must be open, join or cancel")?;
+    let mv = match body.get("move") {
+        None | Some(Value::Null) => None,
+        Some(m) => Some(m.as_str().filter(|m| matches!(*m, "rock" | "paper" | "scissors")).ok_or("move must be rock, paper or scissors")?),
+    };
+    let mut out = json!({"action": action});
+    if action == "open" {
+        let game = body.get("game").and_then(Value::as_str).filter(|g| matches!(*g, "highcard" | "dice" | "coin" | "rps")).ok_or("game must be a duel game")?;
+        let bet = body.get("bet").and_then(Value::as_i64).filter(|n| (1..=CASINO_MAX_BET).contains(n)).ok_or("bet must be 1 to 500 chips")?;
+        out["game"] = json!(game); out["bet"] = json!(bet);
+    } else {
+        let id = body.get("id").and_then(Value::as_str).filter(|i| OWNED_ID_RE.is_match(i)).ok_or("id must be a duel's id")?;
+        out["id"] = json!(id);
+    }
+    if let Some(m) = mv { if action != "cancel" { out["move"] = json!(m); } }
+    Ok(out)
+}
+
+/// The cage's body: `{dir: "buy"|"cash", n}`.
+pub fn casino_cage_body(body: &Value) -> Result<Value, &'static str> {
+    let dir = body.get("dir").and_then(Value::as_str).filter(|d| matches!(*d, "buy" | "cash")).ok_or("dir must be buy or cash")?;
+    let n = body.get("n").and_then(Value::as_i64).filter(|n| (1..=1_000_000).contains(n)).ok_or("n must be a positive whole number")?;
+    Ok(json!({"dir": dir, "n": n}))
+}
+
+/// A blackjack move: `{action}`, and `{bet}` with a deal.
+pub fn casino_blackjack_body(body: &Value) -> Result<Value, &'static str> {
+    let action = body.get("action").and_then(Value::as_str).filter(|a| matches!(*a, "deal" | "hit" | "stand" | "double")).ok_or("action must be deal, hit, stand or double")?;
+    if action != "deal" {
+        return Ok(json!({"action": action}));
+    }
+    let bet = body.get("bet").and_then(Value::as_i64).filter(|n| (1..=CASINO_MAX_BET).contains(n)).ok_or("bet must be 1 to 500 chips")?;
+    Ok(json!({"action": action, "bet": bet}))
+}
+
 /// GET a world with an optional `If-None-Match`. The fixed worlds go without a
 /// device token (the route is public and holds no one's data); an island carries
 /// it, because the Arena serves an island only to those who may visit it. Any
@@ -1227,6 +1286,31 @@ impl App {
         }
     }
 
+    /// GET /v1/casino/me: your chips, coins and casino stats, and the tables the games are drawn from.
+    pub fn arena_casino_me(&self) -> (u16, Value) {
+        self.authed_get("/v1/casino/me")
+    }
+
+    /// GET /v1/casino/duels: the open challenges (with their challengers' display names) and your recent duels.
+    pub fn arena_casino_duels(&self) -> (u16, Value) {
+        self.authed_get("/v1/casino/duels")
+    }
+
+    /// POST /v1/casino/{cage,play,blackjack}. Egress: game names, small numbers and fixed pick words only.
+    pub fn arena_casino_post(&self, what: &str, body: &Value) -> (u16, Value) {
+        let clean = match what {
+            "cage" => casino_cage_body(body),
+            "play" => casino_play_body(body),
+            "blackjack" => casino_blackjack_body(body),
+            "duel" => casino_duel_body(body),
+            _ => Err("no such casino route"),
+        };
+        match clean {
+            Ok(c) => self.authed_send("POST", &format!("/v1/casino/{what}"), c),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
     /// GET /v1/garages/mine: which garage (basement bay or the common carpark) each
     /// owned vehicle calls home, and the basement's size. [basement 3.4]
     pub fn arena_garages_mine(&self) -> (u16, Value) {
@@ -1583,6 +1667,26 @@ pub(crate) mod tests {
     #[test]
     fn vehicles_forward_only_ids_paints_and_spots() {
         assert_eq!(vehicle_buy_body(&json!({"vehicle_id": "bmw-m2", "paint": 2, "price": 0})), Ok(json!({"vehicle_id": "bmw-m2", "paint": 2})));
+        // the casino: only a game, a bet and a known pick leave the machine
+        assert_eq!(casino_play_body(&json!({"game": "roulette", "bet": 5, "pick": "n:17", "note": "x"})), Ok(json!({"game": "roulette", "bet": 5, "pick": "n:17"})));
+        assert_eq!(casino_play_body(&json!({"game": "rocket", "bet": 500, "pick": 250})), Ok(json!({"game": "rocket", "bet": 500, "pick": 250})));
+        assert_eq!(casino_play_body(&json!({"game": "slots", "bet": 1})), Ok(json!({"game": "slots", "bet": 1})));
+        for bad in [json!({"game": "poker", "bet": 5}), json!({"game": "slots", "bet": 501}), json!({"game": "slots", "bet": 0}),
+                    json!({"game": "dice", "bet": 5, "pick": "my/secret/path"}), json!({"game": "dice", "bet": 5, "pick": -1}), json!({"game": "coin", "bet": 2.5})] {
+            assert!(casino_play_body(&bad).is_err(), "{bad}");
+        }
+        assert_eq!(casino_cage_body(&json!({"dir": "cash", "n": 30, "x": 1})), Ok(json!({"dir": "cash", "n": 30})));
+        assert!(casino_cage_body(&json!({"dir": "steal", "n": 30})).is_err());
+        assert_eq!(casino_blackjack_body(&json!({"action": "hit", "bet": 400})), Ok(json!({"action": "hit"})));
+        assert_eq!(casino_blackjack_body(&json!({"action": "deal", "bet": 40})), Ok(json!({"action": "deal", "bet": 40})));
+        assert!(casino_blackjack_body(&json!({"action": "deal"})).is_err());
+        let id = "0f8fad5b-d9cb-469f-a165-70867728950e";
+        assert_eq!(casino_duel_body(&json!({"action": "open", "game": "rps", "bet": 20, "move": "rock", "x": 1})), Ok(json!({"action": "open", "game": "rps", "bet": 20, "move": "rock"})));
+        assert_eq!(casino_duel_body(&json!({"action": "join", "id": id, "move": "paper"})), Ok(json!({"action": "join", "id": id, "move": "paper"})));
+        assert_eq!(casino_duel_body(&json!({"action": "cancel", "id": id, "move": "paper"})), Ok(json!({"action": "cancel", "id": id})));
+        for bad in [json!({"action": "join", "id": "../../etc"}), json!({"action": "open", "game": "poker", "bet": 5}), json!({"action": "open", "game": "rps", "bet": 5, "move": "lizard"})] {
+            assert!(casino_duel_body(&bad).is_err(), "{bad}");
+        }
         assert_eq!(vehicle_buy_body(&json!({"vehicle_id": "bmw-m2"})), Ok(json!({"vehicle_id": "bmw-m2", "paint": 0})));
         for bad in [json!({"vehicle_id": "../x"}), json!({"vehicle_id": "BMW"}), json!({"vehicle_id": "bmw-m2", "paint": 64}), json!({})] {
             assert!(vehicle_buy_body(&bad).is_err(), "{bad}");

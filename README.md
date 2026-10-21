@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.7.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.8.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -57,6 +57,13 @@ paired), published maps and work signals (off by default) add a few listed field
 - **Air.** Book a jet between airports, or a seaplane between any two docks. Fly a **helicopter** from the
   pad by your HQ, a hospital roof or the air base: **Space** climbs, **Shift** descends, **W/S** tilt,
   **A/D** turn, **E** gets in or out once landed. Other players see you flying.
+- **Fly an airliner (3.6).** A narrow-body airliner and a regional jet in your HQ's livery stand on remote
+  stands across the runway at the Commons (the regional jet also beside an island airport's runway at tier 5):
+  walk up and press **E**. **W/S** thrust (the jets take a few seconds to spool up), **A/D** steer, then bank,
+  **Up/Down** the nose (it lifts off from a runway only, past 202 km/h, 166 km/h for the regional jet),
+  **G** gear (assisted: up and down by itself), **F** flaps, **Space** brakes and, in the air, speed brakes
+  (the ground spoilers deploy by themselves on landing), **X** assisted/manual, **K** autopilot, **N** go to.
+  Land on a runway, taxi back to a stand or the apron, stop, then **E** to get out.
 - **The Commons air base.** Hangars, a radar, an attack helicopter, an aircraft carrier offshore and
   fighter jets flying over.
 - **A real airport.** An offshore airfield for the Commons: a 1.6 km runway with full markings and lights,
@@ -364,6 +371,7 @@ and feature guide.
 
 ## Changelog
 
+- **3.8.0 — Fly the airliners.** Two airliners you fly yourself: a narrow-body (the airport's 38 m twin-jet) and a regional jet (the same at 0.72), in your HQ's own livery, on remote stands on the seaward side of the Commons' runway near the 36 end (clear of the passenger jets' stands, taxiways, line-up and roll, and of the prop plane's blast pad), and the regional jet beside a tier-5 island airport's runway (its 500 m runway is too short for the narrow-body). Walk up and press E (✈ Fly the airliner); Go to lists them as Airliner (fly it) / Regional airliner (fly it). A heavy flight model in hqplane.js: slow, damped controls, jets that spool up (about 5 s from idle for the narrow-body), a long takeoff roll that lifts off from a runway only, past 202 km/h (166 km/h regional; about 580 m of the Commons' runway), gear on G and by itself when assisted, flaps, Space for the brakes on the ground and speed brakes in the air, ground spoilers on landing, runway landings only, the autopilot (K) and air navigation (N) as the prop plane, a cockpit view from the captain's seat over a glareshield, and a crash puts you back on the stand. Out only stopped at a stand or on the apron. A new `jet` engine voice: a turbofan's spool whine on N1 (it lags the thrust levers as the engines spool) under broadband roar that grows with the thrust. Others see you in it (presence a = 11 / 12) where the Arena lists the new `airliner` capability; elsewhere you show as the prop plane. Needs the Arena backend release for the new codes.
 - **3.7.0 — The Lucky Byte: a casino, with games against other players.** Every city from tier 3 gets a casino.
   - **On the street:** a black-glass hall with gold fins under a hotel tower, a marquee of chasing bulbs, the name in
     neon on the roof beside a pair of giant turning dice, a red carpet between brass stanchions and palms. It is in

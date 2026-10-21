@@ -1552,9 +1552,13 @@ function mount(el, api){
     if(ride.plane){
       // out once it has stopped: from the seaplane onto a dock or a beach (as from a boat), from the prop plane onto
       // the ground beside it; forced (another world, Return to HQ) it goes back to where it was parked
-      var ps = ride.plane, pspot = null, still = ps.ground && ps.speed < 2;
-      if(still) pspot = ps.water ? (cur && cur.boatLand ? cur.boatLand(ps) : null) : (cur && cur.heliLand ? cur.heliLand({x: ps.x, y: ps.y, z: ps.z, yaw: ps.yaw, ground: true}) : null);
+      // an airliner (HQ 3.6): only at a stand or on the apron (cur.planeStand), down by its forward door
+      var ps = ride.plane, pspot = null, still = ps.ground && ps.speed < 2, jet = !!ride.V.airliner, Hq = HQV.hqplane;
+      var atStand = jet && still && cur && cur.planeStand ? cur.planeStand(ps.x, ps.z) : false;
+      if(jet) pspot = Hq.canExit(ps, atStand) ? Hq.exitSpot(ps) : null;
+      else if(still) pspot = ps.water ? (cur && cur.boatLand ? cur.boatLand(ps) : null) : (cur && cur.heliLand ? cur.heliLand({x: ps.x, y: ps.y, z: ps.z, yaw: ps.yaw, ground: true}) : null);
       if(!force && !still){ if(api.announce) api.announce(ps.ground ? "Slow to a stop first (S, or Space for the brakes), then E." : "Land first, then E to get out."); return; }
+      if(!force && jet && !pspot){ if(api.announce) api.announce("Taxi back to a stand or onto the apron to get out."); return; }
       if(!force && !pspot){ if(api.announce) api.announce(ps.water ? "Taxi up to a dock or onto a beach to step out." : "You can't step out here: taxi somewhere you can stand."); return; }
       var pp = rideProp();
       if(pp){
@@ -1890,7 +1894,7 @@ function mount(el, api){
     var vn = Vc ? "the " + Vc.brand + " " + String(Vc.model).replace(/\s*\([^)]*\)\s*$/, "") + " " : "";
     rideUi.textContent = noOut ? "Can't get out here"
       : ride ? (kind === "car" || VEHICLES[kind0].heli || VEHICLES[kind0].plane ? "Get out (E)" : kind === "skate" ? "Step off (E)" : VEHICLES[kind0].boat ? "Step ashore (E)" : "Get off (E)")
-      : VEHICLES[kind0].plane ? (kind0 === "seaplane" ? "\uD83D\uDEE9\uFE0F Fly the seaplane (E)" : "\u2708\uFE0F Fly the plane (E)") : VEHICLES[kind0].heli ? "\uD83D\uDE81 Fly (E)" : kind === "rowboat" ? "\uD83D\uDEA3 Row (E)" : kind === "jetski" ? "\uD83C\uDF0A Ride the jet ski (E)" : kind === "car" ? "\uD83D\uDE97 Drive " + vn + "(E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride " + vn + "(E)" : kind === "skate" ? "\uD83D\uDEF9 Skate (E)" : "\uD83D\uDEB2 Ride (E)";
+      : VEHICLES[kind0].plane ? (kind0 === "seaplane" ? "\uD83D\uDEE9\uFE0F Fly the seaplane (E)" : VEHICLES[kind0].airliner ? "\u2708\uFE0F Fly the airliner (E)" : "\u2708\uFE0F Fly the plane (E)") : VEHICLES[kind0].heli ? "\uD83D\uDE81 Fly (E)" : kind === "rowboat" ? "\uD83D\uDEA3 Row (E)" : kind === "jetski" ? "\uD83C\uDF0A Ride the jet ski (E)" : kind === "car" ? "\uD83D\uDE97 Drive " + vn + "(E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride " + vn + "(E)" : kind === "skate" ? "\uD83D\uDEF9 Skate (E)" : "\uD83D\uDEB2 Ride (E)";
     rideUi.title = noOut ? "Land on the ground or on a helipad, then E" : ride ? RIDE_HELP[kind] : VEHICLES[kind0].heli || VEHICLES[kind0].plane ? "Take the controls" : VEHICLES[kind0].boat ? "Take the helm" : kind === "car" ? (Vc ? "Get in the " + Vc.brand + " " + Vc.model : "Get in this car") : kind === "moto" ? (Vc ? "Get on the " + Vc.brand + " " + Vc.model : "Get on this motorbike")
       : kind === "skate" ? "Step on this skateboard" : "Get on this bike";
     if(key === "on" && force) tipRide();
@@ -1905,7 +1909,10 @@ function mount(el, api){
     heli: "Space: climb (hold it to take off) · Shift: descend · W / S: nose down to fly forward, nose up to slow · A / D: turn · E: get out once landed",
     attack: "Space: climb (hold it to take off) · Shift: descend · W / S: nose down to fly forward, nose up to slow · A / D: turn · E: get out once landed",
     seaplane: "W / S: throttle up / down · A / D: bank (on the water: steer) · Up / Down or drag up / down: nose up / down (past 108 km/h Up lifts off) · F: flaps · X: assisted / manual · K: autopilot · E: get out at a dock",
-    prop: "W / S: throttle up / down (S at idle brakes) · A / D: bank (on the ground: steer) · Up / Down or drag up / down: nose up / down (past 86 km/h Up lifts off) · G: gear · F: flaps · Space: brakes · X: assisted / manual · K: autopilot · E: get out"
+    prop: "W / S: throttle up / down (S at idle brakes) · A / D: bank (on the ground: steer) · Up / Down or drag up / down: nose up / down (past 86 km/h Up lifts off) · G: gear · F: flaps · Space: brakes · X: assisted / manual · K: autopilot · E: get out",
+    // the airliners (HQ 3.6): the jets spool up slowly; off the runway only
+    airliner: "W / S: thrust up / down (the jets take a few seconds to spool) · A / D: bank (on the ground: steer) · Up / Down: nose up / down (on a runway, past 202 km/h Up lifts off) · G: gear (assisted: by itself) · F: flaps · Space: brakes, in the air speed brakes · X: assisted / manual · K: autopilot · N: go to · E: get out at a stand",
+    regional: "W / S: thrust up / down (the jets take a few seconds to spool) · A / D: bank (on the ground: steer) · Up / Down: nose up / down (on a runway, past 166 km/h Up lifts off) · G: gear (assisted: by itself) · F: flaps · Space: brakes, in the air speed brakes · X: assisted / manual · K: autopilot · N: go to · E: get out at a stand"
   };
   // the one-line version under the driving HUD
   var RIDE_HINT = {
@@ -1917,10 +1924,13 @@ function mount(el, api){
     heli: "Space climb · Shift descend · W/S forward/back · A/D turn · E get out (landed)",
     attack: "Space climb · Shift descend · W/S forward/back · A/D turn · E get out (landed)",
     seaplane: "W/S throttle · A/D bank · \u2191/\u2193 pitch · F flaps · X assist · K autopilot · N go to · E get out at a dock",
-    prop: "W/S throttle · A/D bank · \u2191/\u2193 pitch · G gear · F flaps · Space brakes · X assist · K autopilot · N go to · E get out"
+    prop: "W/S throttle · A/D bank · \u2191/\u2193 pitch · G gear · F flaps · Space brakes · X assist · K autopilot · N go to · E get out",
+    airliner: "W/S thrust · A/D bank · \u2191/\u2193 pitch (runway only) · G gear · F flaps · Space brakes/spoilers · X assist · K autopilot · N go to · E out at a stand",
+    regional: "W/S thrust · A/D bank · \u2191/\u2193 pitch (runway only) · G gear · F flaps · Space brakes/spoilers · X assist · K autopilot · N go to · E out at a stand"
   };
   function tipRide(){ if(!api.announce || !ride) return;
     if(ride.kind === "skate") return;                                 // the skate HUD says how
+    if(ride.plane && ride.V.airliner){ api.announce("In the captain's seat of the " + (ride.kind === "regional" ? "regional jet" : "airliner") + ". W opens the thrust levers, S closes them; the jets take a few seconds to spool up. Taxi onto the runway with A and D, then full thrust: past rotation speed press the Up arrow to lift off. The gear comes up and goes down by itself (G takes it over), F flaps, Space brakes and, in the air, the speed brakes. K autopilot, N picks a destination. Land on a runway, taxi to a stand, stop, then E to get out."); return; }
     if(ride.plane){ api.announce("At the controls" + (ride.kind === "seaplane" ? " of the seaplane" : "") + ". W opens the throttle, S closes it. A and D steer, then bank once you fly. Past rotation speed press the Up arrow to lift off; Up and Down raise and lower the nose, and the plane levels itself when you let go. G gear, F flaps, K autopilot, X switches assisted and manual, N picks a destination. Land, stop, then E to get out."); return; }
     if(ride.heli){ api.announce("At the controls. Hold Space to lift off and climb, Shift to come down, W and S tilt forward and back, A and D turn. Land, then E to get out."); return; }
     var Vc = ride.V.cat, what = Vc ? Vc.brand + " " + Vc.model : null;
@@ -1935,7 +1945,7 @@ function mount(el, api){
   // tipRide() announces the keys, and the speed is not worth a running commentary.
   var dhud = null;                      // (not "hud": that is the camera HUD, hqhud)
   var HUD_MAX = {bike: [60, 10, 5], moto: [120, 20, 10], car: [120, 20, 10], rowboat: [20, 5, 1], jetski: [80, 10, 5], heli: [200, 40, 10], attack: [200, 40, 10],
-                 seaplane: [300, 50, 10], prop: [300, 50, 10]};   // the speed dial: max, major, minor
+                 seaplane: [300, 50, 10], prop: [300, 50, 10], airliner: [500, 100, 20], regional: [500, 100, 20]};   // the speed dial: max, major, minor
   function driveHud(kind0){
     if(dhud){ if(dhud.el.parentNode) dhud.el.parentNode.removeChild(dhud.el); dhud = null; }
     var kind = kind0 && baseKind(kind0), V = kind0 && VEHICLES[kind0];
@@ -2191,6 +2201,8 @@ function mount(el, api){
       else if(ev.type === "land"){ E.sfx(ev.hard ? "hit" : "putt"); if(api.announce) api.announce(ev.water ? "Down on the water" : "Touchdown"); if(ride.ap) ride.ap = null; }
       else if(ev.type === "bump") E.sfx("hit");
       else if(ev.type === "stall") E.sfx("door");
+      else if(ev.type === "gear"){ E.sfx("door"); if(api.announce) api.announce(ev.up ? "Gear up" : "Gear down"); }
+      else if(ev.type === "norunway"){ if(api.announce) api.announce("An airliner lifts off from a runway only: taxi onto one."); }
       else if(ev.type === "crash"){ E.sfx("hit"); planeCrash(ev.why); }
     });
     if(ride.crashT != null) return;
@@ -2202,8 +2214,11 @@ function mount(el, api){
     ride.pitch = st.pitch; ride.roll = st.roll;
     Hp.animate(ride.B, st, dt, isNight());
     if(E.engineSound){
-      if(!ride.eng) ride.eng = E.engineSound(V.plane && (!V.eng || V.eng === "six") ? "prop" : V.eng);   // a prop's drone
-      ride.eng.set(900 + 5600*E.clamp(st.rpm, 0, 1));
+      // a prop's drone; an airliner's turbofans (HQ 3.6: "jet", the whine on N1, which lags the levers as the jets
+      // spool, the roar with the thrust)
+      if(!ride.eng) ride.eng = E.engineSound(V.plane && (!V.eng || V.eng === "six") ? "prop" : V.eng);
+      if(V.airliner) ride.eng.set(900 + 6700*E.clamp(st.rpm, 0, 1), {thr: E.clamp((st.rpm - 0.12)/0.88, 0, 1)});
+      else ride.eng.set(900 + 5600*E.clamp(st.rpm, 0, 1));
     }
     keyMove = st.speed > 0.3 || !st.ground; keyRun = false; if(keyMove) movedHere = true;
     avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
@@ -2252,9 +2267,9 @@ function mount(el, api){
   function planeKey(code){
     var st = ride && ride.plane; if(!st) return false;
     var V = VEHICLES[ride.kind] || {}, say = function(t){ if(api.announce) api.announce(t); };
-    if(code === "KeyG"){ if(!V.gear){ say("Floats: no gear to raise"); return true; }
-      if(st.ground && !st.gearUp){ say("Not on the ground!"); return true; }
-      st.gearUp = !st.gearUp; E.sfx("door"); say(st.gearUp ? "Gear up" : "Gear down"); return true; }
+    if(code === "KeyG"){ var gr = HQV.hqplane.toggleGear(st);
+      if(!gr.ok){ say(gr.why === "floats" ? "Floats: no gear to raise" : "Not on the ground!"); return true; }
+      E.sfx("door"); say((gr.up ? "Gear up" : "Gear down") + (V.autoGear && ride.assist ? " (yours until you land)" : "")); return true; }
     if(code === "KeyF"){ st.flaps = (st.flaps + 1) % 3; say("Flaps " + (st.flaps ? st.flaps : "up")); return true; }
     if(code === "KeyX"){ ride.assist = !ride.assist; say(ride.assist ? "Assisted flying: it levels itself" : "Manual flying: nothing levels itself"); return true; }
     if(code === "KeyK"){
@@ -3672,7 +3687,7 @@ function mount(el, api){
     Object.keys(peers).forEach(function(u){ if(!seen[u]){ var P = peers[u]; if(P.g.parent) P.g.parent.remove(P.g); delete peers[u]; } });
   };
   // what another player is on, from their presence `a`, and how they sit on it
-  var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop"};
+  var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop", 11: "regional", 12: "airliner"};
   function placePeers(dt, t){
     Object.keys(peers).forEach(function(u){
       // the floor they are on: the 3D city sends "city3d" (w.net), so legacy and 3D clients never mix
@@ -3772,8 +3787,9 @@ function mount(el, api){
   var RIDE_A = {bike: 3, skate: 4, car: 5, moto: 6};
   // 7 flying a helicopter, 8 an attack helicopter (the page sends them only where the Arena lists "fly").
   // (a boat has no presence animation of its own yet: others see you standing, or walking while it moves)
-  // 9 the seaplane, 10 the prop plane (the page sends them only where the Arena lists "plane"; HQ 3.2)
-  inst.moving = function(){ return ride ? (ride.plane ? (ride.kind === "seaplane" ? 9 : 10) : ride.heli ? (ride.kind === "attack" ? 8 : 7) : ride.boat ? (keyMove ? 1 : 0) : RIDE_A[ride.base || ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
+  // 9 the seaplane, 10 the prop plane (the page sends them only where the Arena lists "plane"; HQ 3.2); 11 the regional
+  // jet, 12 the airliner (only where it lists "airliner", HQ 3.6; else they go as the prop plane, 10)
+  inst.moving = function(){ return ride ? (ride.plane ? (ride.kind === "seaplane" ? 9 : ride.kind === "regional" ? 11 : ride.kind === "airliner" ? 12 : 10) : ride.heli ? (ride.kind === "attack" ? 8 : 7) : ride.boat ? (keyMove ? 1 : 0) : RIDE_A[ride.base || ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
   // on a board: what others should see you doing ({k, y}); null otherwise
   inst.skate = function(){ return ride && ride.kind === "skate" ? skateNet() : null; };
   inst.riding = function(){ return !!ride; };

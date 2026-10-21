@@ -113,7 +113,7 @@ class Presence(unittest.TestCase):
         self.assertIn("HQV.hqVehicleModels.build(ctx, Vc, ph)", src)
 
     def test_protocol_lists_vehicles(self):
-        self.assertIn('"vehicles"]', read("backend", "src", "protocol.rs"))
+        self.assertRegex(read("backend", "src", "protocol.rs"), r'"hq", 4, &\[[^\]]*"vehicles"[,\]]')
         self.assertIn("hq:[1,4]", read("games", "multi.js"))
 
 

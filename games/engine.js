@@ -180,6 +180,7 @@ function sfx(name, opt){
 //   gain: output level (as before); lope: [Hz, depth] idle wobble; rough: idle irregularity 0..1;
 //   pops: overrun crackle 0..1; turbo: whistle Hz (and a blow-off); air: intake / exhaust noise;
 //   rattle: diesel clatter; blades: prop blades (buzz at blade-pass); rotor: blade slap at 9-18 Hz
+//   fan: [idle, full] Hz of a turbofan's whine on N1, whine its level; roar: broadband jet roar with the thrust
 var ENGINES = {
   v8:     {cyl: 8, idle: 700, red: 6200,  h: [1, .8, .55, .5, .3, .25, .15, .12, .08], sub: .6, det: 7, grit: 2.2, cut: [380, 2400], q: 1.5, gain: 0.06,  lope: [5, 0.3], rough: .5, pops: .5, air: .5},
   diesel: {cyl: 6, idle: 650, red: 3400,  h: [1, .3, .7, .2, .5, .15, .35, .1, .2, .08], sub: .2, det: 4, grit: 3.2, cut: [320, 1500], q: 1, gain: 0.055, lope: [6, 0.2], rough: .4, air: .35, rattle: 0.035},
@@ -205,7 +206,11 @@ var ENGINES = {
   // a helicopter (games/hqheli.js): a low turbine note under the blades' slap
   rotor:  {lo: 22, hi: 44, h: [1, .6, .45, .3, .2, .15], r2: 3, sub: 0, det: 0, grit: 1.4, cut: [300, 520], q: 1, gain: 0.08, rotor: true, turbo: 3200, air: .35},
   // a light aircraft's flat-six (games/hqplane.js seaplane / prop) and its two-blade propeller's buzz
-  prop:   {cyl: 6, idle: 700, red: 2700,  h: [1, .55, .5, .3, .28, .15, .12, .08], sub: .3, det: 6, grit: 2, cut: [380, 1900], q: 1, gain: 0.06, blades: 2, rough: .3, air: .45}
+  prop:   {cyl: 6, idle: 700, red: 2700,  h: [1, .55, .5, .3, .28, .15, .12, .08], sub: .3, det: 6, grit: 2, cut: [380, 1900], q: 1, gain: 0.06, blades: 2, rough: .3, air: .45},
+  // an airliner's turbofans (games/hqplane.js airliner / regional, HQ 3.6): a low core rumble (Hz, not firing), the fan's
+  // spool whine riding on N1 (the game's rpm: it lags the thrust levers as the jets spool) and the exhaust's broadband
+  // roar growing with the thrust (opt.thr)
+  jet:    {lo: 34, hi: 96, h: [1, .5, .3, .2, .12, .08], r2: 2, sub: .2, det: 14, grit: 1.2, cut: [200, 800], q: .8, gain: 0.06, fan: [900, 3300], whine: .45, roar: 1.1, air: .2}
 };
 // The profile's real revs and fundamental (Hz) for a game rpm (900..7600); firing = rpm/60*cyl/2.
 function engineHz(kind, rpm){
@@ -277,6 +282,15 @@ function engineSound(kind){
   }
   var air = band("bandpass", 600, 0.9), rum = band("lowpass", 110, 0.7), sq = band("bandpass", 1400, 6), pop = band("bandpass", 900, 1.5);
   var bov = P.turbo ? band("bandpass", 2600, 1.2) : null, rat = P.rattle ? band("bandpass", 900, 1) : null;
+  // a turbofan: the fan's blade-pass whine and the core's tone above it (one gain), the exhaust roar and its hiss
+  var fan = null, fan2 = null, fg = null, roar = null, hiss = null;
+  if(P.fan){
+    fan = a.createOscillator(); fan2 = a.createOscillator(); fg = a.createGain(); var f2g = a.createGain();
+    fan.type = "sine"; fan2.type = "triangle"; fg.gain.value = 0; f2g.gain.value = 0.35;
+    fan.frequency.value = P.fan[0]; fan2.frequency.value = P.fan[0]*1.62;
+    fan.connect(fg); fan2.connect(f2g); f2g.connect(fg); fg.connect(g); fan.start(); fan2.start(); nodes.push(fan, fan2);
+    roar = band("lowpass", 400, 0.6); hiss = band("bandpass", 2400, 0.8);
+  }
   var wh = null, whg = null;
   if(P.turbo){                      // a turbo spooling up with the boost (a rotor's turbine with the revs)
     wh = a.createOscillator(); whg = a.createGain(); wh.type = "sine"; whg.gain.value = 0; wh.frequency.value = P.turbo*0.4;
@@ -338,6 +352,13 @@ function engineSound(kind){
         tgt(wh.frequency, P.turbo*(0.4 + 0.8*S.boost), 0.08); tgt(whg.gain, 0.014*S.boost*S.boost, 0.08);
       }
       if(rat) tgt(rat.g.gain, P.rattle*(1 - u*0.5), 0.1);
+      // the turbofan: the whine follows N1 (u), the roar the thrust (the load)
+      if(fan){
+        var fq = P.fan[0] + (P.fan[1] - P.fan[0])*u, th = Math.pow(L, 1.5);
+        tgt(fan.frequency, fq, 0.08); tgt(fan2.frequency, fq*1.62, 0.08); tgt(fg.gain, P.whine*(0.3 + 0.7*u), 0.08);
+        tgt(roar.f.frequency, 250 + 1800*L, 0.1); tgt(roar.g.gain, P.roar*(0.05 + 0.95*th), 0.1);
+        tgt(hiss.f.frequency, 1800 + 2600*u, 0.1); tgt(hiss.g.gain, P.roar*0.25*th, 0.1);
+      }
       // the overrun crackle: off the throttle at speed, a burst every 40-260 ms for the first ~1.2 s
       if(P.pops && on && !calm() && L < 0.2 && u > 0.3 && S.lift < 1.2 && t >= S.pop){
         S.pop = t + 0.04 + rnd()*0.22/P.pops;

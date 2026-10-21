@@ -807,16 +807,19 @@ function create(c, W, o){
     var tk = ticket(); if(!tk.sold || tk.pass || buying) return;
     if(!o.post){ say("The ticket booth needs the Arena."); return; }
     buying = true; say("Buying a day pass to " + PARK_NAME + "…");
+    function refused(m){
+      say(/fare is|coins/i.test(String(m || "")) ? "A day pass is " + tk.price + " Poke Coins: you don't have enough." : "The ticket booth couldn't sell a pass right now.");
+    }
+    // the page's arenaPost resolves {ok, status, j} whatever the status: only an ok answer is a pass
     o.post("/api/arena/city/" + encodeURIComponent(o.owner || "commons") + "/fare", {kind: "park"}).then(function(r){
-      buying = false; pass = true;
-      var coins = r && typeof r === "object" && r.coins != null ? " You have " + (r.coins | 0) + " Poke Coins left." : "";
+      buying = false;
+      var j = r && typeof r === "object" && r.j && typeof r.j === "object" ? r.j : {};
+      if(!r || r.ok !== true){ refused(j.detail || j.error); return; }
+      pass = true;
+      var coins = j.coins != null ? " You have " + (j.coins | 0) + " Poke Coins left." : "";
       say("Welcome to " + PARK_NAME + "! Your day pass is good until midnight UTC." + coins);
       if(E.sfx) E.sfx("coin");
-    }, function(e){
-      buying = false;
-      var m = e && e.message ? String(e.message) : "";
-      say(/fare is|coins/i.test(m) ? "A day pass is " + tk.price + " Poke Coins: you don't have enough." : "The ticket booth couldn't sell a pass right now.");
-    });
+    }, function(e){ buying = false; refused(e && e.message); });
   }
   function say(t){ if(o.say) o.say(t); }
   function nowSec(){ return Date.now()/1000; }

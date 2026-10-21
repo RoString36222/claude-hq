@@ -2974,6 +2974,7 @@ function mount(el, api){
     exitLock();
     var keep = keepRide && instant && ride && ride.heli;
     var carry = liftCarry(from, name);   // [basement 3.4] down (or up) the car lift on what you ride
+    if(HQV.hqCarLift && HQV.hqCarLift.arm){ try { HQV.hqCarLift.arm(null); } catch(e){} }   // [integrate] a used lift door is spent
     var go = function(){
       if(!keep) dismount(true);
       rigLeave();

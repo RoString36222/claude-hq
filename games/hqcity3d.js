@@ -665,7 +665,8 @@ HQV.hqWorlds.city3d = function(c, w){
     if(air) air.props(mine).forEach(function(b){ bikes.push(b); });       // air: the helicopters (and your own, by your HQ)
     var back = api.cityReturn && api.cityReturn(), ret = hqs.filter(function(E){ return E.h.userId === back; })[0];
     w.spawn = at(ret || mine); w.spawnFrom = {lobby: at(mine)};
-    w.spawnFrom.basement = (mine && HQV.hqCarLift && HQV.hqCarLift.streetSpot && (function(){ try { return HQV.hqCarLift.streetSpot({home: at(mine), garage: mine.garage, rot: mine.rot, x: mine.x, y: mine.y, z: mine.z, lot: mine.lot, toWorld: function(x, z){ return toWorld(mine, x, z); }}); } catch(e){ return null; } })()) || at(mine);   // [basement 3.4] up the car lift
+    if(mine) w.homeLot = {x: mine.x, z: mine.z, rot: mine.rot, garage: mine.garage};   // [basement 3.4] the car lift's exact lot frame (streetSpot/liftSite)
+    w.spawnFrom.basement = (mine && HQV.hqCarLift && HQV.hqCarLift.streetSpot && (function(){ try { return HQV.hqCarLift.streetSpot({home: at(mine), garage: mine.garage, rot: mine.rot, x: mine.x, y: mine.y, z: mine.z, lot: mine.lot, toWorld: function(x, z){ return toWorld(mine, x, z); }}, w.homeLot); } catch(e){ return null; } })()) || at(mine);   // [basement 3.4] up the car lift
     if(V2){
       w.home = mine ? at(mine) : null;                  // Return to HQ (T): your door, on this world
       // arriving by a trip, a boat or the island button: where it lands you (a dock, a station, the plaza)
@@ -1932,7 +1933,7 @@ HQV.hqWorlds.city3d = function(c, w){
     var s = CP.find(W); if(!s || (s.tier != null && (s.tier | 0) > tier)) return;
     var B; try { B = CP.build(c, s, {night: night, catalogue: c.catalogue}); } catch(e){ return; }
     S.add(B.g); cp = {site: s, B: B, y: null, rows: [], drv: null};
-    try { var ke = CP.entrance && CP.entrance(s), KM = HQV.hqGarageMgr, KI = ke && KM && KM.kiosk && KM.kiosk(c, "carpark"); if(KI && KI.g){ KI.g.position.set(ke.x + 3.2, ke.y || 0, ke.z); S.add(KI.g); (KI.hits || []).forEach(function(o){ hits.push(o); }); if(KI.door){ if(!KI.door.front) KI.door.front = new THREE.Vector3(ke.x + 3.2, ke.y || 0, ke.z + 1.6); doors.push(KI.door); } } } catch(e){}   // [basement 3.4] the garage manager's kiosk
+    try { var ke = CP.entrance && CP.entrance(s), KM = HQV.hqGarageMgr, KI = ke && KM && KM.kiosk && KM.kiosk(c, "carpark"); if(KI && KI.g){ KI.g.position.set(ke.x + 3.2, ke.y || 0, ke.z); S.add(KI.g); (KI.hits || []).forEach(function(o){ hits.push(o); }); if(KI.door){ var kf = KI.door.front; KI.door.front = new THREE.Vector3(ke.x + 3.2 + (kf ? +kf.x || 0 : 0), ke.y || 0, ke.z + (kf ? +kf.z || 0 : 1.6)); doors.push(KI.door); } } } catch(e){}   // [basement 3.4] the garage manager's kiosk
     carparkFleet();
   }
   function carparkEntry(id){

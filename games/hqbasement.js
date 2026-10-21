@@ -358,6 +358,9 @@ HQV.hqWorlds.basement = function(c, w){
     var ks = c.screen(0.8, 0.5, kt.t); ks.position.set(0, 1.35, 0.1); ks.rotation.x = -0.45; kg.add(ks);
     kg.traverse(function(o){ if(o.isMesh){ o.userData.door = kioskDoor; o.userData.tip = "Garage manager"; hits.push(o); } });
   }
+  // [integrate] E's kiosk front is local to the kiosk (rotated PI/2 here): turn it into basement coordinates
+  if(kioskDoor.front && !kioskDoor.front.isVector3){ var kf = kioskDoor.front, kx = +kf.x || 0, kz = +kf.z || 0;
+    kioskDoor.front = new THREE.Vector3(KIOSK.x + kz*Math.sin(PI/2) + kx*Math.cos(PI/2), 0, KIOSK.z + kz*Math.cos(PI/2) - kx*Math.sin(PI/2)); }
   if(!kioskDoor.front) kioskDoor.front = new THREE.Vector3(KIOSK.x + 1.4, 0, KIOSK.z);
   doors.push(kioskDoor);
   if(c.label){ var kTag = c.label("Garage manager", HEX.cyan || "#4fe3ff", 0.42); kTag.position.set(KIOSK.x, 2.4, KIOSK.z); dyn.add(kTag); }
@@ -369,7 +372,7 @@ HQV.hqWorlds.basement = function(c, w){
   // the experience layer (games/hqbasementfx.js): each optional
   var fxPl = null, fxLounge = null, fxPhoto = null, fxTrophy = null, fxArr = null;
   function fx(name){ var a = Array.prototype.slice.call(arguments, 1); try { return Fx && typeof Fx[name] === "function" ? Fx[name].apply(Fx, a) : null; } catch(e){ return null; } }
-  fxPl = fx("plinths", c, dyn, L.plinths.map(function(p, i){ return {x: p.x, z: p.z, r: p.r, disc: discs[i], cone: cones[i], label: p.label}; }));
+  fxPl = fx("plinths", c, dyn, L.plinths.map(function(p, i){ return {x: p.x, z: p.z, r: p.r, turn: discs[i], disc: discs[i], cone: cones[i], label: p.label}; }));
   fxTrophy = fx("trophyWall", c, dyn, {x: 9.5, y: 2.2, z: -HD + 0.2, yaw: 0, w: 8});
   fxLounge = fx("lounge", c, dyn, {x: -27, z: -14, screen: lsScreen});
   fxPhoto = fx("photoSpot", c, dyn, {x: 19, z: -6.8, yaw: PI});
@@ -461,6 +464,7 @@ HQV.hqWorlds.basement = function(c, w){
   w.stale = false;
   w.onEnter = function(from, opts){
     refresh(true);
+    fx("enter", c, w);   // [integrate] lets valet() animate props in this live world
     var dir = from === "lobby" ? "lobby" : "down";
     if(from === "lobby") fxArr = fx("lobbyRide", c, w);
     else fxArr = fx("liftArrival", c, w, {dir: "down"});
@@ -495,9 +499,10 @@ HQV.hqWorlds.basement = function(c, w){
     if(liftState && Lift && Lift.step){ try { Lift.step(liftState, dt); if(carLift && carLift.update) carLift.update(liftState); if(liftState.done) liftState = null; } catch(e){ liftState = null; } }
     if(fxArr && fxArr.update){ try { fxArr.update(t, dt, k); if(fxArr.done && fxArr.done()) fxArr = null; } catch(e){ fxArr = null; } }
     if(fxLounge && fxLounge.update) try { fxLounge.update(t, dt, k); } catch(e){}
+    fx("update", t, dt, k);   // [integrate] valet drives + lift rides
   };
   w.drawCalls = function(){ return merged ? merged.after : null; };
-  w.destroy = function(){ dead = true; unsubs.forEach(function(u){ try { if(typeof u === "function") u(); } catch(e){} }); unsubs = []; };
+  w.destroy = function(){ dead = true; fx("leave"); unsubs.forEach(function(u){ try { if(typeof u === "function") u(); } catch(e){} }); unsubs = []; };
   w.refresh = refresh;
   refresh(false);
   return w;

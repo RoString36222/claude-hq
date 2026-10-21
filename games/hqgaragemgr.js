@@ -137,8 +137,11 @@ var MSG = {
   starter: "Starters live in the basement showcase and never move.",
   same: "It's already there.",
   unknown: "That vehicle isn't one of yours.",
-  error: "Something went wrong. Please try again."
+  error: "Something went wrong. Please try again.",
+  busy: "You're driving it. Get out first, then move it."
 };
+var guard = null;
+function setGuard(fn){ guard = typeof fn === "function" ? fn : null; }
 function mapError(status, body){
   var d = String((body && (body.error || body.detail)) || "").toLowerCase();
   if(status === 409) return {code: d.indexOf("taken") >= 0 ? "taken" : "full", msg: d.indexOf("taken") >= 0 ? MSG.taken : MSG.full};
@@ -165,6 +168,9 @@ function transfer(id, home, bay){
     return Promise.reject(/^lot:/.test(String(id)) ? {code: "starter", msg: MSG.starter} : {code: "unknown", msg: MSG.unknown});
   }
   if(home !== "basement" && home !== "carpark") return Promise.reject({code: "refused", msg: MSG.refused});
+  // the world's say (hq3d.js, setGuard): you're driving it -> refused; out on a trip -> it is parked home first
+  var held = null; try { held = guard ? guard(String(id), home) : null; } catch(e){ held = null; }
+  if(held) return Promise.reject({code: "busy", msg: typeof held === "string" ? held : MSG.busy});
   var start = cache ? Promise.resolve(cache) : homes();
   return start.then(function(H){
     if(!H.available) throw {code: "unavailable", msg: MSG.unavailable};
@@ -513,8 +519,8 @@ function kiosk(ctx, from){
 
 HQV.hqGarageMgr = {
   homes: homes, homeOf: homeOf, bayOf: bayOf, transfer: transfer, onChange: onChange, plan: plan,
-  open: open, close: close, isOpen: isOpen, kiosk: kiosk, MESSAGES: MSG,
+  open: open, close: close, isOpen: isOpen, kiosk: kiosk, MESSAGES: MSG, setGuard: setGuard,
   _io: io,
-  _reset: function(){ cache = null; inflight = null; subs = []; if(P.root) close(); P.cat = null; }
+  _reset: function(){ guard = null; cache = null; inflight = null; subs = []; if(P.root) close(); P.cat = null; }
 };
 })();

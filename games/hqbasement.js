@@ -396,6 +396,14 @@ HQV.hqWorlds.basement = function(c, w){
     for(var i = 0; i < vs.length; i++) if(vs[i] && vs[i].id === id) return vs[i];
     return null;
   }
+  var poolMat = null;
+  function bayPool(){
+    if(!poolMat){ var pt = c.canvasTex(128, 128, function(g){ var gr = g.createRadialGradient ? g.createRadialGradient(64, 64, 4, 64, 64, 62) : null;
+        if(gr){ gr.addColorStop(0, "rgba(255,214,160,.55)"); gr.addColorStop(0.6, "rgba(255,190,120,.16)"); gr.addColorStop(1, "rgba(255,190,120,0)"); g.fillStyle = gr; } else g.fillStyle = "rgba(255,200,140,.2)";
+        g.fillRect(0, 0, 128, 128); });
+      poolMat = new THREE.MeshBasicMaterial({map: pt && pt.t, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false}); }
+    var m = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 5.6), poolMat); m.rotation.x = -PI/2; m.renderOrder = 2; return m;
+  }
   function riddenOff(b){ return b && b.g && b.g.parent && b.g.parent !== S; }       // hq3d has it under you
   function rebuildOwn(){
     if(dead) return;
@@ -409,6 +417,7 @@ HQV.hqWorlds.basement = function(c, w){
       if(riddenOff(b)) return;
       var i = bikes.indexOf(b); if(i >= 0) bikes.splice(i, 1);
       if(b.g.parent) b.g.parent.remove(b.g);
+      if(b.pool && b.pool.parent) b.pool.parent.remove(b.pool);
       delete ownProps[k];
     });
     rows.forEach(function(r){
@@ -418,9 +427,10 @@ HQV.hqWorlds.basement = function(c, w){
       try { rig = HQV.hqVehicleModels.build(c, entry, hex); } catch(e){ return; }
       if(!rig || !rig.g) return;
       var g = new THREE.Group(); g.add(rig.g); g.position.set(P.x, 0, P.z); g.rotation.y = P.yaw; S.add(g);
+      var pool = bayPool(); pool.position.set(P.x, 0.02, P.z); pool.rotation.z = P.yaw; S.add(pool);   // a warm downlight pool on the bay: one additive quad, no real light
       var o = {key: k, ownId: r.id, vehicleId: r.vehicle_id, color: hex, world: "basement", x: P.x, z: P.z, yaw: P.yaw, home: {x: P.x, z: P.z, yaw: P.yaw}, stored: false, basement: true, bay: r.bay};
       var b = {g: g, x: P.x, z: P.z, yaw: P.yaw, color: hex, paint: Math.max(0, r.paint | 0), paintIdx: r.paint, kind: r.vehicle_id, vehicle_id: r.vehicle_id, id: k, stay: true,
-               world: w, rig: rig, own: o, home: {x: P.x, z: P.z, yaw: P.yaw}, bay: r.bay};
+               world: w, rig: rig, own: o, home: {x: P.x, z: P.z, yaw: P.yaw}, bay: r.bay, pool: pool};
       bikes.push(b); ownProps[k] = b;
     });
   }
@@ -468,7 +478,9 @@ HQV.hqWorlds.basement = function(c, w){
     var dir = from === "lobby" ? "lobby" : "down";
     if(from === "lobby") fxArr = fx("lobbyRide", c, w);
     else fxArr = fx("liftArrival", c, w, {dir: "down"});
-    if(Lift && Lift.create) try { liftState = Lift.create({dir: "down", depth: 6, k: (opts && opts.k != null) ? opts.k : 1}); } catch(e){ liftState = null; }
+    var k0 = (opts && opts.k != null) ? opts.k : (c.E && c.E.calm && c.E.calm() ? 0 : lastK);
+    if(Lift && Lift.create && dir === "down") try { liftState = Lift.create({dir: "down", depth: 6, k: k0}); } catch(e){ liftState = null; }
+    floorChip(k0);
     if(dir === "lobby") pOpen = 1;
   };
   w.setTime = function(night, weather){
@@ -478,9 +490,37 @@ HQV.hqWorlds.basement = function(c, w){
   };
   w.onData = function(){};
   w.onLook = function(){};
-  var acc = 0, turn = 0;
+  // the floor indicator for the ride down (car lift or person lift): G -> B1 lit as the platform passes, doors, then it
+  // fades; in Calm it shows B1 at once and fades quickly. Text only (textContent), theme tokens, polite live region.
+  var chip = null, chipT = 0, chipK = 1, chipSaid = false;
+  function floorChip(k){
+    chipK = k; chipT = 0; chipSaid = false; if(!c.el || !document.createElement) return;
+    if(!chip){ chip = document.createElement("div"); chip.className = "hqb1-floor"; chip.setAttribute("role", "status"); chip.setAttribute("aria-live", "polite");
+      chip.style.cssText = "position:absolute;top:14px;left:14px;display:flex;gap:6px;align-items:center;padding:6px 12px;border-radius:999px;"
+        + "background:var(--panel,#111a);color:var(--ink,#eee);border:1px solid var(--line,#333);font:600 13px/1 var(--mono,ui-monospace,monospace);pointer-events:none;z-index:5;transition:opacity .35s";
+      ["G", "\u25bc", "B1", ""].forEach(function(tx, i){ var sp = document.createElement("span"); sp.textContent = tx; if(i === 3){ sp.style.fontWeight = "400"; sp.style.color = "var(--muted,#999)"; } chip.appendChild(sp); });
+      c.el.appendChild(chip); }
+    chip.style.opacity = "1"; chip.hidden = false; chipDraw(k < 0.5 ? "B1" : "G", k < 0.5 ? "" : "doors closing");
+  }
+  function chipDraw(floor, note){
+    if(!chip) return; var sp = chip.children;
+    sp[0].style.color = floor === "G" ? "var(--gold,#f2c230)" : "var(--faint,#666)"; sp[2].style.color = floor === "B1" ? "var(--gold,#f2c230)" : "var(--faint,#666)";
+    if(sp[3].textContent !== note) sp[3].textContent = note;
+    if(floor === "B1" && !chipSaid){ chipSaid = true; sp[3].textContent = note || "B1 \u00b7 your basement garage"; }
+  }
+  function chipStep(dt){
+    if(!chip || chip.hidden) return;
+    chipT += dt;
+    var ls = liftState, fs = fxArr && fxArr.state ? fxArr.state() : null;
+    if(ls) chipDraw(ls.floor, ls.phase === "closing" ? "doors closing" : ls.phase === "moving" ? "going down" : ls.phase === "opening" ? "doors opening" : "");
+    else if(fs && fs.floor) chipDraw(fs.floor === "B1" || fs.floor === -1 ? "B1" : "G", "");
+    else chipDraw("B1", "");
+    var hold = chipK < 0.5 ? 0.9 : 1.6;
+    if(!ls && (!fxArr || chipK < 0.5) && chipT > hold){ chip.style.opacity = "0"; if(chipT > hold + 0.5) chip.hidden = true; }
+  }
+  var acc = 0, turn = 0, lastK = 1;
   w.update = function(t, dt, k){
-    if(k == null) k = 1; dt = Math.min(0.1, Math.max(0, dt || 0));
+    if(k == null) k = 1; lastK = k; dt = Math.min(0.1, Math.max(0, dt || 0));
     acc += dt; if(acc > 0.12){ acc = 0; if(k > 0) drawLounge(t); }
     anims.forEach(function(f){ try { f(t, k); } catch(e){} });
     // the turntables: 0.25 rad/s, scaled by k (still in Calm); a starter at home turns with its disc
@@ -496,13 +536,15 @@ HQV.hqWorlds.basement = function(c, w){
     var av = c.avatar && c.avatar();
     var want = av && Math.hypot(av.x - LIFT.x, av.z - LIFT.z) < 3.4 ? 1 : 0;
     pOpen += (want - pOpen)*Math.min(1, dt*4); pdl.position.x = -0.6 - pOpen*1.05; pdr.position.x = 0.6 + pOpen*1.05; plight.intensity = pOpen*24;
-    if(liftState && Lift && Lift.step){ try { Lift.step(liftState, dt); if(carLift && carLift.update) carLift.update(liftState); if(liftState.done) liftState = null; } catch(e){ liftState = null; } }
+    if(liftState && Lift && Lift.step){ try { Lift.step(liftState, dt); if(carLift && carLift.update) carLift.update(liftState, t, k); if(liftState.done) liftState = null; } catch(e){ liftState = null; } }
     if(fxArr && fxArr.update){ try { fxArr.update(t, dt, k); if(fxArr.done && fxArr.done()) fxArr = null; } catch(e){ fxArr = null; } }
     if(fxLounge && fxLounge.update) try { fxLounge.update(t, dt, k); } catch(e){}
     fx("update", t, dt, k);   // [integrate] valet drives + lift rides
+    chipStep(dt);
   };
   w.drawCalls = function(){ return merged ? merged.after : null; };
-  w.destroy = function(){ dead = true; fx("leave"); unsubs.forEach(function(u){ try { if(typeof u === "function") u(); } catch(e){} }); unsubs = []; };
+  w.onLeave = function(){ if(chip) chip.hidden = true; };
+  w.destroy = function(){ dead = true; if(chip && chip.parentNode) chip.parentNode.removeChild(chip); chip = null; fx("leave"); unsubs.forEach(function(u){ try { if(typeof u === "function") u(); } catch(e){} }); unsubs = []; };
   w.refresh = refresh;
   refresh(false);
   return w;

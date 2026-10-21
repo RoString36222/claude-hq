@@ -116,6 +116,11 @@ replies.push([200, {ok: true, home: {home: "carpark", bay: null}, basement: {max
 await M.transfer(A, "carpark");
 out.cpCall = calls[calls.length - 1];
 try { await M.transfer("lot:u:car", "carpark"); } catch(e){ out.starterRej = e; }
+// the world's guard: you're driving it -> refused, nothing posted; a guard that parks it home lets it through
+let guarded = [], nCalls = calls.length;
+M.setGuard((id, home) => { guarded.push([id, home]); return id === B ? M.MESSAGES.busy : null; });
+try { await M.transfer(B, "carpark"); } catch(e){ out.busyRej = e; }
+out.busyCalls = calls.length - nCalls; out.guarded = guarded; M.setGuard(null);
 un();
 
 // panel
@@ -219,6 +224,10 @@ class HqGarageMgr(unittest.TestCase):
         self.assertEqual(o["bayB"], 1)
         self.assertEqual(o["emitsOk"], 2)
         self.assertEqual(o["starterRej"]["code"], "starter")
+        self.assertEqual(o["busyRej"]["code"], "busy")
+        self.assertIn("driving", o["busyRej"]["msg"])
+        self.assertEqual(o["busyCalls"], 0)
+        self.assertEqual(o["guarded"][0][1], "carpark")
 
     def test_panel_text_only(self):
         o = self.o

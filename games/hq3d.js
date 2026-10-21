@@ -2423,6 +2423,7 @@ function mount(el, api){
       dismount(true);
       callStop(false);
       Object.keys(parked).forEach(function(id){ delete parked[id]; });
+      if(worlds.basement) (C.bikes || []).slice().forEach(function(b){ if(b.plinth == null || b.own) return; C.bikes.splice(C.bikes.indexOf(b), 1); worlds.basement.scene.add(b.g); worlds.basement.bikes.push(b); b.world = null; b.g.position.y = 0; placeProp(b, b.home.x, b.home.z, b.home.yaw); });   // [basement 3.4] a starter called out: back on its B1 plinth
       (C.bikes || []).forEach(function(b){ if(b.home){ placeProp(b, b.home.x, b.home.z, b.home.yaw); b.g.visible = true; b.returnAt = 0; if(b.own) ownMoved(b); } });
       var h = C.home;
       avatar.x = h.x; avatar.z = h.z; avatar.yaw = (h.yaw || 0) + PI;     // facing your door
@@ -2590,7 +2591,7 @@ function mount(el, api){
   // the city's carpark (HQV.hqCarpark): {cp, site}, or null (none here, or not built yet)
   function carpark(C, o){
     // [basement 3.4] a B1 vehicle comes up the car lift by your HQ instead (HQV.hqCarLift.liftSite: the carpark's duck type)
-    if(o && o.ownId != null && HQV.hqGarageMgr && HQV.hqGarageMgr.homeOf && HQV.hqGarageMgr.homeOf(o.ownId) === "basement" && HQV.hqCarLift && HQV.hqCarLift.liftSite){
+    if(o && (o.b1 || (o.ownId != null && HQV.hqGarageMgr && HQV.hqGarageMgr.homeOf && HQV.hqGarageMgr.homeOf(o.ownId) === "basement")) && HQV.hqCarLift && HQV.hqCarLift.liftSite){
       try { var LS = HQV.hqCarLift.liftSite(C, api.me ? api.me() : null); if(LS && LS.cp && LS.site){ LS.lift = true; return LS; } } catch(e){}
     }
     var cp = HQV.hqCarpark, RD = C && C.callRoad; if(!cp || !cp.find || !RD || !RD.W) return null;
@@ -2610,7 +2611,8 @@ function mount(el, api){
     if(home) ["car", "moto"].forEach(function(kind){
       var best = null, bd = 40;
       (C.bikes || []).forEach(function(b){ if(b.kind !== kind || !b.home || b.own) return; var d = Math.hypot(b.home.x - home.x, b.home.z - home.z); if(d < bd){ bd = d; best = b; } });
-      if(best) out.push({key: "prop:" + best.id, b: best, starter: kind});
+      if(!best && C === worlds.city && worlds.basement) [C.bikes, worlds.basement.bikes].forEach(function(bs){ (bs || []).forEach(function(b){ if(!best && b.kind === kind && b.plinth != null && !b.own) best = b; }); });   // [basement 3.4] out here, or on its B1 plinth: up the car lift
+      if(best) out.push({key: "prop:" + best.id, b: best, starter: kind, b1: best.plinth != null && best.world !== C});
     });
     return out;
   }
@@ -2625,6 +2627,7 @@ function mount(el, api){
       var b = it.b, T = b && tripOf(b), sub;
       if(T && T.mode === "call") sub = "On its way · " + Math.max(0, Math.round(T.run.len - T.run.s)) + " m";
       else if(T) sub = "Going back to " + (T.K ? (T.K.lift ? "your basement (B1)" : "the carpark") : "your garage");   // [basement 3.4]
+      else if(it.b1) sub = "In your basement (B1) · up the car lift";   // [basement 3.4]
       else if(b){ var d = Math.hypot(b.x - avatar.x, b.z - avatar.z); sub = d < 12 ? "Right here" : (d < H.CALL_R ? Math.round(d) + " m away · ~" + H.eta(d*1.3) + " s" : "Far away · arrives in ~20 s"); }
       else if(K) sub = "In the carpark";
       else sub = "Parked elsewhere · arrives in ~20 s";
@@ -2664,6 +2667,7 @@ function mount(el, api){
     var to = {x: road.x, z: road.z}, R = null, v0 = 0, from = null, head = null, ys = null, K = null, bay = null;
     trips.slice().forEach(function(T){ if(T.mode === "call" && T.b !== b) tripEnd(T, true); });   // another one on its way pulls in
     var T0 = tripOf(b); if(T0){ v0 = T0.run.v; tripEnd(T0, true, true); }                          // the same one: redirected
+    if(it.b1 && (K = carpark(C, {b1: true}))){ bay = cpBay(K, key); var hb = cpPath(K, "exitPath", bay), eb = cpEntrance(K), Rb = hb && eb ? roadRoute(RD, {x: eb.x, z: eb.z}, to, 6000) : null; if(Rb){ R = Rb; head = hb; } }   // [basement 3.4] a starter from B1
     // 1. it stands in this world within CALL_R m: it drives from there
     if(b && b.world === C && Math.hypot(b.x - avatar.x, b.z - avatar.z) <= H.CALL_R){
       if(Math.hypot(b.x - road.x, b.z - road.z) < 8 && !T0){ callSay(callTitle(it) + " is right here."); return true; }
@@ -2686,6 +2690,7 @@ function mount(el, api){
       }
       if(!R){ callSay("It can't find a way to you here. Try nearer a street."); return false; }
     }
+    if(it.b1 && b.world !== C){ var bs1 = worlds.basement.bikes, i1 = bs1.indexOf(b); if(i1 >= 0) bs1.splice(i1, 1); (C.scene || scene).add(b.g); C.bikes.push(b); b.world = C; if(!from && !head) from = {x: b.x, z: b.z}; }   // [basement 3.4] out of B1 into the street
     var dir = H.arrival(R.pts), spot = H.kerb(road, dir);
     // standing on the kerb spot yourself: it pulls in just past you, not onto you
     if(Math.hypot(spot.x - avatar.x, spot.z - avatar.z) < 3.5){ spot.x += dir[0]*6.5; spot.z += dir[1]*6.5; }
@@ -2798,6 +2803,14 @@ function mount(el, api){
   }
   // you got off b: one of your own goes back after RETURN_S s
   function ownLeft(b){ if(b && b.own && HQV.hqCall) b.returnAt = E.now() + HQV.hqCall.RETURN_S; }
+  // [basement 3.4] a garage transfer (games/hqgaragemgr.js): refused while you drive it; out on a trip or parked on a street, it is parked home first
+  if(HQV.hqGarageMgr && HQV.hqGarageMgr.setGuard) HQV.hqGarageMgr.setGuard(function(id){
+    var k = "own:" + id; if(ride && ride.id === k) return HQV.hqGarageMgr.MESSAGES.busy;
+    Object.keys(worlds).forEach(function(n){ var W = worlds[n], b = W && W !== worlds.basement ? propOf(k, W) : null; if(!b) return;
+      var T = tripOf(b); if(T){ tripEnd(T, false, true); if(callUi) callUi.status(null); } clearTimeout(parkTimer[k]);
+      if(b.own){ b.own.stored = true; ownSave(b.own); } if(b === showProp) showProp = null; propRemove(b); });
+    return null;
+  });
   inst.call = {open: function(){ return callToggle(); }, pick: callPick, list: function(){ return callOn() ? callItems() : []; },
                state: function(){ var T = trips.filter(function(x){ return x.mode === "call"; })[0] || trips[0]; return T ? {mode: T.mode, key: T.key, x: T.run.x, y: T.run.y, z: T.run.z, yaw: T.run.yaw, v: T.run.v, s: T.run.s, len: T.run.len, done: T.run.done, carpark: !!T.K} : null; },
                trips: function(){ return trips.map(function(T){ return {mode: T.mode, key: T.key, x: T.run.x, z: T.run.z, v: T.run.v, s: T.run.s, len: T.run.len, carpark: !!T.K}; }); },
@@ -2989,7 +3002,7 @@ function mount(el, api){
       moveAvatar(0); view.target.copy(view.goal);
       if(w.camModes) rigEnter(w);
       if(prev && prev !== w && prev.onLeave){ try { prev.onLeave(); } catch(e){} }
-      if(w.onEnter){ try { w.onEnter(); } catch(e){} }
+      if(w.onEnter){ try { w.onEnter(from, {k: E.calm() ? 0 : 1}); } catch(e){} }   // [basement 3.4] where from, and Calm
       if(carry) liftLand(w, name, carry);   // [basement 3.4] your ride arrives with you
       if(api.remember !== false){ try { localStorage.setItem("hq_world", name); } catch(e){} }
       if(api.onWorld) api.onWorld(name);

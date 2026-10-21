@@ -255,7 +255,10 @@ class Hq3dSource(unittest.TestCase):
         self.assertIn("if(rigOn() && CHASE[rig.mode] && !walkTo){", mv)
         self.assertIn("footStep(", mv)
         self.assertNotIn("back = true", mv)
-        self.assertNotIn("rig.moveYaw", mv)           # never walk along anything that follows you
+        # never walk along anything that follows you: the camera's heading is read only once, as S goes down
+        # (HQ 3.3.1: S walks you toward the camera; footStep latches it in faceGoal, and the camera holds meanwhile)
+        self.assertEqual(mv.count("rig.moveYaw"), 2)
+        self.assertIn("face: fwd < 0 && avatar.faceGoal == null && rig.moveYaw != null ? wrapPi(rig.moveYaw + PI) : null", mv)
         # idle / walk / sprint blended by your signed pace (S plays it backwards), and the lean into turns (HQ 3.2)
         self.assertIn("locomote(avatar.ch, avatar.speed, avatar.rate, dt)", mv)
         self.assertIn("leanStep(avatar.ch,", mv)
@@ -354,13 +357,14 @@ out.wFirst = H.footStep(z, {fwd: 1}, 1/60).speed;
 out.w = [run(z, {fwd: 1}, 0.1, 60).speed, run(z, {fwd: 1}, 1, 60).speed, run(z, {fwd: 1, run: true}, 1, 60).speed];
 var back = run({yaw: 0.7, rate: 0, rateV: 0, speed: 0, speedV: 0}, {fwd: -1}, 1, 60);
 out.back = [back.speed, back.yaw, back.travelYaw];
-// S turns you round (HQ 3.3): the most it ever turns past the half turn, a tap's end, and W cancelling it
-(function(){ var st = {yaw: 0}, most = 0; for(var i = 0; i < 120; i++){ st = H.footStep(st, {fwd: -1}, 1/60);
+// S walks you toward the camera (HQ 3.3.1): the most it ever turns past facing it, the camera holding through
+// the release, and W handing the camera back
+(function(){ var st = {yaw: 0}, most = 0; for(var i = 0; i < 120; i++){ st = H.footStep(st, {fwd: -1, face: Math.PI}, 1/60);
   var d = st.yaw < 0 ? st.yaw + 2*Math.PI : st.yaw; most = Math.max(most, d); } out.aboutMost = most; })();
-var tap = run(run({yaw: 0}, {fwd: -1}, 0.1, 60), {}, 1, 60);
-out.tap = [tap.yaw, tap.speed, tap.about];
-var cancel = run(run({yaw: 0}, {fwd: -1}, 0.15, 60), {fwd: 1}, 0.5, 60);
-out.cancel = [cancel.about, cancel.speed];
+var rel = run(run({yaw: 0}, {fwd: -1, face: Math.PI}, 1, 60), {}, 0.6, 60);
+out.release = [rel.travelYaw, rel.speed];
+var onW = run(rel, {fwd: 1}, 0.5, 60);
+out.onW = [onW.travelYaw, onW.speed, onW.yaw];
 var turn = run(z, {turn: 1}, 1, 60);
 out.turn = [turn.rate, turn.yaw, turn.travelYaw];
 out.turnR = run(z, {turn: -1}, 1, 60).rate;
@@ -451,21 +455,21 @@ class Hq3dPure(unittest.TestCase):
         self.assertLess(self.o["stop"], 4)                    # eases down, not a hard stop
         self.assertGreater(self.o["stop"], 1)
 
-    def test_s_turns_you_round_and_walks_on(self):
-        # HQ 3.3: S no longer steps back facing away; it turns you round (a half turn on a critically damped
-        # spring) and, held, walks you forward out of it, toward where the camera was.
-        speed, yaw, travel = self.o["back"]
-        self.assertAlmostEqual(speed, 4, delta=0.15)                                   # walking forward
-        self.assertAlmostEqual(math.cos(yaw - (0.7 + math.pi)), 1, delta=1e-3)          # facing the other way
-        self.assertAlmostEqual(travel, yaw, places=9)                                   # headed where you face
-        self.assertLessEqual(self.o["aboutMost"], math.pi + 0.01)                       # never overshoots
-        tyaw, tspeed, tabout = self.o["tap"]
-        self.assertAlmostEqual(math.cos(tyaw - math.pi), 1, delta=1e-3)                 # a tap still turns you round
-        self.assertAlmostEqual(tspeed, 0, delta=0.05)
-        self.assertIsNone(tabout)
-        cabout, cspeed = self.o["cancel"]
-        self.assertIsNone(cabout)                                                       # W cancels the half turn
-        self.assertGreater(cspeed, 3)
+    def test_s_walks_you_toward_the_camera(self):
+        # HQ 3.3.1: S turns you to face the camera (critically damped, no overshoot) and walks you toward it while the
+        # camera holds its heading (travelYaw null) and only backs up; it keeps holding through the release until W.
+        speed, yaw, travel = self.o["back"]                                              # no inp.face: faces yaw0 + PI
+        self.assertAlmostEqual(speed, 4, delta=0.15)
+        self.assertAlmostEqual(math.cos(yaw - (0.7 + math.pi)), 1, delta=1e-3)
+        self.assertIsNone(travel)                                                         # the camera holds
+        self.assertLessEqual(self.o["aboutMost"], math.pi + 0.01)                        # never turns past facing it
+        rtravel, rspeed = self.o["release"]
+        self.assertIsNone(rtravel)                                                        # still holding after the release
+        self.assertAlmostEqual(rspeed, 0, delta=0.1)
+        wtravel, wspeed, wyaw = self.o["onW"]
+        self.assertIsNotNone(wtravel)                                                     # W: the camera comes round behind
+        self.assertAlmostEqual(math.cos(wtravel - wyaw), 1, delta=1e-6)
+        self.assertGreater(wspeed, 3)
 
     def test_turn_rate_springs(self):
         rate, yaw, travel = self.o["turn"]

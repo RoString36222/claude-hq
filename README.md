@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.3.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.3.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -358,6 +358,100 @@ and feature guide.
 
 ## Changelog
 
+- **3.3.1 — S walks you toward the camera.** On foot, holding **S** now turns you to face the camera (smoothly,
+  without overshooting) and walks you toward it, as in most third-person games; the camera keeps its heading and
+  just backs up with you, and keeps holding when you let go. Press **W** (or turn with **A**/**D**) and it swings
+  back round behind you. (3.2.2's S spun the camera round with you, so a held S looked just like W.)
+- **3.3.0 — Skyline: landmarks, an amusement park and weather.** The cities got a skyline and a day out.
+  - **Six landmark towers** stand over the busiest districts, each its own design: **The Helix** (a glass
+    tower turning a quarter turn as it rises), **Aurora Spire** (three-lobed setbacks to a long spire),
+    **The Lantern** (a glass bullet in a steel diagrid), **Gemini Towers** (twin towers with a skybridge),
+    **Beacon Tower** (an observation tower with a glowing sky-deck) and **The Regent** (art deco stone up to
+    a lit sunburst crown). Real PBR facades reflect a real sky; by night their windows light up, floodlights
+    wash their feet and aviation lights blink on top. Each is in **Go to**.
+  - **Skyline Park**, an amusement park on the city's largest clear park block: a neon gate and marquee, a
+    ticket booth, lamp-lit paths, string lights, food stalls and five rides — **Comet**, a roller coaster
+    with a lift hill, a banked first drop, a vertical loop and airtime hills, ridden **first person**;
+    **Skywheel**, a Ferris wheel with 24 gondolas and a chasing rim of lights; **Freefall**, a drop tower
+    with a pause at the top over the whole city; the **Carousel**; and **Starswing**, a wave swinger. Walk
+    up to a ride and press **E**. Rides run on the shared clock, so everyone sees the same train; residents
+    visit the park too.
+  - **Stations and kiosks:** every ride boards from its own station: a boarded deck up steps from the path,
+    a tiled gable roof on steel posts with a lit eave, the ride's name in neon ringed by bulbs, a brass and
+    velvet queue, an operator's booth and planters (the Comet's runs its roof back over the track). Popcorn,
+    ice-cream and cotton-candy kiosks and a ticket booth, each with what it sells, giant, on its roof. Paved
+    promenades follow the ground.
+  - **A crowd:** visitors stroll the promenades, queue at the stations, wait at the kiosks and ride every
+    ride, the City's own detailed residents (the animated Kenney characters) near you and its light bodies
+    further off, all on the shared clock.
+  - **Look around with the mouse:** drag to turn the camera while walking (left or right button), and drag
+    on a ride to look around from your seat; it recentres when the ride ends.
+  - **A day pass** is a new `park` fare: **10 Poke Coins**, once per UTC day per city, paid into that city's
+    treasury. On an Arena that doesn't sell passes yet the gate opens as a free preview.
+  - **Weather**: clear skies, overcast, rain, thunderstorms (lightning, thunder after the flash), snow and
+    fog, in 15-minute spells eased in over 90 s; the same for everyone in a city. The city stats panel's
+    forecast and an announcement say what is coming.
+  - **Weather on the ground:** snow settles a little -- a patchy dusting on roads, pavements, grass and roofs that
+    builds over a snow spell and melts after -- and rain leaves the streets darker and glossier until they dry.
+    Worked out from the same shared forecast, so everyone sees the same.
+  - **Faster:** the park and the landmarks merge their pieces by material (about half the draw calls
+    looking into the park), and its crowd, bulbs and balloons rest when you are far off.
+  - *Accessibility:* in Calm and with reduced motion, rides are watched from the platform instead of ridden
+    first person, nothing falls, and there are no lightning flashes, blinking or chasing lights.
+  - *Security:* the pass is server-authoritative. `POST /v1/city/:owner/fare {kind:"park"}` debits the
+    rider and writes a `park_pass` row (migration 0016) in the same transaction as the ledger entry, so a
+    pass always means the coins were paid and a second purchase that day charges nothing.
+    `GET /v1/city/:owner` gains the caller's `park: {price, pass}`. The page can't grant itself a pass.
+  - *Privacy:* no new egress. The ticket sends `{kind: "park"}` to the existing fare route; weather and
+    rides are computed locally from the clock and the world doc.
+  - *Third-party assets:* CC0 surface materials from [ambientCG](https://ambientcg.com) (Facade001,
+    Facade006, Facade015, Facade018A, MetalPlates006) and a CC0 sky from [Poly Haven](https://polyhaven.com)
+    ("Kloofendal 48d Partly Cloudy (Pure Sky)"), plus PavingStones128, WoodFloor043, RoofingTiles012A and
+    CorrugatedSteel005 for the park, resampled JPEGs vendored in `games/city/` with `LICENSE-assets.txt`, 4.6 MB, served only from 127.0.0.1 (`.jpg` only; the licence is not served).
+
+- **3.2.2 — S turns you round.** On foot, **S** no longer walks you backwards facing away: it turns you round
+  (a smooth half turn that eases in and out and lands without overshooting, toward the side you are already
+  turning), and held, walks you back the way you came while the camera swings round behind you. A tap still
+  makes a full about-face; **W** cancels it; **A**/**D** during it change where you end up.
+- **3.2.1 — The Get out pill stays clear of the route banner.** On the ground with a route set (taxiing a
+  plane, or in a car or on a bike), the Get out / Get on pill now sits just under the navigation banner at
+  whatever height it is, instead of a fixed 96 px that a two- or three-line banner overlapped.
+- **3.2.0 — Planes, air navigation, and in-sync turning.**
+  - **Fly a seaplane or a prop plane.** A seaplane is moored down the river from every city's main dock, and a
+    small prop plane (an original design) stands by every airport's runway (the Commons always, an island at
+    tier 5). Walk up and press E. W / S set the throttle, A / D bank (steer on the ground or the water), the Up /
+    Down arrows or a vertical drag raise and lower the nose; past rotation speed Up lifts off. Assisted flying (the
+    default) levels the wings and the nose when you let go, keeps you above stall speed and cannot roll over; X
+    switches to manual. G gear, F flaps, Space brakes, K autopilot (holds your height and heading, or flies to
+    the waypoint). Lift grows with airspeed, a stall drops the nose gently, ground effect cushions the flare. Land
+    the seaplane on any water and the prop plane on a runway (or, slowly, on flat ground with the gear down); a
+    crash is a bump and you are back at the dock or the stand. The flight HUD has airspeed and altitude dials, a
+    readout with heading, throttle, gear and flaps, and a stall warning. Chase and cockpit cameras, gamepad
+    support, an engine note. Other players see your plane where the Arena supports it (the new plane presence
+    capability, a = 9 / 10; older Arenas show you standing, as for helicopters).
+  - **Air navigation.** While you fly (planes and helicopters), Go to (N) lists the runways, the seaplane's
+    landing lane off the river mouth, helipads and the other islands; a minimap click sets a free waypoint. The
+    route is a straight line on the minimap, the light pillar marks the destination, and the HUD shows an arrow to
+    it with its distance, time at your speed and the height to fly. A runway or a landing lane gets its approach:
+    rings down a 3° glideslope from the final approach fix, a touchdown marker, and a glideslope indicator on final.
+    At a dock in a city with an airport, the travel menu now says flights leave from the airport (N takes you there).
+  - **Turning in sync.** On foot the chase camera used to trail a held turn by up to ~60° and park ~23° off once
+    you stopped, while the heading-up minimap turned with your facing at once; dragging the camera turned only the
+    camera. Now the camera turns with you (no lag, no overshoot), the minimap turns with the camera, walking with a
+    dragged camera steers you toward where it looks, and you turn faster (3.6 rad/s) on a smoother spring.
+  - **Smoother walking.** Idle, walk and run blend by speed, played at the rate your stride needs; you lean into
+    turns and with the pace, turn your head into the turn and shuffle when turning on the spot; other players are
+    dead-reckoned between presence updates and animate the same way.
+  - **Water and docks.** Boats, ferries and the seaplane float on one water surface that runs on the drawn sea's
+    clock (they used to bob out of step with the waves), moored boats ride the swell instead of sitting flat while
+    waves pass through them, a ferry no longer sits 0.2 m deep in the river, boarding a moored boat no longer pops,
+    the camera no longer dips under the water, and a far chase camera has the depth precision to stop the shore
+    flickering. Piers are finished: planks, posts, a safety line, cleats, fenders, ladders and lamps on the head.
+- **3.1.1 — City camera and plates.** The chase camera sits higher and further back (the far camera
+  higher still), so you see the street around you instead of the ground at your feet. Left-drag now
+  turns the camera too (trackpads have no right-drag); a click still walks. On a motorbike or a bicycle
+  the camera follows turns more gently and barely tilts with the lean. Every HQ's car and motorbike
+  carry the HQ's name on their number plates.
 - **3.1.0 — Navigation, rivers and travel.** Finding your way round the cities, and between them.
   - **A river through every city:** from the sea past the plaza to a harbour basin in town. The
     **dock** stands on its bank by the plaza (on a tier-1 island too, with a road to it) and the

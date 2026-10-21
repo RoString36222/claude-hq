@@ -153,6 +153,13 @@ M.close();
 
 // kiosk without a ctx
 out.kioskNull = M.kiosk(null, "carpark");
+class Obj { constructor(){ this.children = []; this.position = {set(){}}; this.rotation = {}; this.userData = {}; } add(c){ this.children.push(c); } }
+let meshes = 0; const mk = () => { meshes++; return new Obj(); };
+const kctx = {THREE: {Group: Obj}, mat: () => ({}), emis: () => ({}), cyl: (a,b,c,m,x,y,z,p) => { const o = mk(); p.add(o); return o; },
+  box: (w,h,d,m,x,y,z,p) => { const o = mk(); p.add(o); return o; }, canvasTex: (w, h, d) => ({t: {}}), screen: () => mk(), glow: () => new Obj()};
+const K = M.kiosk(kctx, "basement");
+out.kiosk = {hits: K.hits.length, doors: K.hits.every(h => h.userData.door === K.door && h.userData.tip === "Garage manager"),
+  gDoor: K.g.userData.door.view, from: K.door.from, meshes};
 console.log(JSON.stringify(out));
 """
 
@@ -242,6 +249,9 @@ class HqGarageMgr(unittest.TestCase):
         self.assertEqual(k["door"]["from"], "carpark")
         self.assertEqual(k["door"]["tip"], "Garage manager")
         self.assertEqual(k["hits"], [])
+        k = self.o["kiosk"]
+        self.assertEqual((k["hits"], k["doors"], k["gDoor"], k["from"]), (3, True, "garage:open", "basement"))
+        self.assertLessEqual(k["meshes"], 6, "a handful of draw calls")
 
 
 class Source(unittest.TestCase):

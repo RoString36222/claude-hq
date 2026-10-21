@@ -1713,9 +1713,12 @@ function mount(el, api){
     if(!force && key === rideUi.dataset.k) return;
     rideUi.dataset.k = key; rideUi.hidden = !key;
     var kind0 = ride ? ride.kind : (nb && VEHICLES[nb.kind] ? nb.kind : "bike"), Vc = VEHICLES[kind0].cat, kind = baseKind(kind0);
+    // a catalogue vehicle by name, without its generation ("M3 Competition", not "M3 Competition (G80)"): the pill
+    // stands between the top-left buttons and the city's stats
+    var vn = Vc ? "the " + Vc.brand + " " + String(Vc.model).replace(/\s*\([^)]*\)\s*$/, "") + " " : "";
     rideUi.textContent = ride ? (kind === "car" || VEHICLES[kind0].heli ? "Get out (E)" : kind === "skate" ? "Step off (E)" : VEHICLES[kind0].boat ? "Step ashore (E)" : "Get off (E)")
-      : VEHICLES[kind0].heli ? "\uD83D\uDE81 Fly (E)" : kind === "rowboat" ? "\uD83D\uDEA3 Row (E)" : kind === "jetski" ? "\uD83C\uDF0A Ride the jet ski (E)" : kind === "car" ? "\uD83D\uDE97 Drive " + (Vc ? "the " + Vc.brand + " " + Vc.model + " " : "") + "(E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride " + (Vc ? "the " + Vc.brand + " " + Vc.model + " " : "") + "(E)" : kind === "skate" ? "\uD83D\uDEF9 Skate (E)" : "\uD83D\uDEB2 Ride (E)";
-    rideUi.title = ride ? RIDE_HELP[kind] : VEHICLES[kind0].heli ? "Take the controls" : VEHICLES[kind0].boat ? "Take the helm" : kind === "car" ? "Get in this car" : kind === "moto" ? "Get on this motorbike"
+      : VEHICLES[kind0].heli ? "\uD83D\uDE81 Fly (E)" : kind === "rowboat" ? "\uD83D\uDEA3 Row (E)" : kind === "jetski" ? "\uD83C\uDF0A Ride the jet ski (E)" : kind === "car" ? "\uD83D\uDE97 Drive " + vn + "(E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride " + vn + "(E)" : kind === "skate" ? "\uD83D\uDEF9 Skate (E)" : "\uD83D\uDEB2 Ride (E)";
+    rideUi.title = ride ? RIDE_HELP[kind] : VEHICLES[kind0].heli ? "Take the controls" : VEHICLES[kind0].boat ? "Take the helm" : kind === "car" ? (Vc ? "Get in the " + Vc.brand + " " + Vc.model : "Get in this car") : kind === "moto" ? (Vc ? "Get on the " + Vc.brand + " " + Vc.model : "Get on this motorbike")
       : kind === "skate" ? "Step on this skateboard" : "Get on this bike";
     if(key === "on" && force) tipRide();
   }
@@ -2525,7 +2528,12 @@ function mount(el, api){
   catLoad.then(function(){ propsSeen = null; });                        // the remembered vehicle, once the catalogue is in
   function ownSave(o, midTrip){
     if(o.local){ try { localStorage.setItem(OWN_LS, JSON.stringify({vehicleId: o.vehicleId, color: o.color, world: o.world, x: o.x, z: o.z, yaw: o.yaw, home: o.home, stored: !!o.stored})); } catch(e){} }
-    if(midTrip && o.ownId != null && HQV.hqGarage && HQV.hqGarage.park){     // debounced: one save for a trip cut short
+    if(o.ownId == null || !HQV.hqGarage || !HQV.hqGarage.park) return;
+    if(o.stored){
+      // back in its bay: that is where the Arena should have it (a pose saved on the way in must not win)
+      clearTimeout(parkTimer[o.key]); delete parkTimer[o.key];
+      try { Promise.resolve(HQV.hqGarage.park(o.ownId, null)).catch(function(){}); } catch(e){}
+    } else if(midTrip){                                                     // debounced: one save for a trip cut short
       clearTimeout(parkTimer[o.key]);
       parkTimer[o.key] = setTimeout(function(){ try { Promise.resolve(HQV.hqGarage.park(o.ownId, {world: o.world, x: o.x, z: o.z, yaw: o.yaw})).catch(function(){}); } catch(e){} }, 1500);
     }
@@ -2543,8 +2551,7 @@ function mount(el, api){
     g.position.set(x, groundAt(x, z), z); g.rotation.y = yaw;
     (C.scene || scene).add(g);
     // its paint as an index into the catalogue's paints: presence sends that (`vp`), so others see your colour
-    var hexes = (V.cat.paints || []).map(function(p){ return parseInt(String(p && p.hex || "#000").slice(1), 16); }), pi = hexes.indexOf(o.color);
-    var b = {g: g, x: x, z: z, yaw: yaw, color: o.color, paint: Math.max(0, pi), kind: o.vehicleId, id: o.key, stay: true, world: C, rig: R, own: o,
+    var b = {g: g, x: x, z: z, yaw: yaw, color: o.color, paint: paintIdx(V.cat, o.color), kind: o.vehicleId, id: o.key, stay: true, world: C, rig: R, own: o,
              home: o.home || {x: x, z: z, yaw: yaw}};
     C.bikes.push(b);
     if(o.key === "showroom") showProp = b;
@@ -2567,19 +2574,31 @@ function mount(el, api){
       (L || []).forEach(function(v){
         if(!v || v.id == null || typeof v.vehicle_id !== "string") return;
         var k = "own:" + v.id, o = own[k] || (own[k] = {key: k, ownId: v.id, stored: true});
-        o.vehicleId = v.vehicle_id; o.color = /^#[0-9a-fA-F]{6}$/.test(v.paint || "") ? parseInt(v.paint.slice(1), 16) : null;
+        // the Arena keeps the paint as an index into the vehicle's paints (a "#rrggbb" is taken as it is)
+        var cat = VEHICLES[v.vehicle_id] && VEHICLES[v.vehicle_id].cat, ph = v.paint;
+        if(typeof ph === "number") ph = cat && cat.paints && cat.paints[ph] ? cat.paints[ph].hex : null;
+        o.vehicleId = v.vehicle_id; o.color = /^#[0-9a-fA-F]{6}$/.test(ph || "") ? parseInt(ph.slice(1), 16) : null;
         var p = v.parked; if(p && !propOf(k) && !tripOf(propOf(k))){ o.world = String(p.world || ""); o.x = +p.x; o.z = +p.z; o.yaw = +p.yaw || 0; o.stored = false; }
       });
       ownPlace(cur);
     }, function(){});
   }
-  // the city's carpark (HQV.hqCarpark): {cp, site}, or null (none here, or not built yet)
+  // kept current: a vehicle claimed at the dealership, or the garage list the City loads, is known before C opens
+  // (mine() serves its cache without notifying again, so this is no loop)
+  var ownUnsub = HQV.hqGarage && HQV.hqGarage.onChange ? HQV.hqGarage.onChange(function(){ ownRefresh(); }) : null;
+  // the city's carpark (HQV.hqCarpark): {cp, site}, or null (none here, or not built yet). Only the one the City
+  // draws (C.carpark.site()): a site above the city's tier stands in the world doc but is not built, and a vehicle
+  // must not drive out of a garage nobody can see
   function carpark(C){
-    var cp = HQV.hqCarpark, RD = C && C.callRoad; if(!cp || !cp.find || !RD || !RD.W) return null;
-    try { var site = cp.find(RD.W()); return site ? {cp: cp, site: site} : null; } catch(e){ return null; }
+    var cp = HQV.hqCarpark, RD = C && C.callRoad; if(!cp || !RD || !C.carpark || !C.carpark.site) return null;
+    try { var site = C.carpark.site(); return site ? {cp: cp, site: site} : null; } catch(e){ return null; }
   }
+  // its bay: the one the carpark draws it in (bayOf), else a stable hash of the vehicle
   function cpBay(K, key){
-    try { var L = K.cp.bays ? K.cp.bays(K.site) : null; return L && L.length ? L[hashStr(String(key)) % L.length] : null; } catch(e){ return null; }
+    try {
+      var b = K.cp.bayOf ? K.cp.bayOf(K.site, key) : null; if(b) return b;
+      var L = K.cp.bays ? K.cp.bays(K.site) : null; return L && L.length ? L[hashStr(String(key)) % L.length] : null;
+    } catch(e){ return null; }
   }
   function cpEntrance(K){ try { var e = K.cp.entrance ? K.cp.entrance(K.site) : null; return e && isFinite(e.x) && isFinite(e.z) ? e : null; } catch(x){ return null; } }
   function cpPath(K, which, bay){ try { return K.cp[which] && bay ? HQV.hqCall.poly(K.cp[which](bay, K.site)) : null; } catch(e){ return null; } }
@@ -2678,6 +2697,8 @@ function mount(el, api){
     var run = H.run(path, v0, ys);
     if(T0) run.yaw = b.yaw;
     tripStart({mode: "call", key: key, b: b, C: C, run: run, title: callTitle(it), K: K, bay: bay});
+    // out of its bay: the carpark stops drawing it parked there (stored() shows it again when it comes back)
+    if(head && K && K.cp.release){ try { K.cp.release(K.site, key); } catch(e){} }
     callSay(callTitle(it) + " is on its way: about " + H.eta(run.len) + " s.");
     return true;
   }
@@ -2814,10 +2835,21 @@ function mount(el, api){
     return true;
   }
   function vName(id){ var V = VEHICLES[id]; return V && V.cat ? V.cat.brand + " " + V.cat.model : "vehicle"; }
+  // a colour ("#rrggbb" or a number) as an index into a catalogue vehicle's paints (0 when it is none of them): what
+  // the Arena stores and presence sends (`vp`)
+  function paintIdx(cat, col){
+    if(col == null) return 0;
+    var n = typeof col === "number" ? col : /^#[0-9a-fA-F]{6}$/.test(String(col)) ? parseInt(String(col).slice(1), 16) : NaN;
+    var ps = cat && cat.paints || [];
+    for(var i = 0; i < ps.length; i++) if(ps[i] && /^#[0-9a-fA-F]{6}$/.test(ps[i].hex) && parseInt(ps[i].hex.slice(1), 16) === n) return i;
+    return 0;
+  }
   function dealerGet(id, hex){
     var Gr = HQV.hqGarage, nm = vName(id);
     if(!Gr || !Gr.buy) return Promise.resolve({ok: false, text: "Getting vehicles opens soon."});
-    return Promise.resolve(Gr.buy(id, hex)).then(function(r){
+    // the Arena takes the paint as an index into the vehicle's paints (Gr.buy sends paint | 0)
+    var V = VEHICLES[id];
+    return Promise.resolve(Gr.buy(id, paintIdx(V && V.cat, hex))).then(function(r){
       if(r && r.id != null && !r.error) return {ok: true, text: "Your " + nm + " is delivered to the garage — press C to call it."};
       var st = r && r.status;
       return {ok: false, text: st === 402 ? "Not enough coins for the " + nm + "." : st === 403 ? "Your level is too low for the " + nm + " yet."
@@ -2832,7 +2864,7 @@ function mount(el, api){
     var bay = bays[0], col = hex && /^#[0-9a-fA-F]{6}$/.test(hex) ? parseInt(hex.slice(1), 16) : null;
     var R = HQV.hqVehicleModels.build(ctx, V.cat, col), g = new THREE.Group(); g.add(R.g);
     g.position.set(bay.x, groundAt(bay.x, bay.z), bay.z); g.rotation.y = bay.yaw; (C.scene || scene).add(g);
-    var prop = {g: g, x: bay.x, z: bay.z, yaw: bay.yaw, color: col, kind: id, id: "testdrive", stay: true, world: C,
+    var prop = {g: g, x: bay.x, z: bay.z, yaw: bay.yaw, color: col, paint: paintIdx(V.cat, col), kind: id, id: "testdrive", stay: true, world: C,
                 home: {x: bay.x, z: bay.z, yaw: bay.yaw}};
     C.bikes.push(prop);
     testDrive = {prop: prop, world: C, bay: bay, until: Date.now() + TEST_S*1000, back: null, started: false, name: vName(id)};
@@ -3323,6 +3355,8 @@ function mount(el, api){
   if(SMOKE && SMOKE.on){
     window.HQ3D_DEBUG = {mode: function(m){ smokeCam(m); }, teleport: function(x, z, yaw){ smokeTeleport(+x || 0, +z || 0, yaw == null ? null : +yaw); },
                          ride: function(kind){ smokeRide(kind); }, stats: function(){ return smokeStats(); },
+                         // other players as drawn: what they ride (a, the catalogue vehicle v + paint vp) and the model shown
+                         peers: function(){ return Object.keys(peers).map(function(u){ var P = peers[u]; return {u: u, a: P.a, v: P.v, vp: P.vp, drawn: P.vkind || null, x: P.g ? P.g.position.x : null, z: P.g ? P.g.position.z : null}; }); },
                          // in a helicopter (ride('heli') first): put it in the air at x, y, z, rotor up to speed
                          fly: function(x, y, z, yaw){ var h = ride && ride.heli; if(!h) return false; h.x = +x; h.y = +y; h.z = +z; if(yaw != null) h.yaw = +yaw;
                            h.ground = false; h.rpm = 1; h.vx = h.vy = h.vz = 0; return true; },
@@ -3405,6 +3439,7 @@ function mount(el, api){
   };
   inst.destroy = function(){
     inst.alive = false; inst.pause(); driveHud(null); exitLock(); rigLeave(); dropNext();
+    if(ownUnsub){ try { ownUnsub(); } catch(e){} ownUnsub = null; }
     window.removeEventListener("keydown", onKey, true); window.removeEventListener("keyup", onKey, true); window.removeEventListener("blur", onBlur);
     window.removeEventListener("gamepadconnected", onPadOn); window.removeEventListener("gamepaddisconnected", onPadOff);
     if(SMOKE && SMOKE.on){ window.removeEventListener("error", smokeErr); window.removeEventListener("unhandledrejection", smokeErr); }

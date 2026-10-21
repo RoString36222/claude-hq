@@ -52,6 +52,106 @@ class StrikeSync(unittest.TestCase):
         if self.strike is None:
             self.skipTest("Python strike.py is gone — see backend/src/strike/tests.rs")
 
+    def test_the_warden_is_a_mid_match_boss_with_no_pvp(self):
+        """Pure file-text locks for The Warden (JS twin + Rust judge). No Python judge."""
+        js = read(STRIKE_JS)
+        rs = read(STRIKE_RS)
+        # menu option sits next to Map view (2D)
+        self.assertIn('check("Summon the Warden"', js)
+        self.assertIn('check("Map view (2D)"', js)
+        # host sends the option; practice never summons
+        self.assertIn("warden: V.wardenOn ? 1 : 0", js)
+        self.assertIn("warden.as_i64().map(|v| v != 0)", rs)
+        # twin constants
+        for name in (
+            "WARDEN_TRIGGER", "WARDEN_HP_PER", "WARDEN_MIN_HP", "WARDEN_MAX_HP",
+            "WARDEN_SLAB_R", "WARDEN_SLAB_ARM", "WARDEN_SLAB_R_HIT", "WARDEN_SLAB_CD",
+            "WARDEN_LASER_WARN", "WARDEN_LASER_HOLD", "WARDEN_LASER_CD",
+            "WARDEN_LASER_YAW0", "WARDEN_LASER_W", "WARDEN_DIS_CD", "WARDEN_CKPT",
+            "WARDEN_BOX_WAIST", "WARDEN_BOX_CHEST", "WARDEN_BOX_HEAD", "WARDEN_BOX_ARM",
+            "WARDEN_ARM_X", "WARDEN_ARM_DMG_MULT", "WARDEN_ARM_HP", "WARDEN_SLAB_WIRE",
+            "WARDEN_CHECK_NAMES", "WARDEN_SCALE",
+            "WARDEN_SEE_HEAD", "WARDEN_SEE_CHEST", "WARDEN_SEE_WAIST", "WARDEN_SEE_ARM",
+            "WARDEN_SLAB_KNOCK", "WARDEN_SLAB_KNOCK_PUSH", "WARDEN_SLAB_BLAST_DMG",
+            "WARDEN_LOOT_R0", "WARDEN_LOOT_RSPAN", "WARDEN_LOOT_RMIN",
+            "DD_TOXIC_CHIP_DMG",
+            "WARDEN_CORE_EXPOSE", "WARDEN_CORE_COVER_MULT", "WARDEN_CORE_HIT_MULT",
+            "WARDEN_CK2_EXPOSE", "WARDEN_CK1_PUSH",
+            "WARDEN_GRIP_CD", "WARDEN_GRIP_WARN", "WARDEN_GRIP_HOLD", "WARDEN_GRIP_PULL",
+            "WARDEN_GRIP_R", "WARDEN_GRIP_MIN", "WARDEN_GRIP_SWEEP_DMG",
+        ):
+            self.assertIn(name, js, "JS missing " + name)
+            self.assertIn(name, rs, "Rust missing " + name)
+        # The Warden has no weak point: never the weapon head-crit; bots prefer the arm
+        self.assertIn("var head = false, arm =", js)
+        self.assertIn("let head = false;", rs)
+        self.assertIn("WARDEN_SEE_ARM", js)
+        self.assertIn("fn warden_aim", rs)
+        self.assertIn("function wardenAim(", js)
+        self.assertNotIn("WEAPONS[w].head", rs[rs.find("fn warden_hit"):rs.find("fn warden_hit") + 800])
+        # multi-axis arm motion (not just top-down)
+        self.assertIn("idleY", js)
+        self.assertIn("piv.rotation.y", js)
+        self.assertIn("elbow.rotation.x", js)
+        self.assertIn("wardenGroup.rotation.y", js)
+        self.assertIn("WARDEN_LOOT_R0 + hashMatch(seed, salt + 17) * WARDEN_LOOT_RSPAN", js)
+        self.assertIn("WARDEN_LOOT_R0 + hash_match(seed, salt.wrapping_add(17)) * WARDEN_LOOT_RSPAN", rs)
+        self.assertIn('"warden-slam"', js)
+        self.assertIn('"warden-laser"', js)
+        self.assertIn('"warden-slam"', rs)
+        self.assertIn('"warden-laser"', rs)
+        self.assertIn("envKiller", js)
+        self.assertIn("FEED_TTL", js)
+        # hit helpers and the mid-match tick
+        for name in ("wardenBoxes", "wardenHit", "wardenBlast", "wardenAfterDamage",
+                     "wardenLoot", "wardenDeath", "wardenSummon", "wardenTick"):
+            self.assertIn("function " + name, js, "JS missing " + name)
+        for name in ("warden_hit", "warden_blast", "warden_after_damage", "warden_loot",
+                     "warden_death", "warden_summon", "warden_tick"):
+            self.assertIn("fn " + name, rs, "Rust missing " + name)
+        # snap key + event kind (never "ev")
+        self.assertIn('"wd"', js)
+        self.assertIn('"wd"', rs)
+        self.assertIn('m.ev === "warden"', js)
+        self.assertIn('"warden"', rs)
+        self.assertIn("wd[11]", js)
+        self.assertIn("yaw-cdeg", rs)
+        # loot is a ring of non-disaster totems + one health pack
+        self.assertIn("WARDEN_FRACS", js)
+        self.assertIn("FRACS", rs)
+        self.assertIn("hashMatch(seed, salt)", js)
+        self.assertNotIn("Math.random(", re.sub(r"/\*.*?\*/", "", re.sub(r"//.*?$", "", js, flags=re.M), flags=re.S))
+        # checkpoints exclude disasters
+        self.assertIn('"warden-pack"', js)
+        self.assertIn('"warden"', rs)
+        # bots must find a visible hit height (head/chest/waist) — never LOS only the
+        # chest into the centre blocks and stand there refusing to fire
+        self.assertIn("function wardenSee", js)
+        self.assertIn("fn warden_see", rs)
+        self.assertIn("wardenSee(", js)
+        self.assertIn("warden_see(", rs)
+        self.assertIn("heavyArm", js)  # the arms hinge at the elbow before a slam
+        self.assertIn("elbow.rotation.x = -eK", js)  # folds toward the body, not backwards
+        self.assertIn("wardenLaser", js)  # the laser eyes are drawn
+        self.assertIn("mapLaserRun", js)  # the ground beam stops at the map edge
+        self.assertIn("map_laser_run", rs)
+        self.assertIn("wardenDustBurst", js)  # the slam blows dust
+        self.assertIn("WARDEN_SLAB_KNOCK_PUSH", js)  # and blows people away
+        # Exposed Core: plated torso, slam opens the chest (Rust-authoritative mults)
+        self.assertIn("function wardenBodyMult", js)
+        self.assertIn("fn warden_body_mult", rs)
+        self.assertIn("coreUntil", js)
+        self.assertIn("core_until", rs)
+        self.assertIn("WARDEN_CORE_HIT_MULT", js)
+        self.assertIn("WARDEN_CORE_HIT_MULT", rs)
+        self.assertIn('"warden-grip"', js)
+        self.assertIn('"warden-grip"', rs)
+        self.assertIn("ms_core", js)
+        self.assertIn("ms-core", rs)
+        # the Strikezone welcome card spells the boss out under its own heading
+        self.assertIn('"The Warden"', js)
+        self.assertIn("Summon the Warden", js)
+
     def test_map_file_is_mirrored(self):
         for a, b in ((MAP, SERVER_MAP), (MAP_SAND, SERVER_MAP_SAND)):
             with open(a, "rb") as fa, open(b, "rb") as fb:

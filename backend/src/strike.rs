@@ -247,6 +247,7 @@ pub const DD_SHOCK_KNOCK: f64 = 12.0;
 pub const DD_TOXIC_R: f64 = 5.0;
 pub const DD_TOXIC_DMG: i64 = 8;     // per second inside a cloud
 pub const DD_TOXIC_ZONES: usize = 3;
+pub const DD_TOXIC_CHIP_DMG: i64 = 3; // the green gas fills the arena — everyone chips
 pub const DD_SINK_R: f64 = 4.5;
 pub const DD_SINK_DMG: i64 = 12;     // per second in the pit
 pub const DD_SINK_PULL: f64 = 4.0;
@@ -275,6 +276,66 @@ pub const DD_WIND_SCATTER: f64 = 2.4;
 pub const DD_EMP_SCATTER: f64 = 1.0;
 /// walk speed while a disaster slow is on (quake / toxic / sink / wind)
 pub const DD_SLOW_MULT: f64 = 0.65;
+
+// ---- The Warden: a mid-match giant torso god summoned at half the kill limit ----
+// Twin: WARDEN_* in games/strike.js. While it lives the clock and the scores freeze,
+// nobody can hurt each other (only the Warden takes damage), normal totem / pack /
+// disaster-totem drops stop, and only the Warden calls disasters.
+pub const WARDEN_TRIGGER: f64 = 0.5;   // half the kill limit
+pub const WARDEN_HP_PER: i64 = 2000;   // max HP = this * fighters on the field at summon
+pub const WARDEN_MIN_HP: i64 = 4000;
+pub const WARDEN_MAX_HP: i64 = 24000;
+pub const WARDEN_SLAB_R: f64 = 3.2;    // ground warning radius of an arm slam
+pub const WARDEN_SLAB_ARM: f64 = 1.2;  // s the arms lift (telegraph) before the slam
+pub const WARDEN_SLAB_R_HIT: f64 = 4.5; // everyone inside this is instantly dead
+pub const WARDEN_SLAB_KNOCK: f64 = 10.0; // blast ring: blown away + hurt, not instant
+pub const WARDEN_SLAB_KNOCK_PUSH: f64 = 8.0;
+pub const WARDEN_SLAB_BLAST_DMG: i64 = 25;
+pub const WARDEN_SLAB_CD: f64 = 7.0;
+pub const WARDEN_LOOT_R0: f64 = 18.0;
+pub const WARDEN_LOOT_RSPAN: f64 = 12.0;
+pub const WARDEN_LOOT_RMIN: f64 = 16.0;
+pub const WARDEN_LASER_WARN: f64 = 1.0;
+pub const WARDEN_LASER_HOLD: f64 = 4.0;
+pub const WARDEN_LASER_CD: f64 = 9.0;
+pub const WARDEN_LASER_YAW0: f64 = 0.35; // rad/s the head sweeps while the beam runs
+pub const WARDEN_LASER_W: f64 = 0.55;    // m half-width of the beam (instant kill)
+pub const WARDEN_DIS_CD: f64 = 14.0;     // the Warden calls a random disaster this often
+pub const WARDEN_CKPT: usize = 3;        // health checkpoints (75% / 50% / 25%)
+/// Silhouette scale: the boss (and its hit volumes) are 3× the first cut.
+pub const WARDEN_SCALE: f64 = 3.0;
+// hit volumes, in local space around (warden.x, 0, warden.z): (half_w, half_d) + y span
+pub const WARDEN_BOX_WAIST: (f64, f64, f64, f64) = (5.4, 3.6, 0.0, 4.8);   // (hw, hd, y0, y1)
+pub const WARDEN_BOX_CHEST: (f64, f64, f64, f64) = (6.6, 3.9, 4.8, 11.4);
+pub const WARDEN_BOX_HEAD: (f64, f64, f64, f64) = (2.7, 2.7, 11.4, 15.6); // no crit — body damage only
+pub const WARDEN_BOX_ARM: (f64, f64, f64, f64) = (1.8, 1.8, 5.4, 15.0);    // each arm; x offset ±8.7
+pub const WARDEN_ARM_X: f64 = 8.7;
+pub const WARDEN_ARM_DMG_MULT: f64 = 0.35; // arms take 35% of a torso shot
+pub const WARDEN_ARM_HP: i64 = 2000;       // each arm; 0 = that arm is disabled
+/// Exposed Core: torso is plated until a slam (or checkpoint II) opens the chest.
+pub const WARDEN_CORE_EXPOSE: f64 = 3.0;
+pub const WARDEN_CORE_COVER_MULT: f64 = 0.2;
+pub const WARDEN_CORE_HIT_MULT: f64 = 3.0;
+pub const WARDEN_CK2_EXPOSE: f64 = 6.0;
+/// Gravity Grip: open-hand pull toward the torso (cover / dash breaks it).
+pub const WARDEN_GRIP_CD: f64 = 16.0;
+pub const WARDEN_GRIP_WARN: f64 = 1.0;
+pub const WARDEN_GRIP_HOLD: f64 = 2.0;
+pub const WARDEN_GRIP_PULL: f64 = 5.0;
+pub const WARDEN_GRIP_R: f64 = 28.0;
+pub const WARDEN_GRIP_MIN: f64 = 2.2;
+pub const WARDEN_GRIP_SWEEP_DMG: i64 = 18;
+pub const WARDEN_CK1_PUSH: f64 = 12.0;
+/// Aim / LOS probe heights (arm, chest, waist) and the laser-eye origin.
+/// Never prefer the head — it is no weak point and must not be the default aim.
+pub const WARDEN_SEE_HEAD: f64 = 13.5;
+pub const WARDEN_SEE_CHEST: f64 = 7.8;
+pub const WARDEN_SEE_WAIST: f64 = 3.6;
+pub const WARDEN_SEE_ARM: f64 = 10.2;
+/// Ground-warning lead: the ring paints this long before the slam lands.
+pub const WARDEN_SLAB_WIRE: f64 = 0.9;
+/// Roman numerals for the three health checkpoints (feed text).
+pub const WARDEN_CHECK_NAMES: [&str; 4] = ["", "I", "II", "III"];
 pub const CHARM: f64 = 8.0;    // s a mole-turned bot shoots its own side
 pub const FREEZE: f64 = 5.0;   // s a paralysed bot can't move or fire
 pub const DECOY: f64 = 10.0;   // s a decoy ghost stands and eats shots
@@ -926,6 +987,26 @@ pub fn map_by_id(id: &str) -> Option<&'static Map> {
     MAPS.iter().find(|m| m.id == id)
 }
 
+/// How far a ground beam can run before it leaves the arena (never off the map).
+/// Twin: mapLaserRun in games/strike.js.
+pub fn map_laser_run(map: &Map, wx: f64, wz: f64, yaw: f64) -> f64 {
+    let b = map.bounds();
+    let dx = yaw.cos();
+    let dz = yaw.sin();
+    let mut run: f64 = 200.0;
+    if dx > 1e-6 {
+        run = run.min((b[3] - 0.5 - wx) / dx);
+    } else if dx < -1e-6 {
+        run = run.min((b[0] + 0.5 - wx) / dx);
+    }
+    if dz > 1e-6 {
+        run = run.min((b[5] - 0.5 - wz) / dz);
+    } else if dz < -1e-6 {
+        run = run.min((b[2] + 0.5 - wz) / dz);
+    }
+    run.clamp(4.0, 80.0)
+}
+
 // ------------------------------------------------------- shared geometry --
 /// Index of the first solid box a player standing at (x, y, z) is inside.
 pub fn overlaps(m: &Map, x: f64, y: f64, z: f64, shrink: f64) -> Option<usize> {
@@ -1162,6 +1243,42 @@ pub fn los(m: &Map, a: [f64; 3], b: [f64; 3]) -> bool {
     ray_map(m, a, u, ln) >= ln - 1e-6
 }
 
+/// Preferred aim point on The Warden: the near arm (least damage). Never the head.
+pub fn warden_aim(wx: f64, wz: f64, slot: usize, core: bool) -> (f64, f64, f64) {
+    // open core: every bot focuses the exposed chest (still never the head)
+    if core {
+        return (wx, WARDEN_SEE_CHEST, wz);
+    }
+    let side = if slot.is_multiple_of(2) { -1.0 } else { 1.0 };
+    (wx + side * WARDEN_ARM_X, WARDEN_SEE_ARM, wz)
+}
+
+/// The Warden is huge and centre cover hides its chest — return a hit height the
+/// shooter can actually see. Prefer the arm (least damage); never the head.
+/// `None` = fully covered.
+fn warden_see(m: &Map, o: [f64; 3], wx: f64, wz: f64, slot: usize, core: bool) -> Option<f64> {
+    let side = if slot.is_multiple_of(2) { -1.0 } else { 1.0 };
+    let pts: [(f64, f64); 4] = if core {
+        [
+            (wx, WARDEN_SEE_CHEST),
+            (wx + side * WARDEN_ARM_X, WARDEN_SEE_ARM),
+            (wx - side * WARDEN_ARM_X, WARDEN_SEE_ARM),
+            (wx, WARDEN_SEE_WAIST),
+        ]
+    } else {
+        [
+            (wx + side * WARDEN_ARM_X, WARDEN_SEE_ARM),
+            (wx - side * WARDEN_ARM_X, WARDEN_SEE_ARM),
+            (wx, WARDEN_SEE_CHEST),
+            (wx, WARDEN_SEE_WAIST),
+        ]
+    };
+    pts
+    .into_iter()
+    .find(|&(x, y)| los(m, o, [x, y, wz]))
+    .map(|(_, y)| y)
+}
+
 /// A finite JSON number (not a bool), clamped to [lo, hi].
 pub fn as_num(v: Option<&Value>, lo: f64, hi: f64) -> Option<f64> {
     let f = v?.as_number()?.as_f64()?;
@@ -1376,6 +1493,113 @@ pub struct WarnMark {
     pub dmg: i64,
     pub overhead: bool,
     pub quake: bool,
+}
+
+/// The Warden: a giant torso-only totem god summoned at half the kill limit.
+/// While it lives the clock and the scores freeze, fighters cannot hurt each
+/// other, normal drops stop and only the Warden calls disasters. It fights
+/// back with arm slams (instant kill in the warning circle), laser eyes
+/// (instant kill on the beam, cover saves you) and its own disasters.
+#[derive(Clone, Debug)]
+pub struct Warden {
+    pub hp: i64,
+    pub max: i64,
+    pub x: f64,
+    pub z: f64,
+    /// When the arm-lift telegraph ends and the slam lands (0 = idle).
+    pub slab_arm: f64,
+    pub slab_land: f64,
+    pub slab_at: f64,
+    /// Laser: when the warn ends (eyes glow) and the beam runs (0 = idle).
+    pub laser_warn: f64,
+    pub laser_on: f64,
+    pub laser_yaw: f64,
+    pub laser_at: f64,
+    /// Body facing (radians). The torso turns around; laser_yaw is the beam.
+    pub yaw: f64,
+    /// Next disaster call (0 = none).
+    pub dis_at: f64,
+    /// Checkpoints fired (75% / 50% / 25%).
+    pub ck: [bool; WARDEN_CKPT],
+    /// Each arm's remaining HP; 0 = that arm is disabled and skips its next slam.
+    pub arm_l: i64,
+    pub arm_r: i64,
+    /// Which arm the next slam uses (0 left, 1 right, 2 both).
+    pub slam_arm: u8,
+    pub born: f64,
+    /// Exposed Core: chest is open until this clock (0 = plated / covered).
+    pub core_until: f64,
+    /// Gravity Grip: warn ends, pull runs until grip_on, next cast at grip_at.
+    pub grip_warn: f64,
+    pub grip_on: f64,
+    pub grip_at: f64,
+}
+
+impl Warden {
+    /// The three torso volumes as axis-aligned boxes (waist, chest, head) plus
+    /// the two arm volumes. `x`/`z` are the Warden's map centre. Box3 is
+    /// `[lo_x, lo_y, lo_z, hi_x, hi_y, hi_z]`.
+    pub fn boxes(&self) -> [Box3; 5] {
+        let (wx, wz) = (self.x, self.z);
+        let vol = |hw: f64, hd: f64, y0: f64, y1: f64, cx: f64| {
+            [cx - hw, y0, wz - hd, cx + hw, y1, wz + hd]
+        };
+        let (bw, bd, by0, by1) = WARDEN_BOX_WAIST;
+        let (ch, cd, cy0, cy1) = WARDEN_BOX_CHEST;
+        let (hh, hd, hy0, hy1) = WARDEN_BOX_HEAD;
+        let (ah, ad, ay0, ay1) = WARDEN_BOX_ARM;
+        [
+            vol(bw, bd, by0, by1, wx),
+            vol(ch, cd, cy0, cy1, wx),
+            vol(hh, hd, hy0, hy1, wx),
+            vol(ah, ad, ay0, ay1, wx - WARDEN_ARM_X),
+            vol(ah, ad, ay0, ay1, wx + WARDEN_ARM_X),
+        ]
+    }
+
+    /// Index of the volume a shot hit (0 waist, 1 chest, 2 head, 3 left arm,
+    /// 4 right arm). Disabled arms are not hit volumes — the shot passes to
+    /// the torso behind. Head is no crit.
+    pub fn hit_index(&self, o: [f64; 3], d: [f64; 3], maxd: f64) -> Option<(usize, f64)> {
+        let bs = self.boxes();
+        let mut best: Option<(usize, f64)> = None;
+        for (i, b) in bs.iter().enumerate() {
+            if i == 3 && self.arm_l <= 0 {
+                continue;
+            }
+            if i == 4 && self.arm_r <= 0 {
+                continue;
+            }
+            if let Some(th) = ray_box(o, d, b) {
+                if th <= maxd && best.map(|bt| th < bt.1).unwrap_or(true) {
+                    best = Some((i, th));
+                }
+            }
+        }
+        best
+    }
+
+    /// Is this volume the crit box (the head)?
+    pub fn is_head(i: usize) -> bool {
+        i == 2
+    }
+
+    pub fn is_arm(i: usize) -> bool {
+        i == 3 || i == 4
+    }
+}
+
+/// Torso damage while the core is plated vs exposed (arms use their own mult).
+/// Twin: wardenBodyMult in games/strike.js.
+fn warden_body_mult(wd: &Warden, vol: usize, t: f64) -> f64 {
+    if wd.core_until <= t {
+        return WARDEN_CORE_COVER_MULT;
+    }
+    if vol == 1 {
+        WARDEN_CORE_HIT_MULT
+    } else {
+        1.0
+    }
 }
 
 /// The Contested Capture crate: hold it CRATE_CLAIM seconds (damage interrupts).
@@ -1780,6 +2004,14 @@ pub struct Strike {
     pub hot_at: Option<f64>,
     pub fuse_at: Option<f64>,
     pub world_k: i64,
+    /// The host's "Summon the Warden" option (half-score mid-match boss).
+    pub warden_opt: bool,
+    /// Set once the Warden has risen this match — it is a one-shot, not a recurring event.
+    pub warden_done: bool,
+    /// The Warden, while it lives. None before it is summoned and after it dies.
+    pub warden: Option<Warden>,
+    /// ms_left frozen at the summon (the clock is parked here until it dies).
+    pub warden_frozen_ms: i64,
     pub dirty: Vec<String>,
     pub shots: Vec<Value>,
     /// Blast points since the last snapshot ("b" rows): [x, y, z] in cm.
@@ -1814,6 +2046,7 @@ impl Strike {
             bubbles: Vec::new(), fate: None, event: None, event_at: None, capture: None,
             hot_at: None, fuse_at: None, world_k: 0,
             disaster: None, disaster_at: None, warns: Vec::new(),
+            warden_opt: true, warden_done: false, warden: None, warden_frozen_ms: 0,
             decoys: Vec::new(),
             shots: Vec::new(), booms: Vec::new(), detonate_echoes: Vec::new(), rockets: Vec::new(),
             rocket_k: 0, pending: Vec::new(), k: 0, sent: VecDeque::new(),
@@ -1875,7 +2108,14 @@ impl Strike {
 
     pub fn ms_left(&self, t: f64) -> i64 {
         match self.phase {
-            Phase::Round => (((self.ends_at - t) * 1000.0) as i64).max(0),
+            Phase::Round => {
+                // The Warden freezes the round clock where it stood at the summon.
+                if self.warden.is_some() {
+                    self.warden_frozen_ms.max(0)
+                } else {
+                    (((self.ends_at - t) * 1000.0) as i64).max(0)
+                }
+            }
             Phase::Warmup => self.minutes * 60000,
             _ => 0,
         }
@@ -1975,7 +2215,7 @@ impl Strike {
 
     #[allow(clippy::too_many_arguments)] // one per start option the lobby sends, plus the clock
     pub fn start(&mut self, members: &[(String, Value)], minutes: &Value, kills: &Value, tsize: &Value,
-                 diff: &Value, map: &Value, t: f64) -> Option<String> {
+                 diff: &Value, map: &Value, warden: &Value, t: f64) -> Option<String> {
         if self.running() {
             return Some("a match is already on: the host can end it first".into());
         }
@@ -2027,6 +2267,11 @@ impl Strike {
         self.capture = None;
         self.disaster = None;
         self.disaster_at = Some(t + DIS_FIRST);
+        // The Warden: opt-in from the host ("Summon the Warden" next to Map view 2D).
+        self.warden_opt = warden.as_i64().map(|v| v != 0).unwrap_or(warden.as_bool().unwrap_or(true));
+        self.warden = None;
+        self.warden_done = false;
+        self.warden_frozen_ms = 0;
         self.warns.clear();
         self.portals.clear();
         self.mines.clear();
@@ -2068,6 +2313,9 @@ impl Strike {
         self.disaster_at = None;
         self.dis_at = None;
         self.warns.clear();
+        self.warden = None;
+        self.warden_done = false;
+        self.warden_frozen_ms = 0;
     }
 
     pub fn running(&self) -> bool {
@@ -3003,12 +3251,625 @@ impl Strike {
             .collect()
     }
 
+    /// True while the mid-match boss is on the field. PvP is off, scores and the
+    /// round clock are frozen, and the drop / auto-disaster clocks are suspended.
+    pub fn warden_live(&self) -> bool {
+        self.warden.is_some()
+    }
+
+    /// Apply one shot to the Warden. Arms soak at WARDEN_ARM_DMG_MULT on their own
+    /// pool (0 = disabled, shots then pass to the torso). The head is no weak point:
+    /// never apply the weapon head-crit here.
+    fn warden_hit(&mut self, w: usize, o: [f64; 3], d: [f64; 3], reach: f64, t: f64) -> Option<(i64, bool)> {
+        let (head, arm_side, dmg) = {
+            let wd = self.warden.as_ref()?;
+            let (vol, _th) = wd.hit_index(o, d, reach)?;
+            let head = false;
+            let arm_side = if vol == 3 { Some(0u8) } else if vol == 4 { Some(1u8) } else { None };
+            let base = WEAPONS[w].damage;
+            // arms soak on their own pool; the torso is plated until the core opens
+            let dmg = if arm_side.is_some() {
+                ((base as f64) * WARDEN_ARM_DMG_MULT).round() as i64
+            } else {
+                ((base as f64) * warden_body_mult(wd, vol, t)).round() as i64
+            };
+            (head, arm_side, dmg.max(0))
+        };
+        if dmg <= 0 {
+            return Some((0, head));
+        }
+        if let Some(side) = arm_side {
+            let wd = self.warden.as_mut()?;
+            if side == 0 {
+                wd.arm_l = (wd.arm_l - dmg).max(0);
+            } else {
+                wd.arm_r = (wd.arm_r - dmg).max(0);
+            }
+        } else if let Some(wd) = self.warden.as_mut() {
+            wd.hp = (wd.hp - dmg).max(0);
+        }
+        self.warden_after_damage(t);
+        Some((dmg, head))
+    }
+
+    /// Launcher splash on the Warden: the nearest live volume takes blast_damage
+    /// from the detonation point. Players take nothing while the Warden lives.
+    fn warden_blast(&mut self, at: [f64; 3], t: f64) {
+        let mut best: Option<(usize, bool, i64)> = None;
+        {
+            let Some(wd) = self.warden.as_ref() else { return };
+            for (i, b) in wd.boxes().iter().enumerate() {
+                if i == 3 && wd.arm_l <= 0 {
+                    continue;
+                }
+                if i == 4 && wd.arm_r <= 0 {
+                    continue;
+                }
+                let cx = at[0].clamp(b[0], b[3]);
+                let cy = at[1].clamp(b[1], b[4]);
+                let cz = at[2].clamp(b[2], b[5]);
+                let dist = dist3(at, [cx, cy, cz]);
+                if dist > BLAST_R {
+                    continue;
+                }
+                let direct = dist < DIRECT_R;
+                let dmg = blast_damage(dist, direct);
+                if dmg > 0 && best.map(|bd| dmg > bd.2).unwrap_or(true) {
+                    best = Some((i, Warden::is_head(i), dmg));
+                }
+            }
+        }
+        let Some((vol, _head, dmg)) = best else { return };
+        if dmg <= 0 {
+            return;
+        }
+        if Warden::is_arm(vol) {
+            let Some(wd) = self.warden.as_mut() else { return };
+            if vol == 3 {
+                wd.arm_l = (wd.arm_l - dmg).max(0);
+            } else {
+                wd.arm_r = (wd.arm_r - dmg).max(0);
+            }
+        } else if let Some(wd) = self.warden.as_mut() {
+            let dealt = ((dmg as f64) * warden_body_mult(wd, vol, t)).round() as i64;
+            wd.hp = (wd.hp - dealt).max(0);
+        }
+        self.warden_after_damage(t);
+    }
+
+    /// After any Warden damage: fire the 75/50/25 checkpoints (loot ring) and death.
+    fn warden_after_damage(&mut self, t: f64) {
+        let Some(wd) = self.warden.as_ref() else { return };
+        let (hp, max) = (wd.hp, wd.max);
+        let mut fire_ck: Option<usize> = None;
+        if let Some(wd) = self.warden.as_mut() {
+            const FRACS: [f64; WARDEN_CKPT] = [0.75, 0.50, 0.25];
+            for (i, f) in FRACS.iter().enumerate() {
+                if !wd.ck[i] && (hp as f64) <= (max as f64 * *f) {
+                    wd.ck[i] = true;
+                    fire_ck = Some(i);
+                    break;
+                }
+            }
+        }
+        if let Some(ck) = fire_ck {
+            self.pending.push((
+                "warden",
+                json!({"ev": "warden", "phase": "ckpt", "ck": ck, "name": WARDEN_CHECK_NAMES[ck + 1],
+                       "hp": hp, "max": max}),
+            ));
+            self.warden_loot(ck, t);
+            // checkpoint identities: I shoves everyone clear, II cracks the core open
+            if ck == 0 {
+                self.warden_shock(t);
+            } else if ck == 1 {
+                if let Some(wd) = self.warden.as_mut() {
+                    wd.core_until = wd.core_until.max(t + WARDEN_CK2_EXPOSE);
+                }
+            }
+            self.warden_after_damage(t);
+            return;
+        }
+        if hp <= 0 {
+            self.warden_death(t);
+        }
+    }
+
+    /// Checkpoint I: a shockwave shoves every fighter clear of the body (not a slam).
+    fn warden_shock(&mut self, t: f64) {
+        let Some(wd) = self.warden.as_ref() else { return };
+        let (gx, gz) = (wd.x, wd.z);
+        let mut shoves: Vec<(usize, f64, f64)> = Vec::new();
+        for (j, (_, v)) in self.players.iter().enumerate() {
+            if v.dead || v.gone || self.disaster_immune(j, t) {
+                continue;
+            }
+            let (dx, dz) = (v.x - gx, v.z - gz);
+            let d = (dx * dx + dz * dz).sqrt().max(0.15);
+            shoves.push((j, dx / d, dz / d));
+        }
+        for (j, kx, kz) in shoves {
+            let p = &mut self.players[j].1;
+            p.x = (p.x + kx * WARDEN_CK1_PUSH).clamp(-200.0, 200.0);
+            p.z = (p.z + kz * WARDEN_CK1_PUSH).clamp(-200.0, 200.0);
+            p.hist.push_back((t, p.x, p.y, p.z));
+        }
+    }
+
+    /// Checkpoint loot: one of each non-disaster totem plus a health pack, scattered
+    /// away from the body (r = 12..20, hashed angles). One-shot slots.
+    fn warden_loot(&mut self, ckpt: usize, t: f64) {
+        let _ = t;
+        let Some(wd) = self.warden.as_ref() else { return };
+        let (wx, wz) = (wd.x, wd.z);
+        let born = wd.born as u32;
+        let mut kinds: Vec<&'static str> = TOTEM_KINDS
+            .iter()
+            .copied()
+            .filter(|k| !DISASTERS.contains(k))
+            .collect();
+        kinds.push("health");
+        self.ensure_drop_slots();
+        // one-shot loot ring lives past the recycled drop slots (never round-robined)
+        let base = self.kinds.len();
+        for k in kinds.iter() {
+            self.items.push(None);
+            self.kinds.push(k);
+            self.spots.push([0.0, 0.0, 0.0]);
+            self.cursed.push(false);
+        }
+        let seed = born
+            .wrapping_mul(0x9E37_79B9)
+            .wrapping_add(0x57A7_1001)
+            .wrapping_add((ckpt as u32).wrapping_mul(64));
+        for (i, kind) in kinds.iter().enumerate() {
+            let salt = 200 + (ckpt as u32) * 64 + i as u32;
+            // scatter clear of the body (fists land at |x|≈8.7, chest half-width 6.6) —
+            // even slots bias +Z, odd −Z so the burst fans both ways
+            let side_z = if i % 2 == 0 { 1.0 } else { -1.0 };
+            let mut ang = side_z * (std::f64::consts::PI * 0.5)
+                + (hash_match(seed, salt) - 0.5) * std::f64::consts::PI * 1.4;
+            let mut rad = WARDEN_LOOT_R0 + hash_match(seed, salt.wrapping_add(17)) * WARDEN_LOOT_RSPAN;
+            let mut x = wx + ang.cos() * rad;
+            let mut z = wz + ang.sin() * rad;
+            for k in 0..24 {
+                if (x - wx).hypot(z - wz) >= WARDEN_LOOT_RMIN
+                    && overlaps(self.map(), x, 0.1, z, 0.0).is_none()
+                {
+                    break;
+                }
+                let s2 = seed
+                    .wrapping_add(((k as u32) + 1).wrapping_mul(2654435761))
+                    .wrapping_add(i as u32);
+                ang = side_z * (std::f64::consts::PI * 0.5)
+                    + (hash_match(s2, salt) - 0.5) * std::f64::consts::PI * 1.4;
+                rad = WARDEN_LOOT_R0 + hash_match(s2, salt.wrapping_add(17)) * WARDEN_LOOT_RSPAN;
+                x = wx + ang.cos() * rad;
+                z = wz + ang.sin() * rad;
+            }
+            let slot = base + i;
+            self.spots[slot] = [x, 0.0, z];
+            self.items[slot] = None;
+            if self.cursed.len() <= slot {
+                self.cursed.resize(slot + 1, false);
+            }
+            self.cursed[slot] = false;
+            let tag = if *kind == "health" { "warden-pack" } else { "warden" };
+            if *kind == "health" {
+                self.pending.push((
+                    "pack",
+                    json!({"i": slot, "kind": "health", "x": cm(x), "z": cm(z), "tag": tag}),
+                ));
+            } else {
+                self.pending.push((
+                    "totem",
+                    json!({"i": slot, "kind": kind, "x": cm(x), "z": cm(z), "tag": tag}),
+                ));
+            }
+        }
+    }
+
+    /// The Warden dies: the match is back on — clocks restart, the score and the
+    /// round clock unfreeze.
+    fn warden_death(&mut self, t: f64) {
+        let Some(wd) = self.warden.take() else { return };
+        self.pending.push((
+            "warden",
+            json!({"ev": "warden", "phase": "dead", "hp": 0, "max": wd.max}),
+        ));
+        self.totem_at = Some(t + TOTEM_GAP);
+        self.pack_at = Some(t + PACK_GAP);
+        self.dis_at = Some(t + DIS_GAP_DROP);
+        self.disaster_at = Some(t + DIS_FIRST);
+        self.ends_at = t + (self.warden_frozen_ms as f64) / 1000.0;
+        self.warden_frozen_ms = 0;
+        self.warden_done = true;
+        self.mark_all();
+    }
+
+    /// Summon the Warden at map centre. Max HP scales with the fighters on the
+    /// field; the round clock freezes and every drop / auto-disaster clock stops.
+    fn warden_summon(&mut self, t: f64) {
+        let fighters = self
+            .players
+            .iter()
+            .filter(|(_, p)| !p.dead && !p.gone)
+            .count() as i64;
+        let max = (WARDEN_HP_PER * fighters).clamp(WARDEN_MIN_HP, WARDEN_MAX_HP);
+        let b = self.map().bounds();
+        let cx = (b[0] + b[3]) * 0.5;
+        let cz = (b[2] + b[5]) * 0.5;
+        self.warden_frozen_ms = self.ms_left(t);
+        self.warden = Some(Warden {
+            hp: max,
+            max,
+            x: cx,
+            z: cz,
+            slab_arm: 0.0,
+            slab_land: 0.0,
+            slab_at: t + 2.5,
+            laser_warn: 0.0,
+            laser_on: 0.0,
+            laser_yaw: 0.0,
+            laser_at: t + WARDEN_LASER_CD,
+            yaw: 0.0,
+            dis_at: t + WARDEN_DIS_CD,
+            ck: [false; WARDEN_CKPT],
+            arm_l: WARDEN_ARM_HP,
+            arm_r: WARDEN_ARM_HP,
+            slam_arm: 0,
+            born: t,
+            core_until: 0.0,
+            grip_warn: 0.0,
+            grip_on: 0.0,
+            grip_at: t + 8.0,
+        });
+        // suspend the normal drops and the auto-disaster clock — only the Warden
+        // may drop non-disaster loot or call a disaster while it lives
+        self.totem_at = None;
+        self.pack_at = None;
+        self.dis_at = None;
+        self.disaster_at = None;
+        self.pending.push((
+            "warden",
+            json!({"ev": "warden", "phase": "rise", "hp": max, "max": max,
+                   "x": cm(cx), "z": cm(cz),
+                   "armL": WARDEN_ARM_HP, "armR": WARDEN_ARM_HP}),
+        ));
+        self.mark_all();
+    }
+
+    /// One tick of the Warden: summon at half the kill limit, then slam / laser /
+    /// disaster attacks and the checkpoint / death bookkeeping.
+    #[allow(clippy::too_many_lines)]
+    fn warden_tick(&mut self, t: f64) {
+        if self.warden.is_none() {
+            if !self.warden_opt || self.warden_done {
+                return;
+            }
+            let half = ((self.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+            if self.scores[0] >= half || self.scores[1] >= half {
+                self.warden_summon(t);
+            }
+            return;
+        }
+        // --- body turn: the torso faces around the arena (twin of JS wardenTick) ---
+        {
+            let Some(wd) = self.warden.as_mut() else { return };
+            if wd.laser_on > 0.0 && t >= wd.laser_warn {
+                wd.yaw = wd.laser_yaw;
+            } else {
+                let turn_n = ((t - wd.born) / 6.0).floor() as u32;
+                let t_yaw = hash_match(wd.born as u32 ^ 0xB0D9, 40 + turn_n) * std::f64::consts::TAU;
+                let y0 = wd.yaw;
+                let mut yd = (t_yaw - y0 + std::f64::consts::PI * 3.0) % (std::f64::consts::TAU)
+                    - std::f64::consts::PI;
+                if yd < -std::f64::consts::PI {
+                    yd += std::f64::consts::TAU;
+                }
+                let dt = 1.0 / HZ;
+                wd.yaw = y0 + yd * (dt / 2.0).min(1.0);
+            }
+        }
+        // --- slam telegraph / land ---
+        {
+            let Some(wd) = self.warden.as_mut() else { return };
+            if wd.slab_arm > 0.0 && t >= wd.slab_arm {
+                // the slam lands: everyone inside each active arm's circle dies
+                let (wx, wz) = (wd.x, wd.z);
+                let arm = wd.slam_arm;
+                let (al, ar) = (wd.arm_l, wd.arm_r);
+                wd.slab_arm = 0.0;
+                wd.slab_land = 0.0;
+                let mut pts: Vec<(f64, f64)> = Vec::new();
+                if (arm == 0 || arm == 2) && al > 0 {
+                    pts.push((wx - WARDEN_ARM_X, wz));
+                }
+                if (arm == 1 || arm == 2) && ar > 0 {
+                    pts.push((wx + WARDEN_ARM_X, wz));
+                }
+                self.world_k += 1;
+                for (sx, sz) in &pts {
+                    self.warns.push(WarnMark {
+                        id: self.world_k,
+                        x: *sx,
+                        y: 0.0,
+                        z: *sz,
+                        hit_at: t,
+                        r: WARDEN_SLAB_R,
+                        dmg: 0,
+                        overhead: false,
+                        quake: true,
+                    });
+                }
+                let mut victims: Vec<usize> = Vec::new();
+                let mut blasts: Vec<(usize, f64, f64, f64)> = Vec::new(); // (j, x, z, dsl)
+                for (j, (_, v)) in self.players.iter().enumerate() {
+                    if v.dead || v.gone {
+                        continue;
+                    }
+                    for (sx, sz) in &pts {
+                        let dsl = (v.x - *sx).hypot(v.z - *sz);
+                        if dsl <= WARDEN_SLAB_R_HIT {
+                            victims.push(j);
+                            break;
+                        }
+                        if dsl <= WARDEN_SLAB_KNOCK {
+                            // the blast blows everyone near the smash away and hurts
+                            blasts.push((j, *sx, *sz, dsl));
+                            break;
+                        }
+                    }
+                }
+                for (j, sx, sz, dsl) in blasts {
+                    let lnsl = dsl.max(0.05);
+                    let (px, pz) = {
+                        let v = &self.players[j].1;
+                        ((v.x - sx) / lnsl, (v.z - sz) / lnsl)
+                    };
+                    let dead_now = {
+                        let p = &mut self.players[j].1;
+                        p.x = (p.x + px * WARDEN_SLAB_KNOCK_PUSH).clamp(-200.0, 200.0);
+                        p.z = (p.z + pz * WARDEN_SLAB_KNOCK_PUSH).clamp(-200.0, 200.0);
+                        p.hist.push_back((t, p.x, p.y, p.z));
+                        p.hp = (p.hp - WARDEN_SLAB_BLAST_DMG).max(0);
+                        p.hp <= 0
+                    };
+                    if dead_now {
+                        victims.push(j);
+                    }
+                }
+                for j in victims {
+                    self.env_kill(j, "warden-slam", t);
+                }
+                // the slam staggers the torso and cracks the chest core open
+                if let Some(wd) = self.warden.as_mut() {
+                    wd.core_until = t + WARDEN_CORE_EXPOSE;
+                }
+                return;
+            }
+        }
+        // start a slam telegraph (arm-lift) when the CD is up
+        {
+            let Some(wd) = self.warden.as_mut() else { return };
+            if wd.slab_arm <= 0.0 && wd.slab_land <= 0.0 && t >= wd.slab_at {
+                let slam_n = ((t - wd.born) / WARDEN_SLAB_CD.max(0.1)) as u32;
+                let mut arm: u8 = if (slam_n + 1).is_multiple_of(3) {
+                    2
+                } else if hash_match(wd.born as u32 ^ 0x57A9, 90 + slam_n) < 0.5 {
+                    0
+                } else {
+                    1
+                };
+                // a disabled arm skips its slam; both disabled = no slam
+                if arm == 0 && wd.arm_l <= 0 {
+                    arm = if wd.arm_r > 0 { 1 } else { 9 };
+                } else if arm == 1 && wd.arm_r <= 0 {
+                    arm = if wd.arm_l > 0 { 0 } else { 9 };
+                } else if arm == 2 {
+                    if wd.arm_l <= 0 && wd.arm_r <= 0 {
+                        arm = 9;
+                    } else if wd.arm_l <= 0 {
+                        arm = 1;
+                    } else if wd.arm_r <= 0 {
+                        arm = 0;
+                    }
+                }
+                if arm == 9 {
+                    wd.slab_at = t + 1.0;
+                } else {
+                    let (wx, wz) = (wd.x, wd.z);
+                    wd.slam_arm = arm;
+                    wd.slab_arm = t + WARDEN_SLAB_ARM;
+                    wd.slab_land = t + WARDEN_SLAB_ARM;
+                    wd.slab_at = t + WARDEN_SLAB_ARM + WARDEN_SLAB_CD;
+                    let wire_at = t + (WARDEN_SLAB_ARM - WARDEN_SLAB_WIRE).max(0.0);
+                    self.world_k += 1;
+                    let mut pts: Vec<(f64, f64)> = Vec::new();
+                    if arm == 0 || arm == 2 {
+                        pts.push((wx - WARDEN_ARM_X, wz));
+                    }
+                    if arm == 1 || arm == 2 {
+                        pts.push((wx + WARDEN_ARM_X, wz));
+                    }
+                    for (sx, sz) in pts {
+                        self.warns.push(WarnMark {
+                            id: self.world_k,
+                            x: sx,
+                            y: 0.0,
+                            z: sz,
+                            hit_at: wire_at.max(t + 0.05),
+                            r: WARDEN_SLAB_R,
+                            dmg: 0,
+                            overhead: false,
+                            quake: true,
+                        });
+                    }
+                }
+            }
+        }
+        // --- laser eyes ---
+        let dt = 1.0 / HZ;
+        {
+            let Some(wd) = self.warden.as_mut() else { return };
+            if wd.laser_on > 0.0 && t >= wd.laser_on {
+                wd.laser_warn = 0.0;
+                wd.laser_on = 0.0;
+            }
+            if wd.laser_on > 0.0 && t >= wd.laser_warn {
+                wd.laser_yaw = (wd.laser_yaw + WARDEN_LASER_YAW0 * dt) % (std::f64::consts::TAU);
+            } else if wd.laser_on <= 0.0 && t >= wd.laser_at {
+                let flip = hash_match(wd.born as u32 ^ 0x1A5E, 80 + ((t - wd.born) as u32));
+                wd.laser_yaw = if flip < 0.5 { 0.0 } else { std::f64::consts::PI };
+                wd.laser_warn = t + WARDEN_LASER_WARN;
+                wd.laser_on = t + WARDEN_LASER_WARN + WARDEN_LASER_HOLD;
+                wd.laser_at = t + WARDEN_LASER_WARN + WARDEN_LASER_HOLD + WARDEN_LASER_CD;
+            }
+        }
+        // beam damage: anyone the ground laser touches (and that has no cover) dies
+        if let Some(wd) = self.warden.as_ref() {
+            if wd.laser_on > t && t >= wd.laser_warn {
+                // ground laser: the eye looks down and the beam slants to the floor
+                let eye = [wd.x, WARDEN_SEE_HEAD, wd.z];
+                let dir = [wd.laser_yaw.cos(), 0.0, wd.laser_yaw.sin()];
+                let mut victims: Vec<usize> = Vec::new();
+                for (j, (_, v)) in self.players.iter().enumerate() {
+                    if v.dead || v.gone {
+                        continue;
+                    }
+                    if self.disaster_immune(j, t) {
+                        continue;
+                    }
+                    let ppos = [v.x, v.y + 0.9, v.z];
+                    let px = ppos[0] - eye[0];
+                    let pz = ppos[2] - eye[2];
+                    let along = px * dir[0] + pz * dir[2];
+                    // stay on the map: the beam stops at the arena edge
+                    let run_k = map_laser_run(self.map(), wd.x, wd.z, wd.laser_yaw);
+                    if along < 0.0 || along > run_k {
+                        continue;
+                    }
+                    let cx = eye[0] + dir[0] * along;
+                    let cz = eye[2] + dir[2] * along;
+                    let lat = (ppos[0] - cx).hypot(ppos[2] - cz);
+                    if lat > WARDEN_LASER_W + 0.3 {
+                        continue;
+                    }
+                    // cover saves: hide behind something
+                    if !los(self.map(), eye, ppos) {
+                        continue;
+                    }
+                    victims.push(j);
+                }
+                for j in victims {
+                    self.env_kill(j, "warden-laser", t);
+                }
+            }
+        }
+        // --- the Warden calls a disaster ---
+        {
+            let mut call: Option<&'static str> = None;
+            if let Some(wd) = self.warden.as_mut() {
+                if t >= wd.dis_at {
+                    wd.dis_at = t + WARDEN_DIS_CD;
+                    let k = ((t - wd.born) / WARDEN_DIS_CD.max(0.1)) as u32;
+                    call = Some(DISASTERS[dis_kind(wd.born as u32 ^ 0xD15A, k, DISASTERS.len())]);
+                }
+            }
+            if let Some(kind) = call {
+                self.start_disaster(kind, t);
+            }
+        }
+        // --- Gravity Grip: open-hand pull toward the torso (cover / dash breaks it) ---
+        {
+            let dt = 1.0 / HZ;
+            let mut grip_live = false;
+            let mut grip_warn = false;
+            if let Some(wd) = self.warden.as_mut() {
+                if wd.grip_warn > 0.0 && t >= wd.grip_warn {
+                    wd.grip_warn = 0.0;
+                    wd.grip_on = t + WARDEN_GRIP_HOLD;
+                }
+                if wd.grip_on > 0.0 && t >= wd.grip_on {
+                    wd.grip_on = 0.0;
+                }
+                grip_live = wd.grip_on > 0.0 && t < wd.grip_on;
+                grip_warn = wd.grip_warn > 0.0;
+                if !grip_warn && !grip_live && t >= wd.grip_at {
+                    wd.grip_warn = t + WARDEN_GRIP_WARN;
+                    wd.grip_at = t + WARDEN_GRIP_WARN + WARDEN_GRIP_CD;
+                    grip_warn = true;
+                }
+            }
+            let _ = grip_warn;
+            if grip_live {
+                let Some(wd) = self.warden.as_ref() else { return };
+                let (gx, gz) = (wd.x, wd.z);
+                let mut acts: Vec<(usize, bool, f64, f64)> = Vec::new();
+                for (j, (_, v)) in self.players.iter().enumerate() {
+                    if v.dead || v.gone || self.disaster_immune(j, t) {
+                        continue;
+                    }
+                    // dash / spawn cover breaks the pull
+                    if v.speed_until > t || v.protect > t {
+                        continue;
+                    }
+                    let (dx, dz) = (gx - v.x, gz - v.z);
+                    let d = (dx * dx + dz * dz).sqrt();
+                    if d > WARDEN_GRIP_R {
+                        continue;
+                    }
+                    if !los(self.map(), [gx, WARDEN_SEE_CHEST, gz], [v.x, v.y + 0.9, v.z]) {
+                        continue;
+                    }
+                    if d <= WARDEN_GRIP_MIN {
+                        // too close: the free arm sweeps you out
+                        let (sx, sz) = (v.x - gx, v.z - gz);
+                        let sl = (sx * sx + sz * sz).sqrt().max(0.15);
+                        acts.push((j, true, sx / sl, sz / sl));
+                    } else {
+                        acts.push((j, false, dx, dz));
+                    }
+                }
+                let mut victims: Vec<usize> = Vec::new();
+                for (j, sweep, ux, uz) in acts {
+                    let dead_now = {
+                        let p = &mut self.players[j].1;
+                        if sweep {
+                            p.x = (p.x + ux * 6.0).clamp(-200.0, 200.0);
+                            p.z = (p.z + uz * 6.0).clamp(-200.0, 200.0);
+                            p.hist.push_back((t, p.x, p.y, p.z));
+                            p.hp = (p.hp - WARDEN_GRIP_SWEEP_DMG).max(0);
+                            p.hp <= 0
+                        } else {
+                            let ln = (ux * ux + uz * uz).sqrt().max(0.05);
+                            let step = ln.min(WARDEN_GRIP_PULL * dt);
+                            p.x = (p.x + (ux / ln) * step).clamp(-200.0, 200.0);
+                            p.z = (p.z + (uz / ln) * step).clamp(-200.0, 200.0);
+                            p.hist.push_back((t, p.x, p.y, p.z));
+                            false
+                        }
+                    };
+                    if dead_now {
+                        victims.push(j);
+                    }
+                }
+                for j in victims {
+                    self.env_kill(j, "warden-grip", t);
+                }
+            }
+        }
+    }
+
     /// Drop one totem: a fresh kind and spot derived from the drop counter, landing in
     /// the OLDEST totem slot of the ring (replacing whatever sat there, taken or not),
     /// announced to the room by the "totem" event tick() emits. (can_mole: the mole only
     /// drops when the other side fields a bot — it can't turn a human. Repetitions
     /// allowed: kinds repeat by chance.)
     fn spawn_totem(&mut self, can_mole: bool) {
+        if self.warden.is_some() {
+            return;
+        }
         self.ensure_drop_slots();
         let a = self.drop_rings().0;
         self.totem_k += 1;
@@ -3048,6 +3909,9 @@ impl Strike {
     /// Disaster totems: their own ring, their own clock, never mixed into the personal
     /// roster. Tagged "dis" so the beacon reads as an arena-wide event, not a power-up.
     fn spawn_disaster_totem(&mut self) {
+        if self.warden.is_some() {
+            return;
+        }
         self.ensure_drop_slots();
         let d = self.drop_rings().2;   // the Disaster ring starts where the pack ring ends
         self.dis_k += 1;
@@ -3070,6 +3934,9 @@ impl Strike {
     /// Drop one loose pack (health or ammo, even odds): its own clock, independent of the
     /// totems — same recycled-slot ring, same fresh random spot each time.
     fn spawn_pack(&mut self) {
+        if self.warden.is_some() {
+            return;
+        }
         self.ensure_drop_slots();
         let b = self.drop_rings().1;
         self.pack_k += 1;
@@ -3134,6 +4001,33 @@ impl Strike {
         }
         let team = self.players[i].1.team;
         let t_view = res.2;
+        // The Warden: while it lives, fighters cannot hurt each other — only the
+        // Warden takes damage. Shots still draw a tracer; disasters still hurt.
+        if self.warden.is_some() {
+            let end = self
+                .warden
+                .as_ref()
+                .and_then(|wd| wd.hit_index(o, d, reach))
+                .map(|(_, th)| th)
+                .unwrap_or(reach);
+            let shooter_slot = self.players[i].1.slot;
+            let mut shot = vec![
+                json!(shooter_slot),
+                json!(w),
+                json!(cm(o[0] + d[0] * end)),
+                json!(cm(o[1] + d[1] * end)),
+                json!(cm(o[2] + d[2] * end)),
+                json!(-1),
+                json!(0),
+            ];
+            if let Some((_dmg, head)) = self.warden_hit(w, o, d, reach, t) {
+                shot[6] = json!(if head { 1 } else { 0 });
+                self.mark_all();
+            }
+            let shot = Value::Array(shot);
+            self.shots.push(shot.clone());
+            return (Some(shot), None);
+        }
         let mut best: Option<(usize, f64, bool)> = None;
         for (j, (vid, v)) in self.players.iter().enumerate() {
             if vid == uid || v.dead || v.gone || v.team == team || v.spawn_t > t_view {
@@ -3427,6 +4321,11 @@ impl Strike {
         }
         self.booms.push(json!([cm(at[0]), cm(at[1]), cm(at[2])]));
         let shooter = r.shooter.clone();
+        // The Warden: the blast cannot touch fighters — only the Warden volume.
+        if self.warden.is_some() {
+            self.warden_blast(at, t);
+            return;
+        }
         // pass 1 (read-only): who is in range, and how hard it hits them
         let hits: Vec<(usize, i64)> = self.players.iter().enumerate()
             .filter(|(_, (_, v))| !v.dead && !v.gone)
@@ -3512,7 +4411,11 @@ impl Strike {
         // the mole's twist: a charmed killer's point lands on the OTHER side (the charmer's)
         let charmed = p.charm_until > t;
         let team = if charmed { 1 - p.team } else { p.team };
-        self.scores[team as usize] += 1;
+        // The Warden freezes the scoreline — kills still count on the board, but
+        // no team point is awarded until it falls.
+        if self.warden.is_none() {
+            self.scores[team as usize] += 1;
+        }
         let scores = self.scores;
         let ev = json!({"k": uid, "v": vid, "w": w, "hs": if head { 1 } else { 0 }, "kills": p.kills,
                         "deaths": deaths, "team": team, "scores": scores});
@@ -3546,7 +4449,8 @@ impl Strike {
         self.pending.push((
             "kill",
             json!({"k": null, "v": vid, "w": -1, "hs": 0, "kills": 0,
-                   "deaths": deaths, "team": 0, "scores": scores, "dis": dis}),
+                   "deaths": deaths, "team": 0, "scores": scores,
+                   "dis": dis, "how": dis}),
         ));
         self.mark(&vid);
     }
@@ -3771,6 +4675,21 @@ impl Strike {
                 if t >= d.hit_at {
                     d.hit_at = t + 1.0;
                     if d.kind == "toxicfog" {
+                        // the green gas fills the whole arena — everyone out in it chips
+                        for j in 0..self.players.len() {
+                            if self.disaster_immune(j, t) {
+                                continue;
+                            }
+                            let dead_now = {
+                                let p = &mut self.players[j].1;
+                                p.hp = (p.hp - DD_TOXIC_CHIP_DMG).max(0);
+                                p.hp <= 0
+                            };
+                            self.mark_all();
+                            if dead_now {
+                                self.env_kill(j, d.kind, t);
+                            }
+                        }
                         // the three clouds are frozen at start_disaster — the same
                         // centres the client paints, so what you see is what hurts
                         for &(zx, zz) in d.zones.clone().iter() {
@@ -3989,6 +4908,36 @@ impl Strike {
         // -- decide a goal (at most every BOT_THINK) --
         let think = self.players[i].1.bot.as_ref().map(|b| t >= b.think_at).unwrap_or(false);
         if think {
+            // The Warden: while it lives, every bot targets it (no PVP).
+            if let Some(wd) = self.warden.as_ref() {
+                let (wx, wz, core_open) = (wd.x, wd.z, wd.core_until > t);
+                let see_y = warden_see(self.map(), [x, y + EYE, z], wx, wz, i, core_open);
+                let clear = see_y.is_some();
+                let m = self.map();
+                let b = self.players[i].1.bot.as_mut().unwrap();
+                b.think_at = t + BOT_THINK;
+                b.decoy = None;
+                // keep the first sighting: restamping seen_at every think starves
+                // the BOT_REACT gate and the bot never opens fire
+                let fresh = b.target.as_deref() != Some("warden");
+                b.target = Some("warden".to_string());
+                if fresh {
+                    b.seen_at = Some(t);
+                }
+                let aim = warden_aim(wx, wz, i, core_open);
+                b.lost_x = aim.0;
+                b.lost_z = aim.2;
+                b.lost_y = see_y.unwrap_or(WARDEN_SEE_ARM);
+                b.lost_until = 0.0;
+                b.goal = if clear {
+                    None
+                } else if (wx - x).hypot(wz - z) > 14.0 {
+                    Some(m.nav_next(x, z, wx, wz, y, 2.5))
+                } else {
+                    let ang = (b.wpi as f64) * 2.399 + t * 0.7;
+                    Some(m.nav_next(x, z, wx + ang.cos() * 8.0, wz + ang.sin() * 8.0, y, 2.5))
+                };
+            } else {
             // the mole: a charmed bot sees its own side as the enemy and its old enemy as home
             let charmed = self.players[i].1.charm_until > t;
             // the closest visible enemy, resolved to its uid without holding a borrow
@@ -4129,6 +5078,7 @@ impl Strike {
                     _ => None,
                 };
             }
+            }
         }
         // -- turn and aim --
         let bait = self.players[i].1.bot.as_ref().and_then(|b| b.decoy)
@@ -4217,6 +5167,42 @@ impl Strike {
                 let b = self.players[i].1.bot.as_mut().unwrap();
                 b.aim_y = aim_y;
                 b.aim_p = aim_p;
+            }
+        }
+        // The Warden: aim at its arm (least damage) while it lives (bait/decoy still wins).
+        if bait.is_none() {
+            if let Some(wd) = self.warden.as_ref() {
+            let (wx, wz, core_open) = (wd.x, wd.z, wd.core_until > t);
+            target_alive = true;
+            let (ax, ty, az) = warden_aim(wx, wz, i, core_open);
+            let ty = warden_see(self.map(), [x, y + EYE, z], wx, wz, i, core_open).unwrap_or(ty);
+            let mut want_yaw = yaw_of(ax - x, az - z);
+            let flat = (ax - x).hypot(az - z).max(0.1);
+            let mut want_pitch = ((ty - (y + EYE)) / flat).atan().to_degrees();
+            let err_due =
+                t - self.players[i].1.bot.as_ref().map(|b| b.err_at).unwrap_or(0.0) >= BOT_THINK;
+            if err_due {
+                let seed = (t * 1000.0) as i64 as u32 & 0xFFFF;
+                let blind = self.players[i].1.blind_until > t;
+                let aim_x = BOT_AIM * self.bot_aim * self.bot_aim_mult(t, blind);
+                let ey = (mb32(seed) * 2.0 - 1.0) * aim_x.to_degrees();
+                let ep = (mb32(seed.wrapping_add(7919) & 0xFFFF) * 2.0 - 1.0) * aim_x.to_degrees();
+                let b = self.players[i].1.bot.as_mut().unwrap();
+                b.err_at = t;
+                b.err_y = ey;
+                b.err_p = ep;
+            }
+            let b = self.players[i].1.bot.as_ref().unwrap();
+            want_yaw += b.err_y;
+            want_pitch = want_pitch.clamp(-89.0, 89.0) + b.err_p;
+            let step_deg = (BOT_TURN * self.bot_turn).to_degrees() * dt;
+            let dy = (want_yaw - aim_y + 540.0).rem_euclid(360.0) - 180.0;
+            aim_y += dy.clamp(-step_deg, step_deg);
+            let dp = want_pitch - aim_p;
+            aim_p += dp.clamp(-step_deg, step_deg);
+            let b = self.players[i].1.bot.as_mut().unwrap();
+            b.aim_y = aim_y;
+            b.aim_p = aim_p;
             }
         }
         if !target_alive {
@@ -4335,11 +5321,18 @@ impl Strike {
                         let d = (dc.x - x).hypot(dc.z - z);
                         (d, los(self.map(), [x, y + EYE, z], [dc.x, 1.0 + EYE, dc.z]))
                     }
-                    None => {
-                        let tgt = b.target.as_ref().unwrap();
-                        let v = self.players.iter().find(|(u, _)| u == tgt).map(|(_, p)| p).unwrap();
-                        let d = (v.x - x).hypot(v.z - z);
-                        (d, los(self.map(), [x, y + EYE, z], [v.x, v.y + EYE, v.z]))
+                    None => match self.warden.as_ref() {
+                        Some(wd) => {
+                            let d = (wd.x - x).hypot(wd.z - z);
+                            let core_open = wd.core_until > t;
+                            (d, warden_see(self.map(), [x, y + EYE, z], wd.x, wd.z, i, core_open).is_some())
+                        }
+                        None => {
+                            let tgt = b.target.as_ref().unwrap();
+                            let v = self.players.iter().find(|(u, _)| u == tgt).map(|(_, p)| p).unwrap();
+                            let d = (v.x - x).hypot(v.z - z);
+                            (d, los(self.map(), [x, y + EYE, z], [v.x, v.y + EYE, v.z]))
+                        }
                     }
                 };
                 // only fire when the target is actually exposed right now (like the client)
@@ -4455,6 +5448,34 @@ impl Strike {
         }
         let team = p.team;
         let reach = ray_map(self.map(), o, d, WEAPONS[w].range);
+        // The Warden: only it takes bot fire while it lives.
+        if self.warden.is_some() {
+            let end = self
+                .warden
+                .as_ref()
+                .and_then(|wd| wd.hit_index(o, d, reach))
+                .map(|(_, th)| th)
+                .unwrap_or(reach);
+            let shooter_slot = self.players[i].1.slot;
+            let mut shot = vec![
+                json!(shooter_slot),
+                json!(w),
+                json!(cm(o[0] + d[0] * end)),
+                json!(cm(o[1] + d[1] * end)),
+                json!(cm(o[2] + d[2] * end)),
+                json!(-1),
+                json!(0),
+            ];
+            if let Some((_dmg, head)) = self.warden_hit(w, o, d, reach, t) {
+                shot[6] = json!(if head { 1 } else { 0 });
+                self.mark_all();
+            }
+            let shot = Value::Array(shot);
+            self.shots.push(shot.clone());
+            self.players[i].1.bot.as_mut().unwrap().fire_at = t;
+            self.players[i].1.mag[w] -= 1;
+            return Some(shot);
+        }
         // the decoy: a ghost standing in the line of fire swallows the shot (bots only fall
         // for it while it stands — the client marks the same dismiss-on-hit)
         let mut decoy_hit: Option<usize> = None;
@@ -4572,6 +5593,11 @@ impl Strike {
             self.dirty = self.players.iter().map(|(u, _)| u.to_string()).collect();
             evs.push(("go", json!({"msLeft": self.ms_left(t)})));
         }
+        if self.phase != Phase::Round {
+            return evs;
+        }
+        // The Warden: summon / attacks / checkpoints / death (pauses the clock).
+        self.warden_tick(t);
         if self.phase != Phase::Round {
             return evs;
         }
@@ -4735,18 +5761,21 @@ impl Strike {
         // TOTEM_GAP (the mole only when a side fields a bot — it can't turn a human) and
         // a fresh random health/ammo pack every PACK_GAP. Each replaces the oldest slot
         // of its ring, so drops keep coming whether or not anyone took the last one.
-        if self.totem_at.map(|at| t >= at).unwrap_or(false) {
-            self.totem_at = Some(t + TOTEM_GAP);
-            let can_mole = self.players.iter().any(|(_, v)| v.is_bot() && !v.dead && !v.gone);
-            self.spawn_totem(can_mole);
-        }
-        if self.pack_at.map(|at| t >= at).unwrap_or(false) {
-            self.pack_at = Some(t + PACK_GAP);
-            self.spawn_pack();
-        }
-        if self.dis_at.map(|at| t >= at).unwrap_or(false) {
-            self.dis_at = Some(t + DIS_GAP_DROP);
-            self.spawn_disaster_totem();
+        // Drop clocks are suspended while the Warden lives — only it drops loot.
+        if self.warden.is_none() {
+            if self.totem_at.map(|at| t >= at).unwrap_or(false) {
+                self.totem_at = Some(t + TOTEM_GAP);
+                let can_mole = self.players.iter().any(|(_, v)| v.is_bot() && !v.dead && !v.gone);
+                self.spawn_totem(can_mole);
+            }
+            if self.pack_at.map(|at| t >= at).unwrap_or(false) {
+                self.pack_at = Some(t + PACK_GAP);
+                self.spawn_pack();
+            }
+            if self.dis_at.map(|at| t >= at).unwrap_or(false) {
+                self.dis_at = Some(t + DIS_GAP_DROP);
+                self.spawn_disaster_totem();
+            }
         }
         // decoys expire silently (the client's render pass drops the mesh when its window ends)
         self.decoys.retain(|dc| dc.until > t);
@@ -4994,7 +6023,12 @@ impl Strike {
             && p.away.map(|a| t - a < GRACE).unwrap_or(true));
         let empty1 = !self.players.iter().any(|(_, p)| p.team == 1 && !p.gone
             && p.away.map(|a| t - a < GRACE).unwrap_or(true));
-        if self.scores[0] >= self.limit || self.scores[1] >= self.limit || t >= self.ends_at || empty0 || empty1 {
+        // While the Warden lives the clock and the scoreline are frozen: the round
+        // can only end early by emptying a side.
+        let warden_live = self.warden.is_some();
+        let over_score = !warden_live && (self.scores[0] >= self.limit || self.scores[1] >= self.limit);
+        let over_time = !warden_live && t >= self.ends_at;
+        if over_score || over_time || empty0 || empty1 {
             self.phase = Phase::Done;
             let mut results = Vec::new();
             let (mut prev, mut place) = (None, 0usize);
@@ -5114,11 +6148,42 @@ impl Strike {
             .map(|w| json!([w.id, cm(w.x), cm(w.z), ((w.hit_at - t).max(0.0) * 1000.0) as i64,
                             cm(w.r), if w.overhead { 1 } else { 0 }, w.dmg, w.quake as i64]))
             .collect();
+        // The Warden ("wd" — never "ev"): [hp, max, cm x, cm z,
+        // ms-to-slab-arm, ms-to-slab-land, ms-to-laser-warn, laser-on-ms,
+        // laser-yaw-cdeg, ms-to-dis, ck-bitmask, yaw-cdeg,
+        // ms-core, ms-grip-warn, ms-grip-on, ms-grip-at].
+        let warden_row = self.warden.as_ref().map(|wd| {
+            let mut ck = 0i64;
+            for (i, c) in wd.ck.iter().enumerate() {
+                if *c {
+                    ck |= 1 << i;
+                }
+            }
+            let ms = |at: f64| ((at - t).max(0.0) * 1000.0) as i64;
+            json!([
+                wd.hp,
+                wd.max,
+                cm(wd.x),
+                cm(wd.z),
+                if wd.slab_arm > 0.0 { ms(wd.slab_arm) } else { 0 },
+                if wd.slab_land > 0.0 { ms(wd.slab_land) } else { 0 },
+                if wd.laser_warn > 0.0 { ms(wd.laser_warn) } else { 0 },
+                if wd.laser_on > t { ((wd.laser_on - t) * 1000.0) as i64 } else { 0 },
+                (wd.laser_yaw.to_degrees() * 100.0).round() as i64,
+                if wd.dis_at > t { ms(wd.dis_at) } else { 0 },
+                ck,
+                (wd.yaw.to_degrees() * 100.0).round() as i64,
+                if wd.core_until > t { ms(wd.core_until) } else { 0 },
+                if wd.grip_warn > 0.0 { ms(wd.grip_warn) } else { 0 },
+                if wd.grip_on > t { ms(wd.grip_on) } else { 0 },
+                if wd.grip_at > t { ms(wd.grip_at) } else { 0 }
+            ])
+        });
         let snap = json!({"k": self.k, "ts": self.ms(t), "ms": self.ms_left(t), "sc": self.scores,
                           "p": ents, "s": self.shots, "r": rockets, "b": self.booms, "d": decoys,
                           "po": portals, "mi": mines, "me": meteors, "bc": beacons, "bu": bubbles,
                           "fa": fate_row, "ae": ev_row, "cr": crate_row,
-                          "di": dis_row, "dm": marks});
+                          "di": dis_row, "dm": marks, "wd": warden_row});
         self.dirty.clear();
         self.shots.clear();
         self.booms.clear();
@@ -5303,7 +6368,8 @@ impl StrikeHub {
                                            msg.get("kills").unwrap_or(&null),
                                            msg.get("tsize").unwrap_or(&null),
                                            msg.get("diff").unwrap_or(&null),
-                                           msg.get("map").unwrap_or(&null), t);
+                                           msg.get("map").unwrap_or(&null),
+                                           msg.get("warden").unwrap_or(&null), t);
                     if err.is_none() && !self.tick_on(room_id) {
                         sm.end();
                         err = Some("the Arena is busy right now: try again in a minute".into());

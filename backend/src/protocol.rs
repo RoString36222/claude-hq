@@ -44,6 +44,10 @@ pub const GAMES: &[(&str, i64, &[&str])] = &[
     // client paints the same clouds/pit the judge damages; `dm` rows grow dmg + quake
     // so impact marks carry their hit; hurricane chips DD_WIND_DMG while it shoves.
     // Player flags grow FLAG_BLIND / FLAG_SLOW (white-out veil / disaster crawl).
+    // The Warden (additive on v9): `start.warden` = 1|0 (absent defaults true);
+    // snap `"wd"` = [hp,max,cm_x,cm_z,ms_slab_arm,ms_slab_land,ms_laser_warn,laser_on_ms,laser_yaw_cdeg,ms_dis,ck_bits,yaw_cdeg,ms_core,ms_grip_warn,ms_grip_on,ms_grip_at];
+    // event `"warden"` {phase:"rise"|"ckpt"|"dead", ck?, hp, max, x?, z?, armL?, armR?}.
+    // Never use `"ev"` for that row — Out::msg owns it.
     ("strike", 9, &["maps"]),
     // v2: the generated 3D City. "alt": pos may carry h (feet height, cm) and p (pitch, deg); x/z span +-102_400 cm; floor "city3d"
     // v3: Cities. "isles": the floor may be a world's own room, "city3d:<world id>" (valley/hq.rs floor_ok)

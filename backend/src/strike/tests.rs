@@ -15,7 +15,7 @@ fn members(n: usize, prefix: &str) -> Vec<(String, Value)> {
 
 pub(crate) fn started(n: usize, tsize: i64, t0: f64) -> (Strike, f64) {
     let mut s = Strike::new();
-    assert_eq!(s.start(&members(n, "u"), &json!(5), &json!(30), &json!(tsize), &json!("normal"), &Value::Null, t0), None);
+    assert_eq!(s.start(&members(n, "u"), &json!(5), &json!(30), &json!(tsize), &json!("normal"), &Value::Null, &json!(0), t0), None);
     s.tick(t0 + COUNTDOWN, true);
     assert_eq!(s.phase, Phase::Round);
     (s, t0 + COUNTDOWN)
@@ -29,6 +29,14 @@ pub(crate) fn put(s: &mut Strike, uid: &str, x: f64, y: f64, z: f64, t: f64, q: 
     p.hist = VecDeque::from([(t, x, y, z)]);
     p.protect = 0.0;
     p.spawn_t = t - 5.0;
+    if let Some(b) = p.bot.as_mut() {
+        b.body.x = x;
+        b.body.y = y;
+        b.body.z = z;
+        b.body.vx = 0.0;
+        b.body.vy = 0.0;
+        b.body.vz = 0.0;
+    }
     if let Some(q) = q {
         p.q = Some(q);
         p.q0 = q;
@@ -95,12 +103,12 @@ fn map_is_sane() {
 #[test]
 fn the_host_can_pick_sandbar() {
     let mut s = Strike::new();
-    assert_eq!(s.start(&members(2, "u"), &json!(5), &json!(30), &json!(2), &json!("normal"), &json!("sandbar"), 0.0), None);
+    assert_eq!(s.start(&members(2, "u"), &json!(5), &json!(30), &json!(2), &json!("normal"), &json!("sandbar"), &json!(0), 0.0), None);
     assert_eq!(s.map().id, "sandbar");
     assert_eq!(s.view(0.0)["map"], json!("sandbar"));
     // an unknown id falls back to the dockyard, never a panic
     let mut s2 = Strike::new();
-    assert_eq!(s2.start(&members(2, "u"), &json!(5), &json!(30), &json!(2), &json!("normal"), &json!("nowhere"), 0.0), None);
+    assert_eq!(s2.start(&members(2, "u"), &json!(5), &json!(30), &json!(2), &json!("normal"), &json!("nowhere"), &json!(0), 0.0), None);
     assert_eq!(s2.map().id, "dockyard");
 }
 
@@ -108,7 +116,7 @@ fn the_host_can_pick_sandbar() {
 #[test]
 fn the_host_sizes_the_sides_and_bots_fill_them() {
     let mut s = Strike::new();
-    assert_eq!(s.start(&members(3, "u"), &json!(5), &json!(30), &json!(3), &json!("normal"), &Value::Null, 0.0), None);
+    assert_eq!(s.start(&members(3, "u"), &json!(5), &json!(30), &json!(3), &json!("normal"), &Value::Null, &json!(0), 0.0), None);
     for tm in 0..2u8 {
         let side = s.players.iter().filter(|(_, p)| p.team == tm && !p.gone).count();
         assert_eq!(side, 3, "side {tm} must have 3 players");
@@ -126,7 +134,7 @@ fn a_five_by_five_fills_both_sides_and_a_duel_shrinks_them() {
     // 1..=5 are all legal team sizes now: the host's X tops each side up with
     // bots, and MAX_PLAYERS holds all ten seats at once.
     let mut s = Strike::new();
-    assert_eq!(s.start(&members(4, "u"), &json!(5), &json!(30), &json!(5), &json!("normal"), &Value::Null, 0.0), None);
+    assert_eq!(s.start(&members(4, "u"), &json!(5), &json!(30), &json!(5), &json!("normal"), &Value::Null, &json!(0), 0.0), None);
     for tm in 0..2u8 {
         let side = s.players.iter().filter(|(_, p)| p.team == tm && !p.gone).count();
         assert_eq!(side, 5, "side {tm} must have 5 players");
@@ -137,7 +145,7 @@ fn a_five_by_five_fills_both_sides_and_a_duel_shrinks_them() {
     assert_eq!(alive, s.players.len(), "nobody benches to make 5v5 fit");
 
     let mut d = Strike::new();
-    assert_eq!(d.start(&members(2, "u"), &json!(3), &json!(10), &json!(1), &json!("normal"), &Value::Null, 0.0), None);
+    assert_eq!(d.start(&members(2, "u"), &json!(3), &json!(10), &json!(1), &json!("normal"), &Value::Null, &json!(0), 0.0), None);
     for tm in 0..2u8 {
         let side = d.players.iter().filter(|(_, p)| p.team == tm && !p.gone).count();
         assert_eq!(side, 1, "side {tm} must have exactly 1 player in a 1v1");
@@ -151,18 +159,18 @@ fn the_host_sets_their_own_scoreline() {
     // quick picks): anything inside 1..=60 minutes and 1..=500 kills is honoured,
     // and out-of-range values clamp instead of snapping back to a default.
     let mut s = Strike::new();
-    assert_eq!(s.start(&members(2, "u"), &json!(7), &json!(25), &json!(2), &json!("normal"), &Value::Null, 0.0), None);
+    assert_eq!(s.start(&members(2, "u"), &json!(7), &json!(25), &json!(2), &json!("normal"), &Value::Null, &json!(0), 0.0), None);
     assert_eq!(s.minutes, 7, "an off-list length is the host's to pick");
     assert_eq!(s.limit, 25, "an off-list target is the host's to pick");
     let mut s = Strike::new();   // a fresh match: start() refuses while one is running
-    assert_eq!(s.start(&members(2, "u"), &json!(600), &json!(0), &json!(2), &json!("normal"), &Value::Null, 0.0), None);
+    assert_eq!(s.start(&members(2, "u"), &json!(600), &json!(0), &json!(2), &json!("normal"), &Value::Null, &json!(0), 0.0), None);
     assert_eq!(s.minutes, 60, "600 minutes clamps to the 60-minute cap");
     assert_eq!(s.limit, 1, "0 kills clamps up to the 1-kill floor");
     // every preset stays legal, so the menu's quick picks can't fall back either
     for m in MINUTES {
         for k in KILLS {
             let mut p = Strike::new();
-            assert_eq!(p.start(&members(2, "u"), &json!(m), &json!(k), &json!(2), &json!("normal"), &Value::Null, 0.0), None);
+            assert_eq!(p.start(&members(2, "u"), &json!(m), &json!(k), &json!(2), &json!("normal"), &Value::Null, &json!(0), 0.0), None);
             assert_eq!((p.minutes, p.limit), (m, k), "preset {m} min / {k} kills must survive start");
         }
     }
@@ -836,7 +844,7 @@ fn the_host_picks_one_bot_skill_for_both_sides() {
     // MP lobbies fill short sides with bots on BOTH teams, so one skill level applies to
     // the whole match — never a sharper filler's side against a duller's
     let mut s = Strike::new();
-    assert_eq!(s.start(&members(2, "u"), &json!(5), &json!(30), &json!(3), &json!("hard"), &Value::Null, 0.0), None);
+    assert_eq!(s.start(&members(2, "u"), &json!(5), &json!(30), &json!(3), &json!("hard"), &Value::Null, &json!(0), 0.0), None);
     assert_eq!(s.bot_diff, "hard");
     assert_eq!(s.bot_aim, 0.5);
     assert_eq!(s.bot_react, 0.35);
@@ -844,12 +852,12 @@ fn the_host_picks_one_bot_skill_for_both_sides() {
     assert_eq!(s.bot_rate, 0.8);
     // an unknown id — including a crafted wire one — quietly falls back to normal
     let mut s2 = Strike::new();
-    s2.start(&members(2, "u"), &json!(5), &json!(30), &json!(3), &json!("nightmare"), &Value::Null, 0.0);
+    s2.start(&members(2, "u"), &json!(5), &json!(30), &json!(3), &json!("nightmare"), &Value::Null, &json!(0), 0.0);
     assert_eq!(s2.bot_diff, "normal");
     assert_eq!(s2.bot_aim, 1.0);
     // and a match started without a diff is normal (the host didn't pick one)
     let mut s3 = Strike::new();
-    s3.start(&members(2, "u"), &json!(5), &json!(30), &json!(3), &Value::Null, &Value::Null, 0.0);
+    s3.start(&members(2, "u"), &json!(5), &json!(30), &json!(3), &Value::Null, &Value::Null, &json!(0), 0.0);
     assert_eq!(s3.bot_diff, "normal");
 }
 
@@ -1446,4 +1454,361 @@ fn a_fall_out_of_the_map_is_rescued_after_void_secs() {
     s2.tick(t2 + VOID_SECS + 0.2, true);
     let b = s2.player(&bid).unwrap();
     assert!(!b.dead && b.y > 0.5, "bot rescued too (y={})", b.y);
+}
+
+// ---------------------------------------------------------- The Warden ----
+// Mid-match giant boss: rises at half the score, freezes the round, forbids PvP,
+// slams / laser-eyes / calls disasters, drops checkpoint loot, dies and restores.
+
+fn started_warden(n: usize, tsize: i64, t0: f64) -> (Strike, f64) {
+    let mut s = Strike::new();
+    assert_eq!(
+        s.start(
+            &members(n, "u"),
+            &json!(5),
+            &json!(30),
+            &json!(tsize),
+            &json!("normal"),
+            &Value::Null,
+            &json!(1),
+            t0
+        ),
+        None
+    );
+    s.tick(t0 + COUNTDOWN, true);
+    assert_eq!(s.phase, Phase::Round);
+    (s, t0 + COUNTDOWN)
+}
+
+fn aim_msg(s: &Strike, uid: &str, tgt: [f64; 3], w: usize, q: i64) -> Value {
+    let o = eye(s, uid);
+    let yaw = (tgt[0] - o[0]).atan2(-(tgt[2] - o[2])).to_degrees();
+    let pitch = (tgt[1] - o[1])
+        .atan2((tgt[0] - o[0]).hypot(tgt[2] - o[2]))
+        .to_degrees();
+    let (dy, dp) = spread_of(1, w);
+    json!({"w": w, "ox": cm(o[0]), "oy": cm(o[1]), "oz": cm(o[2]),
+           "r": ((yaw - dy) * 100.0) as i64, "p": ((pitch - dp) * 100.0) as i64, "q": q, "ip": 0})
+}
+
+/// Head of the Warden — the only clear lane over the centre blocks.
+fn warden_head(s: &Strike) -> [f64; 3] {
+    let wd = s.warden.as_ref().expect("warden lives");
+    [wd.x, WARDEN_SEE_HEAD, wd.z]
+}
+
+/// Stand above the centre blocks and pour rounds into the head (w=0, q steps of 20).
+/// Returns the clock after the last shot so the caller can fire again without
+/// tripping the weapon cadence.
+fn drain_warden(s: &mut Strike, t: f64) -> f64 {
+    put(s, "u0", 0.0, 3.0, 14.0, t, Some(0));
+    let mut q = 20i64;
+    for _ in 0..40 {
+        if s.warden.is_none() {
+            return t + (q as f64) * 0.002;
+        }
+        let tgt = warden_head(s);
+        let msg = aim_msg(s, "u0", tgt, 0, q);
+        let tq = t + (q as f64) * 0.002;
+        q += 20;
+        let _ = s.fire("u0", &msg, tq);
+        if let Some(wd) = s.warden.as_mut() {
+            // walk through the 75/50/25 checkpoints without waiting on DPS
+            wd.hp = wd.hp.saturating_sub(400);
+        }
+        s.warden_after_damage(tq);
+        s.tick(tq + 0.01, true);
+    }
+    panic!("warden refused to die");
+}
+
+#[test]
+fn the_warden_rises_at_half_the_score_and_freezes_the_match() {
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    assert!(s.warden.is_none(), "no boss before half the score");
+    let ms0 = s.ms_left(t);
+    assert!(ms0 > 0, "the round clock is running");
+
+    // any side reaching ceil(limit * 0.5) summons it
+    let half = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.scores[0] = half;
+    let evs = s.tick(t + 0.05, true);
+    assert!(s.warden.is_some(), "the Warden rises at half: {:?}", evs);
+    assert!(
+        evs.iter().any(|(k, v)| *k == "warden" && v["phase"] == "rise"),
+        "rise event: {:?}",
+        evs
+    );
+    let wd = s.warden.as_ref().unwrap();
+    let fighters = s.players.iter().filter(|(_, p)| !p.dead && !p.gone).count() as i64;
+    let want = (WARDEN_HP_PER * fighters).clamp(WARDEN_MIN_HP, WARDEN_MAX_HP);
+    assert_eq!(wd.max, want, "max HP scales with the fighters on the field");
+    assert_eq!(wd.arm_l, WARDEN_ARM_HP);
+    assert_eq!(wd.arm_r, WARDEN_ARM_HP);
+
+    // the clock is parked where it stood
+    let frozen = s.ms_left(t + 0.05);
+    let later = s.ms_left(t + 30.0);
+    assert_eq!(frozen, later, "ms_left does not drain while the Warden lives");
+    assert!(frozen <= ms0 + 50, "parked near the summon moment");
+
+    // normal drops and the auto-disaster clock are suspended
+    assert!(s.totem_at.is_none());
+    assert!(s.pack_at.is_none());
+    assert!(s.dis_at.is_none());
+    assert!(s.disaster_at.is_none());
+}
+
+#[test]
+fn fighters_cannot_hurt_each_other_while_the_warden_lives() {
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    s.scores[0] = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.tick(t + 0.05, true);
+    assert!(s.warden.is_some());
+
+    // put a foe point-blank and shoot them the way a normal match would
+    let foe = s
+        .players
+        .iter()
+        .find(|(_, p)| p.team != s.player("u0").unwrap().team && !p.is_bot())
+        .map(|(u, _)| u.clone())
+        .expect("a human foe");
+    put(&mut s, "u0", 8.0, 0.0, 8.0, t, Some(0));
+    put(&mut s, &foe, 8.0, 0.0, 10.0, t, Some(0));
+    let hp0 = s.player(&foe).unwrap().hp;
+    let tgt = chest(&s, &foe);
+    let msg = aim_msg(&s, "u0", tgt, 0, 10);
+    let (shot, _) = s.fire("u0", &msg, t + 0.1);
+    let shot = shot.expect("the tracer still draws");
+    assert_eq!(shot[5], json!(-1), "the shot lands on the Warden row, not a player");
+    assert_eq!(s.player(&foe).unwrap().hp, hp0, "PvP damage is off while the boss lives");
+
+    // and the Warden actually takes the hit (head above the centre blocks)
+    put(&mut s, "u0", 0.0, 3.0, 14.0, t, Some(0));
+    let hpw = s.warden.as_ref().unwrap().hp;
+    let msg2 = aim_msg(&s, "u0", warden_head(&s), 0, 30);
+    let (_shot, _) = s.fire("u0", &msg2, t + 0.2);
+    assert!(s.warden.as_ref().unwrap().hp < hpw, "the boss bleeds");
+}
+
+#[test]
+fn the_wardens_slam_and_laser_are_instant_kills_with_a_warning() {
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    s.scores[0] = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.tick(t + 0.05, true);
+    let (wx, wz) = {
+        let wd = s.warden.as_ref().unwrap();
+        (wd.x, wd.z)
+    };
+
+    // a disabled arm skips its slam: both arms out = nobody dies under the circles
+    {
+        let wd = s.warden.as_mut().unwrap();
+        wd.arm_l = 0;
+        wd.arm_r = 0;
+        wd.slam_arm = 2;
+        wd.slab_arm = 0.0;
+        wd.slab_land = 0.0;
+        wd.slab_at = t + 0.05;
+    }
+    put(&mut s, "u0", wx - WARDEN_ARM_X, 0.0, wz, t, Some(0));
+    put(&mut s, "u1", wx + WARDEN_ARM_X, 0.0, wz, t, Some(0));
+    s.tick(t + 0.2, true);
+    assert!(!s.player("u0").unwrap().dead, "no slam when both arms are out");
+    assert!(!s.player("u1").unwrap().dead);
+
+    // right arm only: the slam lands on its circle and kills what is under it
+    {
+        let wd = s.warden.as_mut().unwrap();
+        wd.arm_r = WARDEN_ARM_HP;
+        wd.slam_arm = 1;
+        wd.slab_arm = t + 0.3;
+        wd.slab_land = t + 0.3;
+        wd.slab_at = t + 10.0;
+    }
+    s.tick(t + 0.35, true);
+    assert!(s.player("u1").unwrap().dead, "instant kill under the arm");
+    assert!(!s.player("u0").unwrap().dead, "the other arm's circle is safe");
+
+    // laser eyes: a warn window, then the beam kills what it touches (cover saves).
+    // Stand on +Z at head height so the centre blocks are not in the way.
+    put(&mut s, "u0", wx, 4.0, wz + 10.0, t, Some(0));
+    {
+        let wd = s.warden.as_mut().unwrap();
+        wd.laser_yaw = std::f64::consts::FRAC_PI_2; // +Z
+        wd.laser_warn = t + 0.5;
+        wd.laser_on = t + 0.5 + WARDEN_LASER_HOLD;
+        wd.laser_at = t + 100.0;
+        wd.slab_at = t + 100.0;
+    }
+    s.tick(t + 0.3, true);
+    assert!(!s.player("u0").unwrap().dead, "the warn window is not lethal");
+    s.tick(t + 0.7, true);
+    assert!(s.player("u0").unwrap().dead, "the beam kills on contact");
+}
+
+#[test]
+fn only_the_warden_calls_disasters_and_only_it_drops_boosts() {
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    s.scores[0] = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.tick(t + 0.05, true);
+    assert!(s.warden.is_some());
+    let items0 = s.items.len();
+    // park the boss's own disaster clock so this window is quiet
+    {
+        let wd = s.warden.as_mut().unwrap();
+        wd.dis_at = t + 1000.0;
+        wd.slab_at = t + 1000.0;
+        wd.laser_at = t + 1000.0;
+        wd.slab_arm = 0.0;
+        wd.slab_land = 0.0;
+        wd.laser_warn = 0.0;
+        wd.laser_on = 0.0;
+        wd.ck = [true; WARDEN_CKPT]; // no checkpoint loot during the quiet window
+        // bots now open fire — keep the boss standing so ordinary drops stay off
+        wd.hp = 1_000_000;
+        wd.arm_l = 1_000_000;
+        wd.arm_r = 1_000_000;
+    }
+
+    // a long quiet stretch: no player-facing totem/pack/disaster-totem drops
+    let mut totems = 0;
+    let mut packs = 0;
+    let mut now = t + 0.1;
+    for _ in 0..80 {
+        let evs = s.tick(now, true);
+        for (k, v) in &evs {
+            if *k == "totem" && v["tag"] != "warden" {
+                totems += 1;
+            }
+            if *k == "pack" && v["tag"] != "warden-pack" {
+                packs += 1;
+            }
+        }
+        now += 0.25;
+    }
+    assert_eq!(totems, 0, "no ordinary totem falls while the Warden lives");
+    assert_eq!(packs, 0, "no ordinary pack falls while the Warden lives");
+    assert!(s.disaster.is_none(), "nobody but the Warden starts a disaster");
+
+    // the Warden itself calls a disaster on its own clock
+    {
+        let wd = s.warden.as_mut().unwrap();
+        wd.dis_at = t + 0.1;
+    }
+    let evs = s.tick(t + 20.2, true);
+    assert!(s.disaster.is_some(), "only the Warden starts a disaster: {:?}", evs);
+
+    // checkpoints spill non-disaster loot + a health pack in a ring
+    let before = s.items.len();
+    {
+        let wd = s.warden.as_mut().unwrap();
+        wd.hp = wd.max / 2; // crosses the 75% and 50% marks on the next wound
+        wd.ck = [false; WARDEN_CKPT];
+    }
+    put(&mut s, "u0", 0.0, 3.0, 14.0, t, Some(0));
+    let msg = aim_msg(&s, "u0", warden_head(&s), 0, 40);
+    let _ = s.fire("u0", &msg, t + 20.3);
+    s.warden_after_damage(t + 20.3);
+    let evs = s.tick(t + 20.35, true);
+    let loot: Vec<_> = evs
+        .iter()
+        .filter(|(k, v)| {
+            (*k == "totem" || *k == "pack")
+                && (v["tag"] == "warden" || v["tag"] == "warden-pack")
+        })
+        .collect();
+    assert!(!loot.is_empty(), "checkpoint loot drops: {:?}", evs);
+    assert!(s.items.len() > before, "one-shot loot slots appended");
+    assert!(s.items.len() >= items0);
+    let ck = s.warden.as_ref().unwrap().ck;
+    assert!(ck[0] && ck[1], "the 75% and 50% checkpoints fired");
+}
+
+#[test]
+fn when_the_warden_dies_the_match_is_back() {
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    s.scores[0] = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.tick(t + 0.05, true);
+    assert!(s.warden.is_some());
+    let frozen = s.ms_left(t + 0.05);
+
+    // park a foe, kill the boss, and confirm PvP + clocks come back
+    let foe = s
+        .players
+        .iter()
+        .find(|(_, p)| p.team != s.player("u0").unwrap().team && !p.is_bot())
+        .map(|(u, _)| u.clone())
+        .expect("a human foe");
+    put(&mut s, "u0", 0.0, 3.0, 14.0, t, Some(0));
+    put(&mut s, &foe, 4.0, 0.0, 12.0, t, Some(0));
+
+    let end = drain_warden(&mut s, t + 0.4);
+    assert!(s.warden.is_none(), "the boss is gone");
+    assert!(s.totem_at.is_some(), "totem clock restored");
+    assert!(s.pack_at.is_some(), "pack clock restored");
+    assert!(s.dis_at.is_some(), "disaster-totem clock restored");
+    assert!(s.disaster_at.is_some(), "auto-disaster clock restored");
+    let live = s.ms_left(end + 0.05);
+    assert!(live <= frozen + 200, "the clock is running again");
+
+    // a shot that was a no-op during the fight hurts again
+    let hp0 = s.player(&foe).unwrap().hp;
+    let msg = aim_msg(&s, "u0", chest(&s, &foe), 0, 90);
+    let (shot, _) = s.fire("u0", &msg, end + 0.3);
+    let shot = shot.expect("the shot draws");
+    assert_ne!(shot[5], json!(-1), "it hits a player row again");
+    assert!(s.player(&foe).unwrap().hp < hp0, "PvP damage is back");
+}
+
+#[test]
+fn bots_open_fire_on_the_warden_from_a_firing_lane() {
+    // Bug lock: the centre blocks hide the chest at y=2.5. A bot that only checks
+    // that height never shoots. It must pick a visible hit height and land shots.
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    s.scores[0] = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.tick(t + 0.05, true);
+    let max_hp = s.warden.as_ref().expect("warden lives").max;
+    // stand south of the centre blocks (the usual spawn lane) with a clear line
+    // to an arm / torso height — that is the lane warden_see must find
+    let bid = s
+        .players
+        .iter()
+        .find(|(_, p)| p.is_bot())
+        .map(|(u, _)| u.clone())
+        .expect("a bot filler");
+    put(&mut s, &bid, 0.0, 0.0, 14.0, t, Some(0));
+    // keep the bot's physics body where put() placed the player
+    if let Some(p) = s.player_mut(&bid) {
+        if let Some(b) = p.bot.as_mut() {
+            b.body.x = 0.0;
+            b.body.y = 0.0;
+            b.body.z = 14.0;
+            b.body.vx = 0.0;
+            b.body.vy = 0.0;
+            b.body.vz = 0.0;
+            b.fire_at = -1e9;
+            b.seen_at = None;
+            b.think_at = t;
+        }
+    }
+    // park the slam / laser / disaster clocks so they cannot steal the frame
+    {
+        let wd = s.warden.as_mut().unwrap();
+        wd.slab_at = t + 1000.0;
+        wd.slab_arm = 0.0;
+        wd.slab_land = 0.0;
+        wd.laser_at = t + 1000.0;
+        wd.laser_warn = 0.0;
+        wd.laser_on = 0.0;
+        wd.dis_at = t + 1000.0;
+    }
+    // run long enough for think + react + several SMG intervals
+    let mut now = t;
+    for _ in 0..40 {
+        now += 0.2;
+        s.tick(now, true);
+    }
+    let hp = s.warden.as_ref().map(|wd| wd.hp).unwrap_or(0);
+    assert!(hp < max_hp, "the bot never shot the Warden (hp={hp} max={max_hp})");
 }

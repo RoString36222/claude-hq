@@ -2362,11 +2362,21 @@ HQV.hqWorlds.city3d = function(c, w){
     indexBuildings();
     wb = HQV.worldbuild.create(c, W, V2 ? {scene: S, quality: 2, tier: tier, gap: !!(HQV.hqBridges && W.river)} : {scene: S, quality: 2});
     S.add(wb.root); S.add(staticG); S.add(hqG);
-    if(V2 && HQV.hqSpectacle && W.spectacle) try {
-      spx = HQV.hqSpectacle.create(c, W, {scene: S, ground: groundY, owner: owner, night: night, say: say, avatar: function(){ return c.avatar(); },
-        city: function(){ return cityState; }, post: postJson});
-    } catch(e){ spx = null; }
-    if(V2 && HQV.hqWeather) try { wx = HQV.hqWeather.create(c, {scene: S, world: worldId, say: say, ground: groundY}); wx.setNight(night); } catch(e){ wx = null; }
+    // the landmarks, the park and the weather: built just after the City is ready, so they never hold up its
+    // first frame (a slow machine's 15 s budget in hq3d.js is the world's alone)
+    var extrasOn = false;
+    function extras(){
+      if(dead || extrasOn) return; extrasOn = true;
+      if(V2 && HQV.hqSpectacle && W.spectacle) try {
+        spx = HQV.hqSpectacle.create(c, W, {scene: S, ground: groundY, owner: owner, night: night, say: say, avatar: function(){ return c.avatar(); },
+          city: function(){ return cityState; }, post: postJson});
+      } catch(e){ spx = null; }
+      if(V2 && HQV.hqWeather) try { wx = HQV.hqWeather.create(c, {scene: S, world: worldId, say: say, ground: groundY}); wx.setNight(night); } catch(e){ wx = null; }
+      // the park and the landmarks take the snow and the wet like the rest of the city
+      if(spx && wb.settle) spx.g.traverse(function(o){ if(o.isMesh) [].concat(o.material).forEach(function(m){ if(m && m.isMeshStandardMaterial) wb.settle(m); }); });
+      if(spx) spx.setNight(night);
+    }
+    wb.ready.then(function(){ setTimeout(extras, 0); }, function(){});
     buildStatic();
     if(V2) citiesSetup();
     build();
@@ -2516,6 +2526,7 @@ HQV.hqWorlds.city3d = function(c, w){
   // lights everything for a moment under lightning; the sky is repainted only when how it looks changes.
   function weatherApply(wl){
     if(!wl) return;
+    if(wb && wb.setGround && wl.ground) wb.setGround(wl.ground.snow, wl.ground.wet);   // snow lying, wet streets
     var f = wl.flash || 0, base = night ? 0x0f1f30 : 0xb8dcf2, tint = night ? HQV.hqWeather.lerpHex(wl.tint, 0, 0.84) : wl.tint;
     hemi.intensity = (night ? 1.3 : 2.4)*(1 - wl.dim*0.45) + f*3.5;
     sun.intensity = (night ? 0.7 : 2.4)*(1 - wl.dim*0.85) + f*1.2;

@@ -41,6 +41,15 @@ for (let w = 0; w < 500; w++) {
   s1.forEach(s => { if (s.t < w*X.STRIKE_WIN || s.t > (w + 1)*X.STRIKE_WIN) inside = false; });
 }
 Object.assign(out, {maxN, inside, sameS});
+// what lies on the ground: snow builds in a snow spell (to no more than SNOW_MAX), melts after; rain wets at once, dries
+let sSlot = null; for (let s = 50; s < 6000 && sSlot == null; s++) if (X.kindAt('w', s) === 'snow' && X.kindAt('w', s - 1) === 'snow' && X.kindAt('w', s + 1) !== 'snow' && X.kindAt('w', s + 1) !== 'rain') sSlot = s;
+const sEnd = (sSlot + 1)*X.SLOT;
+let rSlot = null; for (let s = 50; s < 6000 && rSlot == null; s++) if (X.kindAt('w', s) === 'rain' && X.kindAt('w', s + 1) === 'clear' && X.kindAt('w', s + 2) === 'clear') rSlot = s;
+const rEnd = (rSlot + 1)*X.SLOT;
+let maxSnow = 0; for (let m = -60; m < 60; m++) maxSnow = Math.max(maxSnow, X.settled('w', sEnd + m*60000).snow);
+out.ground = {snowIn: X.settled('w', sEnd - 60000).snow, snowLater: X.settled('w', sEnd + 45*60000).snow, maxSnow: maxSnow, cap: X.SNOW_MAX,
+  wetIn: X.settled('w', rEnd - 60000).wet, wetLater: X.settled('w', rEnd + 15*60000).wet,
+  smooth: Math.abs(X.settled('w', sEnd - 90000).snow - X.settled('w', sEnd - 89000).snow) < 0.01};
 const f = X.forecast('w', t0, 3); out.forecast = [f.length, f[0].at === t0, f[1].at - f[0].at, !!f[0].name, !!f[0].icon];
 console.log(JSON.stringify(out));
 """
@@ -81,6 +90,26 @@ class ForecastTests(unittest.TestCase):
 
     def test_the_forecast_runs_slot_by_slot(self):
         self.assertEqual(self.o["forecast"], [4, True, 15 * 60 * 1000, True, True])
+
+
+class GroundTests(unittest.TestCase):
+    def setUp(self):
+        if not hasattr(ForecastTests, "o"):
+            ForecastTests.setUpClass()
+        self.g = ForecastTests.o["ground"]
+
+    def test_snow_settles_a_little_and_melts_after(self):
+        self.assertGreater(self.g["snowIn"], 0.3)
+        self.assertLessEqual(self.g["maxSnow"], self.g["cap"] + 1e-9)
+        self.assertLessEqual(self.g["cap"], 0.5)                 # a dusting, not a blanket
+        self.assertEqual(self.g["snowLater"], 0)
+
+    def test_rain_wets_the_ground_and_it_dries(self):
+        self.assertGreater(self.g["wetIn"], 0.9)
+        self.assertEqual(self.g["wetLater"], 0)
+
+    def test_the_cover_changes_smoothly(self):
+        self.assertTrue(self.g["smooth"])
 
 
 class SourceTests(unittest.TestCase):

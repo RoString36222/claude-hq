@@ -85,6 +85,24 @@ function strikes(world, sec){
   }
   return out;
 }
+// What the weather has left on the ground at `ms` (games/worldbuild.js settle): snow cover, building over a dozen
+// minutes of snowfall to a light dusting (SNOW_MAX) and melting off after (faster in rain), and how wet it is, on at
+// once in rain and drying over minutes. Replays the last SETTLE_MIN minutes of the forecast a minute at a time (and
+// eases between minutes), so it is the same for everyone and never jumps.
+var SNOW_MAX = 0.45, SETTLE_MIN = 40;
+function settledAt(world, m0){
+  var snow = 0, wet = 0;
+  for(var m = SETTLE_MIN; m >= 0; m--){
+    var L = look(world, (m0 - m)*60000);
+    snow = L.snow > 0.3 ? Math.min(SNOW_MAX, snow + 0.05*L.snow) : Math.max(0, snow - (L.rain > 0.3 ? 0.06 : 0.025));
+    wet = L.rain > 0.2 ? Math.min(1, wet + 0.35*L.rain) : Math.max(0, wet - 0.12);
+  }
+  return {snow: snow, wet: wet};
+}
+function settled(world, ms){
+  var m0 = Math.floor((+ms || 0)/60000), f = (+ms || 0)/60000 - m0, a = settledAt(world, m0), b = settledAt(world, m0 + 1);
+  return {snow: lerp(a.snow, b.snow, f), wet: Math.max(lerp(a.wet, b.wet, f), look(world, ms).rain)};
+}
 function forecast(world, ms, n){
   var A = at(world, ms), out = [];
   for(var i = 0; i <= Math.max(0, n | 0); i++){
@@ -202,7 +220,7 @@ function create(c, o){
     } catch(e){}
   }
 
-  var hiss = null, said = null, lastStrike = -1, pending = [], flash = 0, boltLeft = 0, cur = null, night = false;
+  var hiss = null, said = null, lastStrike = -1, pending = [], flash = 0, boltLeft = 0, cur = null, night = false, gnd = null, gndAt = -9;
   function amt(v){ return Math.max(0, Math.min(1, v)); }
   var inst = {
     setNight: function(n){ night = !!n; },
@@ -261,6 +279,9 @@ function create(c, o){
       } else if(boltLeft <= 0) bolt.visible = false;
       pending = pending.filter(function(p){ if(p.at <= sec){ thunder(p.dist, p.seed); return false; } return true; });
       L.flash = calm ? 0 : flash;
+      // what lies on the ground: worked out about once a second (it changes over minutes)
+      if(!gnd || t - gndAt > 1){ gnd = settled(world, nowMs); gndAt = t; }
+      L.ground = gnd;
       return L;
     },
     destroy: function(){
@@ -274,5 +295,6 @@ function create(c, o){
 }
 
 HQV.hqWeather = {SLOT: SLOT, EASE: EASE, KINDS: KINDS, WEIGHT: WEIGHT, LOOK: LOOK, NAME: NAME, ICON: ICON, STRIKE_WIN: STRIKE_WIN,
-  hash32: hash32, kindAt: kindAt, at: at, look: look, strikes: strikes, forecast: forecast, lerpHex: lerpHex, create: create};
+  hash32: hash32, kindAt: kindAt, at: at, look: look, strikes: strikes, forecast: forecast, lerpHex: lerpHex,
+  settled: settled, SNOW_MAX: SNOW_MAX, create: create};
 })();

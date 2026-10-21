@@ -365,6 +365,9 @@ and feature guide.
   - **Weather**: clear skies, overcast, rain, thunderstorms (lightning, thunder after the flash), snow and
     fog, in 15-minute spells eased in over 90 s; the same for everyone in a city. The city stats panel's
     forecast and an announcement say what is coming.
+  - **Weather on the ground:** snow settles a little -- a patchy dusting on roads, pavements, grass and roofs that
+    builds over a snow spell and melts after -- and rain leaves the streets darker and glossier until they dry.
+    Worked out from the same shared forecast, so everyone sees the same.
   - **Faster:** the park and the landmarks merge their pieces by material (about half the draw calls
     looking into the park), and its crowd, bulbs and balloons rest when you are far off.
   - *Accessibility:* in Calm and with reduced motion, rides are watched from the platform instead of ridden

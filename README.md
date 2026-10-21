@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.5.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.5.3** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -364,6 +364,13 @@ and feature guide.
 
 ## Changelog
 
+- **3.5.3 — B1 as a lavish showroom.** The basement garage was mostly black; now it is bright and warm (~3000 K): a
+  strong warm fill, warm cove strips along every wall-ceiling edge and under a floating oak ceiling panel, scalloped
+  wall-washer pools, polished warm-stone floor slabs (seeded canvas) with the bay lines and numbers in dark ink, dark-
+  walnut slats behind the showcase plinths with light spilling from under them, brushed-metal trims, smoked-bronze
+  lounge glass round a cognac sofa, rug and floor lamp, the HQ sign in warm neon, framed posters of your HQ's own name
+  and level, and more plants. Nothing new moves; the washes, halos and posters are one mesh each and the plants now
+  merge into the static group.
 - **3.5.2 — Arriving in B1 by the car lift.** You used to arrive standing on the lift facing its back wall, and the
   lift's trigger sat just off the pad on the way out, so the first W sent you straight back up to the street. Now you
   (and what you rode) arrive just off the pad facing into the basement, and the trigger is on the pad itself: drive or

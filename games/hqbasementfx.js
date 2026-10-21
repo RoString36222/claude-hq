@@ -295,13 +295,15 @@ function lounge(ctx, g, at){
 function lighting(w, o){
   o = o || {};
   var night = !!o.night, wet = /rain|storm|drizzle|shower/i.test(String(o.weather || ""));
-  var look = {warm: night ? 1 : 0, sheen: wet ? 1 : 0, exposure: night ? 0.92 : 1, tint: night ? 0xffd9a8 : 0xf4f7ff};
+  var look = {warm: night ? 1 : 0, sheen: wet ? 1 : 0, exposure: night ? 0.92 : 1, tint: night ? 0xffd9a8 : 0xffe6c4};
   if(w){
     try {
       var lights = w.fxLights || w.lights || [];
       for(var i = 0; i < lights.length; i++){ var L = lights[i]; if(L && L.color && L.color.setHex) L.color.setHex(look.tint); }
       var fl = w.floorMat || (w.floor && w.floor.material);
-      if(fl && "roughness" in fl){ fl.roughness = wet ? 0.06 : 0.15; if("envMapIntensity" in fl) fl.envMapIntensity = wet ? 1.6 : 1.0; fl.needsUpdate = true; }
+      if(fl && "roughness" in fl){   // [3.5.3] dry restores the floor's own polish (userData.rough0 / env0) when it has one
+        var ud = fl.userData || {}, r0 = num(ud.rough0, 0.15), e0 = num(ud.env0, 1.0);
+        fl.roughness = wet ? Math.min(0.06, r0) : r0; if("envMapIntensity" in fl) fl.envMapIntensity = wet ? Math.max(1.6, e0) : e0; fl.needsUpdate = true; }
     } catch(e){}
     w.fxLook = look;
   }

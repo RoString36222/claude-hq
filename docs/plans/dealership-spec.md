@@ -16,44 +16,45 @@ an owned vehicle to you. The Cities and navigation specs still hold.
 
 ## Classes
 
-A class id is `<kind>.<type>.<band>`, e.g. `bike.naked.middle`, `car.suv.l3`. The band comes
-from the engine's displacement (and, for an electric drivetrain, its own band).
+A class id is `<kind>.<type>.<band>`, e.g. `bike.naked.950`, `car.suv.3000`. The band is the
+engine's displacement in cc, for bikes and cars alike (an electric drivetrain has its own band).
+Class labels say it the same way: "Naked · up to 400 cc", "SUV · 2001-3000 cc".
 
-### Bike bands (displacement)
+### Bike bands (cc)
 
 | band | cc | why this cut |
 |---|---|---|
-| `small` | up to 400 cc | the entry class: 300-400 cc singles and twins (A2 licence territory) |
-| `middle` | 401-950 cc | the twins and triples between the small bikes and the litre bikes |
-| `big` | over 950 cc | litre bikes and up |
+| `400` | up to 400 cc | the entry class: 300-400 cc singles and twins (A2 licence territory) |
+| `950` | 401-950 cc | the twins and triples between the entry bikes and the litre bikes |
+| `over950` | over 950 cc | litre bikes and up |
 
 ### Bike types
 
 `naked` (no fairing, upright), `sport` (full fairing, tucked), `adventure` (long travel, tall,
 on and off road), `cruiser`, `scooter`, `dirt` (off road only).
 
-### Car bands (displacement)
+### Car bands (cc)
 
-| band | litres | electric |
-|---|---|---|
-| `l2` | up to 2.0 L | |
-| `l3` | 2.1-3.0 L | |
-| `l5` | 3.1-5.0 L | |
-| `l8` | over 5.0 L | |
-| `ev` | | any battery-electric car |
+| band | cc |
+|---|---|
+| `2000` | up to 2000 cc |
+| `3000` | 2001-3000 cc |
+| `5000` | 3001-5000 cc |
+| `over5000` | over 5000 cc |
+| `ev` | battery-electric (no engine): banded on its own |
 
-A plug-in hybrid is banded by its engine (the BMW M5 is `l5`).
+A plug-in hybrid is banded by its engine's cc (the BMW M5's 4395 cc V8 is `5000`).
 
 ### Car types
 
-`hatch`, `sedan`, `coupe`, `suv`, `pickup`, `hyper` (hypercars: always `l8` or `ev`).
+`hatch`, `sedan`, `coupe`, `suv`, `pickup`, `hyper` (hypercars: always `over5000` or `ev`).
 
 ### Rules
 
 - A class exists when at least one vehicle in the catalogue belongs to it. It **is on sale**
   only with exactly 2 vehicles. A third candidate waits as a `reserve` until a slot is free.
 - Class tier sets the price band, and the tier you need to buy (see Economy). Tiers:
-  bikes `small` 1, `middle` 2, `big` 3; cars `l2` 1, `l3` 2, `l5` 3, `l8` 4, `ev` by power
+  bikes `400` 1, `950` 2, `over950` 3; cars `2000` 1, `3000` 2, `5000` 3, `over5000` 4, `ev` by power
   (under 300 kW 2, under 500 kW 3, else 4), `hyper` always 5.
 
 ## The class grid, from the first player's picks (BMW and Bugatti cars, BMW and KTM Duke bikes)
@@ -65,13 +66,13 @@ Specs are approximate maker figures, to be checked when each vehicle is built.
 
 | class | slot 1 | slot 2 |
 |---|---|---|
-| `bike.naked.small` | KTM 390 Duke: 399 cc single, 45 PS, ~165 kg, ~170 km/h | BMW G 310 R: 313 cc single, 34 PS, ~164 kg, ~145 km/h |
-| `bike.naked.middle` | KTM 990 Duke: 947 cc twin, 123 PS, ~179 kg, ~230 km/h | BMW F 900 R: 895 cc twin, 105 PS, ~211 kg, ~225 km/h |
-| `bike.naked.big` | KTM 1390 Super Duke R: 1350 cc V-twin, 190 PS, ~200 kg, ~290 km/h | BMW S 1000 R: 999 cc four, 165 PS, ~199 kg, ~250 km/h |
-| `bike.sport.small` | BMW G 310 RR: 313 cc single, 34 PS, ~174 kg, ~160 km/h | open (KTM RC 390 fits; KTM is a picked brand, the RC is not a Duke) |
-| `bike.sport.big` | BMW S 1000 RR: 999 cc four, 210 PS, ~197 kg, ~300 km/h | BMW M 1000 RR: 999 cc four, 212 PS, ~192 kg, ~306 km/h |
-| `bike.adventure.small` | BMW G 310 GS: 313 cc single, 34 PS, ~175 kg, ~145 km/h | open (KTM 390 Adventure fits) |
-| `bike.adventure.big` | BMW R 1300 GS: 1300 cc boxer, 145 PS, ~237 kg, ~220 km/h | open (KTM 1390 Super Adventure fits) |
+| `bike.naked.400` | KTM 390 Duke: 399 cc single, 45 PS, ~165 kg, ~170 km/h | BMW G 310 R: 313 cc single, 34 PS, ~164 kg, ~145 km/h |
+| `bike.naked.950` | KTM 990 Duke: 947 cc twin, 123 PS, ~179 kg, ~230 km/h | BMW F 900 R: 895 cc twin, 105 PS, ~211 kg, ~225 km/h |
+| `bike.naked.over950` | KTM 1390 Super Duke R: 1350 cc V-twin, 190 PS, ~200 kg, ~290 km/h | BMW S 1000 R: 999 cc four, 165 PS, ~199 kg, ~250 km/h |
+| `bike.sport.400` | BMW G 310 RR: 313 cc single, 34 PS, ~174 kg, ~160 km/h | open (KTM RC 390 fits; KTM is a picked brand, the RC is not a Duke) |
+| `bike.sport.over950` | BMW S 1000 RR: 999 cc four, 210 PS, ~197 kg, ~300 km/h | BMW M 1000 RR: 999 cc four, 212 PS, ~192 kg, ~306 km/h |
+| `bike.adventure.400` | BMW G 310 GS: 313 cc single, 34 PS, ~175 kg, ~145 km/h | open (KTM 390 Adventure fits) |
+| `bike.adventure.over950` | BMW R 1300 GS: 1300 cc boxer, 145 PS, ~237 kg, ~220 km/h | open (KTM 1390 Super Adventure fits) |
 
 The Duke line fills every naked band; BMW fills the rest. Today's motorbike stays as the free
 starter, outside the classes.
@@ -80,29 +81,29 @@ starter, outside the classes.
 
 | class | slot 1 | slot 2 |
 |---|---|---|
-| `car.hatch.l2` | BMW M135 xDrive: 2.0 L turbo four, 300 PS, ~1.6 t, AWD, 250 km/h | open |
-| `car.sedan.l2` | BMW 330Li: 2.0 L turbo four, 258 PS, ~1.7 t, RWD, 250 km/h | open |
-| `car.sedan.l3` | BMW M3 Competition (G80): 3.0 L twin-turbo six, 510 PS, ~1.7 t, RWD, 290 km/h | BMW M340i: 3.0 L turbo six, 374 PS, ~1.7 t, AWD, 250 km/h |
-| `car.sedan.l5` | BMW M5 (G90): 4.4 L twin-turbo V8 plug-in hybrid, 727 PS, ~2.4 t, AWD, 305 km/h | open |
-| `car.coupe.l3` | BMW M2 (G87): 3.0 L twin-turbo six, 480 PS, ~1.7 t, RWD, 285 km/h | BMW M4 CSL: 3.0 L twin-turbo six, 550 PS, ~1.6 t, RWD, 307 km/h |
-| `car.suv.l3` | BMW X5 xDrive40i: 3.0 L turbo six, 381 PS, ~2.2 t, AWD, 250 km/h | BMW X3 M50: 3.0 L turbo six, 398 PS, ~2.0 t, AWD, 250 km/h |
-| `car.suv.l5` | BMW X5 M Competition: 4.4 L twin-turbo V8, 625 PS, ~2.4 t, AWD, 290 km/h | BMW XM: 4.4 L twin-turbo V8 plug-in hybrid, 653 PS, ~2.7 t, AWD, 270 km/h |
-| `car.hyper.l8` | Bugatti Chiron Super Sport: 8.0 L quad-turbo W16, 1600 PS, ~2.0 t, AWD, 440 km/h | Bugatti Tourbillon: 8.3 L V16 hybrid, 1800 PS, ~2.0 t, AWD, 445 km/h |
+| `car.hatch.2000` | BMW M135 xDrive: 1998 cc turbo four, 300 PS, ~1.6 t, AWD, 250 km/h | open |
+| `car.sedan.2000` | BMW 330Li: 1998 cc turbo four, 258 PS, ~1.7 t, RWD, 250 km/h | open |
+| `car.sedan.3000` | BMW M3 Competition (G80): 2993 cc twin-turbo six, 510 PS, ~1.7 t, RWD, 290 km/h | BMW M340i: 2998 cc turbo six, 374 PS, ~1.7 t, AWD, 250 km/h |
+| `car.sedan.5000` | BMW M5 (G90): 4395 cc twin-turbo V8 plug-in hybrid, 727 PS, ~2.4 t, AWD, 305 km/h | open |
+| `car.coupe.3000` | BMW M2 (G87): 2993 cc twin-turbo six, 480 PS, ~1.7 t, RWD, 285 km/h | BMW M4 CSL: 2993 cc twin-turbo six, 550 PS, ~1.6 t, RWD, 307 km/h |
+| `car.suv.3000` | BMW X5 xDrive40i: 2998 cc turbo six, 381 PS, ~2.2 t, AWD, 250 km/h | BMW X3 M50: 2998 cc turbo six, 398 PS, ~2.0 t, AWD, 250 km/h |
+| `car.suv.5000` | BMW X5 M Competition: 4395 cc twin-turbo V8, 625 PS, ~2.4 t, AWD, 290 km/h | BMW XM: 4395 cc twin-turbo V8 plug-in hybrid, 653 PS, ~2.7 t, AWD, 270 km/h |
+| `car.hyper.over5000` | Bugatti Chiron Super Sport: 7993 cc quad-turbo W16, 1600 PS, ~2.0 t, AWD, 440 km/h | Bugatti Tourbillon: 8300 cc V16 hybrid, 1800 PS, ~2.0 t, AWD, 445 km/h |
 | `car.sedan.ev` | BMW i4 M50: two motors, 544 PS, ~2.3 t, AWD, 225 km/h | BMW i7 M70: two motors, 660 PS, ~2.7 t, AWD, 250 km/h |
 
-Reserve: Bugatti Veyron 16.4 (8.0 L W16, 1001 PS, 407 km/h), waiting for a third hyper slot or
-a `car.hyper.l8` swap. Today's hatchback stays as the free starter.
+Reserve: Bugatti Veyron 16.4 (7993 cc W16, 1001 PS, 407 km/h), waiting for a third hyper slot or
+a `car.hyper.over5000` swap. Today's hatchback stays as the free starter.
 
 **Status after player 1:** 10 classes on sale (both slots filled), 6 with one open slot.
 
 ## The catalogue (`games/hqvehicles.json`, data only)
 
 ```text
-{ "classes": [{ "id": "bike.naked.small", "kind": "bike", "type": "naked", "band": "small",
+{ "classes": [{ "id": "bike.naked.400", "kind": "bike", "type": "naked", "band": "400",
                 "label": "Naked · up to 400 cc", "tier": 1 }],
   "vehicles": [{
     "id": "ktm-390-duke",                     // [a-z0-9-], stable forever (owned vehicles point at it)
-    "class": "bike.naked.small", "slot": 1,   // slot 1 | 2 | "reserve"
+    "class": "bike.naked.400", "slot": 1,   // slot 1 | 2 | "reserve"
     "brand": "KTM", "model": "390 Duke", "year": 2024,
     "pickedBy": ["<user id>"],                // whose preference brought it in
     "spec": { "cc": 399, "cyl": 1, "layout": "single", "aspiration": "na", "electric": false,

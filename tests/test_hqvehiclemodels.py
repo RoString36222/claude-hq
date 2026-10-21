@@ -6,6 +6,7 @@ ground, the steering, the rider's anchors), the paint, shared geometry, the star
 motorbike, untouched) and the glTF hook (a real model swapped in once it has loaded).
 Skipped when node is not installed. Stdlib only."""
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -51,7 +52,7 @@ for (const e of ENTRIES){
   const w0 = r.wheels[0].rotation.x; r.roll(1.0, 0.5);
   const st = r.brake && (r.brake(true), r.meshes.filter(m => m.userData.mk === "tail").map(m => m.material.color.getHex()));
   out.rows.push({id: e.id, kind: r.kind, tris: V.triangles(r), dc: V.drawCalls(r), size: s.toArray(), minY: b.min.y,
-    tyreW: tb.max.x - tb.min.x, dims: V.dims(e), radii: r.radii, R: r.R,
+    tyreW: tb.max.x - tb.min.x, dims: V.dims(e), shown: V.shown(e), scale: r.scale, radii: r.radii, R: r.R,
     wheels: r.wheels.map(w => ({name: w.name, p: wpos(w)})),
     anchors: ["a-seat", "a-grip-l", "a-grip-r", "a-foot-l", "a-foot-r"].map(n => !!r.g.getObjectByName(n)),
     seat: r.seat ? wpos(r.seat) : null, grips: r.grips.map(g => g ? wpos(g) : null),
@@ -61,6 +62,14 @@ for (const e of ENTRIES){
     mats, paintIsRig: paintMeshes.length > 0 && paintMeshes.every(m => m.material === r.paint), paint0: before, paint1: r.paint.color.getHex(),
     tailOn: st, riderK: r.riderK || null, hats: r.hats === false ? false : null, lean: r.lean});
 }
+// every catalogue vehicle as drawn: its box and its seat (the display scale, HQV.hqVehicleModels.SCALE)
+const cat = JSON.parse(fs.readFileSync(root + "/games/vehicles/catalogue.json", "utf8"));
+out.cat = cat.vehicles.filter(v => v.slot !== "starter").map(v => {
+  const r = V.build(THREE, v, 0x3366cc); r.g.updateMatrixWorld(true);
+  const s = new THREE.Box3().setFromObject(r.g).getSize(v3());
+  return {id: v.id, kind: r.kind, size: s.toArray(), seatY: r.seat.getWorldPosition(v3()).y, tris: V.triangles(r), dc: V.drawCalls(r), shown: V.shown(v)};
+});
+out.SCALE = V.SCALE;
 // shared geometry: two copies of one entry, different paints
 const a = V.build(THREE, ENTRIES[0], 0x111111), b2 = V.build(THREE, ENTRIES[0], 0xeeeeee);
 const ga = a.meshes.map(m => m.geometry.uuid).sort().join(), gb = b2.meshes.map(m => m.geometry.uuid).sort().join();
@@ -108,16 +117,24 @@ class VehicleModels(unittest.TestCase):
 
     def test_budgets(self):
         for r in self.o["rows"]:
-            self.assertLess(r["tris"], 4000, r["id"])
+            self.assertLess(r["tris"], 6000, r["id"])
             # the body: at most five materials; one mesh per wheel; a bike's steering; a car's steering wheel
             body = sum(1 for k in r["mats"] if k in ("paint", "trim", "glass", "light", "tail"))
             self.assertLessEqual(body, 5, (r["id"], r["mats"]))
-            self.assertLessEqual(r["dc"], 10 if r["kind"] == "car" else 9, (r["id"], r["mats"]))
+            # a mesh per material per rigid piece; a car's calipers ride its four wheel holders
+            self.assertLessEqual(r["dc"], 16 if r["kind"] == "car" else 12, (r["id"], r["mats"]))
+        for r in self.o["cat"]:
+            self.assertLess(r["tris"], 6000, r["id"])
+            self.assertLessEqual(r["dc"], 16 if r["kind"] == "car" else 12, r["id"])
 
     def test_size_matches_dims(self):
         for r in self.o["rows"]:
             sx, sy, sz = r["size"]
-            d = r["dims"]
+            d = r["shown"]
+            k = self.o["SCALE"][r["kind"]]
+            self.assertEqual(r["scale"], k)
+            for n in ("lengthM", "widthM", "heightM", "wheelbaseM"):
+                self.assertAlmostEqual(d[n], r["dims"][n]*k, delta=0.002)
             self.assertAlmostEqual(sz/d["lengthM"], 1, delta=0.05, msg=(r["id"], "length", sz, d))
             self.assertAlmostEqual(sy/d["heightM"], 1, delta=0.05, msg=(r["id"], "height", sy, d))
             self.assertAlmostEqual(r["minY"], 0, delta=0.02, msg=r["id"])
@@ -128,14 +145,62 @@ class VehicleModels(unittest.TestCase):
                 self.assertAlmostEqual(sx/d["widthM"], 1, delta=0.08, msg=(r["id"], "bars", sx))
         # the catalogue's dims win over the type's
         self.assertEqual(self.rows["t-ev"]["dims"]["lengthM"], 5.39)
-        self.assertAlmostEqual(self.rows["t-ev"]["size"][2], 5.39, delta=0.27)
+        self.assertAlmostEqual(self.rows["t-ev"]["size"][2], 5.39*self.o["SCALE"]["car"], delta=0.27)
+
+    # the starters as hq3d draws them (games/hq3d.js carModel / motoModel, measured: length, height, width in m)
+    STARTER = {"car": (3.97, 1.79, 2.08), "bike": (2.64, 1.59, 0.96)}
+
+    def test_the_starters_scale_family(self):
+        # by box size (the cube root of length × height × width): each kind's median within 15% of its starter,
+        # a superbike at least the starter motorbike, every car at least the starter hatch; and real sizes kept
+        size = lambda b: (b[0]*b[1]*b[2]) ** (1/3)
+        by = {}
+        for r in self.o["cat"]:
+            sx, sy, sz = r["size"]
+            by.setdefault(r["kind"], {})[r["id"]] = size((sz, sy, sx))
+        for kind in ("car", "bike"):
+            v = sorted(by[kind].values()); med = v[len(v)//2]
+            self.assertAlmostEqual(med/size(self.STARTER[kind]), 1, delta=0.15, msg=(kind, med))
+        self.assertGreaterEqual(by["bike"]["bmw-s-1000-rr"], size(self.STARTER["bike"]))
+        for i, s in by["car"].items():
+            self.assertGreaterEqual(s, size(self.STARTER["car"])*0.98, i)
+        self.assertGreater(by["car"]["bmw-x5-40i"], by["car"]["bmw-m135-xdrive"]*1.1)      # an SUV still over a hatch
+        self.assertGreater(by["bike"]["bmw-r-1300-gs"], by["bike"]["ktm-rc-390"]*1.1)
+        # the rider's seat at the starters' height: a bike's about the starter motorbike's (1.06 m)
+        for r in self.o["cat"]:
+            if r["kind"] == "bike":
+                self.assertTrue(0.9 <= r["seatY"] <= 1.25, (r["id"], r["seatY"]))
+
+    def test_bays_and_turntables_fit_the_largest(self):
+        # the car park, the basement and the dealer's turntables hold the biggest vehicle as drawn
+        def const(path, name):
+            src = open(os.path.join(ROOT, path)).read()
+            m = re.search(r"\b%s = ([0-9.]+)" % name, src)
+            return float(m.group(1))
+        cars = [r for r in self.o["cat"] if r["kind"] == "car"]
+        bikes = [r for r in self.o["cat"] if r["kind"] == "bike"]
+        wmax = max(r["size"][0] for r in cars)
+        lmax = max(r["size"][2] for r in cars)
+        self.assertLess(wmax, const("games/hqcarpark.js", "BAY_W") - 0.2)
+        self.assertLess(lmax, const("games/hqcarpark.js", "BAY_D") + const("games/hqcarpark.js", "AISLE")/2 - 1.5,
+                        "nose at the bay's back line, the tail leaves the aisle open")
+        # B1's gallery (games/hqbasement.js): plinths one pitch apart, their radius capped at R_MAX; the longest car's
+        # nose and tail stay on its plinth (its mirrors' corners may reach just past the rim)
+        bsrc = open(os.path.join(ROOT, "games/hqbasement.js")).read()
+        gal = dict((k, float(v)) for k, v in re.findall(r"\b(x0|x1|nBack): (-?[0-9.]+)", bsrc.split("var GAL = ", 1)[1].split("};", 1)[0]))
+        r_max = ((gal["x1"] - gal["x0"])/(gal["nBack"] - 1) - 0.35)/2
+        self.assertLess(lmax/2, r_max)
+        self.assertLess(wmax, 2*r_max - 2.5)
+        sweep = lambda rs: max((r["size"][0]**2 + r["size"][2]**2) ** 0.5 for r in rs)   # turning on a turntable
+        self.assertLessEqual(sweep(cars), const("games/hqdealer.js", "CAR_CELL"))
+        self.assertLessEqual(sweep(bikes), const("games/hqdealer.js", "BIKE_CELL"))
 
     def test_wheels_on_the_wheelbase_and_the_ground(self):
         for r in self.o["rows"]:
             W = r["wheels"]
             zs = sorted({round(w["p"][2], 3) for w in W})
             self.assertEqual(len(zs), 2, r["id"])
-            self.assertAlmostEqual(zs[1] - zs[0], r["dims"]["wheelbaseM"], delta=0.01, msg=r["id"])
+            self.assertAlmostEqual(zs[1] - zs[0], r["shown"]["wheelbaseM"], delta=0.01, msg=r["id"])
             for w, rad in zip(W, r["radii"]):
                 self.assertAlmostEqual(w["p"][1], rad, delta=0.01, msg=(r["id"], w["name"]))   # touching the ground
             self.assertEqual([w["name"] for w in W], ["wheel-%d" % i for i in range(len(W))])
@@ -192,7 +257,7 @@ class VehicleModels(unittest.TestCase):
         self.assertFalse(g["standin"])
         self.assertEqual(g["wheels"], ["wheel-0", "wheel-1", "wheel-2", "wheel-3"])
         self.assertEqual(g["steer"], ["wheel-0", "wheel-1"])
-        self.assertAlmostEqual(g["len"], 4.79, delta=0.01)
+        self.assertAlmostEqual(g["len"], 4.79*self.o["SCALE"]["car"], delta=0.01)
         self.assertAlmostEqual(g["minY"], 0, delta=0.01)
         self.assertEqual(g["paint"], [0x00ff00])
         self.assertEqual(g["paint2"], [0x0000ff], "each vehicle its own paint")

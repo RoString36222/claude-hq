@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.5.4** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.5.5** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -364,6 +364,17 @@ and feature guide.
 
 ## Changelog
 
+- **3.5.5 — Dealership vehicles at full size, with more detail.** The catalogue's bikes and cars used to look toy-sized
+  next to the starters (built at true metres, while the starters are drawn big round the chunky riders). They now share
+  one display scale per kind (`HQV.hqVehicleModels.SCALE`: bikes 1.3×, cars 1.08×), so a superbike stands as big as
+  the starter motorbike and every car at least as big as the starter hatch, with the real differences kept (an SUV
+  still over a hatch). The rider's seat, grips and pegs, the collision box, the wheelbase used on slopes and the chase
+  camera's distance follow it; the car park parks long cars nose to the back line, and the dealership's turntables are
+  a little roomier. Handling is unchanged. The stand-in bodies also gain the starters' level of detail: round-shouldered
+  tyres, alloys with discs and calipers, shut lines, handles, plates, indicators, fog lights, wipers, a roof fin, SUV
+  rails and arch cladding, splitters and diffusers on cars; round tyres (wire spokes on the big adventure bikes),
+  discs and calipers, chain and sprockets, radiator, fins, a tank stripe, fork legs, grips, levers, a dash, a skid
+  plate and winglets on bikes. Each is still built once and shared (14 draw calls a car, 8-10 a bike).
 - **3.5.4 — B1 showcase gallery.** Every vehicle in your basement now stands on its own display plinth, not just the
   three starters: fifteen turntables in two rows (eight along the back wall, the starters S1–S3 by the walnut wall,
   then seven down the front), each with a bronze base, a warm spot cone, a halo spilling onto the stone, a slow

@@ -70,7 +70,7 @@ class ShowroomNode(unittest.TestCase):
             self.assertEqual(r["wheels"], 4 if r["kind"] == "car" else 2, r["id"])
             self.assertEqual(r["roll"], "function", r["id"] + ": hq3d rolls a catalogue rig's own wheels")
             self.assertTrue(r["seat"], r["id"])
-            self.assertLess(r["tris"], 4000, r["id"])
+            self.assertLess(r["tris"], 6000, r["id"])
 
     def test_a_chiron_outruns_a_390_duke_off_the_line(self):
         rows = {r["id"]: r for r in self.o["rows"]}

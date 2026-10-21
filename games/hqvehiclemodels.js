@@ -2,8 +2,12 @@
  *
  * Every catalogue vehicle drives from the start: until its real glTF model is imported, it gets a body built
  * here from its kind and type (car: hatch, sedan, coupe, suv, hyper, an electric sedan; bike: naked, sport,
- * adventure) at its real size, with cheap brand cues (BMW kidneys and angel eyes, the Bugatti horseshoe, C-line
- * and quad LEDs, KTM's orange trellis and split headlight, the GS beak and X light).
+ * adventure) from its real size (drawn at SCALE, below), with cheap brand cues (BMW kidneys and angel eyes, the
+ * Bugatti horseshoe, C-line and quad LEDs, KTM's orange trellis and split headlight, the GS beak and X light) and
+ * the starters' level of detail (3.5.5): a car's round-shouldered tyres, alloys, discs and calipers, shut lines,
+ * handles, plates, indicators, fogs, wipers, fin, SUV rails and cladding, splitter and diffuser; a bike's round
+ * tyres (wire spokes on the big adventure bikes), discs and calipers, chain and sprockets, radiator, fins, tank
+ * stripe, fork legs, grips, levers, dash, skid plate, winglets.
  *
  *   build(c, entry, paint, opts) -> rig     c: the hq3d ctx (c.THREE; c.car / c.moto for the starters), or THREE
  *     rig = {g, wheels, steer, spin, R, radii, seat, grips, feet, lean, hats, riderK, brake(on), roll(d, st),
@@ -13,12 +17,18 @@
  *     group spun about x; a car's front wheels sit in "steer-l" / "steer-r" holders and its steering wheel is
  *     "spin"; a bike's bars, fork and front wheel are "steer". g.userData.rig is the rig.
  *     The starters (entry.starter, or no class) are hq3d's own car and motorbike (c.car / c.moto), unchanged.
- *   dims(entry) -> {lengthM, widthM, heightM, wheelbaseM}   entry.dims, else typical for its kind and type
+ *   dims(entry) -> {lengthM, widthM, heightM, wheelbaseM}   entry.dims, else typical for its kind and type (true metres)
+ *   SCALE = {bike, car}   the display scale: every catalogue body is drawn this much over its true size, so it sits in
+ *     the starters' scale family (hq3d draws its motorbike at 1.2× round big-headed riders, its hatch tall and chunky).
+ *     The one knob: the body, wheels, rider anchors and a real model all scale with it; hq3d's collision box and
+ *     wheelbase, the camera, the car park's impostors read shown(entry). Handling (speeds, acceleration) does not.
+ *   scaleOf(entry) -> SCALE[kind]     shown(entry) -> dims(entry) × scaleOf(entry), as drawn
  *   styleOf(entry) -> {kind: "car" | "bike", type, brand, ev}
  *   triangles(rig), drawCalls(rig)     what it costs (the stand-in's own meshes)
  *
- * Budget: under 4k triangles per vehicle. Each rigid piece (the body; each wheel; a bike's steering; a car's
- * steering wheel) is merged into one mesh per material, and the body uses at most five: paint (recolourable, one
+ * Budget: under 6k triangles per vehicle (about 2.6-3.5k a bike, 3.9-4.8k a car), 8-10 draw calls a bike, 14 a car.
+ * Each rigid piece (the body; each wheel; a bike's steering; a car's steering wheel; a car's wheel holder, for its
+ * caliper) is merged into one mesh per material, and the body uses at most five: paint (recolourable, one
  * per vehicle), trim (vertex coloured: black, greys, chrome, KTM orange), glass, lights (vertex coloured, unlit)
  * and the tail lights (unlit; brighter on the brake). Geometry is built once per catalogue entry and shared by
  * every copy; only the paint and tail materials are per vehicle.
@@ -33,6 +43,9 @@
 var HQV = window.HQV = window.HQV || {};
 var PI = Math.PI;
 
+// the display scale per kind (see the header): a catalogue bike's box (length × height × width) then matches the
+// starter motorbike's (a superbike a touch over it), every car's at least the starter hatch's; tests/test_hqvehiclemodels.py
+var SCALE = {bike: 1.3, car: 1.08};
 // typical sizes (m) for a kind and type, when the catalogue entry gives none
 var DIMS = {
   "car.hatch":  {lengthM: 4.36, widthM: 1.80, heightM: 1.46, wheelbaseM: 2.67},
@@ -93,6 +106,12 @@ function dims(entry){
   var out = {};
   ["lengthM", "widthM", "heightM", "wheelbaseM"].forEach(function(k){ out[k] = +d[k] > 0 ? +d[k] : base[k]; });
   if(entry && entry.model3d && +entry.model3d.lengthM > 0 && !(+d.lengthM > 0)) out.lengthM = +entry.model3d.lengthM;
+  return out;
+}
+function scaleOf(entry){ var k = SCALE[styleOf(entry).kind]; return +k > 0 ? +k : 1; }
+function shown(entry){
+  var d = dims(entry), k = scaleOf(entry), out = {};
+  Object.keys(d).forEach(function(n){ out[n] = Math.round(d[n]*k*1000)/1000; });
   return out;
 }
 function isM(entry){ return /\bM\d|\bM\b|Competition|CSL/.test(String((entry && entry.model) || "")); }
@@ -214,16 +233,31 @@ function finish(T, root){
 function anchor(T, p, name, x, y, z){ var o = new T.Object3D(); o.name = name; o.position.set(x, y, z); p.add(o); return o; }
 
 /* ---------- cars ---------- */
-function carWheel(B, holder, name, R, tw, side, rim, spokes){
-  var T = B.T, w = B.node(holder, name);
-  B.add(w, "wheel", new T.CylinderGeometry(R, R, tw, 18), COL.tyre, 0, 0, 0, 0, 0, PI/2);
+// a car's wheel: a tyre with rounded shoulders and two tread grooves, the alloy (a lip, its spokes: split pairs on an
+// M car), a brake disc behind it; the caliper sits on the holder (it steers with the wheel, never spins)
+function carWheel(B, holder, name, R, tw, side, rim, spokes, caliper, split){
+  var T = B.T, w = B.node(holder, name), sh = Math.min(0.05, tw*0.2);
+  B.add(w, "wheel", new T.CylinderGeometry(R, R, tw - 2*sh, 18, 1, true), COL.tyre, 0, 0, 0, 0, 0, PI/2);
+  [1, -1].forEach(function(s){
+    var t = new T.TorusGeometry(R - sh, sh, 2, 18); t.rotateY(PI/2);
+    B.add(w, "wheel", t, s === side ? 0x202226 : COL.tyre, s*(tw/2 - sh), 0, 0);                    // the shoulder, the sidewall
+    B.add(w, "wheel", new T.CylinderGeometry(R + 0.003, R + 0.003, 0.014, 18, 1, true), 0x08090a, s*tw*0.17, 0, 0, 0, 0, PI/2);   // a groove
+  });
   var ox = side*(tw/2 + 0.004);
-  B.add(w, "wheel", new T.CylinderGeometry(R*0.7, R*0.7, 0.012, 14), rim, ox, 0, 0, 0, 0, PI/2);
-  for(var k = 0; k < (spokes || 5); k++){
-    var a = k/(spokes || 5)*PI*2;
-    B.box(w, "wheel", COL.grey, 0.02, R*0.62, 0.05, ox + side*0.008, Math.cos(a)*R*0.31, Math.sin(a)*R*0.31, a, 0, 0);
+  B.add(w, "wheel", new T.CircleGeometry(R*0.68, 14), COL.black, ox - side*0.03, 0, 0, 0, side*PI/2, 0);   // the barrel's dark inside
+  var lip = new T.TorusGeometry(R*0.68, 0.016, 3, 16); lip.rotateY(PI/2);
+  B.add(w, "wheel", lip, rim, ox, 0, 0);
+  B.add(w, "wheel", new T.CylinderGeometry(R*0.5, R*0.5, 0.016, 12), COL.steel, ox - side*0.075, 0, 0, 0, 0, PI/2);   // the brake disc
+  var n = spokes || 5;
+  for(var k = 0; k < n; k++){
+    var a = k/n*PI*2;
+    if(split) [-0.11, 0.11].forEach(function(da){ B.box(w, "wheel", rim, 0.018, R*0.6, 0.026, ox + side*0.006, Math.cos(a + da)*R*0.32, Math.sin(a + da)*R*0.32, a + da, 0, 0); });
+    else B.box(w, "wheel", rim, 0.02, R*0.6, 0.05, ox + side*0.008, Math.cos(a)*R*0.31, Math.sin(a)*R*0.31, a, 0, 0);
   }
-  B.add(w, "wheel", new T.CylinderGeometry(0.05, 0.05, 0.02, 8), COL.chrome, ox + side*0.012, 0, 0, 0, 0, PI/2);
+  B.add(w, "wheel", new T.CylinderGeometry(0.055, 0.055, 0.024, 10), COL.dark, ox + side*0.012, 0, 0, 0, 0, PI/2);
+  B.add(w, "wheel", new T.CylinderGeometry(0.03, 0.03, 0.03, 8), COL.chrome, ox + side*0.016, 0, 0, 0, 0, PI/2);
+  // the caliper: behind the spokes, at the back of the disc
+  B.box(holder, "trim", caliper, 0.05, R*0.34, R*0.16, ox - side*0.05, R*0.06, -R*0.42, 0.25, 0, 0);
   return w;
 }
 function buildCar(T, entry, st, d){
@@ -309,6 +343,7 @@ function buildCar(T, entry, st, d){
       [1, -1].forEach(function(sx){
         B.plate(body, "trim", st.ev ? COL.bmwBlue : COL.alu, kw, kh, 0.03, 0.05, sx*(kw/2 + 0.02), ky, zN + 0.005);
         B.plate(body, "trim", st.ev ? COL.grey : COL.black, kw - 0.03, kh - 0.03, 0.03, 0.04, sx*(kw/2 + 0.02), ky, zN + 0.012);
+        if(!st.ev) for(var j = -1; j <= 1; j++) B.box(body, "trim", COL.alu, 0.012, kh - 0.05, 0.012, sx*(kw/2 + 0.02) + j*kw*0.26, ky, zN + 0.03);   // the slats
       });
     } else if(!st.ev) B.plate(body, "trim", COL.black, W*0.42, 0.14, 0.03, 0.04, 0, yl - 0.02, zN + 0.004);
   }
@@ -334,27 +369,78 @@ function buildCar(T, entry, st, d){
     for(var i = 0; i < nx; i++){ var ex = (i < nx/2 ? 1 : -1)*(W*0.3 + (i % 2)*0.1); B.add(body, "trim", new T.CylinderGeometry(0.045, 0.045, 0.12, 8), COL.chrome, ex, gc + 0.1, -L/2 + 0.02, PI/2, 0, 0); }
   }
   if(hyper || st.type === "coupe") B.box(body, "paint", null, W*0.8, 0.03, 0.22, 0, yt + 0.01, -L/2 + 0.2, -0.12, 0, 0);
+  // detail: shut lines and handles, the plates, indicators and fog lights, wipers, the fin; an SUV's rails and arch
+  // cladding, a hatch's roof spoiler, an M saloon's boot lip, a splitter and diffuser fins on the quick ones
+  var two = st.type === "coupe" || hyper, zd0 = Math.min(zA, zf - ar - 0.06), zd1 = Math.max(zr + ar + 0.06, zC - 0.02);
+  var shut = two ? [zd0, Math.max(zd1, (zA + zC)/2 - 0.25)] : [zd0, (zA + zC)/2 + 0.1, zd1], ly0 = gc + 0.16, ly1 = yb - 0.03;
+  [1, -1].forEach(function(sx){
+    var x = sx*(W/2 + 0.002);
+    shut.forEach(function(z, i){
+      B.box(body, "trim", COL.black, 0.012, ly1 - ly0, 0.014, x, (ly0 + ly1)/2, z);
+      if(i < shut.length - 1) B.box(body, "trim", bmw ? COL.alu : COL.dark, 0.02, 0.026, 0.13, sx*(W/2 + 0.01), yb - 0.09, shut[i + 1] + 0.16);
+    });
+    B.box(body, "trim", COL.black, 0.06, 0.02, 0.05, sx*(W/2 + 0.01), yb + 0.06, zA - 0.1);                // the mirror's stalk
+    B.box(body, "trim", COL.dark, 0.012, 0.05, 0.11, sx*(W/2 + 0.07), yb + 0.08, zA - 0.2);               // its glass
+    if(!bugatti){
+      B.box(body, "light", COL.amber, 0.07, 0.03, 0.02, sx*W*0.43, yl - 0.075, L/2 + 0.004);             // indicators
+      B.box(body, "light", COL.head, 0.08, 0.035, 0.02, sx*W*0.37, gc + 0.21, L/2 + 0.006);              // fog lights
+    }
+    B.box(body, "light", COL.head, 0.08, 0.035, 0.02, sx*W*0.3, gc + 0.22, -L/2 - 0.006);                // reversing lights
+    B.box(body, "trim", COL.black, W*0.26, 0.014, 0.02, sx*W*0.18, yb + 0.02, zA - 0.05, 0, sx*0.08, 0); // the wipers
+    if(st.type === "suv" || st.type === "pickup"){
+      [zr, zf].forEach(function(z){ var c = new T.TorusGeometry(ar + 0.012, 0.035, 3, 10, PI); c.rotateY(PI/2); B.add(body, "trim", c, COL.black, sx*(W/2 - 0.012), R, z); });
+      var rx = sx*(tw/2 - 0.08), rl = Math.max(0.4, zAr - zCr - 0.1);
+      B.box(body, "trim", bmw && isM(entry) ? COL.black : COL.alu, 0.035, 0.03, rl, rx, H + 0.05, (zAr + zCr)/2);
+      [zAr - 0.08, zCr + 0.12].forEach(function(z){ B.box(body, "trim", COL.black, 0.04, 0.05, 0.06, rx, H + 0.02, z); });
+    }
+  });
+  if(!(bugatti && hyper)){
+    B.box(body, "trim", 0xeceee6, 0.52, 0.11, 0.012, 0, gc + 0.2, L/2 + 0.035);                            // the plates
+    B.box(body, "trim", COL.dark, 0.34, 0.035, 0.004, 0, gc + 0.2, L/2 + 0.043);
+  }
+  B.box(body, "trim", 0xeceee6, 0.52, 0.11, 0.012, 0, gc + 0.3, -L/2 - 0.012);
+  B.box(body, "trim", COL.dark, 0.34, 0.035, 0.004, 0, gc + 0.3, -L/2 - 0.02);
+  if(!hyper){
+    B.box(body, "tail", COL.red, 0.32, 0.03, 0.03, 0, top - 0.03, zCr - 0.02);                            // the third brake light
+    B.side(body, "trim", COL.black, [[zCr + 0.08, H], [zCr + 0.12, H + 0.05], [zCr + 0.22, H]], 0.05, 0, 1);   // the fin
+  }
+  if(st.type === "hatch") B.box(body, "paint", null, tw*0.95, 0.035, 0.24, 0, H - 0.01, zCr - 0.02, 0.1, 0, 0);   // the roof spoiler
+  if(st.type === "sedan" && bmw && isM(entry)) B.box(body, "paint", null, W*0.6, 0.025, 0.07, 0, yt + 0.012, -L/2 + 0.16);
+  if(hyper || st.type === "coupe" || isM(entry)){
+    B.box(body, "trim", COL.black, W*0.86, 0.022, 0.14, 0, gc + 0.012, L/2 - 0.04);                       // the splitter
+    for(var fi = -2; fi <= 2; fi++) B.box(body, "trim", COL.black, 0.02, 0.12, 0.3, fi*W*0.12, gc + 0.07, -L/2 + 0.16);   // diffuser fins
+  }
   // the wheels: the front ones in steer holders
   var tw = hyper ? 0.3 : 0.26, wx = W/2 - tw/2 - 0.03, rim = bugatti ? COL.alu : bmw && isM(entry) ? COL.grey : COL.steel;
-  var wheels = [];
+  var wheels = [], cal = bugatti ? COL.alu : bmw && isM(entry) ? COL.bmwBlue : hyper ? COL.red : COL.grey;
   [[-wx, zf, "steer-l", -1], [wx, zf, "steer-r", 1], [-wx, zr, null, -1], [wx, zr, null, 1]].forEach(function(p, i){
-    var h = new T.Group(); h.position.set(p[0], R, p[1]); if(p[2]) h.name = p[2]; root.add(h);
-    wheels.push(carWheel(B, h, "wheel-" + i, R, tw, p[3], rim, bugatti ? 7 : 5));
+    var h = B.node(root, p[2], p[0], R, p[1]);
+    wheels.push(carWheel(B, h, "wheel-" + i, R, tw, p[3], rim, bugatti ? 7 : 5, cal, bmw && isM(entry)));
   });
   finish(T, root);
   return {g: root, meta: {kind: "car", R: R, radii: [R, R, R, R], lean: hyper ? -0.04 : -0.08, riderK: riderK}};
 }
 
 /* ---------- bikes ---------- */
-function bikeWheel(B, p, name, R, tw, rim, disc, x, y, z){
-  var T = B.T, w = B.node(p, name, x, y, z);
-  B.add(w, "wheel", new T.CylinderGeometry(R, R, tw, 18), COL.tyre, 0, 0, 0, 0, 0, PI/2);
+// a bike's wheel: a round-profile tyre, the rim's bright lip, cast spokes (wire spokes: an adventure bike's), the
+// discs (front: one or two, the rear's on the right), the rear's sprocket on the left (model-local +x)
+function bikeWheel(B, p, name, R, tw, rim, discs, x, y, z, wire, sprocket){
+  var T = B.T, w = B.node(p, name, x, y, z), tr = tw/2;
+  var tyre = new T.TorusGeometry(R - tr, tr, 6, 22); tyre.rotateY(PI/2);
+  B.add(w, "wheel", tyre, COL.tyre);
+  var lip = new T.TorusGeometry(R - tw*0.95, 0.014, 3, 20); lip.rotateY(PI/2);
+  B.add(w, "wheel", lip, rim);
   [1, -1].forEach(function(s){
-    B.add(w, "wheel", new T.CylinderGeometry(R*0.74, R*0.74, 0.01, 14), COL.black, s*(tw/2 + 0.002), 0, 0, 0, 0, PI/2);
-    for(var k = 0; k < 3; k++){ var a = k/3*PI*2 + (s > 0 ? 0 : PI/3); B.box(w, "wheel", rim, 0.012, R*0.6, 0.04, s*(tw/2 + 0.008), Math.cos(a)*R*0.33, Math.sin(a)*R*0.33, a, 0, 0); }
+    B.add(w, "wheel", new T.CircleGeometry(R - tw*0.95, 16), COL.black, s*tw*0.12, 0, 0, 0, s*PI/2, 0);
+    if(wire){ for(var k = 0; k < 12; k++){ var a = k/12*PI*2 + (s > 0 ? 0 : PI/12); B.box(w, "wheel", COL.steel, 0.006, R - tw, 0.006, s*tw*0.14, Math.cos(a)*(R - tw)/2, Math.sin(a)*(R - tw)/2, a, 0, s*0.12); } }
+    else for(var k2 = 0; k2 < 3; k2++){ var a2 = k2/3*PI*2 + (s > 0 ? 0 : PI/3); B.box(w, "wheel", rim, 0.012, R*0.6, 0.04, s*(tw*0.12 + 0.008), Math.cos(a2)*R*0.33, Math.sin(a2)*R*0.33, a2, 0, 0); }
   });
-  if(disc) B.add(w, "wheel", new T.CylinderGeometry(R*0.55, R*0.55, 0.008, 14), COL.steel, tw/2 + 0.03, 0, 0, 0, 0, PI/2);
-  B.add(w, "wheel", new T.CylinderGeometry(0.04, 0.04, tw + 0.04, 8), COL.alu, 0, 0, 0, 0, 0, PI/2);
+  (discs || []).forEach(function(s){
+    B.add(w, "wheel", new T.CylinderGeometry(R*0.55, R*0.55, 0.008, 16), COL.steel, s*(tr + 0.03), 0, 0, 0, 0, PI/2);
+    B.add(w, "wheel", new T.CylinderGeometry(R*0.3, R*0.3, 0.012, 10), COL.dark, s*(tr + 0.03), 0, 0, 0, 0, PI/2);   // the carrier
+  });
+  if(sprocket) B.add(w, "wheel", new T.CylinderGeometry(R*0.4, R*0.4, 0.012, 16), COL.dark, tr + 0.035, 0, 0, 0, 0, PI/2);
+  B.add(w, "wheel", new T.CylinderGeometry(0.045, 0.045, tw + 0.06, 8), COL.alu, 0, 0, 0, 0, 0, PI/2);
   return w;
 }
 function buildBike(T, entry, st, d){
@@ -427,18 +513,41 @@ function buildBike(T, entry, st, d){
     [0.6, -0.6].forEach(function(r){ B.box(body, "light", COL.drl, 0.03, 0.2, 0.02, 0, yh + 0.04, zh + 0.3, 0, 0, r); });
     [1, -1].forEach(function(sx){ B.bar(body, "trim", COL.black, [sx*0.18, 0.62, ez + 0.3], [sx*0.36, 0.42, ez + 0.08], 0.02, null, true); });   // crash bars
   }
+  // detail: the chain and its guard, the rear caliper, the radiator, the clutch cover and the head's fins, the tank's
+  // stripe and cap, pillion pegs, a skid plate (adventure), winglets (an M superbike), the tail tidy
+  var rtw = sport ? 0.19 : 0.16, cx = 0.12, fsz = zp + 0.08, fsy = yp - 0.02, rs = Rr*0.4;
+  B.bar(body, "trim", COL.dark, [cx, fsy + 0.045, fsz], [cx, Rr + rs, zr], 0.012, 0.02);                    // the chain, top run
+  B.bar(body, "trim", COL.dark, [cx, fsy - 0.045, fsz], [cx, Rr - rs, zr], 0.012, 0.02);                    // and bottom
+  B.add(body, "trim", new T.CylinderGeometry(0.05, 0.05, 0.02, 10), COL.dark, cx, fsy, fsz, 0, 0, PI/2);     // the front sprocket
+  B.bar(body, "trim", COL.black, [cx + 0.01, fsy + 0.09, fsz - 0.05], [cx + 0.01, Rr + rs + 0.05, zr + 0.2], 0.008, 0.05);   // the guard
+  B.box(body, "trim", COL.gold, 0.04, 0.09, 0.07, -(rtw/2 + 0.05), Rr + Rr*0.45, zr - Rr*0.2, 0.5, 0, 0);   // the rear caliper
+  if(!boxer){
+    B.box(body, "trim", COL.dark, ew + 0.12, small ? 0.26 : 0.34, 0.05, 0, 0.32 + eh*0.65, ez + 0.3, -0.25, 0, 0);   // the radiator
+    B.box(body, "trim", COL.grey, ew + 0.06, small ? 0.2 : 0.28, 0.01, 0, 0.32 + eh*0.65, ez + 0.33, -0.25, 0, 0);
+  }
+  B.add(body, "trim", new T.CylinderGeometry(0.12, 0.12, 0.03, 14), ktm ? COL.ktm : COL.alu, ew/2 + 0.015, 0.42, ez - 0.02, 0, 0, PI/2);   // the clutch cover
+  for(var fi = 0; fi < 3; fi++) B.box(body, "trim", COL.alu, ew*0.9, 0.012, 0.25, 0, 0.32 + eh - 0.02 - fi*0.05, ez + 0.06);   // the head's fins
+  B.bar(body, "trim", ktm ? COL.ktm : bmw ? (sport ? 0xd02030 : COL.bmwBlue) : 0xf0f0f0, [0, yh + 0.045, zh - 0.1], [0, tTop + 0.012, zs0 + 0.16], 0.07, 0.012);   // the stripe
+  B.add(body, "trim", new T.CylinderGeometry(0.04, 0.04, 0.02, 10), COL.alu, 0.07, (yh + tTop)/2 + 0.04, (zh + zs0)/2 + 0.02);   // the filler cap
+  [1, -1].forEach(function(sx){ B.box(body, "trim", COL.steel, 0.08, 0.02, 0.035, sx*0.19, fy + 0.12, zr + WB*0.18); });          // pillion pegs
+  if(adv){
+    B.box(body, "trim", COL.alu, ew + 0.1, 0.03, 0.5, 0, 0.27, ez + 0.02, -0.06, 0, 0);                     // the skid plate
+    [1, -1].forEach(function(sx){ B.bar(body, "trim", COL.black, [sx*0.17, ys - 0.08, zr + 0.25], [sx*0.19, ys - 0.24, zr - 0.05], 0.016, null, true); });   // the rack's rails
+  }
+  if(sport && bmw && /\bM\b|M 1000/.test(String(entry.model || ""))) [1, -1].forEach(function(sx){ B.box(body, "trim", COL.dark, 0.09, 0.012, 0.16, sx*0.24, yh - 0.12, zh - 0.02, 0, 0, -sx*0.3); });   // winglets
+  B.bar(body, "trim", COL.black, [0, tip[1] - 0.09, tip[0] + 0.04], [0, ys - 0.2, zr - 0.08], 0.05, 0.012);   // the tail tidy
   // the steering: fork, front wheel, mudguard, bars (clip-ons on a sport bike), a naked bike's headlight
   var steer = B.node(root, "steer", 0, yh, zh);
   var fx = [zf - zh, Rf - yh], forkCol = ktm ? COL.ktm : sport ? COL.gold : COL.steel;
   [1, -1].forEach(function(sx){ B.bar(steer, "trim", forkCol, [sx*0.085, 0.02, 0.02], [sx*0.085, fx[1] + 0.05, fx[0] - 0.01], 0.028, null, true); });
   B.box(steer, "trim", COL.dark, 0.24, 0.05, 0.1, 0, 0.0, 0.0);
   B.add(steer, "trim", (function(){ var g = new T.TorusGeometry(Rf + 0.035, 0.03, 3, 10, PI*0.4); g.rotateZ(PI*0.32); g.rotateY(PI/2); return g; })(), adv ? COL.black : COL.dark, 0, fx[1], fx[0]);
-  var grips;
+  var grips, by0 = 0;
   if(sport){
     [1, -1].forEach(function(sx){ B.bar(steer, "trim", COL.black, [sx*0.1, 0.0, -0.02], [sx*0.3, 0.0, -0.1], 0.016, null, true); });
-    grips = [0.3, 0.0, -0.1];
+    grips = [0.3, 0.0, -0.1]; by0 = 0.04;
   } else {
-    var bw = Math.max(0.3, d.widthM/2 - 0.012), by = adv ? 0.2 : 0.13, bz = adv ? -0.22 : -0.17;
+    var bw = Math.max(0.3, d.widthM/2 - 0.012), by = adv ? 0.2 : 0.13, bz = adv ? -0.22 : -0.17; by0 = by;
     B.bar(steer, "trim", COL.black, [bw, by, bz], [-bw, by, bz], 0.014, null, true);
     B.bar(steer, "trim", COL.dark, [0, 0.02, 0], [0, by, bz], 0.02, null, true);
     if(adv) [1, -1].forEach(function(sx){ B.box(steer, "paint", null, 0.08, 0.06, 0.12, sx*(bw - 0.02), by + 0.02, bz + 0.08); });
@@ -450,10 +559,23 @@ function buildBike(T, entry, st, d){
     if(ktm){ [1, -1].forEach(function(sx){ B.box(steer, "light", COL.head, 0.045, 0.15, 0.02, sx*0.04, -0.06, 0.175); B.box(steer, "light", COL.drl, 0.02, 0.1, 0.02, sx*0.085, -0.03, 0.17, 0, 0, sx*0.5); }); }
     else B.add(steer, "light", new T.CylinderGeometry(0.075, 0.075, 0.02, 14), COL.head, 0, -0.05, 0.18, PI/2, 0, 0);
   }
+  // the fork's lower legs and axle clamps, the front calipers, the top clamp, grips, levers and their reservoirs, the dash
+  [1, -1].forEach(function(sx){
+    var lo = [sx*0.085, fx[1] + 0.04, fx[0] - 0.01], hi = [sx*0.085, fx[1]*0.45, fx[0]*0.45 + 0.01];
+    B.bar(steer, "trim", sport || ktm ? COL.dark : COL.steel, lo, hi, 0.036, null, true);
+    if(!small || sx < 0) B.box(steer, "trim", COL.gold, 0.035, 0.11, 0.06, sx*0.085, fx[1] + Rf*0.4, fx[0] - Rf*0.4, -0.6, 0, 0);
+    B.add(steer, "trim", new T.CylinderGeometry(0.03, 0.03, 0.05, 8), COL.black, sx*(grips[0] + 0.035), grips[1], grips[2], 0, 0, PI/2);   // a grip
+    B.bar(steer, "trim", COL.alu, [sx*(grips[0] - 0.07), grips[1] + 0.01, grips[2] + 0.04], [sx*(grips[0] + 0.03), grips[1], grips[2] + 0.07], 0.008, 0.012);   // a lever
+    B.box(steer, "trim", COL.dark, 0.04, 0.035, 0.035, sx*(grips[0] - 0.09), grips[1] + 0.03, grips[2] + 0.01);   // its reservoir
+  });
+  B.box(steer, "trim", COL.alu, 0.22, 0.025, 0.08, 0, 0.04, -0.02);                                           // the top clamp
+  B.box(steer, "trim", COL.black, 0.14, 0.09, 0.03, 0, sport ? 0.06 : by0 + 0.06, sport ? 0.02 : -0.04, -0.6, 0, 0);   // the dash
+  B.box(steer, "light", 0x9fd8ff, 0.11, 0.06, 0.004, 0, sport ? 0.065 : by0 + 0.065, sport ? 0.005 : -0.055, -0.6, 0, 0);
   anchor(T, steer, "a-grip-l", grips[0], grips[1], grips[2]); anchor(T, steer, "a-grip-r", -grips[0], grips[1], grips[2]);
   var rim = ktm && naked ? COL.ktm : bmw && sport ? COL.bmwBlue : adv ? COL.alu : COL.black;
-  bikeWheel(B, root, "wheel-0", Rr, sport ? 0.19 : 0.16, rim, false, 0, Rr, zr);
-  bikeWheel(B, steer, "wheel-1", Rf, 0.12, rim, true, 0, fx[1], fx[0]);
+  var wire = adv && (ktm || !small);
+  bikeWheel(B, root, "wheel-0", Rr, rtw, rim, [-1], 0, Rr, zr, wire, true);
+  bikeWheel(B, steer, "wheel-1", Rf, 0.12, rim, small ? [-1] : [1, -1], 0, fx[1], fx[0], wire, false);
   finish(T, root);
   return {g: root, meta: {kind: "bike", R: Rr, radii: [Rr, Rf], lean: S.lean, riderK: null}};
 }
@@ -475,10 +597,24 @@ function shared(T){
     light: new T.MeshBasicMaterial({vertexColors: true})
   });
 }
-function keyOf(entry, st, d){ return [entry.id || "?", st.kind, st.type, st.brand, st.ev ? 1 : 0, d.lengthM, d.widthM, d.heightM, d.wheelbaseM].join("|"); }
+function keyOf(entry, st, d, k){ return [entry.id || "?", st.kind, st.type, st.brand, st.ev ? 1 : 0, d.lengthM, d.widthM, d.heightM, d.wheelbaseM, k].join("|"); }
 function blueprint(T, entry){
-  var st = styleOf(entry), d = dims(entry), key = keyOf(entry, st, d), BP = store(T).bp;
-  return BP[key] || (BP[key] = {st: st, d: d, bp: st.kind === "bike" ? buildBike(T, entry, st, d) : buildCar(T, entry, st, d)});
+  var st = styleOf(entry), d = dims(entry), k = scaleOf(entry), key = keyOf(entry, st, d, k), BP = store(T).bp;
+  if(BP[key]) return BP[key];
+  var bp = st.kind === "bike" ? buildBike(T, entry, st, d) : buildCar(T, entry, st, d);
+  return (BP[key] = {st: st, d: d, k: k, bp: k === 1 ? bp : scaled(bp, k)});
+}
+// the display scale, baked into the blueprint: every node's offset and every vertex × k (rotations kept), so the
+// rig's anchors, wheel radii and positions are all in shown metres and the rig's root stays at scale 1
+function scaled(bp, k){
+  bp.g.traverse(function(o){
+    if(o !== bp.g) o.position.multiplyScalar(k);
+    if(o.isMesh){ o.geometry.scale(k, k, k); o.geometry.computeBoundingSphere(); }
+  });
+  var m = bp.meta;
+  m.R *= k; m.radii = m.radii.map(function(r){ return r*k; });
+  if(m.riderK) m.riderK = Math.min(0.85, m.riderK*k);      // the same driver, in the same share of the bigger cabin
+  return bp;
 }
 function paintOf(entry, paint){
   if(paint != null) return paint;
@@ -510,7 +646,7 @@ function build(c, entry, paint, opts){
   function get(n){ return g.getObjectByName(n); }
   var car = bp.meta.kind === "car", on = null;
   var rig = {
-    g: g, entry: entry, dims: B.d, kind: bp.meta.kind, paint: pm, standin: get("body"), meshes: meshes,
+    g: g, entry: entry, dims: B.d, scale: B.k, kind: bp.meta.kind, paint: pm, standin: get("body"), meshes: meshes,
     wheels: car ? [0, 1, 2, 3].map(function(i){ return get("wheel-" + i); }) : [get("wheel-0"), get("wheel-1")],
     steer: car ? [get("steer-l"), get("steer-r")] : get("steer"), spin: car ? get("spin") : null,
     R: bp.meta.R, radii: bp.meta.radii.slice(), lean: bp.meta.lean,
@@ -548,7 +684,7 @@ function attachModel(T, rig, m3, loader, base){
   return loadGlb(loader, url).then(function(scene){
     if(rig.disposed) return rig;
     var o = scene.clone(true), box = new T.Box3().setFromObject(o), size = box.getSize(new T.Vector3());
-    var len = +m3.lengthM > 0 ? +m3.lengthM : rig.dims.lengthM, s = len/Math.max(1e-3, size.z);
+    var len = (+m3.lengthM > 0 ? +m3.lengthM : rig.dims.lengthM)*(rig.scale || 1), s = len/Math.max(1e-3, size.z);
     var wrap = new T.Group(); wrap.name = "glb";
     o.scale.multiplyScalar(s);
     box.setFromObject(o);
@@ -593,6 +729,6 @@ function triangles(rig){ var t = 0; (rig.meshes || []).forEach(function(m){ var 
 function drawCalls(rig){ return (rig.meshes || []).length; }
 function clearCache(T){ var BP = store(T).bp; Object.keys(BP).forEach(function(k){ BP[k].bp.g.traverse(function(o){ if(o.isMesh) o.geometry.dispose(); }); delete BP[k]; }); }
 
-HQV.hqVehicleModels = {build: build, dims: dims, styleOf: styleOf, triangles: triangles, drawCalls: drawCalls, clearCache: clearCache,
+HQV.hqVehicleModels = {build: build, dims: dims, shown: shown, scaleOf: scaleOf, SCALE: SCALE, styleOf: styleOf, triangles: triangles, drawCalls: drawCalls, clearCache: clearCache,
                        DIMS: DIMS, CAR: CAR, BIKE: BIKE};
 })();

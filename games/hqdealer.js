@@ -49,7 +49,8 @@ var NEAR_ROAD = 30;              // m: a lot whose door is this near an arterial
 var WANT_FROM_PLAZA = 300;       // m: the best distance from the plaza (downtown, not on it)
 var CANDIDATES = 400;            // the best this many by district and size get the road test
 var TURN = 0.22;                 // rad/s: the turntables
-var CAR_CELL = 6.2, BIKE_CELL = 3.2;   // m: a turntable's square in the hall
+// m: a turntable's square in the hall, round the longest vehicle as drawn (HQV.hqVehicleModels.SCALE) turning on it
+var CAR_CELL = 6.6, BIKE_CELL = 3.4;
 var PLINTH = 0.15;
 
 /* ---------- placement (pure) ---------- */
@@ -479,7 +480,7 @@ function mountPanel(stage, opts){
     try { rig = HQV.hqVehicleModels.build(opts.ctx || opts.three, Object.assign({}, v, {model3d: v.model3d || null}), parseInt(hex.slice(1), 16)); } catch(e){ rig = null; }
     if(!rig) return;
     p.holder.add(rig.g);
-    var L = (v.dims && +v.dims.lengthM) || 4.5, bike = String(v["class"] || "").indexOf("bike.") === 0;
+    var VM = HQV.hqVehicleModels, L = (v.dims && (VM.shown ? +VM.shown(v).lengthM : +v.dims.lengthM)) || 4.5, bike = String(v["class"] || "").indexOf("bike.") === 0;
     p.cam.position.set(L*0.95, L*0.42 + (bike ? 0.4 : 0.6), L*1.05); p.cam.lookAt(0, bike ? 0.55 : 0.6, 0);
   }
   function previewLoop(){

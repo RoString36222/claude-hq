@@ -377,7 +377,8 @@ function chaseCollide(s, from, want, radius, dt, q){
 }
 function chasePose(s, mode, T, dt, q){
   var _ = s._, M = MODES[mode], V = T.vehicle ? VEHICLE[T.vehicle] : null, red = s.settings.reduced, k;
-  var back = M.back*(V ? V.backMul : 1)*_.backScale, baseUp = M.up*(V ? V.upMul : 1), side = M.side*(V ? V.sideMul : 1);
+  // T.size: a catalogue vehicle's length over its kind's starter (games/hq3d.js): a longer car, the camera further back
+  var back = M.back*(V ? V.backMul : 1)*(V && T.size > 0 ? clamp(T.size, 0.85, 1.5) : 1)*_.backScale, baseUp = M.up*(V ? V.upMul : 1), side = M.side*(V ? V.sideMul : 1);
   _.upOff = clamp(_.upOff + _.lift*LIFT*dt, 0.6 - baseUp, 2*baseUp);
   var up = baseUp + _.upOff;
   // The orbit offset on top of the heading: Q/R swing eased in and out (exact exponential), right-drag adds

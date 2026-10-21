@@ -238,7 +238,7 @@ class DealerNode(unittest.TestCase):
         self.assertEqual(b["vehicles"], b["onSale"], "the flagship shows every vehicle on sale")
         self.assertLessEqual(b["dc"], 90, "draw calls: one per vehicle, the rest merged or instanced")
         self.assertEqual(b["inst"], 2, "the turntables and their rims: two InstancedMeshes")
-        self.assertLess(b["vehTris"], 4000)
+        self.assertLess(b["vehTris"], 6000)          # the detailed stand-ins (3.5.5), baked to one draw per turntable
         self.assertGreater(b["turned"], 0, "the turntables turn")
         self.assertGreaterEqual(b["boxes"], 1)
         self.assertGreaterEqual(b["lod"], 1)

@@ -1289,14 +1289,22 @@ function mount(el, api){
   if(HQV.hqplane) Object.keys(HQV.hqplane.VEHICLES).forEach(function(k){ VEHICLES[k] = HQV.hqplane.VEHICLES[k]; });
   // the catalogue's real cars and bikes (games/vehicles/catalogue.json, docs/plans/dealership-spec.md): keyed by
   // their id, handling derived from their specs (games/hqvehiclephys.js), driven as the car or the motorbike
-  // (baseKind), drawn by games/hqvehiclemodels.js. V.cat is the catalogue entry, V.wb its wheelbase (m).
-  var CAT = null;
-  function catEntry(v){ var cls = String(v["class"] || "").split("."); return {kind: cls[0] === "bike" ? "bike" : "car", type: v.body || cls[1], spec: v.spec, dims: v.dims, sound: v.sound}; }
+  // (baseKind), drawn by games/hqvehiclemodels.js. V.cat is the catalogue entry; V.dims its size as drawn (the
+  // models' display scale, HQV.hqVehicleModels.SCALE: the collision box comes from it, handling from the specs),
+  // V.wb its wheelbase and V.size its length over the starter's of its kind (the chase camera backs off by it).
+  var CAT = null, STARTER_LEN = {car: 3.97, bike: 2.64};
+  function catEntry(v, d){ var cls = String(v["class"] || "").split("."); return {kind: cls[0] === "bike" ? "bike" : "car", type: v.body || cls[1], spec: v.spec, dims: d || v.dims, sound: v.sound}; }
   function catRegister(cat){
     CAT = cat;
+    var VM = HQV.hqVehicleModels;
     ((cat && cat.vehicles) || []).forEach(function(v){
       if(v.slot === "starter" || VEHICLES[v.id]) return;
-      try { var V = HQV.hqVehiclePhys.derive(catEntry(v)); V.cat = v; V.wb = (v.dims && +v.dims.wheelbaseM) || 0; VEHICLES[v.id] = V; } catch(e){}
+      try {
+        var d = v.dims && VM && VM.shown ? VM.shown(v) : v.dims, V = HQV.hqVehiclePhys.derive(catEntry(v, d));
+        V.cat = v; V.dims = d || null; V.wb = (d && +d.wheelbaseM) || 0;
+        V.size = d && +d.lengthM > 0 ? E.clamp(+d.lengthM/STARTER_LEN[V.kind === "bike" ? "bike" : "car"], 0.85, 1.5) : 1;
+        VEHICLES[v.id] = V;
+      } catch(e){}
     });
     return cat;
   }
@@ -2473,6 +2481,7 @@ function mount(el, api){
     var st = ride && ride.sk && ride.sk.st;
     return {x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: avatar.yaw, pitch: ride ? ride.pitch || 0 : 0, roll: ride ? ride.roll || 0 : 0,
             speed: ride ? Math.abs(st ? st.speed || 0 : ride.speed) : Math.abs(avatar.speed || 0), vehicle: ride ? ride.base || ride.kind : null,
+            size: ride && ride.V && ride.V.size || 1,
             lean: ride && ride.lean ? ride.lean.rotation.z : 0, moving: !!keyMove,
             travelYaw: avatar.travelYaw != null ? avatar.travelYaw : null, turnRate: avatar.rate || 0};
   }
@@ -3105,7 +3114,7 @@ function mount(el, api){
   }
   // four hazard lights at its corners, blinking while it drives itself
   function hazards(b){
-    var V = VEHICLES[b.kind], hw = V && V.cat && V.cat.dims ? +V.cat.dims.widthM/2 : 0.9, hl = V ? V.box[1] : 2, g = new THREE.Group();
+    var V = VEHICLES[b.kind], hw = V && V.dims ? +V.dims.widthM/2 : 0.9, hl = V ? V.box[1] : 2, g = new THREE.Group();
     [[1, 1], [-1, 1], [1, -1], [-1, -1]].forEach(function(s){ var sp = glowSprite(0xffa020, 0.9, 0.95); sp.position.set(s[0]*hw*0.9, 0.75, s[1]*hl*0.95); g.add(sp); });
     b.g.add(g); return g;
   }
@@ -3828,6 +3837,8 @@ function mount(el, api){
   if(SMOKE && SMOKE.on){
     window.HQ3D_DEBUG = {mode: function(m){ smokeCam(m); }, scene: function(){ return cur && cur.scene; }, teleport: function(x, z, yaw){ smokeTeleport(+x || 0, +z || 0, yaw == null ? null : +yaw); },
                          ride: function(kind){ smokeRide(kind); }, stats: function(){ return smokeStats(); },
+                         // the floor-building ctx (THREE, the starter models car / moto / bike), for tools that measure vehicles
+                         ctx: function(){ return ctx; },
                          // other players as drawn: what they ride (a, the catalogue vehicle v + paint vp) and the model shown
                          peers: function(){ return Object.keys(peers).map(function(u){ var P = peers[u]; return {u: u, a: P.a, v: P.v, vp: P.vp, drawn: P.vkind || null, x: P.g ? P.g.position.x : null, z: P.g ? P.g.position.z : null}; }); },
                          // in a helicopter (ride('heli') first): put it in the air at x, y, z, rotor up to speed

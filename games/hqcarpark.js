@@ -303,8 +303,9 @@ function paintHex(entry, paint){
   var p0 = entry && entry.paints && entry.paints[0]; p0 = p0 && (p0.hex || p0);
   return typeof p0 === "string" && /^#[0-9a-fA-F]{6}$/.test(p0) ? parseInt(p0.slice(1), 16) : 0x8a8f96;
 }
+// its size as drawn (HQV.hqVehicleModels.shown: the models' display scale), for the impostors
 function dimsOf(entry){
-  var d = (entry && entry.dims) || {}, bike = entry && /^bike\./.test(String(entry.class || "")) || (entry && entry.kind === "bike");
+  var VM = HQV.hqVehicleModels, d = (entry && entry.dims && VM && VM.shown ? VM.shown(entry) : entry && entry.dims) || {}, bike = entry && /^bike\./.test(String(entry.class || "")) || (entry && entry.kind === "bike");
   return {kind: bike ? "bike" : "car", l: d.lengthM || (bike ? 2.1 : 4.6), w: d.widthM || (bike ? 0.85 : 1.9), h: d.heightM || (bike ? 1.2 : 1.45)};
 }
 function canvasSign(THREE, text, w, h){
@@ -433,10 +434,15 @@ function build(c, site, opts){
     im.name = "carpark:fleet:" + kind; im.castShadow = true; im.frustumCulled = false; inst[kind] = im; fleetG.add(im);
   }
   var m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), vp = new THREE.Vector3(), vs = new THREE.Vector3(), colr = new THREE.Color();
+  // a vehicle longer than its bay (it parks nose in) stands with its nose at the back line, its tail out over the aisle
+  function seat(r, b, v){
+    var L = layout(site), ov = Math.max(0, r.dims.l/2 - (L.bd/2 - 0.1));
+    return v.set(b.x - Math.sin(b.yaw)*ov, b.y, b.z - Math.cos(b.yaw)*ov);
+  }
   function place(r, show){
     var im = inst[r.dims.kind]; if(!im) return;
     var b = B[r.bay];
-    q.setFromAxisAngle(up, b.yaw); vp.set(b.x, b.y, b.z);
+    q.setFromAxisAngle(up, b.yaw); seat(r, b, vp);
     if(show) vs.set(r.dims.w, r.dims.h, r.dims.l); else vs.set(0, 0, 0);
     im.setMatrixAt(r.slot, m4.compose(vp, q, vs)); im.instanceMatrix.needsUpdate = true;
   }
@@ -470,7 +476,7 @@ function build(c, site, opts){
     if(!best || !HQV.hqVehicleModels) return;
     try {
       var R = HQV.hqVehicleModels.build(c, best.entry, best.paint), b = B[best.bay], h = new THREE.Group();
-      h.add(R.g); h.position.set(b.x, b.y, b.z); h.rotation.y = b.yaw; fleetG.add(h); full = {g: h};
+      h.add(R.g); seat(best, b, h.position); h.rotation.y = b.yaw; fleetG.add(h); full = {g: h};
       place(best, false);
     } catch(e){ fullKey = null; }
   }

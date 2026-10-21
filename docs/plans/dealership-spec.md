@@ -343,7 +343,7 @@ on the road graph; feature-detected, so calling works before it exists).
 - **Pick one** and it comes to you, picked in this order:
   1. It stands in this world within 1.5 km (`CALL_R`): it drives from there.
   2. It is in the carpark (a city with one): it leaves its bay (the bay is a stable hash of the
-     vehicle), follows `exitPath` down the ramps at 4 m/s (`RAMP_V`, heights from the path), then
+     vehicle), follows `exitPath` down the ramps at 7 m/s (`RAMP_V`, heights from the path), then
      drives the road route from `entrance()` to you.
   3. Else (no carpark, no route, another world) it **appears out of sight**: a street point
      45-320 m away, at least 40 m from you (`MIN_HIDE`) and outside the camera's frustum, with a

@@ -354,7 +354,7 @@ and feature guide.
     vehicles turning on display. Press E for the panel: both vehicles of each class side by side with their
     real specs and factory paints, a 3-minute **test drive**, and **Get it**. Everything is free and unlocked.
   - **The garage.** A multi-storey garage where your vehicles live, each in its own bay: six levels on the
-    Commons, three on an island from tier 2 (where the island has a free lot). Open sides let you see the
+    Commons, three on an island at tier 5. Away from a garage, a called vehicle arrives from just out of sight. Open sides let you see the
     cars, and a helix ramp you can drive up.
   - **Call your vehicle (C).** Pick one and it drives out of its bay, down the ramps and along the roads to
     you, with hazard lights and its ETA on the minimap, and parks at the kerb beside you. Get out and, five

@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.1.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.2.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -51,6 +51,9 @@ paired), published maps and work signals (off by default) add a few listed field
   who commute, work and go home on a schedule.
 - **Getting around.** A river through every city with bridges and boats, a **minimap**, waypoints and
   **turn-by-turn directions** (N / Go to), ferries, rail, helicopters and cargo ships you can ride.
+- **Real cars and bikes.** A **dealership** in every city with real vehicles from the brands players pick
+  (BMW, Bugatti, KTM so far), grouped in classes by type and engine size, two per class, all free. They drive
+  like their real specs, live in a **multi-storey garage**, and drive themselves to you when you press **C**.
 - **Driving.** Detailed cars, motorbikes and bicycles with riders seated properly, car **powerslides**, a
   speed / rev HUD, **Return to HQ (T)**, your HQ's name on its number plates, a higher camera you turn by dragging.
 
@@ -336,6 +339,34 @@ and feature guide.
 
 ## Changelog
 
+- **3.2.0 — The dealership.** Real cars and bikes, a dealership to get them, a garage to keep them.
+  - **Real vehicles, in classes.** 32 vehicles from the first player's brands: BMW and Bugatti cars, BMW and
+    KTM Duke bikes, from the KTM 390 Duke to the Bugatti Tourbillon. Every vehicle sits in a class by type
+    (naked, sport, adventure; hatch, sedan, coupe, SUV, hypercar, electric) and engine size in cc (bikes up
+    to 400 cc, 401-950 cc, over 950 cc; cars up to 2000 cc, 3000 cc, 5000 cc, over 5000 cc, electric). Each
+    class sells two. More brands join as players add theirs (`games/vehicles/catalogue.json`: one entry per
+    vehicle).
+  - **They drive like the real thing.** Handling comes from each vehicle's real power, weight and drivetrain:
+    rear-wheel drive slides, all-wheel drive grips, electric cars pull from standstill on one gear. 0-100 km/h
+    lands on the maker's figure (an M3 Competition in 3.9 s, a Chiron Super Sport in 2.4 s). New engine
+    voices: single, twin, V-twin, boxer, W16, V16 and electric.
+  - **The dealership.** A glass showroom in every city from tier 2 (the flagship on the Commons) with the
+    vehicles turning on display. Press E for the panel: both vehicles of each class side by side with their
+    real specs and factory paints, a 3-minute **test drive**, and **Get it**. Everything is free and unlocked.
+  - **The garage.** A multi-storey garage where your vehicles live, each in its own bay: six levels on the
+    Commons, three on an island from tier 2 (where the island has a free lot). Open sides let you see the
+    cars, and a helix ramp you can drive up.
+  - **Call your vehicle (C).** Pick one and it drives out of its bay, down the ramps and along the roads to
+    you, with hazard lights and its ETA on the minimap, and parks at the kerb beside you. Get out and, five
+    seconds later, it drives itself back to the garage. Far from a garage it arrives from just out of sight.
+  - **Others see your car.** Other players see the real vehicle you are driving, in your paint (HQ presence
+    v4, the `vehicles` capability; older clients still see the starter car or motorbike).
+  - The vehicles use built-in 3D bodies drawn to each one's real size for now; licensed models will replace
+    them (`tools/vehicle_fetch.py`).
+  **Privacy/egress:** the new dashboard proxies (`GET /api/arena/vehicles/mine`, `POST /api/arena/vehicles/buy`
+  and `/api/arena/vehicles/<id>/park`) send only a validated vehicle id, paint and position with the paired
+  device token. Presence adds the driven vehicle's catalogue id and paint index. Nothing transcript-derived
+  is sent.
 - **3.1.1 — City camera and plates.** The chase camera sits higher and further back (the far camera
   higher still), so you see the street around you instead of the ground at your feet. Left-drag now
   turns the camera too (trackpads have no right-drag); a click still walks. On a motorbike or a bicycle

@@ -1,7 +1,7 @@
 """games/vehicles/catalogue.json (the vehicle catalogue) and games/hqvehicles.js (its loader's helpers).
 
-The rules in docs/plans/dealership-spec.md: classes by kind, type and cc band; at most two slot vehicles
-per class (slots 1 and 2); stable ids; specs, dimensions and paints in sane ranges."""
+The rules in docs/plans/dealership-spec.md: classes by kind, type and cc band; 1 to 4 listed vehicles
+per class (slots 1-4, HQ 3.9); stable ids; specs, dimensions and paints in sane ranges."""
 import json
 import os
 import re
@@ -88,16 +88,16 @@ class Catalogue(unittest.TestCase):
                              f"{v['id']}: {s['cc']} cc (electric {s['electric']}) is not band {c['band']}")
             self.assertEqual(v["body"], c["type"], f"{v['id']}: the stand-in body is the class type")
 
-    def test_at_most_two_slots_per_class(self):
+    def test_at_most_four_slots_per_class(self):
         by = {}
         for v in self.vehicles:
-            self.assertIn(v["slot"], (1, 2, "reserve", "starter"), v["id"])
-            if v["slot"] in (1, 2):
+            self.assertIn(v["slot"], (1, 2, 3, 4, "reserve", "starter"), v["id"])
+            if v["slot"] in (1, 2, 3, 4):
                 by.setdefault(v["class"], []).append(v["slot"])
         for cid, slots in by.items():
-            self.assertLessEqual(len(slots), 2, cid)
+            self.assertLessEqual(len(slots), 4, cid)
             self.assertEqual(len(slots), len(set(slots)), f"{cid}: a slot taken twice")
-            self.assertIn(1, slots, f"{cid}: slot 2 filled before slot 1")
+            self.assertEqual(sorted(slots), list(range(1, len(slots) + 1)), f"{cid}: slots filled in order from 1")
 
     def test_specs_are_sane(self):
         for v in self.vehicles:
@@ -228,11 +228,11 @@ class Loader(unittest.TestCase):
         naked = [c for c in cls if c.startswith("bike.naked.")]
         self.assertEqual(naked, ["bike.naked.400", "bike.naked.950", "bike.naked.over950"])
 
-    def test_on_sale_is_the_full_classes(self):
+    def test_on_sale_is_every_class_listing_one_to_four(self):
         with open(CAT, encoding="utf-8") as f:
             cat = json.load(f)
         full = sorted(c["id"] for c in cat["classes"] if c["id"] != "starter"
-                      and len([v for v in cat["vehicles"] if v["class"] == c["id"] and v["slot"] in (1, 2)]) == 2)
+                      and len([v for v in cat["vehicles"] if v["class"] == c["id"] and v["slot"] in (1, 2, 3, 4)]) in (1, 2, 3, 4))
         self.assertEqual(sorted(self.o["sale"]), full)
         self.assertGreaterEqual(len(full), 10)
 

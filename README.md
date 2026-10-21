@@ -386,7 +386,7 @@ and feature guide.
     Classic (Royal Enfield Classic 350 and Interceptor 650) and Cruiser (Harley-Davidson Fat Boy 114); the Ducati
     Panigale V4 S and Yamaha R1 wait as `bike.sport.over950` reserves and the Triumph Street Triple 765 RS as a
     `bike.naked.950` reserve, and the classic and cruiser classes go on sale once each has a second bike (the
-    two-per-class rule). Each looks like itself: the Panigale's single-sided swingarm, biplane winglets and two
+    two-per-class rule) — superseded below: everything is on sale. Each looks like itself: the Panigale's single-sided swingarm, biplane winglets and two
     cans stacked under the seat; the H2's green trellis, chrome-mirror flanks and ram-air duct; the Classic's round
     lamp under its nacelle, teardrop tank, chrome, spoked wheels and sprung saddle; the Interceptor's twin
     peashooters; the Fat Boy's disc wheels, V-twin, floorboards and wide pull-back bars; the Triumph's bug eyes; the
@@ -406,6 +406,11 @@ and feature guide.
     lamps, the S 1000 RR's asymmetric pair and winglets, the M 1000 RR's stripes, the G 310 GS's asymmetric lamps.
     Sizes, display scale, rider anchors, collision and the detail atlas are unchanged; cars stay at 14 draw calls
     and under 6k triangles, bikes at 8-10 draw calls and under 6k.
+  - **Sell them all: a class is on sale with 1 to 4 vehicles** (it took exactly 2). Every new vehicle is buyable:
+    the Urus is `car.suv.5000`'s third, the Panigale and R1 `bike.sport.over950`'s third and fourth, the Street
+    Triple `bike.naked.950`'s third, and the one-bike classes (Classic 350, Interceptor 650, Fat Boy) and the
+    one-car BMW classes (M135, 330Li, M5) are on sale too. The Bugatti Veyron stays a reserve. The Arena checks
+    the same rule (`backend/src/vehicles.rs`); the flagship's forecourt is shallower so its hall shows all 42.
   - **Arena:** the catalogue is server data, so the Arena needs a deploy (`ops/release.sh deploy`) before these
     can be bought.
 

@@ -1,7 +1,7 @@
 /* Claude HQ: the dealership (HQV.hqDealer), docs/plans/dealership-spec.md "The dealership".
  *
  * One dealership in every city from tier 2 (the Commons has the flagship): a glass showroom with the city's
- * on-sale vehicles (HQV.hqVehicles.onSale: the classes with both slots filled) on slowly turning turntables,
+ * on-sale vehicles (HQV.hqVehicles.onSale: the classes listing 1 to 4 vehicles) on slowly turning turntables,
  * a forecourt in front where a test drive starts and a vehicle you get waits, brand flags and a pylon sign.
  * Its door opens the dealer panel (E): Bikes / Cars, type and cc band, the two vehicles of each class side by
  * side with their real specs and paints, a turning 3D preview, Test drive and Get it.
@@ -144,11 +144,13 @@ var KIND_LABEL = {bike: "Bikes", car: "Cars"};
 function onSale(cat){
   if(HQV.hqVehicles && HQV.hqVehicles.onSale) return HQV.hqVehicles.onSale(cat);
   var by = {};
-  ((cat && cat.vehicles) || []).forEach(function(v){ if(v && (v.slot === 1 || v.slot === 2)) (by[v["class"]] = by[v["class"]] || []).push(v); });
-  return ((cat && cat.classes) || []).filter(function(c){ return c.id !== "starter" && (by[c.id] || []).length === 2; });
+  ((cat && cat.vehicles) || []).forEach(function(v){ if(listed(v)) (by[v["class"]] = by[v["class"]] || []).push(v); });
+  return ((cat && cat.classes) || []).filter(function(c){ var n = (by[c.id] || []).length; return c.id !== "starter" && n >= 1 && n <= 4; });
 }
+// [3.9] a listed vehicle: slot 1 to 4 of its class
+function listed(v){ return !!v && typeof v.slot === "number" && v.slot >= 1 && v.slot <= 4 && v.slot % 1 === 0; }
 function slotVehicles(cat, id){
-  return ((cat && cat.vehicles) || []).filter(function(v){ return v && v["class"] === id && (v.slot === 1 || v.slot === 2); })
+  return ((cat && cat.vehicles) || []).filter(function(v){ return listed(v) && v["class"] === id; })
     .sort(function(a, b){ return a.slot - b.slot; });
 }
 function specLine(v){
@@ -168,7 +170,7 @@ function model(cat, o){
   var level = Math.max(0, +o.level || 0), owned = {}, garage = !!o.garage, out = [], K = {};
   (o.owned || []).forEach(function(id){ owned[id] = (owned[id] || 0) + 1; });
   onSale(cat).forEach(function(c){
-    var vs = slotVehicles(cat, c.id); if(vs.length !== 2) return;
+    var vs = slotVehicles(cat, c.id); if(!vs.length || vs.length > 4) return;
     var k = K[c.kind];
     if(!k){ k = K[c.kind] = {kind: c.kind, label: KIND_LABEL[c.kind] || c.kind, sections: [], T: {}}; out.push(k); }
     var t = k.T[c.type];
@@ -193,7 +195,8 @@ var CARS = []; for(var ci = 0; ci < LINEUP; ci++) CARS.push({kind: "car"});
 // items: [{kind: "car" | "bike"}] in showroom order -> the forecourt, the hall and a turntable cell per item that fits
 function layout(F, items, flagship){
   var W = Math.max(MIN_W, +F.w || 0), D = Math.max(MIN_D, +F.d || 0);
-  var fcD = Math.max(9, Math.min(14, D*0.32)), hw = Math.min(W - 4, flagship ? 70 : 56), hd = Math.min(D - fcD - 3, flagship ? 40 : 32);
+  // ([3.9] the flagship keeps a shallow forecourt: its hall shows the whole lineup, 1 to 4 vehicles a class)
+  var fcD = flagship ? 9 : Math.max(9, Math.min(14, D*0.32)), hw = Math.min(W - 4, flagship ? 70 : 56), hd = Math.min(D - fcD - 3, flagship ? 40 : 32);
   var zf = D/2 - fcD - 1, zb = zf - hd, H = flagship ? 9 : 7.5;
   var hall = {x0: -hw/2, x1: hw/2, z0: zb, z1: zf, h: H, w: hw, d: hd};
   // shelves from the front glass back: cars, then bikes; a 2 m aisle behind the front glass

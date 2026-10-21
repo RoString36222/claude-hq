@@ -39,9 +39,12 @@
  *   build(c, site, opts)        -> B = {g, setNight(n), fleet(list), store(bay, o), update(cam), drawCalls(), dispose()}
  *     c: the hq3d ctx or {THREE}. opts: {night, catalogue (the catalogue, or a function returning it: stored()
  *     looks vehicle ids up in it)}. g is in world coordinates.
- *     B.fleet([{key, entry (catalogue), paint (hex number or "#rrggbb")}]): parks them in their bays: every one an
- *     instance of a car or a bike silhouette in its paint (two draw calls for the whole fleet), and the one nearest
- *     the camera (within NEAR m) as its full model (HQV.hqVehicleModels).
+ *     B.fleet([{key, entry (catalogue), paint (hex number or "#rrggbb"), alias?}]): parks them in their bays: every
+ *     one an instance of a car or a bike silhouette in its paint (two draw calls for the whole fleet), and the one
+ *     nearest the camera (within NEAR m) as its full model (HQV.hqVehicleModels). `alias` is the calling part's own
+ *     name for the vehicle (games/hq3d.js: "own:<owned id>"); bayOf / release / stored accept either.
+ *   bayOf(site, key)            -> the bay that vehicle is drawn in (the drawn garage's own assignment), or null
+ *   release(site, key)          -> it has been called away: not drawn in its bay (the bay stays its own) until stored()
  */
 (function(){
 "use strict";
@@ -61,6 +64,7 @@ var LEVELS = {commons: 6, island: 3};
 var NEAR = 16;              // m from the camera: the nearest parked vehicle is drawn in full
 var STEP = PI/18;           // the helix's sampling (10 degrees)
 var BUILT = {};             // site id -> the drawn garage (build()), for stored()
+var AWAY = {};              // site id -> {fleet key: 1}: vehicles called away from their bays (release())
 
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
 function hash(s){ var h = 2166136261; s = String(s); for(var i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
@@ -421,7 +425,7 @@ function build(c, site, opts){
   /* the fleet: two InstancedMeshes (cars, bikes) and the nearest one in full */
   var B = bays(site), fleetG = new THREE.Group(); g.add(fleetG);
   var silM = new THREE.MeshStandardMaterial({color: 0xffffff, vertexColors: true, roughness: 0.45, metalness: 0.3});
-  var inst = {}, rows = [], full = null, fullKey = null, last = [];
+  var inst = {}, rows = [], full = null, fullKey = null, last = [], lastA = {}, alias = {};
   function makeInst(kind, n){
     if(inst[kind]){ fleetG.remove(inst[kind]); inst[kind].dispose(); inst[kind] = null; }
     if(!n) return;
@@ -442,8 +446,11 @@ function build(c, site, opts){
     var fixed = list.filter(function(v){ return v.bay != null && B[v.bay]; }), fixedBays = fixed.map(function(v){ return v.bay; });
     var A = assign(site, list.filter(function(v){ return fixed.indexOf(v) < 0; }).map(function(v){ return String(v.key); }), fixedBays), cnt = {car: 0, bike: 0};
     fixed.forEach(function(v){ A[String(v.key)] = v.bay; });
-    last = list;
-    rows = list.filter(function(v){ return A[String(v.key)] != null; }).map(function(v){
+    last = list; lastA = A; alias = {};
+    list.forEach(function(v){ if(v.alias != null) alias[String(v.alias)] = String(v.key); });
+    // a vehicle called away keeps its bay (the assignment above counts it) but is not drawn there
+    var away = AWAY[site.id] || {};
+    rows = list.filter(function(v){ return A[String(v.key)] != null && !away[String(v.key)]; }).map(function(v){
       var d = dimsOf(v.entry), r = {key: String(v.key), entry: v.entry, paint: paintHex(v.entry, v.paint), dims: d, bay: A[String(v.key)], slot: cnt[d.kind]++};
       return r;
     });
@@ -467,15 +474,22 @@ function build(c, site, opts){
       place(best, false);
     } catch(e){ fullKey = null; }
   }
+  function keyOf(k){ k = String(k); return alias[k] || k; }
   function store(bay, o){
     var i = typeof bay === "number" ? bay : bay && bay.i;
     if(i == null || !B[i] || !o || !o.entry) return false;
-    var key = String(o.key != null ? o.key : "stored:" + i);
-    // it takes that bay: whoever stood there (and its own old place) gives way
+    var key = o.key != null ? keyOf(o.key) : "stored:" + i, prev = last.filter(function(v){ return String(v.key) === key; })[0];
+    if(AWAY[site.id]) delete AWAY[site.id][key];
+    // back in its own bay: it simply shows there again
+    if(prev && lastA[key] === i){ fleet(last); return true; }
+    // another bay: it takes that one, and whoever stood there (and its own old place) gives way
     var gone = rows.filter(function(r){ return r.bay === i; }).map(function(r){ return r.key; }).concat([key]);
-    fleet(last.filter(function(v){ return gone.indexOf(String(v.key)) < 0; }).concat([{key: key, entry: o.entry, paint: o.paint, bay: i}]));
+    fleet(last.filter(function(v){ return gone.indexOf(String(v.key)) < 0; })
+      .concat([{key: key, entry: o.entry, paint: o.paint, bay: i, alias: prev ? prev.alias : undefined}]));
     return true;
   }
+  function bayOf(k){ var j = lastA[keyOf(k)]; return j == null ? null : B[j]; }
+  function release(k){ var key = keyOf(k); (AWAY[site.id] = AWAY[site.id] || {})[key] = 1; fleet(last); return lastA[key] != null; }
   function setNight(on){ M.light.emissiveIntensity = on ? 2.4 : 0.25; }
   setNight(!!opts.night);
   function drawCalls(){ var n = 0; g.traverse(function(o){ if(o.isMesh && o.visible) n++; }); return n; }
@@ -484,7 +498,7 @@ function build(c, site, opts){
     boxG.dispose(); Object.keys(M).forEach(function(k){ M[k].dispose(); }); silM.dispose();
     if(tex) tex.dispose();
   }
-  var Bo = {g: g, layout: L, setNight: setNight, fleet: fleet, store: store, update: update, drawCalls: drawCalls,
+  var Bo = {g: g, layout: L, setNight: setNight, fleet: fleet, store: store, bayOf: bayOf, release: release, update: update, drawCalls: drawCalls,
             rows: function(){ return rows.map(function(r){ return {key: r.key, bay: r.bay}; }); },
             dispose: function(){ if(BUILT[site.id] === Bo) delete BUILT[site.id]; dispose(); }, merged: merged, bays: B,
             catalogue: opts.catalogue || null};
@@ -503,7 +517,13 @@ function stored(site, bay, o){
   return Bo.store(bay, {key: o.key, entry: entry, paint: o.color != null ? o.color : o.paint});
 }
 
-HQV.hqCarpark = {find: find, bayFor: bayFor, stored: stored, camHit: camHit, layout: layout, bays: bays, assign: assign, exitPath: exitPath, entryPath: entryPath,
+// The calling part: the bay a vehicle is drawn in (the drawn garage's own assignment, so the one that drives out is
+// the one you saw parked), and "it has been called away" (not drawn until stored() puts it back). Null / false
+// when that garage is not drawn.
+function bayOf(site, key){ var Bo = site && BUILT[site.id]; return Bo ? Bo.bayOf(key) : null; }
+function release(site, key){ var Bo = site && BUILT[site.id]; return Bo ? Bo.release(key) : false; }
+
+HQV.hqCarpark = {find: find, bayFor: bayFor, bayOf: bayOf, release: release, stored: stored, camHit: camHit, layout: layout, bays: bays, assign: assign, exitPath: exitPath, entryPath: entryPath,
                  entrance: entrance, groundAt: groundAt, blockedAt: blockedAt, levelY: function(s, l){ return levelY(layout(s), l); },
                  toLocal: function(s, x, z){ return toLocal(layout(s), x, z); }, build: build,
                  LEVEL_H: LEVEL_H, LANE: LANE, BAY_W: BAY_W, AISLE: AISLE, WALL: WALL, OUT: OUT};

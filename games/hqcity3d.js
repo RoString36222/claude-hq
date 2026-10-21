@@ -1929,6 +1929,8 @@ HQV.hqWorlds.city3d = function(c, w){
     var s = CP.find(W); if(!s || (s.tier != null && (s.tier | 0) > tier)) return;
     var B; try { B = CP.build(c, s, {night: night, catalogue: c.catalogue}); } catch(e){ return; }
     S.add(B.g); cp = {site: s, B: B, y: null, rows: [], drv: null};
+    // a vehicle claimed at the dealership is delivered into its bay straight away (mine() serves its cache: no loop)
+    var G = HQV.hqGarage; cp.unsub = G && G.onChange ? G.onChange(function(){ if(!dead && cp) carparkFleet(); }) : null;
     carparkFleet();
   }
   function carparkEntry(id){
@@ -1944,7 +1946,7 @@ HQV.hqWorlds.city3d = function(c, w){
     var G = HQV.hqGarage;
     if(G && G.mine){
       Promise.resolve(G.mine()).then(function(rows){
-        apply((rows || []).filter(function(r){ return r && !r.parked; }).map(function(r){ return {key: who + ":" + r.id, entry: carparkEntry(r.vehicle_id), paint: r.paint}; }));
+        apply((rows || []).filter(function(r){ return r && !r.parked; }).map(function(r){ return {key: who + ":" + r.id, alias: "own:" + r.id, entry: carparkEntry(r.vehicle_id), paint: r.paint}; }));
       }, function(){});
     } else {
       var p = c.showroomPick && c.showroomPick();
@@ -1976,6 +1978,7 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   function carparkDestroy(){
     if(!cp) return;
+    if(cp.unsub){ try { cp.unsub(); } catch(e){} cp.unsub = null; }
     if(cp.drv){ S.remove(cp.drv.g); cp.drv = null; }
     S.remove(cp.B.g); try { cp.B.dispose(); } catch(e){}
     cp = null;
@@ -1984,7 +1987,7 @@ HQV.hqWorlds.city3d = function(c, w){
   w.carpark = {
     site: function(){ return cp ? cp.site : null; },
     bays: function(){ return cp ? HQV.hqCarpark.bays(cp.site) : []; },
-    fleet: function(){ return cp ? cp.rows : []; },
+    fleet: function(){ return cp ? (cp.B.rows ? cp.B.rows() : cp.rows) : []; },   // what is drawn (called-away ones are not)
     refresh: function(){ carparkFleet(); },
     height: function(){ return cp ? cp.y : null; },
     level: function(l){ if(cp) cp.y = HQV.hqCarpark.levelY(cp.site, l | 0); return cp ? cp.y : null; },   // the floor your next teleport lands on

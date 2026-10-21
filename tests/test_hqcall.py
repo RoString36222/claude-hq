@@ -207,12 +207,23 @@ class CallWiring(unittest.TestCase):
         for s in ("HQV.hqGarage.mine()", "HQV.hqGarage.park(o.ownId, {world: o.world, x: o.x, z: o.z, yaw: o.yaw})"):
             self.assertIn(s, self.src)
         # park only for a trip cut short (a world change); the carpark is where your vehicles live
-        self.assertIn("if(midTrip && o.ownId != null && HQV.hqGarage && HQV.hqGarage.park)", self.src)
+        self.assertIn("} else if(midTrip){", self.src)
+        # back in its bay: the Arena is told so, and a pose saved on the way in is dropped (it put the car on the
+        # street at its bay's coordinates on the next load)
+        self.assertRegex(self.src, r"if\(o\.stored\)\{[^}]*clearTimeout\(parkTimer\[o\.key\]\)[^}]*\n\s*try \{ Promise\.resolve\(HQV\.hqGarage\.park\(o\.ownId, null\)\)")
+        # the list stays current without opening C (a vehicle claimed at the dealership is known straight away)
+        self.assertIn("HQV.hqGarage.onChange(function(){ ownRefresh(); })", self.src)
+        # the Arena's paint is an index: a colour for drawing, and an index back for buying / presence
+        self.assertIn('if(typeof ph === "number") ph = cat && cat.paints && cat.paints[ph] ? cat.paints[ph].hex : null;', self.src)
+        self.assertIn("Gr.buy(id, paintIdx(V && V.cat, hex))", self.src)
+        self.assertIn("paint: paintIdx(V.cat, col)", self.src)
 
     def test_carpark_contract_and_the_way_back(self):
-        for s in ("cp.find(RD.W())", 'cpPath(K, "exitPath", bay)', 'cpPath(K, "entryPath", bay)', "cpEntrance(K)",
-                  "K.cp.bays(K.site)", "ownLeft(b)", "goBack(b)"):
+        for s in ("C.carpark.site()", 'cpPath(K, "exitPath", bay)', 'cpPath(K, "entryPath", bay)', "cpEntrance(K)",
+                  "K.cp.bayOf(K.site, key)", "K.cp.bays(K.site)", "K.cp.release(K.site, key)", "ownLeft(b)", "goBack(b)"):
             self.assertIn(s, self.src)
+        # only the garage the City draws (a site above its tier stands in the doc but is not built)
+        self.assertNotIn("cp.find(RD.W())", self.src)
 
     def test_text_only(self):
         self.assertNotIn("innerHTML", read("games", "hqcall.js"))

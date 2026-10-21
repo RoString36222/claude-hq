@@ -1091,7 +1091,8 @@ Thanks to everyone who has contributed to Claude HQ:
   seasons and game rooms; self-hosting and ops (docker-compose + Caddy, VPS bootstrap, the
   containerized deploy panel, pull-based auto-deploy and the deploy console, #23–#38, #94–#111);
   Cali Tuesdays (#36); the Rust Arena (#90–#93) and the Rust HQ server `dashboard-rs` (#109);
-  Arena City on a grid (#110); and the Rust-only backend restructure (#117, #119)
+  Arena City on a grid (#110); the Rust-only backend restructure (#117, #119); and HQ 3: the 3D Arena
+  City, Cities with your own island, navigation and rivers, and the transport network (#125, #126)
 - [@SwastikTripathi](https://github.com/SwastikTripathi) — editable Trainer name (#1); Arena
   fixes for the blank-dashboard crash, SSL on python.org Python and browser-shortcut hijacking
   (#3, #4); nudges, chat @-mentions and the publish-health dot (#7–#24); unit tests + CI (#5);
@@ -1102,9 +1103,9 @@ Thanks to everyone who has contributed to Claude HQ:
   sidebar-shell redesign with the sessions-first Live view and thinking orbs (#30), and the
   "haan yeaaah" button (#39)
 - [@MustafaAsad198](https://github.com/MustafaAsad198) — Cursor sessions (#95), the space-jump
-  avatar in the HQ (#101) and Strikezone (#105, #113)
-- [@J-Karthikeyan](https://github.com/J-Karthikeyan) — the soundboard with browser uploads (#40)
-  and the account board (#116)
+  avatar in the HQ (#101), Strikezone (#105, #113), its disasters (#124) and the strike zone warden (#127)
+- [@J-Karthikeyan](https://github.com/J-Karthikeyan) — the soundboard with browser uploads (#40),
+  the account board (#116) and account standings (#122)
 
 Made with [Claude Code](https://claude.com/claude-code).
 

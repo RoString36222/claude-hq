@@ -1820,6 +1820,8 @@ HQV.hqWorlds.city3d = function(c, w){
   };
   /* ========== end AIR ========== */
 
+  // the residents this City draws (read-only, for tests and tools)
+  w.npcSim = function(){ return nsim; };
   // E: a resident's line, a stop's lines, a terminal's trips (and E again cancels a wait)
   w.use = function(p){
     if(!V2 || !p) return false;

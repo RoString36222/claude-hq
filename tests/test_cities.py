@@ -306,7 +306,7 @@ out.drawn.civics = wc.scene.getObjectByName("civic:lod") ? wc.scene.getObjectByN
 /* ---------- a resident talks (E) ---------- */
 (function(){
   // a resident the sim shows walking near some point in the day; the City draws it, E says its line
-  var sim = HQV.npcSim.create(WD.docOf(CW), {tier: 5, grow: 1000, seed: CW.seed});
+  var sim = wc.npcSim(); if(!sim){ out.talk = {seen: 0}; return; }
   var tMs = HQV.npcSim.localMs(new Date(NOW)), list = sim.at(tMs, {x: 0, z: 0}, 400);
   out.talk = {seen: list.length};
   var r = list.filter(x => x.mode === "walk")[0] || list[0]; if(!r) return;
@@ -440,7 +440,9 @@ class CitiesTest(unittest.TestCase):
     def setUpClass(cls):
         src = HARNESS % {"root": json.dumps(ROOT), "me": json.dumps(ME), "commons": json.dumps(COMMONS),
                          "island": json.dumps(ISLAND), "legacy": json.dumps(os.path.join(FIX, "claude-hq@1.json.gz"))}
-        r = subprocess.run([NODE, "--input-type=module", "-e", src], capture_output=True, text=True, timeout=600)
+        # a fixed clock (NOW) in a fixed zone: the residents out at that hour are the same on every machine
+        r = subprocess.run([NODE, "--input-type=module", "-e", src], capture_output=True, text=True, timeout=600,
+                           env=dict(os.environ, TZ="UTC"))
         if r.returncode != 0:
             raise AssertionError("node failed:\n" + r.stderr[-4000:])
         cls.out = json.loads(r.stdout)

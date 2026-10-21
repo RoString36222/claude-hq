@@ -55,7 +55,9 @@ CHROMES = [
 # Console output Chrome prints for a page error. Network failures are not page
 # bugs here: CI has no Arena and no sprite CDN guarantees.
 JS_ERRORS = ("Uncaught", "SyntaxError", "ReferenceError", "TypeError")
-SMOKE_TIMEOUT = 60.0
+# how long a page may take to load the world and draw 30 frames: the cold whole-map load is ~37 s on a
+# fast Mac under SwiftShader and slower on CI's shared macOS runners (the budgets below are the real checks)
+SMOKE_TIMEOUT = 180.0
 MAX_DRAW_CALLS = 400
 MAX_TRIANGLES = 1_500_000
 

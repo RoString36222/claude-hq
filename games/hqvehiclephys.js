@@ -70,17 +70,18 @@ function voiceFor(spec, kind){
   var cyl = num(spec.cyl, 0), lay = String(spec.layout || "").toLowerCase();
   if(kind === "bike"){
     if(cyl <= 1 || lay === "single") return "single";
-    if(lay === "boxer") return "boxer";
+    if(/boxer/.test(lay)) return "boxer";
     if(/v/.test(lay) && cyl === 2) return "vtwin";
     if(cyl === 2) return "twin";
     return "four";
   }
   if(lay === "w16" || (cyl >= 16 && /w/.test(lay))) return "w16";
   if(cyl >= 16) return "v16";
-  if(cyl >= 8) return "v8";
-  if(cyl >= 6) return "six";
-  if(lay === "boxer") return "boxer";
-  return "four";
+  var turbo = /turbo/.test(String(spec.aspiration || "").toLowerCase());   // a turbo car: its whistle and blow-off
+  if(cyl >= 8) return turbo ? "v8tt" : "v8";
+  if(cyl >= 6) return turbo ? "turbo6" : "six";
+  if(/boxer/.test(lay)) return "boxer";
+  return turbo ? "turbo4" : "four";
 }
 
 // Where each gear tops out, as hq3d's starters: top*1.045*(i/n)^p (cars 0.95, bikes 0.84); one gear for a motor

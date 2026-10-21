@@ -34,7 +34,8 @@ out.voices = {single: P.voiceFor({cyl: 1}, 'bike'), twin: P.voiceFor({cyl: 2, la
   vtwin: P.voiceFor({cyl: 2, layout: 'v'}, 'bike'), boxer: P.voiceFor({cyl: 2, layout: 'boxer'}, 'bike'),
   four: P.voiceFor({cyl: 4}, 'bike'), six: P.voiceFor({cyl: 6}, 'car'), v8: P.voiceFor({cyl: 8, layout: 'v'}, 'car'),
   w16: P.voiceFor({cyl: 16, layout: 'w16'}, 'car'), v16: P.voiceFor({cyl: 16, layout: 'v'}, 'car'),
-  electric: P.voiceFor({electric: true}, 'car')};
+  electric: P.voiceFor({electric: true}, 'car'), turbo4: P.voiceFor({cyl: 4, aspiration: 'turbo'}, 'car'),
+  turbo6: P.voiceFor({cyl: 6, aspiration: 'twin-turbo'}, 'car'), v8tt: P.voiceFor({cyl: 8, layout: 'v8', aspiration: 'twin-turbo'}, 'car')};
 console.log(JSON.stringify(out));
 """
 
@@ -104,7 +105,7 @@ TODAY = {
     "starter_moto": {"top": 24, "acc": 9, "rev": 3, "lean": 0.42, "box": [0, 0.8], "gears": [6.5, 11.5, 16, 20.5, 25],
                      "slide": {"min": 8, "turn": 1.35, "grip": 3.2, "max": 0.32, "bleed": 3}},
 }
-VOICES = ["single", "twin", "vtwin", "boxer", "four", "six", "v8", "w16", "v16", "electric"]
+VOICES = ["single", "twin", "vtwin", "boxer", "four", "six", "v8", "w16", "v16", "electric", "turbo4", "turbo6", "v8tt"]
 
 
 def near(a, b, tol):

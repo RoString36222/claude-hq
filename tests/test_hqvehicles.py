@@ -21,7 +21,7 @@ BIKE_BANDS = {"400", "950", "over950"}
 CAR_BANDS = {"2000", "3000", "5000", "over5000", "ev"}
 LAYOUTS = {"single", "parallel-twin", "v-twin", "boxer-twin", "inline-3", "inline-4", "inline-6", "v8", "w16", "v16", "electric"}
 ASPIRATION = {"na", "turbo", "twin-turbo", "quad-turbo", "electric"}
-SOUNDS = {"single", "twin", "vtwin", "boxer", "four", "six", "v8", "w16", "v16", "electric"}
+SOUNDS = {"single", "twin", "vtwin", "boxer", "four", "six", "v8", "w16", "v16", "electric", "turbo4", "turbo6", "v8tt"}
 DRIVES = {"rwd", "fwd", "awd"}
 # coins per class tier (the spec's Economy) for when prices are set; tier 0 is the free starters.
 # FREE FOR ALL FOR NOW: every price is 0 (allowed in any tier) and every class's minLevel is 0.

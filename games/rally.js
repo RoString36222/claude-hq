@@ -732,7 +732,7 @@ function makeGame(host, opts){
     if(eng && V.engKind !== kind){ eng.stop(); eng = null; }
     if(!eng){ eng = E.engineSound(kind); V.engKind = kind; }
     var lim = C.spec.engine.limiter;
-    eng.set(900 + (C.rpm - C.spec.engine.idle)/(lim - C.spec.engine.idle)*6700);
+    eng.set(900 + (C.rpm - C.spec.engine.idle)/(lim - C.spec.engine.idle)*6700, {thr: C.tel.throttle, gear: C.tel.gear});
     if(E.noiseLoop){
       if(!skid) skid = E.noiseLoop(1400, 2);
       if(!gravel) gravel = E.noiseLoop(380, 0.8);

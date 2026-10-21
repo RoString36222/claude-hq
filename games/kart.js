@@ -556,7 +556,7 @@ function makeGame(host, opts){
     var ek = (CARS[C.car|0] || CARS[0]).eng;
     if(V.eng && V.engKind !== ek){ V.eng.stop(); V.eng = null; }
     if(!V.eng){ V.eng = E.engineSound(ek); V.engKind = ek; }   // HQ 2.1 sound pack: your vehicle's own engine, following the revs
-    V.eng.set(C.rpm);
+    V.eng.set(C.rpm, {thr: thr > 0 ? thr : 0});
     C.wheel += C.v*dt/0.3;
     return sp;
   }

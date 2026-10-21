@@ -1768,7 +1768,9 @@ function mount(el, api){
     // stopped with the throttle off: no note (without set() each frame, engineSound fades out)
     if(v < 0.3 && !(thr > 0)) return;
     if(!ride.eng && E.engineSound) ride.eng = E.engineSound(V.eng);
-    if(ride.eng) ride.eng.set(ride.rpm);
+    // the throttle (load), the gear (an upshift cuts, a downshift blips), road rumble and a squeal in a slide
+    if(ride.eng) ride.eng.set(ride.rpm, {thr: thr > 0 ? thr : 0, gear: ride.gear, speed: V.boat ? 0 : v,
+      slip: ride.drift && !V.boat ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0});
   }
   /* ---------- skating (games/hqskate.js does the physics) ---------- */
   // ride.sk = {st (the sim's state, in the park's frame), cx, cz (the park's centre), prev (keys last frame)}
@@ -2200,7 +2202,7 @@ function mount(el, api){
     ride.pitch = st.pitch; ride.roll = st.roll;
     Hp.animate(ride.B, st, dt, isNight());
     if(E.engineSound){
-      if(!ride.eng) ride.eng = E.engineSound(V.eng || "six");
+      if(!ride.eng) ride.eng = E.engineSound(V.plane && (!V.eng || V.eng === "six") ? "prop" : V.eng);   // a prop's drone
       ride.eng.set(900 + 5600*E.clamp(st.rpm, 0, 1));
     }
     keyMove = st.speed > 0.3 || !st.ground; keyRun = false; if(keyMove) movedHere = true;

@@ -2400,3 +2400,93 @@ html.hq-calm .pr-bar i{transition:none}
 html.hq-calm .boss-fight .boss-hp-fill{animation:none}
 html.hq-calm .boss-hp-fill{transition:none}
 @media (prefers-reduced-motion: reduce){ .boss-fight .boss-hp-fill{animation:none} .boss-hp-fill{transition:none} }
+/* 3D city HUD (games/hqhud.js) */
+/* The top centre belongs to hq3d's ride/skate overlays, so the HUD stacks bottom centre: compass, prompt, chip. */
+.hqhud{position:absolute;inset:0;z-index:2;pointer-events:none;font-family:var(--font);color:var(--ink)}
+.hqhud [hidden],.hqhud[hidden]{display:none !important}
+.hqhud-labels{position:absolute;inset:0;width:100%;height:100%}
+.hqhud-vignette{position:absolute;inset:0;opacity:0;background:radial-gradient(ellipse at center,transparent 52%,var(--scrim) 100%);transition:opacity .3s var(--ease)}
+.hqhud-chip{position:absolute;bottom:96px;left:50%;transform:translate(-50%,6px);opacity:0;padding:5px 14px;border-radius:999px;
+  background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);font:600 13px var(--font);color:var(--ink);white-space:nowrap;
+  transition:opacity var(--t-med) var(--ease),transform var(--t-med) var(--ease)}
+.hqhud-chip.on{opacity:1;transform:translate(-50%,0)}
+.hqhud-chip:empty{visibility:hidden}
+.hqhud-cross{position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px}
+.hqhud-cross::before,.hqhud-cross::after{content:"";position:absolute;background:var(--ink);box-shadow:0 0 0 1px var(--bg);border-radius:1px}
+.hqhud-cross::before{left:7px;top:0;width:2px;height:16px}
+.hqhud-cross::after{top:7px;left:0;height:2px;width:16px}
+.hqhud-prompt{position:absolute;left:50%;top:calc(50% + 26px);transform:translateX(-50%);display:flex;gap:8px;align-items:center;
+  padding:5px 12px;border-radius:var(--radius-sm);background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);font-size:13px;white-space:nowrap}
+.hqhud-cross[hidden] ~ .hqhud-prompt{top:auto;bottom:52px}
+.hqhud-prompt kbd{font:700 11px var(--mono);border:1px solid var(--line2);border-bottom-width:2px;border-radius:4px;padding:0 5px;background:var(--panel2);color:var(--ink)}
+.hqhud-speed{position:absolute;right:16px;bottom:14px;display:flex;align-items:baseline;gap:5px;padding:4px 12px;border-radius:var(--radius-sm);
+  background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow)}
+.hqhud-speed b{font:700 26px var(--mono);font-variant-numeric:tabular-nums;color:var(--ink)}
+.hqhud-speed span{font:600 11px var(--mono);color:var(--muted)}
+.hqhud-compass{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);width:min(320px,60%,calc(100% - 250px));height:28px;border-radius:var(--radius-sm);
+  background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);overflow:hidden;
+  -webkit-mask-image:linear-gradient(90deg,transparent,var(--ink) 18%,var(--ink) 82%,transparent);mask-image:linear-gradient(90deg,transparent,var(--ink) 18%,var(--ink) 82%,transparent)}
+.hqhud-tick{position:absolute;bottom:0;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:1px;
+  font:700 11px/1 var(--mono);color:var(--ink)}
+.hqhud-tick::after{content:"";width:1px;height:5px;background:var(--faint)}
+.hqhud-tick.hqhud-mid::after{height:8px}
+.hqhud-tick.hqhud-card::after{width:2px;height:7px;background:var(--ink)}
+.hqhud-needle{position:absolute;left:50%;top:0;margin-left:-4px;width:0;height:0;border:4px solid transparent;border-top-color:var(--brand)}
+.hqhud-gear{position:absolute;top:10px;right:10px;pointer-events:auto;width:32px;height:32px;display:grid;place-items:center;font-size:17px;line-height:1;
+  border-radius:var(--radius-sm);background:var(--panel);border:1px solid var(--line);color:var(--ink);box-shadow:var(--shadow);cursor:pointer}
+.hqhud-gear:hover{border-color:var(--line2)}
+.hqhud-gear:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.hqhud-gear[aria-expanded="true"]{border-color:var(--brand);background:var(--brand-soft)}
+.hqhud-settings{position:absolute;top:48px;right:10px;pointer-events:auto;width:250px;max-height:calc(100% - 60px);overflow:auto;display:grid;gap:8px;
+  padding:12px;border-radius:var(--radius);background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow-lg);font-size:12.5px;color:var(--ink)}
+.hqhud-set-title{margin:0;font-size:13px;font-weight:650}
+.hqhud-set-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 8px}
+.hqhud-set-row label{color:var(--muted)}
+.hqhud-set-row input[type="range"]{grid-column:1 / -1;grid-row:2;width:100%;accent-color:var(--brand)}
+.hqhud-set-row input[type="checkbox"]{accent-color:var(--brand)}
+.hqhud-set-row select{font:inherit;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:2px 6px}
+.hqhud-set-row :focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+.hqhud-set-val{font:600 11.5px var(--mono);color:var(--ink);font-variant-numeric:tabular-nums}
+html.hq-calm .hqhud-chip,html.hq-calm .hqhud-vignette{transition:none}
+@media (prefers-reduced-motion: reduce){ .hqhud-chip,.hqhud-vignette{transition:none} }
+
+/* ---- HQ 3.x: the Town Hall panel (ui/app/38-townhall.js) ---- */
+.th-back{z-index:90}
+.th-modal{width:min(520px,100%)}
+.th-panel{display:grid;gap:10px}
+.th-tabs{display:inline-flex;gap:2px;justify-self:start;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:2px}
+.th-tab{background:none;border:none;color:var(--muted);border-radius:6px;padding:4px 12px;font-size:12.5px;font-weight:600;cursor:pointer}
+.th-tab:hover{color:var(--ink)}
+.th-tab.on{background:var(--panel);color:var(--ink);box-shadow:var(--shadow)}
+.th-tab:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+.th-body{display:grid;gap:12px}
+.th-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.th-name{margin:0;font-size:17px;font-weight:700;color:var(--ink);overflow-wrap:anywhere}
+.th-tier{font:600 12px var(--mono);color:var(--brand)}
+.th-prog{display:grid;gap:4px}
+.th-bar{height:8px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);overflow:hidden}
+.th-fill{height:100%;background:var(--brand);border-radius:inherit}
+.th-prog-label{font-size:12px;font-variant-numeric:tabular-nums}
+.th-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:8px}
+.th-stat{display:grid;gap:2px;padding:8px 10px;border-radius:var(--radius-sm);background:var(--panel2);border:1px solid var(--line)}
+.th-stat-k{font-size:11.5px;color:var(--muted)}
+.th-stat-v{font:650 15px var(--mono);font-variant-numeric:tabular-nums;color:var(--ink);overflow-wrap:anywhere}
+.th-sec{display:grid;gap:6px}
+.th-sec h4{margin:0;font-size:12.5px;font-weight:650;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.th-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.th-row-name{flex:1 1 auto;min-width:0;color:var(--ink);overflow-wrap:anywhere}
+.th-row-v{font:600 12px var(--mono)}
+.th-input{width:96px;height:34px;padding:0 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:13px var(--mono)}
+.th-input:focus-visible,.th-select:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+.th-fee{font-size:12px}
+.th-select{justify-self:start}
+.th-goods{display:grid;gap:4px}
+.th-good{display:grid;grid-template-columns:minmax(0,1fr) 64px 64px auto;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--line)}
+.th-good-head{font-size:11.5px;color:var(--muted);border-bottom-color:var(--line2)}
+.th-num{font:600 13px var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+.th-good-head .th-num{font:inherit}
+.th-acts{display:flex;gap:6px}
+.th-msg{margin:0;font-size:12.5px}
+.th-msg.ok{color:var(--good)}
+.th-msg.bad{color:var(--need)}
+@media(max-width:420px){.th-good{grid-template-columns:minmax(0,1fr) 52px 52px}.th-acts{grid-column:1 / -1}}

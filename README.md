@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.8.3** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.1.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -330,6 +330,61 @@ and feature guide.
 
 ## Changelog
 
+- **3.1.0 — Navigation and rivers.** Finding your way round the cities.
+  - **A river through every city:** from the sea past the plaza to a harbour basin in town. The
+    **dock** stands on its bank by the plaza (on a tier-1 island too, with a road to it) and the
+    **port** on the basin, so neither is out on the edge of the city any more. Arterials, the ring
+    road and the highways cross on bridges; boats sail up the river and under them.
+  - **A minimap** in the bottom-right corner: the coast, the river, the roads, the civic buildings,
+    HQs, other players and your route. Heading-up or north-up, zoom with the wheel or +/-, click it
+    to set a waypoint, open the full map (M) from it; it zooms out as you speed up.
+  - **Waypoints and turn-by-turn directions along the roads:** press **N** or **Go to** for a
+    searchable list of places (the dock, the port, the town hall, your HQ, the ferry to your island
+    or the Commons...), or click the minimap or the ground on the map. A banner shows the next turn,
+    the distance and the ETA; chevrons on the road and a light pillar at the destination lead the
+    way; it reroutes when you go another way, and says "Press E for the ferry" at the dock.
+  - Keys pressed in a stop's, a dock's or the Go to menu no longer reach the dashboard's shortcuts
+    (W no longer switches to the Workshop while a menu is open).
+- **3.0.0 — Cities.** Arena City grows into a world of cities.
+  - **The Commons** (`claude-hq@2`) replaces the gridded street for everyone: an organic city on an
+    island, with arterial and local streets, districts (old town, downtown, suburbs, office, tech, film
+    and more), every open HQ's tower on the lot the Arena assigns it, and civic buildings you can walk
+    into: the HQ tabs open from the library, the market, the post office and the rest, and the **town
+    hall** opens the **Town Hall** panel (the city's tier, growth, population, treasury, tax, specialty
+    and its market).
+  - **Your own island** (`user:<you>@2`): a personal city with your HQ next to the town hall. It grows
+    with your XP through five tiers (Village, Town, City, Metropolis, Capital): new streets, lots,
+    services, buses from tier 2 and trams from tier 4 appear as you climb. Owners don't place
+    buildings; you upgrade the city, move coins in and out (10% fee) and choose who may visit:
+    everyone in your Arena (the default), your crew only, or nobody. Visitors walk, ride, shop and trade.
+  - **Economy:** passive tax into the city treasury, upgrades, a specialty good per city (the one its
+    industry zone visibly makes), supply chains, and a market whose prices move every hour inside a band.
+  - **People and traffic:** residents who commute, work, lunch and go home on a schedule (press **E**
+    on one to hear them), cars, buses, trams and emergency runs. Press **E** at a stop, pick where to
+    go, wait for the bus or tram and ride it (2 coins to that city's treasury).
+  - **The sea:** the other islands on the horizon; a rowboat and a jet ski at every dock you can
+    drive (E), and land on another island's dock. Press **E** at a dock, port, station or airport for
+    ferries, trains, planes and fast travel (1 coin; ferries, rail and boats are free); the **My
+    island** / **The Commons** button goes straight between your island and the Commons.
+  - **Multiplayer:** each world has its own presence room (`city3d:<world id>`, HQ presence v3); an
+    Arena without @2 still gets the 3D City on `claude-hq@1`, and `?world=old` still loads the legacy City.
+  **Privacy/egress:** the new dashboard proxies (`GET /api/arena/city/:owner`, `/api/arena/market/:owner`,
+  `/api/arena/archipelago`, `/api/arena/world/claude-hq@2/assign`; `POST /api/arena/city/:owner/{build,
+  transfer,privacy,fare}` and `/api/arena/market/:owner/trade`) send only the regex-validated owner id
+  (a user id or `commons`) and bodies rebuilt from allowlisted, value-checked keys, with the paired device
+  token, to the configured Arena. `GET /api/arena/world/user:<id>@2` adds the device token because the
+  Arena serves an island only to those who may visit it; the fixed worlds still go without one. Nothing
+  transcript-derived is sent.
+- **2.9.0 — The 3D Arena City.** Arena City is now a 3D city built from the Arena's generated world
+  (`claude-hq@1`), with camera modes, a map, and a local dev Arena (`tools/local_arena.sh`);
+  `?world=old` still loads the legacy City.
+  **Privacy/egress:** `GET /api/arena/world/:id` sends only the fixed, regex-validated world id and the
+  page's `If-None-Match` ETag to the configured Arena; no device token, no transcript-derived data.
+  **Dev login:** `POST /v1/auth/dev-login` exists only with `ARENA_DEV_LOGIN=1` and a loopback bind.
+  **`tools/local_arena.sh`:** `build start` chains; stop the preview with `stop-tmp 8767`; `restore`
+  takes an optional port; `pair` refuses a git root that does not ignore `*.prod-bak` (the backups hold
+  the production device token); `stop`/`stop-tmp`/`start` only kill our own arena or claudehq binaries.
+  The `install-agent` plist holds `ARENA_SECRET_KEY` (written 0600).
 - **2.8.3 — Strikezone: every disaster hits, and it hits what you see.** Arena Disasters used to
   play as theatre: Meteor Shower streaked pretty fire while impact rings scattered at random,
   Toxic Fog painted green clouds at map centre while damage re-rolled somewhere else every second,

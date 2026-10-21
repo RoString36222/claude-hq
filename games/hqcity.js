@@ -142,57 +142,12 @@ HQV.hqWorlds.city = function(c, w){
     sub.position.set(0, B.top() + 5.6, 0); g.add(sub);
     B.hits.forEach(function(o){ hits.push(o); }); B.doors.forEach(function(d){ doors.push(d); });
     L.B = B; L.H = B.top() + 2; L.fade = {g: B.g, on: false}; lotsB.push(B);
-    lotExtras(L, g, lotColors(h.look));
-  }
-  // the garage beside an HQ and its car, motorbike and bicycle, in its colours (LOT_EXTRAS); all
-  // three join w.bikes, so hq3d.js lets you drive and ride them
-  function lotExtras(L, g, col){
-    var X = LOT_EXTRAS, G = X.garage, K = X.car, Bk = X.bike;
-    var wallM = mat(col.paint, {roughness: 0.8}), trimM = emis(col.accent, col.accent, 0.35);
-    var gg = new THREE.Group(); gg.position.set(G.x, 0, G.z); g.add(gg);
-    // the garage: a floor, three walls, a flat roof, the roller door rolled up under the lintel
-    box(G.w, 0.06, G.d, emis(0x4a545e, 0xfff1d6, 0.05, {roughness: 0.9}), 0, 0.03, 0, gg);   // the floor, lit by its lamp
-    // the walls, and the top (roof, lintel, rolled-up door): the top fades while you are inside,
-    // the whole garage while it stands between you and the camera (fadeGarages)
-    var walls = new THREE.Group(), top = new THREE.Group(); gg.add(walls); gg.add(top);
-    box(G.w, G.h, 0.2, wallM, 0, G.h/2, -G.d/2 + 0.1, walls);
-    box(0.2, G.h, G.d, wallM, -G.w/2 + 0.1, G.h/2, 0, walls);
-    box(0.2, G.h, G.d, wallM, G.w/2 - 0.1, G.h/2, 0, walls);
-    box(G.w + 0.3, 0.2, G.d + 0.3, mat(0x3a4552, {roughness: 0.7}), 0, G.h + 0.1, 0, top);
-    box(G.w, 0.45, 0.2, mat(col.paint, {roughness: 0.8}), 0, G.h - 0.22, G.d/2 - 0.1, top);   // the lintel over the opening
-    box(G.w + 0.3, 0.12, 0.06, trimM, 0, G.h - 0.06, G.d/2 + 0.02, top);              // accent strip
-    L.garage = {top: top, walls: walls, on: 0};
-    var slats = c.canvasTex(64, 32, function(gx){ gx.fillStyle = "#c9d1d9"; gx.fillRect(0, 0, 64, 32); gx.fillStyle = "rgba(0,0,0,.3)";
-      for(var y = 3; y < 32; y += 6) gx.fillRect(0, y, 64, 2); });
-    var roll = new THREE.Mesh(new THREE.BoxGeometry(G.w - 0.45, 0.38, 0.4), new THREE.MeshStandardMaterial({map: slats.t, roughness: 0.6, metalness: 0.3}));
-    roll.position.set(0, G.h - 0.62, G.d/2 - 0.35); roll.castShadow = true; top.add(roll);             // the door, rolled up
-    sph(0.1, emis(0xfff1d6, 0xffd9a0, 2), 0, G.h - 0.12, G.d/2 + 0.2, gg);
-    var gl = c.glow(0xffd9a0, 2.2, 0.7); gl.position.set(0, G.h - 0.2, G.d/2 + 0.45); gg.add(gl); lampGlows.push(gl);
-    var inside = c.glow(0xfff1d6, 3.0, 0.35); inside.position.set(0, G.h - 0.4, 0); gg.add(inside); lampGlows.push(inside);
-    // the apron from the door to the road
-    var apron = new THREE.Mesh(new THREE.PlaneGeometry(G.w - 0.4, 11 - (G.z + G.d/2)), mat(0x323a43, {roughness: 0.9}));
-    apron.rotation.x = -PI/2; apron.position.set(G.x, 0.03, (G.z + G.d/2 + 11)/2); apron.receiveShadow = true; g.add(apron);
     var cr = Math.cos(L.rot), sr = Math.sin(L.rot);                               // the lot's frame -> the street's
-    function street(p){ return {x: L.x + p.x*cr + p.z*sr, z: L.z - p.x*sr + p.z*cr}; }
-    // the car, parked inside, nose out: its body in the HQ's paint with stripes in its accent
-    var Cm = c.car(col.paint, col.accent); Cm.g.position.set(K.x, 0, K.z); Cm.g.rotation.y = K.yaw; g.add(Cm.g);
-    // under the roof the sun never reaches it: the garage lamp lights its paint (no extra light, so a
-    // city of garages costs nothing more to draw)
-    function lamplit(gr){ gr.traverse(function(o){ var m = o.material; if(m && m.color && m.emissive && !(m.emissiveIntensity > 0.5)){
-      m.emissive.copy(m.color); m.emissiveIntensity = 0.28; } }); }
-    lamplit(Cm.g);
-    var kp = street(K); L.car = {g: Cm.g};
-    // (id: the same prop after a rebuild; stay: hq3d.js parks it wherever you get off)
-    var uid = "lot:" + L.h.userId + ":";
-    bikes.push({g: Cm.g, x: kp.x, z: kp.z, yaw: K.yaw + L.rot, color: col.paint, accent: col.accent, kind: "car", id: uid + "car", stay: true});
-    // its motorbike and its bicycle beside the car, in the HQ's accent
-    var Mo = X.moto, Mm = c.moto(col.accent, col.paint); Mm.g.position.set(Mo.x, 0, Mo.z); Mm.g.rotation.y = Mo.yaw; g.add(Mm.g);
-    var mp = street(Mo);
-    lamplit(Mm.g); bikes.push({g: Mm.g, x: mp.x, z: mp.z, yaw: Mo.yaw + L.rot, color: col.accent, accent: col.paint, kind: "moto", id: uid + "moto", stay: true});
-    var Bm = c.bike(col.accent, col.paint); Bm.g.position.set(Bk.x, 0, Bk.z); Bm.g.rotation.y = Bk.yaw; g.add(Bm.g);
-    var bp = street(Bk); lamplit(Bm.g);
-    bikes.push({g: Bm.g, x: bp.x, z: bp.z, yaw: Bk.yaw + L.rot, color: col.accent, accent: col.paint, id: uid + "bike", stay: true});
+    var X = HQV.hqCityParts.lotExtras(c, g, lotColors(h.look), L.rot, function(x, z){ return {x: L.x + x*cr + z*sr, z: L.z - x*sr + z*cr}; }, null, h.userId);
+    X.glows.forEach(function(gl){ lampGlows.push(gl); }); L.car = X.car; L.garage = X.garage;
+    X.items.forEach(function(b){ bikes.push(b); });
   }
+  // the garage beside an HQ and its car, motorbike and bicycle: HQV.hqCityParts.lotExtras (games/hqcityparts.js)
   // one tab's building (games/hqbase.js): its door opens that tab
   function viewBuilding(L){
     var V = HQV.hqViewBuilding(c, L.v, {doorFront: function(){ return new THREE.Vector3(L.door.x, 0, L.door.z); }});
@@ -237,15 +192,18 @@ HQV.hqWorlds.city = function(c, w){
       var lawn = flat(new THREE.PlaneGeometry(BLOCK_W - 4, BLOCK_D - 4), gm, 0.022); lawn.position.x = bx; lawn.position.z = bz;
     }
     // the plaza on the middle block: a fountain, the bike park beside it, and the city's name
-    fount = fountain(); fount.g.position.set(P.x, 0, P.z); streetG.add(fount.g);
-    bikes = bikePark(P.x + 8.6, P.z);
-    skate = skatePark(P.x - SKATE_DX, P.z); w.skatepark = skate;
+    var parts = HQV.hqCityParts;
+    fount = parts.fountain(c, streetG, P.x, 0, P.z);
+    bikes = parts.bikePark(c, streetG, P.x + 8.6, 0, P.z);
+    skate = parts.skatePark(c, streetG, P.x - SKATE_DX, 0, P.z); w.skatepark = skate;
+    if(skate) skate.boards.forEach(function(b){ bikes.push(b); });
     var nb = city.lots.length;
     var cityL = c.label("Arena City · " + nb + " HQ" + (nb === 1 ? "" : "s"), HEX.amber, 1.3); cityL.position.set(P.x, 6.4, P.z); streetG.add(cityL);
     function tree(x, z, sc){ var tg = new THREE.Group(); tg.position.set(x, 0, z); tg.scale.setScalar(sc); streetG.add(tg);
       cyl(0.2, 0.28, 1.2, mat(0x5a3d2a), 0, 0.6, 0, tg, 8);
       for(var cn = 0; cn < 3; cn++) c.add(new THREE.Mesh(new THREE.ConeGeometry(1.3 - cn*0.3, 1.6, 8), mat([0x2f6b45, 0x2a5f3d, 0x357a4f][cn])), 0, 1.6 + cn*0.9, 0, tg); }
-    [[1, -1], [1, 1]].forEach(function(k){ var pt = new THREE.Group();          // (the other two corners are the skatepark) pt.position.set(P.x + k[0]*(BLOCK_W/2 - 3), 0, P.z + k[1]*(BLOCK_D/2 - 3)); streetG.add(pt);
+    [[1, -1], [1, 1]].forEach(function(k){                                     // (the other two corners are the skatepark)
+      var pt = new THREE.Group(); pt.position.set(P.x + k[0]*(BLOCK_W/2 - 3), 0, P.z + k[1]*(BLOCK_D/2 - 3)); streetG.add(pt);
       cyl(0.2, 0.28, 1.2, mat(0x5a3d2a), 0, 0.6, 0, pt, 8); sph(1.2, mat(0x3c8a4f, {roughness: 0.9}), 0, 2.1, 0, pt); });
     // street lamps on the corner of every crossing
     function lamp(x, z){ cyl(0.07, 0.1, 3.4, mat(0x2b3a48, {metalness: 0.6}), x, 1.7, z, streetG, 8); sph(0.16, emis(0xfff1d6, 0xffd9a0, 2), x, 3.3, z, streetG);
@@ -286,131 +244,8 @@ HQV.hqWorlds.city = function(c, w){
   w.spawnFrom = {};
   Object.defineProperty(w.spawnFrom, "lobby", {get: function(){ return at(mine()); }, enumerable: true});
 
-  /* ---------- the fountain: a stone basin, two bowls, falling water, a jet on top ---------- */
-  var FOUNT_R = 4.4;
-  function lathe(pts, m, y, p){
-    var o = new THREE.Mesh(new THREE.LatheGeometry(pts.map(function(q){ return new THREE.Vector2(q[0], q[1]); }), 48), m);
-    o.position.y = y || 0; o.castShadow = true; o.receiveShadow = true; p.add(o); return o;
-  }
-  function fountain(){
-    var g = new THREE.Group(), stone = mat(0xb9c2cb, {roughness: 0.7}), stone2 = mat(0x8f9aa6, {roughness: 0.75});
-    // the basin: a low stone wall with a rim to sit on, and a water surface inside
-    lathe([[3.9, 0], [4.4, 0], [4.45, 0.62], [4.3, 0.74], [4.0, 0.74], [3.92, 0.62], [3.9, 0.12], [0, 0.12]], stone, 0, g);
-    var rip = c.canvasTex(256, 256, function(gx){
-      gx.fillStyle = "#1d6f93"; gx.fillRect(0, 0, 256, 256);
-      var R = c.rng(31); for(var i = 0; i < 70; i++){ gx.strokeStyle = "rgba(170,230,255," + (0.08 + R()*0.2) + ")"; gx.lineWidth = 1 + R()*2;
-        gx.beginPath(); gx.ellipse(R()*256, R()*256, 8 + R()*30, 3 + R()*8, 0, 0, 7); gx.stroke(); }
-    });
-    rip.t.wrapS = rip.t.wrapT = THREE.RepeatWrapping; rip.t.repeat.set(3, 3);
-    var waterM = new THREE.MeshStandardMaterial({map: rip.t, color: 0x7fd0f0, emissive: new THREE.Color(COL.cyan), emissiveIntensity: 0.28,
-      transparent: true, opacity: 0.88, roughness: 0.15, metalness: 0.1});
-    var pool = new THREE.Mesh(new THREE.CircleGeometry(3.9, 48), waterM); pool.rotation.x = -PI/2; pool.position.y = 0.52; g.add(pool);
-    // the column and two bowls, each spilling a sheet of water into the one below
-    lathe([[0.85, 0], [0.7, 0.15], [0.5, 0.3], [0.45, 1.2], [0.6, 1.45], [0, 1.45]], stone2, 0.1, g);
-    lathe([[0.35, 0], [1.9, 0.2], [2.05, 0.32], [1.95, 0.38], [1.75, 0.3], [0.3, 0.18]], stone, 1.48, g);
-    var bowl1 = new THREE.Mesh(new THREE.CircleGeometry(1.78, 40), waterM); bowl1.rotation.x = -PI/2; bowl1.position.y = 1.83; g.add(bowl1);
-    lathe([[0.42, 0], [0.3, 0.2], [0.24, 0.85], [0.36, 1.0], [0, 1.0]], stone2, 1.75, g);
-    lathe([[0.2, 0], [1.0, 0.12], [1.1, 0.24], [1.02, 0.29], [0.9, 0.22], [0.18, 0.12]], stone, 2.72, g);
-    var bowl2 = new THREE.Mesh(new THREE.CircleGeometry(0.93, 32), waterM); bowl2.rotation.x = -PI/2; bowl2.position.y = 2.98; g.add(bowl2);
-    lathe([[0.16, 0], [0.12, 0.25], [0.2, 0.4], [0.07, 0.62], [0, 0.66]], stone2, 2.95, g);
-    var sheetT = c.canvasTex(64, 256, function(gx){
-      gx.clearRect(0, 0, 64, 256); var R = c.rng(57);
-      for(var i = 0; i < 26; i++){ var x = R()*64, h = 30 + R()*120, y = R()*256; gx.fillStyle = "rgba(200,240,255," + (0.25 + R()*0.45) + ")"; gx.fillRect(x, y, 1 + R()*2.5, h); gx.fillRect(x, y - 256, 1 + R()*2.5, h); }
-    });
-    sheetT.t.wrapS = sheetT.t.wrapT = THREE.RepeatWrapping; sheetT.t.repeat.set(14, 1);
-    var sheetM = new THREE.MeshBasicMaterial({map: sheetT.t, transparent: true, opacity: 0.75, depthWrite: false, side: THREE.DoubleSide, toneMapped: false});
-    var sheet1 = new THREE.Mesh(new THREE.CylinderGeometry(2.04, 2.22, 1.32, 48, 1, true), sheetM); sheet1.position.y = 1.18; g.add(sheet1);
-    var sheet2 = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.24, 0.96, 40, 1, true), sheetM); sheet2.position.y = 2.53; g.add(sheet2);
-    // the jet: drops thrown up from the top that arc down into the top bowl
-    var NJ = 160, jp = new Float32Array(NJ*3), jr = c.rng(71), jets = [];
-    for(var i = 0; i < NJ; i++) jets.push({a: jr()*PI*2, v: 0.55 + jr()*0.45, o: jr()});
-    var jg = new THREE.BufferGeometry(); jg.setAttribute("position", new THREE.BufferAttribute(jp, 3));
-    var jet = new THREE.Points(jg, new THREE.PointsMaterial({color: 0xcff2ff, size: 0.09, transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false}));
-    g.add(jet);
-    var glow = c.glow(COL.cyan, 7, 0.25); glow.position.y = 1.2; g.add(glow);
-    return {g: g, rip: rip.t, sheet: sheetT.t, jet: jet, jp: jp, jets: jets, glow: glow, waterM: waterM};
-  }
-  function fountainStep(t){
-    var F = fount; if(!F) return;
-    var calm = c.E.calm(), tt = calm ? 0 : t;        // Calm / reduced motion: still water
-    F.rip.offset.set(tt*0.02, tt*0.035);
-    F.sheet.offset.y = tt*0.9;
-    F.jet.visible = !calm;
-    if(calm) return;
-    var p = F.jp;
-    for(var i = 0; i < F.jets.length; i++){
-      var j = F.jets[i], u = (t*0.8 + j.o) % 1, r = u*0.82*j.v, y = 3.6 + u*1.5*j.v - u*u*(1.5*j.v + 0.55);
-      p[i*3] = Math.cos(j.a)*r; p[i*3 + 1] = y; p[i*3 + 2] = Math.sin(j.a)*r;
-    }
-    F.jet.geometry.attributes.position.needsUpdate = true;
-  }
-
-  /* ---------- the skatepark: the plaza's other half (games/hqskate.js is its shape and physics) ---------- */
-  // Two quarter pipes facing each other, a fun box in the middle, a ledge and a rail, and a row of
-  // boards at the fountain end: walk up to one and press E. Built from HQV.hqSkatePark, so every
-  // ramp you see is the one you ride on.
-  function skatePark(cx, cz){
-    var SP = HQV.hqSkatePark; if(!SP) return null;
-    var g = new THREE.Group(); g.position.set(cx, 0, cz); streetG.add(g);
-    var concrete = mat(0xa7b0b9, {roughness: 0.85}), side = mat(0x77818b, {roughness: 0.9}), steel = mat(0xc4ccd4, {metalness: 0.85, roughness: 0.25});
-    var paint = emis(0xffb347, 0xffb347, 0.25);
-    var floorM = new THREE.MeshStandardMaterial({color: 0x8f99a3, roughness: 0.8});
-    var fl = new THREE.Mesh(new THREE.PlaneGeometry(2*SP.HW, 2*SP.HD), floorM); fl.rotation.x = -PI/2; fl.position.y = 0.025; fl.receiveShadow = true; g.add(fl);
-    [-1, 1].forEach(function(sx){ box(0.08, 0.02, 2*SP.HD, paint, sx*(SP.HW - 0.05), 0.04, 0, g, true); });   // painted edges
-    // an extruded profile: pts are (along z, up) pairs; it is laid across the park's width (x)
-    function profile(pts, depth, m){
-      var sh = new THREE.Shape(); sh.moveTo(pts[0][0], pts[0][1]); for(var i = 1; i < pts.length; i++) sh.lineTo(pts[i][0], pts[i][1]);
-      var o = new THREE.Mesh(new THREE.ExtrudeGeometry(sh, {depth: depth, bevelEnabled: false}), m); o.castShadow = true; o.receiveShadow = true; return o;
-    }
-    var Q = SP.QP;
-    [-1, 1].forEach(function(end){
-      var pts = [[Q.from, 0]];
-      for(var i = 1; i <= 24; i++){ var t = Q.run*i/24; pts.push([Q.from + t, SP.height(0, end*(Q.from + t))]); }
-      pts.push([Q.from + Q.run + 0.4, SP.QP_TOP], [Q.from + Q.run + 0.4, 0]);
-      var qp = profile(pts, 2*SP.HW, [side, concrete]);
-      qp.rotation.y = end > 0 ? -PI/2 : PI/2; qp.position.x = end > 0 ? SP.HW : -SP.HW; g.add(qp);
-      var cop = cyl(0.06, 0.06, 2*SP.HW, steel, 0, SP.QP_TOP + 0.02, end*(Q.from + Q.run), g, 10); cop.rotation.z = PI/2;   // the coping
-    });
-    var B = SP.BOX, box1 = profile([[-B.hd, 0], [-B.flat, B.top], [B.flat, B.top], [B.hd, 0]], 2*B.hw, [side, concrete]);
-    box1.rotation.y = -PI/2; box1.position.x = B.hw; g.add(box1);
-    var Lg = SP.LEDGE;
-    box(Lg.x1 - Lg.x0, Lg.top, 2*Lg.hd, side, (Lg.x0 + Lg.x1)/2, Lg.top/2, 0, g);
-    box(0.06, 0.04, 2*Lg.hd, steel, Lg.x1 - 0.03, Lg.top + 0.01, 0, g);              // its steel edge (grind it)
-    var R = SP.RAIL, rail = cyl(0.04, 0.04, 2*R.hd, steel, R.x, R.top, 0, g, 10); rail.rotation.x = PI/2;
-    [-R.hd, 0, R.hd].forEach(function(z){ cyl(0.03, 0.03, R.top, steel, R.x, R.top/2, z, g, 8); });
-    // the boards, side by side at the fountain end, noses into the park
-    var list = [], cols = [0xff6b5b, 0x5fd3e6, 0xffb347, 0x9b8cf0];
-    cols.forEach(function(col, i){
-      var lx = SP.HW - 0.5, lz = -7.2 + i*0.55, Bd = c.board(col);
-      Bd.g.position.set(lx, 0, lz); Bd.g.rotation.y = -PI/2; g.add(Bd.g);
-      list.push({g: Bd.g, x: cx + lx, z: cz + lz, yaw: -PI/2, color: col, kind: "skate", id: "skate:" + i});
-    });
-    var sign = c.label("\uD83D\uDEF9 Skatepark · press E on a board", HEX.amber, 0.7); sign.position.set(SP.HW - 0.5, 2.4, -6.4); g.add(sign);
-    list.forEach(function(b){ bikes.push(b); });
-    return {cx: cx, cz: cz, boards: list};
-  }
-
-  /* ---------- the bike park: a rack of bikes beside the fountain ---------- */
-  // Walk up to one and press E (hq3d.js does the riding). w.bikes lists them: {g, x, z, yaw, color, id}.
-  function bikePark(cx, cz){
-    var list = [], g = new THREE.Group(); g.position.set(cx, 0, cz); streetG.add(g);
-    var padT = c.canvasTex(128, 256, function(gx){ gx.fillStyle = "#4a5866"; gx.fillRect(0, 0, 128, 256); gx.strokeStyle = "rgba(255,255,255,.35)"; gx.lineWidth = 3;
-      for(var y = 20; y < 256; y += 39){ gx.beginPath(); gx.moveTo(14, y); gx.lineTo(114, y); gx.stroke(); } });
-    var pad = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 9.6), new THREE.MeshStandardMaterial({map: padT.t, roughness: 0.85}));
-    pad.rotation.x = -PI/2; pad.position.y = 0.035; pad.receiveShadow = true; g.add(pad);
-    var steel = mat(0x9aa7b5, {metalness: 0.8, roughness: 0.3});
-    // the rack: a rail with a hoop per slot, front wheels go in on the fountain side
-    box(0.06, 0.06, 9, steel, -0.7, 0.42, 0, g);
-    var cols = [0xff6b5b, 0x5fd3e6, 0xffb347, 0x6fd38a, 0x9b8cf0, 0xe0559b];
-    for(var i = 0; i < 6; i++){
-      var z = -3.75 + i*1.5;
-      var hoop = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.03, 6, 20, PI), steel); hoop.position.set(-0.7, 0.05, z); hoop.rotation.y = PI/2; hoop.castShadow = true; g.add(hoop);
-      var B = c.bike(cols[i]); B.g.position.set(0, 0, z); B.g.rotation.y = -PI/2; g.add(B.g);   // facing the fountain
-      list.push({g: B.g, x: cx, z: cz + z, yaw: -PI/2, color: cols[i], id: "rack:" + i});
-    }
-    var sign = c.label("\uD83D\uDEB2 Bike park · press E", HEX.green, 0.7); sign.position.set(0.9, 2.6, 0); g.add(sign);
-    return list;
-  }
+  /* ---------- the fountain, the skatepark and the bike park: games/hqcityparts.js ---------- */
+  var FOUNT_R = HQV.hqCityParts.FOUNT_R;
 
   function applyTime(){
     lotsB.concat(viewsB).forEach(function(B){ B.setNight(night); });
@@ -481,7 +316,7 @@ HQV.hqWorlds.city = function(c, w){
   w.update = function(t, dt, k){
     fadeAcc += dt; if(fadeAcc > 0.15){ fadeAcc = 0; cutaway(); }
     lotsB.concat(viewsB).forEach(function(B){ B.animate(t, dt, k); });
-    fountainStep(t);
+    if(fount) fount.step(t);
     cars.forEach(function(cr){ cr.s += cr.v*dt*k; var p = rectAt(cr.s, cr.ax, cr.az), sg = cr.v < 0 ? -1 : 1;
       cr.g.position.set(p.x, 0, p.z); cr.g.rotation.y = Math.atan2(-p.dz*sg, p.dx*sg); });
   };

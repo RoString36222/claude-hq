@@ -11,15 +11,33 @@ function hqCalm(){ return document.documentElement.classList.contains("hq-calm")
   !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); }
 function hqWebGL(){ try { return !!document.createElement("canvas").getContext("webgl2"); } catch(e){ return false; } }
 
+// Script load order (3D city spec, section 1): the engine, the HQ host + Mission Control, the other
+// floors (Lobby, Base, the skate sim), then the 3D City: world data, geometry, meshes, camera rig, HUD,
+// the City's shared parts, the classic City, the static-mesh merger (hqmerge) and the generated one.
+// Cities (3.0): the civic building kit (after hqmerge, which it merges with), the residents (the
+// pure sim before its drawing), traffic and transit, the sea and the boats, and island travel, all
+// before the City that wires them (games/hqcity3d.js). Navigation (3.1): the road router, the minimap, the
+// route's chevrons and the Go to panel / route banner, also before the City.
+var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqlobby","hqbase","hqskate","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
+                  "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqtravel","hqvoyage","hqships","hqbridges","hqair","hqaircraft","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcity3d"];
+// The 3D City's own files: if one fails, the classic City still works (games/hq3d.js falls back to it);
+// a Cities part that fails only takes its own feature out of the 3D City.
+var HQ_SCRIPTS_3D = {world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
+                     hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqair:1, hqaircraft:1, hqairbase:1,
+                     hqnav:1, hqminimap:1, hqroutefx:1, hqnavui:1, hqrail:1};
+// ?hqsmoke=1 (tools/ui_smoke.py, tools/hq_shots.py): HQ opens straight into the City with three synthetic HQs.
+var HQ_SMOKE = /[?&]hqsmoke=1(&|$)/.test(location.search);
 function hqLoadScripts(){
   if(HQ3D.load) return HQ3D.load;
-  // The engine (shared with the Valley's 3D games), the HQ host + Mission Control, then the
-  // other floors of the building: the Lobby and the Base outside.
-  var files = ((window.HQV && window.HQV.engine) ? [] : ["engine"]).concat((window.HQV && window.HQV.avatar3d) ? [] : ["avatar3d"], ["hq3d","hqlobby","hqbase","hqskate","hqcity"]);
+  var files = HQ_SCRIPTS.filter(function(n){
+    return !(n==="engine" && window.HQV && window.HQV.engine) && !(n==="avatar3d" && window.HQV && window.HQV.avatar3d);
+  });
   HQ3D.load = files.reduce(function(p, name){
     return p.then(function(){ return new Promise(function(res, rej){
       var sc=document.createElement("script"); sc.src="/games/"+name+".js"; sc.async=false;
-      sc.onload=res; sc.onerror=function(){ rej(new Error(name+".js failed to load")); };
+      sc.onload=res; sc.onerror=function(){
+        if(HQ_SCRIPTS_3D[name]){ if(window.console) console.warn(name+".js failed to load: the classic City stays"); res(); return; }
+        rej(new Error(name+".js failed to load")); };
       document.head.appendChild(sc);
     }); });
   }, Promise.resolve()).catch(function(e){ HQ3D.load=null; throw e; });
@@ -39,9 +57,9 @@ function hqApi(){
     level: function(){ var a=(typeof progLevel==="function") && progLevel(); if(a) return a; var s=(STATE && STATE.season) || {}; return Math.max(1, (s.level|0) || 1); },
     look: function(){ return Object.assign({}, hqLook(), {decor: (window.HQ_MYCOS || {}).decor,
                                                           crew: (typeof crewBanner==="function") ? crewBanner() : null}); },
-    startWorld: (function(){ try { var w=localStorage.getItem("hq_world"); return w==="base"||w==="lobby"||w==="mission" ? w : "base"; } catch(e){ return "base"; } })(),
+    startWorld: HQ_SMOKE ? "base" : (function(){ try { var w=localStorage.getItem("hq_world"); return w==="base"||w==="lobby"||w==="mission" ? w : "base"; } catch(e){ return "base"; } })(),
     // HQ 2.1 Arena City: outside is the street of open HQs unless you are private (HQ closed)
-    outside: function(){ return hqCityOn() ? "city" : "base"; },
+    outside: function(){ return HQ_SMOKE || hqCityOn() ? "city" : "base"; },
     city: function(){ return HQ_CITY.list; },
     cityReturn: function(){ return HQ_CITY.back; },
     visit: function(uid){ hqVisit(uid, {from:"city"}); },
@@ -51,7 +69,16 @@ function hqApi(){
     onWorld: function(name){ HQ3D.world = name; hqRenderWhere(); },
     announce: function(t){ if(typeof announce==="function") announce(t); },
     // a skate combo banked in the city park (games/hq3d.js): maybe a new best for the week board
-    skateCombo: function(c){ hqSkateCombo(c); }
+    skateCombo: function(c){ hqSkateCombo(c); },
+    // Cities: who you are on the Arena (your island is user:<you>@2), what its presence supports
+    // ("isles": a room per world), and a short notice over the page
+    me: function(){ return (window.ARENA && ARENA.you && ARENA.you.userId) || null; },
+    netCan: function(cap){ return hqNetCan(cap); },
+    // the City's Arena reads and writes, through this dashboard's proxies only (games/hqcity3d.js builds
+    // every path from checked ids): GET -> the JSON body, POST -> {ok, status, j} (18-arena.js arenaPost)
+    arenaGet: function(path){ return fetch(path, {cache:"no-store"}).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }); },
+    arenaPost: function(path, body){ return arenaPost(path, body); },
+    toast: function(t){ if(typeof toast==="function") toast(t, "level"); }
   };
 }
 // How your building looks (HQ customisation; saved on the Arena in a later step): paint, accent, sign.
@@ -106,6 +133,12 @@ function hqRenderWhere(){
 /* ---- HQ 2.1: Arena City. Everyone who opened their HQ has a building on one round street. ---- */
 // Being in the city is being open to visitors: going private closes your HQ again.
 var HQ_CITY = {list:[], sig:"", at:0, back:null, busy:false};
+if(HQ_SMOKE){
+  HQ_CITY.list = [
+    {userId:"smoke-a", isYou:true, trainerName:"You", level:4, look:{}, crew:{working:2, needs:1, idle:0}},
+    {userId:"smoke-b", trainerName:"Maya", level:7, look:{paint:"#3f8f5a"}, crew:{working:1, needs:0, idle:1}},
+    {userId:"smoke-c", trainerName:"Ravi", level:2, look:{paint:"#b5473a"}, crew:{working:0, needs:0, idle:2}}];
+}
 function hqCityOn(){ return typeof HQ_REMOTE!=="undefined" && !!(HQ_REMOTE && HQ_REMOTE.open && HQ_REMOTE.me); }
 function hqCitySet(on){
   if(HQ_CITY.busy) return; HQ_CITY.busy=true;
@@ -128,6 +161,7 @@ function hqCityOutside(){
   var w=HQ3D.world; if(HQ3D.inst && !HQ3D.visit && w==="base" && hqCityOn()) HQ3D.inst.goWorld("base");
 }
 function hqCityLoad(force){
+  if(HQ_SMOKE) return;               // the synthetic street stays
   if((!hqCityOn() && HQ3D.world!=="city") || HQ3D.visit) return;
   if(!force && Date.now()-HQ_CITY.at < 60000) return;
   HQ_CITY.at=Date.now();
@@ -228,7 +262,7 @@ function hqRenderCrew(){
   var b=$("hqModeBtn"); if(b) b.addEventListener("click", hqToggle);
   // HQ always opens on the classic dashboard (Live unless you were on another tab); the 3D HQ is one
   // H key or the header switch away. After every file of the page script has run (later files add to HQ).
-  setTimeout(function(){ hqViewChanged(VIEW); }, 0);
+  setTimeout(function(){ if(HQ_SMOKE && VIEW!=="hq"){ hqModeSave("3d"); setView("hq"); return; } hqViewChanged(VIEW); }, 0);
 })();
 
 /* ---- HQ 2.1: customise your building; visit friends' HQs through the Arena ---- */
@@ -388,7 +422,7 @@ function hqRenderVisiting(){
 // x/z, facing and whether you walk. The server sends everyone's spot back 8 times a second.
 var HQNET = {ws:null, room:null, gen:0, sentAt:0, last:"", peers:[], timer:null};
 function hqNetWant(){
-  if(VIEW!=="hq" || !HQ3D.inst || document.hidden) return null;
+  if(VIEW!=="hq" || !HQ3D.inst || document.hidden || HQ_SMOKE) return null;
   if(HQ3D.visit) return "hq_"+HQ3D.visit.userId;
   if(HQ3D.world==="city" && (hqCityOn() || (window.ARENA && ARENA.paired))) return "hq_city";   // everyone on the street sees everyone
   if(HQ_REMOTE.open && HQ_REMOTE.me) return "hq_"+HQ_REMOTE.me;
@@ -454,6 +488,12 @@ function hqNetCan(cap){
 function hqNetSend(){
   var ws=HQNET.ws; if(!ws || ws.readyState!==1 || !HQ3D.inst || !HQ3D.inst.where) return;
   var w=HQ3D.inst.where(); if(!w || !w.world) return;
+  // The 3D city's floor ("city3d") is presence v2: an Arena without "alt" would reject it, so there
+  // the 3D city is offline-only (nobody sees you, you see nobody).
+  var alt=hqNetCan("alt");
+  if(w.world==="city3d" && !alt) return;
+  // a world's own room ("city3d:<world id>", Cities) is presence v3: only where the Arena lists "isles"
+  if(w.world.indexOf("city3d:")===0 && !hqNetCan("isles")) return;
   // Your character, once per join and whenever it changes, to an Arena that shows it ("look").
   var spec = typeof charSpec==="function" ? charSpec() : null, sg = spec ? spec.join(".") : null;
   if(sg && HQNET.lookSent!==sg && hqNetCan("look")){
@@ -464,21 +504,25 @@ function hqNetSend(){
   if(a===4 && !hqNetCan("skate")) a=2;  // nor does one without skateboards know a 4
   // a car (5) or a motorbike (6) needs "drive"; without it, show a bike where bikes are known
   if((a===5 || a===6) && !hqNetCan("drive")) a = hqNetCan("ride") ? 3 : 2;
+  if((a===7 || a===8) && !hqNetCan("fly")) a = 0;   // a helicopter (7 / 8) needs "fly": else you stand where it is
   var msg={type:"game", g:"hq", op:"pos", w:w.world, x:Math.round(w.x*100), z:Math.round(w.z*100),
            r:Math.round(((w.yaw*180/Math.PI)%360+360)%360), a:a};
   // on a board: the trick you are doing (k) and how high you are (y, decimetres), so others see it
   var sk = a===4 && HQ3D.inst.skate ? HQ3D.inst.skate() : null;
   if(sk){ msg.k=sk.k|0; msg.y=sk.y|0; }
-  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.k,msg.y].join(","), now=Date.now();
+  // "alt": your feet height (cm) and pitch (degrees) on the 3D city's hills
+  // (h is clamped to the Arena's +-500 m: a helicopter above that would get the whole frame dropped)
+  if(alt && w.h!=null){ msg.h=Math.max(-50000, Math.min(50000, Math.round(w.h*100))); msg.p=Math.round(Math.max(-90, Math.min(90, (+w.pitch||0)*180/Math.PI))); }
+  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.k,msg.y,msg.h,msg.p].join(","), now=Date.now();
   if(key===HQNET.last && now-HQNET.sentAt<2000) return;
   HQNET.last=key; HQNET.sentAt=now;
   try { ws.send(JSON.stringify(msg)); } catch(e){}
 }
 setInterval(function(){ if(VIEW==="hq") hqSync(); hqNetSync(); hqNetSend(); }, 125);
 // "Here now": who else is in this HQ, and on which floor.
-var HQ_FLOOR_NAME = {base:"outside", city:"in Arena City", lobby:"in the Lobby", mission:"in Mission Control"};
+var HQ_FLOOR_NAME = {base:"outside", city:"in Arena City", city3d:"in Arena City", lobby:"in the Lobby", mission:"in Mission Control"};
 // (riding a bike shows as "on a bike" beside the floor, a skateboard as "skating", and so on)
-var HQ_MOVING_NAME = {3:" · on a bike", 4:" · skating", 5:" · driving", 6:" · on a motorbike"};
+var HQ_MOVING_NAME = {3:" · on a bike", 4:" · skating", 5:" · driving", 6:" · on a motorbike", 7:" · flying", 8:" · flying"};
 function hqRenderHere(){
   var box=$("hqHere"); if(!box) return;
   var ps=HQNET.peers||[];
@@ -486,7 +530,8 @@ function hqRenderHere(){
   if(!ps.length) return;
   var h=document.createElement("b"); h.textContent="Here now"; box.appendChild(h);
   ps.slice(0,12).forEach(function(p){
-    var d=document.createElement("button"); d.type="button"; d.className="hq3d-person"; d.textContent=(p.n||"Visitor")+" · "+(HQ_FLOOR_NAME[p.w]||"")+(HQ_MOVING_NAME[p.a]||"");
+    var where=HQ_FLOOR_NAME[p.w]||(String(p.w||"").indexOf("city3d:user:")===0 ? "on an island" : String(p.w||"").indexOf("city3d:")===0 ? "in the Commons" : "");
+    var d=document.createElement("button"); d.type="button"; d.className="hq3d-person"; d.textContent=(p.n||"Visitor")+" · "+where+(HQ_MOVING_NAME[p.a]||"");
     d.title="Open their trainer card"; d.addEventListener("click", function(){ if(typeof tcardOpen==="function") tcardOpen(p.u); });
     if(typeof cosFrameApply==="function") cosFrameApply(d, p.f);
     box.appendChild(d);

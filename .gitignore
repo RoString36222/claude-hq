@@ -27,6 +27,7 @@ backend-rs/
 
 # Arena device token — never commit
 arena-link.json
+*.prod-bak
 
 # Soundboard clips — private, served from the host, never in the public repo
 sounds/

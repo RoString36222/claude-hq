@@ -22,11 +22,111 @@
 (function(){
 "use strict";
 var HQV = window.HQV = window.HQV || {};
+
+/* ---------- pure helpers (node-tested: tests/test_hq3d_integration.py) ---------- */
+// The camera modes that orbit behind you (camrig's chase family).
+var CHASE = {far: 1, chase: 1, near: 1};
+var MODE_LABEL = {map: "Map", far: "Far camera", chase: "Chase camera", near: "Near camera", fp: "First person",
+                  classic: "Classic camera", photo: "Photo mode", cine: "Cinematic camera"};
+// Which Arena City to build: the generated 3D city, or the classic street (?world=old, or
+// localStorage hq_city_impl = "old").
+function cityImplOf(search, stored){
+  var q = null;
+  try { q = new URLSearchParams(search || "").get("world"); } catch(e){ q = null; }
+  return q === "old" || stored === "old" ? "old" : "3d";
+}
+// A photo's file name, local time: claude-hq-YYYYMMDD-HHMMSS.png
+function shotName(d){
+  function p(n){ return (n < 10 ? "0" : "") + n; }
+  return "claude-hq-" + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + "-" + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds()) + ".png";
+}
+// A gamepad's state as HQ input. axes: [lx, ly, rx, ry]; buttons: GamepadButton-likes or booleans;
+// prev: last call's `pressed` (for press edges). Dead zone 0.15, the rest rescaled to 0..1.
+// -> {move: [x, y], look: [x, y], cycle: -1|0|1 (LB / RB), map (Y), hop (A held), use (X: E), pressed, any}
+function padToInput(axes, buttons, prev){
+  axes = axes || []; buttons = buttons || []; prev = prev || [];
+  function dz(v){ v = +v || 0; var a = Math.abs(v); return a < 0.15 ? 0 : (v < 0 ? -1 : 1)*Math.min(1, (a - 0.15)/0.85); }
+  function on(i){ var b = buttons[i]; return !!(b && (typeof b === "object" ? b.pressed : b)); }
+  var pressed = [0, 1, 2, 3, 4, 5].map(on);
+  function edge(i){ return pressed[i] && !prev[i]; }
+  var out = {move: [dz(axes[0]), dz(axes[1])], look: [dz(axes[2]), dz(axes[3])],
+             cycle: (edge(5) ? 1 : 0) - (edge(4) ? 1 : 0), map: edge(3), hop: pressed[0], use: edge(2), pressed: pressed};
+  out.any = !!(out.move[0] || out.move[1] || out.look[0] || out.look[1] || pressed.some(Boolean));
+  return out;
+}
+// The door you look at in first person: the nearest whose 1.2 m disc round its front the view ray
+// passes within maxM metres (measured along the ground). pose = {pos, look}; doors = [{front: {x, z, y?}}].
+function doorUnderCrosshair(pose, doors, maxM){
+  if(!pose || !pose.pos || !pose.look) return null;
+  var o = pose.pos, dx = pose.look.x - o.x, dy = pose.look.y - o.y, dz = pose.look.z - o.z, len = Math.hypot(dx, dy, dz);
+  if(!(len > 1e-6)) return null;
+  dx /= len; dy /= len; dz /= len;
+  var h2 = dx*dx + dz*dz, best = null, bt = Infinity, R = 1.2;
+  (doors || []).forEach(function(d){
+    var f = d && (d.front || d); if(!f || f.x == null || f.z == null) return;
+    var t = h2 > 1e-9 ? ((f.x - o.x)*dx + (f.z - o.z)*dz)/h2 : 0;     // ray parameter of the closest approach on the ground plane
+    if(t < 0) return;
+    var px = o.x + dx*t, pz = o.z + dz*t;
+    if(Math.hypot(f.x - px, f.z - pz) > R) return;
+    if(Math.sqrt(h2)*t > maxM) return;
+    if(f.y != null){ var y = o.y + dy*t; if(y < f.y - 0.5 || y > f.y + 3.5) return; }
+    if(t < bt){ bt = t; best = d; }
+  });
+  return best;
+}
+// What a click on the City map does, from w.mapPick(x, z): your HQ dives into 3D at its door,
+// someone else's flies the map to their lot (no teleport), anywhere else flies the map there.
+function mapClickAction(p){
+  if(!p) return null;
+  if(p.kind === "hq" && p.you && p.door){
+    var lx = p.lot ? p.lot.x : p.door.x, lz = p.lot ? p.lot.z : p.door.z - 1;
+    return {act: "dive", x: p.door.x, z: p.door.z, yaw: Math.atan2(p.door.x - lx, p.door.z - lz)};
+  }
+  if(p.kind === "hq" && p.lot) return {act: "fly", x: p.lot.x, z: p.lot.z, span: 44, name: p.name || null};
+  return {act: "fly", x: +p.x || 0, z: +p.z || 0};
+}
+// Critically damped spring, exact closed form (as games/camrig.js): the same goal reached in any number of steps.
+// -> [x, v]
+function spring(x, v, goal, omega, dt){
+  x = +x || 0; v = +v || 0; dt = Math.max(0, +dt || 0);
+  var c1 = x - goal, c2 = v + omega*c1, e = Math.exp(-omega*dt);
+  return [goal + (c1 + c2*dt)*e, (c2 - omega*(c1 + c2*dt))*e];
+}
+// The share of the way to a goal to cover this frame at rate k: 1 - exp(-k dt) (frame-rate independent).
+function ease(k, dt){ return 1 - Math.exp(-Math.max(0, +k || 0)*Math.max(0, +dt || 0)); }
+function wrapPi(a){ a = +a || 0; return Math.atan2(Math.sin(a), Math.cos(a)); }
+// On foot in the chase cameras: m/s, the back-step share, rad/s, and the springs' omegas.
+var FOOT = {walk: 4, run: 7, back: 0.65, turn: 2.4, turnW: 10, speedW: 12};
+// Where you are headed: facing while going forward or turning, facing + PI while stepping back, null when still.
+function travelYawOf(yaw, speed, rate){
+  speed = +speed || 0; rate = +rate || 0;
+  if(speed < -0.05) return wrapPi(yaw + Math.PI);
+  return speed > 0.05 || Math.abs(rate) > 0.05 ? wrapPi(yaw) : null;
+}
+// One body-relative step on foot (chase family). st = {yaw, rate, rateV, speed (signed), speedV};
+// inp = {fwd: -1..1 (W +, S -), turn: -1..1 (A +, turns left), run}. The turn rate springs toward
+// +-2.4 rad/s and the yaw integrates it; the speed springs toward 4 / 7 m/s forward or 0.65x back.
+// -> a new state plus travelYaw.
+function footStep(st, inp, dt){
+  st = st || {}; inp = inp || {}; dt = Math.max(0, +dt || 0);
+  var fwd = Math.max(-1, Math.min(1, +inp.fwd || 0)), turn = Math.max(-1, Math.min(1, +inp.turn || 0));
+  var base = inp.run ? FOOT.run : FOOT.walk, rate0 = +st.rate || 0;
+  var r = spring(rate0, st.rateV, turn*FOOT.turn, FOOT.turnW, dt);
+  var s = spring(st.speed, st.speedV, fwd > 0 ? fwd*base : fwd*base*FOOT.back, FOOT.speedW, dt);
+  var yaw = wrapPi((+st.yaw || 0) + (rate0 + r[0])*0.5*dt);          // trapezoid over the frame
+  return {yaw: yaw, rate: r[0], rateV: r[1], speed: s[0], speedV: s[1], travelYaw: travelYawOf(yaw, s[0], r[0])};
+}
+HQV.hq3dPure = {cityImplOf: cityImplOf, shotName: shotName, padToInput: padToInput, doorUnderCrosshair: doorUnderCrosshair,
+                mapClickAction: mapClickAction, spring: spring, ease: ease, footStep: footStep, travelYawOf: travelYawOf,
+                FOOT: FOOT, CHASE: CHASE, MODE_LABEL: MODE_LABEL};
+
 var E = HQV.engine;
 if(!E){ return; }
 
 var PI = Math.PI;
 var CHAR_FILES = ["character-female-a", "character-male-a", "character-female-c", "character-male-c", "character-female-e", "character-male-e"];
+// the six characters and their model height, for the City's residents (games/npcdraw.js keeps copies)
+HQV.hq3dPure.CHAR_FILES = CHAR_FILES; HQV.hq3dPure.CH_H = 0.72;
 var COL = {cyan: 0x5fd3e6, coral: 0xff6b5b, violet: 0x9b8cf0, amber: 0xffb347, green: 0x6fd38a};
 var HEX = {cyan: "#5fd3e6", coral: "#ff6b5b", violet: "#9b8cf0", amber: "#ffb347", green: "#6fd38a", ink: "#e9eff3", muted: "#93a7b7", stale: "#5b6b78"};
 var STATE_COL = {working: COL.cyan, needs: COL.coral, idle: COL.violet, stale: 0x3a4652};
@@ -99,6 +199,22 @@ function mount(el, api){
   var tex = {}, wall = null, sky = {}, lamps = [], winPanes = [], streams = [], holo = {};
   var night = null, raf = 0, last = 0, acc = {scr: 0, wall: 0, sky: 0};
   var keys = {}, walkTo = null, walkDoor = null;
+  // The 3D City (worlds with camModes): a perspective camera driven by games/camrig.js, the HUD of
+  // games/hqhud.js and the quality governor of games/worldbuild.js. Other worlds keep the ortho `cam`.
+  var pcam = null, rig = null, hud = null, pose = null, camSet = null, lastMode = null, lastFpView = null, calmWas = null, calmT = 0;
+  var gov = null, govQ = null, perf = {t: 0, n: 0, ms: 0}, entering = null, cityFailed = false, failLogged = false, cityRetried = false;
+  var idleT = 0, occT = 0, pad = {on: false, prev: [], st: null}, frustum = null, projM = null, projV = null, lastPeers = [];
+  var SMOKE = smokeParams();
+  // URL hooks for tools/ui_smoke.py and tools/hq_shots.py (inert without ?hqsmoke=1; ?hqperf=1 logs frame times).
+  function smokeParams(){
+    var q; try { q = new URLSearchParams(location.search); } catch(e){ return null; }
+    var perfOn = q.get("hqperf") === "1";
+    if(q.get("hqsmoke") !== "1") return perfOn ? {on: false, perf: true} : null;
+    var at = (q.get("at") || "").split(",").map(Number);
+    return {on: true, perf: perfOn, cam: q.get("cam"), night: q.get("night") === "1", ride: q.get("ride"), span: +q.get("span") || null,
+            calm: q.get("calm") === "1", yaw: q.get("yaw") != null && isFinite(+q.get("yaw")) && q.get("yaw") !== "" ? +q.get("yaw") : null, at: at.length === 2 && isFinite(at[0]) && isFinite(at[1]) ? {x: at[0], z: at[1]} : null,
+            frames: 0, applied: false, done: false, peer: null};
+  }
 
   /* ---------- helpers ---------- */
   function mat(c, o){ return new THREE.MeshStandardMaterial(Object.assign({color: c, roughness: 0.7, metalness: 0.08}, o || {})); }
@@ -169,7 +285,8 @@ function mount(el, api){
     if(rx || ry || rz) m.rotation.set(rx || 0, ry || 0, rz || 0);
     p.add(m); return m;
   }
-  function rig(p, name, x, y, z){ var g = new THREE.Group(); g.name = name; g.userData.rigid = true; g.position.set(x || 0, y || 0, z || 0); p.add(g); return g; }
+  // (not "rig": that is the camera rig below, and a var of that name would shadow this function)
+  function rigidPart(p, name, x, y, z){ var g = new THREE.Group(); g.name = name; g.userData.rigid = true; g.position.set(x || 0, y || 0, z || 0); p.add(g); return g; }
   function anchor(p, name, x, y, z){ var o = new THREE.Object3D(); o.name = name; o.position.set(x, y, z); p.add(o); return o; }
   function rrShape(w, h, r){                      // a rounded rectangle, centred
     var s = new THREE.Shape(), x = -w/2, y = -h/2; r = Math.max(0.001, Math.min(r, w/2, h/2));
@@ -274,7 +391,7 @@ function mount(el, api){
   function buildBike(){
     var g = new THREE.Group(), WR = BIKE_WR, WB = BIKE_WB, CR = BIKE_CR;
     function wheel(p, name, x, y, z){
-      var w = rig(p, name, x, y, z);
+      var w = rigidPart(p, name, x, y, z);
       ring("tyre", WR - 0.024, 0.024, w, 0, 0, 0, 40);
       ring("rim", WR - 0.052, 0.011, w, 0, 0, 0, 40);
       disc("chrome", 0.024, 0.08, w, 0, 0, 0, 10);
@@ -302,7 +419,7 @@ function mount(el, api){
     vpart("seat", sideGeo(sad, 0.13, 0.018), g);
     slab("tail", 0.05, 0.03, 0.012, 0.01, g, 0, 0.55, -0.24, 0, 0, 0, 0.003);
     // the steering: fork, front wheel, bars, a light and a bell turn about the head tube
-    var steer = rig(g, "steer", H.x, H.y, H.z);
+    var steer = rigidPart(g, "steer", H.x, H.y, H.z);
     wheel(steer, "wheel-1", 0, WR - H.y, WB/2 - H.z);
     [0.045, -0.045].forEach(function(x){ rod("paint", V3(x, Hb.y - H.y, Hb.z - H.z), V3(x, WR - H.y, WB/2 - H.z), 0.012, steer, 8); });
     slab("paint", 0.12, 0.03, 0.05, 0.01, steer, 0, Hb.y - H.y - 0.01, Hb.z - H.z, 0, 0, 0, 0.008);   // fork crown
@@ -313,7 +430,7 @@ function mount(el, api){
     vpart("chrome", new THREE.CylinderGeometry(0.018, 0.022, 0.016, 12), steer, 0.13, 0.13, 0.02);   // the bell
     anchor(steer, "a-grip-l", 0.254, 0.118, 0.005); anchor(steer, "a-grip-r", -0.254, 0.118, 0.005);
     // the cranks, the chainring and the pedals turn about the bottom bracket (left pedal on +x: the rider faces +z)
-    var crank = rig(g, "crank", BB.x, BB.y, BB.z);
+    var crank = rigidPart(g, "crank", BB.x, BB.y, BB.z);
     ring("chrome", 0.072, 0.009, crank, 0.05, 0, 0, 30); disc("dark", 0.064, 0.008, crank, 0.05, 0, 0, 20);
     [[1, 0.06], [-1, -0.06]].forEach(function(sd){
       var arm = new THREE.Group(); arm.rotation.x = sd[0] > 0 ? 0 : PI; crank.add(arm);
@@ -399,7 +516,7 @@ function mount(el, api){
     slab("dark", 1.48, 0.14, 0.36, 0.05, g, 0, 1.0, 0.6, 0.18);
     var col = new THREE.Group(); col.position.set(-0.38, 0.99, 0.07); col.rotation.x = -0.6; g.add(col);   // tilted to face the driver
     rod("dark", V3(0, 0, 0.02), V3(0, 0, 0.3), 0.025, col, 8);
-    var spin = rig(col, "spin");
+    var spin = rigidPart(col, "spin");
     vpart("dark", new THREE.TorusGeometry(0.16, 0.022, 8, 28), spin);
     [0, 2.1, -2.1].forEach(function(a){ slab("chrome", 0.026, 0.15, 0.02, 0.008, spin, Math.sin(a)*0.075, -Math.cos(a)*0.075, 0, 0, 0, a, 0.005); });
     vpart("chrome", new THREE.CylinderGeometry(0.04, 0.04, 0.04, 14), spin, 0, 0, 0, PI/2, 0, 0);
@@ -409,7 +526,7 @@ function mount(el, api){
     // the wheels: chunky tyres round dark alloys with five bright spokes; the front ones steer
     [[-CAR_WX, CAR_WZ, "steer-l"], [CAR_WX, CAR_WZ, "steer-r"], [-CAR_WX, -CAR_WZ, null], [CAR_WX, -CAR_WZ, null]].forEach(function(p, i){
       var hold = new THREE.Group(); hold.position.set(p[0], CAR_WR, p[1]); if(p[2]) hold.name = p[2]; g.add(hold);
-      var w = rig(hold, "wheel-" + i);
+      var w = rigidPart(hold, "wheel-" + i);
       ring("tyre", CAR_WR - 0.1, 0.1, w, 0, 0, 0, 28);
       disc("trim", CAR_WR - 0.12, 0.16, w, 0, 0, 0, 22);
       [1, -1].forEach(function(sx){
@@ -444,7 +561,7 @@ function mount(el, api){
     var g = new THREE.Group(), m = new THREE.Group(), WR = MOTO_WR, WB = MOTO_WB;
     m.scale.setScalar(MOTO_S); g.add(m);
     function wheel(p, name, x, y, z){
-      var w = rig(p, name, x, y, z);
+      var w = rigidPart(p, name, x, y, z);
       ring("tyre", WR - 0.07, 0.07, w, 0, 0, 0, 32);
       ring("rim", WR - 0.145, 0.018, w, 0, 0, 0, 30);                             // the rim; the spokes in the accent
       for(var k = 0; k < 5; k++){ var a = k/5*PI*2, L = WR - 0.165, rc = 0.02 + L/2; slab("accent", 0.026, L, 0.022, 0.008, w, 0, Math.cos(a)*rc, Math.sin(a)*rc, a, 0, 0, 0.006); }
@@ -494,7 +611,7 @@ function mount(el, api){
     [0.2, -0.2].forEach(function(x){ rod("trim", V3(x*0.6, 0.56, -0.12), V3(x, 0.56, -0.12), 0.016, m, 6); });
     anchor(m, "a-foot-l", 0.2, 0.58, -0.1); anchor(m, "a-foot-r", -0.2, 0.58, -0.1);
     // the steering: forks, front wheel, mudguard, bars and the headlight cowl turn about the head
-    var steer = rig(m, "steer", 0, 0.98, 0.5), FW = V3(0, WR - 0.98, WB/2 - 0.5);
+    var steer = rigidPart(m, "steer", 0, 0.98, 0.5), FW = V3(0, WR - 0.98, WB/2 - 0.5);
     wheel(steer, "wheel-1", FW.x, FW.y, FW.z);
     [0.09, -0.09].forEach(function(x){
       rod("chrome", V3(x, 0.04, 0.0), V3(x, -0.3, 0.1), 0.026, steer, 10);
@@ -547,7 +664,7 @@ function mount(el, api){
 
   // What a floor of the building (games/hqlobby.js, games/hqbase.js) builds with.
   var ctx = {
-    get THREE(){ return THREE; }, get L(){ return L; }, E: E, PI: PI, COL: COL, HEX: HEX, STATE_HEX: STATE_HEX,
+    get THREE(){ return THREE; }, get L(){ return L; }, get el(){ return el; }, E: E, PI: PI, COL: COL, HEX: HEX, STATE_HEX: STATE_HEX,
     mat: function(c, o){ return mat(c, o); }, emis: function(c, e, ei, o){ return emis(c, e, ei, o); },
     add: function(o, x, y, z, p, ns){ return add(o, x, y, z, p, ns); }, box: function(w, h, d, m, x, y, z, p, ns){ return box(w, h, d, m, x, y, z, p, ns); },
     cyl: function(rt, rb, h, m, x, y, z, p, seg){ return cyl(rt, rb, h, m, x, y, z, p, seg); }, sph: function(r, m, x, y, z, p){ return sph(r, m, x, y, z, p); },
@@ -562,11 +679,28 @@ function mount(el, api){
     avatar: function(){ return avatar ? {x: avatar.x, z: avatar.z} : null; },
     view: function(){ return {yaw: view.yaw, pitch: view.pitch}; },
     sessions: function(){ return sessions; }, level: function(){ return api.level ? api.level() : 1; },
-    look: function(){ return (api.look && api.look()) || {}; }, api: api
+    look: function(){ return (api.look && api.look()) || {}; }, api: api,
+    // Cities: put you somewhere in this world (off a bus, back at a dock), or build the City again on
+    // another world (an island, the Commons) and arrive at spawn
+    teleport: function(x, z, yaw){ if(avatar){ if(ride) dismount(true); placeAvatar(x, z, yaw); } },
+    goCity: function(world, spawn){ return inst.goCity ? inst.goCity(world, spawn) : false; },
+    // navigation (HQ 3.1, games/hqcity3d.js): where you face and how fast, and what you ride (kind, a boat or not);
+    // the other players in this world; is world w the one you are in; the full map (M)
+    motion: function(){ return avatar ? {yaw: avatar.yaw || 0, speed: Math.abs(ride ? (ride.speed || 0) : (avatar.speed || 0)),
+                                         ride: ride ? ride.kind || null : null, boat: !!(ride && ride.boat)} : null; },
+    others: function(){ var out = []; Object.keys(peers).forEach(function(u){ var P = peers[u]; if(cur && P.g.parent === cur.scene) out.push({x: P.x, z: P.z, col: bikeColor(u)}); }); return out; },
+    active: function(w){ return !!(inst.running && cur && cur === w); },
+    toggleMap: function(){ if(rigOn()) mapToggle(); },
+    // voyages (games/hqcity3d.js, games/hqvoyage.js): the next city built while you sail, then moved into with no fade
+    prebuildCity: function(world){ return inst.prebuildCity ? inst.prebuildCity(world) : false; },
+    cityBuilt: function(world){ return !!(nextCity && nextCity.world === world && nextCity.ready); },
+    swapCity: function(world, keep){ return inst.swapCity ? inst.swapCity(world, keep) : false; },
+    night: function(){ return isNight(); },
+    held: function(code){ return !!keys[code]; }
   };
 
   /* ---------- day / night from the local clock ---------- */
-  function isNight(){ var h = new Date().getHours(); return h < 7 || h >= 19; }
+  function isNight(){ if(SMOKE && SMOKE.on) return SMOKE.night; var h = new Date().getHours(); return h < 7 || h >= 19; }
   function skyTex(day){
     return canvasTex(512, 256, function(g, w, h){
       var gr = g.createLinearGradient(0, 0, 0, h);
@@ -927,9 +1061,13 @@ function mount(el, api){
 
   /* ---------- you ---------- */
   function buildAvatar(){
-    avatar = {g: new THREE.Group(), x: 3, z: 9, yaw: PI, ch: null, speed: 0, vy: 0, airborne: false};
+    // speed (m/s; signed in the chase cameras: < 0 steps back) and rate (rad/s) on springs (sv, rv);
+    // mdx/mdz: the last walk direction off the chase cameras; hy: the visual ground height on a spring (hyV)
+    avatar = {g: new THREE.Group(), x: 3, z: 9, yaw: PI, ch: null, speed: 0, sv: 0, rate: 0, rv: 0, mdx: 0, mdz: 1,
+              travelYaw: null, hy: 0, hyV: 0, vy: 0, hop: 0, airborne: false};
+    avatar.g.rotation.order = "YXZ";                 // yaw, then pitch (x = -pitch), then roll (Units in the 3D city spec)
     avatar.g.position.set(avatar.x, 0, avatar.z); scene.add(avatar.g);
-    var ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.55, 32), new THREE.MeshBasicMaterial({color: COL.amber, transparent: true, opacity: 0.7, toneMapped: false}));
+    var ring = avatar.ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.55, 32), new THREE.MeshBasicMaterial({color: COL.amber, transparent: true, opacity: 0.7, toneMapped: false}));
     ring.rotation.x = -PI/2; ring.position.y = 0.02; avatar.g.add(ring);
     nameTag();
     var mySpec = api.character && api.character();
@@ -1004,7 +1142,11 @@ function mount(el, api){
            slide: {min: 7, turn: 1.3, grip: 2.2, max: 0.62, bleed: 3.4}},
     skate: {top: 9, acc: 5.5, rev: 0, lean: 0, box: [0, 0], skate: true}     // its physics: games/hqskate.js
   };
-  var ride = null;
+  // the boats at the docks (games/hqboat.js: a rowboat and a jet ski; their physics is its own)
+  if(HQV.hqboat) Object.keys(HQV.hqboat.VEHICLES).forEach(function(k){ VEHICLES[k] = HQV.hqboat.VEHICLES[k]; });
+  // the helicopters on the pads (games/hqheli.js: their flight model is their own; heliMove below)
+  if(HQV.hqheli) Object.keys(HQV.hqheli.VEHICLES).forEach(function(k){ VEHICLES[k] = HQV.hqheli.VEHICLES[k]; });
+  var ride = null, nearIdx = -1;                                      // nearIdx: nearBike(), once per frame
   function nearBike(){
     var bs = cur && cur.bikes; if(!bs || !avatar) return -1;
     var best = -1, bd = 1e9;
@@ -1015,7 +1157,9 @@ function mount(el, api){
         d = Math.hypot(avatar.x - (b.x + hx*u), avatar.z - (b.z + hz*u)) - 0.9;
         if(d > 1.2) return;                       // close by its door, not through the garage wall
       }
-      if(d < 1.7 && d < bd){ bd = d; best = i; } });
+      var reach = VEHICLES[b.kind] && VEHICLES[b.kind].reach ? VEHICLES[b.kind].reach : VEHICLES[b.kind] && VEHICLES[b.kind].boat ? 4 : 1.7;   // a boat lies off the quay
+      if(b.y != null && Math.abs(b.y - avatar.hy) > 3) return;                  // a helicopter up on a roof
+      if(d < reach && d < bd){ bd = d; best = i; } });
     return best;
   }
   // the parked prop you are riding: found by its id, so a rebuilt street (someone opened their HQ
@@ -1202,31 +1346,83 @@ function mount(el, api){
 
   function mount(i){
     var b = cur.bikes && cur.bikes[i]; if(!b || ride) return;
+    mountOn(b, i);
+  }
+  // b: a parked {g, x, z, yaw, color, roof?, kind}; i: its index in cur.bikes (-1: not parked anywhere)
+  function mountOn(b, i){
     var lean = new THREE.Group(); avatar.g.add(lean);
-    var kind = VEHICLES[b.kind] ? b.kind : "bike", car = kind === "car";
-    var B = car ? carModel(b.color, b.accent) : kind === "moto" ? motoModel(b.color, b.accent) : kind === "skate" ? boardModel(b.color) : bikeModel(b.color, b.accent); lean.add(B.g);
+    var kind = VEHICLES[b.kind] ? b.kind : "bike", car = kind === "car", boat = !!VEHICLES[kind].boat && !!HQV.hqboat, heli = !!VEHICLES[kind].heli && !!HQV.hqheli;
+    var B = heli ? HQV.hqheli.model(ctx, kind, b.color, b.accent) : boat ? HQV.hqboat.model(ctx, kind, b.color, b.accent) : car ? carModel(b.color, b.accent) : kind === "moto" ? motoModel(b.color, b.accent) : kind === "skate" ? boardModel(b.color) : bikeModel(b.color, b.accent); lean.add(B.g);
     if(avatar.ch){ lean.add(avatar.ch.o); seatAny(avatar.ch, kind, B); }
     b.g.visible = false;
-    avatar.airborne = false; avatar.vy = 0; avatar.g.position.y = 0;   // getting on mid-hop lands you on the seat
+    avatar.airborne = false; avatar.vy = 0; avatar.hop = 0;   // getting on mid-hop lands you on the seat
     // you take its place: the seat is where it stands (a car is long, so this matters most there)
     if(kind !== "skate"){ avatar.x = b.x; avatar.z = b.z; }
+    settleY(0); if(boat) avatar.hy = cur.sea ? cur.sea.y : 0; avatar.g.position.y = avatar.hy;
+    avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0;
     ride = {idx: i, id: b.id || null, B: B, lean: lean, speed: 0, steer: 0, head: b.yaw, slip: 0, drift: false, gear: 1, rpm: 900,
-            kind: kind, V: VEHICLES[kind], car: car, eng: null};
+            kind: kind, V: VEHICLES[kind], car: car, eng: null, pitch: 0, pv: 0, roll: 0, rv: 0,
+            boat: boat ? HQV.hqboat.newState(kind, b.x, b.z, b.yaw) : null,
+            heli: heli ? HQV.hqheli.newState(kind, b.x, b.y != null ? b.y : groundAt(b.x, b.z), b.z, b.yaw) : null};
+    if(ride.heli){ avatar.hy = ride.heli.y; avatar.g.position.y = avatar.hy; }
     if(kind === "skate") skateStart(b);
-    avatar.yaw = b.yaw; walkTo = null; walkDoor = null;
+    if(ride.boat) ride.boat.y = cur.sea ? cur.sea.y : 0;            // afloat where it lies (no spring down from 0)
+    avatar.yaw = b.yaw; avatar.rideYaw = null; walkTo = null; walkDoor = null;
     movedHere = true;                       // you are somewhere now: a street rebuild must not put you back at your door
-    avatar.g.position.set(avatar.x, 0, avatar.z); avatar.g.rotation.y = avatar.yaw;
+    avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
     E.sfx(kind === "bike" ? "bell" : car ? "door" : kind === "skate" ? "jump" : "go");
     if(kind !== "skate") driveHud(kind);
     rideUiSync(true);
   }
   function dismount(force){
     if(!ride) return;
+    if(ride.heli){
+      // out only once it is down, and on land: the world says where you stand (a roof pad: its building's door);
+      // forced (another world, Return to HQ) it stays where it was parked
+      var hs = ride.heli, hspot = hs.ground && cur && cur.heliLand ? cur.heliLand(hs) : null;
+      if(!hs.ground && !force){ if(api.announce) api.announce("Land first: hold Shift to come down, then E."); return; }
+      if(!hspot && !force){ if(api.announce) api.announce("You can't step out here: land on the ground or on a helipad."); return; }
+      var hp = rideProp();
+      if(hp){
+        if(hspot && !force){ parked[hp.id] = {x: hs.x, z: hs.z, yaw: hs.yaw}; placeProp(hp, hs.x, hs.z, hs.yaw); hp.g.position.y = hs.y; hp.y = hs.y; }
+        hp.g.visible = true;
+      }
+      if(avatar.ch){ poseUndo(avatar.ch); avatar.g.add(avatar.ch.o); seatOn(avatar.ch, null); }
+      avatar.g.rotation.x = 0; avatar.g.rotation.z = 0;
+      if(hspot){ avatar.x = hspot.x; avatar.z = hspot.z; if(hspot.yaw != null) avatar.yaw = hspot.yaw; }
+      avatar.g.remove(ride.lean);
+      if(ride.eng){ ride.eng.stop(); ride.eng = null; }
+      ride = null; doorsArmed = false; stopFeet(); settleY(0);
+      avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
+      driveHud(null); rideUiSync(true);
+      return;
+    }
+    if(ride.boat){
+      // ashore only at a dock or where the bow touches the beach (the world says where you step);
+      // forced (another world, Return to HQ) the boat goes back to its berth
+      var spot = cur && cur.boatLand ? cur.boatLand(ride.boat) : null;
+      if(!spot && !force){ if(api.announce) api.announce("Steer to a dock or onto a beach to step ashore."); return; }
+      var bp = rideProp();
+      if(bp){
+        if(spot && !force){ parked[bp.id] = {x: ride.boat.x, z: ride.boat.z, yaw: ride.boat.yaw}; placeProp(bp, ride.boat.x, ride.boat.z, ride.boat.yaw); }
+        bp.g.visible = true;
+      }
+      if(avatar.ch){ poseUndo(avatar.ch); avatar.g.add(avatar.ch.o); seatOn(avatar.ch, null); }
+      avatar.g.rotation.x = 0; avatar.g.rotation.z = 0;
+      if(spot){ avatar.x = spot.x; avatar.z = spot.z; if(spot.yaw != null) avatar.yaw = spot.yaw; }
+      avatar.g.remove(ride.lean);
+      if(ride.eng){ ride.eng.stop(); ride.eng = null; }
+      ride = null; doorsArmed = false; stopFeet(); settleY(0);
+      avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
+      driveHud(null); rideUiSync(true);
+      return;
+    }
     if(ride.kind === "skate"){
       var st = ride.sk && ride.sk.st;
       if(st && (st.air || st.grind) && !force) return;               // finish the trick first (E mid-air does nothing)
-      avatar.g.position.y = 0; skateHud(null);
+      settleY(0); avatar.g.position.y = avatar.hy; skateHud(null);
     }
+    avatar.g.rotation.x = 0; avatar.g.rotation.z = 0;                  // off the slope-following vehicle: stand upright
     var b = rideProp();
     if(b){
       // a vehicle from a garage stays where you leave it; the rack's bikes and the boards go home
@@ -1242,9 +1438,9 @@ function mount(el, api){
       offs.some(function(o){
         var ox = avatar.x + o[0]*cy + o[1]*sy, oz = avatar.z - o[0]*sy + o[1]*cy;
         if(blocked(ox, oz)) return false;
-        avatar.x = ox; avatar.z = oz; return true;
+        avatar.x = ox; avatar.z = oz; settleY(0); avatar.g.position.set(ox, avatar.hy, oz); return true;
       });
-      avatar.g.position.set(avatar.x, 0, avatar.z);
+      avatar.g.position.set(avatar.x, groundAt(avatar.x, avatar.z), avatar.z);
     }
     avatar.g.remove(ride.lean);
     if(ride.eng){ ride.eng.stop(); ride.eng = null; }
@@ -1290,7 +1486,7 @@ function mount(el, api){
     else ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - (V.motor ? 3 : 2)*dt) : Math.min(0, ride.speed + 4*dt);
     if(ride.speed > top) ride.speed = Math.max(top, ride.speed - 6*dt);
     if(ride.B.brake) ride.B.brake(!!V.motor && ((thr < 0 && ride.speed > 0.3) || (hand && Math.abs(ride.speed) > 0.3)));   // the brake lights
-    ride.steer += (st - ride.steer)*Math.min(1, dt*6);
+    ride.steer += (st - ride.steer)*ease(6, dt);
     // the powerslide: Shift (or B) with the steering, fast enough, going forward. It holds while you
     // keep Shift down and some speed, so you can catch it with opposite lock.
     var spd = Math.abs(ride.speed), S = V.slide, was = ride.drift;
@@ -1302,13 +1498,16 @@ function mount(el, api){
     // the way you travel follows the way you point: at once with grip, slowly in a slide (and
     // catching up smoothly as the tyres bite again)
     var slip = angDiff(avatar.yaw, ride.head);
-    if(ride.drift) ride.head += slip*Math.min(1, dt*S.grip);
-    else if(Math.abs(slip) > 0.02) ride.head += slip*Math.min(1, dt*7);
+    if(ride.drift) ride.head += slip*ease(S.grip, dt);
+    else if(Math.abs(slip) > 0.02) ride.head += slip*ease(7, dt);
     else ride.head = avatar.yaw;
     if(S){ slip = E.clamp(angDiff(avatar.yaw, ride.head), -S.max, S.max); ride.head = avatar.yaw - slip; } else slip = 0;
     ride.slip = slip;
     if(ride.drift) ride.speed = Math.max(0, ride.speed - (0.15*ride.speed + Math.abs(Math.sin(slip))*S.bleed/Math.max(0.2, S.max))*dt);
-    var d = ride.speed*dt, sh = Math.sin(ride.head), ch = Math.cos(ride.head), nx = avatar.x + sh*d, nz = avatar.z + ch*d;
+    var d = ride.speed*dt;
+    // the 3D city's hills: slower uphill, a little faster down (world.js slopeFactor per kind)
+    if(d && cur.camModes) d *= slopeFactor(slopeAlong(avatar.x, avatar.z, ride.head, 1.5)*(d < 0 ? -1 : 1), ride.kind);
+    var sh = Math.sin(ride.head), ch = Math.cos(ride.head), nx = avatar.x + sh*d, nz = avatar.z + ch*d;
     // the body, every corner of it, stays out of the walls; a body already touching one may still
     // move or turn as long as that does not push it further in (so nothing is ever stuck)
     var bx = V.box, now = bodyHits(avatar.x, avatar.z, yaw0, bx);
@@ -1325,13 +1524,37 @@ function mount(el, api){
     (ride.kind === "car" ? carRoll : ride.kind === "moto" ? motoRoll : bikeRoll)(ride.B, d, ride.steer);
     // lean into the turn, a slide leans further (and sit up straight in Calm); a car does not lean
     var lean = E.calm() ? 0 : (-ride.steer*Math.min(1, spd/6) - ride.slip*1.2)*V.lean;
-    ride.lean.rotation.z += (lean - ride.lean.rotation.z)*Math.min(1, dt*8);
+    ride.lean.rotation.z += (lean - ride.lean.rotation.z)*ease(8, dt);
     engineStep(dt, thr);
     keyMove = spd > 0.3; keyRun = false; if(keyMove){ movedHere = true; walkInto(); }
-    avatar.g.position.set(avatar.x, 0, avatar.z); avatar.g.rotation.y = avatar.yaw;
+    vehicleTilt(dt);
+    var ry0 = avatar.rideYaw != null ? avatar.rideYaw : avatar.yaw;
+    avatar.rate += ((dt > 0 ? wrapPi(avatar.yaw - ry0)/dt : 0) - avatar.rate)*ease(10, dt); avatar.rideYaw = avatar.yaw;
+    // where you are headed is where the vehicle travels (ride.head: in a slide that is not where it points)
+    avatar.travelYaw = Math.abs(ride.speed) > 0.05 ? (ride.speed < 0 ? wrapPi(ride.head + PI) : ride.head) : null;
+    settleY(dt);
+    avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
+    avatar.g.rotation.y = avatar.yaw; avatar.g.rotation.x = -ride.pitch; avatar.g.rotation.z = ride.roll;
     var b = rideProp(); if(b && b.g.visible) b.g.visible = false;   // the street rebuilt under you
-    view.goal.set(avatar.x*(cur.follow || 1), cur.camY || 1.4, avatar.z*(cur.follow || 1));
+    view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
   }
+  // A vehicle on the 3D city's ground: nose pitched to the slope over its wheelbase, a car rolled to the
+  // cross slope over 1.2 m (a bike or motorbike only leans, ride.lean); both on springs (omega 10).
+  var WHEELBASE = {car: 2.3, moto: MOTO_WB, bike: BIKE_WB};
+  function vehicleTilt(dt){
+    var wantP = 0, wantR = 0;
+    if(cur && cur.camModes && cur.groundY){
+      var wb = WHEELBASE[ride.kind] || 1.2, h = wb/2, sy = Math.sin(avatar.yaw), cy = Math.cos(avatar.yaw);
+      wantP = Math.atan((groundAt(avatar.x + sy*h, avatar.z + cy*h) - groundAt(avatar.x - sy*h, avatar.z - cy*h))/wb);
+      if(ride.kind === "car"){                      // model-local +x (left) is (cos yaw, -sin yaw); roll > 0 = right side down
+        var lx = cy*0.6, lz = -sy*0.6;
+        wantR = Math.atan((groundAt(avatar.x + lx, avatar.z + lz) - groundAt(avatar.x - lx, avatar.z - lz))/1.2);
+      }
+    }
+    var a = tiltSpring(ride.pitch, ride.pv, wantP, dt), r = tiltSpring(ride.roll, ride.rv, wantR, dt);
+    ride.pitch = a[0]; ride.pv = a[1]; ride.roll = r[0]; ride.rv = r[1];
+  }
+  function tiltSpring(x, v, goal, dt){ return spring(x || 0, v || 0, goal, 10, dt); }
   // An automatic gearbox and the engine note (games/engine.js engineSound), for the HUD's rev
   // counter and your ears: revs climb through each gear and drop as it changes up; a slide spins
   // the wheels up a little.
@@ -1343,6 +1566,8 @@ function mount(el, api){
     ride.gear = ride.speed < -0.3 ? -1 : g;
     var top = G[g - 1], tgt = 900 + 6600*E.clamp(v/top, 0, 1) + (thr > 0 ? 500*thr : 0) + (ride.drift ? 900 : 0);
     ride.rpm += (Math.min(7800, tgt) - ride.rpm)*(1 - Math.exp(-dt*8));
+    // stopped with the throttle off: no note (without set() each frame, engineSound fades out)
+    if(v < 0.3 && !(thr > 0)) return;
     if(!ride.eng && E.engineSound) ride.eng = E.engineSound(V.eng);
     if(ride.eng) ride.eng.set(ride.rpm);
   }
@@ -1371,8 +1596,13 @@ function mount(el, api){
     if(inp.ollie || (wasAir && !st.air)) sk.crouch = 0.16;
     sk.pose = E.calm() ? null : skatePoseOf(Sim.kOf(st), st.air, sk.crouch);
     evs.forEach(skateEvent);
+    var syaw0 = avatar.yaw;
     avatar.x = st.x + sk.cx; avatar.z = st.z + sk.cz; avatar.yaw = st.yaw;
-    avatar.g.position.set(avatar.x, st.y, avatar.z); avatar.g.rotation.y = avatar.yaw;
+    avatar.rate += ((dt > 0 ? wrapPi(avatar.yaw - syaw0)/dt : 0) - avatar.rate)*ease(10, dt);
+    avatar.travelYaw = Math.abs(st.speed) > 0.05 ? (st.speed < 0 ? wrapPi(avatar.yaw + PI) : avatar.yaw) : null;
+    // the 3D city: the park's pad height plus the sim's height (st.y already holds the ramps; never add groundAt)
+    var base = cur.camModes && cur.skateBase != null ? cur.skateBase : 0;
+    avatar.g.position.set(avatar.x, base + st.y, avatar.z); avatar.g.rotation.y = avatar.yaw;
     // the trick: the whole rider and board turn for a spin, the board alone flips or shoves
     var calm = E.calm(), B = ride.B;
     ride.lean.rotation.y = calm ? 0 : st.spin;
@@ -1386,7 +1616,7 @@ function mount(el, api){
     B.wheels.forEach(function(w){ w.rotation.x += st.speed*dt/0.03; });
     keyMove = Math.abs(st.speed) > 0.3 || st.air; keyRun = false; if(keyMove){ movedHere = true; walkInto(); }
     var b = rideProp(); if(b && b.g.visible) b.g.visible = false;
-    view.goal.set(avatar.x*(cur.follow || 1), (cur.camY || 1.4) + st.y*0.7, avatar.z*(cur.follow || 1));
+    view.goal.set(avatar.x*(cur.follow || 1), groundAt(avatar.x, avatar.z) + (cur.camY || 1.4) + st.y*0.7, avatar.z*(cur.follow || 1));
     sk.t += dt; if(sk.t > 0.25){ sk.t = 0; skateHudCombo(st); }
   }
   function skateEvent(e){
@@ -1436,14 +1666,14 @@ function mount(el, api){
   // The "Ride (E)" / "Get off (E)" button over the scene: shows near a parked bike or while riding.
   function rideUiSync(force){
     if(!rideUi) return;
-    var near = ride ? -2 : nearBike(), nb = near >= 0 && cur && cur.bikes ? cur.bikes[near] : null;
+    var near = ride ? -2 : force ? nearBike() : nearIdx, nb = near >= 0 && cur && cur.bikes ? cur.bikes[near] : null;
     var key = ride ? "on" : nb ? "near-" + (nb.kind || "bike") : "";
     if(!force && key === rideUi.dataset.k) return;
     rideUi.dataset.k = key; rideUi.hidden = !key;
     var kind = ride ? ride.kind : (nb && VEHICLES[nb.kind] ? nb.kind : "bike");
-    rideUi.textContent = ride ? (kind === "car" ? "Get out (E)" : kind === "skate" ? "Step off (E)" : "Get off (E)")
-      : kind === "car" ? "\uD83D\uDE97 Drive (E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride (E)" : kind === "skate" ? "\uD83D\uDEF9 Skate (E)" : "\uD83D\uDEB2 Ride (E)";
-    rideUi.title = ride ? RIDE_HELP[kind] : kind === "car" ? "Get in this car" : kind === "moto" ? "Get on this motorbike"
+    rideUi.textContent = ride ? (kind === "car" || VEHICLES[kind].heli ? "Get out (E)" : kind === "skate" ? "Step off (E)" : VEHICLES[kind].boat ? "Step ashore (E)" : "Get off (E)")
+      : VEHICLES[kind].heli ? "\uD83D\uDE81 Fly (E)" : kind === "rowboat" ? "\uD83D\uDEA3 Row (E)" : kind === "jetski" ? "\uD83C\uDF0A Ride the jet ski (E)" : kind === "car" ? "\uD83D\uDE97 Drive (E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride (E)" : kind === "skate" ? "\uD83D\uDEF9 Skate (E)" : "\uD83D\uDEB2 Ride (E)";
+    rideUi.title = ride ? RIDE_HELP[kind] : VEHICLES[kind].heli ? "Take the controls" : VEHICLES[kind].boat ? "Take the helm" : kind === "car" ? "Get in this car" : kind === "moto" ? "Get on this motorbike"
       : kind === "skate" ? "Step on this skateboard" : "Get on this bike";
     if(key === "on" && force) tipRide();
   }
@@ -1451,16 +1681,25 @@ function mount(el, api){
     bike: "W / S: pedal and brake · A / D: steer · Shift: pedal harder · E: get off",
     moto: "W: throttle (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Shift + steer: slide the back wheel · Space: handbrake · E: get off",
     car: "W: accelerator (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Shift + steer: powerslide · Space: handbrake · E: get out",
-    skate: "W: push · S: brake · A / D: carve (in the air: spin) · Space: ollie · F: kickflip · G: shove-it · E: step off"
+    skate: "W: push · S: brake · A / D: carve (in the air: spin) · Space: ollie · F: kickflip · G: shove-it · E: step off",
+    rowboat: "W: row · S: back water · A / D: steer · E: step ashore at a dock or a beach",
+    jetski: "W: throttle · S: astern · A / D: steer (it needs way on to turn) · E: step ashore at a dock or a beach",
+    heli: "Space: climb (hold it to take off) · Shift: descend · W / S: nose down to fly forward, nose up to slow · A / D: turn · E: get out once landed",
+    attack: "Space: climb (hold it to take off) · Shift: descend · W / S: nose down to fly forward, nose up to slow · A / D: turn · E: get out once landed"
   };
   // the one-line version under the driving HUD
   var RIDE_HINT = {
     bike: "W pedal · S brake · A/D steer · Shift pedal harder · E get off · T home",
     moto: "W throttle · S brake · A/D steer · Shift+steer slide · Space handbrake · E get off · T home",
-    car: "W go · S brake · A/D steer · Shift+steer powerslide · Space handbrake · E get out · T home"
+    car: "W go · S brake · A/D steer · Shift+steer powerslide · Space handbrake · E get out · T home",
+    rowboat: "W row · S back water · A/D steer · E step ashore at a dock or a beach",
+    jetski: "W throttle · S astern · A/D steer · E step ashore at a dock or a beach",
+    heli: "Space climb · Shift descend · W/S forward/back · A/D turn · E get out (landed)",
+    attack: "Space climb · Shift descend · W/S forward/back · A/D turn · E get out (landed)"
   };
   function tipRide(){ if(!api.announce || !ride) return;
     if(ride.kind === "skate") return;                                 // the skate HUD says how
+    if(ride.heli){ api.announce("At the controls. Hold Space to lift off and climb, Shift to come down, W and S tilt forward and back, A and D turn. Land, then E to get out."); return; }
     api.announce(ride.kind === "car" ? "In the car. Hold W to accelerate, S brakes and reverses, A and D steer, hold Shift while steering to powerslide, Space is the handbrake, E gets out."
       : ride.kind === "moto" ? "On the motorbike. Hold W for throttle, S brakes, A and D steer, hold Shift while steering to slide, Space is the handbrake, E gets off."
       : "On the bike. W and S pedal and brake, A and D steer, Shift pedals harder, E gets off."); }
@@ -1470,10 +1709,10 @@ function mount(el, api){
   // plus the keys. The dials are drawn in the theme's colours (engine.js tokens); in Calm (and with
   // reduced motion) the moving dials give way to a plain readout. Decorative to screen readers:
   // tipRide() announces the keys, and the speed is not worth a running commentary.
-  var hud = null;
-  var HUD_MAX = {bike: [60, 10, 5], moto: [120, 20, 10], car: [120, 20, 10]};   // the speed dial: max, major, minor
+  var dhud = null;                      // (not "hud": that is the camera HUD, hqhud)
+  var HUD_MAX = {bike: [60, 10, 5], moto: [120, 20, 10], car: [120, 20, 10], rowboat: [20, 5, 1], jetski: [80, 10, 5], heli: [200, 40, 10], attack: [200, 40, 10]};   // the speed dial: max, major, minor
   function driveHud(kind){
-    if(hud){ if(hud.el.parentNode) hud.el.parentNode.removeChild(hud.el); hud = null; }
+    if(dhud){ if(dhud.el.parentNode) dhud.el.parentNode.removeChild(dhud.el); dhud = null; }
     if(!kind || !HUD_MAX[kind]) return;
     gamesCss();
     var d = document.createElement("div"); d.className = "hq3d-drive hq3d-drive-" + kind; d.setAttribute("aria-hidden", "true");
@@ -1483,7 +1722,7 @@ function mount(el, api){
     var hint = document.createElement("div"); hint.className = "hq3d-drive-hint"; hint.textContent = RIDE_HINT[kind];
     [slide, cv, read, hint].forEach(function(n){ d.appendChild(n); });
     ((rideUi && rideUi.parentNode) || el).appendChild(d);
-    hud = {el: d, cv: cv, read: read, kind: kind, tok: null, tokAt: -9, at: -9, txt: "", sl: false};
+    dhud = {el: d, cv: cv, read: read, kind: kind, tok: null, tokAt: -9, at: -9, txt: "", sl: false};
   }
   // the HUD's and the Return to HQ button's styles live with the games' (the Valley loads the same sheet)
   function gamesCss(){
@@ -1492,19 +1731,19 @@ function mount(el, api){
   }
   function gearTxt(g){ return g < 0 ? "R" : g === 0 ? "N" : String(g); }
   function driveHudDraw(t){
-    if(!hud || !ride || t - hud.at < 1/30) return;
-    hud.at = t;
+    if(!dhud || !ride || t - dhud.at < 1/30) return;
+    dhud.at = t;
     var kmh = Math.abs(ride.speed)*3.6, motor = !!ride.V.motor, gear = motor ? (Math.abs(ride.speed) < 0.3 && ride.gear > 0 ? 0 : ride.gear) : 0;
-    var txt = Math.round(kmh) + " km/h" + (motor ? "  ·  gear " + gearTxt(gear) : "");
-    if(txt !== hud.txt){ hud.txt = txt; hud.read.textContent = txt; }
-    if(!!ride.drift !== hud.sl){ hud.sl = !!ride.drift; hud.el.classList.toggle("sliding", hud.sl); }
+    var txt = Math.round(kmh) + " km/h" + (motor ? "  ·  gear " + gearTxt(gear) : "") + (ride.heli ? "  ·  " + Math.round(ride.heli.agl) + " m up" + (ride.heli.ground ? " (landed)" : "") : "");
+    if(txt !== dhud.txt){ dhud.txt = txt; dhud.read.textContent = txt; }
+    if(!!ride.drift !== dhud.sl){ dhud.sl = !!ride.drift; dhud.el.classList.toggle("sliding", dhud.sl); }
     if(E.calm()) return;                              // no moving needles (CSS shows the readout instead)
-    if(!hud.tok || t - hud.tokAt > 2){ hud.tok = E.tokens(); hud.tokAt = t; }
-    var cv = hud.cv, dpr = Math.min(window.devicePixelRatio || 1, 2), W = motor ? 236 : 124, H = 124;
+    if(!dhud.tok || t - dhud.tokAt > 2){ dhud.tok = E.tokens(); dhud.tokAt = t; }
+    var cv = dhud.cv, dpr = Math.min(window.devicePixelRatio || 1, 2), W = motor ? 236 : 124, H = 124;
     if(cv.width !== Math.round(W*dpr)){ cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr); }
-    var g = cv.getContext("2d"), M = HUD_MAX[hud.kind]; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
-    driveDial(g, hud.tok, 62, 64, 54, kmh, M[0], M[1], M[2], "km/h", Math.round(kmh), null);
-    if(motor) driveDial(g, hud.tok, 174, 64, 54, ride.rpm/1000, 8, 1, 0.5, "×1000 rpm", gearTxt(gear), 6.5, "GEAR");
+    var g = cv.getContext("2d"), M = HUD_MAX[dhud.kind]; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    driveDial(g, dhud.tok, 62, 64, 54, kmh, M[0], M[1], M[2], "km/h", Math.round(kmh), null);
+    if(motor) driveDial(g, dhud.tok, 174, 64, 54, ride.rpm/1000, 8, 1, 0.5, "×1000 rpm", gearTxt(gear), 6.5, "GEAR");
   }
   // one round dial: Kart Racing's (games/kart.js dial()), the label under the needle's hub
   function driveDial(g, T, cx, cy, r, val, max, major, minor, unit, label, red, cap){
@@ -1597,52 +1836,159 @@ function mount(el, api){
   }
   function rideToggle(){ if(ride) dismount(); else { var i = nearBike(); if(i >= 0) mount(i); } }
 
-  function moveAvatar(dt){
-    if(ride){ if(ride.kind === "skate") skateMove(dt); else rideMove(dt); return; }
-    var mx = 0, mz = 0;
-    if(keys.KeyW || keys.ArrowUp) mz -= 1; if(keys.KeyS || keys.ArrowDown) mz += 1;
-    if(keys.KeyA || keys.ArrowLeft) mx -= 1; if(keys.KeyD || keys.ArrowRight) mx += 1;
-    var vx = 0, vz = 0, run = keys.ShiftLeft || keys.ShiftRight;
-    if(mx || mz){
-      walkTo = null; walkDoor = null;
-      // relative to the camera: "up" walks away from it
-      var s = Math.sin(view.yaw), c = Math.cos(view.yaw), l = Math.hypot(mx, mz);
-      vx = (mx*c + mz*s)/l; vz = (-mx*s + mz*c)/l;
-    } else if(walkTo){
-      var dx = walkTo.x - avatar.x, dz = walkTo.z - avatar.z, d = Math.hypot(dx, dz);
-      if(d < 0.25){ walkTo = null; if(walkDoor){ var dd = walkDoor; walkDoor = null; through(dd); } }
-      else { vx = dx/d; vz = dz/d; }
+  // The visual ground height: springs (omega 18) toward the ground under you, so a kerb or a road's
+  // height change is a step, not a snap. dt 0 (a teleport) or a jump over 3 m lands at once.
+  // The raw ground (groundAt) stays the physics: hops and collisions measure from it.
+  // A boat (games/hqboat.js): its own water physics against the world's sea (cur.sea, games/ocean.js
+  // seaOf): W / S throttle and astern, A / D steer (A turns left, as rideMove), a pad's stick too.
+  function boatMove(dt){
+    var gp = padNow(), H = HQV.hqboat, st = ride.boat;
+    var thr = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+    var steer = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
+    if(gp){ thr = E.clamp(thr + gp.thr, -1, 1); steer = E.clamp(steer - gp.x, -1, 1); }
+    walkTo = null; walkDoor = null;
+    var inp = {thr: thr, steer: steer}, yaw0 = avatar.yaw;
+    var evs = cur.sea ? H.step(st, inp, dt, cur.sea.boat || cur.sea) : [];   // the hull's sea: under a bridge is water
+    (evs || []).forEach(function(ev){ var k = ev && (ev.type || ev); if(k === "beach" || k === "dock") E.sfx(k === "dock" ? "door" : "hit"); });
+    ride.speed = st.speed != null ? st.speed : ride.speed; ride.steer = steer;
+    avatar.x = st.x; avatar.z = st.z; avatar.yaw = st.yaw;
+    avatar.rate += ((dt > 0 ? wrapPi(avatar.yaw - yaw0)/dt : 0) - avatar.rate)*ease(10, dt); avatar.rideYaw = avatar.yaw;
+    avatar.travelYaw = Math.abs(ride.speed) > 0.05 ? (ride.speed < 0 ? wrapPi(avatar.yaw + PI) : avatar.yaw) : null;
+    avatar.hy = st.y != null ? st.y : (cur.sea ? cur.sea.y : 0); avatar.hyV = 0;
+    ride.pitch = st.pitch || 0; ride.roll = st.roll || 0;
+    H.animate(ride.B, st, inp, dt);
+    engineStep(dt, thr);
+    keyMove = Math.abs(ride.speed) > 0.3; keyRun = false; if(keyMove) movedHere = true;
+    avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
+    avatar.g.rotation.y = avatar.yaw; avatar.g.rotation.x = -ride.pitch; avatar.g.rotation.z = ride.roll;
+    var b = rideProp(); if(b && b.g.visible) b.g.visible = false;
+    view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
+  }
+  // A helicopter (games/hqheli.js): Space climbs, Shift descends, W / S tilt it forward and back, A / D turn
+  // (a pad: left stick turns, the triggers tilt, A climbs, B descends). The world's floor (cur.heliFloor: terrain,
+  // roofs, the sea, a carrier's deck) is what it lands on and what stops it.
+  function heliMove(dt){
+    var gp = padNow(), Hh = HQV.hqheli, st = ride.heli;
+    var fwd = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+    var turn = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
+    var lift = (keys.Space ? 1 : 0) - (keys.ShiftLeft || keys.ShiftRight ? 1 : 0);
+    if(gp){ fwd = E.clamp(fwd + gp.thr, -1, 1); turn = E.clamp(turn - gp.x, -1, 1); lift = E.clamp(lift + (gp.hand ? 1 : 0) - (gp.slide ? 1 : 0), -1, 1); }
+    walkTo = null; walkDoor = null;
+    var yaw0 = avatar.yaw, floor = cur && cur.heliFloor ? cur.heliFloor : groundAt;
+    var evs = Hh.step(st, {fwd: fwd, turn: turn, lift: lift}, dt, {floor: floor});
+    evs.forEach(function(ev){
+      if(ev.type === "land") E.sfx(ev.hard ? "hit" : "putt");
+      else if(ev.type === "bump") E.sfx("hit");
+      else if(ev.type === "takeoff") E.sfx("go");
+    });
+    ride.speed = st.speed; ride.steer = turn;
+    avatar.x = st.x; avatar.z = st.z; avatar.yaw = st.yaw;
+    avatar.rate += ((dt > 0 ? wrapPi(avatar.yaw - yaw0)/dt : 0) - avatar.rate)*ease(10, dt); avatar.rideYaw = avatar.yaw;
+    avatar.travelYaw = st.speed > 0.5 ? Math.atan2(st.vx, st.vz) : null;
+    avatar.hy = st.y; avatar.hyV = 0;
+    ride.pitch = st.pitch; ride.roll = st.roll;
+    Hh.animate(ride.B, st, dt, isNight());
+    // the rotor's note: the blades spooling up, harder with the collective and the speed (set() every frame or it fades)
+    if(st.rpm > 0.02 && E.engineSound){
+      if(!ride.eng) ride.eng = E.engineSound(ride.V.eng);
+      ride.eng.set(900 + 6700*E.clamp(st.rpm*0.55 + Math.max(0, lift)*0.25 + st.speed/ride.V.top*0.2, 0, 1));
     }
-    var sp = (run ? 7 : 4)*dt;
-    keyMove = !!(vx || vz); keyRun = !!run; if(keyMove) movedHere = true;
-    if(vx || vz){
-      var nx = avatar.x + vx*sp, nz = avatar.z + vz*sp;
+    keyMove = st.speed > 0.3 || !st.ground; keyRun = false; if(keyMove) movedHere = true;
+    avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
+    avatar.g.rotation.y = avatar.yaw; avatar.g.rotation.x = -ride.pitch; avatar.g.rotation.z = ride.roll;
+    var b = rideProp(); if(b && b.g.visible) b.g.visible = false;
+    view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
+  }
+  function settleY(dt){
+    var gy = groundAt(avatar.x, avatar.z);
+    if(!(dt > 0) || Math.abs(gy - avatar.hy) > 3){ avatar.hy = gy; avatar.hyV = 0; }
+    else { var h = spring(avatar.hy, avatar.hyV, gy, 18, dt); avatar.hy = h[0]; avatar.hyV = h[1]; }
+    return gy;
+  }
+  // a teleport: standing still where you land, at the ground's height (no spring from where you were)
+  function stopFeet(){ avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0; avatar.travelYaw = null; avatar.hy = 1e9; }
+  function moveAvatar(dt){
+    if(ride){ if(ride.kind === "skate") skateMove(dt); else if(ride.boat) boatMove(dt); else if(ride.heli) heliMove(dt); else rideMove(dt); return; }
+    // on a bus or a tram (games/hqcity3d.js w.carry): the vehicle's seat, its timetable's pose
+    var cp = cur && cur.carry ? cur.carry() : null;
+    if(cp){
+      walkTo = null; walkDoor = null; keyMove = false; movedHere = true;
+      avatar.x = cp.x; avatar.z = cp.z; avatar.yaw = cp.yaw; avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.travelYaw = cp.yaw;
+      avatar.hy = cp.y; avatar.hyV = 0; setAnim(avatar.ch, "idle");
+      avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
+      view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
+      return;
+    }
+    var fwd = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+    var side = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
+    var run = !!(keys.ShiftLeft || keys.ShiftRight), base = run ? FOOT.run : FOOT.walk;
+    if(fwd || side){ walkTo = null; walkDoor = null; }
+    var yaw0 = avatar.yaw, dx = 0, dz = 0;
+    if(rigOn() && CHASE[rig.mode] && !walkTo){
+      // Chase cameras: the keys are the BODY's. W walks along your facing, S steps back without turning
+      // (the camera swings round to show where you are headed), A / D turn you on a spring.
+      var f = footStep({yaw: avatar.yaw, rate: avatar.rate, rateV: avatar.rv, speed: avatar.speed, speedV: avatar.sv},
+                       {fwd: fwd, turn: side, run: run}, dt);
+      avatar.yaw = f.yaw; avatar.rate = f.rate; avatar.rv = f.rateV; avatar.speed = f.speed; avatar.sv = f.speedV;
+      dx = Math.sin(avatar.yaw); dz = Math.cos(avatar.yaw);
+      if(avatar.speed < 0){ dx = -dx; dz = -dz; }
+      avatar.mdx = dx; avatar.mdz = dz;
+    } else {
+      // Classic: relative to the camera ("up" walks away from it; view.yaw points target -> camera).
+      // First person: along the look (W / S) and strafing (A / D); rig.lookYaw points camera -> target.
+      // A click on the floor walks there. You turn to face where you go; the speed springs either way.
+      if(avatar.speed < 0){ avatar.speed = -avatar.speed; avatar.sv = -avatar.sv; avatar.mdx = -avatar.mdx; avatar.mdz = -avatar.mdz; }
+      var want = 0;
+      if(fwd || side){
+        var ref = rigOn() && rig.mode !== "classic" ? rig.lookYaw + PI : view.yaw, mx = -side, mz = -fwd;
+        var sn = Math.sin(ref), cs = Math.cos(ref), l = Math.hypot(mx, mz);
+        avatar.mdx = (mx*cs + mz*sn)/l; avatar.mdz = (-mx*sn + mz*cs)/l; want = base;
+      } else if(walkTo){
+        var wx = walkTo.x - avatar.x, wz = walkTo.z - avatar.z, d = Math.hypot(wx, wz);
+        if(d < 0.25){ walkTo = null; if(walkDoor){ var dd = walkDoor; walkDoor = null; through(dd); } }
+        else { avatar.mdx = wx/d; avatar.mdz = wz/d; want = Math.min(base, d*6); }   // ease into the spot
+      }
+      var sp = spring(avatar.speed, avatar.sv, want, FOOT.speedW, dt);
+      avatar.speed = Math.max(0, sp[0]); avatar.sv = avatar.speed > 0 ? sp[1] : 0;
+      dx = avatar.mdx; dz = avatar.mdz;
+      if(avatar.speed > 0.05) avatar.yaw = E.angLerp(avatar.yaw, Math.atan2(dx, dz), ease(10, dt));
+      avatar.rate += ((dt > 0 ? wrapPi(avatar.yaw - yaw0)/dt : 0) - avatar.rate)*ease(12, dt);
+      avatar.rv = 0;
+    }
+    avatar.travelYaw = travelYawOf(avatar.yaw, avatar.speed, avatar.rate);
+    var step = Math.abs(avatar.speed)*dt;
+    if(step && cur.camModes) step *= slopeFactor(slopeAlong(avatar.x, avatar.z, Math.atan2(dx, dz), 1.5), "foot");
+    keyMove = Math.abs(avatar.speed) > 0.3; keyRun = keyMove && run; if(keyMove) movedHere = true;
+    if(step > 0){
+      var nx = avatar.x + dx*step, nz = avatar.z + dz*step;
       // standing somewhere blocked already (a car parked over you, a street rebuilt round you):
       // any step is allowed, so you can always walk out
       if(!blocked(nx, nz) || blocked(avatar.x, avatar.z)){ avatar.x = nx; avatar.z = nz; }
       else if(!blocked(nx, avatar.z)) avatar.x = nx;
       else if(!blocked(avatar.x, nz)) avatar.z = nz;
-      else if(walkTo){ walkTo = null; walkDoor = null; }
-      avatar.yaw = E.angLerp(avatar.yaw, Math.atan2(vx, vz), Math.min(1, dt*12));
-      setAnim(avatar.ch, run ? "sprint" : "walk");
-      walkInto();
-    } else setAnim(avatar.ch, "idle");
+      else { avatar.speed = 0; avatar.sv = 0; keyMove = false; if(walkTo){ walkTo = null; walkDoor = null; } }   // a wall stops you
+    }
+    // the walk plays at your pace, backwards while you step back
+    if(keyMove){ if(keyRun && avatar.speed > 0) setAnim(avatar.ch, "sprint", avatar.speed/FOOT.run); else setAnim(avatar.ch, "walk", avatar.speed/FOOT.walk); walkInto(); }
+    else setAnim(avatar.ch, "idle");
     // Space hops: a little gravity so you come back down where you started.
     // Calm mode keeps feet on the ground (no bouncing for reduced motion).
-    if(E.calm()){ avatar.vy = 0; avatar.airborne = false; avatar.g.position.y = 0; }
+    // The hop is measured from the ground under you (the 3D city's hills; 0 on every flat floor).
+    if(E.calm()){ avatar.vy = 0; avatar.airborne = false; avatar.hop = 0; }
     else{
       if(keys.Space && !avatar.airborne){ avatar.airborne = true; avatar.vy = 6.2; E.sfx("jump"); }
       if(avatar.airborne){
         avatar.vy -= 18*dt;
-        var ny = avatar.g.position.y + avatar.vy*dt;
+        var ny = avatar.hop + avatar.vy*dt;
         if(ny <= 0){ ny = 0; avatar.vy = 0; avatar.airborne = false; }
-        avatar.g.position.y = ny;
+        avatar.hop = ny;
       }
     }
-    avatar.g.position.set(avatar.x, avatar.g.position.y, avatar.z); avatar.g.rotation.y = avatar.yaw;
+    settleY(dt);
+    avatar.g.position.set(avatar.x, avatar.hy + avatar.hop, avatar.z); avatar.g.rotation.y = avatar.yaw;
     // the camera follows you, gently
     if(cur === worlds.mission) view.goal.set((avatar.x + TABLE.x)*0.5, 1.4, (avatar.z + TABLE.z)*0.5 + 1);
-    else view.goal.set(avatar.x*(cur.follow || 1), cur.camY || 1.4, avatar.z*(cur.follow || 1));
+    else view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
   }
 
   /* ---------- camera + input ---------- */
@@ -1656,21 +2002,296 @@ function mount(el, api){
     if(w !== inst.w || h !== inst.h){ renderer.setSize(w, h, false); inst.w = w; inst.h = h; }
     var span = view.span/view.zoom, a = w/h; if(a < 1) span /= Math.max(a, 0.55);
     cam.left = -span*a; cam.right = span*a; cam.top = span; cam.bottom = -span; cam.updateProjectionMatrix();
+    if(pcam && pcam.aspect !== a){ pcam.aspect = a; pcam.updateProjectionMatrix(); }
   }
   var ray = null, drag = null, ptr = null;
   function pick(e, list){
     var r = canvas.getBoundingClientRect();
     ptr.set((e.clientX - r.left)/r.width*2 - 1, -(e.clientY - r.top)/r.height*2 + 1);
-    ray.setFromCamera(ptr, cam);
+    ray.setFromCamera(ptr, curCam());
     return ray.intersectObjects(list, false)[0] || null;
   }
-  function onDown(e){ drag = {x: e.clientX, y: e.clientY, yaw: view.yaw, pitch: view.pitch, moved: 0}; canvas.setPointerCapture(e.pointerId); }
+
+  /* ---------- the 3D City: camera rig (games/camrig.js), HUD (games/hqhud.js), quality ---------- */
+  // A rig world is one whose world object lists camModes (the generated City); everything else keeps
+  // the orthographic `cam` and today's controls.
+  function rigOn(){ return !!(rig && cur && cur.camModes); }
+  // The camera that draws and picks: the perspective one in every rig mode but Classic.
+  function curCam(){ return rigOn() && rig.mode !== "classic" && pcam ? pcam : cam; }
+  function groundAt(x, z){ return cur && cur.camModes && cur.groundY ? cur.groundY(x, z) : 0; }
+  // grade (dy/ds) along yaw over +-len m: world.js slopeAlong, on the world's own ground (roads, pads)
+  function slopeAlong(x, z, yaw, len){ var sx = Math.sin(yaw)*len, sz = Math.cos(yaw)*len; return (groundAt(x + sx, z + sz) - groundAt(x - sx, z - sz))/(2*len); }
+  function slopeFactor(grade, kind){ var W = HQV.world; return W && W.slopeFactor ? W.slopeFactor(grade, kind) : 1; }
+  function hudSettings(){
+    if(hud && hud.settings) return hud.settings();
+    var H = HQV.hqhud, raw = null;
+    try { raw = localStorage.getItem("hq_cam"); } catch(e){ raw = null; }
+    return H && H.loadSettings ? H.loadSettings(raw) : {fov: 65, sens: 1, invertY: false, reduced: false, headBob: true, quality: "auto", preferred: "chase"};
+  }
+  // What camrig gets: the HUD's settings, reduced motion also when HQ is calm (E.calm covers the system setting too)
+  function camSettings(){
+    var s = Object.assign({}, camSet || hudSettings());
+    s.reduced = !!(E.calm() || s.reduced || (SMOKE && SMOKE.calm));
+    return s;
+  }
+  function locked(){ return document.pointerLockElement === canvas; }
+  function exitLock(){ try { if(locked() && document.exitPointerLock) document.exitPointerLock(); } catch(e){} }
+  function showAvatar(on){
+    if(!avatar) return;
+    if(avatar.ch) avatar.ch.o.visible = on; if(avatar.tag) avatar.tag.visible = on; if(avatar.ring) avatar.ring.visible = on;
+  }
+  function rigEnter(w){
+    if(!w.camModes || !HQV.camrig) return;
+    var C = HQV.camrig;
+    camSet = hudSettings();
+    rig = C.create({mode: w.startMode || "map", preferred: camSet.preferred, settings: camSettings(), span: SMOKE && SMOKE.span || 600, seed: 1});
+    if(HQV.hqhud){
+      hud = HQV.hqhud.mount(el, {announce: function(t){ if(api.announce) api.announce(t); }});
+      hud.onSettings(function(s){ camSet = s || hudSettings(); if(rig) C.setSettings(rig, camSettings()); govQ = null; });
+      if(w.mapInfo) hud.setLabels(w.mapInfo());
+    }
+    calmWas = E.calm(); calmT = 0; lastMode = null; lastFpView = rig.fpView; idleT = 0; occT = 0; pose = null;
+    if(rig.mode === "map" && C.flyMap) C.flyMap(rig, avatar.x, avatar.z, SMOKE && SMOKE.span || 600);   // open on the map round you
+    gov = HQV.worldbuild && HQV.worldbuild.governor ? HQV.worldbuild.governor.create({target: 16.7}) : null; govQ = null;
+  }
+  function rigLeave(){
+    exitLock();
+    Object.keys(HELD_CAM).forEach(function(c){ delete keys[c]; });   // their keyup would not reach a non-rig world
+    if(hud){ try { hud.destroy(); } catch(e){} hud = null; }
+    if(rig && cur && cur.setFaded) cur.setFaded([]);
+    rig = null; pose = null; lastMode = null;
+    if(gov || govQ){ gov = null; govQ = null; setQuality({pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5), shadows: true, level: 2}); }
+    showAvatar(true);
+  }
+  // Settings "quality" other than auto pins the governor's level.
+  var QUALITY = {low: 0, medium: 1, high: 2};
+  function qualityStep(ms){
+    if(!gov) return;
+    var pin = QUALITY[camSet && camSet.quality], dpr = window.devicePixelRatio || 1;
+    var q = pin != null ? {level: pin, pixelRatio: [0.75, 1, Math.min(dpr, 1.5)][pin], shadows: pin > 0} : HQV.worldbuild.governor.step(gov, ms);
+    if(govQ && govQ.level === q.level && govQ.pixelRatio === q.pixelRatio && govQ.shadows === q.shadows) return;
+    govQ = q; setQuality(q);
+    if(cur.setQuality) cur.setQuality(q.level); else if(cur.wb && cur.wb.setQuality) cur.wb.setQuality(q.level);
+  }
+  // The renderer's shadow map stays on and no material is touched at runtime (that recompiles every
+  // shader: a freeze); shadows off is the world's sun no longer casting. Runs only when the level changes.
+  function setQuality(q){
+    if(renderer.getPixelRatio() !== q.pixelRatio){ renderer.setPixelRatio(q.pixelRatio); inst.w = 0; }   // resize() sets the size again
+    var on = !!q.shadows;
+    if(cur && cur.scene) cur.scene.traverse(function(o){ if(o.isDirectionalLight && o.castShadow !== on) o.castShadow = on; });
+  }
+  function perfLog(ms){
+    if(!SMOKE || !SMOKE.perf) return;
+    perf.n++; perf.ms += ms; perf.t += ms/1000;
+    if(perf.t < 5) return;
+    var ri = renderer.info.render;
+    console.info("hq-frame", JSON.stringify({ms: Math.round(perf.ms/perf.n*10)/10, dc: ri.calls, tri: ri.triangles, q: govQ ? govQ.level : null}));
+    perf.t = 0; perf.n = 0; perf.ms = 0;
+  }
+  // What camrig follows. y: the smoothed visual height; travelYaw: where you are headed (facing, facing + PI
+  // stepping back, null when still); turnRate: the smoothed body yaw rate (rad/s, + = left); speed >= 0.
+  function rigTarget(){
+    var st = ride && ride.sk && ride.sk.st;
+    return {x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: avatar.yaw, pitch: ride ? ride.pitch || 0 : 0, roll: ride ? ride.roll || 0 : 0,
+            speed: ride ? Math.abs(st ? st.speed || 0 : ride.speed) : Math.abs(avatar.speed || 0), vehicle: ride ? ride.kind : null,
+            lean: ride && ride.lean ? ride.lean.rotation.z : 0, moving: !!keyMove,
+            travelYaw: avatar.travelYaw != null ? avatar.travelYaw : null, turnRate: avatar.rate || 0};
+  }
+  // Any key, click, wheel or pad input: the idle timer restarts and a cinematic hands back the camera.
+  function noteInput(){
+    idleT = 0;
+    if(rig && rig.mode === "cine"){ var C = HQV.camrig; C.input(rig, {anyInput: true}); C.setMode(rig, rig.prev && rig.prev !== "cine" ? rig.prev : rig.preferred || "chase"); }
+  }
+  function modeChanged(prev, now){
+    lastMode = now; lastFpView = rig.fpView; idleT = 0;
+    if((prev === "fp" || prev === "photo") && now !== "fp" && now !== "photo") exitLock();
+    // one fade system per mode: Classic runs the world's hqCutaway, the rig modes the occluder list
+    if((now === "classic" || now === "map") && cur.setFaded) cur.setFaded([]);
+    if(now === "classic"){ view.yaw = rig.lookYaw + PI; view.target.copy(view.goal); }
+    if(hud) hud.setMode(now, MODE_LABEL[now] || now);
+  }
+  function persistPreferred(){
+    if(!rig || !rig.preferred) return;
+    if(camSet) camSet.preferred = rig.preferred;
+    if(hud && hud.setSettings){ hud.setSettings({preferred: rig.preferred}); return; }   // saves hq_cam
+    var H = HQV.hqhud;
+    if(H && H.saveSettings){ var s = Object.assign({}, hudSettings(), {preferred: rig.preferred}); H.saveSettings(s); }
+  }
+  function camCycle(dir){
+    HQV.camrig.cycle(rig, dir); persistPreferred();
+    // V in a car's first person goes seat -> bonnet without changing the mode
+    if(rig.mode === lastMode && rig.fpView !== lastFpView){ lastFpView = rig.fpView; if(hud) hud.setMode(rig.mode, rig.fpView === "bonnet" ? "Bonnet camera" : "Seat camera"); }
+  }
+  function mapToggle(){
+    if(cur && cur.bigMap && rig.mode !== "map" && cur.bigMap()) return;   // the 3D City: M grows its minimap
+    var C = HQV.camrig;
+    if(rig.mode === "map") C.dive(rig, rigTarget()); else C.rise(rig);
+  }
+  function photoToggle(){
+    var C = HQV.camrig;
+    if(rig.mode === "photo") C.setMode(rig, rig.prev && rig.prev !== "photo" && rig.prev !== "cine" ? rig.prev : rig.preferred || "chase");
+    else C.setMode(rig, "photo");
+  }
+  // Enter in photo mode: the frame as a PNG, named by the local time (shotName).
+  function photoShot(){
+    renderer.render(cur.scene, curCam());
+    canvas.toBlob(function(b){
+      if(!b) return;
+      var a = document.createElement("a"), url = URL.createObjectURL(b);
+      a.href = url; a.download = shotName(new Date()); document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+      if(api.announce) api.announce("Photo saved");
+    }, "image/png");
+  }
+  function placeAvatar(x, z, yaw){
+    avatar.x = x; avatar.z = z; if(yaw != null) avatar.yaw = yaw;
+    avatar.hop = 0; avatar.vy = 0; avatar.airborne = false; stopFeet();
+    walkTo = null; walkDoor = null; doorsArmed = false; movedHere = true;
+    moveAvatar(0); view.target.copy(view.goal);
+  }
+  // A click on the City map (w.mapPick): your HQ dives in at its door; another HQ flies the map there; the ground
+  // sets a waypoint where the world takes one (w.mapWaypoint), else flies the map there too.
+  function mapClick(e){
+    var x, z, f = pick(e, [].concat(cur.floor || []));
+    if(f){ x = f.point.x; z = f.point.z; }
+    else {                                   // tiles not drawn yet: straight-down camera, span metres per view height
+      var r = canvas.getBoundingClientRect(), kk = (rig.mapSpan || 2048)/(r.height || 1), c = rig.mapCentre || {x: 0, z: 0};
+      x = c.x + (e.clientX - r.left - r.width/2)*kk; z = c.z + (e.clientY - r.top - r.height/2)*kk;
+    }
+    var p = cur.mapPick ? cur.mapPick(x, z) : {kind: "point", x: x, z: z};
+    if(p && p.kind === "point" && cur.mapWaypoint && cur.mapWaypoint(x, z)) return;     // the ground: a waypoint (HQ 3.1)
+    var a = mapClickAction(p), C = HQV.camrig;
+    if(!a) return;
+    if(a.act === "dive"){ dismount(true); placeAvatar(a.x, a.z, a.yaw); C.dive(rig, rigTarget()); }
+    else { C.flyMap(rig, a.x, a.z, a.span); if(a.name && api.announce) api.announce(a.name); }
+  }
+  // The HUD's E prompt: a door under the crosshair only. A vehicle near you already has its own E pill (rideUi:
+  // "Drive (E)", "Row (E)"), so the HUD never offers it a second time (it once said "E  Ride the bike" by a rowboat).
+  function hudPrompt(){
+    if(rig.mode === "fp" && !ride && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d) return "E  Enter " + (d.label || d.tip || "the door"); }
+    return null;
+  }
+  function project(x, y, z){
+    projV.set(x, y, z).project(curCam());
+    return {x: (projV.x + 1)/2*(inst.w || 1), y: (1 - projV.y)/2*(inst.h || 1), vis: projV.z > -1 && projV.z < 1};
+  }
+  function peerDots(){
+    var out = [];
+    Object.keys(peers).forEach(function(u){ var P = peers[u]; if(P.g.parent === cur.scene) out.push({n: P.n || "Visitor", x: P.x, y: P.hy || 0, z: P.z}); });
+    return out;
+  }
+  function camInfo(){
+    var c = curCam();
+    c.updateMatrixWorld(); projM.multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse); frustum.setFromProjectionMatrix(projM);
+    return {x: c.position.x, y: c.position.y, z: c.position.z, fov: c.isPerspectiveCamera ? c.fov : 0, far: c.far, mode: rig ? rig.mode : "classic",
+            frustum: frustum, avatar: {x: avatar.x, y: avatar.g.position.y, z: avatar.z}};
+  }
+  // Every frame in a rig world: held keys into the rig, step it, put the perspective camera on its pose.
+  function rigFrame(t, dt){
+    var C = HQV.camrig, m = rig.mode, k = keys;
+    var ev = {swing: (k.KeyR ? 1 : 0) - (k.KeyQ ? 1 : 0), lift: (k.KeyC ? 1 : 0) - (k.KeyZ ? 1 : 0)};
+    var fwd = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0), side = (k.KeyA || k.ArrowLeft ? 1 : 0) - (k.KeyD || k.ArrowRight ? 1 : 0);
+    if(m === "photo"){ ev.fly = {x: -side, y: ev.lift, z: fwd}; ev.fast = !!(k.ShiftLeft || k.ShiftRight); ev.swing = 0; ev.lift = 0; }   // fly x: +1 = to the right
+    if(m === "map" && (fwd || side)){ var pv = 600*dt; ev.pan = [-side*pv, -fwd*pv]; }
+    C.input(rig, ev);
+    var T = rigTarget();
+    pose = C.step(rig, T, dt, {ground: groundAt, hit: cur.camHit || function(){ return 1; }, viewH: inst.h || 600, aspect: (inst.w || 1)/(inst.h || 1)});
+    if(rig.mode === "cine" && rig.wake) C.setMode(rig, rig.prev && rig.prev !== "cine" ? rig.prev : rig.preferred || "chase");
+    if(rig.mode !== lastMode) modeChanged(lastMode, rig.mode);
+    if(pose && !pose.ortho){
+      pcam.position.set(pose.pos.x, pose.pos.y, pose.pos.z);
+      pcam.up.set(pose.up.x, pose.up.y, pose.up.z);
+      pcam.lookAt(pose.look.x, pose.look.y, pose.look.z);
+      if(pose.roll) pcam.rotateZ(pose.roll);
+      pcam.fov = pose.fov; pcam.near = pose.near; pcam.far = pose.far; pcam.updateProjectionMatrix(); pcam.updateMatrixWorld();
+    }
+    showAvatar(!(pose && pose.hideAvatar));
+    if(rig.mode !== "classic" && rig.mode !== "map" && cur.setFaded && cur.occluderItems && pose){
+      occT += dt;
+      if(occT >= 0.1){ occT = 0; cur.setFaded(C.occluders(pose.pos, pose.focus || pose.look, cur.occluderItems(avatar.x, avatar.g.position.y, avatar.z))); }
+    }
+    calmT += dt;
+    if(calmT >= 1){ calmT = 0; var cl = E.calm(); if(cl !== calmWas){ calmWas = cl; C.setSettings(rig, camSettings()); } }
+    // idle: 45 s without input starts a cinematic (never from the map or photo mode)
+    if(rig.mode === "map" || rig.mode === "photo" || rig.mode === "cine") idleT = 0;
+    else if((idleT += dt) > 45){ idleT = 0; C.setMode(rig, "cine"); }
+    if(hud && pose) hud.frame({mode: rig.mode, hudOn: pose.hud !== false, yaw: rig.lookYaw, speed: ride ? T.speed : null,
+      vehicle: ride ? ride.kind : null, prompt: hudPrompt(), crosshair: rig.mode === "fp", vignette: pose.vignette || 0,
+      mapSpan: rig.mapSpan, project: project, peers: peerDots(), ground: groundAt});
+  }
+  // A trip between islands (games/hqtravel.js through hqcity3d's w.camPose): while its pose has a
+  // camera, it is the shot (a perspective one: classic and the map hand over to chase first).
+  function tripCam(){
+    var cp = cur && cur.camPose ? cur.camPose() : null;
+    if(!cp || !cp.camera || !cp.pos || !cp.look || !rigOn()) return;
+    if(rig.mode === "classic" || rig.mode === "map" || rig.mode === "photo") HQV.camrig.setMode(rig, "chase", {instant: true});
+    pcam.position.set(cp.pos.x, cp.pos.y, cp.pos.z);
+    if(cp.up) pcam.up.set(cp.up.x, cp.up.y, cp.up.z);
+    pcam.lookAt(cp.look.x, cp.look.y, cp.look.z);
+    pcam.fov = cp.fov || 60; pcam.far = Math.max(pcam.far, 3000); pcam.updateProjectionMatrix(); pcam.updateMatrixWorld();
+    showAvatar(false);
+  }
+  // Gamepad: polled only after a gamepadconnected (and until a gamepaddisconnected).
+  function onPadOn(){ pad.on = true; }
+  function onPadOff(){ pad.on = false; pad.st = null; pad.prev = []; }
+  function padPoll(dt){
+    pad.st = null;
+    if(!pad.on || !navigator.getGamepads) return;
+    var list = navigator.getGamepads() || [], gp = null;
+    for(var i = 0; i < list.length; i++) if(list[i]){ gp = list[i]; break; }
+    if(!gp) return;
+    var p = padToInput(gp.axes, gp.buttons, pad.prev); pad.prev = p.pressed; pad.st = p;
+    if(!p.any) return;
+    noteInput();
+    if(rigOn()){
+      if(p.cycle) camCycle(p.cycle);
+      if(p.map) mapToggle();
+      var lx = p.look[0]*900*dt, ly = p.look[1]*900*dt;
+      if(lx || ly){ if(rig.mode === "fp" || rig.mode === "photo") HQV.camrig.input(rig, {look: [lx, ly]}); else if(CHASE[rig.mode]) HQV.camrig.input(rig, {orbit: [lx, ly]}); }
+    }
+    if(p.use) useKey();
+  }
+  // the keys as this frame sees them: the keyboard, plus the left stick and A (hop) of a pad
+  function withPad(){
+    var p = pad.st; if(!p) return keys;
+    var k = Object.assign({}, keys);
+    if(p.move[1] < -0.35) k.KeyW = true; if(p.move[1] > 0.35) k.KeyS = true;
+    if(p.move[0] < -0.35) k.KeyA = true; if(p.move[0] > 0.35) k.KeyD = true;
+    if(p.hop) k.Space = true;
+    return k;
+  }
+
+  function onDown(e){
+    noteInput();
+    if(rigOn() && rig.mode !== "classic"){
+      var m = rig.mode;
+      // first person and photo: a click captures the mouse for looking (Esc gives it back); no picking while locked
+      if(m === "fp" || m === "photo"){ if(!locked() && canvas.requestPointerLock){ try { canvas.requestPointerLock(); } catch(x){} } drag = null; return; }
+      if(m === "cine") return;
+      // map: left-drag pans; chase family: right-drag orbits, a left click picks / walks
+      drag = {x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, moved: 0, rig: true, button: e.button,
+              map: m === "map" && e.button === 0, orbit: !!CHASE[m] && e.button === 2};
+      canvas.setPointerCapture(e.pointerId); return;
+    }
+    drag = {x: e.clientX, y: e.clientY, yaw: view.yaw, pitch: view.pitch, moved: 0}; canvas.setPointerCapture(e.pointerId);
+  }
   function onMove(e){
+    if(locked()){ if(rig){ HQV.camrig.input(rig, {look: [e.movementX || 0, e.movementY || 0]}); noteInput(); } return; }
     if(drag){
       var dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.moved = Math.max(drag.moved, Math.abs(dx) + Math.abs(dy));
+      if(drag.rig){
+        var ix = e.clientX - drag.lx, iy = e.clientY - drag.ly; drag.lx = e.clientX; drag.ly = e.clientY;
+        if(drag.moved > 5 && rig){
+          if(drag.map) HQV.camrig.input(rig, {pan: [-ix, -iy]});              // grab the map: it follows the pointer
+          else if(drag.orbit) HQV.camrig.input(rig, {orbit: [ix, iy]});
+          tip.hidden = true; noteInput();
+        }
+        return;
+      }
       if(drag.moved > 5){ view.yaw = drag.yaw - dx*0.006; view.pitch = E.clamp(drag.pitch + dy*0.004, 0.25, 1.2); tip.hidden = true; }
       return;
     }
+    if(rigOn() && rig.mode === "map"){ tip.hidden = true; return; }
     var h = pick(e, hitList());
     var o = h && h.object.userData, txt = null;
     if(o && o.desk){ var s = o.desk.s; txt = titleOf(s) + " · " + STATE_TXT[crewState(s)] + " · " + projectOf(s); }
@@ -1683,29 +2304,43 @@ function mount(el, api){
   }
   function onUp(e){
     var d = drag; drag = null; if(!d || d.moved > 5) return;
+    if(d.rig && rigOn() && rig.mode === "map"){ if(d.button === 0) mapClick(e); return; }
+    if(d.rig && d.button !== 0) return;                                 // a right click only orbits
     var h = pick(e, hitList());
     var o = h && h.object.userData;
     if(o && o.desk){ api.openSession(o.desk.id); return; }
     if(o && o.project){ inst.setFilter(filter === o.project ? null : o.project); api.onFilter(filter); return; }
     if(o && o.door){ walkTo = {x: o.door.front.x, z: o.door.front.z}; walkDoor = o.door; return; }
-    var f = pick(e, [cur.floor]), b = cur.bounds;
+    var f = pick(e, [].concat(cur.floor)), b = cur.bounds;
     if(f){ walkTo = {x: E.clamp(f.point.x, b[0] + 1, b[1] - 1), z: E.clamp(f.point.z, b[2] + 1, b[3] - 1)}; walkDoor = null; }
   }
+  // the browser menu stays away only while right-drag orbits (chase family)
+  function onContext(e){ if(rigOn() && CHASE[rig.mode]) e.preventDefault(); }
   function hitList(){ return cur === worlds.mission ? clickables.concat(doorHits, projHits) : (cur.hits || []); }
   // Through a door: another view of the page, or another floor of the building ("@lobby").
   function through(d){
+    if(!d.view){ if(d.kind === "townhall" && cur && cur.townHall) cur.townHall(); return; }   // games/hqcivic.js: the town hall
     if(d.view.charAt(0) === "@") enterWorld(d.view.slice(1), cur.name);
     else if(d.view.indexOf("visit:") === 0){ if(api.visit) api.visit(d.view.slice(6)); }   // someone's HQ on the city street
     else api.go(d.view);
   }
   // "Outside" is Arena City when the page says so (not private, paired), else your own Base.
   function outside(name){ return name === "base" && api.outside && api.outside() === "city" && HQV.hqWorlds.city ? "city" : name; }
+  // The generated 3D City is the City unless ?world=old / hq_city_impl = "old", or it failed to load.
+  function cityImpl(){ var st = null; try { st = localStorage.getItem("hq_city_impl"); } catch(e){ st = null; } return cityImplOf(location.search, st); }
   function makeWorld(name){
+    // the world document changed under a 3D City you are not in: drop it and build a fresh one
+    var old = worlds[name];
+    if(old && old.stale === true && old !== cur){ delete worlds[name]; if(old.destroy){ try { old.destroy(); } catch(e){} } }
     if(worlds[name]) return worlds[name];
-    var build = HQV.hqWorlds[name]; if(!build) return null;
+    var build = HQV.hqWorlds[name];
+    if(name === "city" && !cityFailed && cityImpl() !== "old" && HQV.hqWorlds.city3d) build = HQV.hqWorlds.city3d;
+    if(!build) return null;
     var w = {scene: new THREE.Scene(), name: name};
     tgt = w.scene;
-    var got = build(ctx, w) || w;
+    var got;
+    try { got = build(ctx, w) || w; }
+    catch(err){ tgt = scene; if(build !== HQV.hqWorlds.city3d) throw err; cityFallback(name, null, err); return makeWorld(name); }
     tgt = scene;
     worlds[name] = got; if(got.setTime) got.setTime(isNight()); if(got.onData) got.onData(sessions);
     return got;
@@ -1736,7 +2371,7 @@ function mount(el, api){
       (C.bikes || []).forEach(function(b){ if(b.home){ placeProp(b, b.home.x, b.home.z, b.home.yaw); b.g.visible = true; } });
       var h = C.home;
       avatar.x = h.x; avatar.z = h.z; avatar.yaw = (h.yaw || 0) + PI;     // facing your door
-      avatar.vy = 0; avatar.airborne = false; avatar.g.position.y = 0;
+      avatar.vy = 0; avatar.airborne = false; avatar.hop = 0; stopFeet();
       walkTo = null; walkDoor = null; doorsArmed = false; movedHere = false; keys = {};
       if(h.camYaw != null) view.yaw = h.camYaw;
       view.pitch = C.camPitch || view.pitch;
@@ -1755,57 +2390,141 @@ function mount(el, api){
   homeUi.textContent = "🏠 Return to HQ (T)"; homeUi.title = "Back to your front door, your car, motorbike and bicycle back in the garage";
   homeUi.addEventListener("click", function(){ returnHome(); canvas.focus(); }); el.appendChild(homeUi);
   function homeUiSync(){ var on = !!(cur && cur === worlds.city); if(homeUi.hidden === on){ homeUi.hidden = !on; if(on) gamesCss(); } }
-  // Fade out, move you to the other scene (at the door you came through), fade in.
+  function showLoading(text){ loading.textContent = text; if(!loading.parentNode) el.appendChild(loading); }
+  // The 3D City could not load (no world route on this Arena, a timeout): the classic City, under the same name.
+  function cityFallback(name, w, err){
+    if(!failLogged){ failLogged = true; console.warn("hq3d: the 3D city is not available:", (err && err.message) || err); }
+    if(api.announce) api.announce("The 3D city is not available, showing the classic City");
+    cityFailed = true;
+    if(worlds[name] === w) delete worlds[name];
+    if(w && w.destroy){ try { w.destroy(); } catch(e){} }
+  }
+  // Fade out, move you to the other scene (at the door you came through), fade in. A world with
+  // whenReady (the 3D City) is awaited first behind the loading overlay; the world you are in keeps drawing.
   function enterWorld(name, from, instant){
     name = outside(name);
+    if(entering === name) return;                                   // already on the way there
     var w = name === "mission" ? worlds.mission : makeWorld(name); if(!w || fading) return;
+    if(w.whenReady && !w.isReady){
+      entering = name; showLoading("Building the city…");
+      var to = 0, settle = function(ok, err){
+        // a later enterWorld replaced this one (or this world was dropped): nothing to do here
+        if(entering !== name || worlds[name] !== w) return;
+        entering = null; clearTimeout(to); loading.remove();
+        if(ok) w.isReady = true;
+        else if(!cityRetried && /unavailable: timeout/.test((err && err.message) || "")){
+          // world.js's deadline is wall-clock: a long first-frame shader compile (cold profile, software GL) can
+          // trip it although the doc arrived. Drop this City and build a fresh one, once, before falling back.
+          cityRetried = true;
+          if(worlds[name] === w) delete worlds[name];
+          if(w.destroy){ try { w.destroy(); } catch(e){} }
+        }
+        else cityFallback(name, w, err);
+        enterWorld(name, from, instant);
+      };
+      to = setTimeout(function(){ settle(false, new Error("timed out")); }, 15000);
+      w.whenReady.then(function(){ settle(true); }, function(e){ settle(false, e); });
+      return;
+    }
+    if(entering){ entering = null; loading.remove(); }               // going somewhere else instead
+    exitLock();
+    var keep = keepRide && instant && ride && ride.heli;
     var go = function(){
-      dismount(true);
+      if(!keep) dismount(true);
+      rigLeave();
+      var prev = cur;
       if(cur && cur === worlds.city && avatar) lastCity = cityAnchor(cur);   // where you were on the street
       if(avatar.g.parent) avatar.g.parent.remove(avatar.g);
       w.scene.add(avatar.g);
       var sp = (w.spawnFrom && (w.spawnFrom[from] || (from === "city" && w.spawnFrom.base))) || (name === "city" && !from && citySpot(w)) || w.spawn;
-      avatar.x = sp.x; avatar.z = sp.z; avatar.yaw = sp.yaw || 0; walkTo = null; walkDoor = null;
-      cur = w; doorsArmed = false; movedHere = false; view.span = w.span || 12; view.zoom = w.zoom || 1.45; view.yaw = sp.camYaw != null ? sp.camYaw : w.camYaw != null ? w.camYaw : PI/4; view.pitch = w.camPitch || 0.62;
+      avatar.x = sp.x; avatar.z = sp.z; avatar.yaw = sp.yaw || 0; avatar.hop = 0; avatar.airborne = false; walkTo = null; walkDoor = null; stopFeet();
+      cur = w; if(w === worlds.mission && missionDirty) refreshMission(); doorsArmed = false; movedHere = false; view.span = w.span || 12; view.zoom = w.zoom || 1.45; view.yaw = sp.camYaw != null ? sp.camYaw : w.camYaw != null ? w.camYaw : PI/4; view.pitch = w.camPitch || 0.62;
+      if(keep){ ride.idx = -1; ride.id = null; avatar.hy = ride.heli.y; movedHere = true; }   // flying in: the helicopter is yours now
       moveAvatar(0); view.target.copy(view.goal);
+      if(w.camModes) rigEnter(w);
+      if(prev && prev !== w && prev.onLeave){ try { prev.onLeave(); } catch(e){} }
+      if(w.onEnter){ try { w.onEnter(); } catch(e){} }
       if(api.remember !== false){ try { localStorage.setItem("hq_world", name); } catch(e){} }
       if(api.onWorld) api.onWorld(name);
+      if(prev && prev.swapOut && prev !== w && prev.destroy){ try { prev.destroy(); } catch(e){} }   // the island you left
     };
     if(instant || E.calm()){ go(); return; }
     fading = true; fadeEl.classList.add("on"); E.sfx("door");
     setTimeout(function(){ go(); fadeEl.classList.remove("on"); setTimeout(function(){ fading = false; }, 260); }, 260);
   }
-  function onWheel(e){ e.preventDefault(); view.zoom = E.clamp(view.zoom*Math.exp(-e.deltaY*0.0012), 0.6, 3.5); }
+  function onWheel(e){
+    e.preventDefault(); noteInput();
+    if(rigOn() && rig.mode !== "classic"){ HQV.camrig.input(rig, {zoom: e.deltaY}); return; }
+    view.zoom = E.clamp(view.zoom*Math.exp(-e.deltaY*0.0012), 0.6, 3.5);
+  }
   var MOVE_KEYS = {KeyW: 1, KeyA: 1, KeyS: 1, KeyD: 1, ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1, ShiftLeft: 1, ShiftRight: 1, Space: 1};
   var SKATE_KEYS = {KeyF: 1, KeyG: 1};                                // tricks, only while on a board
-  function typing(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || (t && t.isContentEditable); }
+  // the camera keys of a rig world (the page binds R, C, M and V too: these win while HQ is open there)
+  var CAM_KEYS = {KeyV: 1, KeyM: 1, KeyP: 1, KeyQ: 1, KeyR: 1, KeyZ: 1, KeyC: 1};
+  var HELD_CAM = {KeyQ: 1, KeyR: 1, KeyZ: 1, KeyC: 1};
+  function typing(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || (t && t.isContentEditable) || !!(t && t.closest && t.closest(".hqhud-gear, .hqhud-settings")); }
+  // E (and a pad's X): get on or off what is near you; in first person also the door under the crosshair.
+  function useKey(){
+    if(ride || nearBike() >= 0){ rideToggle(); return true; }
+    if(rigOn() && rig.mode === "fp" && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d){ through(d); return true; } }
+    // the world's own (games/hqcity3d.js): talk to a resident, a bus stop, a dock, a station
+    if(cur && cur.use && avatar && cur.use({x: avatar.x, z: avatar.z, yaw: avatar.yaw})) return true;
+    return false;
+  }
+  // V / Shift+V, M, P, Q / R, Z / C (and Enter in photo mode); only while a rig world (cur.camModes) is up.
+  function camKey(e){
+    if(!rigOn() || !inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return false;
+    var down = e.type === "keydown";
+    if(e.code === "Enter" && rig.mode === "photo"){ e.preventDefault(); if(down && !e.repeat) photoShot(); return true; }
+    if(!CAM_KEYS[e.code]) return false;
+    e.preventDefault();
+    if(HELD_CAM[e.code]){ keys[e.code] = down; return true; }
+    if(!down || e.repeat) return true;
+    if(e.code === "KeyV") camCycle(e.shiftKey ? -1 : 1);
+    else if(e.code === "KeyM") mapToggle();
+    else if(e.code === "KeyP") photoToggle();
+    return true;
+  }
   // Capture phase, so walking keys win over the page's single-key shortcuts while HQ is open.
   function onKey(e){
+    if(HQV.townHall && HQV.townHall.isOpen && HQV.townHall.isOpen()){ keys = {}; return; }   // the Town Hall has the keys
+    if(HQV.hqnavui && HQV.hqnavui.owns && HQV.hqnavui.owns(e)) return;                      // the Go to panel's, the banner's
+    if(cur && cur.menuOpen && cur.menuOpen()){ keys = {}; return; }                         // a stop's or a dock's menu too
+    if(e.type === "keydown" && inst.running && rigOn() && !typing(e.target)) noteInput();
     if(e.code === "KeyE" && e.type === "keydown" && !e.repeat && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey
-       && (ride || nearBike() >= 0)){ e.preventDefault(); rideToggle(); return; }
+       && (ride || nearBike() >= 0 || (rigOn() && rig.mode === "fp") || (cur && cur.use))){ if(useKey()) e.preventDefault(); return; }
     if((e.code === "KeyT" || e.code === "Home") && e.type === "keydown" && !e.repeat && inst.running && cur === worlds.city && !typing(e.target)
        && !e.metaKey && !e.ctrlKey && !e.altKey){ e.preventDefault(); returnHome(); return; }
+    if(camKey(e)) return;
     if(!inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
     if(!MOVE_KEYS[e.code] && !(SKATE_KEYS[e.code] && ride && ride.kind === "skate")) return;
     keys[e.code] = e.type === "keydown";
     if(e.code.indexOf("Shift") < 0) e.preventDefault();
   }
   function onBlur(){ keys = {}; }
-  var padUse = false;
 
   /* ---------- the loop ---------- */
   function frame(ts){
     raf = 0; if(!inst.running) return;
     raf = requestAnimationFrame(frame);
-    var t = E.now() - clock0, dt = Math.min(0.05, last ? t - last : 0); last = t;
+    // time from the rAF timestamp (the same clock as E.now()), not from when this callback got to run
+    var t = (ts > 0 ? ts/1000 : E.now()) - clock0, ms = last ? (t - last)*1000 : 16.7, dt = Math.max(0, Math.min(0.05, last ? t - last : 0)); last = t;
     var k = E.calm() ? 0.25 : 1;
     syncProps();
-    // a gamepad's X gets on and off, like E (only near something to ride, or riding)
-    var gpu = cur && cur.bikes ? padNow() : null, use = !!(gpu && gpu.use);
-    if(use && !padUse && (ride || nearBike() >= 0)) rideToggle();
-    padUse = use;
+    padPoll(dt);
+    // a pad's stick and A count as keys this frame; on the map, in photo mode and in a cinematic
+    // the keys drive the camera (rigFrame), not you
+    var kb = keys, kp = withPad();
+    keys = rigOn() && (rig.mode === "map" || rig.mode === "photo" || rig.mode === "cine") ? {} : kp;
     moveAvatar(dt);
+    if(cur && cur.onBoat) cur.onBoat(ride && ride.boat ? {st: ride.boat, kind: ride.kind, beam: ride.V.beam || 1} : null);   // the City's wake, landings
+    if(cur && cur.onHeli) cur.onHeli(ride && ride.heli ? {st: ride.heli, kind: ride.kind} : null);                          // flying on to another island
+    nearIdx = ride ? -1 : nearBike();
     rideUiSync(false); homeUiSync();
+    keys = kp;
+    if(rigOn()) rigFrame(t, dt);
+    tripCam();
+    keys = kb;
     // the camera keeps up better the faster you go (a car at full speed stays on screen)
     var ease = 1 - Math.exp(-dt*(ride ? 4 + Math.min(6, Math.abs(ride.speed)*0.3) : 4)); view.target.lerp(view.goal, ease);
     resize(); placeCam();
@@ -1819,7 +2538,13 @@ function mount(el, api){
     placePeers(dt, t);
     fxStep(t, dt); driveHudDraw(t);
     acc.sky += dt; if(acc.sky > 30){ acc.sky = 0; applyTime(); }
-    if(cur !== worlds.mission){ if(cur.update) cur.update(t, dt, k); renderer.render(cur.scene, cam); return; }
+    if(cur !== worlds.mission){
+      if(rigOn()){ qualityStep(ms); perfLog(ms); }
+      if(cur.update){ if(cur.camModes) cur.update(t, dt, k, camInfo()); else cur.update(t, dt, k); }
+      renderer.render(cur.scene, curCam());
+      smokeFrame();
+      return;
+    }
     acc.scr += dt; acc.wall += dt;
     if(acc.scr > 0.18){ acc.scr = 0; desks.forEach(function(D){ if(!filter || projectOf(D.s) === filter) drawScreen(D, t); }); drawLeds(); }
     if(acc.wall > 1){ acc.wall = 0; drawWall(t); }
@@ -1850,12 +2575,14 @@ function mount(el, api){
   inst.update = function(list){
     sessions = Array.isArray(list) ? list : [];
     if(!scene) return;
-    layoutDesks(); buildStreamsIfChanged(); buildProjects(); drawWall(E.now() - clock0);
+    // Mission Control's desks, table and wall redraw only while you are in it (else on the way back in)
+    if(cur === worlds.mission) refreshMission(); else missionDirty = true;
     Object.keys(worlds).forEach(function(k){ if(worlds[k].onData) worlds[k].onData(sessions); });
   };
   // The building's paint/accent/sign changed (customisation): every floor redraws what shows it.
   // Focus combo (×1..×2): the holo-table glows brighter and warms from cyan to amber.
-  var combo = 1;
+  var combo = 1, missionDirty = false;
+  function refreshMission(){ missionDirty = false; layoutDesks(); buildStreamsIfChanged(); buildProjects(); drawWall(E.now() - clock0); }
   inst.setCombo = function(m){ combo = E.clamp(+m || 1, 1, 2); };
   inst.lookChanged = function(){ if(avatar) nameTag(); Object.keys(worlds).forEach(function(k){ if(worlds[k].onLook) worlds[k].onLook(); }); };
   // The list of open HQs changed: the city street rebuilds.
@@ -1870,21 +2597,26 @@ function mount(el, api){
     Object.keys(pk).forEach(function(id){ var w2 = pk[id] && anchorAt(C, pk[id]); if(w2){ parked[id].x = w2.x; parked[id].z = w2.z; } });
     propsSeen = null;
     // the street filled in after you arrived and you have not moved yet: stand at your door
-    if(cur === worlds.city && !movedHere && cur.spawn){ avatar.x = cur.spawn.x; avatar.z = cur.spawn.z; avatar.yaw = cur.spawn.yaw || 0; if(cur.spawn.camYaw != null) view.yaw = cur.spawn.camYaw; moveAvatar(0); view.target.copy(view.goal); }
+    if(cur === worlds.city && !movedHere && cur.spawn){ avatar.x = cur.spawn.x; avatar.z = cur.spawn.z; avatar.yaw = cur.spawn.yaw || 0; stopFeet(); if(cur.spawn.camYaw != null) view.yaw = cur.spawn.camYaw; moveAvatar(0); view.target.copy(view.goal); }
+    if(hud && cur === worlds.city && cur.mapInfo) hud.setLabels(cur.mapInfo());     // the map's HQ names
   };
   /* ---------- other people in this HQ (live, from the Arena) ---------- */
-  // inst.setPeers([{u, n, w, x, z, r, a}]): x/z in cm, r in degrees, a 0 idle / 1 walk / 2 run.
+  // inst.setPeers([{u, n, w, x, z, r, a, h?, p?}]): x/z in cm, r in degrees, a 0 idle / 1 walk / 2 run;
+  // h (feet height, cm) and p (pitch, degrees) from a presence v2 Arena ("alt") in the 3D city.
   // Each shows on its floor as a Kenney character with a name tag, eased toward where it was last seen.
   var peers = {};
   inst.setPeers = function(list){
     if(!THREE) return;
+    lastPeers = list || [];
+    if(SMOKE && SMOKE.peer) list = lastPeers.concat([SMOKE.peer]);          // ?hqsmoke=1: one synthetic friend
     var seen = {};
     (list || []).forEach(function(p){
       if(!p || typeof p.u !== "string") return;
       seen[p.u] = 1;
       var P = peers[p.u];
       if(!P){
-        P = peers[p.u] = {g: new THREE.Group(), ch: null, x: p.x/100, z: p.z/100, yaw: p.r*PI/180};
+        P = peers[p.u] = {g: new THREE.Group(), ch: null, x: p.x/100, z: p.z/100, yaw: p.r*PI/180, hy: null, pitch: 0};
+        P.g.rotation.order = "YXZ";
         var ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.55, 32), new THREE.MeshBasicMaterial({color: COL.green, transparent: true, opacity: 0.7, toneMapped: false}));
         ring.rotation.x = -PI/2; ring.position.y = 0.02; P.g.add(ring);
         var tg = label(short(p.n || "Visitor", 14), frameHex(p.f) || HEX.green, 0.5); tg.position.y = 2.3; P.g.add(tg);
@@ -1900,21 +2632,27 @@ function mount(el, api){
           if(P.board) standSkater(ch, true); else if(P.bike) seatOn(ch, P.bike);
         }, Array.isArray(p.c) ? p.c : null);
       }
+      P.n = p.n; P.th = typeof p.h === "number" ? p.h/100 : null; P.tp = typeof p.p === "number" ? p.p*PI/180 : 0;
       P.w = p.w; P.tx = p.x/100; P.tz = p.z/100; P.tyaw = p.r*PI/180; P.a = p.a | 0; P.k = p.k | 0; P.y = Math.max(0, Math.min(60, p.y | 0));
     });
     Object.keys(peers).forEach(function(u){ if(!seen[u]){ var P = peers[u]; if(P.g.parent) P.g.parent.remove(P.g); delete peers[u]; } });
   };
   // what another player is on, from their presence `a`, and how they sit on it
-  var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto"};
+  var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack"};
   function placePeers(dt, t){
     Object.keys(peers).forEach(function(u){
-      var P = peers[u], here = cur && P.w === cur.name;
+      // the floor they are on: the 3D city sends "city3d" (w.net), so legacy and 3D clients never mix
+      var P = peers[u], here = cur && P.w === (cur.net || cur.name);
       if(!here){ if(P.g.parent) P.g.parent.remove(P.g); return; }
-      if(P.g.parent !== cur.scene){ cur.scene.add(P.g); P.x = P.tx; P.z = P.tz; P.yaw = P.tyaw; }
-      var k = Math.min(1, dt*8), jump = Math.hypot(P.tx - P.x, P.tz - P.z) > 6;
+      if(P.g.parent !== cur.scene){ cur.scene.add(P.g); P.x = P.tx; P.z = P.tz; P.yaw = P.tyaw; P.hy = null; P.pitch = P.tp; }
+      // their height: the h they send, else the ground under them (0 on flat floors)
+      var ty = P.th != null && cur.camModes ? P.th : groundAt(P.tx, P.tz);
+      var k = ease(8, dt), jump = Math.hypot(P.tx - P.x, P.tz - P.z, P.hy == null ? 0 : ty - P.hy) > 6;
       P.x = jump ? P.tx : P.x + (P.tx - P.x)*k; P.z = jump ? P.tz : P.z + (P.tz - P.z)*k;
+      P.hy = jump || P.hy == null ? ty : P.hy + (ty - P.hy)*k;
+      P.pitch = jump ? P.tp : P.pitch + (P.tp - P.pitch)*k;
       P.yaw = E.angLerp(P.yaw, P.tyaw, k);
-      P.g.position.set(P.x, 0, P.z); P.g.rotation.y = P.yaw;
+      P.g.position.set(P.x, P.hy, P.z); P.g.rotation.y = P.yaw; P.g.rotation.x = -P.pitch;
       var skates = P.a === 4;
       // on a board: stood on it side-on, lifted to the height they send, the trick they send played here
       if(skates && !P.board){ if(P.bike){ if(P.ch) P.g.add(P.ch.o); P.g.remove(P.lean); P.bike = null; P.vkind = null; }
@@ -1924,7 +2662,8 @@ function mount(el, api){
       if(P.board){
         if(P.ch && P.ch.o.parent !== P.lean){ P.lean.add(P.ch.o); standSkater(P.ch, true); }
         var K = HQV.hqSkateSim ? HQV.hqSkateSim.K : {}, calm = E.calm(), tk = (t || 0)*1000;
-        P.gy = (P.gy || 0) + ((P.y || 0)/10 - (P.gy || 0))*k; P.g.position.y = P.gy;   // smoothed: the frame above set y to 0
+        P.gy = (P.gy || 0) + ((P.y || 0)/10 - (P.gy || 0))*k;           // smoothed: the frame above set y
+        P.g.position.y = (cur.camModes && cur.skateBase != null ? cur.skateBase : 0) + P.gy; P.g.rotation.x = 0;
         P.board.deck.rotation.z = !calm && P.k === K.flip ? (tk/450 % 1)*PI*2 : 0;
         P.board.deck.rotation.y = !calm && P.k === K.shove ? (tk/400 % 1)*PI : 0;
         P.lean.rotation.y = !calm && P.k === K.spin ? (tk/840 % 1)*PI*2 : 0;
@@ -1937,12 +2676,14 @@ function mount(el, api){
         }
         return;
       }
-      // on wheels: a bike (3), a car (5) or a motorbike (6), in their colour, them in its seat
+      // on wheels: a bike (3), a car (5) or a motorbike (6), in their colour, them in its seat;
+      // or at the controls of a helicopter (7) / an attack helicopter (8), at the height `h` they send
       var vk = PEER_VEHICLE[P.a] || null;
+      if(vk && !VEHICLES[vk]) vk = null;                          // no games/hqheli.js here
       if(P.bike && P.vkind !== vk){ if(P.ch){ P.g.add(P.ch.o); seatOn(P.ch, null); } P.g.remove(P.lean); P.bike = null; P.lean = null; P.vkind = null; }
       if(vk && !P.bike){
         P.lean = new THREE.Group(); P.g.add(P.lean); P.vkind = vk; P.steer = 0;
-        P.bike = vk === "car" ? carModel(bikeColor(u)) : vk === "moto" ? motoModel(bikeColor(u)) : bikeModel(bikeColor(u));
+        P.bike = VEHICLES[vk].heli ? HQV.hqheli.model(ctx, vk, bikeColor(u)) : vk === "car" ? carModel(bikeColor(u)) : vk === "moto" ? motoModel(bikeColor(u)) : bikeModel(bikeColor(u));
         P.lean.add(P.bike.g); if(P.ch){ P.lean.add(P.ch.o); seatOn(P.ch, P.bike); }
       }
       if(P.bike){
@@ -1952,10 +2693,13 @@ function mount(el, api){
         // the wheels and their lean into the bend follow it
         var dyaw = P.pyaw == null ? 0 : Math.atan2(Math.sin(P.yaw - P.pyaw), Math.cos(P.yaw - P.pyaw)), v = dt > 0 ? mv/dt : 0;
         var want = !jump && v > 0.5 && dt > 0 ? E.clamp(dyaw/dt/(1.9*Math.min(1, v/2.5)), -1, 1) : 0;
-        P.steer += (want - P.steer)*Math.min(1, dt*6);
-        (vk === "car" ? carRoll : vk === "moto" ? motoRoll : bikeRoll)(P.bike, jump ? 0 : mv, P.steer);
+        P.steer += (want - P.steer)*ease(6, dt);
+        if(VEHICLES[vk].heli){                       // rotors at flying speed, the strobe blinking, the searchlight at night
+          P.hst = P.hst || {rpm: 1, t: 0, ground: false}; P.hst.t += dt || 0;
+          HQV.hqheli.animate(P.bike, P.hst, dt, isNight());
+        } else (vk === "car" ? carRoll : vk === "moto" ? motoRoll : bikeRoll)(P.bike, jump ? 0 : mv, P.steer);
         var pl = E.calm() || vk === "car" ? 0 : -P.steer*Math.min(1, v/6)*VEHICLES[vk].lean;
-        P.lean.rotation.z += (pl - P.lean.rotation.z)*Math.min(1, dt*8);
+        P.lean.rotation.z += (pl - P.lean.rotation.z)*ease(8, dt);
         // their brake lights, when they slow down hard (held a moment, so they do not flicker)
         if(P.pv != null && dt > 0 && (P.pv - v)/dt > 3 && v > 0.5) P.brakeT = 0.4; else P.brakeT = (P.brakeT || 0) - dt;
         P.pv = v; if(P.bike.brake) P.bike.brake(P.brakeT > 0);
@@ -1970,38 +2714,166 @@ function mount(el, api){
   // 0 still, 1 walk, 2 run, 3 on a bike (any speed: others draw you riding), 4 on a skateboard,
   // 5 driving a car, 6 on a motorbike (the page sends 5 / 6 only where the Arena lists "drive").
   var RIDE_A = {bike: 3, skate: 4, car: 5, moto: 6};
-  inst.moving = function(){ return ride ? (RIDE_A[ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
+  // 7 flying a helicopter, 8 an attack helicopter (the page sends them only where the Arena lists "fly").
+  // (a boat has no presence animation of its own yet: others see you standing, or walking while it moves)
+  inst.moving = function(){ return ride ? (ride.heli ? (ride.kind === "attack" ? 8 : 7) : ride.boat ? (keyMove ? 1 : 0) : RIDE_A[ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
   // on a board: what others should see you doing ({k, y}); null otherwise
   inst.skate = function(){ return ride && ride.kind === "skate" ? skateNet() : null; };
   inst.riding = function(){ return !!ride; };
   // read-only, for the HUD's tests and tools: what you are driving and how
   inst.drive = function(){ return ride ? {kind: ride.kind, speed: ride.speed, slip: ride.slip, drift: !!ride.drift, gear: ride.gear, rpm: Math.round(ride.rpm)} : null; };
 
+  /* ---------- ?hqsmoke=1: hooks for tools/ui_smoke.py and tools/hq_shots.py (inert otherwise) ---------- */
+  function smokeErr(e){
+    var m = e && (e.message || (e.reason && (e.reason.message || String(e.reason)))) || String(e);
+    try { document.documentElement.dataset.hqSmoke = "error " + m; } catch(x){}
+  }
+  function smokeStats(){
+    var w = cur || {}, s = w.stats ? w.stats() : w.wb && w.wb.stats ? w.wb.stats() : {}, ri = renderer && renderer.info.render;
+    // the renderer's own counts of the last frame when the world reports none
+    if(ri && s.drawCalls == null) s = Object.assign({drawCalls: ri.calls, triangles: ri.triangles}, s);
+    return Object.assign({}, s, {labels: hud && hud.labelCounts ? hud.labelCounts() : null, mode: rig ? rig.mode : "classic",
+      cache: HQV.world && typeof HQV.world.cacheMs === "function" ? HQV.world.cacheMs() : null,
+      vehicle: ride ? {pitch: ride.pitch || 0, roll: ride.roll || 0} : null, world: w.net || w.name || null});
+  }
+  // &cam=<mode> once ready; "fp-bonnet" is first person from a car's bonnet
+  function smokeCam(m){
+    if(!rig || !m) return;
+    var C = HQV.camrig;
+    if(m === "fp-bonnet"){ C.setMode(rig, "fp", {instant: true}); rig.fpView = "bonnet"; }
+    else if(m !== rig.mode) C.setMode(rig, m, {instant: true});
+  }
+  function smokeTeleport(x, z, yaw){
+    dismount(true); placeAvatar(x, z, yaw != null && isFinite(yaw) ? yaw : avatar.yaw);
+    if(rig && rig.mode === "map") HQV.camrig.flyMap(rig, x, z, rig.mapSpan);
+  }
+  // &ride=car|moto|bike|skate: on that vehicle where you stand (not taken from anyone's garage)
+  function smokeRide(kind){
+    if(!VEHICLES[kind] || (kind === "skate" && !HQV.hqSkateSim)) return;
+    dismount(true);
+    mountOn({g: new THREE.Group(), x: avatar.x, z: avatar.z, yaw: avatar.yaw, color: 0x3d6fd1, roof: 0x2a3c50, kind: kind}, -1);
+  }
+  function smokeFrame(){
+    var S = SMOKE; if(!S || !S.on || S.done || !cur || cur.name !== "city") return;
+    if(!S.applied){
+      S.applied = true;
+      try {
+        // no &at=: your own HQ door (hq_shots' door spot); &yaw= turns you before &ride= mounts
+        var door = !S.at && cur.spawnFrom && cur.spawnFrom.lobby;
+        if(S.at) smokeTeleport(S.at.x, S.at.z, S.yaw);
+        else if(door) smokeTeleport(door.x, door.z, S.yaw != null ? S.yaw : door.yaw);
+        else if(S.yaw != null) smokeTeleport(avatar.x, avatar.z, S.yaw);
+        if(S.ride) smokeRide(S.ride);
+        smokeCam(S.cam);
+        if(rig && S.span) HQV.camrig.flyMap(rig, avatar.x, avatar.z, S.span);
+        S.peer = {u: "smoke-friend", n: "Friend", w: cur.net || cur.name, x: Math.round((avatar.x + 20)*100), z: Math.round(avatar.z*100), r: 0, a: 0};
+        inst.setPeers(lastPeers);
+      } catch(e){ smokeErr(e); S.done = true; return; }
+    }
+    if(++S.frames < 30) return;
+    S.done = true;
+    try { document.documentElement.dataset.hqSmoke = "ok " + JSON.stringify(smokeStats()); } catch(e){ smokeErr(e); }
+  }
+  if(SMOKE && SMOKE.on){
+    window.HQ3D_DEBUG = {mode: function(m){ smokeCam(m); }, teleport: function(x, z, yaw){ smokeTeleport(+x || 0, +z || 0, yaw == null ? null : +yaw); },
+                         ride: function(kind){ smokeRide(kind); }, stats: function(){ return smokeStats(); },
+                         // in a helicopter (ride('heli') first): put it in the air at x, y, z, rotor up to speed
+                         fly: function(x, y, z, yaw){ var h = ride && ride.heli; if(!h) return false; h.x = +x; h.y = +y; h.z = +z; if(yaw != null) h.yaw = +yaw;
+                           h.ground = false; h.rpm = 1; h.vx = h.vy = h.vz = 0; return true; },
+                         heli: function(){ var h = ride && ride.heli; return h ? {x: h.x, y: h.y, z: h.z, yaw: h.yaw, speed: h.speed, agl: h.agl, ground: h.ground, rpm: h.rpm} : null; },
+                         // the City's navigation (route, minimap, panel), for tools that follow a route
+                         nav: function(){ return cur && cur.nav ? cur.nav() : null; },
+                         // avatar + camera, for tools that drive the keys and record motion
+                         probe: function(){ var c = curCam(); return {x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: avatar.yaw, speed: avatar.speed || 0,
+                           travelYaw: avatar.travelYaw, turnRate: avatar.rate || 0, heading: rig && rig.moveYaw != null ? rig.moveYaw : null,
+                           mode: rig && rig.mode, moveYaw: rig && rig.moveYaw, lookYaw: rig && rig.lookYaw,
+                           cam: c ? {x: c.position.x, y: c.position.y, z: c.position.z} : null, t: performance.now()}; }};
+  }
+
   inst._place = function(x, z){ if(avatar){ avatar.x = x; avatar.z = z; } };    // for tests
   // read-only: the scene of the world you stand in (tests and tools traverse it)
   inst.sceneOf = function(){ return cur ? cur.scene : null; };
-  inst.where = function(){ return avatar ? {world: cur && cur.name, x: avatar.x, z: avatar.z, yaw: avatar.yaw} : null; };
+  // where you are, for presence: the floor (the 3D city is "city3d"), and in it your feet height (m) and pitch (rad)
+  inst.where = function(){
+    if(!avatar) return null;
+    var rigW = !!(cur && cur.camModes);
+    return {world: cur && (cur.net || cur.name), x: avatar.x, z: avatar.z, yaw: avatar.yaw,
+            h: rigW ? avatar.g.position.y : null, pitch: rigW && ride ? ride.pitch || 0 : 0};
+  };
   inst.goWorld = function(name){ name = outside(name); if(scene && cur && cur.name !== name) enterWorld(name, null); };
+  // Another island (or back to the Commons): the City is built again for that world (games/hqcity3d.js
+  // HQV.hqCity3d.go picks it and where you arrive), behind the loading overlay while the old one draws.
+  inst.goCity = function(world, spawn){
+    if(!scene || !HQV.hqCity3d || !HQV.hqCity3d.go) return false;
+    HQV.hqCity3d.go(world, spawn || null);
+    var C = worlds.city;
+    if(C){ delete worlds.city; C.swapOut = true; if(C !== cur && C.destroy){ try { C.destroy(); } catch(e){} } }
+    lastCity = null; entering = null;
+    enterWorld("city", null);
+    return true;
+  };
+  // A voyage's destination, built in its own scene while you are still in this City (its tiles build on their own,
+  // its overlays stay hidden until it is the one you are in); swapCity then moves you in without a fade or a
+  // loading screen, mid-sea, where both cities are far behind the haze.
+  var nextCity = null, keepRide = false;
+  function dropNext(){ if(!nextCity) return; var w = nextCity.w; nextCity = null; if(w && w !== cur && w.destroy){ try { w.destroy(); } catch(e){} } }
+  inst.prebuildCity = function(world){
+    if(!scene || !HQV.hqCity3d || !HQV.hqWorlds.city3d) return false;
+    if(nextCity && nextCity.world === world) return true;
+    dropNext();
+    HQV.hqCity3d.go(world, null);
+    var w = {scene: new THREE.Scene(), name: "city"}, got = null;
+    tgt = w.scene;
+    try { got = HQV.hqWorlds.city3d(ctx, w) || w; } catch(err){ got = null; }
+    tgt = scene;
+    if(!got) return false;
+    if(got.setTime) got.setTime(isNight()); if(got.onData) got.onData(sessions);
+    var N = nextCity = {world: world, w: got, ready: false};
+    (got.whenReady || Promise.resolve()).then(function(){ if(nextCity === N){ N.ready = true; got.isReady = true; } },
+                                              function(){ if(nextCity === N) dropNext(); });
+    return true;
+  };
+  // keep = {dx, dz}: you fly on in the helicopter you are in, moved by the new island's offset (games/hqcity3d.js)
+  inst.swapCity = function(world, keep){
+    if(!nextCity || nextCity.world !== world || !nextCity.ready || !scene) return false;
+    var C = worlds.city;
+    if(C){ delete worlds.city; C.swapOut = true; }
+    worlds.city = nextCity.w; nextCity = null;
+    lastCity = null; entering = null;
+    if(keep && ride && ride.heli){ ride.heli.x -= +keep.dx || 0; ride.heli.z -= +keep.dz || 0; keepRide = true; }
+    enterWorld("city", null, true);
+    keepRide = false;
+    return true;
+  };
   var streamKey = "";
   function buildStreamsIfChanged(){
     var k = desks.map(function(D){ return D.id + ":" + crewState(D.s); }).join("|");
     if(k !== streamKey){ streamKey = k; buildStreams(); applyFilter(); }
   }
   inst.setFilter = function(p){ filter = p || null; if(scene) applyFilter(); };
-  inst.pause = function(){ inst.running = false; keys = {}; if(raf){ cancelAnimationFrame(raf); raf = 0; }
+  inst.pause = function(){ inst.running = false; keys = {}; exitLock(); if(raf){ cancelAnimationFrame(raf); raf = 0; }
     if(ride && ride.eng){ ride.eng.stop(); ride.eng = null; } };     // (the engine starts again with the next frame you drive)
   inst.resume = function(){
     if(!inst.alive || inst.running || !scene) { if(!scene) inst.wantRun = true; return; }
     inst.running = true; last = 0; applyTime(); raf = requestAnimationFrame(frame);
   };
   inst.destroy = function(){
-    inst.alive = false; inst.pause(); driveHud(null);
+    inst.alive = false; inst.pause(); driveHud(null); exitLock(); rigLeave(); dropNext();
     window.removeEventListener("keydown", onKey, true); window.removeEventListener("keyup", onKey, true); window.removeEventListener("blur", onBlur);
+    window.removeEventListener("gamepadconnected", onPadOn); window.removeEventListener("gamepaddisconnected", onPadOff);
+    if(SMOKE && SMOKE.on){ window.removeEventListener("error", smokeErr); window.removeEventListener("unhandledrejection", smokeErr); }
     if(renderer){ renderer.dispose(); }
     el.textContent = "";
   };
   window.addEventListener("keydown", onKey, true); window.addEventListener("keyup", onKey, true); window.addEventListener("blur", onBlur);
+  window.addEventListener("gamepadconnected", onPadOn); window.addEventListener("gamepaddisconnected", onPadOff);
+  if(SMOKE && SMOKE.on){ window.addEventListener("error", smokeErr); window.addEventListener("unhandledrejection", smokeErr); }
 
+  // Outside is the 3D City: start reading its world (IndexedDB, then the Arena) while three.js loads,
+  // a quiet moment; games/world.js hands the same promise to the City when it is built.
+  if(api.outside && api.outside() === "city" && cityImpl() !== "old" && HQV.hqWorlds && HQV.hqWorlds.city3d && HQV.world && HQV.world.load){
+    try { HQV.world.load({id: HQV.world.COMMONS || "claude-hq@1"}).catch(function(){}); } catch(e){}
+  }
   E.lib().then(function(lib){
     if(!inst.alive) return;
     L = lib; THREE = lib.THREE;
@@ -2013,6 +2885,8 @@ function mount(el, api){
     renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
     scene = new THREE.Scene(); tgt = scene;
     cam = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 500);
+    pcam = new THREE.PerspectiveCamera(65, 1, 0.3, 3000);           // the 3D City's rig modes (Classic keeps `cam`)
+    frustum = new THREE.Frustum(); projM = new THREE.Matrix4(); projV = new THREE.Vector3();
     view.target = new THREE.Vector3(0, 1.4, 1); view.goal = view.target.clone();
     var gc = document.createElement("canvas"); gc.width = gc.height = 128; var gg = gc.getContext("2d");
     var rg = gg.createRadialGradient(64, 64, 0, 64, 64, 64); rg.addColorStop(0, "rgba(255,255,255,1)"); rg.addColorStop(0.22, "rgba(255,255,255,.55)"); rg.addColorStop(0.6, "rgba(255,255,255,.12)"); rg.addColorStop(1, "rgba(255,255,255,0)");
@@ -2020,17 +2894,21 @@ function mount(el, api){
     buildRoom(); buildHolo(); buildAvatar();
     worlds.mission = cur = {scene: scene, name: "mission", span: 12, floor: inst.floor, bounds: [-ROOM, ROOM, -ROOM, ROOM],
       spawn: {x: 3, z: 9, yaw: PI}, spawnFrom: {lobby: {x: -12.6, z: 13.5, yaw: PI/2}}};
+    // Mission Control's desks first: the 3D City starts reading its world from IndexedDB in enterWorld,
+    // and a long task right after that read would hold up its answer (the < 100 ms cache gate)
+    inst.update(sessions);
+    drawLeds();
     enterWorld(HQV.hqWorlds[api.startWorld] || api.startWorld === "mission" ? api.startWorld : "mission", null, true);
     canvas.addEventListener("pointerdown", onDown); canvas.addEventListener("pointermove", onMove); canvas.addEventListener("pointerup", onUp);
     canvas.addEventListener("pointerleave", function(){ tip.hidden = true; });
     canvas.addEventListener("wheel", onWheel, {passive: false});
-    loading.remove();
-    inst.update(sessions);
-    drawLeds();
+    canvas.addEventListener("contextmenu", onContext);
+    if(!entering) loading.remove();                                  // (else it stays up until the City is ready)
     if(inst.wantRun){ inst.wantRun = false; inst.resume(); }
   }).catch(function(e){ loading.textContent = "The 3D HQ couldn’t load: " + (e && e.message || e); });
   return inst;
 }
 
-HQV.hq3d = {mount: mount, crewState: crewState, projectOf: projectOf, titleOf: titleOf};
+HQV.hq3d = {mount: mount, crewState: crewState, projectOf: projectOf, titleOf: titleOf,
+            padToInput: padToInput, doorUnderCrosshair: doorUnderCrosshair, shotName: shotName};
 })();

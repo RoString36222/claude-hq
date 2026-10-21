@@ -57,7 +57,37 @@ pub const GAME: &str = "hq";
 pub const HZ: f64 = 8.0;
 
 /// hqpresence.py:17, in order. A `w` outside this list drops the whole frame.
-pub const FLOORS: [&str; 4] = ["base", "lobby", "mission", "city"];
+/// `city3d` is the generated 3D City (protocol v2): its own floor, so a legacy
+/// City page and a 3D one never draw each other on the wrong map.
+pub const FLOORS: [&str; 5] = ["base", "lobby", "mission", "city", "city3d"];
+
+/// A per-world room of the 3D City (protocol v3, "isles"): `city3d:<world id>`,
+/// the Commons (`claude-hq@2`, or `claude-hq@1` on an Arena without it) or a
+/// personal island `user:<user id>@2`, so people on different islands never draw
+/// each other. Checked exactly: anything else drops the frame like an unknown floor.
+pub fn floor_ok(w: &str) -> bool {
+    if FLOORS.contains(&w) {
+        return true;
+    }
+    let Some(id) = w.strip_prefix("city3d:") else { return false };
+    if id == "claude-hq@1" || id == "claude-hq@2" {
+        return true;
+    }
+    id.strip_prefix("user:").and_then(|r| r.strip_suffix("@2")).is_some_and(|u| {
+        u.len() == 36
+            && u.bytes().enumerate().all(|(i, b)| if matches!(i, 8 | 13 | 18 | 23) { b == b'-' } else { b.is_ascii_digit() || (b'a'..=b'f').contains(&b) })
+    })
+}
+
+/// How far x and z may reach, in cm: the generated world is 2048 m across
+/// (+-1024 m). One bound for every floor and every client version; it used to be
+/// +-6000 (60 m), which silently dropped every frame past the first block.
+pub const XZ_MAX_CM: f64 = 102_400.0;
+
+/// The "alt" capability: feet height `h` (cm) and pitch `p` (degrees) ride along
+/// with a position, so others see you on a slope. These are their bounds.
+const ALT_H_MAX: f64 = 50_000.0;
+const ALT_P_MAX: f64 = 90.0;
 
 /// hqpresence.py:18: inbound position frames a second per person, 24 deep.
 /// Clients send 8 (ui/app/22-hq.js:402 runs every 125 ms), so the headroom is
@@ -94,6 +124,9 @@ struct Person {
     /// (`k`, 0..=SKATE_K_MAX) and how high they are (`y`, decimetres, 0..=SKATE_Y_MAX),
     /// so others see the board flip and the air. None whenever a is not 4.
     skate: Option<(u8, u8)>,
+    /// Feet height (cm) and pitch (degrees), the "alt" capability. Per frame: a
+    /// frame without either clears it. None until a v2 page sends one.
+    alt: Option<(i64, i64)>,
     /// (tokens, when) -- Python's `[POS_BURST, t]` list.
     bucket: (f64, f64),
 }
@@ -129,6 +162,7 @@ impl Hq {
                 a: json!(0),
                 look: None,
                 skate: None,
+                alt: None,
                 bucket: (POS_BURST, t),
             });
         }
@@ -162,15 +196,15 @@ impl Hq {
         let w = msg.get("w").and_then(Value::as_str);
         // `num_in`, which REJECTS out of range -- not `as_num`, which clamps.
         // An x of 10^9 must be dropped whole (test_hq_presence.py:44), not
-        // pinned to the wall at 6000.
-        let x = num_in(msg.get("x"), -6000.0, 6000.0);
-        let z = num_in(msg.get("z"), -6000.0, 6000.0);
+        // pinned to the wall at XZ_MAX_CM.
+        let x = num_in(msg.get("x"), -XZ_MAX_CM, XZ_MAX_CM);
+        let z = num_in(msg.get("z"), -XZ_MAX_CM, XZ_MAX_CM);
         let r = num_in(msg.get("r"), -720.0, 720.0);
         // Python's `msg.get("a", 0)`: an ABSENT key defaults to 0, an explicit
         // null does not and fails the membership test below.
         let a = msg.get("a").cloned().unwrap_or_else(|| json!(0));
         let (Some(w), Some(x), Some(z), Some(r)) = (w, x, z, r) else { return false };
-        if !FLOORS.contains(&w) || !anim_ok(&a) {
+        if !floor_ok(w) || !anim_ok(&a) {
             return false;
         }
         // On a board, its trick and height ride along: absent means 0, and a bad
@@ -182,12 +216,25 @@ impl Hq {
         } else {
             None
         };
+        // Height and pitch: both absent is an older page (or nothing to say);
+        // otherwise a missing one of the pair is 0 and a bad one drops the frame.
+        let alt = match (msg.get("h"), msg.get("p")) {
+            (None, None) => None,
+            (h, pt) => {
+                let zero = json!(0);
+                let (Some(h), Some(pt)) = (num_in(Some(h.unwrap_or(&zero)), -ALT_H_MAX, ALT_H_MAX),
+                                           num_in(Some(pt.unwrap_or(&zero)), -ALT_P_MAX, ALT_P_MAX))
+                else { return false };
+                Some((super::py_trunc(h), super::py_trunc(pt)))
+            }
+        };
         p.w = w.to_string();
         p.x = super::py_trunc(x); // Python's int(x): toward zero
         p.z = super::py_trunc(z);
         p.r = super::deg360(r); // int(r) % 360, so -90 is 270
         p.a = a;
         p.skate = skate;
+        p.alt = alt;
         self.dirty = true;
         true
     }
@@ -238,6 +285,12 @@ impl Hq {
                         m.insert("k".into(), json!(k));
                         m.insert("y".into(), json!(y));
                     }
+                    // only from a page that sent them (the "alt" capability), so a
+                    // v1 listing is byte-identical to what it always was
+                    if let Some((h, pt)) = p.alt {
+                        m.insert("h".into(), json!(h));
+                        m.insert("p".into(), json!(pt));
+                    }
                     Value::Object(m)
                 })
                 .collect(),
@@ -255,8 +308,9 @@ fn anim_ok(a: &Value) -> bool {
         // 0 still, 1 walk, 2 run -- and 3, riding a bike in Arena City (the "ride"
         // capability in protocol.rs; a page only sends 3 to an Arena that lists it),
         // 4, on a skateboard (the "skate" capability, likewise), and 5 / 6, driving a
-        // car / riding a motorbike (the "drive" capability).
-        Value::Number(n) => n.as_f64().is_some_and(|f| [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0].contains(&f)),
+        // car / riding a motorbike (the "drive" capability), and 7 / 8, flying a helicopter /
+        // an attack helicopter (the "fly" capability; its height rides in `h`).
+        Value::Number(n) => n.as_f64().is_some_and(|f| [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0].contains(&f)),
         _ => false,
     }
 }
@@ -390,10 +444,29 @@ mod tests {
     // ------------------------------------------------------- the catalogues --
 
     #[test]
+    fn a_world_room_is_a_floor_only_for_a_real_world_id() {
+        for ok in ["city3d", "city3d:claude-hq@2", "city3d:claude-hq@1", "city3d:user:0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c@2"] {
+            assert!(floor_ok(ok), "{ok}");
+        }
+        for bad in ["city3d:", "city3d:claude-hq@3", "city3d:user:0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c@1",
+                    "city3d:user:0B8E4C1A-3F2D-4E5B-9A6C-7D8E9F0A1B2C@2", "city3d:user:0b8e4c1a/3f2d-4e5b-9a6c-7d8e9f0a1b2c@2",
+                    "city3d:user:@2", "city:claude-hq@2", "city3dx", "base:claude-hq@2"] {
+            assert!(!floor_ok(bad), "{bad}");
+        }
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        let isl = "city3d:user:0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c@2";
+        assert!(p.pos("u", &json!({"w": isl, "x": 0, "z": 0, "r": 0}), 0.1));
+        assert_eq!(p.listing()[0]["w"], isl);
+        assert!(!p.pos("u", &json!({"w": "city3d:elsewhere@2", "x": 0, "z": 0, "r": 0}), 0.2));
+    }
+
+    #[test]
     fn the_rates_and_the_floors_are_pythons() {
         // hqpresence.py:13-19, byte for byte and in order.
         assert_eq!(HZ, 8.0);
-        assert_eq!(FLOORS, ["base", "lobby", "mission", "city"]);
+        assert_eq!(FLOORS, ["base", "lobby", "mission", "city", "city3d"]);
+        assert_eq!(XZ_MAX_CM, 102_400.0);
         assert_eq!(POS_RATE, 12.0);
         assert_eq!(POS_BURST, 24.0);
         assert_eq!(KEEPALIVE, 2.0);
@@ -434,8 +507,8 @@ mod tests {
         assert_eq!(p.listing()[0]["r"], 270); // int(-90) % 360, not Rust's -90
         // a bool x is not a number in Python either
         assert!(!p.pos("u", &json!({"w": "mission", "x": true, "z": 0, "r": 0}), 0.2));
-        // a is 7, which is not in (0, 1, 2)
-        assert!(!p.pos("u", &json!({"w": "mission", "x": 0, "z": 0, "r": 0, "a": 7}), 0.3));
+        // a is 9, which no capability sends
+        assert!(!p.pos("u", &json!({"w": "mission", "x": 0, "z": 0, "r": 0, "a": 9}), 0.3));
         // nobody by that name is standing anywhere
         assert!(!p.pos("nobody", &json!({"w": "base", "x": 0, "z": 0, "r": 0}), 0.4));
         // Every rejection above left the stored position alone.
@@ -503,7 +576,7 @@ mod tests {
             json!({"x": 1, "z": 1, "r": 0}),                       // no floor at all
             json!({"w": 1, "x": 1, "z": 1, "r": 0}),               // a non-string floor
             json!({"w": "base", "x": 1e9, "z": 0, "r": 0}),        // rejected, NOT clamped
-            json!({"w": "base", "x": -6000.5, "z": 0, "r": 0}),    // just outside
+            json!({"w": "base", "x": -102_400.5, "z": 0, "r": 0}), // just outside
             json!({"w": "base", "x": "1", "z": 0, "r": 0}),        // a string is not a number
             json!({"w": "base", "z": 0, "r": 0}),                  // no x
             json!({"w": "base", "x": 0, "r": 0}),                  // no z
@@ -527,14 +600,80 @@ mod tests {
     fn the_edges_of_every_range_are_inclusive() {
         let mut p = Hq::default();
         p.enter("u", json!({"handle": "u"}), 0.0);
-        assert!(p.pos("u", &json!({"w": "city", "x": -6000, "z": 6000, "r": -720, "a": 1}), 0.1));
-        assert_eq!(p.listing()[0], json!({"u": "u", "n": "u", "w": "city", "x": -6000,
-                                          "z": 6000, "r": 0, "a": 1})); // -720 % 360 == 0
+        assert!(p.pos("u", &json!({"w": "city", "x": -102_400, "z": 102_400, "r": -720, "a": 1}), 0.1));
+        assert_eq!(p.listing()[0], json!({"u": "u", "n": "u", "w": "city", "x": -102_400,
+                                          "z": 102_400, "r": 0, "a": 1})); // -720 % 360 == 0
         // int() truncates toward zero, so -0.9 cm is 0 and not -1.
         assert!(p.pos("u", &json!({"w": "base", "x": -0.9, "z": 0.9, "r": 359.9}), 0.2));
         let l = &p.listing()[0];
         assert_eq!((&l["x"], &l["z"], &l["r"], &l["a"]), (&json!(0), &json!(0), &json!(359),
                                                           &json!(0)));
+    }
+
+    #[test]
+    fn height_and_pitch_ride_along_only_when_sent() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        // Absent (a v1 page): no keys, the listing is the v1 one byte for byte.
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1}), 0.1));
+        assert_eq!(p.listing()[0].to_string(), r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":1}"#);
+        // Both sent: both echoed, truncated toward zero, after everything else.
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 10, "z": 20, "r": 0, "a": 1, "h": 1234.9, "p": -7.9}), 0.2));
+        assert_eq!(p.listing()[0].to_string(),
+                   r#"{"u":"u","n":"u","w":"city3d","x":10,"z":20,"r":0,"a":1,"h":1234,"p":-7}"#);
+        // In a helicopter ("fly"): a = 7 / 8, flown at its height.
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 10, "z": 20, "r": 0, "a": 7, "h": 12_000, "p": 4}), 0.25));
+        assert_eq!(p.listing()[0].to_string(),
+                   r#"{"u":"u","n":"u","w":"city3d","x":10,"z":20,"r":0,"a":7,"h":12000,"p":4}"#);
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 8, "h": 9000, "p": 0}), 0.27));
+        // One of the pair alone: the other counts as 0.
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "p": 12}), 0.3));
+        assert_eq!((p.listing()[0]["h"].clone(), p.listing()[0]["p"].clone()), (json!(0), json!(12)));
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "h": -50_000}), 0.4));
+        assert_eq!((p.listing()[0]["h"].clone(), p.listing()[0]["p"].clone()), (json!(-50_000), json!(0)));
+        // The bounds are inclusive.
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "h": 50_000, "p": -90}), 0.5));
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "h": 1, "p": 90}), 0.6));
+        // A bad one drops the whole frame: nothing moves, the old alt stays.
+        for bad in [json!({"h": 50_001}), json!({"h": -50_001}), json!({"p": 91}), json!({"p": -90.5}),
+                    json!({"p": true}), json!({"h": "1"}), json!({"h": null}), json!({"h": 5, "p": [1]})] {
+            let mut m = json!({"w": "city3d", "x": 900, "z": 0, "r": 0});
+            for (k, v) in bad.as_object().unwrap() { m[k] = v.clone(); }
+            assert!(!p.pos("u", &m, 1.0), "accepted {m}");
+        }
+        assert_eq!((p.listing()[0]["x"].clone(), p.listing()[0]["h"].clone(), p.listing()[0]["p"].clone()),
+                   (json!(0), json!(1), json!(90)));
+        // Per frame: a frame without either clears it.
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0}), 2.0));
+        assert!(p.listing()[0].get("h").is_none() && p.listing()[0].get("p").is_none());
+    }
+
+    #[test]
+    fn a_skater_carries_trick_height_and_alt_together_in_a_pinned_order() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"displayName": "Ann", "cos": {"frame": "#d8b34a"}}), 0.0);
+        assert!(p.look("u", &json!({"c": [1, 2]}), 0.05));
+        assert!(p.pos("u", &json!({"w": "city3d", "x": -5, "z": 6, "r": 90, "a": 4, "k": 3, "y": 12,
+                                   "h": 840, "p": 4}), 0.1));
+        // u n w x z r a, then f, c, k, y and h, p LAST.
+        assert_eq!(p.listing()[0].to_string(),
+                   r##"{"u":"u","n":"Ann","w":"city3d","x":-5,"z":6,"r":90,"a":4,"f":"#d8b34a","c":[1,2],"k":3,"y":12,"h":840,"p":4}"##);
+    }
+
+    #[test]
+    fn x_and_z_span_the_whole_generated_world() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 102_400, "z": -102_400, "r": 0}), 0.1));
+        assert_eq!((p.listing()[0]["x"].clone(), p.listing()[0]["z"].clone()), (json!(102_400), json!(-102_400)));
+        // Past the old 60 m wall, on any floor: kept (it used to be dropped).
+        assert!(p.pos("u", &json!({"w": "city", "x": 6001, "z": 0, "r": 0}), 0.2));
+        for m in [json!({"w": "city3d", "x": 102_400.5, "z": 0, "r": 0}),
+                  json!({"w": "city3d", "x": 0, "z": -102_400.5, "r": 0}),
+                  json!({"w": "city3d", "x": 1e9, "z": 0, "r": 0})] {
+            assert!(!p.pos("u", &m, 1.0), "accepted {m}");
+        }
+        assert_eq!(p.listing()[0]["x"], json!(6001));
     }
 
     /// Divergence 1: Python's `a not in (0, 1, 2)` is `==`, so `True` is `1`.
@@ -544,7 +683,7 @@ mod tests {
         p.enter("u", json!({"handle": "u"}), 0.0);
         for (a, keep) in [(json!(0), true), (json!(1), true), (json!(2), true),
                           (json!(2.0), true), (json!(true), true), (json!(false), true),
-                          (json!(3), true), (json!(4), true), (json!(5), true), (json!(6), true), (json!(7), false),
+                          (json!(3), true), (json!(4), true), (json!(5), true), (json!(6), true), (json!(7), true), (json!(8), true), (json!(9), false),
                           (json!(-1), false), (json!(1.5), false),
                           (json!("1"), false), (json!([1]), false)] {
             let m = json!({"w": "base", "x": 0, "z": 0, "r": 0, "a": a});

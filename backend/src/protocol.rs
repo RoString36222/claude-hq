@@ -45,7 +45,10 @@ pub const GAMES: &[(&str, i64, &[&str])] = &[
     // so impact marks carry their hit; hurricane chips DD_WIND_DMG while it shoves.
     // Player flags grow FLAG_BLIND / FLAG_SLOW (white-out veil / disaster crawl).
     ("strike", 9, &["maps"]),
-    ("hq", 1, &["ride", "look", "skate", "drive"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`; "drive": a = 5 (a car), 6 (a motorbike)
+    // v2: the generated 3D City. "alt": pos may carry h (feet height, cm) and p (pitch, deg); x/z span +-102_400 cm; floor "city3d"
+    // v3: Cities. "isles": the floor may be a world's own room, "city3d:<world id>" (valley/hq.rs floor_ok)
+    // "fly": a = 7 (a helicopter), 8 (an attack helicopter), at the height `h` ("alt")
+    ("hq", 3, &["ride", "look", "skate", "drive", "alt", "isles", "fly"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`; "drive": a = 5 (a car), 6 (a motorbike)
     ("type", 1, &[]),
     ("td", 1, &[]),
     ("bowl", 1, &[]),
@@ -92,7 +95,9 @@ mod tests {
         assert_eq!(info["games"]["kart"], json!({"v": 2, "caps": ["scale", "tracks"]}));
         assert_eq!(info["games"]["plat"], json!({"v": 1, "caps": []}));
         // HQ presence carries a = 3 (a bike), 4 (skating), 5 / 6 (a car / a motorbike) only where these are listed.
-        assert_eq!(info["games"]["hq"], json!({"v": 1, "caps": ["ride", "look", "skate", "drive"]}));
+        // "alt" (v2): h / p ride along, x / z span the 2 km world, floor "city3d".
+        // "isles" (v3): the floor may be a world's own room, city3d:<world id>.
+        assert_eq!(info["games"]["hq"], json!({"v": 3, "caps": ["ride", "look", "skate", "drive", "alt", "isles", "fly"]}));
         assert_eq!(version("fps"), 1);
         assert_eq!(version("pond"), 1);
         // An unknown game still answers 1, as Python's PROTOCOL.get(g, {}) does.

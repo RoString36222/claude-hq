@@ -371,3 +371,295 @@ fn vial_spend_route_and_payload() {
     assert_eq!(v["vial"]["xp"], 10);
     assert_eq!(v["vial"]["costs"], json!({"0": 30, "1": 90, "2": 180, "3": 400}));
 }
+
+/// A one-route fake Arena: GET /v1/world/claude-hq@1 answers the world with an
+/// ETag (304 when If-None-Match matches), anything else 404 with a JSON body.
+/// Returns its base URL and every request line + If-None-Match it saw.
+fn fake_arena() -> (String, Arc<std::sync::Mutex<Vec<(String, String)>>>) {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://127.0.0.1:{}", l.local_addr().unwrap().port());
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let s2 = seen.clone();
+    std::thread::spawn(move || {
+        for conn in l.incoming() {
+            let Ok(mut c) = conn else { continue };
+            let mut buf = Vec::new();
+            let mut b = [0u8; 1024];
+            while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                match c.read(&mut b) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => buf.extend_from_slice(&b[..n]),
+                }
+            }
+            let head = String::from_utf8_lossy(&buf).to_string();
+            let line = head.lines().next().unwrap_or("").to_string();
+            let inm = head.lines().find_map(|l| {
+                let (k, v) = l.split_once(':')?;
+                k.eq_ignore_ascii_case("if-none-match").then(|| v.trim().to_string())
+            }).unwrap_or_default();
+            let auth = head.to_lowercase().contains("authorization:");
+            s2.lock().unwrap().push((line.clone(), if auth { "AUTH".into() } else { inm.clone() }));
+            let resp = if line.starts_with("GET /v1/world/claude-hq@1 ") {
+                if inm == "\"w1\"" {
+                    "HTTP/1.1 304 Not Modified\r\nETag: \"w1\"\r\nConnection: close\r\n\r\n".to_string()
+                } else {
+                    let body = r#"{"id":"claude-hq@1","version":1}"#;
+                    format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nETag: \"w1\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body)
+                }
+            } else {
+                let body = r#"{"detail":"no such world"}"#;
+                format!("HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body)
+            };
+            let _ = c.write_all(resp.as_bytes());
+        }
+    });
+    (base, seen)
+}
+
+#[test]
+fn arena_world_passes_etag_and_304_through() {
+    let srv = serve();
+    // Unconfigured: 400, nothing sent anywhere.
+    let (code, _, _) = get(srv.port, "/api/arena/world/claude-hq@1", "");
+    assert_eq!(code, 400);
+    let (base, seen) = fake_arena();
+    srv.app.save_config(&json!({"arenaUrl": base})).unwrap();
+    let (code, head, body) = get(srv.port, "/api/arena/world/claude-hq@1", "");
+    assert_eq!(code, 200);
+    assert!(head.contains("content-type: application/json"), "{head}");
+    assert!(head.contains("etag: \"w1\""), "{head}");
+    assert!(head.contains("cache-control: no-cache"), "{head}");
+    assert_eq!(body, br#"{"id":"claude-hq@1","version":1}"#);
+    // The page revalidates: a matching tag is a 304 with no body.
+    let (code, head, body) = get(srv.port, "/api/arena/world/claude-hq@1", "If-None-Match: \"w1\"\r\n");
+    assert_eq!(code, 304);
+    assert!(head.contains("etag: \"w1\""), "{head}");
+    assert!(body.is_empty());
+    // A stale tag gets the full world again.
+    assert_eq!(get(srv.port, "/api/arena/world/claude-hq@1", "If-None-Match: \"old\"\r\n").0, 200);
+    // The Arena's 404 and its body pass through.
+    let (code, _, body) = get(srv.port, "/api/arena/world/other@2", "");
+    assert_eq!(code, 404);
+    assert_eq!(body, br#"{"detail":"no such world"}"#);
+    // A bad id never leaves the machine (an encoded @ is decoded first).
+    assert_eq!(get(srv.port, "/api/arena/world/claude-hq%401", "").0, 200);
+    for bad in ["/api/arena/world/..%2Fx@1", "/api/arena/world/a@1/x", "/api/arena/world/nope", "/api/arena/world/"] {
+        assert_eq!(get(srv.port, bad, "").0, 404, "{bad}");
+    }
+    let s = seen.lock().unwrap().clone();
+    assert_eq!(s.iter().map(|(l, i)| (l.split(' ').nth(1).unwrap().to_string(), i.clone())).collect::<Vec<_>>(), vec![
+        ("/v1/world/claude-hq@1".to_string(), String::new()),
+        ("/v1/world/claude-hq@1".to_string(), "\"w1\"".to_string()),
+        ("/v1/world/claude-hq@1".to_string(), "\"old\"".to_string()),
+        ("/v1/world/other@2".to_string(), String::new()),
+        ("/v1/world/claude-hq@1".to_string(), String::new()),
+    ]);
+}
+
+#[test]
+fn arena_world_link_url_wins_and_unreachable_is_502() {
+    let srv = serve();
+    let (base, seen) = fake_arena();
+    srv.app.save_config(&json!({"arenaUrl": "http://127.0.0.1:9"})).unwrap();
+    // Port 9 (discard) is closed here: the Arena did not answer.
+    assert_eq!(get(srv.port, "/api/arena/world/claude-hq@1", "").0, 502);
+    // A paired link's url wins over config, and its device token is NOT sent.
+    srv.app.save_link(&json!({"token": "secret-device-token", "url": base})).unwrap();
+    assert_eq!(get(srv.port, "/api/arena/world/claude-hq@1", "").0, 200);
+    assert_eq!(seen.lock().unwrap().clone().last().unwrap().1, "");
+}
+
+/// A fake Arena for the city proxies: every request's (method, path,
+/// Authorization, JSON body) is recorded; /v1/city/<HIDDEN>... answers 404,
+/// any other /v1/city, /v1/market or /v1/archipelago path 200 with its path.
+const HIDDEN: &str = "99999999-9999-4999-8999-999999999999";
+type Seen = Arc<std::sync::Mutex<Vec<(String, String, String, Value)>>>;
+fn fake_city_arena() -> (String, Seen) {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://127.0.0.1:{}", l.local_addr().unwrap().port());
+    let seen: Seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let s2 = seen.clone();
+    std::thread::spawn(move || {
+        for conn in l.incoming() {
+            let Ok(mut c) = conn else { continue };
+            let mut buf = Vec::new();
+            let mut b = [0u8; 4096];
+            let split = loop {
+                if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break i;
+                }
+                match c.read(&mut b) {
+                    Ok(0) | Err(_) => break buf.len(),
+                    Ok(n) => buf.extend_from_slice(&b[..n]),
+                }
+            };
+            let head = String::from_utf8_lossy(&buf[..split]).to_string();
+            let hdr = |name: &str| head.lines().find_map(|l| {
+                let (k, v) = l.split_once(':')?;
+                k.eq_ignore_ascii_case(name).then(|| v.trim().to_string())
+            }).unwrap_or_default();
+            let len: usize = hdr("content-length").parse().unwrap_or(0);
+            let mut body = buf.get(split + 4..).unwrap_or(&[]).to_vec();
+            while body.len() < len {
+                match c.read(&mut b) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => body.extend_from_slice(&b[..n]),
+                }
+            }
+            let mut parts = head.lines().next().unwrap_or("").split(' ');
+            let (method, path) = (parts.next().unwrap_or("").to_string(), parts.next().unwrap_or("").to_string());
+            s2.lock().unwrap().push((method, path.clone(), hdr("authorization"), serde_json::from_slice(&body).unwrap_or(Value::Null)));
+            let known = ["/v1/city/", "/v1/market/", "/v1/archipelago", "/v1/rail"].iter().any(|p| path.starts_with(p));
+            let (status, out) = if path.starts_with(&format!("/v1/city/{}", HIDDEN)) || !known {
+                ("404 Not Found", json!({"detail": "no such city"}).to_string())
+            } else {
+                ("200 OK", json!({"ok": true, "path": path}).to_string())
+            };
+            let resp = format!("HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", status, out.len(), out);
+            let _ = c.write_all(resp.as_bytes());
+        }
+    });
+    (base, seen)
+}
+
+const OWNER: &str = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+
+fn get_json(srv: &Srv, path: &str) -> (u16, Value) {
+    let (code, _, body) = get(srv.port, path, "");
+    (code, serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+
+#[test]
+fn city_market_and_archipelago_gets_are_proxied_with_the_device_token() {
+    let srv = serve();
+    let (base, seen) = fake_city_arena();
+    // Unpaired: nothing leaves the machine.
+    assert_eq!(get_json(&srv, &format!("/api/arena/city/{}", OWNER)), (400, json!({"error": "not paired"})));
+    assert_eq!(get_json(&srv, "/api/arena/archipelago"), (400, json!({"error": "not paired"})));
+    assert!(seen.lock().unwrap().is_empty());
+    srv.app.save_link(&json!({"token": "dev-token", "url": base})).unwrap();
+    for (route, upstream) in [
+        (format!("/api/arena/city/{}", OWNER), format!("/v1/city/{}", OWNER)),
+        ("/api/arena/city/commons".to_string(), "/v1/city/commons".to_string()),
+        (format!("/api/arena/market/{}", OWNER), format!("/v1/market/{}", OWNER)),
+        ("/api/arena/market/commons".to_string(), "/v1/market/commons".to_string()),
+        ("/api/arena/archipelago".to_string(), "/v1/archipelago".to_string()),
+        ("/api/arena/rail".to_string(), "/v1/rail".to_string()),
+    ] {
+        assert_eq!(get_json(&srv, &route), (200, json!({"ok": true, "path": upstream})), "{route}");
+    }
+    // A city hidden from the caller: the Arena's 404 passes through, as "error".
+    assert_eq!(get_json(&srv, &format!("/api/arena/city/{}", HIDDEN)), (404, json!({"detail": "no such city", "error": "no such city"})));
+    let s = seen.lock().unwrap();
+    assert_eq!(s.len(), 7);
+    assert!(s.iter().all(|(m, _, auth, body)| m == "GET" && auth == "Bearer dev-token" && body.is_null()));
+}
+
+#[test]
+fn city_and_market_posts_forward_only_the_allowlisted_body() {
+    let srv = serve();
+    let (base, seen) = fake_city_arena();
+    srv.app.save_link(&json!({"token": "dev-token", "url": base})).unwrap();
+    let extra = json!({"sessionId": "s1", "path": "/Users/me/secret", "title": "plan"});
+    let with = |b: &Value| {
+        let mut o = extra.clone();
+        o.as_object_mut().unwrap().extend(b.as_object().unwrap().clone());
+        o.to_string()
+    };
+    let cases = [
+        ("build", json!({"upgrade": "tax_office"})),
+        ("transfer", json!({"amount": 250, "dir": "in"})),
+        ("transfer", json!({"amount": 90, "dir": "out"})),
+        ("privacy", json!({"mode": "closed"})),
+        ("fare", json!({"kind": "bus"})),
+    ];
+    for (action, b) in &cases {
+        let route = format!("/api/arena/city/{}/{}", OWNER, action);
+        assert_eq!(post(&srv, &route, with(b).as_bytes(), "", true), (200, json!({"ok": true, "path": format!("/v1/city/{}/{}", OWNER, action)})), "{route}");
+    }
+    let trade = json!({"good": "tech", "qty": 4, "side": "buy"});
+    assert_eq!(post(&srv, "/api/arena/market/commons/trade", with(&trade).as_bytes(), "", true).0, 200);
+    // The older market route is untouched.
+    assert!(server::post_paths().contains(&"/api/arena/market/sell"));
+    let s = seen.lock().unwrap();
+    let got: Vec<(String, String, Value)> = s.iter().map(|(m, p, _, b)| (m.clone(), p.clone(), b.clone())).collect();
+    let mut want: Vec<(String, String, Value)> =
+        cases.iter().map(|(a, b)| ("POST".to_string(), format!("/v1/city/{}/{}", OWNER, a), b.clone())).collect();
+    want.push(("POST".into(), "/v1/market/commons/trade".into(), trade));
+    assert_eq!(got, want);
+    assert!(s.iter().all(|x| x.2 == "Bearer dev-token"));
+}
+
+#[test]
+fn rail_build_is_proxied_with_only_the_world_id() {
+    let srv = serve();
+    let (base, seen) = fake_city_arena();
+    srv.app.save_link(&json!({"token": "dev-token", "url": base})).unwrap();
+    let isl = format!("user:{}@2", OWNER);
+    let body = json!({"to": isl, "sessionId": "s1", "path": "/Users/me/secret"}).to_string();
+    assert_eq!(post(&srv, "/api/arena/rail/build", body.as_bytes(), "", true), (200, json!({"ok": true, "path": "/v1/rail/build"})));
+    assert_eq!(post(&srv, "/api/arena/rail/build", b"{}", "", true).0, 200);
+    for bad in [r#"{"to":"claude-hq@1"}"#, r#"{"to":"user:../admin@2"}"#, r#"{"to":7}"#] {
+        assert_eq!(post(&srv, "/api/arena/rail/build", bad.as_bytes(), "", true).0, 400, "{bad}");
+    }
+    assert_eq!(post(&srv, "/api/arena/rail/build", br#"{"to":"claude-hq@2"}"#, "", false).0, 403, "CSRF gate");
+    assert_eq!(post(&srv, "/api/arena/rail", b"{}", "", true).0, 404, "the list is GET only");
+    let s = seen.lock().unwrap();
+    let got: Vec<(String, String, Value)> = s.iter().map(|(m, p, _, b)| (m.clone(), p.clone(), b.clone())).collect();
+    assert_eq!(got, vec![("POST".to_string(), "/v1/rail/build".to_string(), json!({"to": isl})),
+                         ("POST".to_string(), "/v1/rail/build".to_string(), json!({}))]);
+    assert!(s.iter().all(|x| x.2 == "Bearer dev-token"));
+}
+
+#[test]
+fn city_proxies_reject_bad_owner_ids_and_bodies_before_forwarding() {
+    let srv = serve();
+    let (base, seen) = fake_city_arena();
+    srv.app.save_link(&json!({"token": "dev-token", "url": base})).unwrap();
+    let bad_owners = ["nope", "Commons", "me", "A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5", "..", "%2e%2e",
+                      "commons%2Fx", "%2Fv1%2Fadmin", "commons%00", "commons%20", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d%0a"];
+    for bad in bad_owners {
+        for route in ["/api/arena/city/{}", "/api/arena/market/{}"] {
+            let p = route.replace("{}", bad);
+            assert_eq!(get_json(&srv, &p), (400, json!({"error": "bad owner id"})), "{p}");
+        }
+        for (route, b) in [("/api/arena/city/{}/build", json!({"upgrade": "park"})), ("/api/arena/city/{}/privacy", json!({"mode": "arena"})),
+                           ("/api/arena/city/{}/transfer", json!({"amount": 1, "dir": "in"})), ("/api/arena/city/{}/fare", json!({"kind": "fast"})),
+                           ("/api/arena/market/{}/trade", json!({"good": "fish", "qty": 1, "side": "sell"}))] {
+            let p = route.replace("{}", bad);
+            assert_eq!(post(&srv, &p, b.to_string().as_bytes(), "", true), (400, json!({"error": "bad owner id"})), "{p}");
+        }
+    }
+    // An empty owner is a bad id; a deeper path is not a GET route.
+    for p in ["/api/arena/city/", "/api/arena/market/"] {
+        assert_eq!(get_json(&srv, p), (400, json!({"error": "bad owner id"})), "{p}");
+    }
+    for p in [format!("/api/arena/city/{}/build", OWNER), format!("/api/arena/city/{}/x/y", OWNER), format!("/api/arena/market/{}/trade", OWNER)] {
+        assert_eq!(get_json(&srv, &p), (404, json!({"error": "not found"})), "{p}");
+    }
+    // Paths that are not POST routes at all.
+    for p in [format!("/api/arena/city/{}/demolish", OWNER), format!("/api/arena/city/{}", OWNER), format!("/api/arena/market/{}/steal", OWNER),
+              "/api/arena/city//build".to_string(), format!("/api/arena/city/x/{}/build", OWNER), "/api/arena/archipelago".to_string()] {
+        assert_eq!(post(&srv, &p, b"{}", "", true), (404, json!({"error": "not found"})), "{p}");
+    }
+    // Gates and bodies: CSRF, the small size cap, JSON objects only, every field checked.
+    let build = format!("/api/arena/city/{}/build", OWNER);
+    let trade = format!("/api/arena/market/{}/trade", OWNER);
+    assert_eq!(post(&srv, &build, br#"{"upgrade":"park"}"#, "", false).0, 403);
+    assert_eq!(post(&srv, &build, b"", "Content-Length: 4097\r\n", true).0, 413);
+    assert_eq!(post(&srv, &trade, b"", "Content-Length: 4097\r\n", true).0, 413);
+    assert_eq!(post(&srv, &build, b"{not json", "", true).0, 400);
+    assert_eq!(post(&srv, &build, b"[\"park\"]", "", true).1["error"], "bad JSON body: body must be an object");
+    for (route, b) in [
+        ("build", json!({"upgrade": "<img src=x>"})), ("build", json!({})),
+        ("transfer", json!({"amount": 0, "dir": "in"})), ("transfer", json!({"amount": 2.5, "dir": "in"})), ("transfer", json!({"amount": 5, "dir": "up"})),
+        ("privacy", json!({"mode": "public"})), ("fare", json!({"kind": "taxi"})),
+    ] {
+        let p = format!("/api/arena/city/{}/{}", OWNER, route);
+        assert_eq!(post(&srv, &p, b.to_string().as_bytes(), "", true).0, 400, "{p} {b}");
+    }
+    for b in [json!({"good": "fish", "qty": 0, "side": "buy"}), json!({"good": "fish", "qty": 1, "side": "gift"}), json!({"good": "../x", "qty": 1, "side": "buy"})] {
+        assert_eq!(post(&srv, &trade, b.to_string().as_bytes(), "", true).0, 400, "{b}");
+    }
+    assert!(seen.lock().unwrap().is_empty(), "{:?}", seen.lock().unwrap());
+}

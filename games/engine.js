@@ -172,7 +172,9 @@ var ENGINES = {
   // Valley Rally: a turbo four with its whistle, a straight six, a high-revving four
   turbo4: {lo: 34, hi: 158, a: "sawtooth", b: "triangle", ratio: 2.0, cut: 1250, q: 5, gain: 0.05,  whistle: 2300, lope: [11, 0.08]},
   six:    {lo: 30, hi: 140, a: "sawtooth", b: "sawtooth", ratio: 1.5, cut: 1050, q: 6, gain: 0.055},
-  four:   {lo: 38, hi: 176, a: "square",   b: "sawtooth", ratio: 2.0, cut: 1600, q: 4, gain: 0.045, lope: [16, 0.1]}
+  four:   {lo: 38, hi: 176, a: "square",   b: "sawtooth", ratio: 2.0, cut: 1600, q: 4, gain: 0.045, lope: [16, 0.1]},
+  // a helicopter (games/hqheli.js): a low turbine note under the blades' slap
+  rotor:  {lo: 22, hi: 44,  a: "sawtooth", b: "triangle", ratio: 3.0, cut: 420,  q: 2, gain: 0.08,  lope: [14, 0.75], whistle: 3200}
 };
 function engineSound(kind){
   var P = ENGINES[kind] || ENGINES.v8;
@@ -203,12 +205,17 @@ function engineSound(kind){
       var u = clamp((rpm - 900)/6700, 0, 1), hz = P.lo + (P.hi - P.lo)*u, t = a.currentTime, on = sfxVolume() > 0;
       o.frequency.setTargetAtTime(hz, t, 0.05); o2.frequency.setTargetAtTime(hz*P.ratio, t, 0.05);
       f.frequency.setTargetAtTime(P.cut*(0.7 + u*0.9), t, 0.08);
-      g.gain.setTargetAtTime(on ? P.gain*(0.7 + u*0.5) : 0, t, 0.1);
-      if(wh){ wh.frequency.setTargetAtTime(P.whistle*(0.4 + u), t, 0.15); whg.gain.setTargetAtTime(on ? 0.012*u*u : 0, t, 0.15); }
-      if(rt) rt.gain.setTargetAtTime(on ? P.rattle*(1 - u*0.5) : 0, t, 0.1);
+      // a dead man's switch: each set() fades the note out 0.25 s from now and the next frame's
+      // set() cancels that, so the engine falls silent whenever the game stops calling (a hidden
+      // tab, another view, a stalled loop) instead of droning on at its last revs
+      [[g, on ? P.gain*(0.7 + u*0.5) : 0, 0.1], [whg, on ? 0.012*u*u : 0, 0.15], [rt, on ? P.rattle*(1 - u*0.5) : 0, 0.1]].forEach(function(q){
+        if(!q[0]) return;
+        q[0].gain.cancelScheduledValues(t); q[0].gain.setTargetAtTime(q[1], t, q[2]); q[0].gain.setTargetAtTime(0, t + 0.25, 0.05);
+      });
+      if(wh) wh.frequency.setTargetAtTime(P.whistle*(0.4 + u), t, 0.15);
     },
     stop: function(){
-      try { g.gain.setTargetAtTime(0, a.currentTime, 0.05); if(whg) whg.gain.setTargetAtTime(0, a.currentTime, 0.05); if(rt) rt.gain.setTargetAtTime(0, a.currentTime, 0.05);
+      try { [g, whg, rt].forEach(function(n){ if(n){ n.gain.cancelScheduledValues(a.currentTime); n.gain.setTargetAtTime(0, a.currentTime, 0.05); } });
             nodes.forEach(function(nd){ nd.stop(a.currentTime + 0.3); }); } catch(e){}
     }
   };
@@ -225,10 +232,11 @@ function noiseLoop(freq, q){
   return {
     set: function(gain, fq){
       var t = a.currentTime, on = sfxVolume() > 0;
-      g.gain.setTargetAtTime(on ? clamp(+gain || 0, 0, 0.3) : 0, t, 0.06);
+      g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(on ? clamp(+gain || 0, 0, 0.3) : 0, t, 0.06);
+      g.gain.setTargetAtTime(0, t + 0.25, 0.05);                       // silent when set() stops coming (engineSound)
       if(fq) f.frequency.setTargetAtTime(clamp(fq, 60, 8000), t, 0.1);
     },
-    stop: function(){ try { g.gain.setTargetAtTime(0, a.currentTime, 0.05); src.stop(a.currentTime + 0.3); } catch(e){} }
+    stop: function(){ try { g.gain.cancelScheduledValues(a.currentTime); g.gain.setTargetAtTime(0, a.currentTime, 0.05); src.stop(a.currentTime + 0.3); } catch(e){} }
   };
 }
 // Browsers allow audio only after a user gesture: wake it on the first one.

@@ -1,6 +1,10 @@
 /* Valley minigames. Colours come only from index.html's semantic tokens so every theme
    (aurora / midnight / forest / mono / contrast, light and dark) works; pixel art is drawn
    on canvases and only scaled here. */
+/* The 3D City's navigation (HQ 3.1): the minimap (which also moves the driving dials left of it) and the
+   Go to panel, route banner and arrival card. */
+@import url("hqminimap.css");
+@import url("hqnavui.css");
 .vg-shell{display:flex;flex-direction:column;gap:14px;position:relative}
 .vg-wait{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;border-radius:var(--radius);
   background:var(--panel);border:1px solid var(--line);color:var(--muted);font-weight:600}
@@ -805,6 +809,9 @@ html.hq-calm .bowl-flash.on{opacity:1}
 /* ==== Arena City driving HUD (games/hq3d.js driveHud): while in a car or on a bike ====
    Kart Racing's speed + rev dials (drawn from the theme tokens), a "Powerslide" chip while
    sliding, and the keys. In Calm / reduced motion the moving dials give way to a plain readout. */
+/* the 3D City's stage is a size container: its overlays (the minimap, the navigation panel and banner) lay out by
+   its size, not the window's (the dashboard's side panel takes part of the width) */
+.hq3d-stage{container:hq3d / size}
 .hq3d-drive{position:absolute;right:12px;bottom:12px;z-index:4;display:flex;flex-direction:column;align-items:flex-end;gap:6px;
   pointer-events:none;max-width:calc(100% - 24px)}
 .hq3d-drive-dial{display:block;width:236px;height:124px}
@@ -820,6 +827,7 @@ html.hq-calm .hq3d-drive-dial{display:none}
 html.hq-calm .hq3d-drive-read{display:block}
 @media (prefers-reduced-motion: reduce){ .hq3d-drive-dial{display:none} .hq3d-drive-read{display:block} }
 @media (max-width:560px){ .hq3d-drive-dial{width:170px;height:89px} .hq3d-drive-bike .hq3d-drive-dial{width:89px} .hq3d-drive-hint{font-size:11px} }
+@container hq3d (max-height: 440px){ .hq3d-drive-dial{width:170px;height:89px} .hq3d-drive-bike .hq3d-drive-dial{width:89px} .hq3d-drive-hint{font-size:11px} }
 /* ==== end of the Arena City driving HUD ==== */
 /* ==== Arena City "Return to HQ" button (games/hq3d.js returnHome): top left over the street ==== */
 .hq3d-home{position:absolute;left:12px;top:12px;z-index:4;padding:8px 14px;border-radius:999px;font-weight:700;font-size:13px;
@@ -828,3 +836,27 @@ html.hq-calm .hq3d-drive-read{display:block}
 .hq3d-home:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .hq3d-home[hidden]{display:none}
 /* ==== end of the Return to HQ button ==== */
+/* the 3D City's stats panel (games/hqcity3d.js statsUi), top right */
+.hq3d-stats{position:absolute;right:12px;top:12px;z-index:4;min-width:190px;max-width:min(260px,46%);display:grid;gap:4px;padding:10px 12px;border-radius:12px;
+  color:var(--ink);background:color-mix(in srgb,var(--panel) 90%,transparent);border:1px solid var(--line);box-shadow:var(--shadow-lg);font-size:12.5px;pointer-events:auto}
+.hq3d-stats-name{font-weight:750;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hq3d-stat{display:flex;justify-content:space-between;gap:12px;color:var(--muted)}
+.hq3d-stat b{color:var(--ink);font-weight:700;font-variant-numeric:tabular-nums}
+.hq3d-stat[data-mood="good"] b{color:var(--good)}
+.hq3d-stat[data-mood="ok"] b{color:var(--warn)}
+.hq3d-stat[data-mood="low"] b{color:var(--need)}
+.hq3d-stats-bar{height:4px;border-radius:999px;background:var(--line);overflow:hidden}
+.hq3d-stats-bar i{display:block;height:100%;background:var(--brand)}
+
+/* ==== the ferry voyage panel (games/hqcity3d.js voyHud): top centre while you are aboard ==== */
+.hq3d-voyage{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:6;display:grid;grid-template-columns:auto 1fr;
+  column-gap:12px;row-gap:6px;align-items:center;min-width:min(440px,calc(100% - 380px));max-width:560px;padding:10px 16px 10px 12px;
+  border-radius:var(--radius);background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow-lg);pointer-events:none}
+.hq3d-voyage[hidden]{display:none}
+.hq3d-voyage-icon{grid-row:1 / span 3;width:44px;height:44px;display:grid;place-items:center;border-radius:12px;font-size:26px;
+  background:var(--brand);color:var(--on-brand)}
+.hq3d-voyage-main{font:700 14px/1.25 var(--font);color:var(--ink)}
+.hq3d-voyage-bar{height:6px;border-radius:999px;background:var(--line);overflow:hidden}
+.hq3d-voyage-bar > span{display:block;height:100%;width:0;border-radius:inherit;background:var(--brand);transition:width .4s linear}
+.hq3d-voyage-hint{font:500 12px/1.2 var(--font);color:var(--muted)}
+@container hq3d (max-width: 830px){ .hq3d-voyage{top:196px;left:12px;right:12px;transform:none;min-width:0;max-width:none} }

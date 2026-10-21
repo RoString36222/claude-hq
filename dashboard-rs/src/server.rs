@@ -22,6 +22,8 @@ const ICON_SVG: &str = include_str!("../assets/icon.svg");
 const CSRF_PLACEHOLDER: &str = "__HQ_CSRF__";
 pub const MAX_POST_BODY: usize = 1024 * 1024;
 pub const MAX_SOUND_POST_BODY: usize = 8 * 1024 * 1024;
+/// A city or market POST carries a few small fields (crate::arena::city_body).
+pub const MAX_CITY_POST_BODY: usize = 4 * 1024;
 const STREAM_HEARTBEAT_SECS: f64 = 15.0;
 const JSON: &str = "application/json; charset=utf-8";
 const TEXT: &str = "text/plain; charset=utf-8";
@@ -41,9 +43,23 @@ const SW_JS: &str = concat!(
 pub fn post_body_limit(path: &str) -> usize {
     if path == "/api/arena/sounds" {
         MAX_SOUND_POST_BODY
+    } else if city_post_target(path).is_some() {
+        MAX_CITY_POST_BODY
     } else {
         MAX_POST_BODY
     }
+}
+
+/// (owner, action) for a city or market POST: `/api/arena/city/<owner>/<build|
+/// transfer|privacy|fare>` or `/api/arena/market/<owner>/trade`. The owner comes
+/// back percent-decoded and unchecked; arena.rs validates it before forwarding.
+pub fn city_post_target(path: &str) -> Option<(String, &str)> {
+    let (owner, action) = if let Some(rest) = path.strip_prefix("/api/arena/city/") {
+        rest.rsplit_once('/').filter(|(_, a)| crate::arena::CITY_POSTS.contains(a))?
+    } else {
+        (path.strip_prefix("/api/arena/market/")?.strip_suffix("/trade")?, "trade")
+    };
+    (!owner.is_empty() && !owner.contains('/')).then(|| (py::unquote(owner), action))
 }
 
 /// Every state-changing route; anything else 404s locally.
@@ -54,7 +70,7 @@ pub fn post_paths() -> Vec<&'static str> {
         "/api/arena/pantry/give", "/api/arena/pantry/reward", "/api/arena/hq/me", "/api/arena/portrait", "/api/arena/cosmetics/buy",
         "/api/arena/cosmetics/equip", "/api/arena/market/sell", "/api/arena/crews/create", "/api/arena/crews/join",
         "/api/arena/crews/leave", "/api/arena/quickplay/join", "/api/arena/quickplay/leave", "/api/arena/cali/order",
-        "/api/arena/sounds", "/api/games/state", "/api/vial/spend", "/api/notch/install",
+        "/api/arena/sounds", "/api/arena/rail/build", "/api/games/state", "/api/vial/spend", "/api/notch/install",
     ];
     v.extend(ARENA_ROOM_POSTS);
     v.extend(ext::POST.iter().map(|(p, _)| *p));
@@ -438,6 +454,31 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
         }
         return Reply::new(200, data, if ct.is_empty() { ctype } else { &ct });
     }
+    if path == "/api/arena/world/claude-hq@2/assign" {
+        let (c, r) = app.arena_commons_assign();
+        return Reply::json(c, &r);
+    }
+    if let Some(raw) = path.strip_prefix("/api/arena/world/") {
+        return world_reply(app, &py::unquote(raw), headers);
+    }
+    // Cities: the owner is checked in arena.rs; a deeper path is not a GET route.
+    for (prefix, read) in [("/api/arena/city/", App::arena_city as fn(&App, &str) -> (u16, Value)), ("/api/arena/market/", App::arena_market)] {
+        if let Some(raw) = path.strip_prefix(prefix) {
+            if raw.contains('/') {
+                return Reply::json(404, &json!({"error": "not found"}));
+            }
+            let (c, r) = read(app, &py::unquote(raw));
+            return Reply::json(c, &r);
+        }
+    }
+    if path == "/api/arena/archipelago" {
+        let (c, r) = app.arena_archipelago();
+        return Reply::json(c, &r);
+    }
+    if path == "/api/arena/rail" {
+        let (c, r) = app.arena_rail();
+        return Reply::json(c, &r);
+    }
     let qs = |k: &str| py::qs_first(query, k);
     match path {
         "/api/arena/preview" => {
@@ -610,6 +651,23 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
     }
 }
 
+/// GET /api/arena/world/:id: the Arena's answer passed through (status incl.
+/// 304 and 404, Content-Type, ETag), revalidated by the page on every load.
+fn world_reply(app: &App, id: &str, headers: &HeaderMap) -> Reply {
+    let inm = headers.get("if-none-match").and_then(|v| v.to_str().ok()).unwrap_or("");
+    match app.arena_world(id, inm) {
+        Err((code, v)) => Reply::json(code, &v),
+        Ok(w) => {
+            let ctype = if w.ctype.is_empty() { JSON.to_string() } else { w.ctype };
+            let mut r = Reply { code: w.code, body: w.body, headers: vec![("Content-Type", ctype), ("Cache-Control", "no-cache".into())] };
+            if !w.etag.is_empty() {
+                r.headers.push(("ETag", w.etag));
+            }
+            r
+        }
+    }
+}
+
 fn transcript_page(app: &App, sid: &str, query: &str) -> Reply {
     if !is_uuid(sid) {
         return Reply::json(404, &json!({"error": "unknown session"}));
@@ -733,7 +791,7 @@ async fn do_post(app: Arc<App>, headers: HeaderMap, path: String, body: Body) ->
     if !origin_ok(&headers) {
         return reply(Reply::json(403, &json!({"error": "cross-site request rejected"})));
     }
-    if !post_paths().contains(&path.as_str()) {
+    if !post_paths().contains(&path.as_str()) && city_post_target(&path).is_none() {
         return reply(Reply::json(404, &json!({"error": "not found"})));
     }
     let cl = headers.get("content-length").and_then(|v| v.to_str().ok()).map(|s| py::strip(s).to_string()).unwrap_or_default();
@@ -851,6 +909,9 @@ fn arena_post(app: &App, path: &str, body: &Value) -> (u16, Value) {
     if ARENA_ROOM_POSTS.contains(&path) {
         return handlers::room_post(app, path, b);
     }
+    if let Some((owner, action)) = city_post_target(path) {
+        return if action == "trade" { app.arena_market_trade(&owner, body) } else { app.arena_city_post(&owner, action, body) };
+    }
     let r = match path {
         "/api/arena/pair" => match b.get("code").and_then(|v| v.as_str()).filter(|c| !py::strip(c).is_empty()) {
             Some(code) => app.arena_pair(code, b.get("label")),
@@ -861,6 +922,7 @@ fn arena_post(app: &App, path: &str, body: &Value) -> (u16, Value) {
             (200, json!({"ok": true}))
         }
         "/api/arena/publish" => app.arena_publish(),
+        "/api/arena/rail/build" => app.arena_rail_build(body),
         "/api/arena/ticket" => app.arena_ws_ticket(),
         "/api/arena/nudge" => match b.get("toHandle").and_then(|v| v.as_str()).filter(|t| !py::strip(t).is_empty()) {
             Some(to) => app.arena_send_nudge(py::strip(to), b.get("note")),

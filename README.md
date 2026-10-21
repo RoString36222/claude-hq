@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.5.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.5.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -364,6 +364,10 @@ and feature guide.
 
 ## Changelog
 
+- **3.5.2 — Arriving in B1 by the car lift.** You used to arrive standing on the lift facing its back wall, and the
+  lift's trigger sat just off the pad on the way out, so the first W sent you straight back up to the street. Now you
+  (and what you rode) arrive just off the pad facing into the basement, and the trigger is on the pad itself: drive or
+  walk back onto the lift to go up.
 - **3.5.1 — Drive your starters out of B1.** You can now get on the car, motorbike or bicycle on its showcase
   plinth from the plinth's edge (the plinth kept you further away than you could reach), and riding a starter onto
   the car lift takes it up to the street with you instead of leaving it in the showcase. Return to HQ (T) still puts

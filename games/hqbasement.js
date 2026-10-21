@@ -116,7 +116,7 @@ function adopt(w, ride){
   var b = ride && (ride.B || ride.prop || ride), id = (ride && ride.id) || (b && b.id), c = w && w.ctx;
   var res = {placed: false, ownId: null, pending: null};
   if(!id) return res;
-  var P = w && w.pad || PAD, bs = w && w.bikes;
+  var P = w && (w.arrive || w.pad) || PAD, bs = w && w.bikes;   // [3.5.1] off the pad, facing in
   if(b && b.g && b.id === id && bs && bs.indexOf(b) < 0) bs.push(b);
   if(b && b.g){ b.x = P.x; b.z = P.z; b.yaw = P.yaw; if(b.g.position) b.g.position.set(P.x, 0, P.z); if(b.g.rotation) b.g.rotation.y = P.yaw; res.placed = true;
     if(w) b.world = w; }
@@ -310,7 +310,8 @@ HQV.hqWorlds.basement = function(c, w){
 
   // the car-lift platform (games/hqcarlift.js when it is there, else a plain chevroned pad), door up to the street
   var liftDoor = {view: "@base", kind: "carlift", label: "Car lift", tip: "Car lift: drive on to go up to the street (G)",
-                  front: new THREE.Vector3(PAD.x - PAD.d/2 - 1.4, 0, PAD.z)};
+                  front: new THREE.Vector3(PAD.x, 0, PAD.z)};   // [3.5.1] the trigger is ON the pad: it used to sit just
+                  // off its basement side, on the way out, so the first W after arriving sent you straight back up
   var carLift = null;
   if(Lift && Lift.mesh) try { carLift = Lift.mesh(c, {w: PAD.w, d: PAD.d, level: "B1", dir: "up"}); } catch(e){ carLift = null; }
   var padG;
@@ -469,7 +470,10 @@ HQV.hqWorlds.basement = function(c, w){
     return Math.max(0, Math.min(1, t));
   };
   w.spawn = {x: LIFT.x + 2.4, z: LIFT.z, yaw: PI/2};
-  w.spawnFrom = {city: padSpot, lobby: {x: LIFT.x + 2.4, z: LIFT.z, yaw: PI/2}, base: padSpot};
+  // [3.5.1] off the car lift you (and what you rode) arrive just off the pad, facing into B1, clear of its trigger
+  var arriveSpot = {x: PAD.x + Math.sin(PAD.yaw)*(PAD.d/2 + 2.6), z: PAD.z + Math.cos(PAD.yaw)*(PAD.d/2 + 2.6), yaw: PAD.yaw};
+  w.arrive = arriveSpot;
+  w.spawnFrom = {city: arriveSpot, lobby: {x: LIFT.x + 2.4, z: LIFT.z, yaw: PI/2}, base: arriveSpot};
   w.home = w.spawnFrom.lobby;
   w.blocked = function(x, z){ var m = c.motion && c.motion(); return blockedAt(L, x, z, !!(m && m.ride)); };
   w.stale = false;

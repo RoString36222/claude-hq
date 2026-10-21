@@ -165,7 +165,9 @@ class BasementTest(unittest.TestCase):
         a = self.o["adopt"]
         self.assertTrue(a["placed"])
         self.assertEqual(a["ownId"], "v3")
-        self.assertEqual((a["x"], a["z"]), (24.5, 6.5))
+        # 3.5.1: off the car lift it lands just off the pad (2.6 m clear of its edge), facing into B1, not on the
+        # pad's trigger, so the first W drives you into the basement instead of back up the lift
+        self.assertEqual((round(a["x"], 6), round(a["z"], 6)), (18.8, 6.5))
         self.assertTrue(a["inBikes"])
         self.assertEqual(a["calls"], [["v3", "basement"]])
         self.assertEqual(self.o["adoptFull"], {"ok": False, "full": True})

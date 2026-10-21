@@ -17,7 +17,7 @@
  *   Parts are merged by material (body, brand, wing, dark, windows, gear) plus one Points for the lights
  *   (nav red / green, strobes, beacons, taxi and landing lights; a few pixels at any distance): about seven
  *   draw calls a plane. Aircraft materials are unfogged, so a plane 3 km off still reads against the haze.
- *   parked(c, kind, n) -> F  a parked fleet ("jet" or "commuter"), one InstancedMesh per material (<= 7 draw
+ *   parked(c, kind, n) -> F  a parked fleet ("jet" or "commuter"), one InstancedMesh per material (F.setDetail(1): 3 of them; <= 7 draw
  *     calls whatever n): F.set(i, {x, y, z, yaw}, brandHex), F.count(k), F.setNight(n), F.dispose(), F.g
  *   DOOR_L1 [x, y, z] the airliner's forward left door sill (model frame), NOSE its nose (z), SPAN its span
  *   AIRLINES the invented airlines {id: {name, color}} (archipelago: the brand colour), AIRLINE_IDS
@@ -335,6 +335,7 @@ function finish(c, g, M, geos, Lt, gearM, seat, own, sp){
 }
 
 /* ---------- a parked fleet: one InstancedMesh per material, the brand colour per instance ---------- */
+var FAR_PARTS = {body: 1, brand: 1, wing: 1};
 function parked(c, kind, n){
   var THREE = c.THREE, jet = !/^(commuter|amphib|amphibian|sea|seaplane)$/.test(String(kind || "jet"));
   n = Math.max(1, Math.min(64, n | 0 || 1));
@@ -345,7 +346,7 @@ function parked(c, kind, n){
   Object.keys(S.P.by).forEach(function(k){
     var geo = HQV.hqShips.merge(THREE, S.P.by[k]); geos.push(geo);
     var im = new THREE.InstancedMesh(geo, M[k], n);
-    im.name = g.name + "-" + k; im.castShadow = k !== "win"; im.frustumCulled = false; im.count = 0; im.visible = false;
+    im.name = g.name + "-" + k; im.castShadow = k !== "win"; im.frustumCulled = false; im.count = 0; im.visible = false; im.userData.part = k;
     if(k === "brand"){ brand = im; for(var i = 0; i < n; i++) im.setColorAt(i, col.setHex(jet ? brandHex() : ISLE)); }
     g.add(im); ims.push(im);
   });
@@ -358,7 +359,11 @@ function parked(c, kind, n){
     if(brand){ brand.setColorAt(i, col.setHex(hex != null ? hex : jet ? brandHex() : ISLE)); brand.instanceColor.needsUpdate = true; }
     return F;
   };
-  F.count = function(k){ k = Math.max(0, Math.min(n, k | 0)); ims.forEach(function(im){ im.count = k; im.visible = k > 0; }); return F; };
+  // level 1 (far): only the body, the livery and the wings (3 draw calls); the windows, trim and gear from level 2
+  var level = 2, shown = 0;
+  function vis(){ ims.forEach(function(im){ im.count = shown; im.visible = shown > 0 && (level >= 2 || FAR_PARTS[im.userData.part] === 1); }); }
+  F.count = function(k){ shown = Math.max(0, Math.min(n, k | 0)); vis(); return F; };
+  F.setDetail = function(lv){ level = (lv | 0) >= 2 ? 2 : 1; vis(); return F; };
   F.setNight = function(on){ M.win.emissiveIntensity = on ? 1.4 : 0.05; return F; };
   F.dispose = function(){
     ims.forEach(function(im){ im.dispose(); }); geos.forEach(function(x){ x.dispose(); }); Object.keys(M).forEach(function(k){ M[k].dispose(); });

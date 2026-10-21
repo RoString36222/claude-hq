@@ -708,7 +708,16 @@ function mount(el, api){
     cityBuilt: function(world){ return !!(nextCity && nextCity.world === world && nextCity.ready); },
     swapCity: function(world, keep){ return inst.swapCity ? inst.swapCity(world, keep) : false; },
     night: function(){ return isNight(); },
-    held: function(code){ return !!keys[code]; }
+    held: function(code){ return !!keys[code]; },
+    // compile a group's shaders now, hidden parts too (a level of detail switched on later costs no frame then)
+    prewarm: function(root){
+      if(!renderer || !root || !cur || !cur.scene) return false;
+      var shown = [];
+      root.traverse(function(o){ if(!o.visible){ o.visible = true; shown.push(o); } });
+      try { renderer.compile(root, curCam(), cur.scene); } catch(e){}
+      shown.forEach(function(o){ o.visible = false; });
+      return true;
+    }
   };
 
   /* ---------- day / night from the local clock ---------- */
@@ -1679,11 +1688,14 @@ function mount(el, api){
   function rideUiSync(force){
     if(!rideUi) return;
     var near = ride ? -2 : force ? nearBike() : nearIdx, nb = near >= 0 && cur && cur.bikes ? cur.bikes[near] : null;
-    var key = ride ? "on" : nb ? "near-" + (nb.kind || "bike") : "";
+    // a helicopter set down where you can't step out (a roof without stairs, the sea): say so instead of "Get out"
+    var hs = ride && ride.heli, noOut = !!(hs && hs.ground && cur && cur.heliLand && !cur.heliLand(hs));
+    var key = ride ? (noOut ? "on-noout" : "on") : nb ? "near-" + (nb.kind || "bike") : "";
     if(!force && key === rideUi.dataset.k) return;
     rideUi.dataset.k = key; rideUi.hidden = !key;
     var kind = ride ? ride.kind : (nb && VEHICLES[nb.kind] ? nb.kind : "bike");
-    rideUi.textContent = ride ? (kind === "car" || VEHICLES[kind].heli ? "Get out (E)" : kind === "skate" ? "Step off (E)" : VEHICLES[kind].boat ? "Step ashore (E)" : "Get off (E)")
+    rideUi.textContent = noOut ? "Can't get out here: land on the ground"
+      : ride ? (kind === "car" || VEHICLES[kind].heli ? "Get out (E)" : kind === "skate" ? "Step off (E)" : VEHICLES[kind].boat ? "Step ashore (E)" : "Get off (E)")
       : VEHICLES[kind].heli ? "\uD83D\uDE81 Fly (E)" : kind === "rowboat" ? "\uD83D\uDEA3 Row (E)" : kind === "jetski" ? "\uD83C\uDF0A Ride the jet ski (E)" : kind === "car" ? "\uD83D\uDE97 Drive (E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride (E)" : kind === "skate" ? "\uD83D\uDEF9 Skate (E)" : "\uD83D\uDEB2 Ride (E)";
     rideUi.title = ride ? RIDE_HELP[kind] : VEHICLES[kind].heli ? "Take the controls" : VEHICLES[kind].boat ? "Take the helm" : kind === "car" ? "Get in this car" : kind === "moto" ? "Get on this motorbike"
       : kind === "skate" ? "Step on this skateboard" : "Get on this bike";
@@ -1888,6 +1900,7 @@ function mount(el, api){
     walkTo = null; walkDoor = null;
     var yaw0 = avatar.yaw, floor = cur && cur.heliFloor ? cur.heliFloor : groundAt;
     var evs = Hh.step(st, {fwd: fwd, turn: turn, lift: lift}, dt, {floor: floor});
+    if(evs.length || st.ground) rideUiSync(false);                // "Get out" only where you can
     evs.forEach(function(ev){
       if(ev.type === "land") E.sfx(ev.hard ? "hit" : "putt");
       else if(ev.type === "bump") E.sfx("hit");
@@ -2743,8 +2756,11 @@ function mount(el, api){
   }
   function smokeStats(){
     var w = cur || {}, s = w.stats ? w.stats() : w.wb && w.wb.stats ? w.wb.stats() : {}, ri = renderer && renderer.info.render;
-    // the renderer's own counts of the last frame when the world reports none
-    if(ri && s.drawCalls == null) s = Object.assign({drawCalls: ri.calls, triangles: ri.triangles}, s);
+    // drawCalls / triangles: the renderer's own counts of the last frame (shadow pass included), so the budgets see
+    // everything drawn (the airport, aircraft, ships, the HUD's 3D bits), not only the world's tiles; those stay as
+    // worldDrawCalls / worldTriangles
+    s = Object.assign({}, s, {worldDrawCalls: s.drawCalls != null ? s.drawCalls : null, worldTriangles: s.triangles != null ? s.triangles : null});
+    if(ri && ri.calls > 0){ s.drawCalls = ri.calls; s.triangles = ri.triangles; }
     return Object.assign({}, s, {labels: hud && hud.labelCounts ? hud.labelCounts() : null, mode: rig ? rig.mode : "classic",
       cache: HQV.world && typeof HQV.world.cacheMs === "function" ? HQV.world.cacheMs() : null,
       vehicle: ride ? {pitch: ride.pitch || 0, roll: ride.roll || 0} : null, world: w.net || w.name || null});

@@ -50,7 +50,8 @@ var K = {
 };
 K.sea.len = 700; K.jet.len = RUNWAY;
 // the Isle Hopper: the seaplane on wheels too (Commons runway <-> an island's river mouth)
-K.amphib = Object.assign({}, K.sea, {taxi: 7, climb: 45, cruise: 75, approach: 42, touch: 38, accRoll: 2.4, decRoll: 2.2, cruiseY: 320, lift: 420, turnR: 650, hold: 4});
+K.amphib = Object.assign({}, K.sea, {taxi: 7, climb: 45, cruise: 75, approach: 42, touch: 38, accRoll: 2.4, decRoll: 2.2, cruiseY: 320, lift: 420, turnR: 650, hold: 4, finLine: 900});
+K.jet.finLine = 2400;
 // on an airfield's taxiways (m/s, m/s², s): push back, line up, exit; v² ≤ lat·R in a curve; the stand's last leadLen m
 K.ground = {push: 1.0, pushAcc: 0.3, line: 4, exit: 15, lead: 2.5, leadLen: 40, lat: 1.0, lineup: 2};
 // an extra wait at the runway holding point (s) per runway in use and class: the departure pushes that much earlier
@@ -172,7 +173,8 @@ function route(kind, A, B, ends){
   // the destination: touchdown td past its threshold on the extended centreline, a straight final from its fix
   var ub = ar.dir, tdIn = ar.td != null ? +ar.td : C.tdIn, hLand = Math.atan2(ub[0], ub[1]);
   var td = [ar.thr[0] + ub[0]*tdIn, ar.thr[1] + ub[1]*tdIn];
-  var fin = C.flare/2 + C.intercept/GS + C.level + 100;            // the straight final, from its fix to touchdown
+  // the straight final, from its fix to touchdown (finLine: a longer one, so the plane is wings level well before it)
+  var fin = C.flare/2 + C.intercept/GS + C.level + 100 + (C.finLine || 0);
   var faf = [td[0] - ub[0]*fin, td[1] - ub[1]*fin];
   var Dn = dubins(q0, Math.atan2(ua[0], ua[1]), faf, hLand, C.turnR);
   if(Dn){

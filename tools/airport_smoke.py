@@ -6,7 +6,8 @@ tools/ui_smoke.py's DevTools-pipe driver (HQ_GL=metal for GPU speed; HQ_PROFILE:
 
 steps (comma separated, default all): spawn, map, threshold, gallery, curb, walk, apron, final, sim, flight, night.
 Writes <out dir>/*.png and <out dir>/report.json; prints one line per shot. Look at every PNG yourself.
-Numeric checks: no page errors, every view's HQ3D_DEBUG.stats().drawCalls under ui_smoke.MAX_DRAW_CALLS, the spawn
+Numeric checks: no page errors, every view's real draw calls (HQ3D_DEBUG.stats().drawCalls: the renderer's) under
+ui_smoke.MAX_DRAW_CALLS except the wide views (most of the Commons in view: ~550 before the airport, capped at WIDE_CAP), the spawn
 view's airport at level 1 adding <= 30 renderer draw calls (its groups hidden vs shown), air.perf() <= 1 ms at the apron, the flown roll on the runway's centreline, no two aircraft on top of
 each other over simulated minutes. Exit code 1 when a check fails.
 """
@@ -22,6 +23,10 @@ STEPS = sys.argv[3].split(",") if len(sys.argv) > 3 else ALL
 os.makedirs(OUT, exist_ok=True)
 FAILS, ROWS = [], []
 SPAWN_EXTRA = 30          # the airport's share of the spawn view (level 1)
+# views with most of the Commons in them (the spawn, the whole airfield from the air, a final approach over the city),
+# whole frame: before the airport the spawn view alone drew 539-557 calls day and 550-554 night; frames vary +-20
+WIDE_CAP = 650
+WIDE = ("spawn", "airfield-aerial", "final")
 
 
 def fail(msg):
@@ -53,7 +58,7 @@ class Page(smoke.Page):
 HIDE = """(function(){var c=[].slice.call(document.querySelectorAll('div,section,aside')).filter(function(e){var t=e.textContent||'';
   var r=e.getBoundingClientRect();return t.indexOf('Join voice')>=0&&t.indexOf('Lobby')>=0&&r.width>0&&r.width<420;});
   c.forEach(function(e){e.style.visibility='hidden'});return c.length;})()"""
-STATS = "(function(){var s=HQ3D_DEBUG.stats()||{};var a=HQV.hqCity3d.air;return {dc:s.drawCalls,tri:s.triangles,level:a&&a.level?a.level():null,perf:a&&a.perf?a.perf():null,err:(HQ3D.inst&&null)||null}})()"
+STATS = "(function(){var s=HQ3D_DEBUG.stats()||{};var a=HQV.hqCity3d.air;return {dc:s.drawCalls,tri:s.triangles,world:s.worldDrawCalls,level:a&&a.level?a.level():null,perf:a&&a.perf?a.perf():null,err:(HQ3D.inst&&null)||null}})()"
 AIR = "HQV.hqCity3d.air"
 
 
@@ -79,18 +84,19 @@ def shot(pg, name, note="", measure=True):
     pg.screenshot(path)
     st = pg.j(STATS) or {}
     row = {"name": name, "note": note, "dc": (fr or {}).get("dc"), "tri": (fr or {}).get("tri"), "ms": (fr or {}).get("ms"),
-           "tiles": st.get("dc"), "level": st.get("level"), "perf": st.get("perf"),
+           "real": st.get("dc"), "tiles": st.get("world"), "level": st.get("level"), "perf": st.get("perf"),
            "state": pg.j(AIR + ".state()"), "errors": pg.errors(), "probe": pg.j("HQ3D_DEBUG.probe()")}
     ROWS.append(row)
-    print("SHOT", name, json.dumps({k: row[k] for k in ("note", "dc", "tri", "ms", "tiles", "level", "perf", "errors")}), flush=True)
+    print("SHOT", name, json.dumps({k: row[k] for k in ("note", "dc", "real", "tri", "ms", "tiles", "level", "perf", "errors")}), flush=True)
     if row["errors"]:
         fail("%s: page errors %s" % (name, row["errors"][:3]))
-    # the view gate is ui_smoke's: HQ3D_DEBUG.stats().drawCalls (the City's tiles) under MAX_DRAW_CALLS; dc is the
-    # renderer's whole frame (shadow pass, residents, traffic and the airport included), for the airport's share
-    if not row["tiles"]:
-        fail("%s: HQ3D_DEBUG.stats().drawCalls read %r (a failed measurement)" % (name, row["tiles"]))
-    elif row["tiles"] >= smoke.MAX_DRAW_CALLS:
-        fail("%s: %d draw calls (>= %d)" % (name, row["tiles"], smoke.MAX_DRAW_CALLS))
+    # the view gate: HQ3D_DEBUG.stats().drawCalls, the renderer's whole frame (shadow pass, residents, traffic and the
+    # airport included; tiles: the City's own tiles) under MAX_DRAW_CALLS, the wide views under WIDE_CAP
+    cap = WIDE_CAP if any(w in name for w in WIDE) else smoke.MAX_DRAW_CALLS
+    if not row["real"]:
+        fail("%s: HQ3D_DEBUG.stats().drawCalls read %r (a failed measurement)" % (name, row["real"]))
+    elif row["real"] >= cap:
+        fail("%s: %d draw calls (>= %d)" % (name, row["real"], cap))
     if measure and not row["dc"]:
         fail("%s: the renderer's draw calls read %r" % (name, row["dc"]))
     return row

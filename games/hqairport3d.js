@@ -846,7 +846,7 @@ function create(c, L, o){
   var lampGeo = new THREE.BoxGeometry(0.45, 0.3, 0.45); geos.push(lampGeo);
   var lampM = new THREE.MeshBasicMaterial({color: 0xffffff, toneMapped: false}); mats.push(lampM);
   var lamps = new THREE.InstancedMesh(lampGeo, lampM, Math.max(1, n)); lamps.name = "airport-lamps"; lamps.count = n; g.add(lamps);
-  var SC = {flood: [2.2, 0.8, 1.1], obst: [0.9, 0.9, 0.9], centre: [0.8, 0.35, 0.8], tdz: [0.8, 0.35, 0.8], tcl: [0.7, 0.35, 0.7], stop: [0.7, 0.6, 0.7], sock: [0.6, 0.6, 0.6]};
+  var SC = {flood: [2.2, 0.8, 1.1], obst: [0.9, 0.9, 0.9], thr: [0.75, 0.8, 0.75], tedge: [0.75, 0.8, 0.75], centre: [0.8, 0.35, 0.8], tdz: [0.8, 0.35, 0.8], tcl: [0.7, 0.35, 0.7], stop: [0.7, 0.6, 0.7], sock: [0.6, 0.6, 0.6]};
   var glowPos = new Float32Array((n + P.papi.length)*3), glowCol = new Float32Array((n + P.papi.length)*3), obstIx = [];
   LT.forEach(function(l, i){
     var sc = SC[l.g] || [1, 1, 1]; V3.set(l.x, l.y, l.z); Q4.identity(); S3.set(sc[0], sc[1], sc[2]); M4.compose(V3, Q4, S3); lamps.setMatrixAt(i, M4);
@@ -891,6 +891,8 @@ function create(c, L, o){
   var st = {night: !!o.night, detail: 2, endIdx: o.endIdx === 1 ? 1 : 0, clear: [false, false], blink: false, papiDirty: true};
   function setLamp(i, rgb){
     var on = rgb || LAMP_OFF;
+    // by day a lamp's lens reads grey with a hint of its colour (the material then dims it to DAY_LAMP)
+    if(!st.night && rgb) on = [0.45 + 0.3*rgb[0], 0.45 + 0.3*rgb[1], 0.45 + 0.3*rgb[2]];
     lamps.instanceColor.setXYZ(i, on[0], on[1], on[2]);
     var gc = rgb || [0, 0, 0]; glowCol[i*3] = gc[0]; glowCol[i*3 + 1] = gc[1]; glowCol[i*3 + 2] = gc[2];
   }
@@ -909,7 +911,7 @@ function create(c, L, o){
   var A = {g: g, plan: P};
   A.setNight = function(v){
     st.night = !!v && v !== 0;
-    lampM.color.setScalar(st.night ? 1 : DAY_LAMP);
+    lampM.color.setScalar(st.night ? 1 : DAY_LAMP); recolor();
     signM.emissiveIntensity = st.night ? 0.85 : 0.05;
     sockM.emissive.setHex(st.night ? 0x2a2018 : 0x000000);
     vis();

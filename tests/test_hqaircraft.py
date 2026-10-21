@@ -33,6 +33,7 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
     F.count(n);
     F.setNight(false); r.day = HQV.hqMerge.drawCount(F.g);
     F.setNight(true); r.night = HQV.hqMerge.drawCount(F.g);
+    F.setDetail(1); r.far = HQV.hqMerge.drawCount(F.g); F.count(n); r.farRecount = HQV.hqMerge.drawCount(F.g); F.setDetail(2); r.near = HQV.hqMerge.drawCount(F.g);
     r.trisPerPlane = F.tris;
     r.inst = 0; F.g.traverse(function(o){ if(o.isInstancedMesh){ r.inst++; r.count = o.count; } });
     var brand = F.g.children.filter(function(o){ return /-brand$/.test(o.name); })[0];
@@ -138,6 +139,9 @@ class TestHqAircraft(unittest.TestCase):
             self.assertLessEqual(f["night"], 7, f)
             self.assertEqual(f["count"], f["n"], f)
             self.assertEqual(f["zero"], 0, f)
+            self.assertLessEqual(f["far"], 3, f)              # level 1: body, livery, wings
+            self.assertEqual(f["farRecount"], f["far"], f)    # count() keeps the level
+            self.assertEqual(f["near"], f["night"], f)
             self.assertLessEqual(f["trisPerPlane"], 12000, f)
             self.assertGreater(f["disposedMats"], 0, f)
         twelve = [f for f in self.r["parked"] if f["n"] == 12]

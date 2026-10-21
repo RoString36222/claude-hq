@@ -13,8 +13,9 @@
  *     concourse gallery under (x, z), or null (the caller uses the ground). Off the nave, a floor counts only when
  *     yRef >= floor - 1.5, so walking Ring Road 5 under the skybridge stays on the road.
  *   blockedAt(P, x, z, y) -> true when a wall, glass facade or prop at that level stands at (x, z).
- *   gateSpot(P, standId) -> {x, y, z, yaw}: in the gallery facing the stand; commuter stands (bus boarding): the
- *     gallery's south end, facing the commuter apron. null for an unknown stand.
+ *   roofAt(P, x, z) -> the top of whatever stands at (x, z) (roofs, the tower, the hangars), or null: the helicopter's floor.
+ *   gateSpot(P, standId) -> {x, y, z, yaw}: in the gallery at the glass facing the stand; commuter stands (bus
+ *     boarding): the gallery's south end, a few metres in from its end wall, facing up the gallery. null for an unknown stand.
  *   bridgePose(b, k) -> the pose of jet bridge b at extension k (0 retracted .. 1 at the door): {yaw, len, y1, cabYaw,
  *     E, door: [x, y, z] (cab door sill), bogie: [x, z], pitch}.
  *   create(c, L, o) -> {g, plan, setBridge(id, k, snap), setBoard(lines), setNight(n), setDetail(level),
@@ -22,7 +23,7 @@
  *     c: the hq3d ctx (THREE, mat, emis, canvasTex, rng, hashStr, short). o: {night}.
  *     Static parts merge per material (HQV.hqMerge); the jet bridges are 5 InstancedMeshes for all six, the cars
  *     one InstancedMesh, and every night light here is one Points cloud. setDetail(2|1|0) only toggles visibility
- *     (2: everything; 1: one merged far mesh per material plus the lights; 0: the lights at night).
+ *     (2: everything; 1: one merged far mesh per material, the parked cars and the lights; 0: the lights at night).
  *   NAVE: the terminal nave's ramp and mezzanine, shared with HQV.hqCivic.AIRPORT_NAVE (tests/test_hqairbldg.py
  *     checks they match).
  * tests/test_hqairbldg.py runs it under node against the vendored three.js.
@@ -119,13 +120,14 @@ function plan(L){
   // ---- gate spots
   var face = yawOf(F.B[0], F.B[1]);
   contact.forEach(function(s){
-    var vk = toF(F, s.x, s.z)[1], p = toW(F, conc.u1 - 2.5, vk);
+    var vk = toF(F, s.x, s.z)[1], p = toW(F, conc.u1 - 1.6, vk);        // close to the glass: the nose and bridge under the VDGS
     P.gates[s.id] = {x: p[0], y: GATE, z: p[1], yaw: face};
   });
   if(commuter.length){
     var cu = 0, cv = 0;
     commuter.forEach(function(s){ var q = toF(F, s.x, s.z); cu += q[0]/commuter.length; cv += q[1]/commuter.length; });
-    var su = conc.u1 - 6, sv = conc.v0 + 4, p = toW(F, su, sv), d = dirW(F, cu - su, cv - sv);
+    // clear of the end wall and its sign, facing up the gallery (stepping off an Isle Hopper you look along it)
+    var su = conc.u1 - 6, sv = conc.v0 + 8, p = toW(F, su, sv), d = dirW(F, 0, 1);
     commuter.forEach(function(s){ P.gates[s.id] = {x: p[0], y: GATE, z: p[1], yaw: yawOf(d[0], d[1])}; });
   }
   // ---- jet bridges, one per contact stand
@@ -219,6 +221,19 @@ function blockedAt(P, x, z, y){
     if(b.y0 < yy + 1.6 && b.y1 > yy + 0.4 && inBlock(b, q[0], q[1])) return true;
   }
   return false;
+}
+// the top of whatever stands at (x, z): a wall's or a building's roof, the concourse's and skybridge's roofs, the
+// hangars, the tower's cab; null over open ground. What a helicopter lands on or runs into.
+function roofAt(P, x, z){
+  if(!P || !P.blocks) return null;
+  var q = toF(P.F, +x || 0, +z || 0), u = q[0], v = q[1], y = null, i;
+  function up(h){ if(y == null || h > y) y = h; }
+  for(i = 0; i < P.blocks.length; i++) if(inBlock(P.blocks[i], u, v)) up(P.blocks[i].y1);
+  var C = P.conc, S = P.sky;
+  if(C && u >= C.u0 && u <= C.u1 && v >= C.v0 && v <= C.v1) up(P.gate + ROOF - 4.4);
+  if(S && u >= S.u0 && u <= S.u1 && Math.abs(v - S.v) <= S.w/2 + 0.2) up(S.roof + 0.3);
+  (P.hangars || []).forEach(function(h){ if(u >= h.u0 && u <= h.u1 && v >= h.v0 && v <= h.v1) up(P.Ly + 22); });
+  return y;
 }
 function gateSpot(P, id){
   var g = P && P.gates && P.gates[String(id)];
@@ -653,15 +668,25 @@ function create(c, L, o){
 
   /* ---- the far meshes (detail 1): one merged mesh per material ---- */
   tgt = far;
-  var farL = M("farLight", 0xd2d6da, {roughness: 0.8}), farD = M("farDark", 0x34495a, {roughness: 0.4, metalness: 0.3});
-  fbox(C.u0, C.u1, C.v0, C.v1, Ly, G + 1, farL); fbox(C.u0, C.u1, C.v0, C.v1, G + 1, G + 6, farD); fbox(C.u0 - 0.5, C.u1 + 1, C.v0, C.v1, G + 6, P.top, farL);
-  fbox(sky.u0, C.u0, sky.v - hs, sky.v + hs, G - 0.45, G + 0.9, farL); fbox(sky.u0, C.u0, sky.v - hs, sky.v + hs, G + 0.9, sky.roof, farD);
-  fcyl(tu, tv, 3.0, 4.2, ty, ty + 56, 8, farL); fcyl(tu, tv, 6.6, 5.0, ty + 56, ty + 62, 8, farD); fcyl(tu, tv, 7, 7, ty + 62, ty + 65, 8, farL);
+  // the glazing and the tower cab keep the near tint (and its glow at night), so the switch at 600 m does not pop
+  var farL = M("farLight", 0xd2d6da, {roughness: 0.8}), farD = M("farDark", 0x3a434c, {roughness: 0.9});
+  var farG = N("farGlass", 0x86a8ba, 0xffd9a0, 0, 0.32, {roughness: 0.15, metalness: 0.35}), farC = N("farCab", 0x5f95a3, 0x5fe0c8, 0, 0.3, {roughness: 0.1, metalness: 0.4});
+  fbox(C.u0, C.u1, C.v0, C.v1, Ly, G + 1, farL); fbox(C.u0, C.u1, C.v0, C.v1, G + 1, G + 6, farG); fbox(C.u0 - 0.5, C.u1 + 1, C.v0, C.v1, G + 6, P.top, farL);
+  fbox(sky.u0, C.u0, sky.v - hs, sky.v + hs, G - 0.45, G + 0.9, farL); fbox(sky.u0, C.u0, sky.v - hs, sky.v + hs, G + 0.9, sky.roof, farG);
+  fcyl(tu, tv, 3.0, 4.2, ty, ty + 56, 8, farL); fcyl(tu, tv, 6.6, 5.0, ty + 56, ty + 62, 8, farC); fcyl(tu, tv, 7, 7, ty + 62, ty + 65, 8, farL);
   fbox(au - 0.8, au + 0.8, av - 0.8, av + 0.8, A.y, ah + 2, farL);
   (P.hangars || []).forEach(function(H){ fbox(H.u0, H.u1, H.v0, H.v1, Ly, Ly + 19, farL); });
   if(P.fire){ fbox(P.fire.hall.u0, P.fire.hall.u1, P.fire.hall.v0, P.fire.hall.v1, Ly, Ly + 9, farL); fbox(P.fire.tower.u0, P.fire.tower.u1, P.fire.tower.v0, P.fire.tower.v1, Ly, Ly + 30, farL); }
   if(P.fuel) P.fuel.tanks.forEach(function(t){ fcyl(t[0], t[1], P.fuel.r, P.fuel.r, Ly, Ly + P.fuel.h, 12, farL); });
-  fbox(CP.u0, CP.u1, CP.v0, CP.v1, lv[0], lv[3] + 1.1, farL);
+  // the car park as the near one reads from afar: open decks with parapets on its columns, the core, the roof lamps
+  for(var fc = 0; fc < colU.length; fc++) for(var fv = 0; fv < 8; fv++){ var fvv = CP.v0 + 0.4 + (CP.v1 - CP.v0 - 0.8)*fv/7; fbox(colU[fc] - 0.25, colU[fc] + 0.25, fvv - 0.25, fvv + 0.25, lv[0], lv[3], farL); }
+  for(var fl2 = 0; fl2 < lv.length; fl2++){
+    fbox(CP.u0, CP.u1, CP.v0, CP.v1, lv[fl2] - 0.3, lv[fl2], farL);
+    if(fl2){ fbox(CP.u0, CP.u1, CP.v0, CP.v0 + 0.3, lv[fl2], lv[fl2] + 1.1, farL); fbox(CP.u0, CP.u1, CP.v1 - 0.3, CP.v1, lv[fl2], lv[fl2] + 1.1, farL);
+             fbox(CP.u0, CP.u0 + 0.3, CP.v0, CP.v1, lv[fl2], lv[fl2] + 1.1, farL); fbox(CP.u1 - 0.3, CP.u1, CP.v0, CP.v1, lv[fl2], lv[fl2] + 1.1, farL); }
+  }
+  if(fbA) fbox(fbA.a[0] - 3, fbA.a[0] + 5, CP.v0 + 0.3, CP.v0 + 6, lv[0], lv[3] + 2.6, farL);
+  lampPts.forEach(function(p){ fbox(p[0] - 0.1, p[0] + 0.1, p[2] - 0.1, p[2] + 0.1, lv[3], lv[3] + 5, farD); fbox(p[0] - 0.35, p[0] + 0.35, p[2] - 0.35, p[2] + 0.35, lv[3] + 5, lv[3] + 5.2, farL); });
   if(P.depot) fbox(P.depot.shed.u0, P.depot.shed.u1, P.depot.shed.v0, P.depot.shed.v1, Ly, Ly + 4.5, farL);
   if(HQV.hqMerge && HQV.hqMerge.mergeStatic) HQV.hqMerge.mergeStatic(THREE, far);
   tgt = near;
@@ -693,7 +718,7 @@ function create(c, L, o){
   var night = o.night != null ? !!o.night : false, level = 2;
   function apply(){
     nightList.forEach(function(r){ r.m.emissiveIntensity = night ? r.night : r.day; });
-    near.visible = level >= 2; bg.visible = level >= 2; carIM.visible = level >= 2; far.visible = level === 1;
+    near.visible = level >= 2; bg.visible = level >= 2; carIM.visible = level >= 1; far.visible = level === 1;
     points.visible = night;
   }
   apply();
@@ -751,7 +776,7 @@ function create(c, L, o){
   return api;
 }
 
-HQV.hqAirbldg = {plan: plan, floorAt: floorAt, blockedAt: blockedAt, gateSpot: gateSpot, bridgePose: bridgePose, cabBox: cabBox, create: create,
+HQV.hqAirbldg = {plan: plan, floorAt: floorAt, blockedAt: blockedAt, roofAt: roofAt, gateSpot: gateSpot, bridgePose: bridgePose, cabBox: cabBox, create: create,
   NAVE: NAVE, toFrame: function(L, x, z){ return toF(frameOf(L), x, z); }, toWorld: function(L, u, v){ return toW(frameOf(L), u, v); },
   K: {DRUM_OUT: DRUM_OUT, DRUM_BACK: DRUM_BACK, DRUM_R: DRUM_R, COL_R: COL_R, CAB_D: CAB_D, CAB_W: CAB_W, BOGIE_R: BOGIE_R, BOGIE_BACK: BOGIE_BACK, RET_LEN: RET_LEN, DOOR: DOOR}};
 })();

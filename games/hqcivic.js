@@ -58,7 +58,9 @@ var STYLES = {
   brick:  {wall: "#9a5a44", win: "#36434f", bay: [3, 3.4], fw: 0.42, fh: 0.52, lit: 0.45, glow: "#ffd9a0"},
   stone:  {wall: "#d8d0bf", win: "#3f4d5a", bay: [3.5, 4.2], fw: 0.36, fh: 0.6, lit: 0.5, glow: "#ffe3b0"},
   white:  {wall: "#eceff2", win: "#62829e", bay: [3, 3.6], fw: 0.56, fh: 0.5, lit: 0.6, glow: "#f4fbff"},
-  plain:  {wall: "#b5b1a8", win: "#46505a", bay: [6, 4.5], fw: 0.3, fh: 0.22, lit: 0.35, glow: "#ffe0a8"}
+  plain:  {wall: "#b5b1a8", win: "#46505a", bay: [6, 4.5], fw: 0.3, fh: 0.22, lit: 0.35, glow: "#ffe0a8"},
+  // the airport terminal's side halls: bands of glazing, every window lit (a terminal never sleeps)
+  terminal: {wall: "#56708a", win: "#9cc0da", bay: [3, 3.6], fw: 0.96, fh: 0.62, lit: 1, glow: "#ffeac0"}
 };
 var TEX = {};               // style -> {map, emi}: shared by every building
 
@@ -865,7 +867,7 @@ BUILD.airport = function(k){
   // the skirt: down from the plinth past the ground (it falls to -0.6 m under the site's back)
   k.box(k.W, 1.3, k.D, pave, 0, -0.65, 0).castShadow = false;
   // side masses: blocking, two floors to the eaves
-  [-1, 1].forEach(function(s){ k.mass("glass", s*(nw + hw)/2, 0, hw - nw, 2*hd, 2, {fh: (H.eaves - PLINTH)/2, roofCol: 0x6b7680}); });
+  [-1, 1].forEach(function(s){ k.mass("terminal", s*(nw + hw)/2, 0, hw - nw, 2*hd, 2, {fh: (H.eaves - PLINTH)/2, roofCol: 0x6b7680}); });
   // the wave roof: a closed slab over the hall, its underside 14 m at the eaves rising to the crown, waving along u
   function under(x, z){ var a = x/(hw + 1), w = 0.5 - 0.5*Math.cos(2*PI*(z/sz)/H.waveLen); return H.roof0 + H.crown*(1 - a*a) + H.wave*w; }
   (function(){

@@ -118,10 +118,14 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   out.draws = draws; out.sameObjects = ids() === before;
   A.setNight(false); A.setDetail(2);
   out.stats = A.stats();
-  // lamp colours through the mesh: the in-use end flips everything
+  // by day the lamps read grey (a hint of their colour); at night their colour
+  A.setRunway(0); out.dayLamps = A.lampColors();
+  // lamp colours through the mesh (at night): the in-use end flips everything
+  A.setNight(true);
   A.setRunway(0); out.mesh0 = A.lampColors();
   A.setRunway(1); out.mesh1 = A.lampColors();
   A.setRunway(0); A.setHold(0, true); out.meshHold = A.lampColors(); A.setHold(0, false);
+  A.setNight(false);
   // PAPI against a camera on the 36 approach: ~3.0 deg (2 white, 2 red), 4.5 deg (all white), 1.5 deg (all red)
   var cam = new THREE.PerspectiveCamera(50, 1, 0.3, 3000), pp = P.papi.filter(function(p){ return p.end === 0; }), mid = pp[1];
   out.papi = {};
@@ -229,6 +233,12 @@ class TestHqAirport3d(unittest.TestCase):
             if u <= RU - 50:
                 self.assertEqual(self.r["colors"]["0"][i], C["green"])
         self.assertTrue(any(self.r["colors"]["0"][i] == C["yellow"] for i, _ in tcl))
+
+    def test_day_lamps_read_grey(self):
+        for i, l in self.lights("thr"):
+            c = self.r["dayLamps"][i]
+            self.assertLess(max(c) - min(c), 0.35, c)            # not a saturated green or red
+            self.assertGreater(min(c), 0.4, c)
 
     def test_mesh_colours_follow_set_runway_and_hold(self):
         m0, m1, mh, C = self.r["mesh0"], self.r["mesh1"], self.r["meshHold"], self.C

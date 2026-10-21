@@ -767,7 +767,7 @@ HQV.hqWorlds.city3d = function(c, w){
   }
 
   /* ---------- Cities: a v2 world's civic buildings, residents, traffic, sea, boats and travel ---------- */
-  var MENU_CSS = "position:absolute;left:50%;top:18%;transform:translateX(-50%);z-index:6;min-width:260px;max-width:min(440px,92%);" +
+  var MENU_CSS = "position:absolute;left:50%;top:18%;transform:translateX(-50%);z-index:60;min-width:260px;max-width:min(440px,92%);max-height:max(160px,calc(82% - 232px));overflow-y:auto;" +
     "display:grid;gap:6px;padding:12px 14px;border-radius:12px;color:var(--ink);background:color-mix(in srgb,var(--panel) 94%,transparent);" +
     "border:1px solid var(--line);box-shadow:var(--shadow-lg);font-size:13px";
   var ITEM_CSS = "text-align:left;padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel2,var(--panel));color:var(--ink);cursor:pointer;font:inherit";
@@ -1372,6 +1372,8 @@ HQV.hqWorlds.city3d = function(c, w){
     }
     apCivic = civics.filter(function(B){ return B && B.kind === "airport"; })[0] || null;
     apNight(night);
+    // the near level's shaders now, not on the frame you first come within 600 m
+    if(c.prewarm) [ap3, apB, apV, apFleet && apFleet.jet, apFleet && apFleet.commuter].forEach(function(m){ if(m && m.g) c.prewarm(m.g); });
   }
   function apErr(e){ if(window.console) console.warn("airport:", e); w.airportErr = String((e && e.stack) || e); }
   function apNight(n){
@@ -1416,7 +1418,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(lv === apLevel) return;
     apLevel = lv;
     if(ap3) ap3.setDetail(lv); if(apB) apB.setDetail(lv); if(apV) apV.setDetail(lv);
-    if(apFleet){ apFleet.jet.g.visible = lv >= 1; apFleet.commuter.g.visible = lv >= 1; }
+    if(apFleet){ apFleet.jet.g.visible = lv >= 1; apFleet.commuter.g.visible = lv >= 1; apFleet.jet.setDetail(lv); apFleet.commuter.setDetail(lv); }
     // shadows only near: the sun's shadow box follows you (120 m), so from further off a caster only adds a pass
     [ap3, apB, apFleet && apFleet.jet, apFleet && apFleet.commuter].forEach(function(m){
       if(m && m.g) m.g.traverse(function(o){ if(!o.isMesh) return; if(o.userData.apCast == null) o.userData.apCast = !!o.castShadow; o.castShadow = o.userData.apCast && lv >= 2; });
@@ -2066,6 +2068,8 @@ HQV.hqWorlds.city3d = function(c, w){
         if(x >= b.min.x && x <= b.max.x && z >= b.min.z && z <= b.max.z && b.max.y > y) y = b.max.y; });
     }
     var pf = apL ? AF.floorAt(apL, x, z) : null; if(pf != null && pf > y) y = pf;        // AIR: the airfield's platform
+    if(apP) [[0, 0], [6, 0], [-6, 0], [0, 6], [0, -6]].forEach(function(d){       // AIR: its buildings' roofs, the tower (the rotor's
+      var pr = ABL.roofAt(apP, x + d[0], z + d[1]); if(pr != null && pr > y) y = pr; });   // 6 m clear of their walls)
     var a = air ? air.floor(x, z) : null;
     return a != null && a > y ? a : y;
   };

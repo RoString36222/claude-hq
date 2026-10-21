@@ -249,6 +249,7 @@ function create(c, S, o){
   var jets = [], roar = null, boomAt = {}, seed = WD && WD.hash32 ? WD.hash32(String(W.id || "")) : 7; A.seed = seed;
   function gy(x, z){ return o.groundY ? o.groundY(x, z) : WD.groundAt(W, x, z); }
   function land(x, z){ return !sea || sea.land(x, z); }
+  function fieldY(x, z){ var F = HQV.hqAirfield; return o.airfield && F && F.floorAt ? F.floorAt(o.airfield, x, z) : null; }
   // is the turned rectangle F (x, z, rot, hw, hd) clear for something built: on land, off the roads, sites and lots
   // (sites: allowed ones), nothing blocking, flat to within tol m. -> its highest ground, else null
   function clear(F, ok, tol, quick){
@@ -476,13 +477,15 @@ function create(c, S, o){
         return {x: s.x/100 + f[0]/fl*r, z: s.z/100 + f[1]/fl*r, yaw: Math.atan2(f[0], f[1])};
       }
     }
-    if(!land(st.x, st.z)) return null;
-    if(st.y - gy(st.x, st.z) > 1.5 && A.groundAt(st.x, st.z) == null) return null;     // a roof with no stairs down
+    // the airfield's platform and piers are land too (most of it stands over the sea)
+    var fy = fieldY(st.x, st.z);
+    if(!land(st.x, st.z) && fy == null) return null;
+    if(st.y - (fy != null ? fy : gy(st.x, st.z)) > 1.5 && A.groundAt(st.x, st.z) == null) return null;     // a roof with no stairs down
     var cy = Math.cos(st.yaw), sy = Math.sin(st.yaw);
     var offs = [[3, 0.5], [-3, 0.5], [3.4, -1.5], [-3.4, -1.5], [0, 7], [0, -8]];
     for(var k = 0; k < offs.length; k++){
       var x = st.x + offs[k][0]*cy + offs[k][1]*sy, z = st.z - offs[k][0]*sy + offs[k][1]*cy;
-      if(land(x, z) && !(o.blocked && o.blocked(x, z))) return {x: x, z: z, yaw: st.yaw};
+      if((land(x, z) || fieldY(x, z) != null) && !(o.blocked && o.blocked(x, z))) return {x: x, z: z, yaw: st.yaw};
     }
     return null;
   };

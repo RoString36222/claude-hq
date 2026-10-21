@@ -80,6 +80,12 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   out.gateSpots = Object.keys(P.gates).map(function(id){ var s = AB.gateSpot(P, id); return {id: id, s: s, floor: AB.floorAt(P, s.x, s.z, s.y), blocked: AB.blockedAt(P, s.x, s.z, s.y)}; });
   // the concourse ground floor blocks at apron level; the gallery does not block above it
   var cg = W((P.conc.u0 + P.conc.u1)/2, 40); out.concBlock = [AB.blockedAt(P, cg[0], cg[1], L.y), AB.blockedAt(P, cg[0], cg[1], P.gate)];
+  // the helicopter's floor: the tower, the concourse, the skybridge, both hangars, the car park; open apron: null
+  var H0 = P.hangars[0], H1 = P.hangars[1], hc0 = W((H0.u0 + H0.u1)/2, (H0.v0 + H0.v1)/2), hc1 = W((H1.u0 + H1.u1)/2, (H1.v0 + H1.v1)/2);
+  var skm = W((P.sky.u0 + P.sky.u1)/2, P.sky.v), cpm = W((P.carpark.u0 + P.carpark.u1)/2, (P.carpark.v0 + P.carpark.v1)/2);
+  out.roofs = {tower: AB.roofAt(P, P.tower.x, P.tower.z), conc: AB.roofAt(P, cg[0], cg[1]), sky: AB.roofAt(P, skm[0], skm[1]), hangar0: AB.roofAt(P, hc0[0], hc0[1]),
+               hangar1: AB.roofAt(P, hc1[0], hc1[1]), carpark: AB.roofAt(P, cpm[0], cpm[1]), stand: AB.roofAt(P, L.stands[0].x, L.stands[0].z), none: AB.roofAt(null, 0, 0),
+               ys: P.ys, Ly: P.Ly, gate: P.gate};
 
   /* ---------- the civic terminal on its real site: its nave is plan(L)'s ---------- */
   var Wd = HQV.world.pack(JSON.parse(zlib.gunzipSync(fs.readFileSync(root + "/tests/fixtures/claude-hq@2.json.gz"))));
@@ -308,7 +314,7 @@ class TestHqAirbldg(unittest.TestCase):
                 self.assertLess(abs(math.atan2(math.sin(math.atan2(*d) - g["s"]["yaw"]), math.cos(math.atan2(*d) - g["s"]["yaw"]))), 0.6, g["id"])
         com = [g for g in self.r["gateSpots"] if self.stands[g["id"]]["kind"] == "commuter"]
         u, v = self.r_frame(com[0]["s"]["x"], com[0]["s"]["z"])
-        self.assertAlmostEqual(v, -146, places=6)
+        self.assertAlmostEqual(v, -142, places=6)              # the south end (v0 -150), clear of its end wall
 
     def r_frame(self, x, z):
         f = self.L["frame"]
@@ -355,6 +361,17 @@ class TestHqAirbldg(unittest.TestCase):
         H = [h for h in P["hangars"] if h["open"]][0]
         self.assertTrue(H["u0"] < u - 19 and u + 19.05 < H["u1"] and H["v0"] < v - 18 and v + 18 < H["v1"])
         self.assertAlmostEqual(hs["y"], self.L["y"], places=6)
+
+    def test_roofs_for_the_helicopter(self):
+        r = self.r["roofs"]
+        self.assertAlmostEqual(r["tower"], r["ys"] + 66, places=3)
+        self.assertGreaterEqual(r["conc"], r["gate"] + 7)
+        self.assertGreater(r["sky"], r["gate"] + 4)
+        self.assertAlmostEqual(r["hangar0"], r["Ly"] + 22, places=3)
+        self.assertAlmostEqual(r["hangar1"], r["Ly"] + 22, places=3)
+        self.assertGreater(r["carpark"], r["ys"] + 12)
+        self.assertIsNone(r["stand"])
+        self.assertIsNone(r["none"])
 
     def test_tower(self):
         t = self.r["plan"]["tower"]

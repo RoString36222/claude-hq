@@ -561,7 +561,9 @@ Routes from a v1 end (no `push`) behave as today, so today's tests still pass af
 |---|---|---|---|
 | 2 near | d < 600 m | everything | ≤ 110 static |
 | 1 mid | 600 ≤ d < 1800 m (the Commons spawn, about 770 m away, is here) | ground (3), white + yellow paint (2), the lamp mesh + glow (2, night only), buildings as one merged far mesh per material (≤ 6), parked fleet (≤ 14), tower beacon. No vehicles, no fixtures, no fence, no signs | ≤ 30 |
-| 0 far | d ≥ 1800 m, or `map` mode | ground (3) and white paint (1); at night the lamp glow only | ≤ 6 |
+| 0 far | d ≥ 1800 m | ground (3) and white paint (1); at night the lamp glow only | ≤ 6 |
+
+`map` mode uses level 1 (as built): the stands with their parked jets and the edge lights read well on the map. At level 1 the buildings' far mesh keeps the car park's open decks, parapets, columns and lamp posts and the near glazing and tower-cab tints (with their night glow), and the parked cars stay, so the switch at 600 m does not pop; the parked fleet draws only body, livery and wings (3 calls a kind).
 
 `setDetail` only toggles `visible`. It never rebuilds, and moving from one level to another allocates nothing. Vehicles stop updating below level 2.
 
@@ -569,6 +571,8 @@ Whole-view gates, measured headless with `HQ3D_DEBUG.stats()`:
 - Commons spawn view ≤ baseline + 30 (level 1);
 - apron view from the gallery ≤ 300;
 - every view ≤ `MAX_DRAW_CALLS` 400.
+
+As built (round 2): `HQ3D_DEBUG.stats().drawCalls` / `triangles` are now the renderer's own counts of the last frame (shadow pass included); the world's tile counts moved to `worldDrawCalls` / `worldTriangles`. Before, the stat counted only the City's tiles, so these gates measured nothing of the airport. On real counts the Commons spawn view is ~550 calls **before** the airport (the whole City in view, shadow pass included), so `tools/airport_smoke.py` gates the views with most of the Commons in them (the spawn, the whole airfield from the air, a final approach over the city) at `WIDE_CAP` 650 and the airport's share at the spawn at +30 (its groups hidden vs shown: measured +5..+27, modules 16 calls by day, 17 at night); every other view stays ≤ 400.
 
 CPU:
 - airport per-frame work (traffic, poses, vehicles, lights) ≤ 1.0 ms average at the apron, measured by `HQV.hqCity3d.air.perf()`, which integration adds;

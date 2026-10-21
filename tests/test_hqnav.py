@@ -297,7 +297,7 @@ class HqNavTest(unittest.TestCase):
         P, tiers = self.out["places"], self.out["siteTiers"]
         allowed = {"dock", "port", "transit", "airport", "townhall", "hospital", "clinic", "police", "fire", "school",
                    "university", "market", "mall", "bank", "library", "post", "stadium", "fountain", "skatepark",
-                   "myhq", "hq", "travel"}
+                   "carpark", "myhq", "hq", "travel"}
         for t, lst in P.items():
             with self.subTest(tier=t):
                 d = [p["dist"] for p in lst]
@@ -319,6 +319,7 @@ class HqNavTest(unittest.TestCase):
         self.assertNotIn("hospital", k1)
         self.assertIn("port", k5)
         self.assertIn("stadium", k5)
+        self.assertIn("carpark", k5, "the vehicle garage is a place to go")
         self.assertGreater(len(P["5"]), len(P["1"]))
         self.assertEqual(self.out["commonsTravel"], [{"label": "My island (ferry)", "world": "user:%s@2" % ME}])
         self.assertEqual(set(self.out["v1Kinds"]), {"fountain", "skatepark"})

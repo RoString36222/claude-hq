@@ -90,6 +90,9 @@ const fn civic(kind: &'static str, tier: u8, count: i64, w_cm: i64, d_cm: i64, a
     Civic { kind, tier, count, w_cm, d_cm, apart_cm, place }
 }
 
+/// The multi-storey garage's kind (games/hqcarpark.js draws it).
+pub const CARPARK: &str = "carpark";
+
 const RESIDENTIAL: &[u8] = &[district::SUBURB, district::RESIDENTIAL, district::OLDTOWN];
 const INDUSTRIAL: &[u8] = &[district::INDUSTRIAL, district::LOGISTICS];
 
@@ -119,6 +122,12 @@ pub const CIVIC: &[Civic] = &[
     civic("dock", 1, 1, 1_200, 2_400, 0, Place::Shore),
     civic("port", 3, 1, 3_000, 4_000, 0, Place::Shore),
     civic("airport", 5, 1, 4_000, 16_000, 0, Place::Edge),
+    // >>> carpark (HQ 3.2 vehicles: the multi-storey garage every owned vehicle lives in) >>>
+    // Last, so it takes what the services left; on an island from tier 1 (your own fleet is
+    // called from it), by an arterial downtown if one has room. A city with no lot for it has
+    // none (placed with `soft`: it never fails the world).
+    civic(CARPARK, 1, 1, 5_000, 3_600, 0, on(&[district::DOWNTOWN, district::COMMERCIAL, district::OLDTOWN, district::CIVIC], true, false, false)),
+    // <<< carpark <<<
 ];
 
 /// The HQ tabs (games/hqbase.js VIEWS, in its order) and the kind of site whose door
@@ -591,6 +600,12 @@ pub fn place(seed: u64, p: &Profile, t: &Terrain, g: &Graph, blocks: &mut [Block
         match row.place {
             Place::Plaza => c.plaza(row)?,
             Place::Junction => c.junction(row)?,
+            // the carpark is optional: a city with no lot for it simply has none
+            Place::Lots { districts, arterial, park, far } if row.kind == CARPARK => {
+                if c.lots_place(row, districts, arterial, park, far, false).is_err() {
+                    c.lots_place(row, districts, false, park, far, false).ok();
+                }
+            }
             Place::Lots { districts, arterial, park, far } => c.lots_place(row, districts, arterial, park, far, false)?,
             Place::Coverage { radius_cm, along_arterial } => c.coverage(row, radius_cm, along_arterial),
             Place::Along { every_cm, tram } => c.along(row, every_cm, tram),

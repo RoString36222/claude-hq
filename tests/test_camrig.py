@@ -133,9 +133,16 @@ out.dive = {chase: diveRun("chase"), near: diveRun("near"), far: diveRun("far"),
   var s = C.create({mode: "chase"}), free = run(s, t, 2);
   var hitFirst = run(s, t, 1/60, wall), hitP = run(s, t, 0.5, wall);
   var after = run(s, t, 0.1);
-  var s2 = C.create({mode: "chase"}); run(s2, t, 2); run(s2, t, 0.5, wall); var later = run(s2, t, 3);
+  // back out by 3 s of easing, after the COL_HOLD (0.6 s) the camera keeps the pulled-in distance (HQ 3.3.1)
+  var s2 = C.create({mode: "chase"}); run(s2, t, 2); run(s2, t, 0.5, wall); var later = run(s2, t, 3 + C.COL_HOLD);
   function d(p){ var dx = p.pos.x - p.look.x, dy = p.pos.y - p.look.y, dz = p.pos.z - p.look.z; return Math.sqrt(dx*dx + dy*dy + dz*dz); }
   out.collide = {free: d(free), hitFirst: d(hitFirst), hit: d(hitP), easing: d(after), later: d(later), radius: C.MODES.chase.collide};
+  // riding past buildings: the ray clips a corner every 0.3 s (hit 0.15 s, clear 0.15 s); after the first pull-in the
+  // camera must not pump back out between corners (HQ 3.3.1: COL_HOLD)
+  var s3 = C.create({mode: "chase"}); run(s3, t, 2); run(s3, t, 0.15, wall);
+  var lo = 1e9, hi = -1e9; for(var k = 0; k < 8; k++){ var a1 = d(run(s3, t, 0.15)), a2 = d(run(s3, t, 0.15, wall));
+    lo = Math.min(lo, a1, a2); hi = Math.max(hi, a1, a2); }
+  out.collide.pump = hi - lo;
   var slope = {ground: function(x, z){ return 0.6*x + 0.3*z; }, hit: function(){ return 1; }}, worst = 1e9;
   ["far", "chase", "near"].forEach(function(m){
     [0, 1.5, 3, 4.5].forEach(function(yaw){
@@ -603,6 +610,7 @@ class CamRig(unittest.TestCase):
         self.assertLess(c["hitFirst"], c["free"] - 1e-3, "pull-in did not start")
         self.assertLess(c["easing"], c["free"] - 0.1, "push-out eases, it does not snap")
         self.close(c["later"], c["free"], 0.01)
+        self.assertLess(c["pump"], 0.05, "the camera pumped in and out between corners")
         self.assertGreaterEqual(self.o["slopeClear"], 0.3 - 1e-9)
 
     def test_recentre_in_chase_family(self):

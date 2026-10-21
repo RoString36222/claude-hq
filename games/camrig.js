@@ -71,7 +71,7 @@ var FAR = 6000, BLEND = 0.5, BLEND_RED = 0.3, DIVE = 1.2, DIVE_RED = 0.6, FLY_MA
 var HEAD_MIN = 1.6, HEAD_K = 1.1, HEAD_MAX = 6, HEAD_HOLD = 4, CARRY_MAX = 0.5, VEH_LAG = 7, SWING_HL = 0.08, PIVOT_W = 12, PIVOT_MAX = 1.5;
 // HEAD_BIAS/HEAD_BIAS_MAX pick the side of a near-PI goal; HEAD_AGAINST makes the camera wait for a goal turning toward it
 var HEAD_BIAS = 0.3, HEAD_BIAS_MAX = 0.7, HEAD_AGAINST = 10;
-var AHEAD_W = 4, AHEAD_MAX = 3, AHEAD_K = 0.3, COL_IN = 25, COL_OUT = 3, COL_HYST = 0.3;
+var AHEAD_W = 4, AHEAD_MAX = 3, AHEAD_K = 0.3, COL_IN = 25, COL_OUT = 3, COL_HYST = 0.3, COL_HOLD = 0.6;
 var RECENTRE = 2, SWING = 1.9, LIFT = 2, ORBIT_K = 0.006, LOOK_K = 0.0022, ZOOM_K = 0.0015;
 var CINE_SHOT = 12;
 var NEAR_MAX = 2.5;        // m: the chase family's near plane grows with its distance up to this (3.2)
@@ -347,15 +347,18 @@ function pullIn(s, from, want, radius, dt, q){
   return pos;
 }
 // Chase collision along pivot -> wanted camera, as a fraction of that ray: pull in on a spring (COL_IN), ease
-// back out (COL_OUT); while blocked the goal only moves out once the room has grown COL_HYST m.
+// back out (COL_OUT); while blocked the goal only moves out once the room has grown COL_HYST m. Once clear it keeps
+// the pulled-in distance for COL_HOLD s before easing out (HQ 3.3.1): riding past buildings the ray clips corner
+// after corner, and without the hold the camera pumped in (fast) and out (slow) at every one.
 function chaseCollide(s, from, want, radius, dt, q){
   var _ = s._, vec = v3(want.x - from.x, want.y - from.y, want.z - from.z), len = vlen(vec) || 1e-6;
   var t = clamp(num(q.hit(from, want), 1), 0, 1), goal = 1;
   if(t < 1){
     var d = Math.min(len, Math.max(0.6, t*len - radius));
     if(_.colG == null || d < _.colG || d > _.colG + COL_HYST) _.colG = d;
-    goal = Math.min(1, _.colG/len);
-  } else _.colG = null;
+    goal = Math.min(1, _.colG/len); _.colHold = COL_HOLD;
+  } else if(_.colG != null && (_.colHold = (_.colHold || 0) - dt) > 0) goal = Math.min(1, _.colG/len);   // hold
+  else _.colG = null;
   if(_.colFrac == null){ _.colFrac = goal; _.colV = 0; }
   else {
     var cs = spring(_.colFrac, _.colV, goal, goal < _.colFrac ? COL_IN : COL_OUT, dt);
@@ -666,7 +669,7 @@ function occluders(pos, lookAt, items){
 }
 
 HQV.camrig = {MODES: MODES, ORDER: ORDER, VEHICLE: VEHICLE, create: create, setSettings: setSettings, setMode: setMode,
-  cycle: cycle, dive: dive, rise: rise, flyMap: flyMap, input: input, absorb: absorb, step: step, occluders: occluders,
+  cycle: cycle, dive: dive, rise: rise, flyMap: flyMap, input: input, absorb: absorb, step: step, occluders: occluders, COL_HOLD: COL_HOLD,
   fpAnchorWorld: fpAnchorWorld, spring: spring, smootherstep: smootherstep,
   consts: {SPAN_MIN: SPAN_MIN, SPAN_MAX: SPAN_MAX, HALF: HALF, LOOK_H: LOOK_H, MAP_TAN: MAP_TAN}};
 })();

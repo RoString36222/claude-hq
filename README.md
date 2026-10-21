@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.3.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.3.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -358,6 +358,10 @@ and feature guide.
 
 ## Changelog
 
+- **3.3.2 — No more camera pumping near buildings.** Riding (or walking) past buildings, the chase camera kept
+  zooming in and out: its collision ray clipped corner after corner, pulling in fast and easing out between them.
+  Now once it pulls in it keeps that distance for 0.6 s after the last hit before easing back out, so passing a
+  row of buildings is one smooth move in and one out.
 - **3.3.1 — S walks you toward the camera.** On foot, holding **S** now turns you to face the camera (smoothly,
   without overshooting) and walks you toward it, as in most third-person games; the camera keeps its heading and
   just backs up with you, and keeps holding when you let go. Press **W** (or turn with **A**/**D**) and it swings

@@ -3328,8 +3328,19 @@ function mount(el, api){
   function liftLand(w, name, carry){
     var b = null;
     if(name === "basement"){
-      if(carry.b && carry.b.world && carry.b.world !== w && carry.b.own) propRemove(carry.b);   // it leaves the street
-      try { if(HQV.hqBasement && HQV.hqBasement.adopt) b = HQV.hqBasement.adopt(w, {id: carry.id, kind: carry.kind, own: carry.own, b: carry.b}); } catch(e){ b = null; }
+      var cb = carry.b;
+      if(cb && cb.world && cb.world !== w){
+        if(cb.own) propRemove(cb);                                  // it leaves the street
+        else { var ob = cb.world.bikes, oi = ob ? ob.indexOf(cb) : -1; if(oi >= 0) ob.splice(oi, 1); }   // [3.5.2] a starter too
+      }
+      try { if(HQV.hqBasement && HQV.hqBasement.adopt) b = HQV.hqBasement.adopt(w, {id: carry.id, kind: carry.kind, own: carry.own, b: cb}); } catch(e){ b = null; }
+      // [3.5.2] adopt() moved the prop's position into B1 but not its model: a starter's mesh stayed in the City's
+      // scene, so it vanished on arrival. Move the mesh into B1's scene with it.
+      if(cb && cb.g && !cb.own){ if(cb.g.parent !== (w.scene || scene)){ if(cb.g.parent) cb.g.parent.remove(cb.g); (w.scene || scene).add(cb.g); } cb.world = w; cb.g.visible = true; }
+      // [3.5.2] an owned vehicle already homed in B1 came back from a drive: clear its street pose so B1 redraws it in its bay
+      if(cb && cb.own && cb.own.ownId != null && HQV.hqGarageMgr && HQV.hqGarageMgr.homeOf && HQV.hqGarageMgr.homeOf(cb.own.ownId) === "basement" && HQV.hqGarage && HQV.hqGarage.park){
+        try { Promise.resolve(HQV.hqGarage.park(cb.own.ownId, null)).then(function(){ if(HQV.hqGarage.mine) HQV.hqGarage.mine(true); }).catch(function(){}); } catch(e){}
+      }
     } else if(carry.own && w.bikes){
       // up to the street: its prop moves into the City at the apron, the rider still on it
       var o = carry.own, sp = (w.spawnFrom && w.spawnFrom.basement) || {x: avatar.x, z: avatar.z, yaw: avatar.yaw};

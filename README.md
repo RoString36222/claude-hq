@@ -367,7 +367,8 @@ and feature guide.
 - **3.5.2 — Arriving in B1 by the car lift.** You used to arrive standing on the lift facing its back wall, and the
   lift's trigger sat just off the pad on the way out, so the first W sent you straight back up to the street. Now you
   (and what you rode) arrive just off the pad facing into the basement, and the trigger is on the pad itself: drive or
-  walk back onto the lift to go up.
+  walk back onto the lift to go up. Also: a vehicle driven down the car lift no longer vanishes on arrival (its
+  model stayed in the City's scene), and an owned vehicle homed in B1 is redrawn in its bay when you drive it back down.
 - **3.5.1 — Drive your starters out of B1.** You can now get on the car, motorbike or bicycle on its showcase
   plinth from the plinth's edge (the plinth kept you further away than you could reach), and riding a starter onto
   the car lift takes it up to the street with you instead of leaving it in the showcase. Return to HQ (T) still puts

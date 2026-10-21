@@ -846,6 +846,36 @@ html.hq-calm .hq3d-drive-read{display:block}
 .hq3d-home:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .hq3d-home[hidden]{display:none}
 /* ==== end of the Return to HQ button ==== */
+/* ==== the (temporary) Showroom (games/hqshowroom.js, G in the 3D City): every catalogue vehicle, free ==== */
+.hqshowroom{position:absolute;z-index:7;top:12px;left:50%;transform:translateX(-50%);width:min(760px,calc(100% - 24px));max-height:calc(100% - 24px);
+  display:flex;flex-direction:column;border-radius:14px;color:var(--ink);background:color-mix(in srgb,var(--panel) 96%,transparent);
+  border:1px solid var(--line);box-shadow:var(--shadow-lg);overflow:hidden}
+.hqshowroom[hidden]{display:none}
+.hqshowroom-head{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.hqshowroom-title{font-weight:800;font-size:15px}
+.hqshowroom-note{font-size:12px;color:var(--muted)}
+.hqshowroom-close{border:0;background:none;color:var(--muted);font-size:16px;cursor:pointer;padding:4px 8px;border-radius:8px}
+.hqshowroom-close:hover{color:var(--ink);background:var(--line)}
+.hqshowroom-tabs{display:flex;gap:6px;padding:8px 14px 0}
+.hqshowroom-tab{padding:6px 14px;border-radius:999px;border:1px solid var(--line);background:none;color:var(--ink);font-weight:700;font-size:13px;cursor:pointer}
+.hqshowroom-tab.on{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.hqshowroom-body{overflow:auto;padding:4px 14px 14px}
+.hqshowroom-type h3{margin:12px 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.hqshowroom-class{margin:0 0 10px}
+.hqshowroom-class-label{font-size:12px;font-weight:700;margin:0 0 6px}
+.hqshowroom-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+.hqshowroom-card{display:grid;gap:4px;padding:10px;border-radius:10px;border:1px solid var(--line);background:color-mix(in srgb,var(--panel) 80%,var(--bg))}
+.hqshowroom-card.reserve{opacity:.8;border-style:dashed}
+.hqshowroom-brand{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.hqshowroom-model{font-weight:800;font-size:14px}
+.hqshowroom-spec{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.hqshowroom-paints{display:flex;flex-wrap:wrap;gap:5px;margin-top:2px}
+.hqshowroom-swatch{width:20px;height:20px;border-radius:50%;border:2px solid var(--line);cursor:pointer;padding:0}
+.hqshowroom-swatch.on{border-color:var(--ink);box-shadow:0 0 0 2px var(--brand)}
+.hqshowroom-paint-name{font-size:11px;color:var(--muted);min-height:14px}
+.hqshowroom-go{justify-self:start;margin-top:2px;padding:6px 14px;border-radius:999px;border:0;background:var(--brand);color:var(--on-brand);font-weight:700;font-size:12px;cursor:pointer}
+.hqshowroom-go:focus-visible,.hqshowroom-tab:focus-visible,.hqshowroom-swatch:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+/* ==== end of the Showroom ==== */
 /* the 3D City's stats panel (games/hqcity3d.js statsUi), top right */
 .hq3d-stats{position:absolute;right:12px;top:12px;z-index:4;min-width:190px;max-width:min(260px,46%);display:grid;gap:4px;padding:10px 12px;border-radius:12px;
   color:var(--ink);background:color-mix(in srgb,var(--panel) 90%,transparent);border:1px solid var(--line);box-shadow:var(--shadow-lg);font-size:12.5px;pointer-events:auto}

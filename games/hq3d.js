@@ -99,7 +99,7 @@ function wrapPi(a){ a = +a || 0; return Math.atan2(Math.sin(a), Math.cos(a)); }
 // walking forward turns you to face where a dragged (orbited) camera looks (HQ 3.2: the mouse steers while you walk).
 // 3.2 turns faster (3.6 rad/s, was 2.4) on a snappier spring (omega 18, was 10): the old turn read as sluggish
 // next to the minimap, which turned with your facing at once.
-var FOOT = {walk: 4, run: 7, back: 0.65, turn: 3.6, turnW: 18, speedW: 12, steer: 6};
+var FOOT = {walk: 4, run: 7, back: 0.65, turn: 3.6, turnW: 18, speedW: 12, steer: 6, aboutW: 9};
 // Where you are headed: facing while going forward or turning, facing + PI while stepping back. Standing still it
 // stays your facing if that is where you were last headed (prev: the last travelYaw), so the camera finishes
 // swinging in behind you after you turn on the spot; after a back-step (prev ~ facing + PI) or from a standstill: null
@@ -110,18 +110,44 @@ function travelYawOf(yaw, speed, rate, prev){
   if(speed > 0.05 || Math.abs(rate) > 0.05) return wrapPi(yaw);
   return prev != null && isFinite(prev) && Math.abs(wrapPi(prev - yaw)) < Math.PI/2 ? wrapPi(yaw) : null;
 }
-// One body-relative step on foot (chase family). st = {yaw, rate, rateV, speed (signed), speedV, travelYaw?};
+// One body-relative step on foot (chase family). st = {yaw, rate, rateV, speed (signed), speedV, travelYaw?, about?};
 // inp = {fwd: -1..1 (W +, S -), turn: -1..1 (A +, turns left), run}. The turn rate springs toward
-// +-FOOT.turn rad/s and the yaw integrates it; the speed springs toward 4 / 7 m/s forward or 0.65x back.
+// +-FOOT.turn rad/s and the yaw integrates it; the speed springs toward 4 / 7 m/s forward.
+// S turns you round instead of stepping back (HQ 3.3): pressing it starts a half turn (st.about: the signed angle
+// still to turn, toward the side you are already turning or steering, else left) on a critically damped spring, and while S is held you walk forward out of it, faster the more you face the new way
+// (cos of what is left), so S walks you toward the camera. A/D during it moves where you end up; a tap of S
+// still finishes the half turn; W cancels it. The camera follows the body round (travelYaw is your facing).
 // -> a new state plus travelYaw.
 function footStep(st, inp, dt){
   st = st || {}; inp = inp || {}; dt = Math.max(0, +dt || 0);
   var fwd = Math.max(-1, Math.min(1, +inp.fwd || 0)), turn = Math.max(-1, Math.min(1, +inp.turn || 0));
   var base = inp.run ? FOOT.run : FOOT.walk, rate0 = +st.rate || 0;
-  var r = spring(rate0, st.rateV, turn*FOOT.turn, FOOT.turnW, dt);
-  var s = spring(st.speed, st.speedV, fwd > 0 ? fwd*base : fwd*base*FOOT.back, FOOT.speedW, dt);
-  var yaw = wrapPi((+st.yaw || 0) + (rate0 + r[0])*0.5*dt);          // trapezoid over the frame
-  return {yaw: yaw, rate: r[0], rateV: r[1], speed: s[0], speedV: s[1], travelYaw: travelYawOf(yaw, s[0], r[0], st.travelYaw)};
+  var about = st.about != null && isFinite(st.about) ? +st.about : null, aboutV = +st.aboutV || 0;
+  var sHeld = fwd < 0 && !!st.sHeld;                    // S still down from the press that started a half turn
+  if(fwd > 0) about = null;                                                           // W: straight on
+  else if(fwd < 0 && !sHeld){                                                         // S pressed: a half turn
+    var side = turn ? (turn > 0 ? 1 : -1) : Math.abs(rate0) > 0.3 ? (rate0 > 0 ? 1 : -1) : 1;
+    about = side*Math.PI; aboutV = 0; sHeld = true;
+  }
+  var yaw0 = +st.yaw || 0, yaw, rate, rateV, s;
+  if(about != null){
+    // the half turn: what is left (`about`) closes on a critically damped spring (FOOT.aboutW), so it eases in and
+    // out and lands on the half turn without overshoot; A/D during it move where it ends
+    about += turn*FOOT.turn*dt;
+    var a = spring(about, aboutV, 0, FOOT.aboutW, dt), dYaw = about - a[0];
+    about = a[0]; aboutV = a[1]; yaw = wrapPi(yaw0 + dYaw); rate = dt > 0 ? dYaw/dt : 0; rateV = 0;
+    // while S is held, walk out of it: faster the more you face the new way
+    var goal = fwd < 0 ? -fwd*base*Math.max(0, Math.cos(Math.min(Math.PI/2, Math.abs(about)))) : 0;
+    s = spring(st.speed, st.speedV, goal, FOOT.speedW, dt);
+    if(Math.abs(about) < 0.01 && Math.abs(aboutV) < 0.2){ about = null; aboutV = 0; }  // round: done
+  } else {
+    var r = spring(rate0, st.rateV, turn*FOOT.turn, FOOT.turnW, dt);
+    // S held after its half turn: keep walking (toward where the camera was)
+    s = spring(st.speed, st.speedV, fwd > 0 ? fwd*base : fwd < 0 ? -fwd*base : 0, FOOT.speedW, dt);
+    yaw = wrapPi(yaw0 + (rate0 + r[0])*0.5*dt); rate = r[0]; rateV = r[1];          // trapezoid over the frame
+  }
+  return {yaw: yaw, rate: rate, rateV: rateV, speed: s[0], speedV: s[1], about: about, aboutV: aboutV, sHeld: sHeld,
+          travelYaw: travelYawOf(yaw, s[0], rate, st.travelYaw)};
 }
 // Locomotion (HQ 3.2): idle, walk and sprint play together, weighted by speed, so nothing pops; each clip's playback
 // rate is the ground speed over the ground its stride covers at rate 1 (STRIDE, m/s, fitted to the Mini Characters'
@@ -2206,16 +2232,16 @@ function mount(el, api){
     if(fwd || side){ walkTo = null; walkDoor = null; }
     var yaw0 = avatar.yaw, sp0 = avatar.speed || 0, dx = 0, dz = 0;
     if(rigOn() && CHASE[rig.mode] && !walkTo){
-      // Chase cameras: the keys are the BODY's. W walks along your facing, S steps back without turning
-      // (the camera swings round to show where you are headed), A / D turn you on a spring.
+      // Chase cameras: the keys are the BODY's. W walks along your facing, S turns you round and (held) walks you
+      // back toward the camera, which swings round behind you (footStep), A / D turn you on a spring.
       // Walking forward with the camera dragged round (left- or right-drag, a pad's right stick): you turn to face
       // where it looks, at FOOT.steer rad/s, the camera keeping still meanwhile (camrig absorb moves the offset into
       // its heading): the mouse steers while you walk, as in most third-person games. Standing still a drag only
       // looks round you.
       if(fwd > 0 && HQV.camrig.absorb){ var ab = HQV.camrig.absorb(rig, FOOT.steer*dt); if(ab) avatar.yaw = wrapPi(avatar.yaw + ab); }
-      var f = footStep({yaw: avatar.yaw, rate: avatar.rate, rateV: avatar.rv, speed: avatar.speed, speedV: avatar.sv, travelYaw: avatar.travelYaw},
-                       {fwd: fwd, turn: side, run: run}, dt);
-      avatar.yaw = f.yaw; avatar.rate = f.rate; avatar.rv = f.rateV; avatar.speed = f.speed; avatar.sv = f.speedV;
+      var f = footStep({yaw: avatar.yaw, rate: avatar.rate, rateV: avatar.rv, speed: avatar.speed, speedV: avatar.sv, travelYaw: avatar.travelYaw,
+                        about: avatar.about, aboutV: avatar.aboutV, sHeld: avatar.sHeld}, {fwd: fwd, turn: side, run: run}, dt);
+      avatar.yaw = f.yaw; avatar.rate = f.rate; avatar.rv = f.rateV; avatar.speed = f.speed; avatar.sv = f.speedV; avatar.about = f.about; avatar.aboutV = f.aboutV; avatar.sHeld = f.sHeld;
       dx = Math.sin(avatar.yaw); dz = Math.cos(avatar.yaw);
       if(avatar.speed < 0){ dx = -dx; dz = -dz; }
       avatar.mdx = dx; avatar.mdz = dz;

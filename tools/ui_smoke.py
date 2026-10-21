@@ -274,7 +274,8 @@ class Chrome:
 
         # HQ_GL=metal draws WebGL on the GPU (still headless: no window); the default stays software (swiftshader)
         gl = ["--use-angle=metal"] if os.environ.get("HQ_GL") == "metal" else ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
-        flags = ["--headless=new"] + gl + ["--no-first-run",
+        # --mute-audio: a headless Chrome still plays sound through the speakers (engines in a test drive)
+        flags = ["--headless=new", "--mute-audio"] + gl + ["--no-first-run",
                  "--no-default-browser-check", "--disable-background-timer-throttling",
                  "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
                  "--remote-debugging-pipe", "--user-data-dir=" + profile,
@@ -451,7 +452,7 @@ def dump_dom_smoke(chrome, profile, url):
     """Fallback without the DevTools pipe: repeated --dump-dom launches with a
     growing --timeout until data-hq-smoke is set. Returns (value, error lines)."""
     for ms in (8000, 16000, 32000, 60000):
-        out = subprocess.run([chrome, "--headless=new", "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
+        out = subprocess.run([chrome, "--headless=new", "--mute-audio", "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
                               "--no-first-run", "--user-data-dir=" + profile, "--enable-logging=stderr", "--v=0",
                               "--timeout=%d" % ms, "--dump-dom", url], capture_output=True, text=True, timeout=ms / 1000 + 60)
         errs = [ln for ln in out.stderr.splitlines() if "CONSOLE" in ln and any(k in ln for k in JS_ERRORS)]

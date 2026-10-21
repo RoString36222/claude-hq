@@ -40,28 +40,30 @@ paired), published maps and work signals (off by default) add a few listed field
 
 ---
 
-## 🆕 What's new in 2.5: Make + compete
+## 🆕 What's new in 3: Cities
 
-- **Workshop.** Build your own **kart tracks**, **Platformer levels** and **Blaster arenas** in editors that
-  check them live, test them, then race or play them with friends in a room.
-- **Map gallery.** Publish to your room or to everyone; browse newest, most liked and hot this week; like,
-  report, remix, "Race in room". Each map keeps its own leaderboard, and a **map of the week** per game.
-- **Compete.** A **weekly cup** per game from your normal multiplayer races, a monthly season podium, and a
-  **world boss** everyone wears down together with merged PRs and wins, then fights with a Pokémon team.
-- **Tower Defense.** Your Pokémon are the towers against twenty bug waves (types matter), solo or co-op.
-- **Bowling.** Ten-pin with Pokémon bowlers on the golf physics, solo or up to 8 in a room.
-- **Progress from real work.** Loot chests from merged PRs, green test runs and long focus sessions; a
-  **skill tree** from how you work; **prestige** stars at level 50; a six-chapter **story campaign**.
-  Work signals are off by default and only counts leave your machine.
+- **A world of cities.** Arena City is now a 3D world built by the Arena: **The Commons**, an organic island
+  city with districts, every open HQ's tower on its lot, and civic buildings you walk into (the HQ tabs open
+  from the library, the market, the post office; the **town hall** shows the city's tier, treasury and market).
+- **Your own island.** A personal city with your HQ by the town hall, growing with your XP through five tiers
+  (Village → Capital): new streets, services, buses and trams. Upgrade it, run its treasury, choose who visits.
+- **Economy and life.** Tax, upgrades, a specialty good per city, supply chains and an hourly market; residents
+  who commute, work and go home on a schedule.
+- **Getting around.** A river through every city with bridges and boats, a **minimap**, waypoints and
+  **turn-by-turn directions** (N / Go to), ferries, rail, helicopters and cargo ships you can ride.
+- **Driving.** Detailed cars, motorbikes and bicycles with riders seated properly, car **powerslides**, a
+  speed / rev HUD, **Return to HQ (T)**, your HQ's name on its number plates, a higher camera you turn by dragging.
 
-### Also new since 2.1
+### Also new since 2.5
 
-- **2.4: your 3D character.** Build the person you are in the 3D HQ (body, colours, hair, headwear,
-  accessories, a cyberpunk set) with a live preview; it becomes your portrait on the Trainer card and,
-  with the Arena on, on the leaderboard, in rooms and in chat, and friends see your real look in the city.
-- **2.3: Arena City.** Jump to City from anywhere, a fountain in the middle and a **bike park** you can ride.
-- **2.2: Music.** See what friends are playing (Spotify, Apple Music, YouTube Music), **listening rooms**
-  with a shared queue in sync, **Go live** to stream your own audio to the room, and a DJ visualiser.
+- **2.8: Valley Rally.** Off-road rally stages in a cel-shaded world with a detailed car model (suspension,
+  Pacejka-style tyres on seven surfaces, AWD / RWD / FWD, handbrake drifts), three cars, ghosts, a daily stage and
+  live rooms of up to 8. Plus **account standings** and **Strikezone** disasters that really hit.
+- **2.7: all Rust.** The local HQ is `dashboard-rs` (`claudehq`) and the Arena is `backend/`; **Update**
+  rebuilds `claudehq` for you.
+- **2.6: HQ Notch.** Your party in the Mac's notch: Allow / Always / Deny prompts, answer questions, approve
+  plans, a live ticker, optional phone alerts; HQ offers a one-click install (Settings › HQ Notch).
+- **2.2–2.4:** Music and listening rooms, the first Arena City, and your own 3D character.
 
 ---
 
@@ -163,6 +165,10 @@ dashboard-rs/target/release/claudehq
 
 That starts the server on <http://127.0.0.1:8765> and opens it in your browser.
 
+> **macOS tip:** clone it **outside** `~/Documents`, `~/Desktop` and `~/Downloads` (for example `~/claude-hq`).
+> macOS asks before a new program reads those folders, and every rebuild of `claudehq` counts as a new program,
+> so a clone there makes the login item wait on a permission prompt after each update.
+
 ### Flags
 ```
 dashboard-rs/target/release/claudehq [--port 8765] [--no-open] [--root DIR]
@@ -184,7 +190,7 @@ Once installed you never start it by hand again — just open <http://127.0.0.1:
 
 ### Optional shell alias
 ```bash
-echo 'alias claude-hq="~/Documents/Claude/claude-dashboard/dashboard-rs/target/release/claudehq"' >> ~/.zshrc
+echo 'alias claude-hq="$HOME/claude-hq/dashboard-rs/target/release/claudehq"' >> ~/.zshrc   # your clone's path
 ```
 
 ### Optional: HQ Notch (macOS)

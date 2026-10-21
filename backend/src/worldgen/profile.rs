@@ -45,10 +45,17 @@ pub struct Profile {
     pub hills: &'static [(i64, i64)],
     pub plateau: &'static [(i64, i64)],
     /// City grid: a block, the road round it, and every `avenue_every`-th line an avenue.
+    /// On an organic world (@2) these are the layout widths: the blocks, lots and sites
+    /// are cut and placed against them.
     pub block_w_cm: i64,
     pub block_d_cm: i64,
     pub road_cm: i64,
     pub avenue_cm: i64,
+    /// Organic worlds (@2): the widths (cm, sidewalks included) a local road and an
+    /// arterial are paved at, at least the layout's. The extra comes out of the block
+    /// and lot strip along the road, so nothing is placed differently (organic/widen.rs).
+    pub paved_road_cm: i64,
+    pub paved_avenue_cm: i64,
     pub avenue_every: i64,
     /// Sidewalk width (cm) each side of a street and an avenue, taken out of the road's width.
     pub street_walk_cm: i64,
@@ -142,6 +149,8 @@ pub fn city() -> Profile {
         block_d_cm: 2_600,
         road_cm: 800,
         avenue_cm: 1_200,
+        paved_road_cm: 800,
+        paved_avenue_cm: 1_200,
         avenue_every: 4,
         street_walk_cm: 150,
         avenue_walk_cm: 200,
@@ -212,6 +221,16 @@ pub fn commons() -> Profile {
             Zone { district: district::TECH, ring_pm: 820, count: 1 },
             Zone { district: district::STUDIO, ring_pm: 860, count: 1 },
         ],
+        // HQ 3.10: wider roads. Laid out at Arena City's 8 m / 12 m (so every lot, site and
+        // HQ stays where it was), paved wider: a local road 10.5 m (a 7 m carriageway, was 5 m;
+        // 1.75 m sidewalks, were 1.5), an arterial 15.5 m (11 m, was 8; 2.25 m sidewalks,
+        // were 2), a highway 13.5 m (was 10) and the ring 12 m (was 9). @1 keeps city()'s.
+        paved_road_cm: 1_050,
+        paved_avenue_cm: 1_550,
+        street_walk_cm: 175,
+        avenue_walk_cm: 225,
+        highway_cm: 1_350,
+        ring_cm: 1_200,
         radials: (4, 5),
         plaza_cm: 3_600,
         art_ring_pm: 560,

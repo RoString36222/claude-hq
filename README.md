@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.9.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.10.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -371,6 +371,14 @@ and feature guide.
 
 ## Changelog
 
+- **3.10.0 — Wider roads.** Every street in the Commons and on every island is paved wider: a local road 10.5 m
+  (a 7 m carriageway, was 5 m; 1.75 m sidewalks), an arterial 15.5 m (11 m, was 8; 2.25 m sidewalks), the Commons'
+  highways 13.5 m (were 10) and its ring road 12 m (was 9). Lanes, markings, kerbs and traffic follow the new widths.
+  Nothing moves: the city is laid out exactly as before (the same lots, HQ lots and their ranks, sites), and the wider
+  road takes the strip of block and lot along it, each lot's door stepping back up to 2 m with its frontage; a civic
+  building or stop the wider road would reach steps back by as much. Where a lot cannot give way (a dead end's tip in a
+  notch of it, a sharp corner into a junction, an HQ lot that would drop under the pool's least size) the road beside
+  it keeps its old width (about 3% of street segments). Arena City (claude-hq@1) is unchanged. Needs an Arena deploy.
 - **3.9.0 — Lamborghinis, new bikes and redesigned vehicles.** Thirteen new vehicles in the catalogue (`games/vehicles/catalogue.json`, its
   Arena copy `backend/data/vehicles.json`), each with its maker's real specs, size and factory paints, its own stand-in
   body and engine voice. Every vehicle is free for now, as before.

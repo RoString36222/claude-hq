@@ -169,7 +169,9 @@ fn every_tier_2_lot_is_within_250_m_of_a_bus_stop() {
     for w in worlds() {
         for (l, d) in w.layers.lots.iter().zip(by_road(w, "busstop")) {
             if l.min_tier.unwrap_or(2) >= 2 {
-                assert!(d <= 25_000, "{}: lot {} is {} m from a bus stop", w.id, l.id, d / 100);
+                // (placed for 250 m at the layout widths: the door and the stop each step back
+                // up to 2 m from a wider road, organic/widen.rs)
+                assert!(d <= 25_400, "{}: lot {} is {} m from a bus stop", w.id, l.id, d / 100);
             }
         }
         // most stops are on the arterials

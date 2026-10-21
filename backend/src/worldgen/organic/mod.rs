@@ -23,6 +23,7 @@ pub mod graph;
 pub mod lots;
 pub mod streets;
 pub mod tensor;
+pub mod widen;
 pub mod zoning;
 
 #[cfg(test)]
@@ -182,6 +183,8 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>) -
     for (k, l) in lots.iter_mut().enumerate() {
         l.id = k as u32;
     }
+    // the layout is final: pave the roads wider into the strip of block and lot along them
+    let paving = widen::widen(p, base, &g, &mut blocks, &mut lots, &mut sites);
 
     // the road graph as the world's roads (live nodes only), then the graded roads
     let mut renum = vec![u32::MAX; g.nodes.len()];
@@ -195,12 +198,14 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>) -
     let mut edges: Vec<Edge> = g
         .edges
         .iter()
-        .filter(|e| e.alive)
-        .map(|e| {
-            let (class, walk) = if e.kind == Kind::Arterial { ("arterial", p.avenue_walk_cm) } else { ("local", p.street_walk_cm) };
+        .enumerate()
+        .filter(|(_, e)| e.alive)
+        .map(|(k, e)| {
+            let class = if e.kind == Kind::Arterial { "arterial" } else { "local" };
             let Street { name, .. } = &streets[e.road as usize];
+            let (width, walk) = paving.width(k as u32);
             Edge {
-                id: 0, a: renum[e.a as usize], b: renum[e.b as usize], class, width: width(e.kind), walk, lanes: 1, route: None,
+                id: 0, a: renum[e.a as usize], b: renum[e.b as usize], class, width, walk, lanes: 1, route: None,
                 name: name.clone(), points: roads::resample(g.nodes[e.a as usize], g.nodes[e.b as usize]), min_tier: None,
                 bridge: e.bridge.then_some(true),
             }

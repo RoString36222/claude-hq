@@ -71,6 +71,32 @@ pub fn profile_for(seed: &str, version: u32) -> profile::Profile {
     }
 }
 
+/// Where world `id`'s river meets the sea, in the world's own frame: [x, z] cm of the
+/// mouth (the centre line's first point, on the coast) and [dx, dz], the way out to
+/// sea there (per mille, a unit vector). None for a world without a river. A pure
+/// function of the id (the river ignores edits and tiers), so it is worked out once
+/// per process: the archipelago lists it for the big ships' anchorages.
+pub fn river_mouth(id: &str) -> Option<[i64; 4]> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static MEMO: OnceLock<Mutex<HashMap<String, Option<[i64; 4]>>>> = OnceLock::new();
+    let memo = MEMO.get_or_init(Mutex::default);
+    if let Some(m) = memo.lock().unwrap().get(id) {
+        return *m;
+    }
+    let mouth = (|| {
+        let (seed_str, version) = parse_id(id).ok()?;
+        let r = river::River::new(rng::fnv1a64(seed_str.as_bytes()), &profile_for(seed_str, version)).ok()??;
+        let (m, up) = (*r.center.first()?, r.center[r.center.len().min(4) - 1]);
+        // out of the river's last stretch, else straight out from the island's middle
+        let (dx, dz) = if up != m { (m[0] - up[0], m[1] - up[1]) } else { (m[0], m[1]) };
+        let l = ((dx * dx + dz * dz) as f64).sqrt().max(1.0);
+        Some([m[0], m[1], (dx as f64 * 1000.0 / l).round() as i64, (dz as f64 * 1000.0 / l).round() as i64])
+    })();
+    memo.lock().unwrap().insert(id.to_string(), mouth);
+    mouth
+}
+
 #[derive(Serialize)]
 pub struct WorldDoc {
     pub id: String,

@@ -5,7 +5,7 @@
  * (POST /api/arena/rail/build, paid from their island's treasury) and listed by GET /api/arena/rail. Every point is
  * in ARCHIPELAGO metres (a city's own frame plus its position, as games/hqvoyage.js), so one alignment serves both
  * cities: a city draws it at (p - its position).
- *   alignment(A, B)   A, B = {world, x, z (archipelago m), W (a packed world) or null, tier}
+ *   alignment(A, B)   A, B = {world, x, z (archipelago m), W (a packed world) or null, tier, lane ({off, until}: lanes())}
  *                     From A's station the line runs ELEVATED over A's streets (games/hqnav.js's shortest route,
  *                     DECK_UP over the road) to A's coast facing B, straight across the sea on a viaduct, then over
  *                     B's streets to B's station. The corners are rounded by an elastic band held within CUT m of the
@@ -18,6 +18,8 @@
  *   at(R, s)          the track at s m along: {x, y, z, yaw, pitch}
  *   departures(a, b, nowMs, back, ahead)  a -> b departures (ms), the same on every client
  *   nextDeparture(a, b, nowMs)
+ *   lanes(W, tier, here, others)  {world: {off, until}}: lines leaving one station along the same streets run side
+ *                     by side, LANE m apart, until they part
  *   lineKey(a, b)     "a|b" with the two world ids ordered (as the Arena's rail_line)
  *   menuRows(rail, here, places, mine, myTier, nowMs)  the station menu's rail rows: ride / build / build-from / note
  * Speeds: 22 m/s over the streets, 45 m/s over the sea, sqrt(A_LAT r) (not under CURVE_MIN) on a curve, 1 m/s² either way.
@@ -48,6 +50,11 @@ var DWELL = 40;            // s a train stands at a platform before leaving and 
 var COST = 500;            // coins: a line, from the builder's island treasury
 var NOMINAL_COAST = 880;
 var COMMONS = "claude-hq@2";
+var LANE = 7.7;            // m between the tracks of lines leaving one station side by side: one double viaduct, a shared
+                           // island platform between them
+var TAPER = 90;            // m: a lane eases back to the street's middle over this once its lines part
+var PART = 3*LANE;         // m: lines this far apart have parted; their lanes hold until then (past the smoothed corner)
+var SHARE_MIN = 24;        // m: lines running beside each other no further than this part at once (keep the middle)
 
 function hyp(x, z){ return Math.sqrt(x*x + z*z); }
 function wrap(a){ while(a > Math.PI) a -= 2*Math.PI; while(a < -Math.PI) a += 2*Math.PI; return a; }
@@ -104,6 +111,78 @@ function dedupe(P, min){
   return out;
 }
 
+// The lanes at a station: lines that leave it along the same streets run side by side (LANE m apart about the
+// street's middle) until they part, then ease back to the street's middle over TAPER m; ordered so the one that
+// turns off to a side runs on that side (no crossing). Lines that part at once keep the middle. The same on every
+// client (a pure function of the station's city and the lines' far ends).
+// here {x, z}, others [{world, x, z}] (archipelago m) -> {world: {off (m, + to the left of the way out), until (m along
+// the leg where the taper starts)}}
+function lanes(W, tier, here, others){
+  var L = (others || []).map(function(o){
+    var dx = o.x - here.x, dz = o.z - here.z, P = cityLeg(W, tier, dx, dz);
+    P.push([dx, dz]);                                                         // on to the far end: they part at sea too
+    var Q = resample(P, STEP), S = [0];
+    for(var i = 1; i < Q.length; i++) S.push(S[i - 1] + hyp(Q[i][0] - Q[i - 1][0], Q[i][1] - Q[i - 1][1]));
+    return {world: String(o.world), Q: Q, S: S, g: -1, shared: 0};
+  }).sort(function(a, b){ return a.world < b.world ? -1 : a.world > b.world ? 1 : 0; }), out = {};
+  function ptAt(l, s){ var i = 0; while(i < l.S.length - 1 && l.S[i + 1] < s) i++; return l.Q[Math.min(i, l.Q.length - 1)]; }
+  function dist(l, x, z){ var m = 1e18; for(var i = 0; i < l.Q.length; i++) m = Math.min(m, hyp(l.Q[i][0] - x, l.Q[i][1] - z)); return m; }
+  // how far a runs beside b, and which side of a b goes when they part (+1: left)
+  function pair(a, b){
+    var k = 0; while(k < a.Q.length && dist(b, a.Q[k][0], a.Q[k][1]) < LANE*0.75) k++;
+    var sh = a.S[Math.min(k, a.S.length - 1)], p0 = ptAt(a, Math.max(0, sh - 24)), p1 = ptAt(a, sh), q = ptAt(b, sh + 40);
+    var dx = p1[0] - p0[0], dz = p1[1] - p0[1], side = -dz*(q[0] - p1[0]) + dx*(q[1] - p1[1]);
+    var k2 = k; while(k2 < a.Q.length && dist(b, a.Q[k2][0], a.Q[k2][1]) < PART) k2++;
+    return {sh: sh, hold: a.S[Math.min(k2, a.S.length - 1)], side: side > 0 ? 1 : -1};
+  }
+  var G = [];
+  for(var i = 0; i < L.length; i++) for(var j = i + 1; j < L.length; j++){
+    var pr = pair(L[i], L[j]);
+    if(pr.sh < SHARE_MIN) continue;
+    L[i].shared = Math.max(L[i].shared, pr.hold); L[j].shared = Math.max(L[j].shared, pr.hold);
+    L[i]["s" + j] = pr.side; L[j]["s" + i] = -pr.side;                     // j is on side (+1 left) of i
+    L[i]["h" + j] = L[j]["h" + i] = pr.sh;
+    var gi = L[i].g, gj = L[j].g;
+    if(gi < 0 && gj < 0){ L[i].g = L[j].g = G.length; G.push([i, j]); }
+    else if(gi < 0){ L[i].g = gj; G[gj].push(i); }
+    else if(gj < 0){ L[j].g = gi; G[gi].push(j); }
+    else if(gi !== gj){ G[gj].forEach(function(x){ L[x].g = gi; G[gi].push(x); }); G[gj] = []; }
+  }
+  L.forEach(function(l){ out[l.world] = {off: 0, until: 0, left: false, right: false}; });
+  G.forEach(function(g){
+    // rank by how many of the group run to each one's right
+    var rk = g.map(function(x){ var r = 0; g.forEach(function(y){ if(y !== x && L[x]["s" + y] === -1) r++; }); return {x: x, r: r}; })
+              .sort(function(a, b){ return a.r - b.r || a.x - b.x; });
+    // left / right: a neighbour beside its whole platform (they share the island platform between them)
+    function by(a, b){ return !!b && (L[a.x]["h" + b.x] || 0) >= PLAT + 8; }
+    rk.forEach(function(e, n){ out[L[e.x].world] = {off: (n - (rk.length - 1)/2)*LANE, until: L[e.x].shared, left: by(e, rk[n + 1]), right: by(e, rk[n - 1])}; });
+  });
+  return out;
+}
+// A polyline moved sideways (+ to the left of its way) by lane.off m up to lane.until m along it, easing back to the
+// middle over TAPER m; mitred at the corners
+function offsetLeg(P, lane){
+  var n = P.length, off = lane && +lane.off || 0; if(!off || n < 2) return P;
+  var N = [], s = 0, out = [], until = +lane.until || 0;
+  for(var i = 0; i < n - 1; i++){ var dx = P[i + 1][0] - P[i][0], dz = P[i + 1][1] - P[i][1], l = hyp(dx, dz) || 1; N.push([-dz/l, dx/l]); }
+  for(var j = 0; j < n; j++){
+    if(j) s += hyp(P[j][0] - P[j - 1][0], P[j][1] - P[j - 1][1]);
+    var a = N[Math.max(0, j - 1)], b = N[Math.min(n - 2, j)], mx = a[0] + b[0], mz = a[1] + b[1], ml = hyp(mx, mz);
+    if(ml < 1e-6){ mx = b[0]; mz = b[1]; ml = 1; }
+    mx /= ml; mz /= ml;
+    var u = s <= until ? 1 : Math.max(0, 1 - (s - until)/TAPER), o = off*(u*u*(3 - 2*u))*Math.min(2, 1/Math.max(0.5, mx*b[0] + mz*b[1]));
+    out.push([P[j][0] + mx*o, P[j][1] + mz*o, Math.abs(off*(u*u*(3 - 2*u)))]);
+  }
+  // inside a corner tighter than the lane the offset folds back on itself: drop what comes nearer the middle than the lane
+  return out.filter(function(q, j){
+    for(var i = Math.max(0, j - 12); i < Math.min(n - 1, j + 12); i++){
+      var ax = P[i][0], az = P[i][1], ex = P[i + 1][0] - ax, ez = P[i + 1][1] - az, l2 = ex*ex + ez*ez || 1;
+      var t = Math.max(0, Math.min(1, ((q[0] - ax)*ex + (q[1] - az)*ez)/l2));
+      if(hyp(q[0] - ax - ex*t, q[1] - az - ez*t) < q[2]*0.97) return false;
+    }
+    return true;
+  }).map(function(q){ return [q[0], q[1]]; });
+}
 // One city's leg in its own frame: [[x, z], ...] from the street in front of its station to its coast facing
 // (dx, dz) and a little out over the water. No W (or no station, no road): a straight nominal leg from the centre.
 function cityLeg(W, tier, dx, dz){
@@ -143,7 +222,7 @@ function resample(V, step){
 }
 // An elastic band in a corridor: the polyline resampled, blurred again and again, every point held within its
 // corridor (CUT m of where it was over land, wider over the sea), so the corners round off as widely as the
-// street allows. -> {P: points every STEP m, r: the curve radius at each (m, Infinity on a straight)}
+// street allows. -> points every STEP m
 function corridor(V, landAt, overBuilding){
   var O = resample(V, STEP), n = O.length, P = null, lim = new Float64Array(n), K = 9;
   for(var i = 0; i < n; i++) lim[i] = landAt(O[i][0], O[i][1]) ? CUT : 70;
@@ -174,8 +253,11 @@ function corridor(V, landAt, overBuilding){
     }
     if(!hit) break;
   }
-  P = resample(dedupe(P, 0.5), STEP); n = P.length;
-  var r = new Float64Array(n), r0 = new Float64Array(n), w = 4;
+  return resample(dedupe(P, 0.5), STEP);
+}
+// the curve radius at each point of a polyline every STEP m (m, Infinity on a straight)
+function radii(P){
+  var n = P.length, r = new Float64Array(n), r0 = new Float64Array(n), w = 4;
   for(var j = 0; j < n; j++){
     var i0 = Math.max(0, j - w), i1 = Math.min(n - 1, j + w);
     if(i1 - i0 < 2){ r0[j] = Infinity; continue; }
@@ -185,7 +267,7 @@ function corridor(V, landAt, overBuilding){
     if(r0[j] > 2000) r0[j] = Infinity;
   }
   for(var q = 0; q < n; q++){ var mr = Infinity; for(var t = Math.max(0, q - 2); t <= Math.min(n - 1, q + 2); t++) mr = Math.min(mr, r0[t]); r[q] = mr; }
-  return {P: P, r: r};
+  return r;
 }
 
 // the alignment from A's station to B's (both in archipelago metres)
@@ -210,9 +292,14 @@ function alignment(A, B){
     var k = WDb.surfaceAt(Wc, lx, lz);
     return (k === "lot" || k === "site") && WDb.blockedAt(Wc, lx, lz);
   } : null;
-  var F = corridor(V, landAt, overBuilding), P = F.P, n = P.length;
+  var P = corridor(V, landAt, overBuilding);
+  // the lanes: moved sideways off the street's middle at each end (once smooth: parallel, never closer than LANE)
+  if(A.lane && A.lane.off) P = offsetLeg(P, A.lane);
+  if(B.lane && B.lane.off) P = offsetLeg(P.slice().reverse(), B.lane).reverse();
+  if((A.lane && A.lane.off) || (B.lane && B.lane.off)) P = resample(dedupe(P, 0.5), STEP);
+  var Fr = radii(P), n = P.length;
   var pts = new Float64Array(3*n), s = new Float64Array(n), r = new Float64Array(n);
-  for(var k = 0; k < n; k++){ pts[3*k] = P[k][0]; pts[3*k + 2] = P[k][1]; r[k] = F.r[k]; if(k) s[k] = s[k - 1] + hyp(P[k][0] - P[k - 1][0], P[k][1] - P[k - 1][1]); }
+  for(var k = 0; k < n; k++){ pts[3*k] = P[k][0]; pts[3*k + 2] = P[k][1]; r[k] = Fr[k]; if(k) s[k] = s[k - 1] + hyp(P[k][0] - P[k - 1][0], P[k][1] - P[k - 1][1]); }
   var len = s[n - 1];
   // heights: DECK_UP over the ground of the city below, SEA_UP over the sea, eased to GRADE without dipping
   var WD = WDo(), ya = A.sea != null ? +A.sea : 0, yb = B.sea != null ? +B.sea : 0, base = new Float64Array(n), land = new Uint8Array(n);
@@ -395,7 +482,7 @@ function menuRows(rail, here, places, mine, myTier, nowMs){
 }
 
 HQV.hqRail = {alignment: alignment, reverse: reverse, poseAt: poseAt, at: at, departures: departures, nextDeparture: nextDeparture, lineKey: lineKey,
-  linesAt: linesAt, built: built, menuRows: menuRows, stationOf: stationOf, doorOf: doorOf, cityLeg: cityLeg, coastExit: coastExit,
+  linesAt: linesAt, built: built, menuRows: menuRows, lanes: lanes, LANE: LANE, stationOf: stationOf, doorOf: doorOf, cityLeg: cityLeg, coastExit: coastExit,
   simplify: simplify, EVERY: EVERY, DWELL: DWELL, DECK_UP: DECK_UP, SEA_UP: SEA_UP, GRADE: GRADE, CAR_L: CAR_L,
   CAR_GAP: CAR_GAP, CARS: CARS, TRAIN_L: TRAIN_L, PLAT: PLAT, COST: COST, CITY_V: CITY_V, SEA_V: SEA_V, ACC: ACC, CUT: CUT};
 /* ---------- drawing (THREE): the viaduct, the track, the stations' platforms, the trains, their passengers ----------
@@ -537,7 +624,7 @@ function placeTrain(T, R, head, o){
 // One built line drawn in a city: R runs from this city (or to it); o: the city's archipelago position (m);
 // ends: which of R's ends are this city's stations ([0] and/or [R.len]); ground(x, z), seaY, door (its station's
 // door, local m): where its stairs come down
-function lineView(c, M, R, o, ends, ground, seaY, door){
+function lineView(c, M, R, o, ends, ground, seaY, door, lane){
   var THREE = c.THREE, g = new THREE.Group(); g.name = "rail:line";
   // the stretch within DRAW_R of this city's centre
   var a = 0, b = R.len, first = true;
@@ -581,14 +668,19 @@ function lineView(c, M, R, o, ends, ground, seaY, door){
     var s0 = e === 0 ? 0 : R.len - PLAT, s1 = s0 + PLAT, P = samples(R, s0, s1, 4, o);
     if(P.length < 2) return;
     var slab = [], edge = [], roof = [];
+    // a side (sd: + is the right of increasing s) with a line beside it: the island platform between them is the
+    // neighbour's when it is on our left (drawn once), and no stairs land on it
+    function nb(sd){ var left = e === 0 ? sd < 0 : sd > 0; return !!lane && (left ? lane.left : lane.right); }
+    function mineSide(sd){ var left = e === 0 ? sd < 0 : sd > 0; return !(left && lane && lane.left); }
     [-1, 1].forEach(function(sd){
+      edge.push([extrude(THREE, P, [[sd*2.05, PLAT_TOP + 0.01], [sd*2.4, PLAT_TOP + 0.01]], false), new THREE.Matrix4()]);
+      if(!mineSide(sd)) return;
       var w0 = sd*2.05, w1 = sd*5.6;
       slab.push([extrude(THREE, P, [[w0, PLAT_TOP], [w1, PLAT_TOP], [w1, -1.4], [w0, -1.4]], true), new THREE.Matrix4()]);
-      edge.push([extrude(THREE, P, [[w0, PLAT_TOP + 0.01], [sd*2.4, PLAT_TOP + 0.01]], false), new THREE.Matrix4()]);
       roof.push([extrude(THREE, P, [[sd*2.3, 4.7], [sd*6.1, 4.45], [sd*6.1, 4.3], [sd*2.3, 4.55]], true), new THREE.Matrix4()]);
     });
     add(merge(THREE, slab), M.platform, true); add(merge(THREE, edge), M.edge); add(merge(THREE, roof), M.canopy, true);
-    P.forEach(function(p, i){ if(i % 3 === 1) [-1, 1].forEach(function(sd){ posts.push({p: p, l: sd*5.2}); }); });
+    P.forEach(function(p, i){ if(i % 3 === 1) [-1, 1].forEach(function(sd){ if(mineSide(sd)) posts.push({p: p, l: sd*5.2}); }); });
     // people waiting, the same on every client
     var h = hash(R.from + R.to + e) >>> 0;
     for(var k = 0; k < 9; k++){
@@ -598,7 +690,10 @@ function lineView(c, M, R, o, ends, ground, seaY, door){
     }
     // the stairs: a straight flight beside the platform on the door's side, landing at its middle
     var pm = at(R, (s0 + s1)/2), dl = door ? (door.x - (pm.x - o.x))*Math.cos(pm.yaw) - (door.z - (pm.z - o.z))*Math.sin(pm.yaw) : 1;
-    var sd2 = dl >= 0 ? 1 : -1, mid = lat({x: pm.x - o.x, z: pm.z - o.z, yaw: pm.yaw}, sd2*7.0);
+    var sd2 = dl >= 0 ? 1 : -1;
+    if(nb(sd2)) sd2 = -sd2;
+    if(nb(sd2)) return;                                           // between two lines: reached across the island platforms
+    var mid = lat({x: pm.x - o.x, z: pm.z - o.z, yaw: pm.yaw}, sd2*7.0);
     var gy = ground(mid.x, mid.z); if(!isFinite(gy)) gy = 0;
     var top = pm.y + PLAT_TOP, hgt = Math.max(1, top - gy), n = Math.ceil(hgt/0.19), run = n*0.29, fx = Math.sin(pm.yaw), fz = Math.cos(pm.yaw);
     var dir = e === 0 ? -1 : 1;                                   // down toward the station end of the platform
@@ -646,6 +741,20 @@ function mount(c, w, o){
     return i ? Math.max(1, Math.min(5, i.tier | 0)) : 1;
   }
   function myIsland(){ return o.me ? "user:" + o.me + "@2" : null; }
+  function posOf(a, wid){
+    var h = wid === "claude-hq@2" ? a && a.commons : (a && a.islands || []).filter(function(i){ return i && i.world === wid; })[0];
+    return h && isFinite(+h.x) && isFinite(+h.z) ? {x: (+h.x || 0)/100, z: (+h.z || 0)/100} : null;
+  }
+  // a line's lanes at a station: from every line there (the same on every client); memoised per station and lines
+  var laneMemo = {};
+  function laneOf(W, wid, other){
+    var others = linesAt(rail, wid).map(function(l){ var p = posOf(arch, l.other); return p ? {world: l.other, x: p.x, z: p.z} : null; }).filter(Boolean);
+    var here = posOf(arch, wid); if(!here || !W) return null;
+    var key = wid + ">" + others.map(function(x){ return x.world; }).sort().join(",");
+    if(!laneMemo[key]) laneMemo[key] = lanes(W, tierOf(arch, wid), here, others);
+    return laneMemo[key][other] || null;
+  }
+  function laneKey(a, b){ return JSON.stringify([a, b]); }
   function placesOf(a){ return (o.places(a) || []).map(function(p){ return Object.assign({}, p, {tier: tierOf(a, p.world)}); }); }
   function setNight(n){
     night = !!n; M.glass.emissiveIntensity = night ? 1.25 : 0; M.glass.opacity = night ? 0.85 : 0.62;
@@ -661,6 +770,13 @@ function mount(c, w, o){
       var h = world === "claude-hq@2" ? arch && arch.commons : (arch && arch.islands || []).filter(function(i){ return i && i.world === world; })[0];
       hp = {x: h ? (+h.x || 0)/100 : 0, z: h ? (+h.z || 0)/100 : 0}; myTier = tierOf(arch, myIsland());
       var want = linesAt(rail, world), have = {};
+      // a line built since: the lines beside it move into their lanes (not the one you are riding)
+      lines.slice().forEach(function(L){
+        var V = RIDE.trip, riding = V && (V.from === L.other || V.to === L.other);
+        if(riding || laneKey(laneOf(o.W, world, L.other), laneOf(L.W2, L.other, world)) === L.lk) return;
+        L.view.dispose(); root.remove(L.view.g); views.splice(views.indexOf(L.view), 1); lines.splice(lines.indexOf(L), 1);
+        try { addLine(L.to, L.W2); } catch(e){ if(typeof console !== "undefined") console.warn("rail: the line to " + L.other + " was not redrawn", e); }
+      });
       lines.forEach(function(L){ have[L.other] = L; });
       var places = placesOf(arch), jobs = [];
       want.forEach(function(L){
@@ -678,14 +794,15 @@ function mount(c, w, o){
     }, function(){});
   }
   function addLine(to, W2){
-    var mineSide = {world: world, x: hp.x, z: hp.z, W: o.W, tier: tierOf(arch, world), sea: seaOf(o.W, o.sea)};
-    var them = {world: to.world, x: to.x, z: to.z, W: W2, tier: to.tier, sea: seaOf(W2, 0)};
+    var la = laneOf(o.W, world, to.world), lb = laneOf(W2, to.world, world);
+    var mineSide = {world: world, x: hp.x, z: hp.z, W: o.W, tier: tierOf(arch, world), sea: seaOf(o.W, o.sea), lane: la};
+    var them = {world: to.world, x: to.x, z: to.z, W: W2, tier: to.tier, sea: seaOf(W2, 0), lane: lb};
     var ab = world < to.world ? alignment(mineSide, them) : alignment(them, mineSide), ba = reverse(ab);
     var out = ab.from === world ? ab : ba, inb = ab.from === world ? ba : ab;
     var st = stationOf(o.W), door = st ? doorOf(st) : null;
-    var V = lineView(c, M, ab, hp, ab.from === world ? [0] : [ab.len], o.ground, o.sea, door);
+    var V = lineView(c, M, ab, hp, ab.from === world ? [0] : [ab.len], o.ground, o.sea, door, la);
     root.add(V.g); views.push(V);
-    lines.push({other: to.world, to: to, out: out, inb: inb, W2: W2, view: V});
+    lines.push({other: to.world, to: to, out: out, inb: inb, W2: W2, view: V, lk: laneKey(la, lb)});
   }
   function seaOf(W, dflt){ return W && W.island && W.island.sea_cm != null ? (+W.island.sea_cm || 0)/100 : dflt || 0; }
   function loadDoc(id){
@@ -862,5 +979,6 @@ function mount(c, w, o){
           riding: function(){ return ours(RIDE.trip); }};
 }
 HQV.hqRail.mount = mount;
+HQV.hqRail.view = lineView;
 HQV.hqRail.ride = RIDE;
 })();

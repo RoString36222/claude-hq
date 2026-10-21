@@ -308,8 +308,9 @@ fn anim_ok(a: &Value) -> bool {
         // 0 still, 1 walk, 2 run -- and 3, riding a bike in Arena City (the "ride"
         // capability in protocol.rs; a page only sends 3 to an Arena that lists it),
         // 4, on a skateboard (the "skate" capability, likewise), and 5 / 6, driving a
-        // car / riding a motorbike (the "drive" capability).
-        Value::Number(n) => n.as_f64().is_some_and(|f| [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0].contains(&f)),
+        // car / riding a motorbike (the "drive" capability), and 7 / 8, flying a helicopter /
+        // an attack helicopter (the "fly" capability; its height rides in `h`).
+        Value::Number(n) => n.as_f64().is_some_and(|f| [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0].contains(&f)),
         _ => false,
     }
 }
@@ -506,8 +507,8 @@ mod tests {
         assert_eq!(p.listing()[0]["r"], 270); // int(-90) % 360, not Rust's -90
         // a bool x is not a number in Python either
         assert!(!p.pos("u", &json!({"w": "mission", "x": true, "z": 0, "r": 0}), 0.2));
-        // a is 7, which is not in (0, 1, 2)
-        assert!(!p.pos("u", &json!({"w": "mission", "x": 0, "z": 0, "r": 0, "a": 7}), 0.3));
+        // a is 9, which no capability sends
+        assert!(!p.pos("u", &json!({"w": "mission", "x": 0, "z": 0, "r": 0, "a": 9}), 0.3));
         // nobody by that name is standing anywhere
         assert!(!p.pos("nobody", &json!({"w": "base", "x": 0, "z": 0, "r": 0}), 0.4));
         // Every rejection above left the stored position alone.
@@ -620,6 +621,11 @@ mod tests {
         assert!(p.pos("u", &json!({"w": "city3d", "x": 10, "z": 20, "r": 0, "a": 1, "h": 1234.9, "p": -7.9}), 0.2));
         assert_eq!(p.listing()[0].to_string(),
                    r#"{"u":"u","n":"u","w":"city3d","x":10,"z":20,"r":0,"a":1,"h":1234,"p":-7}"#);
+        // In a helicopter ("fly"): a = 7 / 8, flown at its height.
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 10, "z": 20, "r": 0, "a": 7, "h": 12_000, "p": 4}), 0.25));
+        assert_eq!(p.listing()[0].to_string(),
+                   r#"{"u":"u","n":"u","w":"city3d","x":10,"z":20,"r":0,"a":7,"h":12000,"p":4}"#);
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 8, "h": 9000, "p": 0}), 0.27));
         // One of the pair alone: the other counts as 0.
         assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "p": 12}), 0.3));
         assert_eq!((p.listing()[0]["h"].clone(), p.listing()[0]["p"].clone()), (json!(0), json!(12)));
@@ -677,7 +683,7 @@ mod tests {
         p.enter("u", json!({"handle": "u"}), 0.0);
         for (a, keep) in [(json!(0), true), (json!(1), true), (json!(2), true),
                           (json!(2.0), true), (json!(true), true), (json!(false), true),
-                          (json!(3), true), (json!(4), true), (json!(5), true), (json!(6), true), (json!(7), false),
+                          (json!(3), true), (json!(4), true), (json!(5), true), (json!(6), true), (json!(7), true), (json!(8), true), (json!(9), false),
                           (json!(-1), false), (json!(1.5), false),
                           (json!("1"), false), (json!([1]), false)] {
             let m = json!({"w": "base", "x": 0, "z": 0, "r": 0, "a": a});

@@ -135,7 +135,10 @@ class EngineSound(unittest.TestCase):
                 "bmw-i4-m50": "electric", "bugatti-chiron-super-sport": "w16", "bugatti-tourbillon": "v16",
                 "ktm-990-duke": "twin", "bmw-m135-xdrive": "turbo4",
                 "lamborghini-revuelto": "v12", "lamborghini-countach-lp400": "v12", "lamborghini-huracan-sto": "v10",
-                "lamborghini-temerario": "v8tt", "lamborghini-urus-performante": "v8tt"}
+                "lamborghini-temerario": "v8tt", "lamborghini-urus-performante": "v8tt",
+                "ducati-panigale-v4-s": "v4", "kawasaki-ninja-h2": "supercharged", "royal-enfield-classic-350": "longstroke",
+                "royal-enfield-interceptor-650": "twin270", "harley-davidson-fat-boy-114": "vtwin45",
+                "triumph-street-triple-765-rs": "triple", "yamaha-r1": "crossplane", "suzuki-hayabusa": "four"}
         for vid, voice in want.items():
             self.assertEqual(c[vid][0], voice, vid)
         for vid, (snd, derived) in c.items():

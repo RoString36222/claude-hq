@@ -138,7 +138,7 @@ function place(W, tier){
 }
 
 /* ---------- the panel model (pure) ---------- */
-var TYPE_LABEL = {naked: "Naked", sport: "Sport", adventure: "Adventure", cruiser: "Cruiser", scooter: "Scooter", dirt: "Dirt",
+var TYPE_LABEL = {naked: "Naked", sport: "Sport", adventure: "Adventure", cruiser: "Cruiser", scooter: "Scooter", dirt: "Dirt", classic: "Classic", hypersport: "Hypersport",
                   hatch: "Hatchback", sedan: "Sedan", coupe: "Coupé", suv: "SUV", pickup: "Pickup", hyper: "Hypercar", super: "Supercar"};
 var KIND_LABEL = {bike: "Bikes", car: "Cars"};
 function onSale(cat){

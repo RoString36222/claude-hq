@@ -12,7 +12,7 @@
  *   estimate0100(spec, kind) -> s      from power-to-weight when the maker gives no figure
  *   voiceFor(spec, kind) -> name       the engine voice for a layout
  * entry = {kind: "car"|"bike", type: "sedan"|"coupe"|"suv"|"hatch"|"pickup"|"hyper"|"super"|"naked"|"sport"|
- *          "adventure"|"cruiser"|"scooter"|"dirt", spec: {cc, cyl, layout, aspiration, electric, powerKw,
+ *          "adventure"|"cruiser"|"scooter"|"dirt"|"classic"|"hypersport", spec: {cc, cyl, layout, aspiration, electric, powerKw,
  *          torqueNm, massKg, drive, topKmh, zeroTo100s, gears}, dims: {lengthM, widthM, heightM, wheelbaseM},
  *          sound (optional: a voice name that overrides voiceFor)}
  * Real figures go in; the game's caps (CAP_KMH) keep a hypercar inside a city.
@@ -36,7 +36,7 @@ var SLIP = {rwd: 0.8, awd: 0.35, fwd: 0.2};           // how readily the tail st
 var GRIP = {rwd: 0.75, awd: 1, fwd: 0.7};             // launch grip
 var LAUNCH = {rwd: 2.7, awd: 2.2, fwd: 4.2, bike: 2.6};   // s: the quickest 0-100 its tyres allow
 // how far a bike leans into a turn, by type (the starter motorbike is a naked: hq3d's 0.42)
-var LEAN = {naked: 0.42, sport: 0.5, adventure: 0.34, cruiser: 0.3, scooter: 0.36, dirt: 0.4};
+var LEAN = {naked: 0.42, sport: 0.5, adventure: 0.34, cruiser: 0.3, scooter: 0.36, dirt: 0.4, classic: 0.36, hypersport: 0.48};
 // body roll by type (rad at full lock and speed); hq3d's starter car has none
 var ROLL = {hatch: 0, sedan: 0.035, coupe: 0.025, hyper: 0.015, super: 0.018, suv: 0.075, pickup: 0.08};
 var BRAKE = 14;                                       // m/s², hq3d's
@@ -69,10 +69,16 @@ function voiceFor(spec, kind){
   if(spec.electric) return "electric";
   var cyl = num(spec.cyl, 0), lay = String(spec.layout || "").toLowerCase();
   if(kind === "bike"){
-    if(cyl <= 1 || lay === "single") return "single";
+    // [3.9] specific output (kW per litre) tells a lazy long-stroke single or 270-degree twin from a revvy one
+    var kwl = num(spec.powerKw, 0)*1000/Math.max(1, num(spec.cc, 1000));
+    if(cyl <= 1 || lay === "single") return kwl > 0 && kwl < 60 ? "longstroke" : "single";
+    if(/supercharg/.test(String(spec.aspiration || "").toLowerCase())) return "supercharged";
     if(/boxer/.test(lay)) return "boxer";
-    if(/v/.test(lay) && cyl === 2) return "vtwin";
-    if(cyl === 2) return "twin";
+    if(/v/.test(lay) && cyl === 2) return /45/.test(lay) ? "vtwin45" : "vtwin";
+    if(cyl === 2) return kwl > 0 && kwl < 65 ? "twin270" : "twin";
+    if(cyl === 3) return "triple";
+    if(/^v/.test(lay) && cyl === 4) return "v4";
+    if(/crossplane/.test(lay)) return "crossplane";
     return "four";
   }
   if(lay === "w16" || (cyl >= 16 && /w/.test(lay))) return "w16";

@@ -206,6 +206,17 @@ var ENGINES = {
   v12:      {cyl: 12, idle: 950, red: 9500, h: [1, .3, .42, .18, .28, .1, .16, .06, .08], sub: 0, det: 10, grit: 1.8, cut: [900, 7400], q: 1.9, gain: 0.05, lope: [12, 0.04], rough: .08, pops: .6, air: .7},
   w16:      {cyl: 16, idle: 900, red: 6700, h: [1, .5, .3, .25, .15, .1, .06], sub: .15, det: 5, grit: 1.5, cut: [600, 3600], q: 1, gain: 0.065, lope: [7, 0.06], rough: .1, pops: .3, turbo: 1500, air: .6},
   v16:      {cyl: 16, idle: 1000, red: 9000, h: [1, .35, .45, .2, .28, .12, .16, .08], sub: 0, det: 9, grit: 1.9, cut: [800, 6000], q: 1.6, gain: 0.055, lope: [9, 0.05], rough: .1, pops: .6, air: .65},
+  // [3.9] the new bikes: a counter-rotating V4's twin-pulse bark (the Panigale), an inline triple's howl, a crossplane
+  // four's uneven growl (the R1), a supercharged four with the blower's whine and a chirp on a lift (the H2), a
+  // long-stroke single's slow thump (the Classic 350), a low-revving 270-degree twin (the Interceptor) and a 45-degree
+  // V-twin's lumpy potato-potato (the Fat Boy)
+  v4:           {cyl: 4, idle: 1250, red: 14500, h: [1, .6, .35, .4, .2, .22, .1, .12, .06], sub: .45, det: 9, grit: 2.3, cut: [650, 5200], q: 1.6, gain: 0.05, lope: [7, 0.18], rough: .35, pops: .9, air: .7},
+  triple:       {cyl: 3, idle: 1150, red: 12650, h: [1, .5, .55, .3, .35, .15, .2, .08], sub: .3, det: 7, grit: 2, cut: [600, 4800], q: 1.5, gain: 0.05, lope: [9, 0.1], rough: .2, pops: .75, air: .65},
+  crossplane:   {cyl: 4, idle: 1350, red: 13800, h: [1, .75, .5, .45, .3, .25, .15, .1], sub: .55, det: 8, grit: 2.4, cut: [600, 5000], q: 1.6, gain: 0.05, lope: [6, 0.22], rough: .45, pops: .85, air: .7},
+  supercharged: {cyl: 4, idle: 1100, red: 12500, h: [1, .3, .5, .18, .3, .1, .18, .07, .1], sub: .05, det: 8, grit: 1.8, cut: [700, 5400], q: 1.4, gain: 0.048, lope: [14, 0.08], rough: .15, pops: .5, turbo: 3200, air: .65},
+  longstroke:   {cyl: 1, idle: 800, red: 6100, h: [1, .95, .8, .6, .5, .38, .3, .22, .16, .12], sub: 0, det: 4, grit: 2.8, cut: [300, 1700], q: 1.6, gain: 0.055, lope: [2.4, 0.35], rough: .85, pops: .4, air: .45},
+  twin270:      {cyl: 2, idle: 1050, red: 7250, h: [1, .65, .45, .32, .22, .14, .1], sub: .55, det: 6, grit: 2.2, cut: [450, 2600], q: 1.3, gain: 0.05, lope: [4.2, 0.35], rough: .55, pops: .5, air: .55},
+  vtwin45:      {cyl: 2, idle: 850, red: 5500, h: [1, .85, .6, .45, .3, .2, .12], sub: 1, det: 5, grit: 2.8, cut: [300, 1800], q: 1.8, gain: 0.06, lope: [2.2, 0.6], rough: 1, pops: .5, air: .5},
   electric: {lo: 600, hi: 3600, h: null, r2: 2.5, sub: 0, det: 0, grit: 1, cut: [2400, 7000], q: 2, gain: 0.03, air: .15},
   // a helicopter (games/hqheli.js): a low turbine note under the blades' slap
   rotor:  {lo: 22, hi: 44, h: [1, .6, .45, .3, .2, .15], r2: 3, sub: 0, det: 0, grit: 1.4, cut: [300, 520], q: 1, gain: 0.08, rotor: true, turbo: 3200, air: .35},

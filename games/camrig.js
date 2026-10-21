@@ -51,7 +51,11 @@ var VEHICLE = {
   jetski:  {backMul: 1.1, upMul: 0.7, sideMul: 1,  fovSpeedKick: 1,   fpAnchor: {seat: [0, 1.25, -0.2]}, roll: 0.3},
   // helicopters (games/hqheli.js): further back and higher, the horizon tilting a little with the bank
   heli:    {backMul: 2.6, upMul: 1.7, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [-0.4, 1.75, 1.0]}, roll: 0.35},
-  attack:  {backMul: 2.8, upMul: 1.8, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [0, 1.95, 2.1]}, roll: 0.35}
+  attack:  {backMul: 2.8, upMul: 1.8, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [0, 1.95, 2.1]}, roll: 0.35},
+  // planes (games/hqplane.js, HQ 3.2): well behind and above (the seaplane is 16 m long), the horizon banking a little;
+  // first person is the pilot's eye in the cockpit, looking out over the nose
+  seaplane: {backMul: 3.4, upMul: 1.5, sideMul: 1, fovSpeedKick: 0.4, fpAnchor: {seat: [0.35, 2.95, 5.6]}, roll: 0.3},
+  prop:     {backMul: 2.2, upMul: 1.15, sideMul: 1, fovSpeedKick: 0.5, fpAnchor: {seat: [0.28, 2.05, 0.95]}, roll: 0.3}
 };
 var SPAN_MIN = 44, SPAN_MAX = 2048, HALF = 1024, MAP_TAN = Math.tan(5*DEG);
 var LOOK_H = 1.3;          // chase look point above the target's feet (the "head" the camera frames)

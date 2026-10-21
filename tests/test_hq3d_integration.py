@@ -59,7 +59,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           "worldbuild", "camrig", "hqhud", "hqcityparts", "hqcity", "hqmerge",
                           # Cities (3.0): the civic kit, residents, traffic, the sea, boats, travel
                           "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqheli", "hqtravel", "hqvoyage", "hqships", "hqbridges",
-                          "hqair", "hqaircraft", "hqairbase",
+                          "hqair", "hqaircraft", "hqplane", "hqairbase",   # (3.2: the planes you fly)
                           # navigation (3.1): the router, the minimap, the route's chevrons, the Go to panel
                           "hqnav", "hqminimap", "hqroutefx", "hqnavui",
                           # rail (3.x): the lines between cities, their trains
@@ -114,11 +114,23 @@ class LoadOrderAndProtocol(unittest.TestCase):
         self.assertIn('if((a===7 || a===8) && !hqNetCan("fly")) a = 0;', send)
         self.assertLess(send.index('hqNetCan("fly")'), send.index("var msg="))
         # others see them in it: the helicopter model at the height they send, its rotors turning
-        self.assertIn('var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack"};', src)
+        self.assertIn('var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop"};', src)
         place = func_body(src, "placePeers")
         self.assertIn("HQV.hqheli.model(ctx, vk, bikeColor(u))", place)
         self.assertIn("HQV.hqheli.animate(P.bike, P.hst, dt, isNight())", place)
         self.assertIn("if(vk && !VEHICLES[vk]) vk = null;", place)   # a page without games/hqheli.js
+
+    def test_presence_plane(self):
+        # HQ 3.2: flying a plane you send a = 9 (the seaplane) / 10 (the prop plane), only to an Arena that lists "plane"
+        src = read(HQ3D)
+        moving = assigned_body(src, "inst.moving")
+        self.assertIn('ride.plane ? (ride.kind === "seaplane" ? 9 : 10)', moving)
+        send = func_body(read(HQ_UI), "hqNetSend")
+        self.assertIn('if((a===9 || a===10) && !hqNetCan("plane")) a = 0;', send)
+        self.assertLess(send.index('hqNetCan("plane")'), send.index("var msg="))
+        place = func_body(src, "placePeers")
+        self.assertIn("HQV.hqplane.model(ctx, vk, bikeColor(u))", place)
+        self.assertIn("HQV.hqplane.animate(P.bike, P.pst, dt, isNight())", place)
 
 
 class Hq3dSource(unittest.TestCase):

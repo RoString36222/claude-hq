@@ -1,0 +1,172 @@
+"""Pilotable planes (games/hqplane.js, HQ 3.2): the seaplane and the prop plane.
+
+hqplane.js's physics is pure, so node runs scripted flights against a stub `window` and the Python side checks them:
+the takeoff roll and lift-off past vr, the climb, the top speed, level flight holding its height when the keys are
+let go (assisted), the bank limit and wings levelling, coordinated turns, a gentle stall (the nose drops, no crash),
+ground effect, landings (runway, any flat ground under the soft limit, water for the seaplane) and crashes (hard,
+gear up, the prop plane on water, a wall), the same flight at 30 and 120 Hz, the autopilot holding height and turning
+to a heading, and the models from the hq3d ctx with the vendored three.js. Skipped when node is not installed."""
+import json
+import math
+import os
+import shutil
+import subprocess
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NODE = shutil.which("node")
+
+HARNESS = r"""
+import fs from "fs";
+const root = %(root)s;
+const THREE = await import(root + "/games/vendor/three-module.js");
+globalThis.window = {HQV: {}};
+for (const f of ["hqships", "hqaircraft", "hqplane"]) new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
+const P = window.HQV.hqplane, out = {};
+// a long runway at y 0 along +z; water everywhere x > 200 (for the seaplane), at y 0
+const land = {floor: () => 0, water: (x) => x > 200, waterY: () => 0, runway: (x, z) => Math.abs(x) < 15};
+const sea = {floor: () => -5, water: () => true, waterY: () => 0, runway: () => false};
+function fly(kind, hz, secs, inputs, env, x, y, z, yaw, setup){
+  var st = P.newState(kind, x || 0, y || 0, z || 0, yaw || 0), dt = 1/hz, n = Math.round(secs*hz), path = [], ev = [];
+  if(setup) setup(st);
+  for(var i = 0; i < n; i++){
+    var t = i*dt;
+    P.step(st, inputs(t, st), dt, env || land).forEach(function(e){ ev.push([Math.round((t + dt)*100)/100, e.type, e.why || e.hard || false]); });
+    if((i + 1) %% hz === 0) path.push([st.x, st.y, st.z, st.yaw, st.speed, st.pitch, st.roll, st.ground]);
+    if(st.crashed) break;
+  }
+  return {st: st, path: path, ev: ev};
+}
+function airborne(st, y, s){ st.ground = false; st.y = y; st.speed = s; st.thr = 0.7; st.rpm = 0.7; st.cmd = 0.05; st.pitch = 0.05; }
+// full throttle down the runway; Up at 6 s
+var to = fly("prop", 60, 30, (t) => ({thr: 1, pitch: t > 6 && t < 22 ? 1 : 0}));
+out.takeoff = {ev: to.ev, end: to.st, path: to.path};
+out.takeoff30 = fly("prop", 30, 30, (t) => ({thr: 1, pitch: t > 6 && t < 22 ? 1 : 0})).st;
+out.takeoff120 = fly("prop", 120, 30, (t) => ({thr: 1, pitch: t > 6 && t < 22 ? 1 : 0})).st;
+// assisted lift-off with no Up at all (it rotates by itself)
+out.autoRotate = fly("prop", 60, 25, () => ({thr: 1})).ev;
+// level flight: 300 m, keys let go, cruise power
+out.level = fly("prop", 60, 30, () => ({}), land, 0, 300, 0, 0, (st) => airborne(st, 300, 45)).path;
+out.top = fly("prop", 60, 90, () => ({thr: 1}), land, 0, 400, 0, 0, (st) => { airborne(st, 400, 40); st.gearUp = true; st.gear = 0; }).st.speed;
+// bank: A held 4 s then let go
+var bank = fly("prop", 60, 10, (t) => ({roll: t < 4 ? 1 : 0}), land, 0, 300, 0, 0, (st) => airborne(st, 300, 45));
+out.bank = bank.path;
+// manual: A held rolls past the assisted limit
+out.manual = fly("prop", 60, 3, () => ({roll: 1, assist: false}), land, 0, 300, 0, 0, (st) => airborne(st, 300, 45)).path;
+// stall: power off, nose held up, manual (assisted would not let it stall: it keeps 1.15 stall speed)
+var stall = fly("prop", 60, 40, (t) => ({thr: -1, pitch: t < 20 ? 1 : 0, assist: false}), land, 0, 600, 0, 0, (st) => airborne(st, 600, 40));
+out.protect = fly("prop", 60, 40, (t) => ({thr: -1, pitch: 1}), land, 0, 600, 0, 0, (st) => airborne(st, 600, 40)).path.map((p) => p[4]);
+out.stall = {ev: stall.ev, path: stall.path, crashed: stall.st.crashed};
+// landings
+out.landRunway = fly("prop", 60, 60, () => ({thr: -1}), land, 0, 30, 0, 0, (st) => airborne(st, 30, 30));
+out.landRough = fly("prop", 60, 60, () => ({thr: -1}), {floor: () => 0, water: () => false, waterY: () => 0, runway: () => false}, 0, 30, 0, 0, (st) => airborne(st, 30, 30));
+out.gearUp = fly("prop", 60, 60, () => ({thr: -1}), land, 0, 30, 0, 0, (st) => { airborne(st, 30, 30); st.gearUp = true; st.gear = 0; });
+out.dive = fly("prop", 60, 30, () => ({thr: 1, pitch: -1}), land, 0, 200, 0, 0, (st) => airborne(st, 200, 50));
+out.propWater = fly("prop", 60, 60, () => ({thr: -1}), sea, 0, 30, 0, 0, (st) => airborne(st, 30, 30));
+out.seaLand = fly("seaplane", 60, 60, () => ({thr: -1}), sea, 0, 30, 0, 0, (st) => airborne(st, 30, 34));
+out.seaTakeoff = fly("seaplane", 60, 40, () => ({thr: 1}), sea).ev;
+out.wall = fly("prop", 60, 20, () => ({}), {floor: (x, z) => z > 300 ? 120 : 0, water: () => false, waterY: () => 0, runway: () => true}, 0, 60, 0, 0, (st) => airborne(st, 60, 45));
+// brakes: rolling at 20 m/s on the runway, idle, Space
+out.brake = fly("prop", 60, 8, () => ({brake: true}), land, 0, 0, 0, 0, (st) => { st.speed = 20; }).st.speed;
+// autopilot: hold 350 m and turn to heading PI/2 from 300 m heading 0
+var ap = fly("prop", 60, 60, (t, st) => Object.assign({thr: 0}, P.autopilot(st, {alt: 350, hdg: Math.PI/2})), land, 0, 300, 0, 0, (st) => { airborne(st, 300, 45); st.thr = 0.75; });
+out.ap = {y: ap.st.y, yaw: ap.st.yaw, crashed: ap.st.crashed};
+// the models
+const c = {THREE, mat: (col, o) => new THREE.MeshStandardMaterial(Object.assign({color: col}, o || {}))};
+out.models = ["seaplane", "prop"].map((k) => { const B = P.model(c, k); P.animate(B, P.newState(k), 1/60, true); let n = 0; B.g.traverse((o) => { if(o.isMesh || o.isPoints) n++; });
+  const box = new THREE.Box3().setFromObject(B.g); return {k, draws: n, seat: !!B.seat, minY: box.min.y, len: box.max.z - box.min.z, span: box.max.x - box.min.x}; });
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class HqPlane(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        r = subprocess.run([NODE, "--input-type=module", "-"], input=HARNESS % {"root": json.dumps(ROOT)},
+                           capture_output=True, text=True, timeout=120)
+        if r.returncode:
+            raise AssertionError(r.stderr)
+        cls.o = json.loads(r.stdout)
+
+    def types(self, ev):
+        return [e[1] for e in ev]
+
+    def test_takeoff_past_rotation_speed(self):
+        t = self.o["takeoff"]
+        self.assertIn("takeoff", self.types(t["ev"]))
+        self.assertNotIn("crash", self.types(t["ev"]))
+        self.assertGreater(t["end"]["y"], 80)                 # climbing away
+        self.assertFalse(t["end"]["ground"])
+        # it does not leave the ground before Up at 6 s (below vr it could not anyway)
+        self.assertGreater(next(e[0] for e in t["ev"] if e[1] == "takeoff"), 6)
+
+    def test_assisted_rotates_by_itself(self):
+        self.assertIn("takeoff", self.types(self.o["autoRotate"]))
+
+    def test_frame_rate_independent(self):
+        a, b = self.o["takeoff30"], self.o["takeoff120"]
+        for k in ("x", "y", "z", "speed"):
+            self.assertAlmostEqual(a[k], b[k], delta=max(0.5, abs(b[k])*0.01), msg=k)
+
+    def test_level_flight_holds_height(self):
+        ys = [p[1] for p in self.o["level"]]
+        self.assertLess(max(ys) - min(ys), 25)
+        self.assertLess(abs(ys[-1] - ys[-6]), 6)              # settled
+
+    def test_top_speed(self):
+        self.assertAlmostEqual(self.o["top"], 66, delta=4)
+
+    def test_bank_limit_and_level(self):
+        rolls = [p[6] for p in self.o["bank"]]
+        self.assertLess(min(rolls), -0.6)                     # A banks left (left side down)
+        self.assertGreater(min(rolls), -0.72)                 # never past the assisted limit
+        self.assertLess(abs(rolls[-1]), 0.05)                 # level again once let go
+        yaws = [p[3] for p in self.o["bank"]]
+        self.assertGreater(yaws[3], 0.3)                      # turned left
+        self.assertGreater(max(abs(r[6]) for r in self.o["manual"]), 1.5)   # manual rolls on, past the assisted limit
+
+    def test_gentle_stall(self):
+        s = self.o["stall"]
+        self.assertIn("stall", self.types(s["ev"]))
+        self.assertIsNone(s["crashed"])
+        pitches = [p[5] for p in s["path"]]
+        self.assertLess(min(pitches[5:25]), 0)                # the nose drops even with Up held
+        # assisted: Up held with the power off never gets it much under stall speed (21 m/s)
+        self.assertGreater(min(self.o["protect"][5:]), 21*0.95)
+
+    def test_landings(self):
+        self.assertIn("land", self.types(self.o["landRunway"]["ev"]))
+        self.assertIsNone(self.o["landRunway"]["st"]["crashed"])
+        self.assertIn("land", self.types(self.o["landRough"]["ev"]))      # flat ground, slow enough: forgiving
+        self.assertIn("land", self.types(self.o["seaLand"]["ev"]))
+        self.assertTrue(self.o["seaLand"]["st"]["water"])
+        self.assertIn("takeoff", self.types(self.o["seaTakeoff"]))
+
+    def test_crashes(self):
+        self.assertEqual(self.o["gearUp"]["st"]["crashed"], "gear")
+        self.assertEqual(self.o["propWater"]["st"]["crashed"], "water")
+        self.assertEqual(self.o["dive"]["st"]["crashed"], "hard")
+        self.assertEqual(self.o["wall"]["st"]["crashed"], "wall")
+
+    def test_brakes(self):
+        self.assertLess(self.o["brake"], 1)
+
+    def test_autopilot(self):
+        ap = self.o["ap"]
+        self.assertIsNone(ap["crashed"])
+        self.assertAlmostEqual(ap["y"], 350, delta=25)
+        self.assertAlmostEqual(math.atan2(math.sin(ap["yaw"] - math.pi/2), math.cos(ap["yaw"] - math.pi/2)), 0, delta=0.08)
+
+    def test_models(self):
+        for m in self.o["models"]:
+            self.assertTrue(m["seat"])
+            self.assertLess(m["draws"], 16, m)                 # merged by material
+            self.assertGreater(m["minY"], -0.05, m)            # nothing below the surface it stands on
+        sp, pp = self.o["models"]
+        self.assertAlmostEqual(sp["span"], 20, delta=1.5)
+        self.assertAlmostEqual(pp["span"], 10.6, delta=0.8)
+
+
+if __name__ == "__main__":
+    unittest.main()

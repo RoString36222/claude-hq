@@ -221,7 +221,19 @@ function seaOf(doc, wave, tier){
   var land = landOf(doc, tier, R), sea = {land: land, docks: docksOf(doc, land), y: (+I.sea_cm || 0)/100, wave: wave || calmWave};
   // the hull's view: sea.land as it is when asked (the City adds its piers to it), but a bridge deck over the water
   // is open water underneath
-  sea.boat = {docks: sea.docks, y: sea.y, wave: sea.wave,
+  // The water's surface where the hulls float (HQ 3.2): the river's calm level, else sea level plus the swell on the
+  // clock the drawn sea runs on (sea.clock: the City sets it every frame to the time it gives the sea's shader; sea.flat
+  // in Calm, when the shader draws no swell). Boats, ferries and the seaplane all float on this one function, so
+  // nothing bobs out of step with the waves drawn under it (they used to run on a clock of their own from 0).
+  // level(x, z): the still water there (the river RIVER_Y up); swell(x, z, t): the waves on it (none on the river)
+  sea.clock = null; sea.flat = false;
+  sea.level = function(x, z){ return sea.y + (R && R.inWater(x, z) ? RIVER_Y : 0); };
+  sea.swell = function(x, z, t){
+    if(sea.flat || (R && R.inWater(x, z))) return 0;
+    var v = sea.wave(x, z, sea.clock != null ? sea.clock : t); return isFinite(v) ? v : 0;
+  };
+  sea.surface = function(x, z, t){ return sea.level(x, z) + sea.swell(x, z, t); };
+  sea.boat = {docks: sea.docks, y: sea.y, wave: sea.wave, surface: sea.surface,
               land: function(x, z){ return sea.land(x, z) && !(R && R.inWater(x, z) && R.onDeck(x, z, tier)); }};
   return sea;
 }

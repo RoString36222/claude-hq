@@ -173,6 +173,16 @@ var ENGINES = {
   turbo4: {lo: 34, hi: 158, a: "sawtooth", b: "triangle", ratio: 2.0, cut: 1250, q: 5, gain: 0.05,  whistle: 2300, lope: [11, 0.08]},
   six:    {lo: 30, hi: 140, a: "sawtooth", b: "sawtooth", ratio: 1.5, cut: 1050, q: 6, gain: 0.055},
   four:   {lo: 38, hi: 176, a: "square",   b: "sawtooth", ratio: 2.0, cut: 1600, q: 4, gain: 0.045, lope: [16, 0.1]},
+  // real vehicles (games/hqvehiclephys.js voiceFor): a thumping single, a parallel twin, a loping V-twin,
+  // a flat boxer, a W16's deep smooth roar, a V16's higher shriek, and an electric motor's whine (no lope,
+  // no gears: it climbs with the speed)
+  single:   {lo: 22, hi: 150, a: "square",   b: "sawtooth", ratio: 0.5,  cut: 900,  q: 5, gain: 0.05,  lope: [9, 0.55]},
+  twin:     {lo: 32, hi: 190, a: "sawtooth", b: "square",   ratio: 1.0,  cut: 1700, q: 4, gain: 0.045, lope: [14, 0.3]},
+  vtwin:    {lo: 24, hi: 140, a: "sawtooth", b: "square",   ratio: 0.5,  cut: 800,  q: 6, gain: 0.055, lope: [6, 0.6]},
+  boxer:    {lo: 28, hi: 160, a: "square",   b: "triangle", ratio: 1.0,  cut: 1000, q: 5, gain: 0.05,  lope: [10, 0.3]},
+  w16:      {lo: 20, hi: 105, a: "sawtooth", b: "sawtooth", ratio: 1.995, cut: 650, q: 3, gain: 0.065, whistle: 1500},
+  v16:      {lo: 30, hi: 190, a: "sawtooth", b: "triangle", ratio: 2.0,  cut: 1500, q: 7, gain: 0.055},
+  electric: {lo: 180, hi: 1400, a: "sine",   b: "triangle", ratio: 1.5,  cut: 2600, q: 9, gain: 0.03},
   // a helicopter (games/hqheli.js): a low turbine note under the blades' slap
   rotor:  {lo: 22, hi: 44,  a: "sawtooth", b: "triangle", ratio: 3.0, cut: 420,  q: 2, gain: 0.08,  lope: [14, 0.75], whistle: 3200}
 };

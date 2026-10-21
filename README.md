@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.6.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.8.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -371,7 +371,70 @@ and feature guide.
 
 ## Changelog
 
-- **3.6.0 — Fly the airliners.** Two airliners you fly yourself: a narrow-body (the airport's 38 m twin-jet) and a regional jet (the same at 0.72), in your HQ's own livery, on remote stands on the seaward side of the Commons' runway near the 36 end (clear of the passenger jets' stands, taxiways, line-up and roll, and of the prop plane's blast pad), and the regional jet beside a tier-5 island airport's runway (its 500 m runway is too short for the narrow-body). Walk up and press E (✈ Fly the airliner); Go to lists them as Airliner (fly it) / Regional airliner (fly it). A heavy flight model in hqplane.js: slow, damped controls, jets that spool up (about 5 s from idle for the narrow-body), a long takeoff roll that lifts off from a runway only, past 202 km/h (166 km/h regional; about 580 m of the Commons' runway), gear on G and by itself when assisted, flaps, Space for the brakes on the ground and speed brakes in the air, ground spoilers on landing, runway landings only, the autopilot (K) and air navigation (N) as the prop plane, a cockpit view from the captain's seat over a glareshield, and a crash puts you back on the stand. Out only stopped at a stand or on the apron. A new `jet` engine voice: a turbofan's spool whine on N1 (it lags the thrust levers as the engines spool) under broadband roar that grows with the thrust. Others see you in it (presence a = 11 / 12) where the Arena lists the new `airliner` capability; elsewhere you show as the prop plane. Needs the Arena backend release for the new codes.
+- **3.8.0 — Fly the airliners.** Two airliners you fly yourself: a narrow-body (the airport's 38 m twin-jet) and a regional jet (the same at 0.72), in your HQ's own livery, on remote stands on the seaward side of the Commons' runway near the 36 end (clear of the passenger jets' stands, taxiways, line-up and roll, and of the prop plane's blast pad), and the regional jet beside a tier-5 island airport's runway (its 500 m runway is too short for the narrow-body). Walk up and press E (✈ Fly the airliner); Go to lists them as Airliner (fly it) / Regional airliner (fly it). A heavy flight model in hqplane.js: slow, damped controls, jets that spool up (about 5 s from idle for the narrow-body), a long takeoff roll that lifts off from a runway only, past 202 km/h (166 km/h regional; about 580 m of the Commons' runway), gear on G and by itself when assisted, flaps, Space for the brakes on the ground and speed brakes in the air, ground spoilers on landing, runway landings only, the autopilot (K) and air navigation (N) as the prop plane, a cockpit view from the captain's seat over a glareshield, and a crash puts you back on the stand. Out only stopped at a stand or on the apron. A new `jet` engine voice: a turbofan's spool whine on N1 (it lags the thrust levers as the engines spool) under broadband roar that grows with the thrust. Others see you in it (presence a = 11 / 12) where the Arena lists the new `airliner` capability; elsewhere you show as the prop plane. Needs the Arena backend release for the new codes.
+- **3.7.0 — The Lucky Byte: a casino, with games against other players.** Every city from tier 3 gets a casino.
+  - **On the street:** a black-glass hall with gold fins under a hotel tower, a marquee of chasing bulbs, the name in
+    neon on the roof beside a pair of giant turning dice, a red carpet between brass stanchions and palms. It is in
+    **Go to**. Walk through the doors onto the casino floor.
+  - **The floor:** a loud casino carpet, chandeliers, a bar with back-lit bottles, two banks of slot machines, roulette,
+    two blackjack tables, the dice pit, the Race Book's wall of screens, Plinko, the Lucky Wheel, a Rocket cabinet, the
+    Scratch-O-Matic, a giant Coin Toss coin, and the cashier's cage. Dealers wear waistcoats and bow ties; the crowd
+    plays the machines. The wheel spins, the Plinko ball drops and the dealer nods when you win.
+  - **Eleven games, played with Poke Coins:** buy chips at the cage (10 chips a coin; cash them back the same way, so a
+    win too big for your 30-coin wallet stays on the rack, never lost), walk up to a game and press E (or click its
+    prompt). Slots, roulette, blackjack (3:2, the dealer stands on 17s, double down), horse racing (six runners with
+    live commentary), Plinko, the Lucky Wheel, Rocket (pick your cash-out; it crashes when it crashes), dice, scratch
+    cards (scratch with the mouse) and the coin. Every game keeps a few percent; the golden asterisk by the door shows
+    the honest odds.
+  - **Player against player:** the Duel Table. Post a challenge (high card, a dice duel, a coin duel, or rock paper
+    scissors with hidden moves), and anyone in any casino can take it; it is settled on the spot, the winner taking
+    the pot less 5%. You hear about it when someone takes yours, wherever you are on the floor.
+  - **The house has opinions:** lose and it roasts your luck (never you): near misses, the zero, your horse last, a bust
+    at 22, a big bet, a losing streak, a rival who read your rock, each with a picture (a stamp, a falling chart, the
+    world's smallest violin, the house's yacht, a flatlining wallet, a tumbleweed) and a sad trombone. Win and it
+    complains.
+  - **Things to find:** a duck, a door marked Staff Only, a machine out of order since forever, a cat on a bar stool,
+    a money tree, a ghost who plays machine 13 at 3:33 a.m., and an old cheat code.
+  - *Security:* every outcome is drawn on the Arena (`backend/src/casino.rs`, the OS-seeded thread RNG) before the
+    stake is taken, in one transaction with the payout; the page only animates it. New routes `GET /v1/casino/me`,
+    `GET /v1/casino/duels`, `POST /v1/casino/{cage,play,blackjack,duel}` (migration 0019: `casino_play`, `casino_hand`,
+    `casino_duel`); the HQ server proxies them as `/api/arena/casino/...`, POST + CSRF, with every field checked
+    against an allowlist (a game, a bet, a known pick word or a small number, a duel's uuid). Six plays per 2 s at most.
+  - *Privacy:* the only new egress is the game, the bet and the pick (and a duel's id) to the paired Arena. Duels show
+    each player's display name, as the Arena's other boards do. No transcript data is involved.
+  - *Accessibility:* in Calm and with reduced motion the animations are short and nothing flashes or shakes; every
+    control is a button with a label, Space or Enter plays, Escape leaves the table.
+- **3.6.0 — Skyline Park after dark: fireworks, a dancing fountain and a sixth ride.**
+  - **Free for everyone.** Skyline Park no longer charges a day pass: walk straight in, ride everything. The Arena
+    stops charging the `park` fare and stops sending a price, so pages from before 3.6 open the gate free too. The
+    ticket booth by the gate is a Welcome booth now.
+  - **Fireworks.** Every 8 minutes after dark a 90-second show goes up over the park: shells climb on spark
+    trails and burst into peonies, tilted rings, golden willows, twinkling chrysanthemums and strobes, ending in a
+    finale four times as fast. Each burst flashes and booms, the sound arriving late with distance. It runs on the
+    shared clock, so everyone in the city sees the same show, and you can see it from across the city.
+  - **The Storm Galleon**, a swinging pirate-style ship (an original design: a red-and-gold hull with shield
+    emblems, a compass-star sail, lanterns and a gold scroll at the bow), rocked up past 70° between two A-frames.
+    Its benches step up toward bow and stern; you ride the high stern row. It has its own station, like every ride.
+  - **A lagoon with a dancing fountain** in the lawn by the gate, under the coaster's low pass: rippling water in a
+    stone coping and eleven jets running four choreographed figures, lit in shifting colours by night.
+  - **The park lit up.** Rainbow chase lights run down the coaster's rails and climb the drop tower, every bulb
+    glows (and reads from afar), and four searchlights sweep the night sky from the gate and the far corners.
+  - **Grounds:** blossom and green trees and flower beds wherever the lawn is clear of the rides, the paths and the
+    crowd's walks, and a food court of parasol tables strung with lights by the cotton candy.
+  - *Fixed:* you no longer stop short of the landmark towers. Each one blocked a circle round itself, metres outside the
+    Aurora Spire's lobes, the Beacon Tower's shaft and fins, and the corners of the square towers; now only the
+    tower's own outline at the ground blocks you.
+  - *Fixed:* the Starswing's chairs had no backs (the line that added them had slipped into a comment), and a long
+    ride name ran off its station's sign.
+  - *Accessibility:* in Calm and with reduced motion there are no fireworks, the searchlights hold still and the
+    fountain stands steady.
+  - *Privacy:* no new egress; the show, the fountain and the ride are computed locally from the clock.
+- **3.5.8 — Your car lift's gate no longer faces your building.** On a third of the Commons' lots an HQ with its
+  wings (level 30 and up) had its car-lift bay right behind a wing with the gate facing the wing's back wall: a car,
+  motorbike or bicycle brought up from B1 came out against the building, so you could not take it out, and the bay was
+  in the way coming and going. A bay now only stands where there are 8 m clear in front of its gate; where only the
+  back of the lot has room, the bay faces away from the building and you ride out to the back. Lots whose bay was fine
+  keep it exactly where it was.
 - **3.5.7 — Engines that sound like engines.** Every engine note is now built like the real thing (still pure WebAudio, no audio files): its pitch is the firing frequency (rpm/60 × cylinders/2) of the engine it models, with its own harmonic recipe, a detuned twin for body, a half-order sub for the lumpy ones and a waveshaper for grit, behind a low-pass that opens with the revs and the throttle. A KTM 390 thumps as a single, the 1390 lopes as a V-twin, the R 1300 GS burbles as a boxer, the S 1000 RR screams to 14,000 rpm, BMW's turbo fours and sixes and twin-turbo V8s whistle and blow off when you lift, the Bugattis roar (W16) or shriek (V16) and the EVs whine. On the throttle it is louder and brighter, off it softer with crackle on the overrun for the sporty ones (deterministic, not under Calm); upshifts cut for a moment, downshifts blip; a lumpy, uneven idle; intake roar, road rumble with speed and a tyre squeal in a powerslide. Planes get a flat-six with a two-blade prop's buzz. Every engine is one node graph made once (nothing per frame) into a shared compressor, at about the old volume; muted means silent.
 - **3.5.6 — Dealership vehicles, the next layer of detail.** Look through a catalogue car's (lighter) glass and you see a cabin: stitched seats with headrests, a glowing instrument cluster and centre screen, the console and a steering wheel with spokes. Headlights get projector lenses and a DRL strip, tail lights become LED light bars, grilles and intakes a honeycomb mesh, and there are generic round badges, lettered tyre sidewalls, quad, twin or centre exhaust tips by type, side skirts, chrome or black window trim, mirror indicators, a fuel flap and lettered plates. Bikes get a full exhaust (headers, collector, end can with cap and mouth), a sprung shock with its reservoir, swingarm pivot and chain adjusters, gear and brake pedals, brake hoses and cables, fork caps, bar-end weights, knee pads, rim tape, a plate hanger and extra trellis tubes. Nearly all of it is one shared canvas texture, so draw calls are unchanged (14 a car, 8-10 a bike); sizes, seats and the rider's fit are exactly as before.
 - **3.5.5 — Dealership vehicles at full size, with more detail.** The catalogue's bikes and cars used to look toy-sized

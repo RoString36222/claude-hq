@@ -353,7 +353,8 @@ var KINDS = {
   post: ["Post Office", "📮"], stadium: ["Stadium", "🏟️"], fountain: ["Fountain", "⛲"],
   // games/hqspectacle.js claims these (each carries its own name): the amusement park and the landmark towers
   funpark: ["Amusement park", "🎡"], landmark: ["Landmark", "🏙️"],
-  skatepark: ["Skatepark", "🛹"], dealer: ["Dealership", "🚘"], carpark: ["Garage", "🅿️"]
+  skatepark: ["Skatepark", "🛹"], dealer: ["Dealership", "🚘"], carpark: ["Garage", "🅿️"],
+  casino: ["Casino", "🎰"]                     // games/hqcasino.js (its own name: The Lucky Byte)
 };
 var ICON = {myhq: "🏠", hq: "🏢", travel: "⛴️"};
 var DOOR_OUT = 2;   // a door stands this far out past the site's edge (m)

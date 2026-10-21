@@ -50,6 +50,7 @@ mod sounds;
 mod story_check;
 mod valley;
 mod vehicles;
+mod casino; // HQ 3.7
 mod garages; // [basement 3.4]
 mod weeks;
 mod world;
@@ -1019,6 +1020,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(skills::routes())
         .merge(sounds::routes())
         .merge(vehicles::routes())
+        .merge(casino::routes())
         .merge(garages::routes()) // [basement 3.4]
         .layer(middleware::from_fn_with_state(state.clone(), require_device));
 

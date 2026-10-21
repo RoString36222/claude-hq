@@ -14,8 +14,8 @@
  * coasterPlan(a, b, hm)   the coaster's control points in the park's frame (pure; the tests check its clearances).
  *
  * create(c, W, o) -> the drawn landmarks and park, and riding them (needs THREE through hq3d's ctx):
- *   o: {scene, ground(x, z), owner (the city's owner id), city() (its CityState, which carries the caller's
- *       park: {price, pass} from an Arena that sells passes), post(path, body) -> Promise, say(text), avatar()}
+ *   o: {scene, ground(x, z), owner (the city's owner id), city() (its CityState), say(text), avatar()}
+ *   The park is free for everyone (HQ 3.6): no tickets, the turnstile always open.
  *   -> {g, update(t, dt, cam), setNight(n), blocked(x, z), use(p), carry(), camPose(), riding(), destroy()}
  *
  * The ticket is a "park" fare on the city (POST /api/arena/city/:owner/fare): server-authoritative and paid to that
@@ -197,6 +197,45 @@ function turned(omega, t, run){
   return a;
 }
 
+// The fireworks (HQ 3.6): a show over the park every SHOW_EVERY s of the shared clock (by night, not in Calm),
+// SHOW_LEN s long, ending in a FINALE of shells four times as fast. shells(a, b, s0, s1): every shell whose burst falls
+// in [s0, s1), in the park's frame (a, b: its half width and depth), the same for everyone: when, from where, how high,
+// what kind and colours. Shell i of a show draws in slot i % FW_SLOTS: no two in one slot are ever alive together.
+var SHOW_EVERY = 480, SHOW_LEN = 90, FINALE = 14, FW_RISE = 1.8, FW_SLOTS = 32, FW_LIVE = 6.5;
+var FW_KINDS = ["peony", "ring", "willow", "chrysanthemum", "strobe"], FW_WEIGHT = [38, 16, 18, 18, 10];
+var FW_COLS = [[0xff3355, 0xffc0a0], [0x3399ff, 0xc8f0ff], [0x55ff7a, 0xfff3a0], [0xffc22e, 0xff5a1a], [0xc061ff, 0xff9fdc],
+               [0xffffff, 0x9fd0ff], [0xff5fa8, 0x5fffe8], [0xff9f1c, 0xfff08a], [0x29e0ff, 0xb46bff]];
+var FW_T = null;
+function showAt(sec){ var t = ((sec % SHOW_EVERY) + SHOW_EVERY) % SHOW_EVERY; return t < SHOW_LEN ? {t: t, start: sec - t, n: Math.floor(sec/SHOW_EVERY)} : null; }
+function shellTimes(){                                  // a show's launch times: a steady pace with salvos, then the finale
+  var out = [], t = 2, i = 0;
+  while(t < SHOW_LEN - FINALE - 2){
+    out.push(t); i++;
+    if(i % 12 === 0){ out.push(t + 0.35, t + 0.7); t += 1.0; }
+    t += 1.15 + (hash32("fw:t:" + i) % 1000)/1000*0.9;
+  }
+  for(t = SHOW_LEN - FINALE; t < SHOW_LEN - 1.5; t += 0.3) out.push(t);
+  return out;
+}
+function shells(a, b, s0, s1){
+  FW_T = FW_T || shellTimes();
+  var out = [];
+  for(var n = Math.floor((s0 - SHOW_LEN - FW_RISE)/SHOW_EVERY); n <= Math.floor(s1/SHOW_EVERY); n++){
+    var S0 = n*SHOW_EVERY;
+    for(var i = 0; i < FW_T.length; i++){
+      var tb = S0 + FW_T[i] + FW_RISE; if(tb < s0 || tb >= s1) continue;
+      var fin = FW_T[i] >= SHOW_LEN - FINALE, h = (function(n2, i2){ return function(k){ return (hash32("fw:" + n2 + ":" + i2 + ":" + k) % 100000)/100000; }; })(n, i);
+      var w = h("k")*100, kind = 0; for(var j = 0, acc = 0; j < FW_KINDS.length; j++){ acc += FW_WEIGHT[j]; if(w < acc){ kind = j; break; } }
+      if(fin && kind === 2) kind = 0;                   // the finale bursts big and bright, no slow willows
+      var cp = FW_COLS[Math.floor(h("c")*FW_COLS.length)], lx = (h("x")*2 - 1)*a*0.7, lz = b - 4 - h("z")*6;
+      out.push({t: tb, i: i, slot: i % FW_SLOTS, show: n, kind: FW_KINDS[kind], k: kind, launch: {x: lx, z: lz},
+                burst: {x: lx + (h("dx") - 0.5)*18, y: 42 + h("y")*30 + (fin ? 8 : 0), z: lz - 8 - h("dz")*18},
+                col: cp[0], col2: cp[1], size: (fin ? 1.2 : 1)*(0.85 + h("s")*0.35), seed: h("r")});
+    }
+  }
+  return out.sort(function(p, q){ return p.t - q.t || p.i - q.i; });
+}
+
 /* ---------- drawing ---------- */
 var TEXC = {};          // textures, shared by every City built on this page (the renderer re-uploads as needed)
 function create(c, W, o){
@@ -375,19 +414,21 @@ function create(c, W, o){
       gp.add(cone(s*0.06, s*0.012, H*0.13, M.steel, H));
       var ring = new THREE.Mesh(new THREE.TorusGeometry(s*0.33, 0.45, 6, 48), glowMat(0x7fd8ff)); ring.rotation.x = PI/2; ring.position.y = H + 0.6; gp.add(ring);
       beacon(gp, H*1.13 + 1); floods(gp, s*0.6, 0x9fd8ff);
-      return s*0.47;
+      return [base];
     },
     // a three-lobed tower climbing in setbacks to a long spire
     spire: function(gp, s, H){
       var R = s*0.42, tiers = [0, 0.3, 0.5, 0.64, 0.75, 0.84, 0.9];
+      var foot = null;
       tiers.forEach(function(t0, i){
         var t1 = i + 1 < tiers.length ? tiers[i + 1] : 0.95, k = 1 - i*0.12;
         var base = section(function(a){ return R*k*(1 + 0.24*Math.cos(3*a + i*0.35)); }, 72);
         gp.add(tower(base, t0*H, t1*H, 4, function(u){ return lerp(1, 0.97, u); }, null, M.grid, TILE.grid));
+        if(!i) foot = base;
       });
       gp.add(cone(R*0.16, R*0.01, H*0.28, M.steel, H*0.95));
       beacon(gp, H*1.23 + 1); floods(gp, s*0.55, 0xfff1d0);
-      return R*1.2;
+      return [foot];
     },
     // a glass bullet wrapped in a steel diagrid
     lantern: function(gp, s, H){
@@ -403,12 +444,13 @@ function create(c, W, o){
       }
       var cap = new THREE.Mesh(new THREE.SphereGeometry(R*0.12, 16, 10), glowMat(0xffe8b0)); cap.position.y = H*0.985; gp.add(cap);
       beacon(gp, H + 2); floods(gp, s*0.55, 0xbfe6ff);
-      return R*0.85;
+      return [rings[0].pts];
     },
     // twin eight-pointed towers in setbacks with a skybridge between them
     twins: function(gp, s, H){
-      var R = s*0.235, gap = s*0.1, off = gap/2 + R, steps = [[0, 0.58, 1], [0.58, 0.72, 0.86], [0.72, 0.82, 0.72], [0.82, 0.9, 0.58], [0.9, 0.94, 0.44]];
+      var R = s*0.235, gap = s*0.1, off = gap/2 + R, steps = [[0, 0.58, 1], [0.58, 0.72, 0.86], [0.72, 0.82, 0.72], [0.82, 0.9, 0.58], [0.9, 0.94, 0.44]], feet = [];
       [-1, 1].forEach(function(sd){
+        feet.push(section(function(a){ return R*(1 + 0.09*Math.cos(8*a)); }, 96).map(function(p){ return [p[0] + sd*off, p[1]]; }));
         var tg = new THREE.Group(); tg.position.x = sd*off; gp.add(tg);
         steps.forEach(function(st){
           var base = section(function(a){ return R*st[2]*(1 + 0.09*Math.cos(8*a)); }, 96);
@@ -420,15 +462,19 @@ function create(c, W, o){
       var by = H*0.42, bridge = new THREE.Mesh(new THREE.BoxGeometry(gap + R*0.6, 5, 3.4), M.steel); bridge.position.y = by; bridge.castShadow = true; gp.add(bridge);
       [-1, 1].forEach(function(sd){ gp.add(tube([[sd*gap*0.15, by - 2.5, 0], [sd*(gap/2 + R*0.6), by - 30, 0]], 0.55, M.steel, 8)); });
       floods(gp, s*0.6, 0xfff0d0);
-      return [{x: -off, z: 0, r: R*1.1}, {x: off, z: 0, r: R*1.1}];
+      return feet;
     },
     // an observation tower: a concrete shaft, a glass sky-deck ringed in light, a second pod and an antenna
     needle: function(gp, s, H){
       var r0 = Math.min(9, s*0.24);
-      gp.add(tower(section(function(){ return r0; }, 40), 0, H*0.78, 6, function(u){ return lerp(1, 0.42, u); }, null, M.stone, TILE.stone));
+      var shaft = section(function(){ return r0; }, 40), feet = [shaft];
+      gp.add(tower(shaft, 0, H*0.78, 6, function(u){ return lerp(1, 0.42, u); }, null, M.stone, TILE.stone));
       for(var i = 0; i < 3; i++){                                    // three fins round the foot
         var f = new THREE.Mesh(new THREE.BoxGeometry(1.6, H*0.16, r0*2.6), M.stone); var a = i/3*TAU;
         f.position.set(Math.sin(a)*r0*1.1, H*0.08, Math.cos(a)*r0*1.1); f.rotation.y = a; f.castShadow = true; gp.add(f);
+        // the fin's footprint: its box turned by a about y ((lx, lz) -> (lx cos a + lz sin a, -lx sin a + lz cos a))
+        feet.push([[-0.8, -r0*1.3], [0.8, -r0*1.3], [0.8, r0*1.3], [-0.8, r0*1.3]].map(function(q){
+          return [f.position.x + q[0]*Math.cos(a) + q[1]*Math.sin(a), f.position.z - q[0]*Math.sin(a) + q[1]*Math.cos(a)]; }));
       }
       var py = H*0.66, prof = [[0.42, 0], [1.8, 3], [2.05, 7], [2.05, 11], [1.6, 14], [0.42, 16]], rings = [];
       prof.forEach(function(p){ rings.push({y: py + p[1], pts: section(function(){ return r0*p[0]; }, 64)}); });
@@ -439,11 +485,11 @@ function create(c, W, o){
       gp.add(new THREE.Mesh(loft(rings, TILE.glass), M.glass));
       gp.add(cone(r0*0.16, r0*0.03, H*0.22, M.steel, H*0.78));
       beacon(gp, H + 1); floods(gp, r0*2.2, 0xfff0c0);
-      return r0*1.6;
+      return feet;
     },
     // an art deco stone tower stepping back to a crown of lit sunbursts
     regent: function(gp, s, H){
-      var tiers = [[1, 0.45], [0.82, 0.2], [0.66, 0.13], [0.52, 0.09]], y = 0;
+      var tiers = [[1, 0.45], [0.82, 0.2], [0.66, 0.13], [0.52, 0.09]], y = 0, foot = rrect(s, s*0.9, 1.4, 3);
       tiers.forEach(function(t){ var h = t[1]*H; gp.add(tower(rrect(s*t[0], s*t[0]*0.9, 1.4, 3), y, y + h, 4, null, null, M.stone, TILE.stone)); y += h; });
       var cw = s*0.42, crown = glowMat(0xfff2c8);
       for(var i = 0; i < 6; i++){
@@ -456,7 +502,7 @@ function create(c, W, o){
       }
       gp.add(cone(cw*0.08, cw*0.01, H*0.16, M.steel, y + H*0.12));
       beacon(gp, y + H*0.28 + 1); floods(gp, s*0.6, 0xffe2b0);
-      return s*0.47;
+      return [foot];
     }
   };
   var HMUL = {twist: 1, spire: 1.15, lantern: 0.72, twins: 0.82, needle: 1.35, regent: 0.9};
@@ -467,8 +513,14 @@ function create(c, W, o){
     landG.add(gp);
     mergeInto(gp, true, function(o){ return o.userData.keep; });
     var cr = Math.cos(m.rot), sr = Math.sin(m.rot);
-    var circles = (Array.isArray(foot) ? foot : [{x: 0, z: 0, r: foot}]).map(function(f){ return {x: m.x + f.x*cr + f.z*sr, z: m.z - f.x*sr + f.z*cr, r: f.r}; });
-    marks.push({m: m, g: gp, H: H, circles: circles});
+    // what blocks you: the tower's own outline at the ground (each builder returns its base rings), turned and
+    // moved into the world, each with its bounds for a quick reject
+    var polys = foot.map(function(P){
+      var W2 = P.map(function(q){ return [m.x + q[0]*cr + q[1]*sr, m.z - q[0]*sr + q[1]*cr]; }), b = {x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity};
+      W2.forEach(function(q){ b.x0 = Math.min(b.x0, q[0]); b.x1 = Math.max(b.x1, q[0]); b.z0 = Math.min(b.z0, q[1]); b.z1 = Math.max(b.z1, q[1]); });
+      return {P: W2, b: b};
+    });
+    marks.push({m: m, g: gp, H: H, polys: polys});
   });
 
   /* ---------- the park ---------- */
@@ -482,6 +534,7 @@ function create(c, W, o){
     function toL(x, z){ var dx = x - P.x, dz = z - P.z; return {x: dx*cr - dz*sr, z: dx*sr + dz*cr}; }
     function ly(lx, lz){ var w = toW(lx, lz); return ground(w.x, w.z) - gy; }
     var hits = [], segs = [], bulbs = [], glows = [], rides = [], statics = [], movers = [], dynRoots = [];
+    var track = [], paved = [], zones = [];   // the coaster's samples; paved rectangles; rides' sweeps (for the scenery)
     var hm = clamp(Math.min(P.w, P.d)*0.42, 26, 46);
 
     // the paths, paved, laid over the ground as it lies (a flat slab floats or sinks on a slope)
@@ -494,6 +547,7 @@ function create(c, W, o){
         Pp.setXYZ(i, x, ly(x, z) + 0.07, z); Uv.setXY(i, x/TILE.pave, z/TILE.pave);
       }
       geo.computeVertexNormals();
+      paved.push([x0, z0, x1, z1]);
       var m = new THREE.Mesh(geo, M.pave); m.receiveShadow = true; pg.add(m); return m;
     }
     paveArea(-3.5, -b - 3, 3.5, b*0.55);                                  // the boulevard, from outside the gate
@@ -566,9 +620,12 @@ function create(c, W, o){
         var gr = gx.createLinearGradient(0, 0, 1024, 256); gr.addColorStop(0, "#0f1220"); gr.addColorStop(1, "#2a1240");
         gx.fillStyle = gr; gx.fillRect(0, 0, 1024, 256);
         gx.strokeStyle = accent; gx.lineWidth = 12; gx.strokeRect(14, 14, 996, 228);
-        gx.font = "bold 132px 'Avenir Next', 'Segoe UI', sans-serif"; gx.textAlign = "center"; gx.textBaseline = "middle";
+        var label = (icon ? icon + "  " : "") + String(name).toUpperCase(), fs = 132;
+        gx.font = "bold " + fs + "px 'Avenir Next', 'Segoe UI', sans-serif";
+        var tw = gx.measureText(label).width; if(tw > 930){ fs = Math.floor(fs*930/tw); gx.font = "bold " + fs + "px 'Avenir Next', 'Segoe UI', sans-serif"; }   // a long name fits the board
+        gx.textAlign = "center"; gx.textBaseline = "middle";
         gx.shadowColor = accent; gx.shadowBlur = 34; gx.fillStyle = "#fff8e6";
-        gx.fillText((icon ? icon + "  " : "") + String(name).toUpperCase(), 512, 138);
+        gx.fillText(label, 512, 138);
       }).t;
       t.colorSpace = THREE.SRGBColorSpace; return t;
     }
@@ -624,7 +681,7 @@ function create(c, W, o){
         for(var j2 = 0; j2 < 14; j2++){ var f = new THREE.Mesh(new THREE.SphereGeometry(0.35 + R2()*0.2, 12, 8), fluff); var a3 = R2()*TAU, r3 = R2()*0.45; f.position.set(Math.cos(a3)*r3, 1.9 + R2()*0.7, Math.sin(a3)*r3); pgp.add(f); }
       } else if(kind === "ticket"){
         var tkT = c.canvasTex(512, 256, function(gx){ gx.fillStyle = "#ffd23f"; gx.fillRect(0, 0, 512, 256); gx.strokeStyle = "#7a1f3d"; gx.setLineDash([14, 10]); gx.lineWidth = 8; gx.strokeRect(22, 22, 468, 212);
-          gx.fillStyle = "#7a1f3d"; gx.font = "bold 84px 'Avenir Next', sans-serif"; gx.textAlign = "center"; gx.textBaseline = "middle"; gx.fillText("ADMIT ONE", 256, 130); }).t;
+          gx.fillStyle = "#7a1f3d"; gx.font = "bold 84px 'Avenir Next', sans-serif"; gx.textAlign = "center"; gx.textBaseline = "middle"; gx.fillText("FREE ENTRY", 256, 130); }).t;
         tkT.colorSpace = THREE.SRGBColorSpace;
         var tk = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.1, 0.08), new THREE.MeshStandardMaterial({map: tkT, roughness: 0.6})); tk.position.y = 0.7; tk.rotation.z = 0.12; pgp.add(tk);
       }
@@ -699,7 +756,7 @@ function create(c, W, o){
     }
 
     // the ticket booth by the gate and the food kiosks down the boulevard (after the builders' textures above)
-    kiosk({x: GATE + 4.8, z: -b - 2.6, yaw: PI, name: "Tickets", prop: "ticket", acc: "#ffd23f"});
+    kiosk({x: GATE + 4.8, z: -b - 2.6, yaw: PI, name: "Welcome", prop: "ticket", acc: "#ffd23f"});
     [{x: -9, z: -b*0.55, name: "Popcorn", prop: "popcorn", acc: "#ffd23f"}, {x: 9, z: -b*0.35, name: "Ice Cream", prop: "cone", acc: "#7ee0ff"},
      {x: -9, z: b*0.2, name: "Cotton Candy", prop: "candy", acc: "#ff7ad9"}].forEach(function(k){ k.yaw = k.x < 0 ? PI/2 : -PI/2; kiosk(k); });
 
@@ -709,9 +766,15 @@ function create(c, W, o){
       wheel: {x: -a*0.42, z: -b*0.36, R: clamp(Math.min(a, b)*0.42, 10, 26)},
       drop: {x: -a*0.42, z: b*0.42, H: clamp(hm*1.55, 40, 72)},
       carousel: {x: a*0.3, z: -b*0.02, r: clamp(a*0.18, 6, 9)},
-      swing: {x: a*0.28, z: b*0.38, r: clamp(a*0.12, 4, 6)}
+      swing: {x: a*0.28, z: b*0.38, r: clamp(a*0.12, 4, 6)},
+      galleon: a >= 30 && b >= 48 ? {x: -a*0.04, z: b*0.69} : null     // behind the boulevard's end, where the park is long enough
     };
     rides.push(coaster(), wheel(place.wheel), drop(place.drop), carousel(place.carousel), swinger(place.swing));
+    if(place.galleon) rides.push(galleon(place.galleon));
+    zones.push({x: place.wheel.x, z: place.wheel.z, hw: 4, hd: place.wheel.R + 2}, {x: place.drop.x, z: place.drop.z, hw: 5.5, hd: 5.5},
+               {x: place.carousel.x, z: place.carousel.z, hw: place.carousel.r + 1.5, hd: place.carousel.r + 1.5},
+               {x: place.swing.x, z: place.swing.z, hw: place.swing.r + 8, hd: place.swing.r + 8});
+    if(place.galleon) zones.push({x: place.galleon.x, z: place.galleon.z, hw: 17, hd: 5.5});
     // every ride's station: you walk up to its steps, queue on its deck and board from there
     rides.forEach(function(r){
       var o3 = r.stationAt; if(!o3) return;
@@ -772,6 +835,9 @@ function create(c, W, o){
       var cg = new THREE.Group(); cg.name = "coaster"; pg.add(cg); dynRoots.push(cg);
       cg.add(sweep([0.55, 0], 0.09, railM)); cg.add(sweep([-0.55, 0], 0.09, railM)); cg.add(sweep([0, -0.45], 0.22, spineM));
       var led = sweep([0, -0.72], 0.05, glowMat(0x4fd1ff)); cg.add(led);
+      // chase lights down both rails' outsides, a rainbow that runs along the lap by night (the park's bulbs)
+      for(i = 0; i < N; i += 3) [-1, 1].forEach(function(sd){ var lp = Pt[i].clone().addScaledVector(Sd[i], sd*0.74).addScaledVector(Up[i], 0.02); bulbs.push({x: lp.x, y: lp.y, z: lp.z, k: (i/N*6) % 1}); });
+      track = Pt;
       var nT = Math.floor(N/2.4), ties = new THREE.InstancedMesh(new THREE.BoxGeometry(1.3, 0.12, 0.16), spineM, nT), mx = new THREE.Matrix4(), bas = new THREE.Matrix4();
       for(i = 0; i < nT; i++){ var kk = Math.floor(i*N/nT); bas.makeBasis(Sd[kk], Up[kk], Tg[kk]); mx.copy(bas).setPosition(Pt[kk].clone().addScaledVector(Up[kk], -0.2)); ties.setMatrixAt(i, mx); }
       cg.add(ties);
@@ -889,6 +955,7 @@ function create(c, W, o){
       dg.add(tower(rrect(3.2, 3.2, 0.4, 2), 0, H, 6, null, null, M.steel, TILE.steel));
       var crownM = glowMat(0xff3d7f), crown = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.0, 3, 16), crownM); crown.position.y = H + 1.5; dg.add(crown);
       beacon(dg, H + 3.6);
+      for(var yb = 2; yb < H; yb += 0.9) [[1, 1], [-1, 1], [-1, -1], [1, -1]].forEach(function(q){ bulbs.push({x: o3.x + q[0]*1.68, y: ly(o3.x, o3.z) + yb, z: o3.z + q[1]*1.68, k: (yb/H*1.5) % 1}); });
       var ringG = new THREE.Group(); dg.add(ringG);
       var ring = new THREE.Mesh(new THREE.TorusGeometry(3.2, 0.5, 8, 32), plain(0xffd23f, {metal: 0.4, rough: 0.3})); ring.rotation.x = PI/2; ringG.add(ring);
       var dropAnchors = [];
@@ -976,7 +1043,7 @@ function create(c, W, o){
         var arm = new THREE.Group(), an = i/16*TAU; arm.rotation.y = -an; top.add(arm);
         var hang = new THREE.Group(); hang.position.x = rt; arm.add(hang);
         var ch = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.12, 0.6), plain([0xff4f6d, 0x3bceac, 0xffd23f, 0x5f6bff][i % 4])); ch.position.y = -LC; hang.add(ch);
-        var bk = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.6, 0.1), ch.material); bk.position.set(0, -LC + 0.3, -0.3); // the back, behind a rider facing the way it travels (+z) hang.add(bk);
+        var bk = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.6, 0.1), ch.material); bk.position.set(0, -LC + 0.3, -0.3); hang.add(bk);   // the back, behind a rider facing the way it travels (+z)
         var cgeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-0.3, 0, 0), new THREE.Vector3(-0.3, -LC, 0), new THREE.Vector3(0.3, 0, 0), new THREE.Vector3(0.3, -LC, 0)]);
         hang.add(new THREE.LineSegments(cgeo, chainM));
         chairs.push({arm: arm, hang: hang}); movers.push(hang);
@@ -1004,6 +1071,328 @@ function create(c, W, o){
       };
     }
 
+    // The Storm Galleon: a swinging ship on two arms between A-frames, rocked higher each swing to past 70 degrees and
+    // back. Its benches step up toward bow and stern, where the drops are biggest; you ride the stern row, facing the mast.
+    function galleon(o3){
+      var PIV = 12.5, ARM = 9.5, HL = 7, sg3 = new THREE.Group(); sg3.position.set(o3.x, ly(o3.x, o3.z), o3.z); pg.add(sg3); dynRoots.push(sg3);
+      var frameM = plain(0x23305c, {metal: 0.6, rough: 0.35, env: 0.6}), goldM = plain(0xe9b949, {metal: 0.85, rough: 0.28, env: 1});
+      [-1, 1].forEach(function(sz){
+        [-1, 1].forEach(function(sx){ sg3.add(tube([[sx*8.5, 0, sz*4.3], [0, PIV, sz*3.5]], 0.38, frameM, 8)); hits.push({x: o3.x + sx*8.5, z: o3.z + sz*4.3, r: 0.8}); });
+        sg3.add(tube([[-4.3, PIV*0.5, sz*3.9], [4.3, PIV*0.5, sz*3.9]], 0.2, frameM, 4));
+        var foot = mbox(1.6, 0.35, 1.6, plain(0x9aa0a8, {rough: 0.9}), 1); [-1, 1].forEach(function(sx){ var f2 = foot.clone(); f2.position.set(sx*8.5, 0.15, sz*4.3); sg3.add(f2); });
+      });
+      var axle = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 7.8, 18), goldM); axle.rotation.x = PI/2; axle.position.y = PIV; sg3.add(axle);
+      [-1, 1].forEach(function(sz){ var hubc = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.3, 18), goldM); hubc.rotation.x = PI/2; hubc.position.set(0, PIV, sz*3.95); sg3.add(hubc); });
+      var sw = new THREE.Group(); sw.position.y = PIV; sg3.add(sw);
+      [-1, 1].forEach(function(sz){ [-1, 1].forEach(function(sx){ sw.add(tube([[0, 0, sz*3.0], [sx*3.4, -ARM + 0.9, sz*2.7]], 0.2, frameM, 6)); }); });
+      var ship = new THREE.Group(); ship.position.y = -ARM; sw.add(ship);
+      // the hull: a U section swept bow to stern, wide amidships, the gunwale rising to both ends, the keel a little
+      function topY(x){ var u = Math.min(1, Math.abs(x)/HL); return 0.75 + 2.2*Math.pow(u, 2.5); }
+      function botY(x){ var u = Math.min(1, Math.abs(x)/HL); return -1.1 + 0.9*u*u; }
+      function halfW(x){ var u = Math.min(1, Math.abs(x)/HL); return 0.08 + 2.42*Math.pow(Math.max(0, 1 - Math.pow(u, 2.4)), 0.55); }
+      function inside(x, y){ var t3 = topY(x), s3 = clamp((t3 - y)/(t3 - botY(x)), 0, 1); return halfW(x)*Math.sqrt(1 - s3*s3); }
+      var hullT = c.canvasTex(1024, 256, function(gx){
+        gx.fillStyle = "#14213d"; gx.fillRect(0, 0, 1024, 256);
+        gx.strokeStyle = "rgba(255,255,255,0.07)"; gx.lineWidth = 2; for(var y4 = 96; y4 < 256; y4 += 14){ gx.beginPath(); gx.moveTo(0, y4); gx.lineTo(1024, y4); gx.stroke(); }
+        gx.fillStyle = "#e9b949"; gx.fillRect(0, 0, 1024, 14); gx.fillRect(0, 84, 1024, 8);
+        gx.fillStyle = "#9b1d20"; gx.fillRect(0, 14, 1024, 70);
+        for(var q4 = 0; q4 < 8; q4++){ var cx4 = 64 + q4*128; gx.fillStyle = "#e9b949"; gx.beginPath(); gx.arc(cx4, 49, 27, 0, TAU); gx.fill();
+          gx.fillStyle = q4 % 2 ? "#1d4e89" : "#f4f1de"; gx.beginPath(); gx.arc(cx4, 49, 21, 0, TAU); gx.fill();
+          gx.fillStyle = "#e9b949"; gx.beginPath(); for(var k4 = 0; k4 < 10; k4++){ var r4 = k4 % 2 ? 7 : 16, an4 = k4/10*TAU - PI/2; gx.lineTo(cx4 + Math.cos(an4)*r4, 49 + Math.sin(an4)*r4); } gx.fill(); }
+      }).t;
+      hullT.colorSpace = THREE.SRGBColorSpace; hullT.wrapS = THREE.RepeatWrapping;
+      var NX = 36, NV = 14, hp = [], hu = [], hi = [];
+      for(var i = 0; i <= NX; i++){ var x = -HL + 2*HL*i/NX, t3 = topY(x), b3 = botY(x), w3 = halfW(x);
+        for(var j = 0; j <= NV; j++){ var v = j/NV*PI, cv = Math.cos(v); hp.push(x, t3 - (t3 - b3)*Math.sin(v), w3*cv); hu.push(i/NX*2, Math.abs(cv)); } }
+      for(i = 0; i < NX; i++) for(j = 0; j < NV; j++){ var A0 = i*(NV + 1) + j, B0 = A0 + NV + 1; hi.push(A0, B0, A0 + 1, A0 + 1, B0, B0 + 1); }
+      var hg = new THREE.BufferGeometry(); hg.setAttribute("position", new THREE.Float32BufferAttribute(hp, 3)); hg.setAttribute("uv", new THREE.Float32BufferAttribute(hu, 2)); hg.setIndex(hi); hg.computeVertexNormals();
+      var hull = new THREE.Mesh(hg, new THREE.MeshStandardMaterial({map: hullT, roughness: 0.45, metalness: 0.15, side: THREE.DoubleSide, envMap: env, envMapIntensity: 0.6})); hull.castShadow = true; ship.add(hull);
+      // the gunwale's gold rail, lamps along it, and the benches in rows across the deck, stepping up to the ends
+      var railPts = [[], []]; for(i = 0; i <= 24; i++){ var xr = -HL*0.97 + 2*HL*0.97*i/24; railPts[0].push([xr, topY(xr) + 0.05, halfW(xr)]); railPts[1].push([xr, topY(xr) + 0.05, -halfW(xr)]); }
+      railPts.forEach(function(rp){ ship.add(tube(rp, 0.09, goldM, 48)); });
+      for(i = 1; i < 12; i++){ var xl = -HL*0.9 + 2*HL*0.9*i/12; [-1, 1].forEach(function(sz){ var lb = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 6), glowMat(0xfff1c4)); lb.position.set(xl, topY(xl) + 0.18, sz*halfW(xl)); ship.add(lb); }); }
+      function deckY(x){ return -0.15 + 1.25*Math.pow(Math.max(0, Math.abs(x) - 0.8)/(HL - 0.8), 1.5); }
+      var benchM = plain(0x9b1d20, {rough: 0.5}), anchors = [], ROWS = [-5, -3.8, -2.5, -1.2, 1.2, 2.5, 3.8, 5];
+      ROWS.forEach(function(xr){
+        var sg4 = xr > 0 ? 1 : -1, dy = deckY(xr), hw = inside(xr, dy) - 0.06;
+        var plat = mbox(1.3, 0.7, 2*hw, M.deck, TILE.deck); plat.position.set(xr, dy - 0.35, 0); ship.add(plat);
+        var seat = mbox(0.5, 0.1, 2*hw - 0.3, benchM, 1); seat.position.set(xr, dy + 0.42, 0); ship.add(seat);
+        var back = mbox(0.08, 0.6, 2*hw - 0.3, benchM, 1); back.position.set(xr + sg4*0.26, dy + 0.75, 0); ship.add(back);
+        ship.add(tube([[xr - sg4*0.32, dy + 0.75, -hw + 0.2], [xr - sg4*0.32, dy + 0.75, hw - 0.2]], 0.04, goldM, 2));
+        for(var zz = -hw + 0.5; zz <= hw - 0.4; zz += 1.25){
+          if(Math.abs(zz - 0.3) < 1.0) continue;                                    // the middle aisle: your seat, and a clear view down the deck
+          var an = new THREE.Object3D(); an.position.set(xr, dy + 0.47 - 0.8, zz); an.rotation.y = -sg4*PI/2; ship.add(an); anchors.push(an);
+        }
+      });
+      // the mast and its sail (an original compass-star emblem), a crow's nest, a pennant, lanterns, a gold scroll at the bow
+      var woodM = plain(0x5b3a24, {rough: 0.8});
+      var mast = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.2, 7.6, 10), woodM); mast.position.y = -0.15 + 3.8; ship.add(mast);
+      var nest = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.45, 0.5, 12, 1, true), new THREE.MeshStandardMaterial({color: 0x5b3a24, roughness: 0.8, side: THREE.DoubleSide})); nest.position.y = 6.2; ship.add(nest);
+      var yard = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 4.6, 8), woodM); yard.rotation.x = PI/2; yard.position.y = 5.5; ship.add(yard);
+      var sailT = c.canvasTex(512, 512, function(gx){
+        gx.fillStyle = "#f4ead2"; gx.fillRect(0, 0, 512, 512); gx.strokeStyle = "rgba(120,90,50,0.25)"; gx.lineWidth = 3;
+        for(var x4 = 64; x4 < 512; x4 += 64){ gx.beginPath(); gx.moveTo(x4, 0); gx.lineTo(x4, 512); gx.stroke(); }
+        gx.translate(256, 250); gx.fillStyle = "#9b1d20";
+        for(var k4 = 0; k4 < 16; k4++){ var r4 = k4 % 4 === 0 ? 170 : k4 % 2 ? 46 : 105, an4 = k4/16*TAU - PI/2; if(!k4) gx.beginPath(); gx.lineTo(Math.cos(an4)*r4, Math.sin(an4)*r4); }
+        gx.closePath(); gx.fill(); gx.fillStyle = "#e9b949"; gx.beginPath(); gx.arc(0, 0, 30, 0, TAU); gx.fill();
+      }).t;
+      sailT.colorSpace = THREE.SRGBColorSpace;
+      var sgeo = new THREE.PlaneGeometry(4.2, 3.4, 8, 6), sp3 = sgeo.attributes.position;
+      for(i = 0; i < sp3.count; i++){ var su = sp3.getX(i)/2.1, sv = sp3.getY(i)/1.7; sp3.setZ(i, 0.55*(1 - su*su)*(1 - 0.4*sv*sv)); }
+      sgeo.computeVertexNormals();
+      var sail = new THREE.Mesh(sgeo, new THREE.MeshStandardMaterial({map: sailT, roughness: 0.85, side: THREE.DoubleSide})); sail.position.set(0.15, 3.7, 0); sail.rotation.y = PI/2 - 0.55; ship.add(sail);
+      var pen = new THREE.Mesh(new THREE.ConeGeometry(0.28, 2.2, 3), plain(0x9b1d20, {rough: 0.6})); pen.rotation.z = PI/2; pen.position.set(-1.1, 7.25, 0); ship.add(pen);
+      [-1, 1].forEach(function(sx){ var ln = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.5, 0.34), glowMat(0xffb35c)); ln.position.set(sx*(HL - 0.45), topY(HL - 0.45) + 0.45, 0); ship.add(ln); });
+      var scroll = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.13, 8, 24, PI*1.5), goldM); scroll.position.set(HL + 0.1, topY(HL) + 0.1, 0); scroll.rotation.z = -0.6; ship.add(scroll);
+      var rig = []; [[-HL + 0.3, topY(HL - 0.3)], [HL - 0.3, topY(HL - 0.3)]].forEach(function(e){ rig.push(new THREE.Vector3(e[0], e[1], 0), new THREE.Vector3(0, 7.3, 0)); });
+      ship.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(rig), new THREE.LineBasicMaterial({color: 0x3a2a1a})));
+      mergeInto(sw, true);
+      mergeInto(sg3, true, function(o){ return o === sw; });
+      rectHit(o3.x, o3.z, 0, 21, 6.5);                      // under the swing
+      // the motion: rocked up to 75 degrees over 14 s, held, rocked down; the pendulum's own period
+      var CYC = 58, RUN = 46, AMAX = 1.3, PER = TAU*Math.sqrt(ARM*1.08/G);
+      function amp(t){ return t < 14 ? AMAX*ease(t/14) : t < RUN - 12 ? AMAX : t < RUN ? AMAX*(1 - ease((t - RUN + 12)/12)) : 0; }
+      function thAt(sec){ var t = ((sec % CYC) + CYC) % CYC; return t >= RUN ? 0 : amp(t)*Math.sin(TAU*t/PER); }
+      var ax = new THREE.Vector3(0, 0, 1), m4 = new THREE.Matrix4();
+      function onShip(sec, x, y, z){ return new THREE.Vector3(x, y - ARM, z).applyAxisAngle(ax, thAt(sec)).add(new THREE.Vector3(0, PIV, 0)); }
+      return {
+        id: "galleon", name: "Storm Galleon", icon: "⚓", accent: "#ffb703",
+        stationAt: {x: o3.x, z: o3.z - 8.4, yaw: PI, w: 8, d: 3.4, top: ly(o3.x, o3.z - 8.4) + 0.9}, anchors: anchors,
+        entry: {x: o3.x, z: o3.z - 10.6}, exit: {x: o3.x + 2, z: o3.z - 10.6},
+        next: function(sec){ var t = ((sec % CYC) + CYC) % CYC; return sec - t + CYC; }, dur: RUN, board: 0,
+        update: function(sec){ sw.rotation.z = thAt(sec); },
+        seat: function(sec){
+          var dy = deckY(-5), p = onShip(sec, -5, dy + 1.5, 0.3), f = onShip(sec, -4, dy + 1.32, 0.3).sub(p).normalize(), up = onShip(sec, -5, dy + 2.5, 0.3).sub(p).normalize();
+          sg3.updateMatrixWorld(); m4.extractRotation(sg3.matrixWorld);
+          return {p: sg3.localToWorld(p), t: f.applyMatrix4(m4), up: up.applyMatrix4(m4)};
+        },
+        watch: {x: o3.x + 18, z: o3.z - 14, y: 7}
+      };
+    }
+
+    // ----- the grounds (HQ 3.6) -----
+    // The walkers' loops (the boulevard both ways, the ring, a tour of the stations): the crowd walks them and the
+    // scenery keeps off them
+    var walkPts = [[[-1.4, -b - 2], [-1.4, b*0.5], [1.4, b*0.5], [1.4, -b - 2]],
+                   [[-a*0.58, -b*0.08], [a*0.58, -b*0.08], [a*0.58, b*0.48], [-a*0.58, b*0.48]],
+                   rides.map(function(r){ return [r.entry.x, r.entry.z]; }).concat([[0, -b*0.45]]).sort(function(p, q){ return Math.atan2(p[0], p[1]) - Math.atan2(q[0], q[1]); })];
+    function segDist(px, pz, x0, z0, x1, z1){ var dx = x1 - x0, dz = z1 - z0, L2 = dx*dx + dz*dz, u = L2 ? clamp(((px - x0)*dx + (pz - z0)*dz)/L2, 0, 1) : 0; return Math.hypot(px - x0 - u*dx, pz - z0 - u*dz); }
+    // somewhere clear for a thing r m across: inside the fence, off the paths and the walkers' loops, clear of the rides,
+    // their stations and sweeps, and from under the coaster where it runs low
+    function clearAt(x, z, r){
+      if(Math.abs(x) > a - 2.2 - r || Math.abs(z) > b - 2.2 - r) return false;
+      var i, j;
+      for(i = 0; i < paved.length; i++){ var q = paved[i]; if(x > q[0] - r - 0.8 && x < q[2] + r + 0.8 && z > q[1] - r - 0.8 && z < q[3] + r + 0.8) return false; }
+      for(i = 0; i < hits.length; i++){ var h = hits[i]; if(Math.abs(x - h.x) < h.r + r + 0.8 && Math.hypot(x - h.x, z - h.z) < h.r + r + 0.8) return false; }
+      for(i = 0; i < rects.length; i++){ var R3 = rects[i], dx = x - R3.x, dz = z - R3.z; if(Math.abs(dx*R3.c - dz*R3.s) < R3.hw + r + 1 && Math.abs(dx*R3.s + dz*R3.c) < R3.hd + r + 1) return false; }
+      for(i = 0; i < zones.length; i++){ var zn = zones[i]; if(Math.abs(x - zn.x) < zn.hw + r && Math.abs(z - zn.z) < zn.hd + r) return false; }
+      for(i = 0; i < walkPts.length; i++){ var L = walkPts[i]; for(j = 0; j < L.length; j++){ var p0 = L[j], p1 = L[(j + 1) % L.length]; if(segDist(x, z, p0[0], p0[1], p1[0], p1[1]) < r + 2) return false; } }
+      for(i = 0; i < track.length; i += 2){ var t3 = track[i]; if(Math.abs(x - t3.x) < r + 2.6 && Math.abs(z - t3.z) < r + 2.6 && t3.y - ly(t3.x, t3.z) < 13) return false; }
+      return true;
+    }
+    function Hs(k){ return (hash32("park:" + k) % 100000)/100000; }
+
+    // The lagoon: water in a stone coping under the coaster's low pass, ripples on it, lit from below by night, and a
+    // dancing fountain in it: eleven jets choreographed on the shared clock, coloured by night
+    var lagoon = null;
+    if(a >= 32 && b >= 48){
+      var lx0 = a*0.36, lz0 = -b*0.66, lrx = Math.min(8, a*0.2), lrz = Math.min(8.5, b*0.14), lo = 1e9, hi2 = -1e9;
+      for(var li = 0; li < 24; li++){ var la = li/24*TAU; [0, 0.6, 1.1].forEach(function(f){ var gy2 = ly(lx0 + Math.cos(la)*(lrx + 1)*f, lz0 + Math.sin(la)*(lrz + 1)*f); lo = Math.min(lo, gy2); hi2 = Math.max(hi2, gy2); }); }
+      var yw = hi2 + 0.12, WT = {value: 0};
+      var cop = new THREE.Shape(); cop.absellipse(0, 0, lrx + 0.9, lrz + 0.9, 0, TAU, false, 0);
+      var hole = new THREE.Path(); hole.absellipse(0, 0, lrx, lrz, 0, TAU, true, 0); cop.holes.push(hole);
+      var cg3 = new THREE.ExtrudeGeometry(cop, {depth: yw + 0.4 - (lo - 0.3), bevelEnabled: false, curveSegments: 48}); cg3.rotateX(-PI/2);
+      var cuv = cg3.attributes.uv; for(var ci = 0; ci < cuv.count; ci++) cuv.setXY(ci, cuv.getX(ci)/TILE.pave, cuv.getY(ci)/TILE.pave);
+      var coping = new THREE.Mesh(cg3, M.pave); coping.position.set(lx0, lo - 0.3, lz0); coping.castShadow = coping.receiveShadow = true; pg.add(coping);
+      var wm = new THREE.MeshStandardMaterial({color: 0x0b4f66, roughness: 0.08, metalness: 0.05, envMap: env, envMapIntensity: 0.55, emissive: 0x0b4a7a, emissiveIntensity: 0});
+      wm.onBeforeCompile = function(sh){
+        sh.uniforms.uWT = WT;
+        sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 vLW;").replace("#include <begin_vertex>", "#include <begin_vertex>\nvLW = (modelMatrix*vec4(transformed, 1.0)).xyz;");
+        sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nuniform float uWT;\nvarying vec3 vLW;").replace("#include <normal_fragment_maps>",
+          "#include <normal_fragment_maps>\nvec2 wq = vLW.xz;\nvec3 wn = vec3(0.06*sin(wq.x*1.9 + uWT*1.4) + 0.04*sin((wq.x + wq.y)*3.1 - uWT*2.3) + 0.02*sin(wq.x*7.0 - uWT*3.7), 0.0,\n" +
+          "  0.06*cos(wq.y*1.7 - uWT*1.2) + 0.04*cos((wq.x - wq.y)*2.7 + uWT*1.9) + 0.02*cos(wq.y*6.3 + uWT*3.1));\nnormal = normalize(normal + mat3(viewMatrix)*wn);");
+      };
+      wm.customProgramCacheKey = function(){ return "hq-lagoon"; };
+      var wg3 = new THREE.ShapeGeometry(new THREE.Shape().absellipse(0, 0, lrx + 0.05, lrz + 0.05, 0, TAU, false, 0), 48); wg3.rotateX(-PI/2);
+      var water = new THREE.Mesh(wg3, wm); water.position.set(lx0, yw, lz0); water.receiveShadow = true; pg.add(water); dynRoots.push(water);
+      // the fountain's basin in the middle and the nozzles round it, ringed in light
+      var basin = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.5, 0.5, 24), M.pave); basin.position.set(lx0, yw + 0.05, lz0); pg.add(basin);
+      var jets = [{x: 0, z: 0}]; for(var ji = 0; ji < 10; ji++){ var ja = ji/10*TAU; jets.push({x: Math.cos(ja)*lrx*0.62, z: Math.sin(ja)*lrz*0.62}); }
+      jets.forEach(function(J, k){ var nz = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, 0.25, 10), plain(0xc9ccd1, {metal: 0.8, rough: 0.3, env: 0.8})); nz.position.set(lx0 + J.x, yw + (k ? 0.08 : 0.38), lz0 + J.z); pg.add(nz);
+        var rg = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.05, 6, 16), glowMat(0x9fe8ff)); rg.rotation.x = PI/2; rg.position.set(lx0 + J.x, yw + (k ? 0.03 : 0.33), lz0 + J.z); pg.add(rg); });
+      var NJ = jets.length, JP = 150, nP = NJ*JP, fpos = new Float32Array(3*nP), fj = new Float32Array(nP), fph = new Float32Array(2*nP), Rf = c.rng(31);
+      jets.forEach(function(J, k){ for(var q = 0; q < JP; q++){ var n2 = k*JP + q; fpos[3*n2] = lx0 + J.x; fpos[3*n2 + 1] = yw + (k ? 0.15 : 0.45); fpos[3*n2 + 2] = lz0 + J.z; fj[n2] = k; fph[2*n2] = q/JP; fph[2*n2 + 1] = Rf(); } });
+      var fgeo = new THREE.BufferGeometry(); fgeo.setAttribute("position", new THREE.BufferAttribute(fpos, 3)); fgeo.setAttribute("aJet", new THREE.BufferAttribute(fj, 1)); fgeo.setAttribute("aPh", new THREE.BufferAttribute(fph, 2));
+      var hs = [], cs = []; for(ji = 0; ji < NJ; ji++){ hs.push(1); cs.push(new THREE.Vector3(1, 1, 1)); }
+      var FU = {uT: {value: 0}, uScale: {value: 600}, uNight: {value: 0}, uLean: {value: 0}, uH: {value: hs}, uCol: {value: cs}, uCen: {value: new THREE.Vector3(lx0, yw, lz0)}};
+      var fmat = new THREE.ShaderMaterial({uniforms: FU, transparent: true, depthWrite: false,
+        vertexShader: ["#define NJ " + NJ, "#define TMAX 3.4", "attribute float aJet; attribute vec2 aPh;", "uniform float uT, uScale, uNight, uLean; uniform float uH[NJ]; uniform vec3 uCol[NJ]; uniform vec3 uCen;",
+          "varying vec3 vC; varying float vA;",
+          "void main(){",
+          "  int j = int(aJet + 0.5); float h = clamp(uH[j], 0.2, 13.5), v0 = sqrt(19.62*h), T = 2.0*v0/9.81;",
+          "  float s = fract(uT/TMAX + aPh.x)*TMAX, u = s/T;",
+          "  vec2 o = position.xz - uCen.xz; float L = length(o); vec2 d = L > 0.01 ? o/L : vec2(0.0); float an = aPh.y*6.2832;",
+          "  vec2 sd = (j == 0 ? 0.0 : uLean)*d*v0*0.32 + vec2(cos(an), sin(an))*(0.1 + 0.22*aPh.y);",
+          "  vec3 p = position + vec3(sd.x*s, v0*s - 4.905*s*s, sd.y*s);",
+          "  vA = u < 1.0 ? smoothstep(0.0, 0.05, u)*(1.0 - smoothstep(0.82, 1.0, u)) : 0.0;",
+          "  vC = mix(vec3(0.93, 0.97, 1.0), uCol[j], uNight);",
+          "  vec4 mv = modelViewMatrix*vec4(p, 1.0); gl_Position = projectionMatrix*mv;",
+          "  gl_PointSize = vA > 0.01 ? clamp(mix(0.16, 0.42, u)*(j == 0 ? 1.4 : 1.0)*uScale/max(1.0, -mv.z), 1.0, 48.0) : 0.0;",
+          "}"].join("\n"),
+        fragmentShader: ["uniform float uNight; varying vec3 vC; varying float vA;",
+          "void main(){ vec2 q = gl_PointCoord - 0.5; float r2 = dot(q, q)*4.0, g = exp(-r2*3.0); float al = vA*g*mix(0.5, 0.9, uNight); if(al < 0.01) discard; gl_FragColor = vec4(vC*mix(1.0, 1.5, uNight), al); }"].join("\n")});
+      var spray = new THREE.Points(fgeo, fmat); spray.frustumCulled = false; spray.renderOrder = 4; pg.add(spray); dynRoots.push(spray);
+      spray.onBeforeRender = function(r, sc, cam){ FU.uScale.value = r.domElement.height/(2*Math.tan((cam.fov || 55)*PI/360)); };
+      // the choreography: four figures of 36 s, each easing in from the last; steady in Calm
+      var jetH = function(sec, j, calm){
+        if(calm) return j ? 2.4 : 6;
+        function fig(m, t){
+          if(m === 0) return j ? 1.4 + 3.4*Math.pow(0.5 + 0.5*Math.sin(t*2.4 - j*0.628), 2) : 7;              // a wave chasing round
+          if(m === 1){ var pz = Math.pow(0.5 + 0.5*Math.sin(t*1.7), 3); return j ? 1 + 5*pz : 3 + 9.5*pz; }   // all together, pulsing
+          if(m === 2) return j ? 0.6 + 4.8*clamp(0.5 + 1.6*Math.sin(t*PI/1.6 + j*PI), 0, 1) : 5;              // odd and even in turn
+          return j ? 3.4 + 0.6*Math.sin(t*3 + j) : 4 + 9*clamp((t % 36)/30, 0, 1);                               // the crown, the centre climbing
+        }
+        var m = Math.floor(sec/36) % 4, w = ease(((sec % 36) + 36) % 36/3);
+        return lerp(fig((m + 3) % 4, sec), fig(m, sec), w);
+      };
+      hits.push({x: lx0, z: lz0, r: 1});
+      for(var gx2 = -lrx - 1; gx2 <= lrx + 1; gx2 += 1.6) for(var gz2 = -lrz - 1; gz2 <= lrz + 1; gz2 += 1.6){
+        if((gx2*gx2)/((lrx + 1)*(lrx + 1)) + (gz2*gz2)/((lrz + 1)*(lrz + 1)) <= 1) hits.push({x: lx0 + gx2, z: lz0 + gz2, r: 0.95});
+      }
+      zones.push({x: lx0, z: lz0, hw: lrx + 2, hd: lrz + 2});
+      lagoon = {water: water, wm: wm, WT: WT, FU: FU, spray: spray, fmat: fmat, NJ: NJ, jetH: jetH};
+    }
+
+    // The food court: parasol tables by the cotton candy, strung with lights
+    var parasolTs = [["#e63946", "#fff4e0"], ["#2a9d8f", "#f1faee"], ["#ffb703", "#fffbea"]].map(function(cp){
+      var t = c.canvasTex(256, 32, function(gx){ for(var s2 = 0; s2 < 16; s2++){ gx.fillStyle = s2 % 2 ? cp[1] : cp[0]; gx.fillRect(s2*16, 0, 16, 32); } }).t; t.colorSpace = THREE.SRGBColorSpace; return t; });
+    var parasolMs = parasolTs.map(function(t){ return new THREE.MeshStandardMaterial({map: t, roughness: 0.7, side: THREE.DoubleSide}); });
+    var tableM = plain(0xf5f1e8, {rough: 0.4}), poleM = plain(0xc9ccd1, {metal: 0.8, rough: 0.35}), stoolM = plain(0x2a9d8f, {rough: 0.5}), tops = [];
+    for(var tz = b*0.04; tz <= b*0.32; tz += 3.6) [-a*0.47, -a*0.37].forEach(function(tx){
+      if(!clearAt(tx, tz, 1.5)) return;
+      var gy3 = ly(tx, tz), tg = new THREE.Group(); tg.position.set(tx, gy3, tz); pg.add(tg);
+      var top = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 0.06, 18), tableM); top.position.y = 0.76; tg.add(top);
+      var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.5, 6), poleM); leg.position.y = 1.25; tg.add(leg);
+      for(var sk = 0; sk < 4; sk++){ var sa2 = sk*PI/2 + 0.4, st2 = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.46, 10), stoolM); st2.position.set(Math.cos(sa2)*1.0, 0.23, Math.sin(sa2)*1.0); tg.add(st2); }
+      var para = new THREE.Mesh(new THREE.ConeGeometry(1.55, 0.6, 16, 1, true), parasolMs[tops.length % 3]); para.position.y = 2.45; para.castShadow = true; tg.add(para);
+      hits.push({x: tx, z: tz, r: 1.1}); tops.push([tx, gy3 + 2.75, tz]);
+    });
+    for(var ti = 0; ti + 1 < tops.length; ti++){ var t0 = tops[ti], t1 = tops[ti + 1];
+      for(var tk = 1; tk < 9; tk++){ var tu = tk/9; bulbs.push({x: lerp(t0[0], t1[0], tu), y: lerp(t0[1], t1[1], tu) - Math.sin(tu*PI)*0.5, z: lerp(t0[2], t1[2], tu), k: (tk + ti*3)/9 % 1}); } }
+    if(tops.length) zones.push({x: -a*0.42, z: b*0.18, hw: a*0.08 + 1.6, hd: b*0.16});
+
+    // Trees and flower beds wherever the lawn is clear: blossom and green crowns, beds of one colour each
+    var trees = [], beds = [];
+    for(var gx3 = -a + 4; gx3 < a - 3; gx3 += 4.4) for(var gz3 = -b + 4; gz3 < b - 3; gz3 += 4.4){
+      var key = Math.round(gx3) + ":" + Math.round(gz3), jx = gx3 + (Hs(key + "x") - 0.5)*2.2, jz = gz3 + (Hs(key + "z") - 0.5)*2.2;
+      if(trees.length < 90 && Hs(key + "k") < 0.62 && clearAt(jx, jz, 1.9)){ trees.push({x: jx, z: jz, h: 3.2 + Hs(key + "h")*2.6, s: 1.1 + Hs(key + "s")*0.6, c: Hs(key + "c")}); hits.push({x: jx, z: jz, r: 0.35}); }
+      else if(beds.length < 40 && clearAt(jx, jz, 1.4)) beds.push({x: jx, z: jz, c: Hs(key + "b")});
+    }
+    if(trees.length){
+      var trunkI = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.15, 0.24, 1, 7), plain(0x6b4a2f, {rough: 0.9}), trees.length);
+      var crownI = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshStandardMaterial({color: 0xffffff, roughness: 0.85, flatShading: true}), trees.length*3);
+      var CROWN = [0xf7a8c4, 0xffc4dd, 0xf28db2, 0x4f9a3a, 0x6bb04c, 0x3f8a4f, 0x7cc35a, 0x5aa04a], dt2 = new THREE.Object3D(), ccol = new THREE.Color();
+      trees.forEach(function(t, k){
+        var gy4 = ly(t.x, t.z);
+        dt2.position.set(t.x, gy4 + t.h*0.5, t.z); dt2.scale.set(1, t.h, 1); dt2.rotation.set(0, 0, 0); dt2.updateMatrix(); trunkI.setMatrixAt(k, dt2.matrix);
+        var hex = CROWN[Math.floor(t.c*CROWN.length)];
+        for(var q = 0; q < 3; q++){ var qa = q*2.1 + t.c*6, qr = q ? 0.55*t.s : 0;
+          dt2.position.set(t.x + Math.cos(qa)*qr, gy4 + t.h + (q ? -0.25 : 0.35)*t.s, t.z + Math.sin(qa)*qr); dt2.scale.setScalar(t.s*(q ? 0.8 : 1.05)); dt2.rotation.set(qa, qa*0.7, 0); dt2.updateMatrix();
+          crownI.setMatrixAt(3*k + q, dt2.matrix); ccol.setHex(hex).offsetHSL(0, 0, (q - 1)*0.04); crownI.setColorAt(3*k + q, ccol); }
+      });
+      trunkI.castShadow = crownI.castShadow = true; crownI.receiveShadow = true; pg.add(trunkI); pg.add(crownI);
+    }
+    if(beds.length){
+      var FLOW = [[0xff4f6d, 0xffd6e0], [0xffd23f, 0xfff4c2], [0x8d5cf6, 0xe6dcff], [0xff8c42, 0xffe0c7], [0xff6fb5, 0xffffff], [0x3a86ff, 0xdbe8ff]];
+      var soilI = new THREE.InstancedMesh(new THREE.CylinderGeometry(1.15, 1.25, 0.3, 20), plain(0x4a3426, {rough: 1}), beds.length);
+      var edgeI = new THREE.InstancedMesh(new THREE.TorusGeometry(1.24, 0.1, 6, 28), plain(0xd8d2c4, {rough: 0.8}), beds.length);
+      var FPB = 46, flowI = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.12, 0), new THREE.MeshStandardMaterial({color: 0xffffff, roughness: 0.6}), beds.length*FPB);
+      var leafI = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.2, 0), plain(0x3f8a3a, {rough: 0.9}), beds.length*20);
+      var db = new THREE.Object3D(), fc = new THREE.Color();
+      beds.forEach(function(bd, k){
+        var gy5 = ly(bd.x, bd.z), pal = FLOW[Math.floor(bd.c*FLOW.length)], Rb = c.rng(100 + k);
+        db.rotation.set(0, 0, 0); db.scale.setScalar(1); db.position.set(bd.x, gy5 + 0.1, bd.z); db.updateMatrix(); soilI.setMatrixAt(k, db.matrix);
+        db.rotation.set(PI/2, 0, 0); db.position.set(bd.x, gy5 + 0.22, bd.z); db.updateMatrix(); edgeI.setMatrixAt(k, db.matrix);
+        for(var q = 0; q < FPB; q++){ var fa = Rb()*TAU, fr = Math.sqrt(Rb())*1.0; db.rotation.set(Rb()*3, Rb()*3, 0); db.scale.setScalar(0.8 + Rb()*0.6);
+          db.position.set(bd.x + Math.cos(fa)*fr, gy5 + 0.34 + Rb()*0.22, bd.z + Math.sin(fa)*fr); db.updateMatrix(); flowI.setMatrixAt(k*FPB + q, db.matrix);
+          fc.setHex(q % 5 === 4 ? pal[1] : pal[0]); flowI.setColorAt(k*FPB + q, fc); }
+        for(q = 0; q < 20; q++){ var la2 = Rb()*TAU, lr = Math.sqrt(Rb())*1.0; db.rotation.set(0, Rb()*3, 0); db.scale.setScalar(0.9 + Rb()*0.7);
+          db.position.set(bd.x + Math.cos(la2)*lr, gy5 + 0.3, bd.z + Math.sin(la2)*lr); db.updateMatrix(); leafI.setMatrixAt(k*20 + q, db.matrix); }
+      });
+      [soilI, edgeI, flowI, leafI].forEach(function(im){ im.receiveShadow = true; pg.add(im); });
+    }
+
+    // Searchlights: four beams sweeping the night sky, from either side of the gate and the far corners
+    var beams = [];
+    var beamGeo = new THREE.CylinderGeometry(6, 0.3, 160, 32, 1, true); beamGeo.translate(0, 80, 0);
+    var beamM = new THREE.ShaderMaterial({transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, uniforms: {uA: {value: 0}},
+      vertexShader: "varying vec2 vUv; varying vec3 vN; varying vec3 vV; void main(){ vUv = uv; vec4 mv = modelViewMatrix*vec4(position, 1.0); vN = normalize(normalMatrix*normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix*mv; }",
+      fragmentShader: "uniform float uA; varying vec2 vUv; varying vec3 vN; varying vec3 vV; void main(){ float f = abs(dot(normalize(vN), normalize(vV))); float al = uA*pow(f, 2.5)*pow(1.0 - vUv.y, 1.4); if(al < 0.002) discard; gl_FragColor = vec4(0.78, 0.87, 1.0, al); }"});
+    [[-(GATE + 8), -b + 2.5, 0.3], [GATE + 8, -b + 2.5, 2.1], [-(a - 3), b - 3, 3.9], [a - 3, b - 3, 5.3]].forEach(function(q){
+      var hg2 = new THREE.Group(); hg2.position.set(q[0], ly(q[0], q[1]), q[1]); pg.add(hg2);
+      var drum = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.65, 0.8, 16), plain(0x2c2f36, {metal: 0.7, rough: 0.4})); drum.position.y = 0.4; hg2.add(drum);
+      var piv = new THREE.Group(); piv.position.set(q[0], ly(q[0], q[1]) + 0.9, q[1]); pg.add(piv); dynRoots.push(piv);
+      var tilt = new THREE.Group(); piv.add(tilt);
+      var lens = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.12, 16), glowMat(0xeaf4ff)); tilt.add(lens);
+      var beam = new THREE.Mesh(beamGeo, beamM); beam.frustumCulled = false; tilt.add(beam);
+      hits.push({x: q[0], z: q[1], r: 0.8}); beams.push({piv: piv, tilt: tilt, beam: beam, ph: q[2]});
+    });
+
+    // The fireworks: one Points cloud, every star's flight worked out in its vertex shader from its shell's launch,
+    // burst, kind and colours (uniforms, FW_SLOTS shells at once), so a whole show is one draw call. Drawn in the
+    // spectacle's own group, so it is seen from across the city when the park itself is not drawn.
+    var fwG = new THREE.Group(); fwG.position.copy(pg.position); fwG.rotation.y = pg.rotation.y; g.add(fwG);
+    var FW_STARS = 160, FW_TRAIL = 12, fwPer = FW_STARS + FW_TRAIL + 1, fwN = FW_SLOTS*fwPer;
+    var fSlot = new Float32Array(fwN), fDir = new Float32Array(3*fwN), fR = new Float32Array(2*fwN), Rw = c.rng(77);
+    for(var fs = 0; fs < FW_SLOTS; fs++) for(var fj2 = 0; fj2 < fwPer; fj2++){
+      var fk = fs*fwPer + fj2; fSlot[fk] = fs; fR[2*fk] = Rw();
+      if(fj2 < FW_STARS){ var fy = 1 - 2*(fj2 + 0.5)/FW_STARS, frad = Math.sqrt(1 - fy*fy), fth = fj2*2.39996 + Rw()*0.25;   // a Fibonacci sphere
+        fDir[3*fk] = Math.cos(fth)*frad; fDir[3*fk + 1] = fy; fDir[3*fk + 2] = Math.sin(fth)*frad; }
+      else if(fj2 < FW_STARS + FW_TRAIL) fR[2*fk + 1] = -0.02 - (fj2 - FW_STARS)*0.04;     // the rising shell's sparks, each a little behind
+      else fR[2*fk + 1] = 1;                                                                 // the flash
+    }
+    var fwGeo = new THREE.BufferGeometry(); fwGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3*fwN), 3));
+    fwGeo.setAttribute("aSlot", new THREE.BufferAttribute(fSlot, 1)); fwGeo.setAttribute("aDir", new THREE.BufferAttribute(fDir, 3)); fwGeo.setAttribute("aR", new THREE.BufferAttribute(fR, 2));
+    function v4s(){ var o4 = []; for(var i4 = 0; i4 < FW_SLOTS; i4++) o4.push(new THREE.Vector4(0, 0, 0, -1e4)); return o4; }
+    var WU = {uTime: {value: 0}, uScale: {value: 600}, uA: {value: v4s()}, uB: {value: v4s()}, uC: {value: v4s()}, uD: {value: v4s()}};
+    var fwMat = new THREE.ShaderMaterial({uniforms: WU, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      vertexShader: ["#define K " + FW_SLOTS, "#define RISE " + FW_RISE.toFixed(2),
+        "attribute float aSlot; attribute vec3 aDir; attribute vec2 aR;",
+        "uniform float uTime, uScale; uniform vec4 uA[K]; uniform vec4 uB[K]; uniform vec4 uC[K]; uniform vec4 uD[K];",
+        "varying vec3 vCol; varying float vA;",
+        "void main(){",
+        "  int s = int(aSlot + 0.5); vec4 A = uA[s], B = uB[s], C = uC[s], D = uD[s];",
+        "  float t = uTime - A.w, kind = B.w, a = 0.0, size = 1.0; vec3 p = A.xyz; vCol = C.rgb;",
+        "  if(aR.y < 0.0){",                                                       // the shell rising, slowing, its sparks behind
+        "    float L = -aR.y, tt = t - L, u = clamp((tt + RISE)/RISE, 0.0, 1.0), e = 1.0 - (1.0 - u)*(1.0 - u);",
+        "    p = mix(B.xyz, A.xyz, e) + vec3(sin(tt*23.0 + aR.x*6.0), 0.0, cos(tt*19.0))*0.3*L;",
+        "    a = (tt > -RISE && tt < 0.0) ? 1.0 - L*1.8 : 0.0; size = mix(0.9, 0.35, L*2.0); vCol = vec3(1.0, 0.72, 0.38);",
+        "  } else if(aR.y > 0.5){",                                                // the flash as it bursts, lighting the smoke
+        "    a = (t > 0.0 && t < 1.0) ? exp(-t*6.0)*0.32 : 0.0; size = 46.0*C.w; vCol = mix(vec3(1.0), C.rgb, 0.55);",
+        "  } else {",
+        "    vec3 d = aDir; float sd = D.w*6.2832, cs = cos(sd), sn = sin(sd); d = vec3(d.x*cs - d.z*sn, d.y, d.x*sn + d.z*cs);",
+        "    float sp = 25.0*C.w*(0.93 + 0.14*aR.x), k = 1.7, gg = 3.0, life = 3.0;",
+        "    if(kind > 0.5 && kind < 1.5){ d = normalize(vec3(d.x, d.y*0.05, d.z)); float tl = D.w*1.4 - 0.7, ct = cos(tl), st = sin(tl); d = vec3(d.x, d.y*ct - d.z*st, d.y*st + d.z*ct); }",
+        "    else if(kind > 1.5 && kind < 2.5){ k = 1.2; gg = 6.5; life = 5.0; sp *= 0.85; }",
+        "    else if(kind > 2.5 && kind < 3.5){ life = 3.6; }",
+        "    float f = (1.0 - exp(-k*t))/k;",
+        "    p = A.xyz + d*sp*f + vec3(0.0, -0.5*gg*t*t, 0.0);",
+        "    a = t > 0.0 && t < life ? 1.0 - smoothstep(life*0.45, life, t) : 0.0;",
+        "    if(kind > 3.5 && t > 0.7) a *= step(0.5, fract(t*7.0 + aR.x*13.0));",
+        "    if(kind > 2.5 && kind < 3.5) a *= 0.7 + 0.3*sin(t*40.0 + aR.x*30.0);",
+        "    vec3 c2 = (kind > 1.5 && kind < 2.5) ? vec3(1.0, 0.7, 0.28) : D.rgb;",
+        "    vCol = mix(vec3(1.0, 0.97, 0.9), mix(C.rgb, c2, smoothstep(0.35, 0.85, t/life + aR.x*0.15)), smoothstep(0.0, 0.2, t));",
+        "    size = mix(1.8, 0.9, clamp(t/life, 0.0, 1.0))*C.w;",
+        "  }",
+        "  vec4 mv = modelViewMatrix*vec4(p, 1.0); gl_Position = projectionMatrix*mv; vA = a;",
+        "  gl_PointSize = a > 0.003 ? clamp(size*uScale/max(1.0, -mv.z), 1.5, 240.0) : 0.0;",
+        "}"].join("\n"),
+      fragmentShader: ["varying vec3 vCol; varying float vA;",
+        "void main(){ vec2 q = gl_PointCoord - 0.5; float r2 = dot(q, q)*4.0, g = exp(-r2*3.5), core = exp(-r2*18.0);",
+        "  float al = vA*(g*0.8 + core*0.7); if(al < 0.004) discard; gl_FragColor = vec4(vCol*(1.0 + core*0.8), al); }"].join("\n")});
+    var fwPts = new THREE.Points(fwGeo, fwMat); fwPts.frustumCulled = false; fwPts.renderOrder = 6; fwPts.visible = false; fwG.add(fwPts);
+    fwPts.onBeforeRender = function(r, sc, cam){ WU.uScale.value = r.domElement.height/(2*Math.tan((cam.fov || 55)*PI/360)); };
+
     // fewer draw calls: every static group to a mesh per material, every moving part merged within itself
     pg.updateMatrixWorld(true);
     movers.forEach(function(mv){ mergeInto(mv, false); });
@@ -1019,9 +1408,7 @@ function create(c, W, o){
       var ND = HQV.npcDraw; if(!ND || !ND.bodyGeometry || !ND.bodyMaterial) return null;
       function H(i, k){ return (hash32("crowd:" + i + ":" + k) % 10000)/10000; }
       function loopOf(pts){ var cum = [0]; for(var i = 1; i <= pts.length; i++){ var p0 = pts[i - 1], p1 = pts[i % pts.length]; cum.push(cum[i - 1] + Math.hypot(p1[0] - p0[0], p1[1] - p0[1])); } return {pts: pts, cum: cum, len: cum[pts.length]}; }
-      var tour = rides.map(function(r){ return [r.entry.x, r.entry.z]; }).concat([[0, -b*0.45]]).sort(function(p, q){ return Math.atan2(p[0], p[1]) - Math.atan2(q[0], q[1]); });
-      var loops = [loopOf([[-1.4, -b - 2], [-1.4, b*0.5], [1.4, b*0.5], [1.4, -b - 2]]),
-                   loopOf([[-a*0.58, -b*0.08], [a*0.58, -b*0.08], [a*0.58, b*0.48], [-a*0.58, b*0.48]]), loopOf(tour)];
+      var loops = walkPts.map(loopOf);
       var members = [], NW = 48, i;
       for(i = 0; i < NW; i++) members.push({kind: "walk", loop: loops[i % 3], v: 0.9 + H(i, "v")*0.6, off: H(i, "o"), lat: (H(i, "l") - 0.5)*1.6, dir: i % 3 === 1 && i % 2 ? -1 : 1});
       rides.forEach(function(r){ (r.queue || []).forEach(function(q, j){ if(H(j, r.id) < 0.75) members.push({kind: "stand", x: q.x, y: q.y, z: q.z, yaw: q.yaw}); }); });
@@ -1135,6 +1522,15 @@ function create(c, W, o){
     var bulbI = new THREE.InstancedMesh(new THREE.SphereGeometry(0.07, 6, 5), new THREE.MeshBasicMaterial({color: 0xffffff}), Math.max(1, bulbs.length)), dmb = new THREE.Object3D();
     bulbs.forEach(function(p, j){ dmb.position.set(p.x, p.y, p.z); dmb.updateMatrix(); bulbI.setMatrixAt(j, dmb.matrix); });
     pg.add(bulbI);
+    // and by night each bulb's glow: soft dots that keep a few pixels across from afar, so the lit park reads from the city
+    var glowPos = new Float32Array(3*bulbs.length), glowCol = new Float32Array(3*bulbs.length);
+    bulbs.forEach(function(p, j){ glowPos[3*j] = p.x; glowPos[3*j + 1] = p.y; glowPos[3*j + 2] = p.z; });
+    var glowGeo = new THREE.BufferGeometry(); glowGeo.setAttribute("position", new THREE.BufferAttribute(glowPos, 3)); glowGeo.setAttribute("color", new THREE.BufferAttribute(glowCol, 3));
+    var GU = {uScale: {value: 600}}, glowPts = new THREE.Points(glowGeo, new THREE.ShaderMaterial({uniforms: GU, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      vertexShader: "uniform float uScale; varying vec3 vC; void main(){ vC = color; vec4 mv = modelViewMatrix*vec4(position, 1.0); gl_Position = projectionMatrix*mv; gl_PointSize = clamp(0.8*uScale/max(1.0, -mv.z), 2.0, 64.0); }",
+      fragmentShader: "varying vec3 vC; void main(){ vec2 q = gl_PointCoord - 0.5; float r2 = dot(q, q)*4.0; float al = exp(-r2*4.5)*0.7 + exp(-r2*22.0)*0.6; if(al < 0.01) discard; gl_FragColor = vec4(vC*1.25, al); }"}));
+    glowPts.frustumCulled = false; glowPts.visible = false; glowPts.renderOrder = 3; pg.add(glowPts);
+    glowPts.onBeforeRender = function(r, sc, cam){ GU.uScale.value = r.domElement.height/(2*Math.tan((cam.fov || 55)*PI/360)); };
 
     // collision in the park's frame: the fence (but the gate's gap), posts, rides and the low track
     var grid = {}, CELL = 8;
@@ -1158,34 +1554,12 @@ function create(c, W, o){
       return false;
     }
     return {g: pg, a: a, b: b, crowd: crowd, gate: {x: 0, z: -b - 2.5}, booth: {x: GATE + 4.8, z: -b - 4.6}, rides: rides, bulbs: bulbs, bulbI: bulbI, glows: glows,
-            balloons: balloons, blockedL: blockedL, toW: toW, toL: toL, ly: ly, inside: function(lx, lz){ return lx > -a && lx < a && lz > -b && lz < b; }};
+            balloons: balloons, blockedL: blockedL, toW: toW, toL: toL, ly: ly, inside: function(lx, lz){ return lx > -a && lx < a && lz > -b && lz < b; },
+            fx: {lagoon: lagoon, beams: beams, glowPts: glowPts, glowCol: glowGeo.attributes.color, fwG: fwG, fwPts: fwPts, WU: WU, trees: trees.length, beds: beds.length, tables: tops.length}};
   }
 
   /* ---------- tickets, rides and the prompt ---------- */
-  var pass = false, buying = false, riding = null, prompt = null, promptAt = null, lastPassCheck = 0;
-  function ticket(){
-    var st = o.city ? o.city() : null, pk = st && st.park;
-    if(!pk || typeof pk !== "object") return {sold: false, price: 0, pass: true};        // an Arena without park passes: a free preview
-    return {sold: true, price: Math.max(0, pk.price | 0), pass: pass || !!pk.pass};
-  }
-  function buy(){
-    var tk = ticket(); if(!tk.sold || tk.pass || buying) return;
-    if(!o.post){ say("The ticket booth needs the Arena."); return; }
-    buying = true; say("Buying a day pass to " + PARK_NAME + "…");
-    function refused(m){
-      say(/fare is|coins/i.test(String(m || "")) ? "A day pass is " + tk.price + " Poke Coins: you don't have enough." : "The ticket booth couldn't sell a pass right now.");
-    }
-    // the page's arenaPost resolves {ok, status, j} whatever the status: only an ok answer is a pass
-    o.post("/api/arena/city/" + encodeURIComponent(o.owner || "commons") + "/fare", {kind: "park"}).then(function(r){
-      buying = false;
-      var j = r && typeof r === "object" && r.j && typeof r.j === "object" ? r.j : {};
-      if(!r || r.ok !== true){ refused(j.detail || j.error); return; }
-      pass = true;
-      var coins = j.coins != null ? " You have " + (j.coins | 0) + " Poke Coins left." : "";
-      say("Welcome to " + PARK_NAME + "! Your day pass is good until midnight UTC." + coins);
-      if(E.sfx) E.sfx("coin");
-    }, function(e){ buying = false; refused(e && e.message); });
-  }
+  var riding = null, prompt = null, promptAt = null;   // the park is free for everyone (HQ 3.6): no tickets, the turnstile always open
   function say(t){ if(o.say) o.say(t); }
   function nowSec(){ return Date.now()/1000; }
   function avatarL(){ var me = o.avatar ? o.avatar() : null; return me && park ? {w: me, l: park.toL(me.x, me.z)} : null; }
@@ -1198,8 +1572,6 @@ function create(c, W, o){
     return best;
   }
   function board(r){
-    var tk = ticket();
-    if(!tk.pass){ say("You need a day pass for " + r.name + ": buy one at the gate."); return; }
     var sec = nowSec(), t0 = r.next(sec), k = r.pick ? r.pick(t0) : 0;
     riding = {r: r, t0: t0, until: t0 + r.dur, k: k, waitSaid: false};
     var wait = Math.max(0, Math.round(t0 - sec));
@@ -1216,8 +1588,7 @@ function create(c, W, o){
     var text = null;
     if(riding) text = null;
     else if(n && n.kind === "gate"){
-      var tk = ticket();
-      text = !tk.sold ? "🎡 " + PARK_NAME + " · free preview" : tk.pass ? "🎡 " + PARK_NAME + " · pass OK" : "🎟️ Day pass · " + tk.price + " coins (E)";
+      text = "🎡 " + PARK_NAME + " · free entry";
     } else if(n && n.kind === "ride") text = n.ride.icon + " Ride " + n.ride.name + " (E)";
     if(!c.el) return;
     if(!text){ if(prompt) prompt.hidden = true; return; }
@@ -1231,6 +1602,64 @@ function create(c, W, o){
   }
 
   var col = new THREE.Color(), lastNightKey = null;
+  // The park's grounds and shows each frame (HQ 3.6): the fountain's jets and the lagoon's ripples, its underwater
+  // lights by night; the searchlights' sweep; every bulb's glow by night
+  function parkFx(sec, cam, calm, mid){
+    var F = park.fx, Lg = F.lagoon;
+    F.glowPts.visible = night;
+    if(Lg){
+      Lg.spray.visible = !mid; Lg.WT.value = calm ? 0 : sec % 3600;
+      Lg.FU.uT.value = sec % 340; Lg.FU.uLean.value = calm ? 0 : 0.5 + 0.5*Math.sin(sec*0.21);
+      for(var j = 0; j < Lg.NJ; j++){
+        Lg.FU.uH.value[j] = Lg.jetH(sec, j, calm);
+        col.setHSL(((sec*(calm ? 0 : 0.04) + j*0.09) % 1 + 1) % 1, 0.9, 0.62); Lg.FU.uCol.value[j].set(col.r, col.g, col.b);
+      }
+      Lg.wm.emissiveIntensity = night ? 0.55 : 0; if(night) Lg.wm.emissive.setHSL(((sec*(calm ? 0 : 0.03)) % 1 + 1) % 1, 0.7, 0.35);
+    }
+    F.beams.forEach(function(bm){
+      bm.piv.rotation.y = bm.ph + (calm ? 0 : Math.sin(sec*0.23 + bm.ph)*1.2 + sec*0.05);
+      bm.tilt.rotation.x = 0.3 + (calm ? 0 : 0.16*Math.sin(sec*0.31 + bm.ph*2));
+      bm.beam.material.uniforms.uA.value = night ? 0.085 : 0;
+    });
+  }
+  // The fireworks: the shells of the show in progress into their slots, a boom for each as it bursts (the sound
+  // arriving at the speed of sound), and a word when a show starts. Only by night, never in Calm.
+  var fwSaid = -1, fwLast = 0, boomBuf = null;
+  function fireworks(sec, cam, calm, dc){
+    var F = park.fx, on = night && !calm && (showAt(sec) || showAt(sec - FW_LIVE));
+    F.fwPts.visible = !!on; if(!on){ fwLast = sec; return; }
+    var base = Math.floor(sec/SHOW_EVERY)*SHOW_EVERY, U = F.WU, sh = showAt(sec);
+    U.uTime.value = sec - base;
+    for(var i = 0; i < FW_SLOTS; i++) U.uA.value[i].w = -1e4;
+    var list = shells(park.a, park.b, sec - FW_LIVE, sec + FW_RISE + 0.05);
+    list.forEach(function(s2){
+      var A = U.uA.value[s2.slot], B = U.uB.value[s2.slot], C = U.uC.value[s2.slot], D = U.uD.value[s2.slot];
+      A.set(s2.burst.x, s2.burst.y, s2.burst.z, s2.t - base); B.set(s2.launch.x, park.ly(s2.launch.x, s2.launch.z) + 0.4, s2.launch.z, s2.k);
+      col.setHex(s2.col); C.set(col.r, col.g, col.b, s2.size); col.setHex(s2.col2); D.set(col.r, col.g, col.b, s2.seed);
+      if(s2.t > fwLast && s2.t <= sec && cam && cam.x != null){
+        var w = park.toW(s2.burst.x, s2.burst.z), d = Math.hypot(w.x - cam.x, park.g.position.y + s2.burst.y - (cam.y || 0), w.z - cam.z);
+        if(d < 2200) boom(d, s2.i);
+      }
+    });
+    fwLast = sec;
+    if(sh && sh.n !== fwSaid){ fwSaid = sh.n; if(dc < 1600 && sh.t < 5) say("🎆 Fireworks over " + PARK_NAME + "!"); }
+  }
+  function boom(dist, seed){
+    var A = E.audioOut ? E.audioOut() : null; if(!A) return;
+    try {
+      var ac = A.ctx;
+      if(!boomBuf || boomBuf.sampleRate !== ac.sampleRate){
+        var n = Math.floor(ac.sampleRate*1.6), r = c.rng(5), last = 0; boomBuf = ac.createBuffer(1, n, ac.sampleRate); var d = boomBuf.getChannelData(0);
+        for(var q = 0; q < n; q++){ var tq = q/ac.sampleRate; last = (last + 0.06*(r()*2 - 1))/1.06; d[q] = (last*5 + (tq < 0.03 ? (r()*2 - 1)*0.8 : 0))*Math.exp(-tq*3.2); }
+      }
+      var src = ac.createBufferSource(), lp = ac.createBiquadFilter(), gn = ac.createGain(), t0 = ac.currentTime + dist/343;
+      src.buffer = boomBuf; src.playbackRate.value = 0.8 + (seed % 7)*0.06;
+      lp.type = "lowpass"; lp.frequency.value = 260 + 1400*Math.max(0, 1 - dist/1200);
+      gn.gain.value = 0.55*Math.max(0.06, 1 - dist/2200);
+      src.connect(lp); lp.connect(gn); gn.connect(A.out); src.start(t0);
+    } catch(e){}
+  }
+
   var inst = {
     g: g,
     spec: spec,
@@ -1239,6 +1668,9 @@ function create(c, W, o){
       nightMats.forEach(function(x){ x.m.emissiveIntensity = night ? x.night : x.day; if(x.envDay) x.m.envMapIntensity = night ? x.envDay*0.18 : x.envDay; });
       beacons.forEach(function(b){ if(b.flood) b.flood.material.opacity = night ? 0.32 : 0; });
       if(park) park.glows.forEach(function(gl){ gl.material.opacity = night ? 0.75 : 0; });
+      if(park && park.fx.lagoon){ var Lg = park.fx.lagoon; Lg.fmat.blending = night ? THREE.AdditiveBlending : THREE.NormalBlending; Lg.fmat.needsUpdate = true; Lg.FU.uNight.value = night ? 1 : 0; }
+      if(park) park.fx.beams.forEach(function(bm){ bm.beam.visible = night; });
+      lastNightKey = null;
     },
     update: function(t, dt, cam){
       if(dead) return;
@@ -1251,6 +1683,7 @@ function create(c, W, o){
       // distance: the park's small things (crowd, bulbs, balloons) only near it, the park itself only in sight
       var pc = spec.park, dc = cam && cam.x != null ? Math.hypot(cam.x - pc.x, cam.z - pc.z) : 0, far = !riding && dc > 1100, mid = !riding && dc > 250;
       park.g.visible = !far;
+      fireworks(sec, cam, calm, dc);
       if(park.crowd) park.crowd.mesh.visible = !mid;
       park.bulbI.visible = !mid;
       park.balloons.forEach(function(bl){ bl.visible = !mid; });
@@ -1266,23 +1699,24 @@ function create(c, W, o){
         park.bulbs.forEach(function(bp, j){
           if(!night) col.setRGB(0.62, 0.6, 0.55); else col.setHSL(((bp.k + (calm ? 0 : sec*0.15)) % 1 + 1) % 1, 0.85, 0.62);
           park.bulbI.setColorAt(j, col);
+          park.fx.glowCol.setXYZ(j, col.r, col.g, col.b);
         });
         if(park.bulbI.instanceColor) park.bulbI.instanceColor.needsUpdate = true;
+        park.fx.glowCol.needsUpdate = true;
       }
       park.balloons.forEach(function(bl){ var u = bl.userData; bl.position.set(u.bx + (calm ? 0 : Math.sin(sec*0.8 + u.ph)*0.12), park.ly(u.bx, u.bz) + 3.2 + (calm ? 0 : Math.sin(sec*1.1 + u.ph)*0.15), u.bz); });
-      // a pass bought on another device shows up on the next CityState read
-      if(!pass && sec - lastPassCheck > 5){ lastPassCheck = sec; var tk = ticket(); if(tk.sold && tk.pass) pass = true; }
+      parkFx(sec, cam, calm, mid);
       // riding: off at the end of the lap or cycle
       if(riding && sec >= riding.until) leave(true);
       promptUi(riding ? null : nearest());
     },
     blocked: function(x, z){
-      for(var i = 0; i < marks.length; i++) for(var j = 0; j < marks[i].circles.length; j++){
-        var cc = marks[i].circles[j]; if(Math.abs(x - cc.x) < cc.r && Math.abs(z - cc.z) < cc.r && Math.hypot(x - cc.x, z - cc.z) < cc.r) return true;
+      for(var i = 0; i < marks.length; i++) for(var j = 0; j < marks[i].polys.length; j++){
+        var pp = marks[i].polys[j], bb = pp.b; if(x >= bb.x0 && x <= bb.x1 && z >= bb.z0 && z <= bb.z1 && inPoly(pp.P, x, z)) return true;
       }
       if(!park) return false;
       var L = park.toL(x, z);
-      return park.blockedL(L.x, L.z, ticket().pass);
+      return park.blockedL(L.x, L.z, true);
     },
     use: function(p){
       if(riding){
@@ -1291,7 +1725,7 @@ function create(c, W, o){
         say("Hold on: you're mid-ride!"); return true;
       }
       var n = nearest(); if(!n) return false;
-      if(n.kind === "gate"){ var tk = ticket(); if(tk.sold && !tk.pass) buy(); else say(tk.sold ? "Your day pass is good: enjoy " + PARK_NAME + "!" : PARK_NAME + " is a free preview until this Arena sells passes."); return true; }
+      if(n.kind === "gate"){ say("Welcome to " + PARK_NAME + "! Entry is free: walk on in."); return true; }
       if(n.kind === "ride"){ board(n.ride); return true; }
       return false;
     },
@@ -1331,7 +1765,7 @@ function create(c, W, o){
       return {p: {x: s0.p.x, y: s0.p.y, z: s0.p.z}, t: {x: s0.t.x, y: s0.t.y, z: s0.t.z}, up: {x: s0.up.x, y: s0.up.y, z: s0.up.z}, next: r.next(sec), dur: r.dur};
     },
     // for tools and tests: the park's frame and its rides
-    debug: function(){ return park ? {park: spec.park, rides: park.rides.map(function(r){ return {id: r.id, name: r.name, entry: park.toW(r.entry.x, r.entry.z)}; }), gate: park.toW(park.gate.x, park.gate.z), pass: ticket()} : null; },
+    debug: function(){ return park ? {park: spec.park, rides: park.rides.map(function(r){ return {id: r.id, name: r.name, entry: park.toW(r.entry.x, r.entry.z)}; }), gate: park.toW(park.gate.x, park.gate.z), free: true} : null; },
     destroy: function(){
       dead = true; if(prompt && prompt.parentNode) prompt.parentNode.removeChild(prompt); prompt = null;
       S.remove(g);
@@ -1343,5 +1777,6 @@ function create(c, W, o){
 }
 
 HQV.hqSpectacle = {claim: claim, create: create, coasterPlan: coasterPlan, TYPES: TYPES, NAMES: NAMES, PARK_NAME: PARK_NAME,
+  shells: shells, showAt: showAt, SHOW_EVERY: SHOW_EVERY, SHOW_LEN: SHOW_LEN, FW_SLOTS: FW_SLOTS, FW_RISE: FW_RISE, FW_LIVE: FW_LIVE, FW_KINDS: FW_KINDS,
   PARK_MIN: PARK_MIN, MAX_MARKS: MAX_MARKS, LANDMARK_GAP: LANDMARK_GAP, hash32: hash32};
 })();

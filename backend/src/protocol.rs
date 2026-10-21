@@ -54,7 +54,7 @@ pub const GAMES: &[(&str, i64, &[&str])] = &[
     // "fly": a = 7 (a helicopter), 8 (an attack helicopter), at the height `h` ("alt")
     // "plane" (HQ 3.2): a = 9 (the seaplane), 10 (the prop plane), at the height `h`; a page sends them only where listed
     // v4 "vehicles": while driving (a = 5 / 6), `v` names the catalogue vehicle and `vp` its paint
-    // "airliner" (HQ 3.6): a = 11 (the regional jet), 12 (the narrow-body airliner), at the height `h`; only where listed
+    // "airliner" (HQ 3.8): a = 11 (the regional jet), 12 (the narrow-body airliner), at the height `h`; only where listed
     ("hq", 4, &["ride", "look", "skate", "drive", "alt", "isles", "fly", "plane", "vehicles", "airliner"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`; "drive": a = 5 (a car), 6 (a motorbike)
     ("type", 1, &[]),
     ("td", 1, &[]),

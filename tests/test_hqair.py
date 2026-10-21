@@ -237,6 +237,13 @@ console.log(JSON.stringify(runs));
 """
 
 SCRIPT_TRAFFIC = PRELUDE + r"""
+// the real hqAirfield (its end() and timetable), as in the game; "alt" flips the runway in use every period
+eval(fs.readFileSync(path.join(R0, 'games', 'hqairfield.js'), 'utf8'));
+const AFR = window.HQV.hqAirfield;
+function realAF(mode){
+  if(mode !== 'alt') return AFR;
+  return Object.assign({}, AFR, {timetable: (w, d, a, b) => AFR.timetable(w, d, a, b).map(m => Object.assign({}, m, {end: mod(m.period, 2)}))});
+}
 const HOURS = 6, STANDS = {}; L.stands.forEach(s => STANDS[s.id] = s);
 // the planform as boxes in model metres [x0, x1, z0, z1] (games/hqaircraft.js): fuselage, wing, tailplane
 const PLAN = {jet: [[-2, 2, -19, 19.05], [-18, 18, -5.5, 3.6], [-6.3, 6.3, -19.5, -15.2]], amphib: [[-1, 1, -8.2, 7.4], [-9.9, 9.9, -0.1, 1.9], [-3.2, 3.2, -8.3, -6.8]]};
@@ -250,28 +257,38 @@ let calls = 0;
 const route0 = A.route; A.route = function(){ calls++; return route0.apply(this, arguments); };
 const res = {};
 for(const mode of ['real', 'alt']){
-  const AF = makeAF(mode), cache = new Map(), t0 = AF.slotBase(CTX.world, 1000), seen = {};
-  const r = res[mode] = {maxMv: {jet: 0, commuter: 0}, maxCache: 0, gg: [], gp: [], nb: [], minGG: 1e9, minGP: 1e9, minNB: 1e9, stateBad: [], ends: {}, hit: null};
+  const AF = realAF(mode), cache = new Map(), holds = new Map(), t0 = AF.slotBase(CTX.world, 1000), seen = {};
+  const r = res[mode] = {maxMv: {jet: 0, commuter: 0}, maxCache: 0, gg: [], gp: [], nb: [], minGG: 1e9, minPlan: 1e9, minGP: 1e9, minNB: 1e9,
+                         stateBad: [], ends: {}, hit: null, held: {}, nPairs: 0};
   calls = 0;
   for(let s = 0; s < HOURS*3600; s++){
-    const now = t0 + s*1000, tr = A.traffic(AF, CTX, now, {cache});
+    const now = t0 + s*1000, tr = A.traffic(AF, CTX, now, {cache, holds});
     r.maxCache = Math.max(r.maxCache, cache.size);
     const cnt = {jet: 0, commuter: 0};
     for(const m of tr.moving){
       cnt[m.cls]++;
-      if(!seen[m.id]) seen[m.id] = {id: m.id, type: m.type, cls: m.cls, R: m.R, t0: now - m.t*1000, end: m.end};
+      if(!seen[m.id]) seen[m.id] = {id: m.id, type: m.type, cls: m.cls, R: m.R, t0: m.t0, end: m.end};
+      if(m.hold) r.held[m.id] = m.hold;
       r.ends[m.end] = 1;
       if(m.pose.phase === 'pushback' && tr.stands[m.stand].state !== 'pushback') r.stateBad.push([s, m.id, 'push', tr.stands[m.stand].state]);
     }
     for(const p of tr.parked) if(tr.moving.some(m => m.stand === p.stand && !m.pose.air && hyp(m.pose.x - p.x, m.pose.z - p.z) < 5)) r.stateBad.push([s, p.stand, 'twice']);
     r.maxMv.jet = Math.max(r.maxMv.jet, cnt.jet); r.maxMv.commuter = Math.max(r.maxMv.commuter, cnt.commuter);
-    // separation: aircraft on the ground (moving), the parked ones
+    // separation (spec 7.3): aircraft on the ground (moving) >= 45 m apart on one track; while one pushes back, two
+    // departures queue at their holding point, or they pass on separate lanes (>= 35 m abeam), planforms >= 3 m apart
     const g = tr.moving.filter(m => !m.pose.air && hyp(m.pose.x, m.pose.z) < 3000);
-    const per = id => Math.floor(+id.split(':')[2]/8), cls = m => m.type + (m.cls === 'jet' ? 'J' : 'C') + '/' + m.pose.phase;
+    const per = id => Math.floor(+id.split(':')[0]/8), cls = m => m.type + (m.cls === 'jet' ? 'J' : 'C') + '/' + m.pose.phase;
+    const fw = y => [Math.sin(y), Math.cos(y)], abeam = (a, b) => { const f = fw(a.yaw), h = fw(b.yaw), dx = b.x - a.x, dz = b.z - a.z;
+      return Math.min(Math.abs(dx*f[1] - dz*f[0]), Math.abs(dx*h[1] - dz*h[0])); };
     for(let i = 0; i < g.length; i++) for(let j = i + 1; j < g.length; j++){
-      const a = g[i], b = g[j], d = hyp(a.pose.x - b.pose.x, a.pose.z - b.pose.z);
-      r.minGG = Math.min(r.minGG, d);
-      if(d < 45) r.gg.push({s, d, pair: [cls(a), cls(b)].sort().join(' ~ '), cross: per(a.id) !== per(b.id) || a.end !== b.end, a: [a.id, a.pose.x, a.pose.z], b: [b.id, b.pose.x, b.pose.z]});
+      const a = g[i], b = g[j], P = a.pose, Q = b.pose, d = hyp(P.x - Q.x, P.z - Q.z);
+      if(d >= 45) continue;
+      r.nPairs++;
+      const queue = a.type === 'dep' && b.type === 'dep' && a.end === b.end && /hold|lineup/.test(P.phase + Q.phase);
+      const relaxed = P.phase === 'pushback' || Q.phase === 'pushback' || queue || abeam(P, Q) >= 35;
+      const c = relaxed ? planDist({x: P.x, z: P.z, yaw: P.yaw, kind: a.kind}, {x: Q.x, z: Q.z, yaw: Q.yaw, kind: b.kind}) : null;
+      if(relaxed) r.minPlan = Math.min(r.minPlan, c); else r.minGG = Math.min(r.minGG, d);
+      if(relaxed ? c < 3 : true) r.gg.push({s, d, c, pair: [cls(a), cls(b)].sort().join(' ~ '), cross: per(a.id) !== per(b.id) || a.end !== b.end, a: [a.id, P.x, P.z], b: [b.id, Q.x, Q.z]});
     }
     for(const m of g) for(const p of tr.parked){
       if(m.pose.phase === 'pushback' && p.stand !== m.stand && Math.abs(STANDS[p.stand].z - STANDS[m.stand].z) < 50){
@@ -304,6 +321,7 @@ for(const mode of ['real', 'alt']){
   // the worst of each kind of conflict, for the report
   const worst = {}; for(const c of r.gg){ if(!worst[c.pair] || c.d < worst[c.pair].d) worst[c.pair] = c; }
   r.ggKinds = worst; r.nGG = r.gg.length; r.nCross = r.gg.filter(c => c.cross).length; r.gg = null;
+  const hv = Object.values(r.held); r.held = {n: hv.length, max: Math.max(0, ...hv), min: Math.min(0, ...hv)};
 }
 console.log(JSON.stringify(res));
 """
@@ -555,21 +573,18 @@ class TrafficTest(unittest.TestCase):
             with self.subTest(k):
                 self.assertEqual(r["nCross"], 0)
 
-    def test_conflicts_are_only_the_reported_ones(self):
-        # the ground conflicts holdExtra cannot remove (reported with the T2 hand-in); anything else is a regression
-        known = {"arrC/taxi ~ arrJ/taxi", "arrC/taxi ~ depJ/pushback", "arrJ/taxi ~ depJ/pushback"}
+    def test_ground_separation(self):
+        # spec 7.3 on the real hqAirfield ends and timetable, Isle Hoppers and jets mixed: >= 45 m on one track, and
+        # planforms >= 3 m apart while pushing back, queueing at the holding point or passing on the parallel taxiway.
+        # The jets give way (traffic() holds them); the hoppers fly the timetable exactly.
         for k, r in self.each():
             with self.subTest(k):
-                self.assertLessEqual(set(r["ggKinds"]), known)
-
-    @unittest.expectedFailure
-    def test_ground_separation_45m(self):
-        # spec 7.3: any two aircraft on the ground >= 45 m apart. Fails on the spec's own layout and timetable, for any
-        # K.holdExtra: a jet arrival (slot m+1, +0) overtakes the commuter arrival (slot m, +180) on B (7 vs 9 m/s), and
-        # an arrival taxiing on B passes a stand whose next-slot jet is pushing back (stand = arrival's + 3).
-        for k, r in self.each():
-            with self.subTest(k):
+                self.assertEqual(r["ggKinds"], {})
                 self.assertGreaterEqual(r["minGG"], 45)
+                self.assertGreaterEqual(r["minPlan"], 3)
+                self.assertGreater(r["nPairs"], 0)          # (the relaxed pairs were met, so this measured something)
+                self.assertGreater(r["held"]["n"], 0)       # some jets were held or pushed later
+                self.assertLessEqual(r["held"]["max"], 150)
 
 
 if __name__ == "__main__":

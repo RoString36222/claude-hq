@@ -216,6 +216,8 @@ function sAt(P, tau){
 
 /* ---------- stand-local frame: a along the stand's heading (to the nose), l to its left ---------- */
 function loc(st, a, l){ var y = st.yaw, f = fwd(y); return [st.x + a*f[0] + l*f[1], st.z + a*f[1] - l*f[0]]; }
+// a route's stand: hqair gives R.standA / R.standB as the end's stand object ({id, x, z, yaw}); a bare id works too
+function standKey(s){ return s == null ? null : typeof s === "object" ? (s.id != null ? String(s.id) : null) : String(s); }
 function isCommuter(st){ return st && st.kind === "commuter"; }
 // the jobs at a stand: spot {a, l, yaw (relative to the stand)}, the box waypoints in (from the lane) and out
 // (legs: [{w: [[a, l]...], rev}]), all in the stand's frame; right side = negative l (the jet bridge is on the left)
@@ -294,7 +296,7 @@ function tugHome(K, st, curveId, nose){
 // departure: an index into L.runway.ends, a designator, or an end object), else inferred from its pose
 function flowOf(m, st, K, dep){
   var e = m && m.R ? (dep ? (m.R.endA != null ? m.R.endA : m.R.flowA) : (m.R.endB != null ? m.R.endB : m.R.flowB)) : null;
-  if(e && typeof e === "object") e = e.id;
+  if(e && typeof e === "object") e = e.end != null ? e.end : e.id;      // an end object (hqairfield.end): its designator
   if(typeof e === "number" || /^[0-9]$/.test(String(e))){ var E = K.L.runway && K.L.runway.ends && K.L.runway.ends[+e]; if(E) e = String(E.id); }
   if(e === 0 || e === "0" || e === "36") return "36";
   if(e === 1 || e === "1" || e === "18") return "18";
@@ -373,8 +375,9 @@ function poses(L, stands, moving, nowMs, ahead, o){
   var deps = {}, arrs = [];
   moving.forEach(function(m){
     if(!m || !m.R) return;
-    if(m.R.standA != null && K.stands[String(m.R.standA)]) deps[String(m.R.standA)] = m;
-    if(m.R.standB != null && K.stands[String(m.R.standB)]) arrs.push(m);
+    var sa = standKey(m.R.standA), sb = standKey(m.R.standB);
+    if(m.type !== "arr" && sa != null && K.stands[sa]) deps[sa] = m;
+    if(m.type !== "dep" && sb != null && K.stands[sb]) arrs.push(m);
   });
   ids.forEach(function(id){
     var S = stands[id] || {}, st = K.stands[String(id)], tIn = S.tIn != null ? +S.tIn : null;
@@ -425,24 +428,24 @@ function poses(L, stands, moving, nowMs, ahead, o){
   var fmDone = {};
   arrs.forEach(function(m){
     if(!(m.cls === "jet" || m.kind === "jet")) return;
-    var st = K.stands[String(m.R.standB)], mp = mpose(m);
+    var sk = standKey(m.R.standB), st = K.stands[sk], mp = mpose(m);
     if(!st || isCommuter(st) || !mp) return;
     var landed = m.R.tTD == null || (m.t != null && m.t >= m.R.tTD);
     if(!landed || mp.phase === "parked") return;
     var fl = flowOf(m, st, K), cid = fl && st.lead ? st.lead[fl] : null, C = cid && L.curves ? L.curves[cid] : null;
     if(!C) return;
-    var r = fmState(K, st, C, mp), SB = stands[String(m.R.standB)];
-    var fid = "fm|" + (SB && SB.tIn != null ? m.R.standB + "|" + SB.tIn : m.id), b = beaconOn(nowMs, fid);
+    var r = fmState(K, st, C, mp), SB = stands[sk];
+    var fid = "fm|" + (SB && SB.tIn != null ? sk + "|" + SB.tIn : m.id), b = beaconOn(nowMs, fid);
     if(r.lead){
       if(mp.phase !== "taxi") return;           // not before the end of the exit
       var a = aheadOf(m, LEAD);
       if(a) add("followme", {x: a.x, z: a.z, yaw: a.yaw != null ? a.yaw : mp.yaw}, {id: fid, phase: "lead", beacon: b, of: String(m.id)});
-      fmDone[String(m.R.standB)] = 1;
+      fmDone[sk] = 1;
       return;
     }
     var H = followHome(K, C[0], r.dirB);
     if(r.s < H.P.len) add("followme", atS(H.P, r.s, WB.followme), {id: fid, phase: "off", beacon: b, of: String(m.id)});
-    fmDone[String(m.R.standB)] = 1;
+    fmDone[sk] = 1;
   });
   // after on-block: home at road speed (needs the arrival's flow, stands[id].end)
   ids.forEach(function(id){

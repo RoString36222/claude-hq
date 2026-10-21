@@ -42,7 +42,7 @@ var EVERY = 120000;               // ms between departures on a route (each way)
 // per kind: speeds (m/s), accelerations (m/s²) by the kind of ground, heights and distances (m)
 // half: the origin to the nose (the tail), for the runway occupancy; jet.v1: the roll on a v1 airport's 500 m runway
 var K = {
-  jet: {taxi: 9, climb: 78, cruise: 115, approach: 68, touch: 64, accTaxi: 1.2, accRoll: 2.7, accAir: 0.9, decTaxi: 1.5, decRoll: 2.6, decAir: 0.7,
+  jet: {taxi: 7, climb: 78, cruise: 115, approach: 68, touch: 64, accTaxi: 1.2, accRoll: 2.7, accAir: 0.9, decTaxi: 1.5, decRoll: 2.6, decAir: 0.7,
         cruiseY: 600, lift: 1050, rotR: 320, climbG: 0.12, descG: 0.08, flare: 240, intercept: 120, level: 300, tdIn: 70, out: 600, turnR: 1100, hold: 4, aoa: 0.045,
         half: 19, v1: {lift: 430, accRoll: 5.5, decRoll: 4.6}},
   sea: {taxi: 10, climb: 50, cruise: 75, approach: 45, touch: 40, accTaxi: 1.0, accRoll: 3.6, accAir: 0.8, decTaxi: 1.2, decRoll: 3.0, decAir: 0.6,
@@ -54,7 +54,8 @@ K.amphib = Object.assign({}, K.sea, {taxi: 7, climb: 45, cruise: 75, approach: 4
 // on an airfield's taxiways (m/s, m/s², s): push back, line up, exit; v² ≤ lat·R in a curve; the stand's last leadLen m
 K.ground = {push: 1.0, pushAcc: 0.3, line: 4, exit: 15, lead: 2.5, leadLen: 40, lat: 1.0, lineup: 2};
 // an extra wait at the runway holding point (s) per runway in use and class: the departure pushes that much earlier
-K.holdExtra = {"36": {jet: 0, commuter: 0}, "18": {jet: 0, commuter: 0}};
+// (traffic() may take a jet's back again, down to 0, when pushing later keeps the ground separation: see seqHold)
+K.holdExtra = {"36": {jet: 40, commuter: 0}, "18": {jet: 40, commuter: 0}};
 var NOMINAL_COAST = 900, NOMINAL_RIVER = 600, SEA_OFF = 45;
 
 function hyp(x, z){ return Math.sqrt(x*x + z*z); }
@@ -250,6 +251,9 @@ function route(kind, A, B, ends){
   }
   v[0] = 0; v[n - 1] = 0; v[iHold] = 0; v[iHold + 1] = 0; v[iRoll] = 0; v[iRoll - 1] = 0;
   if(hasPush) v[iPush1] = 0;
+  // a stop where the exit joins the parallel taxiway, clear of the runway (ends.stopIn): traffic() can hold it there
+  var stopIn = !!ends.stopIn && !eb.v1 && iExit1 > iExit && iExit1 < n - 1;
+  if(stopIn) v[iExit1] = 0;
   function accOf(k){ var kd = KD[k]; return kd === "roll" ? CA.accRoll : kd === "push" ? GR.pushAcc : kd === "taxi" || kd === "land" || kd === "line" || kd === "exit" ? C.accTaxi : C.accAir; }
   function decOf(k){ var kd = KD[k]; return kd === "land" ? CB.decRoll : kd === "roll" ? CA.decRoll : kd === "push" ? GR.pushAcc : kd === "taxi" || kd === "line" || kd === "exit" ? C.decTaxi : C.decAir; }
   for(i = 1; i < n; i++) v[i] = Math.min(v[i], Math.sqrt(v[i - 1]*v[i - 1] + 2*accOf(i)*(s[i] - s[i - 1])));
@@ -275,7 +279,7 @@ function route(kind, A, B, ends){
   return {kind: kind, pts: pts, y: y, s: s, v: v, t: t, T: t[n - 1], len: s[n - 1], hand: t[kh], nA: iRoll,
           iHold: iHold, iTD: iTD, sLift: sLift, sTD: sTD, sFAF: sFAF, sPeak: sPeak, cruiseY: cruiseY,
           tPush1: t[iPush1], tHold0: t[iHold], tHold1: t[iHold + 1], tLine: t[iHold + 1], tRoll: t[iRoll], tLift: t[iLift], tTD: t[iTD],
-          tExit: t[iExit], tExit1: t[iExit1], tVacate: t[k1], sPush1: s[iPush1], sRoll: s[iRoll], sExit: s[iExit], occ: occ,
+          tExit: t[iExit], tExit1: t[iExit1], tVacate: t[k1], tStopIn: stopIn ? t[iExit1] : null, sPush1: s[iPush1], sRoll: s[iRoll], sExit: s[iExit], occ: occ,
           standA: ea.stand || null, standB: eb.stand || null,
           y0: y0, y1: y1, C: C, from: A.world, to: B.world, A: {x: Ax, z: Az}, B: {x: Bx, z: Bz}, endA: ea, endB: eb};
 }
@@ -369,20 +373,124 @@ function aheadOf(R, along, d){
 // islandEnd(world)}. A jet arrival flies route("jet", far, here) and touches down at its tRunway; a departure rolls at
 // its tRunway; commuters fly "amphib" to/from islandEnd. Routes are cached per (class, type, stand, end, far): at most
 // CACHE_MAX, least recently used out first, and a hit never calls route() (o.cache: a Map of your own).
+// Ground sequencing (spec 7.3, 45 m between ground aircraft): the Isle Hoppers fly the timetable exactly (one of them may
+// be the player's), the jets give way. A jet departure pushes up to SEQ_MAX s early and waits the extra at the runway
+// holding point; a jet arrival stops where its exit joins taxiway A (R.tStopIn) and is held there up to SEQ_MAX s. The
+// least wait that keeps SEP m from every other ground aircraft is found once per movement from the timetable alone, so
+// every client holds the same aircraft for the same time (o.holds: a Map of your own).
 // Returns, all in archipelago metres:
-//   moving  [{id, cls, kind, type, stand, end, airline, reg, pose, R, t}] from push start (an arrival: SHOW_ARR s before
-//           touchdown) to on-block (a departure: to its handover)
-//   stands  {id: {state: empty|arriving|onblock|turnaround|pushback, airline, reg, kind, tIn, tOut, pushT}}
+//   moving  [{id, cls, kind, type, stand, end, airline, reg, pose, R, t, t0, hold}] from push start (an arrival: SHOW_ARR s
+//           before touchdown) to on-block (a departure: to its handover); t is R's time (poseAt(R, t) is the pose), t0 the
+//           ms of R's t = 0 had there been no hold, hold the wait (s)
+//   stands  {id: {state: empty|arriving|onblock|turnaround|pushback, airline, reg, kind, tIn, tOut, pushT, end}} (empty
+//           has times only for AFTER_PUSH s after a push)
 //   parked  [{stand, x, z, yaw, airline, reg, kind}] the stands in onblock|turnaround
 var CACHE_MAX = 96, SHOW_ARR = 150, ONBLOCK = 120, BACK_MS = 45*60000, AHEAD_MS = 15*60000, STRIP = 50, EXIT_V = 15;
-var routeCache = new Map();
+var AFTER_PUSH = 180, SEP = 48, SEQ_MAX = 150, SEQ_STEP = 2, SEQ_WIN = 18*60000, SEQ_OLD = 10*60000, HOLDS_MAX = 160;
+var routeCache = new Map(), holdCache = new Map();
 function stopDist(C){ return (C.touch*C.touch - EXIT_V*EXIT_V)/(2*C.decRoll); }
 function placeOf(e, id){ var n = normEnd(e), p = n.dep.push.length ? n.dep.push[0] : n.dep.taxi[0]; return {world: String(id), x: p[0], z: p[1]}; }
+// R's time at ms for a movement entry: a departure's extra wait sits at its hold (before its anchor, the roll), an
+// arrival's at its stop on A (after its anchor, the touchdown); the aircraft stands still through either
+// (a departure's h may be negative, down to minus its K.holdExtra: it pushes that much later and waits less)
+function rtAt(e, ms){
+  var tau = (ms - e.t0)/1000, h = e.h || 0;
+  if(!h) return tau;
+  if(e.dep) return tau + h < e.tH ? tau + h : Math.max(tau, e.tH);
+  return tau <= e.tH ? tau : tau <= e.tH + h ? e.tH : tau - h;
+}
+// a ground sample: {x, z, yaw, ph (phase), kind, dep, end} while the entry is on the ground at ms (pushing back ..
+// lift-off, touchdown .. on block), else null
+function sampleOf(e, p){ return {x: p.x, z: p.z, yaw: p.yaw, ph: p.phase, kind: e.kind, dep: e.dep, end: e.m.end}; }
+function groundAt(e, ms, cx, cz){
+  var tau = (ms - e.t0)/1000, R = e.R;
+  if(e.dep ? (tau < -(e.h || 0) || tau > R.tLift) : (tau < R.tTD || tau > R.T + (e.h || 0))) return null;
+  var p = poseAt(R, rtAt(e, ms));
+  return p.air || hyp(p.x - cx, p.z - cz) > 3000 ? null : sampleOf(e, p);
+}
+// the planform as thick segments in model metres [x0, z0, x1, z1, half-thickness] (games/hqaircraft.js): fuselage, wing,
+// tailplane; the clearance between two aircraft is the least gap between their pieces
+var PLAN = {jet: [[0, -19, 0, 19, 2], [-15.5, -1, 15.5, -1, 2.5], [-6.3, -17.3, 6.3, -17.3, 2.2]],
+            amphib: [[0, -8.2, 0, 7.4, 1], [-9, 0.9, 9, 0.9, 1], [-3.2, -7.5, 3.2, -7.5, 0.8]]};
+function segPt(p, a, b){
+  var dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx*dx + dz*dz, t = L2 > 0 ? clamp(((p[0] - a[0])*dx + (p[1] - a[1])*dz)/L2, 0, 1) : 0;
+  return hyp(p[0] - a[0] - dx*t, p[1] - a[1] - dz*t);
+}
+function cross2(o, a, b){ return (a[0] - o[0])*(b[1] - o[1]) - (a[1] - o[1])*(b[0] - o[0]); }
+function segSeg(a, b, c, d){
+  var d1 = cross2(c, d, a), d2 = cross2(c, d, b), d3 = cross2(a, b, c), d4 = cross2(a, b, d);
+  if(((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0))) return 0;
+  return Math.min(segPt(a, c, d), segPt(b, c, d), segPt(c, a, b), segPt(d, a, b));
+}
+function pieces(s){
+  var f = dirOf(s.yaw), l = leftOf(s.yaw);
+  return (PLAN[s.kind] || PLAN.jet).map(function(q){
+    return [[s.x + l[0]*q[0] + f[0]*q[1], s.z + l[1]*q[0] + f[1]*q[1]], [s.x + l[0]*q[2] + f[0]*q[3], s.z + l[1]*q[2] + f[1]*q[3]], q[4]];
+  });
+}
+function clearance(a, b){
+  var A = pieces(a), B = pieces(b), m = Infinity;
+  for(var i = 0; i < A.length; i++) for(var j = 0; j < B.length; j++) m = Math.min(m, segSeg(A[i][0], A[i][1], B[j][0], B[j][1]) - A[i][2] - B[j][2]);
+  return Math.max(0, m);
+}
+// how far a pair falls short of the separation (0: none): SEP m origin to origin on one track; the planforms keep
+// PLAN_SEP m instead while one of them pushes back, while two departures queue at their runway's holding point, and
+// side by side on separate lanes (A and B are 42 m apart: LANE m or more abeam of each other's heading)
+var PLAN_SEP = 6, LANE = 35, QUEUE = {hold: 1, lineup: 1};
+function abeam(a, b){ var f = dirOf(a.yaw), g = dirOf(b.yaw), dx = b.x - a.x, dz = b.z - a.z; return Math.min(Math.abs(dx*f[1] - dz*f[0]), Math.abs(dx*g[1] - dz*g[0])); }
+function shortOf(a, b){
+  var d = hyp(a.x - b.x, a.z - b.z);
+  if(d >= SEP) return 0;
+  if(a.ph === "pushback" || b.ph === "pushback" || (a.dep && b.dep && a.end === b.end && (QUEUE[a.ph] || QUEUE[b.ph])) || abeam(a, b) >= LANE)
+    return Math.max(0, PLAN_SEP - clearance(a, b));
+  return SEP - d;
+}
+// the least hold (s, a multiple of SEQ_STEP up to SEQ_MAX; a departure from minus its slack, the K.holdExtra in its
+// route) that keeps jet entry e clear of `others` (their holds known, shortOf) while it is on the ground; with none that
+// does, the one that falls short the least
+function seqHold(e, others, cx, cz){
+  var R = e.R, tH = e.tH, j, k;
+  if(tH == null || !(tH > 0)) return 0;
+  var HP = sampleOf(e, poseAt(R, tH)), F = [], base, n;
+  if(e.dep){
+    // τ (s from t0) = -SEQ_MAX .. tH1: before tH - h it is at R time τ + h (an integer: F), from there on at its hold
+    base = -SEQ_MAX; n = Math.floor(e.tH1) + SEQ_MAX + 1;
+    for(j = 0; j <= Math.floor(tH); j++) F.push(sampleOf(e, poseAt(R, j)));
+  } else {
+    // τ = tH + k: held while k <= h, then at R time tH + k - h (F[k - h]) until on block
+    base = tH; n = Math.ceil(R.T - tH) + SEQ_MAX + 1;
+    for(j = 0; tH + j <= R.T; j++) F.push(sampleOf(e, poseAt(R, tH + j)));
+  }
+  var t0 = e.t0 + base*1000, t1 = e.t0 + (base + n - 1)*1000, O = [];
+  others.forEach(function(o){
+    if(o === e) return;
+    var g0 = o.dep ? o.t0 - (o.h || 0)*1000 : o.t0 + o.R.tTD*1000, g1 = o.dep ? o.t0 + o.R.tLift*1000 : o.t0 + (o.R.T + (o.h || 0))*1000;
+    if(g1 < t0 || g0 > t1) return;
+    var Q = new Array(n), any = false;
+    for(var q = 0; q < n; q++){ var ms = t0 + q*1000; Q[q] = ms < g0 || ms > g1 ? null : groundAt(o, ms, cx, cz); if(Q[q]) any = true; }
+    if(any) O.push(Q);
+  });
+  if(!O.length) return 0;
+  var best = 0, bestS = Infinity, hMin = e.dep ? -Math.floor(Math.max(0, e.slack || 0)/SEQ_STEP)*SEQ_STEP : 0;
+  for(var h = hMin; h <= SEQ_MAX; h += SEQ_STEP){
+    var sc = 0;
+    for(k = 0; k < n && sc < bestS; k++){
+      var p;
+      if(e.dep){ var tau = base + k; if(tau < -h) continue; p = tau + h < tH ? F[tau + h] : HP; }
+      else { if(k <= h) p = HP; else { p = F[k - h]; if(!p) break; } }
+      if(!p) continue;
+      for(var oi = 0; oi < O.length; oi++){ var q2 = O[oi][k]; if(q2){ var sh = shortOf(p, q2); sc += sh*sh; } }
+    }
+    if(sc === 0) return h;
+    if(sc < bestS){ bestS = sc; best = h; }
+  }
+  return best;
+}
 function traffic(AF, ctx, nowMs, o){
   o = o || {}; ctx = ctx || {};
-  var out = {moving: [], stands: {}, parked: []}, L = ctx.L, cache = o.cache || routeCache;
+  var out = {moving: [], stands: {}, parked: []}, L = ctx.L, cache = o.cache || routeCache, holds = o.holds || holdCache;
   if(!AF || !L || !L.ok) return out;
-  var cx = +ctx.cx || 0, cz = +ctx.cz || 0, here = {world: ctx.world, x: cx, z: cz}, ST = {};
+  var cx = +ctx.cx || 0, cz = +ctx.cz || 0, here = {world: ctx.world, x: cx, z: cz}, ST = {}, dests = ctx.dests || [];
   (L.stands || []).forEach(function(s){ ST[s.id] = s; out.stands[s.id] = {state: "empty"}; });
   function routeOf(m){
     var key = [ctx.world, cx, cz, m.cls, m.type, m.stand, m.end, m.far].join("|");
@@ -393,34 +501,76 @@ function traffic(AF, ctx, nowMs, o){
       var fE = m.cls === "jet" ? (ctx.farEnd ? ctx.farEnd(m) : null) : (ctx.islandEnd ? ctx.islandEnd(m.far) : null);
       if(hE && hE.ok !== false && fE){
         var fP = placeOf(fE, m.far), E = L.runway.ends[m.end], hx = (K.holdExtra[E && E.id] || {})[m.cls] || 0;
-        R = m.type === "dep" ? API.route(kind, here, fP, {a: hE, b: fE, holdExtra: hx}) : API.route(kind, fP, here, {a: fE, b: hE});
+        R = m.type === "dep" ? API.route(kind, here, fP, {a: hE, b: fE, holdExtra: hx})
+          : API.route(kind, fP, here, {a: fE, b: hE, stopIn: m.cls === "jet"});
       }
     } catch(e){ R = null; }
     cache.set(key, R);
     while(cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
     return R;
   }
-  var mv = AF.timetable(ctx.world, ctx.dests || [], nowMs - BACK_MS, nowMs + AHEAD_MS) || [], by = {};
-  mv.forEach(function(m){
-    var R = routeOf(m); if(!R) return;
-    var kind = m.cls === "jet" ? "jet" : "amphib", e = {m: m, R: R, kind: kind};
-    if(m.type === "arr"){ e.t0 = m.tRunway - R.tTD*1000; e.vis = Math.max(e.t0, m.tRunway - SHOW_ARR*1000); e.fin = e.t0 + R.T*1000; }
-    else { e.t0 = m.tRunway - R.tRoll*1000; e.vis = e.t0; e.fin = e.t0 + R.hand*1000; }
+  // every movement within SEQ_WIN of the shown window (their routes only when a hold needs them)
+  var all = AF.timetable(ctx.world, dests, nowMs - BACK_MS - SEQ_WIN, nowMs + AHEAD_MS + SEQ_WIN) || [], ents = {};
+  function entOf(m){
+    if(ents[m.id] !== undefined) return ents[m.id];
+    var R = routeOf(m), e = null;
+    if(R){
+      var dep = m.type === "dep";
+      e = {m: m, R: R, kind: m.cls === "jet" ? "jet" : "amphib", dep: dep, h: 0,
+           t0: dep ? m.tRunway - R.tRoll*1000 : m.tRunway - R.tTD*1000, tH: dep ? R.tHold0 : R.tStopIn,
+           tH1: dep ? R.tHold1 : null, slack: dep ? R.tHold1 - R.tHold0 - R.C.hold : 0};
+    }
+    ents[m.id] = e;
+    return e;
+  }
+  function near(m, lo, hi){ return all.filter(function(x){ return x !== m && x.tRunway >= m.tRunway + lo && x.tRunway <= m.tRunway + hi; }); }
+  // a jet's hold: departures give way to the hoppers, arrivals to the hoppers and the (sequenced) jet departures
+  function holdOf(e){
+    if(e.m.cls !== "jet" || e.tH == null) return 0;
+    var key = [ctx.world, cx, cz, dests.join(","), e.m.id, e.m.end, e.m.stand, e.m.far].join("|");
+    if(holds.has(key)) return holds.get(key);
+    var others = [];
+    near(e.m, -SEQ_WIN, SEQ_WIN).forEach(function(x){
+      if(x.cls === "jet" && (e.dep || x.type !== "dep")) return;
+      var oe = entOf(x); if(!oe) return;
+      if(x.cls === "jet") oe.h = holdOf(oe);
+      others.push(oe);
+    });
+    var h = seqHold(e, others, cx, cz);
+    holds.set(key, h);
+    while(holds.size > HOLDS_MAX) holds.delete(holds.keys().next().value);
+    return h;
+  }
+  var by = {};
+  all.forEach(function(m){
+    if(m.tRunway < nowMs - BACK_MS || m.tRunway > nowMs + AHEAD_MS) return;
+    var e = entOf(m); if(!e) return;
+    var R = e.R;
+    // long past (on block or airborne SEQ_OLD ago): its hold no longer shows
+    if(m.cls === "jet" && e.t0 + (e.dep ? R.tLift : R.T + SEQ_MAX)*1000 > nowMs - SEQ_OLD) e.h = holdOf(e);
+    if(m.type === "arr"){ e.vis = Math.max(e.t0, m.tRunway - SHOW_ARR*1000); e.fin = e.t0 + (R.T + e.h)*1000; }
+    else { e.vis = e.t0 - e.h*1000; e.fin = e.t0 + R.hand*1000; }
     (by[m.airframe] = by[m.airframe] || {})[m.type] = e;
     if(nowMs >= e.vis && nowMs < e.fin){
-      var t = (nowMs - e.t0)/1000;
-      out.moving.push({id: m.id, cls: m.cls, kind: kind, type: m.type, stand: String(m.stand), end: m.end, airline: m.airline, reg: m.reg,
-                       pose: poseAt(R, t), R: R, t: t, vis: e.vis});
+      var t = rtAt(e, nowMs);
+      out.moving.push({id: m.id, cls: m.cls, kind: e.kind, type: m.type, stand: String(m.stand), end: m.end, airline: m.airline, reg: m.reg,
+                       pose: poseAt(R, t), R: R, t: t, t0: e.t0, hold: e.h, vis: e.vis});
     }
   });
   out.moving.sort(function(a, b){ return a.vis - b.vis || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0); });
   var rank = {empty: 0, arriving: 1, pushback: 2, onblock: 3, turnaround: 3};
   Object.keys(by).sort().forEach(function(af){
     var a = by[af].arr, d = by[af].dep, m = (a || d).m, sid = String(m.stand);
-    var tVis = a ? a.vis : -Infinity, tIn = a ? a.fin : -Infinity, tOut = d ? d.t0 : Infinity, tP1 = d ? d.t0 + d.R.tPush1*1000 : Infinity;
+    var tVis = a ? a.vis : -Infinity, tIn = a ? a.fin : -Infinity, tOut = d ? d.vis : Infinity, tP1 = d ? d.t0 + (d.R.tPush1 - d.h)*1000 : Infinity;
     var st = nowMs < tVis ? null : nowMs < tIn ? "arriving" : nowMs < tOut ? (nowMs < tIn + ONBLOCK*1000 ? "onblock" : "turnaround") : nowMs < tP1 ? "pushback" : null;
+    // just pushed: the stand is empty again, but keeps the times a while (the tug drives home after its push)
+    if(!st && d && nowMs >= tP1 && nowMs < tP1 + AFTER_PUSH*1000 && out.stands[sid] && out.stands[sid].state === "empty" && out.stands[sid].tOut == null){
+      out.stands[sid] = {state: "empty", airline: m.airline, reg: m.reg, kind: d.kind, tIn: tIn, tOut: tOut, pushT: 0, end: d.m.end};
+      return;
+    }
     if(!st || !out.stands[sid] || rank[st] <= rank[out.stands[sid].state]) return;
-    out.stands[sid] = {state: st, airline: m.airline, reg: m.reg, kind: (a || d).kind, tIn: tIn, tOut: tOut, pushT: st === "pushback" ? (nowMs - tOut)/1000 : 0};
+    out.stands[sid] = {state: st, airline: m.airline, reg: m.reg, kind: (a || d).kind, tIn: tIn, tOut: tOut, pushT: st === "pushback" ? (nowMs - tOut)/1000 : 0,
+                       end: a ? a.m.end : d.m.end};
   });
   Object.keys(out.stands).forEach(function(id){
     var S = out.stands[id], s = ST[id];
@@ -470,5 +620,6 @@ function ambient(places, nowMs, cx, cz, radius){
 
 var API = HQV.hqAir = {route: route, poseAt: poseAt, airportEnd: airportEnd, dockEnd: dockEnd, nominalAirport: nominalAirport, normEnd: normEnd,
              traffic: traffic, aheadOf: aheadOf, stopDist: stopDist, flights: flights, nextFlight: nextFlight, ambient: ambient, dubins: dubins,
-             EVERY: EVERY, RUNWAY: RUNWAY, STAND_BACK: STAND_BACK, KINDS: K, K: K, GS: GS, CACHE_MAX: CACHE_MAX, SHOW_ARR: SHOW_ARR, AIR_MAX: 4};
+             EVERY: EVERY, RUNWAY: RUNWAY, STAND_BACK: STAND_BACK, KINDS: K, K: K, GS: GS, CACHE_MAX: CACHE_MAX, SHOW_ARR: SHOW_ARR, AIR_MAX: 4,
+             SEP: SEP, SEQ_MAX: SEQ_MAX};
 })();

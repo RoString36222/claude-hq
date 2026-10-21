@@ -278,5 +278,59 @@ class TestHqAirground(unittest.TestCase):
         self.assertGreater(self.r["disposed"], 11)
 
 
+# the real chain: hqAirfield's timetable and ends -> hqair.traffic -> poses (no stubs): R.standA / R.standB are the
+# ends' stand objects there, and the tug and the follow-me car must still find their aircraft
+REAL = r"""
+var fs = require("fs"), root = %(root)s;
+global.window = {HQV: {}};
+["hqairfield", "hqair", "hqairground"].forEach(function(f){ new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))(); });
+var HQV = window.HQV, AF = HQV.hqAirfield, A = HQV.hqAir, G = HQV.hqAirground;
+var L = JSON.parse(fs.readFileSync(root + "/tests/fixtures/airfield_commons.json", "utf8"));
+var ISLES = {"island:a@2": [3200, -2600], "island:b@2": [-3400, 2900]};
+var ctx = {L: L, world: "claude-hq@2", dests: Object.keys(ISLES), cx: 0, cz: 0,
+  farEnd: function(m){ return A.nominalAirport(Math.sin(m.far)*9000, Math.cos(m.far)*9000, [0, 0]); },
+  islandEnd: function(w){ return A.dockEnd(null, ISLES[w][0], ISLES[w][1], [0, 0]); }};
+var t0 = AF.slotBase(ctx.world, 2000), o = {cache: new Map(), holds: new Map()}, out = {push: 0, pushNear: 0, pushFar: [], lead: 0, arrTaxi: 0, tugPh: {}, fmPh: {}};
+function ahead(e, d){ return A.aheadOf(e.R, e.pose.along, d); }
+for(var s = 0; s < 3*3600; s += 2){
+  var now = t0 + s*1000, tr = A.traffic(AF, ctx, now, o), P = G.poses(L, tr.stands, tr.moving, now, ahead, {cx: 0, cz: 0});
+  P.forEach(function(q){ if(q.type === "tug") out.tugPh[q.phase] = 1; if(q.type === "followme") out.fmPh[q.phase] = 1; });
+  tr.moving.forEach(function(m){
+    var p = m.pose, f = [Math.sin(p.yaw), Math.cos(p.yaw)];
+    if(m.cls === "jet" && m.type === "arr" && p.phase === "taxi") out.arrTaxi++;
+    if(p.phase !== "pushback" || m.pose.speed < 0.2) return;
+    out.push++;
+    var nose = m.cls === "jet" ? 19.05 : 7.4, want = [p.x + f[0]*(nose + 4), p.z + f[1]*(nose + 4)];
+    var near = P.some(function(q){ return q.type === "tug" && q.phase === "push" && Math.hypot(q.x - want[0], q.z - want[1]) < 3; });
+    if(near) out.pushNear++; else if(out.pushFar.length < 5) out.pushFar.push([s, m.id]);
+  });
+  if(P.some(function(q){ return q.type === "followme" && q.phase === "lead"; })) out.lead++;
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class TestHqAirgroundRealTraffic(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        p = subprocess.run([NODE, "-e", REAL % {"root": json.dumps(ROOT)}], capture_output=True, text=True, timeout=600)
+        if p.returncode != 0:
+            raise AssertionError("node harness failed:\n" + p.stderr)
+        cls.r = json.loads(p.stdout)
+
+    def test_the_tug_pushes_every_pushback(self):
+        self.assertGreater(self.r["push"], 100)
+        self.assertEqual(self.r["pushFar"], [])
+        self.assertEqual(self.r["pushNear"], self.r["push"])
+        for ph in ("push", "return"):
+            self.assertIn(ph, self.r["tugPh"])
+
+    def test_the_follow_me_car_leads_arriving_jets(self):
+        self.assertGreater(self.r["arrTaxi"], 100)
+        self.assertIn("lead", self.r["fmPh"])
+        self.assertGreater(self.r["lead"], 30)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1395,7 +1395,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(!hE || !fE) return null;
     var n = AIR.normEnd(fE), p0 = n.dep.push.length ? n.dep.push[0] : n.dep.taxi[0], fP = {world: String(m.far), x: p0[0], z: p0[1]};
     var here = {world: ctx.world, x: ctx.cx, z: ctx.cz}, E = L.runway.ends[m.end], hx = ((AIR.K.holdExtra || {})[E && E.id] || {})[m.cls] || 0;
-    return m.type === "dep" ? AIR.route(kind, here, fP, {a: hE, b: fE, holdExtra: hx}) : AIR.route(kind, fP, here, {a: fE, b: hE});
+    return m.type === "dep" ? AIR.route(kind, here, fP, {a: hE, b: fE, holdExtra: hx}) : AIR.route(kind, fP, here, {a: fE, b: hE, stopIn: m.cls === "jet"});
   }
   // the camera's distance to the platform's rectangles (its height counts): the airport's level of detail, hysteresis 50 m
   function apDetail(cam, mode){

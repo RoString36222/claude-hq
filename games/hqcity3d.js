@@ -395,6 +395,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var want = NAV.world || COMMONS, arriveAt = NAV.spawn, worldId = LEGACY, V2 = false;
   NAV.spawn = null;
   var me = (api.me && api.me()) || null, owner = "commons", tier = 5, grow = 1000, cityState = null, assignRows = null;
+  var dealerSite = null, dealerB = null;          // the dealership (games/hqdealer.js): its site and building
   var civics = [], civicG = new THREE.Group(), boatG = new THREE.Group(), boats = [], civicLod = null, decks = [];
   var oc = null, sea = null, arch = null, tsim = null, tview = null, nsim = null, ndraw = null;
   var bus = null, menu = null, menuKey = null, talkL = null, ui = null, statsEl = null, statsAt = 0, fadeEl = null, landing = false, npcSkip = 0;
@@ -829,6 +830,14 @@ HQV.hqWorlds.city3d = function(c, w){
       B.hits.forEach(function(o){ hits.push(o); });
       B.doors.forEach(function(d){ if(d.live) doors.push(d); });
     });
+    dealerB = null;
+    if(dealerSite && HQV.hqDealer && (dealerSite.tier == null || (dealerSite.tier | 0) <= tier)){
+      try {
+        var DB = HQV.hqDealer.build(c, dealerSite, {tier: tier, night: night});
+        civicG.add(DB.g); civics.push(DB); dealerB = DB;
+        DB.hits.forEach(function(o){ hits.push(o); }); DB.doors.forEach(function(d){ doors.push(d); });
+      } catch(e){ dealerB = null; }
+    }
     decks = []; civics.forEach(function(B){ (B.decks || []).forEach(function(d){ decks.push(d); }); });
     buildLod();
   }
@@ -1844,11 +1853,24 @@ HQV.hqWorlds.city3d = function(c, w){
       var line = ndraw.talk({x: p.x, z: p.z}, npcMs());
       if(line && line.text){ showTalk(line); return true; }
     }
+    if(dealerB && c.dealer && (dealerB.inside(p.x, p.z) || Math.hypot(p.x - dealerB.door.x, p.z - dealerB.door.z) < 4)){ c.dealer.open(); return true; }
     var rs = rail && rail.station(p.x, p.z); if(rs){ openTravelMenu(rs); return true; }   // rail: at the station's door, before its bus bay
     if(tsim){ var st = tsim.stopsNear(p.x, p.z, STOP_R)[0]; if(st){ openStopMenu(st); return true; } }
     var tm = HQV.hqTravel ? terminalAt(W, tier, p.x, p.z) : null;
     if(tm){ if(route && route.travel) navClear(); openTravelMenu(tm); return true; }     // the ferry you were routed to
     return false;
+  };
+  // the dealership (games/hqdealer.js) for hq3d's dealer panel and test drives: where it is, its forecourt bays
+  // (world m, nose out), and a drive route along the roads from (x, z) back to a bay (Float64Array x, z, ...; null: none)
+  w.dealer = {
+    site: function(){ return dealerB ? {id: dealerSite.id, name: dealerSite.name, x: dealerB.x, z: dealerB.z, door: dealerB.door, flagship: !!dealerSite.flagship} : null; },
+    forecourt: function(){ return dealerB ? dealerB.forecourt.slice() : []; },
+    route: function(x, z, bay){
+      if(!dealerB || !HQV.hqnav || !W) return null;
+      var to = bay || dealerB.forecourt[0]; if(!to) return null;
+      try { var R = HQV.hqnav.route(navGraph(), {x: x, z: z}, {x: to.x, z: to.z}, "drive"); return R ? R.pts : null; } catch(e){ return null; }
+    },
+    inside: function(x, z){ return !!(dealerB && dealerB.inside(x, z)); }
   };
   // a stop's or a terminal's menu, or the Go to panel: hq3d's keys stand still (the keys are theirs)
   w.menuOpen = function(){ return !!menu || !!(nui && nui.isOpen()); };
@@ -1950,6 +1972,7 @@ HQV.hqWorlds.city3d = function(c, w){
       }
     }
     if(talkL && nowMs > talkL.until){ S.remove(talkL.o); disposeTree(talkL.o); talkL = null; }
+    if(dealerB && c.active && c.active(w)) HQV.hqCity3d.dealer = w.dealer;   // the dealership, for tools (as .ships, .air)
     busStep();
     if(air) air.update(t, dt, k, cam);                                     // air: jets, the radar
     var tp = tripStep();
@@ -1964,6 +1987,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(ndraw){ try { ndraw.dispose(); } catch(e){} }
     if(oc){ try { oc.dispose(); } catch(e){} }
     S.remove(civicG); S.remove(boatG);
+    if(dealerB){ dealerB.dispose(); dealerB = null; }
     if(air){ air.destroy(); air = null; }                                  // air:
     ferryPool.forEach(function(F){ F.dispose(); }); ferryPool = []; if(myFerry){ myFerry.dispose(); myFerry = null; }
     if(ferryT){ ferryT.dispose(); ferryT = null; } if(ferryG){ S.remove(ferryG); ferryG = null; }
@@ -2136,7 +2160,10 @@ HQV.hqWorlds.city3d = function(c, w){
   /* ---------- loading: the world doc, then every tile drawable ---------- */
   function setup(doc){
     if(dead) throw new Error("world unavailable: closed");     // hq3d gave up on us (timeout): build nothing
-    W = doc; indexBuildings();
+    W = doc;
+    // the dealership (games/hqdealer.js) takes one of the city's building lots, before anything draws or indexes them
+    if(V2 && HQV.hqDealer){ try { dealerSite = HQV.hqDealer.place(W, tier); } catch(e){ dealerSite = null; } }
+    indexBuildings();
     wb = HQV.worldbuild.create(c, W, V2 ? {scene: S, quality: 2, tier: tier, gap: !!(HQV.hqBridges && W.river)} : {scene: S, quality: 2});
     S.add(wb.root); S.add(staticG); S.add(hqG);
     buildStatic();

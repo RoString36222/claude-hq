@@ -708,6 +708,8 @@ function mount(el, api){
     cityBuilt: function(world){ return !!(nextCity && nextCity.world === world && nextCity.ready); },
     swapCity: function(world, keep){ return inst.swapCity ? inst.swapCity(world, keep) : false; },
     night: function(){ return isNight(); },
+    // the dealership (games/hqdealer.js via games/hqcity3d.js): its door or forecourt opens the dealer panel
+    dealer: {open: function(){ return dealerOpen(); }},
     held: function(code){ return !!keys[code]; }
   };
 
@@ -1222,6 +1224,7 @@ function mount(el, api){
     var bs = cur && cur.bikes; if(!bs || bs === propsSeen) return;
     propsSeen = bs;
     if(showProp && cur === showProp.world && bs.indexOf(showProp) < 0) bs.push(showProp);   // the Showroom's vehicle
+    if(testDrive && cur === testDrive.world && !testDrive.back && bs.indexOf(testDrive.prop) < 0) bs.push(testDrive.prop);   // a test drive's
     bs.forEach(function(b){
       if(!b.home) b.home = {x: b.x, z: b.z, yaw: b.yaw};                  // its bay (Return to HQ puts it back)
       var p = b.id && parked[b.id]; if(p) placeProp(b, p.x, p.z, p.yaw);
@@ -2357,7 +2360,7 @@ function mount(el, api){
   function hitList(){ return cur === worlds.mission ? clickables.concat(doorHits, projHits) : (cur.hits || []); }
   // Through a door: another view of the page, or another floor of the building ("@lobby").
   function through(d){
-    if(!d.view){ if(d.kind === "townhall" && cur && cur.townHall) cur.townHall(); return; }   // games/hqcivic.js: the town hall
+    if(!d.view){ if(d.kind === "townhall" && cur && cur.townHall) cur.townHall(); else if(d.kind === "dealer") dealerOpen(); return; }   // games/hqcivic.js: the town hall; games/hqdealer.js: the dealership
     if(d.view.charAt(0) === "@") enterWorld(d.view.slice(1), cur.name);
     else if(d.view.indexOf("visit:") === 0){ if(api.visit) api.visit(d.view.slice(6)); }   // someone's HQ on the city street
     else api.go(d.view);
@@ -2431,6 +2434,7 @@ function mount(el, api){
     var on = !!(cur && cur === worlds.city); if(homeUi.hidden === on){ homeUi.hidden = !on; if(on) gamesCss(); }
     var so = showroomOn(); if(showBtn && showBtn.hidden === so) showBtn.hidden = !so;
     if(!so && showUi && showUi.isOpen()) showUi.close();
+    if(dealUi && dealUi.isOpen() && !dealerOn()) dealUi.close();
   }
   /* The Showroom (G, or its button): TEMPORARY, until the dealership (docs/plans/dealership-spec.md) replaces
      it. Any catalogue vehicle, free: it waits at your garage (or beside you, away from home) and E gets you in.
@@ -2439,7 +2443,9 @@ function mount(el, api){
   var showBtn = document.createElement("button"); showBtn.type = "button"; showBtn.className = "hq3d-home hq3d-showroom-btn"; showBtn.hidden = true;
   showBtn.style.top = "132px"; showBtn.textContent = "🚗 Showroom (G)"; showBtn.title = "Try any car or bike (temporary, until the dealership opens)";
   showBtn.addEventListener("click", function(){ showroomToggle(); }); el.appendChild(showBtn);
-  function showroomOn(){ return !!(HQV.hqShowroom && HQV.hqVehicleModels && cur && cur === worlds.city && cur.camModes); }
+  // the dealership replaced it: only behind ?dev=1 now (a quick way to any vehicle while building)
+  var SHOW_DEV = (function(){ try { return new URLSearchParams(location.search).get("dev") === "1"; } catch(e){ return false; } })();
+  function showroomOn(){ return !!(SHOW_DEV && HQV.hqShowroom && HQV.hqVehicleModels && cur && cur === worlds.city && cur.camModes); }
   function showroomUi(){
     if(showUi || !HQV.hqShowroom) return showUi;
     gamesCss();
@@ -2493,6 +2499,108 @@ function mount(el, api){
   inst.showroom = {open: function(){ return showroomOn() && !!showroomUi() && (showUi.open(), true); }, pick: showroomPick,
                    prop: function(){ return showProp ? {id: showProp.kind, x: showProp.x, z: showProp.z, yaw: showProp.yaw} : null; },
                    isOpen: function(){ return !!(showUi && showUi.isOpen()); }, loaded: function(){ return catLoad.then(function(){ return !!CAT; }); }};
+  /* The dealership (games/hqdealer.js draws it and its panel; docs/plans/dealership-spec.md). Its door or forecourt
+     (E) opens the dealer panel. Test drive: you sit in the vehicle on the forecourt's first bay for TEST_S seconds
+     (the ride pill counts down); when the time is up or you get out, it drives itself back along the roads to its bay
+     and stays there. Get it: HQV.hqGarage.buy (games/hqgarage.js) delivers it to the city's garage. Everything is
+     free and unlocked today (the catalogue's price and minLevel are 0); the panel shows them if that ever changes. */
+  var dealUi = null, testDrive = null, TEST_S = HQV.hqDealer ? HQV.hqDealer.TEST_S : 180, BACK_MPS = 9;
+  function dealerOn(){ return !!(HQV.hqDealer && HQV.hqVehicleModels && cur && cur === worlds.city && cur.dealer && cur.dealer.site()); }
+  function dealerUi(){
+    if(dealUi || !HQV.hqDealer) return dealUi;
+    gamesCss();
+    dealUi = HQV.hqDealer.mountPanel(el, {catalogue: function(){ return CAT; }, level: function(){ return ctx.level(); }, three: THREE, ctx: ctx,
+      garage: function(){ return !!(HQV.hqGarage && HQV.hqGarage.buy); },
+      owned: function(){ return HQV.hqGarage && HQV.hqGarage.mine ? Promise.resolve(HQV.hqGarage.mine()).then(function(rows){
+        return (rows || []).map(function(r){ return r && r.vehicle_id; }).filter(Boolean); }) : []; },
+      onTest: function(id, hex){ dealerTest(id, hex); }, onGet: dealerGet,
+      announce: function(t){ if(api.announce) api.announce(t); }, onClose: function(){ if(canvas && canvas.focus) canvas.focus(); }});
+    catLoad.then(function(){ if(dealUi && dealUi.isOpen()) dealUi.render(); });
+    return dealUi;
+  }
+  function dealerOpen(){
+    if(!dealerOn()) return false;
+    var u = dealerUi(); if(!u) return false;
+    var s = cur.dealer.site(); u.title(s && s.name); keys = {}; u.open();
+    return true;
+  }
+  function vName(id){ var V = VEHICLES[id]; return V && V.cat ? V.cat.brand + " " + V.cat.model : "vehicle"; }
+  function dealerGet(id, hex){
+    var Gr = HQV.hqGarage, nm = vName(id);
+    if(!Gr || !Gr.buy) return Promise.resolve({ok: false, text: "Getting vehicles opens soon."});
+    return Promise.resolve(Gr.buy(id, hex)).then(function(r){
+      if(r && r.id != null && !r.error) return {ok: true, text: "Your " + nm + " is delivered to the garage — press C to call it."};
+      var st = r && r.status;
+      return {ok: false, text: st === 402 ? "Not enough coins for the " + nm + "." : st === 403 ? "Your level is too low for the " + nm + " yet."
+        : "Couldn't get the " + nm + " right now."};
+    }, function(){ return {ok: false, text: "Couldn't get the " + nm + " right now."}; });
+  }
+  function dealerTest(id, hex){
+    var V = VEHICLES[id], C = cur; if(!V || !V.cat || !C || !C.bikes || !C.dealer || !HQV.hqVehicleModels) return false;
+    var bays = C.dealer.forecourt(); if(!bays.length) return false;
+    if(ride) dismount(true);
+    testDrop();
+    var bay = bays[0], col = hex && /^#[0-9a-fA-F]{6}$/.test(hex) ? parseInt(hex.slice(1), 16) : null;
+    var R = HQV.hqVehicleModels.build(ctx, V.cat, col), g = new THREE.Group(); g.add(R.g);
+    g.position.set(bay.x, groundAt(bay.x, bay.z), bay.z); g.rotation.y = bay.yaw; (C.scene || scene).add(g);
+    var prop = {g: g, x: bay.x, z: bay.z, yaw: bay.yaw, color: col, kind: id, id: "testdrive", stay: true, world: C,
+                home: {x: bay.x, z: bay.z, yaw: bay.yaw}};
+    C.bikes.push(prop);
+    testDrive = {prop: prop, world: C, bay: bay, until: Date.now() + TEST_S*1000, back: null, started: false, name: vName(id)};
+    mountOn(prop, C.bikes.indexOf(prop));
+    testDrive.started = !!(ride && ride.id === "testdrive");
+    if(api.announce) api.announce("Test drive: the " + testDrive.name + " is yours for " + Math.round(TEST_S/60) + " minutes. It drives itself back to the dealership when you're done.");
+    return true;
+  }
+  // the test-drive vehicle leaves the world (another test drive, another world): gone at once
+  function testDrop(){
+    var T = testDrive; if(!T) return; testDrive = null;
+    if(ride && ride.id === "testdrive") dismount(true);
+    if(T.prop.g.parent) T.prop.g.parent.remove(T.prop.g);
+    var bs = T.world && T.world.bikes, i = bs ? bs.indexOf(T.prop) : -1; if(i >= 0) bs.splice(i, 1);
+    delete parked[T.prop.id];
+  }
+  // back to its bay along the roads (a straight line if no route), as a self-driving car: nobody can get in meanwhile
+  function testReturn(){
+    var T = testDrive, b = T.prop, C = T.world, bs = C.bikes, i = bs ? bs.indexOf(b) : -1; if(i >= 0) bs.splice(i, 1);
+    delete parked[b.id];
+    var pts = C.dealer && C.dealer.route ? C.dealer.route(b.x, b.z, T.bay) : null, P = [b.x, b.z];
+    if(pts && pts.length >= 4) for(var k = 0; k < pts.length; k++) P.push(pts[k]);
+    P.push(T.bay.x, T.bay.z);
+    var cum = [0];
+    for(var j = 2; j < P.length; j += 2) cum.push(cum[cum.length - 1] + Math.hypot(P[j] - P[j - 2], P[j + 1] - P[j - 1]));
+    T.back = {P: P, cum: cum, s: 0, len: cum[cum.length - 1], told: false};
+    if(api.announce) api.announce("Test drive over: the " + T.name + " is driving itself back to the dealership.");
+  }
+  function testStep(dt){
+    var T = testDrive; if(!T) return;
+    if(cur !== T.world || !T.world.bikes){ testDrop(); return; }
+    if(ride && ride.id === "testdrive"){
+      T.started = true;
+      var left = Math.max(0, T.until - Date.now());
+      if(left <= 0){ dismount(); if(ride && ride.id === "testdrive") dismount(true); return; }
+      var sec = Math.ceil(left/1000), txt = "⏱ Test drive · " + Math.floor(sec/60) + ":" + ("0" + (sec % 60)).slice(-2) + " left · Get out (E)";
+      if(rideUi && rideUi.textContent !== txt) rideUi.textContent = txt;
+      return;
+    }
+    if(!T.started) return;
+    if(!T.back){ testReturn(); return; }
+    var B = T.back; if(B.s >= B.len) return;                                  // home: it waits on its bay
+    B.s = Math.min(B.len, B.s + BACK_MPS*dt);
+    var n = 1; while(n < B.cum.length - 1 && B.cum[n] < B.s) n++;
+    var a = B.cum[n - 1], seg = Math.max(1e-6, B.cum[n] - a), u = Math.max(0, Math.min(1, (B.s - a)/seg));
+    var x0 = B.P[2*n - 2], z0 = B.P[2*n - 1], x1 = B.P[2*n], z1 = B.P[2*n + 1];
+    var x = x0 + (x1 - x0)*u, z = z0 + (z1 - z0)*u;
+    var yaw = B.s >= B.len ? T.bay.yaw : Math.hypot(x1 - x0, z1 - z0) > 0.05 ? Math.atan2(x1 - x0, z1 - z0) : T.prop.yaw;
+    placeProp(T.prop, x, z, yaw);
+    if(B.s >= B.len && !B.told){ B.told = true; if(api.announce) api.announce("The " + T.name + " is back at the dealership."); }
+  }
+  inst.dealer = {open: function(){ return dealerOpen(); }, isOpen: function(){ return !!(dealUi && dealUi.isOpen()); },
+                 test: function(id, hex){ return dealerTest(id, hex); }, get: dealerGet,
+                 testDrive: function(){ var T = testDrive; return T ? {id: T.prop.kind, x: T.prop.x, z: T.prop.z, left: Math.max(0, T.until - Date.now()),
+                   riding: !!(ride && ride.id === "testdrive"), back: T.back ? {s: T.back.s, len: T.back.len} : null, bay: T.bay} : null; },
+                 endTest: function(){ if(testDrive) testDrive.until = Date.now(); },
+                 loaded: function(){ return catLoad.then(function(){ return !!CAT; }); }};
   function showLoading(text){ loading.textContent = text; if(!loading.parentNode) el.appendChild(loading); }
   // The 3D City could not load (no world route on this Arena, a timeout): the classic City, under the same name.
   function cityFallback(name, w, err){
@@ -2593,6 +2701,15 @@ function mount(el, api){
     if(HQV.townHall && HQV.townHall.isOpen && HQV.townHall.isOpen()){ keys = {}; return; }   // the Town Hall has the keys
     if(HQV.hqnavui && HQV.hqnavui.owns && HQV.hqnavui.owns(e)) return;                      // the Go to panel's, the banner's
     if(cur && cur.menuOpen && cur.menuOpen()){ keys = {}; return; }                         // a stop's or a dock's menu too
+    if(dealUi && dealUi.isOpen()){                                                          // the dealer panel has the keys
+      keys = {};
+      if(HQV.hqDealer.owns(e)) return;
+      if(!e.metaKey && !e.ctrlKey && !e.altKey){
+        e.preventDefault(); e.stopPropagation();
+        if(e.type === "keydown" && !e.repeat && e.key === "Escape") dealUi.close();
+      }
+      return;
+    }
     if(showUi && showUi.isOpen()){                                                          // the Showroom has the keys
       keys = {};
       if(HQV.hqShowroom.owns(e)) return;
@@ -2631,6 +2748,7 @@ function mount(el, api){
     var kb = keys, kp = withPad();
     keys = rigOn() && (rig.mode === "map" || rig.mode === "photo" || rig.mode === "cine") ? {} : kp;
     moveAvatar(dt);
+    testStep(dt);
     if(cur && cur.onBoat) cur.onBoat(ride && ride.boat ? {st: ride.boat, kind: ride.kind, beam: ride.V.beam || 1} : null);   // the City's wake, landings
     if(cur && cur.onHeli) cur.onHeli(ride && ride.heli ? {st: ride.heli, kind: ride.kind} : null);                          // flying on to another island
     nearIdx = ride ? -1 : nearBike();

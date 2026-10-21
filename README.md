@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.5.6** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.6.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -364,6 +364,28 @@ and feature guide.
 
 ## Changelog
 
+- **3.6.0 — Skyline Park after dark: fireworks, a dancing fountain and a sixth ride.**
+  - **Free for everyone.** Skyline Park no longer charges a day pass: walk straight in, ride everything. The Arena
+    stops charging the `park` fare and stops sending a price, so pages from before 3.6 open the gate free too. The
+    ticket booth by the gate is a Welcome booth now.
+  - **Fireworks.** Every 8 minutes after dark a 90-second show goes up over the park: shells climb on spark
+    trails and burst into peonies, tilted rings, golden willows, twinkling chrysanthemums and strobes, ending in a
+    finale four times as fast. Each burst flashes and booms, the sound arriving late with distance. It runs on the
+    shared clock, so everyone in the city sees the same show, and you can see it from across the city.
+  - **The Storm Galleon**, a swinging pirate-style ship (an original design: a red-and-gold hull with shield
+    emblems, a compass-star sail, lanterns and a gold scroll at the bow), rocked up past 70° between two A-frames.
+    Its benches step up toward bow and stern; you ride the high stern row. It has its own station, like every ride.
+  - **A lagoon with a dancing fountain** in the lawn by the gate, under the coaster's low pass: rippling water in a
+    stone coping and eleven jets running four choreographed figures, lit in shifting colours by night.
+  - **The park lit up.** Rainbow chase lights run down the coaster's rails and climb the drop tower, every bulb
+    glows (and reads from afar), and four searchlights sweep the night sky from the gate and the far corners.
+  - **Grounds:** blossom and green trees and flower beds wherever the lawn is clear of the rides, the paths and the
+    crowd's walks, and a food court of parasol tables strung with lights by the cotton candy.
+  - *Fixed:* the Starswing's chairs had no backs (the line that added them had slipped into a comment), and a long
+    ride name ran off its station's sign.
+  - *Accessibility:* in Calm and with reduced motion there are no fireworks, the searchlights hold still and the
+    fountain stands steady.
+  - *Privacy:* no new egress; the show, the fountain and the ride are computed locally from the clock.
 - **3.5.6 — Dealership vehicles, the next layer of detail.** Look through a catalogue car's (lighter) glass and you see a cabin: stitched seats with headrests, a glowing instrument cluster and centre screen, the console and a steering wheel with spokes. Headlights get projector lenses and a DRL strip, tail lights become LED light bars, grilles and intakes a honeycomb mesh, and there are generic round badges, lettered tyre sidewalls, quad, twin or centre exhaust tips by type, side skirts, chrome or black window trim, mirror indicators, a fuel flap and lettered plates. Bikes get a full exhaust (headers, collector, end can with cap and mouth), a sprung shock with its reservoir, swingarm pivot and chain adjusters, gear and brake pedals, brake hoses and cables, fork caps, bar-end weights, knee pads, rim tape, a plate hanger and extra trellis tubes. Nearly all of it is one shared canvas texture, so draw calls are unchanged (14 a car, 8-10 a bike); sizes, seats and the rider's fit are exactly as before.
 - **3.5.5 — Dealership vehicles at full size, with more detail.** The catalogue's bikes and cars used to look toy-sized
   next to the starters (built at true metres, while the starters are drawn big round the chunky riders). They now share

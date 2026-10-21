@@ -2898,7 +2898,7 @@ HQV.hqWorlds.city3d = function(c, w){
       if(dead || extrasOn) return; extrasOn = true;
       if(V2 && HQV.hqSpectacle && W.spectacle) try {
         spx = HQV.hqSpectacle.create(c, W, {scene: S, ground: groundY, owner: owner, night: night, say: say, avatar: function(){ return c.avatar(); },
-          city: function(){ return cityState; }, post: postJson});
+          city: function(){ return cityState; }});
       } catch(e){ spx = null; }
       if(V2 && HQV.hqWeather) try { wx = HQV.hqWeather.create(c, {scene: S, world: worldId, say: say, ground: groundY}); wx.setNight(night); } catch(e){ wx = null; }
       // the park and the landmarks take the snow and the wet like the rest of the city

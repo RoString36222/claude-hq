@@ -79,7 +79,7 @@ pub const QUICKPLAY_GAMES: [&str; 6] = ["kart", "plat", "fps", "golf", "type", "
 /// Cities (HQ 3.x): the owner-scoped POSTs under /api/arena/city/:owner/.
 pub const CITY_POSTS: [&str; 4] = ["build", "transfer", "privacy", "fare"];
 const CITY_PRIVACY: [&str; 3] = ["arena", "friends", "closed"];
-/// "park": a day pass to that city's amusement park (the Arena sells it once per UTC day).
+/// "park": entry to that city's amusement park (free since HQ 3.6; still accepted from older pages).
 const CITY_FARES: [&str; 4] = ["bus", "tram", "fast", "park"];
 /// An upgrade or a good: a short lowercase key, never free text.
 static CITY_KEY_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9_]{0,31}$").unwrap());

@@ -58,6 +58,7 @@ out.gate = {
   commonsT3: modes(city(C, null, FULL), city(B, 3, FULL)),
   commonsT5: modes(city(C, null, FULL), city(B, 5, FULL)),
   commonsNoDoc: modes(city(C, null, FULL), {world: B, tier: 5}),
+  toCommonsNoDoc: modes(city(A, 5, FULL), {world: C}),
   t4NoDoc: modes(city(A, 4, FULL), {world: B, tier: 4}),
   dockTooEarly: modes(city(A, 1, LATEDOCK), city(B, 1, FULL)),
   dockGrown: modes(city(A, 3, LATEDOCK), city(B, 1, FULL)),
@@ -157,7 +158,7 @@ async function main(){
   }
   out.fail = {doc: await failCase("rail", "doc"), baddoc: await failCase("rail", "baddoc"),
               build: await failCase("rail", "build"), hang: await failCase("rail", "hang"),
-              ferry: await failCase("plane", "doc", city(A, 5, FULL), city(B, 5, null))};
+              ferry: await failCase("plane", "doc", city(A, 5, FULL), city(B, 5, FULL))};
 
   // fast travel: refused (and no fare) until visited; then one 1-coin fare, a fade, and arrival
   mem = {};
@@ -217,7 +218,7 @@ async function main(){
 
   // poses: a pure function of time, whatever the update cadence
   function poseRun(fps){
-    var r = rig(), trip = H.start("plane", city(A, 5, FULL), city(B, 5, null, 4000, 8000), r.hooks), samples = [];
+    var r = rig(), trip = H.start("plane", city(A, 5, FULL), city(B, 5, FULL, 4000, 8000), r.hooks), samples = [];
     r.docD.res(DEST); r.cityD.res({tier: 5}); r.buildD.res("P");
     return (async function(){
       await flush(); await flush(); await flush();
@@ -237,6 +238,34 @@ async function main(){
     for(var t = 0; t <= 80; t += 4) a.push(H.ridePose(m, F, 60, t));
     out.ridePoses[m] = a;
   });
+
+  // the cinematic landing at the Commons airport (claude-hq@2's site airport:0), against the airfield's new structures:
+  // boxes and cylinders from tests/fixtures/airfield_commons.json (m): the concourse (roof 12 m), the skybridge (floor
+  // 5, roof 9.5, w 8), the tower (66 m, its cab and antenna to 70) and the ASR (a 25 m mast and its dish)
+  (function(){
+    var raw = JSON.parse(require("zlib").gunzipSync(fs.readFileSync(root + "/tests/fixtures/claude-hq@2.json.gz")).toString("utf8"));
+    var commons = {world: C, tier: 5, doc: raw}, site = null;
+    (raw.layers.sites || []).forEach(function(q){ if(q.kind === "airport") site = q; });
+    var sp = H.spawnAt(C, site), boxes = [
+      {id: "concourse", x0: -792, x1: -774, y0: 0, y1: 12, z0: -150, z1: 150},
+      {id: "skybridge", x0: -774, x1: -686, y0: 5, y1: 9.5, z0: -4, z1: 4}], cyls = [
+      {id: "tower", x: -715, z: -100, r: 8, h: 70}, {id: "asr", x: -730, z: 110, r: 6, h: 28}];
+    function clearance(p){
+      var m = {};
+      boxes.forEach(function(b){ var dx = Math.max(b.x0 - p.x, 0, p.x - b.x1), dy = Math.max(b.y0 - p.y, 0, p.y - b.y1), dz = Math.max(b.z0 - p.z, 0, p.z - b.z1);
+        m[b.id] = Math.hypot(dx, dy, dz); });
+      cyls.forEach(function(c){ var dr = Math.max(0, Math.hypot(p.x - c.x, p.z - c.z) - c.r), dy = Math.max(0, p.y - c.h); m[c.id] = Math.hypot(dr, dy); });
+      return m;
+    }
+    var worst = {}, start = null, end = null;
+    for(var t = 0; t <= H.MODES.plane.arrive + 0.001; t += 0.05){
+      var ps = H.arrivePose("plane", sp, t), v = ps.vehicle.pos;
+      [clearance(v), clearance(ps.pos)].forEach(function(m, i){ Object.keys(m).forEach(function(k){
+        var key = (i ? "camera:" : "plane:") + k; worst[key] = Math.min(worst[key] == null ? Infinity : worst[key], m[k]); }); });
+      if(start == null) start = v; end = v;
+    }
+    out.arriveAir = {spawn: sp, worst: worst, start: start, end: end, site: site && site.id, presumed: H.options({world: A, tier: 5}, commons).map(function(o){ return o.mode; })};
+  })();
 
   // storage that throws or holds garbage: nothing visited, nothing breaks
   storageMode = "throw";
@@ -274,7 +303,10 @@ class HqTravel(unittest.TestCase):
         self.assertNotIn("plane", g["commonsT4"])
         self.assertNotIn("rail", g["commonsT3"])
         self.assertIn("plane", g["commonsT5"])
-        self.assertIn("plane", g["commonsNoDoc"])                  # no doc yet: presumed from the profile
+        # no doc yet: only the Commons is presumed to have an airport (the generator never fits one on an island)
+        self.assertNotIn("plane", g["commonsNoDoc"])
+        self.assertEqual(g["commonsNoDoc"], ["ferry", "rail", "boat"])
+        self.assertIn("plane", g["toCommonsNoDoc"])
         self.assertIn("rail", g["t4NoDoc"])
         self.assertEqual(g["dockTooEarly"], [])                    # its only dock grows in at tier 3
         self.assertEqual(g["dockGrown"], ["ferry", "boat"])
@@ -282,6 +314,18 @@ class HqTravel(unittest.TestCase):
         self.assertNotIn("boat", g["noDocks"])
         self.assertEqual(g["same"], [])
         self.assertEqual(g["badId"], [])
+
+    def test_plane_arrival_clears_the_airfield(self):
+        a = self.o["arriveAir"]
+        self.assertEqual(a["site"], "airport:0")
+        # the spawn: the site's front + 2 m, facing the city (+x); the landing comes in from the city side
+        self.assertAlmostEqual(a["spawn"]["z"], 0, delta=0.5)
+        self.assertGreater(a["start"]["x"], a["end"]["x"] + 500)
+        self.assertAlmostEqual(a["start"]["y"], 120, delta=0.5)
+        self.assertEqual(set(k.split(":")[1] for k in a["worst"]), {"concourse", "skybridge", "tower", "asr"})
+        for k, v in a["worst"].items():
+            self.assertGreaterEqual(v, 20, (k, v))             # docs/plans/airport-spec.md 8: >= 20 m from every one
+        self.assertNotIn("plane", a["presumed"])                   # an island without its doc: no airport presumed
 
     def test_ride_times_in_range(self):
         s = self.o["seconds"]

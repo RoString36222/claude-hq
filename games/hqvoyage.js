@@ -162,10 +162,14 @@ function nextSailing(a, b, nowMs, every){ every = every || EVERY; var off = hash
 /* ---------- big ships: the cruise ship and the cargo ships, sea only (too big for the rivers) ----------
  * arch: archipelago METRES {commons: {x, z}, islands: [{world, name, x, z, W?}]} (hqcity3d's archMetres). A city's
  * coast radius is coastR(W) when its W is given, else 950 m; every client passes none, so every client builds the
- * same loops. The cruise loop visits every city once (a nearest-neighbour tour, untangled), standing off each one on
- * its outer side; each cargo ship loops through 2-4 cities' anchorages (off the coast + ~420 m, beside the cruise
- * stop). The paths are centripetal Catmull-Rom splines through those points, with detour points added round any
- * island they cut too close to (planned at coast + 350 m, never under coast + 200 m), so they turn smoothly.
+ * same loops. A city's `mouth` ([x, z, dx, dz]: its river's mouth in its own frame, cm, and the way out to sea, per
+ * mille; the archipelago lists it) puts its anchorages off its river mouth: the cruise ship stands out along the
+ * river's way out until it is clear of the coast (coast + 420 m), each cargo ship beside it (ANCHOR_TURN round, 150 m
+ * further out). Without one they stand on the city's outer side of the tour. The cruise loop visits every city once
+ * (a nearest-neighbour tour, untangled); each cargo ship loops through 2-4 cities. At each city the loop sweeps round
+ * it on an arc from where it comes in to where it leaves, through the anchorage, the one way round that passes it
+ * (so an anchorage on the far side is never a hairpin). Detour points go round any island a leg cuts too close to
+ * (planned at coast + 350 m, never under coast + 200 m), then the line is smoothed, so the ships turn gently.
  *   seaLoop(arch, "cruise")      -> R (as route: pts, s, t, v, T; plus stops [{world, name, t0, t1 (s on the loop)}])
  *   seaLoop(arch, "cargo", k)    -> the k-th cargo ship's loop
  *   fleet(arch)                  -> {cruise: [ship], cargo: [ship], anchor: {world: {x, z}}}; ship = {kind, k, name, R, off (s), boxes}
@@ -176,6 +180,8 @@ function nextSailing(a, b, nowMs, every){ every = every || EVERY; var off = hash
 var PI2 = 2*Math.PI, RELAX = 400, BIG_NOMINAL = 950, BIG_PLAN = 350, BIG_DETOUR = 520;
 var CRUISE_V = 11, CARGO_V = 9.5, BIG_ACC = 0.08, CRUISE_DWELL = 150, CARGO_DWELL = 210;
 var CRUISE_STAND = 560, CARGO_STAND = 420, ANCHOR_TURN = 0.75;      // m off the coast; the anchorage's angle from the cruise stop
+var MOUTH_CLEAR = 420, MOUTH_MIN = 250, CARGO_OUT = 150;           // m: off a river mouth, past the coast; at least this far out; cargo further
+var SWEEP_STEP = 0.5, SWEEP_TRIM = 0.55;                           // rad: between a sweep's points; kept off the line to each neighbour
 var CRUISE_NAMES = ["Claude Serenade", "Aurora of the Isles"];
 var CARGO_NAMES = ["Context Carrier", "Token Trader", "Gradient Express", "Ever Attentive", "Maru Inference", "Northern Embedding"];
 
@@ -183,7 +189,14 @@ function bigCities(arch){
   arch = arch || {}; var out = [];
   function add(o, world, name){
     if(!o || !isFinite(+o.x) || !isFinite(+o.z)) return;
-    out.push({world: world, name: name, x: +o.x, z: +o.z, r: o.W ? coastR(o.W) : (+o.r || BIG_NOMINAL)});
+    var c = {world: world, name: name, x: +o.x, z: +o.z, r: o.W ? coastR(o.W) : (+o.r || BIG_NOMINAL), mouth: null};
+    var m = Array.isArray(o.mouth) && o.mouth.length >= 4 ? o.mouth.map(Number) : null;
+    if(m && m.every(isFinite) && hyp(m[2], m[3]) > 1e-6){
+      var u = unit(m[2], m[3]);
+      c.mouth = {x: c.x + m[0]/100, z: c.z + m[1]/100, dx: u[0], dz: u[1]};
+      c.r = Math.max(c.r, hyp(m[0], m[1])/100);              // the coast reaches at least as far as the mouth
+    }
+    out.push(c);
   }
   if(arch.commons) add(arch.commons, arch.commons.world || "claude-hq@2", "The Commons");
   var isl = (Array.isArray(arch.islands) ? arch.islands : []).slice().sort(function(a, b){ return String(a.world) < String(b.world) ? -1 : 1; });
@@ -225,9 +238,45 @@ function outwards(C, T){
   });
   return out;
 }
+// the cruise ship's anchorage off c: out from its river mouth along the river's way out until it is MOUTH_CLEAR past
+// the coast (at least MOUTH_MIN from the mouth); with no mouth, CRUISE_STAND off the coast along d
+function cruiseStand(c, d){
+  var m = c.mouth;
+  if(!m) return {x: c.x + d[0]*(c.r + CRUISE_STAND), z: c.z + d[1]*(c.r + CRUISE_STAND)};
+  for(var s = MOUTH_MIN; s < 4000; s += 10){
+    var x = m.x + m.dx*s, z = m.z + m.dz*s;
+    if(hyp(x - c.x, z - c.z) >= c.r + MOUTH_CLEAR) return {x: x, z: z};
+  }
+  return {x: m.x + m.dx*4000, z: m.z + m.dz*4000};
+}
+// a cargo ship's anchorage off c: beside the cruise ship's (ANCHOR_TURN round, the side by hash), a little further out
 function anchorOf(c, d, side){
-  var a = Math.atan2(d[0], d[1]) + (((hash(c.world, "anchor") ^ (side | 0)) & 1) ? ANCHOR_TURN : -ANCHOR_TURN), r = c.r + CARGO_STAND;
+  var turn = ((hash(c.world, "anchor") ^ (side | 0)) & 1) ? ANCHOR_TURN : -ANCHOR_TURN, a, r;
+  if(c.mouth){ var st = cruiseStand(c, d); a = Math.atan2(st.x - c.x, st.z - c.z) + turn; r = hyp(st.x - c.x, st.z - c.z) + CARGO_OUT; }
+  else { a = Math.atan2(d[0], d[1]) + turn; r = c.r + CARGO_STAND; }
   return {x: c.x + Math.sin(a)*r, z: c.z + Math.cos(a)*r};
+}
+function mod2pi(a){ a %= PI2; return a < 0 ? a + PI2 : a; }
+// the loop's points at each city of `order` (indices into C): a sweep round it at its anchorage's radius, from the
+// side it comes in on to the side it leaves by, through the anchorage (a stop), the one way round that passes it
+function sweeps(C, order, standOf){
+  var n = order.length, K = [];
+  order.forEach(function(ci, i){
+    var c = C[ci], st = standOf(c), p = C[order[(i + n - 1) % n]], q = C[order[(i + 1) % n]];
+    var aS = Math.atan2(st.x - c.x, st.z - c.z), r = hyp(st.x - c.x, st.z - c.z);
+    var aP = Math.atan2(p.x - c.x, p.z - c.z), aN = Math.atan2(q.x - c.x, q.z - c.z);
+    // the way round (+1: increasing angle) whose span from in to out holds the anchorage
+    var span = mod2pi(aN - aP) || PI2, sg = mod2pi(aS - aP) < span ? 1 : -1;
+    if(sg < 0) span = mod2pi(aP - aN) || PI2;
+    var off = sg > 0 ? mod2pi(aS - aP) : mod2pi(aP - aS);           // the anchorage, along the sweep from in
+    var a0 = Math.min(SWEEP_TRIM, off*0.5), a1 = Math.max(span - SWEEP_TRIM, off + (span - off)*0.5);
+    var m0 = Math.max(0, Math.ceil((off - a0)/SWEEP_STEP) - 1), m1 = Math.max(0, Math.ceil((a1 - off)/SWEEP_STEP) - 1);
+    function at(t){ var a = aP + sg*t; return {x: c.x + Math.sin(a)*r, z: c.z + Math.cos(a)*r, stop: null}; }
+    for(var j = 0; j <= m0; j++) K.push(at(a0 + (off - a0)*j/(m0 + 1)));
+    K.push({x: st.x, z: st.z, stop: c});
+    for(var k = 1; k <= m1 + 1; k++) K.push(at(off + (a1 - off)*k/(m1 + 1)));
+  });
+  return K;
 }
 // the leg a -> b round the islands in its way: where it cuts within coast + BIG_PLAN of a city, a detour point off
 // that city on the side the leg passes (coast + BIG_DETOUR), and the two halves again (a few levels deep)
@@ -326,10 +375,10 @@ function seaLoop(arch, kind, k){
   if(!C.length) return null;
   if(kind === "cruise"){
     if(C.length === 1){
-      var c = C[0], r = c.r + CRUISE_STAND;
-      for(var i = 0; i < 8; i++){ var a = i*PI2/8; K.push({x: c.x + Math.sin(a)*r, z: c.z + Math.cos(a)*r, stop: i ? null : c}); }
-    } else B.T.forEach(function(ci){ var c = C[ci], d = B.O[c.world], r = c.r + CRUISE_STAND; K.push({x: c.x + d[0]*r, z: c.z + d[1]*r, stop: c}); });
-    return loopRoute(C.length === 2 ? bulge(K) : K, C, CRUISE_V, CRUISE_DWELL);
+      var c = C[0], s0 = cruiseStand(c, [0, 1]), r = hyp(s0.x - c.x, s0.z - c.z), b = Math.atan2(s0.x - c.x, s0.z - c.z);
+      for(var i = 0; i < 8; i++){ var a = b + i*PI2/8; K.push({x: c.x + Math.sin(a)*r, z: c.z + Math.cos(a)*r, stop: i ? null : c}); }
+    } else K = sweeps(C, B.T, function(c){ return cruiseStand(c, B.O[c.world]); });
+    return loopRoute(K, C, CRUISE_V, CRUISE_DWELL);
   }
   // cargo k: 2-4 cities, picked by hash, called at in tour order
   k = k | 0;
@@ -341,36 +390,18 @@ function seaLoop(arch, kind, k){
   }
   if(k % 2) pick.reverse();
   if(pick.length === 1){                                  // one city: round it, calling at its anchorage
-    var c1 = C[pick[0]], a1 = anchorOf(c1, [0, 1], k), a0 = Math.atan2(a1.x - c1.x, a1.z - c1.z), r1 = c1.r + CARGO_STAND;
+    var c1 = C[pick[0]], a1 = anchorOf(c1, [0, 1], k), a0 = Math.atan2(a1.x - c1.x, a1.z - c1.z), r1 = hyp(a1.x - c1.x, a1.z - c1.z);
     for(var j = 0; j < 8; j++){ var aj = a0 + j*PI2/8; K.push({x: c1.x + Math.sin(aj)*r1, z: c1.z + Math.cos(aj)*r1, stop: j ? null : c1}); }
   } else {
-    // its anchorages on the outer side of its own loop, beside the cruise stop (no hairpins into a far side)
-    var O2 = outwards(C, pick);
-    pick.forEach(function(ci){ var a = anchorOf(C[ci], O2[C[ci].world], k); K.push({x: a.x, z: a.z, stop: C[ci]}); });
+    // its anchorages beside the cruise stop (with no river mouth, on the outer side of the cruise tour), swept round
+    K = sweeps(C, pick, function(c){ return anchorOf(c, B.O[c.world], k); });
   }
-  return loopRoute(pick.length > 1 ? bulge(K) : K, C, CARGO_V, CARGO_DWELL);
-}
-// a loop through few points can fold flat (out and back on one line, a hairpin at each end): every leg bows out
-// from the loop's middle by a fifth of its length (at most 900 m), the same side for all of them
-function bulge(K){
-  if(K.length < 2) return K;
-  var cx = 0, cz = 0, n = K.length, out = [], side = 1, best = -1;
-  K.forEach(function(k){ cx += k.x/n; cz += k.z/n; });
-  K.forEach(function(p, i){
-    var q = K[(i + 1) % n], L = hyp(q.x - p.x, q.z - p.z);
-    if(L > best){ best = L; var mx = (p.x + q.x)/2 + (q.z - p.z)*0.01, mz = (p.z + q.z)/2 - (q.x - p.x)*0.01;
-                  side = hyp(mx - cx, mz - cz) >= hyp((p.x + q.x)/2 - cx, (p.z + q.z)/2 - cz) ? 1 : -1; }
-  });
-  K.forEach(function(p, i){
-    var q = K[(i + 1) % n], ex = q.x - p.x, ez = q.z - p.z, L = hyp(ex, ez), f = side*Math.min(0.2, 900/Math.max(1, L));
-    out.push(p, {x: (p.x + q.x)/2 + ez*f, z: (p.z + q.z)/2 - ex*f, stop: null});
-  });
-  return out;
+  return loopRoute(K, C, CARGO_V, CARGO_DWELL);
 }
 var fleetMemo = {key: null, out: null};          // every City built in a session asks for the same archipelago's
 function fleet(arch){
   var B = bigPlan(arch), n = B.C.length, out = {cruise: [], cargo: []};
-  var key = JSON.stringify(B.C.map(function(c){ return [c.world, Math.round(c.x), Math.round(c.z), Math.round(c.r)]; }));
+  var key = JSON.stringify(B.C.map(function(c){ var m = c.mouth; return [c.world, Math.round(c.x), Math.round(c.z), Math.round(c.r), m && [Math.round(m.x), Math.round(m.z), Math.round(m.dx*1000), Math.round(m.dz*1000)]]; }));
   if(fleetMemo.key === key) return fleetMemo.out;
   fleetMemo.key = key; fleetMemo.out = out;
   if(!n) return out;

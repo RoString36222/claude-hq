@@ -80,19 +80,24 @@ const fs = require('fs'), path = require('path'), vm = require('vm'), R0 = proce
 const src = fs.readFileSync(path.join(R0, 'games/hqvoyage.js'), 'utf8');
 function load(){ const ctx = {window: {HQV: {}}, Math, JSON, Float64Array, Object, Array, String, Number, isFinite}; vm.createContext(ctx); vm.runInContext(src, ctx); return ctx.window.HQV.hqVoyage; }
 const V = load(), V2 = load();
-function arch(n, seed){
+// mouths: each city's river mouth, as the archipelago lists it ([x, z] cm in its own frame on a 700-950 m coast, the
+// way out per mille, up to 0.6 rad off straight out)
+function arch(n, seed, mouths){
   let s = seed; const rnd = () => (s = (s*16807) % 2147483647)/2147483647;
+  const mouth = () => { const a = rnd()*2*Math.PI, r = 700 + rnd()*250, t = a + (rnd() - 0.5)*1.2;
+    return [Math.round(Math.sin(a)*r*100), Math.round(Math.cos(a)*r*100), Math.round(Math.sin(t)*1000), Math.round(Math.cos(t)*1000)]; };
   const isl = []; let tries = 0;
   while(isl.length < n && tries++ < 100000){ const a = rnd()*2*Math.PI, r = 3000 + rnd()*(2000 + 900*n), x = Math.sin(a)*r, z = Math.cos(a)*r;
     if(Math.hypot(x, z) < 3000 || isl.some(o => Math.hypot(o.x - x, o.z - z) < 3000)) continue;
-    isl.push({world: 'user:' + isl.length + '@2', name: 'I' + isl.length, x, z}); }
-  return {commons: {x: 0, z: 0}, islands: isl};
+    isl.push(Object.assign({world: 'user:' + isl.length + '@2', name: 'I' + isl.length, x, z}, mouths ? {mouth: mouth()} : {})); }
+  return {commons: Object.assign({x: 0, z: 0}, mouths ? {mouth: mouth()} : {}), islands: isl};
 }
 function alongT(R, along){ const s = R.s; let lo = 0, hi = s.length - 1; while(hi - lo > 1){ const m = (lo + hi) >> 1; if(s[m] <= along) lo = m; else hi = m; }
   return R.t[lo] + (s[hi] > s[lo] ? (R.t[hi] - R.t[lo])*(along - s[lo])/(s[hi] - s[lo]) : 0); }
 const out = [];
-for(const [n, seed] of [[0, 1], [1, 2], [2, 3], [3, 7], [4, 5], [7, 9], [12, 11]]){
-  const A = arch(n, seed), F = V.fleet(A), C = V.bigCities(A), G = V2.fleet(JSON.parse(JSON.stringify(A)));
+for(const [n, seed, mouths] of [[0, 1], [1, 2], [2, 3], [3, 7], [4, 5], [7, 9], [12, 11],
+                                 [0, 21, 1], [1, 22, 1], [2, 23, 1], [3, 27, 1], [4, 25, 1], [7, 29, 1], [12, 31, 1]]){
+  const A = arch(n, seed, mouths), F = V.fleet(A), C = V.bigCities(A), G = V2.fleet(JSON.parse(JSON.stringify(A)));
   for(const sh of F.cruise.concat(F.cargo)){
     const R = sh.R, P = R.pts, m = R.t.length;
     let clear = 1e9, back = 0, turn = 0, vmax = 0;
@@ -111,8 +116,13 @@ for(const [n, seed] of [[0, 1], [1, 2], [2, 3], [3, 7], [4, 5], [7, 9], [12, 11]
     }
     const now = 1.7e12, twin = (sh.kind === 'cruise' ? G.cruise : G.cargo)[sh.k];
     const a0 = V.shipAt(sh, now, 0), a1 = V.shipAt(sh, now + R.T*1000, 0), b0 = V2.shipAt(twin, now, 0);
+    // each anchorage against its city's river mouth: how far off it, and how square to the river's way out
+    let offMouth = 0, square = 1;
+    for(const st of R.stops){ const c = C.find(c => c.world === st.world), m = c.mouth; if(!m) continue;
+      const d = Math.hypot(st.x - m.x, st.z - m.z); offMouth = Math.max(offMouth, d);
+      if(sh.kind === 'cruise') square = Math.min(square, ((st.x - m.x)*m.dx + (st.z - m.z)*m.dz)/d); }
     const worlds = R.stops.map(st => st.world), calls = V.calls(sh, worlds[0], now, R.T*1000), ns = V.nextStop(sh, V.loopT(sh, now, 0));
-    out.push({n, kind: sh.kind, k: sh.k, cities: C.length, closed: Math.hypot(P[0] - P[2*(m - 1)], P[1] - P[2*m - 1]), clear, back, turn, vmax,
+    out.push({n, mouths: !!mouths, offMouth, square, kind: sh.kind, k: sh.k, cities: C.length, closed: Math.hypot(P[0] - P[2*(m - 1)], P[1] - P[2*m - 1]), clear, back, turn, vmax,
       stops: worlds, uniq: new Set(worlds).size, T: R.T, periodic: Math.hypot(a0.x - a1.x, a0.z - a1.z), same: Math.hypot(a0.x - b0.x, a0.z - b0.z),
       call: calls.length ? (calls[0].here ? 0 : calls[0].arrive - now) : -1, callLeave: calls.length ? calls[0].leave - calls[0].arrive : 0,
       next: ns && ns.stop ? 1 : 0, boxes: sh.boxes || 0});
@@ -131,9 +141,20 @@ class BigShipsTest(unittest.TestCase):
             raise AssertionError(r.stderr)
         cls.o = json.loads(r.stdout)
 
+    def test_anchorages_off_the_river_mouth(self):
+        rows = [r for r in self.o if r["mouths"]]
+        self.assertTrue(rows)
+        for r in rows:
+            if r["kind"] == "cruise":
+                # out along the river's way out, past the coast: a few hundred metres off the mouth
+                self.assertLess(r["offMouth"], 900, r)
+                self.assertGreater(r["square"], 0.8, r)
+            else:
+                self.assertLess(r["offMouth"], 1700, r)   # beside the cruise ship's
+
     def test_every_archipelago_has_ships(self):
         for n in (0, 1, 2, 3, 4, 7, 12):
-            rows = [r for r in self.o if r["n"] == n]
+            rows = [r for r in self.o if r["n"] == n and not r["mouths"]]
             self.assertEqual(sum(r["kind"] == "cruise" for r in rows), 2 if n + 1 > 4 else 1, n)
             self.assertGreaterEqual(sum(r["kind"] == "cargo" for r in rows), 1, n)
 

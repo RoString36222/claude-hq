@@ -214,6 +214,17 @@ class SourceTests(unittest.TestCase):
         self.assertRegex(self.js, r"camPose: function\(\)\{[\s\S]{0,200}if\(E\.calm\(\)\)")
         self.assertIn("up: {x: 0, y: 1, z: 0}, fov: 55", self.js)
 
+    def test_landmarks_block_their_own_outline_not_a_circle_round_it(self):
+        # a circle round a three-lobed or finned tower stopped you metres short of its walls: each builder returns
+        # its base rings and you are blocked inside those polygons only
+        self.assertNotIn("circles", self.js)
+        self.assertIn("inPoly(pp.P, x, z)", self.js)
+        builders = self.js[self.js.index("var BUILD = {"):self.js.index("var HMUL = ")]
+        returns = re.findall(r"\n      return ([^;]+);\n    \}", builders)
+        self.assertEqual(len(returns), 6, returns)
+        for r in returns:
+            self.assertRegex(r, r"^\[|^feet$", r)
+
     def test_the_park_is_free_for_everyone(self):
         # no tickets since HQ 3.4: nothing is bought, nothing gates a ride, the turnstile is always open
         self.assertNotIn('"/fare"', self.js)

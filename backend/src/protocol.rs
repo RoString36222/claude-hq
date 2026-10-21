@@ -48,6 +48,9 @@ pub const GAMES: &[(&str, i64, &[&str])] = &[
     // snap `"wd"` = [hp,max,cm_x,cm_z,ms_slab_arm,ms_slab_land,ms_laser_warn,laser_on_ms,laser_yaw_cdeg,ms_dis,ck_bits,yaw_cdeg,ms_core,ms_grip_warn,ms_grip_on,ms_grip_at];
     // event `"warden"` {phase:"rise"|"ckpt"|"dead", ck?, hp, max, x?, z?, armL?, armR?}.
     // Never use `"ev"` for that row — Out::msg owns it.
+    // Match flight drones + grappling gun (still additive on v9): snap `"dr"` =
+    // [[id, cm_x, cm_y, cm_z], …]; a hooked fighter carries FLAG_HOOK (1<<26) and
+    // cannot shoot. The grapple is weapon index 4 (LAUNCH_W stays 3 / the rocket).
     ("strike", 9, &["maps"]),
     // v2: the generated 3D City. "alt": pos may carry h (feet height, cm) and p (pitch, deg); x/z span +-102_400 cm; floor "city3d"
     // v3: Cities. "isles": the floor may be a world's own room, "city3d:<world id>" (valley/hq.rs floor_ok)

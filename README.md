@@ -345,6 +345,25 @@ and feature guide.
     way; it reroutes when you go another way, and says "Press E for the ferry" at the dock.
   - Keys pressed in a stop's, a dock's or the Go to menu no longer reach the dashboard's shortcuts
     (W no longer switches to the Workshop while a menu is open).
+  - **Strikezone: The Warden.** Halfway to the score limit a giant torso-only totem-golem rises at
+    the map centre — rubble skirt, fused torso, heavy arms with real elbows, glowing sigil. While
+    it lives **nobody can hurt each other**: players and bots all shoot the Warden (bots retarget
+    it automatically), the round clock and team scores freeze, and only the Warden calls disasters
+    and drops loot — no normal totem or disaster-totem drops until it is dead. Hit volumes are
+    head (no crit), waist, chest core, and two separate arms (least damage; disable one to skip
+    that arm's next slam). The chest is plated until a slam or checkpoint II opens the **Exposed
+    Core** (the glowing chest then takes ×3). Arms slam the ground: a red ring warns first, the
+    arm lifts and hinges elbow-to-fist, anything under the fist dies instantly and just outside
+    the smash blows dust and knocks everyone away with damage. Laser eyes look down and burn a
+    map-bounded ground beam (anyone in the path dies; run or hide). **Gravity Grip** every 16s
+    pulls fighters toward the torso (sprint or cover breaks free; too close and the free arm
+    sweeps you out). The torso turns around the arena. Three health checkpoints each spill every
+    non-disaster totem plus a health pack farther out of the body: **I** shoves everyone clear,
+    **II** opens the core, **III** drops the next loot burst even farther out. The kill feed
+    always names the real cause — **The Warden · arm slam** / **laser eyes** / **gravity grip**,
+    or the actual disaster. Menu checkbox **Summon the Warden** (next to Map view; ticked by
+    default; practice never summons). The Strikezone welcome card spells out the full kit. Local
+    only, no new egress, no new third-party assets.
 - **3.0.0 — Cities.** Arena City grows into a world of cities.
   - **The Commons** (`claude-hq@2`) replaces the gridded street for everyone: an organic city on an
     island, with arterial and local streets, districts (old town, downtown, suburbs, office, tech, film
@@ -407,6 +426,18 @@ and feature guide.
   out there can kill you and you can't shoot yourself, so the clock is the way home;
   the HUD counts it down (`Out of bounds — back in 7s`). Solo the client runs it; in MP
   the Arena referee does and emits the same `spawn` drop a respawn uses. Local only.
+  Also in this entry: **The Warden.** Halfway to the score limit a giant torso-only boss rises at
+  the map centre — heavy arms that slam the ground (ground warning + arm raise first; anything
+  under the arm dies) and laser eyes that sweep the arena (warn, then a beam you hide from).
+  While it lives **nobody can hurt each other** — players and bots all shoot the Warden, bots
+  retarget it automatically, the round clock and team scores freeze, and only the Warden calls
+  disasters and drops loot. Three health checkpoints each spill every non-disaster totem plus a
+  health pack in a ring around it. Kill it and the match is back to normal. The boss silhouette
+  and its hit volumes were first cut at **2.5×** (retuned to 3× in 2.8.4; totem-golem: rubble skirt, fused torso, heavy
+  arms, glowing sigil), and the Strikezone welcome card has a **Warden** section that spells out
+  every rule above before you drop in. Menu checkbox
+  **Summon the Warden** (next to Map view) turns the fight on or off. Local only, no new
+  egress, no new third-party assets.
 - **2.8.2 — Account standings.** The Arena's **Standings** has a **Players / Accounts** switch next to
   its title. Accounts mode ranks Claude accounts for the chosen window (Season, 30 days, 7 days, All
   time): one row per account with everyone's combined numbers, expandable to each member's own row and

@@ -224,14 +224,47 @@ POST /v1/vehicles/:id/park {world, x, z, yaw}
 
 ## The dealership (games/hqdealer.js)
 
-- A `dealer` site in every city from tier 2 (the Commons has a flagship one). Glass showroom,
-  with the city's on-sale vehicles on turntables inside, one bay per class, and a forecourt. Its
-  door opens the dealer panel (E).
-- **Panel:** classes as tabs (Bikes / Cars, then type and band), the two vehicles of each class
-  side by side with their real specs, price, paint swatches and a turning 3D preview. Locked
-  classes show the tier they need. textContent only.
-- **Test drive:** 3 minutes in the vehicle from the forecourt, then it drives itself back.
-- **Buy:** pick the paint, pay; the vehicle waits on the forecourt and joins your garage.
+- **Where (decided):** one dealership in every city from tier 2; the Commons' is the **Flagship
+  Dealership**. It is **not a generator site**: a new civic row would take a lot before the HQ pool
+  is drawn, and the Commons' HQ lots go by rank (`commons_lot.lot_rank`), so every player's HQ could
+  move, and every world would need re-pinning. Instead the client turns one of the world's
+  `building` lots into the dealership (`HQV.hqDealer.place(W, tier)`, pure and idempotent, the same
+  lot on every client): the lot that fits the most of the lineup (26 vehicles; more room counts for
+  no more), then the district (commercial, downtown, office, finance, the old town, tech...), its
+  door within 30 m of an arterial, and about 300 m from the plaza. The lot's `kind` becomes
+  `dealer` (worldbuild draws no building there, the building index skips it) and a `dealer:0` site
+  (`kind: "dealer"`, `tier: 2`, the lot's footprint and front) joins `W.sites`, before worldbuild
+  or anything else reads the lots. Go to (N) lists it ("Dealership" 🚘) and the minimap shows it (a
+  car on blue). On today's fixtures the Commons gets a 64 x 39 m tech lot 390 m from the plaza (the
+  whole lineup fits); an island gets a civic or downtown lot that fits a few of each.
+- **The building:** a glass hall at the back of the lot (a white roof slab, a dark fascia with the
+  name, a solid back wall, mullions, light strips), a forecourt in front with six bays and the walk
+  to the door, a flag per brand on show, and a pylon sign. Inside, the on-sale vehicles (both of
+  every class with two slots filled; cars first, then bikes) stand on slowly turning turntables
+  (0.22 rad/s; Calm slows them), as many as fit (the flagship: all). Each vehicle is its stand-in
+  body baked into one vertex-coloured mesh (one draw call each, shared by every showroom); the
+  turntables and their glowing rims are two InstancedMeshes; the static parts are merged
+  (hqMerge). At night the floor, back wall and glass glow and floodlights light the forecourt (no
+  real lights). It is one of the City's civic buildings (its boxes block you, the far LOD box and
+  the camera boxes as theirs). Measured headless: 56-78 draw calls for the whole view there.
+- **The panel** (E at the door or anywhere on the forecourt; or click the door): Cars / Bikes, by
+  type and cc band, the two vehicles of each class side by side (brand, model, the spec line, paint
+  swatches), a turning 3D preview of the one picked (one small extra renderer, drawing only while
+  the panel is open). **Everything is free and unlocked** (the owner's call): each card says
+  "Free" and its button is **Get it**. The panel still reads `price` and `minLevel` (from the
+  vehicle, else its class): a price shows as "12,000 coins" and "Buy · ...", a level the player
+  lacks as "Needs level N" (the button disabled). textContent only; keys in the panel stay there
+  (Escape closes).
+- **Test drive:** you sit in the vehicle on the forecourt's first bay; the ride pill counts down 3
+  minutes. When the time is up or you get out, it **drives itself back** along the roads (hqnav's
+  drive route from where you left it to its bay, 9 m/s; nobody can get in meanwhile) and waits on
+  its bay. Another test drive, Return to HQ or another world ends it at once.
+- **Get it:** `HQV.hqGarage.buy(id, paint)` (games/hqgarage.js) delivers the vehicle to the city's
+  garage; the panel says "Delivered to the garage — press C to call it". Without hqGarage the button
+  reads "Getting vehicles opens soon".
+- The temporary Showroom (G) is only there behind `?dev=1` now.
+- Hooks for tools: `HQ3D.inst.dealer` (open, isOpen, test, testDrive, endTest), and
+  `HQV.hqCity3d.dealer` (site, forecourt, route, inside).
 
 ## Calling your vehicle (games/hqcall.js)
 

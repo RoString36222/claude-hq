@@ -52,9 +52,10 @@ var POI = {
   transit: {col: "#2a9d8f", g: "bus"}, airport: {col: "#5b6b8c", g: "plane"},
   townhall: {col: "#8a6d3b", g: "hall"}, hospital: {col: "#c9372c", g: "cross"}, clinic: {col: "#d4574c", g: "cross"},
   police: {col: "#2d4a8a", g: "shield"}, fire: {col: "#d0611f", g: "flame"}, market: {col: "#3f8f4f", g: "basket"},
-  school: {col: "#a07a12", g: "book"}, myhq: {col: "#ffb347", g: "star"}, hq: {col: "#5fd3e6", g: "house"}
+  school: {col: "#a07a12", g: "book"}, myhq: {col: "#ffb347", g: "star"}, hq: {col: "#5fd3e6", g: "house"},
+  dealer: {col: "#1c66b5", g: "car"}
 };
-var POI_ORDER = ["hq", "school", "market", "fire", "police", "clinic", "hospital", "townhall", "airport", "transit", "dock", "port", "myhq"];
+var POI_ORDER = ["hq", "school", "market", "fire", "police", "clinic", "hospital", "townhall", "airport", "transit", "dealer", "dock", "port", "myhq"];
 var PAL = {
   dark: {sea: "#0f2a3d", land: "#1d2620", landEdge: "#33503f", water: "#1a4a6b", bank: "#2f6f8f",
          road: {highway: "#c99a4a", ring: "#b08a50", arterial: "#8d939c", avenue: "#8d939c", local: "#5d636b", street: "#5d636b"},
@@ -235,6 +236,10 @@ function glyph(g, kind, disc){
         if(i) g.lineTo(r*Math.cos(a), r*Math.sin(a)); else g.moveTo(r*Math.cos(a), r*Math.sin(a));
       }
       g.closePath(); g.fill(); return;
+    case "car":
+      g.moveTo(-0.6, 0.25); g.lineTo(-0.55, -0.05); g.lineTo(-0.3, -0.1); g.lineTo(-0.15, -0.38); g.lineTo(0.25, -0.38);
+      g.lineTo(0.42, -0.1); g.lineTo(0.6, -0.02); g.lineTo(0.6, 0.25); g.closePath(); g.fill();
+      g.fillStyle = disc; g.beginPath(); g.arc(-0.32, 0.27, 0.15, 0, 2*PI); g.arc(0.32, 0.27, 0.15, 0, 2*PI); g.fill(); return;
     case "house":
       g.moveTo(-0.5, -0.05); g.lineTo(0, -0.52); g.lineTo(0.5, -0.05); g.lineTo(0.38, -0.05); g.lineTo(0.38, 0.48);
       g.lineTo(-0.38, 0.48); g.lineTo(-0.38, -0.05); g.closePath(); g.fill(); return;

@@ -213,7 +213,7 @@ HQV.hqWorlds.basement = function(c, w){
   }
 
   // walls and the ceiling slab (concrete), with a skirting light line
-  var conc = mat(0x2b3036, {roughness: 0.92}), slabM = mat(0x1d2126, {roughness: 0.95});
+  var conc = mat(0x2b3036, {roughness: 0.92}), slabM = mat(0x2a2f35, {roughness: 0.95});
   box(2*HW, 0.4, 2*HD, slabM, 0, CEIL + 0.2, 0, st, true);
   box(2*HW, CEIL, 0.5, conc, 0, CEIL/2, -HD - 0.25, st); box(2*HW, CEIL, 0.5, conc, 0, CEIL/2, HD + 0.25, st);
   box(0.5, CEIL, 2*HD, conc, -HW - 0.25, CEIL/2, 0, st); box(0.5, CEIL, 2*HD, conc, HW + 0.25, CEIL/2, 0, st);
@@ -236,7 +236,7 @@ HQV.hqWorlds.basement = function(c, w){
   });
   stripI.name = "basement:strips"; S.add(stripI);
   var colI = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.42, 0.42, CEIL, 20), mat(0xd9dee3, {roughness: 0.35, metalness: 0.2}), COLS.length);
-  var upI = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.43, 0.75, 1.6, 20, 1, true), basic(accent, {transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide}), COLS.length);
+  var upI = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.43, 0.75, 1.6, 20, 1, true), basic(accent, {transparent: true, opacity: 0.1, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide}), COLS.length);
   COLS.forEach(function(p, i){ m4.compose(v1.set(p.x, CEIL/2, p.z), q.identity(), v2.set(1, 1, 1)); colI.setMatrixAt(i, m4);
     m4.compose(v1.set(p.x, 0.8, p.z), q.identity(), v2.set(1, 1, 1)); upI.setMatrixAt(i, m4); });
   colI.castShadow = true; colI.receiveShadow = true; colI.name = "basement:columns"; upI.name = "basement:uplights"; S.add(colI); S.add(upI);

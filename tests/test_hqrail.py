@@ -66,6 +66,31 @@ out.rowsMine = RL.menuRows(rail, mine, places, mine, 3, 1e12).map(r => r.kind + 
 out.rowsCommons = RL.menuRows(rail, 'claude-hq@2', [{world: mine, name: 'My island', tier: 3}, {world: other, name: 'Bee', tier: 2}], mine, 3, 1e12).map(r => r.kind + ':' + r.to.world);
 out.rowsNoLine = RL.menuRows({lines: []}, 'claude-hq@2', [{world: mine, name: 'My island', tier: 3}], mine, 3, 1e12).map(r => r.kind);
 out.rowsLowTier = RL.menuRows({lines: []}, mine, places, mine, 1, 1e12).length;
+// three lines out of the Commons' station along the same streets: side by side in lanes, never on one track
+const Bs = [{world: 'user:a@2', x: 2400, z: -3200}, {world: 'user:b@2', x: 3100, z: -2300}, {world: 'user:c@2', x: 1500, z: -3500}];
+const lay = (L, bs) => bs.map(b => RL.alignment(Object.assign({}, A0, {lane: L[b.world]}), {world: b.world, x: b.x, z: b.z, W: Wi, tier: 3, sea: B0.sea}));
+function minSep(Rs){
+  let m = 1e9;
+  for (let a = 0; a < Rs.length; a++) for (let b = a + 1; b < Rs.length; b++)
+    for (let i = 0; i < Rs[a].n; i++) {
+      const x = Rs[a].pts[3*i], z = Rs[a].pts[3*i + 2];
+      if (Math.hypot(x, z) > 1500) continue;                                          // the Commons' end
+      for (let j = 0; j < Rs[b].n; j++) m = Math.min(m, Math.hypot(Rs[b].pts[3*j] - x, Rs[b].pts[3*j + 2] - z));
+    }
+  return m;
+}
+const L3 = RL.lanes(Wc, 5, {x: 0, z: 0}, Bs), L3r = RL.lanes(Wc, 5, {x: 0, z: 0}, Bs.slice().reverse());
+out.lanes3 = Bs.map(b => L3[b.world].off).sort((a, b) => a - b);
+out.lanesSame = JSON.stringify(L3) === JSON.stringify(Object.fromEntries(Object.keys(L3).sort().map(k => [k, L3r[k]])));
+out.sepNone = minSep(lay({}, Bs)); out.sep3 = minSep(lay(L3, Bs));
+const L2 = RL.lanes(Wc, 5, {x: 0, z: 0}, Bs.slice(0, 2)), R2 = lay(L2, Bs.slice(0, 2));
+out.sep2 = minSep(R2); out.lanes2 = Bs.slice(0, 2).map(b => L2[b.world]);
+// beside each other along the platforms: LANE apart, an island platform between
+const q0 = RL.at(R2[0], 40), q1 = RL.at(R2[1], 40); out.platGap = Math.hypot(q0.x - q1.x, q0.z - q1.z);
+out.lane1 = RL.lanes(Wc, 5, {x: 0, z: 0}, Bs.slice(0, 1))['user:a@2'];
+// lines leaving the other way along the street (one north-west, one south-east): no lanes
+const Lo = RL.lanes(Wc, 5, {x: 0, z: 0}, [{world: 'user:a@2', x: 2400, z: -3200}, {world: 'user:d@2', x: -3000, z: 2600}]);
+out.lanesApart = [Lo['user:a@2'].off, Lo['user:d@2'].off];
 console.log(JSON.stringify(out));
 """
 
@@ -132,6 +157,22 @@ class RailTest(unittest.TestCase):
         self.assertEqual(o["rowsCommons"], ["ride:user:aaaaaaaa-0000-4000-8000-000000000001@2", "note:user:bbbbbbbb-0000-4000-8000-000000000002@2"])
         self.assertEqual(o["rowsNoLine"], ["build-from"])
         self.assertEqual(o["rowsLowTier"], 0)
+
+    def test_lines_from_one_station_run_side_by_side(self):
+        o = self.o
+        lane = 7.7
+        self.assertLess(o["sepNone"], 1, "without lanes the three lines share one track out of the station")
+        self.assertEqual(o["lanes3"], [-lane, 0, lane])
+        self.assertTrue(o["lanesSame"], "the same lanes whatever order the lines are listed in")
+        # never on one track: the trains (2.9 m wide) and the masts beside them stay clear
+        self.assertGreater(o["sep3"], 6)
+        self.assertGreater(o["sep2"], 7)
+        self.assertEqual([l["off"] for l in o["lanes2"]], [-lane/2, lane/2])
+        self.assertAlmostEqual(o["platGap"], lane, delta=0.3)
+        # the island platform between them is drawn once (by the right-hand line) and both see their neighbour
+        self.assertEqual([(l["left"], l["right"]) for l in o["lanes2"]], [(True, False), (False, True)])
+        self.assertEqual(o["lane1"]["off"], 0)
+        self.assertEqual(o["lanesApart"], [0, 0])
 
 
 if __name__ == "__main__":

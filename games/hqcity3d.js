@@ -2712,7 +2712,15 @@ HQV.hqWorlds.city3d = function(c, w){
     var list = HQV.hqnav.places(W, navTier, {x: me0.x, z: me0.z, me: me, island: V2 && island(),
       hqs: hqs.map(function(E){ return {userId: E.h.userId, name: E.name || E.h.name, lot: E.lot}; })});
     var m = c.motion ? c.motion() : null;
-    return m && m.air ? airNavPlaces(m, me0).concat(list) : list;
+    if(m && m.air) return airNavPlaces(m, me0).concat(list);
+    // the planes you can fly (HQ 3.2): their own places, where they stand now, so Go to finds them
+    planeProps.forEach(function(p){
+      var sea = p.kind !== "prop", dx = Math.sin(p.yaw + Math.PI/2)*(sea ? 0 : 7), dz = Math.cos(p.yaw + Math.PI/2)*(sea ? 0 : 7);
+      var door = {x: p.x + dx, z: p.z + dz};
+      list.push({id: p.id, kind: "plane", label: sea ? "Seaplane (fly it)" : "Prop plane (fly it)", icon: sea ? "\uD83D\uDEEB" : "\u2708\uFE0F",
+                 x: p.x, z: p.z, door: door, dist: Math.hypot(door.x - me0.x, door.z - me0.z)});
+    });
+    return list.sort(function(a, b){ return a.dist - b.dist; });
   }
   function fmtM(m){ return HQV.hqnavui ? HQV.hqnavui.fmtDist(m) : Math.round(m) + " m"; }
   // dest: {x, z, label, kind, air?: an approach (airPlaces)}

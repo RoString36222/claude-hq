@@ -10,7 +10,7 @@
 # Before you run it: an A record GRAFANA_DOMAIN -> this server (Caddy needs it
 # to get the certificate). Grafana's own login protects the site; this script
 # generates a strong admin password the first time and prints it once.
-# Re-running is safe: it keeps the password and the Caddy block it already wrote.
+# Re-running is safe: it keeps the password and rewrites its own backend/caddy.d/grafana.caddy.
 set -euo pipefail
 [ "$(id -u)" -eq 0 ] || { echo "run with sudo"; exit 1; }
 
@@ -35,23 +35,11 @@ if ! grep -q '^GRAFANA_ADMIN_PASSWORD=.\+' .env; then
 fi
 
 CADDY="$DIR/backend/Caddyfile"
-if ! grep -q 'GRAFANA_DOMAIN' "$CADDY"; then
-  cat >> "$CADDY" <<'CADDYCFG'
-
-{$GRAFANA_DOMAIN} {
-	encode zstd gzip
-	reverse_proxy grafana:3000
-	header {
-		Strict-Transport-Security "max-age=31536000"
-		X-Content-Type-Options "nosniff"
-		Referrer-Policy "no-referrer"
-	}
-}
-CADDYCFG
-  echo "  appended the Grafana block to the Caddyfile"
-else
-  echo "  Caddyfile already has the Grafana block"
-fi
+# Grafana's site goes in backend/caddy.d/ (git-ignored, imported by the Caddyfile), so the checkout
+# stays clean for ops/release.sh; an older install's appended block is moved there first.
+. "$DIR/ops/caddy-local.sh"
+caddy_migrate "$DIR"
+caddy_site "$DIR" grafana
 
 # Validate before restarting: an invalid config must not take the Arena down.
 PANEL_DOMAIN=$(grep -E '^PANEL_DOMAIN=' .env | cut -d= -f2- || true)

@@ -29,7 +29,8 @@ On the VPS: add an A record for the dashboard's domain pointing at the VPS, then
 sudo GRAFANA_DOMAIN=grafana.example.com ARENA_DOMAIN=arena.example.com bash ops/install-monitoring.sh
 ```
 
-It adds the Grafana site to the Caddyfile (HTTPS with an automatic certificate),
+It writes the Grafana site to `backend/caddy.d/grafana.caddy` (git-ignored; the Caddyfile imports
+`caddy.d/*.caddy`, so the server's checkout stays clean for `ops/release.sh`; HTTPS with an automatic certificate),
 generates a strong admin password into `.env` and prints it once, sets
 `COMPOSE_PROFILES=monitoring`, and starts Prometheus, node-exporter and Grafana.
 Re-running is safe. Then open `https://grafana.example.com` and log in as `admin`.

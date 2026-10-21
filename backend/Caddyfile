@@ -26,3 +26,8 @@
 		}
 	}
 }
+
+# Server-local sites (the deploy panel, Grafana): ops/install-panel.sh and ops/install-monitoring.sh
+# write them to caddy.d/*.caddy, which git ignores, so a server's checkout stays clean for
+# ops/release.sh. A glob that matches nothing is fine.
+import caddy.d/*.caddy

@@ -70,18 +70,11 @@ grep -q '^ARENA_DIR=' .env \
   || echo "ARENA_DIR=$DIR" >> .env
 
 CADDY="$DIR/backend/Caddyfile"
-if ! grep -q 'PANEL_UPSTREAM' "$CADDY"; then
-  cat >> "$CADDY" <<'CADDYCFG'
-
-{$PANEL_DOMAIN} {
-	encode zstd gzip
-	reverse_proxy {$PANEL_UPSTREAM}
-}
-CADDYCFG
-  echo "  appended the panel block to the Caddyfile"
-else
-  echo "  Caddyfile already has the panel block"
-fi
+# The panel's site goes in backend/caddy.d/ (git-ignored, imported by the Caddyfile), so the checkout
+# stays clean for ops/release.sh; an older install's appended block is moved there first.
+. "$DIR/ops/caddy-local.sh"
+caddy_migrate "$DIR"
+caddy_site "$DIR" panel
 
 # Validate before restarting: an invalid config must not take Arena down.
 if ! docker run --rm -v "$DIR/backend":/cfg:ro \

@@ -81,8 +81,8 @@ services:
     environment:
       ARENA_DOMAIN: ${ARENA_DOMAIN:?set ARENA_DOMAIN}
       # Set by ops/install-panel.sh. Empty when the panel is not installed,
-      # which is fine because the Caddyfile block that uses them is only
-      # appended by that installer.
+      # which is fine because the site that uses them (backend/caddy.d/panel.caddy)
+      # only exists once that installer has run.
       PANEL_DOMAIN: ${PANEL_DOMAIN:-}
       PANEL_UPSTREAM: ${PANEL_UPSTREAM:-}
       # Set by ops/install-monitoring.sh (Grafana on its own domain); empty otherwise.
@@ -92,6 +92,7 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy.d:/etc/caddy/caddy.d:ro   # server-local sites (ops/caddy-local.sh), git-ignored
       - caddy-data:/data      # certificates live here -- keep this volume
       - caddy-config:/config
 

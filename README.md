@@ -40,6 +40,30 @@ paired), published maps and work signals (off by default) add a few listed field
 
 ---
 
+## 🆕 What's new in 3.1: Travel the archipelago
+
+- **Cities.** The Commons is a shared organic city on its own island, and every player gets an **island
+  city** of their own that grows with their XP from Village to Capital, with residents, traffic, buses,
+  trams and a city economy.
+- **Ferries.** Board a ferry at the dock (E) and sit aboard while it sails down the river, across the sea
+  and up the next city's river. The next city loads on the way, with no loading screen. Hold **Space** for 8× speed.
+- **Opening bridges.** Bascule, lift and swing bridges open for ferries and taxiing seaplanes while cars
+  wait at the barriers.
+- **Big ships.** The cruise ship *Claude Serenade* loops round every city, anchoring off its river mouth,
+  and container ships run cargo between them. Ride either from a port and go ashore at any stop.
+- **Rail.** Build a rail line from your island's station to any other city (500 coins from your city's
+  treasury, tier 2+). It runs on viaducts over the streets and across the sea, with 4-car trains you
+  can ride. Lines leaving the same station run side by side.
+- **Air.** Book a jet between airports, or a seaplane between any two docks. Fly a **helicopter** from the
+  pad by your HQ, a hospital roof or the air base: **Space** climbs, **Shift** descends, **W/S** tilt,
+  **A/D** turn, **E** gets in or out once landed. Other players see you flying.
+- **The Commons air base.** Hangars, a radar, an attack helicopter, an aircraft carrier offshore and
+  fighter jets flying over.
+- **Find your way.** A minimap (press **M** for the big map), waypoints, and turn-by-turn directions
+  along the roads (**N** or **Go to**).
+
+---
+
 ## 🆕 What's new in 2.5: Make + compete
 
 - **Workshop.** Build your own **kart tracks**, **Platformer levels** and **Blaster arenas** in editors that
@@ -330,7 +354,7 @@ and feature guide.
 
 ## Changelog
 
-- **3.1.0 — Navigation and rivers.** Finding your way round the cities.
+- **3.1.0 — Navigation, rivers and travel.** Finding your way round the cities, and between them.
   - **A river through every city:** from the sea past the plaza to a harbour basin in town. The
     **dock** stands on its bank by the plaza (on a tier-1 island too, with a road to it) and the
     **port** on the basin, so neither is out on the edge of the city any more. Arterials, the ring
@@ -345,6 +369,28 @@ and feature guide.
     way; it reroutes when you go another way, and says "Press E for the ferry" at the dock.
   - Keys pressed in a stop's, a dock's or the Go to menu no longer reach the dashboard's shortcuts
     (W no longer switches to the Workshop while a menu is open).
+  - **Ferries you ride:** scheduled sailings to up to six places, the same timetable on every client.
+    You sit aboard (E at the dock) while it sails down the river, out to sea and up the next city's
+    river, and that city loads on the way, with no loading screen. Ferries keep right and keep their
+    distance; **Space** goes full ahead (8×).
+  - **Opening bridges:** bascule, lift and swing bridges (every city has a mix) lift for ferries and
+    seaplanes, with lights, barriers and cars waiting.
+  - **Cruise and cargo ships:** the 120 m cruise ship *Claude Serenade* loops round every city and the
+    95 m container ships run between two to four. Each anchors off a city's river mouth. Ride either from a port
+    and go ashore at any stop.
+  - **Rail between islands:** from a station (tier 2+), build a line to another city for 500 coins from
+    your island's treasury. It runs elevated over the streets and across the sea, with 4-car trains
+    every few minutes you can ride. Lines that leave a station along the same streets run side by
+    side, each with its own platform.
+  - **Air:** jets between airports and seaplanes between docks (every island has one); a flyable
+    helicopter at your HQ, hospitals and the Commons air base (hangars, radar, an attack helicopter, an
+    aircraft carrier you can land on, fighter jet sorties). Other players see you flying (HQ presence
+    `a` = 7/8 on Arenas that list `fly`).
+  - **The big map:** M opens the minimap full size with an animation; drag to pan, zoom, click to set a
+    waypoint, Esc to close.
+  **Privacy/egress:** `GET /api/arena/rail` and `POST /api/arena/rail/build` send only the validated
+  destination world id (`to`) with the paired device token. Presence gains a height and a flying
+  pose, as before for driving. Nothing transcript-derived is sent.
 - **3.0.0 — Cities.** Arena City grows into a world of cities.
   - **The Commons** (`claude-hq@2`) replaces the gridded street for everyone: an organic city on an
     island, with arterial and local streets, districts (old town, downtown, suburbs, office, tech, film

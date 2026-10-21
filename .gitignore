@@ -25,6 +25,9 @@ backend-rs/
 # OS
 .DS_Store
 
+# tools/vehicle_fetch.py search reports and raw downloads (games/vehicles/*.glb are the imported ones)
+vehicle-candidates/
+
 # Arena device token — never commit
 arena-link.json
 *.prod-bak

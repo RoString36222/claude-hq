@@ -867,7 +867,11 @@ BUILD.airport = function(k){
   // the skirt: down from the plinth past the ground (it falls to -0.6 m under the site's back)
   k.box(k.W, 1.3, k.D, pave, 0, -0.65, 0).castShadow = false;
   // side masses: blocking, two floors to the eaves
-  [-1, 1].forEach(function(s){ k.mass("terminal", s*(nw + hw)/2, 0, hw - nw, 2*hd, 2, {fh: (H.eaves - PLINTH)/2, roofCol: 0x6b7680}); });
+  // (their nave sides are plain panelled walls: a window facade 132 m long seen end-on from the nave shimmers)
+  [-1, 1].forEach(function(s){
+    k.mass("terminal", s*(nw + hw)/2, 0, hw - nw, 2*hd, 2, {fh: (H.eaves - PLINTH)/2, roofCol: 0x6b7680, sides: [[0, 1], [s, 0], [0, -1]]});
+    k.box(0.2, H.eaves - PLINTH, 2*hd, stone, s*(nw + 0.1), (H.eaves + PLINTH)/2, 0);
+  });
   // the wave roof: a closed slab over the hall, its underside 14 m at the eaves rising to the crown, waving along u
   function under(x, z){ var a = x/(hw + 1), w = 0.5 - 0.5*Math.cos(2*PI*(z/sz)/H.waveLen); return H.roof0 + H.crown*(1 - a*a) + H.wave*w; }
   (function(){
@@ -908,7 +912,10 @@ BUILD.airport = function(k){
       if(fi === 0 && Math.abs(xc) < doorW){ y0 = PLINTH + doorH; }                              // over the door
       if(fi === 1 && Math.abs(xc) < sbw){ pane(PW, N.y1 - PLINTH, 0.08, xc, (PLINTH + N.y1)/2, z); y0 = sbt; }   // the skybridge's way in
       pane(PW, top - y0, 0.08, xc, (top + y0)/2, z);
-      k.box(0.1, top - PLINTH, 0.18, frameM, x, (top + PLINTH)/2, z);
+      // the mullion: none across the door's opening (over it only), nor across the skybridge's way in
+      if(fi === 0 && Math.abs(x) < doorW) k.box(0.1, top - PLINTH - doorH, 0.18, frameM, x, (top + PLINTH + doorH)/2, z);
+      else if(fi === 1 && Math.abs(x) < sbw){ k.box(0.1, N.y1 - PLINTH, 0.18, frameM, x, (N.y1 + PLINTH)/2, z); k.box(0.1, top - sbt, 0.18, frameM, x, (top + sbt)/2, z); }
+      else k.box(0.1, top - PLINTH, 0.18, frameM, x, (top + PLINTH)/2, z);
     }
     k.box(0.1, under(nw, z) - PLINTH, 0.18, frameM, nw, (under(nw, z) + PLINTH)/2, z);
     [doorH + PLINTH, 8.4, 12].forEach(function(y){ k.box(2*nw, 0.1, 0.16, frameM, 0, y, z); });

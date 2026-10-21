@@ -777,12 +777,11 @@ function create(c, L, o){
   var apronM = std(0xffffff, {map: apronT, roughness: 0.85, metalness: 0});
   var apronMesh = mesh(geoOf(THREE, AB, false, true), apronM, "airport-apron", true);
 
-  /* ----- paint: one mesh per colour ----- */
-  var paint = {};
-  ["white", "yellow", "red", "black"].forEach(function(k){
-    var B = buf(); P.paint[k].forEach(function(q){ quadInto(B, q, null, false); });
-    var m = std(COL[k], {roughness: 0.6, metalness: 0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4});
-    paint[k] = mesh(geoOf(THREE, B, false, false), m, "airport-paint-" + k, true);
+  /* ----- paint: vertex-coloured, one mesh per level (0: white; 1: white and yellow; 2: every colour) ----- */
+  var paint = {}, paintM = std(0xffffff, {vertexColors: true, roughness: 0.6, metalness: 0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4});
+  [["white"], ["white", "yellow"], ["white", "yellow", "red", "black"]].forEach(function(ks, lv){
+    var B = buf(); ks.forEach(function(k){ var col = lin(COL[k]); P.paint[k].forEach(function(q){ quadInto(B, q, col, false); }); });
+    paint[lv] = mesh(geoOf(THREE, B, true, false), paintM, "airport-paint-" + lv, true);
   });
 
   /* ----- fixtures (merged, vertex colours), signs, fence ----- */
@@ -903,7 +902,7 @@ function create(c, L, o){
   function vis(){
     var d = st.detail, nt = st.night;
     groundMesh.visible = rwyMesh.visible = apronMesh.visible = true;
-    paint.white.visible = true; paint.yellow.visible = d >= 1; paint.red.visible = paint.black.visible = d >= 2;
+    paint[0].visible = d <= 0; paint[1].visible = d === 1; paint[2].visible = d >= 2;
     lamps.visible = d >= 2 || (d === 1 && nt); glow.visible = nt; rabbit.visible = nt && d >= 1;
     papi.visible = d >= 2; pools.visible = nt && d >= 2;
     fixMesh.visible = signMesh.visible = fenceMesh.visible = socks.visible = d >= 2;

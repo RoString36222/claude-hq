@@ -627,12 +627,45 @@ function create(c, L, o){
   });
 
   /* ---- merge the near group; swap the glass back in ---- */
+  // the plain opaque paints (concrete, white, doors, red, floors, seats) become one vertex-coloured material first,
+  // so they merge into one draw; metal, the roofs, the lit and glass ones and the signs keep their own
+  (function(){
+    var plain = [concrete, white, doorM, red, floorM, seatM], vcM = mats.plain = c.mat(0xffffff, {vertexColors: true, roughness: 0.65, metalness: 0.1});
+    near.traverse(function(m){
+      if(!m.isMesh || m.isInstancedMesh || plain.indexOf(m.material) < 0 || (m.parent && m.parent.userData && m.parent.userData.anim)) return;
+      var n = m.geometry.attributes.position.count, col = new Float32Array(n*3), cc = m.material.color;
+      for(var i = 0; i < n; i++){ col[i*3] = cc.r; col[i*3 + 1] = cc.g; col[i*3 + 2] = cc.b; }
+      m.geometry.setAttribute("color", new THREE.BufferAttribute(col, 3)); m.material = vcM;
+    });
+  })();
   if(HQV.hqMerge && HQV.hqMerge.mergeStatic){
     nightList.forEach(function(r, i){ r.m.emissiveIntensity = 1000 + i; });
     HQV.hqMerge.mergeStatic(THREE, near, {keep: function(m){ return m.parent && m.parent.userData && m.parent.userData.anim; }});
   }
   near.traverse(function(m){ if(m.material === glassTmp) m.material = glass; else if(m.material === cabTmp) m.material = cabGlass; });
   near.traverse(function(m){ if(m.isMesh && m.material === signM){ m.castShadow = false; } });
+  // the roofs are double-sided (the hangars' barrels are one open surface), so their own front faces are in the
+  // shadow map: receiving shadows they would shade themselves in rings (acne). Nothing stands over them anyway.
+  near.traverse(function(m){ if(m.isMesh && m.material === roofM) m.receiveShadow = false; });
+  /* ---- the static near group's shadow: its casters' shapes in two invisible meshes (one per face side), so the
+     shadow pass draws 2 calls for the buildings instead of one per merged material ---- */
+  (function(){
+    var sides = {}, inv = new THREE.Matrix4(), mm = new THREE.Matrix4(), v = new THREE.Vector3();
+    near.updateMatrixWorld(true); inv.copy(near.matrixWorld).invert();
+    near.traverse(function(m){
+      if(!m.isMesh || m.isInstancedMesh || !m.castShadow || (m.parent && m.parent.userData && m.parent.userData.anim)) return;
+      var sd = m.material && m.material.side === THREE.DoubleSide ? THREE.DoubleSide : THREE.FrontSide, L = sides[sd] = sides[sd] || [];
+      var P = m.geometry.attributes.position, I = m.geometry.index, n = I ? I.count : P.count;
+      mm.multiplyMatrices(inv, m.matrixWorld);
+      for(var i = 0; i < n; i++){ v.fromBufferAttribute(P, I ? I.getX(i) : i).applyMatrix4(mm); L.push(v.x, v.y, v.z); }
+      m.castShadow = false;
+    });
+    Object.keys(sides).forEach(function(sd){
+      var sg = new THREE.BufferGeometry(); sg.setAttribute("position", new THREE.Float32BufferAttribute(sides[sd], 3)); sg.computeBoundingSphere();
+      var sm = mats["shadow" + sd] = new THREE.MeshBasicMaterial({colorWrite: false, depthWrite: false, side: +sd});
+      var sh = new THREE.Mesh(sg, sm); sh.name = "airbldg:shadow"; sh.castShadow = true; sh.receiveShadow = false; near.add(sh);
+    });
+  })();
 
   /* ---- cars: one InstancedMesh, parked in the car park, taxis at the rank, cars at the drop-off ---- */
   var carGeo = vgeo(THREE, [

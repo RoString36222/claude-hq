@@ -430,6 +430,12 @@ function pieces(s){
     return [[s.x + l[0]*q[0] + f[0]*q[1], s.z + l[1]*q[0] + f[1]*q[1]], [s.x + l[0]*q[2] + f[0]*q[3], s.z + l[1]*q[2] + f[1]*q[3]], q[4]];
   });
 }
+// how far a point is outside an aircraft's planform (s: {x, z, yaw, kind}; 0 on or inside it): what you walk into
+function planGap(s, x, z){
+  var A = pieces(s), m = Infinity;
+  for(var i = 0; i < A.length; i++) m = Math.min(m, segPt([x, z], A[i][0], A[i][1]) - A[i][2]);
+  return Math.max(0, m);
+}
 function clearance(a, b){
   var A = pieces(a), B = pieces(b), m = Infinity;
   for(var i = 0; i < A.length; i++) for(var j = 0; j < B.length; j++) m = Math.min(m, segSeg(A[i][0], A[i][1], B[j][0], B[j][1]) - A[i][2] - B[j][2]);
@@ -621,7 +627,7 @@ function ambient(places, nowMs, cx, cz, radius){
 }
 
 var API = HQV.hqAir = {route: route, poseAt: poseAt, airportEnd: airportEnd, dockEnd: dockEnd, nominalAirport: nominalAirport, normEnd: normEnd,
-             traffic: traffic, aheadOf: aheadOf, stopDist: stopDist, flights: flights, nextFlight: nextFlight, ambient: ambient, dubins: dubins,
+             traffic: traffic, aheadOf: aheadOf, planGap: planGap, stopDist: stopDist, flights: flights, nextFlight: nextFlight, ambient: ambient, dubins: dubins,
              EVERY: EVERY, RUNWAY: RUNWAY, STAND_BACK: STAND_BACK, KINDS: K, K: K, GS: GS, CACHE_MAX: CACHE_MAX, SHOW_ARR: SHOW_ARR, AIR_MAX: 4,
              SEP: SEP, SEQ_MAX: SEQ_MAX};
 })();

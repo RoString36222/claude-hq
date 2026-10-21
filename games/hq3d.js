@@ -1699,10 +1699,10 @@ function mount(el, api){
     if(!force && key === rideUi.dataset.k) return;
     rideUi.dataset.k = key; rideUi.hidden = !key;
     var kind = ride ? ride.kind : (nb && VEHICLES[nb.kind] ? nb.kind : "bike");
-    rideUi.textContent = noOut ? "Can't get out here: land on the ground"
+    rideUi.textContent = noOut ? "Can't get out here"
       : ride ? (kind === "car" || VEHICLES[kind].heli ? "Get out (E)" : kind === "skate" ? "Step off (E)" : VEHICLES[kind].boat ? "Step ashore (E)" : "Get off (E)")
       : VEHICLES[kind].heli ? "\uD83D\uDE81 Fly (E)" : kind === "rowboat" ? "\uD83D\uDEA3 Row (E)" : kind === "jetski" ? "\uD83C\uDF0A Ride the jet ski (E)" : kind === "car" ? "\uD83D\uDE97 Drive (E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride (E)" : kind === "skate" ? "\uD83D\uDEF9 Skate (E)" : "\uD83D\uDEB2 Ride (E)";
-    rideUi.title = ride ? RIDE_HELP[kind] : VEHICLES[kind].heli ? "Take the controls" : VEHICLES[kind].boat ? "Take the helm" : kind === "car" ? "Get in this car" : kind === "moto" ? "Get on this motorbike"
+    rideUi.title = noOut ? "Land on the ground or on a helipad, then E" : ride ? RIDE_HELP[kind] : VEHICLES[kind].heli ? "Take the controls" : VEHICLES[kind].boat ? "Take the helm" : kind === "car" ? "Get in this car" : kind === "moto" ? "Get on this motorbike"
       : kind === "skate" ? "Step on this skateboard" : "Get on this bike";
     if(key === "on" && force) tipRide();
   }
@@ -2178,6 +2178,7 @@ function mount(el, api){
     avatar.hop = 0; avatar.vy = 0; avatar.airborne = false; stopFeet();
     walkTo = null; walkDoor = null; doorsArmed = false; movedHere = true;
     moveAvatar(0); view.target.copy(view.goal);
+    if(rig && yaw != null && HQV.camrig.snap) HQV.camrig.snap(rig);     // the chase camera behind your new heading
   }
   // A click on the City map (w.mapPick): your HQ dives in at its door; another HQ flies the map there; the ground
   // sets a waypoint where the world takes one (w.mapWaypoint), else flies the map there too.
@@ -2199,6 +2200,7 @@ function mount(el, api){
   // "Drive (E)", "Row (E)"), so the HUD never offers it a second time (it once said "E  Ride the bike" by a rowboat).
   function hudPrompt(){
     if(rig.mode === "fp" && !ride && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d) return "E  Enter " + (d.label || d.tip || "the door"); }
+    if(!ride && cur && cur.prompt && avatar) return cur.prompt({x: avatar.x, z: avatar.z}) || null;    // the world's (a terminal's door)
     return null;
   }
   function project(x, y, z){
@@ -2496,6 +2498,8 @@ function mount(el, api){
   function typing(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || (t && t.isContentEditable) || !!(t && t.closest && t.closest(".hqhud-gear, .hqhud-settings")); }
   // E (and a pad's X): get on or off what is near you; in first person also the door under the crosshair.
   function useKey(){
+    // held by a trip (a booked ferry, flight or cruise seat: cur.carry): E is the trip's (get off), not a bike beside it
+    if(!ride && cur && cur.use && cur.carry && avatar && cur.carry() && cur.use({x: avatar.x, z: avatar.z, yaw: avatar.yaw})) return true;
     if(ride || nearBike() >= 0){ rideToggle(); return true; }
     if(rigOn() && rig.mode === "fp" && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d){ through(d); return true; } }
     // the world's own (games/hqcity3d.js): talk to a resident, a bus stop, a dock, a station

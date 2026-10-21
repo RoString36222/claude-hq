@@ -99,6 +99,8 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   [2, 1, 0].forEach(function(lv){ A.setDetail(lv); A.setNight(true); var n = D(A.g); A.setNight(false); out.draws[lv] = [n, D(A.g)]; });
   A.setDetail(2);
   out.bridgeDraws = 0; A.g.traverseVisible(function(o){ if(/^airbldg:bridge:/.test(o.name)) out.bridgeDraws++; });
+  // shadow-pass draws: the static buildings' two proxies, the bridges and the turning parts (dish, beacon)
+  out.casters = {proxy: 0, other: 0}; A.g.traverseVisible(function(o){ if(o.castShadow) out.casters[o.name === "airbldg:shadow" ? "proxy" : "other"]++; });
   var tris = 0; A.g.traverse(function(o){ if(o.isMesh){ var g = o.geometry, n = (g.index ? g.index.count : g.attributes.position.count)/3; tris += o.isInstancedMesh ? n*o.count : n; } });
   out.tris = tris;
   // extended at the door: snapped, and eased frame-rate independently
@@ -384,8 +386,10 @@ class TestHqAirbldg(unittest.TestCase):
 
     def test_draw_calls(self):
         d = {int(k): v for k, v in self.r["draws"].items()}
-        self.assertLessEqual(max(d[2]), 28, d)
+        self.assertLessEqual(max(d[2]), 22, d)          # the plain paints one vertex-coloured draw; + 2 shadow casters
         self.assertLessEqual(self.r["bridgeDraws"], 5)
+        self.assertLessEqual(self.r["casters"]["proxy"], 2, self.r["casters"])
+        self.assertLessEqual(self.r["casters"]["other"], 9, self.r["casters"])      # 5 bridge parts + the turning ones
         self.assertEqual(self.r["bridgeDraws"], 5)
         self.assertLessEqual(max(d[1]), 7, d)
         self.assertLessEqual(max(d[0]), 1, d)

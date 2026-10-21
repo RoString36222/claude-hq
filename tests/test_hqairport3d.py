@@ -348,11 +348,12 @@ class TestHqAirport3d(unittest.TestCase):
         d = self.r["draws"]
         for n in ("day", "night"):
             self.assertLessEqual(d[n + "2"], 24, d)
-            self.assertLessEqual(d[n + "1"], 8, d)      # ground 3, white + yellow 2, lamps + glow + rabbit at night
+            self.assertLessEqual(d[n + "1"], 7, d)      # ground 3, white + yellow paint 1, lamps + glow + rabbit at night
             self.assertLessEqual(d[n + "0"], 6, d)      # ground 3, white 1, glow at night
         self.assertEqual(d["day0"], 4)
         self.assertEqual(d["night0"], 5)
-        self.assertEqual(d["day1"], 5)
+        self.assertEqual(d["day1"], 4)
+        self.assertLessEqual(d["day2"], 10, d)              # the paint is one vertex-coloured mesh per level
         self.assertGreater(d["night2"], d["day2"])
         self.assertTrue(self.r["sameObjects"])
 

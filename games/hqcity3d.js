@@ -727,7 +727,7 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   function blocked(x, z){
     if(!W) return true;
-    if(apL && AF.floorAt(apL, x, z) != null) return apBlocked(x, z);        // AIR: on the airfield's platform (past the world's edge too)
+    if(apL && AF.floorAt(apL, x, z) != null) return apBlocked(x, z) || !!apPlaneAt(x, z, 0.4);   // AIR: the platform (past the world's edge too), its aircraft
     if(apP && apBlocked(x, z)) return true;                                    // AIR: the airport's buildings on land
     if(WD.blockedAt(W, x, z)) return true;
     if(bridges && bridges.blockedAt(x, z)) return true;                      // an opening bridge's gap or barrier
@@ -767,7 +767,8 @@ HQV.hqWorlds.city3d = function(c, w){
   }
 
   /* ---------- Cities: a v2 world's civic buildings, residents, traffic, sea, boats and travel ---------- */
-  var MENU_CSS = "position:absolute;left:50%;top:18%;transform:translateX(-50%);z-index:60;min-width:260px;max-width:min(440px,92%);max-height:max(160px,calc(82% - 232px));overflow-y:auto;" +
+  // the menu sits under the left-hand buttons, clear of the city card (top right) and the minimap (bottom right)
+  var MENU_CSS = "position:absolute;left:12px;top:140px;z-index:60;min-width:260px;max-width:min(440px,calc(100% - 236px));max-height:max(160px,calc(100% - 210px));overflow-y:auto;" +
     "display:grid;gap:6px;padding:12px 14px;border-radius:12px;color:var(--ink);background:color-mix(in srgb,var(--panel) 94%,transparent);" +
     "border:1px solid var(--line);box-shadow:var(--shadow-lg);font-size:13px";
   var ITEM_CSS = "text-align:left;padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel2,var(--panel));color:var(--ink);cursor:pointer;font:inherit";
@@ -943,15 +944,14 @@ HQV.hqWorlds.city3d = function(c, w){
     closeMenu();
     var el = c.el; if(!el || typeof document === "undefined") return;
     try { if(document.pointerLockElement && document.exitPointerLock) document.exitPointerLock(); } catch(e){}
-    var m = document.createElement("div"); m.className = "hqcity-menu"; m.setAttribute("role", "dialog"); m.setAttribute("aria-label", title);
+    var m = document.createElement("div"); m.className = "hqcity-menu"; m.setAttribute("role", "dialog"); m.setAttribute("aria-label", title); m.tabIndex = -1;
     m.style.cssText = MENU_CSS;
     var h = document.createElement("b"); h.textContent = title; m.appendChild(h);
-    var first = null;
     items.forEach(function(it, i){
       var b = document.createElement("button"); b.type = "button"; b.style.cssText = ITEM_CSS;
       b.textContent = (i < 9 ? (i + 1) + ". " : "") + it.text; b.disabled = !!it.off;
       b.addEventListener("click", function(){ closeMenu(); it.fn(); });
-      m.appendChild(b); if(!first && !it.off) first = b;
+      m.appendChild(b);
     });
     if(!items.length){ var p = document.createElement("span"); p.textContent = "Nothing leaves from here right now."; m.appendChild(p); }
     var x = document.createElement("button"); x.type = "button"; x.style.cssText = ITEM_CSS; x.textContent = "Close (Esc)";
@@ -960,11 +960,13 @@ HQV.hqWorlds.city3d = function(c, w){
     menuKey = function(e){
       if(e.type !== "keydown") return;
       if(e.key === "Escape" || e.code === "KeyE"){ e.preventDefault(); closeMenu(); return; }
+      if(e.code === "Space" && e.target === m){ e.preventDefault(); return; }       // the jump key: not a choice (nor a scroll)
       var n = parseInt(e.key, 10);
       if(n >= 1 && n <= 9 && items[n - 1] && !items[n - 1].off){ e.preventDefault(); closeMenu(); items[n - 1].fn(); }
     };
     window.addEventListener("keydown", menuKey, true);
-    try { (first || x).focus(); } catch(e){}
+    // focus the menu itself: Tab reaches the items, a digit picks one; Space or Enter only acts on one you chose
+    try { m.focus(); } catch(e){}
   }
   function stopName(id){
     var s = siteById(id); if(!s) return String(id);
@@ -1032,7 +1034,7 @@ HQV.hqWorlds.city3d = function(c, w){
             var dep = VOY.nextSailing(worldId, to.world, Date.now());
             if(dep - Date.now() < 8000) dep += VOY.EVERY;
             txt = "⛴ Ferry to " + to.name + " · sails in " + waitText(dep - Date.now()) + " · you ride it across";
-            items.push({text: txt, fn: function(){ boardFerry(to); }});
+            items.push({text: txt, fn: function(){ boardFerry(to, dep); }});
             return;
           }
           items.push({text: txt, fn: function(){ startTrip(o.mode, from, to, site); }});
@@ -1179,7 +1181,8 @@ HQV.hqWorlds.city3d = function(c, w){
     var S0 = myFerry && myFerry.seats[V.seat % myFerry.seats.length], sx = S0 ? S0.position.x : 2.2, sh = S0 ? S0.position.y : SHIPS.SUN_DECK + 0.8, sz = S0 ? S0.position.z : -9.5;
     return {x: x + sx*cy + sz*sy, y: waterY(x, z, Date.now()/1000) + sh - 0.35, z: z - sx*sy + sz*cy, yaw: p.yaw};
   }
-  function boardFerry(to){
+  // want: the sailing the menu showed (ms); kept while it is still at the dock, else the next one
+  function boardFerry(to, want){
     if(!ferryOn()){ say("No ferry runs from here."); return; }
     say("Checking the timetable to " + to.name + "…");
     WD.load({id: to.world}).then(function(W2){
@@ -1188,6 +1191,7 @@ HQV.hqWorlds.city3d = function(c, w){
       var R = VOY.route({world: worldId, x: hp.x, z: hp.z, W: W}, {world: to.world, x: to.x, z: to.z, W: W2 && W2.v >= 2 ? W2 : null});
       var dep = VOY.nextSailing(worldId, to.world, now);
       if(dep - now < 8000) dep += VOY.EVERY;                                                // too late for this one: the next
+      if(want > now + 1000 && want < dep) dep = want;                                       // the one the menu showed, still in
       NAV.voy = {R: R, dep: dep, warp: 0, from: worldId, to: to.world, name: to.name, seat: Math.floor(now/1000) % 6, swapped: false, built: false};
       shipSfx("door");
       say("Aboard the ferry to " + to.name + ". It sails in " + waitText(dep - now) + ". E gets you off before it sails.");
@@ -1324,8 +1328,8 @@ HQV.hqWorlds.city3d = function(c, w){
   var AF = HQV.hqAirfield, AP3 = HQV.hqAirport3d, ABL = HQV.hqAirbldg, AGR = HQV.hqAirground;
   var apL, apP = null, ap3 = null, apB = null, apV = null, apFleet = null, apRects = null, apLevel = -1, apYRef = null;
   var apTr = null, apCtx = null, apDests = null, apIsles = {}, apVehT = 0, apSlowT = -1, apFleetKey = "", apBoardKey = "", apCivic = null;
-  var apPerf = {n: 0, ms: 0, last: 0}, apComm = null;
-  var AP_REACH = 1240, AP_NEAR = 600, AP_MID = 1800, AP_HYST = 50, AP_VEH_DT = 1/30, AP_JET_FAR = 9000;
+  var apPerf = {n: 0, ms: 0, last: 0}, apComm = null, apPlanes = [];
+  var AP_REACH = 1240, AP_NEAR = 600, AP_MID = 1800, AP_HYST = 50, AP_VEH_DT = 1/30, AP_JET_FAR = 40000;   // the jets' far ends: past the horizon, so they cruise away
   var AP_AIRWAYS = ["Far Shoals", "Westmark", "Long Reef", "Cape Token", "Driftholm"];      // the jets' invented far ends
   // this city's airfield layout (the Commons; no other site fits one), once per city; null without one
   function airfield(){
@@ -1449,6 +1453,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(apB) apB.update(dt, t, 1);
     ap3.update(dt, t, cam && cam.x != null ? {position: {x: cam.x, y: cam.y, z: cam.z}} : null);
     apParked(tr, hp);
+    apPlanes = apGroundPlanes(tr, hp);
     // the vehicles: at the apron (level 2, within 900 m of it), 30 times a second at most
     if(apV){
       var ce = apV.centre, near = apLevel >= 2 && cam && cam.x != null && Math.hypot(cam.x - ce[0], cam.z - ce[1]) <= (apV.HIDE_BEYOND || 900);
@@ -1465,14 +1470,42 @@ HQV.hqWorlds.city3d = function(c, w){
     if(t0){ var ms = performance.now() - t0; apPerf.n++; apPerf.ms += ms; apPerf.last = ms; if(apPerf.n > 600){ apPerf.n = 300; apPerf.ms /= 2; } }
     return list;
   }
+  // the parked aircraft drawn: traffic().parked less your own plane (drawn on its own, myPlane) while it waits on its
+  // stand to leave or stands there having arrived
+  function apParkedList(tr, hp){
+    var F = NAV.flight, own = F && airMine(F) && F.stand != null ? flightPose(F) : null;
+    if(!own || own.air) return tr.parked;
+    var ox = own.x, oz = own.z;
+    return tr.parked.filter(function(p){ return !(String(p.stand) === String(F.stand) && Math.hypot(p.x - ox, p.z - oz) < 12); });
+  }
+  // the aircraft on the ground in this city's frame ({x, z, yaw, kind, top}: parked, the hangar's, taxiing; not yours):
+  // you walk round them and a helicopter neither sinks into nor sets down on one
+  function apGroundPlanes(tr, hp){
+    var out = [], top = function(k){ return k === "jet" ? 13 : 5; };
+    apParkedList(tr, hp).forEach(function(p){ var k = p.kind === "jet" ? "jet" : "amphib"; out.push({x: p.x - hp.x, z: p.z - hp.z, yaw: p.yaw, kind: k, top: top(k)}); });
+    var hs = apP && apP.hangarStand; if(hs) out.push({x: hs.x, z: hs.z, yaw: hs.yaw, kind: "jet", top: top("jet")});
+    var F = NAV.flight, mine = F && airMine(F) ? F.mvId : null;
+    tr.moving.forEach(function(e){ var p = e.pose; if(!p || p.air || e.id === mine) return;
+      out.push({x: p.x - hp.x, z: p.z - hp.z, yaw: p.yaw, kind: e.kind === "jet" ? "jet" : "amphib", top: top(e.kind === "jet" ? "jet" : "amphib")}); });
+    return out;
+  }
+  // the aircraft whose planform (pad m round it) covers (x, z), or null
+  function apPlaneAt(x, z, pad){
+    for(var i = 0; i < apPlanes.length; i++){
+      var q = apPlanes[i];
+      if(Math.abs(q.x - x) < 26 + pad && Math.abs(q.z - z) < 26 + pad && AIR.planGap(q, x, z) <= pad) return q;
+    }
+    return null;
+  }
   // parked jets and hoppers on their stands (traffic().parked), the jet in the open hangar
   function apParked(tr, hp){
     if(!apFleet) return;
-    var key = tr.parked.map(function(p){ return p.stand + p.airline; }).join("|");
+    var list = apParkedList(tr, hp);
+    var key = list.map(function(p){ return p.stand + p.airline; }).join("|");
     if(key === apFleetKey) return;
     apFleetKey = key;
     var nj = 0, nc = 0, y = apL.y;
-    tr.parked.forEach(function(p){
+    list.forEach(function(p){
       var pose = {x: p.x - hp.x, y: y, z: p.z - hp.z, yaw: p.yaw};
       if(p.kind === "jet"){ if(nj < 6) apFleet.jet.set(nj++, pose, apAirline(p.airline)); }
       else if(nc < 3) apFleet.commuter.set(nc++, pose, apAirline(p.airline));
@@ -1627,13 +1660,15 @@ HQV.hqWorlds.city3d = function(c, w){
   function airCam(){
     var F = NAV.flight; if(!airMine(F) || !myPlane || !myPlane.g.visible) return null;
     var P = myPlane.g.position, D = F.kind === "jet" ? 64 : 30, yaw = (airLook.camYaw || 0) + airLook.yaw + airLook.auto, pit = airLook.pitch;
+    // a hopper on its stand (and taxiing out) at the Commons: high enough to look over the airside fence
+    if(F.kind === "amphib" && F.from === worldId && apL && flightT(F) < F.R.tRoll) pit = Math.max(pit, 0.5);
     var cx = P.x - Math.sin(yaw)*Math.cos(pit)*D, cz = P.z - Math.cos(yaw)*Math.cos(pit)*D, cy = P.y + 3 + Math.sin(pit)*D;
     var gy = airGround(cx, cz) + 2.5;
     return {frame: "here", camera: true, pos: {x: cx, y: Math.max(cy, gy), z: cz}, look: {x: P.x, y: P.y + 3, z: P.z}, up: {x: 0, y: 1, z: 0}, fov: 55};
   }
   // the next Isle Hopper for `to`: from the Commons, the next departure slot to it (push >= now + 30 s); from an
   // island, the next arrival slot from here (landing >= now + 30 s + its flight). That movement becomes yours.
-  function apBook(to, W2){
+  function apBook(to, W2, wantId){
     if(!AF || !apDests || !apDests.length) return null;
     var now = Date.now(), fromC = worldId === COMMONS, ctx = fromC ? (apL ? apContext(apL, COMMONS, hereArch().x, hereArch().z) : null) : (apComm ? apContext(apComm.L, COMMONS, apComm.x, apComm.z) : null);
     if(!ctx) return null;
@@ -1641,15 +1676,18 @@ HQV.hqWorlds.city3d = function(c, w){
     // your island end is its real river (the doc you have); the Commons' part is the timetable's
     ctx.islandEnd = function(wid){ var I = apIsles[wid]; return I && wid === isle ? AIR.dockEnd(fromC ? W2 : W, I.x, I.z, [ctx.cx, ctx.cz]) : isleEnd(wid); };
     var mv = AF.timetable(COMMONS, apDests, now, now + 4*3600000).filter(function(m){ return m.cls === "commuter" && m.type === (fromC ? "dep" : "arr") && m.far === isle; });
+    // wantId (the slot a menu showed): that movement while it has not left (1 s to spare), else the next one
     for(var i = 0; i < mv.length; i++){
       var R = null; try { R = apRoute(ctx, mv[i]); } catch(e){ R = null; }
       if(!R) continue;
       var dep = fromC ? mv[i].tRunway - R.tRoll*1000 : mv[i].tRunway - R.tTD*1000;
-      if(dep >= now + 30000) return {R: R, dep: dep, m: mv[i]};
+      if(dep >= now + (wantId != null && mv[i].id === wantId ? 1000 : 30000)) return {R: R, dep: dep, m: mv[i]};
     }
     return null;
   }
-  function airBoard(to){
+  // want: what the menu showed ({id} an Isle Hopper's movement, {dep} a seaplane's departure): that one while it waits
+  function airBoard(to, want){
+    want = want || {};
     if(!airOn()){ say("No flights from here."); return; }
     say("Checking the departures for " + to.name + "…");
     WD.load({id: to.world}).then(function(W2){
@@ -1657,7 +1695,7 @@ HQV.hqWorlds.city3d = function(c, w){
       W2 = W2 && W2.v >= 2 && W2.id === to.world ? W2 : null;
       var hp = hereArch(), now = Date.now(), kind = airKind(to), R = null, dep = 0, mvId = null, stand = null;
       if(kind === "amphib"){
-        var B = apBook(to, W2);
+        var B = apBook(to, W2, want.id);
         if(!B){ say("No Isle Hopper to " + to.name + " right now."); return; }
         R = B.R; dep = B.dep; mvId = B.m.id; stand = B.m.stand;
       } else {
@@ -1667,6 +1705,7 @@ HQV.hqWorlds.city3d = function(c, w){
         R = AIR.route("sea", {world: worldId, x: hp.x, z: hp.z}, {world: to.world, x: to.x, z: to.z}, {a: eh, b: et});
         dep = AIR.nextFlight(worldId, to.world, now);
         if(dep - now < 8000) dep += AIR.EVERY;
+        if(want.dep > now + 1000 && want.dep < dep) dep = want.dep;
       }
       if(myPlane){ myPlane.dispose(); myPlane = null; }
       NAV.flight = {R: R, dep: dep, warp: 0, from: worldId, to: to.world, name: to.name, kind: kind, mvId: mvId, stand: stand, swapped: false, built: false};
@@ -1759,14 +1798,14 @@ HQV.hqWorlds.city3d = function(c, w){
     var apH = worldId === COMMONS ? airfield() : null, kind = airKind(to);
     if(site.kind === "airport" ? !apH : !(site.kind === "dock" && !apH)) return;
     if(kind === "sea" && !(VOY && VOY.berthOf(W))) return;
-    var now = Date.now(), dep;
+    var now = Date.now(), dep, want;
     if(kind === "amphib"){
       var B = apBook(to, null);
       if(!B) return;
-      dep = B.dep;
-    } else { dep = AIR.nextFlight(worldId, to.world, now); if(dep - now < 8000) dep += AIR.EVERY; }
+      dep = B.dep; want = {id: B.m.id};
+    } else { dep = AIR.nextFlight(worldId, to.world, now); if(dep - now < 8000) dep += AIR.EVERY; want = {dep: dep}; }
     items.push({text: (kind === "amphib" ? "🛩 Isle Hopper to " : "🛩 Seaplane to ") + to.name + " · boarding, departs in " + waitText(dep - now),
-                fn: function(){ airBoard(to); }});
+                fn: function(){ airBoard(to, want); }});
   }
   var PHASE_TXT = {pushback: "pushing back", taxi: "taxiing", hold: "holding short", lineup: "lining up", takeoff: "taking off", climb: "climbing",
                    cruise: "cruising", descent: "descending", approach: "on approach", flare: "landing", rollout: "landing", exit: "leaving the runway",
@@ -2070,11 +2109,13 @@ HQV.hqWorlds.city3d = function(c, w){
     var pf = apL ? AF.floorAt(apL, x, z) : null; if(pf != null && pf > y) y = pf;        // AIR: the airfield's platform
     if(apP) [[0, 0], [6, 0], [-6, 0], [0, 6], [0, -6]].forEach(function(d){       // AIR: its buildings' roofs, the tower (the rotor's
       var pr = ABL.roofAt(apP, x + d[0], z + d[1]); if(pr != null && pr > y) y = pr; });   // 6 m clear of their walls)
+    var q = apL ? apPlaneAt(x, z, 4) : null; if(q && apL.y + q.top > y) y = apL.y + q.top;   // AIR: a parked or taxiing aircraft
     var a = air ? air.floor(x, z) : null;
     return a != null && a > y ? a : y;
   };
   // stepping out of a helicopter that has landed: beside it on land, a roof pad's building's door; never at sea
   w.heliLand = function(st){
+    if(st && apL && apPlaneAt(st.x, st.z, 8)) return null;                                  // AIR: not on (or beside) an aircraft
     if(air) return air.landSpot(st);
     return st && st.ground && (!sea || sea.land(st.x + 3*Math.cos(st.yaw), st.z - 3*Math.sin(st.yaw))) ? {x: st.x + 3*Math.cos(st.yaw), z: st.z - 3*Math.sin(st.yaw), yaw: st.yaw} : null;
   };
@@ -2109,6 +2150,18 @@ HQV.hqWorlds.city3d = function(c, w){
 
   // the residents this City draws (read-only, for tests and tools)
   w.npcSim = function(){ return nsim; };
+  // the HUD's E prompt at a terminal's door (what E opens there), while nothing else holds E
+  var promptK = null, promptV = null;
+  w.prompt = function(p){
+    if(!V2 || !p || menu || bus || w.carry()) return null;
+    var k = Math.round(p.x) + "," + Math.round(p.z);
+    if(k !== promptK){
+      promptK = k;
+      var tm = HQV.hqTravel ? terminalAt(W, tier, p.x, p.z) : null;
+      promptV = tm ? "E  " + (tm.kind === "airport" ? "Departures" : tm.kind === "transit" ? "Trains and trips" : "Ferries and trips") : null;
+    }
+    return promptV;
+  };
   // E: a resident's line, a stop's lines, a terminal's trips (and E again cancels a wait)
   w.use = function(p){
     if(!V2 || !p) return false;

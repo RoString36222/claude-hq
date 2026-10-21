@@ -198,11 +198,13 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   out.draws = {};
   V.setNight(false); V.set(busiest); out.draws.day = HQV.hqMerge.drawCount(V.g); out.busiest = busiest.length;
   V.setNight(true); V.set(all); out.draws.nightAll = HQV.hqMerge.drawCount(V.g);
-  var tris = 0; V.g.traverse(function(o){ if(o.isInstancedMesh && o.visible) tris += o.geometry.attributes.position.count/3*o.count; }); out.tris = tris;
+  out.tris = V.drawn().tris; out.drawnAll = V.drawn().n;
   V.setDetail(1); out.draws.level1 = HQV.hqMerge.drawCount(V.g); V.set([]); V.setDetail(2);
   V.setVisible(false); out.draws.hidden = HQV.hqMerge.drawCount(V.g); V.setVisible(true);
   V.set([]); out.draws.none = HQV.hqMerge.drawCount(V.g);
-  V.set(all); var meshes = 0, pts = 0; V.g.traverse(function(o){ if(o.isInstancedMesh) meshes++; if(o.isPoints) pts++; }); out.meshes = meshes; out.points = pts;
+  V.set(all); var meshes = 0, pts = 0, casters = 0; V.g.traverse(function(o){ if(o.isMesh) meshes++; if(o.isPoints) pts++; if(o.castShadow) casters++; }); out.meshes = meshes; out.points = pts; out.casters = casters;
+  // the batch's instances agree with the poses: every type at its CAP, and set([]) hides them all again
+  out.capAll = G.TYPES.every(function(t){ return out.drawnAll[t] === G.CAP[t]; }) && out.drawnAll.cateringBox === G.CAP.catering;
   var disposed = 0; V.g.traverse(function(o){ if(o.geometry) o.geometry.addEventListener("dispose", function(){ disposed++; }); });
   V.dispose(); out.disposed = disposed;
   process.stdout.write(JSON.stringify(out));
@@ -267,15 +269,17 @@ class TestHqAirground(unittest.TestCase):
 
     def test_draw_calls(self):
         d = self.r["draws"]
-        self.assertLessEqual(d["day"], 12, d)
-        self.assertLessEqual(d["nightAll"], 12, d)
-        self.assertEqual(self.r["meshes"], 11)
+        self.assertLessEqual(d["day"], 2, d)               # one BatchedMesh for every vehicle, one Points cloud
+        self.assertLessEqual(d["nightAll"], 2, d)
+        self.assertEqual(self.r["meshes"], 1)
+        self.assertEqual(self.r["casters"], 0)
+        self.assertTrue(self.r["capAll"], self.r["drawnAll"])
         self.assertEqual(self.r["points"], 1)
         self.assertEqual(d["level1"], 0)
         self.assertEqual(d["hidden"], 0)
         self.assertEqual(d["none"], 0)
         self.assertLessEqual(self.r["tris"], 40000)
-        self.assertGreater(self.r["disposed"], 11)
+        self.assertEqual(self.r["disposed"], 2)             # the batch's and the beacons' geometry
 
 
 # the real chain: hqAirfield's timetable and ends -> hqair.traffic -> poses (no stubs): R.standA / R.standB are the

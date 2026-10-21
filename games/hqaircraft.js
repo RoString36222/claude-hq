@@ -74,9 +74,9 @@ function Parts(THREE){
   };
 }
 function merged(THREE, P, M, name, g){
-  var geos = [];
-  Object.keys(P.by).forEach(function(k){
-    var geo = HQV.hqShips.merge(THREE, P.by[k]), m = new THREE.Mesh(geo, M[k]);
+  var geos = [], parts = solidParts(P.by);
+  Object.keys(parts).forEach(function(k){
+    var geo = HQV.hqShips.merge(THREE, parts[k]), m = new THREE.Mesh(geo, M[k]);
     m.name = name + "-" + k; m.castShadow = k !== "win"; g.add(m); geos.push(geo);
   });
   return geos;
@@ -123,10 +123,23 @@ function mats(c, brand, extra){
     wing: c.mat(0xbcc3cb, {roughness: 0.35, metalness: 0.55, fog: false}),
     dark: c.mat(0x1c2026, {roughness: 0.4, metalness: 0.3, fog: false}),
     win: c.mat(0x26313d, {roughness: 0.2, metalness: 0.3, emissive: new THREE.Color(0xffd9a0), emissiveIntensity: 0, fog: false}),
-    gear: c.mat(0x3a3f46, {roughness: 0.6, metalness: 0.5, fog: false})
+    gear: c.mat(0x3a3f46, {roughness: 0.6, metalness: 0.5, fog: false}),
+    solid: c.mat(0xffffff, {vertexColors: true, roughness: 0.4, metalness: 0.3, fog: false})   // the plain parts merged (SOLID)
   };
   Object.keys(extra || {}).forEach(function(k){ M[k] = extra[k]; });
   return M;
+}
+
+// the plain parts (body, trim, wings, static gear) as one vertex-coloured part, "solid": one draw for them all; the
+// livery (a colour per plane), the windows (lit at night) and the extras keep their own. SOLID: mats()' colours.
+var SOLID = {body: 0xf3f4f6, wing: 0xbcc3cb, dark: 0x1c2026, gear: 0x3a3f46};
+function solidParts(by){
+  var parts = {};
+  Object.keys(by).forEach(function(k){
+    if(SOLID[k] == null){ parts[k] = by[k]; return; }
+    parts.solid = (parts.solid || []).concat(by[k].map(function(p){ return [p[0], p[1], SOLID[k]]; }));
+  });
+  return parts;
 }
 
 /* ---------- the airliner ---------- */
@@ -335,7 +348,7 @@ function finish(c, g, M, geos, Lt, gearM, seat, own, sp){
 }
 
 /* ---------- a parked fleet: one InstancedMesh per material, the brand colour per instance ---------- */
-var FAR_PARTS = {body: 1, brand: 1, wing: 1};
+var FAR_PARTS = {solid: 1, body: 1, brand: 1, wing: 1};
 function parked(c, kind, n){
   var THREE = c.THREE, jet = !/^(commuter|amphib|amphibian|sea|seaplane)$/.test(String(kind || "jet"));
   n = Math.max(1, Math.min(64, n | 0 || 1));
@@ -343,8 +356,9 @@ function parked(c, kind, n){
   var g = new THREE.Group(); g.name = "parked-" + (jet ? "jet" : "commuter");
   var ims = [], geos = [], m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), pv = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
   var up = new THREE.Vector3(0, 1, 0), col = new THREE.Color(), brand = null;
-  Object.keys(S.P.by).forEach(function(k){
-    var geo = HQV.hqShips.merge(THREE, S.P.by[k]); geos.push(geo);
+  var parts = solidParts(S.P.by);
+  Object.keys(parts).forEach(function(k){
+    var geo = HQV.hqShips.merge(THREE, parts[k]); geos.push(geo);
     var im = new THREE.InstancedMesh(geo, M[k], n);
     im.name = g.name + "-" + k; im.castShadow = k !== "win"; im.frustumCulled = false; im.count = 0; im.visible = false; im.userData.part = k;
     if(k === "brand"){ brand = im; for(var i = 0; i < n; i++) im.setColorAt(i, col.setHex(jet ? brandHex() : ISLE)); }
@@ -352,6 +366,13 @@ function parked(c, kind, n){
   });
   var F = {g: g, n: n, kind: jet ? "jet" : "commuter", tris: 0};
   geos.forEach(function(x){ F.tris += (x.index ? x.index.count : x.attributes.position.count)/3; });
+  // the shadow: one invisible caster for every casting part (one shadow-pass draw for the fleet, not five)
+  var sp = [];
+  ims.forEach(function(im){ if(!im.castShadow) return; var a = im.geometry.attributes.position.array; for(var i = 0; i < a.length; i++) sp.push(a[i]); im.castShadow = false; });
+  var sgeo = new THREE.BufferGeometry(); sgeo.setAttribute("position", new THREE.Float32BufferAttribute(sp, 3)); sgeo.computeBoundingSphere(); geos.push(sgeo);
+  var shm = new THREE.InstancedMesh(sgeo, new THREE.MeshBasicMaterial({colorWrite: false, depthWrite: false}), n);
+  shm.name = g.name + "-shadow"; shm.castShadow = true; shm.frustumCulled = false; shm.count = 0; shm.visible = false; shm.userData.part = "shadow";
+  M.shadow = shm.material; g.add(shm); ims.push(shm);
   F.set = function(i, p, hex){
     i = i | 0; if(i < 0 || i >= n || !p) return F;
     pv.set(+p.x || 0, +p.y || 0, +p.z || 0); q.setFromAxisAngle(up, +p.yaw || 0); m4.compose(pv, q, one);

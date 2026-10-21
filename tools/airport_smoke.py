@@ -190,6 +190,10 @@ def main():
             if "walk" in STEPS:
                 rep["walk"] = walk(pg, L)
             if "apron" in STEPS:
+                # on foot on taxiway B facing the stands: the concourse, the parked fleet, the vehicles and the whole
+                # city behind them in one frame (the busiest ground view; a normal view: MAX_DRAW_CALLS)
+                go(pg, -860, 40, math.pi/2, "chase", 4); shot(pg, "06b-apron-B", "on foot on taxiway B, facing the stands")
+            if "apron" in STEPS:
                 aerial(pg, -560, 110, 120, -2.1, 4)
                 r = shot(pg, "07-apron-overview", "the terminal, skybridge, concourse and apron from over the city's edge")
                 time.sleep(3)
@@ -210,6 +214,7 @@ def main():
             shot(pg, "20-night-spawn", "night, the spawn view")
             aerial(pg, -380, 160, 380, -2.2, 4); shot(pg, "21-night-overview", "night, the airfield from over the city")
             aerial(pg, -760, 45, -250, -0.5, 4); shot(pg, "22-night-apron", "night, the apron and concourse")
+            go(pg, -860, 40, math.pi/2, "chase", 4); shot(pg, "22b-night-apron-B", "night, on foot on taxiway B, facing the stands")
             final(pg, "23-night-final")
             pg.close()
     finally:

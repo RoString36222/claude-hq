@@ -236,6 +236,7 @@ function padModel(c, r, p, x, y, z, rot, glows){
     var a = i/8*PI*2, l = K.box(0.25, 0.15, 0.25, K.n(0x103020, 0x46e07a, 1.6), Math.sin(a)*r*0.97, 0.15, Math.cos(a)*r*0.97, g);
     if(glows && c.glow && i % 2 === 0){ var gl = c.glow(0x46e07a, 1.4, 0.8); gl.position.set(x + Math.sin(a + (rot || 0))*r, y + 0.4, z + Math.cos(a + (rot || 0))*r); glows.push(gl); p.add(gl); }
   }
+  merge(c, g);                                     // one draw per material (3), not one per part (13)
   return g;
 }
 
@@ -453,7 +454,7 @@ function create(c, S, o){
       homeDone = true;
       var L = mine.lot || {}, lx = L.x != null ? L.x/100 : mine.x, lz = L.z != null ? L.z/100 : mine.z;
       var F = findSpot(lx, lz, 8, 8, mine.rot || 0, 22, 140, grass, 1.2);
-      if(F){ addPad(F.x, F.y, F.z, 7, F.rot, null, {kind: "home"}); heliProp("heli", F.x, F.y + 0.12, F.z, F.rot + PI, 0xc8323c, 0xf2f2f2, "heli:home"); A.home = F; }
+      if(F){ addPad(F.x, F.y, F.z, 7, F.rot, null, {kind: "home"}); heliProp("heli", F.x, F.y + 0.12, F.z, F.rot + PI, 0xc8323c, 0xf2f2f2, "heli:home"); A.home = F; A.setNight(night); }
     }
     return props;
   };
@@ -521,8 +522,28 @@ function create(c, S, o){
       roar.set(clamp(0.5/(1 + Math.pow(near/180, 2)), 0, 0.5), 220 + 900/(1 + near/200));
     }
   };
+  // the night glows (the pads' edge lights, the base's floodlights, the deck lights): sprites, one draw each, turned
+  // into one Points cloud per size and opacity (a Points size is in px at 1 m: the sprite's metres over tan(fov/2))
+  function glowPoints(){
+    var by = {}, out = [];
+    glows.forEach(function(gl){
+      if(!gl.isSprite || gl.parent !== root || !gl.material || !gl.material.map){ out.push(gl); return; }
+      var k = gl.scale.x + "|" + gl.material.opacity, B = by[k] = by[k] || {s: gl.scale.x, op: gl.material.opacity, map: gl.material.map, pos: [], col: []};
+      B.pos.push(gl.position.x, gl.position.y, gl.position.z); B.col.push(gl.material.color.r, gl.material.color.g, gl.material.color.b);
+      root.remove(gl); gl.material.dispose();
+    });
+    Object.keys(by).forEach(function(k){
+      var B = by[k], geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(B.pos, 3)); geo.setAttribute("color", new THREE.Float32BufferAttribute(B.col, 3)); geo.computeBoundingSphere();
+      var m = new THREE.PointsMaterial({map: B.map, size: B.s/Math.tan(30*PI/180), sizeAttenuation: true, vertexColors: true, transparent: true, opacity: B.op,
+        blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false});
+      var P = new THREE.Points(geo, m); P.name = "air:glows"; root.add(P); out.push(P);
+    });
+    glows = out;
+  }
   A.setNight = function(n){
     night = !!n;
+    glowPoints();
     glows.forEach(function(gl){ gl.visible = night; });
     nightM.forEach(function(q){ q[0].emissiveIntensity = night ? q[1] : q[2]; });
   };

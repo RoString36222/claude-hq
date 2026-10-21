@@ -18,8 +18,8 @@
  *   pavement, except the tug while pushing (nose + 4 m) and on its way back to the box, and the follow-me car
  *   (70 m ahead of an arriving jet from the end of its exit to its stand's lead-in, then home to the depot).
  *   The fuel tanker and the ARFF trucks stay parked in their zones.
- *   create(c, L) -> G  one InstancedMesh per vehicle type (merged, vertex-coloured, one material each) plus one
- *     Points cloud for the amber beacons and the follow-me sign at night: <= 12 draw calls.
+ *   create(c, L) -> G  one BatchedMesh for every vehicle type (each type's model merged, vertex-coloured; one
+ *     material) plus one Points cloud for the amber beacons and the follow-me sign at night: <= 2 draw calls.
  *     G.g, G.set(poses), G.setNight(n), G.setVisible(b), G.setDetail(level) (vehicles only at level 2),
  *     G.dispose(). set() does nothing while hidden. G.centre [x, z]: the apron's centre; integration calls
  *     setVisible(false) beyond G.HIDE_BEYOND (900 m) from it and runs poses()/set() at <= 30 Hz.
@@ -561,15 +561,24 @@ var MODELS = {
 
 function create(c, L){
   var THREE = c.THREE, g = new THREE.Group(); g.name = "airground";
-  var mats = [], geos = [], IM = {}, roof = {}, m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), pv = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), up = new THREE.Vector3(0, 1, 0);
-  TYPES.concat(["cateringBox"]).forEach(function(type){
+  var mats = [], IM = {}, roof = {}, m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), pv = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), up = new THREE.Vector3(0, 1, 0);
+  // every type in one BatchedMesh (one draw call): a geometry per type and CAP instances of it, hidden until set()
+  var KINDS = TYPES.concat(["cateringBox"]), NI = 0, NV = 0, built = {};
+  KINDS.forEach(function(type){
     var M = Model(THREE); roof[type] = MODELS[type](M);
-    var geo = M.build(), mat = c.mat(0xffffff, {vertexColors: true, roughness: 0.62, metalness: 0.12});
-    var cap = type === "cateringBox" ? CAP.catering : CAP[type];
-    var im = new THREE.InstancedMesh(geo, mat, cap);
-    im.name = "airground-" + type; im.count = 0; im.visible = false; im.frustumCulled = false; im.castShadow = false; im.receiveShadow = true;
-    g.add(im); IM[type] = {m: im, cap: cap}; mats.push(mat); geos.push(geo);
+    var geo = M.build(), cap = type === "cateringBox" ? CAP.catering : CAP[type];
+    built[type] = {geo: geo, cap: cap}; NI += cap; NV += geo.attributes.position.count;
   });
+  var mat = c.mat(0xffffff, {vertexColors: true, roughness: 0.62, metalness: 0.12}); mats.push(mat);
+  var BM = new THREE.BatchedMesh(NI, NV, NV, mat);
+  BM.name = "airground-vehicles"; BM.castShadow = false; BM.receiveShadow = true; BM.visible = false;
+  KINDS.forEach(function(type){
+    var b = built[type], gid = BM.addGeometry(b.geo), ids = [];
+    for(var i = 0; i < b.cap; i++){ var id = BM.addInstance(gid); BM.setVisibleAt(id, false); ids.push(id); }
+    IM[type] = {ids: ids, cap: b.cap, tris: b.geo.attributes.position.count/3, n: 0};
+    b.geo.dispose();                                                     // copied into the batch
+  });
+  g.add(BM);
   var NB = 0; TYPES.forEach(function(t){ NB += CAP[t]; }); NB += CAP.followme;
   var bg = new THREE.BufferGeometry(), bpos = new Float32Array(NB*3), bcol = new Float32Array(NB*3);
   bg.setAttribute("position", new THREE.BufferAttribute(bpos, 3)); bg.setAttribute("color", new THREE.BufferAttribute(bcol, 3)); bg.setDrawRange(0, 0);
@@ -594,7 +603,7 @@ function create(c, L){
       var I = IM[type]; if(!I) return false;
       var i = cnt[type] || 0; if(i >= I.cap) return false;
       pv.set(p.x, (p.y || 0) + (dy || 0), p.z); q.setFromAxisAngle(up, p.yaw || 0); m4.compose(pv, q, one);
-      I.m.setMatrixAt(i, m4); cnt[type] = i + 1;
+      BM.setMatrixAt(I.ids[i], m4); cnt[type] = i + 1;
       return true;
     }
     (list || []).forEach(function(p){
@@ -604,16 +613,20 @@ function create(c, L){
       if(p.beacon) beacon(p, roof[p.type], [1, 0.62, 0.1]);
       if(night && p.type === "followme") beacon(p, [0, 1.75, 0.2], [1, 0.9, 0.45]);
     });
-    Object.keys(IM).forEach(function(t){ var I = IM[t], n = cnt[t] || 0; I.m.count = n; I.m.visible = n > 0; if(n) I.m.instanceMatrix.needsUpdate = true; });
+    var any = false;
+    Object.keys(IM).forEach(function(t){ var I = IM[t], n = cnt[t] || 0; for(var i = 0; i < I.cap; i++) if((i < n) !== (i < I.n)) BM.setVisibleAt(I.ids[i], i < n); I.n = n; if(n) any = true; });
+    BM.visible = any;
     bg.setDrawRange(0, nb); bg.attributes.position.needsUpdate = true; bg.attributes.color.needsUpdate = true; bp.visible = nb > 0;
     return G;
   };
   G.setNight = function(n){ night = !!n; bm.size = night ? 6 : 4; return G; };
   G.setVisible = function(b){ vis = !!b; shown(); return G; };
   G.setDetail = function(level){ detail = level | 0; shown(); return G; };
+  // the vehicles drawn now: {type: count}, and their triangles (for tests and tools)
+  G.drawn = function(){ var o = {n: {}, tris: 0}; Object.keys(IM).forEach(function(t){ if(IM[t].n){ o.n[t] = IM[t].n; o.tris += IM[t].n*IM[t].tris; } }); return o; };
   G.dispose = function(){
-    Object.keys(IM).forEach(function(t){ IM[t].m.dispose(); });
-    geos.forEach(function(x){ x.dispose(); }); mats.forEach(function(m){ m.dispose(); }); bg.dispose(); bm.dispose();
+    BM.dispose();
+    mats.forEach(function(m){ m.dispose(); }); bg.dispose(); bm.dispose();
     if(g.parent) g.parent.remove(g);
   };
   G.setNight(false);

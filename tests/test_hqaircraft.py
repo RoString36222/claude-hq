@@ -35,6 +35,7 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
     F.setNight(true); r.night = HQV.hqMerge.drawCount(F.g);
     F.setDetail(1); r.far = HQV.hqMerge.drawCount(F.g); F.count(n); r.farRecount = HQV.hqMerge.drawCount(F.g); F.setDetail(2); r.near = HQV.hqMerge.drawCount(F.g);
     r.trisPerPlane = F.tris;
+    r.casters = 0; F.g.traverseVisible(function(o){ if(o.castShadow) r.casters++; });
     r.inst = 0; F.g.traverse(function(o){ if(o.isInstancedMesh){ r.inst++; r.count = o.count; } });
     var brand = F.g.children.filter(function(o){ return /-brand$/.test(o.name); })[0];
     r.colors = n > 1 ? [0, 1].map(function(i){ var cc = new THREE.Color(); brand.getColorAt(i, cc); return cc.getHex(); }) : null;
@@ -48,13 +49,15 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   /* ---------- the airliner's geometry against the constants ---------- */
   var P = A.airliner(c, {brand: 0xe2805e});
   P.g.updateMatrixWorld(true);
-  var bb = new THREE.Box3(), v = new THREE.Vector3(), door = [];
+  var bb = new THREE.Box3(), v = new THREE.Vector3(), door = [], dk = new THREE.Color(0x1c2026);
+  // the door is trim ("dark"), merged into the plain parts' mesh ("-solid"): its vertices carry the trim's colour
+  function trim(o, i){ var C = o.geometry.attributes.color; return /-dark$/.test(o.name) || (/-solid$/.test(o.name) && C && Math.abs(C.getX(i) - dk.r) < 1e-4 && Math.abs(C.getY(i) - dk.g) < 1e-4 && Math.abs(C.getZ(i) - dk.b) < 1e-4); }
   P.g.traverse(function(o){
     if(!o.isMesh || /-gear$/.test(o.name)) return;
     var pos = o.geometry.attributes.position;
     for(var i = 0; i < pos.count; i++){
       v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld); bb.expandByPoint(v);
-      if(/-dark$/.test(o.name) && v.x > 1.5 && Math.abs(v.z - 14.6) < 0.6) door.push([v.x, v.y, v.z]);
+      if(trim(o, i) && v.x > 1.5 && Math.abs(v.z - 14.6) < 0.6) door.push([v.x, v.y, v.z]);
     }
   });
   out.bounds = {minX: bb.min.x, maxX: bb.max.x, maxZ: bb.max.z, minZ: bb.min.z};
@@ -135,11 +138,12 @@ class TestHqAircraft(unittest.TestCase):
     def test_parked_fleet_draw_calls(self):
         self.assertEqual(len(self.r["parked"]), 4)
         for f in self.r["parked"]:
-            self.assertLessEqual(f["day"], 7, f)
-            self.assertLessEqual(f["night"], 7, f)
+            self.assertLessEqual(f["day"], 4, f)                # plain parts, livery, windows, the shadow caster
+            self.assertLessEqual(f["night"], 4, f)
             self.assertEqual(f["count"], f["n"], f)
             self.assertEqual(f["zero"], 0, f)
-            self.assertLessEqual(f["far"], 3, f)              # level 1: body, livery, wings
+            self.assertEqual(f["casters"], 1, f)              # one shadow-pass draw for the whole fleet
+            self.assertLessEqual(f["far"], 2, f)              # level 1: the plain parts and the livery
             self.assertEqual(f["farRecount"], f["far"], f)    # count() keeps the level
             self.assertEqual(f["near"], f["night"], f)
             self.assertLessEqual(f["trisPerPlane"], 12000, f)

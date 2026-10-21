@@ -326,12 +326,10 @@ class TestHqAirfield(unittest.TestCase):
         self.assertEqual(e["nulls"], [None, None, None, None])
 
     def test_heading_kinks(self):
-        # KNOWN FIXTURE DEFECT (reported): A and B are 42 m apart but A?/A and A?/B are R 40 fillets, so the arrival turn
-        # from A onto the end link overlaps the turn from the link onto B. end() splices them where they cross (the path
-        # stays exactly on painted curves), which leaves one ~59 deg heading kink in arr.taxi. Nothing else may kink.
+        # A and B are 42 m apart but A?/A and A?/B are R 40 fillets that overlap; arrivals off A take uturns(L), one
+        # R 21 arc tangent to A, the link and B, so no ground path kinks anywhere (> 10 deg between 5 m steps).
         k = self.o["ends"]["kinks"]
-        self.assertLessEqual(set(k), {"atax"}, k)
-        self.assertLessEqual(k.get("atax", 0), 60, k)
+        self.assertEqual(k, {}, k)
 
     def test_line_up_is_exact(self):
         le = self.o["ends"]["lineEnds"]

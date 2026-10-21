@@ -59,7 +59,8 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           "worldbuild", "camrig", "hqhud", "hqcityparts", "hqcity", "hqmerge",
                           # Cities (3.0): the civic kit, residents, traffic, the sea, boats, travel
                           "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqheli", "hqtravel", "hqvoyage", "hqships", "hqbridges",
-                          "hqair", "hqaircraft", "hqairbase",
+                          # the airport: the airfield layout before the flights, its ground, buildings, vehicles
+                          "hqairfield", "hqair", "hqaircraft", "hqairport3d", "hqairbldg", "hqairground", "hqairbase",
                           # navigation (3.1): the router, the minimap, the route's chevrons, the Go to panel
                           "hqnav", "hqminimap", "hqroutefx", "hqnavui",
                           # rail (3.x): the lines between cities, their trains

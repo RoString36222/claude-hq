@@ -186,7 +186,10 @@ function plan(L, opts){
   var gAt = function(x, z){ var h = ground ? +ground(x, z) : NaN; return isFinite(h) ? h : null; };
   var yLand = function(p){ var h = gAt(p[0], p[1]); return (h != null ? h : ySite) + 0.15; };
   var R = L.runway, ends = R.ends || [], E0 = ends[0], len = num(R.len, 1600), RW = num(R.w, 45), SH = num(R.shoulder, 7.5), PAD = num(R.pad, 60);
-  var W = L.widths || {}, TW = num(W.A, 18), TSH = num(W.shoulder, 3.5), lines = L.lines || {}, curves = L.curves || {};
+  var W = L.widths || {}, TW = num(W.A, 18), TSH = num(W.shoulder, 3.5), lines = L.lines || {}, curves = {};
+  // the curves plus the arrivals' A -> B U-turns at the end links (HQV.hqAirfield.uturns: flown, so painted and lit)
+  var UT = HQV.hqAirfield && HQV.hqAirfield.uturns ? HQV.hqAirfield.uturns(L) : {};
+  [L.curves || {}, UT].forEach(function(o){ Object.keys(o).forEach(function(k){ curves[k] = o[k]; }); });
   var P = {y: {}, surf: [], runway: null, apron: [], paint: {white: [], yellow: [], red: [], black: []}, lights: [], papi: [], rabbit: [],
            fixtures: {boxes: [], cyls: []}, fence: [], fenceY: y0 + 0.1, signs: [], cells: [], masts: [], pools: [], socks: [], holds: [],
            edges: {water: 0, land: 0}};

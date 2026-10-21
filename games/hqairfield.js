@@ -11,6 +11,8 @@
  *   onPavement(L, x, z)          -> "runway"|"taxiway"|"road"|"apron"|null   (taxiway = centreline ± width/2)
  *   shoulderAt(L, x, z)          -> "runway"|"taxiway"|null    on a shoulder and not on pavement
  *   end(L, standId, endIdx, cx, cz, {stopDist})   -> the v2 end (7.3) in archipelago metres, or null
+ *   uturns(L) -> {"A1/AB", "A6/AB": [[x, z]...]}  the arrivals' U-turn from A onto B at each end link (not in L.curves:
+ *                                the fixture's A?/A and A?/B fillets overlap there); painted with the curves
  *   runwayEnd(world, ms) -> 0|1  windAt(world, ms, L?) -> {end, yaw, speed}
  *   timetable(world, dests, fromMs, toMs) -> [{id, type, cls, stand, end, tRunway, slot, period, airframe, airline, reg, far}]
  *   SLOT, PERIOD, GAP (s), slotBase(world, m), slotAt(world, ms), hash(s)
@@ -368,6 +370,23 @@ function exitCurve(L, E, id){
   if(!C || C.length < 2) return null;
   return offOf(E, C[0]) <= offOf(E, C[C.length - 1]) ? copyPts(C) : rev(C);
 }
+// the U-turn from A onto B at a link (an arrival's turn off A, along the link and back down B). A and B are only 42 m
+// apart, so the two R 40 fillets A?/A and A?/B overlap; this one arc of radius (B - A)/2, tangent to A, the link's
+// centreline and B, replaces them. Painted and lit with the other curves (uturns(L)). sg: +1 the +v link, -1 the -v one.
+function uturnOf(L, link){
+  var A = L.lines && L.lines.A, Bl = L.lines && L.lines.B, K = L.lines && L.lines[link], f = frameOf(L);
+  if(!A || !Bl || !K || !f) return null;
+  var uA = toFrame(L, A[0][0], A[0][1])[0], uB = toFrame(L, Bl[0][0], Bl[0][1])[0], vL = toFrame(L, K[0][0], K[0][1])[1];
+  var sg = vL >= 0 ? 1 : -1, um = (uA + uB)/2, rt = Math.abs(uA - uB)/2, vc = vL - sg*rt, n = Math.max(4, Math.ceil(Math.PI*rt/2)), out = [];
+  for(var i = 0; i <= n; i++){ var ph = Math.PI*i/n, q = toWorld(L, um + (uA - um)*Math.cos(ph), vc + sg*rt*Math.sin(ph)); out.push([r3(q[0]), r3(q[1])]); }
+  return out;
+}
+function uturns(L){
+  var out = {};
+  if(!L || L.ok === false || !L.lines) return out;
+  ["A1", "A6"].forEach(function(k){ var u = uturnOf(L, k); if(u) out[k + "/AB"] = u; });
+  return out;
+}
 function stopDistOf(o){ return o && o.stopDist != null && isFinite(+o.stopDist) ? +o.stopDist : (JET_TOUCH*JET_TOUCH - EXIT_V*EXIT_V)/(2*JET_DEC); }
 
 function end(L, standId, endIdx, cx, cz, o){
@@ -400,7 +419,9 @@ function end(L, standId, endIdx, cx, cz, o){
   if(ex.id !== far && C[ex.id + "/A"]){
     join(exit, C[ex.id + "/A"]);                                   // exit line + the join onto A (heading E.dir)
     atax = [exit[exit.length - 1]];
-    join(atax, C[far + "/A"]);                                     // A to the far link
+    var ut = uturnOf(L, far);
+    if(ut) join(atax, ut);                                         // A to the far link, the U-turn onto B
+    else { join(atax, C[far + "/A"]); join(atax, rev(C[far + "/B"])); }
   } else {
     // the far-end link: the reversed runway fillet, then along the link to where it crosses A
     var A = L.lines.A, e0 = exit[exit.length - 1], h = headOut(exit), cr = null;
@@ -408,7 +429,7 @@ function end(L, standId, endIdx, cx, cz, o){
     if(cr) join(exit, [cr]);
     atax = [exit[exit.length - 1]];
   }
-  join(atax, rev(C[far + "/B"]));                                  // onto B, running the flow's way
+  if(ex.id === far || !C[ex.id + "/A"]) join(atax, rev(C[far + "/B"]));   // off the link onto B, running the flow's way
   join(atax, S);                                                   // B to the stand's lead-in, nose-in to the stand
   var y = L.y;
   return {v: 2, kind: "jet", y: y, site: L.site, end: E.id, stand: {id: st.id, x: st.x + cx, z: st.z + cz, yaw: st.yaw},
@@ -487,7 +508,7 @@ function timetable(world, dests, fromMs, toMs){
   return out;
 }
 
-HQV.hqAirfield = {layout: layout, toFrame: toFrame, toWorld: toWorld, floorAt: floorAt, onPavement: onPavement, shoulderAt: shoulderAt,
+HQV.hqAirfield = {layout: layout, uturns: uturns, toFrame: toFrame, toWorld: toWorld, floorAt: floorAt, onPavement: onPavement, shoulderAt: shoulderAt,
                   end: end, runwayEnd: runwayEnd, windAt: windAt, timetable: timetable, slotBase: slotBase, slotAt: slotAt, periodAt: periodAt,
                   hash: hash, SLOT: SLOT, SLOTS: SLOTS, PERIOD: PERIOD, GAP: GAP, OFF: OFF, AIRWAYS: AIRWAYS, AIRLINES: AIRLINES, COMMUTER: COMMUTER};
 })();

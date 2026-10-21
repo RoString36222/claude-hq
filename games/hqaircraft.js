@@ -22,10 +22,6 @@
  *   DOOR_L1 [x, y, z] the airliner's forward left door sill (model frame), NOSE its nose (z), SPAN its span
  *   AIRLINES the invented airlines {id: {name, color}} (archipelago: the brand colour), AIRLINE_IDS
  *   contrails(c) -> {add() -> mesh, set(mesh, [x, y, z] from, [x, y, z] to), dispose()}  white ribbons
- *   airport(c, end, o) -> A  the runway (from games/hqair.js airportEnd, local frame) on its deck and piles,
- *     edge, threshold and approach lights (InstancedMesh fixtures, Points glow at night), the sequenced
- *     flasher, the stand's lead-in line and stop bar, and the control tower's beacon.
- *     o: {ground(x, z) -> terrain y, site, tier}. A.g, A.setNight(n), A.update(t), A.dispose()
  */
 (function(){
 "use strict";
@@ -397,113 +393,7 @@ function contrails(c){
   };
 }
 
-/* ---------- the airport's dressing ---------- */
-function airport(c, end, o){
-  o = o || {};
-  var THREE = c.THREE, P = Parts(THREE), ground = o.ground || function(){ return 0; };
-  var u = end.dir, thr = end.thr, L = end.len, y = end.y, ry = Math.atan2(u[0], u[1]), W = 30;
-  function at(a, b){ return [thr[0] + u[0]*a + u[1]*b, thr[1] + u[1]*a - u[0]*b]; }   // a along the runway, b to its left
-  // the deck: a slab from just behind the threshold to past the far end, on piles where the land falls away
-  var a0 = -20, a1 = L + 25, mid = at((a0 + a1)/2, 0);
-  P.box("asphalt", W, 2.0, a1 - a0, mid[0], y - 1.0, mid[1], 0, ry);
-  P.box("conc", W + 2, 0.4, a1 - a0 + 2, mid[0], y - 1.9, mid[1], 0, ry);
-  for(var a = a0 + 5; a <= a1; a += 25) [-W/2 + 2, 0, W/2 - 2].forEach(function(b){
-    var p = at(a, b), gy = Math.min(ground(p[0], p[1]), 0) - 3;
-    if(y - 2 - gy > 1.5) P.add("conc", new THREE.CylinderGeometry(0.8, 0.9, y - 2 - gy, 10), p[0], (y - 2 + gy)/2, p[1]);
-  });
-  // markings: the centreline, piano keys and the aiming point at the landing (seaward) end, side stripes
-  for(a = 30; a < L - 30; a += 24){ var q = at(a, 0); P.box("paint", 0.9, 0.04, 12, q[0], y + 0.02, q[1], 0, ry); }
-  [-1, 1].forEach(function(s){ for(var k = 0; k < 5; k++){ var pk = at(L - 8, s*(2.4 + k*2.6)); P.box("paint", 1.6, 0.04, 14, pk[0], y + 0.02, pk[1], 0, ry);
-                                                        var pk2 = at(6, s*(2.4 + k*2.6)); P.box("paint", 1.6, 0.04, 10, pk2[0], y + 0.02, pk2[1], 0, ry); }
-                                var am = at(L - 90, s*5); P.box("paint", 2.4, 0.04, 30, am[0], y + 0.02, am[1], 0, ry);
-                                var sd = at((a0 + a1)/2, s*(W/2 - 1.2)); P.box("paint", 0.5, 0.04, a1 - a0 - 4, sd[0], y + 0.02, sd[1], 0, ry); });
-  // the stand: a yellow lead-in line from the threshold to the stand, and its stop bar; a stand sign
-  var st = at(-(HQV.hqAir ? HQV.hqAir.STAND_BACK : 25), 0), sy = Math.max(y, ground(st[0], st[1]) + 0.2);
-  var li = at(-12, 0);
-  P.box("yellow", 0.35, 0.05, 26, li[0], sy + 0.02, li[1], 0, ry);
-  var sb = at(-(HQV.hqAir ? HQV.hqAir.STAND_BACK : 25) - 17, 0);
-  P.box("yellow", 6, 0.05, 0.5, sb[0], sy + 0.02, sb[1], 0, ry);
-  var mk = new THREE.Group();
-  // the light fixtures (InstancedMesh): runway edges, the green threshold bar at the landing end, red at the other, approach bars
-  var spots = {edge: [], green: [], red: [], appr: [], pole: []};
-  for(a = 0; a <= L; a += 30) [-1, 1].forEach(function(s){ var p = at(a, s*(W/2 + 0.6)); spots.edge.push([p[0], y + 0.15, p[1]]); });
-  for(var b = -W/2; b <= W/2; b += 3){ var pg = at(L + 3, b); spots.green.push([pg[0], y + 0.15, pg[1]]); var pr = at(-19, b); spots.red.push([pr[0], y + 0.15, pr[1]]); }
-  for(a = L + 30; a <= L + 330; a += 30){
-    var wide = a === L + 150 ? 15 : 4;
-    for(b = -wide; b <= wide; b += wide > 4 ? 2.5 : 2){ var pa = at(a, b), gy2 = Math.min(ground(pa[0], pa[1]), 0); spots.appr.push([pa[0], y + 0.6, pa[1]]); }
-    var pp = at(a, 0), gy3 = Math.min(ground(pp[0], pp[1]), 0);
-    spots.pole.push([pp[0], (y + 0.5 + gy3 - 3)/2, pp[1], y + 0.5 - gy3 + 3]);
-  }
-  var M = {
-    asphalt: c.mat(0x2b3036, {roughness: 0.95}), conc: c.mat(0x9a9d9f, {roughness: 0.9}), paint: c.mat(0xf2f2f2, {roughness: 0.8}),
-    yellow: c.mat(0xf2c230, {roughness: 0.7})
-  };
-  var g = new THREE.Group(); g.name = "airport-dressing";
-  var geos = merged(THREE, P, M, "airport", g);
-  g.children.forEach(function(m){ m.castShadow = false; m.receiveShadow = true; });
-  var LM = {
-    edge: c.mat(0x666666, {emissive: new THREE.Color(0xfff2c8), emissiveIntensity: 0.3}),
-    green: c.mat(0x225522, {emissive: new THREE.Color(0x30ff70), emissiveIntensity: 0.3}),
-    red: c.mat(0x552222, {emissive: new THREE.Color(0xff3020), emissiveIntensity: 0.3}),
-    appr: c.mat(0x666666, {emissive: new THREE.Color(0xffffff), emissiveIntensity: 0.3}),
-    pole: c.mat(0xd0d3d6, {roughness: 0.6})
-  };
-  var fixG = new THREE.BoxGeometry(0.45, 0.3, 0.45), poleG = new THREE.CylinderGeometry(0.18, 0.18, 1, 6), m4 = new THREE.Matrix4(), inst = [];
-  Object.keys(spots).forEach(function(k){
-    var S = spots[k]; if(!S.length) return;
-    var im = new THREE.InstancedMesh(k === "pole" ? poleG : fixG, LM[k], S.length);
-    S.forEach(function(p, i){ m4.makeTranslation(p[0], p[1], p[2]); if(k === "pole") m4.scale(new THREE.Vector3(1, p[3], 1)); im.setMatrixAt(i, m4); });
-    im.instanceMatrix.needsUpdate = true; im.name = "airport-lights-" + k; g.add(im); inst.push(im);
-  });
-  // their glow at night: one Points cloud (a few pixels at any distance), and the sequenced flasher running in
-  var glowPos = [], glowCol = [];
-  function glow(list, rgb){ list.forEach(function(p){ glowPos.push(p[0], p[1] + 0.3, p[2]); glowCol.push(rgb[0], rgb[1], rgb[2]); }); }
-  glow(spots.edge, [1, 0.9, 0.65]); glow(spots.green, [0.2, 1, 0.4]); glow(spots.red, [1, 0.15, 0.1]); glow(spots.appr, [1, 1, 0.95]);
-  var gg = new THREE.BufferGeometry(); gg.setAttribute("position", new THREE.Float32BufferAttribute(glowPos, 3)); gg.setAttribute("color", new THREE.Float32BufferAttribute(glowCol, 3));
-  var gm = new THREE.PointsMaterial({size: 3.5, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false, fog: false, toneMapped: false});
-  var gp = new THREE.Points(gg, gm); gp.frustumCulled = false; gp.name = "airport-glow"; g.add(gp);
-  var fl = new THREE.BufferGeometry(); fl.setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0], 3));
-  var fm = new THREE.PointsMaterial({color: 0xffffff, size: 9, sizeAttenuation: false, transparent: true, depthWrite: false, fog: false, toneMapped: false});
-  var fp = new THREE.Points(fl, fm); fp.frustumCulled = false; g.add(fp);
-  // the control tower's beacon (hqcivic's tower: right of the terminal, its cab at 24 + 4 tier m), green and white in turn
-  var tw = null;
-  if(o.site){
-    var T = o.tier || 5, W0 = (o.site.w || 0)/100, D0 = (o.site.d || 0)/100, tw0 = Math.min(W0*0.6, 60 + T*20), td = Math.min(D0*0.18, 30), tz = D0/2 - 4 - td/2;
-    var lx = tw0/2 + 14, lz = tz - 4, f = [-u[0], -u[1]], rr = Math.atan2(f[0], f[1]), cx = o.site.x/100, cz = o.site.z/100;
-    var wx = cx + lx*Math.cos(rr) + lz*Math.sin(rr), wz = cz - lx*Math.sin(rr) + lz*Math.cos(rr), wy = ground(cx, cz) + 0.12 + 24 + T*4 + 5.4;
-    var tb = new THREE.BufferGeometry(); tb.setAttribute("position", new THREE.Float32BufferAttribute([wx, wy, wz], 3));
-    var tm = new THREE.PointsMaterial({color: 0x30ff70, size: 7, sizeAttenuation: false, transparent: true, depthWrite: false, fog: false, toneMapped: false});
-    var tp = new THREE.Points(tb, tm); tp.frustumCulled = false; g.add(tp);
-    var bm = c.mat(0x222222, {emissive: new THREE.Color(0x30ff70), emissiveIntensity: 1.5});
-    var bc = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.7, 10), bm); bc.position.set(wx, wy - 0.2, wz); g.add(bc);
-    tw = {tb: tb, tm: tm, bm: bm, bc: bc};
-  }
-  var night = false, A = {g: g, stand: st};
-  A.setNight = function(n){
-    night = !!n;
-    var k = n ? 2.6 : 0.25;
-    ["edge", "green", "red", "appr"].forEach(function(key){ LM[key].emissiveIntensity = k; });
-    gp.visible = night; fp.visible = night;
-  };
-  A.update = function(t){
-    if(night){
-      // the rabbit: a white flash running in along the approach bars to the threshold, twice a second
-      var ph = (t*2) % 1, aa = L + 330 - ph*300, q = at(aa, 0);
-      fl.attributes.position.setXYZ(0, q[0], y + 0.9, q[1]); fl.attributes.position.needsUpdate = true; fm.opacity = ph < 0.92 ? 1 : 0;
-    }
-    if(tw){ var green = (t % 2) < 1; tw.tm.color.setHex(green ? 0x30ff70 : 0xffffff); tw.bm.emissive.setHex(green ? 0x30ff70 : 0xffffff); tw.tm.size = night ? 8 : 4; }
-  };
-  A.dispose = function(){
-    geos.forEach(function(x){ x.dispose(); }); Object.keys(M).forEach(function(k){ M[k].dispose(); }); Object.keys(LM).forEach(function(k){ LM[k].dispose(); });
-    fixG.dispose(); poleG.dispose(); gg.dispose(); gm.dispose(); fl.dispose(); fm.dispose();
-    if(tw){ tw.tb.dispose(); tw.tm.dispose(); tw.bm.dispose(); tw.bc.geometry.dispose(); }
-    if(g.parent) g.parent.remove(g);
-  };
-  A.setNight(false);
-  return A;
-}
-
-HQV.hqAircraft = {airliner: airliner, seaplane: seaplane, amphibian: amphibian, parked: parked, contrails: contrails, airport: airport,
+HQV.hqAircraft = {airliner: airliner, seaplane: seaplane, amphibian: amphibian, parked: parked, contrails: contrails,
                   brandHex: brandHex, airlineColor: airlineColor, AIRLINES: AIRLINES, AIRLINE_IDS: AIRLINE_IDS,
                   DOOR_L1: DOOR_L1, NOSE: NOSE, SPAN: SPAN, AMPH_NOSE: AMPH_NOSE};
 })();

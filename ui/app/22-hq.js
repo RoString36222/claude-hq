@@ -19,11 +19,11 @@ function hqWebGL(){ try { return !!document.createElement("canvas").getContext("
 // before the City that wires them (games/hqcity3d.js). Navigation (3.1): the road router, the minimap, the
 // route's chevrons and the Go to panel / route banner, also before the City.
 var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqlobby","hqbase","hqskate","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
-                  "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqtravel","hqvoyage","hqships","hqbridges","hqair","hqaircraft","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcity3d"];
+                  "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqtravel","hqvoyage","hqships","hqbridges","hqairfield","hqair","hqaircraft","hqairport3d","hqairbldg","hqairground","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcity3d"];
 // The 3D City's own files: if one fails, the classic City still works (games/hq3d.js falls back to it);
 // a Cities part that fails only takes its own feature out of the 3D City.
 var HQ_SCRIPTS_3D = {world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
-                     hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqair:1, hqaircraft:1, hqairbase:1,
+                     hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqairfield:1, hqair:1, hqaircraft:1, hqairport3d:1, hqairbldg:1, hqairground:1, hqairbase:1,
                      hqnav:1, hqminimap:1, hqroutefx:1, hqnavui:1, hqrail:1};
 // ?hqsmoke=1 (tools/ui_smoke.py, tools/hq_shots.py): HQ opens straight into the City with three synthetic HQs.
 var HQ_SMOKE = /[?&]hqsmoke=1(&|$)/.test(location.search);

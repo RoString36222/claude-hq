@@ -336,6 +336,20 @@ and feature guide.
 
 ## Changelog
 
+- **3.2.0 — A real airport for the Commons.** The old glass box with a runway patch painted across
+  it is gone. The Commons now has an offshore airfield on a reclaimed platform west of the coast: a
+  1.6 km runway (18/36) with blast pads, piano keys, touchdown-zone and centreline markings, two
+  parallel taxiways with rapid exits, edge, centreline, approach and PAPI lights, a rabbit at night,
+  windsocks that follow the wind, signs, fences and a sea wall. A landside terminal with a walk-through
+  hall and a ramp leads over a skybridge across Ring Road 5 to a glazed concourse with six jet bridges;
+  there are a 66 m control tower with a rotating beacon, an approach radar, a fire station, hangars,
+  a fuel farm and a multi-storey car park. Airliners in four invented liveries fly a timetable that is
+  the same for everyone (push back, taxi, hold, line up, take off; land, leave by a rapid exit, taxi
+  in), with tugs, baggage trains, belt loaders, fuel and catering trucks and a follow-me car working
+  the stands. From the terminal you can take the **Isle Hopper**, an amphibian, to an island (and
+  back from the island's dock); island to island is still a seaplane. The minimap and the big map
+  show the airfield, and ships, ferries, the carrier and the air base keep clear of it.
+
 - **3.1.1 — City camera and plates.** The chase camera sits higher and further back (the far camera
   higher still), so you see the street around you instead of the ground at your feet. Left-drag now
   turns the camera too (trackpads have no right-drag); a click still walks. On a motorbike or a bicycle

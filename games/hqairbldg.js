@@ -397,6 +397,8 @@ function create(c, L, o){
     add(geo, roofM, 0, y0, 0);
   })();
   P.top = roofU((C.u0 + C.u1)/2) + 0.35;
+  // a softly lit flat ceiling under the curved roof (its underside faces away from every light: black from inside)
+  fbox(C.u0 + 0.4, C.u1 - 0.5, C.v0 + 0.6, C.v1 - 0.6, gTop - 0.12, gTop, N("ceil", 0xe6e2d8, 0xfff1d6, 0.35, 0.7, {roughness: 0.8}));
   // gallery: seats, gate desks, gate signs, the departures boards; VDGS boards outside, facing each stand
   P.props.seats.forEach(function(s){ fbox(s.u0, s.u1, s.v0, s.v1, G, G + 0.45, seatM); fbox(s.u0 + 0.8, s.u1, s.v0, s.v1, G + 0.45, s.y1, seatM); });
   P.props.desks.forEach(function(d){ fbox(d.u0, d.u1, d.v0, d.v1, G, d.y1 - 0.05, white); fbox(d.u0 - 0.05, d.u1 + 0.05, d.v0 - 0.05, d.v1 + 0.05, d.y1 - 0.05, d.y1, metal); });

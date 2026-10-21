@@ -64,6 +64,14 @@ out.coaster = {inside: C.pts.every(p => Math.abs(p.x) <= a - 6 + 1e-6 && Math.ab
 const Wi = WD.pack(doc('island@2')), Si = SP.claim(Wi, 1);
 out.island = {park: !!Si.park, marks: Si.marks.length,
   shown: Si.marks.every(m => { const l = Wi.lots.filter(x => x.id === m.lot)[0]; return l.min_tier == null || l.min_tier <= 1; })};
+// the world cache (world.js cacheCopy) never keeps a claim: a claim made by older code read back from
+// IndexedDB was trusted forever (W.spectacle short-circuits claim), with its old sites (y 0: underground)
+const Wk = WD.pack(doc('claude-hq@2')), lotsK = {}; Wk.lots.forEach(l => { lotsK[l.id] = l.kind; });
+SP.claim(Wk, 5);
+const cc = WD.cacheCopy(Wk);
+out.cache = {spectacle: 'spectacle' in cc, claimedSites: cc.sites.filter(s => s.claimed || s.kind === 'funpark' || s.kind === 'landmark').length,
+  landmarkLots: cc.lots.filter(l => l.kind === 'landmark' || l.was != null).length, kindsBack: cc.lots.every(l => l.kind === lotsK[l.id]),
+  liveKept: !!Wk.spectacle && Wk.sites.some(s => s.kind === 'funpark'), sharedLots: cc.lots.some((l, i) => l === Wk.lots[i])};
 console.log(JSON.stringify(out));
 """
 
@@ -130,6 +138,15 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(c["station"], [1.6, 1.6])
         self.assertEqual(c["crest"], c["top"])
         self.assertAlmostEqual(c["loopTop"], 3 + 2 * c["R"], places=6)
+
+    def test_the_world_cache_never_keeps_a_claim(self):
+        c = self.o["cache"]
+        self.assertFalse(c["spectacle"])
+        self.assertEqual(c["claimedSites"], 0)
+        self.assertEqual(c["landmarkLots"], 0)
+        self.assertTrue(c["kindsBack"])
+        self.assertTrue(c["liveKept"])                 # the live W keeps its claims; only the record is clean
+        self.assertFalse(c["sharedLots"])              # its own copies: a later claim cannot reach the record
 
     def test_an_island_claims_only_what_its_tier_shows(self):
         self.assertTrue(self.o["island"]["shown"])

@@ -414,19 +414,21 @@ function create(c, W, o){
       gp.add(cone(s*0.06, s*0.012, H*0.13, M.steel, H));
       var ring = new THREE.Mesh(new THREE.TorusGeometry(s*0.33, 0.45, 6, 48), glowMat(0x7fd8ff)); ring.rotation.x = PI/2; ring.position.y = H + 0.6; gp.add(ring);
       beacon(gp, H*1.13 + 1); floods(gp, s*0.6, 0x9fd8ff);
-      return s*0.47;
+      return [base];
     },
     // a three-lobed tower climbing in setbacks to a long spire
     spire: function(gp, s, H){
       var R = s*0.42, tiers = [0, 0.3, 0.5, 0.64, 0.75, 0.84, 0.9];
+      var foot = null;
       tiers.forEach(function(t0, i){
         var t1 = i + 1 < tiers.length ? tiers[i + 1] : 0.95, k = 1 - i*0.12;
         var base = section(function(a){ return R*k*(1 + 0.24*Math.cos(3*a + i*0.35)); }, 72);
         gp.add(tower(base, t0*H, t1*H, 4, function(u){ return lerp(1, 0.97, u); }, null, M.grid, TILE.grid));
+        if(!i) foot = base;
       });
       gp.add(cone(R*0.16, R*0.01, H*0.28, M.steel, H*0.95));
       beacon(gp, H*1.23 + 1); floods(gp, s*0.55, 0xfff1d0);
-      return R*1.2;
+      return [foot];
     },
     // a glass bullet wrapped in a steel diagrid
     lantern: function(gp, s, H){
@@ -442,12 +444,13 @@ function create(c, W, o){
       }
       var cap = new THREE.Mesh(new THREE.SphereGeometry(R*0.12, 16, 10), glowMat(0xffe8b0)); cap.position.y = H*0.985; gp.add(cap);
       beacon(gp, H + 2); floods(gp, s*0.55, 0xbfe6ff);
-      return R*0.85;
+      return [rings[0].pts];
     },
     // twin eight-pointed towers in setbacks with a skybridge between them
     twins: function(gp, s, H){
-      var R = s*0.235, gap = s*0.1, off = gap/2 + R, steps = [[0, 0.58, 1], [0.58, 0.72, 0.86], [0.72, 0.82, 0.72], [0.82, 0.9, 0.58], [0.9, 0.94, 0.44]];
+      var R = s*0.235, gap = s*0.1, off = gap/2 + R, steps = [[0, 0.58, 1], [0.58, 0.72, 0.86], [0.72, 0.82, 0.72], [0.82, 0.9, 0.58], [0.9, 0.94, 0.44]], feet = [];
       [-1, 1].forEach(function(sd){
+        feet.push(section(function(a){ return R*(1 + 0.09*Math.cos(8*a)); }, 96).map(function(p){ return [p[0] + sd*off, p[1]]; }));
         var tg = new THREE.Group(); tg.position.x = sd*off; gp.add(tg);
         steps.forEach(function(st){
           var base = section(function(a){ return R*st[2]*(1 + 0.09*Math.cos(8*a)); }, 96);
@@ -459,15 +462,19 @@ function create(c, W, o){
       var by = H*0.42, bridge = new THREE.Mesh(new THREE.BoxGeometry(gap + R*0.6, 5, 3.4), M.steel); bridge.position.y = by; bridge.castShadow = true; gp.add(bridge);
       [-1, 1].forEach(function(sd){ gp.add(tube([[sd*gap*0.15, by - 2.5, 0], [sd*(gap/2 + R*0.6), by - 30, 0]], 0.55, M.steel, 8)); });
       floods(gp, s*0.6, 0xfff0d0);
-      return [{x: -off, z: 0, r: R*1.1}, {x: off, z: 0, r: R*1.1}];
+      return feet;
     },
     // an observation tower: a concrete shaft, a glass sky-deck ringed in light, a second pod and an antenna
     needle: function(gp, s, H){
       var r0 = Math.min(9, s*0.24);
-      gp.add(tower(section(function(){ return r0; }, 40), 0, H*0.78, 6, function(u){ return lerp(1, 0.42, u); }, null, M.stone, TILE.stone));
+      var shaft = section(function(){ return r0; }, 40), feet = [shaft];
+      gp.add(tower(shaft, 0, H*0.78, 6, function(u){ return lerp(1, 0.42, u); }, null, M.stone, TILE.stone));
       for(var i = 0; i < 3; i++){                                    // three fins round the foot
         var f = new THREE.Mesh(new THREE.BoxGeometry(1.6, H*0.16, r0*2.6), M.stone); var a = i/3*TAU;
         f.position.set(Math.sin(a)*r0*1.1, H*0.08, Math.cos(a)*r0*1.1); f.rotation.y = a; f.castShadow = true; gp.add(f);
+        // the fin's footprint: its box turned by a about y ((lx, lz) -> (lx cos a + lz sin a, -lx sin a + lz cos a))
+        feet.push([[-0.8, -r0*1.3], [0.8, -r0*1.3], [0.8, r0*1.3], [-0.8, r0*1.3]].map(function(q){
+          return [f.position.x + q[0]*Math.cos(a) + q[1]*Math.sin(a), f.position.z - q[0]*Math.sin(a) + q[1]*Math.cos(a)]; }));
       }
       var py = H*0.66, prof = [[0.42, 0], [1.8, 3], [2.05, 7], [2.05, 11], [1.6, 14], [0.42, 16]], rings = [];
       prof.forEach(function(p){ rings.push({y: py + p[1], pts: section(function(){ return r0*p[0]; }, 64)}); });
@@ -478,11 +485,11 @@ function create(c, W, o){
       gp.add(new THREE.Mesh(loft(rings, TILE.glass), M.glass));
       gp.add(cone(r0*0.16, r0*0.03, H*0.22, M.steel, H*0.78));
       beacon(gp, H + 1); floods(gp, r0*2.2, 0xfff0c0);
-      return r0*1.6;
+      return feet;
     },
     // an art deco stone tower stepping back to a crown of lit sunbursts
     regent: function(gp, s, H){
-      var tiers = [[1, 0.45], [0.82, 0.2], [0.66, 0.13], [0.52, 0.09]], y = 0;
+      var tiers = [[1, 0.45], [0.82, 0.2], [0.66, 0.13], [0.52, 0.09]], y = 0, foot = rrect(s, s*0.9, 1.4, 3);
       tiers.forEach(function(t){ var h = t[1]*H; gp.add(tower(rrect(s*t[0], s*t[0]*0.9, 1.4, 3), y, y + h, 4, null, null, M.stone, TILE.stone)); y += h; });
       var cw = s*0.42, crown = glowMat(0xfff2c8);
       for(var i = 0; i < 6; i++){
@@ -495,7 +502,7 @@ function create(c, W, o){
       }
       gp.add(cone(cw*0.08, cw*0.01, H*0.16, M.steel, y + H*0.12));
       beacon(gp, y + H*0.28 + 1); floods(gp, s*0.6, 0xffe2b0);
-      return s*0.47;
+      return [foot];
     }
   };
   var HMUL = {twist: 1, spire: 1.15, lantern: 0.72, twins: 0.82, needle: 1.35, regent: 0.9};
@@ -506,8 +513,14 @@ function create(c, W, o){
     landG.add(gp);
     mergeInto(gp, true, function(o){ return o.userData.keep; });
     var cr = Math.cos(m.rot), sr = Math.sin(m.rot);
-    var circles = (Array.isArray(foot) ? foot : [{x: 0, z: 0, r: foot}]).map(function(f){ return {x: m.x + f.x*cr + f.z*sr, z: m.z - f.x*sr + f.z*cr, r: f.r}; });
-    marks.push({m: m, g: gp, H: H, circles: circles});
+    // what blocks you: the tower's own outline at the ground (each builder returns its base rings), turned and
+    // moved into the world, each with its bounds for a quick reject
+    var polys = foot.map(function(P){
+      var W2 = P.map(function(q){ return [m.x + q[0]*cr + q[1]*sr, m.z - q[0]*sr + q[1]*cr]; }), b = {x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity};
+      W2.forEach(function(q){ b.x0 = Math.min(b.x0, q[0]); b.x1 = Math.max(b.x1, q[0]); b.z0 = Math.min(b.z0, q[1]); b.z1 = Math.max(b.z1, q[1]); });
+      return {P: W2, b: b};
+    });
+    marks.push({m: m, g: gp, H: H, polys: polys});
   });
 
   /* ---------- the park ---------- */
@@ -1698,8 +1711,8 @@ function create(c, W, o){
       promptUi(riding ? null : nearest());
     },
     blocked: function(x, z){
-      for(var i = 0; i < marks.length; i++) for(var j = 0; j < marks[i].circles.length; j++){
-        var cc = marks[i].circles[j]; if(Math.abs(x - cc.x) < cc.r && Math.abs(z - cc.z) < cc.r && Math.hypot(x - cc.x, z - cc.z) < cc.r) return true;
+      for(var i = 0; i < marks.length; i++) for(var j = 0; j < marks[i].polys.length; j++){
+        var pp = marks[i].polys[j], bb = pp.b; if(x >= bb.x0 && x <= bb.x1 && z >= bb.z0 && z <= bb.z1 && inPoly(pp.P, x, z)) return true;
       }
       if(!park) return false;
       var L = park.toL(x, z);

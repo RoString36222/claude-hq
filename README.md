@@ -381,6 +381,9 @@ and feature guide.
     glows (and reads from afar), and four searchlights sweep the night sky from the gate and the far corners.
   - **Grounds:** blossom and green trees and flower beds wherever the lawn is clear of the rides, the paths and the
     crowd's walks, and a food court of parasol tables strung with lights by the cotton candy.
+  - *Fixed:* you no longer stop short of the landmark towers. Each one blocked a circle round itself, metres outside the
+    Aurora Spire's lobes, the Beacon Tower's shaft and fins, and the corners of the square towers; now only the
+    tower's own outline at the ground blocks you.
   - *Fixed:* the Starswing's chairs had no backs (the line that added them had slipped into a comment), and a long
     ride name ran off its station's sign.
   - *Accessibility:* in Calm and with reduced motion there are no fireworks, the searchlights hold still and the

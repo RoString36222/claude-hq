@@ -163,9 +163,12 @@ class Hq3dSource(unittest.TestCase):
         self.assertIn("[].concat(cur.floor", func_body(self.src, "mapClick"))
         self.assertIn("ray.setFromCamera(ptr, curCam())", func_body(self.src, "pick"))
 
-    def test_orbit_right_button_and_contextmenu(self):
+    def test_orbit_left_or_right_drag_and_contextmenu(self):
         down = func_body(self.src, "onDown")
-        self.assertIn("orbit: !!CHASE[m] && e.button === 2", down)
+        # left- or right-drag orbits in the chase cameras (trackpads have no right-drag)
+        self.assertIn("orbit: !!CHASE[m] && (e.button === 0 || e.button === 2)", down)
+        # a left click that barely moved still walks / picks
+        self.assertIn("if(!d || d.moved > 5) return;", func_body(self.src, "onUp"))
         ctx = func_body(self.src, "onContext")
         self.assertIn("if(rigOn() && CHASE[rig.mode]) e.preventDefault();", ctx)
         # the only contextmenu listener is onContext (no unconditional preventDefault anywhere)

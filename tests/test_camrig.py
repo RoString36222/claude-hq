@@ -444,8 +444,8 @@ class CamRig(unittest.TestCase):
     def test_mode_table_and_order(self):
         m = self.o["modes"]
         self.assertEqual(self.o["order"], ["far", "chase", "near", "fp", "classic"])
-        self.assertEqual((m["far"]["back"], m["far"]["up"], m["far"]["fov"]), (14, 6, 60))
-        self.assertEqual((m["chase"]["back"], m["chase"]["up"], m["chase"]["fov"]), (6, 2.2, 65))
+        self.assertEqual((m["far"]["back"], m["far"]["up"], m["far"]["fov"]), (15, 9, 60))
+        self.assertEqual((m["chase"]["back"], m["chase"]["up"], m["chase"]["fov"]), (7, 3.8, 65))
         self.assertEqual((m["near"]["back"], m["near"]["up"], m["near"]["fov"], m["near"]["side"]), (2.8, 1.8, 70, 0.6))
         self.assertEqual((m["fp"]["fov"], m["photo"]["fov"], m["cine"]["fov"], m["map"]["fov"]), (75, 60, 50, 10))
 
@@ -477,8 +477,8 @@ class CamRig(unittest.TestCase):
         for v in ("car", "moto", "bike", "skate"):
             for mode in ("far", "chase", "near"):
                 self.vclose(self.o["veh"][v][mode], self.expected(mode, v))
-        self.close(self.o["veh"]["moto"]["roll"], 1.0 * 0.4 * 0.5, 1e-9)
-        self.close(self.o["veh"]["bike"]["roll"], 0.6 * 0.4 * 0.5, 1e-9)
+        self.close(self.o["veh"]["moto"]["roll"], 0.4 * 0.4 * 0.5, 1e-9)
+        self.close(self.o["veh"]["bike"]["roll"], 0.25 * 0.4 * 0.5, 1e-9)
         self.close(self.o["veh"]["car"]["roll"], 0, 1e-9)
         for v in ("moto", "bike", "skate"):
             self.assertEqual(self.o["veh"][v]["rollReduced"], 0)
@@ -609,16 +609,16 @@ class CamRig(unittest.TestCase):
         # Q/R: 1.9 rad/s eased in and out, so a 1 s hold turns 1.9 rad once it has coasted out
         self.close(b["swingYaw"], 1.9, 0.02)
         self.assertLessEqual(abs(b["swingLong"]), math.pi + 1e-9)
-        self.close(b["liftUp"], 3 * 2.2, 1e-6)
+        self.close(b["liftUp"], 3 * 3.8, 1e-6)
         self.close(b["liftDown"], 0.6, 1e-6)
-        self.close(b["wheelOut"], 2.5 * 6, 1e-3)
-        self.close(b["wheelIn"], 0.5 * 6, 1e-3)
+        self.close(b["wheelOut"], 2.5 * 7, 1e-3)
+        self.close(b["wheelIn"], 0.5 * 7, 1e-3)
 
     def test_settings_mid_session_and_reduced_motion(self):
         s = self.o["settings"]
         self.close(s["fovAfter"], 80, 0.5)
         self.assertGreater(s["kickOn"]["fov"], 69)
-        self.assertGreater(abs(s["kickOn"]["roll"]), 0.2)
+        self.assertGreater(abs(s["kickOn"]["roll"]), 0.05)
         self.close(s["kickOff"]["fov"], 65, 0.5)
         self.assertEqual(s["kickOff"]["roll"], 0)
         self.assertLess(s["blendNormal"][0], 1)

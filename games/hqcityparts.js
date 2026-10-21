@@ -186,16 +186,16 @@ function lotExtras(c, g, col, rot, toWorld, apronEnd, uid, at){
   var apron = new THREE.Mesh(new THREE.PlaneGeometry(G.w - 0.4, Math.max(0.1, AE - (oz + G.z + G.d/2))), mat(0x323a43, {roughness: 0.9}));
   apron.rotation.x = -PI/2; apron.position.set(lx(G.x), 0.03, (oz + G.z + G.d/2 + AE)/2); apron.receiveShadow = true; g.add(apron);
   // the car, parked inside, nose out: its body in the HQ's paint with stripes in its accent
-  var Cm = c.car(col.paint, col.accent); Cm.g.position.set(lx(K.x), 0, oz + K.z); Cm.g.rotation.y = K.yaw; g.add(Cm.g);
+  var Cm = c.car(col.paint, col.accent, col.plate); Cm.g.position.set(lx(K.x), 0, oz + K.z); Cm.g.rotation.y = K.yaw; g.add(Cm.g);
   lamplit(Cm.g);
   var kp = toWorld(lx(K.x), oz + K.z), car = {g: Cm.g};
   // (id: the same prop after a rebuild; stay: hq3d.js parks it wherever you get off)
   uid = "lot:" + uid + ":";
-  items.push({g: Cm.g, x: kp.x, z: kp.z, yaw: K.yaw + rot, color: col.paint, accent: col.accent, kind: "car", id: uid + "car", stay: true});
+  items.push({g: Cm.g, x: kp.x, z: kp.z, yaw: K.yaw + rot, color: col.paint, accent: col.accent, kind: "car", id: uid + "car", stay: true, plate: col.plate});
   // its motorbike and its bicycle beside the car, in the HQ's accent
-  var Mo = X.moto, Mm = c.moto(col.accent, col.paint); Mm.g.position.set(lx(Mo.x), 0, oz + Mo.z); Mm.g.rotation.y = Mo.yaw; g.add(Mm.g);
+  var Mo = X.moto, Mm = c.moto(col.accent, col.paint, col.plate); Mm.g.position.set(lx(Mo.x), 0, oz + Mo.z); Mm.g.rotation.y = Mo.yaw; g.add(Mm.g);
   var mp = toWorld(lx(Mo.x), oz + Mo.z);
-  lamplit(Mm.g); items.push({g: Mm.g, x: mp.x, z: mp.z, yaw: Mo.yaw + rot, color: col.accent, accent: col.paint, kind: "moto", id: uid + "moto", stay: true});
+  lamplit(Mm.g); items.push({g: Mm.g, x: mp.x, z: mp.z, yaw: Mo.yaw + rot, color: col.accent, accent: col.paint, kind: "moto", id: uid + "moto", stay: true, plate: col.plate});
   var Bm = c.bike(col.accent, col.paint); Bm.g.position.set(lx(Bk.x), 0, oz + Bk.z); Bm.g.rotation.y = Bk.yaw; g.add(Bm.g);
   var bp = toWorld(lx(Bk.x), oz + Bk.z); lamplit(Bm.g);
   items.push({g: Bm.g, x: bp.x, z: bp.z, yaw: Bk.yaw + rot, color: col.accent, accent: col.paint, id: uid + "bike", stay: true});   // a bicycle: no kind, as hq3d.js expects

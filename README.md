@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.1.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.1.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -330,6 +330,11 @@ and feature guide.
 
 ## Changelog
 
+- **3.1.1 — City camera and plates.** The chase camera sits higher and further back (the far camera
+  higher still), so you see the street around you instead of the ground at your feet. Left-drag now
+  turns the camera too (trackpads have no right-drag); a click still walks. On a motorbike or a bicycle
+  the camera follows turns more gently and barely tilts with the lean. Every HQ's car and motorbike
+  carry the HQ's name on their number plates.
 - **3.1.0 — Navigation and rivers.** Finding your way round the cities.
   - **A river through every city:** from the sea past the plaza to a harbour basin in town. The
     **dock** stands on its bank by the plaza (on a tier-1 island too, with a road to it) and the

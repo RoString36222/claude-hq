@@ -610,7 +610,7 @@ HQV.hqWorlds.city3d = function(c, w){
     // the garage apron stops at the lot's front edge (the building stands HQ_DZ in front of the lot's middle)
     var ae = Math.min(11, (E.lot.d || 0)/200 - HQ_DZ);
     E.garage = garagePlace(E.lot, p, B.wings);
-    var X = E.garage ? parts.lotExtras(c, g, HQV.hqLotColors(h.look), p.rot, function(x, z){ return toWorld(p, x, z); }, ae, h.userId, E.garage)
+    var X = E.garage ? parts.lotExtras(c, g, HQV.hqPlated ? HQV.hqPlated(HQV.hqLotColors(h.look), h) : HQV.hqLotColors(h.look), p.rot, function(x, z){ return toWorld(p, x, z); }, ae, h.userId, E.garage)
                      : {glows: [], car: null, items: []};
     E.glows = X.glows; E.car = X.car; E.items = X.items;
     // the building (its own meshes: it fades), then the lot round it: pad, garage, apron; never

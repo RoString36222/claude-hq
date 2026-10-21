@@ -358,12 +358,24 @@ function mount(el, api){
     return root;
   }
   // one vehicle's materials: c1 its paint, c2 the accent (stripes, the rims of a motorbike)
-  var plateTex = null;
-  function vmats(c1, c2){
-    if(!plateTex) plateTex = canvasTex(128, 40, function(g){
+  // Number plates read the HQ's name (its sign), upper case; one texture per text, the font shrinks to fit.
+  var plateTexs = {};
+  function plateText(s){
+    s = String(s == null ? "" : s).toUpperCase().replace(/[^A-Z0-9 '·.&-]/g, "").replace(/\s+/g, " ").trim();
+    return s ? s.slice(0, 18) : "HQ·CITY";
+  }
+  function plateTexFor(txt){
+    txt = plateText(txt);
+    return plateTexs[txt] || (plateTexs[txt] = canvasTex(128, 40, function(g){
       g.fillStyle = "#f1f0e8"; g.fillRect(0, 0, 128, 40); g.strokeStyle = "#20242a"; g.lineWidth = 3; g.strokeRect(3, 3, 122, 34);
-      g.fillStyle = "#20242a"; g.font = "700 21px ui-monospace, Menlo, monospace"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("HQ·CITY", 64, 21);
-    }).t;
+      g.fillStyle = "#20242a"; g.textAlign = "center"; g.textBaseline = "middle";
+      var px = 21; g.font = "700 " + px + "px ui-monospace, Menlo, monospace";
+      while(px > 10 && g.measureText(txt).width > 112){ px -= 1; g.font = "700 " + px + "px ui-monospace, Menlo, monospace"; }
+      g.fillText(txt, 64, 21);
+    }).t);
+  }
+  function vmats(c1, c2, plate){
+    var plateTex = plateTexFor(plate);
     return {
       paint: mat(c1, {metalness: 0.45, roughness: 0.3}), accent: mat(c2, {metalness: 0.4, roughness: 0.34}),
       dark: mat(0x1b1f25, {roughness: 0.72}), trim: mat(0x2b3038, {roughness: 0.82}), seat: mat(0x26292f, {roughness: 0.92}),
@@ -377,9 +389,9 @@ function mount(el, api){
       plate: new THREE.MeshStandardMaterial({map: plateTex, roughness: 0.6})
     };
   }
-  function vehicle(kind, c1, c2){
+  function vehicle(kind, c1, c2, plate){
     var bp = VBP[kind] || (VBP[kind] = compile(BUILD[kind]()));
-    var g = bp.clone(true), M = vmats(c1, c2 == null ? 0xf2f2f2 : c2), on = null;
+    var g = bp.clone(true), M = vmats(c1, c2 == null ? 0xf2f2f2 : c2, plate), on = null;
     g.traverse(function(o){ if(o.isMesh) o.material = M[o.userData.mk] || M.dark; });
     function get(n){ return g.getObjectByName(n); }
     return {g: g, M: M, get: get, seat: get("a-seat"), grips: [get("a-grip-l"), get("a-grip-r")], feet: [get("a-foot-l"), get("a-foot-r")],
@@ -537,8 +549,8 @@ function mount(el, api){
     });
     return g;
   }
-  function carModel(body, accent){
-    var V = vehicle("car", carPaint(body), accent);
+  function carModel(body, accent, plate){
+    var V = vehicle("car", carPaint(body), accent, plate);
     return {g: V.g, wheels: [0, 1, 2, 3].map(function(i){ return V.get("wheel-" + i); }), steer: [V.get("steer-l"), V.get("steer-r")], spin: V.get("spin"),
             R: CAR_WR, seat: V.seat, grips: V.grips, feet: V.feet, lean: -0.08, hats: false, riderK: 0.8, brake: V.brake};
   }
@@ -634,8 +646,8 @@ function mount(el, api){
     anchor(g, "a-seat", 0, 0.88*MOTO_S, -0.27*MOTO_S);
     return g;
   }
-  function motoModel(color, c2){
-    var V = vehicle("moto", color, c2);
+  function motoModel(color, c2, plate){
+    var V = vehicle("moto", color, c2, plate);
     return {g: V.g, wheels: [V.get("wheel-0"), V.get("wheel-1")], steer: V.get("steer"), R: MOTO_WR*MOTO_S,
             seat: V.seat, grips: V.grips, feet: V.feet, lean: 0.45, brake: V.brake};
   }
@@ -672,7 +684,7 @@ function mount(el, api){
     glow: function(c, sz, op){ return glowSprite(c, sz, op); }, label: function(t, c, sc){ return label(t, c, sc); }, glyph: function(ch, c){ return glyph(ch, c); },
     plant: function(x, z, sc, seed){ return plant(x, z, sc, seed); }, sky: function(day){ return day ? sky.day : sky.night; },
     bike: function(col, c2){ return bikeModel(col, c2); }, bikeRoll: function(B, d, st){ bikeRoll(B, d, st); }, bikeColor: bikeColor,
-    car: function(body, accent){ return carModel(body, accent); }, moto: function(col, c2){ return motoModel(col, c2); },
+    car: function(body, accent, plate){ return carModel(body, accent, plate); }, moto: function(col, c2, plate){ return motoModel(col, c2, plate); },
     board: function(col){ return boardModel(col); },
     rng: rng, hashStr: hashStr, short: short, rr: rr, crewState: crewState,
     character: function(key, cb){ makeCharacter(key, cb); }, anim: function(ch, n, sp){ setAnim(ch, n, sp); },
@@ -1352,7 +1364,7 @@ function mount(el, api){
   function mountOn(b, i){
     var lean = new THREE.Group(); avatar.g.add(lean);
     var kind = VEHICLES[b.kind] ? b.kind : "bike", car = kind === "car", boat = !!VEHICLES[kind].boat && !!HQV.hqboat, heli = !!VEHICLES[kind].heli && !!HQV.hqheli;
-    var B = heli ? HQV.hqheli.model(ctx, kind, b.color, b.accent) : boat ? HQV.hqboat.model(ctx, kind, b.color, b.accent) : car ? carModel(b.color, b.accent) : kind === "moto" ? motoModel(b.color, b.accent) : kind === "skate" ? boardModel(b.color) : bikeModel(b.color, b.accent); lean.add(B.g);
+    var B = heli ? HQV.hqheli.model(ctx, kind, b.color, b.accent) : boat ? HQV.hqboat.model(ctx, kind, b.color, b.accent) : car ? carModel(b.color, b.accent, b.plate) : kind === "moto" ? motoModel(b.color, b.accent, b.plate) : kind === "skate" ? boardModel(b.color) : bikeModel(b.color, b.accent); lean.add(B.g);
     if(avatar.ch){ lean.add(avatar.ch.o); seatAny(avatar.ch, kind, B); }
     b.g.visible = false;
     avatar.airborne = false; avatar.vy = 0; avatar.hop = 0;   // getting on mid-hop lands you on the seat
@@ -2268,9 +2280,10 @@ function mount(el, api){
       // first person and photo: a click captures the mouse for looking (Esc gives it back); no picking while locked
       if(m === "fp" || m === "photo"){ if(!locked() && canvas.requestPointerLock){ try { canvas.requestPointerLock(); } catch(x){} } drag = null; return; }
       if(m === "cine") return;
-      // map: left-drag pans; chase family: right-drag orbits, a left click picks / walks
+      // map: left-drag pans; chase family: left- or right-drag orbits (trackpads have no right-drag),
+      // and a left click that barely moved still picks / walks (onUp, under 5 px)
       drag = {x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, moved: 0, rig: true, button: e.button,
-              map: m === "map" && e.button === 0, orbit: !!CHASE[m] && e.button === 2};
+              map: m === "map" && e.button === 0, orbit: !!CHASE[m] && (e.button === 0 || e.button === 2)};
       canvas.setPointerCapture(e.pointerId); return;
     }
     drag = {x: e.clientX, y: e.clientY, yaw: view.yaw, pitch: view.pitch, moved: 0}; canvas.setPointerCapture(e.pointerId);

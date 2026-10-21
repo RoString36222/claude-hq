@@ -31,8 +31,8 @@ var PI = Math.PI, DEG = PI/180;
 // distances metres, angles degrees; side > 0 = to the right (model-local -x)
 var MODES = {
   map:     {fov: 10, lag: 6, collide: 0},
-  far:     {back: 14, up: 6, fov: 60, side: 0, lag: 5, collide: 0.4, near: 0.3, chase: true},
-  chase:   {back: 6, up: 2.2, fov: 65, side: 0, lag: 6, collide: 0.35, near: 0.3, chase: true},
+  far:     {back: 15, up: 9, fov: 60, side: 0, lag: 5, collide: 0.4, near: 0.3, chase: true},
+  chase:   {back: 7, up: 3.8, fov: 65, side: 0, lag: 6, collide: 0.35, near: 0.3, chase: true},
   near:    {back: 2.8, up: 1.8, fov: 70, side: 0.6, lag: 8, collide: 0.3, near: 0.3, chase: true},
   fp:      {back: 0, up: 1.65, fov: 75, side: 0, lag: 30, collide: 0.15, near: 0.15},
   classic: {ortho: true},
@@ -43,8 +43,8 @@ var ORDER = ["far", "chase", "near", "fp", "classic"];
 // anchors in the model-local frame (+z forward, +x LEFT), metres
 var VEHICLE = {
   car:   {backMul: 1.35, upMul: 0.85, sideMul: 1,   fovSpeedKick: 1,   fpAnchor: {seat: [-0.38, 1.15, 0.1], bonnet: [0, 1.05, 1.6]}, roll: 0},
-  moto:  {backMul: 1.0,  upMul: 0.75, sideMul: 1,   fovSpeedKick: 1,   fpAnchor: {seat: [0, 1.35, -0.1]}, roll: 1.0},
-  bike:  {backMul: 0.9,  upMul: 0.85, sideMul: 1,   fovSpeedKick: 1,   fpAnchor: {seat: [0, 1.55, -0.2]}, roll: 0.6},
+  moto:  {backMul: 1.0,  upMul: 0.75, sideMul: 1,   fovSpeedKick: 1,   fpAnchor: {seat: [0, 1.35, -0.1]}, roll: 0.4, headLag: 3.5},
+  bike:  {backMul: 0.9,  upMul: 0.85, sideMul: 1,   fovSpeedKick: 1,   fpAnchor: {seat: [0, 1.55, -0.2]}, roll: 0.25, headLag: 3},
   skate: {backMul: 1.1,  upMul: 0.55, sideMul: 1.4, fovSpeedKick: 1.6, fpAnchor: {seat: [0, 1.5, 0]}, roll: 0.3},
   // the boats at the docks (games/hqboat.js): low on the water, the jet ski banks into its turns
   rowboat: {backMul: 1.2, upMul: 0.8, sideMul: 1,  fovSpeedKick: 0.5, fpAnchor: {seat: [0, 1.1, -0.1]}, roll: 0},
@@ -57,7 +57,8 @@ var SPAN_MIN = 44, SPAN_MAX = 2048, HALF = 1024, MAP_TAN = Math.tan(5*DEG);
 var LOOK_H = 1.3;          // chase look point above the target's feet (the "head" the camera frames)
 var FAR = 6000, BLEND = 0.5, BLEND_RED = 0.3, DIVE = 1.2, DIVE_RED = 0.6, FLY_MAP = 0.8;
 // chase family: heading spring omega = clamp(HEAD_MIN + HEAD_K |turnRate|, HEAD_MIN, HEAD_MAX); HEAD_HOLD decays its
-// velocity when you stand still; VEH_LAG the vehicle rotation lag; SWING rad/s eased in over SWING_HL s; the pivot
+// velocity when you stand still; VEH_LAG the vehicle rotation lag (two-wheelers turn sharply, so they use a softer
+// VEHICLE[v].headLag and a small horizon roll: the camera swings and tilts gently instead of whipping round); SWING rad/s eased in over SWING_HL s; the pivot
 // springs at PIVOT_W within PIVOT_MAX m of the head; look-ahead min(AHEAD_MAX, speed AHEAD_K) at AHEAD_W;
 // collision pull-in COL_IN, push-out COL_OUT, COL_HYST m of hysteresis
 var HEAD_MIN = 1.6, HEAD_K = 1.1, HEAD_MAX = 6, HEAD_HOLD = 4, VEH_LAG = 7, SWING_HL = 0.08, PIVOT_W = 12, PIVOT_MAX = 1.5;
@@ -371,7 +372,7 @@ function chasePose(s, mode, T, dt, q){
   if(_.head == null){ _.head = T.yaw; _.headV = 0; }
   var goal = V ? T.yaw : T.travelYaw;
   if(goal != null){
-    var tr = V ? 0 : T.turnRate, w = V ? VEH_LAG : clamp(HEAD_MIN + HEAD_K*Math.abs(tr), HEAD_MIN, HEAD_MAX);
+    var tr = V ? 0 : T.turnRate, w = V ? (V.headLag || VEH_LAG) : clamp(HEAD_MIN + HEAD_K*Math.abs(tr), HEAD_MIN, HEAD_MAX);
     var ref = _.headV/w - clamp(HEAD_BIAS*tr, -HEAD_BIAS_MAX, HEAD_BIAS_MAX), err = wrap(goal - _.head - ref) + ref;
     // pull: where the spring heads (the goal less its steady turning lag). With the goal on the far side of the
     // turn (coming round to meet the camera, e.g. A after S) both the pull and the goal's turn are kept only by

@@ -60,7 +60,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           # Cities (3.0): the civic kit, residents, traffic, the sea, boats, travel
                           "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqheli",
                           # vehicles (3.2): the catalogue, handling from specs, their bodies, the (temporary) Showroom
-                          "hqvehicles", "hqvehiclephys", "hqvehiclemodels", "hqshowroom",
+                          "hqvehicles", "hqvehiclephys", "hqvehiclemodels", "hqshowroom", "hqgarage",
                           "hqtravel", "hqvoyage", "hqships", "hqbridges",
                           "hqair", "hqaircraft", "hqairbase",
                           # navigation (3.1): the router, the minimap, the route's chevrons, the Go to panel
@@ -72,7 +72,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         m = re.search(r"\bhq:\[(\d+),(\d+)\]", read(MULTI))
         self.assertTrue(m)
         lo, hi = int(m.group(1)), int(m.group(2))
-        self.assertEqual((lo, hi), (1, 3))   # v3: Cities, a presence room per world ("isles")
+        self.assertEqual((lo, hi), (1, 4))   # v4: the catalogue vehicle you drive ("vehicles")
         p = re.search(r'\("hq",\s*(\d+),', read(PROTOCOL))
         self.assertTrue(p, "hq row in protocol.rs")
         self.assertGreaterEqual(hi, int(p.group(1)))
@@ -88,7 +88,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         self.assertIn("msg.h=Math.max(-50000, Math.min(50000, Math.round(w.h*100)))", m.group(1))
         self.assertIn("Math.max(-90, Math.min(90,", m.group(1))
         self.assertNotRegex(body.replace(m.group(0), ""), r"msg\.[hp]=")
-        self.assertIn("msg.h,msg.p].join", body)   # both in the dedupe key
+        self.assertIn("msg.h,msg.p,msg.v,msg.vp].join", body)   # both in the dedupe key (and the vehicle)
         # the city3d skip comes before anything is sent
         self.assertLess(body.index('w.world==="city3d"'), body.index("ws.send"))
 

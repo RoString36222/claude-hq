@@ -1390,7 +1390,7 @@ function mount(el, api){
     settleY(0); if(boat) avatar.hy = cur.sea ? cur.sea.y : 0; avatar.g.position.y = avatar.hy;
     avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0;
     ride = {idx: i, id: b.id || null, B: B, lean: lean, speed: 0, steer: 0, head: b.yaw, slip: 0, drift: false, gear: 1, rpm: 900,
-            kind: kind, base: base, V: VEHICLES[kind], car: car, eng: null, pitch: 0, pv: 0, roll: 0, rv: 0,
+            kind: kind, base: base, V: VEHICLES[kind], car: car, eng: null, pitch: 0, pv: 0, roll: 0, rv: 0, paint: Math.max(0, b.paint | 0),
             boat: boat ? HQV.hqboat.newState(kind, b.x, b.z, b.yaw) : null,
             heli: heli ? HQV.hqheli.newState(kind, b.x, b.y != null ? b.y : groundAt(b.x, b.z), b.z, b.yaw) : null};
     if(ride.heli){ avatar.hy = ride.heli.y; avatar.g.position.y = avatar.hy; }
@@ -2483,7 +2483,8 @@ function mount(el, api){
     var spot = showroomSpot(V), R = HQV.hqVehicleModels.build(ctx, V.cat, col), g = new THREE.Group(); g.add(R.g);
     g.position.set(spot.x, groundAt(spot.x, spot.z), spot.z); g.rotation.y = spot.yaw;
     (C.scene || scene).add(g);
-    showProp = {g: g, x: spot.x, z: spot.z, yaw: spot.yaw, color: col, kind: id, id: "showroom", stay: true, world: C,
+    var paints = (V.cat.paints || []).map(function(p){ return String(p && p.hex || "").toLowerCase(); }), pi = hex ? paints.indexOf(String(hex).toLowerCase()) : 0;
+    showProp = {g: g, x: spot.x, z: spot.z, yaw: spot.yaw, color: col, paint: Math.max(0, pi), kind: id, id: "showroom", stay: true, world: C,
                 home: {x: spot.x, z: spot.z, yaw: spot.yaw}};
     C.bikes.push(showProp);
     rideUiSync(true);
@@ -2747,6 +2748,8 @@ function mount(el, api){
       }
       P.n = p.n; P.th = typeof p.h === "number" ? p.h/100 : null; P.tp = typeof p.p === "number" ? p.p*PI/180 : 0;
       P.w = p.w; P.tx = p.x/100; P.tz = p.z/100; P.tyaw = p.r*PI/180; P.a = p.a | 0; P.k = p.k | 0; P.y = Math.max(0, Math.min(60, p.y | 0));
+      // a catalogue vehicle (`v`, only while driving): the real car or bike, in its paint; unknown here: the starter
+      P.v = typeof p.v === "string" && VEHICLES[p.v] && VEHICLES[p.v].cat ? p.v : null; P.vp = Math.max(0, p.vp | 0);
     });
     Object.keys(peers).forEach(function(u){ if(!seen[u]){ var P = peers[u]; if(P.g.parent) P.g.parent.remove(P.g); delete peers[u]; } });
   };
@@ -2793,10 +2796,14 @@ function mount(el, api){
       // or at the controls of a helicopter (7) / an attack helicopter (8), at the height `h` they send
       var vk = PEER_VEHICLE[P.a] || null;
       if(vk && !VEHICLES[vk]) vk = null;                          // no games/hqheli.js here
-      if(P.bike && P.vkind !== vk){ if(P.ch){ P.g.add(P.ch.o); seatOn(P.ch, null); } P.g.remove(P.lean); P.bike = null; P.lean = null; P.vkind = null; }
+      // the catalogue vehicle they drive (a car or a bike, matching a = 5 / 6), its paint part of what is drawn
+      if(P.v && (P.a === 5 || P.a === 6) && baseKind(P.v) === vk && HQV.hqVehicleModels) vk = P.v;
+      var vsig = vk && VEHICLES[vk].cat ? vk + ":" + P.vp : vk;
+      if(P.bike && P.vkind !== vsig){ if(P.ch){ P.g.add(P.ch.o); seatOn(P.ch, null); } P.g.remove(P.lean); P.bike = null; P.lean = null; P.vkind = null; }
       if(vk && !P.bike){
-        P.lean = new THREE.Group(); P.g.add(P.lean); P.vkind = vk; P.steer = 0;
-        P.bike = VEHICLES[vk].heli ? HQV.hqheli.model(ctx, vk, bikeColor(u)) : vk === "car" ? carModel(bikeColor(u)) : vk === "moto" ? motoModel(bikeColor(u)) : bikeModel(bikeColor(u));
+        P.lean = new THREE.Group(); P.g.add(P.lean); P.vkind = vsig; P.steer = 0;
+        var Vc = VEHICLES[vk].cat, ph = Vc && Vc.paints && Vc.paints[P.vp] && /^#[0-9a-fA-F]{6}$/.test(Vc.paints[P.vp].hex) ? parseInt(Vc.paints[P.vp].hex.slice(1), 16) : bikeColor(u);
+        P.bike = Vc ? HQV.hqVehicleModels.build(ctx, Vc, ph) : VEHICLES[vk].heli ? HQV.hqheli.model(ctx, vk, bikeColor(u)) : vk === "car" ? carModel(bikeColor(u)) : vk === "moto" ? motoModel(bikeColor(u)) : bikeModel(bikeColor(u));
         P.lean.add(P.bike.g); if(P.ch){ P.lean.add(P.ch.o); seatOn(P.ch, P.bike); }
       }
       if(P.bike){
@@ -2810,8 +2817,9 @@ function mount(el, api){
         if(VEHICLES[vk].heli){                       // rotors at flying speed, the strobe blinking, the searchlight at night
           P.hst = P.hst || {rpm: 1, t: 0, ground: false}; P.hst.t += dt || 0;
           HQV.hqheli.animate(P.bike, P.hst, dt, isNight());
-        } else (vk === "car" ? carRoll : vk === "moto" ? motoRoll : bikeRoll)(P.bike, jump ? 0 : mv, P.steer);
-        var pl = E.calm() || vk === "car" ? 0 : -P.steer*Math.min(1, v/6)*VEHICLES[vk].lean;
+        } else if(P.bike.roll) P.bike.roll(jump ? 0 : mv, P.steer);   // a catalogue vehicle's own wheels
+        else (vk === "car" ? carRoll : vk === "moto" ? motoRoll : bikeRoll)(P.bike, jump ? 0 : mv, P.steer);
+        var pl = E.calm() || baseKind(vk) === "car" ? 0 : -P.steer*Math.min(1, v/6)*VEHICLES[vk].lean;
         P.lean.rotation.z += (pl - P.lean.rotation.z)*ease(8, dt);
         // their brake lights, when they slow down hard (held a moment, so they do not flicker)
         if(P.pv != null && dt > 0 && (P.pv - v)/dt > 3 && v > 0.5) P.brakeT = 0.4; else P.brakeT = (P.brakeT || 0) - dt;
@@ -2833,6 +2841,8 @@ function mount(el, api){
   // on a board: what others should see you doing ({k, y}); null otherwise
   inst.skate = function(){ return ride && ride.kind === "skate" ? skateNet() : null; };
   inst.riding = function(){ return !!ride; };
+  // driving a catalogue vehicle: its id and paint index, for presence (`v` / `vp`, the "vehicles" capability)
+  inst.vehicle = function(){ return ride && ride.V && ride.V.cat ? {v: ride.kind, vp: ride.paint | 0} : null; };
   // read-only, for the HUD's tests and tools: what you are driving and how
   inst.drive = function(){ return ride ? {kind: ride.kind, speed: ride.speed, slip: ride.slip, drift: !!ride.drift, gear: ride.gear, rpm: Math.round(ride.rpm)} : null; };
 

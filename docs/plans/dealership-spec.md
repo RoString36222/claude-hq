@@ -200,27 +200,48 @@ with its own firing pattern and filter, so no audio files.
 
 ## Ownership and economy (Arena, Rust)
 
+**Free for all for now:** every vehicle's `price` and every class's `minLevel` is 0 in the
+catalogue, so buying is claiming. Prices and level gates are data: set them in the catalogue and
+the server's checks apply unchanged (backend/src/vehicles.rs tests them on fixture data).
+
 ```text
 migration 0016_vehicles.sql
-  owned_vehicles(id, user_id, vehicle_id, paint, bought_at,
-                 parked_world, parked_x, parked_z, parked_yaw)   -- where you left it
+  owned_vehicles(id, user_id, vehicle_id, paint, price, bought_at,
+                 parked_world, parked_x, parked_z, parked_yaw)   -- parked_* NULL: in its garage
 
-GET  /v1/vehicles/mine                   -> [{id, vehicle_id, paint, parked}]
-POST /v1/vehicles/buy {vehicle_id, paint} -> 200 {id} | 402 not enough coins | 403 tier too low
-POST /v1/vehicles/:id/park {world, x, z, yaw}
+GET  /v1/vehicles/mine -> {vehicles: [{id, vehicle_id, paint, bought_at, parked: {world, x, z, yaw} | null}], max}
+POST /v1/vehicles/buy {vehicle_id, paint} -> 200 {ok, vehicle, coins}
+       | 404 unknown | 409 not on sale (a starter, a reserve, a class missing a slot) or garage full
+       | 403 below the class's minLevel | 402 not enough Poke Coins | 422 a bad body or paint
+POST /v1/vehicles/:id/park {world, x, z, yaw} | {garage: true} -> 200 {ok} | 404 not yours
 ```
 
-- The Arena keeps its own copy of the catalogue's ids, classes, tiers and prices
-  (`backend/data/vehicles.json`, a byte copy of `games/vehicles/catalogue.json` checked by tests/test_game_data_sync.py, as the
-  game data already is). The server sets the price, never the client.
-- Paid in Poke Coins. Class price bands: tier 1 800-1500, 2 2500-5000, 3 8000-15000,
-  4 25000-40000, 5 (hypercars) 100000+. To be tuned against what players actually earn.
-- **Buying needs the class tier:** your level. To be confirmed: player level, or your island's
-  city tier.
-- Presence: the vehicle you're driving travels as its catalogue id and paint (a new optional
-  field), so other players see the real car. Older clients fall back to today's car or motorbike.
-- Dashboard proxies `/api/arena/vehicles/*` send only the validated vehicle id, paint and
-  coordinates, with the device token.
+- **Owned vehicles live in their city's multi-storey garage** and drive themselves back there when
+  their owner leaves them. `parked` is null in the garage (the normal state) and set only for a
+  vehicle out on a trip; `{garage: true}` puts it back.
+- The Arena keeps its own copy of the catalogue (`backend/data/vehicles.json`, a byte copy of
+  `games/vehicles/catalogue.json` checked by tests/test_game_data_sync.py) and reads ids, slots,
+  prices, paints and each class's `minLevel` from it. The server sets the price, never the client.
+- **Level gate:** a class's `minLevel` (catalogue, per class) against the player's HQ level (session
+  + game XP, `cosmetics::hq_level`, the level on the Trainer card). The intended gates when they
+  are switched on: tier 1 any, 2 L10, 3 L20, 4 L30, 5 (hypercars) L40. 0 = no gate.
+- **Price:** Poke Coins from `poke_balances`, debited in the same `BEGIN IMMEDIATE` transaction as
+  the `owned_vehicles` row, which records the price paid (`poke_ledger`'s op CHECK has no vehicle
+  op). A price of 0 touches no balance. Price bands when set: tier 1 800-1500, 2 2500-5000,
+  3 8000-15000, 4 25000-40000, 5 100000+.
+- Several of the same vehicle may be owned (another paint); at most 20 vehicles per player.
+- **Presence** (hq protocol v4, capability `vehicles`): while driving (a = 5 / 6) the page sends `v`,
+  the catalogue id, and `vp`, the paint index. The Arena keeps them only for a known id and only
+  while a is 5 or 6, and drops the whole frame on a bad one. Others draw the real model in its paint
+  (games/hq3d.js placePeers with hqVehicleModels); an older client, or an Arena without the
+  capability, shows the starter car or motorbike.
+- Dashboard proxies: `GET /api/arena/vehicles/mine`, `POST /api/arena/vehicles/buy` and
+  `POST /api/arena/vehicles/<id>/park` send only a catalogue id, a paint index, an owned vehicle's
+  id, a world id and coordinates, with the device token.
+- Client: `games/hqgarage.js`, `HQV.hqGarage = {mine(), buy(id, paint), park(id, pose | null),
+  cached(), onChange(fn)}`, the API the dealership and calling your vehicle use.
+- **Follow-up:** an unmanned vehicle driving to or from the garage is drawn locally by its owner
+  only. Others see a vehicle only while someone drives it.
 
 ## The dealership (games/hqdealer.js)
 
@@ -258,7 +279,7 @@ POST /v1/vehicles/:id/park {world, x, z, yaw}
 
 ## Open questions
 
-1. Buying gate: player level, or island city tier?
+1. Buying gate: decided, player level (each class's `minLevel`); free for all for now.
 2. Prices: are the coin bands right for what players earn?
 3. Models: check licences per model before importing; any brand with no usable model waits.
 4. The open slots: fill them from the next players' brands, or with BMW and KTM models in the

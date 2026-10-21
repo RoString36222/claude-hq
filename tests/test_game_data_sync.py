@@ -14,6 +14,7 @@ PAIRS = [
     ("games/platformer/levels.json", "backend/data/platformer_levels.json"),
     ("games/strike/map.json", "backend/data/strike_map.json"),
     ("games/strike/map-sandbar.json", "backend/data/strike_map_sandbar.json"),
+    ("games/vehicles/catalogue.json", "backend/data/vehicles.json"),
 ]
 
 

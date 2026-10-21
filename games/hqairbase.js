@@ -8,6 +8,13 @@
  *                   a pair on a straight flyover, a pair on a racetrack over the city (in, a banked half circle,
  *                   out), or (with a carrier) one jet catapulted off its bow while another traps on its stern.
  *   rectHit(R, x, z) is (x, z) inside the turned rectangle R = {x, z, hw, hd, rot}
+ *   clearOfAirfield(L, R, buffer) the turned rectangle R, grown by buffer m, misses the airfield L (games/hqairfield.js
+ *                   layout, docs/plans/airport-spec.md 3 and 8): every L.platform polygon, every L.landside footprint
+ *                   (the forecourt and access roads at roadW, the skybridge as a capsule of radius w/2, the tower and
+ *                   the ASR as 15 m circles), the runway's keepOut capsule and both approach corridors. No L: true.
+ *   carrierSpot(seaLand(x, z), airportSite, L) -> the carrier's rectangle {x, z, rot, hw: 24, hd: 140} or null: the first
+ *                   bearing (from the airport's, alternating either side) whose open water fits it, clear of L by 40 m
+ * create(c, S, o) also takes o.airfield = L: the air base keeps 20 m off it and the carrier 40 m (without it, as before).
  * create(c, S, o) -> A: what a City (games/hqcity3d.js) draws and asks. o = {W (the world doc), sea (ocean.js
  *   seaOf, or null), commons (bool: the air base and the carrier), civics (hqcivic buildings), blocked(x, z) and
  *   groundY(x, z) (the City's, before this), night}.
@@ -93,6 +100,83 @@ function rectHit(R, x, z){
 }
 // a point in a frame (centre x, z; turned rot): local (lx, lz) -> world, as hqcity3d's toWorld
 function toW(F, lx, lz){ var c = Math.cos(F.rot), s = Math.sin(F.rot); return {x: F.x + lx*c + lz*s, z: F.z - lx*s + lz*c}; }
+
+/* ---------- keeping clear of the airfield (pure) ---------- */
+function segDist(px, pz, a, b){
+  var dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx*dx + dz*dz, u = L2 > 1e-12 ? ((px - a[0])*dx + (pz - a[1])*dz)/L2 : 0;
+  u = u < 0 ? 0 : u > 1 ? 1 : u;
+  return Math.hypot(px - a[0] - dx*u, pz - a[1] - dz*u);
+}
+function cross(a, b, c){ return (b[0] - a[0])*(c[1] - a[1]) - (b[1] - a[1])*(c[0] - a[0]); }
+function segsCross(a, b, c, d){
+  var d1 = cross(c, d, a), d2 = cross(c, d, b), d3 = cross(a, b, c), d4 = cross(a, b, d);
+  return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
+}
+function segSeg(a, b, c, d){
+  if(segsCross(a, b, c, d)) return 0;
+  return Math.min(segDist(a[0], a[1], c, d), segDist(b[0], b[1], c, d), segDist(c[0], c[1], a, b), segDist(d[0], d[1], a, b));
+}
+function inPoly(P, x, z){
+  var inside = false;
+  for(var i = 0, j = P.length - 1; i < P.length; j = i++){
+    var a = P[i], b = P[j];
+    if((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0])*(z - a[1])/(b[1] - a[1]) + a[0]) inside = !inside;
+  }
+  return inside;
+}
+// the distance between the polygon Q and the shape S (closed: a polygon; open: a polyline, a segment or a point); -1 overlapping or touching
+function shapeDist(Q, S, closed){
+  var i, j, m = Infinity;
+  if(!S || !S.length) return Infinity;
+  if(inPoly(Q, S[0][0], S[0][1])) return -1;
+  if(closed && S.length > 2 && inPoly(S, Q[0][0], Q[0][1])) return -1;
+  var n = S.length, ne = closed ? n : Math.max(1, n - 1);
+  for(i = 0; i < Q.length; i++){
+    var a = Q[i], b = Q[(i + 1) % Q.length];
+    for(j = 0; j < ne; j++){ m = Math.min(m, segSeg(a, b, S[j], S[(j + 1) % n])); if(m <= 0) return -1; }
+  }
+  return m;
+}
+function rectPoly(R){
+  return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(function(k){ var p = toW(R, k[0]*R.hw, k[1]*R.hd); return [p.x, p.z]; });
+}
+function pt(p){ return Array.isArray(p) && p.length >= 2 && isFinite(p[0]) && isFinite(p[1]); }
+function clearOfAirfield(L, R, buffer){
+  if(!L || L.ok === false || !R) return true;
+  var b = Math.max(0, +buffer || 0), Q = rectPoly({x: +R.x || 0, z: +R.z || 0, rot: +R.rot || 0, hw: Math.abs(+R.hw || 0), hd: Math.abs(+R.hd || 0)});
+  function far(S, closed, r){ return !Array.isArray(S) || !S.length || !S.every(pt) || shapeDist(Q, S, closed) >= b + (r || 0); }
+  var i, P = L.platform || [];
+  for(i = 0; i < P.length; i++) if(!far(P[i], true)) return false;
+  var ls = L.landside || {}, rw = (+ls.roadW || 8)/2;
+  if(!far(ls.terminal, true) || !far(ls.canopy, true) || !far(ls.carpark, true)) return false;
+  if(!far(ls.forecourt, true, rw) || !far(ls.access, false, rw) || !far(ls.carparkBridge, false, 2)) return false;
+  var sb = ls.skybridge;
+  if(sb && !far([sb.a, sb.b], false, (+sb.w || 8)/2)) return false;
+  var circ = [ls.tower, ls.asr];
+  for(i = 0; i < circ.length; i++){ var C = circ[i]; if(C && !far([[+C.x, +C.z]], false, 15)) return false; }
+  var K = L.keepOut || {}, caps = (K.capsule ? [K.capsule] : []).concat(K.corridors || []);
+  for(i = 0; i < caps.length; i++){ var c = caps[i]; if(c && !far([c.a, c.b], false, +c.r || 0)) return false; }
+  return true;
+}
+// The carrier: out from the airport's bearing (alternately either side, 5° steps), the first open water that takes its
+// 48 x 280 m deck (230 m past the coast), clear of the airfield by 40 m
+var CARRIER = {hw: 24, hd: 140, off: 230, clear: 40};
+function carrierSpot(seaLand, airport, L){
+  if(typeof seaLand !== "function") return null;
+  var bear = airport ? Math.atan2(+airport.x || 0, +airport.z || 0) : PI*1.5;
+  for(var i = 0; i < 72; i++){
+    var a = bear + (i % 2 ? 1 : -1)*Math.ceil(i/2)*PI/36, sx = Math.sin(a), sz = Math.cos(a), rc = null;
+    for(var r = 200; r < 1500; r += 10){
+      var ok = true; for(var q = 0; q <= 80; q += 20) if(seaLand(sx*(r + q), sz*(r + q))){ ok = false; break; }
+      if(ok){ rc = r; break; }
+    }
+    if(rc == null) continue;
+    var Kp = {x: sx*(rc + CARRIER.off), z: sz*(rc + CARRIER.off), rot: a + PI/2, hw: CARRIER.hw, hd: CARRIER.hd}, wet = true;
+    for(var u = -1; u <= 1 && wet; u += 0.5) for(var v = -1; v <= 1; v += 0.25){ var p = toW(Kp, u*Kp.hw, v*Kp.hd); if(seaLand(p.x, p.z)){ wet = false; break; } }
+    if(wet && clearOfAirfield(L, Kp, CARRIER.clear)) return Kp;
+  }
+  return null;
+}
 
 /* ---------- the meshes ---------- */
 function kit(c, parent){
@@ -182,11 +266,12 @@ function create(c, S, o){
     return hi;
   }
   // the nearest clear spot to (cx, cz), rings rmin..rmax m out; -> {x, z, rot, hw, hd, y} or null
-  function findSpot(cx, cz, hw, hd, rot, rmin, rmax, ok, tol){
+  function findSpot(cx, cz, hw, hd, rot, rmin, rmax, ok, tol, fits){
     for(var r = rmin; r <= rmax; r += 12){
       var n = Math.max(1, Math.round(PI*2*r/14));
       for(var i = 0; i < n; i++){
         var a = i/n*PI*2, F = {x: cx + Math.sin(a)*r, z: cz + Math.cos(a)*r, rot: rot, hw: hw, hd: hd};
+        if(fits && !fits(F)) continue;
         if(clear(F, ok, tol, true) == null) continue;
         var y = clear(F, ok, tol, false);
         if(y != null){ F.y = y; return F; }
@@ -229,7 +314,9 @@ function create(c, S, o){
   function buildBase(){
     var f = airport.front || [65536, 0], fl = Math.hypot(f[0], f[1]) || 1, rot = Math.atan2(f[0]/fl, f[1]/fl) + PI/2;
     var ax = airport.x/100, az = airport.z/100;
-    var F = findSpot(ax, az, 56, 40, rot, 60, 520, grass, 2.5) || findSpot(ax, az, 56, 40, rot + PI/2, 60, 520, grass, 3);
+    // off the airfield (its platform, landside buildings, runway and approaches) by 20 m when the City hands its layout
+    var fits = o.airfield ? function(F){ return clearOfAirfield(o.airfield, F, 20); } : null;
+    var F = findSpot(ax, az, 56, 40, rot, 60, 520, grass, 2.5, fits) || findSpot(ax, az, 56, 40, rot + PI/2, 60, 520, grass, 3, fits);
     if(!F) return;
     var g = new THREE.Group(); g.position.set(F.x, F.y, F.z); g.rotation.y = F.rot; root.add(g);
     var K = kit(c, g), concrete = K.m(0x80878e, {roughness: 0.95}), yellow = K.m(0xe3b23c, {roughness: 0.8}), white = K.m(0xeeeeee, {roughness: 0.8});
@@ -314,18 +401,7 @@ function create(c, S, o){
   }
 
   function buildCarrier(){
-    var bear = airport ? Math.atan2(airport.x, airport.z) : PI*1.5, best = null;
-    for(var i = 0; i < 72 && !best; i++){
-      var a = bear + (i % 2 ? 1 : -1)*Math.ceil(i/2)*PI/36, sx = Math.sin(a), sz = Math.cos(a), rc = null;
-      for(var r = 200; r < 1500; r += 10){
-        var ok = true; for(var q = 0; q <= 80; q += 20) if(sea.land(sx*(r + q), sz*(r + q))){ ok = false; break; }
-        if(ok){ rc = r; break; }
-      }
-      if(rc == null) continue;
-      var Kp = {x: sx*(rc + 230), z: sz*(rc + 230), rot: a + PI/2, hw: 24, hd: 140}, wet = true;
-      for(var u = -1; u <= 1 && wet; u += 0.5) for(var v = -1; v <= 1; v += 0.25){ var p = toW(Kp, u*Kp.hw, v*Kp.hd); if(sea.land(p.x, p.z)){ wet = false; break; } }
-      if(wet) best = Kp;
-    }
+    var best = carrierSpot(function(x, z){ return sea.land(x, z); }, airport, o.airfield || null);
     if(!best) return;
     var Y = sea.y || 0, deck = 18, g = new THREE.Group(); g.position.set(best.x, Y, best.z); g.rotation.y = best.rot; root.add(g);
     var K = kit(c, g), grey = K.m(0x6c757d, {roughness: 0.7, metalness: 0.2}), deckM = K.m(0x3b4046, {roughness: 0.95}), hullM = K.m(0x5d666e, {roughness: 0.75, metalness: 0.2});
@@ -456,5 +532,6 @@ function create(c, S, o){
   return A;
 }
 
-HQV.hqAirbase = {CYCLE: CYCLE, JET: JET, jetsAt: jetsAt, rectHit: rectHit, hash: hash, create: create, jetModel: jetModel};
+HQV.hqAirbase = {CYCLE: CYCLE, JET: JET, jetsAt: jetsAt, rectHit: rectHit, hash: hash, create: create, jetModel: jetModel,
+                 clearOfAirfield: clearOfAirfield, carrierSpot: carrierSpot, CARRIER: CARRIER};
 })();

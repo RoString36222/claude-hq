@@ -28,7 +28,23 @@ for(let t = 0; t <= R.T; t += 1){
 }
 const h = V.poseAt(R, R.hand), s0 = V.poseAt(R, 0), s1 = V.poseAt(R, R.T);
 const sa = V.sailings('a', 'b', 1e9, 6e5, 6e5), sb = V.sailings('b', 'a', 1e9, 6e5, 6e5);
-console.log(JSON.stringify({T: R.T, len: R.len, dry, back, maxV, riverSamples, s0: s0.speed, s1: s1.speed,
+// the Commons' airfield: its capsule (the fixture's L.keepOut.capsule) and everything on the water round it
+const L = JSON.parse(fs.readFileSync(path.join(R0, 'tests/fixtures/airfield_commons.json'), 'utf8')), AIR = V.COMMONS_AIRFIELD;
+function clearOf(P, n){ let m = 1e9; for(let k = 0; k + 1 < n; k++) for(let j = 0; j <= 6; j++){ const u = j/6;
+  m = Math.min(m, V.airClear(AIR, P[2*k] + (P[2*k + 2] - P[2*k])*u, P[2*k + 1] + (P[2*k + 3] - P[2*k + 1])*u)); } return m; }
+const air = {capsule: AIR, fixture: L.keepOut.capsule, ferries: [], inside: V.airClear(AIR, -1015, 0), edge: V.airClear(AIR, -1015 + 220, 0)};
+for(let i = 0; i < 24; i++) for(const d of [3200, 6500]){
+  const a = i/24*2*Math.PI, I = {world: 'user:t' + i + '@2', x: Math.sin(a)*d, z: Math.cos(a)*d, W: null};
+  const out = V.route({world: 'claude-hq@2', x: 0, z: 0, W: Wc}, I), back = V.route(I, {world: 'claude-hq@2', x: 0, z: 0, W: Wc}),
+        blind = V.route(I, {world: 'claude-hq@2', x: 0, z: 0, W: null});
+  air.ferries.push([i, d, clearOf(out.pts, out.pts.length/2), clearOf(back.pts, back.pts.length/2), clearOf(blind.pts, blind.pts.length/2)]);
+}
+// the seaplane at the Commons: hqair's dock end, down the river and out along its water runway
+eval(fs.readFileSync(path.join(R0, 'games/hqair.js'), 'utf8'));
+const E = window.HQV.hqAir.dockEnd(Wc, 0, 0, [-5000, 0]), sp = [];
+E.taxi.forEach(p => sp.push(p[0], p[1])); sp.push(E.thr[0] + E.dir[0]*E.len, E.thr[1] + E.dir[1]*E.len);
+air.seaplane = clearOf(sp, sp.length/2);
+console.log(JSON.stringify({air, T: R.T, len: R.len, dry, back, maxV, riverSamples, s0: s0.speed, s1: s1.speed,
   handA: Math.hypot(h.x, h.z), handB: Math.hypot(h.x - B.x, h.z - B.z), handLeg: h.leg,
   end: [s1.x - B.x, s1.z - B.z], berth: V.berthOf(Wi), same: JSON.stringify(sa) === JSON.stringify(sb), n: sa.length,
   next: V.nextSailing('a', 'b', 1e9) >= 1e9}));
@@ -64,6 +80,20 @@ class VoyageTest(unittest.TestCase):
         self.assertAlmostEqual(self.o["end"][0], b["x"], delta=1)
         self.assertAlmostEqual(self.o["end"][1], b["z"], delta=1)
 
+    def test_airfield_capsule_is_the_fixtures(self):
+        a = self.o["air"]
+        self.assertEqual(a["capsule"], a["fixture"])
+        self.assertEqual(a["capsule"], {"a": [-1015, -1220], "b": [-1015, 1220], "r": 180})
+        self.assertAlmostEqual(a["inside"], -180)
+        self.assertAlmostEqual(a["edge"], 40)
+
+    def test_ferries_and_seaplane_keep_off_the_airfield(self):
+        a = self.o["air"]
+        self.assertEqual(len(a["ferries"]), 48)
+        for f in a["ferries"]:
+            self.assertGreaterEqual(min(f[2:]), 40, f)          # out, back, and seen from an island without the doc
+        self.assertGreaterEqual(a["seaplane"], 40)
+
     def test_sailings_shared_both_ways(self):
         self.assertTrue(self.o["same"])
         self.assertEqual(self.o["n"], 10)
@@ -90,14 +120,32 @@ function arch(n, seed, mouths){
   while(isl.length < n && tries++ < 100000){ const a = rnd()*2*Math.PI, r = 3000 + rnd()*(2000 + 900*n), x = Math.sin(a)*r, z = Math.cos(a)*r;
     if(Math.hypot(x, z) < 3000 || isl.some(o => Math.hypot(o.x - x, o.z - z) < 3000)) continue;
     isl.push(Object.assign({world: 'user:' + isl.length + '@2', name: 'I' + isl.length, x, z}, mouths ? {mouth: mouth()} : {})); }
-  return {commons: Object.assign({x: 0, z: 0}, mouths ? {mouth: mouth()} : {}), islands: isl};
+  // the Commons' river never runs out under its airfield (the runway's capsule holds the west coast)
+  const cmouth = () => { let m = mouth(); while(V.airClear(V.COMMONS_AIRFIELD, m[0]/100, m[1]/100) < 400) m = mouth(); return m; };
+  return {commons: Object.assign({x: 0, z: 0}, mouths ? {mouth: cmouth()} : {}), islands: isl};
 }
 function alongT(R, along){ const s = R.s; let lo = 0, hi = s.length - 1; while(hi - lo > 1){ const m = (lo + hi) >> 1; if(s[m] <= along) lo = m; else hi = m; }
   return R.t[lo] + (s[hi] > s[lo] ? (R.t[hi] - R.t[lo])*(along - s[lo])/(s[hi] - s[lo]) : 0); }
+// m from the segment p-q to the airfield capsule (negative: inside)
+const AIR = V.COMMONS_AIRFIELD;
+function segSeg(p, q, a, b){
+  const d = (x, z, a, b) => { const dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx*dx + dz*dz; let u = L2 ? ((x - a[0])*dx + (z - a[1])*dz)/L2 : 0;
+    u = Math.max(0, Math.min(1, u)); return Math.hypot(x - a[0] - dx*u, z - a[1] - dz*u); };
+  const cr = (a, b, c) => (b[0] - a[0])*(c[1] - a[1]) - (b[1] - a[1])*(c[0] - a[0]);
+  if((cr(a, b, p) > 0) !== (cr(a, b, q) > 0) && (cr(p, q, a) > 0) !== (cr(p, q, b) > 0)) return 0;
+  return Math.min(d(p[0], p[1], a, b), d(q[0], q[1], a, b), d(a[0], a[1], p, q), d(b[0], b[1], p, q));
+}
+function airMin(P, n, ox, oz){ let m = 1e9; for(let k = 0; k + 1 < n; k++) m = Math.min(m, segSeg([P[2*k] - ox, P[2*k + 1] - oz], [P[2*k + 2] - ox, P[2*k + 3] - oz], AIR.a, AIR.b) - AIR.r); return m; }
+const ferries = [];
 const out = [];
 for(const [n, seed, mouths] of [[0, 1], [1, 2], [2, 3], [3, 7], [4, 5], [7, 9], [12, 11],
                                  [0, 21, 1], [1, 22, 1], [2, 23, 1], [3, 27, 1], [4, 25, 1], [7, 29, 1], [12, 31, 1]]){
   const A = arch(n, seed, mouths), F = V.fleet(A), C = V.bigCities(A), G = V2.fleet(JSON.parse(JSON.stringify(A)));
+  // the ferries between the Commons (no doc here: its nominal river) and each island, both ways
+  for(const o of A.islands){
+    const cm = {world: 'claude-hq@2', x: 0, z: 0, W: null}, is = {world: o.world, x: o.x, z: o.z, W: null};
+    for(const R of [V.route(cm, is), V.route(is, cm)]) ferries.push({n, seed, to: o.world, air: airMin(R.pts, R.pts.length/2, 0, 0)});
+  }
   for(const sh of F.cruise.concat(F.cargo)){
     const R = sh.R, P = R.pts, m = R.t.length;
     let clear = 1e9, back = 0, turn = 0, vmax = 0;
@@ -125,10 +173,10 @@ for(const [n, seed, mouths] of [[0, 1], [1, 2], [2, 3], [3, 7], [4, 5], [7, 9], 
     out.push({n, mouths: !!mouths, offMouth, square, kind: sh.kind, k: sh.k, cities: C.length, closed: Math.hypot(P[0] - P[2*(m - 1)], P[1] - P[2*m - 1]), clear, back, turn, vmax,
       stops: worlds, uniq: new Set(worlds).size, T: R.T, periodic: Math.hypot(a0.x - a1.x, a0.z - a1.z), same: Math.hypot(a0.x - b0.x, a0.z - b0.z),
       call: calls.length ? (calls[0].here ? 0 : calls[0].arrive - now) : -1, callLeave: calls.length ? calls[0].leave - calls[0].arrive : 0,
-      next: ns && ns.stop ? 1 : 0, boxes: sh.boxes || 0});
+      next: ns && ns.stop ? 1 : 0, boxes: sh.boxes || 0, air: airMin(P, m, 0, 0)});
   }
 }
-console.log(JSON.stringify(out));
+console.log(JSON.stringify({ships: out, ferries}));
 """
 
 
@@ -136,10 +184,19 @@ console.log(JSON.stringify(out));
 class BigShipsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        r = subprocess.run([NODE, "-e", BIG, ROOT], capture_output=True, text=True, timeout=120)
+        r = subprocess.run([NODE, "-e", BIG, ROOT], capture_output=True, text=True, timeout=180)
         if r.returncode != 0:
             raise AssertionError(r.stderr)
-        cls.o = json.loads(r.stdout)
+        o = json.loads(r.stdout)
+        cls.o, cls.ferries = o["ships"], o["ferries"]
+
+    def test_loops_and_ferries_keep_off_the_airfield(self):
+        # docs/plans/airport-spec.md 8: nothing sails within 40 m of the runway's keepOut capsule
+        for r in self.o:
+            self.assertGreaterEqual(r["air"], 40, r)
+        self.assertGreater(len(self.ferries), 50)
+        for f in self.ferries:
+            self.assertGreaterEqual(f["air"], 40, f)
 
     def test_anchorages_off_the_river_mouth(self):
         rows = [r for r in self.o if r["mouths"]]

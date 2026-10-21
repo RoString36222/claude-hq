@@ -1491,10 +1491,11 @@ function mount(el, api){
     var V = ride.V, top = V.sprint && shift ? V.sprint : V.top;
     walkTo = null; walkDoor = null;
     // an engine pulls hardest from a standstill and less as it nears its top speed
-    var pull = (V.motor ? V.acc*Math.max(0.25, 1 - Math.max(0, ride.speed)/top) : V.acc)*Math.max(0, thr);
+    // (V.floor: the pull left near the top, more for an electric motor; games/hqvehiclephys.js)
+    var pull = (V.motor ? V.acc*Math.max(V.floor || 0.25, 1 - Math.max(0, ride.speed)/top) : V.acc)*Math.max(0, thr);
     if(V.motor && hand) ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - 24*dt) : Math.min(0, ride.speed + 24*dt);   // handbrake
     else if(thr > 0) ride.speed = Math.min(top, ride.speed + (ride.speed < 0 ? 14 : pull)*dt);
-    else if(thr < 0) ride.speed = Math.max(-V.rev, ride.speed - (ride.speed > 0 ? 14 : 4)*-thr*dt);
+    else if(thr < 0) ride.speed = Math.max(-V.rev, ride.speed - (ride.speed > 0 ? V.brake || 14 : 4)*-thr*dt);   // V.brake: a heavy car stops longer
     else ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - (V.motor ? 3 : 2)*dt) : Math.min(0, ride.speed + 4*dt);
     if(ride.speed > top) ride.speed = Math.max(top, ride.speed - 6*dt);
     if(ride.B.brake) ride.B.brake(!!V.motor && ((thr < 0 && ride.speed > 0.3) || (hand && Math.abs(ride.speed) > 0.3)));   // the brake lights
@@ -1563,6 +1564,8 @@ function mount(el, api){
         wantR = Math.atan((groundAt(avatar.x + lx, avatar.z + lz) - groundAt(avatar.x - lx, avatar.z - lz))/1.2);
       }
     }
+    // body roll in a turn (V.roll, rad at full lock from 15 m/s: an SUV leans out, the starter car does not)
+    if(ride.V.roll && !E.calm()) wantR += ride.steer*Math.min(1, Math.abs(ride.speed)/15)*ride.V.roll;
     var a = tiltSpring(ride.pitch, ride.pv, wantP, dt), r = tiltSpring(ride.roll, ride.rv, wantR, dt);
     ride.pitch = a[0]; ride.pv = a[1]; ride.roll = r[0]; ride.rv = r[1];
   }

@@ -11,7 +11,7 @@
  *   t0100(top, acc, floor) -> s        the other way round (Infinity when 100 km/h is past `top`)
  *   estimate0100(spec, kind) -> s      from power-to-weight when the maker gives no figure
  *   voiceFor(spec, kind) -> name       the engine voice for a layout
- * entry = {kind: "car"|"bike", type: "sedan"|"coupe"|"suv"|"hatch"|"pickup"|"hyper"|"naked"|"sport"|
+ * entry = {kind: "car"|"bike", type: "sedan"|"coupe"|"suv"|"hatch"|"pickup"|"hyper"|"super"|"naked"|"sport"|
  *          "adventure"|"cruiser"|"scooter"|"dirt", spec: {cc, cyl, layout, aspiration, electric, powerKw,
  *          torqueNm, massKg, drive, topKmh, zeroTo100s, gears}, dims: {lengthM, widthM, heightM, wheelbaseM},
  *          sound (optional: a voice name that overrides voiceFor)}
@@ -38,7 +38,7 @@ var LAUNCH = {rwd: 2.7, awd: 2.2, fwd: 4.2, bike: 2.6};   // s: the quickest 0-1
 // how far a bike leans into a turn, by type (the starter motorbike is a naked: hq3d's 0.42)
 var LEAN = {naked: 0.42, sport: 0.5, adventure: 0.34, cruiser: 0.3, scooter: 0.36, dirt: 0.4};
 // body roll by type (rad at full lock and speed); hq3d's starter car has none
-var ROLL = {hatch: 0, sedan: 0.035, coupe: 0.025, hyper: 0.015, suv: 0.075, pickup: 0.08};
+var ROLL = {hatch: 0, sedan: 0.035, coupe: 0.025, hyper: 0.015, super: 0.018, suv: 0.075, pickup: 0.08};
 var BRAKE = 14;                                       // m/s², hq3d's
 
 function clamp(x, a, b){ return x < a ? a : x > b ? b : x; }
@@ -78,6 +78,8 @@ function voiceFor(spec, kind){
   if(lay === "w16" || (cyl >= 16 && /w/.test(lay))) return "w16";
   if(cyl >= 16) return "v16";
   var turbo = /turbo/.test(String(spec.aspiration || "").toLowerCase());   // a turbo car: its whistle and blow-off
+  if(cyl >= 12) return "v12";                                              // [3.9] a V12 (the Revuelto, the Countach)
+  if(cyl >= 10) return "v10";                                              // a V10 (the Huracán)
   if(cyl >= 8) return turbo ? "v8tt" : "v8";
   if(cyl >= 6) return turbo ? "turbo6" : "six";
   if(/boxer/.test(lay)) return "boxer";

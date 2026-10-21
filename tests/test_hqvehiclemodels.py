@@ -163,7 +163,8 @@ class VehicleModels(unittest.TestCase):
             self.assertAlmostEqual(med/size(self.STARTER[kind]), 1, delta=0.15, msg=(kind, med))
         self.assertGreaterEqual(by["bike"]["bmw-s-1000-rr"], size(self.STARTER["bike"]))
         for i, s in by["car"].items():
-            self.assertGreaterEqual(s, size(self.STARTER["car"])*0.98, i)
+            # [3.9] the one exception: the 1974 Countach, a 1.07 m wedge, drawn at its real size a touch under the hatch
+            self.assertGreaterEqual(s, size(self.STARTER["car"])*(0.95 if i == "lamborghini-countach-lp400" else 0.98), i)
         self.assertGreater(by["car"]["bmw-x5-40i"], by["car"]["bmw-m135-xdrive"]*1.1)      # an SUV still over a hatch
         self.assertGreater(by["bike"]["bmw-r-1300-gs"], by["bike"]["ktm-rc-390"]*1.1)
         # the rider's seat at the starters' height: a bike's about the starter motorbike's (1.06 m)

@@ -16,12 +16,12 @@ NODE = shutil.which("node")
 ID_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 HEX_RE = re.compile(r"^#[0-9a-f]{6}$")
 BIKE_TYPES = {"naked", "sport", "adventure", "cruiser", "scooter", "dirt"}
-CAR_TYPES = {"hatch", "sedan", "coupe", "suv", "pickup", "hyper"}
+CAR_TYPES = {"hatch", "sedan", "coupe", "suv", "pickup", "hyper", "super"}
 BIKE_BANDS = {"400", "950", "over950"}
 CAR_BANDS = {"2000", "3000", "5000", "over5000", "ev"}
-LAYOUTS = {"single", "parallel-twin", "v-twin", "boxer-twin", "inline-3", "inline-4", "inline-6", "v8", "w16", "v16", "electric"}
+LAYOUTS = {"single", "parallel-twin", "v-twin", "boxer-twin", "inline-3", "inline-4", "inline-6", "v8", "v10", "v12", "w16", "v16", "electric"}
 ASPIRATION = {"na", "turbo", "twin-turbo", "quad-turbo", "electric"}
-SOUNDS = {"single", "twin", "vtwin", "boxer", "four", "six", "v8", "w16", "v16", "electric", "turbo4", "turbo6", "v8tt"}
+SOUNDS = {"single", "twin", "vtwin", "boxer", "four", "six", "v8", "w16", "v16", "electric", "turbo4", "turbo6", "v8tt", "v10", "v12"}
 DRIVES = {"rwd", "fwd", "awd"}
 # coins per class tier (the spec's Economy) for when prices are set; tier 0 is the free starters.
 # FREE FOR ALL FOR NOW: every price is 0 (allowed in any tier) and every class's minLevel is 0.

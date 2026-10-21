@@ -133,7 +133,9 @@ class EngineSound(unittest.TestCase):
         want = {"ktm-390-duke": "single", "ktm-1390-super-duke-r": "vtwin", "bmw-s-1000-rr": "four",
                 "bmw-r-1300-gs": "boxer", "bmw-m3-competition": "turbo6", "bmw-m5": "v8tt",
                 "bmw-i4-m50": "electric", "bugatti-chiron-super-sport": "w16", "bugatti-tourbillon": "v16",
-                "ktm-990-duke": "twin", "bmw-m135-xdrive": "turbo4"}
+                "ktm-990-duke": "twin", "bmw-m135-xdrive": "turbo4",
+                "lamborghini-revuelto": "v12", "lamborghini-countach-lp400": "v12", "lamborghini-huracan-sto": "v10",
+                "lamborghini-temerario": "v8tt", "lamborghini-urus-performante": "v8tt"}
         for vid, voice in want.items():
             self.assertEqual(c[vid][0], voice, vid)
         for vid, (snd, derived) in c.items():

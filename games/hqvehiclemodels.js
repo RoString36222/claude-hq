@@ -61,6 +61,7 @@ var DIMS = {
   "car.suv":    {lengthM: 4.92, widthM: 2.00, heightM: 1.75, wheelbaseM: 2.98},
   "car.pickup": {lengthM: 5.37, widthM: 2.03, heightM: 1.90, wheelbaseM: 3.32},
   "car.hyper":  {lengthM: 4.54, widthM: 2.04, heightM: 1.21, wheelbaseM: 2.71},
+  "car.super":  {lengthM: 4.70, widthM: 2.00, heightM: 1.20, wheelbaseM: 2.70},
   "car.ev":     {lengthM: 4.78, widthM: 1.85, heightM: 1.45, wheelbaseM: 2.86},
   "bike.naked": {lengthM: 2.05, widthM: 0.84, heightM: 1.20, wheelbaseM: 1.40},
   "bike.sport": {lengthM: 2.07, widthM: 0.74, heightM: 1.15, wheelbaseM: 1.44},
@@ -76,6 +77,9 @@ var CAR = {
   coupe: {R: 0.35, gc: 0.12, belt: 0.61, nose: 0.46, tail: 0.62, cowl: 0.37, ws: 0.82, roofEnd: 0.12, glassEnd: -0.62, seat: 0.24, fo: 0.47},
   suv:   {R: 0.40, gc: 0.20, belt: 0.60, nose: 0.58, tail: 0.62, cowl: 0.30, ws: 0.62, roofEnd: -0.62, glassEnd: -0.80, seat: 0.40, fo: 0.48},
   hyper: {R: 0.36, gc: 0.10, belt: 0.66, nose: 0.46, tail: 0.66, cowl: 0.20, ws: 0.90, roofEnd: 0.90, glassEnd: -0.30, seat: 0.20, fo: 0.43},
+  // [3.9] a mid-engined supercar: a wedge (a low sharp nose, the windscreen's foot just behind the front axle, a long
+  // rake), the cabin forward, an engine cover sloping from the roof to the tail
+  super: {R: 0.35, gc: 0.10, belt: 0.60, nose: 0.36, tail: 0.68, cowl: 0.10, ws: 1.05, roofEnd: 0.75, glassEnd: -0.55, seat: 0.18, fo: 0.42},
   ev:    {R: 0.35, gc: 0.13, belt: 0.62, nose: 0.48, tail: 0.63, cowl: 0.30, ws: 0.74, roofEnd: 0.12, glassEnd: -0.45, seat: 0.27, fo: 0.46}
 };
 // bikes: wheel radii (rear, front), the steering head's height, the seat's height, bars, lean in a bend
@@ -99,7 +103,8 @@ var ATLAS = {
   white: [0, 0, 64, 64], honey: [64, 0, 256, 128], head: [320, 0, 192, 96], ledbar: [512, 0, 256, 64],
   gauges: [768, 0, 256, 128], ledcell: [512, 64, 64, 64], radfin: [576, 64, 128, 64],
   tyre: [0, 128, 1024, 48], plate: [0, 192, 192, 64], knee: [192, 192, 128, 64], badge: [320, 176, 80, 80],
-  rimtape: [400, 176, 80, 80], screen: [480, 176, 192, 80], stitch: [672, 176, 128, 80], bikehead: [800, 176, 96, 96]
+  rimtape: [400, 176, 80, 80], screen: [480, 176, 192, 80], stitch: [672, 176, 128, 80], bikehead: [800, 176, 96, 96],
+  ylamp: [0, 272, 192, 96], hexbadge: [192, 272, 80, 80]
 };
 var UV = {};
 Object.keys(ATLAS).forEach(function(k){
@@ -169,6 +174,19 @@ function drawAtlas(cv){
     x.fillStyle = "#2b2d32"; x.fillRect(X, Y, W, H); x.fillStyle = "#1c1e22";
     for(var i = 0; i < 5; i++) x.fillRect(X + W*0.12 + i*W*0.17, Y + H*0.1, 3, H*0.8);
     x.strokeStyle = "#8a8f98"; x.lineWidth = 1; x.setLineDash([3, 3]); x.strokeRect(X + 5, Y + 5, W - 10, H - 10); x.setLineDash([]);
+  });
+  // [3.9] a slim supercar headlight: a dark housing, a bright Y-shaped light guide lying on its side, a projector
+  clip(P.ylamp, function(X, Y, W, H){
+    x.fillStyle = "#24272c"; x.fillRect(X, Y, W, H); x.strokeStyle = "#ffffff"; x.lineWidth = H*0.11; x.lineCap = "round";
+    x.beginPath(); x.moveTo(X + W*0.06, Y + H*0.5); x.lineTo(X + W*0.46, Y + H*0.5); x.lineTo(X + W*0.9, Y + H*0.16);
+    x.moveTo(X + W*0.46, Y + H*0.5); x.lineTo(X + W*0.9, Y + H*0.84); x.stroke();
+    circ(X + W*0.72, Y + H*0.5, H*0.13, "#cfe6ff");
+  });
+  // [3.9] a generic hexagonal badge: a gold rim, a black field, a thin inner hexagon (no emblem, no lettering)
+  clip(P.hexbadge, function(X, Y, W, H){
+    function hex(r, c, line){ x.beginPath(); for(var k = 0; k < 6; k++){ var a = k*PI/3; x[k ? "lineTo" : "moveTo"](X + W/2 + Math.cos(a)*r, Y + H/2 + Math.sin(a)*r); }
+      x.closePath(); if(line){ x.strokeStyle = c; x.lineWidth = line; x.stroke(); } else { x.fillStyle = c; x.fill(); } }
+    x.fillStyle = "#101113"; x.fillRect(X, Y, W, H); hex(W*0.48, "#c9a227"); hex(W*0.4, "#101113"); hex(W*0.24, "#c9a227", 3);
   });
   // a round bike headlight: a projector, a ring of daytime LEDs
   clip(P.bikehead, function(X, Y, W, H){ x.fillStyle = "#2a2d31"; x.fillRect(X, Y, W, H); circ(X + W/2, Y + H/2, W*0.4, "#ffffff", W*0.07); circ(X + W/2, Y + H/2, W*0.2, "#ffffff"); circ(X + W/2, Y + H/2, W*0.09, "#cfe6ff"); });
@@ -415,12 +433,17 @@ function buildCar(T, entry, st, d){
   if(zCr > zAr - 0.3) zCr = zAr - 0.3;
   if(zC > zCr - 0.05) zC = zCr - 0.05;
   var brand = st.brand, bmw = brand === "bmw", bugatti = brand === "bugatti", hyper = st.type === "hyper";
+  // [3.9] a mid-engined car (a hypercar or a supercar) and the Lamborghini cues: trapezoid arches, Y lights, hexagons
+  var sup = st.type === "super", mid = hyper || sup, lambo = brand === "lamborghini", lsup = lambo && sup;
+  var sto = lambo && /\bSTO\b/.test(String(entry.model || "")), classic = lambo && /Countach/.test(String(entry.model || ""));
   var hood = function(z){ return yn + (yb - yn)*(L/2 - 0.14 - z)/Math.max(0.1, L/2 - 0.14 - zA); };
   var deck = function(z){ return yb + (yt - yb)*(zC - z)/Math.max(0.1, zC - (-L/2 + 0.12)); };
   // the lower body: its side profile, both arches cut out; fenders swell over the wheels where the hood runs low
-  var pts = [[-L/2, gc + 0.16], [-L/2 + 0.14, gc], [zr - ar, gc], [zr - ar, R], arcPt(zr, R, ar), [zr + ar, gc],
-             [zf - ar, gc], [zf - ar, R], arcPt(zf, R, ar), [zf + ar, gc], [L/2 - 0.16, gc], [L/2, gc + 0.2],
-             [L/2, yn - 0.09], [L/2 - 0.14, yn, L/2, yn]];
+  // (a Lamborghini's arches are half hexagons: three straight cuts, not a curve)
+  var arch = function(z){ return lambo ? [[z - ar*0.5, R + ar*0.866], [z + ar*0.5, R + ar*0.866], [z + ar, R]] : [arcPt(z, R, ar), [z + ar, R]]; };
+  var pts = [[-L/2, gc + 0.16], [-L/2 + 0.14, gc], [zr - ar, gc], [zr - ar, R]].concat(arch(zr), [[zr + ar, gc],
+             [zf - ar, gc], [zf - ar, R]], arch(zf), [[zf + ar, gc], [L/2 - 0.16, gc], [L/2, gc + 0.2],
+             [L/2, yn - 0.09], [L/2 - 0.14, yn, L/2, yn]]);
   var fz = zf, fy = Math.max(hood(fz), archTop + 0.05);
   if(fy > hood(fz) + 0.005 && zf - ar > zA + 0.05){ pts.push([zf + ar*0.9, Math.max(hood(zf + ar*0.9), (fy + hood(zf + ar*0.9))/2)]); pts.push([fz, fy]); pts.push([zf - ar, Math.max(hood(zf - ar), fy - 0.02)]); }
   pts.push([zA, yb]);
@@ -431,27 +454,27 @@ function buildCar(T, entry, st, d){
   pts.push([-L/2 + 0.12, yt]); pts.push([-L/2, yt - 0.12, -L/2, yt]);
   B.side(body, "paint", null, pts, W, 0.045, 6);
   // arch liners
-  [zr, zf].forEach(function(z){ B.add(body, "trim", new T.CylinderGeometry(ar - 0.01, ar - 0.01, W*0.9, 10, 1, true, 0, PI), COL.black, 0, R, z, 0, 0, PI/2); });
+  [zr, zf].forEach(function(z){ B.add(body, "trim", new T.CylinderGeometry(ar - 0.01, ar - 0.01, W*0.9, lambo ? 3 : 10, 1, true, 0, PI), COL.black, 0, R, z, 0, 0, PI/2); });
   // the greenhouse: tinted glass all round, the roof, the pillars
-  var gw = (hyper ? 0.76 : 0.88)*W, top = H - 0.045, tw = gw*(st.type === "suv" ? 0.88 : 0.8);
+  var gw = (mid ? 0.76 : 0.88)*W, top = H - 0.045, tw = gw*(st.type === "suv" ? 0.88 : 0.8);
   // the greenhouse tapers in to the roof (tumblehome); the roof sits on it, a touch wider at its foot
   B.frustum(body, "glass", null, {z0: zA, z1: zC, y: yb - 0.03, w: gw}, {z0: zAr, z1: zCr, y: top, w: tw});
   B.frustum(body, "paint", null, {z0: zAr + 0.03, z1: zCr - 0.03, y: top - 0.012, w: tw + 0.03}, {z0: zAr - 0.06, z1: zCr + 0.05, y: H, w: tw - 0.06});
   var bx = function(f, sx){ return sx*(gw/2 + (tw/2 - gw/2)*f + 0.004); };
   // [3.5.6] the window trim: chrome on the plain cars, black (shadowline) on the quick ones, aluminium on a Bugatti
-  var wtc = bugatti ? COL.alu : (isM(entry) || hyper || st.type === "coupe" || st.type === "hatch") ? COL.black : COL.chrome;
+  var wtc = bugatti ? COL.alu : (isM(entry) || mid || st.type === "coupe" || st.type === "hatch") ? COL.black : COL.chrome;
   [1, -1].forEach(function(sx){
     B.bar(body, "paint", null, [bx(0, sx), yb - 0.02, zA], [bx(1, sx), top, zAr], 0.06, 0.07);                // A pillar
-    B.bar(body, hyper ? "trim" : "paint", COL.black, [bx(0, sx), yb - 0.02, zC + 0.05], [bx(1, sx), top, zCr + 0.04], 0.08, 0.15);   // C
+    B.bar(body, hyper ? "trim" : "paint", COL.black, [bx(0, sx), yb - 0.02, zC + 0.05], [bx(1, sx), top, zCr + 0.04], sup ? 0.12 : 0.08, sup ? 0.3 : 0.15);   // C (a supercar's buttress)
     var zb = (zA + zC)/2 + 0.1, zbt = (zAr + zCr)/2 + 0.06;
-    if(!hyper) B.bar(body, "trim", COL.black, [bx(0, sx), yb - 0.02, zb], [bx(1, sx), top, zbt], 0.035, 0.07);   // B
+    if(!mid) B.bar(body, "trim", COL.black, [bx(0, sx), yb - 0.02, zb], [bx(1, sx), top, zbt], 0.035, 0.07);   // B
     B.box(body, "trim", wtc, 0.02, 0.025, Math.max(0.2, zA - zC - 0.1), sx*(gw/2 + 0.005), yb + 0.005, (zA + zC)/2);   // the belt line
     B.bar(body, "trim", wtc, [bx(0.97, sx), top - 0.02, zAr - 0.04], [bx(0.97, sx), top - 0.02, zCr + 0.06], 0.016, 0.02);   // the window's top trim
     B.box(body, "paint", null, 0.07, 0.07, 0.15, sx*(W/2 + 0.05), yb + 0.08, zA - 0.12);                   // a mirror
     B.box(body, "trim", COL.black, 0.04, 0.09, Math.max(0.2, WB - 2*ar - 0.1), sx*(W/2 - 0.01), gc + 0.07, (zf + zr)/2);   // the sill
   });
   // inside: two seats, the dash; the steering wheel (spin) in front of the driver (right-hand drive: -x)
-  var ys = gc + S.seat, zS = (zA + zCr)/2 + (hyper ? 0.15 : -0.05), xd = -W*0.21, head = top - 0.04 - ys;
+  var ys = gc + S.seat, zS = (zA + zCr)/2 + (mid ? 0.15 : -0.05), xd = -W*0.21, head = top - 0.04 - ys;
   var k = Math.max(0.55, Math.min(1.0, head/1.22)), riderK = 0.8*k;
   var hb = Math.min(0.62, head*0.75);
   [xd, -xd].forEach(function(x){
@@ -477,8 +500,17 @@ function buildCar(T, entry, st, d){
   anchor(T, root, "a-foot-l", xd + 0.11, gc + 0.12, zS + 0.62*k); anchor(T, root, "a-foot-r", xd - 0.11, gc + 0.12, zS + 0.62*k);
   anchor(T, root, "a-seat", xd, ys, zS);
   // the front: lights, the grille (by brand), the bumper's intake
-  var zN = L/2 + 0.004, yl = yn - 0.15;
-  B.t("honey").box(body, "trim", 0xffffff, W*0.62, 0.13, 0.06, 0, gc + 0.2, L/2 - 0.01);                  // the lower intake (its mesh)
+  var zN = L/2 + 0.004, yl = lsup ? yn - 0.09 : yn - 0.15;
+  if(!lambo) B.t("honey").box(body, "trim", 0xffffff, W*0.62, 0.13, 0.06, 0, gc + 0.2, L/2 - 0.01);       // the lower intake (its mesh)
+  else {
+    // [3.9] a wide hexagonal intake (the Urus's grille, up high), big side intakes, each a black blade over its mesh
+    var hx = new T.CircleGeometry(0.5, 6); hx.scale(sup ? W*0.5 : W*0.56, sup ? 0.15 : 0.26, 1);
+    B.t("honey").add(body, "trim", hx, 0xffffff, 0, sup ? gc + 0.17 : (gc + 0.24 + yl - 0.06)/2, zN + 0.006);
+    [1, -1].forEach(function(sx){
+      B.t("honey").box(body, "trim", 0xffffff, W*0.2, sup ? 0.17 : 0.2, 0.04, sx*W*0.36, gc + 0.19, L/2 - 0.005, 0, 0, sx*0.12);
+      B.box(body, "trim", COL.black, W*0.22, 0.03, 0.05, sx*W*0.36, gc + (sup ? 0.29 : 0.31), L/2 + 0.01, 0, 0, -sx*0.32);   // the blade
+    });
+  }
   if(bugatti){
     // the horseshoe: an open ring, its gap at the top, round a dark mesh; quad LED strips each side
     var hs = Math.min(0.22, yn - gc - 0.12)*0.85, gap = 0.62*PI, tor = new T.TorusGeometry(hs, 0.025, 4, 18, 2*PI - gap);
@@ -491,6 +523,13 @@ function buildCar(T, entry, st, d){
   } else {
     var kid = bmw;
     [1, -1].forEach(function(sx){
+      if(lambo){                                                                                        // [3.9] slim, raked, the Y inside
+        var lw = sup ? W*0.27 : W*0.25, lh = sup ? 0.07 : 0.085, lr = sx*(sup ? 0.16 : 0.08);
+        B.box(body, "trim", COL.black, lw + 0.03, lh + 0.025, 0.04, sx*W*0.32, yl, zN - 0.012, 0, 0, lr);
+        if(classic) B.t("head").box(body, "light", COL.head, lw*0.7, lh*0.6, 0.006, sx*W*0.32, yl, zN + 0.008, 0, 0, lr);
+        else B.t("ylamp").box(body, "light", 0xffffff, lw, lh, 0.006, sx*W*0.32, yl, zN + 0.008, 0, 0, lr);
+        return;
+      }
       B.box(body, "trim", COL.black, W*0.24, 0.11, 0.04, sx*W*0.31, yl, zN - 0.012);                    // the headlight housing
       if(bmw){                                                                                          // angel eyes, round projectors
         [0.25, 0.36].forEach(function(f){ B.add(body, "light", new T.TorusGeometry(0.042, 0.008, 3, 12), COL.drl, sx*W*f, yl, zN + 0.008); });
@@ -507,13 +546,25 @@ function buildCar(T, entry, st, d){
         else B.t("honey").plate(body, "trim", 0xffffff, kw - 0.03, kh - 0.03, 0.03, 0.04, sx*(kw/2 + 0.02), ky, zN + 0.012);
         if(!st.ev) for(var j = -1; j <= 1; j++) B.box(body, "trim", COL.alu, 0.012, kh - 0.05, 0.012, sx*(kw/2 + 0.02) + j*kw*0.26, ky, zN + 0.03);   // the slats
       });
-    } else if(!st.ev) B.t("honey").plate(body, "trim", 0xffffff, W*0.42, 0.14, 0.03, 0.04, 0, yl - 0.02, zN + 0.004);
+    } else if(!st.ev && !lambo) B.t("honey").plate(body, "trim", 0xffffff, W*0.42, 0.14, 0.03, 0.04, 0, yl - 0.02, zN + 0.004);
     // [3.5.6] a generic round badge: on the grille, else on the nose above the kidneys
     if(kid) B.t("badge").add(body, "trim", new T.CircleGeometry(0.035, 14), 0xffffff, 0, yn - 0.002, L/2 - 0.08, -1.0, 0, 0);
+    else if(lambo){ var hb0 = new T.CircleGeometry(0.045, 6); hb0.rotateZ(PI/2); hb0.scale(1, 1.15, 1);            // [3.9] a hexagonal shield on the nose
+      B.t("hexbadge").add(body, "trim", hb0, 0xffffff, 0, sup ? yn - 0.004 : yl + 0.02, sup ? L/2 - 0.1 : zN + 0.02, sup ? -1.2 : 0, 0, 0); }
     else B.t("badge").add(body, "trim", new T.CircleGeometry(0.035, 14), 0xffffff, 0, yl - 0.02, zN + 0.022);
   }
   // the side: intakes ahead of the rear wheels (hypercars), Bugatti's C-line
-  if(hyper) [1, -1].forEach(function(sx){ B.box(body, "trim", COL.black, 0.03, 0.26, 0.5, sx*(W/2 + 0.002), gc + 0.3, zr + ar + 0.35); });
+  if(mid && !lambo) [1, -1].forEach(function(sx){ B.box(body, "trim", COL.black, 0.03, 0.26, 0.5, sx*(W/2 + 0.002), gc + 0.3, zr + ar + 0.35); });
+  if(lsup){
+    // [3.9] the big triangular side intake ahead of the rear wheel (one slab through the body: its two faces are the
+    // intakes), a mesh deep inside it; a carbon blade along the door's foot
+    var i0 = zr + ar + 0.04, i1 = Math.min(zr + ar + (classic ? 0.6 : 0.85), (zA + zC)/2), iy0 = gc + 0.2, iy1 = yb - 0.03;
+    B.side(body, "trim", COL.black, [[i0, iy0], [i1, iy1 - 0.02], [i0, iy1]], W + 0.012, 0, 1);
+    B.t("honey").box(body, "trim", 0xffffff, W + 0.004, (iy1 - iy0)*0.5, (i1 - i0)*0.35, 0, iy0 + (iy1 - iy0)*0.62, i0 + (i1 - i0)*0.2);
+  }
+  if(lambo && !sup) [1, -1].forEach(function(sx){                                                     // [3.9] the Urus's sharp shoulder crease
+    B.box(body, "paint", null, 0.03, 0.035, L*0.72, sx*(W/2 - 0.004), yb - 0.1, -0.05, 0.035, 0, 0);
+  });
   if(bugatti){
     [1, -1].forEach(function(sx){
       var cr = Math.min(0.42, (yb - gc)*0.6), arc = 1.15*PI, c = new T.TorusGeometry(cr, 0.03, 3, 14, arc);
@@ -525,6 +576,12 @@ function buildCar(T, entry, st, d){
   var zT = -L/2 - 0.004, yr = yt - 0.2;
   B.box(body, "trim", COL.black, W*0.7, 0.12, 0.06, 0, gc + 0.12, -L/2 + 0.01);
   if(bugatti) B.t("ledbar").box(body, "tail", COL.red, W*0.82, 0.035, 0.02, 0, yt - 0.16, zT);
+  else if(lambo && !classic) [1, -1].forEach(function(sx){
+    // [3.9] a hexagonal ring of light each side (a torus of six segments), a thin light bar running in to the middle
+    var hr = new T.TorusGeometry(sup ? 0.075 : 0.065, 0.014, 3, 6); hr.rotateZ(PI/6);
+    B.add(body, "tail", hr, COL.red, sx*W*(sup ? 0.36 : 0.38), yr, zT);
+    B.t("ledbar").box(body, "tail", COL.red, W*(sup ? 0.2 : 0.24), 0.022, 0.02, sx*W*(sup ? 0.17 : 0.15), yr + 0.01, zT);
+  });
   else [1, -1].forEach(function(sx){
     B.t("ledbar").box(body, "tail", COL.red, W*0.2, 0.05, 0.02, sx*W*0.37, yr, zT);                     // [3.5.6] an LED light bar
     if(bmw) B.box(body, "tail", COL.red, 0.05, 0.1, 0.02, sx*W*0.28, yr - 0.03, zT);                 // the L
@@ -532,39 +589,61 @@ function buildCar(T, entry, st, d){
   // [3.5.6] the tips: quad on an M car or a hypercar, twin otherwise, Bugatti's one wide centre pipe; each a bright
   // open sleeve round a dark mouth
   if(!st.ev){
-    var tip = function(ex, r){
-      B.add(body, "trim", new T.CylinderGeometry(r, r, 0.12, 12, 1, true), COL.chrome, ex, gc + 0.1, -L/2 + 0.02, PI/2, 0, 0);
-      B.add(body, "trim", new T.CircleGeometry(r*0.85, 12), 0x050505, ex, gc + 0.1, -L/2 + 0.02, 0, PI, 0);
+    var tip = function(ex, r, ty, seg){
+      ty = ty != null ? ty : gc + 0.1; seg = seg || 12;
+      B.add(body, "trim", new T.CylinderGeometry(r, r, 0.12, seg, 1, true), COL.chrome, ex, ty, -L/2 + 0.02, PI/2, 0, 0);
+      B.add(body, "trim", new T.CircleGeometry(r*0.85, seg), 0x050505, ex, ty, -L/2 + 0.02, 0, PI, 0);
     };
     if(bugatti){ var bt = new T.CylinderGeometry(0.06, 0.06, 0.1, 12, 1, true); bt.scale(2.2, 1, 1); B.add(body, "trim", bt, COL.alu, 0, gc + 0.1, -L/2 + 0.02, PI/2, 0, 0);
                  var bm = new T.CircleGeometry(0.052, 12); bm.scale(2.2, 1, 1); B.add(body, "trim", bm, 0x050505, 0, gc + 0.1, -L/2 + 0.03, 0, PI, 0); }
+    else if(lsup){ [-1, 1].forEach(function(s2){ tip(s2*(classic ? W*0.3 : 0.09), classic ? 0.045 : 0.058, classic ? gc + 0.1 : yt - 0.3, classic ? 12 : 6); }); }   // [3.9] hexagonal, high in the middle
+    else if(lambo){ for(var ui = 0; ui < 4; ui++) tip((ui < 2 ? 1 : -1)*(W*0.3 + (ui % 2)*0.11), 0.045, gc + 0.1, 6); }
     else { var nx = isM(entry) || hyper ? 4 : 2; for(var i = 0; i < nx; i++) tip((i < nx/2 ? 1 : -1)*(W*0.3 + (i % 2)*0.1), nx > 2 ? 0.042 : 0.048); }
   }
-  if(hyper || st.type === "coupe") B.box(body, "paint", null, W*0.8, 0.03, 0.22, 0, yt + 0.01, -L/2 + 0.2, -0.12, 0, 0);
+  if(mid || st.type === "coupe") B.box(body, "paint", null, W*0.8, 0.03, 0.22, 0, yt + 0.01, -L/2 + 0.2, -0.12, 0, 0);
+  if(lsup && !classic){
+    // [3.9] the engine cover: black louvres across the rear glass, from the roof's end down to its foot
+    for(var li = 1; li <= 4; li++){
+      var lf = li/5, lz = zCr + (zC - zCr)*lf, ly = top + (yb - 0.03 - top)*lf;
+      B.box(body, "trim", COL.black, tw*0.86 + (gw - tw)*lf*0.8, 0.014, 0.05, 0, ly + 0.012, lz, Math.atan2(top - yb, zCr - zC), 0, 0);
+    }
+  }
+  if(sto){
+    // the STO: a big rear wing on two struts, its endplates; a roof scoop and a fin down the engine cover
+    var wy = yt + 0.3, wz = -L/2 + 0.28;
+    B.box(body, "paint", null, W*0.9, 0.025, 0.3, 0, wy, wz, -0.14, 0, 0);
+    [1, -1].forEach(function(sx){
+      B.box(body, "paint", null, 0.02, 0.14, 0.36, sx*W*0.45, wy - 0.03, wz);
+      B.bar(body, "trim", COL.black, [sx*W*0.18, yt - 0.02, wz + 0.05], [sx*W*0.18, wy - 0.01, wz], 0.025, 0.08);
+    });
+    B.box(body, "paint", null, 0.24, 0.07, 0.42, 0, H + 0.03, (zAr + zCr)/2 - 0.05);
+    B.side(body, "paint", null, [[zCr - 0.05, H - 0.02], [zCr + 0.15, H + 0.04], [-L/2 + 0.3, yt + 0.02], [-L/2 + 0.4, yt - 0.02]], 0.02, 0, 1);
+  }
   // detail: shut lines and handles, the plates, indicators and fog lights, wipers, the fin; an SUV's rails and arch
   // cladding, a hatch's roof spoiler, an M saloon's boot lip, a splitter and diffuser fins on the quick ones
-  var two = st.type === "coupe" || hyper, zd0 = Math.min(zA, zf - ar - 0.06), zd1 = Math.max(zr + ar + 0.06, zC - 0.02);
+  var two = st.type === "coupe" || mid, zd0 = Math.min(zA, zf - ar - 0.06), zd1 = Math.max(zr + ar + 0.06, zC - 0.02);
   var shut = two ? [zd0, Math.max(zd1, (zA + zC)/2 - 0.25)] : [zd0, (zA + zC)/2 + 0.1, zd1], ly0 = gc + 0.16, ly1 = yb - 0.03;
   [1, -1].forEach(function(sx){
     var x = sx*(W/2 + 0.002);
     shut.forEach(function(z, i){
-      B.box(body, "trim", COL.black, 0.012, ly1 - ly0, 0.014, x, (ly0 + ly1)/2, z);
-      if(i < shut.length - 1) B.box(body, "trim", bmw ? COL.alu : COL.dark, 0.02, 0.026, 0.13, sx*(W/2 + 0.01), yb - 0.09, shut[i + 1] + 0.16);
+      // (a Lamborghini's scissor door: its front shut line leans back with the A pillar; no handles to see)
+      B.box(body, "trim", COL.black, 0.012, ly1 - ly0, 0.014, x, (ly0 + ly1)/2, z, lsup && i === 0 ? 0.3 : 0, 0, 0);
+      if(i < shut.length - 1 && !lsup) B.box(body, "trim", bmw ? COL.alu : COL.dark, 0.02, 0.026, 0.13, sx*(W/2 + 0.01), yb - 0.09, shut[i + 1] + 0.16);
     });
     B.box(body, "trim", COL.black, 0.06, 0.02, 0.05, sx*(W/2 + 0.01), yb + 0.06, zA - 0.1);                // the mirror's stalk
     B.box(body, "trim", COL.dark, 0.012, 0.05, 0.11, sx*(W/2 + 0.07), yb + 0.08, zA - 0.2);               // its glass
     // [3.5.6] the mirror's indicator strip, the side skirt (black on the quick ones, else body colour)
     B.box(body, "light", COL.amber, 0.05, 0.012, 0.012, sx*(W/2 + 0.06), yb + 0.06, zA - 0.045, 0, -sx*0.35, 0);
-    var sk = isM(entry) || hyper || st.type === "coupe", skl = Math.max(0.3, WB - 2*ar - 0.08);
+    var sk = isM(entry) || mid || st.type === "coupe", skl = Math.max(0.3, WB - 2*ar - 0.08);
     B.box(body, sk ? "trim" : "paint", COL.black, 0.05, 0.035, skl, sx*(W/2 + 0.012), gc + 0.025, (zf + zr)/2);
     if(!bugatti){
       B.box(body, "light", COL.amber, 0.07, 0.03, 0.02, sx*W*0.43, yl - 0.075, L/2 + 0.004);             // indicators
-      B.box(body, "light", COL.head, 0.08, 0.035, 0.02, sx*W*0.37, gc + 0.21, L/2 + 0.006);              // fog lights
+      if(!lambo) B.box(body, "light", COL.head, 0.08, 0.035, 0.02, sx*W*0.37, gc + 0.21, L/2 + 0.006);   // fog lights
     }
     B.box(body, "light", COL.head, 0.08, 0.035, 0.02, sx*W*0.3, gc + 0.22, -L/2 - 0.006);                // reversing lights
     B.box(body, "trim", COL.black, W*0.26, 0.014, 0.02, sx*W*0.18, yb + 0.02, zA - 0.05, 0, sx*0.08, 0); // the wipers
     if(st.type === "suv" || st.type === "pickup"){
-      [zr, zf].forEach(function(z){ var c = new T.TorusGeometry(ar + 0.012, 0.035, 3, 10, PI); c.rotateY(PI/2); B.add(body, "trim", c, COL.black, sx*(W/2 - 0.012), R, z); });
+      [zr, zf].forEach(function(z){ var c = new T.TorusGeometry(ar + 0.012, 0.035, 3, lambo ? 3 : 10, PI); c.rotateY(PI/2); B.add(body, "trim", c, COL.black, sx*(W/2 - 0.012), R, z); });
       var rx = sx*(tw/2 - 0.08), rl = Math.max(0.4, zAr - zCr - 0.1);
       B.box(body, "trim", bmw && isM(entry) ? COL.black : COL.alu, 0.035, 0.03, rl, rx, H + 0.05, (zAr + zCr)/2);
       [zAr - 0.08, zCr + 0.12].forEach(function(z){ B.box(body, "trim", COL.black, 0.04, 0.05, 0.06, rx, H + 0.02, z); });
@@ -573,29 +652,30 @@ function buildCar(T, entry, st, d){
   if(!(bugatti && hyper)) B.t("plate").box(body, "trim", 0xffffff, 0.52, 0.11, 0.012, 0, gc + 0.2, L/2 + 0.035);   // the plates
   B.t("plate").box(body, "trim", 0xffffff, 0.52, 0.11, 0.012, 0, gc + 0.3, -L/2 - 0.012);
   // [3.5.6] the rear badge; the fuel (charge) flap over the rear wheel, its shut line round it
-  B.t("badge").add(body, "trim", new T.CircleGeometry(0.035, 14), 0xffffff, 0, bugatti ? yt - 0.25 : yt - 0.15, -L/2 - 0.006, 0, PI, 0);
+  if(lambo){ var hb1 = new T.CircleGeometry(0.04, 6); hb1.rotateZ(PI/2); hb1.scale(1, 1.15, 1); B.t("hexbadge").add(body, "trim", hb1, 0xffffff, 0, yt - (sup ? 0.12 : 0.15), -L/2 - 0.006, 0, PI, 0); }
+  else B.t("badge").add(body, "trim", new T.CircleGeometry(0.035, 14), 0xffffff, 0, bugatti ? yt - 0.25 : yt - 0.15, -L/2 - 0.006, 0, PI, 0);
   var ffs = st.ev ? 1 : -1, ffy = Math.min(yb - 0.08, Math.max(archTop + 0.08, (archTop + yb)/2)), ffh = Math.min(0.11, Math.max(0.06, yb - archTop - 0.06));
   B.flank(body, "trim", COL.black, 0.17, ffh + 0.012, 0.004, 0.03, ffs*(W/2 + 0.001), ffy, zr + 0.02, ffs);
   B.flank(body, "paint", null, 0.155, ffh, 0.006, 0.025, ffs*(W/2 + 0.003), ffy, zr + 0.02, ffs);
-  if(!hyper){
+  if(!mid){
     B.box(body, "tail", COL.red, 0.32, 0.03, 0.03, 0, top - 0.03, zCr - 0.02);                            // the third brake light
     B.side(body, "trim", COL.black, [[zCr + 0.08, H], [zCr + 0.12, H + 0.05], [zCr + 0.22, H]], 0.05, 0, 1);   // the fin
   }
   if(st.type === "hatch") B.box(body, "paint", null, tw*0.95, 0.035, 0.24, 0, H - 0.01, zCr - 0.02, 0.1, 0, 0);   // the roof spoiler
   if(st.type === "sedan" && bmw && isM(entry)) B.box(body, "paint", null, W*0.6, 0.025, 0.07, 0, yt + 0.012, -L/2 + 0.16);
-  if(hyper || st.type === "coupe" || isM(entry)){
+  if(mid || st.type === "coupe" || isM(entry)){
     B.box(body, "trim", COL.black, W*0.86, 0.022, 0.14, 0, gc + 0.012, L/2 - 0.04);                       // the splitter
     for(var fi = -2; fi <= 2; fi++) B.box(body, "trim", COL.black, 0.02, 0.12, 0.3, fi*W*0.12, gc + 0.07, -L/2 + 0.16);   // diffuser fins
   }
   // the wheels: the front ones in steer holders
-  var tw = hyper ? 0.3 : 0.26, wx = W/2 - tw/2 - 0.03, rim = bugatti ? COL.alu : bmw && isM(entry) ? COL.grey : COL.steel;
-  var wheels = [], cal = bugatti ? COL.alu : bmw && isM(entry) ? COL.bmwBlue : hyper ? COL.red : COL.grey;
+  var tw = mid ? 0.3 : 0.26, wx = W/2 - tw/2 - 0.03, rim = bugatti ? COL.alu : bmw && isM(entry) ? COL.grey : COL.steel;
+  var wheels = [], cal = bugatti ? COL.alu : bmw && isM(entry) ? COL.bmwBlue : lambo ? COL.gold : hyper ? COL.red : COL.grey;
   [[-wx, zf, "steer-l", -1], [wx, zf, "steer-r", 1], [-wx, zr, null, -1], [wx, zr, null, 1]].forEach(function(p, i){
     var h = B.node(root, p[2], p[0], R, p[1]);
     wheels.push(carWheel(B, h, "wheel-" + i, R, tw, p[3], rim, bugatti ? 7 : 5, cal, bmw && isM(entry)));
   });
   finish(T, root);
-  return {g: root, meta: {kind: "car", R: R, radii: [R, R, R, R], lean: hyper ? -0.04 : -0.08, riderK: riderK}};
+  return {g: root, meta: {kind: "car", R: R, radii: [R, R, R, R], lean: mid ? -0.04 : -0.08, riderK: riderK}};
 }
 
 /* ---------- bikes ---------- */

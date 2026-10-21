@@ -17,7 +17,7 @@
 var HQV = (typeof window !== "undefined" ? window : globalThis).HQV = (typeof window !== "undefined" ? window : globalThis).HQV || {};
 
 var TYPE_LABEL = {naked: "Naked", sport: "Sport", adventure: "Adventure", cruiser: "Cruiser", scooter: "Scooter", dirt: "Dirt",
-                  hatch: "Hatchback", sedan: "Sedan", coupe: "Coupé", suv: "SUV", pickup: "Pickup", hyper: "Hypercar"};
+                  hatch: "Hatchback", sedan: "Sedan", coupe: "Coupé", suv: "SUV", pickup: "Pickup", hyper: "Hypercar", super: "Supercar"};
 var KIND_LABEL = {bike: "Bikes", car: "Cars"};
 var OWN = ".hqshowroom";
 

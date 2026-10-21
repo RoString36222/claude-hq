@@ -200,6 +200,10 @@ var ENGINES = {
   boxer:    {cyl: 2, idle: 1050, red: 9000,  h: [1, .5, .6, .25, .3, .12, .15, .06], sub: .45, det: 5, grit: 2, cut: [500, 3000], q: 1.2, gain: 0.05, lope: [4.5, 0.3], rough: .5, pops: .3, air: .5},
   turbo6:   {cyl: 6, idle: 720, red: 7200,  h: [1, .42, .3, .36, .15, .2, .1, .1, .06], sub: 0, det: 6, grit: 1.7, cut: [460, 3200], q: 1.2, gain: 0.055, lope: [8, 0.05], rough: .12, pops: .6, turbo: 2000, air: .5},
   v8tt:     {cyl: 8, idle: 650, red: 7000,  h: [1, .7, .5, .45, .28, .22, .14, .1, .07], sub: .35, det: 6, grit: 2, cut: [420, 3000], q: 1.4, gain: 0.06, lope: [5.5, 0.15], rough: .3, pops: .55, turbo: 1600, air: .5},
+  // [3.9] the naturally aspirated Italians: a V10's hard-edged wail (the Huracán's 8,500 rpm, its odd orders rasping) and
+  // a V12's smooth shriek to 9,500 (the Revuelto); both open the low-pass far up and crackle on the overrun
+  v10:      {cyl: 10, idle: 1000, red: 8700, h: [1, .45, .6, .3, .38, .18, .24, .12, .1, .06], sub: .12, det: 8, grit: 2.2, cut: [700, 6600], q: 1.8, gain: 0.055, lope: [10, 0.06], rough: .15, pops: .8, air: .7},
+  v12:      {cyl: 12, idle: 950, red: 9500, h: [1, .3, .42, .18, .28, .1, .16, .06, .08], sub: 0, det: 10, grit: 1.8, cut: [900, 7400], q: 1.9, gain: 0.05, lope: [12, 0.04], rough: .08, pops: .6, air: .7},
   w16:      {cyl: 16, idle: 900, red: 6700, h: [1, .5, .3, .25, .15, .1, .06], sub: .15, det: 5, grit: 1.5, cut: [600, 3600], q: 1, gain: 0.065, lope: [7, 0.06], rough: .1, pops: .3, turbo: 1500, air: .6},
   v16:      {cyl: 16, idle: 1000, red: 9000, h: [1, .35, .45, .2, .28, .12, .16, .08], sub: 0, det: 9, grit: 1.9, cut: [800, 6000], q: 1.6, gain: 0.055, lope: [9, 0.05], rough: .1, pops: .6, air: .65},
   electric: {lo: 600, hi: 3600, h: null, r2: 2.5, sub: 0, det: 0, grit: 1, cut: [2400, 7000], q: 2, gain: 0.03, air: .15},

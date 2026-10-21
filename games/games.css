@@ -415,6 +415,11 @@ html.hq-calm .vg-plat-cd,html.hq-calm .vg-plat-fade{animation:none}
 .vg-fps-hurt.on{opacity:.9}
 .vg-fps-vig{position:absolute;inset:0;box-shadow:inset 0 0 70px 10px var(--need);opacity:0;transition:opacity .2s}
 .vg-fps-vig.on{opacity:.55}
+/* disaster white-out (thunder / meteor flash / shockring blast). Semantic tokens only. */
+.vg-fps-blind-ov{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .12s;
+  background:color-mix(in srgb,var(--gold) 55%,var(--ink))}
+.vg-fps-blind .vg-fps-blind-ov{opacity:.55}
+html.hq-calm .vg-fps-blind .vg-fps-blind-ov{opacity:.28}
 /* your own drop shield, seen from the inside: the rim colour is set from JS
    (SHIELD_COLOR — the same constant the 3D bubble uses) so games.css stays hex-free */
 .vg-fps-shield-ov{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .25s;
@@ -427,6 +432,71 @@ html.hq-calm .vg-plat-cd,html.hq-calm .vg-plat-fade{animation:none}
 .vg-fps-cloak-ov{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .25s;
   box-shadow:inset 0 0 70px 14px var(--fps-cloak-rim),inset 0 0 18px 4px var(--fps-cloak-rim)}
 .vg-fps-cloak .vg-fps-cloak-ov{opacity:1}
+/* Wave D: arena-wide disaster overlay (warn banner + per-kind tint). Semantic tokens only. */
+.vg-fps-dis-ov{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .3s;
+  background:color-mix(in srgb,var(--panel) 18%,transparent);
+  display:flex;align-items:flex-start;justify-content:center;padding-top:12vh}
+.vg-fps-dis-ov-in{font:800 22px/1.2 var(--sans,var(--ui,system-ui,sans-serif));letter-spacing:.08em;
+  color:var(--ink);background:color-mix(in srgb,var(--panel) 88%,transparent);
+  border:1px solid var(--line);border-radius:10px;padding:10px 18px;
+  box-shadow:0 2px 14px color-mix(in srgb,var(--ink) 22%,transparent)}
+.vg-fps-dis-ov[data-dis="warn"]{opacity:1}
+.vg-fps-dis-ov[data-dis="warn"] .vg-fps-dis-ov-in{
+  color:var(--ink);border-color:var(--gold);background:color-mix(in srgb,var(--gold) 22%,var(--panel))}
+/* the hold names what is tearing up the map (the warn already said INCOMING) */
+.vg-fps-dis-ov[data-dis="sandstorm"] .vg-fps-dis-ov-in,
+.vg-fps-dis-ov[data-dis="meteorshower"] .vg-fps-dis-ov-in,
+.vg-fps-dis-ov[data-dis="hurricane"] .vg-fps-dis-ov-in,
+.vg-fps-dis-ov[data-dis="thunder"] .vg-fps-dis-ov-in,
+.vg-fps-dis-ov[data-dis="earthquake"] .vg-fps-dis-ov-in,
+.vg-fps-dis-ov[data-dis="shockring"] .vg-fps-dis-ov-in,
+.vg-fps-dis-ov[data-dis="toxicfog"] .vg-fps-dis-ov-in,
+.vg-fps-dis-ov[data-dis="absolutezero"] .vg-fps-dis-ov-in,
+.vg-fps-dis-ov[data-dis="sinkhole"] .vg-fps-dis-ov-in,
+.vg-fps-dis-ov[data-dis="emp"] .vg-fps-dis-ov-in{
+  color:var(--ink);border-color:var(--gold);
+  background:color-mix(in srgb,var(--panel) 82%,transparent);
+  box-shadow:0 2px 18px color-mix(in srgb,var(--ink) 28%,transparent)}
+/* live tints — one per disaster, all themes, no hard-coded hex */
+.vg-fps-dis-ov[data-dis="sandstorm"]{opacity:1;background:color-mix(in srgb,var(--warn) 16%,transparent)}
+.vg-fps-dis-ov[data-dis="meteorshower"]{opacity:1;background:color-mix(in srgb,var(--need) 12%,transparent)}
+.vg-fps-dis-ov[data-dis="hurricane"]{opacity:1;background:color-mix(in srgb,var(--brand) 10%,transparent)}
+.vg-fps-dis-ov[data-dis="thunder"]{opacity:1;background:color-mix(in srgb,var(--gold) 14%,transparent)}
+.vg-fps-dis-ov[data-dis="earthquake"]{opacity:1;background:color-mix(in srgb,var(--panel2) 22%,transparent)}
+.vg-fps-dis-ov[data-dis="shockring"]{opacity:1;background:color-mix(in srgb,var(--need) 14%,transparent)}
+.vg-fps-dis-ov[data-dis="toxicfog"]{opacity:1;background:color-mix(in srgb,var(--good) 14%,transparent)}
+.vg-fps-dis-ov[data-dis="absolutezero"]{opacity:1;background:color-mix(in srgb,var(--brand-soft) 14%,transparent)}
+.vg-fps-dis-ov[data-dis="sinkhole"]{opacity:1;background:color-mix(in srgb,var(--panel2) 26%,transparent)}
+.vg-fps-dis-ov[data-dis="emp"]{opacity:1;background:color-mix(in srgb,var(--brand) 14%,transparent)}
+/* EMP Apocalypse: the tracking display goes dark (scope / radar / score strip) */
+.vg-fps-emp .vg-fps-radar{opacity:.18;filter:grayscale(1)}
+.vg-fps-emp .vg-fps-top{opacity:.2}
+.vg-fps-emp .vg-fps-scope{opacity:.15}
+.vg-fps-emp .vg-fps-feed{opacity:.35}
+/* warn banner pulse — runs only when motion is welcome (Calm / reduce still it) */
+@media (prefers-reduced-motion: no-preference){
+  .vg-fps-dis-ov[data-dis="warn"] .vg-fps-dis-ov-in{animation:vgDisWarn 1s ease-in-out infinite}
+  .vg-fps-dis-ov[data-dis="sandstorm"] .vg-fps-dis-ov-in,
+  .vg-fps-dis-ov[data-dis="meteorshower"] .vg-fps-dis-ov-in,
+  .vg-fps-dis-ov[data-dis="thunder"] .vg-fps-dis-ov-in,
+  .vg-fps-dis-ov[data-dis="earthquake"] .vg-fps-dis-ov-in,
+  .vg-fps-dis-ov[data-dis="shockring"] .vg-fps-dis-ov-in,
+  .vg-fps-dis-ov[data-dis="sinkhole"] .vg-fps-dis-ov-in,
+  .vg-fps-dis-ov[data-dis="emp"] .vg-fps-dis-ov-in{animation:vgDisWarn 1.4s ease-in-out infinite}
+  @keyframes vgDisWarn{
+    0%,100%{transform:scale(1);opacity:1}
+    50%{transform:scale(1.04);opacity:.82}
+  }
+}
+html.hq-calm .vg-fps-dis-ov[data-dis] .vg-fps-dis-ov-in{animation:none}
+@media (prefers-reduced-motion: reduce){
+  .vg-fps-dis-ov{transition:none}
+  .vg-fps-dis-ov[data-dis] .vg-fps-dis-ov-in{animation:none}
+}
+/* Large-text: the banner must not clip */
+@media (min-width: 1px){
+  html.hq-large .vg-fps-dis-ov-in{font-size:26px;padding:14px 22px}
+}
 .vg-fps-shld i{display:block;width:90px;height:8px;border-radius:4px;background:var(--panel2);border:1px solid var(--line);overflow:hidden}
 .vg-fps-shld b{display:block;height:100%;width:100%;background:var(--fps-shield)}
 .vg-fps-hp,.vg-fps-ammo,.vg-fps-top{position:absolute;padding:6px 10px;border-radius:8px;background:color-mix(in srgb,var(--panel) 88%,transparent);
@@ -670,6 +740,18 @@ html.hq-calm .bowl-flash.on{opacity:1}
 .vg-fps-scope.sniper{background:
   radial-gradient(circle at 50% 50%, transparent 0 36vmin, var(--vsr-scope, rgb(0,0,0)) 37.5vmin)}
 /* ---- Strikezone (team shooter; shares the Blaster Arena HUD classes above) ---- */
+/* Strikezone radar: a small top-down glance map. Decorative (aria-hidden with the
+   rest of the HUD), so it is allowed to be simple; every colour is a theme token and
+   it never animates on its own (the canvas redraw is a state refresh, not a motion
+   effect — Calm / reduced-motion need no extra gate here). */
+.vg-fps-radar{position:absolute;left:10px;top:10px;width:120px;height:120px;border-radius:10px;overflow:hidden;
+  background:color-mix(in srgb,var(--panel) 88%,transparent);border:1px solid var(--line);
+  box-shadow:0 2px 10px color-mix(in srgb,var(--ink) 18%,transparent)}
+.vg-fps-radar-cv{display:block;width:120px;height:120px;image-rendering:auto}
+@media (max-width: 720px){
+  .vg-fps-radar{width:88px;height:88px}
+  .vg-fps-radar-cv{width:88px;height:88px}
+}
 .vg-strike-final{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;font:800 18px var(--mono);margin:8px 0}
 .vg-strike-final b{font:inherit}
 .vg-strike-win{font-weight:800}

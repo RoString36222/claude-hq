@@ -66,6 +66,26 @@ class RustBuildContext(unittest.TestCase):
             covered = any(p == src or p.startswith(src.rstrip("/") + "/") for src in sources)
             self.assertTrue(covered, f"{p} is embedded but never COPYed into the image")
 
+    def test_game_data_lives_in_backend_data(self):
+        """Game data is embedded out of backend/data/, which is the only tree left.
+
+        The Python Arena (backend/app/) is gone; embeds that reach outside
+        backend/ or into a deleted tree fail the image build with a compiler
+        error far from the Dockerfile that caused it.
+        """
+        in_tree = sorted(p for p in embedded_paths() if p.startswith("data/"))
+        self.assertEqual(in_tree, [
+            "data/fps_map.json",
+            "data/golf_courses.json",
+            "data/kart_tracks.json",
+            "data/platformer_levels.json",
+            "data/pokemon.json",
+            "data/strike_map.json",
+            "data/strike_map_sandbar.json",
+        ])
+        self.assertEqual([p for p in embedded_paths() if "app/" in p], [],
+                         "embeds must not reach the deleted Python tree")
+
 
 if __name__ == "__main__":
     unittest.main()

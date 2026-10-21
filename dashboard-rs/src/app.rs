@@ -350,7 +350,7 @@ impl App {
                 continue;
             }
             let Some(at) = m.get("at").and_then(py::number) else { continue };
-            if !at.is_finite() || !(now - MEALS_KEEP_SECS <= at && at <= now + 60.0) {
+            if !(at.is_finite() && now - MEALS_KEEP_SECS <= at && at <= now + 60.0) {
                 continue;
             }
             out.push(Meal { request_id: rid.into(), session_id: sid.into(), kind: kind.into(), at });

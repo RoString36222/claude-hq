@@ -638,18 +638,46 @@ def main():
         chrome = find_chrome()
         if not chrome:
             fail("no Chrome/Chromium found for the browser check")
-        out = subprocess.run(
-            [chrome, "--headless=new", "--disable-gpu", "--no-sandbox", "--no-first-run",
-             f"--user-data-dir={os.path.join(tmp, 'chrome')}", "--enable-logging=stderr", "--v=0",
-             "--timeout=10000", "--dump-dom", base + "/"],
-            capture_output=True, text=True, timeout=90)
-        console = [ln for ln in out.stderr.splitlines() if "CONSOLE" in ln]
+        # --dump-dom waits for the load event. Third-party sprite hotlinks are
+        # allowed to fail (monsterSVG is the fallback) but a slow CDN can stall
+        # load forever — that is what hung CI. Map every host to NOTFOUND so
+        # those requests die instantly, and keep a wall-clock kill as the
+        # backstop (Chrome's --timeout is not a wall clock here). Do not pass
+        # --virtual-time-budget: virtual time freezes while a request is in
+        # flight and hangs worse.
+        cmd = [
+            chrome, "--headless=new", "--disable-gpu", "--no-sandbox", "--no-first-run",
+            "--disable-extensions", "--disable-background-networking",
+            "--disable-component-update", "--disable-default-apps", "--disable-sync",
+            "--disable-translate", "--metrics-recording-only", "--mute-audio",
+            "--no-default-browser-check", "--disable-dev-shm-usage",
+            "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1",
+            f"--user-data-dir={os.path.join(tmp, 'chrome')}",
+            "--enable-logging=stderr", "--v=0",
+            "--dump-dom", base + "/",
+        ]
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True)
+        try:
+            out, err = proc.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), 9)
+            except OSError:
+                proc.kill()
+            try:
+                out, err = proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                out, err = "", ""
+            fail(f"headless Chrome did not dump the DOM in 30s (exit {proc.poll()})", err)
+        console = [ln for ln in err.splitlines() if "CONSOLE" in ln]
         errors = [ln for ln in console if any(k in ln for k in JS_ERRORS)]
         if errors:
             fail("the page threw while loading:\n" + "\n".join(errors[:20]))
-        if "<body" not in out.stdout or len(out.stdout) < 10000:
-            fail("Chrome rendered an empty page", out.stderr)
-        print(f"ok  headless Chrome loaded the page: {len(out.stdout)} bytes of DOM, "
+        if "<body" not in out or len(out) < 10000:
+            fail("Chrome rendered an empty page", err)
+        print(f"ok  headless Chrome loaded the page: {len(out)} bytes of DOM, "
               f"{len(console)} console lines, no JavaScript errors")
 
         if world:

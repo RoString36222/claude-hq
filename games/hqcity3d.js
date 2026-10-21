@@ -1960,7 +1960,8 @@ HQV.hqWorlds.city3d = function(c, w){
     if(tsim && tview){
       var obs = boatNow ? [] : [{x: me0.x, z: me0.z, r: 1}];
       if(bridges) obs = obs.concat(bridges.obstacles());
-      try { tview.update(tsim.at(nowMs, {x: cam ? cam.x : me0.x, z: cam ? cam.z : me0.z}, 320, obs), nowMs); } catch(e){}
+      if(callObs) obs.push(callObs);                       // a vehicle you called, on its way: traffic stops behind it
+      try { callTraffic = tsim.at(nowMs, {x: cam ? cam.x : me0.x, z: cam ? cam.z : me0.z}, 320, obs); tview.update(callTraffic, nowMs); } catch(e){}
     }
     if(ndraw && cam){
       if(npcSkip > 0) npcSkip--;
@@ -2014,6 +2015,48 @@ HQV.hqWorlds.city3d = function(c, w){
     return m && m.boat ? "boat" : m && (m.ride === "car" || m.ride === "moto" || m.ride === "bike") ? "drive" : "walk";
   }
   function navGraph(){ return HQV.hqnav.graph(W, navTier); }
+  /* Calling your vehicle (games/hqcall.js, driven by games/hq3d.js): the roads it can use, where it may appear out of
+     sight, the traffic it slows for, and itself as an obstacle the traffic stops for. */
+  var callObs = null, callTraffic = null;
+  // the centre line's direction at the point of edge ei nearest (x, z), and half its carriageway (m)
+  function edgeDir(ei, x, z){
+    var e = W.edges[ei], p = e.pts, m = p.length/3, best = 1e18, ux = 0, uz = 1;
+    for(var i = 0; i + 1 < m; i++){
+      var ax = p[3*i]/100, az = p[3*i + 2]/100, bx = p[3*i + 3]/100, bz = p[3*i + 5]/100, dx = bx - ax, dz = bz - az, L2 = dx*dx + dz*dz;
+      if(!(L2 > 0)) continue;
+      var t = Math.max(0, Math.min(1, ((x - ax)*dx + (z - az)*dz)/L2)), qx = ax + dx*t - x, qz = az + dz*t - z, d = qx*qx + qz*qz;
+      if(d < best){ best = d; var L = Math.sqrt(L2); ux = dx/L; uz = dz/L; }
+    }
+    return {ux: ux, uz: uz, half: Math.max(2.5, (e.width - 2*(e.walk || 0))/200)};
+  }
+  w.callRoad = {
+    // the nearest road point to (x, z): {x, z, ux, uz, half, d}
+    snap: function(x, z){
+      if(!W || !HQV.hqnav) return null;
+      var p = HQV.hqnav.snap(navGraph(), x, z); if(!p) return null;
+      var D = edgeDir(p.ei, p.x, p.z);
+      return {x: p.x, z: p.z, ux: D.ux, uz: D.uz, half: D.half, d: p.d};
+    },
+    route: function(from, to){ return W && HQV.hqnav ? HQV.hqnav.route(navGraph(), from, to, "drive") : null; },
+    // road points between r0 and r1 m from (x, z) on streets (no highways, no bridges), about every 25 m
+    candidates: function(x, z, r0, r1){
+      if(!W || !HQV.hqnav) return [];
+      var G = navGraph(), out = [];
+      for(var k = 0; k < G.M; k++){
+        var e = W.edges[G.keep[k]]; if(e.cls === "highway" || e.bridge) continue;
+        var P = G.XZ[k], C = G.CUM[k], last = -1e9;
+        for(var i = 0; i < P.length; i += 2){
+          if(C[i/2] - last < 25) continue;
+          var d = Math.hypot(P[i] - x, P[i + 1] - z); if(d < r0 || d > r1) continue;
+          last = C[i/2]; out.push({x: P[i], z: P[i + 1]});
+        }
+      }
+      return out;
+    },
+    traffic: function(){ return callTraffic || []; },
+    W: function(){ return W; },                            // the packed world (HQV.hqCarpark.find reads its sites)
+    obstacle: function(o){ callObs = o && isFinite(o.x) && isFinite(o.z) ? {x: o.x, z: o.z, r: +o.r || 2.4} : null; }
+  };
   function navPlaces(){
     var me0 = c.avatar() || {x: 0, z: 0};
     return HQV.hqnav.places(W, navTier, {x: me0.x, z: me0.z, me: me, island: V2 && island(),

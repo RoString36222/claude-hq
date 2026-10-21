@@ -921,6 +921,29 @@ html.hq-calm .hq3d-drive-read{display:block}
 .hqdealer-test:focus-visible,.hqdealer-get:focus-visible,.hqdealer-tab:focus-visible,.hqdealer-swatch:focus-visible,.hqdealer-pick:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 @container hq3d (max-width: 700px){ .hqdealer-top{grid-template-columns:1fr} .hqdealer-preview{height:130px} .hqdealer-pair{grid-template-columns:1fr} }
 /* ==== end of the Showroom ==== */
+/* ==== calling your vehicle (games/hqcall.js, C in the 3D City): the list, and the "on its way" pill ==== */
+.hqcall{position:absolute;z-index:7;top:12px;left:50%;transform:translateX(-50%);width:min(380px,calc(100% - 24px));max-height:calc(100% - 24px);
+  display:flex;flex-direction:column;border-radius:14px;color:var(--ink);background:color-mix(in srgb,var(--panel) 96%,transparent);
+  border:1px solid var(--line);box-shadow:var(--shadow-lg);overflow:hidden}
+.hqcall[hidden],.hqcall-pill[hidden]{display:none}
+.hqcall-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.hqcall-title{font-weight:800;font-size:15px}
+.hqcall-close{border:0;background:none;color:var(--muted);font-size:16px;cursor:pointer;padding:4px 8px;border-radius:8px}
+.hqcall-close:hover{color:var(--ink);background:var(--line)}
+.hqcall-list{overflow:auto;padding:8px;display:grid;gap:6px}
+.hqcall-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;border:1px solid var(--line);
+  background:color-mix(in srgb,var(--panel) 80%,var(--bg));color:var(--ink);text-align:left;cursor:pointer;font:inherit}
+.hqcall-item:hover,.hqcall-item:focus-visible{border-color:var(--brand);outline:none}
+.hqcall-item.busy{border-color:var(--brand)}
+.hqcall-swatch{width:16px;height:16px;border-radius:50%;flex:none;border:2px solid var(--line)}
+.hqcall-text{display:grid;gap:2px;min-width:0}
+.hqcall-name{font-weight:750;font-size:13.5px}
+.hqcall-sub{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.hqcall-empty{padding:12px;font-size:13px;color:var(--muted)}
+.hqcall-pill{position:absolute;z-index:6;left:50%;bottom:64px;transform:translateX(-50%);max-width:calc(100% - 24px);padding:7px 14px;border-radius:999px;
+  font-size:13px;font-weight:650;color:var(--ink);background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--brand);
+  box-shadow:var(--shadow-lg);pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+/* ==== end of calling your vehicle ==== */
 /* the 3D City's stats panel (games/hqcity3d.js statsUi), top right */
 .hq3d-stats{position:absolute;right:12px;top:12px;z-index:4;min-width:190px;max-width:min(260px,46%);display:grid;gap:4px;padding:10px 12px;border-radius:12px;
   color:var(--ink);background:color-mix(in srgb,var(--panel) 90%,transparent);border:1px solid var(--line);box-shadow:var(--shadow-lg);font-size:12.5px;pointer-events:auto}

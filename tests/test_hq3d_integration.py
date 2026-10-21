@@ -60,7 +60,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           # Cities (3.0): the civic kit, residents, traffic, the sea, boats, travel
                           "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqheli",
                           # vehicles (3.2): the catalogue, handling from specs, their bodies, the (temporary) Showroom
-                          "hqvehicles", "hqvehiclephys", "hqvehiclemodels", "hqshowroom", "hqgarage", "hqdealer",
+                          "hqvehicles", "hqvehiclephys", "hqvehiclemodels", "hqshowroom", "hqgarage", "hqdealer", "hqcall",
                           "hqtravel", "hqvoyage", "hqships", "hqbridges",
                           "hqair", "hqaircraft", "hqairbase",
                           # navigation (3.1): the router, the minimap, the route's chevrons, the Go to panel

@@ -124,7 +124,8 @@ function create(c, W, opts){
   var quality = opts.quality != null ? clamp(opts.quality|0, 0, 2) : 2, lodScale = LOD_SCALE[quality], shadowsOn = quality > 0;
   var wb = {root: new THREE.Group()}, destroyed = false, nextId = 1, readyLeft = NT*NT;
   wb.root.name = "worldbuild";
-  var U = {uNight: {value: 0}, uFade: {value: [-1, -1, -1, -1, -1, -1, -1, -1]}, uPostUv: {value: new THREE.Vector2(0, 0)}, uWaterT: {value: 0}};
+  var U = {uNight: {value: 0}, uFade: {value: [-1, -1, -1, -1, -1, -1, -1, -1]}, uPostUv: {value: new THREE.Vector2(0, 0)}, uWaterT: {value: 0},
+           uSnow: {value: 0}, uWet: {value: 0}};   // what the weather has left on the ground (settle)
   // tier: null shows every item (ALL_TIERS in tierDiff); ground and sea only exist in v2 / island docs
   var tier = tierOf(opts.tier), hasGround = Gm.hasGround(W), seaY = Gm.seaY(W), diffs = {};
   var M = materials();
@@ -209,6 +210,42 @@ function create(c, W, opts){
     if(seaY != null) m.water = waterMat();
     m.frame = new THREE.MeshStandardMaterial({color: 0x8a9096, roughness: 0.5, metalness: 0.5});
     m.bridge = std({roughness: 0.8});
+    ["terrain", "asphalt", "marks", "walk", "body", "body0", "trees", "bridge"].forEach(function(k){ settle(m[k]); });
+    return m;
+  }
+  // What the weather leaves on the ground (HQ 3.2, games/hqweather.js settled): snow lying in patches on whatever faces
+  // up -- roads, pavements, grass, roofs, tree crowns -- and, after rain, surfaces darker and glossier where wet.
+  // A patch on top of the material's own (the windows' rows, the trees' sway), keyed apart so they compile once.
+  function settle(m){
+    if(!m || m.userData.settled) return m;
+    m.userData.settled = true;
+    var prev = m.onBeforeCompile, prevKey = m.customProgramCacheKey;
+    m.onBeforeCompile = function(sh, r){
+      if(prev) prev.call(m, sh, r);
+      sh.uniforms.uSnow = U.uSnow; sh.uniforms.uWet = U.uWet; sh.uniforms.uSetNight = U.uNight;
+      sh.vertexShader = rep(sh.vertexShader, "common", "varying vec3 vSetW;");
+      sh.vertexShader = rep(sh.vertexShader, "begin_vertex", "vSetW = (modelMatrix * vec4(transformed, 1.0)).xyz;");
+      sh.fragmentShader = rep(sh.fragmentShader, "common", "uniform float uSnow;\nuniform float uWet;\nuniform float uSetNight;\nvarying vec3 vSetW;\n" +
+        "float setH(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7)))*43758.5453); }\n" +
+        "float setN(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0 - 2.0*f);\n" +
+        "  return mix(mix(setH(i), setH(i + vec2(1.0, 0.0)), f.x), mix(setH(i + vec2(0.0, 1.0)), setH(i + vec2(1.0, 1.0)), f.x), f.y); }");
+      sh.fragmentShader = rep(sh.fragmentShader, "normal_fragment_maps",
+        "float setUp = clamp(dot(normal, normalize((viewMatrix*vec4(0.0, 1.0, 0.0, 0.0)).xyz)), 0.0, 1.0);\n" +
+        // snow: where it faces up, in drifts and bare patches (two octaves of noise on the ground plane)
+        "float setPatch = setN(vSetW.xz*0.32)*0.62 + setN(vSetW.xz*1.9)*0.38;\n" +
+        "float setS = smoothstep(0.6, 0.92, setUp)*smoothstep(1.0 - uSnow, 1.0 - uSnow + 0.22, setPatch);\n" +
+        "diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.92, 0.94, 0.97), setS*0.9);\n" +
+        "roughnessFactor = mix(roughnessFactor, 0.8, setS);\n" +
+        // wet: darker and glossier, more so on what lies flat, less where the snow is
+        "float setWt = uWet*smoothstep(0.35, 0.85, setUp)*(1.0 - setS);\n" +
+        "diffuseColor.rgb *= 1.0 - 0.3*setWt;\n" +
+        "roughnessFactor = mix(roughnessFactor, 0.16, setWt*0.85);");
+      // and a wet surface's sheen: the sky caught at a low angle (Fresnel), most down the street, dim at night
+      sh.fragmentShader = rep(sh.fragmentShader, "emissivemap_fragment",
+        "float setF = pow(1.0 - clamp(dot(normal, normalize(-vViewPosition)), 0.0, 1.0), 5.0);\n" +
+        "totalEmissiveRadiance += vec3(0.40, 0.45, 0.50)*setWt*setF*0.14*(1.0 - 0.8*uSetNight);");
+    };
+    m.customProgramCacheKey = function(){ return (prevKey ? prevKey.call(m) : "std") + "+settle"; };
     return m;
   }
   // the sea: a plain colour (no vertex colours on the plane); the normal is tilted by a few travelling cosines of the
@@ -721,6 +758,9 @@ function create(c, W, opts){
   };
   wb.tier = function(){ return tier; };
   wb.setNight = function(on){ U.uNight.value = on ? 1 : 0; };
+  // the weather on the ground (games/hqweather.js settled): snow cover and wetness, 0..1 each
+  wb.setGround = function(snow, wet){ U.uSnow.value = Math.max(0, Math.min(1, +snow || 0)); U.uWet.value = Math.max(0, Math.min(1, +wet || 0)); };
+  wb.settle = settle;                                       // for the City's own materials (the park)
   wb.setFaded = function(ids){
     var v = U.uFade.value, k = 0;
     (ids || []).forEach(function(id){ var n = typeof id === "number" ? id : (typeof id === "string" && /^\d+$/.test(id) ? +id : NaN); if(k < 8 && isFinite(n)) v[k++] = n; });

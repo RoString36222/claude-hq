@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.2.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.4.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -40,34 +40,58 @@ paired), published maps and work signals (off by default) add a few listed field
 
 ---
 
-## 🆕 What's new in 3: Cities
+## 🆕 What's new in 3.1: Travel the archipelago
 
-- **A world of cities.** Arena City is now a 3D world built by the Arena: **The Commons**, an organic island
-  city with districts, every open HQ's tower on its lot, and civic buildings you walk into (the HQ tabs open
-  from the library, the market, the post office; the **town hall** shows the city's tier, treasury and market).
-- **Your own island.** A personal city with your HQ by the town hall, growing with your XP through five tiers
-  (Village → Capital): new streets, services, buses and trams. Upgrade it, run its treasury, choose who visits.
-- **Economy and life.** Tax, upgrades, a specialty good per city, supply chains and an hourly market; residents
-  who commute, work and go home on a schedule.
-- **Getting around.** A river through every city with bridges and boats, a **minimap**, waypoints and
-  **turn-by-turn directions** (N / Go to), ferries, rail, helicopters and cargo ships you can ride, and a
-  **real airport** on the Commons with airliners on a shared timetable and the Isle Hopper to the islands.
+- **Cities.** The Commons is a shared organic city on its own island, and every player gets an **island
+  city** of their own that grows with their XP from Village to Capital, with residents, traffic, buses,
+  trams and a city economy.
+- **Ferries.** Board a ferry at the dock (E) and sit aboard while it sails down the river, across the sea
+  and up the next city's river. The next city loads on the way, with no loading screen. Hold **Space** for 8× speed.
+- **Opening bridges.** Bascule, lift and swing bridges open for ferries and taxiing seaplanes while cars
+  wait at the barriers.
+- **Big ships.** The cruise ship *Claude Serenade* loops round every city, anchoring off its river mouth,
+  and container ships run cargo between them. Ride either from a port and go ashore at any stop.
+- **Rail.** Build a rail line from your island's station to any other city (500 coins from your city's
+  treasury, tier 2+). It runs on viaducts over the streets and across the sea, with 4-car trains you
+  can ride. Lines leaving the same station run side by side.
+- **Air.** Book a jet between airports, or a seaplane between any two docks. Fly a **helicopter** from the
+  pad by your HQ, a hospital roof or the air base: **Space** climbs, **Shift** descends, **W/S** tilt,
+  **A/D** turn, **E** gets in or out once landed. Other players see you flying.
+- **The Commons air base.** Hangars, a radar, an attack helicopter, an aircraft carrier offshore and
+  fighter jets flying over.
+- **A real airport.** An offshore airfield for the Commons: a 1.6 km runway with full markings and lights,
+  taxiways, a terminal and concourse with jet bridges, a control tower, and airliners on a timetable everyone
+  shares. Take the **Isle Hopper** from the terminal to an island.
 - **Real cars and bikes.** A **dealership** in every city with real vehicles from the brands players pick
   (BMW, Bugatti, KTM so far), grouped in classes by type and engine size, two per class, all free. They drive
   like their real specs, live in a **multi-storey garage**, and drive themselves to you when you press **C**.
-- **Driving.** Detailed cars, motorbikes and bicycles with riders seated properly, car **powerslides**, a
-  speed / rev HUD, **Return to HQ (T)**, your HQ's name on its number plates, a higher camera you turn by dragging.
+- **Find your way.** A minimap (press **M** for the big map), waypoints, and turn-by-turn directions
+  along the roads (**N** or **Go to**).
 
-### Also new since 2.5
+---
 
-- **2.8: Valley Rally.** Off-road rally stages in a cel-shaded world with a detailed car model (suspension,
-  Pacejka-style tyres on seven surfaces, AWD / RWD / FWD, handbrake drifts), three cars, ghosts, a daily stage and
-  live rooms of up to 8. Plus **account standings** and **Strikezone** disasters that really hit.
-- **2.7: all Rust.** The local HQ is `dashboard-rs` (`claudehq`) and the Arena is `backend/`; **Update**
-  rebuilds `claudehq` for you.
-- **2.6: HQ Notch.** Your party in the Mac's notch: Allow / Always / Deny prompts, answer questions, approve
-  plans, a live ticker, optional phone alerts; HQ offers a one-click install (Settings › HQ Notch).
-- **2.2–2.4:** Music and listening rooms, the first Arena City, and your own 3D character.
+## 🆕 What's new in 2.5: Make + compete
+
+- **Workshop.** Build your own **kart tracks**, **Platformer levels** and **Blaster arenas** in editors that
+  check them live, test them, then race or play them with friends in a room.
+- **Map gallery.** Publish to your room or to everyone; browse newest, most liked and hot this week; like,
+  report, remix, "Race in room". Each map keeps its own leaderboard, and a **map of the week** per game.
+- **Compete.** A **weekly cup** per game from your normal multiplayer races, a monthly season podium, and a
+  **world boss** everyone wears down together with merged PRs and wins, then fights with a Pokémon team.
+- **Tower Defense.** Your Pokémon are the towers against twenty bug waves (types matter), solo or co-op.
+- **Bowling.** Ten-pin with Pokémon bowlers on the golf physics, solo or up to 8 in a room.
+- **Progress from real work.** Loot chests from merged PRs, green test runs and long focus sessions; a
+  **skill tree** from how you work; **prestige** stars at level 50; a six-chapter **story campaign**.
+  Work signals are off by default and only counts leave your machine.
+
+### Also new since 2.1
+
+- **2.4: your 3D character.** Build the person you are in the 3D HQ (body, colours, hair, headwear,
+  accessories, a cyberpunk set) with a live preview; it becomes your portrait on the Trainer card and,
+  with the Arena on, on the leaderboard, in rooms and in chat, and friends see your real look in the city.
+- **2.3: Arena City.** Jump to City from anywhere, a fountain in the middle and a **bike park** you can ride.
+- **2.2: Music.** See what friends are playing (Spotify, Apple Music, YouTube Music), **listening rooms**
+  with a shared queue in sync, **Go live** to stream your own audio to the room, and a DJ visualiser.
 
 ---
 
@@ -340,7 +364,7 @@ and feature guide.
 
 ## Changelog
 
-- **3.2.0 — The dealership and the airport.** Real cars and bikes with a dealership and a garage, and a real
+- **3.4.0 — The dealership and the airport.** Real cars and bikes with a dealership and a garage, and a real
   airport for the Commons.
   - **Real vehicles, in classes.** 32 vehicles from the first player's brands: BMW and Bugatti cars, BMW and
     KTM Duke bikes, from the KTM 390 Duke to the Bugatti Tourbillon. Every vehicle sits in a class by type
@@ -381,12 +405,105 @@ and feature guide.
   and `/api/arena/vehicles/<id>/park`) send only a validated vehicle id, paint and position with the paired
   device token. Presence adds the driven vehicle's catalogue id and paint index. Nothing transcript-derived
   is sent.
+- **3.3.2 — No more camera pumping near buildings.** Riding (or walking) past buildings, the chase camera kept
+  zooming in and out: its collision ray clipped corner after corner, pulling in fast and easing out between them.
+  Now once it pulls in it keeps that distance for 0.6 s after the last hit before easing back out, so passing a
+  row of buildings is one smooth move in and one out.
+- **3.3.1 — S walks you toward the camera.** On foot, holding **S** now turns you to face the camera (smoothly,
+  without overshooting) and walks you toward it, as in most third-person games; the camera keeps its heading and
+  just backs up with you, and keeps holding when you let go. Press **W** (or turn with **A**/**D**) and it swings
+  back round behind you. (3.2.2's S spun the camera round with you, so a held S looked just like W.)
+- **3.3.0 — Skyline: landmarks, an amusement park and weather.** The cities got a skyline and a day out.
+  - **Six landmark towers** stand over the busiest districts, each its own design: **The Helix** (a glass
+    tower turning a quarter turn as it rises), **Aurora Spire** (three-lobed setbacks to a long spire),
+    **The Lantern** (a glass bullet in a steel diagrid), **Gemini Towers** (twin towers with a skybridge),
+    **Beacon Tower** (an observation tower with a glowing sky-deck) and **The Regent** (art deco stone up to
+    a lit sunburst crown). Real PBR facades reflect a real sky; by night their windows light up, floodlights
+    wash their feet and aviation lights blink on top. Each is in **Go to**.
+  - **Skyline Park**, an amusement park on the city's largest clear park block: a neon gate and marquee, a
+    ticket booth, lamp-lit paths, string lights, food stalls and five rides — **Comet**, a roller coaster
+    with a lift hill, a banked first drop, a vertical loop and airtime hills, ridden **first person**;
+    **Skywheel**, a Ferris wheel with 24 gondolas and a chasing rim of lights; **Freefall**, a drop tower
+    with a pause at the top over the whole city; the **Carousel**; and **Starswing**, a wave swinger. Walk
+    up to a ride and press **E**. Rides run on the shared clock, so everyone sees the same train; residents
+    visit the park too.
+  - **Stations and kiosks:** every ride boards from its own station: a boarded deck up steps from the path,
+    a tiled gable roof on steel posts with a lit eave, the ride's name in neon ringed by bulbs, a brass and
+    velvet queue, an operator's booth and planters (the Comet's runs its roof back over the track). Popcorn,
+    ice-cream and cotton-candy kiosks and a ticket booth, each with what it sells, giant, on its roof. Paved
+    promenades follow the ground.
+  - **A crowd:** visitors stroll the promenades, queue at the stations, wait at the kiosks and ride every
+    ride, the City's own detailed residents (the animated Kenney characters) near you and its light bodies
+    further off, all on the shared clock.
+  - **Look around with the mouse:** drag to turn the camera while walking (left or right button), and drag
+    on a ride to look around from your seat; it recentres when the ride ends.
+  - **A day pass** is a new `park` fare: **10 Poke Coins**, once per UTC day per city, paid into that city's
+    treasury. On an Arena that doesn't sell passes yet the gate opens as a free preview.
+  - **Weather**: clear skies, overcast, rain, thunderstorms (lightning, thunder after the flash), snow and
+    fog, in 15-minute spells eased in over 90 s; the same for everyone in a city. The city stats panel's
+    forecast and an announcement say what is coming.
+  - **Weather on the ground:** snow settles a little -- a patchy dusting on roads, pavements, grass and roofs that
+    builds over a snow spell and melts after -- and rain leaves the streets darker and glossier until they dry.
+    Worked out from the same shared forecast, so everyone sees the same.
+  - **Faster:** the park and the landmarks merge their pieces by material (about half the draw calls
+    looking into the park), and its crowd, bulbs and balloons rest when you are far off.
+  - *Accessibility:* in Calm and with reduced motion, rides are watched from the platform instead of ridden
+    first person, nothing falls, and there are no lightning flashes, blinking or chasing lights.
+  - *Security:* the pass is server-authoritative. `POST /v1/city/:owner/fare {kind:"park"}` debits the
+    rider and writes a `park_pass` row (migration 0016) in the same transaction as the ledger entry, so a
+    pass always means the coins were paid and a second purchase that day charges nothing.
+    `GET /v1/city/:owner` gains the caller's `park: {price, pass}`. The page can't grant itself a pass.
+  - *Privacy:* no new egress. The ticket sends `{kind: "park"}` to the existing fare route; weather and
+    rides are computed locally from the clock and the world doc.
+  - *Third-party assets:* CC0 surface materials from [ambientCG](https://ambientcg.com) (Facade001,
+    Facade006, Facade015, Facade018A, MetalPlates006) and a CC0 sky from [Poly Haven](https://polyhaven.com)
+    ("Kloofendal 48d Partly Cloudy (Pure Sky)"), plus PavingStones128, WoodFloor043, RoofingTiles012A and
+    CorrugatedSteel005 for the park, resampled JPEGs vendored in `games/city/` with `LICENSE-assets.txt`, 4.6 MB, served only from 127.0.0.1 (`.jpg` only; the licence is not served).
+
+- **3.2.2 — S turns you round.** On foot, **S** no longer walks you backwards facing away: it turns you round
+  (a smooth half turn that eases in and out and lands without overshooting, toward the side you are already
+  turning), and held, walks you back the way you came while the camera swings round behind you. A tap still
+  makes a full about-face; **W** cancels it; **A**/**D** during it change where you end up.
+- **3.2.1 — The Get out pill stays clear of the route banner.** On the ground with a route set (taxiing a
+  plane, or in a car or on a bike), the Get out / Get on pill now sits just under the navigation banner at
+  whatever height it is, instead of a fixed 96 px that a two- or three-line banner overlapped.
+- **3.2.0 — Planes, air navigation, and in-sync turning.**
+  - **Fly a seaplane or a prop plane.** A seaplane is moored down the river from every city's main dock, and a
+    small prop plane (an original design) stands by every airport's runway (the Commons always, an island at
+    tier 5). Walk up and press E. W / S set the throttle, A / D bank (steer on the ground or the water), the Up /
+    Down arrows or a vertical drag raise and lower the nose; past rotation speed Up lifts off. Assisted flying (the
+    default) levels the wings and the nose when you let go, keeps you above stall speed and cannot roll over; X
+    switches to manual. G gear, F flaps, Space brakes, K autopilot (holds your height and heading, or flies to
+    the waypoint). Lift grows with airspeed, a stall drops the nose gently, ground effect cushions the flare. Land
+    the seaplane on any water and the prop plane on a runway (or, slowly, on flat ground with the gear down); a
+    crash is a bump and you are back at the dock or the stand. The flight HUD has airspeed and altitude dials, a
+    readout with heading, throttle, gear and flaps, and a stall warning. Chase and cockpit cameras, gamepad
+    support, an engine note. Other players see your plane where the Arena supports it (the new plane presence
+    capability, a = 9 / 10; older Arenas show you standing, as for helicopters).
+  - **Air navigation.** While you fly (planes and helicopters), Go to (N) lists the runways, the seaplane's
+    landing lane off the river mouth, helipads and the other islands; a minimap click sets a free waypoint. The
+    route is a straight line on the minimap, the light pillar marks the destination, and the HUD shows an arrow to
+    it with its distance, time at your speed and the height to fly. A runway or a landing lane gets its approach:
+    rings down a 3° glideslope from the final approach fix, a touchdown marker, and a glideslope indicator on final.
+    At a dock in a city with an airport, the travel menu now says flights leave from the airport (N takes you there).
+  - **Turning in sync.** On foot the chase camera used to trail a held turn by up to ~60° and park ~23° off once
+    you stopped, while the heading-up minimap turned with your facing at once; dragging the camera turned only the
+    camera. Now the camera turns with you (no lag, no overshoot), the minimap turns with the camera, walking with a
+    dragged camera steers you toward where it looks, and you turn faster (3.6 rad/s) on a smoother spring.
+  - **Smoother walking.** Idle, walk and run blend by speed, played at the rate your stride needs; you lean into
+    turns and with the pace, turn your head into the turn and shuffle when turning on the spot; other players are
+    dead-reckoned between presence updates and animate the same way.
+  - **Water and docks.** Boats, ferries and the seaplane float on one water surface that runs on the drawn sea's
+    clock (they used to bob out of step with the waves), moored boats ride the swell instead of sitting flat while
+    waves pass through them, a ferry no longer sits 0.2 m deep in the river, boarding a moored boat no longer pops,
+    the camera no longer dips under the water, and a far chase camera has the depth precision to stop the shore
+    flickering. Piers are finished: planks, posts, a safety line, cleats, fenders, ladders and lamps on the head.
 - **3.1.1 — City camera and plates.** The chase camera sits higher and further back (the far camera
   higher still), so you see the street around you instead of the ground at your feet. Left-drag now
   turns the camera too (trackpads have no right-drag); a click still walks. On a motorbike or a bicycle
   the camera follows turns more gently and barely tilts with the lean. Every HQ's car and motorbike
   carry the HQ's name on their number plates.
-- **3.1.0 — Navigation and rivers.** Finding your way round the cities.
+- **3.1.0 — Navigation, rivers and travel.** Finding your way round the cities, and between them.
   - **A river through every city:** from the sea past the plaza to a harbour basin in town. The
     **dock** stands on its bank by the plaza (on a tier-1 island too, with a road to it) and the
     **port** on the basin, so neither is out on the edge of the city any more. Arterials, the ring
@@ -401,25 +518,28 @@ and feature guide.
     way; it reroutes when you go another way, and says "Press E for the ferry" at the dock.
   - Keys pressed in a stop's, a dock's or the Go to menu no longer reach the dashboard's shortcuts
     (W no longer switches to the Workshop while a menu is open).
-  - **Strikezone: The Warden.** Halfway to the score limit a giant torso-only totem-golem rises at
-    the map centre — rubble skirt, fused torso, heavy arms with real elbows, glowing sigil. While
-    it lives **nobody can hurt each other**: players and bots all shoot the Warden (bots retarget
-    it automatically), the round clock and team scores freeze, and only the Warden calls disasters
-    and drops loot — no normal totem or disaster-totem drops until it is dead. Hit volumes are
-    head (no crit), waist, chest core, and two separate arms (least damage; disable one to skip
-    that arm's next slam). The chest is plated until a slam or checkpoint II opens the **Exposed
-    Core** (the glowing chest then takes ×3). Arms slam the ground: a red ring warns first, the
-    arm lifts and hinges elbow-to-fist, anything under the fist dies instantly and just outside
-    the smash blows dust and knocks everyone away with damage. Laser eyes look down and burn a
-    map-bounded ground beam (anyone in the path dies; run or hide). **Gravity Grip** every 16s
-    pulls fighters toward the torso (sprint or cover breaks free; too close and the free arm
-    sweeps you out). The torso turns around the arena. Three health checkpoints each spill every
-    non-disaster totem plus a health pack farther out of the body: **I** shoves everyone clear,
-    **II** opens the core, **III** drops the next loot burst even farther out. The kill feed
-    always names the real cause — **The Warden · arm slam** / **laser eyes** / **gravity grip**,
-    or the actual disaster. Menu checkbox **Summon the Warden** (next to Map view; ticked by
-    default; practice never summons). The Strikezone welcome card spells out the full kit. Local
-    only, no new egress, no new third-party assets.
+  - **Ferries you ride:** scheduled sailings to up to six places, the same timetable on every client.
+    You sit aboard (E at the dock) while it sails down the river, out to sea and up the next city's
+    river, and that city loads on the way, with no loading screen. Ferries keep right and keep their
+    distance; **Space** goes full ahead (8×).
+  - **Opening bridges:** bascule, lift and swing bridges (every city has a mix) lift for ferries and
+    seaplanes, with lights, barriers and cars waiting.
+  - **Cruise and cargo ships:** the 120 m cruise ship *Claude Serenade* loops round every city and the
+    95 m container ships run between two to four. Each anchors off a city's river mouth. Ride either from a port
+    and go ashore at any stop.
+  - **Rail between islands:** from a station (tier 2+), build a line to another city for 500 coins from
+    your island's treasury. It runs elevated over the streets and across the sea, with 4-car trains
+    every few minutes you can ride. Lines that leave a station along the same streets run side by
+    side, each with its own platform.
+  - **Air:** jets between airports and seaplanes between docks (every island has one); a flyable
+    helicopter at your HQ, hospitals and the Commons air base (hangars, radar, an attack helicopter, an
+    aircraft carrier you can land on, fighter jet sorties). Other players see you flying (HQ presence
+    `a` = 7/8 on Arenas that list `fly`).
+  - **The big map:** M opens the minimap full size with an animation; drag to pan, zoom, click to set a
+    waypoint, Esc to close.
+  **Privacy/egress:** `GET /api/arena/rail` and `POST /api/arena/rail/build` send only the validated
+  destination world id (`to`) with the paired device token. Presence gains a height and a flying
+  pose, as before for driving. Nothing transcript-derived is sent.
 - **3.0.0 — Cities.** Arena City grows into a world of cities.
   - **The Commons** (`claude-hq@2`) replaces the gridded street for everyone: an organic city on an
     island, with arterial and local streets, districts (old town, downtown, suburbs, office, tech, film

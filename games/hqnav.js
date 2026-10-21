@@ -351,6 +351,8 @@ var KINDS = {
   school: ["School", "🏫"], university: ["University", "🎓"], market: ["Market", "🛒"],
   mall: ["Mall", "🛍️"], bank: ["Bank", "🏦"], library: ["Library", "📚"],
   post: ["Post Office", "📮"], stadium: ["Stadium", "🏟️"], fountain: ["Fountain", "⛲"],
+  // games/hqspectacle.js claims these (each carries its own name): the amusement park and the landmark towers
+  funpark: ["Amusement park", "🎡"], landmark: ["Landmark", "🏙️"],
   skatepark: ["Skatepark", "🛹"], dealer: ["Dealership", "🚘"], carpark: ["Garage", "🅿️"]
 };
 var ICON = {myhq: "🏠", hq: "🏢", travel: "⛴️"};

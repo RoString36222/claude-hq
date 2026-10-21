@@ -27,7 +27,8 @@
  *                     world bitmap in its real colours: the platform's grass, the apron, taxiways, the runway and its
  *                     pads, the service road, the landside roads, the terminal, concourse and skybridge. Kept across
  *                     setWorld for the same world; null takes it out. It redraws into the same bitmap canvas.
- *     mm.frame({x, z, yaw, speed, route, waypoint, others, dt?})
+ *     mm.frame({x, z, yaw, view?, speed, route, waypoint, others, dt?})   view: the camera's heading (heading-up turns
+ *                    by it; default yaw); yaw: where you face (the arrow)
  *     mm.setMode("heading" | "north"), mm.mode(), mm.zoom(+1 | -1), mm.view(), mm.destroy()
  * Clicks and taps call onPick with the world point (the host snaps it to a road); the wheel and the
  * +/- buttons zoom; one button toggles heading-up / north-up, another calls onExpand (the full map).
@@ -561,7 +562,9 @@ function mount(el, opts){
     dt = clamp(dt, 0, 0.25);
     var target = big ? bigSpan()*Math.pow(ZOOM_STEP, -bigLevel) : zoomFor(f.speed)*Math.pow(ZOOM_STEP, -level);
     span = span == null ? target : span + (target - span)*ease(SPAN_K*(big ? 1.6 : 1), dt);
-    V = viewFor(mode, f.x, f.z, f.yaw, span, cssW, cssH);
+    // heading-up turns with the camera's heading (f.view, HQ 3.2) where the host gives it, so the map, the camera
+    // and the compass agree; the arrow below still shows where you face
+    V = viewFor(mode, f.x, f.z, f.view != null && isFinite(f.view) ? f.view : f.yaw, span, cssW, cssH);
     // swing (0 small .. 1 big) eases, so the map turns north-up as it grows and back to your heading as it shrinks
     swing += ((big ? 1 : 0) - swing)*ease(SWING_K, dt);
     if(!big && swing < 1e-3) swing = 0;

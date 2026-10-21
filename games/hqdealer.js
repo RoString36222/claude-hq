@@ -124,11 +124,13 @@ function place(W, tier){
   if((tier | 0) < MIN_TIER) return null;
   var c = pick(W); if(!c) return null;
   var l = c.lot, F = c.F, y = l.door && l.door.length >= 3 ? l.door[1] | 0 : (l.y | 0);
-  l.kind = "dealer";                       // worldbuild draws no building here now; the site does
+  // worldbuild draws no building here now; the site does. `was` and `claimed` keep it out of the world cache
+  // (games/world.js cacheCopy puts the lot back and drops the site), as games/hqspectacle.js does
+  l.was = l.kind; l.kind = "dealer";
   var s = {id: SITE_ID, kind: "dealer", tier: MIN_TIER, lot: l.id, block: l.block, district: l.district,
            x: Math.round(F.cx*100), y: y, z: Math.round(F.cz*100), w: Math.round(F.w*100), d: Math.round(F.d*100),
            front: [Math.round(F.f[0]*Q16), Math.round(F.f[1]*Q16)], facing: l.facing || "north",
-           flagship: W.id === COMMONS, name: W.id === COMMONS ? "Flagship Dealership" : "Dealership"};
+           flagship: W.id === COMMONS, name: W.id === COMMONS ? "Flagship Dealership" : "Dealership", claimed: 1};
   W.sites.push(s);
   W.index = null;                          // world.js rebuilds its lot/site buckets
   return s;

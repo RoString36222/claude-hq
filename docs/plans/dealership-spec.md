@@ -205,7 +205,7 @@ catalogue, so buying is claiming. Prices and level gates are data: set them in t
 the server's checks apply unchanged (backend/src/vehicles.rs tests them on fixture data).
 
 ```text
-migration 0016_vehicles.sql
+migration 0017_vehicles.sql
   owned_vehicles(id, user_id, vehicle_id, paint, price, bought_at,
                  parked_world, parked_x, parked_z, parked_yaw)   -- parked_* NULL: in its garage
 

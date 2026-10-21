@@ -17,14 +17,15 @@ function hqWebGL(){ try { return !!document.createElement("canvas").getContext("
 // Cities (3.0): the civic building kit (after hqmerge, which it merges with), the residents (the
 // pure sim before its drawing), traffic and transit, the sea and the boats, and island travel, all
 // before the City that wires them (games/hqcity3d.js). Navigation (3.1): the road router, the minimap, the
-// route's chevrons and the Go to panel / route banner, also before the City.
+// route's chevrons and the Go to panel / route banner, also before the City. City 3.2: the weather, and the
+// landmarks and amusement park (hqspectacle), also before the City.
 var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqlobby","hqbase","hqskate","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
-                  "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqshowroom","hqgarage", "hqdealer","hqcall","hqtravel","hqvoyage","hqships","hqbridges","hqairfield","hqair","hqaircraft","hqairport3d","hqairbldg","hqairground","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcarpark","hqcity3d"];
+                  "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqshowroom","hqgarage", "hqdealer","hqcall","hqtravel","hqvoyage","hqships","hqbridges","hqairfield","hqair","hqaircraft","hqplane","hqairport3d","hqairbldg","hqairground","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcarpark","hqweather","hqspectacle","hqcity3d"];
 // The 3D City's own files: if one fails, the classic City still works (games/hq3d.js falls back to it);
 // a Cities part that fails only takes its own feature out of the 3D City.
 var HQ_SCRIPTS_3D = {world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
-                     hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqshowroom:1, hqgarage:1, hqdealer:1, hqcall:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqairfield:1, hqair:1, hqaircraft:1, hqairport3d:1, hqairbldg:1, hqairground:1, hqairbase:1,
-                     hqnav:1, hqminimap:1, hqroutefx:1, hqnavui:1, hqrail:1, hqcarpark:1};
+                     hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqshowroom:1, hqgarage:1, hqdealer:1, hqcall:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqairfield:1, hqair:1, hqaircraft:1, hqplane:1, hqairport3d:1, hqairbldg:1, hqairground:1, hqairbase:1,
+                     hqnav:1, hqminimap:1, hqroutefx:1, hqnavui:1, hqrail:1, hqcarpark:1, hqweather:1, hqspectacle:1};
 // ?hqsmoke=1 (tools/ui_smoke.py, tools/hq_shots.py): HQ opens straight into the City with three synthetic HQs.
 var HQ_SMOKE = /[?&]hqsmoke=1(&|$)/.test(location.search);
 function hqLoadScripts(){
@@ -505,6 +506,7 @@ function hqNetSend(){
   // a car (5) or a motorbike (6) needs "drive"; without it, show a bike where bikes are known
   if((a===5 || a===6) && !hqNetCan("drive")) a = hqNetCan("ride") ? 3 : 2;
   if((a===7 || a===8) && !hqNetCan("fly")) a = 0;   // a helicopter (7 / 8) needs "fly": else you stand where it is
+  if((a===9 || a===10) && !hqNetCan("plane")) a = 0;   // a plane (9 the seaplane, 10 the prop plane, HQ 3.2) needs "plane" likewise
   var msg={type:"game", g:"hq", op:"pos", w:w.world, x:Math.round(w.x*100), z:Math.round(w.z*100),
            r:Math.round(((w.yaw*180/Math.PI)%360+360)%360), a:a};
   // on a board: the trick you are doing (k) and how high you are (y, decimetres), so others see it

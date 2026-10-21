@@ -732,6 +732,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(bridges && bridges.blockedAt(x, z)) return true;                      // an opening bridge's gap or barrier
     if(sea && !sea.land(x, z)) return true;                                    // the sea: take a boat
     if(civics.length && civicBlocked(x, z)) return true;
+    if(cp && HQV.hqCarpark.blockedAt(cp.site, x, z, carparkHint(x, z))) return true;   // carpark: its walls at your level
     if(air && air.blocked(x, z)) return true;                              // air: hangars, the tower, the base's fence
     if(fount && Math.hypot(x - fount.g.position.x, z - fount.g.position.z) < fount.R + 0.35) return true;   // the fountain
     if(skate && SP.walkBlocked(x - skate.cx, z - skate.cz)) return true;      // its ramps (on foot or wheels; boards ride them)
@@ -759,6 +760,7 @@ HQV.hqWorlds.city3d = function(c, w){
   function groundY(x, z){
     if(!W) return 0;
     if(skate && SP.inPark(x - skate.cx, z - skate.cz)) return skate.y;      // the park's flat pad; the skater adds its ramps
+    if(cp){ var cpy = carparkGround(x, z); if(cpy != null) return cpy; }   // carpark: its floors and the helix
     var dy = decks.length ? HQV.hqCivic.deckAt(decks, x, z) : null;        // a pier's deck, over the water
     var ay = air ? air.groundAt(x, z) : null; if(ay != null) return ay;    // air: the helipads, the base's apron
     return dy != null ? dy : WD.groundAt(W, x, z);
@@ -1920,16 +1922,110 @@ HQV.hqWorlds.city3d = function(c, w){
     row("Treasury", K.treasury == null ? "–" : fmt(K.treasury) + " coins");
     if(K.specialty) row("Specialty", K.specialty.charAt(0).toUpperCase() + K.specialty.slice(1));
   }
+  /* ========== carpark (HQ 3.2 vehicles): the multi-storey garage every owned vehicle lives in (games/hqcarpark.js) ========== */
+  var cp = null;            // {site, B, y: your height in it (null outside), rows, drv}
+  function carparkSetup(){
+    var CP = HQV.hqCarpark; if(!CP || !V2 || !W) return;
+    var s = CP.find(W); if(!s || (s.tier != null && (s.tier | 0) > tier)) return;
+    var B; try { B = CP.build(c, s, {night: night, catalogue: c.catalogue}); } catch(e){ return; }
+    S.add(B.g); cp = {site: s, B: B, y: null, rows: [], drv: null};
+    carparkFleet();
+  }
+  function carparkEntry(id){
+    var cat = c.catalogue && c.catalogue();
+    return cat && cat.vehicles ? cat.vehicles.filter(function(v){ return v.id === id; })[0] || null : null;
+  }
+  // your vehicles in their bays: the Arena's (HQV.hqGarage; one parked out in the streets is not in its bay), else the
+  // Showroom's pick
+  function carparkFleet(){
+    if(!cp) return;
+    var who = me || "you";
+    function apply(list){ if(!dead && cp) cp.rows = cp.B.fleet(list.filter(function(v){ return v.entry; })); }
+    var G = HQV.hqGarage;
+    if(G && G.mine){
+      Promise.resolve(G.mine()).then(function(rows){
+        apply((rows || []).filter(function(r){ return r && !r.parked; }).map(function(r){ return {key: who + ":" + r.id, entry: carparkEntry(r.vehicle_id), paint: r.paint}; }));
+      }, function(){});
+    } else {
+      var p = c.showroomPick && c.showroomPick();
+      apply(p ? [{key: who + ":showroom", entry: carparkEntry(p.vehicle_id), paint: p.paint}] : []);
+    }
+  }
+  // your height while you are in it: the floor or the turn of the helix you are on (hqCarpark picks the surface
+  // nearest it), for queries round you; anything else is on the ground floor
+  function carparkHint(x, z){
+    var a = c.avatar(); return a && cp.y != null && Math.hypot(x - a.x, z - a.z) < 6 ? cp.y : null;
+  }
+  function carparkGround(x, z){
+    var y = HQV.hqCarpark.groundAt(cp.site, x, z, carparkHint(x, z)), a = c.avatar();
+    if(a && Math.hypot(x - a.x, z - a.z) < 0.8) cp.y = y;
+    return y;
+  }
+  function carparkUpdate(dt, cam){
+    if(c.active && c.active(w)) HQV.hqCity3d.carpark = w.carpark;          // for tools
+    if(cam && cam.x != null) cp.B.update(cam);
+    var D = cp.drv; if(!D) return;
+    D.s = Math.min(D.len, D.s + D.v*dt);
+    var P = D.P, i = 0; while(i < D.cum.length - 2 && D.cum[i + 1] < D.s) i++;
+    var a = P[i], b = P[i + 1], u = D.cum[i + 1] > D.cum[i] ? (D.s - D.cum[i])/(D.cum[i + 1] - D.cum[i]) : 1;
+    D.g.position.set(a.x + (b.x - a.x)*u, a.y + (b.y - a.y)*u, a.z + (b.z - a.z)*u);
+    var want = Math.atan2(b.x - a.x, b.z - a.z), dy = want - D.g.rotation.y;
+    while(dy > Math.PI) dy -= 2*Math.PI; while(dy < -Math.PI) dy += 2*Math.PI;
+    D.g.rotation.y += dy*Math.min(1, dt*8);
+    if(D.s >= D.len) D.done = true;
+  }
+  function carparkDestroy(){
+    if(!cp) return;
+    if(cp.drv){ S.remove(cp.drv.g); cp.drv = null; }
+    S.remove(cp.B.g); try { cp.B.dispose(); } catch(e){}
+    cp = null;
+  }
+  // for tools and tests (HQV.hqCity3d.carpark)
+  w.carpark = {
+    site: function(){ return cp ? cp.site : null; },
+    bays: function(){ return cp ? HQV.hqCarpark.bays(cp.site) : []; },
+    fleet: function(){ return cp ? cp.rows : []; },
+    refresh: function(){ carparkFleet(); },
+    height: function(){ return cp ? cp.y : null; },
+    level: function(l){ if(cp) cp.y = HQV.hqCarpark.levelY(cp.site, l | 0); return cp ? cp.y : null; },   // the floor your next teleport lands on
+    drawCalls: function(){ return cp ? cp.B.drawCalls() : 0; },
+    // fill n bays with catalogue vehicles (deterministic): what a busy garage looks like
+    demo: function(n){
+      var cat = c.catalogue && c.catalogue(); if(!cp || !cat) return 0;
+      var vs = cat.vehicles.filter(function(v){ return v.dims; }), list = [];
+      for(var i = 0; i < (n | 0); i++){ var v = vs[i % vs.length]; list.push({key: "demo:" + i, entry: v, paint: i % Math.max(1, (v.paints || []).length)}); }
+      cp.rows = cp.B.fleet(list); return cp.rows.length;
+    },
+    // a vehicle driving out of bay i down to the street (its exit path), at v m/s
+    drive: function(i, id, v){
+      if(!cp || !HQV.hqVehicleModels) return false;
+      var b = HQV.hqCarpark.bays(cp.site)[i | 0]; if(!b) return false;
+      var e = carparkEntry(id || "bmw-m3-competition") || ((c.catalogue && c.catalogue()) || {vehicles: []}).vehicles.filter(function(x){ return x.dims; })[0];
+      if(!e) return false;
+      if(cp.drv) S.remove(cp.drv.g);
+      var P = HQV.hqCarpark.exitPath(b), cum = [0];
+      for(var k = 1; k < P.length; k++) cum.push(cum[k - 1] + Math.hypot(P[k].x - P[k - 1].x, P[k].y - P[k - 1].y, P[k].z - P[k - 1].z));
+      var R = HQV.hqVehicleModels.build(c, e, null), g = new THREE.Group(); g.add(R.g); g.rotation.y = b.yaw + Math.PI; S.add(g);
+      cp.drv = {P: P, cum: cum, len: cum[cum.length - 1], s: 0, v: +v || 6, g: g, done: false};
+      return {points: P.length, len: cp.drv.len};
+    },
+    driving: function(){ var D = cp && cp.drv; return D ? {x: D.g.position.x, y: D.g.position.y, z: D.g.position.z, s: D.s, len: D.len, done: D.done} : null; },
+    path: function(i){ var b = cp && HQV.hqCarpark.bays(cp.site)[i | 0]; return b ? HQV.hqCarpark.exitPath(b) : null; },
+    entrance: function(){ return cp ? HQV.hqCarpark.entrance(cp.site, HQV.hqnav && HQV.hqnav.graph && W ? HQV.hqnav.graph(W, tier) : null) : null; }
+  };
+  /* ========== end carpark ========== */
   function citiesSetup(){
     buildCivic(); S.add(civicG);
     setupSea(); bridgesSetup(); setupLife(); buildUi(); statsUi(); setupFerries(); setupBigShips(); setupAir(); setupRail();
     airSetup();                                                            // air: helipads, the air base, the carrier, jets
+    carparkSetup();                                                        // carpark: the multi-storey vehicle garage
     if(worldId === COMMONS) getJson("/api/arena/world/" + COMMONS + "/assign").then(function(rows){
       if(dead || !Array.isArray(rows)) return; assignRows = rows; sig = null; build();
     }, function(){});
   }
   function citiesUpdate(t, dt, k, cam){
     var nowMs = Date.now();
+    if(cp) carparkUpdate(dt, cam);                                         // carpark
     if(statsEl && nowMs - statsAt > 60000){ statsAt = nowMs; fetchCity().then(function(){ if(!dead) statsUi(); }); }
     // civic buildings near the camera are drawn in full, the rest (the map's too, from up there) as boxes
     civics.forEach(function(B){
@@ -1990,6 +2086,7 @@ HQV.hqWorlds.city3d = function(c, w){
     S.remove(civicG); S.remove(boatG);
     if(dealerB){ dealerB.dispose(); dealerB = null; }
     if(air){ air.destroy(); air = null; }                                  // air:
+    carparkDestroy();                                                      // carpark
     ferryPool.forEach(function(F){ F.dispose(); }); ferryPool = []; if(myFerry){ myFerry.dispose(); myFerry = null; }
     if(ferryT){ ferryT.dispose(); ferryT = null; } if(ferryG){ S.remove(ferryG); ferryG = null; }
     bridgesDestroy();
@@ -2264,6 +2361,7 @@ HQV.hqWorlds.city3d = function(c, w){
       x0 = Math.min(from.x, from.x + (to.x - from.x)*u); x1 = Math.max(from.x, from.x + (to.x - from.x)*u);
       z0 = Math.min(from.z, from.z + (to.z - from.z)*u); z1 = Math.max(from.z, from.z + (to.z - from.z)*u); }
     buildingsIn(x0, x1, z0, z1).concat(placedIn(x0, x1, z0, z1)).forEach(function(b){ var h = segBox(from, to, b); if(h < t) t = h; });
+    if(cp){ var ch = HQV.hqCarpark.camHit(cp.site, from, to); if(ch < t) t = ch; }   // carpark: the floor above you
     return t;
   };
   w.occluderItems = function(x, y, z){
@@ -2289,6 +2387,7 @@ HQV.hqWorlds.city3d = function(c, w){
     hemi.intensity = n ? 1.3 : 2.4; sun.intensity = n ? 0.7 : 2.4; sun.color.set(n ? 0xa9b8ff : 0xfff2dc);
     if(wb) wb.setNight(n); applyTime();
     civics.forEach(function(B){ B.setNight(n); }); if(oc) oc.setTime(n); if(rail) rail.setNight(n);
+    if(cp) cp.B.setNight(n);                                               // carpark
     if(air) air.setNight(n); };                                            // air:
   // Fading: in classic the buildings between you and hq3d's orthographic view (as hqbase.js
   // hqCutaway decides it); in every rig mode hq3d passes the occluders to w.setFaded. Switching

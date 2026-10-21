@@ -689,6 +689,9 @@ function mount(el, api){
     rng: rng, hashStr: hashStr, short: short, rr: rr, crewState: crewState,
     character: function(key, cb){ makeCharacter(key, cb); }, anim: function(ch, n, sp){ setAnim(ch, n, sp); },
     avatar: function(){ return avatar ? {x: avatar.x, z: avatar.z} : null; },
+    // the vehicle catalogue (games/vehicles/catalogue.json) and the Showroom's pick, for the garage (games/hqcarpark.js)
+    catalogue: function(){ return CAT; },
+    showroomPick: function(){ return showProp ? {vehicle_id: showProp.kind, paint: showProp.color} : null; },
     view: function(){ return {yaw: view.yaw, pitch: view.pitch}; },
     sessions: function(){ return sessions; }, level: function(){ return api.level ? api.level() : 1; },
     look: function(){ return (api.look && api.look()) || {}; }, api: api,

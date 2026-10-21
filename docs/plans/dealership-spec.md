@@ -287,6 +287,48 @@ POST /v1/vehicles/:id/park {world, x, z, yaw} | {garage: true} -> 200 {ok} | 404
 - Hooks for tools: `HQ3D.inst.dealer` (open, isOpen, test, testDrive, endTest), and
   `HQV.hqCity3d.dealer` (site, forecourt, route, inside).
 
+## The vehicle garage (games/hqcarpark.js)
+
+Every owned vehicle lives in a multi-storey garage: you call it out of there, and it goes back there.
+
+- **One per city.** A generator site, civic kind `carpark` (backend/src/worldgen/civic.rs), the LAST row of
+  the civic table, so it takes what the services left: 50 x 36 m on a lot by an arterial downtown (else
+  commercial, the old town, civic; else any district), shrunk to 3/4 or 1/2 where nothing bigger fits. It is
+  tier 1 (on an island the ring rule can make it 2), so every island has one from the start: your fleet is
+  called from it. A city with no lot for it simply has none (it never fails the world). claude-hq@1 is
+  unchanged; claude-hq@2 is re-pinned (CLAUDE_HQ_2) and the fixtures regenerated.
+- **Levels:** 6 on the Commons (the biggest), 3 on an island (`find(W)` sets `levels` from the world id, so every
+  client and every caller agrees). 3.2 m a level; the top one is an open roof deck.
+- **The building, in the site's frame (+z its front):** a helix ramp tower at one end (one turn per level, a
+  6 m lane round a core; narrower in a small garage, a 1.6 m core at least) and the deck beside it: a cross
+  aisle along the tower, then aisles along the building with a row of 2.7 x 5.4 m bays either side. The helix
+  meets every level on the deck's side through an opening in the tower's wall; the ground floor opens to the
+  street at the front, at the cross aisle. Open sides with parapets and blue cladding, columns, white bay lines,
+  ceiling lights that come on at night, lamp posts on the roof, a "P GARAGE" sign on the front, the crown of
+  the tower and over the door. The Commons' holds 192 bays, the fixture island's 18.
+- **Your fleet is in whichever city's garage you are in.** Each owned vehicle has its own bay:
+  `assign(site, keys)` with key `<owner id>:<owned vehicle id>`: its hash picks a bay, a taken bay passes to the
+  next free one, keys placed in hash order, so the same set of keys gives the same bays on every client. For now
+  the fleet drawn is your own (`HQV.hqGarage.mine()`, without the ones parked out in the streets; before that
+  exists, the Showroom's pick); other players' vehicles join once ownership is in presence.
+- **Drawing:** the building is merged per material (under 12 draw calls); parked vehicles are instances of a
+  car and a bike silhouette in their paint (two draw calls for the whole fleet) and the one nearest the camera
+  (within 16 m) is its full model.
+- **Driving in it:** `groundAt(site, x, z, y)` is the floor or the turn of the helix nearest your height, and
+  `blockedAt(site, x, z, y)` the walls, the core, the tower's corners and the columns at your height; the City
+  keeps your height in the garage (`cp.y`) for the queries round you, so you can drive up the helix and park on
+  the roof.
+- **Paths** (world m, with y): `exitPath(bay)` from the bay out to its aisle, along to the cross aisle, onto the
+  helix and down to the ground, out of the front door to `entrance(site, G)` (the kerb in front of the door;
+  with a road graph, its nearest road point); `entryPath(bay)` is the same backwards. Only ever down on the way
+  out, no steeper than 15%, clear of every wall (tests/test_hqcarpark.py drives every level's).
+- Go to (N) lists it ("Garage", 🅿️) and the minimap shows a blue P.
+
+```text
+HQV.hqCarpark = {find(W), layout(site), bays(site), assign(site, keys), exitPath(bay), entryPath(bay),
+                 entrance(site, G?), groundAt(site, x, z, y), blockedAt(site, x, z, y), build(c, site, opts)}
+```
+
 ## Calling your vehicle (games/hqcall.js)
 
 Your vehicles live in the city's **multi-storey carpark** (games/hqcarpark.js, `HQV.hqCarpark`:
@@ -336,6 +378,8 @@ on the road graph; feature-detected, so calling works before it exists).
 - **Hooks for tools:** `HQ3D.inst.call` = `{open, pick(key), list, state, trips, own, prop(key),
   back(key), roads, isOpen}`. The City adds `w.callRoad = {snap, route, candidates, traffic, W,
   obstacle}`.
+- **A newly claimed vehicle** is delivered into your bay in the carpark (the dealership's forecourt is only
+  for the test drive).
 
 ## Build order
 
@@ -345,7 +389,8 @@ on the road graph; feature-detected, so calling works before it exists).
 3. Arena: ownership tables, buy and park, presence field; dashboard proxies.
 4. Models for the 10 full classes, one brand at a time (BMW bikes, KTM Duke, BMW cars, Bugatti).
 5. Dealership: the site, building, panel and test drive.
-6. Calling your vehicle.
+6. The vehicle garage (the `carpark` site, the building, bays, paths), then calling your vehicle out of it
+   and its drive back.
 7. Fill open slots as players add brands.
 
 ## Open questions

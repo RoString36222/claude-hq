@@ -351,7 +351,7 @@ var KINDS = {
   school: ["School", "🏫"], university: ["University", "🎓"], market: ["Market", "🛒"],
   mall: ["Mall", "🛍️"], bank: ["Bank", "🏦"], library: ["Library", "📚"],
   post: ["Post Office", "📮"], stadium: ["Stadium", "🏟️"], fountain: ["Fountain", "⛲"],
-  skatepark: ["Skatepark", "🛹"], dealer: ["Dealership", "🚘"]
+  skatepark: ["Skatepark", "🛹"], dealer: ["Dealership", "🚘"], carpark: ["Garage", "🅿️"]
 };
 var ICON = {myhq: "🏠", hq: "🏢", travel: "⛴️"};
 var DOOR_OUT = 2;   // a door stands this far out past the site's edge (m)

@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.5.5** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.5.6** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -364,6 +364,7 @@ and feature guide.
 
 ## Changelog
 
+- **3.5.6 — Dealership vehicles, the next layer of detail.** Look through a catalogue car's (lighter) glass and you see a cabin: stitched seats with headrests, a glowing instrument cluster and centre screen, the console and a steering wheel with spokes. Headlights get projector lenses and a DRL strip, tail lights become LED light bars, grilles and intakes a honeycomb mesh, and there are generic round badges, lettered tyre sidewalls, quad, twin or centre exhaust tips by type, side skirts, chrome or black window trim, mirror indicators, a fuel flap and lettered plates. Bikes get a full exhaust (headers, collector, end can with cap and mouth), a sprung shock with its reservoir, swingarm pivot and chain adjusters, gear and brake pedals, brake hoses and cables, fork caps, bar-end weights, knee pads, rim tape, a plate hanger and extra trellis tubes. Nearly all of it is one shared canvas texture, so draw calls are unchanged (14 a car, 8-10 a bike); sizes, seats and the rider's fit are exactly as before.
 - **3.5.5 — Dealership vehicles at full size, with more detail.** The catalogue's bikes and cars used to look toy-sized
   next to the starters (built at true metres, while the starters are drawn big round the chunky riders). They now share
   one display scale per kind (`HQV.hqVehicleModels.SCALE`: bikes 1.3×, cars 1.08×), so a superbike stands as big as

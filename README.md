@@ -371,7 +371,7 @@ and feature guide.
 
 ## Changelog
 
-- **3.9.0 — Lamborghinis and new bikes.** Thirteen new vehicles in the catalogue (`games/vehicles/catalogue.json`, its
+- **3.9.0 — Lamborghinis, new bikes and redesigned vehicles.** Thirteen new vehicles in the catalogue (`games/vehicles/catalogue.json`, its
   Arena copy `backend/data/vehicles.json`), each with its maker's real specs, size and factory paints, its own stand-in
   body and engine voice. Every vehicle is free for now, as before.
   - **Lamborghini, a new Supercar type:** `car.super.over5000` (Revuelto: 6.5 L V12 plug-in hybrid, 1015 CV;
@@ -394,6 +394,18 @@ and feature guide.
     grip and foot anchors: upright on a classic, and low, feet forward, arms out on a cruiser. Seven new voices: a
     twin-pulse V4, an inline triple, a crossplane four, a supercharged four (its whine, a chirp on a lift), a
     long-stroke single, a 270-degree twin and a 45-degree V-twin.
+  - **Every existing stand-in redesigned to look like its model:** car bodies have rounded shoulders and draw in at
+    the nose and tail in plan; BMW grilles by model (the M3/M4's tall kidneys with horizontal slats, the 3 Series'
+    wide ones, the M5's and the XM/i7's lit outlines, the M2's frameless pair, the X5's XXL, the X3's diagonal slats,
+    the i4's closed panel), lights by model (angel eyes, slim lamps with a vertical DRL, the M2's square lamps, the
+    XM/i7's split lamps, the X5's hexagonal DRLs), the M cars' power dome and gills, the M4 CSL's ducktail, laser
+    tails and gold wheels, wheel spokes by model; Bugatti's three noses (the Chiron's wide horseshoe and LED row, the
+    Tourbillon's tall one and LED columns, the Veyron's round one and projectors), the Chiron and Tourbillon spine,
+    the Veyron's roof scoops and round tails, and a hypercar roof. Bikes: KTM's 390/990/1390 Duke faces, the RC's
+    single lamp, the Adventures' vertical split lamps, the 1390's single-sided swingarm; BMW's F 900 R and S 1000 R
+    lamps, the S 1000 RR's asymmetric pair and winglets, the M 1000 RR's stripes, the G 310 GS's asymmetric lamps.
+    Sizes, display scale, rider anchors, collision and the detail atlas are unchanged; cars stay at 14 draw calls
+    and under 6k triangles, bikes at 8-10 draw calls and under 6k.
   - **Arena:** the catalogue is server data, so the Arena needs a deploy (`ops/release.sh deploy`) before these
     can be bought.
 

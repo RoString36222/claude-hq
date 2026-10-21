@@ -79,7 +79,7 @@ var CAR = {
   sedan: {R: 0.35, gc: 0.13, belt: 0.62, nose: 0.50, tail: 0.64, cowl: 0.34, ws: 0.66, roofEnd: 0.05, glassEnd: -0.35, seat: 0.27, fo: 0.46},
   coupe: {R: 0.35, gc: 0.12, belt: 0.61, nose: 0.46, tail: 0.62, cowl: 0.37, ws: 0.82, roofEnd: 0.12, glassEnd: -0.62, seat: 0.24, fo: 0.47},
   suv:   {R: 0.40, gc: 0.20, belt: 0.60, nose: 0.58, tail: 0.62, cowl: 0.30, ws: 0.62, roofEnd: -0.62, glassEnd: -0.80, seat: 0.40, fo: 0.48},
-  hyper: {R: 0.36, gc: 0.10, belt: 0.66, nose: 0.46, tail: 0.66, cowl: 0.20, ws: 0.90, roofEnd: 0.90, glassEnd: -0.30, seat: 0.20, fo: 0.43},
+  hyper: {R: 0.36, gc: 0.10, belt: 0.66, nose: 0.46, tail: 0.66, cowl: 0.20, ws: 0.80, roofEnd: 0.50, glassEnd: -0.35, seat: 0.20, fo: 0.43},   // ([3.9] a real roof)
   // [3.9] a mid-engined supercar: a wedge (a low sharp nose, the windscreen's foot just behind the front axle, a long
   // rake), the cabin forward, an engine cover sloping from the roof to the tail
   super: {R: 0.35, gc: 0.10, belt: 0.60, nose: 0.36, tail: 0.68, cowl: 0.10, ws: 1.05, roofEnd: 0.75, glassEnd: -0.55, seat: 0.18, fo: 0.42},
@@ -241,6 +241,34 @@ function shown(entry){
   Object.keys(d).forEach(function(n){ out[n] = Math.round(d[n]*k*1000)/1000; });
   return out;
 }
+// [3.9] each catalogue car's own cues, by maker and model (an unknown model gets its type's defaults): its proportions
+// over the type's (S), the grille and lights, the tails, the wheels (spokes, split pairs, colour) and extras (a power
+// dome on the hood, wing gills, a ducktail, a Bugatti's spine)
+function carLook(entry, st){
+  var m = String((entry && entry.model) || ""), b = st.brand, bmw = b === "bmw";
+  var L = {S: null, grille: bmw ? "wide" : null, lights: bmw ? "angel" : null, tail: null, spokes: 5, split: false, rim: null,
+           dome: false, gills: false, ducktail: false, bug: null};
+  if(bmw){
+    if(/^M[34]\b/.test(m)){ L.grille = "tall"; L.dome = true; L.gills = true; L.split = true; }
+    if(/CSL/.test(m)){ L.ducktail = true; L.rim = COL.gold; L.spokes = 6; L.split = false; L.tail = "laser"; L.S = {glassEnd: -0.78, roofEnd: 0.02}; }
+    if(/^M2\b/.test(m)){ L.grille = "frameless"; L.lights = "square"; L.dome = true; L.spokes = 6; L.S = {belt: 0.63}; }
+    if(/^M5\b/.test(m)){ L.grille = "wideLit"; L.lights = "slimV"; L.dome = true; L.gills = true; L.spokes = 10; }
+    if(/^M135/.test(m)){ L.lights = "slim"; L.spokes = 5; L.split = true; }
+    if(/^330|^M340/.test(m)){ L.spokes = /^M/.test(m) ? 5 : 10; L.split = /^M/.test(m); }
+    if(/^i4\b/.test(m)){ L.grille = "closed"; L.spokes = 5; L.split = true; }
+    if(/^i7\b/.test(m)){ L.grille = "xlLit"; L.lights = "split"; L.tail = "thin"; L.spokes = 10; L.S = {roofEnd: 0.28, belt: 0.6}; }
+    if(/^XM\b/.test(m)){ L.grille = "xlLit"; L.lights = "split"; L.tail = "thin"; L.spokes = 10; L.rim = COL.dark; L.S = {belt: 0.64, roofEnd: -0.74, glassEnd: -0.86}; }
+    if(/^X5\b/.test(m)){ L.grille = "xl"; L.lights = "hex"; L.spokes = 5; L.split = true; L.S = {roofEnd: -0.7, glassEnd: -0.86}; }
+    if(/^X5 M/.test(m)){ L.gills = true; L.dome = true; }
+    if(/^X3\b/.test(m)){ L.grille = "diag"; L.lights = "slimV"; L.spokes = 10; }
+  }
+  if(b === "bugatti"){
+    L.bug = /Tourbillon/.test(m) ? "tourbillon" : /Veyron/.test(m) ? "veyron" : "chiron";
+    L.spokes = L.bug === "chiron" ? 7 : 10; L.split = L.bug === "veyron";
+  }
+  L.S = Object.assign({}, CAR[st.type], L.S || {});
+  return L;
+}
 function isM(entry){ return /\bM\d|\bM\b|Competition|CSL/.test(String((entry && entry.model) || "")); }
 
 /* ---------- the builder: parts gathered per rigid piece and material, merged once ---------- */
@@ -323,11 +351,11 @@ Builder.prototype.bar = function(node, mk, col, a, b, w, d, round){
   return this.put(node, mk, geo, col);
 };
 // a side profile (a shape in (z, y)) extruded across the width w, centred on x 0
-Builder.prototype.side = function(node, mk, col, pts, w, bevel, curve){
+Builder.prototype.side = function(node, mk, col, pts, w, bevel, curve, segs){
   var T = this.T, s = shapeOf(T, pts), b = bevel || 0;
-  // the bevel starts inside the outline (bevelOffset), so the profile keeps its exact size
+  // the bevel starts inside the outline (bevelOffset), so the profile keeps its exact size; segs > 1 rounds it
   var g = new T.ExtrudeGeometry(s, {depth: Math.max(0.002, w - 2*b), bevelEnabled: b > 0, bevelThickness: b, bevelSize: b, bevelOffset: -b,
-                                    bevelSegments: 1, curveSegments: curve || 5});
+                                    bevelSegments: segs || 1, curveSegments: curve || 5});
   g.rotateY(-PI/2); g.translate((w - 2*b)/2, 0, 0);
   return this.put(node, mk, g, col);
 };
@@ -433,7 +461,7 @@ function carWheel(B, holder, name, R, tw, side, rim, spokes, caliper, split){
 }
 function buildCar(T, entry, st, d){
   var B = new Builder(T), root = new T.Group(), body = B.node(root, "body");
-  var S = CAR[st.type], L = d.lengthM, W = d.widthM, H = d.heightM, WB = d.wheelbaseM;
+  var look = carLook(entry, st), S = look.S, L = d.lengthM, W = d.widthM, H = d.heightM, WB = d.wheelbaseM;
   var R = S.R*Math.min(1.12, Math.max(0.9, W/1.9)), gc = S.gc, ar = R + 0.06, archTop = R + ar;
   var zf = L/2 - S.fo*(L - WB), zr = zf - WB;
   var yb = Math.max(H*S.belt, archTop + 0.04), yn = Math.max(H*S.nose, gc + 0.34), yt = Math.max(H*S.tail, archTop + 0.02);
@@ -460,7 +488,12 @@ function buildCar(T, entry, st, d){
   if(zC > zr && ry > deck(rz) + 0.005){ pts.push([zr + ar, Math.max(deck(zr + ar), ry - 0.02)]); pts.push([rz, ry]); pts.push([zr - ar*0.9, Math.max(deck(zr - ar*0.9), (ry + deck(zr - ar*0.9))/2)]); }
   else if(zC <= zr + ar){ pts.push([zC, Math.max(yb, archTop + 0.05)]); }
   pts.push([-L/2 + 0.12, yt]); pts.push([-L/2, yt - 0.12, -L/2, yt]);
-  B.side(body, "paint", null, pts, W, 0.045, 6);
+  var shell = B.side(body, "paint", null, pts, W, lambo ? 0.045 : 0.075, 6, lambo ? 1 : 2);   // ([3.9] rounder shoulders, a Lamborghini's crisp)
+  // [3.9] rounded corners in plan: the nose and the tail draw in towards their ends (9% narrower at the very end), so
+  // no car reads as a box from a three-quarter view
+  (function(){ var P = shell.attributes.position, rz = Math.min(0.55, L*0.12);
+    for(var i = 0; i < P.count; i++){ var e = Math.max(0, (Math.abs(P.getZ(i)) - (L/2 - rz))/rz); if(e > 0) P.setX(i, P.getX(i)*(1 - 0.09*e*e)); }
+    shell.computeVertexNormals(); })();
   // arch liners
   [zr, zf].forEach(function(z){ B.add(body, "trim", new T.CylinderGeometry(ar - 0.01, ar - 0.01, W*0.9, lambo ? 3 : 10, 1, true, 0, PI), COL.black, 0, R, z, 0, 0, PI/2); });
   // the greenhouse: tinted glass all round, the roof, the pillars
@@ -521,13 +554,22 @@ function buildCar(T, entry, st, d){
   }
   if(bugatti){
     // the horseshoe: an open ring, its gap at the top, round a dark mesh; quad LED strips each side
-    var hs = Math.min(0.22, yn - gc - 0.12)*0.85, gap = 0.62*PI, tor = new T.TorusGeometry(hs, 0.025, 4, 18, 2*PI - gap);
-    tor.rotateZ(PI/2 + gap/2);
-    B.add(body, "trim", tor, COL.chrome, 0, gc + 0.22 + hs, zN + 0.01);
-    B.t("honey").add(body, "trim", new T.CircleGeometry(hs - 0.01, 14), 0xffffff, 0, gc + 0.22 + hs, zN + 0.005);
-    [1, -1].forEach(function(sx){ for(var i = 0; i < 4; i++) B.t("ledcell").box(body, "light", COL.drl, 0.05, 0.03, 0.02, sx*(W*0.24 + i*0.065), yl + 0.02, zN); });
+    // ([3.9] the Chiron's wide horseshoe and four LEDs in a row, the Tourbillon's tall narrow one and LEDs stacked in a
+    // column, the Veyron's round one between two round projectors a side)
+    var bv = look.bug, hsx = bv === "tourbillon" ? 0.78 : bv === "chiron" ? 1.12 : 1, hsy = bv === "tourbillon" ? 1.2 : bv === "chiron" ? 0.92 : 1;
+    var hs = Math.min(0.22, yn - gc - 0.12)*0.85, gap = (bv === "veyron" ? 0.45 : 0.62)*PI, tor = new T.TorusGeometry(hs, 0.025, 4, 18, 2*PI - gap);
+    tor.rotateZ(PI/2 + gap/2); tor.scale(hsx, hsy, 1);
+    var hcy = gc + 0.22 + hs*hsy;
+    B.add(body, "trim", tor, COL.chrome, 0, hcy, zN + 0.01);
+    var hm = new T.CircleGeometry(hs - 0.01, 14); hm.scale(hsx, hsy, 1);
+    B.t("honey").add(body, "trim", hm, 0xffffff, 0, hcy, zN + 0.005);
+    [1, -1].forEach(function(sx){
+      if(bv === "tourbillon") for(var i = 0; i < 4; i++) B.t("ledcell").box(body, "light", COL.drl, 0.06, 0.028, 0.02, sx*W*0.3, yl + 0.08 - i*0.045, zN);
+      else if(bv === "veyron") [0.25, 0.35].forEach(function(f){ B.t("bikehead").add(body, "light", new T.CircleGeometry(0.045, 12), COL.head, sx*W*f, yl, zN + 0.006); B.add(body, "trim", new T.TorusGeometry(0.047, 0.008, 3, 12), COL.chrome, sx*W*f, yl, zN + 0.008); });
+      else for(var i2 = 0; i2 < 4; i2++) B.t("ledcell").box(body, "light", COL.drl, 0.05, 0.03, 0.02, sx*(W*0.24 + i2*0.065), yl + 0.02, zN);
+    });
     var bg = new T.CircleGeometry(0.035, 14); bg.scale(1.5, 1, 1);                                     // [3.5.6] an oval badge atop the horseshoe
-    B.t("badge").add(body, "trim", bg, 0xffffff, 0, gc + 0.22 + 2*hs - 0.01, zN + 0.03);
+    B.t("badge").add(body, "trim", bg, 0xffffff, 0, hcy + hs*hsy - 0.01, zN + 0.03);
   } else {
     var kid = bmw;
     [1, -1].forEach(function(sx){
@@ -538,6 +580,31 @@ function buildCar(T, entry, st, d){
         else B.t("ylamp").box(body, "light", 0xffffff, lw, lh, 0.006, sx*W*0.32, yl, zN + 0.008, 0, 0, lr);
         return;
       }
+      var lt = look.lights;
+      // [3.9] by model: slim lamps (with a vertical DRL), square ones (the M2), split (a slim DRL up high, the lamps low in
+      // the bumper: the XM, the i7), angular ones with hexagonal DRL rings (the X5); else the angel eyes
+      if(lt === "split"){
+        B.box(body, "trim", COL.black, W*0.25, 0.045, 0.04, sx*W*0.3, yl + 0.05, zN - 0.012, 0, 0, sx*0.04);
+        B.box(body, "light", COL.drl, W*0.23, 0.02, 0.006, sx*W*0.3, yl + 0.05, zN + 0.008, 0, 0, sx*0.04);
+        var lly = gc + 0.4;
+        B.box(body, "trim", COL.black, W*0.13, 0.1, 0.04, sx*W*0.36, lly, zN - 0.01);
+        B.t("head").box(body, "light", 0xffffff, W*0.115, 0.08, 0.006, sx*W*0.36, lly, zN + 0.01);
+        return;
+      }
+      if(lt === "hex"){
+        B.box(body, "trim", COL.black, W*0.25, 0.11, 0.04, sx*W*0.31, yl, zN - 0.012, 0, 0, -sx*0.05);
+        B.t("head").box(body, "light", 0xffffff, W*0.22, 0.09, 0.004, sx*W*0.31, yl, zN + 0.006, 0, 0, -sx*0.05);
+        [0.25, 0.36].forEach(function(f){ var hx = new T.TorusGeometry(0.044, 0.009, 3, 6); hx.rotateZ(PI/6); B.add(body, "light", hx, COL.drl, sx*W*f, yl, zN + 0.01); });
+        return;
+      }
+      if(lt === "slim" || lt === "slimV" || lt === "square"){
+        var sq = lt === "square", hw = sq ? W*0.17 : W*0.25, hh = sq ? 0.12 : 0.075, hxp = sx*W*(sq ? 0.33 : 0.31), rz0 = sq ? 0 : sx*0.07;
+        B.box(body, "trim", COL.black, hw, hh, 0.04, hxp, yl, zN - 0.012, 0, 0, rz0);
+        B.t("head").box(body, "light", 0xffffff, hw*0.82, hh*0.7, 0.004, hxp, yl - 0.005, zN + 0.006, 0, 0, rz0);
+        B.box(body, "light", COL.drl, hw*0.9, 0.012, 0.006, hxp, yl + hh*0.42, zN + 0.01, 0, 0, rz0);          // the DRL brow
+        if(lt !== "slim") B.box(body, "light", COL.drl, 0.014, hh*0.9, 0.006, hxp - sx*hw*0.42, yl, zN + 0.012);   // its vertical stroke
+        return;
+      }
       B.box(body, "trim", COL.black, W*0.24, 0.11, 0.04, sx*W*0.31, yl, zN - 0.012);                    // the headlight housing
       if(bmw){                                                                                          // angel eyes, round projectors
         [0.25, 0.36].forEach(function(f){ B.add(body, "light", new T.TorusGeometry(0.042, 0.008, 3, 12), COL.drl, sx*W*f, yl, zN + 0.008); });
@@ -545,14 +612,27 @@ function buildCar(T, entry, st, d){
       } else B.t("head").box(body, "light", COL.head, W*0.2, 0.06, 0.02, sx*W*0.31, yl, zN);           // [3.5.6] projectors and a DRL strip
     });
     if(kid){                                                                                            // the kidneys
-      var tall = isM(entry) && st.type !== "suv", big = st.type === "suv" || st.ev;
-      var kw = big ? 0.26 : tall ? 0.19 : 0.23, kh = big ? 0.26 : tall ? 0.3 : 0.17, ky = gc + 0.24 + kh/2 + (tall ? 0 : 0.04);
+      // [3.9] by model: tall M3/M4 kidneys with horizontal slats down into the bumper, wide low ones (the 3 Series, the
+      // M5's lit outline), the M2's frameless horizontal pair, the XXL ones (the X5; lit on the XM and the i7), the X3's
+      // diagonal slats, the i4's closed panel
+      var gk = look.grille, closed = gk === "closed" || st.ev;
+      var KD = {tall: [0.19, 0.31, 0], wide: [0.24, 0.16, 0.04], wideLit: [0.25, 0.15, 0.05], frameless: [0.22, 0.13, 0.05], xl: [0.27, 0.28, 0.02],
+                xlLit: [0.27, 0.3, 0.02], diag: [0.26, 0.2, 0.03], closed: [0.23, 0.22, 0.03]}[closed ? "closed" : gk] || [0.23, 0.17, 0.04];
+      var kw = KD[0], kh = KD[1], ky = gc + 0.24 + kh/2 + KD[2], lit = /Lit$/.test(gk), slat = gk === "tall" || gk === "frameless" ? "h" : gk === "diag" ? "d" : "v";
       ky = Math.min(ky, yn - 0.06 - kh/2);
       [1, -1].forEach(function(sx){
-        B.plate(body, "trim", st.ev ? COL.bmwBlue : COL.alu, kw, kh, 0.03, 0.05, sx*(kw/2 + 0.02), ky, zN + 0.005);
-        if(st.ev) B.plate(body, "trim", COL.grey, kw - 0.03, kh - 0.03, 0.03, 0.04, sx*(kw/2 + 0.02), ky, zN + 0.012);
-        else B.t("honey").plate(body, "trim", 0xffffff, kw - 0.03, kh - 0.03, 0.03, 0.04, sx*(kw/2 + 0.02), ky, zN + 0.012);
-        if(!st.ev) for(var j = -1; j <= 1; j++) B.box(body, "trim", COL.alu, 0.012, kh - 0.05, 0.012, sx*(kw/2 + 0.02) + j*kw*0.26, ky, zN + 0.03);   // the slats
+        var kx = sx*(kw/2 + 0.02);
+        B.plate(body, "trim", closed ? COL.bmwBlue : gk === "frameless" || gk === "xlLit" ? COL.black : COL.alu, kw, kh, 0.03, gk === "xlLit" ? 0.03 : 0.05, kx, ky, zN + 0.005);
+        if(closed) B.plate(body, "trim", COL.grey, kw - 0.03, kh - 0.03, 0.03, 0.04, kx, ky, zN + 0.012);
+        else B.t("honey").plate(body, "trim", 0xffffff, kw - 0.03, kh - 0.03, 0.03, 0.04, kx, ky, zN + 0.012);
+        if(!closed){                                                                                    // the slats
+          if(slat === "h") for(var j = -1; j <= 1; j++) B.box(body, "trim", gk === "tall" ? COL.black : COL.alu, kw - 0.05, 0.014, 0.012, kx, ky + j*kh*0.26, zN + 0.03);
+          else for(var j2 = -1; j2 <= 1; j2++) B.box(body, "trim", COL.alu, 0.012, kh - 0.05, 0.012, kx + j2*kw*0.26, ky, zN + 0.03, 0, 0, slat === "d" ? sx*0.45 : 0);
+        }
+        if(lit){                                                                                        // a lit contour round the kidney
+          B.box(body, "light", COL.drl, kw, 0.01, 0.006, kx, ky + kh/2, zN + 0.025); B.box(body, "light", COL.drl, kw, 0.01, 0.006, kx, ky - kh/2, zN + 0.025);
+          [1, -1].forEach(function(e){ B.box(body, "light", COL.drl, 0.01, kh, 0.006, kx + e*kw/2, ky, zN + 0.025); });
+        }
       });
     } else if(!st.ev && !lambo) B.t("honey").plate(body, "trim", 0xffffff, W*0.42, 0.14, 0.03, 0.04, 0, yl - 0.02, zN + 0.004);
     // [3.5.6] a generic round badge: on the grille, else on the nose above the kidneys
@@ -580,10 +660,29 @@ function buildCar(T, entry, st, d){
       B.add(body, "trim", c, COL.alu, sx*(W/2 + 0.012), gc + cr + 0.08, zA - 0.25);
     });
   }
+  // [3.9] the M cars' power dome on the hood and the gills behind the front wheels; a Bugatti's spine (Chiron,
+  // Tourbillon) down the roof and the engine cover, the Veyron's two roof scoops
+  var hrun = Math.max(0.1, L/2 - 0.14 - zA), hang = Math.atan2(yb - yn, hrun);
+  if(look.dome){ var hz0 = zA + 0.15, hz1 = L/2 - 0.4, hzm = (hz0 + hz1)/2; if(hz1 > hz0) B.box(body, "paint", null, W*0.3, 0.05, (hz1 - hz0)/Math.cos(hang), 0, hood(hzm) + 0.006, hzm, hang, 0, 0); }
+  if(look.gills) [1, -1].forEach(function(sx){ for(var gi = 0; gi < 2; gi++) B.box(body, "trim", COL.black, 0.014, 0.026, 0.17, sx*(W/2 + 0.002), yb - 0.13 - gi*0.05, zf - ar - 0.2); });
+  if(look.bug === "chiron" || look.bug === "tourbillon"){
+    B.box(body, "paint", null, 0.03, 0.05, Math.max(0.2, zAr - zCr), 0, H + 0.01, (zAr + zCr)/2);
+    B.bar(body, "paint", null, [0, H + 0.01, zCr + 0.02], [0, yt + 0.03, -L/2 + 0.35], 0.03, 0.05);
+  }
+  if(look.bug === "veyron") [1, -1].forEach(function(sx){ B.box(body, "paint", null, 0.16, 0.09, 0.36, sx*0.22, H - 0.05, zCr - 0.12, 0.25, 0, 0); B.box(body, "trim", COL.black, 0.13, 0.06, 0.02, sx*0.22, H - 0.02, zCr + 0.06); });
   // the back: tail lights, the diffuser, exhausts, a lip
   var zT = -L/2 - 0.004, yr = yt - 0.2;
   B.box(body, "trim", COL.black, W*0.7, 0.12, 0.06, 0, gc + 0.12, -L/2 + 0.01);
-  if(bugatti) B.t("ledbar").box(body, "tail", COL.red, W*0.82, 0.035, 0.02, 0, yt - 0.16, zT);
+  if(bugatti && look.bug === "veyron") [1, -1].forEach(function(sx){ [0.3, 0.4].forEach(function(f){ B.add(body, "tail", new T.CircleGeometry(0.045, 12), COL.red, sx*W*f, yt - 0.17, zT, 0, PI, 0); }); });
+  else if(bugatti){ B.t("ledbar").box(body, "tail", COL.red, W*0.82, 0.035, 0.02, 0, yt - 0.16, zT); if(look.bug === "tourbillon") B.box(body, "tail", COL.red, 0.03, 0.14, 0.02, 0, yt - 0.2, zT); }
+  else if(look.tail === "thin") [1, -1].forEach(function(sx){                                         // [3.9] slim full-width-ish bars (the XM, the i7)
+    B.t("ledbar").box(body, "tail", COL.red, W*0.3, 0.028, 0.02, sx*W*0.3, yr + 0.04, zT);
+    B.box(body, "tail", COL.red, W*0.08, 0.06, 0.02, sx*W*0.42, yr, zT);
+  });
+  else if(look.tail === "laser") [1, -1].forEach(function(sx){                                        // the CSL's laser blades
+    B.t("ledbar").box(body, "tail", COL.red, W*0.2, 0.05, 0.02, sx*W*0.37, yr, zT);
+    [0, 1].forEach(function(k){ B.box(body, "tail", 0xffffff, W*0.14, 0.008, 0.02, sx*W*(0.35 + k*0.03), yr - 0.008 + k*0.016, zT - 0.004, 0, 0, sx*0.35); });
+  });
   else if(lambo && !classic) [1, -1].forEach(function(sx){
     // [3.9] a hexagonal ring of light each side (a torus of six segments), a thin light bar running in to the middle
     var hr = new T.TorusGeometry(sup ? 0.075 : 0.065, 0.014, 3, 6); hr.rotateZ(PI/6);
@@ -671,16 +770,17 @@ function buildCar(T, entry, st, d){
   }
   if(st.type === "hatch") B.box(body, "paint", null, tw*0.95, 0.035, 0.24, 0, H - 0.01, zCr - 0.02, 0.1, 0, 0);   // the roof spoiler
   if(st.type === "sedan" && bmw && isM(entry)) B.box(body, "paint", null, W*0.6, 0.025, 0.07, 0, yt + 0.012, -L/2 + 0.16);
+  if(look.ducktail) B.box(body, "paint", null, W*0.74, 0.04, 0.17, 0, yt + 0.035, -L/2 + 0.14, 0.32, 0, 0);   // [3.9] the CSL's ducktail
   if(mid || st.type === "coupe" || isM(entry)){
     B.box(body, "trim", COL.black, W*0.86, 0.022, 0.14, 0, gc + 0.012, L/2 - 0.04);                       // the splitter
     for(var fi = -2; fi <= 2; fi++) B.box(body, "trim", COL.black, 0.02, 0.12, 0.3, fi*W*0.12, gc + 0.07, -L/2 + 0.16);   // diffuser fins
   }
   // the wheels: the front ones in steer holders
-  var tw = mid ? 0.3 : 0.26, wx = W/2 - tw/2 - 0.03, rim = bugatti ? COL.alu : bmw && isM(entry) ? COL.grey : COL.steel;
+  var tw = mid ? 0.3 : 0.26, wx = W/2 - tw/2 - 0.03, rim = look.rim != null ? look.rim : bugatti ? COL.alu : bmw && isM(entry) ? COL.grey : COL.steel;
   var wheels = [], cal = bugatti ? COL.alu : bmw && isM(entry) ? COL.bmwBlue : lambo ? COL.gold : hyper ? COL.red : COL.grey;
   [[-wx, zf, "steer-l", -1], [wx, zf, "steer-r", 1], [-wx, zr, null, -1], [wx, zr, null, 1]].forEach(function(p, i){
     var h = B.node(root, p[2], p[0], R, p[1]);
-    wheels.push(carWheel(B, h, "wheel-" + i, R, tw, p[3], rim, bugatti ? 7 : 5, cal, bmw && isM(entry)));
+    wheels.push(carWheel(B, h, "wheel-" + i, R, tw, p[3], rim, lambo ? 5 : look.spokes, cal, look.split || (bmw && isM(entry) && !look.rim)));
   });
   finish(T, root);
   return {g: root, meta: {kind: "car", R: R, radii: [R, R, R, R], lean: mid ? -0.04 : -0.08, riderK: riderK}};
@@ -719,7 +819,12 @@ function buildBike(T, entry, st, d){
   var hyp = st.type === "hypersport", classic = st.type === "classic", cruiser = st.type === "cruiser", br = st.brand;
   var duc = br === "ducati", kawa = br === "kawasaki", ren = br === "royalenfield", hd = br === "harleydavidson", tri = br === "triumph", yam = br === "yamaha", suz = br === "suzuki";
   var fresh = duc || kawa || ren || hd || tri || yam || suz || classic || cruiser || hyp, cyl = Math.max(1, Math.round(+sp.cyl || 0) || 2);
-  var ssa = duc || kawa, trellis = ktm || kawa, twinShock = classic, old = classic || cruiser;
+  // [3.9] the existing makers' models, each its own face: KTM's 390 / 990 / 1390 Duke heads, the RC's single lamp, the
+  // Adventures' vertical split lamps; BMW's round G 310 R lamp, the F 900 R's angular one, the S 1000 R's brows, the
+  // S 1000 RR's asymmetric pair, the G 310 GS's asymmetric lamps (the R 1300 GS keeps its X)
+  var mdl = String(entry.model || ""), d990 = ktm && /990/.test(mdl), sdr = ktm && /1390 Super Duke/.test(mdl), f900 = bmw && /F 900/.test(mdl);
+  var s1kr = bmw && /S 1000 R$/.test(mdl), s1krr = bmw && /S 1000 RR/.test(mdl), m1k = bmw && /M 1000/.test(mdl), g310gs = bmw && /G 310 GS/.test(mdl);
+  var ssa = duc || kawa || sdr, trellis = ktm || kawa, twinShock = classic, old = classic || cruiser;
   var boxer = sp.layout === "boxer" || (bmw && adv && (+sp.cc || 1300) > 900), small = (+sp.cc || 0) > 0 ? +sp.cc <= 400 : /\b[1-4]\d\d\b/.test(String(entry.model || ""));
   var frame = ktm ? COL.ktm : kawa ? COL.kawa : bmw ? COL.alu : old || duc || yam ? COL.black : COL.grey, accent = ktm ? COL.ktm : bmw && sport ? COL.bmwBlue : COL.grey;
   var zs0 = zr + WB*0.5, zs1 = zr + WB*0.12, rtw0 = cruiser ? 0.24 : classic ? 0.13 : sport ? 0.19 : 0.16;
@@ -916,6 +1021,12 @@ function buildBike(T, entry, st, d){
         B.box(body, "light", COL.drl, 0.05, 0.012, 0.012, sx*0.07, yh - 0.12, zn - 0.03, 0, sx*0.4, 0);
         B.t("honey").box(body, "trim", 0xffffff, 0.05, 0.06, 0.02, sx*0.075, yh - 0.25, zn - 0.04, 0, sx*0.35, 0);
         B.box(body, "trim", COL.chrome, 0.012, 0.025, 0.5, sx*0.235, yh - 0.36, zh - 0.12, 0.12, 0, 0);
+      } else if(ktm){                                                                                 // [3.9] the RC: DRL slashes either side of one lamp
+        B.box(body, "light", COL.drl, 0.08, 0.012, 0.012, sx*0.08, yh - 0.15, zf - 0.01, 0, sx*0.35, -sx*0.45);
+      } else if(s1krr){                                                                               // the S 1000 RR's asymmetric pair: round left, wide right
+        if(sx > 0) B.t("bikehead").add(body, "light", new T.CircleGeometry(0.04, 12), COL.head, 0.075, yh - 0.17, zf + 0.004, 0, 0.35, 0);
+        else B.t("head").box(body, "light", COL.head, 0.11, 0.04, 0.03, -0.08, yh - 0.17, zf, 0, -0.35, 0);
+        B.box(body, "light", COL.drl, 0.06, 0.008, 0.01, sx*0.09, yh - 0.13, zf - 0.01, 0, sx*0.35, -sx*0.25);
       } else {
         B.t("head").box(body, "light", COL.head, 0.09, 0.035, 0.03, sx*0.08, yh - 0.17, zf - 0.0, 0, sx*0.35, 0);
         B.box(body, "light", COL.drl, 0.07, 0.008, 0.01, sx*0.09, yh - 0.145, zf - 0.01, 0, sx*0.35, -sx*0.25);   // [3.5.6] the DRL brow
@@ -931,14 +1042,24 @@ function buildBike(T, entry, st, d){
       B.bar(body, "trim", COL.black, [0.16, yh - 0.24, zf - 0.08], [0.17, 0.62, ez + 0.12], 0.05, null, true);  // the ram-air duct on the left
     }
     if(suz) B.t("head").box(body, "light", COL.head, 0.07, 0.13, 0.02, 0, yh - 0.2, zn - 0.005);           // the stacked vertical headlight
+    if(ktm) B.t("head").box(body, "light", COL.head, 0.08, 0.06, 0.02, 0, yh - 0.19, zf - 0.005);         // the RC's one lamp
     if(bmw) B.box(body, "trim", COL.bmwBlue, 0.02, 0.06, 0.5, 0.29, yh - 0.25, zh - 0.1, 0.4, 0, 0);
   }
   if(adv){
     B.side(body, "paint", null, [[zf + 0.16, Rf*2 + 0.06], [zf + 0.2, Rf*2 + 0.1], [zh + 0.12, yh - 0.06], [zh + 0.02, yh - 0.16]], 0.16, 0.02, 2);
     B.box(body, "paint", null, 0.38, 0.3, 0.22, 0, yh + 0.04, zh + 0.18);
     B.side(body, "glass", null, [[zh + 0.26, yh + 0.16], [zh + 0.07, yh + 0.42], [zh + 0.01, yh + 0.4], [zh + 0.18, yh + 0.14]], 0.36, 0.005, 1);
-    [0.6, -0.6].forEach(function(r){ B.box(body, "light", COL.drl, 0.03, 0.2, 0.02, 0, yh + 0.04, zh + 0.3, 0, 0, r); });
-    B.t("bikehead").box(body, "light", COL.head, 0.17, 0.15, 0.004, 0, yh + 0.04, zh + 0.293);              // [3.5.6] the projector behind the X
+    if(ktm) [1, -1].forEach(function(sx){                                                             // [3.9] a KTM's vertical split lamps
+      B.t("head").box(body, "light", COL.head, 0.05, 0.17, 0.006, sx*0.045, yh + 0.03, zh + 0.293);
+      B.box(body, "light", COL.drl, 0.014, 0.19, 0.006, sx*0.1, yh + 0.04, zh + 0.296, 0, 0, sx*0.15);
+    });
+    else if(g310gs){                                                                                  // the G 310 GS: an asymmetric pair
+      B.t("bikehead").add(body, "light", new T.CircleGeometry(0.06, 14), COL.head, 0.07, yh + 0.04, zh + 0.296);
+      var ov = new T.CircleGeometry(0.06, 14); ov.scale(1.3, 0.75, 1); B.t("bikehead").add(body, "light", ov, COL.head, -0.07, yh + 0.03, zh + 0.296);
+    } else {
+      [0.6, -0.6].forEach(function(r){ B.box(body, "light", COL.drl, 0.03, 0.2, 0.02, 0, yh + 0.04, zh + 0.3, 0, 0, r); });
+      B.t("bikehead").box(body, "light", COL.head, 0.17, 0.15, 0.004, 0, yh + 0.04, zh + 0.293);            // [3.5.6] the projector behind the X
+    }
     [1, -1].forEach(function(sx){ B.bar(body, "trim", COL.black, [sx*0.18, 0.62, ez + 0.3], [sx*0.36, 0.42, ez + 0.08], 0.02, null, true); });   // crash bars
   }
   // detail: the chain and its guard, the rear caliper, the radiator, the clutch cover and the head's fins, the tank's
@@ -962,7 +1083,8 @@ function buildBike(T, entry, st, d){
     B.box(body, "trim", COL.alu, ew + 0.1, 0.03, 0.5, 0, 0.27, ez + 0.02, -0.06, 0, 0);                     // the skid plate
     [1, -1].forEach(function(sx){ B.bar(body, "trim", COL.black, [sx*0.17, ys - 0.08, zr + 0.25], [sx*0.19, ys - 0.24, zr - 0.05], 0.016, null, true); });   // the rack's rails
   }
-  if(sport && bmw && /\bM\b|M 1000/.test(String(entry.model || ""))) [1, -1].forEach(function(sx){ B.box(body, "trim", COL.dark, 0.09, 0.012, 0.16, sx*0.24, yh - 0.12, zh - 0.02, 0, 0, -sx*0.3); });   // winglets
+  if(m1k || s1krr) [1, -1].forEach(function(sx){ B.box(body, "trim", COL.dark, m1k ? 0.09 : 0.07, 0.012, m1k ? 0.16 : 0.12, sx*0.24, yh - 0.12, zh - 0.02, 0, 0, -sx*0.3); });   // winglets (the M's bigger)
+  if(m1k) [0.3, 0.35].forEach(function(x, i){ B.box(body, "trim", i ? COL.bmwBlue : 0xd02030, 0.02, 0.03, 0.5, x - 0.06, yh - 0.31 - i*0.035, zh - 0.1, 0.4, 0, 0); });   // the M stripes
   if(!old) B.bar(body, "trim", COL.black, [0, tip[1] - 0.09, tip[0] + 0.04], [0, ys - 0.2, zr - 0.08], 0.05, 0.012);   // the tail tidy
   // the steering: fork, front wheel, mudguard, bars (clip-ons on a sport bike), a naked bike's headlight
   var steer = B.node(root, "steer", 0, yh, zh);
@@ -1010,8 +1132,20 @@ function buildBike(T, entry, st, d){
         B.add(steer, "trim", e, COL.black, sx*0.065, -0.06, 0.15); var f = new T.CircleGeometry(0.05, 14); f.scale(1, 1.3, 1);
         B.t("bikehead").add(steer, "light", f, COL.head, sx*0.065, -0.06, 0.167); });
       B.box(steer, "paint", null, 0.2, 0.08, 0.03, 0, 0.06, 0.12, -0.5, 0, 0);                              // the fly screen
+    } else if(d990){                                                                                  // [3.9] the 990: two thin vertical DRLs over a wide lamp
+      [1, -1].forEach(function(sx){ B.box(steer, "light", COL.drl, 0.018, 0.13, 0.02, sx*0.055, -0.03, 0.175, 0, 0, sx*0.12); });
+      B.t("head").box(steer, "light", COL.head, 0.09, 0.05, 0.02, 0, -0.11, 0.17);
+    } else if(sdr){                                                                                   // the 1390: a split lamp clasped by DRL pincers
+      [1, -1].forEach(function(sx){ B.box(steer, "light", COL.head, 0.04, 0.12, 0.02, sx*0.032, -0.06, 0.175);
+        B.box(steer, "light", COL.drl, 0.016, 0.09, 0.02, sx*0.08, -0.01, 0.17, 0, 0, sx*0.6); B.box(steer, "light", COL.drl, 0.016, 0.09, 0.02, sx*0.08, -0.11, 0.17, 0, 0, -sx*0.6); });
     } else if(ktm){ [1, -1].forEach(function(sx){ B.box(steer, "light", COL.head, 0.045, 0.15, 0.02, sx*0.04, -0.06, 0.175); B.box(steer, "light", COL.drl, 0.02, 0.1, 0.02, sx*0.085, -0.03, 0.17, 0, 0, sx*0.5); }); }
-    else B.t("bikehead").add(steer, "light", new T.CylinderGeometry(0.075, 0.075, 0.02, 16), COL.head, 0, -0.05, 0.18, PI/2, 0, 0);
+    else if(f900){                                                                                    // an angular lamp under a V of DRL
+      B.t("head").box(steer, "light", COL.head, 0.13, 0.07, 0.02, 0, -0.07, 0.175);
+      [1, -1].forEach(function(sx){ B.box(steer, "light", COL.drl, 0.08, 0.014, 0.02, sx*0.04, -0.02, 0.178, 0, 0, -sx*0.3); });
+    } else if(s1kr){                                                                                  // a wide, narrow lamp under two brows
+      B.t("head").box(steer, "light", COL.head, 0.15, 0.045, 0.02, 0, -0.08, 0.175);
+      [1, -1].forEach(function(sx){ B.box(steer, "light", COL.drl, 0.07, 0.012, 0.02, sx*0.045, -0.035, 0.178, 0, 0, sx*0.25); });
+    } else B.t("bikehead").add(steer, "light", new T.CylinderGeometry(0.075, 0.075, 0.02, 16), COL.head, 0, -0.05, 0.18, PI/2, 0, 0);
   }
   // the fork's lower legs and axle clamps, the front calipers, the top clamp, grips, levers and their reservoirs, the dash
   [1, -1].forEach(function(sx){

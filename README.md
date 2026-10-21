@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.3.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.5.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -59,6 +59,12 @@ paired), published maps and work signals (off by default) add a few listed field
   **A/D** turn, **E** gets in or out once landed. Other players see you flying.
 - **The Commons air base.** Hangars, a radar, an attack helicopter, an aircraft carrier offshore and
   fighter jets flying over.
+- **A real airport.** An offshore airfield for the Commons: a 1.6 km runway with full markings and lights,
+  taxiways, a terminal and concourse with jet bridges, a control tower, and airliners on a timetable everyone
+  shares. Take the **Isle Hopper** from the terminal to an island.
+- **Real cars and bikes.** A **dealership** in every city with real vehicles from the brands players pick
+  (BMW, Bugatti, KTM so far), grouped in classes by type and engine size, two per class, all free. They drive
+  like their real specs, live in a **multi-storey garage**, and drive themselves to you when you press **C**.
 - **Find your way.** A minimap (press **M** for the big map), waypoints, and turn-by-turn directions
   along the roads (**N** or **Go to**).
 
@@ -358,6 +364,55 @@ and feature guide.
 
 ## Changelog
 
+- **3.5.0 — HQ 3.5 — Basement Garage.** Every HQ now sits on a lavish B1 basement garage: the old garage beside
+  the tower is a glass **car lift** (drive on and you go down with your car; drive onto the pad down there and you
+  come up on the street in it), and a new **B1 lift** in the lobby takes you down on foot. Your starter car,
+  motorbike and bicycle live on turntable showcase plinths; your bought vehicles get numbered bays (more as your HQ
+  levels up). The **garage manager** (kiosks in B1 and at the common multi-storey) transfers each vehicle between
+  your private basement and the common carpark; calling a B1 vehicle (C) brings it up the car lift. Return to HQ (T)
+  puts the starters back in B1. Fixes: an owned vehicle's paint (an index), its carpark bay, and its parked spot cleared
+  once it is home.
+- **3.4.0 — The dealership and the airport.** Real cars and bikes with a dealership and a garage, and a real
+  airport for the Commons.
+  - **Real vehicles, in classes.** 32 vehicles from the first player's brands: BMW and Bugatti cars, BMW and
+    KTM Duke bikes, from the KTM 390 Duke to the Bugatti Tourbillon. Every vehicle sits in a class by type
+    (naked, sport, adventure; hatch, sedan, coupe, SUV, hypercar, electric) and engine size in cc (bikes up
+    to 400 cc, 401-950 cc, over 950 cc; cars up to 2000 cc, 3000 cc, 5000 cc, over 5000 cc, electric). Each
+    class sells two. More brands join as players add theirs (`games/vehicles/catalogue.json`: one entry per
+    vehicle).
+  - **They drive like the real thing.** Handling comes from each vehicle's real power, weight and drivetrain:
+    rear-wheel drive slides, all-wheel drive grips, electric cars pull from standstill on one gear. 0-100 km/h
+    lands on the maker's figure (an M3 Competition in 3.9 s, a Chiron Super Sport in 2.4 s). New engine
+    voices: single, twin, V-twin, boxer, W16, V16 and electric.
+  - **The dealership.** A glass showroom in every city from tier 2 (the flagship on the Commons) with the
+    vehicles turning on display. Press E for the panel: both vehicles of each class side by side with their
+    real specs and factory paints, a 3-minute **test drive**, and **Get it**. Everything is free and unlocked.
+  - **The garage.** A multi-storey garage where your vehicles live, each in its own bay: six levels on the
+    Commons, three on an island at tier 5. Open sides let you see the cars, and a helix ramp you can drive up.
+  - **Call your vehicle (C).** Pick one and it drives out of its bay, down the ramps and along the roads to
+    you, with hazard lights and its ETA on the minimap, and parks at the kerb beside you. Get out and, five
+    seconds later, it drives itself back to the garage. Far from a garage it arrives from just out of sight.
+  - **Others see your car.** Other players see the real vehicle you are driving, in your paint (HQ presence
+    v4, the `vehicles` capability; older clients still see the starter car or motorbike).
+  - The vehicles use built-in 3D bodies drawn to each one's real size for now; licensed models will replace
+    them (`tools/vehicle_fetch.py`).
+  - **A real airport for the Commons.** The old glass box with a runway patch painted across
+    it is gone. The Commons now has an offshore airfield on a reclaimed platform west of the coast: a
+    1.6 km runway (18/36) with blast pads, piano keys, touchdown-zone and centreline markings, two
+    parallel taxiways with rapid exits, edge, centreline, approach and PAPI lights, a rabbit at night,
+    windsocks that follow the wind, signs, fences and a sea wall. A landside terminal with a walk-through
+    hall and a ramp leads over a skybridge across Ring Road 5 to a glazed concourse with six jet bridges;
+    there are a 66 m control tower with a rotating beacon, an approach radar, a fire station, hangars,
+    a fuel farm and a multi-storey car park. Airliners in four invented liveries fly a timetable that is
+    the same for everyone (push back, taxi, hold, line up, take off; land, leave by a rapid exit, taxi
+    in), with tugs, baggage trains, belt loaders, fuel and catering trucks and a follow-me car working
+    the stands. From the terminal you can take the **Isle Hopper**, an amphibian, to an island (and
+    back from the island's dock); island to island is still a seaplane. The minimap and the big map
+    show the airfield, and ships, ferries, the carrier and the air base keep clear of it.
+  **Privacy/egress:** the new dashboard proxies (`GET /api/arena/vehicles/mine`, `POST /api/arena/vehicles/buy`
+  and `/api/arena/vehicles/<id>/park`) send only a validated vehicle id, paint and position with the paired
+  device token. Presence adds the driven vehicle's catalogue id and paint index. Nothing transcript-derived
+  is sent.
 - **3.3.2 — No more camera pumping near buildings.** Riding (or walking) past buildings, the chase camera kept
   zooming in and out: its collision ray clipped corner after corner, pulling in fast and easing out between them.
   Now once it pulls in it keeps that distance for 0.6 s after the last hit before easing back out, so passing a

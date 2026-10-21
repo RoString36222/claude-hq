@@ -70,14 +70,11 @@ HQV.hqLotExtras = LOT_EXTRAS;
 // the car while it is parked (carParked; not while you are driving it), in its garage or, given
 // at = {x, z, yaw} (lot frame), wherever it was left. The bike is not.
 function lotExtraBlocked(x, z, carParked, at){
-  var G = LOT_EXTRAS.garage, K = LOT_EXTRAS.car, T = 0.2 + 0.3;   // wall + a body's width
+  var G = LOT_EXTRAS.garage, T = 0.2 + 0.3;   // wall + a body's width
   var inX = Math.abs(x - G.x) < G.w/2 + 0.3, inZ = z > G.z - G.d/2 - 0.3 && z < G.z + G.d/2;
   if(inX && Math.abs(z - (G.z - G.d/2)) < T) return true;                          // back wall
   if(inZ && (Math.abs(x - (G.x - G.w/2)) < T || Math.abs(x - (G.x + G.w/2)) < T)) return true;   // side walls
-  if(carParked === false) return false;
-  var cx = at ? at.x : K.x, cz = at ? at.z : K.z, yw = at ? at.yaw || 0 : K.yaw;
-  var dx = x - cx, dz = z - cz, s = Math.sin(yw), c = Math.cos(yw);
-  return Math.abs(dx*c - dz*s) < K.wid/2 + 0.2 && Math.abs(dx*s + dz*c) < K.len/2 + 0.2;
+  return false;   // [basement 3.4] the car lives in the basement now: no car box (carParked, at, K kept for callers)
 }
 HQV.hqLotExtraBlocked = lotExtraBlocked;
 // an HQ's own colours, read the way its building reads them (games/hqbase.js): paint and accent
@@ -146,7 +143,8 @@ HQV.hqWorlds.city = function(c, w){
     B.hits.forEach(function(o){ hits.push(o); }); B.doors.forEach(function(d){ doors.push(d); });
     L.B = B; L.H = B.top() + 2; L.fade = {g: B.g, on: false}; lotsB.push(B);
     var cr = Math.cos(L.rot), sr = Math.sin(L.rot);                               // the lot's frame -> the street's
-    var X = HQV.hqCityParts.lotExtras(c, g, plated(lotColors(h.look), h), L.rot, function(x, z){ return {x: L.x + x*cr + z*sr, z: L.z - x*sr + z*cr}; }, null, h.userId);
+    var X = HQV.hqCityParts.lotExtras(c, g, plated(lotColors(h.look), h), L.rot, function(x, z){ return {x: L.x + x*cr + z*sr, z: L.z - x*sr + z*cr}; }, null, h.userId, null, h.isYou);
+    (X.hits || []).forEach(function(o){ hits.push(o); }); (X.doors || []).forEach(function(d){ doors.push(d); });   // [basement 3.4] the car lift
     X.glows.forEach(function(gl){ lampGlows.push(gl); }); L.car = X.car; L.garage = X.garage;
     X.items.forEach(function(b){ bikes.push(b); });
   }

@@ -156,11 +156,12 @@ fn games_allowlist_etag_and_save() {
         assert_eq!(get(srv.port, bad, "").0, 404, "{}", bad);
     }
     for good in ["golf/courses.json", "golf/straight.glb", "vendor/three-core.js", "kart/tracks.json", "fps/map.json", "platformer/levels.json", "strike/map.json",
+                 "vehicles/catalogue.json",
                  "rally/physics.js", "rally/stage.js", "rally/scene.js"] {
         assert!(srv.app.game_file(good).is_some(), "{}", good);
     }
     // Valley Rally may serve scripts from its own folder; no other folder may, and nothing deeper
-    for bad in ["rally/tools/tune.js", "rally/../core.js", "rally/Physics.js", "rally/x.glb", "rally/missing.js", "kart/x.js", "golf/x.js"] {
+    for bad in ["rally/tools/tune.js", "rally/../core.js", "rally/Physics.js", "rally/x.glb", "rally/missing.js", "kart/x.js", "golf/x.js", "vehicles/x.js", "vehicles/sub/x.glb"] {
         assert!(srv.app.game_file(bad).is_none(), "{}", bad);
     }
     // the 3D City's CC0 textures: JPEGs only, never its licence text, a script or anything deeper

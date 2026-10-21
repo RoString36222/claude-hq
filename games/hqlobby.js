@@ -135,6 +135,22 @@ HQV.hqWorlds.lobby = function(c, w){
     doors.push(d); lifts.push({dl: dl, dr: dr, open: 0, light: light, x: lx});
   });
   var liftTag = c.label("Lifts · Mission Control", c.HEX.amber, 0.55); liftTag.position.set(9.9, 5.1, -R + 0.8); S.add(liftTag);
+  // [basement 3.4] a third lift on the right wall, down to the B1 basement garage (games/hqbasement.js)
+  var b1 = (function(){
+    var g = new THREE.Group(); g.position.set(R - 0.05, 0, -8); g.rotation.y = -PI/2; S.add(g);
+    box(2.9, 4.2, 0.25, mat(0x8d9aa6, {metalness: 0.85, roughness: 0.25}), 0, 2.1, 0, g);
+    box(2.4, 3.5, 0.1, mat(0x0a1118), 0, 1.75, 0.1, g);
+    var dm = mat(0x2b3138, {metalness: 0.9, roughness: 0.18});
+    var dl = box(1.18, 3.45, 0.08, dm, -0.6, 1.75, 0.18, g), dr = box(1.18, 3.45, 0.08, dm, 0.6, 1.75, 0.18, g);
+    var it = c.canvasTex(512, 96, function(gg){ gg.fillStyle = "#100a06"; gg.fillRect(0, 0, 512, 96); gg.fillStyle = c.HEX.cyan; gg.font = "600 44px ui-monospace, Menlo, monospace"; gg.fillText("\u25bc B1  Garage", 18, 62); });
+    var ind = c.screen(2.2, 0.42, it.t); ind.position.set(0, 3.85, 0.14); g.add(ind);
+    var light = new THREE.PointLight(0xbfe9ff, 0, 0, 2); light.position.set(0, 2.2, 0.6); g.add(light);
+    var d = {view: "@basement", kind: "lift", label: "Garage lift", tip: "Lift: down to your B1 basement garage", front: new THREE.Vector3(R - 1.8, 0, -8)};
+    g.traverse(function(o){ if(o.isMesh){ o.userData.door = d; hits.push(o); } });
+    doors.push(d);
+    var tag = c.label("Lift \u00b7 B1 Basement garage", c.HEX.cyan, 0.55); tag.position.set(R - 0.8, 5.1, -8); S.add(tag);
+    return {dl: dl, dr: dr, open: 0, light: light};
+  })();
 
   // entrance: glass wall and sliding doors on the left wall, the street beyond
   var outside = c.screen(14, 7, c.sky(false)); outside.position.set(-17, 3.5, 0); outside.rotation.y = PI/2; S.add(outside);
@@ -210,7 +226,8 @@ HQV.hqWorlds.lobby = function(c, w){
   w.floor = floor; w.hits = hits; w.doors = doors; w.span = 11; w.zoom = 1.1; w.camY = 1.6; w.follow = 0.6;
   w.bounds = [-R, R, -R, R];
   w.spawn = {x: 0, z: 6, yaw: PI};
-  w.spawnFrom = {base: {x: -R + 2.4, z: 0, yaw: PI/2}, mission: {x: 9.9, z: -R + 2.6, yaw: 0}};
+  w.spawnFrom = {base: {x: -R + 2.4, z: 0, yaw: PI/2}, mission: {x: 9.9, z: -R + 2.6, yaw: 0},
+                 basement: {x: R - 2.6, z: -8, yaw: -PI/2}};   // [basement 3.4] out of the B1 lift
   w.blocked = blocked;
   w.setTime = function(night){
     S.background = new THREE.Color(night ? 0x0a1520 : 0x7fb2d6);
@@ -236,6 +253,8 @@ HQV.hqWorlds.lobby = function(c, w){
       var want = av && Math.hypot(av.x - L.x, av.z + R - 1.8) < 3.2 ? 1 : 0;
       L.open += (want - L.open)*Math.min(1, dt*4); L.dl.position.x = -0.6 - L.open*1.05; L.dr.position.x = 0.6 + L.open*1.05; L.light.intensity = L.open*30;
     });
+    if(b1){ var wb = av && Math.hypot(av.x - (R - 1.8), av.z + 8) < 3.2 ? 1 : 0;   // [basement 3.4] the B1 lift's doors
+      b1.open += (wb - b1.open)*Math.min(1, dt*4); b1.dl.position.x = -0.6 - b1.open*1.05; b1.dr.position.x = 0.6 + b1.open*1.05; b1.light.intensity = b1.open*30; }
     var dOpen = av && Math.abs(av.x + R) < 4 && Math.abs(av.z) < 3 ? 1 : 0;
     slideL.userData.o = (slideL.userData.o || 0) + (dOpen - (slideL.userData.o || 0))*Math.min(1, dt*4);
     slideL.position.z = -0.9 - slideL.userData.o*1.7; slideR.position.z = 0.9 + slideL.userData.o*1.7;

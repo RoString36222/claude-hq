@@ -62,6 +62,16 @@ pub fn city_post_target(path: &str) -> Option<(String, &str)> {
     (!owner.is_empty() && !owner.contains('/')).then(|| (py::unquote(owner), action))
 }
 
+/// The owned vehicle in `/api/arena/vehicles/<id>/park`; arena.rs validates the id.
+pub fn vehicle_park_target(path: &str) -> Option<&str> {
+    path.strip_prefix("/api/arena/vehicles/")?.strip_suffix("/park").filter(|id| !id.is_empty() && !id.contains('/'))
+}
+
+/// The owned vehicle in `/api/arena/vehicles/<id>/home`; arena.rs validates the id. [basement 3.4]
+pub fn vehicle_home_target(path: &str) -> Option<&str> {
+    path.strip_prefix("/api/arena/vehicles/")?.strip_suffix("/home").filter(|id| !id.is_empty() && !id.contains('/'))
+}
+
 /// Every state-changing route; anything else 404s locally.
 pub fn post_paths() -> Vec<&'static str> {
     let mut v = vec![
@@ -70,7 +80,7 @@ pub fn post_paths() -> Vec<&'static str> {
         "/api/arena/pantry/give", "/api/arena/pantry/reward", "/api/arena/hq/me", "/api/arena/portrait", "/api/arena/cosmetics/buy",
         "/api/arena/cosmetics/equip", "/api/arena/market/sell", "/api/arena/crews/create", "/api/arena/crews/join",
         "/api/arena/crews/leave", "/api/arena/quickplay/join", "/api/arena/quickplay/leave", "/api/arena/cali/order",
-        "/api/arena/sounds", "/api/arena/rail/build", "/api/games/state", "/api/vial/spend", "/api/notch/install",
+        "/api/arena/sounds", "/api/arena/rail/build", "/api/arena/vehicles/buy", "/api/games/state", "/api/vial/spend", "/api/notch/install",
     ];
     v.extend(ARENA_ROOM_POSTS);
     v.extend(ext::POST.iter().map(|(p, _)| *p));
@@ -313,7 +323,7 @@ static GAME_ASSET_RE: LazyLock<Regex> = LazyLock::new(|| {
     // Valley Rally (games/rally/) is all generated code: its physics, stage and scene scripts
     // are classic scripts in that folder, so it alone may serve .js beside its data. The 3D
     // City's CC0 surface textures and sky (games/city/, LICENSE-assets.txt) are JPEGs only.
-    Regex::new(r"^(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart|platformer|fps|strike)/[a-z][a-z0-9-]{0,40}\.(glb|json|png)|rally/[a-z][a-z0-9-]{0,40}\.(js|json|png)|city/[a-z][a-z0-9-]{0,40}\.jpg)$").unwrap()
+    Regex::new(r"^(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart|platformer|fps|strike|vehicles)/[a-z][a-z0-9-]{0,40}\.(glb|json|png)|rally/[a-z][a-z0-9-]{0,40}\.(js|json|png)|city/[a-z][a-z0-9-]{0,40}\.jpg)$").unwrap()
 });
 
 fn game_type(ext: &str) -> &'static str {
@@ -479,6 +489,11 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
     }
     if path == "/api/arena/rail" {
         let (c, r) = app.arena_rail();
+        return Reply::json(c, &r);
+    }
+    if path == "/api/arena/garages/mine" { let (c, r) = app.arena_garages_mine(); return Reply::json(c, &r); } // [basement 3.4]
+    if path == "/api/arena/vehicles/mine" {
+        let (c, r) = app.arena_vehicles_mine();
         return Reply::json(c, &r);
     }
     let qs = |k: &str| py::qs_first(query, k);
@@ -793,7 +808,9 @@ async fn do_post(app: Arc<App>, headers: HeaderMap, path: String, body: Body) ->
     if !origin_ok(&headers) {
         return reply(Reply::json(403, &json!({"error": "cross-site request rejected"})));
     }
-    if !post_paths().contains(&path.as_str()) && city_post_target(&path).is_none() {
+    if !post_paths().contains(&path.as_str()) && city_post_target(&path).is_none() && vehicle_park_target(&path).is_none()
+        && vehicle_home_target(&path).is_none() // [basement 3.4]
+    {
         return reply(Reply::json(404, &json!({"error": "not found"})));
     }
     let cl = headers.get("content-length").and_then(|v| v.to_str().ok()).map(|s| py::strip(s).to_string()).unwrap_or_default();
@@ -911,6 +928,10 @@ fn arena_post(app: &App, path: &str, body: &Value) -> (u16, Value) {
     if ARENA_ROOM_POSTS.contains(&path) {
         return handlers::room_post(app, path, b);
     }
+    if let Some(id) = vehicle_park_target(path) {
+        return app.arena_vehicle_park(id, body);
+    }
+    if let Some(id) = vehicle_home_target(path) { return app.arena_vehicle_home(id, body); } // [basement 3.4]
     if let Some((owner, action)) = city_post_target(path) {
         return if action == "trade" { app.arena_market_trade(&owner, body) } else { app.arena_city_post(&owner, action, body) };
     }
@@ -925,6 +946,7 @@ fn arena_post(app: &App, path: &str, body: &Value) -> (u16, Value) {
         }
         "/api/arena/publish" => app.arena_publish(),
         "/api/arena/rail/build" => app.arena_rail_build(body),
+        "/api/arena/vehicles/buy" => app.arena_vehicle_buy(body),
         "/api/arena/ticket" => app.arena_ws_ticket(),
         "/api/arena/nudge" => match b.get("toHandle").and_then(|v| v.as_str()).filter(|t| !py::strip(t).is_empty()) {
             Some(to) => app.arena_send_nudge(py::strip(to), b.get("note")),

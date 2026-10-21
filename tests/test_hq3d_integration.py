@@ -55,23 +55,30 @@ class LoadOrderAndProtocol(unittest.TestCase):
         m = re.search(r"var HQ_SCRIPTS = (\[[^\]]*\]);", read(HQ_UI))
         self.assertTrue(m, "HQ_SCRIPTS list in 22-hq.js")
         self.assertEqual(json.loads(m.group(1)),
-                         ["engine", "avatar3d", "hq3d", "hqlobby", "hqbase", "hqskate", "world", "worldgeom",
+                         ["engine", "avatar3d", "hq3d", "hqlobby",
+                          # the basement garage (3.4): the car lift, the garage manager, its effects, B1 itself
+                          "hqcarlift", "hqgaragemgr", "hqbasementfx", "hqbasement",
+                          "hqbase", "hqskate", "world", "worldgeom",
                           "worldbuild", "camrig", "hqhud", "hqcityparts", "hqcity", "hqmerge",
                           # Cities (3.0): the civic kit, residents, traffic, the sea, boats, travel
-                          "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqheli", "hqtravel", "hqvoyage", "hqships", "hqbridges",
-                          "hqair", "hqaircraft", "hqplane", "hqairbase",   # (3.2: the planes you fly)
+                          "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqheli",
+                          # vehicles (3.2): the catalogue, handling from specs, their bodies, the (temporary) Showroom
+                          "hqvehicles", "hqvehiclephys", "hqvehiclemodels", "hqshowroom", "hqgarage", "hqdealer", "hqcall",
+                          "hqtravel", "hqvoyage", "hqships", "hqbridges",
+                          # the airport: the airfield layout before the flights, the planes you fly (3.2), its ground, buildings, vehicles
+                          "hqairfield", "hqair", "hqaircraft", "hqplane", "hqairport3d", "hqairbldg", "hqairground", "hqairbase",
                           # navigation (3.1): the router, the minimap, the route's chevrons, the Go to panel
                           "hqnav", "hqminimap", "hqroutefx", "hqnavui",
                           # rail (3.x): the lines between cities, their trains
                           "hqrail",
-                          # City 3.2: the weather, the landmarks and the amusement park
-                          "hqweather", "hqspectacle", "hqcity3d"])
+                          # the vehicle garage (3.4); City 3.2: the weather, the landmarks and the amusement park
+                          "hqcarpark", "hqweather", "hqspectacle", "hqcity3d"])
 
     def test_multi_hq_range_covers_server(self):
         m = re.search(r"\bhq:\[(\d+),(\d+)\]", read(MULTI))
         self.assertTrue(m)
         lo, hi = int(m.group(1)), int(m.group(2))
-        self.assertEqual((lo, hi), (1, 3))   # v3: Cities, a presence room per world ("isles")
+        self.assertEqual((lo, hi), (1, 4))   # v4: the catalogue vehicle you drive ("vehicles")
         p = re.search(r'\("hq",\s*(\d+),', read(PROTOCOL))
         self.assertTrue(p, "hq row in protocol.rs")
         self.assertGreaterEqual(hi, int(p.group(1)))
@@ -87,7 +94,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         self.assertIn("msg.h=Math.max(-50000, Math.min(50000, Math.round(w.h*100)))", m.group(1))
         self.assertIn("Math.max(-90, Math.min(90,", m.group(1))
         self.assertNotRegex(body.replace(m.group(0), ""), r"msg\.[hp]=")
-        self.assertIn("msg.h,msg.p].join", body)   # both in the dedupe key
+        self.assertIn("msg.h,msg.p,msg.v,msg.vp].join", body)   # both in the dedupe key (and the vehicle)
         # the city3d skip comes before anything is sent
         self.assertLess(body.index('w.world==="city3d"'), body.index("ws.send"))
 

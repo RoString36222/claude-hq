@@ -857,6 +857,104 @@ html.hq-calm .hq3d-drive-read{display:block}
 .hq3d-home:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .hq3d-home[hidden]{display:none}
 /* ==== end of the Return to HQ button ==== */
+/* ==== the (temporary) Showroom (games/hqshowroom.js, G in the 3D City): every catalogue vehicle, free ==== */
+.hqshowroom{position:absolute;z-index:7;top:12px;left:50%;transform:translateX(-50%);width:min(760px,calc(100% - 24px));max-height:calc(100% - 24px);
+  display:flex;flex-direction:column;border-radius:14px;color:var(--ink);background:color-mix(in srgb,var(--panel) 96%,transparent);
+  border:1px solid var(--line);box-shadow:var(--shadow-lg);overflow:hidden}
+.hqshowroom[hidden]{display:none}
+.hqshowroom-head{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.hqshowroom-title{font-weight:800;font-size:15px}
+.hqshowroom-note{font-size:12px;color:var(--muted)}
+.hqshowroom-close{border:0;background:none;color:var(--muted);font-size:16px;cursor:pointer;padding:4px 8px;border-radius:8px}
+.hqshowroom-close:hover{color:var(--ink);background:var(--line)}
+.hqshowroom-tabs{display:flex;gap:6px;padding:8px 14px 0}
+.hqshowroom-tab{padding:6px 14px;border-radius:999px;border:1px solid var(--line);background:none;color:var(--ink);font-weight:700;font-size:13px;cursor:pointer}
+.hqshowroom-tab.on{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.hqshowroom-body{overflow:auto;padding:4px 14px 14px}
+.hqshowroom-type h3{margin:12px 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.hqshowroom-class{margin:0 0 10px}
+.hqshowroom-class-label{font-size:12px;font-weight:700;margin:0 0 6px}
+.hqshowroom-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+.hqshowroom-card{display:grid;gap:4px;padding:10px;border-radius:10px;border:1px solid var(--line);background:color-mix(in srgb,var(--panel) 80%,var(--bg))}
+.hqshowroom-card.reserve{opacity:.8;border-style:dashed}
+.hqshowroom-brand{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.hqshowroom-model{font-weight:800;font-size:14px}
+.hqshowroom-spec{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.hqshowroom-paints{display:flex;flex-wrap:wrap;gap:5px;margin-top:2px}
+.hqshowroom-swatch{width:20px;height:20px;border-radius:50%;border:2px solid var(--line);cursor:pointer;padding:0}
+.hqshowroom-swatch.on{border-color:var(--ink);box-shadow:0 0 0 2px var(--brand)}
+.hqshowroom-paint-name{font-size:11px;color:var(--muted);min-height:14px}
+.hqshowroom-go{justify-self:start;margin-top:2px;padding:6px 14px;border-radius:999px;border:0;background:var(--brand);color:var(--on-brand);font-weight:700;font-size:12px;cursor:pointer}
+.hqshowroom-go:focus-visible,.hqshowroom-tab:focus-visible,.hqshowroom-swatch:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+/* ==== the dealership's panel (games/hqdealer.js, E at its door in the 3D City): the classes, a turning preview ==== */
+.hqdealer{position:absolute;z-index:7;top:12px;left:50%;transform:translateX(-50%);width:min(820px,calc(100% - 24px));max-height:calc(100% - 24px);
+  display:grid;grid-template-rows:auto auto auto 1fr auto;color:var(--ink);background:color-mix(in srgb,var(--panel) 96%,transparent);
+  border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-lg);font-size:13px;overflow:hidden}
+.hqdealer[hidden]{display:none}
+.hqdealer-head{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.hqdealer-title{font-weight:800;font-size:15px}
+.hqdealer-note{font-size:12px;color:var(--muted)}
+.hqdealer-close{border:0;background:none;color:var(--muted);font-size:16px;cursor:pointer;padding:4px 8px;border-radius:8px}
+.hqdealer-close:hover{color:var(--ink);background:var(--line)}
+.hqdealer-top{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:12px;align-items:center;padding:10px 14px 0}
+.hqdealer-preview{height:170px;border-radius:12px;background:radial-gradient(ellipse at 50% 70%,color-mix(in srgb,var(--panel) 70%,var(--ink) 12%),var(--bg));overflow:hidden}
+.hqdealer-canvas{display:block;width:100%;height:100%}
+.hqdealer-info{display:grid;gap:3px;align-content:center}
+.hqdealer-info .hqdealer-model{font-size:18px}
+.hqdealer-price{font-weight:800;color:var(--brand)}
+.hqdealer-tabs{display:flex;gap:6px;padding:10px 14px 0}
+.hqdealer-tab{padding:6px 14px;border-radius:999px;border:1px solid var(--line);background:none;color:var(--ink);font-weight:700;font-size:13px;cursor:pointer}
+.hqdealer-tab.on{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.hqdealer-body{overflow:auto;padding:4px 14px 10px;min-height:0}
+.hqdealer-type h3{margin:12px 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.hqdealer-class{margin:0 0 10px}
+.hqdealer-class-label{font-size:12px;font-weight:700;margin:0 0 6px}
+.hqdealer-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.hqdealer-card{display:grid;gap:4px;padding:10px;border-radius:10px;border:1px solid var(--line);background:color-mix(in srgb,var(--panel) 80%,var(--bg))}
+.hqdealer-card.on{border-color:var(--brand);box-shadow:0 0 0 1px var(--brand)}
+.hqdealer-card.locked{opacity:.75}
+.hqdealer-pick{display:grid;gap:2px;text-align:left;border:0;background:none;color:inherit;padding:0;cursor:pointer;font:inherit}
+.hqdealer-brand{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.hqdealer-model{font-weight:800;font-size:14px}
+.hqdealer-spec{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.hqdealer-paints{display:flex;flex-wrap:wrap;gap:5px;margin-top:2px}
+.hqdealer-swatch{width:20px;height:20px;border-radius:50%;border:2px solid var(--line);cursor:pointer;padding:0}
+.hqdealer-swatch.on{border-color:var(--ink);box-shadow:0 0 0 2px var(--brand)}
+.hqdealer-paint-name,.hqdealer-tag{font-size:11px;color:var(--muted);min-height:14px}
+.hqdealer-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
+.hqdealer-test,.hqdealer-get{padding:6px 14px;border-radius:999px;font-weight:700;font-size:12px;cursor:pointer}
+.hqdealer-test{border:1px solid var(--line);background:none;color:var(--ink)}
+.hqdealer-get{border:0;background:var(--brand);color:var(--on-brand)}
+.hqdealer-get:disabled{opacity:.55;cursor:default}
+.hqdealer-status{padding:8px 14px;border-top:1px solid var(--line);font-size:12px;min-height:16px;color:var(--ink)}
+.hqdealer-status:empty{display:none}
+.hqdealer-empty{padding:16px 0;color:var(--muted)}
+.hqdealer-test:focus-visible,.hqdealer-get:focus-visible,.hqdealer-tab:focus-visible,.hqdealer-swatch:focus-visible,.hqdealer-pick:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+@container hq3d (max-width: 700px){ .hqdealer-top{grid-template-columns:1fr} .hqdealer-preview{height:130px} .hqdealer-pair{grid-template-columns:1fr} }
+/* ==== end of the Showroom ==== */
+/* ==== calling your vehicle (games/hqcall.js, C in the 3D City): the list, and the "on its way" pill ==== */
+.hqcall{position:absolute;z-index:7;top:12px;left:50%;transform:translateX(-50%);width:min(380px,calc(100% - 24px));max-height:calc(100% - 24px);
+  display:flex;flex-direction:column;border-radius:14px;color:var(--ink);background:color-mix(in srgb,var(--panel) 96%,transparent);
+  border:1px solid var(--line);box-shadow:var(--shadow-lg);overflow:hidden}
+.hqcall[hidden],.hqcall-pill[hidden]{display:none}
+.hqcall-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.hqcall-title{font-weight:800;font-size:15px}
+.hqcall-close{border:0;background:none;color:var(--muted);font-size:16px;cursor:pointer;padding:4px 8px;border-radius:8px}
+.hqcall-close:hover{color:var(--ink);background:var(--line)}
+.hqcall-list{overflow:auto;padding:8px;display:grid;gap:6px}
+.hqcall-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;border:1px solid var(--line);
+  background:color-mix(in srgb,var(--panel) 80%,var(--bg));color:var(--ink);text-align:left;cursor:pointer;font:inherit}
+.hqcall-item:hover,.hqcall-item:focus-visible{border-color:var(--brand);outline:none}
+.hqcall-item.busy{border-color:var(--brand)}
+.hqcall-swatch{width:16px;height:16px;border-radius:50%;flex:none;border:2px solid var(--line)}
+.hqcall-text{display:grid;gap:2px;min-width:0}
+.hqcall-name{font-weight:750;font-size:13.5px}
+.hqcall-sub{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.hqcall-empty{padding:12px;font-size:13px;color:var(--muted)}
+.hqcall-pill{position:absolute;z-index:6;left:50%;bottom:64px;transform:translateX(-50%);max-width:calc(100% - 24px);padding:7px 14px;border-radius:999px;
+  font-size:13px;font-weight:650;color:var(--ink);background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--brand);
+  box-shadow:var(--shadow-lg);pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+/* ==== end of calling your vehicle ==== */
 /* the 3D City's stats panel (games/hqcity3d.js statsUi), top right */
 .hq3d-stats{position:absolute;right:12px;top:12px;z-index:4;min-width:190px;max-width:min(260px,46%);display:grid;gap:4px;padding:10px 12px;border-radius:12px;
   color:var(--ink);background:color-mix(in srgb,var(--panel) 90%,transparent);border:1px solid var(--line);box-shadow:var(--shadow-lg);font-size:12.5px;pointer-events:auto}

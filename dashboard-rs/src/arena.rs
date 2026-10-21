@@ -112,6 +112,55 @@ pub fn rail_body(body: &Value) -> Result<Value, &'static str> {
     }
 }
 
+/// A catalogue vehicle id (games/vehicles/catalogue.json).
+pub static VEHICLE_ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z0-9-]{1,48}$").unwrap());
+/// An owned vehicle's id on the Arena (a lowercase uuid).
+pub static OWNED_ID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$").unwrap());
+
+/// A vehicle buy's body: `{vehicle_id, paint}` (paint a small index, 0 when absent);
+/// any other field is dropped. The Arena sets the price.
+pub fn vehicle_buy_body(body: &Value) -> Result<Value, &'static str> {
+    let id = body.get("vehicle_id").and_then(Value::as_str).filter(|s| VEHICLE_ID_RE.is_match(s)).ok_or("vehicle_id must be a catalogue id")?;
+    let paint = match body.get("paint") {
+        None | Some(Value::Null) => 0,
+        Some(p) => p.as_i64().filter(|n| (0..64).contains(n)).ok_or("paint must be a small index")?,
+    };
+    Ok(json!({"vehicle_id": id, "paint": paint}))
+}
+
+/// A vehicle home's body: `{home}` or `{home, bay}` (bay 0..11, basement only;
+/// null means "any free bay"); any other field is dropped. [basement 3.4]
+pub fn vehicle_home_body(body: &Value) -> Result<Value, &'static str> {
+    let home = body.get("home").and_then(Value::as_str)
+        .filter(|h| matches!(*h, "basement" | "carpark"))
+        .ok_or("home must be basement or carpark")?;
+    match body.get("bay") {
+        None | Some(Value::Null) => Ok(json!({"home": home})),
+        Some(b) => match b.as_i64().filter(|n| (0..12).contains(n)) {
+            Some(n) if home == "basement" => Ok(json!({"home": home, "bay": n})),
+            Some(_) => Err("only the basement has numbered bays"),
+            None => Err("bay must be an integer from 0 to 11"),
+        },
+    }
+}
+
+/// A vehicle park's body: `{garage: true}` (back in its city's garage), or
+/// `{world, x, z, yaw}` with a world the page can be in and finite coordinates.
+pub fn vehicle_park_body(body: &Value) -> Result<Value, &'static str> {
+    if body.get("garage") == Some(&Value::Bool(true)) {
+        return Ok(json!({"garage": true}));
+    }
+    let world = body.get("world").and_then(Value::as_str)
+        .filter(|w| matches!(*w, "claude-hq@1" | "claude-hq@2") || ISLAND_WORLD_RE.is_match(w))
+        .ok_or("world must be the Commons or an island's world id")?;
+    let num = |k: &str| body.get(k).and_then(Value::as_f64).filter(|v| v.is_finite());
+    match (num("x"), num("z"), num("yaw")) {
+        (Some(x), Some(z), Some(yaw)) if x.abs() <= 20_000.0 && z.abs() <= 20_000.0 => Ok(json!({"world": world, "x": x, "z": z, "yaw": yaw})),
+        _ => Err("x, z and yaw must be numbers in range"),
+    }
+}
+
 /// GET a world with an optional `If-None-Match`. The fixed worlds go without a
 /// device token (the route is public and holds no one's data); an island carries
 /// it, because the Arena serves an island only to those who may visit it. Any
@@ -1152,6 +1201,50 @@ impl App {
         }
     }
 
+    /// GET /v1/vehicles/mine: the vehicles this user owns, and where each is.
+    pub fn arena_vehicles_mine(&self) -> (u16, Value) {
+        self.authed_get("/v1/vehicles/mine")
+    }
+
+    /// POST /v1/vehicles/buy: claim or buy a catalogue vehicle. Egress: only a
+    /// catalogue id and a paint index.
+    pub fn arena_vehicle_buy(&self, body: &Value) -> (u16, Value) {
+        match vehicle_buy_body(body) {
+            Ok(clean) => self.authed_send("POST", "/v1/vehicles/buy", clean),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
+    /// POST /v1/vehicles/<id>/park: where an owned vehicle stands, or back in its
+    /// garage. Egress: the vehicle's id, a world id and three numbers.
+    pub fn arena_vehicle_park(&self, id: &str, body: &Value) -> (u16, Value) {
+        if !OWNED_ID_RE.is_match(id) {
+            return (400, json!({"error": "bad vehicle id"}));
+        }
+        match vehicle_park_body(body) {
+            Ok(clean) => self.authed_send("POST", &format!("/v1/vehicles/{id}/park"), clean),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
+    /// GET /v1/garages/mine: which garage (basement bay or the common carpark) each
+    /// owned vehicle calls home, and the basement's size. [basement 3.4]
+    pub fn arena_garages_mine(&self) -> (u16, Value) {
+        self.authed_get("/v1/garages/mine")
+    }
+
+    /// POST /v1/vehicles/<id>/home: move an owned vehicle between its basement and
+    /// the common carpark. Egress: the vehicle's id, a garage name and a bay. [basement 3.4]
+    pub fn arena_vehicle_home(&self, id: &str, body: &Value) -> (u16, Value) {
+        if !OWNED_ID_RE.is_match(id) {
+            return (400, json!({"error": "bad vehicle id"}));
+        }
+        match vehicle_home_body(body) {
+            Ok(clean) => self.authed_send("POST", &format!("/v1/vehicles/{id}/home"), clean),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
     /// GET /v1/world/claude-hq@2/assign: which Commons HQ lot (a rank) each open
     /// HQ's tower stands on. Egress: the device token and the fixed path only.
     pub fn arena_commons_assign(&self) -> (u16, Value) {
@@ -1485,6 +1578,69 @@ pub(crate) mod tests {
         let urls: Vec<&str> = s.iter().map(|x| x.1.as_str()).collect();
         assert_eq!(urls, vec!["https://arena.example/v1/rail", "https://arena.example/v1/rail/build"]);
         assert_eq!(s[1].3, Some(json!({"to": isl})));
+    }
+
+    #[test]
+    fn vehicles_forward_only_ids_paints_and_spots() {
+        assert_eq!(vehicle_buy_body(&json!({"vehicle_id": "bmw-m2", "paint": 2, "price": 0})), Ok(json!({"vehicle_id": "bmw-m2", "paint": 2})));
+        assert_eq!(vehicle_buy_body(&json!({"vehicle_id": "bmw-m2"})), Ok(json!({"vehicle_id": "bmw-m2", "paint": 0})));
+        for bad in [json!({"vehicle_id": "../x"}), json!({"vehicle_id": "BMW"}), json!({"vehicle_id": "bmw-m2", "paint": 64}), json!({})] {
+            assert!(vehicle_buy_body(&bad).is_err(), "{bad}");
+        }
+        assert_eq!(vehicle_park_body(&json!({"garage": true, "x": 1})), Ok(json!({"garage": true})));
+        assert_eq!(vehicle_park_body(&json!({"world": "claude-hq@2", "x": 1.5, "z": -2, "yaw": 0.5, "note": "n"})),
+                   Ok(json!({"world": "claude-hq@2", "x": 1.5, "z": -2.0, "yaw": 0.5})));
+        for bad in [json!({"world": "../w", "x": 1, "z": 1, "yaw": 0}), json!({"world": "claude-hq@2", "x": 1e9, "z": 1, "yaw": 0}),
+                    json!({"world": "claude-hq@2", "x": 1}), json!({"garage": false})] {
+            assert!(vehicle_park_body(&bad).is_err(), "{bad}");
+        }
+        let (_d, app) = app();
+        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({})))));
+        let id = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+        assert_eq!(app.arena_vehicles_mine().0, 200);
+        assert_eq!(app.arena_vehicle_buy(&json!({"vehicle_id": "ktm-390-duke", "paint": 1})).0, 200);
+        assert_eq!(app.arena_vehicle_park(id, &json!({"garage": true})).0, 200);
+        assert_eq!(app.arena_vehicle_park("../x", &json!({"garage": true})).0, 400);
+        let s = sent.lock().unwrap();
+        let urls: Vec<&str> = s.iter().map(|x| x.1.as_str()).collect();
+        assert_eq!(urls, vec!["https://arena.example/v1/vehicles/mine", "https://arena.example/v1/vehicles/buy",
+                              format!("https://arena.example/v1/vehicles/{id}/park").as_str()]);
+        assert_eq!(s[1].3, Some(json!({"vehicle_id": "ktm-390-duke", "paint": 1})));
+        assert!(s.iter().all(|x| x.2.as_deref() == Some("T")));
+    }
+
+    #[test]
+    fn garages_forward_only_ids_homes_and_bays() {
+        // [basement 3.4]
+        assert_eq!(vehicle_home_body(&json!({"home": "basement", "bay": 3, "user_id": "x", "token": "t"})), Ok(json!({"home": "basement", "bay": 3})));
+        assert_eq!(vehicle_home_body(&json!({"home": "basement", "bay": null})), Ok(json!({"home": "basement"})));
+        assert_eq!(vehicle_home_body(&json!({"home": "carpark", "note": "n"})), Ok(json!({"home": "carpark"})));
+        for bad in [json!({"home": "garage"}), json!({}), json!({"home": "basement", "bay": 12}), json!({"home": "basement", "bay": -1}),
+                    json!({"home": "basement", "bay": "1"}), json!({"home": "carpark", "bay": 0}), json!({"home": 1})] {
+            assert!(vehicle_home_body(&bad).is_err(), "{bad}");
+        }
+        use crate::server::{vehicle_home_target, vehicle_park_target};
+        assert_eq!(vehicle_home_target("/api/arena/vehicles/abc/home"), Some("abc"));
+        assert_eq!(vehicle_home_target("/api/arena/vehicles/abc/park"), None);
+        assert_eq!(vehicle_park_target("/api/arena/vehicles/abc/home"), None, "the two routes never overlap");
+        for bad in ["/api/arena/vehicles//home", "/api/arena/vehicles/a/b/home", "/api/arena/garages/mine"] {
+            assert_eq!(vehicle_home_target(bad), None, "{bad}");
+        }
+        let (_d, app) = app();
+        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({})))));
+        let id = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+        assert_eq!(app.arena_garages_mine().0, 200);
+        assert_eq!(app.arena_vehicle_home(id, &json!({"home": "basement", "bay": 2, "extra": 1})).0, 200);
+        assert_eq!(app.arena_vehicle_home(id, &json!({"home": "carpark"})).0, 200);
+        assert_eq!(app.arena_vehicle_home("../x", &json!({"home": "carpark"})).0, 400);
+        assert_eq!(app.arena_vehicle_home(id, &json!({"home": "moon"})).0, 400);
+        let s = sent.lock().unwrap();
+        let urls: Vec<&str> = s.iter().map(|x| x.1.as_str()).collect();
+        let home = format!("https://arena.example/v1/vehicles/{id}/home");
+        assert_eq!(urls, vec!["https://arena.example/v1/garages/mine", home.as_str(), home.as_str()]);
+        assert_eq!(s[1].3, Some(json!({"home": "basement", "bay": 2})));
+        assert_eq!(s[2].3, Some(json!({"home": "carpark"})));
+        assert!(s.iter().all(|x| x.2.as_deref() == Some("T")));
     }
 
     #[test]

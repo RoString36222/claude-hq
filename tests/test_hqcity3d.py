@@ -427,7 +427,7 @@ class HqCity3dTest(unittest.TestCase):
         for want in lw["want"]:
             self.assertIn(want, lw["trees"])
         self.assertEqual(lw["kinds"][:10], ["bike"] * 6 + ["skate"] * 4)   # bike park first, then boards
-        self.assertEqual(lw["kinds"][10:], ["car", "moto", "bike"] * 3)
+        self.assertEqual(lw["kinds"][10:], [])   # [basement 3.4] the starters live in the B1 basement now
         self.assertEqual(lw["skate"], [-11, 0])
 
     def test_legacy_lot_extras_caller(self):
@@ -463,13 +463,15 @@ class HqCity3dTest(unittest.TestCase):
 
     def test_city3d_rideables_and_doors(self):
         o = self.out["city3d"]
-        self.assertEqual(o["kinds"], ["bike"] * 6 + ["skate"] * 4 + ["car", "moto", "bike"] * 5)
+        self.assertEqual(o["kinds"], ["bike"] * 6 + ["skate"] * 4)   # [basement 3.4] the starters live in the B1 basement now
         self.assertTrue(o["finite"])
         self.assertIn("@lobby", o["doors"])
-        self.assertEqual(sum(1 for d in o["doors"] if d and d.startswith("visit:")), 4)
+        # [basement 3.4] each other HQ's door, and its car-lift bay (a visit too); yours goes down to B1
+        self.assertEqual(sum(1 for d in o["doors"] if d and d.startswith("visit:")), 8)
+        self.assertIn("@basement", o["doors"])
         self.assertGreaterEqual(len(o["doors"]), 5 + 13)
-        self.assertEqual(o["rebuilt"]["bikes"], 10 + 3 * 6)
-        self.assertEqual(o["rebuilt"]["doors"][1], o["rebuilt"]["doors"][0] + 1)
+        self.assertEqual(o["rebuilt"]["bikes"], 10)                                  # [basement 3.4] no starters on the street
+        self.assertEqual(o["rebuilt"]["doors"][1], o["rebuilt"]["doors"][0] + 2)    # [basement 3.4] its door and its car lift
 
     def test_city3d_ground_and_blocking(self):
         o = self.out["city3d"]

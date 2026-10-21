@@ -25,8 +25,9 @@ fn commons() -> &'static WorldDoc {
 // again (HQ 3.1) for the river (river.rs): its water and banks carved before the streets grow, the
 // bridges, the dock on its bank by the plaza and the port on its basin, the sea 4 m down as an island's;
 // the bank rising to a metre over the sea at the water's edge, the dock and the port at their backs' height,
-// the HQ pool taking the lots that hold an HQ's box first
-const CLAUDE_HQ_2: &str = "481f2207da5b44c3";
+// the HQ pool taking the lots that hold an HQ's box first;
+// again (HQ 3.2) for the multi-storey vehicle garage (civic "carpark", placed last of the services)
+const CLAUDE_HQ_2: &str = "b990b7b1c17ecdd9";
 
 const ISLAND: &str = "user:0b6f2a3c-1d4e-4f5a-9b8c-7d6e5f4a3b2c@2";
 

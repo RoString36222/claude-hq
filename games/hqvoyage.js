@@ -11,6 +11,11 @@
  *   poseAt(R, t)       -> {x, z, yaw, speed, along, leg: "river" | "sea", u (0..1)}; yaw 0 faces +z
  *   sailings(a, b, nowMs, every) the departures (ms) of the route a <-> b around now (the same on every client)
  * Speeds: 6.5 m/s in a river, 21 m/s at sea, 0.45 m/s² either way, so it eases off the berth and onto it.
+ * The Commons' airfield (docs/plans/airport-spec.md 8): COMMONS_AIRFIELD is the runway's keepOut capsule in the
+ * Commons' frame (the airfield layout's L.keepOut.capsule). Nothing here sails within AIR_CLEAR (40 m) of it: the
+ * ferry's sea lane round the Commons follows the convex hull of its circle and the capsule grown by AIR_LANE, a
+ * Commons river we have no doc for turns away from it, and the big ships plan round it like an island.
+ *   airClear(air, x, z) -> m from the capsule air = {a, b, r} (negative inside)
  */
 (function(){
 "use strict";
@@ -21,9 +26,22 @@ var OFFSHORE = 260;             // m: the sea lane round a coast, outside its fu
 var NOMINAL_COAST = 900, NOMINAL_RIVER = 600;
 var STEP = 30;                  // m between points on an arc or a straight
 var EVERY = 120000;             // ms between sailings on a route
+var COMMONS_WORLD = "claude-hq@2";
+var COMMONS_AIRFIELD = {a: [-1015, -1220], b: [-1015, 1220], r: 180};   // m, the Commons' frame: L.keepOut.capsule
+var AIR_CLEAR = 40, AIR_LANE = 120;   // m past the capsule: never closer; the ferry lane's hull
 
 function hyp(x, z){ return Math.sqrt(x*x + z*z); }
 function wrap(a){ while(a > Math.PI) a -= 2*Math.PI; while(a < -Math.PI) a += 2*Math.PI; return a; }
+// the capsule: the nearest point of its axis to (x, z), and how far (x, z) is outside it
+function axisNear(air, x, z){
+  var a = air.a, b = air.b, dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx*dx + dz*dz;
+  var u = L2 > 1e-9 ? Math.max(0, Math.min(1, ((x - a[0])*dx + (z - a[1])*dz)/L2)) : 0;
+  return {x: a[0] + dx*u, z: a[1] + dz*u, u: u};
+}
+function airClear(air, x, z){ if(!air) return Infinity; var q = axisNear(air, x, z); return hyp(x - q.x, z - q.z) - air.r; }
+// the airfield in a city's own frame (m), or null: the Commons' capsule
+function airOf(world){ return world === COMMONS_WORLD ? COMMONS_AIRFIELD : null; }
+function shiftAir(air, x, z){ return air ? {a: [air.a[0] + x, air.a[1] + z], b: [air.b[0] + x, air.b[1] + z], r: air.r} : null; }
 
 // the coast's furthest point from the city's centre (m)
 function coastR(W){
@@ -60,9 +78,18 @@ function inland(W){
   for(var j = k; j >= 0; j--) P.push([R[j][0]/100, R[j][1]/100]);
   return P;
 }
-function nominal(cx, cz, toward){
-  // a city we have no doc for: a straight river 600 m in from its coast, facing the other city
+function rayClear(air, a){
+  for(var r = NOMINAL_COAST - NOMINAL_RIVER; r <= 4000; r += 20) if(airClear(air, Math.sin(a)*r, Math.cos(a)*r) < AIR_LANE) return false;
+  return true;
+}
+function nominal(cx, cz, toward, air){
+  // a city we have no doc for: a straight river 600 m in from its coast, facing the other city (turned a little at a
+  // time, away from the airfield's middle, until the river and its way out to sea stand clear of the airfield)
   var a = Math.atan2(toward[0] - cx, toward[1] - cz), P = [];
+  if(air){
+    var a0 = a, sg = wrap(a0 - Math.atan2((air.a[0] + air.b[0])/2, (air.a[1] + air.b[1])/2)) >= 0 ? 1 : -1;
+    for(var k = 1; k <= 64 && !rayClear(air, a); k++) a = a0 + sg*k*0.05;
+  }
   for(var r = NOMINAL_COAST - NOMINAL_RIVER; r <= NOMINAL_COAST; r += STEP) P.push([Math.sin(a)*r, Math.cos(a)*r]);
   return P;
 }
@@ -70,6 +97,39 @@ function nominal(cx, cz, toward){
 function arc(cx, cz, r, a0, a1, out){
   var da = wrap(a1 - a0), n = Math.max(1, Math.ceil(Math.abs(da)*r/STEP));
   for(var i = 0; i <= n; i++){ var a = a0 + da*i/n; out.push([cx + Math.sin(a)*r, cz + Math.cos(a)*r]); }
+}
+// The sea lane round a city with an airfield: the convex hull of its lane circle (radius r) and the capsule grown by
+// AIR_LANE, as a dense polygon (local m); lanePt(H, a) is where the ray from the centre at bearing a leaves it.
+function laneHull(r, air){
+  var R = air.r + AIR_LANE, D = [[0, 0, r], [air.a[0], air.a[1], R], [air.b[0], air.b[1], R]], H = [], N = 720;
+  for(var i = 0; i < N; i++){
+    var t = i/N*2*Math.PI, nx = Math.sin(t), nz = Math.cos(t), best = null, bv = -Infinity;
+    for(var j = 0; j < D.length; j++){ var v = D[j][0]*nx + D[j][1]*nz + D[j][2]; if(v > bv){ bv = v; best = D[j]; } }
+    H.push([best[0] + nx*best[2], best[1] + nz*best[2]]);
+  }
+  return H;
+}
+function lanePt(H, a){
+  var dx = Math.sin(a), dz = Math.cos(a), best = 0;
+  for(var i = 0; i < H.length; i++){
+    var p = H[i], q = H[(i + 1) % H.length], ex = q[0] - p[0], ez = q[1] - p[1], den = dx*ez - dz*ex;
+    if(Math.abs(den) < 1e-12) continue;
+    var t = (p[0]*ez - p[1]*ex)/den, u = (p[0]*dz - p[1]*dx)/den;
+    if(u >= -1e-9 && u <= 1 + 1e-9 && t > best) best = t;
+  }
+  return [dx*best, dz*best];
+}
+// the lane round (cx, cz) from bearing a0 to a1 (the short way): an arc, or along the hull round an airfield
+function laneArc(cx, cz, r, a0, a1, air, out){
+  if(!air){ arc(cx, cz, r, a0, a1, out); return; }
+  var H = laneHull(r, air), da = wrap(a1 - a0), far = r;
+  H.forEach(function(p){ far = Math.max(far, hyp(p[0], p[1])); });
+  var n = Math.max(1, Math.ceil(Math.abs(da)*far/STEP));
+  for(var i = 0; i <= n; i++){ var p = lanePt(H, a0 + da*i/n); out.push([cx + p[0], cz + p[1]]); }
+}
+function lanePoint(cx, cz, r, a, air){
+  if(!air) return [cx + Math.sin(a)*r, cz + Math.cos(a)*r];
+  var p = lanePt(laneHull(r, air), a); return [cx + p[0], cz + p[1]];
 }
 function straight(p, q, out){
   var d = hyp(q[0] - p[0], q[1] - p[1]), n = Math.max(1, Math.ceil(d/STEP));
@@ -87,19 +147,20 @@ function chaikin(P, from, to){
 
 function route(A, B){
   var Ax = +A.x || 0, Az = +A.z || 0, Bx = +B.x || 0, Bz = +B.z || 0;
-  var la = A.W ? inland(A.W) : nominal(0, 0, [Bx - Ax, Bz - Az]);
-  var lb = B.W ? inland(B.W) : nominal(0, 0, [Ax - Bx, Az - Bz]);
+  var airA = airOf(A.world), airB = airOf(B.world);
+  var la = A.W ? inland(A.W) : nominal(0, 0, [Bx - Ax, Bz - Az], airA);
+  var lb = B.W ? inland(B.W) : nominal(0, 0, [Ax - Bx, Az - Bz], airB);
   var ra = (A.W ? coastR(A.W) : NOMINAL_COAST) + OFFSHORE, rb = (B.W ? coastR(B.W) : NOMINAL_COAST) + OFFSHORE;
   var P = [];
   la.forEach(function(p){ P.push([p[0] + Ax, p[1] + Az]); });
   var nA = P.length;                                              // points [0, nA) are A's river
   var mA = la[la.length - 1], aOut = Math.atan2(mA[0], mA[1]);    // out from the mouth to the sea lane
   var toB = Math.atan2(Bx - Ax, Bz - Az), toA = wrap(toB + Math.PI);
-  arc(Ax, Az, ra, aOut, toB, P);
+  laneArc(Ax, Az, ra, aOut, toB, airA, P);
   var mB = lb[lb.length - 1], bOut = Math.atan2(mB[0], mB[1]);
-  var q = [Bx + Math.sin(toA)*rb, Bz + Math.cos(toA)*rb];
+  var q = lanePoint(Bx, Bz, rb, toA, airB);
   straight(P[P.length - 1], q, P);
-  arc(Bx, Bz, rb, toA, bOut, P);
+  laneArc(Bx, Bz, rb, toA, bOut, airB, P);
   for(var i = lb.length - 1; i >= 0; i--) P.push([lb[i][0] + Bx, lb[i][1] + Bz]);
   var nB = lb.length;
   // smooth the joins at sea (and where the rivers meet it), twice; the river points stay as they are
@@ -181,6 +242,7 @@ var PI2 = 2*Math.PI, RELAX = 400, BIG_NOMINAL = 950, BIG_PLAN = 350, BIG_DETOUR 
 var CRUISE_V = 11, CARGO_V = 9.5, BIG_ACC = 0.08, CRUISE_DWELL = 150, CARGO_DWELL = 210;
 var CRUISE_STAND = 560, CARGO_STAND = 420, ANCHOR_TURN = 0.75;      // m off the coast; the anchorage's angle from the cruise stop
 var MOUTH_CLEAR = 420, MOUTH_MIN = 250, CARGO_OUT = 150;           // m: off a river mouth, past the coast; at least this far out; cargo further
+var AIR_PLAN = 120, AIR_DETOUR = 320;                              // m past an airfield's capsule: pushed out to; detour points
 var SWEEP_STEP = 0.5, SWEEP_TRIM = 0.55;                           // rad: between a sweep's points; kept off the line to each neighbour
 var CRUISE_NAMES = ["Claude Serenade", "Aurora of the Isles"];
 var CARGO_NAMES = ["Context Carrier", "Token Trader", "Gradient Express", "Ever Attentive", "Maru Inference", "Northern Embedding"];
@@ -189,7 +251,8 @@ function bigCities(arch){
   arch = arch || {}; var out = [];
   function add(o, world, name){
     if(!o || !isFinite(+o.x) || !isFinite(+o.z)) return;
-    var c = {world: world, name: name, x: +o.x, z: +o.z, r: o.W ? coastR(o.W) : (+o.r || BIG_NOMINAL), mouth: null};
+    var c = {world: world, name: name, x: +o.x, z: +o.z, r: o.W ? coastR(o.W) : (+o.r || BIG_NOMINAL), mouth: null,
+             air: shiftAir(airOf(world), +o.x, +o.z)};
     var m = Array.isArray(o.mouth) && o.mouth.length >= 4 ? o.mouth.map(Number) : null;
     if(m && m.every(isFinite) && hyp(m[2], m[3]) > 1e-6){
       var u = unit(m[2], m[3]);
@@ -242,10 +305,13 @@ function outwards(C, T){
 // the coast (at least MOUTH_MIN from the mouth); with no mouth, CRUISE_STAND off the coast along d
 function cruiseStand(c, d){
   var m = c.mouth;
-  if(!m) return {x: c.x + d[0]*(c.r + CRUISE_STAND), z: c.z + d[1]*(c.r + CRUISE_STAND)};
+  if(!m){
+    for(var e = CRUISE_STAND; e < 4000; e += 10){ var x0 = c.x + d[0]*(c.r + e), z0 = c.z + d[1]*(c.r + e); if(airClear(c.air, x0, z0) >= AIR_PLAN) return {x: x0, z: z0}; }
+    return {x: c.x + d[0]*(c.r + 4000), z: c.z + d[1]*(c.r + 4000)};
+  }
   for(var s = MOUTH_MIN; s < 4000; s += 10){
     var x = m.x + m.dx*s, z = m.z + m.dz*s;
-    if(hyp(x - c.x, z - c.z) >= c.r + MOUTH_CLEAR) return {x: x, z: z};
+    if(hyp(x - c.x, z - c.z) >= c.r + MOUTH_CLEAR && airClear(c.air, x, z) >= AIR_PLAN) return {x: x, z: z};
   }
   return {x: m.x + m.dx*4000, z: m.z + m.dz*4000};
 }
@@ -254,6 +320,7 @@ function anchorOf(c, d, side){
   var turn = ((hash(c.world, "anchor") ^ (side | 0)) & 1) ? ANCHOR_TURN : -ANCHOR_TURN, a, r;
   if(c.mouth){ var st = cruiseStand(c, d); a = Math.atan2(st.x - c.x, st.z - c.z) + turn; r = hyp(st.x - c.x, st.z - c.z) + CARGO_OUT; }
   else { a = Math.atan2(d[0], d[1]) + turn; r = c.r + CARGO_STAND; }
+  for(var k = 0; k < 400 && airClear(c.air, c.x + Math.sin(a)*r, c.z + Math.cos(a)*r) < AIR_PLAN; k++) r += 10;
   return {x: c.x + Math.sin(a)*r, z: c.z + Math.cos(a)*r};
 }
 function mod2pi(a){ a %= PI2; return a < 0 ? a + PI2 : a; }
@@ -287,10 +354,53 @@ function legAround(a, b, C, depth, out){
     var px = a.x + dx*u, pz = a.z + dz*u, d = hyp(px - c.x, pz - c.z);
     if(d < c.r + BIG_PLAN && u > 0 && u < 1 && u*Math.sqrt(L2) < hd){ hd = u*Math.sqrt(L2); hit = {c: c, px: px, pz: pz, d: d}; }
   });
-  if(!hit || depth > 6){ out.push(b); return; }
-  var c = hit.c, n = hit.d > 1 ? unit(hit.px - c.x, hit.pz - c.z) : unit(dz, -dx), r = c.r + BIG_DETOUR;
-  var w = {x: c.x + n[0]*r, z: c.z + n[1]*r, stop: null};
+  var w = !hit && depth <= 6 ? airDetour(a, b, C) : null;
+  if((!hit && !w) || depth > 6){ out.push(b); return; }
+  if(hit){
+    var c = hit.c, n = hit.d > 1 ? unit(hit.px - c.x, hit.pz - c.z) : unit(dz, -dx), r = c.r + BIG_DETOUR;
+    w = {x: c.x + n[0]*r, z: c.z + n[1]*r, stop: null};
+  }
   legAround(a, w, C, depth + 1, out); legAround(w, b, C, depth + 1, out);
+}
+// the leg a -> b past an airfield's capsule: where it comes within AIR_PLAN of one, a detour point AIR_DETOUR out from
+// it, off to the side where the leg runs beside the capsule, round its nearer end where the leg crosses its axis
+function airDetour(a, b, C){
+  for(var i = 0; i < C.length; i++){
+    var air = C[i].air; if(!air) continue;
+    var best = closest(a, b, air);
+    if(best.d - air.r >= AIR_PLAN) continue;
+    var R = air.r + AIR_DETOUR, ax = unit(air.b[0] - air.a[0], air.b[1] - air.a[1]);
+    if(best.q.u > 0.02 && best.q.u < 0.98 && best.d > 1 && !crosses(a, b, air)){
+      var s = unit(best.x - best.q.x, best.z - best.q.z);
+      return {x: best.q.x + s[0]*R, z: best.q.z + s[1]*R, stop: null};
+    }
+    var sg = best.q.u < 0.5 ? -1 : 1, e = sg < 0 ? air.a : air.b;
+    return {x: e[0] + ax[0]*sg*R, z: e[1] + ax[1]*sg*R, stop: null};
+  }
+  return null;
+}
+// the closest approach of the leg a -> b to the capsule's axis: {x, z (on the leg), q (axisNear on the axis), d}
+function closest(a, b, air){
+  var dx = b.x - a.x, dz = b.z - a.z, L2 = dx*dx + dz*dz, best = null;
+  function leg(x, z){ var u = L2 > 1e-9 ? Math.max(0, Math.min(1, ((x - a.x)*dx + (z - a.z)*dz)/L2)) : 0; return {x: a.x + dx*u, z: a.z + dz*u}; }
+  function take(x, z){ var q = axisNear(air, x, z), d = hyp(x - q.x, z - q.z); if(!best || d < best.d) best = {x: x, z: z, q: q, d: d}; }
+  if(crosses(a, b, air)){
+    // where they cross: the leg's point on the axis line
+    var ex = air.b[0] - air.a[0], ez = air.b[1] - air.a[1], den = dx*ez - dz*ex;
+    var t = Math.abs(den) > 1e-12 ? ((air.a[0] - a.x)*ez - (air.a[1] - a.z)*ex)/den : 0;
+    take(a.x + dx*t, a.z + dz*t);
+  }
+  take(a.x, a.z); take(b.x, b.z);
+  var pa = leg(air.a[0], air.a[1]), pb = leg(air.b[0], air.b[1]);
+  take(pa.x, pa.z); take(pb.x, pb.z);
+  return best;
+}
+// does the segment a -> b cross the capsule's axis
+function crosses(a, b, air){
+  function side(p, q, x, z){ return (q[0] - p[0])*(z - p[1]) - (q[1] - p[1])*(x - p[0]); }
+  var A = [a.x, a.z], B = [b.x, b.z];
+  return (side(air.a, air.b, a.x, a.z) > 0) !== (side(air.a, air.b, b.x, b.z) > 0) &&
+         (side(A, B, air.a[0], air.a[1]) > 0) !== (side(A, B, air.b[0], air.b[1]) > 0);
 }
 // a closed polyline through K (detouring round islands), sampled every STEP m: [{x, z}]
 function clearPath(K, C){
@@ -319,6 +429,7 @@ function resample(X, Z){
 }
 function relax(P, C, iters){
   var X = P.map(function(p){ return p.x; }), Z = P.map(function(p){ return p.z; });
+  var airs = C.filter(function(c){ return c.air; }).map(function(c){ return c.air; });
   for(var it = 0; it < iters; it++){
     if(it % 8 === 0){ var rs = resample(X, Z); X = rs[0]; Z = rs[1]; }
     var n = X.length, X2 = X.slice(), Z2 = Z.slice();
@@ -328,6 +439,15 @@ function relax(P, C, iters){
       var d = hyp(X[j] - c.x, Z[j] - c.z), r = c.r + BIG_PLAN;
       if(d < r){ var u = unit(X[j] - c.x, Z[j] - c.z); X[j] = c.x + u[0]*r; Z[j] = c.z + u[1]*r; }
     });
+    // and out of every airfield's capsule (grown by AIR_PLAN)
+    for(var k = 0; k < airs.length; k++){
+      var A = airs[k], ax = A.a[0], az = A.a[1], ex = A.b[0] - ax, ez = A.b[1] - az, E2 = ex*ex + ez*ez, rq = A.r + AIR_PLAN;
+      for(var m = 0; m < n; m++){
+        var u2 = E2 > 1e-9 ? ((X[m] - ax)*ex + (Z[m] - az)*ez)/E2 : 0; u2 = u2 < 0 ? 0 : u2 > 1 ? 1 : u2;
+        var qx = ax + ex*u2, qz = az + ez*u2, ox = X[m] - qx, oz = Z[m] - qz, dq = Math.sqrt(ox*ox + oz*oz);
+        if(dq < rq && dq > 1e-6){ X[m] = qx + ox/dq*rq; Z[m] = qz + oz/dq*rq; }
+      }
+    }
   }
   return X.map(function(x, i){ return {x: x, z: Z[i]}; });
 }
@@ -438,5 +558,6 @@ function calls(ship, world, nowMs, aheadMs){
 HQV.hqVoyage = {route: route, poseAt: poseAt, sailings: sailings, nextSailing: nextSailing, berthOf: berthOf,
                 inland: inland, coastR: coastR, EVERY: EVERY, RIVER_V: RIVER_V, SEA_V: SEA_V,
                 seaLoop: seaLoop, fleet: fleet, shipAt: shipAt, loopT: loopT, nextStop: nextStop, calls: calls, bigCities: bigCities,
-                BIG_NOMINAL: BIG_NOMINAL, CRUISE_V: CRUISE_V, CARGO_V: CARGO_V};
+                BIG_NOMINAL: BIG_NOMINAL, CRUISE_V: CRUISE_V, CARGO_V: CARGO_V,
+                COMMONS_AIRFIELD: COMMONS_AIRFIELD, AIR_CLEAR: AIR_CLEAR, airClear: airClear};
 })();

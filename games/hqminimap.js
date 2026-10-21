@@ -23,6 +23,10 @@
  *     mm.setWorld(W, tier, {places, coast, river})  W: the packed world (HQV.world.pack); places: hqnav
  *                     Places (m; default: W's civic sites at this tier); coast, river: cm, as the doc's
  *                     layers (default W.island.coast and W.river)
+ *     mm.setAirfield(L | null)  the airfield (games/hqairfield.js layout, docs/plans/airport-spec.md 8) painted into the
+ *                     world bitmap in its real colours: the platform's grass, the apron, taxiways, the runway and its
+ *                     pads, the service road, the landside roads, the terminal, concourse and skybridge. Kept across
+ *                     setWorld for the same world; null takes it out. It redraws into the same bitmap canvas.
  *     mm.frame({x, z, yaw, view?, speed, route, waypoint, others, dt?})   view: the camera's heading (heading-up turns
  *                    by it; default yaw); yaw: where you face (the arrow)
  *     mm.setMode("heading" | "north"), mm.mode(), mm.zoom(+1 | -1), mm.view(), mm.destroy()
@@ -53,9 +57,11 @@ var POI = {
   transit: {col: "#2a9d8f", g: "bus"}, airport: {col: "#5b6b8c", g: "plane"},
   townhall: {col: "#8a6d3b", g: "hall"}, hospital: {col: "#c9372c", g: "cross"}, clinic: {col: "#d4574c", g: "cross"},
   police: {col: "#2d4a8a", g: "shield"}, fire: {col: "#d0611f", g: "flame"}, market: {col: "#3f8f4f", g: "basket"},
-  school: {col: "#a07a12", g: "book"}, myhq: {col: "#ffb347", g: "star"}, hq: {col: "#5fd3e6", g: "house"}
+  school: {col: "#a07a12", g: "book"}, myhq: {col: "#ffb347", g: "star"}, hq: {col: "#5fd3e6", g: "house"},
+  dealer: {col: "#1c66b5", g: "car"},
+  carpark: {col: "#1f6fd1", g: "parking"}
 };
-var POI_ORDER = ["hq", "school", "market", "fire", "police", "clinic", "hospital", "townhall", "airport", "transit", "dock", "port", "myhq"];
+var POI_ORDER = ["hq", "school", "market", "fire", "police", "clinic", "hospital", "townhall", "airport", "transit", "dealer", "dock", "port", "carpark", "myhq"];
 var PAL = {
   dark: {sea: "#0f2a3d", land: "#1d2620", landEdge: "#33503f", water: "#1a4a6b", bank: "#2f6f8f",
          road: {highway: "#c99a4a", ring: "#b08a50", arterial: "#8d939c", avenue: "#8d939c", local: "#5d636b", street: "#5d636b"},
@@ -144,13 +150,15 @@ function polyPath(g, poly, ox, oz, k){
   g.closePath();
 }
 
-// The world bitmap: north-up, bitmap px (bx, by) = ((x1 - x)*k, (z1 - z)*k) for world m (x, z).
-function buildStatic(doc, W, tier, coast, river, pal, dpr){
+// The world bitmap: north-up, bitmap px (bx, by) = ((x1 - x)*k, (z1 - z)*k) for world m (x, z). reuse: a canvas
+// to draw into again (setAirfield) instead of a new one.
+function buildStatic(doc, W, tier, coast, river, pal, dpr, reuse){
   var half = num(W && W.half, 1024) + MARGIN, span = 2*half;
   var k = Math.min(BITMAP_PX_M, (dpr >= 2 ? BITMAP_MAX : BITMAP_MAX*2/3)/span);
   var n = Math.max(1, Math.ceil(span*k));
-  var cv = doc.createElement("canvas");
-  cv.width = n; cv.height = n;
+  var cv = reuse || doc.createElement("canvas");
+  if(cv.width !== n) cv.width = n;
+  if(cv.height !== n) cv.height = n;
   var g = cv.getContext("2d");
   var B = {cv: cv, g: g, k: k, x1: half, z1: half, n: n};
   if(!g) return B;
@@ -192,6 +200,61 @@ function buildStatic(doc, W, tier, coast, river, pal, dpr){
     }
   }
   return B;
+}
+
+// The airfield's real colours (docs/plans/airport-spec.md 4), the same in both palettes
+var AIR_COL = {grass: "#6f8f4f", apron: "#a8a69e", taxi: "#3a3d42", taxiEdge: "#55585c", runway: "#2b2d30", runwayEdge: "#4a4d52",
+               pad: "#55575b", road: "#3a3d42", paint: "#f2f2ee", roof: "#d6dade", glass: "#9fb4c4", carpark: "#8e9096"};
+function isPt(p){ return Array.isArray(p) && p.length >= 2 && isFinite(p[0]) && isFinite(p[1]); }
+// L (world m) into the bitmap B: polygons filled, polylines stroked at their real widths
+function paintAirfield(B, L){
+  var g = B && B.g;
+  if(!g || !L || L.ok === false) return;
+  var k = B.k;
+  function trace(P, closed){
+    if(!Array.isArray(P) || P.length < 2 || !P.every(isPt)) return false;
+    g.beginPath();
+    for(var i = 0; i < P.length; i++){ var bx = (B.x1 - P[i][0])*k, by = (B.z1 - P[i][1])*k; if(i) g.lineTo(bx, by); else g.moveTo(bx, by); }
+    if(closed) g.closePath();
+    return true;
+  }
+  function fill(P, col){ if(trace(P, true)){ g.fillStyle = col; g.fill(); } }
+  function line(P, w, col, cap){ if(trace(P, false)){ g.lineCap = cap || "round"; g.lineJoin = "round"; g.lineWidth = Math.max(1, w*k); g.strokeStyle = col; g.stroke(); } }
+  // a strip along a -> b, w wide, ext m past each end
+  function strip(a, b, w, ext, col){
+    if(!isPt(a) || !isPt(b)) return;
+    var dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz) || 1, ux = dx/l, uz = dz/l, h = w/2;
+    var a2 = [a[0] - ux*ext, a[1] - uz*ext], b2 = [b[0] + ux*ext, b[1] + uz*ext];
+    fill([[a2[0] - uz*h, a2[1] + ux*h], [b2[0] - uz*h, b2[1] + ux*h], [b2[0] + uz*h, b2[1] - ux*h], [a2[0] + uz*h, a2[1] - ux*h]], col);
+  }
+  (L.platform || []).forEach(function(P){ fill(P, AIR_COL.grass); });
+  (L.apron || []).forEach(function(P){ fill(P, AIR_COL.apron); });
+  var sv = L.service || {};
+  ["fuel", "fire", "hangars", "depot"].forEach(function(id){ fill(sv[id], AIR_COL.apron); });
+  // the taxiways (every line but the runway, every curve but the stands' lead-ins): shoulders, then pavement
+  var W = L.widths || {}, sh = num(W.shoulder, 3.5), lines = L.lines || {}, curves = L.curves || {}, taxi = [];
+  Object.keys(lines).sort().forEach(function(id){ if(id !== "RWY") taxi.push([lines[id], num(W[id], 18)]); });
+  Object.keys(curves).sort().forEach(function(id){ if(id.charAt(0) !== "S") taxi.push([curves[id], 18]); });
+  taxi.forEach(function(t){ line(t[0], t[1] + 2*sh, AIR_COL.taxiEdge); });
+  taxi.forEach(function(t){ line(t[0], t[1], AIR_COL.taxi); });
+  // the runway: shoulders, the blast pads, the pavement and its centreline
+  var R = L.runway || {}, E = R.ends || [], rw = num(R.w, 45), rsh = num(R.shoulder, 7.5);
+  if(E.length >= 2 && isPt(E[0].thr) && isPt(E[1].thr)){
+    strip(E[0].thr, E[1].thr, rw + 2*rsh, 0, AIR_COL.runwayEdge);
+    E.forEach(function(e){ if(e.pad && e.pad.length >= 2) strip(e.pad[0], e.pad[1], rw, 0, AIR_COL.pad); });
+    strip(E[0].thr, E[1].thr, rw, 0, AIR_COL.runway);
+    line([E[0].thr, E[1].thr], 0.9, AIR_COL.paint, "butt");
+  }
+  line(L.serviceRoad, num(L.serviceRoadW, 6), AIR_COL.road);
+  // landside: the roads, the car park, the terminal and its canopy, the skybridge, the concourse
+  var ls = L.landside || {}, roadW = num(ls.roadW, 8);
+  line(ls.access, roadW, AIR_COL.road, "butt");
+  line(ls.forecourt, roadW, AIR_COL.road);
+  fill(ls.carpark, AIR_COL.carpark);
+  fill(ls.terminal, AIR_COL.roof);
+  fill(ls.canopy, AIR_COL.glass);
+  if(ls.skybridge) line([ls.skybridge.a, ls.skybridge.b], num(ls.skybridge.w, 8), AIR_COL.glass, "butt");
+  fill(L.concourse, AIR_COL.roof);
 }
 
 // The pictograms, white on a coloured disc, drawn in a unit box centred on 0 (radius 1).
@@ -236,6 +299,15 @@ function glyph(g, kind, disc){
         if(i) g.lineTo(r*Math.cos(a), r*Math.sin(a)); else g.moveTo(r*Math.cos(a), r*Math.sin(a));
       }
       g.closePath(); g.fill(); return;
+    case "car":
+      g.moveTo(-0.6, 0.25); g.lineTo(-0.55, -0.05); g.lineTo(-0.3, -0.1); g.lineTo(-0.15, -0.38); g.lineTo(0.25, -0.38);
+      g.lineTo(0.42, -0.1); g.lineTo(0.6, -0.02); g.lineTo(0.6, 0.25); g.closePath(); g.fill();
+      g.fillStyle = disc; g.beginPath(); g.arc(-0.32, 0.27, 0.15, 0, 2*PI); g.arc(0.32, 0.27, 0.15, 0, 2*PI); g.fill(); return;
+    case "parking":
+      g.lineWidth = 0.26; g.lineCap = "butt"; g.lineJoin = "round";
+      g.moveTo(-0.24, 0.56); g.lineTo(-0.24, -0.5); g.lineTo(0.08, -0.5);
+      g.quadraticCurveTo(0.46, -0.5, 0.46, -0.16); g.quadraticCurveTo(0.46, 0.18, 0.08, 0.18); g.lineTo(-0.24, 0.18);
+      g.stroke(); return;
     case "house":
       g.moveTo(-0.5, -0.05); g.lineTo(0, -0.52); g.lineTo(0.5, -0.05); g.lineTo(0.38, -0.05); g.lineTo(0.38, 0.48);
       g.lineTo(-0.38, 0.48); g.lineTo(-0.38, -0.05); g.closePath(); g.fill(); return;
@@ -273,7 +345,7 @@ function mount(el, opts){
   var onExpand = typeof opts.onExpand === "function" ? opts.onExpand : function(){};
   var domL = [], alive = true;
   var mode = "heading", level = 0, span = null, lastT = null, W = null, tier = null;
-  var stat = null, atlas = null, places = [], pal = PAL.dark;
+  var stat = null, atlas = null, places = [], pal = PAL.dark, coastW = null, riverW = null, airL = null;
   var cssW = 200, cssH = 200, dpr = 1, V = viewFor(mode, 0, 0, 0, WALK_SPAN, cssW, cssH);
   // the big map (M): the same canvas grown to most of the stage, north-up over the whole world, with a pan
   // (m, from you) you drag; rot/ay ease between heading-up and north-up so the map swings round as it grows
@@ -440,7 +512,9 @@ function mount(el, opts){
     pal = palette(el);
     var coast = Array.isArray(o.coast) ? o.coast : (W.island && W.island.coast) || null;
     var river = o.river || W.river || null;
+    coastW = coast; riverW = river;
     stat = buildStatic(doc, W, tier, coast, river, pal, dpr);
+    if(airHere()) paintAirfield(stat, airL);
     atlas = buildAtlas(doc, dpr);
     var src = Array.isArray(o.places) ? o.places : sitePlaces(W, tier);
     src.forEach(function(p){
@@ -450,6 +524,18 @@ function mount(el, opts){
     });
     // the higher-priority icons are drawn last, on top
     places.sort(function(a, b){ return a.i - b.i; });
+  }
+
+  // the airfield: on the world it was laid out for (an L without a world id goes on any)
+  function airHere(){ return !!(airL && W && (!airL.world || !W.id || airL.world === W.id)); }
+  function setAirfield(L){
+    var next = L && typeof L === "object" && L.ok !== false && Array.isArray(L.platform) ? L : null;
+    if(!next && !airL) return;
+    airL = next;
+    if(!W || !stat) return;
+    // the bitmap again, into the same canvas: with the airfield on top, or without it
+    stat = buildStatic(doc, W, tier, coastW, riverW, pal, dpr, stat.cv);
+    if(airHere()) paintAirfield(stat, airL);
   }
 
   // ---- the overlay: one frame ----
@@ -587,12 +673,12 @@ function mount(el, opts){
     if(ro){ try { ro.disconnect(); } catch(e){} ro = null; }
     if(root.parentNode) root.parentNode.removeChild(root);
     if(scrim.parentNode) scrim.parentNode.removeChild(scrim);
-    stat = null; atlas = null; W = null; places = [];
+    stat = null; atlas = null; W = null; places = []; airL = null;
   }
 
   return {
     el: root, canvas: cv,
-    setWorld: setWorld, frame: frame, setMode: setMode, zoom: zoom, expand: expand, destroy: destroy,
+    setWorld: setWorld, setAirfield: setAirfield, frame: frame, setMode: setMode, zoom: zoom, expand: expand, destroy: destroy,
     isBig: function(){ return big; },
     mode: function(){ return mode; },
     view: function(){ return {x: V.x, z: V.z, rot: V.rot, span: V.span, w: V.w, h: V.h, ay: V.ay}; },
@@ -602,5 +688,5 @@ function mount(el, opts){
 }
 
 HQV.hqminimap = {mount: mount, toMini: toMini, fromMini: fromMini, zoomFor: zoomFor, viewFor: viewFor,
-                 edgeClamp: edgeClamp, sitePlaces: sitePlaces, POI: POI};
+                 edgeClamp: edgeClamp, sitePlaces: sitePlaces, POI: POI, AIR_COL: AIR_COL};
 })();

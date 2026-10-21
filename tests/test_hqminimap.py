@@ -436,5 +436,120 @@ class MinimapTest(unittest.TestCase):
         self.assertIn(".hq3d-drive{right:224px}", css)
 
 
+# setAirfield: a probe canvas that rasterises only a few chosen points (world m -> bitmap px): each fill() of the
+# current path (even-odd) and each stroke() (distance to its segments <= lineWidth/2) paints the probes it covers
+AIRFIELD = r"""
+const fs = require('fs'), zlib = require('zlib');
+const [JS, WORLD, AT2, FIXT] = process.argv.slice(1);
+const probes = {runway: [-1005, 0], runwayN: [-1025, 600], runwayS: [-1008, -700], centre: [-1015, 300], taxiA: [-905, 0], taxiB: [-863, 400],
+  apron: [-830, 30], grass: [-955, -100], sea: [-1000, 1000], terminal: [-620, 0], land: [-300, 0]};
+function probeCtx(cv){
+  const ctx = {canvas: cv, px: {}, path: [], sub: null, fillStyle: '#000', strokeStyle: '#000', lineWidth: 1};
+  // the bitmap's frame, as buildStatic lays it out: x1 = z1 = W.half + MARGIN, k from the canvas's size
+  const pts = () => { const k = cv.width/(2*HALF); return Object.keys(probes).map(n => [n, (HALF - probes[n][0])*k, (HALF - probes[n][1])*k]); };
+  ctx.beginPath = () => { ctx.path = []; ctx.sub = null; };
+  ctx.moveTo = (x, y) => { ctx.sub = [[x, y]]; ctx.path.push(ctx.sub); };
+  ctx.lineTo = (x, y) => { if(!ctx.sub){ ctx.moveTo(x, y); return; } ctx.sub.push([x, y]); };
+  ctx.closePath = () => { if(ctx.sub && ctx.sub.length) ctx.sub.closed = true; };
+  ctx.fill = () => { pts().forEach(([k, x, y]) => { let inside = false;
+    ctx.path.forEach(P => { for(let i = 0, j = P.length - 1; i < P.length; j = i++){ const a = P[i], b = P[j];
+      if((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0])*(y - a[1])/(b[1] - a[1]) + a[0]) inside = !inside; } });
+    if(inside) ctx.px[k] = ctx.fillStyle; }); };
+  ctx.stroke = () => { pts().forEach(([k, x, y]) => { let d = Infinity;
+    ctx.path.forEach(P => { const n = P.closed ? P.length : P.length - 1; for(let i = 0; i < n; i++){ const a = P[i], b = P[(i + 1) % P.length];
+      const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx*dx + dy*dy; let u = L2 ? ((x - a[0])*dx + (y - a[1])*dy)/L2 : 0; u = Math.max(0, Math.min(1, u));
+      d = Math.min(d, Math.hypot(x - a[0] - dx*u, y - a[1] - dy*u)); } });
+    if(d <= ctx.lineWidth/2) ctx.px[k] = ctx.strokeStyle; }); };
+  ctx.fillRect = (x0, y0, w, h) => { pts().forEach(([k, x, y]) => { if(x >= x0 && x <= x0 + w && y >= y0 && y <= y0 + h) ctx.px[k] = ctx.fillStyle; }); };
+  ['save','restore','translate','rotate','scale','arc','arcTo','rect','quadraticCurveTo','bezierCurveTo','clearRect','setTransform',
+   'fillText','strokeText','clip','drawImage'].forEach(k => { ctx[k] = () => {}; });
+  ctx.measureText = t => ({width: String(t).length*6});
+  return ctx;
+}
+class El {
+  constructor(tag){ this.tagName = tag.toUpperCase(); this.children = []; this.parentNode = null; this.className = '';
+    this.attrs = {}; this.listeners = {}; this.style = {}; this.textContent = ''; this.width = 300; this.height = 150;
+    this.clientWidth = 200; this.clientHeight = 200; }
+  appendChild(c){ c.parentNode = this; this.children.push(c); return c; }
+  removeChild(c){ this.children = this.children.filter(x => x !== c); c.parentNode = null; return c; }
+  setAttribute(k, v){ this.attrs[k] = String(v); }
+  getAttribute(k){ return k in this.attrs ? this.attrs[k] : null; }
+  addEventListener(t, f){ (this.listeners[t] = this.listeners[t] || []).push(f); }
+  removeEventListener(t, f){ this.listeners[t] = (this.listeners[t] || []).filter(x => x !== f); }
+  getContext(k){ return this.tagName === 'CANVAS' && k === '2d' ? (this._ctx = this._ctx || probeCtx(this)) : null; }
+}
+const made = []; let HALF = 1084;
+const document = {createElement: t => { const e = new El(t); if(e.tagName === 'CANVAS') made.push(e); return e; }};
+const window = {HQV: {}, document, devicePixelRatio: 1, console, performance: {now: () => 0},
+  addEventListener(){}, removeEventListener(){}, getComputedStyle: () => ({getPropertyValue: n => n === '--bg' ? ' #0c0d10' : ''})};
+new Function('window', fs.readFileSync(WORLD, 'utf8'))(window);
+new Function('window', fs.readFileSync(JS, 'utf8'))(window);
+const M = window.HQV.hqminimap, WD = window.HQV.world, out = {};
+const at2 = WD.pack(JSON.parse(zlib.gunzipSync(fs.readFileSync(AT2)).toString('utf8')));
+const L = JSON.parse(fs.readFileSync(FIXT, 'utf8')); HALF = at2.half + 60;
+const stage = new El('div'), mm = M.mount(stage, {});
+const px = () => Object.assign({}, mm.layers().static._ctx.px);
+mm.setWorld(at2, 5, {}); out.before = px();
+const cv1 = mm.layers().static, base = made.length;
+mm.setAirfield(L); out.after = px();
+mm.setAirfield(L); out.again = px();
+out.sameCanvas = mm.layers().static === cv1;
+out.newCanvases = made.length - base;
+out.col = M.AIR_COL; out.bitmapHalf = HALF;
+// kept across setWorld of the same world; another world (an island) never gets the Commons' airfield
+mm.setWorld(at2, 5, {}); out.reworld = px();
+mm.setWorld(Object.assign(Object.create(at2), {id: 'user:x@2'}), 5, {}); out.otherWorld = px();
+mm.setWorld(at2, 5, {}); mm.setAirfield(null); out.cleared = px();
+let threw = null; try { mm.setAirfield({ok: false, why: 'no site'}); mm.setAirfield(undefined); mm.setAirfield({}); } catch(e){ threw = String(e); }
+out.threw = threw; out.stillClear = px();
+// handed before any world: remembered, painted when the world comes
+const mm2 = M.mount(new El('div'), {}); mm2.setAirfield(L); mm2.setWorld(at2, 5, {}); out.early = Object.assign({}, mm2.layers().static._ctx.px);
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class AirfieldTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        r = subprocess.run([NODE, "-e", AIRFIELD, "--", JS, os.path.join(ROOT, "games", "world.js"),
+                            os.path.join(FIX, "claude-hq@2.json.gz"), os.path.join(FIX, "airfield_commons.json")],
+                           capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            raise AssertionError(r.stderr)
+        cls.o = json.loads(r.stdout)
+
+    def test_runway_painted_at_the_fixture_position(self):
+        o, c = self.o, self.o["col"]
+        self.assertEqual(o["before"]["runway"], "#0f2a3d")          # the sea before
+        for k in ("runway", "runwayN", "runwayS"):
+            self.assertEqual(o["after"][k], c["runway"], k)
+        self.assertEqual(o["after"]["centre"], c["paint"])          # the centreline
+        self.assertEqual(o["after"]["taxiA"], c["taxi"])
+        self.assertEqual(o["after"]["taxiB"], c["taxi"])
+        self.assertEqual(o["after"]["apron"], c["apron"])
+        self.assertEqual(o["after"]["grass"], c["grass"])
+        self.assertEqual(o["after"]["terminal"], c["roof"])
+        self.assertEqual(o["after"]["sea"], o["before"]["sea"])    # off the platform: untouched
+        self.assertEqual(o["after"]["land"], o["before"]["land"])
+        # the runway fits the bitmap (x >= -1037.5 inside W.half + MARGIN = 1084 m)
+        self.assertAlmostEqual(o["bitmapHalf"], 1084, delta=1)
+
+    def test_idempotent_and_no_new_canvases(self):
+        o = self.o
+        self.assertEqual(o["again"], o["after"])
+        self.assertTrue(o["sameCanvas"])
+        self.assertEqual(o["newCanvases"], 0)
+
+    def test_kept_cleared_and_world_bound(self):
+        o = self.o
+        self.assertEqual(o["reworld"], o["after"])                  # a setWorld of the same world keeps it
+        self.assertNotEqual(o["otherWorld"]["runway"], o["col"]["runway"])
+        self.assertEqual(o["cleared"], o["before"])                 # null takes it out again
+        self.assertIsNone(o["threw"])
+        self.assertEqual(o["stillClear"], o["before"])              # nothing usable: nothing painted
+        self.assertEqual(o["early"]["runway"], o["col"]["runway"])  # handed before the world: painted when it comes
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -64,10 +64,15 @@ if ! docker run --rm -v "$DIR/backend":/cfg:ro \
   echo "  Inspect: $CADDY"; exit 1
 fi
 
-# Named services only (see install-panel.sh): `app` is not this script's business.
-docker compose --profile monitoring up -d prometheus node-exporter grafana caddy
+# Named services, and --no-deps: Caddy depends on `app`, and without --no-deps compose
+# recreates `app` too -- from the compose default image (claude-hq-arena:local) instead
+# of the release ops/release.sh records in .release.env. `app` is not this script's
+# business. The release file is passed anyway so the project's config matches a release.
+ENVS=(--env-file .env)
+[ -f .release.env ] && ENVS+=(--env-file .release.env)
+docker compose "${ENVS[@]}" --profile monitoring up -d --no-deps prometheus node-exporter grafana caddy
 sleep 6
-docker compose --profile monitoring ps prometheus node-exporter grafana caddy
+docker compose "${ENVS[@]}" --profile monitoring ps
 
 echo
 echo "  Open https://$GRAFANA_DOMAIN  (user: admin)"

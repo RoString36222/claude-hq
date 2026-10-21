@@ -2638,7 +2638,7 @@ function mount(el, api){
     Object.keys(peers).forEach(function(u){ if(!seen[u]){ var P = peers[u]; if(P.g.parent) P.g.parent.remove(P.g); delete peers[u]; } });
   };
   // what another player is on, from their presence `a`, and how they sit on it
-  var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto"};
+  var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack"};
   function placePeers(dt, t){
     Object.keys(peers).forEach(function(u){
       // the floor they are on: the 3D city sends "city3d" (w.net), so legacy and 3D clients never mix
@@ -2676,12 +2676,14 @@ function mount(el, api){
         }
         return;
       }
-      // on wheels: a bike (3), a car (5) or a motorbike (6), in their colour, them in its seat
+      // on wheels: a bike (3), a car (5) or a motorbike (6), in their colour, them in its seat;
+      // or at the controls of a helicopter (7) / an attack helicopter (8), at the height `h` they send
       var vk = PEER_VEHICLE[P.a] || null;
+      if(vk && !VEHICLES[vk]) vk = null;                          // no games/hqheli.js here
       if(P.bike && P.vkind !== vk){ if(P.ch){ P.g.add(P.ch.o); seatOn(P.ch, null); } P.g.remove(P.lean); P.bike = null; P.lean = null; P.vkind = null; }
       if(vk && !P.bike){
         P.lean = new THREE.Group(); P.g.add(P.lean); P.vkind = vk; P.steer = 0;
-        P.bike = vk === "car" ? carModel(bikeColor(u)) : vk === "moto" ? motoModel(bikeColor(u)) : bikeModel(bikeColor(u));
+        P.bike = VEHICLES[vk].heli ? HQV.hqheli.model(ctx, vk, bikeColor(u)) : vk === "car" ? carModel(bikeColor(u)) : vk === "moto" ? motoModel(bikeColor(u)) : bikeModel(bikeColor(u));
         P.lean.add(P.bike.g); if(P.ch){ P.lean.add(P.ch.o); seatOn(P.ch, P.bike); }
       }
       if(P.bike){
@@ -2692,7 +2694,10 @@ function mount(el, api){
         var dyaw = P.pyaw == null ? 0 : Math.atan2(Math.sin(P.yaw - P.pyaw), Math.cos(P.yaw - P.pyaw)), v = dt > 0 ? mv/dt : 0;
         var want = !jump && v > 0.5 && dt > 0 ? E.clamp(dyaw/dt/(1.9*Math.min(1, v/2.5)), -1, 1) : 0;
         P.steer += (want - P.steer)*ease(6, dt);
-        (vk === "car" ? carRoll : vk === "moto" ? motoRoll : bikeRoll)(P.bike, jump ? 0 : mv, P.steer);
+        if(VEHICLES[vk].heli){                       // rotors at flying speed, the strobe blinking, the searchlight at night
+          P.hst = P.hst || {rpm: 1, t: 0, ground: false}; P.hst.t += dt || 0;
+          HQV.hqheli.animate(P.bike, P.hst, dt, isNight());
+        } else (vk === "car" ? carRoll : vk === "moto" ? motoRoll : bikeRoll)(P.bike, jump ? 0 : mv, P.steer);
         var pl = E.calm() || vk === "car" ? 0 : -P.steer*Math.min(1, v/6)*VEHICLES[vk].lean;
         P.lean.rotation.z += (pl - P.lean.rotation.z)*ease(8, dt);
         // their brake lights, when they slow down hard (held a moment, so they do not flicker)
@@ -2709,8 +2714,9 @@ function mount(el, api){
   // 0 still, 1 walk, 2 run, 3 on a bike (any speed: others draw you riding), 4 on a skateboard,
   // 5 driving a car, 6 on a motorbike (the page sends 5 / 6 only where the Arena lists "drive").
   var RIDE_A = {bike: 3, skate: 4, car: 5, moto: 6};
+  // 7 flying a helicopter, 8 an attack helicopter (the page sends them only where the Arena lists "fly").
   // (a boat has no presence animation of its own yet: others see you standing, or walking while it moves)
-  inst.moving = function(){ return ride ? (ride.boat || ride.heli ? (keyMove ? 1 : 0) : RIDE_A[ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
+  inst.moving = function(){ return ride ? (ride.heli ? (ride.kind === "attack" ? 8 : 7) : ride.boat ? (keyMove ? 1 : 0) : RIDE_A[ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
   // on a board: what others should see you doing ({k, y}); null otherwise
   inst.skate = function(){ return ride && ride.kind === "skate" ? skateNet() : null; };
   inst.riding = function(){ return !!ride; };

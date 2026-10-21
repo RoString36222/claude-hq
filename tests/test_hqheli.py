@@ -122,6 +122,12 @@ out.models = H.KINDS.map(function(k){
   return {kind: k, meshes: meshes, size: [sz.x, sz.y, sz.z], minY: bb.min.y, anchors: !!(M.seat && M.grips[1] && M.feet[1]),
           disc: M.disc.material.opacity, beam: M.beam.visible, strobe: M.lights.strobe.visible};
 });
+// another player flying one (games/hq3d.js placePeers): their colour, a bare flying state, the rotors turning
+out.peer = H.KINDS.map(function(k){
+  var M = H.model(c, k, 0xff6b5b), st = {rpm: 1, t: 0, ground: false}, a0 = M.blades.rotation.y;
+  for(var i = 0; i < 3; i++){ st.t += 1/60; H.animate(M, st, 1/60, false); }
+  return {kind: k, spun: Math.abs(M.blades.rotation.y - a0), disc: M.disc.material.opacity, beam: M.beam.visible};
+});
 out.jet = (function(){ var J = A.jetModel(c); var bb = new THREE.Box3().setFromObject(J.g), sz = bb.getSize(new THREE.Vector3()); return [sz.x, sz.y, sz.z]; })();
 console.log(JSON.stringify(out));
 """
@@ -225,6 +231,10 @@ class HeliTest(unittest.TestCase):
             self.assertGreaterEqual(m["minY"], -0.05, m)        # stands on its skids / wheels
             self.assertGreater(m["disc"], 0.2, m)               # spinning: the blur disc shows
             self.assertTrue(m["beam"], m)                       # night, flying: the searchlight
+        for m in self.o["peer"]:                                # someone else at the controls
+            self.assertGreater(m["spun"], 0.5, m)
+            self.assertGreater(m["disc"], 0.2, m)
+            self.assertFalse(m["beam"], m)                      # daytime: no searchlight
         x, y, z = self.o["jet"]
         self.assertTrue(14 < z < 19 and 9 < x < 12, self.o["jet"])
 

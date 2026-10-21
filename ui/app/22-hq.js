@@ -504,13 +504,15 @@ function hqNetSend(){
   if(a===4 && !hqNetCan("skate")) a=2;  // nor does one without skateboards know a 4
   // a car (5) or a motorbike (6) needs "drive"; without it, show a bike where bikes are known
   if((a===5 || a===6) && !hqNetCan("drive")) a = hqNetCan("ride") ? 3 : 2;
+  if((a===7 || a===8) && !hqNetCan("fly")) a = 0;   // a helicopter (7 / 8) needs "fly": else you stand where it is
   var msg={type:"game", g:"hq", op:"pos", w:w.world, x:Math.round(w.x*100), z:Math.round(w.z*100),
            r:Math.round(((w.yaw*180/Math.PI)%360+360)%360), a:a};
   // on a board: the trick you are doing (k) and how high you are (y, decimetres), so others see it
   var sk = a===4 && HQ3D.inst.skate ? HQ3D.inst.skate() : null;
   if(sk){ msg.k=sk.k|0; msg.y=sk.y|0; }
   // "alt": your feet height (cm) and pitch (degrees) on the 3D city's hills
-  if(alt && w.h!=null){ msg.h=Math.round(w.h*100); msg.p=Math.round(Math.max(-90, Math.min(90, (+w.pitch||0)*180/Math.PI))); }
+  // (h is clamped to the Arena's +-500 m: a helicopter above that would get the whole frame dropped)
+  if(alt && w.h!=null){ msg.h=Math.max(-50000, Math.min(50000, Math.round(w.h*100))); msg.p=Math.round(Math.max(-90, Math.min(90, (+w.pitch||0)*180/Math.PI))); }
   var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.k,msg.y,msg.h,msg.p].join(","), now=Date.now();
   if(key===HQNET.last && now-HQNET.sentAt<2000) return;
   HQNET.last=key; HQNET.sentAt=now;
@@ -520,7 +522,7 @@ setInterval(function(){ if(VIEW==="hq") hqSync(); hqNetSync(); hqNetSend(); }, 1
 // "Here now": who else is in this HQ, and on which floor.
 var HQ_FLOOR_NAME = {base:"outside", city:"in Arena City", city3d:"in Arena City", lobby:"in the Lobby", mission:"in Mission Control"};
 // (riding a bike shows as "on a bike" beside the floor, a skateboard as "skating", and so on)
-var HQ_MOVING_NAME = {3:" · on a bike", 4:" · skating", 5:" · driving", 6:" · on a motorbike"};
+var HQ_MOVING_NAME = {3:" · on a bike", 4:" · skating", 5:" · driving", 6:" · on a motorbike", 7:" · flying", 8:" · flying"};
 function hqRenderHere(){
   var box=$("hqHere"); if(!box) return;
   var ps=HQNET.peers||[];

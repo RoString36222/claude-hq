@@ -81,7 +81,8 @@ class LoadOrderAndProtocol(unittest.TestCase):
         self.assertRegex(body, r'if\(w\.world==="city3d" && !alt\) return;')
         m = re.search(r"if\(alt && w\.h!=null\)\{([^}]*)\}", body)
         self.assertTrue(m, "h/p only behind the alt capability")
-        self.assertIn("msg.h=Math.round(w.h*100)", m.group(1))
+        # clamped to the Arena's +-500 m (ALT_H_MAX): a helicopter higher up would get the frame dropped
+        self.assertIn("msg.h=Math.max(-50000, Math.min(50000, Math.round(w.h*100)))", m.group(1))
         self.assertIn("Math.max(-90, Math.min(90,", m.group(1))
         self.assertNotRegex(body.replace(m.group(0), ""), r"msg\.[hp]=")
         self.assertIn("msg.h,msg.p].join", body)   # both in the dedupe key
@@ -100,6 +101,21 @@ class LoadOrderAndProtocol(unittest.TestCase):
         where = assigned_body(src, "inst.where")
         self.assertIn("cur.net || cur.name", where)
         self.assertIn("h: rigW ? avatar.g.position.y : null", where)
+
+    def test_presence_fly(self):
+        # in a helicopter you send a = 7 (8: the attack one), only to an Arena that lists "fly"
+        src = read(HQ3D)
+        moving = assigned_body(src, "inst.moving")
+        self.assertIn('ride.heli ? (ride.kind === "attack" ? 8 : 7)', moving)
+        send = func_body(read(HQ_UI), "hqNetSend")
+        self.assertIn('if((a===7 || a===8) && !hqNetCan("fly")) a = 0;', send)
+        self.assertLess(send.index('hqNetCan("fly")'), send.index("var msg="))
+        # others see them in it: the helicopter model at the height they send, its rotors turning
+        self.assertIn('var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack"};', src)
+        place = func_body(src, "placePeers")
+        self.assertIn("HQV.hqheli.model(ctx, vk, bikeColor(u))", place)
+        self.assertIn("HQV.hqheli.animate(P.bike, P.hst, dt, isNight())", place)
+        self.assertIn("if(vk && !VEHICLES[vk]) vk = null;", place)   # a page without games/hqheli.js
 
 
 class Hq3dSource(unittest.TestCase):

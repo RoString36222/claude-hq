@@ -170,7 +170,8 @@ class Hq3dSource(unittest.TestCase):
         # left- or right-drag orbits in the chase cameras (trackpads have no right-drag)
         self.assertIn("orbit: !!CHASE[m] && (e.button === 0 || e.button === 2)", down)
         # a left click that barely moved still walks / picks
-        self.assertIn("if(!d || d.moved > 5) return;", func_body(self.src, "onUp"))
+        # (a drag on a ride, d.trip, looks around: never a click either)
+        self.assertIn("if(!d || d.trip || d.moved > 5) return;", func_body(self.src, "onUp"))
         ctx = func_body(self.src, "onContext")
         self.assertIn("if(rigOn() && CHASE[rig.mode]) e.preventDefault();", ctx)
         # the only contextmenu listener is onContext (no unconditional preventDefault anywhere)

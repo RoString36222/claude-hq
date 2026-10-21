@@ -350,6 +350,16 @@ and feature guide.
     with a pause at the top over the whole city; the **Carousel**; and **Starswing**, a wave swinger. Walk
     up to a ride and press **E**. Rides run on the shared clock, so everyone sees the same train; residents
     visit the park too.
+  - **Stations and kiosks:** every ride boards from its own station: a boarded deck up steps from the path,
+    a tiled gable roof on steel posts with a lit eave, the ride's name in neon ringed by bulbs, a brass and
+    velvet queue, an operator's booth and planters (the Comet's runs its roof back over the track). Popcorn,
+    ice-cream and cotton-candy kiosks and a ticket booth, each with what it sells, giant, on its roof. Paved
+    promenades follow the ground.
+  - **A crowd:** visitors stroll the promenades, queue at the stations, wait at the kiosks and ride every
+    ride, the City's own detailed residents (the animated Kenney characters) near you and its light bodies
+    further off, all on the shared clock.
+  - **Look around with the mouse:** drag to turn the camera while walking (left or right button), and drag
+    on a ride to look around from your seat; it recentres when the ride ends.
   - **A day pass** is a new `park` fare: **10 Poke Coins**, once per UTC day per city, paid into that city's
     treasury. On an Arena that doesn't sell passes yet the gate opens as a free preview.
   - **Weather**: clear skies, overcast, rain, thunderstorms (lightning, thunder after the flash), snow and
@@ -365,8 +375,8 @@ and feature guide.
     rides are computed locally from the clock and the world doc.
   - *Third-party assets:* CC0 surface materials from [ambientCG](https://ambientcg.com) (Facade001,
     Facade006, Facade015, Facade018A, MetalPlates006) and a CC0 sky from [Poly Haven](https://polyhaven.com)
-    ("Kloofendal 48d Partly Cloudy (Pure Sky)"), resampled JPEGs vendored in `games/city/` with
-    `LICENSE-assets.txt`, 3.2 MB, served only from 127.0.0.1 (`.jpg` only; the licence is not served).
+    ("Kloofendal 48d Partly Cloudy (Pure Sky)"), plus PavingStones128, WoodFloor043, RoofingTiles012A and
+    CorrugatedSteel005 for the park, resampled JPEGs vendored in `games/city/` with `LICENSE-assets.txt`, 4.6 MB, served only from 127.0.0.1 (`.jpg` only; the licence is not served).
 
 - **3.1.1 — City camera and plates.** The chase camera sits higher and further back (the far camera
   higher still), so you see the street around you instead of the ground at your feet. Left-drag now

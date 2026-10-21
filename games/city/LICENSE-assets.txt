@@ -14,6 +14,10 @@ Surface materials -- ambientCG (https://ambientcg.com), CC0
   office-col.jpg office-nrm.jpg office-rgh.jpg office-emi.jpg   Facade015 (1K; normal/roughness 512)
   stone-col.jpg  stone-nrm.jpg  stone-rgh.jpg  stone-emi.jpg    Facade018A (1K; normal/roughness 512)
   steel-col.jpg  steel-nrm.jpg  steel-rgh.jpg              MetalPlates006 (1K; normal 512)
+  pave-col.jpg   pave-nrm.jpg   pave-rgh.jpg               PavingStones128 (1K; normal/roughness 512)
+  deck-col.jpg   deck-nrm.jpg   deck-rgh.jpg               WoodFloor043 (1K; normal/roughness 512)
+  roof-col.jpg   roof-nrm.jpg   roof-rgh.jpg               RoofingTiles012A (1K; normal/roughness 512)
+  corr-col.jpg   corr-nrm.jpg   corr-rgh.jpg               CorrugatedSteel005 (1K; normal/roughness 512)
   ("-col" Color, "-nrm" NormalGL, "-rgh" Roughness, "-emi" Emission)
 
 Sky -- Poly Haven (https://polyhaven.com), CC0

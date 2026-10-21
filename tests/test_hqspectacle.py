@@ -171,6 +171,43 @@ class SourceTests(unittest.TestCase):
         i_claim = self.city.index("HQV.hqSpectacle.claim(W, tier)")
         self.assertLess(i_claim, self.city.index("indexBuildings();\n    wb = HQV.worldbuild.create"))
 
+    def test_every_ride_seat_is_in_the_worlds_frame(self):
+        # the coaster's track is drawn in the park's frame; its seat was returned in it, so a rider rode a ghost
+        # coaster ~350 m away beside the plaza. Every seat goes through a matrixWorld / localToWorld now.
+        seat = self.js[self.js.index('id: "coaster"'):]
+        seat = seat[seat.index("seat: function(sec){"):][:400]
+        self.assertIn("applyMatrix4(M)", seat)
+        self.assertIn("transformDirection(M)", seat)
+        for rid in ("wheel", "drop", "carousel", "swing"):
+            body = self.js[self.js.index('id: "%s"' % rid):]
+            body = body[body.index("seat: function"):][:420]
+            self.assertIn("localToWorld", body, rid)
+
+    def test_a_refused_ticket_never_opens_the_gate(self):
+        # the page's arenaPost resolves {ok, status, j} whatever the status
+        buy = self.js[self.js.index("function buy()"):][:1600]
+        self.assertIn("if(!r || r.ok !== true){ refused(j.detail || j.error); return; }", buy)
+        self.assertLess(buy.index("r.ok !== true"), buy.index("pass = true"))
+
+    def test_sites_name_ground_without_flattening_it(self):
+        self.assertEqual(self.js.count("pad: false"), 2)
+        world = open(os.path.join(ROOT, "games", "world.js"), encoding="utf-8").read()
+        self.assertIn("if(s.pad !== false) I.padList.push", world)
+
+    def test_the_crowd_is_the_citys_residents_body(self):
+        self.assertIn("ND.bodyGeometry()", self.js)
+        self.assertIn("ND.bodyMaterial(THREE, U)", self.js)
+        npc = open(os.path.join(ROOT, "games", "npcdraw.js"), encoding="utf-8").read()
+        self.assertIn("bodyMaterial: bodyMaterial", npc)
+
+    def test_mouse_looks_around_on_a_ride_and_orbits_on_foot(self):
+        hq = open(os.path.join(ROOT, "games", "hq3d.js"), encoding="utf-8").read()
+        self.assertIn("if(tripHeld()){ drag = {", hq)                    # a drag on a ride is yours to look with
+        self.assertIn("D.applyAxisAngle(Uu, tripLook.yaw);", hq)
+        self.assertIn("tripLook.yaw = 0; tripLook.pitch = 0; return;", hq)   # it recentres when the ride lets go
+        self.assertIn('orbit: !!CHASE[m] && (e.button === 0 || e.button === 2)', hq)
+        self.assertIn("if(!d || d.trip || d.moved > 5) return;", hq)      # a drag is never a click
+
     def test_riding_comes_first_in_the_city_hooks(self):
         self.assertIn("var p = spx && spx.carry(); return p ||", self.city)
         self.assertIn("var p = spx && spx.camPose(); return p ||", self.city)

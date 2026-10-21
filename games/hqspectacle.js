@@ -241,9 +241,14 @@ function create(c, W, o){
     grid: pbr("grid", {metal: 0.6, rough: 0.7, env: 1.0, emi: "-col", emiCol: 0xfff1d0, emiNight: 0.6}),
     office: pbr("office", {metal: 0.5, rough: 0.8, env: 0.9, emi: true, emiCol: 0xfff0d0, emiNight: 1.6}),
     stone: pbr("stone", {metal: 0.05, rough: 1, env: 0.4, emi: true, emiCol: 0xffe2b0, emiNight: 1.5}),
-    steel: pbr("steel", {metal: 0.9, rough: 0.6, env: 1.0})
+    steel: pbr("steel", {metal: 0.9, rough: 0.6, env: 1.0}),
+    // the park's: paving for its promenades, boards for its decks, tiles for its roofs, corrugated steel cladding
+    pave: pbr("pave", {rough: 1, env: 0.2}),
+    deck: pbr("deck", {rough: 1, env: 0.35}),
+    roof: pbr("roof", {rough: 1, env: 0.25}),
+    corr: pbr("corr", {metal: 0.75, rough: 1, env: 0.7})
   };
-  var TILE = {glass: 10, grid: 12, office: 14, stone: 12, steel: 4};
+  var TILE = {glass: 10, grid: 12, office: 14, stone: 12, steel: 4, pave: 3, deck: 2.4, roof: 2.6, corr: 2.2};
   function plain(col, o2){ o2 = o2 || {}; return new THREE.MeshStandardMaterial({color: col, roughness: o2.rough != null ? o2.rough : 0.55, metalness: o2.metal || 0, envMap: o2.env ? env : null, envMapIntensity: o2.env || 0}); }
   function glowMat(col){ var m = new THREE.MeshStandardMaterial({color: col, emissive: col, emissiveIntensity: 0.25, roughness: 0.4}); nightMats.push({m: m, day: 0.25, night: 2.2, envDay: 0}); return m; }
 
@@ -293,6 +298,16 @@ function create(c, W, o){
   function tube(pts, r, mat, seg){
     var curve = new THREE.CatmullRomCurve3(pts.map(function(p){ return new THREE.Vector3(p[0], p[1], p[2]); }));
     var m = new THREE.Mesh(new THREE.TubeGeometry(curve, seg || pts.length*2, r, 5, false), mat); m.castShadow = true; return m;
+  }
+  // a box whose faces carry UVs in metres, so a tiled texture keeps its scale whatever the box's size;
+  // mat may be an array in BoxGeometry's face order (+x, -x, +y, -y, +z, -z)
+  function mbox(w, h, d, mat, tile){
+    var geo = new THREE.BoxGeometry(w, h, d), uv = geo.attributes.uv, n = geo.attributes.normal;
+    for(var i = 0; i < uv.count; i++){
+      var ax = Math.abs(n.getX(i)), ay = Math.abs(n.getY(i));
+      uv.setXY(i, uv.getX(i)*(ax > 0.5 ? d : w)/tile, uv.getY(i)*(ay > 0.5 ? d : h)/tile);
+    }
+    var m = new THREE.Mesh(geo, mat); m.castShadow = true; m.receiveShadow = true; return m;
   }
   function cone(r0, r1, h, mat, y, seg){ var m = new THREE.Mesh(new THREE.CylinderGeometry(r1, r0, h, seg || 16), mat); m.position.y = y + h/2; m.castShadow = true; return m; }
 
@@ -424,20 +439,24 @@ function create(c, W, o){
     var hits = [], segs = [], bulbs = [], glows = [], rides = [];
     var hm = clamp(Math.min(P.w, P.d)*0.42, 26, 46);
 
-    // the path: the boulevard from the gate and a ring round the middle
-    var paveT = c.canvasTex(128, 128, function(gx){
-      gx.fillStyle = "#c9c2b4"; gx.fillRect(0, 0, 128, 128); gx.strokeStyle = "rgba(90,80,70,.35)"; gx.lineWidth = 2;
-      for(var i = 0; i <= 128; i += 32){ gx.beginPath(); gx.moveTo(i, 0); gx.lineTo(i, 128); gx.stroke(); gx.beginPath(); gx.moveTo(0, i); gx.lineTo(128, i); gx.stroke(); }
-    }).t;
-    paveT.wrapS = paveT.wrapT = THREE.RepeatWrapping;
-    function slab(x0, z0, x1, z1){
-      var w = Math.abs(x1 - x0), d = Math.abs(z1 - z0), t = paveT.clone(); t.needsUpdate = true; t.repeat.set(w/4, d/4);
-      var m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshStandardMaterial({map: t, roughness: 0.95}));
-      m.rotation.x = -PI/2; m.position.set((x0 + x1)/2, ly((x0 + x1)/2, (z0 + z1)/2) + 0.06, (z0 + z1)/2); m.receiveShadow = true; pg.add(m);
+    // the paths, paved, laid over the ground as it lies (a flat slab floats or sinks on a slope)
+    function paveArea(x0, z0, x1, z1){
+      var w = x1 - x0, d = z1 - z0, geo = new THREE.PlaneGeometry(w, d, Math.max(1, Math.ceil(w/2)), Math.max(1, Math.ceil(d/2)));
+      geo.rotateX(-PI/2);
+      var Pp = geo.attributes.position, Uv = geo.attributes.uv;
+      for(var i = 0; i < Pp.count; i++){
+        var x = Pp.getX(i) + (x0 + x1)/2, z = Pp.getZ(i) + (z0 + z1)/2;
+        Pp.setXYZ(i, x, ly(x, z) + 0.07, z); Uv.setXY(i, x/TILE.pave, z/TILE.pave);
+      }
+      geo.computeVertexNormals();
+      var m = new THREE.Mesh(geo, M.pave); m.receiveShadow = true; pg.add(m); return m;
     }
-    slab(-3.5, -b, 3.5, b*0.55);
-    slab(-a*0.62, -b*0.12, a*0.62, -b*0.04); slab(-a*0.62, b*0.44, a*0.62, b*0.52);
-    slab(-a*0.62, -b*0.12, -a*0.54, b*0.52); slab(a*0.54, -b*0.12, a*0.62, b*0.52);
+    paveArea(-3.5, -b - 3, 3.5, b*0.55);                                  // the boulevard, from outside the gate
+    paveArea(-9, -b - 3, 9, -b + 6);                                       // the entrance plaza
+    paveArea(-a*0.62, -b*0.12, a*0.62, -b*0.04); paveArea(-a*0.62, b*0.44, a*0.62, b*0.52);
+    paveArea(-a*0.62, -b*0.12, -a*0.54, b*0.52); paveArea(a*0.54, -b*0.12, a*0.62, b*0.52);
+    var rects = [];                                                       // blocked boxes in the park's frame
+    function rectHit(x, z, yaw, w, d){ rects.push({x: x, z: z, c: Math.cos(yaw), s: Math.sin(yaw), hw: w/2, hd: d/2}); }
 
     // the fence, with the gate in the middle of the near side
     var GATE = 3.6, fenceM = plain(0x1f3b33, {metal: 0.6, rough: 0.4}), posts = [];
@@ -469,11 +488,6 @@ function create(c, W, o){
     nightMats.push({m: signM, day: 0.35, night: 1.4, envDay: 0});
     var sign = new THREE.Mesh(new THREE.PlaneGeometry(2*GATE + 3, (2*GATE + 3)*192/1024), signM); sign.position.set(0, ly(0, -b) + 7.2, -b - 0.05); sign.rotation.y = PI; pg.add(sign);
     for(var i = 0; i < 28; i++){ var u = i/27; bulbs.push({x: lerp(-GATE - 1.4, GATE + 1.4, u), y: ly(0, -b) + 8.6, z: -b - 0.1, k: u}); bulbs.push({x: lerp(-GATE - 1.4, GATE + 1.4, u), y: ly(0, -b) + 5.8, z: -b - 0.1, k: 1 - u}); }
-    // the ticket booth beside the gate
-    var boothM = plain(0xff7a59, {rough: 0.5});
-    var booth = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.6, 2.2), boothM); booth.position.set(GATE + 4.5, ly(GATE + 4.5, -b + 2.5) + 1.3, -b + 2.5); booth.castShadow = true; pg.add(booth);
-    var roof = new THREE.Mesh(new THREE.ConeGeometry(2.2, 1.2, 4), plain(0xfff0d6)); roof.rotation.y = PI/4; roof.position.set(booth.position.x, booth.position.y + 1.9, booth.position.z); pg.add(roof);
-    hits.push({x: booth.position.x, z: booth.position.z, r: 1.6});
     // a bunch of balloons by the gate
     var balloonCols = [0xff4f6d, 0xffd23f, 0x3bceac, 0x5f6bff, 0xff8c42, 0xc86bfa], balloons = [];
     for(i = 0; i < 6; i++){
@@ -496,14 +510,152 @@ function create(c, W, o){
         for(var k = 1; k < 12; k++){ var u2 = k/12, sag = Math.sin(u2*PI)*0.7; bulbs.push({x: lerp(p0[0], p1[0], u2), y: ly(p0[0], p0[1]) + 5.4 - sag, z: lerp(p0[1], p1[1], u2), k: (k + i)/12 % 1}); }
       });
     }
-    // food stalls along the boulevard
+    // food kiosks along the boulevard, each with its sign and what it sells up on its roof
     var awnT = c.canvasTex(64, 64, function(gx){ for(var s2 = 0; s2 < 8; s2++){ gx.fillStyle = s2 % 2 ? "#fff4e0" : "#e63946"; gx.fillRect(s2*8, 0, 8, 64); } }).t;
-    awnT.colorSpace = THREE.SRGBColorSpace;
-    [[-9, -b*0.55], [9, -b*0.35], [-9, b*0.2]].forEach(function(p){
-      var st = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.4, 2.4), plain(0xf7e8c8)); st.position.set(p[0], ly(p[0], p[1]) + 1.2, p[1]); st.castShadow = true; pg.add(st);
-      var aw = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.15, 3.2), new THREE.MeshStandardMaterial({map: awnT, roughness: 0.6})); aw.position.set(p[0], st.position.y + 1.45, p[1]); aw.rotation.x = 0.12; pg.add(aw);
-      hits.push({x: p[0], z: p[1], r: 2.1});
-    });
+    awnT.colorSpace = THREE.SRGBColorSpace; awnT.wrapS = awnT.wrapT = THREE.RepeatWrapping;
+    var kiosks = [];
+
+    // a lit sign: the name in warm neon on a dark board edged in the accent colour
+    function signTex(name, icon, accent){
+      var t = c.canvasTex(1024, 256, function(gx){
+        var gr = gx.createLinearGradient(0, 0, 1024, 256); gr.addColorStop(0, "#0f1220"); gr.addColorStop(1, "#2a1240");
+        gx.fillStyle = gr; gx.fillRect(0, 0, 1024, 256);
+        gx.strokeStyle = accent; gx.lineWidth = 12; gx.strokeRect(14, 14, 996, 228);
+        gx.font = "bold 132px 'Avenir Next', 'Segoe UI', sans-serif"; gx.textAlign = "center"; gx.textBaseline = "middle";
+        gx.shadowColor = accent; gx.shadowBlur = 34; gx.fillStyle = "#fff8e6";
+        gx.fillText((icon ? icon + "  " : "") + String(name).toUpperCase(), 512, 138);
+      }).t;
+      t.colorSpace = THREE.SRGBColorSpace; return t;
+    }
+    function signMat(tx){ var m = new THREE.MeshStandardMaterial({map: tx, emissiveMap: tx, emissive: 0xffffff, emissiveIntensity: 0.4, roughness: 0.45, side: THREE.DoubleSide}); nightMats.push({m: m, day: 0.4, night: 1.5, envDay: 0}); return m; }
+    function hexOf(css){ return parseInt(String(css).slice(1), 16); }
+    // a group placed in the park's frame at x, z facing yaw (its +z), and its own frame -> the park's
+    function framed(x, z, yaw){
+      var gp = new THREE.Group(); gp.position.set(x, 0, z); gp.rotation.y = yaw; pg.add(gp);
+      var cc = Math.cos(yaw), ss = Math.sin(yaw);
+      return {g: gp, L: function(lx, lz){ return {x: x + lx*cc + lz*ss, z: z - lx*ss + lz*cc}; }};
+    }
+    // A kiosk: a boarded counter under a striped awning, corrugated walls, a tiled roof, a lit sign and
+    // what it sells, giant, up on top. k: {x, z, yaw, name, prop, acc}
+    function kiosk(k){
+      var F = framed(k.x, k.z, k.yaw), gk = F.g, base = ly(k.x, k.z) - 0.2, acc = hexOf(k.acc);
+      gk.position.y = base;
+      var counter = mbox(3.4, 1.15, 0.7, M.deck, TILE.deck); counter.position.set(0, 0.58, 0.9); gk.add(counter);
+      var top = mbox(3.6, 0.08, 0.85, plain(0xf5efe4, {rough: 0.35}), 1); top.position.set(0, 1.19, 0.92); gk.add(top);
+      var back = mbox(3.4, 2.9, 0.18, M.corr, TILE.corr); back.position.set(0, 1.45, -1); gk.add(back);
+      [-1, 1].forEach(function(sd){ var sw = mbox(0.18, 2.9, 2.2, M.corr, TILE.corr); sw.position.set(sd*1.62, 1.45, 0.05); gk.add(sw); });
+      var lamp = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.06, 0.4), glowMat(0xfff1c4)); lamp.position.set(0, 2.75, 0.2); gk.add(lamp);
+      var roof = mbox(3.9, 0.16, 2.8, M.roof, TILE.roof); roof.position.set(0, 3.0, 0.05); roof.rotation.x = 0.08; gk.add(roof);
+      var at = awnT.clone(); at.needsUpdate = true; at.repeat.set(2, 1);
+      var awn = new THREE.Mesh(new THREE.PlaneGeometry(3.7, 1.3), new THREE.MeshStandardMaterial({map: at, roughness: 0.7, side: THREE.DoubleSide}));
+      awn.position.set(0, 2.55, 1.55); awn.rotation.x = -1.05; awn.castShadow = true; gk.add(awn);
+      for(var q = 0; q < 9; q++){ var sc = new THREE.Mesh(new THREE.ConeGeometry(0.21, 0.24, 8), plain(q % 2 ? 0xfff4e0 : 0xe63946)); sc.rotation.x = PI; sc.position.set(-1.64 + q*0.41, 1.98, 2.06); gk.add(sc); }
+      var sb = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.75, 0.16), signMat(signTex(k.name, "", k.k || k.acc))); sb.position.set(0, 3.55, 0.8); gk.add(sb);
+      var edge = new THREE.Mesh(new THREE.BoxGeometry(3.1, 0.05, 0.2), glowMat(acc)); edge.position.set(0, 3.15, 0.8); gk.add(edge);
+      prop(gk, k.prop, 0, 3.95, -0.25);
+      rectHit(k.x, k.z, k.yaw, 3.6, 2.6);
+      // where its customers stand: in front of the counter
+      var cust = [];
+      for(q = 0; q < 3; q++){ var pp = F.L(-0.9 + q*0.9, 2.0 + (q % 2)*0.35); cust.push({x: pp.x, z: pp.z, yaw: k.yaw + PI}); }
+      kiosks.push({x: k.x, z: k.z, cust: cust});
+    }
+    // what a kiosk sells, giant, on its roof
+    var stripeT = c.canvasTex(64, 16, function(gx){ for(var s2 = 0; s2 < 8; s2++){ gx.fillStyle = s2 % 2 ? "#ffffff" : "#e63946"; gx.fillRect(s2*8, 0, 8, 16); } }).t;
+    stripeT.colorSpace = THREE.SRGBColorSpace;
+    function prop(gk, kind, x, y, z){
+      var pgp = new THREE.Group(); pgp.position.set(x, y, z); gk.add(pgp);
+      if(kind === "popcorn"){
+        var bucket = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.55, 1.3, 20, 1, true), new THREE.MeshStandardMaterial({map: stripeT, roughness: 0.5, side: THREE.DoubleSide}));
+        bucket.position.y = 0.65; pgp.add(bucket);
+        var corn = plain(0xffe9a0, {rough: 0.9}), R = c.rng(5);
+        for(var i = 0; i < 22; i++){ var k = new THREE.Mesh(new THREE.SphereGeometry(0.17 + R()*0.08, 8, 6), corn); var a2 = R()*TAU, rr = R()*0.6; k.position.set(Math.cos(a2)*rr, 1.3 + R()*0.35, Math.sin(a2)*rr); pgp.add(k); }
+      } else if(kind === "cone"){
+        var waffle = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.4, 16), plain(0xd9a35b, {rough: 0.8})); waffle.rotation.x = PI; waffle.position.y = 0.7; pgp.add(waffle);
+        [0xffc6d9, 0xbff0d4, 0x6f4e37].forEach(function(cl, j){ var sc = new THREE.Mesh(new THREE.SphereGeometry(0.55 - j*0.08, 18, 12), plain(cl, {rough: 0.6})); sc.position.y = 1.5 + j*0.62; pgp.add(sc); });
+        var cherry = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8), plain(0xd7263d, {rough: 0.25})); cherry.position.y = 3.15; pgp.add(cherry);
+      } else if(kind === "candy"){
+        var stick = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.6, 8), plain(0xfaf3e0)); stick.position.y = 0.8; pgp.add(stick);
+        var fluff = plain(0xff9fd6, {rough: 1}), R2 = c.rng(9);
+        for(var j2 = 0; j2 < 14; j2++){ var f = new THREE.Mesh(new THREE.SphereGeometry(0.35 + R2()*0.2, 12, 8), fluff); var a3 = R2()*TAU, r3 = R2()*0.45; f.position.set(Math.cos(a3)*r3, 1.9 + R2()*0.7, Math.sin(a3)*r3); pgp.add(f); }
+      } else if(kind === "ticket"){
+        var tkT = c.canvasTex(512, 256, function(gx){ gx.fillStyle = "#ffd23f"; gx.fillRect(0, 0, 512, 256); gx.strokeStyle = "#7a1f3d"; gx.setLineDash([14, 10]); gx.lineWidth = 8; gx.strokeRect(22, 22, 468, 212);
+          gx.fillStyle = "#7a1f3d"; gx.font = "bold 84px 'Avenir Next', sans-serif"; gx.textAlign = "center"; gx.textBaseline = "middle"; gx.fillText("ADMIT ONE", 256, 130); }).t;
+        tkT.colorSpace = THREE.SRGBColorSpace;
+        var tk = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.1, 0.08), new THREE.MeshStandardMaterial({map: tkT, roughness: 0.6})); tk.position.y = 0.7; tk.rotation.z = 0.12; pgp.add(tk);
+      }
+      return pgp;
+    }
+    // A ride's station: a boarded deck at boarding height up steps from the path, a tiled gable roof on steel
+    // posts with a lit eave, the ride's sign in neon edged in bulbs, a queue of brass posts and velvet ropes,
+    // an operator's booth and planters. Its front (+z) faces the path; `back` runs the roof back over a track.
+    // o: {x, z, yaw, w, d, top (deck height in the park's frame, null: 0.9 over the ground), back, name, icon, accent}
+    // -> {entry, exit, queue: [{x, y, z, yaw}] (park frame), top}
+    function station(o){
+      var F = framed(o.x, o.z, o.yaw), sg = F.g, L = F.L, acc = hexOf(o.accent), w = o.w, d = o.d, back = o.back || 0;
+      var lows = [[-1, -1], [1, -1], [1, 1], [-1, 1], [0, 0]].map(function(q){ var p = L(q[0]*w/2, q[1]*d/2); return ly(p.x, p.z); });
+      var base = Math.min.apply(null, lows) - 0.15, top = o.top != null ? o.top : Math.max.apply(null, lows) + 0.9, h = top - base;
+      var deck = mbox(w, h, d, [M.corr, M.corr, M.deck, M.corr, M.corr, M.corr], TILE.deck); deck.position.set(0, base + h/2, 0); sg.add(deck);
+      var trim = mbox(w + 0.1, 0.12, d + 0.1, glowMat(acc), 1); trim.position.set(0, top - 0.25, 0); sg.add(trim);
+      // steps up from the path in front
+      var fy = ly(L(0, d/2 + 1).x, L(0, d/2 + 1).z), rise = Math.max(0, top - fy), nS = Math.max(1, Math.ceil(rise/0.24));
+      for(var k = 0; k < nS; k++){
+        var yt = top - (k + 1)*rise/nS, st = mbox(3.2, Math.max(0.05, yt - base), 0.42, M.deck, TILE.deck);
+        st.position.set(0, base + (yt - base)/2, d/2 + 0.21 + k*0.42); sg.add(st);
+      }
+      // posts and a gable roof (the ridge along x) in roofing tiles, a lit eave strip along the front
+      var postH = 3.3, roofY = top + postH, rd = d + back + 1.2, rw = w + 1.2, rz = -back/2, pitch = 0.36;
+      [[-1, 1], [1, 1], [-1, -1], [1, -1]].forEach(function(q){
+        var pz = q[1] > 0 ? d/2 - 0.3 : -d/2 - back + 0.3, post = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, postH, 10), M.steel);
+        post.position.set(q[0]*(w/2 - 0.3), top + postH/2, pz); post.castShadow = true; sg.add(post);
+        if(q[1] < 0 && back > 0){ var gyb = ly(L(q[0]*(w/2 - 0.3), pz).x, L(q[0]*(w/2 - 0.3), pz).z), full = roofY - gyb;   // posts behind, down to the ground
+          var lp = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, full, 10), M.steel); lp.position.set(q[0]*(w/2 - 0.3), gyb + full/2, pz); lp.castShadow = true; sg.add(lp); }
+      });
+      [-1, 1].forEach(function(sd){
+        var slab = mbox(rw, 0.14, rd/2/Math.cos(pitch) + 0.15, M.roof, TILE.roof);
+        slab.position.set(0, roofY + Math.tan(pitch)*rd/4, rz + sd*rd/4); slab.rotation.x = sd*pitch; sg.add(slab);
+        var gable = new THREE.Mesh(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(sd*rw/2, roofY, rz - rd/2), new THREE.Vector3(sd*rw/2, roofY, rz + rd/2), new THREE.Vector3(sd*rw/2, roofY + Math.tan(pitch)*rd/2, rz)]), plain(acc, {rough: 0.5}));
+        gable.material.side = THREE.DoubleSide; gable.geometry.computeVertexNormals(); sg.add(gable);
+      });
+      var ridge = mbox(rw + 0.1, 0.2, 0.3, M.steel, TILE.steel); ridge.position.set(0, roofY + Math.tan(pitch)*rd/2 + 0.05, rz); sg.add(ridge);
+      var eave = new THREE.Mesh(new THREE.BoxGeometry(rw, 0.08, 0.08), glowMat(acc)); eave.position.set(0, roofY - 0.02, rz + rd/2); sg.add(eave);
+      var ceil = new THREE.Mesh(new THREE.BoxGeometry(w - 0.4, 0.05, d + back - 0.4), glowMat(0xfff4dc)); ceil.position.set(0, roofY - 0.1, rz); sg.add(ceil);
+      // the sign, standing on the front of the roof, in bulbs
+      var sw = Math.min(w*0.9, 7.5), sh = sw/4, sy = roofY + Math.tan(pitch)*rd/4 + sh/2 + 0.35;
+      var sign = new THREE.Mesh(new THREE.PlaneGeometry(sw, sh), signMat(signTex(o.name, o.icon, o.accent))); sign.position.set(0, sy, rz + rd/4 + 0.2); sg.add(sign);
+      var frame = mbox(sw + 0.3, sh + 0.3, 0.12, M.steel, TILE.steel); frame.position.set(0, sy, rz + rd/4 + 0.12); sg.add(frame);
+      for(k = 0; k <= 16; k++){ var u = k/16; [sy + sh/2 + 0.1, sy - sh/2 - 0.1].forEach(function(by, j){ var p = L(lerp(-sw/2, sw/2, u), rz + rd/4 + 0.28); bulbs.push({x: p.x, y: by, z: p.z, k: j ? 1 - u : u}); }); }
+      // the queue: brass posts, velvet ropes, three switchbacks across the deck
+      var brass = plain(0xd4a52c, {metal: 0.9, rough: 0.25, env: 1}), velvet = plain(0xa4133c, {rough: 0.7}), queue = [];
+      var rows = Math.max(1, Math.min(3, Math.floor((d - 0.6)/1.0)));
+      for(var r = 0; r < rows; r++){
+        var qz = d/2 - 0.6 - r*1.0, x0 = -w/2 + 0.6 + (r % 2 ? 1.6 : 0), x1 = w/2 - 0.6 - (r % 2 ? 0 : 1.6), n = Math.max(2, Math.round((x1 - x0)/1.4) + 1), pts = [];
+        for(var j = 0; j < n; j++){
+          var px = lerp(x0, x1, j/(n - 1)), ps = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 0.95, 8), brass); ps.position.set(px, top + 0.47, qz - 0.5); sg.add(ps);
+          var cap = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), brass); cap.position.set(px, top + 0.96, qz - 0.5); sg.add(cap);
+          pts.push([px, top + 0.88, qz - 0.5]); if(j < n - 1) pts.push([lerp(px, lerp(x0, x1, (j + 1)/(n - 1)), 0.5), top + 0.74, qz - 0.5]);
+        }
+        sg.add(tube(pts, 0.03, velvet, pts.length*4));
+        for(j = 0; j < 4; j++){ var qp = L(lerp(x0 + 0.4, x1 - 0.4, (j + 0.5)/4), qz - 0.05); queue.push({x: qp.x, y: top, z: qp.z, yaw: o.yaw + (r % 2 ? -PI/2 : PI/2)}); }
+      }
+      // the operator's booth at the back corner: glazed, lit inside
+      var bx = w/2 - 1.0, bz = -d/2 + 0.8, bo = mbox(1.5, 2.2, 1.3, M.corr, TILE.corr); bo.position.set(bx, top + 1.1, bz); sg.add(bo);
+      var win = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.9), M.glass); win.position.set(bx, top + 1.5, bz + 0.66); sg.add(win);
+      var bl = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.05, 0.9), glowMat(0xfff1c4)); bl.position.set(bx, top + 2.12, bz); sg.add(bl);
+      // planters either side of the steps
+      var leaf = plain(0x3f8f4f, {rough: 0.9}), bloom = plain(acc, {rough: 0.6});
+      [-1, 1].forEach(function(sd){
+        var pl = mbox(0.9, 0.6, 0.9, M.deck, TILE.deck), pp = d/2 + 0.6; pl.position.set(sd*2.2, fy + 0.3, pp); sg.add(pl);
+        for(var b2 = 0; b2 < 4; b2++){ var bu = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), b2 === 3 ? bloom : leaf); bu.position.set(sd*2.2 + (b2 % 2 - 0.5)*0.32, fy + 0.75 + (b2 === 3 ? 0.2 : 0), pp + (b2 > 1 ? 0.16 : -0.16)); sg.add(bu); }
+      });
+      rectHit(o.x - (back/2)*Math.sin(o.yaw), o.z - (back/2)*Math.cos(o.yaw), o.yaw, w, d + back);
+      var en = L(0, d/2 + 0.42*nS + 1.4), ex = L(w/2 + 1.4, d/2 + 1.2);
+      return {entry: {x: en.x, z: en.z}, exit: {x: ex.x, z: ex.z}, queue: queue, top: top};
+    }
+
+    // the ticket booth by the gate and the food kiosks down the boulevard (after the builders' textures above)
+    kiosk({x: GATE + 4.8, z: -b - 2.6, yaw: PI, name: "Tickets", prop: "ticket", acc: "#ffd23f"});
+    [{x: -9, z: -b*0.55, name: "Popcorn", prop: "popcorn", acc: "#ffd23f"}, {x: 9, z: -b*0.35, name: "Ice Cream", prop: "cone", acc: "#7ee0ff"},
+     {x: -9, z: b*0.2, name: "Cotton Candy", prop: "candy", acc: "#ff7ad9"}].forEach(function(k){ k.yaw = k.x < 0 ? PI/2 : -PI/2; kiosk(k); });
 
     /* ----- the rides ----- */
     var place = {
@@ -514,6 +666,12 @@ function create(c, W, o){
       swing: {x: a*0.28, z: b*0.38, r: clamp(a*0.12, 4, 6)}
     };
     rides.push(coaster(), wheel(place.wheel), drop(place.drop), carousel(place.carousel), swinger(place.swing));
+    // every ride's station: you walk up to its steps, queue on its deck and board from there
+    rides.forEach(function(r){
+      var o3 = r.stationAt; if(!o3) return;
+      var st = station({x: o3.x, z: o3.z, yaw: o3.yaw, w: o3.w, d: o3.d, back: o3.back, top: o3.top, name: r.name, icon: r.icon, accent: r.accent});
+      r.entry = st.entry; r.exit = st.exit; r.queue = st.queue; r.deckTop = st.top;
+    });
 
     // the coaster
     function coaster(){
@@ -583,22 +741,40 @@ function create(c, W, o){
       sup.forEach(function(s2, j3){ dm2.position.set(s2.x, (s2.y0 + s2.y1)/2, s2.z); dm2.scale.set(1, s2.y1 - s2.y0, 1); dm2.updateMatrix(); supI.setMatrixAt(j3, dm2.matrix); });
       supI.castShadow = true; cg.add(supI);
       for(i = 0; i < N; i += 4){ var p2 = Pt[i]; if(p2.y - ly(p2.x, p2.z) < 2.4) hits.push({x: p2.x, z: p2.z, r: 1.1}); }   // ground-level track blocks
-      // the station: a platform on the inside of the track, a roof
-      var st0 = Pt[iStop], plat = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.3, 22), plain(0x9aa3ad, {rough: 0.9}));
-      plat.position.set(st0.x - 2.6, ly(st0.x - 2.6, st0.z) + 0.15, st0.z); plat.receiveShadow = true; cg.add(plat);
-      var sroof = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.3, 24), plain(0x5f2bd9, {rough: 0.5})); sroof.position.set(st0.x - 1.2, plat.position.y + 3.6, st0.z); cg.add(sroof);
-      // the train: four cars
-      var carM = plain(0x1d4ed8, {metal: 0.6, rough: 0.25, env: 1}), seatM = plain(0x111318, {rough: 0.8}), cars = [];
+      var st0 = Pt[iStop];
+      // the train: four cars in glossy clearcoat paint, two bucket seats each under shoulder restraints, the
+      // front one with a nose and headlights; anchors[] are where riders sit (the front-left seat is yours)
+      var paints = [0xff3b5c, 0xffb627, 0x2ec4b6, 0x4361ee], cars = [], anchors = [];
+      var leather = plain(0x17181d, {rough: 0.55}), bar = plain(0xffd23f, {metal: 0.3, rough: 0.35}), chrome = M.steel;
       for(i = 0; i < 4; i++){
-        var car = new THREE.Group(), body = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.7, 2.2), carM); body.position.y = 0.35; body.castShadow = true; car.add(body);
-        var seat = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.6, 0.2), seatM); seat.position.set(0, 0.85, -0.6); car.add(seat);
-        if(i === 0){ var nose = new THREE.Mesh(new THREE.ConeGeometry(0.75, 1.1, 4), carM); nose.rotation.set(PI/2, PI/4, 0); nose.position.set(0, 0.35, 1.6); car.add(nose); }
+        var car = new THREE.Group(), paint = new THREE.MeshPhysicalMaterial({color: paints[i], metalness: 0.35, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.06, envMap: env, envMapIntensity: 0.9});
+        var rings = [{y: 0.12, pts: rrect(1.3, 2.0, 0.3, 5)}, {y: 0.3, pts: rrect(1.56, 2.3, 0.4, 5)}, {y: 0.78, pts: rrect(1.6, 2.36, 0.42, 5)}];
+        var tub = new THREE.Mesh(loft(rings, 1, false), paint); tub.castShadow = true; car.add(tub);
+        // a chrome lip round the tub's edge (a frame: the seats and riders stay in view)
+        [[0, 1.17, 1.64, 0.08], [0, -1.17, 1.64, 0.08], [0.79, 0, 0.08, 2.4], [-0.79, 0, 0.08, 2.4]].forEach(function(f){
+          var lip = mbox(f[2], 0.07, f[3], chrome, TILE.steel); lip.position.set(f[0], 0.8, f[1]); car.add(lip); });
+        var bogie = mbox(1.2, 0.22, 1.7, chrome, TILE.steel); bogie.position.y = 0.0; car.add(bogie);
+        [-0.36, 0.36].forEach(function(sx, si){
+          var sb = mbox(0.56, 0.14, 0.55, leather, 1); sb.position.set(sx, 0.5, -0.05); car.add(sb);
+          var bk = mbox(0.56, 0.75, 0.14, leather, 1); bk.position.set(sx, 0.9, -0.36); bk.rotation.x = -0.12; car.add(bk);
+          var hd = mbox(0.4, 0.3, 0.12, leather, 1); hd.position.set(sx, 1.42, -0.42); car.add(hd);
+          var harness = new THREE.Mesh(new THREE.TorusGeometry(0.23, 0.045, 8, 16, PI), bar); harness.position.set(sx, 1.05, -0.12); harness.rotation.set(0, PI/2, PI/2); car.add(harness);
+          var an = new THREE.Object3D(); an.position.set(sx, 0.56 - 0.8, -0.02); car.add(an);
+          if(!(i === 0 && si === 0)) anchors.push(an);
+        });
+        if(i === 0){
+          var nose = new THREE.Mesh(loft([{y: 0, pts: rrect(1.5, 0.66, 0.24, 4)}, {y: 0.9, pts: rrect(0.8, 0.36, 0.14, 4)}], 1, true), paint);
+          nose.rotation.x = PI/2; nose.position.set(0, 0.42, 1.18); car.add(nose);
+          [-0.4, 0.4].forEach(function(hx){ var hl = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), glowMat(0xfff6d8)); hl.position.set(hx, 0.5, 1.75); car.add(hl); });
+        }
         cg.add(car); cars.push(car);
       }
       var CAR_GAP = 2.7/ds, LAP_NAME = "Comet";
       var stP = {x: st0.x - 2.6, z: st0.z - 4};
+      // where its station goes: a deck along the inside of the track at the stop, the roof back over the track
+      var stationAt = {x: st0.x - 0.95 - 1.7, z: st0.z, yaw: -PI/2, w: 20, d: 3.4, back: 3.2, top: st0.y + 0.25};
       return {
-        id: "coaster", name: LAP_NAME, icon: "🎢", entry: stP, exit: {x: st0.x - 2.6, z: st0.z + 7},
+        id: "coaster", name: LAP_NAME, icon: "🎢", accent: "#ff3b5c", entry: stP, exit: {x: st0.x - 2.6, z: st0.z + 7}, stationAt: stationAt, anchors: anchors,
         // the ride you board is the next train out: from its dwell to back in the station
         next: function(sec){ var tau = ((sec % LAP) + LAP) % LAP; return tau < DWELL - 3 ? sec - tau : sec - tau + LAP; },
         dur: LAP, board: DWELL - 1,
@@ -606,7 +782,13 @@ function create(c, W, o){
           var f = sAt(sec);
           cars.forEach(function(car, ci){ var fr = frame(f - ci*CAR_GAP); car.position.copy(fr.p); bas.makeBasis(fr.sd, fr.up, fr.t); car.quaternion.setFromRotationMatrix(bas); });
         },
-        seat: function(sec){ var fr = frame(sAt(sec)); return {p: fr.p.clone().addScaledVector(fr.up, 1.45).addScaledVector(fr.t, -0.3), t: fr.t, up: fr.up}; },
+        // the track is drawn in the park's frame: the seat goes to the world's, like every other ride's
+        // (it was left in the park's, so a rider rode a ghost coaster beside the plaza)
+        seat: function(sec){
+          var fr = frame(sAt(sec)), M = cg.matrixWorld;
+          return {p: fr.p.clone().addScaledVector(fr.up, 1.45).addScaledVector(fr.t, -0.3).applyMatrix4(M),
+                  t: fr.t.clone().transformDirection(M), up: fr.up.clone().transformDirection(M)};
+        },
         watch: {x: st0.x - 26, z: st0.z + 30, y: 18}
       };
     }
@@ -634,7 +816,7 @@ function create(c, W, o){
       function ang(sec, i2){ return ((sec % PERIOD)/PERIOD)*TAU + i2/24*TAU; }
       hits.push({x: o3.x, z: o3.z, r: 1.4});
       return {
-        id: "wheel", name: "Skywheel", icon: "🎡", entry: {x: o3.x + 5, z: o3.z - 2}, exit: {x: o3.x + 5, z: o3.z + 2},
+        id: "wheel", name: "Skywheel", icon: "🎡", accent: "#3bceac", stationAt: {x: o3.x + 4.2, z: o3.z, yaw: PI/2, w: 8, d: 4, top: ly(o3.x, o3.z) + 2.05}, anchors: [], entry: {x: o3.x + 5, z: o3.z - 2}, exit: {x: o3.x + 5, z: o3.z + 2},
         // a gondola is at the bottom every PERIOD/24 s; ride it all the way round
         next: function(sec){ var per = PERIOD/24, ph = ((sec % per) + per) % per; return sec - ph + per; }, dur: PERIOD, board: 0,
         pick: function(sec){ var best = 0, bd = 9; for(var j = 0; j < 24; j++){ var a2 = ((ang(sec, j) % TAU) + TAU) % TAU, d = Math.min(a2, TAU - a2); if(d < bd){ bd = d; best = j; } } return best; },
@@ -663,7 +845,9 @@ function create(c, W, o){
       beacon(dg, H + 3.6);
       var ringG = new THREE.Group(); dg.add(ringG);
       var ring = new THREE.Mesh(new THREE.TorusGeometry(3.2, 0.5, 8, 32), plain(0xffd23f, {metal: 0.4, rough: 0.3})); ring.rotation.x = PI/2; ringG.add(ring);
-      for(var i = 0; i < 12; i++){ var an = i/12*TAU, s2 = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.2, 0.7), plain(0x22252b)); s2.position.set(Math.cos(an)*3.9, -0.3, Math.sin(an)*3.9); s2.rotation.y = -an; ringG.add(s2); }
+      var dropAnchors = [];
+      for(var i = 0; i < 12; i++){ var an = i/12*TAU, s2 = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.2, 0.7), plain(0x22252b)); s2.position.set(Math.cos(an)*3.9, -0.3, Math.sin(an)*3.9); s2.rotation.y = -an; ringG.add(s2);
+        if(i % 4){ var da = new THREE.Object3D(); da.position.set(Math.cos(an)*4.25, 0.3 - 0.8, Math.sin(an)*4.25); da.rotation.y = Math.atan2(Math.cos(an), Math.sin(an)); ringG.add(da); dropAnchors.push(da); } }
       hits.push({x: o3.x, z: o3.z, r: 2.6});
       var CYC = 48, top = H - 5, low = 1.4, BR = 26, tf = Math.sqrt(2*(top - BR)/G);
       function yAt(sec){
@@ -678,7 +862,7 @@ function create(c, W, o){
       // seat 0 faces out of the park, away from its middle
       var face = Math.atan2(-o3.x, -o3.z) + PI;
       return {
-        id: "drop", name: "Freefall", icon: "🚀", entry: {x: o3.x + 6, z: o3.z}, exit: {x: o3.x + 6, z: o3.z + 2},
+        id: "drop", name: "Freefall", icon: "🚀", accent: "#ff3d7f", stationAt: {x: o3.x + 7.2, z: o3.z, yaw: PI/2, w: 7, d: 4, top: ly(o3.x, o3.z) + 1.1}, anchors: dropAnchors, entry: {x: o3.x + 6, z: o3.z}, exit: {x: o3.x + 6, z: o3.z + 2},
         next: function(sec){ var t = ((sec % CYC) + CYC) % CYC; return t < 7 ? sec - t : sec - t + CYC; }, dur: CYC - 2, board: 0,
         update: function(sec){ ringG.position.y = yAt(sec); },
         seat: function(sec){ var p = new THREE.Vector3(Math.sin(face)*4.6, yAt(sec) + 0.6, Math.cos(face)*4.6); dg.localToWorld(p);
@@ -698,7 +882,7 @@ function create(c, W, o){
       stripes.colorSpace = THREE.SRGBColorSpace;
       var canopy = new THREE.Mesh(new THREE.ConeGeometry(r + 0.8, 2.6, 40, 1, true), new THREE.MeshStandardMaterial({map: stripes, side: THREE.DoubleSide, roughness: 0.6}));
       canopy.position.y = 6.2; spin.add(canopy);
-      var horses = [], hb = new THREE.SphereGeometry(0.5, 12, 8);
+      var horses = [], hb = new THREE.SphereGeometry(0.5, 12, 8), carAnchors = [];
       for(var i = 0; i < 16; i++){
         var ring2 = i < 6 ? 0.52 : 0.84, cnt = i < 6 ? 6 : 10, idx = i < 6 ? i : i - 6, an = idx/cnt*TAU + (i < 6 ? 0.3 : 0);
         var h = new THREE.Group(); h.position.set(Math.cos(an)*r*ring2, 0, Math.sin(an)*r*ring2); h.rotation.y = -an;
@@ -710,6 +894,7 @@ function create(c, W, o){
         var saddle = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.1, 0.5), plain([0xd7263d, 0x1b998b, 0x5f6bff][i % 3])); saddle.position.y = 0.28; body.add(saddle);
         [[-0.18, 0.4], [0.18, 0.4], [-0.18, -0.4], [0.18, -0.4]].forEach(function(lg){ var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.7, 5), torso.material); leg.position.set(lg[0], -0.55, lg[1]); leg.rotation.x = lg[1] > 0 ? -0.5 : 0.4; body.add(leg); });
         spin.add(h); horses.push({g: h, body: body, ph: i*0.9});
+        if(i !== 6 && i % 3 !== 1){ var ca = new THREE.Object3D(); ca.position.set(0, 0.33 - 0.8, -0.05); body.add(ca); carAnchors.push(ca); }
       }
       var edge = [];
       for(i = 0; i < 40; i++){ var an2 = i/40*TAU; edge.push(new THREE.Vector3(Math.cos(an2)*(r + 0.8), 4.9, Math.sin(an2)*(r + 0.8))); }
@@ -723,7 +908,7 @@ function create(c, W, o){
       function bob(sec, k){ return 1.35 + 0.32*Math.sin(sec*2.2 + horses[k].ph); }
       var outer = 6;      // the first outer-ring horse is the one you get
       return {
-        id: "carousel", name: "Carousel", icon: "🎠", entry: {x: o3.x + r + 2.4, z: o3.z}, exit: {x: o3.x + r + 2.4, z: o3.z + 2},
+        id: "carousel", name: "Carousel", icon: "🎠", accent: "#ffd23f", stationAt: {x: o3.x + r + 3.0, z: o3.z, yaw: PI/2, w: 6, d: 3.2, top: ly(o3.x, o3.z) + 0.6}, anchors: carAnchors, entry: {x: o3.x + r + 2.4, z: o3.z}, exit: {x: o3.x + r + 2.4, z: o3.z + 2},
         next: function(sec){ var t = ((sec % CYC) + CYC) % CYC; return t >= RUN ? sec - t + CYC : sec - t + CYC; }, dur: RUN, board: 0,
         update: function(sec){ spin.rotation.y = -angAt(sec); horses.forEach(function(h, k){ h.body.position.y = bob(sec, k); }); },
         seat: function(sec){ var h = horses[outer], p = new THREE.Vector3(0, bob(sec, outer) + 1.05, 0); h.g.localToWorld(p);
@@ -734,13 +919,13 @@ function create(c, W, o){
     // the wave swinger: chairs flung out on chains under a spinning, tilting crown
     function swinger(o3){
       var rt = o3.r, LC = 6, sg2 = new THREE.Group(); sg2.position.set(o3.x, ly(o3.x, o3.z), o3.z); pg.add(sg2);
-      var mast = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.2, 13, 16), plain(0x3d5afe, {metal: 0.5, rough: 0.35, env: 0.6})); mast.position.y = 6.5; mast.castShadow = true; sg2.add(mast);
-      var top = new THREE.Group(); top.position.y = 13; sg2.add(top);
+      var MH = LC + 1.6, mast = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.2, MH, 16), plain(0x3d5afe, {metal: 0.5, rough: 0.35, env: 0.6})); mast.position.y = MH/2; mast.castShadow = true; sg2.add(mast);
+      var top = new THREE.Group(); top.position.y = MH; sg2.add(top);
       var crownT = c.canvasTex(256, 32, function(gx){ for(var s2 = 0; s2 < 16; s2++){ gx.fillStyle = s2 % 2 ? "#ffe066" : "#7b2ff7"; gx.fillRect(s2*16, 0, 16, 32); } }).t;
       crownT.colorSpace = THREE.SRGBColorSpace;
       var hat = new THREE.Mesh(new THREE.ConeGeometry(rt + 1.2, 2.2, 32, 1, true), new THREE.MeshStandardMaterial({map: crownT, side: THREE.DoubleSide, roughness: 0.5})); hat.position.y = 1.4; top.add(hat);
       var rim = new THREE.Mesh(new THREE.TorusGeometry(rt + 1.1, 0.25, 6, 48), glowMat(0xff9de2)); rim.rotation.x = PI/2; rim.position.y = 0.3; top.add(rim);
-      var chairs = [], chainM = new THREE.LineBasicMaterial({color: 0x888c93});
+      var chairs = [], chainM = new THREE.LineBasicMaterial({color: 0x888c93}), swingAnchors = [];
       for(var i = 0; i < 16; i++){
         var arm = new THREE.Group(), an = i/16*TAU; arm.rotation.y = -an; top.add(arm);
         var hang = new THREE.Group(); hang.position.x = rt; arm.add(hang);
@@ -749,6 +934,7 @@ function create(c, W, o){
         var cgeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-0.3, 0, 0), new THREE.Vector3(-0.3, -LC, 0), new THREE.Vector3(0.3, 0, 0), new THREE.Vector3(0.3, -LC, 0)]);
         hang.add(new THREE.LineSegments(cgeo, chainM));
         chairs.push({arm: arm, hang: hang});
+        if(i){ var sa = new THREE.Object3D(); sa.position.set(0, -LC + 0.06 - 0.8, 0); hang.add(sa); swingAnchors.push(sa); }
       }
       hits.push({x: o3.x, z: o3.z, r: 1.4});
       var CYC = 44, RUN = 36, WMAX = TAU/5.2;
@@ -758,7 +944,7 @@ function create(c, W, o){
       function swingAt(sec){ var t = ((sec % CYC) + CYC) % CYC, w = omega(t), th = 0.3;
         for(var it = 0; it < 6; it++) th = Math.atan(w*w*(rt + LC*Math.sin(th))/G); return th; }
       return {
-        id: "swing", name: "Starswing", icon: "🌀", entry: {x: o3.x + rt + LC + 3, z: o3.z}, exit: {x: o3.x + rt + LC + 3, z: o3.z + 2},
+        id: "swing", name: "Starswing", icon: "🌀", accent: "#8d5cf6", stationAt: {x: o3.x + rt + LC*0.85 + 2.7, z: o3.z, yaw: PI/2, w: 6, d: 3.4, top: ly(o3.x, o3.z) + 0.5}, anchors: swingAnchors, entry: {x: o3.x + rt + LC + 3, z: o3.z}, exit: {x: o3.x + rt + LC + 3, z: o3.z + 2},
         next: function(sec){ var t = ((sec % CYC) + CYC) % CYC; return sec - t + CYC; }, dur: RUN, board: 0,
         update: function(sec, nt, calm){
           var t = ((sec % CYC) + CYC) % CYC, th = swingAt(sec);
@@ -772,6 +958,126 @@ function create(c, W, o){
       };
     }
 
+    // The crowd: the City's own resident body (games/npcdraw.js: six boxes, the gait in its vertex shader) in one
+    // instanced mesh. Walkers stroll three loops (the boulevard both ways, the ring, a tour of the stations), people
+    // queue on the station decks and wait at the kiosks, and riders sit in the rides' seats (their anchors). Like
+    // the rides, it all runs on the shared clock, so everyone sees the same crowd.
+    var crowd = buildCrowd();
+    function buildCrowd(){
+      var ND = HQV.npcDraw; if(!ND || !ND.bodyGeometry || !ND.bodyMaterial) return null;
+      function H(i, k){ return (hash32("crowd:" + i + ":" + k) % 10000)/10000; }
+      function loopOf(pts){ var cum = [0]; for(var i = 1; i <= pts.length; i++){ var p0 = pts[i - 1], p1 = pts[i % pts.length]; cum.push(cum[i - 1] + Math.hypot(p1[0] - p0[0], p1[1] - p0[1])); } return {pts: pts, cum: cum, len: cum[pts.length]}; }
+      var tour = rides.map(function(r){ return [r.entry.x, r.entry.z]; }).concat([[0, -b*0.45]]).sort(function(p, q){ return Math.atan2(p[0], p[1]) - Math.atan2(q[0], q[1]); });
+      var loops = [loopOf([[-1.4, -b - 2], [-1.4, b*0.5], [1.4, b*0.5], [1.4, -b - 2]]),
+                   loopOf([[-a*0.58, -b*0.08], [a*0.58, -b*0.08], [a*0.58, b*0.48], [-a*0.58, b*0.48]]), loopOf(tour)];
+      var members = [], NW = 48, i;
+      for(i = 0; i < NW; i++) members.push({kind: "walk", loop: loops[i % 3], v: 0.9 + H(i, "v")*0.6, off: H(i, "o"), lat: (H(i, "l") - 0.5)*1.6, dir: i % 3 === 1 && i % 2 ? -1 : 1});
+      rides.forEach(function(r){ (r.queue || []).forEach(function(q, j){ if(H(j, r.id) < 0.75) members.push({kind: "stand", x: q.x, y: q.y, z: q.z, yaw: q.yaw}); }); });
+      kiosks.forEach(function(k){ k.cust.forEach(function(q){ members.push({kind: "stand", x: q.x, z: q.z, yaw: q.yaw}); }); });
+      rides.forEach(function(r){ (r.anchors || []).forEach(function(an){ members.push({kind: "ride", an: an}); }); });
+      var Gb = ND.bodyGeometry(), n = members.length, geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(Gb.pos, 3)); geo.setAttribute("normal", new THREE.BufferAttribute(Gb.nrm, 3));
+      geo.setIndex(new THREE.BufferAttribute(Gb.idx, 1));
+      geo.setAttribute("aPart", new THREE.BufferAttribute(Gb.part, 1)); geo.setAttribute("aLimb", new THREE.BufferAttribute(Gb.limb, 1)); geo.setAttribute("aPivot", new THREE.BufferAttribute(Gb.pivot, 1));
+      var gait = new Float32Array(3*n), shirt = new Float32Array(3*n), pants = new Float32Array(3*n), skin = new Float32Array(3*n), col = new THREE.Color();
+      var SH = [0xe63946, 0xf4a261, 0x2a9d8f, 0x264653, 0xe9c46a, 0x8d5cf6, 0xff6fb5, 0x3a86ff, 0xffbe0b, 0x06d6a0, 0xef476f, 0x118ab2, 0xf1faee, 0x222831];
+      var PA = [0x2b2d42, 0x3d405b, 0x1d3557, 0x6c584c, 0xadb5bd, 0x14213d, 0x5e503f];
+      var SK = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac, 0x5c3a21];
+      members.forEach(function(m, k){
+        gait[3*k] = H(k, "ph")*TAU; gait[3*k + 1] = m.kind === "walk" ? m.v/1.5 : 0.3; gait[3*k + 2] = m.kind === "walk" ? 0.55 : m.kind === "ride" ? 0 : 0.04;
+        [[shirt, SH], [pants, PA], [skin, SK]].forEach(function(pr, j){ var hx = pr[1][Math.floor(H(k, "c" + j)*pr[1].length)]; if(!j) m.shirtHex = hx;
+          col.setHex(hx); pr[0][3*k] = col.r; pr[0][3*k + 1] = col.g; pr[0][3*k + 2] = col.b; });
+        m.look = Math.floor(H(k, "char")*Math.max(1, (ND.CHAR_FILES || []).length));
+      });
+      [["aGait", gait], ["aShirt", shirt], ["aPants", pants], ["aSkin", skin]].forEach(function(at){ geo.setAttribute(at[0], new THREE.InstancedBufferAttribute(at[1], 3)); });
+      var U = {uNpcTime: {value: 0}}, mesh = new THREE.InstancedMesh(geo, ND.bodyMaterial(THREE, U), n);
+      mesh.frustumCulled = false; mesh.castShadow = true; mesh.name = "funpark:crowd"; g.add(mesh);
+      var m4 = new THREE.Matrix4(), q4 = new THREE.Quaternion(), p4 = new THREE.Vector3(), s4 = new THREE.Vector3(1, 1, 1), up = new THREE.Vector3(0, 1, 0);
+      var ZERO = new THREE.Matrix4().makeScale(0, 0, 0), Mw = members.map(function(){ return new THREE.Matrix4(); }), wq4 = new THREE.Quaternion(), wp4 = new THREE.Vector3(), ws4 = new THREE.Vector3();
+      function walkAt(m, sec){
+        var Lp = m.loop, s0 = ((m.off*Lp.len + m.dir*m.v*sec) % Lp.len + Lp.len) % Lp.len, k = 0;
+        while(k < Lp.pts.length - 1 && Lp.cum[k + 1] <= s0) k++;
+        var p0 = Lp.pts[k], p1 = Lp.pts[(k + 1) % Lp.pts.length], seg = (Lp.cum[k + 1] - Lp.cum[k]) || 1, u = (s0 - Lp.cum[k])/seg;
+        var dx = (p1[0] - p0[0])/seg, dz = (p1[1] - p0[1])/seg;
+        return {x: p0[0] + (p1[0] - p0[0])*u - dz*m.lat, z: p0[1] + (p1[1] - p0[1])*u + dx*m.lat, yaw: Math.atan2(dx*m.dir, dz*m.dir)};
+      }
+      // Near: the City's own detailed residents (games/npcdraw.js's near level of detail): the six Kenney
+      // characters, skinned, walking / idling / sitting, their clothes tinted by their shirt, for the NEAR_MAX
+      // nearest within NEAR m (let go at NEAR_OUT, so the edge does not flicker). Pooled per look and reused;
+      // until a look has loaded, and beyond NEAR, a person is the instanced body.
+      var CHARS = ND.CHAR_FILES || [], NEAR = 40, NEAR_OUT = 44, NEAR_MAX = 36, SC = 1.7/0.72, TINT = 0.45;
+      var free = {}, made = 0, loadingN = 0, held = {};                  // held[member] = character
+      function loadChar(k){
+        if(!E.loadGlb || !Lb || !CHARS[k] || made + loadingN >= NEAR_MAX + 6) return;
+        loadingN++;
+        E.loadGlb(Lb, "golf", CHARS[k]).then(function(gl){
+          loadingN--; if(dead) return;
+          var o = Lb.clone(gl.scene), mixer = new THREE.AnimationMixer(o), acts = {}, ch = {o: o, mixer: mixer, acts: acts, mats: [], cur: null, k: k};
+          ["idle", "walk", "sit"].forEach(function(n){ var cl = THREE.AnimationClip.findByName(gl.animations, n); if(cl) acts[n] = mixer.clipAction(cl); });
+          o.scale.setScalar(SC);
+          o.traverse(function(n){
+            if(!n.isMesh) return; n.castShadow = true; n.frustumCulled = false;
+            n.material = Array.isArray(n.material) ? n.material.map(function(mm){ return mm.clone(); }) : n.material.clone();
+            (Array.isArray(n.material) ? n.material : [n.material]).forEach(function(mm){ if(mm.color) ch.mats.push(mm); });
+          });
+          made++; (free[k] = free[k] || []).push(ch);
+        }, function(){ loadingN--; });
+      }
+      function anim(ch, n, speed){
+        var a2 = ch.acts[n] || ch.acts.idle; if(!a2) return;
+        if(ch.cur !== n){ a2.reset().fadeIn(0.25).play(); if(ch.cur && ch.acts[ch.cur] && ch.acts[ch.cur] !== a2) ch.acts[ch.cur].fadeOut(0.25); ch.cur = n; }
+        a2.timeScale = speed == null ? 1 : speed;
+      }
+      function release(k){ var ch = held[k]; if(!ch) return; delete held[k]; g.remove(ch.o); (free[ch.k] = free[ch.k] || []).push(ch); }
+      var nearAcc = 1;
+      return {mesh: mesh, n: n, members: members, near: function(){ return Object.keys(held).length; }, update: function(sec, dt, cam){
+        U.uNpcTime.value = sec % 600;
+        var k, m;
+        // everyone's pose in the world
+        for(k = 0; k < n; k++){
+          m = members[k];
+          if(m.kind === "ride"){ m.an.updateWorldMatrix(true, false); Mw[k].copy(m.an.matrixWorld); continue; }
+          var lx, lz, yaw;
+          if(m.kind === "walk"){ var wq = walkAt(m, sec); lx = wq.x; lz = wq.z; yaw = wq.yaw; } else { lx = m.x; lz = m.z; yaw = m.yaw; }
+          p4.set(lx, m.y != null ? m.y : ly(lx, lz), lz).applyMatrix4(pg.matrixWorld);
+          q4.setFromAxisAngle(up, yaw + P.rot); Mw[k].compose(p4, q4, s4);
+        }
+        // who is near (a few times a second): nearest first, under NEAR (NEAR_OUT for those already near)
+        nearAcc += dt || 0;
+        if(cam && cam.x != null && nearAcc > 0.25){
+          nearAcc = 0;
+          var cand = [];
+          for(k = 0; k < n; k++){
+            var e3 = Mw[k].elements, dx3 = e3[12] - cam.x, dy3 = e3[13] - (cam.y || 0), dz3 = e3[14] - cam.z, d2 = dx3*dx3 + dy3*dy3 + dz3*dz3, r = held[k] ? NEAR_OUT : NEAR;
+            if(d2 < r*r) cand.push([d2, k]);
+          }
+          cand.sort(function(p, q){ return p[0] - q[0] || p[1] - q[1]; });
+          var want = {}; cand.slice(0, NEAR_MAX).forEach(function(c2){ want[c2[1]] = 1; });
+          Object.keys(held).forEach(function(kk){ if(!want[kk]) release(kk); });
+          Object.keys(want).forEach(function(kk){
+            if(held[kk]) return;
+            var mm = members[kk], list = free[mm.look];
+            if(list && list.length){
+              var ch = list.pop(); held[kk] = ch; g.add(ch.o); ch.cur = null;
+              var w = new THREE.Color(0xffffff).lerp(new THREE.Color(mm.shirtHex), TINT); ch.mats.forEach(function(mt){ mt.color.copy(w); });
+            } else loadChar(mm.look);
+          });
+        } else if(!cam || cam.x == null){ Object.keys(held).forEach(release); }
+        // draw: a detailed character where one is held (its body hidden), the body everywhere else
+        for(k = 0; k < n; k++){
+          m = members[k]; var chr = held[k];
+          if(!chr){ mesh.setMatrixAt(k, Mw[k]); continue; }
+          mesh.setMatrixAt(k, ZERO);
+          Mw[k].decompose(wp4, wq4, ws4);
+          if(m.kind === "ride") wp4.add(up.clone().applyQuaternion(wq4).multiplyScalar(0.35));   // Kenney's sit pose: hips at chair height
+          chr.o.position.copy(wp4); chr.o.quaternion.copy(wq4);
+          anim(chr, m.kind === "walk" ? "walk" : m.kind === "ride" ? "sit" : "idle", m.kind === "walk" ? m.v/1.4 : 1);
+          chr.mixer.update(dt || 0);
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+      }};
+    }
+
     // every bulb in the park: one instanced mesh, coloured by day and chasing by night
     var bulbI = new THREE.InstancedMesh(new THREE.SphereGeometry(0.07, 6, 5), new THREE.MeshBasicMaterial({color: 0xffffff}), Math.max(1, bulbs.length)), dmb = new THREE.Object3D();
     bulbs.forEach(function(p, j){ dmb.position.set(p.x, p.y, p.z); dmb.updateMatrix(); bulbI.setMatrixAt(j, dmb.matrix); });
@@ -781,12 +1087,16 @@ function create(c, W, o){
     var grid = {}, CELL = 8;
     hits.forEach(function(h){ var k = Math.floor(h.x/CELL) + ":" + Math.floor(h.z/CELL); (grid[k] = grid[k] || []).push(h); });
     function blockedL(lx, lz, gateOpen){
-      if(lx < -a - 1.5 || lx > a + 1.5 || lz < -b - 1.5 || lz > b + 1.5) return false;
+      if(lx < -a - 6 || lx > a + 6 || lz < -b - 6 || lz > b + 6) return false;
       for(var j = 0; j < segs.length; j++){
         var s4 = segs[j], dx = s4[2] - s4[0], dz = s4[3] - s4[1], L2 = dx*dx + dz*dz, u = L2 ? clamp(((lx - s4[0])*dx + (lz - s4[1])*dz)/L2, 0, 1) : 0;
         if(Math.hypot(lx - (s4[0] + u*dx), lz - (s4[1] + u*dz)) < 0.45) return true;
       }
       if(!gateOpen && Math.abs(lz + b) < 0.6 && Math.abs(lx) < GATE) return true;     // the turnstile
+      for(var q3 = 0; q3 < rects.length; q3++){                                         // stations and kiosks
+        var R3 = rects[q3], dx3 = lx - R3.x, dz3 = lz - R3.z;
+        if(Math.abs(dx3*R3.c - dz3*R3.s) < R3.hw && Math.abs(dx3*R3.s + dz3*R3.c) < R3.hd) return true;
+      }
       var cx2 = Math.floor(lx/CELL), cz2 = Math.floor(lz/CELL);
       for(var ix = -1; ix <= 1; ix++) for(var iz = -1; iz <= 1; iz++){
         var L3 = grid[(cx2 + ix) + ":" + (cz2 + iz)]; if(!L3) continue;
@@ -794,7 +1104,7 @@ function create(c, W, o){
       }
       return false;
     }
-    return {g: pg, a: a, b: b, gate: {x: 0, z: -b - 2.5}, booth: {x: GATE + 4.5, z: -b - 1.5}, rides: rides, bulbs: bulbs, bulbI: bulbI, glows: glows,
+    return {g: pg, a: a, b: b, crowd: crowd, gate: {x: 0, z: -b - 2.5}, booth: {x: GATE + 4.8, z: -b - 4.6}, rides: rides, bulbs: bulbs, bulbI: bulbI, glows: glows,
             balloons: balloons, blockedL: blockedL, toW: toW, toL: toL, ly: ly, inside: function(lx, lz){ return lx > -a && lx < a && lz > -b && lz < b; }};
   }
 
@@ -887,6 +1197,7 @@ function create(c, W, o){
       if(!park) return;
       park.g.updateMatrixWorld();
       park.rides.forEach(function(r){ r.update(sec, night, calm); });
+      if(park.crowd){ park.g.updateMatrixWorld(true); park.crowd.update(sec, dt, cam); }
       // the bulbs: warm white by day, chasing colours by night (steady in Calm)
       var key = night ? (calm ? "n" : "c" + Math.floor(sec*6)) : "d";
       if(key !== lastNightKey){
@@ -927,7 +1238,10 @@ function create(c, W, o){
     carry: function(){
       if(!riding || !park) return null;
       var sec = nowSec(), r = riding.r;
-      if(sec < riding.t0 + r.board){ var e = park.toW(r.entry.x, r.entry.z); return {x: e.x, y: park.g.position.y + park.ly(r.entry.x, r.entry.z), z: e.z, yaw: 0}; }
+      if(sec < riding.t0 + r.board){                // waiting your turn at the head of the queue, on the deck
+        var q0 = r.queue && r.queue[0], qx = q0 ? q0.x : r.entry.x, qz = q0 ? q0.z : r.entry.z, e = park.toW(qx, qz);
+        return {x: e.x, y: park.g.position.y + (q0 ? q0.y : park.ly(qx, qz)), z: e.z, yaw: (q0 ? q0.yaw : 0) + spec.park.rot};
+      }
       var s = r.seat(sec, riding.k);
       return {x: s.p.x, y: s.p.y - 1.2, z: s.p.z, yaw: Math.atan2(s.t.x, s.t.z)};
     },
@@ -939,8 +1253,14 @@ function create(c, W, o){
         var wp = park.toW(r.watch.x, r.watch.z), s0 = r.seat(sec, riding.k);
         return {camera: true, pos: {x: wp.x, y: park.g.position.y + r.watch.y, z: wp.z}, look: {x: s0.p.x, y: s0.p.y, z: s0.p.z}, up: {x: 0, y: 1, z: 0}, fov: 55};
       }
-      var s = r.seat(sec, riding.k), lk = s.p.clone().addScaledVector(s.t, 12);
-      return {camera: true, pos: {x: s.p.x, y: s.p.y, z: s.p.z}, look: {x: lk.x, y: lk.y, z: lk.z}, up: {x: s.up.x, y: s.up.y, z: s.up.z}, fov: r.id === "coaster" ? 78 : 66};
+      var s = r.seat(sec, riding.k), eye = s.p.clone(), lk;
+      if(r.id === "coaster"){                       // sit back in the second row: the front car and the rails ahead in view
+        // your seat: the front car's left one (side = up x forward is the car's +x), eyes ahead of the headrest
+        var side = s.up.clone().cross(s.t).normalize();
+        eye.addScaledVector(s.t, 0.25).addScaledVector(s.up, 0.15).addScaledVector(side, -0.36);
+        lk = s.p.clone().addScaledVector(s.t, 14).addScaledVector(s.up, -2.6);
+      } else lk = s.p.clone().addScaledVector(s.t, 12);
+      return {camera: true, pos: {x: eye.x, y: eye.y, z: eye.z}, look: {x: lk.x, y: lk.y, z: lk.z}, up: {x: s.up.x, y: s.up.y, z: s.up.z}, fov: r.id === "coaster" ? 80 : 66};
     },
     riding: function(){ return riding ? {id: riding.r.id, name: riding.r.name, t0: riding.t0, until: riding.until} : null; },
     // for tools and tests: a ride's seat at any clock time (s), as {p, t, up}, and its cycle

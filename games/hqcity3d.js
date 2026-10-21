@@ -666,6 +666,7 @@ HQV.hqWorlds.city3d = function(c, w){
     // arriving: at your own door, or the door of the HQ you just visited; else the plaza's spawn
     var mine = hqs.filter(function(E){ return E.h.isYou; })[0];
     if(air) air.props(mine).forEach(function(b){ bikes.push(b); });       // air: the helicopters (and your own, by your HQ)
+    planeProps.forEach(function(b){ bikes.push(b); });                     // planes: the seaplane at the dock, the prop plane at the airport
     var back = api.cityReturn && api.cityReturn(), ret = hqs.filter(function(E){ return E.h.userId === back; })[0];
     w.spawn = at(ret || mine); w.spawnFrom = {lobby: at(mine)};
     if(V2){
@@ -898,12 +899,24 @@ HQV.hqWorlds.city3d = function(c, w){
         if(P){ var lat = (P.w/2 + 1)*sg; x = P.head[0] - P.dir[0]*2.5 + P.dir[1]*lat; z = P.head[1] - P.dir[1]*2.5 - P.dir[0]*lat; }
         var col = [0x2f6f9f, 0xc8323c, 0x2f8f5b, 0xe8b730][(n*2 + j) % 4], B = HQV.hqboat.model(c, kind, col, 0xf2f2f2);
         B.g.position.set(x, sea.y + (river && river.inWater(x, z) ? riverY : 0), z); B.g.rotation.y = d.yaw; boatG.add(B.g);
-        boats.push({g: B.g, x: x, z: z, yaw: d.yaw, color: col, accent: 0xf2f2f2, kind: kind, id: "boat:" + d.id + ":" + kind, stay: true});
+        boats.push({g: B.g, x: x, z: z, yaw: d.yaw, color: col, accent: 0xf2f2f2, kind: kind, id: "boat:" + d.id + ":" + kind, stay: true,
+                    float: {draft: HQV.hqboat.VEHICLES[kind].draft || 0}});
       });
     });
     getArch().then(function(a){ if(!dead && a) HQV.ocean.setArchipelago(archMetres(a), worldId); }, function(){});
   }
   function siteById(id){ for(var i = 0; i < W.sites.length; i++) if(W.sites[i].id === id) return W.sites[i]; return null; }
+  // Moored boats and seaplanes ride the swell (HQ 3.2): they used to sit at sea level while the drawn waves rose
+  // through their hulls. Only those within PROP_FAR of the camera, a heave and a gentle roll; flat in Calm.
+  function floatParked(cam){
+    var list = boats.concat(planeProps);
+    for(var i = 0; i < list.length; i++){
+      var b = list[i]; if(!b.g.visible || !b.float) continue;
+      if(Math.abs(b.x - cam.x) > PROP_FAR || Math.abs(b.z - cam.z) > PROP_FAR) continue;
+      var y = sea.surface(b.x, b.z) - b.float.draft, sw = sea.swell(b.x + 1.5, b.z) - sea.swell(b.x - 1.5, b.z);
+      b.g.position.y = y; b.y = y; b.g.rotation.z = sea.flat ? 0 : Math.max(-0.06, Math.min(0.06, sw*0.25));
+    }
+  }
   function archMetres(a){
     function m(o){ return Object.assign({}, o, {x: (+o.x || 0)/100, z: (+o.z || 0)/100}); }
     return {commons: a.commons ? m(a.commons) : null, islands: (Array.isArray(a.islands) ? a.islands : []).map(m)};
@@ -965,7 +978,8 @@ HQV.hqWorlds.city3d = function(c, w){
       if(e.type !== "keydown") return;
       if(e.key === "Escape" || e.code === "KeyE"){ e.preventDefault(); closeMenu(); return; }
       var n = parseInt(e.key, 10);
-      if(n >= 1 && n <= 9 && items[n - 1] && !items[n - 1].off){ e.preventDefault(); closeMenu(); items[n - 1].fn(); }
+      if(n >= 1 && n <= 9 && items[n - 1] && !items[n - 1].off){ e.preventDefault(); closeMenu(); items[n - 1].fn(); return; }
+      for(var k = 0; k < items.length; k++) if(items[k].key && e.code === items[k].key && !e.metaKey && !e.ctrlKey && !e.altKey){ e.preventDefault(); closeMenu(); items[k].fn(); return; }
     };
     window.addEventListener("keydown", menuKey, true);
     try { (first || x).focus(); } catch(e){}
@@ -1045,6 +1059,10 @@ HQV.hqWorlds.city3d = function(c, w){
       });
       bigShipItems(site, items);                                                                        // big ships
       if(rail && site.kind === "transit") items = rail.rows(a).concat(items);      // rail
+      // at the dock of a city with an airport, the flights are at the airport: say so, and N routes you there (HQ 3.2)
+      var apS = site.kind === "dock" && airOn() ? airportHere() : null;
+      if(apS) items = items.slice(0, 8).concat([{text: "\u2708 Flights leave from the airport · press N to go there", key: "KeyN",
+                                                fn: function(){ navToSite(apS, "the airport"); }}]);
       openMenu(siteTitle(site), items.slice(0, 9));
     }, function(){ say("The Arena didn't answer: no trips right now."); });
   }
@@ -1128,6 +1146,9 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   function waterY(x, z, t){
     if(!sea) return 0;
+    // the shared surface (ocean.js: the drawn sea's clock, flat in Calm); a big hull heaves 0.35 of the swell. (It
+    // used to scale the river's raised level too, sinking a ferry 0.2 m into the river.)
+    if(sea.level) return sea.level(x, z) + sea.swell(x, z, t)*0.35;
     var v = sea.wave ? sea.wave(x, z, t) : 0;
     return sea.y + (isFinite(v) ? v*0.35 : 0);
   }
@@ -1831,6 +1852,170 @@ HQV.hqWorlds.city3d = function(c, w){
   };
   /* ========== end AIR ========== */
 
+  /* ========== PLANES (HQ 3.2): the seaplane at the dock and the prop plane at the airport (games/hqplane.js) ==========
+     A seaplane moors off the main berth (the Commons' dock, your island's), facing out over the water; a prop plane
+     stands at every airport (the Commons always, an island at tier 5) on the runway's apron by the threshold. hq3d flies
+     them over w.planeEnv: the floor (w.heliFloor, plus the runway decks out over the water), open water and its
+     surface (ocean.js sea.surface: the boats' and ferries' own), and the runways; w.planeHome is where a crash puts a
+     plane back. */
+  var planeProps = [], runways = [], planeG = null, PLANE_CLEAR = [[0, 0], [9, 0], [-9, 0], [0, 8], [0, -8], [6, 5], [-6, 5]];
+  function planesSetup(){
+    if(!HQV.hqplane || !HQV.hqAircraft || !HQV.hqShips || !W) return;
+    planeG = new THREE.Group(); planeG.name = "planes"; S.add(planeG);
+    var ap = airportHere() || null;
+    if(ap && AIR){
+      var end = AIR.airportEnd(ap, 0, 0, airRunwayY(W, ap)), u = end.dir, thr = end.thr, ry = Math.atan2(u[0], u[1]);
+      runways.push({thr: thr, dir: u, len: end.len, y: end.y, a0: -20, a1: end.len + 25, hw: 15});
+      // its stand: beside the runway's deck by the threshold, clear of the airliners' stand (on the centreline 25 m
+      // back, 36 m of wing) and of their takeoff roll: flat ground on whichever side has it, else the deck's edge
+      var spot = null, base = air && air.base, side = [-30, 30, -36, 36];
+      if(base) side.sort(function(a, c2){ function d(bb){ return -Math.hypot(thr[0] + u[1]*bb - base.x, thr[1] - u[0]*bb - base.z); } return d(a) - d(c2); });   // away from the air base's fence
+      side.some(function(bb){
+        var x = thr[0] + u[0]*20 + u[1]*bb, z = thr[1] + u[1]*20 - u[0]*bb, gy0 = groundY(x, z);
+        if(sea && !sea.land(x, z)) return false;
+        if(Math.abs(gy0 - end.y) > 1.2 || Math.abs(groundY(x + u[0]*6, z + u[1]*6) - gy0) > 0.8 || blocked(x, z)) return false;
+        spot = {x: x, y: gy0, z: z}; return true;
+      });
+      if(!spot) spot = {x: thr[0] + u[0]*60 + u[1]*12, y: end.y, z: thr[1] + u[1]*60 - u[0]*12};
+      addPlane("prop", spot.x, spot.y, spot.z, ry, 0x2f6f9f, 0xf2f2f2, "plane:prop:" + ap.id, null);
+    }
+    // the seaplane: on the water down the river from the main berth (the way the airline's seaplanes taxi out,
+    // hqvoyage.inland), past where they tie up (45 m), facing down-river toward the sea; the clearest spot 60..200 m on
+    var b = VOY && VOY.berthOf ? VOY.berthOf(W) : null, path = b && VOY.inland ? VOY.inland(W) : null;
+    if(b && path && path.length > 1 && sea && sea.surface){
+      var site = siteById(b.site), along = 0, best = null, bs = -1;
+      for(var i = 1; i < path.length && along < 200; i++){
+        var ax = path[i - 1][0], az = path[i - 1][1], L = Math.hypot(path[i][0] - ax, path[i][1] - az) || 1, f = [(path[i][0] - ax)/L, (path[i][1] - az)/L];
+        for(var u = 0; u < L; u += 5){
+          var d = along + u; if(d < 60 || d > 200) continue;
+          var x = ax + f[0]*u, z = az + f[1]*u;
+          var score = PLANE_CLEAR.filter(function(o){ var lx = o[0], lz = o[1]; return !sea.boat.land(x + lx*f[1] + lz*f[0], z - lx*f[0] + lz*f[1]); }).length;
+          if(score > bs){ bs = score; best = {x: x, z: z, yaw: Math.atan2(f[0], f[1])}; }
+        }
+        along += L;
+      }
+      if(best && !sea.boat.land(best.x, best.z))
+        addPlane("seaplane", best.x, sea.surface(best.x, best.z) - 0.25, best.z, best.yaw, 0xd0262b, 0xf2f2f2, "plane:sea:" + (site ? site.id : "berth"), {draft: 0.25});
+    }
+    if(bikes && planeProps.length) planeProps.forEach(function(p){ if(bikes.indexOf(p) < 0) bikes.push(p); });
+  }
+  function addPlane(kind, x, y, z, yaw, col, acc, id, flt){
+    var B = HQV.hqplane.model(c, kind, col, acc); B.g.position.set(x, y, z); B.g.rotation.y = yaw; planeG.add(B.g);
+    HQV.hqplane.animate(B, null, 0, night);
+    planeProps.push({g: B.g, x: x, y: y, z: z, yaw: yaw, kind: kind, color: col, accent: acc, id: id, stay: true, float: flt, B: B,
+                     home0: {x: x, y: y, z: z, yaw: yaw}});
+  }
+  w.planes = function(){ return planeProps.map(function(p){ return {kind: p.kind, x: p.x, y: p.y, z: p.z, yaw: p.yaw, id: p.id}; }); };   // (tools)
+  function planesDestroy(){ if(planeG && planeG.parent) planeG.parent.remove(planeG); planeG = null; planeProps = []; runways = []; }
+  // a point on a runway's deck (its a0..a1 along, hw either side): that runway, else null
+  function runwayAt(x, z){
+    for(var i = 0; i < runways.length; i++){
+      var R0 = runways[i], dx = x - R0.thr[0], dz = z - R0.thr[1], a = dx*R0.dir[0] + dz*R0.dir[1], bb = dx*R0.dir[1] - dz*R0.dir[0];
+      if(a >= R0.a0 && a <= R0.a1 && Math.abs(bb) <= R0.hw) return R0;
+    }
+    return null;
+  }
+  // the camera's floor (hq3d rigFrame): the ground, and over open water the water's surface plus 0.5 m, so a chase
+  // camera behind a boat or low over the sea never dips under the waves (it used to follow the sea bed) (3.2)
+  w.camGround = function(x, z){
+    var g = groundY(x, z);
+    if(sea && sea.surface && (!W || Math.abs(x) > W.half || Math.abs(z) > W.half || !sea.boat.land(x, z))) g = Math.max(g, sea.surface(x, z) + 0.5);
+    return g;
+  };
+  w.planeEnv = {
+    floor: function(x, z){ var R0 = runwayAt(x, z), f = w.heliFloor(x, z); return R0 ? Math.max(R0.y, R0.y > f - 2 ? R0.y : f) : f; },
+    water: function(x, z){ if(runwayAt(x, z)) return false; var off = !W || Math.abs(x) > W.half || Math.abs(z) > W.half; return !!sea && (off || !sea.boat.land(x, z)); },
+    waterY: function(x, z){ return sea && sea.surface ? sea.surface(x, z) : (sea ? sea.y : 0); },
+    runway: function(x, z){ return !!runwayAt(x, z); }
+  };
+  // where a crashed plane goes back to: the nearest of its kind's places here (else null: where you took it from)
+  w.planeHome = function(kind, x, z){
+    var best = null, bd = Infinity;
+    planeProps.forEach(function(p){ if(p.kind !== kind) return; var d = Math.hypot(p.home0.x - x, p.home0.z - z); if(d < bd){ bd = d; best = p.home0; } });
+    return best;
+  };
+  /* ========== end PLANES ========== */
+
+  /* ========== AIR NAVIGATION (HQ 3.2): the Go to list, the waypoint and the approach while you fly ==========
+     The ground's navigation, flown: the same Go to panel (N), minimap click and banner, with the air's own
+     destinations first (the runways here, the seaplane's landing lane off the river mouth, helipads, the other
+     islands). The route is a straight line (no roads) drawn on the minimap, the light pillar stands at the
+     destination, and a runway or a water lane gets its approach: rings down a 3° glideslope from the final approach
+     fix and a touchdown marker. w.airGuide() is what the flight HUD (hq3d guideDraw) and the autopilot follow. */
+  var GS = Math.tan(3*Math.PI/180), FAF = 1500, apprG = null, apprFor = null;
+  function airNavPlaces(m, me0){
+    var out = [], craft = m.craft;
+    function add(p){ p.dist = Math.hypot(p.door.x - me0.x, p.door.z - me0.z); out.push(p); }
+    // runways (land toward the threshold, from out over the sea: as the airliners do), for planes and helicopters
+    runways.forEach(function(R0, i){
+      var td = {x: R0.thr[0] + R0.dir[0]*(R0.len - 70), z: R0.thr[1] + R0.dir[1]*(R0.len - 70)};
+      add({id: "air:runway:" + i, kind: "runway", label: "Runway (the airport)", icon: "\u2708", x: td.x, z: td.z, door: td,
+           air: {kind: "runway", td: td, hdg: Math.atan2(-R0.dir[0], -R0.dir[1]), y: R0.y}});
+    });
+    // the seaplane's landing lane: off the river's mouth, landing toward it (hqair's dockEnd)
+    if((craft === "seaplane" || !craft) && AIR && VOY && VOY.berthOf && VOY.berthOf(W) && sea){
+      var e = AIR.dockEnd(W, 0, 0, [0, 0]), td2 = {x: e.thr[0] + e.dir[0]*370, z: e.thr[1] + e.dir[1]*370};
+      add({id: "air:lane", kind: "lane", label: "Water landing lane (the river mouth)", icon: "\uD83D\uDEE9", x: td2.x, z: td2.z, door: td2,
+           air: {kind: "lane", td: td2, hdg: Math.atan2(-e.dir[0], -e.dir[1]), y: sea.y}});
+    }
+    // helipads (helicopters)
+    if(craft === "heli" && air && air.pads) air.pads.forEach(function(P, i){
+      add({id: "air:pad:" + i, kind: "pad", label: P.at && P.at.kind ? "Helipad (" + P.at.kind + ")" : "Helipad", icon: "H", x: P.x, z: P.z, door: {x: P.x, z: P.z},
+           air: {kind: "pad", td: {x: P.x, z: P.z}, hdg: null, y: P.y}});
+    });
+    // the other islands: fly there (you fly into their city on the way, as a helicopter does)
+    if(arch){
+      var hp = hereArch();
+      travelPlaces(arch, worldId, me).forEach(function(to){
+        var x = to.x - hp.x, z = to.z - hp.z;
+        add({id: "air:city:" + to.world, kind: "city", label: "Fly to " + to.name, icon: "\uD83C\uDFDD", x: x, z: z, door: {x: x, z: z}, air: null});
+      });
+    }
+    out.sort(function(a, b){ return a.dist - b.dist; });
+    return out;
+  }
+  // where to fly now: straight to the destination, or (a runway or a lane, still far out or off its line) to its final
+  // approach fix first; on final, the glideslope: gs > 0 above it, < 0 below (-1..1 = +-half the slope's height)
+  function airGuideNow(me0){
+    if(!route || route.done || route.mode !== "air") return null;
+    var m = c.motion ? c.motion() : null, y = m ? m.y : 0, A = route.air;
+    var to = {x: route.x, z: route.z}, via = null, alt = null, gs = null;
+    if(A && A.hdg != null){
+      var bx = -Math.sin(A.hdg), bz = -Math.cos(A.hdg);                   // from touchdown back along the approach
+      var dx = me0.x - A.td.x, dz = me0.z - A.td.z, along = dx*bx + dz*bz, off = Math.abs(dx*bz - dz*bx);
+      var faf = {x: A.td.x + bx*FAF, z: A.td.z + bz*FAF};
+      if(along > FAF + 200 || along < 0 || off > Math.max(120, along*0.3)){ via = faf; alt = A.y + GS*FAF + 20; }   // not on final yet
+      else { var gy = A.y + GS*Math.max(0, along); alt = gy; gs = Math.max(-1, Math.min(1, (y - gy)/Math.max(8, GS*along*0.5))); }
+    } else if(A) alt = A.y + 30;
+    else alt = Math.max(120, y);
+    var tgt = via || to, dist = Math.hypot(tgt.x - me0.x, tgt.z - me0.z);
+    return {label: route.label, bearing: Math.atan2(tgt.x - me0.x, tgt.z - me0.z), dist: dist, alt: alt, gs: gs, to: tgt, via: via};
+  }
+  w.airGuide = function(){ var me0 = c.avatar(); return me0 ? airGuideNow(me0) : null; };
+  // the approach's rings down the glideslope and the touchdown marker (one InstancedMesh, one plane), for the route's
+  // runway or lane; null hides them. Static meshes: nothing animates (Calm needs nothing).
+  function approachShow(A){
+    if(A === apprFor) return;
+    apprFor = A;
+    if(apprG){ S.remove(apprG); apprG.traverse(function(o){ if(o.geometry) o.geometry.dispose(); if(o.material) o.material.dispose(); }); apprG = null; }
+    if(!A || A.hdg == null) return;
+    apprG = new THREE.Group(); apprG.name = "approach";
+    var bx = -Math.sin(A.hdg), bz = -Math.cos(A.hdg), n = 6, im = new THREE.InstancedMesh(new THREE.TorusGeometry(9, 0.45, 6, 28),
+      new THREE.MeshBasicMaterial({color: 0x5fd3e6, transparent: true, opacity: 0.75, depthWrite: false, fog: false, toneMapped: false}), n);
+    var m4 = new THREE.Matrix4(), q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, A.hdg, 0)), sc = new THREE.Vector3(1, 1, 1);
+    for(var i = 0; i < n; i++){
+      var d = 220 + i*(FAF - 220)/(n - 1), p = new THREE.Vector3(A.td.x + bx*d, A.y + GS*d + 2, A.td.z + bz*d);
+      m4.compose(p, q, sc); im.setMatrixAt(i, m4);
+    }
+    im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; apprG.add(im);
+    var tdz = new THREE.Mesh(new THREE.PlaneGeometry(A.kind === "lane" ? 30 : 18, 90),
+      new THREE.MeshBasicMaterial({color: 0x5fd3e6, transparent: true, opacity: 0.28, depthWrite: false, fog: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -4}));
+    tdz.rotation.order = "YXZ"; tdz.rotation.set(-Math.PI/2, A.hdg, 0);              // flat, along the landing heading
+    tdz.position.set(A.td.x - bx*20, A.y + 0.08, A.td.z - bz*20); apprG.add(tdz);
+    S.add(apprG);
+  }
+  /* ========== end AIR NAVIGATION ========== */
+
   // the residents this City draws (read-only, for tests and tools)
   w.npcSim = function(){ return nsim; };
   // E: a resident's line, a stop's lines, a terminal's trips (and E again cancels a wait)
@@ -1912,6 +2097,7 @@ HQV.hqWorlds.city3d = function(c, w){
     buildCivic(); S.add(civicG);
     setupSea(); bridgesSetup(); setupLife(); buildUi(); statsUi(); setupFerries(); setupBigShips(); setupAir(); setupRail();
     airSetup();                                                            // air: helipads, the air base, the carrier, jets
+    planesSetup();                                                         // planes: the seaplane and the prop plane (HQ 3.2)
     if(worldId === COMMONS) getJson("/api/arena/world/" + COMMONS + "/assign").then(function(rows){
       if(dead || !Array.isArray(rows)) return; assignRows = rows; sig = null; build();
     }, function(){});
@@ -1941,6 +2127,8 @@ HQV.hqWorlds.city3d = function(c, w){
       if(inner.visible !== vis) inner.visible = vis;
     });
     var me0 = (cam && cam.avatar) || c.avatar() || {x: 0, z: 0};
+    if(sea){ var calmSea = !!(c.E && c.E.calm && c.E.calm()); sea.flat = calmSea; sea.clock = calmSea ? 0 : t; }   // = the drawn sea's (oc.step)
+    if(sea && sea.surface && cam && cam.x != null) floatParked(cam);
     if(oc && cam){
       oc.step(t, dt, cam);
       if(boatNow) oc.wake([{id: "you", x: boatNow.st.x, z: boatNow.st.z, yaw: boatNow.st.yaw, speed: boatNow.st.speed || 0, beam: boatNow.beam}]);
@@ -1979,6 +2167,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(ferryT){ ferryT.dispose(); ferryT = null; } if(ferryG){ S.remove(ferryG); ferryG = null; }
     bridgesDestroy();
     airDestroy();                                                                         // AIR
+    planesDestroy();
     Object.keys(bigShips).forEach(function(k){ bigShips[k].dispose(); }); bigShips = {}; if(myCruise){ myCruise.dispose(); myCruise = null; }   // big ships
     Object.keys(bigTpl).forEach(function(k){ bigTpl[k].dispose(); }); bigTpl = {}; if(bigG){ S.remove(bigG); bigG = null; }
     if(rail){ rail.destroy(); rail = null; }                // rail
@@ -1997,30 +2186,42 @@ HQV.hqWorlds.city3d = function(c, w){
   var mm = null, nui = null, fx = null, goBtn = null, navKeyFn = null, route = null, navTier = 5, navSig = null;
   function navMode(){
     var m = c.motion ? c.motion() : null;
-    return m && m.boat ? "boat" : m && (m.ride === "car" || m.ride === "moto" || m.ride === "bike") ? "drive" : "walk";
+    return m && m.air ? "air" : m && m.boat ? "boat" : m && (m.ride === "car" || m.ride === "moto" || m.ride === "bike") ? "drive" : "walk";
   }
   function navGraph(){ return HQV.hqnav.graph(W, navTier); }
   function navPlaces(){
     var me0 = c.avatar() || {x: 0, z: 0};
-    return HQV.hqnav.places(W, navTier, {x: me0.x, z: me0.z, me: me, island: V2 && island(),
+    var list = HQV.hqnav.places(W, navTier, {x: me0.x, z: me0.z, me: me, island: V2 && island(),
       hqs: hqs.map(function(E){ return {userId: E.h.userId, name: E.name || E.h.name, lot: E.lot}; })});
+    var m = c.motion ? c.motion() : null;
+    return m && m.air ? airNavPlaces(m, me0).concat(list) : list;
   }
   function fmtM(m){ return HQV.hqnavui ? HQV.hqnavui.fmtDist(m) : Math.round(m) + " m"; }
-  // dest: {x, z, label, kind}
+  // dest: {x, z, label, kind, air?: an approach (airPlaces)}
   function navTo(dest){
     route = {x: dest.x, z: dest.z, label: dest.label || "the pin", kind: dest.kind || "pin", travel: dest.kind === "travel",
-             R: null, mode: null, at: 0, done: false};
+             R: null, mode: null, at: 0, done: false, air: dest.air || null};
     navRoute();
     say("Route to " + route.label + (route.R ? ", " + fmtM(route.R.len) : "") + ".");
   }
   function navRoute(){
     var me0 = c.avatar(); if(!route || !me0) return;
     route.mode = navMode(); route.at = Date.now();
+    if(route.mode === "air"){                            // flying: straight there, the approach marked (approachShow)
+      route.R = null; approachShow(route.air);
+      if(fx){ fx.setRoute(null, groundY); fx.setWaypoint({x: route.x, y: route.air ? route.air.y : groundY(route.x, route.z), z: route.z}); }
+      return;
+    }
+    approachShow(null);
     route.R = route.mode === "boat" ? null : HQV.hqnav.route(navGraph(), {x: me0.x, z: me0.z}, {x: route.x, z: route.z}, route.mode);
     if(fx){ fx.setRoute(route.R ? route.R.pts : null, groundY); fx.setWaypoint({x: route.x, y: groundY(route.x, route.z), z: route.z}); }
   }
+  function navToSite(site, label){
+    if(!site || !HQV.hqnav) return;
+    var d = HQV.hqnav.doorOf(site); navTo({x: d.x, z: d.z, label: label || site.name || site.kind, kind: site.kind});
+  }
   function navClear(){
-    route = null;
+    route = null; approachShow(null);
     if(fx){ fx.setRoute(null, groundY); fx.setWaypoint(null); }
     if(nui) nui.banner(null);
   }
@@ -2042,7 +2243,16 @@ HQV.hqWorlds.city3d = function(c, w){
     if(route && !route.done){
       var mode = navMode();
       if(mode !== route.mode) navRoute();                 // on or off a vehicle: the route for the new way
-      if(route.R){
+      if(mode === "air"){
+        var G = airGuideNow(me0), dd = Math.hypot(route.x - me0.x, route.z - me0.z), mm0 = c.motion ? c.motion() : null;
+        if(dd < (route.air ? 60 : 120) && (!route.air || (mm0 && mm0.y - groundY(me0.x, me0.z) < 3))) navArrive();
+        else if(G){
+          pts = G.via ? new Float64Array([me0.x, me0.z, G.via.x, G.via.z, route.x, route.z]) : new Float64Array([me0.x, me0.z, route.x, route.z]);
+          var hd = Math.round(((-G.bearing*180/Math.PI) % 360 + 360) % 360);
+          info = {step: {kind: "fly", road: "Fly " + ("00" + hd).slice(-3) + "°" + (G.via ? " to the final approach" : G.gs != null ? " down the glideslope" : "")}, toNext: G.dist, left: dd,
+                  eta_s: dd/Math.max(10, mm0 ? mm0.speed : 10), hint: G.gs != null ? "On final: follow the rings down to the runway" : ""};
+        }
+      } else if(route.R){
         var P = HQV.hqnav.progress(route.R, me0.x, me0.z);
         if(P.arrived) navArrive();
         else {
@@ -2065,7 +2275,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(info) info.dest = route.label;
     if(nui) nui.banner(info);
     if(fx) fx.update(dt, me0, cam);
-    if(mm) mm.frame({x: me0.x, z: me0.z, yaw: m ? m.yaw : 0, speed: m ? m.speed : 0, route: pts,
+    if(mm) mm.frame({x: me0.x, z: me0.z, yaw: m ? m.yaw : 0, view: m && m.view != null ? m.view : null, speed: m ? m.speed : 0, route: pts,
                      waypoint: route ? {x: route.x, z: route.z} : null, others: c.others ? c.others() : [], dt: dt});
   }
   // the minimap's places: civic sites and the HQs as they are placed now (redrawn only when the HQs change)
@@ -2109,7 +2319,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(HQV.hqnavui){
       try {
         nui = HQV.hqnavui.mount(c.el, {places: navPlaces, onClear: navClear, announce: announce,
-          onGo: function(p){ navTo({x: p.door.x, z: p.door.z, label: p.label, kind: p.kind}); }});
+          onGo: function(p){ navTo({x: p.door.x, z: p.door.z, label: p.label, kind: p.kind, air: p.air || null}); }});
       } catch(e){ nui = null; }
     }
     if(nui){

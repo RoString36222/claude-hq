@@ -27,12 +27,16 @@ services:
       # kept out of the image) so they survive a redeploy. Drop files into
       # backend/sounds/ on the host; they appear in GET /v1/sounds immediately.
       ARENA_SOUNDS_DIR: /srv/sounds
+      # Prometheus metrics on their own port, for the monitoring profile below.
+      # Caddy only proxies app:8080, so /metrics is never public.
+      ARENA_METRICS_BIND: 0.0.0.0:9091
     volumes:
       - arena-data:/data
       - ./sounds:/srv/sounds:ro
     # Deliberately NOT published to the host: Caddy is the only way in.
     expose:
       - "8080"
+      - "9091"
     healthcheck:
       # `arena --health`, baked into the image.
       test: ["CMD", "arena-health"]
@@ -81,6 +85,8 @@ services:
       # appended by that installer.
       PANEL_DOMAIN: ${PANEL_DOMAIN:-}
       PANEL_UPSTREAM: ${PANEL_UPSTREAM:-}
+      # Set by ops/install-monitoring.sh (Grafana on its own domain); empty otherwise.
+      GRAFANA_DOMAIN: ${GRAFANA_DOMAIN:-}
     ports:
       - "80:80"     # needed for the ACME HTTP challenge, and redirects to 443
       - "443:443"
@@ -89,7 +95,71 @@ services:
       - caddy-data:/data      # certificates live here -- keep this volume
       - caddy-config:/config
 
+  # ---- Monitoring (optional): docker compose --profile monitoring up -d ----
+  # Prometheus scrapes the Arena (app:9091) and node-exporter (the VPS) over the
+  # compose network; Grafana serves the "Arena backend" dashboard on
+  # 127.0.0.1:3000 of the VPS only. Reach it with an SSH tunnel:
+  #   ssh -L 3000:127.0.0.1:3000 <you>@<vps>   then open http://localhost:3000
+  # Put COMPOSE_PROFILES=monitoring in .env to keep it in every `docker compose` call.
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --storage.tsdb.retention.size=2GB
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    expose:
+      - "9090"
+
+  # The VPS's CPU, memory, disk and load, read from the host's /proc, /sys and
+  # root filesystem (read-only). Not on the host network, so port 9100 is not
+  # exposed anywhere.
+  node-exporter:
+    profiles: ["monitoring"]
+    image: prom/node-exporter:v1.9.1
+    restart: unless-stopped
+    pid: host
+    command:
+      - --path.rootfs=/host
+    volumes:
+      - /:/host:ro,rslave
+    expose:
+      - "9100"
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana-oss:12.1.0
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      # Set GRAFANA_ADMIN_PASSWORD in .env; the fallback is only for a first look.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/arena.json
+      # Behind Caddy on GRAFANA_DOMAIN (ops/install-monitoring.sh): links and cookies for https.
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-https://${GRAFANA_DOMAIN:-localhost}/}
+      GF_SECURITY_COOKIE_SECURE: ${GRAFANA_COOKIE_SECURE:-true}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+
 volumes:
   arena-data:
+  prometheus-data:
+  grafana-data:
   caddy-data:
   caddy-config:

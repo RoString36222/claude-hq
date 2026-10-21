@@ -235,15 +235,53 @@ POST /v1/vehicles/:id/park {world, x, z, yaw}
 
 ## Calling your vehicle (games/hqcall.js)
 
-- **C** (or the garage menu) lists your owned vehicles. Pick one, and it comes to you.
-- If it's parked within 1.5 km of you in this world, it **drives itself** to the nearest road
-  point next to you along games/hqnav.js's road route, as traffic does (stopping at junctions,
-  avoiding cars). Hazard lights on; a pin and an ETA on the minimap.
-- If it's farther, in another world, or no road reaches you, it **arrives from just out of
-  sight**: it appears on the road behind the nearest corner and drives the last stretch.
-- It parks by the kerb beside you and unlocks. A bike or car you leave stays where you left it
-  (saved through `/park`); T (Return to HQ) still puts everything back in the garage.
-- One vehicle on its way at a time; calling again redirects it.
+Your vehicles live in the city's **multi-storey carpark** (games/hqcarpark.js, `HQV.hqCarpark`:
+`find(W)` -> the city's carpark site or null, `bays(site)`, `exitPath(bay, site)` from the bay down
+the ramps to the street entrance, `entryPath(bay, site)` the reverse, `entrance(site)` -> `{x, z, yaw}`
+on the road graph; feature-detected, so calling works before it exists).
+
+- **C** (a tap; held, C still raises the camera) or the **📞 Call (C)** button lists your vehicles:
+  `HQV.hqGarage.mine()` (`own:<id>`) when the Arena's garage exists, until then the Showroom's vehicle,
+  plus your HQ garage's car and motorbike. Each row: name, paint swatch, where it is ("In the carpark",
+  "291 m away · ~53 s", "On its way · 120 m"). Keys inside never leak; textContent only.
+- **Pick one** and it comes to you, picked in this order:
+  1. It stands in this world within 1.5 km (`CALL_R`): it drives from there.
+  2. It is in the carpark (a city with one): it leaves its bay (the bay is a stable hash of the
+     vehicle), follows `exitPath` down the ramps at 4 m/s (`RAMP_V`, heights from the path), then
+     drives the road route from `entrance()` to you.
+  3. Else (no carpark, no route, another world) it **appears out of sight**: a street point
+     45-320 m away, at least 40 m from you (`MIN_HIDE`) and outside the camera's frustum, with a
+     road route under 900 m. It then drives the last stretch.
+- **On the road** (games/hqnav.js route, drive mode) it keeps 1.8 m right of the centre line
+  (`LANE`; everyone drives on the right) and cruises at 12 m/s. It slows for turns (4.5 m/s
+  through a right angle, looked ahead 30 m) and keeps 6 m behind traffic and you
+  (`aheadOf`, a 1.4 m half-lane). After 4 s held up by traffic it noses through for 3 s, since
+  traffic stops for it too (`w.callRoad.obstacle`). It gives up and parks after 25 s stuck.
+  Hazard lights blink, an orange dot shows on the minimap, and a pill reads
+  "📞 BMW M3 on its way · 315 m · ~44 s". It never stops for you in its last 12 m.
+- **It parks at the kerb beside you**, on the right of the way it came, 1.3 m in from the
+  carriageway's edge and facing along the road. If you stand on that spot, it stops 6.5 m past
+  you. E gets you in. It can't be boarded while it drives itself.
+- **Calling again** redirects it at its current speed. Calling another vehicle parks the first one
+  where it is.
+- **When you get out**, 5 s later (`RETURN_S`) it drives itself back:
+  - With a carpark: along the roads to `entrance()`, then `entryPath` up into its bay. There it
+    leaves the world (no prop) and is marked stored. `HQV.hqCarpark.stored(site, bay, {key,
+    vehicleId, color})` is called when it exists, so the carpark can show it.
+  - With no carpark: back to its place by your HQ's garage.
+  - Getting back in within the 5 s cancels it.
+- **T (Return to HQ)** still puts everything back at your HQ.
+- **A trip cut short** (you change world mid-trip) leaves the vehicle where it was. That pose is
+  the only one saved through `hqGarage.park` (debounced). Otherwise the carpark is where your
+  vehicles are.
+- **World id, not `w.net`:** your vehicles are remembered by the City's world id (`w.world()`).
+  `w.net` is `city3d` on the Commons and every island alike.
+- **The Showroom's vehicle survives a world change:** it's remembered in this session and in
+  localStorage (`hq3d.own.showroom.v1`). It stands where you left it in its own world, and
+  anywhere else it arrives from out of sight.
+- **Hooks for tools:** `HQ3D.inst.call` = `{open, pick(key), list, state, trips, own, prop(key),
+  back(key), roads, isOpen}`. The City adds `w.callRoad = {snap, route, candidates, traffic, W,
+  obstacle}`.
 
 ## Build order
 

@@ -85,6 +85,8 @@ services:
       # appended by that installer.
       PANEL_DOMAIN: ${PANEL_DOMAIN:-}
       PANEL_UPSTREAM: ${PANEL_UPSTREAM:-}
+      # Set by ops/install-monitoring.sh (Grafana on its own domain); empty otherwise.
+      GRAFANA_DOMAIN: ${GRAFANA_DOMAIN:-}
     ports:
       - "80:80"     # needed for the ACME HTTP challenge, and redirects to 443
       - "443:443"
@@ -145,6 +147,9 @@ services:
       GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/arena.json
+      # Behind Caddy on GRAFANA_DOMAIN (ops/install-monitoring.sh): links and cookies for https.
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-https://${GRAFANA_DOMAIN:-localhost}/}
+      GF_SECURITY_COOKIE_SECURE: ${GRAFANA_COOKIE_SECURE:-true}
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro

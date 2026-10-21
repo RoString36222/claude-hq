@@ -23,20 +23,25 @@ The Arena serves Prometheus metrics on its own port when `ARENA_METRICS_BIND` is
 is never public. Labels are the method, the route template (`/v1/rooms/:room_id/ws`,
 never a raw path) and the status, so no room, user or handle ends up in a series.
 
-On the VPS, from `backend/`:
+On the VPS: add an A record for the dashboard's domain pointing at the VPS, then from the repo:
 
 ```bash
-echo 'GRAFANA_ADMIN_PASSWORD=<a strong password>' >> .env
-echo 'COMPOSE_PROFILES=monitoring' >> .env      # keep it in every `docker compose` call
-docker compose --profile monitoring up -d prometheus node-exporter grafana
-ssh -L 3000:127.0.0.1:3000 <you>@<vps>          # from your machine; then open http://localhost:3000
+sudo GRAFANA_DOMAIN=grafana.example.com ARENA_DOMAIN=arena.example.com bash ops/install-monitoring.sh
 ```
+
+It adds the Grafana site to the Caddyfile (HTTPS with an automatic certificate),
+generates a strong admin password into `.env` and prints it once, sets
+`COMPOSE_PROFILES=monitoring`, and starts Prometheus, node-exporter and Grafana.
+Re-running is safe. Then open `https://grafana.example.com` and log in as `admin`.
+Grafana also listens on `127.0.0.1:3000` of the VPS, if you'd rather use an SSH tunnel
+(`ssh -L 3000:127.0.0.1:3000 <you>@<vps>`).
 
 - **Prometheus** (`monitoring/prometheus.yml`) scrapes the Arena and node-exporter every
   15 s and keeps 30 days (at most 2 GB). It is not published on the host.
 - **node-exporter** reads the VPS's CPU, memory, disk and load from the host's `/proc`,
   `/sys` and root filesystem (read-only). It is not published on the host.
-- **Grafana** listens on `127.0.0.1:3000` of the VPS only (reach it over SSH). It opens
+- **Grafana** is served by Caddy on `GRAFANA_DOMAIN` behind its own login (sign-up and
+  anonymous access off, secure cookies, brute-force login protection on). It opens
   on the provisioned **Arena backend** dashboard (`monitoring/grafana/dashboards/arena.json`):
   - overview: up, version, uptime, requests/s, 5xx rate, p95 latency, open websockets, people in rooms
   - traffic and latency (p50/p95/p99) per route, a route table, 4xx and 5xx per route

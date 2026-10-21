@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.2.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.2.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -336,6 +336,10 @@ and feature guide.
 
 ## Changelog
 
+- **3.2.2 — S turns you round.** On foot, **S** no longer walks you backwards facing away: it turns you round
+  (a smooth half turn that eases in and out and lands without overshooting, toward the side you are already
+  turning), and held, walks you back the way you came while the camera swings round behind you. A tap still
+  makes a full about-face; **W** cancels it; **A**/**D** during it change where you end up.
 - **3.2.1 — The Get out pill stays clear of the route banner.** On the ground with a route set (taxiing a
   plane, or in a car or on a bike), the Get out / Get on pill now sits just under the navigation banner at
   whatever height it is, instead of a fixed 96 px that a two- or three-line banner overlapped.

@@ -351,6 +351,13 @@ out.wFirst = H.footStep(z, {fwd: 1}, 1/60).speed;
 out.w = [run(z, {fwd: 1}, 0.1, 60).speed, run(z, {fwd: 1}, 1, 60).speed, run(z, {fwd: 1, run: true}, 1, 60).speed];
 var back = run({yaw: 0.7, rate: 0, rateV: 0, speed: 0, speedV: 0}, {fwd: -1}, 1, 60);
 out.back = [back.speed, back.yaw, back.travelYaw];
+// S turns you round (HQ 3.3): the most it ever turns past the half turn, a tap's end, and W cancelling it
+(function(){ var st = {yaw: 0}, most = 0; for(var i = 0; i < 120; i++){ st = H.footStep(st, {fwd: -1}, 1/60);
+  var d = st.yaw < 0 ? st.yaw + 2*Math.PI : st.yaw; most = Math.max(most, d); } out.aboutMost = most; })();
+var tap = run(run({yaw: 0}, {fwd: -1}, 0.1, 60), {}, 1, 60);
+out.tap = [tap.yaw, tap.speed, tap.about];
+var cancel = run(run({yaw: 0}, {fwd: -1}, 0.15, 60), {fwd: 1}, 0.5, 60);
+out.cancel = [cancel.about, cancel.speed];
 var turn = run(z, {turn: 1}, 1, 60);
 out.turn = [turn.rate, turn.yaw, turn.travelYaw];
 out.turnR = run(z, {turn: -1}, 1, 60).rate;
@@ -441,11 +448,21 @@ class Hq3dPure(unittest.TestCase):
         self.assertLess(self.o["stop"], 4)                    # eases down, not a hard stop
         self.assertGreater(self.o["stop"], 1)
 
-    def test_s_steps_back_facing_forward(self):
+    def test_s_turns_you_round_and_walks_on(self):
+        # HQ 3.3: S no longer steps back facing away; it turns you round (a half turn on a critically damped
+        # spring) and, held, walks you forward out of it, toward where the camera was.
         speed, yaw, travel = self.o["back"]
-        self.assertAlmostEqual(speed, -4*0.65, delta=0.01)
-        self.assertAlmostEqual(yaw, 0.7, places=9)           # no turning
-        self.assertAlmostEqual(travel, 0.7 - math.pi, places=6)
+        self.assertAlmostEqual(speed, 4, delta=0.15)                                   # walking forward
+        self.assertAlmostEqual(math.cos(yaw - (0.7 + math.pi)), 1, delta=1e-3)          # facing the other way
+        self.assertAlmostEqual(travel, yaw, places=9)                                   # headed where you face
+        self.assertLessEqual(self.o["aboutMost"], math.pi + 0.01)                       # never overshoots
+        tyaw, tspeed, tabout = self.o["tap"]
+        self.assertAlmostEqual(math.cos(tyaw - math.pi), 1, delta=1e-3)                 # a tap still turns you round
+        self.assertAlmostEqual(tspeed, 0, delta=0.05)
+        self.assertIsNone(tabout)
+        cabout, cspeed = self.o["cancel"]
+        self.assertIsNone(cabout)                                                       # W cancels the half turn
+        self.assertGreater(cspeed, 3)
 
     def test_turn_rate_springs(self):
         rate, yaw, travel = self.o["turn"]

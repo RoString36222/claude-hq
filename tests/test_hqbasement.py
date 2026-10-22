@@ -66,6 +66,7 @@ out.gallery = {n: PL.length, starters: PL.slice(0, 3).map(p => p.kind), bayMap: 
   clearSpots: [w1.arrive, w1.spawnFrom.lobby, L1.kiosk, L1.lift.front].concat(w1.doors.map(d => d.front).filter(Boolean)).every(s => PL.every(p => Math.hypot(s.x - p.x, s.z - p.z) > RM + 1)),
   clearCols: PL.every(p => L1.cols.every(cc => Math.hypot(cc.x - p.x, cc.z - p.z) > RM + 0.6)),
   clearLounge: PL.every(p => p.x - RM > L1.lounge.x1 + 0.3 || p.z - RM > L1.lounge.z1 + 0.3),
+  clearEV: PL.every(p => Math.abs(p.x - L1.ev.x) > 4.2 + RM || p.z + RM < L1.ev.z + 1.6),
   locked: B.layout(3).plinths.filter(p => !p.lit).map(p => [p.bay, p.unlock])};
 // the lounge: an open doorway in the hall-side glass, the glass either side still blocks
 const LD = L1.lounge.door, dz = (LD.z0 + LD.z1)/2;
@@ -118,6 +119,12 @@ const yaws0 = w1.bikes.map(b => b.yaw);
 for(let i = 0; i < 5; i++) w1.update(i*0.1, 0.1, 0);
 out.calmStatic = JSON.stringify(yaws0) === JSON.stringify(w1.bikes.map(b => b.yaw));
 out.nameFor = B.nameFor({look: {sign: "Neon Dreams"}});
+// 3.11.1: the largest catalogue vehicle as drawn (shown dims, SCALE applied) turns on a plinth without touching its edge
+{ const keep = window.HQV; window.HQV = {}; new Function(fs.readFileSync(root + "/games/hqvehiclemodels.js", "utf8"))();
+  const VM = window.HQV.hqVehicleModels; window.HQV = keep;
+  const cat = JSON.parse(fs.readFileSync(root + "/games/vehicles/catalogue.json", "utf8")), vs = cat.vehicles || cat;
+  let big = {id: null, h: 0}; vs.forEach(e => { const d = VM.shown(e), h = Math.hypot(d.lengthM, d.widthM)/2; if(h > big.h) big = {id: e.id, h, len: d.lengthM}; });
+  out.biggest = {id: big.id, len: big.len, h: big.h, r: B.fitR(big.h + 0.2), rMax: RM}; }
 console.log(JSON.stringify(out));
 """
 
@@ -159,11 +166,17 @@ class BasementTest(unittest.TestCase):
         self.assertEqual(g["starters"], ["car", "moto", "bike"])
         self.assertTrue(g["bayMap"])
         self.assertGreater(g["minGap"], 0.3)        # at the largest radius, neighbours never touch
-        self.assertGreater(g["rMax"], 3.0)          # fits a 5.4 m saloon turning on it
-        for k in ("inRoom", "clearPad", "clearSpots", "clearCols", "clearLounge"):
+        self.assertGreaterEqual(g["rMax"], 3.4)     # [3.11.1] fits a 5.9 m limousine turning on it
+        for k in ("inRoom", "clearPad", "clearSpots", "clearCols", "clearLounge", "clearEV"):
             self.assertTrue(g[k], k)
         self.assertEqual(g["locked"][0], [4, 5])
         self.assertEqual(len(g["locked"]), 8)
+
+    def test_largest_vehicle_fits(self):
+        b = self.o["biggest"]
+        self.assertGreater(b["len"], 5.5)           # the catalogue's longest as drawn (i7 at car SCALE)
+        self.assertAlmostEqual(b["r"], b["h"] + 0.2, places=6)   # fitted, not clipped by the cap
+        self.assertGreater(b["rMax"] - b["h"], 0.3)  # and the cap leaves room for a slightly larger built box
 
     def test_lounge_doorway(self):
         lo = self.o["lounge"]

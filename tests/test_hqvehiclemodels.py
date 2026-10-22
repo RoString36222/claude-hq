@@ -198,12 +198,13 @@ class VehicleModels(unittest.TestCase):
         self.assertLess(wmax, const("games/hqcarpark.js", "BAY_W") - 0.2)
         self.assertLess(lmax, const("games/hqcarpark.js", "BAY_D") + const("games/hqcarpark.js", "AISLE")/2 - 1.5,
                         "nose at the bay's back line, the tail leaves the aisle open")
-        # B1's gallery (games/hqbasement.js): plinths one pitch apart, their radius capped at R_MAX; the longest car's
-        # nose and tail stay on its plinth (its mirrors' corners may reach just past the rim)
+        # B1's gallery (games/hqbasement.js): plinths one pitch apart, their radius capped at R_MAX; [3.11.1] the
+        # largest car as drawn turns on its plinth, its whole box (mirrors' corners too) inside the rim
         bsrc = open(os.path.join(ROOT, "games/hqbasement.js")).read()
-        gal = dict((k, float(v)) for k, v in re.findall(r"\b(x0|x1|nBack): (-?[0-9.]+)", bsrc.split("var GAL = ", 1)[1].split("};", 1)[0]))
-        r_max = ((gal["x1"] - gal["x0"])/(gal["nBack"] - 1) - 0.35)/2
-        self.assertLess(lmax/2, r_max)
+        gal = dict((k, float(v)) for k, v in re.findall(r"\b(pitch|nBack): (-?[0-9.]+)", bsrc.split("var GAL = ", 1)[1].split("};", 1)[0]))
+        r_max = (gal["pitch"] - 0.35)/2
+        sweep = lambda rs: max((r["size"][0]**2 + r["size"][2]**2) ** 0.5 for r in rs)   # turning on a turntable
+        self.assertLess(sweep(cars)/2 + 0.2, r_max)
         self.assertLess(wmax, 2*r_max - 2.5)
         sweep = lambda rs: max((r["size"][0]**2 + r["size"][2]**2) ** 0.5 for r in rs)   # turning on a turntable
         self.assertLessEqual(sweep(cars), const("games/hqdealer.js", "CAR_CELL"))

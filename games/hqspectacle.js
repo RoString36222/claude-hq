@@ -41,6 +41,9 @@ var TYPES = ["twist", "spire", "lantern", "twins", "needle", "regent"];
 var NAMES = {twist: "The Helix", spire: "Aurora Spire", lantern: "The Lantern", twins: "Gemini Towers",
              needle: "Beacon Tower", regent: "The Regent"};
 var PARK_NAME = "Skyline Park";
+// [3.11.1] fireworks are heard only within BOOM_M of the camera, fading to nothing at that edge
+var BOOM_M = 1000;
+function boomVol(dist){ dist = +dist; return isFinite(dist) && dist >= 0 && dist < BOOM_M ? 0.55*(1 - dist/BOOM_M) : 0; }
 
 function hash32(s){
   var h = 0x811c9dc5; s = String(s);
@@ -1638,14 +1641,15 @@ function create(c, W, o){
       col.setHex(s2.col); C.set(col.r, col.g, col.b, s2.size); col.setHex(s2.col2); D.set(col.r, col.g, col.b, s2.seed);
       if(s2.t > fwLast && s2.t <= sec && cam && cam.x != null){
         var w = park.toW(s2.burst.x, s2.burst.z), d = Math.hypot(w.x - cam.x, park.g.position.y + s2.burst.y - (cam.y || 0), w.z - cam.z);
-        if(d < 2200) boom(d, s2.i);
+        if(d < BOOM_M) boom(d, s2.i);
       }
     });
     fwLast = sec;
     if(sh && sh.n !== fwSaid){ fwSaid = sh.n; if(dc < 1600 && sh.t < 5) say("🎆 Fireworks over " + PARK_NAME + "!"); }
   }
   function boom(dist, seed){
-    var A = E.audioOut ? E.audioOut() : null; if(!A) return;
+    var vol = boomVol(dist); if(!(vol > 0)) return;
+    var A = E.ambientOut ? E.ambientOut() : E.audioOut ? E.audioOut() : null; if(!A) return;
     try {
       var ac = A.ctx;
       if(!boomBuf || boomBuf.sampleRate !== ac.sampleRate){
@@ -1654,8 +1658,8 @@ function create(c, W, o){
       }
       var src = ac.createBufferSource(), lp = ac.createBiquadFilter(), gn = ac.createGain(), t0 = ac.currentTime + dist/343;
       src.buffer = boomBuf; src.playbackRate.value = 0.8 + (seed % 7)*0.06;
-      lp.type = "lowpass"; lp.frequency.value = 260 + 1400*Math.max(0, 1 - dist/1200);
-      gn.gain.value = 0.55*Math.max(0.06, 1 - dist/2200);
+      lp.type = "lowpass"; lp.frequency.value = 260 + 1400*Math.max(0, 1 - dist/BOOM_M);
+      gn.gain.value = vol;
       src.connect(lp); lp.connect(gn); gn.connect(A.out); src.start(t0);
     } catch(e){}
   }
@@ -1776,7 +1780,7 @@ function create(c, W, o){
   return inst;
 }
 
-HQV.hqSpectacle = {claim: claim, create: create, coasterPlan: coasterPlan, TYPES: TYPES, NAMES: NAMES, PARK_NAME: PARK_NAME,
+HQV.hqSpectacle = {boomVol: boomVol, BOOM_M: BOOM_M, claim: claim, create: create, coasterPlan: coasterPlan, TYPES: TYPES, NAMES: NAMES, PARK_NAME: PARK_NAME,
   shells: shells, showAt: showAt, SHOW_EVERY: SHOW_EVERY, SHOW_LEN: SHOW_LEN, FW_SLOTS: FW_SLOTS, FW_RISE: FW_RISE, FW_LIVE: FW_LIVE, FW_KINDS: FW_KINDS,
   PARK_MIN: PARK_MIN, MAX_MARKS: MAX_MARKS, LANDMARK_GAP: LANDMARK_GAP, hash32: hash32};
 })();

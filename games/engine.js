@@ -121,6 +121,10 @@ function sfxVolume(){
   v = parseFloat(v); return isFinite(v) ? clamp(v, 0, 1) : 0.5;
 }
 function sfxSetVolume(v){ try { localStorage.setItem("hq_sfx", String(clamp(+v || 0, 0, 1))); } catch(e){} if(SND.master) SND.master.gain.value = sfxVolume(); }
+// [3.11.1] Ambient sounds (thunder, fireworks, rain, the jets' roar): their own switch, localStorage hq_ambient
+// ("0" off, anything else or unset on), separate from engines and game sounds; still under the one volume.
+function ambientOn(){ var v = null; try { v = localStorage.getItem("hq_ambient"); } catch(e){} return v !== "0"; }
+function ambientSet(on){ try { localStorage.setItem("hq_ambient", on ? "1" : "0"); } catch(e){} }
 function audio(){
   if(SND.ctx) { if(SND.ctx.state === "suspended") SND.ctx.resume().catch(function(){}); return SND.ctx; }
   var C = window.AudioContext || window.webkitAudioContext; if(!C) return null;
@@ -419,6 +423,11 @@ function noiseLoop(freq, q){
     stop: function(){ try { g.gain.cancelScheduledValues(a.currentTime); g.gain.setTargetAtTime(0, a.currentTime, 0.05); src.stop(a.currentTime + 0.3); } catch(e){} }
   };
 }
+// an ambient noiseLoop: silent while Ambient sounds is off (checked every set(), so the switch acts at once)
+function ambientLoop(freq, q){
+  var L = noiseLoop(freq, q);
+  return {set: function(gain, fq){ L.set(ambientOn() ? gain : 0, fq); }, stop: L.stop};
+}
 // Browsers allow audio only after a user gesture: wake it on the first one.
 if(typeof window.addEventListener === "function"){
   window.addEventListener("pointerdown", function(){ if(sfxVolume() > 0) audio(); }, {once: true, capture: true});
@@ -452,8 +461,9 @@ HQV.engine = {now: now, clamp: clamp, hex: hex, angLerp: angLerp, calm: calm, sa
               fmtTime: fmtTime, dist3: dist3, lib: lib, loadGlb: loadGlb, hasWebGL2: hasWebGL2,
               senderTime: senderTime, jitter: jitter, pushSnap: pushSnap, bracket: bracket,
               sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES), engineHz: engineHz, watchBar: watchBar,
-              noiseLoop: noiseLoop,
+              noiseLoop: noiseLoop, ambientLoop: ambientLoop, ambientOn: ambientOn, ambientSet: ambientSet,
               // the shared AudioContext and its master gain (the SFX volume), or null when sound is off:
               // for a game that shapes its own sound (the City's thunder) instead of a named sfx
-              audioOut: function(){ var a = sfxVolume() > 0 ? audio() : null; return a && SND.master ? {ctx: a, out: SND.master} : null; }};
+              audioOut: function(){ var a = sfxVolume() > 0 ? audio() : null; return a && SND.master ? {ctx: a, out: SND.master} : null; },
+              ambientOut: function(){ var a = ambientOn() && sfxVolume() > 0 ? audio() : null; return a && SND.master ? {ctx: a, out: SND.master} : null; }};
 })();

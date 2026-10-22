@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.11.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.11.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -371,6 +371,13 @@ and feature guide.
 
 ## Changelog
 
+- **3.11.1 — Bigger plinths, calmer ambience.** B1's gallery turntables grow to 3.45 m (from 3.19 m) so the
+  longest catalogue cars as drawn (the 5.8 m i7, the Urus) turn on them with room to spare: seven plinths along
+  the back wall and eight down the front, on a 7.25 m pitch, still clear of the lifts, kiosk, lounge, columns and
+  chargers (bay i is still slot 3 + i). Thunder is heard only for strikes within 1 km (fading to nothing at the
+  edge, no floor) and fireworks only within 1 km of the camera. A new **Ambient sounds** switch in Settings
+  (on by default, separate from engines and game sounds) silences thunder, fireworks, the rain's hiss and the
+  jets' roar. **Privacy / egress:** none (one local setting, `hq_ambient`). **Third-party assets:** none.
 - **3.11.0 — The boombox.** While you are tuned in to your Music room and its song plays, your
   character carries a big cartoon boombox on the right shoulder in the 3D City (toon-shaded and inked,
   squashing on the beat, woofers pumping, notes popping out), the right hand gripping it from the outside.

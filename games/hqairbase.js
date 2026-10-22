@@ -518,7 +518,7 @@ function create(c, S, o){
     if(Object.keys(boomAt).length > 20) boomAt = {};
     // the roar: one noise band for all of them, louder the nearer the nearest
     if(near < 1500 && E.noiseLoop){
-      if(!roar) roar = E.noiseLoop(320, 0.8);
+      if(!roar) roar = (E.ambientLoop || E.noiseLoop)(320, 0.8);   // [3.11.1] an ambient sound
       roar.set(clamp(0.5/(1 + Math.pow(near/180, 2)), 0, 0.5), 220 + 900/(1 + near/200));
     }
   };

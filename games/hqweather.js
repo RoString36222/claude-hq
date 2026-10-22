@@ -48,6 +48,9 @@ function hash32(s){
   for(var i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
   return h >>> 0;
 }
+// [3.11.1] thunder is heard only for strikes within THUNDER_M of the camera, fading to nothing at that edge (no floor)
+var THUNDER_M = 1000;
+function thunderVol(dist){ dist = +dist; return isFinite(dist) && dist >= 0 && dist < THUNDER_M ? 0.85*(1 - dist/THUNDER_M) : 0; }
 function clamp(v, a, b){ return v < a ? a : (v > b ? b : v); }
 function smooth(t){ t = clamp(t, 0, 1); return t*t*(3 - 2*t); }
 function lerp(a, b, k){ return a + (b - a)*k; }
@@ -207,14 +210,14 @@ function create(c, o){
     bolt.geometry = boltG;
   }
   function thunder(dist, seed){
-    var A = E.audioOut ? E.audioOut() : null; if(!A) return;
+    var vol = thunderVol(dist); if(!(vol > 0)) return;
+    var A = E.ambientOut ? E.ambientOut() : E.audioOut ? E.audioOut() : null; if(!A) return;
     try {
       var ac = A.ctx, dur = 3.4, n = Math.floor(ac.sampleRate*dur), buf = ac.createBuffer(1, n, ac.sampleRate), d = buf.getChannelData(0);
       var r = c.rng((seed % 100000) + 3), last = 0;
       for(var q = 0; q < n; q++){ last = (last + 0.02*(r()*2 - 1))/1.02; d[q] = last*3.4*(1 + 0.6*Math.sin(q/ac.sampleRate*9)); }   // brown noise, rolling
       var src = ac.createBufferSource(), lp = ac.createBiquadFilter(), gn = ac.createGain(), t0 = ac.currentTime;
       src.buffer = buf; lp.type = "lowpass"; lp.frequency.value = 140 + 520*Math.max(0, 1 - dist/1500);
-      var vol = 0.85*Math.max(0.12, 1 - dist/1900);
       gn.gain.setValueAtTime(0.0001, t0); gn.gain.exponentialRampToValueAtTime(vol, t0 + 0.06); gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
       src.connect(lp); lp.connect(gn); gn.connect(A.out); src.start(t0); src.stop(t0 + dur);
     } catch(e){}
@@ -249,7 +252,7 @@ function create(c, o){
         SU.uVel.value.set(L.wx*L.wind*2.2, -1.5, L.wz*L.wind*2.2); SU.uBright.value = night ? 0.62 : 1;
       }
       // rain on the ground: a hiss that follows the rain (engine.js noiseLoop needs set() every frame)
-      if(rainA > 0.05 && !hiss && E.noiseLoop) hiss = E.noiseLoop(2600, 0.35);
+      if(rainA > 0.05 && !hiss && E.noiseLoop) hiss = (E.ambientLoop || E.noiseLoop)(2600, 0.35);   // [3.11.1] an ambient sound
       if(hiss){ if(rainA > 0.05) hiss.set(0.04 + rainA*0.11); else { hiss.stop(); hiss = null; } }
       // the cloud deck, drifting with the wind, wrapped around the camera
       var drift = t*(4 + L.wind*14), shade = night ? 0.16 : 1 - L.dim*0.62, cop = show ? L.cloud*(calm ? 0.7 : 0.85) : 0;
@@ -273,7 +276,7 @@ function create(c, o){
             var gy = o.ground ? o.ground(st.x, st.z) : 0, dist = Math.hypot(st.x - cx, st.z - cz);
             makeBolt(st, gy); boltLeft = 0.32; bolt.visible = true;
             flash = Math.max(flash, 1 - Math.min(0.75, dist/2400));
-            pending.push({at: sec + dist/343, dist: dist, seed: st.seed});
+            if(dist < THUNDER_M) pending.push({at: sec + dist/343, dist: dist, seed: st.seed});
           }
         });
       } else if(boltLeft <= 0) bolt.visible = false;
@@ -294,7 +297,7 @@ function create(c, o){
   return inst;
 }
 
-HQV.hqWeather = {SLOT: SLOT, EASE: EASE, KINDS: KINDS, WEIGHT: WEIGHT, LOOK: LOOK, NAME: NAME, ICON: ICON, STRIKE_WIN: STRIKE_WIN,
+HQV.hqWeather = {thunderVol: thunderVol, THUNDER_M: THUNDER_M, SLOT: SLOT, EASE: EASE, KINDS: KINDS, WEIGHT: WEIGHT, LOOK: LOOK, NAME: NAME, ICON: ICON, STRIKE_WIN: STRIKE_WIN,
   hash32: hash32, kindAt: kindAt, at: at, look: look, strikes: strikes, forecast: forecast, lerpHex: lerpHex,
   settled: settled, SNOW_MAX: SNOW_MAX, create: create};
 })();

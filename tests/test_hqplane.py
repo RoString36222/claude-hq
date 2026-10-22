@@ -354,5 +354,24 @@ class AirlinerStands(unittest.TestCase):
         self.assertGreater(b["v"][0] - a["v"][1], 20)                  # the two stands apart
 
 
+class FlyOnWiring(unittest.TestCase):
+    """3.11.1: taking off spammed "Flying on to <someone>'s island…", rebuilt that City again and again and could
+    swap you mid-air into a fallback Commons. The City now asks HQV.ocean.flyOn (tests/test_ocean.py checks its
+    hysteresis); hq3d never swaps in a City built ahead that came back as another world; a Go to route to a plane
+    ends when you board one."""
+    def test_wiring(self):
+        city = open(os.path.join(ROOT, "games", "hqcity3d.js"), encoding="utf-8").read()
+        hq = open(os.path.join(ROOT, "games", "hq3d.js"), encoding="utf-8").read()
+        self.assertIn("HQV.ocean.flyOn(flyS,", city)
+        self.assertNotIn("heliGo", city)                                     # the old arm-on-every-frame state
+        self.assertIn("if(!h){ flyS.go = null;", city)                       # landing / getting out disarms
+        self.assertIn("c.cityFailed(G.world)", city)
+        self.assertIn("!w.prebuilt) say(", city)                            # a City built ahead says nothing
+        self.assertIn('route.kind === "plane" ||', city)
+        self.assertIn('name: "city", prebuilt: true}', hq)
+        self.assertIn("got.world() !== world){ nextFailed[world] = true; dropNext(); return; }", hq)
+        self.assertIn("nextFailed[world]) return false;", hq)
+
+
 if __name__ == "__main__":
     unittest.main()

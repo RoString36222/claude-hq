@@ -759,6 +759,7 @@ function mount(el, api){
     // voyages (games/hqcity3d.js, games/hqvoyage.js): the next city built while you sail, then moved into with no fade
     prebuildCity: function(world){ return inst.prebuildCity ? inst.prebuildCity(world) : false; },
     cityBuilt: function(world){ return !!(nextCity && nextCity.world === world && nextCity.ready); },
+    cityFailed: function(world){ return !!(nextFailed && nextFailed[world]); },
     swapCity: function(world, keep){ return inst.swapCity ? inst.swapCity(world, keep) : false; },
     night: function(){ return isNight(); },
     // the dealership (games/hqdealer.js via games/hqcity3d.js): its door or forecourt opens the dealer panel
@@ -4010,19 +4011,24 @@ function mount(el, api){
   // loading screen, mid-sea, where both cities are far behind the haze.
   var nextCity = null, keepRide = false;
   function dropNext(){ if(!nextCity) return; var w = nextCity.w; nextCity = null; if(w && w !== cur && w.destroy){ try { w.destroy(); } catch(e){} } }
+  // a City built ahead that came back as another world (the island isn't available: the Commons instead) is
+  // dropped and never swapped in (3.11.1: it was, and you were flown into a second Commons mid-air)
+  var nextFailed = {};
   inst.prebuildCity = function(world){
-    if(!scene || !HQV.hqCity3d || !HQV.hqWorlds.city3d) return false;
+    if(!scene || !HQV.hqCity3d || !HQV.hqWorlds.city3d || nextFailed[world]) return false;
     if(nextCity && nextCity.world === world) return true;
     dropNext();
     HQV.hqCity3d.go(world, null);
-    var w = {scene: new THREE.Scene(), name: "city"}, got = null;
+    var w = {scene: new THREE.Scene(), name: "city", prebuilt: true}, got = null;
     tgt = w.scene;
     try { got = HQV.hqWorlds.city3d(ctx, w) || w; } catch(err){ got = null; }
     tgt = scene;
     if(!got) return false;
     if(got.setTime) got.setTime(isNight()); if(got.onData) got.onData(sessions);
     var N = nextCity = {world: world, w: got, ready: false};
-    (got.whenReady || Promise.resolve()).then(function(){ if(nextCity === N){ N.ready = true; got.isReady = true; } },
+    (got.whenReady || Promise.resolve()).then(function(){ if(nextCity !== N) return;
+                                                          if(got.world && got.world() !== world){ nextFailed[world] = true; dropNext(); return; }
+                                                          N.ready = true; got.isReady = true; },
                                               function(){ if(nextCity === N) dropNext(); });
     return true;
   };
@@ -4031,7 +4037,7 @@ function mount(el, api){
     if(!nextCity || nextCity.world !== world || !nextCity.ready || !scene) return false;
     var C = worlds.city;
     if(C){ delete worlds.city; C.swapOut = true; }
-    worlds.city = nextCity.w; nextCity = null;
+    worlds.city = nextCity.w; nextCity.w.prebuilt = false; nextCity = null;
     lastCity = null; entering = null;
     var fl = ride && (ride.heli || ride.plane);
     if(keep && fl){ fl.x -= +keep.dx || 0; fl.z -= +keep.dz || 0; ride.home = null; keepRide = true; }

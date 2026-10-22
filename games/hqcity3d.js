@@ -841,7 +841,7 @@ HQV.hqWorlds.city3d = function(c, w){
       V2 = !!doc && (doc.v | 0) >= 2;
       if(!V2) return doc;
       owner = ownerOf(worldId);
-      if(worldId !== want) say(want === COMMONS ? "" : "That island isn't available; you're in the Commons.");
+      if(worldId !== want && !w.prebuilt) say(want === COMMONS ? "" : "That island isn't available; you're in the Commons.");   // (not a City built ahead as you fly on: 3.11.1)
       return fetchCity().then(function(){ return doc; });
     });
   }
@@ -2159,7 +2159,7 @@ HQV.hqWorlds.city3d = function(c, w){
 
   /* ========== AIR: helicopters, helipads, the air base, the carrier, the jets (games/hqheli.js, games/hqair.js) ==========
      Everything of theirs is in this block; elsewhere in this file the hooks are single lines marked "// air:". */
-  var air = null, heliGo = null;
+  var air = null;
   function airSetup(){
     if(!HQV.hqAirbase || !HQV.hqheli || !W) return;
     try { air = HQV.hqAirbase.create(c, S, {W: W, sea: sea, commons: worldId === COMMONS, civics: civics, blocked: blocked, groundY: groundY, night: night, airfield: airfield()}); }
@@ -2189,29 +2189,41 @@ HQV.hqWorlds.city3d = function(c, w){
   };
   // Flying on: out over the sea toward another island, its City is built while you fly (hq3d's prebuildCity) and you
   // fly into it once you are nearer it than this one (swapCity, keeping the helicopter: no loading screen); if it
-  // cannot be built that way, HQV.hqTravel.arrive lands you there (the loading screen) as a boat does.
+  // cannot be built that way, HQV.hqTravel.arrive lands you there (the loading screen) as a boat does. Which island,
+  // and when, is HQV.ocean.flyOn's (3.11.1: armed only heading for it, past the coast, and for a plane past this
+  // airport's runways too; announced once; a City that came back as another world, e.g. an island that isn't
+  // available, is never swapped in: that island is left alone while you are here).
+  var flyS = null;
+  function flyOnR(kind){
+    var r = (island() ? HQV.ocean.COAST_R.island : HQV.ocean.COAST_R.commons) + 150;
+    if(kind && kind !== "heli"){
+      runways.forEach(function(R0){ r = Math.max(r, Math.hypot(R0.thr[0], R0.thr[1]) + 500, Math.hypot(R0.thr[0] + R0.dir[0]*R0.len, R0.thr[1] + R0.dir[1]*R0.len) + 500); });
+      planeProps.forEach(function(p){ if(p.home0) r = Math.max(r, Math.hypot(p.home0.x, p.home0.z) + 500); });
+    }
+    return r;
+  }
   w.onHeli = function(h){
-    if(!h || !V2 || !HQV.ocean || landing || !arch) return;
-    var st = h.st, dh = Math.hypot(st.x, st.z);
-    if(!heliGo){
-      if(dh < (island() ? HQV.ocean.COAST_R.island : HQV.ocean.COAST_R.commons) + 150) return;
-      var q = HQV.ocean.nearestIsland(st.x, st.z);
-      if(!q || !worldOk(q.world) || q.shore > 1600) return;
-      heliGo = {world: q.world, x: q.x, z: q.z, d0: q.dist, name: q.name || "the island", built: !!(c.prebuildCity && c.prebuildCity(q.world))};
-      say("Flying on to " + heliGo.name + "…");
+    if(!V2 || !HQV.ocean || !HQV.ocean.flyOn || landing || !arch) return;
+    if(!flyS) flyS = HQV.ocean.flyOnState();
+    if(!h){ flyS.go = null; flyS.cand = null; return; }        // landed or got out: nothing armed (it used to stay armed)
+    var st = h.st, now = Date.now();
+    var F = HQV.ocean.flyOn(flyS, {x: st.x, z: st.z, vx: st.vx, vz: st.vz, yaw: st.yaw, speed: st.speed}, {r: flyOnR(h.kind), now: now, ok: worldOk});
+    if(F.arm){
+      F.arm.built = !!(c.prebuildCity && c.prebuildCity(F.arm.world));
+      if(F.say) say("Flying on to " + F.arm.name + "…");
       return;
     }
-    var dn = Math.hypot(st.x - heliGo.x, st.z - heliGo.z);
-    if(dn > heliGo.d0 + 600){ heliGo = null; return; }                    // turned away: another island, or home
-    if(heliGo.built && dn < dh && c.cityBuilt && c.cityBuilt(heliGo.world)){
-      var G = heliGo; heliGo = null; landing = true;
+    var G = flyS.go; if(!G) return;
+    if(c.cityFailed && c.cityFailed(G.world)){ flyS.off[G.world] = Infinity; flyS.go = null; return; }   // not that island
+    if(G.built && F.swap && c.cityBuilt && c.cityBuilt(G.world)){
+      flyS.go = null; landing = true;
       if(c.swapCity && c.swapCity(G.world, {dx: G.x, dz: G.z})){ if(HQV.hqTravel && HQV.hqTravel.markVisited) HQV.hqTravel.markVisited(G.world); }
-      else { landing = false; heliGo = G; G.built = false; }
+      else { landing = false; flyS.go = G; G.built = false; }
       return;
     }
-    if(!heliGo.built && dn < HQV.ocean.COAST_R.island + 300 && HQV.hqTravel){
-      landing = true; say("Landing on " + heliGo.name + "…");
-      HQV.hqTravel.arrive(heliGo.world, null, travelHooks()).then(function(sp){ if(sp && sp.failed) landing = false; });
+    if(!G.built && Math.hypot(st.x - G.x, st.z - G.z) < HQV.ocean.COAST_R.island + 300 && HQV.hqTravel){
+      landing = true; say("Landing on " + G.name + "…");
+      HQV.hqTravel.arrive(G.world, null, travelHooks()).then(function(sp){ if(sp && sp.failed) landing = false; });
     }
   };
   /* ========== end AIR ========== */
@@ -2816,7 +2828,8 @@ HQV.hqWorlds.city3d = function(c, w){
       if(mode !== route.mode) navRoute();                 // on or off a vehicle: the route for the new way
       if(mode === "air"){
         var G = airGuideNow(me0), dd = Math.hypot(route.x - me0.x, route.z - me0.z), mm0 = c.motion ? c.motion() : null;
-        if(dd < (route.air ? 60 : 120) && (!route.air || (mm0 && mm0.y - groundY(me0.x, me0.z) < 3))) navArrive();
+        // a route to a plane (Go to: "Prop plane (fly it)") ends as you board one: it must not become a waypoint you fly to (3.11.1)
+        if(route.kind === "plane" || (dd < (route.air ? 60 : 120) && (!route.air || (mm0 && mm0.y - groundY(me0.x, me0.z) < 3)))) navArrive();
         else if(G){
           pts = G.via ? new Float64Array([me0.x, me0.z, G.via.x, G.via.z, route.x, route.z]) : new Float64Array([me0.x, me0.z, route.x, route.z]);
           var hd = Math.round(((-G.bearing*180/Math.PI) % 360 + 360) % 360);

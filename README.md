@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.11.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.11.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -371,6 +371,14 @@ and feature guide.
 
 ## Changelog
 
+- **3.11.2 — Steady flying on.** Taking off no longer glitches. The Commons' airport sits offshore, past the coast,
+  so the moment a plane lifted off the City picked the nearest island whatever your heading, said "Flying on to …"
+  and built that island's City (a long frame); a circuit dropped it and picked the next, again and again, and a City
+  that came back as another world (an island that isn't available) was swapped in under you mid-air. Flying on is
+  now armed only heading for an island (for a plane, also past the airport's runways) for 2 s, announced at most
+  once a minute per island, rests 20 s after you turn back, swaps only well past half-way, and never swaps in a
+  City built as another world. Landing or getting out disarms it, and a Go to route to a plane ends as you board.
+  **Privacy / egress:** none. **Third-party assets:** none.
 - **3.11.1 — Bigger plinths, calmer ambience.** B1's gallery turntables grow to 3.45 m (from 3.19 m) so the
   longest catalogue cars as drawn (the 5.8 m i7, the Urus) turn on them with room to spare: seven plinths along
   the back wall and eight down the front, on a 7.25 m pitch, still clear of the lifts, kiosk, lounge, columns and

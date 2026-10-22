@@ -137,6 +137,28 @@ out.river = {water: rs.land(mid[0]/100, mid[1]/100), boatWater: rs.boat.land(mid
              deck: rs.land(bp[0]/100, bp[2]/100), boatDeck: rs.boat.land(bp[0]/100, bp[2]/100),
              closed: O.seaOf(rdoc, null, (be.min_tier || 0) - 1).land(bp[0]/100, bp[2]/100),
              berths: rs.docks.map(function(d){ return RV.inWater(d.x, d.z) && !rs.land(d.x, d.z); }), none: O.riverOf({layers: {}})};
+// flying on (3.11.1): a plane circling off the Commons, a straight flight out, a hover, a turn home and back out
+O.setArchipelago(arch(6), "claude-hq@2");
+function fly(path, secs, r){
+  var S = O.flyOnState(), ev = [], firstSwap = null, dt = 1/30;
+  for(var t = 0; t < secs; t += dt){
+    var st = path(t), now = Math.round(t*1000), F = O.flyOn(S, st, {r: r, now: now});
+    if(F.arm) ev.push(["arm", now, F.arm.world, F.say, Math.round(Math.hypot(st.x, st.z))]);
+    if(F.cancel) ev.push(["cancel", now]);
+    if(F.swap && firstSwap == null && S.go) firstSwap = {t: now, dn: Math.round(Math.hypot(st.x - S.go.x, st.z - S.go.z)), dh: Math.round(Math.hypot(st.x, st.z))};
+  }
+  return {ev: ev, swap: firstSwap};
+}
+function circle(R, v){ return function(t){ var a = v*t/R; return {x: R*Math.sin(a), z: R*Math.cos(a), vx: v*Math.cos(a), vz: -v*Math.sin(a)}; }; }
+var i1 = arch(6).islands[0], u = [i1.x/Math.hypot(i1.x, i1.z), i1.z/Math.hypot(i1.x, i1.z)];
+function line(d0, v, dir){ return function(t){ var d = d0 + v*t*dir; return {x: u[0]*d, z: u[1]*d, vx: u[0]*v*dir, vz: u[1]*v*dir}; }; }
+function outBack(t){                                          // out toward island 1, home at 6 s, back out at 16 s
+  var v = 60, d = t < 6 ? 1000 + v*t : t < 16 ? 1360 - v*(t - 6) : 760 + v*(t - 16), s = t < 6 || t >= 16 ? 1 : -1;
+  return {x: u[0]*d, z: u[1]*d, vx: u[0]*v*s, vz: u[1]*v*s};
+}
+out.flyOn = {world1: i1.world, circuit: fly(circle(1500, 60), 300, 1150), circuitPlane: fly(circle(1500, 60), 300, 1800),
+             straight: fly(line(1000, 60, 1), 40, 1150), hover: fly(function(){ return {x: -u[0]*1600, z: -u[1]*1600, vx: 0, vz: 0, yaw: 0, speed: 0}; }, 20, 1150),
+             outBack: fly(outBack, 80, 1150)};
 console.log(JSON.stringify(out));
 """
 
@@ -239,6 +261,37 @@ class OceanTest(unittest.TestCase):
         self.assertEqual(tr["dock"], "dock")
         self.assertLess(((tr["at"][0] - tr["goal"]["x"]) ** 2 + (tr["at"][1] - tr["goal"]["z"]) ** 2) ** 0.5, 8)
         self.assertLess(tr["t"], 400)
+
+    def test_fly_on_hysteresis(self):
+        """3.11.1: taking off from the Commons' offshore airfield said "Flying on to …" (and built that City) over and
+        over as a circuit armed, dropped and re-armed island after island. Now: heading for it, once, steady."""
+        f = self.o["flyOn"]
+        for k in ("circuit", "circuitPlane"):
+            c = f[k]
+            said = [e for e in c["ev"] if e[0] == "arm" and e[3]]
+            self.assertLessEqual(len(said), 3, (k, c["ev"]))          # 5 laps of a 9.4 km circuit
+            last = {}
+            for e in said:                                          # never the same island twice inside a minute
+                if e[2] in last:
+                    self.assertGreaterEqual(e[1] - last[e[2]], 60000, (k, c["ev"]))
+                last[e[2]] = e[1]
+            self.assertIsNone(c["swap"], k)                         # never nearer another island than home
+        st = f["straight"]
+        arms = [e for e in st["ev"] if e[0] == "arm"]
+        self.assertEqual(len(arms), 1, st["ev"])
+        self.assertEqual(arms[0][2], f["world1"])
+        self.assertTrue(arms[0][3])
+        self.assertGreaterEqual(arms[0][1], (1150 - 1000) / 60 * 1000 + 2000 - 50)   # past the coast, then 2 s heading for it
+        self.assertIsNotNone(st["swap"])
+        self.assertLess(st["swap"]["dn"], st["swap"]["dh"] - 150 + 1)
+        self.assertEqual(f["hover"]["ev"], [])                      # hovering beyond the coast: not heading anywhere
+        ob = [e[0] for e in f["outBack"]["ev"]]
+        self.assertEqual(ob[:2], ["arm", "cancel"], f["outBack"]["ev"])
+        rearm = [e for e in f["outBack"]["ev"] if e[0] == "arm"][1:]
+        self.assertTrue(rearm, f["outBack"]["ev"])
+        cancel_t = [e for e in f["outBack"]["ev"] if e[0] == "cancel"][0][1]
+        self.assertGreaterEqual(rearm[0][1] - cancel_t, 20000)       # that island rests 20 s
+        self.assertFalse(rearm[0][3])                                # and is not announced again within the minute
 
 
 if __name__ == "__main__":

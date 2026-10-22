@@ -9,12 +9,17 @@ COPY src src
 COPY migrations migrations
 # Every game's data file is read at COMPILE time with include_str!.
 COPY data data
-RUN cargo build --release --locked --bin arena
+# The build directory (several GB) and the crate cache are deleted in the same step that makes
+# them, so the layer this leaves behind is just the binary: no multi-GB layer per deploy for the
+# disk to keep (ops/release.sh prunes what is left). Works with the classic builder and BuildKit.
+RUN cargo build --release --locked --bin arena \
+    && cp target/release/arena /usr/local/bin/arena \
+    && rm -rf target /usr/local/cargo/registry
 
 FROM debian:bookworm-slim
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=build /src/target/release/arena /usr/local/bin/arena
+COPY --from=build /usr/local/bin/arena /usr/local/bin/arena
 RUN printf '#!/bin/sh\nexec /usr/local/bin/arena --health\n' > /usr/local/bin/arena-health \
     && chmod 0755 /usr/local/bin/arena-health
 ARG ARENA_VERSION=dev

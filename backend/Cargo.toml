@@ -32,3 +32,15 @@ anyhow = "1.0.104"
 needless_range_loop = "allow"
 type_complexity = "allow"
 enum_variant_names = "allow"
+
+# Smaller builds: release binaries carry no symbols (a smaller image and download); local debug
+# builds keep only line tables (backtraces still name files and lines) and none for dependencies,
+# which roughly halves target/.
+[profile.release]
+strip = true
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

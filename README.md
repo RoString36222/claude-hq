@@ -383,7 +383,7 @@ and feature guide.
   **lights** switch on at night and in heavy rain, a storm, snow or fog (**L** toggles them by hand), brighter
   lamps and tails plus one additive pool-and-cone mesh on the road (no real lights, one draw call per lit
   vehicle); other players' vehicles light up from your own clock and weather. **Grip:** rain, storms and snow
-  lower lateral grip and braking (about −25 % braking in a storm, −50 % in snow; two wheels lose more and ride
+  lower lateral grip and braking (about −35 % braking in a storm, −50 % in snow; two wheels lose more and ride
   slower), powerslides come easier and last longer, and wet-road spray flies off your wheels (off in Calm); the
   drive HUD shows Wet road / Snow, the lights and the damage. **Damage:** hits above ~22 km/h dent the panels
   you hit, crack a headlight and, past 70 %, smoke from the bonnet (not in Calm); a wrecked car pulls slightly.

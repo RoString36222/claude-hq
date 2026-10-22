@@ -152,6 +152,69 @@ class StrikeSync(unittest.TestCase):
         self.assertIn('"The Warden"', js)
         self.assertIn("Summon the Warden", js)
 
+    def test_drones_and_the_grappling_gun(self):
+        """Match flight drones + player-only zero-damage grapple (file-text twins)."""
+        js = read(STRIKE_JS)
+        rs = read(STRIKE_RS)
+        src = block()
+        # roster: grapple is a NEW index; the launcher keeps LAUNCH_W / the rocket path
+        self.assertIn('{id: "grapple"', src)
+        self.assertIn('damage: 0', src)
+        self.assertIn("GRAPPLE_W = 4", src)
+        self.assertIn("LAUNCH_W = 3", src)
+        self.assertIn("BOT_WEAPON_MAX", src)
+        self.assertIn("pub const NW: usize = 5", rs)
+        self.assertIn("pub const GRAPPLE_W: usize = 4", rs)
+        self.assertIn("pub const LAUNCH_W: usize = 3", rs)
+        self.assertIn("pub const BOT_WEAPON_MAX: usize = 4", rs)
+        self.assertIn('id: "grapple"', rs)
+        self.assertIn("damage: 0, head: 0, mag: 5", rs)
+        # every rocket path names the launcher, not NW-1 (which would become the grapple)
+        self.assertNotIn("if w == NW - 1", rs)
+        self.assertIn("if w == LAUNCH_W", rs)
+        self.assertIn("if(V.w === LAUNCH_W)", js)
+        self.assertIn("if(V.w === GRAPPLE_W)", js)
+        # bots never roll the grapple
+        self.assertIn("BOT_WEAPON_MAX", js)
+        self.assertIn("* BOT_WEAPON_MAX as f64", rs)
+        self.assertIn("P.w !== GRAPPLE_W", js)
+        # match drones: deterministic lanes from map bounds (no Math.random)
+        self.assertIn("function grappleRoutes", js)
+        self.assertIn("fn grapple_routes", rs)
+        self.assertIn("function droneHit", js)
+        self.assertIn("fn drone_hit", rs)
+        self.assertIn("DRONE_Y = 7.5", src)
+        self.assertIn("DRONE_N = 8", src)
+        self.assertIn("pub const DRONE_N: usize = 8", rs)
+        self.assertIn("pub const DRONE_Y: f64 = 7.5", rs)
+        # wings-style climb: never snap the shooter to drone altitude
+        self.assertIn("GRAPPLE_RISE", src)
+        self.assertIn("pub const GRAPPLE_RISE: f64 = 4.0", rs)
+        self.assertNotIn("V.me.y = cd[1]", js)
+        self.assertNotIn("p.y = c[1]", rs)
+        # foe hook: victim cannot shoot; FLAG_HOOK on the snap row
+        self.assertIn("HOOK_LOCK", src)
+        self.assertIn("pub const FLAG_HOOK: i64 = 67_108_864", rs)
+        self.assertIn("FLAG_HOOK", js)
+        self.assertIn("67108864", js)
+        self.assertIn("V.hookUntil && t < V.hookUntil) return false", js)
+        self.assertIn("p.hook_until > t", rs)
+        self.assertIn("hook_until", rs)
+        self.assertIn("swing_until", rs)
+        self.assertIn("swing_let_up", rs)  # air-guard let-up like the wings totem
+        self.assertIn('"dr"', js)
+        self.assertIn('"dr"', rs)
+        # zero damage on the grapple row; 5 hooks, crates refill via pack
+        self.assertEqual(
+            re.search(r'id: "grapple"[^}]+damage: 0[^}]+mag: 5', src) is not None
+            or re.search(r'id: "grapple".{0,120}damage: 0', src, re.S) is not None,
+            True)
+        self.assertIn("pack: 5", src)
+        self.assertIn("pack: 5", rs)
+        # welcome card names drones + the grapple
+        self.assertIn("grappling gun", js)
+        self.assertIn("Grappling gun", js)
+
     def test_map_file_is_mirrored(self):
         for a, b in ((MAP, SERVER_MAP), (MAP_SAND, SERVER_MAP_SAND)):
             with open(a, "rb") as fa, open(b, "rb") as fb:

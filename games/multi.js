@@ -15,6 +15,8 @@ var LIVE = {};          // g -> {lobby:[...], ...game state from the server}
 // server's PROTOCOL table (backend/app/valley.py, backend/src/protocol.rs). A server
 // below the range is an Arena to update; above it, Claude HQ is the one to update.
 // strike v9 additive: start.warden (1|0, absent = true), snap "wd" boss row (now + core/grip clocks), event "warden".
+// Also additive: snap "dr" match flight drones [id, cm_x, cm_y, cm_z], FLAG_HOOK on a
+// player row (grappling-gun lock — they cannot shoot), weapon index 4 = grapple.
 // games/strike.js onSnap/onEvent parse those; unknown keys here are ignored as before.
 var CLIENT_PROTO = {pond:[1,1], race:[1,1], duel:[1,1], mines:[1,1], farm:[1,1], golf:[1,1], kart:[1,2], rally:[1,1], plat:[1,1], fps:[1,1], strike:[1,9], hq:[1,4], type:[1,1], td:[1,1], bowl:[1,1]};
 // null = fine to play; else {who:"arena"|"hq", text} explaining why not.

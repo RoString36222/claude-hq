@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.10.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.10.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -371,6 +371,9 @@ and feature guide.
 
 ## Changelog
 
+- **3.10.1 — Strikezone: the arsenal explains itself.** Each gun on the pre-match card now
+  says what it does and how to fire it (keys, scope, the grapple's drone-swing / foe-lock).
+  **Privacy / egress:** no new network calls. **Third-party assets:** none.
 - **3.10.0 — Wider roads.** Every street in the Commons and on every island is paved wider: a local road 10.5 m
   (a 7 m carriageway, was 5 m; 1.75 m sidewalks), an arterial 15.5 m (11 m, was 8; 2.25 m sidewalks), the Commons'
   highways 13.5 m (were 10) and its ring road 12 m (was 9). Lanes, markings, kerbs and traffic follow the new widths.
@@ -572,6 +575,25 @@ and feature guide.
   and `/api/arena/vehicles/<id>/park`) send only a validated vehicle id, paint and position with the paired
   device token. Presence adds the driven vehicle's catalogue id and paint index. Nothing transcript-derived
   is sent.
+- **3.3.4 — Strikezone polish: eight slow drones, a wings-style climb, the grapple in-hand.**
+  Flight drones go from 4 to **8**, each on its own slow sky lane (still derived from the map
+  bounds). Hooking a drone now **eases** you up to its height the way the wings totem rises —
+  no more teleport to altitude. The grappling gun is visible in first-person (it was scaled
+  too thin to read), and its aim-down-sights matches the launcher's light zoom. The Tab weapon
+  wheel highlight is a real pie slice that covers the selected gun (the old four-quadrant
+  squares could not tile five weapons). **Privacy / egress:** no new network calls.
+  **Third-party assets:** none.
+
+- **3.3.3 — Strikezone: flight drones + the grappling gun.** Four drones cruise the arena on
+  fixed sky lanes (derived from the map bounds — no map-file change). Real players also carry a
+  fifth gun, the **Grappling gun** (key `5`): zero damage. Hook a drone and you are pulled to its
+  height and swing across the map (jump / sprint to let go); hook a foe (player or bot) and drag
+  them in — while the hook is on they cannot shoot. 5 hooks per life; ammo crates refill it. Bots
+  never carry it. While The Warden lives the hook is mobility only (no foe hooks, no damage to the
+  Warden). Snap additive key `"dr"` + `FLAG_HOOK` on the victim's row; the rocket path keeps
+  `LAUNCH_W = 3` so the launcher is unchanged. **Privacy / egress:** no new network calls.
+  **Third-party assets:** none — the 3D gun is original geometry; drones reuse the existing
+  Kenney `enemy-flying` hotlink with the usual `monsterSVG` fallback.
 - **3.3.2 — No more camera pumping near buildings.** Riding (or walking) past buildings, the chase camera kept
   zooming in and out: its collision ray clipped corner after corner, pulling in fast and easing out between them.
   Now once it pulls in it keeps that distance for 0.6 s after the last hit before easing back out, so passing a

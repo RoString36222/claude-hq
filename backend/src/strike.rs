@@ -92,10 +92,16 @@ pub struct Weapon {
     pub range: f64,
     pub pack: i64,
 }
-// The Arena serves all four, launcher included: its rocket is a real missile the
-// server flies in tick() (ROCKETS) and resolves as a blast (blast_damage), matching
-// the browser's solo simulation (FS.MISSILE_V & co in games/strike.js).
-pub const NW: usize = 4;
+// The Arena serves all four guns plus the grappling gun, launcher included: its rocket
+// is a real missile the server flies in tick() (ROCKETS) and resolves as a blast
+// (blast_damage), matching the browser's solo simulation (FS.MISSILE_V & co in
+// games/strike.js). The grapple does zero damage — it hooks a match drone (swing) or a
+// foe (drag + trigger lock). Real players only.
+pub const NW: usize = 5;
+pub const LAUNCH_W: usize = 3;
+pub const GRAPPLE_W: usize = 4;
+/// Bots roll a weapon in `0..BOT_WEAPON_MAX` (never the grapple).
+pub const BOT_WEAPON_MAX: usize = 4;
 pub const WEAPONS: [Weapon; NW] = [
     Weapon { id: "rapid", interval: 0.1, damage: 12, head: 18, mag: 30, reserve: 90, reload: 1.6, spread: 1.2,
              range: 60.0, pack: 60 },
@@ -105,7 +111,23 @@ pub const WEAPONS: [Weapon; NW] = [
              range: 70.0, pack: 12 },
     Weapon { id: "launcher", interval: 1.2, damage: 120, head: 120, mag: 1, reserve: 5, reload: 2.5, spread: 0.0,
              range: 60.0, pack: 2 },
+    Weapon { id: "grapple", interval: 0.9, damage: 0, head: 0, mag: 5, reserve: 5, reload: 2.2, spread: 0.0,
+             range: 40.0, pack: 5 },
 ];
+// Match flight drones (grapple anchors) + the grappling gun's movement windows.
+// Twins: GRAPPLE_W / DRONE_* / GRAPPLE_* in games/strike.js (STRIKE-SHARED).
+pub const DRONE_Y: f64 = 7.5;
+pub const DRONE_R: f64 = 0.8;
+pub const DRONE_N: usize = 8;
+pub const DRONE_PHASE: f64 = 1.3;
+pub const GRAPPLE_TIME: f64 = 2.5;
+pub const GRAPPLE_SWING: f64 = 11.0;
+pub const GRAPPLE_UP: f64 = 6.0;
+pub const GRAPPLE_PULL: f64 = 18.0;
+pub const HOOK_LOCK: f64 = 2.0;
+pub const GRAPPLE_RISE: f64 = 4.0;
+/// Snapshot flag: hooked by a grappling gun (cannot shoot). Next free bit under 2^31.
+pub const FLAG_HOOK: i64 = 67_108_864;
 // --- the launcher's rocket (shared with games/strike.js) ---
 pub const MISSILE_V: f64 = 22.0;   // launch speed (m/s)
 pub const MISSILE_G: f64 = 6.0;    // gravity on the rocket (gentler than a body)
@@ -135,6 +157,80 @@ pub fn mark_damage(dist: f64, r: f64, dmg: i64) -> i64 {
         min + (1.0 - min) * (1.0 - (u - near) / (1.0 - near))
     };
     ((dmg as f64 * k).round() as i64).max(1)
+}
+
+/// Match flight drones: DRONE_N ping-pong lanes drawn from the map bounds so every
+/// shipped / user map gets anchors without a new JSON field. Twin: grappleRoutes.
+pub fn grapple_routes(b: [f64; 6]) -> Vec<([f64; 3], [f64; 3], f64)> {
+    let (x0, z0, x1, z1) = (b[0], b[2], b[3], b[5]);
+    let (x0, x1) = if x1 > x0 + 1.0 { (x0, x1) } else { (x0, x0 + 84.0) };
+    let (z0, z1) = if z1 > z0 + 1.0 { (z0, z1) } else { (z0, z0 + 60.0) };
+    let y = DRONE_Y;
+    let inset = 5.0;
+    let (xs, mut xe) = (x0 + inset, x1 - inset);
+    let (zs, mut ze) = (z0 + inset, z1 - inset);
+    if xe < xs {
+        xe = xs + 1.0;
+    }
+    if ze < zs {
+        ze = zs + 1.0;
+    }
+    let xq = xs + (xe - xs) / 3.0;
+    let xq2 = xs + (xe - xs) * 2.0 / 3.0;
+    let zq = zs + (ze - zs) / 3.0;
+    let zq2 = zs + (ze - zs) * 2.0 / 3.0;
+    // eight slow sky lanes — each drone on its own path (twin of grappleRoutes)
+    vec![
+        ([xs, y, zs], [xe, y, zs], 3.2),
+        ([xs, y, zq], [xe, y, zq], 3.6),
+        ([xs, y, zq2], [xe, y, zq2], 3.0),
+        ([xs, y, ze], [xe, y, ze], 3.4),
+        ([xq, y, zs], [xq, y, ze], 3.5),
+        ([xq2, y, zs], [xq2, y, ze], 3.1),
+        ([xs, y, zs], [xe, y, ze], 3.3),
+        ([xe, y, zs], [xs, y, ze], 3.7),
+    ]
+}
+
+/// A match drone's centre at match-clock `t` (ping-pong along its lane). Twin: targetAt.
+pub fn drone_at(tg: &([f64; 3], [f64; 3], f64), t: f64) -> [f64; 3] {
+    let (a, b, s) = tg;
+    let ln = (((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2) + (b[2] - a[2]).powi(2)).sqrt()).max(1e-6);
+    let ph = ((t * s / ln) % 2.0 + 2.0) % 2.0;
+    let u = if ph <= 1.0 { ph } else { 2.0 - ph };
+    [
+        a[0] + (b[0] - a[0]) * u,
+        a[1] + (b[1] - a[1]) * u,
+        a[2] + (b[2] - a[2]) * u,
+    ]
+}
+
+/// First match-drone hit along the ray: (dist, index). Twin: droneHit.
+pub fn drone_hit(
+    o: [f64; 3],
+    d: [f64; 3],
+    routes: &[([f64; 3], [f64; 3], f64)],
+    t: f64,
+    maxd: f64,
+) -> Option<(f64, usize)> {
+    let mut best: Option<(f64, usize)> = None;
+    for (i, tg) in routes.iter().enumerate() {
+        let c = drone_at(tg, t);
+        let b = [
+            c[0] - DRONE_R,
+            c[1] - DRONE_R * 0.7,
+            c[2] - DRONE_R,
+            c[0] + DRONE_R,
+            c[1] + DRONE_R * 0.7,
+            c[2] + DRONE_R,
+        ];
+        if let Some(h) = ray_box(o, d, &b) {
+            if h < maxd && best.map(|(bd, _)| h < bd).unwrap_or(true) {
+                best = Some((h, i));
+            }
+        }
+    }
+    best
 }
 pub const SWITCH: f64 = 0.25;
 pub const HP: i64 = 100;
@@ -1716,6 +1812,15 @@ pub struct Player {
     pub grav_until: f64,
     /// Snapshot flag bits beyond 1024 (JS bitwise is 32-bit, so stay under 2^31).
     pub flag_extra: i64,
+    /// Grappling-gun windows: hooked (cannot shoot) and a drone-swing let-up.
+    pub hook_until: f64,
+    /// While hooked on a foe: (shooter x, z) we are being dragged toward.
+    pub hook_pull: Option<(f64, f64)>,
+    /// A live drone swing (also a air-guard let-up, like the wings totem).
+    pub swing_until: f64,
+    /// Climb target for a drone hook (the drone altitude). The client eases up to it
+    /// like WING_RISE; the referee records it and never snaps `y`.
+    pub swing_y: f64,
 }
 
 fn bucket(b: &mut (f64, f64), rate: f64, burst: f64, t: f64) -> bool {
@@ -1750,6 +1855,7 @@ impl Player {
             blink_left: 0, ghost_left: 0, rico_left: 0, cluster_left: 0, chain_left: 0,
             swap_cd: 0.0, radarjam_until: 0.0, grav_until: 0.0, flag_extra: 0,
             slow_until: 0.0, blind_until: 0.0,
+            hook_until: 0.0, hook_pull: None, swing_until: 0.0, swing_y: 0.0,
         }
     }
 
@@ -1799,10 +1905,12 @@ impl Player {
         self.dead = false;
         self.mag = std::array::from_fn(|i| WEAPONS[i].mag);
         self.res = std::array::from_fn(|i| WEAPONS[i].reserve);
-        // a bot draws a fresh weapon every life, launcher included (like the solo match)
+        // a bot draws a fresh weapon every life, launcher included (like the solo match).
+        // The grappling gun is players-only — never rolled.
         if self.bot.is_some() {
             self.w = (mb32((self.slot as u32).wrapping_mul(131)
-                .wrapping_add((t * 1000.0) as i64 as u32) & 0xFFFF) * NW as f64) as usize;
+                .wrapping_add((t * 1000.0) as i64 as u32) & 0xFFFF) * BOT_WEAPON_MAX as f64)
+                as usize;
         }
         self.reload = None;
         self.spawn_t = t;
@@ -1811,6 +1919,10 @@ impl Player {
         self.void_at = 0.0;   // a place is back on the map
         self.slow_until = 0.0;
         self.blind_until = 0.0;
+        self.hook_until = 0.0;
+        self.hook_pull = None;
+        self.swing_until = 0.0;
+        self.swing_y = 0.0;
         self.n = 0; // the spread sequence restarts each life
         self.charm_until = 0.0;
         self.freeze_until = 0.0;
@@ -2008,6 +2120,8 @@ pub struct Strike {
     pub warden_opt: bool,
     /// Set once the Warden has risen this match — it is a one-shot, not a recurring event.
     pub warden_done: bool,
+    /// Match flight drones (grapple anchors): lanes from the map bounds, stepped in tick().
+    pub drones: Vec<([f64; 3], [f64; 3], f64)>,
     /// The Warden, while it lives. None before it is summoned and after it dies.
     pub warden: Option<Warden>,
     /// ms_left frozen at the summon (the clock is parked here until it dies).
@@ -2047,6 +2161,7 @@ impl Strike {
             hot_at: None, fuse_at: None, world_k: 0,
             disaster: None, disaster_at: None, warns: Vec::new(),
             warden_opt: true, warden_done: false, warden: None, warden_frozen_ms: 0,
+            drones: Vec::new(),
             decoys: Vec::new(),
             shots: Vec::new(), booms: Vec::new(), detonate_echoes: Vec::new(), rockets: Vec::new(),
             rocket_k: 0, pending: Vec::new(), k: 0, sent: VecDeque::new(),
@@ -2237,6 +2352,7 @@ impl Strike {
         self.limit = clamp_to(kills, 1, 500, 30);
         self.tsize = pick(tsize, &TEAM_SIZES, 2);
         self.phase = Phase::Warmup;
+        self.drones = grapple_routes(self.map().bounds());
         self.go_at = t + COUNTDOWN;
         self.results = None;
         self.players = Vec::new();
@@ -2492,8 +2608,10 @@ impl Strike {
             // v4: a parachute-dropping life legitimately rides the sky for DROP_TIME after its
             // spawn — buy it the fall instead of snapping it back to the ground mid-glide.
             let air_let_up = p.drop && p.drop_t > 0.0 && (clock - p.drop_t) < DROP_TIME;
-            // the wings totem parks the air clock too: a flyer is off the ground by design
-            if !grounded && !air_let_up && p.wings_until <= t && clock - p.air_at > MAX_AIR {
+            // the wings totem parks the air clock too: a flyer is off the ground by design.
+            // A grappling-gun drone swing is the same kind of let-up.
+            let swing_let_up = p.swing_until > t;
+            if !grounded && !air_let_up && !swing_let_up && p.wings_until <= t && clock - p.air_at > MAX_AIR {
                 ok = false;
             }
             if grounded && p.drop && (clock - p.drop_t) >= 0.0 {
@@ -2532,6 +2650,29 @@ impl Strike {
         }
         self.ack(p, msg, q, t);
         (true, None)
+    }
+
+    /// Grappling-gun drag: while a hook is live, haul the victim toward the shooter.
+    /// Bots get the same pull from bot_fire; this covers human victims.
+    fn hook_pull_step(&mut self, t: f64) {
+        let n = self.players.len();
+        for j in 0..n {
+            let hooked = self.players[j].1.hook_until > t;
+            if !hooked {
+                continue;
+            }
+            let Some((hx, hz)) = self.players[j].1.hook_pull else { continue };
+            let (px, pz) = (self.players[j].1.x, self.players[j].1.z);
+            let (dx, dz) = (hx - px, hz - pz);
+            let dist = (dx * dx + dz * dz).sqrt().max(1e-6);
+            let sp = GRAPPLE_PULL.min(dist * 4.0);
+            let p = &mut self.players[j].1;
+            p.vx = dx / dist * sp;
+            p.vz = dz / dist * sp;
+            if dist < 1.2 {
+                p.hook_pull = None;
+            }
+        }
     }
 
     fn pickups(&mut self, i: usize, t: f64) {
@@ -3986,8 +4127,70 @@ impl Strike {
         if protect_ended {
             self.mark(uid);
         }
+        // the grappling gun: zero damage. Hook a match drone (swing) or a foe (drag +
+        // trigger lock). Never damages the Warden — a live Warden just means no foe hook.
+        if w == GRAPPLE_W {
+            let routes = self.drones.clone();
+            let reach = ray_map(self.map(), o, d, WEAPONS[GRAPPLE_W].range);
+            if let Some((_hd, di)) = drone_hit(o, d, &routes, t - self.go_at, reach) {
+                let c = drone_at(&routes[di], t - self.go_at);
+                {
+                    let p = &mut self.players[i].1;
+                    // ease up to the drone on the client (wings-style WING_RISE).
+                    // Never snap y here — a teleport is what the player sees as rubber-band.
+                    p.swing_y = c[1];
+                    p.vx = d[0] * GRAPPLE_SWING;
+                    p.vz = d[2] * GRAPPLE_SWING;
+                    p.swing_until = t + GRAPPLE_TIME;
+                    p.air_at = t;
+                    p.void_at = 0.0;
+                }
+                let shot = json!([self.players[i].1.slot, w, cm(o[0]), cm(o[1]), cm(o[2]), -1, 0]);
+                self.shots.push(shot.clone());
+                self.mark(uid);
+                return (Some(shot), None);
+            }
+            if self.warden.is_none() {
+                let team = self.players[i].1.team;
+                let mut victim: Option<usize> = None;
+                let mut victim_h = f64::INFINITY;
+                for (j, (vuid, v)) in self.players.iter().enumerate() {
+                    if *vuid == uid || v.dead || v.gone || v.team == team {
+                        continue;
+                    }
+                    if v.protect > t {
+                        continue;
+                    }
+                    if let Some(h) = ray_player(o, d, v.x, v.y, v.z, reach) {
+                        if h.0 < victim_h {
+                            victim_h = h.0;
+                            victim = Some(j);
+                        }
+                    }
+                }
+                if let Some(j) = victim {
+                    let (shx, shz) = (self.players[i].1.x, self.players[i].1.z);
+                    let vuid2 = self.players[j].0.clone();
+                    {
+                        let v = &mut self.players[j].1;
+                        v.hook_until = t + HOOK_LOCK;
+                        v.hook_pull = Some((shx, shz));
+                    }
+                    self.mark(&vuid2);
+                    let shot = json!([self.players[i].1.slot, w, cm(o[0]), cm(o[1]), cm(o[2]),
+                                      self.players[j].1.slot, 0]);
+                    self.shots.push(shot.clone());
+                    self.mark(uid);
+                    return (Some(shot), None);
+                }
+            }
+            let shot = json!([self.players[i].1.slot, w, cm(o[0]), cm(o[1]), cm(o[2]), -1, 0]);
+            self.shots.push(shot.clone());
+            self.mark(uid);
+            return (Some(shot), None);
+        }
         // the launcher: don't judge a ray — spawn a rocket; tick() flies it and resolves the blast
-        if w == NW - 1 {
+        if w == LAUNCH_W {
             self.rocket_k += 1;
             let rocket = Rocket {
                 id: self.rocket_k, shooter: uid.to_string(),
@@ -4222,7 +4425,7 @@ impl Strike {
         -> (Option<(usize, [f64; 3], [f64; 3], f64, bool)>, Option<Value>, f64)
     {
         let none = (None, None, 0.0);
-        if p.dead || p.gone || p.is_bot() || !bucket(&mut p.fb, FIRE_RATE, FIRE_BURST, t) {
+        if p.dead || p.gone || p.is_bot() || p.hook_until > t || !bucket(&mut p.fb, FIRE_RATE, FIRE_BURST, t) {
             return none;
         }
         let w = as_num(msg.get("w"), -1.0, 99.0);
@@ -4355,7 +4558,7 @@ impl Strike {
             if killed {
                 let si = self.players.iter().position(|(u, _)| *u == shooter);
                 if let Some(si) = si {
-                    self.kill(si, j, NW - 1, false, t);
+                    self.kill(si, j, LAUNCH_W, false, t);
                 } else {
                     // the shooter left: credit no one, but the death still counts
                     let (vid2, v) = &mut self.players[j];
@@ -4366,7 +4569,7 @@ impl Strike {
                     v.reload = None;
                     let deaths = v.deaths;
                     let team = v.team;
-                    self.pending.push(("kill", json!({"k": null, "v": vid, "w": NW - 1, "hs": 0,
+                    self.pending.push(("kill", json!({"k": null, "v": vid, "w": LAUNCH_W, "hs": 0,
                         "kills": 0, "deaths": deaths, "team": team, "scores": self.scores})));
                 }
             }
@@ -4381,7 +4584,7 @@ impl Strike {
         let echoes = std::mem::take(&mut self.detonate_echoes);
         for (shooter, at, vslot, applied) in echoes {
             if let Some((_, p)) = self.players.iter().find(|(u, _)| *u == shooter) {
-                self.shots.push(json!([p.slot, NW - 1, cm(at[0]), cm(at[1]), cm(at[2]),
+                self.shots.push(json!([p.slot, LAUNCH_W, cm(at[0]), cm(at[1]), cm(at[2]),
                                        vslot, 0, applied]));
             }
         }
@@ -5383,7 +5586,7 @@ impl Strike {
         }
         let (aim_y, aim_p) = (b.aim_y, b.aim_p);
         // a bot with the launcher fires rockets like a player would, one at a time
-        if w == NW - 1 {
+        if w == LAUNCH_W {
             if self.rockets.iter().any(|r| r.shooter == self.players[i].0) {
                 return None;
             }
@@ -5420,6 +5623,25 @@ impl Strike {
             self.players[i].1.mag[w] -= 1;
             self.players[i].1.bot.as_mut().unwrap().fire_at = t;
             return Some(shot);
+        }
+        // hooked by a grappling gun: the trigger is locked (and the body is dragged)
+        if self.players[i].1.hook_until > t {
+            if let Some((hx, hz)) = self.players[i].1.hook_pull {
+                let (px, pz) = (self.players[i].1.x, self.players[i].1.z);
+                let (dx, dz) = (hx - px, hz - pz);
+                let dist = (dx * dx + dz * dz).sqrt().max(1e-6);
+                let sp = GRAPPLE_PULL.min(dist * 4.0);
+                let p = &mut self.players[i].1;
+                p.vx = dx / dist * sp;
+                p.vz = dz / dist * sp;
+                if dist < 1.2 {
+                    p.hook_pull = None;
+                }
+            }
+            return None;
+        }
+        if w == GRAPPLE_W {
+            return None;
         }
         let p = &mut self.players[i].1;
         if p.mag[w] <= 0 || p.reload.is_some() {
@@ -6051,6 +6273,7 @@ impl Strike {
             evs.push(("done", json!({"results": self.results})));
             return evs;
         }
+        self.hook_pull_step(t);
         if send && (!self.dirty.is_empty() || !self.shots.is_empty() || !self.booms.is_empty()
                     || !self.rockets.is_empty()) {
             evs.push(("snap", self.snap(t)));
@@ -6088,7 +6311,8 @@ impl Strike {
                 | if p.phoenix_until > t { FLAG_PHOENIX } else { 0 }
                 | if p.radarjam_until > t { FLAG_JAM } else { 0 }
                 | if p.blind_until > t { FLAG_BLIND } else { 0 }   // white-out veil
-                | if p.slow_until > t { FLAG_SLOW } else { 0 };  // disaster crawl
+                | if p.slow_until > t { FLAG_SLOW } else { 0 }   // disaster crawl
+                | if p.hook_until > t { FLAG_HOOK } else { 0 };  // grappling-gun lock
             let when = p.hist.back().map(|h| self.ms(h.0)).unwrap_or(-1);
             ents.push(json!([p.slot, cm(p.x), cm(p.y), cm(p.z), p.r, p.pt, p.hp, p.w, f, when]));
         }
@@ -6099,6 +6323,20 @@ impl Strike {
         let decoys: Vec<Value> = self.decoys.iter()
             .map(|dc| json!([dc.id, cm(dc.x), cm(dc.y), cm(dc.z),
                              ((dc.until - t) * 1000.0) as i64, (dc.yaw * 100.0) as i64])).collect();
+        // match flight drones (grapple anchors): [id, cm_x, cm_y, cm_z]
+        let mt = (t - self.go_at).max(0.0);
+        let drone_rows: Vec<Value> = self.drones.iter().enumerate().map(|(i, tg)| {
+            let c = drone_at(tg, mt);
+            json!([i, cm(c[0]), cm(c[1]), cm(c[2])])
+        }).collect();
+        // live grapple pulls: [victim_slot, cm_shooter_x, cm_shooter_z]
+        let hook_rows: Vec<Value> = self.players.iter().filter_map(|(_, p)| {
+            if p.hook_until <= t {
+                return None;
+            }
+            let (hx, hz) = p.hook_pull?;
+            Some(json!([p.slot, cm(hx), cm(hz)]))
+        }).collect();
         // Wave C world extras (additive keys — an old client just ignores them)
         let portals: Vec<Value> = self.portals.iter()
             .map(|q| json!([q.id, cm(q.x), cm(q.z), ((q.until - t) * 1000.0) as i64])).collect();
@@ -6181,6 +6419,7 @@ impl Strike {
         });
         let snap = json!({"k": self.k, "ts": self.ms(t), "ms": self.ms_left(t), "sc": self.scores,
                           "p": ents, "s": self.shots, "r": rockets, "b": self.booms, "d": decoys,
+                          "dr": drone_rows, "hk": hook_rows,
                           "po": portals, "mi": mines, "me": meteors, "bc": beacons, "bu": bubbles,
                           "fa": fate_row, "ae": ev_row, "cr": crate_row,
                           "di": dis_row, "dm": marks, "wd": warden_row});

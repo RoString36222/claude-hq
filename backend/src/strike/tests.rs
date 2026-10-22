@@ -679,7 +679,8 @@ fn a_blast_hurts_the_shooter_too() {
 
 #[test]
 fn bots_draw_weapons_across_the_roster() {
-    // every life a bot re-rolls: across enough spawns the roster covers all four
+    // every life a bot re-rolls: across enough spawns the roster covers every bot
+    // weapon (0..BOT_WEAPON_MAX). The grappling gun is players-only — never a bot roll.
     let (mut s, t) = started(0, 2, 0.0);
     let mut seen = [false; NW];
     let mut t2 = t;
@@ -696,7 +697,11 @@ fn bots_draw_weapons_across_the_roster() {
             }
         }
     }
-    assert!(seen.iter().all(|x| *x), "bots must draw every weapon across respawns: {seen:?}");
+    assert!(
+        seen[..BOT_WEAPON_MAX].iter().all(|x| *x),
+        "bots must draw every bot weapon across respawns: {seen:?}"
+    );
+    assert!(!seen[GRAPPLE_W], "bots must never draw the grappling gun");
 }
 
 #[test]
@@ -1811,4 +1816,99 @@ fn bots_open_fire_on_the_warden_from_a_firing_lane() {
     }
     let hp = s.warden.as_ref().map(|wd| wd.hp).unwrap_or(0);
     assert!(hp < max_hp, "the bot never shot the Warden (hp={hp} max={max_hp})");
+}
+
+// ------------------------------------------------ grappling gun + drones --
+#[test]
+fn grapple_routes_stay_inside_the_map_bounds() {
+    let b = MAP.bounds();
+    let routes = grapple_routes(b);
+    assert_eq!(routes.len(), DRONE_N);
+    for (a, e, s) in &routes {
+        assert!(*s > 0.0);
+        for pt in [a, e] {
+            assert!(pt[0] >= b[0] - 0.01 && pt[0] <= b[3] + 0.01, "drone x out of bounds");
+            assert!(pt[2] >= b[2] - 0.01 && pt[2] <= b[5] + 0.01, "drone z out of bounds");
+            assert!((pt[1] - DRONE_Y).abs() < 0.01);
+        }
+        assert!((a[0] - e[0]).abs() + (a[2] - e[2]).abs() > 1.0, "lane must fly somewhere");
+    }
+}
+
+fn hold_grapple(s: &mut Strike, uid: &str) {
+    let p = s.player_mut(uid).unwrap();
+    p.w = GRAPPLE_W;
+    p.mag[GRAPPLE_W] = WEAPONS[GRAPPLE_W].mag;
+}
+
+#[test]
+fn the_grapple_does_no_damage_but_locks_a_foe_trigger() {
+    let (mut s, t) = started(2, 1, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, 0.0, t, None);
+    put(&mut s, "u1", 0.0, 0.0, -10.0, t, None);
+    hold_grapple(&mut s, "u0");
+    let hp1 = s.player("u1").unwrap().hp;
+    let o = [0.0, EYE, 0.0];
+    let msg = json!({"w": GRAPPLE_W, "ox": cm(o[0]), "oy": cm(o[1]), "oz": cm(o[2]),
+                     "r": 0, "p": 0, "q": 10, "ip": 0});
+    let (shot, _) = s.fire("u0", &msg, t + 0.1);
+    assert!(shot.is_some(), "the hook fires");
+    assert_eq!(s.player("u1").unwrap().hp, hp1, "the grappling gun does no damage");
+    assert!(s.player("u1").unwrap().hook_until > t, "the victim is hooked");
+    // while hooked the trigger is locked — a real gun's fire is refused
+    let refuse = json!({"w": 0, "ox": cm(o[0]), "oy": cm(o[1]), "oz": cm(o[2]),
+                        "r": 0, "p": 0, "q": 20, "ip": 0});
+    let (refused, _) = s.fire("u1", &refuse, t + 0.2);
+    assert!(refused.is_none(), "a hooked fighter cannot shoot");
+    // the hook also earns FLAG_HOOK on the snap row, and a "hk" pull row
+    s.mark("u1");
+    let snap = s.snap(t + 0.3);
+    let rows = snap["p"].as_array().unwrap();
+    let flagged = rows.iter().any(|r| r[8].as_i64().unwrap_or(0) & FLAG_HOOK != 0);
+    assert!(flagged, "FLAG_HOOK rides the snap row");
+    let hk = snap["hk"].as_array().cloned().unwrap_or_default();
+    assert!(!hk.is_empty(), "the pull rides the snap hk rows");
+}
+
+#[test]
+fn a_drone_hook_lifts_and_starts_a_swing() {
+    let (mut s, t) = started(1, 1, 0.0);
+    let routes = s.drones.clone();
+    assert!(!routes.is_empty());
+    // the judge samples the drone at (t + 0.1) - go_at
+    let mt = 0.1;
+    let c = drone_at(&routes[0], mt);
+    // stand 2 m south of it with eyes at drone altitude, looking north (yaw 0 -> -z)
+    put(&mut s, "u0", c[0], c[1] - EYE, c[2] + 2.0, t, None);
+    hold_grapple(&mut s, "u0");
+    let o = [c[0], c[1], c[2] + 2.0];
+    let msg = json!({"w": GRAPPLE_W, "ox": cm(o[0]), "oy": cm(o[1]), "oz": cm(o[2]),
+                     "r": 0, "p": 0, "q": 10, "ip": 0});
+    let (shot, _) = s.fire("u0", &msg, t + 0.1);
+    assert!(shot.is_some(), "the hook fires at the drone");
+    let p = s.player("u0").unwrap();
+    assert!(p.swing_until > t, "the shooter is swinging");
+    assert!((p.swing_y - c[1]).abs() < 0.05, "climb target is the drone ({} vs {})", p.swing_y, c[1]);
+    assert!(p.y < c[1] - 0.2, "altitude eases up — no teleport ({} -> {})", p.y, c[1]);
+    assert!(p.hook_until <= t, "the swinger is not trigger-locked");
+}
+
+#[test]
+fn no_foe_hook_while_the_warden_lives() {
+    let (mut s, t) = started(2, 1, 0.0);
+    s.warden_opt = true;
+    s.warden_done = false;
+    s.warden_summon(t);
+    assert!(s.warden.is_some(), "the Warden is up");
+    put(&mut s, "u0", 0.0, 0.0, 0.0, t, None);
+    put(&mut s, "u1", 0.0, 0.0, -8.0, t, None);
+    hold_grapple(&mut s, "u0");
+    let hp_before = s.warden.as_ref().unwrap().hp;
+    let o = [0.0, EYE, 0.0];
+    let msg = json!({"w": GRAPPLE_W, "ox": cm(o[0]), "oy": cm(o[1]), "oz": cm(o[2]),
+                     "r": 0, "p": 0, "q": 10, "ip": 0});
+    let (shot, _) = s.fire("u0", &msg, t + 0.1);
+    assert!(shot.is_some(), "the hook still fires");
+    assert!(s.player("u1").unwrap().hook_until <= t, "no foe hook while The Warden lives");
+    assert_eq!(s.warden.as_ref().unwrap().hp, hp_before, "zero damage to The Warden");
 }

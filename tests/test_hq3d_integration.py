@@ -94,7 +94,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         self.assertIn("msg.h=Math.max(-50000, Math.min(50000, Math.round(w.h*100)))", m.group(1))
         self.assertIn("Math.max(-90, Math.min(90,", m.group(1))
         self.assertNotRegex(body.replace(m.group(0), ""), r"msg\.[hp]=")
-        self.assertIn("msg.h,msg.p,msg.v,msg.vp].join", body)   # both in the dedupe key (and the vehicle)
+        self.assertIn("msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt].join", body)   # both in the dedupe key (and the vehicle, the boombox)
         # the city3d skip comes before anything is sent
         self.assertLess(body.index('w.world==="city3d"'), body.index("ws.send"))
 

@@ -838,6 +838,21 @@ html.hq-calm .bowl-flash.on{opacity:1}
 .hq3d-drive-slide{visibility:hidden;font:800 12px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--bg);
   background:var(--brand);border-radius:999px;padding:5px 10px}
 .hq3d-drive.sliding .hq3d-drive-slide{visibility:visible}
+/* HQ 3.12: driving feel (games/hqdrive.js via games/hq3d.js): the road's grip, the lights and the damage, as one chip */
+.hq3d-drive-badges{font:700 12px/1.2 var(--mono);color:var(--ink);background:color-mix(in srgb,var(--panel) 88%,transparent);
+  border:1px solid var(--line);border-radius:999px;padding:5px 10px;white-space:nowrap}
+.hq3d-drive-badges[hidden]{display:none}
+/* HQ 3.12: the convoy panel (who is in it, your slot, an open invitation) */
+.hq3d-convoy{position:absolute;left:12px;bottom:64px;z-index:4;display:grid;gap:3px;min-width:180px;max-width:min(280px,44%);padding:9px 12px;
+  font-size:12px;line-height:1.35;color:var(--ink);background:color-mix(in srgb,var(--panel) 90%,transparent);border:1px solid var(--line);
+  border-radius:var(--radius-sm);pointer-events:none}
+.hq3d-convoy[hidden]{display:none}
+.hq3d-convoy-h{font-weight:800;color:var(--brand)}
+.hq3d-convoy-m{font-family:var(--mono);color:var(--ink)}
+.hq3d-convoy-ok{font-weight:800;color:var(--good)}
+.hq3d-convoy-far{font-weight:700;color:var(--warn)}
+.hq3d-convoy-inv{font-weight:700;color:var(--brand)}
+.hq3d-convoy-k{color:var(--muted)}
 /* HQ 3.2: flying (games/hq3d.js driveHud): the stall warning, the way to the waypoint and the glideslope */
 .hq3d-drive.stall .hq3d-drive-read{display:block;color:var(--bg);background:var(--need);border-color:var(--need)}
 .hq3d-drive.stall .hq3d-drive-dial{outline:2px solid var(--need);outline-offset:2px;border-radius:12px}

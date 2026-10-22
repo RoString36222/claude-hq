@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.11.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.12.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -64,6 +64,14 @@ paired), published maps and work signals (off by default) add a few listed field
   **G** gear (assisted: up and down by itself), **F** flaps, **Space** brakes and, in the air, speed brakes
   (the ground spoilers deploy by themselves on landing), **X** assisted/manual, **K** autopilot, **N** go to.
   Land on a runway, taxi back to a stand or the apron, stop, then **E** to get out.
+- **Driving feel and convoys (3.12).** Headlights and tail lights come on by themselves at night and in heavy
+  rain, storms, snow or fog, with a pool of light on the road ahead (**L** switches them by hand); other players'
+  cars light up too. Rain and snow cost grip: longer braking, easier powerslides, motorbikes and bicycles ride more
+  carefully, and spray flies off your wheels (the HUD shows **Wet road** or **Snow**). Hit something hard and your
+  car dents, a headlight can crack and a wreck smokes (cosmetic only; the garage kiosk, the B1 car lift and the
+  dealership repair it). **Convoys:** press **Y** near a friend (or **🚗 Convoy** in Here now) to invite them; they
+  press **Y** to join, then hold **J** to keep their slot behind-left or behind-right of the leader, who can set a
+  Go to route that every follower sees. **Y** again leaves.
 - **The Commons air base.** Hangars, a radar, an attack helicopter, an aircraft carrier offshore and
   fighter jets flying over.
 - **A real airport.** An offshore airfield for the Commons: a 1.6 km runway with full markings and lights,
@@ -371,6 +379,22 @@ and feature guide.
 
 ## Changelog
 
+- **3.12.0 — Driving feel + convoys.** Cars, motorbikes and bicycles in the City (`games/hqdrive.js`):
+  **lights** switch on at night and in heavy rain, a storm, snow or fog (**L** toggles them by hand), brighter
+  lamps and tails plus one additive pool-and-cone mesh on the road (no real lights, one draw call per lit
+  vehicle); other players' vehicles light up from your own clock and weather. **Grip:** rain, storms and snow
+  lower lateral grip and braking (about −25 % braking in a storm, −50 % in snow; two wheels lose more and ride
+  slower), powerslides come easier and last longer, and wet-road spray flies off your wheels (off in Calm); the
+  drive HUD shows Wet road / Snow, the lights and the damage. **Damage:** hits above ~22 km/h dent the panels
+  you hit, crack a headlight and, past 70 %, smoke from the bonnet (not in Calm); a wrecked car pulls slightly.
+  Cosmetic, kept per vehicle in localStorage; the garage kiosk, the B1 car lift and the dealership repair it.
+  **Convoys:** **Y** invites the nearest player within 40 m (or **🚗 Convoy** in Here now), **Y** accepts or
+  leaves, hold **J** for a soft assist that steers and throttles you into your slot (behind-left / behind-right
+  on the road, a wider echelon in the air), a convoy panel lists members, distances and "In formation", and the
+  leader's Go to destination is shown to every follower. You leave on a world change or past 300 m. The Arena
+  relays it with presence (`ci` / `cv` / `cg`, the new "convoy" capability); older Arenas hide convoys.
+  **Privacy / egress:** user ids of the people you invite / follow and your Go to point ride City presence,
+  only where the Arena lists "convoy". **Third-party assets:** none. **Backend:** `backend/` changed (deploy needed).
 - **3.11.2 — Steady flying on.** Taking off no longer glitches. The Commons' airport sits offshore, past the coast,
   so the moment a plane lifted off the City picked the nearest island whatever your heading, said "Flying on to …"
   and built that island's City (a long frame); a circuit dropped it and picked the next, again and again, and a City

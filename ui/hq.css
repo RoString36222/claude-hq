@@ -2131,7 +2131,6 @@ html.hq-calm .hq3d-ride{animation:none}
   border:1px solid var(--line);box-shadow:var(--shadow-lg);backdrop-filter:blur(6px)}
 .hq3d-talk[hidden]{display:none}
 .talk-top{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px}
-.hq3d-talk.closed .talk-body{display:none}
 .talk-body{display:flex;flex-direction:column;gap:6px}
 .talk-log{max-height:180px;overflow:auto;display:flex;flex-direction:column;gap:3px;font-size:12.5px;overflow-wrap:anywhere}
 .talk-line b{margin-right:6px;color:var(--brand)}
@@ -2493,3 +2492,5 @@ html.hq-calm .hqhud-chip,html.hq-calm .hqhud-vignette{transition:none}
 .th-msg.ok{color:var(--good)}
 .th-msg.bad{color:var(--need)}
 @media(max-width:420px){.th-good{grid-template-columns:minmax(0,1fr) 52px 52px}.th-acts{grid-column:1 / -1}}
+/* the boombox's player (ui/app/39-boombox.js): playing, but out of sight and out of the way */
+.hq-boom-frame{position:fixed;left:-400px;bottom:0;width:240px;height:200px;border:0;opacity:0;pointer-events:none}

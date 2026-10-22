@@ -131,6 +131,11 @@ struct Person {
     /// id (`v`, one the Arena knows) and paint index (`vp`), so others see the real car
     /// or bike. None whenever a is not 5 or 6, or the page sent no `v`.
     veh: Option<(String, u8)>,
+    /// A boombox on their shoulder (the "boombox" capability, HQ 3.11): the YouTube video it plays (`bb`, an
+    /// 11-character id), when that song started on the Arena's clock (`bt`, epoch ms: a listener works out where it
+    /// is from that, so the value holds still while it plays and the street is not re-sent every frame) and its title
+    /// (`bn`, at most BB_TITLE_MAX characters). Per frame: a frame without `bb` puts it away.
+    boombox: Option<(String, i64, String)>,
     /// (tokens, when) -- Python's `[POS_BURST, t]` list.
     bucket: (f64, f64),
 }
@@ -168,6 +173,7 @@ impl Hq {
                 skate: None,
                 alt: None,
                 veh: None,
+                boombox: None,
                 bucket: (POS_BURST, t),
             });
         }
@@ -245,6 +251,20 @@ impl Hq {
             }
             _ => None,
         };
+        // A boombox: the video, its start and its title together, or the whole frame is dropped.
+        let boombox = match msg.get("bb") {
+            None | Some(Value::Null) => None,
+            Some(v) => {
+                let id = v.as_str().filter(|s| s.len() == 11 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'));
+                let bt = num_in(msg.get("bt"), BB_T_MIN, BB_T_MAX);
+                let bn = match msg.get("bn") {
+                    None | Some(Value::Null) => Some(String::new()),
+                    Some(n) => n.as_str().map(|n| n.chars().filter(|c| !c.is_control()).take(BB_TITLE_MAX).collect::<String>()),
+                };
+                let (Some(id), Some(bt), Some(bn)) = (id, bt, bn) else { return false };
+                Some((id.to_string(), bt as i64, bn))
+            }
+        };
         p.w = w.to_string();
         p.x = super::py_trunc(x); // Python's int(x): toward zero
         p.z = super::py_trunc(z);
@@ -253,6 +273,7 @@ impl Hq {
         p.skate = skate;
         p.alt = alt;
         p.veh = veh;
+        p.boombox = boombox;
         self.dirty = true;
         true
     }
@@ -314,6 +335,12 @@ impl Hq {
                         m.insert("v".into(), json!(v));
                         m.insert("vp".into(), json!(vp));
                     }
+                    // only while their boombox plays ("boombox" capability)
+                    if let Some((bb, bt, bn)) = &p.boombox {
+                        m.insert("bb".into(), json!(bb));
+                        m.insert("bt".into(), json!(bt));
+                        m.insert("bn".into(), json!(bn));
+                    }
                     Value::Object(m)
                 })
                 .collect(),
@@ -345,6 +372,10 @@ const SKATE_K_MAX: u8 = 15;
 const SKATE_Y_MAX: u8 = 60;
 /// A catalogue vehicle's paint index tops out here.
 const VEH_PAINT_MAX: u8 = 63;
+/// A boombox song's start (epoch ms): any time from 2020 to 2096.
+const BB_T_MIN: f64 = 1_577_836_800_000.0;
+const BB_T_MAX: f64 = 4_000_000_000_000.0;
+const BB_TITLE_MAX: usize = 80;
 
 /// A whole number in 0..=max, or 0 when absent; None (drop the frame) for
 /// anything else -- a fraction, a bool, a string, out of range.
@@ -542,6 +573,30 @@ mod tests {
         let first = &p.listing()[0];
         assert_eq!((&first["w"], &first["x"], &first["z"], &first["a"]),
                    (&json!("mission"), &json!(100), &json!(-200), &json!(2)));
+    }
+
+    #[test]
+    fn a_boombox_rides_in_the_listing_while_it_plays() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        let bt = 1_792_600_000_000_i64;
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1, "bb": "dQw4w9WgXcQ", "bt": bt, "bn": "A song\u{7} — someone"}), 0.1));
+        let l = p.listing();
+        assert_eq!((l[0]["bb"].clone(), l[0]["bt"].clone(), l[0]["bn"].clone()), (json!("dQw4w9WgXcQ"), json!(bt), json!("A song — someone")));
+        // a frame without one puts it away
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1}), 0.2));
+        assert!(p.listing()[0].get("bb").is_none());
+        // a bad id, a missing or out-of-range start, a non-string title: the whole frame is dropped
+        for bad in [json!({"bb": "short", "bt": bt}), json!({"bb": "dQw4w9WgXc/", "bt": bt}), json!({"bb": 7, "bt": bt}),
+                    json!({"bb": "dQw4w9WgXcQ"}), json!({"bb": "dQw4w9WgXcQ", "bt": 5}), json!({"bb": "dQw4w9WgXcQ", "bt": bt, "bn": 3})] {
+            let mut m = json!({"w": "city3d", "x": 900, "z": 0, "r": 0, "a": 0});
+            m.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+            assert!(!p.pos("u", &m, 2.0), "{bad}");
+        }
+        assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
+        // a long title is cut short
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "bb": "dQw4w9WgXcQ", "bt": bt, "bn": "x".repeat(300)}), 3.0));
+        assert_eq!(p.listing()[0]["bn"].as_str().unwrap().len(), 80);
     }
 
     #[test]

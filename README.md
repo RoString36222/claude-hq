@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.10.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.11.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -371,6 +371,15 @@ and feature guide.
 
 ## Changelog
 
+- **3.11.0 — The boombox.** While you are tuned in to your Music room and its song plays, your
+  character carries a big cartoon boombox on the right shoulder in the 3D City (toon-shaded and inked,
+  squashing on the beat, woofers pumping, notes popping out), the right hand gripping it from the outside.
+  Anyone within 28 m hears the same song, in step with yours, louder the closer they are
+  (`ui/app/39-boombox.js`). The Arena relays it with presence (`bb` / `bt` / `bn`, the "boombox"
+  capability). The HQ chat panel is now always open (no hide button).
+  **Privacy / egress:** your room song's YouTube id, start time and title ride your City presence to the
+  Arena while it plays; listeners load it in YouTube's privacy-enhanced embed (the main player as a
+  fallback), as the Music tab does. **Third-party assets:** none.
 - **3.10.1 — Strikezone: the arsenal explains itself.** Each gun on the pre-match card now
   says what it does and how to fire it (keys, scope, the grapple's drone-swing / foe-lock).
   **Privacy / egress:** no new network calls. **Third-party assets:** none.

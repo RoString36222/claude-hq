@@ -1028,6 +1028,99 @@ function mount(el, api){
     var R = ch._hd; if(!R.bone || !yaw) return;
     R.bone.rotation.y += yaw; R.off = yaw;
   }
+  /* ---------- a boombox on the shoulder (HQ 3.11) ----------
+     While someone's Music room song plays (yours: inst.setBoombox; anyone else's: presence `bb`), a big cartoon
+     boombox rides on their right shoulder, the right arm under it and up its outer side, the hand gripping it from
+     the outside (BOOM_GRIP, in the torso bone's frame): toon-shaded with a black outline, the whole
+     box squashing on the beat, the woofers pumping, and fat outlined notes popping out and wobbling up into the air.
+     Built in metres and hung on the torso bone (so it sways with them), scaled back out of the character's scale. */
+  var BOOM_AT = [-0.215, 0.3, -0.02], BOOM_GRIP = [-0.37, 0.24, 0], BOOM_SIZE = 1.6, BOOM_NOTES = 6;
+  var boomKit = null, boomV = null, boomMe = false;
+  function boomboxModel(){
+    if(!boomKit){
+      var toon = function(c, e){ var m = new THREE.MeshToonMaterial({color: c}); if(e){ m.emissive = new THREE.Color(e); m.emissiveIntensity = 0.5; } return m; };
+      var note = function(ch, fill){ return canvasTex(128, 128, function(g){
+        g.font = "900 104px system-ui, sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.lineJoin = "round";
+        g.lineWidth = 14; g.strokeStyle = "#1a1423"; g.strokeText(ch, 64, 68); g.fillStyle = fill; g.fillText(ch, 64, 68);
+        g.fillStyle = "rgba(255,255,255,.55)"; g.beginPath(); g.ellipse(48, 84, 9, 6, -0.5, 0, 7); g.fill();
+      }).t; };
+      boomKit = {body: toon(0xff4d6d), trim: toon(0xffd23f), cone: toon(0x1d1b26), shine: toon(0xffffff, 0xffffff),
+                 deck: toon(0x2ec4b6, 0x2ec4b6), reel: toon(0xf7f7f7), keys: [toon(0x4cc9f0), toon(0x80ed99), toon(0xf72585), toon(0xffd23f)],
+                 line: new THREE.MeshBasicMaterial({color: 0x1a1423, side: THREE.BackSide}),
+                 notes: [note("♪", "#ffd23f"), note("♫", "#4cc9f0"), note("♬", "#f72585"), note("♪", "#80ed99"), note("♫", "#ff9f1c"), note("♬", "#c77dff")]};
+    }
+    var K = boomKit, g = new THREE.Group(), bob = new THREE.Group(), front = new THREE.Group(), cones = [];
+    g.add(bob); bob.add(front);
+    // a fat black outline: the same shape, a little bigger, drawn inside out
+    function inked(m){ var o = new THREE.Mesh(m.geometry, K.line); o.position.copy(m.position); o.rotation.copy(m.rotation); o.scale.setScalar(1.07); m.parent.add(o); return m; }
+    // a pill of a body (long axis along x, speakers on the +z face): a box with round ends
+    inked(box(0.62, 0.34, 0.2, K.body, 0, 0, 0, front, true));
+    [-0.31, 0.31].forEach(function(x){ var e = cyl(0.17, 0.17, 0.2, K.body, x, 0, 0, front, 24); e.rotation.x = PI/2; inked(e); });
+    box(0.66, 0.05, 0.215, K.trim, 0, -0.1, 0, front, true);
+    // two big woofers in yellow rims, each with a cartoon shine
+    [-0.3, 0.3].forEach(function(x){
+      var rim = cyl(0.15, 0.15, 0.03, K.trim, x, 0.01, 0.1, front, 28); rim.rotation.x = PI/2;
+      var c = new THREE.Group(); c.position.set(x, 0.01, 0.112); front.add(c);
+      var cn = cyl(0.12, 0.07, 0.04, K.cone, 0, 0, 0, c, 28); cn.rotation.x = PI/2;
+      sph(0.045, K.trim, 0, 0, 0.02, c).scale.z = 0.6;
+      sph(0.022, K.shine, -0.05, 0.05, 0.03, c).scale.z = 0.4;
+      cones.push(c);
+    });
+    // the tape deck: a window and two reels
+    box(0.2, 0.12, 0.02, K.deck, 0, 0.04, 0.1, front, true);
+    [-0.05, 0.05].forEach(function(x){ var r = cyl(0.03, 0.03, 0.02, K.reel, x, 0.04, 0.11, front, 12); r.rotation.x = PI/2; });
+    // piano-key buttons along the top, a chunky handle arc and a bobbled aerial
+    K.keys.forEach(function(m, i){ box(0.06, 0.035, 0.07, m, -0.12 + i*0.08, 0.185, 0.04, front, true); });
+    var arc = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.032, 10, 24, PI), K.trim); arc.position.set(0, 0.17, -0.03); front.add(arc); inked(arc);
+    var ant = cyl(0.01, 0.01, 0.46, K.reel, 0.36, 0.38, -0.05, front, 6); ant.rotation.z = -0.35;
+    sph(0.035, K.keys[2], 0.44, 0.6, -0.05, front);
+    front.traverse(function(o){ if(o.isMesh && o.material !== K.line) o.castShadow = true; });
+    front.rotation.y = -PI/2 - 0.2;                                    // speakers out from the shoulder, a little back (the camera's side)
+    var notes = [];
+    for(var i = 0; i < BOOM_NOTES; i++){
+      var n = new THREE.Sprite(new THREE.SpriteMaterial({map: K.notes[i % K.notes.length], transparent: true, depthWrite: false, toneMapped: false}));
+      g.add(n); notes.push(n);
+    }
+    return {g: g, bob: bob, cones: cones, notes: notes};
+  }
+  // each frame, after the clips: show or hide it, and on foot (hold) point the right arm up at it
+  function boomStep(ch, on, t, hold){
+    var B = ch && ch._bb;
+    if(!on){
+      if(B && B.g.visible){ B.g.visible = false; var R0 = rigOf(ch); if(R0) R0.ra.scale.set(1, 1, 1); }
+      return;
+    }
+    var R = rigOf(ch); if(!R) return;
+    if(!boomV) boomV = new THREE.Vector3();
+    if(!B){
+      B = ch._bb = boomboxModel(); R.t.add(B.g); B.g.position.set(BOOM_AT[0], BOOM_AT[1], BOOM_AT[2]);
+      B.hand = new THREE.Object3D(); B.hand.position.set(BOOM_GRIP[0], BOOM_GRIP[1], BOOM_GRIP[2]); R.t.add(B.hand);
+    }
+    B.g.visible = true;
+    R.t.getWorldScale(boomV); B.g.scale.setScalar(BOOM_SIZE/(boomV.x || 1));
+    t = t || 0;
+    var calm = E.calm(), ph = (t*2) % 1, beat = calm ? 0 : Math.pow(1 - ph, 3);   // 120 bpm
+    // squash and stretch on every beat, the woofers pumping out
+    B.bob.scale.set(1 + beat*0.07, 1 - beat*0.09, 1 + beat*0.07);
+    B.bob.rotation.z = calm ? 0 : Math.sin(t*PI)*0.06;
+    B.cones.forEach(function(c){ c.scale.set(1 + beat*0.22, 1 + beat*0.22, 1 + beat*1.6); });
+    // notes: pop in, wobble, drift up and out, fade
+    B.notes.forEach(function(n, i){
+      var f = (t*0.38 + i/BOOM_NOTES) % 1, side = i % 2 ? 1 : -1;
+      n.visible = !calm;
+      if(calm) return;
+      var pop = f < 0.12 ? f/0.12 : 1, sz = 0.27*(pop < 1 ? pop*(1.25 - 0.25*pop) : 1)*(1 + beat*0.12);
+      n.scale.set(sz, sz, 1);
+      n.position.set(-0.3 - f*0.45, 0.25 + f*1.05, side*0.15 + Math.sin(t*2.6 + i*1.7)*0.18);
+      n.material.rotation = Math.sin(t*4 + i)*0.35;
+      n.material.opacity = f > 0.7 ? (1 - f)/0.3 : 1;
+    });
+    if(hold){
+      if(!tmpA){ tmpA = new THREE.Vector3(); tmpB = new THREE.Vector3(); tmpQ = new THREE.Vector3(); tmpE = new THREE.Euler(); }
+      ch.o.updateMatrixWorld(true);
+      aimBone(R.ra, B.hand.getWorldPosition(boomV), R.rav, "x", 0.9, 0);
+    }
+  }
   function buildDesk(s, at){
     var root = new THREE.Group(); root.position.set(at[0], 0, at[1]); root.lookAt(TABLE.x, 0, TABLE.z); scene.add(root);
     var top = mat(0x2b3947, {roughness: 0.45, metalness: 0.3}), body = mat(0x1c2834, {roughness: 0.7});
@@ -3570,6 +3663,9 @@ function mount(el, api){
       if(ride && ride.kind !== "skate" && avatar.ch.o.parent === ride.lean) ridePose(avatar.ch, ride.B, ride.steer, avatar.g);
       if(skp) poseApply(avatar.ch, skp);                               // Calm: no pose (skp is null)
       if(!ride && avatar.lean) headApply(avatar.ch, avatar.lean.h);     // on foot: the head into the turn
+      // your boombox: on foot or on a board (held up); put away in a seat
+      var bOn = !!boomMe && (!ride || ride.kind === "skate");
+      boomStep(avatar.ch, bOn, t, bOn);
     }
     placePeers(dt, t);
     fxStep(t, dt); driveHudDraw(t);
@@ -3683,6 +3779,8 @@ function mount(el, api){
       P.w = p.w; P.tx = nx; P.tz = nz; P.tyaw = p.r*PI/180; P.a = p.a | 0; P.k = p.k | 0; P.y = Math.max(0, Math.min(60, p.y | 0));
       // a catalogue vehicle (`v`, only while driving): the real car or bike, in its paint; unknown here: the starter
       P.v = typeof p.v === "string" && VEHICLES[p.v] && VEHICLES[p.v].cat ? p.v : null; P.vp = Math.max(0, p.vp | 0);
+      // their boombox (`bb`, the "boombox" capability): the song it plays, while it plays
+      P.bb = typeof p.bb === "string" && /^[A-Za-z0-9_-]{11}$/.test(p.bb) ? p.bb : null;
     });
     Object.keys(peers).forEach(function(u){ if(!seen[u]){ var P = peers[u]; if(P.g.parent) P.g.parent.remove(P.g); delete peers[u]; } });
   };
@@ -3728,6 +3826,7 @@ function mount(el, api){
           setAnim(P.ch, P.k === K.bail ? "sit" : "idle");
           poseUndo(P.ch); P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0);
           if(!calm) poseApply(P.ch, skatePoseOf(P.k, (P.y || 0) > 1 && P.k !== K.grind, 0));
+          boomStep(P.ch, !!P.bb, t, true);
         }
         return;
       }
@@ -3779,6 +3878,7 @@ function mount(el, api){
         P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0);
         if(P.bike && P.ch.o.parent === P.lean) ridePose(P.ch, P.bike, P.steer, P.g);
         else if(!vk){ leanStep(P.ch, P.lean2 || (P.lean2 = {r: 0, rv: 0, p: 0, pv: 0, h: 0, hv: 0}), P.fs, P.fr, 0, dt, true); headApply(P.ch, P.lean2.h); }
+        boomStep(P.ch, !!P.bb && !vk, t, true);                       // their boombox, on foot
       }
     });
   }
@@ -3793,6 +3893,9 @@ function mount(el, api){
   // on a board: what others should see you doing ({k, y}); null otherwise
   inst.skate = function(){ return ride && ride.kind === "skate" ? skateNet() : null; };
   inst.riding = function(){ return !!ride; };
+  // a boombox on your shoulder while your Music room song plays (ui/app/39-boombox.js)
+  inst.setBoombox = function(on){ boomMe = !!on; };
+  inst.boombox = function(){ return !!boomMe; };
   // driving a catalogue vehicle: its id and paint index, for presence (`v` / `vp`, the "vehicles" capability)
   inst.vehicle = function(){ return ride && ride.V && ride.V.cat ? {v: ride.kind, vp: ride.paint | 0} : null; };
   // read-only, for the HUD's tests and tools: what you are driving and how

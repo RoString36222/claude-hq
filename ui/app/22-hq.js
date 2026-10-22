@@ -519,7 +519,10 @@ function hqNetSend(){
   // "vehicles": the catalogue car or bike you drive (v) and its paint (vp), so others see the real one
   var veh = (a===5 || a===6) && HQ3D.inst.vehicle && hqNetCan("vehicles") ? HQ3D.inst.vehicle() : null;
   if(veh && /^[a-z0-9-]{1,48}$/.test(veh.v)){ msg.v=veh.v; msg.vp=Math.max(0, Math.min(63, veh.vp|0)); }
-  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp].join(","), now=Date.now();
+  // "boombox": the Music room song you carry (ui/app/39-boombox.js), so people near you hear it
+  var bb = hqNetCan("boombox") && typeof boomNet==="function" ? boomNet() : null;
+  if(bb){ msg.bb=bb.bb; msg.bt=bb.bt; msg.bn=bb.bn; }
+  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt].join(","), now=Date.now();
   if(key===HQNET.last && now-HQNET.sentAt<2000) return;
   HQNET.last=key; HQNET.sentAt=now;
   try { ws.send(JSON.stringify(msg)); } catch(e){}

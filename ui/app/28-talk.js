@@ -3,8 +3,8 @@
 // or the private room you are in), the same one the Arena tab shows, and its voice button joins the
 // same call that floats over every view (20-arena-voice.js). Walking around the HQ or the city, or
 // going to the Valley or the Arena, never changes who you are talking to.
+// Always open in the HQ view (HQ 3.11): the chat is how the street talks, so it is never hidden.
 var TALK = {open:true, sig:""};
-try { TALK.open = localStorage.getItem("hq_talk_open") !== "0"; } catch(e){}
 
 // The Arena room the panel talks in while you are in the HQ view (null elsewhere, or unpaired).
 function hqTalkRoom(){
@@ -50,8 +50,6 @@ function hqTalkRender(){
   var room=hqTalkRoom();
   box.hidden=!room;
   if(!room) return;
-  box.classList.toggle("closed", !TALK.open);
-  var tg=$("hqTalkToggle"); if(tg){ tg.textContent=TALK.open ? "–" : "+"; tg.setAttribute("aria-expanded", TALK.open ? "true" : "false"); tg.title=TALK.open ? "Hide chat" : "Show chat"; }
   hqTalkHead();
   var log=$("hqTalkLog"), here=true;
   if(log){
@@ -86,7 +84,6 @@ function hqTalkVoice(){
   setTimeout(hqTalkRender, 300);
 }
 (function(){
-  var t=$("hqTalkToggle"); if(t) t.addEventListener("click", function(){ TALK.open=!TALK.open; try { localStorage.setItem("hq_talk_open", TALK.open ? "1" : "0"); } catch(e){} hqTalkRender(); });
   var s=$("hqTalkSend"); if(s) s.addEventListener("click", hqTalkSend);
   var i=$("hqTalkInput");
   if(i){

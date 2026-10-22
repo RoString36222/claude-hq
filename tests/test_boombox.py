@@ -114,5 +114,13 @@ class BoomboxTests(unittest.TestCase):
         self.assertFalse(self.out["view"]["frame"])
 
 
+class PageSendsIt(unittest.TestCase):
+    def test_presence_carries_the_boombox_only_where_the_arena_knows_it(self):
+        with open(os.path.join(ROOT, "ui", "app", "22-hq.js"), encoding="utf-8") as f:
+            hq = f.read()
+        self.assertIn('var bb = hqNetCan("boombox") && typeof boomNet==="function" ? boomNet() : null;', hq)
+        self.assertIn("msg.bb,msg.bt].join", hq, "a new song is sent at once")
+
+
 if __name__ == "__main__":
     unittest.main()

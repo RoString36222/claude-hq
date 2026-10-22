@@ -20,11 +20,11 @@ function hqWebGL(){ try { return !!document.createElement("canvas").getContext("
 // route's chevrons and the Go to panel / route banner, also before the City. City 3.2: the weather, and the
 // landmarks and amusement park (hqspectacle), also before the City.
 var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqlobby","hqcarlift","hqgaragemgr","hqbasementfx","hqbasement","hqbase","hqskate","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
-                  "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqshowroom","hqgarage", "hqdealer","hqcasinoui","hqcasino","hqcall","hqtravel","hqvoyage","hqships","hqbridges","hqairfield","hqair","hqaircraft","hqplane","hqairport3d","hqairbldg","hqairground","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcarpark","hqweather","hqspectacle","hqcity3d"];
+                  "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqdrive","hqshowroom","hqgarage", "hqdealer","hqcasinoui","hqcasino","hqcall","hqtravel","hqvoyage","hqships","hqbridges","hqairfield","hqair","hqaircraft","hqplane","hqairport3d","hqairbldg","hqairground","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcarpark","hqweather","hqspectacle","hqcity3d"];
 // The 3D City's own files: if one fails, the classic City still works (games/hq3d.js falls back to it);
 // a Cities part that fails only takes its own feature out of the 3D City.
 var HQ_SCRIPTS_3D = {hqcarlift:1, hqgaragemgr:1, hqbasementfx:1, hqbasement:1, world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
-                     hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqshowroom:1, hqgarage:1, hqdealer:1, hqcasinoui:1, hqcasino:1, hqcall:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqairfield:1, hqair:1, hqaircraft:1, hqplane:1, hqairport3d:1, hqairbldg:1, hqairground:1, hqairbase:1,
+                     hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqdrive:1, hqshowroom:1, hqgarage:1, hqdealer:1, hqcasinoui:1, hqcasino:1, hqcall:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqairfield:1, hqair:1, hqaircraft:1, hqplane:1, hqairport3d:1, hqairbldg:1, hqairground:1, hqairbase:1,
                      hqnav:1, hqminimap:1, hqroutefx:1, hqnavui:1, hqrail:1, hqcarpark:1, hqweather:1, hqspectacle:1};
 // ?hqsmoke=1 (tools/ui_smoke.py, tools/hq_shots.py): HQ opens straight into the City with three synthetic HQs.
 var HQ_SMOKE = /[?&]hqsmoke=1(&|$)/.test(location.search);
@@ -522,7 +522,12 @@ function hqNetSend(){
   // "boombox": the Music room song you carry (ui/app/39-boombox.js), so people near you hear it
   var bb = hqNetCan("boombox") && typeof boomNet==="function" ? boomNet() : null;
   if(bb){ msg.bb=bb.bb; msg.bt=bb.bt; msg.bn=bb.bn; }
-  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt].join(","), now=Date.now();
+  // "convoy" (HQ 3.12, games/hqdrive.js): whom you invite (ci), whom you follow (cv), where you lead (cg, cm); user ids and a point only
+  var cv = hqNetCan("convoy") && HQ3D.inst.convoyNet ? HQ3D.inst.convoyNet() : null;
+  if(cv){ var UR=/^[A-Za-z0-9_-]{1,64}$/;
+    if(UR.test(cv.ci||"")) msg.ci=cv.ci; if(UR.test(cv.cv||"")) msg.cv=cv.cv;
+    if(Array.isArray(cv.cg) && cv.cg.length===2 && isFinite(cv.cg[0]) && isFinite(cv.cg[1])) msg.cg=[Math.max(-102400, Math.min(102400, Math.round(cv.cg[0]))), Math.max(-102400, Math.min(102400, Math.round(cv.cg[1])))]; }
+  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg].join(","), now=Date.now();
   if(key===HQNET.last && now-HQNET.sentAt<2000) return;
   HQNET.last=key; HQNET.sentAt=now;
   try { ws.send(JSON.stringify(msg)); } catch(e){}
@@ -544,6 +549,13 @@ function hqRenderHere(){
     d.title="Open their trainer card"; d.addEventListener("click", function(){ if(typeof tcardOpen==="function") tcardOpen(p.u); });
     if(typeof cosFrameApply==="function") cosFrameApply(d, p.f);
     box.appendChild(d);
+    // HQ 3.12: invite someone near you in the City to a convoy (games/hqdrive.js; only where the Arena lists "convoy")
+    if(HQ3D.inst && HQ3D.inst.convoyCan && HQ3D.inst.convoyCan(p.u)){
+      var cb=document.createElement("button"); cb.type="button"; cb.className="hq3d-person hq3d-convoy-btn"; cb.textContent="\uD83D\uDE97 Convoy";
+      cb.title="Invite "+(p.n||"them")+" to drive in formation with you"; cb.setAttribute("aria-label", "Invite "+(p.n||"Visitor")+" to a convoy");
+      cb.addEventListener("click", function(){ if(HQ3D.inst && HQ3D.inst.convoyInvite) HQ3D.inst.convoyInvite(p.u); });
+      box.appendChild(cb);
+    }
   });
 }
 

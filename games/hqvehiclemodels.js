@@ -1247,14 +1247,16 @@ function build(c, entry, paint, opts){
     o.material = mk === "paint" ? pm : mk === "tail" ? tail : M[mk] || M.trim;
   });
   function get(n){ return g.getObjectByName(n); }
-  var car = bp.meta.kind === "car", on = null;
+  var car = bp.meta.kind === "car", on = null, lit = false;
   var rig = {
     g: g, entry: entry, dims: B.d, scale: B.k, kind: bp.meta.kind, paint: pm, standin: get("body"), meshes: meshes,
     wheels: car ? [0, 1, 2, 3].map(function(i){ return get("wheel-" + i); }) : [get("wheel-0"), get("wheel-1")],
     steer: car ? [get("steer-l"), get("steer-r")] : get("steer"), spin: car ? get("spin") : null,
     R: bp.meta.R, radii: bp.meta.radii.slice(), lean: bp.meta.lean,
     seat: get("a-seat"), grips: [get("a-grip-l"), get("a-grip-r")], feet: [get("a-foot-l"), get("a-foot-r")],
-    brake: function(b){ b = !!b; if(b === on) return; on = b; tail.color.setHex(b ? 0xffffff : 0x8c8c8c); },
+    brake: function(b){ b = !!b; if(b === on) return; on = b; tail.color.setHex(b ? 0xffffff : lit ? 0xc8c8c8 : 0x8c8c8c); },
+    // [3.12] lights on (games/hqdrive.js): the tails glow brighter (the lamps share one unlit material, always bright)
+    lights: function(l){ lit = !!l; if(!on) tail.color.setHex(lit ? 0xc8c8c8 : 0x8c8c8c); },
     setPaint: function(hex){ pm.color.setHex(hex); if(rig.glbPaint) rig.glbPaint.forEach(function(m){ m.color.setHex(hex); }); },
     // roll forward d metres with the bars / front wheels turned st (-1..1)
     roll: function(dd, s){

@@ -20,11 +20,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def checks(**runs):
-    """{name: "in_progress" | conclusion} -> a check-runs API body."""
+    """{name: "in_progress" | conclusion} -> a check-runs API body (ids 101, 102, ... in order)."""
     return json.dumps({"check_runs": [
-        {"name": n, "status": "in_progress", "conclusion": None} if s == "in_progress"
-        else {"name": n, "status": "completed", "conclusion": s}
-        for n, s in runs.items()]})
+        {"id": 101 + i, "name": n, "status": "in_progress", "conclusion": None} if s == "in_progress"
+        else {"id": 101 + i, "name": n, "status": "completed", "conclusion": s}
+        for i, (n, s) in enumerate(runs.items())]})
 
 
 class CiGate(unittest.TestCase):
@@ -54,6 +54,7 @@ echo "$line"
 """)
         self._tool("sleep", "exit 0")
         self._tool("docker", "exit 1")
+        self._tool("gh", "exit 1")          # never the real gh (it would reach GitHub)
 
     def _tool(self, name, body):
         path = os.path.join(self.bin, name)
@@ -61,11 +62,15 @@ echo "$line"
             f.write("#!/usr/bin/env bash\n" + body)
         os.chmod(path, 0o755)
 
-    def deploy(self, *responses, wait="300"):
+    def deploy(self, *responses, wait="300", **extra):
         with open(self.responses, "w") as f:
             f.write("\n".join(responses) + "\n")
-        env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ["PATH"],
-                   ARENA_SKIP_PULL="1", ARENA_CI_WAIT=wait)
+        env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ["PATH"], ARENA_SKIP_PULL="1", **extra)
+        for k in ("ARENA_CI_WAIT", "ARENA_GH_TOKEN", "GITHUB_TOKEN"):
+            env.pop(k, None)
+        env.update(extra)
+        if wait is not None:
+            env["ARENA_CI_WAIT"] = wait
         p = subprocess.run(["bash", os.path.join(self.repo, "ops", "release.sh"), "deploy"],
                            env=env, capture_output=True, text=True, timeout=60)
         return p.stdout + p.stderr
@@ -94,6 +99,33 @@ echo "$line"
         self.assertIn("CI failed for this commit", out)
         self.assertNotIn("waiting on", out)
         self.assertNotIn("Building", out)
+
+    def test_the_default_hold_outlasts_the_backend_job(self):
+        # the backend job takes about 9 minutes: the hold is 15 by default, polled every 20 s
+        out = self.deploy(checks(backend="in_progress"), checks(backend="success"), wait=None)
+        self.assertIn("holding for CI, up to 900s", out)
+        self.assertIn("CI passed", out)
+
+    def test_a_long_running_ci_is_polled_until_the_wait(self):
+        out = self.deploy(checks(backend="in_progress"), wait="100", ARENA_CI_POLL="20")
+        self.assertEqual(out.count("waiting on: backend"), 6)     # 0, 20, ..., 100 s
+        self.assertIn("CI still running after 100s", out)
+
+    def test_names_the_known_flaky_map_label_check(self):
+        log = "2026-10-22T10:00:00Z FAIL cam=map drew no labels for: peers ({...})"
+        out = self.deploy(checks(repo="success", dashboard="failure"), log, ARENA_GH_TOKEN="t")
+        self.assertIn("known flaky ui_smoke map-label check", out)
+        self.assertIn("job 102", out)
+        self.assertIn("CI failed for this commit", out)
+        self.assertNotIn("Building", out)
+
+    def test_a_real_failure_is_not_called_flaky(self):
+        out = self.deploy(checks(dashboard="failure"), "error[E0308]: mismatched types", ARENA_GH_TOKEN="t")
+        self.assertNotIn("flaky", out)
+        self.assertIn("CI failed for this commit", out)
+        out = self.deploy(checks(dashboard="failure"))       # no token, gh fails: just the failure
+        self.assertNotIn("flaky", out)
+        self.assertIn("CI failed for this commit", out)
 
     def test_github_unreachable_says_so(self):
         out = self.deploy("")

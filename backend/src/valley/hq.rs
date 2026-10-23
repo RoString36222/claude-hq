@@ -87,6 +87,14 @@ pub const XZ_MAX_CM: f64 = 102_400.0;
 /// The "alt" capability: feet height `h` (cm) and pitch `p` (degrees) ride along
 /// with a position, so others see you on a slope. These are their bounds.
 const ALT_H_MAX: f64 = 50_000.0;
+/// The "motion" capability's bounds: the sender's clock (ms; it wraps), a velocity (cm/s: an airliner's 300 m/s),
+/// a yaw rate (deg/s) and an engine's revs.
+const MOTION_T_MAX: f64 = 1_000_000_000.0;
+const MOTION_V_MAX: f64 = 40_000.0;
+const MOTION_YR_MAX: f64 = 3_600.0;
+const MOTION_RPM_MAX: f64 = 25_000.0;
+/// (t, vx, vz, yr, rpm)
+type Motion = (i64, i64, i64, i64, i64);
 const ALT_P_MAX: f64 = 90.0;
 
 /// hqpresence.py:18: inbound position frames a second per person, 24 deep.
@@ -145,6 +153,11 @@ struct Person {
     /// Their pets out with them (the "pets" capability, HQ 3.14): up to PETS_MAX [species, variant, acc, stage, name]
     /// (backend/src/pets.rs), drawn following them by everyone else's page. Per frame: a frame without `pt` has none.
     pets: Option<Vec<PetTag>>,
+    /// How they move (the "motion" capability): the sender's own clock when it took the frame (`t`, ms, 0..=MOTION_T_MAX,
+    /// any origin: a listener only ever compares two of the same sender's), its velocity (`vx`, `vz`, cm/s), its yaw rate
+    /// (`yr`, deg/s) and its engine's revs (`rpm`). A listener draws them a moment in the past, between two frames of their
+    /// own clock, instead of guessing from when the frames happened to arrive. Per frame: a frame without `t` has none.
+    motion: Option<Motion>,
     /// (tokens, when) -- Python's `[POS_BURST, t]` list.
     bucket: (f64, f64),
 }
@@ -186,6 +199,7 @@ impl Hq {
                 boombox: None,
                 convoy: Convoy::default(),
                 pets: None,
+                motion: None,
                 bucket: (POS_BURST, t),
             });
         }
@@ -290,6 +304,24 @@ impl Hq {
         let Some(convoy) = read_convoy(uid, msg) else { return false };
         // Pets: a bad species, variant, accessory, stage or name drops the whole frame.
         let Some(pets) = read_pets(msg.get("pt")) else { return false };
+        // Riding a pet (13): its first pet is the mount, and must be one that carries a rider; none, or a puppy, drops the frame.
+        if a.as_f64() == Some(13.0) && !pets.as_ref().and_then(|v| v.first()).is_some_and(|t| crate::pets::rideable(t.0, t.3)) {
+            return false;
+        }
+        // Motion: absent `t` is a page without it; with `t`, a missing one of the rest is 0 and a bad one drops the frame.
+        let motion = match msg.get("t") {
+            None | Some(Value::Null) => None,
+            Some(tv) => {
+                let zero = json!(0);
+                let f = |k: &str| msg.get(k).unwrap_or(&zero);
+                let (Some(ts), Some(vx), Some(vz), Some(yr), Some(rpm)) = (
+                    num_in(Some(tv), 0.0, MOTION_T_MAX), num_in(Some(f("vx")), -MOTION_V_MAX, MOTION_V_MAX),
+                    num_in(Some(f("vz")), -MOTION_V_MAX, MOTION_V_MAX), num_in(Some(f("yr")), -MOTION_YR_MAX, MOTION_YR_MAX),
+                    num_in(Some(f("rpm")), 0.0, MOTION_RPM_MAX))
+                else { return false };
+                Some((super::py_trunc(ts), super::py_trunc(vx), super::py_trunc(vz), super::py_trunc(yr), super::py_trunc(rpm)))
+            }
+        };
         p.w = w.to_string();
         p.x = super::py_trunc(x); // Python's int(x): toward zero
         p.z = super::py_trunc(z);
@@ -302,6 +334,7 @@ impl Hq {
         p.boombox = boombox;
         p.convoy = convoy;
         p.pets = pets;
+        p.motion = motion;
         self.dirty = true;
         true
     }
@@ -387,6 +420,14 @@ impl Hq {
                     if let Some(pt) = &p.pets {
                         m.insert("pt".into(), json!(pt.iter().map(|t| json!([t.0, t.1, t.2, t.3, t.4])).collect::<Vec<_>>()));
                     }
+                    // only from a page that sends how it moves ("motion" capability)
+                    if let Some((ts, vx, vz, yr, rpm)) = p.motion {
+                        m.insert("t".into(), json!(ts));
+                        m.insert("vx".into(), json!(vx));
+                        m.insert("vz".into(), json!(vz));
+                        m.insert("yr".into(), json!(yr));
+                        m.insert("rpm".into(), json!(rpm));
+                    }
                     Value::Object(m)
                 })
                 .collect(),
@@ -407,8 +448,9 @@ fn anim_ok(a: &Value) -> bool {
         // car / riding a motorbike (the "drive" capability), and 7 / 8, flying a helicopter /
         // an attack helicopter (the "fly" capability; its height rides in `h`), and 9 / 10, flying the
         // seaplane / the prop plane (the "plane" capability, HQ 3.2; its height rides in `h` too), and 11 / 12,
-        // flying the regional jet / the narrow-body airliner (the "airliner" capability, HQ 3.8).
-        Value::Number(n) => n.as_f64().is_some_and(|f| [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0].contains(&f)),
+        // flying the regional jet / the narrow-body airliner (the "airliner" capability, HQ 3.8), and 13, riding your
+        // pet (the "petride" capability, HQ 3.14: `pt`'s first pet is the mount, checked in pos).
+        Value::Number(n) => n.as_f64().is_some_and(|f| [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0].contains(&f)),
         _ => false,
     }
 }
@@ -677,8 +719,8 @@ mod tests {
         assert_eq!(p.listing()[0]["r"], 270); // int(-90) % 360, not Rust's -90
         // a bool x is not a number in Python either
         assert!(!p.pos("u", &json!({"w": "mission", "x": true, "z": 0, "r": 0}), 0.2));
-        // a is 13, which no capability sends (9 and 10 are the planes, HQ 3.2; 11 and 12 the airliners, HQ 3.8)
-        assert!(!p.pos("u", &json!({"w": "mission", "x": 0, "z": 0, "r": 0, "a": 13}), 0.3));
+        // a is 14, which no capability sends (9 and 10 are the planes, HQ 3.2; 11 and 12 the airliners, HQ 3.8; 13 riding a pet, 3.14)
+        assert!(!p.pos("u", &json!({"w": "mission", "x": 0, "z": 0, "r": 0, "a": 14}), 0.3));
         // nobody by that name is standing anywhere
         assert!(!p.pos("nobody", &json!({"w": "base", "x": 0, "z": 0, "r": 0}), 0.4));
         // Every rejection above left the stored position alone.
@@ -756,6 +798,27 @@ mod tests {
         // a code the Arena would not write drops the whole frame
         for bad in [json!("x"), json!(7), json!("9001000---"), json!("0001000---FUCK"), json!("0001000---ABCDEFGHIJ")] {
             assert!(!p.pos("u", &json!({"w": "city", "x": 900, "z": 0, "r": 0, "a": 5, "vt": bad}), 2.0), "{bad}");
+        }
+        assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
+    }
+
+    #[test]
+    fn riding_a_pet_needs_a_mount_that_carries_a_rider() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        // a grown fire dragon (index 10, stage 2) under you, 40 m up: listed with its pets and height
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 13, "h": 4000, "p": 5, "pt": [[10, 1, 0, 2, "Ember"], [0, 0, 1, 0, "Mochi"]]}), 0.1));
+        let l = p.listing();
+        assert_eq!((l[0]["a"].clone(), l[0]["h"].clone(), l[0]["pt"][0][0].clone()), (json!(13), json!(4000), json!(10)));
+        // a big dinosaur (the triceratops, 14) and the grown sea serpent (21) carry you too
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 13, "pt": [[14, 0, 0, 0, "Trike"]]}), 0.2));
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 13, "pt": [[21, 0, 0, 2, "Nessie"]]}), 0.3));
+        // no pets, a young dragon, a dog or the raptor under you: the whole frame is dropped
+        for bad in [json!(null), json!([]), json!([[10, 1, 0, 1, "Ember"]]), json!([[0, 0, 0, 0, "Mochi"]]), json!([[15, 0, 0, 0, "Rex"]]),
+                    json!([[0, 0, 0, 0, "Mochi"], [10, 1, 0, 2, "Ember"]])] {
+            let mut m = json!({"w": "city3d", "x": 900, "z": 0, "r": 0, "a": 13});
+            if !bad.is_null() { m["pt"] = bad.clone(); }
+            assert!(!p.pos("u", &m, 2.0), "{bad}");
         }
         assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
     }
@@ -893,6 +956,35 @@ mod tests {
         let l = &p.listing()[0];
         assert_eq!((&l["x"], &l["z"], &l["r"], &l["a"]), (&json!(0), &json!(0), &json!(359),
                                                           &json!(0)));
+    }
+
+    #[test]
+    fn motion_rides_along_only_when_sent() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        // Absent: the listing is the one it always was.
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 5}), 0.1));
+        assert_eq!(p.listing()[0].to_string(), r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":5}"#);
+        // Sent: echoed after everything else, truncated toward zero; a missing one of the rest is 0.
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 5, "t": 123_456.7, "vx": -2500.9, "vz": 30, "yr": -45, "rpm": 6200}), 0.2));
+        assert_eq!(p.listing()[0].to_string(),
+                   r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":5,"t":123456,"vx":-2500,"vz":30,"yr":-45,"rpm":6200}"#);
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1, "t": 0}), 0.3));
+        assert_eq!((p.listing()[0]["vx"].clone(), p.listing()[0]["rpm"].clone()), (json!(0), json!(0)));
+        // The bounds are inclusive.
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "t": 1_000_000_000, "vx": 40_000, "vz": -40_000, "yr": 3600, "rpm": 25_000}), 0.4));
+        // A bad one drops the whole frame: nothing moves, the old motion stays.
+        for (i, bad) in [json!({"t": -1}), json!({"t": 1_000_000_001}), json!({"t": 5, "vx": 40_001}), json!({"t": 5, "yr": -3601}),
+                         json!({"t": 5, "rpm": 25_001}), json!({"t": "5"}), json!({"t": 5, "vz": "1"})].into_iter().enumerate() {
+            let mut m = json!({"w": "city3d", "x": 99, "z": 99, "r": 0});
+            m.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+            assert!(!p.pos("u", &m, 0.5 + i as f64), "{m}");
+        }
+        assert_eq!(p.listing()[0]["x"], json!(0));
+        assert_eq!(p.listing()[0]["t"], json!(1_000_000_000));
+        // A frame without it: gone.
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0}), 9.0));
+        assert!(p.listing()[0].get("t").is_none());
     }
 
     #[test]

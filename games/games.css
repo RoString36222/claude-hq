@@ -1008,6 +1008,9 @@ html.hq-calm .hq3d-drive-read{display:block}
 .hqcall-title{font-weight:800;font-size:15px}
 .hqcall-close{border:0;background:none;color:var(--muted);font-size:16px;cursor:pointer;padding:4px 8px;border-radius:8px}
 .hqcall-close:hover{color:var(--ink);background:var(--line)}
+.hqcall-search{margin:8px 8px 0;padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:var(--panel2,var(--panel));color:var(--ink);font:inherit;font-size:13px}
+.hqcall-search:focus-visible{border-color:var(--brand);outline:none}
+.hqcall-search[hidden]{display:none}
 .hqcall-list{overflow:auto;padding:8px;display:grid;gap:6px}
 .hqcall-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;border:1px solid var(--line);
   background:color-mix(in srgb,var(--panel) 80%,var(--bg));color:var(--ink);text-align:left;cursor:pointer;font:inherit}

@@ -21,13 +21,13 @@ function hqWebGL(){ try { return !!document.createElement("canvas").getContext("
 // landmarks and amusement park (hqspectacle), also before the City. Living City: the curved roads (roadsmooth,
 // before world.js packs a doc), the event director (citysim), its scene effects (citysimfx) and the news ticker
 // (citynews), also before the City.
-var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqpets","hqlobby","hqcarlift","hqgaragemgr","hqbasementfx","hqbasement","hqstyle","hqtower","hqroof","hqdecor","hqbase","hqskate","roadsmooth","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
-                  "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqdrive","hqshowroom","hqgarage", "hqdealer","hqtuning","hqcasinoui","hqcasino","hqcall","hqtravel","hqvoyage","hqships","hqbridges","hqairfield","hqair","hqaircraft","hqplane","hqairport3d","hqairbldg","hqairground","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcarpark","hqweather","hqspectacle","citysim","citysimfx","citynews","hqcity3d"];
+var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqpets","hqpetride","hqlobby","hqcarlift","hqgaragemgr","hqbasementfx","hqbasement","hqstyle","hqtower","hqroof","hqdecor","hqbase","hqskate","roadsmooth","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
+                  "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqdrive","hqnetsmooth","hqshowroom","hqgarage", "hqdealer","hqtuning","hqcasinoui","hqcasino","hqcall","hqtravel","hqvoyage","hqships","hqbridges","hqairfield","hqair","hqaircraft","hqplane","hqairport3d","hqairbldg","hqairground","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcarpark","hqweather","hqspectacle","hqstunts","citysim","citysimfx","citynews","hqcity3d"];
 // The 3D City's own files: if one fails, the classic City still works (games/hq3d.js falls back to it);
 // a Cities part that fails only takes its own feature out of the 3D City.
-var HQ_SCRIPTS_3D = {hqpets:1, hqcarlift:1, hqgaragemgr:1, hqbasementfx:1, hqbasement:1, roadsmooth:1, world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
-                     hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqdrive:1, hqshowroom:1, hqgarage:1, hqdealer:1, hqtuning:1, hqcasinoui:1, hqcasino:1, hqcall:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqairfield:1, hqair:1, hqaircraft:1, hqplane:1, hqairport3d:1, hqairbldg:1, hqairground:1, hqairbase:1,
-                     hqnav:1, hqminimap:1, hqroutefx:1, hqnavui:1, hqrail:1, hqcarpark:1, hqweather:1, hqspectacle:1,
+var HQ_SCRIPTS_3D = {hqpets:1, hqpetride:1, hqcarlift:1, hqgaragemgr:1, hqbasementfx:1, hqbasement:1, roadsmooth:1, world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
+                     hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqdrive:1, hqnetsmooth:1, hqshowroom:1, hqgarage:1, hqdealer:1, hqtuning:1, hqcasinoui:1, hqcasino:1, hqcall:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqairfield:1, hqair:1, hqaircraft:1, hqplane:1, hqairport3d:1, hqairbldg:1, hqairground:1, hqairbase:1,
+                     hqnav:1, hqminimap:1, hqroutefx:1, hqnavui:1, hqrail:1, hqcarpark:1, hqweather:1, hqspectacle:1, hqstunts:1,
                      citysim:1, citysimfx:1, citynews:1};
 // ?hqsmoke=1 (tools/ui_smoke.py, tools/hq_shots.py): HQ opens straight into the City with three synthetic HQs.
 var HQ_SMOKE = /[?&]hqsmoke=1(&|$)/.test(location.search);
@@ -525,6 +525,7 @@ function hqNetSend(){
   if((a===7 || a===8) && !hqNetCan("fly")) a = 0;   // a helicopter (7 / 8) needs "fly": else you stand where it is
   if((a===11 || a===12) && !hqNetCan("airliner")) a = 10;   // an airliner (11 the regional jet, 12 the narrow-body, HQ 3.6) needs "airliner": else a plane
   if((a===9 || a===10) && !hqNetCan("plane")) a = 0;   // a plane (9 the seaplane, 10 the prop plane, HQ 3.2) needs "plane" likewise
+  if(a===13 && !hqNetCan("petride")) a = 0;   // [3.14] riding your pet (13) needs "petride": else you stand, your pets beside you
   var msg={type:"game", g:"hq", op:"pos", w:w.world, x:Math.round(w.x*100), z:Math.round(w.z*100),
            r:Math.round(((w.yaw*180/Math.PI)%360+360)%360), a:a};
   // on a board: the trick you are doing (k) and how high you are (y, decimetres), so others see it
@@ -550,7 +551,13 @@ function hqNetSend(){
   // [pets 3.14] "pets": the pets out with you (pt: [species, variant, acc, stage, name] x2), drawn following you
   var pt = hqNetCan("pets") && HQ3D.inst.petsNet ? HQ3D.inst.petsNet() : null;
   if(Array.isArray(pt) && pt.length) msg.pt=pt.slice(0,2);
-  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0)].join(","), now=Date.now();
+  // "motion": when this frame was taken on your own clock (t, ms), your velocity (cm/s), yaw rate (deg/s) and revs,
+  // so others draw you smoothly between frames (games/hqnetsmooth.js); numbers about your movement only
+  var mo = hqNetCan("motion") && HQ3D.inst.motion ? HQ3D.inst.motion() : null;
+  if(mo){ var cl=function(v,m){ v=Math.round(+v||0); return Math.max(-m, Math.min(m, v)); };
+    msg.t=Math.round(performance.now())%1000000000; msg.vx=cl(mo.vx*100, 40000); msg.vz=cl(mo.vz*100, 40000);
+    msg.yr=cl(mo.yr*180/Math.PI, 3600); msg.rpm=Math.max(0, Math.min(25000, Math.round(+mo.rpm||0))); }
+  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm].join(","), now=Date.now();
   if(key===HQNET.last && now-HQNET.sentAt<2000) return;
   HQNET.last=key; HQNET.sentAt=now;
   try { ws.send(JSON.stringify(msg)); } catch(e){}
@@ -559,7 +566,7 @@ setInterval(function(){ if(VIEW==="hq") hqSync(); hqNetSync(); hqNetSend(); }, 1
 // "Here now": who else is in this HQ, and on which floor.
 var HQ_FLOOR_NAME = {base:"outside", city:"in Arena City", city3d:"in Arena City", lobby:"in the Lobby", mission:"in Mission Control"};
 // (riding a bike shows as "on a bike" beside the floor, a skateboard as "skating", and so on)
-var HQ_MOVING_NAME = {3:" · on a bike", 4:" · skating", 5:" · driving", 6:" · on a motorbike", 7:" · flying", 8:" · flying"};
+var HQ_MOVING_NAME = {3:" · on a bike", 4:" · skating", 5:" · driving", 6:" · on a motorbike", 7:" · flying", 8:" · flying", 13:" · riding their pet"};
 function hqRenderHere(){
   var box=$("hqHere"); if(!box) return;
   var ps=HQNET.peers||[];

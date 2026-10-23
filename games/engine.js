@@ -166,7 +166,8 @@ function sfx(name, opt){
   try { SFX[name](a, opt); } catch(e){}
 }
 // A continuous engine note (HQ 3.5.7: modelled on a real engine): engineSound(kind, ex) (ex: a tuned exhaust, 3.13) ->
-// {set(rpm 900..7600, opt), stop()}. The game's rpm (900 idle .. 7600 limiter) maps onto the
+// {set(rpm 900..7600, opt), stop()} (engineSound(kind, ex, real): set() takes the engine's real rpm, opt.limiter
+// stutters it on its rev limiter). The game's rpm (900 idle .. 7600 limiter) maps onto the
 // profile's own idle..redline, and the note's fundamental is the firing frequency of a four-stroke,
 // rpm/60 * cylinders/2: a 390 single thumps at 12-90 Hz, a superbike four screams up to ~480 Hz.
 // Its timbre is a harmonic recipe (a PeriodicWave), a detuned twin for body, a half-order sub for
@@ -242,19 +243,48 @@ var EXHAUST = {
   underseat: {gain: 1.2, grit: 1.12, cut: 0.95, sub: 0.12},
   endcan:    {gain: 1.12, grit: 1.2, cut: 1.15, pops: 0.3}
 };
-// engineProfile(kind, ex) -> the profile engineSound plays: ENGINES[kind] as it is (stock, an unknown exhaust, an
-// electric motor or a rotor), or a copy with the exhaust's changes
-function engineProfile(kind, ex){
+// engineProfile(kind, ex, real) -> the profile engineSound plays: ENGINES[kind] as it is (stock, an unknown exhaust, an
+// electric motor or a rotor), or a copy with the exhaust's changes. real (a vehicle's own engine, games/hqvehiclephys.js
+// engineFor: {idle, red, limit, cyl, motorMax, tone}): set() then takes that engine's REAL rpm, the voice plays at its
+// own idle and redline, and its exhaust character shades the voice (tone 0..1: depth a deeper, fuller note; rasp a
+// harder edge; crackle pops on the overrun and at the limiter; induction the intake's roar; whistle a turbo's or a
+// supercharger's whine)
+function engineProfile(kind, ex, real){
   var P = ENGINES[kind] || ENGINES.v8, M = EXHAUST[ex];
-  if(!M || !P.cyl) return P;
+  if((!M || !P.cyl) && !real) return P;
   var Q = {}; Object.keys(P).forEach(function(k){ Q[k] = P[k]; });
-  Q.gain = P.gain*M.gain; Q.grit = (P.grit || 1)*M.grit; Q.cut = [P.cut[0], Math.round(P.cut[1]*M.cut)];
-  Q.pops = Math.min(1, (P.pops || 0) + (M.pops || 0)); Q.sub = Math.min(1.2, (P.sub || 0) + (M.sub || 0));
+  if(real){
+    Q.real = true;
+    if(P.cyl){ Q.idle = real.idle > 0 ? real.idle : P.idle; Q.red = real.red > Q.idle ? real.red : P.red; Q.limit = real.limit > Q.red ? real.limit : Q.red + 300;
+               if(real.cyl > 0) Q.cyl = real.cyl; }
+    else Q.max = real.motorMax > 0 ? real.motorMax : 16000;
+    var T = real.tone;
+    if(T && P.cyl){
+      var d = clamp(+T.depth || 0.5, 0, 1), r = clamp(+T.rasp || 0.5, 0, 1);
+      Q.sub = Math.min(1.2, (P.sub || 0)*(0.5 + d) + Math.max(0, d - 0.6)*0.4);
+      Q.cut = [Math.round(P.cut[0]*(1.25 - 0.5*d)), Math.round(P.cut[1]*(0.85 + 0.35*r))];
+      Q.grit = (P.grit || 1)*(0.75 + 0.6*r); Q.q = P.q*(0.9 + 0.4*r);
+      if(T.crackle != null) Q.pops = clamp(+T.crackle, 0, 1);
+      if(T.induction != null) Q.air = 0.25 + 0.75*clamp(+T.induction, 0, 1);
+      Q.whistle = T.whistle != null ? clamp(+T.whistle, 0, 1) : null;
+      if(Q.whistle > 0.35 && !Q.turbo) Q.turbo = 2600;
+    }
+  }
+  if(M && Q.cyl){
+    Q.gain = Q.gain*M.gain; Q.grit = (Q.grit || 1)*M.grit; Q.cut = [Q.cut[0], Math.round(Q.cut[1]*M.cut)];
+    Q.pops = Math.min(1, (Q.pops || 0) + (M.pops || 0)); Q.sub = Math.min(1.2, (Q.sub || 0) + (M.sub || 0));
+  }
   return Q;
 }
-// The profile's real revs and fundamental (Hz) for a game rpm (900..7600); firing = rpm/60*cyl/2.
-function engineHz(kind, rpm){
-  var P = ENGINES[kind] || ENGINES.v8, u = clamp((rpm - 900)/6700, 0, 1);
+// The profile's real revs and fundamental (Hz) for an rpm; firing = rpm/60*cyl/2. A game rpm (900..7600) maps onto the
+// voice's idle..redline; a real profile (engineProfile(.., real)) takes the engine's own rpm.
+function engineHz(kind, rpm, P){
+  P = P || ENGINES[kind] || ENGINES.v8;
+  if(P.real){
+    if(!P.cyl){ var ue = clamp(rpm/(P.max || 16000), 0, 1); return {u: ue, rpm: rpm, hz: P.lo + (P.hi - P.lo)*ue}; }
+    return {u: clamp((rpm - P.idle)/(P.red - P.idle), 0, 1.15), rpm: rpm, hz: Math.max(P.idle*0.6, rpm)/60*P.cyl/2};
+  }
+  var u = clamp((rpm - 900)/6700, 0, 1);
   if(!P.cyl) return {u: u, rpm: null, hz: P.lo + (P.hi - P.lo)*u};
   var r = P.idle + (P.red - P.idle)*u;
   return {u: u, rpm: r, hz: r/60*P.cyl/2};
@@ -287,8 +317,8 @@ function engineCurve(B, k){
   for(var i = 0; i < 1024; i++){ var x = i/511.5 - 1; c[i] = Math.tanh(k*x)/th; }
   return (B.curves[key] = c);
 }
-function engineSound(kind, ex){
-  var P = engineProfile(kind, ex);
+function engineSound(kind, ex, real){
+  var P = engineProfile(kind, ex, real);
   var a = sfxVolume() > 0 ? audio() : null; if(!a) return {set: function(){}, stop: function(){}};
   var B = engineBus(a), t0 = a.currentTime, nodes = [];
   // the output first (the dead man's switch lives here), then the chain into it:
@@ -339,12 +369,12 @@ function engineSound(kind, ex){
   // state: deterministic randomness (a seed from the kind), the load, the boost, the overrun and the gear
   var seed = 7; for(var i = 0; i < kind.length; i++) seed = (seed*31 + kind.charCodeAt(i)) & 0x7fffffff;
   function rnd(){ seed = (seed*1103515245 + 12345) & 0x7fffffff; return seed/0x7fffffff; }
-  var S = {t: t0, rpm: null, load: 0.3, boost: 0, lift: 9, pop: 0, wob: 0, gear: null, blip: 0, thr: 0};
+  var S = {t: t0, rpm: null, load: 0.3, boost: 0, lift: 9, pop: 0, wob: 0, gear: null, blip: 0, thr: 0, lim: 0};
   function tgt(p, v, tc){ p.setTargetAtTime(v, a.currentTime, tc); }
   return {
     set: function(rpm, opt){
       opt = opt || {};
-      var t = a.currentTime, on = sfxVolume() > 0, dt = clamp(t - S.t, 0, 0.1), F = engineHz(kind, rpm), u = F.u, hz = F.hz;
+      var t = a.currentTime, on = sfxVolume() > 0, dt = clamp(t - S.t, 0, 0.1), F = engineHz(kind, rpm, P), u = Math.min(1, F.u), hz = F.hz;
       S.t = t;
       // the load: the throttle if the game gives it, else how hard the revs are climbing
       var rise = S.rpm != null && dt > 0 ? (rpm - S.rpm)/dt : 0; S.rpm = rpm;
@@ -357,6 +387,12 @@ function engineSound(kind, ex){
         } else { S.blip = 0.16; if(P.pops && on) crackle(t + 0.12); }
       }
       if(opt.gear != null) S.gear = opt.gear;
+      // on the rev limiter: the ignition cuts in a fast stutter, and a sporty one pops through it
+      if(opt.limiter && t >= S.lim){
+        S.lim = t + 0.055 + rnd()*0.02;
+        cut.gain.setTargetAtTime(0.18, t, 0.006); cut.gain.setTargetAtTime(1, t + 0.025, 0.008);
+        if(P.pops && on && !calm() && rnd() < P.pops*0.6) crackle(t + 0.02);
+      }
       if(S.blip > 0){ S.blip -= dt; thr = 1; }
       var k = dt > 0 ? 1 - Math.exp(-dt*10) : 1;
       S.load += (thr - S.load)*k;
@@ -389,7 +425,7 @@ function engineSound(kind, ex){
       if(wh){
         var want = P.rotor ? u : L > 0.5 ? u : 0;
         S.boost += (want - S.boost)*(dt > 0 ? 1 - Math.exp(-dt*(want > S.boost ? 2.2 : 7)) : 1);
-        tgt(wh.frequency, P.turbo*(0.4 + 0.8*S.boost), 0.08); tgt(whg.gain, 0.014*S.boost*S.boost, 0.08);
+        tgt(wh.frequency, P.turbo*(0.4 + 0.8*S.boost), 0.08); tgt(whg.gain, 0.014*S.boost*S.boost*(P.whistle != null ? 0.4 + 1.6*P.whistle : 1), 0.08);
       }
       if(rat) tgt(rat.g.gain, P.rattle*(1 - u*0.5), 0.1);
       // the turbofan: the whine follows N1 (u), the roar the thrust (the load)

@@ -32,7 +32,7 @@ class Source(unittest.TestCase):
         self.assertIn("[{x: me0.x, z: me0.z, r: myR}]", CITY)
 
     def test_your_car_bumps_off_whatever_blocked_says(self):
-        self.assertIn("function blocked(x, z){ return cur === worlds.mission ? missionBlocked(x, z) : cur.blocked(x, z); }", read("games", "hq3d.js"))
+        self.assertIn("function blocked(x, z){ return (cur === worlds.mission ? missionBlocked(x, z) : cur.blocked(x, z)) || peerBlocked(x, z); }", read("games", "hq3d.js"))
 
 
 @unittest.skipUnless(NODE, "node is not installed")

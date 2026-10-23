@@ -180,9 +180,35 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   for(k = 0; k < 30; k++) fr({scene: scene2, world: lobbyW, worldName: "lobby"});
   out.rt.lobby = K.stats().lobby;
   for(k = 0; k < 400; k++) fr({scene: scene2, world: lobbyW, worldName: "lobby"});
-  out.rt.near = K.near ? [K.near.kind, K.near.p.name] : null;
+  // [3.13.5] E needs you still and facing it: back to every pet, nothing is offered; turned to the nearest, it is
+  function nearestAny(){ var b = null, bd = 1e9; K.out().concat(K.lobbyOut ? K.lobbyOut() : []).forEach(function(q){ var d = Math.hypot(q.x - me.x, q.z - me.z); if(q.x != null && d < bd){ bd = d; b = q; } }); return b; }
+  var q0 = nearestAny(), yawTo = function(q){ return Math.atan2(q.x - me.x, q.z - me.z); };
+  me.yaw = yawTo(q0) + Math.PI; fr({scene: scene2, world: lobbyW, worldName: "lobby"});
+  out.rt.backNear = K.near ? K.near.p.name : null;
+  me.yaw = yawTo(q0); fr({scene: scene2, world: lobbyW, worldName: "lobby", busy: true});
+  out.rt.busyNear = K.near ? K.near.p.name : null;                                 // a door / lift / ride here: E is theirs
+  me.speed = 1.5; fr({scene: scene2, world: lobbyW, worldName: "lobby"}); out.rt.movingNear = K.near ? K.near.p.name : null; me.speed = 0;
+  fr({scene: scene2, world: lobbyW, worldName: "lobby"});
+  out.rt.near = K.near ? [K.near.kind, K.near.p.name, +Math.hypot(q0.x - me.x, q0.z - me.z).toFixed(2)] : null;
   if(K.near) K.key("KeyE", me, null);
   out.rt.toggles = toggles;
+  // facing (pure): still, within the distance, within 45 degrees of where you look
+  var F = P.facing;
+  out.facing = {ahead: F({x: 0, z: 0, yaw: 0, speed: 0}, 0, 1.2, 1.5), side: F({x: 0, z: 0, yaw: 0, speed: 0}, 1.2, 0, 1.5), behind: F({x: 0, z: 0, yaw: 0, speed: 0}, 0, -1.2, 1.5),
+    edge: F({x: 0, z: 0, yaw: 0, speed: 0}, 0.8, 1.0, 1.5), far: F({x: 0, z: 0, yaw: 0, speed: 0}, 0, 1.8, 1.5), moving: F({x: 0, z: 0, yaw: 0, speed: 2}, 0, 1.2, 1.5),
+    riding: F({x: 0, z: 0, yaw: 0, speed: 0, ride: {kind: "car"}}, 0, 1.2, 1.5), turned: F({x: 0, z: 0, yaw: Math.PI/2, speed: 0}, 1.2, 0, 1.5), D: [P.LEAVE_D, P.TAKE_D]};
+  // the list arrives late (the Arena answers after the lobby is up): the stay-home pets appear then, and again on a change
+  var K2 = P.create({THREE: THREE}, {}), scene3 = new THREE.Scene(), lw2 = {name: "lobby", bounds: [-15, 15, -15, 15]}; P.lobby(lw2, null);
+  function fr2(){ frames++; K2.frame({t: frames/60, dt: 1/60, scene: scene3, world: lw2, worldName: "lobby", owner: {x: 0, z: 6, yaw: Math.PI, speed: 0}, peers: []}); }
+  for(k = 0; k < 10; k++) fr2();
+  out.late = {before: K2.stats().lobby};
+  K2.setOwned([{id: "h", species: "retriever", name: "het", active: false, home: true}, {id: "s", species: "firedragon", name: "SWASti", active: false, home: true},
+               {id: "r", species: "raptor", name: "raptu", active: false, home: true}]);
+  fr2(); out.late.after = K2.stats().lobby; out.late.mine = K2.stats().mine;
+  K2.setOwned([{id: "h", species: "retriever", name: "het", active: true, home: true}, {id: "s", species: "firedragon", name: "SWASti", active: false, home: true},
+               {id: "r", species: "raptor", name: "raptu", active: false, home: true}]);
+  fr2(); out.late.changed = [K2.stats().lobby, K2.stats().mine];
+  K2.dispose();
   // a host's lobby on a visit
   K.setLobby([{species: "golddragon", variant: 0, acc: 0, stage: 2, name: "Sol"}]);
   for(k = 0; k < 5; k++) fr({scene: scene2, world: lobbyW, worldName: "lobby"});
@@ -257,7 +283,24 @@ out.full = U.localAdopt(full, "corgi", 0, "Seven", 1, 2).err;
 var id3 = r4.pet.id, e1 = U.localEdit(r4.list, id3, {active: true}), e2 = U.localEdit(r4.list, r1.pet.id, {acc: 8}), e3 = U.localEdit(r4.list, r3.pet.id, {acc: 9, name: "Glacier", home: false}),
     e4 = U.localEdit(r4.list, "nope", {home: true}), e5 = U.localEdit(r4.list, r1.pet.id, {name: "<script>"});
 out.edit = {third: e1.err, saddle: e2.err, ok: e3.pet && [e3.pet.acc, e3.pet.name, e3.pet.home], none: e4.err, bad: e5.err};
-console.log(JSON.stringify(out));
+// [3.13.5] a refresh: the HQ is up before the Arena's capabilities arrive
+var can = false, gets = 0, pushed = [];
+global.ARENA = {paired: true}; global.hqNetCan = function(c){ return c === "pets" && can; };
+global.HQ3D = {inst: {setPets: function(l){ pushed.push(l.length); }, setLobbyPets: function(){}}};
+global.fetch = function(u){ gets++; return Promise.resolve({ok: true, status: 200, json: function(){ return Promise.resolve({pets: [
+  {id: "11111111-1111-4111-8111-111111111111", species: "retriever", name: "het", active: true, home: true},
+  {id: "22222222-2222-4222-8222-222222222222", species: "firedragon", name: "SWASti", active: false, home: true},
+  {id: "33333333-3333-4333-8333-333333333333", species: "raptor", name: "raptu", active: false, home: true}], level: 9}); }}); };
+var tick = function(){ return new Promise(function(r){ U.tick(); setTimeout(r, 5); }); }, Ps = function(){ return PETS; };
+tick().then(function(){
+  out.late = {first: [Ps().src, Ps().list.length]};
+  can = true; return tick();
+}).then(function(){ return tick(); }).then(function(){
+  var L = Ps().list;
+  out.late.then = [Ps().src, L.length, L.filter(function(p){ return p.active; }).length, L.filter(function(p){ return p.home && !p.active; }).length];
+  out.late.pushed = pushed[pushed.length - 1];
+  return tick().then(function(){ return tick(); });
+}).then(function(){ out.late.again = gets; console.log(JSON.stringify(out)); });
 """
 
 
@@ -460,9 +503,38 @@ class PetsEngine(unittest.TestCase):
         self.assertEqual(rt["peers"]["drawn"], 4, "yours and the near stranger's; the far one's culled")
         self.assertEqual(rt["lobby"], 1, "the stay-home tabby; the serpent lives elsewhere")
         self.assertEqual(rt["near"][0] in ("lobby", "mine"), True)
+        self.assertLessEqual(rt["near"][2], 2.2)
+        self.assertIsNone(rt["backNear"], "your back to them: E is not a pet's")
+        self.assertIsNone(rt["busyNear"], "a door, lift or ride here: E is theirs")
+        self.assertIsNone(rt["movingNear"], "walking: E is not a pet's")
         self.assertEqual(len(rt["toggles"]), 1)
         self.assertEqual(rt["visit"], 1, "a host's lobby pet on a visit")
         self.assertEqual(rt["left"], 0, "dispose takes everything away")
+
+    def test_e_needs_facing_and_distance(self):
+        f = self.o["facing"]
+        self.assertEqual(f["D"], [1.5, 2.2])
+        self.assertAlmostEqual(f["ahead"], 1.2, places=3)
+        self.assertAlmostEqual(f["turned"], 1.2, places=3)
+        self.assertGreaterEqual(f["edge"], 0, "38 degrees off: still facing it")
+        for k in ("side", "behind", "far", "moving", "riding"):
+            self.assertEqual(f[k], -1, k)
+
+    def test_lobby_pets_after_a_late_list(self):
+        L = self.o["late"]
+        self.assertEqual(L["before"], 0)
+        self.assertEqual((L["after"], L["mine"]), (3, 0), "the list arrives after the lobby: all three stay-home pets appear")
+        self.assertEqual(L["changed"], [2, 1], "one taken out: it follows, two stay")
+
+    def test_e_priority_door_before_pet(self):
+        hq = read("games", "hq3d.js")
+        key = hq[hq.index("function petsKey(e)"):hq.index("function petsKey(e)") + 600]
+        self.assertIn('e.code === "KeyE" && (ride || !PK.near || useHere())', key, "a door, lift or ride wins E over a pet")
+        self.assertLess(hq.index("if(petsKey(e)) return;"), hq.index("if(useKey()) e.preventDefault()"))
+        use = hq[hq.index("function useHere()"):hq.index("function useKey()")]
+        for want in ("nearBike() >= 0", "doorUnderCrosshair(pose, curDoors(), 3)", "cur.prompt", "USE_DOOR_D", "!!d.roof === up"):
+            self.assertIn(want, use)
+        self.assertIn("busy: useHere()", hq)
 
     def test_the_pet_shop(self):
         s = self.o["shop"]
@@ -481,6 +553,12 @@ class PetsUiLogic(unittest.TestCase):
         if r.returncode:
             raise AssertionError(r.stderr[-3000:])
         cls.o = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_pets_reload_from_the_arena(self):
+        # [3.13.5] the 3D HQ up before the Arena's capabilities: the first load is this browser's (empty) list; once the
+        # Arena says "pets" the next tick loads from it, so a refresh keeps your pets (out ones follow, home ones in the lobby)
+        self.assertEqual(self.o["late"], {"first": ["local", 0], "then": ["arena", 3, 1, 2], "pushed": 3, "again": 1})
+
 
     def test_a_stored_list_is_made_safe(self):
         s = self.o["sanitize"]
@@ -507,7 +585,7 @@ class PetsWiring(unittest.TestCase):
         html, hq, net = read("index.html"), read("games", "hq3d.js"), read("ui", "app", "22-hq.js")
         self.assertIn("//@include ui/app/40-pets.js", html)
         self.assertIn('id="setPetsOpen"', html)
-        self.assertIn('"hq3d","hqpets","hqlobby"', net)
+        self.assertIn('"hq3d","hqpets","hqpetride","hqlobby"', net)
         self.assertIn("hqpets:1", net)
         self.assertIn('hqNetCan("pets")', net)
         self.assertIn("msg.pt=pt.slice(0,2)", net)
@@ -547,7 +625,7 @@ class PetsWiring(unittest.TestCase):
         mig = read("backend", "migrations", "0022_pets.sql")
         self.assertIn("CREATE TABLE IF NOT EXISTS owned_pets", mig)
         self.assertIn("home INTEGER NOT NULL DEFAULT 1 CHECK (home IN (0, 1))", mig)
-        self.assertIn('"convoy", "tuning", "pets", "hqstyle"]', read("backend", "src", "protocol.rs"))
+        self.assertIn('"convoy", "tuning", "pets", "hqstyle", "motion", "petride"]', read("backend", "src", "protocol.rs"))
         self.assertIn("read_pets(msg.get(\"pt\"))", read("backend", "src", "valley", "hq.rs"))
         self.assertIn(".merge(pets::routes())", read("backend", "src", "main.rs"))
         srv = read("dashboard-rs", "src", "server.rs")

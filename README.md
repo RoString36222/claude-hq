@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.13.4** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.14.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -79,6 +79,14 @@ paired), published maps and work signals (off by default) add a few listed field
   wing, sport / quad / titanium exhausts (bikes: slip-on, under-seat, end can; each changes the engine note) and a
   plate of your own (8 characters; your HQ's name by default). Drag the preview to orbit, the wheel or **+ / −** to
   zoom. Free; your owned vehicles' tunes live in the Arena (others see them), the starters' in this browser.
+- **Stunts across every city.** Each city reads its own map and builds a set of giant stunts on its open land
+  (**Go to → Stunt**): two **Sky Cannons** that fire you 400-650 m over the rooftops, 100 m+ up and 9-10 s in
+  the air through three rings of fire onto a landing ramp; **Big Air** (about 200 m); a **Mega Loop** (26 m
+  tall, with a corkscrew); a **River Leap** square across the river; and on an island, a **Sea Launch** out over
+  the sea to a splashdown. Drive any car, motorbike or bicycle onto the green boost pad: it sets the exact speed
+  that lands the jump (S backs out). In the air **W/S** flip, **A/D** spin, **Shift+A/D** barrel roll; let go
+  before you touch down to land square, or bail. Scores count air time, height, distance, tricks and rings, with
+  your best kept per stunt. Calm mode turns the pads and flying off.
 - **The Commons air base.** Hangars, a radar, an attack helicopter, an aircraft carrier offshore and
   fighter jets flying over.
 - **A real airport.** An offshore airfield for the Commons: a 1.6 km runway with full markings and lights,
@@ -179,6 +187,16 @@ paired), published maps and work signals (off by default) add a few listed field
   progress is a local `games-save.json`; in an Arena room only game moves are shared.
 
 - **🔥 Flexible streaks:** a streak survives a quiet day or two. It only breaks when you're inactive on 3 days within any 7 (at least 5 active days in every 7), and today never counts as a miss while it's still going. The Arena leaderboard uses the same rule.
+- **🐉 Ride your pets** (3D City): walk up to a grown pet that is out with you and press **E** ("Ride <name>").
+  - **Dragons** (all seven, grown): **W / S** faster / slower (S slows to a hover), **A / D** turn and bank,
+    **Space** climb (on the ground: leap into the air with big wing beats), **Shift** descend (at speed: a dive),
+    let go to glide; **F** breathes its element (fire, frost, lightning, prism, shadow, glitter; off in Calm),
+    **N** Go to. Land anywhere flat, including any HQ roof helipad (the landing assist lines you up), then **E**
+    gets off (not mid-air: landed or within 3 m of the ground). Cruise 25-45 m/s, a dive to about 57 m/s.
+  - **Big dinosaurs** (Triceratops, Brachiosaurus, Stegosaurus, T-Rex, from 400 affection): **W / S** walk,
+    **Shift** run, **A / D** turn, **F** roar, **E** off. **Sea serpent** (grown): on the water only, E beside
+    the shore to step off.
+  - Friends see you riding where the Arena lists `petride` (presence a = 13); elsewhere you show on foot.
 
 **Quality-of-life**
 - Command palette (⌘/Ctrl-K), keyboard shortcuts (`?` for help, `1`–`8` for views, `/` search, `r`
@@ -391,6 +409,64 @@ and feature guide.
 
 ## Changelog
 
+- **3.14.0 — Ride your pets.** A grown dragon (any of the seven), the grown sea serpent or a big dinosaur
+  (Triceratops, Brachiosaurus, Stegosaurus, T-Rex, from the grown mark of 400 affection) that is out with you can
+  be ridden in the 3D City: beside it, "E  Ride <name>". You sit in a saddle on its back (added when it has none),
+  the camera goes to a chase view behind and above, and the pet's own model carries you, big. **Dragons fly**
+  (games/hqpetride.js, a slow, agile glider / helicopter hybrid): W / S set the speed it holds (25-45 m/s, S down
+  to a hover with fast short beats), A / D turn and bank it, Space climbs with big beats (up to 8 m/s; on the
+  ground a leap into the air), Shift descends (from a hover straight down, at speed a dive with the wings folded
+  back, up to about 57 m/s), and with neither it glides on spread wings, sinking about 1 m/s. It lands anywhere
+  flat, the HQ roof helipads with their landing assist included, and uses the helicopters' floors, ceiling
+  (800 m), island-to-island flying on and Go to (N). E gets you off once landed or within 3 m of the ground. F
+  breathes the dragon's element forward (fire, frost, lightning, prism, shadow wisps, gold glitter; visual only,
+  none in Calm). **Dinosaurs walk** (W / S, Shift runs, their walk and run animations) and the **serpent swims**
+  (on the water only). HUD hints, the ride pill and screen-reader tips say how. **Multiplayer:** a new presence
+  code a = 13 (riding a pet; the first pet in `pt` is the mount, the height in `h`) behind the new `petride`
+  capability; the Arena checks the mount can carry a rider (a grown dragon or serpent, a big dinosaur) and drops
+  the frame otherwise. Others draw you on your pet, its wings and gait following your movement. Older Arenas:
+  others see you on foot with your pet beside you. **Needs an Arena deploy** for others to see riders. Privacy:
+  nothing new leaves the machine (the same pet numbers and name as 3.13's `pt`). Third-party assets: none new.
+- **3.13.6 — Players are solid.** Other people in the City (and Mission Control) stop you as a wall does: a
+  body on foot or on a board, the box of the bike, motorbike or car they ride or drive (turned their way; a car
+  from the dealership at its own size), so you bump off them instead of walking or driving through. Not while they
+  fly, nor someone on a floor above or below you. You can't push anyone, and one who walks into you can always be
+  walked away from.
+
+- **3.13.5 — Your pets stay with you, your lobby shows them, and the front door goes to the street.** Fixes: E
+  in your lobby went to the nearest pet following you (always within 2 m) before any door, lift or ride, so using
+  the front door said "Leave <name> here" and your pets were saved as staying home. Now E is a door's, a lift's or a
+  ride's whenever one is there, and "Leave <name> here" / "Take <name> out" need you standing still, close (1.5 m to
+  leave one, 2.2 m to take one out) and facing it. After a refresh the 3D HQ was often up before the Arena's
+  capabilities, so your pets loaded from this browser's empty list and stayed gone (nobody following, nobody in the
+  lobby) until you opened the Pets panel; they now load from the Arena as soon as it answers, and your stay-home
+  pets appear in the lobby then. Out of your lobby's front door you came out on your roof: the 3.13.4 helideck
+  overhangs your front door, and arriving counted as "above everything"; arriving now stands you at the spawn's own
+  level (the street, or the deck for the roof lift). Tests: E priority (door before pet), facing and distance, lobby
+  pets after a late list, the Arena reload, front gate to the street, lobby door destinations and triggers.
+
+- **Next — Stunts across every city** (`games/hqstunts.js`, tests/test_hqstunts.py). Placed per city from its
+  own layout, deterministically (every client builds the same set): a 4 m free-land grid of everything that is not
+  road, river, sea, a site, an HQ or a tower district; building lots elsewhere may be cleared (at most 8 a stunt,
+  retyped `stunt`, restored when the doc is cached). Two Sky Cannons (the longest 200-640 m flights whose path
+  clears every roof by 8 m, at the lowest launch angle that does), Big Air, a Mega Loop, up to three River Leaps
+  and a Sea Launch. Each pad gives the exact launch speed; each landing ramp follows its flight just under it and
+  meets it at the target, so a touch-down is always along the ramp. Flights are the exact parabola (the same at any
+  frame rate). Placement costs 0.1-0.3 s at City load; the stunts draw in 35-41 calls, hidden past 1.1 km.
+  Measured headless on the Commons: both cannons 640-680 m, 104-119 m high, 9-10 s, through all three rings;
+  Big Air 215 m; River Leaps 102 and 135 m; the loop; a 413 m splashdown.
+- **Next — Real revs, real exhausts, smooth multiplayer, call search.** Every catalogue vehicle now carries its
+  researched engine (spec.engine: idle, redline, limiter, gear ratios, primary and final drive, rear tyre, voice and an
+  exhaust tone of depth / rasp / crackle / induction / whistle), and `games/hqvehiclephys.js engineFor` turns it into
+  rpm per m/s for each gear. You drive on the real rpm: the clutch slips to a launch rpm, it upshifts at the redline
+  under power (half way up when cruising), downshifts as the revs sag, and stutters on the rev limiter with pops;
+  the rev counter reads to that engine's own limiter with its red from the redline. The voices play that rpm with the
+  vehicle's own exhaust character (games/engine.js engineProfile(.., real)). Other players are drawn smoothly
+  (`games/hqnetsmooth.js`): a buffer of their frames drawn 0.2 s in the past on a curve through them, stamped with
+  the sender's own clock and carrying their velocity, yaw rate and revs (the Arena's new `motion` capability; an older
+  Arena falls back to arrival times re-timed by distance). Simulated at 30 m/s: the largest frame-to-frame lurch went
+  from 487 m/s (and 34 hard snaps in 12 s) to 2.2 m/s. The call list (C) has a search box: brand, model, year, class,
+  body or engine. Needs the Arena release for `motion`; works without it.
 - **3.13.4 — A real helipad on your HQ, with your helicopter on it.** Every HQ tower's roof now carries a helideck:
   a steel deck raised 3 m over the top roof on legs and struts, cantilevered past it, a 9 m pad (7.5 m on the
   smallest lots: the pad stays over the lot) in its middle with a walkway and a low glass rail round it, so a

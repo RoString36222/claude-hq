@@ -104,7 +104,16 @@ function petsPush(force){
     } else if(inst.setLobbyPets) inst.setLobbyPets([]);
   }
 }
-setInterval(function(){ if(window.HQ3D && HQ3D.inst){ if(!PETS.loaded && petsLib()) petsLoad(); else petsPush(false); } }, 1000);
+// [3.13.5] a refresh: the 3D HQ is often up before the Arena's capabilities arrive, so the first load fell back to this
+// browser's local list (none) and stayed there: your pets were gone till you opened the Pets panel. Once the Arena
+// says "pets", load again from it (once per page; a failed Arena load keeps the local list and its error).
+function petsTick(){
+  if(!(window.HQ3D && HQ3D.inst)) return;
+  if(!PETS.loaded && petsLib()) petsLoad();
+  else if(PETS.loaded && PETS.src === "local" && !PETS.err && !PETS.busy && !PETS.arenaTried && petsArena()){ PETS.arenaTried = true; petsLoad(); }
+  else petsPush(false);
+}
+setInterval(petsTick, 1000);
 
 /* ---- actions ---- */
 function petsSay(msg, bad){ PETS.msg = msg ? {t: msg, bad: !!bad} : null; petsRender(); if(msg && typeof announce === "function") announce(msg); }
@@ -185,7 +194,7 @@ function petsAfter(p, got){
 // E in your lobby (games/hqpets.js): take a stay-home pet out, or leave one of yours there
 function petsToggleOut(id, out){
   var p = PETS.list.filter(function(q){ return q.id === id; })[0]; if(!p) return;
-  if(out && PETS.list.filter(function(q){ return q.active; }).length >= petsLib().MAX_ACTIVE){ if(typeof toast === "function") toast("Two pets are out already: leave one here first (E beside it)", "level"); return; }
+  if(out && PETS.list.filter(function(q){ return q.active; }).length >= petsLib().MAX_ACTIVE){ if(typeof toast === "function") toast("Two pets are out already: leave one here first (stand facing it and press E)", "level"); return; }
   petsEdit(id, out ? {active: true} : {active: false, home: true}, out ? p.name + " comes along!" : p.name + " stays in the lobby.").then(function(ok){
     if(ok && typeof toast === "function") toast(out ? p.name + " comes along!" : p.name + " stays in the lobby", "level");
   });
@@ -339,5 +348,5 @@ function petsRenderAdopt(box, L){
 
 window.HQV = window.HQV || {};
 window.HQV.petsUi = {open: petsOpen, close: petsClose, isOpen: petsIsOpen, render: petsRender, load: petsLoad,
-                     sanitize: petsSanitize, localAdopt: petsLocalAdopt, localEdit: petsLocalEdit};
+                     tick: petsTick, sanitize: petsSanitize, localAdopt: petsLocalAdopt, localEdit: petsLocalEdit};
 (function(){ var b = document.getElementById("setPetsOpen"); if(b) b.addEventListener("click", function(){ if(typeof closeSettings === "function") closeSettings(); petsOpen("mine"); }); })();

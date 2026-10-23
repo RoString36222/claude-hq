@@ -23,8 +23,9 @@
 //! against the caller's HQ level (cosmetics::hq_level, the level the Trainer card
 //! shows). Paid in Poke Coins from poke_balances in the same transaction as the
 //! owned_vehicles row, which records the price (poke_ledger's op CHECK has no
-//! vehicle op). Several of the same vehicle may be owned (another paint), up to
-//! [`MAX_OWNED`].
+//! vehicle op). One of each vehicle per player (ux_owned_vehicles_model, migration 0023): getting one you
+//! already own repaints it in the paint asked for and charges nothing, returning the same vehicle. At most
+//! [`MAX_OWNED`]: room for the whole catalogue.
 //!
 //! Errors: 422 a bad body; 404 an unknown vehicle (or not yours, for park); 409 not
 //! on sale (a starter, a reserve, a class listing more than 4) or the garage is
@@ -47,7 +48,7 @@ use std::sync::LazyLock;
 use crate::cities::{self, Refuse};
 
 /// Most vehicles one player may own.
-pub const MAX_OWNED: i64 = 20;
+pub const MAX_OWNED: i64 = 64;
 /// The most vehicles a class lists (slots 1 to 4, HQ 3.9); a class is on sale with 1 to 4.
 const MAX_SLOTS: usize = 4;
 /// |x|, |z| a parked vehicle may stand at (m): every world fits well inside.
@@ -97,6 +98,14 @@ pub(crate) fn parse_catalogue(src: &str) -> HashMap<String, Model> {
             ))
         })
         .collect()
+}
+
+/// The catalogue's vehicles on sale, sorted (tests that need several different vehicles take them from here).
+#[cfg(test)]
+pub(crate) fn on_sale_ids() -> Vec<String> {
+    let mut v: Vec<String> = CATALOGUE.iter().filter(|(_, m)| m.on_sale).map(|(k, _)| k.clone()).collect();
+    v.sort();
+    v
 }
 
 static CATALOGUE: LazyLock<HashMap<String, Model>> =
@@ -249,6 +258,20 @@ pub(crate) async fn buy_in(
         return Err(Refuse::say(StatusCode::FORBIDDEN, format!("this class needs level {} (you're level {level})", m.min_level)));
     }
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // Already yours: the same vehicle, in the paint asked for, nothing charged.
+    if let Some(row) = sqlx::query("SELECT id, bought_at FROM owned_vehicles WHERE user_id = ?1 AND vehicle_id = ?2")
+        .bind(uid)
+        .bind(vehicle_id)
+        .fetch_optional(&mut *tx)
+        .await?
+    {
+        let id: String = row.get("id");
+        let at: i64 = row.get("bought_at");
+        sqlx::query("UPDATE owned_vehicles SET paint = ?1 WHERE id = ?2").bind(paint).bind(&id).execute(&mut *tx).await?;
+        let coins = coins_of(&mut tx, uid).await?;
+        tx.commit().await?;
+        return Ok((json!({"id": id, "vehicle_id": vehicle_id, "paint": paint, "bought_at": at, "parked": Value::Null, "already": true}), coins));
+    }
     let owned: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM owned_vehicles WHERE user_id = ?1")
         .bind(uid)
         .fetch_one(&mut *tx)
@@ -527,11 +550,46 @@ mod tests {
         let c = parse_catalogue(FIXTURE);
         let p = pool().await;
         coins(&p, A, 1_000_000).await;
-        for i in 0..MAX_OWNED {
-            assert_eq!(code(buy_in(&c, &p, A, "small-a", i % 4, NOW).await), StatusCode::OK, "#{i}");
+        // One of each: getting it again is the same vehicle, repainted, and costs nothing.
+        let (v1, _) = buy_in(&c, &p, A, "small-a", 1, NOW).await.unwrap_or_else(|_| panic!("buys"));
+        let (v2, left) = buy_in(&c, &p, A, "small-a", 3, NOW + 60).await.unwrap_or_else(|_| panic!("gets it again"));
+        assert_eq!(v1["id"], v2["id"]);
+        assert_eq!((v2["paint"].as_i64(), v2["already"].as_bool(), v2["bought_at"].as_i64()), (Some(3), Some(true), Some(NOW)));
+        assert_eq!(left, 1_000_000 - 1000);
+        let m = mine(&p, A).await.unwrap();
+        assert_eq!((m.len(), m[0]["paint"].as_i64()), (1, Some(3)));
+        // The database refuses a second copy outright (ux_owned_vehicles_model).
+        let dup = sqlx::query("INSERT INTO owned_vehicles (id, user_id, vehicle_id, paint, price, bought_at) VALUES ('x', ?1, 'small-a', 0, 0, 0)")
+            .bind(A).execute(&p).await;
+        assert!(dup.is_err(), "unique per player and model");
+        // Another player has their own.
+        coins(&p, B, 5000).await;
+        assert_eq!(code(buy_in(&c, &p, B, "small-a", 0, NOW).await), StatusCode::OK);
+        // The cap: room for the whole catalogue, and a garage at it takes no more.
+        for i in 0..(MAX_OWNED - 1) {
+            sqlx::query("INSERT INTO owned_vehicles (id, user_id, vehicle_id, paint, price, bought_at) VALUES (?1, ?2, ?3, 0, 0, 0)")
+                .bind(format!("fill-{i}")).bind(A).bind(format!("model-{i}")).execute(&p).await.unwrap();
         }
-        assert_eq!(code(buy_in(&c, &p, A, "small-a", 0, NOW).await), StatusCode::CONFLICT, "garage full");
-        assert_eq!(balance(&p, A).await, 1_000_000 - 1000 * MAX_OWNED);
+        assert_eq!(code(buy_in(&c, &p, A, "small-b", 0, NOW).await), StatusCode::CONFLICT, "garage full");
+        assert!(MAX_OWNED as usize >= CATALOGUE.len(), "every vehicle fits in one garage");
+    }
+
+    /// Migration 0023 keeps each player's tuned (else basement, else first-bought) copy and drops the rest.
+    #[tokio::test]
+    async fn the_dedup_migration_keeps_the_best_copy() {
+        let p = pool().await;
+        sqlx::query("DROP INDEX ux_owned_vehicles_model").execute(&p).await.unwrap();
+        for (id, at) in [("old", 1), ("tuned", 2), ("new", 3)] {
+            sqlx::query("INSERT INTO owned_vehicles (id, user_id, vehicle_id, paint, price, bought_at) VALUES (?1, ?2, 'bmw-m2', 0, 0, ?3)")
+                .bind(id).bind(A).bind(at).execute(&p).await.unwrap();
+        }
+        sqlx::query("INSERT INTO vehicle_tuning (vehicle_id, user_id, tuning, updated_at) VALUES ('tuned', ?1, '{}', 0)").bind(A).execute(&p).await.unwrap();
+        sqlx::query("INSERT INTO vehicle_homes (vehicle_id, user_id, home, bay, moved_at) VALUES ('new', ?1, 'basement', 0, 0)").bind(A).execute(&p).await.unwrap();
+        sqlx::raw_sql(include_str!("../migrations/0023_vehicle_dedup.sql")).execute(&p).await.unwrap();
+        let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM owned_vehicles WHERE user_id = ?1").bind(A).fetch_all(&p).await.unwrap();
+        assert_eq!(ids, ["tuned"]);
+        let homes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM vehicle_homes").fetch_one(&p).await.unwrap();
+        assert_eq!(homes, 0, "the dropped copy's bay is freed");
     }
 
     #[tokio::test]

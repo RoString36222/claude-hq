@@ -445,6 +445,15 @@ and feature guide.
   level (the street, or the deck for the roof lift). Tests: E priority (door before pet), facing and distance, lobby
   pets after a late list, the Arena reload, front gate to the street, lobby door destinations and triggers.
 
+- **Next — A real gearbox: manual, rev-matched, clutch, launch control; damage opt in.** (`games/hqvehiclephys.js
+  gearStep`, node-tested.) **G** switches manual / automatic (remembered); in manual **.** shifts up and **,** down,
+  through neutral below 1st; hold **X** for the clutch. Every gear tops out at its own limiter (its real top speed from
+  the gearing: you bounce off it, the speed held). Downshifts are rev-matched: the revs blip up to the lower gear's
+  with the throttle blip and pops, and one that would over-rev is refused ("Too fast for 2nd"). Clutch in (or
+  neutral): W revs the engine free to the limiter; let it out with the revs up and it launches with wheelspin.
+  Automatic: brake and throttle together at a standstill hold the revs (launch control), let go of the brake to go.
+  Off the throttle the engine brakes harder in a lower gear. Vehicle damage (dents, smoke, cracked lights, a bent
+  car's pull) is now opt in: Settings → Vehicle damage, off by default.
 - **Next — Stunts across every city** (`games/hqstunts.js`, tests/test_hqstunts.py). Placed per city from its
   own layout, deterministically (every client builds the same set): a 4 m free-land grid of everything that is not
   road, river, sea, a site, an HQ or a tower district; building lots elsewhere may be cleared (at most 8 a stunt,

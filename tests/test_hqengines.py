@@ -72,3 +72,110 @@ class Engines(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+GEARBOX = r"""
+const fs = require('fs'), path = require('path'), R0 = process.argv[1];
+global.window = {HQV: {}}; eval(fs.readFileSync(path.join(R0, 'games', 'hqvehiclephys.js'), 'utf8'));
+const P = window.HQV.hqVehiclePhys, cat = JSON.parse(fs.readFileSync(path.join(R0, 'games/vehicles/catalogue.json'), 'utf8'));
+const m = cat.vehicles.find(v => v.id === 'bmw-m3-competition'), E = P.engineFor(m.spec, 'car', 'turbo6');
+const dt = 1/60, out = {limit: E.limit, k: E.k};
+function drive(G, v, inp, secs){ let o; for (let t = 0; t < secs; t += dt){ o = P.gearStep(G, Object.assign({speed: v}, inp), E, dt); } return o; }
+// automatic, flat out: up at the redline, never past the limiter
+{ const G = P.gearState(E); let v = 0, maxRpm = 0, ups = [];
+  for (let i = 0; i < 1800; i++){ const o = P.gearStep(G, {thr: 1, speed: v}, E, dt); v = Math.min(o.cap, v + 7*o.drive*dt);
+    maxRpm = Math.max(maxRpm, o.rpm); if (o.events.includes('up')) ups.push(Math.round(o.rpm)); }
+  out.auto = {gear: G.gear, maxRpm, ups}; }
+// manual: up, down (rev-matched), a refused over-rev, neutral, the gear's limiter is its top speed
+{ const G = P.gearState(E); G.manual = true; G.gear = 3;
+  const v3top = E.limit/E.k[2];
+  let o = drive(G, v3top + 5, {thr: 1}, 0.3); out.cap3 = o.cap; out.limiter = o.limiter; out.limDrive = o.drive;
+  const v = 20;                                        // 72 km/h in 3rd (an M3 tops out 2nd near 88 km/h)
+  o = drive(G, v, {thr: 0}, 0.5); const before = o.rpm;
+  o = P.gearStep(G, {speed: v, thr: 0, down: true}, E, dt); out.down = o.events.slice(); out.gearAfterDown = G.gear;
+  o = drive(G, v, {thr: 0}, 0.15); out.revMatch = [before, o.rpm, v*E.k[1]];
+  G.gear = 4; o = drive(G, 60, {thr: 0}, 0.2);            // 216 km/h in 4th: 1st would over-rev
+  G.gear = 2; o = P.gearStep(G, {speed: 60, thr: 0, down: true}, E, dt); out.refused = o.events.slice(); out.gearAfterRefuse = G.gear;
+  G.gear = 1; o = P.gearStep(G, {speed: 0, thr: 0, down: true}, E, dt); out.neutral = G.gear;
+  o = drive(G, 0, {thr: 1}, 1.5); out.freeRev = {rpm: o.rpm, limiter: o.limiter, drive: o.drive};
+  // engine braking: harder in 2nd than in 6th at the same road speed
+  G.gear = 2; const eb2 = drive(G, 20, {thr: 0}, 0.3).engineBrake; G.gear = 6; const eb6 = drive(G, 20, {thr: 0}, 0.3).engineBrake; out.eb = [eb2, eb6]; }
+// the clutch: revs free while held; dumped at standstill with the revs up: a launch with wheelspin
+{ const G = P.gearState(E); G.manual = true; G.gear = 1;
+  let o = drive(G, 0, {thr: 1, clutch: true}, 1.0); out.clutchRpm = o.rpm; out.clutchDrive = o.drive;
+  o = P.gearStep(G, {speed: 0, thr: 1, clutch: false}, E, dt); out.dump = {events: o.events.slice(), slip: o.slip, drive: o.drive}; }
+// automatic launch control: brake and throttle at a standstill hold the revs, then release
+{ const G = P.gearState(E);
+  let o = drive(G, 0, {thr: 1, brake: true}, 1.0); out.lc = {launch: o.launch, rpm: o.rpm, drive: o.drive};
+  o = P.gearStep(G, {speed: 0, thr: 1, brake: false}, E, dt); out.lcGo = {events: o.events.slice(), slip: o.slip}; }
+// a toggle: manual and back; automatic never sits in neutral
+{ const G = P.gearState(E); let o = P.gearStep(G, {toggle: true, speed: 0}, E, dt); out.toggle1 = o.events.slice();
+  G.gear = 0; o = P.gearStep(G, {toggle: true, speed: 0}, E, dt); out.toggle2 = [o.events.slice(), G.gear]; }
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class Gearbox(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        r = subprocess.run([NODE, "-e", GEARBOX, ROOT], capture_output=True, text=True, timeout=60)
+        if r.returncode:
+            raise AssertionError(r.stderr[-3000:])
+        cls.o = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_automatic_shifts_at_the_redline_and_never_over_revs(self):
+        a = self.o["auto"]
+        self.assertGreaterEqual(a["gear"], 6)
+        self.assertLessEqual(a["maxRpm"], self.o["limit"])
+        self.assertTrue(all(r > 6000 for r in a["ups"]), a["ups"])
+
+    def test_each_gear_tops_out_at_its_limiter(self):
+        self.assertAlmostEqual(self.o["cap3"], self.o["limit"]/self.o["k"][2], places=6)
+        self.assertTrue(self.o["limiter"])
+        self.assertEqual(self.o["limDrive"], 0, "on the limiter nothing more reaches the wheels")
+
+    def test_a_downshift_is_rev_matched(self):
+        self.assertEqual(self.o["down"], ["down"])
+        self.assertEqual(self.o["gearAfterDown"], 2)
+        before, after, wheel = self.o["revMatch"]
+        self.assertGreater(after, before + 1000)
+        self.assertLess(abs(after - wheel), 200, "the revs meet the lower gear's within 0.15 s")
+
+    def test_an_over_rev_is_refused_and_below_first_is_neutral(self):
+        self.assertEqual(self.o["refused"], ["refused"])
+        self.assertEqual(self.o["gearAfterRefuse"], 2)
+        self.assertEqual(self.o["neutral"], 0)
+        f = self.o["freeRev"]
+        self.assertTrue(f["limiter"] and f["drive"] == 0 and f["rpm"] > self.o["limit"] - 400, f)
+
+    def test_the_clutch_and_a_launch(self):
+        self.assertGreater(self.o["clutchRpm"], self.o["limit"] - 400)
+        self.assertEqual(self.o["clutchDrive"], 0)
+        d = self.o["dump"]
+        self.assertIn("launch", d["events"])
+        self.assertGreater(d["slip"], 0.5)
+        self.assertGreater(d["drive"], 1.2, "the kick of a clutch dump")
+
+    def test_launch_control(self):
+        self.assertTrue(self.o["lc"]["launch"])
+        self.assertEqual(self.o["lc"]["drive"], 0)
+        self.assertGreater(self.o["lc"]["rpm"], 3000)
+        self.assertIn("launch", self.o["lcGo"]["events"])
+        self.assertGreater(self.o["lcGo"]["slip"], 0.3)
+
+    def test_engine_braking_is_harder_in_a_lower_gear(self):
+        eb2, eb6 = self.o["eb"]
+        self.assertGreater(eb2, eb6 + 0.5)
+
+    def test_toggle(self):
+        self.assertEqual(self.o["toggle1"], ["manual"])
+        self.assertEqual(self.o["toggle2"], [["auto"], 1])
+
+    def test_damage_is_opt_in(self):
+        hud = open(os.path.join(ROOT, "games", "hqhud.js")).read()
+        self.assertIn('damage: false}', hud)
+        self.assertIn('check("damage", "Vehicle damage (dents, smoke)")', hud)
+        src = open(os.path.join(ROOT, "games", "hq3d.js")).read()
+        self.assertIn("if(!D || !drvGround() || !DRV.key || !dmgOn()) return;", src)
+        self.assertIn("DRV.dmg = dmgOn() ? D.dmgLoad(DRV.key) : null;", src)

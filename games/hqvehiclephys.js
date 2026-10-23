@@ -17,6 +17,18 @@
  *                                     `gears`), shiftUp, launch, electric, motorMax, cyl, tone} (tone: the exhaust's
  *                                     depth, rasp, crackle, induction, whistle, 0..1, for games/engine.js)
  *   tyreCirc("190/55 ZR17") -> m       a tyre's rolling circumference (3% squat under load)
+ *   gearState(E) -> G / gearStep(G, inp, E, dt) -> out   the gearbox and clutch, per frame (games/hq3d.js drives on it):
+ *     inp = {thr 0..1, brake (S held), clutch (X held), up / down / toggle (a press this frame: . , G), speed (m/s,
+ *     signed)}. G.manual: you shift (. up, , down, through neutral below 1st); else it shifts itself at the redline
+ *     under power, half way up the revs when cruising, and down as the revs sag. A downshift is rev-matched (the
+ *     revs jump to the lower gear's, a throttle blip), refused if it would over-rev; each gear tops out at its
+ *     limiter (out.cap: you bounce off it, the speed held). The clutch in (or neutral, or mid-shift) frees the
+ *     engine: W revs it to the limiter; let it out with the revs up at low speed and it launches with wheelspin.
+ *     Automatic: brake and throttle together at a standstill hold the revs for a launch. Off the throttle the
+ *     engine brakes harder in a lower gear.
+ *     out = {rpm, gear (-1 R, 0 N, 1..n), manual, drive (0..1.8 on the engine's pull), cap (m/s), engineBrake
+ *            (m/s^2), limiter, slip (0..1 wheelspin), launch (held at a standstill), events: ["up", "down",
+ *            "refused", "manual", "auto", "launch"]}
  * entry = {kind: "car"|"bike", type: "sedan"|"coupe"|"suv"|"hatch"|"pickup"|"hyper"|"super"|"naked"|"sport"|
  *          "adventure"|"cruiser"|"scooter"|"dirt"|"classic"|"hypersport", spec: {cc, cyl, layout, aspiration, electric, powerKw,
  *          torqueNm, massKg, drive, topKmh, zeroTo100s, gears}, dims: {lengthM, widthM, heightM, wheelbaseM},
@@ -147,6 +159,74 @@ function engineFor(spec, kind, voice, gears){
   return E;
 }
 
+function gearState(E){ return {gear: 1, rpm: E && E.idle || 900, shiftT: 0, manual: false, clutchWas: false, launchT: 0, slip0: 0, held: false}; }
+function gearStep(G, inp, E, dt){
+  inp = inp || {}; dt = Math.max(0, Math.min(0.1, +dt || 0));
+  var thr = clamp(+inp.thr || 0, 0, 1), sp = +inp.speed || 0, v = Math.abs(sp), ev = [];
+  var out = {rpm: G.rpm, gear: G.gear, manual: G.manual, drive: 1, cap: Infinity, engineBrake: 0, limiter: false, slip: 0, launch: false, events: ev};
+  if(!E) return out;
+  if(E.electric){                                         // one gear: revs with the road speed, no clutch, no limiter
+    G.gear = sp < -0.3 ? -1 : 1; G.rpm = E.motorMax*clamp(v/Math.max(1, inp.top || 60), 0, 1);
+    out.rpm = G.rpm; out.gear = G.gear; out.engineBrake = thr < 0.05 ? 1.2 : 0; return out;
+  }
+  var K = E.k, n = K ? K.length : 0; if(!n) return out;
+  if(inp.toggle){ G.manual = !G.manual; ev.push(G.manual ? "manual" : "auto"); if(!G.manual && G.gear < 1) G.gear = 1; }
+  function at(g){ return v*K[Math.max(0, Math.min(n, g) - 1)]; }
+  G.shiftT = Math.max(0, G.shiftT - dt);
+  var g = G.gear | 0;
+  if(G.manual){
+    if(inp.up && g < n){ g = g + 1; G.shiftT = 0.18; ev.push("up"); }
+    else if(inp.down){
+      if(g > 1 && at(g - 1) > E.limit*0.99) ev.push("refused");            // it would over-rev: the box says no
+      else if(g > 1){ g--; G.shiftT = 0.14; G.blipTo = at(g); ev.push("down"); }
+      else if(g === 1){ g = 0; ev.push("down"); }                         // below 1st: neutral
+    }
+  } else {
+    if(g < 1) g = 1;
+    if(G.shiftT <= 0 && sp >= 0){
+      var up = thr > 0.6 ? E.shiftUp : E.idle + (E.red - E.idle)*0.45, dn = thr > 0.6 ? E.red*0.5 : E.idle*1.3;
+      if(g < n && at(g) >= up && at(g + 1) > E.idle*1.15){ g++; G.shiftT = 0.3; ev.push("up"); }
+      else if(g > 1 && at(g) < dn && at(g - 1) < E.red*0.9){ g--; G.shiftT = 0.25; G.blipTo = at(g - 1); ev.push("down"); }
+    }
+  }
+  G.gear = g;
+  // the clutch: held, in neutral, or for the moment of a shift the engine turns free of the wheels
+  var free = !!inp.clutch || g === 0 || G.shiftT > 0.06, rpm = G.rpm;
+  // automatic launch control: brake and throttle at a standstill hold the revs up, the car held
+  var hold = !G.manual && inp.brake && thr > 0.3 && v < 0.6;
+  if(hold){ free = true; out.launch = true; if(!G.held) ev.push("launch"); }
+  if(free){
+    // a downshift blips the revs up to the lower gear's (rev-matched) while the clutch is in for it
+    var want = hold ? Math.min(E.limit, E.launch + (E.red - E.launch)*0.35)
+             : G.shiftT > 0 && G.blipTo ? Math.min(E.limit, G.blipTo*1.04) : E.idle + thr*(E.limit - E.idle);
+    rpm += want > rpm ? Math.min(want - rpm, E.red*(G.blipTo ? 6 : 1.9)*dt) : -Math.min(rpm - want, E.red*1.2*dt);
+    if(thr > 0.9 && !hold && rpm >= E.limit - 60){ rpm = E.limit - 220*((G.limPh = ((G.limPh || 0) + dt*24) % 1)); out.limiter = true; }
+    out.drive = g === 0 || inp.clutch || hold ? 0 : 0.35;              // mid-shift a little still gets through
+  } else {
+    var wheel = Math.max(at(g), E.idle);
+    // pulling away in 1st the clutch slips the revs up to the launch rpm under throttle
+    if(g === 1 && v < 6) wheel = Math.max(wheel, E.idle + (E.launch - E.idle)*thr*(1 - v/6));
+    // let out with the revs well above the wheels at low speed: a launch, the tyres spinning
+    var rel = (G.clutchWas || G.held) && G.rpm > wheel + 1500 && v < 12;
+    if(rel){ G.launchT = 0.9; G.slip0 = clamp((G.rpm - wheel)/(E.red*0.55), 0.3, 1); ev.push("launch"); }
+    // rev-matched: the revs meet the wheels fast (a downshift jumps them up, its blip), never a slow slide
+    var k = 1 - Math.exp(-dt*(G.shiftT > 0 ? 40 : 22));
+    rpm += (wheel - rpm)*k;
+    out.cap = E.limit/K[Math.max(0, g - 1)];
+    if(at(g) >= E.limit - 40 && thr > 0.05){ rpm = E.limit - 220*((G.limPh = ((G.limPh || 0) + dt*24) % 1)); out.limiter = true; out.drive = 0; }
+    out.engineBrake = thr < 0.05 ? (0.5 + 3.2*clamp((rpm - E.idle)/(E.red - E.idle), 0, 1))*(G.manual ? 1.25 : 1) : 0;
+  }
+  if(G.launchT > 0){
+    G.launchT = Math.max(0, G.launchT - dt);
+    out.slip = G.slip0*(G.launchT/0.9); out.drive *= 1 + 0.8*out.slip;  // the launch's kick, fading as the tyres bite
+  }
+  if(G.shiftT <= 0) G.blipTo = 0;
+  G.clutchWas = !!inp.clutch; G.held = hold;
+  G.rpm = clamp(rpm, E.idle*0.85, E.limit);
+  out.rpm = G.rpm; out.gear = sp < -0.3 && g > 0 ? -1 : g; out.manual = G.manual;
+  return out;
+}
+
 function derive(entry){
   entry = entry || {};
   var kind = entry.kind === "bike" ? "bike" : "car", spec = entry.spec || {}, dims = entry.dims || {};
@@ -185,6 +265,6 @@ function derive(entry){
 }
 
 HQV.hqVehiclePhys = {derive: derive, accFor: accFor, t0100: t0100, timeTo: timeTo, estimate0100: estimate0100,
-                     voiceFor: voiceFor, gearsFor: gearsFor, engineFor: engineFor, tyreCirc: tyreCirc, REVS: REVS, CAP_KMH: CAP_KMH, SLIDE: SLIDE, LEAN: LEAN, ROLL: ROLL,
+                     voiceFor: voiceFor, gearsFor: gearsFor, engineFor: engineFor, tyreCirc: tyreCirc, gearState: gearState, gearStep: gearStep, REVS: REVS, CAP_KMH: CAP_KMH, SLIDE: SLIDE, LEAN: LEAN, ROLL: ROLL,
                      FLOOR: FLOOR, FLOOR_EV: FLOOR_EV};
 })();

@@ -33,7 +33,7 @@ var PI = Math.PI;
 var KEY = "hq_cam";
 var ORDER = ["far", "chase", "near", "fp", "classic"];       // camrig ORDER (used when camrig is not loaded)
 var QUALITY = ["auto", "low", "medium", "high"];
-var DEFAULTS = {fov: 65, sens: 1, invertY: false, reduced: false, headBob: true, quality: "auto", preferred: "chase"};
+var DEFAULTS = {fov: 65, sens: 1, invertY: false, reduced: false, headBob: true, quality: "auto", preferred: "chase", damage: false};
 var CHIP_MS = 1400;
 var FADE_MS = 400;           // the chip's text stays until its fade-out (--t-med) is over
 var MODE_NAMES = {far: "Far camera", chase: "Chase camera", near: "Near camera", fp: "First person", classic: "Classic camera"};
@@ -86,6 +86,7 @@ function loadSettings(raw){
   s.invertY = typeof o.invertY === "boolean" ? o.invertY : DEFAULTS.invertY;
   s.reduced = typeof o.reduced === "boolean" ? o.reduced : DEFAULTS.reduced;
   s.headBob = typeof o.headBob === "boolean" ? o.headBob : DEFAULTS.headBob;
+  s.damage = typeof o.damage === "boolean" ? o.damage : DEFAULTS.damage;      // vehicle damage: opt in
   s.quality = QUALITY.indexOf(o.quality) >= 0 ? o.quality : DEFAULTS.quality;
   s.preferred = order().indexOf(o.preferred) >= 0 ? o.preferred : DEFAULTS.preferred;
   return s;
@@ -248,6 +249,7 @@ function mount(el, opts){
   check("invertY", "Invert Y");
   check("reduced", "Reduced motion");
   check("headBob", "Head bob");
+  check("damage", "Vehicle damage (dents, smoke)");
   select("quality", "Quality", QUALITY, {auto: "Auto", low: "Low", medium: "Medium", high: "High"});
   select("preferred", "Preferred camera", order(), MODE_NAMES);
 

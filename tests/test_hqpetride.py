@@ -156,11 +156,11 @@ class PetRide(unittest.TestCase):
             self.assertIsNone(k[no], no)
         m = self.o["mount"]
         self.assertTrue(m["grownNear"]["ok"])
-        self.assertEqual(m["young"]["why"], "young")          # grown only
+        self.assertTrue(m["young"]["ok"])                     # 3.14: grown from adoption, any affection
         self.assertEqual(m["far"]["why"], "far")              # beside it
         self.assertEqual(m["dog"]["why"], "kind")
         self.assertEqual(m["raptor"]["why"], "kind")
-        self.assertEqual(m["trikeYoung"]["why"], "young")
+        self.assertTrue(m["trikeYoung"]["ok"])                 # big dinos ride from adoption too
         self.assertTrue(m["trike"]["ok"])
         self.assertEqual(m["serpentLand"]["why"], "water")    # the serpent: on the water only
         self.assertTrue(m["serpentSea"]["ok"])

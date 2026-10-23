@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.14.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.14.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -409,6 +409,7 @@ and feature guide.
 
 ## Changelog
 
+- **3.14.1 — Dragons and dinosaurs ride from day one.** Every dragon and the sea serpent now comes fully grown from adoption (any affection; the Arena's `pets.rs stage_of` and the page agree), and the big dinosaurs (T-Rex, Triceratops, Brachiosaurus, Stegosaurus) can be ridden straight away: walk up and press E. Affection still unlocks tricks. Needs the Arena release.
 - **3.14.0 — Ride your pets.** A grown dragon (any of the seven), the grown sea serpent or a big dinosaur
   (Triceratops, Brachiosaurus, Stegosaurus, T-Rex, from the grown mark of 400 affection) that is out with you can
   be ridden in the 3D City: beside it, "E  Ride <name>". You sit in a saddle on its back (added when it has none),

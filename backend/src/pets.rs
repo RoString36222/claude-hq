@@ -110,16 +110,14 @@ pub fn rideable(species_index: u8, stage: u8) -> bool {
     SPECIES.get(usize::from(species_index)).is_some_and(|s| if s.grows { stage == 2 } else { RIDE_DINO.contains(&s.id) })
 }
 
-/// A grower's stage (0 hatchling, 1 young, 2 grown) at `affection`; 0 for everyone else.
-pub fn stage_of(s: &Species, affection: i64) -> i64 {
+/// A grower's stage (0 hatchling, 1 young, 2 grown); 0 for everyone else. Since 3.14 a dragon or the sea
+/// serpent comes fully grown (ready to ride) from adoption, whatever its `affection` (STAGE_AT is kept for
+/// the record and for tricks' pacing).
+pub fn stage_of(s: &Species, _affection: i64) -> i64 {
     if !s.grows {
         0
-    } else if affection >= STAGE_AT[1] {
-        2
-    } else if affection >= STAGE_AT[0] {
-        1
     } else {
-        0
+        2
     }
 }
 
@@ -651,9 +649,9 @@ mod tests {
     }
 
     #[test]
-    fn growers_grow_with_affection() {
+    fn growers_come_fully_grown() {
         let ice = species("icedragon").unwrap();
-        assert_eq!([0, 149, 150, 399, 400, 1000].map(|a| stage_of(ice, a)), [0, 0, 1, 1, 2, 2]);
+        assert_eq!([0, 149, 150, 399, 400, 1000].map(|a| stage_of(ice, a)), [2, 2, 2, 2, 2, 2]);
         assert_eq!(stage_of(species("corgi").unwrap(), 1000), 0);
         assert!(acc_ok(ice, 31) && !acc_ok(species("corgi").unwrap(), ACC_SADDLE) && !acc_ok(ice, 32) && !acc_ok(ice, -1));
     }

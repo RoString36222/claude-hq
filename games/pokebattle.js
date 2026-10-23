@@ -307,6 +307,10 @@ function spriteUrls(mon, back){
   var slug = (mon.mega || String(mon.name||"").toLowerCase().replace(/[^a-z0-9]/g, ""));
   var oras = false;
   if(mon.mega && G.MEGA_FORMS){ (G.MEGA_FORMS[mon.dex]||[]).forEach(function(f){ if(f.slug === mon.mega && f.dir === "oras") oras = true; }); }
+  if(pack() === "pokemon3d" && G.SHOWDOWN_ANI){
+    // Showdown's animated X/Y-style sprites first (pkparaiso, next, stopped answering; 3.13.3)
+    out.push({u: "https://play.pokemonshowdown.com/sprites/ani" + (back ? "-back" : "") + (sh ? "-shiny" : "") + "/", f: slug+".gif", d3:true});
+  }
   if(pack() === "pokemon3d" && G.PKPARAISO_XY){
     var base = oras ? (sh ? G.PKPARAISO_ORAS_SHINY : G.PKPARAISO_ORAS) : (sh ? G.PKPARAISO_XY_SHINY : G.PKPARAISO_XY);
     if(base){ out.push({u: back ? base.replace("/animados", "/animados-espalda") : base, f: slug+".gif", d3:true}); }

@@ -316,6 +316,11 @@ function evobarHTML(cr){
 // real CDN that ad/content blockers (e.g. Opera GX) don't block like raw.githubusercontent.com.
 var POKE_ANIM="https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/sprites/pokemon/versions/generation-v/black-white/animated/";
 var POKE_STATIC="https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/sprites/pokemon/";
+// Primary for the 3D pack: Pokemon Showdown's animated X/Y-style sprites (every species, the megas
+// as "<name>-mega[x|y]", ani-shiny/ for shinies). pkparaiso (below) is the fallback: it started
+// refusing connections, which left uncached sprites as stills (3.13.3).
+var SHOWDOWN_ANI="https://play.pokemonshowdown.com/sprites/ani/", SHOWDOWN_ANI_SHINY="https://play.pokemonshowdown.com/sprites/ani-shiny/";
+function pokeAniSrc(slug, shiny){ return (shiny ? SHOWDOWN_ANI_SHINY : SHOWDOWN_ANI) + slug + ".gif"; }
 var PKPARAISO_SWSH="https://www.pkparaiso.com/imagenes/espada_escudo/sprites/animados/"; // Gen 8 animated 3D (shiny: <name>-s.gif)
 // Gen 6 X/Y animated 3D — near-full National Dex coverage, used as the animated fallback
 // for 'mon that SwSh (Galar dex) dropped, so nearly everything stays ANIMATED.
@@ -436,8 +441,8 @@ function pokeImgFor(dex, cr, px, altName){
     var base = mega
       ? (mf.dir==="oras" ? (shiny?PKPARAISO_ORAS_SHINY:PKPARAISO_ORAS) : (shiny?PKPARAISO_XY_SHINY:PKPARAISO_XY))
       : (shiny ? PKPARAISO_XY_SHINY : PKPARAISO_XY);
-    var src0 = base + slug + ".gif";
-    return '<img class="pokeimg pokeimg-3d'+(mega?" pokeimg-mega":"")+'" src="'+src0+'" width="'+px+'" height="'+px+'"'+
+    var src0 = pokeAniSrc(slug, shiny);
+    return '<img class="pokeimg pokeimg-3d'+(mega?" pokeimg-mega":"")+'" src="'+src0+'" data-alt="'+base+slug+'.gif" width="'+px+'" height="'+px+'"'+
       ' alt="'+esc(altName||"")+(shiny?" (shiny)":"")+'" data-dex="'+dex+'" data-shiny="'+shiny+'"'+
       ' data-3d="1" data-mega="'+(mega?1:0)+'" data-slug="'+slug+'" data-try="0" data-fb="'+fb+'" decoding="async" onerror="pokeErr(this)" loading="lazy">';
   }
@@ -456,7 +461,10 @@ function pokeErr(img){
   if(img.getAttribute("data-3d")==="1"){
     // primary is now the X/Y(Gen6) animated gif, so on failure go straight to the HOME
     // still png, then the generated monster svg. (SwSh added no coverage for species<=649.)
-    if(t===0){ img.setAttribute("data-try","1"); img.src=POKE_STATIC+"other/home/"+(shiny?"shiny/":"")+dex+".png"; return; }
+    // Showdown gif -> pkparaiso gif (data-alt) -> HOME still png -> the generated monster svg
+    var alt=img.getAttribute("data-alt");
+    if(t===0 && alt){ img.setAttribute("data-try","1"); img.removeAttribute("data-alt"); img.src=alt; return; }
+    if(t<=1){ img.setAttribute("data-try","2"); img.src=POKE_STATIC+"other/home/"+(shiny?"shiny/":"")+dex+".png"; return; }
   } else if(t===0){
     img.setAttribute("data-try","1"); img.src=POKE_STATIC+sub+dex+".png"; return;
   }

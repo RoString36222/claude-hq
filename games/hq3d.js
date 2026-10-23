@@ -145,6 +145,25 @@ function footStep(st, inp, dt){
   return {yaw: yaw2, rate: r[0], rateV: r[1], speed: s2[0], speedV: s2[1], camHeld: camHeld,
           travelYaw: camHeld ? null : travelYawOf(yaw2, s2[0], r[0], st.travelYaw)};
 }
+// One step on foot with mouse steering on (HQ 3.15, the camera gear's "Mouse steering"): the mouse turns you and the
+// camera together, as in a shooter. st = {yaw, speed (signed), speedV, mdx?, mdz?}; inp = {fwd: -1..1 (W +, S -),
+// side: -1..1 (A +, to your left), run, turn: rad the mouse turned the camera this frame}. W walks along your facing,
+// S steps back at FOOT.back of the pace (signed: the clips run backwards), A / D step sideways; you never turn to face
+// where you go. With no key down you coast on the way you were going. -> {yaw, speed, speedV, mdx, mdz}: md is the
+// way you go when the speed is positive (the opposite way while it is negative).
+function steerStep(st, inp, dt){
+  st = st || {}; inp = inp || {}; dt = Math.max(0, +dt || 0);
+  var fwd = Math.max(-1, Math.min(1, +inp.fwd || 0)), side = Math.max(-1, Math.min(1, +inp.side || 0));
+  var yaw = wrapPi((+st.yaw || 0) + (+inp.turn || 0)), sn = Math.sin(yaw), cs = Math.cos(yaw), l = Math.hypot(fwd, side);
+  var mdx = st.mdx != null && isFinite(st.mdx) ? +st.mdx : sn, mdz = st.mdz != null && isFinite(st.mdz) ? +st.mdz : cs, goal = 0;
+  if(l){
+    var bk = fwd < 0 ? -1 : 1;
+    mdx = bk*(fwd*sn + side*cs)/l; mdz = bk*(fwd*cs - side*sn)/l;
+    goal = bk*(inp.run ? FOOT.run : FOOT.walk)*(fwd < 0 ? FOOT.back : 1);
+  }
+  var s = spring(st.speed, st.speedV, goal, FOOT.speedW, dt);
+  return {yaw: yaw, speed: s[0], speedV: s[1], mdx: mdx, mdz: mdz};
+}
 // Locomotion (HQ 3.2): idle, walk and sprint play together, weighted by speed, so nothing pops; each clip's playback
 // rate is the ground speed over the ground its stride covers at rate 1 (STRIDE, m/s, fitted to the Mini Characters'
 // clips: leg 0.40 m, walk swing +-1.04 rad over 0.672 s, sprint +-1.56 rad over 0.536 s; the rate that least slides
@@ -163,7 +182,7 @@ function locoWeights(speed, rate){
   return {idle: still, walk: walk, sprint: sprint, walkTs: dir*wv/STRIDE.walk, sprintTs: dir*v/STRIDE.sprint};
 }
 HQV.hq3dPure = {cityImplOf: cityImplOf, shotName: shotName, padToInput: padToInput, doorUnderCrosshair: doorUnderCrosshair,
-                mapClickAction: mapClickAction, spring: spring, ease: ease, footStep: footStep, travelYawOf: travelYawOf,
+                mapClickAction: mapClickAction, spring: spring, ease: ease, footStep: footStep, steerStep: steerStep, travelYawOf: travelYawOf,
                 locoWeights: locoWeights, STRIDE: STRIDE, FOOT: FOOT, CHASE: CHASE, MODE_LABEL: MODE_LABEL};
 
 var E = HQV.engine;
@@ -3165,7 +3184,20 @@ function mount(el, api){
     var run = !!(keys.ShiftLeft || keys.ShiftRight), base = run ? FOOT.run : FOOT.walk;
     if(fwd || side){ walkTo = null; walkDoor = null; }
     var yaw0 = avatar.yaw, sp0 = avatar.speed || 0, dx = 0, dz = 0;
-    if(rigOn() && CHASE[rig.mode] && !walkTo){
+    if(steering() && !walkTo){
+      // Mouse steering (HQ 3.15): the captured mouse turns the camera (onMove: an orbit, as a drag does) and each frame
+      // the body takes ALL of that turn (camrig absorb), so you face where the camera looks and it stays behind you;
+      // the keys move you relative to that facing (steerStep). hold: the camera's tilt stays where the mouse put it.
+      var tn = HQV.camrig.absorb ? HQV.camrig.absorb(rig, PI) : 0;
+      HQV.camrig.input(rig, {hold: true});
+      var g = steerStep({yaw: avatar.yaw, speed: avatar.speed, speedV: avatar.sv, mdx: avatar.mdx, mdz: avatar.mdz},
+                        {fwd: fwd, side: side, run: run, turn: tn}, dt);
+      avatar.rate += ((dt > 0 ? wrapPi(g.yaw - avatar.yaw)/dt : 0) - avatar.rate)*ease(12, dt);   // the lean and the shuffle
+      avatar.yaw = g.yaw; avatar.speed = g.speed; avatar.sv = g.speedV; avatar.mdx = g.mdx; avatar.mdz = g.mdz; avatar.rv = 0;
+      avatar.faceGoal = null; avatar.faceOff = 0; avatar.aboutV = 0; avatar.camHeld = false;
+      avatar.tyStep = true; avatar.tyChase = avatar.yaw;       // the camera's heading: your facing
+      dx = avatar.speed < 0 ? -g.mdx : g.mdx; dz = avatar.speed < 0 ? -g.mdz : g.mdz;
+    } else if(rigOn() && CHASE[rig.mode] && !walkTo){
       // Chase cameras: the keys are the BODY's. W walks along your facing, S turns you to face the camera and walks
       // you toward it while the camera holds and backs up (footStep), A / D turn you on a spring.
       // Walking forward with the camera dragged round (left- or right-drag, a pad's right stick): you turn to face
@@ -3289,7 +3321,7 @@ function mount(el, api){
     if(hud && hud.settings) return hud.settings();
     var H = HQV.hqhud, raw = null;
     try { raw = localStorage.getItem("hq_cam"); } catch(e){ raw = null; }
-    return H && H.loadSettings ? H.loadSettings(raw) : {fov: 65, sens: 1, invertY: false, reduced: false, headBob: true, quality: "auto", preferred: "chase"};
+    return H && H.loadSettings ? H.loadSettings(raw) : {fov: 65, sens: 1, invertY: false, reduced: false, headBob: true, quality: "auto", preferred: "chase", mouseSteer: false};
   }
   // What camrig gets: the HUD's settings, reduced motion also when HQ is calm (E.calm covers the system setting too)
   function camSettings(){
@@ -3299,6 +3331,28 @@ function mount(el, api){
   }
   function locked(){ return document.pointerLockElement === canvas; }
   function exitLock(){ try { if(locked() && document.exitPointerLock) document.exitPointerLock(); } catch(e){} }
+  // [3.15] Mouse steering (the camera gear): in the chase cameras a click captures the mouse, which then turns you and
+  // the camera together (moveAvatar); Esc, a panel, a typing field or another camera gives the cursor back.
+  function steerOn(){ return !!(camSet && camSet.mouseSteer) && rigOn() && !!CHASE[rig.mode] && !studioPlacing(); }
+  function steering(){ return steerOn() && locked() && !tripHeld(); }
+  function steerLock(){
+    if(locked() || !canvas.requestPointerLock) return;
+    try { var r = canvas.requestPointerLock(); if(r && r.catch) r.catch(function(){}); } catch(x){}   // refused (Esc just now): click again
+  }
+  // the captured mouse does what a drag does: a trip's look, a plane's nose, a ride's orbit; on foot that orbit is
+  // the turn moveAvatar hands to your body
+  function steerLook(dx, dy){
+    if(tripHeld()){ tripLook.yaw = wrapA(tripLook.yaw - dx*0.004); tripLook.pitch = E.clamp(tripLook.pitch - dy*0.004, -1.3, 1.3); return; }
+    if(ride && ride.plane && !ride.plane.ground){ ride.mp = (ride.mp || 0) + dy; HQV.camrig.input(rig, {orbit: [dx, 0]}); return; }
+    HQV.camrig.input(rig, {orbit: [dx, dy]});
+  }
+  // anything open that needs a cursor: a panel, the big map, a field you type in
+  function wantsCursor(){
+    return !!((HQV.townHall && HQV.townHall.isOpen && HQV.townHall.isOpen()) || (cur && cur.menuOpen && cur.menuOpen())
+      || (cur && cur.bigMapOpen && cur.bigMapOpen()) || (HQV.hqGarageMgr && HQV.hqGarageMgr.isOpen && HQV.hqGarageMgr.isOpen())
+      || (tuneUi && tuneUi.isOpen()) || (dealUi && dealUi.isOpen()) || (showUi && showUi.isOpen()) || (callUi && callUi.isOpen())
+      || typing(document.activeElement));
+  }
   function showAvatar(on){
     if(!avatar) return;
     if(avatar.ch) avatar.ch.o.visible = on; if(avatar.tag) avatar.tag.visible = on; if(avatar.ring) avatar.ring.visible = on;
@@ -3369,6 +3423,7 @@ function mount(el, api){
   function modeChanged(prev, now){
     lastMode = now; lastFpView = rig.fpView; idleT = 0;
     if((prev === "fp" || prev === "photo") && now !== "fp" && now !== "photo") exitLock();
+    if(CHASE[prev] && !CHASE[now] && now !== "fp" && now !== "photo") exitLock();   // [3.15] mouse steering's capture
     // one fade system per mode: Classic runs the world's hqCutaway, the rig modes the occluder list
     if((now === "classic" || now === "map") && cur.setFaded) cur.setFaded([]);
     if(now === "classic"){ view.yaw = rig.lookYaw + PI; view.target.copy(view.goal); }
@@ -3455,6 +3510,7 @@ function mount(el, api){
   // Every frame in a rig world: held keys into the rig, step it, put the perspective camera on its pose.
   function rigFrame(t, dt){
     var C = HQV.camrig, m = rig.mode, k = keys;
+    if(locked() && CHASE[m] && (!steerOn() || wantsCursor())) exitLock();   // [3.15] the cursor back for a panel, or steering off
     var ev = {swing: (k.KeyR ? 1 : 0) - (k.KeyQ ? 1 : 0), lift: (k.KeyC ? 1 : 0) - (k.KeyZ ? 1 : 0)};
     var fwd = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0), side = (k.KeyA || k.ArrowLeft ? 1 : 0) - (k.KeyD || k.ArrowRight ? 1 : 0);
     if(m === "photo"){ ev.fly = {x: -side, y: ev.lift, z: fwd}; ev.fast = !!(k.ShiftLeft || k.ShiftRight); ev.swing = 0; ev.lift = 0; }   // fly x: +1 = to the right
@@ -3549,16 +3605,21 @@ function mount(el, api){
       // first person and photo: a click captures the mouse for looking (Esc gives it back); no picking while locked
       if(m === "fp" || m === "photo"){ if(!locked() && canvas.requestPointerLock){ try { canvas.requestPointerLock(); } catch(x){} } drag = null; return; }
       if(m === "cine") return;
+      // [3.15] mouse steering: a click while the mouse is captured picks nothing (a plain click captures it: onUp)
+      if(CHASE[m] && steerOn() && locked()){ drag = null; return; }
       // map: left-drag pans; chase family: left- or right-drag orbits (trackpads have no right-drag),
       // and a left click that barely moved still picks / walks (onUp, under 5 px)
       drag = {x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, moved: 0, rig: true, button: e.button,
-              map: m === "map" && e.button === 0, orbit: !!CHASE[m] && (e.button === 0 || e.button === 2)};
+              map: m === "map" && e.button === 0, orbit: !!CHASE[m] && (e.button === 0 || e.button === 2), steer: !!CHASE[m] && steerOn()};
       canvas.setPointerCapture(e.pointerId); return;
     }
     drag = {x: e.clientX, y: e.clientY, yaw: view.yaw, pitch: view.pitch, moved: 0}; canvas.setPointerCapture(e.pointerId);
   }
   function onMove(e){
-    if(locked()){ if(rig){ HQV.camrig.input(rig, {look: [e.movementX || 0, e.movementY || 0]}); noteInput(); } return; }
+    if(locked()){
+      if(rig){ var lx = e.movementX || 0, ly = e.movementY || 0; if(CHASE[rig.mode]) steerLook(lx, ly); else HQV.camrig.input(rig, {look: [lx, ly]}); noteInput(); }
+      return;
+    }
     if(drag){
       var dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.moved = Math.max(drag.moved, Math.abs(dx) + Math.abs(dy));
       if(drag.studio){ if(drag.moved > 5){ studioPan(e.clientX - drag.lx, e.clientY - drag.ly); tip.hidden = true; } drag.lx = e.clientX; drag.ly = e.clientY; return; }
@@ -3602,6 +3663,7 @@ function mount(el, api){
     if(o && o.desk){ api.openSession(o.desk.id); return; }
     if(o && o.project){ inst.setFilter(filter === o.project ? null : o.project); api.onFilter(filter); return; }
     if(o && o.door){ walkTo = {x: o.door.front.x, z: o.door.front.z}; walkDoor = o.door; return; }
+    if(d.steer){ steerLock(); return; }                                // [3.15] mouse steering: a click captures the mouse
     var f = pick(e, [].concat(cur.floor)), b = cur.bounds;
     if(f){ walkTo = {x: E.clamp(f.point.x, b[0] + 1, b[1] - 1), z: E.clamp(f.point.z, b[2] + 1, b[3] - 1)}; walkDoor = null; }
   }

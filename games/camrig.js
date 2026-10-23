@@ -289,6 +289,7 @@ function input(s, ev){
   if(ev.lift != null) _.lift = clamp(num(ev.lift, 0), -1, 1);
   if(ev.fly) _.fly = {x: clamp(num(ev.fly.x, 0), -1, 1), y: clamp(num(ev.fly.y, 0), -1, 1), z: clamp(num(ev.fly.z, 0), -1, 1)};
   if(ev.fast != null) _.fast = !!ev.fast;
+  if(ev.hold) _.idle = 0;            // mouse steering (hq3d): the orbit's tilt never springs back to rest
   if(ev.orbit){
     if(chaseFamily(s.mode)){
       _.orbitYaw = wrap(_.orbitYaw - num(ev.orbit[0], 0)*set.sens*ORBIT_K);

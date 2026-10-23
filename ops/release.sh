@@ -24,6 +24,7 @@
 #                           read a failed job's log and name a known flaky check
 #   ARENA_SKIP_PULL=1       release the checkout as it is (used by the CI smoke test)
 #   ARENA_KEEP=3            releases to keep
+#   ARENA_BUILD_CACHE=3gb   Docker build cache kept between deploys (the rest is pruned)
 #
 # A rollback restores code, not data: the Arena applies its migrations
 # (backend/migrations) at startup, and they only ever add, so an older build
@@ -36,6 +37,7 @@ STATE="$BACKEND/.release.env"         # what compose should run now (git-ignored
 HISTORY="$BACKEND/.releases"          # one line per release, newest last (git-ignored)
 BRANCH="${ARENA_BRANCH:-main}"
 KEEP="${ARENA_KEEP:-3}"
+BUILD_CACHE="${ARENA_BUILD_CACHE:-3gb}"
 CI_WAIT="${ARENA_CI_WAIT:-900}"
 CI_POLL="${ARENA_CI_POLL:-20}"
 CI_BODY=""                            # the last check-runs answer (ci_passed)
@@ -148,7 +150,11 @@ prune() {  # impl
   docker image ls "claude-hq-arena-$impl" --format '{{.Tag}}' | while read -r tag; do
     [[ "$tag" == local || "$tag" == "<none>" ]] && continue
     grep -qx "$tag" <<<"$keep" || docker image rm "claude-hq-arena-$impl:$tag" >/dev/null 2>&1 || true
-  done
+  done  # the leftovers of every build: untagged images, and BuildKit's cache capped at ARENA_BUILD_CACHE
+  # (enough to keep the cargo cache mounts warm for the next deploy)
+  docker image prune -f >/dev/null 2>&1 || true
+  docker builder prune -f --max-used-space "$BUILD_CACHE" >/dev/null 2>&1 \
+    || docker builder prune -f --keep-storage "$BUILD_CACHE" >/dev/null 2>&1 || true
 }
 
 cmd_check() {

@@ -7,6 +7,11 @@
 # Caddy obtains and renews the TLS certificate automatically, so there is no
 # certbot cron to forget about.
 
+# Container logs are capped (3 x 10 MB per container); Docker's default keeps them forever.
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "3"}
+
 services:
   # The Arena (Rust). ops/release.sh stamps a version: it sets ARENA_APP_IMAGE
   # and ARENA_VERSION in .release.env. A plain `docker compose up -d --build`
@@ -18,6 +23,7 @@ services:
       args:
         ARENA_VERSION: ${ARENA_VERSION:-dev}
     restart: unless-stopped
+    logging: *logging
     env_file: .env
     environment:
       # The volume, not the image: the database must survive a redeploy.
@@ -53,6 +59,7 @@ services:
       context: ../ops
       dockerfile: Dockerfile.panel
     restart: unless-stopped
+    logging: *logging
     env_file: /etc/arena-panel.env
     environment:
       # Mounted at the SAME path it has on the host, not at /repo. The panel
@@ -76,6 +83,7 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    logging: *logging
     depends_on:
       - app
     environment:
@@ -105,6 +113,7 @@ services:
     profiles: ["monitoring"]
     image: prom/prometheus:v3.5.0
     restart: unless-stopped
+    logging: *logging
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -123,6 +132,7 @@ services:
     profiles: ["monitoring"]
     image: prom/node-exporter:v1.9.1
     restart: unless-stopped
+    logging: *logging
     pid: host
     command:
       - --path.rootfs=/host
@@ -135,6 +145,7 @@ services:
     profiles: ["monitoring"]
     image: grafana/grafana-oss:12.1.0
     restart: unless-stopped
+    logging: *logging
     depends_on:
       - prometheus
     environment:

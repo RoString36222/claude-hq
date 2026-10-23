@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.16.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.17.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -409,6 +409,20 @@ and feature guide.
 
 ## Changelog
 
+- **3.17.0 — A tank for four.** On foot in the 3D City, <kbd>K</kbd> rolls your tank up beside you (on your right,
+  else wherever it fits; <kbd>K</kbd> again sends it away, and it goes when you change floor). <kbd>E</kbd> beside it
+  and you drive: slow and heavy (40 km/h, 18 backwards), <kbd>A</kbd> / <kbd>D</kbd> turn it on the spot, a diesel
+  note, walls stop it. **Four seats:** while you drive, other players climb in with <kbd>E</kbd> beside it: the first
+  is the gunner, standing in the turret's hatch (the turret goes where their camera looks, Mouse steering or a drag;
+  <kbd>F</kbd> or a captured click fires a shell that goes off on whatever it hits, an 8 m blast), the next two ride
+  on the back deck. <kbd>E</kbd> again climbs out; when the driver gets out, everyone does. Blasts never move a tank
+  or anyone in it. Driven tanks are solid to everyone else. Over presence (the "tank" capability): the driver sends
+  a = 14 and `ts` (who sits in seats 1-3), a passenger `sb` ([driver, seat]) and the gunner `ta` (turret yaw and
+  barrel pitch, degrees); shells are grenade kind 1 in `gn`. The driver's page decides who sits where (first come,
+  first served; games/hqtank.js assign), every page draws passengers on the driver's drawn tank (so they never drift
+  off it) and the turret at the gunner's aim; the Arena (backend/src/valley/hq.rs) checks every id and number.
+  An original stand-in tank (hull, treads on six road wheels a side, a faceted turret, a long barrel). Needs the
+  Arena redeployed.
 - **3.16.0 — A grenade launcher in the City.** On foot in the 3D City, <kbd>X</kbd> takes out a stubby launcher
   (it rides on your left shoulder; <kbd>X</kbd> again puts it away, and it goes away by itself on a ride, a bus or
   another floor). <kbd>F</kbd>, or a click with the mouse captured (3.15's Mouse steering), lobs a grenade where the

@@ -18,16 +18,18 @@
 var HQV = window.HQV = window.HQV || {};
 
 var G = 9.81, DT = 1/60;
-// kinds: 0 the launcher's grenade (bounces, a fuse). fuse s, blast radius m, the push (m/s, sideways) and lift (m/s,
-// up) at its heart, falling to 0 at the edge, the muzzle speed m/s.
-var KINDS = [{fuse: 1.8, blast: 6, push: 16, lift: 7.5, muzzle: 20}];
+// kinds: 0 the launcher's grenade (bounces, a fuse), 1 the tank's shell (HQ 3.17, games/hqtank.js: goes off on whatever
+// it touches first, its fuse only a limit). fuse s, blast radius m, the push (m/s, sideways) and lift (m/s, up) at its
+// heart, falling to 0 at the edge, the muzzle speed m/s.
+var KINDS = [{fuse: 1.8, blast: 6, push: 16, lift: 7.5, muzzle: 20},
+             {fuse: 4, blast: 8, push: 20, lift: 9, muzzle: 38, impact: true}];
 var LOFT = 0.55;                     // rad above where the camera looks (a chase camera looks down ~0.4): a lob
 var PITCH_MIN = -0.35, PITCH_MAX = 1.25;
 var BOUNCE = 0.4, ROLL = 0.7, R = 0.09, REST_V = 0.35;
 var COOL = 0.75;                     // s between shots
 var KEEP = 1.5;                      // s a shot stays in your presence frames (8 a second: none is missed)
 // the Arena's bounds (backend/src/valley/hq.rs): a shot outside them would drop your whole frame
-var WIRE = {xz: 102400, y: 50000, v: 6000, s: 65535, age: 2000, n: 4, kMax: 0};
+var WIRE = {xz: 102400, y: 50000, v: 6000, s: 65535, age: 2000, n: 4, kMax: 1};
 
 function num(v, d){ v = +v; return isFinite(v) ? v : d; }
 function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
@@ -62,11 +64,16 @@ function step(g, env){
   var nx = g.x + g.vx*DT, nz = g.z + g.vz*DT, ny = g.y + g.vy*DT - 0.5*G*DT*DT;
   g.vy -= G*DT;
   var wy = env.water ? env.water(nx, nz) : null;
-  if(wy != null && isFinite(wy) && ny <= wy){ g.x = nx; g.z = nz; g.y = wy; g.vx = 0; g.vy = 0; g.vz = 0; g.wet = true; return null; }
+  if(wy != null && isFinite(wy) && ny <= wy){
+    g.x = nx; g.z = nz; g.y = wy; g.vx = 0; g.vy = 0; g.vz = 0; g.wet = true;
+    if(K.impact){ g.done = true; return {x: g.x, y: g.y, z: g.z, k: g.k, wet: true}; }
+    return null;
+  }
   var gy = env.ground ? num(env.ground(nx, nz), 0) : 0;
   if(ny > gy + R && env.hit){
     var a = {x: g.x, y: g.y, z: g.z};
     if(env.hit(a, {x: nx, y: ny, z: nz}) < 1){
+      if(K.impact){ g.done = true; return {x: g.x, y: g.y, z: g.z, k: g.k, wet: false}; }   // a shell: on the wall
       // which face it met: the move along x alone, along z alone (a wall), else from above or below (a roof)
       var hx = env.hit(a, {x: nx, y: g.y, z: g.z}) < 1, hz = env.hit(a, {x: g.x, y: g.y, z: nz}) < 1;
       if(hx) g.vx = -g.vx*BOUNCE;
@@ -78,6 +85,7 @@ function step(g, env){
   }
   if(ny <= gy + R){
     ny = gy + R;
+    if(K.impact){ g.x = nx; g.y = ny; g.z = nz; g.done = true; return {x: g.x, y: g.y, z: g.z, k: g.k, wet: false}; }
     if(g.vy < 0) g.vy = Math.abs(g.vy) < 1.5 ? 0 : -g.vy*BOUNCE;
     g.vx *= ROLL; g.vz *= ROLL; g.bounced++;
     if(g.vy === 0 && Math.hypot(g.vx, g.vz) < REST_V){ g.vx = 0; g.vz = 0; g.rest = true; }

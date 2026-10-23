@@ -73,7 +73,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           # rail (3.x): the lines between cities, their trains
                           "hqrail",
                           # the vehicle garage (3.4); City 3.2: the weather, the landmarks and the amusement park
-                          "hqcarpark", "hqweather", "hqspectacle", "hqstunts", "hqgrenade", "hqcity3d"])
+                          "hqcarpark", "hqweather", "hqspectacle", "hqstunts", "hqgrenade", "hqtank", "hqcity3d"])
 
     def test_multi_hq_range_covers_server(self):
         m = re.search(r"\bhq:\[(\d+),(\d+)\]", read(MULTI))
@@ -95,7 +95,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         self.assertIn("msg.h=Math.max(-50000, Math.min(50000, Math.round(w.h*100)))", m.group(1))
         self.assertIn("Math.max(-90, Math.min(90,", m.group(1))
         self.assertNotRegex(body.replace(m.group(0), ""), r"msg\.[hp]=")
-        self.assertIn("msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm,msg.gl,JSON.stringify(msg.gn||0)].join", body)   # both in the dedupe key (and the vehicle, the boombox, the convoy, the tune, the pets)
+        self.assertIn("msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm,msg.gl,JSON.stringify(msg.gn||0),JSON.stringify(msg.ts||0),JSON.stringify(msg.sb||0),JSON.stringify(msg.ta||0)].join", body)   # both in the dedupe key (and the vehicle, the boombox, the convoy, the tune, the pets)
         # the city3d skip comes before anything is sent
         self.assertLess(body.index('w.world==="city3d"'), body.index("ws.send"))
 
@@ -124,7 +124,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         self.assertIn('if((a===7 || a===8) && !hqNetCan("fly")) a = 0;', send)
         self.assertLess(send.index('hqNetCan("fly")'), send.index("var msg="))
         # others see them in it: the helicopter model at the height they send, its rotors turning
-        self.assertIn('var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop", 11: "regional", 12: "airliner", 13: "petride"};', src)
+        self.assertIn('var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop", 11: "regional", 12: "airliner", 13: "petride", 14: "tank"};', src)
         place = func_body(src, "placePeers")
         self.assertIn("HQV.hqheli.model(ctx, vk, bikeColor(u))", place)
         self.assertIn("HQV.hqheli.animate(P.bike, P.hst, dt, isNight())", place)
@@ -215,7 +215,7 @@ class Hq3dSource(unittest.TestCase):
         # [3.15] the camera gear's Mouse steering: in the chase cameras a plain click captures the mouse (never a
         # walk-to), which turns you and the camera together; panels, typing and other cameras give the cursor back
         down = func_body(self.src, "onDown")
-        self.assertIn("if(CHASE[m] && steerOn() && locked()){ drag = null; if(e.button === 0) gnFire(); return; }", down)   # [3.16] fires
+        self.assertIn("if(CHASE[m] && steerOn() && locked()){ drag = null; if(e.button === 0 && !tkFire()) gnFire(); return; }", down)   # [3.16] fires
         self.assertIn("steer: !!CHASE[m] && steerOn()", down)
         up = func_body(self.src, "onUp")
         cap = "if(d.steer){ steerLock(); return; }"

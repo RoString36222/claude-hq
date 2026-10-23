@@ -165,6 +165,16 @@ struct Person {
     /// age at most GN_AGE_MAX ms), so a listener that missed a frame still sees it; listeners dedupe on (uid, s) and fly
     /// the arc themselves, the Arena only checks and relays. Per frame: a frame without `gn` has none.
     gn: Option<Vec<Shot>>,
+    /// A tank's seats (`ts`, the "tank" capability, HQ 3.17), sent by its driver and kept only while driving it (a = 14):
+    /// TANK_SEATS entries, seat 1 the turret gunner and 2 / 3 riders, each a user id or "" (empty). The driver's page
+    /// decides who sits where; the Arena only checks the shape. Per frame: a frame without `ts` has none.
+    ts: Option<Vec<String>>,
+    /// The seat a passenger says they sit in (`sb`, "tank"): the driver's user id and the seat (1..=TANK_SEATS). Only a
+    /// shape: whether the driver's `ts` agrees is for the pages to see. Per frame: a frame without `sb` has none.
+    sb: Option<(String, u8)>,
+    /// The gunner's turret aim (`ta`, "tank"): yaw (relative to the hull) and pitch, whole degrees. Kept only with an `sb`
+    /// in the same frame, since only someone in a seat aims a turret. Per frame: a frame without `ta` has none.
+    ta: Option<(i64, i64)>,
     /// (tokens, when) -- Python's `[POS_BURST, t]` list.
     bucket: (f64, f64),
 }
@@ -209,6 +219,9 @@ impl Hq {
                 motion: None,
                 gl: false,
                 gn: None,
+                ts: None,
+                sb: None,
+                ta: None,
                 bucket: (POS_BURST, t),
             });
         }
@@ -334,6 +347,17 @@ impl Hq {
         // A grenade launcher: `gl` 0 / 1 (absent or null is 0) and `gn` its recent shots; a bad one drops the whole frame.
         let Some(gl) = small_int(msg.get("gl").filter(|v| !v.is_null()), 1) else { return false };
         let Some(gn) = read_shots(msg.get("gn")) else { return false };
+        // [3.17] a tank: its driver's seats (`ts`, only while driving it, a = 14), a passenger's seat (`sb`) and the
+        // gunner's aim (`ta`, only with a seat); a bad one drops the whole frame.
+        let ts = if a.as_f64() == Some(14.0) {
+            let Some(ts) = read_seats(uid, msg.get("ts")) else { return false };
+            ts
+        } else {
+            None
+        };
+        let Some(sb) = read_seat(uid, msg.get("sb")) else { return false };
+        let Some(ta) = read_aim(msg.get("ta")) else { return false };
+        let ta = ta.filter(|_| sb.is_some());
         p.w = w.to_string();
         p.x = super::py_trunc(x); // Python's int(x): toward zero
         p.z = super::py_trunc(z);
@@ -349,6 +373,9 @@ impl Hq {
         p.motion = motion;
         p.gl = gl == 1;
         p.gn = gn;
+        p.ts = ts;
+        p.sb = sb;
+        p.ta = ta;
         self.dirty = true;
         true
     }
@@ -450,6 +477,18 @@ impl Hq {
                     if let Some(gn) = &p.gn {
                         m.insert("gn".into(), json!(gn));
                     }
+                    // only while driving a tank ("tank" capability, HQ 3.17): who sits in seats 1-3
+                    if let Some(ts) = &p.ts {
+                        m.insert("ts".into(), json!(ts));
+                    }
+                    // only while sitting in someone's tank ("tank"): whose, and which seat
+                    if let Some((d, n)) = &p.sb {
+                        m.insert("sb".into(), json!([d, n]));
+                    }
+                    // only while aiming its turret from a seat ("tank")
+                    if let Some((yaw, pitch)) = p.ta {
+                        m.insert("ta".into(), json!([yaw, pitch]));
+                    }
                     Value::Object(m)
                 })
                 .collect(),
@@ -471,8 +510,9 @@ fn anim_ok(a: &Value) -> bool {
         // an attack helicopter (the "fly" capability; its height rides in `h`), and 9 / 10, flying the
         // seaplane / the prop plane (the "plane" capability, HQ 3.2; its height rides in `h` too), and 11 / 12,
         // flying the regional jet / the narrow-body airliner (the "airliner" capability, HQ 3.8), and 13, riding your
-        // pet (the "petride" capability, HQ 3.14: `pt`'s first pet is the mount, checked in pos).
-        Value::Number(n) => n.as_f64().is_some_and(|f| [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0].contains(&f)),
+        // pet (the "petride" capability, HQ 3.14: `pt`'s first pet is the mount, checked in pos), and 14, driving your
+        // tank (the "tank" capability, HQ 3.17: its seats ride in `ts`, checked in pos).
+        Value::Number(n) => n.as_f64().is_some_and(|f| [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0].contains(&f)),
         _ => false,
     }
 }
@@ -501,13 +541,19 @@ fn uid_ok(s: &str) -> bool {
     !s.is_empty() && s.len() <= 64 && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
 }
 
+/// Someone else's user id in a pos frame (a convoy's `ci` / `cv`, a tank's `ts` / `sb`): a string passing [`uid_ok`]
+/// that is never the sender's own id. None for anything else.
+fn peer_id(me: &str, v: &Value) -> Option<String> {
+    v.as_str().filter(|s| uid_ok(s) && *s != me).map(str::to_string)
+}
+
 /// `ci`, `cv` and `cg` from a pos frame: Some(the convoy) (empty when none is sent), None to drop the whole frame
 /// (a malformed id, your own id, a `cg` that is not two numbers on the map).
 fn read_convoy(me: &str, msg: &Value) -> Option<Convoy> {
     let id = |k: &str| -> Option<Option<String>> {
         match msg.get(k) {
             None | Some(Value::Null) => Some(None),
-            Some(v) => v.as_str().filter(|s| uid_ok(s) && *s != me).map(|s| Some(s.to_string())),
+            Some(v) => peer_id(me, v).map(Some),
         }
     };
     let cg = match msg.get("cg") {
@@ -563,8 +609,8 @@ const GN_MAX: usize = 4;
 const GN_S_MAX: i64 = 65_535;
 /// A launch velocity's bound, per axis (cm/s: 60 m/s).
 const GN_V_MAX: i64 = 6_000;
-/// The kinds a page may send: 0, a grenade. The tank's shell (1) comes with a later change, by raising this alone.
-const GN_K_MAX: i64 = 0;
+/// The kinds a page may send: 0, a grenade; 1, the tank's shell ("tank", HQ 3.17), its muzzle speed within GN_V_MAX too.
+const GN_K_MAX: i64 = 1;
 /// How old a shot may be and still ride along (ms).
 const GN_AGE_MAX: i64 = 2_000;
 
@@ -596,6 +642,55 @@ fn read_shots(v: Option<&Value>) -> Option<Option<Vec<Shot>>> {
         out.push(s);
     }
     Some(Some(out))
+}
+
+/// A tank's seats besides the driver's (the "tank" capability, HQ 3.17): 1 the turret gunner, 2 and 3 riders.
+const TANK_SEATS: usize = 3;
+/// The gunner's turret aim, whole degrees: yaw relative to the hull, either way round; pitch from a little below level
+/// to steeply up.
+const TA_YAW_MAX: i64 = 180;
+const TA_PITCH_MIN: i64 = -15;
+const TA_PITCH_MAX: i64 = 60;
+
+/// `ts` from a tank driver's pos frame: Some(None) when absent or null, Some(the seats) when good, None to drop the whole
+/// frame (not exactly TANK_SEATS strings, an entry neither "" nor someone else's user id, the same id twice).
+fn read_seats(me: &str, v: Option<&Value>) -> Option<Option<Vec<String>>> {
+    let a = match v {
+        None | Some(Value::Null) => return Some(None),
+        Some(v) => v.as_array().filter(|a| a.len() == TANK_SEATS)?,
+    };
+    let mut out: Vec<String> = Vec::with_capacity(TANK_SEATS);
+    for e in a {
+        let s = if e.as_str() == Some("") { String::new() } else { peer_id(me, e)? };
+        if !s.is_empty() && out.contains(&s) {
+            return None;
+        }
+        out.push(s);
+    }
+    Some(Some(out))
+}
+
+/// `sb` from a passenger's pos frame: Some(None) when absent or null, Some((driver, seat)) when good, None to drop the
+/// whole frame (not [someone else's user id, a whole number 1..=TANK_SEATS]).
+fn read_seat(me: &str, v: Option<&Value>) -> Option<Option<(String, u8)>> {
+    let a = match v {
+        None | Some(Value::Null) => return Some(None),
+        Some(v) => v.as_array().filter(|a| a.len() == 2)?,
+    };
+    let seat = a.get(1)?.as_i64().filter(|n| (1..=TANK_SEATS as i64).contains(n))?;
+    Some(Some((peer_id(me, a.first()?)?, seat as u8)))
+}
+
+/// `ta` from a gunner's pos frame: Some(None) when absent or null, Some((yaw, pitch)) when good, None to drop the whole
+/// frame (not two whole numbers, yaw within TA_YAW_MAX either way, pitch in TA_PITCH_MIN..=TA_PITCH_MAX).
+fn read_aim(v: Option<&Value>) -> Option<Option<(i64, i64)>> {
+    let a = match v {
+        None | Some(Value::Null) => return Some(None),
+        Some(v) => v.as_array().filter(|a| a.len() == 2)?,
+    };
+    let yaw = a.first()?.as_i64().filter(|n| (-TA_YAW_MAX..=TA_YAW_MAX).contains(n))?;
+    let pitch = a.get(1)?.as_i64().filter(|n| (TA_PITCH_MIN..=TA_PITCH_MAX).contains(n))?;
+    Some(Some((yaw, pitch)))
 }
 
 /// A whole number in 0..=max, or 0 when absent; None (drop the frame) for
@@ -786,8 +881,9 @@ mod tests {
         assert_eq!(p.listing()[0]["r"], 270); // int(-90) % 360, not Rust's -90
         // a bool x is not a number in Python either
         assert!(!p.pos("u", &json!({"w": "mission", "x": true, "z": 0, "r": 0}), 0.2));
-        // a is 14, which no capability sends (9 and 10 are the planes, HQ 3.2; 11 and 12 the airliners, HQ 3.8; 13 riding a pet, 3.14)
-        assert!(!p.pos("u", &json!({"w": "mission", "x": 0, "z": 0, "r": 0, "a": 14}), 0.3));
+        // a is 15, which no capability sends (9 and 10 are the planes, HQ 3.2; 11 and 12 the airliners, HQ 3.8; 13 riding a pet, 3.14;
+        // 14 driving a tank, 3.17)
+        assert!(!p.pos("u", &json!({"w": "mission", "x": 0, "z": 0, "r": 0, "a": 15}), 0.3));
         // nobody by that name is standing anywhere
         assert!(!p.pos("nobody", &json!({"w": "base", "x": 0, "z": 0, "r": 0}), 0.4));
         // Every rejection above left the stored position alone.
@@ -951,7 +1047,7 @@ mod tests {
             json!({"gn": with(1, json!("120"))}),                            // a string
             json!({"gn": with(2, json!(true))}),
             json!({"gn": with(3, Value::Null)}),
-            json!({"gn": with(7, json!(1))}),                                // k = 1, the tank's shell: not yet
+            json!({"gn": with(7, json!(2))}),                                // k = 2: no such kind (1 is the tank's shell)
             json!({"gn": with(8, json!(2001))}),                             // too old
             json!({"gn": with(8, json!(-1))}),
             json!({"gn": with(0, json!(65_536))}),                           // s past 16 bits
@@ -975,6 +1071,123 @@ mod tests {
         let l = p.listing();
         assert_eq!(l[0]["x"], json!(0), "the rejects moved nobody");
         assert_eq!((l[0]["gl"].clone(), l[0]["gn"].clone()), (json!(1), json!([shot(1)])), "and kept the launcher and its shot");
+    }
+
+    #[test]
+    fn a_tank_driver_lists_its_seats_only_while_driving_it() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        // a = 14 with its seats (the gunner in 1, seat 2 empty, a rider in 3): echoed exactly, after everything else
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 14, "ts": ["gun-1", "", "rider_3"]}), 0.1));
+        assert_eq!(p.listing()[0].to_string(), r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":14,"ts":["gun-1","","rider_3"]}"#);
+        // an empty tank is three empty seats: "" is never a repeat
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 14, "ts": ["", "", ""]}), 0.2));
+        assert_eq!(p.listing()[0]["ts"], json!(["", "", ""]));
+        // a frame without them (or with null) clears them: the listing is the one it always was
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 14}), 0.3));
+        assert_eq!(p.listing()[0].to_string(), r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":14}"#);
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 14, "ts": ["gun-1", "", ""]}), 0.4));
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 14, "ts": null}), 0.5));
+        assert!(p.listing()[0].get("ts").is_none());
+        // out of the tank: none, whatever the page sends -- even a bad one is ignored, like `v` off a vehicle
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1, "ts": ["gun-1", "", "rider_3"]}), 0.6));
+        assert!(p.listing()[0].get("ts").is_none());
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1, "ts": "junk"}), 0.7));
+        assert!(p.listing()[0].get("ts").is_none());
+        // the Arena checks shapes only, so one frame may carry all of the tank's fields: after gn, in this order
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 14, "ta": [5, 0], "sb": ["drv-1", 2], "ts": ["gun-1", "", ""],
+                                   "gn": [[1, 0, 0, 0, 0, 0, 0, 1, 0]], "gl": 1}), 0.8));
+        assert_eq!(p.listing()[0].to_string(),
+                   r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":14,"gl":1,"gn":[[1,0,0,0,0,0,0,1,0]],"ts":["gun-1","",""],"sb":["drv-1",2],"ta":[5,0]}"#);
+    }
+
+    #[test]
+    fn a_bad_seat_list_drops_the_whole_frame() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 14, "ts": ["gun-1", "", ""]}), 0.1));
+        for (i, bad) in [
+            json!(["gun-1", ""]),                            // two seats
+            json!(["gun-1", "", "", ""]),                    // four
+            json!(["gun-1", 7, ""]),                         // an entry that is not a string
+            json!(["gun-1", null, ""]),
+            json!(["u", "", ""]),                            // your own id
+            json!(["gun-1", "", "gun-1"]),                   // the same id twice
+            json!(["a b", "", ""]),                          // not shaped like a user id
+            json!(["x".repeat(65), "", ""]),
+            json!("gun-1,,"), json!(7), json!({"1": "gun-1"}), // not an array at all
+        ].into_iter().enumerate() {
+            assert!(!p.pos("u", &json!({"w": "city3d", "x": 900, "z": 0, "r": 0, "a": 14, "ts": bad}), 1.0 + i as f64), "accepted {bad}");
+        }
+        // and a = 15 is nobody's anim
+        assert!(!p.pos("u", &json!({"w": "city3d", "x": 900, "z": 0, "r": 0, "a": 15, "ts": ["gun-1", "", ""]}), 20.0));
+        let l = p.listing();
+        assert_eq!(l[0]["x"], json!(0), "the rejects moved nobody");
+        assert_eq!(l[0]["ts"], json!(["gun-1", "", ""]), "and kept the seats as they were");
+    }
+
+    #[test]
+    fn a_passenger_lists_its_seat_and_a_gunner_its_aim() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        let plain = r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":0}"#;
+        // the gunner (seat 1) aiming, at the inclusive bounds: both echoed after everything else, sb before ta
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "sb": ["drv-1", 1], "ta": [-180, 60]}), 0.1));
+        assert_eq!(p.listing()[0].to_string(), r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":0,"sb":["drv-1",1],"ta":[-180,60]}"#);
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "sb": ["drv-1", 1], "ta": [180, -15]}), 0.2));
+        assert_eq!(p.listing()[0]["ta"], json!([180, -15]));
+        // a rider (seat 3) without an aim
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "sb": ["drv-1", 3]}), 0.3));
+        let l = p.listing();
+        assert_eq!((l[0]["sb"].clone(), l[0].get("ta")), (json!(["drv-1", 3]), None));
+        // an aim without a seat is not relayed: only someone in a seat aims a turret
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "ta": [10, 5]}), 0.4));
+        assert_eq!(p.listing()[0].to_string(), plain);
+        // a frame without them (or with null) clears them
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "sb": ["drv-1", 1], "ta": [10, 5]}), 0.5));
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0}), 0.6));
+        assert_eq!(p.listing()[0].to_string(), plain);
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "sb": ["drv-1", 1], "ta": [10, 5]}), 0.7));
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "sb": null, "ta": null}), 0.8));
+        assert_eq!(p.listing()[0].to_string(), plain);
+        // the gunner fires the tank's shell: a kind-1 shot is accepted and relayed like a grenade
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "sb": ["drv-1", 1], "ta": [30, 10], "gl": 1,
+                                   "gn": [[12, 300, 250, -40, 5800, 300, -1200, 1, 0]]}), 0.9));
+        assert_eq!(p.listing()[0].to_string(),
+                   r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":0,"gl":1,"gn":[[12,300,250,-40,5800,300,-1200,1,0]],"sb":["drv-1",1],"ta":[30,10]}"#);
+    }
+
+    #[test]
+    fn a_bad_seat_or_aim_drops_the_whole_frame() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "sb": ["drv-1", 1], "ta": [30, 10]}), 0.1));
+        let bad = [
+            json!({"sb": ["drv-1", 0]}),                      // seat 0 is the driver's
+            json!({"sb": ["drv-1", 4]}),                      // there is no fourth
+            json!({"sb": ["drv-1", 1.5]}),                    // a fraction
+            json!({"sb": ["drv-1", "1"]}), json!({"sb": ["drv-1", true]}),
+            json!({"sb": ["u", 1]}),                          // your own id
+            json!({"sb": ["a b", 1]}), json!({"sb": ["", 1]}), json!({"sb": [7, 1]}), // not a user id
+            json!({"sb": ["drv-1", 1, 2]}),                   // three entries
+            json!({"sb": ["drv-1"]}), json!({"sb": "drv-1"}),
+            json!({"sb": ["drv-1", 1], "ta": [181, 0]}),      // yaw past 180
+            json!({"sb": ["drv-1", 1], "ta": [-181, 0]}),
+            json!({"sb": ["drv-1", 1], "ta": [0, 61]}),       // pitch past 60
+            json!({"sb": ["drv-1", 1], "ta": [0, -16]}),      // or below -15
+            json!({"sb": ["drv-1", 1], "ta": [10.5, 0]}),     // a fraction
+            json!({"sb": ["drv-1", 1], "ta": [0, 0, 0]}),     // three entries
+            json!({"sb": ["drv-1", 1], "ta": [0]}), json!({"sb": ["drv-1", 1], "ta": ["0", 0]}), json!({"sb": ["drv-1", 1], "ta": 0}),
+            json!({"ta": [181, 0]}),                          // a bad aim drops the frame even without a seat
+        ];
+        for (i, b) in bad.iter().enumerate() {
+            let mut m = json!({"w": "city3d", "x": 900, "z": 0, "r": 0, "a": 0});
+            m.as_object_mut().unwrap().extend(b.as_object().unwrap().clone());
+            assert!(!p.pos("u", &m, 1.0 + i as f64), "accepted {b}");
+        }
+        let l = p.listing();
+        assert_eq!(l[0]["x"], json!(0), "the rejects moved nobody");
+        assert_eq!((l[0]["sb"].clone(), l[0]["ta"].clone()), (json!(["drv-1", 1]), json!([30, 10])), "and kept the seat and the aim");
     }
 
     #[test]
@@ -1206,7 +1419,7 @@ mod tests {
         p.enter("u", json!({"handle": "u"}), 0.0);
         for (a, keep) in [(json!(0), true), (json!(1), true), (json!(2), true),
                           (json!(2.0), true), (json!(true), true), (json!(false), true),
-                          (json!(3), true), (json!(4), true), (json!(5), true), (json!(6), true), (json!(7), true), (json!(8), true), (json!(9), true), (json!(10), true), (json!(11), true), (json!(12), true), (json!(13), false),
+                          (json!(3), true), (json!(4), true), (json!(5), true), (json!(6), true), (json!(7), true), (json!(8), true), (json!(9), true), (json!(10), true), (json!(11), true), (json!(12), true), (json!(13), false), (json!(14), true), (json!(15), false),
                           (json!(-1), false), (json!(1.5), false),
                           (json!("1"), false), (json!([1]), false)] {
             let m = json!({"w": "base", "x": 0, "z": 0, "r": 0, "a": a});

@@ -1154,7 +1154,7 @@ function mount(el, api){
   var GUN_AT = [0.2, 0.34, 0.02], GUN_GRIP = [0.3, 0.2, 0.22], GUN_SIZE = 1.1, gunV = null;
   function curW(){ return cur && (cur.net || cur.name); }
   function gnHere(){ var w = curW(); return !!(cur && cur.camModes && typeof w === "string" && w.indexOf("city3d") === 0); }
-  function gnCan(){ return gnHere() && !ride && !(cur.carry && cur.carry()) && !tripHeld() && !studioPlacing(); }
+  function gnCan(){ return gnHere() && !ride && !TK.seat && !(cur.carry && cur.carry()) && !tripHeld() && !studioPlacing(); }
   function gnToggle(){
     if(!HQV.hqGrenade || (!GN.out && !gnCan())) return false;
     GN.out = !GN.out; E.sfx("ui");
@@ -1203,13 +1203,13 @@ function mount(el, api){
     if(!kb) return;
     if(ride){
       // a car, a motorbike or a bicycle on the ground: shoved along its heading by the push that way, and dented
-      if(ride.boat || ride.heli || ride.plane || ride.pet || ride.kind === "skate" || ride.air || ride.loop) return;
+      if(ride.tank || ride.boat || ride.heli || ride.plane || ride.pet || ride.kind === "skate" || ride.air || ride.loop) return;   // [3.17] a tank shrugs it off
       var along = kb.dx*Math.sin(ride.head) + kb.dz*Math.cos(ride.head);
       ride.speed += along*kb.push*0.6; E.sfx("hit");
       drvHit(kb.push*2, along < 0 ? "f" : "r");
       return;
     }
-    if(cur.carry && cur.carry()) return;
+    if(TK.seat || (cur.carry && cur.carry())) return;                // in a tank or a seat: held
     walkTo = null; walkDoor = null;
     GN.kx += kb.dx*kb.push; GN.kz += kb.dz*kb.push;
     if(!E.calm()){ avatar.airborne = true; avatar.vy = Math.max(avatar.vy || 0, kb.lift); }   // Calm: a shove, never a flight
@@ -1267,6 +1267,215 @@ function mount(el, api){
     var now = E.now(), gn = [];
     GN.mine.slice(-H.WIRE.n).forEach(function(g){ var a = H.toWire(g.launch, (now - g.t0)*1000); if(a) gn.push(a); });
     return {gl: GN.out ? 1 : 0, gn: gn};
+  };
+  /* ---------- [3.17] the tank (games/hqtank.js) ----------
+     K (on foot in the 3D City) rolls your tank up beside you, K again sends it away; E beside it: you drive it
+     (tankMove; presence a = 14). While you drive, other players climb in with E beside it: the first the gunner, the
+     next two riders. Your page decides who sits where (HQV.hqTank.assign over their `sb`, in the order they asked) and
+     lists it (`ts`). Riding in someone's tank (TK.seat) you sit on their drawn tank (seatPlace); as its gunner the
+     turret goes where your camera looks (`ta`) and F or a captured click fires a shell (grenade kind 1, tkFire).
+     Blasts never move a tank or anyone in it. Everyone draws passengers on the driver's drawn tank (seatPeers). */
+  var TK = {prop: null, ts: ["", "", ""], first: {}, seat: null, cd: 0, aim: {yaw: 0, pitch: 0}}, tkV = null;
+  function tkOk(){ return !!HQV.hqTank && gnHere(); }
+  function tkEnv(){ return {blocked: function(x, z){ return blocked(x, z); }}; }
+  function tkGunner(){ return !!(TK.seat && TK.seat.n === 1 && TK.seat.ok); }
+  // your parked tank is solid (not while you drive it)
+  function tankPropBlocked(x, z){
+    var p = TK.prop; if(!p || p.riding || !HQV.hqTank || p.w !== curW()) return false;
+    var s = Math.sin(p.yaw), c = Math.cos(p.yaw), dx = x - p.x, dz = z - p.z;
+    return Math.abs(dx*s + dz*c) <= HQV.hqTank.HALF_L && Math.abs(dx*c - dz*s) <= HQV.hqTank.HALF_W;
+  }
+  function tankUnpark(){ var p = TK.prop; if(!p) return; if(p.B.g.parent) p.B.g.parent.remove(p.B.g); p.B.dispose(); TK.prop = null; }
+  function tankSummon(){
+    var TKm = HQV.hqTank; if(!tkOk() || ride || TK.seat || !avatar) return false;
+    if(TK.prop){ tankUnpark(); E.sfx("door"); if(api.announce) api.announce("Your tank rolls away"); return true; }
+    var s = TKm.spot(avatar.x, avatar.z, avatar.yaw, tkEnv());
+    if(!s){ if(api.announce) api.announce("No room for your tank here: try an open street"); return true; }
+    var B = TKm.model(THREE);
+    TK.prop = {x: s.x, z: s.z, yaw: s.yaw, w: curW(), B: B, riding: false};
+    B.g.position.set(s.x, groundAt(s.x, s.z), s.z); B.g.rotation.set(0, s.yaw, 0); TKm.animate(B, null, null); cur.scene.add(B.g);
+    E.sfx("go"); if(api.announce) api.announce("Your tank is here: E beside it to drive, K sends it away");
+    return true;
+  }
+  function nearTank(){ var p = TK.prop; return !!(p && !p.riding && avatar && p.w === curW() && Math.hypot(avatar.x - p.x, avatar.z - p.z) < HQV.hqTank.REACH); }
+  function mountTank(){
+    var TKm = HQV.hqTank, p = TK.prop; if(!p || ride || !avatar) return false;
+    var lean = new THREE.Group(); avatar.g.add(lean);
+    if(p.B.g.parent) p.B.g.parent.remove(p.B.g);
+    p.B.g.position.set(0, 0, 0); p.B.g.rotation.set(0, 0, 0); lean.add(p.B.g);
+    if(avatar.ch){ lean.add(avatar.ch.o); seatOn(avatar.ch, p.B); }
+    avatar.airborne = false; avatar.vy = 0; avatar.hop = 0; walkTo = null; walkDoor = null; GN.out = false; GN.kx = 0; GN.kz = 0;
+    avatar.x = p.x; avatar.z = p.z; avatar.yaw = p.yaw; avatar.rideYaw = null;
+    avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0;
+    ride = {idx: -1, id: null, B: p.B, lean: lean, speed: 0, steer: 0, head: p.yaw, slip: 0, drift: false, gear: 1, rpm: 900,
+            kind: "tank", base: "tank", V: VEHICLES.tank, car: false, eng: null, pitch: 0, pv: 0, roll: 0, rv: 0, paint: 0, tune: null,
+            boat: null, plane: null, heli: null, home: null, assist: true, ap: null, tank: TKm.newState(p.x, p.z, p.yaw), tur: {yaw: 0, pitch: 0}};
+    p.riding = true; TK.ts = ["", "", ""]; TK.first = {};
+    settleY(0); avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
+    movedHere = true; E.sfx("door");
+    driveHud("tank"); rideUiSync(true);
+    if(api.announce) api.announce("Driving your tank: W / S, A / D turn it on the spot, E climbs out. Others climb in with E beside it.");
+    return true;
+  }
+  function tankMove(dt){
+    var TKm = HQV.hqTank, st = ride.tank, gp = padNow();
+    var fwd = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+    var turn = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
+    if(gp){ fwd = E.clamp(fwd + gp.thr, -1, 1); turn = E.clamp(turn - gp.x, -1, 1); }
+    walkTo = null; walkDoor = null;
+    var yaw0 = avatar.yaw;
+    TKm.step(st, {fwd: fwd, turn: turn}, dt, tkEnv()).forEach(function(ev){ if(ev.type === "bump") E.sfx("hit"); });
+    ride.speed = st.speed; ride.steer = turn; ride.head = st.yaw;
+    avatar.x = st.x; avatar.z = st.z; avatar.yaw = st.yaw;
+    avatar.rate += ((dt > 0 ? wrapPi(avatar.yaw - yaw0)/dt : 0) - avatar.rate)*ease(10, dt); avatar.rideYaw = avatar.yaw;
+    avatar.travelYaw = st.yaw;
+    settleY(dt);
+    ride.pitch += (Math.atan(slopeAlong(avatar.x, avatar.z, avatar.yaw, 3)) - ride.pitch)*ease(6, dt); ride.roll = 0;
+    engineStep(dt, Math.abs(fwd) || Math.abs(turn)*0.5);
+    keyMove = Math.abs(st.speed) > 0.3 || Math.abs(st.rate) > 0.1; keyRun = false; if(keyMove) movedHere = true;
+    avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
+    avatar.g.rotation.y = avatar.yaw; avatar.g.rotation.x = -ride.pitch; avatar.g.rotation.z = 0;
+    view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
+  }
+  // E in the tank: out beside it once it has (nearly) stopped; forced (another floor, Return to HQ): out at once.
+  // It stays parked where you left it; anyone in it climbs out on their own page (you no longer send a = 14).
+  function dismountTank(force){
+    var st = ride.tank, p = TK.prop;
+    if(!force && Math.abs(st.speed) > 1.5){ if(api.announce) api.announce("Stop first (S), then E to climb out."); return false; }
+    var out = null, TKm = HQV.hqTank;
+    [[2.9, 0], [-2.9, 0], [0, 4.4], [0, -4.4]].some(function(o){ var q = TKm.toWorld(st.x, st.z, st.yaw, o[0], o[1]); if(!blocked(q.x, q.z)){ out = q; return true; } return false; });
+    if(ride.eng){ ride.eng.stop(); ride.eng = null; }
+    if(avatar.ch){ avatar.g.add(avatar.ch.o); seatOn(avatar.ch, null); }
+    avatar.g.rotation.x = 0; avatar.g.rotation.z = 0;
+    ride.lean.remove(ride.B.g); avatar.g.remove(ride.lean);
+    if(p){
+      p.x = st.x; p.z = st.z; p.yaw = st.yaw; p.riding = false; p.w = curW();
+      p.B.g.position.set(st.x, groundAt(st.x, st.z), st.z); p.B.g.rotation.set(0, st.yaw, 0); cur.scene.add(p.B.g);
+    }
+    if(out){ avatar.x = out.x; avatar.z = out.z; }
+    ride = null; doorsArmed = false; stopFeet(); settleY(0);
+    TK.ts = ["", "", ""]; TK.first = {};
+    avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
+    driveHud(null); rideUiSync(true);
+    return true;
+  }
+  // someone else's tank you could climb into: the nearest one driven (a = 14) within reach -> its driver's id
+  function tankPeerNear(){
+    if(!avatar) return null;
+    var best = null, bd = HQV.hqTank.REACH, w = curW();
+    Object.keys(peers).forEach(function(u){ var P = peers[u]; if(P.a !== 14 || P.w !== w || P.x == null) return; var d = Math.hypot(avatar.x - P.x, avatar.z - P.z); if(d < bd){ bd = d; best = u; } });
+    return best;
+  }
+  function seatTake(u){
+    var P = peers[u], n = HQV.hqTank.pick(P && P.ts, cvMe());
+    if(!P || !n){ if(api.announce) api.announce("That tank is full"); return false; }
+    TK.seat = {u: u, n: n, t0: E.now(), ok: false, sat: false};
+    walkTo = null; walkDoor = null; GN.out = false; GN.kx = 0; GN.kz = 0; stopFeet();
+    E.sfx("door");
+    if(api.announce) api.announce("Climbing into " + (P.n || "their") + "'s tank" + (n === 1 ? " as its gunner: aim with the camera, F fires" : "") + ". E climbs out.");
+    return true;
+  }
+  function seatLeave(why){
+    var S = TK.seat; if(!S) return;
+    TK.seat = null;
+    if(avatar.ch){ poseUndo(avatar.ch); seatOn(avatar.ch, null); }
+    var P = peers[S.u];
+    if(P && P.x != null){
+      var TKm = HQV.hqTank;
+      [[2.9, 0], [-2.9, 0], [0, -4.4], [0, 4.4]].some(function(o){ var q = TKm.toWorld(P.x, P.z, P.yaw, o[0], o[1]); if(!blocked(q.x, q.z)){ avatar.x = q.x; avatar.z = q.z; return true; } return false; });
+    }
+    stopFeet(); settleY(0);
+    avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.set(0, avatar.yaw, 0);
+    E.sfx("door");
+    if(why && api.announce) api.announce(why);
+  }
+  // in someone's tank, each frame instead of walking: is the seat still yours (their `ts`), else the next free one
+  function seatMove(dt){
+    var S = TK.seat, P = peers[S.u], TKm = HQV.hqTank;
+    walkTo = null; walkDoor = null; keyMove = false; keyRun = false;
+    if(!P || P.a !== 14 || P.w !== curW()){ seatLeave(P ? "The driver climbed out of the tank" : "The tank's driver left"); return; }
+    var st = TKm.status(P.ts, cvMe(), S.n);
+    if(st === "ok") S.ok = true;
+    else if(st === "lost"){
+      var n = TKm.pick(P.ts, cvMe());
+      if(!n){ seatLeave("That tank is full"); return; }
+      S.n = n; S.t0 = E.now(); S.ok = false;
+    } else if(S.ok){ seatLeave("You were let out of the tank"); return; }
+    else if(E.now() - S.t0 > 4){ seatLeave("No answer from the tank: its driver's page may be an older one"); return; }
+    if(S.n === 1 && rigOn()) HQV.camrig.input(rig, {hold: true});       // the gunner's tilt stays where they aim
+  }
+  // where a seat is on a tank model hung under `top` -> tkV (world)
+  function seatAt(top, B, n){ if(!tkV) tkV = new THREE.Vector3(); top.updateMatrixWorld(true); return B.seats[n].getWorldPosition(tkV); }
+  // after the peers are drawn: you, on the seat of the tank you are in
+  function seatPlace(){
+    var S = TK.seat; if(!S || !avatar) return;
+    var P = peers[S.u], B = P && P.bike && P.vkind === "tank" ? P.bike : null; if(!B || P.g.parent !== cur.scene) return;
+    var v = seatAt(P.g, B, S.n);
+    avatar.x = v.x; avatar.z = v.z; avatar.hy = v.y; avatar.hyV = 0; avatar.yaw = P.yaw;
+    avatar.g.position.copy(v); avatar.g.rotation.set(0, P.yaw, 0);
+    if(avatar.ch){ if(!S.sat){ seatOn(avatar.ch, {seat: {position: {x: 0, y: 0, z: 0}}}); S.sat = true; } setAnim(avatar.ch, S.n >= 2 ? "sit" : "idle"); }
+  }
+  // after the peers are drawn: everyone in a tank on its seat (a driver's `ts` confirms them; yours for your tank)
+  function seatPeers(dt){
+    var me = cvMe(), w = curW();
+    Object.keys(peers).forEach(function(u){
+      var Q = peers[u], sb = Q.sb, B = null, top = null, yaw = 0, was = Q.seated;
+      Q.seated = false;
+      if(sb && Q.w === w){
+        if(sb.u === me && ride && ride.tank){ if(TK.ts[sb.n - 1] === u){ B = ride.B; top = avatar.g; yaw = avatar.yaw; } }
+        else { var D = peers[sb.u]; if(D && D.a === 14 && D.bike && D.vkind === "tank" && D.ts && D.ts[sb.n - 1] === u && D.g.parent === cur.scene){ B = D.bike; top = D.g; yaw = D.yaw; } }
+      }
+      if(B){
+        Q.seated = true;
+        Q.g.position.copy(seatAt(top, B, sb.n)); Q.g.rotation.set(0, yaw, 0);
+        if(Q.ring) Q.ring.visible = false;
+        if(Q.ch){ if(!Q.sat){ seatOn(Q.ch, {seat: {position: {x: 0, y: 0, z: 0}}}); Q.sat = true; } setAnim(Q.ch, sb.n >= 2 ? "sit" : "idle"); Q.ch.mixer.update(dt); }
+      } else if(was || Q.sat){
+        if(Q.ring) Q.ring.visible = true;
+        if(Q.ch && Q.sat){ seatOn(Q.ch, null); } Q.sat = false;
+      }
+    });
+  }
+  // the turret's aim, eased toward `to` ({yaw, pitch}); kept on the ride or the peer (cur)
+  function turEase(cur0, to, dt){ var k = ease(8, dt); cur0.yaw = wrapPi(cur0.yaw + wrapPi(to.yaw - cur0.yaw)*k); cur0.pitch += (to.pitch - cur0.pitch)*k; return cur0; }
+  // each frame after the peers: your tank's seats (yours to give) and turret, your aim as a gunner, a tank left behind
+  function tankFrame(dt){
+    var TKm = HQV.hqTank; if(!TKm) return;
+    if(TK.cd > 0) TK.cd = Math.max(0, TK.cd - dt);
+    if(TK.prop && !TK.prop.riding && TK.prop.w !== curW()) tankUnpark();          // another floor: it goes away
+    if(ride && ride.tank){
+      var me = cvMe(), claims = [], now = E.now(), w = curW();
+      Object.keys(peers).forEach(function(u){
+        var Q = peers[u];
+        if(Q.sb && Q.sb.u === me && Q.w === w){ if(TK.first[u] == null) TK.first[u] = now; claims.push({u: u, n: Q.sb.n, t: TK.first[u]}); }
+        else delete TK.first[u];
+      });
+      claims.sort(function(a, b){ return a.t - b.t; });
+      TK.ts = TKm.assign(TK.ts, claims);
+      var G = TK.ts[0] && peers[TK.ts[0]];
+      TKm.animate(ride.B, ride.tank, turEase(ride.tur, G && G.ta ? G.ta : {yaw: 0, pitch: 0}, dt));
+    }
+    if(tkGunner()){ var f = new THREE.Vector3(); curCam().getWorldDirection(f); var D = peers[TK.seat.u]; TK.aim = TKm.aimFrom({x: f.x, y: f.y, z: f.z}, D ? D.yaw : 0); }
+  }
+  // as the gunner: a shell from the muzzle of the tank you are in, along its barrel (on this page at your aim)
+  function tkFire(){
+    var H = HQV.hqGrenade, TKm = HQV.hqTank; if(!tkGunner() || !H || !TKm) return false;
+    if(TK.cd > 0) return true;
+    var D = peers[TK.seat.u], B = D && D.bike && D.vkind === "tank" ? D.bike : null; if(!B) return true;
+    D.g.updateMatrixWorld(true);
+    var m = B.muzzle.getWorldPosition(new THREE.Vector3()), q = new THREE.Vector3(0, 0, 1).transformDirection(B.muzzle.matrixWorld), sp = H.KINDS[1].muzzle;
+    var L = {s: GN.seq = (GN.seq + 1) & 0xffff, k: 1, x: m.x, y: m.y, z: m.z, vx: q.x*sp, vy: q.y*sp, vz: q.z*sp};
+    var g = H.shot(L); g.launch = L; g.t0 = E.now(); g.w = curW(); GN.mine.push(g); GN.live.push(g);
+    TK.cd = TKm.SHELL_COOL; E.sfx("shot");
+    if(!E.calm() && !(camSet && camSet.reduced)) GN.shake = Math.max(GN.shake, 0.2);
+    return true;
+  }
+  // presence: driving, who sits where (ts); in someone's tank, your seat (sb) and, as its gunner, your aim (ta)
+  inst.tankNet = function(){
+    var TKm = HQV.hqTank; if(!TKm || !gnHere()) return null;
+    if(ride && ride.tank) return {ts: TKm.tsWire(TK.ts, cvMe())};
+    if(TK.seat){ var o = {sb: TKm.sbWire(TK.seat.u, TK.seat.n)}; if(tkGunner()) o.ta = TKm.taWire(TK.aim.yaw, TK.aim.pitch); return o.sb ? o : null; }
+    return null;
   };
   /* ---------- [pets 3.14] your pets and everyone else's (games/hqpets.js) ----------
      A small hook: the pets runtime is made on the first frame, fed your pose, what you ride, the floor's blocked /
@@ -1536,7 +1745,7 @@ function mount(el, api){
     avatar.tag = label(short(api.name || "You", 14), frameHex(api.frame && api.frame()) || HEX.amber, 0.5);
     avatar.tag.position.y = 2.3; avatar.g.add(avatar.tag);
   }
-  function blocked(x, z){ return (cur === worlds.mission ? missionBlocked(x, z) : cur.blocked(x, z)) || peerBlocked(x, z); }
+  function blocked(x, z){ return (cur === worlds.mission ? missionBlocked(x, z) : cur.blocked(x, z)) || peerBlocked(x, z) || tankPropBlocked(x, z); }
   // [3.13.2] other players are solid too: on foot or on a board a body (0.55 m), riding or driving their vehicle's box
   // turned their way (a catalogue car's own size); not while they fly, nor a floor above or below you. You can't push
   // them: they stop you, as a wall does (and one who walks into you can always be walked away from).
@@ -1545,9 +1754,9 @@ function mount(el, api){
     var my = avatar ? avatar.g.position.y : 0;
     for(var u in peers){
       var P = peers[u];
-      if(P.g.parent !== cur.scene || P.x == null) continue;
+      if(P.g.parent !== cur.scene || P.x == null || P.seated) continue;           // [3.17] in a tank: the tank is what is solid
       var dx = x - P.x, dz = z - P.z, a = P.a | 0;
-      if(dx*dx + dz*dz > 64 || a >= 7 || (P.hy != null && Math.abs(P.hy - my) > 2.2)) continue;   // 7..12 fly
+      if(dx*dx + dz*dz > 64 || (a >= 7 && a !== 14) || (P.hy != null && Math.abs(P.hy - my) > 2.2)) continue;   // 7..12 fly (14: a tank)
       var V = a === 4 ? null : VEHICLES[P.v && VEHICLES[P.v] ? P.v : PEER_VEHICLE[a]];
       if(!V || !V.box){ if(dx*dx + dz*dz < 0.55*0.55) return true; continue; }
       var sy = Math.sin(P.yaw), cy = Math.cos(P.yaw);
@@ -1596,7 +1805,9 @@ function mount(el, api){
            slide: {min: 8, turn: 1.35, grip: 3.2, max: 0.32, bleed: 3}},
     car:  {top: 22, acc: 6, rev: 5, lean: 0, box: [0.66, 1.66], motor: true, gears: [5, 9.5, 14, 18.5, 23], eng: "turbo",
            slide: {min: 7, turn: 1.3, grip: 2.2, max: 0.62, bleed: 3.4}},
-    skate: {top: 9, acc: 5.5, rev: 0, lean: 0, box: [0, 0], skate: true}     // its physics: games/hqskate.js
+    skate: {top: 9, acc: 5.5, rev: 0, lean: 0, box: [0, 0], skate: true},    // its physics: games/hqskate.js
+    // [3.17] the tank (games/hqtank.js: its own step, tankMove); box: half its width and length, for peerBlocked
+    tank: {top: 11, acc: 3.5, rev: 5, lean: 0, box: [1.7, 3.3], motor: true, gears: [3, 6, 9, 11.5], eng: "diesel", tank: true}
   };
   // the boats at the docks (games/hqboat.js: a rowboat and a jet ski; their physics is its own)
   if(HQV.hqboat) Object.keys(HQV.hqboat.VEHICLES).forEach(function(k){ VEHICLES[k] = HQV.hqboat.VEHICLES[k]; });
@@ -1970,6 +2181,7 @@ function mount(el, api){
   function dismount(force){
     if(!ride) return;
     if(ride.pet){ dismountPet(force); return; }
+    if(ride.tank){ dismountTank(force); return; }                      // [3.17]
     if(!force && (ride.air || ride.loop)){ if(api.announce) api.announce("Not mid-stunt: land first."); return; }   // [stunts]
     if(ride.air || ride.loop){ ride.air = null; ride.loop = null; ride.boost = null; ride.pitch = 0; ride.roll = 0; avatar.hy = groundAt(avatar.x, avatar.z); }
     if(ride.plane){
@@ -3163,7 +3375,8 @@ function mount(el, api){
   // the street: -1e9, never 1e9 (3.13.5: "above everything" put you up on your helideck, which overhangs your front door)
   function stopFeet(y){ avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0; avatar.travelYaw = null; avatar.hy = y != null && isFinite(y) ? +y : -1e9; }
   function moveAvatar(dt){
-    if(ride){ if(ride.pet && !ride.heli) petGroundMove(dt); else if(ride.kind === "skate") skateMove(dt); else if(ride.boat) boatMove(dt); else if(ride.heli) heliMove(dt); else if(ride.plane) planeMove(dt); else rideMove(dt); return; }
+    if(TK.seat){ seatMove(dt); return; }                                // [3.17] in someone's tank: seatPlace puts you there
+    if(ride){ if(ride.tank) tankMove(dt); else if(ride.pet && !ride.heli) petGroundMove(dt); else if(ride.kind === "skate") skateMove(dt); else if(ride.boat) boatMove(dt); else if(ride.heli) heliMove(dt); else if(ride.plane) planeMove(dt); else rideMove(dt); return; }
     // on a bus or a tram (games/hqcity3d.js w.carry): the vehicle's seat, its timetable's pose
     var cp = cur && cur.carry ? cur.carry() : null;
     if(cp){
@@ -3413,6 +3626,10 @@ function mount(el, api){
   // What camrig follows. y: the smoothed visual height; travelYaw: where you are headed (facing, facing + PI
   // stepping back, null when still); turnRate: the smoothed body yaw rate (rad/s, + = left); speed >= 0.
   function rigTarget(){
+    // [3.17] in someone's tank: the camera follows it (as a vehicle), you in your seat
+    var TD = TK.seat && peers[TK.seat.u];
+    if(TD && TD.x != null) return {x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: TD.yaw, pitch: 0, roll: 0, speed: Math.abs(TD.sv || 0), vehicle: "tank",
+                                   size: 1, lean: 0, moving: false, travelYaw: TD.yaw, turnRate: TD.syr || 0};
     var st = ride && ride.sk && ride.sk.st;
     return {x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: avatar.yaw, pitch: ride ? ride.pitch || 0 : 0, roll: ride ? ride.roll || 0 : 0,
             speed: ride ? Math.abs(st ? st.speed || 0 : ride.speed) : Math.abs(avatar.speed || 0), vehicle: ride ? ride.base || ride.kind : null,
@@ -3612,7 +3829,7 @@ function mount(el, api){
       if(m === "fp" || m === "photo"){ if(!locked() && canvas.requestPointerLock){ try { canvas.requestPointerLock(); } catch(x){} } drag = null; return; }
       if(m === "cine") return;
       // [3.15] mouse steering: a click while the mouse is captured picks nothing (a plain click captures it: onUp)
-      if(CHASE[m] && steerOn() && locked()){ drag = null; if(e.button === 0) gnFire(); return; }   // [3.16] with the launcher out it fires
+      if(CHASE[m] && steerOn() && locked()){ drag = null; if(e.button === 0 && !tkFire()) gnFire(); return; }   // [3.16] the launcher fires ([3.17] a gunner's shell)
       // map: left-drag pans; chase family: left- or right-drag orbits (trackpads have no right-drag),
       // and a left click that barely moved still picks / walks (onUp, under 5 px)
       drag = {x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, moved: 0, rig: true, button: e.button,
@@ -4473,6 +4690,10 @@ function mount(el, api){
   function useKey(){
     // held by a trip (a booked ferry, flight or cruise seat: cur.carry): E is the trip's (get off), not a bike beside it
     if(!ride && cur && cur.use && cur.carry && avatar && cur.carry() && cur.use({x: avatar.x, z: avatar.z, yaw: avatar.yaw})) return true;
+    // [3.17] tanks: out of the one you sit in, into your own, or into someone else's that they drive
+    if(TK.seat){ seatLeave("You climbed out of the tank"); return true; }
+    if(!ride && nearTank()){ mountTank(); return true; }
+    if(!ride && tkOk() && nearBike() < 0){ var tu = tankPeerNear(); if(tu){ seatTake(tu); return true; } }
     if(ride || nearBike() >= 0){ rideToggle(); return true; }
     if(rigOn() && rig.mode === "fp" && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d){ through(d); return true; } }
     // the world's own (games/hqcity3d.js): talk to a resident, a bus stop, a dock, a station
@@ -4558,8 +4779,12 @@ function mount(el, api){
       e.preventDefault(); e.stopPropagation(); if(e.type === "keydown" && !e.repeat) petBreath(); return;
     }
     // [3.16] the grenade launcher, on foot in the 3D City: X out / away, F fires (one shot a press)
-    if((e.code === "KeyX" || (e.code === "KeyF" && GN.out)) && !ride && inst.running && gnHere() && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey){
-      e.preventDefault(); e.stopPropagation(); if(e.type === "keydown" && !e.repeat){ if(e.code === "KeyX") gnToggle(); else gnFire(); } return;
+    if((e.code === "KeyX" || (e.code === "KeyF" && (GN.out || tkGunner()))) && !ride && inst.running && gnHere() && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey){
+      e.preventDefault(); e.stopPropagation(); if(e.type === "keydown" && !e.repeat){ if(e.code === "KeyX") gnToggle(); else if(!tkFire()) gnFire(); } return;   // [3.17] a gunner's F: a shell
+    }
+    // [3.17] K: your tank rolls up beside you (again: it goes away), on foot in the 3D City
+    if(e.code === "KeyK" && !ride && !TK.seat && inst.running && tkOk() && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey){
+      e.preventDefault(); e.stopPropagation(); if(e.type === "keydown" && !e.repeat) tankSummon(); return;
     }
     if(drvKey(e)) return;                                              // [3.12] L lights, Y convoy, J (held) formation
     if(camKey(e)) return;
@@ -4615,6 +4840,7 @@ function mount(el, api){
       gunStep(avatar.ch, GN.out && !ride, true);                       // [3.16] the launcher, on foot
     }
     placePeers(dt, t);
+    tankFrame(dt); seatPeers(dt); seatPlace();                         // [3.17] tanks: seats, turrets, you in one
     petsFrame(t, dt);                                                  // [pets 3.14]
     petFxStep(dt);                                                     // [3.14 riding] the ridden breath
     drvFrame(t, dt);                                                   // [3.12] lights, spray, smoke, convoys
@@ -4766,7 +4992,7 @@ function mount(el, api){
         P = peers[p.u] = {g: new THREE.Group(), ch: null, x: p.x/100, z: p.z/100, yaw: p.r*PI/180, hy: null, pitch: 0};
         P.g.rotation.order = "YXZ";
         var ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.55, 32), new THREE.MeshBasicMaterial({color: COL.green, transparent: true, opacity: 0.7, toneMapped: false}));
-        ring.rotation.x = -PI/2; ring.position.y = 0.02; P.g.add(ring);
+        ring.rotation.x = -PI/2; ring.position.y = 0.02; P.g.add(ring); P.ring = ring;
         var tg = label(short(p.n || "Visitor", 14), frameHex(p.f) || HEX.green, 0.5); tg.position.y = 2.3; P.g.add(tg);
       }
       // Their character: made on arrival, and made again when they change it (`c`, the "look" capability).
@@ -4808,6 +5034,9 @@ function mount(el, api){
       P.pt = Array.isArray(p.pt) && p.pt.length ? p.pt.slice(0, 2) : null;   // [pets 3.14] their pets (`pt`): drawn by games/hqpets.js
       // [3.16] their launcher out (`gl`) and their shots (`gn`, the "grenade" capability): each new one flies here too
       P.gl = p.gl === 1;
+      // [3.17] the tank (the "tank" capability): a driver's seats (ts), a passenger's seat (sb), a gunner's aim (ta)
+      var TKm = HQV.hqTank;
+      P.ts = TKm && (p.a | 0) === 14 ? TKm.tsFrom(p.ts) : null; P.sb = TKm ? TKm.sbFrom(p.sb) : null; P.ta = TKm && P.sb ? TKm.taFrom(p.ta) : null;
       if(Array.isArray(p.gn) && p.w === curW()) gnSeen(p.u, p.gn);
       P.u = p.u;   // (3.13.1) or a live set (boomLive, keyed by their Arena user id)
       // [3.12] convoys (the "convoy" capability): whom they invite (ci), whom they follow (cv), where they lead (cg, cm)
@@ -4818,7 +5047,7 @@ function mount(el, api){
     Object.keys(peers).forEach(function(u){ if(!seen[u]){ var P = peers[u]; if(P.g.parent) P.g.parent.remove(P.g); delete peers[u]; } });
   };
   // what another player is on, from their presence `a`, and how they sit on it
-  var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop", 11: "regional", 12: "airliner", 13: "petride"};
+  var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop", 11: "regional", 12: "airliner", 13: "petride", 14: "tank"};
   function placePeers(dt, t){
     Object.keys(peers).forEach(function(u){
       // the floor they are on: the 3D city sends "city3d" (w.net), so legacy and 3D clients never mix
@@ -4849,6 +5078,7 @@ function mount(el, api){
         P.sv = null; P.syr = null;
       }
       P.g.position.set(P.x, P.hy, P.z); P.g.rotation.y = P.yaw; P.g.rotation.x = -P.pitch;
+      if(P.seated){ P.px = P.x; P.pz = P.z; P.pyaw = P.yaw; return; }       // [3.17] in a tank: seatPeers puts them on its seat
       var skates = P.a === 4;
       // on a board: stood on it side-on, lifted to the height they send, the trick they send played here
       if(skates && !P.board){ if(P.bike){ if(P.ch) P.g.add(P.ch.o); P.g.remove(P.lean); P.bike = null; P.vkind = null; }
@@ -4888,7 +5118,7 @@ function mount(el, api){
         P.lean = new THREE.Group(); P.g.add(P.lean); P.vkind = vsig; P.steer = 0;
         var Vc = VEHICLES[vk].cat, ph = Vc && Vc.paints && Vc.paints[P.vp] && /^#[0-9a-fA-F]{6}$/.test(Vc.paints[P.vp].hex) ? parseInt(Vc.paints[P.vp].hex.slice(1), 16) : bikeColor(u);
         var ptn = P.vt && HQV.hqTuning && (vk === "car" || vk === "moto" || Vc) ? HQV.hqTuning.decode(P.vt, (Vc ? VEHICLES[vk].kind === "bike" : vk === "moto") ? "bike" : "car") : null;   // [3.13]
-        P.bike = vk === "petride" ? HQV.hqPetRide.mountModel(ctx, {species: pmount.sp.id, variant: pmount.variant, acc: pmount.acc, name: pmount.name}) : Vc ? HQV.hqVehicleModels.build(ctx, Vc, ph, {tune: ptn}) : VEHICLES[vk].plane ? HQV.hqplane.model(ctx, vk, bikeColor(u)) : VEHICLES[vk].heli ? HQV.hqheli.model(ctx, vk, bikeColor(u)) : vk === "car" ? carModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : vk === "moto" ? motoModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : bikeModel(bikeColor(u));
+        P.bike = vk === "tank" && HQV.hqTank ? HQV.hqTank.model(THREE) : vk === "petride" ? HQV.hqPetRide.mountModel(ctx, {species: pmount.sp.id, variant: pmount.variant, acc: pmount.acc, name: pmount.name}) : Vc ? HQV.hqVehicleModels.build(ctx, Vc, ph, {tune: ptn}) : VEHICLES[vk].plane ? HQV.hqplane.model(ctx, vk, bikeColor(u)) : VEHICLES[vk].heli ? HQV.hqheli.model(ctx, vk, bikeColor(u)) : vk === "car" ? carModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : vk === "moto" ? motoModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : bikeModel(bikeColor(u));
         if(ptn && !Vc && (vk === "car" || vk === "moto") && HQV.hqVehicleModels && HQV.hqVehicleModels.tuneStarter) HQV.hqVehicleModels.tuneStarter(THREE, P.bike, ptn, vk === "car" ? "car" : "bike");
         P.lean.add(P.bike.g); if(P.ch){ P.lean.add(P.ch.o); seatOn(P.ch, P.bike); }
       }
@@ -4901,7 +5131,12 @@ function mount(el, api){
         var yrate = P.syr != null ? P.syr : dt > 0 ? dyaw/dt : 0;
         var want = !jump && v > 0.5 && dt > 0 ? E.clamp(yrate/(1.9*Math.min(1, v/2.5)), -1, 1) : 0;
         P.steer += (want - P.steer)*ease(6, dt);
-        if(VEHICLES[vk].plane){                      // propellers turning, the lights blinking, the gear down near the ground
+        if(VEHICLES[vk].tank && HQV.hqTank){           // [3.17] its treads by how it moves, its turret at its gunner's aim (yours if you are its gunner)
+          var tst = P.tst || (P.tst = {trk: [0, 0]}), thw = HQV.hqTank.HALF_W;
+          if(!jump && dt > 0){ tst.trk[0] += (v - yrate*thw)*dt; tst.trk[1] += (v + yrate*thw)*dt; }
+          var tg = P.ts && P.ts[0], tta = tg && tg === cvMe() && tkGunner() && TK.seat.u === u ? TK.aim : tg && peers[tg] && peers[tg].ta ? peers[tg].ta : {yaw: 0, pitch: 0};
+          HQV.hqTank.animate(P.bike, tst, turEase(P.tur || (P.tur = {yaw: 0, pitch: 0}), tta, dt));
+        } else if(VEHICLES[vk].plane){                      // propellers turning, the lights blinking, the gear down near the ground
           P.pst = P.pst || {rpm: 0.8, t: 0, gear: 1, speed: 0}; P.pst.t += dt || 0; P.pst.speed = v; P.pst.gear = (P.th != null ? P.th - groundAt(P.x, P.z) : 0) < 60 ? 1 : 0;
           HQV.hqplane.animate(P.bike, P.pst, dt, isNight());
         } else if(VEHICLES[vk].heli){                // rotors at flying speed, the strobe blinking, the searchlight at night
@@ -4919,7 +5154,7 @@ function mount(el, api){
         if(P.pv != null && dt > 0 && (P.pv - v)/dt > 3 && v > 0.5) P.brakeT = 0.4; else P.brakeT = (P.brakeT || 0) - dt;
         P.pv = v; if(P.bike.brake) P.bike.brake(P.brakeT > 0);
         // [3.12] their lights, from this page's night and weather (games/hqdrive.js; no network)
-        if(Drv() && !VEHICLES[vk].plane && !VEHICLES[vk].heli && !VEHICLES[vk].petride){ try { Drv().beam(THREE, P.bike, {base: baseKind(vk), shared: true}); Drv().lights(P.bike, DRV.peerLit, false, t, true, isNight() ? 1 : 0.35); } catch(e){} }
+        if(Drv() && !VEHICLES[vk].plane && !VEHICLES[vk].heli && !VEHICLES[vk].petride && !VEHICLES[vk].tank){ try { Drv().beam(THREE, P.bike, {base: baseKind(vk), shared: true}); Drv().lights(P.bike, DRV.peerLit, false, t, true, isNight() ? 1 : 0.35); } catch(e){} }
       }
       // on foot: their pace from how fast they really move (smoothed), so the same blend as yours and no gliding
       var fv = P.sv != null ? (jump ? 0 : P.sv) : dt > 0 && !jump ? Math.hypot(P.x - (P.px == null ? P.x : P.px), P.z - (P.pz == null ? P.z : P.pz))/dt : 0;
@@ -4946,7 +5181,7 @@ function mount(el, api){
   // 9 the seaplane, 10 the prop plane (the page sends them only where the Arena lists "plane"; HQ 3.2); 11 the regional
   // jet, 12 the airliner (only where it lists "airliner", HQ 3.6; else they go as the prop plane, 10)
   // 13 riding your pet (a dragon, the serpent, a dinosaur: HQ 3.14; only where the Arena lists "petride", else on foot)
-  inst.moving = function(){ return ride ? (ride.pet ? 13 : ride.plane ? (ride.kind === "seaplane" ? 9 : ride.kind === "regional" ? 11 : ride.kind === "airliner" ? 12 : 10) : ride.heli ? (ride.kind === "attack" ? 8 : 7) : ride.boat ? (keyMove ? 1 : 0) : RIDE_A[ride.base || ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
+  inst.moving = function(){ return ride ? (ride.tank ? 14 : ride.pet ? 13 : ride.plane ? (ride.kind === "seaplane" ? 9 : ride.kind === "regional" ? 11 : ride.kind === "airliner" ? 12 : 10) : ride.heli ? (ride.kind === "attack" ? 8 : 7) : ride.boat ? (keyMove ? 1 : 0) : RIDE_A[ride.base || ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
   // on a board: what others should see you doing ({k, y}); null otherwise
   inst.skate = function(){ return ride && ride.kind === "skate" ? skateNet() : null; };
   inst.riding = function(){ return !!ride; };
@@ -5032,6 +5267,19 @@ function mount(el, api){
                            return {here: gnHere(), out: GN.out, live: GN.live.length, booms: GN.fx ? GN.fx.busy() : 0, kx: GN.kx, kz: GN.kz, air: !!(avatar && avatar.airborne),
                                    x: avatar ? avatar.x : 0, z: avatar ? avatar.z : 0, net: inst.grenadeNet ? inst.grenadeNet() : null};
                          },
+                         // [3.17] the tank, for tools: "summon", "drive", "board" (the nearest driven tank), "fire", "out"; -> its state
+                         tank: function(a){
+                           if(a === "summon") tankSummon(); else if(a === "drive") mountTank(); else if(a === "fire") tkFire();
+                           else if(a === "board"){ var tu = tankPeerNear(); if(tu) seatTake(tu); }
+                           else if(a === "out"){ if(TK.seat) seatLeave(); else if(ride) dismount(true); }
+                           var st = ride && ride.tank;
+                           return {prop: TK.prop ? {x: TK.prop.x, z: TK.prop.z, riding: TK.prop.riding} : null, driving: !!st, speed: st ? st.speed : 0, yaw: avatar ? avatar.yaw : 0,
+                                   ts: TK.ts.slice(), seat: TK.seat ? {u: TK.seat.u, n: TK.seat.n, ok: TK.seat.ok} : null, aim: TK.aim, a: inst.moving(), net: inst.tankNet(),
+                                   x: avatar ? avatar.x : 0, z: avatar ? avatar.z : 0, hy: avatar ? avatar.hy : 0, me: cvMe(), live: GN.live.length,
+                                   peers: Object.keys(peers).map(function(u){ var P = peers[u]; return {u: u, a: P.a, seated: !!P.seated, tank: P.vkind === "tank", x: P.x, z: P.z}; })};
+                         },
+                         // hold (true) or let go of a key, as if pressed: tools drive with it
+                         press: function(code, on){ keys[code] = !!on; },
                          // [stunts] the City's stunts, and where you are in one (tools drive them headless)
                          stunts: function(){ var S = stuntsNow(); return S ? S.list.map(function(s){ return {id: s.id, kind: s.kind, name: s.name, x: s.x, z: s.z, yaw: s.yaw, respawn: s.respawn,
                            pad: s.pads[0] ? {x: s.pads[0].x, z: s.pads[0].z, v: s.pads[0].v} : null, jump: s.jump ? {D: s.jump.D, v: s.jump.v, t: s.jump.t, apex: s.jump.apex, lip: s.jump.lip, target: s.jump.target} : null}; }) : null; },

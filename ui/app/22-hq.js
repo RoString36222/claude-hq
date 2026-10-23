@@ -562,8 +562,9 @@ function hqNetSend(){
   // and velocity in cm and cm/s, kind, age in ms), so everyone flies the same grenades; numbers about the shots only
   var gr = hqNetCan("grenade") && HQ3D.inst.grenadeNet ? HQ3D.inst.grenadeNet() : null;
   if(gr){ if(gr.gl) msg.gl=1; if(Array.isArray(gr.gn) && gr.gn.length) msg.gn=gr.gn.slice(0,4); }
-  // [3.16] "tank" (games/hqtank.js): in a tank's gunner's seat (a carpool seat, pb / ps), your aim (ta: degrees)
-  var tk = hqNetCan("tank") && msg.pb && HQ3D.inst.tankNet ? HQ3D.inst.tankNet() : null;
+  // [3.16] "tank" (games/hqtank.js): your turret aim (ta: degrees) in a tank's gunner's seat (a carpool seat, pb / ps),
+  // or driving it (14) while nobody is in that seat
+  var tk = hqNetCan("tank") && (msg.pb || a===14) && HQ3D.inst.tankNet ? HQ3D.inst.tankNet() : null;
   if(tk && Array.isArray(tk.ta)) msg.ta=tk.ta;
   var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.pb,msg.ps,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm,msg.gl,JSON.stringify(msg.gn||0),JSON.stringify(msg.ta||0)].join(","), now=Date.now();
   if(key===HQNET.last && now-HQNET.sentAt<2000) return;

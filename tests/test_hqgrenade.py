@@ -170,7 +170,7 @@ class GrenadeWiring(unittest.TestCase):
         cls.mod = read("games", "hqgrenade.js")
 
     def test_keys_and_click(self):
-        self.assertIn('(e.code === "KeyX" || (e.code === "KeyF" && (GN.out || tkGunner()))) && !ride && inst.running && gnHere() && !typing(e.target)', self.hq)
+        self.assertIn('(e.code === "KeyX" || (e.code === "KeyF" && GN.out) || tkF) && (!ride || tkF) && inst.running && gnHere() && !typing(e.target)', self.hq)
         self.assertIn('if(e.code === "KeyX") gnToggle(); else if(!tkFire()) gnFire();', self.hq)
         # a captured click (Mouse steering) fires; no repeat fire from a held key
         self.assertIn("if(e.button === 0 && !tkFire()) gnFire();", func_body(self.hq, "onDown"))

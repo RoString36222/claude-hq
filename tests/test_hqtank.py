@@ -226,6 +226,17 @@ class TankWiring(unittest.TestCase):
         for gone in ("TK.seat", "seatPeers", "tsFrom", "sbFrom"):
             self.assertNotIn(gone, self.hq)
 
+    def test_the_driver_has_the_turret_while_nobody_is_gunner(self):
+        self.assertIn("return !!(ride && ride.tank && tkGunnerOf(cvMe()) == null);", func_body(self.hq, "tkDriverGuns"))
+        fire = func_body(self.hq, "tkFire")
+        self.assertLess(fire.index("if(tkGunner())"), fire.index("else if(tkDriverGuns()){ top = avatar.g; B = ride.B; }"))
+        self.assertIn("else return false;", fire)
+        tf = func_body(self.hq, "tankFrame")
+        self.assertIn("if(!G){ f0 = new THREE.Vector3(); curCam().getWorldDirection(f0); TK.aim = TKm.aimFrom(", tf)
+        self.assertIn('var tkF = e.code === "KeyF" && (tkGunner() || tkDriverGuns());', self.hq)
+        self.assertIn("&& (!ride || tkF) &&", self.hq)                              # F works in the tank; X does not
+        self.assertIn("P.ta || {yaw: 0, pitch: 0};   // its gunner's, else its driver's", self.hq)
+
     def test_blasts_never_move_a_tank(self):
         kn = func_body(self.hq, "gnKnock")
         self.assertIn("ride.tank ||", kn)
@@ -234,16 +245,16 @@ class TankWiring(unittest.TestCase):
 
     def test_presence(self):
         self.assertIn('if(a===14 && !hqNetCan("tank")) a = 0;', self.ui)
-        self.assertIn('var tk = hqNetCan("tank") && msg.pb && HQ3D.inst.tankNet ? HQ3D.inst.tankNet() : null;', self.ui)
+        self.assertIn('var tk = hqNetCan("tank") && (msg.pb || a===14) && HQ3D.inst.tankNet ? HQ3D.inst.tankNet() : null;', self.ui)
         self.assertIn("JSON.stringify(msg.gn||0),JSON.stringify(msg.ta||0)].join", self.ui)
         self.assertLess(self.ui.index("msg.pb=pl.pb"), self.ui.index("var tk = hqNetCan(\"tank\")"))   # the seat first
         self.assertIn('"hqgrenade","hqtank","hqcity3d"]', self.ui)
-        self.assertIn("P.ta = TKm && p.pb ? TKm.taFrom(p.ta) : null;", self.hq)
+        self.assertIn("P.ta = TKm && (p.pb || (p.a | 0) === 14) ? TKm.taFrom(p.ta) : null;", self.hq)
         self.assertIn('"petride", "carpool", "grenade", "tank"]', self.proto)
         self.assertIn('14: "tank"', self.hq)
         net = self.hq[self.hq.index("inst.tankNet = function(){"):][:300]
-        self.assertIn("tkGunner() ? {ta: TKm.taWire(", net)                       # only the gunner sends an aim
-        self.assertIn("let ta = ta.filter(|_| pool.is_some());", self.rs)          # the Arena keeps it only with a seat
+        self.assertIn("(tkGunner() || tkDriverGuns()) ? {ta: TKm.taWire(", net)   # only whoever has the turret sends an aim
+        self.assertIn("let ta = ta.filter(|_| pool.is_some() || a.as_f64() == Some(14.0));", self.rs)   # a gunner's or a driver's
 
     def test_bounds_match_the_arena(self):
         def const(name):

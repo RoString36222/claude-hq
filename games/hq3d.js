@@ -1279,6 +1279,8 @@ function mount(el, api){
   function tkEnv(){ return {blocked: function(x, z){ return blocked(x, z); }}; }
   // you, in seat 1 of a tank someone drives
   function tkGunner(){ var D = POOL.u && POOL.seat === 1 ? peers[POOL.u] : null; return !!(D && D.a === 14); }
+  // you, driving your tank with nobody in its gunner's seat: the turret is yours (it follows your camera, F fires)
+  function tkDriverGuns(){ return !!(ride && ride.tank && tkGunnerOf(cvMe()) == null); }
   // who holds seat 1 of the tank `u` drives (the lower id, should two claim it at once: hqdrive.js poolSeat's rule)
   function tkGunnerOf(u){
     var best = null;
@@ -1320,7 +1322,7 @@ function mount(el, api){
     settleY(0); avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
     movedHere = true; E.sfx("door");
     driveHud("tank"); rideUiSync(true);
-    if(api.announce) api.announce("Driving your tank: W / S, A / D turn it on the spot, E climbs out. Others climb in with E beside it: the first is your gunner.");
+    if(api.announce) api.announce("Driving your tank: W / S, A / D turn it on the spot, the camera aims the turret and F fires it, E climbs out. Others climb in with E beside it: the first takes over the turret as your gunner.");
     return true;
   }
   function tankMove(dt){
@@ -1366,24 +1368,32 @@ function mount(el, api){
   }
   // the turret's aim, eased toward `to` ({yaw, pitch}); kept on the ride or the peer (cur)
   function turEase(cur0, to, dt){ var k = ease(8, dt); cur0.yaw = wrapPi(cur0.yaw + wrapPi(to.yaw - cur0.yaw)*k); cur0.pitch += (to.pitch - cur0.pitch)*k; return cur0; }
-  // each frame after the peers: your tank's turret at your gunner's aim, your own aim as a gunner, a tank left behind
+  // each frame after the peers: your tank's turret at its gunner's aim (yours while nobody is its gunner), your own aim
+  // as someone else's gunner, a tank left behind
   function tankFrame(dt){
     var TKm = HQV.hqTank; if(!TKm) return;
     if(TK.cd > 0) TK.cd = Math.max(0, TK.cd - dt);
     if(TK.prop && !TK.prop.riding && TK.prop.w !== curW()) tankUnpark();          // another floor: it goes away
-    if(ride && ride.tank){ var G = peers[tkGunnerOf(cvMe())]; TKm.animate(ride.B, ride.tank, turEase(ride.tur, G && G.ta ? G.ta : {yaw: 0, pitch: 0}, dt)); }
+    if(ride && ride.tank){
+      var G = peers[tkGunnerOf(cvMe())], f0 = null;
+      if(!G){ f0 = new THREE.Vector3(); curCam().getWorldDirection(f0); TK.aim = TKm.aimFrom({x: f0.x, y: f0.y, z: f0.z}, avatar.yaw); }   // a drag or the mouse swings it
+      TKm.animate(ride.B, ride.tank, turEase(ride.tur, G ? G.ta || {yaw: 0, pitch: 0} : TK.aim, dt));
+    }
     if(tkGunner()){
       var f = new THREE.Vector3(); curCam().getWorldDirection(f);
       TK.aim = TKm.aimFrom({x: f.x, y: f.y, z: f.z}, peers[POOL.u].yaw);
       if(rigOn()) HQV.camrig.input(rig, {hold: true});                         // the tilt stays where you aim
     }
   }
-  // as the gunner: a shell from the muzzle of the tank you are in, along its barrel (on this page at your aim)
+  // a shell from the muzzle along the barrel: as someone's gunner, of the tank you are in (on this page at your aim); as
+  // a driver with nobody in the gunner's seat, of your own
   function tkFire(){
-    var H = HQV.hqGrenade, TKm = HQV.hqTank; if(!tkGunner() || !H || !TKm) return false;
-    if(TK.cd > 0) return true;
-    var D = peers[POOL.u], B = D && D.bike && D.vkind === "tank" ? D.bike : null; if(!B) return true;
-    D.g.updateMatrixWorld(true);
+    var H = HQV.hqGrenade, TKm = HQV.hqTank, D = null, top = null, B = null; if(!H || !TKm) return false;
+    if(tkGunner()){ D = peers[POOL.u]; if(D && D.bike && D.vkind === "tank"){ top = D.g; B = D.bike; } }
+    else if(tkDriverGuns()){ top = avatar.g; B = ride.B; }
+    else return false;
+    if(TK.cd > 0 || !B) return true;
+    top.updateMatrixWorld(true);
     var m = B.muzzle.getWorldPosition(new THREE.Vector3()), q = new THREE.Vector3(0, 0, 1).transformDirection(B.muzzle.matrixWorld), sp = H.KINDS[1].muzzle;
     var L = {s: GN.seq = (GN.seq + 1) & 0xffff, k: 1, x: m.x, y: m.y, z: m.z, vx: q.x*sp, vy: q.y*sp, vz: q.z*sp};
     var g = H.shot(L); g.launch = L; g.t0 = E.now(); g.w = curW(); GN.mine.push(g); GN.live.push(g);
@@ -1391,8 +1401,8 @@ function mount(el, api){
     if(!E.calm() && !(camSet && camSet.reduced)) GN.shake = Math.max(GN.shake, 0.2);
     return true;
   }
-  // presence: as a tank's gunner, your aim (ta), beside your carpool seat (pb / ps)
-  inst.tankNet = function(){ var TKm = HQV.hqTank; return TKm && gnHere() && tkGunner() ? {ta: TKm.taWire(TK.aim.yaw, TK.aim.pitch)} : null; };
+  // presence: your turret aim (ta) as a tank's gunner (beside your carpool seat, pb / ps) or as its driver while nobody is
+  inst.tankNet = function(){ var TKm = HQV.hqTank; return TKm && gnHere() && (tkGunner() || tkDriverGuns()) ? {ta: TKm.taWire(TK.aim.yaw, TK.aim.pitch)} : null; };
   /* ---------- [pets 3.14] your pets and everyone else's (games/hqpets.js) ----------
      A small hook: the pets runtime is made on the first frame, fed your pose, what you ride, the floor's blocked /
      ground / water helpers and the people here (their `pt`, the "pets" capability), and gets B / U / O / E. */
@@ -4825,8 +4835,10 @@ function mount(el, api){
       e.preventDefault(); e.stopPropagation(); if(e.type === "keydown" && !e.repeat) petBreath(); return;
     }
     // [3.16] the grenade launcher, on foot in the 3D City: X out / away, F fires (one shot a press)
-    if((e.code === "KeyX" || (e.code === "KeyF" && (GN.out || tkGunner()))) && !ride && inst.running && gnHere() && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey){
-      e.preventDefault(); e.stopPropagation(); if(e.type === "keydown" && !e.repeat){ if(e.code === "KeyX") gnToggle(); else if(!tkFire()) gnFire(); } return;   // [3.16] a gunner's F: a shell
+    // (a tank's gunner, or its driver while nobody is: F fires its cannon)
+    var tkF = e.code === "KeyF" && (tkGunner() || tkDriverGuns());
+    if((e.code === "KeyX" || (e.code === "KeyF" && GN.out) || tkF) && (!ride || tkF) && inst.running && gnHere() && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey){
+      e.preventDefault(); e.stopPropagation(); if(e.type === "keydown" && !e.repeat){ if(e.code === "KeyX") gnToggle(); else if(!tkFire()) gnFire(); } return;   // [3.16] a shell, else a grenade
     }
     // [3.16] K: your tank rolls up beside you (again: it goes away), on foot in the 3D City
     if(e.code === "KeyK" && !ride && !POOL.u && inst.running && tkOk() && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey){
@@ -5084,7 +5096,7 @@ function mount(el, api){
       P.gl = p.gl === 1;
       // [3.16] the tank (the "tank" capability): a gunner's aim (ta), from seat 1 of someone's tank
       var TKm = HQV.hqTank;
-      P.ta = TKm && p.pb ? TKm.taFrom(p.ta) : null;                       // with their carpool seat only
+      P.ta = TKm && (p.pb || (p.a | 0) === 14) ? TKm.taFrom(p.ta) : null;   // a gunner (with their carpool seat) or a driver
       if(Array.isArray(p.gn) && p.w === curW()) gnSeen(p.u, p.gn);
       P.u = p.u;   // (3.13.1) or a live set (boomLive, keyed by their Arena user id)
       // [3.12] convoys (the "convoy" capability): whom they invite (ci), whom they follow (cv), where they lead (cg, cm)
@@ -5186,7 +5198,7 @@ function mount(el, api){
         if(VEHICLES[vk].tank && HQV.hqTank){           // [3.16] its treads by how it moves, its turret at its gunner's aim (yours if you are its gunner)
           var tst = P.tst || (P.tst = {trk: [0, 0]}), thw = HQV.hqTank.HALF_W;
           if(!jump && dt > 0){ tst.trk[0] += (v - yrate*thw)*dt; tst.trk[1] += (v + yrate*thw)*dt; }
-          var tg = tkGunnerOf(u), tta = tkGunner() && POOL.u === u ? TK.aim : tg && peers[tg].ta ? peers[tg].ta : {yaw: 0, pitch: 0};
+          var tg = tkGunnerOf(u), tta = tkGunner() && POOL.u === u ? TK.aim : tg ? peers[tg].ta || {yaw: 0, pitch: 0} : P.ta || {yaw: 0, pitch: 0};   // its gunner's, else its driver's
           HQV.hqTank.animate(P.bike, tst, turEase(P.tur || (P.tur = {yaw: 0, pitch: 0}), tta, dt));
         } else if(VEHICLES[vk].plane){                      // propellers turning, the lights blinking, the gear down near the ground
           P.pst = P.pst || {rpm: 0.8, t: 0, gear: 1, speed: 0}; P.pst.t += dt || 0; P.pst.speed = v; P.pst.gear = (P.th != null ? P.th - groundAt(P.x, P.z) : 0) < 60 ? 1 : 0;

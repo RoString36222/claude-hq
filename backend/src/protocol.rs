@@ -68,7 +68,7 @@ pub const GAMES: &[(&str, i64, &[&str])] = &[
     // "motion": pos may carry t (the sender's clock, ms), vx / vz (cm/s), yr (deg/s) and rpm, so a listener can draw
     // them smoothly between frames of their own clock (valley/hq.rs Motion)
     // "grenade" (HQ 3.16): pos may carry gl (1: a grenade launcher out) and gn, up to 4 shots [s, x, y, z, vx, vy, vz, k, a] (valley/hq.rs Shot)
-    // "tank" (HQ 3.16): a = 14 (driving your tank; its three seats are "carpool" seats); its gunner's ta ([turret yaw, barrel pitch] degrees, only with pb / ps); gn kind 1 (its shell)
+    // "tank" (HQ 3.16): a = 14 (driving your tank; its three seats are "carpool" seats); its turret aim ta ([yaw, pitch] degrees, from its gunner's carpool seat or its driver); gn kind 1 (its shell)
     ("hq", 4, &["ride", "look", "skate", "drive", "alt", "isles", "fly", "plane", "vehicles", "airliner", "boombox", "convoy", "tuning", "pets", "hqstyle", "motion", "petride", "carpool", "grenade", "tank"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`; "drive": a = 5 (a car), 6 (a motorbike)
     ("type", 1, &[]),
     ("td", 1, &[]),
@@ -120,7 +120,7 @@ mod tests {
         // "isles" (v3): the floor may be a world's own room, city3d:<world id>.
         // "vehicles" (v4): while driving, v / vp name the catalogue vehicle and its paint.
         // "grenade" (HQ 3.16, still v4): gl / gn, a launcher out and its recent shots.
-        // "tank" (HQ 3.16, still v4): a = 14, a gunner's ta (with a carpool seat), gn kind 1.
+        // "tank" (HQ 3.16, still v4): a = 14, ta (a gunner's with a carpool seat, or a driver's), gn kind 1.
         assert_eq!(info["games"]["hq"], json!({"v": 4, "caps": ["ride", "look", "skate", "drive", "alt", "isles", "fly", "plane", "vehicles", "airliner", "boombox", "convoy", "tuning", "pets", "hqstyle", "motion", "petride", "carpool", "grenade", "tank"]}));
         assert_eq!(version("fps"), 1);
         assert_eq!(version("pond"), 1);

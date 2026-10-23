@@ -15,6 +15,7 @@ PAIRS = [
     ("games/strike/map.json", "backend/data/strike_map.json"),
     ("games/strike/map-sandbar.json", "backend/data/strike_map_sandbar.json"),
     ("games/vehicles/catalogue.json", "backend/data/vehicles.json"),
+    ("games/hqstyle/schema.json", "backend/data/hqstyle.json"),   # HQ Studio: the style schema the Arena validates with
 ]
 
 

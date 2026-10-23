@@ -104,13 +104,13 @@ class Presence(unittest.TestCase):
         hq = read("ui", "app", "22-hq.js")
         self.assertIn('(a===5 || a===6) && HQ3D.inst.vehicle && hqNetCan("vehicles")', hq)
         self.assertIn("msg.v=veh.v", hq)
-        self.assertIn("msg.v,msg.vp].join", hq, "a paint change is sent at once")
+        self.assertIn("msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0)].join", hq, "a paint (or tune, 3.13, or pets out, 3.14) change is sent at once")
 
     def test_hq3d_draws_a_peers_catalogue_vehicle(self):
         src = read("games", "hq3d.js")
         self.assertIn("inst.vehicle = function()", src)
         self.assertIn("P.v = typeof p.v === \"string\" && VEHICLES[p.v] && VEHICLES[p.v].cat", src)
-        self.assertIn("HQV.hqVehicleModels.build(ctx, Vc, ph)", src)
+        self.assertIn("HQV.hqVehicleModels.build(ctx, Vc, ph, {tune: ptn})", src)   # [3.13] in its tune
 
     def test_protocol_lists_vehicles(self):
         self.assertRegex(read("backend", "src", "protocol.rs"), r'"hq", 4, &\[[^\]]*"vehicles"[,\]]')

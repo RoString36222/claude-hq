@@ -121,6 +121,10 @@ function sfxVolume(){
   v = parseFloat(v); return isFinite(v) ? clamp(v, 0, 1) : 0.5;
 }
 function sfxSetVolume(v){ try { localStorage.setItem("hq_sfx", String(clamp(+v || 0, 0, 1))); } catch(e){} if(SND.master) SND.master.gain.value = sfxVolume(); }
+// [3.11.1] Ambient sounds (thunder, fireworks, rain, the jets' roar): their own switch, localStorage hq_ambient
+// ("0" off, anything else or unset on), separate from engines and game sounds; still under the one volume.
+function ambientOn(){ var v = null; try { v = localStorage.getItem("hq_ambient"); } catch(e){} return v !== "0"; }
+function ambientSet(on){ try { localStorage.setItem("hq_ambient", on ? "1" : "0"); } catch(e){} }
 function audio(){
   if(SND.ctx) { if(SND.ctx.state === "suspended") SND.ctx.resume().catch(function(){}); return SND.ctx; }
   var C = window.AudioContext || window.webkitAudioContext; if(!C) return null;
@@ -161,7 +165,7 @@ function sfx(name, opt){
   var a = audio(); if(!a || a.state !== "running") return;
   try { SFX[name](a, opt); } catch(e){}
 }
-// A continuous engine note (HQ 3.5.7: modelled on a real engine): engineSound(kind) ->
+// A continuous engine note (HQ 3.5.7: modelled on a real engine): engineSound(kind, ex) (ex: a tuned exhaust, 3.13) ->
 // {set(rpm 900..7600, opt), stop()}. The game's rpm (900 idle .. 7600 limiter) maps onto the
 // profile's own idle..redline, and the note's fundamental is the firing frequency of a four-stroke,
 // rpm/60 * cylinders/2: a 390 single thumps at 12-90 Hz, a superbike four screams up to ~480 Hz.
@@ -227,6 +231,27 @@ var ENGINES = {
   // roar growing with the thrust (opt.thr)
   jet:    {lo: 34, hi: 96, h: [1, .5, .3, .2, .12, .08], r2: 2, sub: .2, det: 14, grit: 1.2, cut: [200, 800], q: .8, gain: 0.06, fan: [900, 3300], whine: .45, roar: 1.1, air: .2}
 };
+// [3.13] the Tuning shop's exhausts (games/hqtuning.js): a small change on top of the engine's own profile. Louder
+// (gain), raspier (grit, a low-pass that opens further at the top: cut), deeper (sub) or more crackle on the overrun
+// (pops). Cars: sport, quad, titanium (blue-burnt tips: the most crackle); bikes: slip-on, under-seat, end can.
+var EXHAUST = {
+  sport:     {gain: 1.18, grit: 1.22, cut: 1.12, pops: 0.1},
+  quad:      {gain: 1.22, grit: 1.1, cut: 1.05, sub: 0.15},
+  titanium:  {gain: 1.15, grit: 1.15, cut: 1.2, pops: 0.35},
+  slipon:    {gain: 1.16, grit: 1.2, cut: 1.12, pops: 0.1},
+  underseat: {gain: 1.2, grit: 1.12, cut: 0.95, sub: 0.12},
+  endcan:    {gain: 1.12, grit: 1.2, cut: 1.15, pops: 0.3}
+};
+// engineProfile(kind, ex) -> the profile engineSound plays: ENGINES[kind] as it is (stock, an unknown exhaust, an
+// electric motor or a rotor), or a copy with the exhaust's changes
+function engineProfile(kind, ex){
+  var P = ENGINES[kind] || ENGINES.v8, M = EXHAUST[ex];
+  if(!M || !P.cyl) return P;
+  var Q = {}; Object.keys(P).forEach(function(k){ Q[k] = P[k]; });
+  Q.gain = P.gain*M.gain; Q.grit = (P.grit || 1)*M.grit; Q.cut = [P.cut[0], Math.round(P.cut[1]*M.cut)];
+  Q.pops = Math.min(1, (P.pops || 0) + (M.pops || 0)); Q.sub = Math.min(1.2, (P.sub || 0) + (M.sub || 0));
+  return Q;
+}
 // The profile's real revs and fundamental (Hz) for a game rpm (900..7600); firing = rpm/60*cyl/2.
 function engineHz(kind, rpm){
   var P = ENGINES[kind] || ENGINES.v8, u = clamp((rpm - 900)/6700, 0, 1);
@@ -262,8 +287,8 @@ function engineCurve(B, k){
   for(var i = 0; i < 1024; i++){ var x = i/511.5 - 1; c[i] = Math.tanh(k*x)/th; }
   return (B.curves[key] = c);
 }
-function engineSound(kind){
-  var P = ENGINES[kind] || ENGINES.v8;
+function engineSound(kind, ex){
+  var P = engineProfile(kind, ex);
   var a = sfxVolume() > 0 ? audio() : null; if(!a) return {set: function(){}, stop: function(){}};
   var B = engineBus(a), t0 = a.currentTime, nodes = [];
   // the output first (the dead man's switch lives here), then the chain into it:
@@ -419,6 +444,11 @@ function noiseLoop(freq, q){
     stop: function(){ try { g.gain.cancelScheduledValues(a.currentTime); g.gain.setTargetAtTime(0, a.currentTime, 0.05); src.stop(a.currentTime + 0.3); } catch(e){} }
   };
 }
+// an ambient noiseLoop: silent while Ambient sounds is off (checked every set(), so the switch acts at once)
+function ambientLoop(freq, q){
+  var L = noiseLoop(freq, q);
+  return {set: function(gain, fq){ L.set(ambientOn() ? gain : 0, fq); }, stop: L.stop};
+}
 // Browsers allow audio only after a user gesture: wake it on the first one.
 if(typeof window.addEventListener === "function"){
   window.addEventListener("pointerdown", function(){ if(sfxVolume() > 0) audio(); }, {once: true, capture: true});
@@ -451,9 +481,10 @@ function watchBar(stage, opts){
 HQV.engine = {now: now, clamp: clamp, hex: hex, angLerp: angLerp, calm: calm, say: say, tokens: tokens, myClock: myClock,
               fmtTime: fmtTime, dist3: dist3, lib: lib, loadGlb: loadGlb, hasWebGL2: hasWebGL2,
               senderTime: senderTime, jitter: jitter, pushSnap: pushSnap, bracket: bracket,
-              sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES), engineHz: engineHz, watchBar: watchBar,
-              noiseLoop: noiseLoop,
+              sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES), engineProfile: engineProfile, exhausts: Object.keys(EXHAUST), engineHz: engineHz, watchBar: watchBar,
+              noiseLoop: noiseLoop, ambientLoop: ambientLoop, ambientOn: ambientOn, ambientSet: ambientSet,
               // the shared AudioContext and its master gain (the SFX volume), or null when sound is off:
               // for a game that shapes its own sound (the City's thunder) instead of a named sfx
-              audioOut: function(){ var a = sfxVolume() > 0 ? audio() : null; return a && SND.master ? {ctx: a, out: SND.master} : null; }};
+              audioOut: function(){ var a = sfxVolume() > 0 ? audio() : null; return a && SND.master ? {ctx: a, out: SND.master} : null; },
+              ambientOut: function(){ var a = ambientOn() && sfxVolume() > 0 ? audio() : null; return a && SND.master ? {ctx: a, out: SND.master} : null; }};
 })();

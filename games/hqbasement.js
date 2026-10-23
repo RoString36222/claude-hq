@@ -31,13 +31,12 @@ var CEIL = 4.6, CAM_CEIL = 4.2;  // the slab, and where the camera stops under i
 var NBAYS = 12, NSTART = 3, NSLOTS = NSTART + NBAYS;
 var PAD = {x: 24.5, z: 6.5, w: 7, d: 6.2, yaw: -PI/2};          // the car-lift platform (the city bay's footprint)
 // [3.5.4] one showcase gallery: every B1 vehicle on its own plinth. Slots 0-2 the starters (S1-S3, by the walnut
-// wall), 3-14 the twelve bays (bay i = slot 3 + i, so the Arena's bay index maps 1:1). Two rows of turntables: eight
-// along the back wall (right to left), seven down the front (left to right), on one pitch. The radius fits the
-// largest vehicle (fitted at runtime from the catalogue dims and the built models' bounding boxes), capped so
-// neighbours never touch.
-var GAL = {back: -15.6, front: 14.4, x0: -19, x1: 28.1, nBack: 8};
-GAL.pitch = (GAL.x1 - GAL.x0)/(GAL.nBack - 1);                   // 6.73 m
-var R_MIN = 2.3, R_DEF = 3.0, R_MAX = Math.round((GAL.pitch - 0.35)/2*100)/100, CARD_OFF = R_MAX + 0.45;
+// wall), 3-14 the twelve bays (bay i = slot 3 + i, so the Arena's bay index maps 1:1). Two rows of turntables on one
+// pitch: [3.11.1] seven along the back wall (right to left, clear of the lounge), eight down the front (left to right).
+// The radius fits the largest vehicle as drawn (fitted at runtime from the catalogue's shown dims and the built
+// models' bounding boxes), capped so neighbours never touch: 3.45 m takes the 5.8 m i7 turning with room to spare.
+var GAL = {back: -15.6, front: 14.4, pitch: 7.25, xBack: -18.8, xFront: -25.4, nBack: 7};
+var R_MIN = 2.3, R_DEF = 3.0, R_MAX = Math.round((GAL.pitch - 0.35)/2*100)/100, CARD_OFF = R_MAX + 0.45;   // 3.45 m
 var PLINTH_R = R_DEF;
 var LIFT = {x: -HW + 0.3, z: 9};                                 // the person-lift doors, on the left wall
 var KIOSK = {x: -24.5, z: 3.2};
@@ -56,7 +55,7 @@ function lockLevel(i){ return Math.max(0, (i - 3)*5); }
 function slotPose(s){
   s = Math.max(0, Math.min(NSLOTS - 1, s | 0));
   var back = s < GAL.nBack, k = back ? GAL.nBack - 1 - s : s - GAL.nBack;
-  return {slot: s, x: Math.round((GAL.x0 + k*GAL.pitch)*100)/100, z: back ? GAL.back : GAL.front, yaw: back ? PI/6 : PI + PI/6, face: back ? 1 : -1};
+  return {slot: s, x: Math.round(((back ? GAL.xBack : GAL.xFront) + k*GAL.pitch)*100)/100, z: back ? GAL.back : GAL.front, yaw: back ? PI/6 : PI + PI/6, face: back ? 1 : -1};
 }
 function bayPose(i){
   i = i | 0; var P = slotPose(NSTART + i);
@@ -543,8 +542,8 @@ HQV.hqWorlds.basement = function(c, w){
   // [3.5.3] more of them, and they go into the static group so they merge (a pot + four greens, not ten draws a plant)
   if(c.plant){ var pr = c.rng ? c.rng(seed ^ 0x9e3) : R, kids0 = S.children.slice();
     // [3.5.4] the back-wall ones stand between the gallery plinths, against the wall
-    [[-21.5, -18.5], [11.3, -18.8], [30.6, -18.4], [-21.4, 18.4], [30.6, 18.4],
-     [-2.2, -18.8], [31, -3.2], [-31, -3.5], [-31, 15.5], [-31.1, -15.6], [-8.9, 18.8]].forEach(function(p, n){
+    [[-21.5, -18.5], [13.8, -18.8], [30.6, -18.4], [-21.4, 18.4], [30.6, 18.4],
+     [-0.7, -18.8], [31, -3.2], [-31, -3.5], [-31, 15.5], [-31.1, -15.6], [-8.9, 18.8]].forEach(function(p, n){
       try { c.plant(p[0], p[1], 0.9 + pr()*0.4, (seed + n) % 997); } catch(e){} });
     S.children.slice().forEach(function(o){ if(kids0.indexOf(o) < 0 && o !== st && o !== dyn && o.isGroup) st.add(o); }); }
 
@@ -590,7 +589,7 @@ HQV.hqWorlds.basement = function(c, w){
 
   /* -------- the vehicles: every one on its gallery plinth, the starters on S1-S3, your basement-homed owned vehicles
      on their bay's plinth (slot 3 + bay) */
-  // [3.5.4] the plinths fit the largest vehicle: the catalogue's dims (HQV.hqVehicleModels.dims), and the bounding box of
+  // [3.5.4] the plinths fit the largest vehicle: the catalogue's dims as drawn (HQV.hqVehicleModels.shown), and the bounding box of
   // every model actually built here (so a model rescaled elsewhere still fits); capped at R_MAX so neighbours never touch
   var need = 0, bbA = new THREE.Box3(), bbB = new THREE.Box3();
   function halfDiag(root){
@@ -607,7 +606,7 @@ HQV.hqWorlds.basement = function(c, w){
   }
   function catList(){ var C = (c.catalogue && c.catalogue()) || HQV.hqVehicleCatalogue || null, vs = C && (C.vehicles || C); return Array.isArray(vs) ? vs : []; }
   (function(){ var VM = HQV.hqVehicleModels; if(!VM || !VM.dims) return;
-    catList().forEach(function(e){ try { var d = VM.dims(e); if(d && d.lengthM > 0) need = Math.max(need, Math.hypot(d.lengthM, d.widthM || 0)/2); } catch(err){} }); })();
+    catList().forEach(function(e){ try { var d = VM.shown ? VM.shown(e) : VM.dims(e); if(d && d.lengthM > 0) need = Math.max(need, Math.hypot(d.lengthM, d.widthM || 0)/2); } catch(err){} }); })();
   function fit(h){
     if(h > need) need = h;
     var r = need > 0 ? fitR(need + 0.2) : R_DEF;
@@ -625,8 +624,16 @@ HQV.hqWorlds.basement = function(c, w){
     if(kind !== "bike") b.kind = kind;            // a bicycle: no kind, as hq3d.js expects
     bikes.push(b); return b;
   }
-  try { if(c.car) addStarter(c.car(col.paint, col.accent, col.plate), "car", 0, {color: col.paint, accent: col.accent, plate: col.plate}); } catch(e){}
-  try { if(c.moto) addStarter(c.moto(col.accent, col.paint, col.plate), "moto", 1, {color: col.accent, accent: col.paint, plate: col.plate}); } catch(e){}
+  // [3.13] the starters in their tune (games/hqtuning.js: this browser keeps it), rebuilt on their plinth after a save
+  var Tn = HQV.hqTuning, VMs = HQV.hqVehicleModels;
+  function starterModel(kind){
+    var tn = Tn ? Tn.of("starter:" + kind) : null, pl = tn && tn.plate ? tn.plate : col.plate;
+    var m = kind === "car" ? c.car(col.paint, col.accent, pl) : c.moto(col.accent, col.paint, pl);
+    if(tn && m && VMs && VMs.tuneStarter) try { VMs.tuneStarter(THREE, m, tn, kind === "car" ? "car" : "bike"); } catch(e){}
+    return m;
+  }
+  try { if(c.car) addStarter(starterModel("car"), "car", 0, {color: col.paint, accent: col.accent, plate: col.plate}); } catch(e){}
+  try { if(c.moto) addStarter(starterModel("moto"), "moto", 1, {color: col.accent, accent: col.paint, plate: col.plate}); } catch(e){}
   try { if(c.bike) addStarter(c.bike(col.accent, col.paint), "bike", 2, {color: col.accent, accent: col.paint}); } catch(e){}
 
   var ownProps = {}, homesNow = null, listNow = null;
@@ -641,10 +648,11 @@ HQV.hqWorlds.basement = function(c, w){
     var max = homesNow && homesNow.available !== false && homesNow.basement ? homesNow.basement.max : L.max;
     if(max !== L.max){ L = layout({max: max, r: L.r}); drawMarks(); drawBars(); drawPlinths(); }
     var rows = homesNow && homesNow.available !== false ? basementRows(listNow, homesNow, max) : [], want = {}, byBay = {};
-    rows.forEach(function(r){ want["own:" + r.id] = r; r.entry = catEntry(r.vehicle_id); byBay[r.bay] = r; });
+    rows.forEach(function(r){ want["own:" + r.id] = r; r.entry = catEntry(r.vehicle_id); byBay[r.bay] = r;
+      r.tune = HQV.hqTuning ? HQV.hqTuning.of("own:" + r.id) : null; r.tsig = r.tune ? JSON.stringify(r.tune) : ""; });   // [3.13] its tune
     Object.keys(ownProps).forEach(function(k){
       var b = ownProps[k], r = want[k];
-      if(r && b.bay === r.bay && b.vehicle_id === r.vehicle_id && b.paintIdx === r.paint) return;
+      if(r && b.bay === r.bay && b.vehicle_id === r.vehicle_id && b.paintIdx === r.paint && b.tsig === r.tsig) return;
       if(riddenOff(b)) return;
       var i = bikes.indexOf(b); if(i >= 0) bikes.splice(i, 1);
       if(b.g.parent) b.g.parent.remove(b.g);
@@ -654,7 +662,7 @@ HQV.hqWorlds.basement = function(c, w){
       var k = "own:" + r.id; if(ownProps[k]) return;
       var entry = r.entry; if(!entry || !HQV.hqVehicleModels || !HQV.hqVehicleModels.build) return;
       var hex = paintHex(entry, r.paint), P = L.plinths[NSTART + r.bay] || bayPose(r.bay), rig;
-      try { rig = HQV.hqVehicleModels.build(c, entry, hex); } catch(e){ return; }
+      try { rig = HQV.hqVehicleModels.build(c, entry, hex, {tune: r.tune}); } catch(e){ return; }
       if(!rig || !rig.g) return;
       measure(rig.g);
       if(rig.ready && rig.ready.then) rig.ready.then(function(){ if(!dead) measure(rig.g); }, function(){});   // a model3d swapped in: measure again
@@ -662,7 +670,7 @@ HQV.hqWorlds.basement = function(c, w){
       g.traverse(function(o){ if(o.isMesh) o.castShadow = true; });
       var o = {key: k, ownId: r.id, vehicleId: r.vehicle_id, color: hex, world: "basement", x: P.x, z: P.z, yaw: P.yaw, home: {x: P.x, z: P.z, yaw: P.yaw}, stored: false, basement: true, bay: r.bay};
       var b = {g: g, x: P.x, z: P.z, yaw: P.yaw, color: hex, paint: Math.max(0, r.paint | 0), paintIdx: r.paint, kind: r.vehicle_id, vehicle_id: r.vehicle_id, id: k, stay: true,
-               world: w, rig: rig, own: o, home: {x: P.x, z: P.z, yaw: P.yaw}, bay: r.bay, gallery: NSTART + r.bay, reach: L.r + 0.8};
+               world: w, rig: rig, own: o, home: {x: P.x, z: P.z, yaw: P.yaw}, bay: r.bay, gallery: NSTART + r.bay, reach: L.r + 0.8, tsig: r.tsig};
       bikes.push(b); ownProps[k] = b;
     });
     drawCards(byBay);
@@ -676,6 +684,20 @@ HQV.hqWorlds.basement = function(c, w){
   }
   try { if(HQV.hqGarage && HQV.hqGarage.onChange) unsubs.push(HQV.hqGarage.onChange(function(l){ listNow = l; rebuildOwn(); })); } catch(e){}
   try { if(Mgr && Mgr.onChange) unsubs.push(Mgr.onChange(function(H){ homesNow = H; rebuildOwn(); })); } catch(e){}
+  // [3.13] a starter tuned at the shop: its plinth's model in the new tune (one you have driven off keeps its look)
+  try { if(Tn && Tn.onChange) unsubs.push(Tn.onChange(function(key){
+    if(dead) return;
+    var kind = key === "starter:car" ? "car" : key === "starter:moto" ? "moto" : null; if(!kind) return;
+    bikes.forEach(function(b){
+      if(b.plinth == null || b.kind !== kind || b.own || riddenOff(b)) return;
+      var m = null; try { m = starterModel(kind); } catch(e){ m = null; }
+      if(!m || !m.g) return;
+      m.g.position.copy(b.g.position); m.g.rotation.copy(b.g.rotation); m.g.visible = b.g.visible;
+      m.g.traverse(function(o){ if(o.isMesh) o.castShadow = true; });
+      if(b.g.parent) b.g.parent.remove(b.g);
+      S.add(m.g); b.g = m.g;
+    });
+  })); } catch(e){}
 
   drawMarks(); drawBars(); drawPlinths(); drawCards({}); drawLounge(0);
   // merge the static group: a few draw calls for walls, slats, sofas, bar and plinth bases

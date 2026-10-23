@@ -395,5 +395,20 @@ function sfxVolumeNow(){
   });
   r.addEventListener("change", function(){ if(window.HQV && HQV.engine) HQV.engine.sfx("coin"); });
 })();
+/* ---- [3.11.1] ambient sounds on/off (localStorage hq_ambient, "0" = off; on by default) ---- */
+function ambientOnNow(){
+  if(window.HQV && HQV.engine && HQV.engine.ambientOn) return HQV.engine.ambientOn();
+  var v=null; try { v=localStorage.getItem("hq_ambient"); } catch(e){}
+  return v!=="0";
+}
+(function(){
+  var cb=$("setAmbient"); if(!cb) return;
+  function show(){ cb.checked=ambientOnNow(); }
+  show();
+  var back=$("settingsBack"); if(back) new MutationObserver(function(){ if(back.classList.contains("open")) show(); }).observe(back, {attributes:true, attributeFilter:["class"]});
+  cb.addEventListener("change", function(){
+    if(window.HQV && HQV.engine && HQV.engine.ambientSet) HQV.engine.ambientSet(cb.checked); else { try { localStorage.setItem("hq_ambient", cb.checked ? "1" : "0"); } catch(e){} }
+  });
+})();
 // Work signals: the PR switch only means something while the main one is on.
 (function(){ var ws=$("setWorkSignals"), wp=$("setWorkSignalsPRs"); if(ws && wp) ws.addEventListener("change", function(){ wp.disabled=!ws.checked; if(!ws.checked) wp.checked=false; }); })();

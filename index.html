@@ -580,7 +580,7 @@
   <section id="hqView" class="hq3d hidden" aria-label="3D HQ">
     <div class="hq3d-stage" id="hqStage"></div>
     <div class="hq3d-talk" id="hqTalk" role="region" aria-label="Chat with the people here" hidden>
-      <div class="talk-top"><b id="hqTalkHead">💬</b><button class="hbtn ghost icon" id="hqTalkToggle" type="button" aria-controls="hqTalkBody" aria-expanded="true">–</button></div>
+      <div class="talk-top"><b id="hqTalkHead">💬</b></div>
       <div id="hqTalkBody" class="talk-body">
         <div class="talk-log" id="hqTalkLog" aria-live="polite"></div>
         <div class="talk-row"><label class="sr-only" for="hqTalkInput">Message</label><input id="hqTalkInput" maxlength="500" autocomplete="off" data-mentions="hqTalkMentions" aria-autocomplete="list" aria-controls="hqTalkMentions"><button class="hbtn" id="hqTalkSend" type="button">Send</button>
@@ -606,6 +606,7 @@
         <div class="hq3d-row"><span class="muted">Paint</span><div class="hq3d-swatches" id="hqPaint" role="group" aria-label="Building paint"></div></div>
         <div class="hq3d-row"><span class="muted">Lights</span><div class="hq3d-swatches" id="hqAccent" role="group" aria-label="Accent lights"></div></div>
         <label class="hq3d-row" for="hqSign"><span class="muted">Sign</span><input id="hqSign" maxlength="18" placeholder="CLAUDE HQ" autocomplete="off"></label>
+        <div class="hq3d-row"><span class="muted">Style</span><button class="hbtn ghost" id="hqStudioBtn" type="button">HQ Studio…</button></div>
         <label class="hq3d-check" for="hqOpen"><input type="checkbox" id="hqOpen"> <span>Open my HQ to visitors <small class="muted">They see your building, your level and how many crew are working, need you or are idle. Never titles, projects or anything your sessions say.</small></span></label>
         <div class="hq3d-row"><button class="hbtn" id="hqSave" type="button">Save</button><span id="hqSaveNote" class="muted" aria-live="polite"></span></div>
       </details>
@@ -1124,6 +1125,11 @@
           <span class="hint">High contrast is a local display preference (kept in this browser).</span>
         </div>
         <div class="setrow">
+          <label id="setStudioLbl">HQ Studio</label>
+          <button class="hbtn" id="setStudio" type="button" aria-describedby="setStudioHint">Open HQ Studio…</button>
+          <span class="hint" id="setStudioHint">Style your tower (facade, colours, crown, entrance, sign, night lights, grounds), your lobby and your floors, and place decor. Others see it in the City when your Arena supports it.</span>
+        </div>
+        <div class="setrow">
           <label for="setTrainer">Trainer name</label>
           <input id="setTrainer" type="text" maxlength="32" placeholder="Auto (from session names)">
           <span class="hint">Shown on your Trainer Card. Leave blank for automatic.</span>
@@ -1222,6 +1228,16 @@
           <label for="setSfx">Game sounds <span id="setSfxVal" class="hint"></span></label>
           <input id="setSfx" type="range" min="0" max="100" step="5">
           <span class="hint">Engines, jumps, blasters, putts and HQ doors, all made on the fly. Off by default with Calm mode or reduced motion.</span>
+        </div>
+        <div class="setrow">
+          <label id="setAmbientLbl">Ambient sounds</label>
+          <label class="dex-toggle"><input type="checkbox" id="setAmbient" aria-labelledby="setAmbientLbl" aria-describedby="setAmbientHint"> Thunder, fireworks, rain and jets nearby</label>
+          <span class="hint" id="setAmbientHint">The world around you, heard only within about a kilometre. Separate from engines and game sounds, and at the same volume.</span>
+        </div>
+        <div class="setrow">
+          <label id="setPetsLbl">Pets</label>
+          <button class="hbtn" id="setPetsOpen" type="button" aria-describedby="setPetsHint">Your pets…</button>
+          <span class="hint" id="setPetsHint">Dogs, cats, dragons, dinosaurs and a sea serpent who follow you round the 3D HQ and the City: who's out with you, names, colours and accessories. Adopt more at the City's Pet shop.</span>
         </div>
         <div class="setrow">
           <label id="setNotchLbl">HQ Notch</label>
@@ -1379,6 +1395,9 @@
 //@include ui/app/36-prestige.js
 //@include ui/app/37-notch-invite.js
 //@include ui/app/38-townhall.js
+//@include ui/app/39-boombox.js
+//@include ui/app/40-pets.js
+//@include ui/app/40-studio.js
 </script>
 </body>
 </html>

@@ -1,0 +1,329 @@
+{
+  "v": 1,
+  "maxBytes": 8192,
+  "colorRe": "^#[0-9a-fA-F]{6}$",
+  "ext": {
+    "preset": {
+      "enum": [
+        "glass",
+        "deco",
+        "brutal",
+        "tokyo",
+        "stone",
+        "eco"
+      ],
+      "def": "glass"
+    },
+    "facade": {
+      "enum": [
+        "glass",
+        "deco",
+        "brutal",
+        "tokyo",
+        "stone",
+        "eco"
+      ],
+      "def": "glass"
+    },
+    "material": {
+      "enum": [
+        "glass",
+        "steel",
+        "concrete",
+        "limestone",
+        "brick",
+        "timber",
+        "marble",
+        "ceramic"
+      ],
+      "def": "glass"
+    },
+    "body": {
+      "color": true,
+      "def": "#2a3c50"
+    },
+    "trim": {
+      "color": true,
+      "def": "#ffb347"
+    },
+    "tint": {
+      "enum": [
+        "clear",
+        "blue",
+        "green",
+        "bronze",
+        "grey",
+        "gold",
+        "rose"
+      ],
+      "def": "blue"
+    },
+    "crown": {
+      "enum": [
+        "flat",
+        "spire",
+        "garden",
+        "deco",
+        "pagoda",
+        "dome",
+        "antenna"
+      ],
+      "def": "spire"
+    },
+    "entrance": {
+      "enum": [
+        "canopy",
+        "portico",
+        "arch",
+        "glassbox",
+        "torii"
+      ],
+      "def": "canopy"
+    },
+    "font": {
+      "enum": [
+        "sans",
+        "serif",
+        "mono",
+        "deco",
+        "script"
+      ],
+      "def": "sans"
+    },
+    "signColor": {
+      "color": true,
+      "def": "#ffb347"
+    },
+    "night": {
+      "color": true,
+      "def": "#ffcf7a"
+    },
+    "flags": {
+      "enum": [
+        "none",
+        "flags",
+        "banners",
+        "both"
+      ],
+      "def": "flags"
+    },
+    "flagColor": {
+      "color": true,
+      "def": "#5fd3e6"
+    },
+    "roof": {
+      "set": [
+        "antennas",
+        "tank",
+        "garden",
+        "solar",
+        "beacon"
+      ],
+      "max": 5,
+      "def": [
+        "antennas",
+        "beacon"
+      ]
+    },
+    "land": {
+      "enum": [
+        "plaza",
+        "lawn",
+        "zen",
+        "tropical",
+        "formal",
+        "desert"
+      ],
+      "def": "plaza"
+    },
+    "balcony": {
+      "bool": true,
+      "def": true
+    }
+  },
+  "int": {
+    "floors": [
+      "lobby",
+      "mission"
+    ],
+    "theme": {
+      "wall": {
+        "enum": [
+          "slate",
+          "white",
+          "sage",
+          "navy",
+          "terracotta",
+          "damask",
+          "geo",
+          "leaf",
+          "oak",
+          "brick",
+          "marble",
+          "concrete"
+        ],
+        "def": "slate"
+      },
+      "floor": {
+        "enum": [
+          "stone",
+          "marble",
+          "oak",
+          "walnut",
+          "terrazzo",
+          "carpet",
+          "concrete",
+          "checker",
+          "tile"
+        ],
+        "def": "stone"
+      },
+      "mood": {
+        "enum": [
+          "warm",
+          "cool",
+          "sunset",
+          "neon",
+          "gallery",
+          "night"
+        ],
+        "def": "warm"
+      },
+      "furn": {
+        "enum": [
+          "standard",
+          "executive",
+          "industrial",
+          "scandi",
+          "gamer",
+          "retro"
+        ],
+        "def": "standard"
+      }
+    },
+    "items": {
+      "kinds": [
+        "plant",
+        "palm",
+        "bonsai",
+        "art",
+        "sculpture",
+        "trophy",
+        "aquarium",
+        "arcade",
+        "bookshelf",
+        "rug",
+        "sofa",
+        "lamp",
+        "piano",
+        "globe",
+        "vending",
+        "statue",
+        "petbed",
+        "cattree",
+        "perch",
+        "perchbig",
+        "dinopen",
+        "bowl",
+        "pond"
+      ],
+      "max": 48,
+      "maxPerFloor": 32,
+      "grid": 13,
+      "rot": 3
+    },
+    "lobby": {
+      "preset": {
+        "enum": [
+          "atrium",
+          "gallery",
+          "zen",
+          "neon",
+          "library",
+          "jungle"
+        ],
+        "def": "atrium"
+      },
+      "ceiling": {
+        "enum": [
+          "coffer",
+          "glass",
+          "beams",
+          "plain",
+          "dome"
+        ],
+        "def": "coffer"
+      },
+      "reception": {
+        "enum": [
+          "curve",
+          "block",
+          "wood",
+          "marble",
+          "neon"
+        ],
+        "def": "curve"
+      },
+      "centre": {
+        "enum": [
+          "fountain",
+          "statue",
+          "aquarium",
+          "screen",
+          "tree"
+        ],
+        "def": "fountain"
+      },
+      "seating": {
+        "enum": [
+          "lounge",
+          "chesterfield",
+          "modular",
+          "beanbag",
+          "benches"
+        ],
+        "def": "lounge"
+      },
+      "art": {
+        "enum": [
+          "abstract",
+          "posters",
+          "portraits",
+          "neon",
+          "none"
+        ],
+        "def": "abstract"
+      },
+      "rug": {
+        "enum": [
+          "none",
+          "persian",
+          "round",
+          "stripe",
+          "geo"
+        ],
+        "def": "round"
+      },
+      "signage": {
+        "enum": [
+          "wall",
+          "hanging",
+          "floor",
+          "neon"
+        ],
+        "def": "wall"
+      },
+      "ambience": {
+        "enum": [
+          "none",
+          "jazz",
+          "nature",
+          "lofi",
+          "fountain",
+          "city"
+        ],
+        "def": "fountain"
+      }
+    }
+  }
+}

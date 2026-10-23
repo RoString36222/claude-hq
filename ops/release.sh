@@ -18,7 +18,10 @@
 # Options (environment):
 #   ARENA_BRANCH=main       branch to release
 #   ARENA_SKIP_CI=1         deploy even if GitHub CI has not passed for the commit
-#   ARENA_CI_WAIT=300       seconds to wait for CI that is still running
+#   ARENA_CI_WAIT=900       seconds to wait for CI that is still running (the backend
+#                           job alone takes about 9 minutes), polled every ARENA_CI_POLL=20
+#   ARENA_GH_TOKEN=...      optional GitHub token (else GITHUB_TOKEN, else the gh CLI) to
+#                           read a failed job's log and name a known flaky check
 #   ARENA_SKIP_PULL=1       release the checkout as it is (used by the CI smoke test)
 #   ARENA_KEEP=3            releases to keep
 #   ARENA_BUILD_CACHE=3gb   Docker build cache kept between deploys (the rest is pruned)
@@ -35,7 +38,9 @@ HISTORY="$BACKEND/.releases"          # one line per release, newest last (git-i
 BRANCH="${ARENA_BRANCH:-main}"
 KEEP="${ARENA_KEEP:-3}"
 BUILD_CACHE="${ARENA_BUILD_CACHE:-3gb}"
-CI_WAIT="${ARENA_CI_WAIT:-300}"
+CI_WAIT="${ARENA_CI_WAIT:-900}"
+CI_POLL="${ARENA_CI_POLL:-20}"
+CI_BODY=""                            # the last check-runs answer (ci_passed)
 GH_REPO="${ARENA_GH_REPO:-RoString36222/claude-hq}"
 
 say()  { printf '\033[1;34m==>\033[0m %s\n' "$1"; }
@@ -88,6 +93,7 @@ ci_passed() {  # sha -> 0 passed, 1 failed, 2 GitHub unreachable, 3 still runnin
   local sha="$1" body
   body=$(curl -fsS --max-time 20 -H "Accept: application/vnd.github+json" \
     "https://api.github.com/repos/$GH_REPO/commits/$sha/check-runs?per_page=100") || return 2
+  CI_BODY="$body"
   python3 - "$body" <<'PY'
 import json, sys
 runs = json.loads(sys.argv[1]).get("check_runs", [])
@@ -104,6 +110,38 @@ for r in runs:
     print("    %-10s %s" % (r["name"], r.get("conclusion") or r.get("status")))
 sys.exit(1 if failed else 0)
 PY
+}
+
+# A failed check whose job log shows the known flaky UI smoke map-label check: say so,
+# so a red CI that is only that flake is easy to tell from a real failure. Best effort:
+# job logs need a token (ARENA_GH_TOKEN / GITHUB_TOKEN) or a signed-in gh CLI.
+FLAKY_MAP="cam=map drew no labels"
+flaky_note() {
+  local ids id log token="${ARENA_GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  ids=$(python3 - "$CI_BODY" <<'PY' 2>/dev/null || true
+import json, sys
+try: runs = json.loads(sys.argv[1]).get("check_runs", [])
+except Exception: runs = []
+for r in runs:
+    if r.get("status") == "completed" and r.get("conclusion") not in ("success", "skipped", "neutral") and r.get("id"):
+        print(r["id"])
+PY
+)
+  for id in $ids; do
+    log=""
+    if [[ -n "$token" ]]; then
+      log=$(curl -fsSL --max-time 30 -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/$GH_REPO/actions/jobs/$id/logs" 2>/dev/null || true)
+    elif command -v gh >/dev/null 2>&1; then
+      log=$(gh api "repos/$GH_REPO/actions/jobs/$id/logs" 2>/dev/null || true)
+    fi
+    if grep -qF "$FLAKY_MAP" <<<"$log"; then
+      echo "    note: job $id failed on the known flaky ui_smoke map-label check (\"$FLAKY_MAP\");"
+      echo "    re-run the failed job on GitHub, or release with ARENA_SKIP_CI=1 if that is the only failure"
+      return 0
+    fi
+  done
+  return 0
 }
 
 prune() {  # impl
@@ -146,19 +184,20 @@ cmd_deploy() {
   if [[ "${ARENA_SKIP_CI:-}" != 1 ]]; then
     say "Checking GitHub CI for ${sha:0:7}"
     # A deploy right after a merge lands while CI is still running: wait for it
-    # rather than fail (autodeploy would otherwise not retry for 5 minutes).
+    # rather than fail (autodeploy would otherwise not retry for 5 minutes). The
+    # backend job takes about 9 minutes, so the hold is 15 by default.
     local waited=0 rc
     while :; do
       rc=0; ci_passed "$sha" || rc=$?
       [[ "$rc" == 3 && "$waited" -lt "$CI_WAIT" ]] || break
       [[ "$waited" == 0 ]] && echo "    holding for CI, up to ${CI_WAIT}s"
-      sleep 20; waited=$((waited + 20))
+      sleep "$CI_POLL"; waited=$((waited + CI_POLL))
     done
     case "$rc" in
       0) ok "CI passed" ;;
       3) die "CI still running after ${CI_WAIT}s (ARENA_SKIP_CI=1 to override)" ;;
       2) die "could not reach GitHub to check CI (ARENA_SKIP_CI=1 to override)" ;;
-      *) die "CI failed for this commit (ARENA_SKIP_CI=1 to override)" ;;
+      *) flaky_note; die "CI failed for this commit (ARENA_SKIP_CI=1 to override)" ;;
     esac
   fi
 

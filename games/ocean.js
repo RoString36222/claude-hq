@@ -112,6 +112,41 @@ function nearestIsland(x, z){
   return {world: best.world, owner: best.owner, name: best.name, tier: best.tier, commons: best.commons, x: bx, z: bz,
           dist: bd, shore: bd - best.r, dock: dock, arrive: dock ? dd < ARRIVE.dock : bd - best.r < ARRIVE.coast};
 }
+/* Flying on (a helicopter or a plane out over the sea, toward another island; 3.11.1 steadied it): which island,
+   with hysteresis. Until 3.11.0 the City armed the nearest island the moment you were past the coast, whatever your
+   heading, and every arming said "Flying on to …" and built that City (a long frame); a plane taking off from the
+   Commons' offshore airfield was already past the coast, so a circuit round it armed, cancelled and re-armed one
+   island after another, and a City you flew half-way toward was swapped in under you. Now: armed only beyond r,
+   heading for the island (within FLY_ON.cone) for FLY_ON.dwell ms; cancelled when you turn back (d0 + FLY_ON.cancel)
+   or come home (inside r - FLY_ON.home), then that island rests FLY_ON.cool ms; announced at most once a FLY_ON.quiet;
+   swapped in only nearer it than here by FLY_ON.swap m and still heading its way.
+   S: the state kept between frames (flyOnState()); st: {x, z, vx?, vz?, yaw?, speed?} (local frame); o: {r (m from
+   here), now (ms), ok(world)?: may you go there}. -> {arm: S.go when just armed, say, cancel, swap} */
+var FLY_ON = {cone: 0.8, dwell: 2000, cancel: 600, home: 150, cool: 20000, quiet: 60000, swap: 150, shore: 1600};
+function flyOnState(){ return {go: null, cand: null, off: {}, said: {}}; }
+function flyOn(S, st, o){
+  var out = {arm: null, say: false, cancel: false, swap: false}, now = +o.now || 0, r = +o.r || 0;
+  var x = +st.x || 0, z = +st.z || 0, dh = Math.hypot(x, z), vx = +st.vx || 0, vz = +st.vz || 0, v = Math.hypot(vx, vz), fx = 0, fz = 0;
+  if(v > 3){ fx = vx/v; fz = vz/v; }
+  else if((+st.speed || 0) > 3 && isFinite(st.yaw)){ fx = Math.sin(st.yaw); fz = Math.cos(st.yaw); }
+  function toward(tx, tz){ var d = Math.hypot(tx - x, tz - z); return d > 0 ? (fx*(tx - x) + fz*(tz - z))/d : 1; }
+  var g = S.go;
+  if(g){
+    var dn = Math.hypot(x - g.x, z - g.z);
+    if(dn > g.d0 + FLY_ON.cancel || dh < r - FLY_ON.home){ S.off[g.world] = now + FLY_ON.cool; S.go = null; out.cancel = true; return out; }
+    out.swap = dn < dh - FLY_ON.swap && toward(g.x, g.z) > 0;
+    return out;
+  }
+  if(dh < r){ S.cand = null; return out; }
+  var q = nearestIsland(x, z);
+  if(!q || q.shore > FLY_ON.shore || (o.ok && !o.ok(q.world)) || (S.off[q.world] || 0) > now || toward(q.x, q.z) < FLY_ON.cone){ S.cand = null; return out; }
+  if(!S.cand || S.cand.world !== q.world){ S.cand = {world: q.world, since: now}; return out; }
+  if(now - S.cand.since < FLY_ON.dwell) return out;
+  S.cand = null;
+  S.go = out.arm = {world: q.world, x: q.x, z: q.z, d0: q.dist, name: q.name || "the island"};
+  out.say = !(S.said[q.world] > now - FLY_ON.quiet); S.said[q.world] = now;
+  return out;
+}
 // out: Float32Array (5 per island) or null (one is made); -> {n, out}
 function horizon(cx, cz, out){
   var L = ARCH.list, n = 0;
@@ -459,6 +494,7 @@ function mount(c, parent){
 
 HQV.ocean = {WAVES: WAVES, COAST_R: COAST_R, SKY_R: SKY_R, ARRIVE: ARRIVE, HORIZON: HORIZON, WAKE: WAKE,
   waveAt: waveAt, waveGlsl: waveGlsl, setArchipelago: setArchipelago, nearestIsland: nearestIsland, horizon: horizon,
+  FLY_ON: FLY_ON, flyOn: flyOn, flyOnState: flyOnState,
   inPoly: inPoly, landTest: landTest, coastOf: coastOf, docksOf: docksOf, seaOf: seaOf, riverOf: riverOf,
   material: function(){ return LIVE.mat; }, riverMaterial: function(){ return LIVE.river; }, RIVER_Y: RIVER_Y,
   wakePush: wakePush, wakeStrip: wakeStrip, mount: mount,

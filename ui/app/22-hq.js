@@ -19,12 +19,12 @@ function hqWebGL(){ try { return !!document.createElement("canvas").getContext("
 // before the City that wires them (games/hqcity3d.js). Navigation (3.1): the road router, the minimap, the
 // route's chevrons and the Go to panel / route banner, also before the City. City 3.2: the weather, and the
 // landmarks and amusement park (hqspectacle), also before the City.
-var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqlobby","hqcarlift","hqgaragemgr","hqbasementfx","hqbasement","hqbase","hqskate","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
-                  "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqshowroom","hqgarage", "hqdealer","hqcasinoui","hqcasino","hqcall","hqtravel","hqvoyage","hqships","hqbridges","hqairfield","hqair","hqaircraft","hqplane","hqairport3d","hqairbldg","hqairground","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcarpark","hqweather","hqspectacle","hqcity3d"];
+var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqpets","hqlobby","hqcarlift","hqgaragemgr","hqbasementfx","hqbasement","hqstyle","hqtower","hqroof","hqdecor","hqbase","hqskate","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
+                  "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqdrive","hqshowroom","hqgarage", "hqdealer","hqtuning","hqcasinoui","hqcasino","hqcall","hqtravel","hqvoyage","hqships","hqbridges","hqairfield","hqair","hqaircraft","hqplane","hqairport3d","hqairbldg","hqairground","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcarpark","hqweather","hqspectacle","hqcity3d"];
 // The 3D City's own files: if one fails, the classic City still works (games/hq3d.js falls back to it);
 // a Cities part that fails only takes its own feature out of the 3D City.
-var HQ_SCRIPTS_3D = {hqcarlift:1, hqgaragemgr:1, hqbasementfx:1, hqbasement:1, world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
-                     hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqshowroom:1, hqgarage:1, hqdealer:1, hqcasinoui:1, hqcasino:1, hqcall:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqairfield:1, hqair:1, hqaircraft:1, hqplane:1, hqairport3d:1, hqairbldg:1, hqairground:1, hqairbase:1,
+var HQ_SCRIPTS_3D = {hqpets:1, hqcarlift:1, hqgaragemgr:1, hqbasementfx:1, hqbasement:1, world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
+                     hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqdrive:1, hqshowroom:1, hqgarage:1, hqdealer:1, hqtuning:1, hqcasinoui:1, hqcasino:1, hqcall:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqairfield:1, hqair:1, hqaircraft:1, hqplane:1, hqairport3d:1, hqairbldg:1, hqairground:1, hqairbase:1,
                      hqnav:1, hqminimap:1, hqroutefx:1, hqnavui:1, hqrail:1, hqcarpark:1, hqweather:1, hqspectacle:1};
 // ?hqsmoke=1 (tools/ui_smoke.py, tools/hq_shots.py): HQ opens straight into the City with three synthetic HQs.
 var HQ_SMOKE = /[?&]hqsmoke=1(&|$)/.test(location.search);
@@ -55,13 +55,17 @@ function hqApi(){
     viewTitle: function(v){ return (typeof VIEW_TITLES!=="undefined" && VIEW_TITLES[v]) || null; },
     onFilter: function(p){ HQ3D.filter = p || null; hqRenderCrew(); },
     // your HQ level: the Arena's (sessions + games) when paired, else the season level the page shows
-    level: function(){ var a=(typeof progLevel==="function") && progLevel(); if(a) return a; var s=(STATE && STATE.season) || {}; return Math.max(1, (s.level|0) || 1); },
+    level: function(){ if(HQ_SMOKE){ var sl=/[?&]hqlevel=(\d+)/.exec(location.search); if(sl) return Math.max(1, Math.min(60, +sl[1])); }   // ?hqsmoke=1&hqlevel=30 (tools)
+      var a=(typeof progLevel==="function") && progLevel(); if(a) return a; var s=(STATE && STATE.season) || {}; return Math.max(1, (s.level|0) || 1); },
     look: function(){ return Object.assign({}, hqLook(), {decor: (window.HQ_MYCOS || {}).decor,
-                                                          crew: (typeof crewBanner==="function") ? crewBanner() : null}); },
+                                                          crew: (typeof crewBanner==="function") ? crewBanner() : null,
+                                                          style: typeof hqStyleDoc==="function" ? hqStyleDoc() : null}); },   // HQ Studio (ui/app/40-studio.js)
+    // HQ Studio: open the panel (the lobby's kiosk)
+    studio: function(tab){ if(typeof hqStudioOpen==="function") hqStudioOpen(tab); },
     startWorld: HQ_SMOKE ? "base" : (function(){ try { var w=localStorage.getItem("hq_world"); return w==="base"||w==="lobby"||w==="mission" ? w : "base"; } catch(e){ return "base"; } })(),
     // HQ 2.1 Arena City: outside is the street of open HQs unless you are private (HQ closed)
     outside: function(){ return HQ_SMOKE || hqCityOn() ? "city" : "base"; },
-    city: function(){ return HQ_CITY.list; },
+    city: function(){ return typeof hqStudioCity=="function" ? hqStudioCity(HQ_CITY.list) : HQ_CITY.list; },   // your entry wears your HQ Studio style
     cityReturn: function(){ return HQ_CITY.back; },
     visit: function(uid){ hqVisit(uid, {from:"city"}); },
     frame: function(){ return (window.HQ_MYCOS || {}).frame; },
@@ -79,6 +83,9 @@ function hqApi(){
     // every path from checked ids): GET -> the JSON body, POST -> {ok, status, j} (18-arena.js arenaPost)
     arenaGet: function(path){ return fetch(path, {cache:"no-store"}).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }); },
     arenaPost: function(path, body){ return arenaPost(path, body); },
+    // [pets 3.14] petting / fetch / a trick (affection), and E in your lobby: take a pet out or leave it (ui/app/40-pets.js)
+    petCare: function(id, kind){ if(typeof petsCare==="function") petsCare(id, kind); },
+    petToggle: function(id, out){ if(typeof petsToggleOut==="function") petsToggleOut(id, out); },
     toast: function(t){ if(typeof toast==="function") toast(t, "level"); }
   };
 }
@@ -139,6 +146,12 @@ if(HQ_SMOKE){
     {userId:"smoke-a", isYou:true, trainerName:"You", level:4, look:{}, crew:{working:2, needs:1, idle:0}},
     {userId:"smoke-b", trainerName:"Maya", level:7, look:{paint:"#3f8f5a"}, crew:{working:1, needs:0, idle:1}},
     {userId:"smoke-c", trainerName:"Ravi", level:2, look:{paint:"#b5473a"}, crew:{working:0, needs:0, idle:2}}];
+  // tools: &hqlevel=N grows every synthetic HQ; &hqstyles=1 puts one HQ Studio preset on each of six (games/hqstyle.js)
+  (function(){
+    var lv=/[?&]hqlevel=(\d+)/.exec(location.search), many=/[?&]hqstyles=1(&|$)/.test(location.search);
+    if(many) ["glass","deco","brutal","tokyo","stone","eco"].forEach(function(p, i){ if(i>=3) HQ_CITY.list.push({userId:"smoke-"+"defghi".charAt(i), trainerName:p, level:7, look:{}, crew:{working:i%3, needs:0, idle:1}}); HQ_CITY.list[i].stylePreset=p; });
+    HQ_CITY.list.forEach(function(h){ if(lv) h.level=Math.max(1, Math.min(60, +lv[1])); });
+  })();
 }
 function hqCityOn(){ return typeof HQ_REMOTE!=="undefined" && !!(HQ_REMOTE && HQ_REMOTE.open && HQ_REMOTE.me); }
 function hqCitySet(on){
@@ -311,6 +324,7 @@ function hqSync(){
     ["paint","accent","sign"].forEach(function(k){ if(l[k]) mine[k]=l[k]; });
     hqSaveLook(mine); hqRenderBuild(); hqPreview();
     hqCityOutside();
+    if(typeof hqStudioSync==="function") hqStudioSync(false);   // HQ Studio: the Arena's copy of your style
   }).catch(function(){});
 }
 function hqSave(){
@@ -376,7 +390,7 @@ function hqVisit(userId, opts){
       hqMount({
         name: base.name, remember:false, startWorld: fromCity ? "lobby" : "base", frame: base.frame,
         level: function(){ return Math.max(1, p.level|0); },
-        look: function(){ return Object.assign({}, p.look||{}, {decor: (p.cos||{}).decor}); },
+        look: function(){ return Object.assign({}, p.look||{}, {decor: (p.cos||{}).decor, style: p.style||null}); },   // their HQ Studio style (an Arena with "hqstyle")
         openSession: function(){ toast("That's "+who+"'s crew: their sessions stay private.","level"); },
         go: function(){ toast("That room is in "+who+"'s HQ. Go home first.","level"); },
         onFilter: function(){}, onWorld: base.onWorld
@@ -519,7 +533,21 @@ function hqNetSend(){
   // "vehicles": the catalogue car or bike you drive (v) and its paint (vp), so others see the real one
   var veh = (a===5 || a===6) && HQ3D.inst.vehicle && hqNetCan("vehicles") ? HQ3D.inst.vehicle() : null;
   if(veh && /^[a-z0-9-]{1,48}$/.test(veh.v)){ msg.v=veh.v; msg.vp=Math.max(0, Math.min(63, veh.vp|0)); }
-  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp].join(","), now=Date.now();
+  // "tuning" (HQ 3.13, games/hqtuning.js): the car or motorbike's tune as a short code (enum digits, colours, the plate)
+  var vt = (a===5 || a===6) && hqNetCan("tuning") && HQ3D.inst.tuneCode ? HQ3D.inst.tuneCode() : null;
+  if(typeof vt==="string" && /^[0-9][0-9A-Za-z_-]{9,32}$/.test(vt)) msg.vt=vt;
+  // "boombox": the Music room song you carry (ui/app/39-boombox.js), so people near you hear it
+  var bb = hqNetCan("boombox") && typeof boomNet==="function" ? boomNet() : null;
+  if(bb){ msg.bb=bb.bb; msg.bt=bb.bt; msg.bn=bb.bn; }
+  // "convoy" (HQ 3.12, games/hqdrive.js): whom you invite (ci), whom you follow (cv), where you lead (cg, cm); user ids and a point only
+  var cv = hqNetCan("convoy") && HQ3D.inst.convoyNet ? HQ3D.inst.convoyNet() : null;
+  if(cv){ var UR=/^[A-Za-z0-9_-]{1,64}$/;
+    if(UR.test(cv.ci||"")) msg.ci=cv.ci; if(UR.test(cv.cv||"")) msg.cv=cv.cv;
+    if(Array.isArray(cv.cg) && cv.cg.length===2 && isFinite(cv.cg[0]) && isFinite(cv.cg[1])) msg.cg=[Math.max(-102400, Math.min(102400, Math.round(cv.cg[0]))), Math.max(-102400, Math.min(102400, Math.round(cv.cg[1])))]; }
+  // [pets 3.14] "pets": the pets out with you (pt: [species, variant, acc, stage, name] x2), drawn following you
+  var pt = hqNetCan("pets") && HQ3D.inst.petsNet ? HQ3D.inst.petsNet() : null;
+  if(Array.isArray(pt) && pt.length) msg.pt=pt.slice(0,2);
+  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0)].join(","), now=Date.now();
   if(key===HQNET.last && now-HQNET.sentAt<2000) return;
   HQNET.last=key; HQNET.sentAt=now;
   try { ws.send(JSON.stringify(msg)); } catch(e){}
@@ -541,6 +569,13 @@ function hqRenderHere(){
     d.title="Open their trainer card"; d.addEventListener("click", function(){ if(typeof tcardOpen==="function") tcardOpen(p.u); });
     if(typeof cosFrameApply==="function") cosFrameApply(d, p.f);
     box.appendChild(d);
+    // HQ 3.12: invite someone near you in the City to a convoy (games/hqdrive.js; only where the Arena lists "convoy")
+    if(HQ3D.inst && HQ3D.inst.convoyCan && HQ3D.inst.convoyCan(p.u)){
+      var cb=document.createElement("button"); cb.type="button"; cb.className="hq3d-person hq3d-convoy-btn"; cb.textContent="\uD83D\uDE97 Convoy";
+      cb.title="Invite "+(p.n||"them")+" to drive in formation with you"; cb.setAttribute("aria-label", "Invite "+(p.n||"Visitor")+" to a convoy");
+      cb.addEventListener("click", function(){ if(HQ3D.inst && HQ3D.inst.convoyInvite) HQ3D.inst.convoyInvite(p.u); });
+      box.appendChild(cb);
+    }
   });
 }
 

@@ -18,6 +18,7 @@ mod db;
 mod fps;
 mod strike;
 mod hq;
+mod hqstyle;
 mod kart;
 mod loot;
 mod mapkey;
@@ -52,6 +53,8 @@ mod valley;
 mod vehicles;
 mod casino; // HQ 3.7
 mod garages; // [basement 3.4]
+mod tuning; // HQ 3.13 the Tuning shop
+mod pets; // HQ 3.14
 mod weeks;
 mod world;
 // The world generator (HQ 3.0), served by world.rs. Parts (queries the City
@@ -1022,6 +1025,8 @@ async fn serve() -> anyhow::Result<()> {
         .merge(vehicles::routes())
         .merge(casino::routes())
         .merge(garages::routes()) // [basement 3.4]
+        .merge(tuning::routes()) // HQ 3.13
+        .merge(pets::routes()) // HQ 3.14
         .layer(middleware::from_fn_with_state(state.clone(), require_device));
 
     let public = Router::new()

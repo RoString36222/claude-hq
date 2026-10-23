@@ -131,6 +131,20 @@ struct Person {
     /// id (`v`, one the Arena knows) and paint index (`vp`), so others see the real car
     /// or bike. None whenever a is not 5 or 6, or the page sent no `v`.
     veh: Option<(String, u8)>,
+    /// Its tuning (the "tuning" capability, HQ 3.13): tuning.rs's short code (`vt`), kept only while driving
+    /// (a = 5 / 6, a catalogue vehicle or a starter) and only when tuning::parse_code accepts it. Per frame.
+    tune: Option<String>,
+    /// A boombox on their shoulder (the "boombox" capability, HQ 3.11): the YouTube video it plays (`bb`, an
+    /// 11-character id), when that song started on the Arena's clock (`bt`, epoch ms: a listener works out where it
+    /// is from that, so the value holds still while it plays and the street is not re-sent every frame) and its title
+    /// (`bn`, at most BB_TITLE_MAX characters). Per frame: a frame without `bb` puts it away.
+    boombox: Option<(String, i64, String)>,
+    /// Convoys (the "convoy" capability, HQ 3.12): whom they invite (`ci`, a user id), whom they follow (`cv`, a user
+    /// id) and, leading one, where they are headed (`cg`, [x, z] in cm). Per frame: a frame without them clears them.
+    convoy: Convoy,
+    /// Their pets out with them (the "pets" capability, HQ 3.14): up to PETS_MAX [species, variant, acc, stage, name]
+    /// (backend/src/pets.rs), drawn following them by everyone else's page. Per frame: a frame without `pt` has none.
+    pets: Option<Vec<PetTag>>,
     /// (tokens, when) -- Python's `[POS_BURST, t]` list.
     bucket: (f64, f64),
 }
@@ -168,6 +182,10 @@ impl Hq {
                 skate: None,
                 alt: None,
                 veh: None,
+                tune: None,
+                boombox: None,
+                convoy: Convoy::default(),
+                pets: None,
                 bucket: (POS_BURST, t),
             });
         }
@@ -245,6 +263,33 @@ impl Hq {
             }
             _ => None,
         };
+        // [3.13] its tuning, only while driving or riding: a code tuning.rs would not write drops the whole frame
+        let tune = match (a.as_f64(), msg.get("vt")) {
+            (_, None) | (_, Some(Value::Null)) => None,
+            (Some(f), Some(v)) if f == 5.0 || f == 6.0 => match v.as_str().and_then(crate::tuning::parse_code) {
+                Some(_) => v.as_str().map(str::to_string),
+                None => return false,
+            },
+            _ => None,
+        };
+        // A boombox: the video, its start and its title together, or the whole frame is dropped.
+        let boombox = match msg.get("bb") {
+            None | Some(Value::Null) => None,
+            Some(v) => {
+                let id = v.as_str().filter(|s| s.len() == 11 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'));
+                let bt = num_in(msg.get("bt"), BB_T_MIN, BB_T_MAX);
+                let bn = match msg.get("bn") {
+                    None | Some(Value::Null) => Some(String::new()),
+                    Some(n) => n.as_str().map(|n| n.chars().filter(|c| !c.is_control()).take(BB_TITLE_MAX).collect::<String>()),
+                };
+                let (Some(id), Some(bt), Some(bn)) = (id, bt, bn) else { return false };
+                Some((id.to_string(), bt as i64, bn))
+            }
+        };
+        // A convoy: each of ci / cv a user id (never your own), cg two numbers on the map; a bad one drops the frame.
+        let Some(convoy) = read_convoy(uid, msg) else { return false };
+        // Pets: a bad species, variant, accessory, stage or name drops the whole frame.
+        let Some(pets) = read_pets(msg.get("pt")) else { return false };
         p.w = w.to_string();
         p.x = super::py_trunc(x); // Python's int(x): toward zero
         p.z = super::py_trunc(z);
@@ -253,6 +298,10 @@ impl Hq {
         p.skate = skate;
         p.alt = alt;
         p.veh = veh;
+        p.tune = tune;
+        p.boombox = boombox;
+        p.convoy = convoy;
+        p.pets = pets;
         self.dirty = true;
         true
     }
@@ -314,6 +363,30 @@ impl Hq {
                         m.insert("v".into(), json!(v));
                         m.insert("vp".into(), json!(vp));
                     }
+                    // only while driving a tuned vehicle ("tuning" capability, HQ 3.13)
+                    if let Some(vt) = &p.tune {
+                        m.insert("vt".into(), json!(vt));
+                    }
+                    // only while their boombox plays ("boombox" capability)
+                    if let Some((bb, bt, bn)) = &p.boombox {
+                        m.insert("bb".into(), json!(bb));
+                        m.insert("bt".into(), json!(bt));
+                        m.insert("bn".into(), json!(bn));
+                    }
+                    // only while they invite, follow or lead with a route ("convoy" capability)
+                    if let Some(ci) = &p.convoy.ci {
+                        m.insert("ci".into(), json!(ci));
+                    }
+                    if let Some(cv) = &p.convoy.cv {
+                        m.insert("cv".into(), json!(cv));
+                    }
+                    if let Some((gx, gz)) = p.convoy.cg {
+                        m.insert("cg".into(), json!([gx, gz]));
+                    }
+                    // only while they have pets out ("pets" capability)
+                    if let Some(pt) = &p.pets {
+                        m.insert("pt".into(), json!(pt.iter().map(|t| json!([t.0, t.1, t.2, t.3, t.4])).collect::<Vec<_>>()));
+                    }
                     Value::Object(m)
                 })
                 .collect(),
@@ -345,6 +418,76 @@ const SKATE_K_MAX: u8 = 15;
 const SKATE_Y_MAX: u8 = 60;
 /// A catalogue vehicle's paint index tops out here.
 const VEH_PAINT_MAX: u8 = 63;
+/// A boombox song's start (epoch ms): any time from 2020 to 2096.
+const BB_T_MIN: f64 = 1_577_836_800_000.0;
+const BB_T_MAX: f64 = 4_000_000_000_000.0;
+const BB_TITLE_MAX: usize = 80;
+
+/// A convoy's presence fields (HQ 3.12). All three absent is no convoy.
+#[derive(Default, Clone, Debug, PartialEq)]
+struct Convoy {
+    ci: Option<String>,
+    cv: Option<String>,
+    cg: Option<(i64, i64)>,
+}
+
+/// A user id as the Arena makes them (portraits.rs `is_user_id`, and `_` for the test rooms' ids): 1..=64 ASCII
+/// letters, digits, `-` or `_`.
+fn uid_ok(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 64 && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+}
+
+/// `ci`, `cv` and `cg` from a pos frame: Some(the convoy) (empty when none is sent), None to drop the whole frame
+/// (a malformed id, your own id, a `cg` that is not two numbers on the map).
+fn read_convoy(me: &str, msg: &Value) -> Option<Convoy> {
+    let id = |k: &str| -> Option<Option<String>> {
+        match msg.get(k) {
+            None | Some(Value::Null) => Some(None),
+            Some(v) => v.as_str().filter(|s| uid_ok(s) && *s != me).map(|s| Some(s.to_string())),
+        }
+    };
+    let cg = match msg.get("cg") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let a = v.as_array().filter(|a| a.len() == 2)?;
+            let (gx, gz) = (num_in(a.first(), -XZ_MAX_CM, XZ_MAX_CM)?, num_in(a.get(1), -XZ_MAX_CM, XZ_MAX_CM)?);
+            Some((super::py_trunc(gx), super::py_trunc(gz)))
+        }
+    };
+    Some(Convoy { ci: id("ci")?, cv: id("cv")?, cg })
+}
+
+/// A pet in presence: species index, variant, accessory bits, growth stage, name.
+type PetTag = (u8, u8, u8, u8, String);
+/// The most pets out with one person.
+const PETS_MAX: usize = 2;
+
+/// `pt` from a pos frame: Some(None) when absent, Some(the pets) when good, None to drop the whole frame (not an
+/// array of at most PETS_MAX, a species out of the roster, a variant / acc / stage out of range, a bad name).
+fn read_pets(v: Option<&Value>) -> Option<Option<Vec<PetTag>>> {
+    let a = match v {
+        None | Some(Value::Null) => return Some(None),
+        Some(v) => v.as_array()?,
+    };
+    if a.len() > PETS_MAX {
+        return None;
+    }
+    if a.is_empty() {
+        return Some(None);
+    }
+    let small = |x: Option<&Value>, max: i64| x.and_then(Value::as_i64).filter(|n| (0..=max).contains(n)).map(|n| n as u8);
+    let mut out = Vec::with_capacity(a.len());
+    for t in a {
+        let t = t.as_array().filter(|t| t.len() == 5)?;
+        let s = small(t.first(), crate::pets::SPECIES.len() as i64 - 1)?;
+        let var = small(t.get(1), crate::pets::VARIANTS - 1)?;
+        let acc = small(t.get(2), crate::pets::ACC_MAX)?;
+        let g = small(t.get(3), 2)?;
+        let n = crate::pets::clean_name(t.get(4)?.as_str()?)?;
+        out.push((s, var, acc, g, n));
+    }
+    Some(Some(out))
+}
 
 /// A whole number in 0..=max, or 0 when absent; None (drop the frame) for
 /// anything else -- a fraction, a bool, a string, out of range.
@@ -542,6 +685,99 @@ mod tests {
         let first = &p.listing()[0];
         assert_eq!((&first["w"], &first["x"], &first["z"], &first["a"]),
                    (&json!("mission"), &json!(100), &json!(-200), &json!(2)));
+    }
+
+    #[test]
+    fn a_boombox_rides_in_the_listing_while_it_plays() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        let bt = 1_792_600_000_000_i64;
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1, "bb": "dQw4w9WgXcQ", "bt": bt, "bn": "A song\u{7} — someone"}), 0.1));
+        let l = p.listing();
+        assert_eq!((l[0]["bb"].clone(), l[0]["bt"].clone(), l[0]["bn"].clone()), (json!("dQw4w9WgXcQ"), json!(bt), json!("A song — someone")));
+        // a frame without one puts it away
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1}), 0.2));
+        assert!(p.listing()[0].get("bb").is_none());
+        // a bad id, a missing or out-of-range start, a non-string title: the whole frame is dropped
+        for bad in [json!({"bb": "short", "bt": bt}), json!({"bb": "dQw4w9WgXc/", "bt": bt}), json!({"bb": 7, "bt": bt}),
+                    json!({"bb": "dQw4w9WgXcQ"}), json!({"bb": "dQw4w9WgXcQ", "bt": 5}), json!({"bb": "dQw4w9WgXcQ", "bt": bt, "bn": 3})] {
+            let mut m = json!({"w": "city3d", "x": 900, "z": 0, "r": 0, "a": 0});
+            m.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+            assert!(!p.pos("u", &m, 2.0), "{bad}");
+        }
+        assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
+        // a long title is cut short
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "bb": "dQw4w9WgXcQ", "bt": bt, "bn": "x".repeat(300)}), 3.0));
+        assert_eq!(p.listing()[0]["bn"].as_str().unwrap().len(), 80);
+    }
+
+    #[test]
+    fn a_convoy_rides_in_the_listing_while_it_is_sent() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 5, "ci": "abc-1", "cv": "lead_2", "cg": [12345.7, -500]}), 0.1));
+        let l = p.listing();
+        assert_eq!((l[0]["ci"].clone(), l[0]["cv"].clone(), l[0]["cg"].clone()), (json!("abc-1"), json!("lead_2"), json!([12345, -500])));
+        // a frame without them clears them, and an older page's listing is unchanged
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 5}), 0.2));
+        for k in ["ci", "cv", "cg"] {
+            assert!(p.listing()[0].get(k).is_none(), "{k}");
+        }
+        // any one alone is fine
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1, "cv": "x"}), 0.3));
+        assert_eq!(p.listing()[0]["cv"], json!("x"));
+        // a bad id, your own id, a bad point: the whole frame is dropped
+        for bad in [json!({"ci": ""}), json!({"ci": "a b"}), json!({"cv": 7}), json!({"cv": "x".repeat(65)}), json!({"ci": "u"}), json!({"cv": "u"}),
+                    json!({"cg": [1]}), json!({"cg": [1, 2, 3]}), json!({"cg": "1,2"}), json!({"cg": [0, 1e9]}), json!({"cg": [true, 0]})] {
+            let mut m = json!({"w": "city3d", "x": 900, "z": 0, "r": 0, "a": 5});
+            m.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+            assert!(!p.pos("u", &m, 2.0), "{bad}");
+        }
+        assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
+        assert_eq!(p.listing()[0]["cv"], json!("x"), "and kept the convoy as it was");
+    }
+
+    #[test]
+    fn a_tuning_code_rides_in_the_listing_only_while_driving() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        let vt = "325333312ab9fffffffc9a227HQ_42-X";
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 5, "v": "bmw-m3-competition", "vp": 2, "vt": vt}), 0.1));
+        assert_eq!(p.listing()[0]["vt"], json!(vt));
+        // a starter (no `v`) keeps its tuning too
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 6, "vt": "0001000---"}), 0.2));
+        assert_eq!(p.listing()[0]["vt"], json!("0001000---"));
+        // on foot: none, whatever the page sends; a frame without it clears it
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 1, "vt": vt}), 0.3));
+        assert!(p.listing()[0].get("vt").is_none());
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 5, "vt": vt}), 0.4));
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 5}), 0.5));
+        assert!(p.listing()[0].get("vt").is_none());
+        // a code the Arena would not write drops the whole frame
+        for bad in [json!("x"), json!(7), json!("9001000---"), json!("0001000---FUCK"), json!("0001000---ABCDEFGHIJ")] {
+            assert!(!p.pos("u", &json!({"w": "city", "x": 900, "z": 0, "r": 0, "a": 5, "vt": bad}), 2.0), "{bad}");
+        }
+        assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
+    }
+
+    #[test]
+    fn pets_ride_in_the_listing_while_they_are_out() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1, "pt": [[11, 2, 5, 1, " Frost "], [0, 0, 1, 0, "Mochi"]]}), 0.1));
+        assert_eq!(p.listing()[0]["pt"], json!([[11, 2, 5, 1, "Frost"], [0, 0, 1, 0, "Mochi"]]));
+        // a frame without them (or with none) has none
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1}), 0.2));
+        assert!(p.listing()[0].get("pt").is_none());
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1, "pt": []}), 0.3));
+        assert!(p.listing()[0].get("pt").is_none());
+        // three pets, an unknown species, a bad variant / acc / stage, a rude or long name, a short tuple: dropped whole
+        for bad in [json!([[0, 0, 0, 0, "A"], [0, 0, 0, 0, "B"], [0, 0, 0, 0, "C"]]), json!([[22, 0, 0, 0, "A"]]), json!([[0, 4, 0, 0, "A"]]),
+                    json!([[0, 0, 32, 0, "A"]]), json!([[0, 0, 0, 3, "A"]]), json!([[0, 0, 0, 0, "Sh1t"]]), json!([[0, 0, 0, 0, "x".repeat(13)]]),
+                    json!([[0, 0, 0, 0]]), json!([[0, 0, 0, 0, 7]]), json!("dog"), json!([[-1, 0, 0, 0, "A"]])] {
+            assert!(!p.pos("u", &json!({"w": "city3d", "x": 900, "z": 0, "r": 0, "a": 0, "pt": bad}), 2.0), "{bad}");
+        }
+        assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
     }
 
     #[test]

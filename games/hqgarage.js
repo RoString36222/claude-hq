@@ -3,13 +3,15 @@
  * A thin client over the dashboard's proxies to the Arena, with a cache. The dealership
  * (games/hqdealer.js) and calling your vehicle (games/hqcall.js) code against exactly this:
  *
- *   HQV.hqGarage.mine()                  -> Promise<[{id, vehicle_id, paint, parked: {world, x, z, yaw} | null}]>
+ *   HQV.hqGarage.mine()                  -> Promise<[{id, vehicle_id, paint, parked: {world, x, z, yaw} | null, tuning}]>
+ *                                           (tuning: the Tuning shop's object, backend/src/tuning.rs, or null when stock; 3.13)
  *                                           (cached; mine(true) refetches). parked null: in its city's garage
  *                                           (the normal state); set only for a vehicle out on a trip.
  *   HQV.hqGarage.buy(vehicleId, paint)   -> Promise<{id} | {error, status}>   (claim: everything is free for now)
  *   HQV.hqGarage.park(id, {world, x, z, yaw})  -> Promise   where it stands now
  *   HQV.hqGarage.park(id, null)          -> Promise   back in its garage
  *   HQV.hqGarage.cached()                -> the last list, or null
+ *   HQV.hqGarage.setTuning(id, tuning, paint)  -> the cache after a save at the Tuning shop (games/hqtuning.js), notified
  *   HQV.hqGarage.onChange(fn)            -> unsubscribe fn; fn(list) after every change
  *
  * Egress (through GET /api/arena/vehicles/mine, POST /api/arena/vehicles/buy and
@@ -47,7 +49,8 @@
     }).map(function(v){
       var p = v.parked;
       return {id: v.id, vehicle_id: v.vehicle_id, paint: Math.max(0, v.paint | 0),
-              parked: p && typeof p.world === "string" && isFinite(p.x) && isFinite(p.z) ? {world: p.world, x: +p.x, z: +p.z, yaw: +p.yaw || 0} : null};
+              parked: p && typeof p.world === "string" && isFinite(p.x) && isFinite(p.z) ? {world: p.world, x: +p.x, z: +p.z, yaw: +p.yaw || 0} : null,
+              tuning: v.tuning && typeof v.tuning === "object" && !Array.isArray(v.tuning) ? v.tuning : null};
     });
   }
   function changed(){
@@ -94,6 +97,12 @@
   HQV.hqGarage = {
     mine: mine, buy: buy, park: park,
     cached: function(){ return list; },
+    setTuning: function(id, tuning, paint){
+      var hit = false;
+      (list || []).forEach(function(v){ if(v.id === id){ v.tuning = tuning && typeof tuning === "object" ? tuning : null; if(paint != null) v.paint = Math.max(0, paint | 0); hit = true; } });
+      if(hit) changed();
+      return hit;
+    },
     onChange: function(f){ if(typeof f !== "function") return function(){}; subs.push(f); return function(){ subs = subs.filter(function(g){ return g !== f; }); }; },
     // tests: a fake fetch, and a clean slate
     _io: io, _reset: function(){ list = null; inflight = null; subs = []; }

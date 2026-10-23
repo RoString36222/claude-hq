@@ -259,7 +259,8 @@ function mount(el, api){
     var at = (q.get("at") || "").split(",").map(Number);
     return {on: true, perf: perfOn, cam: q.get("cam"), night: q.get("night") === "1", ride: q.get("ride"), span: +q.get("span") || null,
             calm: q.get("calm") === "1", yaw: q.get("yaw") != null && isFinite(+q.get("yaw")) && q.get("yaw") !== "" ? +q.get("yaw") : null, at: at.length === 2 && isFinite(at[0]) && isFinite(at[1]) ? {x: at[0], z: at[1]} : null,
-            frames: 0, applied: false, done: false, peer: null};
+            frames: 0, applied: false, done: false, peer: null,
+            wx: /^(clear|cloudy|rain|storm|snow|fog)$/.test(q.get("wx") || "") ? q.get("wx") : null};   // [3.12] &wx=rain: the drive's weather
   }
 
   /* ---------- helpers ---------- */
@@ -437,11 +438,13 @@ function mount(el, api){
   }
   function vehicle(kind, c1, c2, plate){
     var bp = VBP[kind] || (VBP[kind] = compile(BUILD[kind]()));
-    var g = bp.clone(true), M = vmats(c1, c2 == null ? 0xf2f2f2 : c2, plate), on = null;
+    var g = bp.clone(true), M = vmats(c1, c2 == null ? 0xf2f2f2 : c2, plate), on = null, lit = false;
     g.traverse(function(o){ if(o.isMesh) o.material = M[o.userData.mk] || M.dark; });
     function get(n){ return g.getObjectByName(n); }
     return {g: g, M: M, get: get, seat: get("a-seat"), grips: [get("a-grip-l"), get("a-grip-r")], feet: [get("a-foot-l"), get("a-foot-r")],
-            brake: function(b){ b = !!b; if(b === on) return; on = b; M.tail.emissiveIntensity = b ? 3.4 : 0.9; }};
+            brake: function(b){ b = !!b; if(b === on) return; on = b; M.tail.emissiveIntensity = b ? 3.4 : lit ? 2 : 0.9; },
+            // [3.12] headlights on (games/hqdrive.js): brighter lamps and tails; a cracked one glows dimmer
+            lights: function(l, cracked){ lit = !!l; M.head.emissiveIntensity = (lit ? 3.2 : 1.4)*(cracked ? 0.55 : 1); if(!on) M.tail.emissiveIntensity = lit ? 2 : 0.9; }};
   }
 
   // A bicycle: forward is +z, wheels on the ground, sized for those legs (a small diamond frame).
@@ -598,7 +601,7 @@ function mount(el, api){
   function carModel(body, accent, plate){
     var V = vehicle("car", carPaint(body), accent, plate);
     return {g: V.g, wheels: [0, 1, 2, 3].map(function(i){ return V.get("wheel-" + i); }), steer: [V.get("steer-l"), V.get("steer-r")], spin: V.get("spin"),
-            R: CAR_WR, seat: V.seat, grips: V.grips, feet: V.feet, lean: -0.08, hats: false, riderK: 0.8, brake: V.brake};
+            R: CAR_WR, seat: V.seat, grips: V.grips, feet: V.feet, lean: -0.08, hats: false, riderK: 0.8, brake: V.brake, lights: V.lights, M: V.M};   // M: [3.13] its materials, for a tune
   }
   // a dark paint is lifted a little, so a navy or black car still reads on a night street
   function carPaint(hex){
@@ -695,7 +698,7 @@ function mount(el, api){
   function motoModel(color, c2, plate){
     var V = vehicle("moto", color, c2, plate);
     return {g: V.g, wheels: [V.get("wheel-0"), V.get("wheel-1")], steer: V.get("steer"), R: MOTO_WR*MOTO_S,
-            seat: V.seat, grips: V.grips, feet: V.feet, lean: 0.45, brake: V.brake};
+            seat: V.seat, grips: V.grips, feet: V.feet, lean: 0.45, brake: V.brake, lights: V.lights, M: V.M};   // M: [3.13] its materials, for a tune
   }
   function motoRoll(M, d, st){
     if(!M) return;
@@ -734,7 +737,7 @@ function mount(el, api){
     board: function(col){ return boardModel(col); },
     rng: rng, hashStr: hashStr, short: short, rr: rr, crewState: crewState,
     character: function(key, cb){ makeCharacter(key, cb); }, anim: function(ch, n, sp){ setAnim(ch, n, sp); },
-    avatar: function(){ return avatar ? {x: avatar.x, z: avatar.z} : null; },
+    avatar: function(){ return avatar ? {x: avatar.x, z: avatar.z, hy: avatar.hy} : null; },   // [hq revamp] hy: your feet's height (a roof deck)
     // the vehicle catalogue (games/vehicles/catalogue.json) and the Showroom's pick, for the garage (games/hqcarpark.js)
     catalogue: function(){ return CAT; },
     showroomPick: function(){ return showProp ? {vehicle_id: showProp.kind, paint: showProp.color} : null; },
@@ -759,10 +762,12 @@ function mount(el, api){
     // voyages (games/hqcity3d.js, games/hqvoyage.js): the next city built while you sail, then moved into with no fade
     prebuildCity: function(world){ return inst.prebuildCity ? inst.prebuildCity(world) : false; },
     cityBuilt: function(world){ return !!(nextCity && nextCity.world === world && nextCity.ready); },
+    cityFailed: function(world){ return !!(nextFailed && nextFailed[world]); },
     swapCity: function(world, keep){ return inst.swapCity ? inst.swapCity(world, keep) : false; },
     night: function(){ return isNight(); },
     // the dealership (games/hqdealer.js via games/hqcity3d.js): its door or forecourt opens the dealer panel
     dealer: {open: function(){ return dealerOpen(); }},
+    tuning: {open: function(){ return tuneOpen(); }},   // [3.13] the Tuning shop (games/hqtuning.js via games/hqcity3d.js)
     held: function(code){ return !!keys[code]; },
     // compile a group's shaders now, hidden parts too (a level of detail switched on later costs no frame then)
     prewarm: function(root){
@@ -828,7 +833,7 @@ function mount(el, api){
     var floor = new THREE.Mesh(new THREE.PlaneGeometry(2*ROOM, 2*ROOM), new THREE.MeshStandardMaterial({map: fl.t, roughness: 0.55, metalness: 0.15}));
     floor.rotation.x = -PI/2; floor.receiveShadow = true; floor.userData.floor = true; scene.add(floor); inst.floor = floor;
     // two walls (the room is cut away on the camera's side), trim, a light strip at the base
-    var wallM = mat(0x2a3d4f, {roughness: 0.85}), trim = mat(0x34495d);
+    var wallM = mat(0x2a3d4f, {roughness: 0.85}), trim = mat(0x34495d); inst.wallM = wallM;   // [hq revamp] HQ Studio themes it
     box(2*ROOM, 8, 0.5, wallM, 0, 4, -ROOM - 0.25); box(0.5, 8, 2*ROOM, wallM, -ROOM - 0.25, 4, 0);
     box(2*ROOM, 0.35, 0.8, trim, 0, 8.05, -ROOM - 0.1); box(0.8, 0.35, 2*ROOM, trim, -ROOM - 0.1, 8.05, 0);
     var base = emis(0x0d1a24, COL.cyan, 1.2);
@@ -1028,9 +1033,156 @@ function mount(el, api){
     var R = ch._hd; if(!R.bone || !yaw) return;
     R.bone.rotation.y += yaw; R.off = yaw;
   }
+  /* ---------- a boombox on the shoulder (HQ 3.11) ----------
+     While someone's Music room song plays (yours: inst.setBoombox; anyone else's: presence `bb`), a big cartoon
+     boombox rides on their right shoulder, the right arm under it and up its outer side, the hand gripping it from
+     the outside (BOOM_GRIP, in the torso bone's frame): toon-shaded with a black outline, the whole
+     box squashing on the beat, the woofers pumping, and fat outlined notes popping out and wobbling up into the air.
+     Built in metres and hung on the torso bone (so it sways with them), scaled back out of the character's scale. */
+  var BOOM_AT = [-0.215, 0.3, -0.02], BOOM_GRIP = [-0.37, 0.24, 0], BOOM_SIZE = 1.6, BOOM_NOTES = 6;
+  var boomKit = null, boomV = null, boomMe = false;
+  function boomboxModel(){
+    if(!boomKit){
+      var toon = function(c, e){ var m = new THREE.MeshToonMaterial({color: c}); if(e){ m.emissive = new THREE.Color(e); m.emissiveIntensity = 0.5; } return m; };
+      var note = function(ch, fill){ return canvasTex(128, 128, function(g){
+        g.font = "900 104px system-ui, sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.lineJoin = "round";
+        g.lineWidth = 14; g.strokeStyle = "#1a1423"; g.strokeText(ch, 64, 68); g.fillStyle = fill; g.fillText(ch, 64, 68);
+        g.fillStyle = "rgba(255,255,255,.55)"; g.beginPath(); g.ellipse(48, 84, 9, 6, -0.5, 0, 7); g.fill();
+      }).t; };
+      boomKit = {body: toon(0xff4d6d), trim: toon(0xffd23f), cone: toon(0x1d1b26), shine: toon(0xffffff, 0xffffff),
+                 deck: toon(0x2ec4b6, 0x2ec4b6), reel: toon(0xf7f7f7), keys: [toon(0x4cc9f0), toon(0x80ed99), toon(0xf72585), toon(0xffd23f)],
+                 line: new THREE.MeshBasicMaterial({color: 0x1a1423, side: THREE.BackSide}),
+                 notes: [note("♪", "#ffd23f"), note("♫", "#4cc9f0"), note("♬", "#f72585"), note("♪", "#80ed99"), note("♫", "#ff9f1c"), note("♬", "#c77dff")]};
+    }
+    var K = boomKit, g = new THREE.Group(), bob = new THREE.Group(), front = new THREE.Group(), cones = [];
+    g.add(bob); bob.add(front);
+    // a fat black outline: the same shape, a little bigger, drawn inside out
+    function inked(m){ var o = new THREE.Mesh(m.geometry, K.line); o.position.copy(m.position); o.rotation.copy(m.rotation); o.scale.setScalar(1.07); m.parent.add(o); return m; }
+    // a pill of a body (long axis along x, speakers on the +z face): a box with round ends
+    inked(box(0.62, 0.34, 0.2, K.body, 0, 0, 0, front, true));
+    [-0.31, 0.31].forEach(function(x){ var e = cyl(0.17, 0.17, 0.2, K.body, x, 0, 0, front, 24); e.rotation.x = PI/2; inked(e); });
+    box(0.66, 0.05, 0.215, K.trim, 0, -0.1, 0, front, true);
+    // two big woofers in yellow rims, each with a cartoon shine
+    [-0.3, 0.3].forEach(function(x){
+      var rim = cyl(0.15, 0.15, 0.03, K.trim, x, 0.01, 0.1, front, 28); rim.rotation.x = PI/2;
+      var c = new THREE.Group(); c.position.set(x, 0.01, 0.112); front.add(c);
+      var cn = cyl(0.12, 0.07, 0.04, K.cone, 0, 0, 0, c, 28); cn.rotation.x = PI/2;
+      sph(0.045, K.trim, 0, 0, 0.02, c).scale.z = 0.6;
+      sph(0.022, K.shine, -0.05, 0.05, 0.03, c).scale.z = 0.4;
+      cones.push(c);
+    });
+    // the tape deck: a window and two reels
+    box(0.2, 0.12, 0.02, K.deck, 0, 0.04, 0.1, front, true);
+    [-0.05, 0.05].forEach(function(x){ var r = cyl(0.03, 0.03, 0.02, K.reel, x, 0.04, 0.11, front, 12); r.rotation.x = PI/2; });
+    // piano-key buttons along the top, a chunky handle arc and a bobbled aerial
+    K.keys.forEach(function(m, i){ box(0.06, 0.035, 0.07, m, -0.12 + i*0.08, 0.185, 0.04, front, true); });
+    var arc = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.032, 10, 24, PI), K.trim); arc.position.set(0, 0.17, -0.03); front.add(arc); inked(arc);
+    var ant = cyl(0.01, 0.01, 0.46, K.reel, 0.36, 0.38, -0.05, front, 6); ant.rotation.z = -0.35;
+    sph(0.035, K.keys[2], 0.44, 0.6, -0.05, front);
+    front.traverse(function(o){ if(o.isMesh && o.material !== K.line) o.castShadow = true; });
+    front.rotation.y = -PI/2 - 0.2;                                    // speakers out from the shoulder, a little back (the camera's side)
+    var notes = [];
+    for(var i = 0; i < BOOM_NOTES; i++){
+      var n = new THREE.Sprite(new THREE.SpriteMaterial({map: K.notes[i % K.notes.length], transparent: true, depthWrite: false, toneMapped: false}));
+      g.add(n); notes.push(n);
+    }
+    return {g: g, bob: bob, cones: cones, notes: notes};
+  }
+  // each frame, after the clips: show or hide it, and on foot (hold) point the right arm up at it
+  function boomStep(ch, on, t, hold){
+    var B = ch && ch._bb;
+    if(!on){
+      if(B && B.g.visible){ B.g.visible = false; var R0 = rigOf(ch); if(R0) R0.ra.scale.set(1, 1, 1); }
+      return;
+    }
+    var R = rigOf(ch); if(!R) return;
+    if(!boomV) boomV = new THREE.Vector3();
+    if(!B){
+      B = ch._bb = boomboxModel(); R.t.add(B.g); B.g.position.set(BOOM_AT[0], BOOM_AT[1], BOOM_AT[2]);
+      B.hand = new THREE.Object3D(); B.hand.position.set(BOOM_GRIP[0], BOOM_GRIP[1], BOOM_GRIP[2]); R.t.add(B.hand);
+    }
+    B.g.visible = true;
+    R.t.getWorldScale(boomV); B.g.scale.setScalar(BOOM_SIZE/(boomV.x || 1));
+    t = t || 0;
+    var calm = E.calm(), ph = (t*2) % 1, beat = calm ? 0 : Math.pow(1 - ph, 3);   // 120 bpm
+    // squash and stretch on every beat, the woofers pumping out
+    B.bob.scale.set(1 + beat*0.07, 1 - beat*0.09, 1 + beat*0.07);
+    B.bob.rotation.z = calm ? 0 : Math.sin(t*PI)*0.06;
+    B.cones.forEach(function(c){ c.scale.set(1 + beat*0.22, 1 + beat*0.22, 1 + beat*1.6); });
+    // notes: pop in, wobble, drift up and out, fade
+    B.notes.forEach(function(n, i){
+      var f = (t*0.38 + i/BOOM_NOTES) % 1, side = i % 2 ? 1 : -1;
+      n.visible = !calm;
+      if(calm) return;
+      var pop = f < 0.12 ? f/0.12 : 1, sz = 0.27*(pop < 1 ? pop*(1.25 - 0.25*pop) : 1)*(1 + beat*0.12);
+      n.scale.set(sz, sz, 1);
+      n.position.set(-0.3 - f*0.45, 0.25 + f*1.05, side*0.15 + Math.sin(t*2.6 + i*1.7)*0.18);
+      n.material.rotation = Math.sin(t*4 + i)*0.35;
+      n.material.opacity = f > 0.7 ? (1 - f)/0.3 : 1;
+    });
+    if(hold){
+      if(!tmpA){ tmpA = new THREE.Vector3(); tmpB = new THREE.Vector3(); tmpQ = new THREE.Vector3(); tmpE = new THREE.Euler(); }
+      ch.o.updateMatrixWorld(true);
+      aimBone(R.ra, B.hand.getWorldPosition(boomV), R.rav, "x", 0.9, 0);
+    }
+  }
+  /* ---------- [pets 3.14] your pets and everyone else's (games/hqpets.js) ----------
+     A small hook: the pets runtime is made on the first frame, fed your pose, what you ride, the floor's blocked /
+     ground / water helpers and the people here (their `pt`, the "pets" capability), and gets B / U / O / E. */
+  var PK = null, petsOwned = null, petsLobby = null;
+  function petsRt(){
+    if(PK || !HQV.hqPets || !THREE) return PK;
+    try {
+      PK = HQV.hqPets.create(ctx, {calm: function(){ return E.calm(); }, say: function(t){ if(api.announce) api.announce(t); if(api.toast) api.toast(t); },
+        onCare: function(id, kind){ if(api.petCare) api.petCare(id, kind); }, onToggle: function(id, out){ if(api.petToggle) api.petToggle(id, out); }});
+      if(petsOwned) PK.setOwned(petsOwned);
+      if(petsLobby) PK.setLobby(petsLobby);
+    } catch(e){ PK = null; }
+    return PK;
+  }
+  function petsOwner(){
+    var r = null;
+    if(ride){
+      var fl = ride.heli || ride.plane;
+      r = {kind: ride.kind, speed: Math.abs(ride.speed || 0), air: !!(ride.heli ? !ride.heli.ground : ride.plane && !ride.plane.ground && !ride.plane.water),
+           boat: !!ride.boat, water: !!(ride.plane && ride.plane.water), h: fl ? fl.y : avatar.hy};
+    }
+    return {x: avatar.x, z: avatar.z, yaw: avatar.yaw, speed: ride ? Math.abs(ride.speed || 0) : Math.abs(avatar.speed || 0), run: keyRun, ride: r};
+  }
+  function petsWater(x, z){ return !!(cur && cur.sea && cur.sea.land && !cur.sea.land(x, z)); }
+  function petsFrame(t, dt){
+    if(!avatar || !cur || !cur.scene || !petsRt()) return;
+    var here = cur.net || cur.name, list = [];
+    Object.keys(peers).forEach(function(u){
+      var P = peers[u]; if(!P.pt || P.w !== here) return;
+      var a = P.a | 0;
+      list.push({u: u, x: P.x, z: P.z, yaw: P.yaw, speed: a >= 3 ? Math.hypot(P.vx || 0, P.vz || 0) : P.fs || 0, pt: P.pt,
+                 ride: a >= 3 ? {kind: String(a), speed: Math.hypot(P.vx || 0, P.vz || 0), air: a >= 7 && a !== 9, boat: false, h: P.hy || 0} : null});
+    });
+    try {
+      PK.frame({t: t, dt: dt, scene: cur.scene, world: cur, worldName: cur.name, owner: petsOwner(), peers: list, night: isNight(),
+                blocked: function(x, z){ return blocked(x, z); },
+                ground: function(x, z){ return petsWater(x, z) && cur.sea.level ? cur.sea.level(x, z) : groundAt(x, z); },
+                water: petsWater});
+    } catch(e){ if(window.console) console.warn("pets", e); }
+  }
+  function petsKey(e){
+    if(!PK || e.type !== "keydown" || e.repeat || !inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return false;
+    if(!{KeyB: 1, KeyU: 1, KeyO: 1, KeyE: 1}[e.code]) return false;
+    if(e.code === "KeyE" && (ride || !PK.near)) return false;
+    if(PK.key(e.code, petsOwner(), function(x, z){ return blocked(x, z); })){ e.preventDefault(); e.stopPropagation(); return true; }
+    return false;
+  }
+  // your pets (ui/app/40-pets.js): [{id, species, variant, name, acc, affection, active, home}]; a host's lobby pets on a visit
+  inst.setPets = function(list){ petsOwned = Array.isArray(list) ? list : []; if(PK) PK.setOwned(petsOwned); };
+  inst.setLobbyPets = function(list){ petsLobby = Array.isArray(list) ? list : null; if(PK) PK.setLobby(petsLobby); };
+  // presence `pt` ("pets" capability): the pets out with you
+  inst.petsNet = function(){ return PK ? PK.net() : (HQV.hqPets && petsOwned ? HQV.hqPets.encode(petsOwned.filter(function(p){ return p.active; })) : []); };
+  inst.petsDebug = function(){ return PK; };
   function buildDesk(s, at){
     var root = new THREE.Group(); root.position.set(at[0], 0, at[1]); root.lookAt(TABLE.x, 0, TABLE.z); scene.add(root);
-    var top = mat(0x2b3947, {roughness: 0.45, metalness: 0.3}), body = mat(0x1c2834, {roughness: 0.7});
+    var FU = MS ? MS.furn() : null;                                                // [hq revamp] the furniture set (HQ Studio)
+    var top = mat(FU ? FU.top : 0x2b3947, {roughness: 0.45, metalness: 0.3}), body = mat(FU ? FU.body : 0x1c2834, {roughness: 0.7});
     box(2.4, 0.07, 0.95, top, 0, 0.98, 0.9, root); box(2.3, 0.55, 0.04, body, 0, 0.68, 1.34, root);
     [-1.15, 1.15].forEach(function(x){ box(0.06, 0.95, 0.9, body, x, 0.48, 0.9, root); });
     box(0.5, 0.6, 0.8, body, -0.82, 0.3, 0.92, root);
@@ -1048,7 +1200,7 @@ function mount(el, api){
     box(0.28, 0.55, 0.55, mat(0x161e26), 0.78, 0.3, 1.0, root);
     // chair
     var chair = new THREE.Group(); chair.position.set(0, 0, -0.05); root.add(chair);
-    var dark = mat(0x1d2730, {metalness: 0.5, roughness: 0.4}), fab = mat([0x2f4459, 0x46303a, 0x2f4a3a, 0x3e3a52][hashStr(s.sessionId) % 4], {roughness: 0.9});
+    var dark = mat(FU ? FU.metal : 0x1d2730, {metalness: 0.5, roughness: 0.4}), fab = mat((FU ? FU.chair : [0x2f4459, 0x46303a, 0x2f4a3a, 0x3e3a52])[hashStr(s.sessionId) % 4], {roughness: 0.9});
     for(var i = 0; i < 5; i++){ var a = i/5*PI*2; box(0.36, 0.04, 0.06, dark, Math.cos(a)*0.18, 0.08, Math.sin(a)*0.18, chair).rotation.y = -a; }
     cyl(0.04, 0.04, 0.32, dark, 0, 0.26, 0, chair, 8);
     box(0.62, 0.1, 0.58, fab, 0, 0.45, 0, chair);
@@ -1241,8 +1393,10 @@ function mount(el, api){
     avatar.tag.position.y = 2.3; avatar.g.add(avatar.tag);
   }
   function blocked(x, z){ return cur === worlds.mission ? missionBlocked(x, z) : cur.blocked(x, z); }
+  var MS = null;                                                     // [hq revamp] Mission Control's HQ Studio theme
   function missionBlocked(x, z){
     if(Math.abs(x) > ROOM - 0.8 || Math.abs(z) > ROOM - 0.8) return true;
+    if(MS && MS.blocked(x, z)) return true;                                        // [hq revamp] the decor you placed
     if(Math.hypot(x - TABLE.x, z - TABLE.z) < TABLE.r + 0.6) return true;
     for(var i = 0; i < desks.length; i++){ var p = desks[i].root.position; if(Math.hypot(x - p.x, z - p.z) < 1.35) return true; }
     return false;
@@ -1254,7 +1408,8 @@ function mount(el, api){
   function walkInto(){
     if(fading || walkDoor) return;
     var near = null, nd = 1e9;
-    curDoors().forEach(function(d){ if(!d.front) return; var dd = Math.hypot(avatar.x - d.front.x, avatar.z - d.front.z); if(dd < nd){ nd = dd; near = d; } });
+    var up = !!(cur && cur.onRoof && cur.onRoof());                          // [hq revamp] on a roof deck only its lift's door; off it, never
+    curDoors().forEach(function(d){ if(!d.front || !!d.roof !== up) return; var dd = Math.hypot(avatar.x - d.front.x, avatar.z - d.front.z); if(dd < nd){ nd = dd; near = d; } });
     if(!near) return;
     if(nd > 2.6){ doorsArmed = true; return; }
     if(doorsArmed && nd < 1.5){ doorsArmed = false; walkTo = null; if(HQV.hqCarLift && HQV.hqCarLift.arm){ try { HQV.hqCarLift.arm(near); } catch(e){} } through(near); }   // [basement 3.4] which door (the car lift carries you)
@@ -1296,6 +1451,7 @@ function mount(el, api){
   function catEntry(v, d){ var cls = String(v["class"] || "").split("."); return {kind: cls[0] === "bike" ? "bike" : "car", type: v.body || cls[1], spec: v.spec, dims: d || v.dims, sound: v.sound}; }
   function catRegister(cat){
     CAT = cat;
+    if(HQV.hqTuning && HQV.hqTuning.setCatalogue) HQV.hqTuning.setCatalogue(cat);   // [3.13]
     var VM = HQV.hqVehicleModels;
     ((cat && cat.vehicles) || []).forEach(function(v){
       if(v.slot === "starter" || VEHICLES[v.id]) return;
@@ -1363,7 +1519,7 @@ function mount(el, api){
     ownPlace(cur);                                                     // your own vehicles parked in this world
     bs.forEach(function(b){
       if(!b.home) b.home = {x: b.x, z: b.z, yaw: b.yaw};                  // its bay (Return to HQ puts it back)
-      var p = b.id && parked[b.id]; if(p) placeProp(b, p.x, p.z, p.yaw);
+      var p = b.id && parked[b.id]; if(p){ placeProp(b, p.x, p.z, p.yaw); if(p.y != null && b.kind && VEHICLES[b.kind] && VEHICLES[b.kind].heli){ b.g.position.y = p.y; b.y = p.y; } }   // [hq revamp] a helicopter left on a roof
     });
   }
   /* Skate poses, built from the rig's bones (the characters have no trick clips): a crouch
@@ -1521,7 +1677,9 @@ function mount(el, api){
     var lean = new THREE.Group(); avatar.g.add(lean);
     var kind = VEHICLES[b.kind] ? b.kind : "bike", base = baseKind(kind), car = base === "car", Vc = VEHICLES[kind].cat, boat = !!VEHICLES[kind].boat && !!HQV.hqboat, heli = !!VEHICLES[kind].heli && !!HQV.hqheli;
     var plane = !!VEHICLES[kind].plane && !!HQV.hqplane;
-    var B = plane ? HQV.hqplane.model(ctx, kind, b.color, b.accent) : heli ? HQV.hqheli.model(ctx, kind, b.color, b.accent) : boat ? HQV.hqboat.model(ctx, kind, b.color, b.accent) : Vc && HQV.hqVehicleModels ? HQV.hqVehicleModels.build(ctx, Vc, b.color) : car ? carModel(b.color, b.accent, b.plate) : kind === "moto" ? motoModel(b.color, b.accent, b.plate) : kind === "skate" ? boardModel(b.color) : bikeModel(b.color, b.accent); lean.add(B.g);
+    var tn = tuneOf(b), bpl = tn && tn.plate ? tn.plate : b.plate;                                   // [3.13] its tune (the Tuning shop)
+    var B = plane ? HQV.hqplane.model(ctx, kind, b.color, b.accent) : heli ? HQV.hqheli.model(ctx, kind, b.color, b.accent) : boat ? HQV.hqboat.model(ctx, kind, b.color, b.accent) : Vc && HQV.hqVehicleModels ? HQV.hqVehicleModels.build(ctx, Vc, b.color, {tune: tn}) : car ? carModel(b.color, b.accent, bpl) : kind === "moto" ? motoModel(b.color, b.accent, bpl) : kind === "skate" ? boardModel(b.color) : bikeModel(b.color, b.accent); lean.add(B.g);
+    if(tn && !Vc && (car || kind === "moto") && HQV.hqVehicleModels && HQV.hqVehicleModels.tuneStarter) HQV.hqVehicleModels.tuneStarter(THREE, B, tn, car ? "car" : "bike");
     if(avatar.ch){ lean.add(avatar.ch.o); seatAny(avatar.ch, kind, B); }
     b.g.visible = false;
     avatar.airborne = false; avatar.vy = 0; avatar.hop = 0;   // getting on mid-hop lands you on the seat
@@ -1530,7 +1688,7 @@ function mount(el, api){
     settleY(0); if(boat) avatar.hy = b.y != null && b.float ? b.y : cur.sea ? cur.sea.y : 0; avatar.g.position.y = avatar.hy;
     avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0;
     ride = {idx: i, id: b.id || null, B: B, lean: lean, speed: 0, steer: 0, head: b.yaw, slip: 0, drift: false, gear: 1, rpm: 900,
-            kind: kind, base: base, V: VEHICLES[kind], car: car, eng: null, pitch: 0, pv: 0, roll: 0, rv: 0, paint: Math.max(0, b.paint | 0),
+            kind: kind, base: base, V: VEHICLES[kind], car: car, eng: null, pitch: 0, pv: 0, roll: 0, rv: 0, paint: Math.max(0, b.paint | 0), tune: tn,
             boat: boat ? HQV.hqboat.newState(kind, b.x, b.z, b.yaw) : null,
             heli: heli ? HQV.hqheli.newState(kind, b.x, b.y != null ? b.y : groundAt(b.x, b.z), b.z, b.yaw) : null,
             plane: plane ? HQV.hqplane.newState(kind, b.x, b.y != null ? b.y : groundAt(b.x, b.z), b.z, b.yaw) : null,
@@ -1545,6 +1703,7 @@ function mount(el, api){
     avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
     E.sfx(kind === "bike" ? "bell" : car ? "door" : kind === "skate" ? "jump" : "go");
     if(kind !== "skate") driveHud(kind);
+    drvMount();                                                        // [3.12] its lights, damage (games/hqdrive.js)
     rideUiSync(true);
   }
   function dismount(force){
@@ -1583,7 +1742,7 @@ function mount(el, api){
       if(!hspot && !force){ if(api.announce) api.announce("You can't step out here: land on the ground or on a helipad."); return; }
       var hp = rideProp();
       if(hp){
-        if(hspot && !force){ parked[hp.id] = {x: hs.x, z: hs.z, yaw: hs.yaw}; placeProp(hp, hs.x, hs.z, hs.yaw); hp.g.position.y = hs.y; hp.y = hs.y; }
+        if(hspot && !force){ parked[hp.id] = {x: hs.x, z: hs.z, yaw: hs.yaw, y: hs.y}; placeProp(hp, hs.x, hs.z, hs.yaw); hp.g.position.y = hs.y; hp.y = hs.y; }   // [hq revamp] y: it stays up on a roof pad
         hp.g.visible = true;
       }
       if(avatar.ch){ poseUndo(avatar.ch); avatar.g.add(avatar.ch.o); seatOn(avatar.ch, null); }
@@ -1641,6 +1800,7 @@ function mount(el, api){
       });
       avatar.g.position.set(avatar.x, groundAt(avatar.x, avatar.z), avatar.z);
     }
+    drvDismount();                                                     // [3.12] the spray stops, the parked one keeps its dents
     avatar.g.remove(ride.lean);
     if(ride.eng){ ride.eng.stop(); ride.eng = null; }
     ride = null; doorsArmed = false;
@@ -1675,21 +1835,26 @@ function mount(el, api){
     var st = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
     var shift = !!(keys.ShiftLeft || keys.ShiftRight), hand = !!keys.Space;
     if(gp){ thr = E.clamp(thr + gp.thr, -1, 1); st = E.clamp(st - gp.x, -1, 1); shift = shift || gp.slide; hand = hand || gp.hand; }
-    var V = ride.V, top = V.sprint && shift ? V.sprint : V.top;
+    // [3.12] in a convoy, holding J: the assist steers and throttles for your slot where you leave the keys alone
+    // (games/hqdrive.js assist); the road's grip in the weather (gripOf); a badly bent car pulls a little (dmgPull)
+    var DD = Drv(), G = drvGrip(), CS = DRV.jHeld && DD ? cvSlot() : null;
+    if(CS && !CS.air){ var as = DD.assist({x: avatar.x, z: avatar.z, yaw: avatar.yaw, speed: ride.speed}, CS.L, CS.s, false); if(!thr) thr = as.thr; if(!st) st = as.steer; }
+    if(DD && DRV.dmg && Math.abs(ride.speed) > 2) st = E.clamp(st + DD.dmgPull(DRV.dmg, DRV.key), -1, 1);
+    var V = ride.V, top = (V.sprint && shift ? V.sprint : V.top)*G.top;
     walkTo = null; walkDoor = null;
     // an engine pulls hardest from a standstill and less as it nears its top speed
     // (V.floor: the pull left near the top, more for an electric motor; games/hqvehiclephys.js)
     var pull = (V.motor ? V.acc*Math.max(V.floor || 0.25, 1 - Math.max(0, ride.speed)/top) : V.acc)*Math.max(0, thr);
-    if(V.motor && hand) ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - 24*dt) : Math.min(0, ride.speed + 24*dt);   // handbrake
+    if(V.motor && hand) ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - 24*G.brake*dt) : Math.min(0, ride.speed + 24*G.brake*dt);   // handbrake
     else if(thr > 0) ride.speed = Math.min(top, ride.speed + (ride.speed < 0 ? 14 : pull)*dt);
-    else if(thr < 0) ride.speed = Math.max(-V.rev, ride.speed - (ride.speed > 0 ? V.brake || 14 : 4)*-thr*dt);   // V.brake: a heavy car stops longer
+    else if(thr < 0) ride.speed = Math.max(-V.rev, ride.speed - (ride.speed > 0 ? (V.brake || 14)*G.brake : 4)*-thr*dt);   // V.brake: a heavy car stops longer
     else ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - (V.motor ? 3 : 2)*dt) : Math.min(0, ride.speed + 4*dt);
     if(ride.speed > top) ride.speed = Math.max(top, ride.speed - 6*dt);
     if(ride.B.brake) ride.B.brake(!!V.motor && ((thr < 0 && ride.speed > 0.3) || (hand && Math.abs(ride.speed) > 0.3)));   // the brake lights
     ride.steer += (st - ride.steer)*ease(6, dt);
     // the powerslide: Shift (or B) with the steering, fast enough, going forward. It holds while you
     // keep Shift down and some speed, so you can catch it with opposite lock.
-    var spd = Math.abs(ride.speed), S = V.slide, was = ride.drift;
+    var spd = Math.abs(ride.speed), S = DD ? DD.slideOf(V.slide, G) : V.slide, was = ride.drift;
     if(S && shift && ride.speed > S.min && (ride.drift || Math.abs(st) > 0.3)) ride.drift = true;
     else if(!S || !shift || ride.speed < S.min*0.55) ride.drift = false;
     if(ride.drift && !was) E.sfx("door");          // the tyres let go (a burst of noise: engine.js has no screech)
@@ -1699,7 +1864,7 @@ function mount(el, api){
     // catching up smoothly as the tyres bite again)
     var slip = angDiff(avatar.yaw, ride.head);
     if(ride.drift) ride.head += slip*ease(S.grip, dt);
-    else if(Math.abs(slip) > 0.02) ride.head += slip*ease(7, dt);
+    else if(Math.abs(slip) > 0.02) ride.head += slip*ease(7*G.lat, dt);                // wet or snowy: it slips wider
     else ride.head = avatar.yaw;
     if(S){ slip = E.clamp(angDiff(avatar.yaw, ride.head), -S.max, S.max); ride.head = avatar.yaw - slip; } else slip = 0;
     ride.slip = slip;
@@ -1718,6 +1883,7 @@ function mount(el, api){
         var turnOnly = bodyHits(avatar.x, avatar.z, avatar.yaw, bx);
         if(!(turnOnly === 0 || turnOnly < now)) avatar.yaw = yaw0;
         if(d && Math.abs(ride.speed) > 2.5) E.sfx("hit");
+        if(d) drvHit(ride.speed, d > 0 ? "f" : "r");                    // [3.12] a dent where it hit (cosmetic)
         ride.speed *= -0.2; d = 0; ride.drift = false; ride.head = avatar.yaw; ride.slip = 0;
       }
     }
@@ -1771,13 +1937,221 @@ function mount(el, api){
     ride.rpm += (Math.min(7800, tgt) - ride.rpm)*(1 - Math.exp(-dt*8));
     // stopped with the throttle off: no note (without set() each frame, engineSound fades out)
     if(v < 0.3 && !(thr > 0)) return;
-    if(!ride.eng && E.engineSound) ride.eng = E.engineSound(V.eng);
+    if(!ride.eng && E.engineSound) ride.eng = E.engineSound(V.eng, ride.tune && HQV.hqTuning ? HQV.hqTuning.exhaustOf(ride.tune) : null);   // [3.13] a tuned exhaust
     // the throttle (load), the gear (an upshift cuts, a downshift blips), road rumble and a squeal in a slide
     if(ride.eng) ride.eng.set(ride.rpm, {thr: thr > 0 ? thr : 0, gear: ride.gear, speed: V.boat ? 0 : v,
       slip: ride.drift && !V.boat ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0});
   }
   /* ---------- skating (games/hqskate.js does the physics) ---------- */
   // ride.sk = {st (the sim's state, in the park's frame), cx, cz (the park's centre), prev (keys last frame)}
+  /* [3.12] Driving feel and convoys (games/hqdrive.js, feature-detected: without it nothing here does anything).
+     Lights: your car's, motorbike's or bicycle's lamps come on at night and in heavy rain, a storm, snow or fog (L
+     switches them by hand), with a pool of light on the road ahead (one additive mesh, no real light); everyone
+     else's do the same from this page's own clock and weather (nothing is sent). Grip: rain, a storm and snow lower
+     the tyres' grip and braking (gripOf), spray flies off your wheels in the rain. Damage: a hit above DMG_MIN m/s
+     dents the panels you hit (cosmetic; kept in localStorage per vehicle), a cracked headlight, smoke when it is
+     bad; the garage (its kiosk, the B1 lift) and the dealership put it right. Convoys: Y invites the nearest player
+     (or takes an invitation, or leaves), hold J to keep your slot behind the leader; presence carries ci / cv / cg
+     only where the Arena lists "convoy". */
+  var DRV = {wx: null, manual: null, lit: false, fx: null, key: null, dmg: null, grip: null, gripSaid: null, jHeld: false,
+             C: null, cvAt: -9, el: null, sig: "", ring: null, routeSig: "", peerLit: false, base: null};
+  function Drv(){ return HQV.hqDrive || null; }
+  function drvGround(){ return !!ride && !ride.boat && !ride.heli && !ride.plane && ride.kind !== "skate"; }
+  // the weather here (games/hqweather.js through the City), eased over a few seconds; indoors and elsewhere clear
+  function drvWxStep(dt){
+    var D = Drv(); if(!D) return;
+    var w = cur && cur.camModes && cur.weather ? cur.weather() : null;
+    var goal = D.wxOf(SMOKE && SMOKE.wx ? SMOKE.wx : w && w.kind ? w.kind() : "clear");
+    DRV.wx = DRV.wx ? D.wxEase(DRV.wx, goal, 1 - Math.exp(-(dt || 0)/3)) : goal;
+  }
+  function drvGrip(){
+    var D = Drv(); if(!D || !drvGround()) return {lat: 1, brake: 1, top: 1, kind: null};
+    return DRV.grip = D.gripOf(DRV.wx, ride.base);
+  }
+  // getting on: its damage (by its own key: an owned vehicle's, the Showroom's, a garage starter's, else its kind),
+  // its headlights' beam, its dents
+  function drvMount(){
+    var D = Drv(); if(!D || !drvGround()) return;
+    DRV.key = ride.id || ("kind:" + ride.kind); DRV.dmg = D.dmgLoad(DRV.key); DRV.base = ride.base;
+    try { D.beam(THREE, ride.B, {base: ride.base}); D.dent(THREE, ride.B, DRV.dmg, DRV.key); } catch(e){}
+    DRV.lit = null;
+  }
+  function drvDismount(){
+    if(DRV.fx) DRV.fx.clear();
+    var D = Drv(), b = rideProp();
+    if(D && b && b.rig && DRV.dmg) try { D.dent(THREE, b.rig, DRV.dmg, DRV.key); } catch(e){}   // the parked one wears it too
+    DRV.key = null; DRV.dmg = null; DRV.grip = null; DRV.gripSaid = null; DRV.jHeld = false;
+  }
+  // a hit (the street's walls, props and parked vehicles: rideMove's collision): side "f" front, "r" rear
+  function drvHit(v, side){
+    var D = Drv(); if(!D || !drvGround() || !DRV.key) return;
+    var was = DRV.dmg || D.dmgNew(), st = D.dmgAdd(was, v, side);
+    if(st.n === was.n) return;
+    DRV.dmg = st; D.dmgSave(DRV.key, st);
+    try { D.dent(THREE, ride.B, st, DRV.key); } catch(e){}
+    if(D.dmgCracked(st) && !D.dmgCracked(was) && api.announce) api.announce("A headlight cracked. The garage or the dealership can fix it.");
+    if(D.dmgSmoke(st) && !D.dmgSmoke(was) && api.announce) api.announce("Your " + (ride.car ? "car" : "bike") + " is badly damaged: get it repaired at the garage.");
+  }
+  // repaired (key, or every vehicle when null) at the garage or the dealership: a short toast when there was damage
+  function drvRepair(key, where){
+    var D = Drv(); if(!D) return false;
+    var n = key ? (D.dmgRepair(key) ? 1 : 0) : D.dmgRepairAll();
+    if(ride && DRV.key && (!key || key === DRV.key)){ if(DRV.dmg && DRV.dmg.d > 0) n = Math.max(n, 1); DRV.dmg = D.dmgNew(); D.undent(ride.B); }
+    ((cur && cur.bikes) || []).forEach(function(b){ if(b.rig && (!key || b.id === key)) D.undent(b.rig); });
+    if(n && api.toast) api.toast("🔧 Repaired " + (where || "at the garage") + ": good as new");
+    return n > 0;
+  }
+  // L, Y and J (held) while HQ has the keys; true when it was ours
+  function drvKey(e){
+    var D = Drv(); if(!D || !inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return false;
+    var down = e.type === "keydown";
+    if(e.code === "KeyL" && drvGround()){
+      e.preventDefault();
+      if(down && !e.repeat){ DRV.manual = !D.lightsOn(isNight(), DRV.wx, DRV.manual); if(api.announce) api.announce(DRV.manual ? "Lights on" : "Lights off"); }
+      return true;
+    }
+    if(e.code === "KeyJ" && cvOn() && DRV.C && DRV.C.lead){ e.preventDefault(); DRV.jHeld = down; return true; }
+    if(e.code === "KeyY" && cvOn()){ e.preventDefault(); if(down && !e.repeat) cvKey(null); return true; }
+    return false;
+  }
+  /* ---- convoys ---- */
+  function cvOn(){ return !!Drv() && !!cur && cur === worlds.city && !!cur.camModes && !!((SMOKE && SMOKE.on) || (api.netCan && api.netCan("convoy"))); }
+  function cvMe(){ return (api.me && api.me()) || (SMOKE && SMOKE.on ? "smoke-me" : null); }
+  function cvPeers(){
+    var here = cur && (cur.net || cur.name);
+    return Object.keys(peers).map(function(u){ var P = peers[u]; return {u: u, n: P.n || "Visitor", w: P.w, x: P.x, z: P.z, ci: P.ci, cv: P.cv, cg: P.cg, here: P.w === here}; });
+  }
+  function cvCtx(target){ return {me: cvMe(), peers: cvPeers(), world: cur && (cur.net || cur.name), pos: avatar ? {x: avatar.x, z: avatar.z} : {x: 0, z: 0}, now: E.now(), target: target || null}; }
+  function cvSay(t, toastToo){ if(api.announce) api.announce(t); if(toastToo && api.toast) api.toast(t); }
+  function cvKey(target){
+    var D = Drv(); if(!D || !cvOn()) return null;
+    var C = DRV.C || (DRV.C = D.convoyNew()), r = D.convoyKey(C, cvCtx(target)), nm = r.n || "them";
+    if(r.t === "joined") cvSay("🚗 You joined " + nm + "'s convoy. Hold J to keep your slot; Y to leave.", true);
+    else if(r.t === "left") cvSay("You left " + nm + "'s convoy.", true);
+    else if(r.t === "invited") cvSay("🚗 Convoy invite sent to " + nm + ".", true);
+    else if(r.t === "busy") cvSay("You lead a convoy: you can't join another one.");
+    else if(r.t === "full") cvSay("Your convoy is full.");
+    else cvSay("Nobody within " + D.INVITE_R + " m to invite to a convoy.");
+    DRV.cvAt = -9;
+    return r;
+  }
+  // the leader's pose as drawn here (dead-reckoned presence, games/hq3d.js placePeers) and velocity
+  function cvLeader(){ var P = DRV.C && DRV.C.lead ? peers[DRV.C.lead] : null; return P ? {x: P.x, z: P.z, y: P.hy || 0, yaw: P.yaw || 0, vx: P.vx || 0, vz: P.vz || 0, n: P.n} : null; }
+  function cvSlot(){
+    var D = Drv(), C = DRV.C; if(!D || !C || !C.lead) return null;
+    var i = Math.max(0, C.members.indexOf(cvMe()) - 1), air = !!(ride && (ride.plane || ride.heli)), L = cvLeader();
+    return L ? {s: D.slotOf(i, air), L: L, air: air, i: i} : null;
+  }
+  function cvStep(t){
+    var D = Drv(); if(!D) return;
+    var C = DRV.C || (DRV.C = D.convoyNew());
+    if(!cvOn()){
+      if(C.lead || C.invite || C.pending){ var was = C.lead; DRV.C = D.convoyNew(); if(was) cvSay("You left the convoy (you left the City)."); }
+      cvHud(null); cvRing(null); return;
+    }
+    if(t - DRV.cvAt >= 0.25){
+      DRV.cvAt = t;
+      D.convoyStep(C, cvCtx(null)).forEach(function(ev){
+        if(ev.t === "invited") cvSay("🚗 " + ev.n + " invites you to a convoy: press Y to join.", true);
+        else if(ev.t === "joined") cvSay("🚗 " + ev.n + " joined your convoy.", true);
+        else if(ev.t === "left") cvSay(ev.why === "far" ? "Too far from " + (ev.n || "the leader") + ": you left the convoy." : (ev.n || "The leader") + " left: the convoy is over.", true);
+      });
+      // the leader's Go to, shown to the followers too
+      var nav = cur.nav ? cur.nav() : null, L = C.lead ? peers[C.lead] : null;
+      if(C.role === "follow" && L && L.cg && nav && nav.goTo){
+        var sg = L.cg.x + "," + L.cg.z;
+        if(sg !== DRV.routeSig){ DRV.routeSig = sg; try { nav.goTo({x: L.cg.x, z: L.cg.z, label: (L.n || "the leader") + "'s destination", kind: "pin"}); } catch(e){} }
+      } else if(C.role !== "follow") DRV.routeSig = "";
+    }
+    var S = cvSlot();
+    cvRing(S ? D.slotPoint(S.L, S.s, 0.25) : null, S);
+    cvHud(C, S);
+  }
+  // your slot on the road (a ring, one mesh): amber on the way, green once you are in formation
+  function cvRing(p, S){
+    if(!p || !cur || !cur.scene || !avatar){ if(DRV.ring) DRV.ring.visible = false; return; }
+    if(!DRV.ring){
+      DRV.ring = new THREE.Mesh(new THREE.RingGeometry(1.1, 1.5, 28), new THREE.MeshBasicMaterial({color: COL.amber, transparent: true, opacity: 0.75, depthWrite: false, toneMapped: false, side: THREE.DoubleSide}));
+      DRV.ring.rotation.x = -PI/2; DRV.ring.renderOrder = 4; DRV.ring.name = "hq-convoy-slot";
+    }
+    if(DRV.ring.parent !== cur.scene) cur.scene.add(DRV.ring);
+    var ok = Math.hypot(p.x - avatar.x, p.z - avatar.z) < (S && S.air ? 18 : 4);
+    DRV.ring.visible = true;
+    DRV.ring.position.set(p.x, S && S.air ? p.y : groundAt(p.x, p.z) + 0.06, p.z);
+    DRV.ring.scale.setScalar(S && S.air ? 6 : 1);
+    DRV.ring.material.color.setHex(ok ? COL.green : COL.amber);
+  }
+  // the convoy panel: who is in it and how far, your slot, an open invitation (textContent only)
+  function cvHud(C, S){
+    var lines = null;
+    if(C && (C.role || C.pending || C.invite)){
+      var me = cvMe(), D = Drv();
+      lines = [];
+      if(C.role) lines.push(["h", "🚗 Convoy · " + (C.role === "lead" ? "you lead" : "following " + (C.leadName || "the leader"))]);
+      C.members.slice(0, 7).forEach(function(u, i){
+        var P = peers[u], nm = u === me ? "You" : (P && P.n) || "Visitor", d = u === me || !P || !avatar ? null : Math.round(Math.hypot(P.x - avatar.x, P.z - avatar.z));
+        lines.push(["m", (i === 0 ? "★ " : "· ") + nm + (d != null ? " · " + d + " m" : "")]);
+      });
+      if(S && avatar){
+        var p = D.slotPoint(S.L, S.s, 0.25), dd = Math.hypot(p.x - avatar.x, p.z - avatar.z);
+        lines.push(D.inForm(dd, S.air) ? ["ok", "✓ In formation"] : ["far", "Your slot: " + Math.round(dd) + " m" + (ride && !S.air ? " · hold J to close up" : "")]);
+      }
+      if(C.pending) lines.push(["inv", (C.pendName || "Someone") + " invites you · Y to join"]);
+      else if(C.invite){ var I = peers[C.invite]; lines.push(["inv", "Invited " + ((I && I.n) || "them") + "…"]); }
+      lines.push(["k", C.role === "follow" ? "Y leave · J hold formation" : "Y invite the nearest player"]);
+    }
+    var sig = lines ? lines.map(function(l){ return l.join(":"); }).join("|") : "";
+    if(sig === DRV.sig) return;
+    DRV.sig = sig;
+    if(!lines){ if(DRV.el){ DRV.el.hidden = true; DRV.el.textContent = ""; } return; }
+    if(!DRV.el){ gamesCss(); DRV.el = document.createElement("div"); DRV.el.className = "hq3d-convoy"; DRV.el.setAttribute("role", "status"); DRV.el.setAttribute("aria-label", "Convoy"); }
+    if(DRV.el.parentNode !== el) el.appendChild(DRV.el);
+    DRV.el.hidden = false; DRV.el.textContent = "";
+    lines.forEach(function(l){ var d = document.createElement("div"); d.className = "hq3d-convoy-" + l[0]; d.textContent = l[1]; DRV.el.appendChild(d); });
+  }
+  // presence (ui/app/22-hq.js hqNetSend, only where the Arena lists "convoy"): {ci?, cv?, cg?}
+  inst.convoyNet = function(){
+    var D = Drv(); if(!D || !DRV.C || !cvOn()) return null;
+    var nav = cur.nav ? cur.nav() : null, r = nav && nav.route && !nav.route.done ? nav.route : null;
+    return D.convoyNet(DRV.C, {route: r});
+  };
+  // the "Here now" list's Convoy button: is uid near enough (and in this world) to invite, and invite them
+  inst.convoyCan = function(uid){
+    var D = Drv(); if(!D || !cvOn() || !avatar || (DRV.C && DRV.C.lead)) return false;
+    var P = peers[uid]; return !!P && P.w === (cur.net || cur.name) && Math.hypot(P.x - avatar.x, P.z - avatar.z) <= D.INVITE_R;
+  };
+  inst.convoyInvite = function(uid){ var r = cvKey(String(uid || "")); return !!r && r.t === "invited"; };
+  // every frame: the weather, your lights and spray and smoke, everyone else's lights, the convoy
+  function drvFrame(t, dt){
+    var D = Drv(); if(!D) return;
+    drvWxStep(dt);
+    DRV.peerLit = D.lightsAuto(isNight(), DRV.wx);
+    if(drvGround()){
+      var on = D.lightsOn(isNight(), DRV.wx, DRV.manual), cr = D.dmgCracked(DRV.dmg);
+      D.lights(ride.B, on, cr, t, E.calm(), isNight() ? 1 : 0.35);
+      if(!DRV.fx && cur && cur.scene && cur.camModes) DRV.fx = D.fx(THREE, cur.scene, 72);
+      if(DRV.fx && cur && DRV.fx.pts.parent !== cur.scene){ DRV.fx.clear(); cur.scene.add(DRV.fx.pts); }
+      if(DRV.fx){
+        var bx = ride.B._box || {minZ: -1.6, maxZ: 1.6, w: 0.8, h: 1.2};
+        DRV.fx.step(dt, {x: avatar.x, z: avatar.z, y: avatar.hy, yaw: ride.head != null ? ride.head : avatar.yaw, speed: ride.speed, rain: Math.max(DRV.wx.rain, DRV.wx.storm),
+                         smoke: D.dmgSmoke(DRV.dmg), back: -bx.minZ - 0.2, front: bx.maxZ - 0.5, w: ride.car ? bx.w*0.8 : 0.05, h: bx.h*0.75, calm: E.calm()});
+      }
+      // a grip notice once per change (the HUD keeps showing it)
+      var gk = DRV.grip ? DRV.grip.kind : null;
+      if(gk !== DRV.gripSaid){ DRV.gripSaid = gk; if(gk && api.announce) api.announce(gk === "snow" ? "Snow on the road: much less grip, brake early." : "Wet road: less grip and longer braking."); }
+    } else if(DRV.fx && DRV.fx.pts.visible) DRV.fx.step(dt, {calm: true});
+    cvStep(t);
+  }
+  // the drive HUD's badges: grip, lights, damage
+  function drvBadges(){
+    var D = Drv(); if(!D || !dhud || !dhud.badges || !drvGround()) return;
+    var g = DRV.grip, parts = [];
+    if(g && g.kind) parts.push(D.GRIP_ICON[g.kind] + " " + D.GRIP_LABEL[g.kind]);
+    if(D.lightsOn(isNight(), DRV.wx, DRV.manual)) parts.push("💡 Lights" + (DRV.manual === true ? " (L)" : ""));
+    if(DRV.dmg && DRV.dmg.d > 0) parts.push("🔧 " + Math.round(DRV.dmg.d*100) + "% damage");
+    var txt = parts.join("  ·  ");
+    if(txt !== dhud.btxt){ dhud.btxt = txt; dhud.badges.textContent = txt; dhud.badges.hidden = !txt; }
+  }
   var SKATE_BEST = "hq_skate_best";
   function skateBest(){ try { return Math.max(0, parseInt(localStorage.getItem(SKATE_BEST), 10) || 0); } catch(e){ return 0; } }
   function skateStart(b){
@@ -1900,9 +2274,9 @@ function mount(el, api){
     if(key === "on" && force) tipRide();
   }
   var RIDE_HELP = {
-    bike: "W / S: pedal and brake · A / D: steer · Shift: pedal harder · E: get off",
-    moto: "W: throttle (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Shift + steer: slide the back wheel · Space: handbrake · E: get off",
-    car: "W: accelerator (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Shift + steer: powerslide · Space: handbrake · E: get out",
+    bike: "W / S: pedal and brake · A / D: steer · Shift: pedal harder · L: lights (on by themselves at night and in bad weather) · E: get off",
+    moto: "W: throttle (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Shift + steer: slide the back wheel · Space: handbrake · L: lights · E: get off",
+    car: "W: accelerator (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Shift + steer: powerslide · Space: handbrake · L: lights · E: get out",
     skate: "W: push · S: brake · A / D: carve (in the air: spin) · Space: ollie · F: kickflip · G: shove-it · E: step off",
     rowboat: "W: row · S: back water · A / D: steer · E: step ashore at a dock or a beach",
     jetski: "W: throttle · S: astern · A / D: steer (it needs way on to turn) · E: step ashore at a dock or a beach",
@@ -1916,9 +2290,9 @@ function mount(el, api){
   };
   // the one-line version under the driving HUD
   var RIDE_HINT = {
-    bike: "W pedal · S brake · A/D steer · Shift pedal harder · E get off · T home",
-    moto: "W throttle · S brake · A/D steer · Shift+steer slide · Space handbrake · E get off · T home",
-    car: "W go · S brake · A/D steer · Shift+steer powerslide · Space handbrake · E get out · T home",
+    bike: "W pedal · S brake · A/D steer · Shift pedal harder · L lights · E get off · T home",
+    moto: "W throttle · S brake · A/D steer · Shift+steer slide · Space handbrake · L lights · E get off · T home",
+    car: "W go · S brake · A/D steer · Shift+steer powerslide · Space handbrake · L lights · E get out · T home",
     rowboat: "W row · S back water · A/D steer · E step ashore at a dock or a beach",
     jetski: "W throttle · S astern · A/D steer · E step ashore at a dock or a beach",
     heli: "Space climb · Shift descend · W/S forward/back · A/D turn · E get out (landed)",
@@ -1958,6 +2332,9 @@ function mount(el, api){
     var cv = document.createElement("canvas"); cv.className = "hq3d-drive-dial";
     var read = document.createElement("div"); read.className = "hq3d-drive-read";
     var hint = document.createElement("div"); hint.className = "hq3d-drive-hint"; hint.textContent = RIDE_HINT[kind];
+    // [3.12] the road's grip, the lights and the damage (drvBadges)
+    var badges = kind === "car" || kind === "moto" || kind === "bike" ? document.createElement("div") : null;
+    if(badges){ badges.className = "hq3d-drive-badges"; badges.hidden = true; }
     // flying (a helicopter or a plane): the way to the waypoint (cur.airGuide): an arrow turned to its bearing, the
     // distance, the time at this speed, the height to fly, and on final the glideslope (a dot high or low of the bar)
     var guide = null;
@@ -1970,9 +2347,9 @@ function mount(el, api){
       [arr, gt, gs].forEach(function(n){ guide.appendChild(n); });
       guide.parts = {arr: arr, txt: gt, gs: gs, dot: dot};
     }
-    [slide, guide, cv, read, hint].forEach(function(n){ if(n) d.appendChild(n); });
+    [slide, badges, guide, cv, read, hint].forEach(function(n){ if(n) d.appendChild(n); });
     ((rideUi && rideUi.parentNode) || el).appendChild(d);
-    dhud = {el: d, cv: cv, read: read, kind: kind, M: M, tok: null, tokAt: -9, at: -9, txt: "", sl: false, guide: guide, gtxt: ""};
+    dhud = {el: d, cv: cv, read: read, kind: kind, M: M, tok: null, tokAt: -9, at: -9, txt: "", sl: false, guide: guide, gtxt: "", badges: badges, btxt: ""};
   }
   // the HUD's and the Return to HQ button's styles live with the games' (the Valley loads the same sheet)
   function gamesCss(){
@@ -1983,6 +2360,7 @@ function mount(el, api){
   function driveHudDraw(t){
     if(!dhud || !ride || t - dhud.at < 1/30) return;
     dhud.at = t;
+    drvBadges();
     var kmh = Math.abs(ride.speed)*3.6, motor = !!ride.V.motor, gear = motor ? (Math.abs(ride.speed) < 0.3 && ride.gear > 0 ? 0 : ride.gear) : 0;
     var txt = Math.round(kmh) + " km/h" + (motor ? "  ·  gear " + gearTxt(gear) : "") + (ride.heli ? "  ·  " + Math.round(ride.heli.agl) + " m up" + (ride.heli.ground ? " (landed)" : "") : "");
     if(ride.plane) txt = planeHudText(ride.plane, ride);
@@ -2147,6 +2525,7 @@ function mount(el, api){
     walkTo = null; walkDoor = null;
     var yaw0 = avatar.yaw, floor = cur && cur.heliFloor ? cur.heliFloor : groundAt;
     var evs = Hh.step(st, {fwd: fwd, turn: turn, lift: lift}, dt, {floor: floor});
+    if(cur && cur.heliAssist) cur.heliAssist(st, {fwd: fwd, turn: turn, lift: lift}, dt);   // [hq revamp] an HQ roof pad's landing assist (games/hqroof.js)
     if(evs.length || st.ground) rideUiSync(false);                // "Get out" only where you can
     evs.forEach(function(ev){
       if(ev.type === "land") E.sfx(ev.hard ? "hit" : "putt");
@@ -2747,8 +3126,11 @@ function mount(el, api){
   function hitList(){ return cur === worlds.mission ? clickables.concat(doorHits, projHits) : (cur.hits || []); }
   // Through a door: another view of the page, or another floor of the building ("@lobby").
   function through(d){
-    if(d.view === "garage:open"){ if(HQV.hqGarageMgr && HQV.hqGarageMgr.open){ keys = {}; HQV.hqGarageMgr.open({from: d.from}); } return; }   // [basement 3.4] the garage manager
-    if(!d.view){ if(d.kind === "townhall" && cur && cur.townHall) cur.townHall(); else if(d.kind === "dealer") dealerOpen(); return; }   // games/hqcivic.js: the town hall; games/hqdealer.js: the dealership
+    if(d.view === "garage:open"){ drvRepair(null, "at the garage"); if(HQV.hqGarageMgr && HQV.hqGarageMgr.open){ keys = {}; HQV.hqGarageMgr.open({from: d.from}); } return; }   // [basement 3.4] the garage manager ([3.12] repairs)
+    if(!d.view && d.kind === "studio"){ if(api.studio) api.studio(); return; }                       // [hq revamp] the lobby's HQ Studio kiosk
+    if(!d.view){ if(d.kind === "townhall" && cur && cur.townHall) cur.townHall(); else if(d.kind === "dealer") dealerOpen(); else if(d.kind === "tuning") tuneOpen(); return; }   // games/hqcivic.js: the town hall; games/hqdealer.js: the dealership
+    if(d.kind === "roof" && d.view === "@lobby"){ enterWorld("lobby", "roof"); return; }            // [hq revamp] down your roof lift: out by the Roof lift
+    if(d.view === "@roof"){ if(api.outside && api.outside() === "city") enterWorld("city", "roof"); else if(api.announce) api.announce("Your roof deck is on your tower in Arena City: join the City to go up."); return; }   // [hq revamp] the lobby's Roof lift
     if(d.view.charAt(0) === "@") enterWorld(d.view.slice(1), cur.name);
     else if(d.view.indexOf("visit:") === 0){ if(api.visit) api.visit(d.view.slice(6)); }   // someone's HQ on the city street
     else api.go(d.view);
@@ -2933,7 +3315,7 @@ function mount(el, api){
   function propOf(key, C){ var bs = (C || cur) && (C || cur).bikes; if(!bs) return null; for(var i = 0; i < bs.length; i++) if(bs[i].id === key) return bs[i]; return null; }
   function propMake(o, C, x, z, yaw){
     var V = VEHICLES[o.vehicleId]; if(!V || !V.cat || !C || !C.bikes || !HQV.hqVehicleModels) return null;
-    var R = HQV.hqVehicleModels.build(ctx, V.cat, o.color), g = new THREE.Group(); g.add(R.g);
+    var R = HQV.hqVehicleModels.build(ctx, V.cat, o.color, {tune: HQV.hqTuning && o.ownId != null ? HQV.hqTuning.of("own:" + o.ownId) : null}), g = new THREE.Group(); g.add(R.g);   // [3.13] its tune
     g.position.set(x, groundAt(x, z), z); g.rotation.y = yaw;
     (C.scene || scene).add(g);
     // its paint as an index into the catalogue's paints: presence sends that (`vp`), so others see your colour
@@ -2941,6 +3323,7 @@ function mount(el, api){
              home: o.home || {x: x, z: z, yaw: yaw}};
     C.bikes.push(b);
     if(o.key === "showroom") showProp = b;
+    if(Drv()){ var dm = Drv().dmgLoad(o.key); if(dm.d > 0) try { Drv().dent(THREE, R, dm, o.key); } catch(e){} }   // [3.12] its dents, parked
     return b;
   }
   // your vehicles parked in this world, put where you left them (a street rebuilt, a world swapped in); stored ones
@@ -3243,8 +3626,57 @@ function mount(el, api){
     if(!dealerOn()) return false;
     var u = dealerUi(); if(!u) return false;
     var s = cur.dealer.site(); u.title(s && s.name); keys = {}; u.open();
+    drvRepair(null, "at the dealership");                              // [3.12] the workshop puts every dent right
     return true;
   }
+  /* [3.13] The Tuning shop (games/hqtuning.js draws the workshop and the panel): E at its open bay in the City, or Tune on
+     a B1 row of the garage manager. Your owned vehicles (the Arena keeps their tune) and your starter car and motorbike
+     (this browser keeps theirs); a save rebuilds every copy standing in the City (the basement redoes its own). */
+  var tuneUi = null;
+  function myPlate(){ try { if(HQV.hqPlated) return String(HQV.hqPlated({}, {userId: api.me ? api.me() : null, isYou: true, look: ctx.look ? ctx.look() : {}}).plate || ""); } catch(e){} return ""; }
+  function starterCols(){ var c0 = null; try { c0 = HQV.hqLotColors ? HQV.hqLotColors(ctx.look ? ctx.look() : {}) : null; } catch(e){} return c0 || {paint: 0x2a3c50, accent: 0xffb347}; }
+  function tuneKeyOf(b){
+    if(!b) return null;
+    if(b.own && b.own.ownId != null) return "own:" + b.own.ownId;
+    if(b.plinth != null && /^lot:.*:(car|moto)$/.test(String(b.id || ""))) return "starter:" + (b.kind === "moto" ? "moto" : "car");   // your B1 starters
+    return null;
+  }
+  function tuneOf(b){ var k = tuneKeyOf(b); return k && HQV.hqTuning ? HQV.hqTuning.of(k) : null; }
+  function tuneItems(){
+    var H = HQV.hqTuning, out = [], col = starterCols(), L = (HQV.hqGarage && HQV.hqGarage.cached && HQV.hqGarage.cached()) || [];
+    L.forEach(function(v){
+      var V = VEHICLES[v.vehicle_id], e = V && V.cat; if(!e) return;
+      out.push({key: "own:" + v.id, title: (e.brand ? e.brand + " " : "") + e.model, kind: V.kind === "bike" ? "bike" : "car", entry: e, paints: e.paints || [],
+                paint: v.paint | 0, tune: H.of("own:" + v.id), ev: !!(e.spec && e.spec.electric)});
+    });
+    out.push({key: "starter:car", title: "Your starter car", kind: "car", entry: {id: "starter-car", starter: true}, baseHex: col.paint, accent: col.accent, paints: [], paint: 0, tune: H.of("starter:car")});
+    out.push({key: "starter:moto", title: "Your starter motorbike", kind: "bike", entry: {id: "starter-moto", kind: "bike", starter: true}, baseHex: col.accent, accent: col.paint, paints: [], paint: 0, tune: H.of("starter:moto")});
+    return out;
+  }
+  function tuneUiGet(){
+    if(tuneUi || !HQV.hqTuning || !HQV.hqVehicleModels) return tuneUi;
+    gamesCss();
+    tuneUi = HQV.hqTuning.mountPanel(el, {three: THREE, ctx: ctx, vehicles: tuneItems, plate: myPlate,
+      save: function(it, t, paint){ return HQV.hqTuning.save(it.key, t, paint, it.kind); },
+      announce: function(t){ if(api.announce) api.announce(t); }, onClose: function(){ if(canvas && canvas.focus) canvas.focus(); }});
+    return tuneUi;
+  }
+  function tuneOpen(key){
+    var u = tuneUiGet(); if(!u) return false;
+    keys = {};
+    var go = function(){ catLoad.then(function(){ u.open({key: key}); }); };
+    if(HQV.hqGarage && HQV.hqGarage.mine) Promise.resolve(HQV.hqGarage.mine()).then(go, go); else go();
+    return true;
+  }
+  if(HQV.hqTuning) HQV.hqTuning.host = function(key){ return tuneOpen(key); };
+  // a save: the City's copies of that vehicle in its new tune (one you sit in keeps its look until you get out)
+  var tuneUnsub = HQV.hqTuning && HQV.hqTuning.onChange ? HQV.hqTuning.onChange(function(key){
+    (cur && cur.bikes || []).forEach(function(b){
+      if(tuneKeyOf(b) !== key || !b.rig || !b.g || b.gallery != null || (ride && ride.id === b.id)) return;
+      var V = VEHICLES[b.kind]; if(!V || !V.cat || !HQV.hqVehicleModels) return;
+      try { var R = HQV.hqVehicleModels.build(ctx, V.cat, b.color, {tune: tuneOf(b)}); b.g.remove(b.rig.g); b.g.add(R.g); b.rig = R; } catch(e){}
+    });
+  }) : null;
   function vName(id){ var V = VEHICLES[id]; return V && V.cat ? V.cat.brand + " " + V.cat.model : "vehicle"; }
   // a colour ("#rrggbb" or a number) as an index into a catalogue vehicle's paints (0 when it is none of them): what
   // the Arena stores and presence sends (`vp`)
@@ -3356,6 +3788,7 @@ function mount(el, api){
     var b = null;
     if(name === "basement"){
       var cb = carry.b;
+      var rk = carry.id || DRV.key; if(rk) drvRepair(rk, "in your B1 garage");   // [3.12] down the lift: repaired
       if(cb && cb.world && cb.world !== w){
         if(cb.own) propRemove(cb);                                  // it leaves the street
         else { var ob = cb.world.bikes, oi = ob ? ob.indexOf(cb) : -1; if(oi >= 0) ob.splice(oi, 1); }   // [3.5.2] a starter too
@@ -3454,7 +3887,7 @@ function mount(el, api){
   // the camera keys of a rig world (the page binds R, C, M and V too: these win while HQ is open there)
   var CAM_KEYS = {KeyV: 1, KeyM: 1, KeyP: 1, KeyQ: 1, KeyR: 1, KeyZ: 1, KeyC: 1};
   var HELD_CAM = {KeyQ: 1, KeyR: 1, KeyZ: 1, KeyC: 1};
-  function typing(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || (t && t.isContentEditable) || !!(t && t.closest && t.closest(".hqhud-gear, .hqhud-settings")); }
+  function typing(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || (t && t.isContentEditable) || !!(t && t.closest && t.closest(".hqhud-gear, .hqhud-settings, .hqs")); }
   // E (and a pad's X): get on or off what is near you; in first person also the door under the crosshair.
   function useKey(){
     // held by a trip (a booked ferry, flight or cruise seat: cur.carry): E is the trip's (get off), not a bike beside it
@@ -3484,6 +3917,15 @@ function mount(el, api){
     if(HQV.townHall && HQV.townHall.isOpen && HQV.townHall.isOpen()){ keys = {}; return; }   // the Town Hall has the keys
     if(HQV.hqnavui && HQV.hqnavui.owns && HQV.hqnavui.owns(e)) return;                      // the Go to panel's, the banner's
     if(cur && cur.menuOpen && cur.menuOpen()){ keys = {}; return; }                         // a stop's or a dock's menu too
+    if(tuneUi && tuneUi.isOpen()){                                                          // [3.13] the Tuning shop's panel has the keys
+      keys = {};
+      if(HQV.hqTuning.owns(e)) return;
+      if(!e.metaKey && !e.ctrlKey && !e.altKey){
+        e.preventDefault(); e.stopPropagation();
+        if(e.type === "keydown" && !e.repeat && e.key === "Escape") tuneUi.close();
+      }
+      return;
+    }
     if(dealUi && dealUi.isOpen()){                                                          // the dealer panel has the keys
       keys = {};
       if(HQV.hqDealer.owns(e)) return;
@@ -3520,6 +3962,7 @@ function mount(el, api){
       else if(e.type === "keyup") cTap = 0;
     }
     if(e.type === "keydown" && inst.running && rigOn() && !typing(e.target)) noteInput();
+    if(petsKey(e)) return;                                             // [pets 3.14] B ball, U pet, O trick, E lobby
     if(e.code === "KeyE" && e.type === "keydown" && !e.repeat && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey
        && (ride || nearBike() >= 0 || (rigOn() && rig.mode === "fp") || (cur && cur.use))){ if(useKey()) e.preventDefault(); return; }
     if((e.code === "KeyT" || e.code === "Home") && e.type === "keydown" && !e.repeat && inst.running && cur === worlds.city && !typing(e.target)
@@ -3527,13 +3970,14 @@ function mount(el, api){
     if(ride && ride.plane && PLANE_KEYS[e.code] && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey){
       e.preventDefault(); e.stopPropagation(); if(e.type === "keydown" && !e.repeat) planeKey(e.code); return;
     }
+    if(drvKey(e)) return;                                              // [3.12] L lights, Y convoy, J (held) formation
     if(camKey(e)) return;
     if(!inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
     if(!MOVE_KEYS[e.code] && !(SKATE_KEYS[e.code] && ride && ride.kind === "skate")) return;
     keys[e.code] = e.type === "keydown";
     if(e.code.indexOf("Shift") < 0) e.preventDefault();
   }
-  function onBlur(){ keys = {}; }
+  function onBlur(){ keys = {}; DRV.jHeld = false; }
 
   /* ---------- the loop ---------- */
   function frame(ts){
@@ -3570,8 +4014,13 @@ function mount(el, api){
       if(ride && ride.kind !== "skate" && avatar.ch.o.parent === ride.lean) ridePose(avatar.ch, ride.B, ride.steer, avatar.g);
       if(skp) poseApply(avatar.ch, skp);                               // Calm: no pose (skp is null)
       if(!ride && avatar.lean) headApply(avatar.ch, avatar.lean.h);     // on foot: the head into the turn
+      // your boombox: on foot or on a board (held up); put away in a seat
+      var bOn = !!boomMe && (!ride || ride.kind === "skate");
+      boomStep(avatar.ch, bOn, t, bOn);
     }
     placePeers(dt, t);
+    petsFrame(t, dt);                                                  // [pets 3.14]
+    drvFrame(t, dt);                                                   // [3.12] lights, spray, smoke, convoys
     fxStep(t, dt); driveHudDraw(t);
     acc.sky += dt; if(acc.sky > 30){ acc.sky = 0; applyTime(); }
     if(cur !== worlds.mission){
@@ -3622,6 +4071,8 @@ function mount(el, api){
   function refreshMission(){ missionDirty = false; layoutDesks(); buildStreamsIfChanged(); buildProjects(); drawWall(E.now() - clock0); }
   inst.setCombo = function(m){ combo = E.clamp(+m || 1, 1, 2); };
   inst.lookChanged = function(){ if(avatar) nameTag(); Object.keys(worlds).forEach(function(k){ if(worlds[k].onLook) worlds[k].onLook(); }); };
+  // [hq revamp] HQ Studio's Layout tab: the placement grid and its cursor on the lobby's or Mission Control's floor (null: off)
+  inst.studioGrid = function(o){ Object.keys(worlds).forEach(function(k){ if(worlds[k].studioGrid) worlds[k].studioGrid(o); }); };
   // The list of open HQs changed: the city street rebuilds.
   inst.cityChanged = function(){
     if(!worlds.city || !worlds.city.onCity) return;
@@ -3683,6 +4134,14 @@ function mount(el, api){
       P.w = p.w; P.tx = nx; P.tz = nz; P.tyaw = p.r*PI/180; P.a = p.a | 0; P.k = p.k | 0; P.y = Math.max(0, Math.min(60, p.y | 0));
       // a catalogue vehicle (`v`, only while driving): the real car or bike, in its paint; unknown here: the starter
       P.v = typeof p.v === "string" && VEHICLES[p.v] && VEHICLES[p.v].cat ? p.v : null; P.vp = Math.max(0, p.vp | 0);
+      P.vt = typeof p.vt === "string" && /^[0-9][0-9A-Za-z_-]{9,32}$/.test(p.vt) ? p.vt : null;   // [3.13] its tune (the "tuning" capability)
+      // their boombox (`bb`, the "boombox" capability): the song it plays, while it plays
+      P.bb = typeof p.bb === "string" && /^[A-Za-z0-9_-]{11}$/.test(p.bb) ? p.bb : null;
+      P.pt = Array.isArray(p.pt) && p.pt.length ? p.pt.slice(0, 2) : null;   // [pets 3.14] their pets (`pt`): drawn by games/hqpets.js
+      // [3.12] convoys (the "convoy" capability): whom they invite (ci), whom they follow (cv), where they lead (cg, cm)
+      var UR = /^[A-Za-z0-9_-]{1,64}$/;
+      P.ci = typeof p.ci === "string" && UR.test(p.ci) ? p.ci : null; P.cv = typeof p.cv === "string" && UR.test(p.cv) ? p.cv : null;
+      P.cg = Array.isArray(p.cg) && p.cg.length === 2 && isFinite(p.cg[0]) && isFinite(p.cg[1]) ? {x: p.cg[0]/100, z: p.cg[1]/100} : null;
     });
     Object.keys(peers).forEach(function(u){ if(!seen[u]){ var P = peers[u]; if(P.g.parent) P.g.parent.remove(P.g); delete peers[u]; } });
   };
@@ -3728,6 +4187,7 @@ function mount(el, api){
           setAnim(P.ch, P.k === K.bail ? "sit" : "idle");
           poseUndo(P.ch); P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0);
           if(!calm) poseApply(P.ch, skatePoseOf(P.k, (P.y || 0) > 1 && P.k !== K.grind, 0));
+          boomStep(P.ch, !!P.bb, t, true);
         }
         return;
       }
@@ -3737,12 +4197,14 @@ function mount(el, api){
       if(vk && !VEHICLES[vk]) vk = null;                          // no games/hqheli.js here
       // the catalogue vehicle they drive (a car or a bike, matching a = 5 / 6), its paint part of what is drawn
       if(P.v && (P.a === 5 || P.a === 6) && baseKind(P.v) === vk && HQV.hqVehicleModels) vk = P.v;
-      var vsig = vk && VEHICLES[vk].cat ? vk + ":" + P.vp : vk;
+      var vsig = (vk && VEHICLES[vk].cat ? vk + ":" + P.vp : vk) + (vk && P.vt ? "~" + P.vt : "");   // [3.13] and its tune
       if(P.bike && P.vkind !== vsig){ if(P.ch){ P.g.add(P.ch.o); seatOn(P.ch, null); } P.g.remove(P.lean); P.bike = null; P.lean = null; P.vkind = null; }
       if(vk && !P.bike){
         P.lean = new THREE.Group(); P.g.add(P.lean); P.vkind = vsig; P.steer = 0;
         var Vc = VEHICLES[vk].cat, ph = Vc && Vc.paints && Vc.paints[P.vp] && /^#[0-9a-fA-F]{6}$/.test(Vc.paints[P.vp].hex) ? parseInt(Vc.paints[P.vp].hex.slice(1), 16) : bikeColor(u);
-        P.bike = Vc ? HQV.hqVehicleModels.build(ctx, Vc, ph) : VEHICLES[vk].plane ? HQV.hqplane.model(ctx, vk, bikeColor(u)) : VEHICLES[vk].heli ? HQV.hqheli.model(ctx, vk, bikeColor(u)) : vk === "car" ? carModel(bikeColor(u)) : vk === "moto" ? motoModel(bikeColor(u)) : bikeModel(bikeColor(u));
+        var ptn = P.vt && HQV.hqTuning && (vk === "car" || vk === "moto" || Vc) ? HQV.hqTuning.decode(P.vt, (Vc ? VEHICLES[vk].kind === "bike" : vk === "moto") ? "bike" : "car") : null;   // [3.13]
+        P.bike = Vc ? HQV.hqVehicleModels.build(ctx, Vc, ph, {tune: ptn}) : VEHICLES[vk].plane ? HQV.hqplane.model(ctx, vk, bikeColor(u)) : VEHICLES[vk].heli ? HQV.hqheli.model(ctx, vk, bikeColor(u)) : vk === "car" ? carModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : vk === "moto" ? motoModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : bikeModel(bikeColor(u));
+        if(ptn && !Vc && (vk === "car" || vk === "moto") && HQV.hqVehicleModels && HQV.hqVehicleModels.tuneStarter) HQV.hqVehicleModels.tuneStarter(THREE, P.bike, ptn, vk === "car" ? "car" : "bike");
         P.lean.add(P.bike.g); if(P.ch){ P.lean.add(P.ch.o); seatOn(P.ch, P.bike); }
       }
       if(P.bike){
@@ -3766,6 +4228,8 @@ function mount(el, api){
         // their brake lights, when they slow down hard (held a moment, so they do not flicker)
         if(P.pv != null && dt > 0 && (P.pv - v)/dt > 3 && v > 0.5) P.brakeT = 0.4; else P.brakeT = (P.brakeT || 0) - dt;
         P.pv = v; if(P.bike.brake) P.bike.brake(P.brakeT > 0);
+        // [3.12] their lights, from this page's night and weather (games/hqdrive.js; no network)
+        if(Drv() && !VEHICLES[vk].plane && !VEHICLES[vk].heli){ try { Drv().beam(THREE, P.bike, {base: baseKind(vk), shared: true}); Drv().lights(P.bike, DRV.peerLit, false, t, true, isNight() ? 1 : 0.35); } catch(e){} }
       }
       // on foot: their pace from how fast they really move (smoothed), so the same blend as yours and no gliding
       var fv = dt > 0 && !jump ? Math.hypot(P.x - (P.px == null ? P.x : P.px), P.z - (P.pz == null ? P.z : P.pz))/dt : 0;
@@ -3779,6 +4243,7 @@ function mount(el, api){
         P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0);
         if(P.bike && P.ch.o.parent === P.lean) ridePose(P.ch, P.bike, P.steer, P.g);
         else if(!vk){ leanStep(P.ch, P.lean2 || (P.lean2 = {r: 0, rv: 0, p: 0, pv: 0, h: 0, hv: 0}), P.fs, P.fr, 0, dt, true); headApply(P.ch, P.lean2.h); }
+        boomStep(P.ch, !!P.bb && !vk, t, true);                       // their boombox, on foot
       }
     });
   }
@@ -3793,8 +4258,16 @@ function mount(el, api){
   // on a board: what others should see you doing ({k, y}); null otherwise
   inst.skate = function(){ return ride && ride.kind === "skate" ? skateNet() : null; };
   inst.riding = function(){ return !!ride; };
+  // a boombox on your shoulder while your Music room song plays (ui/app/39-boombox.js)
+  inst.setBoombox = function(on){ boomMe = !!on; };
+  inst.boombox = function(){ return !!boomMe; };
   // driving a catalogue vehicle: its id and paint index, for presence (`v` / `vp`, the "vehicles" capability)
   inst.vehicle = function(){ return ride && ride.V && ride.V.cat ? {v: ride.kind, vp: ride.paint | 0} : null; };
+  // [3.13] its tune as presence's short code (`vt`, the "tuning" capability): a tuned car or motorbike you drive, else null
+  inst.tuneCode = function(){
+    var Tn = HQV.hqTuning, k = ride && (ride.base === "car" || ride.base === "moto") ? (ride.base === "moto" ? "bike" : "car") : null;
+    return k && ride.tune && Tn && !Tn.isStock(ride.tune, k) ? Tn.encode(ride.tune, k) : null;
+  };
   // read-only, for the HUD's tests and tools: what you are driving and how
   inst.drive = function(){ return ride ? {kind: ride.kind, speed: ride.speed, slip: ride.slip, drift: !!ride.drift, gear: ride.gear, rpm: Math.round(ride.rpm)} : null; };
 
@@ -3872,6 +4345,12 @@ function mount(el, api){
                          nav: function(){ return cur && cur.nav ? cur.nav() : null; },
                          // the City's park and landmarks (games/hqspectacle.js) and its weather (games/hqweather.js)
                          spectacle: function(){ return cur && cur.spectacle ? cur.spectacle() : null; },
+                         // [3.12] driving feel and convoys (games/hqdrive.js): state, a hit, the smoke friend's convoy fields
+                         drive: function(){ return {wx: DRV.wx, grip: DRV.grip, lit: drvGround() && Drv() ? Drv().lightsOn(isNight(), DRV.wx, DRV.manual) : false, manual: DRV.manual,
+                           key: DRV.key, dmg: DRV.dmg, convoy: DRV.C ? {lead: DRV.C.lead, role: DRV.C.role, members: DRV.C.members, pending: DRV.C.pending, invite: DRV.C.invite} : null, net: inst.convoyNet()}; },
+                         hit: function(v, side){ drvHit(+v || 0, side === "r" ? "r" : "f"); return DRV.dmg; },
+                         assist: function(on){ DRV.jHeld = !!on; },
+                         peer: function(f){ if(SMOKE.peer && f && typeof f === "object") Object.keys(f).forEach(function(k){ SMOKE.peer[k] = f[k]; }); inst.setPeers(lastPeers); return SMOKE.peer; },
                          weather: function(){ return cur && cur.weather ? cur.weather() : null; },
                          // avatar + camera, for tools that drive the keys and record motion
                          probe: function(){ var c = curCam(); return {x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: avatar.yaw, speed: avatar.speed || 0,
@@ -3907,19 +4386,24 @@ function mount(el, api){
   // loading screen, mid-sea, where both cities are far behind the haze.
   var nextCity = null, keepRide = false;
   function dropNext(){ if(!nextCity) return; var w = nextCity.w; nextCity = null; if(w && w !== cur && w.destroy){ try { w.destroy(); } catch(e){} } }
+  // a City built ahead that came back as another world (the island isn't available: the Commons instead) is
+  // dropped and never swapped in (3.11.1: it was, and you were flown into a second Commons mid-air)
+  var nextFailed = {};
   inst.prebuildCity = function(world){
-    if(!scene || !HQV.hqCity3d || !HQV.hqWorlds.city3d) return false;
+    if(!scene || !HQV.hqCity3d || !HQV.hqWorlds.city3d || nextFailed[world]) return false;
     if(nextCity && nextCity.world === world) return true;
     dropNext();
     HQV.hqCity3d.go(world, null);
-    var w = {scene: new THREE.Scene(), name: "city"}, got = null;
+    var w = {scene: new THREE.Scene(), name: "city", prebuilt: true}, got = null;
     tgt = w.scene;
     try { got = HQV.hqWorlds.city3d(ctx, w) || w; } catch(err){ got = null; }
     tgt = scene;
     if(!got) return false;
     if(got.setTime) got.setTime(isNight()); if(got.onData) got.onData(sessions);
     var N = nextCity = {world: world, w: got, ready: false};
-    (got.whenReady || Promise.resolve()).then(function(){ if(nextCity === N){ N.ready = true; got.isReady = true; } },
+    (got.whenReady || Promise.resolve()).then(function(){ if(nextCity !== N) return;
+                                                          if(got.world && got.world() !== world){ nextFailed[world] = true; dropNext(); return; }
+                                                          N.ready = true; got.isReady = true; },
                                               function(){ if(nextCity === N) dropNext(); });
     return true;
   };
@@ -3928,7 +4412,7 @@ function mount(el, api){
     if(!nextCity || nextCity.world !== world || !nextCity.ready || !scene) return false;
     var C = worlds.city;
     if(C){ delete worlds.city; C.swapOut = true; }
-    worlds.city = nextCity.w; nextCity = null;
+    worlds.city = nextCity.w; nextCity.w.prebuilt = false; nextCity = null;
     lastCity = null; entering = null;
     var fl = ride && (ride.heli || ride.plane);
     if(keep && fl){ fl.x -= +keep.dx || 0; fl.z -= +keep.dz || 0; ride.home = null; keepRide = true; }
@@ -3950,6 +4434,7 @@ function mount(el, api){
   };
   inst.destroy = function(){
     inst.alive = false; inst.pause(); driveHud(null); exitLock(); rigLeave(); dropNext();
+    if(PK){ try { PK.dispose(); } catch(e){} PK = null; }             // [pets 3.14]
     if(ownUnsub){ try { ownUnsub(); } catch(e){} ownUnsub = null; }
     window.removeEventListener("keydown", onKey, true); window.removeEventListener("keyup", onKey, true); window.removeEventListener("blur", onBlur);
     window.removeEventListener("gamepadconnected", onPadOn); window.removeEventListener("gamepaddisconnected", onPadOff);
@@ -3986,6 +4471,13 @@ function mount(el, api){
     buildRoom(); buildHolo(); buildAvatar();
     worlds.mission = cur = {scene: scene, name: "mission", span: 12, floor: inst.floor, bounds: [-ROOM, ROOM, -ROOM, ROOM],
       spawn: {x: 3, z: 9, yaw: PI}, spawnFrom: {lobby: {x: -12.6, z: 13.5, yaw: PI/2}}};
+    // [hq revamp] HQ Studio's Mission Control theme: finishes, light, the desks' furniture set, the decor (games/hqdecor.js)
+    if(HQV.hqDecor && HQV.hqDecor.mission){
+      MS = HQV.hqDecor.mission(ctx, scene, {floor: inst.floor, wallM: inst.wallM, lamps: lamps, room: ROOM});
+      worlds.mission.onLook = function(){ if(MS.apply(((api.look && api.look()) || {}).style)){ inst.deskIds = null; layoutDesks(); } };
+      worlds.mission.studioGrid = MS.grid; worlds.mission.update = MS.update;
+      MS.apply(((api.look && api.look()) || {}).style);
+    }
     // Mission Control's desks first: the 3D City starts reading its world from IndexedDB in enterWorld,
     // and a long task right after that read would hold up its answer (the < 100 ms cache gate)
     inst.update(sessions);

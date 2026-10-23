@@ -72,15 +72,27 @@ pub fn vehicle_home_target(path: &str) -> Option<&str> {
     path.strip_prefix("/api/arena/vehicles/")?.strip_suffix("/home").filter(|id| !id.is_empty() && !id.contains('/'))
 }
 
+/// The owned vehicle in `/api/arena/vehicles/<id>/tuning` (GET reads, POST saves); arena.rs validates the id. [3.13]
+pub fn vehicle_tuning_target(path: &str) -> Option<&str> {
+    path.strip_prefix("/api/arena/vehicles/")?.strip_suffix("/tuning").filter(|id| !id.is_empty() && !id.contains('/'))
+}
+
+/// The owned pet and its action in `/api/arena/pets/<id>/{edit,care,release}`; arena.rs validates the id. (HQ 3.14)
+pub fn pet_post_target(path: &str) -> Option<(&str, &str)> {
+    let rest = path.strip_prefix("/api/arena/pets/")?;
+    let (id, action) = rest.split_once('/')?;
+    (!id.is_empty() && matches!(action, "edit" | "care" | "release")).then_some((id, action))
+}
+
 /// Every state-changing route; anything else 404s locally.
 pub fn post_paths() -> Vec<&'static str> {
     let mut v = vec![
         "/api/update", "/api/action", "/api/config", "/api/meta", "/api/evo-choice", "/api/arena/pair", "/api/arena/unpair", "/api/arena/publish",
         "/api/arena/ticket", "/api/arena/nudge", "/api/arena/pantry/claim", "/api/arena/pantry/buy", "/api/arena/pantry/eat",
-        "/api/arena/pantry/give", "/api/arena/pantry/reward", "/api/arena/hq/me", "/api/arena/portrait", "/api/arena/cosmetics/buy",
+        "/api/arena/pantry/give", "/api/arena/pantry/reward", "/api/arena/hq/me", "/api/arena/hq/style", "/api/arena/portrait", "/api/arena/cosmetics/buy",
         "/api/arena/cosmetics/equip", "/api/arena/market/sell", "/api/arena/crews/create", "/api/arena/crews/join",
         "/api/arena/crews/leave", "/api/arena/quickplay/join", "/api/arena/quickplay/leave", "/api/arena/cali/order",
-        "/api/arena/sounds", "/api/arena/rail/build", "/api/arena/vehicles/buy",
+        "/api/arena/sounds", "/api/arena/rail/build", "/api/arena/vehicles/buy", "/api/arena/pets/adopt",
         "/api/arena/casino/cage", "/api/arena/casino/play", "/api/arena/casino/blackjack", "/api/arena/casino/duel", "/api/games/state", "/api/vial/spend", "/api/notch/install",
     ];
     v.extend(ARENA_ROOM_POSTS);
@@ -324,7 +336,7 @@ static GAME_ASSET_RE: LazyLock<Regex> = LazyLock::new(|| {
     // Valley Rally (games/rally/) is all generated code: its physics, stage and scene scripts
     // are classic scripts in that folder, so it alone may serve .js beside its data. The 3D
     // City's CC0 surface textures and sky (games/city/, LICENSE-assets.txt) are JPEGs only.
-    Regex::new(r"^(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart|platformer|fps|strike|vehicles)/[a-z][a-z0-9-]{0,40}\.(glb|json|png)|rally/[a-z][a-z0-9-]{0,40}\.(js|json|png)|city/[a-z][a-z0-9-]{0,40}\.jpg)$").unwrap()
+    Regex::new(r"^(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart|platformer|fps|strike|vehicles|pets)/[a-z][a-z0-9-]{0,40}\.(glb|json|png)|rally/[a-z][a-z0-9-]{0,40}\.(js|json|png)|city/[a-z][a-z0-9-]{0,40}\.jpg)$").unwrap()
 });
 
 fn game_type(ext: &str) -> &'static str {
@@ -495,6 +507,7 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
     if path == "/api/arena/garages/mine" { let (c, r) = app.arena_garages_mine(); return Reply::json(c, &r); } // [basement 3.4]
     if path == "/api/arena/casino/me" { let (c, r) = app.arena_casino_me(); return Reply::json(c, &r); } // HQ 3.7
     if path == "/api/arena/casino/duels" { let (c, r) = app.arena_casino_duels(); return Reply::json(c, &r); }
+    if let Some(id) = vehicle_tuning_target(path) { let (c, r) = app.arena_vehicle_tuning(id); return Reply::json(c, &r); } // [3.13]
     if path == "/api/arena/vehicles/mine" {
         let (c, r) = app.arena_vehicles_mine();
         return Reply::json(c, &r);
@@ -585,6 +598,16 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
         "/api/arena/hq/open" => {
             let (c, r) = app.arena_hq_open();
             return Reply::json(c, &r);
+        }
+        "/api/arena/pets/mine" => { let (c, r) = app.arena_pets_mine(); return Reply::json(c, &r); } // HQ 3.14
+        "/api/arena/pets/home" => { let (c, r) = app.arena_pets_home(&arg("u")); return Reply::json(c, &r); }
+        "/api/arena/hq/style" => {
+            let (c, r) = app.arena_hq_style();
+            return Reply::json(code_or(c, 502), &r);
+        }
+        "/api/arena/hq/styles" => {
+            let (c, r) = app.arena_hq_styles(&arg("ids"));
+            return Reply::json(code_or(c, 502), &r);
         }
         "/api/arena/hq/visit" => {
             let (c, r) = app.arena_hq_visit(&arg("u"));
@@ -813,6 +836,8 @@ async fn do_post(app: Arc<App>, headers: HeaderMap, path: String, body: Body) ->
     }
     if !post_paths().contains(&path.as_str()) && city_post_target(&path).is_none() && vehicle_park_target(&path).is_none()
         && vehicle_home_target(&path).is_none() // [basement 3.4]
+        && vehicle_tuning_target(&path).is_none() // [3.13]
+        && pet_post_target(&path).is_none() // HQ 3.14
     {
         return reply(Reply::json(404, &json!({"error": "not found"})));
     }
@@ -935,6 +960,8 @@ fn arena_post(app: &App, path: &str, body: &Value) -> (u16, Value) {
         return app.arena_vehicle_park(id, body);
     }
     if let Some(id) = vehicle_home_target(path) { return app.arena_vehicle_home(id, body); } // [basement 3.4]
+    if let Some(id) = vehicle_tuning_target(path) { return app.arena_vehicle_tuning_set(id, body); } // [3.13]
+    if let Some((id, action)) = pet_post_target(path) { return app.arena_pet_post(id, action, body); } // HQ 3.14
     if let Some((owner, action)) = city_post_target(path) {
         return if action == "trade" { app.arena_market_trade(&owner, body) } else { app.arena_city_post(&owner, action, body) };
     }
@@ -950,6 +977,7 @@ fn arena_post(app: &App, path: &str, body: &Value) -> (u16, Value) {
         "/api/arena/publish" => app.arena_publish(),
         "/api/arena/rail/build" => app.arena_rail_build(body),
         "/api/arena/vehicles/buy" => app.arena_vehicle_buy(body),
+        "/api/arena/pets/adopt" => app.arena_pet_adopt(body), // HQ 3.14
         "/api/arena/casino/cage" | "/api/arena/casino/play" | "/api/arena/casino/blackjack" | "/api/arena/casino/duel" => app.arena_casino_post(path.rsplit('/').next().unwrap_or(""), body),
         "/api/arena/ticket" => app.arena_ws_ticket(),
         "/api/arena/nudge" => match b.get("toHandle").and_then(|v| v.as_str()).filter(|t| !py::strip(t).is_empty()) {
@@ -973,6 +1001,10 @@ fn arena_post(app: &App, path: &str, body: &Value) -> (u16, Value) {
         "/api/arena/hq/me" => {
             let crew = py::opt_truthy(b.get("crew")).then(|| app.hq_crew_counts());
             app.arena_hq_update(b.get("open"), b.get("look"), crew.as_ref())
+        }
+        "/api/arena/hq/style" => {
+            let (c, r) = app.arena_hq_style_put(b.get("style"));
+            (code_or(c, 502), r)
         }
         "/api/arena/cali/order" => match handlers::cali_body(body) {
             Ok(clean) => {

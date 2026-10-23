@@ -1021,6 +1021,7 @@ function currentModal(){
   if($("warroom") && $("warroom").classList.contains("on")) return $("warroom");
   if($("notchInviteBack") && $("notchInviteBack").classList.contains("open")) return $("notchInviteBack");
   if($("townHallBack") && $("townHallBack").classList.contains("open")) return $("townHallBack");
+  if($("petsBack") && $("petsBack").classList.contains("open")) return $("petsBack");   // [pets 3.14]
   if($("evoPickBack") && $("evoPickBack").classList.contains("open")) return $("evoPickBack");
   if($("evoPreviewBack") && $("evoPreviewBack").classList.contains("open")) return $("evoPreviewBack");
   if(typeof CMDK_OPEN!=="undefined" && CMDK_OPEN) return $("cmdk");

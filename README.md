@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.10.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.13.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -64,6 +64,21 @@ paired), published maps and work signals (off by default) add a few listed field
   **G** gear (assisted: up and down by itself), **F** flaps, **Space** brakes and, in the air, speed brakes
   (the ground spoilers deploy by themselves on landing), **X** assisted/manual, **K** autopilot, **N** go to.
   Land on a runway, taxi back to a stand or the apron, stop, then **E** to get out.
+- **Driving feel and convoys (3.12).** Headlights and tail lights come on by themselves at night and in heavy
+  rain, storms, snow or fog, with a pool of light on the road ahead (**L** switches them by hand); other players'
+  cars light up too. Rain and snow cost grip: longer braking, easier powerslides, motorbikes and bicycles ride more
+  carefully, and spray flies off your wheels (the HUD shows **Wet road** or **Snow**). Hit something hard and your
+  car dents, a headlight can crack and a wreck smokes (cosmetic only; the garage kiosk, the B1 car lift and the
+  dealership repair it). **Convoys:** press **Y** near a friend (or **🚗 Convoy** in Here now) to invite them; they
+  press **Y** to join, then hold **J** to keep their slot behind-left or behind-right of the leader, who can set a
+  Go to route that every follower sees. **Y** again leaves.
+- **The Tuning shop (3.13).** **Redline Tuning**, a workshop next to the dealership in every city from tier 2
+  (**Go to → Tuning shop**): walk into its open bay and press **E**, or press **Tune** on a B1 row of the garage
+  manager. Paint (factory colours or any colour, gloss / matte / metallic / pearl / chrome, a two-tone roof, stripes
+  or a livery), six rim designs per car or bike with their colour and a size step, window tint, a lip, ducktail or GT
+  wing, sport / quad / titanium exhausts (bikes: slip-on, under-seat, end can; each changes the engine note) and a
+  plate of your own (8 characters; your HQ's name by default). Drag the preview to orbit, the wheel or **+ / −** to
+  zoom. Free; your owned vehicles' tunes live in the Arena (others see them), the starters' in this browser.
 - **The Commons air base.** Hangars, a radar, an attack helicopter, an aircraft carrier offshore and
   fighter jets flying over.
 - **A real airport.** An offshore airfield for the Commons: a 1.6 km runway with full markings and lights,
@@ -335,6 +350,11 @@ replies, file paths, project or folder names, session ids, or titles.
   reels, puzzle guesses, battle picks, your team as species numbers and species names, golf
   shots and your golfer's position on the course. The server keeps game state in memory (the
   shared farm is stored) and never sees session titles, prompts or project names.
+- **Pets are what you chose for them.** With an Arena that has pets, your pets live there: species,
+  colours, accessories, affection and the names you typed for them (checked and word-filtered by the
+  server). The pets out with you ride in your presence (species, colour, accessory and growth numbers and
+  the name, at most two), and visitors to your open HQ see the ones in your lobby. Without one, pets live
+  only in this browser. Nothing about your sessions goes into them.
 - The wire format rejects unknown fields outright, so a future client change
   can't silently start leaking one.
 
@@ -371,6 +391,54 @@ and feature guide.
 
 ## Changelog
 
+- **3.13.0 — Tuning shop, pets and the HQ revamp.** One release, one Arena deploy (migrations 0020, 0021 and 0022;
+  presence capabilities `tuning`, `pets` and `hqstyle`).
+  - **The Tuning shop.** Redline Tuning, a workshop next to the dealership in every city from tier 2 (Go to → Tuning shop; E at its bay), and Tune on any B1 row of the garage manager. Paint any catalogue or custom colour in gloss, matte, metallic, pearl or chrome, with a two-tone roof, stripes or a livery. Wheels: six rim designs per car or bike, rim colour, and a size step (the tyre's outside never changes). Window tint, a lip, ducktail or GT wing, and sport, quad or titanium exhausts (bikes: slip-on, under-seat, end can) that change the engine note. A number plate of your own (8 characters, filtered; your HQ's name stays the default). Live preview on a turntable under a lift with an orbit camera; B1 plinths and the City show your tuned vehicles. Free. Your owned vehicles' tunes are kept in the Arena (migration 0020, `/v1/vehicles/:id/tuning`) and other players see them through presence `vt` (the new `tuning` capability). Your starters' tunes stay in this browser. Needs the Arena release.
+  - **Pets.** Adopt dogs (Shiba, Golden Retriever, Corgi, Husky, Dachshund), cats (Tabby, Siamese, Maine Coon, Black cat), dinosaurs (T-Rex pup, Triceratops, Raptor, Brachiosaurus baby, Stegosaurus), dragons (Wyvern, Fire, Ice, Storm, Crystal, Shadow, Golden) and a Sea serpent at Paws & Claws, the City's new Pet shop (Go to: Pet shop), or from the Pets panel (Cmd-K, Settings). Dogs and cats are free; rarer pets are free from their HQ level or sooner for Poke Coins. Up to 6, two out with you. They follow you round the HQ, B1 and the City, go round buildings, catch up if left behind, idle, nap, hop in your car, fly beside your plane or swim beside your boat. B throws a ball to fetch, U pets, O does a trick (more unlock with affection), and dragons grow. Each dragon has its element: frost breath and snow, fire and embers, lightning, prism sparkles, shadow wisps, gold glitter (off in Calm). The rest live in your HQ lobby, roam, nap and greet you; E takes one out or leaves one there, and visitors to your open HQ see them. Friends see your pets through the new "pets" presence capability (species, colours, accessories, growth and name, at most two). Older Arenas keep pets in this browser only. **Privacy:** pet names you type go to the Arena (checked and word-filtered). Pets look and move like animals: rounded bodies, eyes that blink, jointed legs that walk, trot and gallop, wagging tails, flicking ears, sit and sleep poses, and dragons with folding membrane wings that flap and glide; the Shiba, Husky, Golden Retriever and the dinosaurs use animated low-poly models (the rest stay procedural). **Backend:** migration 0022_pets.sql and /v1/pets/* (deploy needed). **Third-party assets:** CC0 animated models by Quaternius (Ultimate Animated Animals: Shiba Inu, Husky; Animated Dinosaurs: T-Rex, Velociraptor, Triceratops, Stegosaurus, Apatosaurus) in `games/pets/` with `LICENSE-quaternius.txt`, served only from 127.0.0.1.
+  - **The HQ revamp and HQ Studio.** Every HQ is grander and a bit bigger, as far as its lot allows: a podium with a grand entrance, setback tiers, six facade systems, lit signage and night lighting, crowns, roof extras and landscaping, and a working helipad on every roof. Land a helicopter on any HQ, get out, walk the roof deck and take the roof lift down; the Lobby has a Roof lift up. HQ Studio (Settings, Cmd-K or the lobby kiosk) styles your tower, a new double-height lobby (reception, centrepiece, seating, art, rugs, signage, ambience), each floor's walls, floor, lighting and furniture, and lets you place decor and pet furniture on a grid. Others see your style when the Arena supports it (migration 0021, "hqstyle"); otherwise it stays on this machine. Privacy: only the style document (enums, colours, grid cells) goes to the Arena, nothing from transcripts. Third-party assets: none. Needs an Arena deploy.
+- **3.12.0 — Driving feel + convoys.** Cars, motorbikes and bicycles in the City (`games/hqdrive.js`):
+  **lights** switch on at night and in heavy rain, a storm, snow or fog (**L** toggles them by hand), brighter
+  lamps and tails plus one additive pool-and-cone mesh on the road (no real lights, one draw call per lit
+  vehicle); other players' vehicles light up from your own clock and weather. **Grip:** rain, storms and snow
+  lower lateral grip and braking (about −35 % braking in a storm, −50 % in snow; two wheels lose more and ride
+  slower), powerslides come easier and last longer, and wet-road spray flies off your wheels (off in Calm); the
+  drive HUD shows Wet road / Snow, the lights and the damage. **Damage:** hits above ~22 km/h dent the panels
+  you hit, crack a headlight and, past 70 %, smoke from the bonnet (not in Calm); a wrecked car pulls slightly.
+  Cosmetic, kept per vehicle in localStorage; the garage kiosk, the B1 car lift and the dealership repair it.
+  **Convoys:** **Y** invites the nearest player within 40 m (or **🚗 Convoy** in Here now), **Y** accepts or
+  leaves, hold **J** for a soft assist that steers and throttles you into your slot (behind-left / behind-right
+  on the road, a wider echelon in the air), a convoy panel lists members, distances and "In formation", and the
+  leader's Go to destination is shown to every follower. You leave on a world change or past 300 m. The Arena
+  relays it with presence (`ci` / `cv` / `cg`, the new "convoy" capability); older Arenas hide convoys.
+  **Privacy / egress:** user ids of the people you invite / follow and your Go to point ride City presence,
+  only where the Arena lists "convoy". **Third-party assets:** none. **Backend:** `backend/` changed (deploy needed).
+- **3.11.2 — Steady flying on.** Taking off no longer glitches. The Commons' airport sits offshore, past the coast,
+  so the moment a plane lifted off the City picked the nearest island whatever your heading, said "Flying on to …"
+  and built that island's City (a long frame); a circuit dropped it and picked the next, again and again, and a City
+  that came back as another world (an island that isn't available) was swapped in under you mid-air. Flying on is
+  now armed only heading for an island (for a plane, also past the airport's runways) for 2 s, announced at most
+  once a minute per island, rests 20 s after you turn back, swaps only well past half-way, and never swaps in a
+  City built as another world. Landing or getting out disarms it, and a Go to route to a plane ends as you board.
+  **Privacy / egress:** none. **Third-party assets:** none.
+- **3.11.1 — Bigger plinths, calmer ambience.** B1's gallery turntables grow to 3.45 m (from 3.19 m) so the
+  longest catalogue cars as drawn (the 5.8 m i7, the Urus) turn on them with room to spare: seven plinths along
+  the back wall and eight down the front, on a 7.25 m pitch, still clear of the lifts, kiosk, lounge, columns and
+  chargers (bay i is still slot 3 + i). Thunder is heard only for strikes within 1 km (fading to nothing at the
+  edge, no floor) and fireworks only within 1 km of the camera. A new **Ambient sounds** switch in Settings
+  (on by default, separate from engines and game sounds) silences thunder, fireworks, the rain's hiss and the
+  jets' roar. **Privacy / egress:** none (one local setting, `hq_ambient`). **Third-party assets:** none.
+- **3.11.0 — The boombox.** While you are tuned in to your Music room and its song plays, your
+  character carries a big cartoon boombox on the right shoulder in the 3D City (toon-shaded and inked,
+  squashing on the beat, woofers pumping, notes popping out), the right hand gripping it from the outside.
+  Anyone within 28 m hears the same song, in step with yours, louder the closer they are
+  (`ui/app/39-boombox.js`). The Arena relays it with presence (`bb` / `bt` / `bn`, the "boombox"
+  capability). The HQ chat panel is now always open (no hide button).
+  **Privacy / egress:** your room song's YouTube id, start time and title ride your City presence to the
+  Arena while it plays; listeners load it in YouTube's privacy-enhanced embed (the main player as a
+  fallback), as the Music tab does. **Third-party assets:** none.
+- **3.10.1 — Strikezone: the arsenal explains itself.** Each gun on the pre-match card now
+  says what it does and how to fire it (keys, scope, the grapple's drone-swing / foe-lock).
+  **Privacy / egress:** no new network calls. **Third-party assets:** none.
 - **3.10.0 — Wider roads.** Every street in the Commons and on every island is paved wider: a local road 10.5 m
   (a 7 m carriageway, was 5 m; 1.75 m sidewalks), an arterial 15.5 m (11 m, was 8; 2.25 m sidewalks), the Commons'
   highways 13.5 m (were 10) and its ring road 12 m (was 9). Lanes, markings, kerbs and traffic follow the new widths.
@@ -572,6 +640,25 @@ and feature guide.
   and `/api/arena/vehicles/<id>/park`) send only a validated vehicle id, paint and position with the paired
   device token. Presence adds the driven vehicle's catalogue id and paint index. Nothing transcript-derived
   is sent.
+- **3.3.4 — Strikezone polish: eight slow drones, a wings-style climb, the grapple in-hand.**
+  Flight drones go from 4 to **8**, each on its own slow sky lane (still derived from the map
+  bounds). Hooking a drone now **eases** you up to its height the way the wings totem rises —
+  no more teleport to altitude. The grappling gun is visible in first-person (it was scaled
+  too thin to read), and its aim-down-sights matches the launcher's light zoom. The Tab weapon
+  wheel highlight is a real pie slice that covers the selected gun (the old four-quadrant
+  squares could not tile five weapons). **Privacy / egress:** no new network calls.
+  **Third-party assets:** none.
+
+- **3.3.3 — Strikezone: flight drones + the grappling gun.** Four drones cruise the arena on
+  fixed sky lanes (derived from the map bounds — no map-file change). Real players also carry a
+  fifth gun, the **Grappling gun** (key `5`): zero damage. Hook a drone and you are pulled to its
+  height and swing across the map (jump / sprint to let go); hook a foe (player or bot) and drag
+  them in — while the hook is on they cannot shoot. 5 hooks per life; ammo crates refill it. Bots
+  never carry it. While The Warden lives the hook is mobility only (no foe hooks, no damage to the
+  Warden). Snap additive key `"dr"` + `FLAG_HOOK` on the victim's row; the rocket path keeps
+  `LAUNCH_W = 3` so the launcher is unchanged. **Privacy / egress:** no new network calls.
+  **Third-party assets:** none — the 3D gun is original geometry; drones reuse the existing
+  Kenney `enemy-flying` hotlink with the usual `monsterSVG` fallback.
 - **3.3.2 — No more camera pumping near buildings.** Riding (or walking) past buildings, the chase camera kept
   zooming in and out: its collision ray clipped corner after corner, pulling in fast and easing out between them.
   Now once it pulls in it keeps that distance for 0.6 s after the last hit before easing back out, so passing a

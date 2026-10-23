@@ -56,10 +56,22 @@ var FS = (function(){
     {id: "revolver", name: "Revolver", interval: 0.5, damage: 50, head: 75, mag: 6, reserve: 24, reload: 2.2,
      spread: 0.5, range: 70.0, auto: false, pack: 12},
     {id: "launcher", name: "Launcher", interval: 1.2, damage: 120, head: 120, mag: 1, reserve: 5, reload: 2.5,
-     spread: 0.0, range: 60.0, auto: false, pack: 2}];
+     spread: 0.0, range: 60.0, auto: false, pack: 2},
+    // the grappling gun: zero damage. Hook a match drone and swing; hook a foe and drag
+    // them in (they cannot shoot while hooked). 5 hooks; ammo crates refill the reserve.
+    // Real players only — bots never roll this one.
+    {id: "grapple", name: "Grappling gun", interval: 0.9, damage: 0, head: 0, mag: 5, reserve: 5, reload: 2.2,
+     spread: 0.0, range: 40.0, auto: false, pack: 5}];
   // the launcher's rocket: a real missile that flies and blasts — the Arena server flies and
   // judges it in multiplayer (snapshots carry it), the browser flies it solo. All impls agree.
   var LAUNCH = WEAPONS[3];
+  // weapon indices (twins: backend/src/strike.rs). LAUNCH_W must stay the rocket's slot —
+  // every `w == NW - 1` rocket path is really "is the launcher".
+  var GRAPPLE_W = 4, LAUNCH_W = 3, BOT_WEAPON_MAX = 4;
+  // match flight drones (grapple anchors): deterministic routes inside the map bounds.
+  var DRONE_Y = 7.5, DRONE_R = 0.8, DRONE_N = 8, DRONE_PHASE = 1.3;
+  var GRAPPLE_TIME = 2.5, GRAPPLE_SWING = 11.0, GRAPPLE_UP = 6.0, GRAPPLE_PULL = 18.0, HOOK_LOCK = 2.0;
+	var GRAPPLE_RISE = 4.0;
   var MISSILE_V = 22.0, MISSILE_G = 6.0, MISSILE_TTL = 3.5, BLAST_R = 4.0, DIRECT_R = 0.8;
   // blast damage by distance from the explosion (direct hit / falloff to BLAST_R)
   function blastDamage(dist, direct){
@@ -288,6 +300,43 @@ var FS = (function(){
     var ph = ((t*s/ln) % 2 + 2) % 2, u = ph <= 1 ? ph : 2 - ph;
     return [a[0] + (b[0]-a[0])*u, a[1] + (b[1]-a[1])*u, a[2] + (b[2]-a[2])*u];
   }
+  // Match flight drones: DRONE_N ping-pong lanes drawn from the map bounds so every
+  // shipped / user map gets anchors without a new JSON field. Twin: grapple_routes.
+  function grappleRoutes(b){
+    b = (b && b.length >= 6) ? b : [-42, -1, -30, 42, 12, 30];
+    var x0 = +b[0], z0 = +b[2], x1 = +b[3], z1 = +b[5];
+    if(!(x1 > x0 + 1)) x1 = x0 + 84;
+    if(!(z1 > z0 + 1)) z1 = z0 + 60;
+    var y = DRONE_Y, inset = 5.0;
+    var xs = x0 + inset, xe = x1 - inset, zs = z0 + inset, ze = z1 - inset;
+    if(xe < xs) xe = xs + 1;
+    if(ze < zs) ze = zs + 1;
+    var xq = xs + (xe - xs)/3, xq2 = xs + (xe - xs)*2/3;
+    var zq = zs + (ze - zs)/3, zq2 = zs + (ze - zs)*2/3;
+    // eight slow sky lanes — each drone on its own path: four long east–west rows,
+    // two north–south columns, and two mid diagonals (deterministic, bounds-inset).
+    return [
+      {a: [xs, y, zs],  b: [xe, y, zs],  s: 3.2},
+      {a: [xs, y, zq],  b: [xe, y, zq],  s: 3.6},
+      {a: [xs, y, zq2], b: [xe, y, zq2], s: 3.0},
+      {a: [xs, y, ze],  b: [xe, y, ze],  s: 3.4},
+      {a: [xq, y, zs],  b: [xq, y, ze],  s: 3.5},
+      {a: [xq2, y, zs], b: [xq2, y, ze], s: 3.1},
+      {a: [xs, y, zs],  b: [xe, y, ze],  s: 3.3},
+      {a: [xe, y, zs],  b: [xs, y, ze],  s: 3.7}
+    ];
+  }
+  // first match-drone hit along the ray: [dist, index] or null. Twin: drone_hit.
+  function droneHit(o, d, routes, t, maxd){
+    var best = null, bi = -1;
+    for(var i = 0; i < (routes || []).length; i++){
+      var tg = routes[i], c = targetAt(tg, t);
+      var b = [c[0]-DRONE_R, c[1]-DRONE_R*0.7, c[2]-DRONE_R, c[0]+DRONE_R, c[1]+DRONE_R*0.7, c[2]+DRONE_R];
+      var h = rayBox(o, d, b);
+      if(h !== null && h < maxd && (best === null || h < best)){ best = h; bi = i; }
+    }
+    return best === null ? null : [best, bi];
+  }
   return {R: R, H: H, EYE: EYE, STEP_H: STEP_H, RUN: RUN, SPRINT: SPRINT, ACCEL: ACCEL, AIR_ACCEL: AIR_ACCEL, GRAVITY: GRAVITY, JUMP_V: JUMP_V,
           LEAP_MULT: LEAP_MULT, SPEED_MULT: SPEED_MULT, WING_TOP: WING_TOP, WING_RISE: WING_RISE, WING_SINK: WING_SINK, WING_DRIFT: WING_DRIFT,
           STAMINA_MAX: STAMINA_MAX, STAMINA_DRAIN: STAMINA_DRAIN, STAMINA_REGEN: STAMINA_REGEN, SPRINT_SLOW: SPRINT_SLOW,
@@ -299,7 +348,12 @@ var FS = (function(){
           spreadOf: spreadOf, rayBox: rayBox, rayMap: rayMap, hitBoxes: hitBoxes, rayPlayer: rayPlayer, targetAt: targetAt,
           buildNav: buildNav, navNext: navNext, losMap: losMap,
           LAUNCH: LAUNCH, MISSILE_V: MISSILE_V, MISSILE_G: MISSILE_G, MISSILE_TTL: MISSILE_TTL,
-          BLAST_R: BLAST_R, DIRECT_R: DIRECT_R, blastDamage: blastDamage};
+          BLAST_R: BLAST_R, DIRECT_R: DIRECT_R, blastDamage: blastDamage,
+          GRAPPLE_W: GRAPPLE_W, LAUNCH_W: LAUNCH_W, BOT_WEAPON_MAX: BOT_WEAPON_MAX,
+          DRONE_Y: DRONE_Y, DRONE_R: DRONE_R, DRONE_N: DRONE_N, DRONE_PHASE: DRONE_PHASE,
+          GRAPPLE_TIME: GRAPPLE_TIME, GRAPPLE_SWING: GRAPPLE_SWING, GRAPPLE_UP: GRAPPLE_UP,
+          GRAPPLE_PULL: GRAPPLE_PULL, HOOK_LOCK: HOOK_LOCK, GRAPPLE_RISE: GRAPPLE_RISE,
+          grappleRoutes: grappleRoutes, droneHit: droneHit};
 })();
 /* STRIKE-SHARED END */
 
@@ -968,21 +1022,23 @@ var DROP_SLOTS = 3, PACK_SLOTS = 2, PACK_GAP = 8, TOTEM_GAP = 10, TOTEM_FIRST = 
 // ring and their own clock, same "somewhere random, recycled slots" rule as the others.
 var DIS_SLOTS = 2, DIS_GAP_DROP = 16, DIS_FIRST_DROP = 12;
 var KEYS = [["W A S D / stick", "move"], ["mouse / right stick", "look"], ["click / RT / F", "fire"], ["R / X", "reload"],
-            ["Shift / stick click", "sprint"], ["Q / E", "lean to peek"], ["right-click or `~ / LT", "scope in"], ["1 2 3 4 / wheel / Tab", "weapon"], ["Space / A", "jump"],
+            ["Shift / stick click", "sprint"], ["Q / E", "lean to peek"], ["right-click or `~ / LT", "scope in"], ["1 2 3 4 5 / wheel / Tab", "weapon"], ["Space / A", "jump"],
             ["B / Back", "scores"], ["I", "item guide"], ["H", "hide these keys"], ["Esc", "release the mouse"]];
-var BUTTONS = {w1: {keys: ["Digit1"]}, w2: {keys: ["Digit2"]}, w3: {keys: ["Digit3"]}, w4: {keys: ["Digit4"]}, swap: {keys: [], pad: [3]}, shoot: {keys: ["KeyF"]},
+var BUTTONS = {w1: {keys: ["Digit1"]}, w2: {keys: ["Digit2"]}, w3: {keys: ["Digit3"]}, w4: {keys: ["Digit4"]}, w5: {keys: ["Digit5"]}, swap: {keys: [], pad: [3]}, shoot: {keys: ["KeyF"]},
                trig: {keys: [], pad: [7]}, peekL: {keys: ["KeyQ"], pad: [14]}, peekR: {keys: ["KeyE"], pad: [15]}, score: {keys: ["KeyB"], pad: [8]},
                items: {keys: ["KeyI"], pad: [2]},
                sprint: {keys: ["ShiftLeft", "ShiftRight"], pad: [10]},
                wheel: {keys: ["Tab"]},
                // scope in: hold the right mouse button, or (trackpad) the `~ key above Tab; gamepad LT works too
                aim: {keys: ["Backquote"], pad: [6], mouse: 2}};
-// weapon "wheel" (hold Tab): emoji glyphs for the 4 slots, in FS.WEAPONS order
+// weapon "wheel" (hold Tab): emoji glyphs for the slots, in FS.WEAPONS order
 // (cannot hotlink real art: IP rule; these are system emoji the OS renders).
-var WHEEL_ICONS = ["\u{1F4A8}", "\u{1F3AF}", "\u{1F52B}", "\u{1F680}"];
+var WHEEL_ICONS = ["\u{1F4A8}", "\u{1F3AF}", "\u{1F52B}", "\u{1F680}", "\u{1FA9D}"];
 // short kill-feed labels, same index order as FS.WEAPONS / the wheel (0 rapid, 1 marksman,
-// 2 revolver, 3 launcher) — the feed used to collapse everything to rifle/smg
-var WSHORT = ["smg", "marksman", "revolver", "launcher"];
+// 2 revolver, 3 launcher, 4 grapple) — the feed used to collapse everything to rifle/smg
+var WSHORT = ["smg", "marksman", "revolver", "launcher", "grapple"];
+// snapshot flag: hooked by a grappling gun (trigger locked). Twin: FLAG_HOOK in strike.rs
+var FLAG_HOOK = 67108864;
 function wLabel(w){
   var i = w|0;
   return WSHORT[i] || WSHORT[0];
@@ -997,7 +1053,7 @@ var SLIDE_DIP = 0.22, SLIDE_RISE = 5.0, SLIDE_FALL = 3.0;
 // ADS per weapon: SMG = holographic red-dot sight (gun + sight housing visible);
 // Marksman = true sniper scope (gun hidden, world through the lens + crosshair);
 // Revolver = plain iron-sight aim (no optics — no ring, no dot, no zoom).
-var ADS = [{fov: 63, cls: "reddot"}, {fov: 14, cls: "sniper"}, {fov: 75, cls: ""}];
+var ADS = [{fov: 63, cls: "reddot"}, {fov: 14, cls: "sniper"}, {fov: 75, cls: ""}, {fov: 75, cls: ""}, {fov: 75, cls: ""}];
 
 function nameOf(p){ return String((p && (p.displayName || p.handle || p.name)) || "Bot").slice(0, 24); }
 function mmss(ms){ ms = Math.max(0, ms|0); var s = Math.ceil(ms/1000), m = Math.floor(s/60); s %= 60; return m+":"+(s < 10 ? "0" : "")+s; }
@@ -1057,7 +1113,7 @@ function makeGame(host, opts){
   var V = {mode: opts.mode, ctx: opts.ctx || null, alive: true, paused: false, phase: "idle", round: null, gotView: false,
     unsupported: false, map: !!sv.map, low: !!sv.low, sens: clamp(+sv.sens || 1, 0.2, 3), offline: false, note: "",
     me: {x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, g: true}, yaw: 0, pitch: 0, hp: 100, dead: false, life: 0, prot: false, team: 0,
-    w: 0, mag: [30, 5, 6], res: [90, 15, 24], magX: [FS.LAUNCH.mag], resX: [FS.LAUNCH.reserve], reloadAt: 0, readyAt: 0, nextShot: 0, n: 0, kills: 0, deaths: 0,
+    w: 0, mag: [30, 5, 6, 1, 5], res: [90, 15, 24, 5, 5], magX: [FS.LAUNCH.mag], resX: [FS.LAUNCH.reserve], reloadAt: 0, readyAt: 0, nextShot: 0, n: 0, kills: 0, deaths: 0,
     missiles: [], shakeAt: -10,
     players: {}, order: [], slots: {}, mySlot: -1, items: [], feed: [], results: null, minutes: 5, limit: 30, tsize: 2, scores: [0, 0],
     goAt: 0, endsAt: 0, deadAt: 0, k: null, kq: 0, off: null, sendAt: 0, sentKey: "", fixAt: 0, score: 0, shots: 0,
@@ -1067,6 +1123,9 @@ function makeGame(host, opts){
     wheelOpen: false, wheelSel: -1, wheelLook: null, stamina: 100, drag: false, dropUntil: 0, shieldTotemUntil: 0, killCam: null,
     voidAt: 0,
     wingsUntil: 0, leapUntil: 0, speedUntil: 0,
+    // grappling gun: hook lock on a foe (cannot shoot) and a drone swing window
+    hookUntil: 0, swingUntil: 0, hookTo: null, hookPull: null, swingY: 0,
+    mdrones: [], mdronesSnap: false,
     totemAt: null, packAt: null, disAt: null, dropRing: 0,
     // ---- Wave D: Arena Disasters ----
     disaster: "", disasterWarnAt: 0, disasterUntil: 0, disasterHitAt: 0,
@@ -1078,7 +1137,8 @@ function makeGame(host, opts){
     warden: null, wardenDone: false};
   if(sv.wardenOn === undefined || sv.wardenOn === null){ sv.wardenOn = true; }
   function myId(){ return V.mode === "mp" && MP ? MP.me() : "me"; }
-  var LAUNCH_W = 3;  // the launcher's index in the 4-strong roster every impl now shares
+  var LAUNCH_W = FS.LAUNCH_W|0 || 3;  // the launcher's index (rocket path); grapple is FS.GRAPPLE_W
+  var GRAPPLE_W = FS.GRAPPLE_W|0 || 4;
   // the chosen tier belongs to the ENEMIES you want to beat — your own bots are always Easy,
   // so Sweaty is "carry these potatoes", never "my team demos the lobby for me" (V lives in
   // makeGame's scope, so this helper must too, not out by DIFFS/diffOf)
@@ -1090,7 +1150,10 @@ function makeGame(host, opts){
   function weaponCount(){
     if(V.mode !== "mp") return FS.WEAPONS.length;
     var gi = window.ARENA && window.ARENA.arena && window.ARENA.arena.games && window.ARENA.arena.games.strike;
-    return (gi && (gi.v|0) >= 2) ? FS.WEAPONS.length : 3;
+    var v = (gi && (gi.v|0)) || 0;
+    if(v < 2) return 3;
+    // grapple rides the same roster but only on an Arena that knows the "dr" snap key
+    return v >= 9 ? FS.WEAPONS.length : 4;
   }
   // protocol v3 servers accept the sprint flag ("sp" on pos, raised speed cap); a v1/v2
   // Arena serves walk-only, like the v1 launcher clamp above. Solo always sprints.
@@ -1311,7 +1374,8 @@ function makeGame(host, opts){
     [["🎯", "First to the kill target wins — or whichever side is ahead when the clock runs out."],
      ["🛡", "Respawns fall from the sky under a parachute shield: steer the glide with WASD, untouchable until your boots touch."],
      ["🕳", "Fall off the map and you get 10s in the void, then a parachute back in — there is no endless free-fall."],
-     ["⚡", "Fresh drops keep landing mid-match — totems and loose health/ammo packs, somewhere random, on their own clocks."]]
+     ["⚡", "Fresh drops keep landing mid-match — totems and loose health/ammo packs, somewhere random, on their own clocks."],
+     ["🚁", "Four drones cruise the sky on fixed lanes. Real players also carry a grappling gun (key 5): hook a drone and swing across the map, or hook a foe to drag them in — while the hook is on they cannot shoot. It does no damage and holds 5 hooks (ammo crates refill it). Bots never carry it."]]
       .forEach(function(r){ var l = api.mk("div", "vg-sz-lin"); l.appendChild(ico("transparent")); l.children[0].textContent = r[0];
         var s = api.mk("span"); s.appendChild(document.createTextNode(r[1])); l.appendChild(s); ar.appendChild(l); });
     card.appendChild(ar);
@@ -1335,16 +1399,25 @@ function makeGame(host, opts){
       .forEach(function(r){ var l = api.mk("div", "vg-sz-lin"); l.appendChild(ico("transparent")); l.children[0].textContent = r[0];
         var s = api.mk("span"); s.appendChild(document.createTextNode(r[1])); l.appendChild(s); wsec.appendChild(l); });
     card.appendChild(wsec);
-    // the arsenal
+    // the arsenal — each card says what it does and how to fire it (static copy only)
+    var ARSENAL_HOW = {
+      rapid: "Hold fire to spray at close range. Key 1.",
+      marksman: "One hard shot — right-click to scope. Key 2.",
+      revolver: "Steady single hits at mid range. Key 3.",
+      launcher: "One rocket, big blast — light zoom on right-click. Key 4.",
+      grapple: "Zero damage. Hook a drone to swing up and leap; hook a foe to lock their trigger. Key 5."
+    };
     var al = api.mk("div", "vg-sz-sec");
     al.appendChild(api.mk("b", null, "The arsenal"));
-    var wrow = api.mk("div", "vg-sz-grid");
+    var wrow = api.mk("div", "vg-sz-arms");
     FS.WEAPONS.forEach(function(w){
       var t = api.mk("div", "vg-sz-pill");
       t.appendChild(wIcon(w));
       var b = api.mk("span", "vg-sz-pn");
       b.appendChild(document.createTextNode(w.name));
-      b.appendChild(api.mk("small", "vg-muted", w.mag+"-round mag"+(w.auto ? " · auto" : "")));
+      b.appendChild(api.mk("small", "vg-muted", w.mag+"-round mag"+(w.auto ? " · auto" : (w.id === "grapple" ? " · 0 damage" : ""))));
+      var how = ARSENAL_HOW[w.id] || "";
+      if(how) b.appendChild(api.mk("small", "vg-sz-how", how));
       t.appendChild(b); wrow.appendChild(t);
     });
     al.appendChild(wrow);
@@ -1552,6 +1625,7 @@ function makeGame(host, opts){
     V.warden = null; V.wardenDone = false;
     (V.missiles || []).forEach(function(m){ if(m.o && R3) R3.rocket(null, m); }); V.missiles = [];
     clearPlayers(); V.phase = "idle"; V.results = null; V.feed = []; V.drones = []; V.tracers = []; V.dmgNums = []; V.killCam = null;
+    V.mdrones = []; V.mdronesSnap = false; V.hookUntil = 0; V.swingUntil = 0; V.hookTo = null; V.hookPull = null; V.swingY = 0;
     cardBox.classList.add("hidden"); board.classList.add("hidden"); guide.classList.add("hidden"); center.classList.add("hidden"); V.board = false; V.guide = false;
     if(R3) R3.clearDynamic();
     // totems die with the old match; the slot "kind" memory resets too
@@ -1634,7 +1708,7 @@ function makeGame(host, opts){
     // solo bots can draw the launcher too — local only, never leaves your machine.
     // deterministic by slot+spawn (never Math.random(): every player sees the same bot twice)
     var seed = ((t*1000)|0) + (P.slot|0)*131;
-    P.w = Math.floor(FS.mb32(seed & 0xFFFF)*4);
+    P.w = Math.floor(FS.mb32(seed & 0xFFFF)*(FS.BOT_WEAPON_MAX|0 || 4));  // never the grapple
     P.mag = FS.WEAPONS.map(function(wp){ return wp.mag; });
     P.res = FS.WEAPONS.map(function(wp){ return wp.reserve; });
     P.reloadAt = 0; P.protUntil = t + 1.5; // PROTECT (strike.py): 1.5 s of spawn cover, gone once they fire
@@ -2786,16 +2860,24 @@ function makeGame(host, opts){
         ? wardenSee(x, P.ai.body.y + FS.EYE, z, txNow, tzNow) != null
         : los([x, P.ai.body.y + FS.EYE, z], [txNow, tyNow + 0.9, tzNow]);
       // launcher bots: a real missile with their aim; one in the air at a time, like the player
-      if(P.w === 3){
+      if(P.hookUntil && t < P.hookUntil){
+        // hooked by a grappling gun: the trigger is locked (and the body is dragged)
+        if(ai.hookPull || P.hookPull){
+          var hp = ai.hookPull || P.hookPull, hdx = hp[0] - x, hdz = hp[1] - z, hd = Math.sqrt(hdx*hdx + hdz*hdz) || 1;
+          var hsp = Math.min(FS.GRAPPLE_PULL || 18, hd * 4);
+          P.ai.body.vx = hdx/hd*hsp; P.ai.body.vz = hdz/hd*hsp;
+          if(hd < 1.2){ ai.hookPull = null; P.hookPull = null; }
+        }
+      } else if(P.w === LAUNCH_W){
         if(clearNow && ai.seenAt != null && t - ai.seenAt >= BOT_REACT*df.react && t >= ai.fireAt + 1.2 - 0.01 &&
-           (P.mag[3]|0) > 0 && !P.reloadAt && !V.missiles.some(function(m){ return m.owner === P; })){
-          ai.fireAt = t; P.mag[3]--; P.n++; P.protUntil = 0;
+           (P.mag[LAUNCH_W]|0) > 0 && !P.reloadAt && !V.missiles.some(function(m){ return m.owner === P; })){
+          ai.fireAt = t; P.mag[LAUNCH_W]--; P.n++; P.protUntil = 0;
           var ldir = FS.dirOf(aim_y, clamp(aim_p, -89, 89));
           spawnMissile(t, [x, P.ai.body.y + FS.EYE, z], ldir, P);
-          E.sfx("shot", {w: 3});
-          if(P.mag[3] <= 0 && (P.res[3]|0) > 0) P.reloadAt = t + FS.LAUNCH.reload * ((V.disaster === "absolutezero" && disLive(t)) ? 1.5 : 1);
+          E.sfx("shot", {w: LAUNCH_W});
+          if(P.mag[LAUNCH_W] <= 0 && (P.res[LAUNCH_W]|0) > 0) P.reloadAt = t + FS.LAUNCH.reload * ((V.disaster === "absolutezero" && disLive(t)) ? 1.5 : 1);
         }
-      } else if(clearNow && ai.seenAt != null && t - ai.seenAt >= BOT_REACT*df.react && t >= ai.fireAt + Math.max(wp.interval, wp.interval*(df.rate || 1)) - 0.01 && P.mag[P.w] > 0 && !P.reloadAt){
+      } else if(P.w !== GRAPPLE_W && clearNow && ai.seenAt != null && t - ai.seenAt >= BOT_REACT*df.react && t >= ai.fireAt + Math.max(wp.interval, wp.interval*(df.rate || 1)) - 0.01 && P.mag[P.w] > 0 && !P.reloadAt){
         ai.fireAt = t; P.mag[P.w]--; P.n++; P.protUntil = 0;
         var sp = FS.spreadOf(P.n, P.w), dir = FS.dirOf(aim_y + sp[0], clamp(aim_p + sp[1], -89, 89));
         var eyeAt = [x, P.ai.body.y + FS.EYE, z];
@@ -2975,6 +3057,7 @@ function makeGame(host, opts){
     renderBoard();
     V.phase = "warmup"; V.goAt = t + 3; V.endsAt = V.goAt + V.minutes*60;
     V.totemAt = t + 3; V.packAt = t + 3; V.disAt = t + 3; V.kinds = [];  // set at warmup; the round's start re-anchors them
+    ensureMatchDrones();
     showStage(true); if(R3) R3.buildMap();
     // straight in: the Play click is the gesture pointer lock needs, so grab the mouse now
     // instead of leaving the player on the "click here to play" pause card
@@ -3060,8 +3143,8 @@ function makeGame(host, opts){
         }
       }
     }
-    if(view.phase === "warmup"){ V.phase = "warmup"; V.goAt = now() + (view.goInMs|0)/1000; V.endsAt = V.goAt + V.minutes*60; }
-    else if(view.phase === "round"){ V.phase = "round"; V.endsAt = now() + (view.msLeft|0)/1000; }
+    if(view.phase === "warmup"){ V.phase = "warmup"; V.goAt = now() + (view.goInMs|0)/1000; V.endsAt = V.goAt + V.minutes*60; ensureMatchDrones(); }
+    else if(view.phase === "round"){ V.phase = "round"; V.startAt = now(); V.endsAt = now() + (view.msLeft|0)/1000; if(!V.mdrones || !V.mdrones.length) ensureMatchDrones(); }
     showStage(true);
     if(fresh && R3) R3.buildMap();
     renderBoard();
@@ -3108,7 +3191,8 @@ function makeGame(host, opts){
     var t = now();
     // the go whistle also names your side once per match (the lobby assigns you silently,
     // so the match must announce it in the very first moment you regain control)
-    if(m.ev === "go"){ V.phase = "round"; V.endsAt = t + (m.msLeft|0)/1000; V.off = null; center.classList.add("hidden");
+    if(m.ev === "go"){ V.phase = "round"; V.startAt = t; V.endsAt = t + (m.msLeft|0)/1000; V.off = null; center.classList.add("hidden");
+      ensureMatchDrones();
       flashCenter("Fight! Team "+TEAMS[V.team|0].n);
       say("Fight! You're on team "+TEAMS[V.team|0].n+" — enemy names are red."); return; }
     if(m.ev === "snap"){ onSnap(m, t); return; }
@@ -3366,6 +3450,23 @@ function makeGame(host, opts){
     if(typeof m.k === "number" && (V.k === null || m.k > V.k)){ V.k = m.k; V.kq = myClock(); }
     if(typeof m.ms === "number") V.endsAt = t + m.ms/1000;
     if(Array.isArray(m.sc)) V.scores = [m.sc[0]|0, m.sc[1]|0];
+    // snap "hk": live grapple pulls [victim_slot, cm_shooter_x, cm_shooter_z]
+    if(Array.isArray(m.hk)){
+      m.hk.forEach(function(e){
+        if(!Array.isArray(e) || e.length < 3) return;
+        var uid = slotUid(e[0]); if(!uid) return;
+        var P = V.players[uid]; if(!P) return;
+        P.hookPull = [(+e[1] || 0)/100, (+e[2] || 0)/100];
+        if(uid === myId()) V.hookPull = P.hookPull;
+      });
+    }
+    // snap "dr": match flight drones [id, cm_x, cm_y, cm_z] — grapple anchors
+    if(Array.isArray(m.dr) && m.dr.length){
+      V.mdrones = m.dr.map(function(e, i){
+        return {i: (+e[0]|0) || i, x: (+e[1] || 0)/100, y: (+e[2] || 0)/100, z: (+e[3] || 0)/100, phase: i*(FS.DRONE_PHASE || 1.3)};
+      });
+      V.mdronesSnap = true;
+    }
     (m.p || []).forEach(function(e){
       if(!Array.isArray(e) || e.length < 10) return;
       var uid = slotUid(e[0]); if(!uid) return;
@@ -3399,9 +3500,15 @@ function makeGame(host, opts){
       // clock checks read "still on", exactly like jam / freeze above
       P.blindUntil = has(16777216) ? Infinity : 0;
       P.slowUntil = has(33554432) ? Infinity : 0;
+      // FLAG_HOOK (1<<26): bit 67108864 (see FS / backend FLAG_HOOK)
+      // bit 67108864 (FLAG_HOOK): hooked by a grappling gun — the trigger is locked
+      if(has(FLAG_HOOK)){ P.hookUntil = Infinity; }
+      else { P.hookUntil = 0; P.hookPull = null; }
       if(uid === myId()){
         V.blindUntil = P.blindUntil;
         V.slowUntil = P.slowUntil;
+        V.hookUntil = P.hookUntil;
+        V.hookPull = P.hookPull;
       }
       // bits 256/512/1024: the movement totems' windows (wings/leap/speed) — Infinity while
       // flagged so the solo clock checks read "still on", exactly like charm/freeze above
@@ -3625,10 +3732,97 @@ function makeGame(host, opts){
     var f = FS.dirOf(V.yaw*180/Math.PI, V.pitch*180/Math.PI), r = [Math.cos(V.yaw), 0, Math.sin(V.yaw)], e = eye();
     return [e[0] + f[0]*0.55 + r[0]*0.22, e[1] + f[1]*0.55 - 0.2, e[2] + f[2]*0.55 + r[2]*0.22];
   }
+  function matchDronePos(D, t){
+    if(!D) return [0, DRONE_Y_FALLBACK(), 0];
+    if(V.mdronesSnap && D.x != null) return [D.x, D.y, D.z];
+    // twin of Rust drone_at(t - go_at): match-clock, no per-drone phase
+    var mt = (V.phase === "round" || V.phase === "warmup") ? (t - (V.startAt || 0)) : 0;
+    if(!(mt > 0)) mt = 0;
+    return FS.targetAt(D.tg || {a: D.a, b: D.b, s: D.s || 7.5}, mt);
+  }
+  function DRONE_Y_FALLBACK(){ return FS.DRONE_Y || 7.5; }
+  function ensureMatchDrones(){
+    V.mdrones = FS.grappleRoutes(MAP && MAP.bounds).map(function(tg, i){
+      return {tg: tg, i: i, phase: i*(FS.DRONE_PHASE || 1.3)};
+    });
+    V.mdronesSnap = false;
+  }
+  function fireGrapple(t, e, d){
+    // zero damage. A match/practice drone lifts you into a swing; a foe is dragged in
+    // and cannot shoot while the hook is on. The Warden is never a hook target.
+    var reach = FS.rayMap(MAP, e, d, W().range), end = reach;
+    var lanes = [], i;
+    if(V.mdrones && V.mdrones.length){
+      for(i = 0; i < V.mdrones.length; i++){
+        lanes.push({tg: V.mdrones[i].tg, phase: V.mdrones[i].phase, snap: matchDronePos(V.mdrones[i], t)});
+      }
+    }
+    if(V.mode === "practice" && V.drones && V.drones.length){
+      for(i = 0; i < V.drones.length; i++){
+        if(V.drones[i].downUntil > t) continue;
+        var c0 = dronePos(V.drones[i], t - V.startAt);
+        lanes.push({snap: c0, practice: V.drones[i]});
+      }
+    }
+    var bestH = null, bestL = null;
+    for(i = 0; i < lanes.length; i++){
+      var c = lanes[i].snap || matchDronePos(V.mdrones[i] || lanes[i], t);
+      var b = [c[0]-FS.DRONE_R, c[1]-FS.DRONE_R*0.7, c[2]-FS.DRONE_R, c[0]+FS.DRONE_R, c[1]+FS.DRONE_R*0.7, c[2]+FS.DRONE_R];
+      var h = FS.rayBox(e, d, b);
+      if(h !== null && h < end && (bestH === null || h < bestH)){ bestH = h; bestL = lanes[i]; }
+    }
+    if(bestH !== null && bestL){
+      var cd = bestL.snap || matchDronePos(V.mdrones[bestL.i] || bestL, t);
+      V.swingUntil = t + (FS.GRAPPLE_TIME || 2.5);
+      V.hookTo = [cd[0], cd[1], cd[2]];
+      // ease up to the drone like the wings totem (WING_RISE) — never snap the altitude
+      V.swingY = +cd[1] || 0;
+      V.me.g = false;
+      var fd = FS.dirOf(V.yaw*180/Math.PI, 0);
+      V.me.vx = fd[0]*(FS.GRAPPLE_SWING || 11);
+      V.me.vz = fd[2]*(FS.GRAPPLE_SWING || 11);
+      V.me.vy = 0;
+      V.voidAt = 0;
+      addTracer(e, [cd[0], cd[1], cd[2]], V.w, t, true);
+      if(bestL.practice){ bestL.practice.downUntil = 0; }
+      say("Grapple: swing");
+      if(R3 && R3.kick) R3.kick();
+      return;
+    }
+    // foe hook — skipped while The Warden lives (nobody hurts / no PvP hooks then)
+    if(!V.warden){
+      var aimed = null, aimedH = null;
+      var scan = function(P){
+        if(!P || P.dead || P.gone || P.team === V.team) return;
+        if(P.prot || (P.protUntil && t < P.protUntil)) return;
+        var h = FS.rayPlayer(e, d, P.x, P.y, P.z, end);
+        if(h && h[0] < end && (aimedH === null || h[0] < aimedH)){ aimedH = h[0]; aimed = P; }
+      };
+      if(V.mode === "bots"){ others().forEach(function(P){ if(P.bot) scan(P); }); }
+      else if(V.mode === "mp"){ others().forEach(scan); }
+      else { others().forEach(scan); }
+      if(aimed){
+        aimed.hookUntil = t + (FS.HOOK_LOCK || 2);
+        aimed.hookPull = [V.me.x, V.me.z];
+        if(aimed.bot){
+          aimed.ai = aimed.ai || {};
+          aimed.ai.hookPull = [V.me.x, V.me.z];
+        }
+        if(V.hookUntil && t < V.hookUntil){ /* never self-hook */ }
+        addTracer(e, [aimed.x, aimed.y + 1.0, aimed.z], V.w, t, true);
+        say("Hooked "+nameOf(aimed)+" — they can't shoot");
+        if(R3 && R3.kick) R3.kick();
+        return;
+      }
+    }
+    addTracer(e, [e[0] + d[0]*end, e[1] + d[1]*end, e[2] + d[2]*end], V.w, t, true);
+    if(R3 && R3.kick) R3.kick();
+  }
   function canShoot(t){
     if(V.dead || V.paused) return false;
     if(V.mode === "mp" && V.phase !== "round") return false;
     if((V.mode === "practice" || V.mode === "bots") && V.phase !== "round") return false;
+    if(V.hookUntil && t < V.hookUntil) return false;  // a live hook locks the trigger
     return t >= V.readyAt && t >= V.nextShot && !V.reloadAt && magOf(V.w)[V.w === LAUNCH_W ? 0 : V.w] > 0;
   }
   function startReload(t){
@@ -3651,7 +3845,7 @@ function makeGame(host, opts){
     w = clamp(w|0, 0, weaponCount() - 1);
     if(w === V.w || V.dead) return;
     V.w = w; V.reloadAt = 0; V.readyAt = t + SWITCH;
-    if(V.mode === "mp" && MP) MP.send("strike", "weapon", {w: w, q: myClock()});  // 0-3 (a v1 Arena clamps to its 3)
+    if(V.mode === "mp" && MP) MP.send("strike", "weapon", {w: w, q: myClock()});  // 0-4 (old Arenas clamp)
     say(W().name);
   }
   // Fire one shot: drawn at once; in a match the server says whether it hit.
@@ -3665,6 +3859,21 @@ function makeGame(host, opts){
     V.nextShot = t + ivl; V.n++; V.shots++;
     V.flashAt = t; V.kick = calm() ? 0.15 : 1;
     V.protUntil = V.protUntil || 0; if(V.protUntil) V.protUntil = 0; // any shot drops your own spawn cover (strike.py:772)
+    if(V.w === GRAPPLE_W){
+      // the hook: no damage on any path. Server judges it in mp; we also predict the
+      // swing / pull so the first frames feel right.
+      var gd = FS.dirOf(V.yaw*180/Math.PI, clamp(V.pitch*180/Math.PI, -PITCH_MAX, PITCH_MAX));
+      if(V.mode === "mp"){
+        var gmsg = {w: GRAPPLE_W, ox: Math.round(e[0]*100), oy: Math.round(e[1]*100), oz: Math.round(e[2]*100),
+                    r: Math.round(((V.yaw*180/Math.PI % 360) + 360) % 360*100), p: Math.round(V.pitch*180/Math.PI),
+                    q: myClock(), ip: 0, e: V.life};
+        if(V.k !== null){ gmsg.k = V.k; gmsg.kq = V.kq; }
+        if(MP) MP.send("strike", "fire", gmsg);
+      }
+      fireGrapple(t, e, gd);
+      if(magOf(V.w)[GRAPPLE_W] <= 0) startReload(t);
+      return;
+    }
     if(V.w === LAUNCH_W){
       // lob a real missile that flies and blasts — the server flies it in mp, we do solo
       var ld = FS.dirOf(V.yaw*180/Math.PI, V.pitch*180/Math.PI);
@@ -3856,8 +4065,9 @@ function makeGame(host, opts){
       if(len > 60){
         // the wedges sit centered on up/right/down/left; atan2's 0 is up, and a wedge's
         // center is its quadrant diagonal — the +π/4 nudges the diagonals into the right wedge
-        var a = Math.atan2(V.wheelLook.x, -V.wheelLook.y) + Math.PI/4, seg = Math.floor(a/(Math.PI/2));
-        V.wheelSel = ((seg % 4) + 4) % 4;
+        var wn = Math.max(4, weaponCount());
+        var a = Math.atan2(V.wheelLook.x, -V.wheelLook.y) + Math.PI/wn, seg = Math.floor(a/(Math.PI*2/wn));
+        V.wheelSel = ((seg % wn) + wn) % wn;
       }
       renderWheel(t);
     } else if(lk){
@@ -3928,6 +4138,22 @@ function makeGame(host, opts){
         V.me.vy = 0;
         acc = 0;
       }
+      // drone-hook swing: climb to the hook height like the wings totem (ease, not a snap),
+      // keep the long leap on XZ, and let jump / sprint drop you off the line.
+      var swinging = !!(V.swingUntil && t < V.swingUntil && !dropping && !V.dead);
+      if(swinging && (jump || (sprintHold && moving))){ V.swingUntil = 0; swinging = false; }
+      if(swinging){
+        var gT = (V.swingY > 0) ? V.swingY : DRONE_Y_FALLBACK();
+        var gy = V.me.y < gT ? Math.min(V.me.y + (FS.GRAPPLE_RISE || 4)*dt, gT)
+                             : Math.max(gT, V.me.y - (FS.GRAPPLE_RISE || 4)*dt*0.5);
+        var gnx = V.me.x + V.me.vx*dt, gnz = V.me.z + V.me.vz*dt;
+        if(FS.overlaps(MAP, gnx, gy, gnz, 0) < 0){ V.me.x = gnx; V.me.z = gnz; }
+        else { V.me.vx = 0; V.me.vz = 0; }
+        V.me.y = gy;
+        V.me.g = false;
+        V.me.vy = 0;
+        acc = 0;
+      }
       if(dropping){
         var floor = FS.topUnder(MAP, V.me.x, V.me.z, V.me.y);
         if(floor == null) floor = -1e9;   // a gap under the canopy: keep sinking into the void clock
@@ -3939,7 +4165,7 @@ function makeGame(host, opts){
         }
         acc = 0;
       } else if(V.dropUntil && t >= V.dropUntil){ V.dropUntil = 0; }
-      if(!dropping && !flying){
+      if(!dropping && !flying && !swinging){
         acc += dt;
         // the drag must bite at once: scaling only the wish leaves a drained 8.1 m/s sprint
         // coasting at ~walk speed for half a second. Clamp velocity to the crawl cap directly.
@@ -4015,6 +4241,7 @@ function makeGame(host, opts){
       if(IN.pressed("w2")) switchTo(1, t);
       if(IN.pressed("w3")) switchTo(2, t);
       if(IN.pressed("w4")) switchTo(3, t);  // solo-only: no-op in mp (switchTo clamps to the shared roster)
+      if(IN.pressed("w5")) switchTo(4, t);  // the grappling gun (players only)
       // cycle: next, wrapping past the end (wheel is directional: down = next, up = previous)
       if(IN.pressed("swap")) switchTo((V.w + 1) % weaponCount(), t);
       var wh = IN.wheel(); if(wh){ switchTo((V.w + (wh > 0 ? 1 : weaponCount() - 1)) % weaponCount(), t); }
@@ -4026,6 +4253,14 @@ function makeGame(host, opts){
       V.trigWas = trig;
       if(want && canShoot(t)) fire(t);
       else if(want && magOf(V.w)[V.w === LAUNCH_W ? 0 : V.w] <= 0 && !V.reloadAt) startReload(t);
+    }
+    // grappling-gun drag on you: haul toward the hooker (server "hk" row / local apply)
+    if(V.hookUntil && t < V.hookUntil && V.hookPull && !V.dead){
+      var hdx = V.hookPull[0] - V.me.x, hdz = V.hookPull[1] - V.me.z;
+      var hd = Math.sqrt(hdx*hdx + hdz*hdz) || 1;
+      var hsp = Math.min(FS.GRAPPLE_PULL || 18, hd * 4);
+      V.me.vx = hdx/hd*hsp; V.me.vz = hdz/hd*hsp;
+      if(hd < 1.2){ V.hookPull = null; }
     }
     V.kick = Math.max(0, V.kick - dt*8);
     missilesStep(t, dt);   // solo: flies them; mp: only renders the server's "r" rows
@@ -4813,8 +5048,8 @@ function makeGame(host, opts){
     var ring = api.mk("div", "vg-fps-wheel-ring"), lab = api.mk("div", "vg-fps-wheel-lab");
     b.appendChild(ring); b.appendChild(lab); hud.appendChild(b);
     var segs = FS.WEAPONS.map(function(wp, i){
-      // the wedge positions are pure CSS (:nth-child(1..4), each square rotated so the
-      // ring's border-radius clips it to a quarter sector; seg 0 sits centered on up)
+      // the wedge positions are pure CSS clip-path pie slices (:nth-child(1..5));
+      // seg 0 sits centered on up, then clockwise — matching atan2(x, -y)
       var s = api.mk("div", "vg-fps-wheel-seg");
       var c = api.mk("div", "vg-fps-wheel-cnt"); s.appendChild(c);
       var ic = api.mk("span", "vg-fps-wheel-ic", WHEEL_ICONS[i]);
@@ -4923,6 +5158,7 @@ function makeGame(host, opts){
         g.strokeStyle = T.need; g.lineWidth = 0.18 * (1 - aR * 0.6); g.stroke(); g.lineWidth = 1;
       });
       if(V.mode === "practice") V.drones.forEach(function(D){ if(D.downUntil > t) return; var c = dronePos(D, (V.phase === "round" ? t - V.startAt : 0)); g.fillStyle = T.need; g.fillRect(c[0] - 0.45, c[2] - 0.45, 0.9, 0.9); });
+      (V.mdrones || []).forEach(function(D){ var c = matchDronePos(D, t); g.fillStyle = T.need; g.fillRect(c[0] - 0.5, c[2] - 0.5, 1.0, 1.0); });
       V.tracers.forEach(function(tr){ var age = t - tr.at; if(age > 0.12) return; g.strokeStyle = tr.mine ? T.gold : T.need; g.lineWidth = 0.08; g.beginPath(); g.moveTo(tr.a[0], tr.a[2]); g.lineTo(tr.b[0], tr.b[2]); g.stroke(); });
       others().forEach(function(P){
         if(P.gone) return;
@@ -5023,7 +5259,17 @@ function makeGame(host, opts){
       g.add(box(0.04, 0.08, 0.30, 0, 0.15, -0.05, 0x2e382c));     // sight rail on top
       return g;
     }
-    guns = [model("blaster-repeater"), gunMarksman(), gunRevolver(), gunLauncher()];
+    function gunGrapple(){ // a cable spool + hook fork — original silhouette, no third-party asset
+      var g = new THREE.Group();
+      g.add(tubeL(0.07, 0.28, 0, 0, 0.12, 0x3a3f45));             // spool drum
+      g.add(tubeL(0.09, 0.06, 0, 0, 0.28, 0x2c3036));             // spool flange
+      g.add(box(0.08, 0.12, 0.34, 0, -0.02, -0.18, 0x2c3036));    // body
+      g.add(box(0.05, 0.12, 0.10, 0, -0.12, 0.02, 0x3a3f45));     // grip
+      g.add(tubeL(0.03, 0.22, 0, 0.02, -0.42, 0x50604a));         // hook shaft
+      g.add(box(0.10, 0.04, 0.08, 0, 0.02, -0.54, 0x6a7a5a));     // hook fork
+      return g;
+    }
+    guns = [model("blaster-repeater"), gunMarksman(), gunRevolver(), gunLauncher(), gunGrapple()];
     // measure each gun BEFORE rotation, in its own local space (setFromObject bakes rotation in
     // and the children's matrices haven't re-synced after rotation.y flips — that misreads the span).
     // Normalise our thin rifle/launcher to the chunky SMG's on-screen length, with a width
@@ -5034,9 +5280,11 @@ function makeGame(host, opts){
       g.traverse(function(n){ if(n.isMesh){ n.castShadow = false; n.receiveShadow = false;
         if(i === 0 && mySkin != null){ n.material = n.material.clone(); n.material.color.setHex(mySkin); } } });
       var k = 1;
-      if(i === 1 || i === 3){
+      if(i === 1 || i === 3 || i === 4){
         var b = new THREE.Box3().setFromObject(g), L = (b.max.z - b.min.z) || refL;
-        k = (refL/L)*(i === 1 ? 5.0 : BOOST);   // rifle: a bit more than the launcher
+        // rifle a bit more than the launcher; the grapple spool is the thinnest silhouette
+        // and used to vanish at k=1 — same on-screen length as the other sidearms
+        k = (refL/L)*(i === 1 ? 5.0 : (i === 4 ? BOOST*1.35 : BOOST));
       }
       g.scale.setScalar(GUN_S*k); g.rotation.y = Math.PI; g.visible = i === 0; gunHold.add(g);
     });
@@ -5198,7 +5446,7 @@ function makeGame(host, opts){
       return g;
     }
     function hash(a, b){ var h = (a*73856093) ^ (b*19349663); h = (h ^ (h >>> 13))*1274126177; return ((h ^ (h >>> 16)) >>> 0)/4294967296; }
-    var pickMeshes = [], droneMeshes = [];
+    var pickMeshes = [], droneMeshes = [], mdMeshes = [], hookLine = null;
     // a beacon so every live pickup is findable from anywhere: a tall, thin, additive light
     // column soaring above the fog (fog:false so it stays legible across the whole map),
     // brightest at the base and fading to nothing at the top
@@ -5264,6 +5512,10 @@ function makeGame(host, opts){
       });
       droneMeshes.forEach(function(d){ scene.remove(d); }); droneMeshes = [];
       MAP.targets.forEach(function(){ var d = model("enemy-flying"); d.scale.setScalar(1.5); d.visible = false; scene.add(d); droneMeshes.push(d); });
+      mdMeshes.forEach(function(d){ scene.remove(d); }); mdMeshes = [];
+      for(var mdk = 0; mdk < (FS.DRONE_N|0 || 8); mdk++){
+        var md = model("enemy-flying"); md.scale.setScalar(1.35); md.visible = false; scene.add(md); mdMeshes.push(md);
+      }
     }
     // the name tag: the dot keeps the side's own colour, the NAME carries friend/foe —
     // enemies read red (shoot on sight), team-mates read your side's colour (hold fire)
@@ -6297,7 +6549,7 @@ function makeGame(host, opts){
         m.g.visible = !P.gone && !(P.dead && t - (P.deadAt || 0) > 1.6);
         m.g.position.set(P.x, P.y, P.z); m.g.rotation.y = Math.PI - P.yaw;
         setAnim(m, P.dead ? "die" : P.moving > 0.5 ? "walk" : "idle");
-        if(m.gun){ m.gun[0].visible = (P.w|0) === 0; m.gun[1].visible = (P.w|0) === 1; m.gun[2].visible = (P.w|0) === 2; m.gun[3].visible = (P.w|0) === 3; }
+        if(m.gun){ for(var gvi = 0; gvi < m.gun.length; gvi++) m.gun[gvi].visible = (P.w|0) === gvi; }
         m.mixer.update(dt);
         m.tag.visible = !P.dead;
         if(m.shield){
@@ -6344,6 +6596,19 @@ function makeGame(host, opts){
         if(!D) return; var c = dronePos(D, V.phase === "round" ? t - V.startAt : 0); d.position.set(c[0], c[1] - 0.3, c[2]);
         d.rotation.y = Math.atan2(V.me.x - c[0], V.me.z - c[2]);
       });
+      mdMeshes.forEach(function(d, i){
+        var D = (V.mdrones || [])[i]; d.visible = !!D && V.phase === "round";
+        if(!D) return; var c = matchDronePos(D, t); d.position.set(c[0], c[1] - 0.3, c[2]);
+        d.rotation.y = Math.atan2(V.me.x - c[0], V.me.z - c[2]);
+      });
+      // the live hook cable (drone swing)
+      if(hookLine){ dyn.remove(hookLine); hookLine.geometry.dispose(); hookLine = null; }
+      if(V.swingUntil > t && V.hookTo && R3){
+        var hA = myMuzzle(), hB = V.hookTo;
+        var hg = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(hA[0], hA[1], hA[2]), new THREE.Vector3(hB[0], hB[1], hB[2])]);
+        hookLine = new THREE.Line(hg, new THREE.LineBasicMaterial({color: 0x9ad0ff}));
+        hookLine.frustumCulled = false; dyn.add(hookLine);
+      }
       // effects fade
       for(var i = tracers.length - 1; i >= 0; i--){ var a = t - tracers[i].at; if(a > 0.09){ dyn.remove(tracers[i].o); tracers[i].o.geometry.dispose(); tracers.splice(i, 1); } else tracers[i].o.material.opacity = 1 - a/0.09; }
       for(var j = puffs.length - 1; j >= 0; j--){ var b = t - puffs[j].at; if(b > 0.25){ dyn.remove(puffs[j].o); puffs.splice(j, 1); } else { puffs[j].o.material.opacity = 1 - b/0.25; if(!quiet) puffs[j].o.scale.setScalar(0.35 + b*1.6); } }
@@ -6413,7 +6678,7 @@ function makeGame(host, opts){
       var rl = V.reloadAt ? clamp((V.reloadAt - t)/W().reload, 0, 1) : 0, dip = V.reloadAt ? Math.sin(rl*Math.PI)*0.25 : 0;
       // scoped: the gun rises to your eye — centred under the dot, the scope ring blacks out the rest
       var adsIn = V.ads ? 1 : 0;
-      var adsCfg = ADS[V.w] || {fov: FOV_ADS, cls: ""};  // the launcher (index 3) takes the generic: a light zoom, no sight art
+      var adsCfg = ADS[V.w] || {fov: FOV_ADS, cls: ""};  // launcher + grapple (3/4) take the generic: a light zoom, no sight art
       var reddot = V.ads && adsCfg.cls === "reddot";
       var revAds = V.ads && adsCfg.cls === "";  // revolver/launcher: no sight — gun big by the eye, sitting below the aim point
       var ax = 0.2*(1 - adsIn), ay = (-0.25 + 0.09*adsIn) - Math.abs(Math.cos(V.bob*2))*bobA - dip*0.3 - (V.dead ? 1 : 0), az = -0.42 + 0.10*adsIn;

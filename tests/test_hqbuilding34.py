@@ -28,7 +28,7 @@ const root = %(root)s;
 const THREE = await import(root + "/games/vendor/three-module.js");
 globalThis.window = {HQV: {}};
 const HQV = window.HQV;
-for (const f of ["hqbase", "hqcityparts", "hqcity"]) new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
+for (const f of ["hqstyle", "hqtower", "hqroof", "hqdecor", "hqbase", "hqcityparts", "hqcity"]) new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
 var noop2d = new Proxy({}, {get(t, k){ return k === "measureText" ? function(){ return {width: 10}; } : function(){ return {addColorStop(){}}; }; }, set(){ return true; }});
 function mat(c, o){ return new THREE.MeshStandardMaterial(Object.assign({color: c}, o || {})); }
 function emis(c, e, ei, o){ var m = mat(c, o); m.emissive = new THREE.Color(e); m.emissiveIntensity = ei; return m; }
@@ -57,7 +57,7 @@ out.blocked = {
   back: B(G.x, G.z - G.d/2, true),                  // the back wall
   side: B(G.x - G.w/2, G.z, true)                   // a side wall
 };
-// the level-10 rooftop helipad (games/hqbase.js): eight edge lights in one InstancedMesh
+// the rooftop helipad (games/hqtower.js; the HQ revamp: at every level): its edge lights in one InstancedMesh
 Object.assign(c, {COL: {amber: 0xffb347, cyan: 0x5fd3e6, green: 0x6fd38a, coral: 0xff6b5b}, HEX: {green: "#6fd38a", amber: "#ffb347", cyan: "#5fd3e6"},
   add: add, E: {calm(){ return false; }}, hashStr(s){ var h = 2166136261; s = String(s); for(var i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h; },
   rng(seed){ var a = seed >>> 0 || 1; return function(){ a = (a + 0x6D2B79F5) >>> 0; var t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0)/4294967296; }; },
@@ -66,7 +66,7 @@ Object.assign(c, {COL: {amber: 0xffb347, cyan: 0x5fd3e6, green: 0x6fd38a, coral:
 function pads(level){
   try { var B = HQV.hqBuilding(c, {level(){ return level; }, look(){ return {}; }, live(){ return 0; }, campus: false, door: {view: "@lobby"},
                                   doorFront(){ return new THREE.Vector3(); }});
-    var n = 0; B.g.traverse(o => { if(o.isInstancedMesh && o.count === 8) n++; }); return n; } catch(e){ return "err:" + e.message; }
+    var n = 0; B.g.traverse(o => { if(o.isInstancedMesh && o.name === "hq-padlights") n++; }); return n; } catch(e){ return "err:" + e.message; }
 }
 out.helipad = {low: pads(5), high: pads(12)};
 console.log(JSON.stringify(out));
@@ -116,11 +116,12 @@ class LotCarLift(unittest.TestCase):
         self.assertTrue(b["side"])
 
 
-    def test_helipad_from_level_10(self):
+    def test_helipad_at_every_level(self):
+        # the HQ revamp: every tower has its roof pad, from level 1 (it was level 10+)
         h = self.out["helipad"]
         if isinstance(h["high"], str):
             self.skipTest("hqBuilding needs more of the ctx than this stub: " + h["high"])
-        self.assertEqual(h["low"], 0)
+        self.assertEqual(h["low"], 1)
         self.assertEqual(h["high"], 1)
 
 

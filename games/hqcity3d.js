@@ -915,9 +915,9 @@ HQV.hqWorlds.city3d = function(c, w){
         // a turned mass's AABB reaches past its walls (onto the road): test the mass itself; a roof or canopy
         // standing clear of the ground (a market hall's, a station's) leaves the ground under it open
         var o = b.o; if(!o) return true;
-        if(o.y0 > CLEAR_UNDER) continue;
-        var dx = x - o.x, dz = z - o.z, cr = Math.cos(o.rot), sr = Math.sin(o.rot);
-        if(Math.abs(dx*cr - dz*sr) <= o.hw && Math.abs(dx*sr + dz*cr) <= o.hd) return true;
+        if(o.y0 > CLEAR_UNDER || o.open) continue;                    // open: legs, a lattice, a shelter's front (its parts block)
+        var dx = x - o.x, dz = z - o.z, cr = Math.cos(o.rot), sr = Math.sin(o.rot), u = dx*cr - dz*sr, v = dx*sr + dz*cr;
+        if(Math.abs(u) <= o.hw && Math.abs(v) <= o.hd && (!o.ell || (u*u)/(o.hw*o.hw) + (v*v)/(o.hd*o.hd) <= 1)) return true;   // ell: round
       }
     }
     return false;

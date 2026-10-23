@@ -379,7 +379,11 @@ and feature guide.
 
 ## Changelog
 
-- **3.12.1 — Solid traffic; the boombox goes live.** The City's cars, buses and trams are solid: you hit
+- **3.12.1 — Solid traffic, true shapes; the boombox goes live.** What isn't a box no longer stops you as one:
+  the stadium's oval bowl, the cooling tower, stacks and silos block their round outlines (not the square round
+  them); you walk between a gantry crane's and the water tower's legs and step into a bus or tram shelter; the air
+  base's control tower and radar are round and its parked jets block their own wings and tail, not a 10 x 16 m box;
+  the airport car park's ground floor is open between its columns. The City's cars, buses and trams are solid: you hit
   them on foot, on a board and at the wheel (your car bumps off and dents, as off a wall) instead of passing through,
   only at your level (not the street under a bridge or a carpark deck), and they see your car at its size so they
   stop short of it. Live in the Music tab ("🔴 Go live") now puts the boombox on your

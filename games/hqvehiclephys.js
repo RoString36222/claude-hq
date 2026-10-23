@@ -172,9 +172,9 @@ function engineFor(spec, kind, voice, gears){
 // The automatic's choice from gear g: a shift schedule, as a real automatic's. Up when the revs reach the up point
 // (Comfort early, Sport high, Track at the redline; at a light throttle much earlier, for a tall cruising gear); never
 // up off the throttle or on the brakes (a lift holds the gear, the engine braking). Down a gear when the revs sag
-// below the down point (higher on the brakes, so the downshifts come one at a time through the stop), only if the
-// lower gear lands well under the up point (no hunting). Flat out and lugging: a kickdown, one jump to the gear
-// with the pull. Drive modes (Shift+G): the up point flat out (up), the down points off the throttle (lift) and on
+// below the down point (on the brakes, as soon as the next gear fits under a ceiling, so they come through the stop
+// in turn), only if the lower gear lands well under the up point (no hunting). Never skips a gear either way: flat
+// out and lugging, a kickdown steps down a gear at a time, quickly, until it pulls. Drive modes (Shift+G): the up point flat out (up), the down points off the throttle (lift) and on
 // the brakes (brake), each a share of the rev range; how fast a shift is (shiftT); the exhaust (gain, pops:
 // games/engine.js). Sport is the car as it comes.
 var MODES = {
@@ -191,17 +191,14 @@ function shiftPoints(E, thr, brake, mode){
   return {up: Math.min(E.shiftUp, E.idle + span*(0.22 + (M.up - 0.22)*thr)), down: E.idle + span*(M.lift*(1 - thr) + 0.45*M.up*thr), full: full};
 }
 function autoGear(E, K, v, thr, brake, mode, g){
-  var n = K.length, S = shiftPoints(E, thr, brake, mode), i;
+  var n = K.length, S = shiftPoints(E, thr, brake, mode);
   g = Math.max(1, Math.min(n, g || 1));
   function rpm(i){ return v*K[i - 1]; }
   if(g < n && rpm(g) >= S.up) return g + 1;
-  if(g > 1 && (brake || (thr <= 0.05 && rpm(g) < S.down))){   // slowing: the lowest gear that keeps the revs under the ceiling
-    for(i = 1; i < g; i++) if(rpm(i) <= S.ceil) return i;
-  }
-  if(g > 1 && rpm(g) < S.down){
-    if(thr > 0.85) for(i = 1; i < g - 1; i++) if(rpm(i) <= S.full*0.8) return i;   // a kickdown: one jump
-    if(rpm(g - 1) <= Math.min(S.up, S.full)*0.95) return g - 1;
-  }
+  // slowing (braking, or the revs sagging off the throttle): the next gear down as soon as it fits under the ceiling
+  if(g > 1 && (brake || (thr <= 0.05 && rpm(g) < S.down))) return rpm(g - 1) <= S.ceil ? g - 1 : g;
+  // under power and lugging: the next gear down (flat out, a kickdown, a quick gear at a time until it pulls)
+  if(g > 1 && rpm(g) < S.down && rpm(g - 1) <= Math.min(S.up, S.full)*0.95) return g - 1;
   return g;
 }
 /* Nitrous (K held): a 4 s charge that refills in about 16 s. N = {charge 0..1}; -> true while it fires. */
@@ -295,14 +292,17 @@ function gearStep(G, inp, E, dt){
   } else {
     if(g < 1) g = 1;
     G.since = (G.since || 0) + dt;
-    if(sp < 0 || v < 1.2){ if(g !== 1 && G.shiftT <= 0){ g = 1; G.since = 0; } }
+    if(sp < 0 || v < 1.2){ if(g > 1 && G.shiftT <= 0 && G.since >= 0.15){ g--; G.since = 0; } }   // stopped: down to 1st, a gear at a time
     else if(G.shiftT <= 0){
       var M = modeOf(inp.mode), tg = autoGear(E, K, v, thr, !!inp.brake, inp.mode, g), cur = at(g);
+      // flat out it never goes past the gear it tops out in (its top speed under the shift point there): at top speed
+      // it sits high in the revs as the real car, not in a tall cruising gear
+      if(tg > g && thr > 0.85 && inp.top > 0 && inp.top*K[g - 1] < E.shiftUp) tg = g;
       if(cur >= E.shiftUp && g < n) tg = g + 1;                   // never sit on the limiter, even off the throttle
       if(tg > g && (G.since >= 0.45 || cur >= E.shiftUp)){
         var aq = E.qs && thr > 0.4; g++; G.shiftT = aq ? 0.05 : 0.25*M.shiftT; G.since = 0; ev.push("up"); if(aq) ev.push("qs");
-      } else if(tg < g && (G.since >= (thr > 0.85 ? 0.12 : inp.brake ? 0.5 : 0.7))){
-        // a kickdown jumps straight to its gear; otherwise one gear at a time, each rev-matched and spaced out
+      } else if(tg < g && (G.since >= (thr > 0.85 ? 0.12 : inp.brake ? 0.3 : 0.5))){
+        // never skips a gear: one at a time, each rev-matched
         var to = tg;
         g = to; G.shiftT = 0.18; G.since = 0; G.blipTo = at(g); ev.push("down");
       }

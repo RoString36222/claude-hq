@@ -544,8 +544,8 @@ and feature guide.
   exhaust tone of depth / rasp / crackle / induction / whistle), and `games/hqvehiclephys.js engineFor` turns it into
   rpm per m/s for each gear. You drive on the real rpm: the clutch slips to a launch rpm, it upshifts under power at
   the drive mode's up point (Comfort early, Sport short of the redline, Track at it; a light throttle far earlier), never
-  upshifts when you lift or brake, downshifts a gear at a time as the revs sag (on the brakes spaced through the stop,
-  each blipped), and stutters on the rev limiter with pops;
+  upshifts when you lift or brake, downshifts a gear at a time as the revs sag (on the brakes as each next gear fits,
+  each blipped), never skipping a gear either way, and stutters on the rev limiter with pops;
   the rev counter reads to that engine's own limiter with its red from the redline. The voices play that rpm with the
   vehicle's own exhaust character (games/engine.js engineProfile(.., real)). Other players are drawn smoothly
   (`games/hqnetsmooth.js`): a buffer of their frames drawn 0.2 s in the past on a curve through them, stamped with

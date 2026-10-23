@@ -15,8 +15,8 @@
  *   lobbyStep(st, cx, dt)   a stay-home pet in the lobby: wander, nap on its spot, play, greet you
  *   spotFor(sp, spots, i)   which lobby "pet spot" ({x, z, kind}) a species uses
  *   throwBall(o, blocked)   where a thrown ball lands (short of a wall)
- *   model(THREE, o)         a low-poly pet: rigid parts (body, head, tail, two leg pairs, wings) animated in JS,
- *                           each part ONE merged vertex-coloured mesh: 5 to 7 draw calls, under 2,000 triangles
+ *   model(THREE, o)         a pet: smooth merged parts (body, head) + instanced jointed legs, neck, tail, jaw, eyelids, ears,
+ *                           membrane wings rebuilt each frame (pose: IK gaits, blinks, look-at): at most 6 draw calls
  *   create(c, opts)         the runtime games/hq3d.js drives each frame (frame, key, net, setOwned, setLobby)
  *   lobby(world, spots)     marks a world as your pets' home (the HQ revamp's lobby calls it with its pet spots)
  *   place / build           the Pet shop on a City lot (games/hqcity3d.js), its own name: Paws & Claws
@@ -416,7 +416,13 @@ function lobbyStep(st, cx, dt){
 }
 
 /* ---------- models (three) ---------- */
-var FIN = {};   // shared materials by finish (+ "|2" double-sided for wings), made once per page
+// A pet is a few merged, smooth-shaded parts (body, head; glowing eyes their own, unlit) plus two InstancedMeshes
+// posed every frame from a small skeleton kept in JS: "limbs" (one tapered capsule: jointed legs with paws, the
+// neck, the tail's segments, the lower jaw, the tongue, eyelids, floppy ears) and "bits" (one cone: pointed ears,
+// the tail's spade, spines and spikes). A dragon's wings are one double-sided mesh rebuilt each frame from an
+// arm (shoulder, elbow, wrist) and four finger spars with a sagging membrane between them. At most 6 draw calls.
+var FIN = {};   // shared materials by finish (+ "|2" double-sided for wings, "|i" for instanced parts), one set per page
+var GEO = {};   // shared unit geometries (never disposed with a pet)
 var ENV = null;
 function envTex(T){
   if(ENV || typeof document === "undefined") return ENV;
@@ -428,10 +434,10 @@ function envTex(T){
   } catch(e){ ENV = null; }
   return ENV;
 }
-function finMat(T, fin, ds){
-  var key = fin + (ds ? "|2" : ""); if(FIN[key]) return FIN[key];
-  var o = {vertexColors: true, flatShading: true, roughness: 0.75, metalness: 0.02};
-  if(fin === "ice"){ o.roughness = 0.25; o.metalness = 0.1; o.emissive = new T.Color(0x9fdcff); o.emissiveIntensity = 0.06; }
+function finMat(T, fin, ds, inst){
+  var key = fin + (ds ? "|2" : "") + (inst ? "|i" : ""); if(FIN[key]) return FIN[key];
+  var o = {vertexColors: !inst, flatShading: false, roughness: 0.82, metalness: 0.02};
+  if(fin === "ice"){ o.roughness = 0.3; o.metalness = 0.1; o.emissive = new T.Color(0x9fdcff); o.emissiveIntensity = 0.06; }
   if(fin === "crystal"){ o.roughness = 0.08; o.metalness = 0.25; o.transparent = true; o.opacity = 0.8; o.emissive = new T.Color(0x8a6aff); o.emissiveIntensity = 0.25; o.envMap = envTex(T); o.envMapIntensity = 1.4; }
   if(fin === "shadow"){ o.roughness = 0.9; o.transparent = true; o.opacity = 0.96; }
   if(fin === "gold"){ o.roughness = 0.22; o.metalness = 0.9; o.envMap = envTex(T); o.envMapIntensity = 1.6; o.emissive = new T.Color(0x3a2400); o.emissiveIntensity = 0.35; }
@@ -441,13 +447,23 @@ function finMat(T, fin, ds){
 }
 var GLOW = null;
 function glowMat(T){ if(!GLOW) GLOW = new T.MeshBasicMaterial({vertexColors: true, toneMapped: false}); return GLOW; }
-// a part under construction: triangles (non-indexed) with colours, merged into one BufferGeometry
-function Part(T){ this.T = T; this.pos = []; this.col = []; }
+// the unit limb: a capsule from y 0 to 1, radius 0.5, tapering a little toward its end
+function limbGeo(T){
+  if(GEO.limb) return GEO.limb;
+  var g = new T.CapsuleGeometry(0.5, 1, 2, 7); g.translate(0, 1, 0); g.scale(1, 0.5, 1);
+  var p = g.attributes.position;
+  for(var i = 0; i < p.count; i++){ var k = 1 - 0.2*Math.max(0, Math.min(1, p.getY(i))); p.setX(i, p.getX(i)*k); p.setZ(i, p.getZ(i)*k); }
+  g.computeVertexNormals(); g.userData.shared = true; GEO.limb = g; return g;
+}
+function bitGeo(T){ if(GEO.bit) return GEO.bit; var g = new T.ConeGeometry(0.5, 1, 6); g.translate(0, 0.5, 0); g.userData.shared = true; GEO.bit = g; return g; }
+// a part under construction: triangles (non-indexed) with colours and smooth normals, merged into one BufferGeometry
+function Part(T){ this.T = T; this.pos = []; this.col = []; this.nor = []; }
 Part.prototype.add = function(geo, m4, hex){
   var T = this.T, g = geo.index ? geo.toNonIndexed() : geo; g.applyMatrix4(m4);
-  var p = g.attributes.position.array, c = new T.Color(hex), cc = g.attributes.color ? g.attributes.color.array : null;
+  var p = g.attributes.position.array, n = g.attributes.normal ? g.attributes.normal.array : null, c = new T.Color(hex), cc = g.attributes.color ? g.attributes.color.array : null;
   for(var i = 0; i < p.length; i += 3){
     this.pos.push(p[i], p[i + 1], p[i + 2]);
+    if(n) this.nor.push(n[i], n[i + 1], n[i + 2]); else this.nor.push(0, 1, 0);
     if(cc) this.col.push(cc[i], cc[i + 1], cc[i + 2]); else this.col.push(c.r, c.g, c.b);
   }
   if(g !== geo) g.dispose(); geo.dispose();
@@ -455,7 +471,8 @@ Part.prototype.add = function(geo, m4, hex){
 Part.prototype.geometry = function(){
   var T = this.T, g = new T.BufferGeometry();
   g.setAttribute("position", new T.Float32BufferAttribute(this.pos, 3)); g.setAttribute("color", new T.Float32BufferAttribute(this.col, 3));
-  g.computeVertexNormals(); return g;
+  g.setAttribute("normal", new T.Float32BufferAttribute(this.nor, 3));
+  return g;
 };
 Part.prototype.tris = function(){ return this.pos.length/9; };
 function M4(T, x, y, z, rx, ry, rz, sx, sy, sz){
@@ -463,15 +480,19 @@ function M4(T, x, y, z, rx, ry, rz, sx, sy, sz){
   return m.compose(new T.Vector3(x || 0, y || 0, z || 0), q, new T.Vector3(sx == null ? 1 : sx, sy == null ? (sx == null ? 1 : sx) : sy, sz == null ? (sx == null ? 1 : sx) : sz));
 }
 // primitives: an ellipsoid (r = [rx, ry, rz]), a box, a cone along +y, a cylinder along +y
-function ell(P, x, y, z, r, hex, rx, ry, seg){ seg = seg || (Math.max(r[0], r[1], r[2]) < 0.06 ? 5 : 8); P.add(new P.T.SphereGeometry(1, seg, Math.max(3, (seg*0.75) | 0)), M4(P.T, x, y, z, rx, ry, 0, r[0], r[1], r[2]), hex); }
+function ell(P, x, y, z, r, hex, rx, ry, seg, rz){ seg = seg || (Math.max(r[0], r[1], r[2]) < 0.05 ? 7 : 11); P.add(new P.T.SphereGeometry(1, seg, Math.max(4, (seg*0.7) | 0)), M4(P.T, x, y, z, rx, ry, rz || 0, r[0], r[1], r[2]), hex); }
 function bx(P, x, y, z, w, h, d, hex, rx, ry, rz){ P.add(new P.T.BoxGeometry(w, h, d), M4(P.T, x, y, z, rx, ry, rz), hex); }
-function cone(P, x, y, z, r, h, hex, rx, ry, rz, seg){ P.add(new P.T.ConeGeometry(r, h, seg || 5), M4(P.T, x, y, z, rx, ry, rz), hex); }
-function cyl(P, x, y, z, r0, r1, h, hex, rx, ry, rz, seg){ P.add(new P.T.CylinderGeometry(r1, r0, h, seg || 6), M4(P.T, x, y, z, rx, ry, rz), hex); }
+function cone(P, x, y, z, r, h, hex, rx, ry, rz, seg){ P.add(new P.T.ConeGeometry(r, h, seg || 6), M4(P.T, x, y, z, rx, ry, rz), hex); }
+function cyl(P, x, y, z, r0, r1, h, hex, rx, ry, rz, seg){ P.add(new P.T.CylinderGeometry(r1, r0, h, seg || 8), M4(P.T, x, y, z, rx, ry, rz), hex); }
 function lerpHex(a, b, k){ var ar = a >> 16 & 255, ag = a >> 8 & 255, ab = a & 255, br = b >> 16 & 255, bg = b >> 8 & 255, bb = b & 255;
   return (Math.round(ar + (br - ar)*k) << 16) | (Math.round(ag + (bg - ag)*k) << 8) | Math.round(ab + (bb - ab)*k); }
 
-// The model: o = {species, variant, acc, stage, name}. Returns {g, P (trick pose), body, head, tail, legsA, legsB, wings,
-// glow, segs, meshes (draw calls), tris, sp, dims}. g is placed by the caller; its y rotation is the pet's yaw.
+// tails by kind: segments, length (x L), radius at the root and the tip (x W), pitch at the root and its curve per segment
+var TAILS = {curl: [4, 0.42, 0.17, 0.12, 1.25, 0.6], plume: [4, 0.6, 0.12, 0.17, 0.45, -0.1], stub: [1, 0.1, 0.18, 0.16, 0.5, 0],
+             thin: [5, 0.6, 0.11, 0.05, 0.25, -0.03], long: [6, 0.95, 0.14, 0.1, -0.35, 0.2], thick: [5, 0.85, 0.36, 0.08, -0.05, -0.02],
+             spiked: [5, 0.8, 0.32, 0.08, 0.02, -0.02], dragon: [7, 1.1, 0.3, 0.05, -0.12, 0.05], fin: [0, 0, 0, 0, 0, 0]};
+// The model: o = {species, variant, acc, stage, name}. Returns {g, P (trick pose), body, head, limbs, bits, wingMesh, glow,
+// segs, legs, eyes, meshes (draw calls), tris, sp, dims, parts}. g is placed by the caller; its y rotation is the pet's yaw.
 function model(T, o){
   o = o || {}; var sp = speciesOf(o.species) || SPECIES[0], pal = sp.pal[Math.max(0, Math.min(VARIANTS - 1, o.variant | 0))];
   var A = pal[0], B2 = pal[1], C = pal[2], EYE = pal[3], acc = accOk(sp, o.acc) ? o.acc | 0 : 0;
@@ -480,194 +501,448 @@ function model(T, o){
   var parts = {}, meshes = 0, tris = 0, mat = finMat(T, sp.fin || "matte");
   function mesh(name, P, parent, m){ if(!P.pos.length) return null; var me = new T.Mesh(P.geometry(), m || mat); me.name = "pet-" + name; parent.add(me); meshes++; tris += P.tris(); parts[name] = me; me.castShadow = name === "body"; return me; }
   function pivot(parent, x, y, z){ var p = new T.Group(); p.position.set(x, y, z); parent.add(p); return p; }
-  var biped = sp.form === "biped", serp = sp.form === "serpent";
+  var biped = sp.form === "biped", serp = sp.form === "serpent", dog = kind === "dog", cat = kind === "cat", scaly = kind === "dragon" || kind === "dino" || serp;
   var cy = lh + H/2;                                                      // the body's centre height
-  var hipZ = biped ? -L*0.12 : -L*0.32, shZ = L*0.32;
-  // ---- body (pivot at the hip, so sitting tilts the front up) ----
+  var hipZ = biped ? -L*0.12 : -L*0.32, shZ = L*0.3;
+  var dark = 0x1a1414, pink = 0xe8a0a0, ivory = 0xf4ecd8;
+  var LI = [], BI = [];                                                   // instance colours: limbs, bits
+  function li(hex){ LI.push(hex); return LI.length - 1; }
+  function bi(hex){ BI.push(hex); return BI.length - 1; }
+  // ---- body (pivot at the hip, so sitting tilts the front up); body space: the body's centre is (0, 0, oz) ----
   var body = pivot(Pg, 0, cy, hipZ), Pb = new Part(T), oz = -hipZ;
+  var bp = biped ? 0.3 : 0;                                              // a biped leans forward
   if(serp){
-    ell(Pb, 0, 0, oz + 0.05, [W*0.5, H*0.5, 0.18], A);
+    ell(Pb, 0, 0, oz + 0.05, [W*0.5, H*0.5, 0.2], A); ell(Pb, 0, -H*0.2, oz + 0.07, [W*0.4, H*0.3, 0.17], C);
   } else {
-    var bp = biped ? 0.35 : 0;                                            // a biped leans forward
-    ell(Pb, 0, 0, oz, [W/2, H/2, L/2], A, -bp);
-    ell(Pb, 0, -H*0.12, oz + L*0.04, [W*0.42, H*0.4, L*0.42], C, -bp);    // the belly
-    if(sp.pat === "stripes") for(var si = -1; si <= 1; si++) bx(Pb, 0, H*0.36, oz + si*L*0.2, W*0.7, H*0.12, L*0.07, B2, -bp);
-    if(sp.pat === "spots") [[0.6, 0.2], [-0.5, -0.1], [0.2, -0.3], [-0.3, 0.3]].forEach(function(p){ ell(Pb, p[0]*W*0.4, H*0.35, oz + p[1]*L, [W*0.12, H*0.1, W*0.12], B2); });
-    if(sp.pat === "mask") ell(Pb, 0, H*0.15, oz, [W*0.46, H*0.38, L*0.46], B2 === 0xf4f6f8 || B2 === 0xffffff || B2 === 0xf8f0ea ? A : B2);
-    if(sp.plates) for(var pi = 0; pi < 5; pi++) cone(Pb, 0, H*0.5 + 0.05, oz + (pi - 2)*L*0.17, 0.07 + (2 - Math.abs(pi - 2))*0.025, 0.2 + (2 - Math.abs(pi - 2))*0.06, B2, 0, 0, 0, 4);
-    if(sp.spikes) for(var ki = 0; ki < 4; ki++) cone(Pb, 0, H*0.5, oz + (1.5 - ki)*L*0.18, 0.035, 0.09*sp.spikes, sp.frost ? 0xffffff : B2, -0.3, 0, 0, 4);
+    // a deep chest, a waist and the hips, the belly underneath: one rounded torso
+    ell(Pb, 0, H*0.04, oz + L*0.2, [W*0.52, H*0.56, L*0.33], A, -bp);
+    ell(Pb, 0, 0, oz - L*0.02, [W*0.47, H*0.5, L*0.36], A, -bp);
+    ell(Pb, 0, H*0.02, oz - L*0.24, [W*0.5, H*0.5, L*0.28], A, -bp);
+    ell(Pb, 0, -H*0.17, oz + L*0.04, [W*0.4, H*0.36, L*0.4], C, -bp);
+    if(dog && C !== A) ell(Pb, 0, -H*0.02, oz + L*0.37, [W*0.36, H*0.42, L*0.14], C, -bp);   // the chest blaze
+    if(cat && sp.ears === "tuft") ell(Pb, 0, H*0.08, oz + L*0.4, [W*0.5, H*0.55, L*0.16], C, -bp);   // a Maine Coon's ruff
+    if(sp.pat === "stripes") for(var si = -2; si <= 2; si++) ell(Pb, 0, H*0.14, oz + si*L*0.15, [W*0.49, H*0.42, L*0.035], B2, -bp, 0, 9);
+    if(sp.pat === "spots") [[0.6, 0.2], [-0.5, -0.1], [0.2, -0.3], [-0.3, 0.3], [0.5, -0.25]].forEach(function(p){ ell(Pb, p[0]*W*0.38, H*0.33, oz + p[1]*L, [W*0.14, H*0.14, W*0.16], B2, 0, 0, 7); });
+    if(sp.pat === "mask") ell(Pb, 0, H*0.15, oz - L*0.02, [W*0.47, H*0.42, L*0.46], B2 === 0xf4f6f8 || B2 === 0xffffff || B2 === 0xf8f0ea ? A : B2);
+    if(sp.plates) for(var pi = 0; pi < 7; pi++){ var ph0 = 1 - Math.abs(pi - 3)/4; cone(Pb, (pi % 2 ? 0.03 : -0.03), H*0.5 + 0.02, oz + (pi - 3)*L*0.12, 0.09*ph0 + 0.03, 0.12 + 0.16*ph0, B2, 0, PI/4, pi % 2 ? -0.1 : 0.1, 4); }
+    if(sp.spikes) for(var ki = 0; ki < 6; ki++) cone(Pb, 0, H*0.48 - Math.abs(ki - 2)*0.008, oz + (2.6 - ki)*L*0.14, 0.03, (0.07 + 0.02*(ki < 3 ? ki : 5 - ki))*sp.spikes, sp.frost ? 0xffffff : B2, -0.45, 0, 0, 4);
     if(sp.gems) for(var gi = 0; gi < 6; gi++) cone(Pb, (gi % 2 ? 1 : -1)*W*0.3, H*0.25, oz + (gi - 2.5)*L*0.13, 0.04, 0.1, gi % 2 ? B2 : C, 0, 0, (gi % 2 ? -1 : 1)*0.7, 3);
-    if(sp.arms) [-1, 1].forEach(function(s){ cyl(Pb, s*W*0.32, -H*0.1, oz + L*0.38, 0.025, 0.02, 0.14, A, 0.8, 0, 0, 4); });
-    // the neck (a long one for the brachiosaurus), from the chest up to the head's pivot
-    var nk = sp.neck || (biped ? 0.12 : kind === "dragon" ? 0.16 : 0.08);
-    var nx0 = oz + L*0.4, ny1 = H*0.35 + nk*0.85, nz1 = oz + L*0.48 + nk*0.45;
-    cyl(Pb, 0, (ny1)/2, (nx0 + nz1)/2, W*0.26, W*0.2, Math.hypot(ny1, nz1 - nx0) + 0.04, A, Math.atan2(nz1 - nx0, ny1), 0, 0, 6);
-    // accessories on the body: collar, bandana, saddle
-    var nr = W*0.27;
-    if(acc & ACC.collar){ var col = new T.TorusGeometry(nr, 0.016, 4, 10); P_add(Pb, col, M4(T, 0, ny1*0.55, (nx0 + nz1)/2 - 0.01, PI/2 - Math.atan2(nz1 - nx0, ny1), 0, 0), 0xd8342a); cone(Pb, 0, ny1*0.55 - nr - 0.02, (nx0 + nz1)/2 + 0.02, 0.025, 0.03, 0xf0c030, PI, 0, 0, 6); }
-    if(acc & ACC.bandana) cone(Pb, 0, ny1*0.45 - nr*0.4, (nx0 + nz1)/2 + nr*0.6, nr*1.05, nr*1.6, 0x3a6ad8, PI*0.9, 0, 0, 3);
-    if(acc & ACC.saddle){ bx(Pb, 0, H/2 + 0.03, oz - L*0.02, W*1.02, 0.05, L*0.34, 0x7a3a1a); bx(Pb, 0, H/2 + 0.07, oz - L*0.14, W*0.7, 0.08, 0.05, 0x5a2a10); bx(Pb, 0, 0, oz, W*1.06, H*0.9, 0.04, 0x5a2a10); }
   }
   // ---- head (pivot at the top of the neck) ----
-  var hy, hz;
-  if(serp){ hy = 0.05; hz = oz + 0.22; }
-  else { var nk2 = sp.neck || (biped ? 0.12 : kind === "dragon" ? 0.16 : 0.08); hy = H*0.35 + nk2*0.85; hz = oz + L*0.48 + nk2*0.45; }
+  var nk = sp.neck || (biped ? 0.12 : kind === "dragon" ? 0.2 : 0.08);
+  var hy, hz, nb;
+  if(serp){ hy = 0.05; hz = oz + 0.24; nb = null; }
+  else { hy = H*0.35 + nk*0.85; hz = oz + L*0.48 + nk*0.45; nb = new T.Vector3(0, H*0.28, oz + L*0.36); }
   var head = pivot(body, 0, hy, hz), Ph = new Part(T), Pgl = sp.glowEyes ? new Part(T) : null;
-  ell(Ph, 0, hr*0.35, hr*0.25, [hr*(kind === "cat" ? 1.05 : 0.95), hr*0.88, hr], A);
-  var snoutCol = kind === "cat" || kind === "dog" && sp.id !== "dachshund" ? C : A;
-  if(sp.pat === "points"){ snoutCol = B2; }
-  ell(Ph, 0, hr*0.12, hr*0.85 + sn*0.45, [hr*(kind === "cat" ? 0.5 : 0.55), hr*0.42, sn*0.7 + 0.02], snoutCol);
-  if(kind === "dog" || kind === "cat") ell(Ph, 0, hr*0.22, hr*0.85 + sn*1.05, [0.022, 0.018, 0.016], 0x1a1414);
-  if(sp.pat === "mask") ell(Ph, 0, hr*0.05, hr*0.55, [hr*0.75, hr*0.55, hr*0.6], B2 === 0xf4f6f8 || B2 === 0xffffff || B2 === 0xf8f0ea ? B2 : C);
-  // eyes (glowing ones a part of their own, drawn unlit)
+  var cr = cat ? [hr*1.02, hr*0.88, hr*0.92] : dog ? [hr*0.9, hr*0.85, hr*0.95] : [hr*0.78, hr*0.7, hr*0.98];
+  var hc = [0, hr*0.3, hr*0.05];
+  ell(Ph, hc[0], hc[1], hc[2], cr, A);
+  var snoutCol = cat || dog && sp.id !== "dachshund" ? C : A;
+  if(sp.pat === "points"){ snoutCol = B2; ell(Ph, 0, hr*0.2, hr*0.45, [hr*0.6, hr*0.55, hr*0.55], B2); }
+  var mz = hr*0.62 + sn*0.5;                                              // the muzzle's centre
+  ell(Ph, 0, hr*0.1, mz, [hr*(cat ? 0.48 : scaly ? 0.5 : 0.52), hr*(scaly ? 0.36 : 0.4), sn*0.75 + 0.025], snoutCol);
+  if(cat) [-1, 1].forEach(function(s){ ell(Ph, s*hr*0.2, hr*0.02, mz + sn*0.3, [hr*0.24, hr*0.2, hr*0.2], C); });   // whisker pads
+  var noseZ = mz + sn*0.75 + 0.02;
+  if(dog) ell(Ph, 0, hr*0.2, noseZ, [hr*0.2, hr*0.14, hr*0.13], dark);
+  if(cat) ell(Ph, 0, hr*0.2, noseZ - 0.005, [hr*0.12, hr*0.08, hr*0.07], 0xd88a8a, 0.3);
+  if(scaly){ [-1, 1].forEach(function(s){ ell(Ph, s*hr*0.17, hr*0.3, noseZ - 0.02, [hr*0.06, hr*0.045, hr*0.05], dark, 0, 0, 6); });
+    ell(Ph, 0, -hr*0.01, mz + sn*0.1, [hr*0.4, hr*0.08, sn*0.7], 0x8a2a2a);                        // the mouth, seen when it opens
+    if(kind !== "dino" || sp.id === "trex" || sp.id === "raptor") [-1, 1].forEach(function(s){ for(var ti = 0; ti < 3; ti++) cone(Ph, s*hr*0.32, 0, mz + sn*(0.5 - ti*0.35), 0.012, 0.04, 0xfaf6ea, PI, 0, 0, 4); }); }
+  if(sp.pat === "mask") ell(Ph, 0, hr*0.05, hr*0.5, [hr*0.75, hr*0.55, hr*0.6], B2 === 0xf4f6f8 || B2 === 0xffffff || B2 === 0xf8f0ea ? B2 : C);
+  // eyes: a white, an iris, a pupil (a slit for cats and the scaly ones), a highlight; glowing irises drawn unlit
+  var eyes = [], er = hr*(cat ? 0.22 : dog ? 0.17 : 0.16), eyaw = cat ? 0.42 : dog ? 0.44 : 0.72, epit = scaly ? 0.28 : 0.2;
   [-1, 1].forEach(function(s){
-    var ex = s*hr*0.48, ey = hr*0.52, ez = hr*0.82;
-    ell(Ph, ex, ey, ez, [hr*0.17, hr*0.19, hr*0.1], 0xffffff);
-    ell(Pgl || Ph, ex*1.02, ey, ez + hr*0.07, [hr*0.11, hr*0.13, hr*0.06], EYE);
+    var ex = hc[0] + s*cr[0]*Math.sin(eyaw)*Math.cos(epit)*0.9, ey = hc[1] + cr[1]*Math.sin(epit)*0.9, ez = hc[2] + cr[2]*Math.cos(eyaw)*Math.cos(epit)*0.9;
+    var nx = Math.sin(s*eyaw)*Math.cos(epit), ny = Math.sin(epit), nz = Math.cos(eyaw)*Math.cos(epit);
+    function at(d){ return [ex + nx*er*d, ey + ny*er*d, ez + nz*er*d]; }
+    var q;
+    ell(Ph, ex, ey, ez, [er, er, er*0.6], dog ? 0x3a2a20 : 0xf6f2ea, -epit, s*eyaw, 9);
+    q = at(0.38); ell(Pgl || Ph, q[0], q[1], q[2], [er*(dog ? 0.9 : 0.8), er*(dog ? 0.9 : 0.8), er*0.28], EYE, -epit, s*eyaw, 9);
+    q = at(0.5); ell(Ph, q[0], q[1], q[2], cat || scaly ? [er*0.17, er*0.62, er*0.14] : [er*0.45, er*0.45, er*0.15], 0x080808, -epit, s*eyaw, 7);
+    q = at(0.6); ell(Ph, q[0] - s*er*0.12, q[1] + er*0.3, q[2], [er*0.17, er*0.17, er*0.1], 0xffffff, -epit, s*eyaw, 5);
+    if(scaly) ell(Ph, ex - s*er*0.1, ey + er*0.75, ez - er*0.1, [er*1.1, er*0.4, er*0.9], B2, -0.2, s*eyaw*0.8, 7);   // a brow ridge
+    eyes.push({c: [ex, ey, ez], n: [nx, ny, nz], r: er, lid: li(scaly ? B2 : A)});
   });
-  // ears, horns, frills, fins
-  var ears = sp.ears;
+  // ears, horns, frills, fins (pointed ears are "bits", floppy ears "limbs": both move)
+  var ears = sp.ears, earsB = [], flop = [];
   if(ears === "point" || ears === "big" || ears === "tuft") [-1, 1].forEach(function(s){
-    var big = ears === "big" ? 1.35 : 1;
-    cone(Ph, s*hr*0.55, hr*1.1, hr*0.15, hr*0.32*big, hr*0.7*big, sp.pat === "points" ? B2 : A, 0, 0, -s*0.25, 4);
-    cone(Ph, s*hr*0.55, hr*1.05, hr*0.21, hr*0.18*big, hr*0.45*big, sp.pat === "points" ? B2 : 0xf2b8b0, 0, 0, -s*0.25, 3);
-    if(ears === "tuft") cone(Ph, s*hr*0.6, hr*1.55, hr*0.12, 0.012, 0.08, B2, 0, 0, -s*0.2, 3);
+    var big = ears === "big" ? 1.35 : ears === "tuft" ? 1.15 : 1;
+    earsB.push({s: s, b: [s*hr*0.5, hr*0.85, -hr*0.02], len: hr*0.72*big, w: hr*0.62*big, i: bi(sp.pat === "points" ? B2 : A), j: bi(sp.pat === "points" ? lerpHex(B2, pink, 0.4) : pink)});
   });
-  if(ears === "flop") [-1, 1].forEach(function(s){ ell(Ph, s*hr*0.85, hr*0.25, hr*0.1, [hr*0.2, hr*0.5, hr*0.32], B2, 0, 0); });
-  if(ears === "horn") [-1, 1].forEach(function(s){ cone(Ph, s*hr*0.42, hr*1.05, -hr*0.25, hr*0.13, hr*0.75, sp.frost ? 0xffffff : sp.fin === "gold" ? 0xfff0b0 : C, -0.7, 0, -s*0.25, 5); });
-  if(ears === "frill"){ cyl(Ph, 0, hr*0.6, -hr*0.35, hr*1.5, hr*1.1, 0.04, B2, -1.1, 0, 0, 10);
-    cone(Ph, 0, hr*0.5, hr*1.35, hr*0.12, hr*0.45, 0xf4ecd8, 1.2, 0, 0, 5);
-    [-1, 1].forEach(function(s){ cone(Ph, s*hr*0.42, hr*1.05, hr*0.55, hr*0.12, hr*0.85, 0xf4ecd8, 1.0, 0, -s*0.15, 5); }); }
-  if(ears === "fin") [-1, 1].forEach(function(s){ cone(Ph, s*hr*0.8, hr*0.5, -hr*0.1, hr*0.3, hr*0.8, B2, -0.9, 0, -s*0.9, 3); });
-  if(sp.crest === 1) for(var ci = 0; ci < 3; ci++) cone(Ph, 0, hr*0.95, hr*(0.4 - ci*0.35), 0.02, 0.08 - ci*0.015, EYE, -0.5, 0, 0, 3);
-  if(sp.crest === 2){ cyl(Ph, 0, hr*1.05, -hr*0.1, hr*0.55, hr*0.6, hr*0.25, 0xfff0a0, 0, 0, 0, 8); [-2, -1, 0, 1, 2].forEach(function(k){ cone(Ph, k*hr*0.22, hr*1.35, -hr*0.1 + (k === 0 ? 0.01 : 0), 0.025, 0.11 - Math.abs(k)*0.015, EYE, 0, 0, -k*0.12, 4); }); }
+  if(ears === "flop") [-1, 1].forEach(function(s){ flop.push({s: s, b: [s*hr*0.72, hr*0.68, -hr*0.02], len: hr*1.05, i: li(B2)}); });
+  if(ears === "horn") [-1, 1].forEach(function(s){ var hcol = sp.frost ? 0xffffff : sp.fin === "gold" ? 0xfff0b0 : ivory;
+    cone(Ph, s*hr*0.36, hr*0.78, -hr*0.42, hr*0.12, hr*0.55, hcol, -1.1, 0, -s*0.3, 6); cone(Ph, s*hr*0.44, hr*0.98, -hr*0.82, hr*0.07, hr*0.45, hcol, -1.75, 0, -s*0.3, 5); });
+  if(ears === "frill"){ cyl(Ph, 0, hr*0.6, -hr*0.4, hr*1.45, hr*1.05, 0.04, B2, -1.15, 0, 0, 14);
+    cone(Ph, 0, hr*0.42, mz + sn*0.4, hr*0.11, hr*0.42, ivory, 1.2, 0, 0, 6);
+    [-1, 1].forEach(function(s){ cone(Ph, s*hr*0.4, hr*0.95, hr*0.4, hr*0.11, hr*0.85, ivory, 1.0, 0, -s*0.15, 6); }); }
+  if(ears === "fin") [-1, 1].forEach(function(s){ cone(Ph, s*hr*0.75, hr*0.45, -hr*0.15, hr*0.3, hr*0.8, B2, -0.9, 0, -s*0.9, 4); });
+  if(sp.crest === 1) for(var ci = 0; ci < 3; ci++) cone(Ph, 0, hr*0.9, hr*(0.35 - ci*0.32), 0.02, 0.08 - ci*0.015, EYE, -0.5, 0, 0, 4);
+  if(sp.crest === 2){ cyl(Ph, 0, hr*0.98, -hr*0.15, hr*0.5, hr*0.55, hr*0.22, 0xfff0a0, 0, 0, 0, 10); [-2, -1, 0, 1, 2].forEach(function(k){ cone(Ph, k*hr*0.2, hr*1.25, -hr*0.15, 0.025, 0.11 - Math.abs(k)*0.015, EYE, 0, 0, -k*0.12, 4); }); }
   // accessories on the head: hat, bow
-  if(acc & ACC.hat){ cone(Ph, hr*0.15, hr*1.3 + hr*0.42, 0, hr*0.42, hr*0.9, 0x6a3ad8, 0, 0, -0.2, 8); ell(Ph, hr*0.33, hr*2.1, 0, [0.03, 0.03, 0.03], 0xfff0a0); }
-  if(acc & ACC.bow) [-1, 1].forEach(function(s){ cone(Ph, s*hr*0.22 - hr*0.4, hr*1.05, hr*0.1, hr*0.16, hr*0.32, 0xf05aa0, 0, 0, s*PI/2, 4); });
+  if(acc & ACC.hat){ cone(Ph, hr*0.1, hr*1.55, -hr*0.05, hr*0.42, hr*0.9, 0x6a3ad8, 0, 0, -0.2, 10); cyl(Ph, hr*0.04, hr*1.12, -hr*0.05, hr*0.55, hr*0.55, 0.012, 0x6a3ad8, 0, 0, -0.2, 12); ell(Ph, hr*0.27, hr*2.0, -hr*0.05, [0.03, 0.03, 0.03], 0xfff0a0); }
+  if(acc & ACC.bow) [-1, 1].forEach(function(s){ cone(Ph, s*hr*0.2 - hr*0.38, hr*0.98, hr*0.05, hr*0.16, hr*0.32, 0xf05aa0, 0, 0, s*PI/2, 5); });
   mesh("head", Ph, head); if(Pgl) mesh("glow", Pgl, head, glowMat(T));
-  // ---- tail (pivot at the rump) ----
-  var tail = pivot(body, 0, serp ? 0 : H*0.15, serp ? oz - 0.12 : oz - L*0.48), Pt = new Part(T);
-  var tk = sp.tail;
-  if(tk === "curl"){ var tg = new T.TorusGeometry(W*0.32, W*0.13, 4, 8, PI*1.4); P_add(Pt, tg, M4(T, 0, W*0.32, -W*0.1, 0, PI/2, 0), A); }
-  else if(tk === "plume"){ ell(Pt, 0, H*0.25, -L*0.22, [W*0.2, W*0.2, L*0.3], sp.id === "husky" ? C : A, -0.7); }
-  else if(tk === "stub"){ ell(Pt, 0, 0.02, -0.03, [0.04, 0.04, 0.05], A); }
-  else if(tk === "thin" || tk === "long"){ var tl = tk === "long" ? L*0.9 : L*0.5; cyl(Pt, 0, tl*0.3, -tl*0.4, 0.025, 0.018, tl, sp.pat === "points" ? B2 : A, -1.0, 0, 0, 5); ell(Pt, 0, tl*0.62, -tl*0.75, [0.026, 0.03, 0.04], sp.pat === "stripes" || sp.pat === "points" ? B2 : A); }
-  else if(tk === "thick" || tk === "dragon" || tk === "spiked"){
-    var len = kind === "dragon" ? L*1.05 : L*0.85;
-    cone(Pt, 0, -0.02, -len/2, W*0.32, len, A, -PI/2 - 0.08, 0, 0, 6);
-    if(tk === "dragon") cone(Pt, 0, -0.04, -len - 0.02, 0.07, 0.14, sp.frost ? 0xffffff : B2, -PI/2, 0, 0, 3);
-    if(tk === "spiked") [-1, 1].forEach(function(s){ cone(Pt, s*0.08, 0.06, -len*0.85, 0.025, 0.16, 0xf4ecd8, 0, 0, -s*1.0, 4); cone(Pt, s*0.07, 0.06, -len*0.7, 0.022, 0.13, 0xf4ecd8, 0, 0, -s*1.0, 4); });
-  }
-  else if(tk === "fin"){ cone(Pt, 0, 0, -0.12, 0.13, 0.22, B2, PI/2, 0, 0, 3); }
-  mesh("tail", Pt, tail);
-  // ---- legs: two diagonal pairs (a trot), or left / right (bipeds); slid and lifted as a pair, not jointed ----
-  var legsA = null, legsB = null;
+  // lower jaw, a dog's tongue
+  var jaw = {h: [0, hr*0.02, hr*0.2], tip: [0, -hr*0.12, mz + sn*0.6], w: hr*(cat ? 0.32 : 0.36), th: hr*0.14, i: li(scaly ? C : snoutCol)};
+  var tongue = dog ? li(0xe8707a) : -1;
+  // accessories on the body: collar, bandana, saddle; the neck runs from nb to the head's pivot
+  var nr = serp ? 0 : Math.max(W*0.26, hr*0.55);
   if(!serp){
-    var PA = new Part(T), PB = new Part(T), lx = W*0.3, lr = Math.max(0.025, W*0.12)*(sp.size > 1.1 ? 1.25 : 1);
-    var sock = sp.pat === "points" ? B2 : sp.id === "shiba" || sp.id === "corgi" || sp.id === "husky" ? C : A;
-    function leg(P, x, z, h, front){ cyl(P, x, h/2, z, lr, lr*0.85, h + H*0.25, front && sp.form === "biped" ? A : A); ell(P, x, lr*0.5, z + lr*0.4, [lr*1.15, lr*0.6, lr*1.4], sock); }
-    if(biped){ leg(PA, lx, hipZ, lh, false); leg(PB, -lx, hipZ, lh, false); }
-    else { var fh = sp.neck ? lh*1.12 : lh; leg(PA, lx, shZ, fh, true); leg(PA, -lx, hipZ, lh, false); leg(PB, -lx, shZ, fh, true); leg(PB, lx, hipZ, lh, false); }
-    legsA = new T.Mesh(PA.geometry(), mat); legsB = new T.Mesh(PB.geometry(), mat); legsA.name = "pet-legsA"; legsB.name = "pet-legsB";
-    Pg.add(legsA); Pg.add(legsB); meshes += 2; tris += PA.tris() + PB.tris(); parts.legsA = legsA; parts.legsB = legsB;
+    var ndy = hy - nb.y, ndz = hz - nb.z, nl = Math.hypot(ndy, ndz), na = -Math.atan2(ndy, ndz);
+    var cx = nb.y + ndy*0.18, cz = nb.z + ndz*0.18;
+    if(acc & ACC.collar){ Pb.add(new T.TorusGeometry(nr*0.97, 0.016, 5, 14), M4(T, 0, cx, cz, na, 0, 0), 0xd8342a); ell(Pb, 0, cx - nr*1.02*Math.cos(na) - 0.015, cz - nr*Math.sin(na)*0.3 + 0.01, [0.022, 0.026, 0.012], 0xf0c030); }
+    if(acc & ACC.bandana) cone(Pb, 0, cx - nr*0.75, cz + nr*0.55, nr*1.0, nr*1.5, 0x3a6ad8, PI*0.88, 0, 0, 3);
+    if(acc & ACC.saddle){ ell(Pb, 0, H*0.5, oz - L*0.03, [W*0.56, 0.035, L*0.2], 0x7a3a1a); ell(Pb, 0, H*0.55, oz - L*0.17, [W*0.36, 0.05, 0.04], 0x5a2a10); bx(Pb, 0, 0, oz - L*0.03, W*1.08, H*0.9, 0.035, 0x5a2a10); }
   }
-  // ---- wings: both in one mesh, raised to the tip; flapped by scaling y about the shoulder (no mirrored joints) ----
-  var wings = null;
+  // ---- legs: a jointed upper and lower leg and a paw each, posed by a two-bone IK every frame ----
+  var legs = [];
+  if(!serp){
+    var lr = Math.max(0.022, W*(biped ? 0.15 : 0.12))*(sp.size > 1.1 ? 1.2 : 1), lx = W*(biped ? 0.3 : 0.32);
+    var sock = sp.pat === "points" ? B2 : sp.id === "shiba" || sp.id === "corgi" || sp.id === "husky" ? C : A;
+    function leg(x, z, front){
+      var ay = -H*(biped ? 0.18 : 0.22), tot = (cy + ay) - lr*0.75;           // hip to ankle, standing
+      legs.push({att: new T.Vector3(x, ay, z), front: front, l1: tot*0.54, l2: tot*0.54, r: lr*(front ? 0.95 : 1.05), tot: tot, side: x > 0 ? 1 : -1,
+                 i: li(A), j: li(lerpHex(A, sock, 0.5)), k: li(sock)});
+    }
+    if(biped){ leg(lx, 0, false); leg(-lx, 0, false); }
+    else { leg(lx, shZ - hipZ, true); leg(-lx, shZ - hipZ, true); leg(lx, 0, false); leg(-lx, 0, false); }
+  }
+  var arms = biped && sp.arms ? [li(A), li(A), li(A), li(A)] : null;
+  // ---- the tail: a chain of segments (a sea serpent's fin rides its coils' end) ----
+  var TD = TAILS[sp.tail] || TAILS.thin, tail = null;
+  if(!serp){
+    var tlen = L*TD[1]*(sp.id === "raptor" ? 1.4 : kind === "cat" ? 1.05 : sp.id === "brachio" ? 1.2 : 1);
+    tail = {n: TD[0], len: tlen, r0: W*TD[2], r1: W*TD[3], p0: TD[4], dp: TD[5], b: new T.Vector3(0, H*0.14, oz - L*0.44), i: []};
+    if(sp.id === "dachshund") tail.p0 = 0.6;
+    if(kind === "cat"){ tail.r0 = Math.max(0.028, W*0.15); tail.r1 = tail.r0*0.8; }
+    for(var ti2 = 0; ti2 < tail.n; ti2++){ var tk = ti2/Math.max(1, tail.n - 1);
+      tail.i.push(li(sp.pat === "points" ? B2 : sp.id === "husky" && ti2 === tail.n - 1 ? C : sp.pat === "stripes" && ti2 % 2 ? B2 : tk > 0.7 && sp.tail === "plume" ? lerpHex(A, C, 0.5) : A)); }
+    tail.tip = sp.tail === "dragon" ? bi(sp.frost ? 0xffffff : B2) : -1;
+    tail.spikes = sp.tail === "spiked" ? [bi(ivory), bi(ivory), bi(ivory), bi(ivory)] : null;
+    tail.spines = sp.tail === "dragon" && sp.spikes ? [bi(sp.frost ? 0xffffff : B2), bi(sp.frost ? 0xffffff : B2), bi(sp.frost ? 0xffffff : B2)] : null;
+  }
+  var neck = null;
+  if(!serp){
+    var nn = sp.neck ? 5 : kind === "dragon" ? 4 : 2;
+    neck = {n: nn, r0: nr, r1: Math.max(hr*0.5, nr*(sp.neck ? 0.45 : 0.8)), i: []};
+    for(var ni = 0; ni < nn; ni++) neck.i.push(li(A));
+  }
+  var fin = serp ? bi(B2) : -1;
+  // the instanced parts: one mesh each, coloured per instance
+  function inst(name, geo, cols){
+    if(!cols.length) return null;
+    var im = new T.InstancedMesh(geo, finMat(T, sp.fin || "matte", false, true), cols.length), c3 = new T.Color(), m0 = new T.Matrix4().makeScale(0, 0, 0);
+    for(var i = 0; i < cols.length; i++){ im.setColorAt(i, c3.setHex(cols[i])); im.setMatrixAt(i, m0); }
+    im.name = "pet-" + name; im.frustumCulled = false; im.castShadow = name === "limbs"; Pg.add(im); meshes++; tris += cols.length*(geo.index ? geo.index.count : geo.attributes.position.count)/3; parts[name] = im;
+    return im;
+  }
+  var limbs = inst("limbs", limbGeo(T), LI), bits = inst("bits", bitGeo(T), BI);
+  // ---- wings: one double-sided mesh, rebuilt each frame from the arm and four finger spars ----
+  var wingMesh = null, wing = null;
   if(sp.fly){
-    var Pw = new Part(T), span = L*1.25, wc = sp.fin === "shadow" ? 0x2a1a3a : B2;
-    var wingsP = pivot(body, 0, H*0.45, oz + L*0.12);
-    [-1, 1].forEach(function(s){
-      var tri = new T.BufferGeometry(), v = [0, 0, 0.1, s*span, span*0.55, 0, 0, 0, -0.18, s*span, span*0.55, 0, s*span*0.6, span*0.15, -0.28, 0, 0, -0.18];
-      tri.setAttribute("position", new T.Float32BufferAttribute(v, 3));
-      var tip = sp.frost ? 0xffffff : sp.fin === "gold" ? 0xfff2b8 : sp.fin === "crystal" ? 0xffffff : wc;
-      var cols = [], cA = new T.Color(wc), cT = new T.Color(tip);
-      for(var q = 0; q < 6; q++){ var k = Math.abs(v[q*3])/span, cc = cA.clone().lerp(cT, Math.pow(k, 1.5)); cols.push(cc.r, cc.g, cc.b); }
-      tri.setAttribute("color", new T.Float32BufferAttribute(cols, 3));
-      Pw.add(tri, new T.Matrix4(), wc);
-      cyl(Pw, s*span*0.5, span*0.28, 0.08, 0.018, 0.012, span*1.15, A, 0, 0, -s*(PI/2 - Math.atan2(span*0.55, span)), 4);
-    });
-    wings = mesh("wings", Pw, wingsP, finMat(T, sp.fin || "matte", true)); wings.castShadow = false;
+    var span = L*1.2, wc = sp.fin === "shadow" ? 0x2a1a3a : B2;
+    var tipC = sp.frost ? 0xffffff : sp.fin === "gold" ? 0xfff2b8 : sp.fin === "crystal" ? 0xffffff : lerpHex(wc, C, 0.3);
+    var bone = lerpHex(A, 0x000000, 0.2);
+    wing = wingSetup(T, span, wc, tipC, bone, {S: [W*0.36, H*0.36, oz + L*0.18], R: [W*0.3, H*0.12, oz - L*0.34]});
+    wingMesh = new T.Mesh(wing.geo, finMat(T, sp.fin || "matte", true)); wingMesh.name = "pet-wings"; wingMesh.frustumCulled = false; body.add(wingMesh);
+    meshes++; tris += wing.tris; parts.wings = wingMesh;
+    wingPose(wing, 0, 0.3, 0, 0);
   }
   mesh("body", Pb, body);
   // ---- a sea serpent's coils: one InstancedMesh of segments, posed each frame along a wave ----
   var segs = null;
   if(serp){
-    var Ps = new Part(T); ell(Ps, 0, 0, 0, [W*0.5, H*0.5, 0.11], A, 0, 0, 7); cone(Ps, 0, H*0.45, 0, 0.04, 0.09, B2, 0, 0, 0, 3); ell(Ps, 0, -H*0.22, 0.01, [W*0.38, H*0.25, 0.09], C, 0, 0, 5);
+    var Ps = new Part(T); ell(Ps, 0, 0, 0, [W*0.5, H*0.5, 0.12], A, 0, 0, 9); cone(Ps, 0, H*0.42, 0, 0.04, 0.09, B2, -0.3, 0, 0, 4); ell(Ps, 0, -H*0.2, 0.01, [W*0.4, H*0.28, 0.1], C, 0, 0, 7);
     segs = new T.InstancedMesh(Ps.geometry(), mat, 10); segs.name = "pet-segs"; segs.frustumCulled = false; Pg.add(segs); meshes++; tris += Ps.tris()*10; parts.segs = segs;
   }
   var stage = sp.grows ? Math.max(0, Math.min(2, o.stage | 0)) : 0, scale = (sp.size || 1)*(sp.grows ? [0.7, 1, 1.35][stage] : 1);
   Pg.scale.setScalar(scale);
-  return {g: g, P: Pg, body: body, head: head, tail: tail, wings: wings ? wings.parent : null, wingMesh: wings, legsA: legsA, legsB: legsB, glow: parts.glow || null,
-          segs: segs, meshes: meshes, tris: Math.round(tris), sp: sp, scale: scale, dims: {L: L, H: H, W: W, lh: lh, cy: cy, oz: oz, hipZ: hipZ}, parts: parts};
+  var seedF = (hashStr(sp.id + ":" + (o.variant | 0) + ":" + (o.name || "")) % 1000)/1000*TAU;
+  var tv = []; for(var vi = 0; vi < 12; vi++) tv.push(new T.Vector3());
+  return {g: g, P: Pg, body: body, head: head, limbs: limbs, bits: bits, wingMesh: wingMesh, wing: wing, glow: parts.glow || null, segs: segs,
+          legs: legs, arms: arms, tail: tail, neck: neck, nb: nb, eyes: eyes, earsB: earsB, flop: flop, jaw: jaw, tongue: tongue, fin: fin, hp0: head.position.clone(),
+          meshes: meshes, tris: Math.round(tris), sp: sp, scale: scale, biped: biped, seedF: seedF, tv: tv, Mh: new T.Matrix4(), q: new T.Quaternion(), mm: new T.Matrix4(),
+          sm: {look: 0, jaw: 0, turn: 0, lastT: null, lastYaw: null},
+          dims: {L: L, H: H, W: W, lh: lh, cy: cy, oz: oz, hipZ: hipZ, hr: hr}, parts: parts};
 }
-function P_add(P, geo, m4, hex){ P.add(geo, m4, hex); }
 
-// Pose a model from its state (anim, ph) at time t; calm: no bounces, no flips, gentle only
-var Q = null;
-function pose(Mo, st, t, calm){
+/* ---------- wings ---------- */
+// Points: S shoulder, E elbow, X wrist, F0..F3 finger tips, M0..M3 the membrane's trailing edge between them (sagging),
+// R where the membrane meets the flank. Angles are in the wing's plane, from "outward" toward "forward".
+var WING_OPEN = [0.35, -0.12, -0.3, -0.8, -1.3, -1.8], WING_FOLD = [-1.2, 1.45, -1.42, -1.5, -1.58, -1.66];
+var WING_LEN = [0.28, 0.36, 0.62, 0.66, 0.55, 0.42];
+var WING_TRI = [["S", "E", "X"], ["X", "F0", "M0"], ["X", "M0", "F1"], ["X", "F1", "M1"], ["X", "M1", "F2"], ["X", "F2", "M2"], ["X", "M2", "F3"],
+                ["X", "F3", "M3"], ["X", "M3", "R"], ["S", "X", "R"]];
+var WING_BONE = [["S", "E", 1], ["E", "X", 0.9], ["X", "F0", 0.55], ["X", "F1", 0.5], ["X", "F2", 0.45], ["X", "F3", 0.4]];
+var WING_TINT = {S: 0, E: 0.2, X: 0.35, F0: 1, F1: 1, F2: 1, F3: 1, M0: 0.75, M1: 0.75, M2: 0.7, M3: 0.55, R: 0.05};
+function wingSetup(T, span, wc, tipC, bone, at){
+  var nTri = (WING_TRI.length + WING_BONE.length*2 + 1)*2, pos = new Float32Array(nTri*9), col = new Float32Array(nTri*9);
+  var cA = new T.Color(wc), cT = new T.Color(tipC), cB = new T.Color(bone), cC = new T.Color(0xf4ecd8), c = new T.Color(), o = 0;
+  [-1, 1].forEach(function(){
+    WING_TRI.forEach(function(t){ t.forEach(function(p){ c.copy(cA).lerp(cT, Math.pow(WING_TINT[p], 1.4)); col[o++] = c.r; col[o++] = c.g; col[o++] = c.b; }); });
+    for(var b = 0; b < WING_BONE.length*2 + 1; b++) for(var v = 0; v < 3; v++){ c.copy(b === WING_BONE.length*2 ? cC : cB); col[o++] = c.r; col[o++] = c.g; col[o++] = c.b; }
+  });
+  var geo = new T.BufferGeometry();
+  geo.setAttribute("position", new T.BufferAttribute(pos, 3)); geo.setAttribute("color", new T.BufferAttribute(col, 3)); geo.setAttribute("normal", new T.BufferAttribute(new Float32Array(nTri*9), 3));
+  return {geo: geo, span: span, S: at.S, R: at.R, tris: nTri, P: {}, open: 0};
+}
+// spread k (0 folded .. 1 open), flap: the arm's lift (+ up), sag: the membrane's billow, curl: the upstroke's folding fingers
+function wingPose(w, k, flap, sag, curl){
+  var pos = w.geo.attributes.position.array, span = w.span, o = 0, P = w.P;
+  k = Math.max(0, Math.min(1, k)); w.open = k;
+  [-1, 1].forEach(function(s){
+    var roll = 1.3*(1 - k) + flap, cu = Math.cos(roll), su = Math.sin(roll);
+    var S = w.S, Ux = s*cu, Uy = su, Nx = -s*su, Ny = cu;
+    function pt(u, v, n){ return [s*S[0] + Ux*u + Nx*(n || 0), S[1] + Uy*u + Ny*(n || 0), S[2] + v]; }
+    function ang(i){ var a = WING_FOLD[i] + (WING_OPEN[i] - WING_FOLD[i])*k; if(i >= 2) a -= curl*(0.25 + (i - 2)*0.12); return a; }
+    var a0 = ang(0), a1 = ang(1), l = WING_LEN, ex = Math.cos(a0)*l[0]*span, ev = Math.sin(a0)*l[0]*span;
+    var xx = ex + Math.cos(a1)*l[1]*span, xv = ev + Math.sin(a1)*l[1]*span;
+    P.S = pt(0, 0); P.E = pt(ex, ev); P.X = pt(xx, xv);
+    var F = [];
+    for(var i = 0; i < 4; i++){ var a = ang(i + 2); F.push([xx + Math.cos(a)*l[i + 2]*span, xv + Math.sin(a)*l[i + 2]*span]); P["F" + i] = pt(F[i][0], F[i][1]); }
+    var Rl = [(Math.abs(w.R[0]) - S[0])*0.2, w.R[2] - S[2]];
+    P.R = [s*w.R[0], w.R[1], w.R[2]];
+    for(var m = 0; m < 4; m++){
+      var a2 = F[m], b2 = m < 3 ? F[m + 1] : Rl, mu = (a2[0] + b2[0])/2, mv = (a2[1] + b2[1])/2, pull = 0.12 + 0.14*k;
+      P["M" + m] = pt(mu + (xx - mu)*pull, mv + (xv - mv)*pull, sag*span*(m < 3 ? 1 : 0.6));
+    }
+    WING_TRI.forEach(function(t){ t.forEach(function(p){ var q = P[p]; pos[o++] = q[0]; pos[o++] = q[1]; pos[o++] = q[2]; }); });
+    // the spars: thin strips just proud of the membrane on both sides
+    WING_BONE.forEach(function(b){
+      var p = P[b[0]], q = P[b[1]], dx = q[0] - p[0], dy = q[1] - p[1], dz = q[2] - p[2];
+      var cx = dy*0 - dz*Ny, cy2 = dz*Nx - dx*0, cz = dx*Ny - dy*Nx, cl = Math.hypot(cx, cy2, cz) || 1, wd = span*0.016*b[2];
+      cx *= wd/cl; cy2 *= wd/cl; cz *= wd/cl;
+      [1, -1].forEach(function(f){
+        var ox = Nx*0.006*f, oy = Ny*0.006*f;
+        var v = [p[0] - cx + ox, p[1] - cy2 + oy, p[2] - cz, q[0] - cx*0.3 + ox, q[1] - cy2*0.3 + oy, q[2] - cz*0.3, p[0] + cx + ox, p[1] + cy2 + oy, p[2] + cz];
+        if(f < 0) v = [v[0], v[1], v[2], v[6], v[7], v[8], v[3], v[4], v[5]];
+        for(var j = 0; j < 9; j++) pos[o++] = v[j];
+      });
+    });
+    // the wrist's claw
+    var X = P.X, cl2 = span*0.06;
+    var cv = [X[0], X[1], X[2], X[0] + s*cl2*0.2, X[1] + cl2*0.3, X[2] + cl2, X[0] - s*cl2*0.2, X[1] + cl2*0.1, X[2] + cl2*0.6];
+    for(var j2 = 0; j2 < 9; j2++) pos[o++] = cv[j2];
+  });
+  w.geo.attributes.position.needsUpdate = true; w.geo.computeVertexNormals();
+}
+// the flap cycle: a quick downstroke (40% of the beat), a slower upstroke with the fingers folding in; returns {flap, sag, curl}
+function flapAt(f){
+  f = f - Math.floor(f);
+  var up = 0.95, dn = -0.6;
+  if(f < 0.4){ var k = (1 - Math.cos(f/0.4*PI))/2; return {flap: up + (dn - up)*k, sag: 0.05, curl: 0, down: 1}; }
+  var k2 = (1 - Math.cos((f - 0.4)/0.6*PI))/2; return {flap: dn + (up - dn)*k2, sag: -0.04, curl: Math.sin(k2*PI)*0.9, down: 0};
+}
+
+/* ---------- posing ---------- */
+// a capsule (or cone) instance from A to B (Vector3s in the pet's space), radius rx (rz: its depth, for flat ones)
+var UP = null, TQ = null, TM = null, TS = null, TE = null;
+function segAt(IM, i, A, B, rx, rz, ext){
+  if(!IM || i < 0) return;
+  var dx = B.x - A.x, dy = B.y - A.y, dz = B.z - A.z, len = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  if(len < 1e-5 || !(rx > 0)){ TM.makeScale(0, 0, 0); IM.setMatrixAt(i, TM); return; }
+  dx /= len; dy /= len; dz /= len; ext = ext || 0;
+  TE.set(dx, dy, dz); TQ.setFromUnitVectors(UP, TE); TS.set(rx*2, len + ext*2, (rz != null ? rz : rx)*2);
+  TE.set(A.x - dx*ext, A.y - dy*ext, A.z - dz*ext); TM.compose(TE, TQ, TS); IM.setMatrixAt(i, TM);
+}
+function hideAt(IM, i){ if(!IM || i < 0) return; TM.makeScale(0, 0, 0); IM.setMatrixAt(i, TM); }
+// two-bone IK: the knee K for a hip H and a foot F (moved within reach), bending toward `bend`
+function ik(H, F, l1, l2, bx2, by, bz, K){
+  var dx = F.x - H.x, dy = F.y - H.y, dz = F.z - H.z, d = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1e-4, ux = dx/d, uy = dy/d, uz = dz/d;
+  var dm = Math.max(Math.abs(l1 - l2) + 1e-3, Math.min(d, (l1 + l2)*0.999));
+  if(dm !== d){ F.set(H.x + ux*dm, H.y + uy*dm, H.z + uz*dm); d = dm; }
+  var a = (l1*l1 - l2*l2 + d*d)/(2*d), h = Math.sqrt(Math.max(0, l1*l1 - a*a));
+  var bd = bx2*ux + by*uy + bz*uz, px = bx2 - ux*bd, py = by - uy*bd, pz = bz - uz*bd, pl = Math.sqrt(px*px + py*py + pz*pz);
+  if(pl < 1e-4){ px = 0; py = -uz; pz = uy; pl = Math.sqrt(py*py + pz*pz) || 1; }
+  K.set(H.x + ux*a + px/pl*h, H.y + uy*a + py/pl*h, H.z + uz*a + pz/pl*h);
+}
+function footCycle(c, duty, stride, lift, out){
+  c = c - Math.floor(c);
+  if(c < duty){ out.dz = stride*(0.5 - c/duty); out.dy = 0; return out; }
+  var s = (c - duty)/(1 - duty); out.dz = stride*(-0.5 + (1 - Math.cos(s*PI))/2); out.dy = Math.sin(s*PI)*lift; return out;
+}
+// leg phases (front L, front R, hind L, hind R; bipeds L, R) and duty factors by gait
+var GAITS = {walk: [[0.25, 0.75, 0, 0.5], 0.64], trot: [[0, 0.5, 0.5, 0], 0.5], gallop: [[0, 0.12, 0.55, 0.65], 0.38], bi: [[0, 0.5], 0.55]};
+var FC = {dz: 0, dy: 0};
+// Pose a model from its state (anim, ph) at time t; calm: no bounces, no flips, gentle only. look: a point it turns its
+// head toward (you, or the ball), {x, z} in the world, or null.
+function pose(Mo, st, t, calm, look){
   if(!Mo) return;
-  var a = st.anim || "stand", ph = st.ph || 0, d = Mo.dims, sp = Mo.sp, kind = sp.kind, k = calm ? 0.35 : 1;
-  var body = Mo.body, head = Mo.head, tail = Mo.tail, P = Mo.P;
-  body.rotation.set(0, 0, 0); body.position.y = d.cy; head.rotation.set(0, 0, 0); tail.rotation.set(0, 0, 0); P.position.set(0, 0, 0); P.rotation.set(0, 0, 0);
-  var walk = a === "walk" || a === "run" || a === "carry" || a === "slither", stride = a === "run" ? 0.11 : 0.06, lift = a === "run" ? 0.06 : 0.035;
-  if(Mo.legsA){
-    if(walk){
-      var s1 = Math.sin(ph*PI), c1 = Math.cos(ph*PI);
-      Mo.legsA.position.set(0, Math.max(0, c1)*lift, s1*stride); Mo.legsB.position.set(0, Math.max(0, -c1)*lift, -s1*stride);
-      body.position.y = d.cy + Math.abs(c1)*(a === "run" ? 0.03 : 0.012)*k;
-      Mo.legsA.scale.y = Mo.legsB.scale.y = 1;
-    } else { Mo.legsA.position.set(0, 0, 0); Mo.legsB.position.set(0, 0, 0); Mo.legsA.scale.y = Mo.legsB.scale.y = 1; }
+  var T3 = Mo.g, a = st.anim || "stand", ph = st.ph || 0, d = Mo.dims, sp = Mo.sp, kind = sp.kind, k = calm ? 0.35 : 1, S = Mo.sm, v = Mo.tv;
+  if(!UP){ UP = new v[0].constructor(0, 1, 0); TE = new v[0].constructor(); TS = new v[0].constructor(); TQ = Mo.q.clone(); TM = Mo.mm.clone(); }
+  var dt = S.lastT == null ? 0 : Math.max(0, Math.min(0.1, t - S.lastT)); S.lastT = t;
+  var body = Mo.body, head = Mo.head, P = Mo.P, hr = d.hr, IM = Mo.limbs, BM = Mo.bits;
+  body.rotation.set(0, 0, 0); body.position.set(0, d.cy, d.hipZ); head.rotation.set(0, 0, 0); head.position.copy(Mo.hp0); head.scale.set(1, 1, 1);
+  P.position.set(0, 0, 0); P.rotation.set(0, 0, 0);
+  // turning (the tail swings out behind a turn)
+  if(S.lastYaw != null && dt > 0){ var tr = wrapPi(st.yaw - S.lastYaw)/dt; S.turn += (Math.max(-4, Math.min(4, tr)) - S.turn)*Math.min(1, dt*4); }
+  S.lastYaw = st.yaw;
+  var walk = a === "walk" || a === "run" || a === "carry" || a === "slither", fly = a === "fly";
+  var gait = walk ? (Mo.biped ? "bi" : a === "run" || st.speed > 4 ? "gallop" : st.speed > 2.2 ? "trot" : "walk") : null;
+  var c = ph*0.5, legT = Mo.legs.length ? Mo.legs[0].tot : d.H, sitting = a === "sit" || a === "look" || a === "beg" || (a === "coil" && kind !== "serpent");
+  // breathing: slow and deep asleep, quick after a run
+  var brF = a === "sleep" ? 1.3 : a === "run" ? 7 : 2.4, br = Math.sin(t*brF + Mo.seedF)*(a === "sleep" ? 0.035 : 0.016);
+  body.scale.set(1 + br*0.7, 1 + br, 1);
+  if(walk && !fly){
+    var bob = Math.cos(c*TAU*2);
+    body.position.y += bob*legT*(gait === "gallop" ? 0.09 : 0.035)*k;
+    if(gait === "gallop") body.rotation.x = Math.sin(c*TAU)*0.1*k; else body.rotation.z = Math.sin(c*TAU)*0.035*k;
+    head.rotation.x = -bob*0.04*k;
   }
-  // the tail wags faster the happier; a curl wags small
-  var wagA = a === "wag" || a === "greet" ? 0.7 : walk ? 0.25 : 0.12, wagF = a === "wag" ? 14 : 4;
-  if(kind === "cat") { wagA *= 0.6; wagF *= 0.5; }
-  tail.rotation.y = Math.sin(t*wagF)*wagA*k; tail.rotation.x = kind === "cat" && !walk ? -0.3 : 0;
-  if(a === "sit" || a === "look" || a === "beg" || a === "coil" && kind !== "serpent"){
-    body.rotation.x = -(a === "beg" ? 0.85 : 0.42); body.position.y = d.cy - d.lh*0.35;
-    head.rotation.x = a === "look" ? -0.35 : 0.3; if(a === "beg") P.position.y = Math.abs(Math.sin(t*5))*0.03*k;
-  }
-  if(a === "sleep"){ body.position.y = d.cy - d.lh*0.85 - d.H*0.1; head.rotation.x = 0.45; head.rotation.y = 0.5; if(Mo.legsA){ Mo.legsA.scale.y = Mo.legsB.scale.y = 0.25; }
-    body.scale.set(1, 1 + Math.sin(t*1.6)*0.03, 1); } else body.scale.set(1, 1, 1);
-  if(a === "sniff"){ head.rotation.x = 0.55 + Math.sin(t*11)*0.06*k; head.rotation.y = Math.sin(t*1.7)*0.4; }
-  if(a === "groom"){ head.rotation.y = 1.2; head.rotation.x = 0.5 + Math.sin(t*9)*0.1*k; body.rotation.x = -0.3; body.position.y = d.cy - d.lh*0.3; }
-  if(a === "yawn"){ head.rotation.x = -0.45; head.scale && head.scale.set(1, 1 + Math.max(0, Math.sin(t*2.5))*0.12, 1); } else head.scale.set(1, 1, 1);
-  if(a === "shake"){ body.rotation.z = Math.sin(t*28)*0.25*k; head.rotation.z = -Math.sin(t*28)*0.2*k; }
-  if(a === "stretch"){ body.rotation.x = 0.25; body.position.y = d.cy - d.lh*0.3; head.rotation.x = -0.3; }
-  if(a === "stomp"){ var sb = Math.abs(Math.sin(t*7)); P.position.y = sb*0.05*k; body.rotation.z = Math.sin(t*7)*0.12*k; }
-  if(a === "roar" || a === "breath" || a === "puff" || a === "crackle"){ head.rotation.x = -0.5 + Math.sin(t*20)*0.03*k; body.rotation.x = -0.12; }
+  if(sitting){ body.rotation.x = -(a === "beg" ? 0.95 : 0.5); body.position.y = d.cy - legT*(a === "beg" ? 0.28 : 0.32); head.rotation.x = a === "look" ? 0.05 : 0.4; if(a === "beg") P.position.y = Math.abs(Math.sin(t*5))*0.02*k; }
+  if(a === "sleep"){ body.position.y = d.H*0.47; head.rotation.x = 0.55; head.rotation.y = 0.7; }
+  if(a === "sniff"){ head.rotation.x = 0.6 + Math.sin(t*11)*0.05*k; head.rotation.y = Math.sin(t*1.7)*0.35; body.rotation.x = 0.1; }
+  if(a === "groom"){ head.rotation.y = 1.1; head.rotation.x = 0.5 + Math.sin(t*9)*0.08*k; body.rotation.x = -0.35; body.position.y = d.cy - legT*0.3; }
+  if(a === "yawn"){ head.rotation.x = -0.4; }
+  if(a === "shake"){ body.rotation.z = Math.sin(t*28)*0.22*k; head.rotation.z = -Math.sin(t*28)*0.25*k; }
+  if(a === "stretch"){ body.rotation.x = 0.32; body.position.y = d.cy - legT*0.25; head.rotation.x = -0.45; }
+  if(a === "stomp"){ var sb = Math.abs(Math.sin(t*7)); P.position.y = sb*0.05*k; body.rotation.z = Math.sin(t*7)*0.1*k; }
+  if(a === "roar" || a === "breath" || a === "puff" || a === "crackle"){ head.rotation.x = -0.35 + Math.sin(t*20)*0.03*k; body.rotation.x = -0.1; }
+  if(a === "wag" && kind !== "cat") body.rotation.y = Math.sin(t*14)*0.05*k;
   if(a === "spin") P.rotation.y = (st.trick ? st.trick.t/st.trick.dur : 0)*TAU*(calm ? 0 : 1);
-  if(a === "roll"){ var rt = st.trick ? st.trick.t/st.trick.dur : 0; body.rotation.z = calm ? 0 : rt*TAU; body.position.y = d.cy - d.lh*0.6; }
+  if(a === "roll"){ var rt = st.trick ? st.trick.t/st.trick.dur : 0; body.rotation.z = calm ? 0 : rt*TAU; body.position.y = d.cy - legT*0.6; }
   if(a === "big"){ var bt = st.trick ? st.trick.t/st.trick.dur : 0;
     if(kind === "dino"){ head.rotation.x = -0.7; body.rotation.x = -0.3; P.position.y = calm ? 0 : Math.max(0, Math.sin(bt*PI*3))*0.05; }
     else if(!calm){ P.position.y = Math.sin(bt*PI)*(kind === "dragon" ? 1.6 : 0.6); P.rotation.x = -bt*TAU; } }
-  // wings: folded on the ground, open in the air, a slow stretch at rest
-  if(Mo.wings){
-    var w = Mo.wings, fly = a === "fly", sy = 1, sx = 0.45;
-    if(fly){ sx = 1; sy = calm ? 0.8 : 0.4 + Math.sin(t*(sp.size > 1 ? 7 : 9))*1.1; }
-    else if(a === "wings"){ sx = 1.1; sy = 1.15 + Math.sin(t*3)*0.2*k; }
-    else if(a === "big" && !calm){ sx = 1; sy = Math.sin(t*10); }
-    else sy = 0.55;
-    w.scale.set(sx, sy, 1);
+  // flight: level, the head and the neck stretched out, the body lifted on each downstroke
+  var FL = null;
+  if(Mo.wing){
+    if(fly){
+      var glide = !calm && Math.sin(t*0.45 + Mo.seedF) > 0.6;
+      FL = calm || glide ? {flap: 0.12 + Math.sin(t*1.3)*0.03, sag: 0.03, curl: 0, down: 0} : flapAt(t*(Mo.scale < 0.8 ? 2.1 : 1.6) + Mo.seedF);
+      body.rotation.x = 0.06 - FL.flap*0.05; body.position.y += -FL.flap*0.035*k; head.position.y -= 0.03; head.position.z += 0.04; head.rotation.x = 0.15;
+      wingPose(Mo.wing, 1, FL.flap, FL.sag, FL.curl);
+    } else if(a === "wings"){ var wk = 0.55 + 0.45*Math.sin(t*2.2); wingPose(Mo.wing, wk*k + (1 - k)*0.4, 0.3 + Math.sin(t*4)*0.25*k, -0.02, 0); }
+    else if(a === "big" && !calm){ FL = flapAt(t*2); wingPose(Mo.wing, 1, FL.flap, FL.sag, FL.curl); }
+    else wingPose(Mo.wing, 0.02 + br*0.4, 0.05, 0, 0);
   }
-  if(a === "fly"){ body.rotation.x = 0.12; if(Mo.legsA){ Mo.legsA.position.set(0, 0.06, -0.04); Mo.legsB.position.set(0, 0.06, -0.04); } }
-  // a sea serpent: its coils along a travelling wave (swimming, slithering), in a ring at rest
-  if(Mo.segs){
-    if(!Q) Q = {m: new Mo.g.matrix.constructor(), s: new Mo.g.scale.constructor(), q: new Mo.g.quaternion.constructor(), p: new Mo.g.position.constructor(), e: new Mo.g.rotation.constructor()};
-    var T3 = Mo.segs, n = T3.count, swim = a === "swim" || a === "float", moving = a === "swim" || a === "slither", coil = a === "coil" || a === "sleep";
-    var m = Q.m, amp = moving ? 0.16 : 0.06, seg = 0.13, hover = swim ? -0.06 : 0.12 + (calm ? 0 : Math.sin(t*2)*0.03);
-    body.position.y = hover + 0.04; body.rotation.x = 0;
-    for(var i = 0; i < n; i++){
-      var x, y, z, yaw2;
-      if(coil){ var ang = i*0.62 + 0.3, r = 0.22 + i*0.012; x = Math.sin(ang)*r; z = -0.1 + Math.cos(ang)*r - 0.2; y = hover + i*0.006; yaw2 = ang + PI/2; }
-      else { var wv = ph*PI*1.4*(calm ? 0.5 : 1) - i*0.7; x = Math.sin(wv)*amp*Math.min(1, i/3 + 0.3); z = -0.12 - i*seg; y = hover + (swim ? Math.sin(wv*0.5)*0.03 : 0); yaw2 = Math.cos(wv)*amp*2; }
-      var sc = 1 - i*0.06;
-      Q.e.set(0, yaw2, 0); Q.q.setFromEuler(Q.e); Q.p.set(x, y, z); Q.s.set(sc, sc, sc); m.compose(Q.p, Q.q, Q.s); T3.setMatrixAt(i, m);
+  // the head turns toward you (or the ball) when it isn't busy
+  var lookW = 0;
+  if(look && !walk && !fly && a !== "sleep" && a !== "sniff" && a !== "groom" && a !== "roll" && a !== "spin" && a !== "big" && a !== "shake"){
+    var lx = look.x - T3.position.x, lz = look.z - T3.position.z;
+    if(lx*lx + lz*lz < 144) lookW = Math.max(-1, Math.min(1, wrapPi(Math.atan2(lx, lz) - st.yaw)));
+  }
+  S.look += (lookW - S.look)*Math.min(1, dt*4); head.rotation.y += S.look*0.85;
+  body.updateMatrix(); head.updateMatrix(); var Mh = Mo.Mh.multiplyMatrices(body.matrix, head.matrix), Bm = body.matrix;
+  // ---- legs ----
+  var G = gait ? GAITS[gait] : null, bodyRel = a === "roll" || a === "big" || a === "shake";
+  Mo.legs.forEach(function(Lg, li2){
+    var Hp = v[0].copy(Lg.att).applyMatrix4(Bm), F = v[1], K = v[2], pawH = Lg.r*0.75, rx = Lg.att.x*1.04, rz = Lg.att.z + d.hipZ;
+    if(fly) F.set(Hp.x, Hp.y - Lg.tot*0.35, Hp.z - Lg.tot*0.8);
+    else if(bodyRel) F.set(0, -Lg.tot*0.95, 0).applyMatrix4(Bm).sub(v[3].set(0, 0, 0).applyMatrix4(Bm)).add(Hp);
+    else if(G){ footCycle(c + G[0][li2], G[1], legT*(gait === "gallop" ? 1.0 : gait === "trot" ? 0.7 : 0.55)*(calm ? 0.8 : 1), legT*(gait === "gallop" ? 0.28 : 0.18), FC);
+      F.set(rx, pawH + FC.dy, rz + FC.dz); }
+    else if(sitting){ if(Lg.front && a === "beg") F.set(Hp.x, Hp.y - Lg.tot*0.35, Hp.z + Lg.tot*0.3); else if(Lg.front) F.set(rx, pawH, Hp.z + Lg.tot*0.08); else F.set(rx*1.1, pawH, rz + Lg.tot*0.5); }
+    else if(a === "sleep"){ if(Lg.front) F.set(rx*0.8, pawH*0.9, Hp.z + Lg.tot*0.75); else F.set(rx*1.6, pawH*0.9, rz + Lg.tot*0.45); }
+    else if(a === "stretch" && Lg.front) F.set(rx, pawH, Hp.z + Lg.tot*0.65);
+    else if(a === "groom" && Lg.front && Lg.side > 0) F.set(Hp.x - 0.02, Hp.y - Lg.tot*0.25, Hp.z + Lg.tot*0.45);
+    else F.set(rx, pawH, rz);
+    var bz = Lg.front ? 1 : -1;
+    ik(Hp, F, Lg.l1, Lg.l2, 0, 0.15, bz, K);
+    segAt(IM, Lg.i, Hp, K, Lg.r, null, Lg.r*0.4); segAt(IM, Lg.j, K, F, Lg.r*0.8, null, Lg.r*0.3);
+    v[4].set(F.x, F.y - pawH*0.25, F.z - Lg.r*0.6); v[5].set(F.x, F.y - pawH*0.25, F.z + Lg.r*(Mo.biped ? 2.4 : 1.6));
+    segAt(IM, Lg.k, v[4], v[5], Lg.r*(Mo.biped ? 1.3 : 1.15), Lg.r*0.7);
+  });
+  if(Mo.arms){ var ar = Mo.arms;
+    [-1, 1].forEach(function(s, ai){ var sw = walk ? Math.sin(c*TAU + ai*PI)*0.25*k : Math.sin(t*1.5 + ai)*0.05;
+      var A0 = v[0].set(s*d.W*0.3, -d.H*0.05, d.oz + d.L*0.36).applyMatrix4(Bm), E0 = v[1].set(s*d.W*0.36, -d.H*0.3, d.oz + d.L*0.42 + sw*0.05).applyMatrix4(Bm), H0 = v[2].set(s*d.W*0.33, -d.H*0.32, d.oz + d.L*0.55 + sw*0.04).applyMatrix4(Bm);
+      segAt(IM, ar[ai*2], A0, E0, 0.024, null, 0.01); segAt(IM, ar[ai*2 + 1], E0, H0, 0.018, null, 0.008); }); }
+  // ---- neck: a curve from the chest to the head (an S for dragons, an arch for the long-necked) ----
+  if(Mo.neck){
+    var N = Mo.neck, nb = Mo.nb, hp = head.position, dn = Math.hypot(hp.y - nb.y, hp.z - nb.z), dr = kind === "dragon";
+    var c1y = nb.y + dn*(dr ? 0.55 : 0.45), c1z = nb.z + dn*(dr ? -0.05 : 0.2), c2y = hp.y - dn*(dr ? 0.05 : 0.15), c2z = hp.z - dn*(dr ? 0.45 : 0.25);
+    var prev = v[0].set(0, nb.y, nb.z).applyMatrix4(Bm);
+    for(var ni = 1; ni <= N.n; ni++){
+      var u = ni/N.n, iu = 1 - u, by = iu*iu*iu*nb.y + 3*iu*iu*u*c1y + 3*iu*u*u*c2y + u*u*u*hp.y, bz2 = iu*iu*iu*nb.z + 3*iu*iu*u*c1z + 3*iu*u*u*c2z + u*u*u*hp.z;
+      var hx = hp.x*u, cur = v[1].set(hx, by, bz2).applyMatrix4(Bm), r = N.r0 + (N.r1 - N.r0)*u;
+      segAt(IM, N.i[ni - 1], prev, cur, r, null, r*0.5); prev.copy(cur);
     }
-    T3.instanceMatrix.needsUpdate = true;
-    tail.position.set(0, hover, -0.12 - n*seg); tail.rotation.y = Math.sin(t*3)*0.4*k;
-    if(coil){ tail.position.set(Math.sin(n*0.62 + 0.3)*0.34, hover, -0.3 + Math.cos(n*0.62 + 0.3)*0.34); }
   }
+  // ---- tail: its segments one after another, wagging (the tip most), swinging out behind a turn ----
+  if(Mo.tail){
+    var Tl = Mo.tail, n = Tl.n, sl = Tl.len/Math.max(1, n), p0 = Tl.p0, dp = Tl.dp, wagA, wagF;
+    wagA = a === "wag" || a === "greet" ? 0.55 : walk ? 0.18 : 0.08; wagF = a === "wag" ? 15 : 4;
+    if(kind === "cat"){ wagA *= 0.5; wagF *= 0.4; if(walk){ p0 = 1.0; dp = 0.12; } }
+    if(kind === "dog" && (a === "wag" || walk)) p0 += 0.3;
+    var curl = 0;
+    if(sitting && kind === "cat"){ p0 = -1.2; dp = 0.2; curl = 0.42; }
+    if(a === "sleep"){ p0 = Math.min(p0, -0.3); dp = 0.05; curl = 0.5; wagA = 0.02; }
+    if(fly){ p0 = -0.08; dp = 0; }
+    var pt = v[0].copy(Tl.b).applyMatrix4(Bm), pitch = p0, yaw = 0, dir = v[1], nx2 = v[2];
+    for(var i = 0; i < n; i++){
+      var f = i/Math.max(1, n - 1);
+      yaw += curl + Math.sin(t*wagF - i*0.6)*wagA*(0.35 + 0.65*f)*k/Math.max(1, n*0.5) - S.turn*0.05*(0.3 + f) + (fly ? Math.sin(t*3 - i*0.7)*0.06*k : 0);
+      if(i) pitch += dp;
+      dir.set(Math.sin(yaw)*Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw)*Math.cos(pitch)).transformDirection(Bm);
+      nx2.copy(pt).addScaledVector(dir, sl);
+      var r2 = Tl.r0 + (Tl.r1 - Tl.r0)*f;
+      segAt(IM, Tl.i[i], pt, nx2, r2, null, r2*0.6);
+      if(Tl.spines && i < 3){ v[3].copy(pt).addScaledVector(dir, sl*0.5); v[3].y += r2*0.7; v[4].copy(v[3]).addScaledVector(dir, sl*0.35); v[4].y += 0.06 - i*0.012; segAt(BM, Tl.spines[i], v[3], v[4], 0.022, 0.012); }
+      if(Tl.spikes && i >= n - 2){ [-1, 1].forEach(function(s, si2){ var j = Tl.spikes[(i - (n - 2))*2 + si2]; v[3].copy(pt).addScaledVector(dir, sl*0.5); v[5].set(s*0.8, 0.55, 0).transformDirection(Bm); v[4].copy(v[3]).addScaledVector(v[5], 0.17); segAt(BM, j, v[3], v[4], 0.022); }); }
+      pt.copy(nx2);
+    }
+    if(Tl.tip >= 0){ v[3].copy(pt).addScaledVector(dir, -0.02); v[4].copy(pt).addScaledVector(dir, 0.13); segAt(BM, Tl.tip, v[3], v[4], 0.075, 0.012); }
+  }
+  // ---- head parts: the jaw (open to roar, breathe, yawn, pant), a dog's tongue, ears, eyelids ----
+  var jw = a === "yawn" ? 0.7 : a === "roar" || (a === "big" && kind === "dino") ? 0.65 : a === "breath" ? 0.55 : a === "puff" ? 0.25 :
+           kind === "dog" && (a === "run" || a === "wag" || a === "greet") ? 0.3 : a === "carry" ? 0.2 : 0.03;
+  S.jaw += (jw*(calm && jw > 0.3 ? 0.6 : 1) - S.jaw)*Math.min(1, dt*8);
+  var J = Mo.jaw, hz0 = J.h, ja = S.jaw, tz = J.tip[2] - hz0[2], ty = J.tip[1] - hz0[1];
+  var jx = v[0].set(hz0[0], hz0[1], hz0[2]).applyMatrix4(Mh), jt = v[1].set(0, hz0[1] + ty*Math.cos(ja) - tz*Math.sin(ja), hz0[2] + tz*Math.cos(ja) + ty*Math.sin(ja)).applyMatrix4(Mh);
+  segAt(IM, J.i, jx, jt, J.w, J.th, J.th*0.5);
+  Mo.mouthP = Mo.mouthP || jt.clone(); Mo.mouthP.copy(jt);
+  if(Mo.tongue >= 0){
+    if(ja > 0.15){ var tg0 = v[2].copy(jx).lerp(jt, 0.55), tg1 = v[3].set(0, hz0[1] + ty*Math.cos(ja*1.3) - (tz + hr*0.3)*Math.sin(ja*1.3) - hr*0.1, hz0[2] + (tz + hr*0.15)*Math.cos(ja*1.3)).applyMatrix4(Mh);
+      tg1.y -= Math.abs(Math.sin(t*9))*0.01*k; segAt(IM, Mo.tongue, tg0, tg1, hr*0.13, hr*0.05); }
+    else hideAt(IM, Mo.tongue);
+  }
+  // pointed ears: up and forward, flattened when asleep, laid back at a run, a flick now and then
+  Mo.earsB.forEach(function(E){
+    var flick = ((t*0.8 + Mo.seedF + E.s*0.9) % 4.7) < 0.22 ? Math.sin(((t*0.8 + Mo.seedF + E.s*0.9) % 4.7)/0.22*PI) : 0;
+    var back = a === "sleep" ? 0.7 : a === "run" ? 0.45 : 0, ex = E.s*(0.3 + flick*0.35*k + (a === "sleep" ? 0.35 : 0)), ey = 1, ez = -0.12 - back - flick*0.4*k;
+    var B0 = v[0].set(E.b[0], E.b[1], E.b[2]).applyMatrix4(Mh), dl = Math.hypot(ex, ey, ez), D = v[1].set(ex/dl, ey/dl, ez/dl).transformDirection(Mh);
+    var B1 = v[2].copy(B0).addScaledVector(D, E.len); segAt(BM, E.i, B0, B1, E.w*0.5, E.w*0.13);
+    var F0 = v[3].set(0, 0, 1).transformDirection(Mh); v[4].copy(B0).addScaledVector(F0, E.w*0.1).addScaledVector(D, E.len*0.06); v[5].copy(v[4]).addScaledVector(D, E.len*0.72);
+    segAt(BM, E.j, v[4], v[5], E.w*0.3, E.w*0.06);
+  });
+  Mo.flop.forEach(function(E){
+    var sw = (walk ? Math.sin(c*TAU*2 + E.s)*0.35 : Math.sin(t*1.3 + E.s)*0.05) + (a === "shake" ? Math.sin(t*28)*0.6 : 0);
+    var ex = E.s*(0.35 + (a === "run" ? 0.3 : 0)), ez = -0.08 + sw*k - (a === "run" ? 0.6 : 0), dl = Math.hypot(ex, 1, ez);
+    var B0 = v[0].set(E.b[0], E.b[1], E.b[2]).applyMatrix4(Mh), D = v[1].set(ex/dl, -1/dl, ez/dl).transformDirection(Mh);
+    segAt(IM, E.i, B0, v[2].copy(B0).addScaledVector(D, E.len), hr*0.09, hr*0.27, hr*0.05);
+  });
+  // eyelids: a blink every few seconds (each pet its own rhythm), half shut in a yawn, shut asleep
+  var bt2 = (t + Mo.seedF*0.7) % 3.9, blink = a === "sleep" ? 1 : a === "yawn" ? 0.55 : bt2 < 0.16 ? Math.sin(bt2/0.16*PI) : 0;
+  Mo.blink = blink;
+  Mo.eyes.forEach(function(e){
+    if(blink < 0.04){ hideAt(IM, e.lid); return; }
+    var c0 = e.c, n0 = e.n, r = e.r, top = v[0].set(c0[0] + n0[0]*r*0.12, c0[1] + r*1.02 + n0[1]*r*0.12, c0[2] + n0[2]*r*0.12).applyMatrix4(Mh);
+    var bot = v[1].set(c0[0] + n0[0]*r*0.12, c0[1] + r*(1.02 - 2.1*blink) + n0[1]*r*0.12, c0[2] + n0[2]*r*0.12).applyMatrix4(Mh);
+    segAt(IM, e.lid, top, bot, r*1.1, r*0.75, r*0.2);
+  });
+  // a sea serpent: its coils along a travelling wave (swimming, slithering), in a ring at rest; its tail fin at the end
+  if(Mo.segs){
+    if(!Q) Q = {m: TM.clone(), s: TS.clone(), q: TQ.clone(), p: TE.clone(), e: new Mo.g.rotation.constructor()};
+    var T4 = Mo.segs, cnt = T4.count, swim = a === "swim" || a === "float", moving = a === "swim" || a === "slither", coil = a === "coil" || a === "sleep";
+    var m = Q.m, amp = moving ? 0.16 : 0.06, sg = 0.13, hover = swim ? -0.06 : 0.12 + (calm ? 0 : Math.sin(t*2)*0.03);
+    body.position.y = hover + 0.04; body.rotation.x = 0;
+    var lx2 = 0, ly2 = 0, lz2 = 0, lyaw = 0;
+    for(var si3 = 0; si3 < cnt; si3++){
+      var x, y, z, yaw2;
+      if(coil){ var ang = si3*0.62 + 0.3, rr = 0.22 + si3*0.012; x = Math.sin(ang)*rr; z = -0.1 + Math.cos(ang)*rr - 0.2; y = hover + si3*0.006; yaw2 = ang + PI/2; }
+      else { var wv = ph*PI*1.4*(calm ? 0.5 : 1) - si3*0.7; x = Math.sin(wv)*amp*Math.min(1, si3/3 + 0.3); z = -0.12 - si3*sg; y = hover + (swim ? Math.sin(wv*0.5)*0.03 : 0); yaw2 = Math.cos(wv)*amp*2; }
+      var sc = 1 - si3*0.06;
+      Q.e.set(0, yaw2, 0); Q.q.setFromEuler(Q.e); Q.p.set(x, y, z); Q.s.set(sc, sc, sc); m.compose(Q.p, Q.q, Q.s); T4.setMatrixAt(si3, m);
+      lx2 = x; ly2 = y; lz2 = z; lyaw = yaw2;
+    }
+    T4.instanceMatrix.needsUpdate = true;
+    var fy = lyaw + Math.sin(t*3)*0.4*k + PI;
+    v[3].set(lx2, ly2, lz2); v[4].set(lx2 + Math.sin(fy)*0.22, ly2 + 0.02, lz2 + Math.cos(fy)*0.22); segAt(BM, Mo.fin, v[3], v[4], 0.13, 0.02);
+  }
+  if(IM) IM.instanceMatrix.needsUpdate = true;
+  if(BM) BM.instanceMatrix.needsUpdate = true;
 }
+var Q = null;
 
 /* ---------- effects: pooled particles, lines, hearts (one set per page) ---------- */
 var FXC = {fire: [0xffb030, 0xff5a1a], ember: [0xffa030, 0xff3a10], ice: [0xd8f4ff, 0x8ad0ff], snow: [0xffffff, 0xe8f4ff], sparkle: [0xffffff, 0xb8e0ff],
@@ -742,6 +1017,7 @@ function elementFx(F, sp, st, M, a, t, dt){
   if(!F || !M) return;
   var fx = sp.fx, g = M.g, s = M.scale || 1, yaw = st.yaw, fx0 = Math.sin(yaw), fz0 = Math.cos(yaw);
   var hx = g.position.x + fx0*(M.dims.oz + M.dims.L*0.6)*s, hz = g.position.z + fz0*(M.dims.oz + M.dims.L*0.6)*s, hy = g.position.y + (M.dims.cy + M.dims.H*0.6 + 0.12)*s;
+  if(M.mouthP){ M.g.updateMatrixWorld(true); var mw = M.mw || (M.mw = M.mouthP.clone()); M.P.localToWorld(mw.copy(M.mouthP)); hx = mw.x; hy = mw.y; hz = mw.z; }   // the open jaw
   st.fxT = (st.fxT || 0) + dt;
   var tick = st.fxT > 0.06; if(tick) st.fxT = 0;
   if(!tick) return;
@@ -786,7 +1062,7 @@ function create(c, opts){
     M.seed = hashStr(seedKey || p.id || p.name || "pet");
     return M;
   }
-  function drop(M){ if(!M) return; if(M.g.parent) M.g.parent.remove(M.g); M.g.traverse(function(o){ if(o.isMesh || o.isInstancedMesh){ o.geometry.dispose(); } if(o.isSprite && o.name === "pet-tag"){ o.material.map.dispose(); o.material.dispose(); } }); }
+  function drop(M){ if(!M) return; if(M.g.parent) M.g.parent.remove(M.g); M.g.traverse(function(o){ if((o.isMesh || o.isInstancedMesh) && !o.geometry.userData.shared){ o.geometry.dispose(); } if(o.isSprite && o.name === "pet-tag"){ o.material.map.dispose(); o.material.dispose(); } }); }
   function sig(p){ return [p.id, p.species, p.variant | 0, p.acc | 0, stageOf(speciesOf(p.species), p.affection), p.name].join("|"); }
   // your pets out with you (MAX_ACTIVE): rebuilt only when what they look like changes
   function syncMine(){
@@ -804,10 +1080,10 @@ function create(c, opts){
     lobbyPets.forEach(function(l){ drop(l.M); }); lobbyPets = []; worldKey = null;   // the lobby re-spawns its stay-home set
   }
   function placeIn(M, sc){ if(M.g.parent !== sc){ if(M.g.parent) M.g.parent.remove(M.g); if(sc) sc.add(M.g); } }
-  function setPose(M, st, ground, t, cm){
+  function setPose(M, st, ground, t, cm, look){
     M.g.visible = !st.hidden;
     M.g.position.set(st.x, ground + (st.y || 0), st.z); M.g.rotation.y = st.yaw;
-    pose(M, st, t, cm);
+    pose(M, st, t, cm, look);
   }
   var K = {};
   K.setOwned = function(list){ owned = (list || []).filter(function(p){ return p && speciesOf(p.species); }).slice(0, MAX_OWNED); syncMine(); };
@@ -851,6 +1127,9 @@ function create(c, opts){
     if(FIN.crystal && !cm) FIN.crystal.emissive.setHSL((t*0.08) % 1, 0.7, 0.55);
     if(FIN["ice|2"]) FIN["ice|2"].emissiveIntensity = FIN.ice ? FIN.ice.emissiveIntensity : 0.06;
     if(FIN["shadow|2"]) FIN["shadow|2"].opacity = night ? 0.5 : 0.9;
+    if(FIN["ice|i"]) FIN["ice|i"].emissiveIntensity = FIN.ice ? FIN.ice.emissiveIntensity : 0.06;
+    if(FIN["shadow|i"]) FIN["shadow|i"].opacity = night ? 0.62 : 0.94;
+    if(FIN["crystal|i"] && FIN.crystal) FIN["crystal|i"].emissive.copy(FIN.crystal.emissive);
     var drawn = 0, meshes = 0;
     // ---- yours ----
     mine.forEach(function(m, i){
@@ -866,7 +1145,7 @@ function create(c, opts){
         if(e.type === "excited" && !cm) F.emit("dust", m.st.x, 0.05, m.st.z, 4, 0, 0, 0, 1.2, 0.5, 0.4);
       });
       var gy = info.ground ? info.ground(m.st.x, m.st.z) : 0;
-      setPose(m.M, m.st, gy, t, cm);
+      setPose(m.M, m.st, gy, t, cm, ball && ball.who === i && !ball.carried ? ball : o);
       if(!cm) elementFx(F, m.M.sp, m.st, m.M, m.st.anim, t, dt);
       if(!m.st.hidden){ drawn++; meshes += m.M.meshes + (m.M.tag ? 1 : 0); }
     });
@@ -898,7 +1177,7 @@ function create(c, opts){
         if(far){ r.M.g.visible = false; r.st.x = pr.x; r.st.z = pr.z; r.st.hidden = false; return; }
         if(!po.ride) trailPush(r.tr, pr.x, pr.z);
         step(r.st, {owner: po, slot: r.slot, sp: r.M.sp, trail: r.tr, blocked: info.blocked, water: info.water, calm: cm}, dt);
-        setPose(r.M, r.st, (info.ground ? info.ground(r.st.x, r.st.z) : 0), t, cm);
+        setPose(r.M, r.st, (info.ground ? info.ground(r.st.x, r.st.z) : 0), t, cm, po);
         if(!cm) elementFx(F, r.M.sp, r.st, r.M, r.st.anim, t, dt);
         if(!r.st.hidden){ drawn++; meshes += r.M.meshes + 1; }
       });
@@ -926,7 +1205,7 @@ function create(c, opts){
       ev.forEach(function(e){ if(e.type === "greet" && !cm) F.heart(l.st.x, (l.M.dims.cy + 0.6)*l.M.scale, l.st.z, 2); });
       var far = Math.hypot(l.st.x - o.x, l.st.z - o.z);
       if(far > 80){ l.M.g.visible = false; return; }
-      setPose(l.M, l.st, (info.ground ? info.ground(l.st.x, l.st.z) : 0), t, cm);
+      setPose(l.M, l.st, (info.ground ? info.ground(l.st.x, l.st.z) : 0), t, cm, o);
       if(!cm) elementFx(F, l.M.sp, l.st, l.M, l.st.anim, t, dt);
       drawn++; meshes += l.M.meshes + 1;
       if(!lobbyList && far < nearD){ nearD = far; near = {kind: "lobby", p: l.p}; }

@@ -39,7 +39,7 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
     }
     var M0 = P.model(THREE, {species: sp.id, variant: 0, acc: 0});
     var finite = true; M0.g.updateMatrixWorld(true); M0.g.traverse(function(o){ if(o.geometry){ var a = o.geometry.attributes.position.array; for(var i = 0; i < a.length; i++) if(!isFinite(a[i])) finite = false; } });
-    out.models[sp.id] = {meshes: worst.meshes, drawn: worst.drawn, tris: worst.tris, sizes: sizes, fin: sp.fin, fx: sp.fx || null, legs: !!M0.legsA, wings: !!M0.wingMesh,
+    out.models[sp.id] = {meshes: worst.meshes, drawn: worst.drawn, tris: worst.tris, sizes: sizes, fin: sp.fin, fx: sp.fx || null, legs: !!(M0.limbs && M0.legs.length), wings: !!M0.wingMesh, eyes: M0.eyes.length,
                          segs: M0.segs ? M0.segs.count : 0, glow: !!M0.glow, finite: finite,
                          mat: M0.parts.body.material.type, transparent: !!M0.parts.body.material.transparent, metal: M0.parts.body.material.metalness};
   });
@@ -47,6 +47,22 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   var ice = P.model(THREE, {species: "icedragon", variant: 0}), cw = ice.wingMesh.geometry.attributes.color.array, white = 0;
   for(var i = 0; i < cw.length; i += 3) if(cw[i] > 0.95 && cw[i + 1] > 0.95 && cw[i + 2] > 0.95) white++;
   out.iceTips = white;
+  // wings fold against the body on the ground and open in flight (the wrist's span, both sides)
+  function spanOf(M){ var a = M.wingMesh.geometry.attributes.position.array, mx = 0; for(var i = 0; i < a.length; i += 3) mx = Math.max(mx, Math.abs(a[i])); return mx; }
+  var fd = P.model(THREE, {species: "firedragon", variant: 0}), fs0 = P.newState(3, 0, 0, 0);
+  fs0.anim = "stand"; P.pose(fd, fs0, 2, false); var folded = {span: spanOf(fd), open: fd.wing.open};
+  fs0.anim = "fly"; P.pose(fd, fs0, 2.3, false); var flying = {span: spanOf(fd), open: fd.wing.open};
+  var flaps = []; for(var ft = 0; ft < 10; ft++){ P.pose(fd, fs0, 3 + ft*0.06, false); flaps.push(Math.round(fd.wingMesh.geometry.attributes.position.array[13]*1000)); }
+  out.wings = {folded: folded, flying: flying, flaps: flaps, L: fd.dims.L};
+  // eyes and a blink; jointed legs (upper and lower apart, a knee between)
+  var dg = P.model(THREE, {species: "corgi", variant: 0}), ds = P.newState(5, 0, 0, 0), lids = [];
+  for(var bt = 0; bt < 80; bt++){ ds.anim = "stand"; P.pose(dg, ds, bt*0.05, false); lids.push(dg.blink > 0.5 ? 1 : 0); }
+  ds.anim = "sleep"; P.pose(dg, ds, 9, false);
+  out.eyes = {n: dg.eyes.length, blinked: lids.indexOf(1) >= 0, open: lids.indexOf(0) >= 0, asleep: dg.blink, legs: dg.legs.length, knees: dg.legs.map(function(l){ return l.l1 > 0 && l.l2 > 0; })};
+  // gait: a walking leg's foot moves forward and back
+  var ws = P.newState(5, 0, 0, 0), zs = []; ws.anim = "walk"; ws.speed = 1.5;
+  for(var wi = 0; wi < 8; wi++){ ws.ph = wi*0.25; P.pose(dg, ws, 10 + wi*0.1, false); var mt = new THREE.Matrix4(); dg.limbs.getMatrixAt(dg.legs[0].k, mt); zs.push(new THREE.Vector3().setFromMatrixPosition(mt).z); }
+  out.gait = Math.max.apply(null, zs) - Math.min.apply(null, zs);
   // ---- names ----
   out.names = ["  Rex  ", "Mr  Biscuit", "O'Malley", "R2-D2", "", "   ", "--", "<b>hi</b>", "Zoë", "xxxxxxxxxxxxx", "Sh1tz", "fUcK", "b1tch", "a$$hole", "Scunthorpe", 7, null].map(P.cleanName);
   // ---- adoption rules ----
@@ -252,9 +268,9 @@ class PetsEngine(unittest.TestCase):
 
     def test_models_stay_inside_their_budgets(self):
         for sid, m in self.o["models"].items():
-            self.assertLessEqual(m["meshes"], 7, sid)          # + its name tag: at most 8 draw calls a pet
+            self.assertLessEqual(m["meshes"], 6, sid)          # + its name tag: at most 7 draw calls a pet
             self.assertEqual(m["meshes"], m["drawn"], sid)
-            self.assertLessEqual(m["tris"], 1500, sid)
+            self.assertLessEqual(m["tris"], 4500, sid)
             self.assertTrue(m["finite"], sid)
             self.assertEqual(m["mat"], "MeshStandardMaterial", sid)
         M = self.o["models"]
@@ -264,6 +280,20 @@ class PetsEngine(unittest.TestCase):
         # dragons grow: hatchling, young, grown
         self.assertEqual(M["icedragon"]["sizes"], [0.7, 1, 1.35])
         self.assertEqual(M["corgi"]["sizes"], [1, 1, 1])
+
+    def test_eyes_legs_and_wings_move(self):
+        e = self.o["eyes"]
+        self.assertEqual(e["n"], 2)
+        self.assertTrue(e["blinked"] and e["open"], "it blinks now and then")
+        self.assertEqual(e["asleep"], 1, "eyes shut asleep")
+        self.assertTrue(e["legs"] == 4 and all(e["knees"]), "jointed legs")
+        self.assertGreater(self.o["gait"], 0.03, "a walking paw steps forward and back")
+        self.assertTrue(all(m["eyes"] == 2 for m in self.o["models"].values()))
+        w = self.o["wings"]
+        self.assertLess(w["folded"]["open"], 0.1)
+        self.assertEqual(w["flying"]["open"], 1)
+        self.assertGreater(w["flying"]["span"], w["folded"]["span"] + w["L"]*0.4, "wings spread in flight, folded on the ground")
+        self.assertGreater(len(set(w["flaps"])), 5, "they flap")
 
     def test_each_dragon_has_its_own_look_and_element(self):
         M = self.o["models"]

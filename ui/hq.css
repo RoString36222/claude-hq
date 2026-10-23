@@ -2522,14 +2522,22 @@ html.hq-calm .pets-sw,html.hq-calm .pets-pick{transition:none}
 @media (prefers-reduced-motion: reduce){.pets-sw,.pets-pick{transition:none}}
 /* HQ Studio (ui/app/40-studio.js): style your tower, lobby and floors */
 .hqs{width:min(860px,100%);max-height:90vh;display:flex;flex-direction:column}
-.hqs .modal-h{gap:10px;flex-wrap:wrap}
-.hqs-tabs{display:flex;gap:4px;flex:1;flex-wrap:wrap}
-.hqs-tab{border:1px solid var(--line);background:var(--panel2);color:var(--muted);border-radius:var(--radius-sm);padding:4px 10px;font:inherit;cursor:pointer}
+.hqs .modal-h{gap:10px;padding-bottom:6px}
+/* one compact row of tabs under the title (never wraps: they share the row) */
+.hqs-tabs{display:flex;gap:4px;flex-wrap:nowrap;padding:0 14px 8px;border-bottom:1px solid var(--line)}
+.hqs-tab{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border:1px solid var(--line);background:var(--panel2);color:var(--muted);border-radius:var(--radius-sm);padding:3px 6px;font:inherit;font-size:.88em;cursor:pointer}
 .hqs-tab[aria-selected=true]{background:var(--brand-soft);color:var(--ink);border-color:var(--brand-line)}
 .hqs-body{overflow:auto;display:flex;flex-direction:column;gap:10px}
-.hqs-top{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
-.hqs-top .hqs-sec{flex:1;min-width:260px}
-.hqs-sketch{border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--panel2);width:220px;height:260px;max-width:100%}
+/* Exterior: the live 3D tower, sticky at the top of the scrolling panel */
+.hqs-pv{position:sticky;top:-10px;z-index:2;background:var(--panel);padding:2px 0 6px;border-bottom:1px solid var(--line)}
+.hqs-pvbar{display:flex;gap:6px;align-items:center}
+.hqs-pvt{flex:1;color:var(--muted);font-size:.85em}
+.hqs-pvbox{margin-top:6px;border:1px solid var(--line);border-radius:var(--radius-sm);overflow:hidden;background:var(--panel2);touch-action:none;cursor:grab}
+.hqs-pvbox:active{cursor:grabbing}
+.hqs-pvcv{display:block;width:100%;height:clamp(180px,30vh,280px)}
+.hqs-pvcv:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.hqs-pv.shut .hqs-pvbox{display:none}
+.hqs-live{border-left:2px solid var(--brand-line);padding-left:8px}
 .hqs-sec{border:1px solid var(--line);border-radius:var(--radius-sm);padding:8px 10px;margin:0;display:flex;flex-direction:column;gap:6px;min-width:0}
 .hqs-sec legend{color:var(--muted);font-size:.85em;padding:0 4px}
 .hqs-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -2538,10 +2546,18 @@ html.hq-calm .pets-sw,html.hq-calm .pets-pick{transition:none}
 .hqs-chip{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:999px;padding:2px 10px;font:inherit;font-size:.86em;cursor:pointer;transition:background var(--t-fast) var(--ease),border-color var(--t-fast) var(--ease)}
 .hqs-chip:hover{border-color:var(--brand-line)}
 .hqs-chip[aria-checked=true],.hqs-chip[aria-pressed=true]{background:var(--brand-soft);border-color:var(--brand);color:var(--ink)}
-.hqs-chip:focus-visible,.hqs-tab:focus-visible,.hqs-grid:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.hqs-chip:focus-visible,.hqs-tab:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .hqs-color{width:44px;height:26px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--panel);padding:0}
-.hqs-gridwrap{display:flex;flex-direction:column;gap:6px;align-items:flex-start}
-.hqs-grid{width:min(378px,100%);aspect-ratio:1;border:1px solid var(--line);border-radius:var(--radius-sm);cursor:crosshair;image-rendering:pixelated}
+/* Layout: the keyboard's placement cursor (the pointer places in the 3D view) and the item tiles with their pictures */
+.hqs-pad{border:1px dashed var(--line);border-radius:var(--radius-sm);padding:6px 8px;background:var(--panel2);cursor:default}
+.hqs-pad.bad{border-color:var(--warn)}
+.hqs-pad:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.hqs-padinfo{margin:0;font-size:.85em;color:var(--ink)}
+.hqs-row-tiles>.hqs-l{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.hqs-chips.hqs-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:6px}
+.hqs-chip.hqs-tile{display:flex;flex-direction:column;align-items:center;gap:2px;border-radius:var(--radius-sm);padding:4px;font-size:.78em;line-height:1.15;text-align:center}
+.hqs-ic{width:44px;height:44px;display:block;border-radius:var(--radius-sm);background:var(--panel2)}
+.hq3d-canvas.hqs-placing{cursor:crosshair}
 .hqs-hint{margin:0;font-size:.85em}
 .hqs-foot{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line)}
 .hqs-note{flex:1;min-width:160px}
@@ -2549,5 +2565,7 @@ html.hq-calm .hqs-chip{transition:none}
 @media (prefers-reduced-motion: reduce){.hqs-chip{transition:none}}
 /* the Studio sits to the right without dimming the page: the 3D HQ behind it is the live preview */
 .modalback.hqs-back{background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;justify-content:flex-end;padding:72px 16px 16px;pointer-events:none}
-.hqs-back .hqs{pointer-events:auto;width:min(540px,100%);max-height:calc(100vh - 96px);box-shadow:var(--shadow)}
+.hqs-back .hqs{pointer-events:auto;width:min(392px,100%);max-height:calc(100vh - 96px);box-shadow:var(--shadow)}
+.hqs-back .hqs .modal-b{padding-top:10px}
+.hqs-back .hqs .hqs-l{min-width:78px}
 @media(max-width:700px){.modalback.hqs-back{justify-content:center;padding:16px}}

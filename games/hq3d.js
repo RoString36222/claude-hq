@@ -2777,7 +2777,8 @@ function mount(el, api){
     var w = canvas.clientWidth, h = canvas.clientHeight; if(!w || !h) return;
     if(w !== inst.w || h !== inst.h){ renderer.setSize(w, h, false); inst.w = w; inst.h = h; }
     var span = view.span/view.zoom, a = w/h; if(a < 1) span /= Math.max(a, 0.55);
-    cam.left = -span*a; cam.right = span*a; cam.top = span; cam.bottom = -span; cam.updateProjectionMatrix();
+    var off = stu && stu.on ? E.clamp(+stu.shift || 0, 0, 0.6)*span*a : 0;          // [3.13.2] HQ Studio docked right: what it edits shows left of it
+    cam.left = -span*a + off; cam.right = span*a + off; cam.top = span; cam.bottom = -span; cam.updateProjectionMatrix();
     if(pcam && pcam.aspect !== a){ pcam.aspect = a; pcam.updateProjectionMatrix(); }
   }
   var ray = null, drag = null, ptr = null;
@@ -3061,6 +3062,7 @@ function mount(el, api){
 
   function onDown(e){
     noteInput();
+    if(studioPlacing()){ drag = {x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, moved: 0, studio: true, button: e.button}; canvas.setPointerCapture(e.pointerId); return; }
     // on a ride (or any trip that holds the camera: w.camPose): a drag looks around from your seat
     if(tripHeld()){ drag = {x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, moved: 0, trip: true}; canvas.setPointerCapture(e.pointerId); return; }
     if(rigOn() && rig.mode !== "classic"){
@@ -3080,6 +3082,7 @@ function mount(el, api){
     if(locked()){ if(rig){ HQV.camrig.input(rig, {look: [e.movementX || 0, e.movementY || 0]}); noteInput(); } return; }
     if(drag){
       var dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.moved = Math.max(drag.moved, Math.abs(dx) + Math.abs(dy));
+      if(drag.studio){ if(drag.moved > 5){ studioPan(e.clientX - drag.lx, e.clientY - drag.ly); tip.hidden = true; } drag.lx = e.clientX; drag.ly = e.clientY; return; }
       if(drag.trip){
         tripLook.yaw = wrapA(tripLook.yaw - (e.clientX - drag.lx)*0.004);
         tripLook.pitch = E.clamp(tripLook.pitch - (e.clientY - drag.ly)*0.004, -1.3, 1.3);
@@ -3099,6 +3102,7 @@ function mount(el, api){
       return;
     }
     if(rigOn() && rig.mode === "map"){ tip.hidden = true; return; }
+    if(studioPlacing()){ tip.hidden = true; studioHover(e); return; }
     var h = pick(e, hitList());
     var o = h && h.object.userData, txt = null;
     if(o && o.desk){ var s = o.desk.s; txt = titleOf(s) + " · " + STATE_TXT[crewState(s)] + " · " + projectOf(s); }
@@ -3111,6 +3115,7 @@ function mount(el, api){
   }
   function onUp(e){
     var d = drag; drag = null; if(!d || d.trip || d.moved > 5) return;
+    if(d.studio){ var sc = studioCell(e); if(sc && stu && stu.cb) (d.button === 2 ? stu.cb.remove : stu.cb.place)(sc.x, sc.z); return; }
     if(d.rig && rigOn() && rig.mode === "map"){ if(d.button === 0) mapClick(e); return; }
     if(d.rig && d.button !== 0) return;                                 // a right click only orbits
     var h = pick(e, hitList());
@@ -3122,7 +3127,7 @@ function mount(el, api){
     if(f){ walkTo = {x: E.clamp(f.point.x, b[0] + 1, b[1] - 1), z: E.clamp(f.point.z, b[2] + 1, b[3] - 1)}; walkDoor = null; }
   }
   // the browser menu stays away only while right-drag orbits (chase family)
-  function onContext(e){ if(rigOn() && CHASE[rig.mode]) e.preventDefault(); }
+  function onContext(e){ if(studioPlacing()){ e.preventDefault(); return; } if(rigOn() && CHASE[rig.mode]) e.preventDefault(); }   // [3.13.2] right click removes in the Studio's Layout
   function hitList(){ return cur === worlds.mission ? clickables.concat(doorHits, projHits) : (cur.hits || []); }
   // Through a door: another view of the page, or another floor of the building ("@lobby").
   function through(d){
@@ -3915,6 +3920,9 @@ function mount(el, api){
   }
   // Capture phase, so walking keys win over the page's single-key shortcuts while HQ is open.
   function onKey(e){
+    // [3.13.2] HQ Studio's Layout tab, over the 3D view: R turns the ghost, Delete / Backspace removes what is under it
+    if(studioPlacing() && e.type === "keydown" && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey && stu.cb && stu.cb.key
+       && (e.code === "KeyR" || e.key === "Delete" || e.key === "Backspace")){ e.preventDefault(); e.stopPropagation(); stu.cb.key(e.code === "KeyR" ? "rotate" : "remove"); return; }
     if(HQV.townHall && HQV.townHall.isOpen && HQV.townHall.isOpen()){ keys = {}; return; }   // the Town Hall has the keys
     if(HQV.hqnavui && HQV.hqnavui.owns && HQV.hqnavui.owns(e)) return;                      // the Go to panel's, the banner's
     if(cur && cur.menuOpen && cur.menuOpen()){ keys = {}; return; }                         // a stop's or a dock's menu too
@@ -4005,6 +4013,7 @@ function mount(el, api){
     tripCam();
     keys = kb;
     // the camera keeps up better the faster you go (a car at full speed stays on screen)
+    studioFrame();
     var ease = 1 - Math.exp(-dt*(ride ? 4 + Math.min(6, Math.abs(ride.speed)*0.3) : 4)); view.target.lerp(view.goal, ease);
     resize(); placeCam();
     if(avatar && avatar.ch){
@@ -4074,6 +4083,69 @@ function mount(el, api){
   inst.lookChanged = function(){ if(avatar) nameTag(); Object.keys(worlds).forEach(function(k){ if(worlds[k].onLook) worlds[k].onLook(); }); };
   // [hq revamp] HQ Studio's Layout tab: the placement grid and its cursor on the lobby's or Mission Control's floor (null: off)
   inst.studioGrid = function(o){ Object.keys(worlds).forEach(function(k){ if(worlds[k].studioGrid) worlds[k].studioGrid(o); }); };
+  /* [3.13.2] HQ Studio's live views. studioView({f: "lobby" | "mission", place, shift, cb}) frames that floor in the main
+     view (the floor you edit, left of the docked panel: shift is the share of the view the panel covers), going there for
+     now if you are elsewhere; place: the Layout tab (from above; the pointer drives a ghost on the floor's grid: cb.hover,
+     cb.place, cb.remove (right click), cb.key; a drag pans, the wheel zooms). studioView(null) gives you your view back
+     (and the floor you were on). studioPreview(canvas, o): your tower in the panel (HQV.hqTower.preview). */
+  var stu = null, stuBack = null, stuPlane = null, stuHit = null;
+  function studioPlacing(){ return !!(stu && stu.on && stu.place && cur && cur.name === stu.f); }
+  inst.studioView = function(o){
+    if(!scene || !avatar || !cur) return false;
+    if(!o){
+      if(!stu) return false;
+      var b = stuBack; stu = null; stuBack = null; canvas.classList.remove("hqs-placing");
+      if(b && b.switched && cur.name !== b.world && inst.running){
+        enterWorld(b.world, null, true);
+        if(cur.name === b.world && b.world !== "city" && cur.bounds){ avatar.x = b.x; avatar.z = b.z; avatar.yaw = b.yaw; moveAvatar(0); }
+      }
+      if(b && cur.name === b.world){ view.yaw = b.vyaw; view.pitch = b.pitch; view.zoom = b.zoom; }
+      if(avatar) moveAvatar(0);
+      return true;
+    }
+    if(o.f !== "lobby" && o.f !== "mission") return false;
+    if(!stuBack) stuBack = {world: cur.name, x: avatar.x, z: avatar.z, yaw: avatar.yaw, vyaw: view.yaw, pitch: view.pitch, zoom: view.zoom, switched: false};
+    var same = stu && stu.f === o.f && !!stu.place === !!o.place;
+    stu = {on: true, f: o.f, place: !!o.place, shift: +o.shift || 0, cb: o.cb || null, tx: same ? stu.tx : 0, tz: same ? stu.tz : (o.f === "lobby" ? 1 : 0), framed: same && stu.framed};
+    if(cur.name !== o.f && inst.running){ stuBack.switched = true; enterWorld(o.f, null, true); }
+    canvas.classList.toggle("hqs-placing", stu.place);
+    return true;
+  };
+  inst.studioState = function(){ return stu ? {f: stu.f, place: stu.place, shift: stu.shift, world: cur && cur.name, framed: !!stu.framed, tx: stu.tx, tz: stu.tz, back: stuBack && stuBack.world} : null; };
+  // each frame, before the camera eases: on the edited floor, the camera looks at it (set once on arrival: yaw, pitch, zoom)
+  function studioFrame(){
+    if(!stu || !stu.on || !cur || cur.name !== stu.f) return;
+    if(!stu.framed){
+      stu.framed = true; view.yaw = PI/4;
+      view.pitch = stu.place ? 1.12 : 0.72;
+      view.zoom = (cur.span || 12)/(stu.place ? 14.5 : 12.5);
+    }
+    view.goal.set(stu.tx, 0.4, stu.tz);
+  }
+  // the cell under the pointer on the floor (y = 0), on the grid's +-13 m
+  function studioCell(e){
+    if(!stuPlane){ stuPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); stuHit = new THREE.Vector3(); }
+    var r = canvas.getBoundingClientRect();
+    ptr.set((e.clientX - r.left)/r.width*2 - 1, -(e.clientY - r.top)/r.height*2 + 1);
+    ray.setFromCamera(ptr, curCam());
+    if(!ray.ray.intersectPlane(stuPlane, stuHit)) return null;
+    var H = (HQV.hqStyle && HQV.hqStyle.SCHEMA.int.items.grid) || 13;
+    return {x: E.clamp(Math.round(stuHit.x), -H, H), z: E.clamp(Math.round(stuHit.z), -H, H), inside: Math.abs(stuHit.x) < H + 0.5 && Math.abs(stuHit.z) < H + 0.5};
+  }
+  function studioHover(e){ var c = studioCell(e); if(c && c.inside && stu.cb && stu.cb.hover) stu.cb.hover(c.x, c.z); }
+  // a drag pans the placement camera (the floor follows the pointer)
+  function studioPan(dx, dy){
+    var h = canvas.clientHeight || 1, upp = 2*view.span/view.zoom/h, sp = Math.max(0.35, Math.sin(view.pitch));
+    var rx = Math.cos(view.yaw), rz = -Math.sin(view.yaw), fx = -Math.sin(view.yaw), fz = -Math.cos(view.yaw);
+    stu.tx = E.clamp(stu.tx - dx*upp*rx + dy*upp/sp*fx, -14, 14);
+    stu.tz = E.clamp(stu.tz - dx*upp*rz + dy*upp/sp*fz, -14, 14);
+  }
+  inst.studioThumbs = function(){ return HQV.hqDecor && HQV.hqDecor.thumbs && THREE ? HQV.hqDecor.thumbs(ctx) : null; };
+  inst.studioPreview = function(cv, o){
+    if(!HQV.hqTower || !HQV.hqTower.preview || !THREE) return null;
+    return HQV.hqTower.preview(ctx, cv, Object.assign({level: ctx.level, look: ctx.look, calm: function(){ return E.calm(); },
+      prestige: function(){ return api.prestige ? api.prestige() | 0 : 0; }}, o || {}));
+  };
   // The list of open HQs changed: the city street rebuilds.
   inst.cityChanged = function(){
     if(!worlds.city || !worlds.city.onCity) return;
@@ -4474,7 +4546,7 @@ function mount(el, api){
     view.target = new THREE.Vector3(0, 1.4, 1); view.goal = view.target.clone();
     var gc = document.createElement("canvas"); gc.width = gc.height = 128; var gg = gc.getContext("2d");
     var rg = gg.createRadialGradient(64, 64, 0, 64, 64, 64); rg.addColorStop(0, "rgba(255,255,255,1)"); rg.addColorStop(0.22, "rgba(255,255,255,.55)"); rg.addColorStop(0.6, "rgba(255,255,255,.12)"); rg.addColorStop(1, "rgba(255,255,255,0)");
-    gg.fillStyle = rg; gg.fillRect(0, 0, 128, 128); tex.glow = new THREE.CanvasTexture(gc);
+    gg.fillStyle = rg; gg.fillRect(0, 0, 128, 128); tex.glow = new THREE.CanvasTexture(gc); tex.glow.userData.shared = true;   // never disposed with a building (HQ Studio's preview)
     buildRoom(); buildHolo(); buildAvatar();
     worlds.mission = cur = {scene: scene, name: "mission", span: 12, floor: inst.floor, bounds: [-ROOM, ROOM, -ROOM, ROOM],
       spawn: {x: 3, z: 9, yaw: PI}, spawnFrom: {lobby: {x: -12.6, z: 13.5, yaw: PI/2}}};

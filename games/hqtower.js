@@ -171,8 +171,17 @@ function drawNight(c, X, kind, share){
     if(F === "tokyo"){ g.fillStyle = X.trim; for(var f = 0; f < 4; f++) g.fillRect(0, f*128 + 120, W, 3); }
   });
 }
-function tile(c, X, kind){ var k = ["map", kind, X.facade, X.material, X.body, X.trim, X.tint].join("|"); return TEX[k] || (TEX[k] = drawTile(c, X, kind).t); }
-function nightTile(c, X, kind, share){ var k = ["emi", kind, X.facade, X.body, X.trim, X.night, share].join("|"); return TEX[k] || (TEX[k] = drawNight(c, X, kind, share).t); }
+// the cache keeps the newest TEX_MAX tiles (HQ Studio's colour pickers make a new one per colour): an older one is
+// dropped and its GPU copy freed (a building still wearing it uploads it again; its canvas is kept). Shared: never
+// disposed with a building (userData.shared, the Studio preview's rebuilds)
+var TEX_N = [], TEX_MAX = 64;
+function keepTex(k, t){
+  t.userData.shared = true; TEX[k] = t; TEX_N.push(k);
+  while(TEX_N.length > TEX_MAX){ var o = TEX_N.shift(); if(TEX[o]){ try { TEX[o].dispose(); } catch(e){} delete TEX[o]; } }
+  return t;
+}
+function tile(c, X, kind){ var k = ["map", kind, X.facade, X.material, X.body, X.trim, X.tint].join("|"); return TEX[k] || keepTex(k, drawTile(c, X, kind).t); }
+function nightTile(c, X, kind, share){ var k = ["emi", kind, X.facade, X.body, X.trim, X.night, share].join("|"); return TEX[k] || keepTex(k, drawNight(c, X, kind, share).t); }
 
 /* ---------- batching: one mesh per material ---------- */
 function kit(THREE){
@@ -579,7 +588,7 @@ function make(c, opts){
     var THREE_ = THREE, y = Pd.y;
     Kd.cyl("dark", Pd.r + 0.15, Pd.r + 0.25, 0.25, Pd.x, y - 0.125, Pd.z, 24);
     var key = "pad:" + Math.round(Pd.r*10);
-    var tex = TEX[key] || (TEX[key] = c.canvasTex(256, 256, function(g){
+    var tex = TEX[key] || keepTex(key, c.canvasTex(256, 256, function(g){
       g.fillStyle = "#2f3740"; g.fillRect(0, 0, 256, 256);
       g.strokeStyle = "#f2b234"; g.lineWidth = 10; g.beginPath(); g.arc(128, 128, 112, 0, PI*2); g.stroke();       // the touchdown circle
       g.strokeStyle = "#f4f6f8"; g.lineWidth = 4; g.beginPath(); g.arc(128, 128, 122, 0, PI*2); g.stroke();
@@ -694,5 +703,96 @@ function make(c, opts){
   return B;
 }
 
-HQV.hqTower = {make: make, massing: massing, footprint: footprint, crownSlots: crownSlots, roofDeck: roofDeck, FH: FH, PODIUM_H: PODIUM_H, TINT: TINT, FONT: FONT};
+/* ---------- HQ Studio's live preview: your tower (this make(), as in the City) in a small canvas of its own ---------- */
+// preview(c, canvas, o) -> {set(), night(on), focus(part), resize(), drag(dx, dy), zoom(dy), tick(t), dispose(), info()}
+//   c: hq3d's world context (canvasTex, glow, label...); o: {look(), level(), prestige(), calm(), renderer(canvas)?}
+//   set() rebuilds the tower from o.look() after a short pause (the last change in DEBOUNCE ms wins); the old one's
+//   geometry, materials and own textures are disposed (shared facade tiles stay: userData.shared). focus("roof" |
+//   "street" | "full") glides the camera to the part an option changes (snaps in Calm). It orbits slowly by itself,
+//   still in Calm; a drag orbits, the wheel zooms. Renders only while the canvas is on the page (and every frame
+//   only while it moves).
+var DEBOUNCE = 90;
+function disposeTree(g){
+  var seen = [];
+  g.traverse(function(x){
+    if(x.geometry) x.geometry.dispose();
+    var ms = x.material ? (Array.isArray(x.material) ? x.material : [x.material]) : [];
+    ms.forEach(function(m){
+      ["map", "emissiveMap", "alphaMap", "normalMap", "roughnessMap"].forEach(function(k){ var t = m[k]; if(t && !(t.userData && t.userData.shared) && seen.indexOf(t) < 0){ seen.push(t); t.dispose(); } });
+      m.dispose();
+    });
+  });
+  return seen.length;
+}
+function preview(c, canvas, o){
+  var THREE = c.THREE; o = o || {};
+  var R = o.renderer ? o.renderer(canvas) : new THREE.WebGLRenderer({canvas: canvas, antialias: true, powerPreference: "low-power"});
+  if(R.setPixelRatio) R.setPixelRatio(Math.min((window.devicePixelRatio || 1), 1.5));
+  if(THREE.SRGBColorSpace && "outputColorSpace" in R) R.outputColorSpace = THREE.SRGBColorSpace;
+  var scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera(32, 1, 0.5, 900);
+  var hemi = new THREE.HemisphereLight(0xdfefff, 0x3a3226, 2.0), sun = new THREE.DirectionalLight(0xfff2dc, 2.2);
+  sun.position.set(30, 60, 40); scene.add(hemi); scene.add(sun);
+  var ground = new THREE.Mesh(new THREE.CircleGeometry(60, 48), new THREE.MeshStandardMaterial({color: 0x56604f, roughness: 1}));
+  ground.rotation.x = -PI/2; ground.position.y = -0.02; scene.add(ground);
+  var B = null, timer = 0, night = false, dead = false, builds = 0, freed = 0, last = 0, dirty = true;
+  var orb = {yaw: 0.55, pitch: 0.22, dist: 60, ty: 12, tz: 0}, goal = {pitch: 0.22, dist: 60, ty: 12, tz: 0}, part = "full";
+  function bounds(){
+    var M = B && B.M, top = B ? B.top() : 20;
+    if(!M) return {full: {pitch: 0.22, dist: 60, ty: 10, tz: 0}};
+    var span = Math.max(M.podium.w, M.podium.d), Rf = M.roof;
+    return {full: {pitch: 0.2, dist: Math.max(top*1.55, span*3.2) + 8, ty: top*0.45, tz: 0},
+            roof: {pitch: 0.62, dist: Math.max(Rf.w, Rf.d)*2.4 + 16, ty: top + 1.5, tz: Rf.z || 0},
+            street: {pitch: 0.12, dist: span*1.9 + 10, ty: M.podium.h*0.55 + 0.6, tz: M.podium.d/2}};
+  }
+  function aim(snap){ var b = bounds(), g = b[part] || b.full; goal.pitch = g.pitch; goal.dist = g.dist; goal.ty = g.ty; goal.tz = g.tz; if(snap){ orb.pitch = g.pitch; orb.dist = g.dist; orb.ty = g.ty; orb.tz = g.tz; } dirty = true; }
+  function lights(){
+    hemi.intensity = night ? 0.5 : 2.0; sun.intensity = night ? 0.25 : 2.2;
+    if(R.setClearColor) R.setClearColor(night ? 0x0b1422 : 0x9fc7e8, 1);
+    ground.material.color.setHex(night ? 0x1d2420 : 0x56604f);
+    if(B) B.setNight(night); dirty = true;
+  }
+  function build(){
+    timer = 0; if(dead) return;
+    if(B){ scene.remove(B.g); freed += disposeTree(B.g); B = null; }
+    B = make(c, {level: o.level || function(){ return 1; }, look: o.look || function(){ return {}; }, prestige: o.prestige, grand: 1});
+    scene.add(B.g); builds++; lights(); aim(builds === 1);
+  }
+  function resize(){
+    var w = canvas.clientWidth || canvas.width || 300, h = canvas.clientHeight || canvas.height || 200;
+    if(R.setSize) R.setSize(w, h, false); cam.aspect = w/h; cam.updateProjectionMatrix(); dirty = true;
+  }
+  function draw(t){
+    if(dead || !B) return;
+    var calm = o.calm && o.calm(), dt = last ? Math.min(0.1, t - last) : 0; last = t;
+    var moving = !calm || Math.abs(orb.dist - goal.dist) > 0.05 || Math.abs(orb.ty - goal.ty) > 0.02 || Math.abs(orb.pitch - goal.pitch) > 0.002;
+    if(!moving && !dirty) return;
+    orb.yaw += dt*(calm ? 0.035 : 0.12);                                     // a slow turn; slower still in Calm
+    var e = calm ? 1 : 1 - Math.exp(-dt*3.5);
+    orb.pitch += (goal.pitch - orb.pitch)*e; orb.dist += (goal.dist - orb.dist)*e; orb.ty += (goal.ty - orb.ty)*e; orb.tz += (goal.tz - orb.tz)*e;
+    var cp = Math.cos(orb.pitch);
+    cam.position.set(Math.sin(orb.yaw)*cp*orb.dist, orb.ty + Math.sin(orb.pitch)*orb.dist, orb.tz + Math.cos(orb.yaw)*cp*orb.dist);
+    cam.lookAt(0, orb.ty, orb.tz);
+    if(B.animate && !calm) B.animate(t, dt, 1);
+    R.render(scene, cam); dirty = false;
+  }
+  resize(); build();
+  return {
+    set: function(now){ if(dead) return; if(timer) clearTimeout(timer); if(now) build(); else timer = setTimeout(build, DEBOUNCE); },
+    night: function(on){ if(on == null) return night; night = !!on; lights(); return night; },
+    focus: function(p){ part = p === "roof" || p === "street" ? p : "full"; aim(o.calm && o.calm()); },
+    resize: resize,
+    drag: function(dx, dy){ orb.yaw -= dx*0.008; goal.pitch = orb.pitch = clamp(orb.pitch + dy*0.005, 0.02, 1.35); dirty = true; },
+    zoom: function(dy){ goal.dist = orb.dist = clamp(orb.dist*Math.exp(dy*0.0012), 12, 260); dirty = true; },
+    tick: draw, scene: scene,
+    info: function(){ return {builds: builds, freed: freed, part: part, night: night, pending: !!timer, children: B ? B.g.children.length : 0, dist: goal.dist}; },
+    dispose: function(){
+      if(dead) return; dead = true; if(timer) clearTimeout(timer);
+      if(B){ scene.remove(B.g); freed += disposeTree(B.g); B = null; }
+      disposeTree(scene);
+      try { R.dispose(); if(R.forceContextLoss) R.forceContextLoss(); } catch(e){}
+    }
+  };
+}
+
+HQV.hqTower = {make: make, preview: preview, massing: massing, footprint: footprint, crownSlots: crownSlots, roofDeck: roofDeck, FH: FH, PODIUM_H: PODIUM_H, TINT: TINT, FONT: FONT};
 })();

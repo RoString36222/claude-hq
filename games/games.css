@@ -1095,4 +1095,4 @@ html.hq-calm .hq3d-drive-read{display:block}
 /* ==== pets (HQ 3.14, games/hqpets.js): E at the Pet shop, or beside a pet in your lobby ==== */
 .hqpets-prompt{position:absolute;z-index:6;left:50%;bottom:118px;transform:translateX(-50%);padding:6px 14px;border-radius:999px;font-weight:800;font-size:13px;
   background:var(--panel);color:var(--ink);border:1px solid var(--line);box-shadow:var(--shadow);pointer-events:none;white-space:nowrap}
-.hqpets-prompt[hidden]{display:none}
+.hqpets-prompt[hidden],.hqpets-prompt:empty{display:none}

@@ -1282,7 +1282,7 @@ function create(c, opts){
   }
   function showPrompt(text){
     if(!c.el || typeof document === "undefined") return;
-    if(!prompt){ prompt = document.createElement("div"); prompt.className = "hqpets-prompt"; prompt.setAttribute("aria-live", "polite"); c.el.appendChild(prompt); }
+    if(!prompt){ prompt = document.createElement("div"); prompt.className = "hqpets-prompt"; prompt.setAttribute("aria-live", "polite"); prompt.hidden = true; c.el.appendChild(prompt); }   // [3.13.2] born hidden: a first call with no prompt left an empty pill on the view
     if(promptFor !== text){ promptFor = text; prompt.textContent = text || ""; prompt.hidden = !text; }
   }
   // info: {t, dt, scene, world, worldName, owner {x, z, yaw, speed, run, ride}, blocked, ground, water, peers, night}

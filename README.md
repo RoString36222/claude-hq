@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.13.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.13.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -391,6 +391,7 @@ and feature guide.
 
 ## Changelog
 
+- **3.13.2 — HQ Studio previews live.** The Studio docks right, narrower, with one compact row of tabs, and the 3D view behind it frames what you edit left of the panel. **Exterior**: your actual tower (the City's own `hqtower` code) in a live 3D preview that stays pinned at the top while you scroll; it turns slowly (still in Calm), drag to orbit, wheel to zoom, Day/Night, Hide; every option rebuilds it (debounced) and glides the camera to what changed: the roof for crown and roof extras, the street for entrance, sign, flags and grounds, night for the night light. **Lobby / Floors**: the lobby or Mission Control is framed (you're taken there for now if you're elsewhere) and every click shows on it; close without Save and the saved look and your view come back. **Layout**: placing happens on the floor itself, seen from above: a translucent ghost of the item follows the pointer, green where it fits, red where it would overlap or run off the floor; click places, right-click or Delete removes, R turns, drag pans, scroll zooms; the item picker shows a small picture of each piece; the keyboard cursor still works. Also: the empty pill floating over the lobby (the pets prompt, created before it had anything to say) is gone.
 - **3.13.1 — Solid traffic, true shapes; the boombox goes live.** What isn't a box no longer stops you as one:
   the stadium's oval bowl, the cooling tower, stacks and silos block their round outlines (not the square round
   them); you walk between a gantry crane's and the water tower's legs and step into a bus or tram shelter; the air

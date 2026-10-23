@@ -203,7 +203,36 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
     B.animate(1, 0.016, 1);
     out.shopB = {doors: B.door && isFinite(B.door.x), near: B.near(B.door.x, B.door.z), inside: B.inside(B.x, B.z), boxes: B.boxes.length, lod: B.lod.length};
   }
-  console.log(JSON.stringify(out));
+  // ---- the real models: none under node without a loader (the procedural pet stays); each GLB rigs, recolours, plays ----
+  out.fallback = {models: K.stats().models, rigged: K.out().length};
+  return Promise.all([import(url.pathToFileURL(root + "/games/vendor/three-gltf-loader.js").href), import(url.pathToFileURL(root + "/games/vendor/three-skeleton-utils.js").href)]).then(function(m){
+    var loader = new m[0].GLTFLoader(), files = {};
+    Object.keys(P.MODELS).forEach(function(id){ files[P.MODELS[id].f] = 1; });
+    return Promise.all(Object.keys(files).map(function(f){ var b = fs.readFileSync(root + "/games/pets/" + f + ".glb");
+      return new Promise(function(res, rej){ loader.parse(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), "", function(gl){ res([f, gl]); }, rej); }); })).then(function(list){
+      var G = {}; list.forEach(function(x){ G[x[0]] = x[1]; });
+      out.rigs = {};
+      Object.keys(P.MODELS).forEach(function(id){
+        var M = P.model(THREE, {species: id, variant: 2, acc: P.speciesOf(id).saddle ? 31 : 23, stage: 1}), R = P.rig(THREE, G[P.MODELS[id].f], m[1].clone, M);
+        M.rig = R; M.P.add(R.wrap); var st = P.newState(4, 0, 0, 0), plays = {};
+        var eyeGap = null;
+        if(R.lids){ var E = R.wrap.getObjectByName("pet-eyes"), M0w = new THREE.Matrix4(); R.wrap.updateMatrixWorld(true);
+          var vs = [], pp = R.geo.attributes.position, v3 = new THREE.Vector3(); for(var q0 = 0; q0 < pp.count; q0++) vs.push(v3.fromBufferAttribute(pp, q0).clone().applyMatrix4(R.skin.matrixWorld));
+          var ep = E.geometry.attributes.position, sums = {}; for(var q1 = 0; q1 < ep.count; q1++){ v3.fromBufferAttribute(ep, q1).applyMatrix4(E.matrixWorld); var sd = v3.x > 0 ? "r" : "l", S0 = sums[sd] || (sums[sd] = [0, 0, 0, 0]); S0[0] += v3.x; S0[1] += v3.y; S0[2] += v3.z; S0[3]++; }
+          eyeGap = Object.keys(sums).map(function(kk){ var S0 = sums[kk], c3 = new THREE.Vector3(S0[0]/S0[3], S0[1]/S0[3], S0[2]/S0[3]); return Math.round(Math.min.apply(null, vs.map(function(p3){ return p3.distanceTo(c3); }))*1000)/1000; }); out.eyedbg = out.eyedbg || {}; out.eyedbg[id] = [Object.keys(sums).map(function(kk){ var S0 = sums[kk]; return [S0[0]/S0[3], S0[1]/S0[3], S0[2]/S0[3]].map(function(x){ return Math.round(x*100)/100; }); }), R.hb.min.toArray().map(function(x){ return Math.round(x*100)/100; }), R.hb.max.toArray().map(function(x){ return Math.round(x*100)/100; })]; }
+        ["stand", "walk", "run", "sit", "sleep", "sniff", "roar", "wag", "roll", "spin", "big", "look"].forEach(function(a, i){ st.anim = a; st.speed = a === "run" ? 6 : 1.5; st.trick = {t: 0.5, dur: 1.6};
+          for(var j = 0; j < 5; j++) P.pose(M, st, i + j*0.05, false, {x: 1, z: 3}); plays[a] = R.cur ? R.cur.getClip().name : null; });
+        var n = 0; R.wrap.traverse(function(o){ if(o.isMesh) n++; });
+        var box = new THREE.Box3().setFromObject(R.wrap, true), c = R.geo.attributes.color.array, pal = new THREE.Color(M.sp.pal[2][0]);
+        var hit = 0; for(var q = 0; q < c.length; q += 3) if(Math.abs(c[q] - pal.r) < 1e-3 && Math.abs(c[q + 1] - pal.g) < 1e-3 && Math.abs(c[q + 2] - pal.b) < 1e-3) hit++;
+        // far away: the pose freezes and refreshes every 8th frame
+        M.lod = true; var t0 = R.mixer.time, ups = 0; for(var f2 = 0; f2 < 16; f2++){ P.pose(M, st, 20 + f2*0.02, false, null); if(R.mixer.time !== t0){ ups++; t0 = R.mixer.time; } } var frozen = ups >= 1 && ups <= 2;
+        out.rigs[id] = {meshes: n, counted: R.meshes, clips: Object.keys(R.acts).sort(), plays: plays, len: Math.round((box.max.z - box.min.z)*100)/100, h: Math.round((box.max.y - box.min.y)*100)/100,
+                        feet: Math.round(box.min.y*100)/100, coloured: hit, lids: !!R.lids, eyeGap: eyeGap, hx: R.hb ? Math.round((R.hb.max.x - R.hb.min.x)*100)/100 : null, frozen: frozen, mouth: !!M.mouthP, collar: !!R.wrap.getObjectByName("pet-acc-neck"), hat: !!R.wrap.getObjectByName("pet-acc-head")};
+      });
+      console.log(JSON.stringify(out));
+    });
+  });
 }).catch(function(e){ console.error(e && e.stack || e); process.exit(1); });
 """
 
@@ -294,6 +323,35 @@ class PetsEngine(unittest.TestCase):
         self.assertEqual(w["flying"]["open"], 1)
         self.assertGreater(w["flying"]["span"], w["folded"]["span"] + w["L"]*0.4, "wings spread in flight, folded on the ground")
         self.assertGreater(len(set(w["flaps"])), 5, "they flap")
+
+    def test_real_models(self):
+        # CC0 Quaternius models, vendored with their licence; under node (no loader) the procedural pets stay
+        lic = read("games", "pets", "LICENSE-quaternius.txt")
+        self.assertIn("CC0 1.0", lic)
+        self.assertIn("quaternius.com/packs/animateddinosaurs.html", lic)
+        self.assertEqual(self.o["fallback"]["models"], 0)
+        self.assertRegex(read("dashboard-rs", "src", "server.rs"), r"vehicles\|pets\)/")
+        total = 0
+        for f in os.listdir(os.path.join(ROOT, "games", "pets")):
+            if f.endswith(".glb"):
+                self.assertRegex(f, r"^[a-z][a-z0-9-]{0,40}\.glb$")
+                total += os.path.getsize(os.path.join(ROOT, "games", "pets", f))
+        self.assertLess(total, 6 * 1024 * 1024, "pet models stay small")
+        for sid, r in self.o["rigs"].items():
+            self.assertEqual(r["meshes"], r["counted"], sid)
+            self.assertLessEqual(r["meshes"], 6, sid)
+            self.assertTrue({"idle", "walk", "run"} <= set(r["clips"]), sid)
+            self.assertEqual((r["plays"]["walk"], r["plays"]["run"], r["plays"]["stand"]), ("walk", "run", "idle"), sid)
+            self.assertGreater(r["coloured"], 10, sid + ": recoloured for its variant")
+            self.assertTrue(r["frozen"] and r["mouth"] and r["collar"] and r["hat"], sid)
+            self.assertGreater(r["len"], 0.5, sid)
+            self.assertGreater(r["feet"], -0.2, sid)
+        self.assertEqual(self.o["rigs"]["trex"]["plays"]["roar"], "roar")
+        self.assertEqual(self.o["rigs"]["shiba"]["plays"]["sniff"], "sniff")
+        self.assertTrue(self.o["rigs"]["triceratops"]["lids"], "eyes (with lids) added where the model has none")
+        for sid in ("triceratops", "stego", "brachio"):
+            r = self.o["rigs"][sid]
+            self.assertTrue(r["eyeGap"] and all(g < r["hx"]*0.3 for g in r["eyeGap"]), sid + ": the added eyes sit on its head")
 
     def test_each_dragon_has_its_own_look_and_element(self):
         M = self.o["models"]

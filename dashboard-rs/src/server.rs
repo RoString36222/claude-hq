@@ -336,7 +336,7 @@ static GAME_ASSET_RE: LazyLock<Regex> = LazyLock::new(|| {
     // Valley Rally (games/rally/) is all generated code: its physics, stage and scene scripts
     // are classic scripts in that folder, so it alone may serve .js beside its data. The 3D
     // City's CC0 surface textures and sky (games/city/, LICENSE-assets.txt) are JPEGs only.
-    Regex::new(r"^(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart|platformer|fps|strike|vehicles)/[a-z][a-z0-9-]{0,40}\.(glb|json|png)|rally/[a-z][a-z0-9-]{0,40}\.(js|json|png)|city/[a-z][a-z0-9-]{0,40}\.jpg)$").unwrap()
+    Regex::new(r"^(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart|platformer|fps|strike|vehicles|pets)/[a-z][a-z0-9-]{0,40}\.(glb|json|png)|rally/[a-z][a-z0-9-]{0,40}\.(js|json|png)|city/[a-z][a-z0-9-]{0,40}\.jpg)$").unwrap()
 });
 
 fn game_type(ext: &str) -> &'static str {

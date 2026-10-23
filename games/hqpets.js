@@ -22,8 +22,10 @@
  *   place / build           the Pet shop on a City lot (games/hqcity3d.js), its own name: Paws & Claws
  *
  * Effects (breath, puffs, sparkles, wisps, glitter, lightning, hearts) come from one pooled Points cloud, one line
- * set and six heart sprites per page, none of it in Calm (gentle idles only there). Original procedural models;
- * no third-party designs. Privacy: presence carries species/variant/acc/stage numbers and the name typed for the pet.
+ * set and six heart sprites per page, none of it in Calm (gentle idles only there). Original procedural models, and
+ * for the Shiba, Husky, Retriever and the dinosaurs CC0 Quaternius models (games/pets/, LICENSE-quaternius.txt;
+ * MODELS / rig / poseRig) loaded lazily over them. Privacy: presence carries species/variant/acc/stage numbers and
+ * the name typed for the pet.
  */
 (function(){
 "use strict";
@@ -434,9 +436,9 @@ function envTex(T){
   } catch(e){ ENV = null; }
   return ENV;
 }
-function finMat(T, fin, ds, inst){
-  var key = fin + (ds ? "|2" : "") + (inst ? "|i" : ""); if(FIN[key]) return FIN[key];
-  var o = {vertexColors: !inst, flatShading: false, roughness: 0.82, metalness: 0.02};
+function finMat(T, fin, ds, inst, flat){
+  var key = fin + (ds ? "|2" : "") + (inst ? "|i" : "") + (flat ? "|f" : ""); if(FIN[key]) return FIN[key];
+  var o = {vertexColors: !inst, flatShading: !!flat, roughness: 0.82, metalness: 0.02};
   if(fin === "ice"){ o.roughness = 0.3; o.metalness = 0.1; o.emissive = new T.Color(0x9fdcff); o.emissiveIntensity = 0.06; }
   if(fin === "crystal"){ o.roughness = 0.08; o.metalness = 0.25; o.transparent = true; o.opacity = 0.8; o.emissive = new T.Color(0x8a6aff); o.emissiveIntensity = 0.25; o.envMap = envTex(T); o.envMapIntensity = 1.4; }
   if(fin === "shadow"){ o.roughness = 0.9; o.transparent = true; o.opacity = 0.96; }
@@ -661,7 +663,7 @@ function model(T, o){
   var tv = []; for(var vi = 0; vi < 12; vi++) tv.push(new T.Vector3());
   return {g: g, P: Pg, body: body, head: head, limbs: limbs, bits: bits, wingMesh: wingMesh, wing: wing, glow: parts.glow || null, segs: segs,
           legs: legs, arms: arms, tail: tail, neck: neck, nb: nb, eyes: eyes, earsB: earsB, flop: flop, jaw: jaw, tongue: tongue, fin: fin, hp0: head.position.clone(),
-          meshes: meshes, tris: Math.round(tris), sp: sp, scale: scale, biped: biped, seedF: seedF, tv: tv, Mh: new T.Matrix4(), q: new T.Quaternion(), mm: new T.Matrix4(),
+          meshes: meshes, tris: Math.round(tris), sp: sp, scale: scale, variant: o.variant | 0, acc: acc, biped: biped, seedF: seedF, tv: tv, Mh: new T.Matrix4(), q: new T.Quaternion(), mm: new T.Matrix4(),
           sm: {look: 0, jaw: 0, turn: 0, lastT: null, lastYaw: null},
           dims: {L: L, H: H, W: W, lh: lh, cy: cy, oz: oz, hipZ: hipZ, hr: hr}, parts: parts};
 }
@@ -768,6 +770,7 @@ var FC = {dz: 0, dy: 0};
 // head toward (you, or the ball), {x, z} in the world, or null.
 function pose(Mo, st, t, calm, look){
   if(!Mo) return;
+  if(Mo.rig) return poseRig(Mo, st, t, calm, look);
   var T3 = Mo.g, a = st.anim || "stand", ph = st.ph || 0, d = Mo.dims, sp = Mo.sp, kind = sp.kind, k = calm ? 0.35 : 1, S = Mo.sm, v = Mo.tv;
   if(!UP){ UP = new v[0].constructor(0, 1, 0); TE = new v[0].constructor(); TS = new v[0].constructor(); TQ = Mo.q.clone(); TM = Mo.mm.clone(); }
   var dt = S.lastT == null ? 0 : Math.max(0, Math.min(0.1, t - S.lastT)); S.lastT = t;
@@ -944,7 +947,173 @@ function pose(Mo, st, t, calm, look){
 }
 var Q = null;
 
+/* ---------- real models (CC0, Quaternius; games/pets/, LICENSE-quaternius.txt) ---------- */
+// Swapped in over the procedural pet once loaded (the procedural one shows meanwhile, and stays when there is no
+// loader, under node, offline or on an error). file, length in m (at the species' size 1), eyes: add our own (the
+// model has none), sit: how far it tilts back to sit. Roles (the GLB's per-vertex _role) take the variant's colours.
+var MODELS = {shiba: {f: "shiba", len: 0.85}, husky: {f: "husky", len: 1.0}, retriever: {f: "husky", len: 1.05},
+              trex: {f: "trex", len: 1.5}, raptor: {f: "raptor", len: 1.3}, triceratops: {f: "triceratops", len: 1.45, eyes: [0.55, 0.45]},
+              stego: {f: "stego", len: 1.5, eyes: [0.6, 0.6]}, brachio: {f: "apatosaurus", len: 2.1, eyes: [0.6, 0.62]}};
+var CLIPS = {dog: ["idle", "look", "sniff", "walk", "run"], dino: ["idle", "walk", "run", "roar", "jump"]};
+var RIG_BONES = {neck: ["Neck1", "Neck"], head: ["Head"], back: ["Torso", "Back"], tail: ["Tail1", "Tail2", "Tail3"]};
+var PETGLB = {};
+function modelFor(sp){ return sp && MODELS[sp.id] || null; }
+function loadPetGlb(L, file){
+  if(!/^[a-z][a-z0-9-]{0,40}$/.test(file)) return Promise.reject(new Error("bad pet model"));
+  return PETGLB[file] || (PETGLB[file] = new Promise(function(res, rej){
+    L.loader.load("/games/pets/" + file + ".glb", res, null, function(e){ delete PETGLB[file]; rej(e); });
+  }));
+}
+function boneOf(root, names){ var b = null; root.traverse(function(o){ if(!b && o.isBone && names.indexOf(o.name) >= 0) b = o; }); return b; }
+// rig(T, gltf, clone, Mo): the model, coloured for this pet, scaled into Mo's P space, accessories and eyes on its bones
+function rig(T, gl, clone, Mo){
+  var sp = Mo.sp, md = MODELS[sp.id], pal = sp.pal[Math.max(0, Math.min(VARIANTS - 1, Mo.variant | 0))], acc = Mo.acc | 0;
+  var root = clone(gl.scene), skin = null; root.traverse(function(o){ if(o.isSkinnedMesh && !skin) skin = o; });
+  if(!skin || !skin.geometry.attributes._role) return null;
+  // colours by role: main, second, belly, eye, dark, white, pink, ivory
+  var roles = [pal[0], pal[1], pal[2], pal[3], 0x1a1414, 0xf4f2ea, 0xd86a6a, 0xf0e6cc], geo = skin.geometry.clone(), ro = geo.attributes._role, n = ro.count;
+  var col = new Float32Array(n*3), cc = new T.Color();
+  for(var i = 0; i < n; i++){ cc.setHex(roles[Math.max(0, Math.min(7, Math.round(ro.getX(i))))]); col[i*3] = cc.r; col[i*3 + 1] = cc.g; col[i*3 + 2] = cc.b; }
+  geo.setAttribute("color", new T.BufferAttribute(col, 3));
+  skin.geometry = geo; skin.material = finMat(T, sp.fin || "matte", false, false, true); skin.castShadow = true; skin.frustumCulled = false; skin.name = "pet-rig";
+  // into P space: its length (nose to tail) to md.len, feet on the ground, centred
+  var wrap = new T.Group(), pivot = new T.Group(); wrap.name = "pet-rig"; pivot.add(root); wrap.add(pivot);
+  root.updateMatrixWorld(true);
+  var box = new T.Box3().setFromObject(root, true), size = box.getSize(new T.Vector3()), s = md.len/Math.max(1e-6, size.z);
+  root.scale.multiplyScalar(s); root.updateMatrixWorld(true); box.setFromObject(root, true);
+  var ctr = box.getCenter(new T.Vector3()), hipZ = -size.z*s*0.22;
+  root.position.x -= ctr.x; root.position.z -= ctr.z; root.position.y -= box.min.y;
+  pivot.position.z = hipZ; root.position.z -= hipZ;
+  wrap.updateMatrixWorld(true);
+  var bones = {}; for(var k in RIG_BONES) bones[k] = boneOf(root, RIG_BONES[k]);
+  bones.tails = RIG_BONES.tail.map(function(nm){ return boneOf(root, [nm]); }).filter(function(b){ return b; });
+  var R = {wrap: wrap, pivot: pivot, root: root, skin: skin, geo: geo, bones: bones, mixer: new T.AnimationMixer(root), acts: {}, cur: null, h: size.y*s, len: md.len,
+           meshes: 1, extra: [], lids: null, frame: 0};
+  (gl.animations || []).forEach(function(cl){ R.acts[cl.name] = R.mixer.clipAction(cl); });
+  // a part placed in the pet's (wrap's) space at rest, carried by a bone from then on
+  var inv = new T.Matrix4(), wInv = new T.Matrix4().copy(wrap.matrixWorld).invert();
+  function onBone(bone, P, name, m){
+    if(!bone || !P.pos.length) return null;
+    var me = new T.Mesh(P.geometry(), m || finMat(T, "matte")); me.name = "pet-" + name; me.matrixAutoUpdate = false;
+    inv.multiplyMatrices(wInv, bone.matrixWorld).invert(); me.matrix.copy(inv); bone.add(me); R.meshes++; R.extra.push(me); return me;
+  }
+  function wpos(b){ return b ? b.getWorldPosition(new T.Vector3()).applyMatrix4(wInv) : null; }
+  var hp = wpos(bones.head), np = wpos(bones.neck), bk = wpos(bones.back);
+  // the head's own vertices (mostly weighted to the head bone), for the eyes and the hat
+  var hv = [], hb = new T.Box3(), hi = bones.head ? skin.skeleton.bones.indexOf(bones.head) : -1, pp = geo.attributes.position, si = geo.attributes.skinIndex, sw = geo.attributes.skinWeight, vv = new T.Vector3();
+  if(hi >= 0) for(var j = 0; j < pp.count; j++){ for(var c2 = 0; c2 < 4; c2++) if(si.getComponent(j, c2) === hi && sw.getComponent(j, c2) > 0.6){ vv.fromBufferAttribute(pp, j).applyMatrix4(skin.matrixWorld).applyMatrix4(wInv); hb.expandByPoint(vv); hv.push(vv.clone()); break; } }
+  var hs = hb.isEmpty() ? null : hb.getSize(new T.Vector3());
+  if(hs && md.eyes){
+    // eyes (white, iris, slit, highlight) and lids that blink, on the head bone
+    var Pe = new Part(T), Pl = new Part(T), er = Math.min(hs.x, hs.y)*0.12, ez = hb.min.z + hs.z*(md.eyes[0] || 0.58), ey = hb.min.y + hs.y*(md.eyes[1] || 0.6), hcx = (hb.min.x + hb.max.x)/2;
+    var eyC = [ey, ez];
+    [-1, 1].forEach(function(sd){
+      // on the head's surface: its outermost vertex on this side in a band at the eyes' height and depth
+      var best = null;
+      hv.forEach(function(q){ if(Math.abs(q.z - ez) < hs.z*0.12 && Math.abs(q.y - ey) < hs.y*0.18 && (!best || sd*(q.x - best.x) > 0)) best = q; });
+      var ex = best ? best.x - sd*er*0.45 : hcx + sd*hs.x*0.25, eyy = best ? best.y : ey, ezz = best ? best.z : ez, yaw = sd*0.75; eyC = [eyy, ezz];
+      function at(dd){ return [ex + Math.sin(yaw)*er*dd, eyy + er*0.2*dd, ezz + Math.cos(yaw)*er*dd]; }
+      ell(Pe, ex, eyy, ezz, [er, er, er*0.6], 0xf6f2ea, -0.2, yaw, 9);
+      var q = at(0.38); ell(Pe, q[0], q[1], q[2], [er*0.8, er*0.8, er*0.28], pal[3] === 0x2a2a2a ? 0xd8a030 : pal[3], -0.2, yaw, 9);
+      q = at(0.5); ell(Pe, q[0], q[1], q[2], [er*0.17, er*0.62, er*0.14], 0x080808, -0.2, yaw, 7);
+      q = at(0.6); ell(Pe, q[0] - sd*er*0.12, q[1] + er*0.3, q[2], [er*0.17, er*0.17, er*0.1], 0xffffff, -0.2, yaw, 5);
+      ell(Pl, ex, eyy + er*0.05, ezz, [er*1.12, er*1.1, er*0.75], pal[0], -0.2, yaw, 9);
+    });
+    onBone(bones.head, Pe, "eyes", finMat(T, "matte"));
+    R.lids = onBone(bones.head, Pl, "lids", finMat(T, sp.fin || "matte"));
+    if(R.lids){ R.lidBase = R.lids.matrix.clone(); R.lidC = new T.Vector3(hcx, eyC[0] + er*0.05, eyC[1]); }
+  }
+  // accessories: collar and bandana on the neck, hat and bow on the head, saddle on the back
+  if(np && hp){
+    var Pn = new Part(T), dir = new T.Vector3().subVectors(hp, np).normalize(), nr = Math.max(0.035, Math.min(md.len*0.04, (hs ? hs.x : md.len*0.15)*0.62));
+    var ang = -Math.atan2(dir.y, dir.z), cpos = np.clone().lerp(hp, 0.35);
+    if(acc & ACC.collar){ Pn.add(new T.TorusGeometry(nr, 0.016, 5, 14), M4(T, cpos.x, cpos.y, cpos.z, ang, 0, 0), 0xd8342a); ell(Pn, cpos.x, cpos.y - nr*Math.cos(ang) - 0.012, cpos.z - nr*Math.sin(ang)*0.2, [0.02, 0.024, 0.012], 0xf0c030); }
+    if(acc & ACC.bandana) cone(Pn, cpos.x, cpos.y - nr*0.8, cpos.z + nr*0.4, nr*0.95, nr*1.4, 0x3a6ad8, PI*0.88, 0, 0, 3);
+    onBone(bones.neck, Pn, "acc-neck");
+  }
+  if(hs && (acc & (ACC.hat | ACC.bow))){
+    var Ph = new Part(T), tx = 0, ty = hb.max.y, tz = hb.min.z + hs.z*0.45, hr = Math.max(hs.x, hs.y)*0.5;
+    if(acc & ACC.hat){ cone(Ph, tx, ty + hr*0.4, tz, hr*0.45, hr*0.9, 0x6a3ad8, 0, 0, -0.2, 10); ell(Ph, tx + hr*0.18, ty + hr*0.88, tz, [0.03, 0.03, 0.03], 0xfff0a0); }
+    if(acc & ACC.bow) [-1, 1].forEach(function(sd){ cone(Ph, sd*hr*0.2 - hr*0.4, ty - hr*0.05, tz, hr*0.16, hr*0.32, 0xf05aa0, 0, 0, sd*PI/2, 5); });
+    onBone(bones.head, Ph, "acc-head");
+  }
+  if(bk && (acc & ACC.saddle)){
+    var Ps = new Part(T), top = box.max.y - box.min.y, w2 = Math.max(0.12, size.x*s*0.42);
+    ell(Ps, bk.x, top*0.98, bk.z, [w2, 0.035, md.len*0.1], 0x7a3a1a); ell(Ps, bk.x, top*1.02, bk.z - md.len*0.07, [w2*0.6, 0.05, 0.035], 0x5a2a10);
+    onBone(bones.back, Ps, "acc-back");
+  }
+  R.headP = hp; R.hb = hs ? hb : null;
+  return R;
+}
+// play `name` (crossfading from what was playing)
+function rigPlay(R, name, ts){
+  var A = R.acts[name] || R.acts.idle; if(!A) return;
+  A.timeScale = ts == null ? 1 : ts;
+  if(R.cur === A) return;
+  A.reset().setEffectiveWeight(1).play();
+  if(R.cur) R.cur.crossFadeTo(A, 0.25, false);
+  R.cur = A;
+}
+var RQ = null;
+// Pose a model pet: the clip for its state, then sit / sleep / tricks as tilts of the whole rig, a wagging tail and a
+// head that turns toward you laid over the clip. Far pets (Mo.lod) keep their pose and only update now and then.
+function poseRig(Mo, st, t, calm, look){
+  var R = Mo.rig, a = st.anim || "stand", S = Mo.sm, P = Mo.P, d = Mo.dims, kind = Mo.sp.kind, k = calm ? 0.35 : 1, dogs = kind === "dog";
+  var dt = S.lastT == null ? 0 : Math.max(0, Math.min(0.1, t - S.lastT)); S.lastT = t;
+  if(!RQ) RQ = {q: new Mo.q.constructor(), v: new Mo.tv[0].constructor(), w: new Mo.tv[0].constructor()};
+  R.frame++;
+  if(Mo.lod && R.frame % 8) return;                                     // far away: a frozen pose, refreshed now and then
+  if(Mo.lod) dt *= 8;
+  P.position.set(0, 0, 0); P.rotation.set(0, 0, 0); R.pivot.rotation.set(0, 0, 0); R.pivot.position.y = 0;
+  var sp = Math.max(0.2, +st.speed || 0), clip = "idle", ts = calm ? 0.8 : 1;
+  if(a === "walk" || a === "slither"){ clip = "walk"; ts = Math.max(0.5, Math.min(2, sp/(dogs ? 1.6 : 1.4))); }
+  else if(a === "run" || a === "carry"){ clip = "run"; ts = Math.max(0.6, Math.min(1.6, sp/(dogs ? 6 : 5.5))); }
+  else if(a === "sniff") clip = dogs ? "sniff" : "idle";
+  else if(a === "look") clip = dogs ? "look" : "idle";
+  else if(a === "roar" || a === "breath" || a === "puff" || (a === "big" && kind === "dino")) clip = dogs ? "idle" : "roar";
+  else if(a === "stomp") clip = dogs ? "idle" : "jump";
+  else if(a === "sleep"){ clip = "idle"; ts = 0.25; }
+  rigPlay(R, clip, ts);
+  R.mixer.update(dt);
+  // whole-body poses the clips don't have
+  var sit = a === "sit" || a === "beg" || a === "coil" || a === "groom";
+  if(sit){ R.pivot.rotation.x = -(a === "beg" ? 0.75 : 0.42); R.pivot.position.y = -R.h*0.12; }
+  if(a === "sleep"){ R.pivot.position.y = -R.h*0.3; R.pivot.rotation.z = 0.25; }
+  if(a === "stretch"){ R.pivot.rotation.x = 0.25; }
+  if(a === "shake") R.pivot.rotation.z = Math.sin(t*28)*0.2*k;
+  if(a === "spin") P.rotation.y = (st.trick ? st.trick.t/st.trick.dur : 0)*TAU*(calm ? 0 : 1);
+  if(a === "roll"){ var rt = st.trick ? st.trick.t/st.trick.dur : 0; R.pivot.rotation.z = calm ? 0 : rt*TAU; R.pivot.position.y = R.h*0.2*Math.sin(rt*PI); }
+  if(a === "big" && kind !== "dino" && !calm){ var bt = st.trick ? st.trick.t/st.trick.dur : 0; P.position.y = Math.sin(bt*PI)*0.6; P.rotation.x = -bt*TAU; }
+  Mo.g.updateMatrixWorld(true);
+  var B = R.bones, q = RQ.q, v = RQ.v;
+  // the tail wags (fast and wide when happy) over whatever the clip does
+  var wagA = a === "wag" || a === "greet" ? 0.5 : 0.08, wagF = a === "wag" || a === "greet" ? 14 : 3;
+  B.tails.forEach(function(b, i){ if(!b.parent) return; b.parent.getWorldQuaternion(q); v.set(0, 1, 0).applyQuaternion(q.invert()).normalize();
+    b.quaternion.premultiply(q.setFromAxisAngle(v, Math.sin(t*wagF - i*0.7)*wagA*k)); });
+  // the head turns toward you (or the ball)
+  var lw = 0;
+  if(look && a !== "walk" && a !== "run" && a !== "carry" && a !== "sleep" && a !== "sniff" && a !== "roll" && a !== "spin"){
+    var lx = look.x - Mo.g.position.x, lz = look.z - Mo.g.position.z;
+    if(lx*lx + lz*lz < 144) lw = Math.max(-0.9, Math.min(0.9, wrapPi(Math.atan2(lx, lz) - st.yaw)));
+  }
+  S.look += (lw - S.look)*Math.min(1, dt*4);
+  if(B.head && B.head.parent && Math.abs(S.look) > 0.01){ B.head.parent.getWorldQuaternion(q); v.set(0, 1, 0).applyQuaternion(q.invert()).normalize(); B.head.quaternion.premultiply(q.setFromAxisAngle(v, S.look)); }
+  // blink (the eyes we added): the lids close over the eye for a moment, and asleep
+  if(R.lids){
+    var bt2 = (t + Mo.seedF*0.7) % 4.1, bl = a === "sleep" ? 1 : bt2 < 0.16 ? Math.sin(bt2/0.16*PI) : 0;
+    R.lids.visible = bl > 0.05;
+    if(R.lids.visible){ var c0 = R.lidC, m1 = RQ.m1 || (RQ.m1 = R.lidBase.clone()), m2 = RQ.m2 || (RQ.m2 = R.lidBase.clone());
+      // scale the lids about the eyes' centre (in the pet's space), then carry them on the head bone as before
+      m1.makeTranslation(c0.x, c0.y, c0.z).multiply(m2.makeScale(1, Math.max(0.05, bl), 1)); m1.multiply(m2.makeTranslation(-c0.x, -c0.y, -c0.z));
+      R.lids.matrix.multiplyMatrices(R.lidBase, m1); }
+  }
+  Mo.blink = a === "sleep" ? 1 : 0;
+  // where the mouth is (P space), for breath and puffs
+  if(B.head){ Mo.g.updateMatrixWorld(true); Mo.mouthP = Mo.mouthP || v.clone(); B.head.getWorldPosition(Mo.mouthP); P.worldToLocal(Mo.mouthP); Mo.mouthP.z += R.len*0.08; }
+}
+
 /* ---------- effects: pooled particles, lines, hearts (one set per page) ---------- */
+var LOD_D = 25;   // past this a pet's model keeps its pose and refreshes it every 8th frame
 var FXC = {fire: [0xffb030, 0xff5a1a], ember: [0xffa030, 0xff3a10], ice: [0xd8f4ff, 0x8ad0ff], snow: [0xffffff, 0xe8f4ff], sparkle: [0xffffff, 0xb8e0ff],
            prism: [0xff8ad8, 0x8ad8ff], wisp: [0xb46aff, 0x4a2a8a], glitter: [0xfff0a0, 0xffc030], smoke: [0x8a8a90, 0x4a4a50], bubbles: [0xc8f8ff, 0x6ad8f0], dust: [0xd8c8a8, 0x8a7a5a]};
 function Fx(T, scene){
@@ -1060,9 +1229,17 @@ function create(c, opts){
     var M = model(T, {species: p.species || (p.sp && p.sp.id), variant: p.variant, acc: p.acc, stage: p.stage != null ? p.stage : stageOf(speciesOf(p.species), p.affection)});
     var tag = tagSprite(T, p.name || M.sp.name); if(tag){ tag.position.y = (M.dims.cy + M.dims.H + (M.sp.neck || 0) + 0.45)*M.scale; M.g.add(tag); M.tag = tag; }
     M.seed = hashStr(seedKey || p.id || p.name || "pet");
+    // the real model, when there is one and it loads: swapped in over the procedural pet (which stays meanwhile)
+    var md = modelFor(M.sp), L = c.L;
+    if(md && L && L.loader && L.clone) loadPetGlb(L, md.f).then(function(gl){
+      if(M.dead) return; var R = null;
+      try { R = rig(T, gl, L.clone, M); } catch(e){ R = null; }
+      if(!R || M.dead) return;
+      M.rig = R; M.P.add(R.wrap); M.body.visible = false; [M.limbs, M.bits, M.segs].forEach(function(o){ if(o) o.visible = false; });
+    }, function(){});
     return M;
   }
-  function drop(M){ if(!M) return; if(M.g.parent) M.g.parent.remove(M.g); M.g.traverse(function(o){ if((o.isMesh || o.isInstancedMesh) && !o.geometry.userData.shared){ o.geometry.dispose(); } if(o.isSprite && o.name === "pet-tag"){ o.material.map.dispose(); o.material.dispose(); } }); }
+  function drop(M){ if(!M) return; M.dead = true; if(M.rig){ M.rig.mixer.stopAllAction(); M.rig.mixer.uncacheRoot(M.rig.root); } if(M.g.parent) M.g.parent.remove(M.g); M.g.traverse(function(o){ if((o.isMesh || o.isInstancedMesh) && !o.geometry.userData.shared){ o.geometry.dispose(); } if(o.isSprite && o.name === "pet-tag"){ o.material.map.dispose(); o.material.dispose(); } }); }
   function sig(p){ return [p.id, p.species, p.variant | 0, p.acc | 0, stageOf(speciesOf(p.species), p.affection), p.name].join("|"); }
   // your pets out with you (MAX_ACTIVE): rebuilt only when what they look like changes
   function syncMine(){
@@ -1092,7 +1269,8 @@ function create(c, opts){
   K.net = function(){ return encode(owned.filter(function(p){ return p.active; })); };
   K.out = function(){ return mine.map(function(m){ return {id: m.p.id, name: m.p.name, x: m.st ? m.st.x : null, z: m.st ? m.st.z : null, anim: m.st ? m.st.anim : null, mode: m.st ? m.st.mode : null}; }); };
   K.stats = function(){ return {mine: mine.length, remote: Object.keys(remote).reduce(function(n, u){ return n + remote[u].length; }, 0), lobby: lobbyPets.length,
-    drawn: statsN.pets, meshes: statsN.meshes, fx: F ? F.used : 0}; };
+    drawn: statsN.pets, meshes: statsN.meshes, fx: F ? F.used : 0, models: all().filter(function(M){ return M.rig; }).length, lod: all().filter(function(M){ return M.lod; }).length}; };
+  function all(){ var L = mine.map(function(m){ return m.M; }).concat(lobbyPets.map(function(l){ return l.M; })); Object.keys(remote).forEach(function(u){ remote[u].forEach(function(r){ L.push(r.M); }); }); return L; }
   function homeWorld(w, name){ return !!(w && (w.petHome || name === "lobby")); }
   function lobbySet(){
     if(lobbyList) return lobbyList.map(function(p, i){ return {id: "visit:" + i, species: p.species, variant: p.variant, acc: p.acc, stage: p.stage, name: p.name}; });
@@ -1147,7 +1325,7 @@ function create(c, opts){
       var gy = info.ground ? info.ground(m.st.x, m.st.z) : 0;
       setPose(m.M, m.st, gy, t, cm, ball && ball.who === i && !ball.carried ? ball : o);
       if(!cm) elementFx(F, m.M.sp, m.st, m.M, m.st.anim, t, dt);
-      if(!m.st.hidden){ drawn++; meshes += m.M.meshes + (m.M.tag ? 1 : 0); }
+      m.M.lod = false; if(!m.st.hidden){ drawn++; meshes += (m.M.rig ? m.M.rig.meshes : m.M.meshes) + (m.M.tag ? 1 : 0); }
     });
     // ---- the ball ----
     if(ball){
@@ -1175,11 +1353,12 @@ function create(c, opts){
         var po = {x: pr.x, z: pr.z, yaw: pr.yaw, speed: pr.speed || 0, run: (pr.speed || 0) > 4, ride: pr.ride || null};
         if(!r.st){ var b = besideOwner(po, r.slot, info.blocked); r.st = newState(r.M.seed, b.x, b.z, pr.yaw); }
         if(far){ r.M.g.visible = false; r.st.x = pr.x; r.st.z = pr.z; r.st.hidden = false; return; }
+        r.M.lod = Math.hypot(pr.x - o.x, pr.z - o.z) > LOD_D;   // a cheaper, now-and-then pose further off
         if(!po.ride) trailPush(r.tr, pr.x, pr.z);
         step(r.st, {owner: po, slot: r.slot, sp: r.M.sp, trail: r.tr, blocked: info.blocked, water: info.water, calm: cm}, dt);
         setPose(r.M, r.st, (info.ground ? info.ground(r.st.x, r.st.z) : 0), t, cm, po);
         if(!cm) elementFx(F, r.M.sp, r.st, r.M, r.st.anim, t, dt);
-        if(!r.st.hidden){ drawn++; meshes += r.M.meshes + 1; }
+        if(!r.st.hidden){ drawn++; meshes += (r.M.rig ? r.M.rig.meshes : r.M.meshes) + 1; }
       });
     });
     Object.keys(remote).forEach(function(u){ if(!seen[u]){ remote[u].forEach(function(r){ drop(r.M); }); delete remote[u]; } });
@@ -1205,9 +1384,10 @@ function create(c, opts){
       ev.forEach(function(e){ if(e.type === "greet" && !cm) F.heart(l.st.x, (l.M.dims.cy + 0.6)*l.M.scale, l.st.z, 2); });
       var far = Math.hypot(l.st.x - o.x, l.st.z - o.z);
       if(far > 80){ l.M.g.visible = false; return; }
+      l.M.lod = far > LOD_D;
       setPose(l.M, l.st, (info.ground ? info.ground(l.st.x, l.st.z) : 0), t, cm, o);
       if(!cm) elementFx(F, l.M.sp, l.st, l.M, l.st.anim, t, dt);
-      drawn++; meshes += l.M.meshes + 1;
+      drawn++; meshes += (l.M.rig ? l.M.rig.meshes : l.M.meshes) + 1;
       if(!lobbyList && far < nearD){ nearD = far; near = {kind: "lobby", p: l.p}; }
     });
     greet = false;
@@ -1375,6 +1555,6 @@ HQV.hqPets = {
   speciesOf: speciesOf, stageOf: stageOf, tricksFor: tricksFor, nextTrick: nextTrick, cleanName: cleanName, accOk: accOk, canAdopt: canAdopt,
   encode: encode, decode: decode, newState: newState, step: step, lobbyStep: lobbyStep, spotFor: spotFor, followTarget: followTarget,
   trailPush: trailPush, trailAt: trailAt, throwBall: throwBall, besideOwner: besideOwner, hashStr: hashStr,
-  model: model, pose: pose, create: create, lobby: lobby, place: place, build: build, pick: shopPick, SHOP_ID: SHOP_ID, SHOP_NAME: SHOP_NAME
+  model: model, pose: pose, create: create, MODELS: MODELS, modelFor: modelFor, rig: rig, LOD_D: LOD_D, lobby: lobby, place: place, build: build, pick: shopPick, SHOP_ID: SHOP_ID, SHOP_NAME: SHOP_NAME
 };
 })();

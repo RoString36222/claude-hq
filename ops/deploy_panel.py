@@ -18,6 +18,7 @@ Deliberate choices:
     not just at login -- removing someone from the list logs them out at once
     rather than whenever their cookie happens to expire.
 """
+import calendar
 import hashlib
 import hmac
 import html
@@ -273,7 +274,7 @@ def parse_progress(text):
     lines = [_ANSI.sub("", ln).rstrip() for ln in text.splitlines()]
     start = 0
     for i, ln in enumerate(lines):
-        if ln.lstrip().startswith("==> Fetching") or " new commits " in ln:
+        if ln.lstrip().startswith("==> Fetching") or " new commits " in ln or " rollback requested by " in ln:
             start = i
     run = lines[start:]
 
@@ -322,6 +323,149 @@ def parse_progress(text):
         "sub": sub,
         "line": next((ln for ln in reversed(run) if ln.strip()), ""),
     }
+
+
+# --- Releases for everyone: what is running now and what ran before ------------------
+# Every release lands in the deploy log, whoever started it: autodeploy (the timer), the panel (it logs who pressed
+# Deploy or Roll back, and a rollback's own output), or a person on the host. autodeploy's and the panel's lines are
+# timestamped ("2026-10-23T10:00:00Z  new commits a -> b"); release.sh's are not, so a run is the stretch from one
+# start line to the next. backend/.releases (release.sh) adds the releases made by hand that never touched the log.
+_TS = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)  (.*)$")
+_STARTS = ("new commits ", "retrying release of ", "panel: deploy requested by ", "panel: rollback requested by ")
+_RANGE = re.compile(r"new commits (\w+) -> (\w+)")
+_RETRY = re.compile(r"retrying release of (\w+)")
+_BY = re.compile(r"panel: (deploy|rollback) requested by (\S+)")
+_COMMIT = re.compile(r"^ {4}([0-9a-f]{7,40}) (.*)$")
+_VERSION = re.compile(r"==> (?:Released|Rolling back to) (\S+)")
+STALE_SECS = 900            # a run silent this long is no longer "in progress" (the host rebooted, it was killed)
+HISTORY_MAX = 40
+HISTORY_BYTES = 4_000_000
+RELEASES = os.environ.get("ARENA_RELEASES", os.path.join(ARENA_DIR, "backend", ".releases"))
+
+
+def _epoch(ts):
+    try:
+        return calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _runs(text):
+    """The log cut into runs: [{"lines": [...], "first": index of its start line}]."""
+    lines = [_ANSI.sub("", ln).rstrip() for ln in text.splitlines()]
+    runs, cur = [], None
+    for ln in lines:
+        m = _TS.match(ln)
+        msg = m[2] if m else ""
+        if m and msg.startswith(_STARTS):
+            # autodeploy's "new commits" right after the panel's "deploy requested by" is the same release
+            joined = (cur is not None and msg.startswith(("new commits ", "retrying release of "))
+                      and any(" deploy requested by " in x for x in cur[-3:])
+                      and not any(_TS.match(x) and _TS.match(x)[2].startswith(("new commits ", "retrying release of "))
+                                  for x in cur))
+            if not joined:
+                cur = []
+                runs.append(cur)
+        if cur is not None:
+            cur.append(ln)
+    return runs
+
+
+def _summary(run):
+    stamps = [(_TS.match(ln)[1], _TS.match(ln)[2]) for ln in run if _TS.match(ln)]
+    msgs = [m for _, m in stamps]
+    r = {"start": _epoch(stamps[0][0]) if stamps else None, "end": None, "kind": "deploy", "by": "auto",
+         "from": None, "to": None, "version": None, "commits": [], "result": "interrupted", "reason": None,
+         "public": None}
+    for m in msgs:
+        b = _BY.search(m)
+        if b:
+            r["kind"], r["by"] = b[1], b[2]
+        g = _RANGE.search(m)
+        if g:
+            r["from"], r["to"] = g[1][:7], g[2][:7]
+        g = _RETRY.search(m)
+        if g and not r["to"]:
+            r["to"] = g[1][:7]
+        c = _COMMIT.match(m)
+        if c and len(r["commits"]) < 10:
+            r["commits"].append({"sha": c[1][:7], "subject": c[2][:120]})
+    for ln in run:
+        v = _VERSION.search(ln)
+        if v:
+            r["version"] = v[1]
+    def at(pred):
+        for ts, m in stamps:
+            if pred(m):
+                return _epoch(ts)
+        return None
+    if any(m.startswith("deployed ") and m.endswith(" OK") for m in msgs) or any("panel: rolled back OK" in m for m in msgs):
+        r["result"] = "ok"
+        r["end"] = at(lambda m: (m.startswith("deployed ") and m.endswith(" OK")) or "panel: rolled back OK" in m)
+    elif any(m.startswith("ERROR") for m in msgs):
+        r["result"] = "fail"
+        r["reason"] = parse_progress("\n".join(run))["reason"] or "failed"
+        r["end"] = at(lambda m: m.startswith("ERROR"))
+    elif any("is already running" in ln for ln in run):
+        r["result"] = "noop"
+    if "  public endpoint healthy" in msgs:
+        r["public"] = True
+    elif any("WARNING: app is healthy but" in m for m in msgs):
+        r["public"] = False
+    return r
+
+
+def live(text, mtime, now=None):
+    """The newest run as everyone should see it: parse_progress plus whether it is still going, who started it and
+    when. Still going = no ending in the log yet and the log written to in the last STALE_SECS."""
+    now = time.time() if now is None else now
+    p = parse_progress(text)
+    runs = _runs(text)
+    last = _summary(runs[-1]) if runs else None
+    fresh = mtime is not None and now - mtime < STALE_SECS
+    ended = last is not None and last["result"] in ("ok", "fail", "noop")
+    p["active"] = bool(p["state"] == "running" and p["idx"] and fresh and not ended)
+    p["by"] = last["by"] if last else None
+    p["kind"] = last["kind"] if last else None
+    p["started"] = last["start"] if last else None
+    p["to"] = last["to"] if last else None
+    return p
+
+
+def parse_history(text, releases_text="", limit=HISTORY_MAX, active=False):
+    """Every release in the log, newest first, plus the hand-made ones only backend/.releases knows about."""
+    runs = [_summary(r) for r in _runs(text)]
+    if runs and active and runs[-1]["result"] == "interrupted":
+        runs[-1]["result"] = "running"
+    # a release is the same one in both places by its version AND what it was (deploying a version and later rolling
+    # back to it are two events)
+    seen = {(r["version"], r["kind"]) for r in runs if r["version"]}
+    for ln in (releases_text or "").splitlines():
+        f = ln.split()
+        kind = "rollback" if len(f) > 4 and f[4] == "rollback" else "deploy"
+        if len(f) < 4 or (f[1], kind) in seen:
+            continue
+        runs.append({"start": _epoch(f[0]), "end": _epoch(f[0]), "kind": kind,
+                     "by": "host", "from": None, "to": f[3][:7], "version": f[1], "commits": [], "result": "ok",
+                     "reason": None, "public": None})
+    runs.sort(key=lambda r: r["start"] or 0, reverse=True)
+    return runs[:limit]
+
+
+def _log_mtime():
+    try:
+        return os.path.getmtime(DEPLOY_LOG)
+    except OSError:
+        return None
+
+
+def _log_line(msg):
+    """A timestamped line in the deploy log, as autodeploy writes them, so every panel shows what this one did."""
+    try:
+        with open(DEPLOY_LOG, "a") as f:
+            f.write("%s  %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), msg))
+    except OSError:
+        pass
 
 
 def status():
@@ -773,6 +917,19 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
     wide log line pushes the whole console past the viewport instead of
     wrapping. This page gets opened on a phone mid-incident, and a horizontal
     scrollbar over telemetry is the worst time to meet one. */
+ /* Releases: the one in progress (the same on every open panel) and the history, newest first. */
+ .nowrel{border:1px solid var(--ink);padding:10px 12px;margin:0 0 10px;background:repeating-linear-gradient(135deg,transparent 0 10px,rgba(255,255,255,.04) 10px 20px)}
+ .hist{list-style:none;margin:0 0 22px;padding:0;border-top:1px solid var(--line)}
+ .hist li{display:grid;grid-template-columns:7.5em 5.5em 1fr auto;gap:4px 12px;padding:8px 0;border-bottom:1px solid var(--line);font-size:11.5px}
+ .hist .when{color:var(--dim)}
+ .hist .res{justify-self:end;padding:1px 6px;border:1px solid var(--line)}
+ .hist .res.ok{color:var(--green);border-color:var(--green)}
+ .hist .res.fail{color:var(--red);border-color:var(--red)}
+ .hist .res.running{color:var(--ink);border-color:var(--ink)}
+ .hist .what{text-transform:none;letter-spacing:.02em}
+ .hist .commits{grid-column:3 / -1;color:var(--dim);text-transform:none;letter-spacing:0}
+ .hist .hempty{display:block;color:var(--dim)}
+ @media (max-width:34rem){.hist li{grid-template-columns:1fr auto}.hist .commits{grid-column:1 / -1}}
  .cell,.masthead>*{min-width:0}
  .subj,samp,pre{overflow-wrap:anywhere}
  @media (max-width:34rem){
@@ -844,6 +1001,10 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
    <span class="nowline" id="nowline">standing by</span></div>
   <div class="verdict" id="verdict"></div>
  </section>
+
+ <h2>releases <span class="rule"></span> everyone's</h2>
+ <div class="nowrel" id="nowrel" hidden></div>
+ <ol class="hist" id="hist"><li class="hempty">loading the release history</li></ol>
 
  <h2>deploy log <span class="rule"></span> tail 40</h2>
  <pre id="log">__LOG__</pre>
@@ -1015,6 +1176,7 @@ function poll(){
    .then(function(r){return r.json();}).then(paint).catch(function(){});
 }
 function act(path){
+  ACTING=true;
   var bs=document.querySelectorAll("button");
   bs.forEach(function(b){b.disabled=true;b.classList.add("armed");});
   $id("rig").className="rig on wait";
@@ -1050,6 +1212,47 @@ function act(path){
      bs.forEach(function(b){b.disabled=false;b.classList.remove("armed");});
    });
 }
+// Everyone's view: whoever started a release (this page, another maintainer's, the autodeploy timer), every open
+// panel follows it live, its buttons held, and the history below updates when it ends.
+var ACTING=false, WAS_ACTIVE=false;
+function ago(s){ s=Math.max(0,s|0); return s<90?s+"s ago":s<5400?Math.round(s/60)+"m ago":s<129600?Math.round(s/3600)+"h ago":Math.round(s/86400)+"d ago"; }
+function dur(a,b){ if(!a||!b||b<a) return ""; var s=b-a; return s<90?s+"s":Math.round(s/60)+"m"; }
+function el(tag,cls,text){ var e=document.createElement(tag); if(cls) e.className=cls; if(text!=null) e.textContent=text; return e; }
+var RES={ok:"shipped",fail:"failed",noop:"up to date",running:"in progress",interrupted:"interrupted"};
+var WHY={ci_failed:"ci failed",ci_timeout:"ci timed out",ci_unreachable:"github unreachable",rolled_back:"rolled back",failed:"failed",busy:"busy"};
+function history(){
+  fetch("/api/history",{headers:{"X-Panel-Token":CSRF}}).then(function(r){return r.json();}).then(function(h){
+    var ol=$id("hist"); while(ol.firstChild) ol.removeChild(ol.firstChild);
+    if(!h.runs||!h.runs.length){ ol.appendChild(el("li","hempty","no releases yet")); return; }
+    h.runs.forEach(function(r){
+      var li=el("li");
+      li.appendChild(el("span","when",r.start?ago(h.now-r.start):"--"));
+      li.appendChild(el("span","by",r.by==="auto"?"autodeploy":r.by==="host"?"on host":r.by));
+      var what=(r.kind==="rollback"?"rollback":"deploy")+(r.to?" "+r.to:"")+(r.from?" (from "+r.from+")":"")+(r.version?" \u00b7 "+r.version:"")+(r.end&&r.start?" \u00b7 "+dur(r.start,r.end):"");
+      li.appendChild(el("span","what",what));
+      li.appendChild(el("span","res "+r.result,(RES[r.result]||r.result)+(r.result==="fail"&&r.reason?" \u00b7 "+(WHY[r.reason]||r.reason):"")+(r.public===false?" \u00b7 public down":"")));
+      if(r.commits&&r.commits.length) li.appendChild(el("span","commits",r.commits.map(function(c){return c.sha+" "+c.subject;}).join("  \u00b7  ")));
+      ol.appendChild(li);
+    });
+  }).catch(function(){});
+}
+function tick(){
+  fetch("/api/progress",{headers:{"X-Panel-Token":CSRF}}).then(function(r){return r.json();}).then(function(j){
+    var box=$id("nowrel");
+    if(j.active){
+      box.hidden=false;
+      box.textContent=(j.kind==="rollback"?"rollback":"release")+" in progress \u00b7 started by "+(j.by&&j.by!=="auto"?j.by:"autodeploy")
+        +(j.started?" \u00b7 "+ago(Date.now()/1000-j.started):"")+(j.to?" \u00b7 "+j.to:"")+" \u00b7 "+(j.phase||"starting").toLowerCase();
+      if(!ACTING){ document.querySelectorAll("button.act").forEach(function(b){ if(b.id!=="refresh") b.disabled=true; }); paint(j); }
+    } else {
+      box.hidden=true;
+      if(WAS_ACTIVE&&!ACTING){ history(); setTimeout(function(){location.reload();},2500); }
+    }
+    WAS_ACTIVE=!!j.active;
+    setTimeout(tick, j.active?2000:10000);
+  }).catch(function(){ setTimeout(tick,10000); });
+}
+history(); setInterval(history,30000); tick();
 $id("deploy").onclick=function(){act("/api/deploy");};
 $id("rollback").onclick=function(){
   if(confirm("Roll back to the previous release?"))act("/api/rollback");};
@@ -1196,7 +1399,18 @@ class Handler(BaseHTTPRequestHandler):
             # same log the page already shows, and changes nothing. The server
             # is a ThreadingHTTPServer, so this answers while /api/deploy is
             # still blocking in another thread.
-            return self._json(200, parse_progress(read_log_tail(DEPLOY_LOG)))
+            return self._json(200, live(read_log_tail(DEPLOY_LOG), _log_mtime()))
+        if path == "/api/history":
+            # Everyone's releases, so every open panel shows the same list: the log (all of it that fits) and
+            # backend/.releases. Read-only.
+            text = read_log_tail(DEPLOY_LOG, HISTORY_BYTES)
+            try:
+                with open(RELEASES) as f:
+                    rel = f.read()
+            except OSError:
+                rel = ""
+            act = live(read_log_tail(DEPLOY_LOG), _log_mtime())["active"]
+            return self._json(200, {"runs": parse_history(text, rel, active=act), "now": int(time.time())})
         self._send(404, "<p>Not found.</p>")
 
     def _exchange(self, code):
@@ -1229,7 +1443,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(403, {"ok": False, "error": "bad CSRF token"})
 
         path = self.path.split("?", 1)[0]
+        if path in ("/api/deploy", "/api/rollback"):
+            cur = live(read_log_tail(DEPLOY_LOG), _log_mtime())
+            if cur["active"]:
+                who = "autodeploy" if cur["by"] in (None, "auto") else cur["by"]
+                return self._json(409, {"ok": False, "reason": "busy", "message": None,
+                                        "error": f"A release is already in progress (started by {who}). Watch it here."})
         if path == "/api/deploy":
+            _log_line(f"panel: deploy requested by {login}")
             rc, out = run(["bash", f"{ARENA_DIR}/ops/autodeploy.sh"], timeout=900)
             if rc == 0:
                 return self._json(200, {"ok": True, "message": "Deployed", "error": None, "reason": None})
@@ -1245,7 +1466,15 @@ class Handler(BaseHTTPRequestHandler):
             # commit is not the previous release -- ops/release.sh restores an
             # earlier stamped IMAGE without rebuilding, which is both faster and
             # the only version that is known to have been healthy.
+            _log_line(f"panel: rollback requested by {login}")
             rc, out = run(["bash", f"{ARENA_DIR}/ops/release.sh", "rollback"], timeout=900)
+            # its output into the log too, so the rollback is in everyone's history
+            try:
+                with open(DEPLOY_LOG, "a") as f:
+                    f.write((out or "").rstrip("\n") + "\n")
+            except OSError:
+                pass
+            _log_line("panel: rolled back OK" if rc == 0 else "ERROR: rollback failed")
             return self._json(200, {"ok": rc == 0,
                                     "message": "Rolled back" if rc == 0 else "Rollback failed",
                                     "error": None if rc == 0 else out[-400:]})

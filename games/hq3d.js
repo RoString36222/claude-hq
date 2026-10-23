@@ -2244,7 +2244,7 @@ function mount(el, api){
     GIN.up = GIN.down = GIN.toggle = false;
     function say(t){ if(api.toast) api.toast(t); if(api.announce) api.announce(t); }
     o.events.forEach(function(ev){
-      if(ev === "manual" || ev === "auto"){ gearPref(ev === "manual"); say(ev === "manual" ? "Manual gearbox: . shifts up, , down (through neutral), hold X for the clutch" : "Automatic gearbox"); }
+      if(ev === "manual" || ev === "auto"){ gearPref(ev === "manual"); say(ev === "manual" ? "Manual gearbox: . shifts up, , down (through neutral), hold X for the clutch" + (o.qs ? ". Quickshifter: shift up flat out, no clutch" : "") : "Automatic gearbox"); }
       else if(ev === "refused") say("Too fast for " + gearTxt(ride.gs.gear - 1) + ": it would over-rev");
       else if(ev === "launch" && o.launch && api.announce) api.announce("Launch control: let go of the brake");
     });
@@ -2316,7 +2316,7 @@ function mount(el, api){
     var v = Math.abs(ride.speed), w = !!(keys.KeyW || keys.ArrowUp);
     if(v < 0.3 && !w && !(thr > 0) && !o.launch && ride.rpm < (V.engine ? V.engine.idle*1.2 : 1500) && !keys.KeyX) return;
     if(!ride.eng && E.engineSound) ride.eng = E.engineSound(V.eng, ride.tune && HQV.hqTuning ? HQV.hqTuning.exhaustOf(ride.tune) : null, V.engine);
-    if(ride.eng) ride.eng.set(ride.rpm, {thr: w ? 1 : thr > 0 ? thr : 0, gear: o.gear > 0 ? o.gear : null, speed: v, limiter: o.limiter,
+    if(ride.eng) ride.eng.set(ride.rpm, {thr: w ? 1 : thr > 0 ? thr : 0, gear: o.gear > 0 ? o.gear : null, speed: v, limiter: o.limiter, qs: o.events.indexOf("qs") >= 0,
       slip: Math.max(o.slip, ride.drift ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0)});
   }
   /* ---------- skating (games/hqskate.js does the physics) ---------- */
@@ -2769,7 +2769,7 @@ function mount(el, api){
     driveDial(g, dhud.tok, 62, 64, 54, kmh, M[0], M[1], M[2], "km/h", Math.round(kmh), null);
     if(motor){                                       // [revs] the rev counter to this engine's own limiter, red from its redline
       var EN = ride.V.engine, top = EN && EN.limit ? Math.max(6, Math.ceil(EN.limit/1000 + 0.3)) : 8, maj = top > 12 ? 2 : 1;
-      driveDial(g, dhud.tok, 174, 64, 54, ride.rpm/1000, top, maj, maj/2, "×1000 rpm", gearTxt(gear), EN && EN.red && !EN.electric ? EN.red/1000 : EN && EN.electric ? null : 6.5, ride.gs && ride.gs.manual ? "MANUAL" : "GEAR");
+      driveDial(g, dhud.tok, 174, 64, 54, ride.rpm/1000, top, maj, maj/2, "×1000 rpm", gearTxt(gear), EN && EN.red && !EN.electric ? EN.red/1000 : EN && EN.electric ? null : 6.5, ride.gs && ride.gs.manual ? (ride.gb && ride.gb.qs ? "MANUAL QS" : "MANUAL") : "GEAR");
     }
     if(ride.plane) driveDial(g, dhud.tok, 174, 64, 54, Math.max(0, ride.plane.agl)/100, 10, 1, 0.5, "×100 m up", Math.round(Math.max(0, ride.plane.agl)), null, "ALT");
   }

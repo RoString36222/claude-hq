@@ -83,8 +83,9 @@ const dt = 1/60, out = {limit: E.limit, k: E.k};
 function drive(G, v, inp, secs){ let o; for (let t = 0; t < secs; t += dt){ o = P.gearStep(G, Object.assign({speed: v}, inp), E, dt); } return o; }
 // automatic, flat out: up at the redline, never past the limiter
 { const G = P.gearState(E); let v = 0, maxRpm = 0, ups = [];
+  let prev = 0;
   for (let i = 0; i < 1800; i++){ const o = P.gearStep(G, {thr: 1, speed: v}, E, dt); v = Math.min(o.cap, v + 7*o.drive*dt);
-    maxRpm = Math.max(maxRpm, o.rpm); if (o.events.includes('up')) ups.push(Math.round(o.rpm)); }
+    maxRpm = Math.max(maxRpm, o.rpm); if (o.events.includes('up')) ups.push(Math.round(prev)); prev = o.rpm; }
   out.auto = {gear: G.gear, maxRpm, ups}; }
 // manual: up, down (rev-matched), a refused over-rev, neutral, the gear's limiter is its top speed
 { const G = P.gearState(E); G.manual = true; G.gear = 3;
@@ -179,3 +180,44 @@ class Gearbox(unittest.TestCase):
         src = open(os.path.join(ROOT, "games", "hq3d.js")).read()
         self.assertIn("if(!D || !drvGround() || !DRV.key || !dmgOn()) return;", src)
         self.assertIn("DRV.dmg = dmgOn() ? D.dmgLoad(DRV.key) : null;", src)
+
+
+QS = r"""
+const fs = require('fs'), path = require('path'), R0 = process.argv[1];
+global.window = {HQV: {}}; eval(fs.readFileSync(path.join(R0, 'games', 'hqvehiclephys.js'), 'utf8'));
+const P = window.HQV.hqVehiclePhys, cat = JSON.parse(fs.readFileSync(path.join(R0, 'games/vehicles/catalogue.json'), 'utf8'));
+const E = id => { const v = cat.vehicles.find(x => x.id === id); return P.engineFor(v.spec, /^bike/.test(v.class) || id === 'starter-moto' ? 'bike' : 'car', v.sound); };
+const out = {has: {}};
+['bmw-s-1000-rr', 'ducati-panigale-v4-s', 'bmw-m3-competition', 'starter-car', 'starter-moto', 'royal-enfield-classic-350'].forEach(id => { out.has[id] = E(id).qs; });
+function up(id, thr){ const e = E(id), G = P.gearState(e); G.manual = true; G.gear = 2;
+  P.gearStep(G, {speed: 20, thr: thr}, e, 1/60); const o = P.gearStep(G, {speed: 20, thr: thr, up: true}, e, 1/60);
+  const o2 = P.gearStep(G, {speed: 20, thr: thr}, e, 1/60); return {events: o.events, shiftT: G.shiftT, drive: o2.drive}; }
+out.qs = up('bmw-s-1000-rr', 1); out.noqs = up('royal-enfield-classic-350', 1); out.lift = up('bmw-s-1000-rr', 0);
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class Quickshifter(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        r = subprocess.run([NODE, "-e", QS, ROOT], capture_output=True, text=True, timeout=60)
+        if r.returncode:
+            raise AssertionError(r.stderr[-3000:])
+        cls.o = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_who_has_one(self):
+        h = self.o["has"]
+        self.assertTrue(h["bmw-s-1000-rr"] and h["ducati-panigale-v4-s"] and h["bmw-m3-competition"])
+        self.assertFalse(h["starter-car"] or h["starter-moto"] or h["royal-enfield-classic-350"])
+
+    def test_a_quickshift_keeps_the_drive(self):
+        q, n = self.o["qs"], self.o["noqs"]
+        self.assertIn("qs", q["events"])
+        self.assertLessEqual(q["shiftT"], 0.05)
+        self.assertEqual(q["drive"], 1, "a 50 ms cut: the clutch never comes in")
+        self.assertNotIn("qs", n["events"])
+        self.assertLess(n["drive"], 0.5, "no quickshifter: the drive drops for the shift")
+
+    def test_only_under_power(self):
+        self.assertNotIn("qs", self.o["lift"]["events"])

@@ -452,7 +452,9 @@ and feature guide.
   with the throttle blip and pops, and one that would over-rev is refused ("Too fast for 2nd"). Clutch in (or
   neutral): W revs the engine free to the limiter; let it out with the revs up and it launches with wheelspin.
   Automatic: brake and throttle together at a standstill hold the revs (launch control), let go of the brake to go.
-  Off the throttle the engine brakes harder in a lower gear. Vehicle damage (dents, smoke, cracked lights, a bent
+  Quickshifter on sporty bikes (70 kW+) and 7+ speed DCT/automatic cars: upshifts flat out are a 50 ms ignition cut
+  with a bark and a pop, no clutch, no lift (the rev counter reads MANUAL QS). Off the throttle the engine brakes
+  harder in a lower gear. Vehicle damage (dents, smoke, cracked lights, a bent
   car's pull) is now opt in: Settings → Vehicle damage, off by default.
 - **Next — Stunts across every city** (`games/hqstunts.js`, tests/test_hqstunts.py). Placed per city from its
   own layout, deterministically (every client builds the same set): a 4 m free-land grid of everything that is not

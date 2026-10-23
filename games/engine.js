@@ -167,7 +167,7 @@ function sfx(name, opt){
 }
 // A continuous engine note (HQ 3.5.7: modelled on a real engine): engineSound(kind, ex) (ex: a tuned exhaust, 3.13) ->
 // {set(rpm 900..7600, opt), stop()} (engineSound(kind, ex, real): set() takes the engine's real rpm, opt.limiter
-// stutters it on its rev limiter). The game's rpm (900 idle .. 7600 limiter) maps onto the
+// stutters it on its rev limiter, opt.qs makes an upshift a quickshifter's hard cut and bark). The game's rpm (900 idle .. 7600 limiter) maps onto the
 // profile's own idle..redline, and the note's fundamental is the firing frequency of a four-stroke,
 // rpm/60 * cylinders/2: a 390 single thumps at 12-90 Hz, a superbike four screams up to ~480 Hz.
 // Its timbre is a harmonic recipe (a PeriodicWave), a detuned twin for body, a half-order sub for
@@ -381,7 +381,11 @@ function engineSound(kind, ex, real){
       var thr = opt.thr != null ? clamp(+opt.thr || 0, 0, 1) : clamp(0.3 + 0.5*u + rise/3000, 0, 1);
       // gears: an upshift cuts the ignition for a moment, a downshift blips the throttle (and pops)
       if(opt.gear != null && S.gear != null && opt.gear > 0 && S.gear > 0 && opt.gear !== S.gear){
-        if(opt.gear > S.gear){
+        if(opt.gear > S.gear && opt.qs){                  // a quickshift: a hard 50 ms cut, its bark and a pop
+          cut.gain.setTargetAtTime(0.04, t, 0.004); cut.gain.setTargetAtTime(1, t + 0.05, 0.012);
+          if(P.pops && on && !calm()) crackle(t + 0.02);
+          if(bov && S.boost > 0.3) blowOff(t);
+        } else if(opt.gear > S.gear){
           cut.gain.setTargetAtTime(0.3, t, 0.012); cut.gain.setTargetAtTime(1, t + 0.09, 0.04);
           if(bov && S.boost > 0.3) blowOff(t);
         } else { S.blip = 0.16; if(P.pops && on) crackle(t + 0.12); }

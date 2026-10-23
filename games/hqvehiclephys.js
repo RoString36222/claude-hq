@@ -25,7 +25,8 @@
  *     limiter (out.cap: you bounce off it, the speed held). The clutch in (or neutral, or mid-shift) frees the
  *     engine: W revs it to the limiter; let it out with the revs up at low speed and it launches with wheelspin.
  *     Automatic: brake and throttle together at a standstill hold the revs for a launch. Off the throttle the
- *     engine brakes harder in a lower gear.
+ *     engine brakes harder in a lower gear. With a quickshifter (E.qs) an upshift under power is a 50 ms ignition
+ *     cut (event "qs"): the drive barely drops, no clutch, no lift; without one a manual upshift takes 0.18 s.
  *     out = {rpm, gear (-1 R, 0 N, 1..n), manual, drive (0..1.8 on the engine's pull), cap (m/s), engineBrake
  *            (m/s^2), limiter, slip (0..1 wheelspin), launch (held at a standstill), events: ["up", "down",
  *            "refused", "manual", "auto", "launch"]}
@@ -128,7 +129,7 @@ var REVS = {single: [1500, 10500], twin: [1300, 10200], vtwin: [1250, 10000], bo
             v8tt: [650, 7200], v8: [700, 6200], six: [750, 7400], v10: [1000, 8500], v12: [950, 9500], w16: [900, 6700],
             v16: [1000, 9000], turbo: [850, 6800], bike: [1400, 11500], electric: [0, 16000]};
 function tyreCirc(t){
-  var m = /(\d{2,3})\s*\/\s*(\d{2,3})\s*[A-Z]*\s*R?\s*(\d{2}(?:\.\d)?)/i.exec(String(t || ""));
+  var m = /(\d{2,3})\s*\/\s*(\d{2,3})\s*[A-Z]*\s*-?\s*R?\s*(\d{2}(?:\.\d)?)/i.exec(String(t || ""));   // 190/55 ZR17, 120/80-18
   if(!m) return null;
   var d = (+m[3])*0.0254 + 2*(+m[1])*(+m[2])/100/1000;
   return Math.PI*d*0.97;
@@ -156,6 +157,10 @@ function engineFor(spec, kind, voice, gears){
   else E.k = null;
   E.shiftUp = Math.round(E.red*0.97);
   E.launch = Math.round(E.idle + (E.red - E.idle)*(kind === "bike" ? 0.3 : 0.28));
+  // a quickshifter (spec.engine.qs, else: a sporty bike of 70 kW or more, or a car with a 7+ speed DCT / automatic):
+  // upshifts under power with a 50 ms ignition cut, no clutch, no lift
+  var gears = num(spec.gears, 0);
+  E.qs = typeof R.qs === "boolean" ? R.qs : kind === "bike" ? num(spec.powerKw, 0) >= 70 : gears >= 7;
   return E;
 }
 
@@ -163,7 +168,7 @@ function gearState(E){ return {gear: 1, rpm: E && E.idle || 900, shiftT: 0, manu
 function gearStep(G, inp, E, dt){
   inp = inp || {}; dt = Math.max(0, Math.min(0.1, +dt || 0));
   var thr = clamp(+inp.thr || 0, 0, 1), sp = +inp.speed || 0, v = Math.abs(sp), ev = [];
-  var out = {rpm: G.rpm, gear: G.gear, manual: G.manual, drive: 1, cap: Infinity, engineBrake: 0, limiter: false, slip: 0, launch: false, events: ev};
+  var out = {rpm: G.rpm, gear: G.gear, manual: G.manual, qs: !!(E && E.qs), drive: 1, cap: Infinity, engineBrake: 0, limiter: false, slip: 0, launch: false, events: ev};
   if(!E) return out;
   if(E.electric){                                         // one gear: revs with the road speed, no clutch, no limiter
     G.gear = sp < -0.3 ? -1 : 1; G.rpm = E.motorMax*clamp(v/Math.max(1, inp.top || 60), 0, 1);
@@ -175,7 +180,7 @@ function gearStep(G, inp, E, dt){
   G.shiftT = Math.max(0, G.shiftT - dt);
   var g = G.gear | 0;
   if(G.manual){
-    if(inp.up && g < n){ g = g + 1; G.shiftT = 0.18; ev.push("up"); }
+    if(inp.up && g < n){ var qs = E.qs && thr > 0.4 && g > 0; g = g + 1; G.shiftT = qs ? 0.05 : 0.18; ev.push("up"); if(qs) ev.push("qs"); }
     else if(inp.down){
       if(g > 1 && at(g - 1) > E.limit*0.99) ev.push("refused");            // it would over-rev: the box says no
       else if(g > 1){ g--; G.shiftT = 0.14; G.blipTo = at(g); ev.push("down"); }
@@ -185,7 +190,7 @@ function gearStep(G, inp, E, dt){
     if(g < 1) g = 1;
     if(G.shiftT <= 0 && sp >= 0){
       var up = thr > 0.6 ? E.shiftUp : E.idle + (E.red - E.idle)*0.45, dn = thr > 0.6 ? E.red*0.5 : E.idle*1.3;
-      if(g < n && at(g) >= up && at(g + 1) > E.idle*1.15){ g++; G.shiftT = 0.3; ev.push("up"); }
+      if(g < n && at(g) >= up && at(g + 1) > E.idle*1.15){ var aq = E.qs && thr > 0.4; g++; G.shiftT = aq ? 0.05 : 0.3; ev.push("up"); if(aq) ev.push("qs"); }
       else if(g > 1 && at(g) < dn && at(g - 1) < E.red*0.9){ g--; G.shiftT = 0.25; G.blipTo = at(g - 1); ev.push("down"); }
     }
   }

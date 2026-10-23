@@ -79,6 +79,14 @@ paired), published maps and work signals (off by default) add a few listed field
   wing, sport / quad / titanium exhausts (bikes: slip-on, under-seat, end can; each changes the engine note) and a
   plate of your own (8 characters; your HQ's name by default). Drag the preview to orbit, the wheel or **+ / −** to
   zoom. Free; your owned vehicles' tunes live in the Arena (others see them), the starters' in this browser.
+- **Stunts across every city.** Each city reads its own map and builds a set of giant stunts on its open land
+  (**Go to → Stunt**): two **Sky Cannons** that fire you 400-650 m over the rooftops, 100 m+ up and 9-10 s in
+  the air through three rings of fire onto a landing ramp; **Big Air** (about 200 m); a **Mega Loop** (26 m
+  tall, with a corkscrew); a **River Leap** square across the river; and on an island, a **Sea Launch** out over
+  the sea to a splashdown. Drive any car, motorbike or bicycle onto the green boost pad: it sets the exact speed
+  that lands the jump (S backs out). In the air **W/S** flip, **A/D** spin, **Shift+A/D** barrel roll; let go
+  before you touch down to land square, or bail. Scores count air time, height, distance, tricks and rings, with
+  your best kept per stunt. Calm mode turns the pads and flying off.
 - **The Commons air base.** Hangars, a radar, an attack helicopter, an aircraft carrier offshore and
   fighter jets flying over.
 - **A real airport.** An offshore airfield for the Commons: a 1.6 km runway with full markings and lights,
@@ -391,6 +399,28 @@ and feature guide.
 
 ## Changelog
 
+- **Next — Stunts across every city** (`games/hqstunts.js`, tests/test_hqstunts.py). Placed per city from its
+  own layout, deterministically (every client builds the same set): a 4 m free-land grid of everything that is not
+  road, river, sea, a site, an HQ or a tower district; building lots elsewhere may be cleared (at most 8 a stunt,
+  retyped `stunt`, restored when the doc is cached). Two Sky Cannons (the longest 200-640 m flights whose path
+  clears every roof by 8 m, at the lowest launch angle that does), Big Air, a Mega Loop, up to three River Leaps
+  and a Sea Launch. Each pad gives the exact launch speed; each landing ramp follows its flight just under it and
+  meets it at the target, so a touch-down is always along the ramp. Flights are the exact parabola (the same at any
+  frame rate). Placement costs 0.1-0.3 s at City load; the stunts draw in 35-41 calls, hidden past 1.1 km.
+  Measured headless on the Commons: both cannons 640-680 m, 104-119 m high, 9-10 s, through all three rings;
+  Big Air 215 m; River Leaps 102 and 135 m; the loop; a 413 m splashdown.
+- **Next — Real revs, real exhausts, smooth multiplayer, call search.** Every catalogue vehicle now carries its
+  researched engine (spec.engine: idle, redline, limiter, gear ratios, primary and final drive, rear tyre, voice and an
+  exhaust tone of depth / rasp / crackle / induction / whistle), and `games/hqvehiclephys.js engineFor` turns it into
+  rpm per m/s for each gear. You drive on the real rpm: the clutch slips to a launch rpm, it upshifts at the redline
+  under power (half way up when cruising), downshifts as the revs sag, and stutters on the rev limiter with pops;
+  the rev counter reads to that engine's own limiter with its red from the redline. The voices play that rpm with the
+  vehicle's own exhaust character (games/engine.js engineProfile(.., real)). Other players are drawn smoothly
+  (`games/hqnetsmooth.js`): a buffer of their frames drawn 0.2 s in the past on a curve through them, stamped with
+  the sender's own clock and carrying their velocity, yaw rate and revs (the Arena's new `motion` capability; an older
+  Arena falls back to arrival times re-timed by distance). Simulated at 30 m/s: the largest frame-to-frame lurch went
+  from 487 m/s (and 34 hard snaps in 12 s) to 2.2 m/s. The call list (C) has a search box: brand, model, year, class,
+  body or engine. Needs the Arena release for `motion`; works without it.
 - **3.13.4 — A real helipad on your HQ, with your helicopter on it.** Every HQ tower's roof now carries a helideck:
   a steel deck raised 3 m over the top roof on legs and struts, cantilevered past it, a 9 m pad (7.5 m on the
   smallest lots: the pad stays over the lot) in its middle with a walkway and a low glass rail round it, so a
@@ -408,18 +438,6 @@ and feature guide.
   The fallback chain is unchanged: a miss still ends at the generated monster sprite. Egress is the same sprite URLs
   as before, now sent by the server instead of the browser.
 - **3.13.2 — HQ Studio previews live.** The Studio docks right, narrower, with one compact row of tabs, and the 3D view behind it frames what you edit left of the panel. **Exterior**: your actual tower (the City's own `hqtower` code) in a live 3D preview that stays pinned at the top while you scroll; it turns slowly (still in Calm), drag to orbit, wheel to zoom, Day/Night, Hide; every option rebuilds it (debounced) and glides the camera to what changed: the roof for crown and roof extras, the street for entrance, sign, flags and grounds, night for the night light. **Lobby / Floors**: the lobby or Mission Control is framed (you're taken there for now if you're elsewhere) and every click shows on it; close without Save and the saved look and your view come back. **Layout**: placing happens on the floor itself, seen from above: a translucent ghost of the item follows the pointer, green where it fits, red where it would overlap or run off the floor; click places, right-click or Delete removes, R turns, drag pans, scroll zooms; the item picker shows a small picture of each piece; the keyboard cursor still works. Also: the empty pill floating over the lobby (the pets prompt, created before it had anything to say) is gone.
-- **Next — Real revs, real exhausts, smooth multiplayer, call search.** Every catalogue vehicle now carries its
-  researched engine (spec.engine: idle, redline, limiter, gear ratios, primary and final drive, rear tyre, voice and an
-  exhaust tone of depth / rasp / crackle / induction / whistle), and `games/hqvehiclephys.js engineFor` turns it into
-  rpm per m/s for each gear. You drive on the real rpm: the clutch slips to a launch rpm, it upshifts at the redline
-  under power (half way up when cruising), downshifts as the revs sag, and stutters on the rev limiter with pops;
-  the rev counter reads to that engine's own limiter with its red from the redline. The voices play that rpm with the
-  vehicle's own exhaust character (games/engine.js engineProfile(.., real)). Other players are drawn smoothly
-  (`games/hqnetsmooth.js`): a buffer of their frames drawn 0.2 s in the past on a curve through them, stamped with
-  the sender's own clock and carrying their velocity, yaw rate and revs (the Arena's new `motion` capability; an older
-  Arena falls back to arrival times re-timed by distance). Simulated at 30 m/s: the largest frame-to-frame lurch went
-  from 487 m/s (and 34 hard snaps in 12 s) to 2.2 m/s. The call list (C) has a search box: brand, model, year, class,
-  body or engine. Needs the Arena release for `motion`; works without it.
 - **3.13.1 — Solid traffic, true shapes; the boombox goes live.** What isn't a box no longer stops you as one:
   the stadium's oval bowl, the cooling tower, stacks and silos block their round outlines (not the square round
   them); you walk between a gantry crane's and the water tower's legs and step into a bus or tram shelter; the air

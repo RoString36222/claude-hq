@@ -548,6 +548,9 @@ function hqNetSend(){
   if(cv){ var UR=/^[A-Za-z0-9_-]{1,64}$/;
     if(UR.test(cv.ci||"")) msg.ci=cv.ci; if(UR.test(cv.cv||"")) msg.cv=cv.cv;
     if(Array.isArray(cv.cg) && cv.cg.length===2 && isFinite(cv.cg[0]) && isFinite(cv.cg[1])) msg.cg=[Math.max(-102400, Math.min(102400, Math.round(cv.cg[0]))), Math.max(-102400, Math.min(102400, Math.round(cv.cg[1])))]; }
+  // "carpool" (HQ 3.15, games/hqdrive.js): riding as a passenger, whose vehicle (pb, a user id) and which seat (ps, 1-3)
+  var pl = hqNetCan("carpool") && HQ3D.inst.poolNet ? HQ3D.inst.poolNet() : null;
+  if(pl && /^[A-Za-z0-9_-]{1,64}$/.test(pl.pb||"") && pl.ps>=1 && pl.ps<=3){ msg.pb=pl.pb; msg.ps=pl.ps|0; }
   // [pets 3.14] "pets": the pets out with you (pt: [species, variant, acc, stage, name] x2), drawn following you
   var pt = hqNetCan("pets") && HQ3D.inst.petsNet ? HQ3D.inst.petsNet() : null;
   if(Array.isArray(pt) && pt.length) msg.pt=pt.slice(0,2);
@@ -557,7 +560,7 @@ function hqNetSend(){
   if(mo){ var cl=function(v,m){ v=Math.round(+v||0); return Math.max(-m, Math.min(m, v)); };
     msg.t=Math.round(performance.now())%1000000000; msg.vx=cl(mo.vx*100, 40000); msg.vz=cl(mo.vz*100, 40000);
     msg.yr=cl(mo.yr*180/Math.PI, 3600); msg.rpm=Math.max(0, Math.min(25000, Math.round(+mo.rpm||0))); }
-  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm].join(","), now=Date.now();
+  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.pb,msg.ps,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm].join(","), now=Date.now();
   if(key===HQNET.last && now-HQNET.sentAt<2000) return;
   HQNET.last=key; HQNET.sentAt=now;
   try { ws.send(JSON.stringify(msg)); } catch(e){}

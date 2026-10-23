@@ -427,8 +427,8 @@ class PetsEngine(unittest.TestCase):
         self.assertEqual(self.o["names"], ["Rex", "Mr Biscuit", "O'Malley", "R2-D2"] + [None]*13)
 
     def test_presence_encoding(self):
-        self.assertEqual(self.o["enc"], [[11, 2, 5, 1, "Frost"], [2, 3, 0, 0, "Waffles"]], "two at most, clamped, no saddle on a corgi")
-        self.assertEqual(self.o["dec"], [["icedragon", 2, 5, 1, "Frost"], ["corgi", 3, 0, 0, "Waffles"]])
+        self.assertEqual(self.o["enc"], [[11, 2, 5, 2, "Frost"], [2, 3, 0, 0, "Waffles"]], "two at most, clamped, no saddle on a corgi")
+        self.assertEqual(self.o["dec"], [["icedragon", 2, 5, 2, "Frost"], ["corgi", 3, 0, 0, "Waffles"]])
         self.assertEqual(self.o["decBad"], 1, "only the well-formed ice dragon")
         self.assertEqual(self.o["decMax"], 2)
 
@@ -494,7 +494,7 @@ class PetsEngine(unittest.TestCase):
     def test_the_runtime_headless(self):
         rt = self.o["rt"]
         self.assertEqual(rt["out"], ["Waffles", "Frost"])
-        self.assertEqual(rt["net"], [[2, 1, 3, 0, "Waffles"], [11, 0, 9, 1, "Frost"]])
+        self.assertEqual(rt["net"], [[2, 1, 3, 0, "Waffles"], [11, 0, 9, 2, "Frost"]])
         self.assertEqual(rt["stats"]["mine"], 2)
         self.assertIn("fetch", rt["cares"])
         self.assertIn("pet", rt["cares"])
@@ -625,7 +625,7 @@ class PetsWiring(unittest.TestCase):
         mig = read("backend", "migrations", "0022_pets.sql")
         self.assertIn("CREATE TABLE IF NOT EXISTS owned_pets", mig)
         self.assertIn("home INTEGER NOT NULL DEFAULT 1 CHECK (home IN (0, 1))", mig)
-        self.assertIn('"convoy", "tuning", "pets", "hqstyle", "motion", "petride"]', read("backend", "src", "protocol.rs"))
+        self.assertIn('"convoy", "tuning", "pets", "hqstyle", "motion", "petride", "carpool"]', read("backend", "src", "protocol.rs"))
         self.assertIn("read_pets(msg.get(\"pt\"))", read("backend", "src", "valley", "hq.rs"))
         self.assertIn(".merge(pets::routes())", read("backend", "src", "main.rs"))
         srv = read("dashboard-rs", "src", "server.rs")

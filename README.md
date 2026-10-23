@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.14.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.15.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -409,6 +409,22 @@ and feature guide.
 
 ## Changelog
 
+- **3.15.0 — Carpooling, pillion riders, and the Suzuki Access 125.** Beside someone driving in the City (stopped or
+  crawling, on your level), E takes the next free seat: "Ride with <name>" for a car, "Hop on behind <name>" for a
+  bicycle, a motorbike or a scooter. They drive and you go where they go, sat in their vehicle on everyone's screen,
+  hands on your lap or round the rider ahead; E gets you out beside it (your own side's door), and you are put off
+  when they get out, leave, or the last seat goes to someone else at the same moment (the lower user id keeps it).
+  A car takes four (a coupe, a hypercar, a supercar and the starter hatchback two), a scooter three, a super sports
+  bike only its rider (a hypersport, a sport bike over 950 cc: no pillion), any other bike two.
+  Players riding with someone are not solid to their driver. New in the dealership: the **Suzuki Access 125**
+  (`bike.scooter.400`, 124 cc single, CVT as one gear), the first scooter, with its own stand-in body (leg shield,
+  floorboard, long seat for three, 10"/12" wheels) and seats for its rider and two behind. Presence carries `pb`
+  (whose vehicle) and `ps` (the seat) only where the Arena lists the new "carpool" capability (backend/src/valley/hq.rs
+  validates both; a bad one drops the frame). Tests: seat counts and the seat race, the scooter's body and seats,
+  the catalogue entry, the presence wiring and the Arena's validation. Also: a car more than 85 % damaged no longer
+  pulls left or right by itself while you drive (the dents, cracked lights and smoke stay; the garage still repairs it).
+
+- **3.14.1 — Dragons and dinosaurs ride from day one.** Every dragon and the sea serpent now comes fully grown from adoption (any affection; the Arena's `pets.rs stage_of` and the page agree), and the big dinosaurs (T-Rex, Triceratops, Brachiosaurus, Stegosaurus) can be ridden straight away: walk up and press E. Affection still unlocks tricks. Needs the Arena release.
 - **3.14.0 — Ride your pets.** A grown dragon (any of the seven), the grown sea serpent or a big dinosaur
   (Triceratops, Brachiosaurus, Stegosaurus, T-Rex, from the grown mark of 400 affection) that is out with you can
   be ridden in the 3D City: beside it, "E  Ride <name>". You sit in a saddle on its back (added when it has none),

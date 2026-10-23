@@ -99,7 +99,8 @@ var SPECIES = [
 ];
 var BY_ID = {}; SPECIES.forEach(function(s, i){ s.index = i; BY_ID[s.id] = s; });
 function speciesOf(id){ return typeof id === "number" ? SPECIES[id] || null : BY_ID[id] || null; }
-function stageOf(sp, aff){ if(!sp || !sp.grows) return 0; aff = +aff || 0; return aff >= STAGE_AT[1] ? 2 : aff >= STAGE_AT[0] ? 1 : 0; }
+// 3.14: dragons and the sea serpent come fully grown from adoption (the Arena's pets.rs stage_of agrees)
+function stageOf(sp, aff){ return sp && sp.grows ? 2 : 0; }
 // tricks a pet knows at this affection (the first always): sit, spin, beg, roll over, and a big one by kind
 var TRICKS = [["sit", 0, "Sit"], ["spin", 20, "Spin"], ["beg", 60, "Beg"], ["roll", 120, "Roll over"], ["big", 250, null]];
 var BIG = {dog: "Backflip", cat: "Backflip", dragon: "Loop the loop", dino: "Mighty roar", serpent: "Corkscrew"};

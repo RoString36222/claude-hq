@@ -150,6 +150,9 @@ struct Person {
     /// Convoys (the "convoy" capability, HQ 3.12): whom they invite (`ci`, a user id), whom they follow (`cv`, a user
     /// id) and, leading one, where they are headed (`cg`, [x, z] in cm). Per frame: a frame without them clears them.
     convoy: Convoy,
+    /// Carpooling (the "carpool" capability, HQ 3.15): riding as a passenger with the driver `pb` (a user id, never
+    /// your own) in seat `ps` (1..=POOL_SEATS; the driver is seat 0). Per frame: a frame without them has you off.
+    pool: Option<(String, u8)>,
     /// Their pets out with them (the "pets" capability, HQ 3.14): up to PETS_MAX [species, variant, acc, stage, name]
     /// (backend/src/pets.rs), drawn following them by everyone else's page. Per frame: a frame without `pt` has none.
     pets: Option<Vec<PetTag>>,
@@ -198,6 +201,7 @@ impl Hq {
                 tune: None,
                 boombox: None,
                 convoy: Convoy::default(),
+                pool: None,
                 pets: None,
                 motion: None,
                 bucket: (POS_BURST, t),
@@ -302,6 +306,8 @@ impl Hq {
         };
         // A convoy: each of ci / cv a user id (never your own), cg two numbers on the map; a bad one drops the frame.
         let Some(convoy) = read_convoy(uid, msg) else { return false };
+        // A passenger seat: pb a user id (never your own) with ps a seat 1..=POOL_SEATS, both or neither.
+        let Some(pool) = read_pool(uid, msg) else { return false };
         // Pets: a bad species, variant, accessory, stage or name drops the whole frame.
         let Some(pets) = read_pets(msg.get("pt")) else { return false };
         // Riding a pet (13): its first pet is the mount, and must be one that carries a rider; none, or a puppy, drops the frame.
@@ -333,6 +339,7 @@ impl Hq {
         p.tune = tune;
         p.boombox = boombox;
         p.convoy = convoy;
+        p.pool = pool;
         p.pets = pets;
         p.motion = motion;
         self.dirty = true;
@@ -416,6 +423,11 @@ impl Hq {
                     if let Some((gx, gz)) = p.convoy.cg {
                         m.insert("cg".into(), json!([gx, gz]));
                     }
+                    // only while they ride with someone ("carpool" capability)
+                    if let Some((pb, ps)) = &p.pool {
+                        m.insert("pb".into(), json!(pb));
+                        m.insert("ps".into(), json!(ps));
+                    }
                     // only while they have pets out ("pets" capability)
                     if let Some(pt) = &p.pets {
                         m.insert("pt".into(), json!(pt.iter().map(|t| json!([t.0, t.1, t.2, t.3, t.4])).collect::<Vec<_>>()));
@@ -497,6 +509,24 @@ fn read_convoy(me: &str, msg: &Value) -> Option<Convoy> {
         }
     };
     Some(Convoy { ci: id("ci")?, cv: id("cv")?, cg })
+}
+
+/// The most passengers a vehicle carries: a scooter's two behind its rider, a car's three.
+const POOL_SEATS: u8 = 3;
+
+/// `pb` and `ps` from a pos frame: Some(the seat, or None when neither is sent), None to drop the whole frame (a
+/// malformed or your own id, a seat out of range, one without the other).
+fn read_pool(me: &str, msg: &Value) -> Option<Option<(String, u8)>> {
+    let absent = |k: &str| matches!(msg.get(k), None | Some(Value::Null));
+    match (absent("pb"), absent("ps")) {
+        (true, true) => Some(None),
+        (false, false) => {
+            let pb = msg.get("pb")?.as_str().filter(|s| uid_ok(s) && *s != me)?;
+            let ps = msg.get("ps")?.as_u64().filter(|n| (1..=POOL_SEATS as u64).contains(n))?;
+            Some(Some((pb.to_string(), ps as u8)))
+        }
+        _ => None,
+    }
 }
 
 /// A pet in presence: species index, variant, accessory bits, growth stage, name.
@@ -777,6 +807,26 @@ mod tests {
         }
         assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
         assert_eq!(p.listing()[0]["cv"], json!("x"), "and kept the convoy as it was");
+    }
+
+    #[test]
+    fn a_passenger_seat_rides_in_the_listing_while_it_is_sent() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "pb": "driver_1", "ps": 2}), 0.1));
+        assert_eq!((p.listing()[0]["pb"].clone(), p.listing()[0]["ps"].clone()), (json!("driver_1"), json!(2)));
+        // a frame without them has you off
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0}), 0.2));
+        assert!(p.listing()[0].get("pb").is_none() && p.listing()[0].get("ps").is_none());
+        // a bad id, your own id, a seat out of range, one without the other: the whole frame is dropped
+        for bad in [json!({"pb": "", "ps": 1}), json!({"pb": "a b", "ps": 1}), json!({"pb": "u", "ps": 1}), json!({"pb": 7, "ps": 1}),
+                    json!({"pb": "d", "ps": 0}), json!({"pb": "d", "ps": 4}), json!({"pb": "d", "ps": 1.5}), json!({"pb": "d", "ps": "1"}),
+                    json!({"pb": "d"}), json!({"ps": 1})] {
+            let mut m = json!({"w": "city3d", "x": 900, "z": 0, "r": 0, "a": 0});
+            m.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+            assert!(!p.pos("u", &m, 2.0), "{bad}");
+        }
+        assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
     }
 
     #[test]

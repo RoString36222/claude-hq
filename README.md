@@ -424,11 +424,11 @@ and feature guide.
     same world; each page knocks back only its own player (games/hqgrenade.js).
   - **A tank for four:** <kbd>K</kbd> rolls your tank up beside you (<kbd>K</kbd> again sends it away), <kbd>E</kbd>
     beside it and you drive: 40 km/h, slow to pull away, <kbd>A</kbd> / <kbd>D</kbd> turn it on the spot, solid to
-    everyone. Its three other seats are carpool seats: while you drive, others climb in with <kbd>E</kbd>. The first
-    in is the gunner: the turret follows their camera and <kbd>F</kbd> or a captured click fires a shell (it goes off
-    on whatever it hits, an 8 m blast); the next two ride on the back. Blasts never move a tank or anyone in it.
-    The "tank" capability adds a = 14, shells (grenade kind 1) and the gunner's aim `ta` beside their carpool seat
-    (games/hqtank.js). An original stand-in tank: hull, treads on six road wheels a side, a turret, a long barrel.
+    everyone. The turret follows your camera and <kbd>F</kbd> or a captured click fires a shell (it goes off on
+    whatever it hits, an 8 m blast). Its three other seats are carpool seats: while you drive, others climb in with
+    <kbd>E</kbd>; the first in becomes the gunner and takes the turret over, the next two ride on the back. Blasts never move a tank or anyone in it.
+    The "tank" capability adds a = 14, shells (grenade kind 1) and the turret's aim `ta`, sent by whoever has
+    the turret: the gunner beside their carpool seat, or the driver (games/hqtank.js). An original stand-in tank: hull, treads on six road wheels a side, a turret, a long barrel.
 
   The new presence fields are numbers and the user ids carpooling already sends; backend/src/valley/hq.rs checks
   every one, and relays them only when sent. Needs the Arena redeployed.

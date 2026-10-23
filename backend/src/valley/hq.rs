@@ -168,9 +168,9 @@ struct Person {
     /// age at most GN_AGE_MAX ms), so a listener that missed a frame still sees it; listeners dedupe on (uid, s) and fly
     /// the arc themselves, the Arena only checks and relays. Per frame: a frame without `gn` has none.
     gn: Option<Vec<Shot>>,
-    /// A tank's gunner's turret aim (`ta`, the "tank" capability, HQ 3.16): yaw (relative to the hull) and pitch, whole
-    /// degrees. Kept only with a carpool seat (`pb` / `ps`) in the same frame: the tank's seats are carpool seats, and only
-    /// someone in one aims its turret. Per frame: a frame without `ta` has none.
+    /// A tank's turret aim (`ta`, the "tank" capability, HQ 3.16): yaw (relative to the hull) and pitch, whole degrees.
+    /// Kept only from its gunner, in a carpool seat (`pb` / `ps`), or its driver (a = 14, aiming while nobody is in that
+    /// seat): nobody else aims a turret. Per frame: a frame without `ta` has none.
     ta: Option<(i64, i64)>,
     /// (tokens, when) -- Python's `[POS_BURST, t]` list.
     bucket: (f64, f64),
@@ -345,9 +345,9 @@ impl Hq {
         // A grenade launcher: `gl` 0 / 1 (absent or null is 0) and `gn` its recent shots; a bad one drops the whole frame.
         let Some(gl) = small_int(msg.get("gl").filter(|v| !v.is_null()), 1) else { return false };
         let Some(gn) = read_shots(msg.get("gn")) else { return false };
-        // [3.16] a tank's gunner's aim (`ta`, only with a carpool seat); a bad one drops the whole frame.
+        // [3.16] a tank's turret aim (`ta`, only from a carpool seat or its driver, a = 14); a bad one drops the whole frame.
         let Some(ta) = read_aim(msg.get("ta")) else { return false };
-        let ta = ta.filter(|_| pool.is_some());
+        let ta = ta.filter(|_| pool.is_some() || a.as_f64() == Some(14.0));
         p.w = w.to_string();
         p.x = super::py_trunc(x); // Python's int(x): toward zero
         p.z = super::py_trunc(z);
@@ -1064,9 +1064,11 @@ mod tests {
     fn a_tank_is_driven_at_a_14_and_its_gunner_aims_from_a_carpool_seat() {
         let mut p = Hq::default();
         p.enter("u", json!({"handle": "u"}), 0.0);
-        // driving a tank is a = 14, nothing more: its seats are carpool seats
+        // driving a tank is a = 14 (its seats are carpool seats), and its driver aims while nobody is its gunner
         assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 14}), 0.1));
         assert_eq!(p.listing()[0].to_string(), r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":14}"#);
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 14, "ta": [90, 12]}), 0.15));
+        assert_eq!(p.listing()[0].to_string(), r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":14,"ta":[90,12]}"#);
         // its gunner: a carpool seat and the aim, at the inclusive bounds; relayed after everything else
         assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "pb": "drv-1", "ps": 1, "ta": [-180, 60]}), 0.2));
         assert_eq!(p.listing()[0].to_string(), r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":0,"pb":"drv-1","ps":1,"ta":[-180,60]}"#);
@@ -1074,7 +1076,7 @@ mod tests {
                                    "gn": [[12, 300, 250, -40, 3800, 300, -1200, 1, 0]]}), 0.3));
         assert_eq!(p.listing()[0].to_string(),
                    r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":0,"pb":"drv-1","ps":1,"gl":1,"gn":[[12,300,250,-40,3800,300,-1200,1,0]],"ta":[180,-15]}"#);
-        // an aim with no seat says nothing (only someone in a tank aims its turret)
+        // an aim from neither a seat nor a driver says nothing (only someone in a tank aims its turret)
         assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "ta": [10, 5]}), 0.4));
         assert!(p.listing()[0].get("ta").is_none());
         // a frame without it, or a null, clears it

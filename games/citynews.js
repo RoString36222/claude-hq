@@ -15,7 +15,10 @@
  *   alerts   alerts(ms) -> [{x, z, kind}] (m) for the minimap (games/hqminimap.js frame({alerts})): the active
  *            incidents that are not done
  *
- * HQV.cityNews.create(stage, D, {say(text), me() -> {x, z}, tzMin?}) -> {update(ms), alerts(ms), destroy(), el}
+ * HQV.cityNews.create(stage, D, {say(text), me() -> {x, z}, tzMin?, enabled?() -> bool}) -> {update(ms), alerts(ms), destroy(), el}
+ *   enabled: the player's "City news ticker" setting (games/hqhud.js `news`, on by default; read from the HUD's
+ *   saved settings when not given). Off: no ticker, no nearby pop-ups, no announcements; alerts() (the minimap's
+ *   markers) still answer.
  *   D: D.active(ms) -> [Ev], D.events(fromMs, toMs) -> [Ev], D.phase(ev, ms), D.at(ms) (all optional, guarded)
  *   Ev: {id, kind, start, end, x, z (m), street, severity, label, units: [{kind}]}
  *   tzMin: the city's offset from UTC in minutes for "19:00" (default D.tzMin, else 0)
@@ -152,6 +155,14 @@ function calmNow(doc){
   } catch(e){ return false; }
 }
 
+// the "City news ticker" setting, from the HUD's saved settings (on unless switched off)
+function newsSetting(){
+  try {
+    var raw = (typeof localStorage !== "undefined") ? localStorage.getItem("hq_cam") : null;
+    var H = HQV.hqhud, s = H && H.loadSettings ? H.loadSettings(raw) : (raw ? JSON.parse(raw) : {});
+    return !(s && s.news === false);
+  } catch(e){ return true; }
+}
 function create(stage, D, o){
   o = o || {};
   var doc = window.document || (typeof document !== "undefined" ? document : null);
@@ -161,6 +172,7 @@ function create(stage, D, o){
   var alive = true, root = null, line = null, live = null;
   var act = [], actAt = -Infinity, ahead = [], aheadAt = -Infinity, list = [], shown = "";
   var known = {}, lastAnn = -Infinity, pendAnn = null, lastToast = -Infinity;
+  var enabled = typeof o.enabled === "function" ? o.enabled : newsSetting, onAt = -Infinity, on = true;
 
   if(doc && stage){
     root = doc.createElement("div");
@@ -187,6 +199,14 @@ function create(stage, D, o){
   function update(ms){
     if(!alive) return;
     ms = num(ms, 0);
+    if(ms - onAt >= 1000 || ms < onAt){ onAt = ms; try { on = enabled() !== false; } catch(e){ on = true; } }
+    if(!on){                                         // switched off: nothing shows, nothing pops up or is spoken
+      if(root && !root.hidden){ root.hidden = true; shown = ""; }
+      pendAnn = null;
+      list = headlines(D, ms, tzMin, act, ahead);
+      for(var k = 0; k < list.length; k++) if(list[k].ev) known[list[k].id] = 1;   // nothing stale pops up when it is back on
+      return;
+    }
     refresh(ms);
     list = headlines(D, ms, tzMin, act, ahead);
     // new incidents: a toast when near you and fresh, else a (rate-limited) announcement

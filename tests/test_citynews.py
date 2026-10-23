@@ -122,6 +122,16 @@ out.farToast = C.said.length;
 // no me() (not in the City yet): no toast, no throw
 const Dm = mount([near1], null); Dm.nw.update(T0); out.noMe = Dm.said.length;
 
+// switched off (the "City news ticker" setting): no ticker, no toast, no announcement; alerts still answer;
+// switched back on, nothing that started meanwhile pops up
+let newsOn = false;
+const Off = mount([near1], {x: 0, z: 0}, {enabled: () => newsOn});
+for(let t = T0; t <= T0 + 3e3; t += 250) Off.nw.update(t);
+out.off = {said: Off.said.length, hidden: Off.root.hidden, text: Off.line.textContent, live: Off.live.writes.length, alerts: Off.nw.alerts(T0).length};
+newsOn = true;
+for(let t = T0 + 3e3; t <= T0 + 6e3; t += 250) Off.nw.update(t);
+out.backOn = {said: Off.said.length, hidden: Off.root.hidden};
+
 // alerts: incidents only, not done, in m
 phases = {x1: 'done'};
 const E = mount([fire, rob, crash, match, market, patrol], {x: 0, z: 0});
@@ -206,6 +216,10 @@ class CityNewsTest(unittest.TestCase):
         self.assertTrue(said[1].startswith("Nearby: \U0001F691 Medical emergency on Oak Lane"))
         self.assertEqual(self.o["farToast"], 0)
         self.assertEqual(self.o["noMe"], 0)
+
+    def test_news_can_be_switched_off(self):
+        self.assertEqual(self.o["off"], {"said": 0, "hidden": True, "text": "", "live": 0, "alerts": 1})
+        self.assertEqual(self.o["backOn"], {"said": 0, "hidden": False}, "back on: the ticker shows, no stale pop-up")
 
     def test_alerts(self):
         al = self.o["alerts"]

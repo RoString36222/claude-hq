@@ -79,6 +79,14 @@ paired), published maps and work signals (off by default) add a few listed field
   wing, sport / quad / titanium exhausts (bikes: slip-on, under-seat, end can; each changes the engine note) and a
   plate of your own (8 characters; your HQ's name by default). Drag the preview to orbit, the wheel or **+ / −** to
   zoom. Free; your owned vehicles' tunes live in the Arena (others see them), the starters' in this browser.
+- **Stunts across every city.** Each city reads its own map and builds a set of giant stunts on its open land
+  (**Go to → Stunt**): two **Sky Cannons** that fire you 400-650 m over the rooftops, 100 m+ up and 9-10 s in
+  the air through three rings of fire onto a landing ramp; **Big Air** (about 200 m); a **Mega Loop** (26 m
+  tall, with a corkscrew); a **River Leap** square across the river; and on an island, a **Sea Launch** out over
+  the sea to a splashdown. Drive any car, motorbike or bicycle onto the green boost pad: it sets the exact speed
+  that lands the jump (S backs out). In the air **W/S** flip, **A/D** spin, **Shift+A/D** barrel roll; let go
+  before you touch down to land square, or bail. Scores count air time, height, distance, tricks and rings, with
+  your best kept per stunt. Calm mode turns the pads and flying off.
 - **The Commons air base.** Hangars, a radar, an attack helicopter, an aircraft carrier offshore and
   fighter jets flying over.
 - **A real airport.** An offshore airfield for the Commons: a 1.6 km runway with full markings and lights,
@@ -420,6 +428,28 @@ and feature guide.
   others see you on foot with your pet beside you. **Needs an Arena deploy** for others to see riders. Privacy:
   nothing new leaves the machine (the same pet numbers and name as 3.13's `pt`). Third-party assets: none new.
 
+- **3.13.5 — Your pets stay with you, your lobby shows them, and the front door goes to the street.** Fixes: E
+  in your lobby went to the nearest pet following you (always within 2 m) before any door, lift or ride, so using
+  the front door said "Leave <name> here" and your pets were saved as staying home. Now E is a door's, a lift's or a
+  ride's whenever one is there, and "Leave <name> here" / "Take <name> out" need you standing still, close (1.5 m to
+  leave one, 2.2 m to take one out) and facing it. After a refresh the 3D HQ was often up before the Arena's
+  capabilities, so your pets loaded from this browser's empty list and stayed gone (nobody following, nobody in the
+  lobby) until you opened the Pets panel; they now load from the Arena as soon as it answers, and your stay-home
+  pets appear in the lobby then. Out of your lobby's front door you came out on your roof: the 3.13.4 helideck
+  overhangs your front door, and arriving counted as "above everything"; arriving now stands you at the spawn's own
+  level (the street, or the deck for the roof lift). Tests: E priority (door before pet), facing and distance, lobby
+  pets after a late list, the Arena reload, front gate to the street, lobby door destinations and triggers.
+
+- **Next — Stunts across every city** (`games/hqstunts.js`, tests/test_hqstunts.py). Placed per city from its
+  own layout, deterministically (every client builds the same set): a 4 m free-land grid of everything that is not
+  road, river, sea, a site, an HQ or a tower district; building lots elsewhere may be cleared (at most 8 a stunt,
+  retyped `stunt`, restored when the doc is cached). Two Sky Cannons (the longest 200-640 m flights whose path
+  clears every roof by 8 m, at the lowest launch angle that does), Big Air, a Mega Loop, up to three River Leaps
+  and a Sea Launch. Each pad gives the exact launch speed; each landing ramp follows its flight just under it and
+  meets it at the target, so a touch-down is always along the ramp. Flights are the exact parabola (the same at any
+  frame rate). Placement costs 0.1-0.3 s at City load; the stunts draw in 35-41 calls, hidden past 1.1 km.
+  Measured headless on the Commons: both cannons 640-680 m, 104-119 m high, 9-10 s, through all three rings;
+  Big Air 215 m; River Leaps 102 and 135 m; the loop; a 413 m splashdown.
 - **3.13.4 — A real helipad on your HQ, with your helicopter on it.** Every HQ tower's roof now carries a helideck:
   a steel deck raised 3 m over the top roof on legs and struts, cantilevered past it, a 9 m pad (7.5 m on the
   smallest lots: the pad stays over the lot) in its middle with a walkway and a low glass rail round it, so a

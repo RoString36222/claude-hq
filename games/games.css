@@ -821,6 +821,23 @@ html.hq-calm .bowl-flash.on{opacity:1}
   .vg-rally-slab{min-width:140px}
   .vg-rally-stand{display:none}
 }
+/* ==== Grand Prix (games/gp.js, HQ 3.17): the rally's HUD plus a live delta, sector flashes and a circuit map ==== */
+.vg-gp-delta{font:800 13px/1.2 var(--font);font-variant-numeric:tabular-nums;color:var(--muted);min-height:16px}
+.vg-gp-delta.good{color:var(--good)}
+.vg-gp-delta.bad{color:var(--need)}
+.vg-gp-split.good{background:var(--good)}
+.vg-gp-split.best{background:var(--gold);color:var(--ink)}
+.vg-gp-split.bad{background:var(--need)}
+.vg-gp-map{position:absolute;right:8px;top:8px;width:150px;height:150px;pointer-events:none;border-radius:var(--radius-sm)}
+.vg-gp-livery{display:inline-flex;flex-direction:column;flex:none;width:22px;height:22px;border-radius:4px;overflow:hidden;border:1px solid var(--line);background:var(--panel2)}
+.vg-gp-livery i{flex:1}
+.vg-gp-laps{gap:6px;align-items:center}
+.vg-gp-circuit .vg-card-ic{font:800 15px var(--font);font-variant-numeric:tabular-nums}
+.vg-gp-deleted td{color:var(--muted);text-decoration:line-through}
+.vg-gp-credit{font-size:11px}
+@media (max-width:640px){
+  .vg-gp-map{width:96px;height:96px}
+}
 /* ==== Arena City driving HUD (games/hq3d.js driveHud): while in a car or on a bike ====
    Kart Racing's speed + rev dials (drawn from the theme tokens), a "Powerslide" chip while
    sliding, and the keys. In Calm / reduced motion the moving dials give way to a plain readout. */
@@ -1099,3 +1116,34 @@ html.hq-calm .hq3d-drive-read{display:block}
 .hqpets-prompt{position:absolute;z-index:6;left:50%;bottom:118px;transform:translateX(-50%);padding:6px 14px;border-radius:999px;font-weight:800;font-size:13px;
   background:var(--panel);color:var(--ink);border:1px solid var(--line);box-shadow:var(--shadow);pointer-events:none;white-space:nowrap}
 .hqpets-prompt[hidden],.hqpets-prompt:empty{display:none}
+/* ==== [3.17] the Grand Prix Circuit's panel (games/hqgpvenue.js, E under its arch in the 3D City) ==== */
+.hqgpv{position:absolute;z-index:7;top:12px;left:50%;transform:translateX(-50%);width:min(860px,calc(100% - 24px));max-height:calc(100% - 24px);
+  display:grid;grid-template-rows:auto auto 1fr;color:var(--ink);background:color-mix(in srgb,var(--panel) 96%,transparent);
+  border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-lg);font-size:13px;overflow:hidden}
+.hqgpv[hidden]{display:none}
+.hqgpv-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.hqgpv-head h3{margin:0;font-size:15px;font-weight:800}
+.hqgpv-x{border:0;background:none;color:var(--muted);font-size:16px;cursor:pointer;padding:4px 8px;border-radius:8px}
+.hqgpv-x:hover{color:var(--ink);background:var(--line)}
+.hqgpv-sub{margin:8px 14px 0;font-size:12px;color:var(--muted)}
+.hqgpv-body{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:12px;padding:10px 14px 14px;min-height:0;overflow:hidden}
+.hqgpv-list{overflow:auto;min-height:0;max-height:min(60vh,520px);border:1px solid var(--line);border-radius:10px;padding:4px}
+.hqgpv-sec{position:sticky;top:-4px;background:var(--panel);font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:6px 8px 4px}
+.hqgpv-row{display:grid;gap:1px;padding:6px 8px;border-radius:8px;cursor:pointer}
+.hqgpv-row span{font-size:11px;color:var(--muted)}
+.hqgpv-row:hover{background:color-mix(in srgb,var(--panel) 80%,var(--bg))}
+.hqgpv-row[aria-selected="true"]{background:color-mix(in srgb,var(--brand) 18%,var(--panel));box-shadow:inset 3px 0 0 var(--brand)}
+.hqgpv-side{display:grid;align-content:start;gap:8px;min-width:0}
+.hqgpv-side h4{margin:0;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.hqgpv-cars{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:6px}
+.hqgpv-car{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:10px;border:1px solid var(--line);background:none;color:var(--ink);font:inherit;font-size:12px;font-weight:600;cursor:pointer;text-align:left}
+.hqgpv-car[aria-checked="true"]{border-color:var(--brand);box-shadow:0 0 0 1px var(--brand)}
+.hqgpv-sw{flex:none;width:26px;height:14px;border-radius:4px;border:1px solid var(--line)}
+.hqgpv-chosen{margin:4px 0 0;font-weight:700}
+.hqgpv-go{justify-self:start;padding:8px 22px;border:0;border-radius:999px;background:var(--brand);color:var(--on-brand);font-weight:800;cursor:pointer}
+.hqgpv-go:disabled{opacity:.5;cursor:default}
+.hqgpv-status{min-height:16px;margin:0;font-size:12px}
+.hqgpv-muted{color:var(--muted);padding:8px}
+.hqgpv-x:focus-visible,.hqgpv-list:focus-visible,.hqgpv-row:focus-visible,.hqgpv-car:focus-visible,.hqgpv-go:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+@container hq3d (max-width: 760px){ .hqgpv-body{grid-template-columns:1fr;overflow:auto} .hqgpv-list{max-height:40vh} }
+/* ==== end of the Grand Prix Circuit ==== */

@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.16.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.17.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -409,6 +409,20 @@ and feature guide.
 
 ## Changelog
 
+- **3.17.0 — Grand Prix: every F1 circuit, and the 2026 grid in the dealership.** A new Valley game, **Grand Prix**
+  (🏎️), puts you on full-size F1 circuits: the 23 rounds of the 2026 calendar and 17 classics (Imola, Istanbul, Kyalami,
+  Watkins Glen…), each its own world at true length. They are built from the real centre lines of
+  [bacinger/f1-circuits](https://github.com/bacinger/f1-circuits) (MIT, shipped as `games/gp/LICENSE-f1-circuits.md`;
+  converted by `cargo run --bin f1circuits`). The game is a time trial on Valley Rally's car physics: laps, three
+  sectors, the delta to your best, a ghost of your best lap and a minimap. In the City, a **Grand Prix Circuit** (Go to
+  🏁, from tier 2) has a pit building, a start gantry and a grandstand. E under its arch picks a circuit and a car and
+  takes you there. The dealership adds a **Formula 1** class with all 11 teams of 2026 (McLaren, Ferrari, Red Bull
+  Racing, Mercedes-AMG, Aston Martin, Alpine, Williams, Racing Bulls, Haas, Audi, Cadillac), each in its team
+  colours. The cars are free like the rest, and drivable everywhere: at the circuit at 345 km/h, and on the city
+  streets at the city's 300 km/h cap. A class may now list more than 4 vehicles through its own `slots` (the F1 grid
+  lists 11; Arena: `backend/src/vehicles.rs`). The vehicle catalogue test moved from Python to Rust
+  (`dashboard-rs/tests/catalogue.rs`). Privacy: Grand Prix is solo and sends nothing; the circuit data is bundled, never
+  fetched at runtime. Team names live only in the catalogue; there are no logos, sponsor marks or driver names.
 - **3.16.1 — Fireworks that crackle.** The show over the park fires about half as many shells (around 40 a show
   instead of 90), with room between bursts and a shorter, sparser finale. Each burst is now a soft thump followed by
   the stars crackling as they fall, a long sizzle for a willow and a thick crackle for a chrysanthemum or a strobe,

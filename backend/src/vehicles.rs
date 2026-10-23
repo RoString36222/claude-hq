@@ -18,8 +18,9 @@
 //! catalogue, so buying is claiming. Prices and level gates are data: set them in the
 //! catalogue and these checks apply unchanged (the tests run them on fixtures).
 //!
-//! Buying: only a listed vehicle (slot 1 to 4) of a class that is on sale (1 to 4
-//! listed vehicles, HQ 3.9); `paint` is an index into its paints. The class's `minLevel` is checked
+//! Buying: only a listed vehicle (slot 1 to 4, or to the class's own `slots`: the Formula 1
+//! grid lists 11, HQ 3.17) of a class that is on sale (1 to that many listed vehicles,
+//! HQ 3.9); `paint` is an index into its paints. The class's `minLevel` is checked
 //! against the caller's HQ level (cosmetics::hq_level, the level the Trainer card
 //! shows). Paid in Poke Coins from poke_balances in the same transaction as the
 //! owned_vehicles row, which records the price (poke_ledger's op CHECK has no
@@ -28,7 +29,7 @@
 //! [`MAX_OWNED`]: room for the whole catalogue.
 //!
 //! Errors: 422 a bad body; 404 an unknown vehicle (or not yours, for park); 409 not
-//! on sale (a starter, a reserve, a class listing more than 4) or the garage is
+//! on sale (a starter, a reserve, a class listing more than its slots) or the garage is
 //! full; 403 the class needs a higher level; 402 not enough Poke Coins.
 //!
 //! PRIVACY: catalogue ids, paint indexes, prices, times and world coordinates only.
@@ -50,7 +51,9 @@ use crate::cities::{self, Refuse};
 /// Most vehicles one player may own.
 pub const MAX_OWNED: i64 = 64;
 /// The most vehicles a class lists (slots 1 to 4, HQ 3.9); a class is on sale with 1 to 4.
+/// A class's `slots` raises that, up to [`SLOTS_CAP`] (the Formula 1 grid's 11, HQ 3.17).
 const MAX_SLOTS: usize = 4;
+const SLOTS_CAP: usize = 12;
 /// |x|, |z| a parked vehicle may stand at (m): every world fits well inside.
 const MAX_COORD: f64 = 20_000.0;
 
@@ -72,10 +75,20 @@ pub(crate) fn parse_catalogue(src: &str) -> HashMap<String, Model> {
         .flatten()
         .filter_map(|c| Some((c["id"].as_str()?, c["minLevel"].as_i64().unwrap_or(0))))
         .collect();
-    let in_slot = |s: &Value| s.as_i64().is_some_and(|n| (1..=MAX_SLOTS as i64).contains(&n));
+    let max_slots: HashMap<&str, usize> = v["classes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|c| Some((c["id"].as_str()?, (c["slots"].as_u64()? as usize).clamp(MAX_SLOTS, SLOTS_CAP))))
+        .collect();
+    let max_of = |class: &str| *max_slots.get(class).unwrap_or(&MAX_SLOTS);
+    let in_slot = |m: &Value| {
+        let max = max_of(m["class"].as_str().unwrap_or("")) as i64;
+        m["slot"].as_i64().is_some_and(|n| (1..=max).contains(&n))
+    };
     let mut slots: HashMap<&str, usize> = HashMap::new();
     for m in v["vehicles"].as_array().into_iter().flatten() {
-        if in_slot(&m["slot"]) {
+        if in_slot(m) {
             *slots.entry(m["class"].as_str().unwrap_or("")).or_default() += 1;
         }
     }
@@ -88,8 +101,8 @@ pub(crate) fn parse_catalogue(src: &str) -> HashMap<String, Model> {
             Some((
                 m["id"].as_str()?.to_string(),
                 Model {
-                    on_sale: in_slot(&m["slot"])
-                        && slots.get(class.as_str()).is_some_and(|n| (1..=MAX_SLOTS).contains(n)),
+                    on_sale: in_slot(m)
+                        && slots.get(class.as_str()).is_some_and(|n| (1..=max_of(&class)).contains(n)),
                     price: m["price"].as_i64().unwrap_or(0),
                     min_level: *min_level.get(class.as_str()).unwrap_or(&0),
                     paints: m["paints"].as_array().map_or(0, Vec::len),
@@ -456,7 +469,8 @@ mod tests {
 
     /// Two classes: one sold at 1000 coins from level 1, one at 5000 from level 10.
     const FIXTURE: &str = r#"{"classes": [
-        {"id": "bike.naked.400", "minLevel": 1}, {"id": "bike.naked.950", "minLevel": 10}, {"id": "car.sedan.5000", "minLevel": 1}],
+        {"id": "bike.naked.400", "minLevel": 1}, {"id": "bike.naked.950", "minLevel": 10}, {"id": "car.sedan.5000", "minLevel": 1},
+        {"id": "car.formula.2000", "minLevel": 0, "slots": 6}],
       "vehicles": [
         {"id": "small-a", "class": "bike.naked.400", "slot": 1, "price": 1000, "paints": [{}, {}, {}, {}]},
         {"id": "small-b", "class": "bike.naked.400", "slot": 2, "price": 900, "paints": [{}]},
@@ -468,6 +482,9 @@ mod tests {
         {"id": "p3", "class": "car.suv.5000", "slot": 3, "price": 0, "paints": [{}]},
         {"id": "p4", "class": "car.suv.5000", "slot": 4, "price": 0, "paints": [{}]},
         {"id": "p5", "class": "car.suv.5000", "slot": 5, "price": 0, "paints": [{}]},
+        {"id": "f5", "class": "car.formula.2000", "slot": 5, "price": 0, "paints": [{}]},
+        {"id": "f6", "class": "car.formula.2000", "slot": 6, "price": 0, "paints": [{}]},
+        {"id": "f7", "class": "car.formula.2000", "slot": 7, "price": 0, "paints": [{}]},
         {"id": "spare", "class": "bike.naked.400", "slot": "reserve", "price": 100, "paints": [{}]},
         {"id": "starter-x", "class": "starter", "slot": "starter", "price": 0, "paints": [{}]}]}"#;
 
@@ -481,6 +498,8 @@ mod tests {
         assert!(c["lonely"].on_sale, "a class listing one vehicle is on sale (3.9)");
         assert!(["p1", "p2", "p3", "p4"].iter().all(|k| c[*k].on_sale), "slots 1 to 4 are listed");
         assert!(!c["p5"].on_sale, "there is no slot 5");
+        assert!(c["f5"].on_sale && c["f6"].on_sale, "a class with slots: 6 lists slots 5 and 6 (3.17)");
+        assert!(!c["f7"].on_sale, "but not past its slots");
         assert_eq!(c["mid-a"].min_level, 10);
     }
 
@@ -493,6 +512,13 @@ mod tests {
             assert!(m.paints > 0, "{id}");
         }
         assert!(!c["bugatti-veyron"].on_sale && !c["starter-car"].on_sale);
+    }
+
+    #[test]
+    fn the_formula_one_grid_is_on_sale() {
+        let grid: Vec<_> = CATALOGUE.iter().filter(|(_, m)| m.class == "car.formula.2000").collect();
+        assert_eq!(grid.len(), 11, "the 2026 grid");
+        assert!(grid.iter().all(|(_, m)| m.on_sale && m.paints >= 4), "all 11 listed (slots 1 to 11)");
     }
 
     #[test]

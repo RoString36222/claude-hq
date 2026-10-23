@@ -1,7 +1,7 @@
 /* Claude HQ: stand-in 3D bodies for the vehicle catalogue (HQV.hqVehicleModels), docs/plans/dealership-spec.md.
  *
  * Every catalogue vehicle drives from the start: until its real glTF model is imported, it gets a body built
- * here from its kind and type (car: hatch, sedan, coupe, suv, hyper, an electric sedan; bike: naked, sport,
+ * here from its kind and type (car: hatch, sedan, coupe, suv, hyper, an electric sedan, [3.17] a Formula 1 car; bike: naked, sport,
  * adventure) from its real size (drawn at SCALE, below), with cheap brand cues (BMW kidneys and angel eyes, the
  * Bugatti horseshoe, C-line and quad LEDs, KTM's orange trellis and split headlight, the GS beak and X light) and
  * the starters' level of detail (3.5.5): a car's round-shouldered tyres, alloys, discs and calipers, shut lines,
@@ -68,6 +68,7 @@ var DIMS = {
   "car.hyper":  {lengthM: 4.54, widthM: 2.04, heightM: 1.21, wheelbaseM: 2.71},
   "car.super":  {lengthM: 4.70, widthM: 2.00, heightM: 1.20, wheelbaseM: 2.70},
   "car.ev":     {lengthM: 4.78, widthM: 1.85, heightM: 1.45, wheelbaseM: 2.86},
+  "car.formula": {lengthM: 5.30, widthM: 1.90, heightM: 0.95, wheelbaseM: 3.40},
   "bike.naked": {lengthM: 2.05, widthM: 0.84, heightM: 1.20, wheelbaseM: 1.40},
   "bike.sport": {lengthM: 2.07, widthM: 0.74, heightM: 1.15, wheelbaseM: 1.44},
   "bike.adventure": {lengthM: 2.21, widthM: 0.95, heightM: 1.45, wheelbaseM: 1.52},
@@ -89,7 +90,9 @@ var CAR = {
   // [3.9] a mid-engined supercar: a wedge (a low sharp nose, the windscreen's foot just behind the front axle, a long
   // rake), the cabin forward, an engine cover sloping from the roof to the tail
   super: {R: 0.35, gc: 0.10, belt: 0.60, nose: 0.36, tail: 0.68, cowl: 0.10, ws: 1.05, roofEnd: 0.75, glassEnd: -0.55, seat: 0.18, fo: 0.42},
-  ev:    {R: 0.35, gc: 0.13, belt: 0.62, nose: 0.48, tail: 0.63, cowl: 0.30, ws: 0.74, roofEnd: 0.12, glassEnd: -0.45, seat: 0.27, fo: 0.46}
+  ev:    {R: 0.35, gc: 0.13, belt: 0.62, nose: 0.48, tail: 0.63, cowl: 0.30, ws: 0.74, roofEnd: 0.12, glassEnd: -0.45, seat: 0.27, fo: 0.46},
+  // [3.17] an open-wheel single-seater (buildFormula draws it; these only keep styleOf from calling it a sedan)
+  formula: {R: 0.36, gc: 0.05, belt: 0.6, nose: 0.3, tail: 0.5, cowl: 0.42, ws: 0.3, roofEnd: 0, glassEnd: 0, seat: 0.15, fo: 0.58}
 };
 // bikes: wheel radii (rear, front), the steering head's height, the seat's height, bars, lean in a bend
 var BIKE = {
@@ -858,6 +861,94 @@ function buildCar(T, entry, st, d, G){
   return {g: root, meta: {kind: "car", R: R, radii: [R, R, R, R], lean: mid ? -0.04 : -0.08, riderK: riderK, plates: plates}};
 }
 
+/* ---------- [3.17] a Formula 1 car (docs/plans/grand-prix-spec.md) ----------
+   An open-wheeler at the catalogue's size: the nose and its two-element front wing, the monocoque with the cockpit, the
+   halo and the airbox over the driver's head, sidepods, the engine cover and its fin, the rear wing on a pylon with its
+   flap and endplates, the floor, wishbones, and exposed wheels on low-profile slicks. The chosen paint is the body; the
+   team livery's accent and trim (entry.livery) are baked into the trim's vertex colours, so every team's car shares
+   nothing but its shape. The driver sits in the middle, low, the head in the open; no plates, no glass. The Tuning shop's
+   geometry (rims, wings, two-tone) does not apply: an F1 car keeps its own aero. */
+// an F1 wheel: a slick (no grooves) with rounded shoulders, the sidewall band, a dark wheel cover over five spokes
+function f1Wheel(B, holder, name, R, tw, side, rimCol){
+  var T = B.T, w = B.node(holder, name), sh = Math.min(0.06, tw*0.18), ox = side*(tw/2 + 0.003);
+  B.add(w, "wheel", new T.CylinderGeometry(R, R, tw - 2*sh, 20, 1, true), COL.tyre, 0, 0, 0, 0, 0, PI/2);
+  [1, -1].forEach(function(s){ var t = new T.TorusGeometry(R - sh, sh, 3, 20); t.rotateY(PI/2); B.add(w, "wheel", t, COL.tyre, s*(tw/2 - sh), 0, 0); });
+  B.t("tyre").ring(w, "wheel", 0xffffff, R*0.64, R - sh*0.9, 24, side*(tw/2 + 0.002), side);   // the sidewall's band
+  B.add(w, "wheel", new T.CircleGeometry(R*0.62, 16), rimCol, ox, 0, 0, 0, side*PI/2, 0);           // the wheel cover
+  B.add(w, "wheel", new T.CircleGeometry(R*0.62, 16), COL.black, -ox, 0, 0, 0, -side*PI/2, 0);     // the inside
+  for(var k = 0; k < 5; k++){ var a = k/5*PI*2; B.box(w, "wheel", COL.dark, 0.018, R*0.5, 0.02, ox + side*0.004, Math.cos(a)*R*0.27, Math.sin(a)*R*0.27, a, 0, 0); }
+  B.add(w, "wheel", new T.CylinderGeometry(0.05, 0.05, 0.03, 10), COL.alu, ox + side*0.01, 0, 0, 0, 0, PI/2);   // the centre nut
+  return w;
+}
+function buildFormula(T, entry, st, d){
+  var B = new Builder(T), root = new T.Group(), body = B.node(root, "body");
+  var L = d.lengthM, W = d.widthM, H = d.heightM, WB = d.wheelbaseM;
+  var lv = (entry && entry.livery) || {}, acc = hexNum(lv.accent), trimC = hexNum(lv.trim);
+  if(acc == null) acc = COL.dark;
+  if(trimC == null) trimC = COL.black;
+  var R = Math.min(0.37, H*0.38), twF = Math.min(0.32, W*0.16), twR = Math.min(0.4, W*0.2), gc = 0.05;
+  var fo = (L - WB)*0.58, zf = L/2 - fo, zr = zf - WB, zCk = zf - WB*0.42, mw = Math.min(0.62, W*0.32);
+  // the nose (narrow) and the monocoque, engine cover and airbox (one profile each)
+  B.side(body, "paint", null, [[L/2, 0.17], [L/2 - 0.06, 0.26], [zf + 0.15, 0.44], [zf + 0.15, 0.2], [L/2 - 0.3, 0.13]], 0.32, 0.04, 4, 2);
+  B.side(body, "paint", null, [[zf + 0.2, 0.46], [zCk + 0.45, 0.58], [zCk - 0.4, 0.6], [zCk - 0.5, H - 0.08], [zCk - 0.85, H - 0.1],
+                               [zr + 0.2, 0.56], [-L/2 + 0.6, 0.44], [-L/2 + 0.6, 0.18], [zr + 0.4, gc + 0.06], [zf + 0.2, gc + 0.1]], mw, 0.06, 5, 2);
+  B.bar(body, "trim", acc, [0, 0.272, L/2 - 0.07], [0, 0.447, zf + 0.15], 0.1, 0.012);                     // the stripe down the nose
+  B.box(body, "trim", COL.black, mw*0.78, 0.03, 0.8, 0, 0.605, zCk);                                       // the cockpit's padded rim
+  B.box(body, "trim", COL.black, 0.22, 0.14, 0.02, 0, H - 0.17, zCk - 0.5);                                // the airbox's mouth
+  B.side(body, "paint", null, [[zCk - 0.85, H - 0.1], [zr + 0.2, 0.64], [zr + 0.2, 0.56], [zCk - 0.85, H - 0.13]], 0.02, 0, 1);   // the fin
+  // sidepods: an intake each, the livery's accent down the flank, a mirror on a stalk
+  [1, -1].forEach(function(sx){
+    var px = sx*(mw/2 + 0.22);
+    B.side(body, "paint", null, [[zCk + 0.25, 0.14], [zCk + 0.25, 0.5], [zCk - 0.3, 0.52], [zr + 0.45, 0.3], [zr + 0.45, 0.12]], 0.5, 0.06, 4, 2).translate(px, 0, 0);
+    B.box(body, "trim", COL.black, 0.38, 0.22, 0.02, px, 0.36, zCk + 0.26);
+    B.box(body, "trim", acc, 0.008, 0.07, 1.2, px + sx*0.252, 0.32, zCk - 0.45);
+    B.bar(body, "trim", COL.carbon, [sx*mw/2, 0.58, zCk + 0.3], [sx*(mw/2 + 0.18), 0.66, zCk + 0.3], 0.015, 0.03);
+    B.box(body, "paint", null, 0.12, 0.05, 0.03, sx*(mw/2 + 0.2), 0.66, zCk + 0.3);
+  });
+  // the floor, the halo
+  B.box(body, "trim", COL.carbon, W*0.58, 0.03, WB - 0.5, 0, gc + 0.015, (zf + zr)/2 - 0.1);
+  B.bar(body, "trim", COL.carbon, [0, 0.58, zCk + 0.42], [0, 0.8, zCk + 0.24], 0.025, null, true);
+  [1, -1].forEach(function(sx){ B.pipe(body, "trim", COL.carbon, [[0, 0.8, zCk + 0.24], [sx*0.2, 0.81, zCk + 0.12], [sx*0.27, 0.8, zCk - 0.12], [sx*0.26, 0.72, zCk - 0.36], [sx*0.24, 0.6, zCk - 0.42]], 0.025); });
+  // the front wing (two elements and the endplates) and the rear wing (the main plane, the flap, the endplates, the
+  // beam wing, the pylon); the rain light under it
+  B.box(body, "trim", trimC, W*0.96, 0.025, 0.42, 0, 0.09, L/2 - 0.24, -0.08, 0, 0);
+  B.box(body, "trim", acc, W*0.9, 0.02, 0.2, 0, 0.15, L/2 - 0.36, -0.35, 0, 0);
+  [1, -1].forEach(function(sx){ B.box(body, "trim", trimC, 0.02, 0.2, 0.5, sx*W*0.48, 0.15, L/2 - 0.26); });
+  B.box(body, "trim", trimC, W*0.53, 0.035, 0.32, 0, H - 0.12, -L/2 + 0.22, -0.15, 0, 0);
+  B.box(body, "trim", acc, W*0.53, 0.02, 0.16, 0, H - 0.03, -L/2 + 0.14, -0.4, 0, 0);
+  [1, -1].forEach(function(sx){ B.box(body, "trim", trimC, 0.02, 0.42, 0.42, sx*W*0.27, H - 0.21, -L/2 + 0.21); });
+  B.box(body, "trim", trimC, W*0.5, 0.02, 0.14, 0, 0.42, -L/2 + 0.3);
+  B.box(body, "trim", COL.carbon, 0.03, H - 0.56, 0.12, 0, (0.44 + H - 0.12)/2, -L/2 + 0.3);
+  B.box(body, "tail", COL.red, 0.12, 0.05, 0.02, 0, 0.34, -L/2 + 0.595);
+  // wishbones, front and rear: an upper and a lower arm to each wheel
+  [[zf, twF], [zr, twR]].forEach(function(a){
+    [1, -1].forEach(function(sx){
+      var hub = sx*(W/2 - a[1] - 0.02), ix = sx*mw*0.38;
+      B.bar(body, "trim", COL.carbon, [ix, 0.38, a[0]], [hub, R + 0.06, a[0]], 0.02, null, true);
+      B.bar(body, "trim", COL.carbon, [ix, 0.18, a[0]], [hub, R - 0.08, a[0]], 0.02, null, true);
+    });
+  });
+  // the driver, low in the middle: hips behind the cockpit's middle, legs out along the nose, a rectangular wheel
+  var ys = 0.2, zS = zCk - 0.2, riderK = 0.5;
+  B.box(body, "trim", COL.dark, 0.4, 0.06, 0.5, 0, ys - 0.05, zS);
+  var col = new T.Group(); col.position.set(0, 0.5, zS + 0.48); col.rotation.x = -0.9; root.add(col);
+  var spin = B.node(col, "spin");
+  B.box(spin, "trim", COL.black, 0.27, 0.12, 0.03, 0, 0, 0);
+  B.t("screen").box(spin, "light", 0xffffff, 0.1, 0.05, 0.01, 0, 0.01, 0.017);
+  [1, -1].forEach(function(sx){ B.box(spin, "trim", COL.dark, 0.04, 0.13, 0.04, sx*0.13, -0.01, 0); });
+  anchor(T, spin, "a-grip-l", 0.13, 0, 0.02); anchor(T, spin, "a-grip-r", -0.13, 0, 0.02);
+  anchor(T, root, "a-foot-l", 0.1, 0.26, zS + 0.95); anchor(T, root, "a-foot-r", -0.1, 0.26, zS + 0.95);
+  anchor(T, root, "a-seat", 0, ys, zS);
+  // the wheels: the front ones in steer holders
+  var wheels = [];
+  [[-(W/2 - twF/2), zf, "steer-l", -1, twF], [W/2 - twF/2, zf, "steer-r", 1, twF], [-(W/2 - twR/2), zr, null, -1, twR], [W/2 - twR/2, zr, null, 1, twR]].forEach(function(p, i){
+    var h = B.node(root, p[2], p[0], R, p[1]);
+    wheels.push(f1Wheel(B, h, "wheel-" + i, R, p[4], p[3], trimC));
+  });
+  finish(T, root);
+  return {g: root, meta: {kind: "car", R: R, radii: [R, R, R, R], lean: -0.02, riderK: riderK, plates: []}};
+}
+
 /* ---------- bikes ---------- */
 // a bike's wheel: a round-profile tyre, the rim's bright lip, cast spokes (wire spokes: an adventure bike's), the
 // discs (front: one or two, the rear's on the right), the rear's sprocket on the left (model-local +x)
@@ -1385,7 +1476,8 @@ function blueprint(T, entry, G){
   G = G || GEO0;
   var st = styleOf(entry), d = dims(entry), k = scaleOf(entry), sig = geoSig(G), key = keyOf(entry, st, d, k) + (sig ? "|t:" + sig : ""), BP = store(T).bp;
   if(BP[key]) return BP[key];
-  var bp = st.kind === "bike" ? (st.type === "scooter" ? buildScooter(T, entry, st, d, G) : buildBike(T, entry, st, d, G)) : buildCar(T, entry, st, d, G);
+  var bp = st.kind === "bike" ? (st.type === "scooter" ? buildScooter(T, entry, st, d, G) : buildBike(T, entry, st, d, G))
+    : st.type === "formula" ? buildFormula(T, entry, st, d) : buildCar(T, entry, st, d, G);
   return (BP[key] = {st: st, d: d, k: k, bp: k === 1 ? bp : scaled(bp, k)});
 }
 

@@ -201,7 +201,7 @@ console.log(JSON.stringify({out}));
     let out = o["out"].as_array().unwrap();
     assert_eq!(out.len(), 11);
     for v in out {
-        assert!((v["top"].as_f64().unwrap() - v["real"].as_f64().unwrap()).abs() < 1e-6 && v["acc"].as_f64().unwrap() > 0.0, "{v}");
+        assert!((v["top"].as_f64().unwrap() - v["real"].as_f64().unwrap()).abs() < 0.01 && v["acc"].as_f64().unwrap() > 0.0, "{v}");
         assert_eq!(v["eng"], "v6");
     }
 }

@@ -175,6 +175,19 @@ function grandOf(lot, p){
   }
   return (GRAND[key] = best);
 }
+// [3.13.4] The room an HQ's helideck has over its lot: the largest disc round the tower's roof (its middle, and the upper
+// tiers' a little back) whose rim stays inside the lot's polygon, to the full helideck's radius; memoised by lot.
+var ROOM = {};
+function roomOf(lot, p){
+  var T = HQV.hqTower; if(!lot || !lot.poly || lot.poly.length < 3 || !T) return null;
+  var key = [lot.id, lot.x, lot.z, lot.w, lot.d].join(":"); if(ROOM[key] != null) return ROOM[key];
+  var P = polyOf(lot), best = 0, max = T.PAD_R + T.WALK;
+  for(var r = 4; r <= max + 1e-6; r += 0.25){
+    var ok = [0, -0.35].every(function(cz){ for(var k = 0; k < 32; k++){ var w = toWorld(p, Math.cos(k*PI/16)*r, cz + Math.sin(k*PI/16)*r); if(!inRing(P, w.x, w.z)) return false; } return true; });
+    if(!ok) break; best = r;
+  }
+  return (ROOM[key] = best);
+}
 // A view building on its site (m): set back so its door and steps stay on the site.
 function placeView(site){
   site = site || {}; var f = turn(site);
@@ -368,7 +381,7 @@ function netRoom(world, isles){ return isles && worldOk(world) ? "city3d:" + wor
 HQV.hqCity3d = {assign: assign, placeLot: placeLot, placeView: placeView, toWorld: toWorld, pickAt: pickAt, segBox: segBox,
   snapShadow: snapShadow, hqKey: hqKey, keepMesh: keepMesh, HQ_DOOR: HQ_DOOR, VIEW_DOOR: VIEW_DOOR, HQ_FAR: HQ_FAR,
   COMMONS: COMMONS, ownerOf: ownerOf, islandOf: islandOf, worldOk: worldOk, frontOf: frontOf, assignRanks: assignRanks,
-  assignIsland: assignIsland, garagePlace: garagePlace, grandOf: grandOf, hqFoot: hqFoot, civicSites: civicSites, doorOf: doorOf, backOf: backOf, terminalAt: terminalAt, stopMenu: stopMenu,
+  assignIsland: assignIsland, garagePlace: garagePlace, grandOf: grandOf, roomOf: roomOf, hqFoot: hqFoot, civicSites: civicSites, doorOf: doorOf, backOf: backOf, terminalAt: terminalAt, stopMenu: stopMenu,
   waitText: waitText, travelPlaces: travelPlaces, netRoom: netRoom, simZones: simZones, cityStats: cityStats};
 // Which world the next City is built on, and where you arrive in it (games/hq3d.js goCity). A trip
 // that is still landing (a plane) rides across the rebuild in NAV.trip.
@@ -664,7 +677,7 @@ HQV.hqWorlds.city3d = function(c, w){
       level: function(){ return Math.max(1, h.level | 0); },
       look: function(){ return Object.assign({}, h.look || {}, {sign: name, decor: cos.decor, style: h.style || null}); },   // [hq revamp] its HQ Studio style
       live: function(){ return (crew.working | 0) + (crew.needs | 0); },
-      campus: false, grand: grandOf(E.lot, p),
+      campus: false, grand: grandOf(E.lot, p), room: roomOf(E.lot, p),
       door: {view: h.isYou ? "@lobby" : "visit:" + h.userId, label: name, userId: h.userId,
              tip: h.isYou ? "Your HQ: go in" : name + ": walk in as a visitor"},
       doorFront: function(){ return new THREE.Vector3(E.door.x, p.y, E.door.z); }
@@ -736,6 +749,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(casinoB) w.spawnFrom.casino = {x: casinoB.door.x, z: casinoB.door.z, yaw: casinoB.door.yaw};   // out of the casino: its red carpet
     roofsBuild();                                                                // [hq revamp] the towers' roofs and their lifts' doors
     var myRoof = roofs.filter(function(r){ return r.own; })[0];
+    var rh = roofHeli(myRoof); if(rh && bikes.indexOf(rh) < 0) bikes.push(rh);     // [3.13.4] your helicopter, parked on your pad
     if(myRoof && myRoof.lift) w.spawnFrom.roof = {x: myRoof.lift.x, y: myRoof.deck.y, z: myRoof.lift.z, yaw: myRoof.rot, camYaw: myRoof.rot + PI + 0.55};
     if(mine) w.homeLot = {x: mine.x, z: mine.z, rot: mine.rot, garage: mine.garage};   // [basement 3.4] the car lift's exact lot frame (streetSpot/liftSite)
     w.spawnFrom.basement = (mine && HQV.hqCarLift && HQV.hqCarLift.streetSpot && (function(){ try { return HQV.hqCarLift.streetSpot({home: at(mine), garage: mine.garage, rot: mine.rot, x: mine.x, y: mine.y, z: mine.z, lot: mine.lot, toWorld: function(x, z){ return toWorld(mine, x, z); }}, w.homeLot); } catch(e){ return null; } })()) || at(mine);   // [basement 3.4] up the car lift
@@ -2253,7 +2267,7 @@ HQV.hqWorlds.city3d = function(c, w){
       var pr = ABL.roofAt(apP, x + d[0], z + d[1]); if(pr != null && pr > y) y = pr; });   // 6 m clear of their walls)
     var q = apL ? apPlaneAt(x, z, 4) : null; if(q && apL.y + q.top > y) y = apL.y + q.top;   // AIR: a parked or taxiing aircraft
     var a = air ? air.floor(x, z) : null;
-    var rp = HQV.hqRoof ? HQV.hqRoof.padAt(roofs, x, z, 0.3) : null; if(rp && rp.pad.y > y) y = rp.pad.y;   // [hq revamp] an HQ's roof pad
+    var rp = HQV.hqRoof ? HQV.hqRoof.padAt(roofs, x, z, (HQV.hqTower ? HQV.hqTower.WALK : 0) + 0.3) : null; if(rp && rp.pad.y > y) y = rp.pad.y;   // [hq revamp] an HQ's roof pad (3.13.4: and its helideck's walkway)
     return a != null && a > y ? a : y;
   };
   // stepping out of a helicopter that has landed: beside it on land, a roof pad's building's door; never at sea
@@ -3167,6 +3181,27 @@ HQV.hqWorlds.city3d = function(c, w){
       }
     });
   }
+  // [3.13.4] your helicopter on your own HQ's pad: a normal parked prop (E to board, hq3d's heliMove), nose to the
+  // front, its rotor clear of the helideck's rail; flown off and left elsewhere, hq3d puts it back (respawnS, or T)
+  var roofHeliP = null, ROOF_HELI_RESPAWN = 300;
+  function roofHeli(R){
+    var Hh = HQV.hqheli;
+    if(!R || !Hh || !Hh.model){ if(roofHeliP){ hqG.remove(roofHeliP.g); disposeTree(roofHeliP.g); roofHeliP = null; } return null; }
+    var P = R.pad, yaw = R.rot, b = roofHeliP, old = b && b.home;
+    if(!b){
+      var M = Hh.model(c, "heli", 0x1f5f8f, 0xf2b234), g = M.g;
+      Object.keys(M.lights || {}).forEach(function(k){ M.lights[k].visible = false; });
+      if(HQV.hqMerge && HQV.hqMerge.mergeStatic) try { HQV.hqMerge.mergeStatic(THREE, g, {keep: function(o){ return !!(o.userData && o.userData.anim); }}); } catch(e){}
+      g.name = "hq-roof-heli"; hqG.add(g);
+      b = roofHeliP = {g: g, kind: "heli", color: 0x1f5f8f, accent: 0xf2b234, id: "heli:roof", stay: true, roof: true};
+    }
+    b.home = {x: P.x, z: P.z, yaw: yaw, y: P.y}; b.respawnS = ROOF_HELI_RESPAWN;
+    if(!old || (Math.hypot(b.x - old.x, b.z - old.z) < 0.5 && Math.abs(b.y - old.y) < 0.5)){       // where it was parked: on the (new) pad
+      b.g.position.set(P.x, P.y, P.z); b.g.rotation.y = yaw; b.x = P.x; b.y = P.y; b.z = P.z; b.yaw = yaw;
+    }
+    return b;
+  }
+  w.roofHeli = function(){ return roofHeliP; };
   // you stand on a roof deck: up at its height (or arriving: stopFeet's 1e9) and inside its railing
   function roofHere(){
     var a = c.avatar(); if(!a || !roofs.length) return null;

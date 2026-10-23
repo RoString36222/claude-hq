@@ -389,7 +389,7 @@ HQV.hqWorlds.lobby = function(c, w){
   w.onEnter = function(){ if(dyn && dyn.amb && c.E && c.E.ambientLoop && !amb){ try { amb = c.E.ambientLoop(dyn.amb[0], dyn.amb[1]); } catch(e){ amb = null; } } };
   w.onLeave = function(){ if(amb){ amb.stop(); amb = null; } };
   // HQ Studio's Layout tab: the grid on this floor and its cursor (null: hidden)
-  w.studioGrid = function(o){ if(!gridO) return; gridO.show(!!o && o.f === "lobby"); if(o) gridO.set(o.x, o.z); };
+  w.studioGrid = function(o){ if(!gridO) return; gridO.show(!!o && o.f === "lobby"); if(o) gridO.set(o.x, o.z, o); };
   // the Studio kiosk is a "door" with no view: hq3d opens HQ Studio (ctx.api.studio)
   w.update = function(t, dt, k){
     acc += dt; if(acc > 0.08){ acc = 0; drawTicker(t);

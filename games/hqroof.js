@@ -4,7 +4,8 @@
  *   roofOf(E, B, toWorld) -> {uid, name, own, pad: {x, z, y, r}, deck: {x, z, hw, hd, y, rot}, lift: {x, z, y}, house}
  *                 one HQ's roof in the world (E: the City's entry {x, y, z, rot, h}; B: its building)
  *   padAt(roofs, x, z, slack)    the roof whose pad (x, z) is over (within r + slack), else null
- *   onDeck(R, x, z)              (x, z) is inside the roof's railing (the deck you walk), off its lift's head house
+ *   onDeck(R, x, z)              (x, z) is inside the roof's railing (the deck you walk: the helideck's disc when
+ *                 deck.r is set, 3.13.4), off its lift's head house
  *   deckAt(roofs, x, z)          the roof whose deck (x, z) is on, else null
  *   assist(st, R, inp, dt) -> cue  a helicopter's landing assist over a pad: within APPROACH m (level with it or
  *                 above it, below CEIL m over it, not climbing) it levels the disc, draws the craft over the pad's
@@ -34,16 +35,16 @@ function roofOf(E, B, toWorld){
   var who = h.trainerName || h.displayName || h.handle;
   return {uid: h.userId || null, name: h.isYou ? "your HQ" : who ? who + "'s HQ" : (E.name || "an HQ"), own: !!h.isYou, rot: +E.rot || 0,
     pad: {x: pw.x, z: pw.z, y: y0 + P.y, r: P.r},
-    deck: {x: dw.x, z: dw.z, hw: D.hw, hd: D.hd, y: y0 + D.y, rot: +E.rot || 0},
+    deck: {x: dw.x, z: dw.z, hw: D.hw, hd: D.hd, r: D.r || 0, y: y0 + D.y, rot: +E.rot || 0},
     lift: lw ? {x: lw.x, z: lw.z, y: y0 + L.y} : null,
-    house: L ? (function(){ var hw = toWorld(E, L.x, L.z - 0.9); return {x: hw.x, z: hw.z, r: 0.75}; })() : null};
+    house: L ? (function(){ var hw = L.hx != null ? toWorld(E, L.hx, L.hz) : toWorld(E, L.x, L.z - 0.9); return {x: hw.x, z: hw.z, r: 0.75}; })() : null};
 }
 // (x, z) in the deck's own frame
 function local(D, x, z){ var dx = x - D.x, dz = z - D.z, c = Math.cos(-D.rot), s = Math.sin(-D.rot); return {x: dx*c + dz*s, z: -dx*s + dz*c}; }
 function onDeck(R, x, z){
   if(!R) return false;
-  var q = local(R.deck, x, z);
-  if(Math.abs(q.x) > R.deck.hw || Math.abs(q.z) > R.deck.hd) return false;
+  if(R.deck.r > 0){ if(Math.hypot(x - R.deck.x, z - R.deck.z) > R.deck.r) return false; }        // the helideck: a disc
+  else { var q = local(R.deck, x, z); if(Math.abs(q.x) > R.deck.hw || Math.abs(q.z) > R.deck.hd) return false; }
   if(R.house && Math.hypot(x - R.house.x, z - R.house.z) < R.house.r) return false;
   return true;
 }
@@ -65,6 +66,7 @@ function assist(st, R, inp, dt){
     st.vx += (tx - st.vx)*kv; st.vz += (tz - st.vz)*kv;
   }
   if(agl < SOFT && st.vy < -SINK) st.vy = -SINK;                                           // the last metres: soft
+  if(agl < SOFT && d > 0.8 && !inp.fwd && !inp.turn && st.vy < -0.5) st.vy = -0.5;           // ... and slower still till it is over the middle (3.13.4: big pads)
   return d <= R.pad.r ? "descend" : "approach";
 }
 function step(S, st, roofs, inp, dt){

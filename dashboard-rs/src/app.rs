@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
-pub const APP_VERSION: &str = "3.13.1";
+pub const APP_VERSION: &str = "3.13.4";
 
 pub static UUID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-fA-F-]{36}$").unwrap());
 pub static RID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_-]{16,64}$").unwrap());
@@ -54,6 +54,8 @@ pub struct Paths {
     pub games_dir: PathBuf,
     pub sounds_dir: PathBuf,
     pub music_cache: PathBuf,
+    /// Pokémon sprite disk cache (sprite.rs); gitignored, never committed.
+    pub sprite_cache: PathBuf,
     pub arena_link: PathBuf,
     /// Claude Code's own state file. Only `oauthAccount.accountUuid` is ever
     /// read from it, and only to hash (arena.rs `account_key`).
@@ -84,6 +86,7 @@ impl Paths {
             games_dir: here.join("games"),
             sounds_dir: here.join("sounds"),
             music_cache: here.join(".music-cache"),
+            sprite_cache: here.join(".sprite-cache"),
             arena_link: here.join("arena-link.json"),
             claude_json: match std::env::var_os("CLAUDE_CONFIG_DIR").filter(|v| !v.is_empty()) {
                 Some(dir) => PathBuf::from(dir).join(".claude.json"),
@@ -144,6 +147,7 @@ pub struct App {
     pub music: Arc<crate::music::MusicState>,
     pub ext: crate::ext::ExtState,
     pub notch: crate::notch::NotchState,
+    pub sprites: crate::sprite::SpriteCache,
     /// Replaces `claude agents --json` (tests).
     pub agents_hook: RwLock<Option<AgentsFn>>,
     /// Replaces the self-restart after an update (tests).
@@ -156,6 +160,7 @@ pub struct App {
 impl App {
     pub fn new(paths: Paths) -> App {
         App {
+            sprites: crate::sprite::SpriteCache::new(paths.sprite_cache.clone()),
             paths,
             csrf_token: py::token_hex(16),
             boot_id: py::token_hex(8),

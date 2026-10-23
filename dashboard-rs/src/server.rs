@@ -586,6 +586,9 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
     if let Some(vid) = path.strip_prefix("/api/music/audio/") {
         return audio_reply(app, vid, headers);
     }
+    if path == "/api/sprite" {
+        return sprite_reply(app, &arg("u"));
+    }
     match path {
         "/api/music/now" | "/api/music/search" | "/api/music/oembed" | "/api/music/audio-state" | "/api/arena/music/now" => {
             let (c, r) = music_get(app, path, &arg);
@@ -774,6 +777,30 @@ fn audio_reply(app: &App, vid: &str, headers: &HeaderMap) -> Reply {
     }
     r.headers.push(("Cache-Control", "no-store".into()));
     r
+}
+
+/// Pokémon sprite through the local disk cache (sprite.rs). 404 and 502 let the page's
+/// onerror chain move on to its next candidate, exactly as a failed hotlink did.
+fn sprite_reply(app: &App, url: &str) -> Reply {
+    use crate::sprite::Sprite;
+    match app.sprites.get(url) {
+        Sprite::Hit { ctype, body } => Reply {
+            code: 200,
+            body,
+            headers: vec![
+                ("Content-Type", ctype.into()),
+                ("Cache-Control", "public, max-age=2592000".into()),
+                ("X-Content-Type-Options", "nosniff".into()),
+            ],
+        },
+        Sprite::Bad => Reply::new(400, "sprite URL not allowed\n", TEXT),
+        Sprite::NotFound => {
+            let mut r = Reply::new(404, "sprite not found upstream\n", TEXT);
+            r.headers[1].1 = "max-age=3600".into();
+            r
+        }
+        Sprite::Fail => Reply::new(502, "sprite fetch failed\n", TEXT),
+    }
 }
 
 fn music_get(app: &App, path: &str, arg: &dyn Fn(&str) -> String) -> (u16, Value) {

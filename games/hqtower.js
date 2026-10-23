@@ -13,13 +13,16 @@
  * shows only its masses. The look is HQV.hqStyle's; nothing here reads the network.
  *
  * Pure parts (node-tested, tests/test_hqtower.py):
- *   massing(level, grand, stars) -> {podium, tiers, wings, roof, pad, top}: the building's boxes (m, its own frame,
+ *   massing(level, grand, stars, room) -> {podium, tiers, wings, roof, pad, top}: the building's boxes (m, its own frame,
  *     door to +z). grand 0..1 is how much bigger than the old tower a lot allows (+18% wide, +8% deep at 1);
- *     every tier is a floor-height multiple; the pad (x, z, r, y) sits on the top roof, inside it.
+ *     every tier is a floor-height multiple; heli (x, z, r, y): the helideck, raised HELI_UP over the top roof on
+ *     legs and cantilevered past it; the pad (x, z, r, y) in its middle, clear for a helicopter's rotor: r = PAD_R, or
+ *     less (to PAD_MIN) where the lot holds less room (the largest disc round the roof's middle inside it).
  *   footprint(grand, wings) -> [[cx, cz, hx, hz]]: the tower, its entrance apron, then each wing (what a lot's
  *     car-lift bay and its run out must keep clear of; hqcity3d's garagePlace and hqBoxes).
- *   crownSlots(M) -> [{x, z}]: where a crown's and the roof extras' pieces stand (the roof's corners): never on the pad.
- *   roofDeck(M) -> {x, z, hw, hd, y}: the roof you can walk on (inside its railing).
+ *   crownSlots(M) -> [{x, z}]: where the roof lift, a crown's and the roof extras' pieces stand (the helideck's
+ *     walkway, on its diagonals): never on the pad.
+ *   roofDeck(M) -> {x, z, hw, hd, r, y}: the helideck you can walk on (a disc of radius r, inside its rail).
  */
 (function(){
 "use strict";
@@ -33,10 +36,14 @@ var CORNICE = 0.4;
 var TILE_W = 4.8, TILE_H = 4*FH;   // the facade tile: 4 bays of 1.2 m by 4 floors
 var POD_W = 4.8, POD_H = PODIUM_H; // the podium's tile: 2 bays of 2.4 m, the full height
 var LOD_FAR = 1;
+var PAD_R = 9;              // the helipad's radius (m): a helicopter's rotor (5.4 m, the attack's 6) with room round it
+var PAD_MIN = 7.5;         // on a small lot no less (the walkway may then reach out over the pavement)
+var WALK = 1.6;            // the helideck's walkway round the pad
+var HELI_UP = 3.0;         // the helideck over the top roof
 
 /* ---------- the shape (pure) ---------- */
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
-function massing(level, grand, stars){
+function massing(level, grand, stars, room){
   level = Math.max(1, level | 0); grand = clamp(+grand || 0, 0, 1); stars = clamp(stars | 0, 0, 5);
   var W0 = 9*(1 + 0.18*grand), D0 = 7*(1 + 0.08*grand);
   var pod = {x: 0, z: 0, w: W0, d: D0, y0: PLINTH, h: PODIUM_H};
@@ -48,14 +55,18 @@ function massing(level, grand, stars){
   var last = tiers[tiers.length - 1], prest = null;
   if(stars){ prest = {x: last.x, z: last.z, w: last.w - 0.2, d: last.d - 0.2, y0: y + 0.3, floors: stars, h: stars*2.4}; y = prest.y0 + prest.h + 0.3; }
   var R = prest || last, roof = {x: R.x, z: R.z, w: R.w, d: R.d, y: y};
-  var pr = Math.min(clamp(Math.min(R.w, R.d)/2 - 0.3, 2.0, 3.6), Math.min(R.w, R.d)/2 - 0.05);   // never over the roof's edge
-  var pad = {x: R.x, z: R.z, r: pr, y: y + 0.25};
+  // 3.13.4: the helideck, a steel deck raised HELI_UP over the top roof on legs and cantilevered past it (no top roof
+  // is near big enough for a helicopter's rotor), the pad (PAD_R) in its middle, a walkway (WALK) round it
+  // room: the biggest disc round the roof's middle the lot holds (hqcity3d roomOf; null: any): the pad keeps inside it
+  var pr = room != null && isFinite(+room) ? clamp(+room - 0.6, PAD_MIN, PAD_R) : PAD_R;
+  var hy = y + HELI_UP, pad = {x: R.x, z: R.z, r: pr, y: hy + 0.02};
+  var heli = {x: R.x, z: R.z, r: pr + WALK, y: hy, base: y};
   var wings = [], floorsW = Math.max(1, floorsLow - 2);
   [[-1, 10], [1, 30]].forEach(function(s){
     if(level < s[1]) return;
     wings.push({x: s[0]*(10.5 + 1.6*grand), z: 0.5, w: 5.5 + 0.8*grand, d: 5 + 0.4*grand, y0: PLINTH, h: PODIUM_H + CORNICE + floorsW*FH, floors: floorsW, side: s[0]});
   });
-  return {level: level, grand: grand, podium: pod, tiers: tiers, prestige: prest, roof: roof, pad: pad, wings: wings, top: y, lowTop: t1.y0 + t1.h};
+  return {level: level, grand: grand, podium: pod, tiers: tiers, prestige: prest, roof: roof, pad: pad, heli: heli, wings: wings, top: y, lowTop: t1.y0 + t1.h};
 }
 function footprint(grand, wings){
   grand = clamp(+grand || 0, 0, 1);
@@ -65,16 +76,15 @@ function footprint(grand, wings){
   if(wings >= 2) out.push([10.5 + 1.6*grand, 0.5, 3 + 0.4*grand, 2.8 + 0.2*grand]);
   return out;
 }
-// the roof's four corners, inset, outside the pad's circle (+0.35 m): the crown and roof extras stand here
+// the helideck's four diagonals (qx, qz: the old corners' signs), on its walkway's outer edge, past the pad's circle
+// (+0.75 m): the roof lift's head house, the crown and the roof extras stand here, never on the pad or under the rotor
 function crownSlots(M){
-  var R = M.roof, P = M.pad, out = [];
-  [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function(q){
-    var x = R.x + q[0]*(R.w/2 - 0.55), z = R.z + q[1]*(R.d/2 - 0.55);
-    if(Math.hypot(x - P.x, z - P.z) > P.r + 0.35) out.push({x: x, z: z, qx: q[0], qz: q[1]});
-  });
+  var H = M.heli, rs = H.r - 0.75, k = Math.SQRT1_2, out = [];
+  [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function(q){ out.push({x: H.x + q[0]*rs*k, z: H.z + q[1]*rs*k, qx: q[0], qz: q[1]}); });
   return out;
 }
-function roofDeck(M){ var R = M.roof; return {x: R.x, z: R.z, hw: R.w/2 - 0.35, hd: R.d/2 - 0.35, y: R.y + 0.05}; }
+// the deck you walk: the helideck's disc inside its rail (r; hw/hd: its bounding square)
+function roofDeck(M){ var H = M.heli, r = H.r - 0.3; return {x: H.x, z: H.z, hw: r, hd: r, r: r, y: H.y}; }
 
 /* ---------- colours ---------- */
 var TINT = {clear: ["#9fb8c8", "#dfeef5"], blue: ["#244e74", "#8fc3e6"], green: ["#2a5c50", "#9fdcc4"], bronze: ["#5a3f25", "#d9b48a"],
@@ -171,8 +181,17 @@ function drawNight(c, X, kind, share){
     if(F === "tokyo"){ g.fillStyle = X.trim; for(var f = 0; f < 4; f++) g.fillRect(0, f*128 + 120, W, 3); }
   });
 }
-function tile(c, X, kind){ var k = ["map", kind, X.facade, X.material, X.body, X.trim, X.tint].join("|"); return TEX[k] || (TEX[k] = drawTile(c, X, kind).t); }
-function nightTile(c, X, kind, share){ var k = ["emi", kind, X.facade, X.body, X.trim, X.night, share].join("|"); return TEX[k] || (TEX[k] = drawNight(c, X, kind, share).t); }
+// the cache keeps the newest TEX_MAX tiles (HQ Studio's colour pickers make a new one per colour): an older one is
+// dropped and its GPU copy freed (a building still wearing it uploads it again; its canvas is kept). Shared: never
+// disposed with a building (userData.shared, the Studio preview's rebuilds)
+var TEX_N = [], TEX_MAX = 64;
+function keepTex(k, t){
+  t.userData.shared = true; TEX[k] = t; TEX_N.push(k);
+  while(TEX_N.length > TEX_MAX){ var o = TEX_N.shift(); if(TEX[o]){ try { TEX[o].dispose(); } catch(e){} delete TEX[o]; } }
+  return t;
+}
+function tile(c, X, kind){ var k = ["map", kind, X.facade, X.material, X.body, X.trim, X.tint].join("|"); return TEX[k] || keepTex(k, drawTile(c, X, kind).t); }
+function nightTile(c, X, kind, share){ var k = ["emi", kind, X.facade, X.body, X.trim, X.night, share].join("|"); return TEX[k] || keepTex(k, drawNight(c, X, kind, share).t); }
 
 /* ---------- batching: one mesh per material ---------- */
 function kit(THREE){
@@ -293,7 +312,7 @@ function make(c, opts){
     var st = styleOf(look), X = st.ext;
     while(baseG.children.length) baseG.remove(baseG.children[0]);
     hits.length = 0; doors.length = 0;
-    var M = massing(level, grand, stars);
+    var M = massing(level, grand, stars, typeof opts.room === "function" ? opts.room() : opts.room);
     var MT = mats(X);
     dyn = {M: M, X: X, mats: MT, glows: [], flags: null, flagN: 0, revolve: null, sock: null, beacons: [], beaconGlows: [], heli: null, prestige: null, fireworks: [], decorFlags: [], banners: [], jets: [], karts: [], core: null, detail: null};
     var core = new THREE.Group(), detail = new THREE.Group(); core.name = "hqt-core"; detail.name = "hqt-detail";
@@ -325,7 +344,7 @@ function make(c, opts){
       pg.position.set(Pp.x, Pp.y0 + Pp.h/2, Pp.z); pg.name = "prestige-floor"; core.add(pg); dyn.prestigeMat = pg.material;
       var bm = new THREE.MeshBasicMaterial({color: 0xffe08a, transparent: true, opacity: 0.35, toneMapped: false, depthWrite: false});
       var beam = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.9, 16, 16, 1, true), bm); beam.name = "prestige-beacon";
-      beam.position.set(M.roof.x - M.roof.w/2 + 0.6, M.top + 9, M.roof.z - M.roof.d/2 + 0.6); detail.add(beam);
+      beam.position.set(M.heli.x, M.heli.y + 8.5, M.heli.z - M.heli.r + 0.6);   // the helideck's back rim, clear of the pad detail.add(beam);
       dyn.prestige = {beam: beam, mat: bm, stars: Pp.floors};
     }
     /* --- facade systems: fins, piers, bands, louvres (detail, merged) --- */
@@ -454,45 +473,44 @@ function make(c, opts){
                              {front: opts.doorFront ? opts.doorFront() : new THREE.Vector3(0, 0, 4.8)});
     [drum, sign].forEach(function(o){ o.userData.door = door; hits.push(o); }); doors.push(door);
     var lt = c.label("Front door", HEX.green, 0.5); lt.position.set(0, PLINTH + P.h + 1.0, front + 1.2); detail.add(lt);
-    /* --- the roof: railing, the helipad (always), the crown on the corners, the roof extras --- */
-    var Rf = M.roof, Pd = M.pad, top = M.top;
+    /* --- the roof: the helideck over it (always: the pad, its walkway and glass rail), the roof lift, the crown and
+       the roof extras on the walkway's diagonals, never on the pad or under a parked helicopter's rotor --- */
+    var Rf = M.roof, Pd = M.pad, top = M.top, Hd = M.heli, hy = Hd.y;
     Kd.box(F === "tokyo" ? "neon" : "lit", Rf.w + 0.16, 0.08, Rf.d + 0.16, Rf.x, top - 0.35, Rf.z);       // the crown's lit band
     Kd.box(F === "stone" || F === "deco" ? "stone" : "trim", Rf.w + 0.3, 0.22, Rf.d + 0.3, Rf.x, top - 0.12, Rf.z);
     Kd.box("roof", Rf.w, 0.12, Rf.d, Rf.x, top + 0.06, Rf.z);
-    [[0, 1], [0, -1], [1, 0], [-1, 0]].forEach(function(q){
-      var lx = q[0] ? 0.08 : Rf.w, lz = q[1] ? 0.08 : Rf.d;
-      Kd.box("glass", lx, 1.0, lz, Rf.x + q[0]*Rf.w/2, top + 0.6, Rf.z + q[1]*Rf.d/2);
-      Kd.box("trim", q[0] ? 0.1 : Rf.w, 0.06, q[1] ? 0.1 : Rf.d, Rf.x + q[0]*Rf.w/2, top + 1.1, Rf.z + q[1]*Rf.d/2);
-    });
+    helideck(M, detail, MT);
     padModel(Pd, detail, Kd);
     var slots = crownSlots(M), cr = X.crown;
     function slot(qx, qz){ for(var i = 0; i < slots.length; i++) if(slots[i].qx === qx && slots[i].qz === qz) return slots[i]; return null; }
-    var lift = slot(-1, -1);                                                         // back-left: the roof lift's head house
-    if(lift){ Kd.box("body", 1.0, 2.4, 1.0, lift.x, top + 1.2, lift.z); Kd.box("roof", 1.2, 0.12, 1.2, lift.x, top + 2.46, lift.z); Kd.box("lit", 0.6, 0.06, 0.04, lift.x, top + 2.1, lift.z + 0.52); }
-    dyn.liftAt = lift;
+    var lift = slot(-1, -1);                                                         // back-left: the roof lift's head house, its door along the walkway
+    if(lift){ var ld = Math.hypot(lift.x - Hd.x, lift.z - Hd.z) || 1, ltx = (lift.z - Hd.z)/ld, ltz = -(lift.x - Hd.x)/ld, lry = Math.atan2(ltx, ltz);
+      Kd.box("body", 1.0, 2.4, 1.0, lift.x, hy + 1.2, lift.z, lry); Kd.box("roof", 1.2, 0.12, 1.2, lift.x, hy + 2.46, lift.z, lry); Kd.box("lit", 0.6, 0.06, 0.04, lift.x + ltx*0.52, hy + 2.1, lift.z + ltz*0.52, lry);
+      dyn.liftAt = {x: lift.x, z: lift.z, tx: ltx, tz: ltz}; }
+    else dyn.liftAt = null;
     var spot = slot(1, -1), fl2 = slot(-1, 1), fr2 = slot(1, 1);
-    if(cr === "spire" && spot){ Kd.cyl("trim", 0.06, 0.32, 9, spot.x, top + 4.6, spot.z, 8); beacon(spot.x, top + 9.3, spot.z); }
-    else if(cr === "antenna" && spot){ Kd.bar("dark", [spot.x - 0.3, top, spot.z - 0.3], [spot.x, top + 7, spot.z], 0.08); Kd.bar("dark", [spot.x + 0.3, top, spot.z - 0.3], [spot.x, top + 7, spot.z], 0.08); Kd.bar("dark", [spot.x, top, spot.z + 0.3], [spot.x, top + 7, spot.z], 0.08);
-      Kd.cyl("trim", 0.02, 0.02, 3, spot.x, top + 8.5, spot.z, 4); beacon(spot.x, top + 10.1, spot.z); }
-    else if(cr === "dome"){ [spot, fl2, fr2].forEach(function(q){ if(!q) return; Kd.cyl("stone", 0.42, 0.42, 1.0, q.x, top + 0.5, q.z, 12); Kd.geo("trim", new THREE.SphereGeometry(0.46, 14, 7, 0, PI*2, 0, PI/2), q.x, top + 1.0, q.z); Kd.cyl("gold", 0.02, 0.05, 0.5, q.x, top + 1.7, q.z, 5); }); }
-    else if(cr === "deco"){
-      [[0, 1], [0, -1], [1, 0], [-1, 0]].forEach(function(q){ Kd.box("body", q[0] ? 0.3 : Rf.w + 0.3, 1.6, q[1] ? 0.3 : Rf.d + 0.3, Rf.x + q[0]*(Rf.w/2 + 0.15), top + 0.8, Rf.z + q[1]*(Rf.d/2 + 0.15)); });
-      for(var fi = -2; fi <= 2; fi++){ var fh = 2.6 - Math.abs(fi)*0.5; Kd.box("trim", 0.22, fh, 0.12, Rf.x + fi*Rf.w/6, top + 1.6 + fh/2, Rf.z + Rf.d/2 + 0.32); }
-      [spot, fl2, fr2].forEach(function(q){ if(q) Kd.cone("trim", 0.25, 2.2, q.x, top + 1.1, q.z, 4); });
+    if(cr === "spire" && spot){ Kd.cyl("trim", 0.06, 0.32, 9, spot.x, hy + 4.5, spot.z, 8); beacon(spot.x, hy + 9.2, spot.z); }
+    else if(cr === "antenna" && spot){ Kd.bar("dark", [spot.x - 0.3, hy, spot.z - 0.3], [spot.x, hy + 7, spot.z], 0.08); Kd.bar("dark", [spot.x + 0.3, hy, spot.z - 0.3], [spot.x, hy + 7, spot.z], 0.08); Kd.bar("dark", [spot.x, hy, spot.z + 0.3], [spot.x, hy + 7, spot.z], 0.08);
+      Kd.cyl("trim", 0.02, 0.02, 3, spot.x, hy + 8.5, spot.z, 4); beacon(spot.x, hy + 10.1, spot.z); }
+    else if(cr === "dome"){ [spot, fl2, fr2].forEach(function(q){ if(!q) return; Kd.cyl("stone", 0.42, 0.42, 1.0, q.x, hy + 0.5, q.z, 12); Kd.geo("trim", new THREE.SphereGeometry(0.46, 14, 7, 0, PI*2, 0, PI/2), q.x, hy + 1.0, q.z); Kd.cyl("gold", 0.02, 0.05, 0.5, q.x, hy + 1.7, q.z, 5); }); }
+    else if(cr === "deco"){                                                          // a low parapet round the tower's roof, under the helideck; fins down its face
+      [[0, 1], [0, -1], [1, 0], [-1, 0]].forEach(function(q){ Kd.box("body", q[0] ? 0.3 : Rf.w + 0.3, 0.9, q[1] ? 0.3 : Rf.d + 0.3, Rf.x + q[0]*(Rf.w/2 + 0.15), top + 0.45, Rf.z + q[1]*(Rf.d/2 + 0.15)); });
+      for(var fi = -2; fi <= 2; fi++){ var fh = 2.6 - Math.abs(fi)*0.5; Kd.box("trim", 0.22, fh, 0.12, Rf.x + fi*Rf.w/6, top - 0.3 - fh/2, Rf.z + Rf.d/2 + 0.32); }
+      [spot, fl2, fr2].forEach(function(q){ if(q) Kd.cone("trim", 0.25, 2.2, q.x, hy + 1.1, q.z, 4); });
     }
     else if(cr === "pagoda"){
       var eav = new THREE.CylinderGeometry(0.1, 1, 1, 4, 1, true); // a flared hip skirt round the top tier, below the roof
       Kd.geo("dark", eav, Rf.x, top - 0.45, Rf.z, 0, PI/4, 0, (Rf.w + 1.6)*0.72, 0.9, (Rf.d + 1.6)*0.72);
-      [spot, fl2, fr2].forEach(function(q){ if(q){ Kd.cyl("neon", 0.05, 0.05, 1.4, q.x, top + 0.7, q.z, 6); Kd.sph("gold", 0.16, q.x, top + 1.5, q.z); } });
+      [spot, fl2, fr2].forEach(function(q){ if(q){ Kd.cyl("neon", 0.05, 0.05, 1.4, q.x, hy + 0.7, q.z, 6); Kd.sph("gold", 0.16, q.x, hy + 1.5, q.z); } });
     }
-    else if(cr === "garden"){ slots.forEach(function(q){ if(q === lift) return; Kd.box("wood", 0.9, 0.5, 0.9, q.x, top + 0.25, q.z); Kd.sph("green", 0.55, q.x, top + 1.0, q.z, 1, 1.1, 1); }); }
+    else if(cr === "garden"){ slots.forEach(function(q){ if(q === lift) return; Kd.box("wood", 0.9, 0.5, 0.9, q.x, hy + 0.25, q.z); Kd.sph("green", 0.55, q.x, hy + 1.0, q.z, 1, 1.1, 1); }); }
     var extras = X.roof || [];
-    if(extras.indexOf("beacon") >= 0 && cr !== "spire" && cr !== "antenna" && spot) beacon(spot.x, top + 3.2, spot.z), Kd.cyl("trim", 0.05, 0.05, 3, spot.x, top + 1.5, spot.z, 6);
+    if(extras.indexOf("beacon") >= 0 && cr !== "spire" && cr !== "antenna" && spot) beacon(spot.x, hy + 3.2, spot.z), Kd.cyl("trim", 0.05, 0.05, 3, spot.x, hy + 1.5, spot.z, 6);
     // the lower roofs (the setback terraces and the wings) take the roof extras: tank, antennas, solar, garden
     var lows = [];
     if(M.tiers.length > 1){ var T0 = M.tiers[0], T1b = M.tiers[1]; lows.push({x: T0.x - T0.w/2 + 0.9, z: T0.z + T0.d/2 - 0.8, y: T1b.y0}); lows.push({x: T0.x + T0.w/2 - 0.9, z: T0.z + T0.d/2 - 0.8, y: T1b.y0}); }
     M.wings.forEach(function(Wg){ lows.push({x: Wg.x - Wg.side*0.6, z: Wg.z - 0.9, y: Wg.top}); });
-    if(!lows.length) [fl2, fr2].forEach(function(q){ if(q) lows.push({x: q.x, z: q.z, y: top + 0.12}); });
+    if(!lows.length) [fl2, fr2].forEach(function(q){ if(q) lows.push({x: q.x, z: q.z, y: hy}); });
     var li = 0;
     function nextLow(){ return lows.length ? lows[li++ % lows.length] : null; }
     if(extras.indexOf("tank") >= 0){ var lt2 = nextLow(); if(lt2){ Kd.cyl("wood", 0.55, 0.55, 1.2, lt2.x, lt2.y + 1.5, lt2.z, 12); Kd.cone("dark", 0.65, 0.5, lt2.x, lt2.y + 2.35, lt2.z, 12); [[-0.4, -0.4], [0.4, -0.4], [-0.4, 0.4], [0.4, 0.4]].forEach(function(q){ Kd.box("dark", 0.06, 0.9, 0.06, lt2.x + q[0], lt2.y + 0.45, lt2.z + q[1]); }); } }
@@ -536,9 +554,9 @@ function make(c, opts){
     /* --- the HQ 2.1 decor cosmetics and the crew banner (the roof's front corners, clear of the pad) --- */
     decor(look, M, detail, Kd);
     if(look.crew && /^#[0-9a-f]{6}$/i.test(look.crew.color || "") && fl2){
-      Kd.cyl("trim", 0.06, 0.06, 3.4, fl2.x, top + 1.7, fl2.z, 6);
+      Kd.cyl("trim", 0.06, 0.06, 3.4, fl2.x, hy + 1.7, fl2.z, 6);
       var ct = c.canvasTex(256, 128, function(g){ g.fillStyle = look.crew.color; g.fillRect(0, 0, 256, 128); g.fillStyle = "#0e1923"; g.font = "700 64px system-ui, sans-serif"; g.textAlign = "center"; g.fillText(String(look.crew.tag || "").slice(0, 4), 128, 86); });
-      var cf = c.screen(1.6, 0.8, ct.t); cf.material.side = THREE.DoubleSide; cf.position.set(fl2.x + 0.8, top + 3.0, fl2.z); cf.userData.wave = 9; detail.add(cf); dyn.decorFlags.push(cf);
+      var cf = c.screen(1.6, 0.8, ct.t); cf.material.side = THREE.DoubleSide; cf.position.set(fl2.x - 0.55, hy + 3.0, fl2.z + 0.55); cf.rotation.y = -PI/4; cf.userData.wave = 9; detail.add(cf); dyn.decorFlags.push(cf);
     }
     /* --- the Base's campus (games/hqbase.js): the plaza's fountain (5), the kart track (35), the statue (50), the Arena annex (55) --- */
     if(opts.campus && level >= 5){
@@ -566,32 +584,47 @@ function make(c, opts){
       var field = new THREE.Mesh(new THREE.CircleGeometry(7.6, 40), new THREE.MeshStandardMaterial({color: 0x1d4a3a, emissive: new THREE.Color(COL.cyan), emissiveIntensity: 0.15})); field.rotation.x = -PI/2; field.position.y = 0.05; ar.add(field);
       var al = c.label("Arena", HEX.cyan, 1.1); al.position.set(0, 7, 0); ar.add(al);
     }
-    var sb2 = c.label(c.short((look.sign || "Claude HQ"), 16) + " · Lv " + level, HEX.amber, 1.1); sb2.position.set(0, top + 7, 0); detail.add(sb2);
+    var sb2 = c.label(c.short((look.sign || "Claude HQ"), 16) + " · Lv " + level, HEX.amber, 1.1); sb2.position.set(0, hy + 7, 0); detail.add(sb2);
     // the detail's own copies of the materials the masses use too: the City's merger (hqmerge) must never fold a detail mesh into a mass
     var MTd = Object.assign({}, MT); ["stone", "body", "roof"].forEach(function(k){ MTd[k] = MT[k].clone(); });
     dyn.matsD = MTd;
     K.flush(core, MT); Kd.flush(detail, MTd, {noShadow: {lit: 1, neon: 1, glass: 1}});
-    built.level = level; built.look = JSON.stringify(look); built.top = top; built.grand = grand; built.stars = stars;
+    built.level = level; built.look = JSON.stringify(look); built.top = hy; built.grand = grand; built.stars = stars;
     B.wings = M.wings.length; B.level = level; B.grand = grand; B.M = M;
     applyLod(); applyTime();
   }
+  // the helideck (games/hqroof.js lands on it, you walk it): a steel disc on four legs from the roof's corners and
+  // eight struts out from the facade, a low glass rail; its own meshes, in a group of its own ("hq-helideck")
+  function helideck(M, parent, mats){
+    var Hd = M.heli, Rf = M.roof, top = M.top, D = Hd.r, x = Hd.x, z = Hd.z, hy = Hd.y, up = hy - top, Kh = kit(THREE), g = new THREE.Group();
+    g.name = "hq-helideck"; parent.add(g);
+    Kh.cyl("dark", D, D - 0.3, 0.35, x, hy - 0.175, z, 48);
+    Kh.cyl("trim", D + 0.05, D + 0.05, 0.14, x, hy - 0.16, z, 48);
+    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function(q){ Kh.box("trim", 0.34, up, 0.34, Rf.x + q[0]*(Rf.w/2 - 0.45), top + up/2, Rf.z + q[1]*(Rf.d/2 - 0.45)); });
+    for(var i = 0; i < 8; i++){
+      var a = (i + 0.5)/8*PI*2, dx = Math.cos(a), dz = Math.sin(a), t = Math.min((Rf.w/2)/Math.max(1e-3, Math.abs(dx)), (Rf.d/2)/Math.max(1e-3, Math.abs(dz)));
+      Kh.bar("trim", [Rf.x + dx*t, top - 2.4, Rf.z + dz*t], [x + dx*(D - 0.5), hy - 0.32, z + dz*(D - 0.5)], 0.2);
+    }
+    Kh.geo("glass", new THREE.CylinderGeometry(D - 0.05, D - 0.05, 0.9, 48, 1, true), x, hy + 0.45, z);
+    Kh.geo("trim", new THREE.TorusGeometry(D - 0.05, 0.05, 4, 48), x, hy + 0.92, z, -PI/2);
+    Kh.flush(g, mats, {noShadow: {glass: 1}});
+  }
   function padModel(Pd, parent, Kd){
     var THREE_ = THREE, y = Pd.y;
-    Kd.cyl("dark", Pd.r + 0.15, Pd.r + 0.25, 0.25, Pd.x, y - 0.125, Pd.z, 24);
     var key = "pad:" + Math.round(Pd.r*10);
-    var tex = TEX[key] || (TEX[key] = c.canvasTex(256, 256, function(g){
+    var tex = TEX[key] || keepTex(key, c.canvasTex(256, 256, function(g){
       g.fillStyle = "#2f3740"; g.fillRect(0, 0, 256, 256);
-      g.strokeStyle = "#f2b234"; g.lineWidth = 10; g.beginPath(); g.arc(128, 128, 112, 0, PI*2); g.stroke();       // the touchdown circle
+      g.strokeStyle = "#f2b234"; g.lineWidth = 8; g.beginPath(); g.arc(128, 128, 84, 0, PI*2); g.stroke();         // the touchdown circle
       g.strokeStyle = "#f4f6f8"; g.lineWidth = 4; g.beginPath(); g.arc(128, 128, 122, 0, PI*2); g.stroke();
-      g.fillStyle = "#f4f6f8"; g.fillRect(84, 70, 22, 116); g.fillRect(150, 70, 22, 116); g.fillRect(84, 117, 88, 22);  // H
+      g.fillStyle = "#f4f6f8"; g.fillRect(96, 84, 16, 88); g.fillRect(144, 84, 16, 88); g.fillRect(96, 120, 64, 16);  // H
     }).t);
-    var deck = new THREE_.Mesh(new THREE_.CircleGeometry(Pd.r, 32), new THREE_.MeshStandardMaterial({map: tex, roughness: 0.7}));
-    deck.rotation.x = -PI/2; deck.position.set(Pd.x, y + 0.01, Pd.z); deck.receiveShadow = true; deck.name = "hq-helipad"; parent.add(deck);
-    var n = 12, lm = new THREE_.MeshBasicMaterial({color: 0x6fd38a, toneMapped: false}), L = new THREE_.InstancedMesh(new THREE_.SphereGeometry(0.07, 6, 4), lm, n), m4 = new THREE_.Matrix4();
-    for(var i = 0; i < n; i++){ m4.makeTranslation(Pd.x + Math.cos(i/n*PI*2)*(Pd.r + 0.05), y + 0.08, Pd.z + Math.sin(i/n*PI*2)*(Pd.r + 0.05)); L.setMatrixAt(i, m4); }
+    var deck = new THREE_.Mesh(new THREE_.CircleGeometry(Pd.r, 48), new THREE_.MeshStandardMaterial({map: tex, roughness: 0.7}));
+    deck.rotation.x = -PI/2; deck.position.set(Pd.x, y, Pd.z); deck.receiveShadow = true; deck.name = "hq-helipad"; parent.add(deck);
+    var n = 16, lm = new THREE_.MeshBasicMaterial({color: 0x6fd38a, toneMapped: false}), L = new THREE_.InstancedMesh(new THREE_.SphereGeometry(0.09, 6, 4), lm, n), m4 = new THREE_.Matrix4();
+    for(var i = 0; i < n; i++){ m4.makeTranslation(Pd.x + Math.cos(i/n*PI*2)*(Pd.r + 0.1), y + 0.06, Pd.z + Math.sin(i/n*PI*2)*(Pd.r + 0.1)); L.setMatrixAt(i, m4); }
     L.name = "hq-padlights"; parent.add(L); dyn.padLights = lm;
-    // the windsock on its mast, on the pad's rim (front-right)
-    var sx = Pd.x + (Pd.r + 0.3)*0.7, sz = Pd.z + (Pd.r + 0.3)*0.7;
+    // the windsock on its mast, on the walkway (the deck's right side)
+    var sx = Pd.x + Pd.r + 1.1, sz = Pd.z;
     Kd.cyl("trim", 0.03, 0.04, 1.8, sx, y + 0.9, sz, 6);
     var sock = new THREE_.Group(); sock.position.set(sx, y + 1.75, sz); parent.add(sock);
     var sg = new THREE_.ConeGeometry(0.16, 0.9, 10, 1, true); sg.rotateZ(PI/2); sg.translate(-0.45, 0, 0);
@@ -617,18 +650,18 @@ function make(c, opts){
     } else if(look.decor === "fireworks"){
       for(var fw = 0; fw < 3; fw++){ var g = new THREE.Group(); parent.add(g); var parts = [];
         for(var q = 0; q < 14; q++){ var sp = c.glow([COL.amber, COL.cyan, COL.coral][fw], 0.6, 1); g.add(sp); parts.push({s: sp, a: q/14*PI*2, b: (q % 3 - 1)*0.6}); }
-        g.userData.anim = true; dyn.fireworks.push({g: g, parts: parts, o: fw/3, x: (fw - 1)*6, y: top + 8 + fw*2}); }
+        g.userData.anim = true; dyn.fireworks.push({g: g, parts: parts, o: fw/3, x: (fw - 1)*6, y: M.heli.y + 8 + fw*2}); }
     } else if(look.decor === "crown"){
-      var crown = new THREE.Group(); crown.name = "decor-crown"; crown.position.set(Rf.x, top, Rf.z); parent.add(crown);   // a ring round the pad: the pad stays clear
+      var crown = new THREE.Group(); crown.name = "decor-crown"; crown.position.set(M.heli.x, M.heli.y, M.heli.z); parent.add(crown);   // a ring on the helideck's rail: the pad stays clear
       var gm = new THREE.MeshStandardMaterial({color: 0xf5d76e, metalness: 0.85, roughness: 0.2, emissive: new THREE.Color(0xd8a43a), emissiveIntensity: 0.25, side: THREE.DoubleSide});
-      var cr = Math.max(M.pad.r + 0.5, Math.min(Rf.w, Rf.d)/2 + 0.2);
+      var cr = M.heli.r + 0.1;
       var band = new THREE.Mesh(new THREE.CylinderGeometry(cr, cr - 0.1, 0.8, 32, 1, true), gm); band.position.y = 0.6; crown.add(band);
       for(var ci = 0; ci < 8; ci++){ var ca = ci/8*PI*2, pt = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.2, 4), gm); pt.position.set(Math.cos(ca)*cr, 1.6, Math.sin(ca)*cr); crown.add(pt); }
     } else if(look.decor === "neon"){
       var T = M.tiers[0], hw = T.w/2 + 0.1, hd = T.d/2 + 0.1, y0 = PLINTH, y1 = top;
       [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function(q){ Kd.box("neon", 0.16, y1 - y0, 0.16, q[0]*hw, (y0 + y1)/2, T.z + q[1]*hd); });
       for(var nf = T.y0; nf < T.y0 + T.h; nf += FH*2){ Kd.box("neon", T.w + 0.3, 0.08, 0.08, 0, nf, T.z + hd); Kd.box("neon", T.w + 0.3, 0.08, 0.08, 0, nf, T.z - hd); }
-      var ng = c.glow(dyn.mats.neon.color.getHex(), 9, 0.35); ng.position.set(0, top + 1, 0); parent.add(ng); dyn.glows.push(ng);
+      var ng = c.glow(dyn.mats.neon.color.getHex(), 9, 0.35); ng.position.set(0, M.heli.y + 1, 0); parent.add(ng); dyn.glows.push(ng);
     }
   }
   function applyTime(){
@@ -658,7 +691,7 @@ function make(c, opts){
   // the pad, the roof deck and the roof lift's door, in the building's frame (null before it is built)
   B.pad = function(){ return dyn ? dyn.M.pad : null; };
   B.roofDeck = function(){ return dyn ? roofDeck(dyn.M) : null; };
-  B.roofLift = function(){ return dyn && dyn.liftAt ? {x: dyn.liftAt.x, z: dyn.liftAt.z + 0.9, y: dyn.M.roof.y} : null; };
+  B.roofLift = function(){ var L = dyn && dyn.liftAt; return L ? {x: L.x + L.tx*0.9, z: L.z + L.tz*0.9, y: dyn.M.heli.y, hx: L.x, hz: L.z} : null; };
   // what you cannot walk through, in the building's own frame
   B.blockedLocal = function(x, z){
     var fp = footprint(B.grand, B.wings), T = fp[0];
@@ -694,5 +727,96 @@ function make(c, opts){
   return B;
 }
 
-HQV.hqTower = {make: make, massing: massing, footprint: footprint, crownSlots: crownSlots, roofDeck: roofDeck, FH: FH, PODIUM_H: PODIUM_H, TINT: TINT, FONT: FONT};
+/* ---------- HQ Studio's live preview: your tower (this make(), as in the City) in a small canvas of its own ---------- */
+// preview(c, canvas, o) -> {set(), night(on), focus(part), resize(), drag(dx, dy), zoom(dy), tick(t), dispose(), info()}
+//   c: hq3d's world context (canvasTex, glow, label...); o: {look(), level(), prestige(), calm(), renderer(canvas)?}
+//   set() rebuilds the tower from o.look() after a short pause (the last change in DEBOUNCE ms wins); the old one's
+//   geometry, materials and own textures are disposed (shared facade tiles stay: userData.shared). focus("roof" |
+//   "street" | "full") glides the camera to the part an option changes (snaps in Calm). It orbits slowly by itself,
+//   still in Calm; a drag orbits, the wheel zooms. Renders only while the canvas is on the page (and every frame
+//   only while it moves).
+var DEBOUNCE = 90;
+function disposeTree(g){
+  var seen = [];
+  g.traverse(function(x){
+    if(x.geometry) x.geometry.dispose();
+    var ms = x.material ? (Array.isArray(x.material) ? x.material : [x.material]) : [];
+    ms.forEach(function(m){
+      ["map", "emissiveMap", "alphaMap", "normalMap", "roughnessMap"].forEach(function(k){ var t = m[k]; if(t && !(t.userData && t.userData.shared) && seen.indexOf(t) < 0){ seen.push(t); t.dispose(); } });
+      m.dispose();
+    });
+  });
+  return seen.length;
+}
+function preview(c, canvas, o){
+  var THREE = c.THREE; o = o || {};
+  var R = o.renderer ? o.renderer(canvas) : new THREE.WebGLRenderer({canvas: canvas, antialias: true, powerPreference: "low-power"});
+  if(R.setPixelRatio) R.setPixelRatio(Math.min((window.devicePixelRatio || 1), 1.5));
+  if(THREE.SRGBColorSpace && "outputColorSpace" in R) R.outputColorSpace = THREE.SRGBColorSpace;
+  var scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera(32, 1, 0.5, 900);
+  var hemi = new THREE.HemisphereLight(0xdfefff, 0x3a3226, 2.0), sun = new THREE.DirectionalLight(0xfff2dc, 2.2);
+  sun.position.set(30, 60, 40); scene.add(hemi); scene.add(sun);
+  var ground = new THREE.Mesh(new THREE.CircleGeometry(60, 48), new THREE.MeshStandardMaterial({color: 0x56604f, roughness: 1}));
+  ground.rotation.x = -PI/2; ground.position.y = -0.02; scene.add(ground);
+  var B = null, timer = 0, night = false, dead = false, builds = 0, freed = 0, last = 0, dirty = true;
+  var orb = {yaw: 0.55, pitch: 0.22, dist: 60, ty: 12, tz: 0}, goal = {pitch: 0.22, dist: 60, ty: 12, tz: 0}, part = "full";
+  function bounds(){
+    var M = B && B.M, top = B ? B.top() : 20;
+    if(!M) return {full: {pitch: 0.22, dist: 60, ty: 10, tz: 0}};
+    var span = Math.max(M.podium.w, M.podium.d), Rf = M.roof;
+    return {full: {pitch: 0.2, dist: Math.max(top*1.55, span*3.2) + 8, ty: top*0.45, tz: 0},
+            roof: {pitch: 0.62, dist: Math.max(Rf.w, Rf.d)*2.4 + 16, ty: top + 1.5, tz: Rf.z || 0},
+            street: {pitch: 0.12, dist: span*1.9 + 10, ty: M.podium.h*0.55 + 0.6, tz: M.podium.d/2}};
+  }
+  function aim(snap){ var b = bounds(), g = b[part] || b.full; goal.pitch = g.pitch; goal.dist = g.dist; goal.ty = g.ty; goal.tz = g.tz; if(snap){ orb.pitch = g.pitch; orb.dist = g.dist; orb.ty = g.ty; orb.tz = g.tz; } dirty = true; }
+  function lights(){
+    hemi.intensity = night ? 0.5 : 2.0; sun.intensity = night ? 0.25 : 2.2;
+    if(R.setClearColor) R.setClearColor(night ? 0x0b1422 : 0x9fc7e8, 1);
+    ground.material.color.setHex(night ? 0x1d2420 : 0x56604f);
+    if(B) B.setNight(night); dirty = true;
+  }
+  function build(){
+    timer = 0; if(dead) return;
+    if(B){ scene.remove(B.g); freed += disposeTree(B.g); B = null; }
+    B = make(c, {level: o.level || function(){ return 1; }, look: o.look || function(){ return {}; }, prestige: o.prestige, grand: 1});
+    scene.add(B.g); builds++; lights(); aim(builds === 1);
+  }
+  function resize(){
+    var w = canvas.clientWidth || canvas.width || 300, h = canvas.clientHeight || canvas.height || 200;
+    if(R.setSize) R.setSize(w, h, false); cam.aspect = w/h; cam.updateProjectionMatrix(); dirty = true;
+  }
+  function draw(t){
+    if(dead || !B) return;
+    var calm = o.calm && o.calm(), dt = last ? Math.min(0.1, t - last) : 0; last = t;
+    var moving = !calm || Math.abs(orb.dist - goal.dist) > 0.05 || Math.abs(orb.ty - goal.ty) > 0.02 || Math.abs(orb.pitch - goal.pitch) > 0.002;
+    if(!moving && !dirty) return;
+    orb.yaw += dt*(calm ? 0.035 : 0.12);                                     // a slow turn; slower still in Calm
+    var e = calm ? 1 : 1 - Math.exp(-dt*3.5);
+    orb.pitch += (goal.pitch - orb.pitch)*e; orb.dist += (goal.dist - orb.dist)*e; orb.ty += (goal.ty - orb.ty)*e; orb.tz += (goal.tz - orb.tz)*e;
+    var cp = Math.cos(orb.pitch);
+    cam.position.set(Math.sin(orb.yaw)*cp*orb.dist, orb.ty + Math.sin(orb.pitch)*orb.dist, orb.tz + Math.cos(orb.yaw)*cp*orb.dist);
+    cam.lookAt(0, orb.ty, orb.tz);
+    if(B.animate && !calm) B.animate(t, dt, 1);
+    R.render(scene, cam); dirty = false;
+  }
+  resize(); build();
+  return {
+    set: function(now){ if(dead) return; if(timer) clearTimeout(timer); if(now) build(); else timer = setTimeout(build, DEBOUNCE); },
+    night: function(on){ if(on == null) return night; night = !!on; lights(); return night; },
+    focus: function(p){ part = p === "roof" || p === "street" ? p : "full"; aim(o.calm && o.calm()); },
+    resize: resize,
+    drag: function(dx, dy){ orb.yaw -= dx*0.008; goal.pitch = orb.pitch = clamp(orb.pitch + dy*0.005, 0.02, 1.35); dirty = true; },
+    zoom: function(dy){ goal.dist = orb.dist = clamp(orb.dist*Math.exp(dy*0.0012), 12, 260); dirty = true; },
+    tick: draw, scene: scene,
+    info: function(){ return {builds: builds, freed: freed, part: part, night: night, pending: !!timer, children: B ? B.g.children.length : 0, dist: goal.dist}; },
+    dispose: function(){
+      if(dead) return; dead = true; if(timer) clearTimeout(timer);
+      if(B){ scene.remove(B.g); freed += disposeTree(B.g); B = null; }
+      disposeTree(scene);
+      try { R.dispose(); if(R.forceContextLoss) R.forceContextLoss(); } catch(e){}
+    }
+  };
+}
+
+HQV.hqTower = {make: make, preview: preview, massing: massing, footprint: footprint, crownSlots: crownSlots, roofDeck: roofDeck, PAD_R: PAD_R, PAD_MIN: PAD_MIN, WALK: WALK, HELI_UP: HELI_UP, FH: FH, PODIUM_H: PODIUM_H, TINT: TINT, FONT: FONT};
 })();

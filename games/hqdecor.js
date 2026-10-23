@@ -153,13 +153,94 @@ function items(c, parent, list, o){
     },
     dispose: function(){ if(g.parent) g.parent.remove(g); g.traverse(function(x){ if(x.isMesh){ x.geometry.dispose(); x.material.dispose(); } }); }};
 }
-// the placement grid on the floor (HQ Studio's Layout tab): lines every metre and the cursor's cell
+// the placement grid on the floor (HQ Studio's Layout tab): lines every metre, the cursor's cells (the item's whole
+// footprint) and a translucent ghost of the item to place; set(x, z, {k, r, ok}): green where it fits, red where it does not
+var GHOST_OK = 0x6fd38a, GHOST_BAD = 0xff6b5b;
 function grid(c, parent, half){
   var THREE = c.THREE, g = new THREE.Group(); g.name = "hq-studio-grid"; g.visible = false; parent.add(g);
   var gh = new THREE.GridHelper(2*half + 1, 2*half + 1, 0xffb347, 0x5fd3e6); gh.position.y = 0.03; gh.material.transparent = true; gh.material.opacity = 0.45; g.add(gh);
-  var cur = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({color: 0xffb347, transparent: true, opacity: 0.55, toneMapped: false, depthWrite: false}));
+  var curM = new THREE.MeshBasicMaterial({color: 0xffb347, transparent: true, opacity: 0.55, toneMapped: false, depthWrite: false});
+  var cur = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), curM);
   cur.rotation.x = -PI/2; cur.position.y = 0.04; g.add(cur);
-  return {g: g, show: function(on){ g.visible = !!on; }, set: function(x, z){ cur.position.x = x; cur.position.z = z; }};
+  var gw = new THREE.Group(); gw.name = "hq-studio-ghost"; g.add(gw);
+  var ghost = null, ghostKey = null, ghostOk = null;
+  function tint(ok){
+    if(ghostOk === ok) return; ghostOk = ok; var col = ok === false ? GHOST_BAD : GHOST_OK;
+    curM.color.setHex(ok == null ? 0xffb347 : col);
+    if(ghost) ghost.g.traverse(function(x){ if(x.isMesh){ x.material.emissive.setHex(col); } });
+  }
+  function setGhost(k, r){
+    var key = k ? k + ":" + (r | 0) : null; if(key === ghostKey) return; ghostKey = key;
+    if(ghost){ ghost.dispose(); ghost = null; }
+    if(!k || !KINDS[k]) return;
+    ghost = items(c, gw, [{k: k, f: "ghost", x: 0, z: 0, r: r | 0}]);
+    ghost.g.traverse(function(x){ if(x.isMesh){ var m = x.material; m.transparent = true; m.opacity = 0.55; m.depthWrite = false; m.emissive = new THREE.Color(GHOST_OK); m.emissiveIntensity = 0.45; x.castShadow = false; x.renderOrder = 2; } });
+    ghostOk = null;
+  }
+  return {g: g, show: function(on){ g.visible = !!on; },
+    set: function(x, z, o){
+      o = o || {};
+      var S = HQV.hqStyle && HQV.hqStyle.SIZE && HQV.hqStyle.SIZE[o.k] || [1, 1], w = S[0], d = S[1];
+      if((o.r | 0) % 2){ var t = w; w = d; d = t; }
+      cur.scale.set(w, d, 1);
+      cur.position.x = x - Math.floor((w - 1)/2) + (w - 1)/2; cur.position.z = z - Math.floor((d - 1)/2) + (d - 1)/2;
+      setGhost(o.k, o.r); gw.position.set(x, 0, z); tint(o.k ? o.ok !== false : null);
+    },
+    ghost: function(){ return ghost ? {k: ghostKey, ok: ghostOk, n: ghost.n} : null; },
+    dispose: function(){ if(ghost){ ghost.dispose(); ghost = null; } }};
+}
+// Would item it ({k, f, x, z, r}) go here? Pure (the Layout tab's ghost and click): every cell of its footprint on the floor's
+// grid, not on another piece (rugs, bowls, pens and beds are walked over: they overlap anything), the floor and the whole
+// HQ under their caps. The same cell as a placed item replaces it (HQV.hqStyle.place does). -> {ok, why, replace}
+function cellsOf(it){
+  var S = HQV.hqStyle && HQV.hqStyle.SIZE && HQV.hqStyle.SIZE[it.k] || [1, 1], w = S[0], d = S[1];
+  if((it.r | 0) % 2){ var t = w; w = d; d = t; }
+  var out = [];
+  for(var i = 0; i < w; i++) for(var j = 0; j < d; j++) out.push({x: it.x + i - Math.floor((w - 1)/2), z: it.z + j - Math.floor((d - 1)/2)});
+  return out;
+}
+function fit(list, it, lim){
+  lim = lim || {}; var half = lim.grid || 13, perMax = lim.maxPerFloor || 32, allMax = lim.max || 48;
+  if(!it || !KINDS[it.k]) return {ok: false, why: "Pick an item first."};
+  var all = cellsOf(it);
+  for(var i = 0; i < all.length; i++) if(Math.abs(all[i].x) > half || Math.abs(all[i].z) > half) return {ok: false, why: "That runs off the floor."};
+  var here = (list || []).filter(function(o){ return o.f === it.f; });
+  var same = here.filter(function(o){ return o.x === it.x && o.z === it.z; })[0] || null;
+  if(!same && here.length >= perMax) return {ok: false, why: "That floor is full (" + perMax + " items)."};
+  if(!same && (list || []).length >= allMax) return {ok: false, why: "Your HQ is full (" + allMax + " items)."};
+  if(!WALK[it.k]){
+    var mine = {}; all.forEach(function(f){ mine[f.x + ":" + f.z] = 1; });
+    for(var n = 0; n < here.length; n++){
+      var o = here[n]; if(o === same || WALK[o.k]) continue;
+      var fp = cellsOf(o);
+      for(var m = 0; m < fp.length; m++) if(mine[fp[m].x + ":" + fp[m].z]) return {ok: false, why: "That overlaps the " + ((HQV.hqStyle && HQV.hqStyle.LABELS[o.k]) || o.k).toLowerCase() + ".", on: o};
+    }
+  }
+  return {ok: true, why: same ? "Replaces the " + ((HQV.hqStyle && HQV.hqStyle.LABELS[same.k]) || same.k).toLowerCase() + "." : "", replace: !!same};
+}
+// small pictures of every kind for the Layout tab's picker: rendered once on a throwaway renderer (its context is lost
+// straight after), cached as data URLs. mk(canvas) makes the renderer (a test's fake); null when WebGL is not there.
+var THUMBS = null;
+function thumbs(c, size, mk){
+  if(THUMBS) return THUMBS;
+  var THREE = c.THREE, R = null, cv = null; size = size || 72;
+  try {
+    cv = document.createElement("canvas"); cv.width = cv.height = size;
+    R = mk ? mk(cv) : new THREE.WebGLRenderer({canvas: cv, antialias: true, alpha: true, preserveDrawingBuffer: true});
+  } catch(e){ return null; }
+  var sc = new THREE.Scene(), cam = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
+  sc.add(new THREE.HemisphereLight(0xffffff, 0x445566, 2.2)); var dl = new THREE.DirectionalLight(0xffffff, 1.6); dl.position.set(3, 6, 4); sc.add(dl);
+  if(R.setClearColor) R.setClearColor(0x000000, 0);
+  var out = {};
+  Object.keys(KINDS).forEach(function(k){
+    var D = items(c, sc, [{k: k, f: "thumb", x: 0, z: 0, r: 0}]);
+    var box = new THREE.Box3().setFromObject(D.g), ctr = box.getCenter(new THREE.Vector3()), sz = box.getSize(new THREE.Vector3()), r = Math.max(sz.x, sz.y, sz.z, 0.4);
+    cam.position.set(ctr.x + r*1.5, ctr.y + r*1.25, ctr.z + r*1.9); cam.lookAt(ctr); cam.updateProjectionMatrix();
+    try { R.render(sc, cam); out[k] = cv.toDataURL("image/png"); } catch(e){ out[k] = null; }
+    D.dispose();
+  });
+  try { R.dispose(); if(R.forceContextLoss) R.forceContextLoss(); } catch(e){}
+  THUMBS = out; return out;
 }
 // Mission Control's theme (hq3d.js's own room): refs = {floor (its mesh), wallM, lamps, room (half size)}. apply(style)
 // swaps the finishes and the light, places the floor's decor, and says whether the desks' furniture set changed (they
@@ -183,10 +264,10 @@ function mission(c, scene, refs){
       return was !== furn;
     },
     furn: function(){ return FURN[furn] || FURN.standard; },
-    grid: function(o){ gridO.show(!!o && o.f === "mission"); if(o) gridO.set(o.x, o.z); },
+    grid: function(o){ gridO.show(!!o && o.f === "mission"); if(o) gridO.set(o.x, o.z, o); },
     blocked: function(x, z){ return !!deco && deco.blocked(x, z); },
     update: function(t, dt, k){ if(deco) deco.update(t, dt, k); }
   };
 }
-HQV.hqDecor = {MOODS: MOODS, mission: mission, FURN: FURN, KINDS: KINDS, wallTex: wallTex, floorTex: floorTex, items: items, footprint: footprint, grid: grid};
+HQV.hqDecor = {MOODS: MOODS, mission: mission, FURN: FURN, KINDS: KINDS, wallTex: wallTex, floorTex: floorTex, items: items, footprint: footprint, grid: grid, fit: fit, cellsOf: cellsOf, thumbs: thumbs};
 })();

@@ -35,13 +35,12 @@
  *          "adventure"|"cruiser"|"scooter"|"dirt"|"classic"|"hypersport"|"formula" ([3.17] an F1 car), spec: {cc, cyl, layout, aspiration, electric, powerKw,
  *          torqueNm, massKg, drive, topKmh, zeroTo100s, gears}, dims: {lengthM, widthM, heightM, wheelbaseM},
  *          sound (optional: a voice name that overrides voiceFor)}
- * Real figures go in; the game's caps (CAP_KMH) keep a hypercar inside a city.
+ * Real figures go in, real top speeds included (a Chiron Super Sport does its 440 km/h).
  */
 (function(){
 var HQV = (typeof window !== "undefined" ? window : globalThis).HQV = (typeof window !== "undefined" ? window : globalThis).HQV || {};
 
 var V100 = 100/3.6;                                   // m/s
-var CAP_KMH = {car: 300, bike: 280};                  // the game's top speed caps (the spec's)
 var FLOOR = 0.25, FLOOR_EV = 0.45;                    // pull left near the top: hq3d's 0.25; a motor keeps more
 var RIDER_KG = 75;                                    // a bike's figures are without its rider
 // A powerslide by drivetrain, as hq3d's: from `min` m/s, turning `turn` times as hard, the tail letting go
@@ -60,7 +59,7 @@ var LEAN = {naked: 0.42, sport: 0.5, adventure: 0.34, cruiser: 0.3, scooter: 0.3
 // body roll by type (rad at full lock and speed); hq3d's starter car has none
 var ROLL = {hatch: 0, sedan: 0.035, coupe: 0.025, hyper: 0.015, super: 0.018, suv: 0.075, pickup: 0.08, formula: 0};
 // [3.17] an F1 car (docs/plans/grand-prix-spec.md): downforce and slicks. It barely slides, launches on every bit of
-// its grip, stops in a car length and does not roll; still capped at the city's 300 km/h like every car.
+// its grip, stops in a car length and does not roll.
 var FORMULA = {grip: 1, slip: 0.12, brake: 19, slide: {min: 11, turn: 1.12, grip: 4.6, max: 0.16, bleed: 4.8}};
 var BRAKE = 14;                                       // m/s², hq3d's
 
@@ -352,10 +351,10 @@ function derive(entry){
   var type = entry.type || (kind === "bike" ? "naked" : "hatch"), electric = !!spec.electric;
   var drive = kind === "bike" ? "rwd" : (spec.drive === "fwd" || spec.drive === "awd" ? spec.drive : "rwd");
   var topU = num(spec.topKmh, kind === "bike" ? 150 : 170)/3.6;            // the real top speed
-  var top = Math.min(topU, CAP_KMH[kind]/3.6);
+  var top = topU;
   var floor = electric ? FLOOR_EV : FLOOR;
   var t = num(spec.zeroTo100s, 0) > 0 ? +spec.zeroTo100s : estimate0100(spec, kind);
-  // acc from the real 0-100 on the game's (capped) top speed; a car that cannot reach 100 km/h is timed to 85% of its
+  // acc from the real 0-100 on its top speed; a car that cannot reach 100 km/h is timed to 85% of its
   // top, scaled from its 0-100 (the starters)
   var acc;
   if(topU > V100*1.02) acc = accFor(top, t, floor);
@@ -386,6 +385,6 @@ function derive(entry){
 
 HQV.hqVehiclePhys = {derive: derive, accFor: accFor, t0100: t0100, timeTo: timeTo, estimate0100: estimate0100,
                      voiceFor: voiceFor, gearsFor: gearsFor, engineFor: engineFor, tyreCirc: tyreCirc, gearState: gearState, gearStep: gearStep, autoGear: autoGear, shiftPoints: shiftPoints, MODES: MODES, MODE_ORDER: MODE_ORDER,
-                     nitroStep: nitroStep, perfStep: perfStep, wheelieStep: wheelieStep, WHEELIE: {BAL: BAL, LOOP: LOOP, OVER: OVER, STOPPIE_V: STOPPIE_V}, REVS: REVS, CAP_KMH: CAP_KMH, SLIDE: SLIDE, LEAN: LEAN, ROLL: ROLL,
+                     nitroStep: nitroStep, perfStep: perfStep, wheelieStep: wheelieStep, WHEELIE: {BAL: BAL, LOOP: LOOP, OVER: OVER, STOPPIE_V: STOPPIE_V}, REVS: REVS, SLIDE: SLIDE, LEAN: LEAN, ROLL: ROLL,
                      FLOOR: FLOOR, FLOOR_EV: FLOOR_EV, FORMULA: FORMULA};
 })();

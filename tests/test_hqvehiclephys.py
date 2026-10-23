@@ -163,13 +163,12 @@ class VehiclePhys(unittest.TestCase):
         self.assertGreater(self.o["chiron"]["acc"], self.o["m3"]["acc"])
         self.assertGreater(self.o["m3"]["acc"], self.o["swift"]["acc"])
 
-    def test_caps(self):
-        self.assertAlmostEqual(self.o["chiron"]["top"], 300/3.6, places=1)     # 440 km/h capped at 300
-        self.assertAlmostEqual(self.o["s1000rr"]["top"], 280/3.6, places=1)    # bikes at 280
-        self.assertAlmostEqual(self.o["m3"]["top"], 290/3.6, places=1)         # under the cap: its own
+    def test_real_top_speeds(self):
+        self.assertAlmostEqual(self.o["chiron"]["top"], 440/3.6, places=1)     # no game cap: its real 440 km/h
+        self.assertGreater(self.o["s1000rr"]["top"], 280/3.6 + 1)               # bikes past the old 280 cap too
+        self.assertAlmostEqual(self.o["m3"]["top"], 290/3.6, places=1)
         for k in REAL:
             V = self.o[k]
-            self.assertLessEqual(V["top"], (300 if V["kind"] == "car" else 280)/3.6 + 0.01)
             self.assertGreater(V["acc"], 0)
             self.assertAlmostEqual(V["gears"][-1], V["top"]*1.045, delta=0.2)  # the top gear reaches the top
 

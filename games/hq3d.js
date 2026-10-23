@@ -2561,7 +2561,7 @@ function mount(el, api){
     o.events.forEach(function(ev){
       if(ev === "manual" || ev === "auto"){ gearPref(ev === "manual"); say(ev === "manual" ? "Manual gearbox: . shifts up, , down (through neutral), hold X for the clutch" + (o.qs ? ". Quickshifter: shift up flat out, no clutch" : "") : "Automatic gearbox"); }
       else if(ev === "refused") say("Too fast for " + gearTxt(ride.gs.gear - 1) + ": it would over-rev");
-      else if(ev === "launch" && o.launch && api.announce) api.announce("Launch control: let go of the brake");
+      else if(ev === "launch" && o.launch) say("🚀 Launch control: revs held, let go of S to launch");
     });
     ride.gb = o;
     return o;
@@ -3271,8 +3271,8 @@ function mount(el, api){
   // the one-line version under the driving HUD
   var RIDE_HINT = {
     bike: "W pedal · S brake · A/D steer · Shift pedal harder · I autopilot · L lights · E get off · T home",
-    moto: "W throttle · S brake · A/D steer · F wheelie (+S stoppie) · Space+W burnout · K nitro · G manual · Shift+G mode · . , shift · X clutch · H horn · I autopilot · L lights · E get off",
-    car: "W go · S brake · A/D steer · Shift+steer powerslide · Space+W burnout · K nitro · G manual · Shift+G mode · . , shift · X clutch · H horn · I autopilot · L lights · E get out",
+    moto: "W throttle · S brake · A/D steer · F wheelie (+S stoppie) · S+W launch control · Space+W burnout · K nitro · G manual · Shift+G mode · . , shift · X clutch · H horn · I autopilot · L lights · E get off",
+    car: "W go · S brake · A/D steer · Shift+steer powerslide · S+W launch control · Space+W burnout · K nitro · G manual · Shift+G mode · . , shift · X clutch · H horn · I autopilot · L lights · E get out",
     rowboat: "W row · S back water · A/D steer · I autopilot · E step ashore at a dock or a beach",
     jetski: "W throttle · S astern · A/D steer · I autopilot · E step ashore at a dock or a beach",
     heli: "Space climb · Shift descend · W/S forward/back · A/D turn · I autopilot · E get out (landed)",
@@ -3312,7 +3312,7 @@ function mount(el, api){
     if(dhud){ if(dhud.el.parentNode) dhud.el.parentNode.removeChild(dhud.el); dhud = null; }
     var kind = kind0 && baseKind(kind0), V = kind0 && VEHICLES[kind0];
     if(!kind || !HUD_MAX[kind]) return;
-    // a catalogue vehicle's dial reaches past its (capped) top speed
+    // a catalogue vehicle's dial reaches past its top speed
     var M = V && V.cat ? [Math.max(120, Math.ceil(V.top*3.6/40)*40 + 40), 40, 10] : HUD_MAX[kind];
     gamesCss();
     var d = document.createElement("div"); d.className = "hq3d-drive hq3d-drive-" + kind; d.setAttribute("aria-hidden", "true");

@@ -290,6 +290,10 @@ impl Hq {
         let Some(convoy) = read_convoy(uid, msg) else { return false };
         // Pets: a bad species, variant, accessory, stage or name drops the whole frame.
         let Some(pets) = read_pets(msg.get("pt")) else { return false };
+        // Riding a pet (13): its first pet is the mount, and must be one that carries a rider; none, or a puppy, drops the frame.
+        if a.as_f64() == Some(13.0) && !pets.as_ref().and_then(|v| v.first()).is_some_and(|t| crate::pets::rideable(t.0, t.3)) {
+            return false;
+        }
         p.w = w.to_string();
         p.x = super::py_trunc(x); // Python's int(x): toward zero
         p.z = super::py_trunc(z);
@@ -407,8 +411,9 @@ fn anim_ok(a: &Value) -> bool {
         // car / riding a motorbike (the "drive" capability), and 7 / 8, flying a helicopter /
         // an attack helicopter (the "fly" capability; its height rides in `h`), and 9 / 10, flying the
         // seaplane / the prop plane (the "plane" capability, HQ 3.2; its height rides in `h` too), and 11 / 12,
-        // flying the regional jet / the narrow-body airliner (the "airliner" capability, HQ 3.8).
-        Value::Number(n) => n.as_f64().is_some_and(|f| [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0].contains(&f)),
+        // flying the regional jet / the narrow-body airliner (the "airliner" capability, HQ 3.8), and 13, riding your
+        // pet (the "petride" capability, HQ 3.14: `pt`'s first pet is the mount, checked in pos).
+        Value::Number(n) => n.as_f64().is_some_and(|f| [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0].contains(&f)),
         _ => false,
     }
 }
@@ -677,8 +682,8 @@ mod tests {
         assert_eq!(p.listing()[0]["r"], 270); // int(-90) % 360, not Rust's -90
         // a bool x is not a number in Python either
         assert!(!p.pos("u", &json!({"w": "mission", "x": true, "z": 0, "r": 0}), 0.2));
-        // a is 13, which no capability sends (9 and 10 are the planes, HQ 3.2; 11 and 12 the airliners, HQ 3.8)
-        assert!(!p.pos("u", &json!({"w": "mission", "x": 0, "z": 0, "r": 0, "a": 13}), 0.3));
+        // a is 14, which no capability sends (9 and 10 are the planes, HQ 3.2; 11 and 12 the airliners, HQ 3.8; 13 riding a pet, 3.14)
+        assert!(!p.pos("u", &json!({"w": "mission", "x": 0, "z": 0, "r": 0, "a": 14}), 0.3));
         // nobody by that name is standing anywhere
         assert!(!p.pos("nobody", &json!({"w": "base", "x": 0, "z": 0, "r": 0}), 0.4));
         // Every rejection above left the stored position alone.
@@ -756,6 +761,27 @@ mod tests {
         // a code the Arena would not write drops the whole frame
         for bad in [json!("x"), json!(7), json!("9001000---"), json!("0001000---FUCK"), json!("0001000---ABCDEFGHIJ")] {
             assert!(!p.pos("u", &json!({"w": "city", "x": 900, "z": 0, "r": 0, "a": 5, "vt": bad}), 2.0), "{bad}");
+        }
+        assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
+    }
+
+    #[test]
+    fn riding_a_pet_needs_a_mount_that_carries_a_rider() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        // a grown fire dragon (index 10, stage 2) under you, 40 m up: listed with its pets and height
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 13, "h": 4000, "p": 5, "pt": [[10, 1, 0, 2, "Ember"], [0, 0, 1, 0, "Mochi"]]}), 0.1));
+        let l = p.listing();
+        assert_eq!((l[0]["a"].clone(), l[0]["h"].clone(), l[0]["pt"][0][0].clone()), (json!(13), json!(4000), json!(10)));
+        // a big dinosaur (the triceratops, 14) and the grown sea serpent (21) carry you too
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 13, "pt": [[14, 0, 0, 0, "Trike"]]}), 0.2));
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 13, "pt": [[21, 0, 0, 2, "Nessie"]]}), 0.3));
+        // no pets, a young dragon, a dog or the raptor under you: the whole frame is dropped
+        for bad in [json!(null), json!([]), json!([[10, 1, 0, 1, "Ember"]]), json!([[0, 0, 0, 0, "Mochi"]]), json!([[15, 0, 0, 0, "Rex"]]),
+                    json!([[0, 0, 0, 0, "Mochi"], [10, 1, 0, 2, "Ember"]])] {
+            let mut m = json!({"w": "city3d", "x": 900, "z": 0, "r": 0, "a": 13});
+            if !bad.is_null() { m["pt"] = bad.clone(); }
+            assert!(!p.pos("u", &m, 2.0), "{bad}");
         }
         assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
     }

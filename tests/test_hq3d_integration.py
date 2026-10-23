@@ -55,7 +55,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         m = re.search(r"var HQ_SCRIPTS = (\[[^\]]*\]);", read(HQ_UI))
         self.assertTrue(m, "HQ_SCRIPTS list in 22-hq.js")
         self.assertEqual(json.loads(m.group(1)),
-                         ["engine", "avatar3d", "hq3d", "hqpets", "hqlobby",
+                         ["engine", "avatar3d", "hq3d", "hqpets", "hqpetride", "hqlobby",
                           # the basement garage (3.4): the car lift, the garage manager, its effects, B1 itself
                           "hqcarlift", "hqgaragemgr", "hqbasementfx", "hqbasement",
                           # the HQ revamp: HQ Studio's style document and the tower it styles (before the Base that builds it)
@@ -124,7 +124,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         self.assertIn('if((a===7 || a===8) && !hqNetCan("fly")) a = 0;', send)
         self.assertLess(send.index('hqNetCan("fly")'), send.index("var msg="))
         # others see them in it: the helicopter model at the height they send, its rotors turning
-        self.assertIn('var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop", 11: "regional", 12: "airliner"};', src)
+        self.assertIn('var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop", 11: "regional", 12: "airliner", 13: "petride"};', src)
         place = func_body(src, "placePeers")
         self.assertIn("HQV.hqheli.model(ctx, vk, bikeColor(u))", place)
         self.assertIn("HQV.hqheli.animate(P.bike, P.hst, dt, isNight())", place)

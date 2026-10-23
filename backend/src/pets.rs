@@ -101,6 +101,15 @@ pub fn species(id: &str) -> Option<&'static Species> {
     SPECIES.iter().find(|s| s.id == id)
 }
 
+/// The big dinosaurs you can ride (they do not grow; the page asks for the grown mark's affection).
+pub const RIDE_DINO: &[&str] = &["trex", "triceratops", "brachio", "stego"];
+
+/// Whether a pet as presence shows it (`pt`: species index, stage) can carry a rider (HQ 3.14, "petride"): a grown
+/// grower (the dragons, the sea serpent) or one of the big dinosaurs (games/hqpetride.js rideKind / grown).
+pub fn rideable(species_index: u8, stage: u8) -> bool {
+    SPECIES.get(usize::from(species_index)).is_some_and(|s| if s.grows { stage == 2 } else { RIDE_DINO.contains(&s.id) })
+}
+
 /// A grower's stage (0 hatchling, 1 young, 2 grown) at `affection`; 0 for everyone else.
 pub fn stage_of(s: &Species, affection: i64) -> i64 {
     if !s.grows {
@@ -603,6 +612,12 @@ mod tests {
         assert!(SPECIES.iter().all(|s| s.id == "golddragon" || (s.min_level < gold.min_level && s.price < gold.price)), "the golden dragon is the rarest");
         assert!(species("icedragon").is_some_and(|s| s.grows && s.saddle));
         assert!(species("seaserpent").is_some_and(|s| s.grows && !s.saddle));
+        // [3.14] who carries a rider: a grown dragon or serpent, a big dinosaur; never a dog, a hatchling or the raptor
+        let ix = |id: &str| SPECIES.iter().position(|s| s.id == id).unwrap() as u8;
+        assert!(rideable(ix("firedragon"), 2) && rideable(ix("seaserpent"), 2) && rideable(ix("wyvern"), 2));
+        assert!(!rideable(ix("firedragon"), 1) && !rideable(ix("seaserpent"), 0));
+        assert!(rideable(ix("triceratops"), 0) && rideable(ix("brachio"), 0) && rideable(ix("stego"), 0) && rideable(ix("trex"), 0));
+        assert!(!rideable(ix("raptor"), 0) && !rideable(ix("shiba"), 0) && !rideable(99, 2));
     }
 
     #[test]

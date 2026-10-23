@@ -811,10 +811,15 @@ function pose(Mo, st, t, calm, look){
   var FL = null;
   if(Mo.wing){
     if(fly){
-      var glide = !calm && Math.sin(t*0.45 + Mo.seedF) > 0.6;
-      FL = calm || glide ? {flap: 0.12 + Math.sin(t*1.3)*0.03, sag: 0.03, curl: 0, down: 0} : flapAt(t*(Mo.scale < 0.8 ? 2.1 : 1.6) + Mo.seedF);
+      // [3.14 riding] st.wing, when someone rides it (games/hqpetride.js): "climb" big beats, "hover" fast short ones,
+      // "glide" spread and still, "dive" folded back; Calm: the same shapes, slower and gentler
+      var wm = st.wing || null, spread = 1;
+      var glide = wm ? wm === "glide" : !calm && Math.sin(t*0.45 + Mo.seedF) > 0.6;
+      if(wm === "dive"){ FL = {flap: 0.55, sag: 0, curl: 0.4, down: 0}; spread = 0.3; }
+      else if(wm === "climb" || wm === "hover"){ FL = flapAt(t*(wm === "hover" ? 3.2 : 2.3)*(calm ? 0.5 : 1) + Mo.seedF); if(wm === "hover"){ FL.flap = 0.25 + (FL.flap - 0.25)*0.6*(calm ? 0.6 : 1); } }
+      else FL = calm || glide ? {flap: 0.12 + Math.sin(t*1.3)*0.03, sag: 0.03, curl: 0, down: 0} : flapAt(t*(Mo.scale < 0.8 ? 2.1 : 1.6) + Mo.seedF);
       body.rotation.x = 0.06 - FL.flap*0.05; body.position.y += -FL.flap*0.035*k; head.position.y -= 0.03; head.position.z += 0.04; head.rotation.x = 0.15;
-      wingPose(Mo.wing, 1, FL.flap, FL.sag, FL.curl);
+      wingPose(Mo.wing, spread, FL.flap, FL.sag, FL.curl);
     } else if(a === "wings"){ var wk = 0.55 + 0.45*Math.sin(t*2.2); wingPose(Mo.wing, wk*k + (1 - k)*0.4, 0.3 + Math.sin(t*4)*0.25*k, -0.02, 0); }
     else if(a === "big" && !calm){ FL = flapAt(t*2); wingPose(Mo.wing, 1, FL.flap, FL.sag, FL.curl); }
     else wingPose(Mo.wing, 0.02 + br*0.4, 0.05, 0, 0);
@@ -1205,6 +1210,20 @@ function elementFx(F, sp, st, M, a, t, dt){
   if(fx === "bubbles" && st.wet && mv) F.emit("bubbles", g.position.x, g.position.y + 0.05, g.position.z, 1, 0, 0, 0, 0.3, 0.8, 0.5);
 }
 
+// the real model, when there is one and it loads: swapped in over the procedural pet M (which stays meanwhile);
+// c: hq3d's ctx (THREE, L: the glTF loader). Also games/hqpetride.js's mounts.
+function upgrade(c, M){
+  var md = modelFor(M && M.sp), L = c && c.L, T = c && c.THREE;
+  if(md && L && L.loader && L.clone && T) loadPetGlb(L, md.f).then(function(gl){
+    if(M.dead) return; var R = null;
+    try { R = rig(T, gl, L.clone, M); } catch(e){ R = null; }
+    if(!R || M.dead) return;
+    M.rig = R; M.P.add(R.wrap); M.body.visible = false; [M.limbs, M.bits, M.segs].forEach(function(o){ if(o) o.visible = false; });
+    if(M.onRig) M.onRig(R);
+  }, function(){});
+  return M;
+}
+
 /* ---------- a name tag (canvas text: never HTML) ---------- */
 function tagSprite(T, name){
   var cv; try { cv = document.createElement("canvas"); } catch(e){ return null; }
@@ -1224,19 +1243,13 @@ function create(c, opts){
   opts = opts || {};
   var T = c.THREE, F = null, scene = null, mine = [], remote = {}, lobbyPets = [], owned = [], lobbyList = null, trail = [], ball = null, ballMesh = null;
   var prompt = null, promptFor = null, lastCare = {}, worldKey = null, greet = false, statsN = {pets: 0, meshes: 0};
+  var mounted = null, rideNear = null;   // [3.14 riding] the pet you ride (its id; drawn by hq3d as the mount), the one you could
   function calm(){ return !!(opts.calm && opts.calm()); }
   function build(p, seedKey){
     var M = model(T, {species: p.species || (p.sp && p.sp.id), variant: p.variant, acc: p.acc, stage: p.stage != null ? p.stage : stageOf(speciesOf(p.species), p.affection)});
     var tag = tagSprite(T, p.name || M.sp.name); if(tag){ tag.position.y = (M.dims.cy + M.dims.H + (M.sp.neck || 0) + 0.45)*M.scale; M.g.add(tag); M.tag = tag; }
     M.seed = hashStr(seedKey || p.id || p.name || "pet");
-    // the real model, when there is one and it loads: swapped in over the procedural pet (which stays meanwhile)
-    var md = modelFor(M.sp), L = c.L;
-    if(md && L && L.loader && L.clone) loadPetGlb(L, md.f).then(function(gl){
-      if(M.dead) return; var R = null;
-      try { R = rig(T, gl, L.clone, M); } catch(e){ R = null; }
-      if(!R || M.dead) return;
-      M.rig = R; M.P.add(R.wrap); M.body.visible = false; [M.limbs, M.bits, M.segs].forEach(function(o){ if(o) o.visible = false; });
-    }, function(){});
+    upgrade(c, M);
     return M;
   }
   function drop(M){ if(!M) return; M.dead = true; if(M.rig){ M.rig.mixer.stopAllAction(); M.rig.mixer.uncacheRoot(M.rig.root); } if(M.g.parent) M.g.parent.remove(M.g); M.g.traverse(function(o){ if((o.isMesh || o.isInstancedMesh) && !o.geometry.userData.shared){ o.geometry.dispose(); } if(o.isSprite && o.name === "pet-tag"){ o.material.map.dispose(); o.material.dispose(); } }); }
@@ -1266,7 +1279,18 @@ function create(c, opts){
   K.setOwned = function(list){ owned = (list || []).filter(function(p){ return p && speciesOf(p.species); }).slice(0, MAX_OWNED); syncMine(); };
   // whose lobby pets to show: null = yours (owned, home and not out); a list (a visit) = the host's
   K.setLobby = function(list){ lobbyList = Array.isArray(list) ? list.slice(0, MAX_OWNED) : null; lobbyPets.forEach(function(l){ drop(l.M); }); lobbyPets = []; worldKey = null; };
-  K.net = function(){ return encode(owned.filter(function(p){ return p.active; })); };
+  // (riding: the mount first, so everyone else draws it under you)
+  K.net = function(){ var out = owned.filter(function(p){ return p.active; }); if(mounted) out.sort(function(a, b){ return (b.id === mounted) - (a.id === mounted); }); return encode(out); };
+  // [3.14 riding] the pet you ride: hidden here (hq3d draws it big, you on it); null gets off, it stands at `at`
+  K.setMounted = function(id, at){
+    var was = mounted; mounted = id || null;
+    if(!mounted && was) mine.forEach(function(m){ if(m.p.id === was && m.st){ if(at){ m.st.x = +at.x || 0; m.st.z = +at.z || 0; if(at.yaw != null) m.st.yaw = +at.yaw; }
+      m.st.hidden = false; m.st.y = 0; m.st.mode = "follow"; m.st.speed = 0; m.M.g.visible = true; } });
+  };
+  K.mounted = function(){ return mounted; };
+  // the pet you could ride from here, or null: {p, sp, x, z, yaw} (K.frame keeps it, with the prompt)
+  K.rideable = function(){ return rideNear; };
+  K.fx = function(){ return F; };
   K.out = function(){ return mine.map(function(m){ return {id: m.p.id, name: m.p.name, x: m.st ? m.st.x : null, z: m.st ? m.st.z : null, anim: m.st ? m.st.anim : null, mode: m.st ? m.st.mode : null}; }); };
   K.stats = function(){ return {mine: mine.length, remote: Object.keys(remote).reduce(function(n, u){ return n + remote[u].length; }, 0), lobby: lobbyPets.length,
     drawn: statsN.pets, meshes: statsN.meshes, fx: F ? F.used : 0, models: all().filter(function(M){ return M.rig; }).length, lod: all().filter(function(M){ return M.lod; }).length}; };
@@ -1313,6 +1337,7 @@ function create(c, opts){
     mine.forEach(function(m, i){
       placeIn(m.M, sc);
       if(!m.st){ var b = besideOwner(o, m.slot, info.blocked); m.st = newState(m.M.seed, b.x, b.z, o.yaw); m.st.id = m.p.id; }
+      if(mounted && m.p.id === mounted){ m.M.g.visible = false; m.st.x = o.x; m.st.z = o.z; m.st.yaw = o.yaw; m.st.hidden = true; return; }   // under you
       var ev = step(m.st, {owner: o, slot: m.slot, sp: m.M.sp, trail: trail, blocked: info.blocked, water: info.water, calm: cm,
                            ball: ball, fetcher: ball && ball.who === i}, dt);
       ev.forEach(function(e){
@@ -1344,7 +1369,8 @@ function create(c, opts){
     (info.peers || []).forEach(function(pr){
       if(!pr || typeof pr.u !== "string") return;
       var list = decode(pr.pt); seen[pr.u] = 1;
-      var R = remote[pr.u] || (remote[pr.u] = []), key = JSON.stringify(pr.pt || []);
+      if(pr.mount) list = list.slice(1);                       // [3.14 riding] their first pet is under them (hq3d draws it)
+      var R = remote[pr.u] || (remote[pr.u] = []), key = JSON.stringify(pr.pt || []) + (pr.mount ? "|m" : "");
       if(R.key !== key){ R.forEach(function(r){ drop(r.M); }); R.length = 0; R.key = key;
         list.forEach(function(p, i){ var M = build({species: p.sp.id, variant: p.variant, acc: p.acc, stage: p.stage, name: p.name}, pr.u + ":" + i); R.push({M: M, st: null, slot: i, tr: []}); }); }
       var far = Math.hypot(pr.x - o.x, pr.z - o.z) > 80;
@@ -1399,6 +1425,18 @@ function create(c, opts){
       showPrompt(near ? (near.kind === "lobby" ? "E  Take " + near.p.name + " out" : "E  Leave " + near.p.name + " here") : null);
     } else showPrompt(null);
     K.near = near;
+    // [3.14 riding] a grown dragon, the sea serpent or a big dinosaur out with you, beside you: "E  Ride <name>"
+    rideNear = null;
+    var PR = HQV.hqPetRide;
+    if(PR && info.canRide && !o.ride && !mounted && !shop && !near){
+      var rb = 1e9;
+      mine.forEach(function(m){
+        if(!m.st || m.st.hidden) return;
+        var d = Math.hypot(m.st.x - o.x, m.st.z - o.z), ok = PR.canMount({sp: m.M.sp, affection: m.p.affection, d: d, water: info.water ? !!info.water(m.st.x, m.st.z) : false, world: true});
+        if(ok.ok && d < rb){ rb = d; rideNear = {p: m.p, sp: m.M.sp, x: m.st.x, z: m.st.z, yaw: m.st.yaw}; }
+      });
+      if(rideNear) showPrompt("E  Ride " + rideNear.p.name);
+    }
     F.step(dt);
     statsN.pets = drawn; statsN.meshes = meshes;
   };
@@ -1555,6 +1593,6 @@ HQV.hqPets = {
   speciesOf: speciesOf, stageOf: stageOf, tricksFor: tricksFor, nextTrick: nextTrick, cleanName: cleanName, accOk: accOk, canAdopt: canAdopt,
   encode: encode, decode: decode, newState: newState, step: step, lobbyStep: lobbyStep, spotFor: spotFor, followTarget: followTarget,
   trailPush: trailPush, trailAt: trailAt, throwBall: throwBall, besideOwner: besideOwner, hashStr: hashStr,
-  model: model, pose: pose, create: create, MODELS: MODELS, modelFor: modelFor, rig: rig, LOD_D: LOD_D, lobby: lobby, place: place, build: build, pick: shopPick, SHOP_ID: SHOP_ID, SHOP_NAME: SHOP_NAME
+  model: model, pose: pose, create: create, upgrade: upgrade, Fx: Fx, FXC: FXC, MODELS: MODELS, modelFor: modelFor, rig: rig, LOD_D: LOD_D, lobby: lobby, place: place, build: build, pick: shopPick, SHOP_ID: SHOP_ID, SHOP_NAME: SHOP_NAME
 };
 })();

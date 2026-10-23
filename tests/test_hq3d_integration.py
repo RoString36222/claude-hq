@@ -59,7 +59,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           # the basement garage (3.4): the car lift, the garage manager, its effects, B1 itself
                           "hqcarlift", "hqgaragemgr", "hqbasementfx", "hqbasement",
                           # the HQ revamp: HQ Studio's style document and the tower it styles (before the Base that builds it)
-                          "hqstyle", "hqtower", "hqbase", "hqskate", "world", "worldgeom",
+                          "hqstyle", "hqtower", "hqroof", "hqdecor", "hqbase", "hqskate", "world", "worldgeom",
                           "worldbuild", "camrig", "hqhud", "hqcityparts", "hqcity", "hqmerge",
                           # Cities (3.0): the civic kit, residents, traffic, the sea, boats, travel
                           "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqheli",

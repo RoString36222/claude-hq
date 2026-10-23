@@ -58,6 +58,7 @@ function buildCmdkItems(q){
   if(typeof hqReturnHome==="function") items.push({group:"Views", ic:"🏠", label:"Return to HQ", sub:"Arena City: your front door, your starters back in B1", run:function(){ hqReturnHome(); }});
   // actions
   items.push({group:"Actions", ic:"⚙️", label:"Open Settings", run:function(){ openSettings(); }});
+  if(typeof hqStudioOpen==="function") items.push({group:"Actions", ic:"\uD83C\uDFA8", label:"HQ Studio", sub:"style your tower, lobby and floors", run:function(){ hqStudioOpen(); }});
   if(typeof openNotchInvite==="function") items.push({group:"Actions", ic:"\uD83D\uDCBB", label:"HQ Notch", sub:"install or check the notch app", run:function(){ openNotchInvite(); }});
   items.push({group:"Actions", ic:"⬇️", label:"Export CSV", run:function(){ downloadExport("csv"); }});
   items.push({group:"Actions", ic:"⬇️", label:"Export JSON", run:function(){ downloadExport("json"); }});

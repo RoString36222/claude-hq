@@ -606,6 +606,7 @@
         <div class="hq3d-row"><span class="muted">Paint</span><div class="hq3d-swatches" id="hqPaint" role="group" aria-label="Building paint"></div></div>
         <div class="hq3d-row"><span class="muted">Lights</span><div class="hq3d-swatches" id="hqAccent" role="group" aria-label="Accent lights"></div></div>
         <label class="hq3d-row" for="hqSign"><span class="muted">Sign</span><input id="hqSign" maxlength="18" placeholder="CLAUDE HQ" autocomplete="off"></label>
+        <div class="hq3d-row"><span class="muted">Style</span><button class="hbtn ghost" id="hqStudioBtn" type="button">HQ Studio…</button></div>
         <label class="hq3d-check" for="hqOpen"><input type="checkbox" id="hqOpen"> <span>Open my HQ to visitors <small class="muted">They see your building, your level and how many crew are working, need you or are idle. Never titles, projects or anything your sessions say.</small></span></label>
         <div class="hq3d-row"><button class="hbtn" id="hqSave" type="button">Save</button><span id="hqSaveNote" class="muted" aria-live="polite"></span></div>
       </details>
@@ -1124,6 +1125,11 @@
           <span class="hint">High contrast is a local display preference (kept in this browser).</span>
         </div>
         <div class="setrow">
+          <label id="setStudioLbl">HQ Studio</label>
+          <button class="hbtn" id="setStudio" type="button" aria-describedby="setStudioHint">Open HQ Studio…</button>
+          <span class="hint" id="setStudioHint">Style your tower (facade, colours, crown, entrance, sign, night lights, grounds), your lobby and your floors, and place decor. Others see it in the City when your Arena supports it.</span>
+        </div>
+        <div class="setrow">
           <label for="setTrainer">Trainer name</label>
           <input id="setTrainer" type="text" maxlength="32" placeholder="Auto (from session names)">
           <span class="hint">Shown on your Trainer Card. Leave blank for automatic.</span>
@@ -1385,6 +1391,7 @@
 //@include ui/app/37-notch-invite.js
 //@include ui/app/38-townhall.js
 //@include ui/app/39-boombox.js
+//@include ui/app/40-studio.js
 </script>
 </body>
 </html>

@@ -28,7 +28,7 @@ const root = %(root)s;
 const THREE = await import(root + "/games/vendor/three-module.js");
 globalThis.window = {HQV: {}};
 const HQV = window.HQV;
-for (const f of ["hqstyle", "hqtower", "hqbase", "hqcityparts", "hqcity"]) new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
+for (const f of ["hqstyle", "hqtower", "hqroof", "hqdecor", "hqbase", "hqcityparts", "hqcity"]) new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
 var noop2d = new Proxy({}, {get(t, k){ return k === "measureText" ? function(){ return {width: 10}; } : function(){ return {addColorStop(){}}; }; }, set(){ return true; }});
 function mat(c, o){ return new THREE.MeshStandardMaterial(Object.assign({color: c}, o || {})); }
 function emis(c, e, ei, o){ var m = mat(c, o); m.emissive = new THREE.Color(e); m.emissiveIntensity = ei; return m; }

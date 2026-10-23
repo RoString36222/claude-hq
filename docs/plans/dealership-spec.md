@@ -357,7 +357,7 @@ on the road graph; feature-detected, so calling works before it exists).
 - **C** (a tap; held, C still raises the camera) or the **📞 Call (C)** button lists your vehicles:
   `HQV.hqGarage.mine()` (`own:<id>`) when the Arena's garage exists, until then the Showroom's vehicle,
   plus your HQ garage's car and motorbike. Each row: name, paint swatch, where it is ("In the carpark",
-  "291 m away · ~53 s", "On its way · 120 m"). Keys inside never leak; textContent only.
+  "291 m away · ~6 s", "On its way · 120 m"). Keys inside never leak; textContent only.
 - **Pick one** and it comes to you, picked in this order:
   1. It stands in this world within 1.5 km (`CALL_R`): it drives from there.
   2. It is in the carpark (a city with one): it leaves its bay (the bay is a stable hash of the
@@ -370,9 +370,16 @@ on the road graph; feature-detected, so calling works before it exists).
   (`LANE`; everyone drives on the right) and cruises at 12 m/s. It slows for turns (4.5 m/s
   through a right angle, looked ahead 30 m) and keeps 6 m behind traffic and you
   (`aheadOf`, a 1.4 m half-lane). After 4 s held up by traffic it noses through for 3 s, since
-  traffic stops for it too (`w.callRoad.obstacle`). It gives up and parks after 25 s stuck.
+  traffic stops for it too (`w.callRoad.obstacle`); a call noses through after 1 s. It gives up and parks after 25 s stuck.
+- **Under 10 s from anywhere.** A call has a 6 s budget (`BUDGET`): everything before its last 25 m
+  (`FINAL`, ramps included) is hurried along the same route, as fast as it must be to leave 3.5 s
+  for the last stretch, ignoring traffic and snapping to the road's heading. The last 25 m are driven
+  at street speed as above. Its clock is real time, not the frame clock (frames are capped at 0.05 s),
+  so a slow machine keeps the budget too. Measured in node over 80 m to 6.4 km routes (with the
+  carpark ramps) at 30 and 144 Hz: 6.2-7.2 s, and 7.9 s with a car blocking its last stretch;
+  headless Chrome, 115 m to 1.75 km in the 3D City, tap to parked: 7.0-8.6 s. The way back is not hurried.
   Hazard lights blink, an orange dot shows on the minimap, and a pill reads
-  "📞 BMW M3 on its way · 315 m · ~44 s". It never stops for you in its last 12 m.
+  "📞 BMW M3 on its way · 315 m · ~6 s". It never stops for you in its last 12 m.
 - **It parks at the kerb beside you**, on the right of the way it came, 1.3 m in from the
   carriageway's edge and facing along the road. If you stand on that spot, it stops 6.5 m past
   you. E gets you in. It can't be boarded while it drives itself.

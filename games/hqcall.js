@@ -5,7 +5,9 @@
  * road route (games/hqnav.js, drive mode) from the carpark's entrance to you, on the right of the road, slowing for
  * turns, junctions, traffic and you. With no carpark it starts where it stands (within CALL_R m in this world), and
  * when there is no way from there either it appears on a road out of sight (over MIN_HIDE m away and outside the
- * camera) and drives the last stretch. It parks at the kerb beside you, facing the way it came. When you get out,
+ * camera) and drives the last stretch. A call is beside you within BUDGET s however far it comes: everything before its
+ * last FINAL m is hurried along the same route, and that last stretch is driven at street speed. It parks at the kerb
+ * beside you, facing the way it came. When you get out,
  * RETURN_S s later it drives itself back: to the carpark's entrance and up entryPath into its bay (or, with no
  * carpark, back to its place by your HQ's garage).
  *
@@ -20,12 +22,16 @@
  *   poly(pl)                     a carpark polyline ([{x, y?, z}], [[x, z]], [[x, y, z]], flat [x, z, ...], {pts, ys})
  *                                -> {xz, y} (y null, or NaN where it is the ground)
  *   join(a, b)                   a then b as one {xz, y} (b's points on the ground)
- *   run(path, v0, ys)            -> R {P, C, len, s, v, x, y, z, yaw, done}; ys: heights per point (NaN: the ground);
- *                                where a height is given (the carpark) it keeps to RAMP_V m/s
- *   step(R, dt, ahead)           advance R by dt s; ahead = metres to the nearest obstacle in its lane (Infinity: none)
+ *   run(path, v0, ys, budget)    -> R {P, C, len, s, v, x, y, z, yaw, done, t}; ys: heights per point (NaN: the
+ *                                ground); where a height is given (the carpark) it keeps to RAMP_V m/s. budget (s,
+ *                                a call: BUDGET): everything before its last FINAL m is hurried (R.hurry) so that it
+ *                                is there in budget s however far it comes; the last FINAL m are driven as usual
+ *   step(R, dt, ahead)           advance R by dt s; ahead = metres to the nearest obstacle in its lane (Infinity: none;
+ *                                ignored while it hurries)
  *   aheadOf(x, z, yaw, obs, half, range) -> metres to the nearest obstacle {x, z, r} in a lane of half width half
  *   spawnPick(cands, me, inView, minD) -> the nearest candidate {x, z} at least minD m from me and not in view, or null
- *   eta(len)                     -> s, for the panel and the pill
+ *   eta(len)                     -> s, for the panel and the pill (a call: at most BUDGET)
+ *   etaOf(R)                     -> s left on a run
  * UI (textContent only; keys inside never reach the dashboard or the avatar):
  *   mount(stage, {items() -> [{key, title, sub, busy}], onPick(key), onClose}) -> ui
  *     ui.open() / close() / toggle() / isOpen() / render() / status(text | null) / destroy()
@@ -45,6 +51,9 @@ var LOOK = 30;          // m of road looked ahead for turns
 var CALL_R = 1500;      // m: farther (or another world) and it arrives from out of sight
 var MIN_HIDE = 40;      // m: out of sight means at least this far
 var EASE_IN = 8;        // m over which the lane offset eases in at the start
+var BUDGET = 6;         // s: a called vehicle is beside you within this, from anywhere
+var FINAL = 25;         // m: its last stretch, driven at street speed (everything before is hurried)
+var FINAL_T = 3.5;       // s kept for that last stretch
 
 function hyp(a, b){ return Math.sqrt(a*a + b*b); }
 function wrap(a){ while(a > Math.PI) a -= 2*Math.PI; while(a < -Math.PI) a += 2*Math.PI; return a; }
@@ -154,8 +163,9 @@ function capAt(R, s){
   return v;
 }
 // ys (optional, one per point): heights along the path (NaN: the ground), the carpark's ramps
-function run(path, v0, ys){
-  var R = {P: path, C: cumOf(path), s: 0, v: Math.max(0, +v0 || 0), done: false, Y: ys && ys.length === path.length/2 ? ys : null};
+function run(path, v0, ys, budget){
+  var R = {P: path, C: cumOf(path), s: 0, v: Math.max(0, +v0 || 0), done: false, Y: ys && ys.length === path.length/2 ? ys : null,
+           t: 0, budget: budget > 0 ? +budget : 0, hurry: false};
   R.len = R.C[R.C.length - 1];
   R.x = path[0]; R.z = path[1]; R.y = R.Y ? R.Y[0] : NaN; R.yaw = headingAt(R, 0.5);
   R.endYaw = path.length >= 4 ? Math.atan2(path[path.length - 2] - path[path.length - 4], path[path.length - 1] - path[path.length - 3]) : R.yaw;
@@ -163,15 +173,21 @@ function run(path, v0, ys){
 }
 function step(R, dt, ahead){
   if(R.done || !(dt > 0)) return R;
+  R.t += dt;
+  // a call: the metres before its last FINAL that it must cover each second to keep its budget, over what it drives
+  var far = R.budget ? R.len - FINAL - R.s : 0, need = far > 0 ? far/Math.max(0.25, R.budget - FINAL_T - R.t) : 0;
+  R.hurry = need > R.v + 1;
+  if(R.hurry) ahead = Infinity;
   var tv = CRUISE;
   for(var k = 0; k <= LOOK; k += 3){ var s2 = R.s + k; if(s2 > R.len) break; tv = Math.min(tv, Math.sqrt(Math.pow(capAt(R, s2), 2) + 2*DEC*k)); }
   tv = Math.min(tv, Math.sqrt(2*DEC*Math.max(0, R.len - R.s)) + 0.4);                        // stopping at the spot
   if(ahead != null && isFinite(ahead)) tv = Math.min(tv, Math.sqrt(2*DEC*Math.max(0, ahead - STOP_GAP)));
   R.v = R.v < tv ? Math.min(tv, R.v + ACC*dt) : Math.max(tv, R.v - DEC*1.6*dt);
   R.s = Math.min(R.len, R.s + R.v*dt);
+  if(R.hurry) R.s = Math.min(R.s + Math.max(0, need - R.v)*dt, R.len - FINAL);
   var p = pointAt(R, R.s); R.x = p.x; R.z = p.z; R.y = p.y;
   var ty = headingAt(R, Math.min(R.len, R.s + 2.5));
-  R.yaw = wrap(R.yaw + wrap(ty - R.yaw)*(1 - Math.exp(-dt*7)));
+  R.yaw = R.hurry ? ty : wrap(R.yaw + wrap(ty - R.yaw)*(1 - Math.exp(-dt*7)));
   if(R.s >= R.len - 0.05){ R.done = true; R.v = 0; R.x = R.P[R.P.length - 2]; R.z = R.P[R.P.length - 1]; R.yaw = R.endYaw; R.y = R.Y ? R.Y[R.Y.length - 1] : NaN; }
   return R;
 }
@@ -194,7 +210,11 @@ function spawnPick(cands, me, inView, minD){
   for(var i = 0; i < L.length; i++) if(!inView || !inView(L[i].x, L[i].z)) return L[i];
   return null;
 }
-function eta(len){ return Math.max(2, Math.round(len/(CRUISE*0.62) + 2)); }
+function eta(len){ return Math.max(2, Math.min(BUDGET, Math.round(len/(CRUISE*0.62) + 2))); }
+function etaOf(R){
+  var e = Math.max(1, Math.round((R.len - R.s)/(CRUISE*0.62) + 1));
+  return R.budget ? Math.max(1, Math.min(e, Math.ceil(R.budget - R.t))) : e;
+}
 
 /* ---------- the panel and the pill ---------- */
 var OWN = ".hqcall";
@@ -254,6 +274,6 @@ function mount(stage, opts){
 }
 
 HQV.hqCall = {kerb: kerb, arrival: arrival, pathFor: pathFor, run: run, step: step, aheadOf: aheadOf, spawnPick: spawnPick,
-              eta: eta, capAt: capAt, pointAt: pointAt, poly: poly, join: join, mount: mount, owns: owns, RETURN_S: 5, RAMP_V: RAMP_V,
+              eta: eta, etaOf: etaOf, BUDGET: BUDGET, capAt: capAt, pointAt: pointAt, poly: poly, join: join, mount: mount, owns: owns, RETURN_S: 5, RAMP_V: RAMP_V,
               CRUISE: CRUISE, TURN_V: TURN_V, LANE: LANE, CALL_R: CALL_R, MIN_HIDE: MIN_HIDE, STOP_GAP: STOP_GAP};
 })();

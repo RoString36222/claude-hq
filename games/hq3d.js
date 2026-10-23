@@ -1743,6 +1743,7 @@ function mount(el, api){
       var hp = rideProp();
       if(hp){
         if(hspot && !force){ parked[hp.id] = {x: hs.x, z: hs.z, yaw: hs.yaw, y: hs.y}; placeProp(hp, hs.x, hs.z, hs.yaw); hp.g.position.y = hs.y; hp.y = hs.y; }   // [hq revamp] y: it stays up on a roof pad
+        if(hspot && !force && hp.respawnS && hp.home) hp.homeAt = Math.hypot(hs.x - hp.home.x, hs.z - hp.home.z) > 3 ? E.now() + hp.respawnS : 0;   // [3.13.4] your roof's helicopter, left elsewhere: back on its pad later
         hp.g.visible = true;
       }
       if(avatar.ch){ poseUndo(avatar.ch); avatar.g.add(avatar.ch.o); seatOn(avatar.ch, null); }
@@ -3231,7 +3232,7 @@ function mount(el, api){
       callStop(false);
       Object.keys(parked).forEach(function(id){ delete parked[id]; });
       if(worlds.basement) (C.bikes || []).slice().forEach(function(b){ if(b.plinth == null || b.own) return; C.bikes.splice(C.bikes.indexOf(b), 1); worlds.basement.scene.add(b.g); worlds.basement.bikes.push(b); b.world = null; b.g.position.y = 0; placeProp(b, b.home.x, b.home.z, b.home.yaw); });   // [basement 3.4] a starter called out: back on its B1 plinth
-      (C.bikes || []).forEach(function(b){ if(b.home){ placeProp(b, b.home.x, b.home.z, b.home.yaw); b.g.visible = true; b.returnAt = 0; if(b.own) ownMoved(b); } });
+      (C.bikes || []).forEach(function(b){ if(b.home){ placeProp(b, b.home.x, b.home.z, b.home.yaw); propHomeY(b); b.g.visible = true; b.returnAt = 0; if(b.own) ownMoved(b); } });
       var h = C.home;
       avatar.x = h.x; avatar.z = h.z; avatar.yaw = (h.yaw || 0) + PI;     // facing your door
       avatar.vy = 0; avatar.airborne = false; avatar.hop = 0; stopFeet();
@@ -3630,6 +3631,17 @@ function mount(el, api){
       var b = bs[i]; if(!b.returnAt) continue;
       if(ride && rideProp() === b){ b.returnAt = 0; continue; }
       if(E.now() >= b.returnAt){ b.returnAt = 0; goBack(b); }
+    }
+  }
+  // [3.13.4] a prop whose home is up off the ground (your roof's helicopter): back at that height too
+  function propHomeY(b){ if(b && b.home && b.home.y != null){ b.g.position.y = b.home.y; b.y = b.home.y; b.homeAt = 0; } }
+  // your roof's helicopter, left somewhere else: respawnS s later (you not riding it, nor by it) a fresh one stands on your pad
+  function propHomeStep(){
+    var bs = cur && cur.bikes; if(!bs) return;
+    for(var i = 0; i < bs.length; i++){
+      var b = bs[i]; if(!b.homeAt || E.now() < b.homeAt) continue;
+      if((ride && rideProp() === b) || (avatar && Math.hypot(avatar.x - b.x, avatar.z - b.z) < 30)){ b.homeAt = E.now() + 20; continue; }
+      delete parked[b.id]; placeProp(b, b.home.x, b.home.z, b.home.yaw); propHomeY(b); b.g.visible = true;
     }
   }
   // you got off b: one of your own goes back after RETURN_S s
@@ -4047,6 +4059,7 @@ function mount(el, api){
     moveAvatar(dt);
     callStep(dt);                                                      // a vehicle you called, on its way
     motionStep(dt);
+    propHomeStep();                                                    // [3.13.4] your roof's helicopter back on its pad
     testStep(dt);                                                      // a dealership test drive
     if(cur && cur.onBoat) cur.onBoat(ride && ride.boat ? {st: ride.boat, kind: ride.kind, beam: ride.V.beam || 1} : null);   // the City's wake, landings
     if(cur && cur.onHeli) cur.onHeli(ride && (ride.heli || (ride.plane && !ride.plane.ground)) ? {st: ride.heli || ride.plane, kind: ride.kind} : null);                          // flying on to another island

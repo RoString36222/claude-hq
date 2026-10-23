@@ -27,13 +27,14 @@ var CW = DOCS["claude-hq@2"];
 function inRing(P, x, z){ var inside = false; for(var i = 0, j = P.length - 1; i < P.length; j = i++){ var xi = P[i][0], zi = P[i][1], xj = P[j][0], zj = P[j][1]; if((zi > z) !== (zj > z) && x < (xj - xi)*(z - zi)/(zj - zi) + xi) inside = !inside; } return inside; }
 // every HQ lot's tower (level 50, both wings): its pad on its deck, inside the lot, and no fly-on over it
 out.pads = CW.lots.filter(l => l.kind === "hq").map(function(l){
-  var p = C3.placeLot(l), g = C3.grandOf(l, p), M = T.massing(50, g, 0), P = l.poly.map(q => [q[0]/100, q[1]/100]);
+  var p = C3.placeLot(l), g = C3.grandOf(l, p), room = C3.roomOf(l, p), M = T.massing(50, g, 0, room), P = l.poly.map(q => [q[0]/100, q[1]/100]);
   var B = {pad: () => M.pad, roofDeck: () => T.roofDeck(M), roofLift: () => null};
   var R = RF.roofOf({x: p.x, y: p.y, z: p.z, rot: p.rot, h: {userId: "u"}}, B, C3.toWorld);
   var rim = [0, 1, 2, 3, 4, 5, 6, 7].every(k => inRing(P, R.pad.x + Math.cos(k*Math.PI/4)*R.pad.r, R.pad.z + Math.sin(k*Math.PI/4)*R.pad.r));
   var S = HQV.ocean.flyOnState(), arm = 0;
   [[10, 0], [0, 10], [-7, 7]].forEach(v => { for(var t = 0; t < 4; t++){ var o = HQV.ocean.flyOn(S, {x: R.pad.x, z: R.pad.z, vx: v[0], vz: v[1], speed: 10}, {r: HQV.ocean.COAST_R.commons + 150, now: t*5000}); if(o.arm || o.swap) arm++; } });
-  return {id: l.id, onDeck: RF.onDeck(R, R.pad.x, R.pad.z), inDeck: R.pad.r <= Math.min(R.deck.hw, R.deck.hd) + 0.36, inLot: rim, flyOn: arm};
+  var deckRim = [0, 1, 2, 3, 4, 5, 6, 7].every(k => inRing(P, R.deck.x + Math.cos(k*Math.PI/4)*R.deck.r, R.deck.z + Math.sin(k*Math.PI/4)*R.deck.r));
+  return {id: l.id, onDeck: RF.onDeck(R, R.pad.x, R.pad.z), inDeck: R.pad.r <= Math.min(R.deck.hw, R.deck.hd) + 0.36, inLot: rim, deckOver: deckRim ? 0 : R.deck.r + 0.3 - room, room: room, padR: R.pad.r, flyOn: arm};
 });
 // the Commons with your HQ (level 30) and a friend's (level 12)
 ROWS = [{user: ME, lot_rank: 0}, {user: "f1", lot_rank: 1}];
@@ -41,10 +42,18 @@ LIST = [{userId: ME, isYou: true, level: 30, look: {}}, {userId: "f1", level: 12
 var wc = city("claude-hq@2"); await wc.whenReady; await new Promise(r => setTimeout(r, 0)); frame(wc, 0, 0, 2);
 var roofs = wc.roofs(), mineR = roofs.filter(r => r.own)[0], fr = roofs.filter(r => !r.own)[0];
 out.roofs = roofs.map(r => ({own: r.own, name: r.name, padFloor: +(wc.heliFloor(r.pad.x, r.pad.z) - r.pad.y).toFixed(3)}));
+// your helicopter, parked on your pad: a boardable prop (in the City's bikes), its rotor clear of the rail
+var rh = wc.roofHeli && wc.roofHeli();
+out.roofHeli = rh ? {inBikes: wc.bikes.indexOf(rh) >= 0, kind: rh.kind, id: rh.id, stay: rh.stay, off: +Math.hypot(rh.x - mineR.pad.x, rh.z - mineR.pad.z).toFixed(3), dy: +(rh.y - mineR.pad.y).toFixed(3),
+  home: !!(rh.home && rh.home.y === mineR.pad.y), respawn: rh.respawnS, rotorClear: Hh.VEHICLES[rh.kind].rotorR + 1 <= mineR.pad.r,
+  onFriend: roofs.filter(r => !r.own).some(r => wc.bikes.some(b => b.kind === "heli" && Math.hypot(b.x - r.pad.x, b.z - r.pad.z) < r.pad.r))} : null;
+var liftDoor = wc.doors.filter(d => d.roof && d.view === "@lobby")[0];
+out.liftClear = liftDoor && mineR.house ? {door: +Math.hypot(liftDoor.front.x - mineR.pad.x, liftDoor.front.z - mineR.pad.z).toFixed(2), house: +(Math.hypot(mineR.house.x - mineR.pad.x, mineR.house.z - mineR.pad.z) - mineR.house.r).toFixed(2), r: mineR.pad.r,
+  doorOnDeck: RF.onDeck(mineR, liftDoor.front.x, liftDoor.front.z)} : null;
 out.roofDoors = wc.doors.filter(d => d.roof).map(d => [d.view, d.kind, +(d.front.y).toFixed(2)]);
-// a landing on the friend's pad: let down 5 m off its centre, 14 m up, no stick but the collective
+// a landing on the friend's pad: let down 2 m past its rim, 14 m up, no stick but the collective
 function land(R, assist){
-  var st = Hh.newState("heli", R.pad.x + 5, R.pad.y + 14, R.pad.z - 3, 0); st.ground = false; st.rpm = 1;
+  var st = Hh.newState("heli", R.pad.x + R.pad.r + 2, R.pad.y + 14, R.pad.z - 3, 0); st.ground = false; st.rpm = 1;
   var cues = {}, inp = {fwd: 0, turn: 0, lift: -1};
   for(var i = 0; i < 900 && !st.ground; i++){ Hh.step(st, inp, 1/30, {floor: wc.heliFloor}); if(assist){ var q = wc.heliAssist(st, inp, 1/30); if(q) cues[q] = 1; } }
   return {ground: st.ground, off: +Math.hypot(st.x - R.pad.x, st.z - R.pad.z).toFixed(2), dy: +(st.y - R.pad.y).toFixed(3), cues: Object.keys(cues).sort(), st: st};
@@ -98,8 +107,15 @@ class HqRoofs(unittest.TestCase):
         for p in pads:
             with self.subTest(lot=p["id"]):
                 self.assertTrue(p["onDeck"] and p["inDeck"], "the pad stays on the roof")
-                self.assertTrue(p["inLot"], "the pad stands over the lot")
+                self.assertGreaterEqual(p["padR"], 7.5, "big enough for a helicopter")
+                if p["room"] >= p["padR"] + 0.6:
+                    self.assertTrue(p["inLot"], "the pad stands over the lot")
+                else:
+                    self.assertEqual(p["padR"], 7.5, "a small lot: the smallest pad")
+                if p["room"] >= 4:
+                    self.assertLessEqual(p["deckOver"], 4, "the helideck's walkway reaches out over the pavement at most")
                 self.assertEqual(p["flyOn"], 0, "no island swap over a tower")
+        self.assertGreater(sum(p["padR"] == 9 for p in pads) / len(pads), 0.5, "most get the full pad")
 
     def test_pads_are_floors(self):
         self.assertEqual(len(self.out["roofs"]), 2)
@@ -107,6 +123,21 @@ class HqRoofs(unittest.TestCase):
             self.assertEqual(r["padFloor"], 0)
         self.assertEqual(sorted(d[0] for d in self.out["roofDoors"]), ["@lobby", "visit:f1"])
         self.assertTrue(all(d[1] == "roof" and d[2] > 10 for d in self.out["roofDoors"]))
+
+    def test_your_helicopter_on_your_pad(self):
+        h = self.out["roofHeli"]
+        self.assertIsNotNone(h, "your HQ has a helicopter on its pad")
+        self.assertTrue(h["inBikes"], "boardable (E): a City prop")
+        self.assertEqual((h["kind"], h["id"], h["stay"]), ("heli", "heli:roof", True))
+        self.assertLess(h["off"], 0.01)
+        self.assertEqual(h["dy"], 0)
+        self.assertTrue(h["home"] and h["respawn"] > 0, "it comes back to the pad")
+        self.assertTrue(h["rotorClear"])
+        self.assertFalse(h["onFriend"], "a friend's pad stays free for landing")
+        lc = self.out["liftClear"]
+        self.assertGreater(lc["door"], lc["r"], "the roof lift's door off the pad")
+        self.assertGreater(lc["house"], lc["r"], "the roof lift's head house off the pad")
+        self.assertTrue(lc["doorOnDeck"])
 
     def test_landing_assist(self):
         L = self.out["landing"]

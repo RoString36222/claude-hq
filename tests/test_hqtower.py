@@ -8,6 +8,7 @@ inside the roof, clear of every crown), the draw-call budget (at most 1.5x the o
 tower's LOD much less), and each style option reaching the building. Stdlib only; skipped without node."""
 import json
 import os
+import re
 import shutil
 import subprocess
 import unittest
@@ -17,6 +18,8 @@ FIX = os.path.join(ROOT, "tests", "fixtures")
 COMMONS = os.path.join(FIX, "claude-hq@2.json.gz")
 ISLAND = os.path.join(FIX, "island@2.json.gz")
 NODE = shutil.which("node")
+# the biggest helicopter's rotor radius (games/hqheli.js VEHICLES rotorR)
+ROTOR_R = max(float(x) for x in re.findall(r"rotorR:\s*([0-9.]+)", open(os.path.join(ROOT, "games", "hqheli.js"), encoding="utf-8").read()))
 # the old tower's draws after the City's merge (measured on main before the revamp: level -> draws)
 OLD_DRAWS = {1: 26, 10: 40, 25: 75, 30: 94, 50: 100}
 # the old tower's height (lobby 3.5 + 2.6 m floors + the upper tier's 0.5 m step), by level
@@ -78,8 +81,8 @@ out.massing = [];
 [1, 5, 10, 15, 20, 25, 30, 40, 45, 50, 60].forEach(function(L){ [0, 0.5, 1].forEach(function(g){ [0, 3].forEach(function(st){
   var M = T.massing(L, g, st), R = M.roof, P = M.pad, slots = T.crownSlots(M);
   out.massing.push({L, g, st, top: M.top, w: M.podium.w, d: M.podium.d, wings: M.wings.length,
-    padIn: Math.abs(P.x - R.x) + P.r <= R.w/2 + 1e-6 && Math.abs(P.z - R.z) + P.r <= R.d/2 + 1e-6, padR: P.r, padY: P.y - R.y,
-    slotsOut: slots.every(s => Math.hypot(s.x - P.x, s.z - P.z) > P.r + 0.3 && Math.abs(s.x - R.x) < R.w/2 && Math.abs(s.z - R.z) < R.d/2), nslots: slots.length,
+    padIn: Math.hypot(P.x - M.heli.x, P.z - M.heli.z) + P.r <= M.heli.r - T.WALK + 1e-6, padR: P.r, padY: P.y - R.y, overRoof: Math.abs(P.x - R.x) < 1e-6 && Math.abs(P.z - R.z) < 1e-6,
+    slotsOut: slots.every(s => Math.hypot(s.x - P.x, s.z - P.z) > P.r + 0.6 && Math.hypot(s.x - M.heli.x, s.z - M.heli.z) < M.heli.r - 0.5), nslots: slots.length,
     tiers: M.tiers.map(t => [t.floors, +(t.h/T.FH).toFixed(6)])});
 }); }); });
 /* ---------- every Commons lot (and the island's) ---------- */
@@ -110,11 +113,26 @@ out.build = [];
 [1, 10, 30, 50].forEach(function(L){ [0, 1].forEach(function(g){
   var B = make(L, {}, g), box = new THREE.Box3(), fp = T.footprint(g, B.wings);
   B.g.updateMatrixWorld(true);
-  B.g.traverse(o => { if(!o.isMesh || o.name === "prestige-beacon") return; var bb = new THREE.Box3().setFromObject(o); if(isFinite(bb.min.x)) box.union(bb); });
+  // what stands on the ground's footprint: the helideck (3.13.4) and what is on it is cantilevered over the roof, aloft
+  var vv = new THREE.Vector3(), ytop = B.M.top - 0.5;
+  B.g.traverse(o => { if(!o.isMesh || o.isInstancedMesh || o.name === "prestige-beacon") return; var pa = o.geometry.attributes.position; if(!pa) return;
+    for(var i = 0; i < pa.count; i++){ vv.fromBufferAttribute(pa, i).applyMatrix4(o.matrixWorld); if(vv.y < ytop) box.expandByPoint(vv); } });
   out.build.push({L, g, top: B.top(), wings: B.wings, minX: box.min.x, maxX: box.max.x, minZ: box.min.z, maxZ: box.max.z,
     fpX: Math.max.apply(null, fp.map(b => Math.abs(b[0]) + b[2])), fpZ0: Math.min.apply(null, fp.map(b => b[1] - b[3])), fpZ1: Math.max.apply(null, fp.map(b => b[1] + b[3])),
     pad: B.pad(), deck: B.roofDeck(), lift: B.roofLift(), padMesh: !!B.g.getObjectByName("hq-helipad"), padLights: !!B.g.getObjectByName("hq-padlights")});
 }); });
+/* ---------- the pad's clearance: nothing but the pad stands over it (every crown, roof extra, decor; the roof lift) ---------- */
+out.clear = [];
+var CROWNS = S.SCHEMA.ext.crown.enum, ROOFX = ["tank", "antennas", "solar", "garden", "beacon"];
+[1, 10, 25, 30, 50].forEach(function(L){ [0, 1].forEach(function(g){ (Array.isArray(CROWNS) ? CROWNS : Object.keys(CROWNS)).forEach(function(cr, n){
+  var look = {style: Object.assign(S.defaults(), {crown: cr, roof: ROOFX}), decor: ["crown", "neon", "fireworks"][n %% 3], crew: {color: "#ff6b5b", tag: "AB"}};
+  var B = make(L, look, g, n %% 2 ? 3 : 0), P = B.pad(), bad = 0, v = new THREE.Vector3();
+  B.g.updateMatrixWorld(true);
+  B.g.traverse(o => { if(!o.isMesh || o.name === "hq-helipad") return; var pa = o.geometry.attributes.position; if(!pa) return;
+    var n2 = o.isInstancedMesh ? 0 : pa.count; for(var i = 0; i < n2; i++){ v.fromBufferAttribute(pa, i).applyMatrix4(o.matrixWorld);
+      if(Math.hypot(v.x - P.x, v.z - P.z) < P.r - 0.01 && v.y > P.y + 0.03 && v.y < P.y + 12) bad++; } });
+  out.clear.push({L, g, cr, padR: P.r, bad, lift: B.roofLift()});
+}); }); });
 /* ---------- draws by style and level ---------- */
 out.draws = {};
 Object.keys(S.PRESETS).forEach(function(pr){ [1, 10, 25, 30, 50].forEach(function(L){
@@ -160,8 +178,9 @@ class HqTower(unittest.TestCase):
     def test_pad_always_on_the_roof_and_clear_of_the_crown(self):
         for m in self.out["massing"]:
             with self.subTest(level=m["L"], grand=m["g"], stars=m["st"]):
-                self.assertTrue(m["padIn"], "the pad stays on the roof")
-                self.assertGreaterEqual(m["padR"], 2.0)
+                self.assertTrue(m["padIn"], "the pad stays on the helideck, inside its walkway")
+                self.assertTrue(m["overRoof"], "the helideck stands over the tower's top roof")
+                self.assertGreaterEqual(m["padR"], ROTOR_R + 2.5, "a helicopter's rotor fits with room round it")
                 self.assertTrue(m["slotsOut"], "crown slots stay off the pad")
                 self.assertGreaterEqual(m["nslots"], 2, "a crown and the roof lift need their corners")
                 for floors, fh in m["tiers"]:
@@ -207,8 +226,16 @@ class HqTower(unittest.TestCase):
                 self.assertGreaterEqual(b["minZ"], b["fpZ0"] - 0.35)
                 self.assertLessEqual(b["maxZ"], b["fpZ1"] + 0.35)
                 self.assertTrue(b["padMesh"] and b["padLights"])
-                self.assertAlmostEqual(b["pad"]["y"], b["deck"]["y"] + 0.2, places=3)
+                self.assertAlmostEqual(b["pad"]["y"], b["deck"]["y"] + 0.02, places=3)
                 self.assertTrue(abs(b["lift"]["x"] - b["deck"]["x"]) <= b["deck"]["hw"] + 0.6)
+
+    def test_nothing_on_the_pad(self):
+        self.assertGreater(len(self.out["clear"]), 30)
+        for c in self.out["clear"]:
+            with self.subTest(level=c["L"], grand=c["g"], crown=c["cr"]):
+                self.assertGreaterEqual(c["padR"], ROTOR_R + 2.5)
+                self.assertEqual(c["bad"], 0, "a crown, roof extra, decor or the roof lift over the pad")
+                self.assertIsNotNone(c["lift"])
 
     def test_draw_budget(self):
         for k, d in self.out["draws"].items():

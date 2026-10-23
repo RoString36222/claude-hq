@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.13.3** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.13.4** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -391,6 +391,15 @@ and feature guide.
 
 ## Changelog
 
+- **3.13.4 — A real helipad on your HQ, with your helicopter on it.** Every HQ tower's roof now carries a helideck:
+  a steel deck raised 3 m over the top roof on legs and struts, cantilevered past it, a 9 m pad (7.5 m on the
+  smallest lots: the pad stays over the lot) in its middle with a walkway and a low glass rail round it, so a
+  helicopter's rotor fits with room to spare (it was a 2–3.6 m disc). The roof lift's head house, the crown (spire,
+  antenna, domes, pagoda, deco, garden), the roof extras, the crew flag and the prestige beam moved out to the
+  walkway's diagonals and rim, clear of the pad; the Art Deco parapet is low and under the deck. Your own pad has
+  your helicopter parked on it: walk up from the roof lift, E to board, take off; land back and it stays; leave it
+  elsewhere and a fresh one stands on your pad again after Return to HQ (T) or five minutes. Friends' pads stay free
+  for landing. The landing assist eases the last metres till you are over the middle. Client-only.
 - **3.13.3 — Pokémon sprites cached on your machine.** The HQ no longer hotlinks every sprite on every load: the
   page asks the local server (`/api/sprite`), which keeps each Showdown / pkparaiso / PokeAPI sprite in `.sprite-cache/`
   in the HQ folder (gitignored, never committed: the art stays third-party), serves repeats from disk and only goes

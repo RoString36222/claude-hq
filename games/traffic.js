@@ -1,6 +1,6 @@
 /* Claude HQ: traffic for the 3D cities (HQV.traffic): cars, buses, trams and emergency runs.
  *
- * create(doc, {tier, grow, seed, onFare}) -> sim, a pure function of (world doc, city tier and growth,
+ * create(doc, {tier, grow, seed, onFare, city}) -> sim, a pure function of (world doc, city tier and growth,
  * clock): two clients with the same inputs see the same vehicles with no server traffic. Pure core:
  * no THREE, no DOM, so tests/test_traffic.py runs it under node; view(c) builds the instanced meshes.
  * Frames and units are the 3D city's: metres, +y up, yaw 0 faces +z, model-local +x is LEFT, so the
@@ -37,9 +37,19 @@
  * It never shares a car lane (it runs on the tram track, in the bus lane, or down the middle where
  * that clears both car lanes), takes each box when nothing that clashes is in it, and starts when
  * its time on tram tracks and bus lanes misses every tram and bus; cars within EV_YIELD m pull over.
+ * With a city (o.city: D, games/citysim.js's director) the seeded windows are off and every emergency and
+ * service unit of D's events drives instead (see "the city's runs" below): fire engines to the fire, the
+ * ambulance to the scene and on to ev.dest, police and tow trucks to crashes, school buses and market vans,
+ * and robberies as chases (the getaway car along ev.route, police behind it). Patrol cars and delivery vans
+ * ride free car-ring slots, as many as D has out; the cars a ring shows follow D.at(ms).rush (a slot's car
+ * is in or out for a whole lap, decided where the lap starts). Without a city nothing changes.
  * at(timeMs, center, radius, obstacles): the vehicles within radius, nearest first, as {id, kind, x,
  * y, z, yaw, speed} (the body's centre) plus paint / line / pull / siren, and a tram's two sections
- * as parts [{x, y, z, yaw}]. Obstacles (the player's vehicle, {x, z, r}) make cars and transit brake
+ * as parts [{x, y, z, yaw}]. A city unit also has ev (its event id), phase ("responding", "onscene",
+ * "transport", "drop", "returning", "chase", "caught") and lights (beacons on, no siren); a patrol car has
+ * patrol: true. Kinds: car, bus, tram, fire, ambulance, police, tow, van, schoolbus, getaway.
+ * view(c).update(vehicles, timeMs, {calm}) draws them; with calm the beacons are lit steady, never flashing.
+ * Obstacles (the player's vehicle, {x, z, r}) make cars and transit brake
  * behind them: a local override (a lag per vehicle, eased back to the timetable once clear),
  * deterministic for the same sequence of calls, and never fed back into the shared schedule.
  * Riding: stopsNear(x, z, r), nextArrival(stopId, timeMs), rideTo(line, from, to, timeMs) -> a trip
@@ -60,7 +70,11 @@ var SPEC = {
   tram:      {len: 27, wid: 2.65, vmax: 10, acc: 1.1, wb: 8, sec: 13},
   fire:      {len: 8, wid: 2.5, vmax: 15, acc: 2.5, wb: 4.5},
   ambulance: {len: 6, wid: 2.2, vmax: 16, acc: 3, wb: 3.6},
-  police:    {len: 4.6, wid: 1.9, vmax: 17, acc: 3.5, wb: 2.7}
+  police:    {len: 4.6, wid: 1.9, vmax: 17, acc: 3.5, wb: 2.7},
+  tow:       {len: 6.2, wid: 2.3, vmax: 13, acc: 2.2, wb: 3.6},
+  van:       {len: 4.6, wid: 1.95, vmax: 12, acc: 2.2, wb: 2.9},
+  schoolbus: {len: 9, wid: 2.4, vmax: 10, acc: 1.4, wb: 5},
+  getaway:   {len: 4.4, wid: 1.85, vmax: 18, acc: 3.8, wb: 2.6}
 };
 var GAP = 2.6;                          // bumper to bumper, at the closest
 var V_STRAIGHT = 9, V_TURN = 6.5, V_UTURN = 3, V_CREEP = 2.5, CLEAR = 0.6, CLASH = 0.3, H_MIN = 6, H_MAX = 16, REPS = 3;
@@ -71,7 +85,19 @@ var INC_W = 240, INC_P = 0.3, INC_LOOK = 3, EV_DWELL = 40, EV_YIELD = 45, EV_NEA
 var EV_KINDS = ["fire", "ambulance", "police"];
 var EV_SITES = {fire: {fire: 1}, ambulance: {hospital: 1, clinic: 1}, police: {police: 1}};
 var PULL_TAPER = 10, LOOK = 34, BRAKE = 14, CATCH = 0.6, CATCH_MAX = 4, OBS_R = 2.4;
-var CAP = {car: 200, bus: 32, tram: 16, fire: 6, ambulance: 6, police: 6};
+var CAP = {car: 200, bus: 32, tram: 16, fire: 8, ambulance: 6, police: 10, tow: 4, van: 12, schoolbus: 6, getaway: 2};
+// with a city (o.city): its units drive the emergency lanes; patrols and delivery vans ride the car rings
+var SIREN = {fire: 1, ambulance: 1, police: 1};
+// s: events listed per bucket, looked back over and planned ahead of; least time at a stop; police leave a
+// roadblock this far apart; m: units park this far short of a box; plans per trip; reroutes round stuck boxes
+var CITY_BUCKET = 2, CITY_TAIL = 600, CITY_AHEAD = 240, CLOCK_BUCKET = 60, SCENE_MIN = 20, ARREST_MIN = 60, LEAVE_STEP = 3;
+var PARK_BACK = 6, CITY_TRY = 40, AVOID_MAX = 3;
+var TRANSIT_PEN = 6;   // the cost factor on tram-track and bus-lane roads for a run that never fits their timetable
+// s: a chase starts CHASE_STEP later at a time (CHASE_TRY times) until every chaser keeps its lag within CHASE_SLACK
+var CHASE_STEP = 2, CHASE_SLACK = 3, CHASE_TRY = 15;
+var RING_SVC = {police: 4, van: 8};        // ring slots kept for patrol cars and vans (shown while the city has them out)
+var RUSH_K = [0.8, 1.25], DENS_TOP = 0.95; // a ring slot's car shows while its hash < density x (0.8 .. 1.25 with the rush)
+var VAN_PAINT = [0xf2f2ee, 0xe8b730, 0xc8323c, 0x2a6fd6];
 var PAINT = [0xc8323c, 0x2a6fd6, 0xf2f2ee, 0x2b2f36, 0x8a9199, 0xe8b730, 0x2f8f5b, 0x6b4bb8, 0xd9772b, 0x8fb8de, 0x5a1f2b, 0xb7c2a0];
 
 /* ---------- small maths ---------- */
@@ -277,6 +303,7 @@ function create(doc, o){
   var seed = typeof o.seed === "number" ? o.seed | 0 : hash32(o.seed != null ? o.seed : (doc.id || "city"));
   var dens = tier >= 5 ? DENS[4] : DENS[tier - 1] + (DENS[tier] - DENS[tier - 1])*grow/1000;
   var fareHook = typeof o.onFare === "function" ? o.onFare : null;
+  var city = o.city && typeof o.city === "object" ? o.city : null;
   var tmpA = {}, tmpB = {}, tmpC = {};
 
   // nodes and active edges, in metres
@@ -731,13 +758,39 @@ function create(doc, o){
       if((r.blocked >> (i % REPS)) & 1 || i - last < k || (cand.length && m + cand[0] - i < k)) continue;
       cand.push(i); last = i;
     }
+    r.cand = cand;
     cand.forEach(function(i){
       totalSlots++;
-      if(h01(seed, r.id*977 + 11, i) >= dens) return;
-      var c = {id: "c" + r.id + "." + i, ring: r, kind: "car", shift: i*H, paint: Math.floor(h01(seed, r.id, i*31 + 5)*PAINT.length)};
+      // with a city, every slot the rush could fill has its car (shown or not, lap by lap: see present())
+      var u = h01(seed, r.id*977 + 11, i);
+      if(u >= (city ? Math.min(DENS_TOP, dens*RUSH_K[1]) : dens)) return;
+      var c = {id: "c" + r.id + "." + i, ring: r, kind: "car", shift: i*H, paint: Math.floor(h01(seed, r.id, i*31 + 5)*PAINT.length), slot: i};
+      if(city) c.u = u;
       r.cars.push(c); cars.push(c);
     });
   });
+  // Patrol cars and vans ride the rings too (the longest first, one vehicle a ring in turn), each in a free
+  // slot, so they keep the rings' guarantees; the j-th of a kind shows while the city has more than j out
+  if(city){
+    var svcRings = rings.filter(function(r){ return r.cand && r.cand.length; }).sort(function(a, b){ return b.pl.len - a.pl.len || a.id - b.id; }), svcN = 0;
+    ["police", "van"].forEach(function(kind){
+      for(var j = 0; j < RING_SVC[kind] && svcRings.length; j++, svcN++){
+        // a free slot (seeded), else the slot of the car the rush shows least (the car leaves the ring)
+        var r = svcRings[svcN % svcRings.length], free = r.cand.filter(function(i){ return !r.cars.some(function(c){ return c.slot === i; }); });
+        var i = free.length ? free[Math.floor(h01(seed, r.id*31 + 7, svcN)*free.length)] : null;
+        if(i == null){
+          var top = null;
+          r.cars.forEach(function(c){ if(c.u != null && (!top || c.u > top.u)) top = c; });
+          if(!top) continue;
+          i = top.slot; r.cars.splice(r.cars.indexOf(top), 1); cars.splice(cars.indexOf(top), 1);
+        }
+        var v = {id: (kind === "police" ? "p" : "v") + r.id + "." + i, ring: r, kind: kind, shift: i*H, slot: i, svc: j};
+        if(kind === "van") v.paint = Math.floor(h01(seed, r.id, i*31 + 9)*VAN_PAINT.length);
+        r.cars.push(v);
+        r.cars.sort(function(a, b){ return a.slot - b.slot; });
+      }
+    });
+  }
   // Lines that share a lane (the same kind on the same edge and direction: buses through the hub) are
   // kept apart by taking it in turn, a BLOCK m stretch at a time: no two of their vehicles are ever
   // on one block together, and since one can only reach or pass another by sharing a block with it,
@@ -762,10 +815,13 @@ function create(doc, o){
   // closed route, u0..u1 for an open one
   function occupancy(r, prof, spec, u0, u1){
     var out = {}, run = {}, Lr = r.pl.len, h = spec.len/2 + GAP/2, o = {}, keys = r.ranges.map(function(rg, i){ return laneKeys(r, i); });
-    var DT = 0.1, n = Math.ceil((u1 - u0)/DT), on = {};
+    var DT = 0.1, n = Math.ceil((u1 - u0)/DT), on = {}, first = 0;
     for(var k = 0; k <= n; k++){
       var u = Math.min(u1, u0 + k*DT), sNow = (r.open ? prof.at(u, o) : prof.S(u, o)).s, sm = r.open ? sNow : mod(sNow, Lr), now = {};
+      // an open route only goes forward: the ranges wholly behind the body are passed for good
+      if(r.open) while(first < r.ranges.length - 1 && r.ranges[first][1] < sm - h) first++;
       r.ranges.forEach(function(rg, i){
+        if(i < first || !keys[i].length) return;
         for(var w = r.open ? 0 : -1; w <= (r.open ? 0 : 1); w++){
           var x = sm - w*Lr;
           if(rg[0] > x + h || rg[1] < x - h) continue;
@@ -910,7 +966,8 @@ function create(doc, o){
     nodeIds.forEach(function(id){ var N = nodes[id]; if(!N.inc.length) return; var d = Math.hypot(N.x - x, N.z - z); if(d < bd){ bd = d; best = id; } });
     return best;
   }
-  function dijkstra(src){
+  // (pen: the cost factor on a road whose emergency lane is the tram track or the bus lane, for a way round them)
+  function dijkstra(src, avoid, pen){
     var dist = {}, prev = {}, heap = [[0, src]], done = {};
     dist[src] = 0;
     while(heap.length){
@@ -920,8 +977,8 @@ function create(doc, o){
       if(done[u]) continue;
       done[u] = 1;
       nodes[u].inc.forEach(function(i){
-        var E = edges[i], v = E.a === u ? E.b : E.a, d = top[0] + E.len;
-        if(!E.ev) return;
+        var E = edges[i], v = E.a === u ? E.b : E.a, d = top[0] + E.len*(pen && E.evKind ? pen : 1);
+        if(!E.ev || (avoid != null && (typeof avoid === "object" ? avoid[v] : v == avoid))) return;
         if(dist[v] == null || d < dist[v] - 1e-9 || (Math.abs(d - dist[v]) <= 1e-9 && prev[v] && E.i < prev[v].e.i)){
           dist[v] = d; prev[v] = {u: u, e: E}; heap.push([d, v]); siftUp(heap, heap.length - 1);
         }
@@ -979,17 +1036,28 @@ function create(doc, o){
     cache(key, I);
     return I;
   }
+  // an emergency-lane route's passes, with the movements each must not share its box with
+  // (a movement's clashes kept by its swept path: the same turn on another run clashes the same)
+  var againstCache = {}, againstKeys = [];
+  function prepRun(R, kind, id){
+    R.kind = kind; R.id = id; R.ev = true;
+    R.passes.forEach(function(p){
+      p.route = R; p.transit = true;
+      var c = p.curve, a = c[0], b = c[c.length - 1], key = [p.node, kind, c.length, a[0].toFixed(3), a[2].toFixed(3), b[0].toFixed(3), b[2].toFixed(3),
+                                                           c[c.length >> 1][0].toFixed(3), c[c.length >> 1][2].toFixed(3), (p.sOut - p.sIn).toFixed(3)].join(",");
+      if(!againstCache.hasOwnProperty(key)){
+        againstCache[key] = (atNode[p.node] || []).filter(function(q){ return clash(p, q); }); againstKeys.push(key);
+        if(againstKeys.length > 2000) delete againstCache[againstKeys.shift()];
+      }
+      p.against = againstCache[key];
+    });
+    return R;
+  }
   function evLanes(chain){ return chain.map(function(c){ return {e: c.e, dir: c.dir, off: c.e.evOff}; }); }
   function planRun(w, kind, st, tgt, chain){
     var spec = SPEC[kind], out = route(evLanes(chain), spec, true);
     var back = route(evLanes([chain[chain.length - 1]].concat(chain.slice().reverse().map(function(c){ return {e: c.e, dir: 1 - c.dir}; }))), spec, true);
-    [out, back].forEach(function(R){
-      R.kind = kind; R.id = "e" + w; R.ev = true;
-      R.passes.forEach(function(p){
-        p.route = R; p.transit = true;
-        p.against = (atNode[p.node] || []).filter(function(q){ return clash(p, q); });
-      });
-    });
+    [out, back].forEach(function(R){ prepRun(R, kind, "e" + w); });
     var sPark = out.pl.len - spec.len/2 - 1, sHome = back.ranges[0][1] - spec.len/2 - 1, t0 = w*INC_W + h01(seed, w, 5)*INC_W*0.5;
     for(var j = 0; j < EV_TRY; j++, t0 += 2){
       var P1 = runProfile(out, spec, t0, spec.len/2 + 0.5, sPark);
@@ -1002,14 +1070,25 @@ function create(doc, o){
     return null;
   }
   // a run's profile from sFrom to sTo starting at clock t0, holding at the line of a box until it is clear
-  function runProfile(R, spec, t0, sFrom, sTo){
+  // lead (a chaser): {t: [the clock its leader reaches each pass's line, or null], q: [how far short of that
+  // line it waits: behind where the leader waits], r: [the clock the leader leaves where it waits], len: the
+  // leader's length}: the chaser comes no nearer than q before r, and enters the box only once the leader is
+  // a body and GAP into it
+  function runProfile(R, spec, t0, sFrom, sTo, lead){
     var P = new Profile();
     P.cur.s = sFrom;
     for(var i = 0; i < R.passes.length; i++){
       var p = R.passes[i];
       if(p.sIn < sFrom) continue;
-      var Lm = p.sIn - P.cur.s, D = fastest(Lm, P.cur.v, p.v, spec.vmax, spec.acc).T, tA = t0 + P.cur.t + D, tF = boxFree(p, tA);
-      if(tF == null) return null;
+      var Lm = p.sIn - P.cur.s, Lt = lead ? lead.t[i] : null, q = Lt != null ? lead.q[i] : 0;
+      if(Lt != null && Lm > q + 0.5){
+        var L1 = Lm - q, D1 = fastest(L1, P.cur.v, p.v, spec.vmax, spec.acc).T;
+        P.segment(L1, p.v, Math.max(D1, lead.r[i] - t0 - P.cur.t), spec);
+        Lm = q;
+      }
+      var D = fastest(Lm, P.cur.v, p.v, spec.vmax, spec.acc).T, tA = t0 + P.cur.t + D;
+      var tF = boxFree(p, Lt != null ? Math.max(tA, Lt + (lead.len + GAP + 1)/p.v) : tA);
+      if(tF == null){ R.stuck = p.node; return null; }
       P.segment(Lm, p.v, D + tF - tA, spec);
       P.cur.v = p.v; P.piece((p.sOut - p.sIn)/p.v, 0); P.cur.s = p.sOut;
     }
@@ -1064,6 +1143,485 @@ function create(doc, o){
     ringPose(R, s, SPEC[I.kind].wb, o);
     o.speed = v; o.s = s;
     return o;
+  }
+
+  // ---- the city's runs (o.city: games/citysim.js's event director) ----
+  // With a city the seeded windows above are off: every unit of the city's events (fire engines, ambulances,
+  // police, tow trucks, market vans, school buses, the getaway car) drives its own trip on the emergency
+  // lanes, from its home node (unit.home) to where it goes (unit.node), parks short of that box until the
+  // event's time to leave (unit.leave; an ambulance then takes its patient to ev.dest and stands there until
+  // unit.drop + 120 s) and drives home. A trip is planned once per event, as a pure function of the event,
+  // the same way as a seeded run: each box when nothing that clashes is in it, each leg when it misses every
+  // tram and bus (2 s later at a time), and never into an earlier unit of the same event (units waiting at
+  // one place park in a line, a body and GAP apart). A unit that cannot fit is left out. Units of different
+  // events are not checked against each other (they rarely meet; they would pass through).
+  // A robbery is a chase: the getaway car flees along ev.route (its emergency-lane part; the shortest way on
+  // where the route takes a road too narrow) to the roadblock, the road carried on until its last stretch
+  // holds the car and its chasers off the tram track and bus lane; each police car comes from its station
+  // timed to pass the scene unit.lag s behind it, with lights and siren, and stops in line behind it; after
+  // the arrest (unit.leave, at least ARREST_MIN s) the getaway car is gone and the police drive home.
+  // Patrols and delivery rounds are on the rings (above), as many as the city has out.
+  var dijCache = {}, dijKeys = [];
+  function dij(src){
+    var k = "n" + src;
+    if(dijCache.hasOwnProperty(k)) return dijCache[k];
+    dijCache[k] = dijkstra(src); dijKeys.push(k);
+    if(dijKeys.length > 24) delete dijCache[dijKeys.shift()];
+    return dijCache[k];
+  }
+  // the tree the trip being planned uses: around the boxes it got stuck at (avoid), if any, and off the tram
+  // track and bus lanes where it can (penal: TRANSIT_PEN, when no plan on the shortest way fits the trams and buses)
+  var avoid = null, penal = 0;
+  function tree(src){ return avoid || penal ? dijkstra(src, avoid, penal) : dij(src); }
+  // the lanes from src to tgt on a Dijkstra tree from src (null when tgt is not reached)
+  function chainOf(Dj, src, tgt){
+    var chain = [], v = tgt;
+    if(Dj.dist[tgt] == null) return null;
+    while(v != src){ var pv = Dj.prev[v]; if(!pv) return null; chain.unshift({e: pv.e, dir: pv.e.a == pv.u ? 0 : 1}); v = pv.u; }
+    return chain;
+  }
+  function sec(ms, d){ return num(ms, num(d, 0))/1000; }
+  function laneKey(ln){ return ln.e.i*2 + ln.dir; }
+  function laneLen(ln){ return len2(lanePts(ln.e, ln.dir, ln.e.evOff)); }
+  // a node on the emergency lanes: n itself, else the nearest one that is (a station on a road whose car
+  // lanes fill it sends its units out from there)
+  function evNode(n){
+    if(n == null || !nodes[n]) return null;
+    if(nodes[n].inc.some(function(i){ return edges[i].ev; })) return n;
+    var N = nodes[n], best = null, bd = Infinity;
+    nodeIds.forEach(function(id){
+      var M = nodes[id];
+      if(!M.inc.some(function(i){ return edges[i].ev; })) return;
+      var d = Math.hypot(M.x - N.x, M.z - N.z);
+      if(d < bd){ bd = d; best = id; }
+    });
+    return best;
+  }
+  function homeOf(u){
+    var s = u.station != null ? sites[u.station] : null;
+    if(u.home != null && nodes[u.home] && nodes[u.home].inc.length) return evNode(u.home);
+    return s ? evNode(nearestNode(s.x, s.z)) : null;
+  }
+  // where a unit can get to from `from` for node n: n, else the reachable node nearest it
+  function reach(from, n){
+    var Dj = dij(from), N = nodes[n], best = null, bd = Infinity;
+    if(!N || Dj.dist[n] != null) return N ? n : null;
+    Object.keys(Dj.dist).forEach(function(id){
+      var M = nodes[id], d = Math.hypot(M.x - N.x, M.z - N.z);
+      if(d < bd - 1e-9 || (Math.abs(d - bd) <= 1e-9 && String(id) < String(best))){ bd = d; best = id; }
+    });
+    return best != null ? nodes[best].id : null;
+  }
+  // the way from `from` to `to`; a unit that will wait there arrives on a lane off the tram track and
+  // bus lane when one meets the node (by the far end of that lane, never through `to` itself)
+  function approach(from, to, wait){
+    var Dj = tree(from), chain = chainOf(Dj, from, to);
+    if(!chain || !chain.length || !wait || !chain[chain.length - 1].e.evKind) return chain;
+    var best = null, bc = Infinity, skip = {}, k;
+    for(k in avoid || {}) skip[k] = 1;
+    skip[to] = 1;
+    var Da = dijkstra(from, skip, penal);
+    nodes[to].inc.forEach(function(i){
+      var E = edges[i], far = E.a == to ? E.b : E.a;
+      if(!E.ev || E.evKind || Da.dist[far] == null) return;
+      var c = chainOf(Da, from, far);
+      if(!c) return;
+      var cost = Da.dist[far] + E.len;
+      if(cost < bc - 1e-9){ bc = cost; best = c.concat([{e: E, dir: E.a == far ? 0 : 1}]); }
+    });
+    return best || chain;
+  }
+  // the way on from node `at` (arrived by lane `prev`) to `to`: out by each other road, then the shortest way,
+  // the cheapest first; turning round through the box (prev's way back) last, as a busy box may never have
+  // room for it. [[lanes], ...] (each after prev)
+  function waysOn(prev, at, to){
+    var opts = [];
+    nodes[at].inc.forEach(function(i){
+      var F = edges[i], far = F.a == at ? F.b : F.a;
+      if(F === prev.e || !F.ev) return;
+      var rest = far == to ? [] : chainOf(tree(far), far, to);
+      if(rest && rest.some(function(x){ return x.e.a == at || x.e.b == at; })) rest = null;   // not back through `at`
+      if(rest) opts.push({c: F.len + (far == to ? 0 : tree(far).dist[to]), lanes: [{e: F, dir: F.a == at ? 0 : 1}].concat(rest)});
+    });
+    opts.sort(function(x, y){ return x.c - y.c || x.lanes[0].e.i - y.lanes[0].e.i; });
+    var back = chainOf(tree(at), at, to);
+    if(back && back.length) opts.push({c: Infinity, lanes: back});
+    return opts.map(function(x){ return x.lanes; });
+  }
+  // the first lap time a profile reaches s (its end when it never does)
+  function timeAt(P, s){
+    var lo = 0, hi = P.T, o = {};
+    if(P.at(hi, o).s < s) return hi;
+    for(var i = 0; i < 40; i++){ var m = (lo + hi)/2; if(P.at(m, o).s >= s) hi = m; else lo = m; }
+    return hi;
+  }
+  // do two bodies (poses {x, z, yaw}) come within 0.3 m end on, 0.15 m side on?
+  function bodiesMeet(a, sa, b, sb){
+    var dx = b.x - a.x, dz = b.z - a.z;
+    if(Math.hypot(dx, dz) > (sa.len + sb.len)/2 + 2) return false;
+    var ax = Math.sin(a.yaw), az = Math.cos(a.yaw), bx = Math.sin(b.yaw), bz = Math.cos(b.yaw);
+    var axes = [[ax, az], [az, -ax], [bx, bz], [bz, -bx]];
+    for(var i = 0; i < 4; i++){
+      var u = axes[i], d = Math.abs(dx*u[0] + dz*u[1]);
+      var ra = Math.abs(ax*u[0] + az*u[1])*(sa.len/2 + 0.3) + Math.abs(az*u[0] - ax*u[1])*(sa.wid/2 + 0.15);
+      var rb = Math.abs(bx*u[0] + bz*u[1])*(sb.len/2 + 0.3) + Math.abs(bz*u[0] - bx*u[1])*(sb.wid/2 + 0.15);
+      if(d > ra + rb) return false;
+    }
+    return true;
+  }
+  // occupancy (to lap time T) carried on for `stand` s more where the body stands at the end
+  function standing(occ, T, stand){
+    if(!(stand > 0)) return occ;
+    var out = {};
+    Object.keys(occ).forEach(function(key){
+      var L = occ[key].slice(), x = L[L.length - 1];
+      if(x[1] >= T - 1e-6) L[L.length - 1] = [x[0], x[1] + stand];
+      out[key] = L;
+    });
+    return out;
+  }
+  // a trip's pose at t: driving a leg, or parked at its end (phase `after`) until the next leg (until)
+  function tripPose(pl, t, o){
+    var L = pl.legs, i = L.length - 1;
+    while(i > 0 && L[i].t0 > t) i--;
+    var g = L[i], u = t - g.t0, moving = u >= 0 && u < g.P.T;
+    o.phase = moving ? g.phase : g.after;
+    o.until = moving ? null : i + 1 < L.length ? L[i+1].t0 : pl.gone;
+    g.P.at(clamp(u, 0, g.P.T), o);
+    var s = o.s, v = moving ? o.v : 0;
+    ringPose(g.R, s, SPEC[pl.kind].wb, o);
+    o.speed = v; o.s = s;
+    return o;
+  }
+  // the first time trip pl's body meets one of others' (null: never); while both stand still it jumps
+  function meetsAny(pl, others){
+    var a = {}, b = {}, sa = SPEC[pl.kind];
+    for(var t = pl.appear; t < pl.gone; ){
+      tripPose(pl, t, a);
+      // the next look: when everything stands still, when the next one sets off or appears; else as soon
+      // as any two could have closed the gap between them at full speed (at least 0.25 s on)
+      var jump = a.until, safe = Infinity;
+      for(var j = 0; j < others.length; j++){
+        var q = others[j], sq = SPEC[q.kind];
+        if(t < q.appear || t >= q.gone){ if(t < q.appear) safe = Math.min(safe, q.appear - t); continue; }
+        tripPose(q, t, b);
+        if(bodiesMeet(a, sa, b, sq)) return t;
+        jump = jump != null && b.until != null ? Math.min(jump, b.until) : null;
+        safe = Math.min(safe, (Math.hypot(b.x - a.x, b.z - a.z) - (sa.len + sq.len)/2 - 1)/(sa.vmax + sq.vmax));
+      }
+      if(a.until != null) safe = Math.min(safe, a.until - t);
+      t = jump != null && jump > t + 0.25 ? jump : t + Math.max(0.25, Math.min(safe, 30));
+    }
+    return null;
+  }
+  // plan a trip: L = [{lanes, phase, after, t (earliest start, s), off (m short of the usual stop)}], each
+  // leg's lanes starting on the one the last leg stopped on; endAt: when it vanishes after its last leg
+  // (tries, step: how many plans, how far each later; CITY_TRY, 2 s)
+  function tripOf(id, ev, unit, kind, L, done, endAt, tries, step){
+    var spec = SPEC[kind], delay = L.map(function(){ return 0; }), nTry = num(tries, CITY_TRY), dStep = num(step, 2);
+    L.forEach(function(g, i){
+      g.R = g.R || prepRun(route(evLanes(g.lanes), spec, true), kind, id);
+      var rg = g.R.ranges, last = rg[rg.length - 1];
+      g.sTo = Math.max(last[0] + spec.len/2 + 0.1, g.R.pl.len - spec.len/2 - PARK_BACK - (g.off || 0));
+      g.sFrom = i ? Math.max(rg[0][0], rg[0][1] - (L[i-1].R.pl.len - L[i-1].sTo)) : num(g.from, spec.len/2 + 0.5);
+      g.lastEv = !!g.lanes[g.lanes.length - 1].e.evKind;
+      g.anyEv = g.lanes.some(function(ln){ return !!ln.e.evKind; });
+    });
+    for(var n = 0; n < nTry; n++){
+      var legs = [], bad = -1, i;
+      for(i = 0; i < L.length && bad < 0; i++){
+        var g = L[i], t0 = Math.max(g.t, i ? legs[i-1].t0 + legs[i-1].P.T + SCENE_MIN : -Infinity) + delay[i];
+        // a leg that starts when it did last try drives the same (its profile and occupancy kept)
+        if(!g.memo || g.memo.t0 !== t0) g.memo = {t0: t0, P: runProfile(g.R, spec, t0, g.sFrom, Math.max(g.sFrom, g.sTo), g.lead), occ: null};
+        var P = g.memo.P;
+        if(!P){ bad = i; L.stuck = g.R.stuck; }
+        else legs.push({R: g.R, P: P, t0: t0, phase: g.phase, after: g.after});
+      }
+      var gone = bad < 0 ? Math.max(legs[legs.length - 1].t0 + legs[legs.length - 1].P.T, num(endAt, 0)) : 0;
+      // its time on tram tracks and bus lanes, standing at the end too when that is on one
+      for(i = 0; bad < 0 && i < legs.length; i++){
+        var lg = legs[i], stand = lg.t0 + lg.P.T, until = i + 1 < legs.length ? legs[i+1].t0 : gone;
+        var mo = L[i].memo;
+        if(!L[i].anyEv) continue;   // never on a tram track or bus lane
+        if(!mo.occ) mo.occ = occupancy(lg.R, lg.P, spec, 0, lg.P.T);
+        if(transitMeets(standing(mo.occ, lg.P.T, L[i].lastEv ? Math.min(until - stand, 600) : 0), lg.t0)) bad = i;
+      }
+      if(bad < 0){
+        var pl = {id: id, ev: ev.id, unit: unit, kind: kind, legs: legs, appear: legs[0].t0, gone: gone};
+        var hit = meetsAny(pl, done);
+        if(hit == null) return pl;
+        for(bad = legs.length - 1; bad > 0 && legs[bad].t0 > hit; bad--);
+      }
+      delay[bad] += dStep;
+      L.fail = bad;
+    }
+    return null;
+  }
+  // an event's trips, in order: the chase first, then each other unit
+  function planEvent(ev){
+    var U = ev.units || [], done = [], fill = {}, gi = -1;
+    if(ev.kind === "patrol" || ev.kind === "delivery") return done;
+    U.forEach(function(u, k){ if(u && u.kind === "getaway" && gi < 0) gi = k; });
+    if(gi >= 0) planChase(ev, gi, done);
+    U.forEach(function(u, k){
+      if(!u || !SPEC[u.kind] || u.kind === "car" || u.kind === "bus" || u.kind === "tram" || k === gi || (gi >= 0 && u.kind === "police" && u.lag != null)) return;
+      var home = homeOf(u), scene = u.node != null && nodes[u.node] ? u.node : ev.node, kind = u.kind, spec = SPEC[kind];
+      if(home == null || scene == null || !nodes[scene]) return;
+      scene = reach(home, scene);
+      var dest = u.drop != null && ev.dest != null && sites[ev.dest] ? reach(home, nearestNode(sites[ev.dest].x, sites[ev.dest].z)) : null;
+      if(scene == null) return;
+      if(dest == scene) dest = null;
+      var stops = [{node: scene, phase: "responding", after: "onscene", t: sec(u.dispatch, ev.start)}];
+      if(dest != null) stops.push({node: dest, phase: "transport", after: "drop", t: sec(u.leave)});
+      stops.push({node: home, phase: "returning", after: "home", t: dest != null ? sec(u.drop) + 120 : sec(u.leave)});
+      // the legs, leaving each stop by its m-th way on (the next when a plan does not fit)
+      function legsOf(m){
+        var L = [], cur = home, prev = null, ok = true, more = false;
+        L.endAt = null;
+        stops.forEach(function(st, i){
+          if(!ok) return;
+          var last = i === stops.length - 1;
+          if(st.node == cur){ if(last && L.length) L.endAt = Math.max(st.t, 0); return; }
+          var chain;
+          if(prev){ var ways = waysOn(prev, cur, st.node); chain = ways[Math.min(m, ways.length - 1)]; if(ways.length > m + 1) more = true; }
+          else chain = approach(cur, st.node, !last);
+          if(!chain || !chain.length){ ok = false; return; }
+          // to wait, it stops short: at the end of the last lane on the way that is off the tram track and bus lane
+          if(!last && chain[chain.length - 1].e.evKind){
+            for(var j = chain.length - 1; j >= 0 && chain[j].e.evKind; j--);
+            if(j >= 0) chain = chain.slice(0, j + 1);
+          }
+          var lanes = (prev ? [prev] : []).concat(chain), key = laneKey(chain[chain.length - 1]);
+          L.push({lanes: lanes, phase: st.phase, after: st.after, t: st.t, off: last ? 0 : fill[key] || 0, key: last ? null : key});
+          prev = chain[chain.length - 1]; cur = prev.dir ? prev.e.a : prev.e.b;
+        });
+        L.more = more;
+        return ok ? L : [];
+      }
+      // a trip stuck at a box (no room ever for its movement) goes round that node, up to AVOID_MAX times; one
+      // that never misses the trams and buses on the shortest way goes the way that keeps off their lanes
+      var pl = null, L = [], L0 = null;
+      for(var pass = 0; pass < 2 && !pl; pass++){
+        var av = {};
+        penal = pass ? TRANSIT_PEN : 0;
+        for(var r = 0; r <= AVOID_MAX && !pl; r++){
+          avoid = r ? av : null;
+          for(var m = 0; m < 3 && !pl; m++){
+            L = legsOf(m);
+            if(!L.length) break;
+            pl = tripOf(ev.id + "/" + k, ev, k, kind, L, done, L.endAt);
+            if(!L.more || L.fail === 0) break;   // another way on changes nothing before the first stop
+          }
+          if(pl || L.stuck == null || av[L.stuck] || L.stuck == home || L.stuck == scene) break;
+          av[L.stuck] = 1;
+        }
+        if(!pass) L0 = L;
+      }
+      avoid = null; penal = 0;
+      if(!pl && L0 && L0.length && !(L.length && L.fail > 0)) L = L0;
+      // a stop it can never leave (a box with no room for its way out): it ends there at its time to go
+      while(!pl && L.fail > 0){
+        var cut = L.slice(0, L.fail);
+        pl = tripOf(ev.id + "/" + k, ev, k, kind, cut, done, Math.max(L[L.fail].t, 0));
+        L.fail = cut.fail; L = cut;
+      }
+      if(!pl) return;
+      L.forEach(function(g){ if(g.key != null) fill[g.key] = g.off + spec.len + GAP; });
+      done.push(pl);
+    });
+    return done;
+  }
+  // the chase: the getaway car's lanes from the scene along ev.route to its roadblock
+  function chaseChain(ev, scene, block){
+    var path = (ev.route || []).slice(), chain = [], cur = scene;
+    if(path.length && path[0] != scene) path.unshift(scene);
+    for(var i = 1; i < path.length; i++){
+      var eb = edgeBetween(path[i-1], path[i]);
+      if(!eb || !eb.e.ev || !nodes[path[i]]) break;
+      chain.push({e: eb.e, dir: eb.dir}); cur = path[i];
+    }
+    var end = block != null && nodes[block] ? block : path.length ? path[path.length - 1] : scene;
+    if(cur != end){ var rest = chainOf(dij(cur), cur, end); if(rest) chain = chain.concat(rest); }
+    return chain;
+  }
+  // carried on (the longest road on each time) until its last lane holds `need` m off the tram track and bus lane
+  function extendChase(chain, need){
+    for(var k = 0; k < 4 && chain.length; k++){
+      var ln = chain[chain.length - 1], E = ln.e, at = ln.dir ? E.a : E.b, best = null;
+      if(!E.evKind && laneLen(ln) >= need) break;
+      nodes[at].inc.forEach(function(i){
+        var F = edges[i];
+        if(F === E || !F.ev) return;
+        if(!best || F.len > best.len + 1e-9 || (Math.abs(F.len - best.len) <= 1e-9 && F.i < best.i)) best = F;
+      });
+      if(!best) break;
+      chain = chain.concat([{e: best, dir: best.a == at ? 0 : 1}]);
+    }
+    return chain;
+  }
+  // a chaser's lead: when the car ahead (trip a.pl, its chase from a.cs m) reaches each box line of the chase,
+  // matched in order to the chaser's way W (its chase from W.cs m)
+  function leadOf(a, W){
+    var g = a.pl.legs[0], mine = [], theirs = [], t = [], q = [], r = [], len = SPEC[a.pl.kind].len;
+    g.R.passes.forEach(function(p, i){
+      if(p.sIn < a.cs - 1e-6) return;
+      var aq = (a.lead && a.lead.q[i]) || 0;
+      theirs.push([g.t0 + timeAt(g.P, p.sIn), aq, g.t0 + timeAt(g.P, p.sIn - aq + 0.5)]);
+    });
+    W.R.passes.forEach(function(p, i){ if(p.sIn >= W.cs - 1e-6) mine.push(i); });
+    if(mine.length !== theirs.length) return null;
+    mine.forEach(function(i, j){ t[i] = theirs[j][0]; q[i] = theirs[j][1] + len + GAP; r[i] = theirs[j][2]; });
+    return {t: t, q: q, r: r, len: len};
+  }
+  // the chase along the director's route; when that never fits the trams and buses (the getaway car or a
+  // chaser left out), along the way to the same roadblock that keeps off their lanes, if that fits more
+  function planChase(ev, gi, done){
+    var base = done.length, want = 1;
+    ev.units.forEach(function(u){ if(u && u.kind === "police" && u.lag != null) want++; });
+    chaseOn(ev, gi, done, 0);
+    var n = done.length - base;
+    if(n >= want) return;
+    var keep = done.splice(base);
+    penal = TRANSIT_PEN;
+    try { chaseOn(ev, gi, done, TRANSIT_PEN); } finally { penal = 0; }
+    if(done.length - base > n) return;
+    done.splice(base);
+    keep.forEach(function(pl){ done.push(pl); });
+  }
+  function chaseOn(ev, gi, done, pen){
+    var U = ev.units, g = U[gi], gs = SPEC.getaway, ps = SPEC.police, scene = evNode(ev.node), cops = [];
+    if(scene == null) return;
+    U.forEach(function(u, k){ if(u && u.kind === "police" && u.lag != null) cops.push(k); });
+    var chain = chaseChain(ev, scene, g.node);
+    if(pen && chain.length){
+      var endN = chain[chain.length - 1].dir ? chain[chain.length - 1].e.a : chain[chain.length - 1].e.b;
+      chain = chainOf(dijkstra(scene, null, pen), scene, endN) || [];
+    }
+    if(!chain.length) return;
+    chain = extendChase(chain, gs.len + 2 + cops.length*(ps.len + GAP) + GAP);
+    var block = chain[chain.length - 1].dir ? chain[chain.length - 1].e.a : chain[chain.length - 1].e.b;
+    // each chaser comes in from its station along the getaway's path
+    // each chaser comes in from its station along the getaway's path, or (when that never fits the
+    // trams and buses at its lag) joins at the scene, where the director has it start
+    var cps = [];
+    cops.forEach(function(k, j){
+      var u = U[k], home = homeOf(u), appr = home == null ? null : home == scene ? [] : chainOf(tree(home), home, scene);
+      var off = gs.len + GAP + cps.length*(ps.len + GAP), ways = (appr && appr.length ? [appr] : []).concat([[]]);
+      cps.push({k: k, u: u, home: home != null ? home : scene, off: off, j: cps.length, lag: num(u.lag, 3 + 1.5*j), ways: ways.map(function(a){
+        var lanes = a.concat(chain), R = prepRun(route(evLanes(lanes), ps, true), "police", ev.id + "/" + k);
+        return {lanes: lanes, R: R, cs: R.ranges[a.length][0], sT: R.ranges[a.length][0] + ps.len/2 + 0.5, from: a.length ? ps.len/2 + 0.5 : R.ranges[0][0] + ps.len/2 + 0.5,
+                sTo: Math.max(R.ranges[R.ranges.length - 1][0] + ps.len/2 + 0.1, R.pl.len - ps.len/2 - PARK_BACK - off)};
+      })});
+    });
+    // The getaway car flees CHASE_STEP s later at a time until every chaser fits within CHASE_SLACK s of its
+    // lag (its start found by a few rounds of drive, look, shift); the last try takes what fits
+    var base = done.length, t1 = sec(g.dispatch, ev.start), G = null, got = [];
+    for(var d = 0; d <= CHASE_TRY; d++){
+      var strict = d < CHASE_TRY;
+      done.splice(base); got = [];
+      G = tripOf(ev.id + "/" + gi, ev, gi, "getaway", [{lanes: chain, phase: "chase", after: "caught", t: t1 + (strict ? d*CHASE_STEP : 0)}], done, 1e12, strict ? 1 : CITY_TRY);
+      if(!G){ if(strict) continue; return; }
+      done.push(G);
+      var tf = G.legs[0].t0, ok = true, ahead = {pl: G, cs: 0};
+      cps.forEach(function(c){
+        var pl = null, L0 = null, want = tf + c.lag;
+        for(var wi = 0; ok && !pl && wi < c.ways.length; wi++){
+          var W = c.ways[wi], t0 = want - (W.sT - W.from)/ps.vmax, lead = leadOf(ahead, W);
+          for(var it = 0; it < 4; it++){ var P = runProfile(W.R, ps, t0, W.from, W.sTo, lead); if(!P) break; t0 += want - (t0 + timeAt(P, W.sT)); }
+          L0 = {lanes: W.lanes, R: W.R, phase: "chase", after: "onscene", t: t0, off: c.off, from: W.from, lead: lead, cs: W.cs};
+          pl = tripOf(ev.id + "/" + c.k, ev, c.k, "police", [L0], done, 1e12, strict ? CHASE_SLACK/0.5 : CITY_TRY, 0.5);
+        }
+        if(!pl){ if(strict) ok = false; return; }
+        got.push({c: c, L0: L0, t0: pl.legs[0].t0, end: pl.legs[0].t0 + pl.legs[0].P.T});
+        done.push(pl);
+        ahead = {pl: pl, cs: L0.cs, lead: L0.lead};
+      });
+      if(ok) break;
+    }
+    // the arrest: the getaway car is gone when the first police car leaves; then they drive home in turn
+    var arrive = G.legs[0].t0 + G.legs[0].P.T;
+    got.forEach(function(x){ arrive = Math.max(arrive, x.end); });
+    var leave = Math.max(arrive + ARREST_MIN, sec(g.leave, 0));
+    done.splice(base + 1);
+    G.gone = leave;
+    got.forEach(function(x, j){
+      var ways = x.c.home == block ? [] : waysOn(chain[chain.length - 1], block, x.c.home), pl = null;
+      for(var m = 0; !pl && m < Math.max(1, Math.min(3, ways.length)); m++){
+        var L = [{lanes: x.L0.lanes, R: x.L0.R, phase: "chase", after: "onscene", t: x.t0, off: x.c.off, from: x.L0.from, lead: x.L0.lead}];
+        if(ways[m]) L.push({lanes: [chain[chain.length - 1]].concat(ways[m]), phase: "returning", after: "home", t: leave + LEAVE_STEP*j});
+        pl = tripOf(ev.id + "/" + x.c.k, ev, x.c.k, "police", L, done, L.length > 1 ? 0 : leave + LEAVE_STEP*j);
+      }
+      // no way home that fits: it ends at the roadblock when it would leave
+      if(!pl && ways.length) pl = tripOf(ev.id + "/" + x.c.k, ev, x.c.k, "police", L.slice(0, 1), done, leave + LEAVE_STEP*j);
+      if(pl) done.push(pl);
+    });
+  }
+  // the events with units out around t: every one overlapping the last CITY_TAIL s (a trip can run on a
+  // little past its event), listed once per CITY_BUCKET s
+  var cityList = {b: null, list: []}, planCache = {}, planKeys = [];
+  function cityEvents(t){
+    var b = Math.floor(t/CITY_BUCKET);
+    if(cityList.b === b) return cityList.list;
+    var t0 = b*CITY_BUCKET, t1 = t0 + CITY_BUCKET, seen = {}, list = [];
+    function add(ev){
+      if(!ev || ev.id == null || seen[ev.id] || !ev.units || !ev.units.length || ev.kind === "patrol" || ev.kind === "delivery") return;
+      seen[ev.id] = 1; list.push(ev);
+    }
+    if(typeof city.events === "function") (city.events((t0 - CITY_TAIL)*1000, (t1 + CITY_AHEAD)*1000) || []).forEach(add);
+    if(typeof city.unitsAt === "function") (city.unitsAt(t0*1000) || []).forEach(function(x){ add(x && x.ev); });
+    list.sort(function(a, c){ return String(a.id) < String(c.id) ? -1 : String(a.id) > String(c.id) ? 1 : 0; });
+    cityList = {b: b, list: list};
+    return list;
+  }
+  function eventTrips(ev){
+    var key = "v" + ev.id;
+    if(planCache.hasOwnProperty(key)) return planCache[key];
+    planCache[key] = planEvent(ev); planKeys.push(key);
+    if(planKeys.length > 96) delete planCache[planKeys.shift()];
+    return planCache[key];
+  }
+  // an event is planned when its units could be out (a chaser sets off before the start), or earlier, one
+  // event a call, while it is coming up: the planning cost is spread over the frames
+  function cityTrips(t){
+    var out = [], spare = true;
+    cityEvents(t).forEach(function(ev){
+      var need = num(ev.start, 0)/1000 - CITY_AHEAD/2 <= t;
+      if(!need && !(spare && !planCache.hasOwnProperty("v" + ev.id))) return;
+      if(!need) spare = false;
+      eventTrips(ev).forEach(function(pl){ if(t >= pl.appear && t < pl.gone) out.push(pl); });
+    });
+    return out;
+  }
+  // the city's units at t as at() lists them: lights and siren on the way in, lights on scene, neither home
+  function cityAt(t){
+    return cityTrips(t).map(function(pl){
+      var o = tripPose(pl, t, {id: pl.id, kind: pl.kind}), moving = o.until == null;
+      o.ev = pl.ev;
+      o.siren = !!(SIREN[pl.kind] && moving && o.phase !== "returning");
+      o.lights = !!((SIREN[pl.kind] || pl.kind === "tow") && !o.siren && o.phase !== "returning" && o.phase !== "home");
+      o.yield = o.siren || (pl.kind === "getaway" && moving);
+      return o;
+    });
+  }
+  // the city's clock per CLOCK_BUCKET s: the rush, and how many patrol cars and delivery vans are out
+  var clockCache = {}, clockKeys = [];
+  function cityClock(ts){
+    var b = Math.floor(ts/CLOCK_BUCKET), key = "k" + b;
+    if(clockCache.hasOwnProperty(key)) return clockCache[key];
+    var ms = b*CLOCK_BUCKET*1000, st = typeof city.at === "function" ? city.at(ms) || {} : {}, c = {rush: clamp(num(st.rush, 0), 0, 1), police: 0, van: 0};
+    if(typeof city.active === "function") (city.active(ms) || []).forEach(function(ev){
+      var kind = ev && ev.kind === "patrol" ? "police" : ev && ev.kind === "delivery" ? "van" : null;
+      if(kind) (ev.units || []).forEach(function(u){ if(u && u.kind === kind && ms >= num(u.dispatch, 0) && ms < num(u.back, 0)) c[kind]++; });
+    });
+    clockCache[key] = c; clockKeys.push(key);
+    if(clockKeys.length > 64) delete clockCache[clockKeys.shift()];
+    return c;
+  }
+  // is a ring vehicle out on its current lap? (decided at the lap's start, at its first slotted box)
+  function present(r, veh, t){
+    var k = Math.floor((t - r.prof.base - veh.shift)/r.prof.T), c = cityClock(r.prof.base + veh.shift + k*r.prof.T);
+    if(veh.svc != null) return veh.svc < c[veh.kind];
+    return veh.u < Math.min(DENS_TOP, dens*(RUSH_K[0] + (RUSH_K[1] - RUSH_K[0])*c.rush));
   }
 
   // ---- poses ----
@@ -1132,12 +1690,13 @@ function create(doc, o){
     var rad = num(radius, Infinity), out = [], obs = obstacles && obstacles.length ? obstacles : null, dt = 0;
     if(lastT != null){ dt = t - lastT; if(dt < -1 || dt > 5){ lag = {}; dt = 0; } dt = clamp(dt, 0, 0.5); }
     lastT = t;
-    var evs = activeIncidents(t).map(function(I){ return evPose(I, t, {id: I.id, kind: I.kind}); });
+    var evs = city ? cityAt(t) : activeIncidents(t).map(function(I){ return evPose(I, t, {id: I.id, kind: I.kind}); });
     function near(b){ return cx >= b[0] - rad - 30 && cx <= b[2] + rad + 30 && cz >= b[1] - rad - 30 && cz <= b[3] + rad + 30; }
     function run(r, list, spec){
       var anyLag = false, st = [];
       if(!near(r.box) && !hasLag(list)) return;
       list.forEach(function(veh){
+        if(city && (veh.u != null || veh.svc != null) && !present(r, veh, t)){ delete lag[veh.id]; return; }
         var q = r.prof.S(t - r.prof.base - veh.shift, {}), sBase = q.s, l0 = lag[veh.id] || 0, l = l0;
         if(obs || l > 0){
           var gapAhead = obs ? obstacleNeed(r, sBase - l, q.v, spec.wid, spec.len, obs) : null;
@@ -1164,10 +1723,12 @@ function create(doc, o){
         var d = Math.hypot(p.x - cx, p.z - cz);
         if(d > rad) return;
         var v = {id: id, kind: x.veh.kind, x: p.x, y: p.y, z: p.z, yaw: p.yaw, speed: dt > 0 ? Math.max(0, x.v - (x.l - x.l0)/dt) : x.v, d: d};
-        if(x.veh.kind === "car"){
-          v.paint = PAINT[x.veh.paint];
+        if(r.kind === "car"){
+          if(x.veh.kind === "car") v.paint = PAINT[x.veh.paint];
+          else if(x.veh.kind === "van") v.paint = VAN_PAINT[x.veh.paint];
+          else { v.patrol = true; v.siren = false; }
           var room = roomAt(r, x.s), pull = 0;
-          if(room > 0) evs.forEach(function(e){ if(e.speed > 0.5) pull = Math.max(pull, room*smooth((EV_YIELD - Math.hypot(e.x - p.x, e.z - p.z))/15)); });
+          if(room > 0) evs.forEach(function(e){ if(e.speed > 0.5 && e.yield !== false) pull = Math.max(pull, room*smooth((EV_YIELD - Math.hypot(e.x - p.x, e.z - p.z))/15)); });
           if(pull > 0){ v.x += -Math.cos(p.yaw)*pull; v.z += Math.sin(p.yaw)*pull; v.pull = pull; }
         } else {
           v.line = r.id;
@@ -1190,7 +1751,9 @@ function create(doc, o){
     lines.forEach(function(r){ run(r, r.vehicles, SPEC[r.kind]); });
     evs.forEach(function(e){
       var d = Math.hypot(e.x - cx, e.z - cz);
-      if(d <= rad) out.push({id: e.id, kind: e.kind, x: e.x, y: e.y, z: e.z, yaw: e.yaw, speed: e.speed, d: d, siren: true});
+      if(d > rad) return;
+      if(!city) out.push({id: e.id, kind: e.kind, x: e.x, y: e.y, z: e.z, yaw: e.yaw, speed: e.speed, d: d, siren: true});
+      else out.push({id: e.id, kind: e.kind, x: e.x, y: e.y, z: e.z, yaw: e.yaw, speed: e.speed, d: d, siren: e.siren, lights: e.lights, ev: e.ev, phase: e.phase});
     });
     out.sort(function(a, b){ return a.d - b.d || (a.id < b.id ? -1 : 1); });
     return out;
@@ -1262,7 +1825,9 @@ function create(doc, o){
   return {
     tier: tier, grow: grow, H: H, at: at, stopsNear: stopsNear, nextArrival: nextArrival, rideTo: rideTo,
     onFare: function(fn){ fareHook = typeof fn === "function" ? fn : null; },
-    incidents: function(timeMs){ return activeIncidents(num(timeMs, 0)/1000).map(function(I){ return {id: I.id, kind: I.kind, station: I.station, node: I.node, start: Math.round(I.start*1000), end: Math.round(I.end*1000)}; }); },
+    incidents: function(timeMs){
+      if(city) return cityTrips(num(timeMs, 0)/1000).map(function(pl){ return {id: pl.id, kind: pl.kind, ev: pl.ev, unit: pl.unit, start: Math.round(pl.appear*1000), end: Math.round(pl.gone*1000)}; });
+      return activeIncidents(num(timeMs, 0)/1000).map(function(I){ return {id: I.id, kind: I.kind, station: I.station, node: I.node, start: Math.round(I.start*1000), end: Math.round(I.end*1000)}; }); },
     lines: function(){ return lines.map(function(r){ return {id: r.id, kind: r.kind, tier: r.tier, lap: r.prof.T, headway: r.headway, vehicles: r.vehicles.length,
                                                               stops: r.prof.stops.map(function(st){ return {id: st.id, arr: st.arr, dep: st.dep}; })}; }); },
     info: function(){ return {H: H, rings: rings.length, cars: cars.length, slots: totalSlots, lines: lines.length, overfull: overfull, errors: errors.slice(), dropped: dropped,
@@ -1343,6 +1908,20 @@ function view(c){
       d.push([box(2.2, 1.3, 1.8), 0xf4f4f0, 0, 1.15, 2.0], [box(2.2, 2.2, 4.0), 0xf4f4f0, 0, 1.6, -0.9], [box(2.22, 0.6, 1.2), 0x28323e, 0, 1.55, 2.3],
              [box(2.23, 0.22, 5.9), 0xd02030, 0, 1.25, 0], [box(0.25, 0.8, 0.05), 0xd02030, 0, 1.9, -2.92], [box(0.8, 0.25, 0.05), 0xd02030, 0, 1.9, -2.92]);
       wheels(d, 0.4, 0.3, [-0.95, 0.95], [-1.9, 2.0]);
+    } else if(kind === "tow"){
+      d.push([box(2.3, 1.7, 2.2), 0xe8a020, 0, 1.45, 1.9], [box(2.32, 0.6, 1.2), 0x28323e, 0, 1.75, 2.35],
+             [box(2.3, 0.35, 3.8), 0x3a3d42, 0, 0.85, -1.1], [box(0.3, 1.6, 0.3), 0x3a3d42, 0, 1.7, -0.6, 0.5],
+             [box(0.25, 0.25, 2.2), 0x3a3d42, 0, 2.3, -1.6, -0.35], [box(2.1, 0.3, 0.2), 0xb8bec6, 0, 0.5, 3.0]);
+      wheels(d, 0.45, 0.32, [-1.0, 1.0], [-2.0, 1.9]);
+    } else if(kind === "van"){
+      // white: the instance colour paints it (delivery white, post yellow or red, blue)
+      d.push([box(1.95, 1.9, 3.3), 0xffffff, 0, 1.3, -0.6], [box(1.95, 1.1, 1.3), 0xffffff, 0, 0.9, 1.6], [box(1.97, 0.55, 0.9), 0x28323e, 0, 1.55, 1.45],
+             [box(1.8, 0.18, 0.15), 0x2a2c30, 0, 0.4, 2.25], [box(1.8, 0.18, 0.15), 0x2a2c30, 0, 0.4, -2.25]);
+      wheels(d, 0.36, 0.26, [-0.85, 0.85], [-1.5, 1.45]);
+    } else if(kind === "schoolbus"){
+      d.push([box(2.4, 1.3, 9), 0xf2c12e, 0, 1.1, 0], [box(2.42, 0.85, 7.6), 0x28323e, 0, 2.15, -0.4], [box(2.4, 0.35, 8.6), 0xf2c12e, 0, 2.75, -0.2],
+             [box(2.42, 0.1, 9.02), 0x1c1d21, 0, 1.25, 0], [box(0.4, 0.15, 0.05), 0xfff4d0, 0.8, 0.8, 4.51], [box(0.4, 0.15, 0.05), 0xfff4d0, -0.8, 0.8, 4.51]);
+      wheels(d, 0.48, 0.3, [-1.05, 1.05], [-2.8, 2.9]);
     } else {
       d.push([side([[-2.3, 0.3], [2.3, 0.3], [2.32, 0.65], [1.3, 0.85], [-2.0, 0.88], [-2.32, 0.7]], 1.86), 0x1d2c4a],
              [side([[-1.4, 0.85], [-1.0, 1.45], [0.5, 1.45], [1.1, 0.85]], 1.7), 0x28323e],
@@ -1361,20 +1940,23 @@ function view(c){
   var paintM = new THREE.MeshStandardMaterial({vertexColors: true, roughness: 0.45, metalness: 0.25});
   var beaconM = new THREE.MeshBasicMaterial({toneMapped: false});
   var CG = carGeo(), BG = busGeo(), TG = tramGeo();
-  inst("car", CG.paint, CAP.car, paintM); inst("carDetail", CG.detail, CAP.car, vc);
+  // a getaway car is a car (black) in the car meshes
+  inst("car", CG.paint, CAP.car + CAP.getaway, paintM); inst("carDetail", CG.detail, CAP.car + CAP.getaway, vc);
   inst("bus", BG.paint, CAP.bus, paintM); inst("busDetail", BG.detail, CAP.bus, vc);
   inst("tram", TG.paint, CAP.tram*2, paintM); inst("tramDetail", TG.detail, CAP.tram*2, vc);
-  EV_KINDS.forEach(function(k){ inst(k, evGeo(k), CAP[k], vc); });
-  inst("beacon", new THREE.BoxGeometry(0.28, 0.14, 0.2), CAP.fire*2 + CAP.ambulance*2 + CAP.police*2, beaconM);
-  var BEACON_Y = {fire: 2.6, ambulance: 2.8, police: 1.55}, BEACON_Z = {fire: 3.3, ambulance: 2.6, police: -0.2};
+  EV_KINDS.concat(["tow", "van", "schoolbus"]).forEach(function(k){ inst(k, evGeo(k), CAP[k], vc); });
+  inst("beacon", new THREE.BoxGeometry(0.28, 0.14, 0.2), (CAP.fire + CAP.ambulance + CAP.police + CAP.tow)*2, beaconM);
+  var BEACON_Y = {fire: 2.6, ambulance: 2.8, police: 1.55, tow: 2.35}, BEACON_Z = {fire: 3.3, ambulance: 2.6, police: -0.2, tow: 2.0};
   var LINE_COL = [0xd23b3b, 0x2c7be5, 0x2fa36b, 0xe0a020, 0x8a55c8, 0x1aa3b8];
 
   function put(m, i, x, y, z, yaw, hex){
     e.set(0, yaw, 0); q.setFromEuler(e); p.set(x, y, z); mtx.compose(p, q, sc); m.setMatrixAt(i, mtx);
     if(hex != null){ col.setHex(hex); m.setColorAt(i, col); }
   }
-  function update(vehicles, timeMs){
-    var n = {car: 0, bus: 0, tram: 0, fire: 0, ambulance: 0, police: 0, beacon: 0}, flash = Math.floor(num(timeMs, 0)/250) & 1;
+  // opt.calm: beacons lit steady, never flashing
+  function update(vehicles, timeMs, opt){
+    var n = {car: 0, bus: 0, tram: 0, fire: 0, ambulance: 0, police: 0, beacon: 0, tow: 0, van: 0, schoolbus: 0, getaway: 0};
+    var flash = opt && opt.calm ? 0 : Math.floor(num(timeMs, 0)/250) & 1, cm = 0;
     (vehicles || []).forEach(function(v){
       var k = v.kind;
       if(n[k] == null) return;
@@ -1389,14 +1971,21 @@ function view(c){
         return;
       }
       if(n[k] >= CAP[k]) return;
-      if(k === "car"){ put(meshes.car, n.car, v.x, v.y, v.z, v.yaw, v.paint != null ? v.paint : 0x8a9199); put(meshes.carDetail, n.car, v.x, v.y, v.z, v.yaw); }
+      if(k === "car" || k === "getaway"){
+        put(meshes.car, cm, v.x, v.y, v.z, v.yaw, k === "getaway" ? 0x17181c : v.paint != null ? v.paint : 0x8a9199); put(meshes.carDetail, cm, v.x, v.y, v.z, v.yaw); cm++;
+      }
+      else if(k === "van") put(meshes.van, n.van, v.x, v.y, v.z, v.yaw, v.paint != null ? v.paint : 0xf2f2ee);
+      else if(k === "schoolbus") put(meshes.schoolbus, n.schoolbus, v.x, v.y, v.z, v.yaw);
       else if(k === "bus"){ put(meshes.bus, n.bus, v.x, v.y, v.z, v.yaw, LINE_COL[hash32(v.line) % LINE_COL.length]); put(meshes.busDetail, n.bus, v.x, v.y, v.z, v.yaw); }
       else {
         put(meshes[k], n[k], v.x, v.y, v.z, v.yaw);
         var s = Math.sin(v.yaw), cs = Math.cos(v.yaw), bz = BEACON_Z[k], by = BEACON_Y[k];
         [-0.45, 0.45].forEach(function(lx, j){
           if(n.beacon >= meshes.beacon.instanceMatrix.count) return;
-          put(meshes.beacon, n.beacon++, v.x + lx*cs + bz*s, v.y + by, v.z - lx*s + bz*cs, v.yaw, v.siren && (flash ^ j) ? 0x3a6bff : 0xff2a2a);
+          // lit (flashing unless Calm) with a siren or lights on, dark otherwise; a tow truck's are amber
+          var lit = v.siren || v.lights, hex = k === "tow" ? (lit ? ((flash ^ j) ? 0xffb020 : 0x7a4a00) : 0x3a2a10) : lit ? ((flash ^ j) ? 0x3a6bff : 0xff2a2a) : 0x401818;
+          if(!v.siren && !v.lights && v.siren !== false) hex = 0xff2a2a;
+          put(meshes.beacon, n.beacon++, v.x + lx*cs + bz*s, v.y + by, v.z - lx*s + bz*cs, v.yaw, hex);
         });
       }
       n[k]++;
@@ -1405,7 +1994,7 @@ function view(c){
       [k, k + "Detail"].forEach(function(name){
         var m = meshes[name];
         if(!m) return;
-        m.count = n[k]; m.instanceMatrix.needsUpdate = true;
+        m.count = k === "car" ? cm : n[k]; m.instanceMatrix.needsUpdate = true;
         if(m.instanceColor) m.instanceColor.needsUpdate = true;
       });
     });

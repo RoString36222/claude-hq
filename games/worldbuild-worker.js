@@ -4,8 +4,10 @@
  *                                                            <- {op:"error", id, message}
  * `tier` builds the tile as that city tier shows the world (HQV.worldgeom.view; each tier's view is cached here).
  * Typed arrays are transferred back. Nothing here leaves the machine.
+ * roadsmooth.js loads first: worldgeom draws a smoothed W's rounded junction corners with it (HQV.roadSmooth), and
+ * world.js's pack() would smooth here too.
  */
-importScripts("/games/world.js", "/games/worldgeom.js");
+importScripts("/games/roadsmooth.js", "/games/world.js", "/games/worldgeom.js");
 (function(){
 "use strict";
 var W = null;

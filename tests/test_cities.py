@@ -80,8 +80,8 @@ function key(target, code, name, type){
 }
 const HQV = window.HQV;
 var NOW = 1760000000000; const realNow = Date.now; Date.now = () => NOW;
-for (const f of ["hqstyle", "hqtower", "hqroof", "hqdecor", "hqbase", "hqskate", "world", "worldgeom", "hqcityparts", "hqcity", "hqmerge", "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqtravel",
-                 "hqbridges", "hqnav", "hqminimap", "hqroutefx", "hqnavui", "hqcity3d"])
+for (const f of ["hqstyle", "hqtower", "hqroof", "hqdecor", "hqbase", "hqskate", "roadsmooth", "world", "worldgeom", "hqcityparts", "hqcity", "hqmerge", "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqtravel",
+                 "hqbridges", "hqnav", "hqminimap", "hqroutefx", "hqnavui", "citysim", "citysimfx", "citynews", "hqcity3d"])
   new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
 const gz = p => JSON.parse(zlib.gunzipSync(fs.readFileSync(p)).toString("utf8"));
 const WD = HQV.world, C3 = HQV.hqCity3d;
@@ -452,6 +452,33 @@ out.cargo = (function(){
   return o;
 })();
 wv.destroy(); delete HQV.hqVoyage; delete HQV.hqShips;
+/* ---------- the Living City: the director drives traffic's runs, the civic fleets, the scene, the news, the alerts ---------- */
+out.living = (function(){
+  var L = wc.city(), D = L.D, o = {D: !!D, fx: !!L.fx, news: !!L.news, newsOn: !!L.news && L.news.el.parentNode === root2d};
+  if(!D) return o;
+  // the first fire of the next two days whose first engine comes from a station: the clock to just after it arrives
+  var NOW0 = NOW, ev = D.events(NOW, NOW + 2*86400000).filter(e => e.kind === "fire" && e.units.some(u => u.kind === "fire" && u.station != null))[0];
+  o.fire = !!ev; if(!ev) return o;
+  var u = ev.units.filter(u => u.kind === "fire" && u.station != null)[0];
+  // on its way in, by the scene: its siren plays (an engine stub that only counts the voices)
+  var voices = [], E0 = HQV.engine; HQV.engine = {siren(kind){ var V = {kind: kind, sets: 0, stopped: false, set(){ V.sets++; }, stop(){ V.stopped = true; }}; voices.push(V); return V; }, sfx(){}};
+  NOW = u.arrive - 20000; avatar = {x: ev.x, z: ev.z};
+  for(var i = 0; i < 40; i++){ NOW += 250; frame(wc, ev.x, ev.z, 1); }
+  o.sirens = voices.filter(V => V.kind === "fire" && V.sets > 0).length; o.maxLive = wc.city().sirens.length;
+  NOW = u.arrive + 20000;
+  for(i = 0; i < 40; i++){ NOW += 250; frame(wc, ev.x, ev.z, 1); }
+  L = wc.city();
+  o.sirensAfter = L.sirens.filter(k => k === ev.id + "/" + ev.units.indexOf(u)).length; o.allStopped = voices.every(V => V.stopped || L.sirens.length); HQV.engine = E0;
+  o.phase = D.phase(ev, NOW);
+  o.alert = L.alerts.filter(a => a.kind === "fire" && Math.hypot(a.x - ev.x, a.z - ev.z) < 1).length;
+  o.station = (L.bySite[String(u.station)] || []).filter(e => e.ev.id === ev.id && e.unit === u).length;
+  o.fxDraws = L.fx ? L.fx.drawCalls() : 0;
+  o.headline = L.news ? L.news.headlines().filter(h => h.ev && h.ev.id === ev.id).length : 0;
+  o.goTo = wc.nav().places().filter(p => p.kind === "incidents" && p.id === "incident:" + ev.id).length;
+  o.units = wc.callRoad.traffic().filter(v => v.ev === ev.id).length;      // traffic's vehicles near you, as the City drew them
+  NOW = NOW0;
+  return o;
+})();
 wi.destroy(); wc.destroy();
 out.leftover = root2d.children.filter(e => e.tagName === "button" || e.attrs.role === "dialog").length;
 
@@ -728,6 +755,23 @@ class CitiesTest(unittest.TestCase):
         self.assertEqual(i["buttonGo"], [["claude-hq@2", None]])
         self.assertEqual(self.out["leftover"], 0, "a destroyed City leaves no buttons or menus behind")
 
+    def test_the_living_city(self):
+        L = self.out["living"]
+        self.assertTrue(L["D"] and L["fx"] and L["news"], L)
+        self.assertTrue(L["newsOn"], "the ticker sits on the City's stage")
+        self.assertTrue(L["fire"], "a fire in the Commons within two days")
+        self.assertIn(L["phase"], ("onscene", "clearing"))
+        self.assertEqual(L["alert"], 1, "the fire on the minimap")
+        self.assertEqual(L["station"], 1, "its engine's run reaches its fire station's building")
+        self.assertGreater(L["fxDraws"], 0, "the scene is drawn")
+        self.assertEqual(L["headline"], 1, "on the ticker")
+        self.assertEqual(L["goTo"], 1, "Go to lists it under Incidents")
+        self.assertGreater(L["units"], 0, "traffic drives the director's units")
+        self.assertGreater(L["sirens"], 0, "an engine on its way in is heard")
+        self.assertLessEqual(L["maxLive"], 2)
+        self.assertEqual(L["sirensAfter"], 0, "its siren is off once it is on the scene")
+        self.assertTrue(L["allStopped"])
+
     def test_fallbacks(self):
         self.assertEqual(self.out["fallIsland"], "claude-hq@2")
         self.assertEqual(self.out["fallLegacy"], ["claude-hq@1", "city3d"])
@@ -744,6 +788,11 @@ class LoadOrder(unittest.TestCase):
             self.assertRegex(src, r"HQ_SCRIPTS_3D = \{[^}]*\b" + m + r":1", m + " fails soft")
         self.assertLess(order.index("hqmerge"), order.index("hqcivic"))
         self.assertLess(order.index("npcsim"), order.index("npcdraw"))
+        # Living City: the director, its effects and the news before the City; the curved roads before world.js packs
+        for m in ["citysim", "citysimfx", "citynews", "roadsmooth"]:
+            self.assertLess(order.index(m), order.index("hqcity3d"), m)
+            self.assertRegex(src, r"HQ_SCRIPTS_3D = \{[^}]*\b" + m + r":1", m + " fails soft")
+        self.assertLess(order.index("roadsmooth"), order.index("world"))
 
     def test_hq3d_hooks(self):
         src = read("games", "hq3d.js")

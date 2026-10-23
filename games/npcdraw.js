@@ -10,6 +10,9 @@
  *                       draw call; a vertex shader swings the legs and arms from a per-instance gait
  *                       (phase, cycles/s, swing), the outfit comes from per-instance colours.
  *   over FAR            not drawn (sim.at is asked for FAR only).
+ * Anims from the sim: walk, idle, drive, and with the city (npcsim opts.city) "lie" (a patient: the character's
+ * "die" clip held at its end, or the idle pose tipped onto its back; a far body lies flat) and "cheer" (fans:
+ * the "emote-yes" clip, or idle; a far body waves both arms overhead: a negative gait swing in the shader).
  * A near resident whose character is still loading is drawn as a body until it is ready. Drivers
  * (anim "drive") are inside their cars, which games/traffic.js draws; riders on a bus are not in sim.at.
  *   draw.update(tMs, cam {x, y?, z}, player {x, z} | null, dt)   once a frame; tMs is the City's local clock
@@ -41,6 +44,9 @@ var WALK_CLIP = 1.4;                // the walk clip's own pace (m/s): its timeS
 var TINT = 0.32;                    // how far a near character's material leans toward the shirt colour
 var TALK_REACH = 3.2;
 var WARM_MS = 0.6;                  // route planning per frame (sim.warm), ms
+var CLIPS = {idle: "idle", walk: "walk", lie: "die", cheer: "emote-yes"};   // our anim -> the Kenney clip
+var LIE_UP = 0.15;                  // a body tipped onto its back is lifted this much (m), out of the ground
+var CHEER = {hz: 1.6, swing: 0.3};  // far bodies cheering: arm waves per second, wave (rad)
 
 /* ---------- pure helpers ---------- */
 // Critically damped spring, exact closed form (as hq3d.js): -> [x, v]
@@ -132,18 +138,24 @@ function farBuffers(cap){
           shirt: new Float32Array(3*cap), pants: new Float32Array(3*cap), skin: new Float32Array(3*cap)};
 }
 // Writes items (sim.at entries) into the buffers B: column-major matrices (rotate yaw about +y, scale
-// 1, translate), the gait [phase (rad), cycles/s, swing (rad)] and the outfit. -> the count written.
+// 1, translate; "lie": tipped onto its back first, head toward -z, lifted LIE_UP), the gait [phase (rad),
+// cycles/s, swing (rad); a negative swing waves the arms overhead: "cheer"] and the outfit. -> the count written.
 function packFar(items, B, cols){
   var n = Math.min((items || []).length, B.cap), M = B.mat, G = B.gait;
   for(var i = 0; i < n; i++){
     var r = items[i], c = Math.cos(r.yaw || 0), s = Math.sin(r.yaw || 0), o = 16*i;
-    var x = r.ax != null ? r.ax : r.x, z = r.az != null ? r.az : r.z;
+    var x = r.ax != null ? r.ax : r.x, z = r.az != null ? r.az : r.z, lie = r.anim === "lie";
     M[o] = c; M[o+1] = 0; M[o+2] = -s; M[o+3] = 0;
-    M[o+4] = 0; M[o+5] = 1; M[o+6] = 0; M[o+7] = 0;
-    M[o+8] = s; M[o+9] = 0; M[o+10] = c; M[o+11] = 0;
-    M[o+12] = x; M[o+13] = r.y || 0; M[o+14] = z; M[o+15] = 1;
-    var walk = r.anim === "walk";
-    G[3*i] = frac(r.id)*6.2831853; G[3*i+1] = walk ? (r.speed || 1.3)/STRIDE : 0; G[3*i+2] = walk ? 0.55 : 0;
+    if(lie){   // yaw x (rotate -pi/2 about x): local +y (head) to -z, local +z (face) up
+      M[o+4] = -s; M[o+5] = 0; M[o+6] = -c; M[o+7] = 0;
+      M[o+8] = 0; M[o+9] = 1; M[o+10] = 0; M[o+11] = 0;
+    } else {
+      M[o+4] = 0; M[o+5] = 1; M[o+6] = 0; M[o+7] = 0;
+      M[o+8] = s; M[o+9] = 0; M[o+10] = c; M[o+11] = 0;
+    }
+    M[o+12] = x; M[o+13] = (r.y || 0) + (lie ? LIE_UP : 0); M[o+14] = z; M[o+15] = 1;
+    var walk = r.anim === "walk", cheer = r.anim === "cheer";
+    G[3*i] = frac(r.id)*6.2831853; G[3*i+1] = walk ? (r.speed || 1.3)/STRIDE : (cheer ? CHEER.hz : 0); G[3*i+2] = walk ? 0.55 : (cheer ? -CHEER.swing : 0);
     if(cols){
       var k = 9*(r.id | 0);
       B.shirt[3*i] = cols[k]; B.shirt[3*i+1] = cols[k+1]; B.shirt[3*i+2] = cols[k+2];
@@ -206,10 +218,11 @@ function bodyMaterial(THREE, U){
     sh.uniforms.uNpcTime = U.uNpcTime;
     sh.vertexShader = rep(sh.vertexShader, "common", "attribute float aPart;\nattribute float aLimb;\nattribute float aPivot;\n" +
       "attribute vec3 aGait;\nattribute vec3 aShirt;\nattribute vec3 aPants;\nattribute vec3 aSkin;\nuniform float uNpcTime;\nvarying vec3 vNpcCol;");
-    // legs swing about the hip, arms about the shoulder against the leg on their side
+    // legs swing about the hip, arms about the shoulder against the leg on their side; a negative swing
+    // (cheering) raises both arms overhead (-2.7 rad: up and a little forward) and waves them, legs still
     sh.vertexShader = rep(sh.vertexShader, "begin_vertex",
-      "float npcSw = sin(uNpcTime * 6.2831853 * aGait.y + aGait.x) * aGait.z;\n" +
-      "float npcA = aLimb == 0.0 ? 0.0 : sign(aLimb) * (abs(aLimb) > 1.5 ? -0.8 : 1.0) * npcSw;\n" +
+      "float npcSw = sin(uNpcTime * 6.2831853 * aGait.y + aGait.x) * abs(aGait.z);\n" +
+      "float npcA = aLimb == 0.0 ? 0.0 : (aGait.z < 0.0 ? (abs(aLimb) > 1.5 ? -2.7 + sign(aLimb) * npcSw : 0.0) : sign(aLimb) * (abs(aLimb) > 1.5 ? -0.8 : 1.0) * npcSw);\n" +
       "float npcC = cos(npcA), npcS = sin(npcA), npcY = transformed.y - aPivot;\n" +
       "transformed.y = aPivot + npcY * npcC - transformed.z * npcS;\n" +
       "transformed.z = npcY * npcS + transformed.z * npcC;\n" +
@@ -227,7 +240,7 @@ function engineLoader(THREE, L){
     var E = HQV.engine; if(!E || !L) return;
     E.loadGlb(L, "golf", CHAR_FILES[((look && look.char) | 0) % CHAR_FILES.length]).then(function(g){
       var o = L.clone(g.scene), mixer = new THREE.AnimationMixer(o), acts = {};
-      ["idle", "walk"].forEach(function(n){ var cl = THREE.AnimationClip.findByName(g.animations, n); if(cl) acts[n] = mixer.clipAction(cl); });
+      Object.keys(CLIPS).forEach(function(n){ var cl = THREE.AnimationClip.findByName(g.animations, CLIPS[n]); if(cl) acts[n] = mixer.clipAction(cl); });
       cb({o: o, mixer: mixer, acts: acts});
     }).catch(function(){});
   };
@@ -266,6 +279,7 @@ function create(THREE, parent, sim, opts){
   function adopt(ch){
     ch.mats = [];
     ch.o.scale.setScalar(BODY_H/CH_H);
+    ch.o.rotation.order = "YXZ";   // yaw, then the tip onto its back ("lie" without its clip)
     ch.o.traverse(function(n){
       if(!n.isMesh) return;
       n.castShadow = true; n.frustumCulled = false;
@@ -311,7 +325,9 @@ function create(THREE, parent, sim, opts){
   }
   function setAnim(ch, n, speed){
     var a = ch.acts && (ch.acts[n] || ch.acts.idle); if(!a) return;
-    if(ch.cur !== n){ a.reset().fadeIn(0.25).play(); if(ch.cur && ch.acts[ch.cur] && ch.acts[ch.cur] !== a) ch.acts[ch.cur].fadeOut(0.25); ch.cur = n; }
+    if(ch.cur !== n){
+      if(n === "lie" && ch.acts.lie){ a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }   // fall, then stay down
+      a.reset().fadeIn(0.25).play(); if(ch.cur && ch.acts[ch.cur] && ch.acts[ch.cur] !== a) ch.acts[ch.cur].fadeOut(0.25); ch.cur = n; }
     a.timeScale = speed == null ? 1 : speed;
   }
 
@@ -337,8 +353,11 @@ function create(THREE, parent, sim, opts){
       }
       keep[r.id] = 1;
       slot.yaw += wrapPi((r.yaw || 0) - slot.yaw)*ease(TURN_K, dt);
-      slot.ch.o.position.set(r.ax, r.y, r.az); slot.ch.o.rotation.y = slot.yaw;
-      if(r.anim === "walk") setAnim(slot.ch, "walk", Math.max(0.5, (r.speed || WALK_CLIP)/WALK_CLIP)); else setAnim(slot.ch, "idle", 1);
+      var tip = r.anim === "lie" && !(slot.ch.acts && slot.ch.acts.lie);   // no fall clip: tip the idle pose over
+      slot.ch.o.position.set(r.ax, r.y + (tip ? LIE_UP : 0), r.az); slot.ch.o.rotation.y = slot.yaw; slot.ch.o.rotation.x = tip ? -Math.PI/2 : 0;
+      if(r.anim === "walk") setAnim(slot.ch, "walk", Math.max(0.5, (r.speed || WALK_CLIP)/WALK_CLIP));
+      else if((r.anim === "lie" || r.anim === "cheer") && slot.ch.acts && slot.ch.acts[r.anim]) setAnim(slot.ch, r.anim, 1);
+      else setAnim(slot.ch, "idle", 1);
       if(slot.ch.mixer) slot.ch.mixer.update(dt);
     });
     Object.keys(slots).forEach(function(id){ if(!keep[id]){ give(slots[id]); delete slots[id]; } });
@@ -371,5 +390,5 @@ function create(THREE, parent, sim, opts){
 HQV.npcDraw = {create: create, split: split, avoid: avoid, packFar: packFar, farBuffers: farBuffers, colours: colours,
                bodyGeometry: bodyGeometry, bodyMaterial: bodyMaterial, pickTalk: pickTalk, lin: lin, spring: spring, ease: ease,
                NEAR: NEAR, NEAR_OUT: NEAR_OUT, FAR: FAR, MAX_NEAR: MAX_NEAR, MAX_FAR: MAX_FAR, AV: AV,
-               TALK_REACH: TALK_REACH, CHAR_FILES: CHAR_FILES};
+               TALK_REACH: TALK_REACH, CHAR_FILES: CHAR_FILES, CLIPS: CLIPS, LIE_UP: LIE_UP};
 })();

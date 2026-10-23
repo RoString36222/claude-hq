@@ -1096,3 +1096,17 @@ html.hq-calm .hq3d-drive-read{display:block}
 .hqpets-prompt{position:absolute;z-index:6;left:50%;bottom:118px;transform:translateX(-50%);padding:6px 14px;border-radius:999px;font-weight:800;font-size:13px;
   background:var(--panel);color:var(--ink);border:1px solid var(--line);box-shadow:var(--shadow);pointer-events:none;white-space:nowrap}
 .hqpets-prompt[hidden],.hqpets-prompt:empty{display:none}
+/* ==== city news ticker (games/citynews.js, city-sim plan 2.6): top centre of the City HUD ==== */
+.citynews{position:absolute;z-index:4;left:50%;top:12px;transform:translateX(-50%);max-width:min(560px,calc(100% - 480px));min-width:0;
+  padding:7px 14px;border-radius:999px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;pointer-events:none;
+  font-weight:700;font-size:13px;line-height:1.3;color:var(--ink);background:color-mix(in srgb,var(--panel) 90%,transparent);
+  border:1px solid var(--line);box-shadow:var(--shadow)}
+.citynews[hidden]{display:none}
+.citynews[data-kind="fire"],.citynews[data-kind="crime"],.citynews[data-kind="medical"],.citynews[data-kind="crash"]{border-color:color-mix(in srgb,var(--need) 60%,var(--line))}
+.citynews-line{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
+.citynews-roll{animation-name:citynews-in;animation-duration:.45s;animation-timing-function:ease-out}
+@keyframes citynews-in{from{transform:translateX(40px);opacity:0}to{transform:none;opacity:1}}
+.citynews-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+@media (max-width:899.98px){ .citynews{top:56px;max-width:calc(100% - 32px)} }
+html.hq-calm .citynews-roll{animation:none}
+@media (prefers-reduced-motion:reduce){ .citynews-roll{animation:none} }

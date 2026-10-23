@@ -59,7 +59,9 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           # the basement garage (3.4): the car lift, the garage manager, its effects, B1 itself
                           "hqcarlift", "hqgaragemgr", "hqbasementfx", "hqbasement",
                           # the HQ revamp: HQ Studio's style document and the tower it styles (before the Base that builds it)
-                          "hqstyle", "hqtower", "hqroof", "hqdecor", "hqbase", "hqskate", "world", "worldgeom",
+                          "hqstyle", "hqtower", "hqroof", "hqdecor", "hqbase", "hqskate",
+                          # Living City: the curved roads, before world.js packs a doc
+                          "roadsmooth", "world", "worldgeom",
                           "worldbuild", "camrig", "hqhud", "hqcityparts", "hqcity", "hqmerge",
                           # Cities (3.0): the civic kit, residents, traffic, the sea, boats, travel
                           "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqheli",
@@ -73,7 +75,9 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           # rail (3.x): the lines between cities, their trains
                           "hqrail",
                           # the vehicle garage (3.4); City 3.2: the weather, the landmarks and the amusement park
-                          "hqcarpark", "hqweather", "hqspectacle", "hqcity3d"])
+                          "hqcarpark", "hqweather", "hqspectacle",
+                          # Living City: the event director, its scene effects and sounds, the news ticker
+                          "citysim", "citysimfx", "citynews", "hqcity3d"])
 
     def test_multi_hq_range_covers_server(self):
         m = re.search(r"\bhq:\[(\d+),(\d+)\]", read(MULTI))

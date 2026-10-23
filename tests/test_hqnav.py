@@ -24,7 +24,7 @@ FRIEND = "11111111-2222-4333-8444-555555555555"
 HARNESS = r"""
 var fs = require("fs"), zlib = require("zlib"), root = %(root)s, FIX = %(fix)s, ME = %(me)s, FRIEND = %(friend)s;
 global.window = {HQV: {}};
-for (var f of ["world", "hqnav"]) new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
+for (var f of %(scripts)s) new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
 var WD = window.HQV.world, N = window.HQV.hqnav, out = {};
 function gz(p){ return JSON.parse(zlib.gunzipSync(fs.readFileSync(FIX + "/" + p)).toString("utf8")); }
 function now(){ var t = process.hrtime(); return t[0]*1e3 + t[1]/1e6; }
@@ -39,6 +39,7 @@ function summary(R, from, to){
 
 /* ---------- the real worlds: spawn -> dock / civic site ---------- */
 var worlds = {commons: WD.pack(gz("claude-hq@2.json.gz")), island: WD.pack(gz("island@2.json.gz")), v1: WD.pack(gz("claude-hq@1.json.gz"))};
+out.smoothed = !!(worlds.commons.smoothed && worlds.island.smoothed && worlds.v1.smoothed);
 out.real = {};
 [["commons", 5], ["island", 5], ["island", 1], ["v1", 5]].forEach(function(c){
   var W = worlds[c[0]], tier = c[1], G = N.graph(W, tier), sp = site(W, "spawn:0"), from = {x: sp.x/100, z: sp.z/100};
@@ -191,9 +192,13 @@ process.stdout.write(JSON.stringify(out));
 
 @unittest.skipUnless(NODE, "node not installed")
 class HqNavTest(unittest.TestCase):
+    SCRIPTS = ["world", "hqnav"]
+    HOLD_EXACT = True
+
     @classmethod
     def setUpClass(cls):
-        src = HARNESS % {"root": json.dumps(ROOT), "fix": json.dumps(FIX), "me": json.dumps(ME), "friend": json.dumps(FRIEND)}
+        src = HARNESS % {"root": json.dumps(ROOT), "fix": json.dumps(FIX), "me": json.dumps(ME), "friend": json.dumps(FRIEND),
+                         "scripts": json.dumps(cls.SCRIPTS)}
         res = subprocess.run([NODE, "-e", src], capture_output=True, text=True, timeout=120)
         if res.returncode != 0:
             raise AssertionError(res.stderr[-3000:])
@@ -281,7 +286,11 @@ class HqNavTest(unittest.TestCase):
         self.assertEqual(p["nextKind"], "arrive")
         s = self.out["slip"]
         self.assertGreaterEqual(s["back"], 40)
-        self.assertAlmostEqual(s["a2"], s["a1"] - 15, places=6, msg="held 15 m back")
+        if self.HOLD_EXACT:
+            self.assertAlmostEqual(s["a2"], s["a1"] - 15, places=6, msg="held 15 m back")
+        else:   # on a curve the point 40 m back can sit nearer a later stretch: held at most 15 m back
+            self.assertGreaterEqual(s["a2"], s["a1"] - 15 - 1e-6)
+            self.assertLess(s["a2"], s["a1"] - 5)
 
     def test_reroute(self):
         r = self.out["reroute"]
@@ -338,6 +347,16 @@ class HqNavTest(unittest.TestCase):
         for bad in ("document.", "innerHTML", "fetch(", "XMLHttpRequest", "THREE.", "localStorage"):
             self.assertFalse(bad in src, bad)
         self.assertIsNone(re.search(r"Math\.min\(\s*1\s*,[^)]*dt", src))
+
+
+class HqNavCurvedTest(HqNavTest):
+    """The same checks on curved roads: games/roadsmooth.js loaded first, so world.js pack() smooths every world
+    (the synthetic graphs are not packed and stay straight)."""
+    SCRIPTS = ["roadsmooth", "world", "hqnav"]
+    HOLD_EXACT = False
+
+    def test_curved(self):
+        self.assertTrue(self.out["smoothed"])
 
 
 if __name__ == "__main__":

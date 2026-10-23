@@ -8,7 +8,7 @@
  * (palette, roof, which side the wing goes, the company on the sign) comes from the site id, so
  * every client builds the same building.
  *
- *   build(c, site, opts) -> {g, doors, hits, glows, setNight(n), animate(t, dt, k), top, boxes, lod, tint, decks, kind, tier}
+ *   build(c, site, opts) -> {g, doors, hits, glows, setNight(n), animate(t, dt, k, units, ms), top, boxes, lod, tint, decks, kind, tier}
  *     c: the hq3d ctx (THREE, mat, emis, box, cyl, sph, canvasTex, glow, label, rng, hashStr, ...).
  *     site: {id, kind, tier, x, y, z (cm), poly: [[x, z], ...] (cm, CCW) | w, d (cm, world axes),
  *            front: [fx, fz] (Q16 unit vector the door faces), view?: "<tab>", name?}.
@@ -24,6 +24,16 @@
  *       the City to walk on.
  *   Static parts are merged per material (HQV.hqMerge.mergeStatic, when it is loaded): a building
  *   costs under 40 draw calls, lit and at night.
+ *   animate(t, dt, k, units, ms): t the scene clock (s), k the motion scale (Calm: 0), units the City's
+ *     runs for this site (games/citysim.js D.unitsAt(ms) whose unit.station or ev.site is this site, plus
+ *     {ev: D.at(ms).match} for the stadium and {ev: D.at(ms).school} for a school), ms their UTC clock.
+ *     The fire station's bay door rolls up and its engine drives out (and back), the hospital's ambulance
+ *     bay empties, the police cars leave and the lamps blink faster; the stadium lights up for a match and
+ *     its scoreboard shows it (matchAt). Returns null, or the sounds to start: [{sfx, x, y, z}] ("bell" at a
+ *     school day's start and end, "whistle" at kick-off, half and full time, "roar" at a goal). No units:
+ *     everything at rest. The fleets and the doors are one InstancedMesh each (a draw call per fleet).
+ *   matchAt(ev, ms) -> {home, away, score, goals, minute, phase, lines}: a match at ms (pure).
+ *   runPose(entry, ms, k) -> null (at rest) | {show, s, door}: where a run's vehicle is (pure).
  *   fit(poly) -> {cx, cz, w, d}: the largest centred axis-aligned rectangle found inside poly.
  *   pierOf(site) -> [{poly: [[x, z] x 4], y, head: [x, z], dir: [dx, dz], w}] (world, m): the pier a dock
  *     or a port lays out over the water (empty for any other kind): its deck (y: its top), the middle of
@@ -475,6 +485,51 @@ KP.vehicle = function(type, x, z, rot){
   }
   return p;
 };
+// A fleet: vehicles of one type parked at slots [[x, z, rot], ...] that leave on runs (the fire
+// station's engines, the hospital's ambulances, the police cars). One vehicle is built with
+// vehicle(), its parts baked into one geometry coloured per vertex (a lamp takes its lit colour),
+// and every slot is an instance of it: the whole fleet is one draw call, however many leave.
+// rest[i]: is slot i's vehicle there when nothing is on (a fire engine behind a shut door is not).
+// out: the way (local, unit) a vehicle drives out of its slot. -> {mesh, slots, rest, out, set(i, show, s)}
+KP.fleet = function(type, slots, rest, out){
+  var THREE = this.THREE, p = this.vehicle(type, 0, 0, 0), pos = [], nor = [], col = [];
+  this.g.remove(p); p.position.set(0, 0, 0); p.updateMatrixWorld(true);
+  p.traverse(function(o){
+    if(!o.isMesh) return;
+    var g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone(), m = o.material;
+    g.applyMatrix4(o.matrixWorld);
+    var cc = m.emissive && m.emissive.getHex() ? m.emissive : m.color, P = g.attributes.position, N = g.attributes.normal;
+    for(var i = 0; i < P.count; i++){
+      pos.push(P.getX(i), P.getY(i), P.getZ(i)); nor.push(N.getX(i), N.getY(i), N.getZ(i)); col.push(cc.r, cc.g, cc.b);
+    }
+  });
+  var geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  var mat = this.mats.fleet || (this.mats.fleet = new THREE.MeshStandardMaterial({vertexColors: true, roughness: 0.5, metalness: 0.2}));
+  var mesh = new THREE.InstancedMesh(geo, mat, slots.length);
+  mesh.name = "civic:fleet:" + type; mesh.castShadow = true; mesh.receiveShadow = true; mesh.userData.anim = true;
+  this.g.add(mesh);
+  var M = new THREE.Matrix4(), Qt = new THREE.Quaternion(), V = new THREE.Vector3(), S = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
+  var now = slots.map(function(){ return null; });
+  var F = {mesh: mesh, slots: slots, rest: rest || slots.map(function(){ return true; }), out: out || [0, 1],
+    // slot i: shown or not, s m driven out along out
+    set: function(i, show, s){
+      var key = show ? (+s || 0).toFixed(3) : "-";
+      if(now[i] === key) return false;
+      now[i] = key; var q = slots[i];
+      V.set(q[0] + F.out[0]*(s || 0), PLINTH, q[1] + F.out[1]*(s || 0)); Qt.setFromAxisAngle(UP, q[2] || 0); S.setScalar(show ? 1 : 0);
+      mesh.setMatrixAt(i, M.compose(V, Qt, S)); mesh.instanceMatrix.needsUpdate = true;
+      return true;
+    },
+    // after a round of set(): drawn only while one is shown, its bounds refitted
+    done: function(){ mesh.visible = now.some(function(k){ return k !== "-"; }); if(mesh.visible) mesh.computeBoundingSphere(); }};
+  slots.forEach(function(q, i){ F.set(i, F.rest[i], 0); });
+  F.done();
+  (this.fleets = this.fleets || []).push(F);
+  return F;
+};
 // shipping containers in stacks over the w x d yard at (cx, cz)
 KP.containers = function(cx, cz, w, d, high){
   var cols = [0xb84a3a, 0x3f6fae, 0x3f9a6a, 0xd8a03a], mats = cols.map(function(c){ return this.m(c, {roughness: 0.7}); }, this);
@@ -600,14 +655,19 @@ BUILD.hospital = function(k){
     var hm = k.m(0xf4f4f4, {roughness: 0.7});
     k.box(0.4, 0.05, 3, hm, w/4 - 1, M.top + 0.72, zc); k.box(0.4, 0.05, 3, hm, w/4 + 1, M.top + 0.72, zc); k.box(2, 0.05, 0.4, hm, w/4, M.top + 0.72, zc);
     k.cyl(4.25, 4.25, 0.06, k.n(0x103020, 0x46e07a, 0.2, 1.6), w/4, M.top + 0.72, zc, 24);
-    k.top = Math.max(k.top, M.top + 1);
+    // its beacon: a red lamp on a short mast at the pad's edge, flashing at night (animate)
+    k.cyl(0.06, 0.08, 1.4, k.m(0x2b3440, {metalness: 0.6}), w/4 + 4.6, M.top + 0.7, zc, 8);
+    k.beacon = k.n(0x400000, 0xff2b2b, 0.3, 2.8); k.sph(0.25, k.beacon, w/4 + 4.6, M.top + 1.5, zc);
+    k.top = Math.max(k.top, M.top + 1.75);
   }
   // the ambulance bay: a canopy on posts at the other front corner, ambulances under it
   var bx = -side*(w/2 - 5), bz = zc + d/2 + 4.5, steel = k.m(0xb7c0c9, {metalness: 0.6, roughness: 0.4});
   k.box(10, 0.4, 8, k.m(0xeceff2, {roughness: 0.6}), bx, PLINTH + 4.6, bz);
   [[-4.6, -3.6], [4.6, -3.6], [-4.6, 3.6], [4.6, 3.6]].forEach(function(q){ k.cyl(0.15, 0.15, 4.4, steel, bx + q[0], PLINTH + 2.2, bz + q[1], 8); });
   k.sign("Emergency", 6, 0.8, bx, PLINTH + 5.3, bz + 4.05, 0, "#ffffff", "#c42a2a");
-  k.vehicle("ambulance", bx - 2.2, bz + 0.4, PI); if(T >= 3) k.vehicle("ambulance", bx + 2.2, bz + 0.4, PI);
+  k.glow(0xff4a4a, bx, PLINTH + 5.3, bz + 4.4, 5, 0.45);                 // the sign lit up at night
+  var amb = [[bx - 2.2, bz + 0.4, PI]]; if(T >= 3) amb.push([bx + 2.2, bz + 0.4, PI]);
+  k.ambulances = k.fleet("ambulance", amb, null, [0, 1]);
   k.door(bx, zc + d/2, {w: 3, kind: "emergency"});
   k.sign(k.title, Math.min(w*0.5, 12), 1.2, 0, M.top - 0.9, zc + d/2 + 0.06, 0, "#c42a2a", "#f4f6f8");
   k.door(side*w/6, zc + d/2, {w: 3, h: 3.2, main: true});
@@ -618,16 +678,30 @@ BUILD.fire = function(k){
   var T = k.tier, n = 2 + (T >= 3) + (T >= 5), bay = 4.6, w = Math.min(k.W*0.9, Math.max(n*bay + 7, 18)), d = Math.min(k.D*0.75, 18);
   var zc = k.back(d, 9), M = k.mass("brick", 0, zc, w, d, 2, {fh: 4});
   var dark = k.m(0x1a1f25, {roughness: 0.8}), frame = k.m(0xb72a2a, {roughness: 0.5}), roll = k.m(0xc9d1d9, {roughness: 0.5, metalness: 0.3});
-  var x0 = -w/2 + 1.5 + bay/2, open = Math.floor(k.R()*n);
+  var x0 = -w/2 + 1.5 + bay/2, open = Math.floor(k.R()*n), slots = [], rest = [];
   for(var i = 0; i < n; i++){
     var x = x0 + i*bay;
     k.box(bay - 0.6, 4, 0.1, dark, x, PLINTH + 2, zc + d/2 + 0.02);                                // the bay
     k.box(bay - 0.2, 0.4, 0.3, frame, x, PLINTH + 4.2, zc + d/2 + 0.1);                             // its red lintel
-    if(i !== open) k.box(bay - 0.7, 3.9, 0.14, roll, x, PLINTH + 1.95, zc + d/2 + 0.08);           // a closed door
     k.box(0.12, 0.02, 9, k.m(0xffd34a, {roughness: 0.6}), x - bay/2 + 0.3, PLINTH + 0.01, zc + d/2 + 4.5);   // the apron's lines
+    slots.push([x, zc + d/2 + 1.2, 0]); rest.push(i === open);
   }
   k.box(n*bay + 1, 0.04, 9, k.m(0x9ea5ac, {roughness: 0.9}), x0 + (n - 1)*bay/2, PLINTH, zc + d/2 + 4.5);
-  k.vehicle("fire", x0 + open*bay, zc + d/2 + 1.2, 0);
+  // an engine per bay (only the open bay's shows at rest: the rest are behind their doors), and the
+  // roll doors, one instance per bay: open rolls one up to its drum under the lintel
+  k.engines = k.fleet("fire", slots, rest, [0, 1]);
+  var DH = 3.9, dm = new k.THREE.InstancedMesh(new k.THREE.BoxGeometry(bay - 0.7, DH, 0.14), roll, n);
+  dm.name = "civic:bays"; dm.castShadow = true; dm.receiveShadow = true; dm.userData.anim = true; k.g.add(dm);
+  var dM = new k.THREE.Matrix4(), dz = zc + d/2 + 0.08, shut = [];
+  k.bays = {n: n, open: open, set: function(i, o){
+    o = Math.max(0, Math.min(1, +o || 0)); var key = o.toFixed(3);
+    if(shut[i] === key) return false; shut[i] = key;
+    var h = 1 - 0.92*o;                                     // a band stays: the rolled drum
+    dM.makeScale(1, h, 1).setPosition(x0 + i*bay, PLINTH + DH - DH*h/2, dz); dm.setMatrixAt(i, dM); dm.instanceMatrix.needsUpdate = true;
+    return true;
+  }, done: function(){ dm.computeBoundingSphere(); }};
+  for(i = 0; i < n; i++) k.bays.set(i, i === open ? 1 : 0);
+  k.bays.done();
   // the hose tower
   var tx = w/2 - 2.2, th = M.top + 6;
   k.box(3.4, th, 3.4, k.m(0x9a5a44, {roughness: 0.8}), tx, th/2, zc - d/2 + 2.2); k.note(tx, zc - d/2 + 2.2, 3.4, 3.4, 0, th);
@@ -649,8 +723,9 @@ BUILD.police = function(k){
   k.glow(0x3f7bff, -2.2, PLINTH + 3, zc + d/2 + 1.6, 2, 0.6); k.glow(0x3f7bff, 2.2, PLINTH + 3, zc + d/2 + 1.6, 2, 0.6);
   k.blink = [A, B];
   k.box(1.6, 0.3, 0.6, A, -w/4, M.top + 0.15, zc); k.box(1.6, 0.3, 0.6, B, w/4, M.top + 0.15, zc);
-  var cars = 1 + (T >= 2) + (T >= 4);
-  for(var i = 0; i < cars; i++) k.vehicle("police", -w/2 + 2 + i*3, Math.min(k.D/2 - 3, zc + d/2 + 4.5), 0);
+  var cars = 1 + (T >= 2) + (T >= 4), lot = [];
+  for(var i = 0; i < cars; i++) lot.push([-w/2 + 2 + i*3, Math.min(k.D/2 - 3, zc + d/2 + 4.5), 0]);
+  k.cars = k.fleet("police", lot, null, [0, 1]);
   k.cyl(0.07, 0.09, 8, k.m(0xc4ccd4, {metalness: 0.8}), w/2 - 1.5, PLINTH + 4, zc + d/2 + 2, 8);
   k.box(0.05, 1, 1.6, k.m(0x2f6fb8, {roughness: 0.8}), w/2 - 1.5, PLINTH + 7.3, zc + d/2 + 1.1);
   k.door(0, zc + d/2, {w: 2.4, main: true});
@@ -1082,13 +1157,33 @@ BUILD.stadium = function(k){
   // floodlights
   if(T >= 2){
     var mast = k.m(0x8a949e, {metalness: 0.6, roughness: 0.4}), head = k.n(0x3a3a3a, 0xfff6e0, 0, 2.6), mh = hgt + 12;
+    k.flood = {head: head, glows: []};
     [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(function(s){
       var x = s[0]*rx*0.78, z = s[1]*rz*0.78;
       k.cyl(0.35, 0.5, mh, mast, x, PLINTH + mh/2, z, 8); k.note(x, z, 1.1, 1.1, 0, mh, true); var hd = k.box(4, 2.4, 0.4, head, x, PLINTH + mh, z); hd.rotation.y = Math.atan2(-x, -z);
-      k.glow(0xfff6e0, x, PLINTH + mh, z, 7, 0.55);
+      k.flood.glows.push(k.glow(0xfff6e0, x, PLINTH + mh, z, 7, 0.55));
     });
     k.top = Math.max(k.top, mh + 1.2);
   }
+  // the scoreboard over the far stand, facing the pitch: its frame always, its screen (canvas text,
+  // never markup) only while a match is on (animate)
+  var sbw = Math.min(16, rx*0.5), sbh = sbw*0.375, sby = PLINTH + hgt + (T >= 4 ? 7 : 2) + sbh/2, sbz = -rz*0.86;
+  var sbm = k.m(0x1d2329, {roughness: 0.6, metalness: 0.3});
+  k.box(sbw + 0.6, sbh + 0.6, 0.5, sbm, 0, sby, sbz - 0.3);
+  [-1, 1].forEach(function(s){ k.box(0.4, sby - sbh/2, 0.4, sbm, s*sbw*0.35, (sby - sbh/2)/2 + PLINTH/2, sbz - 0.4); });
+  var SW = 512, SH = 192, ST = k.c.canvasTex(SW, SH, null);
+  var scr = new k.THREE.Mesh(new k.THREE.PlaneGeometry(sbw, sbh), new k.THREE.MeshBasicMaterial({map: ST.t, toneMapped: false}));
+  scr.position.set(0, sby, sbz + 0.02); scr.name = "civic:scoreboard"; scr.visible = false; scr.userData.anim = true; k.g.add(scr);
+  k.top = Math.max(k.top, sby - PLINTH + sbh/2 + 0.3);
+  k.score = {mesh: scr, sig: null, draw: function(lines){
+    var g = ST.g, sig = JSON.stringify(lines); if(!g || sig === k.score.sig) return; k.score.sig = sig;
+    g.fillStyle = "#0b1622"; g.fillRect(0, 0, SW, SH);
+    g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillStyle = "#ffb347"; g.font = "700 24px system-ui, sans-serif"; g.fillText(k.c.short(String(lines[0] || ""), 42), SW/2, 34);
+    g.fillStyle = "#e9eff3"; g.font = "800 72px ui-monospace, monospace"; g.fillText(k.c.short(String(lines[1] || ""), 12), SW/2, 104);
+    g.fillStyle = "#6fd38a"; g.font = "700 30px system-ui, sans-serif"; g.fillText(k.c.short(String(lines[2] || ""), 30), SW/2, 164);
+    if(ST.t) ST.t.needsUpdate = true;
+  }};
   k.sign(k.title, 14, 2, 0, PLINTH + hgt - 3.5, rz + 0.8, 0, "#ffffff", "#2f7d4a");
   k.door(0, rz, {w: 5, h: 4, main: true});
   k.door(0, -rz, {w: 5, h: 4, rot: PI, kind: "entrance"});
@@ -1268,6 +1363,80 @@ BUILD.farm = function(k){
   k.door(hx, hz + 3.5, {w: 1.2, h: 2.3, kind: "entrance"});
 };
 
+/* ---------- the city's runs and events (games/citysim.js D.unitsAt) ---------- */
+// units: D.unitsAt(ms) for this site, [{ev, unit: {kind, station, dispatch, arrive, leave, back}, phase}]
+// (an entry may carry only ev: the match or the school day). Pure: everything follows from (units, ms).
+var DOOR_MS = 5000;         // a bay door rolls up (or down) in this long
+var PULL_MS = 7000;         // a vehicle drives out of its slot (once its door is up), or back in, in this long
+var PULL_M = 14;            // and this far
+var TEAMS = ["Harbour Rovers", "Elm Park Athletic", "Lighthouse Town", "Northside Wanderers", "Old Mill United",
+  "Riverside Rangers", "Copper Hill FC", "Saltmarsh City", "Kestrel Vale", "Foxglove Albion"];
+// FNV-1a, then a mix (ids that differ only in their last character spread over every bit)
+function h32(s){
+  var h = 2166136261 >>> 0; s = String(s);
+  for(var i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16;
+  return h >>> 0;
+}
+function ramp(x){ return x <= 0 ? 0 : x >= 1 ? 1 : x; }
+function evId(e){ return e && e.ev && e.ev.id != null ? String(e.ev.id) : ""; }
+// The runs of unit kind out of station id (a unit with no station counts: the City filtered them),
+// done ones dropped, in a fixed order: dispatch time, then event id.
+function runsOf(units, kind, id){
+  var out = [];
+  (Array.isArray(units) ? units : []).forEach(function(e){
+    var u = e && e.unit; if(!u || u.kind !== kind || e.phase === "done") return;
+    if(id != null && u.station != null && String(u.station) !== id) return;
+    out.push(e);
+  });
+  return out.sort(function(a, b){ var d = (+a.unit.dispatch || 0) - (+b.unit.dispatch || 0); if(d) return d; var x = evId(a), y = evId(b); return x < y ? -1 : x > y ? 1 : 0; });
+}
+// The events of kind at site id (each once), from the entries' ev.
+function eventsOf(units, kind, id){
+  var out = [], seen = {};
+  (Array.isArray(units) ? units : []).forEach(function(e){
+    var ev = e && e.ev; if(!ev || ev.kind !== kind) return;
+    if(id != null && ev.site != null && String(ev.site) !== id) return;
+    var k = String(ev.id != null ? ev.id : ev.start); if(seen[k]) return; seen[k] = 1; out.push(ev);
+  });
+  return out;
+}
+// Where a run's vehicle is at ms: null (not left yet: at rest), else {show, s (m out along its way),
+// door (0 shut .. 1 up)}. Its door rolls up at dispatch, it drives out once the door is up and is
+// gone (traffic.js drives it); it drives back in over the last PULL_MS before back, and its door
+// comes down after. Without times it is simply out. k (motion, Calm: 0): no driving, no rolling.
+function runPose(e, ms, k){
+  var u = (e && e.unit) || {}, D = u.dispatch != null ? +u.dispatch : NaN, B = u.back != null ? +u.back : NaN;
+  if(ms == null || !isFinite(D)) return {show: false, s: 0, door: 1};
+  if(ms < D) return null;
+  var calm = !(k > 0), door, s;
+  if(isFinite(B) && ms >= B){ door = 1 - ramp((ms - B)/DOOR_MS); return {show: true, s: 0, door: calm ? (door > 0.5 ? 1 : 0) : door}; }
+  door = ramp((ms - D)/DOOR_MS); s = ramp((ms - D - DOOR_MS)/PULL_MS);
+  if(isFinite(B)) s = Math.min(s, ramp((B - ms)/PULL_MS));
+  if(calm) return {show: s <= 0, s: 0, door: door > 0.5 ? 1 : 0};
+  return {show: s < 1, s: s*s*(3 - 2*s)*PULL_M, door: door};
+}
+// The match on the stadium's scoreboard at ms (pure): ev.start is the kick-off and the two hours to
+// ev.end hold two 45-minute halves round a 15-minute break, then full time. The teams (ev.home /
+// ev.away, else made-up names picked by ev.id) and the goals (count, minutes, sides) come from ev.id.
+// -> {home, away, score: [h, a], goals, minute, phase "pre" | "1st" | "ht" | "2nd" | "ft", lines: [3 strings]}
+function matchAt(ev, ms){
+  ev = ev || {};
+  var id = String(ev.id != null ? ev.id : ev.start), h = h32("match:" + id), n = TEAMS.length;
+  var hi = h % n, ai = (hi + 1 + (h >>> 8) % (n - 1)) % n;
+  var home = ev.home ? String(ev.home) : TEAMS[hi], away = ev.away ? String(ev.away) : TEAMS[ai];
+  var t0 = +ev.start || 0, t1 = +ev.end || t0 + 7200000, real = (+ms - t0)/Math.max(60000, t1 - t0)*120;
+  var phase = !(real >= 0) ? "pre" : real < 45 ? "1st" : real < 60 ? "ht" : real < 105 ? "2nd" : "ft";
+  var minute = phase === "pre" ? 0 : phase === "1st" ? Math.floor(real) + 1 : phase === "ht" ? 45 : phase === "2nd" ? Math.floor(real - 15) + 1 : 90;
+  var ng = h32("goals:" + id) % 6, sc = [0, 0], goals = 0;
+  for(var i = 0; i < ng; i++){
+    var g = h32("goal:" + id + ":" + i), gm = 1 + g % 90, at = (gm <= 45 ? gm : gm + 15) - 0.5;
+    if(real >= at){ sc[(g >>> 12) & 1]++; goals++; }
+  }
+  var foot = phase === "pre" ? "KICK-OFF SOON" : phase === "ht" ? "HALF TIME" : phase === "ft" ? "FULL TIME" : minute + "'";
+  return {home: home, away: away, score: sc, goals: goals, minute: minute, phase: phase, lines: [home + " v " + away, sc[0] + " - " + sc[1], foot]};
+}
+
 /* ---------- piers ---------- */
 function pierOf(site){
   var mk = site && PIERS[site.kind]; if(!mk) return [];
@@ -1303,7 +1472,7 @@ function build(c, site, opts){
     k.night.forEach(function(r, i){ r.m.emissiveIntensity = 1000 + i; });
     M.mergeStatic(THREE, k.g, {keep: function(o){ return !!(o.userData && o.userData.door); }});
   }
-  var night = opts.night != null ? !!opts.night : true;
+  var night = opts.night != null ? !!opts.night : true, sid = site.id != null ? String(site.id) : null;
   function apply(){ k.night.forEach(function(r){ r.m.emissiveIntensity = night ? r.night : r.day; }); k.glows.forEach(function(gl){ gl.visible = night; }); }
   apply();
   return {g: k.g, doors: k.doors, hits: k.hits, glows: k.glows, boxes: k.boxes, lod: k.lod, tint: k.tint, decks: pierOf(site),
@@ -1312,12 +1481,59 @@ function build(c, site, opts){
     setBoard: function(lines){ if(k.board) k.board(Array.isArray(lines) ? lines : []); },
     x: k.F.x, y: k.F.y, z: k.F.z, rot: k.F.rot, w: k.W, d: k.D,
     setNight: function(n){ night = !!n; apply(); },
-    // the police lamps blink in turn; k (0..1) is the motion scale (Calm: 0)
-    animate: function(t, dt, kk){
+    // k (0..1) is the motion scale (Calm: 0: nothing blinks or drives, lamps hold steady). units:
+    // D.unitsAt(ms) for this site (none: everything at rest, as before the city ran); ms: the UTC
+    // clock they run on (default Date.now()). The police lamps blink in turn, faster while cars are
+    // out; the fleets leave and come back, the fire station's doors rolling; the helipad beacon
+    // flashes at night; a match lights the stadium and its scoreboard. -> null, or the sounds this
+    // frame starts for the City to play: [{sfx: "bell" | "whistle" | "roar", x, y, z (m)}]
+    animate: function(t, dt, kk, units, ms){
       kk = kk == null ? 1 : kk;
-      if(k.blink){ var on = kk > 0 ? ((t*1.6) % 1) < 0.5 : true; k.blink[0].emissiveIntensity = on ? 2.6 : 0.3; k.blink[1].emissiveIntensity = on ? 0.3 : 2.6; }
+      var busy = Array.isArray(units) && units.length > 0, fx = null;
+      if(busy && ms == null) ms = Date.now();
+      function sound(name){ (fx = fx || []).push({sfx: name, x: k.F.x, y: k.F.y + PLINTH, z: k.F.z}); }
+      if(k.blink){
+        var rate = busy && runsOf(units, "police", sid).length ? 4.2 : 1.6, on = kk > 0 ? ((t*rate) % 1) < 0.5 : true;
+        k.blink[0].emissiveIntensity = on ? 2.6 : 0.3; k.blink[1].emissiveIntensity = on ? 0.3 : 2.6;
+      }
+      if(k.beacon) k.beacon.emissiveIntensity = !night ? 0.3 : kk > 0 ? (((t*0.75) % 1) < 0.16 ? 2.8 : 0.25) : 2.8;
+      (k.fleets || []).forEach(function(F){
+        var kind = F === k.engines ? "fire" : F === k.ambulances ? "ambulance" : "police";
+        var runs = busy ? runsOf(units, kind, sid) : [], n = F.slots.length, start = F === k.engines ? k.bays.open : 0, ch = false, bch = false;
+        for(var j = 0; j < n; j++){
+          var i = (start + j) % n, P = runs[j] ? runPose(runs[j], ms, kk) : null;
+          ch = F.set(i, P ? P.show : F.rest[i], P ? P.s : 0) || ch;
+          if(F === k.engines) bch = k.bays.set(i, Math.max(i === k.bays.open ? 1 : 0, P ? P.door : 0)) || bch;
+        }
+        if(ch) F.done();
+        if(bch) k.bays.done();
+      });
+      if(k.score){
+        var M = null, ev = busy ? eventsOf(units, "match", sid)[0] : null;
+        if(ev){
+          M = matchAt(ev, ms); var id = String(ev.id != null ? ev.id : ev.start), was = k.match;
+          if(was && was.id === id){ if(M.goals > was.goals) sound("roar"); if(M.phase !== was.phase) sound("whistle"); }
+          k.match = {id: id, goals: M.goals, phase: M.phase};
+          k.score.draw(M.lines); k.score.mesh.visible = true;
+        } else if(k.match){ k.match = null; k.score.mesh.visible = false; }
+        // the floodlights: brighter for a match, and on through a day match; as before without one
+        if(k.flood && (M || k.flood.on)){
+          k.flood.on = !!M;
+          k.flood.head.emissiveIntensity = M ? (night ? 4 : 1.6) : night ? 2.6 : 0;
+          k.flood.glows.forEach(function(gl){ if(gl.userData.s0 == null) gl.userData.s0 = gl.scale.x; var s = gl.userData.s0*(M ? 1.5 : 1); gl.scale.set(s, s, 1); gl.visible = night; });
+        }
+      }
+      if(k.kind === "school"){
+        // the bell: as the clock passes a school day's start or end (seen this frame or the last)
+        var now = ms != null ? ms : Date.now(), days = busy ? eventsOf(units, "school", sid) : [], all = days.concat((k.days || []).filter(function(e){ return days.indexOf(e) < 0; }));
+        if(k.bellMs != null && now > k.bellMs && now - k.bellMs < 60000)
+          all.forEach(function(e){ [+e.start, +e.end].forEach(function(b){ if(k.bellMs < b && b <= now) sound("bell"); }); });
+        k.days = days; k.bellMs = now;
+      }
+      return fx;
     }};
 }
 
-HQV.hqCivic = {build: build, fit: fit, frame: frame, pierOf: pierOf, deckAt: deckAt, KINDS: KINDS, STYLES: STYLES, AIRPORT_NAVE: AIRPORT_NAVE};
+HQV.hqCivic = {build: build, fit: fit, frame: frame, pierOf: pierOf, deckAt: deckAt, matchAt: matchAt, runPose: runPose,
+  KINDS: KINDS, STYLES: STYLES, AIRPORT_NAVE: AIRPORT_NAVE, TEAMS: TEAMS};
 })();

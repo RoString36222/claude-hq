@@ -200,6 +200,67 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
     roofNote: AP.boxes.map(function(b){ return b.max.y - AP.y; }).reduce(function(a, b){ return Math.max(a, b); }, 0),
     draws: [HQV.hqMerge.drawCount(AP.g), HQV.hqMerge.drawCount(apDay.g)], nave: AP.nave, doors: AP.doors.map(function(d){ return [d.kind, d.x, d.z]; }),
     board: texts.slice(), center: [g0.x, g0.z], boxesOutside: AP.boxes.filter(function(b){ return !onSite(b.o.x, b.o.z); }).length};
+  /* ---------- the city's runs (citysim D.unitsAt): fleets, doors, lamps, the match, the bell ---------- */
+  var mm = new THREE.Matrix4();
+  function inst(name, B){ var m = null; B.g.traverse(function(o){ if(o.name === name) m = o; }); if(!m) return null;
+    var r = []; for(var i = 0; i < m.count; i++){ m.getMatrixAt(i, mm); var E = mm.elements;   // (decompose() calls a zero scale 1)
+      r.push({s: +Math.hypot(E[4], E[5], E[6]).toFixed(4), x: +E[12].toFixed(3), z: +E[14].toFixed(3)}); }
+    return {visible: m.visible, inst: r}; }
+  function run(kind, station, D, B, id){ return {ev: {id: id || "e1", kind: "fire"}, unit: {kind: kind, station: station, dispatch: D, arrive: D + 60000, leave: D + 120000, back: B}, phase: "responding"}; }
+  var T0 = 1790000000000, Bk = T0 + 600000, R = {};
+  var FS = C.build(c, {id: "fs1", kind: "fire", tier: 5, x: 0, z: 0, front: [0, Q]});
+  var fsOpen = null; (function(){ var d = inst("civic:bays", FS).inst; d.forEach(function(q, i){ if(q.s < 0.5) fsOpen = i; }); })();
+  R.fire = {rest: {eng: inst("civic:fleet:fire", FS), bays: inst("civic:bays", FS).inst, draws: HQV.hqMerge.drawCount(FS.g)}, open: fsOpen};
+  var one = [run("fire", "fs1", T0, Bk)], two = [run("fire", "fs1", T0, Bk), run("fire", "fs1", T0 + 1000, Bk + 1000, "e2"), run("fire", "other", T0, Bk, "e3")];
+  R.fire.ret0 = FS.animate(1, 0.016, 1, one, T0 - 1000);
+  [[one, T0 + 1000, 1], [one, T0 + 8500, 1], [one, T0 + 30000, 1], [two, T0 + 30000, 1], [two, T0 + 2500, 1], [one, Bk - 3000, 1], [one, Bk + 2500, 1], [one, T0 + 30000, 0], [two, T0 + 2500, 0]].forEach(function(q, n){
+    FS.animate(1, 0.016, q[2], q[0], q[1]); R.fire["s" + n] = {eng: inst("civic:fleet:fire", FS), bays: inst("civic:bays", FS).inst, draws: HQV.hqMerge.drawCount(FS.g)}; });
+  FS.animate(1, 0.016, 1, [], T0); R.fire.back = {eng: inst("civic:fleet:fire", FS), bays: inst("civic:bays", FS).inst};
+  FS.animate(1, 0.016, 1); R.fire.none = {eng: inst("civic:fleet:fire", FS), bays: inst("civic:bays", FS).inst};
+  // the hospital: its ambulance bay, the beacon, the emergency sign's glow
+  var HS = C.build(c, {id: "hs1", kind: "hospital", tier: 4, x: 0, z: 0, front: [0, Q]});
+  var beacon = null; HS.g.traverse(function(o){ if(o.material && o.material.emissive && o.material.emissive.getHex() === 0xff2b2b) beacon = o.material; });
+  R.hosp = {rest: inst("civic:fleet:ambulance", HS), glows: HS.glows.length, beacon: !!beacon};
+  HS.animate(0.05, 0.016, 1, [run("ambulance", "hs1", T0, Bk)], T0 + 60000); R.hosp.out1 = inst("civic:fleet:ambulance", HS);
+  HS.animate(0.05, 0.016, 1, [run("ambulance", "hs1", T0, Bk), run("ambulance", "hs1", T0, Bk, "e2")], T0 + 60000); R.hosp.out2 = inst("civic:fleet:ambulance", HS);
+  R.hosp.draws = HQV.hqMerge.drawCount(HS.g);
+  var bk = []; [0.05, 0.6].forEach(function(t){ HS.animate(t, 0.016, 1); bk.push(beacon.emissiveIntensity); });
+  [0.05, 0.6].forEach(function(t){ HS.animate(t, 0.016, 0); bk.push(beacon.emissiveIntensity); });
+  HS.setNight(false); HS.animate(0.05, 0.016, 1); bk.push(beacon.emissiveIntensity); R.hosp.beacon = bk;
+  // the police: cars leave, the lamps blink faster (t 0.2: on at 1.6 Hz, off at 4.2 Hz), Calm steady
+  var PS = C.build(c, {id: "ps1", kind: "police", tier: 5, x: 0, z: 0, front: [0, Q]});
+  var pl = []; PS.g.traverse(function(o){ if(o.material && o.material.emissive && o.material.emissive.getHex() === 0x3f7bff) pl.push(o.material); });
+  var pr = [run("police", "ps1", T0, Bk), run("police", "ps1", T0, Bk, "e2")];
+  R.police = {rest: inst("civic:fleet:police", PS)};
+  PS.animate(0.2, 0.016, 1); R.police.slow = pl[0].emissiveIntensity;
+  PS.animate(0.2, 0.016, 1, pr, T0 + 60000); R.police.fast = pl[0].emissiveIntensity; R.police.out = inst("civic:fleet:police", PS);
+  PS.animate(0.2, 0.016, 0, pr, T0 + 60000); var c1 = pl[0].emissiveIntensity; PS.animate(0.7, 0.016, 0, pr, T0 + 60000); R.police.calm = [c1, pl[0].emissiveIntensity];
+  PS.animate(0.2, 0.016, 1, [run("police", "elsewhere", T0, Bk)], T0 + 60000); R.police.other = inst("civic:fleet:police", PS);
+  // the stadium: a match night
+  var SS = C.build(c, {id: "st1", kind: "stadium", tier: 3, x: 0, z: 0, front: [0, Q]});
+  var scr = null, head = null; SS.g.traverse(function(o){ if(o.name === "civic:scoreboard") scr = o; if(o.material && o.material.emissive && o.material.emissive.getHex() === 0xfff6e0) head = o.material; });
+  var mev = {id: "m7", kind: "match", site: "st1", start: T0, end: T0 + 7200000}, mu = [{ev: mev}];
+  R.stadium = {rest: [scr.visible, head.emissiveIntensity], draws0: HQV.hqMerge.drawCount(SS.g)};
+  texts.length = 0;
+  var sx = [SS.animate(1, 0.016, 1, mu, T0 - 60000), SS.animate(1, 0.016, 1, mu, T0 + 10000)];
+  R.stadium.on = [scr.visible, head.emissiveIntensity, HQV.hqMerge.drawCount(SS.g)]; R.stadium.sx = sx;
+  var M0 = C.matchAt(mev, T0 + 60000), Mft = C.matchAt(mev, T0 + 7200000), roars = 0, wh = 0, last = null;
+  for(var tm = T0 + 60000; tm <= T0 + 7200000; tm += 30000){ var r5 = SS.animate(1, 0.016, 1, mu, tm) || []; r5.forEach(function(e){ if(e.sfx === "roar") roars++; if(e.sfx === "whistle") wh++; }); }
+  R.stadium.texts = texts.slice(); R.stadium.m0 = M0; R.stadium.mft = Mft; R.stadium.roars = roars; R.stadium.whistles = wh;
+  R.stadium.other = C.build(c, {id: "st2", kind: "stadium", tier: 3, x: 0, z: 0, front: [0, Q]}).animate(1, 0.016, 1, mu, T0 + 60000);
+  SS.animate(1, 0.016, 1, [], T0 + 9000000); R.stadium.after = [scr.visible, head.emissiveIntensity];
+  R.matches = []; for(var mi = 0; mi < 40; mi++){ var ev = {id: "x" + mi, start: 0, end: 7200000}, prev = -1, mono = true, a = C.matchAt(ev, 0);
+    for(var tt = 0; tt <= 7200000; tt += 60000){ var g = C.matchAt(ev, tt).goals; if(g < prev) mono = false; prev = g; }
+    R.matches.push({home: a.home, away: a.away, goals: prev, mono: mono, same: JSON.stringify(C.matchAt(ev, 3000000)) === JSON.stringify(C.matchAt(ev, 3000000))}); }
+  R.minutes = [-1, 0, 10, 44.9, 50, 61, 104.9, 106, 130].map(function(m){ var x = C.matchAt({id: "q", start: 0, end: 7200000}, m*60000); return [x.phase, x.minute, x.lines[2]]; });
+  // the school bell, at the day's start and its end
+  var SC = C.build(c, {id: "sc1", kind: "school", tier: 2, x: 0, z: 0, front: [0, Q]}), sd = {id: "d1", kind: "school", site: "sc1", start: T0, end: T0 + 25200000};
+  R.bell = [SC.animate(1, 0.016, 1, [], T0 - 500), SC.animate(1, 0.016, 1, [{ev: sd}], T0 + 500), SC.animate(1, 0.016, 1, [{ev: sd}], T0 + 1500),
+    SC.animate(1, 0.016, 1, [{ev: sd}], T0 + 25199000), SC.animate(1, 0.016, 1, [], T0 + 25201000), SC.animate(1, 0.016, 1, [], T0 + 25202000)];
+  // runPose: pure
+  R.pose = [C.runPose(run("fire", "a", T0, Bk), T0 - 1, 1), C.runPose(run("fire", "a", T0, Bk), T0 + 9000, 1), C.runPose(run("fire", "a", T0, Bk), T0 + 9000, 1),
+    C.runPose({unit: {kind: "fire"}}, T0, 1), C.runPose(run("fire", "a", T0, Bk), T0 + 9000, 0)];
+  out.runs = R;
   process.stdout.write(JSON.stringify(out));
 }).catch(function(e){ console.error(e && e.stack || e); process.exit(1); });
 """
@@ -334,6 +395,113 @@ class TestHqCivic(unittest.TestCase):
         self.assertEqual(p["mats"], 2)
         self.assertNotEqual(p["a1"], p["a2"])
         self.assertEqual(sorted(p["a1"]), sorted(p["a2"]))
+
+    def test_fire_station_engines_leave_and_doors_roll(self):
+        f = self.r["runs"]["fire"]
+        o, n = f["open"], len(f["rest"]["bays"])
+        self.assertEqual(n, 4)
+        self.assertIsNotNone(o)
+        # at rest: only the open bay's engine shows, its door rolled up, the others shut
+        self.assertEqual([q["s"] > 0.5 for q in f["rest"]["eng"]["inst"]], [i == o for i in range(n)])
+        self.assertEqual([q["s"] < 0.5 for q in f["rest"]["bays"]], [i == o for i in range(n)])
+        self.assertIsNone(f["ret0"])
+        e0 = f["rest"]["eng"]["inst"][o]
+        # just dispatched: still parked; mid-pull: further out along +z; then gone (traffic drives it)
+        self.assertAlmostEqual(f["s0"]["eng"]["inst"][o]["z"], e0["z"], places=3)
+        mid = f["s1"]["eng"]["inst"][o]
+        self.assertGreater(mid["s"], 0.5)
+        self.assertGreater(mid["z"], e0["z"] + 1)
+        self.assertAlmostEqual(mid["x"], e0["x"], places=3)
+        self.assertLess(f["s2"]["eng"]["inst"][o]["s"], 0.5)
+        self.assertFalse(f["s2"]["eng"]["visible"])               # none left: no draw call
+        # two runs (and one from another station, ignored): the next bay's door rolls up too, both bays empty
+        nx = (o + 1) % n
+        self.assertTrue(all(q["s"] < 0.5 for q in f["s3"]["eng"]["inst"]))
+        self.assertLess(f["s3"]["bays"][nx]["s"], 0.5)
+        self.assertGreater(f["s3"]["bays"][(o + 2) % n]["s"], 0.5)
+        # 1.5 s after its dispatch the second door is part way up
+        self.assertTrue(0.3 < f["s4"]["bays"][nx]["s"] < 0.95, f["s4"]["bays"][nx])
+        # coming back: driving in; back: parked again
+        back = f["s5"]["eng"]["inst"][o]
+        self.assertGreater(back["s"], 0.5)
+        self.assertGreater(back["z"], e0["z"])
+        self.assertAlmostEqual(f["s6"]["eng"]["inst"][o]["z"], e0["z"], places=3)
+        # Calm: no driving (gone while out), doors snap
+        self.assertLess(f["s7"]["eng"]["inst"][o]["s"], 0.5)
+        self.assertIn(f["s8"]["bays"][nx]["s"], (1.0, 0.08))
+        # nothing on (or no units at all): back to rest
+        for st in (f["back"], f["none"]):
+            self.assertEqual(st["eng"], f["rest"]["eng"])
+            self.assertEqual(st["bays"], f["rest"]["bays"])
+        # the fleet and the doors are one draw each: a run costs no extra draw calls
+        for i in range(9):
+            self.assertLessEqual(f["s%d" % i]["draws"], f["rest"]["draws"], i)
+
+    def test_hospital_bay_and_beacon(self):
+        h = self.r["runs"]["hosp"]
+        self.assertEqual([q["s"] for q in h["rest"]["inst"]], [1, 1])
+        self.assertEqual(sorted(q["s"] for q in h["out1"]["inst"]), [0, 1])
+        self.assertFalse(h["out2"]["visible"])
+        self.assertLess(h["draws"], 40)
+        self.assertTrue(h["beacon"])
+        b = h["beacon"]
+        self.assertNotEqual(b[0], b[1])                           # flashing at night
+        self.assertEqual(b[2], b[3])                              # Calm: steady
+        self.assertEqual(b[4], 0.3)                               # by day: dark
+
+    def test_police_cars_leave_and_lamps_blink_faster(self):
+        p = self.r["runs"]["police"]
+        self.assertEqual([q["s"] for q in p["rest"]["inst"]], [1, 1, 1])
+        self.assertEqual([q["s"] for q in p["out"]["inst"]], [0, 0, 1])
+        self.assertEqual([q["s"] for q in p["other"]["inst"]], [1, 1, 1])   # another station's run
+        self.assertEqual(p["slow"], 2.6)
+        self.assertEqual(p["fast"], 0.3)
+        self.assertEqual(p["calm"][0], p["calm"][1])
+
+    def test_stadium_match_night(self):
+        s = self.r["runs"]["stadium"]
+        self.assertEqual(s["rest"], [False, 2.6])
+        self.assertTrue(s["on"][0])
+        self.assertEqual(s["on"][1], 4)
+        self.assertLessEqual(s["on"][2], s["draws0"] + 1)          # the scoreboard: one draw
+        self.assertEqual(s["sx"][0], None)
+        self.assertEqual([e["sfx"] for e in s["sx"][1]], ["whistle"])   # kick-off
+        self.assertEqual(s["after"], [False, 2.6])
+        self.assertIsNone(s["other"])                             # another stadium's match
+        m0, mft = s["m0"], s["mft"]
+        self.assertEqual(m0["phase"], "1st")
+        self.assertEqual(mft["phase"], "ft")
+        self.assertEqual(s["roars"], mft["goals"])
+        self.assertEqual(s["whistles"], 3)                        # half time, second half, full time
+        self.assertIn(m0["home"] + " v " + m0["away"], s["texts"])
+        self.assertIn("FULL TIME", s["texts"])
+        self.assertIn("%d - %d" % tuple(mft["score"]), s["texts"])
+
+    def test_match_is_pure_and_plausible(self):
+        ms = self.r["runs"]["matches"]
+        for m in ms:
+            self.assertNotEqual(m["home"], m["away"])
+            self.assertTrue(m["mono"])
+            self.assertTrue(m["same"])
+            self.assertLessEqual(m["goals"], 5)
+        self.assertGreater(len({m["goals"] for m in ms}), 2)
+        self.assertGreater(len({m["home"] for m in ms}), 4)
+        self.assertEqual(self.r["runs"]["minutes"], [
+            ["pre", 0, "KICK-OFF SOON"], ["1st", 1, "1'"], ["1st", 11, "11'"], ["1st", 45, "45'"], ["ht", 45, "HALF TIME"],
+            ["2nd", 47, "47'"], ["2nd", 90, "90'"], ["ft", 90, "FULL TIME"], ["ft", 90, "FULL TIME"]])
+
+    def test_school_bell(self):
+        b = self.r["runs"]["bell"]
+        self.assertEqual([None if x is None else [e["sfx"] for e in x] for x in b],
+                         [None, ["bell"], None, None, ["bell"], None])
+
+    def test_run_pose(self):
+        p = self.r["runs"]["pose"]
+        self.assertIsNone(p[0])
+        self.assertEqual(p[1], p[2])
+        self.assertTrue(p[1]["show"] and 0 < p[1]["s"] < 14 and p[1]["door"] == 1)
+        self.assertEqual(p[3], {"show": False, "s": 0, "door": 1})
+        self.assertEqual(p[4], {"show": False, "s": 0, "door": 1})
 
     def test_unknown_kind_and_sign_text(self):
         self.assertEqual(self.r["unknown"], {"kind": "office", "doors": 1})

@@ -164,6 +164,16 @@ out.recentre = {};
   function gap(p){ return Math.hypot(p.pos.x - ref.pos.x, p.pos.z - ref.pos.z); }
   out.recentre[m] = {held: gap(p15), back: gap(p6)};
 });
+// [3.15] mouse steering (hq3d) sends hold every frame: the orbit's tilt stays where the mouse put it
+(function(){
+  var t = T(), s = C.create({mode: "chase"}), u = C.create({mode: "chase"});
+  run(s, t, 1); run(u, t, 1);
+  C.input(s, {orbit: [0, 80]}); C.input(u, {orbit: [0, 80]});
+  var set = s._.orbitPitch;
+  for(var k = 0; k < 300; k++){ C.input(s, {hold: true}); C.step(s, t, 1/60, FLAT); }
+  run(u, t, 5);
+  out.hold = {set: set, held: s._.orbitPitch, free: u._.orbitPitch};
+})();
 (function(){
   var t = T({yaw: 0}), s = C.create({mode: "chase"}), r = {};
   run(s, t, 1);
@@ -617,6 +627,12 @@ class CamRig(unittest.TestCase):
         for mode, r in self.o["recentre"].items():
             self.assertGreater(r["held"], 1.0, mode)
             self.assertLess(r["back"], 0.05, mode)
+
+    def test_hold_keeps_the_tilt(self):
+        h = self.o["hold"]
+        self.assertGreater(abs(h["set"]), 0.1)
+        self.assertAlmostEqual(h["held"], h["set"], places=6)      # held 5 s: never springs back
+        self.assertLess(abs(h["free"]), 0.05)                      # without hold it recentres as before
 
     def test_swing_lift_wheel_bounds(self):
         b = self.o["bounds"]

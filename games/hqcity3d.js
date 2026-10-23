@@ -3159,6 +3159,7 @@ HQV.hqWorlds.city3d = function(c, w){
   w.camModes = ["map", "far", "chase", "near", "fp", "classic", "photo", "cine"];
   w.startMode = "chase";           // the full 3D map view is heavy: M grows the minimap instead (w.bigMap)
   w.bigMap = function(){ if(!mm) return false; mm.expand(); return true; };
+  w.bigMapOpen = function(){ return !!(mm && mm.isBig()); };   // [3.15] hq3d gives a captured mouse back for it
   if(arriveAt) w.startMode = "chase";            // off a ferry, a train, a boat: on the ground, not over the map
   w.skateBase = 0; w.skatepark = null;
   w.spawn = {x: 0, y: 0, z: 10, yaw: 0, camYaw: 0.55}; w.spawnFrom = {lobby: w.spawn};

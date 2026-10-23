@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.14.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.15.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -409,6 +409,15 @@ and feature guide.
 
 ## Changelog
 
+- **3.15.0 — Mouse steering.** A new switch in the 3D City's camera settings (the gear): **Mouse steering**. With
+  it on, click the view and the mouse turns you and the chase camera together, as in a shooter, with no dragging:
+  you always face where the camera looks, moving the mouse up and down tilts the view (and it stays tilted), <kbd>W</kbd>
+  / <kbd>S</kbd> walk forward and step back, <kbd>A</kbd> / <kbd>D</kbd> step sideways, <kbd>Shift</kbd> runs. On a
+  ride the captured mouse does what a drag does (it swings the camera; in a plane up / down is the nose; on a trip it
+  looks round). Esc gives the cursor back, and so does any panel (dealer, tuning, showroom, call list, garage, Go
+  to, a stop's menu, the Town Hall), the big map, a field you type in, another camera, or switching it off. Doors,
+  desks and projects still answer a click while the cursor is free. Off by default; stored with the other camera
+  settings (`hq_cam`). No new network traffic.
 - **3.14.0 — Ride your pets.** A grown dragon (any of the seven), the grown sea serpent or a big dinosaur
   (Triceratops, Brachiosaurus, Stegosaurus, T-Rex, from the grown mark of 400 affection) that is out with you can
   be ridden in the 3D City: beside it, "E  Ride <name>". You sit in a saddle on its back (added when it has none),

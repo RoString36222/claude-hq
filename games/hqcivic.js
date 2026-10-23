@@ -282,14 +282,15 @@ KP.mesh = function(geo, m, x, y, z, p){
 };
 // the front edge of a d-deep thing set back from the site's front, kept inside the site
 KP.back = function(d, set){ return Math.max(-this.D/2 + d/2, this.D/2 - (set != null ? set : SETBACK) - d/2); };
-// note a mass for the camera boxes and the building's top
-KP.note = function(cx, cz, w, d, y0, y1, noLod){
+// note a mass for the camera boxes and the building's top. shape (what blocks you, HQ 3.13.1): "ell" the oval (or
+// round) thing inscribed in the box, "open" nothing (a lattice, legs or a shelter: note those parts on their own)
+KP.note = function(cx, cz, w, d, y0, y1, noLod, shape){
   var o = this.world(cx, cz);
   if(!noLod) this.lod.push({x: o.x, z: o.z, w: w, d: d, rot: this.F.rot, y0: this.F.y + y0, y1: this.F.y + y1});
   var a = this.world(cx - w/2, cz - d/2), b = this.world(cx + w/2, cz + d/2), e = this.world(cx - w/2, cz + d/2), f = this.world(cx + w/2, cz - d/2), Y = this.F.y;
   this.boxes.push({min: {x: Math.min(a.x, b.x, e.x, f.x), y: Y + y0, z: Math.min(a.z, b.z, e.z, f.z)},
                    max: {x: Math.max(a.x, b.x, e.x, f.x), y: Y + y1, z: Math.max(a.z, b.z, e.z, f.z)},
-                   o: {x: o.x, z: o.z, hw: w/2, hd: d/2, rot: this.F.rot, y0: y0}});   // the mass itself, turned (what blocks you)
+                   o: {x: o.x, z: o.z, hw: w/2, hd: d/2, rot: this.F.rot, y0: y0, ell: shape === "ell", open: shape === "open"}});   // the mass itself, turned (what blocks you)
   this.top = Math.max(this.top, y1);
 };
 
@@ -530,7 +531,8 @@ KP.crane = function(x, z, h, col){
   this.box(2.2, 2, 2.6, cab, x, PLINTH + h - 1.2, z + 6);
   this.box(3, 2.2, 4, this.m(0x59636e, {roughness: 0.8}), x, PLINTH + h + 2.3, z - 10);   // the counterweight
   this.box(0.3, 0.3, 0.3, this.n(0x400000, 0xff3030, 0.3, 2.5), x, PLINTH + h + 1.4, z + 22.8);
-  this.note(x, z + 6, s + 1, 36, 0, h + 3.4, true);              // a lattice: no solid box far off
+  this.note(x, z + 6, s + 1, 36, 0, h + 3.4, true, "open");      // a lattice: no solid box far off, and you walk under it
+  [[-s/2, -3], [s/2, -3], [-s/2, 3], [s/2, 3]].forEach(function(q){ this.note(x + q[0], z + q[1], 1, 1, 0, h, true); }, this);   // its legs block
 };
 
 /* ---------- the kinds ---------- */
@@ -823,7 +825,9 @@ function shelter(k, x, z, len, label){
   k.box(0.06, 1.5, 1, k.n(0x0d1a24, 0xf4fbff, 0.3, 1.4), x + len/2 - 0.12, PLINTH + 1.3, z - 0.1);   // the lit timetable
   k.cyl(0.05, 0.05, 2.8, steel, x + len/2 + 0.5, PLINTH + 1.4, z + 0.7, 8);
   k.sign(label, 0.9, 0.5, x + len/2 + 0.5, PLINTH + 2.6, z + 0.75, 0, "#ffffff", k.hex);
-  k.note(x, z, len, 1.8, 0, 2.8);
+  k.note(x, z, len, 1.8, 0, 2.8, false, "open");                      // open at the front: you step in to wait
+  k.note(x, z - 0.8, len, 0.3, 0, 2.6, true); k.note(x - len/2 + 0.1, z - 0.1, 0.3, 1.5, 0, 2.6, true);   // its back and side
+  k.note(x + len/2 - 0.1, z + 0.8, 0.3, 0.3, 0, 2.6, true); k.note(x - len/2 + 0.1, z + 0.8, 0.3, 0.3, 0, 2.6, true);   // the front posts
 }
 BUILD.busstop = function(k){
   var len = Math.max(2.4, Math.min(k.W - 1.4, 4 + k.tier*0.5));
@@ -1015,7 +1019,7 @@ BUILD.power = function(k){
     k.cyl(1.1, 1.6, sh, k.m(0xc9c4ba, {roughness: 0.8}), sx, PLINTH + sh/2, sz, 14);
     for(var b = 0; b < 3; b++) k.cyl(1.2, 1.2, 2, b % 2 ? white : red, sx, PLINTH + sh - 1 - b*2, sz, 14);
     k.sph(0.35, lampM, sx, PLINTH + sh + 0.3, sz);
-    k.note(sx, sz, 3.2, 3.2, 0, sh + 0.6);
+    k.note(sx, sz, 3.4, 3.4, 0, sh + 0.6, false, "ell");
   }
   k.glow(0xff3030, hx - w/2 + 3, PLINTH + sh + 0.4, zc - d/2 - 3, 3, 0.7);
   if(T >= 3){                                                          // the cooling tower
@@ -1023,7 +1027,7 @@ BUILD.power = function(k){
     for(var j = 0; j <= 10; j++){ var u = j/10; pts.push(new k.THREE.Vector2(r*(0.62 + 0.38*Math.pow(2*u - 1.05, 2)), u*ct)); }
     var tx = k.W/2 - r - 2, tzz = -k.D/2 + r + 2;
     k.mesh(new k.THREE.LatheGeometry(pts, 28), k.m(0xc9c4ba, {roughness: 0.85, side: 2}), tx, PLINTH, tzz);
-    k.note(tx, tzz, 2*r, 2*r, 0, ct);
+    k.note(tx, tzz, 2.1*r, 2.1*r, 0, ct, false, "ell");             // round: its base is 1.04 r out
   }
   // the switchyard: transformers behind a fence
   var yx = k.W/2 - 10, yz = k.D/2 - 9, steel = k.m(0x8a949e, {metalness: 0.6, roughness: 0.4});
@@ -1045,7 +1049,8 @@ BUILD.water = function(k){
   k.cyl(r, r, th, tankM, 0, PLINTH + lh + th/2, -1, 24);
   k.mesh(new k.THREE.ConeGeometry(r + 0.2, r*0.6, 24), k.m(0x56606b, {roughness: 0.7}), 0, PLINTH + lh + th + r*0.3, -1);
   k.sph(0.3, k.n(0x400000, 0xff3030, 0.3, 2.5), 0, PLINTH + lh + th + r*0.6 + 0.2, -1);
-  k.note(0, -1, 2*r, 2*r, 0, lh + th + r*0.6);
+  k.note(0, -1, 2*r, 2*r, 0, lh + th + r*0.6, false, "open");        // you walk between its legs
+  [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(function(s){ k.note(s[0]*r*0.7, s[1]*r*0.7 - 1, 0.9, 0.9, 0, lh, true); });
   k.sign(k.title, r*1.4, r*0.45, 0, PLINTH + lh + th/2, r - 1 + 0.05, 0, "#ffffff", "#2f6f9c");
   var pw = Math.min(5, k.W*0.4), pz = k.D/2 - 2.4;
   k.mass("brick", k.W/2 - pw/2 - 0.5, pz, pw, 3.4, 1, {fh: 3});
@@ -1068,7 +1073,7 @@ BUILD.stadium = function(k){
     var rp = [new THREE.Vector2(R*0.84, hgt + 5), new THREE.Vector2(R + 0.8, hgt + 6.5), new THREE.Vector2(R + 0.8, hgt + 6), new THREE.Vector2(R*0.84, hgt + 4.6)];
     k.mesh(new THREE.LatheGeometry(rp, 48), k.m(0xeceff2, {roughness: 0.5, side: 2}), 0, PLINTH, 0).scale.copy(bowl.scale);
   }
-  k.note(0, 0, 2*rx, 2*rz, 0, hgt + (T >= 4 ? 6.5 : 1.5));
+  k.note(0, 0, 2*rx, 2*rz, 0, hgt + (T >= 4 ? 6.5 : 1.5), false, "ell");   // the oval bowl, not its box
   // the pitch and its lines
   var px = rx*ri/(R + 0.6)*1.3, pz = rz*ri/(R + 0.6)*1.3, line = k.m(0xf2f2f2, {roughness: 0.8});
   k.box(px*1.1, 0.06, pz*1.1, k.m(0x3f8f45, {roughness: 0.95}), 0, PLINTH + 0.03, 0);
@@ -1079,7 +1084,7 @@ BUILD.stadium = function(k){
     var mast = k.m(0x8a949e, {metalness: 0.6, roughness: 0.4}), head = k.n(0x3a3a3a, 0xfff6e0, 0, 2.6), mh = hgt + 12;
     [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(function(s){
       var x = s[0]*rx*0.78, z = s[1]*rz*0.78;
-      k.cyl(0.35, 0.5, mh, mast, x, PLINTH + mh/2, z, 8); var hd = k.box(4, 2.4, 0.4, head, x, PLINTH + mh, z); hd.rotation.y = Math.atan2(-x, -z);
+      k.cyl(0.35, 0.5, mh, mast, x, PLINTH + mh/2, z, 8); k.note(x, z, 1.1, 1.1, 0, mh, true); var hd = k.box(4, 2.4, 0.4, head, x, PLINTH + mh, z); hd.rotation.y = Math.atan2(-x, -z);
       k.glow(0xfff6e0, x, PLINTH + mh, z, 7, 0.55);
     });
     k.top = Math.max(k.top, mh + 1.2);
@@ -1253,7 +1258,7 @@ BUILD.farm = function(k){
   var ns = 1 + (T >= 3) + (T >= 5), sm = k.m(0xc4ccd4, {metalness: 0.6, roughness: 0.4}), hx = k.W/4;
   while(ns > 0 && bx + bw/2 + 3 + (ns - 1)*4.4 + 2 > hx - 5) ns--;
   for(i = 0; i < ns; i++){ var sx = bx + bw/2 + 3 + i*4.4, sh = 10 + T*2;
-    k.cyl(1.9, 1.9, sh, sm, sx, PLINTH + sh/2, bz - 1, 16); k.dome(1.95, sx, PLINTH + sh, bz - 1, sm); k.note(sx, bz - 1, 4, 4, 0, sh + 2); }
+    k.cyl(1.9, 1.9, sh, sm, sx, PLINTH + sh/2, bz - 1, 16); k.dome(1.95, sx, PLINTH + sh, bz - 1, sm); k.note(sx, bz - 1, 4.1, 4.1, 0, sh + 2, false, "ell"); }
   // the farmhouse
   var hz = k.D/2 - 7, H = k.mass("white", hx, hz, 9, 7, 2, {fh: 3, roof: false});
   k.gable(hx, hz, 9, 7, H.top, 2.4, k.m(0x6a3a2a, {roughness: 0.7}));

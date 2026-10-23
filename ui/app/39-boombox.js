@@ -4,7 +4,9 @@
 // Arena's clock (`bt`) and its title (`bn`), to an Arena that lists "boombox". Anyone near you in the City hears
 // it: this page plays the nearest boombox in range in a hidden YouTube embed, in step with yours, louder the
 // closer you are. Nothing is played through the Arena or this machine's server.
-var BOOM = {frame:null, v:null, u:null, t:0, at:0, state:-1, vol:-1, ready:false, heard:{}, mine:false};
+// (3.13.1) Live in the Music tab ("Go live") carries it too: anyone near a DJ in the City listens to the live set
+// (ui/app/29-music.js muListen, browser to browser), louder the closer they are, and stops when they walk away.
+var BOOM = {frame:null, v:null, u:null, t:0, at:0, state:-1, vol:-1, ready:false, heard:{}, mine:"", live:null};
 var BOOM_RANGE = 28, BOOM_FULL = 4, BOOM_ID = /^[A-Za-z0-9_-]{11}$/;
 
 // Your boombox's song: the room's current one while it plays and you are tuned in; null otherwise.
@@ -20,6 +22,19 @@ function boomNet(){ var m = boomMine(); return m ? {bb: m.v, bt: m.t, bn: m.n} :
 function boomGain(d){
   var f = Math.max(0, Math.min(1, (BOOM_RANGE - d)/(BOOM_RANGE - BOOM_FULL)));
   return f*f;
+}
+// Who is live in your Arena room: {their Arena user id: their page's peer id} (29-music.js MU.lives).
+function boomLives(){
+  var out = {};
+  if(typeof MU === "undefined" || !MU || !MU.lives) return out;
+  Object.keys(MU.lives).forEach(function(peer){ var L = MU.lives[peer]; if(L && typeof L.userId === "string") out[L.userId] = peer; });
+  return out;
+}
+function boomLiveMe(){ return !!(typeof MU !== "undefined" && MU && MU.dj); }
+// Stop a live set this page started listening to because its DJ was near (never one you chose in the Music tab).
+function boomLiveStop(){
+  if(BOOM.live && typeof MU !== "undefined" && MU && MU.listen && MU.listen.peer === BOOM.live && typeof muListenStop === "function") muListenStop();
+  BOOM.live = null;
 }
 function boomArenaNow(){ return Date.now() + (typeof MU !== "undefined" && MU ? MU.offset || 0 : 0); }
 
@@ -86,26 +101,49 @@ function boomSync(){
 /* ---------- each quarter second ---------- */
 function boomTick(){
   var I = window.HQ3D && HQ3D.inst;
-  var mine = boomMine();
-  if(I && I.setBoombox) I.setBoombox(!!mine);
-  if(!!mine !== BOOM.mine){
-    BOOM.mine = !!mine;
-    if(mine && VIEW === "hq") toast("📻 Boombox on: anyone near you in the City hears “" + (mine.n || "your song") + "”", "level");
+  var mine = boomMine(), liveMe = boomLiveMe(), lives = boomLives(), drawn = {};
+  Object.keys(lives).forEach(function(u){ drawn[u] = 1; });
+  if(I && I.setBoombox) I.setBoombox(!!mine || liveMe);
+  if(I && I.setBoomLive) I.setBoomLive(drawn);
+  var on = liveMe ? "live" : mine ? "song:" + mine.v : "";
+  if(on !== BOOM.mine){
+    BOOM.mine = on;
+    if(on && VIEW === "hq") toast("📻 Boombox on: anyone near you in the City hears " + (liveMe ? "your live set" : "“" + (mine.n || "your song") + "”"), "level");
   }
   // someone else's, nearest first, on your floor and in range (a little further before it stops: no flicker at the edge)
   var w = VIEW === "hq" && I && I.where ? I.where() : null, best = null, bestD = 1e9;
   if(w && w.world && typeof HQNET !== "undefined"){
     (HQNET.peers || []).forEach(function(p){
-      if(!p || p.w !== w.world || typeof p.bb !== "string" || !BOOM_ID.test(p.bb) || typeof p.bt !== "number") return;
+      if(!p || p.w !== w.world) return;
+      var song = typeof p.bb === "string" && BOOM_ID.test(p.bb) && typeof p.bt === "number";
+      if(!song && !lives[p.u]) return;
       var d = Math.hypot(p.x/100 - w.x, p.z/100 - w.z) - (p.u === BOOM.u ? 4 : 0);   // the one playing keeps the lead
       if(d < bestD){ bestD = d; best = p; }
     });
   }
+  var livePeer = best ? lives[best.u] : null;
   // the song you already hear from the Music tab is not played twice
-  if(best && mine && mine.v === best.bb) best = null;
+  if(best && !livePeer && mine && mine.v === best.bb) best = null;
   if(best && bestD > BOOM_RANGE + (best.u === BOOM.u ? 0 : -4)) best = null;
-  if(!best){ if(BOOM.frame) boomDrop(); return; }
+  if(!best || !livePeer) boomLiveStop();
+  if(!best){ if(BOOM.frame || BOOM.u) boomDrop(); return; }
   var dist = best.u === BOOM.u ? bestD + 4 : bestD, gain = boomGain(dist);
+  if(livePeer){
+    if(BOOM.frame) boomDrop();
+    BOOM.u = best.u;
+    // a live set: not over your own Music room song, your own set, or one you chose to listen to
+    var L = MU.listen;
+    if(mine || liveMe || (L && L.peer !== BOOM.live) || typeof muListen !== "function") return;
+    if(!L || L.peer !== livePeer){
+      if(Date.now() - (BOOM.liveAt || 0) < 5000) return;          // a set that dropped: try again every 5 s, not every tick
+      boomLiveStop(); muListen(livePeer); BOOM.live = livePeer; BOOM.liveAt = Date.now();
+      var lk = best.u + ":live";
+      if(!BOOM.heard[lk]){ BOOM.heard[lk] = 1; toast("📻 " + (best.n || "Someone") + "'s boombox: their live set", "level"); }
+      return;
+    }
+    if(L.audio) L.audio.volume = Math.max(0, Math.min(1, (MU.volume/100)*gain));
+    return;
+  }
   if(BOOM.u === best.u && BOOM.v === best.bb && BOOM.bt !== best.bt)BOOM.bt = best.bt;   // resumed or sought: boomSync catches up
   if(BOOM.u !== best.u || BOOM.v !== best.bb){
     boomDrop(); boomPlay(best, gain);

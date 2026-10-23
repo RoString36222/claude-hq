@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.13.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.13.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -391,6 +391,18 @@ and feature guide.
 
 ## Changelog
 
+- **3.13.1 — Solid traffic, true shapes; the boombox goes live.** What isn't a box no longer stops you as one:
+  the stadium's oval bowl, the cooling tower, stacks and silos block their round outlines (not the square round
+  them); you walk between a gantry crane's and the water tower's legs and step into a bus or tram shelter; the air
+  base's control tower and radar are round and its parked jets block their own wings and tail, not a 10 x 16 m box;
+  the airport car park's ground floor is open between its columns. The City's cars, buses and trams are solid: you hit
+  them on foot, on a board and at the wheel (your car bumps off and dents, as off a wall) instead of passing through,
+  only at your level (not the street under a bridge or a carpark deck), and they see your car at its size so they
+  stop short of it. Live in the Music tab ("🔴 Go live") now puts the boombox on your
+  shoulder in the City too, not only a Listen-room song. Anyone near you in the City listens to your live set
+  (the same browser-to-browser stream as "🎧 Listen live", started for them when they walk up, louder the closer
+  they are, stopped when they walk away). It never cuts over a Listen-room song they're tuned in to, a live set
+  they chose in the Music tab, or their own. No new presence field: who is live comes from the room, as before.
 - **3.13.0 — Tuning shop, pets and the HQ revamp.** One release, one Arena deploy (migrations 0020, 0021 and 0022;
   presence capabilities `tuning`, `pets` and `hqstyle`).
   - **The Tuning shop.** Redline Tuning, a workshop next to the dealership in every city from tier 2 (Go to → Tuning shop; E at its bay), and Tune on any B1 row of the garage manager. Paint any catalogue or custom colour in gloss, matte, metallic, pearl or chrome, with a two-tone roof, stripes or a livery. Wheels: six rim designs per car or bike, rim colour, and a size step (the tyre's outside never changes). Window tint, a lip, ducktail or GT wing, and sport, quad or titanium exhausts (bikes: slip-on, under-seat, end can) that change the engine note. A number plate of your own (8 characters, filtered; your HQ's name stays the default). Live preview on a turntable under a lift with an orbit camera; B1 plinths and the City show your tuned vehicles. Free. Your owned vehicles' tunes are kept in the Arena (migration 0020, `/v1/vehicles/:id/tuning`) and other players see them through presence `vt` (the new `tuning` capability). Your starters' tunes stay in this browser. Needs the Arena release.

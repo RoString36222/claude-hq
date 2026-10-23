@@ -1040,7 +1040,7 @@ function mount(el, api){
      box squashing on the beat, the woofers pumping, and fat outlined notes popping out and wobbling up into the air.
      Built in metres and hung on the torso bone (so it sways with them), scaled back out of the character's scale. */
   var BOOM_AT = [-0.215, 0.3, -0.02], BOOM_GRIP = [-0.37, 0.24, 0], BOOM_SIZE = 1.6, BOOM_NOTES = 6;
-  var boomKit = null, boomV = null, boomMe = false;
+  var boomKit = null, boomV = null, boomMe = false, boomLive = {};
   function boomboxModel(){
     if(!boomKit){
       var toon = function(c, e){ var m = new THREE.MeshToonMaterial({color: c}); if(e){ m.emissive = new THREE.Color(e); m.emissiveIntensity = 0.5; } return m; };
@@ -4138,6 +4138,7 @@ function mount(el, api){
       // their boombox (`bb`, the "boombox" capability): the song it plays, while it plays
       P.bb = typeof p.bb === "string" && /^[A-Za-z0-9_-]{11}$/.test(p.bb) ? p.bb : null;
       P.pt = Array.isArray(p.pt) && p.pt.length ? p.pt.slice(0, 2) : null;   // [pets 3.14] their pets (`pt`): drawn by games/hqpets.js
+      P.u = p.u;   // (3.13.1) or a live set (boomLive, keyed by their Arena user id)
       // [3.12] convoys (the "convoy" capability): whom they invite (ci), whom they follow (cv), where they lead (cg, cm)
       var UR = /^[A-Za-z0-9_-]{1,64}$/;
       P.ci = typeof p.ci === "string" && UR.test(p.ci) ? p.ci : null; P.cv = typeof p.cv === "string" && UR.test(p.cv) ? p.cv : null;
@@ -4187,7 +4188,7 @@ function mount(el, api){
           setAnim(P.ch, P.k === K.bail ? "sit" : "idle");
           poseUndo(P.ch); P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0);
           if(!calm) poseApply(P.ch, skatePoseOf(P.k, (P.y || 0) > 1 && P.k !== K.grind, 0));
-          boomStep(P.ch, !!P.bb, t, true);
+          boomStep(P.ch, !!(P.bb || boomLive[P.u]), t, true);
         }
         return;
       }
@@ -4243,7 +4244,7 @@ function mount(el, api){
         P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0);
         if(P.bike && P.ch.o.parent === P.lean) ridePose(P.ch, P.bike, P.steer, P.g);
         else if(!vk){ leanStep(P.ch, P.lean2 || (P.lean2 = {r: 0, rv: 0, p: 0, pv: 0, h: 0, hv: 0}), P.fs, P.fr, 0, dt, true); headApply(P.ch, P.lean2.h); }
-        boomStep(P.ch, !!P.bb && !vk, t, true);                       // their boombox, on foot
+        boomStep(P.ch, !!(P.bb || boomLive[P.u]) && !vk, t, true);                      // their boombox, on foot
       }
     });
   }
@@ -4258,9 +4259,11 @@ function mount(el, api){
   // on a board: what others should see you doing ({k, y}); null otherwise
   inst.skate = function(){ return ride && ride.kind === "skate" ? skateNet() : null; };
   inst.riding = function(){ return !!ride; };
-  // a boombox on your shoulder while your Music room song plays (ui/app/39-boombox.js)
+  // a boombox on your shoulder while your Music room song plays, or while you're live (ui/app/39-boombox.js)
   inst.setBoombox = function(on){ boomMe = !!on; };
   inst.boombox = function(){ return !!boomMe; };
+  // whose boombox plays their live set (Music tab "Go live"): {arena user id: 1}
+  inst.setBoomLive = function(m){ boomLive = m && typeof m === "object" ? m : {}; };
   // driving a catalogue vehicle: its id and paint index, for presence (`v` / `vp`, the "vehicles" capability)
   inst.vehicle = function(){ return ride && ride.V && ride.V.cat ? {v: ride.kind, vp: ride.paint | 0} : null; };
   // [3.13] its tune as presence's short code (`vt`, the "tuning" capability): a tuned car or motorbike you drive, else null

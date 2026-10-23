@@ -402,7 +402,10 @@ var wi = city("user:" + ME + "@2", spawn);
 await wi.whenReady; await new Promise(r => setTimeout(r, 0));
 frame(wi, 0, 0, 2);
 var islandTowers = wi.hits.filter(o => o.userData.door && o.userData.door.userId).map(o => o.userData.door.userId).filter((u, i, a) => a.indexOf(u) === i);
+// the traffic stands on the roads and is solid (3.13.1): this counts what stays put, so it is left out here
+var tSpec = HQV.traffic && HQV.traffic.SPEC; if(tSpec) HQV.traffic.SPEC = null;
 out.roads.island = roadHits(function(x, z){ return wi.blocked(x, z); }, IW, 1);
+if(tSpec) HQV.traffic.SPEC = tSpec;
 out.pure.stats = [1, 3, 5].map(function(t){ var K = C3.cityStats(IW, t, {population: 120, grow: 400, treasury: 55, specialty: "fish"}); return [K.happiness, K.parts.map(p => p.key), K.homes, K.population, K.tierName]; });
 out.pure.statsNone = C3.cityStats(null, 2, null);
 out.pure.garages = IW.lots.filter(l => l.kind === "hq").concat(CW.lots.filter(l => l.kind === "hq").slice(0, 40)).map(function(l){

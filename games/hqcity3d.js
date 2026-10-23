@@ -814,6 +814,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(air && air.blocked(x, z)) return true;                              // air: hangars, the tower, the base's fence
     if(fount && Math.hypot(x - fount.g.position.x, z - fount.g.position.z) < fount.R + 0.35) return true;   // the fountain
     if(skate && SP.walkBlocked(x - skate.cx, z - skate.cz)) return true;      // its ramps (on foot or wheels; boards ride them)
+    if(trafficAt(x, z)) return true;                                       // [3.12.1] the cars, buses and trams going by
     var all = hqs.concat(views);
     for(var i = 0; i < all.length; i++){
       var L = all[i], rx = x - L.x, rz = z - L.z;
@@ -977,9 +978,9 @@ HQV.hqWorlds.city3d = function(c, w){
         // a turned mass's AABB reaches past its walls (onto the road): test the mass itself; a roof or canopy
         // standing clear of the ground (a market hall's, a station's) leaves the ground under it open
         var o = b.o; if(!o) return true;
-        if(o.y0 > CLEAR_UNDER) continue;
-        var dx = x - o.x, dz = z - o.z, cr = Math.cos(o.rot), sr = Math.sin(o.rot);
-        if(Math.abs(dx*cr - dz*sr) <= o.hw && Math.abs(dx*sr + dz*cr) <= o.hd) return true;
+        if(o.y0 > CLEAR_UNDER || o.open) continue;                    // open: legs, a lattice, a shelter's front (its parts block)
+        var dx = x - o.x, dz = z - o.z, cr = Math.cos(o.rot), sr = Math.sin(o.rot), u = dx*cr - dz*sr, v = dx*sr + dz*cr;
+        if(Math.abs(u) <= o.hw && Math.abs(v) <= o.hd && (!o.ell || (u*u)/(o.hw*o.hw) + (v*v)/(o.hd*o.hd) <= 1)) return true;   // ell: round
       }
     }
     return false;
@@ -2735,7 +2736,9 @@ HQV.hqWorlds.city3d = function(c, w){
       if(boatNow) oc.wake([{id: "you", x: boatNow.st.x, z: boatNow.st.z, yaw: boatNow.st.yaw, speed: boatNow.st.speed || 0, beam: boatNow.beam}]);
     }
     if(tsim && tview){
-      var obs = boatNow ? [] : [{x: me0.x, z: me0.z, r: 1}];
+      // you, as the traffic sees you: a car's length at the wheel (they stop short of it, not in it)
+      var mo = c.motion ? c.motion() : null, myR = mo && mo.ride === "car" ? 2.6 : mo && mo.ride ? 1.6 : 1;
+      var obs = boatNow || (mo && mo.air) ? [] : [{x: me0.x, z: me0.z, r: myR}];
       if(bridges) obs = obs.concat(bridges.obstacles());
       if(callObs) obs.push(callObs);                       // a vehicle you called, on its way: traffic stops behind it
       try { callTraffic = tsim.at(nowMs, {x: cam ? cam.x : me0.x, z: cam ? cam.z : me0.z}, 320, obs); tview.update(callTraffic, nowMs); } catch(e){}
@@ -2752,6 +2755,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(talkL && nowMs > talkL.until){ S.remove(talkL.o); disposeTree(talkL.o); talkL = null; }
     if(dealerB && c.active && c.active(w)) HQV.hqCity3d.dealer = w.dealer;
     if(tuningB && c.active && c.active(w)) HQV.hqCity3d.tuning = w.tuning;   // [3.13]   // the dealership, for tools (as .ships, .air)
+    if(c.active && c.active(w)){ HQV.hqCity3d.trafficAt = trafficAt; HQV.hqCity3d.trafficNow = w.callRoad.traffic; }   // for tools
     busStep();
     if(air) air.update(t, dt, k, cam);                                     // air: jets, the radar
     var tp = tripStep();
@@ -2801,6 +2805,26 @@ HQV.hqWorlds.city3d = function(c, w){
   /* Calling your vehicle (games/hqcall.js, driven by games/hq3d.js): the roads it can use, where it may appear out of
      sight, the traffic it slows for, and itself as an obstacle the traffic stops for. */
   var callObs = null, callTraffic = null;
+  // [3.12.1] the traffic is solid: a car, bus or tram as drawn this frame (callTraffic, a tram section by section) blocks
+  // you on foot, on a board and at the wheel, so you hit it instead of passing through. Only at your level: the
+  // street under a bridge or a carpark deck does not.
+  function trafficAt(x, z){
+    var list = callTraffic, SP0 = HQV.traffic && HQV.traffic.SPEC;
+    if(!list || !list.length || !SP0) return false;
+    var gy = null;
+    for(var i = 0; i < list.length; i++){
+      var v = list[i], S = SP0[v.kind];
+      if(!S || Math.abs(v.x - x) > 20 || Math.abs(v.z - z) > 20) continue;
+      var P = v.parts || [v], hl = S.len/P.length/2 + (P.length > 1 ? 0.6 : 0.15), hw = S.wid/2 + 0.15;
+      for(var j = 0; j < P.length; j++){
+        var q = P[j], dx = x - q.x, dz = z - q.z, sy = Math.sin(q.yaw), cy = Math.cos(q.yaw);
+        if(Math.abs(dx*sy + dz*cy) > hl || Math.abs(dx*cy - dz*sy) > hw) continue;
+        if(gy == null) gy = groundY(x, z);
+        if(Math.abs((q.y || 0) - gy) < 3) return true;
+      }
+    }
+    return false;
+  }
   // the centre line's direction at the point of edge ei nearest (x, z), and half its carriageway (m)
   function edgeDir(ei, x, z){
     var e = W.edges[ei], p = e.pts, m = p.length/3, best = 1e18, ux = 0, uz = 1;

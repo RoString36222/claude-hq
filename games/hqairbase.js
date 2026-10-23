@@ -7,7 +7,7 @@
  *                   carrier: {x, z, yaw, deck} or null}. A sortie every CYCLE ms, picked by a hash of its number:
  *                   a pair on a straight flyover, a pair on a racetrack over the city (in, a banked half circle,
  *                   out), or (with a carrier) one jet catapulted off its bow while another traps on its stern.
- *   rectHit(R, x, z) is (x, z) inside the turned rectangle R = {x, z, hw, hd, rot}
+ *   rectHit(R, x, z) is (x, z) inside the turned rectangle R = {x, z, hw, hd, rot} (or its circle, or its polys in that frame)
  *   clearOfAirfield(L, R, buffer) the turned rectangle R, grown by buffer m, misses the airfield L (games/hqairfield.js
  *                   layout, docs/plans/airport-spec.md 3 and 8): every L.platform polygon, every L.landside footprint
  *                   (the forecourt and access roads at roadW, the skybridge as a capsule of radius w/2, the tower and
@@ -94,10 +94,19 @@ function jetsAt(ms, P){
   return out;
 }
 function rectHit(R, x, z){
-  var dx = x - R.x, dz = z - R.z, c = Math.cos(R.rot || 0), s = Math.sin(R.rot || 0);
+  var dx = x - R.x, dz = z - R.z;
+  if(R.circle) return dx*dx + dz*dz <= R.circle*R.circle;       // a round thing (HQ 3.12.1): its circle, not its box
+  var c = Math.cos(R.rot || 0), s = Math.sin(R.rot || 0);
   var lx = dx*c - dz*s, lz = dx*s + dz*c;                       // into the rectangle's frame (inverse of toWorld)
-  return Math.abs(lx) <= R.hw && Math.abs(lz) <= R.hd;
+  if(!(Math.abs(lx) <= R.hw && Math.abs(lz) <= R.hd)) return false;
+  if(!R.polys) return true;
+  for(var i = 0; i < R.polys.length; i++) if(inPoly(R.polys[i], lx, lz)) return true;   // its outline in that frame
+  return false;
 }
+// a parked jet's outline (jetModel's frame, nose +z), a hand's breadth out: the fuselage and nose, each wing, each tailplane
+var JET_OUTLINE = [[[-0.95, -7.3], [0.95, -7.3], [0.95, 4], [0.2, 8.7], [-0.2, 8.7], [-0.95, 4]]].concat([1, -1].map(function(s){
+  return [[s*0.5, 2.5], [s*5.4, -3.1], [s*5.4, -4.4], [s*0.5, -4.6]]; }), [1, -1].map(function(s){
+  return [[s*0.4, -4.4], [s*3, -6.5], [s*3, -7.3], [s*0.4, -7.2]]; }));
 // a point in a frame (centre x, z; turned rot): local (lx, lz) -> world, as hqcity3d's toWorld
 function toW(F, lx, lz){ var c = Math.cos(F.rot), s = Math.sin(F.rot); return {x: F.x + lx*c + lz*s, z: F.z - lx*s + lz*c}; }
 
@@ -346,7 +355,7 @@ function create(c, S, o){
     var cab = K.n(0x1c3a52, 0x9ad8ff, 0.2); nightM.push([cab, 1.1, 0.2]);
     K.cyl(4.2, 3.4, 3.4, cab, tx, 19.7, tz, null, 12); K.cyl(4.6, 4.6, 0.5, darkS, tx, 21.6, tz, null, 12);
     K.cyl(0.1, 0.1, 4, steel, tx, 23.8, tz, null, 6); K.box(0.4, 0.4, 0.4, K.n(0x400000, 0xff3030, 2.5), tx, 25.9, tz);
-    var tp = toW(F, tx, tz); blockR.push({x: tp.x, z: tp.z, hw: 3, hd: 3, rot: F.rot}); floorR.push({x: tp.x, z: tp.z, hw: 4.6, hd: 4.6, rot: F.rot, y: F.y + 21.9});
+    var tp = toW(F, tx, tz); blockR.push({x: tp.x, z: tp.z, hw: 3, hd: 3, rot: F.rot, circle: 3}); floorR.push({x: tp.x, z: tp.z, hw: 4.6, hd: 4.6, rot: F.rot, y: F.y + 21.9});
     // the radar: a dish on a mast, turning
     var rx = 47, rz = 30;
     K.cyl(0.5, 0.8, 7, steel, rx, 3.5, rz);
@@ -355,7 +364,7 @@ function create(c, S, o){
     dish.rotation.x = -PI/2 + 0.35;
     K.cyl(0.08, 0.08, 3.4, steel, 0, 1.9, 0.6, radar, 6).rotation.x = PI/2 - 0.35;
     K.box(1.4, 1.2, 1.4, darkS, 0, 0.2, 0, radar);
-    var rp = toW(F, rx, rz); blockR.push({x: rp.x, z: rp.z, hw: 1, hd: 1, rot: 0});
+    var rp = toW(F, rx, rz); blockR.push({x: rp.x, z: rp.z, hw: 1, hd: 1, rot: F.rot, circle: 1});
     // the fence: posts and rails round the edge, a gate in the middle of the front
     var fm = K.m(0x5d666e, {roughness: 0.6, metalness: 0.5});
     [[-1, 0], [1, 0], [0, -1], [0, 1]].forEach(function(e){
@@ -384,7 +393,7 @@ function create(c, S, o){
     var sock = K.cyl(0.25, 0.6, 2.4, K.m(0xff7a1a, {roughness: 0.7}), 30, 5.7, 35.2, null, 10); sock.rotation.x = PI/2 - 0.2;
     // the jets on the line, in front of the hangars
     [-44, -28, -12, 4].forEach(function(jx, i){ var J = jetModel(c, i % 2 ? 0x707b84 : 0x66717a); J.g.position.set(jx, 0, 14); g.add(J.g); J.ab.forEach(function(f){ J.g.remove(f); }); J.g.remove(J.glow);
-      var q = toW(F, jx, 14); blockR.push({x: q.x, z: q.z, hw: 5, hd: 8, rot: F.rot}); });
+      var q = toW(F, jx, 14); blockR.push({x: q.x, z: q.z, hw: 5.4, hd: 8.7, rot: F.rot, polys: JET_OUTLINE}); });
     // the attack helicopters: one on its pad for show, one you can fly
     var p1 = toW(F, 18, 26), p2 = toW(F, 34, 26);
     var B = H.model(c, "attack"); quiet(B); B.g.position.set(18, 0.12, 26); g.add(B.g);

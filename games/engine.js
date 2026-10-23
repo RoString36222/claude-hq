@@ -158,6 +158,16 @@ var SFX = {
   finish: function(a){ [523, 659, 784, 1047].forEach(function(f, i){ tone(a, "square", f, 0, 0.16, 0.1, i*0.1); }); },
   levelup: function(a){ [392, 523, 659, 784, 1047].forEach(function(f, i){ tone(a, "triangle", f, 0, 0.22, 0.12, i*0.08); }); },
   door: function(a){ noise(a, 0.35, 0.18, 600); },
+  // a car's two-tone horn, a motorbike's single higher one (opt.bike)
+  horn: function(a, opt){
+    if(opt && opt.bike){ tone(a, "square", 520, 0, 0.32, 0.07); tone(a, "square", 525, 0, 0.32, 0.04); return; }
+    tone(a, "sawtooth", 415, 0, 0.42, 0.06); tone(a, "sawtooth", 523, 0, 0.42, 0.05);
+  },
+  // the starter turning the engine over (a gritty whirr), then the catch
+  crank: function(a){
+    for(var i = 0; i < 4; i++) tone(a, "sawtooth", 95 + i*6, 80, 0.11, 0.035, i*0.12);
+    noise(a, 0.5, 0.025, 380);
+  },
   bell: function(a){ tone(a, "sine", 2093, 2050, 0.35, 0.1); tone(a, "sine", 2637, 2600, 0.3, 0.06); tone(a, "sine", 2093, 2050, 0.35, 0.1, 0.14); }   // a bike bell
 };
 function sfx(name, opt){
@@ -421,7 +431,9 @@ function engineSound(kind, ex, real){
       var fc = (P.cut[0] + (P.cut[1] - P.cut[0])*u)*(0.45 + 0.75*L)*(0.4 + 0.6*far);
       tgt(f.frequency, clamp(Math.max(fc, hz*2.5), 60, 16000), 0.06);
       // intake / exhaust roar, road rumble, a squeal in a slide
-      tgt(air.f.frequency, clamp(hz*6, 250, 6000), 0.06); tgt(air.g.gain, (P.air || 0)*0.035*(0.15 + 0.85*L)*(0.25 + 0.75*u), 0.06);
+      // nitrous (opt.boost): a hard hiss over the intake and the whistle up
+      var nit = opt.boost ? 1 : 0;
+      tgt(air.f.frequency, clamp(hz*6 + nit*2500, 250, 8000), 0.06); tgt(air.g.gain, (P.air || 0)*0.035*(0.15 + 0.85*L)*(0.25 + 0.75*u) + nit*0.05, 0.06);
       var spd = Math.abs(+opt.speed || 0), slip = clamp(+opt.slip || 0, 0, 1);
       tgt(rum.f.frequency, 70 + Math.min(spd, 60)*3, 0.1); tgt(rum.g.gain, Math.min(0.05, spd/30*0.05), 0.08);
       tgt(sq.f.frequency, 1150 + 400*slip + 120*rnd(), 0.05); tgt(sq.g.gain, 0.06*slip, 0.05);
@@ -440,14 +452,19 @@ function engineSound(kind, ex, real){
         tgt(hiss.f.frequency, 1800 + 2600*u, 0.1); tgt(hiss.g.gain, P.roar*0.25*th, 0.1);
       }
       // the overrun crackle: off the throttle at speed, a burst every 40-260 ms for the first ~1.2 s
-      if(P.pops && on && !calm() && L < 0.2 && u > 0.3 && S.lift < 1.2 && t >= S.pop){
-        S.pop = t + 0.04 + rnd()*0.22/P.pops;
-        if(rnd() < P.pops) crackle(t);
+      // the drive mode's exhaust (opt.mode: games/hqvehiclephys.js MODES): Comfort quiet and smooth, Track loud and crackling;
+      // opt.crackle: the game's own overrun window (a lift, a downshift's blip), so the pops and the flames agree
+      var MD = opt.mode === "comfort" ? {gain: 0.82, pops: 0.15} : opt.mode === "track" ? {gain: 1.15, pops: 1.6} : {gain: 1, pops: 1};
+      var popsP = Math.min(1, (P.pops || 0)*MD.pops*(opt.crackle ? 1.4 : 1));
+      if(popsP > 0 && on && !calm() && L < 0.2 && u > 0.2 && (S.lift < 1.2 || opt.crackle) && t >= S.pop){
+        S.pop = t + 0.03 + rnd()*0.2/Math.max(0.2, popsP);
+        if(rnd() < popsP) crackle(t);
+        if(opt.crackle && rnd() < popsP*0.5) crackle(t + 0.025 + rnd()*0.03);   // a double bang
       }
       // a dead man's switch: each set() fades the note out 0.25 s from now and the next frame's
       // set() cancels that, so the engine falls silent whenever the game stops calling (a hidden
       // tab, another view, a stalled loop) instead of droning on at its last revs
-      var lvl = on ? P.gain*(0.6 + 0.45*u)*(0.55 + 0.45*L)*far : 0;
+      var lvl = on ? P.gain*MD.gain*(0.6 + 0.45*u)*(0.55 + 0.45*L)*far : 0;
       g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(lvl, t, 0.1); g.gain.setTargetAtTime(0, t + 0.25, 0.05);
     },
     stop: function(){

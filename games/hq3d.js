@@ -1542,6 +1542,7 @@ function mount(el, api){
     ownPlace(cur);                                                     // your own vehicles parked in this world
     bs.forEach(function(b){
       if(!b.home) b.home = {x: b.x, z: b.z, yaw: b.yaw};                  // its bay (Return to HQ puts it back)
+      if(baseKind(b.kind) === "moto" && b.g){ b.g.rotation.z = -STAND_LEAN; standShow(b.g, true); }   // [insane] parked on its side stand
       var p = b.id && parked[b.id]; if(p){ placeProp(b, p.x, p.z, p.yaw); if(p.y != null && b.kind && VEHICLES[b.kind] && VEHICLES[b.kind].heli){ b.g.position.y = p.y; b.y = p.y; } }   // [hq revamp] a helicopter left on a roof
     });
   }
@@ -2128,15 +2129,33 @@ function mount(el, api){
     walkTo = null; walkDoor = null;
     // [gearbox] the gearbox and clutch (games/hqvehiclephys.js gearStep): which gear, how much of the engine reaches
     // the wheels, the gear's top speed at its limiter, engine braking, a launch. W and S together: both keys' raw state
-    var GB = gearboxStep(dt, thr, hand);
+    var GB = gearboxStep(dt, thr, hand), PH = HQV.hqVehiclePhys, wHeld = !!(keys.KeyW || keys.ArrowUp);
+    ride.burn = !!(GB && hand && wHeld && Math.abs(ride.speed) < 4);
+    // [insane] nitrous: K held, a 4 s charge (a bigger pull and 25% over its top speed while it fires)
+    var NIT = !!(GB && PH && PH.nitroStep && PH.nitroStep(ride.nitro || (ride.nitro = {charge: 1}), GIN.nitro, wHeld ? 1 : Math.max(0, thr), ride.speed, dt));
+    if(NIT) top *= 1.25;
+    ride.thrNow = wHeld ? 1 : thr;
     // an engine pulls hardest from a standstill and less as it nears its top speed
     // (V.floor: the pull left near the top, more for an electric motor; games/hqvehiclephys.js)
-    var pull = (V.motor ? V.acc*Math.max(V.floor || 0.25, 1 - Math.max(0, ride.speed)/top) : V.acc)*Math.max(0, thr)*(GB ? GB.drive : 1);
+    var pull = (V.motor ? V.acc*Math.max(V.floor || 0.25, 1 - Math.max(0, ride.speed)/top) : V.acc)*Math.max(0, thr)*(GB ? GB.drive : 1) + (NIT ? V.acc*0.7 : 0);
     if(V.motor && hand) ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - 24*G.brake*dt) : Math.min(0, ride.speed + 24*G.brake*dt);   // handbrake
     else if(thr > 0) ride.speed = Math.min(top, ride.speed + (ride.speed < 0 ? 14 : pull)*dt);
     else if(thr < 0) ride.speed = Math.max(-V.rev, ride.speed - (ride.speed > 0 ? (V.brake || 14)*G.brake : 4)*-thr*dt);   // V.brake: a heavy car stops longer
     else ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - (V.motor ? 3 + (GB ? GB.engineBrake : 0) : 2)*dt) : Math.min(0, ride.speed + 4*dt);
     if(ride.speed > top) ride.speed = Math.max(top, ride.speed - 6*dt);
+    if(ride.burn){                                                     // [insane] a burnout: held on the brake, smoke; steer for donuts
+      ride.speed = 0;
+      if(st && (ride.base !== "car" || ride.V.drive !== "fwd")){ avatar.yaw += st*(ride.base === "car" ? 2.3 : 1.1)*dt; ride.head = avatar.yaw; }
+    }
+    // [insane] wheelies and stoppies (motorbikes, F held): games/hqvehiclephys.js wheelieStep
+    if(ride.base === "moto" && V.motor && PH && PH.wheelieStep && !E.calm()){
+      var WS = ride.wh || (ride.wh = {p: 0, pv: 0}), EN0 = V.engine || {};
+      var wo = PH.wheelieStep(WS, {trick: GIN.trick, thr: wHeld ? 1 : Math.max(0, thr), brake: !!(keys.KeyS || keys.ArrowDown) || hand,
+                                   speed: ride.speed, gear: ride.gear, rpmFrac: ride.rpm/(EN0.red || 9000)}, dt);
+      wo.events.forEach(trickEvent);
+      if(WS.kind === "stoppie") ride.speed = Math.max(0, ride.speed - 3*dt);
+    } else if(ride.wh){ ride.wh.p = 0; ride.wh.pv = 0; ride.wh.kind = null; }
+    if(GB && PH && PH.perfStep) PH.perfStep(ride.perf || (ride.perf = {armed: Math.abs(ride.speed) < 0.3}), ride.speed, dt).forEach(perfEvent);
     if(GB){
       if(GB.launch) ride.speed = 0;                                     // launch control: held on the brake, revs up
       else if(ride.speed > GB.cap) ride.speed = Math.max(GB.cap, ride.speed - 9*dt);   // on the limiter: this gear's top speed
@@ -2187,6 +2206,10 @@ function mount(el, api){
     else (ride.kind === "car" ? carRoll : ride.kind === "moto" ? motoRoll : bikeRoll)(ride.B, d, ride.steer);
     // lean into the turn, a slide leans further (and sit up straight in Calm); a car does not lean
     var lean = E.calm() ? 0 : (-ride.steer*Math.min(1, spd/6) - ride.slip*1.2)*V.lean;
+    // [insane] stopped on a motorbike: over onto its side stand (the stand swings down)
+    var parkedUp = ride.base === "moto" && spd < 0.2 && !(ride.thrNow > 0) && !ride.burn;
+    if(parkedUp) lean = -STAND_LEAN;
+    if(ride.base === "moto") standShow(ride.lean, parkedUp);
     ride.lean.rotation.z += (lean - ride.lean.rotation.z)*ease(8, dt);
     engineStep(dt, thr);
     keyMove = spd > 0.3; keyRun = false; if(keyMove){ movedHere = true; walkInto(); }
@@ -2196,8 +2219,10 @@ function mount(el, api){
     // where you are headed is where the vehicle travels (ride.head: in a slide that is not where it points)
     avatar.travelYaw = Math.abs(ride.speed) > 0.05 ? (ride.speed < 0 ? wrapPi(ride.head + PI) : ride.head) : null;
     if(ride.snapY){ avatar.hy = groundAt(avatar.x, avatar.z); avatar.hyV = 0; } else settleY(dt);   // [stunts] a ramp at speed: on it, not a spring behind it
-    avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
-    avatar.g.rotation.y = avatar.yaw; avatar.g.rotation.x = -ride.pitch; avatar.g.rotation.z = ride.roll;
+    // [insane] a wheelie pivots on the rear axle, a stoppie on the front: the wheel that stays down stays on the road
+    var wp = ride.wh ? ride.wh.p : 0, wbh = (V.wb || WHEELBASE[ride.base] || 1.4)/2;
+    avatar.g.position.set(avatar.x, avatar.hy + Math.sin(Math.abs(wp))*wbh, avatar.z);
+    avatar.g.rotation.y = avatar.yaw; avatar.g.rotation.x = -(ride.pitch + wp); avatar.g.rotation.z = ride.roll;
     var b = rideProp(); if(b && b.g.visible) b.g.visible = false;   // the street rebuilt under you
     view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
   }
@@ -2232,14 +2257,16 @@ function mount(el, api){
   }
   // [gearbox] per frame, before the speed moves: the gearbox's answer (null for a vehicle without one: a bicycle, a
   // boat, a vehicle whose engine has no gearing); the presses of . , G since the last frame go in once
-  var GIN = {up: false, down: false, toggle: false};
+  var GIN = {up: false, down: false, toggle: false, nitro: false, trick: false};
   function gearboxStep(dt, thr, hand){
     var V = ride.V, P = HQV.hqVehiclePhys;
     if(!V.motor || V.boat || ride.plane || ride.heli || !P || !P.gearStep) return null;
     var EN = engineOf(V); if(!EN || !(EN.k || EN.electric)) return null;
     if(!ride.gs){ ride.gs = P.gearState(EN); ride.gs.manual = gearPref(); }
     var w = !!(keys.KeyW || keys.ArrowUp), sb = !!(keys.KeyS || keys.ArrowDown), gp = padNow();
-    var o = P.gearStep(ride.gs, {thr: w ? 1 : Math.max(0, thr), brake: sb || hand, clutch: !!keys.KeyX,
+    // a burnout (Space + W at a standstill) is the clutch in with the revs up and the rear wheels spinning
+    var burn = !!(hand && w && Math.abs(ride.speed) < 4);
+    var o = P.gearStep(ride.gs, {thr: w ? 1 : Math.max(0, thr), brake: sb || hand, clutch: !!keys.KeyX || burn, mode: ride.mode || (ride.mode = modePref()),
                                  up: GIN.up, down: GIN.down, toggle: GIN.toggle, speed: ride.speed, top: V.top}, EN, dt);
     GIN.up = GIN.down = GIN.toggle = false;
     function say(t){ if(api.toast) api.toast(t); if(api.announce) api.announce(t); }
@@ -2251,6 +2278,48 @@ function mount(el, api){
     ride.gb = o;
     return o;
   }
+  // the drive mode (Comfort / Sport / Track), remembered on this machine
+  function modePref(set){
+    if(set != null){ try { localStorage.setItem("hq3d.driveMode", set); } catch(e){} return set; }
+    try { var m = localStorage.getItem("hq3d.driveMode"); return m === "comfort" || m === "track" ? m : "sport"; } catch(e){ return "sport"; }
+  }
+  // [insane] tricks and the performance timer, scored with your best per vehicle (kept on this machine)
+  function bestOf(key, val, lower){
+    var m = {}; try { m = JSON.parse(localStorage.getItem("hq3d.bests") || "{}") || {}; } catch(e){ m = {}; }
+    var was = m[key]; if(was != null && (lower ? val >= was : val <= was)) return was;
+    m[key] = val; try { localStorage.setItem("hq3d.bests", JSON.stringify(m)); } catch(e){} return null;
+  }
+  function vehKey(){ return ride && ride.V && ride.V.cat ? ride.V.cat.id : (ride ? ride.kind : "?"); }
+  function trickEvent(e){
+    var name = e.trick === "stoppie" ? "STOPPIE" : "WHEELIE";
+    if(e.kind === "start"){ stuntSay(name + "!", e.trick === "stoppie" ? "Ease off the brake to put it down" : "Tap W to hold it on the balance point", 1.2, "#7dffb0"); return; }
+    if(e.kind === "bail"){
+      ride.speed = 0; E.sfx("hit"); if(drvHit) drvHit(8, e.trick === "stoppie" ? "f" : "r");
+      stuntSay(e.trick === "stoppie" ? "💥 OVER THE BARS" : "💥 LOOPED OUT", Math.round(e.dist || 0) + " m before it went", 2.4, "#ff6b6b");
+      if(api.announce) api.announce(e.trick === "stoppie" ? "Over the bars" : "Looped out"); return;
+    }
+    var d = Math.round(e.dist || 0); if(d < 3) return;
+    var was = bestOf(vehKey() + ":" + e.trick, d, false);
+    stuntSay("🏍 " + name + " " + d + " m", was == null ? "New best on this bike!" : "Best " + was + " m", 2.6, "#ffe14d");
+    if(api.announce) api.announce(name.toLowerCase() + " " + d + " metres");
+  }
+  function perfEvent(e){
+    var label = e.kind === "0-100" ? "0–100 km/h" : e.kind === "0-200" ? "0–200 km/h" : "¼ mile";
+    var t = Math.round(e.t*100)/100, was = bestOf(vehKey() + ":" + e.kind, t, true);
+    stuntSay("⏱ " + label + "  " + t.toFixed(2) + " s" + (e.v ? "  @ " + Math.round(e.v*3.6) + " km/h" : ""), was == null ? "New best!" : "Best " + was.toFixed(2) + " s", 3, "#7fd8ff");
+    if(api.announce) api.announce(label + " in " + t.toFixed(1) + " seconds");
+  }
+  // the side stand: a bike leans onto it when it stops (and stands on it parked); one thin leg, made once
+  var STAND_LEAN = 0.15;
+  function standShow(g, on){
+    if(!g) return;
+    var leg = g.userData.stand;
+    if(!leg){
+      leg = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.36, 6), new THREE.MeshStandardMaterial({color: 0x2a2d31, metalness: 0.6, roughness: 0.4}));
+      leg.position.set(0.17, 0.17, -0.12); leg.rotation.z = 0.55; g.add(leg); g.userData.stand = leg;
+    }
+    leg.visible = !!on;
+  }
   // manual or automatic, remembered on this machine
   function gearPref(set){
     if(set != null){ try { localStorage.setItem("hq3d.gearbox", set ? "manual" : "auto"); } catch(e){} return !!set; }
@@ -2259,9 +2328,19 @@ function mount(el, api){
   // . and , shift, G switches manual / automatic: only while you drive something with a gearbox
   function gearKey(e){
     if(!ride || !inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey || !drvGround() || !ride.V.motor || ride.V.boat) return false;
-    var c = e.code; if(c !== "Period" && c !== "Comma" && c !== "KeyG") return false;
+    var c = e.code, down = e.type === "keydown";
+    if(c === "KeyK"){ e.preventDefault(); GIN.nitro = down; return true; }                       // nitrous, held
+    if(c === "KeyF" && ride.base === "moto"){ e.preventDefault(); GIN.trick = down; return true; }   // wheelie / stoppie, held
+    if(c === "KeyH"){ e.preventDefault(); if(down && !e.repeat) E.sfx("horn", {bike: ride.base !== "car"}); return true; }
+    if(c !== "Period" && c !== "Comma" && c !== "KeyG") return false;
     e.preventDefault(); e.stopPropagation();
-    if(e.type === "keydown" && !e.repeat){ if(c === "Period") GIN.up = true; else if(c === "Comma") GIN.down = true; else GIN.toggle = true; }
+    if(down && !e.repeat){
+      if(c === "Period") GIN.up = true; else if(c === "Comma") GIN.down = true;
+      else if(e.shiftKey){ var P = HQV.hqVehiclePhys, O = P && P.MODE_ORDER || ["sport"], i = O.indexOf(modePref());
+        var m = modePref(O[(i + 1) % O.length]); ride.mode = m; if(api.toast) api.toast("Drive mode: " + (P && P.MODES ? P.MODES[m].label : m));
+        if(api.announce) api.announce("Drive mode " + m); }
+      else GIN.toggle = true;
+    }
     return true;
   }
   function engineStep(dt, thr){
@@ -2313,10 +2392,24 @@ function mount(el, api){
   // launch), the limiter's stutter, the rev-matched blip on a downshift (engine.js blips on a lower gear), wheelspin
   function gearboxSound(dt, thr, V, o){
     ride.rpm = o.rpm; ride.gear = o.gear;
-    var v = Math.abs(ride.speed), w = !!(keys.KeyW || keys.ArrowUp);
-    if(v < 0.3 && !w && !(thr > 0) && !o.launch && ride.rpm < (V.engine ? V.engine.idle*1.2 : 1500) && !keys.KeyX) return;
+    var v = Math.abs(ride.speed), w = !!(keys.KeyW || keys.ArrowUp), EN = V.engine || {};
+    // [insane] it keeps running while you're on it (idle in neutral or stopped); getting on cranks it and it catches
+    if(ride.startT == null){ ride.startT = 1.1; E.sfx("crank"); }
+    if(ride.startT > 0){
+      ride.startT -= dt;
+      ride.rpm = ride.startT > 0.55 ? (EN.idle || 800)*0.35 : (EN.idle || 800) + ((EN.red || 6000) - (EN.idle || 800))*0.32*Math.max(0, ride.startT/0.55);
+    }
+    // exhaust flames and pops: an overrun lift, a downshift's blip, the limiter, a quickshift (drawn in drvFrame)
+    var FX = ride.fxs || (ride.fxs = {popT: 0, qsT: 0, thrWas: 0, lim: false});
+    FX.popT = Math.max(0, FX.popT - dt); FX.qsT = Math.max(0, FX.qsT - dt);
+    var M = HQV.hqVehiclePhys && HQV.hqVehiclePhys.MODES ? HQV.hqVehiclePhys.MODES[ride.mode || "sport"] : null, popsK = M ? M.pops : 1;
+    if(FX.thrWas > 0.7 && !(w || thr > 0.1) && ride.rpm > (EN.red || 6000)*0.5) FX.popT = 0.9*Math.min(1.4, popsK);
+    if(o.events.indexOf("down") >= 0) FX.popT = Math.max(FX.popT, 0.35*popsK);
+    if(o.events.indexOf("qs") >= 0) FX.qsT = 0.14;
+    FX.lim = o.limiter; FX.thrWas = w ? 1 : Math.max(0, thr);
     if(!ride.eng && E.engineSound) ride.eng = E.engineSound(V.eng, ride.tune && HQV.hqTuning ? HQV.hqTuning.exhaustOf(ride.tune) : null, V.engine);
     if(ride.eng) ride.eng.set(ride.rpm, {thr: w ? 1 : thr > 0 ? thr : 0, gear: o.gear > 0 ? o.gear : null, speed: v, limiter: o.limiter, qs: o.events.indexOf("qs") >= 0,
+      mode: ride.mode, boost: !!(ride.nitro && ride.nitro.on), crackle: FX.popT > 0,
       slip: Math.max(o.slip, ride.drift ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0)});
   }
   /* ---------- skating (games/hqskate.js does the physics) ---------- */
@@ -2519,7 +2612,24 @@ function mount(el, api){
       var gk = DRV.grip ? DRV.grip.kind : null;
       if(gk !== DRV.gripSaid){ DRV.gripSaid = gk; if(gk && api.announce) api.announce(gk === "snow" ? "Snow on the road: much less grip, brake early." : "Wet road: less grip and longer braking."); }
     } else if(DRV.fx && DRV.fx.pts.visible) DRV.fx.step(dt, {calm: true});
+    vfxFrame(t, dt);
     cvStep(t);
+  }
+  // [insane] exhaust flames, nitrous, tyre smoke, skid marks (games/hqvfx.js): one set per scene, fed from your ride
+  var VFX = null, vfxN = 0;
+  function vfxFrame(t, dt){
+    if(!HQV.hqVfx || !cur || !cur.scene || !cur.camModes) return;
+    if(!VFX || VFX.scene !== cur.scene){ if(VFX) try { VFX.fx.dispose(); } catch(e){} VFX = {scene: cur.scene, fx: HQV.hqVfx.create(THREE, cur.scene)}; }
+    if(!drvGround() || !ride.V.motor || ride.V.boat || ride.air || ride.loop){ VFX.fx.step(dt, {calm: true}); return; }
+    vfxN++;
+    var FX = ride.fxs || {}, h = ((vfxN*2654435761) >>> 0)/4294967296;
+    var flame = FX.lim ? 0.55 + 0.45*h : FX.qsT > 0 ? 1 : FX.popT > 0 ? (h > 0.55 ? 0.95 : 0) : 0;
+    var spd = Math.abs(ride.speed), braking = (keys.KeyS || keys.ArrowDown) && ride.speed > 12;
+    var slip = ride.gb ? ride.gb.slip : 0, drift = ride.drift ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0;
+    var bx = ride.B._box || {minZ: -1.6, maxZ: 1.6, w: 0.8, h: 1.2};
+    VFX.fx.step(dt, {x: avatar.x, y: avatar.hy, z: avatar.z, yaw: avatar.yaw, speed: ride.speed, back: -bx.minZ, w: bx.w*0.5, bike: ride.base !== "car",
+      flame: flame, nitro: !!(ride.nitro && ride.nitro.on), smoke: Math.max(ride.burn ? 1 : 0, slip, drift*0.8, braking ? 0.2 : 0),
+      skid: Math.max(ride.burn ? 1 : 0, slip > 0.2 ? 1 : 0, drift, braking && spd > 15 ? 0.6 : 0), ground: groundAt, calm: E.calm()});
   }
   // the drive HUD's badges: grip, lights, damage
   function drvBadges(){
@@ -2528,6 +2638,9 @@ function mount(el, api){
     if(g && g.kind) parts.push(D.GRIP_ICON[g.kind] + " " + D.GRIP_LABEL[g.kind]);
     if(D.lightsOn(isNight(), DRV.wx, DRV.manual)) parts.push("💡 Lights" + (DRV.manual === true ? " (L)" : ""));
     if(DRV.dmg && DRV.dmg.d > 0) parts.push("🔧 " + Math.round(DRV.dmg.d*100) + "% damage");
+    var PM = HQV.hqVehiclePhys && HQV.hqVehiclePhys.MODES;                 // [insane] the drive mode and the nitrous left
+    if(ride.gb && PM) parts.push("🎛 " + PM[ride.mode || "sport"].label);
+    if(ride.nitro && (ride.nitro.on || ride.nitro.charge < 0.995)) parts.push("🔥 N₂O " + Math.round(ride.nitro.charge*100) + "%");
     var txt = parts.join("  ·  ");
     if(txt !== dhud.btxt){ dhud.btxt = txt; dhud.badges.textContent = txt; dhud.badges.hidden = !txt; }
   }
@@ -2675,8 +2788,8 @@ function mount(el, api){
   // the one-line version under the driving HUD
   var RIDE_HINT = {
     bike: "W pedal · S brake · A/D steer · Shift pedal harder · L lights · E get off · T home",
-    moto: "W throttle · S brake · A/D steer · Shift+steer slide · Space handbrake · G manual · . , shift · X clutch · L lights · E get off · T home",
-    car: "W go · S brake · A/D steer · Shift+steer powerslide · Space handbrake · G manual · . , shift · X clutch · L lights · E get out · T home",
+    moto: "W throttle · S brake · A/D steer · F wheelie (+S stoppie) · Space+W burnout · K nitro · G manual · Shift+G mode · . , shift · X clutch · H horn · L lights · E get off",
+    car: "W go · S brake · A/D steer · Shift+steer powerslide · Space+W burnout · K nitro · G manual · Shift+G mode · . , shift · X clutch · H horn · L lights · E get out",
     rowboat: "W row · S back water · A/D steer · E step ashore at a dock or a beach",
     jetski: "W throttle · S astern · A/D steer · E step ashore at a dock or a beach",
     heli: "Space climb · Shift descend · W/S forward/back · A/D turn · E get out (landed)",
@@ -2769,6 +2882,9 @@ function mount(el, api){
     driveDial(g, dhud.tok, 62, 64, 54, kmh, M[0], M[1], M[2], "km/h", Math.round(kmh), null);
     if(motor){                                       // [revs] the rev counter to this engine's own limiter, red from its redline
       var EN = ride.V.engine, top = EN && EN.limit ? Math.max(6, Math.ceil(EN.limit/1000 + 0.3)) : 8, maj = top > 12 ? 2 : 1;
+      if(EN && EN.shiftUp && !EN.electric && ride.rpm >= EN.shiftUp*0.96 && ((t*8) % 2) < 1){    // [insane] the shift light
+        g.beginPath(); g.arc(174, 14, 5, 0, PI*2); g.fillStyle = dhud.tok.need; g.fill();
+      }
       driveDial(g, dhud.tok, 174, 64, 54, ride.rpm/1000, top, maj, maj/2, "×1000 rpm", gearTxt(gear), EN && EN.red && !EN.electric ? EN.red/1000 : EN && EN.electric ? null : 6.5, ride.gs && ride.gs.manual ? (ride.gb && ride.gb.qs ? "MANUAL QS" : "MANUAL") : "GEAR");
     }
     if(ride.plane) driveDial(g, dhud.tok, 174, 64, 54, Math.max(0, ride.plane.agl)/100, 10, 1, 0.5, "×100 m up", Math.round(Math.max(0, ride.plane.agl)), null, "ALT");

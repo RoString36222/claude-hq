@@ -290,3 +290,93 @@ class AutomaticGearbox(unittest.TestCase):
 
     def test_no_hunting(self):
         self.assertLessEqual(self.o["steady"], 1)
+
+
+INSANE = r"""
+const fs = require('fs'), path = require('path'), R0 = process.argv[1];
+global.window = {HQV: {}}; eval(fs.readFileSync(path.join(R0, 'games', 'hqvehiclephys.js'), 'utf8'));
+const P = window.HQV.hqVehiclePhys, dt = 1/60, out = {};
+// nitrous: about 4 s of it, then a refill
+{ const N = {charge: 1}; let on = 0; for (let i = 0; i < 600; i++){ if (P.nitroStep(N, true, 1, 20, dt)) on++; else break; }
+  out.nitroSecs = on*dt; out.empty = N.charge; out.dryRefire = P.nitroStep(N, true, 1, 20, dt); for (let i = 0; i < 60*20; i++) P.nitroStep(N, false, 1, 20, dt); out.refilled = N.charge;
+  out.needsThrottle = P.nitroStep({charge: 1}, true, 0, 20, dt); }
+// the performance timer: a steady 5 m/s^2 from a standstill
+{ const T = {}; let v = 0, evs = []; P.perfStep(T, 0, dt);
+  for (let i = 0; i < 60*20; i++){ v += 5*dt; evs = evs.concat(P.perfStep(T, v, dt)); }
+  out.perf = evs.map(e => [e.kind, Math.round(e.t*100)/100]); }
+// wheelies: held throttle in 1st loops out; feathered holds; stoppie at 12 m/s holds, at 25 goes over
+// a wheelie let down (W and F released) lands: no stoppie from the bounce
+{ const W = {p: 0, pv: 0}, ev = []; for (let i = 0; i < 240; i++){ const up = i < 60;
+    P.wheelieStep(W, {trick: up, thr: up ? 1 : 0, speed: 10, gear: 1, rpmFrac: 0.7}, dt).events.forEach(e => ev.push(e.kind + ":" + e.trick)); }
+  out.landing = {ev: ev, p: W.p}; }
+function wsim(fn, n){ const W = {p: 0, pv: 0}, ev = []; let maxP = 0, minP = 0;
+  for (let i = 0; i < n; i++){ const o = P.wheelieStep(W, fn(i), dt); o.events.forEach(e => ev.push(e.kind)); maxP = Math.max(maxP, W.p); minP = Math.min(minP, W.p); }
+  return {ev, maxP, minP}; }
+out.held = wsim(i => ({trick: true, thr: 1, speed: 10, gear: 1, rpmFrac: 0.6}), 180);
+out.feather = wsim(i => ({trick: true, thr: (Math.floor(i/30) % 2) ? 0 : 1, speed: 10, gear: 1, rpmFrac: 0.6}), 600);
+out.stoppie = wsim(i => ({trick: true, brake: true, speed: Math.max(0, 12 - i/30), gear: 2}), 400);
+out.over = wsim(i => ({trick: true, brake: true, speed: 25, gear: 4}), 60);
+out.stopped = wsim(i => ({trick: true, brake: true, speed: 0, gear: 1}), 120);
+// drive modes: the automatic's choice at a light throttle, 70 km/h, in an M3
+{ const cat = JSON.parse(fs.readFileSync(path.join(R0, 'games/vehicles/catalogue.json'), 'utf8')), m = cat.vehicles.find(x => x.id === 'bmw-m3-competition');
+  const E = P.engineFor(m.spec, 'car', 'turbo6'), v = 70/3.6;
+  out.modes = ['comfort', 'sport', 'track'].map(md => { const g = P.autoGear(E, E.k, v, 0.4, false, md); return [md, g, Math.round(v*E.k[g - 1])]; }); }
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class InsaneVehicles(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        r = subprocess.run([NODE, "-e", INSANE, ROOT], capture_output=True, text=True, timeout=60)
+        if r.returncode:
+            raise AssertionError(r.stderr[-3000:])
+        cls.o = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_nitrous(self):
+        self.assertAlmostEqual(self.o["nitroSecs"], 4, delta=0.2)
+        self.assertLess(self.o["empty"], 0.01)
+        self.assertFalse(self.o["dryRefire"], "empty: it waits for a refill, no flicker")
+        self.assertGreater(self.o["refilled"], 0.99)
+        self.assertFalse(self.o["needsThrottle"])
+
+    def test_performance_timer(self):
+        p = dict(self.o["perf"])
+        self.assertAlmostEqual(p["0-100"], 100/3.6/5, delta=0.05)
+        self.assertAlmostEqual(p["0-200"], 200/3.6/5, delta=0.05)
+        self.assertAlmostEqual(p["quarter"], (2*402.3/5)**0.5, delta=0.1)
+
+    def test_wheelie_takes_skill(self):
+        h, f = self.o["held"], self.o["feather"]
+        self.assertIn("start", h["ev"]); self.assertIn("bail", h["ev"], "throttle held: it loops out")
+        self.assertNotIn("bail", f["ev"], "feathered: it holds")
+        self.assertGreater(f["maxP"], 0.8)
+
+    def test_wheelie_lands_without_a_phantom_stoppie(self):
+        self.assertEqual(self.o["landing"]["ev"], ["start:wheelie", "end:wheelie"])
+        self.assertEqual(self.o["landing"]["p"], 0)
+
+    def test_stoppie(self):
+        s, o = self.o["stoppie"], self.o["over"]
+        self.assertEqual(s["ev"], ["start", "end"])
+        self.assertLess(s["minP"], -0.3)
+        self.assertIn("bail", o["ev"], "too fast: over the bars")
+        self.assertEqual(self.o["stopped"]["ev"], [], "nothing happens at a standstill")
+
+    def test_drive_modes(self):
+        (c, gc, rc), (s, gs, rs), (t, gt, rt) = self.o["modes"]
+        self.assertGreaterEqual(gc, gs); self.assertGreaterEqual(gs, gt)
+        self.assertLess(rc, rs); self.assertLess(rs, rt)
+
+    def test_wiring(self):
+        src = open(os.path.join(ROOT, "games", "hq3d.js")).read()
+        for needle in ("PH.nitroStep(", "PH.wheelieStep(", "PH.perfStep(", "vfxFrame(t, dt)", "standShow(", 'E.sfx("crank")',
+                       'E.sfx("horn"', "ride.burn", "modePref("):
+            self.assertIn(needle, src)
+        eng = open(os.path.join(ROOT, "games", "engine.js")).read()
+        self.assertIn("horn: function(a, opt)", eng)
+        self.assertIn("crank: function(a)", eng)
+        vfx = open(os.path.join(ROOT, "games", "hqvfx.js")).read()
+        self.assertNotIn("Math.random", vfx)
+        self.assertNotIn("innerHTML", vfx)

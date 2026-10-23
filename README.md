@@ -456,6 +456,14 @@ and feature guide.
   with a bark and a pop, no clutch, no lift (the rev counter reads MANUAL QS). Off the throttle the engine brakes
   harder in a lower gear. Vehicle damage (dents, smoke, cracked lights, a bent
   car's pull) is now opt in: Settings → Vehicle damage, off by default.
+  Also in this release: the engine stays on in neutral and stopped, and starts with a crank. **Shift+G** cycles drive
+  modes (Comfort shifts early and quietly, Sport, Track holds revs and crackles; remembered). **K** is nitrous (about
+  4 s, blue flames; once empty it waits for a 15% refill). **Space+W** does a burnout, and steering makes donuts (not on
+  front-wheel-drive cars). On bikes, **F** wheelies (feather the throttle or you loop out) and **F+S** stoppies (too fast
+  and you go over the bars); a stopped bike leans on its side stand, parked ones too. Flames and pops on the overrun
+  and on quickshifts, tyre smoke, skid marks, a shift light, **H** horn, and a timer for 0–100, 0–200 and the quarter
+  mile with personal bests per vehicle (`games/hqvfx.js`, nitroStep/perfStep/wheelieStep node-tested). Calm mode shows
+  no effects.
 - **Next — Stunts across every city** (`games/hqstunts.js`, tests/test_hqstunts.py). Placed per city from its
   own layout, deterministically (every client builds the same set): a 4 m free-land grid of everything that is not
   road, river, sea, a site, an HQ or a tower district; building lots elsewhere may be cleared (at most 8 a stunt,

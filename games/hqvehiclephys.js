@@ -169,14 +169,23 @@ function engineFor(spec, kind, voice, gears){
 // closest to a target that rises with the pedal. Braking: revs kept in the pulling band (a downshift at a time, ready
 // for the exit). Coasting: a relaxed band. A gear is a candidate only between 1.05 x idle and the shift point; with a
 // comfort margin (6% of the rev range) the current gear is kept rather than hunting.
-function autoGear(E, K, v, thr, brake){
-  var n = K.length, span = E.red - E.idle, best = 1, bd = Infinity, i;
+// Drive modes (Shift+G): how high the automatic holds the revs (want), where it shifts flat out (shift, of the shift
+// point), how fast a shift is (shiftT), and the exhaust (gain, pops: games/engine.js). Sport is the car as it comes.
+var MODES = {
+  comfort: {label: "Comfort", want: 0.75, shift: 0.82, shiftT: 1.4, gain: 0.82, pops: 0.15},
+  sport:   {label: "Sport",   want: 1,    shift: 1,    shiftT: 1,   gain: 1,    pops: 1},
+  track:   {label: "Track",   want: 1.2,  shift: 1,    shiftT: 0.6, gain: 1.15, pops: 1.6}
+};
+var MODE_ORDER = ["comfort", "sport", "track"];
+function modeOf(m){ return MODES[m] || MODES.sport; }
+function autoGear(E, K, v, thr, brake, mode){
+  var n = K.length, span = E.red - E.idle, best = 1, bd = Infinity, i, M = modeOf(mode), top = E.shiftUp*M.shift;
   function rpm(g){ return v*K[g - 1]; }
   if(thr > 0.85){
-    for(i = 1; i <= n; i++) if(rpm(i) <= E.shiftUp*0.995) return i;
+    for(i = 1; i <= n; i++) if(rpm(i) <= top*0.995) return i;
     return n;
   }
-  var want = thr > 0.05 ? E.idle + span*(0.2 + 0.45*thr) : brake ? E.idle + span*0.45 : E.idle + span*0.22;
+  var want = E.idle + span*Math.min(0.85, M.want*(thr > 0.05 ? 0.2 + 0.45*thr : brake ? 0.45 : 0.22));
   var lo = E.idle*1.05, hi = E.shiftUp*(thr > 0.05 || brake ? 0.92 : 0.8);
   for(i = 1; i <= n; i++){
     var r = rpm(i); if(r > hi) continue;
@@ -184,6 +193,72 @@ function autoGear(E, K, v, thr, brake){
     if(d < bd - 1e-9){ bd = d; best = i; }
   }
   return best;
+}
+/* Nitrous (K held): a 4 s charge that refills in about 16 s. N = {charge 0..1}; -> true while it fires. */
+function nitroStep(N, held, thr, speed, dt){
+  dt = Math.max(0, Math.min(0.1, +dt || 0));
+  if(N.charge <= 0.001) N.dry = true; else if(N.charge >= 0.15) N.dry = false;   // run dry: it waits for 15% back
+  var on = !!held && thr > 0.3 && speed > 2 && !N.dry;
+  N.charge = Math.max(0, Math.min(1, N.charge + (on ? -0.25 : 0.06)*dt));
+  N.on = on;
+  return on;
+}
+/* The performance timer: from a standstill it times 0-100 km/h, 0-200 km/h and the quarter mile (402.3 m, with the speed
+   at the line). P = {}; -> [{kind: "0-100" | "0-200" | "quarter", t (s), v? (m/s)}] when one is reached. Stopping again
+   (or reversing) re-arms it; a run that slows below half its best speed is abandoned. */
+function perfStep(P, speed, dt){
+  dt = Math.max(0, Math.min(0.1, +dt || 0)); var v = +speed || 0, out = [];
+  if(v < 0.3){ if(v > -0.3){ P.armed = true; P.run = false; } return out; }
+  if(P.armed && !P.run){ P.run = true; P.t = 0; P.d = 0; P.vmax = 0; P.got = {}; P.armed = false; }
+  if(!P.run) return out;
+  P.t += dt; P.d += v*dt; P.vmax = Math.max(P.vmax, v);
+  if(!P.got["0-100"] && v >= 100/3.6){ P.got["0-100"] = 1; out.push({kind: "0-100", t: P.t}); }
+  if(!P.got["0-200"] && v >= 200/3.6){ P.got["0-200"] = 1; out.push({kind: "0-200", t: P.t}); }
+  if(!P.got.quarter && P.d >= 402.3){ P.got.quarter = 1; out.push({kind: "quarter", t: P.t, v: v}); P.run = false; }
+  if(P.run && v < P.vmax*0.5) P.run = false;
+  return out;
+}
+/* Wheelies and stoppies on a motorbike (F held). W = {p (rad: + front up, - rear up), pv, dist, kind}; inp = {trick,
+   thr 0..1, brake, speed (m/s), gear, rpmFrac (rpm/redline)}. A wheelie lifts with the throttle in a low gear and the
+   revs up and balances near BAL; past LOOP it loops out (a bail). A stoppie lifts the rear under hard braking above
+   STOPPIE_V; past OVER it goes over the bars (a bail). Calm: none. -> {events: [{kind: "start"|"end"|"bail", trick,
+   dist}]} with W.p to draw. */
+var BAL = 1.05, LOOP = 1.38, OVER = -0.78, STOPPIE_V = 4;
+function wheelieStep(W, inp, dt){
+  dt = Math.max(0, Math.min(0.1, +dt || 0)); inp = inp || {};
+  var ev = [], thr = clamp(+inp.thr || 0, 0, 1), v = Math.abs(+inp.speed || 0), was = W.kind || null;
+  var low = (inp.gear | 0) <= 1 ? 1 : (inp.gear | 0) === 2 ? 0.85 : (inp.gear | 0) === 3 ? 0.55 : 0.3, k = 1 - Math.exp(-dt*7);
+  var power = low*(0.45 + 0.55*clamp(+inp.rpmFrac || 0, 0, 1));
+  if(inp.trick && inp.brake && v > STOPPIE_V && W.p <= 0.05){
+    // the rear rises toward a height set by the speed; over 20 m/s it keeps going: over the bars
+    var tgt = v > 20 ? OVER - 0.2 : -Math.min(0.62, 0.12 + v/26);
+    W.pv += ((tgt - W.p)*5 - W.pv)*k;
+  } else if(inp.trick && thr > 0.25 && v > 0.8 && W.p >= -0.05){
+    // up to the balance point quickly, then the throttle keeps creeping it past: feather it (tap W) to hold it there
+    var want = W.p < BAL*0.92 ? 2.4*power*thr : 0.1*thr*power + (W.p > BAL ? 0.07 : 0);
+    W.pv += (want - W.pv)*k;
+  } else if(inp.trick && W.p > 0){
+    W.pv += (-1.1 - W.pv)*k;                                            // off the throttle with F held: it settles slowly
+  } else if(Math.abs(W.p) < 0.01){ W.p = 0; W.pv = 0; }               // on both wheels
+  else {
+    W.pv += ((W.p > 0 ? -3.2 : 3.2)*Math.min(1, Math.abs(W.p)*3 + 0.2) - W.pv)*k;   // back down on both wheels
+  }
+  var p0 = W.p; W.p += W.pv*dt;
+  if(p0*W.p < 0 && !(inp.trick && (W.p < 0 ? inp.brake : thr > 0.25))){ W.p = 0; W.pv = 0; }   // it lands on both wheels, no bounce into the other trick
+  if(W.p < 0.002 && W.p > -0.002 && !inp.trick){ W.p = 0; W.pv = 0; }
+  if(was === null && W.p > 0.12){ W.kind = "wheelie"; W.dist = 0; ev.push({kind: "start", trick: "wheelie"}); }
+  else if(was === null && W.p < -0.1){ W.kind = "stoppie"; W.dist = 0; ev.push({kind: "start", trick: "stoppie"}); }
+  if(W.kind) W.dist += v*dt;
+  if(W.p > LOOP || W.p < OVER){
+    ev.push({kind: "bail", trick: W.kind || (W.p > 0 ? "wheelie" : "stoppie"), dist: W.dist || 0});
+    W.p = 0; W.pv = 0; W.kind = null; W.dist = 0;
+  } else if(W.kind && ((W.kind === "wheelie" && W.p < 0.05) || (W.kind === "stoppie" && W.p > -0.04))){
+    ev.push({kind: "end", trick: W.kind, dist: W.dist});
+    W.kind = null;
+    if(W.p < 0) { W.p = Math.max(W.p, -0.04); }
+  }
+  if(W.p < 0 && v < 0.5){ W.pv = 3; }                                  // a stoppie never sticks at a standstill
+  return {events: ev, p: W.p};
 }
 function gearState(E){ return {gear: 1, rpm: E && E.idle || 900, shiftT: 0, manual: false, clutchWas: false, launchT: 0, slip0: 0, held: false}; }
 function gearStep(G, inp, E, dt){
@@ -212,17 +287,17 @@ function gearStep(G, inp, E, dt){
     G.since = (G.since || 0) + dt;
     if(sp < 0 || v < 1.2){ if(g !== 1 && G.shiftT <= 0){ g = 1; G.since = 0; } }
     else if(G.shiftT <= 0){
-      var tg = autoGear(E, K, v, thr, !!inp.brake), cur = at(g);
+      var M = modeOf(inp.mode), tg = autoGear(E, K, v, thr, !!inp.brake, inp.mode), cur = at(g);
       if(tg !== g && thr <= 0.85 && cur < E.shiftUp*0.92 && cur > E.idle*1.05){
         // keep this gear unless the other is clearly better (no hunting between two close gears)
-        var span = E.red - E.idle, want = thr > 0.05 ? E.idle + span*(0.2 + 0.45*thr) : inp.brake ? E.idle + span*0.45 : E.idle + span*0.22;
+        var span = E.red - E.idle, want = E.idle + span*Math.min(0.85, M.want*(thr > 0.05 ? 0.2 + 0.45*thr : inp.brake ? 0.45 : 0.22));
         if(Math.abs(at(tg) - want) > Math.abs(cur - want) - span*0.06) tg = g;
       }
-      if(cur >= E.shiftUp && g < n){                 // never sit on the limiter: up now
+      if(cur >= E.shiftUp*(thr > 0.85 ? M.shift : 1) && g < n){   // never sit on the limiter (Comfort shifts early): up now
         tg = Math.max(tg, g + 1);
       }
       if(tg > g && (G.since >= 0.45 || cur >= E.shiftUp)){
-        var aq = E.qs && thr > 0.4; g++; G.shiftT = aq ? 0.05 : 0.25; G.since = 0; ev.push("up"); if(aq) ev.push("qs");
+        var aq = E.qs && thr > 0.4; g++; G.shiftT = aq ? 0.05 : 0.25*M.shiftT; G.since = 0; ev.push("up"); if(aq) ev.push("qs");
       } else if(tg < g && (G.since >= (thr > 0.85 ? 0.12 : 0.3))){
         // a kickdown drops straight to the gear it wants; otherwise one gear at a time, each rev-matched
         var to = thr > 0.85 ? tg : g - 1;
@@ -306,6 +381,7 @@ function derive(entry){
 }
 
 HQV.hqVehiclePhys = {derive: derive, accFor: accFor, t0100: t0100, timeTo: timeTo, estimate0100: estimate0100,
-                     voiceFor: voiceFor, gearsFor: gearsFor, engineFor: engineFor, tyreCirc: tyreCirc, gearState: gearState, gearStep: gearStep, autoGear: autoGear, REVS: REVS, CAP_KMH: CAP_KMH, SLIDE: SLIDE, LEAN: LEAN, ROLL: ROLL,
+                     voiceFor: voiceFor, gearsFor: gearsFor, engineFor: engineFor, tyreCirc: tyreCirc, gearState: gearState, gearStep: gearStep, autoGear: autoGear, MODES: MODES, MODE_ORDER: MODE_ORDER,
+                     nitroStep: nitroStep, perfStep: perfStep, wheelieStep: wheelieStep, WHEELIE: {BAL: BAL, LOOP: LOOP, OVER: OVER, STOPPIE_V: STOPPIE_V}, REVS: REVS, CAP_KMH: CAP_KMH, SLIDE: SLIDE, LEAN: LEAN, ROLL: ROLL,
                      FLOOR: FLOOR, FLOOR_EV: FLOOR_EV};
 })();

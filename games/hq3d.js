@@ -1145,6 +1145,129 @@ function mount(el, api){
       aimBone(R.ra, B.hand.getWorldPosition(boomV), R.rav, "x", 0.9, 0);
     }
   }
+  /* ---------- [3.16] the grenade launcher (games/hqgrenade.js) ----------
+     X takes it out (on foot in the 3D City; on your left shoulder, the left arm up to its grip, as the boombox is held
+     on the right), F or a click with the mouse captured (Mouse steering) fires where the camera looks. Your shots and
+     everyone else's (presence `gn`, the "grenade" capability) fly here in the same fixed steps; a blast knocks back
+     only you (gnKnock: on foot a push and a lift, in a car a shove and a dent), and the others see you move. */
+  var GN = {out: false, cd: 0, seq: 0, mine: [], live: [], seen: {}, fx: null, kx: 0, kz: 0, shake: 0};
+  var GUN_AT = [0.2, 0.34, 0.02], GUN_GRIP = [0.3, 0.2, 0.22], GUN_SIZE = 1.1, gunV = null;
+  function curW(){ return cur && (cur.net || cur.name); }
+  function gnHere(){ var w = curW(); return !!(cur && cur.camModes && typeof w === "string" && w.indexOf("city3d") === 0); }
+  function gnCan(){ return gnHere() && !ride && !(cur.carry && cur.carry()) && !tripHeld() && !studioPlacing(); }
+  function gnToggle(){
+    if(!HQV.hqGrenade || (!GN.out && !gnCan())) return false;
+    GN.out = !GN.out; E.sfx("ui");
+    if(api.announce) api.announce(GN.out ? "Grenade launcher out: F or click to fire, X puts it away" : "Grenade launcher put away");
+    return true;
+  }
+  function gnFire(){
+    var H = HQV.hqGrenade;
+    if(!H || !GN.out || GN.cd > 0 || !gnCan() || !avatar) return false;
+    var f = new THREE.Vector3(); curCam().getWorldDirection(f);
+    var v = H.aim({x: f.x, y: f.y, z: f.z}, 0), sn = Math.sin(avatar.yaw), cs = Math.cos(avatar.yaw);
+    // from its muzzle: over your left shoulder ((cos, -sin) is your left), a little ahead
+    var L = {s: GN.seq = (GN.seq + 1) & 0xffff, k: 0, x: avatar.x + sn*0.6 + cs*0.25, y: avatar.g.position.y + 1.55, z: avatar.z + cs*0.6 - sn*0.25,
+             vx: v.vx, vy: v.vy, vz: v.vz};
+    var g = H.shot(L); g.launch = L; g.t0 = E.now(); g.w = curW(); GN.mine.push(g); GN.live.push(g);   // (the frames carry the launch)
+    GN.cd = H.COOL; E.sfx("shot");
+    return true;
+  }
+  // someone else's shots from their frame: each new one (their id + its number) flies from its launch, `age` ago
+  function gnSeen(u, list){
+    var H = HQV.hqGrenade; if(!H || !gnHere() || !Array.isArray(list)) return;
+    var now = E.now();
+    list.slice(0, H.WIRE.n).forEach(function(a){
+      var o = H.fromWire(a); if(!o) return;
+      var key = u + ":" + o.s; if(GN.seen[key] != null && now - GN.seen[key] < 6) return;
+      GN.seen[key] = now;
+      if(o.age >= H.KINDS[o.k].fuse) return;                         // too late: it has gone off already
+      var g = H.shot(o); g.t0 = now - o.age; g.w = curW(); GN.live.push(g);
+    });
+  }
+  function gnEnv(){
+    return {ground: groundAt, hit: cur && cur.camHit ? cur.camHit : null,
+            water: cur && cur.waterAt ? function(x, z){ return cur.waterAt(x, z); } : null};
+  }
+  // a blast: its fireball and smoke (Calm: smoke only), its boom (late by the distance), a shake, and your knock
+  function gnBlast(b){
+    var H = HQV.hqGrenade, calm = E.calm(), c = curCam();
+    if(GN.fx) GN.fx.blast(b.x, b.y, b.z, b.k, b.wet, calm);
+    var d = c ? Math.hypot(c.position.x - b.x, c.position.y - b.y, c.position.z - b.z) : 0;
+    H.boom(E.audioOut ? E.audioOut() : null, d, b.wet);
+    if(!calm && !(camSet && camSet.reduced)) GN.shake = Math.max(GN.shake, Math.max(0, 1 - d/40)*0.45);
+    gnKnock(b);
+  }
+  function gnKnock(b){
+    var H = HQV.hqGrenade, kb = avatar && gnHere() ? H.knock(b, avatar.x, avatar.g.position.y + 0.9, avatar.z) : null;
+    if(!kb) return;
+    if(ride){
+      // a car, a motorbike or a bicycle on the ground: shoved along its heading by the push that way, and dented
+      if(ride.boat || ride.heli || ride.plane || ride.pet || ride.kind === "skate" || ride.air || ride.loop) return;
+      var along = kb.dx*Math.sin(ride.head) + kb.dz*Math.cos(ride.head);
+      ride.speed += along*kb.push*0.6; E.sfx("hit");
+      drvHit(kb.push*2, along < 0 ? "f" : "r");
+      return;
+    }
+    if(cur.carry && cur.carry()) return;
+    walkTo = null; walkDoor = null;
+    GN.kx += kb.dx*kb.push; GN.kz += kb.dz*kb.push;
+    if(!E.calm()){ avatar.airborne = true; avatar.vy = Math.max(avatar.vy || 0, kb.lift); }   // Calm: a shove, never a flight
+    if(api.announce && kb.s > 0.3) api.announce("Knocked back by a blast");
+  }
+  // each frame, before the camera: fly every shot on to now, go off, draw; then the cooldown and the cleanup
+  function gnFrame(dt){
+    var H = HQV.hqGrenade; if(!H) return;
+    if(GN.cd > 0) GN.cd = Math.max(0, GN.cd - dt);
+    if(GN.out && !gnCan()) GN.out = false;                          // on a ride, a trip, another floor: put away
+    var now = E.now(), w = curW();
+    if(GN.mine.length) GN.mine = GN.mine.filter(function(g){ return now - g.t0 < H.KEEP && g.w === w; });
+    if(!GN.live.length && !(GN.fx && GN.fx.busy())) return;
+    if(!GN.fx && cur && cur.scene) GN.fx = H.fx(THREE, cur.scene);
+    if(!GN.fx) return;
+    if(GN.fxW !== w){ GN.fx.clear(); GN.fxW = w; }                   // another floor: the last one's blasts are gone
+    GN.fx.attach(cur.scene);
+    var env = gnEnv();
+    for(var i = GN.live.length - 1; i >= 0; i--){
+      var g = GN.live[i];
+      if(g.w !== w){ if(g.m){ g.m.free(); g.m = null; } GN.live.splice(i, 1); continue; }   // left that floor
+      var b = H.advance(g, env, now - g.t0);
+      if(!g.m) g.m = GN.fx.ball();
+      g.m.position.set(g.x, g.y, g.z); if(!g.rest && !g.wet) g.m.rotation.x += dt*9;
+      if(b) gnBlast(b);
+      if(g.done){ g.m.free(); g.m = null; GN.live.splice(i, 1); }
+    }
+    GN.fx.step(dt);
+    Object.keys(GN.seen).forEach(function(k){ if(now - GN.seen[k] > 8) delete GN.seen[k]; });
+  }
+  // each frame, after the clips: the launcher on the left shoulder (out) or gone; hold: point the left arm at its grip
+  function gunStep(ch, on, hold){
+    var B = ch && ch._gun;
+    if(!on){
+      if(B && B.g.visible){ B.g.visible = false; var R0 = rigOf(ch); if(R0) R0.la.scale.set(1, 1, 1); }
+      return;
+    }
+    var R = rigOf(ch); if(!R || !HQV.hqGrenade) return;
+    if(!gunV) gunV = new THREE.Vector3();
+    if(!B){
+      B = ch._gun = {g: HQV.hqGrenade.launcherModel(THREE)}; R.t.add(B.g); B.g.position.set(GUN_AT[0], GUN_AT[1], GUN_AT[2]);
+      B.hand = new THREE.Object3D(); B.hand.position.set(GUN_GRIP[0], GUN_GRIP[1], GUN_GRIP[2]); R.t.add(B.hand);
+    }
+    B.g.visible = true;
+    R.t.getWorldScale(gunV); B.g.scale.setScalar(GUN_SIZE/(gunV.x || 1));
+    if(hold){
+      if(!tmpA){ tmpA = new THREE.Vector3(); tmpB = new THREE.Vector3(); tmpQ = new THREE.Vector3(); tmpE = new THREE.Euler(); }
+      ch.o.updateMatrixWorld(true);
+      aimBone(R.la, B.hand.getWorldPosition(gunV), R.lav, "x", 0.9, 0);
+    }
+  }
+  // presence: the launcher out (gl) and your shots of the last KEEP s (gn, at most WIRE.n), each with its age
+  inst.grenadeNet = function(){
+    var H = HQV.hqGrenade; if(!H || !gnHere()) return null;
+    var now = E.now(), gn = [];
+    GN.mine.slice(-H.WIRE.n).forEach(function(g){ var a = H.toWire(g.launch, (now - g.t0)*1000); if(a) gn.push(a); });
+    return {gl: GN.out ? 1 : 0, gn: gn};
+  };
   /* ---------- [pets 3.14] your pets and everyone else's (games/hqpets.js) ----------
      A small hook: the pets runtime is made on the first frame, fed your pose, what you ride, the floor's blocked /
      ground / water helpers and the people here (their `pt`, the "pets" capability), and gets B / U / O / E. */
@@ -3253,6 +3376,16 @@ function mount(el, api){
       else if(!blocked(avatar.x, nz)) avatar.z = nz;
       else { avatar.speed = 0; avatar.sv = 0; keyMove = false; if(walkTo){ walkTo = null; walkDoor = null; } }   // a wall stops you
     }
+    // [3.16] a blast's push (gnKnock): a velocity of its own, slid along walls as a step is, dying away (slower in the air)
+    if(GN.kx || GN.kz){
+      var kx = avatar.x + GN.kx*dt, kz = avatar.z + GN.kz*dt, kd = Math.exp(-(avatar.airborne ? 1.5 : 6)*dt);
+      if(!blocked(kx, kz) || blocked(avatar.x, avatar.z)){ avatar.x = kx; avatar.z = kz; }
+      else if(!blocked(kx, avatar.z)){ avatar.x = kx; GN.kz = 0; }
+      else if(!blocked(avatar.x, kz)){ avatar.z = kz; GN.kx = 0; }
+      else { GN.kx = 0; GN.kz = 0; }
+      GN.kx *= kd; GN.kz *= kd; if(Math.hypot(GN.kx, GN.kz) < 0.2){ GN.kx = 0; GN.kz = 0; }
+      movedHere = true;
+    }
     // idle, walk and sprint blended by your pace, each at the rate your stride needs (backwards while you step back);
     // a lean into the turn and with the pace, the head into the turn
     locomote(avatar.ch, avatar.speed, avatar.rate, dt);
@@ -3523,6 +3656,7 @@ function mount(el, api){
     if(rig.mode !== lastMode) modeChanged(lastMode, rig.mode);
     if(pose && !pose.ortho){
       pcam.position.set(pose.pos.x, pose.pos.y, pose.pos.z);
+      if(GN.shake > 0){ pcam.position.x += Math.sin(t*61)*GN.shake*0.3; pcam.position.y += Math.sin(t*73)*GN.shake*0.25; GN.shake = Math.max(0, GN.shake - dt*1.2); }   // [3.16] a blast
       pcam.up.set(pose.up.x, pose.up.y, pose.up.z);
       pcam.lookAt(pose.look.x, pose.look.y, pose.look.z);
       if(pose.roll) pcam.rotateZ(pose.roll);
@@ -3606,7 +3740,7 @@ function mount(el, api){
       if(m === "fp" || m === "photo"){ if(!locked() && canvas.requestPointerLock){ try { canvas.requestPointerLock(); } catch(x){} } drag = null; return; }
       if(m === "cine") return;
       // [3.15] mouse steering: a click while the mouse is captured picks nothing (a plain click captures it: onUp)
-      if(CHASE[m] && steerOn() && locked()){ drag = null; return; }
+      if(CHASE[m] && steerOn() && locked()){ drag = null; if(e.button === 0) gnFire(); return; }   // [3.16] with the launcher out it fires
       // map: left-drag pans; chase family: left- or right-drag orbits (trackpads have no right-drag),
       // and a left click that barely moved still picks / walks (onUp, under 5 px)
       drag = {x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, moved: 0, rig: true, button: e.button,
@@ -4554,6 +4688,10 @@ function mount(el, api){
     if(ride && ride.pet && e.code === "KeyF" && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey){   // [3.14] the breath
       e.preventDefault(); e.stopPropagation(); if(e.type === "keydown" && !e.repeat) petBreath(); return;
     }
+    // [3.16] the grenade launcher, on foot in the 3D City: X out / away, F fires (one shot a press)
+    if((e.code === "KeyX" || (e.code === "KeyF" && GN.out)) && !ride && inst.running && gnHere() && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey){
+      e.preventDefault(); e.stopPropagation(); if(e.type === "keydown" && !e.repeat){ if(e.code === "KeyX") gnToggle(); else gnFire(); } return;
+    }
     if(drvKey(e)) return;                                              // [3.12] L lights, Y convoy, J (held) formation
     if(camKey(e)) return;
     if(!inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -4581,6 +4719,7 @@ function mount(el, api){
     motionStep(dt);
     propHomeStep();                                                    // [3.13.4] your roof's helicopter back on its pad
     testStep(dt);                                                      // a dealership test drive
+    gnFrame(dt);                                                       // [3.16] grenades in flight, blasts, your knock
     if(cur && cur.onBoat) cur.onBoat(ride && ride.boat ? {st: ride.boat, kind: ride.kind, beam: ride.V.beam || 1} : null);   // the City's wake, landings
     if(cur && cur.onHeli) cur.onHeli(ride && (ride.heli || (ride.plane && !ride.plane.ground)) ? {st: ride.heli || ride.plane, kind: ride.pet ? "heli" : ride.kind} : null);                          // flying on to another island (a dragon: as a helicopter)
     nearIdx = ride || POOL.u ? -1 : nearBike();
@@ -4606,6 +4745,7 @@ function mount(el, api){
       // your boombox: on foot or on a board (held up); put away in a seat
       var bOn = !!boomMe && !POOL.u && (!ride || ride.kind === "skate");
       boomStep(avatar.ch, bOn, t, bOn);
+      gunStep(avatar.ch, GN.out && !ride, true);                       // [3.16] the launcher, on foot
     }
     placePeers(dt, t);
     petsFrame(t, dt);                                                  // [pets 3.14]
@@ -4799,6 +4939,9 @@ function mount(el, api){
       // their boombox (`bb`, the "boombox" capability): the song it plays, while it plays
       P.bb = typeof p.bb === "string" && /^[A-Za-z0-9_-]{11}$/.test(p.bb) ? p.bb : null;
       P.pt = Array.isArray(p.pt) && p.pt.length ? p.pt.slice(0, 2) : null;   // [pets 3.14] their pets (`pt`): drawn by games/hqpets.js
+      // [3.16] their launcher out (`gl`) and their shots (`gn`, the "grenade" capability): each new one flies here too
+      P.gl = p.gl === 1;
+      if(Array.isArray(p.gn) && p.w === curW()) gnSeen(p.u, p.gn);
       P.u = p.u;   // (3.13.1) or a live set (boomLive, keyed by their Arena user id)
       // [3.12] convoys (the "convoy" capability): whom they invite (ci), whom they follow (cv), where they lead (cg, cm)
       var UR = /^[A-Za-z0-9_-]{1,64}$/;
@@ -4929,6 +5072,7 @@ function mount(el, api){
         if(P.bike && P.ch.o.parent === P.lean) ridePose(P.ch, P.bike, P.steer, P.g);
         else if(!vk){ leanStep(P.ch, P.lean2 || (P.lean2 = {r: 0, rv: 0, p: 0, pv: 0, h: 0, hv: 0}), P.fs, P.fr, 0, dt, true); headApply(P.ch, P.lean2.h); }
         boomStep(P.ch, !!(P.bb || boomLive[P.u]) && !vk, t, true);                      // their boombox, on foot
+        gunStep(P.ch, !!P.gl && !vk, true);                                              // [3.16] their launcher, on foot
       }
     });
   }
@@ -5019,6 +5163,13 @@ function mount(el, api){
   if(SMOKE && SMOKE.on){
     window.HQ3D_DEBUG = {mode: function(m){ smokeCam(m); }, scene: function(){ return cur && cur.scene; }, teleport: function(x, z, yaw){ smokeTeleport(+x || 0, +z || 0, yaw == null ? null : +yaw); },
                          ride: function(kind){ smokeRide(kind); }, stats: function(){ return smokeStats(); },
+                         // [3.16] the grenade launcher, for tools: fire one (true), or a blast a metre in front of you ("boom"); -> its state
+                         grenade: function(a){
+                           if(a === true){ GN.out = true; GN.cd = 0; gnFire(); }
+                           else if(a === "boom" && avatar) gnBlast({x: avatar.x + Math.sin(avatar.yaw), y: avatar.g.position.y, z: avatar.z + Math.cos(avatar.yaw), k: 0, wet: false});
+                           return {here: gnHere(), out: GN.out, live: GN.live.length, booms: GN.fx ? GN.fx.busy() : 0, kx: GN.kx, kz: GN.kz, air: !!(avatar && avatar.airborne),
+                                   x: avatar ? avatar.x : 0, z: avatar ? avatar.z : 0, net: inst.grenadeNet ? inst.grenadeNet() : null};
+                         },
                          // [stunts] the City's stunts, and where you are in one (tools drive them headless)
                          stunts: function(){ var S = stuntsNow(); return S ? S.list.map(function(s){ return {id: s.id, kind: s.kind, name: s.name, x: s.x, z: s.z, yaw: s.yaw, respawn: s.respawn,
                            pad: s.pads[0] ? {x: s.pads[0].x, z: s.pads[0].z, v: s.pads[0].v} : null, jump: s.jump ? {D: s.jump.D, v: s.jump.v, t: s.jump.t, apex: s.jump.apex, lip: s.jump.lip, target: s.jump.target} : null}; }) : null; },

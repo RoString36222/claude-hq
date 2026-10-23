@@ -67,7 +67,8 @@ pub const GAMES: &[(&str, i64, &[&str])] = &[
     // "carpool" (HQ 3.15): pos may carry pb (the user id of the driver you ride with) and ps (your seat, 1-3)
     // "motion": pos may carry t (the sender's clock, ms), vx / vz (cm/s), yr (deg/s) and rpm, so a listener can draw
     // them smoothly between frames of their own clock (valley/hq.rs Motion)
-    ("hq", 4, &["ride", "look", "skate", "drive", "alt", "isles", "fly", "plane", "vehicles", "airliner", "boombox", "convoy", "tuning", "pets", "hqstyle", "motion", "petride", "carpool"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`; "drive": a = 5 (a car), 6 (a motorbike)
+    // "grenade" (HQ 3.16): pos may carry gl (1: a grenade launcher out) and gn, up to 4 shots [s, x, y, z, vx, vy, vz, k, a] (valley/hq.rs Shot)
+    ("hq", 4, &["ride", "look", "skate", "drive", "alt", "isles", "fly", "plane", "vehicles", "airliner", "boombox", "convoy", "tuning", "pets", "hqstyle", "motion", "petride", "carpool", "grenade"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`; "drive": a = 5 (a car), 6 (a motorbike)
     ("type", 1, &[]),
     ("td", 1, &[]),
     ("bowl", 1, &[]),
@@ -117,7 +118,8 @@ mod tests {
         // "alt" (v2): h / p ride along, x / z span the 2 km world, floor "city3d".
         // "isles" (v3): the floor may be a world's own room, city3d:<world id>.
         // "vehicles" (v4): while driving, v / vp name the catalogue vehicle and its paint.
-        assert_eq!(info["games"]["hq"], json!({"v": 4, "caps": ["ride", "look", "skate", "drive", "alt", "isles", "fly", "plane", "vehicles", "airliner", "boombox", "convoy", "tuning", "pets", "hqstyle", "motion", "petride", "carpool"]}));
+        // "grenade" (HQ 3.16, still v4): gl / gn, a launcher out and its recent shots.
+        assert_eq!(info["games"]["hq"], json!({"v": 4, "caps": ["ride", "look", "skate", "drive", "alt", "isles", "fly", "plane", "vehicles", "airliner", "boombox", "convoy", "tuning", "pets", "hqstyle", "motion", "petride", "carpool", "grenade"]}));
         assert_eq!(version("fps"), 1);
         assert_eq!(version("pond"), 1);
         // An unknown game still answers 1, as Python's PROTOCOL.get(g, {}) does.

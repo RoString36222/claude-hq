@@ -161,6 +161,13 @@ struct Person {
     /// (`yr`, deg/s) and its engine's revs (`rpm`). A listener draws them a moment in the past, between two frames of their
     /// own clock, instead of guessing from when the frames happened to arrive. Per frame: a frame without `t` has none.
     motion: Option<Motion>,
+    /// A grenade launcher out (`gl`, the "grenade" capability, HQ 3.16; a tank's turret reuses it). Not tied to `a`: a
+    /// gunner may sit in a vehicle. Per frame: a frame without `gl` puts it away.
+    gl: bool,
+    /// Their recent shots (`gn`, "grenade"): up to GN_MAX [`Shot`]s. A shot rides in every frame while it is young (its
+    /// age at most GN_AGE_MAX ms), so a listener that missed a frame still sees it; listeners dedupe on (uid, s) and fly
+    /// the arc themselves, the Arena only checks and relays. Per frame: a frame without `gn` has none.
+    gn: Option<Vec<Shot>>,
     /// (tokens, when) -- Python's `[POS_BURST, t]` list.
     bucket: (f64, f64),
 }
@@ -204,6 +211,8 @@ impl Hq {
                 pool: None,
                 pets: None,
                 motion: None,
+                gl: false,
+                gn: None,
                 bucket: (POS_BURST, t),
             });
         }
@@ -328,6 +337,9 @@ impl Hq {
                 Some((super::py_trunc(ts), super::py_trunc(vx), super::py_trunc(vz), super::py_trunc(yr), super::py_trunc(rpm)))
             }
         };
+        // A grenade launcher: `gl` 0 / 1 (absent or null is 0) and `gn` its recent shots; a bad one drops the whole frame.
+        let Some(gl) = small_int(msg.get("gl").filter(|v| !v.is_null()), 1) else { return false };
+        let Some(gn) = read_shots(msg.get("gn")) else { return false };
         p.w = w.to_string();
         p.x = super::py_trunc(x); // Python's int(x): toward zero
         p.z = super::py_trunc(z);
@@ -342,6 +354,8 @@ impl Hq {
         p.pool = pool;
         p.pets = pets;
         p.motion = motion;
+        p.gl = gl == 1;
+        p.gn = gn;
         self.dirty = true;
         true
     }
@@ -439,6 +453,14 @@ impl Hq {
                         m.insert("vz".into(), json!(vz));
                         m.insert("yr".into(), json!(yr));
                         m.insert("rpm".into(), json!(rpm));
+                    }
+                    // only while their grenade launcher is out ("grenade" capability, HQ 3.16)
+                    if p.gl {
+                        m.insert("gl".into(), json!(1));
+                    }
+                    // only while they have shots in the air ("grenade" capability), in the order they were sent
+                    if let Some(gn) = &p.gn {
+                        m.insert("gn".into(), json!(gn));
                     }
                     Value::Object(m)
                 })
@@ -557,6 +579,51 @@ fn read_pets(v: Option<&Value>) -> Option<Option<Vec<PetTag>>> {
         let g = small(t.get(3), 2)?;
         let n = crate::pets::clean_name(t.get(4)?.as_str()?)?;
         out.push((s, var, acc, g, n));
+    }
+    Some(Some(out))
+}
+
+/// A shot in presence (the "grenade" capability, HQ 3.16): [s, x, y, z, vx, vy, vz, k, a] -- its number (0..=GN_S_MAX;
+/// it wraps), its launch point (cm: x / z within XZ_MAX_CM, y within ALT_H_MAX), its launch velocity (cm/s, each within
+/// GN_V_MAX), its kind (0..=GN_K_MAX) and its age when the frame was taken (ms, 0..=GN_AGE_MAX). Relayed as received.
+type Shot = [i64; 9];
+/// The most shots one frame carries: the few still young, never a stream.
+const GN_MAX: usize = 4;
+/// A shot's number wraps at 16 bits, plenty to tell apart the few a listener holds.
+const GN_S_MAX: i64 = 65_535;
+/// A launch velocity's bound, per axis (cm/s: 60 m/s).
+const GN_V_MAX: i64 = 6_000;
+/// The kinds a page may send: 0, a grenade. The tank's shell (1) comes with a later change, by raising this alone.
+const GN_K_MAX: i64 = 0;
+/// How old a shot may be and still ride along (ms).
+const GN_AGE_MAX: i64 = 2_000;
+
+/// `gn` from a pos frame: Some(None) when absent, null or empty, Some(the shots) when good, None to drop the whole frame
+/// (not an array of at most GN_MAX, an entry not exactly 9 whole numbers, one out of its range, two with the same s).
+fn read_shots(v: Option<&Value>) -> Option<Option<Vec<Shot>>> {
+    let a = match v {
+        None | Some(Value::Null) => return Some(None),
+        Some(v) => v.as_array()?,
+    };
+    if a.len() > GN_MAX {
+        return None;
+    }
+    if a.is_empty() {
+        return Some(None);
+    }
+    let (xz, h, sv) = (XZ_MAX_CM as i64, ALT_H_MAX as i64, GN_V_MAX);
+    let lim = [(0, GN_S_MAX), (-xz, xz), (-h, h), (-xz, xz), (-sv, sv), (-sv, sv), (-sv, sv), (0, GN_K_MAX), (0, GN_AGE_MAX)];
+    let mut out: Vec<Shot> = Vec::with_capacity(a.len());
+    for e in a {
+        let e = e.as_array().filter(|e| e.len() == 9)?;
+        let mut s: Shot = [0; 9];
+        for ((n, v), (lo, hi)) in s.iter_mut().zip(e).zip(lim) {
+            *n = v.as_i64().filter(|n| (lo..=hi).contains(n))?;
+        }
+        if out.iter().any(|o| o[0] == s[0]) {
+            return None;
+        }
+        out.push(s);
     }
     Some(Some(out))
 }
@@ -891,6 +958,73 @@ mod tests {
             assert!(!p.pos("u", &json!({"w": "city3d", "x": 900, "z": 0, "r": 0, "a": 0, "pt": bad}), 2.0), "{bad}");
         }
         assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
+    }
+
+    #[test]
+    fn a_grenade_launcher_and_its_shots_ride_in_the_listing_while_sent() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        // gl and two shots (the second at every inclusive bound): echoed after everything else, in the order sent
+        let gn = json!([[7, 120, 180, -35, 1500, 900, -2000, 0, 300], [65_535, -102_400, 50_000, 102_400, 6000, -6000, 0, 0, 2000]]);
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1, "gl": 1, "gn": gn}), 0.1));
+        assert_eq!(p.listing()[0].to_string(),
+                   r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":1,"gl":1,"gn":[[7,120,180,-35,1500,900,-2000,0,300],[65535,-102400,50000,102400,6000,-6000,0,0,2000]]}"#);
+        // a frame without them clears both: the listing is the one it always was
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1}), 0.2));
+        assert_eq!(p.listing()[0].to_string(), r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":1}"#);
+        // null, 0 and an empty array say nothing either
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1, "gl": null, "gn": null}), 0.3));
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1, "gl": 0, "gn": []}), 0.4));
+        assert_eq!(p.listing()[0].to_string(), r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":1}"#);
+        // either alone is fine, and `a` does not matter: a gunner may sit in a car
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 5, "gl": 1}), 0.5));
+        let l = p.listing();
+        assert_eq!((l[0]["gl"].clone(), l[0].get("gn")), (json!(1), None));
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 5, "gn": [[9, 0, 0, 0, 0, 0, 0, 0, 0]]}), 0.6));
+        let l = p.listing();
+        assert_eq!((l[0].get("gl"), l[0]["gn"].clone()), (None, json!([[9, 0, 0, 0, 0, 0, 0, 0, 0]])));
+    }
+
+    #[test]
+    fn a_bad_shot_or_launcher_flag_drops_the_whole_frame() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        let shot = |s: i64| json!([s, 120, 180, -35, 1500, 900, -2000, 0, 300]);
+        // one shot, with slot i set to v
+        let with = |i: usize, v: Value| { let mut e = shot(1); e[i] = v; json!([e]) };
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 1, "gl": 1, "gn": [shot(1)]}), 0.1));
+        let bad = [
+            json!({"gn": [shot(0), shot(1), shot(2), shot(3), shot(4)]}), // five shots
+            json!({"gn": [[1, 120, 180, -35, 1500, 900, -2000, 0]]}),       // eight numbers
+            json!({"gn": [[1, 120, 180, -35, 1500, 900, -2000, 0, 300, 0]]}), // ten
+            json!({"gn": with(4, json!(1500.5))}),                           // a fraction
+            json!({"gn": with(1, json!("120"))}),                            // a string
+            json!({"gn": with(2, json!(true))}),
+            json!({"gn": with(3, Value::Null)}),
+            json!({"gn": with(7, json!(1))}),                                // k = 1, the tank's shell: not yet
+            json!({"gn": with(8, json!(2001))}),                             // too old
+            json!({"gn": with(8, json!(-1))}),
+            json!({"gn": with(0, json!(65_536))}),                           // s past 16 bits
+            json!({"gn": with(0, json!(-1))}),
+            json!({"gn": with(4, json!(6001))}),                             // vx
+            json!({"gn": with(5, json!(-6001))}),                            // vy
+            json!({"gn": with(6, json!(6001))}),                             // vz
+            json!({"gn": with(1, json!(102_401))}),                          // x beyond XZ_MAX_CM
+            json!({"gn": with(3, json!(-102_401))}),                         // z
+            json!({"gn": with(2, json!(50_001))}),                           // y beyond ALT_H_MAX
+            json!({"gn": [shot(3), shot(3)]}),                               // the same s twice
+            json!({"gn": [shot(3), 5]}),                                     // an entry that is not an array
+            json!({"gn": "1,2"}), json!({"gn": 5}), json!({"gn": {"s": 1}}), // not an array at all
+            json!({"gl": 2}), json!({"gl": -1}), json!({"gl": true}), json!({"gl": 0.5}), json!({"gl": "1"}),
+        ];
+        for (i, b) in bad.iter().enumerate() {
+            let mut m = json!({"w": "city3d", "x": 900, "z": 0, "r": 0, "a": 1});
+            m.as_object_mut().unwrap().extend(b.as_object().unwrap().clone());
+            assert!(!p.pos("u", &m, 1.0 + i as f64), "accepted {b}");
+        }
+        let l = p.listing();
+        assert_eq!(l[0]["x"], json!(0), "the rejects moved nobody");
+        assert_eq!((l[0]["gl"].clone(), l[0]["gn"].clone()), (json!(1), json!([shot(1)])), "and kept the launcher and its shot");
     }
 
     #[test]

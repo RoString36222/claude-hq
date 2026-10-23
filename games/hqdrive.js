@@ -209,6 +209,7 @@ function convoyKey(C, o){
 // entry's own count, 1-4, when it gives one)
 var POOL_TWO = {coupe: 1, hyper: 1, "super": 1};
 function poolSeats(base, type, seats, band){
+  if(base === "tank") return 4;                    // [3.16] games/hqtank.js: its driver, its gunner (seat 1), two on the back
   if(!(base === "car" || base === "moto" || base === "bike")) return 0;
   if(seats === (seats | 0) && seats >= 1 && seats <= 4) return seats;
   if(base === "car") return !type || POOL_TWO[type] ? 2 : 4;

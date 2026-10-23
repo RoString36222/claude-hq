@@ -361,8 +361,8 @@ class Wiring(unittest.TestCase):
     def test_presence_is_gated_and_compact(self):
         hq = read("ui", "app", "22-hq.js")
         self.assertIn('var vt = (a===5 || a===6) && hqNetCan("tuning") && HQ3D.inst.tuneCode ? HQ3D.inst.tuneCode() : null;', hq)
-        self.assertIn("msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm,msg.gl,JSON.stringify(msg.gn||0)].join", hq)
-        self.assertIn('"convoy", "tuning", "pets", "hqstyle", "motion", "petride", "carpool", "grenade"]', read("backend", "src", "protocol.rs"))
+        self.assertIn("msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm,msg.gl,JSON.stringify(msg.gn||0),JSON.stringify(msg.ta||0)].join", hq)
+        self.assertIn('"convoy", "tuning", "pets", "hqstyle", "motion", "petride", "carpool", "grenade", "tank"]', read("backend", "src", "protocol.rs"))
         src = read("games", "hq3d.js")
         self.assertIn("inst.tuneCode = function(){", src)
         self.assertIn("HQV.hqVehicleModels.build(ctx, Vc, ph, {tune: ptn})", src)

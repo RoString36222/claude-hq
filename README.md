@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.13.5** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.13.6** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -398,6 +398,12 @@ and feature guide.
 ---
 
 ## Changelog
+
+- **3.13.6 — Players are solid.** Other people in the City (and Mission Control) stop you as a wall does: a
+  body on foot or on a board, the box of the bike, motorbike or car they ride or drive (turned their way; a car
+  from the dealership at its own size), so you bump off them instead of walking or driving through. Not while they
+  fly, nor someone on a floor above or below you. You can't push anyone, and one who walks into you can always be
+  walked away from.
 
 - **3.13.5 — Your pets stay with you, your lobby shows them, and the front door goes to the street.** Fixes: E
   in your lobby went to the nearest pet following you (always within 2 m) before any door, lift or ride, so using

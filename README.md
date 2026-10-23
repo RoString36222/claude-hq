@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.12.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.12.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -379,6 +379,11 @@ and feature guide.
 
 ## Changelog
 
+- **3.12.1 — The boombox goes live.** Live in the Music tab ("🔴 Go live") now puts the boombox on your
+  shoulder in the City too, not only a Listen-room song. Anyone near you in the City listens to your live set
+  (the same browser-to-browser stream as "🎧 Listen live", started for them when they walk up, louder the closer
+  they are, stopped when they walk away). It never cuts over a Listen-room song they're tuned in to, a live set
+  they chose in the Music tab, or their own. No new presence field: who is live comes from the room, as before.
 - **3.12.0 — Driving feel + convoys.** Cars, motorbikes and bicycles in the City (`games/hqdrive.js`):
   **lights** switch on at night and in heavy rain, a storm, snow or fog (**L** toggles them by hand), brighter
   lamps and tails plus one additive pool-and-cone mesh on the road (no real lights, one draw call per lit

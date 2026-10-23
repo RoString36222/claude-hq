@@ -64,6 +64,24 @@ boomTick(); out.far = {frame: !!BOOM.frame};
 // Not in the HQ view: nothing plays.
 HQNET.peers = [peer("near", 6, 0, "bbbbbbbbbbb")]; VIEW = "music";
 boomTick(); out.view = {frame: !!BOOM.frame};
+// Live sets (3.12.1): a DJ near you is heard live, quieter further off; walking away stops it.
+VIEW = "hq"; MU.tuned = false; MU.st = null;
+var listens = [], stops = 0, drawnLive = null;
+global.muListen = function(peer){ listens.push(peer); MU.listen = {peer: peer, audio: {volume: 1}}; };
+global.muListenStop = function(){ stops++; MU.listen = null; };
+HQ3D.inst.setBoomLive = function(m){ drawnLive = m; };
+MU.lives = {pA: {userId: "dj", who: "DJ"}};
+HQNET.peers = [{u: "dj", n: "dj", w: "city3d", x: 1000, z: 0}];
+boomTick(); out.live1 = {listens: listens.slice(), drawn: drawnLive, frame: !!BOOM.frame};
+boomTick(); out.live1.vol = Math.round(MU.listen.audio.volume*1000)/1000;
+HQNET.peers = [{u: "dj", n: "dj", w: "city3d", x: 4000, z: 0}];
+boomTick(); out.live2 = {stops: stops, listen: MU.listen};
+// a set you chose to listen to in the Music tab is left alone
+MU.listen = {peer: "pA", audio: {volume: 1}};
+HQNET.peers = [{u: "dj", n: "dj", w: "city3d", x: 1000, z: 0}];
+boomTick(); out.manual = {listens: listens.length, vol: MU.listen.audio.volume, stops: stops};
+// your own live set puts the boombox on you
+MU.listen = null; MU.dj = {}; HQNET.peers = []; boomTick(); out.liveMe = {on: boomOn, net: boomNet()};
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -112,6 +130,18 @@ class BoomboxTests(unittest.TestCase):
         self.assertFalse(self.out["dupe"]["frame"])
         self.assertFalse(self.out["far"]["frame"])
         self.assertFalse(self.out["view"]["frame"])
+
+
+    def test_a_live_set_is_heard_near_its_dj(self):
+        o = self.out
+        self.assertEqual(o["live1"]["listens"], ["pA"])
+        self.assertEqual(o["live1"]["drawn"], {"dj": 1})
+        self.assertFalse(o["live1"]["frame"])
+        self.assertEqual(o["live1"]["vol"], 0.45)        # 10 m off: (18/24)^2 of the 80 volume
+        self.assertEqual(o["live2"], {"stops": 1, "listen": None})
+        self.assertEqual(o["manual"], {"listens": 1, "vol": 1, "stops": 1})
+        self.assertTrue(o["liveMe"]["on"])
+        self.assertIsNone(o["liveMe"]["net"])            # presence carries songs only; live sets go by MU.lives
 
 
 class PageSendsIt(unittest.TestCase):

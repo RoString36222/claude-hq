@@ -285,7 +285,7 @@ function peerEvoImg(spr, px){
   if(!slug) return '<div style="font-size:'+Math.round(px*0.6)+'px" aria-hidden="true">✨</div>';
   var base = spr.dir==="oras" ? (shiny?PKPARAISO_ORAS_SHINY:PKPARAISO_ORAS) : (shiny?PKPARAISO_XY_SHINY:PKPARAISO_XY);
   var fb=encodeURIComponent(JSON.stringify([hashStr(slug),220,4,shiny,px]));
-  return '<img class="pokeimg pokeimg-3d'+(spr.mega?" pokeimg-mega":"")+'" src="'+pokeAniSrc(slug, shiny)+'" data-alt="'+base+slug+'.gif" width="'+px+'" height="'+px+'"'+
+  return '<img class="pokeimg pokeimg-3d'+(spr.mega?" pokeimg-mega":"")+'" src="'+pokeAniSrc(slug, shiny)+'" data-alt="'+pokeCached(base+slug+'.gif')+'" width="'+px+'" height="'+px+'"'+
     ' alt="'+esc(slug)+'" data-dex="'+dex+'" data-shiny="'+shiny+'" data-3d="1" data-mega="'+(spr.mega?1:0)+'"'+
     ' data-slug="'+slug+'" data-try="0" data-fb="'+fb+'" onerror="pokeErr(this)">';
 }

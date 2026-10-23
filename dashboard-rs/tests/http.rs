@@ -671,3 +671,37 @@ fn city_proxies_reject_bad_owner_ids_and_bodies_before_forwarding() {
     }
     assert!(seen.lock().unwrap().is_empty(), "{:?}", seen.lock().unwrap());
 }
+
+#[test]
+fn sprite_route_caches_allowlisted_urls_only() {
+    use claudehq::sprite::Fetched;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let srv = serve();
+    let n = Arc::new(AtomicUsize::new(0));
+    let n2 = n.clone();
+    *srv.app.sprites.fetch_hook.write().unwrap() = Some(Arc::new(move |u: &str| {
+        n2.fetch_add(1, Ordering::SeqCst);
+        if u.ends_with("missingno.gif") {
+            Fetched::NotFound
+        } else {
+            Fetched::Ok { ctype: "image/gif".into(), body: b"GIF89a-sprite".to_vec() }
+        }
+    }));
+    let q = |u: &str| format!("/api/sprite?u={}", claudehq::py::quote(u, ""));
+    let ok = q("https://play.pokemonshowdown.com/sprites/ani/pikachu.gif");
+    for _ in 0..2 {
+        let (code, head, body) = get(srv.port, &ok, "");
+        assert_eq!(code, 200);
+        assert!(head.contains("content-type: image/gif"), "{}", head);
+        assert!(head.contains("max-age=2592000"));
+        assert_eq!(body, b"GIF89a-sprite");
+    }
+    assert_eq!(n.load(Ordering::SeqCst), 1, "second request served from the disk cache");
+    assert!(srv.app.paths.sprite_cache.is_dir());
+    assert_eq!(get(srv.port, &q("https://play.pokemonshowdown.com/sprites/ani/missingno.gif"), "").0, 404);
+    for bad in ["https://evil.example/sprites/ani/pikachu.gif", "http://play.pokemonshowdown.com/sprites/ani/pikachu.gif", "https://play.pokemonshowdown.com@evil.example/sprites/a.gif"] {
+        assert_eq!(get(srv.port, &q(bad), "").0, 400, "{}", bad);
+    }
+    assert_eq!(get(srv.port, "/api/sprite", "").0, 400);
+    assert_eq!(n.load(Ordering::SeqCst), 2);
+}

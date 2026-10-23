@@ -217,7 +217,7 @@ function megaFormImg(f, cr, px){
   var shiny=cr.shiny?1:0, seed=creatureSeed(cr), hue=creatureTypeHue(cr), finalDex=branchFinalDex(cr);
   var base = f.dir==="oras" ? (shiny?PKPARAISO_ORAS_SHINY:PKPARAISO_ORAS) : (shiny?PKPARAISO_XY_SHINY:PKPARAISO_XY);
   var fb=encodeURIComponent(JSON.stringify([seed,hue,4,shiny,px]));
-  return '<img class="pokeimg pokeimg-3d pokeimg-mega" src="'+pokeAniSrc(f.slug, shiny)+'" data-alt="'+base+f.slug+'.gif" width="'+px+'" height="'+px+'"'+
+  return '<img class="pokeimg pokeimg-3d pokeimg-mega" src="'+pokeAniSrc(f.slug, shiny)+'" data-alt="'+pokeCached(base+f.slug+'.gif')+'" width="'+px+'" height="'+px+'"'+
     ' alt="'+esc(f.name)+'" data-dex="'+finalDex+'" data-shiny="'+shiny+'" data-3d="1" data-mega="1"'+
     ' data-slug="'+f.slug+'" data-try="0" data-fb="'+fb+'" onerror="pokeErr(this)" loading="lazy">';
 }

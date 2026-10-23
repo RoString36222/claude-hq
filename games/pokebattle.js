@@ -300,6 +300,8 @@ function packIsPoke(){ try { return typeof G.isPokePack === "function" ? G.isPok
 function pack(){ try { return (G.cfg && G.cfg().creaturePack) || "pokemon"; } catch(e){ return "pokemon"; } }
 function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
 
+// Through the HQ's local sprite cache when the page offers it (06-trainer-packs.js pokeCached).
+function cachedSrc(u){ try { return typeof G.pokeCached === "function" ? G.pokeCached(u) : u; } catch(e){ return u; } }
 // Sprite candidates, best first. Only the page's existing sprite hosts are used.
 function spriteUrls(mon, back){
   var A = G.POKE_ANIM, S = G.POKE_STATIC, out = [], sh = mon.shiny;
@@ -329,7 +331,7 @@ function spriteUrls(mon, back){
 pk.preload = function(mons){
   if(!packIsPoke() || typeof Image === "undefined") return;
   (mons || []).forEach(function(m){
-    [false, true].forEach(function(back){ var u = spriteUrls(m, back)[0]; if(u){ var im = new Image(); im.decoding = "async"; im.src = u.u + u.f; } });
+    [false, true].forEach(function(back){ var u = spriteUrls(m, back)[0]; if(u){ var im = new Image(); im.decoding = "async"; im.src = cachedSrc(u.u + u.f); } });
   });
 };
 function creatureBox(mon, px){
@@ -353,7 +355,7 @@ function spriteEl(mon, back, scene){
     if(k >= urls.length){ img.remove(); var cb = creatureBox(mon, back ? 120 : 96); if(back) cb.classList.add("flip"); wrap.appendChild(cb); return; }
     var c = urls[k++];
     img.classList.toggle("flip", !!c.flip); img.classList.toggle("d3", !!c.d3);
-    img.src = c.u + c.f;
+    img.src = cachedSrc(c.u + c.f);
   }
   img.addEventListener("error", tryNext);
   img.addEventListener("load", function(){

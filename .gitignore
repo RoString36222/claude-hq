@@ -50,6 +50,8 @@ backend/.release.env.tmp
 backend/.releases
 .autodeploy-tried
 .music-cache/
+# Pokémon sprite disk cache (dashboard-rs sprite.rs): third-party art, never commit
+.sprite-cache/
 
 # HQ 2.5 loot reporter state (salted PR hashes, sent counts)
 loot-state.json

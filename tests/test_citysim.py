@@ -77,6 +77,9 @@ out.fix = {};
       if(u.drop != null && !(u.drop >= u.leave && u.drop <= u.back)) r.bad.push(ev.id + " drop");
       if(!nodes.hasOwnProperty(u.node)) r.bad.push(ev.id + " unit node");
       if(u.kind === "getaway") return;
+      // a school bus or a market van comes from somewhere else: it has a road to drive
+      if((ev.kind === "school" || ev.kind === "market") && !(D.dist(u.home, u.node) > 0)) r.bad.push(ev.id + " no drive " + u.kind);
+      if(ev.kind === "school" && u.station === ev.site) r.bad.push(ev.id + " bus from its own school");
       var s = sites[u.station];
       if(!s || C.STATIONS[u.kind].indexOf(s.kind) < 0) r.bad.push(ev.id + " station " + u.station + " for " + u.kind);
       else if(!isFinite(D.dist(u.home, u.node)) || !isFinite(D.dist(u.home, ev.node))) r.bad.push(ev.id + " unreachable");
@@ -93,7 +96,12 @@ out.fix = {};
       }
       if(!ok || D.phase(ev, ev.start) !== "reported" || D.phase(ev, ev.end) !== "done") r.phaseBad.push(ev.id);
     }
-    if(ev.kind === "crime"){ r.crimes++; if(ev.routeLen >= 1000 && ev.route.length >= 2) r.longRoutes++; }
+    if(ev.kind === "crime"){
+      r.crimes++; if(ev.routeLen >= 1000 && ev.route.length >= 2) r.longRoutes++;
+      // the roadblock is where the route ends (metres), its heading from the node before
+      var bn = docs[cfg[0]].layers.roads.nodes.filter(function(n){ return n.id === ev.route[ev.route.length - 1]; })[0];
+      if(!ev.block || !bn || Math.abs(ev.block.x - bn.x/100) > 0.01 || Math.abs(ev.block.z - bn.z/100) > 0.01 || !isFinite(ev.block.fx)) r.bad.push(ev.id + " block");
+    }
   });
   var fires = list.filter(function(e){ return e.kind === "fire"; });
   for(var i = 0; i < fires.length; i++) for(var j = i + 1; j < fires.length; j++)

@@ -551,6 +551,33 @@ SFX.siren = function(a, o){
   g.gain.setValueAtTime(vol*(cm ? 0.35 : 1), t + 1.3); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
   os.connect(g); g.connect(SND.master); os.start(t); os.stop(t + 1.55);
 };
+// The stadium's one-shots (games/hqcivic.js on a match): SFX "whistle" (the referee's: a short and a long trill)
+// and "roar" (the crowd on a goal: a 1.5 s band-passed noise swell), each heard at opt.dist m and fading to nothing
+// at CIVIC_M; softer and steadier under Calm. civicVol(dist) is their level (0..1).
+var CIVIC_M = 250;
+function civicVol(dist){ dist = +dist; if(!isFinite(dist) || dist < 0) dist = 0; return dist >= CIVIC_M ? 0 : Math.pow(1 - dist/CIVIC_M, 2); }
+SFX.whistle = function(a, o){
+  var k = civicVol(o && o.dist), cm = calm(); if(!(k > 0)) return;
+  [[0, 0.2], [0.3, 0.55]].forEach(function(w){
+    var t = a.currentTime + w[0], d = w[1], os = a.createOscillator(), lfo = a.createOscillator(), lg = a.createGain(), g = a.createGain(), v = 0.08*k*(cm ? 0.5 : 1);
+    os.type = "sine"; os.frequency.setValueAtTime(3000, t);
+    lfo.type = "sine"; lfo.frequency.setValueAtTime(cm ? 6 : 34, t); lg.gain.setValueAtTime(cm ? 40 : 200, t);     // the pea's trill
+    lfo.connect(lg); lg.connect(os.frequency);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v, t + 0.012);
+    g.gain.setValueAtTime(v, t + d - 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    os.connect(g); g.connect(SND.master); os.start(t); lfo.start(t); os.stop(t + d + 0.02); lfo.stop(t + d + 0.02);
+  });
+};
+SFX.roar = function(a, o){
+  var k = civicVol(o && o.dist), cm = calm(); if(!(k > 0)) return;
+  var t = a.currentTime, src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain(), v = 0.3*k*(cm ? 0.4 : 1);
+  src.buffer = engineBus(a).noise; src.loop = true;
+  f.type = "bandpass"; f.frequency.setValueAtTime(700, t); f.Q.setValueAtTime(0.7, t);
+  if(!cm) f.frequency.exponentialRampToValueAtTime(1100, t + 0.6);                   // voices rising
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v, t + (cm ? 0.6 : 0.35));
+  g.gain.setValueAtTime(v, t + 0.9); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+  src.connect(f); f.connect(g); g.connect(SND.master); src.start(t); src.stop(t + 1.55);
+};
 // Ambient loops (under the Ambient sounds switch): crowdLoop() a stadium's roar, crackleLoop() a burning building.
 // Both -> {set(dist m, level 0..1), stop()}; silent until set(), and silent again 0.25 s after the last set().
 var CROWD_M = 900, CRACKLE_M = 260;
@@ -630,7 +657,8 @@ HQV.engine = {now: now, clamp: clamp, hex: hex, angLerp: angLerp, calm: calm, sa
               sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES), engineProfile: engineProfile, exhausts: Object.keys(EXHAUST), engineHz: engineHz, watchBar: watchBar,
               noiseLoop: noiseLoop, ambientLoop: ambientLoop, ambientOn: ambientOn, ambientSet: ambientSet,
               siren: siren, sirenHz: sirenHz, sirenVol: sirenVol, doppler: doppler, hornOn: hornOn, SIREN_M: SIREN_M,
-              crowdLoop: crowdLoop, crackleLoop: crackleLoop, crowdVol: crowdVol, crackleVol: crackleVol,
+              crowdLoop: crowdLoop, crackleLoop: crackleLoop, crowdVol: crowdVol, crackleVol: crackleVol, civicVol: civicVol, CIVIC_M: CIVIC_M,
+              hasSfx: function(name){ return !!SFX[name]; },
               // the shared AudioContext and its master gain (the SFX volume), or null when sound is off:
               // for a game that shapes its own sound (the City's thunder) instead of a named sfx
               audioOut: function(){ var a = sfxVolume() > 0 ? audio() : null; return a && SND.master ? {ctx: a, out: SND.master} : null; },

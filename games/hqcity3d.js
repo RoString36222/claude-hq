@@ -891,9 +891,11 @@ HQV.hqWorlds.city3d = function(c, w){
   var CLEAR_UNDER = 2.4;     // m: a civic mass whose underside is higher than this off its site's ground does not block
   var BOAT_SIDE = 3;         // m: the two boats moored either side of a berth (a dock with no pier drawn)
   var NPC_BUDGET = 3;        // ms: residents whose update took longer than this update every other frame
+  var NPC_PREWARM = 400;     // ms the residents may spend at setup on who joins the city's events now (npcsim warm)
   var TALK_SHOW = 5;         // s a resident's line stays over their head
   var CITY_TZ = 0;           // the city's clock (min east of UTC) for school, market, match days: one shared schedule
   var CITY_UNITS_MS = 250;   // ms: the director's units (the civic fleets, matches, school bells) are read this often
+  var TRAFFIC_WARM_MS = 2;   // ms a frame traffic may spend planning the city's coming runs (traffic.warm)
   var ALERTS_MS = 500;       // ms: the minimap's incident alerts are read this often
   var SIREN_R = 400;         // m: the sirens of the nearest SIREN_VOICES emergency vehicles within this are heard
   var SIREN_VOICES = 2;
@@ -1080,6 +1082,7 @@ HQV.hqWorlds.city3d = function(c, w){
       try {
         var topt = {tier: tier, grow: grow, seed: W.id, onFare: payFare}; if(city) topt.city = city;
         tsim = HQV.traffic.create(doc, topt);
+        if(city && tsim.warm) tsim.warm(Date.now(), Infinity, true);   // the city's runs already out, before the first frame
         tview = HQV.traffic.view(c); S.add(tview.group);
       } catch(e){ tsim = null; tview = null; }
     }
@@ -1088,6 +1091,7 @@ HQV.hqWorlds.city3d = function(c, w){
         var sdoc = Object.assign({}, doc, {layers: Object.assign({}, doc.layers, {zones: simZones(doc.layers.zones)})});
         var nopt = {tier: tier, grow: grow, seed: W.seed || W.id}; if(city) nopt.city = city;   // (npcsim's own local clock)
         nsim = HQV.npcSim.create(sdoc, nopt);
+        if(city && nsim.warm) nsim.warm(npcMs(), NPC_PREWARM);   // who joins the events now, before the first frame
         ndraw = HQV.npcDraw.create(THREE, S, nsim, {lib: c.L});
       } catch(e){ nsim = null; ndraw = null; }
     }
@@ -1109,12 +1113,23 @@ HQV.hqWorlds.city3d = function(c, w){
     return D;
   }
   // the director's runs by station, plus each match and school day by its site (a match as its kick-off, a school
-  // day as its bell: hqcivic's scoreboard and bell read start/end), read every CITY_UNITS_MS
+  // day as its bell: hqcivic's scoreboard and bell read start/end), read every CITY_UNITS_MS. Patrols and
+  // delivery rounds are left out (traffic has them on its rings; they would keep a station's bays always empty).
+  // With traffic driving the units, a station's vehicle leaves its bay as its trip appears on the road and comes
+  // back in as it is gone (tsim.cityRuns); one traffic never drives stays in its bay.
   function cityUnits(ms){
     if(!city || (ms - cityU.at < CITY_UNITS_MS && ms >= cityU.at)) return;
-    var by = {}, live = {};
+    var by = {}, live = {}, C = HQV.hqCivic || {}, OUT = (C.DOOR_MS || 5000) + (C.PULL_MS || 7000), IN = C.PULL_MS || 7000;
     function put(k, e){ k = String(k); (by[k] = by[k] || []).push(e); }
-    try { (city.unitsAt(ms) || []).forEach(function(U){ if(U && U.unit && U.unit.station != null) put(U.unit.station, U); }); } catch(e){}
+    function round(ev){ return !ev || ev.kind === "patrol" || ev.kind === "delivery"; }
+    if(tsim && tsim.cityRuns) try {
+      (tsim.cityRuns(ms) || []).forEach(function(x){
+        var u = x && x.unit; if(!u || u.station == null || round(x.ev)) return;
+        var d = x.start - OUT, b = x.end + IN;
+        if(ms >= d && ms < b) put(u.station, {ev: x.ev, unit: {kind: u.kind, station: u.station, dispatch: d, back: b}, src: u, phase: "out"});
+      });
+    } catch(e){}
+    else try { (city.unitsAt(ms) || []).forEach(function(U){ if(U && U.unit && U.unit.station != null && !round(U.ev)) put(U.unit.station, U); }); } catch(e){}
     try {
       (city.active(ms) || []).forEach(function(ev){
         if(!ev || ev.site == null || !((ev.kind === "match" && ev.kick != null) || (ev.kind === "school" && ev.bell != null))) return;
@@ -1125,13 +1140,15 @@ HQV.hqWorlds.city3d = function(c, w){
     } catch(e){}
     cityEv = live; cityU = {at: ms, by: by};
   }
-  // a civic building's sounds this frame (each once), heard within CIVIC_SFX_M of the camera
+  // a civic building's sounds this frame (each once), heard within CIVIC_SFX_M of the camera and quieter with
+  // distance (the stadium's whistle and roar take it as opt.dist; the bell is a near one anyway)
   function civicSfx(list, cam){
     var E = HQV.engine, seen = {};
     if(!E || !E.sfx || !cam || cam.x == null) return;
     list.forEach(function(s){
-      if(!s || seen[s.sfx] || Math.hypot(s.x - cam.x, s.z - cam.z) > CIVIC_SFX_M) return;
-      seen[s.sfx] = 1; E.sfx(s.sfx);
+      var d = s ? Math.hypot(s.x - cam.x, s.z - cam.z, (+cam.y || 0) - (+s.y || 0)) : Infinity;
+      if(!s || seen[s.sfx] || d > CIVIC_SFX_M) return;
+      seen[s.sfx] = 1; E.sfx(s.sfx, {dist: d});
     });
   }
   // The sirens of the SIREN_VOICES nearest emergency vehicles traffic draws with theirs on (within SIREN_R), each
@@ -2867,6 +2884,8 @@ HQV.hqWorlds.city3d = function(c, w){
       var obs = boatNow || (mo && mo.air) ? [] : [{x: me0.x, z: me0.z, r: myR}];
       if(bridges) obs = obs.concat(bridges.obstacles());
       if(callObs) obs.push(callObs);                       // a vehicle you called, on its way: traffic stops behind it
+      // the city's coming runs are planned a little each frame (TRAFFIC_WARM_MS), not all on the frame they are needed
+      if(city && tsim.warm) try { tsim.warm(nowMs, TRAFFIC_WARM_MS); } catch(e){}
       try { callTraffic = tsim.at(nowMs, {x: cam ? cam.x : me0.x, z: cam ? cam.z : me0.z}, 320, obs); tview.update(callTraffic, nowMs, {calm: calmNow()}); } catch(e){}
       sirenStep(callTraffic, cam, dt);
     }
@@ -3218,7 +3237,10 @@ HQV.hqWorlds.city3d = function(c, w){
         var E0 = HQV.engine;
         try {
           if(E0) HQV.engine = Object.assign({}, E0, {siren: null});
-          cfx = HQV.citySimFx.create(c, W, city, {scene: S, ground: groundY, say: say, calm: calmNow});
+          // traffic drives the director's units (when it is there): cfx leaves their bodies and beacons to it
+          var fxo = {scene: S, ground: groundY, say: say, calm: calmNow};
+          if(tsim && tview) fxo.vehicles = function(){ return callTraffic || []; };
+          cfx = HQV.citySimFx.create(c, W, city, fxo);
           cfx.setNight(night);
         } catch(e){ cfx = null; }
         finally { HQV.engine = E0; }

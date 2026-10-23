@@ -1534,6 +1534,6 @@ function build(c, site, opts){
     }};
 }
 
-HQV.hqCivic = {build: build, fit: fit, frame: frame, pierOf: pierOf, deckAt: deckAt, matchAt: matchAt, runPose: runPose,
+HQV.hqCivic = {build: build, fit: fit, frame: frame, pierOf: pierOf, deckAt: deckAt, matchAt: matchAt, runPose: runPose, DOOR_MS: DOOR_MS, PULL_MS: PULL_MS,
   KINDS: KINDS, STYLES: STYLES, AIRPORT_NAVE: AIRPORT_NAVE, TEAMS: TEAMS};
 })();

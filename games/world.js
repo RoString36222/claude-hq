@@ -31,7 +31,8 @@
  * smoothed W the rounded kerb corners of 3+ way junctions (roadSmooth.junctionCorners) are carriageway too: the
  * asphalt worldgeom draws between a corner's arc and the kerbs' sharp corner is road to roadUnder, not sidewalk
  * (junctionCorners(W, node): the corners kept, none that would pave a lot or a site).
- * Without roadsmooth.js, pack() builds today's straight roads.
+ * Without roadsmooth.js, pack() builds today's straight roads. A W read back from IndexedDB is given the roads this
+ * page would pack (roadsAsHere: smoothed by this roadSmooth.VERSION, or straight without it), whatever packed it.
  * Pure core: no THREE, no DOM at load time, so node, a worker (importScripts) and the page all load it.
  */
 (function(){
@@ -692,6 +693,21 @@ function unclaim(W){
   if(W.sites) W.sites = W.sites.filter(function(s){ return s && !s.claimed; });
   return W;
 }
+// A cached W's roads made as pack() makes them on this page: smoothed by this roadsmooth.js's VERSION when it is
+// loaded (smooth() restarts from the server's e.pts0), else the server's straight pieces. A record packed while
+// roadsmooth.js failed to load, by an older VERSION, or on a page with it when this one has none, would otherwise
+// give this client other edges than its peers (traffic's timetables, npcsim's and citysim's routes) and draw
+// corners its physics does not have. -> true when it changed W.
+function roadsAsHere(W){
+  var RS = HQV.roadSmooth, want = RS && typeof RS.smooth === "function" ? RS.VERSION || 1 : 0, has = W.smoothed ? W.smoothed.v || 0 : 0;
+  if(want === has) return false;
+  if(want) RS.smooth(W);
+  else {
+    (W.edges || []).forEach(function(e){ if(e.pts0){ e.pts = e.pts0; delete e.pts0; } });
+    delete W.smoothed; W.index = null; W.docView = null;
+  }
+  return true;
+}
 function idbPut(idb, rec, id){
   if(!idb) return;
   try { Promise.resolve(idb.put(id, rec)).catch(function(){}); } catch(e){}
@@ -746,6 +762,8 @@ function load(opts){
     if(rec && rec.v === PACK_V && rec.packed && rec.packed.terrain){   // other v: packed by older code, refetch
       var W = unclaim(rec.packed);
       W.etag = rec.etag || W.etag || null;
+      // the roads as this page smooths them (whatever page packed the record): re-stored when that changed them
+      if(roadsAsHere(W)) idbPut(idb, {v: PACK_V, etag: W.etag, packed: cacheCopy(W)}, id);
       state.cur = W;
       state.cacheMs = Math.round(now() - t0);
       log("hq-world cache " + state.cacheMs);

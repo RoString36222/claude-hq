@@ -687,6 +687,62 @@ class CityTraffic(unittest.TestCase):
         self.assertTrue(v["flashes"])
 
 
+REAL_HQ = r"""
+var fs = require("fs"), zlib = require("zlib"), root = %(root)s;
+global.window = {HQV: {}};
+["world", "roadsmooth", "citysim", "traffic"].forEach(function(f){ new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))(); });
+var HQV = window.HQV, W = HQV.world.pack(JSON.parse(zlib.gunzipSync(fs.readFileSync(root + "/tests/fixtures/claude-hq@2.json.gz"))));
+var doc = HQV.world.docOf(W), D = HQV.citySim.create(doc, {seed: W.id, tier: 5, coverage: 0.6}), out = {};
+function make(){ return HQV.traffic.create(doc, {tier: 5, seed: W.id, city: D}); }
+function ms(f){ var a = process.hrtime.bigint(); f(); return Number(process.hrtime.bigint() - a)/1e6; }
+// 30 minutes of frames (10 a second) round the camera, warm() given 2 ms a frame as the City does
+var T = make(), C = make(), t0 = Date.UTC(2026, 9, 21, 9, 0, 0), worst = 0, sum = 0, n = 0, wWorst = 0, diff = 0;
+out.setup = ms(function(){ T.warm(t0, Infinity, true); });
+for(var f = 0; f < 30*60*10; f++){
+  var t = t0 + f*100;
+  wWorst = Math.max(wWorst, ms(function(){ T.warm(t, 2); }));
+  var d = ms(function(){ T.at(t, {x: 0, z: 0}, 320, []); }); worst = Math.max(worst, d); sum += d; n++;
+  if(f % 600 === 0 && JSON.stringify(T.incidents(t)) !== JSON.stringify(C.incidents(t))) diff++;
+}
+out.perf = {worst: worst, mean: sum/n, warmWorst: wWorst, diff: diff};
+// a week: the school buses and the market vans drive
+var S = make(), wk = Date.UTC(2026, 9, 19), kinds = {}, vans = {};
+D.events(wk, wk + 7*86400000).filter(function(e){ return e.kind === "school" || e.kind === "market"; }).forEach(function(ev){
+  for(var t = ev.start; t < ev.end; t += 10000) S.incidents(t).forEach(function(x){
+    if(x.ev !== ev.id) return;
+    kinds[ev.kind + ":" + x.kind] = 1;
+    if(ev.kind === "market" && x.kind === "van") (vans[ev.id] = vans[ev.id] || {})[x.id] = 1;
+  });
+});
+out.week = {kinds: Object.keys(kinds).sort(), vans: Object.keys(vans).map(function(k){ return Object.keys(vans[k]).length; })};
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE and os.path.exists(os.path.join(ROOT, "games", "citysim.js")), "node and games/citysim.js needed")
+class RealCityFrames(unittest.TestCase):
+    """The Commons (claude-hq@2, roads smoothed) with the real director at tier 5, coverage 0.6: no frame plans a
+    whole event (warm() plans them a step at a time, ahead), and the school buses and market vans really drive."""
+    @classmethod
+    def setUpClass(cls):
+        p = subprocess.run([NODE, "-e", REAL_HQ.replace("%(root)s", json.dumps(ROOT))], capture_output=True, text=True, timeout=600)
+        if p.returncode != 0:
+            raise AssertionError(p.stderr[-4000:])
+        cls.r = json.loads(p.stdout)
+
+    def test_worst_frame_in_budget(self):
+        p = self.r["perf"]
+        self.assertLess(p["worst"], 3.0, p)                     # at(): never a plan in a frame once warm runs
+        self.assertLess(p["mean"], 0.5, p)
+        self.assertEqual(p["diff"], 0, "warm() changes when an event is planned, never its trips")
+
+    def test_school_buses_and_market_vans_drive(self):
+        w = self.r["week"]
+        self.assertIn("school:schoolbus", w["kinds"])
+        self.assertIn("market:van", w["kinds"])
+        self.assertTrue(w["vans"] and max(w["vans"]) >= 2, w)
+
+
 class Source(unittest.TestCase):
     def test_frame_rate_independent_and_seeded(self):
         with open(os.path.join(ROOT, "games", "traffic.js"), encoding="utf-8") as f:

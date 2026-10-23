@@ -215,9 +215,16 @@ function segDist(ax, az, bx, bz, cx, cz, dx, dz){
 }
 function pathDist(A, B){
   var best = 1e9;
-  for(var i = 1; i < A.length; i++) for(var j = 1; j < B.length; j++){
-    var d = segDist(A[i-1][0], A[i-1][2], A[i][0], A[i][2], B[j-1][0], B[j-1][2], B[j][0], B[j][2]);
-    if(d < best) best = d;
+  for(var i = 1; i < A.length; i++){
+    var p = A[i-1], q = A[i], ax0 = Math.min(p[0], q[0]), ax1 = Math.max(p[0], q[0]), az0 = Math.min(p[2], q[2]), az1 = Math.max(p[2], q[2]);
+    for(var j = 1; j < B.length; j++){
+      var r = B[j-1], t = B[j];
+      // (a pair whose boxes are already further apart than the best so far cannot be nearer)
+      var gx = Math.max(0, Math.min(r[0], t[0]) - ax1, ax0 - Math.max(r[0], t[0])), gz = Math.max(0, Math.min(r[2], t[2]) - az1, az0 - Math.max(r[2], t[2]));
+      if(gx*gx + gz*gz >= best*best) continue;
+      var d = segDist(p[0], p[2], q[0], q[2], r[0], r[2], t[0], t[2]);
+      if(d < best) best = d;
+    }
   }
   return best;
 }
@@ -816,30 +823,57 @@ function create(doc, o){
   function occupancy(r, prof, spec, u0, u1){
     var out = {}, run = {}, Lr = r.pl.len, h = spec.len/2 + GAP/2, o = {}, keys = r.ranges.map(function(rg, i){ return laneKeys(r, i); });
     var DT = 0.1, n = Math.ceil((u1 - u0)/DT), on = {}, first = 0;
-    for(var k = 0; k <= n; k++){
-      var u = Math.min(u1, u0 + k*DT), sNow = (r.open ? prof.at(u, o) : prof.S(u, o)).s, sm = r.open ? sNow : mod(sNow, Lr), now = {};
+    // (per step: the keys the body is on are stamped with the step, not gathered in a new object; the block
+    // keys' strings are made once each; the running stretches are kept in the order they began)
+    var stamp = {}, hit = [], runKeys = [], names = {};
+    function name(K, bk, bay){ var c = names[K.k] || (names[K.k] = {}), j = bay ? "~" + bk : bk; return c[j] || (c[j] = K.k + "/" + bk + (bay ? "~" : "")); }
+    function mark(key, k){ if(stamp[key] !== k){ stamp[key] = k; hit.push(key); } }
+    // an open route is only looked at from a step before it nears its first lane that holds anything (the
+    // first time it reaches that, as timeAt) until it is past the last one with nothing running
+    var k0 = 0, sEnd = Infinity;
+    if(r.open){
+      var sA = Infinity; sEnd = -Infinity;
+      r.ranges.forEach(function(rg, i){ if(keys[i].length){ sA = Math.min(sA, rg[0] - h); sEnd = Math.max(sEnd, rg[1] + h); } });
+      if(!(sA < Infinity)) return out;
+      if(prof.at(u1, o).s < sA) return out;
+      var lo = u0, hi = u1;
+      if(prof.at(u0, o).s < sA){ for(var it = 0; it < 40; it++){ var mid = (lo + hi)/2; if(prof.at(mid, o).s >= sA) hi = mid; else lo = mid; } k0 = Math.max(0, Math.floor((lo - u0)/DT) - 1); }
+    }
+    for(var k = k0; k <= n; k++){
+      var u = Math.min(u1, u0 + k*DT), sNow = (r.open ? prof.at(u, o) : prof.S(u, o)).s, sm = r.open ? sNow : mod(sNow, Lr), lat = -1;
+      hit.length = 0;
       // an open route only goes forward: the ranges wholly behind the body are passed for good
+      // (and the ranges run in order along s: the look stops at the first one wholly ahead of it)
       if(r.open) while(first < r.ranges.length - 1 && r.ranges[first][1] < sm - h) first++;
-      r.ranges.forEach(function(rg, i){
-        if(i < first || !keys[i].length) return;
+      for(var i = r.open ? first : 0; i < r.ranges.length; i++){
+        var rg = r.ranges[i];
+        if(r.open && rg[0] > sm + h) break;
+        if(!keys[i].length) continue;
         for(var w = r.open ? 0 : -1; w <= (r.open ? 0 : 1); w++){
           var x = sm - w*Lr;
           if(rg[0] > x + h || rg[1] < x - h) continue;
-          var lo = Math.max(rg[0], x - h) - rg[0] + rg[2], hi = Math.min(rg[1], x + h) - rg[0] + rg[2], lat = bayLat(r, sm);
-          keys[i].forEach(function(K){
+          var lo = Math.max(rg[0], x - h) - rg[0] + rg[2], hi = Math.min(rg[1], x + h) - rg[0] + rg[2];
+          if(lat < 0) lat = bayLat(r, sm);
+          for(var q = 0; q < keys[i].length; q++){
+            var K = keys[i][q];
             // on the other track of a crossover the place is mirrored (to within a block)
-            var a = K.mir != null ? K.mir - hi : lo, b = K.mir != null ? K.mir - lo : hi, m = K.mir != null ? 1 : 0;
+            var a = K.mir != null ? K.mir - hi : lo, b = K.mir != null ? K.mir - lo : hi, m = K.mir != null ? 1 : 0, bk;
             // in the lane unless wholly in a lay-by; in the strip of lay-bys beside it (finer blocks) once
             // far enough over to reach a bus parked there
-            if(lat < BAY - 0.05) for(var bk = Math.floor(a/BLOCK) - m; bk <= Math.floor(b/BLOCK) + m; bk++) now[K.k + "/" + bk] = 1;
-            if(lat > BAY - SPEC.bus.wid - 0.15) for(bk = Math.floor(a/BAY_BLOCK); bk <= Math.floor(b/BAY_BLOCK); bk++) now[K.k + "/" + bk + "~"] = 1;
-          });
+            if(lat < BAY - 0.05) for(bk = Math.floor(a/BLOCK) - m; bk <= Math.floor(b/BLOCK) + m; bk++) mark(name(K, bk, false), k);
+            if(lat > BAY - SPEC.bus.wid - 0.15) for(bk = Math.floor(a/BAY_BLOCK); bk <= Math.floor(b/BAY_BLOCK); bk++) mark(name(K, bk, true), k);
+          }
         }
-      });
-      Object.keys(now).forEach(function(key){ if(run[key] == null) run[key] = u; on[key] = u; });
-      Object.keys(run).forEach(function(key){
-        if(!now[key] || k === n){ (out[key] = out[key] || []).push([run[key] - DT - 0.1, on[key] + DT + 0.1]); delete run[key]; }
-      });
+      }
+      for(q = 0; q < hit.length; q++){ var hk = hit[q]; if(run[hk] == null){ run[hk] = u; runKeys.push(hk); } on[hk] = u; }
+      var keep = 0;
+      for(q = 0; q < runKeys.length; q++){
+        var rk = runKeys[q];
+        if(stamp[rk] !== k || k === n){ (out[rk] = out[rk] || []).push([run[rk] - DT - 0.1, on[rk] + DT + 0.1]); delete run[rk]; }
+        else runKeys[keep++] = rk;
+      }
+      runKeys.length = keep;
+      if(!keep && sm > sEnd) break;
     }
     if(!r.open) Object.keys(out).forEach(function(key){
       // a stretch over the lap seam is one stretch
@@ -1153,7 +1187,8 @@ function create(doc, o){
   // unit.drop + 120 s) and drives home. A trip is planned once per event, as a pure function of the event,
   // the same way as a seeded run: each box when nothing that clashes is in it, each leg when it misses every
   // tram and bus (2 s later at a time), and never into an earlier unit of the same event (units waiting at
-  // one place park in a line, a body and GAP apart). A unit that cannot fit is left out. Units of different
+  // one place park in a line, a body and GAP apart). A unit that never misses the trams and buses on the
+  // shortest way goes the way that keeps off their lanes (TRANSIT_PEN); one that still cannot fit is left out. Units of different
   // events are not checked against each other (they rarely meet; they would pass through).
   // A robbery is a chase: the getaway car flees along ev.route (its emergency-lane part; the shortest way on
   // where the route takes a road too narrow) to the roadblock, the road carried on until its last stretch
@@ -1352,18 +1387,31 @@ function create(doc, o){
         if(hit == null) return pl;
         for(bad = legs.length - 1; bad > 0 && legs[bad].t0 > hit; bad--);
       }
-      delay[bad] += dStep;
+      // later and later by the default step (2 s, then 4 s from the 10th try...: up to ~3 min late in all), so a
+      // run that keeps catching a tram or bus can wait for the next gap in the timetable
+      delay[bad] += step == null ? dStep*(1 + Math.floor(n/10)) : dStep;
       L.fail = bad;
     }
     return null;
   }
-  // an event's trips, in order: the chase first, then each other unit
-  function planEvent(ev){
-    var U = ev.units || [], done = [], fill = {}, gi = -1;
-    if(ev.kind === "patrol" || ev.kind === "delivery") return done;
-    U.forEach(function(u, k){ if(u && u.kind === "getaway" && gi < 0) gi = k; });
-    if(gi >= 0) planChase(ev, gi, done);
-    U.forEach(function(u, k){
+  // an event's trips, in order: the chase first, then each other unit. Planned a step at a time (planStep: the
+  // chase, or one unit), so warm() can spread an event over frames; the steps run in the same order whenever
+  // they run, so the trips are the same.
+  function planStart(ev){
+    var U = ev.units || [], P = {ev: ev, done: [], fill: {}, gi: -1, k: -1, fin: ev.kind === "patrol" || ev.kind === "delivery"};
+    U.forEach(function(u, k){ if(u && u.kind === "getaway" && P.gi < 0) P.gi = k; });
+    if(P.gi < 0) P.k = 0;
+    return P;
+  }
+  function planStep(P){
+    if(P.fin) return;
+    var ev = P.ev, U = ev.units || [];
+    if(P.k < 0){ planChase(ev, P.gi, P.done); P.k = 0; }
+    else { planUnit(ev, U[P.k], P.k, P.done, P.fill, P.gi); P.k++; }
+    if(P.k >= U.length) P.fin = true;
+  }
+  function planUnit(ev, u, k, done, fill, gi){
+    (function(){
       if(!u || !SPEC[u.kind] || u.kind === "car" || u.kind === "bus" || u.kind === "tram" || k === gi || (gi >= 0 && u.kind === "police" && u.lag != null)) return;
       var home = homeOf(u), scene = u.node != null && nodes[u.node] ? u.node : ev.node, kind = u.kind, spec = SPEC[kind];
       if(home == null || scene == null || !nodes[scene]) return;
@@ -1428,8 +1476,7 @@ function create(doc, o){
       if(!pl) return;
       L.forEach(function(g){ if(g.key != null) fill[g.key] = g.off + spec.len + GAP; });
       done.push(pl);
-    });
-    return done;
+    })();
   }
   // the chase: the getaway car's lanes from the scene along ev.route to its roadblock
   function chaseChain(ev, scene, block){
@@ -1573,24 +1620,46 @@ function create(doc, o){
     cityList = {b: b, list: list};
     return list;
   }
-  function eventTrips(ev){
+  // an event's plan (planStart), kept for the last 96 events
+  function planOf(ev){
     var key = "v" + ev.id;
     if(planCache.hasOwnProperty(key)) return planCache[key];
-    planCache[key] = planEvent(ev); planKeys.push(key);
+    planCache[key] = planStart(ev); planKeys.push(key);
     if(planKeys.length > 96) delete planCache[planKeys.shift()];
     return planCache[key];
   }
-  // an event is planned when its units could be out (a chaser sets off before the start), or earlier, one
-  // event a call, while it is coming up: the planning cost is spread over the frames
+  function eventTrips(ev){
+    var P = planOf(ev);
+    while(!P.fin) planStep(P);
+    return P.done;
+  }
+  function needed(ev, t){ return num(ev.start, 0)/1000 - CITY_AHEAD/2 <= t; }
+  // an event is planned (whatever is left of it) when its units could be out (a chaser sets off before the
+  // start); before that warm() plans it a step at a time while it is coming up
   function cityTrips(t){
-    var out = [], spare = true;
+    var out = [];
     cityEvents(t).forEach(function(ev){
-      var need = num(ev.start, 0)/1000 - CITY_AHEAD/2 <= t;
-      if(!need && !(spare && !planCache.hasOwnProperty("v" + ev.id))) return;
-      if(!need) spare = false;
+      if(!needed(ev, t)) return;
       eventTrips(ev).forEach(function(pl){ if(t >= pl.appear && t < pl.gone) out.push(pl); });
     });
     return out;
+  }
+  // Plan steps of the events around timeMs (those needed now first, then those coming up within CITY_AHEAD s,
+  // each by its start) until budgetMs of wall time is spent (a step is never cut: one may run over it): called
+  // once a frame, it keeps at() from planning a whole event on the frame it is first needed. now: only those
+  // needed now (before the first frame). -> true when nothing is left. Only when (not what) is planned depends
+  // on the clock.
+  function nowMs(){ return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now(); }
+  function warm(timeMs, budgetMs, now){
+    if(!city) return true;
+    var t = num(timeMs, 0)/1000, t0 = nowMs(), lim = budgetMs === Infinity ? Infinity : num(budgetMs, 2);
+    var list = cityEvents(t).filter(function(ev){ var key = "v" + ev.id; return (!now || needed(ev, t)) && (!planCache.hasOwnProperty(key) || !planCache[key].fin); });
+    list.sort(function(a, b){ return (needed(b, t) - needed(a, t)) || num(a.start, 0) - num(b.start, 0) || (String(a.id) < String(b.id) ? -1 : 1); });
+    for(var i = 0; i < list.length; i++){
+      var P = planOf(list[i]);
+      while(!P.fin){ if(nowMs() - t0 >= lim) return false; planStep(P); }
+    }
+    return true;
   }
   // the city's units at t as at() lists them: lights and siren on the way in, lights on scene, neither home
   function cityAt(t){
@@ -1823,8 +1892,22 @@ function create(doc, o){
   }
 
   return {
-    tier: tier, grow: grow, H: H, at: at, stopsNear: stopsNear, nextArrival: nextArrival, rideTo: rideTo,
+    tier: tier, grow: grow, H: H, at: at, warm: warm, stopsNear: stopsNear, nextArrival: nextArrival, rideTo: rideTo,
     onFare: function(fn){ fareHook = typeof fn === "function" ? fn : null; },
+    // the city's runs as planned so far, each {id, ev, unit (the director's objects), kind, start, end (ms: when its
+    // vehicle appears on the road and is gone)}: those of every event around timeMs that has been planned (none is
+    // planned here); a unit traffic could not fit has none
+    cityRuns: function(timeMs){
+      var out = [];
+      if(!city) return out;
+      cityEvents(num(timeMs, 0)/1000).forEach(function(ev){
+        var key = "v" + ev.id; if(!planCache.hasOwnProperty(key)) return;
+        planCache[key].done.forEach(function(pl){
+          out.push({id: pl.id, ev: ev, unit: (ev.units || [])[pl.unit] || null, kind: pl.kind, start: Math.round(pl.appear*1000), end: Math.round(pl.gone*1000)});
+        });
+      });
+      return out;
+    },
     incidents: function(timeMs){
       if(city) return cityTrips(num(timeMs, 0)/1000).map(function(pl){ return {id: pl.id, kind: pl.kind, ev: pl.ev, unit: pl.unit, start: Math.round(pl.appear*1000), end: Math.round(pl.gone*1000)}; });
       return activeIncidents(num(timeMs, 0)/1000).map(function(I){ return {id: I.id, kind: I.kind, station: I.station, node: I.node, start: Math.round(I.start*1000), end: Math.round(I.end*1000)}; }); },

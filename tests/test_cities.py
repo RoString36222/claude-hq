@@ -471,7 +471,8 @@ out.living = (function(){
   o.sirensAfter = L.sirens.filter(k => k === ev.id + "/" + ev.units.indexOf(u)).length; o.allStopped = voices.every(V => V.stopped || L.sirens.length); HQV.engine = E0;
   o.phase = D.phase(ev, NOW);
   o.alert = L.alerts.filter(a => a.kind === "fire" && Math.hypot(a.x - ev.x, a.z - ev.z) < 1).length;
-  o.station = (L.bySite[String(u.station)] || []).filter(e => e.ev.id === ev.id && e.unit === u).length;
+  // (with traffic driving the units the entry's times are its trip's, the director's unit as src)
+  o.station = (L.bySite[String(u.station)] || []).filter(e => e.ev.id === ev.id && (e.unit === u || e.src === u)).length;
   o.fxDraws = L.fx ? L.fx.drawCalls() : 0;
   o.headline = L.news ? L.news.headlines().filter(h => h.ev && h.ev.id === ev.id).length : 0;
   o.goTo = wc.nav().places().filter(p => p.kind === "incidents" && p.id === "incident:" + ev.id).length;

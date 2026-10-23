@@ -29,8 +29,9 @@
  * `festival` (the funpark or the town hall, Fri-Sun 18:00-23:30), `rush` (Mon-Fri 07-09, 17-19).
  *
  * Ev = {id, kind, start, end, x, z, node, site, lot, street, severity, label, units, dispatch, arrive, clear, done,
- *       dest?, route?, routeLen?, kick?, bell?, who?}; times are UTC ms, x/z metres, node a road node id, site a
- *       site id, lot a lot id (or null), route road node ids.
+ *       dest?, route?, routeLen?, block?, kick?, bell?, who?}; times are UTC ms, x/z metres, node a road node id,
+ *       site a site id, lot a lot id (or null), route road node ids, block (a robbery's) the roadblock {x, z} at the
+ *       route's last node and {fx, fz} the node before it (m).
  * Unit = {kind, station (site id; null for the getaway), home (its road node id), node (where it goes),
  *         dispatch, arrive, leave, back (ms), drop? (an ambulance at the hospital), lag? (a chaser, s)}.
  *   kind: "fire" | "ambulance" | "police" | "tow" | "van" | "schoolbus" | "getaway". dispatch >= ev.start,
@@ -393,7 +394,9 @@ function create(doc, o){
     scene(ev, P, n); ev.severity = sev("crime", w, cov.police);
     ev.label = "Robbery at " + (ev.site != null ? NAMES[P.kind] || "a shop" : "a shop" + (ev.street ? " on " + ev.street : ""));
     ev.route = run.path; ev.routeLen = Math.round(run.len);
-    var block = run.path[run.path.length - 1], c = covK("police"), arrest = (240 + 180*rnd("crime", w, 6))*slowK(c);
+    var block = run.path[run.path.length - 1], bq = run.path[run.path.length - 2];
+    ev.block = {x: nx[block], z: nz[block], fx: nx[bq], fz: nz[bq]};
+    var c = covK("police"), arrest = (240 + 180*rnd("crime", w, 6))*slowK(c);
     var g = {kind: "getaway", station: null, home: null, node: block, dispatch: t + 20 + 40*rnd("crime", w, 7)};
     g.arrive = g.dispatch + run.len/SPEED.getaway; g.leave = g.back = g.arrive + arrest;
     ev.units.push(g);
@@ -483,8 +486,10 @@ function create(doc, o){
     if(mk && MARKET_DAYS[dow]){
       var ev = base("market", "market:" + day, utc(day, 7));
       scene(ev, mk, mk.node); ev.site = mk.id; ev.label = "Market day";
-      var vans = nearest("van", mk.node);
-      for(var k = 0; k < 2 && vans.length; k++) ev.units.push(goHome(unit("van", vans[k % vans.length], mk.node, ev.start, 600*k), mk.node, ev.start + 1800 + 600*k));
+      // (never the market itself: a van from there would have nowhere to drive)
+      var vans = nearest("van", mk.node).filter(function(s){ return s.id !== mk.id && s.node !== mk.node; });
+      // in turn, 40 min apart: one van at a time at the stalls (the street by a market holds one)
+      for(var k = 0; k < 2 && vans.length; k++) ev.units.push(goHome(unit("van", vans[k % vans.length], mk.node, ev.start, 2400*k), mk.node, ev.start + 1800 + 2400*k));
       out.push(finish(ev, utc(day, 12.5), utc(day, 13)));
     }
     // school runs
@@ -492,7 +497,8 @@ function create(doc, o){
       [[7.5, 8, 8.5], [14 + 2/3, 15, 15 + 2/3]].forEach(function(T, half){
         var ev = base("school", "school:" + day + ":" + j + ":" + half, utc(day, T[0])), bell = utc(day, T[1]);
         scene(ev, sc, sc.node); ev.site = sc.id; ev.bell = bell; ev.label = half ? "School's out" : "School run";
-        var depot = nearest("schoolbus", sc.node);
+        // a transit depot or another school, never this one (its buses would have nowhere to drive)
+        var depot = nearest("schoolbus", sc.node).filter(function(s){ return s.id !== sc.id && s.node !== sc.node; });
         for(var k = 0; k < (tier >= 3 ? 2 : 1) && depot.length; k++){
           var B = unit("schoolbus", depot[0], sc.node, ev.start, 120*k);
           ev.units.push(goHome(B, sc.node, Math.max(B.arrive + 120, bell + (half ? 300 : -120) + 60*k)));

@@ -19,11 +19,17 @@
  *   Curve: centripetal Catmull-Rom through the filleted polyline (lines and arcs sampled <= 1.5 m), each edge then
  *     resampled at equal arc steps of at most `step` (3 m; about 2.4x the server's point count).
  *   Deviation cap: no point is farther than CAP x half-width (arterial 2.7 m, local 1.8 m) from the original
- *     polyline; a point over it is pulled back onto the cap. Lots are inset by half the width + 25 cm, so the
- *     centreline never reaches one.
+ *     polyline; a point over it is pulled back onto the cap. Lot clearance: lots are inset only half the width +
+ *     25 cm from the original centreline, so a point whose road edges (half the width either side) would reach
+ *     into a lot or a site is pulled back toward the original polyline until they are as clear as the original's
+ *     (at most half the width): neither the paving nor roadUnder ever reaches a lot.
  *   Heights: y is the original polyline's y at the point's nearest point on it (the server's grade).
  *   opts: {cap: CAP, step: 3, lock: LOCK}. Idempotent: a second call starts again from e.pts0.
- *   Marks W.smoothed = {v: VERSION}.
+ *   Marks W.smoothed = {v: VERSION, tight: {nodeId: radius m}} (tight: the degree-2 nodes whose fillet a lot held
+ *   tighter, below).
+ *   Lots and fillets: a fillet whose arc would bring the road's edges nearer a lot or a site than the original's
+ *   are (at most half the width) is drawn tighter, its tangent length cut 30% a time (ROOM_TRIES), or the corner
+ *   kept sharp; what remains (Catmull-Rom's swing) is pulled back point by point, as below.
  *
  * junctionCorners(W, nodeId) -> [{a, b, r, c: [x, z], pts: [[x, z], ...]}]   (metres; for rendering only)
  *   At a 3+ way junction, a kerb fillet between each pair of neighbouring arms (a: the edge id on one side, b: the
@@ -38,7 +44,7 @@
 var root = typeof window !== "undefined" ? window : self;
 var HQV = root.HQV = root.HQV || {};
 
-var VERSION = 1;
+var VERSION = 2;           // 2: the road's edges kept clear of lots and sites
 var CAP = 0.45;            // max deviation from the original polyline, as a fraction of the half-width
 var CAP_USE = 0.95;        // fillets aim inside the cap, so cm rounding never crosses it
 var STEP = 3;              // m between output samples (at most)
@@ -172,7 +178,11 @@ function relax(D, V, cap, fixA, fixB, iters, lock){
   }
   return P;
 }
-function curve(V, cap, stairs, lockA, lockB, lock){
+// room(x, z, px, pz): is (x, z) (a curve point near the original's point (px, pz)) clear enough of the lots? A
+// fillet that is not is drawn tighter (its tangent length cut by 30% a time, up to ROOM_TRIES times, then the
+// corner is left sharp); its vertex index goes in `tight` with the radius it got (0: sharp).
+var ROOM_TRIES = 8;
+function curve(V, cap, stairs, lockA, lockB, lock, room, tight){
   var n = V.length, s = [0], i;
   for(i = 1; i < n; i++) s.push(s[i-1] + Math.hypot(V[i][0] - V[i-1][0], V[i][2] - V[i-1][2]));
   var total = s[n-1];
@@ -196,15 +206,28 @@ function curve(V, cap, stairs, lockA, lockB, lock){
     if(lockB) t = Math.min(t, Math.max(0, total - sq - lock));
     if(!(t > 0.05) || !(tn > 1e-6)){ line([Q[0], Q[2]]); continue; }
     var ui = [(Q[0] - P[0])/lin, (Q[2] - P[2])/lin], uo = [(R[0] - Q[0])/lout, (R[2] - Q[2])/lout];
-    var T1 = [Q[0] - ui[0]*t, Q[2] - ui[1]*t], rad = t/tn;
-    var sg = ui[0]*uo[1] - ui[1]*uo[0] > 0 ? 1 : -1;
-    var C = [T1[0] + sg*rad*(-ui[1]), T1[1] + sg*rad*ui[0]], vx = T1[0] - C[0], vz = T1[1] - C[1];
-    line(T1);
-    var m = Math.max(2, Math.ceil(rad*th/ARC_CHORD));
-    for(var j = 1; j <= m; j++){
-      var al = sg*th*j/m, ca = Math.cos(al), sa = Math.sin(al);
-      ctrl.push([C[0] + vx*ca - vz*sa, C[1] + vx*sa + vz*ca]);
+    var sg = ui[0]*uo[1] - ui[1]*uo[0] > 0 ? 1 : -1, arc = null, t0 = t;
+    for(var tr = 0; tr <= ROOM_TRIES && t > 0.05; tr++, t *= 0.7){
+      var T1 = [Q[0] - ui[0]*t, Q[2] - ui[1]*t], rad = t/tn;
+      var C = [T1[0] + sg*rad*(-ui[1]), T1[1] + sg*rad*ui[0]], vx = T1[0] - C[0], vz = T1[1] - C[1];
+      var m = Math.max(2, Math.ceil(rad*th/ARC_CHORD)), pts = [], ok = true;
+      for(var j = 1; j <= m; j++){
+        var al = sg*th*j/m, ca = Math.cos(al), sa = Math.sin(al), ax = C[0] + vx*ca - vz*sa, az = C[1] + vx*sa + vz*ca;
+        // (its nearest original point: on the arm in or the arm out, whichever is nearer)
+        if(room && ok){
+          var fi = clamp((ax - P[0])*ui[0] + (az - P[2])*ui[1], 0, lin), fo = clamp((ax - Q[0])*uo[0] + (az - Q[2])*uo[1], 0, lout);
+          var ix = P[0] + ui[0]*fi, iz = P[2] + ui[1]*fi, ox = Q[0] + uo[0]*fo, oz = Q[2] + uo[1]*fo;
+          var near = Math.hypot(ax - ix, az - iz) <= Math.hypot(ax - ox, az - oz);
+          ok = room(ax, az, near ? ix : ox, near ? iz : oz);
+        }
+        pts.push([ax, az]);
+      }
+      if(ok){ arc = {T1: T1, pts: pts, rad: rad}; break; }
     }
+    if(tight && (!arc || t < t0 - 1e-9)) tight.push([K[k], arc ? arc.rad : 0]);
+    if(!arc){ line([Q[0], Q[2]]); continue; }
+    line(arc.T1);
+    arc.pts.forEach(function(p){ ctrl.push(p); });
   }
   line([V[n-1][0], V[n-1][2]]);
   if(stairs && ctrl.length > 2) ctrl = relax(ctrl, V, cap, lockA, lockB, stairs, lock);
@@ -257,6 +280,46 @@ function onPoly(V, x, z){
   return {p: o, d: best};
 }
 
+/* ---------- lot clearance ---------- */
+// The lots and sites as rings (m) in a grid of AREA_CELL m cells, each listed in every cell within `reach` m of it:
+// {cells: {"i,j": [ring, ...]}} (a lot's poly, else its rect)
+var AREA_CELL = 32;
+function areaIndex(W, reach){
+  var cells = {};
+  (W.lots || []).concat(W.sites || []).forEach(function(o){
+    if(!o) return;
+    var ring;
+    if(o.poly && o.poly.length >= 3) ring = o.poly.map(function(p){ return [p[0]/100, p[1]/100]; });
+    else if(o.w > 0 && o.d > 0){
+      var x0 = (o.x - o.w/2)/100, x1 = (o.x + o.w/2)/100, z0 = (o.z - o.d/2)/100, z1 = (o.z + o.d/2)/100;
+      ring = [[x0, z0], [x1, z0], [x1, z1], [x0, z1]];
+    }
+    if(!ring) return;
+    var bx0 = Infinity, bx1 = -Infinity, bz0 = Infinity, bz1 = -Infinity;
+    ring.forEach(function(p){ bx0 = Math.min(bx0, p[0]); bx1 = Math.max(bx1, p[0]); bz0 = Math.min(bz0, p[1]); bz1 = Math.max(bz1, p[1]); });
+    for(var i = Math.floor((bx0 - reach)/AREA_CELL); i <= Math.floor((bx1 + reach)/AREA_CELL); i++)
+      for(var j = Math.floor((bz0 - reach)/AREA_CELL); j <= Math.floor((bz1 + reach)/AREA_CELL); j++)
+        (cells[i + "," + j] = cells[i + "," + j] || []).push(ring);
+  });
+  return {cells: cells};
+}
+// how far (x, z) is from the nearest lot or site (0 inside one), looking no further than the index's reach
+function clearance(I, x, z){
+  var L = I.cells[Math.floor(x/AREA_CELL) + "," + Math.floor(z/AREA_CELL)], best = Infinity;
+  if(!L) return best;
+  for(var q = 0; q < L.length; q++){
+    var R = L[q], inside = false;
+    for(var i = 0, j = R.length - 1; i < R.length; j = i++){
+      var A = R[j], B = R[i];
+      if((B[1] > z) !== (A[1] > z) && x < (A[0] - B[0])*(z - B[1])/(A[1] - B[1]) + B[0]) inside = !inside;
+      var dx = B[0] - A[0], dz = B[1] - A[1], l2 = dx*dx + dz*dz, f = l2 > 0 ? clamp(((x - A[0])*dx + (z - A[1])*dz)/l2, 0, 1) : 0;
+      best = Math.min(best, Math.hypot(x - A[0] - dx*f, z - A[1] - dz*f));
+    }
+    if(inside) return 0;
+  }
+  return best;
+}
+
 function smoothChain(W, inc, ch, o){
   var E = W.edges, V = [], breaks = [0], i, k;
   ch.items.forEach(function(it, j){
@@ -268,9 +331,13 @@ function smoothChain(W, inc, ch, o){
     }
     breaks.push(V.length - 1);
   });
-  var e0 = E[ch.items[0].i], cap = o.cap*Math.max(0, e0.width)/200;
+  var e0 = E[ch.items[0].i], cap = o.cap*Math.max(0, e0.width)/200, hw = Math.max(0, e0.width)/200;
   if(V.length < 2 || !(cap > 0)) return;
-  var C = curve(V, cap, STAIRS[e0.cls] || 0, hasBridge(W, inc, ch.a), hasBridge(W, inc, ch.b), o.lock);
+  // a curve point's road edges must be as clear of the lots and sites as the original's (at most half the width)
+  function room(x, z, px, pz){ return !o.areas || clearance(o.areas, x, z) >= Math.min(hw, clearance(o.areas, px, pz)) - 0.01; }
+  var tight = [], C = curve(V, cap, STAIRS[e0.cls] || 0, hasBridge(W, inc, ch.a), hasBridge(W, inc, ch.b), o.lock, room, tight);
+  // the interior nodes whose fillet the lots held tighter, with the radius it got (m; 0: left sharp)
+  tight.forEach(function(q){ var b = breaks.indexOf(q[0]); if(b > 0 && b < breaks.length - 1) o.tight[ch.items[b].fwd ? E[ch.items[b].i].a : E[ch.items[b].i].b] = Math.round(q[1]*100)/100; });
   var total = C.s[C.s.length-1];
   // split arc lengths at the interior nodes
   var cut = [0], a0 = 0;
@@ -287,6 +354,16 @@ function smoothChain(W, inc, ch, o){
       var q = along(C, A + L*k/m, h); h = q.i;
       var hit = onPoly(V, q.x, q.z), x = q.x, z = q.z;
       if(hit.d > cap){ x = hit.p[0] + (x - hit.p[0])*cap/hit.d; z = hit.p[2] + (z - hit.p[2])*cap/hit.d; }
+      // the paved road's edges (half the width each side) as clear of every lot and site as the original's
+      // were: pulled back toward the original polyline (by bisection) until they are
+      if(o.areas && hit.d > 1e-6){
+        var want = Math.min(hw, clearance(o.areas, hit.p[0], hit.p[2])) - 0.01;
+        if(clearance(o.areas, x, z) < want){
+          var lo = 0, hi = 1, px = hit.p[0], pz = hit.p[2], qx = x - px, qz = z - pz;
+          for(var bi = 0; bi < 14; bi++){ var mid = (lo + hi)/2; if(clearance(o.areas, px + qx*mid, pz + qz*mid) >= want) lo = mid; else hi = mid; }
+          x = px + qx*lo; z = pz + qz*lo;
+        }
+      }
       out.push([Math.round(x*100), Math.round(hit.p[1]*100), Math.round(z*100)]);
     }
     if(!it.fwd) out.reverse();
@@ -311,9 +388,11 @@ function smooth(W, opts){
     if(!e.pts0) e.pts0 = e.pts;
     e.pts = e.pts0;                    // a second call starts again from the server's points
   });
-  var inc = incidence(W);
+  var inc = incidence(W), reach = 0;
+  W.edges.forEach(function(e){ reach = Math.max(reach, Math.max(0, e.width)/200); });
+  o.areas = areaIndex(W, reach + 1); o.tight = {};
   chains(W, inc).forEach(function(ch){ smoothChain(W, inc, ch, o); });
-  W.smoothed = {v: VERSION};
+  W.smoothed = {v: VERSION, tight: o.tight};
   if(W.index) W.index = null;         // world.js rebuilds its buckets from the new points
   if(W.docView) W.docView = null;
   return W;

@@ -668,5 +668,47 @@ class NpcRealCityTest(unittest.TestCase):
         self.assertLess(self.r["ms"], 8000, self.r["ms"])        # 72 whole-town asks with every event built
 
 
+FRAME_HARNESS = r"""
+var fs = require("fs"), zlib = require("zlib"), root = %(root)s;
+global.window = {HQV: {}};
+["world", "roadsmooth", "citysim", "npcsim"].forEach(function(f){ new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))(); });
+var HQV = window.HQV, W = HQV.world.pack(JSON.parse(zlib.gunzipSync(fs.readFileSync(root + "/tests/fixtures/claude-hq@2.json.gz"))));
+var doc = HQV.world.docOf(W), D = HQV.citySim.create(doc, {seed: W.id, tier: 5, coverage: 0.6});
+function make(){ return HQV.npcSim.create(doc, {tier: 5, seed: W.seed || W.id, city: D, clockTzMin: 0}); }
+var t0 = Date.UTC(2026, 9, 24, 13, 0, 0), out = {};   // a Saturday: a match at 15:00
+function ms(f){ var a = process.hrtime.bigint(); var r = f(); return [Number(process.hrtime.bigint() - a)/1e6, r]; }
+var A = make(), B = make();
+out.prewarm = ms(function(){ return A.warm(t0, 1e9); })[0];
+out.first = ms(function(){ return A.at(t0, {x: 0, z: 0}, 150); })[0];
+var worst = 0, diff = 0;
+for(var s = 1; s < 2*3600; s++){
+  var t = t0 + s*1000; A.warm(t, 3);
+  var r = ms(function(){ return A.at(t, {x: 0, z: 0}, 150); }); worst = Math.max(worst, r[0]);
+  if(s %% 120 === 0 && JSON.stringify(r[1]) !== JSON.stringify(B.at(t, {x: 0, z: 0}, 150))) diff++;
+}
+out.worst = worst; out.diff = diff;
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE and os.path.exists(os.path.join(ROOT, "games", "citysim.js")), "node and games/citysim.js needed")
+class NpcCityFrameCost(unittest.TestCase):
+    """On the Commons (claude-hq@2, roads smoothed) with the real director at tier 5 through a Saturday match: once
+    warmed at setup, no frame's at() builds a crowd (warm() does it a little at a time, ahead), and the rows are
+    the same as a cold instance's."""
+    @classmethod
+    def setUpClass(cls):
+        js = FRAME_HARNESS.replace("%(root)s", json.dumps(ROOT)).replace("%%", "%")
+        p = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=300)
+        if p.returncode != 0:
+            raise AssertionError("node harness failed:\n" + p.stderr[-4000:])
+        cls.r = json.loads(p.stdout)
+
+    def test_frames_stay_in_budget(self):
+        self.assertLess(self.r["first"], 20, self.r)             # the first frame after the setup warm
+        self.assertLess(self.r["worst"], 8, self.r)              # 2 h of frames, events coming and going
+        self.assertEqual(self.r["diff"], 0)                      # warm() changes when, never what
+
+
 if __name__ == "__main__":
     unittest.main()

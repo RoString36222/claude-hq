@@ -83,6 +83,8 @@ var SLOTS_KEPT = 4, WIDE = 256;     // slots cached; an entry covering more cell
 // the city's events (opts.city)
 var EV_SLOT = 5*MIN, EV_BACK = 12*HOUR, EV_AHEAD = 3*HOUR, EV_KEPT = 400;
 var HOLD = 3*HOUR;                  // an incident holds nobody longer than this after its end (crowds: EV_BACK)
+var EV_LEAD = 2*HOUR;               // nobody sets off for an event earlier than this before its start
+var EV_WARM = 2*EV_SLOT;            // warm() builds who joins an event this long before claims() would need it
 var GAWK_R = 120, PATIENT_R = 200, FAN_SHARE = 0.14, FAN_MAX = 240, PUPIL_SHARE = 0.7, PUPIL_MAX = 150, PUPIL_R = 1500;
 var SHOP_SHARE = 0.18, SHOP_MAX = 80, SHOP_R = 1000, FEST_SHARE = 0.12, FEST_MAX = 160, OUT_WALK = 1200;
 var CREW = {fire: {n: 3, jobs: {firefighter: 1}}, police: {n: 2, jobs: {officer: 1}}, ambulance: {n: 2, jobs: {nurse: 1, doctor: 1}}};
@@ -856,7 +858,13 @@ function create(doc, opts){
     if(!(W > 0)) return out;
     function H(r, n){ return frac(tag + ":" + r.id + ":" + n); }
     function sign(r){ return H(r, 9) < 0.5 ? -1 : 1; }
-    function byHash(list){ return list.slice().sort(function(a, b){ return (H(a, 0) - H(b, 0)) || (a.id - b.id); }); }
+    // each resident's H(r, 0) once per event (a sort asks for it O(n log n) times; a crowd filters on it too)
+    var h0 = {};
+    function H0(r){ var v = h0[r.id]; return v != null ? v : (h0[r.id] = H(r, 0)); }
+    function byHash(list){
+      return list.map(function(r){ return {k: H0(r), r: r}; }).sort(function(a, b){ return (a.k - b.k) || (a.r.id - b.r.id); })
+        .map(function(x){ return x.r; });
+    }
     function nearby(R){ var L = [], seen = {}; placesNear(ex, ez, R).forEach(function(p){ homeOf[p.i].concat(workOf[p.i]).forEach(function(r){ if(!seen[r.id]){ seen[r.id] = 1; L.push(r); } }); }); return byHash(L); }
     function take(R){ used[R.r.id] = 1; if(!excl[R.r.id]) out.push(R); }   // left out, but its place is taken: a subset of the raw pick
     // crews first: the station's people on shift
@@ -905,7 +913,7 @@ function create(doc, opts){
     }
     // home-based crowds: from home when at home, back home after
     function crowd(list, share, max, plan){
-      var L = list.filter(function(r){ return r.home && H(r, 0) < share; });
+      var L = list.filter(function(r){ return r.home && H0(r) < share; });
       byHash(L).slice(0, max).forEach(function(r){
         if(used[r.id]) return;
         var R = plan(r); if(!R || stateOf(r, R.a).state !== "home") return;
@@ -958,9 +966,12 @@ function create(doc, opts){
   }
 
   // the timelines that hold residents at local t: {id: {R, s (segAt)}}; the earliest event wins
+  // (an event more than EV_LEAD off holds nobody yet: it is not built until then, by warm() a little before)
   function claims(t){
     var out = {}; if(!city) return out;
-    eventsNear(t - tzMs).forEach(function(ev){
+    var u = t - tzMs;
+    eventsNear(u).forEach(function(ev){
+      if(+ev.start - EV_LEAD > u) return;
       partsOf(ev).list.forEach(function(R){
         if(out[R.r.id] || t < R.a || t >= R.end) return;
         var s = segAt(R, t); if(s) out[R.r.id] = {R: R, s: s};
@@ -1053,11 +1064,16 @@ function create(doc, opts){
     Object.keys(cl).forEach(function(k){ if(evId == null || String(cl[k].R.ev.id) === String(evId)) out.push({id: +k, kind: cl[k].R.kind, ev: cl[k].R.ev.id}); });
     return out.sort(function(a, b){ return a.id - b.id; });
   };
-  // plan routes ahead (trips in progress or starting within the next hour) for up to `ms` of wall time
+  // build who joins the events claims() needs now or within EV_WARM (one event at a time, the earliest first),
+  // then plan routes ahead (trips in progress or starting within the next hour), for up to `ms` of wall time
   var warmAt = 0;
   sim.warm = function(t, ms){
     var t0 = Date.now(), lim = ms == null ? 4 : +ms, n = residents.length, done = 0;
     t = +t || 0;
+    if(city){
+      var u = t - tzMs, L = eventsNear(u);
+      for(var j = 0; j < L.length && Date.now() - t0 < lim; j++) if(+L[j].start - EV_LEAD <= u + EV_WARM) partsOf(L[j]);
+    }
     for(var k = 0; k < n && Date.now() - t0 < lim; k++){
       var r = residents[(warmAt + k) % n], day = Math.floor(t/DAY);
       for(var dd = -1; dd <= 0; dd++){

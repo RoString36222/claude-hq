@@ -97,6 +97,20 @@ FIX.forEach(function(f){
     }
     var Q0 = e.pts0;
     for(k = 0; k + 2 < Q0.length; k += 3) for(q = 0; q < A.length; q++) if(inPoly(Q0[k]/100, Q0[k+2]/100, A[q].ring)){ o.inAreaOrig++; break; }
+    // the paved edges too: half the width (less 5 cm) either side, square to the road
+    function edgesIn(P){
+      var n = P.length/3, hw = e.width/200 - 0.05, c = 0;
+      for(var i = 0; i < n; i++){
+        var a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1), dx = (P[3*b] - P[3*a])/100, dz = (P[3*b+2] - P[3*a+2])/100, l = Math.hypot(dx, dz);
+        if(!(l > 1e-6)) continue;
+        for(var sd = -1; sd <= 1; sd += 2){
+          var x = P[3*i]/100 - dz/l*hw*sd, z = P[3*i+2]/100 + dx/l*hw*sd;
+          for(var q2 = 0; q2 < A.length; q2++) if(inPoly(x, z, A[q2].ring)){ c++; break; }
+        }
+      }
+      return c;
+    }
+    o.edgeIn = (o.edgeIn || 0) + edgesIn(P); o.edgeInOrig = (o.edgeInOrig || 0) + edgesIn(Q0);
   });
   function turnAtNode(id){
     var L = inc[id]; if(!L || L.length !== 2) return 0;
@@ -135,6 +149,9 @@ FIX.forEach(function(f){
     var th = turnAtNode(id), L = inc[id], cap = RS.CAP*e.width/200*0.95, h = th/2;
     if(th < 1e-3) return lim;
     var R = Math.min(cap/(1 - Math.cos(h)), 0.45*Math.min(lenOf(L[0]), lenOf(L[1]))/Math.tan(h));
+    // a fillet the lots held tighter (W.smoothed.tight: its radius; 0: left sharp, as the server drew it)
+    var T = W.smoothed && W.smoothed.tight, tr = T ? T[id] : null;
+    if(tr != null){ if(!(tr > 0)) return Infinity; R = Math.min(R, tr); }
     return Math.max(lim, 3/R*DEG*1.15 + 0.5);
   }
   function check(e, t, x, z, id, where){
@@ -158,7 +175,7 @@ FIX.forEach(function(f){
     var before = Math.PI - dh(hOut0(e), hOut0(f)), after = Math.PI - dh(hOut(e), hOut(f));
     if(before > 25/DEG){
       o.kinksBefore++;
-      if(nearBridge(id)) o.kinksExempt++;
+      if(nearBridge(id) || (W.smoothed.tight && W.smoothed.tight[id] === 0)) o.kinksExempt++;
       else if(after < before - 1/DEG) o.kinksSmoothed++;   // (and within allowed(), checked below)
       else o.kinksAfter++;
     }
@@ -218,6 +235,8 @@ class RoadSmoothTest(unittest.TestCase):
         for f, o in self.each():
             self.assertEqual(o["inAreaOrig"], 0, f)   # the server's roads are clear of them ...
             self.assertEqual(o["inArea"], 0, f)       # ... and so are the curves
+            self.assertEqual(o["edgeInOrig"], 0, f)   # the paved edges (centre +- half the width) too ...
+            self.assertEqual(o["edgeIn"], 0, f)       # ... curved as well
 
     def test_endpoints(self):
         for f, o in self.each():
@@ -244,7 +263,12 @@ class RoadSmoothTest(unittest.TestCase):
         for f, o in self.each():
             self.assertTrue(o["det"], f)            # two packs agree byte for byte (and smooth() is idempotent)
             self.assertTrue(o["packed"], f)         # world.js pack() smooths by itself when roadsmooth.js is loaded
-            self.assertEqual(o["smoothed"], {"v": 1})
+            self.assertEqual(o["smoothed"]["v"], 2)
+            # corners a lot sits snug inside are drawn tighter, never left sharp (on @1 nearly all are)
+            tight = o["smoothed"]["tight"]
+            self.assertEqual([k for k, r in tight.items() if not r > 0], [], f)
+            if "@2" in f:
+                self.assertLess(len(tight), 0.5*o["splits"], f)    # most keep their full arc
             self.assertTrue(o["docOf"], f)          # world.docOf hands the curves to traffic / npcsim
 
     def test_fast(self):

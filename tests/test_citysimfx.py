@@ -58,6 +58,10 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   var L = X.layout(W, EVS[0], function(x, z){ return 1; }); out.layout = {roof: L.roof, slots: L.slots, cones: L.cones.length, flames: L.flames.length, door: L.door};
   out.crashLayout = X.layout(W, EVS[2], null).crash.length;
   out.blockLayout = X.layout(W, EVS[4], null).block;
+  // citysim's shape: route node ids, the roadblock as ev.block (m); the units park there, not at the robbery
+  var L2 = X.layout(W, {id: "r2", kind: "crime", x: 60, z: -30, route: [5, 6, 7], block: {x: 300, z: 10, fx: 280, fz: 10},
+                        units: [{kind: "getaway"}, U("police", 1), U("police", 2)]}, null);
+  out.blockLayout2 = {block: L2.block, slots: L2.slots};
   var wind = {x: 1, z: 0, k: 1}, still = {x: 1, z: 0, k: 0};
   function meanX(w, t, calm){ var s = 0, ys = []; for(var i = 0; i < 20; i++){ var p = X.smokePuff(i, 20, t, w, 1, calm, "f1"); s += p.x; ys.push([p.y, p.a]); } return [s/20, ys]; }
   out.smoke = {wind: meanX(wind, 10, false)[0], still: meanX(still, 10, false)[0],
@@ -91,6 +95,10 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   fx.update(600000 + 600000, 1/60, cam); out.charred = snap(); out.charDraws = fx.drawCalls();
   fx.update(600000 + 7200000, 1/60, cam); out.goneDraws = fx.drawCalls();
   out.groupKids = fx.group.children.length;
+  // traffic driving the units: no bodies here (only the crash's two cars), an engine's ladder at traffic's pose
+  var fx3 = X.create({THREE: THREE}, W, D, {scene: scene, ground: function(){ return 1; }, calm: function(){ return false; },
+    vehicles: function(){ return [{kind: "fire", ev: "f1", phase: "onscene", x: 104, y: 1, z: 66, yaw: 0}, {kind: "fire", ev: "f1", phase: "responding", x: 200, y: 1, z: 66, yaw: 0}]; }});
+  var fx0 = fx; fx = fx3; fx3.update(250000, 1/60, cam); out.traffic = snap(); fx = fx0; fx3.destroy();
 
   /* ---------- the sounds it asks for ---------- */
   made.length = 0; sets.length = 0; stops = 0; crackles.length = 0; crowds.length = 0;
@@ -169,6 +177,12 @@ now = 50; const p1 = pops(); now = 50; const p2 = pops(); out.pops = [p1, p2];
 // the one-shot sfx
 m0 = made; E.sfx('siren', {kind: 'ambulance', dist: 100, approach: 10}); out.sfxMade = made - m0;
 m0 = made; E.sfx('siren', {kind: 'police', dist: 5000}); out.sfxFar = made - m0;
+// every sound a civic building asks the City to play (hqcivic's sound("...")) is in the SFX table
+const civ = fs.readFileSync(require('path').join(require('path').dirname(process.argv[1]), 'hqcivic.js'), 'utf8');
+out.civic = Array.from(new Set(Array.from(civ.matchAll(/sound\("(\w+)"\)/g)).map(m => m[1]))).sort().map(n => [n, E.hasSfx(n)]);
+// the stadium's whistle and roar: louder near, nothing past CIVIC_M
+out.civicMade = ['whistle', 'roar'].map(n => { const r = []; [10, 200, E.CIVIC_M + 1].forEach(d => { const m = made; E.sfx(n, {dist: d}); r.push(made - m); }); return r; });
+out.civicVol = [0, 100, 249, 250].map(d => E.civicVol(d));
 console.log(JSON.stringify(out));
 """
 
@@ -229,6 +243,19 @@ class CitySimFx(unittest.TestCase):
         self.assertEqual(self.o["crashLayout"], 2)
         b = self.o["blockLayout"]
         self.assertEqual((b["x"], b["z"]), (220, 0))                         # the roadblock at the chase's end
+        b2 = self.o["blockLayout2"]
+        self.assertIsNotNone(b2["block"])                                    # citysim's ev.block (route = node ids)
+        self.assertEqual((b2["block"]["x"], b2["block"]["z"]), (300, 10))
+        self.assertEqual(len(b2["slots"]), 3)
+        for s in b2["slots"]:                                                # parked up the road into the block
+            self.assertLess(s["x"], 300)
+            self.assertLess(math.hypot(s["x"] - 300, s["z"] - 10), 30)
+
+    def test_units_left_to_traffic(self):
+        t, own = self.o["traffic"], self.o["onscene"]
+        self.assertEqual(t["fx:car"]["n"], 2)                                # the crash's two cars, no units
+        self.assertGreater(own["fx:car"]["n"], 2)
+        self.assertGreater(t["fx:box"]["n"], 0)                              # the ladder and hose (+ cordon tape)
 
     def test_smoke_rises_and_leans_with_the_wind(self):
         s = self.o["smoke"]
@@ -353,6 +380,19 @@ class SirenSound(unittest.TestCase):
         self.assertEqual(o["calmHorn"], 0)
         self.assertEqual(o["mutedMade"], 0)
         self.assertEqual(o["ambOffMade"], 0)
+
+    def test_civic_sounds_exist(self):
+        o = self.o
+        names = [n for n, _ in o["civic"]]
+        self.assertTrue({"bell", "whistle", "roar"} <= set(names), names)
+        self.assertEqual([n for n, ok in o["civic"] if not ok], [])          # none dropped by sfx()
+        for made in o["civicMade"]:
+            self.assertGreater(made[0], 0)
+            self.assertEqual(made[2], 0)                                     # out of earshot: nothing made
+        v = o["civicVol"]
+        self.assertEqual(v[0], 1)
+        self.assertGreater(v[1], v[2])
+        self.assertEqual(v[3], 0)
 
     def test_ambient_loops(self):
         o = self.o

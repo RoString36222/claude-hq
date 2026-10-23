@@ -2,7 +2,11 @@
  *
  * create(c, W, D, o) -> {update(ms, dt, cam), setNight(n), drawCalls(), destroy()}
  *   c: the hq3d ctx (c.THREE); W: the packed world (lots in cm); D: the event director (games/citysim.js:
- *   D.events / D.active / D.phase / D.unitsAt / D.at); o: {scene, ground(x, z), say, calm()}.
+ *   D.events / D.active / D.phase / D.unitsAt / D.at); o: {scene, ground(x, z), say, calm(), vehicles()?}.
+ *   vehicles: when traffic.js drives the director's units, its at() list this frame. The units are then left to
+ *   traffic (drawn once, where and when it parks them): here only an engine's ladder and hose at its parked pose
+ *   and the beacons' light on the street. Without it the units park in a row at the scene (a robbery's at the
+ *   roadblock) over the director's [arrive, leave).
  *   update takes the UTC epoch ms (the shared clock: everyone sees the same fire at the same moment), the frame's
  *   dt (s) and the camera ({x, y, z}, as hq3d's camInfo()).
  *
@@ -86,16 +90,18 @@ function phaseU(spans, phase, ms){
   var s = spans && spans[phase]; if(!s || !(s[1] > s[0])) return 0.5;
   return clamp((ms - s[0])/(s[1] - s[0]), 0, 1);
 }
-// n flames spread round a roof's edge (roof: {x, z, w, d, y} m), 0.6 m in from it, deterministic by seed
+// n flames spread round a roof's edge (roof: {x, z, w, d, y, yaw?} m; w across, d along the yaw), 0.6 m in from
+// it, deterministic by seed
 function flameSpots(roof, n, seed){
   var w = Math.max(1, roof.w - 1.2), d = Math.max(1, roof.d - 1.2), P = 2*(w + d), out = [];
+  var ya = num(roof.yaw, 0), cy = Math.cos(ya), sy = Math.sin(ya);
   for(var i = 0; i < n; i++){
     var s = ((i + 0.25 + 0.5*h01(seed, i, "f"))/n)*P, x, z;
     if(s < w){ x = -w/2 + s; z = -d/2; }
     else if((s -= w) < d){ x = w/2; z = -d/2 + s; }
     else if((s -= d) < w){ x = w/2 - s; z = d/2; }
     else { s -= w; x = -w/2; z = d/2 - s; }
-    out.push([roof.x + x, roof.y, roof.z + z]);
+    out.push([roof.x + x*cy + z*sy, roof.y, roof.z - x*sy + z*cy]);
   }
   return out;
 }
@@ -107,7 +113,7 @@ function smokePuff(i, n, tSec, wind, k, calmed, seed){
   var lean = (wind ? num(wind.k, 0) : 0)*(3 + 16*age*age), wx = wind ? num(wind.x, 0) : 0, wz = wind ? num(wind.z, 0) : 0;
   var sp = 0.6 + 3.2*age;
   return {x: wx*lean + (h01(seed, i, "x") - 0.5)*2*sp, y: 1 + age*(10 + 24*k), z: wz*lean + (h01(seed, i, "z") - 0.5)*2*sp,
-          s: (2.2 + 7*age)*(0.6 + 0.5*k), a: clamp(k, 0, 1.3)*0.7*Math.min(1, age*5)*(1 - age)};
+          s: (2.2 + 7*age)*(0.6 + 0.5*k), a: clamp(k, 0, 1.3)*0.5*Math.min(1, age*5)*(1 - age)};
 }
 // a beacon lamp's brightness (0.08..1) at ms: lamp 0/1 of a pair, alternating (police fastest); "hazard": both
 // together at 1 Hz. Calm: steady.
@@ -152,7 +158,7 @@ function sirenPick(units, ms, cam, n, range){
 }
 
 // The scene's layout, once per event: where everything stands (m), ground heights included.
-//   lot (a building's): roof {x, z, w, d, y}, flames on its edge, parking in front of its door
+//   lot (a building's): roof {x, z, w, d, y, yaw} (as worldgeom draws it), flames on its edge, parking in front of its door
 //   else: the event's (x, z), parking along a seeded heading
 //   -> {x, z, y, roof|null, door {x, z, y}, tan {x, z}, slots [{x, z, y, yaw}], cones [{x, z, y}],
 //       flames [[x, y, z]], crash [{x, z, y, yaw, col}], stretcher {..}|null, block {x, z, y, yaw}|null}
@@ -162,6 +168,18 @@ function lotIndex(W){
   try { Object.defineProperty(W, "__fxLots", {value: m, enumerable: false, configurable: true}); } catch(e){}
   return m;
 }
+// the roof of a building lot as worldgeom draws the building: its footprint (an oriented lot's fitted, turned rect;
+// an @1 lot's rect 1 m inside), at the top of its walls over the highest corner. null without worldgeom.
+function roofOf(lot, gy){
+  var G = HQV.worldgeom, fp = null, F = null, o, hu, hv;
+  if(!G || typeof G.footprint !== "function") return null;
+  try { fp = G.footprint(lot); } catch(e){ return null; }
+  if(fp){ if(!(fp.hu > 0.5 && fp.hv > 0.5)) return null; o = fp.o; hu = fp.hu; hv = fp.hv; F = fp.F; }
+  else { o = {x: lot.x/100, z: lot.z/100}; hu = lot.w/200 - 1; hv = lot.d/200 - 1; if(!(hu > 0.25 && hv > 0.25)) return null; }
+  var ux = F ? F.z : 1, uz = F ? -F.x : 0, vx = F ? F.x : 0, vz = F ? F.z : 1, top = -Infinity;
+  [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function(c){ top = Math.max(top, gy(o.x + c[0]*hu*ux + c[1]*hv*vx, o.z + c[0]*hu*uz + c[1]*hv*vz)); });
+  return {x: o.x, z: o.z, w: 2*hu, d: 2*hv, yaw: F ? Math.atan2(F.x, F.z) : 0, y: top + Math.max(1, lot.floors|0)*FLOOR_H};
+}
 function layout(W, ev, ground){
   var gy = typeof ground === "function" ? ground : function(){ return 0; }, seed = String(ev.id), sev = sevOf(ev);
   var lot = ev.lot != null && typeof ev.lot === "object" ? ev.lot : ev.lot != null ? lotIndex(W || {})[ev.lot] : null;
@@ -170,7 +188,7 @@ function layout(W, ev, ground){
   if(lot && isFinite(lot.x) && isFinite(lot.w)){
     L.x = lot.x/100; L.z = lot.z/100;
     var g0 = gy(L.x, L.z);
-    L.roof = {x: L.x, z: L.z, w: lot.w/100, d: lot.d/100, y: g0 + Math.max(1, lot.floors|0)*FLOOR_H};
+    L.roof = roofOf(lot, gy) || {x: L.x, z: L.z, w: lot.w/100, d: lot.d/100, y: g0 + Math.max(1, lot.floors|0)*FLOOR_H};
     var fr = lot.front && lot.front.length === 2 ? lot.front : [0, Q16], fl = Math.hypot(fr[0], fr[1]) || 1;
     nx = fr[0]/fl; nz = fr[1]/fl;
     var door = lot.door && lot.door.length === 3 ? {x: lot.door[0]/100, z: lot.door[2]/100}
@@ -204,8 +222,9 @@ function layout(W, ev, ground){
   }
   if(ev.kind === "medical"){ var sx = L.x + L.tan.x*1.8, sz = L.z + L.tan.z*1.8; L.stretcher = {x: sx, z: sz, y: gy(sx, sz), yaw: yaw}; }
   if(ev.kind === "crime"){
+    // citysim's ev.block: {x, z} at the route's last node, {fx, fz} the node before it (m)
     var rb = ev.roadblock || ev.block || null, rt = ev.route, bp = null, bq = null;
-    if(rb && rb.x != null) bp = rb;
+    if(rb && rb.x != null){ bp = rb; if(isFinite(rb.fx) && isFinite(rb.fz)) bq = {x: rb.fx, z: rb.fz}; }
     else if(rt && rt.length){
       var pt = function(p){ return p ? (p.length ? {x: p[0], z: p[p.length === 3 ? 2 : 1]} : p) : null; };
       bp = pt(rt[rt.length - 1]); bq = pt(rt[rt.length - 2]);
@@ -213,7 +232,16 @@ function layout(W, ev, ground){
     if(bp && isFinite(bp.x)){
       var by = bq ? Math.atan2(bp.x - bq.x, bp.z - bq.z) + Math.PI/2 : yaw + Math.PI/2;
       L.block = {x: bp.x, z: bp.z, y: gy(bp.x, bp.z), yaw: by};
+      // the getaway car and its chasers stop at the roadblock, never at the robbery: in a line up the road it
+      // came in by, the getaway car first
+      var dx = bq ? bp.x - bq.x : Math.sin(by - Math.PI/2), dz = bq ? bp.z - bq.z : Math.cos(by - Math.PI/2), dl = Math.hypot(dx, dz) || 1;
+      dx /= dl; dz /= dl;
+      L.slots = L.slots.map(function(sl, i){
+        var px = bp.x - dx*(6 + 7*i), pz = bp.z - dz*(6 + 7*i);
+        return {x: px, z: pz, y: gy(px, pz), yaw: Math.atan2(dx, dz) + (h01(seed, i, "sk") - 0.5)*0.25};
+      });
     }
+    else L.slots = [];
   }
   return L;
 }
@@ -238,7 +266,7 @@ function create(c, W, D, o){
   o = o || {};
   var THREE = c.THREE, E = HQV.engine || null, scene = o.scene, ground = typeof o.ground === "function" ? o.ground : function(){ return 0; };
   var group = new THREE.Group(); group.name = "citysimfx";
-  var night = false, dead = false, col = new THREE.Color();
+  var night = false, dead = false, col = new THREE.Color(), fromTraffic = typeof o.vehicles === "function";
 
   // billboard pools: one InstancedBufferGeometry each, aPos (xyz, size) and aCol (rgb, alpha) per sprite
   function pool(name, cap, frag, additive){
@@ -308,9 +336,10 @@ function create(c, W, D, o){
     var F = fireLevel(ph, phaseU(C.spans, ph, ms), sevOf(ev)), t = ms/1000, seed = String(ev.id), i;
     // the blackened roof: from the time the engines are on it until CHAR_MS after the fire is out
     if(ph === "onscene" || ph === "clearing" || (ph === "done" && ms < num(ev.end, 0) + CHAR_MS))
-      P.box.push(L.roof.x, L.roof.y, L.roof.z, 0, 0, L.roof.w - 0.4, 0.12, L.roof.d - 0.4, 0x141210);
+      // (a thin layer at the top of the walls: flush on a flat roof, under a pitched one)
+      P.box.push(L.roof.x, L.roof.y - 0.02, L.roof.z, L.roof.yaw || 0, 0, L.roof.w - 0.4, 0.1, L.roof.d - 0.4, 0x141210);
     if(F.smoke > 0){
-      var n = 10 + 6*sevOf(ev), dark = Math.round(0x22 + (0xd8 - 0x22)*F.steam), sc = (dark << 16) | (dark << 8) | dark;
+      var n = 10 + 6*sevOf(ev), dark = Math.round(0x4a + (0xd8 - 0x4a)*F.steam), sc = (dark << 16) | (dark << 8) | dark;
       for(i = 0; i < n; i++){
         var s = smokePuff(i, n, t, wind, F.smoke, calm, seed);
         P.smoke.push(L.roof.x + s.x, L.roof.y + s.y, L.roof.z + s.z, s.s, sc, s.a);
@@ -344,15 +373,27 @@ function create(c, W, D, o){
         P.glow.push(bx, top, bz, night ? 1.4 : 0.9, bc[lamp], b);
         if(night) P.glow.push(bx, sl.y + 0.4, bz, 9, bc[lamp], 0.22*b);                   // the light on the street
       }
-      if(k === "fire" && L.roof){
-        // the ladder up toward the roof, and a hose to the door
-        var dx = L.roof.x - sl.x, dz = L.roof.z - sl.z, hd = Math.hypot(dx, dz) || 1, rise = Math.max(2, L.roof.y - (sl.y + 2.6));
-        var reach = Math.min(28, Math.hypot(hd*0.7, rise)), pitch = Math.atan2(rise, hd*0.7);
-        P.box.push(sl.x, sl.y + 2.6, sl.z, Math.atan2(dx, dz), Math.PI/2 - pitch, 0.6, reach, 0.18, 0xd8d8d8);
-        var hx = (L.door.x + L.roof.x)/2 - sl.x, hz = (L.door.z + L.roof.z)/2 - sl.z, hl = Math.hypot(hx, hz);
-        P.box.push(sl.x + hx/2, sl.y + 0.05, sl.z + hz/2, Math.atan2(hx, hz), 0, 0.14, 0.1, hl, 0xc9b23a);
-      }
+      if(k === "fire" && L.roof) ladder(L, sl);
     }
+  }
+  // With traffic driving the units (o.vehicles: its at() list this frame, each {kind, ev, phase, x, y, z, yaw}) they are drawn there, beacons and all: here only what traffic does not draw, at the poses it parked them
+  // in: an engine's ladder and hose, and at night the beacons' light on the street
+  function drawParked(ev, C, ms, calm){
+    var L = C.L, vs; try { vs = o.vehicles() || []; } catch(e){ vs = []; }
+    for(var i = 0; i < vs.length; i++){
+      var v = vs[i]; if(!v || v.ev !== ev.id || v.phase !== "onscene") continue;          // parked at the scene
+      var k = v.kind, y = num(v.y, 0), bc = BEACON[k];
+      if(night && bc) for(var lamp = 0; lamp < 2; lamp++) P.glow.push(v.x, y + 0.4, v.z, 9, bc[lamp], 0.22*beaconK(k, ms, lamp, calm, C.seed + i*137));
+      if(k === "fire" && L.roof) ladder(L, {x: v.x, y: y, z: v.z});
+    }
+  }
+  // an engine's ladder up toward the roof and its hose to the door, from where it stands (sl {x, y, z})
+  function ladder(L, sl){
+    var dx = L.roof.x - sl.x, dz = L.roof.z - sl.z, hd = Math.hypot(dx, dz) || 1, rise = Math.max(2, L.roof.y - (sl.y + 2.6));
+    var reach = Math.min(28, Math.hypot(hd*0.7, rise)), pitch = Math.atan2(rise, hd*0.7);
+    P.box.push(sl.x, sl.y + 2.6, sl.z, Math.atan2(dx, dz), Math.PI/2 - pitch, 0.6, reach, 0.18, 0xd8d8d8);
+    var hx = (L.door.x + L.roof.x)/2 - sl.x, hz = (L.door.z + L.roof.z)/2 - sl.z, hl = Math.hypot(hx, hz);
+    P.box.push(sl.x + hx/2, sl.y + 0.05, sl.z + hz/2, Math.atan2(hx, hz), 0, 0.14, 0.1, hl, 0xc9b23a);
   }
   function drawCordon(C){
     var cs = C.L.cones;
@@ -368,7 +409,7 @@ function create(c, W, D, o){
     var flame = 0;
     if(ev.kind === "fire") flame = drawFire(ev, C, ph, ms, calm);
     if(ph === "done") return flame;
-    drawUnits(ev, C, ms, calm);
+    if(fromTraffic) drawParked(ev, C, ms, calm); else drawUnits(ev, C, ms, calm);
     if(ph === "onscene" || ph === "clearing") drawCordon(C);
     if(ev.kind === "crash") L.crash.forEach(function(k, i){
       P.car.push(k.x, k.y, k.z, k.yaw, 0, 1, 1, 1, k.col);

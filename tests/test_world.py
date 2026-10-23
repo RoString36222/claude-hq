@@ -831,7 +831,23 @@ out.trees = {n: T.length, inFillet: T.filter(function(t){ return H.surfaceAt(W, 
 var W2 = require("v8").deserialize(require("v8").serialize(W));
 W2.index = null;
 out.clone = W2.smoothed && H.groundAt(W2, F[0].kx, F[0].kz) === H.groundAt(W, F[0].kx, F[0].kz) && (W2.index.filList || []).length === F.length;
-done(out);
+// a cached record is read back with the roads this page makes: a straight one (packed while roadsmooth.js failed to
+// load) is smoothed and stored again; a smoothed one on a page without roadsmooth.js goes back to the server's points
+(async function(){
+  function idb(rec){ var s = {puts: 0}; s.get = function(){ return Promise.resolve(rec); }; s.put = function(){ s.puts++; return Promise.resolve(); }; return s; }
+  function f304(){ return Promise.resolve({status: 304, headers: {get: function(){ return null; }}}); }
+  function same(A, B){ return A.edges.every(function(e, i){ return JSON.stringify(Array.from(e.pts)) === JSON.stringify(Array.from(B.edges[i].pts)); }); }
+  var straight = (function(){ var rs = window.HQV.roadSmooth; delete window.HQV.roadSmooth; try { return H.pack(doc); } finally { window.HQV.roadSmooth = rs; } })();
+  var I1 = idb({v: H.PACK_V, etag: "e", packed: require("v8").deserialize(require("v8").serialize(H.cacheCopy(straight)))}), A = await H.load({id: "claude-hq@1", fetch: f304, idb: I1});
+  out.cacheStraight = {v: A.smoothed && A.smoothed.v, sameAsPack: same(A, W), puts: I1.puts};
+  var I2 = idb({v: H.PACK_V, etag: "e", packed: require("v8").deserialize(require("v8").serialize(H.cacheCopy(W)))}), rs = window.HQV.roadSmooth;
+  delete window.HQV.roadSmooth;
+  try { var B = await H.load({id: "claude-hq@2", fetch: f304, idb: I2}); } finally { window.HQV.roadSmooth = rs; }
+  out.cacheNoRs = {smoothed: !!B.smoothed, sameAsStraight: same(B, straight), pts0: B.edges.some(function(e){ return !!e.pts0; }), puts: I2.puts};
+  var I3 = idb({v: H.PACK_V, etag: "e", packed: require("v8").deserialize(require("v8").serialize(H.cacheCopy(W)))}), C3 = await H.load({id: "user:00000000-0000-0000-0000-000000000001@2", fetch: f304, idb: I3});
+  out.cacheSame = {puts: I3.puts, v: C3.smoothed.v};
+  done(out);
+})().catch(function(e){ console.error(e && e.stack || e); process.exit(1); });
 """
 
 
@@ -847,12 +863,18 @@ class CurvedRoads(unittest.TestCase):
     def test_pack_smooths(self):
         o = self.out
         self.assertEqual(o["packV"], 5)
-        self.assertEqual(o["smoothed"], {"v": 1})
+        self.assertEqual(o["smoothed"]["v"], 2)
         self.assertTrue(o["pts0"])
         self.assertGreater(o["morePts"][0], 1.5 * o["morePts"][1], "3 m samples: more points than the server's 24 m pieces")
         self.assertTrue(o["docOf"])
         self.assertTrue(o["cache"])
         self.assertTrue(o["clone"])
+
+    def test_cache_read_with_this_pages_roads(self):
+        o = self.out
+        self.assertEqual(o["cacheStraight"], {"v": 2, "sameAsPack": True, "puts": 1})    # smoothed, stored again
+        self.assertEqual(o["cacheNoRs"], {"smoothed": False, "sameAsStraight": True, "pts0": False, "puts": 1})
+        self.assertEqual(o["cacheSame"], {"puts": 0, "v": 2})                             # already right: left alone
 
     def test_rounded_corners_are_road(self):
         f = self.out["fil"]

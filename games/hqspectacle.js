@@ -1675,15 +1675,19 @@ function create(c, W, o){
       if(!boomBuf || boomBuf.sampleRate !== ac.sampleRate){ boomBuf = thumpBuf(ac); crackBufs = [0, 1, 2, 3].map(function(v){ return crackleBuf(ac, v); }); }
       var src = ac.createBufferSource(), lp = ac.createBiquadFilter(), gn = ac.createGain();
       src.buffer = boomBuf; src.playbackRate.value = 0.8 + (seed % 7)*0.06;
-      lp.type = "lowpass"; lp.frequency.value = 180 + 520*near;
-      gn.gain.value = vol*0.7;
+      lp.type = "lowpass"; lp.frequency.value = 140 + 220*near;
+      gn.gain.value = vol*0.5;
       src.connect(lp); lp.connect(gn); gn.connect(A.out); src.start(t0);
-      // the crackle: high and crisp up close, dulled by distance, quieter than the thump at any range
+      // heard from far off: everything dulled, and a faint echo back off the city's towers
+      var dl = ac.createDelay(1), fb = ac.createGain(), wet = ac.createGain();
+      dl.delayTime.value = 0.28 + (seed % 3)*0.07; fb.gain.value = 0.32; wet.gain.value = 0.45;
+      gn.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet); wet.connect(A.out);
+      // the crackle: soft and papery, never crisp (the show is always far overhead), quieter than the thump
       var cs = ac.createBufferSource(), hp = ac.createBiquadFilter(), lp2 = ac.createBiquadFilter(), cg = ac.createGain(), ck = CRACKLE[kind] != null ? CRACKLE[kind] : 0.6;
       cs.buffer = crackBufs[seed % crackBufs.length]; cs.playbackRate.value = kind === 2 ? 0.7 : 0.9 + (seed % 5)*0.05;
-      hp.type = "highpass"; hp.frequency.value = 900; lp2.type = "lowpass"; lp2.frequency.value = 2500 + 6500*near*near;
-      cg.gain.value = vol*ck*(0.35 + 0.5*near);
-      cs.connect(hp); hp.connect(lp2); lp2.connect(cg); cg.connect(A.out); cs.start(t0 + 0.05);
+      hp.type = "highpass"; hp.frequency.value = 600; lp2.type = "lowpass"; lp2.frequency.value = 1600 + 1800*near;
+      cg.gain.value = vol*ck*(0.22 + 0.2*near);
+      cs.connect(hp); hp.connect(lp2); lp2.connect(cg); cg.connect(A.out); cg.connect(dl); cs.start(t0 + 0.05);
     } catch(e){}
   }
 

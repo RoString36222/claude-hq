@@ -201,7 +201,7 @@ function turned(omega, t, run){
 }
 
 // The fireworks (HQ 3.6): a show over the park every SHOW_EVERY s of the shared clock (by night, not in Calm),
-// SHOW_LEN s long, ending in a FINALE of shells four times as fast. shells(a, b, s0, s1): every shell whose burst falls
+// SHOW_LEN s long, ending in a FINALE of shells several times as fast. shells(a, b, s0, s1): every shell whose burst falls
 // in [s0, s1), in the park's frame (a, b: its half width and depth), the same for everyone: when, from where, how high,
 // what kind and colours. Shell i of a show draws in slot i % FW_SLOTS: no two in one slot are ever alive together.
 var SHOW_EVERY = 480, SHOW_LEN = 90, FINALE = 14, FW_RISE = 1.8, FW_SLOTS = 32, FW_LIVE = 6.5;
@@ -214,10 +214,10 @@ function shellTimes(){                                  // a show's launch times
   var out = [], t = 2, i = 0;
   while(t < SHOW_LEN - FINALE - 2){
     out.push(t); i++;
-    if(i % 12 === 0){ out.push(t + 0.35, t + 0.7); t += 1.0; }
-    t += 1.15 + (hash32("fw:t:" + i) % 1000)/1000*0.9;
+    if(i % 8 === 0){ out.push(t + 0.5); t += 0.8; }     // [3.15.1] about half as many shells as before: room between bursts
+    t += 2.6 + (hash32("fw:t:" + i) % 1000)/1000*1.6;
   }
-  for(t = SHOW_LEN - FINALE; t < SHOW_LEN - 1.5; t += 0.3) out.push(t);
+  for(t = SHOW_LEN - FINALE; t < SHOW_LEN - 1.5; t += 0.7) out.push(t);
   return out;
 }
 function shells(a, b, s0, s1){
@@ -1641,26 +1641,49 @@ function create(c, W, o){
       col.setHex(s2.col); C.set(col.r, col.g, col.b, s2.size); col.setHex(s2.col2); D.set(col.r, col.g, col.b, s2.seed);
       if(s2.t > fwLast && s2.t <= sec && cam && cam.x != null){
         var w = park.toW(s2.burst.x, s2.burst.z), d = Math.hypot(w.x - cam.x, park.g.position.y + s2.burst.y - (cam.y || 0), w.z - cam.z);
-        if(d < BOOM_M) boom(d, s2.i);
+        if(d < BOOM_M) boom(d, s2.i, s2.k);
       }
     });
     fwLast = sec;
     if(sh && sh.n !== fwSaid){ fwSaid = sh.n; if(dc < 1600 && sh.t < 5) say("🎆 Fireworks over " + PARK_NAME + "!"); }
   }
-  function boom(dist, seed){
+  // [3.15.1] a burst is a soft thump and then the stars crackling as they fall, not one sharp bang: the thump has no
+  // hard click (that is what made it sound like gunfire), and the crackle is a spray of tiny pops over a second or two,
+  // more for a chrysanthemum or a strobe, a long sizzle for a willow. Both fixed buffers, made once (c.rng, no Math.random).
+  var CRACKLE = [0.55, 0.45, 0.8, 1, 1], crackBufs = null;
+  function thumpBuf(ac){
+    var n = Math.floor(ac.sampleRate*1.2), r = c.rng(5), last = 0, b = ac.createBuffer(1, n, ac.sampleRate), d = b.getChannelData(0);
+    for(var q = 0; q < n; q++){ var tq = q/ac.sampleRate; last = (last + 0.05*(r()*2 - 1))/1.05;
+      d[q] = last*4.2*Math.min(1, tq/0.02)*Math.exp(-tq*4.5); }
+    return b;
+  }
+  function crackleBuf(ac, v){
+    var sr = ac.sampleRate, n = Math.floor(sr*2.4), r = c.rng(31 + v), b = ac.createBuffer(1, n, sr), d = b.getChannelData(0);
+    for(var k = 0; k < 170; k++){                                          // pops, thickest just after the stars spread
+      var at = 0.25 + Math.pow(r(), 1.7)*1.9, len = Math.floor(sr*(0.0015 + r()*0.004)), amp = (0.25 + r()*0.75)*Math.exp(-(at - 0.25)*0.9);
+      for(var q = 0, j0 = Math.floor(at*sr), prev = 0; q < len && j0 + q < n; q++){ var x = r()*2 - 1; d[j0 + q] += (x - prev)*amp*Math.exp(-q/(len*0.3)); prev = x*0.6; }
+    }
+    for(var m = 0, i = 0; i < n; i++) m = Math.max(m, Math.abs(d[i]));   // pops that land together never clip
+    for(i = 0; m > 1 && i < n; i++) d[i] /= m;
+    return b;
+  }
+  function boom(dist, seed, kind){
     var vol = boomVol(dist); if(!(vol > 0)) return;
     var A = E.ambientOut ? E.ambientOut() : E.audioOut ? E.audioOut() : null; if(!A) return;
     try {
-      var ac = A.ctx;
-      if(!boomBuf || boomBuf.sampleRate !== ac.sampleRate){
-        var n = Math.floor(ac.sampleRate*1.6), r = c.rng(5), last = 0; boomBuf = ac.createBuffer(1, n, ac.sampleRate); var d = boomBuf.getChannelData(0);
-        for(var q = 0; q < n; q++){ var tq = q/ac.sampleRate; last = (last + 0.06*(r()*2 - 1))/1.06; d[q] = (last*5 + (tq < 0.03 ? (r()*2 - 1)*0.8 : 0))*Math.exp(-tq*3.2); }
-      }
-      var src = ac.createBufferSource(), lp = ac.createBiquadFilter(), gn = ac.createGain(), t0 = ac.currentTime + dist/343;
+      var ac = A.ctx, near = Math.max(0, 1 - dist/BOOM_M), t0 = ac.currentTime + dist/343;
+      if(!boomBuf || boomBuf.sampleRate !== ac.sampleRate){ boomBuf = thumpBuf(ac); crackBufs = [0, 1, 2, 3].map(function(v){ return crackleBuf(ac, v); }); }
+      var src = ac.createBufferSource(), lp = ac.createBiquadFilter(), gn = ac.createGain();
       src.buffer = boomBuf; src.playbackRate.value = 0.8 + (seed % 7)*0.06;
-      lp.type = "lowpass"; lp.frequency.value = 260 + 1400*Math.max(0, 1 - dist/BOOM_M);
-      gn.gain.value = vol;
+      lp.type = "lowpass"; lp.frequency.value = 180 + 520*near;
+      gn.gain.value = vol*0.7;
       src.connect(lp); lp.connect(gn); gn.connect(A.out); src.start(t0);
+      // the crackle: high and crisp up close, dulled by distance, quieter than the thump at any range
+      var cs = ac.createBufferSource(), hp = ac.createBiquadFilter(), lp2 = ac.createBiquadFilter(), cg = ac.createGain(), ck = CRACKLE[kind] != null ? CRACKLE[kind] : 0.6;
+      cs.buffer = crackBufs[seed % crackBufs.length]; cs.playbackRate.value = kind === 2 ? 0.7 : 0.9 + (seed % 5)*0.05;
+      hp.type = "highpass"; hp.frequency.value = 900; lp2.type = "lowpass"; lp2.frequency.value = 2500 + 6500*near*near;
+      cg.gain.value = vol*ck*(0.35 + 0.5*near);
+      cs.connect(hp); hp.connect(lp2); lp2.connect(cg); cg.connect(A.out); cs.start(t0 + 0.05);
     } catch(e){}
   }
 

@@ -189,7 +189,8 @@ class FireworksTests(unittest.TestCase):
         self.assertTrue(self.o["windows"])
 
     def test_shells_fly_only_in_a_show_and_over_the_park(self):
-        self.assertGreater(self.o["n"], 100)
+        self.assertGreater(self.o["n"], 60)
+        self.assertLess(self.o["n"], 110)                     # two shows: about 45 shells each, not 90 (3.15.1)
         self.assertTrue(self.o["inShow"])
         self.assertTrue(self.o["over"])
         self.assertEqual(self.o["kinds"], 5)

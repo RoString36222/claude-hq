@@ -164,6 +164,27 @@ function engineFor(spec, kind, voice, gears){
   return E;
 }
 
+// The automatic's choice: the gear for what the driver is doing. Flat out (thr > 0.85): the lowest gear below the shift
+// point (the most power: up at the redline, a kickdown skips straight down). Part throttle: the gear whose revs come
+// closest to a target that rises with the pedal. Braking: revs kept in the pulling band (a downshift at a time, ready
+// for the exit). Coasting: a relaxed band. A gear is a candidate only between 1.05 x idle and the shift point; with a
+// comfort margin (6% of the rev range) the current gear is kept rather than hunting.
+function autoGear(E, K, v, thr, brake){
+  var n = K.length, span = E.red - E.idle, best = 1, bd = Infinity, i;
+  function rpm(g){ return v*K[g - 1]; }
+  if(thr > 0.85){
+    for(i = 1; i <= n; i++) if(rpm(i) <= E.shiftUp*0.995) return i;
+    return n;
+  }
+  var want = thr > 0.05 ? E.idle + span*(0.2 + 0.45*thr) : brake ? E.idle + span*0.45 : E.idle + span*0.22;
+  var lo = E.idle*1.05, hi = E.shiftUp*(thr > 0.05 || brake ? 0.92 : 0.8);
+  for(i = 1; i <= n; i++){
+    var r = rpm(i); if(r > hi) continue;
+    var d = Math.abs(r - want) + (r < lo ? span : 0);
+    if(d < bd - 1e-9){ bd = d; best = i; }
+  }
+  return best;
+}
 function gearState(E){ return {gear: 1, rpm: E && E.idle || 900, shiftT: 0, manual: false, clutchWas: false, launchT: 0, slip0: 0, held: false}; }
 function gearStep(G, inp, E, dt){
   inp = inp || {}; dt = Math.max(0, Math.min(0.1, +dt || 0));
@@ -188,10 +209,25 @@ function gearStep(G, inp, E, dt){
     }
   } else {
     if(g < 1) g = 1;
-    if(G.shiftT <= 0 && sp >= 0){
-      var up = thr > 0.6 ? E.shiftUp : E.idle + (E.red - E.idle)*0.45, dn = thr > 0.6 ? E.red*0.5 : E.idle*1.3;
-      if(g < n && at(g) >= up && at(g + 1) > E.idle*1.15){ var aq = E.qs && thr > 0.4; g++; G.shiftT = aq ? 0.05 : 0.3; ev.push("up"); if(aq) ev.push("qs"); }
-      else if(g > 1 && at(g) < dn && at(g - 1) < E.red*0.9){ g--; G.shiftT = 0.25; G.blipTo = at(g - 1); ev.push("down"); }
+    G.since = (G.since || 0) + dt;
+    if(sp < 0 || v < 1.2){ if(g !== 1 && G.shiftT <= 0){ g = 1; G.since = 0; } }
+    else if(G.shiftT <= 0){
+      var tg = autoGear(E, K, v, thr, !!inp.brake), cur = at(g);
+      if(tg !== g && thr <= 0.85 && cur < E.shiftUp*0.92 && cur > E.idle*1.05){
+        // keep this gear unless the other is clearly better (no hunting between two close gears)
+        var span = E.red - E.idle, want = thr > 0.05 ? E.idle + span*(0.2 + 0.45*thr) : inp.brake ? E.idle + span*0.45 : E.idle + span*0.22;
+        if(Math.abs(at(tg) - want) > Math.abs(cur - want) - span*0.06) tg = g;
+      }
+      if(cur >= E.shiftUp && g < n){                 // never sit on the limiter: up now
+        tg = Math.max(tg, g + 1);
+      }
+      if(tg > g && (G.since >= 0.45 || cur >= E.shiftUp)){
+        var aq = E.qs && thr > 0.4; g++; G.shiftT = aq ? 0.05 : 0.25; G.since = 0; ev.push("up"); if(aq) ev.push("qs");
+      } else if(tg < g && (G.since >= (thr > 0.85 ? 0.12 : 0.3))){
+        // a kickdown drops straight to the gear it wants; otherwise one gear at a time, each rev-matched
+        var to = thr > 0.85 ? tg : g - 1;
+        g = to; G.shiftT = 0.18; G.since = 0; G.blipTo = at(g); ev.push("down");
+      }
     }
   }
   G.gear = g;
@@ -270,6 +306,6 @@ function derive(entry){
 }
 
 HQV.hqVehiclePhys = {derive: derive, accFor: accFor, t0100: t0100, timeTo: timeTo, estimate0100: estimate0100,
-                     voiceFor: voiceFor, gearsFor: gearsFor, engineFor: engineFor, tyreCirc: tyreCirc, gearState: gearState, gearStep: gearStep, REVS: REVS, CAP_KMH: CAP_KMH, SLIDE: SLIDE, LEAN: LEAN, ROLL: ROLL,
+                     voiceFor: voiceFor, gearsFor: gearsFor, engineFor: engineFor, tyreCirc: tyreCirc, gearState: gearState, gearStep: gearStep, autoGear: autoGear, REVS: REVS, CAP_KMH: CAP_KMH, SLIDE: SLIDE, LEAN: LEAN, ROLL: ROLL,
                      FLOOR: FLOOR, FLOOR_EV: FLOOR_EV};
 })();

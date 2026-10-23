@@ -221,3 +221,72 @@ class Quickshifter(unittest.TestCase):
 
     def test_only_under_power(self):
         self.assertNotIn("qs", self.o["lift"]["events"])
+
+
+AUTO = r"""
+const fs = require('fs'), path = require('path'), R0 = process.argv[1];
+global.window = {HQV: {}}; eval(fs.readFileSync(path.join(R0, 'games', 'hqvehiclephys.js'), 'utf8'));
+const P = window.HQV.hqVehiclePhys, cat = JSON.parse(fs.readFileSync(path.join(R0, 'games/vehicles/catalogue.json'), 'utf8'));
+const m = cat.vehicles.find(x => x.id === 'bmw-m3-competition'), E = P.engineFor(m.spec, 'car', 'turbo6'), dt = 1/60;
+// a simple longitudinal model: throttle pulls (times the gearbox's drive), brakes and engine braking slow it
+function run(v0, g0, fn, secs){
+  const G = P.gearState(E); G.gear = g0; G.rpm = v0*E.k[g0 - 1]; let v = v0; const log = [];
+  for (let t = 0; t < secs; t += dt){
+    const inp = fn(t, v), o = P.gearStep(G, Object.assign({speed: v}, inp), E, dt);
+    v = Math.max(0, Math.min(o.cap, v + (inp.thr ? 6*o.drive*inp.thr : 0)*dt - (inp.brake ? 9 : (inp.thr ? 0 : 1 + o.engineBrake))*dt));
+    log.push({t, v, g: G.gear, rpm: o.rpm, ev: o.events});
+  }
+  return log;
+}
+const out = {};
+{ const L = run(150/3.6, 6, () => ({thr: 0, brake: true}), 6);           // braking from 150 to a stop
+  const gears = L.map(x => x.g); out.brake = {first: gears[0], last: gears[gears.length - 1],
+    monotonic: gears.every((g, i) => i === 0 || g <= gears[i - 1]),
+    rpmMid: L.filter(x => x.v > 8).map(x => x.rpm).reduce((a, b) => Math.min(a, b), 1e9),
+    downs: L.filter(x => x.ev.includes('down')).length}; }
+{ const L = run(80/3.6, 8, () => ({thr: 1}), 0.4); out.kick = {gear: L[L.length - 1].g, first: L.findIndex(x => x.ev.includes('down'))}; }
+{ const L = run(60/3.6, 2, () => ({thr: 0.25}), 4); out.cruise = {gear: L[L.length - 1].g, rpm: L[L.length - 1].rpm}; }
+{ const L = run(120/3.6, 3, () => ({thr: 0}), 4); out.coast = {gear: L[L.length - 1].g, rpm: L[L.length - 1].rpm}; }
+// steady speed, steady throttle: settles and stays (no hunting)
+{ const G = P.gearState(E); G.gear = 2; let shifts = 0;
+  for (let t = 0; t < 12; t += dt){ const o = P.gearStep(G, {speed: 70/3.6, thr: 0.3}, E, dt); if (t > 2) shifts += o.events.filter(e => e === 'up' || e === 'down').length; }
+  out.steady = shifts; }
+out.span = [E.idle, E.red, E.shiftUp];
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class AutomaticGearbox(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        r = subprocess.run([NODE, "-e", AUTO, ROOT], capture_output=True, text=True, timeout=60)
+        if r.returncode:
+            raise AssertionError(r.stderr[-3000:])
+        cls.o = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_braking_downshifts_all_the_way(self):
+        b = self.o["brake"]
+        self.assertEqual(b["first"], 6)
+        self.assertEqual(b["last"], 1)
+        self.assertTrue(b["monotonic"], "down a gear at a time, never back up while braking")
+        self.assertGreaterEqual(b["downs"], 4)
+        self.assertGreater(b["rpmMid"], 1500, "kept in the pulling band while braking, not lugging at idle")
+
+    def test_kickdown_skips_straight_down(self):
+        k = self.o["kick"]
+        self.assertLessEqual(k["gear"], 4)
+        self.assertLess(k["first"], 15, "within a quarter of a second")
+
+    def test_part_throttle_cruises_in_a_tall_gear(self):
+        c = self.o["cruise"]
+        self.assertGreaterEqual(c["gear"], 4)
+        self.assertLess(c["rpm"], 4200)
+
+    def test_coasting_relaxes(self):
+        c = self.o["coast"]
+        self.assertGreaterEqual(c["gear"], 6)
+        self.assertLess(c["rpm"], 2800)
+
+    def test_no_hunting(self):
+        self.assertLessEqual(self.o["steady"], 1)

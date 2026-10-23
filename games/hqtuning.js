@@ -462,14 +462,19 @@ function mountPanel(stage, opts){
   function renderTab(){
     while(body.firstChild) body.removeChild(body.firstChild);
     if(!cur){ mk("div", "hqtune-empty", body, "Nothing to tune yet: get a car or a bike at the dealership."); return; }
-    var k = cur.kind;
+    var k = cur.kind, f1 = !!(cur.entry && cur.entry.body === "formula");   // [3.17] an F1 car keeps its own aero, wheels and open cockpit
+    if(f1 && tab !== "paint" && tab !== "exhaust"){
+      mk("div", "hqtune-empty", body, tab === "wheels" ? "An F1 car keeps its own wheels: covers over 18-inch rims on slicks." : tab === "windows" ? "No windows: an F1 cockpit is open." :
+        tab === "aero" ? "An F1 car keeps its own wings: its downforce is part of the car." : "An F1 car carries its number, not a plate.");
+      return;
+    }
     if(tab === "paint"){
       if(cur.paints && cur.paints.length) swatches(body, "Factory paint", cur.paints.map(function(p, i){ return {hex: p.hex, name: p.name || ("Paint " + (i + 1)), on: !draft.color && i === draftPaint, i: i}; }), null,
         function(o){ draftPaint = o.i; draft.color = null; });
       swatches(body, "Your colour", [], draft.color, null, function(v){ draft.color = v; });
       chips(body, "Finish", OPTIONS.finish, function(v){ return draft.finish === v; }, function(v){ draft.finish = v; });
-      chips(body, "Two-tone", OPTIONS.two_tone[k], function(v){ return draft.two_tone === v; }, function(v){ draft.two_tone = v; if(v !== "none" && !draft.color2) draft.color2 = k === "bike" ? "#15171a" : "#f2f2f2"; });
-      if(draft.two_tone !== "none") swatches(body, "Second colour", [{hex: "#f2f2f2", name: "White", on: draft.color2 === "#f2f2f2"}, {hex: "#15171a", name: "Black", on: draft.color2 === "#15171a"}, {hex: "#c9a227", name: "Gold", on: draft.color2 === "#c9a227"}, {hex: "#b3131f", name: "Red", on: draft.color2 === "#b3131f"}],
+      if(!f1) chips(body, "Two-tone", OPTIONS.two_tone[k], function(v){ return draft.two_tone === v; }, function(v){ draft.two_tone = v; if(v !== "none" && !draft.color2) draft.color2 = k === "bike" ? "#15171a" : "#f2f2f2"; });
+      if(!f1 && draft.two_tone !== "none") swatches(body, "Second colour", [{hex: "#f2f2f2", name: "White", on: draft.color2 === "#f2f2f2"}, {hex: "#15171a", name: "Black", on: draft.color2 === "#15171a"}, {hex: "#c9a227", name: "Gold", on: draft.color2 === "#c9a227"}, {hex: "#b3131f", name: "Red", on: draft.color2 === "#b3131f"}],
         draft.color2, function(o){ draft.color2 = o.hex; }, function(v){ draft.color2 = v; });
     } else if(tab === "wheels"){
       chips(body, "Rims", OPTIONS.rim[k].map(function(n, i){ return [i, n]; }), function(v){ return draft.rim === v; }, function(v){ draft.rim = v; });

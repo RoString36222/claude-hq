@@ -31,7 +31,7 @@
  *            (m/s^2), limiter, slip (0..1 wheelspin), launch (held at a standstill), events: ["up", "down",
  *            "refused", "manual", "auto", "launch"]}
  * entry = {kind: "car"|"bike", type: "sedan"|"coupe"|"suv"|"hatch"|"pickup"|"hyper"|"super"|"naked"|"sport"|
- *          "adventure"|"cruiser"|"scooter"|"dirt"|"classic"|"hypersport", spec: {cc, cyl, layout, aspiration, electric, powerKw,
+ *          "adventure"|"cruiser"|"scooter"|"dirt"|"classic"|"hypersport"|"formula" ([3.17] an F1 car), spec: {cc, cyl, layout, aspiration, electric, powerKw,
  *          torqueNm, massKg, drive, topKmh, zeroTo100s, gears}, dims: {lengthM, widthM, heightM, wheelbaseM},
  *          sound (optional: a voice name that overrides voiceFor)}
  * Real figures go in; the game's caps (CAP_KMH) keep a hypercar inside a city.
@@ -57,7 +57,10 @@ var LAUNCH = {rwd: 2.7, awd: 2.2, fwd: 4.2, bike: 2.6};   // s: the quickest 0-1
 // how far a bike leans into a turn, by type (the starter motorbike is a naked: hq3d's 0.42)
 var LEAN = {naked: 0.42, sport: 0.5, adventure: 0.34, cruiser: 0.3, scooter: 0.36, dirt: 0.4, classic: 0.36, hypersport: 0.48};
 // body roll by type (rad at full lock and speed); hq3d's starter car has none
-var ROLL = {hatch: 0, sedan: 0.035, coupe: 0.025, hyper: 0.015, super: 0.018, suv: 0.075, pickup: 0.08};
+var ROLL = {hatch: 0, sedan: 0.035, coupe: 0.025, hyper: 0.015, super: 0.018, suv: 0.075, pickup: 0.08, formula: 0};
+// [3.17] an F1 car (docs/plans/grand-prix-spec.md): downforce and slicks. It barely slides, launches on every bit of
+// its grip, stops in a car length and does not roll; still capped at the city's 300 km/h like every car.
+var FORMULA = {grip: 1, slip: 0.12, brake: 19, slide: {min: 11, turn: 1.12, grip: 4.6, max: 0.16, bleed: 4.8}};
 var BRAKE = 14;                                       // m/s², hq3d's
 
 function clamp(x, a, b){ return x < a ? a : x > b ? b : x; }
@@ -106,6 +109,7 @@ function voiceFor(spec, kind){
   if(cyl >= 12) return "v12";                                              // [3.9] a V12 (the Revuelto, the Countach)
   if(cyl >= 10) return "v10";                                              // a V10 (the Huracán)
   if(cyl >= 8) return turbo ? "v8tt" : "v8";
+  if(cyl === 6 && lay === "v6" && turbo) return "v6";                     // [3.17] the F1 turbo-hybrid V6
   if(cyl >= 6) return turbo ? "turbo6" : "six";
   if(/boxer/.test(lay)) return "boxer";
   return turbo ? "turbo4" : "four";
@@ -127,7 +131,7 @@ var REVS = {single: [1500, 10500], twin: [1300, 10200], vtwin: [1250, 10000], bo
             v4: [1250, 14500], triple: [1150, 12650], crossplane: [1350, 13800], supercharged: [1100, 12500],
             longstroke: [800, 6100], twin270: [1050, 7250], vtwin45: [850, 5500], turbo4: [800, 6500], turbo6: [700, 7000],
             v8tt: [650, 7200], v8: [700, 6200], six: [750, 7400], v10: [1000, 8500], v12: [950, 9500], w16: [900, 6700],
-            v16: [1000, 9000], turbo: [850, 6800], bike: [1400, 11500], electric: [0, 16000]};
+            v16: [1000, 9000], turbo: [850, 6800], v6: [4000, 12000], bike: [1400, 11500], electric: [0, 16000]};   // [3.17] v6: the F1 turbo-hybrid
 function tyreCirc(t){
   var m = /(\d{2,3})\s*\/\s*(\d{2,3})\s*[A-Z]*\s*-?\s*R?\s*(\d{2}(?:\.\d)?)/i.exec(String(t || ""));   // 190/55 ZR17, 120/80-18
   if(!m) return null;
@@ -376,6 +380,7 @@ function derive(entry){
   V.engine = engineFor(spec, kind, V.eng, V.gears);
   if(V.engine.k && !electric && spec.engine && spec.engine.ratios) V.gears = V.engine.k.map(function(k){ return Math.round(V.engine.red/k*10)/10; });
   var S = SLIDE[kind === "bike" ? "bike" : drive];
+  if(kind === "car" && type === "formula"){ S = FORMULA.slide; V.grip = FORMULA.grip; V.slip = FORMULA.slip; V.brake = FORMULA.brake; }
   V.slide = {min: S.min, turn: S.turn, grip: S.grip, max: S.max, bleed: S.bleed};
   return V;
 }
@@ -383,5 +388,5 @@ function derive(entry){
 HQV.hqVehiclePhys = {derive: derive, accFor: accFor, t0100: t0100, timeTo: timeTo, estimate0100: estimate0100,
                      voiceFor: voiceFor, gearsFor: gearsFor, engineFor: engineFor, tyreCirc: tyreCirc, gearState: gearState, gearStep: gearStep, autoGear: autoGear, MODES: MODES, MODE_ORDER: MODE_ORDER,
                      nitroStep: nitroStep, perfStep: perfStep, wheelieStep: wheelieStep, WHEELIE: {BAL: BAL, LOOP: LOOP, OVER: OVER, STOPPIE_V: STOPPIE_V}, REVS: REVS, CAP_KMH: CAP_KMH, SLIDE: SLIDE, LEAN: LEAN, ROLL: ROLL,
-                     FLOOR: FLOOR, FLOOR_EV: FLOOR_EV};
+                     FLOOR: FLOOR, FLOOR_EV: FLOOR_EV, FORMULA: FORMULA};
 })();

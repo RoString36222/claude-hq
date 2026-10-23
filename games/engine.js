@@ -219,6 +219,9 @@ var ENGINES = {
   // a V12's smooth shriek to 9,500 (the Revuelto); both open the low-pass far up and crackle on the overrun
   v10:      {cyl: 10, idle: 1000, red: 8700, h: [1, .45, .6, .3, .38, .18, .24, .12, .1, .06], sub: .12, det: 8, grit: 2.2, cut: [700, 6600], q: 1.8, gain: 0.055, lope: [10, 0.06], rough: .15, pops: .8, air: .7},
   v12:      {cyl: 12, idle: 950, red: 9500, h: [1, .3, .42, .18, .28, .1, .16, .06, .08], sub: 0, det: 10, grit: 1.8, cut: [900, 7400], q: 1.9, gain: 0.05, lope: [12, 0.04], rough: .08, pops: .6, air: .7},
+  // [3.17] the F1 turbo-hybrid V6 (docs/plans/grand-prix-spec.md): 12,500 rpm, a high hard whine from the even firing
+  // and the turbo's scream, very little low rumble; the MGU-H keeps the blow-off quiet
+  v6:       {cyl: 6, idle: 4000, red: 12500, h: [1, .35, .55, .2, .4, .15, .25, .1, .12, .06], sub: 0, det: 9, grit: 1.6, cut: [1100, 8200], q: 2, gain: 0.05, lope: [16, 0.03], rough: .06, pops: .25, turbo: 3600, air: .7},
   w16:      {cyl: 16, idle: 900, red: 6700, h: [1, .5, .3, .25, .15, .1, .06], sub: .15, det: 5, grit: 1.5, cut: [600, 3600], q: 1, gain: 0.065, lope: [7, 0.06], rough: .1, pops: .3, turbo: 1500, air: .6},
   v16:      {cyl: 16, idle: 1000, red: 9000, h: [1, .35, .45, .2, .28, .12, .16, .08], sub: 0, det: 9, grit: 1.9, cut: [800, 6000], q: 1.6, gain: 0.055, lope: [9, 0.05], rough: .1, pops: .6, air: .65},
   // [3.9] the new bikes: a counter-rotating V4's twin-pulse bark (the Panigale), an inline triple's howl, a crossplane

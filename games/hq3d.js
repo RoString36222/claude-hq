@@ -787,6 +787,7 @@ function mount(el, api){
     // the dealership (games/hqdealer.js via games/hqcity3d.js): its door or forecourt opens the dealer panel
     dealer: {open: function(){ return dealerOpen(); }},
     tuning: {open: function(){ return tuneOpen(); }},   // [3.13] the Tuning shop (games/hqtuning.js via games/hqcity3d.js)
+    gp: {open: function(){ return gpOpen(); }},         // [3.17] the Grand Prix Circuit (games/hqgpvenue.js via games/hqcity3d.js)
     held: function(code){ return !!keys[code]; },
     // compile a group's shaders now, hidden parts too (a level of detail switched on later costs no frame then)
     prewarm: function(root){
@@ -4213,7 +4214,7 @@ function mount(el, api){
   function through(d){
     if(d.view === "garage:open"){ drvRepair(null, "at the garage"); if(HQV.hqGarageMgr && HQV.hqGarageMgr.open){ keys = {}; HQV.hqGarageMgr.open({from: d.from}); } return; }   // [basement 3.4] the garage manager ([3.12] repairs)
     if(!d.view && d.kind === "studio"){ if(api.studio) api.studio(); return; }                       // [hq revamp] the lobby's HQ Studio kiosk
-    if(!d.view){ if(d.kind === "townhall" && cur && cur.townHall) cur.townHall(); else if(d.kind === "dealer") dealerOpen(); else if(d.kind === "tuning") tuneOpen(); return; }   // games/hqcivic.js: the town hall; games/hqdealer.js: the dealership
+    if(!d.view){ if(d.kind === "townhall" && cur && cur.townHall) cur.townHall(); else if(d.kind === "dealer") dealerOpen(); else if(d.kind === "tuning") tuneOpen(); else if(d.kind === "gp") gpOpen(); return; }   // games/hqcivic.js: the town hall; games/hqdealer.js: the dealership
     if(d.kind === "roof" && d.view === "@lobby"){ enterWorld("lobby", "roof"); return; }            // [hq revamp] down your roof lift: out by the Roof lift
     if(d.view === "@roof"){ if(api.outside && api.outside() === "city") enterWorld("city", "roof"); else if(api.announce) api.announce("Your roof deck is on your tower in Arena City: join the City to go up."); return; }   // [hq revamp] the lobby's Roof lift
     if(d.view.charAt(0) === "@") enterWorld(d.view.slice(1), cur.name);
@@ -4771,6 +4772,29 @@ function mount(el, api){
     return true;
   }
   if(HQV.hqTuning) HQV.hqTuning.host = function(key){ return tuneOpen(key); };
+  /* [3.17] The Grand Prix Circuit (games/hqgpvenue.js draws the venue and the panel): E under its arch in the City. The
+     circuits, the F1 car (the one you drive, else one you own) and Go, which opens the Valley's Grand Prix there. */
+  var gpUi = null, gpCat = null;
+  function gpUiGet(){
+    if(gpUi || !HQV.hqGpVenue) return gpUi;
+    gamesCss();
+    gpUi = HQV.hqGpVenue.mountPanel(el, {
+      catalogue: function(){ return gpCat; },
+      driving: function(){ return ride && VEHICLES[ride.kind] && VEHICLES[ride.kind].cat ? VEHICLES[ride.kind].cat.id : null; },
+      owned: function(){ return ((HQV.hqGarage && HQV.hqGarage.cached && HQV.hqGarage.cached()) || []).map(function(v){ return v && v.vehicle_id; }); },
+      go: function(o){ if(api.grandPrix) api.grandPrix(o); else if(api.announce) api.announce("The Grand Prix opens from the Valley."); },
+      announce: function(t){ if(api.announce) api.announce(t); },
+      onClose: function(going){ if(!going && canvas && canvas.focus) canvas.focus(); }});
+    return gpUi;
+  }
+  function gpOpen(){
+    var u = gpUiGet(); if(!u) return false;
+    keys = {};
+    var go = function(){ u.open(); };
+    var cat = HQV.hqVehicles && HQV.hqVehicles.load ? HQV.hqVehicles.load() : Promise.resolve(null);
+    cat.then(function(c){ gpCat = c; go(); }, go);
+    return true;
+  }
   // a save: the City's copies of that vehicle in its new tune (one you sit in keeps its look until you get out)
   var tuneUnsub = HQV.hqTuning && HQV.hqTuning.onChange ? HQV.hqTuning.onChange(function(key){
     (cur && cur.bikes || []).forEach(function(b){
@@ -4797,7 +4821,9 @@ function mount(el, api){
     return Promise.resolve(Gr.buy(id, paintIdx(V && V.cat, hex))).then(function(r){
       if(r && r.id != null && !r.error) return {ok: true, text: "Your " + nm + " is delivered to the garage — press C to call it."};
       var st = r && r.status;
+      // [3.17] 404: an Arena older than this catalogue (the F1 grid before its server update) doesn't sell it yet
       return {ok: false, text: st === 402 ? "Not enough coins for the " + nm + "." : st === 403 ? "Your level is too low for the " + nm + " yet."
+        : st === 404 ? "Your Arena doesn't sell the " + nm + " yet: it needs its server update. Test drive it meanwhile."
         : "Couldn't get the " + nm + " right now."};
     }, function(){ return {ok: false, text: "Couldn't get the " + nm + " right now."}; });
   }
@@ -5038,6 +5064,15 @@ function mount(el, api){
     if(HQV.townHall && HQV.townHall.isOpen && HQV.townHall.isOpen()){ keys = {}; return; }   // the Town Hall has the keys
     if(HQV.hqnavui && HQV.hqnavui.owns && HQV.hqnavui.owns(e)) return;                      // the Go to panel's, the banner's
     if(cur && cur.menuOpen && cur.menuOpen()){ keys = {}; return; }                         // a stop's or a dock's menu too
+    if(gpUi && gpUi.isOpen()){                                                              // [3.17] the Grand Prix panel has the keys
+      keys = {};
+      if(HQV.hqGpVenue.owns(e)) return;
+      if(!e.metaKey && !e.ctrlKey && !e.altKey){
+        e.preventDefault(); e.stopPropagation();
+        if(e.type === "keydown" && !e.repeat && e.key === "Escape") gpUi.close();
+      }
+      return;
+    }
     if(tuneUi && tuneUi.isOpen()){                                                          // [3.13] the Tuning shop's panel has the keys
       keys = {};
       if(HQV.hqTuning.owns(e)) return;

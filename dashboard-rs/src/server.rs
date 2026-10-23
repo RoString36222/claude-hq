@@ -334,9 +334,10 @@ impl App {
 static GAME_FILE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9_-]{0,40}\.(js|css)$").unwrap());
 static GAME_ASSET_RE: LazyLock<Regex> = LazyLock::new(|| {
     // Valley Rally (games/rally/) is all generated code: its physics, stage and scene scripts
-    // are classic scripts in that folder, so it alone may serve .js beside its data. The 3D
+    // are classic scripts in that folder, so it may serve .js beside its data; Grand Prix
+    // (games/gp/, HQ 3.17) is the same: its circuit scripts and circuits.json. The 3D
     // City's CC0 surface textures and sky (games/city/, LICENSE-assets.txt) are JPEGs only.
-    Regex::new(r"^(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart|platformer|fps|strike|vehicles|pets)/[a-z][a-z0-9-]{0,40}\.(glb|json|png)|rally/[a-z][a-z0-9-]{0,40}\.(js|json|png)|city/[a-z][a-z0-9-]{0,40}\.jpg)$").unwrap()
+    Regex::new(r"^(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart|platformer|fps|strike|vehicles|pets)/[a-z][a-z0-9-]{0,40}\.(glb|json|png)|rally/[a-z][a-z0-9-]{0,40}\.(js|json|png)|gp/[a-z][a-z0-9-]{0,40}\.(js|json|png)|city/[a-z][a-z0-9-]{0,40}\.jpg)$").unwrap()
 });
 
 fn game_type(ext: &str) -> &'static str {

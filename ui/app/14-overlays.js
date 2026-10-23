@@ -56,8 +56,13 @@ function buildCmdkItems(q){
   items.push({group:"Views", ic:"📺", label:"War Room", run:function(){ openWarroom(); }});
   if(typeof hqJumpCity==="function") items.push({group:"Views", ic:"\uD83C\uDFD9", label:"Jump to Arena City", sub:"the 3D street, the fountain and the bike park", run:function(){ hqJumpCity(); }});
   if(typeof hqReturnHome==="function") items.push({group:"Views", ic:"🏠", label:"Return to HQ", sub:"Arena City: your front door, your starters back in B1", run:function(){ hqReturnHome(); }});
+  if(typeof petsOpen==="function"){   // [pets 3.14]
+    items.push({group:"Views", ic:"\uD83D\uDC3E", label:"Pets", sub:"who's out with you, names, colours, accessories, affection", run:function(){ petsOpen("mine"); }});
+    items.push({group:"Views", ic:"\uD83D\uDC36", label:"Adopt a pet", sub:"dogs, cats, dinosaurs, dragons, a sea serpent", run:function(){ petsOpen("adopt"); }});
+  }
   // actions
   items.push({group:"Actions", ic:"⚙️", label:"Open Settings", run:function(){ openSettings(); }});
+  if(typeof hqStudioOpen==="function") items.push({group:"Actions", ic:"\uD83C\uDFA8", label:"HQ Studio", sub:"style your tower, lobby and floors", run:function(){ hqStudioOpen(); }});
   if(typeof openNotchInvite==="function") items.push({group:"Actions", ic:"\uD83D\uDCBB", label:"HQ Notch", sub:"install or check the notch app", run:function(){ openNotchInvite(); }});
   items.push({group:"Actions", ic:"⬇️", label:"Export CSV", run:function(){ downloadExport("csv"); }});
   items.push({group:"Actions", ic:"⬇️", label:"Export JSON", run:function(){ downloadExport("json"); }});

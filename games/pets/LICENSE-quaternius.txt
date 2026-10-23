@@ -1,0 +1,22 @@
+Pet models (games/pets/*.glb) used by games/hqpets.js
+
+All by Quaternius (https://quaternius.com), released under CC0 1.0 Universal (Public Domain Dedication):
+https://creativecommons.org/publicdomain/zero/1.0/
+
+  shiba.glb, husky.glb       "Ultimate Animated Animals" pack (ShibaInu.gltf, Husky.gltf)
+                             https://quaternius.com/packs/ultimateanimatedanimals.html
+  trex.glb, raptor.glb,      "Animated Dinosaurs" pack (Trex.fbx, Velociraptor.fbx, Triceratops.fbx,
+  triceratops.glb,           Stegosaurus.fbx, Apatosaurus.fbx)
+  stego.glb, apatosaurus.glb https://quaternius.com/packs/animateddinosaurs.html
+
+Each pack's License.txt reads:
+
+  LowPoly Models by @Quaternius
+  License: CC0 1.0 Universal (CC0 1.0) Public Domain Dedication
+  https://creativecommons.org/publicdomain/zero/1.0/
+
+Changes made for Claude HQ (CC0 asks for none; noted for clarity): converted to binary glTF with three.js r186
+(FBXLoader / GLTFExporter); the meshes merged into one skinned mesh whose materials became a per-vertex "_ROLE"
+(main, second, belly, eye, dark, white, pink, ivory) so each pet can be recoloured; normals dropped (flat shaded);
+animations cut to idle / look / sniff / walk / run (dogs) and idle / walk / run / roar / jump (dinosaurs),
+resampled to 15 fps, scale tracks and non-deforming bones' tracks removed.

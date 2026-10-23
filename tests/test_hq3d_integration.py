@@ -55,15 +55,16 @@ class LoadOrderAndProtocol(unittest.TestCase):
         m = re.search(r"var HQ_SCRIPTS = (\[[^\]]*\]);", read(HQ_UI))
         self.assertTrue(m, "HQ_SCRIPTS list in 22-hq.js")
         self.assertEqual(json.loads(m.group(1)),
-                         ["engine", "avatar3d", "hq3d", "hqlobby",
+                         ["engine", "avatar3d", "hq3d", "hqpets", "hqlobby",
                           # the basement garage (3.4): the car lift, the garage manager, its effects, B1 itself
                           "hqcarlift", "hqgaragemgr", "hqbasementfx", "hqbasement",
-                          "hqbase", "hqskate", "world", "worldgeom",
+                          # the HQ revamp: HQ Studio's style document and the tower it styles (before the Base that builds it)
+                          "hqstyle", "hqtower", "hqroof", "hqdecor", "hqbase", "hqskate", "world", "worldgeom",
                           "worldbuild", "camrig", "hqhud", "hqcityparts", "hqcity", "hqmerge",
                           # Cities (3.0): the civic kit, residents, traffic, the sea, boats, travel
                           "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqheli",
                           # vehicles (3.2): the catalogue, handling from specs, their bodies, the (temporary) Showroom
-                          "hqvehicles", "hqvehiclephys", "hqvehiclemodels", "hqdrive", "hqshowroom", "hqgarage", "hqdealer", "hqcasinoui", "hqcasino", "hqcall",
+                          "hqvehicles", "hqvehiclephys", "hqvehiclemodels", "hqdrive", "hqshowroom", "hqgarage", "hqdealer", "hqtuning", "hqcasinoui", "hqcasino", "hqcall",
                           "hqtravel", "hqvoyage", "hqships", "hqbridges",
                           # the airport: the airfield layout before the flights, the planes you fly (3.2), its ground, buildings, vehicles
                           "hqairfield", "hqair", "hqaircraft", "hqplane", "hqairport3d", "hqairbldg", "hqairground", "hqairbase",
@@ -94,7 +95,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         self.assertIn("msg.h=Math.max(-50000, Math.min(50000, Math.round(w.h*100)))", m.group(1))
         self.assertIn("Math.max(-90, Math.min(90,", m.group(1))
         self.assertNotRegex(body.replace(m.group(0), ""), r"msg\.[hp]=")
-        self.assertIn("msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg].join", body)   # both in the dedupe key (and the vehicle, the boombox, the convoy)
+        self.assertIn("msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0)].join", body)   # both in the dedupe key (and the vehicle, the boombox, the convoy, the tune, the pets)
         # the city3d skip comes before anything is sent
         self.assertLess(body.index('w.world==="city3d"'), body.index("ws.send"))
 
@@ -244,7 +245,7 @@ class Hq3dSource(unittest.TestCase):
         self.assertIn("return cur && cur.camModes && cur.groundY ? cur.groundY(x, z) : 0;", func_body(self.src, "groundAt"))
 
     def test_builder_requests(self):
-        self.assertIn('t.closest(".hqhud-gear, .hqhud-settings")', func_body(self.src, "typing"))
+        self.assertIn('t.closest(".hqhud-gear, .hqhud-settings, .hqs")', func_body(self.src, "typing"))   # (and HQ Studio's panel)
         self.assertIn("C.occluders(pose.pos, pose.focus || pose.look,", self.src)
         self.assertNotIn("occluders(pose.pos, pose.look,", self.src)
         self.assertIn('if(rig.mode === "cine" && rig.wake)', func_body(self.src, "rigFrame"))

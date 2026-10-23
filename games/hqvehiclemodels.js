@@ -31,6 +31,11 @@
  *   scaleOf(entry) -> SCALE[kind]     shown(entry) -> dims(entry) × scaleOf(entry), as drawn
  *   styleOf(entry) -> {kind: "car" | "bike", type, brand, ev}
  *   triangles(rig), drawCalls(rig)     what it costs (the stand-in's own meshes)
+ *   [3.13] opts.tune: the Tuning shop's tune (games/hqtuning.js; the Arena's canonical object). Rims, their colour and size,
+ *     a wing, the exhaust and two-tone parts pick a blueprint of their own (shared by every copy of that tune); the finish,
+ *     colours, tint and a plate of its own (one more mesh) are this vehicle's materials, rig.setTune(t) changes those live
+ *     (false: the geometry differs, build again). A starter (c.car / c.moto) gets tuneStarter(). Anchors, wheels, radius
+ *     and collision never change. Budgets tuned: a car <= 16 draw calls and < 8k triangles, a bike <= 12 and < 6k.
  *
  * Budget: under 6k triangles per vehicle (about 3.8-5.0k a bike, 4.4-5.4k a car), 8-10 draw calls a bike, 14 a car
  * (the atlas adds none: every textured part rides a material the vehicle already draws).
@@ -99,7 +104,8 @@ var BIKE = {
 var COL = {
   black: 0x15171a, dark: 0x24272c, grey: 0x4a4f57, steel: 0x8d959e, alu: 0xc9ced4, chrome: 0xdfe4ea,
   ktm: 0xff6a00, gold: 0xc9a227, bmwBlue: 0x1c69d4, tyre: 0x141518, kawa: 0x5fbf2a, brown: 0x4a3426, ducRed: 0xb3131f,
-  head: 0xfff8ea, drl: 0xe8f4ff, amber: 0xffa31a, red: 0xff2a34
+  head: 0xfff8ea, drl: 0xe8f4ff, amber: 0xffa31a, red: 0xff2a34,
+  ti: 0x5d6fc8, carbon: 0x1d1f24                              // [3.13] blue-burnt titanium, carbon fibre
 };
 var VCOL = {trim: 1, light: 1, wheel: 1, tail: 1};
 
@@ -115,6 +121,9 @@ var ATLAS = {
   ylamp: [0, 272, 192, 96], hexbadge: [192, 272, 80, 80]
 };
 var UV = {};
+// [3.13] two-tone paint: a paint part tagged t("tone2") samples the right half of the paint's own 2 x 1 texture (its
+// second colour); every other paint part sits in the white patch's middle, the left half (the body colour)
+UV.tone2 = [0.8, 0.4, 0.95, 0.6];
 Object.keys(ATLAS).forEach(function(k){
   var r = ATLAS[k], i = k === "white" ? r[2]/2 - 1 : 1.5;        // inset off the patch's edge (the white one: its middle)
   UV[k] = [(r[0] + i)/AW, 1 - (r[1] + r[3] - i)/AH, (r[0] + r[2] - i)/AW, 1 - (r[1] + i)/AH];
@@ -320,6 +329,7 @@ Builder.prototype.put = function(node, mk, geo, col){
   this.uvr = null;
   for(var j = 0; j < nv; j++){
     if(r && src){ uv[j*2] = r[0] + Math.min(1, Math.max(0, src.getX(j)))*(r[2] - r[0]); uv[j*2 + 1] = r[1] + Math.min(1, Math.max(0, src.getY(j)))*(r[3] - r[1]); }
+    else if(r){ uv[j*2] = (r[0] + r[2])/2; uv[j*2 + 1] = (r[1] + r[3])/2; }   // [3.13] no uvs of its own (a frustum): the patch's middle
     else { uv[j*2] = w[0]; uv[j*2 + 1] = w[1]; }
   }
   g.setAttribute("uv", new T.BufferAttribute(uv, 2));
@@ -433,8 +443,10 @@ function anchor(T, p, name, x, y, z){ var o = new T.Object3D(); o.name = name; o
 /* ---------- cars ---------- */
 // a car's wheel: a tyre with rounded shoulders and two tread grooves, the alloy (a lip, its spokes: split pairs on an
 // M car), a brake disc behind it; the caliper sits on the holder (it steers with the wheel, never spins)
-function carWheel(B, holder, name, R, tw, side, rim, spokes, caliper, split){
-  var T = B.T, w = B.node(holder, name), sh = Math.min(0.05, tw*0.2);
+// [3.13] the Tuning shop's rims (design 1-5; 0 the car's own) and a size step (sz -1..2: the alloy grows inside the
+// tyre, a lower profile; the tyre's outside, the rig's radius, never changes)
+function carWheel(B, holder, name, R, tw, side, rim, spokes, caliper, split, design, sz){
+  var T = B.T, w = B.node(holder, name), sh = Math.min(0.05, tw*0.2), rf = 0.68 + 0.035*(sz | 0), k = rf/0.68;
   B.add(w, "wheel", new T.CylinderGeometry(R, R, tw - 2*sh, 18, 1, true), COL.tyre, 0, 0, 0, 0, 0, PI/2);
   [1, -1].forEach(function(s){
     var t = new T.TorusGeometry(R - sh, sh, 2, 18); t.rotateY(PI/2);
@@ -442,16 +454,27 @@ function carWheel(B, holder, name, R, tw, side, rim, spokes, caliper, split){
     B.add(w, "wheel", new T.CylinderGeometry(R + 0.003, R + 0.003, 0.014, 18, 1, true), 0x08090a, s*tw*0.17, 0, 0, 0, 0, PI/2);   // a groove
   });
   var ox = side*(tw/2 + 0.004);
-  B.t("tyre").ring(w, "wheel", 0xffffff, R*0.7, R - sh*0.9, 24, side*(tw/2 + 0.003), side);              // [3.5.6] the sidewall's lettering
-  B.add(w, "wheel", new T.CircleGeometry(R*0.68, 14), COL.black, ox - side*0.03, 0, 0, 0, side*PI/2, 0);   // the barrel's dark inside
-  var lip = new T.TorusGeometry(R*0.68, 0.016, 3, 16); lip.rotateY(PI/2);
+  B.t("tyre").ring(w, "wheel", 0xffffff, Math.min(R*(rf + 0.02), R - sh*0.9 - 0.02), R - sh*0.9, 24, side*(tw/2 + 0.003), side);   // [3.5.6] the sidewall's lettering
+  B.add(w, "wheel", new T.CircleGeometry(R*rf, 14), COL.black, ox - side*0.03, 0, 0, 0, side*PI/2, 0);   // the barrel's dark inside
+  var lip = new T.TorusGeometry(R*rf, design === 5 ? 0.03 : 0.016, 3, 16); lip.rotateY(PI/2);
   B.add(w, "wheel", lip, rim, ox, 0, 0);
   B.add(w, "wheel", new T.CylinderGeometry(R*0.5, R*0.5, 0.016, 12), COL.steel, ox - side*0.075, 0, 0, 0, 0, PI/2);   // the brake disc
-  var n = spokes || 5;
-  for(var k = 0; k < n; k++){
-    var a = k/n*PI*2;
-    if(split) [-0.11, 0.11].forEach(function(da){ B.box(w, "wheel", rim, 0.018, R*0.6, 0.026, ox + side*0.006, Math.cos(a + da)*R*0.32, Math.sin(a + da)*R*0.32, a + da, 0, 0); });
-    else B.box(w, "wheel", rim, 0.02, R*0.6, 0.05, ox + side*0.008, Math.cos(a)*R*0.31, Math.sin(a)*R*0.31, a, 0, 0);
+  var n = spokes || 5, sp = function(a, wd, dp, f){ B.box(w, "wheel", rim, wd, R*0.6*k*(f || 1), dp, ox + side*0.008, Math.cos(a)*R*0.31*k*(f || 1), Math.sin(a)*R*0.31*k*(f || 1), a, 0, 0); };
+  if(design === 1) for(var k1 = 0; k1 < 5; k1++) sp(k1/5*PI*2, 0.034, 0.05);                                  // five wide spokes
+  else if(design === 2){                                                                                    // a cross-laced mesh in a ring
+    for(var k2 = 0; k2 < 10; k2++) sp(k2/10*PI*2 + (k2 % 2 ? 0.22 : -0.22), 0.011, 0.03);
+    var ring = new T.TorusGeometry(R*0.4*k, 0.01, 3, 14); ring.rotateY(PI/2); B.add(w, "wheel", ring, rim, ox + side*0.006, 0, 0);
+  } else if(design === 3) for(var k3 = 0; k3 < 12; k3++) sp(k3/12*PI*2, 0.013, 0.04);                       // twelve slim spokes
+  else if(design === 4){                                                                                    // an aero disc: a flat face, six vents
+    B.add(w, "wheel", new T.CircleGeometry(R*rf*0.97, 16), rim, ox + side*0.01, 0, 0, 0, side*PI/2, 0);
+    for(var k4 = 0; k4 < 6; k4++){ var a4 = k4/6*PI*2; B.add(w, "wheel", new T.CircleGeometry(R*0.08*k, 7), COL.black, ox + side*0.013, Math.cos(a4)*R*0.42*k, Math.sin(a4)*R*0.42*k, 0, side*PI/2, 0); }
+  } else if(design === 5){                                                                                  // a deep dish: a wide polished lip, short spokes
+    var step = new T.TorusGeometry(R*rf*0.8, 0.012, 3, 14); step.rotateY(PI/2); B.add(w, "wheel", step, COL.chrome, ox - side*0.012, 0, 0);
+    for(var k5 = 0; k5 < 6; k5++) sp(k5/6*PI*2, 0.03, 0.04, 0.75);
+  } else for(var kk = 0; kk < n; kk++){
+    var a = kk/n*PI*2;
+    if(split) [-0.11, 0.11].forEach(function(da){ B.box(w, "wheel", rim, 0.018, R*0.6*k, 0.026, ox + side*0.006, Math.cos(a + da)*R*0.32*k, Math.sin(a + da)*R*0.32*k, a + da, 0, 0); });
+    else B.box(w, "wheel", rim, 0.02, R*0.6*k, 0.05, ox + side*0.008, Math.cos(a)*R*0.31*k, Math.sin(a)*R*0.31*k, a, 0, 0);
   }
   B.add(w, "wheel", new T.CylinderGeometry(0.055, 0.055, 0.024, 10), COL.dark, ox + side*0.012, 0, 0, 0, 0, PI/2);
   B.t("badge").add(w, "wheel", new T.CylinderGeometry(0.03, 0.03, 0.03, 10), 0xffffff, ox + side*0.016, 0, 0, 0, 0, PI/2);   // the centre cap
@@ -459,8 +482,9 @@ function carWheel(B, holder, name, R, tw, side, rim, spokes, caliper, split){
   B.box(holder, "trim", caliper, 0.05, R*0.34, R*0.16, ox - side*0.05, R*0.06, -R*0.42, 0.25, 0, 0);
   return w;
 }
-function buildCar(T, entry, st, d){
-  var B = new Builder(T), root = new T.Group(), body = B.node(root, "body");
+function buildCar(T, entry, st, d, G){
+  G = G || GEO0;
+  var B = new Builder(T), root = new T.Group(), body = B.node(root, "body"), t2 = function(){ return B.t("tone2"); };
   var look = carLook(entry, st), S = look.S, L = d.lengthM, W = d.widthM, H = d.heightM, WB = d.wheelbaseM;
   var R = S.R*Math.min(1.12, Math.max(0.9, W/1.9)), gc = S.gc, ar = R + 0.06, archTop = R + ar;
   var zf = L/2 - S.fo*(L - WB), zr = zf - WB;
@@ -500,17 +524,20 @@ function buildCar(T, entry, st, d){
   var gw = (mid ? 0.76 : 0.88)*W, top = H - 0.045, tw = gw*(st.type === "suv" ? 0.88 : 0.8);
   // the greenhouse tapers in to the roof (tumblehome); the roof sits on it, a touch wider at its foot
   B.frustum(body, "glass", null, {z0: zA, z1: zC, y: yb - 0.03, w: gw}, {z0: zAr, z1: zCr, y: top, w: tw});
+  if(G.two === 1) t2();                                                                                    // [3.13] a two-tone roof
   B.frustum(body, "paint", null, {z0: zAr + 0.03, z1: zCr - 0.03, y: top - 0.012, w: tw + 0.03}, {z0: zAr - 0.06, z1: zCr + 0.05, y: H, w: tw - 0.06});
   var bx = function(f, sx){ return sx*(gw/2 + (tw/2 - gw/2)*f + 0.004); };
   // [3.5.6] the window trim: chrome on the plain cars, black (shadowline) on the quick ones, aluminium on a Bugatti
   var wtc = bugatti ? COL.alu : (isM(entry) || mid || st.type === "coupe" || st.type === "hatch") ? COL.black : COL.chrome;
   [1, -1].forEach(function(sx){
+    if(G.two === 1) t2();
     B.bar(body, "paint", null, [bx(0, sx), yb - 0.02, zA], [bx(1, sx), top, zAr], 0.06, 0.07);                // A pillar
     B.bar(body, hyper ? "trim" : "paint", COL.black, [bx(0, sx), yb - 0.02, zC + 0.05], [bx(1, sx), top, zCr + 0.04], sup ? 0.1 : 0.08, sup ? 0.06 : 0.15);   // C (a supercar's buttress)
     var zb = (zA + zC)/2 + 0.1, zbt = (zAr + zCr)/2 + 0.06;
     if(!mid) B.bar(body, "trim", COL.black, [bx(0, sx), yb - 0.02, zb], [bx(1, sx), top, zbt], 0.035, 0.07);   // B
     B.box(body, "trim", wtc, 0.02, 0.025, Math.max(0.2, zA - zC - 0.1), sx*(gw/2 + 0.005), yb + 0.005, (zA + zC)/2);   // the belt line
     B.bar(body, "trim", wtc, [bx(0.97, sx), top - 0.02, zAr - 0.04], [bx(0.97, sx), top - 0.02, zCr + 0.06], 0.016, 0.02);   // the window's top trim
+    if(G.two === 1 || G.two === 3) t2();                                                                     // [3.13] its cap in the second tone
     B.box(body, "paint", null, 0.07, 0.07, 0.15, sx*(W/2 + 0.05), yb + 0.08, zA - 0.12);                   // a mirror
     B.box(body, "trim", COL.black, 0.04, 0.09, Math.max(0.2, WB - 2*ar - 0.1), sx*(W/2 - 0.01), gc + 0.07, (zf + zr)/2);   // the sill
   });
@@ -695,7 +722,16 @@ function buildCar(T, entry, st, d){
   });
   // [3.5.6] the tips: quad on an M car or a hypercar, twin otherwise, Bugatti's one wide centre pipe; each a bright
   // open sleeve round a dark mouth
-  if(!st.ev){
+  if(!st.ev && G.ex){
+    // [3.13] the Tuning shop's exhausts instead: sport (two big tips), quad, titanium (quad, blue-burnt with a gold lip)
+    var tc = G.ex === 3 ? COL.ti : COL.chrome, tq = G.ex === 1 ? [[1, 0], [-1, 0]] : [[1, 0], [1, 1], [-1, 0], [-1, 1]];
+    tq.forEach(function(q){
+      var ex = q[0]*(W*0.28 + q[1]*0.11), r = G.ex === 1 ? 0.062 : 0.046;
+      B.add(body, "trim", new T.CylinderGeometry(r, r*0.92, 0.16, 12, 1, true), tc, ex, gc + 0.1, -L/2 + 0.03, PI/2, 0, 0);
+      var lp = new T.TorusGeometry(r, 0.008, 3, 12); B.add(body, "trim", lp, G.ex === 3 ? COL.gold : COL.chrome, ex, gc + 0.1, -L/2 - 0.05);
+      B.add(body, "trim", new T.CircleGeometry(r*0.85, 12), 0x050505, ex, gc + 0.1, -L/2 + 0.02, 0, PI, 0);
+    });
+  } else if(!st.ev){
     var tip = function(ex, r, ty, seg){
       ty = ty != null ? ty : gc + 0.1; seg = seg || 12;
       B.add(body, "trim", new T.CylinderGeometry(r, r, 0.12, seg, 1, true), COL.chrome, ex, ty, -L/2 + 0.02, PI/2, 0, 0);
@@ -775,31 +811,71 @@ function buildCar(T, entry, st, d){
     B.box(body, "trim", COL.black, W*0.86, 0.022, 0.14, 0, gc + 0.012, L/2 - 0.04);                       // the splitter
     for(var fi = -2; fi <= 2; fi++) B.box(body, "trim", COL.black, 0.02, 0.12, 0.3, fi*W*0.12, gc + 0.07, -L/2 + 0.16);   // diffuser fins
   }
+  // [3.13] the Tuning shop's wings: a lip, a ducktail, a GT wing on two struts (on the roof's trailing edge when the rear
+  // glass runs down to the tail: a hatch, an SUV)
+  if(G.wing === 1) B.box(body, "paint", null, W*0.72, 0.028, 0.09, 0, yt + 0.018, -L/2 + 0.1, -0.18, 0, 0);
+  else if(G.wing === 2) B.box(body, "paint", null, W*0.76, 0.045, 0.2, 0, yt + 0.04, -L/2 + 0.15, 0.32, 0, 0);
+  else if(G.wing === 3){
+    var roofW = zC < -L/2 + 0.45, gwy = roofW ? H + 0.1 : yt + 0.34, gwz = roofW ? zCr + 0.02 : -L/2 + 0.3, gby = roofW ? H - 0.01 : yt - 0.02;
+    B.box(body, "trim", COL.carbon, W*0.88, 0.026, 0.3, 0, gwy, gwz, -0.12, 0, 0);
+    [1, -1].forEach(function(sx){
+      B.box(body, "trim", COL.carbon, 0.02, 0.15, 0.36, sx*W*0.44, gwy - 0.035, gwz);
+      B.bar(body, "trim", COL.black, [sx*W*0.2, gby, gwz + 0.06], [sx*W*0.2, gwy - 0.01, gwz], 0.024, 0.08);
+    });
+  }
+  // [3.13] two-tone stripes: a pair down the bonnet, the roof and the boot lid, laid on the side profile's top line
+  if(G.two === 2){
+    var topPts = pts.filter(function(p){ return !p.arc && p[1] >= archTop - 0.01; }).map(function(p){ return [p[0], p[1]]; }).sort(function(a, b){ return b[0] - a[0]; });
+    var runs = [topPts.filter(function(p){ return p[0] >= zA && p[0] <= L/2 - 0.12; }), topPts.filter(function(p){ return p[0] <= zC && p[0] >= -L/2 + 0.1; })];
+    [0.11, -0.11].forEach(function(x){
+      runs.forEach(function(R2){ for(var si = 1; si < R2.length; si++) t2().bar(body, "paint", null, [x, R2[si - 1][1] + 0.007, R2[si - 1][0]], [x, R2[si][1] + 0.007, R2[si][0]], 0.12, 0.008); });
+      t2().box(body, "paint", null, 0.12, 0.008, Math.max(0.1, zAr - zCr - 0.14), x, H + 0.004, (zAr + zCr)/2);
+    });
+  }
+  // [3.13] a livery: a band down each flank (between the arches when the belt line sits low over them)
+  if(G.two === 3){
+    var yLv = Math.max((archTop + yb)/2, archTop + 0.07), full = yLv + 0.05 < yb - 0.03, zq = L/2 - Math.min(0.55, L*0.12);
+    [1, -1].forEach(function(sx){
+      if(full) t2().box(body, "paint", null, 0.008, 0.09, 2*zq - 0.1, sx*(W/2 + 0.003), yLv, 0);
+      else t2().box(body, "paint", null, 0.008, 0.09, Math.max(0.2, WB - 2*ar - 0.1), sx*(W/2 + 0.003), Math.min(yLv, yb - 0.08), (zf + zr)/2);
+      t2().box(body, "paint", null, 0.008, 0.035, Math.max(0.2, WB - 2*ar - 0.1), sx*(W/2 + 0.003), gc + 0.2, (zf + zr)/2);
+    });
+  }
   // the wheels: the front ones in steer holders
-  var tw = mid ? 0.3 : 0.26, wx = W/2 - tw/2 - 0.03, rim = look.rim != null ? look.rim : bugatti ? COL.alu : bmw && isM(entry) ? COL.grey : COL.steel;
+  var tw = mid ? 0.3 : 0.26, wx = W/2 - tw/2 - 0.03, rim = G.rimCol != null ? G.rimCol : look.rim != null ? look.rim : bugatti ? COL.alu : bmw && isM(entry) ? COL.grey : COL.steel;
   var wheels = [], cal = bugatti ? COL.alu : bmw && isM(entry) ? COL.bmwBlue : lambo ? COL.gold : hyper ? COL.red : COL.grey;
   [[-wx, zf, "steer-l", -1], [wx, zf, "steer-r", 1], [-wx, zr, null, -1], [wx, zr, null, 1]].forEach(function(p, i){
     var h = B.node(root, p[2], p[0], R, p[1]);
-    wheels.push(carWheel(B, h, "wheel-" + i, R, tw, p[3], rim, lambo ? 5 : look.spokes, cal, look.split || (bmw && isM(entry) && !look.rim)));
+    wheels.push(carWheel(B, h, "wheel-" + i, R, tw, p[3], rim, lambo ? 5 : look.spokes, cal, look.split || (bmw && isM(entry) && !look.rim), G.rim, G.size));
   });
   finish(T, root);
-  return {g: root, meta: {kind: "car", R: R, radii: [R, R, R, R], lean: mid ? -0.04 : -0.08, riderK: riderK}};
+  // [3.13] where a custom plate goes: over each atlas plate's face (x, y, z, turned ry / rx; w x h)
+  var plates = [{p: [0, gc + 0.3, -L/2 - 0.0195], ry: PI, rx: 0, w: 0.5, h: 0.1}];
+  if(!(bugatti && hyper)) plates.push({p: [0, gc + 0.2, L/2 + 0.0425], ry: 0, rx: 0, w: 0.5, h: 0.1});
+  return {g: root, meta: {kind: "car", R: R, radii: [R, R, R, R], lean: mid ? -0.04 : -0.08, riderK: riderK, plates: plates}};
 }
 
 /* ---------- bikes ---------- */
 // a bike's wheel: a round-profile tyre, the rim's bright lip, cast spokes (wire spokes: an adventure bike's), the
 // discs (front: one or two, the rear's on the right), the rear's sprocket on the left (model-local +x)
-function bikeWheel(B, p, name, R, tw, rim, discs, x, y, z, wire, sprocket, tape, solid){
-  var T = B.T, w = B.node(p, name, x, y, z), tr = tw/2;
+// [3.13] the Tuning shop's rims (design 1-5: five-spoke, Y-spoke, wire, solid disc, ten-spoke; 0 the bike's own) and
+// a size step (sz -1..2: the rim grows inside the tyre; the tyre's outside never changes)
+function bikeWheel(B, p, name, R, tw, rim, discs, x, y, z, wire, sprocket, tape, solid, design, sz){
+  var T = B.T, w = B.node(p, name, x, y, z), tr = tw/2, ri = R - tw*(0.95 - 0.1*(sz | 0)), k = ri/(R - tw*0.95);
+  if(design === 3){ wire = true; solid = false; } else if(design === 4){ solid = true; wire = false; } else if(design){ wire = false; solid = false; }
   var tyre = new T.TorusGeometry(R - tr, tr, 6, 22); tyre.rotateY(PI/2);
   B.add(w, "wheel", tyre, COL.tyre);
-  var lip = new T.TorusGeometry(R - tw*0.95, 0.014, 3, 20); lip.rotateY(PI/2);
+  var lip = new T.TorusGeometry(ri, 0.014, 3, 20); lip.rotateY(PI/2);
   B.add(w, "wheel", lip, rim);
   [1, -1].forEach(function(s){
-    B.t("rimtape").add(w, "wheel", new T.CircleGeometry(R - tw*0.95, 20), tape || COL.grey, s*tw*0.12, 0, 0, 0, s*PI/2, 0);   // [3.5.6] its rim tape
-    if(solid) B.add(w, "wheel", new T.CircleGeometry(R - tw*0.95, 20), rim, s*(tw*0.12 + 0.006), 0, 0, 0, s*PI/2, 0);   // [3.9] a cruiser's solid disc
-    else if(wire){ for(var k = 0; k < 12; k++){ var a = k/12*PI*2 + (s > 0 ? 0 : PI/12); B.box(w, "wheel", COL.steel, 0.006, R - tw, 0.006, s*tw*0.14, Math.cos(a)*(R - tw)/2, Math.sin(a)*(R - tw)/2, a, 0, s*0.12); } }
-    else for(var k2 = 0; k2 < 3; k2++){ var a2 = k2/3*PI*2 + (s > 0 ? 0 : PI/3); B.box(w, "wheel", rim, 0.012, R*0.6, 0.04, s*(tw*0.12 + 0.008), Math.cos(a2)*R*0.33, Math.sin(a2)*R*0.33, a2, 0, 0); }
+    B.t("rimtape").add(w, "wheel", new T.CircleGeometry(ri, 20), tape || COL.grey, s*tw*0.12, 0, 0, 0, s*PI/2, 0);   // [3.5.6] its rim tape
+    var spk = function(a, wd, dp){ B.box(w, "wheel", rim, wd, R*0.6*k, dp, s*(tw*0.12 + 0.008), Math.cos(a)*R*0.33*k, Math.sin(a)*R*0.33*k, a, 0, 0); };
+    if(solid) B.add(w, "wheel", new T.CircleGeometry(ri, 20), rim, s*(tw*0.12 + 0.006), 0, 0, 0, s*PI/2, 0);   // [3.9] a cruiser's solid disc
+    else if(wire){ for(var kw = 0; kw < 12; kw++){ var a = kw/12*PI*2 + (s > 0 ? 0 : PI/12); B.box(w, "wheel", COL.steel, 0.006, ri - tw*0.05, 0.006, s*tw*0.14, Math.cos(a)*(ri - tw*0.05)/2, Math.sin(a)*(ri - tw*0.05)/2, a, 0, s*0.12); } }
+    else if(design === 1) for(var k1 = 0; k1 < 5; k1++) spk(k1/5*PI*2 + (s > 0 ? 0 : PI/5), 0.012, 0.03);
+    else if(design === 2) for(var k6 = 0; k6 < 3; k6++) [-0.13, 0.13].forEach(function(da){ spk(k6/3*PI*2 + da + (s > 0 ? 0 : PI/3), 0.009, 0.03); });
+    else if(design === 5) for(var k5 = 0; k5 < 10; k5++) spk(k5/10*PI*2 + (s > 0 ? 0 : PI/10), 0.007, 0.025);
+    else for(var k2 = 0; k2 < 3; k2++){ var a2 = k2/3*PI*2 + (s > 0 ? 0 : PI/3); spk(a2, 0.012, 0.04); }
   });
   (discs || []).forEach(function(s){
     B.add(w, "wheel", new T.CylinderGeometry(R*0.55, R*0.55, 0.008, 16), COL.steel, s*(tr + 0.03), 0, 0, 0, 0, PI/2);
@@ -809,8 +885,9 @@ function bikeWheel(B, p, name, R, tw, rim, discs, x, y, z, wire, sprocket, tape,
   B.add(w, "wheel", new T.CylinderGeometry(0.045, 0.045, tw + 0.06, 8), COL.alu, 0, 0, 0, 0, 0, PI/2);
   return w;
 }
-function buildBike(T, entry, st, d){
-  var B = new Builder(T), root = new T.Group(), body = B.node(root, "body");
+function buildBike(T, entry, st, d, G){
+  G = G || GEO0;
+  var B = new Builder(T), root = new T.Group(), body = B.node(root, "body"), t2 = function(){ return B.t("tone2"); };
   var S = BIKE[st.type], WB = d.wheelbaseM, sc = d.heightM/DIMS["bike." + st.type].heightM;
   var Rr = S.Rr, Rf = S.Rf, zr = -WB/2, zf = WB/2, yh = S.head*sc, ys = S.seat*Math.min(1.1, Math.max(0.9, sc));
   var zh = zf - 0.3, zp = zr + WB*0.42, yp = 0.46, sp = entry.spec || {};
@@ -901,8 +978,13 @@ function buildBike(T, entry, st, d){
   else if(hd) cans = [[[-0.21, 0.28, zr + WB*0.62], [-0.23, 0.3, zr - 0.08], 0.05], [[-0.21, 0.42, zr + WB*0.48], [-0.23, 0.44, zr + 0.02], 0.05]];
   else if(sport && !yam) cans = [[[-0.17, 0.46, zr + WB*0.3], [-0.19, 0.58, zr + WB*0.12], 0.055]];
   else if(adv) cans = [[[-0.21, 0.58, zr + WB*0.26], [-0.23, 0.7, zr + WB*0.04], 0.065]];
+  // [3.13] the Tuning shop's exhausts instead: a fat slip-on can, a pair tucked under the tail, a long titanium end can
+  var canCol = shiny;
+  if(G.ex === 1) cans = [[[-0.2, 0.48, zr + WB*0.34], [-0.22, 0.6, zr + WB*0.1], 0.064]];
+  else if(G.ex === 2) cans = [1, -1].map(function(sx){ return [[sx*0.08, ys - 0.17, zr + WB*0.2], [sx*0.08, ys - 0.1, zr - 0.06], 0.045]; });
+  else if(G.ex === 3){ cans = [[[-0.19, 0.44, zr + WB*0.44], [-0.22, 0.68, zr - 0.06], 0.05]]; canCol = COL.ti; }
   var can = function(a, b, r){
-    B.bar(body, "trim", shiny, a, b, r, null, true);
+    B.bar(body, "trim", canCol, a, b, r, null, true);
     var cd = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], cn = Math.hypot(cd[0], cd[1], cd[2]), cu = cd.map(function(v){ return v/cn; });
     var cp = function(f){ return [a[0] + cd[0]*f, a[1] + cd[1]*f, a[2] + cd[2]*f]; };
     B.bar(body, "trim", old ? COL.chrome : sport ? COL.dark : COL.black, cp(0.86), [b[0] + cu[0]*0.02, b[1] + cu[1]*0.02, b[2] + cu[2]*0.02], r + 0.006, null, true);   // the end cap
@@ -918,7 +1000,7 @@ function buildBike(T, entry, st, d){
     ca = [-0.13, 0.36, nz + nl/2 - 0.02];
   }
   var col0 = [-0.1, 0.26, ez - 0.15], nh = boxer ? 2 : fresh ? Math.min(4, cyl) : small ? 1 : sport ? 4 : 2;
-  if(hd){                                                                                              // the shotgun headers, one per barrel
+  if(hd && !G.ex){                                                                                     // the shotgun headers, one per barrel
     B.pipe(body, "trim", COL.chrome, [[-0.06, 0.68, ez + 0.3], [-0.16, 0.5, ez + 0.36], [-0.21, 0.3, ez + 0.2], cans[0][0]], 0.028);
     B.pipe(body, "trim", COL.chrome, [[-0.06, 0.7, ez - 0.28], [-0.17, 0.56, ez - 0.2], cans[1][0]], 0.028);
   } else {
@@ -939,16 +1021,21 @@ function buildBike(T, entry, st, d){
     var tky = cruiser ? ys + 0.22 : ys + 0.1, tkz = cruiser ? (zh + zs0)/2 - 0.02 : (zh + zs0)/2 + 0.04;
     B.add(body, "paint", tk, null, 0, tky, tkz, cruiser ? 0.06 : 0.1, 0, 0);
     tTop = tky + th*0.5;
+    if(G.two === 2) t2().box(body, "paint", null, 0.06, 0.012, tl*0.7, 0, tTop + 0.002, tkz, cruiser ? 0.06 : 0.1, 0, 0);   // [3.13] a tank stripe
     if(cruiser) B.box(body, "trim", COL.chrome, 0.08, 0.02, tl*0.6, 0, tTop - 0.005, tkz - 0.04, 0.06, 0, 0);
     [1, -1].forEach(function(sx){ B.t("badge").add(body, "trim", new T.CircleGeometry(0.035, 12), 0xffffff, sx*(tw/2 - 0.01), tky, tkz + 0.06, 0, sx*PI/2, 0); });   // a generic round tank badge
     if(classic) [1, -1].forEach(function(sx){ B.t("knee").box(body, "trim", 0xffffff, 0.012, 0.1, 0.14, sx*(tw/2 - 0.03), tky - 0.02, tkz - 0.12, 0, 0, -sx*0.1); });   // knee pads
-    if(classic) [1, -1].forEach(function(sx){ B.box(body, "paint", null, 0.04, 0.16, 0.22, sx*0.13, ys - 0.14, zs0 - 0.12); });   // the side boxes
+    if(classic) [1, -1].forEach(function(sx){ if(G.two === 3) t2(); B.box(body, "paint", null, 0.04, 0.16, 0.22, sx*0.13, ys - 0.14, zs0 - 0.12); });   // the side boxes
   } else {
     B.side(body, "paint", null, [[zh - 0.04, yh - 0.1], [zh - 0.06, yh + 0.03], [zs0 + 0.1, tTop, zh - 0.25, tTop + 0.03], [zs0, ys - 0.02],
                                  [zs0 + 0.08, ys - 0.14], [zh - 0.16, yh - 0.24]], tw, 0.03, 4);
+    if(G.two === 2){                                                                                   // [3.13] a stripe over the tank's top line
+      var tq0 = [zs0 + 0.1, tTop], tqc = [zh - 0.25, tTop + 0.03], tq1 = [zh - 0.06, yh + 0.03], qp = function(u){ return [(1 - u)*(1 - u)*tq0[0] + 2*u*(1 - u)*tqc[0] + u*u*tq1[0], (1 - u)*(1 - u)*tq0[1] + 2*u*(1 - u)*tqc[1] + u*u*tq1[1]]; };
+      for(var qi = 0; qi < 3; qi++){ var qa = qp(0.08 + qi*0.28), qb = qp(0.08 + (qi + 1)*0.28); t2().bar(body, "paint", null, [0, qa[1] + 0.007, qa[0]], [0, qb[1] + 0.007, qb[0]], 0.07, 0.01); }
+    }
     [1, -1].forEach(function(sx){ B.t("knee").box(body, "trim", 0xffffff, 0.012, 0.12, 0.17, sx*(tw/2 + 0.004), ys + 0.0, zs0 + 0.2, 0, 0, -sx*0.06); });   // [3.5.6] knee pads
   }
-  if(naked || adv) [1, -1].forEach(function(sx){ B.box(body, "paint", null, 0.03, 0.2, 0.32, sx*(tw/2 + 0.02), yh - 0.2, zh - 0.18, 0.25, 0, -sx*0.18); });
+  if(naked || adv) [1, -1].forEach(function(sx){ if(G.two === 3) t2(); B.box(body, "paint", null, 0.03, 0.2, 0.32, sx*(tw/2 + 0.02), yh - 0.2, zh - 0.18, 0.25, 0, -sx*0.18); });
   if(ktm && naked) [1, -1].forEach(function(sx){ B.box(body, "trim", COL.black, 0.02, 0.06, 0.26, sx*(tw/2 + 0.04), yh - 0.1, zh - 0.18, 0.25, 0, -sx*0.18); });
   var tip = sport ? [zr - (suz ? 0.2 : 0.12), ys + 0.18] : adv ? [zr - 0.06, ys + 0.06] : [zr - 0.04, ys + 0.1];
   // a fender (paint) round a wheel: an open band, from angle a0 to a1 (0 = ahead, PI/2 = over the top)
@@ -964,11 +1051,13 @@ function buildBike(T, entry, st, d){
   var py = ys - 0.2, pz = zr - 0.12;
   if(old){
     // a deep rear fender over the wheel (the tail), a round tail lamp and the plate on its back
+    if(G.two === 3) t2();                                                                            // [3.13] a livery: the rear fender
     fender(body, cruiser ? Rr - 0.02 : Rr, rtw0 + 0.08, PI*0.3, PI*(cruiser ? 0.98 : 1.02), Rr, zr);
     var ta = PI*(cruiser ? 0.74 : 0.82), tly = Rr + Math.sin(ta)*(Rr + 0.06), tlz = zr + Math.cos(ta)*(Rr + 0.06);
     B.add(body, "tail", new T.CylinderGeometry(0.045, 0.045, 0.03, 12), COL.red, 0, tly + 0.04, tlz - 0.02, PI/2, 0, 0);
     tip = [tlz, tly + 0.1]; py = tly - 0.1; pz = tlz - 0.03;
   } else {
+    if(G.two === 3) t2();                                                                            // [3.13] a livery: the tail unit
     B.side(body, "paint", null, [[zs1 + 0.02, ys - 0.04], [zs1, ys + (sport ? 0.1 : 0.05)], tip, [tip[0] + 0.06, tip[1] - 0.12], [zs1 - 0.05, ys - 0.14]], sport ? 0.2 : 0.18, 0.02, 2);
     B.t("ledbar").box(body, "tail", COL.red, 0.1, 0.035, 0.02, 0, tip[1] - 0.06, tip[0] + 0.02);         // [3.5.6] an LED bar
   }
@@ -1171,14 +1260,17 @@ function buildBike(T, entry, st, d){
   B.box(steer, "trim", COL.black, 0.14, 0.09, 0.03, 0, sport ? 0.06 : by0 + 0.06, sport ? 0.02 : -0.04, -0.6, 0, 0);   // the dash
   B.box(steer, "light", 0x9fd8ff, 0.11, 0.06, 0.004, 0, sport ? 0.065 : by0 + 0.065, sport ? 0.005 : -0.055, -0.6, 0, 0);
   anchor(T, steer, "a-grip-l", grips[0], grips[1], grips[2]); anchor(T, steer, "a-grip-r", -grips[0], grips[1], grips[2]);
-  var rim = ktm && naked ? COL.ktm : bmw && sport ? COL.bmwBlue : adv || cruiser ? COL.alu : classic ? COL.chrome : yam ? COL.grey : COL.black;
+  var rim = G.rimCol != null ? G.rimCol : ktm && naked ? COL.ktm : bmw && sport ? COL.bmwBlue : adv || cruiser ? COL.alu : classic ? COL.chrome : yam ? COL.grey : COL.black;
   var wire = adv && (ktm || !small) || classic;
   var tape = rim === COL.black ? (ktm ? COL.ktm : bmw ? COL.bmwBlue : 0xf0f0f0) : rim === COL.ktm ? 0xf4f4f4 : COL.black;
   if(wire) tape = COL.black;
-  bikeWheel(B, root, "wheel-0", Rr, rtw, rim, [-1], 0, Rr, zr, wire, true, tape, cruiser);
-  bikeWheel(B, steer, "wheel-1", Rf, cruiser ? 0.16 : classic ? 0.1 : 0.12, rim, small || (classic && cyl < 2) ? [-1] : [1, -1], 0, fx[1], fx[0], wire, false, tape, cruiser);
+  bikeWheel(B, root, "wheel-0", Rr, rtw, rim, [-1], 0, Rr, zr, wire, true, tape, cruiser, G.rim, G.size);
+  bikeWheel(B, steer, "wheel-1", Rf, cruiser ? 0.16 : classic ? 0.1 : 0.12, rim, small || (classic && cyl < 2) ? [-1] : [1, -1], 0, fx[1], fx[0], wire, false, tape, cruiser, G.rim, G.size);
   finish(T, root);
-  return {g: root, meta: {kind: "bike", R: Rr, radii: [Rr, Rf], lean: S.lean, riderK: null}};
+  // [3.13] where a custom plate goes: over the atlas plate's back face (tilted with it)
+  var pn = [0, Math.sin(0.4), -Math.cos(0.4)];
+  return {g: root, meta: {kind: "bike", R: Rr, radii: [Rr, Rf], lean: S.lean, riderK: null,
+                          plates: [{p: [pn[0]*0.0075, py + pn[1]*0.0075, pz + pn[2]*0.0075], ry: PI, rx: 0.4, w: 0.17, h: 0.11}]}};
 }
 
 /* ---------- materials, the cache, the rig ---------- */
@@ -1201,11 +1293,104 @@ function shared(T){
   });
 }
 function keyOf(entry, st, d, k){ return [entry.id || "?", st.kind, st.type, st.brand, st.ev ? 1 : 0, d.lengthM, d.widthM, d.heightM, d.wheelbaseM, k].join("|"); }
-function blueprint(T, entry){
-  var st = styleOf(entry), d = dims(entry), k = scaleOf(entry), key = keyOf(entry, st, d, k), BP = store(T).bp;
+// [3.13] a blueprint per catalogue entry and tuned geometry (rims, rim colour, size, wing, exhaust, two-tone parts): a
+// stock vehicle keys as it always did, so every untuned copy still shares one
+function blueprint(T, entry, G){
+  G = G || GEO0;
+  var st = styleOf(entry), d = dims(entry), k = scaleOf(entry), sig = geoSig(G), key = keyOf(entry, st, d, k) + (sig ? "|t:" + sig : ""), BP = store(T).bp;
   if(BP[key]) return BP[key];
-  var bp = st.kind === "bike" ? buildBike(T, entry, st, d) : buildCar(T, entry, st, d);
+  var bp = st.kind === "bike" ? buildBike(T, entry, st, d, G) : buildCar(T, entry, st, d, G);
   return (BP[key] = {st: st, d: d, k: k, bp: k === 1 ? bp : scaled(bp, k)});
+}
+
+/* ---------- [3.13] tuning (games/hqtuning.js, the Tuning shop) ----------
+   A tune is the Arena's canonical object (backend/src/tuning.rs): {finish, color, two_tone, color2, rim, rim_color,
+   rim_size, tint, wing, exhaust, plate}; colours "#rrggbb" or null, anything missing is stock. Geometry (rims and their
+   colour, the size step, a wing, the exhaust, two-tone parts) picks the blueprint; the rest is per-vehicle material:
+   the finish, the colours (a 2 x 1 texel map carries the second tone), the window tint, the plate (one more mesh). */
+var FINISH = {gloss: [0.55, 0.3], matte: [0.12, 0.86], metallic: [0.85, 0.24], pearl: [0.45, 0.14], chrome: [0.92, 0.1]};
+var TINT = [null, [0.6, 0x141c24], [0.78, 0x0b1016], [0.92, 0x040506]];
+var TWO = {none: 0, roof: 1, stripe: 2, livery: 3}, WING = {none: 0, lip: 1, ducktail: 2, gt: 3};
+var EXH = {stock: 0, sport: 1, quad: 2, titanium: 3, slipon: 1, underseat: 2, endcan: 3};
+var GEO0 = {rim: 0, rimCol: null, size: 0, wing: 0, ex: 0, two: 0};
+function hexNum(h){ return typeof h === "string" && /^#[0-9a-fA-F]{6}$/.test(h) ? parseInt(h.slice(1), 16) : null; }
+function geoOf(tune, kind){
+  var t = tune || {}, bike = kind === "bike", two = TWO[t.two_tone] | 0;
+  if(two && hexNum(t.color2) == null) two = 0;
+  return {rim: Math.max(0, Math.min(5, t.rim | 0)), rimCol: hexNum(t.rim_color), size: Math.max(-1, Math.min(2, t.rim_size | 0)),
+          wing: bike ? 0 : WING[t.wing] | 0, ex: EXH[t.exhaust] | 0, two: bike && two === 1 ? 0 : two};
+}
+function geoSig(G){ return G.rim || G.rimCol != null || G.size || G.wing || G.ex || G.two ? [G.rim, G.rimCol == null ? "-" : G.rimCol, G.size, G.wing, G.ex, G.two].join(",") : ""; }
+function plateClean(s){ s = String(s == null ? "" : s).toUpperCase().replace(/[^A-Z0-9 -]/g, "").replace(/\s+/g, " ").trim(); return s.slice(0, 8); }
+// one canvas texture per plate text, shared by every vehicle wearing it (node, the tests: none, plain white)
+function plateTex(T, txt){
+  var st = store(T); st.plates = st.plates || {};
+  if(st.plates[txt] !== undefined) return st.plates[txt];
+  st.plates[txt] = null;
+  if(typeof document === "undefined" || !document.createElement || !T.CanvasTexture) return null;
+  try {
+    var cv = document.createElement("canvas"); cv.width = 256; cv.height = 64; var g = cv.getContext("2d");
+    g.fillStyle = "#eceee6"; g.fillRect(0, 0, 256, 64); g.strokeStyle = "#202226"; g.lineWidth = 5; g.strokeRect(4, 4, 248, 56);
+    g.fillStyle = "#16181b"; g.textAlign = "center"; g.textBaseline = "middle";
+    var px = 46; g.font = "700 " + px + "px ui-monospace, Menlo, monospace";
+    while(px > 18 && g.measureText(txt).width > 228){ px -= 2; g.font = "700 " + px + "px ui-monospace, Menlo, monospace"; }
+    g.fillText(txt, 128, 34);
+    var t = new T.CanvasTexture(cv); if(T.SRGBColorSpace) t.colorSpace = T.SRGBColorSpace; t.anisotropy = 4;
+    st.plates[txt] = t;
+  } catch(e){ st.plates[txt] = null; }
+  return st.plates[txt];
+}
+// the plates' quads (front and back, or a bike's one), in one geometry per blueprint
+function plateGeo(T, bp){
+  if(bp.plateGeo) return bp.plateGeo;
+  var P = [], N = [], U = [];
+  (bp.meta.plates || []).forEach(function(q){
+    var g = new T.PlaneGeometry(q.w, q.h); g.rotateY(q.ry || 0); if(q.rx) g.rotateX(q.rx); g.translate(q.p[0], q.p[1], q.p[2]);
+    var n = g.toNonIndexed(); g.dispose();
+    P.push.apply(P, n.attributes.position.array); N.push.apply(N, n.attributes.normal.array); U.push.apply(U, n.attributes.uv.array); n.dispose();
+  });
+  var out = new T.BufferGeometry();
+  out.setAttribute("position", new T.BufferAttribute(new Float32Array(P), 3)); out.setAttribute("normal", new T.BufferAttribute(new Float32Array(N), 3));
+  out.setAttribute("uv", new T.BufferAttribute(new Float32Array(U), 2)); out.computeBoundingSphere();
+  return (bp.plateGeo = out);
+}
+function setFinish(m, fin, col){
+  var f = FINISH[fin] || FINISH.gloss; m.metalness = f[0]; m.roughness = f[1];
+  if(m.emissive){ m.emissive.setHex(0x000000); m.emissiveIntensity = 1; }
+  if(fin === "pearl" && m.emissive){ m.emissive.setHex(col); m.emissiveIntensity = 0.07; }        // a soft glow off the base coat
+  if(fin === "chrome" && m.emissive){ m.emissive.setHex(0xffffff); m.emissiveIntensity = 0.06; }  // no environment map: a little lift
+  m.needsUpdate = true;
+}
+// the materials a tune sets on a built catalogue rig: finish, colour, second tone, tint; returns nothing
+function tuneMats(T, rig, t, baseHex){
+  t = t || {};
+  var pm = rig.paint, col = hexNum(t.color), c1 = col != null ? col : baseHex, two = rig.tuneGeo && rig.tuneGeo.two, c2 = hexNum(t.color2);
+  rig.baseHex = baseHex;
+  if(two && c2 != null && T.DataTexture){
+    var d = rig.toneData || (rig.toneData = new Uint8Array(8)), tex = rig.toneTex;
+    [c1, c2].forEach(function(c, i){ d[i*4] = (c >> 16) & 255; d[i*4 + 1] = (c >> 8) & 255; d[i*4 + 2] = c & 255; d[i*4 + 3] = 255; });
+    if(!tex){
+      tex = rig.toneTex = new T.DataTexture(d, 2, 1, T.RGBAFormat);
+      tex.magFilter = tex.minFilter = T.NearestFilter; tex.generateMipmaps = false; if(T.SRGBColorSpace) tex.colorSpace = T.SRGBColorSpace;
+    }
+    tex.needsUpdate = true; pm.map = tex; pm.color.setHex(0xffffff);
+  } else { pm.map = null; pm.color.setHex(c1); }
+  setFinish(pm, t.finish, c1);
+  if(rig.glbPaint) rig.glbPaint.forEach(function(m){ m.color.setHex(c1); setFinish(m, t.finish, c1); });
+  // the window tint: the shared glass, or this vehicle's own darker copy
+  var lvl = Math.max(0, Math.min(3, t.tint | 0)), M = shared(T);
+  if(lvl && TINT[lvl]){
+    var gm = rig.glassTint || (rig.glassTint = M.glass.clone());
+    gm.opacity = TINT[lvl][0]; gm.color.setHex(TINT[lvl][1]);
+    rig.meshes.forEach(function(m){ if(m.userData.mk === "glass") m.material = gm; });
+  } else rig.meshes.forEach(function(m){ if(m.userData.mk === "glass") m.material = M.glass; });
+  // the plate: its own text (the HQ's name stays the default where the page passes it), else the atlas plates show
+  var txt = plateClean(t.plate);
+  if(rig.plateMesh){
+    if(txt){ var map = plateTex(T, txt); rig.plateMesh.visible = true; if(rig.plateMesh.material.map !== map){ rig.plateMesh.material.map = map; rig.plateMesh.material.needsUpdate = true; } }
+    else rig.plateMesh.visible = false;
+  }
+  rig.tune = t;
 }
 // the display scale, baked into the blueprint: every node's offset and every vertex × k (rotations kept), so the
 // rig's anchors, wheel radii and positions are all in shown metres and the rig's root stays at scale 1
@@ -1215,6 +1400,7 @@ function scaled(bp, k){
     if(o.isMesh){ o.geometry.scale(k, k, k); o.geometry.computeBoundingSphere(); }
   });
   var m = bp.meta;
+  if(m.plates) m.plates.forEach(function(q){ q.p = q.p.map(function(v){ return v*k; }); q.w *= k; q.h *= k; });
   m.R *= k; m.radii = m.radii.map(function(r){ return r*k; });
   if(m.riderK) m.riderK = Math.min(0.85, m.riderK*k);      // the same driver, in the same share of the bigger cabin
   return bp;
@@ -1230,12 +1416,15 @@ function build(c, entry, paint, opts){
   opts = opts || {};
   var T = c && c.Mesh ? c : c && c.THREE;
   if(!T) throw new Error("hqVehicleModels.build: no THREE");
+  var tune = opts.tune || null;
   if(isStarter(entry) && c && !c.Mesh){                 // the starters: hq3d's own car and motorbike
-    var bike = styleOf(entry).kind === "bike";
-    if(bike && c.moto) return c.moto(paintOf(entry, paint));
-    if(!bike && c.car) return c.car(paintOf(entry, paint));
+    var bike = styleOf(entry).kind === "bike", sr = null;
+    if(bike && c.moto) sr = c.moto(paintOf(entry, paint), opts.accent, tune && plateClean(tune.plate) ? plateClean(tune.plate) : opts.plate);
+    if(!bike && c.car) sr = c.car(paintOf(entry, paint), opts.accent, tune && plateClean(tune.plate) ? plateClean(tune.plate) : opts.plate);
+    if(sr){ if(tune) tuneStarter(T, sr, tune, bike ? "bike" : "car"); return sr; }
   }
-  var B = blueprint(T, entry || {}), bp = B.bp, M = shared(T);
+  var kind0 = styleOf(entry || {}).kind, G = geoOf(tune, kind0);
+  var B = blueprint(T, entry || {}, G), bp = B.bp, M = shared(T);
   var g = bp.g.clone(true);
   var pm = new T.MeshStandardMaterial({color: paintOf(entry, paint), metalness: 0.55, roughness: 0.3});
   pm.userData.paint = true;
@@ -1268,6 +1457,18 @@ function build(c, entry, paint, opts){
     ready: null
   };
   if(car){ rig.hats = false; rig.riderK = bp.meta.riderK; }
+  // [3.13] tuned: a plate of its own (one more mesh, on the body: it hides with the stand-in), the materials
+  rig.tuneGeo = G;
+  if(tune){
+    if(plateClean(tune.plate) && bp.meta.plates && bp.meta.plates.length && rig.standin){
+      var plm = new T.Mesh(plateGeo(T, bp), new T.MeshStandardMaterial({color: 0xffffff, roughness: 0.6}));
+      plm.name = "mk:plate"; plm.userData.mk = "plate"; rig.standin.add(plm); meshes.push(plm); rig.plateMesh = plm;
+    }
+    tuneMats(T, rig, tune, paintOf(entry, paint));
+    rig.setPaint = function(hex){ rig.baseHex = hex; tuneMats(T, rig, Object.assign({}, rig.tune, {color: null}), hex); };
+  }
+  // the material half of a new tune, live (the Tuning shop's preview); geometry changes need a new build (sameGeo says)
+  rig.setTune = function(t2){ if(!rig.tuneGeo || geoSig(geoOf(t2, rig.kind)) !== geoSig(rig.tuneGeo) || !!plateClean(t2 && t2.plate) !== !!rig.plateMesh) return false; tuneMats(T, rig, t2 || {}, rig.baseHex != null ? rig.baseHex : paintOf(entry, paint)); return true; };
   g.userData.rig = rig; g.name = "vehicle:" + ((entry && entry.id) || "?");
   var m3 = entry && entry.model3d;
   if(m3 && m3.file){
@@ -1330,10 +1531,61 @@ function attachModel(T, rig, m3, loader, base){
 }
 function isInside(n, root){ for(var p = n; p; p = p.parent) if(p === root) return true; return false; }
 
+/* [3.13] a starter's tune (hq3d's own car and motorbike: games/hq3d.js vehicle(), rig.M its materials): the finish and
+   colour on its paint, the second tone on its accent stripes, the rim colour and size, the tint, a wing (a car) and
+   exhaust tips, as one small extra group (two meshes: the wing in the paint, the tips in chrome). Rim designs and the
+   plate's text (passed to c.car / c.moto) are the build's. */
+function tuneStarter(T, rig, t, kind){
+  if(!rig || !rig.g || !rig.M) return rig;
+  t = t || {};
+  var M = rig.M, col = hexNum(t.color), c2 = hexNum(t.color2);
+  if(col != null && M.paint) M.paint.color.setHex(col);
+  if(M.paint) setFinish(M.paint, t.finish, M.paint.color.getHex());
+  if(t.two_tone && t.two_tone !== "none" && c2 != null && M.accent) M.accent.color.setHex(c2);
+  var rc = hexNum(t.rim_color); if(rc != null && M.rim) M.rim.color.setHex(rc);
+  var lvl = Math.max(0, Math.min(3, t.tint | 0));
+  if(lvl && TINT[lvl]) ["glass", "tint"].forEach(function(k){ if(M[k]){ M[k].opacity = TINT[lvl][0]; M[k].color.setHex(TINT[lvl][1]); } });
+  var sz = Math.max(-1, Math.min(2, t.rim_size | 0));
+  if(sz) rig.g.traverse(function(o){ if(o.isMesh && o.userData.mk === "rim" && o.parent && /^wheel-/.test(o.parent.name || "")){ o.scale.y = o.scale.z = 1 + 0.04*sz; } });
+  var old = rig.g.getObjectByName("tune:extras"); if(old) rig.g.remove(old);
+  var bb = new T.Box3().setFromObject(rig.g), ex = new T.Group(); ex.name = "tune:extras";
+  var wing = kind === "bike" ? 0 : WING[t.wing] | 0, exh = EXH[t.exhaust] | 0, pg = [], cg = [];
+  function at(geo, x, y, z, rx){ if(rx) geo.rotateX(rx); geo.translate(x, y, z); return geo; }
+  if(wing){
+    var w = bb.max.x - bb.min.x, zb = bb.min.z, yt = bb.max.y;
+    if(wing === 1) pg.push(at(new T.BoxGeometry(w*0.7, 0.03, 0.12), 0, yt - 0.02, zb + 0.32, -0.15));
+    else if(wing === 2) pg.push(at(new T.BoxGeometry(w*0.72, 0.05, 0.22), 0, yt - 0.01, zb + 0.32, 0.3));
+    else { pg.push(at(new T.BoxGeometry(w*0.86, 0.03, 0.3), 0, yt + 0.12, zb + 0.35, -0.12));
+           [1, -1].forEach(function(sx){ pg.push(at(new T.BoxGeometry(0.03, 0.16, 0.06), sx*w*0.22, yt + 0.04, zb + 0.38)); }); }
+  }
+  if(exh){
+    var n = exh === 1 ? 2 : 4, wd = bb.max.x - bb.min.x, r = kind === "bike" ? 0.045 : exh === 1 ? 0.06 : 0.045;
+    for(var i = 0; i < (kind === "bike" ? 1 : n); i++){
+      var x = kind === "bike" ? -wd*0.28 : (i < n/2 ? 1 : -1)*(wd*0.28 + (n > 2 ? (i % 2)*0.11 : 0));
+      cg.push(at(new T.CylinderGeometry(r, r*0.92, kind === "bike" ? 0.36 : 0.16, 10, 1, true), x, kind === "bike" ? 0.5 : 0.3, bb.min.z + (kind === "bike" ? 0.3 : 0.04), PI/2 + (kind === "bike" ? -0.25 : 0)));
+    }
+  }
+  function merge(list, m){
+    if(!list.length) return;
+    var P = [], N = [];
+    list.forEach(function(g){ var n = g.index ? g.toNonIndexed() : g; P.push.apply(P, n.attributes.position.array); N.push.apply(N, n.attributes.normal.array); if(n !== g) n.dispose(); g.dispose(); });
+    var out = new T.BufferGeometry(); out.setAttribute("position", new T.BufferAttribute(new Float32Array(P), 3)); out.setAttribute("normal", new T.BufferAttribute(new Float32Array(N), 3));
+    var mesh = new T.Mesh(out, m); mesh.castShadow = true; ex.add(mesh);
+  }
+  merge(pg, M.paint || new T.MeshStandardMaterial({color: 0x333333}));
+  merge(cg, exh === 3 ? new T.MeshStandardMaterial({color: COL.ti, metalness: 0.9, roughness: 0.25}) : (M.chrome || new T.MeshStandardMaterial({color: COL.chrome, metalness: 0.9, roughness: 0.2})));
+  if(ex.children.length) rig.g.add(ex);
+  rig.tune = t;
+  return rig;
+}
+
 function triangles(rig){ var t = 0; (rig.meshes || []).forEach(function(m){ var g = m.geometry; t += (g.index ? g.index.count : g.attributes.position.count)/3; }); return Math.round(t); }
 function drawCalls(rig){ return (rig.meshes || []).length; }
 function clearCache(T){ var BP = store(T).bp; Object.keys(BP).forEach(function(k){ BP[k].bp.g.traverse(function(o){ if(o.isMesh) o.geometry.dispose(); }); delete BP[k]; }); }
 
 HQV.hqVehicleModels = {build: build, dims: dims, shown: shown, scaleOf: scaleOf, SCALE: SCALE, styleOf: styleOf, triangles: triangles, drawCalls: drawCalls, clearCache: clearCache,
-                       DIMS: DIMS, CAR: CAR, BIKE: BIKE};
+                       DIMS: DIMS, CAR: CAR, BIKE: BIKE,
+                       // [3.13] tuning: the geometry a tune picks (sameGeo: can setTune apply it live?), a starter's tune
+                       geoOf: geoOf, geoSig: geoSig, sameGeo: function(a, b, kind){ return geoSig(geoOf(a, kind)) === geoSig(geoOf(b, kind)); },
+                       tuneStarter: tuneStarter, plateClean: plateClean, FINISH: FINISH};
 })();

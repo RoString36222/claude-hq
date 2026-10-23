@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.12.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.13.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -72,6 +72,13 @@ paired), published maps and work signals (off by default) add a few listed field
   dealership repair it). **Convoys:** press **Y** near a friend (or **🚗 Convoy** in Here now) to invite them; they
   press **Y** to join, then hold **J** to keep their slot behind-left or behind-right of the leader, who can set a
   Go to route that every follower sees. **Y** again leaves.
+- **The Tuning shop (3.13).** **Redline Tuning**, a workshop next to the dealership in every city from tier 2
+  (**Go to → Tuning shop**): walk into its open bay and press **E**, or press **Tune** on a B1 row of the garage
+  manager. Paint (factory colours or any colour, gloss / matte / metallic / pearl / chrome, a two-tone roof, stripes
+  or a livery), six rim designs per car or bike with their colour and a size step, window tint, a lip, ducktail or GT
+  wing, sport / quad / titanium exhausts (bikes: slip-on, under-seat, end can; each changes the engine note) and a
+  plate of your own (8 characters; your HQ's name by default). Drag the preview to orbit, the wheel or **+ / −** to
+  zoom. Free; your owned vehicles' tunes live in the Arena (others see them), the starters' in this browser.
 - **The Commons air base.** Hangars, a radar, an attack helicopter, an aircraft carrier offshore and
   fighter jets flying over.
 - **A real airport.** An offshore airfield for the Commons: a 1.6 km runway with full markings and lights,
@@ -343,6 +350,11 @@ replies, file paths, project or folder names, session ids, or titles.
   reels, puzzle guesses, battle picks, your team as species numbers and species names, golf
   shots and your golfer's position on the course. The server keeps game state in memory (the
   shared farm is stored) and never sees session titles, prompts or project names.
+- **Pets are what you chose for them.** With an Arena that has pets, your pets live there: species,
+  colours, accessories, affection and the names you typed for them (checked and word-filtered by the
+  server). The pets out with you ride in your presence (species, colour, accessory and growth numbers and
+  the name, at most two), and visitors to your open HQ see the ones in your lobby. Without one, pets live
+  only in this browser. Nothing about your sessions goes into them.
 - The wire format rejects unknown fields outright, so a future client change
   can't silently start leaking one.
 
@@ -379,6 +391,11 @@ and feature guide.
 
 ## Changelog
 
+- **3.13.0 — Tuning shop, pets and the HQ revamp.** One release, one Arena deploy (migrations 0020, 0021 and 0022;
+  presence capabilities `tuning`, `pets` and `hqstyle`).
+  - **The Tuning shop.** Redline Tuning, a workshop next to the dealership in every city from tier 2 (Go to → Tuning shop; E at its bay), and Tune on any B1 row of the garage manager. Paint any catalogue or custom colour in gloss, matte, metallic, pearl or chrome, with a two-tone roof, stripes or a livery. Wheels: six rim designs per car or bike, rim colour, and a size step (the tyre's outside never changes). Window tint, a lip, ducktail or GT wing, and sport, quad or titanium exhausts (bikes: slip-on, under-seat, end can) that change the engine note. A number plate of your own (8 characters, filtered; your HQ's name stays the default). Live preview on a turntable under a lift with an orbit camera; B1 plinths and the City show your tuned vehicles. Free. Your owned vehicles' tunes are kept in the Arena (migration 0020, `/v1/vehicles/:id/tuning`) and other players see them through presence `vt` (the new `tuning` capability). Your starters' tunes stay in this browser. Needs the Arena release.
+  - **Pets.** Adopt dogs (Shiba, Golden Retriever, Corgi, Husky, Dachshund), cats (Tabby, Siamese, Maine Coon, Black cat), dinosaurs (T-Rex pup, Triceratops, Raptor, Brachiosaurus baby, Stegosaurus), dragons (Wyvern, Fire, Ice, Storm, Crystal, Shadow, Golden) and a Sea serpent at Paws & Claws, the City's new Pet shop (Go to: Pet shop), or from the Pets panel (Cmd-K, Settings). Dogs and cats are free; rarer pets are free from their HQ level or sooner for Poke Coins. Up to 6, two out with you. They follow you round the HQ, B1 and the City, go round buildings, catch up if left behind, idle, nap, hop in your car, fly beside your plane or swim beside your boat. B throws a ball to fetch, U pets, O does a trick (more unlock with affection), and dragons grow. Each dragon has its element: frost breath and snow, fire and embers, lightning, prism sparkles, shadow wisps, gold glitter (off in Calm). The rest live in your HQ lobby, roam, nap and greet you; E takes one out or leaves one there, and visitors to your open HQ see them. Friends see your pets through the new "pets" presence capability (species, colours, accessories, growth and name, at most two). Older Arenas keep pets in this browser only. **Privacy:** pet names you type go to the Arena (checked and word-filtered). Pets look and move like animals: rounded bodies, eyes that blink, jointed legs that walk, trot and gallop, wagging tails, flicking ears, sit and sleep poses, and dragons with folding membrane wings that flap and glide; the Shiba, Husky, Golden Retriever and the dinosaurs use animated low-poly models (the rest stay procedural). **Backend:** migration 0022_pets.sql and /v1/pets/* (deploy needed). **Third-party assets:** CC0 animated models by Quaternius (Ultimate Animated Animals: Shiba Inu, Husky; Animated Dinosaurs: T-Rex, Velociraptor, Triceratops, Stegosaurus, Apatosaurus) in `games/pets/` with `LICENSE-quaternius.txt`, served only from 127.0.0.1.
+  - **The HQ revamp and HQ Studio.** Every HQ is grander and a bit bigger, as far as its lot allows: a podium with a grand entrance, setback tiers, six facade systems, lit signage and night lighting, crowns, roof extras and landscaping, and a working helipad on every roof. Land a helicopter on any HQ, get out, walk the roof deck and take the roof lift down; the Lobby has a Roof lift up. HQ Studio (Settings, Cmd-K or the lobby kiosk) styles your tower, a new double-height lobby (reception, centrepiece, seating, art, rugs, signage, ambience), each floor's walls, floor, lighting and furniture, and lets you place decor and pet furniture on a grid. Others see your style when the Arena supports it (migration 0021, "hqstyle"); otherwise it stays on this machine. Privacy: only the style document (enums, colours, grid cells) goes to the Arena, nothing from transcripts. Third-party assets: none. Needs an Arena deploy.
 - **3.12.0 — Driving feel + convoys.** Cars, motorbikes and bicycles in the City (`games/hqdrive.js`):
   **lights** switch on at night and in heavy rain, a storm, snow or fog (**L** toggles them by hand), brighter
   lamps and tails plus one additive pool-and-cone mesh on the road (no real lights, one draw call per lit

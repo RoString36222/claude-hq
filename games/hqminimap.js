@@ -58,10 +58,10 @@ var POI = {
   townhall: {col: "#8a6d3b", g: "hall"}, hospital: {col: "#c9372c", g: "cross"}, clinic: {col: "#d4574c", g: "cross"},
   police: {col: "#2d4a8a", g: "shield"}, fire: {col: "#d0611f", g: "flame"}, market: {col: "#3f8f4f", g: "basket"},
   school: {col: "#a07a12", g: "book"}, myhq: {col: "#ffb347", g: "star"}, hq: {col: "#5fd3e6", g: "house"},
-  dealer: {col: "#1c66b5", g: "car"},
+  dealer: {col: "#1c66b5", g: "car"}, tuning: {col: "#b8452c", g: "wrench"},   // [3.13] the Tuning shop (games/hqtuning.js)
   carpark: {col: "#1f6fd1", g: "parking"}
 };
-var POI_ORDER = ["hq", "school", "market", "fire", "police", "clinic", "hospital", "townhall", "airport", "transit", "dealer", "dock", "port", "carpark", "myhq"];
+var POI_ORDER = ["hq", "school", "market", "fire", "police", "clinic", "hospital", "townhall", "airport", "transit", "dealer", "tuning", "dock", "port", "carpark", "myhq"];
 var PAL = {
   dark: {sea: "#0f2a3d", land: "#1d2620", landEdge: "#33503f", water: "#1a4a6b", bank: "#2f6f8f",
          road: {highway: "#c99a4a", ring: "#b08a50", arterial: "#8d939c", avenue: "#8d939c", local: "#5d636b", street: "#5d636b"},
@@ -303,6 +303,10 @@ function glyph(g, kind, disc){
       g.moveTo(-0.6, 0.25); g.lineTo(-0.55, -0.05); g.lineTo(-0.3, -0.1); g.lineTo(-0.15, -0.38); g.lineTo(0.25, -0.38);
       g.lineTo(0.42, -0.1); g.lineTo(0.6, -0.02); g.lineTo(0.6, 0.25); g.closePath(); g.fill();
       g.fillStyle = disc; g.beginPath(); g.arc(-0.32, 0.27, 0.15, 0, 2*PI); g.arc(0.32, 0.27, 0.15, 0, 2*PI); g.fill(); return;
+    case "wrench":                                                       // [3.13] an open-ended spanner, on the slant
+      g.lineWidth = 0.22; g.lineCap = "round"; g.moveTo(-0.42, 0.42); g.lineTo(0.12, -0.12); g.stroke();
+      g.beginPath(); g.arc(0.24, -0.24, 0.27, 0, 2*PI); g.fill();
+      g.fillStyle = disc; g.beginPath(); g.moveTo(0.24, -0.24); g.lineTo(0.62, -0.42); g.lineTo(0.42, -0.62); g.closePath(); g.fill(); return;
     case "parking":
       g.lineWidth = 0.26; g.lineCap = "butt"; g.lineJoin = "round";
       g.moveTo(-0.24, 0.56); g.lineTo(-0.24, -0.5); g.lineTo(0.08, -0.5);

@@ -103,7 +103,7 @@ class ShowroomWiring(unittest.TestCase):
 
     def test_catalogue_vehicles_drive_on_the_car_and_moto_paths(self):
         self.assertIn('function baseKind(k){ var V = VEHICLES[k]; return V && V.cat ? (V.kind === "bike" ? "moto" : "car") : k; }', self.src)
-        self.assertIn("HQV.hqVehicleModels.build(ctx, Vc, b.color)", self.src)
+        self.assertIn("HQV.hqVehicleModels.build(ctx, Vc, b.color, {tune: tn})", self.src)
         self.assertIn("if(ride.B.roll) ride.B.roll(d, ride.steer);", self.src)
 
     def test_others_see_the_starter_car_or_motorbike(self):

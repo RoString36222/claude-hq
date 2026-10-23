@@ -379,7 +379,10 @@ and feature guide.
 
 ## Changelog
 
-- **3.12.1 — The boombox goes live.** Live in the Music tab ("🔴 Go live") now puts the boombox on your
+- **3.12.1 — Solid traffic; the boombox goes live.** The City's cars, buses and trams are solid: you hit
+  them on foot, on a board and at the wheel (your car bumps off and dents, as off a wall) instead of passing through,
+  only at your level (not the street under a bridge or a carpark deck), and they see your car at its size so they
+  stop short of it. Live in the Music tab ("🔴 Go live") now puts the boombox on your
   shoulder in the City too, not only a Listen-room song. Anyone near you in the City listens to your live set
   (the same browser-to-browser stream as "🎧 Listen live", started for them when they walk up, louder the closer
   they are, stopped when they walk away). It never cuts over a Listen-room song they're tuned in to, a live set

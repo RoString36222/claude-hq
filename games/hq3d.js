@@ -1927,8 +1927,17 @@ function mount(el, api){
   // An automatic gearbox and the engine note (games/engine.js engineSound), for the HUD's rev
   // counter and your ears: revs climb through each gear and drop as it changes up; a slide spins
   // the wheels up a little.
+  // [revs] a vehicle's real engine (games/hqvehiclephys.js engineFor): a catalogue one's from its researched figures, a
+  // starter's (and a boat's) from its voice's typical revs on its gear speeds; made once per vehicle
+  function engineOf(V){
+    if(V.engine) return V.engine;
+    var P = HQV.hqVehiclePhys; if(!P || !P.engineFor || !V.gears) return null;
+    return (V.engine = P.engineFor({}, V.kind === "bike" || ride.base === "moto" ? "bike" : "car", V.eng, V.gears));
+  }
   function engineStep(dt, thr){
     var V = ride.V; if(!V.motor){ ride.gear = 0; return; }
+    var EN = !V.boat ? engineOf(V) : null;
+    if(EN && (EN.k || EN.electric)) return engineReal(dt, thr, V, EN);
     var G = V.gears, v = Math.abs(ride.speed), g = Math.max(1, Math.min(G.length, ride.gear | 0 || 1));
     if(v > G[g - 1]*0.98 && g < G.length) g++;
     else if(g > 1 && v < G[g - 2]*0.78) g--;
@@ -1941,6 +1950,33 @@ function mount(el, api){
     // the throttle (load), the gear (an upshift cuts, a downshift blips), road rumble and a squeal in a slide
     if(ride.eng) ride.eng.set(ride.rpm, {thr: thr > 0 ? thr : 0, gear: ride.gear, speed: V.boat ? 0 : v,
       slip: ride.drift && !V.boat ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0});
+  }
+  // The real thing: rpm from the road speed through the gear you are in (rpm per m/s, EN.k), a clutch that slips to
+  // EN.launch pulling away, upshifts at its redline under power (half way up its revs when cruising), downshifts as the
+  // revs sag, not more often than every 0.35 s; on the limiter it stutters. An electric motor: one gear, its revs with
+  // the road speed. The sound plays this rpm (engine.js engineSound(.., real)), the rev counter shows it.
+  function engineReal(dt, thr, V, EN){
+    var v = Math.abs(ride.speed), lim = false, rpm;
+    if(EN.electric){ ride.gear = ride.speed < -0.3 ? -1 : 1; rpm = EN.motorMax*E.clamp(v/Math.max(1, V.top*1.045), 0, 1); }
+    else {
+      var K = EN.k, n = K.length, g = Math.max(1, Math.min(n, ride.gear | 0 || 1)), load = thr > 0 ? thr : 0;
+      ride.shiftT = Math.max(0, (ride.shiftT || 0) - dt);
+      if(ride.shiftT <= 0 && ride.speed >= 0){
+        var up = load > 0.6 ? EN.shiftUp : EN.idle + (EN.red - EN.idle)*0.45, down = load > 0.6 ? EN.red*0.5 : EN.idle*1.3;
+        if(g < n && v*K[g - 1] >= up && v*K[g] > EN.idle*1.15){ g++; ride.shiftT = 0.35; }
+        else if(g > 1 && v*K[g - 1] < down && v*K[g - 2] < EN.red*0.9){ g--; ride.shiftT = 0.35; }
+      }
+      ride.gear = ride.speed < -0.3 ? -1 : g;
+      var wheel = v*K[Math.max(0, g - 1)], clutch = g === 1 ? EN.idle + (EN.launch - EN.idle)*load : EN.idle;
+      var want = Math.max(wheel, clutch, EN.idle);
+      if(want >= EN.limit && load > 0){ want = EN.limit - 180*Math.abs(Math.sin(E.now()*55)); lim = true; }
+      rpm = Math.min(want, EN.limit);
+    }
+    ride.rpm += (rpm - ride.rpm)*(1 - Math.exp(-dt*(EN.electric ? 10 : 14)));
+    if(v < 0.3 && !(thr > 0)) return;
+    if(!ride.eng && E.engineSound) ride.eng = E.engineSound(V.eng, ride.tune && HQV.hqTuning ? HQV.hqTuning.exhaustOf(ride.tune) : null, EN);
+    if(ride.eng) ride.eng.set(ride.rpm, {thr: thr > 0 ? thr : 0, gear: ride.gear, speed: v, limiter: lim,
+      slip: ride.drift ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0});
   }
   /* ---------- skating (games/hqskate.js does the physics) ---------- */
   // ride.sk = {st (the sim's state, in the park's frame), cx, cz (the park's centre), prev (keys last frame)}
@@ -2375,7 +2411,10 @@ function mount(el, api){
     if(cv.width !== Math.round(W*dpr)){ cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr); }
     var g = cv.getContext("2d"), M = dhud.M; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
     driveDial(g, dhud.tok, 62, 64, 54, kmh, M[0], M[1], M[2], "km/h", Math.round(kmh), null);
-    if(motor) driveDial(g, dhud.tok, 174, 64, 54, ride.rpm/1000, 8, 1, 0.5, "×1000 rpm", gearTxt(gear), 6.5, "GEAR");
+    if(motor){                                       // [revs] the rev counter to this engine's own limiter, red from its redline
+      var EN = ride.V.engine, top = EN && EN.limit ? Math.max(6, Math.ceil(EN.limit/1000 + 0.3)) : 8, maj = top > 12 ? 2 : 1;
+      driveDial(g, dhud.tok, 174, 64, 54, ride.rpm/1000, top, maj, maj/2, "×1000 rpm", gearTxt(gear), EN && EN.red && !EN.electric ? EN.red/1000 : EN && EN.electric ? null : 6.5, "GEAR");
+    }
     if(ride.plane) driveDial(g, dhud.tok, 174, 64, 54, Math.max(0, ride.plane.agl)/100, 10, 1, 0.5, "×100 m up", Math.round(Math.max(0, ride.plane.agl)), null, "ALT");
   }
   // the air guidance line (cur.airGuide(): {label, bearing (rad, yaw convention), dist (m), alt (m to fly at, or null),
@@ -3416,7 +3455,11 @@ function mount(el, api){
       else if(b){ var d = Math.hypot(b.x - avatar.x, b.z - avatar.z); sub = d < 12 ? "Right here" : (d < H.CALL_R ? Math.round(d) + " m away · ~" + H.eta(d*1.3) + " s" : "Far away · arrives in ~" + H.BUDGET + " s"); }
       else if(K) sub = "In the carpark · arrives in ~" + H.BUDGET + " s";
       else sub = "Parked elsewhere · arrives in ~" + H.BUDGET + " s";
-      return {key: it.key, title: callTitle(it), sub: sub, busy: !!(T && T.mode === "call"), col: hexOf(it.o ? it.o.color : b && b.color)};
+      var cat = it.o && VEHICLES[it.o.vehicleId] ? VEHICLES[it.o.vehicleId].cat : null, sp = cat && cat.spec || {};
+      var tags = cat ? [cat.brand, cat.model, cat.year, String(cat["class"] || "").replace(/\./g, " "), cat.body, sp.layout, sp.cc ? sp.cc + "cc" : "",
+                        sp.cyl ? sp.cyl + " cylinder" : "", sp.aspiration, sp.electric ? "electric ev" : "", /^(moto|bike)/.test(String(cat["class"])) ? "bike motorbike motorcycle" : "car"].join(" ")
+                     : it.starter === "moto" ? "bike motorbike motorcycle starter" : "car starter";
+      return {key: it.key, title: callTitle(it), sub: sub, busy: !!(T && T.mode === "call"), col: hexOf(it.o ? it.o.color : b && b.color), tags: tags};
     });
   }
   function callOn(){ return !!(HQV.hqCall && cur && cur === worlds.city && cur.callRoad && cur.camModes); }
@@ -4002,6 +4045,7 @@ function mount(el, api){
     var kb = keys, kp = withPad();
     keys = rigOn() && (rig.mode === "map" || rig.mode === "photo" || rig.mode === "cine") ? {} : kp;
     moveAvatar(dt);
+    motionStep(dt);
     callStep(dt);                                                      // a vehicle you called, on its way
     testStep(dt);                                                      // a dealership test drive
     if(cur && cur.onBoat) cur.onBoat(ride && ride.boat ? {st: ride.boat, kind: ride.kind, beam: ride.V.beam || 1} : null);   // the City's wake, landings
@@ -4204,6 +4248,14 @@ function mount(el, api){
       } else if(P.at == null || nowS - P.at >= 1){ P.vx = 0; P.vz = 0; }
       if((p.a | 0) === 0 && !(p.h != null && Math.abs(nx - (P.tx || nx)) > 0.01)){ P.vx = 0; P.vz = 0; }
       P.at = nowS;
+      // [smooth] their frames into a buffer drawn a moment in the past (games/hqnetsmooth.js); a new floor starts afresh
+      var NS = HQV.hqNetSmooth;
+      if(NS){
+        if(!P.track || P.w !== p.w) P.track = NS.track();
+        var nm = function(k, s){ return typeof p[k] === "number" && isFinite(p[k]) ? p[k]*s : null; };
+        NS.push(P.track, {t: nm("t", 1), x: nx, z: nz, y: nm("h", 0.01), yaw: p.r*PI/180, pitch: P.tp,
+                          vx: nm("vx", 0.01), vz: nm("vz", 0.01), yr: nm("yr", PI/180), rpm: nm("rpm", 1)}, nowS);
+      }
       P.w = p.w; P.tx = nx; P.tz = nz; P.tyaw = p.r*PI/180; P.a = p.a | 0; P.k = p.k | 0; P.y = Math.max(0, Math.min(60, p.y | 0));
       // a catalogue vehicle (`v`, only while driving): the real car or bike, in its paint; unknown here: the starter
       P.v = typeof p.v === "string" && VEHICLES[p.v] && VEHICLES[p.v].cat ? p.v : null; P.vp = Math.max(0, p.vp | 0);
@@ -4232,14 +4284,24 @@ function mount(el, api){
       // Where they are now: their last report carried on along their velocity for up to 0.3 s (dead reckoning), and
       // the drawn position on a critically damped spring (omega 10) toward that: smooth between reports, no lurch,
       // no overshoot; a jump of over 6 m (a teleport, a new world) lands at once. Yaw the short way round.
-      var k = ease(8, dt), lead = Math.min(0.3, Math.max(0, E.now() - (P.at || 0)));
-      var gx = P.tx + (P.vx || 0)*lead, gz = P.tz + (P.vz || 0)*lead;
-      var jump = Math.hypot(gx - P.x, gz - P.z, P.hy == null ? 0 : ty - P.hy) > 6;
-      if(jump){ P.x = gx; P.z = gz; P.sx = 0; P.sz = 0; }
-      else { var sx = spring(P.x, P.sx || 0, gx, 10, dt), sz = spring(P.z, P.sz || 0, gz, 10, dt); P.x = sx[0]; P.sx = sx[1]; P.z = sz[0]; P.sz = sz[1]; }
-      P.hy = jump || P.hy == null ? ty : P.hy + (ty - P.hy)*k;
-      P.pitch = jump ? P.tp : P.pitch + (P.tp - P.pitch)*k;
-      var yw = spring(0, P.yv || 0, wrapPi(P.tyaw - P.yaw), 12, dt); P.yaw = wrapPi(P.yaw + yw[0]); P.yv = jump ? 0 : yw[1];
+      var k = ease(8, dt), jump, SM = P.track && HQV.hqNetSmooth ? HQV.hqNetSmooth.sample(P.track, E.now()) : null;
+      if(SM){
+        // [smooth] on the curve through their frames (games/hqnetsmooth.js): no spring, no lag, no lurch
+        jump = !!SM.jump || P.hy == null;
+        P.x = SM.x; P.z = SM.z; P.yaw = wrapPi(SM.yaw); P.pitch = SM.pitch;
+        P.hy = SM.y != null && cur.camModes ? SM.y : groundAt(SM.x, SM.z);
+        P.sv = SM.speed; P.syr = SM.yr; P.rpm = SM.rpm;
+      } else {
+        var lead = Math.min(0.3, Math.max(0, E.now() - (P.at || 0)));
+        var gx = P.tx + (P.vx || 0)*lead, gz = P.tz + (P.vz || 0)*lead;
+        jump = Math.hypot(gx - P.x, gz - P.z, P.hy == null ? 0 : ty - P.hy) > 6;
+        if(jump){ P.x = gx; P.z = gz; P.sx = 0; P.sz = 0; }
+        else { var sx = spring(P.x, P.sx || 0, gx, 10, dt), sz = spring(P.z, P.sz || 0, gz, 10, dt); P.x = sx[0]; P.sx = sx[1]; P.z = sz[0]; P.sz = sz[1]; }
+        P.hy = jump || P.hy == null ? ty : P.hy + (ty - P.hy)*k;
+        P.pitch = jump ? P.tp : P.pitch + (P.tp - P.pitch)*k;
+        var yw = spring(0, P.yv || 0, wrapPi(P.tyaw - P.yaw), 12, dt); P.yaw = wrapPi(P.yaw + yw[0]); P.yv = jump ? 0 : yw[1];
+        P.sv = null; P.syr = null;
+      }
       P.g.position.set(P.x, P.hy, P.z); P.g.rotation.y = P.yaw; P.g.rotation.x = -P.pitch;
       var skates = P.a === 4;
       // on a board: stood on it side-on, lifted to the height they send, the trick they send played here
@@ -4286,8 +4348,9 @@ function mount(el, api){
         var mv = Math.hypot(P.x - (P.px == null ? P.x : P.px), P.z - (P.pz == null ? P.z : P.pz));
         // how hard they steer, read from how fast they turn (presence carries no steering): the bars,
         // the wheels and their lean into the bend follow it
-        var dyaw = P.pyaw == null ? 0 : Math.atan2(Math.sin(P.yaw - P.pyaw), Math.cos(P.yaw - P.pyaw)), v = dt > 0 ? mv/dt : 0;
-        var want = !jump && v > 0.5 && dt > 0 ? E.clamp(dyaw/dt/(1.9*Math.min(1, v/2.5)), -1, 1) : 0;
+        var dyaw = P.pyaw == null ? 0 : Math.atan2(Math.sin(P.yaw - P.pyaw), Math.cos(P.yaw - P.pyaw)), v = P.sv != null ? P.sv : dt > 0 ? mv/dt : 0;
+        var yrate = P.syr != null ? P.syr : dt > 0 ? dyaw/dt : 0;
+        var want = !jump && v > 0.5 && dt > 0 ? E.clamp(yrate/(1.9*Math.min(1, v/2.5)), -1, 1) : 0;
         P.steer += (want - P.steer)*ease(6, dt);
         if(VEHICLES[vk].plane){                      // propellers turning, the lights blinking, the gear down near the ground
           P.pst = P.pst || {rpm: 0.8, t: 0, gear: 1, speed: 0}; P.pst.t += dt || 0; P.pst.speed = v; P.pst.gear = (P.th != null ? P.th - groundAt(P.x, P.z) : 0) < 60 ? 1 : 0;
@@ -4306,8 +4369,8 @@ function mount(el, api){
         if(Drv() && !VEHICLES[vk].plane && !VEHICLES[vk].heli){ try { Drv().beam(THREE, P.bike, {base: baseKind(vk), shared: true}); Drv().lights(P.bike, DRV.peerLit, false, t, true, isNight() ? 1 : 0.35); } catch(e){} }
       }
       // on foot: their pace from how fast they really move (smoothed), so the same blend as yours and no gliding
-      var fv = dt > 0 && !jump ? Math.hypot(P.x - (P.px == null ? P.x : P.px), P.z - (P.pz == null ? P.z : P.pz))/dt : 0;
-      var fr = dt > 0 && P.pyaw != null && !jump ? wrapPi(P.yaw - P.pyaw)/dt : 0;
+      var fv = P.sv != null ? (jump ? 0 : P.sv) : dt > 0 && !jump ? Math.hypot(P.x - (P.px == null ? P.x : P.px), P.z - (P.pz == null ? P.z : P.pz))/dt : 0;
+      var fr = P.syr != null ? (jump ? 0 : P.syr) : dt > 0 && P.pyaw != null && !jump ? wrapPi(P.yaw - P.pyaw)/dt : 0;
       P.fs = (P.fs || 0) + ((P.a === 0 && fv < 0.5 ? 0 : Math.min(fv, 12)) - (P.fs || 0))*ease(8, dt);
       P.fr = (P.fr || 0) + (fr - (P.fr || 0))*ease(8, dt);
       P.px = P.x; P.pz = P.z; P.pyaw = P.yaw;
@@ -4442,6 +4505,19 @@ function mount(el, api){
   // read-only: the scene of the world you stand in (tests and tools traverse it)
   inst.sceneOf = function(){ return cur ? cur.scene : null; };
   // where you are, for presence: the floor (the 3D city is "city3d"), and in it your feet height (m) and pitch (rad)
+  // [smooth] how you move, for the "motion" presence fields: your velocity and yaw rate from the drawn avatar each
+  // frame (lightly eased; a teleport is not a speed), and your engine's revs
+  var MOT = {x: null, z: null, yaw: 0, vx: 0, vz: 0, yr: 0};
+  function motionStep(dt){
+    if(!avatar || !(dt > 0)) return;
+    if(MOT.x != null){
+      var vx = (avatar.x - MOT.x)/dt, vz = (avatar.z - MOT.z)/dt, yr = wrapPi(avatar.yaw - MOT.yaw)/dt, k = ease(14, dt);
+      if(Math.hypot(vx, vz) > 160){ vx = 0; vz = 0; yr = 0; MOT.vx = 0; MOT.vz = 0; }
+      MOT.vx += (vx - MOT.vx)*k; MOT.vz += (vz - MOT.vz)*k; MOT.yr += (E.clamp(yr, -20, 20) - MOT.yr)*k;
+    }
+    MOT.x = avatar.x; MOT.z = avatar.z; MOT.yaw = avatar.yaw;
+  }
+  inst.motion = function(){ return avatar ? {vx: MOT.vx, vz: MOT.vz, yr: MOT.yr, rpm: ride && ride.rpm > 0 ? ride.rpm : 0} : null; };
   inst.where = function(){
     if(!avatar) return null;
     var rigW = !!(cur && cur.camModes);

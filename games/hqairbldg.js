@@ -187,7 +187,7 @@ function plan(L){
   }
   var cp = Z.carpark;
   P.carpark = {u0: cp.u0, u1: cp.u1, v0: cp.v0, v1: cp.v1, levels: [ys, ys + 3.2, ys + 6.4, ys + 9.6], ramp: {u0: cp.u1 - 5, u1: cp.u1 - 0.6}};
-  // its ground floor is open between the columns (HQ 3.12.1): the decks above block, and each column (as drawn below)
+  // its ground floor is open between the columns (HQ 3.13.1): the decks above block, and each column (as drawn below)
   blk("carpark", cp.u0, cp.u1, cp.v0, cp.v1, ys + 2.9, ys + 12.5);
   [cp.u0 + 0.4, cp.u0 + 6, cp.u0 + 25, cp.u0 + 44, cp.u1 - 0.4].forEach(function(cu){
     for(var cv = 0; cv < 8; cv++){ var vv = cp.v0 + 0.4 + (cp.v1 - cp.v0 - 0.8)*cv/7; blk("carpark", cu - 0.35, cu + 0.35, vv - 0.35, vv + 0.35, ys - 1, ys + 3.2); }

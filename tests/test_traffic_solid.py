@@ -1,4 +1,4 @@
-"""The traffic is solid (HQ 3.12.1): games/hqcity3d.js blocked() counts the cars, buses and trams drawn this
+"""The traffic is solid (HQ 3.13.1): games/hqcity3d.js blocked() counts the cars, buses and trams drawn this
 frame, so you hit them on foot, on a board and at the wheel (games/hq3d.js rideMove's bodyHits), and the
 traffic sees you at your car's size so it stops short of you. Source checks plus the hit-test itself, run
 under node on a stand-alone copy of trafficAt. Stdlib only."""

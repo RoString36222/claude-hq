@@ -89,6 +89,13 @@ pub fn routes() -> Router<crate::AppState> {
         // literally "me" is unreachable, exactly as in the Python.
         .route("/v1/hq/me", get(get_me).put(put_me).fallback(method_not_allowed))
         .route("/v1/hq/open", get(list_open).fallback(method_not_allowed))
+        // HQ Studio (3.15). Both are static (or deeper) than `:user_id`, so
+        // matchit routes them here whatever the registration order.
+        .route(
+            "/v1/hq/me/style",
+            get(crate::hqstyle::get_mine).put(crate::hqstyle::put_mine).fallback(method_not_allowed),
+        )
+        .route("/v1/hq/styles", get(crate::hqstyle::get_many).fallback(method_not_allowed))
         .route("/v1/hq/:user_id", get(get_one).fallback(method_not_allowed))
 }
 
@@ -112,6 +119,10 @@ struct HqOut {
     #[serde(rename = "updatedAt")] updated_at: Option<String>,
     #[serde(rename = "isYou")] is_you: bool,
     cos: Cos,
+    /// HQ Studio (3.15): the normalized style document, absent when the user
+    /// has none. Last, so every key before it keeps its place.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    style: Option<Value>,
 }
 
 #[derive(Debug, Default, PartialEq, Serialize)]
@@ -263,7 +274,8 @@ async fn get_me_inner(pool: &SqlitePool, c: &crate::Caller) -> Result<Response, 
     // `cos` is deliberately empty here: the Python's get_me and update_me never
     // call _with_cos, while the open list and a visit do. The asymmetry is the
     // contract, not an oversight.
-    let out = project(&Public::from_caller(c), prof.as_ref(), level, &c.user_id, Cos::default());
+    let mut out = project(&Public::from_caller(c), prof.as_ref(), level, &c.user_id, Cos::default());
+    out.style = crate::hqstyle::load(pool, &c.user_id).await?;
     Ok(Json(out).into_response())
 }
 
@@ -292,7 +304,8 @@ async fn put_me_inner(
     // the write, not inside it.
     let prof = load_prof(pool, &c.user_id).await?;
     let level = level_of(pool, &c.user_id).await?;
-    let out = project(&Public::from_caller(c), prof.as_ref(), level, &c.user_id, Cos::default());
+    let mut out = project(&Public::from_caller(c), prof.as_ref(), level, &c.user_id, Cos::default());
+    out.style = crate::hqstyle::load(pool, &c.user_id).await?;
     Ok(Json(out).into_response())
 }
 
@@ -340,6 +353,7 @@ async fn list_open_inner(pool: &SqlitePool, viewer: &str) -> Result<Response, sq
     let ids: Vec<String> = hqs.iter().map(|(u, _)| u.id.clone()).collect();
     let levels = levels_for(pool, &ids).await?;
     let cos = equipped(pool, &ids).await?;
+    let mut styles = crate::hqstyle::load_many(pool, &ids).await?;
 
     // The viewer's own open HQ is in this list, with isYou true: it is not an
     // "other people's HQs" list.
@@ -347,7 +361,9 @@ async fn list_open_inner(pool: &SqlitePool, viewer: &str) -> Result<Response, sq
         .iter()
         .map(|(u, p)| {
             let level = levels.get(&u.id).copied().unwrap_or(1);
-            project(u, Some(p), level, viewer, cos.get(&u.id).cloned().unwrap_or_default())
+            let mut out = project(u, Some(p), level, viewer, cos.get(&u.id).cloned().unwrap_or_default());
+            out.style = styles.remove(&u.id);
+            out
         })
         .collect();
     Ok(Json(json!({ "hqs": out })).into_response())
@@ -398,7 +414,9 @@ async fn get_one_inner(
     let level = level_of(pool, uid).await?;
     let cos = equipped(pool, std::slice::from_ref(&who.id)).await?;
     let cos = cos.get(&who.id).cloned().unwrap_or_default();
-    Ok(Json(project(&who, prof.as_ref(), level, viewer, cos)).into_response())
+    let mut out = project(&who, prof.as_ref(), level, viewer, cos);
+    out.style = crate::hqstyle::load(pool, uid).await?;
+    Ok(Json(out).into_response())
 }
 
 // --- projection -----------------------------------------------------------
@@ -433,6 +451,7 @@ fn project(
         updated_at: p.and_then(|p| p.updated_at.as_deref()).map(iso),
         is_you: u.id == viewer,
         cos,
+        style: None,
     }
 }
 

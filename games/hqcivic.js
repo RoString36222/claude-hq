@@ -282,7 +282,7 @@ KP.mesh = function(geo, m, x, y, z, p){
 };
 // the front edge of a d-deep thing set back from the site's front, kept inside the site
 KP.back = function(d, set){ return Math.max(-this.D/2 + d/2, this.D/2 - (set != null ? set : SETBACK) - d/2); };
-// note a mass for the camera boxes and the building's top. shape (what blocks you, HQ 3.12.1): "ell" the oval (or
+// note a mass for the camera boxes and the building's top. shape (what blocks you, HQ 3.13.1): "ell" the oval (or
 // round) thing inscribed in the box, "open" nothing (a lattice, legs or a shelter: note those parts on their own)
 KP.note = function(cx, cz, w, d, y0, y1, noLod, shape){
   var o = this.world(cx, cz);

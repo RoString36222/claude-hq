@@ -952,6 +952,53 @@ html.hq-calm .hq3d-drive-read{display:block}
 .hqdealer-test:focus-visible,.hqdealer-get:focus-visible,.hqdealer-tab:focus-visible,.hqdealer-swatch:focus-visible,.hqdealer-pick:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 @container hq3d (max-width: 700px){ .hqdealer-top{grid-template-columns:1fr} .hqdealer-preview{height:130px} .hqdealer-pair{grid-template-columns:1fr} }
 /* ==== end of the Showroom ==== */
+/* ==== the Tuning shop's panel (games/hqtuning.js, E at its bay in the 3D City, or Tune in the garage manager) ==== */
+.hqtune{position:absolute;z-index:7;top:12px;left:50%;transform:translateX(-50%);width:min(980px,calc(100% - 24px));max-height:calc(100% - 24px);
+  display:grid;grid-template-rows:auto 1fr auto;color:var(--ink);background:color-mix(in srgb,var(--panel) 96%,transparent);
+  border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-lg);font-size:13px;overflow:hidden}
+.hqtune[hidden]{display:none}
+.hqtune-head{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.hqtune-title{font-weight:800;font-size:15px}
+.hqtune-note{font-size:12px;color:var(--muted)}
+.hqtune-close{border:0;background:none;color:var(--muted);font-size:16px;cursor:pointer;padding:4px 8px;border-radius:8px}
+.hqtune-close:hover{color:var(--ink);background:var(--line)}
+.hqtune-main{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:12px;padding:10px 14px;min-height:0;overflow:hidden}
+.hqtune-left{display:grid;grid-template-rows:auto 1fr auto;gap:6px;min-height:0}
+.hqtune-pick{font:inherit;font-weight:700;padding:6px 10px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+.hqtune-preview{min-height:260px;border-radius:12px;overflow:hidden;background:radial-gradient(ellipse at 50% 72%,color-mix(in srgb,var(--panel) 66%,var(--ink) 14%),var(--bg))}
+.hqtune-canvas{display:block;width:100%;height:100%;min-height:260px;cursor:grab;touch-action:none}
+.hqtune-canvas:active{cursor:grabbing}
+.hqtune-hint{font-size:11px;color:var(--muted)}
+.hqtune-right{display:grid;grid-template-rows:auto 1fr;gap:8px;min-height:0}
+.hqtune-tabs{display:flex;flex-wrap:wrap;gap:6px}
+.hqtune-tab{padding:5px 12px;border-radius:999px;border:1px solid var(--line);background:none;color:var(--ink);font-weight:700;font-size:12px;cursor:pointer}
+.hqtune-tab.on{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.hqtune-body{overflow:auto;min-height:0;display:grid;gap:10px;align-content:start;padding-right:2px}
+.hqtune-group{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin:0;min-width:0}
+.hqtune-group legend{font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:0 4px}
+.hqtune-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.hqtune-chip{padding:5px 11px;border-radius:999px;border:1px solid var(--line);background:color-mix(in srgb,var(--panel) 80%,var(--bg));color:var(--ink);font-size:12px;font-weight:600;cursor:pointer}
+.hqtune-chip.on{border-color:var(--brand);box-shadow:0 0 0 1px var(--brand);color:var(--brand)}
+.hqtune-swatch{width:24px;height:24px;border-radius:50%;border:2px solid var(--line);cursor:pointer;padding:0}
+.hqtune-swatch.on{border-color:var(--ink);box-shadow:0 0 0 2px var(--brand)}
+.hqtune-custom{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.hqtune-custom input{width:34px;height:26px;padding:0;border:1px solid var(--line);border-radius:8px;background:none;cursor:pointer}
+.hqtune-plate input{font:700 18px var(--mono);letter-spacing:.12em;text-transform:uppercase;width:12ch;padding:6px 10px;border-radius:8px;
+  border:2px solid var(--ink);background:var(--panel);color:var(--ink)}
+.hqtune-tip{font-size:11px;color:var(--muted);margin-top:4px}
+.hqtune-tip.bad{color:var(--need)}
+.hqtune-empty{padding:12px 0;color:var(--muted)}
+.hqtune-foot{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;padding:8px 14px;border-top:1px solid var(--line)}
+.hqtune-status{font-size:12px;color:var(--ink);min-height:16px}
+.hqtune-reset,.hqtune-save{padding:6px 16px;border-radius:999px;font-weight:700;font-size:12px;cursor:pointer}
+.hqtune-reset{border:1px solid var(--line);background:none;color:var(--ink)}
+.hqtune-save{border:0;background:var(--brand);color:var(--on-brand)}
+.hqtune-reset:disabled,.hqtune-save:disabled{opacity:.5;cursor:default}
+.hqtune-tab:focus-visible,.hqtune-chip:focus-visible,.hqtune-swatch:focus-visible,.hqtune-save:focus-visible,.hqtune-reset:focus-visible,
+.hqtune-pick:focus-visible,.hqtune-canvas:focus-visible,.hqtune-close:focus-visible,.hqtune-plate input:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+@container hq3d (max-width: 760px){ .hqtune-main{grid-template-columns:1fr;overflow:auto} .hqtune-preview,.hqtune-canvas{min-height:190px} }
+/* ==== end of the Tuning shop ==== */
+
 /* ==== calling your vehicle (games/hqcall.js, C in the 3D City): the list, and the "on its way" pill ==== */
 .hqcall{position:absolute;z-index:7;top:12px;left:50%;transform:translateX(-50%);width:min(380px,calc(100% - 24px));max-height:calc(100% - 24px);
   display:flex;flex-direction:column;border-radius:14px;color:var(--ink);background:color-mix(in srgb,var(--panel) 96%,transparent);
@@ -1045,3 +1092,7 @@ html.hq-calm .hq3d-drive-read{display:block}
 .hqcasino-prompt[hidden],.hqcasino-toast[hidden]{display:none}
 .hqcasino-toast{position:absolute;z-index:6;left:50%;top:14px;transform:translateX(-50%);max-width:min(620px,calc(100% - 40px));padding:10px 16px;border-radius:12px;
   font-weight:700;text-align:center;color:var(--ink);background:color-mix(in srgb,var(--panel) 94%,transparent);border:1px solid var(--line);box-shadow:var(--shadow-lg)}
+/* ==== pets (HQ 3.14, games/hqpets.js): E at the Pet shop, or beside a pet in your lobby ==== */
+.hqpets-prompt{position:absolute;z-index:6;left:50%;bottom:118px;transform:translateX(-50%);padding:6px 14px;border-radius:999px;font-weight:800;font-size:13px;
+  background:var(--panel);color:var(--ink);border:1px solid var(--line);box-shadow:var(--shadow);pointer-events:none;white-space:nowrap}
+.hqpets-prompt[hidden]{display:none}

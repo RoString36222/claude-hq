@@ -4,7 +4,7 @@
 // Arena's clock (`bt`) and its title (`bn`), to an Arena that lists "boombox". Anyone near you in the City hears
 // it: this page plays the nearest boombox in range in a hidden YouTube embed, in step with yours, louder the
 // closer you are. Nothing is played through the Arena or this machine's server.
-// (3.12.1) Live in the Music tab ("Go live") carries it too: anyone near a DJ in the City listens to the live set
+// (3.13.1) Live in the Music tab ("Go live") carries it too: anyone near a DJ in the City listens to the live set
 // (ui/app/29-music.js muListen, browser to browser), louder the closer they are, and stops when they walk away.
 var BOOM = {frame:null, v:null, u:null, t:0, at:0, state:-1, vol:-1, ready:false, heard:{}, mine:"", live:null};
 var BOOM_RANGE = 28, BOOM_FULL = 4, BOOM_ID = /^[A-Za-z0-9_-]{11}$/;

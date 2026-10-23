@@ -1,4 +1,4 @@
-"""What isn't a box doesn't block as one (HQ 3.12.1): a civic mass noted "ell" blocks its oval (the stadium's bowl,
+"""What isn't a box doesn't block as one (HQ 3.13.1): a civic mass noted "ell" blocks its oval (the stadium's bowl,
 the cooling tower, stacks, silos), one noted "open" blocks nothing but the parts noted on their own (a crane's or the
 water tower's legs, a shelter's back and posts); the air base's control tower and radar block their circles and a
 parked jet its outline; the airport car park's ground floor is open between its columns. node runs the functions

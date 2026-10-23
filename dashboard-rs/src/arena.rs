@@ -145,6 +145,36 @@ pub fn vehicle_home_body(body: &Value) -> Result<Value, &'static str> {
     }
 }
 
+/// A tuning save's body (HQ 3.13, the Tuning shop): `{tuning, paint?}`, rebuilt from the known keys only,
+/// each a short enum word, a `#rrggbb` (or null), a small integer, or the plate (A-Z, 0-9, space, dash, at
+/// most 8). The Arena (backend/src/tuning.rs) validates every value against the vehicle's kind.
+pub fn vehicle_tuning_body(body: &Value) -> Result<Value, &'static str> {
+    let t = body.get("tuning").and_then(Value::as_object).ok_or("tuning must be an object")?;
+    let word = |v: &Value| v.as_str().is_some_and(|s| (1..=12).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'));
+    let hex = |v: &Value| v.is_null() || v.as_str().is_some_and(|s| s.len() == 7 && s.starts_with('#') && s[1..].bytes().all(|b| b.is_ascii_hexdigit()));
+    let small = |v: &Value| v.as_i64().is_some_and(|n| (-8..=8).contains(&n));
+    let mut out = serde_json::Map::new();
+    for (k, v) in t {
+        let ok = match k.as_str() {
+            "finish" | "two_tone" | "wing" | "exhaust" => word(v),
+            "color" | "color2" | "rim_color" => hex(v),
+            "rim" | "rim_size" | "tint" => small(v),
+            "plate" => v.as_str().is_some_and(|s| s.len() <= 8 && s.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b' ' || b == b'-')),
+            _ => return Err("unknown tuning field"),
+        };
+        if !ok {
+            return Err("bad tuning value");
+        }
+        out.insert(k.clone(), v.clone());
+    }
+    let mut clean = json!({"tuning": out});
+    match body.get("paint") {
+        None | Some(Value::Null) => {}
+        Some(p) => { clean["paint"] = json!(p.as_i64().filter(|n| (0..64).contains(n)).ok_or("paint must be 0 to 63")?); }
+    }
+    Ok(clean)
+}
+
 /// A vehicle park's body: `{garage: true}` (back in its city's garage), or
 /// `{world, x, z, yaw}` with a world the page can be in and finite coordinates.
 pub fn vehicle_park_body(body: &Value) -> Result<Value, &'static str> {
@@ -159,6 +189,53 @@ pub fn vehicle_park_body(body: &Value) -> Result<Value, &'static str> {
         (Some(x), Some(z), Some(yaw)) if x.abs() <= 20_000.0 && z.abs() <= 20_000.0 => Ok(json!({"world": world, "x": x, "z": z, "yaw": yaw})),
         _ => Err("x, z and yaw must be numbers in range"),
     }
+}
+
+/// Pets (HQ 3.14, backend/src/pets.rs): a species id, and a pet's name as the page may send it (the Arena
+/// trims it, checks it again and filters words).
+static PET_SPECIES_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z]{1,24}$").unwrap());
+static PET_NAME_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9 '-]{1,24}$").unwrap());
+
+fn pet_name(body: &Value) -> Result<Value, &'static str> {
+    body.get("name").and_then(Value::as_str).filter(|n| PET_NAME_RE.is_match(n) && n.trim().chars().count() <= 12)
+        .map(|n| json!(n)).ok_or("name must be 1 to 12 letters, digits, spaces, - or '")
+}
+fn pet_small(body: &Value, k: &str, max: i64) -> Result<Option<Value>, &'static str> {
+    match body.get(k) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_i64().filter(|n| (0..=max).contains(n)).map(|n| Some(json!(n))).ok_or("a pet's numbers are small"),
+    }
+}
+
+/// An adoption's body: `{species, variant?, name}`; anything else is dropped. The Arena sets any price.
+pub fn pet_adopt_body(body: &Value) -> Result<Value, &'static str> {
+    let species = body.get("species").and_then(Value::as_str).filter(|s| PET_SPECIES_RE.is_match(s)).ok_or("species must be a species id")?;
+    let mut o = json!({"species": species, "name": pet_name(body)?});
+    if let Some(v) = pet_small(body, "variant", 15)? { o["variant"] = v; }
+    Ok(o)
+}
+
+/// A pet edit's body: any of `{name, variant, acc, active, home}`, at least one; anything else is dropped.
+pub fn pet_edit_body(body: &Value) -> Result<Value, &'static str> {
+    let mut o = serde_json::Map::new();
+    if body.get("name").is_some() { o.insert("name".into(), pet_name(body)?); }
+    if let Some(v) = pet_small(body, "variant", 15)? { o.insert("variant".into(), v); }
+    if let Some(v) = pet_small(body, "acc", 255)? { o.insert("acc".into(), v); }
+    for k in ["active", "home"] {
+        match body.get(k) {
+            None | Some(Value::Null) => {}
+            Some(Value::Bool(b)) => { o.insert(k.into(), json!(b)); }
+            Some(_) => return Err("active and home are true or false"),
+        }
+    }
+    if o.is_empty() { return Err("nothing to change"); }
+    Ok(Value::Object(o))
+}
+
+/// A pet care's body: `{kind}`, petting, fetch or a trick.
+pub fn pet_care_body(body: &Value) -> Result<Value, &'static str> {
+    body.get("kind").and_then(Value::as_str).filter(|k| matches!(*k, "pet" | "fetch" | "trick"))
+        .map(|k| json!({"kind": k})).ok_or("kind must be pet, fetch or trick")
 }
 
 /// The Casino (HQ 3.7): its one-shot games and the shapes a play may take. The Arena checks every field again
@@ -250,6 +327,44 @@ fn http_world(url: &str, inm: &str, token: Option<&str>) -> WorldReply {
 
 pub fn valid_room_id(v: &Value) -> bool {
     v.as_str().map(|s| ROOM_ID_RE.is_match(s)).unwrap_or(false)
+}
+
+/// The Arena's cap on one HQ Studio style document (`maxBytes` in hqstyle.json).
+pub const HQ_STYLE_MAX_BYTES: usize = 8192;
+/// At most this many user ids in one `/api/arena/hq/styles` request.
+pub const HQ_STYLE_IDS_MAX: usize = 100;
+
+/// `{"style": obj|null}` for PUT /v1/hq/me/style: an object of at most
+/// [`HQ_STYLE_MAX_BYTES`] compact bytes, or null (reset). The Arena validates
+/// every key; this only keeps junk and oversize bodies off the wire.
+pub fn hq_style_body(style: Option<&Value>) -> Result<Value, &'static str> {
+    match style {
+        Some(Value::Null) => Ok(json!({"style": null})),
+        Some(v @ Value::Object(_)) => {
+            if serde_json::to_string(v).map_or(usize::MAX, |t| t.len()) > HQ_STYLE_MAX_BYTES {
+                return Err("style is too large");
+            }
+            Ok(json!({"style": v}))
+        }
+        _ => Err("style must be an object or null"),
+    }
+}
+
+/// `a,b,c` -> user ids (each [`valid_user_id`], at most [`HQ_STYLE_IDS_MAX`], duplicates dropped).
+pub fn hq_style_ids(raw: &str) -> Result<Vec<String>, &'static str> {
+    let mut out: Vec<String> = Vec::new();
+    for id in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        if !valid_user_id(id) {
+            return Err("bad user id");
+        }
+        if !out.iter().any(|x| x == id) {
+            out.push(id.to_string());
+        }
+    }
+    if out.len() > HQ_STYLE_IDS_MAX {
+        return Err("too many user ids");
+    }
+    Ok(out)
 }
 
 pub fn valid_user_id(s: &str) -> bool {
@@ -1026,6 +1141,38 @@ impl App {
         self.authed_get(&format!("/v1/hq/{}", uid))
     }
 
+    // ---- HQ Studio (3.15) ---------------------------------------------------
+
+    /// GET /v1/hq/me/style. An Arena without HQ Studio answers 404, passed
+    /// through so the page falls back to its local-only copy.
+    pub fn arena_hq_style(&self) -> (u16, Value) {
+        self.authed_get("/v1/hq/me/style")
+    }
+
+    /// PUT /v1/hq/me/style. Egress: the style document only (enum keys, colours,
+    /// grid furniture; the Arena refuses anything else), never transcript data.
+    pub fn arena_hq_style_put(&self, style: Option<&Value>) -> (u16, Value) {
+        if self.authed().is_none() {
+            return not_paired();
+        }
+        match hq_style_body(style) {
+            Ok(body) => self.authed_send("PUT", "/v1/hq/me/style", body),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
+    /// GET /v1/hq/styles?ids=a,b: the styles of open HQs among `ids`.
+    pub fn arena_hq_styles(&self, ids: &str) -> (u16, Value) {
+        if self.authed().is_none() {
+            return not_paired();
+        }
+        match hq_style_ids(ids) {
+            Ok(v) if v.is_empty() => (200, json!({"styles": {}})),
+            Ok(v) => self.authed_get(&format!("/v1/hq/styles?ids={}", v.join(","))),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
     pub fn arena_portrait_put(&self, png: &[u8]) -> (u16, Value) {
         match self.authed() {
             Some((t, b)) => http_bytes("PUT", &format!("{}/v1/me/portrait", b), &t, "image/png", png),
@@ -1286,6 +1433,26 @@ impl App {
         }
     }
 
+    /// GET /v1/vehicles/<id>/tuning: how an owned vehicle is tuned (HQ 3.13). Egress: the vehicle's id.
+    pub fn arena_vehicle_tuning(&self, id: &str) -> (u16, Value) {
+        if !OWNED_ID_RE.is_match(id) {
+            return (400, json!({"error": "bad vehicle id"}));
+        }
+        self.authed_get(&format!("/v1/vehicles/{id}/tuning"))
+    }
+
+    /// POST /v1/vehicles/<id>/tuning: save an owned vehicle's tuning (and paint). Egress: the vehicle's id,
+    /// enum words, colours, small numbers and the plate text the user typed (vehicle_tuning_body). [3.13]
+    pub fn arena_vehicle_tuning_set(&self, id: &str, body: &Value) -> (u16, Value) {
+        if !OWNED_ID_RE.is_match(id) {
+            return (400, json!({"error": "bad vehicle id"}));
+        }
+        match vehicle_tuning_body(body) {
+            Ok(clean) => self.authed_send("POST", &format!("/v1/vehicles/{id}/tuning"), clean),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
     /// GET /v1/casino/me: your chips, coins and casino stats, and the tables the games are drawn from.
     pub fn arena_casino_me(&self) -> (u16, Value) {
         self.authed_get("/v1/casino/me")
@@ -1325,6 +1492,44 @@ impl App {
         }
         match vehicle_home_body(body) {
             Ok(clean) => self.authed_send("POST", &format!("/v1/vehicles/{id}/home"), clean),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
+    /// GET /v1/pets/mine: your pets, your level and coins (HQ 3.14).
+    pub fn arena_pets_mine(&self) -> (u16, Value) {
+        self.authed_get("/v1/pets/mine")
+    }
+
+    /// GET /v1/pets/home/<user id>: the pets in that HQ's lobby (an open HQ, or yours). Egress: a user id.
+    pub fn arena_pets_home(&self, uid: &str) -> (u16, Value) {
+        if !valid_user_id(uid) {
+            return (400, json!({"error": "bad user id"}));
+        }
+        self.authed_get(&format!("/v1/pets/home/{uid}"))
+    }
+
+    /// POST /v1/pets/adopt. Egress: a species id, a variant and the name you typed for the pet.
+    pub fn arena_pet_adopt(&self, body: &Value) -> (u16, Value) {
+        match pet_adopt_body(body) {
+            Ok(clean) => self.authed_send("POST", "/v1/pets/adopt", clean),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
+    /// POST /v1/pets/<id>/{edit,care,release}. Egress: the pet's id, small numbers, flags, a name, a care word.
+    pub fn arena_pet_post(&self, id: &str, action: &str, body: &Value) -> (u16, Value) {
+        if !OWNED_ID_RE.is_match(id) {
+            return (400, json!({"error": "bad pet id"}));
+        }
+        let clean = match action {
+            "edit" => pet_edit_body(body),
+            "care" => pet_care_body(body),
+            "release" => Ok(json!({})),
+            _ => Err("no such pet route"),
+        };
+        match clean {
+            Ok(c) => self.authed_send("POST", &format!("/v1/pets/{id}/{action}"), c),
             Err(e) => (400, json!({"error": e})),
         }
     }
@@ -1551,6 +1756,60 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn hq_style_bodies_and_ids_are_checked_locally() {
+        assert_eq!(hq_style_body(Some(&json!(null))), Ok(json!({"style": null})));
+        assert_eq!(hq_style_body(Some(&json!({"v": 1}))), Ok(json!({"style": {"v": 1}})));
+        for bad in [None, Some(json!("x")), Some(json!([])), Some(json!(1)), Some(json!(true))] {
+            assert!(hq_style_body(bad.as_ref()).is_err(), "{bad:?}");
+        }
+        let big = json!({"v": 1, "pad": "x".repeat(HQ_STYLE_MAX_BYTES)});
+        assert_eq!(hq_style_body(Some(&big)), Err("style is too large"));
+        let a = "01234567-89ab-cdef-0123-456789abcdef";
+        assert_eq!(hq_style_ids(&format!("{a},{a}")), Ok(vec![a.to_string()]));
+        assert_eq!(hq_style_ids(""), Ok(vec![]));
+        assert!(hq_style_ids("../x").is_err());
+        assert!(hq_style_ids(&a.to_uppercase()).is_err());
+        let many: Vec<String> = (0..101).map(|i| format!("01234567-89ab-cdef-0123-{i:012}")).collect();
+        assert_eq!(hq_style_ids(&many.join(",")), Err("too many user ids"));
+        assert_eq!(hq_style_ids(&many[..100].join(",")).unwrap().len(), 100);
+        assert!(crate::server::post_paths().contains(&"/api/arena/hq/style"));
+    }
+
+    #[test]
+    fn hq_style_routes_reach_the_arena_and_pass_its_status_through() {
+        let (_d, app) = app();
+        let reply = Arc::new(Mutex::new((200, json!({"style": null}))));
+        let sent = stub(&app, "https://arena.example", reply.clone());
+        assert_eq!(app.arena_hq_style(), (200, json!({"style": null})));
+        app.arena_hq_style_put(Some(&json!({"v": 1})));
+        let a = "01234567-89ab-cdef-0123-456789abcdef";
+        app.arena_hq_styles(&format!("{a},{a}"));
+        {
+            let s = sent.lock().unwrap();
+            assert_eq!((s[0].0.as_str(), s[0].1.as_str()), ("GET", "https://arena.example/v1/hq/me/style"));
+            assert_eq!((s[1].0.as_str(), s[1].1.as_str()), ("PUT", "https://arena.example/v1/hq/me/style"));
+            assert_eq!(s[1].3, Some(json!({"style": {"v": 1}})));
+            assert_eq!(s[2].1, format!("https://arena.example/v1/hq/styles?ids={a}"));
+        }
+        // refused locally: nothing sent
+        assert_eq!(app.arena_hq_style_put(Some(&json!("x"))).0, 400);
+        assert_eq!(app.arena_hq_styles("nope").0, 400);
+        assert_eq!(app.arena_hq_styles(""), (200, json!({"styles": {}})));
+        assert_eq!(sent.lock().unwrap().len(), 3);
+        // an Arena without HQ Studio: its 404 comes back as a 404
+        *reply.lock().unwrap() = (404, json!({"error": "Not Found"}));
+        assert_eq!(app.arena_hq_style().0, 404);
+        assert_eq!(app.arena_hq_style_put(Some(&json!(null))).0, 404);
+        // the open list passes a style through untouched
+        *reply.lock().unwrap() = (200, json!({"hqs": [{"userId": a, "style": {"v": 1}}]}));
+        assert_eq!(app.arena_hq_open().1["hqs"][0]["style"], json!({"v": 1}));
+        // unpaired: nothing leaves
+        app.clear_link();
+        assert_eq!(app.arena_hq_style_put(Some(&json!(null))), (400, json!({"error": "not paired"})));
+        assert_eq!(app.arena_hq_styles(a).0, 400);
+    }
+
+    #[test]
     fn not_paired_makes_no_request() {
         let (_d, app) = app();
         let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({})))));
@@ -1714,6 +1973,36 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn tuning_forwards_only_known_fields() {
+        // [3.13]
+        let t = json!({"finish": "pearl", "color": "#12ab9f", "two_tone": "stripe", "color2": null, "rim": 3, "rim_color": "#ffffff",
+                       "rim_size": -1, "tint": 2, "wing": "gt", "exhaust": "titanium", "plate": "HQ 42-X"});
+        assert_eq!(vehicle_tuning_body(&json!({"tuning": t, "paint": 2, "user_id": "x"})), Ok(json!({"tuning": t, "paint": 2})));
+        assert_eq!(vehicle_tuning_body(&json!({"tuning": {}})), Ok(json!({"tuning": {}})));
+        for bad in [json!({}), json!({"tuning": 1}), json!({"tuning": {"turbo": true}}), json!({"tuning": {"plate": "hq"}}),
+                    json!({"tuning": {"plate": "ABCDEFGHI"}}), json!({"tuning": {"color": "red"}}), json!({"tuning": {"finish": "../x"}}),
+                    json!({"tuning": {"rim": 99}}), json!({"tuning": {}, "paint": 64})] {
+            assert!(vehicle_tuning_body(&bad).is_err(), "{bad}");
+        }
+        use crate::server::vehicle_tuning_target;
+        assert_eq!(vehicle_tuning_target("/api/arena/vehicles/abc/tuning"), Some("abc"));
+        for bad in ["/api/arena/vehicles//tuning", "/api/arena/vehicles/a/b/tuning", "/api/arena/vehicles/abc/home"] {
+            assert_eq!(vehicle_tuning_target(bad), None, "{bad}");
+        }
+        let (_d, app) = app();
+        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({})))));
+        let id = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+        assert_eq!(app.arena_vehicle_tuning(id).0, 200);
+        assert_eq!(app.arena_vehicle_tuning_set(id, &json!({"tuning": {"tint": 1}})).0, 200);
+        assert_eq!(app.arena_vehicle_tuning("../x").0, 400);
+        assert_eq!(app.arena_vehicle_tuning_set(id, &json!({"tuning": {"x": 1}})).0, 400);
+        let s = sent.lock().unwrap();
+        let urls: Vec<&str> = s.iter().map(|x| x.1.as_str()).collect();
+        assert_eq!(urls, vec![format!("https://arena.example/v1/vehicles/{id}/tuning").as_str(), format!("https://arena.example/v1/vehicles/{id}/tuning").as_str()]);
+        assert_eq!(s[1].3, Some(json!({"tuning": {"tint": 1}})));
+    }
+
+    #[test]
     fn garages_forward_only_ids_homes_and_bays() {
         // [basement 3.4]
         assert_eq!(vehicle_home_body(&json!({"home": "basement", "bay": 3, "user_id": "x", "token": "t"})), Ok(json!({"home": "basement", "bay": 3})));
@@ -1744,6 +2033,49 @@ pub(crate) mod tests {
         assert_eq!(urls, vec!["https://arena.example/v1/garages/mine", home.as_str(), home.as_str()]);
         assert_eq!(s[1].3, Some(json!({"home": "basement", "bay": 2})));
         assert_eq!(s[2].3, Some(json!({"home": "carpark"})));
+        assert!(s.iter().all(|x| x.2.as_deref() == Some("T")));
+    }
+
+    #[test]
+    fn pets_forward_only_species_names_numbers_and_flags() {
+        // HQ 3.14
+        assert_eq!(pet_adopt_body(&json!({"species": "icedragon", "variant": 2, "name": "Frost", "price": 0})),
+                   Ok(json!({"species": "icedragon", "variant": 2, "name": "Frost"})));
+        assert_eq!(pet_adopt_body(&json!({"species": "corgi", "name": "Mr Waffles"})), Ok(json!({"species": "corgi", "name": "Mr Waffles"})));
+        for bad in [json!({"species": "../x", "name": "A"}), json!({"species": "corgi"}), json!({"species": "corgi", "name": "<b>"}),
+                    json!({"species": "corgi", "name": "x".repeat(13)}), json!({"species": "corgi", "name": "A", "variant": 99})] {
+            assert!(pet_adopt_body(&bad).is_err(), "{bad}");
+        }
+        assert_eq!(pet_edit_body(&json!({"acc": 9, "active": true, "affection": 1000, "user_id": "x"})), Ok(json!({"acc": 9, "active": true})));
+        assert_eq!(pet_edit_body(&json!({"home": false})), Ok(json!({"home": false})));
+        for bad in [json!({}), json!({"active": 1}), json!({"acc": 256}), json!({"name": "/etc"})] {
+            assert!(pet_edit_body(&bad).is_err(), "{bad}");
+        }
+        assert_eq!(pet_care_body(&json!({"kind": "fetch", "n": 99})), Ok(json!({"kind": "fetch"})));
+        assert!(pet_care_body(&json!({"kind": "feed"})).is_err());
+        use crate::server::pet_post_target;
+        assert_eq!(pet_post_target("/api/arena/pets/abc/edit"), Some(("abc", "edit")));
+        assert_eq!(pet_post_target("/api/arena/pets/abc/release"), Some(("abc", "release")));
+        for bad in ["/api/arena/pets/adopt", "/api/arena/pets//care", "/api/arena/pets/a/b/care", "/api/arena/pets/abc/feed"] {
+            assert_eq!(pet_post_target(bad), None, "{bad}");
+        }
+        let (_d, app) = app();
+        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({})))));
+        let id = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+        assert_eq!(app.arena_pets_mine().0, 200);
+        assert_eq!(app.arena_pet_adopt(&json!({"species": "shiba", "name": "Mochi"})).0, 200);
+        assert_eq!(app.arena_pet_post(id, "care", &json!({"kind": "pet"})).0, 200);
+        assert_eq!(app.arena_pet_post(id, "release", &json!({"x": 1})).0, 200);
+        assert_eq!(app.arena_pet_post("../x", "edit", &json!({"home": true})).0, 400);
+        assert_eq!(app.arena_pets_home(id).0, 200);
+        assert_eq!(app.arena_pets_home("../x").0, 400);
+        let s = sent.lock().unwrap();
+        let urls: Vec<&str> = s.iter().map(|x| x.1.as_str()).collect();
+        let care = format!("https://arena.example/v1/pets/{id}/care");
+        let rel = format!("https://arena.example/v1/pets/{id}/release");
+        let home = format!("https://arena.example/v1/pets/home/{id}");
+        assert_eq!(urls, vec!["https://arena.example/v1/pets/mine", "https://arena.example/v1/pets/adopt", care.as_str(), rel.as_str(), home.as_str()]);
+        assert_eq!(s[3].3, Some(json!({})), "a release sends nothing");
         assert!(s.iter().all(|x| x.2.as_deref() == Some("T")));
     }
 

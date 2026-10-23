@@ -54,6 +54,7 @@ var FADE_OP = 0.16;         // a faded building's opacity (as hqbase.js)
 var FADE_TAU = 0.083;       // the fade's time constant (s): ~95% of the way in 0.25 s
 var HQ_FAR = 250;           // an HQ (and its lot extras) further than this from the camera is not drawn (m)
 var HQ_FAR_HYST = 10;       // ... and comes back inside HQ_FAR - this (no flicker on the edge)
+var HQ_LOD = 120;           // [hq revamp] an HQ further than this shows only its masses (its detail comes back inside HQ_LOD - HQ_FAR_HYST)
 // an HQ lot's paving tint by its district (legend name), over the paving texture; others plain
 var PAVE = {hq: 0xffffff, plaza: 0xf2ece2, civic: 0xe8ecef, commercial: 0xdde4ec, residential: 0xefe2d0, industrial: 0xd2d0cb};
 
@@ -105,14 +106,14 @@ function inRing(P, x, z){
   return inside;
 }
 var GARAGE_CLEAR = 8;        // the clear run out of a bay's door: room to drive out and turn (its apron is 3.2 m)
-function garagePlace(lot, p, wings){
-  var G = HQV.hqLotExtras.garage;
-  if(!lot || !lot.poly || lot.poly.length < 3) return {x: G.x, z: G.z, s: 1, f: 1};
-  var P = lot.poly.map(function(q){ return [q[0]/100, q[1]/100]; }), hw = G.w/2 + 0.3, hd = G.d/2 + 0.3;
-  // the HQ's footprint (hqBoxes: the tower, then each wing) and the walk from its door to the front
-  var keep = [[0, 0, 4.8, 3.8], [0, HQ_DOOR + 6, 1.6, 6]];
-  if(wings >= 1) keep.push([-10.5, 0.5, 3, 2.8]);
-  if(wings >= 2) keep.push([10.5, 0.5, 3, 2.8]);
+// The HQ's footprint (HQV.hqTower.footprint: the tower, its entrance, then each wing) at grand (0..1); the old tower's without hqtower
+function hqFoot(grand, wings){
+  if(HQV.hqTower) return HQV.hqTower.footprint(grand, wings);
+  var out = [[0, 0, 4.8, 3.8]]; if(wings >= 1) out.push([-10.5, 0.5, 3, 2.8]); if(wings >= 2) out.push([10.5, 0.5, 3, 2.8]); return out;
+}
+// the bay search: the best spot (or, any: the first) for a bay clear of keep, inside the lot's polygon P
+function baySearch(P, p, keep, any){
+  var G = HQV.hqLotExtras.garage, hw = G.w/2 + 0.3, hd = G.d/2 + 0.3;
   function clear(x, z, ex, ez){
     for(var k = 0; k < keep.length; k++){ var K = keep[k]; if(Math.abs(x - K[0]) < ex + K[2] && Math.abs(z - K[1]) < ez + K[3]) return false; }
     return true;
@@ -123,15 +124,56 @@ function garagePlace(lot, p, wings){
     return true;
   }
   var best = null;
-  [1, -1].forEach(function(f){
+  for(var fi = 0; fi < 2; fi++){ var f = fi ? -1 : 1;
     for(var gx = -30; gx <= 30; gx += 0.5) for(var gz = -16; gz <= 16; gz += 0.5){
       if(!fits(gx, gz, f)) continue;
+      if(any) return {x: gx, z: gz, s: gx < 0 ? -1 : 1, f: f};
       // in front of the HQ first, facing the road first
       var d = (Math.abs(gx) - G.x)*(Math.abs(gx) - G.x) + (gz - G.z)*(gz - G.z) + (gz < 0 ? 400 : 0) + (f < 0 ? 2000 : 0);
       if(!best || d < best.d) best = {x: gx, z: gz, s: gx < 0 ? -1 : 1, f: f, d: d};
     }
-  });
+  }
   return best && {x: best.x, z: best.z, s: best.s, f: best.f};
+}
+function polyOf(lot){ return lot.poly.map(function(q){ return [q[0]/100, q[1]/100]; }); }
+// Where an HQ's car-lift bay goes on a v2 lot for an HQ of this size (grand, its wings): where it stood before the
+// HQ revamp while that spot is still clear of the bigger building and its run out; else the best spot for the new
+// footprint (the 3.5.8 rules: inside the lot, 8 m clear out of its gate, facing the road first); null when none fits.
+function garagePlace(lot, p, wings, grand){
+  var G = HQV.hqLotExtras.garage;
+  if(!lot || !lot.poly || lot.poly.length < 3) return {x: G.x, z: G.z, s: 1, f: 1};
+  var P = polyOf(lot), walk = [0, HQ_DOOR + 6, 1.6, 6];
+  var old = [[0, 0, 4.8, 3.8], walk]; if(wings >= 1) old.push([-10.5, 0.5, 3, 2.8]); if(wings >= 2) old.push([10.5, 0.5, 3, 2.8]);
+  var was = baySearch(P, p, old, false);
+  if(!(grand > 0) && !HQV.hqTower) return was;
+  var keep = hqFoot(grand || 0, wings).concat([walk]);
+  if(was && bayClear(was, keep)) return was;
+  return baySearch(P, p, keep, false);
+}
+function bayClear(b, keep){
+  var G = HQV.hqLotExtras.garage, hw = G.w/2 + 0.3, hd = G.d/2 + 0.3;
+  function clear(x, z, ex, ez){ return keep.every(function(K){ return !(Math.abs(x - K[0]) < ex + K[2] && Math.abs(z - K[1]) < ez + K[3]); }); }
+  return clear(b.x, b.z, hw, hd) && clear(b.x, b.z + b.f*(G.d/2 + GARAGE_CLEAR/2), G.w/2, GARAGE_CLEAR/2);
+}
+// How much bigger than the old tower an HQ may stand on this lot (the HQ revamp): the largest of 1, .75, .5, .25 (else 0)
+// at which every part of the footprint that fitted inside the lot's polygon at the old size still does, for every wing
+// count, and a car-lift bay still fits beside it. The same for everyone (pure: the lot alone); memoised by lot.
+var GRAND = {};
+function boxInLot(P, p, b){ for(var i = -1; i <= 1; i += 0.5) for(var j = -1; j <= 1; j += 0.5){ var w = toWorld(p, b[0] + i*b[2], b[1] + j*b[3]); if(!inRing(P, w.x, w.z)) return false; } return true; }
+function grandOf(lot, p){
+  if(!lot || !lot.poly || lot.poly.length < 3 || !HQV.hqTower) return 0;
+  var key = [lot.id, lot.x, lot.z, lot.w, lot.d].join(":"); if(GRAND[key] != null) return GRAND[key];
+  var P = polyOf(lot), walk = [0, HQ_DOOR + 6, 1.6, 6], best = 0, steps = [0.25, 0.5, 0.75, 1];
+  for(var si = 0; si < steps.length; si++){
+    var g = steps[si], ok = true;
+    for(var wings = 0; wings <= 2 && ok; wings++){
+      var b0 = hqFoot(0, wings), b = hqFoot(g, wings);
+      for(var i = 0; i < b.length && ok; i++) if(boxInLot(P, p, b0[i]) && !boxInLot(P, p, b[i])) ok = false;
+      if(ok && !baySearch(P, p, b.concat([walk]), true)) ok = false;
+    }
+    if(!ok) break; best = g;
+  }
+  return (GRAND[key] = best);
 }
 // A view building on its site (m): set back so its door and steps stay on the site.
 function placeView(site){
@@ -175,7 +217,7 @@ function snapShadow(p, dir, texel){
   return {x: a*xx + b*yx + d*zx, y: b*yy + d*zy, z: a*xz + b*yz + d*zz};
 }
 // what is part of an HQ's look (its building is rebuilt when it changes); crew counts are not
-function hqKey(E){ var h = E.h || {}; return JSON.stringify([h.userId, (E.lot || {}).id, h.level, h.look, h.cos, !!h.isYou]); }
+function hqKey(E){ var h = E.h || {}; return JSON.stringify([h.userId, (E.lot || {}).id, h.level, h.look, h.style || null, h.cos, !!h.isYou]); }
 function crewText(h){ var crew = (h && h.crew) || {}; return (h && h.isYou ? "You · " : "") + (crew.working | 0) + " working · " + (crew.needs | 0) + " need them"; }
 // A mesh mergeStatic must leave alone: doors and anything tagged animated or fading, materials
 // something changes later (lit by night, blinking, scrolling, a canvas), see-through ones, and
@@ -326,7 +368,7 @@ function netRoom(world, isles){ return isles && worldOk(world) ? "city3d:" + wor
 HQV.hqCity3d = {assign: assign, placeLot: placeLot, placeView: placeView, toWorld: toWorld, pickAt: pickAt, segBox: segBox,
   snapShadow: snapShadow, hqKey: hqKey, keepMesh: keepMesh, HQ_DOOR: HQ_DOOR, VIEW_DOOR: VIEW_DOOR, HQ_FAR: HQ_FAR,
   COMMONS: COMMONS, ownerOf: ownerOf, islandOf: islandOf, worldOk: worldOk, frontOf: frontOf, assignRanks: assignRanks,
-  assignIsland: assignIsland, garagePlace: garagePlace, civicSites: civicSites, doorOf: doorOf, backOf: backOf, terminalAt: terminalAt, stopMenu: stopMenu,
+  assignIsland: assignIsland, garagePlace: garagePlace, grandOf: grandOf, hqFoot: hqFoot, civicSites: civicSites, doorOf: doorOf, backOf: backOf, terminalAt: terminalAt, stopMenu: stopMenu,
   waitText: waitText, travelPlaces: travelPlaces, netRoom: netRoom, simZones: simZones, cityStats: cityStats};
 // Which world the next City is built on, and where you arrive in it (games/hq3d.js goCity). A trip
 // that is still landing (a plane) rides across the rebuild in NAV.trip.
@@ -414,6 +456,8 @@ HQV.hqWorlds.city3d = function(c, w){
   var me = (api.me && api.me()) || null, owner = "commons", tier = 5, grow = 1000, cityState = null, assignRows = null;
   var dealerSite = null, dealerB = null;          // the dealership (games/hqdealer.js): its site and building
   var casinoSite = null, casinoB = null;          // the casino (games/hqcasino.js): its site and the building on the street
+  var tuningSite = null, tuningB = null;          // [3.13] the Tuning shop (games/hqtuning.js): its site and the workshop
+  var petSite = null, petB = null;                // [pets 3.14] the Pet shop (games/hqpets.js): its site and building
   var civics = [], civicG = new THREE.Group(), boatG = new THREE.Group(), boats = [], civicLod = null, decks = [];
   var oc = null, sea = null, arch = null, tsim = null, tview = null, nsim = null, ndraw = null;
   var bus = null, menu = null, menuKey = null, talkL = null, ui = null, statsEl = null, statsAt = 0, fadeEl = null, landing = false, npcSkip = 0;
@@ -463,9 +507,13 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   // an HQ's boxes, matching hqBuilding's blockedLocal: the tower, then each wing (so the ground beside it stays clear)
   function hqBoxes(p, B){
-    var top = B.top(), out = [aabbOf(p, 0, 0, 4.8, 3.8, top)];
-    if(B.wings >= 1) out.push(aabbOf(p, -10.5, 0.5, 3, 2.8, top));
-    if(B.wings >= 2) out.push(aabbOf(p, 10.5, 0.5, 3, 2.8, top));
+    var top = B.top(), fp = hqFoot(B.grand || 0, B.wings), M = B.M;
+    if(!M){ var o0 = [aabbOf(p, fp[0][0], fp[0][1], fp[0][2], fp[0][3], top)]; for(var i0 = 1; i0 < fp.length; i0++) o0.push(aabbOf(p, fp[i0][0], fp[i0][1], fp[i0][2], fp[i0][3], top)); return o0; }
+    // [hq revamp] the podium at its cornice, each tier (and the prestige floors) at its roof, each wing at its own: so a
+    // helicopter can set down on a setback terrace or a wing, and the camera keeps out of exactly what is there
+    var out = [aabbOf(p, fp[0][0], fp[0][1], fp[0][2], fp[0][3], M.podium.y0 + M.podium.h + 0.4)];
+    M.tiers.concat(M.prestige ? [M.prestige] : []).forEach(function(T, n, all){ out.push(aabbOf(p, T.x, T.z, T.w/2, T.d/2, n === all.length - 1 ? top : T.y0 + T.h + 0.2)); });
+    M.wings.forEach(function(Wg){ out.push(aabbOf(p, Wg.x, Wg.z, Wg.w/2 + 0.3, Wg.d/2 + 0.3, Wg.top || (Wg.y0 + Wg.h))); });
     return out;
   }
 
@@ -613,9 +661,9 @@ HQV.hqWorlds.city3d = function(c, w){
       ring.rotation.x = -PI/2; ring.position.set(0, 0.04, 0.5); ring.scale.y = 0.45; g.add(ring); }
     var B = HQV.hqBuilding(c, {
       level: function(){ return Math.max(1, h.level | 0); },
-      look: function(){ return Object.assign({}, h.look || {}, {sign: name, decor: cos.decor}); },
+      look: function(){ return Object.assign({}, h.look || {}, {sign: name, decor: cos.decor, style: h.style || null}); },   // [hq revamp] its HQ Studio style
       live: function(){ return (crew.working | 0) + (crew.needs | 0); },
-      campus: false,
+      campus: false, grand: grandOf(E.lot, p),
       door: {view: h.isYou ? "@lobby" : "visit:" + h.userId, label: name, userId: h.userId,
              tip: h.isYou ? "Your HQ: go in" : name + ": walk in as a visitor"},
       doorFront: function(){ return new THREE.Vector3(E.door.x, p.y, E.door.z); }
@@ -628,7 +676,7 @@ HQV.hqWorlds.city3d = function(c, w){
     E.boxes = hqBoxes(p, B);
     // the garage apron stops at the lot's front edge (the building stands HQ_DZ in front of the lot's middle)
     var ae = Math.min(11, (E.lot.d || 0)/200 - HQ_DZ);
-    E.garage = garagePlace(E.lot, p, B.wings);
+    E.garage = garagePlace(E.lot, p, B.wings, B.grand);
     var X = E.garage ? parts.lotExtras(c, g, HQV.hqPlated ? HQV.hqPlated(HQV.hqLotColors(h.look), h) : HQV.hqLotColors(h.look), p.rot, function(x, z){ return toWorld(p, x, z); }, ae, h.userId, E.garage, h.isYou)
                      : {glows: [], car: null, items: []};
     E.glows = X.glows; E.car = X.car; E.items = X.items; E.lift = X.lift || null;
@@ -658,7 +706,7 @@ HQV.hqWorlds.city3d = function(c, w){
   function build(){
     if(!W) return;
     var list = (api.city && api.city()) || [];
-    var key = JSON.stringify(list.map(function(h){ return [h.userId, h.level, h.look, h.cos, h.crew, !!h.isYou]; }));
+    var key = JSON.stringify(list.map(function(h){ return [h.userId, h.level, h.look, h.style || null, h.cos, h.crew, !!h.isYou]; }));
     if(key === sig && !forceYou) return; sig = key;
     var old = {}; hqs.forEach(function(E){ old[E.oid] = E; });
     var next = [], made = [];
@@ -685,6 +733,9 @@ HQV.hqWorlds.city3d = function(c, w){
     var back = api.cityReturn && api.cityReturn(), ret = hqs.filter(function(E){ return E.h.userId === back; })[0];
     w.spawn = at(ret || mine); w.spawnFrom = {lobby: at(mine)};
     if(casinoB) w.spawnFrom.casino = {x: casinoB.door.x, z: casinoB.door.z, yaw: casinoB.door.yaw};   // out of the casino: its red carpet
+    roofsBuild();                                                                // [hq revamp] the towers' roofs and their lifts' doors
+    var myRoof = roofs.filter(function(r){ return r.own; })[0];
+    if(myRoof && myRoof.lift) w.spawnFrom.roof = {x: myRoof.lift.x, y: myRoof.deck.y, z: myRoof.lift.z, yaw: myRoof.rot, camYaw: myRoof.rot + PI + 0.55};
     if(mine) w.homeLot = {x: mine.x, z: mine.z, rot: mine.rot, garage: mine.garage};   // [basement 3.4] the car lift's exact lot frame (streetSpot/liftSite)
     w.spawnFrom.basement = (mine && HQV.hqCarLift && HQV.hqCarLift.streetSpot && (function(){ try { return HQV.hqCarLift.streetSpot({home: at(mine), garage: mine.garage, rot: mine.rot, x: mine.x, y: mine.y, z: mine.z, lot: mine.lot, toWorld: function(x, z){ return toWorld(mine, x, z); }}, w.homeLot); } catch(e){ return null; } })()) || at(mine);   // [basement 3.4] up the car lift
     if(V2){
@@ -763,7 +814,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(air && air.blocked(x, z)) return true;                              // air: hangars, the tower, the base's fence
     if(fount && Math.hypot(x - fount.g.position.x, z - fount.g.position.z) < fount.R + 0.35) return true;   // the fountain
     if(skate && SP.walkBlocked(x - skate.cx, z - skate.cz)) return true;      // its ramps (on foot or wheels; boards ride them)
-    if(trafficAt(x, z)) return true;                                       // [3.12.1] the cars, buses and trams going by
+    if(trafficAt(x, z)) return true;                                       // [3.13.1] the cars, buses and trams going by
     var all = hqs.concat(views);
     for(var i = 0; i < all.length; i++){
       var L = all[i], rx = x - L.x, rz = z - L.z;
@@ -879,6 +930,18 @@ HQV.hqWorlds.city3d = function(c, w){
         // back out of the casino: on the red carpet, facing the street
         if(w.spawnFrom) w.spawnFrom.casino = {x: KB.door.x, z: KB.door.z, yaw: KB.door.yaw};
       } catch(e){ casinoB = null; }
+    }
+    tuningB = null;                                                                  // [3.13] the Tuning shop
+    if(tuningSite && HQV.hqTuning && (tuningSite.tier == null || (tuningSite.tier | 0) <= tier)){
+      try {
+        var TB = HQV.hqTuning.build(c, tuningSite, {tier: tier, night: night});
+        civicG.add(TB.g); civics.push(TB); tuningB = TB;
+        TB.hits.forEach(function(o){ hits.push(o); }); TB.doors.forEach(function(d){ doors.push(d); });
+      } catch(e){ tuningB = null; }
+    }
+    petB = null;                                                        // [pets 3.14] the Pet shop
+    if(petSite && HQV.hqPets && HQV.hqPets.build){
+      try { var PB = HQV.hqPets.build(c, petSite, {tier: tier, night: night}); civicG.add(PB.g); civics.push(PB); petB = PB; } catch(e){ petB = null; }
     }
     decks = []; civics.forEach(function(B){ (B.decks || []).forEach(function(d){ decks.push(d); }); });
     buildLod();
@@ -2180,11 +2243,14 @@ HQV.hqWorlds.city3d = function(c, w){
       var pr = ABL.roofAt(apP, x + d[0], z + d[1]); if(pr != null && pr > y) y = pr; });   // 6 m clear of their walls)
     var q = apL ? apPlaneAt(x, z, 4) : null; if(q && apL.y + q.top > y) y = apL.y + q.top;   // AIR: a parked or taxiing aircraft
     var a = air ? air.floor(x, z) : null;
+    var rp = HQV.hqRoof ? HQV.hqRoof.padAt(roofs, x, z, 0.3) : null; if(rp && rp.pad.y > y) y = rp.pad.y;   // [hq revamp] an HQ's roof pad
     return a != null && a > y ? a : y;
   };
   // stepping out of a helicopter that has landed: beside it on land, a roof pad's building's door; never at sea
   w.heliLand = function(st){
     if(st && apL && apPlaneAt(st.x, st.z, 8)) return null;                                  // AIR: not on (or beside) an aircraft
+    var rp = st && st.ground && HQV.hqRoof ? HQV.hqRoof.padAt(roofs, st.x, st.z, 0.6) : null;   // [hq revamp] on an HQ's pad: out onto its deck
+    if(rp && Math.abs(st.y - rp.pad.y) < 1) return HQV.hqRoof.spotBeside(rp);
     if(air) return air.landSpot(st);
     return st && st.ground && (!sea || sea.land(st.x + 3*Math.cos(st.yaw), st.z - 3*Math.sin(st.yaw))) ? {x: st.x + 3*Math.cos(st.yaw), z: st.z - 3*Math.sin(st.yaw), yaw: st.yaw} : null;
   };
@@ -2455,6 +2521,8 @@ HQV.hqWorlds.city3d = function(c, w){
       if(line && line.text){ showTalk(line); return true; }
     }
     if(dealerB && c.dealer && (dealerB.inside(p.x, p.z) || Math.hypot(p.x - dealerB.door.x, p.z - dealerB.door.z) < 4)){ c.dealer.open(); return true; }
+    if(tuningB && c.tuning && (tuningB.inside(p.x, p.z) || Math.hypot(p.x - tuningB.door.x, p.z - tuningB.door.z) < 4)){ c.tuning.open(); return true; }   // [3.13]
+    if(petB && petB.near(p.x, p.z) && HQV.petsUi){ HQV.petsUi.open("adopt"); return true; }   // [pets 3.14] the Pet shop
     var rs = rail && rail.station(p.x, p.z); if(rs){ openTravelMenu(rs); return true; }   // rail: at the station's door, before its bus bay
     if(tsim){ var st = tsim.stopsNear(p.x, p.z, STOP_R)[0]; if(st){ openStopMenu(st); return true; } }
     var tm = HQV.hqTravel ? terminalAt(W, tier, p.x, p.z) : null;
@@ -2463,6 +2531,8 @@ HQV.hqWorlds.city3d = function(c, w){
   };
   // the dealership (games/hqdealer.js) for hq3d's dealer panel and test drives: where it is, its forecourt bays
   // (world m, nose out), and a drive route along the roads from (x, z) back to a bay (Float64Array x, z, ...; null: none)
+  // [pets 3.14] the Pet shop: where its door is, and whether you stand at it (E opens the adoption panel)
+  w.petShop = {site: function(){ return petB ? {x: petB.x, z: petB.z, door: petB.door} : null; }, near: function(x, z){ return !!(petB && petB.near(x, z)); }};
   w.dealer = {
     site: function(){ return dealerB ? {id: dealerSite.id, name: dealerSite.name, x: dealerB.x, z: dealerB.z, door: dealerB.door, flagship: !!dealerSite.flagship} : null; },
     forecourt: function(){ return dealerB ? dealerB.forecourt.slice() : []; },
@@ -2473,6 +2543,9 @@ HQV.hqWorlds.city3d = function(c, w){
     },
     inside: function(x, z){ return !!(dealerB && dealerB.inside(x, z)); }
   };
+  // [3.13] the Tuning shop, for tools (as .dealer): where it is and its door
+  w.tuning = {site: function(){ return tuningB ? {id: tuningSite.id, name: tuningSite.name, x: tuningB.x, z: tuningB.z, door: tuningB.door} : null; },
+              inside: function(x, z){ return !!(tuningB && tuningB.inside(x, z)); }};
   // a stop's or a terminal's menu, or the Go to panel: hq3d's keys stand still (the keys are theirs)
   w.menuOpen = function(){ return !!menu || !!(nui && nui.isOpen()); };
   function showTalk(line){
@@ -2680,7 +2753,8 @@ HQV.hqWorlds.city3d = function(c, w){
       }
     }
     if(talkL && nowMs > talkL.until){ S.remove(talkL.o); disposeTree(talkL.o); talkL = null; }
-    if(dealerB && c.active && c.active(w)) HQV.hqCity3d.dealer = w.dealer;   // the dealership, for tools (as .ships, .air)
+    if(dealerB && c.active && c.active(w)) HQV.hqCity3d.dealer = w.dealer;
+    if(tuningB && c.active && c.active(w)) HQV.hqCity3d.tuning = w.tuning;   // [3.13]   // the dealership, for tools (as .ships, .air)
     if(c.active && c.active(w)){ HQV.hqCity3d.trafficAt = trafficAt; HQV.hqCity3d.trafficNow = w.callRoad.traffic; }   // for tools
     busStep();
     if(air) air.update(t, dt, k, cam);                                     // air: jets, the radar
@@ -2698,6 +2772,8 @@ HQV.hqWorlds.city3d = function(c, w){
     S.remove(civicG); S.remove(boatG);
     if(dealerB){ dealerB.dispose(); dealerB = null; }
     if(casinoB){ casinoB.dispose(); casinoB = null; }
+    if(tuningB){ tuningB.dispose(); tuningB = null; }
+    if(petB){ petB.dispose(); petB = null; }                           // [pets 3.14]
     if(air){ air.destroy(); air = null; }                                  // air:
     carparkDestroy();                                                      // carpark
     ferryPool.forEach(function(F){ F.dispose(); }); ferryPool = []; if(myFerry){ myFerry.dispose(); myFerry = null; }
@@ -2729,7 +2805,7 @@ HQV.hqWorlds.city3d = function(c, w){
   /* Calling your vehicle (games/hqcall.js, driven by games/hq3d.js): the roads it can use, where it may appear out of
      sight, the traffic it slows for, and itself as an obstacle the traffic stops for. */
   var callObs = null, callTraffic = null;
-  // [3.12.1] the traffic is solid: a car, bus or tram as drawn this frame (callTraffic, a tram section by section) blocks
+  // [3.13.1] the traffic is solid: a car, bus or tram as drawn this frame (callTraffic, a tram section by section) blocks
   // you on foot, on a board and at the wheel, so you hit it instead of passing through. Only at your level: the
   // street under a bridge or a carpark deck does not.
   function trafficAt(x, z){
@@ -2972,6 +3048,12 @@ HQV.hqWorlds.city3d = function(c, w){
     if(V2 && HQV.hqDealer){ try { dealerSite = HQV.hqDealer.place(W, tier); } catch(e){ dealerSite = null; } }
     // the casino (games/hqcasino.js) likewise, after the dealership has taken its lot
     if(V2 && HQV.hqCasino){ try { casinoSite = HQV.hqCasino.place(W, tier); } catch(e){ casinoSite = null; } }
+    // [pets 3.14] the Pet shop: a lot after the dealership and the casino, before the Tuning shop (from tier 2), so it keeps
+    // its lot when the City reaches tier 2; the Tuning shop then takes the free lot nearest the dealership. Each claim
+    // retypes its lot, so the four always stand on different lots.
+    if(V2 && HQV.hqPets && HQV.hqPets.place){ try { petSite = HQV.hqPets.place(W); } catch(e){ petSite = null; } }
+    // [3.13] the Tuning shop: the building lot nearest the dealership, once the dealership, the casino and the Pet shop have theirs
+    if(V2 && HQV.hqTuning){ try { tuningSite = HQV.hqTuning.place(W, tier); } catch(e){ tuningSite = null; } }
     indexBuildings();
     wb = HQV.worldbuild.create(c, W, V2 ? {scene: S, quality: 2, tier: tier, gap: !!(HQV.hqBridges && W.river)} : {scene: S, quality: 2});
     S.add(wb.root); S.add(staticG); S.add(hqG);
@@ -3040,8 +3122,41 @@ HQV.hqWorlds.city3d = function(c, w){
   if(arriveAt) w.startMode = "chase";            // off a ferry, a train, a boat: on the ground, not over the map
   w.skateBase = 0; w.skatepark = null;
   w.spawn = {x: 0, y: 0, z: 10, yaw: 0, camYaw: 0.55}; w.spawnFrom = {lobby: w.spawn};
-  w.blocked = blocked;
-  w.groundY = groundY;
+  /* ---------- [hq revamp] HQ roofs: every tower's helipad and roof deck (games/hqroof.js, games/hqtower.js) ----------
+     A helicopter lands on any HQ's pad (heliFloor: the pad's deck; heliAssist: the landing assist and its one-time
+     "Landing on <name>'s HQ"); stepping out on a pad puts you on that roof's deck (heliLand), where you walk inside its
+     railing (blocked, groundY: while you stand up there) and its lift's door takes you down: into your Lobby, or into
+     a friend's HQ as a visitor. The lobby's Roof lift brings you up to your own deck (spawnFrom.roof). */
+  var roofs = [], roofS = {};
+  function roofsBuild(){
+    var R = HQV.hqRoof; roofs = [];
+    if(!R) return;
+    hqs.forEach(function(E){
+      var r = null; try { r = R.roofOf(Object.assign({}, E, {y: (+E.y || 0) + PAD_UP}), E.B, toWorld); } catch(e){ r = null; }   // the building stands on its lot's slab
+      if(!r) return; roofs.push(r);
+      if(r.lift && !E.roofDoor){
+        var own = r.own, d = {view: own ? "@lobby" : "visit:" + r.uid, kind: "roof", roof: true, userId: r.uid, label: own ? "Roof lift" : E.name + " · roof lift",
+          tip: own ? "Roof lift: down to your Lobby" : "Roof lift: down into " + E.name + " as a visitor", front: new THREE.Vector3(r.lift.x, r.lift.y, r.lift.z)};
+        doors.push(d); E.B.doors.push(d); E.roofDoor = d;
+      }
+    });
+  }
+  // you stand on a roof deck: up at its height (or arriving: stopFeet's 1e9) and inside its railing
+  function roofHere(){
+    var a = c.avatar(); if(!a || !roofs.length) return null;
+    var R = HQV.hqRoof.deckAt(roofs, a.x, a.z);
+    return R && a.hy != null && a.hy > R.deck.y - 2.5 ? R : null;
+  }
+  w.onRoof = function(){ return !!roofHere(); };
+  w.blocked = function(x, z){ var R = roofHere(); return R ? !HQV.hqRoof.onDeck(R, x, z) : blocked(x, z); };
+  w.groundY = function(x, z){ var R = roofHere(); return R && HQV.hqRoof.onDeck(R, x, z) ? R.deck.y : groundY(x, z); };
+  w.heliAssist = function(st, inp, dt){
+    if(!HQV.hqRoof || !roofs.length) return null;
+    var o = HQV.hqRoof.step(roofS, st, roofs, inp, dt);
+    if(o.say){ if(api.toast) api.toast("\uD83D\uDE81 " + o.say); else if(api.announce) api.announce(o.say); }
+    return o.cue;
+  };
+  w.roofs = function(){ return roofs; };
   Object.defineProperty(w, "bikes", {get: function(){ return bikes; }, configurable: true});
   Object.defineProperty(w, "floor", {get: function(){ return wb ? wb.terrainMeshes() : []; }, configurable: true});
   // hq3d's quality governor and the ?hqsmoke stats line reach the tiles through these
@@ -3115,6 +3230,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(cam && cam.x != null) hqs.forEach(function(E){
       var d = Math.hypot(E.x - cam.x, E.z - cam.z), vis = mode === "map" || (E.g.visible ? d < HQ_FAR : d < HQ_FAR - HQ_FAR_HYST);
       if(E.g.visible !== vis) E.g.visible = vis;
+      if(vis && E.B && E.B.setLod) E.B.setLod(mode === "map" || (E.B.lod() ? d > HQ_LOD - HQ_FAR_HYST : d > HQ_LOD));   // [hq revamp] far: its masses only
     });
     // the sun's shadow box follows you (the whole map in map mode), on its texel grid
     var me = (cam && cam.avatar) || c.avatar() || {x: 0, z: 0}, map = mode === "map", R = map ? 1024 : 60, D = map ? 1500 : 120;

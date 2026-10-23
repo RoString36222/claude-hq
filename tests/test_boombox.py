@@ -64,7 +64,7 @@ boomTick(); out.far = {frame: !!BOOM.frame};
 // Not in the HQ view: nothing plays.
 HQNET.peers = [peer("near", 6, 0, "bbbbbbbbbbb")]; VIEW = "music";
 boomTick(); out.view = {frame: !!BOOM.frame};
-// Live sets (3.12.1): a DJ near you is heard live, quieter further off; walking away stops it.
+// Live sets (3.13.1): a DJ near you is heard live, quieter further off; walking away stops it.
 VIEW = "hq"; MU.tuned = false; MU.st = null;
 var listens = [], stops = 0, drawnLive = null;
 global.muListen = function(peer){ listens.push(peer); MU.listen = {peer: peer, audio: {volume: 1}}; };

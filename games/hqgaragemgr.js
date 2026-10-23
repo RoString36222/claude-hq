@@ -11,6 +11,7 @@
  *   plan(list, homes, max, move) -> {ok, reason?, bay?, swap?}   pure; reason: full|same|unknown|starter|out
  *   open({from}) / close() / isOpen()   the panel (role=dialog, focus trap, Esc, arrows, Enter)
  *   kiosk(ctx, from)        -> {g, hits, door}  a lit pedestal with a screen; door is the "garage:open" view
+ *   [3.13] a B1 row (and the starter car / motorbike) also has Tune: the Tuning shop's panel on it (HQV.hqTuning.openFor)
  *
  * Egress: GET /api/arena/garages/mine and POST /api/arena/vehicles/<uuid>/home with {home} or {home, bay}.
  * Owned-vehicle ids and a bay number only. The panel is built with textContent; it never shows tokens, user ids
@@ -225,7 +226,7 @@ var CSS = [
   ".hqgm-meter i{flex:1;height:6px;border-radius:3px;background:var(--line,#ddd)}",
   ".hqgm-meter i.on{background:var(--brand,#b64e2b)}.hqgm-meter i.lock{opacity:.35}",
   ".hqgm-list{list-style:none;margin:0;padding:4px 8px 10px;display:flex;flex-direction:column;gap:6px}",
-  ".hqgm-row{display:grid;grid-template-columns:18px 1fr auto;gap:10px;align-items:center;padding:8px 10px;border-radius:var(--radius-sm,8px);background:var(--panel,#fff);border:1px solid var(--line,#ddd);outline:none}",
+  ".hqgm-row{display:grid;grid-template-columns:18px 1fr auto auto;gap:10px;align-items:center;padding:8px 10px;border-radius:var(--radius-sm,8px);background:var(--panel,#fff);border:1px solid var(--line,#ddd);outline:none}",
   ".hqgm-row:focus-visible,.hqgm-row:focus{border-color:var(--brand,#b64e2b);box-shadow:0 0 0 2px var(--brand2,#d97757)}",
   ".hqgm-sw{width:18px;height:18px;border-radius:50%;border:1px solid var(--line,#ddd)}",
   ".hqgm-name{font-weight:600}.hqgm-meta{color:var(--muted,#666);font-size:12px}",
@@ -309,6 +310,13 @@ function rowEl(v, col, H){
   mid.appendChild(E("div", "hqgm-st" + (v.parked ? " out" : ""), st));
   li.appendChild(sw); li.appendChild(mid);
   li.setAttribute("aria-label", d.name + ", " + st);
+  // [3.13] Tune: a B1 vehicle (or the starter car or motorbike) opens the Tuning shop's panel on it (games/hqtuning.js)
+  var tk = col === "basement" ? (v.starter ? (v.vid === "starter-car" ? "starter:car" : v.vid === "starter-moto" ? "starter:moto" : null) : "own:" + v.id) : null;
+  if(tk && HQV.hqTuning && typeof HQV.hqTuning.host === "function"){
+    var tb = E("button", "hqgm-btn hqgm-tune", "Tune"); tb.setAttribute("type", "button"); tb.setAttribute("aria-label", "Tune the " + d.name);
+    tb.addEventListener("click", function(){ close(); try { HQV.hqTuning.openFor(tk); } catch(e){} });
+    li.appendChild(tb);
+  }
   if(!v.starter && H.available){
     var to = col === "basement" ? "carpark" : "basement";
     var btn = E("button", "hqgm-btn", to === "carpark" ? "Send to common garage" : "Bring to basement");

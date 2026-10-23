@@ -80,7 +80,7 @@ function key(target, code, name, type){
 }
 const HQV = window.HQV;
 var NOW = 1760000000000; const realNow = Date.now; Date.now = () => NOW;
-for (const f of ["hqbase", "hqskate", "world", "worldgeom", "hqcityparts", "hqcity", "hqmerge", "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqtravel",
+for (const f of ["hqstyle", "hqtower", "hqroof", "hqdecor", "hqbase", "hqskate", "world", "worldgeom", "hqcityparts", "hqcity", "hqmerge", "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqtravel",
                  "hqbridges", "hqnav", "hqminimap", "hqroutefx", "hqnavui", "hqcity3d"])
   new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
 const gz = p => JSON.parse(zlib.gunzipSync(fs.readFileSync(p)).toString("utf8"));
@@ -402,7 +402,7 @@ var wi = city("user:" + ME + "@2", spawn);
 await wi.whenReady; await new Promise(r => setTimeout(r, 0));
 frame(wi, 0, 0, 2);
 var islandTowers = wi.hits.filter(o => o.userData.door && o.userData.door.userId).map(o => o.userData.door.userId).filter((u, i, a) => a.indexOf(u) === i);
-// the traffic stands on the roads and is solid (3.12.1): this counts what stays put, so it is left out here
+// the traffic stands on the roads and is solid (3.13.1): this counts what stays put, so it is left out here
 var tSpec = HQV.traffic && HQV.traffic.SPEC; if(tSpec) HQV.traffic.SPEC = null;
 out.roads.island = roadHits(function(x, z){ return wi.blocked(x, z); }, IW, 1);
 if(tSpec) HQV.traffic.SPEC = tSpec;

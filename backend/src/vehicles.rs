@@ -1,7 +1,8 @@
 //! Vehicles (HQ 3.2, docs/plans/dealership-spec.md): the real cars and bikes players buy at
 //! the dealership, and where they left them.
 //!
-//!   GET  /v1/vehicles/mine                 -> {vehicles: [{id, vehicle_id, paint, bought_at, parked}]}
+//!   GET  /v1/vehicles/mine                 -> {vehicles: [{id, vehicle_id, paint, bought_at, parked, tuning}]}
+//!                                             (tuning: tuning.rs's canonical JSON, null when stock; HQ 3.13)
 //!   POST /v1/vehicles/buy {vehicle_id, paint} -> {ok, vehicle, coins}
 //!   POST /v1/vehicles/:id/park {world, x, z, yaw} | {garage: true} -> {ok}
 //!
@@ -106,6 +107,16 @@ pub(crate) fn is_vehicle(id: &str) -> bool {
     CATALOGUE.contains_key(id)
 }
 
+/// A catalogue vehicle's class ("car.sedan.3000", "bike.naked.400", ...), for the Tuning shop (tuning.rs).
+pub(crate) fn class_of(id: &str) -> Option<&'static str> {
+    CATALOGUE.get(id).map(|m| m.class.as_str())
+}
+
+/// How many paints a catalogue vehicle comes in (0 for an unknown id).
+pub(crate) fn paints_of(id: &str) -> usize {
+    CATALOGUE.get(id).map_or(0, |m| m.paints)
+}
+
 pub fn routes() -> Router<crate::AppState> {
     Router::new()
         .route("/v1/vehicles/mine", get(get_mine))
@@ -191,7 +202,16 @@ pub(crate) async fn mine(pool: &SqlitePool, uid: &str) -> Result<Vec<Value>, sql
     .bind(uid)
     .fetch_all(pool)
     .await?;
-    Ok(rows.iter().map(row_json).collect())
+    // [3.13] each vehicle's tuning (the Tuning shop, tuning.rs): null when stock
+    let tuned = crate::tuning::mine(pool, uid).await?;
+    Ok(rows
+        .iter()
+        .map(|r| {
+            let mut v = row_json(r);
+            v["tuning"] = v["id"].as_str().and_then(|id| tuned.get(id)).cloned().unwrap_or(Value::Null);
+            v
+        })
+        .collect())
 }
 
 /// `uid` buys `vehicle_id` in `paint` from the embedded catalogue. Returns (the vehicle, coins left).

@@ -95,7 +95,7 @@ function jetsAt(ms, P){
 }
 function rectHit(R, x, z){
   var dx = x - R.x, dz = z - R.z;
-  if(R.circle) return dx*dx + dz*dz <= R.circle*R.circle;       // a round thing (HQ 3.12.1): its circle, not its box
+  if(R.circle) return dx*dx + dz*dz <= R.circle*R.circle;       // a round thing (HQ 3.13.1): its circle, not its box
   var c = Math.cos(R.rot || 0), s = Math.sin(R.rot || 0);
   var lx = dx*c - dz*s, lz = dx*s + dz*c;                       // into the rectangle's frame (inverse of toWorld)
   if(!(Math.abs(lx) <= R.hw && Math.abs(lz) <= R.hd)) return false;

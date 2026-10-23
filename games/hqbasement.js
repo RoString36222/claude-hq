@@ -624,8 +624,16 @@ HQV.hqWorlds.basement = function(c, w){
     if(kind !== "bike") b.kind = kind;            // a bicycle: no kind, as hq3d.js expects
     bikes.push(b); return b;
   }
-  try { if(c.car) addStarter(c.car(col.paint, col.accent, col.plate), "car", 0, {color: col.paint, accent: col.accent, plate: col.plate}); } catch(e){}
-  try { if(c.moto) addStarter(c.moto(col.accent, col.paint, col.plate), "moto", 1, {color: col.accent, accent: col.paint, plate: col.plate}); } catch(e){}
+  // [3.13] the starters in their tune (games/hqtuning.js: this browser keeps it), rebuilt on their plinth after a save
+  var Tn = HQV.hqTuning, VMs = HQV.hqVehicleModels;
+  function starterModel(kind){
+    var tn = Tn ? Tn.of("starter:" + kind) : null, pl = tn && tn.plate ? tn.plate : col.plate;
+    var m = kind === "car" ? c.car(col.paint, col.accent, pl) : c.moto(col.accent, col.paint, pl);
+    if(tn && m && VMs && VMs.tuneStarter) try { VMs.tuneStarter(THREE, m, tn, kind === "car" ? "car" : "bike"); } catch(e){}
+    return m;
+  }
+  try { if(c.car) addStarter(starterModel("car"), "car", 0, {color: col.paint, accent: col.accent, plate: col.plate}); } catch(e){}
+  try { if(c.moto) addStarter(starterModel("moto"), "moto", 1, {color: col.accent, accent: col.paint, plate: col.plate}); } catch(e){}
   try { if(c.bike) addStarter(c.bike(col.accent, col.paint), "bike", 2, {color: col.accent, accent: col.paint}); } catch(e){}
 
   var ownProps = {}, homesNow = null, listNow = null;
@@ -640,10 +648,11 @@ HQV.hqWorlds.basement = function(c, w){
     var max = homesNow && homesNow.available !== false && homesNow.basement ? homesNow.basement.max : L.max;
     if(max !== L.max){ L = layout({max: max, r: L.r}); drawMarks(); drawBars(); drawPlinths(); }
     var rows = homesNow && homesNow.available !== false ? basementRows(listNow, homesNow, max) : [], want = {}, byBay = {};
-    rows.forEach(function(r){ want["own:" + r.id] = r; r.entry = catEntry(r.vehicle_id); byBay[r.bay] = r; });
+    rows.forEach(function(r){ want["own:" + r.id] = r; r.entry = catEntry(r.vehicle_id); byBay[r.bay] = r;
+      r.tune = HQV.hqTuning ? HQV.hqTuning.of("own:" + r.id) : null; r.tsig = r.tune ? JSON.stringify(r.tune) : ""; });   // [3.13] its tune
     Object.keys(ownProps).forEach(function(k){
       var b = ownProps[k], r = want[k];
-      if(r && b.bay === r.bay && b.vehicle_id === r.vehicle_id && b.paintIdx === r.paint) return;
+      if(r && b.bay === r.bay && b.vehicle_id === r.vehicle_id && b.paintIdx === r.paint && b.tsig === r.tsig) return;
       if(riddenOff(b)) return;
       var i = bikes.indexOf(b); if(i >= 0) bikes.splice(i, 1);
       if(b.g.parent) b.g.parent.remove(b.g);
@@ -653,7 +662,7 @@ HQV.hqWorlds.basement = function(c, w){
       var k = "own:" + r.id; if(ownProps[k]) return;
       var entry = r.entry; if(!entry || !HQV.hqVehicleModels || !HQV.hqVehicleModels.build) return;
       var hex = paintHex(entry, r.paint), P = L.plinths[NSTART + r.bay] || bayPose(r.bay), rig;
-      try { rig = HQV.hqVehicleModels.build(c, entry, hex); } catch(e){ return; }
+      try { rig = HQV.hqVehicleModels.build(c, entry, hex, {tune: r.tune}); } catch(e){ return; }
       if(!rig || !rig.g) return;
       measure(rig.g);
       if(rig.ready && rig.ready.then) rig.ready.then(function(){ if(!dead) measure(rig.g); }, function(){});   // a model3d swapped in: measure again
@@ -661,7 +670,7 @@ HQV.hqWorlds.basement = function(c, w){
       g.traverse(function(o){ if(o.isMesh) o.castShadow = true; });
       var o = {key: k, ownId: r.id, vehicleId: r.vehicle_id, color: hex, world: "basement", x: P.x, z: P.z, yaw: P.yaw, home: {x: P.x, z: P.z, yaw: P.yaw}, stored: false, basement: true, bay: r.bay};
       var b = {g: g, x: P.x, z: P.z, yaw: P.yaw, color: hex, paint: Math.max(0, r.paint | 0), paintIdx: r.paint, kind: r.vehicle_id, vehicle_id: r.vehicle_id, id: k, stay: true,
-               world: w, rig: rig, own: o, home: {x: P.x, z: P.z, yaw: P.yaw}, bay: r.bay, gallery: NSTART + r.bay, reach: L.r + 0.8};
+               world: w, rig: rig, own: o, home: {x: P.x, z: P.z, yaw: P.yaw}, bay: r.bay, gallery: NSTART + r.bay, reach: L.r + 0.8, tsig: r.tsig};
       bikes.push(b); ownProps[k] = b;
     });
     drawCards(byBay);
@@ -675,6 +684,20 @@ HQV.hqWorlds.basement = function(c, w){
   }
   try { if(HQV.hqGarage && HQV.hqGarage.onChange) unsubs.push(HQV.hqGarage.onChange(function(l){ listNow = l; rebuildOwn(); })); } catch(e){}
   try { if(Mgr && Mgr.onChange) unsubs.push(Mgr.onChange(function(H){ homesNow = H; rebuildOwn(); })); } catch(e){}
+  // [3.13] a starter tuned at the shop: its plinth's model in the new tune (one you have driven off keeps its look)
+  try { if(Tn && Tn.onChange) unsubs.push(Tn.onChange(function(key){
+    if(dead) return;
+    var kind = key === "starter:car" ? "car" : key === "starter:moto" ? "moto" : null; if(!kind) return;
+    bikes.forEach(function(b){
+      if(b.plinth == null || b.kind !== kind || b.own || riddenOff(b)) return;
+      var m = null; try { m = starterModel(kind); } catch(e){ m = null; }
+      if(!m || !m.g) return;
+      m.g.position.copy(b.g.position); m.g.rotation.copy(b.g.rotation); m.g.visible = b.g.visible;
+      m.g.traverse(function(o){ if(o.isMesh) o.castShadow = true; });
+      if(b.g.parent) b.g.parent.remove(b.g);
+      S.add(m.g); b.g = m.g;
+    });
+  })); } catch(e){}
 
   drawMarks(); drawBars(); drawPlinths(); drawCards({}); drawLounge(0);
   // merge the static group: a few draw calls for walls, slats, sofas, bar and plinth bases

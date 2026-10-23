@@ -505,8 +505,13 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   // an HQ's boxes, matching hqBuilding's blockedLocal: the tower, then each wing (so the ground beside it stays clear)
   function hqBoxes(p, B){
-    var top = B.top(), fp = hqFoot(B.grand || 0, B.wings), out = [aabbOf(p, fp[0][0], fp[0][1], fp[0][2], fp[0][3], top)];
-    for(var i = HQV.hqTower ? 2 : 1; i < fp.length; i++) out.push(aabbOf(p, fp[i][0], fp[i][1], fp[i][2], fp[i][3], top));
+    var top = B.top(), fp = hqFoot(B.grand || 0, B.wings), M = B.M;
+    if(!M){ var o0 = [aabbOf(p, fp[0][0], fp[0][1], fp[0][2], fp[0][3], top)]; for(var i0 = 1; i0 < fp.length; i0++) o0.push(aabbOf(p, fp[i0][0], fp[i0][1], fp[i0][2], fp[i0][3], top)); return o0; }
+    // [hq revamp] the podium at its cornice, each tier (and the prestige floors) at its roof, each wing at its own: so a
+    // helicopter can set down on a setback terrace or a wing, and the camera keeps out of exactly what is there
+    var out = [aabbOf(p, fp[0][0], fp[0][1], fp[0][2], fp[0][3], M.podium.y0 + M.podium.h + 0.4)];
+    M.tiers.concat(M.prestige ? [M.prestige] : []).forEach(function(T, n, all){ out.push(aabbOf(p, T.x, T.z, T.w/2, T.d/2, n === all.length - 1 ? top : T.y0 + T.h + 0.2)); });
+    M.wings.forEach(function(Wg){ out.push(aabbOf(p, Wg.x, Wg.z, Wg.w/2 + 0.3, Wg.d/2 + 0.3, Wg.top || (Wg.y0 + Wg.h))); });
     return out;
   }
 
@@ -726,6 +731,9 @@ HQV.hqWorlds.city3d = function(c, w){
     var back = api.cityReturn && api.cityReturn(), ret = hqs.filter(function(E){ return E.h.userId === back; })[0];
     w.spawn = at(ret || mine); w.spawnFrom = {lobby: at(mine)};
     if(casinoB) w.spawnFrom.casino = {x: casinoB.door.x, z: casinoB.door.z, yaw: casinoB.door.yaw};   // out of the casino: its red carpet
+    roofsBuild();                                                                // [hq revamp] the towers' roofs and their lifts' doors
+    var myRoof = roofs.filter(function(r){ return r.own; })[0];
+    if(myRoof && myRoof.lift) w.spawnFrom.roof = {x: myRoof.lift.x, y: myRoof.deck.y, z: myRoof.lift.z, yaw: myRoof.rot, camYaw: myRoof.rot + PI + 0.55};
     if(mine) w.homeLot = {x: mine.x, z: mine.z, rot: mine.rot, garage: mine.garage};   // [basement 3.4] the car lift's exact lot frame (streetSpot/liftSite)
     w.spawnFrom.basement = (mine && HQV.hqCarLift && HQV.hqCarLift.streetSpot && (function(){ try { return HQV.hqCarLift.streetSpot({home: at(mine), garage: mine.garage, rot: mine.rot, x: mine.x, y: mine.y, z: mine.z, lot: mine.lot, toWorld: function(x, z){ return toWorld(mine, x, z); }}, w.homeLot); } catch(e){ return null; } })()) || at(mine);   // [basement 3.4] up the car lift
     if(V2){
@@ -2220,11 +2228,14 @@ HQV.hqWorlds.city3d = function(c, w){
       var pr = ABL.roofAt(apP, x + d[0], z + d[1]); if(pr != null && pr > y) y = pr; });   // 6 m clear of their walls)
     var q = apL ? apPlaneAt(x, z, 4) : null; if(q && apL.y + q.top > y) y = apL.y + q.top;   // AIR: a parked or taxiing aircraft
     var a = air ? air.floor(x, z) : null;
+    var rp = HQV.hqRoof ? HQV.hqRoof.padAt(roofs, x, z, 0.3) : null; if(rp && rp.pad.y > y) y = rp.pad.y;   // [hq revamp] an HQ's roof pad
     return a != null && a > y ? a : y;
   };
   // stepping out of a helicopter that has landed: beside it on land, a roof pad's building's door; never at sea
   w.heliLand = function(st){
     if(st && apL && apPlaneAt(st.x, st.z, 8)) return null;                                  // AIR: not on (or beside) an aircraft
+    var rp = st && st.ground && HQV.hqRoof ? HQV.hqRoof.padAt(roofs, st.x, st.z, 0.6) : null;   // [hq revamp] on an HQ's pad: out onto its deck
+    if(rp && Math.abs(st.y - rp.pad.y) < 1) return HQV.hqRoof.spotBeside(rp);
     if(air) return air.landSpot(st);
     return st && st.ground && (!sea || sea.land(st.x + 3*Math.cos(st.yaw), st.z - 3*Math.sin(st.yaw))) ? {x: st.x + 3*Math.cos(st.yaw), z: st.z - 3*Math.sin(st.yaw), yaw: st.yaw} : null;
   };
@@ -3057,8 +3068,41 @@ HQV.hqWorlds.city3d = function(c, w){
   if(arriveAt) w.startMode = "chase";            // off a ferry, a train, a boat: on the ground, not over the map
   w.skateBase = 0; w.skatepark = null;
   w.spawn = {x: 0, y: 0, z: 10, yaw: 0, camYaw: 0.55}; w.spawnFrom = {lobby: w.spawn};
-  w.blocked = blocked;
-  w.groundY = groundY;
+  /* ---------- [hq revamp] HQ roofs: every tower's helipad and roof deck (games/hqroof.js, games/hqtower.js) ----------
+     A helicopter lands on any HQ's pad (heliFloor: the pad's deck; heliAssist: the landing assist and its one-time
+     "Landing on <name>'s HQ"); stepping out on a pad puts you on that roof's deck (heliLand), where you walk inside its
+     railing (blocked, groundY: while you stand up there) and its lift's door takes you down: into your Lobby, or into
+     a friend's HQ as a visitor. The lobby's Roof lift brings you up to your own deck (spawnFrom.roof). */
+  var roofs = [], roofS = {};
+  function roofsBuild(){
+    var R = HQV.hqRoof; roofs = [];
+    if(!R) return;
+    hqs.forEach(function(E){
+      var r = null; try { r = R.roofOf(E, E.B, toWorld); } catch(e){ r = null; }
+      if(!r) return; roofs.push(r);
+      if(r.lift && !E.roofDoor){
+        var own = r.own, d = {view: own ? "@lobby" : "visit:" + r.uid, kind: "roof", roof: true, userId: r.uid, label: own ? "Roof lift" : E.name + " · roof lift",
+          tip: own ? "Roof lift: down to your Lobby" : "Roof lift: down into " + E.name + " as a visitor", front: new THREE.Vector3(r.lift.x, r.lift.y, r.lift.z)};
+        doors.push(d); E.B.doors.push(d); E.roofDoor = d;
+      }
+    });
+  }
+  // you stand on a roof deck: up at its height (or arriving: stopFeet's 1e9) and inside its railing
+  function roofHere(){
+    var a = c.avatar(); if(!a || !roofs.length) return null;
+    var R = HQV.hqRoof.deckAt(roofs, a.x, a.z);
+    return R && a.hy != null && a.hy > R.deck.y - 2.5 ? R : null;
+  }
+  w.onRoof = function(){ return !!roofHere(); };
+  w.blocked = function(x, z){ var R = roofHere(); return R ? !HQV.hqRoof.onDeck(R, x, z) : blocked(x, z); };
+  w.groundY = function(x, z){ var R = roofHere(); return R && HQV.hqRoof.onDeck(R, x, z) ? R.deck.y : groundY(x, z); };
+  w.heliAssist = function(st, inp, dt){
+    if(!HQV.hqRoof || !roofs.length) return null;
+    var o = HQV.hqRoof.step(roofS, st, roofs, inp, dt);
+    if(o.say){ if(api.toast) api.toast("\uD83D\uDE81 " + o.say); else if(api.announce) api.announce(o.say); }
+    return o.cue;
+  };
+  w.roofs = function(){ return roofs; };
   Object.defineProperty(w, "bikes", {get: function(){ return bikes; }, configurable: true});
   Object.defineProperty(w, "floor", {get: function(){ return wb ? wb.terrainMeshes() : []; }, configurable: true});
   // hq3d's quality governor and the ?hqsmoke stats line reach the tiles through these

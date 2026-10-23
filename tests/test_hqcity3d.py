@@ -35,7 +35,7 @@ const root = %(root)s;
 const THREE = await import(root + "/games/vendor/three-module.js");
 globalThis.window = {HQV: {}};
 const HQV = window.HQV;
-for (const f of ["hqstyle", "hqtower", "hqbase", "hqskate", "world", "hqcityparts", "hqcity", "hqcity3d"])
+for (const f of ["hqstyle", "hqtower", "hqroof", "hqdecor", "hqbase", "hqskate", "world", "hqcityparts", "hqcity", "hqcity3d"])
   new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
 const doc = JSON.parse(zlib.gunzipSync(fs.readFileSync(%(fixture)s)).toString("utf8"));
 // games/hqmerge.js when it is there, else a stand-in that merges nothing; either way every call
@@ -467,11 +467,12 @@ class HqCity3dTest(unittest.TestCase):
         self.assertTrue(o["finite"])
         self.assertIn("@lobby", o["doors"])
         # [basement 3.4] each other HQ's door, and its car-lift bay (a visit too); yours goes down to B1
-        self.assertEqual(sum(1 for d in o["doors"] if d and d.startswith("visit:")), 8)
+        # each of the four others: its front door, its car lift, and (the HQ revamp) its roof lift down from the pad
+        self.assertEqual(sum(1 for d in o["doors"] if d and d.startswith("visit:")), 12)
         self.assertIn("@basement", o["doors"])
         self.assertGreaterEqual(len(o["doors"]), 5 + 13)
         self.assertEqual(o["rebuilt"]["bikes"], 10)                                  # [basement 3.4] no starters on the street
-        self.assertEqual(o["rebuilt"]["doors"][1], o["rebuilt"]["doors"][0] + 2)    # [basement 3.4] its door and its car lift
+        self.assertEqual(o["rebuilt"]["doors"][1], o["rebuilt"]["doors"][0] + 3)    # [basement 3.4] its door and its car lift; [hq revamp] its roof lift
 
     def test_city3d_ground_and_blocking(self):
         o = self.out["city3d"]

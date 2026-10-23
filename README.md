@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.13.4** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.13.5** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -398,6 +398,18 @@ and feature guide.
 ---
 
 ## Changelog
+
+- **3.13.5 — Your pets stay with you, your lobby shows them, and the front door goes to the street.** Fixes: E
+  in your lobby went to the nearest pet following you (always within 2 m) before any door, lift or ride, so using
+  the front door said "Leave <name> here" and your pets were saved as staying home. Now E is a door's, a lift's or a
+  ride's whenever one is there, and "Leave <name> here" / "Take <name> out" need you standing still, close (1.5 m to
+  leave one, 2.2 m to take one out) and facing it. After a refresh the 3D HQ was often up before the Arena's
+  capabilities, so your pets loaded from this browser's empty list and stayed gone (nobody following, nobody in the
+  lobby) until you opened the Pets panel; they now load from the Arena as soon as it answers, and your stay-home
+  pets appear in the lobby then. Out of your lobby's front door you came out on your roof: the 3.13.4 helideck
+  overhangs your front door, and arriving counted as "above everything"; arriving now stands you at the spawn's own
+  level (the street, or the deck for the roof lift). Tests: E priority (door before pet), facing and distance, lobby
+  pets after a late list, the Arena reload, front gate to the street, lobby door destinations and triggers.
 
 - **Next — Stunts across every city** (`games/hqstunts.js`, tests/test_hqstunts.py). Placed per city from its
   own layout, deterministically (every client builds the same set): a 4 m free-land grid of everything that is not

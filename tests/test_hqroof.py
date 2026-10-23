@@ -70,6 +70,15 @@ out.walk = {onRoof: wc.onRoof(), ground: +(wc.groundY(spot.x, spot.z) - fr.deck.
   house: fr.house ? wc.blocked(fr.house.x, fr.house.z) : null};
 avatar = {x: spot.x, z: spot.z, hy: 0};                                         // the street under it: not the roof
 out.walk.street = wc.onRoof();
+// [3.13.5] out of the lobby's front door: the street at your door, not your helideck (which overhangs it); the roof lift's spawn: the deck
+var ex = wc.spawnFrom.lobby, ar = wc.spawnFrom.roof;
+avatar = {x: ex.x, z: ex.z, hy: ex.y}; var exRoof = wc.onRoof(), exGround = +(wc.groundY(ex.x, ex.z) - ex.y).toFixed(3);
+avatar = {x: ex.x, z: ex.z, hy: -1e9}; var exNone = wc.onRoof();
+avatar = {x: ar.x, z: ar.z, hy: ar.y}; var arRoof = wc.onRoof(), arGround = +(wc.groundY(ar.x, ar.z) - mineR.deck.y).toFixed(3);
+var myDoor = wc.doors.filter(d => !d.roof && d.view === "@lobby")[0];
+out.frontGate = {underDeck: !!RF.deckAt(roofs, ex.x, ex.z), roof: exRoof, ground: exGround, noLevel: exNone, liftRoof: arRoof, liftGround: arGround,
+  exitY: ex.y, deckY: mineR.deck.y, door: myDoor ? {view: myDoor.view, d: +Math.hypot(myDoor.front.x - ex.x, myDoor.front.z - ex.z).toFixed(2)} : null,
+  streetDoors: wc.doors.filter(d => !d.roof).map(d => d.view).filter(v => v === "@roof").length, roofDoorViews: wc.doors.filter(d => d.roof).map(d => d.view)};
 var sp = wc.spawnFrom.roof; out.spawnRoof = sp ? {onDeck: RF.onDeck(mineR, sp.x, sp.z), y: +(sp.y - mineR.deck.y).toFixed(3)} : null;
 // the plane never gets the assist: only heliMove calls heliAssist
 // the lobby: its Roof lift, the Studio kiosk
@@ -79,6 +88,9 @@ var keep0 = {add: c.add, box: c.box, cyl: c.cyl, sph: c.sph};                   
 ["add", "box", "cyl", "sph"].forEach(function(k){ var f = keep0[k], at = k === "add" ? 4 : k === "box" ? 7 : k === "cyl" ? 7 : 5;
   c[k] = function(){ var a = Array.prototype.slice.call(arguments); if(!a[at]) a[at] = lw.scene; return f.apply(c, a); }; });
 HQV.hqWorlds.lobby(c, lw); Object.assign(c, keep0);
+var LD = lw.doors.filter(d => d.front), pairs = [];
+for(var i = 0; i < LD.length; i++) for(var j = i + 1; j < LD.length; j++) pairs.push([LD[i].view, LD[j].view, +Math.hypot(LD[i].front.x - LD[j].front.x, LD[i].front.z - LD[j].front.z).toFixed(2)]);
+out.lobbyDoors = {views: LD.map(d => [d.view, d.kind || null, d.label || null]), pairs: pairs, spawns: Object.keys(lw.spawnFrom).map(k => [k, LD.map(d => [d.view, +Math.hypot(d.front.x - lw.spawnFrom[k].x, d.front.z - lw.spawnFrom[k].z).toFixed(2)])])};
 out.lobby = {roof: lw.doors.filter(d => d.view === "@roof").map(d => d.kind), spawnRoof: lw.spawnFrom.roof, studio: lw.hits.some(h => h.userData.door && h.userData.door.kind === "studio"),
   b1: lw.doors.some(d => d.view === "@basement" && d.kind === "lift"), mission: lw.doors.filter(d => d.view === "@mission").length};
 """
@@ -164,6 +176,36 @@ class HqRoofs(unittest.TestCase):
         self.assertFalse(w["street"])
         self.assertTrue(self.out["spawnRoof"]["onDeck"])
 
+    def test_front_gate_goes_to_the_street(self):
+        f = self.out["frontGate"]
+        # the bug (3.13.4): the helideck overhangs your front door, and arriving "above everything" put you on it
+        self.assertFalse(f["roof"], "out of the lobby's front door: the street, not the roof")
+        self.assertEqual(f["ground"], 0)
+        self.assertFalse(f["noLevel"])
+        self.assertLess(f["exitY"], f["deckY"] - 2.5)
+        self.assertTrue(f["liftRoof"], "the roof lift still lands you on your deck")
+        self.assertEqual(f["liftGround"], 0)
+        self.assertEqual(f["door"]["view"], "@lobby")
+        self.assertLess(f["door"]["d"], 3.5, "you come out at your own door")
+        self.assertEqual(f["streetDoors"], 0)
+        self.assertEqual(sorted(f["roofDoorViews"]), ["@lobby", "visit:f1"], "roof doors only lead down")
+
+    def test_lobby_doors_destinations_and_triggers(self):
+        L = self.out["lobbyDoors"]
+        views = {v[0] for v in L["views"]}
+        self.assertTrue({"@base", "@roof", "@mission", "@basement"} <= views)
+        front = [v for v in L["views"] if v[2] == "Front door"]
+        self.assertEqual([f[0] for f in front], ["@base"], "the front door goes out, never up")
+        self.assertEqual([v[0] for v in L["views"] if v[2] == "Roof lift"], ["@roof"])
+        for a, b, d in L["pairs"]:
+            with self.subTest(a=a, b=b):
+                self.assertGreater(d, 3.0, "walk-in triggers (1.5 m) never overlap")
+        # every arrival spot is clear of every door's trigger (doors arm only after 2.6 m anyway)
+        for k, ds in L["spawns"]:
+            for v, d in ds:
+                with self.subTest(spawn=k, door=v):
+                    self.assertGreater(d, 0.6)
+
     def test_lobby_roof_lift(self):
         lb = self.out["lobby"]
         self.assertEqual(lb["roof"], ["lift"])
@@ -179,6 +221,8 @@ class HqRoofs(unittest.TestCase):
         self.assertIn("cur.heliAssist(st", s)                                    # helicopters only (heliMove)
         self.assertNotRegex(s[s.index("function planeMove"):s.index("function planeMove") + 4000], r"heliAssist")
         self.assertIn("!!d.roof !== up", s)                                      # roof doors only on the roof
+        self.assertNotIn("avatar.hy = 1e9", s)                                   # [3.13.5] arriving never counts as up on a roof
+        self.assertIn("stopFeet(sp.y)", s)                                       # a spawn's own level (the roof lift's deck)
 
 
 if __name__ == "__main__":

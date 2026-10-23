@@ -1113,6 +1113,17 @@ function poseRig(Mo, st, t, calm, look){
 }
 
 /* ---------- effects: pooled particles, lines, hearts (one set per page) ---------- */
+// [3.13.5] E with a pet is only for the one you stand still and face, close by: a following pet is always within
+// 2 m of you, and E for a door, a lift or a ride beside it was being taken as "leave it here" (your pets went home).
+var FACE_COS = Math.cos(Math.PI/4), LEAVE_D = 1.5, TAKE_D = 2.2, STILL = 0.3;
+// how far (x, z) is when o (yaw: the way you face, +z at 0) stands still facing it (within +-45 deg) within maxD; else -1
+function facing(o, x, z, maxD){
+  if(!o || !isFinite(x) || !isFinite(z) || (+o.speed || 0) > STILL || o.ride) return -1;
+  var dx = x - (+o.x || 0), dz = z - (+o.z || 0), d = Math.hypot(dx, dz), yaw = +o.yaw || 0;
+  if(d > maxD) return -1;
+  if(d < 0.35) return d;                                                     // right at your feet: it is the one
+  return (dx*Math.sin(yaw) + dz*Math.cos(yaw))/d >= FACE_COS ? d : -1;
+}
 var LOD_D = 25;   // past this a pet's model keeps its pose and refreshes it every 8th frame
 var FXC = {fire: [0xffb030, 0xff5a1a], ember: [0xffa030, 0xff3a10], ice: [0xd8f4ff, 0x8ad0ff], snow: [0xffffff, 0xe8f4ff], sparkle: [0xffffff, 0xb8e0ff],
            prism: [0xff8ad8, 0x8ad8ff], wisp: [0xb46aff, 0x4a2a8a], glitter: [0xfff0a0, 0xffc030], smoke: [0x8a8a90, 0x4a4a50], bubbles: [0xc8f8ff, 0x6ad8f0], dust: [0xd8c8a8, 0x8a7a5a]};
@@ -1285,7 +1296,7 @@ function create(c, opts){
     if(!prompt){ prompt = document.createElement("div"); prompt.className = "hqpets-prompt"; prompt.setAttribute("aria-live", "polite"); prompt.hidden = true; c.el.appendChild(prompt); }   // [3.13.2] born hidden: a first call with no prompt left an empty pill on the view
     if(promptFor !== text){ promptFor = text; prompt.textContent = text || ""; prompt.hidden = !text; }
   }
-  // info: {t, dt, scene, world, worldName, owner {x, z, yaw, speed, run, ride}, blocked, ground, water, peers, night}
+  // info: {t, dt, scene, world, worldName, owner {x, z, yaw, speed, run, ride}, blocked, ground, water, peers, night, busy (E is something else's here)}
   K.frame = function(info){
     var t = info.t || 0, dt = info.dt || 0, cm = calm(), sc = info.scene;
     if(!F) F = Fx(T, sc);
@@ -1376,7 +1387,7 @@ function create(c, opts){
         greet = !lobbyList;   // your own pets run to greet you; a host's just carry on
       }
     }
-    var near = null, nearD = 2.2;
+    var near = null, nearD = 1e9, busy = !!info.busy;   // busy: E is a door's, a lift's or a ride's here (hq3d), never a pet's
     lobbyPets.forEach(function(l){
       placeIn(l.M, sc);
       var mates = lobbyPets.map(function(x){ return {id: x.st.id, x: x.st.x, z: x.st.z, kind: x.M.sp.kind}; });
@@ -1388,14 +1399,15 @@ function create(c, opts){
       setPose(l.M, l.st, (info.ground ? info.ground(l.st.x, l.st.z) : 0), t, cm, o);
       if(!cm) elementFx(F, l.M.sp, l.st, l.M, l.st.anim, t, dt);
       drawn++; meshes += (l.M.rig ? l.M.rig.meshes : l.M.meshes) + 1;
-      if(!lobbyList && far < nearD){ nearD = far; near = {kind: "lobby", p: l.p}; }
+      var fd = !lobbyList && !busy ? facing(o, l.st.x, l.st.z, TAKE_D) : -1;
+      if(fd >= 0 && fd < nearD){ nearD = fd; near = {kind: "lobby", p: l.p}; }
     });
     greet = false;
     // in your own lobby, E takes a stay-home pet out, or leaves one of yours here
     var shop = !o.ride && info.world && info.world.petShop && info.world.petShop.near(o.x, o.z);
     if(shop) showPrompt("E  Paws & Claws: adopt a pet");
     else if(home && !lobbyList && !o.ride){
-      mine.forEach(function(m){ var d = Math.hypot(m.st.x - o.x, m.st.z - o.z); if(d < nearD){ nearD = d; near = {kind: "mine", p: m.p}; } });
+      if(!busy) mine.forEach(function(m){ if(!m.st || m.st.hidden) return; var d = facing(o, m.st.x, m.st.z, LEAVE_D); if(d >= 0 && d < nearD){ nearD = d; near = {kind: "mine", p: m.p}; } });
       showPrompt(near ? (near.kind === "lobby" ? "E  Take " + near.p.name + " out" : "E  Leave " + near.p.name + " here") : null);
     } else showPrompt(null);
     K.near = near;
@@ -1555,6 +1567,6 @@ HQV.hqPets = {
   speciesOf: speciesOf, stageOf: stageOf, tricksFor: tricksFor, nextTrick: nextTrick, cleanName: cleanName, accOk: accOk, canAdopt: canAdopt,
   encode: encode, decode: decode, newState: newState, step: step, lobbyStep: lobbyStep, spotFor: spotFor, followTarget: followTarget,
   trailPush: trailPush, trailAt: trailAt, throwBall: throwBall, besideOwner: besideOwner, hashStr: hashStr,
-  model: model, pose: pose, create: create, MODELS: MODELS, modelFor: modelFor, rig: rig, LOD_D: LOD_D, lobby: lobby, place: place, build: build, pick: shopPick, SHOP_ID: SHOP_ID, SHOP_NAME: SHOP_NAME
+  facing: facing, LEAVE_D: LEAVE_D, TAKE_D: TAKE_D, model: model, pose: pose, create: create, MODELS: MODELS, modelFor: modelFor, rig: rig, LOD_D: LOD_D, lobby: lobby, place: place, build: build, pick: shopPick, SHOP_ID: SHOP_ID, SHOP_NAME: SHOP_NAME
 };
 })();

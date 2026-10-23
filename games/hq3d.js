@@ -1160,7 +1160,7 @@ function mount(el, api){
                  ride: a >= 3 ? {kind: String(a), speed: Math.hypot(P.vx || 0, P.vz || 0), air: a >= 7 && a !== 9, boat: false, h: P.hy || 0} : null});
     });
     try {
-      PK.frame({t: t, dt: dt, scene: cur.scene, world: cur, worldName: cur.name, owner: petsOwner(), peers: list, night: isNight(),
+      PK.frame({t: t, dt: dt, scene: cur.scene, world: cur, worldName: cur.name, owner: petsOwner(), peers: list, night: isNight(), busy: useHere(),
                 blocked: function(x, z){ return blocked(x, z); },
                 ground: function(x, z){ return petsWater(x, z) && cur.sea.level ? cur.sea.level(x, z) : groundAt(x, z); },
                 water: petsWater});
@@ -1169,7 +1169,7 @@ function mount(el, api){
   function petsKey(e){
     if(!PK || e.type !== "keydown" || e.repeat || !inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return false;
     if(!{KeyB: 1, KeyU: 1, KeyO: 1, KeyE: 1}[e.code]) return false;
-    if(e.code === "KeyE" && (ride || !PK.near)) return false;
+    if(e.code === "KeyE" && (ride || !PK.near || useHere())) return false;   // [3.13.5] a door, a lift, a ride: E is theirs
     if(PK.key(e.code, petsOwner(), function(x, z){ return blocked(x, z); })){ e.preventDefault(); e.stopPropagation(); return true; }
     return false;
   }
@@ -1731,7 +1731,7 @@ function mount(el, api){
       if(pspot){ avatar.x = pspot.x; avatar.z = pspot.z; if(pspot.yaw != null) avatar.yaw = pspot.yaw; }
       avatar.g.remove(ride.lean);
       if(ride.eng){ ride.eng.stop(); ride.eng = null; }
-      ride = null; doorsArmed = false; stopFeet(); settleY(0);
+      ride = null; doorsArmed = false; stopFeet(avatar.hy); settleY(0);
       avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
       driveHud(null); rideUiSync(true);
       return;
@@ -1753,7 +1753,7 @@ function mount(el, api){
       if(hspot){ avatar.x = hspot.x; avatar.z = hspot.z; if(hspot.yaw != null) avatar.yaw = hspot.yaw; }
       avatar.g.remove(ride.lean);
       if(ride.eng){ ride.eng.stop(); ride.eng = null; }
-      ride = null; doorsArmed = false; stopFeet(); settleY(0);
+      ride = null; doorsArmed = false; stopFeet(avatar.hy); settleY(0);
       avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
       driveHud(null); rideUiSync(true);
       return;
@@ -1773,7 +1773,7 @@ function mount(el, api){
       if(spot){ avatar.x = spot.x; avatar.z = spot.z; if(spot.yaw != null) avatar.yaw = spot.yaw; }
       avatar.g.remove(ride.lean);
       if(ride.eng){ ride.eng.stop(); ride.eng = null; }
-      ride = null; doorsArmed = false; stopFeet(); settleY(0);
+      ride = null; doorsArmed = false; stopFeet(avatar.hy); settleY(0);
       avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
       driveHud(null); rideUiSync(true);
       return;
@@ -2837,7 +2837,9 @@ function mount(el, api){
     return gy;
   }
   // a teleport: standing still where you land, at the ground's height (no spring from where you were)
-  function stopFeet(){ avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0; avatar.travelYaw = null; avatar.hy = 1e9; }
+  // y: the level you land on (a roof deck's spawn carries its y; a dismount keeps the height you rode at). Without it,
+  // the street: -1e9, never 1e9 (3.13.5: "above everything" put you up on your helideck, which overhangs your front door)
+  function stopFeet(y){ avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0; avatar.travelYaw = null; avatar.hy = y != null && isFinite(y) ? +y : -1e9; }
   function moveAvatar(dt){
     if(ride){ if(ride.kind === "skate") skateMove(dt); else if(ride.boat) boatMove(dt); else if(ride.heli) heliMove(dt); else if(ride.plane) planeMove(dt); else rideMove(dt); return; }
     // on a bus or a tram (games/hqcity3d.js w.carry): the vehicle's seat, its timetable's pose
@@ -3364,7 +3366,7 @@ function mount(el, api){
       (C.bikes || []).forEach(function(b){ if(b.home){ placeProp(b, b.home.x, b.home.z, b.home.yaw); propHomeY(b); b.g.visible = true; b.returnAt = 0; if(b.own) ownMoved(b); } });
       var h = C.home;
       avatar.x = h.x; avatar.z = h.z; avatar.yaw = (h.yaw || 0) + PI;     // facing your door
-      avatar.vy = 0; avatar.airborne = false; avatar.hop = 0; stopFeet();
+      avatar.vy = 0; avatar.airborne = false; avatar.hop = 0; stopFeet(h.y);
       walkTo = null; walkDoor = null; doorsArmed = false; movedHere = false; keys = {};
       if(h.camYaw != null) view.yaw = h.camYaw;
       view.pitch = C.camPitch || view.pitch;
@@ -4046,7 +4048,7 @@ function mount(el, api){
       if(avatar.g.parent) avatar.g.parent.remove(avatar.g);
       w.scene.add(avatar.g);
       var sp = (w.spawnFrom && (w.spawnFrom[from] || (from === "city" && w.spawnFrom.base))) || (name === "city" && !from && citySpot(w)) || w.spawn;
-      avatar.x = sp.x; avatar.z = sp.z; avatar.yaw = sp.yaw || 0; avatar.hop = 0; avatar.airborne = false; walkTo = null; walkDoor = null; stopFeet();
+      avatar.x = sp.x; avatar.z = sp.z; avatar.yaw = sp.yaw || 0; avatar.hop = 0; avatar.airborne = false; walkTo = null; walkDoor = null; stopFeet(sp.y);
       cur = w; if(w === worlds.mission && missionDirty) refreshMission(); doorsArmed = false; movedHere = false; view.span = w.span || 12; view.zoom = w.zoom || 1.45; view.yaw = sp.camYaw != null ? sp.camYaw : w.camYaw != null ? w.camYaw : PI/4; view.pitch = w.camPitch || 0.62;
       if(keep){ ride.idx = -1; ride.id = null; avatar.hy = (ride.heli || ride.plane).y; movedHere = true; }   // flying in: the helicopter is yours now
       moveAvatar(0); view.target.copy(view.goal);
@@ -4074,6 +4076,19 @@ function mount(el, api){
   var CAM_KEYS = {KeyV: 1, KeyM: 1, KeyP: 1, KeyQ: 1, KeyR: 1, KeyZ: 1, KeyC: 1};
   var HELD_CAM = {KeyQ: 1, KeyR: 1, KeyZ: 1, KeyC: 1};
   function typing(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || (t && t.isContentEditable) || !!(t && t.closest && t.closest(".hqhud-gear, .hqhud-settings, .hqs")); }
+  // [3.13.5] Is E something other than a pet's here? A ride (or one beside you), a door under the crosshair, the world's
+  // own prompt (a terminal, the Studio kiosk), or a door / lift you stand at (its walk-in trigger, 2.6 m): then E never
+  // goes to a pet ("Leave <name> here" once took E from the front door, and your pets stayed home).
+  var USE_DOOR_D = 2.6;
+  function useHere(){
+    if(!avatar || !cur) return false;
+    if(ride || nearBike() >= 0) return true;
+    if(rigOn() && rig.mode === "fp" && pose && doorUnderCrosshair(pose, curDoors(), 3)) return true;
+    if(cur.prompt){ try { if(cur.prompt({x: avatar.x, z: avatar.z})) return true; } catch(e){} }
+    var up = !!(cur.onRoof && cur.onRoof()), ds = curDoors();
+    for(var i = 0; i < ds.length; i++){ var d = ds[i]; if(d && d.front && !!d.roof === up && Math.hypot(avatar.x - d.front.x, avatar.z - d.front.z) < USE_DOOR_D) return true; }
+    return false;
+  }
   // E (and a pad's X): get on or off what is near you; in first person also the door under the crosshair.
   function useKey(){
     // held by a trip (a booked ferry, flight or cruise seat: cur.carry): E is the trip's (get off), not a bike beside it
@@ -4339,7 +4354,7 @@ function mount(el, api){
     Object.keys(pk).forEach(function(id){ var w2 = pk[id] && anchorAt(C, pk[id]); if(w2){ parked[id].x = w2.x; parked[id].z = w2.z; } });
     propsSeen = null;
     // the street filled in after you arrived and you have not moved yet: stand at your door
-    if(cur === worlds.city && !movedHere && cur.spawn){ avatar.x = cur.spawn.x; avatar.z = cur.spawn.z; avatar.yaw = cur.spawn.yaw || 0; stopFeet(); if(cur.spawn.camYaw != null) view.yaw = cur.spawn.camYaw; moveAvatar(0); view.target.copy(view.goal); }
+    if(cur === worlds.city && !movedHere && cur.spawn){ avatar.x = cur.spawn.x; avatar.z = cur.spawn.z; avatar.yaw = cur.spawn.yaw || 0; stopFeet(cur.spawn.y); if(cur.spawn.camYaw != null) view.yaw = cur.spawn.camYaw; moveAvatar(0); view.target.copy(view.goal); }
     if(hud && cur === worlds.city && cur.mapInfo) hud.setLabels(cur.mapInfo());     // the map's HQ names
   };
   /* ---------- other people in this HQ (live, from the Arena) ---------- */
@@ -4626,7 +4641,7 @@ function mount(el, api){
                            cam: c ? {x: c.position.x, y: c.position.y, z: c.position.z} : null, t: performance.now()}; }};
   }
 
-  inst._place = function(x, z){ if(avatar){ avatar.x = x; avatar.z = z; } };    // for tests
+  inst._place = function(x, z, yaw){ if(avatar){ avatar.x = x; avatar.z = z; if(yaw != null && isFinite(yaw)) avatar.yaw = +yaw; } };    // for tests (yaw: 3.13.5)
   // read-only: the scene of the world you stand in (tests and tools traverse it)
   inst.sceneOf = function(){ return cur ? cur.scene : null; };
   // where you are, for presence: the floor (the 3D city is "city3d"), and in it your feet height (m) and pitch (rad)

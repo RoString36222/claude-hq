@@ -542,8 +542,10 @@ and feature guide.
 - **Next — Real revs, real exhausts, smooth multiplayer, call search.** Every catalogue vehicle now carries its
   researched engine (spec.engine: idle, redline, limiter, gear ratios, primary and final drive, rear tyre, voice and an
   exhaust tone of depth / rasp / crackle / induction / whistle), and `games/hqvehiclephys.js engineFor` turns it into
-  rpm per m/s for each gear. You drive on the real rpm: the clutch slips to a launch rpm, it upshifts at the redline
-  under power (half way up when cruising), downshifts as the revs sag, and stutters on the rev limiter with pops;
+  rpm per m/s for each gear. You drive on the real rpm: the clutch slips to a launch rpm, it upshifts under power at
+  the drive mode's up point (Comfort early, Sport short of the redline, Track at it; a light throttle far earlier), never
+  upshifts when you lift or brake, downshifts a gear at a time as the revs sag (on the brakes spaced through the stop,
+  each blipped), and stutters on the rev limiter with pops;
   the rev counter reads to that engine's own limiter with its red from the redline. The voices play that rpm with the
   vehicle's own exhaust character (games/engine.js engineProfile(.., real)). Other players are drawn smoothly
   (`games/hqnetsmooth.js`): a buffer of their frames drawn 0.2 s in the past on a curve through them, stamped with

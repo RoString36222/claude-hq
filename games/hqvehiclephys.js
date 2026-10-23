@@ -19,8 +19,9 @@
  *   tyreCirc("190/55 ZR17") -> m       a tyre's rolling circumference (3% squat under load)
  *   gearState(E) -> G / gearStep(G, inp, E, dt) -> out   the gearbox and clutch, per frame (games/hq3d.js drives on it):
  *     inp = {thr 0..1, brake (S held), clutch (X held), up / down / toggle (a press this frame: . , G), speed (m/s,
- *     signed)}. G.manual: you shift (. up, , down, through neutral below 1st); else it shifts itself at the redline
- *     under power, half way up the revs when cruising, and down as the revs sag. A downshift is rev-matched (the
+ *     signed)}. G.manual: you shift (. up, , down, through neutral below 1st); else it shifts itself (autoGear: up
+ *     under power, early at a light throttle; never up off the throttle; down a gear at a time as the revs sag, sooner
+ *     on the brakes). A downshift is rev-matched (the
  *     revs jump to the lower gear's, a throttle blip), refused if it would over-rev; each gear tops out at its
  *     limiter (out.cap: you bounce off it, the speed held). The clutch in (or neutral, or mid-shift) frees the
  *     engine: W revs it to the limiter; let it out with the revs up at low speed and it launches with wheelspin.
@@ -168,35 +169,40 @@ function engineFor(spec, kind, voice, gears){
   return E;
 }
 
-// The automatic's choice: the gear for what the driver is doing. Flat out (thr > 0.85): the lowest gear below the shift
-// point (the most power: up at the redline, a kickdown skips straight down). Part throttle: the gear whose revs come
-// closest to a target that rises with the pedal. Braking: revs kept in the pulling band (a downshift at a time, ready
-// for the exit). Coasting: a relaxed band. A gear is a candidate only between 1.05 x idle and the shift point; with a
-// comfort margin (6% of the rev range) the current gear is kept rather than hunting.
-// Drive modes (Shift+G): how high the automatic holds the revs (want), where it shifts flat out (shift, of the shift
-// point), how fast a shift is (shiftT), and the exhaust (gain, pops: games/engine.js). Sport is the car as it comes.
+// The automatic's choice from gear g: a shift schedule, as a real automatic's. Up when the revs reach the up point
+// (Comfort early, Sport high, Track at the redline; at a light throttle much earlier, for a tall cruising gear); never
+// up off the throttle or on the brakes (a lift holds the gear, the engine braking). Down a gear when the revs sag
+// below the down point (higher on the brakes, so the downshifts come one at a time through the stop), only if the
+// lower gear lands well under the up point (no hunting). Flat out and lugging: a kickdown, one jump to the gear
+// with the pull. Drive modes (Shift+G): the up point flat out (up), the down points off the throttle (lift) and on
+// the brakes (brake), each a share of the rev range; how fast a shift is (shiftT); the exhaust (gain, pops:
+// games/engine.js). Sport is the car as it comes.
 var MODES = {
-  comfort: {label: "Comfort", want: 0.75, shift: 0.82, shiftT: 1.4, gain: 0.82, pops: 0.15},
-  sport:   {label: "Sport",   want: 1,    shift: 1,    shiftT: 1,   gain: 1,    pops: 1},
-  track:   {label: "Track",   want: 1.2,  shift: 1,    shiftT: 0.6, gain: 1.15, pops: 1.6}
+  comfort: {label: "Comfort", up: 0.55, lift: 0.2,  brake: 0.32, shiftT: 1.4, gain: 0.82, pops: 0.15},
+  sport:   {label: "Sport",   up: 0.82, lift: 0.28, brake: 0.45, shiftT: 1,   gain: 1,    pops: 1},
+  track:   {label: "Track",   up: 1,    lift: 0.36, brake: 0.55, shiftT: 0.6, gain: 1.15, pops: 1.6}
 };
 var MODE_ORDER = ["comfort", "sport", "track"];
 function modeOf(m){ return MODES[m] || MODES.sport; }
-function autoGear(E, K, v, thr, brake, mode){
-  var n = K.length, span = E.red - E.idle, best = 1, bd = Infinity, i, M = modeOf(mode), top = E.shiftUp*M.shift;
-  function rpm(g){ return v*K[g - 1]; }
-  if(thr > 0.85){
-    for(i = 1; i <= n; i++) if(rpm(i) <= top*0.995) return i;
-    return n;
+function shiftPoints(E, thr, brake, mode){
+  var M = modeOf(mode), span = E.red - E.idle, full = Math.min(E.shiftUp, E.idle + span*M.up);
+  if(brake) return {up: Infinity, down: E.idle + span*M.brake, ceil: E.idle + span*(M.brake + 0.3), full: full};
+  if(thr <= 0.05) return {up: Infinity, down: E.idle + span*M.lift, ceil: E.idle + span*(M.lift + 0.3), full: full};
+  return {up: Math.min(E.shiftUp, E.idle + span*(0.22 + (M.up - 0.22)*thr)), down: E.idle + span*(M.lift*(1 - thr) + 0.45*M.up*thr), full: full};
+}
+function autoGear(E, K, v, thr, brake, mode, g){
+  var n = K.length, S = shiftPoints(E, thr, brake, mode), i;
+  g = Math.max(1, Math.min(n, g || 1));
+  function rpm(i){ return v*K[i - 1]; }
+  if(g < n && rpm(g) >= S.up) return g + 1;
+  if(g > 1 && (brake || (thr <= 0.05 && rpm(g) < S.down))){   // slowing: the lowest gear that keeps the revs under the ceiling
+    for(i = 1; i < g; i++) if(rpm(i) <= S.ceil) return i;
   }
-  var want = E.idle + span*Math.min(0.85, M.want*(thr > 0.05 ? 0.2 + 0.45*thr : brake ? 0.45 : 0.22));
-  var lo = E.idle*1.05, hi = E.shiftUp*(thr > 0.05 || brake ? 0.92 : 0.8);
-  for(i = 1; i <= n; i++){
-    var r = rpm(i); if(r > hi) continue;
-    var d = Math.abs(r - want) + (r < lo ? span : 0);
-    if(d < bd - 1e-9){ bd = d; best = i; }
+  if(g > 1 && rpm(g) < S.down){
+    if(thr > 0.85) for(i = 1; i < g - 1; i++) if(rpm(i) <= S.full*0.8) return i;   // a kickdown: one jump
+    if(rpm(g - 1) <= Math.min(S.up, S.full)*0.95) return g - 1;
   }
-  return best;
+  return g;
 }
 /* Nitrous (K held): a 4 s charge that refills in about 16 s. N = {charge 0..1}; -> true while it fires. */
 function nitroStep(N, held, thr, speed, dt){
@@ -291,20 +297,13 @@ function gearStep(G, inp, E, dt){
     G.since = (G.since || 0) + dt;
     if(sp < 0 || v < 1.2){ if(g !== 1 && G.shiftT <= 0){ g = 1; G.since = 0; } }
     else if(G.shiftT <= 0){
-      var M = modeOf(inp.mode), tg = autoGear(E, K, v, thr, !!inp.brake, inp.mode), cur = at(g);
-      if(tg !== g && thr <= 0.85 && cur < E.shiftUp*0.92 && cur > E.idle*1.05){
-        // keep this gear unless the other is clearly better (no hunting between two close gears)
-        var span = E.red - E.idle, want = E.idle + span*Math.min(0.85, M.want*(thr > 0.05 ? 0.2 + 0.45*thr : inp.brake ? 0.45 : 0.22));
-        if(Math.abs(at(tg) - want) > Math.abs(cur - want) - span*0.06) tg = g;
-      }
-      if(cur >= E.shiftUp*(thr > 0.85 ? M.shift : 1) && g < n){   // never sit on the limiter (Comfort shifts early): up now
-        tg = Math.max(tg, g + 1);
-      }
+      var M = modeOf(inp.mode), tg = autoGear(E, K, v, thr, !!inp.brake, inp.mode, g), cur = at(g);
+      if(cur >= E.shiftUp && g < n) tg = g + 1;                   // never sit on the limiter, even off the throttle
       if(tg > g && (G.since >= 0.45 || cur >= E.shiftUp)){
         var aq = E.qs && thr > 0.4; g++; G.shiftT = aq ? 0.05 : 0.25*M.shiftT; G.since = 0; ev.push("up"); if(aq) ev.push("qs");
-      } else if(tg < g && (G.since >= (thr > 0.85 ? 0.12 : 0.3))){
-        // a kickdown drops straight to the gear it wants; otherwise one gear at a time, each rev-matched
-        var to = thr > 0.85 ? tg : g - 1;
+      } else if(tg < g && (G.since >= (thr > 0.85 ? 0.12 : inp.brake ? 0.5 : 0.7))){
+        // a kickdown jumps straight to its gear; otherwise one gear at a time, each rev-matched and spaced out
+        var to = tg;
         g = to; G.shiftT = 0.18; G.since = 0; G.blipTo = at(g); ev.push("down");
       }
     }
@@ -386,7 +385,7 @@ function derive(entry){
 }
 
 HQV.hqVehiclePhys = {derive: derive, accFor: accFor, t0100: t0100, timeTo: timeTo, estimate0100: estimate0100,
-                     voiceFor: voiceFor, gearsFor: gearsFor, engineFor: engineFor, tyreCirc: tyreCirc, gearState: gearState, gearStep: gearStep, autoGear: autoGear, MODES: MODES, MODE_ORDER: MODE_ORDER,
+                     voiceFor: voiceFor, gearsFor: gearsFor, engineFor: engineFor, tyreCirc: tyreCirc, gearState: gearState, gearStep: gearStep, autoGear: autoGear, shiftPoints: shiftPoints, MODES: MODES, MODE_ORDER: MODE_ORDER,
                      nitroStep: nitroStep, perfStep: perfStep, wheelieStep: wheelieStep, WHEELIE: {BAL: BAL, LOOP: LOOP, OVER: OVER, STOPPIE_V: STOPPIE_V}, REVS: REVS, CAP_KMH: CAP_KMH, SLIDE: SLIDE, LEAN: LEAN, ROLL: ROLL,
                      FLOOR: FLOOR, FLOOR_EV: FLOOR_EV, FORMULA: FORMULA};
 })();

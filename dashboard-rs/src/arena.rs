@@ -252,6 +252,44 @@ pub fn valid_room_id(v: &Value) -> bool {
     v.as_str().map(|s| ROOM_ID_RE.is_match(s)).unwrap_or(false)
 }
 
+/// The Arena's cap on one HQ Studio style document (`maxBytes` in hqstyle.json).
+pub const HQ_STYLE_MAX_BYTES: usize = 8192;
+/// At most this many user ids in one `/api/arena/hq/styles` request.
+pub const HQ_STYLE_IDS_MAX: usize = 100;
+
+/// `{"style": obj|null}` for PUT /v1/hq/me/style: an object of at most
+/// [`HQ_STYLE_MAX_BYTES`] compact bytes, or null (reset). The Arena validates
+/// every key; this only keeps junk and oversize bodies off the wire.
+pub fn hq_style_body(style: Option<&Value>) -> Result<Value, &'static str> {
+    match style {
+        Some(Value::Null) => Ok(json!({"style": null})),
+        Some(v @ Value::Object(_)) => {
+            if serde_json::to_string(v).map_or(usize::MAX, |t| t.len()) > HQ_STYLE_MAX_BYTES {
+                return Err("style is too large");
+            }
+            Ok(json!({"style": v}))
+        }
+        _ => Err("style must be an object or null"),
+    }
+}
+
+/// `a,b,c` -> user ids (each [`valid_user_id`], at most [`HQ_STYLE_IDS_MAX`], duplicates dropped).
+pub fn hq_style_ids(raw: &str) -> Result<Vec<String>, &'static str> {
+    let mut out: Vec<String> = Vec::new();
+    for id in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        if !valid_user_id(id) {
+            return Err("bad user id");
+        }
+        if !out.iter().any(|x| x == id) {
+            out.push(id.to_string());
+        }
+    }
+    if out.len() > HQ_STYLE_IDS_MAX {
+        return Err("too many user ids");
+    }
+    Ok(out)
+}
+
 pub fn valid_user_id(s: &str) -> bool {
     USER_ID_RE.is_match(s)
 }
@@ -1026,6 +1064,38 @@ impl App {
         self.authed_get(&format!("/v1/hq/{}", uid))
     }
 
+    // ---- HQ Studio (3.15) ---------------------------------------------------
+
+    /// GET /v1/hq/me/style. An Arena without HQ Studio answers 404, passed
+    /// through so the page falls back to its local-only copy.
+    pub fn arena_hq_style(&self) -> (u16, Value) {
+        self.authed_get("/v1/hq/me/style")
+    }
+
+    /// PUT /v1/hq/me/style. Egress: the style document only (enum keys, colours,
+    /// grid furniture; the Arena refuses anything else), never transcript data.
+    pub fn arena_hq_style_put(&self, style: Option<&Value>) -> (u16, Value) {
+        if self.authed().is_none() {
+            return not_paired();
+        }
+        match hq_style_body(style) {
+            Ok(body) => self.authed_send("PUT", "/v1/hq/me/style", body),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
+    /// GET /v1/hq/styles?ids=a,b: the styles of open HQs among `ids`.
+    pub fn arena_hq_styles(&self, ids: &str) -> (u16, Value) {
+        if self.authed().is_none() {
+            return not_paired();
+        }
+        match hq_style_ids(ids) {
+            Ok(v) if v.is_empty() => (200, json!({"styles": {}})),
+            Ok(v) => self.authed_get(&format!("/v1/hq/styles?ids={}", v.join(","))),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
     pub fn arena_portrait_put(&self, png: &[u8]) -> (u16, Value) {
         match self.authed() {
             Some((t, b)) => http_bytes("PUT", &format!("{}/v1/me/portrait", b), &t, "image/png", png),
@@ -1548,6 +1618,60 @@ pub(crate) mod tests {
         assert_eq!(s[1].1, "https://arena.example/v1/leaderboards/rally");
         assert_eq!(s[2].3, Some(json!({"game": "rally"})));
         assert_eq!(s.len(), 3);
+    }
+
+    #[test]
+    fn hq_style_bodies_and_ids_are_checked_locally() {
+        assert_eq!(hq_style_body(Some(&json!(null))), Ok(json!({"style": null})));
+        assert_eq!(hq_style_body(Some(&json!({"v": 1}))), Ok(json!({"style": {"v": 1}})));
+        for bad in [None, Some(json!("x")), Some(json!([])), Some(json!(1)), Some(json!(true))] {
+            assert!(hq_style_body(bad.as_ref()).is_err(), "{bad:?}");
+        }
+        let big = json!({"v": 1, "pad": "x".repeat(HQ_STYLE_MAX_BYTES)});
+        assert_eq!(hq_style_body(Some(&big)), Err("style is too large"));
+        let a = "01234567-89ab-cdef-0123-456789abcdef";
+        assert_eq!(hq_style_ids(&format!("{a},{a}")), Ok(vec![a.to_string()]));
+        assert_eq!(hq_style_ids(""), Ok(vec![]));
+        assert!(hq_style_ids("../x").is_err());
+        assert!(hq_style_ids(&a.to_uppercase()).is_err());
+        let many: Vec<String> = (0..101).map(|i| format!("01234567-89ab-cdef-0123-{i:012}")).collect();
+        assert_eq!(hq_style_ids(&many.join(",")), Err("too many user ids"));
+        assert_eq!(hq_style_ids(&many[..100].join(",")).unwrap().len(), 100);
+        assert!(crate::server::post_paths().contains(&"/api/arena/hq/style"));
+    }
+
+    #[test]
+    fn hq_style_routes_reach_the_arena_and_pass_its_status_through() {
+        let (_d, app) = app();
+        let reply = Arc::new(Mutex::new((200, json!({"style": null}))));
+        let sent = stub(&app, "https://arena.example", reply.clone());
+        assert_eq!(app.arena_hq_style(), (200, json!({"style": null})));
+        app.arena_hq_style_put(Some(&json!({"v": 1})));
+        let a = "01234567-89ab-cdef-0123-456789abcdef";
+        app.arena_hq_styles(&format!("{a},{a}"));
+        {
+            let s = sent.lock().unwrap();
+            assert_eq!((s[0].0.as_str(), s[0].1.as_str()), ("GET", "https://arena.example/v1/hq/me/style"));
+            assert_eq!((s[1].0.as_str(), s[1].1.as_str()), ("PUT", "https://arena.example/v1/hq/me/style"));
+            assert_eq!(s[1].3, Some(json!({"style": {"v": 1}})));
+            assert_eq!(s[2].1, format!("https://arena.example/v1/hq/styles?ids={a}"));
+        }
+        // refused locally: nothing sent
+        assert_eq!(app.arena_hq_style_put(Some(&json!("x"))).0, 400);
+        assert_eq!(app.arena_hq_styles("nope").0, 400);
+        assert_eq!(app.arena_hq_styles(""), (200, json!({"styles": {}})));
+        assert_eq!(sent.lock().unwrap().len(), 3);
+        // an Arena without HQ Studio: its 404 comes back as a 404
+        *reply.lock().unwrap() = (404, json!({"error": "Not Found"}));
+        assert_eq!(app.arena_hq_style().0, 404);
+        assert_eq!(app.arena_hq_style_put(Some(&json!(null))).0, 404);
+        // the open list passes a style through untouched
+        *reply.lock().unwrap() = (200, json!({"hqs": [{"userId": a, "style": {"v": 1}}]}));
+        assert_eq!(app.arena_hq_open().1["hqs"][0]["style"], json!({"v": 1}));
+        // unpaired: nothing leaves
+        app.clear_link();
+        assert_eq!(app.arena_hq_style_put(Some(&json!(null))), (400, json!({"error": "not paired"})));
+        assert_eq!(app.arena_hq_styles(a).0, 400);
     }
 
     #[test]

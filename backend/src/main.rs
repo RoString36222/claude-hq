@@ -18,6 +18,7 @@ mod db;
 mod fps;
 mod strike;
 mod hq;
+mod hqstyle;
 mod kart;
 mod loot;
 mod mapkey;

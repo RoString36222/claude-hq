@@ -394,6 +394,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var WD = HQV.world, parts = HQV.hqCityParts, SP = HQV.hqSkatePark;
   var api = c.api || {};
   var hits = [], doors = [], night = true, W = null, wb = null, dead = false;
+  var stx = null, stApi = null;                // [stunts] the jumps, the loop and their rings (games/hqstunts.js): drawn, and the queries
   var spx = null, wx = null, wxKey = "";       // the landmarks and the park (games/hqspectacle.js); the weather (games/hqweather.js)
 
   var hemi = new THREE.HemisphereLight(0xbcd7ff, 0x223322, 2.2); S.add(hemi);
@@ -811,6 +812,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(civics.length && civicBlocked(x, z)) return true;
     if(cp && HQV.hqCarpark.blockedAt(cp.site, x, z, carparkHint(x, z))) return true;   // carpark: its walls at your level
     if(spx && spx.blocked(x, z)) return true;                               // landmarks, the park's fence, gate and rides
+    if(stApi && stuntWall(x, z)) return true;                               // [stunts] a ramp's flank or high end
     if(air && air.blocked(x, z)) return true;                              // air: hangars, the tower, the base's fence
     if(fount && Math.hypot(x - fount.g.position.x, z - fount.g.position.z) < fount.R + 0.35) return true;   // the fountain
     if(skate && SP.walkBlocked(x - skate.cx, z - skate.cz)) return true;      // its ramps (on foot or wheels; boards ride them)
@@ -843,7 +845,15 @@ HQV.hqWorlds.city3d = function(c, w){
     var dy = decks.length ? HQV.hqCivic.deckAt(decks, x, z) : null;        // a pier's deck, over the water
     var ay = air ? air.groundAt(x, z) : null; if(ay != null) return ay;    // air: the helipads, the base's apron
     var fy = apGroundY(x, z); if(fy != null) return fy;                    // AIR: the airfield's platform, the terminal, the gallery
-    return dy != null ? dy : WD.groundAt(W, x, z);
+    var gy = dy != null ? dy : WD.groundAt(W, x, z), sy = stApi ? stApi.groundAt(x, z) : null;   // [stunts] their decks and ramps
+    return sy != null && sy > gy ? sy : gy;
+  }
+  // [stunts] a ramp is driven up from its low end: from off it, a part of it higher than your knees is a wall
+  function stuntWall(x, z){
+    var sy = stApi.groundAt(x, z); if(sy == null) return false;
+    var a = c.avatar(); if(!a || a.hy == null) return false;
+    var ay = stApi.groundAt(a.x, a.z); if(ay != null && a.hy > ay - 1.5) return false;
+    return sy > a.hy + 1.1;
   }
 
   /* ---------- Cities: a v2 world's civic buildings, residents, traffic, sea, boats and travel ---------- */
@@ -3054,6 +3064,9 @@ HQV.hqWorlds.city3d = function(c, w){
     if(V2 && HQV.hqPets && HQV.hqPets.place){ try { petSite = HQV.hqPets.place(W); } catch(e){ petSite = null; } }
     // [3.13] the Tuning shop: the building lot nearest the dealership, once the dealership, the casino and the Pet shop have theirs
     if(V2 && HQV.hqTuning){ try { tuningSite = HQV.hqTuning.place(W, tier); } catch(e){ tuningSite = null; } }
+    // [stunts] the jumps, the loop and the sea launch (games/hqstunts.js): open land the shops have left, read off this
+    // city's own layout; the building lots under them are cleared before anything indexes or draws them
+    if(V2 && HQV.hqStunts){ try { stApi = HQV.hqStunts.api(HQV.hqStunts.claim(W, tier)); } catch(e){ stApi = null; } }
     indexBuildings();
     wb = HQV.worldbuild.create(c, W, V2 ? {scene: S, quality: 2, tier: tier, gap: !!(HQV.hqBridges && W.river)} : {scene: S, quality: 2});
     S.add(wb.root); S.add(staticG); S.add(hqG);
@@ -3070,6 +3083,10 @@ HQV.hqWorlds.city3d = function(c, w){
       // the park and the landmarks take the snow and the wet like the rest of the city
       if(spx && wb.settle) spx.g.traverse(function(o){ if(o.isMesh) [].concat(o.material).forEach(function(m){ if(m && m.isMeshStandardMaterial) wb.settle(m); }); });
       if(spx) spx.setNight(night);
+      if(stApi) try {
+        stx = HQV.hqStunts.create(c, W, {scene: S, ground: function(x, z){ var s0 = stApi; stApi = null; var y = groundY(x, z); stApi = s0; return y; }});
+        if(stx){ stx.setNight(night); if(wb.settle) stx.g.traverse(function(o){ if(o.isMesh && o.material && o.material.isMeshStandardMaterial) wb.settle(o.material); }); }
+      } catch(e){ stx = null; }
     }
     wb.ready.then(function(){ setTimeout(extras, 0); }, function(){});
     buildStatic();
@@ -3092,6 +3109,7 @@ HQV.hqWorlds.city3d = function(c, w){
   w.destroy = function(){
     dead = true;
     if(spx){ spx.destroy(); spx = null; }
+    if(stx){ stx.destroy(); stx = null; } stApi = null;
     if(wx){ wx.destroy(); wx = null; }
     if(wb){ wb.destroy(); wb = null; }
     S.remove(staticG); S.remove(hqG);
@@ -3104,6 +3122,14 @@ HQV.hqWorlds.city3d = function(c, w){
   Object.defineProperty(w, "net", {get: function(){ return V2 ? netRoom(worldId, !!(api.netCan && api.netCan("isles"))) : "city3d"; },
     configurable: true});
   w.world = function(){ return worldId; };
+  // [stunts] hq3d's flying: the stunts' queries, and the water's surface where a jump may splash down (null: dry land)
+  w.stunts = function(){ return stApi; };
+  w.stuntsDrawn = function(){ return stx; };
+  w.waterAt = function(x, z){
+    if(sea && !sea.land(x, z)) return sea.level(x, z);
+    if(W && W.river && WD.riverAt(W, x, z)) return WD.groundAt(W, x, z) + 0.6;
+    return null;
+  };
   // Riding in the park (games/hqspectacle.js) comes first: it holds you in your seat and owns the camera.
   (function(){
     var carry0 = w.carry, cam0 = w.camPose, use0 = w.use;
@@ -3200,7 +3226,7 @@ HQV.hqWorlds.city3d = function(c, w){
     civics.forEach(function(B){ B.setNight(n); }); if(oc) oc.setTime(n); if(rail) rail.setNight(n);
     if(cp) cp.B.setNight(n);                                               // carpark
     if(air) air.setNight(n);                                               // air:
-    if(spx) spx.setNight(n); if(wx) wx.setNight(n); wxKey = ""; };
+    if(spx) spx.setNight(n); if(stx) stx.setNight(n); if(wx) wx.setNight(n); wxKey = ""; };
   // Fading: in classic the buildings between you and hq3d's orthographic view (as hqbase.js
   // hqCutaway decides it); in every rig mode hq3d passes the occluders to w.setFaded. Switching
   // between the two clears the other's fades. Either way the fade itself eases (fadeStep).
@@ -3250,6 +3276,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(V2) bigStep(t, dt);                                                                              // big ships
     if(rail) rail.update(t, dt, cam);                     // rail
     if(spx) spx.update(t, dt, cam);
+    if(stx) stx.update(t, dt, cam);
     if(wx) weatherApply(wx.update(t, dt, cam));
     navStep(dt, cam);
   };

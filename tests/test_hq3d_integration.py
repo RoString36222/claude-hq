@@ -73,7 +73,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           # rail (3.x): the lines between cities, their trains
                           "hqrail",
                           # the vehicle garage (3.4); City 3.2: the weather, the landmarks and the amusement park
-                          "hqcarpark", "hqweather", "hqspectacle", "hqcity3d"])
+                          "hqcarpark", "hqweather", "hqspectacle", "hqstunts", "hqcity3d"])
 
     def test_multi_hq_range_covers_server(self):
         m = re.search(r"\bhq:\[(\d+),(\d+)\]", read(MULTI))

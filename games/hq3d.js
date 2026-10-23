@@ -1330,6 +1330,10 @@ function mount(el, api){
     var fwd = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
     var turn = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
     if(gp){ fwd = E.clamp(fwd + gp.thr, -1, 1); turn = E.clamp(turn - gp.x, -1, 1); }
+    if(ride.auto){                                                     // [autopilot] its throttle is a speed: ask for the one it wants
+      if(fwd || turn) apOff("Autopilot off: you have it");
+      else { var apd = apRoad({vmax: TKm.TOP*0.95, lat: 2.5, brake: 6, yawRate: 0.55, head: st.yaw, speed: st.speed}); if(apd){ fwd = E.clamp(apd.v/TKm.TOP, 0, 1); turn = apd.steer; } }
+    }
     walkTo = null; walkDoor = null;
     var yaw0 = avatar.yaw;
     TKm.step(st, {fwd: fwd, turn: turn}, dt, tkEnv()).forEach(function(ev){ if(ev.type === "bump") E.sfx("hit"); });
@@ -1821,6 +1825,7 @@ function mount(el, api){
     ownPlace(cur);                                                     // your own vehicles parked in this world
     bs.forEach(function(b){
       if(!b.home) b.home = {x: b.x, z: b.z, yaw: b.yaw};                  // its bay (Return to HQ puts it back)
+      if(baseKind(b.kind) === "moto" && b.g){ b.g.rotation.z = -STAND_LEAN; standShow(b.g, true); }   // [insane] parked on its side stand
       var p = b.id && parked[b.id]; if(p){ placeProp(b, p.x, p.z, p.yaw); if(p.y != null && b.kind && VEHICLES[b.kind] && VEHICLES[b.kind].heli){ b.g.position.y = p.y; b.y = p.y; } }   // [hq revamp] a helicopter left on a roof
     });
   }
@@ -2403,16 +2408,45 @@ function mount(el, api){
     // (games/hqdrive.js assist); the road's grip in the weather (gripOf)
     var DD = Drv(), G = drvGrip(), CS = DRV.jHeld && DD ? cvSlot() : null;
     if(CS && !CS.air){ var as = DD.assist({x: avatar.x, z: avatar.z, yaw: avatar.yaw, speed: ride.speed}, CS.L, CS.s, false); if(!thr) thr = as.thr; if(!st) st = as.steer; }
+    if(ride.auto){                                                     // [autopilot] I: it drives; your W / S / A / D take over
+      if(thr || st || hand) apOff("Autopilot off: you have it");
+      else { var apd = apRoad(); if(apd){ thr = apd.thr; st = apd.steer; } }
+    }
     var V = ride.V, top = (V.sprint && shift ? V.sprint : V.top)*G.top;
     walkTo = null; walkDoor = null;
+    // [gearbox] the gearbox and clutch (games/hqvehiclephys.js gearStep): which gear, how much of the engine reaches
+    // the wheels, the gear's top speed at its limiter, engine braking, a launch. W and S together: both keys' raw state
+    var GB = gearboxStep(dt, thr, hand), PH = HQV.hqVehiclePhys, wHeld = !!(keys.KeyW || keys.ArrowUp);
+    ride.burn = !!(GB && hand && wHeld && Math.abs(ride.speed) < 4);
+    // [insane] nitrous: K held, a 4 s charge (a bigger pull and 25% over its top speed while it fires)
+    var NIT = !!(GB && PH && PH.nitroStep && PH.nitroStep(ride.nitro || (ride.nitro = {charge: 1}), GIN.nitro, wHeld ? 1 : Math.max(0, thr), ride.speed, dt));
+    if(NIT) top *= 1.25;
+    ride.thrNow = wHeld ? 1 : thr;
     // an engine pulls hardest from a standstill and less as it nears its top speed
     // (V.floor: the pull left near the top, more for an electric motor; games/hqvehiclephys.js)
-    var pull = (V.motor ? V.acc*Math.max(V.floor || 0.25, 1 - Math.max(0, ride.speed)/top) : V.acc)*Math.max(0, thr);
+    var pull = (V.motor ? V.acc*Math.max(V.floor || 0.25, 1 - Math.max(0, ride.speed)/top) : V.acc)*Math.max(0, thr)*(GB ? GB.drive : 1) + (NIT ? V.acc*0.7 : 0);
     if(V.motor && hand) ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - 24*G.brake*dt) : Math.min(0, ride.speed + 24*G.brake*dt);   // handbrake
     else if(thr > 0) ride.speed = Math.min(top, ride.speed + (ride.speed < 0 ? 14 : pull)*dt);
     else if(thr < 0) ride.speed = Math.max(-V.rev, ride.speed - (ride.speed > 0 ? (V.brake || 14)*G.brake : 4)*-thr*dt);   // V.brake: a heavy car stops longer
-    else ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - (V.motor ? 3 : 2)*dt) : Math.min(0, ride.speed + 4*dt);
+    else ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - (V.motor ? 3 + (GB ? GB.engineBrake : 0) : 2)*dt) : Math.min(0, ride.speed + 4*dt);
     if(ride.speed > top) ride.speed = Math.max(top, ride.speed - 6*dt);
+    if(ride.burn){                                                     // [insane] a burnout: held on the brake, smoke; steer for donuts
+      ride.speed = 0;
+      if(st && (ride.base !== "car" || ride.V.drive !== "fwd")){ avatar.yaw += st*(ride.base === "car" ? 2.3 : 1.1)*dt; ride.head = avatar.yaw; }
+    }
+    // [insane] wheelies and stoppies (motorbikes, F held): games/hqvehiclephys.js wheelieStep
+    if(ride.base === "moto" && V.motor && PH && PH.wheelieStep && !E.calm()){
+      var WS = ride.wh || (ride.wh = {p: 0, pv: 0}), EN0 = V.engine || {};
+      var wo = PH.wheelieStep(WS, {trick: GIN.trick, thr: wHeld ? 1 : Math.max(0, thr), brake: !!(keys.KeyS || keys.ArrowDown) || hand,
+                                   speed: ride.speed, gear: ride.gear, rpmFrac: ride.rpm/(EN0.red || 9000)}, dt);
+      wo.events.forEach(trickEvent);
+      if(WS.kind === "stoppie") ride.speed = Math.max(0, ride.speed - 3*dt);
+    } else if(ride.wh){ ride.wh.p = 0; ride.wh.pv = 0; ride.wh.kind = null; }
+    if(GB && PH && PH.perfStep) PH.perfStep(ride.perf || (ride.perf = {armed: Math.abs(ride.speed) < 0.3}), ride.speed, dt).forEach(perfEvent);
+    if(GB){
+      if(GB.launch) ride.speed = 0;                                     // launch control: held on the brake, revs up
+      else if(ride.speed > GB.cap) ride.speed = Math.max(GB.cap, ride.speed - 9*dt);   // on the limiter: this gear's top speed
+    }
     if(ride.boost){                                                    // [stunts] a pad holds you at the jump's speed, straight
       if(thr < 0 || hand || !STN){ ride.boost = null; if(thr < 0) stuntSay("Backed out", "", 1.2); }
       else { ride.speed = ride.boost.v; st = 0; ride.steer = 0; avatar.yaw = ride.head = ride.boost.yaw; }
@@ -2459,6 +2493,10 @@ function mount(el, api){
     else (ride.kind === "car" ? carRoll : ride.kind === "moto" ? motoRoll : bikeRoll)(ride.B, d, ride.steer);
     // lean into the turn, a slide leans further (and sit up straight in Calm); a car does not lean
     var lean = E.calm() ? 0 : (-ride.steer*Math.min(1, spd/6) - ride.slip*1.2)*V.lean;
+    // [insane] stopped on a motorbike: over onto its side stand (the stand swings down)
+    var parkedUp = ride.base === "moto" && spd < 0.2 && !(ride.thrNow > 0) && !ride.burn;
+    if(parkedUp) lean = -STAND_LEAN;
+    if(ride.base === "moto") standShow(ride.lean, parkedUp);
     ride.lean.rotation.z += (lean - ride.lean.rotation.z)*ease(8, dt);
     engineStep(dt, thr);
     keyMove = spd > 0.3; keyRun = false; if(keyMove){ movedHere = true; walkInto(); }
@@ -2468,8 +2506,10 @@ function mount(el, api){
     // where you are headed is where the vehicle travels (ride.head: in a slide that is not where it points)
     avatar.travelYaw = Math.abs(ride.speed) > 0.05 ? (ride.speed < 0 ? wrapPi(ride.head + PI) : ride.head) : null;
     if(ride.snapY){ avatar.hy = groundAt(avatar.x, avatar.z); avatar.hyV = 0; } else settleY(dt);   // [stunts] a ramp at speed: on it, not a spring behind it
-    avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
-    avatar.g.rotation.y = avatar.yaw; avatar.g.rotation.x = -ride.pitch; avatar.g.rotation.z = ride.roll;
+    // [insane] a wheelie pivots on the rear axle, a stoppie on the front: the wheel that stays down stays on the road
+    var wp = ride.wh ? ride.wh.p : 0, wbh = (V.wb || WHEELBASE[ride.base] || 1.4)/2;
+    avatar.g.position.set(avatar.x, avatar.hy + Math.sin(Math.abs(wp))*wbh, avatar.z);
+    avatar.g.rotation.y = avatar.yaw; avatar.g.rotation.x = -(ride.pitch + wp); avatar.g.rotation.z = ride.roll;
     var b = rideProp(); if(b && b.g.visible) b.g.visible = false;   // the street rebuilt under you
     view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
   }
@@ -2502,8 +2542,97 @@ function mount(el, api){
     var P = HQV.hqVehiclePhys; if(!P || !P.engineFor || !V.gears) return null;
     return (V.engine = P.engineFor({}, V.kind === "bike" || ride.base === "moto" ? "bike" : "car", V.eng, V.gears));
   }
+  // [gearbox] per frame, before the speed moves: the gearbox's answer (null for a vehicle without one: a bicycle, a
+  // boat, a vehicle whose engine has no gearing); the presses of . , G since the last frame go in once
+  var GIN = {up: false, down: false, toggle: false, nitro: false, trick: false};
+  function gearboxStep(dt, thr, hand){
+    var V = ride.V, P = HQV.hqVehiclePhys;
+    if(!V.motor || V.boat || ride.plane || ride.heli || !P || !P.gearStep) return null;
+    var EN = engineOf(V); if(!EN || !(EN.k || EN.electric)) return null;
+    if(!ride.gs){ ride.gs = P.gearState(EN); ride.gs.manual = gearPref(); }
+    var w = !!(keys.KeyW || keys.ArrowUp), sb = !!(keys.KeyS || keys.ArrowDown), gp = padNow();
+    // a burnout (Space + W at a standstill) is the clutch in with the revs up and the rear wheels spinning
+    var burn = !!(hand && w && Math.abs(ride.speed) < 4);
+    var o = P.gearStep(ride.gs, {thr: w ? 1 : Math.max(0, thr), brake: sb || hand, clutch: !!keys.KeyX || burn, mode: ride.mode || (ride.mode = modePref()),
+                                 up: GIN.up, down: GIN.down, toggle: GIN.toggle, speed: ride.speed, top: V.top}, EN, dt);
+    GIN.up = GIN.down = GIN.toggle = false;
+    function say(t){ if(api.toast) api.toast(t); if(api.announce) api.announce(t); }
+    o.events.forEach(function(ev){
+      if(ev === "manual" || ev === "auto"){ gearPref(ev === "manual"); say(ev === "manual" ? "Manual gearbox: . shifts up, , down (through neutral), hold X for the clutch" + (o.qs ? ". Quickshifter: shift up flat out, no clutch" : "") : "Automatic gearbox"); }
+      else if(ev === "refused") say("Too fast for " + gearTxt(ride.gs.gear - 1) + ": it would over-rev");
+      else if(ev === "launch" && o.launch && api.announce) api.announce("Launch control: let go of the brake");
+    });
+    ride.gb = o;
+    return o;
+  }
+  // the drive mode (Comfort / Sport / Track), remembered on this machine
+  function modePref(set){
+    if(set != null){ try { localStorage.setItem("hq3d.driveMode", set); } catch(e){} return set; }
+    try { var m = localStorage.getItem("hq3d.driveMode"); return m === "comfort" || m === "track" ? m : "sport"; } catch(e){ return "sport"; }
+  }
+  // [insane] tricks and the performance timer, scored with your best per vehicle (kept on this machine)
+  function bestOf(key, val, lower){
+    var m = {}; try { m = JSON.parse(localStorage.getItem("hq3d.bests") || "{}") || {}; } catch(e){ m = {}; }
+    var was = m[key]; if(was != null && (lower ? val >= was : val <= was)) return was;
+    m[key] = val; try { localStorage.setItem("hq3d.bests", JSON.stringify(m)); } catch(e){} return null;
+  }
+  function vehKey(){ return ride && ride.V && ride.V.cat ? ride.V.cat.id : (ride ? ride.kind : "?"); }
+  function trickEvent(e){
+    var name = e.trick === "stoppie" ? "STOPPIE" : "WHEELIE";
+    if(e.kind === "start"){ stuntSay(name + "!", e.trick === "stoppie" ? "Ease off the brake to put it down" : "Tap W to hold it on the balance point", 1.2, "#7dffb0"); return; }
+    if(e.kind === "bail"){
+      ride.speed = 0; E.sfx("hit"); if(drvHit) drvHit(8, e.trick === "stoppie" ? "f" : "r");
+      stuntSay(e.trick === "stoppie" ? "💥 OVER THE BARS" : "💥 LOOPED OUT", Math.round(e.dist || 0) + " m before it went", 2.4, "#ff6b6b");
+      if(api.announce) api.announce(e.trick === "stoppie" ? "Over the bars" : "Looped out"); return;
+    }
+    var d = Math.round(e.dist || 0); if(d < 3) return;
+    var was = bestOf(vehKey() + ":" + e.trick, d, false);
+    stuntSay("🏍 " + name + " " + d + " m", was == null ? "New best on this bike!" : "Best " + was + " m", 2.6, "#ffe14d");
+    if(api.announce) api.announce(name.toLowerCase() + " " + d + " metres");
+  }
+  function perfEvent(e){
+    var label = e.kind === "0-100" ? "0–100 km/h" : e.kind === "0-200" ? "0–200 km/h" : "¼ mile";
+    var t = Math.round(e.t*100)/100, was = bestOf(vehKey() + ":" + e.kind, t, true);
+    stuntSay("⏱ " + label + "  " + t.toFixed(2) + " s" + (e.v ? "  @ " + Math.round(e.v*3.6) + " km/h" : ""), was == null ? "New best!" : "Best " + was.toFixed(2) + " s", 3, "#7fd8ff");
+    if(api.announce) api.announce(label + " in " + t.toFixed(1) + " seconds");
+  }
+  // the side stand: a bike leans onto it when it stops (and stands on it parked); one thin leg, made once
+  var STAND_LEAN = 0.15;
+  function standShow(g, on){
+    if(!g) return;
+    var leg = g.userData.stand;
+    if(!leg){
+      leg = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.36, 6), new THREE.MeshStandardMaterial({color: 0x2a2d31, metalness: 0.6, roughness: 0.4}));
+      leg.position.set(0.17, 0.17, -0.12); leg.rotation.z = 0.55; g.add(leg); g.userData.stand = leg;
+    }
+    leg.visible = !!on;
+  }
+  // manual or automatic, remembered on this machine
+  function gearPref(set){
+    if(set != null){ try { localStorage.setItem("hq3d.gearbox", set ? "manual" : "auto"); } catch(e){} return !!set; }
+    try { return localStorage.getItem("hq3d.gearbox") === "manual"; } catch(e){ return false; }
+  }
+  // . and , shift, G switches manual / automatic: only while you drive something with a gearbox
+  function gearKey(e){
+    if(!ride || !inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey || !drvGround() || !ride.V.motor || ride.V.boat) return false;
+    var c = e.code, down = e.type === "keydown";
+    if(c === "KeyK"){ e.preventDefault(); GIN.nitro = down; return true; }                       // nitrous, held
+    if(c === "KeyF" && ride.base === "moto"){ e.preventDefault(); GIN.trick = down; return true; }   // wheelie / stoppie, held
+    if(c === "KeyH"){ e.preventDefault(); if(down && !e.repeat) E.sfx("horn", {bike: ride.base !== "car"}); return true; }
+    if(c !== "Period" && c !== "Comma" && c !== "KeyG") return false;
+    e.preventDefault(); e.stopPropagation();
+    if(down && !e.repeat){
+      if(c === "Period") GIN.up = true; else if(c === "Comma") GIN.down = true;
+      else if(e.shiftKey){ var P = HQV.hqVehiclePhys, O = P && P.MODE_ORDER || ["sport"], i = O.indexOf(modePref());
+        var m = modePref(O[(i + 1) % O.length]); ride.mode = m; if(api.toast) api.toast("Drive mode: " + (P && P.MODES ? P.MODES[m].label : m));
+        if(api.announce) api.announce("Drive mode " + m); }
+      else GIN.toggle = true;
+    }
+    return true;
+  }
   function engineStep(dt, thr){
     var V = ride.V; if(!V.motor){ ride.gear = 0; return; }
+    if(ride.gb){ return gearboxSound(dt, thr, V, ride.gb); }
     var EN = !V.boat ? engineOf(V) : null;
     if(EN && (EN.k || EN.electric)) return engineReal(dt, thr, V, EN);
     var G = V.gears, v = Math.abs(ride.speed), g = Math.max(1, Math.min(G.length, ride.gear | 0 || 1));
@@ -2546,6 +2675,30 @@ function mount(el, api){
     if(ride.eng) ride.eng.set(ride.rpm, {thr: thr > 0 ? thr : 0, gear: ride.gear, speed: v, limiter: lim,
       slip: ride.drift ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0});
   }
+  // [gearbox] the engine's note from the gearbox: its rpm (free-revving with the clutch in or in neutral, held for a
+  // launch), the limiter's stutter, the rev-matched blip on a downshift (engine.js blips on a lower gear), wheelspin
+  function gearboxSound(dt, thr, V, o){
+    ride.rpm = o.rpm; ride.gear = o.gear;
+    var v = Math.abs(ride.speed), w = !!(keys.KeyW || keys.ArrowUp), EN = V.engine || {};
+    // [insane] it keeps running while you're on it (idle in neutral or stopped); getting on cranks it and it catches
+    if(ride.startT == null){ ride.startT = 1.1; E.sfx("crank"); }
+    if(ride.startT > 0){
+      ride.startT -= dt;
+      ride.rpm = ride.startT > 0.55 ? (EN.idle || 800)*0.35 : (EN.idle || 800) + ((EN.red || 6000) - (EN.idle || 800))*0.32*Math.max(0, ride.startT/0.55);
+    }
+    // exhaust flames and pops: an overrun lift, a downshift's blip, the limiter, a quickshift (drawn in drvFrame)
+    var FX = ride.fxs || (ride.fxs = {popT: 0, qsT: 0, thrWas: 0, lim: false});
+    FX.popT = Math.max(0, FX.popT - dt); FX.qsT = Math.max(0, FX.qsT - dt);
+    var M = HQV.hqVehiclePhys && HQV.hqVehiclePhys.MODES ? HQV.hqVehiclePhys.MODES[ride.mode || "sport"] : null, popsK = M ? M.pops : 1;
+    if(FX.thrWas > 0.7 && !(w || thr > 0.1) && ride.rpm > (EN.red || 6000)*0.5) FX.popT = 0.9*Math.min(1.4, popsK);
+    if(o.events.indexOf("down") >= 0) FX.popT = Math.max(FX.popT, 0.35*popsK);
+    if(o.events.indexOf("qs") >= 0) FX.qsT = 0.14;
+    FX.lim = o.limiter; FX.thrWas = w ? 1 : Math.max(0, thr);
+    if(!ride.eng && E.engineSound) ride.eng = E.engineSound(V.eng, ride.tune && HQV.hqTuning ? HQV.hqTuning.exhaustOf(ride.tune) : null, V.engine);
+    if(ride.eng) ride.eng.set(ride.rpm, {thr: w ? 1 : thr > 0 ? thr : 0, gear: o.gear > 0 ? o.gear : null, speed: v, limiter: o.limiter, qs: o.events.indexOf("qs") >= 0,
+      mode: ride.mode, boost: !!(ride.nitro && ride.nitro.on), crackle: FX.popT > 0,
+      slip: Math.max(o.slip, ride.drift ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0)});
+  }
   /* ---------- skating (games/hqskate.js does the physics) ---------- */
   // ride.sk = {st (the sim's state, in the park's frame), cx, cz (the park's centre), prev (keys last frame)}
   /* [3.12] Driving feel and convoys (games/hqdrive.js, feature-detected: without it nothing here does anything).
@@ -2576,8 +2729,8 @@ function mount(el, api){
   // its headlights' beam, its dents
   function drvMount(){
     var D = Drv(); if(!D || !drvGround()) return;
-    DRV.key = ride.id || ("kind:" + ride.kind); DRV.dmg = D.dmgLoad(DRV.key); DRV.base = ride.base;
-    try { D.beam(THREE, ride.B, {base: ride.base}); D.dent(THREE, ride.B, DRV.dmg, DRV.key); } catch(e){}
+    DRV.key = ride.id || ("kind:" + ride.kind); DRV.dmg = dmgOn() ? D.dmgLoad(DRV.key) : null; DRV.base = ride.base;
+    try { D.beam(THREE, ride.B, {base: ride.base}); if(DRV.dmg) D.dent(THREE, ride.B, DRV.dmg, DRV.key); } catch(e){}
     DRV.lit = null;
   }
   function drvDismount(){
@@ -2587,8 +2740,10 @@ function mount(el, api){
     DRV.key = null; DRV.dmg = null; DRV.grip = null; DRV.gripSaid = null; DRV.jHeld = false;
   }
   // a hit (the street's walls, props and parked vehicles: rideMove's collision): side "f" front, "r" rear
+  // [damage] dents, cracked lights, smoke and the pull of a bent car are opt in (Settings: Vehicle damage)
+  function dmgOn(){ var s = hudSettings(); return !!(s && s.damage); }
   function drvHit(v, side){
-    var D = Drv(); if(!D || !drvGround() || !DRV.key) return;
+    var D = Drv(); if(!D || !drvGround() || !DRV.key || !dmgOn()) return;
     var was = DRV.dmg || D.dmgNew(), st = D.dmgAdd(was, v, side);
     if(st.n === was.n) return;
     DRV.dmg = st; D.dmgSave(DRV.key, st);
@@ -2865,15 +3020,99 @@ function mount(el, api){
       var gk = DRV.grip ? DRV.grip.kind : null;
       if(gk !== DRV.gripSaid){ DRV.gripSaid = gk; if(gk && api.announce) api.announce(gk === "snow" ? "Snow on the road: much less grip, brake early." : "Wet road: less grip and longer braking."); }
     } else if(DRV.fx && DRV.fx.pts.visible) DRV.fx.step(dt, {calm: true});
+    vfxFrame(t, dt);
     cvStep(t);
   }
+  // [insane] exhaust flames, nitrous, tyre smoke, skid marks (games/hqvfx.js): one set per scene, fed from your ride
+  var VFX = null, vfxN = 0;
+  function vfxFrame(t, dt){
+    if(!HQV.hqVfx || !cur || !cur.scene || !cur.camModes) return;
+    if(!VFX || VFX.scene !== cur.scene){ if(VFX) try { VFX.fx.dispose(); } catch(e){} VFX = {scene: cur.scene, fx: HQV.hqVfx.create(THREE, cur.scene)}; }
+    if(!drvGround() || !ride.V.motor || ride.V.boat || ride.air || ride.loop){ VFX.fx.step(dt, {calm: true}); return; }
+    vfxN++;
+    var FX = ride.fxs || {}, h = ((vfxN*2654435761) >>> 0)/4294967296;
+    var flame = FX.lim ? 0.55 + 0.45*h : FX.qsT > 0 ? 1 : FX.popT > 0 ? (h > 0.55 ? 0.95 : 0) : 0;
+    var spd = Math.abs(ride.speed), braking = (keys.KeyS || keys.ArrowDown) && ride.speed > 12;
+    var slip = ride.gb ? ride.gb.slip : 0, drift = ride.drift ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0;
+    var bx = ride.B._box || {minZ: -1.6, maxZ: 1.6, w: 0.8, h: 1.2};
+    VFX.fx.step(dt, {x: avatar.x, y: avatar.hy, z: avatar.z, yaw: avatar.yaw, speed: ride.speed, back: -bx.minZ, w: bx.w*0.5, bike: ride.base !== "car",
+      flame: flame, nitro: !!(ride.nitro && ride.nitro.on), smoke: Math.max(ride.burn ? 1 : 0, slip, drift*0.8, braking ? 0.2 : 0),
+      skid: Math.max(ride.burn ? 1 : 0, slip > 0.2 ? 1 : 0, drift, braking && spd > 15 ? 0.6 : 0), ground: groundAt, calm: E.calm()});
+  }
   // the drive HUD's badges: grip, lights, damage
+  /* ---- [autopilot] I in anything you drive, ride, sail or fly (games/hqautopilot.js): with a route (N) it takes you
+     there and stops; without one a car follows its road (straight on at junctions), a boat or a helicopter holds its
+     heading. It only works the controls, so the vehicle's own physics, gears and sound do the rest. Planes: their own
+     autopilot (K, planeKey). Your steering or throttle takes over. ---- */
+  function apKind(){
+    if(!ride) return null;
+    if(ride.plane) return "plane";
+    if(ride.tank) return "tank";
+    if(ride.kind === "skate" || (ride.pet && !ride.heli)) return null;
+    return ride.boat ? "boat" : ride.heli ? "heli" : "road";
+  }
+  function apGoal(){ var nav = cur && cur.nav ? cur.nav() : null; return nav && nav.route && !nav.route.done ? nav.route : null; }
+  function apOff(msg){
+    if(!ride || !ride.auto) return;
+    ride.auto = null;
+    if(msg){ if(api.toast) api.toast(msg); if(api.announce) api.announce(msg); }
+  }
+  function apToggle(){
+    var k = apKind(), say = function(t){ if(api.toast) api.toast(t); if(api.announce) api.announce(t); };
+    if(k === "plane") return planeKey("KeyK");
+    if(!k){ say("No autopilot on this one"); return true; }
+    if(!HQV.hqAutopilot){ say("The autopilot didn't load"); return true; }
+    if(ride.auto){ apOff("Autopilot off"); return true; }
+    if(k === "heli" && ride.heli && ride.heli.ground && !apGoal()){ say("Pick a destination first (N), or take off: the autopilot then holds your course"); return true; }
+    ride.auto = {kind: k, P: null, src: null, cruise: false, hdg: k === "heli" ? ride.heli.yaw : k === "boat" ? ride.boat.yaw : avatar.yaw};
+    var r = apGoal();
+    say(r ? "Autopilot: taking you to " + r.label : k === "road" || k === "tank" ? "Autopilot: following the road (N picks a destination)" : "Autopilot: holding your course (N picks a destination)");
+    return true;
+  }
+  // on the road: the route if there is one (re-planned when the city re-routes), else the road ahead; it brakes for the
+  // traffic and other players in its lane -> games/hqautopilot.js drive() | null (it has switched itself off)
+  function apRoad(o){
+    var A = ride.auto, AP = HQV.hqAutopilot, r = apGoal(), x = avatar.x, z = avatar.z;
+    o = o || {};
+    var head = o.head != null ? o.head : (ride.head != null ? ride.head : avatar.yaw), speed = o.speed != null ? o.speed : ride.speed;
+    if(r && r.R){ if(A.src !== r.R){ A.src = r.R; A.P = AP.plan(r.R.pts); A.cruise = false; } }
+    else if(!A.P || A.cruise){                                       // no route (or one finished: the plan we have runs to its end)
+      if(!A.P || A.P.len - A.P.s < 90){
+        var G = cur && cur.navGraph ? cur.navGraph() : null, pts = G ? AP.cruise(G, x, z, head, 260) : null;
+        if(!pts){ apOff("Autopilot off: no road here"); return null; }
+        A.P = AP.plan(pts); A.cruise = true; A.src = null;
+      }
+    }
+    // the traffic stops for you too: after waiting 4 s behind it, it noses on for 3 s (as a called vehicle does)
+    var now = E.now(), wt = A.at != null ? Math.min(0.5, Math.max(0, now - A.at)) : 0; A.at = now;
+    A.nose = Math.max(0, (A.nose || 0) - wt);
+    var obs = [], RD = cur && cur.callRoad;
+    (RD && RD.traffic && !(A.nose > 0) ? RD.traffic() || [] : []).forEach(function(v){ if(v && Math.abs(v.x - x) < 60 && Math.abs(v.z - z) < 60) obs.push({x: v.x, z: v.z, r: 2}); });
+    Object.keys(peers).forEach(function(u){ var P = peers[u]; if(P && P.w === (cur.net || cur.name) && Math.abs(P.x - x) < 60 && Math.abs(P.z - z) < 60) obs.push({x: P.x, z: P.z, r: 1.4}); });
+    var ahead = HQV.hqCall ? HQV.hqCall.aheadOf(x, z, head, obs, 1.4, 45) : Infinity;
+    var M = HQV.hqVehiclePhys && HQV.hqVehiclePhys.MODES, mode = ride.mode || "sport", G0 = DRV.grip || {}, V = ride.V || {};
+    var vm = o.vmax || Math.min((V.top || 20)*0.95, {comfort: 13, sport: 17, track: 22}[mode] || 17)*(G0.top || 1);
+    var d = AP.drive(A.P, {x: x, z: z, yaw: head, speed: speed},
+      {vmax: vm, lat: (o.lat || {comfort: 3.5, sport: 5, track: 7}[mode] || 5)*(G0.lat || 1), brake: o.brake || 5, yawRate: o.yawRate || 1.9, ahead: ahead, stop: !A.cruise});
+    // held up: by the traffic (then it noses on), or against something with nowhere to go (near the end: it is there)
+    var held = Math.abs(speed) < 0.3;
+    A.wait = held && d.thr <= 0 && ahead < Infinity ? (A.wait || 0) + wt : 0;
+    if(A.wait > 4){ A.wait = 0; A.nose = 3; }
+    A.stuck = held && d.thr > 0.15 ? (A.stuck || 0) + wt : 0;
+    if(d.done || (!A.cruise && d.left < 8 && held)) apOff("Autopilot: you're there");
+    else if(A.stuck > 3){ if(!A.cruise && d.left < 25) apOff("Autopilot: you're there"); else apOff("Autopilot off: something's in the way"); }
+    return d;
+  }
   function drvBadges(){
     var D = Drv(); if(!D || !dhud || !dhud.badges || !drvGround()) return;
     var g = DRV.grip, parts = [];
     if(g && g.kind) parts.push(D.GRIP_ICON[g.kind] + " " + D.GRIP_LABEL[g.kind]);
     if(D.lightsOn(isNight(), DRV.wx, DRV.manual)) parts.push("💡 Lights" + (DRV.manual === true ? " (L)" : ""));
     if(DRV.dmg && DRV.dmg.d > 0) parts.push("🔧 " + Math.round(DRV.dmg.d*100) + "% damage");
+    var PM = HQV.hqVehiclePhys && HQV.hqVehiclePhys.MODES;                 // [insane] the drive mode and the nitrous left
+    if(ride.gb && PM) parts.push("🎛 " + PM[ride.mode || "sport"].label);
+    if(ride.nitro && (ride.nitro.on || ride.nitro.charge < 0.995)) parts.push("🔥 N₂O " + Math.round(ride.nitro.charge*100) + "%");
+    if(ride.auto){ var ag = apGoal(); parts.push("🤖 Autopilot" + (ag ? " → " + ag.label : ride.auto.cruise ? " · road" : "")); }
     var txt = parts.join("  ·  ");
     if(txt !== dhud.btxt){ dhud.btxt = txt; dhud.badges.textContent = txt; dhud.badges.hidden = !txt; }
   }
@@ -3030,20 +3269,20 @@ function mount(el, api){
   };
   // the one-line version under the driving HUD
   var RIDE_HINT = {
-    bike: "W pedal · S brake · A/D steer · Shift pedal harder · L lights · E get off · T home",
-    moto: "W throttle · S brake · A/D steer · Shift+steer slide · Space handbrake · L lights · E get off · T home",
-    car: "W go · S brake · A/D steer · Shift+steer powerslide · Space handbrake · L lights · E get out · T home",
-    rowboat: "W row · S back water · A/D steer · E step ashore at a dock or a beach",
-    jetski: "W throttle · S astern · A/D steer · E step ashore at a dock or a beach",
-    heli: "Space climb · Shift descend · W/S forward/back · A/D turn · E get out (landed)",
-    attack: "Space climb · Shift descend · W/S forward/back · A/D turn · E get out (landed)",
-    dragon: "W/S faster/slower · A/D turn · Space climb · Shift descend/dive · F breath · N go to · E get off (landed)",
+    bike: "W pedal · S brake · A/D steer · Shift pedal harder · I autopilot · L lights · E get off · T home",
+    moto: "W throttle · S brake · A/D steer · F wheelie (+S stoppie) · Space+W burnout · K nitro · G manual · Shift+G mode · . , shift · X clutch · H horn · I autopilot · L lights · E get off",
+    car: "W go · S brake · A/D steer · Shift+steer powerslide · Space+W burnout · K nitro · G manual · Shift+G mode · . , shift · X clutch · H horn · I autopilot · L lights · E get out",
+    rowboat: "W row · S back water · A/D steer · I autopilot · E step ashore at a dock or a beach",
+    jetski: "W throttle · S astern · A/D steer · I autopilot · E step ashore at a dock or a beach",
+    heli: "Space climb · Shift descend · W/S forward/back · A/D turn · I autopilot · E get out (landed)",
+    attack: "Space climb · Shift descend · W/S forward/back · A/D turn · I autopilot · E get out (landed)",
+    dragon: "W/S faster/slower · A/D turn · Space climb · Shift descend/dive · F breath · I autopilot · N go to · E get off (landed)",
     dino: "W/S walk · A/D turn · Shift run · F roar · E get off",
     serpent: "W/S swim · A/D turn · Shift faster · F spray · E step off at the shore",
-    seaplane: "W/S throttle · A/D bank · \u2191/\u2193 pitch · F flaps · X assist · K autopilot · N go to · E get out at a dock",
-    prop: "W/S throttle · A/D bank · \u2191/\u2193 pitch · G gear · F flaps · Space brakes · X assist · K autopilot · N go to · E get out",
-    airliner: "W/S thrust · A/D bank · \u2191/\u2193 pitch (runway only) · G gear · F flaps · Space brakes/spoilers · X assist · K autopilot · N go to · E out at a stand",
-    regional: "W/S thrust · A/D bank · \u2191/\u2193 pitch (runway only) · G gear · F flaps · Space brakes/spoilers · X assist · K autopilot · N go to · E out at a stand"
+    seaplane: "W/S throttle · A/D bank · \u2191/\u2193 pitch · F flaps · X assist · K/I autopilot · N go to · E get out at a dock",
+    prop: "W/S throttle · A/D bank · \u2191/\u2193 pitch · G gear · F flaps · Space brakes · X assist · K/I autopilot · N go to · E get out",
+    airliner: "W/S thrust · A/D bank · \u2191/\u2193 pitch (runway only) · G gear · F flaps · Space brakes/spoilers · X assist · K/I autopilot · N go to · E out at a stand",
+    regional: "W/S thrust · A/D bank · \u2191/\u2193 pitch (runway only) · G gear · F flaps · Space brakes/spoilers · X assist · K/I autopilot · N go to · E out at a stand"
   };
   function tipRide(){ if(!api.announce || !ride) return;
     if(ride.kind === "skate") return;                                 // the skate HUD says how
@@ -3125,7 +3364,10 @@ function mount(el, api){
     driveDial(g, dhud.tok, 62, 64, 54, kmh, M[0], M[1], M[2], "km/h", Math.round(kmh), null);
     if(motor){                                       // [revs] the rev counter to this engine's own limiter, red from its redline
       var EN = ride.V.engine, top = EN && EN.limit ? Math.max(6, Math.ceil(EN.limit/1000 + 0.3)) : 8, maj = top > 12 ? 2 : 1;
-      driveDial(g, dhud.tok, 174, 64, 54, ride.rpm/1000, top, maj, maj/2, "×1000 rpm", gearTxt(gear), EN && EN.red && !EN.electric ? EN.red/1000 : EN && EN.electric ? null : 6.5, "GEAR");
+      if(EN && EN.shiftUp && !EN.electric && ride.rpm >= EN.shiftUp*0.96 && ((t*8) % 2) < 1){    // [insane] the shift light
+        g.beginPath(); g.arc(174, 14, 5, 0, PI*2); g.fillStyle = dhud.tok.need; g.fill();
+      }
+      driveDial(g, dhud.tok, 174, 64, 54, ride.rpm/1000, top, maj, maj/2, "×1000 rpm", gearTxt(gear), EN && EN.red && !EN.electric ? EN.red/1000 : EN && EN.electric ? null : 6.5, ride.gs && ride.gs.manual ? (ride.gb && ride.gb.qs ? "MANUAL QS" : "MANUAL") : "GEAR");
     }
     if(ride.plane) driveDial(g, dhud.tok, 174, 64, 54, Math.max(0, ride.plane.agl)/100, 10, 1, 0.5, "×100 m up", Math.round(Math.max(0, ride.plane.agl)), null, "ALT");
   }
@@ -3246,6 +3488,16 @@ function mount(el, api){
     var thr = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
     var steer = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
     if(gp){ thr = E.clamp(thr + gp.thr, -1, 1); steer = E.clamp(steer - gp.x, -1, 1); }
+    if(ride.auto){                                                     // [autopilot] round the coast to where you are going, or on along its heading
+      if(thr || steer) apOff("Autopilot off: you have it");
+      else {
+        var sea = cur.sea && (cur.sea.boat || cur.sea), bg = apGoal(), ba = HQV.hqAutopilot.boat({x: st.x, z: st.z, yaw: st.yaw, speed: st.speed || 0}, bg ? {x: bg.x, z: bg.z} : null,
+          {top: ride.V.top || 10, land: sea && sea.land, hdg: ride.auto.hdg});
+        thr = ba.thr; steer = ba.steer;
+        if(ba.done) apOff("Autopilot: you're there");
+        else if(ba.blocked && Math.abs(st.speed || 0) < 0.5) apOff(bg ? "Autopilot: as close as the water goes" : "Autopilot off: land ahead");
+      }
+    }
     walkTo = null; walkDoor = null;
     var inp = {thr: thr, steer: steer}, yaw0 = avatar.yaw;
     var evs = cur.sea ? H.step(st, inp, dt, cur.sea.boat || cur.sea) : [];   // the hull's sea: under a bridge is water
@@ -3275,6 +3527,14 @@ function mount(el, api){
     if(gp){ fwd = E.clamp(fwd + gp.thr, -1, 1); turn = E.clamp(turn - gp.x, -1, 1); lift = E.clamp(lift + (gp.hand ? 1 : 0) - (gp.slide ? 1 : 0), -1, 1); }
     walkTo = null; walkDoor = null;
     var yaw0 = avatar.yaw, floor = cur && cur.heliFloor ? cur.heliFloor : groundAt, PR = ride.pet ? HQV.hqPetRide : null;
+    if(ride.auto){                                                     // [autopilot] up, over whatever is in the way, there, and down
+      if(fwd || turn || lift) apOff("Autopilot off: you have it");
+      else {
+        var hg = apGoal(), HV = ride.V || {}, ha = HQV.hqAutopilot.heli(st, hg ? {x: hg.x, z: hg.z} : null, {floor: floor, alt: 45, top: HV.top || 45, acc: HV.acc || 7.5, hdg: ride.auto.hdg});
+        fwd = ha.fwd; turn = ha.turn; lift = ha.lift;
+        if(ha.done) apOff(hg ? "Autopilot: landed" : null);
+      }
+    }
     var evs = PR ? PR.step(st, {fwd: fwd, turn: turn, lift: lift, run: false}, dt, {floor: floor}) : Hh.step(st, {fwd: fwd, turn: turn, lift: lift}, dt, {floor: floor});   // [3.14] a dragon
     if(cur && cur.heliAssist) cur.heliAssist(st, {fwd: fwd, turn: turn, lift: lift}, dt);   // [hq revamp] an HQ roof pad's landing assist (games/hqroof.js)
     if(evs.length || st.ground) rideUiSync(false);                // "Get out" only where you can
@@ -4149,7 +4409,7 @@ function mount(el, api){
              home: o.home || {x: x, z: z, yaw: yaw}};
     C.bikes.push(b);
     if(o.key === "showroom") showProp = b;
-    if(Drv()){ var dm = Drv().dmgLoad(o.key); if(dm.d > 0) try { Drv().dent(THREE, R, dm, o.key); } catch(e){} }   // [3.12] its dents, parked
+    if(Drv() && dmgOn()){ var dm = Drv().dmgLoad(o.key); if(dm.d > 0) try { Drv().dent(THREE, R, dm, o.key); } catch(e){} }   // [3.12] its dents, parked (opt in)
     return b;
   }
   // your vehicles parked in this world, put where you left them (a street rebuilt, a world swapped in); stored ones
@@ -4805,6 +5065,10 @@ function mount(el, api){
       }
       return;
     }
+    if(e.code === "KeyI" && ride && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey){   // [autopilot]
+      e.preventDefault(); e.stopPropagation(); if(e.type === "keydown" && !e.repeat) apToggle(); return;
+    }
+    if(gearKey(e)) return;                                             // [gearbox] . , shift, G manual / automatic
     if(e.code === "KeyG" && e.type === "keydown" && !e.repeat && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey
        && !(ride && ride.kind === "skate") && showroomOn()){ e.preventDefault(); e.stopPropagation(); showroomToggle(); return; }
     if(callUi && callUi.isOpen()){                                                          // the call list has the keys
@@ -4847,7 +5111,8 @@ function mount(el, api){
     if(drvKey(e)) return;                                              // [3.12] L lights, Y convoy, J (held) formation
     if(camKey(e)) return;
     if(!inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
-    if(!MOVE_KEYS[e.code] && !(SKATE_KEYS[e.code] && ride && ride.kind === "skate")) return;
+    if(!MOVE_KEYS[e.code] && !(SKATE_KEYS[e.code] && ride && ride.kind === "skate")
+       && !(e.code === "KeyX" && ride && !ride.plane && drvGround())) return;     // [gearbox] X: the clutch, held
     keys[e.code] = e.type === "keydown";
     if(e.code.indexOf("Shift") < 0) e.preventDefault();
   }

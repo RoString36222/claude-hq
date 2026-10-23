@@ -489,6 +489,32 @@ and feature guide.
   level (the street, or the deck for the roof lift). Tests: E priority (door before pet), facing and distance, lobby
   pets after a late list, the Arena reload, front gate to the street, lobby door destinations and triggers.
 
+- **Next — A real gearbox: manual, rev-matched, clutch, launch control; damage opt in.** (`games/hqvehiclephys.js
+  gearStep`, node-tested.) **G** switches manual / automatic (remembered); in manual **.** shifts up and **,** down,
+  through neutral below 1st; hold **X** for the clutch. Every gear tops out at its own limiter (its real top speed from
+  the gearing: you bounce off it, the speed held). Downshifts are rev-matched: the revs blip up to the lower gear's
+  with the throttle blip and pops, and one that would over-rev is refused ("Too fast for 2nd"). Clutch in (or
+  neutral): W revs the engine free to the limiter; let it out with the revs up and it launches with wheelspin.
+  Automatic: brake and throttle together at a standstill hold the revs (launch control), let go of the brake to go.
+  Quickshifter on sporty bikes (70 kW+) and 7+ speed DCT/automatic cars: upshifts flat out are a 50 ms ignition cut
+  with a bark and a pop, no clutch, no lift (the rev counter reads MANUAL QS). Off the throttle the engine brakes
+  harder in a lower gear. Vehicle damage (dents, smoke, cracked lights, a bent
+  car's pull) is now opt in: Settings → Vehicle damage, off by default.
+  Also in this release: the engine stays on in neutral and stopped, and starts with a crank. **Shift+G** cycles drive
+  modes (Comfort shifts early and quietly, Sport, Track holds revs and crackles; remembered). **K** is nitrous (about
+  4 s, blue flames; once empty it waits for a 15% refill). **Space+W** does a burnout, and steering makes donuts (not on
+  front-wheel-drive cars). On bikes, **F** wheelies (feather the throttle or you loop out) and **F+S** stoppies (too fast
+  and you go over the bars); a stopped bike leans on its side stand, parked ones too. Flames and pops on the overrun
+  and on quickshifts, tyre smoke, skid marks, a shift light, **H** horn, and a timer for 0–100, 0–200 and the quarter
+  mile with personal bests per vehicle (`games/hqvfx.js`, nitroStep/perfStep/wheelieStep node-tested). Calm mode shows
+  no effects.
+  **I** is the autopilot in anything you drive, ride, sail or fly (`games/hqautopilot.js`, node-tested against the
+  real boat and helicopter physics). With a route (**N**) it takes you there and stops: a car or a bike keeps to the
+  right-hand lane, slows for corners, brakes for traffic and players in its lane, and nudges on if a car is waiting for
+  it; a boat steers round the coast; a helicopter lifts off, climbs over whatever is in the way and lands on the spot.
+  With no route a car follows its road, straight on at junctions, and a boat or a helicopter holds its course. It only
+  works the controls, so the gears, the sound and your drive mode still apply (Comfort cruises at 47 km/h, Track at
+  79). Any steering or throttle of yours takes over. Planes keep their own autopilot (**K**, now also **I**).
 - **Next — Stunts across every city** (`games/hqstunts.js`, tests/test_hqstunts.py). Placed per city from its
   own layout, deterministically (every client builds the same set): a 4 m free-land grid of everything that is not
   road, river, sea, a site, an HQ or a tower district; building lots elsewhere may be cleared (at most 8 a stunt,

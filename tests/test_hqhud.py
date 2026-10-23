@@ -285,6 +285,7 @@ class HudNodeTests(unittest.TestCase):
 
     def test_load_settings(self):
         defaults = {"fov": 65, "sens": 1, "invertY": False, "reduced": False, "headBob": True, "quality": "auto", "preferred": "chase",
+                    "damage": False,                 # vehicle damage is opt in
                     "mouseSteer": False}
         junk, none, arr, clamped, good = self.o["junk"]
         self.assertEqual(junk, defaults)

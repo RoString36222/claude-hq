@@ -245,7 +245,7 @@ class Hq3dSource(unittest.TestCase):
         self.assertIn("return cur && cur.camModes && cur.groundY ? cur.groundY(x, z) : 0;", func_body(self.src, "groundAt"))
 
     def test_builder_requests(self):
-        self.assertIn('t.closest(".hqhud-gear, .hqhud-settings")', func_body(self.src, "typing"))
+        self.assertIn('t.closest(".hqhud-gear, .hqhud-settings, .hqs")', func_body(self.src, "typing"))   # (and HQ Studio's panel)
         self.assertIn("C.occluders(pose.pos, pose.focus || pose.look,", self.src)
         self.assertNotIn("occluders(pose.pos, pose.look,", self.src)
         self.assertIn('if(rig.mode === "cine" && rig.wake)', func_body(self.src, "rigFrame"))

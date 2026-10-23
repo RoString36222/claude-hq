@@ -2521,3 +2521,7 @@ html.hq-calm .hqhud-chip,html.hq-calm .hqhud-vignette{transition:none}
 .hqs-note{flex:1;min-width:160px}
 html.hq-calm .hqs-chip{transition:none}
 @media (prefers-reduced-motion: reduce){.hqs-chip{transition:none}}
+/* the Studio sits to the right without dimming the page: the 3D HQ behind it is the live preview */
+.modalback.hqs-back{background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;justify-content:flex-end;padding:72px 16px 16px;pointer-events:none}
+.hqs-back .hqs{pointer-events:auto;width:min(540px,100%);max-height:calc(100vh - 96px);box-shadow:var(--shadow)}
+@media(max-width:700px){.modalback.hqs-back{justify-content:center;padding:16px}}

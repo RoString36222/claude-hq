@@ -162,7 +162,10 @@ function drawNight(c, X, kind, share){
     g.fillStyle = shade(X.body, 0.12); g.fillRect(0, 0, W, H);
     windows(F, kind, W, H).forEach(function(wn){
       var on = kind === "podium" || R() < share/10;
-      g.fillStyle = on ? X.night : "#020406"; winPath(g, wn); g.fill();
+      if(on){ var lg = g.createLinearGradient(0, wn.y, 0, wn.y + wn.h); lg.addColorStop(0, "#ffffff"); lg.addColorStop(0.12, X.night); lg.addColorStop(1, shade(X.night, 0.45)); g.fillStyle = lg; }
+      else g.fillStyle = R() < 0.25 ? shade(X.night, 0.12) : "#020406";                    // a dim room now and then
+      winPath(g, wn); g.fill();
+      g.fillStyle = "rgba(0,0,0,.55)"; g.fillRect(wn.x + wn.w/2 - 1, wn.y, 2, wn.h);                // the mullion, dark against the light
       if(on && kind !== "podium" && R() < 0.5){ g.fillStyle = "rgba(0,0,0,.5)"; var px = wn.x + 4 + R()*(wn.w - 14); g.beginPath(); g.arc(px + 4, wn.y + wn.h - 22, 4, 0, 7); g.fill(); g.fillRect(px, wn.y + wn.h - 17, 8, 17); }
     });
     if(F === "tokyo"){ g.fillStyle = X.trim; for(var f = 0; f < 4; f++) g.fillRect(0, f*128 + 120, W, 3); }
@@ -437,6 +440,7 @@ function make(c, opts){
     });
     var sign = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(P.w - 0.8, 8.4), 1.3), new THREE.MeshBasicMaterial({map: sg.t, transparent: true, toneMapped: false}));
     sign.position.set(0, PLINTH + P.h - 0.75, front + 0.06); detail.add(sign); dyn.sign = sign;
+    if(E === "portico" || E === "torii"){ sign.scale.setScalar(0.62); sign.position.set(0, PLINTH + (E === "portico" ? 4.4 : 4.05), front + (E === "portico" ? 2.42 : 2.3)); }   // on the portico's entablature, the torii's plaque
     Kd.box("dark", Math.min(P.w - 0.6, 8.6), 1.45, 0.08, 0, PLINTH + P.h - 0.75, front + 0.01);
     if(F === "tokyo"){   // a vertical blade sign on the corner
       var vt = c.canvasTex(128, 640, function(g){ g.fillStyle = "#0b0d16"; g.fillRect(0, 0, 128, 640); g.strokeStyle = X.trim; g.lineWidth = 6; g.strokeRect(6, 6, 116, 628);
@@ -452,6 +456,8 @@ function make(c, opts){
     var lt = c.label("Front door", HEX.green, 0.5); lt.position.set(0, PLINTH + P.h + 1.0, front + 1.2); detail.add(lt);
     /* --- the roof: railing, the helipad (always), the crown on the corners, the roof extras --- */
     var Rf = M.roof, Pd = M.pad, top = M.top;
+    Kd.box(F === "tokyo" ? "neon" : "lit", Rf.w + 0.16, 0.08, Rf.d + 0.16, Rf.x, top - 0.35, Rf.z);       // the crown's lit band
+    Kd.box(F === "stone" || F === "deco" ? "stone" : "trim", Rf.w + 0.3, 0.22, Rf.d + 0.3, Rf.x, top - 0.12, Rf.z);
     Kd.box("roof", Rf.w, 0.12, Rf.d, Rf.x, top + 0.06, Rf.z);
     [[0, 1], [0, -1], [1, 0], [-1, 0]].forEach(function(q){
       var lx = q[0] ? 0.08 : Rf.w, lz = q[1] ? 0.08 : Rf.d;

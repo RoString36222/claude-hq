@@ -3078,7 +3078,7 @@ HQV.hqWorlds.city3d = function(c, w){
     var R = HQV.hqRoof; roofs = [];
     if(!R) return;
     hqs.forEach(function(E){
-      var r = null; try { r = R.roofOf(E, E.B, toWorld); } catch(e){ r = null; }
+      var r = null; try { r = R.roofOf(Object.assign({}, E, {y: (+E.y || 0) + PAD_UP}), E.B, toWorld); } catch(e){ r = null; }   // the building stands on its lot's slab
       if(!r) return; roofs.push(r);
       if(r.lift && !E.roofDoor){
         var own = r.own, d = {view: own ? "@lobby" : "visit:" + r.uid, kind: "roof", roof: true, userId: r.uid, label: own ? "Roof lift" : E.name + " · roof lift",

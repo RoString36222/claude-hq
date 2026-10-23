@@ -2120,10 +2120,9 @@ function mount(el, api){
     var shift = !!(keys.ShiftLeft || keys.ShiftRight), hand = !!keys.Space;
     if(gp){ thr = E.clamp(thr + gp.thr, -1, 1); st = E.clamp(st - gp.x, -1, 1); shift = shift || gp.slide; hand = hand || gp.hand; }
     // [3.12] in a convoy, holding J: the assist steers and throttles for your slot where you leave the keys alone
-    // (games/hqdrive.js assist); the road's grip in the weather (gripOf); a badly bent car pulls a little (dmgPull)
+    // (games/hqdrive.js assist); the road's grip in the weather (gripOf)
     var DD = Drv(), G = drvGrip(), CS = DRV.jHeld && DD ? cvSlot() : null;
     if(CS && !CS.air){ var as = DD.assist({x: avatar.x, z: avatar.z, yaw: avatar.yaw, speed: ride.speed}, CS.L, CS.s, false); if(!thr) thr = as.thr; if(!st) st = as.steer; }
-    if(DD && DRV.dmg && Math.abs(ride.speed) > 2) st = E.clamp(st + DD.dmgPull(DRV.dmg, DRV.key), -1, 1);
     var V = ride.V, top = (V.sprint && shift ? V.sprint : V.top)*G.top;
     walkTo = null; walkDoor = null;
     // an engine pulls hardest from a standstill and less as it nears its top speed

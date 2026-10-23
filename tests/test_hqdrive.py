@@ -39,7 +39,7 @@ let st = D.dmgNew(); const steps = [];
 for (let i = 0; i < 8; i++) { st = D.dmgAdd(st, 16, i < 4 ? 'f' : 'r'); steps.push(st.d); }
 out.steps = steps; out.final = st; out.cracked = D.dmgCracked(st); out.smoke = D.dmgSmoke(st);
 out.light = [D.dmgCracked(D.dmgAdd(null, 9, 'f')), D.dmgSmoke(D.dmgAdd(null, 9, 'f'))];
-out.pull = [D.dmgPull(D.dmgNew(), 'k'), Math.abs(D.dmgPull(st, 'own:1')), D.dmgPull(st, 'own:1') === D.dmgPull(st, 'own:1')];
+out.pull = typeof D.dmgPull;
 out.saved = D.dmgSave('own:abc', st); out.loaded = D.dmgLoad('own:abc'); out.other = D.dmgLoad('own:zzz').d;
 out.badKey = [D.dmgSave('../x y', st), D.dmgLoad('../x y').d];
 D.dmgSave('kind:car', D.dmgAdd(null, 12, 'r'));
@@ -153,9 +153,7 @@ class DriveTests(unittest.TestCase):
         self.assertTrue(o["cracked"])
         self.assertTrue(o["smoke"])
         self.assertEqual(o["light"], [False, False])                   # one light knock: nothing cracked, no smoke
-        self.assertEqual(o["pull"][0], 0)
-        self.assertGreater(o["pull"][1], 0)
-        self.assertTrue(o["pull"][2])
+        self.assertEqual(o["pull"], "undefined")   # damage never steers the car
 
     def test_damage_persists_per_vehicle_and_the_garage_repairs_it(self):
         o = self.o

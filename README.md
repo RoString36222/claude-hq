@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.14.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.14.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -408,6 +408,9 @@ and feature guide.
 ---
 
 ## Changelog
+
+- **3.14.1 — A damaged car steers straight.** A car more than 85 % bent no longer pulls left or right by
+  itself while you drive; damage still shows as dents, cracked lights and smoke, and the garage still repairs it.
 
 - **3.14.0 — Ride your pets.** A grown dragon (any of the seven), the grown sea serpent or a big dinosaur
   (Triceratops, Brachiosaurus, Stegosaurus, T-Rex, from the grown mark of 400 affection) that is out with you can

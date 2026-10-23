@@ -72,6 +72,13 @@ paired), published maps and work signals (off by default) add a few listed field
   dealership repair it). **Convoys:** press **Y** near a friend (or **🚗 Convoy** in Here now) to invite them; they
   press **Y** to join, then hold **J** to keep their slot behind-left or behind-right of the leader, who can set a
   Go to route that every follower sees. **Y** again leaves.
+- **The Tuning shop (3.13).** **Redline Tuning**, a workshop next to the dealership in every city from tier 2
+  (**Go to → Tuning shop**): walk into its open bay and press **E**, or press **Tune** on a B1 row of the garage
+  manager. Paint (factory colours or any colour, gloss / matte / metallic / pearl / chrome, a two-tone roof, stripes
+  or a livery), six rim designs per car or bike with their colour and a size step, window tint, a lip, ducktail or GT
+  wing, sport / quad / titanium exhausts (bikes: slip-on, under-seat, end can; each changes the engine note) and a
+  plate of your own (8 characters; your HQ's name by default). Drag the preview to orbit, the wheel or **+ / −** to
+  zoom. Free; your owned vehicles' tunes live in the Arena (others see them), the starters' in this browser.
 - **The Commons air base.** Hangars, a radar, an attack helicopter, an aircraft carrier offshore and
   fighter jets flying over.
 - **A real airport.** An offshore airfield for the Commons: a 1.6 km runway with full markings and lights,

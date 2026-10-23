@@ -131,6 +131,9 @@ struct Person {
     /// id (`v`, one the Arena knows) and paint index (`vp`), so others see the real car
     /// or bike. None whenever a is not 5 or 6, or the page sent no `v`.
     veh: Option<(String, u8)>,
+    /// Its tuning (the "tuning" capability, HQ 3.13): tuning.rs's short code (`vt`), kept only while driving
+    /// (a = 5 / 6, a catalogue vehicle or a starter) and only when tuning::parse_code accepts it. Per frame.
+    tune: Option<String>,
     /// A boombox on their shoulder (the "boombox" capability, HQ 3.11): the YouTube video it plays (`bb`, an
     /// 11-character id), when that song started on the Arena's clock (`bt`, epoch ms: a listener works out where it
     /// is from that, so the value holds still while it plays and the street is not re-sent every frame) and its title
@@ -176,6 +179,7 @@ impl Hq {
                 skate: None,
                 alt: None,
                 veh: None,
+                tune: None,
                 boombox: None,
                 convoy: Convoy::default(),
                 bucket: (POS_BURST, t),
@@ -255,6 +259,15 @@ impl Hq {
             }
             _ => None,
         };
+        // [3.13] its tuning, only while driving or riding: a code tuning.rs would not write drops the whole frame
+        let tune = match (a.as_f64(), msg.get("vt")) {
+            (_, None) | (_, Some(Value::Null)) => None,
+            (Some(f), Some(v)) if f == 5.0 || f == 6.0 => match v.as_str().and_then(crate::tuning::parse_code) {
+                Some(_) => v.as_str().map(str::to_string),
+                None => return false,
+            },
+            _ => None,
+        };
         // A boombox: the video, its start and its title together, or the whole frame is dropped.
         let boombox = match msg.get("bb") {
             None | Some(Value::Null) => None,
@@ -279,6 +292,7 @@ impl Hq {
         p.skate = skate;
         p.alt = alt;
         p.veh = veh;
+        p.tune = tune;
         p.boombox = boombox;
         p.convoy = convoy;
         self.dirty = true;
@@ -341,6 +355,10 @@ impl Hq {
                     if let Some((v, vp)) = &p.veh {
                         m.insert("v".into(), json!(v));
                         m.insert("vp".into(), json!(vp));
+                    }
+                    // only while driving a tuned vehicle ("tuning" capability, HQ 3.13)
+                    if let Some(vt) = &p.tune {
+                        m.insert("vt".into(), json!(vt));
                     }
                     // only while their boombox plays ("boombox" capability)
                     if let Some((bb, bt, bn)) = &p.boombox {
@@ -674,6 +692,29 @@ mod tests {
         }
         assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
         assert_eq!(p.listing()[0]["cv"], json!("x"), "and kept the convoy as it was");
+    }
+
+    #[test]
+    fn a_tuning_code_rides_in_the_listing_only_while_driving() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        let vt = "325333312ab9fffffffc9a227HQ_42-X";
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 5, "v": "bmw-m3-competition", "vp": 2, "vt": vt}), 0.1));
+        assert_eq!(p.listing()[0]["vt"], json!(vt));
+        // a starter (no `v`) keeps its tuning too
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 6, "vt": "0001000---"}), 0.2));
+        assert_eq!(p.listing()[0]["vt"], json!("0001000---"));
+        // on foot: none, whatever the page sends; a frame without it clears it
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 1, "vt": vt}), 0.3));
+        assert!(p.listing()[0].get("vt").is_none());
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 5, "vt": vt}), 0.4));
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 5}), 0.5));
+        assert!(p.listing()[0].get("vt").is_none());
+        // a code the Arena would not write drops the whole frame
+        for bad in [json!("x"), json!(7), json!("9001000---"), json!("0001000---FUCK"), json!("0001000---ABCDEFGHIJ")] {
+            assert!(!p.pos("u", &json!({"w": "city", "x": 900, "z": 0, "r": 0, "a": 5, "vt": bad}), 2.0), "{bad}");
+        }
+        assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
     }
 
     #[test]

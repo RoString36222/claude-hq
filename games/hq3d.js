@@ -601,7 +601,7 @@ function mount(el, api){
   function carModel(body, accent, plate){
     var V = vehicle("car", carPaint(body), accent, plate);
     return {g: V.g, wheels: [0, 1, 2, 3].map(function(i){ return V.get("wheel-" + i); }), steer: [V.get("steer-l"), V.get("steer-r")], spin: V.get("spin"),
-            R: CAR_WR, seat: V.seat, grips: V.grips, feet: V.feet, lean: -0.08, hats: false, riderK: 0.8, brake: V.brake, lights: V.lights};
+            R: CAR_WR, seat: V.seat, grips: V.grips, feet: V.feet, lean: -0.08, hats: false, riderK: 0.8, brake: V.brake, lights: V.lights, M: V.M};   // M: [3.13] its materials, for a tune
   }
   // a dark paint is lifted a little, so a navy or black car still reads on a night street
   function carPaint(hex){
@@ -698,7 +698,7 @@ function mount(el, api){
   function motoModel(color, c2, plate){
     var V = vehicle("moto", color, c2, plate);
     return {g: V.g, wheels: [V.get("wheel-0"), V.get("wheel-1")], steer: V.get("steer"), R: MOTO_WR*MOTO_S,
-            seat: V.seat, grips: V.grips, feet: V.feet, lean: 0.45, brake: V.brake, lights: V.lights};
+            seat: V.seat, grips: V.grips, feet: V.feet, lean: 0.45, brake: V.brake, lights: V.lights, M: V.M};   // M: [3.13] its materials, for a tune
   }
   function motoRoll(M, d, st){
     if(!M) return;
@@ -767,6 +767,7 @@ function mount(el, api){
     night: function(){ return isNight(); },
     // the dealership (games/hqdealer.js via games/hqcity3d.js): its door or forecourt opens the dealer panel
     dealer: {open: function(){ return dealerOpen(); }},
+    tuning: {open: function(){ return tuneOpen(); }},   // [3.13] the Tuning shop (games/hqtuning.js via games/hqcity3d.js)
     held: function(code){ return !!keys[code]; },
     // compile a group's shaders now, hidden parts too (a level of detail switched on later costs no frame then)
     prewarm: function(root){
@@ -1393,6 +1394,7 @@ function mount(el, api){
   function catEntry(v, d){ var cls = String(v["class"] || "").split("."); return {kind: cls[0] === "bike" ? "bike" : "car", type: v.body || cls[1], spec: v.spec, dims: d || v.dims, sound: v.sound}; }
   function catRegister(cat){
     CAT = cat;
+    if(HQV.hqTuning && HQV.hqTuning.setCatalogue) HQV.hqTuning.setCatalogue(cat);   // [3.13]
     var VM = HQV.hqVehicleModels;
     ((cat && cat.vehicles) || []).forEach(function(v){
       if(v.slot === "starter" || VEHICLES[v.id]) return;
@@ -1618,7 +1620,9 @@ function mount(el, api){
     var lean = new THREE.Group(); avatar.g.add(lean);
     var kind = VEHICLES[b.kind] ? b.kind : "bike", base = baseKind(kind), car = base === "car", Vc = VEHICLES[kind].cat, boat = !!VEHICLES[kind].boat && !!HQV.hqboat, heli = !!VEHICLES[kind].heli && !!HQV.hqheli;
     var plane = !!VEHICLES[kind].plane && !!HQV.hqplane;
-    var B = plane ? HQV.hqplane.model(ctx, kind, b.color, b.accent) : heli ? HQV.hqheli.model(ctx, kind, b.color, b.accent) : boat ? HQV.hqboat.model(ctx, kind, b.color, b.accent) : Vc && HQV.hqVehicleModels ? HQV.hqVehicleModels.build(ctx, Vc, b.color) : car ? carModel(b.color, b.accent, b.plate) : kind === "moto" ? motoModel(b.color, b.accent, b.plate) : kind === "skate" ? boardModel(b.color) : bikeModel(b.color, b.accent); lean.add(B.g);
+    var tn = tuneOf(b), bpl = tn && tn.plate ? tn.plate : b.plate;                                   // [3.13] its tune (the Tuning shop)
+    var B = plane ? HQV.hqplane.model(ctx, kind, b.color, b.accent) : heli ? HQV.hqheli.model(ctx, kind, b.color, b.accent) : boat ? HQV.hqboat.model(ctx, kind, b.color, b.accent) : Vc && HQV.hqVehicleModels ? HQV.hqVehicleModels.build(ctx, Vc, b.color, {tune: tn}) : car ? carModel(b.color, b.accent, bpl) : kind === "moto" ? motoModel(b.color, b.accent, bpl) : kind === "skate" ? boardModel(b.color) : bikeModel(b.color, b.accent); lean.add(B.g);
+    if(tn && !Vc && (car || kind === "moto") && HQV.hqVehicleModels && HQV.hqVehicleModels.tuneStarter) HQV.hqVehicleModels.tuneStarter(THREE, B, tn, car ? "car" : "bike");
     if(avatar.ch){ lean.add(avatar.ch.o); seatAny(avatar.ch, kind, B); }
     b.g.visible = false;
     avatar.airborne = false; avatar.vy = 0; avatar.hop = 0;   // getting on mid-hop lands you on the seat
@@ -1627,7 +1631,7 @@ function mount(el, api){
     settleY(0); if(boat) avatar.hy = b.y != null && b.float ? b.y : cur.sea ? cur.sea.y : 0; avatar.g.position.y = avatar.hy;
     avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0;
     ride = {idx: i, id: b.id || null, B: B, lean: lean, speed: 0, steer: 0, head: b.yaw, slip: 0, drift: false, gear: 1, rpm: 900,
-            kind: kind, base: base, V: VEHICLES[kind], car: car, eng: null, pitch: 0, pv: 0, roll: 0, rv: 0, paint: Math.max(0, b.paint | 0),
+            kind: kind, base: base, V: VEHICLES[kind], car: car, eng: null, pitch: 0, pv: 0, roll: 0, rv: 0, paint: Math.max(0, b.paint | 0), tune: tn,
             boat: boat ? HQV.hqboat.newState(kind, b.x, b.z, b.yaw) : null,
             heli: heli ? HQV.hqheli.newState(kind, b.x, b.y != null ? b.y : groundAt(b.x, b.z), b.z, b.yaw) : null,
             plane: plane ? HQV.hqplane.newState(kind, b.x, b.y != null ? b.y : groundAt(b.x, b.z), b.z, b.yaw) : null,
@@ -1876,7 +1880,7 @@ function mount(el, api){
     ride.rpm += (Math.min(7800, tgt) - ride.rpm)*(1 - Math.exp(-dt*8));
     // stopped with the throttle off: no note (without set() each frame, engineSound fades out)
     if(v < 0.3 && !(thr > 0)) return;
-    if(!ride.eng && E.engineSound) ride.eng = E.engineSound(V.eng);
+    if(!ride.eng && E.engineSound) ride.eng = E.engineSound(V.eng, ride.tune && HQV.hqTuning ? HQV.hqTuning.exhaustOf(ride.tune) : null);   // [3.13] a tuned exhaust
     // the throttle (load), the gear (an upshift cuts, a downshift blips), road rumble and a squeal in a slide
     if(ride.eng) ride.eng.set(ride.rpm, {thr: thr > 0 ? thr : 0, gear: ride.gear, speed: V.boat ? 0 : v,
       slip: ride.drift && !V.boat ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0});
@@ -3065,7 +3069,7 @@ function mount(el, api){
   // Through a door: another view of the page, or another floor of the building ("@lobby").
   function through(d){
     if(d.view === "garage:open"){ drvRepair(null, "at the garage"); if(HQV.hqGarageMgr && HQV.hqGarageMgr.open){ keys = {}; HQV.hqGarageMgr.open({from: d.from}); } return; }   // [basement 3.4] the garage manager ([3.12] repairs)
-    if(!d.view){ if(d.kind === "townhall" && cur && cur.townHall) cur.townHall(); else if(d.kind === "dealer") dealerOpen(); return; }   // games/hqcivic.js: the town hall; games/hqdealer.js: the dealership
+    if(!d.view){ if(d.kind === "townhall" && cur && cur.townHall) cur.townHall(); else if(d.kind === "dealer") dealerOpen(); else if(d.kind === "tuning") tuneOpen(); return; }   // games/hqcivic.js: the town hall; games/hqdealer.js: the dealership
     if(d.view.charAt(0) === "@") enterWorld(d.view.slice(1), cur.name);
     else if(d.view.indexOf("visit:") === 0){ if(api.visit) api.visit(d.view.slice(6)); }   // someone's HQ on the city street
     else api.go(d.view);
@@ -3250,7 +3254,7 @@ function mount(el, api){
   function propOf(key, C){ var bs = (C || cur) && (C || cur).bikes; if(!bs) return null; for(var i = 0; i < bs.length; i++) if(bs[i].id === key) return bs[i]; return null; }
   function propMake(o, C, x, z, yaw){
     var V = VEHICLES[o.vehicleId]; if(!V || !V.cat || !C || !C.bikes || !HQV.hqVehicleModels) return null;
-    var R = HQV.hqVehicleModels.build(ctx, V.cat, o.color), g = new THREE.Group(); g.add(R.g);
+    var R = HQV.hqVehicleModels.build(ctx, V.cat, o.color, {tune: HQV.hqTuning && o.ownId != null ? HQV.hqTuning.of("own:" + o.ownId) : null}), g = new THREE.Group(); g.add(R.g);   // [3.13] its tune
     g.position.set(x, groundAt(x, z), z); g.rotation.y = yaw;
     (C.scene || scene).add(g);
     // its paint as an index into the catalogue's paints: presence sends that (`vp`), so others see your colour
@@ -3564,6 +3568,54 @@ function mount(el, api){
     drvRepair(null, "at the dealership");                              // [3.12] the workshop puts every dent right
     return true;
   }
+  /* [3.13] The Tuning shop (games/hqtuning.js draws the workshop and the panel): E at its open bay in the City, or Tune on
+     a B1 row of the garage manager. Your owned vehicles (the Arena keeps their tune) and your starter car and motorbike
+     (this browser keeps theirs); a save rebuilds every copy standing in the City (the basement redoes its own). */
+  var tuneUi = null;
+  function myPlate(){ try { if(HQV.hqPlated) return String(HQV.hqPlated({}, {userId: api.me ? api.me() : null, isYou: true, look: ctx.look ? ctx.look() : {}}).plate || ""); } catch(e){} return ""; }
+  function starterCols(){ var c0 = null; try { c0 = HQV.hqLotColors ? HQV.hqLotColors(ctx.look ? ctx.look() : {}) : null; } catch(e){} return c0 || {paint: 0x2a3c50, accent: 0xffb347}; }
+  function tuneKeyOf(b){
+    if(!b) return null;
+    if(b.own && b.own.ownId != null) return "own:" + b.own.ownId;
+    if(b.plinth != null && /^lot:.*:(car|moto)$/.test(String(b.id || ""))) return "starter:" + (b.kind === "moto" ? "moto" : "car");   // your B1 starters
+    return null;
+  }
+  function tuneOf(b){ var k = tuneKeyOf(b); return k && HQV.hqTuning ? HQV.hqTuning.of(k) : null; }
+  function tuneItems(){
+    var H = HQV.hqTuning, out = [], col = starterCols(), L = (HQV.hqGarage && HQV.hqGarage.cached && HQV.hqGarage.cached()) || [];
+    L.forEach(function(v){
+      var V = VEHICLES[v.vehicle_id], e = V && V.cat; if(!e) return;
+      out.push({key: "own:" + v.id, title: (e.brand ? e.brand + " " : "") + e.model, kind: V.kind === "bike" ? "bike" : "car", entry: e, paints: e.paints || [],
+                paint: v.paint | 0, tune: H.of("own:" + v.id), ev: !!(e.spec && e.spec.electric)});
+    });
+    out.push({key: "starter:car", title: "Your starter car", kind: "car", entry: {id: "starter-car", starter: true}, baseHex: col.paint, accent: col.accent, paints: [], paint: 0, tune: H.of("starter:car")});
+    out.push({key: "starter:moto", title: "Your starter motorbike", kind: "bike", entry: {id: "starter-moto", kind: "bike", starter: true}, baseHex: col.accent, accent: col.paint, paints: [], paint: 0, tune: H.of("starter:moto")});
+    return out;
+  }
+  function tuneUiGet(){
+    if(tuneUi || !HQV.hqTuning || !HQV.hqVehicleModels) return tuneUi;
+    gamesCss();
+    tuneUi = HQV.hqTuning.mountPanel(el, {three: THREE, ctx: ctx, vehicles: tuneItems, plate: myPlate,
+      save: function(it, t, paint){ return HQV.hqTuning.save(it.key, t, paint, it.kind); },
+      announce: function(t){ if(api.announce) api.announce(t); }, onClose: function(){ if(canvas && canvas.focus) canvas.focus(); }});
+    return tuneUi;
+  }
+  function tuneOpen(key){
+    var u = tuneUiGet(); if(!u) return false;
+    keys = {};
+    var go = function(){ catLoad.then(function(){ u.open({key: key}); }); };
+    if(HQV.hqGarage && HQV.hqGarage.mine) Promise.resolve(HQV.hqGarage.mine()).then(go, go); else go();
+    return true;
+  }
+  if(HQV.hqTuning) HQV.hqTuning.host = function(key){ return tuneOpen(key); };
+  // a save: the City's copies of that vehicle in its new tune (one you sit in keeps its look until you get out)
+  var tuneUnsub = HQV.hqTuning && HQV.hqTuning.onChange ? HQV.hqTuning.onChange(function(key){
+    (cur && cur.bikes || []).forEach(function(b){
+      if(tuneKeyOf(b) !== key || !b.rig || !b.g || b.gallery != null || (ride && ride.id === b.id)) return;
+      var V = VEHICLES[b.kind]; if(!V || !V.cat || !HQV.hqVehicleModels) return;
+      try { var R = HQV.hqVehicleModels.build(ctx, V.cat, b.color, {tune: tuneOf(b)}); b.g.remove(b.rig.g); b.g.add(R.g); b.rig = R; } catch(e){}
+    });
+  }) : null;
   function vName(id){ var V = VEHICLES[id]; return V && V.cat ? V.cat.brand + " " + V.cat.model : "vehicle"; }
   // a colour ("#rrggbb" or a number) as an index into a catalogue vehicle's paints (0 when it is none of them): what
   // the Arena stores and presence sends (`vp`)
@@ -3804,6 +3856,15 @@ function mount(el, api){
     if(HQV.townHall && HQV.townHall.isOpen && HQV.townHall.isOpen()){ keys = {}; return; }   // the Town Hall has the keys
     if(HQV.hqnavui && HQV.hqnavui.owns && HQV.hqnavui.owns(e)) return;                      // the Go to panel's, the banner's
     if(cur && cur.menuOpen && cur.menuOpen()){ keys = {}; return; }                         // a stop's or a dock's menu too
+    if(tuneUi && tuneUi.isOpen()){                                                          // [3.13] the Tuning shop's panel has the keys
+      keys = {};
+      if(HQV.hqTuning.owns(e)) return;
+      if(!e.metaKey && !e.ctrlKey && !e.altKey){
+        e.preventDefault(); e.stopPropagation();
+        if(e.type === "keydown" && !e.repeat && e.key === "Escape") tuneUi.close();
+      }
+      return;
+    }
     if(dealUi && dealUi.isOpen()){                                                          // the dealer panel has the keys
       keys = {};
       if(HQV.hqDealer.owns(e)) return;
@@ -4008,6 +4069,7 @@ function mount(el, api){
       P.w = p.w; P.tx = nx; P.tz = nz; P.tyaw = p.r*PI/180; P.a = p.a | 0; P.k = p.k | 0; P.y = Math.max(0, Math.min(60, p.y | 0));
       // a catalogue vehicle (`v`, only while driving): the real car or bike, in its paint; unknown here: the starter
       P.v = typeof p.v === "string" && VEHICLES[p.v] && VEHICLES[p.v].cat ? p.v : null; P.vp = Math.max(0, p.vp | 0);
+      P.vt = typeof p.vt === "string" && /^[0-9][0-9A-Za-z_-]{9,32}$/.test(p.vt) ? p.vt : null;   // [3.13] its tune (the "tuning" capability)
       // their boombox (`bb`, the "boombox" capability): the song it plays, while it plays
       P.bb = typeof p.bb === "string" && /^[A-Za-z0-9_-]{11}$/.test(p.bb) ? p.bb : null;
       // [3.12] convoys (the "convoy" capability): whom they invite (ci), whom they follow (cv), where they lead (cg, cm)
@@ -4069,12 +4131,14 @@ function mount(el, api){
       if(vk && !VEHICLES[vk]) vk = null;                          // no games/hqheli.js here
       // the catalogue vehicle they drive (a car or a bike, matching a = 5 / 6), its paint part of what is drawn
       if(P.v && (P.a === 5 || P.a === 6) && baseKind(P.v) === vk && HQV.hqVehicleModels) vk = P.v;
-      var vsig = vk && VEHICLES[vk].cat ? vk + ":" + P.vp : vk;
+      var vsig = (vk && VEHICLES[vk].cat ? vk + ":" + P.vp : vk) + (vk && P.vt ? "~" + P.vt : "");   // [3.13] and its tune
       if(P.bike && P.vkind !== vsig){ if(P.ch){ P.g.add(P.ch.o); seatOn(P.ch, null); } P.g.remove(P.lean); P.bike = null; P.lean = null; P.vkind = null; }
       if(vk && !P.bike){
         P.lean = new THREE.Group(); P.g.add(P.lean); P.vkind = vsig; P.steer = 0;
         var Vc = VEHICLES[vk].cat, ph = Vc && Vc.paints && Vc.paints[P.vp] && /^#[0-9a-fA-F]{6}$/.test(Vc.paints[P.vp].hex) ? parseInt(Vc.paints[P.vp].hex.slice(1), 16) : bikeColor(u);
-        P.bike = Vc ? HQV.hqVehicleModels.build(ctx, Vc, ph) : VEHICLES[vk].plane ? HQV.hqplane.model(ctx, vk, bikeColor(u)) : VEHICLES[vk].heli ? HQV.hqheli.model(ctx, vk, bikeColor(u)) : vk === "car" ? carModel(bikeColor(u)) : vk === "moto" ? motoModel(bikeColor(u)) : bikeModel(bikeColor(u));
+        var ptn = P.vt && HQV.hqTuning && (vk === "car" || vk === "moto" || Vc) ? HQV.hqTuning.decode(P.vt, (Vc ? VEHICLES[vk].kind === "bike" : vk === "moto") ? "bike" : "car") : null;   // [3.13]
+        P.bike = Vc ? HQV.hqVehicleModels.build(ctx, Vc, ph, {tune: ptn}) : VEHICLES[vk].plane ? HQV.hqplane.model(ctx, vk, bikeColor(u)) : VEHICLES[vk].heli ? HQV.hqheli.model(ctx, vk, bikeColor(u)) : vk === "car" ? carModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : vk === "moto" ? motoModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : bikeModel(bikeColor(u));
+        if(ptn && !Vc && (vk === "car" || vk === "moto") && HQV.hqVehicleModels && HQV.hqVehicleModels.tuneStarter) HQV.hqVehicleModels.tuneStarter(THREE, P.bike, ptn, vk === "car" ? "car" : "bike");
         P.lean.add(P.bike.g); if(P.ch){ P.lean.add(P.ch.o); seatOn(P.ch, P.bike); }
       }
       if(P.bike){
@@ -4133,6 +4197,11 @@ function mount(el, api){
   inst.boombox = function(){ return !!boomMe; };
   // driving a catalogue vehicle: its id and paint index, for presence (`v` / `vp`, the "vehicles" capability)
   inst.vehicle = function(){ return ride && ride.V && ride.V.cat ? {v: ride.kind, vp: ride.paint | 0} : null; };
+  // [3.13] its tune as presence's short code (`vt`, the "tuning" capability): a tuned car or motorbike you drive, else null
+  inst.tuneCode = function(){
+    var Tn = HQV.hqTuning, k = ride && (ride.base === "car" || ride.base === "moto") ? (ride.base === "moto" ? "bike" : "car") : null;
+    return k && ride.tune && Tn && !Tn.isStock(ride.tune, k) ? Tn.encode(ride.tune, k) : null;
+  };
   // read-only, for the HUD's tests and tools: what you are driving and how
   inst.drive = function(){ return ride ? {kind: ride.kind, speed: ride.speed, slip: ride.slip, drift: !!ride.drift, gear: ride.gear, rpm: Math.round(ride.rpm)} : null; };
 

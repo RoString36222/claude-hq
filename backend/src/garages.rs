@@ -1,6 +1,7 @@
 //! Garages (HQ 3.4, Basement Garage): which garage each owned vehicle calls home.
 //!
-//!   GET  /v1/garages/mine               -> {homes: {<id>: {home, bay}}, basement: {max, used, level, next_at, cap}}
+//!   GET  /v1/garages/mine               -> {homes: {<id>: {home, bay}}, basement: {max, used, level, next_at, cap},
+//!                                           tuning: {<id>: tuning}}   (HQ 3.13: tuned vehicles only, tuning.rs)
 //!   POST /v1/vehicles/:id/home {home, bay?} -> {ok, home: {home, bay}, basement: {max, used, level, next_at, cap}}
 //!
 //! Every owned vehicle lives either in its owner's private basement garage (B1,
@@ -131,7 +132,8 @@ pub(crate) async fn mine(pool: &SqlitePool, uid: &str, level: i64) -> Result<Val
         used += i64::from(home == "basement");
         homes.insert(r.get("id"), json!({"home": home, "bay": bay}));
     }
-    Ok(json!({"homes": homes, "basement": basement_json(level, used)}))
+    let tuning = crate::tuning::mine(pool, uid).await?;
+    Ok(json!({"homes": homes, "basement": basement_json(level, used), "tuning": tuning}))
 }
 
 /// Move `uid`'s vehicle `id` to `home` (in `bay`, or its current bay, or the lowest

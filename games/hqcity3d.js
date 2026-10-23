@@ -414,6 +414,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var me = (api.me && api.me()) || null, owner = "commons", tier = 5, grow = 1000, cityState = null, assignRows = null;
   var dealerSite = null, dealerB = null;          // the dealership (games/hqdealer.js): its site and building
   var casinoSite = null, casinoB = null;          // the casino (games/hqcasino.js): its site and the building on the street
+  var tuningSite = null, tuningB = null;          // [3.13] the Tuning shop (games/hqtuning.js): its site and the workshop
   var civics = [], civicG = new THREE.Group(), boatG = new THREE.Group(), boats = [], civicLod = null, decks = [];
   var oc = null, sea = null, arch = null, tsim = null, tview = null, nsim = null, ndraw = null;
   var bus = null, menu = null, menuKey = null, talkL = null, ui = null, statsEl = null, statsAt = 0, fadeEl = null, landing = false, npcSkip = 0;
@@ -878,6 +879,14 @@ HQV.hqWorlds.city3d = function(c, w){
         // back out of the casino: on the red carpet, facing the street
         if(w.spawnFrom) w.spawnFrom.casino = {x: KB.door.x, z: KB.door.z, yaw: KB.door.yaw};
       } catch(e){ casinoB = null; }
+    }
+    tuningB = null;                                                                  // [3.13] the Tuning shop
+    if(tuningSite && HQV.hqTuning && (tuningSite.tier == null || (tuningSite.tier | 0) <= tier)){
+      try {
+        var TB = HQV.hqTuning.build(c, tuningSite, {tier: tier, night: night});
+        civicG.add(TB.g); civics.push(TB); tuningB = TB;
+        TB.hits.forEach(function(o){ hits.push(o); }); TB.doors.forEach(function(d){ doors.push(d); });
+      } catch(e){ tuningB = null; }
     }
     decks = []; civics.forEach(function(B){ (B.decks || []).forEach(function(d){ decks.push(d); }); });
     buildLod();
@@ -2454,6 +2463,7 @@ HQV.hqWorlds.city3d = function(c, w){
       if(line && line.text){ showTalk(line); return true; }
     }
     if(dealerB && c.dealer && (dealerB.inside(p.x, p.z) || Math.hypot(p.x - dealerB.door.x, p.z - dealerB.door.z) < 4)){ c.dealer.open(); return true; }
+    if(tuningB && c.tuning && (tuningB.inside(p.x, p.z) || Math.hypot(p.x - tuningB.door.x, p.z - tuningB.door.z) < 4)){ c.tuning.open(); return true; }   // [3.13]
     var rs = rail && rail.station(p.x, p.z); if(rs){ openTravelMenu(rs); return true; }   // rail: at the station's door, before its bus bay
     if(tsim){ var st = tsim.stopsNear(p.x, p.z, STOP_R)[0]; if(st){ openStopMenu(st); return true; } }
     var tm = HQV.hqTravel ? terminalAt(W, tier, p.x, p.z) : null;
@@ -2472,6 +2482,9 @@ HQV.hqWorlds.city3d = function(c, w){
     },
     inside: function(x, z){ return !!(dealerB && dealerB.inside(x, z)); }
   };
+  // [3.13] the Tuning shop, for tools (as .dealer): where it is and its door
+  w.tuning = {site: function(){ return tuningB ? {id: tuningSite.id, name: tuningSite.name, x: tuningB.x, z: tuningB.z, door: tuningB.door} : null; },
+              inside: function(x, z){ return !!(tuningB && tuningB.inside(x, z)); }};
   // a stop's or a terminal's menu, or the Go to panel: hq3d's keys stand still (the keys are theirs)
   w.menuOpen = function(){ return !!menu || !!(nui && nui.isOpen()); };
   function showTalk(line){
@@ -2677,7 +2690,8 @@ HQV.hqWorlds.city3d = function(c, w){
       }
     }
     if(talkL && nowMs > talkL.until){ S.remove(talkL.o); disposeTree(talkL.o); talkL = null; }
-    if(dealerB && c.active && c.active(w)) HQV.hqCity3d.dealer = w.dealer;   // the dealership, for tools (as .ships, .air)
+    if(dealerB && c.active && c.active(w)) HQV.hqCity3d.dealer = w.dealer;
+    if(tuningB && c.active && c.active(w)) HQV.hqCity3d.tuning = w.tuning;   // [3.13]   // the dealership, for tools (as .ships, .air)
     busStep();
     if(air) air.update(t, dt, k, cam);                                     // air: jets, the radar
     var tp = tripStep();
@@ -2694,6 +2708,7 @@ HQV.hqWorlds.city3d = function(c, w){
     S.remove(civicG); S.remove(boatG);
     if(dealerB){ dealerB.dispose(); dealerB = null; }
     if(casinoB){ casinoB.dispose(); casinoB = null; }
+    if(tuningB){ tuningB.dispose(); tuningB = null; }
     if(air){ air.destroy(); air = null; }                                  // air:
     carparkDestroy();                                                      // carpark
     ferryPool.forEach(function(F){ F.dispose(); }); ferryPool = []; if(myFerry){ myFerry.dispose(); myFerry = null; }
@@ -2948,6 +2963,8 @@ HQV.hqWorlds.city3d = function(c, w){
     if(V2 && HQV.hqDealer){ try { dealerSite = HQV.hqDealer.place(W, tier); } catch(e){ dealerSite = null; } }
     // the casino (games/hqcasino.js) likewise, after the dealership has taken its lot
     if(V2 && HQV.hqCasino){ try { casinoSite = HQV.hqCasino.place(W, tier); } catch(e){ casinoSite = null; } }
+    // [3.13] the Tuning shop: the building lot nearest the dealership, once the dealership and the casino have theirs
+    if(V2 && HQV.hqTuning){ try { tuningSite = HQV.hqTuning.place(W, tier); } catch(e){ tuningSite = null; } }
     indexBuildings();
     wb = HQV.worldbuild.create(c, W, V2 ? {scene: S, quality: 2, tier: tier, gap: !!(HQV.hqBridges && W.river)} : {scene: S, quality: 2});
     S.add(wb.root); S.add(staticG); S.add(hqG);

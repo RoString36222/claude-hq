@@ -72,6 +72,11 @@ pub fn vehicle_home_target(path: &str) -> Option<&str> {
     path.strip_prefix("/api/arena/vehicles/")?.strip_suffix("/home").filter(|id| !id.is_empty() && !id.contains('/'))
 }
 
+/// The owned vehicle in `/api/arena/vehicles/<id>/tuning` (GET reads, POST saves); arena.rs validates the id. [3.13]
+pub fn vehicle_tuning_target(path: &str) -> Option<&str> {
+    path.strip_prefix("/api/arena/vehicles/")?.strip_suffix("/tuning").filter(|id| !id.is_empty() && !id.contains('/'))
+}
+
 /// Every state-changing route; anything else 404s locally.
 pub fn post_paths() -> Vec<&'static str> {
     let mut v = vec![
@@ -495,6 +500,7 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
     if path == "/api/arena/garages/mine" { let (c, r) = app.arena_garages_mine(); return Reply::json(c, &r); } // [basement 3.4]
     if path == "/api/arena/casino/me" { let (c, r) = app.arena_casino_me(); return Reply::json(c, &r); } // HQ 3.7
     if path == "/api/arena/casino/duels" { let (c, r) = app.arena_casino_duels(); return Reply::json(c, &r); }
+    if let Some(id) = vehicle_tuning_target(path) { let (c, r) = app.arena_vehicle_tuning(id); return Reply::json(c, &r); } // [3.13]
     if path == "/api/arena/vehicles/mine" {
         let (c, r) = app.arena_vehicles_mine();
         return Reply::json(c, &r);
@@ -813,6 +819,7 @@ async fn do_post(app: Arc<App>, headers: HeaderMap, path: String, body: Body) ->
     }
     if !post_paths().contains(&path.as_str()) && city_post_target(&path).is_none() && vehicle_park_target(&path).is_none()
         && vehicle_home_target(&path).is_none() // [basement 3.4]
+        && vehicle_tuning_target(&path).is_none() // [3.13]
     {
         return reply(Reply::json(404, &json!({"error": "not found"})));
     }
@@ -935,6 +942,7 @@ fn arena_post(app: &App, path: &str, body: &Value) -> (u16, Value) {
         return app.arena_vehicle_park(id, body);
     }
     if let Some(id) = vehicle_home_target(path) { return app.arena_vehicle_home(id, body); } // [basement 3.4]
+    if let Some(id) = vehicle_tuning_target(path) { return app.arena_vehicle_tuning_set(id, body); } // [3.13]
     if let Some((owner, action)) = city_post_target(path) {
         return if action == "trade" { app.arena_market_trade(&owner, body) } else { app.arena_city_post(&owner, action, body) };
     }

@@ -145,6 +145,36 @@ pub fn vehicle_home_body(body: &Value) -> Result<Value, &'static str> {
     }
 }
 
+/// A tuning save's body (HQ 3.13, the Tuning shop): `{tuning, paint?}`, rebuilt from the known keys only,
+/// each a short enum word, a `#rrggbb` (or null), a small integer, or the plate (A-Z, 0-9, space, dash, at
+/// most 8). The Arena (backend/src/tuning.rs) validates every value against the vehicle's kind.
+pub fn vehicle_tuning_body(body: &Value) -> Result<Value, &'static str> {
+    let t = body.get("tuning").and_then(Value::as_object).ok_or("tuning must be an object")?;
+    let word = |v: &Value| v.as_str().is_some_and(|s| (1..=12).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'));
+    let hex = |v: &Value| v.is_null() || v.as_str().is_some_and(|s| s.len() == 7 && s.starts_with('#') && s[1..].bytes().all(|b| b.is_ascii_hexdigit()));
+    let small = |v: &Value| v.as_i64().is_some_and(|n| (-8..=8).contains(&n));
+    let mut out = serde_json::Map::new();
+    for (k, v) in t {
+        let ok = match k.as_str() {
+            "finish" | "two_tone" | "wing" | "exhaust" => word(v),
+            "color" | "color2" | "rim_color" => hex(v),
+            "rim" | "rim_size" | "tint" => small(v),
+            "plate" => v.as_str().is_some_and(|s| s.len() <= 8 && s.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b' ' || b == b'-')),
+            _ => return Err("unknown tuning field"),
+        };
+        if !ok {
+            return Err("bad tuning value");
+        }
+        out.insert(k.clone(), v.clone());
+    }
+    let mut clean = json!({"tuning": out});
+    match body.get("paint") {
+        None | Some(Value::Null) => {}
+        Some(p) => { clean["paint"] = json!(p.as_i64().filter(|n| (0..64).contains(n)).ok_or("paint must be 0 to 63")?); }
+    }
+    Ok(clean)
+}
+
 /// A vehicle park's body: `{garage: true}` (back in its city's garage), or
 /// `{world, x, z, yaw}` with a world the page can be in and finite coordinates.
 pub fn vehicle_park_body(body: &Value) -> Result<Value, &'static str> {
@@ -1286,6 +1316,26 @@ impl App {
         }
     }
 
+    /// GET /v1/vehicles/<id>/tuning: how an owned vehicle is tuned (HQ 3.13). Egress: the vehicle's id.
+    pub fn arena_vehicle_tuning(&self, id: &str) -> (u16, Value) {
+        if !OWNED_ID_RE.is_match(id) {
+            return (400, json!({"error": "bad vehicle id"}));
+        }
+        self.authed_get(&format!("/v1/vehicles/{id}/tuning"))
+    }
+
+    /// POST /v1/vehicles/<id>/tuning: save an owned vehicle's tuning (and paint). Egress: the vehicle's id,
+    /// enum words, colours, small numbers and the plate text the user typed (vehicle_tuning_body). [3.13]
+    pub fn arena_vehicle_tuning_set(&self, id: &str, body: &Value) -> (u16, Value) {
+        if !OWNED_ID_RE.is_match(id) {
+            return (400, json!({"error": "bad vehicle id"}));
+        }
+        match vehicle_tuning_body(body) {
+            Ok(clean) => self.authed_send("POST", &format!("/v1/vehicles/{id}/tuning"), clean),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
     /// GET /v1/casino/me: your chips, coins and casino stats, and the tables the games are drawn from.
     pub fn arena_casino_me(&self) -> (u16, Value) {
         self.authed_get("/v1/casino/me")
@@ -1711,6 +1761,36 @@ pub(crate) mod tests {
                               format!("https://arena.example/v1/vehicles/{id}/park").as_str()]);
         assert_eq!(s[1].3, Some(json!({"vehicle_id": "ktm-390-duke", "paint": 1})));
         assert!(s.iter().all(|x| x.2.as_deref() == Some("T")));
+    }
+
+    #[test]
+    fn tuning_forwards_only_known_fields() {
+        // [3.13]
+        let t = json!({"finish": "pearl", "color": "#12ab9f", "two_tone": "stripe", "color2": null, "rim": 3, "rim_color": "#ffffff",
+                       "rim_size": -1, "tint": 2, "wing": "gt", "exhaust": "titanium", "plate": "HQ 42-X"});
+        assert_eq!(vehicle_tuning_body(&json!({"tuning": t, "paint": 2, "user_id": "x"})), Ok(json!({"tuning": t, "paint": 2})));
+        assert_eq!(vehicle_tuning_body(&json!({"tuning": {}})), Ok(json!({"tuning": {}})));
+        for bad in [json!({}), json!({"tuning": 1}), json!({"tuning": {"turbo": true}}), json!({"tuning": {"plate": "hq"}}),
+                    json!({"tuning": {"plate": "ABCDEFGHI"}}), json!({"tuning": {"color": "red"}}), json!({"tuning": {"finish": "../x"}}),
+                    json!({"tuning": {"rim": 99}}), json!({"tuning": {}, "paint": 64})] {
+            assert!(vehicle_tuning_body(&bad).is_err(), "{bad}");
+        }
+        use crate::server::vehicle_tuning_target;
+        assert_eq!(vehicle_tuning_target("/api/arena/vehicles/abc/tuning"), Some("abc"));
+        for bad in ["/api/arena/vehicles//tuning", "/api/arena/vehicles/a/b/tuning", "/api/arena/vehicles/abc/home"] {
+            assert_eq!(vehicle_tuning_target(bad), None, "{bad}");
+        }
+        let (_d, app) = app();
+        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({})))));
+        let id = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+        assert_eq!(app.arena_vehicle_tuning(id).0, 200);
+        assert_eq!(app.arena_vehicle_tuning_set(id, &json!({"tuning": {"tint": 1}})).0, 200);
+        assert_eq!(app.arena_vehicle_tuning("../x").0, 400);
+        assert_eq!(app.arena_vehicle_tuning_set(id, &json!({"tuning": {"x": 1}})).0, 400);
+        let s = sent.lock().unwrap();
+        let urls: Vec<&str> = s.iter().map(|x| x.1.as_str()).collect();
+        assert_eq!(urls, vec![format!("https://arena.example/v1/vehicles/{id}/tuning").as_str(), format!("https://arena.example/v1/vehicles/{id}/tuning").as_str()]);
+        assert_eq!(s[1].3, Some(json!({"tuning": {"tint": 1}})));
     }
 
     #[test]

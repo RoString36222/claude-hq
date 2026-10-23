@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.15.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.16.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -409,6 +409,17 @@ and feature guide.
 
 ## Changelog
 
+- **3.16.0 — A grenade launcher in the City.** On foot in the 3D City, <kbd>X</kbd> takes out a stubby launcher
+  (it rides on your left shoulder; <kbd>X</kbd> again puts it away, and it goes away by itself on a ride, a bus or
+  another floor). <kbd>F</kbd>, or a click with the mouse captured (3.15's Mouse steering), lobs a grenade where the
+  camera looks: it arcs, bounces off the ground, walls and roofs, sinks in water, and goes off after 1.8 s with a
+  fireball, a smoke ring, a shock ring on the ground and a boom you hear late from far off. The City has no health:
+  a blast knocks back everyone within 6 m (you too), harder nearer its heart, up into the air on foot and a shove
+  plus a dent in a car. Calm mode keeps you on the ground and drops the fireball, the ring and the shake. Other
+  players see your launcher and your grenades: each shot rides in your presence frames for 1.5 s (the "grenade"
+  capability: `gl`, and `gn` as launch point, velocity, kind and age, all numbers; backend/src/valley/hq.rs checks
+  every one), every page flies it in the same fixed 1/60 s steps against the same world, and each page knocks back
+  only its own player (games/hqgrenade.js). Needs the Arena redeployed.
 - **3.15.0 — Mouse steering.** A new switch in the 3D City's camera settings (the gear): **Mouse steering**. With
   it on, click the view and the mouse turns you and the chase camera together, as in a shooter, with no dragging:
   you always face where the camera looks, moving the mouse up and down tilts the view (and it stays tilted), <kbd>W</kbd>

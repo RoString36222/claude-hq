@@ -64,7 +64,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           # Cities (3.0): the civic kit, residents, traffic, the sea, boats, travel
                           "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqheli",
                           # vehicles (3.2): the catalogue, handling from specs, their bodies, the (temporary) Showroom
-                          "hqvehicles", "hqvehiclephys", "hqvehiclemodels", "hqdrive", "hqshowroom", "hqgarage", "hqdealer", "hqtuning", "hqcasinoui", "hqcasino", "hqcall",
+                          "hqvehicles", "hqvehiclephys", "hqvehiclemodels", "hqdrive", "hqnetsmooth", "hqshowroom", "hqgarage", "hqdealer", "hqtuning", "hqcasinoui", "hqcasino", "hqcall",
                           "hqtravel", "hqvoyage", "hqships", "hqbridges",
                           # the airport: the airfield layout before the flights, the planes you fly (3.2), its ground, buildings, vehicles
                           "hqairfield", "hqair", "hqaircraft", "hqplane", "hqairport3d", "hqairbldg", "hqairground", "hqairbase",
@@ -95,7 +95,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         self.assertIn("msg.h=Math.max(-50000, Math.min(50000, Math.round(w.h*100)))", m.group(1))
         self.assertIn("Math.max(-90, Math.min(90,", m.group(1))
         self.assertNotRegex(body.replace(m.group(0), ""), r"msg\.[hp]=")
-        self.assertIn("msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0)].join", body)   # both in the dedupe key (and the vehicle, the boombox, the convoy, the tune, the pets)
+        self.assertIn("msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm].join", body)   # both in the dedupe key (and the vehicle, the boombox, the convoy, the tune, the pets)
         # the city3d skip comes before anything is sent
         self.assertLess(body.index('w.world==="city3d"'), body.index("ws.send"))
 

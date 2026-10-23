@@ -625,7 +625,7 @@ class PetsWiring(unittest.TestCase):
         mig = read("backend", "migrations", "0022_pets.sql")
         self.assertIn("CREATE TABLE IF NOT EXISTS owned_pets", mig)
         self.assertIn("home INTEGER NOT NULL DEFAULT 1 CHECK (home IN (0, 1))", mig)
-        self.assertIn('"convoy", "tuning", "pets", "hqstyle"]', read("backend", "src", "protocol.rs"))
+        self.assertIn('"convoy", "tuning", "pets", "hqstyle", "motion"]', read("backend", "src", "protocol.rs"))
         self.assertIn("read_pets(msg.get(\"pt\"))", read("backend", "src", "valley", "hq.rs"))
         self.assertIn(".merge(pets::routes())", read("backend", "src", "main.rs"))
         srv = read("dashboard-rs", "src", "server.rs")

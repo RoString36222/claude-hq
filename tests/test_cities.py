@@ -80,7 +80,7 @@ function key(target, code, name, type){
 }
 const HQV = window.HQV;
 var NOW = 1760000000000; const realNow = Date.now; Date.now = () => NOW;
-for (const f of ["hqbase", "hqskate", "world", "worldgeom", "hqcityparts", "hqcity", "hqmerge", "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqtravel",
+for (const f of ["hqstyle", "hqtower", "hqbase", "hqskate", "world", "worldgeom", "hqcityparts", "hqcity", "hqmerge", "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqtravel",
                  "hqbridges", "hqnav", "hqminimap", "hqroutefx", "hqnavui", "hqcity3d"])
   new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
 const gz = p => JSON.parse(zlib.gunzipSync(fs.readFileSync(p)).toString("utf8"));

@@ -35,7 +35,7 @@ const root = %(root)s;
 const THREE = await import(root + "/games/vendor/three-module.js");
 globalThis.window = {HQV: {}};
 const HQV = window.HQV;
-for (const f of ["hqbase", "hqskate", "world", "hqcityparts", "hqcity", "hqcity3d"])
+for (const f of ["hqstyle", "hqtower", "hqbase", "hqskate", "world", "hqcityparts", "hqcity", "hqcity3d"])
   new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
 const doc = JSON.parse(zlib.gunzipSync(fs.readFileSync(%(fixture)s)).toString("utf8"));
 // games/hqmerge.js when it is there, else a stand-in that merges nothing; either way every call

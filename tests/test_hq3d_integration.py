@@ -73,7 +73,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           # rail (3.x): the lines between cities, their trains
                           "hqrail",
                           # the vehicle garage (3.4); City 3.2: the weather, the landmarks and the amusement park
-                          "hqcarpark", "hqweather", "hqspectacle", "hqstunts", "hqcity3d"])
+                          "hqcarpark", "hqweather", "hqspectacle", "hqstunts", "hqgrenade", "hqtank", "hqcity3d"])
 
     def test_multi_hq_range_covers_server(self):
         m = re.search(r"\bhq:\[(\d+),(\d+)\]", read(MULTI))
@@ -95,7 +95,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         self.assertIn("msg.h=Math.max(-50000, Math.min(50000, Math.round(w.h*100)))", m.group(1))
         self.assertIn("Math.max(-90, Math.min(90,", m.group(1))
         self.assertNotRegex(body.replace(m.group(0), ""), r"msg\.[hp]=")
-        self.assertIn("msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm].join", body)   # both in the dedupe key (and the vehicle, the boombox, the convoy, the tune, the pets)
+        self.assertIn("msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm,msg.gl,JSON.stringify(msg.gn||0),JSON.stringify(msg.ta||0)].join", body)   # both in the dedupe key (and the vehicle, the boombox, the convoy, the tune, the pets)
         # the city3d skip comes before anything is sent
         self.assertLess(body.index('w.world==="city3d"'), body.index("ws.send"))
 
@@ -124,7 +124,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         self.assertIn('if((a===7 || a===8) && !hqNetCan("fly")) a = 0;', send)
         self.assertLess(send.index('hqNetCan("fly")'), send.index("var msg="))
         # others see them in it: the helicopter model at the height they send, its rotors turning
-        self.assertIn('var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop", 11: "regional", 12: "airliner", 13: "petride"};', src)
+        self.assertIn('var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop", 11: "regional", 12: "airliner", 13: "petride", 14: "tank"};', src)
         place = func_body(src, "placePeers")
         self.assertIn("HQV.hqheli.model(ctx, vk, bikeColor(u))", place)
         self.assertIn("HQV.hqheli.animate(P.bike, P.hst, dt, isNight())", place)
@@ -210,6 +210,38 @@ class Hq3dSource(unittest.TestCase):
         self.assertIn('P.g.rotation.order = "YXZ"', self.src)
         self.assertIn("avatar.g.rotation.x = -ride.pitch; avatar.g.rotation.z = ride.roll;", self.src)
         self.assertIn("P.g.rotation.x = -P.pitch", self.src)
+
+    def test_mouse_steering_wiring(self):
+        # [3.15] the camera gear's Mouse steering: in the chase cameras a plain click captures the mouse (never a
+        # walk-to), which turns you and the camera together; panels, typing and other cameras give the cursor back
+        down = func_body(self.src, "onDown")
+        self.assertIn("if(CHASE[m] && steerOn() && locked()){ drag = null; if(e.button === 0 && !tkFire()) gnFire(); return; }", down)   # [3.16] fires
+        self.assertIn("steer: !!CHASE[m] && steerOn()", down)
+        up = func_body(self.src, "onUp")
+        cap = "if(d.steer){ steerLock(); return; }"
+        self.assertLess(up.index("if(o && o.door)"), up.index(cap))                     # doors and desks still pick
+        self.assertLess(up.index(cap), up.index("pick(e, [].concat(cur.floor))"))        # the floor never walks you
+        self.assertIn("if(CHASE[rig.mode]) steerLook(lx, ly); else HQV.camrig.input(rig, {look: [lx, ly]});",
+                      func_body(self.src, "onMove"))
+        self.assertIn("r.catch(function(){})", func_body(self.src, "steerLock"))         # a refused capture never throws
+        look = func_body(self.src, "steerLook")
+        self.assertIn("tripHeld()", look)
+        self.assertIn("ride.mp = (ride.mp || 0) + dy", look)
+        mv = func_body(self.src, "moveAvatar")
+        self.assertLess(mv.index("if(steering() && !walkTo){"), mv.index("if(rigOn() && CHASE[rig.mode] && !walkTo){"))
+        self.assertIn("HQV.camrig.absorb(rig, PI)", mv)
+        self.assertIn("HQV.camrig.input(rig, {hold: true});", mv)
+        self.assertIn("steerStep(", mv)
+        self.assertIn("if(locked() && CHASE[m] && (!steerOn() || wantsCursor())) exitLock();", func_body(self.src, "rigFrame"))
+        wc = func_body(self.src, "wantsCursor")
+        for k in ("HQV.townHall.isOpen()", "cur.menuOpen()", "cur.bigMapOpen()", "HQV.hqGarageMgr.isOpen()", "tuneUi.isOpen()",
+                  "dealUi.isOpen()", "showUi.isOpen()", "callUi.isOpen()", "typing(document.activeElement)"):
+            self.assertIn(k, wc)
+        self.assertIn('if(CHASE[prev] && !CHASE[now] && now !== "fp" && now !== "photo") exitLock();',
+                      func_body(self.src, "modeChanged"))
+        self.assertIn("mouseSteer: false", func_body(self.src, "hudSettings"))
+        city = read(os.path.join(ROOT, "games", "hqcity3d.js"))
+        self.assertIn("w.bigMapOpen = function(){ return !!(mm && mm.isBig()); };", city)
 
     def test_exit_pointer_lock(self):
         self.assertIn("document.exitPointerLock()", func_body(self.src, "exitLock"))
@@ -387,6 +419,14 @@ out.still = [run(z, {}, 1, 60).travelYaw, H.travelYawOf(1, 0, 0), H.travelYawOf(
 out.loco = [0, 0.5, 2, 4, 5.6, 7, -2.6].map(function(v){ return H.locoWeights(v, 0); });
 out.locoShuffle = H.locoWeights(0, 3.6);
 out.stop = run(run(z, {fwd: 1}, 1, 60), {}, 0.05, 60).speed;
+// [3.15] mouse steering: W along your facing, S back at FOOT.back of the pace (signed), A to your left (+x facing +z),
+// the mouse's turn added to your facing, and with no key down you coast on the way you were going
+function runS(st, inp, secs, fps){ var n = Math.round(secs*fps); for(var i = 0; i < n; i++) st = H.steerStep(st, inp, 1/fps); return st; }
+var sw = runS({yaw: 0.5}, {fwd: 1}, 1, 60), sb = runS({yaw: 0.5}, {fwd: -1}, 1, 60), sa = runS({yaw: 0}, {side: 1}, 1, 60);
+var sc = runS(sa, {}, 0.05, 60), sr = runS({yaw: 0}, {fwd: 1, run: true}, 1, 60);
+out.steer = {w: [sw.speed, sw.mdx, sw.mdz, sw.yaw], back: [sb.speed, sb.mdx, sb.mdz, sb.yaw], left: [sa.speed, sa.mdx, sa.mdz],
+             coast: [sc.speed, sc.mdx, sc.mdz], run: sr.speed, turn: H.steerStep({yaw: 0.2}, {turn: 0.3}, 1/60).yaw,
+             wrap: H.steerStep({yaw: 3}, {turn: 0.5}, 1/60).yaw, junk: H.steerStep(null, null, NaN)};
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -456,6 +496,31 @@ class Hq3dPure(unittest.TestCase):
         self.assertEqual(self.o["ease"][0], 0)
         self.assertAlmostEqual(self.o["ease"][1], 1 - math.exp(-1), places=9)
         self.assertEqual(self.o["ease"][2], 0)
+
+    def test_mouse_steering_step(self):
+        st = self.o["steer"]
+        speed, mdx, mdz, yaw = st["w"]
+        self.assertAlmostEqual(speed, 4, delta=0.01)                                     # W: FOOT.walk along your facing
+        self.assertAlmostEqual(mdx, math.sin(0.5), places=6)
+        self.assertAlmostEqual(mdz, math.cos(0.5), places=6)
+        self.assertAlmostEqual(yaw, 0.5, places=9)                                       # never turns to face where you go
+        speed, mdx, mdz, yaw = st["back"]
+        self.assertAlmostEqual(speed, -4*0.65, delta=0.01)                               # S: FOOT.back of the pace, signed
+        self.assertAlmostEqual(mdx, math.sin(0.5), places=6)                             # (you go -md while it is negative)
+        self.assertAlmostEqual(mdz, math.cos(0.5), places=6)
+        self.assertAlmostEqual(yaw, 0.5, places=9)
+        speed, mdx, mdz = st["left"]
+        self.assertAlmostEqual(speed, 4, delta=0.01)                                     # A: a step to your left
+        self.assertAlmostEqual(mdx, 1, places=6)
+        self.assertAlmostEqual(mdz, 0, places=6)
+        speed, mdx, mdz = st["coast"]
+        self.assertGreater(speed, 0.5)                                                   # let go: you coast the same way
+        self.assertLess(speed, 4)
+        self.assertAlmostEqual(mdx, 1, places=6)
+        self.assertAlmostEqual(st["run"], 7, delta=0.02)
+        self.assertAlmostEqual(st["turn"], 0.5, places=9)                                # the mouse's turn is the body's
+        self.assertAlmostEqual(st["wrap"], 3.5 - 2*math.pi, places=9)
+        self.assertEqual(st["junk"]["speed"], 0)
 
     def test_foot_speed_springs(self):
         self.assertLess(self.o["wFirst"], 0.5)               # no instant 0 -> 4

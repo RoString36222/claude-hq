@@ -21,6 +21,7 @@ Requires=docker.service
 Type=oneshot
 Environment=ARENA_DIR=$DIR
 Environment=ARENA_DOMAIN=$DOMAIN
+Environment=ARENA_DEPLOY_LOG=$DIR/.arena-deploy.log
 ExecStart=$DIR/ops/autodeploy.sh
 UNIT
 
@@ -39,7 +40,15 @@ Persistent=true
 WantedBy=timers.target
 UNIT
 
-touch /var/log/arena-deploy.log
+# One log for the timer and the deploy panel (which reads $DIR/.arena-deploy.log), so every release is in everyone's
+# history. An existing /var/log file's history is carried over once, then that path becomes a link to the shared log.
+SHARED="$DIR/.arena-deploy.log"
+touch "$SHARED"
+if [ -f /var/log/arena-deploy.log ] && [ ! -L /var/log/arena-deploy.log ]; then
+  cat /var/log/arena-deploy.log "$SHARED" > "$SHARED.tmp" && mv "$SHARED.tmp" "$SHARED"
+  rm -f /var/log/arena-deploy.log
+fi
+ln -sfn "$SHARED" /var/log/arena-deploy.log
 systemctl daemon-reload
 systemctl enable --now arena-deploy.timer
 

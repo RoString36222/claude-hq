@@ -156,11 +156,11 @@ class PetRide(unittest.TestCase):
             self.assertIsNone(k[no], no)
         m = self.o["mount"]
         self.assertTrue(m["grownNear"]["ok"])
-        self.assertEqual(m["young"]["why"], "young")          # grown only
+        self.assertTrue(m["young"]["ok"])                     # 3.14: grown from adoption, any affection
         self.assertEqual(m["far"]["why"], "far")              # beside it
         self.assertEqual(m["dog"]["why"], "kind")
         self.assertEqual(m["raptor"]["why"], "kind")
-        self.assertEqual(m["trikeYoung"]["why"], "young")
+        self.assertTrue(m["trikeYoung"]["ok"])                 # big dinos ride from adoption too
         self.assertTrue(m["trike"]["ok"])
         self.assertEqual(m["serpentLand"]["why"], "water")    # the serpent: on the water only
         self.assertTrue(m["serpentSea"]["ok"])
@@ -272,16 +272,16 @@ class Wiring(unittest.TestCase):
         self.assertIn('"hqpets","hqpetride","hqlobby"', hq)
         self.assertIn("hqpetride:1", hq)
         g = read("games/hq3d.js")
-        self.assertIn("return ride ? (ride.pet ? 13 :", g)
+        self.assertIn("return ride ? (ride.tank ? 14 : ride.pet ? 13 :", g)   # [3.17] a tank first
         self.assertIn('13: "petride"', g)
         self.assertIn("HQV.hqPetRide.mountModel(ctx, {species: pmount.sp.id", g)   # remote riders on their pet
         self.assertIn("HQV.hqPetRide.animate(P.bike, pst", g)
         self.assertIn("mount: a === 13", g)                                       # their follower copy steps aside
         self.assertIn("if(ride.pet){ dismountPet(force); return; }", g)
         proto = read("backend/src/protocol.rs")
-        self.assertRegex(proto, r'\("hq", 4, &\[[^\]]*"petride"\]')
+        self.assertRegex(proto, r'\("hq", 4, &\[[^\]]*"petride"[^\]]*\]')
         hqrs = read("backend/src/valley/hq.rs")
-        self.assertIn("13.0].contains(&f)", hqrs)
+        self.assertIn("13.0, 14.0].contains(&f)", hqrs)   # [3.17] 14: a tank
         self.assertIn("crate::pets::rideable(t.0, t.3)", hqrs)
 
     def test_pets_runtime_hides_the_mount_and_offers_the_ride(self):

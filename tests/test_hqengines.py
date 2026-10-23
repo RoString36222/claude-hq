@@ -175,7 +175,7 @@ class Gearbox(unittest.TestCase):
 
     def test_damage_is_opt_in(self):
         hud = open(os.path.join(ROOT, "games", "hqhud.js")).read()
-        self.assertIn('damage: false}', hud)
+        self.assertIn('damage: false', hud)
         self.assertIn('check("damage", "Vehicle damage (dents, smoke)")', hud)
         src = open(os.path.join(ROOT, "games", "hq3d.js")).read()
         self.assertIn("if(!D || !drvGround() || !DRV.key || !dmgOn()) return;", src)

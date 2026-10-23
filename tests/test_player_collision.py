@@ -68,7 +68,7 @@ process.stdout.write(JSON.stringify(out));
 
 class Source(unittest.TestCase):
     def test_blocked_asks_about_players(self):
-        self.assertIn("cur.blocked(x, z)) || peerBlocked(x, z); }", HQ3D)
+        self.assertIn("cur.blocked(x, z)) || peerBlocked(x, z) || tankPropBlocked(x, z); }", HQ3D)   # [3.17] your parked tank
 
 
 if __name__ == "__main__":

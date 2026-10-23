@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.14.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.16.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -409,6 +409,45 @@ and feature guide.
 
 ## Changelog
 
+- **3.16.0 — Mouse steering, a grenade launcher and a tank for four.** In the 3D City:
+  - **Mouse steering** (a new switch in the camera settings, the gear): click the view and the mouse turns you and
+    the chase camera together, as in a shooter; <kbd>W</kbd> / <kbd>S</kbd> walk forward and step back, <kbd>A</kbd> /
+    <kbd>D</kbd> step sideways, the tilt stays where you put it. On a ride the captured mouse does what a drag does.
+    <kbd>Esc</kbd>, any panel, the big map, a field you type in or another camera gives the cursor back. Off by
+    default; no network traffic.
+  - **A grenade launcher:** on foot, <kbd>X</kbd> takes it out (on your left shoulder) and <kbd>F</kbd>, or a click with
+    the mouse captured, lobs a grenade where the camera looks. It bounces off the ground, walls and roofs, sinks in
+    water and goes off after 1.8 s: a fireball, smoke, a shock ring and a boom heard late from far off. The City has
+    no health: a blast knocks back everyone within 6 m, you too (on foot up into the air, in a car a shove and a
+    dent; Calm keeps you on the ground and drops the flash and the shake). Each shot rides in its shooter's presence
+    for 1.5 s (the "grenade" capability: `gl`, `gn`) and every page flies it the same way, in fixed steps against the
+    same world; each page knocks back only its own player (games/hqgrenade.js).
+  - **A tank for four:** <kbd>K</kbd> rolls your tank up beside you (<kbd>K</kbd> again sends it away), <kbd>E</kbd>
+    beside it and you drive: 40 km/h, slow to pull away, <kbd>A</kbd> / <kbd>D</kbd> turn it on the spot, solid to
+    everyone. The turret follows your camera and <kbd>F</kbd> or a captured click fires a shell (it goes off on
+    whatever it hits, an 8 m blast). Its three other seats are carpool seats: while you drive, others climb in with
+    <kbd>E</kbd>; the first in becomes the gunner and takes the turret over, the next two ride on the back. Blasts never move a tank or anyone in it.
+    The "tank" capability adds a = 14, shells (grenade kind 1) and the turret's aim `ta`, sent by whoever has
+    the turret: the gunner beside their carpool seat, or the driver (games/hqtank.js). An original stand-in tank: hull, treads on six road wheels a side, a turret, a long barrel.
+
+  The new presence fields are numbers and the user ids carpooling already sends; backend/src/valley/hq.rs checks
+  every one, and relays them only when sent. Needs the Arena redeployed.
+- **3.15.0 — Carpooling, pillion riders, and the Suzuki Access 125.** Beside someone driving in the City (stopped or
+  crawling, on your level), E takes the next free seat: "Ride with <name>" for a car, "Hop on behind <name>" for a
+  bicycle, a motorbike or a scooter. They drive and you go where they go, sat in their vehicle on everyone's screen,
+  hands on your lap or round the rider ahead; E gets you out beside it (your own side's door), and you are put off
+  when they get out, leave, or the last seat goes to someone else at the same moment (the lower user id keeps it).
+  A car takes four (a coupe, a hypercar, a supercar and the starter hatchback two), a scooter three, a super sports
+  bike only its rider (a hypersport, a sport bike over 950 cc: no pillion), any other bike two.
+  Players riding with someone are not solid to their driver. New in the dealership: the **Suzuki Access 125**
+  (`bike.scooter.400`, 124 cc single, CVT as one gear), the first scooter, with its own stand-in body (leg shield,
+  floorboard, long seat for three, 10"/12" wheels) and seats for its rider and two behind. Presence carries `pb`
+  (whose vehicle) and `ps` (the seat) only where the Arena lists the new "carpool" capability (backend/src/valley/hq.rs
+  validates both; a bad one drops the frame). Tests: seat counts and the seat race, the scooter's body and seats,
+  the catalogue entry, the presence wiring and the Arena's validation. Also: a car more than 85 % damaged no longer
+  pulls left or right by itself while you drive (the dents, cracked lights and smoke stay; the garage still repairs it).
+
+- **3.14.1 — Dragons and dinosaurs ride from day one.** Every dragon and the sea serpent now comes fully grown from adoption (any affection; the Arena's `pets.rs stage_of` and the page agree), and the big dinosaurs (T-Rex, Triceratops, Brachiosaurus, Stegosaurus) can be ridden straight away: walk up and press E. Affection still unlocks tricks. Needs the Arena release.
 - **3.14.0 — Ride your pets.** A grown dragon (any of the seven), the grown sea serpent or a big dinosaur
   (Triceratops, Brachiosaurus, Stegosaurus, T-Rex, from the grown mark of 400 affection) that is out with you can
   be ridden in the 3D City: beside it, "E  Ride <name>". You sit in a saddle on its back (added when it has none),

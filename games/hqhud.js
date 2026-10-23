@@ -33,7 +33,7 @@ var PI = Math.PI;
 var KEY = "hq_cam";
 var ORDER = ["far", "chase", "near", "fp", "classic"];       // camrig ORDER (used when camrig is not loaded)
 var QUALITY = ["auto", "low", "medium", "high"];
-var DEFAULTS = {fov: 65, sens: 1, invertY: false, reduced: false, headBob: true, quality: "auto", preferred: "chase", damage: false};
+var DEFAULTS = {fov: 65, sens: 1, invertY: false, reduced: false, headBob: true, quality: "auto", preferred: "chase", damage: false, mouseSteer: false};
 var CHIP_MS = 1400;
 var FADE_MS = 400;           // the chip's text stays until its fade-out (--t-med) is over
 var MODE_NAMES = {far: "Far camera", chase: "Chase camera", near: "Near camera", fp: "First person", classic: "Classic camera"};
@@ -89,6 +89,7 @@ function loadSettings(raw){
   s.damage = typeof o.damage === "boolean" ? o.damage : DEFAULTS.damage;      // vehicle damage: opt in
   s.quality = QUALITY.indexOf(o.quality) >= 0 ? o.quality : DEFAULTS.quality;
   s.preferred = order().indexOf(o.preferred) >= 0 ? o.preferred : DEFAULTS.preferred;
+  s.mouseSteer = typeof o.mouseSteer === "boolean" ? o.mouseSteer : DEFAULTS.mouseSteer;   // [3.15] the mouse turns you (hq3d)
   return s;
 }
 
@@ -250,6 +251,7 @@ function mount(el, opts){
   check("reduced", "Reduced motion");
   check("headBob", "Head bob");
   check("damage", "Vehicle damage (dents, smoke)");
+  check("mouseSteer", "Mouse steering");
   select("quality", "Quality", QUALITY, {auto: "Auto", low: "Low", medium: "Medium", high: "High"});
   select("preferred", "Preferred camera", order(), MODE_NAMES);
 

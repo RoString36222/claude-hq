@@ -72,7 +72,7 @@ function rideKind(sp){
   if(sp.kind === "dino" && RIDE_DINO[sp.id]) return "dino";
   return null;
 }
-function grown(sp, aff){ return !!rideKind(sp) && (+aff || 0) >= STAGE_GROWN; }
+function grown(sp, aff){ return !!rideKind(sp); }   // 3.14: every dragon, the serpent and the big dinosaurs ride from adoption
 function canMount(o){
   o = o || {}; var sp = o.sp, k = rideKind(sp);
   if(!k) return {ok: false, why: "kind"};

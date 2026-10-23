@@ -4325,6 +4325,9 @@ function mount(el, api){
       } catch(e){ smokeErr(e); S.done = true; return; }
     }
     if(++S.frames < 30) return;
+    // cam=map: the labels hud mounts and counts on later frames; on a slow CI box 30 frames can pass first
+    // (the "drew no labels ({})" flake), so wait for a count, up to ~900 frames
+    if(S.cam === "map" && S.frames < 900){ var lc = hud && hud.labelCounts ? hud.labelCounts() : null; if(!lc || !(lc.roads > 0 && lc.hqs > 0 && lc.peers > 0)) return; }
     S.done = true;
     try { document.documentElement.dataset.hqSmoke = "ok " + JSON.stringify(smokeStats()); } catch(e){ smokeErr(e); }
   }

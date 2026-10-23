@@ -65,7 +65,8 @@ class ShowroomNode(unittest.TestCase):
         for r in rows.values():
             self.assertGreater(r["top"], 10, r["id"])
             self.assertGreater(r["acc"], 1, r["id"])
-            self.assertLess(r["t0100"], 20, r["id"])
+            if r["top"]*3.6 > 100:                                       # (a scooter tops out below 100 km/h)
+                self.assertLess(r["t0100"], 20, r["id"])
             self.assertEqual(r["rigKind"], r["kind"], r["id"])
             self.assertEqual(r["wheels"], 4 if r["kind"] == "car" else 2, r["id"])
             self.assertEqual(r["roll"], "function", r["id"] + ": hq3d rolls a catalogue rig's own wheels")

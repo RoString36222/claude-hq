@@ -1403,7 +1403,7 @@ function mount(el, api){
     var my = avatar ? avatar.g.position.y : 0;
     for(var u in peers){
       var P = peers[u];
-      if(P.g.parent !== cur.scene || P.x == null) continue;
+      if(P.g.parent !== cur.scene || P.x == null || P.pb) continue;   // [3.15] a passenger rides inside their driver's box
       var dx = x - P.x, dz = z - P.z, a = P.a | 0;
       if(dx*dx + dz*dz > 64 || a >= 7 || (P.hy != null && Math.abs(P.hy - my) > 2.2)) continue;   // 7..12 fly
       var V = a === 4 ? null : VEHICLES[P.v && VEHICLES[P.v] ? P.v : PEER_VEHICLE[a]];
@@ -2446,6 +2446,124 @@ function mount(el, api){
     var P = peers[uid]; return !!P && P.w === (cur.net || cur.name) && Math.hypot(P.x - avatar.x, P.z - avatar.z) <= D.INVITE_R;
   };
   inst.convoyInvite = function(uid){ var r = cvKey(String(uid || "")); return !!r && r.t === "invited"; };
+  /* ---- [3.15] carpooling: a seat in someone else's car, behind them on a bike, a motorbike or a scooter ----
+     Beside someone who is driving (stopped or crawling), E takes the next free seat (games/hqdrive.js poolSeats: a car
+     four, a coupe or a hypercar two, a scooter three, any other bike two); they drive and you go where they go,
+     sat in their vehicle as everyone sees it (each page seats you on its own model of it). E gets you out; so does their
+     getting out, leaving, or someone with the lower user id taking the last seat at the same moment. Presence carries
+     pb (whose vehicle) and ps (the seat), only where the Arena lists "carpool". */
+  var POOL = {u: null, seat: 0, n: "", car: false, sb: null, near: null};
+  function poolOn(){ return !!Drv() && !!cur && cur === worlds.city && !!cur.camModes && !!((SMOKE && SMOKE.on) || (api.netCan && api.netCan("carpool"))); }
+  // what a peer drives that carries passengers: {base: car | moto | bike, type: its catalogue type or null}
+  function poolKind(P){
+    var vk = P ? PEER_VEHICLE[P.a] : null; if(!(vk === "car" || vk === "moto" || vk === "bike")) return null;
+    var Vc = P.v && VEHICLES[P.v] ? VEHICLES[P.v].cat : null;
+    var cl = Vc ? String(Vc["class"] || "").split(".") : [];
+    return {base: vk, type: Vc ? cl[1] || Vc.body || null : null, band: cl[2] || null, seats: Vc ? Vc.seats : null};
+  }
+  function poolList(){ return Object.keys(peers).map(function(u){ return {u: u, pb: peers[u].pb, ps: peers[u].ps}; }); }
+  function poolNear(){
+    if(!poolOn() || ride || POOL.u || !avatar || (cur.carry && cur.carry())) return null;
+    var D = Drv(), here = cur.net || cur.name, me = cvMe(), best = null, bd = 1e9;
+    Object.keys(peers).forEach(function(u){
+      var P = peers[u], k = P.w === here && P.bike && P.lean && !P.pb ? poolKind(P) : null; if(!k) return;
+      if(P.hy != null && Math.abs(P.hy - avatar.hy) > 2.2) return;
+      if((P.sv != null ? Math.abs(P.sv) : Math.hypot(P.vx || 0, P.vz || 0)) > 2.5) return;   // only one stopped or crawling
+      var d = Math.hypot(P.x - avatar.x, P.z - avatar.z); if(d > (k.base === "car" ? 3.2 : 1.8) || d >= bd) return;
+      var seat = D.poolSeat(me, u, poolList(), D.poolSeats(k.base, k.type, k.seats, k.band), 0); if(!seat) return;
+      bd = d; best = {u: u, seat: seat, n: short(P.n || "them", 20), car: k.base === "car"};
+    });
+    return best;
+  }
+  function poolBoard(c){
+    if(!c || ride || !avatar) return;
+    POOL.u = c.u; POOL.seat = c.seat; POOL.n = c.n; POOL.car = c.car; POOL.sb = null; POOL.near = null;
+    walkTo = null; walkDoor = null; E.sfx(c.car ? "door" : "go");
+    cvSay((c.car ? "\uD83D\uDE97 You got in " + c.n + "'s car" : "\uD83D\uDEF5 You hopped on behind " + c.n) + ". E gets you out.", true);
+    if(!poolMove()) return;
+    rideUiSync(true);
+  }
+  // each frame you ride: on their seat on their vehicle as drawn here, where they are; false once you are off
+  function poolMove(){
+    var P = peers[POOL.u], here = cur && (cur.net || cur.name), k = poolOn() && P && P.w === here && P.bike && P.lean && !P.pb ? poolKind(P) : null;
+    if(!k){ poolOff(!P ? "gone" : P.w !== here || !poolOn() ? "left" : "out"); return false; }
+    var D = Drv(), s = D.poolSeat(cvMe(), POOL.u, poolList(), D.poolSeats(k.base, k.type, k.seats, k.band), POOL.seat);
+    if(!s){ poolOff("full"); return false; }
+    POOL.seat = s;
+    var SB = poolSpot(P.bike, k, s); if(!SB){ poolOff("out"); return false; }
+    if(avatar.ch && (avatar.ch.o.parent !== P.lean || POOL.sb !== SB)){ poseUndo(avatar.ch); P.lean.add(avatar.ch.o); seatOn(avatar.ch, SB); }
+    POOL.sb = SB;
+    walkTo = null; walkDoor = null; keyMove = false; movedHere = true;
+    avatar.x = P.x; avatar.z = P.z; avatar.yaw = P.yaw; avatar.travelYaw = P.yaw; avatar.speed = 0; avatar.sv = 0; avatar.rate = 0;
+    avatar.hy = P.hy != null ? P.hy : groundAt(P.x, P.z); avatar.hyV = 0;
+    avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
+    view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
+    return true;
+  }
+  // out beside their vehicle (a car: your own side's door, else round it), never into a wall
+  function poolOff(why){
+    if(!POOL.u) return;
+    var name = POOL.n, car = POOL.car, side = POOL.sb && POOL.sb.seat.position.x < 0 ? -1 : 1;
+    POOL.u = null; POOL.seat = 0; POOL.sb = null; POOL.near = null;
+    if(avatar && avatar.ch){ poseUndo(avatar.ch); avatar.g.add(avatar.ch.o); seatOn(avatar.ch, null); }
+    if(avatar){
+      var cy = Math.cos(avatar.yaw), sy = Math.sin(avatar.yaw);
+      var offs = car ? [[side*1.4, 0], [-side*1.4, 0], [0, -2.6], [0, 2.6]] : [[side*0.8, 0], [-side*0.8, 0], [0, -1.3]];
+      offs.some(function(o){
+        var ox = avatar.x + o[0]*cy + o[1]*sy, oz = avatar.z - o[0]*sy + o[1]*cy;
+        if(blocked(ox, oz)) return false;
+        avatar.x = ox; avatar.z = oz; return true;
+      });
+      stopFeet(groundAt(avatar.x, avatar.z)); avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.set(0, avatar.yaw, 0);
+    }
+    if(why === "full") cvSay("Someone else took that seat: " + name + "'s " + (car ? "car" : "bike") + " is full.", true);
+    else if(why === "out") cvSay(name + (car ? " got out." : " got off."), true);
+    else if(why) cvSay(name + " left.", true);
+    rideUiSync(true);
+  }
+  // passenger seat s (1..) on vehicle model B: its own anchor (a scooter's a-seat-1 / a-seat-2), else beside the
+  // driver and behind (a car), or behind them (a bike), with hands and feet to reach; made once per model and seat
+  function poolSpot(B, k, s){
+    var C = B._pool || (B._pool = {}); if(C[s]) return C[s];
+    if(!B.seat || !B.seat.parent) return null;
+    var par = B.seat.parent, p = B.seat.position, car = k.base === "car", named = B.g && B.g.getObjectByName ? B.g.getObjectByName("a-seat-" + s) : null;
+    var sc = +B.scale > 0 ? +B.scale : k.base === "moto" && !B.entry ? MOTO_S : 1, at;
+    if(named && named.parent === par) at = named.position.clone();
+    else if(car) at = new THREE.Vector3(s === 2 ? p.x : -p.x, p.y + (s >= 2 ? 0.03*sc : 0), p.z - (s >= 2 ? 0.85*sc : 0));
+    else at = new THREE.Vector3(p.x, p.y + 0.05*sc, p.z - (k.base === "bike" ? 0.36 : 0.3)*sc);
+    var grips = car ? [anchor(par, "a-pool-grip", at.x + 0.17*sc, at.y + 0.02*sc, at.z + 0.24*sc), anchor(par, "a-pool-grip", at.x - 0.17*sc, at.y + 0.02*sc, at.z + 0.24*sc)]
+                    : [anchor(par, "a-pool-grip", 0.15*sc, at.y + 0.2*sc, at.z + 0.2*sc), anchor(par, "a-pool-grip", -0.15*sc, at.y + 0.2*sc, at.z + 0.2*sc)];
+    var feet = car ? [anchor(par, "a-pool-foot", at.x + 0.12*sc, at.y - 0.3*sc, at.z + 0.5*sc), anchor(par, "a-pool-foot", at.x - 0.12*sc, at.y - 0.3*sc, at.z + 0.5*sc)]
+                   : [anchor(par, "a-pool-foot", 0.2*sc, at.y - 0.42*sc, at.z + 0.05*sc), anchor(par, "a-pool-foot", -0.2*sc, at.y - 0.42*sc, at.z + 0.05*sc)];
+    return (C[s] = {seat: anchor(par, "a-pool-" + s, at.x, at.y, at.z), grips: grips, feet: feet, riderK: B.riderK, hats: B.hats, lean: car ? 0 : 0.05});
+  }
+  // someone riding with someone (Q.pb): seated on that driver's vehicle as drawn here (yours, when it is you), true;
+  // false when that vehicle is not here (they are drawn where they are, on foot)
+  function poolDraw(Q, dt, t){
+    var me = cvMe(), D = Q.pb === me ? null : peers[Q.pb], L = null, B = null, k = null, top = null;
+    if(Q.pb === me){ if(ride && ride.lean && !ride.pet && (ride.base === "car" || ride.base === "moto" || ride.kind === "bike")){ L = ride.lean; B = ride.B; top = avatar.g;
+      var rc = ride.V && ride.V.cat ? String(ride.V.cat["class"] || "").split(".") : [];
+      k = {base: ride.kind === "bike" ? "bike" : ride.base, type: rc[1] || null, band: rc[2] || null, seats: ride.V && ride.V.cat ? ride.V.cat.seats : null}; } }
+    else if(D && D.w === Q.w && D.bike && D.lean && !D.pb){ k = poolKind(D); L = D.lean; B = D.bike; top = D.g; }
+    if(!k || !(Q.ps >= 1 && Q.ps < Drv().poolSeats(k.base, k.type, k.seats, k.band))) return false;
+    var SB = poolSpot(B, k, Q.ps); if(!SB) return false;
+    if(Q.pb === me && !Q.poolMe){ Q.poolMe = true; cvSay((k.base === "car" ? "\uD83D\uDE97 " + (Q.n || "Someone") + " got in" : "\uD83D\uDEF5 " + (Q.n || "Someone") + " hopped on behind you") + ".", true); }
+    if(Q.ring) Q.ring.visible = false;
+    if(Q.ch){
+      if(Q.ch.o.parent !== L || Q.sb !== SB){ poseUndo(Q.ch); L.add(Q.ch.o); seatOn(Q.ch, SB); Q.sb = SB; }
+      Q.ch.mixer.update(dt); if(Q.ch.update) Q.ch.update(t || 0);
+      ridePose(Q.ch, SB, 0, top);
+    }
+    Q.pooled = true;
+    return true;
+  }
+  function poolUndraw(Q){
+    Q.pooled = false; Q.sb = null; if(Q.ring) Q.ring.visible = true;
+    if(Q.ch && Q.ch.o.parent !== (Q.lean || Q.g)){ poseUndo(Q.ch); (Q.lean || Q.g).add(Q.ch.o); seatOn(Q.ch, Q.bike || null); }
+  }
+  // presence (ui/app/22-hq.js hqNetSend, only where the Arena lists "carpool"): {pb, ps} while you ride with someone
+  inst.poolNet = function(){ return POOL.u && poolOn() ? {pb: POOL.u, ps: POOL.seat} : null; };
+  inst.pool = function(){ return POOL.u ? {u: POOL.u, seat: POOL.seat} : null; };
   // every frame: the weather, your lights and spray and smoke, everyone else's lights, the convoy
   function drvFrame(t, dt){
     var D = Drv(); if(!D) return;
@@ -2586,6 +2704,16 @@ function mount(el, api){
     var aloft = !!(ride && ((ride.plane && !ride.plane.ground) || (ride.heli && !ride.heli.ground && !(ride.pet && ride.heli.agl <= (HQV.hqPetRide ? HQV.hqPetRide.DISMOUNT_H : 3)))));
     var key = ride ? (aloft ? "" : noOut ? "on-noout" : "on") : nb ? "near-" + (nb.kind || "bike") : "";
     if(!force && key === rideUi.dataset.k) return;
+    // [3.15] riding with someone, or beside someone's car or bike you can ride in
+    var pn = !ride && !nb ? POOL.near : null;
+    if(!ride && (POOL.u || pn)){
+      key = POOL.u ? "pool-on" : "pool-" + pn.u + ":" + pn.seat;
+      if(!force && key === rideUi.dataset.k) return;
+      rideUi.dataset.k = key; rideUi.hidden = false;
+      rideUi.textContent = POOL.u ? (POOL.car ? "Get out (E)" : "Get off (E)") : (pn.car ? "\uD83D\uDE97 Ride with " : "\uD83D\uDEF5 Hop on behind ") + pn.n + " (E)";
+      rideUi.title = POOL.u ? "Riding with " + POOL.n + ": they drive, E gets you out" : pn.car ? "Get in " + pn.n + "'s car" : "Ride pillion with " + pn.n;
+      return;
+    }
     rideUi.dataset.k = key; rideUi.hidden = !key;
     var kind0 = ride ? ride.kind : (nb && VEHICLES[nb.kind] ? nb.kind : "bike"), Vc = VEHICLES[kind0].cat, kind = baseKind(kind0);
     // a catalogue vehicle by name, without its generation ("M3 Competition", not "M3 Competition (G80)"): the pill
@@ -3022,6 +3150,7 @@ function mount(el, api){
   function stopFeet(y){ avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0; avatar.travelYaw = null; avatar.hy = y != null && isFinite(y) ? +y : -1e9; }
   function moveAvatar(dt){
     if(ride){ if(ride.pet && !ride.heli) petGroundMove(dt); else if(ride.kind === "skate") skateMove(dt); else if(ride.boat) boatMove(dt); else if(ride.heli) heliMove(dt); else if(ride.plane) planeMove(dt); else rideMove(dt); return; }
+    if(POOL.u && poolMove()) return;                                   // [3.15] a passenger: where their vehicle takes you
     // on a bus or a tram (games/hqcity3d.js w.carry): the vehicle's seat, its timetable's pose
     var cp = cur && cur.carry ? cur.carry() : null;
     if(cp){
@@ -3530,6 +3659,7 @@ function mount(el, api){
      fade (none in Calm). Your HQ not on the street (private): your own Base. */
   function returnHome(){
     if(!scene || fading) return false;
+    if(POOL.u) poolOff(null);                                          // [3.15] out of their car first
     var C = worlds.city;
     if(cur && worlds.basement && cur === worlds.basement){   // [basement 3.4] in B1: the starters back on their plinths
       var gb = function(){ dismount(true); (cur.bikes || []).forEach(function(b){ if(b.stay && b.home && !b.own){ placeProp(b, b.home.x, b.home.z, b.home.yaw); b.g.visible = true; b.returnAt = 0; delete parked[b.id]; } });
@@ -4277,7 +4407,9 @@ function mount(el, api){
   function useKey(){
     // held by a trip (a booked ferry, flight or cruise seat: cur.carry): E is the trip's (get off), not a bike beside it
     if(!ride && cur && cur.use && cur.carry && avatar && cur.carry() && cur.use({x: avatar.x, z: avatar.z, yaw: avatar.yaw})) return true;
+    if(!ride && POOL.u){ poolOff(null); return true; }                // [3.15] out of their car, off their bike
     if(ride || nearBike() >= 0){ rideToggle(); return true; }
+    if(!ride && POOL.near){ poolBoard(POOL.near); return true; }
     if(rigOn() && rig.mode === "fp" && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d){ through(d); return true; } }
     // the world's own (games/hqcity3d.js): talk to a resident, a bus stop, a dock, a station
     if(cur && cur.use && avatar && cur.use({x: avatar.x, z: avatar.z, yaw: avatar.yaw})) return true;
@@ -4352,7 +4484,7 @@ function mount(el, api){
     if(e.type === "keydown" && inst.running && rigOn() && !typing(e.target)) noteInput();
     if(petsKey(e)) return;                                             // [pets 3.14] B ball, U pet, O trick, E lobby
     if(e.code === "KeyE" && e.type === "keydown" && !e.repeat && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey
-       && (ride || nearBike() >= 0 || (rigOn() && rig.mode === "fp") || (cur && cur.use))){ if(useKey()) e.preventDefault(); return; }
+       && (ride || POOL.u || POOL.near || nearBike() >= 0 || (rigOn() && rig.mode === "fp") || (cur && cur.use))){ if(useKey()) e.preventDefault(); return; }
     if((e.code === "KeyT" || e.code === "Home") && e.type === "keydown" && !e.repeat && inst.running && cur === worlds.city && !typing(e.target)
        && !e.metaKey && !e.ctrlKey && !e.altKey){ e.preventDefault(); returnHome(); return; }
     if(ride && ride.plane && PLANE_KEYS[e.code] && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey){
@@ -4390,7 +4522,8 @@ function mount(el, api){
     testStep(dt);                                                      // a dealership test drive
     if(cur && cur.onBoat) cur.onBoat(ride && ride.boat ? {st: ride.boat, kind: ride.kind, beam: ride.V.beam || 1} : null);   // the City's wake, landings
     if(cur && cur.onHeli) cur.onHeli(ride && (ride.heli || (ride.plane && !ride.plane.ground)) ? {st: ride.heli || ride.plane, kind: ride.pet ? "heli" : ride.kind} : null);                          // flying on to another island (a dragon: as a helicopter)
-    nearIdx = ride ? -1 : nearBike();
+    nearIdx = ride || POOL.u ? -1 : nearBike();
+    POOL.near = nearIdx < 0 && !ride ? poolNear() : null;             // [3.15] someone's car or bike to ride in
     rideUiSync(false); homeUiSync();
     keys = kp;
     if(rigOn()) rigFrame(t, dt);
@@ -4406,10 +4539,11 @@ function mount(el, api){
       headUndo(avatar.ch);
       avatar.ch.mixer.update(dt); if(avatar.ch.update) avatar.ch.update(t);
       if(ride && ride.kind !== "skate" && avatar.ch.o.parent === ride.lean) ridePose(avatar.ch, ride.B, ride.steer, avatar.g);
+      else if(!ride && POOL.sb && peers[POOL.u] && avatar.ch.o.parent === peers[POOL.u].lean) ridePose(avatar.ch, POOL.sb, 0, peers[POOL.u].g);
       if(skp) poseApply(avatar.ch, skp);                               // Calm: no pose (skp is null)
       if(!ride && avatar.lean) headApply(avatar.ch, avatar.lean.h);     // on foot: the head into the turn
       // your boombox: on foot or on a board (held up); put away in a seat
-      var bOn = !!boomMe && (!ride || ride.kind === "skate");
+      var bOn = !!boomMe && !POOL.u && (!ride || ride.kind === "skate");
       boomStep(avatar.ch, bOn, t, bOn);
     }
     placePeers(dt, t);
@@ -4564,7 +4698,7 @@ function mount(el, api){
         P = peers[p.u] = {g: new THREE.Group(), ch: null, x: p.x/100, z: p.z/100, yaw: p.r*PI/180, hy: null, pitch: 0};
         P.g.rotation.order = "YXZ";
         var ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.55, 32), new THREE.MeshBasicMaterial({color: COL.green, transparent: true, opacity: 0.7, toneMapped: false}));
-        ring.rotation.x = -PI/2; ring.position.y = 0.02; P.g.add(ring);
+        ring.rotation.x = -PI/2; ring.position.y = 0.02; P.g.add(ring); P.ring = ring;
         var tg = label(short(p.n || "Visitor", 14), frameHex(p.f) || HEX.green, 0.5); tg.position.y = 2.3; P.g.add(tg);
       }
       // Their character: made on arrival, and made again when they change it (`c`, the "look" capability).
@@ -4609,6 +4743,9 @@ function mount(el, api){
       var UR = /^[A-Za-z0-9_-]{1,64}$/;
       P.ci = typeof p.ci === "string" && UR.test(p.ci) ? p.ci : null; P.cv = typeof p.cv === "string" && UR.test(p.cv) ? p.cv : null;
       P.cg = Array.isArray(p.cg) && p.cg.length === 2 && isFinite(p.cg[0]) && isFinite(p.cg[1]) ? {x: p.cg[0]/100, z: p.cg[1]/100} : null;
+      // [3.15] carpooling (the "carpool" capability): whose vehicle they ride in (pb) and in which seat (ps)
+      P.pb = typeof p.pb === "string" && UR.test(p.pb) && (p.ps | 0) >= 1 && (p.ps | 0) <= 3 ? p.pb : null; P.ps = P.pb ? p.ps | 0 : 0;
+      if(!P.pb) P.poolMe = false;
     });
     Object.keys(peers).forEach(function(u){ if(!seen[u]){ var P = peers[u]; if(P.g.parent) P.g.parent.remove(P.g); delete peers[u]; } });
   };
@@ -4644,6 +4781,8 @@ function mount(el, api){
         P.sv = null; P.syr = null;
       }
       P.g.position.set(P.x, P.hy, P.z); P.g.rotation.y = P.yaw; P.g.rotation.x = -P.pitch;
+      if(P.pb && P.a !== 4 && !P.bike && poolDraw(P, dt, t)) return;      // [3.15] a passenger, in their driver's seat
+      if(P.pooled) poolUndraw(P);
       var skates = P.a === 4;
       // on a board: stood on it side-on, lifted to the height they send, the trick they send played here
       if(skates && !P.board){ if(P.bike){ if(P.ch) P.g.add(P.ch.o); P.g.remove(P.lean); P.bike = null; P.vkind = null; }
@@ -4857,6 +4996,9 @@ function mount(el, api){
                            key: DRV.key, dmg: DRV.dmg, convoy: DRV.C ? {lead: DRV.C.lead, role: DRV.C.role, members: DRV.C.members, pending: DRV.C.pending, invite: DRV.C.invite} : null, net: inst.convoyNet()}; },
                          hit: function(v, side){ drvHit(+v || 0, side === "r" ? "r" : "f"); return DRV.dmg; },
                          assist: function(on){ DRV.jHeld = !!on; },
+                         // [3.15] carpooling: whose vehicle you ride in and the seat, what E would board, and why not
+                         pool: function(){ var P = peers["smoke-friend"]; return {u: POOL.u, seat: POOL.seat, near: POOL.near, on: poolOn(),
+                           friend: P ? {k: poolKind(P), bike: !!P.bike, lean: !!P.lean, sv: P.sv, vx: P.vx, vz: P.vz, hy: P.hy, d: avatar ? Math.hypot(P.x - avatar.x, P.z - avatar.z) : null} : null, hy: avatar ? avatar.hy : null}; },
                          peer: function(f){ if(SMOKE.peer && f && typeof f === "object") Object.keys(f).forEach(function(k){ SMOKE.peer[k] = f[k]; }); inst.setPeers(lastPeers); return SMOKE.peer; },
                          weather: function(){ return cur && cur.weather ? cur.weather() : null; },
                          // avatar + camera, for tools that drive the keys and record motion

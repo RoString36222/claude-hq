@@ -115,7 +115,8 @@ class Catalogue(unittest.TestCase):
                 else:
                     self.assertTrue(50 <= s["cc"] <= 9000)
                     self.assertTrue(1 <= s["cyl"] <= 16)
-                    self.assertTrue(4 <= s["gears"] <= 10)
+                    # a scooter's CVT is one gear (games/hqvehiclephys.js: the revs climb with the speed)
+                    self.assertTrue(4 <= s["gears"] <= 10 or (v["body"] == "scooter" and s["gears"] == 1), s)
                 if bike:
                     self.assertEqual(s["drive"], "rwd")
                     self.assertTrue(5 <= s["powerKw"] <= 200 and 90 <= s["massKg"] <= 350, s)

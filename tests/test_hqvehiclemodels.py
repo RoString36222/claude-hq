@@ -40,6 +40,8 @@ ENTRIES = [
     {"id": "t-super", "class": "car.super.over5000", "brand": "Lamborghini", "model": "Revuelto"},
     {"id": "t-sto", "class": "car.super.over5000", "brand": "Lamborghini", "model": "Huracán STO"},
     {"id": "t-urus", "class": "car.suv.5000", "brand": "Lamborghini", "model": "Urus Performante"},
+    {"id": "t-scooter", "class": "bike.scooter.400", "brand": "Suzuki", "model": "Access 125", "spec": {"cc": 124, "cyl": 1},
+     "dims": {"lengthM": 1.87, "widthM": 0.69, "heightM": 1.16, "wheelbaseM": 1.265}},
 ]
 
 HARNESS = r"""

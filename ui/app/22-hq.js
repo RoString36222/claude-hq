@@ -19,7 +19,7 @@ function hqWebGL(){ try { return !!document.createElement("canvas").getContext("
 // before the City that wires them (games/hqcity3d.js). Navigation (3.1): the road router, the minimap, the
 // route's chevrons and the Go to panel / route banner, also before the City. City 3.2: the weather, and the
 // landmarks and amusement park (hqspectacle), also before the City.
-var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqpets","hqlobby","hqcarlift","hqgaragemgr","hqbasementfx","hqbasement","hqbase","hqskate","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
+var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqpets","hqlobby","hqcarlift","hqgaragemgr","hqbasementfx","hqbasement","hqstyle","hqtower","hqroof","hqdecor","hqbase","hqskate","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
                   "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqdrive","hqshowroom","hqgarage", "hqdealer","hqtuning","hqcasinoui","hqcasino","hqcall","hqtravel","hqvoyage","hqships","hqbridges","hqairfield","hqair","hqaircraft","hqplane","hqairport3d","hqairbldg","hqairground","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcarpark","hqweather","hqspectacle","hqcity3d"];
 // The 3D City's own files: if one fails, the classic City still works (games/hq3d.js falls back to it);
 // a Cities part that fails only takes its own feature out of the 3D City.
@@ -55,13 +55,17 @@ function hqApi(){
     viewTitle: function(v){ return (typeof VIEW_TITLES!=="undefined" && VIEW_TITLES[v]) || null; },
     onFilter: function(p){ HQ3D.filter = p || null; hqRenderCrew(); },
     // your HQ level: the Arena's (sessions + games) when paired, else the season level the page shows
-    level: function(){ var a=(typeof progLevel==="function") && progLevel(); if(a) return a; var s=(STATE && STATE.season) || {}; return Math.max(1, (s.level|0) || 1); },
+    level: function(){ if(HQ_SMOKE){ var sl=/[?&]hqlevel=(\d+)/.exec(location.search); if(sl) return Math.max(1, Math.min(60, +sl[1])); }   // ?hqsmoke=1&hqlevel=30 (tools)
+      var a=(typeof progLevel==="function") && progLevel(); if(a) return a; var s=(STATE && STATE.season) || {}; return Math.max(1, (s.level|0) || 1); },
     look: function(){ return Object.assign({}, hqLook(), {decor: (window.HQ_MYCOS || {}).decor,
-                                                          crew: (typeof crewBanner==="function") ? crewBanner() : null}); },
+                                                          crew: (typeof crewBanner==="function") ? crewBanner() : null,
+                                                          style: typeof hqStyleDoc==="function" ? hqStyleDoc() : null}); },   // HQ Studio (ui/app/40-studio.js)
+    // HQ Studio: open the panel (the lobby's kiosk)
+    studio: function(tab){ if(typeof hqStudioOpen==="function") hqStudioOpen(tab); },
     startWorld: HQ_SMOKE ? "base" : (function(){ try { var w=localStorage.getItem("hq_world"); return w==="base"||w==="lobby"||w==="mission" ? w : "base"; } catch(e){ return "base"; } })(),
     // HQ 2.1 Arena City: outside is the street of open HQs unless you are private (HQ closed)
     outside: function(){ return HQ_SMOKE || hqCityOn() ? "city" : "base"; },
-    city: function(){ return HQ_CITY.list; },
+    city: function(){ return typeof hqStudioCity=="function" ? hqStudioCity(HQ_CITY.list) : HQ_CITY.list; },   // your entry wears your HQ Studio style
     cityReturn: function(){ return HQ_CITY.back; },
     visit: function(uid){ hqVisit(uid, {from:"city"}); },
     frame: function(){ return (window.HQ_MYCOS || {}).frame; },
@@ -142,6 +146,12 @@ if(HQ_SMOKE){
     {userId:"smoke-a", isYou:true, trainerName:"You", level:4, look:{}, crew:{working:2, needs:1, idle:0}},
     {userId:"smoke-b", trainerName:"Maya", level:7, look:{paint:"#3f8f5a"}, crew:{working:1, needs:0, idle:1}},
     {userId:"smoke-c", trainerName:"Ravi", level:2, look:{paint:"#b5473a"}, crew:{working:0, needs:0, idle:2}}];
+  // tools: &hqlevel=N grows every synthetic HQ; &hqstyles=1 puts one HQ Studio preset on each of six (games/hqstyle.js)
+  (function(){
+    var lv=/[?&]hqlevel=(\d+)/.exec(location.search), many=/[?&]hqstyles=1(&|$)/.test(location.search);
+    if(many) ["glass","deco","brutal","tokyo","stone","eco"].forEach(function(p, i){ if(i>=3) HQ_CITY.list.push({userId:"smoke-"+"defghi".charAt(i), trainerName:p, level:7, look:{}, crew:{working:i%3, needs:0, idle:1}}); HQ_CITY.list[i].stylePreset=p; });
+    HQ_CITY.list.forEach(function(h){ if(lv) h.level=Math.max(1, Math.min(60, +lv[1])); });
+  })();
 }
 function hqCityOn(){ return typeof HQ_REMOTE!=="undefined" && !!(HQ_REMOTE && HQ_REMOTE.open && HQ_REMOTE.me); }
 function hqCitySet(on){
@@ -314,6 +324,7 @@ function hqSync(){
     ["paint","accent","sign"].forEach(function(k){ if(l[k]) mine[k]=l[k]; });
     hqSaveLook(mine); hqRenderBuild(); hqPreview();
     hqCityOutside();
+    if(typeof hqStudioSync==="function") hqStudioSync(false);   // HQ Studio: the Arena's copy of your style
   }).catch(function(){});
 }
 function hqSave(){
@@ -379,7 +390,7 @@ function hqVisit(userId, opts){
       hqMount({
         name: base.name, remember:false, startWorld: fromCity ? "lobby" : "base", frame: base.frame,
         level: function(){ return Math.max(1, p.level|0); },
-        look: function(){ return Object.assign({}, p.look||{}, {decor: (p.cos||{}).decor}); },
+        look: function(){ return Object.assign({}, p.look||{}, {decor: (p.cos||{}).decor, style: p.style||null}); },   // their HQ Studio style (an Arena with "hqstyle")
         openSession: function(){ toast("That's "+who+"'s crew: their sessions stay private.","level"); },
         go: function(){ toast("That room is in "+who+"'s HQ. Go home first.","level"); },
         onFilter: function(){}, onWorld: base.onWorld

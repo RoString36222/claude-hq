@@ -737,7 +737,7 @@ function mount(el, api){
     board: function(col){ return boardModel(col); },
     rng: rng, hashStr: hashStr, short: short, rr: rr, crewState: crewState,
     character: function(key, cb){ makeCharacter(key, cb); }, anim: function(ch, n, sp){ setAnim(ch, n, sp); },
-    avatar: function(){ return avatar ? {x: avatar.x, z: avatar.z} : null; },
+    avatar: function(){ return avatar ? {x: avatar.x, z: avatar.z, hy: avatar.hy} : null; },   // [hq revamp] hy: your feet's height (a roof deck)
     // the vehicle catalogue (games/vehicles/catalogue.json) and the Showroom's pick, for the garage (games/hqcarpark.js)
     catalogue: function(){ return CAT; },
     showroomPick: function(){ return showProp ? {vehicle_id: showProp.kind, paint: showProp.color} : null; },
@@ -833,7 +833,7 @@ function mount(el, api){
     var floor = new THREE.Mesh(new THREE.PlaneGeometry(2*ROOM, 2*ROOM), new THREE.MeshStandardMaterial({map: fl.t, roughness: 0.55, metalness: 0.15}));
     floor.rotation.x = -PI/2; floor.receiveShadow = true; floor.userData.floor = true; scene.add(floor); inst.floor = floor;
     // two walls (the room is cut away on the camera's side), trim, a light strip at the base
-    var wallM = mat(0x2a3d4f, {roughness: 0.85}), trim = mat(0x34495d);
+    var wallM = mat(0x2a3d4f, {roughness: 0.85}), trim = mat(0x34495d); inst.wallM = wallM;   // [hq revamp] HQ Studio themes it
     box(2*ROOM, 8, 0.5, wallM, 0, 4, -ROOM - 0.25); box(0.5, 8, 2*ROOM, wallM, -ROOM - 0.25, 4, 0);
     box(2*ROOM, 0.35, 0.8, trim, 0, 8.05, -ROOM - 0.1); box(0.8, 0.35, 2*ROOM, trim, -ROOM - 0.1, 8.05, 0);
     var base = emis(0x0d1a24, COL.cyan, 1.2);
@@ -1181,7 +1181,8 @@ function mount(el, api){
   inst.petsDebug = function(){ return PK; };
   function buildDesk(s, at){
     var root = new THREE.Group(); root.position.set(at[0], 0, at[1]); root.lookAt(TABLE.x, 0, TABLE.z); scene.add(root);
-    var top = mat(0x2b3947, {roughness: 0.45, metalness: 0.3}), body = mat(0x1c2834, {roughness: 0.7});
+    var FU = MS ? MS.furn() : null;                                                // [hq revamp] the furniture set (HQ Studio)
+    var top = mat(FU ? FU.top : 0x2b3947, {roughness: 0.45, metalness: 0.3}), body = mat(FU ? FU.body : 0x1c2834, {roughness: 0.7});
     box(2.4, 0.07, 0.95, top, 0, 0.98, 0.9, root); box(2.3, 0.55, 0.04, body, 0, 0.68, 1.34, root);
     [-1.15, 1.15].forEach(function(x){ box(0.06, 0.95, 0.9, body, x, 0.48, 0.9, root); });
     box(0.5, 0.6, 0.8, body, -0.82, 0.3, 0.92, root);
@@ -1199,7 +1200,7 @@ function mount(el, api){
     box(0.28, 0.55, 0.55, mat(0x161e26), 0.78, 0.3, 1.0, root);
     // chair
     var chair = new THREE.Group(); chair.position.set(0, 0, -0.05); root.add(chair);
-    var dark = mat(0x1d2730, {metalness: 0.5, roughness: 0.4}), fab = mat([0x2f4459, 0x46303a, 0x2f4a3a, 0x3e3a52][hashStr(s.sessionId) % 4], {roughness: 0.9});
+    var dark = mat(FU ? FU.metal : 0x1d2730, {metalness: 0.5, roughness: 0.4}), fab = mat((FU ? FU.chair : [0x2f4459, 0x46303a, 0x2f4a3a, 0x3e3a52])[hashStr(s.sessionId) % 4], {roughness: 0.9});
     for(var i = 0; i < 5; i++){ var a = i/5*PI*2; box(0.36, 0.04, 0.06, dark, Math.cos(a)*0.18, 0.08, Math.sin(a)*0.18, chair).rotation.y = -a; }
     cyl(0.04, 0.04, 0.32, dark, 0, 0.26, 0, chair, 8);
     box(0.62, 0.1, 0.58, fab, 0, 0.45, 0, chair);
@@ -1392,8 +1393,10 @@ function mount(el, api){
     avatar.tag.position.y = 2.3; avatar.g.add(avatar.tag);
   }
   function blocked(x, z){ return cur === worlds.mission ? missionBlocked(x, z) : cur.blocked(x, z); }
+  var MS = null;                                                     // [hq revamp] Mission Control's HQ Studio theme
   function missionBlocked(x, z){
     if(Math.abs(x) > ROOM - 0.8 || Math.abs(z) > ROOM - 0.8) return true;
+    if(MS && MS.blocked(x, z)) return true;                                        // [hq revamp] the decor you placed
     if(Math.hypot(x - TABLE.x, z - TABLE.z) < TABLE.r + 0.6) return true;
     for(var i = 0; i < desks.length; i++){ var p = desks[i].root.position; if(Math.hypot(x - p.x, z - p.z) < 1.35) return true; }
     return false;
@@ -1405,7 +1408,8 @@ function mount(el, api){
   function walkInto(){
     if(fading || walkDoor) return;
     var near = null, nd = 1e9;
-    curDoors().forEach(function(d){ if(!d.front) return; var dd = Math.hypot(avatar.x - d.front.x, avatar.z - d.front.z); if(dd < nd){ nd = dd; near = d; } });
+    var up = !!(cur && cur.onRoof && cur.onRoof());                          // [hq revamp] on a roof deck only its lift's door; off it, never
+    curDoors().forEach(function(d){ if(!d.front || !!d.roof !== up) return; var dd = Math.hypot(avatar.x - d.front.x, avatar.z - d.front.z); if(dd < nd){ nd = dd; near = d; } });
     if(!near) return;
     if(nd > 2.6){ doorsArmed = true; return; }
     if(doorsArmed && nd < 1.5){ doorsArmed = false; walkTo = null; if(HQV.hqCarLift && HQV.hqCarLift.arm){ try { HQV.hqCarLift.arm(near); } catch(e){} } through(near); }   // [basement 3.4] which door (the car lift carries you)
@@ -1515,7 +1519,7 @@ function mount(el, api){
     ownPlace(cur);                                                     // your own vehicles parked in this world
     bs.forEach(function(b){
       if(!b.home) b.home = {x: b.x, z: b.z, yaw: b.yaw};                  // its bay (Return to HQ puts it back)
-      var p = b.id && parked[b.id]; if(p) placeProp(b, p.x, p.z, p.yaw);
+      var p = b.id && parked[b.id]; if(p){ placeProp(b, p.x, p.z, p.yaw); if(p.y != null && b.kind && VEHICLES[b.kind] && VEHICLES[b.kind].heli){ b.g.position.y = p.y; b.y = p.y; } }   // [hq revamp] a helicopter left on a roof
     });
   }
   /* Skate poses, built from the rig's bones (the characters have no trick clips): a crouch
@@ -1738,7 +1742,7 @@ function mount(el, api){
       if(!hspot && !force){ if(api.announce) api.announce("You can't step out here: land on the ground or on a helipad."); return; }
       var hp = rideProp();
       if(hp){
-        if(hspot && !force){ parked[hp.id] = {x: hs.x, z: hs.z, yaw: hs.yaw}; placeProp(hp, hs.x, hs.z, hs.yaw); hp.g.position.y = hs.y; hp.y = hs.y; }
+        if(hspot && !force){ parked[hp.id] = {x: hs.x, z: hs.z, yaw: hs.yaw, y: hs.y}; placeProp(hp, hs.x, hs.z, hs.yaw); hp.g.position.y = hs.y; hp.y = hs.y; }   // [hq revamp] y: it stays up on a roof pad
         hp.g.visible = true;
       }
       if(avatar.ch){ poseUndo(avatar.ch); avatar.g.add(avatar.ch.o); seatOn(avatar.ch, null); }
@@ -2521,6 +2525,7 @@ function mount(el, api){
     walkTo = null; walkDoor = null;
     var yaw0 = avatar.yaw, floor = cur && cur.heliFloor ? cur.heliFloor : groundAt;
     var evs = Hh.step(st, {fwd: fwd, turn: turn, lift: lift}, dt, {floor: floor});
+    if(cur && cur.heliAssist) cur.heliAssist(st, {fwd: fwd, turn: turn, lift: lift}, dt);   // [hq revamp] an HQ roof pad's landing assist (games/hqroof.js)
     if(evs.length || st.ground) rideUiSync(false);                // "Get out" only where you can
     evs.forEach(function(ev){
       if(ev.type === "land") E.sfx(ev.hard ? "hit" : "putt");
@@ -3122,7 +3127,10 @@ function mount(el, api){
   // Through a door: another view of the page, or another floor of the building ("@lobby").
   function through(d){
     if(d.view === "garage:open"){ drvRepair(null, "at the garage"); if(HQV.hqGarageMgr && HQV.hqGarageMgr.open){ keys = {}; HQV.hqGarageMgr.open({from: d.from}); } return; }   // [basement 3.4] the garage manager ([3.12] repairs)
+    if(!d.view && d.kind === "studio"){ if(api.studio) api.studio(); return; }                       // [hq revamp] the lobby's HQ Studio kiosk
     if(!d.view){ if(d.kind === "townhall" && cur && cur.townHall) cur.townHall(); else if(d.kind === "dealer") dealerOpen(); else if(d.kind === "tuning") tuneOpen(); return; }   // games/hqcivic.js: the town hall; games/hqdealer.js: the dealership
+    if(d.kind === "roof" && d.view === "@lobby"){ enterWorld("lobby", "roof"); return; }            // [hq revamp] down your roof lift: out by the Roof lift
+    if(d.view === "@roof"){ if(api.outside && api.outside() === "city") enterWorld("city", "roof"); else if(api.announce) api.announce("Your roof deck is on your tower in Arena City: join the City to go up."); return; }   // [hq revamp] the lobby's Roof lift
     if(d.view.charAt(0) === "@") enterWorld(d.view.slice(1), cur.name);
     else if(d.view.indexOf("visit:") === 0){ if(api.visit) api.visit(d.view.slice(6)); }   // someone's HQ on the city street
     else api.go(d.view);
@@ -3879,7 +3887,7 @@ function mount(el, api){
   // the camera keys of a rig world (the page binds R, C, M and V too: these win while HQ is open there)
   var CAM_KEYS = {KeyV: 1, KeyM: 1, KeyP: 1, KeyQ: 1, KeyR: 1, KeyZ: 1, KeyC: 1};
   var HELD_CAM = {KeyQ: 1, KeyR: 1, KeyZ: 1, KeyC: 1};
-  function typing(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || (t && t.isContentEditable) || !!(t && t.closest && t.closest(".hqhud-gear, .hqhud-settings")); }
+  function typing(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || (t && t.isContentEditable) || !!(t && t.closest && t.closest(".hqhud-gear, .hqhud-settings, .hqs")); }
   // E (and a pad's X): get on or off what is near you; in first person also the door under the crosshair.
   function useKey(){
     // held by a trip (a booked ferry, flight or cruise seat: cur.carry): E is the trip's (get off), not a bike beside it
@@ -4063,6 +4071,8 @@ function mount(el, api){
   function refreshMission(){ missionDirty = false; layoutDesks(); buildStreamsIfChanged(); buildProjects(); drawWall(E.now() - clock0); }
   inst.setCombo = function(m){ combo = E.clamp(+m || 1, 1, 2); };
   inst.lookChanged = function(){ if(avatar) nameTag(); Object.keys(worlds).forEach(function(k){ if(worlds[k].onLook) worlds[k].onLook(); }); };
+  // [hq revamp] HQ Studio's Layout tab: the placement grid and its cursor on the lobby's or Mission Control's floor (null: off)
+  inst.studioGrid = function(o){ Object.keys(worlds).forEach(function(k){ if(worlds[k].studioGrid) worlds[k].studioGrid(o); }); };
   // The list of open HQs changed: the city street rebuilds.
   inst.cityChanged = function(){
     if(!worlds.city || !worlds.city.onCity) return;
@@ -4461,6 +4471,13 @@ function mount(el, api){
     buildRoom(); buildHolo(); buildAvatar();
     worlds.mission = cur = {scene: scene, name: "mission", span: 12, floor: inst.floor, bounds: [-ROOM, ROOM, -ROOM, ROOM],
       spawn: {x: 3, z: 9, yaw: PI}, spawnFrom: {lobby: {x: -12.6, z: 13.5, yaw: PI/2}}};
+    // [hq revamp] HQ Studio's Mission Control theme: finishes, light, the desks' furniture set, the decor (games/hqdecor.js)
+    if(HQV.hqDecor && HQV.hqDecor.mission){
+      MS = HQV.hqDecor.mission(ctx, scene, {floor: inst.floor, wallM: inst.wallM, lamps: lamps, room: ROOM});
+      worlds.mission.onLook = function(){ if(MS.apply(((api.look && api.look()) || {}).style)){ inst.deskIds = null; layoutDesks(); } };
+      worlds.mission.studioGrid = MS.grid; worlds.mission.update = MS.update;
+      MS.apply(((api.look && api.look()) || {}).style);
+    }
     // Mission Control's desks first: the 3D City starts reading its world from IndexedDB in enterWorld,
     // and a long task right after that read would hold up its answer (the < 100 ms cache gate)
     inst.update(sessions);

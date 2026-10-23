@@ -220,7 +220,7 @@ class DriveTests(unittest.TestCase):
         self.assertIn('api.netCan && api.netCan("convoy")', hq3d)
         self.assertIn('var cv = hqNetCan("convoy") && HQ3D.inst.convoyNet ? HQ3D.inst.convoyNet() : null;', ui)
         self.assertIn("msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0)].join", ui)  # in the dedupe key
-        self.assertRegex(proto, r'\("hq", 4, &\[[^\]]*"convoy"[^\]]*\]')
+        self.assertRegex(proto, r'\("hq", 4, &\[[^\]]*"convoy"[^\]]*\]')   # (later caps may follow: "hqstyle")
         # convoyCan (the Here now button) and convoyNet go through cvOn(), which checks the capability
         self.assertRegex(hq3d, r"inst\.convoyNet = function\(\)\{\s*var D = Drv\(\); if\(!D \|\| !DRV\.C \|\| !cvOn\(\)\) return null;")
         self.assertIn("if(!D || !cvOn() || !avatar", hq3d)

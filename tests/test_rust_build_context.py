@@ -77,6 +77,7 @@ class RustBuildContext(unittest.TestCase):
         self.assertEqual(in_tree, [
             "data/fps_map.json",
             "data/golf_courses.json",
+            "data/hqstyle.json",
             "data/kart_tracks.json",
             "data/platformer_levels.json",
             "data/pokemon.json",

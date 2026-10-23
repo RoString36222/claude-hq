@@ -62,7 +62,8 @@ pub const GAMES: &[(&str, i64, &[&str])] = &[
     // "convoy" (HQ 3.12): pos may carry ci (a user id you invite), cv (the user id you follow) and cg ([x, z] cm, where you lead)
     // "tuning" (HQ 3.13): while driving (a = 5 / 6), vt: the vehicle's tuning as tuning.rs's short code (at most 33 characters)
     // "pets" (HQ 3.14): pos may carry pt, up to 2 [species, variant, acc, stage, name] (backend/src/pets.rs)
-    ("hq", 4, &["ride", "look", "skate", "drive", "alt", "isles", "fly", "plane", "vehicles", "airliner", "boombox", "convoy", "tuning", "pets"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`; "drive": a = 5 (a car), 6 (a motorbike)
+    // "hqstyle" (HQ Studio, 3.15): /v1/hq/me/style + style in the HQ listing
+    ("hq", 4, &["ride", "look", "skate", "drive", "alt", "isles", "fly", "plane", "vehicles", "airliner", "boombox", "convoy", "tuning", "pets", "hqstyle"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`; "drive": a = 5 (a car), 6 (a motorbike)
     ("type", 1, &[]),
     ("td", 1, &[]),
     ("bowl", 1, &[]),
@@ -112,7 +113,7 @@ mod tests {
         // "alt" (v2): h / p ride along, x / z span the 2 km world, floor "city3d".
         // "isles" (v3): the floor may be a world's own room, city3d:<world id>.
         // "vehicles" (v4): while driving, v / vp name the catalogue vehicle and its paint.
-        assert_eq!(info["games"]["hq"], json!({"v": 4, "caps": ["ride", "look", "skate", "drive", "alt", "isles", "fly", "plane", "vehicles", "airliner", "boombox", "convoy", "tuning", "pets"]}));
+        assert_eq!(info["games"]["hq"], json!({"v": 4, "caps": ["ride", "look", "skate", "drive", "alt", "isles", "fly", "plane", "vehicles", "airliner", "boombox", "convoy", "tuning", "pets", "hqstyle"]}));
         assert_eq!(version("fps"), 1);
         assert_eq!(version("pond"), 1);
         // An unknown game still answers 1, as Python's PROTOCOL.get(g, {}) does.

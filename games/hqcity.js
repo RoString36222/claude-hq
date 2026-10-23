@@ -130,9 +130,10 @@ HQV.hqWorlds.city = function(c, w){
       ring.rotation.x = -PI/2; ring.position.set(0, 0.04, 0.5); ring.scale.y = 0.45; g.add(ring); }
     var B = HQV.hqBuilding(c, {
       level: function(){ return Math.max(1, h.level | 0); },
-      look: function(){ return Object.assign({}, h.look || {}, {sign: name, decor: cos.decor}); },
+      look: function(){ return Object.assign({}, h.look || {}, {sign: name, decor: cos.decor, style: h.style || null}); },   // [hq revamp] its HQ Studio style
       live: function(){ return (crew.working | 0) + (crew.needs | 0); },
-      campus: false,
+      campus: false, grand: 0,                                                       // the grid's lots: the old tower's size
+
       door: {view: h.isYou ? "@lobby" : "visit:" + h.userId, label: name, userId: h.userId,
              tip: h.isYou ? "Your HQ: go in" : name + ": walk in as a visitor"},
       doorFront: function(){ return new THREE.Vector3(L.door.x, 0, L.door.z); }
@@ -159,7 +160,7 @@ HQV.hqWorlds.city = function(c, w){
 
   function build(){
     var list = (api.city && api.city()) || [];
-    var key = JSON.stringify(list.map(function(h){ return [h.userId, h.level, h.look, h.cos, h.crew, !!h.isYou]; }));
+    var key = JSON.stringify(list.map(function(h){ return [h.userId, h.level, h.look, h.style || null, h.cos, h.crew, !!h.isYou]; }));
     if(key === sig) return; sig = key;
     while(streetG.children.length) streetG.remove(streetG.children[0]);
     hits.length = 0; doors.length = 0; lampGlows.length = 0; cars.length = 0; lotsB.length = 0; viewsB.length = 0;

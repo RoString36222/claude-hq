@@ -89,7 +89,7 @@ pub fn post_paths() -> Vec<&'static str> {
     let mut v = vec![
         "/api/update", "/api/action", "/api/config", "/api/meta", "/api/evo-choice", "/api/arena/pair", "/api/arena/unpair", "/api/arena/publish",
         "/api/arena/ticket", "/api/arena/nudge", "/api/arena/pantry/claim", "/api/arena/pantry/buy", "/api/arena/pantry/eat",
-        "/api/arena/pantry/give", "/api/arena/pantry/reward", "/api/arena/hq/me", "/api/arena/portrait", "/api/arena/cosmetics/buy",
+        "/api/arena/pantry/give", "/api/arena/pantry/reward", "/api/arena/hq/me", "/api/arena/hq/style", "/api/arena/portrait", "/api/arena/cosmetics/buy",
         "/api/arena/cosmetics/equip", "/api/arena/market/sell", "/api/arena/crews/create", "/api/arena/crews/join",
         "/api/arena/crews/leave", "/api/arena/quickplay/join", "/api/arena/quickplay/leave", "/api/arena/cali/order",
         "/api/arena/sounds", "/api/arena/rail/build", "/api/arena/vehicles/buy", "/api/arena/pets/adopt",
@@ -601,6 +601,14 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
         }
         "/api/arena/pets/mine" => { let (c, r) = app.arena_pets_mine(); return Reply::json(c, &r); } // HQ 3.14
         "/api/arena/pets/home" => { let (c, r) = app.arena_pets_home(&arg("u")); return Reply::json(c, &r); }
+        "/api/arena/hq/style" => {
+            let (c, r) = app.arena_hq_style();
+            return Reply::json(code_or(c, 502), &r);
+        }
+        "/api/arena/hq/styles" => {
+            let (c, r) = app.arena_hq_styles(&arg("ids"));
+            return Reply::json(code_or(c, 502), &r);
+        }
         "/api/arena/hq/visit" => {
             let (c, r) = app.arena_hq_visit(&arg("u"));
             return Reply::json(c, &r);
@@ -993,6 +1001,10 @@ fn arena_post(app: &App, path: &str, body: &Value) -> (u16, Value) {
         "/api/arena/hq/me" => {
             let crew = py::opt_truthy(b.get("crew")).then(|| app.hq_crew_counts());
             app.arena_hq_update(b.get("open"), b.get("look"), crew.as_ref())
+        }
+        "/api/arena/hq/style" => {
+            let (c, r) = app.arena_hq_style_put(b.get("style"));
+            (code_or(c, 502), r)
         }
         "/api/arena/cali/order" => match handlers::cali_body(body) {
             Ok(clean) => {

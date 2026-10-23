@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.16.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.16.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -409,6 +409,11 @@ and feature guide.
 
 ## Changelog
 
+- **3.16.1 — Fireworks that crackle.** The show over the park fires about half as many shells (around 40 a show
+  instead of 90), with room between bursts and a shorter, sparser finale. Each burst is now a soft thump followed by
+  the stars crackling as they fall, a long sizzle for a willow and a thick crackle for a chrysanthemum or a strobe,
+  instead of one sharp bang that sounded like gunfire. It is all heard as if from far off: muffled, soft, with a
+  faint echo off the towers.
 - **3.16.0 — Mouse steering, a grenade launcher and a tank for four.** In the 3D City:
   - **Mouse steering** (a new switch in the camera settings, the gear): click the view and the mouse turns you and
     the chase camera together, as in a shooter; <kbd>W</kbd> / <kbd>S</kbd> walk forward and step back, <kbd>A</kbd> /

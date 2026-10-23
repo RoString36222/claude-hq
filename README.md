@@ -427,6 +427,11 @@ and feature guide.
   the frame otherwise. Others draw you on your pet, its wings and gait following your movement. Older Arenas:
   others see you on foot with your pet beside you. **Needs an Arena deploy** for others to see riders. Privacy:
   nothing new leaves the machine (the same pet numbers and name as 3.13's `pt`). Third-party assets: none new.
+- **3.13.6 — Players are solid.** Other people in the City (and Mission Control) stop you as a wall does: a
+  body on foot or on a board, the box of the bike, motorbike or car they ride or drive (turned their way; a car
+  from the dealership at its own size), so you bump off them instead of walking or driving through. Not while they
+  fly, nor someone on a floor above or below you. You can't push anyone, and one who walks into you can always be
+  walked away from.
 
 - **3.13.5 — Your pets stay with you, your lobby shows them, and the front door goes to the street.** Fixes: E
   in your lobby went to the nearest pet following you (always within 2 m) before any door, lift or ride, so using
@@ -450,6 +455,18 @@ and feature guide.
   frame rate). Placement costs 0.1-0.3 s at City load; the stunts draw in 35-41 calls, hidden past 1.1 km.
   Measured headless on the Commons: both cannons 640-680 m, 104-119 m high, 9-10 s, through all three rings;
   Big Air 215 m; River Leaps 102 and 135 m; the loop; a 413 m splashdown.
+- **Next — Real revs, real exhausts, smooth multiplayer, call search.** Every catalogue vehicle now carries its
+  researched engine (spec.engine: idle, redline, limiter, gear ratios, primary and final drive, rear tyre, voice and an
+  exhaust tone of depth / rasp / crackle / induction / whistle), and `games/hqvehiclephys.js engineFor` turns it into
+  rpm per m/s for each gear. You drive on the real rpm: the clutch slips to a launch rpm, it upshifts at the redline
+  under power (half way up when cruising), downshifts as the revs sag, and stutters on the rev limiter with pops;
+  the rev counter reads to that engine's own limiter with its red from the redline. The voices play that rpm with the
+  vehicle's own exhaust character (games/engine.js engineProfile(.., real)). Other players are drawn smoothly
+  (`games/hqnetsmooth.js`): a buffer of their frames drawn 0.2 s in the past on a curve through them, stamped with
+  the sender's own clock and carrying their velocity, yaw rate and revs (the Arena's new `motion` capability; an older
+  Arena falls back to arrival times re-timed by distance). Simulated at 30 m/s: the largest frame-to-frame lurch went
+  from 487 m/s (and 34 hard snaps in 12 s) to 2.2 m/s. The call list (C) has a search box: brand, model, year, class,
+  body or engine. Needs the Arena release for `motion`; works without it.
 - **3.13.4 — A real helipad on your HQ, with your helicopter on it.** Every HQ tower's roof now carries a helideck:
   a steel deck raised 3 m over the top roof on legs and struts, cantilevered past it, a 9 m pad (7.5 m on the
   smallest lots: the pad stays over the lot) in its middle with a walkway and a low glass rail round it, so a

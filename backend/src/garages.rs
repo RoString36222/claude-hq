@@ -297,10 +297,13 @@ mod tests {
         pool
     }
 
+    /// `n` different vehicles (one of each per player: vehicles.rs buy_in).
     async fn own(p: &SqlitePool, uid: &str, n: usize) -> Vec<String> {
+        let models = crate::vehicles::on_sale_ids();
+        assert!(models.len() >= n, "the catalogue sells at least {n}");
         let mut ids = Vec::new();
         for i in 0..n {
-            let (v, _) = crate::vehicles::buy(p, uid, "bmw-g-310-r", 0, NOW + i as i64)
+            let (v, _) = crate::vehicles::buy(p, uid, &models[i], 0, NOW + i as i64)
                 .await
                 .unwrap_or_else(|_| panic!("claims #{i}"));
             ids.push(v["id"].as_str().unwrap().to_string());

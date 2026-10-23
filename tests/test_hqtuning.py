@@ -285,7 +285,7 @@ class Tuning(unittest.TestCase):
         self.assertLess(sp["gain"]/st["gain"], 1.3, "slightly")
         self.assertTrue(e["ev"] and e["same"] and e["untouched"], "an electric motor and stock keep their own profile")
         src = read("games", "engine.js")
-        self.assertIn("function engineSound(kind, ex){\n  var P = engineProfile(kind, ex);", src)
+        self.assertIn("function engineSound(kind, ex, real){\n  var P = engineProfile(kind, ex, real);", src)
         self.assertIn("E.engineSound(V.eng, ride.tune && HQV.hqTuning ? HQV.hqTuning.exhaustOf(ride.tune) : null)", read("games", "hq3d.js"))
 
     def test_the_store(self):
@@ -361,8 +361,8 @@ class Wiring(unittest.TestCase):
     def test_presence_is_gated_and_compact(self):
         hq = read("ui", "app", "22-hq.js")
         self.assertIn('var vt = (a===5 || a===6) && hqNetCan("tuning") && HQ3D.inst.tuneCode ? HQ3D.inst.tuneCode() : null;', hq)
-        self.assertIn("msg.cg,msg.vt,JSON.stringify(msg.pt||0)].join", hq)
-        self.assertIn('"convoy", "tuning", "pets", "hqstyle", "petride"]', read("backend", "src", "protocol.rs"))
+        self.assertIn("msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm].join", hq)
+        self.assertIn('"convoy", "tuning", "pets", "hqstyle", "motion", "petride"]', read("backend", "src", "protocol.rs"))
         src = read("games", "hq3d.js")
         self.assertIn("inst.tuneCode = function(){", src)
         self.assertIn("HQV.hqVehicleModels.build(ctx, Vc, ph, {tune: ptn})", src)

@@ -212,7 +212,7 @@ class DealerNode(unittest.TestCase):
                     for v in c["vehicles"]:
                         self.assertFalse(v["locked"], v["id"])
                         self.assertTrue(v["canGet"], v["id"])
-                        self.assertEqual(v["action"], "Get it", v["id"])
+                        self.assertEqual(v["action"], "Yours · repaint" if v["id"] == "bmw-m2" else "Get it", v["id"])
                         self.assertEqual(v["priceText"], "Free", v["id"])
         by_class = {}
         for v in self.cat["vehicles"]:

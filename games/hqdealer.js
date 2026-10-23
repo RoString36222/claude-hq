@@ -19,7 +19,7 @@
  *   layout(F, items)        -> {fc, hall, cells: [{x, z, r, i}], slots: [{x, z, yaw}]}  (pure, local m) where things go
  *   model(cat, o)           -> panel model (pure): {tabs: [{kind, label, sections: [{type, label, classes: [{id,
  *                              label, vehicles: [card]}]}]}]}; card = {id, brand, model, spec, paints, price,
- *                              priceText, minLevel, locked, owned, canGet, action}. o = {level, owned: [vehicle ids],
+ *                              priceText, minLevel, locked, owned (1 if yours: one of each per player), canGet, action}. o = {level, owned: [vehicle ids],
  *                              garage: bool}. Free and unlocked unless the data sets a price or a minLevel.
  *   build(c, site, opts)    -> B, the civic-building shape games/hqcity3d.js keeps (g, doors, hits, glows,
  *                              setNight, animate, top, boxes, lod, tint, decks, x, y, z) plus forecourt (world
@@ -180,9 +180,10 @@ function model(cat, o){
       var price = Math.max(0, +v.price || 0);
       return {id: v.id, brand: v.brand || "", model: v.model || v.id, spec: specLine(v), kind: c.kind,
               paints: (v.paints || []).filter(function(p){ return p && /^#[0-9a-fA-F]{6}$/.test(p.hex); }),
-              price: price, priceText: priceText(price), minLevel: minLevel, locked: locked, owned: owned[v.id] || 0,
+              price: price, priceText: priceText(price), minLevel: minLevel, locked: locked, owned: owned[v.id] ? 1 : 0,
               canGet: garage && !locked,
-              action: !garage ? "Getting vehicles opens soon" : locked ? "Needs level " + minLevel : price > 0 ? "Buy · " + priceText(price) : "Get it"};
+              // one of each per player: getting one you have repaints it in the colour picked (free, no second copy)
+              action: !garage ? "Getting vehicles opens soon" : locked ? "Needs level " + minLevel : owned[v.id] ? "Yours · repaint" : price > 0 ? "Buy · " + priceText(price) : "Get it"};
     })});
   });
   out.sort(function(a, b){ return a.kind === b.kind ? 0 : a.kind === "car" ? -1 : 1; });   // cars first: the showroom's floor
@@ -504,7 +505,7 @@ function mountPanel(stage, opts){
     mk("div", "hqdealer-brand", info, card.brand);
     mk("div", "hqdealer-model", info, card.model);
     mk("div", "hqdealer-spec", info, card.spec);
-    mk("div", "hqdealer-price", info, card.locked ? "Needs level " + card.minLevel : card.priceText + (card.owned ? " · you have " + card.owned : ""));
+    mk("div", "hqdealer-price", info, card.locked ? "Needs level " + card.minLevel : card.priceText + (card.owned ? " · yours" : ""));
   }
   function render(){
     while(tabs.firstChild) tabs.removeChild(tabs.firstChild);

@@ -33,8 +33,11 @@
  *   eta(len)                     -> s, for the panel and the pill (a call: at most BUDGET)
  *   etaOf(R)                     -> s left on a run
  * UI (textContent only; keys inside never reach the dashboard or the avatar):
- *   mount(stage, {items() -> [{key, title, sub, busy}], onPick(key), onClose}) -> ui
- *     ui.open() / close() / toggle() / isOpen() / render() / status(text | null) / destroy()
+ *   mount(stage, {items() -> [{key, title, sub, busy, tags}], onPick(key), onClose}) -> ui
+ *     ui.open() / close() / toggle() / isOpen() / render() / status(text | null) / search(text) / destroy()
+ *     A search box over the list keeps the vehicles whose name, where-it-is line or tags (brand, model, year,
+ *     class, body, engine) hold every word typed; Enter calls the first, Down goes into the list, Escape closes.
+ *   matches(it, q)               every word of q is in the item's title, sub or tags (case- and accent-blind)
  *   owns(e)                      a key event inside the panel (hq3d's capture-phase handler skips it)
  */
 (function(){
@@ -220,6 +223,12 @@ function etaOf(R){
 var OWN = ".hqcall";
 function inside(t){ return !!(t && t.closest && t.closest(OWN)); }
 function owns(e){ return !!(e && (e.hqCallHandled || inside(e.target))); }
+function fold(t){ t = String(t == null ? "" : t).toLowerCase(); return t.normalize ? t.normalize("NFD").replace(/[\u0300-\u036f]/g, "") : t; }
+function matches(it, q){
+  var words = fold(q).split(/\s+/).filter(Boolean); if(!words.length) return true;
+  var hay = fold([it && it.title, it && it.sub, it && it.tags].join(" "));
+  return words.every(function(w){ return hay.indexOf(w) >= 0; });
+}
 
 function mount(stage, opts){
   opts = opts || {};
@@ -234,13 +243,17 @@ function mount(stage, opts){
   var head = mk("div", "hqcall-head", root);
   mk("div", "hqcall-title", head, "📞 Call a vehicle");
   var closeBtn = mk("button", "hqcall-close", head, "✕"); closeBtn.type = "button"; closeBtn.setAttribute("aria-label", "Close");
+  var find = mk("input", "hqcall-search", root); find.type = "search"; find.placeholder = "Search: brand, model, bike, SUV, V8…";
+  find.setAttribute("aria-label", "Search your vehicles"); find.autocomplete = "off"; find.spellcheck = false;
   var list = mk("div", "hqcall-list", root);
   var pill = mk("div", "hqcall-pill", stage); pill.hidden = true; pill.setAttribute("role", "status"); pill.setAttribute("aria-live", "polite");
 
   function render(){
     while(list.firstChild) list.removeChild(list.firstChild);
-    var L = items() || [];
-    if(!L.length){ mk("div", "hqcall-empty", list, "No vehicles yet. Pick one in the Showroom (G)."); return; }
+    var all = items() || [], L = all.filter(function(it){ return matches(it, find.value); });
+    find.hidden = all.length < 2;
+    if(!all.length){ mk("div", "hqcall-empty", list, "No vehicles yet. Pick one in the Showroom (G)."); return; }
+    if(!L.length){ mk("div", "hqcall-empty", list, "Nothing matches “" + find.value.trim() + "”."); return; }
     L.forEach(function(it, i){
       var b = mk("button", "hqcall-item" + (it.busy ? " busy" : ""), list); b.type = "button";
       if(it.col){ var sw = mk("span", "hqcall-swatch", b); sw.style.background = it.col; }
@@ -248,13 +261,16 @@ function mount(stage, opts){
       mk("span", "hqcall-name", tx, it.title || it.key);
       mk("span", "hqcall-sub", tx, it.sub || "");
       on(b, "click", function(){ close(); onPick(it.key); });
-      if(i === 0 && open && b.focus) b.focus();
     });
   }
   function contain(e){
     e.hqCallHandled = true;
     if(e.stopPropagation) e.stopPropagation();
-    if(e.type === "keydown" && (e.key === "Escape" || e.code === "KeyC")){ if(e.preventDefault) e.preventDefault(); close(); }
+    var typing = e.target === find;
+    if(e.type === "keydown" && typing && e.key === "Enter"){
+      var first = list.querySelector("button"); if(e.preventDefault) e.preventDefault(); if(first) first.click();
+    }
+    else if(e.type === "keydown" && (e.key === "Escape" || (e.code === "KeyC" && !typing))){ if(e.preventDefault) e.preventDefault(); close(); }
     else if(e.type === "keydown" && (e.key === "ArrowDown" || e.key === "ArrowUp")){
       var bs = [].slice.call(list.querySelectorAll("button")), i = bs.indexOf(doc.activeElement);
       if(bs.length){ if(e.preventDefault) e.preventDefault(); bs[(i + (e.key === "ArrowDown" ? 1 : -1) + bs.length) % bs.length].focus(); }
@@ -262,11 +278,16 @@ function mount(stage, opts){
   }
   on(root, "keydown", contain); on(root, "keyup", contain);
   on(closeBtn, "click", function(){ close(); });
-  function openP(){ if(open) return; open = true; root.hidden = false; render(); var f = list.querySelector("button") || closeBtn; if(f && f.focus) f.focus(); }
+  on(find, "input", function(){ render(); });
+  // focus once the key that opened it is done with (its letter must not land in the box)
+  function openP(){
+    if(open) return; open = true; root.hidden = false; find.value = ""; render();
+    setTimeout(function(){ if(!open) return; var f = !find.hidden ? find : list.querySelector("button") || closeBtn; if(f && f.focus) f.focus(); }, 0);
+  }
   function close(){ if(!open) return; open = false; root.hidden = true; if(opts.onClose) opts.onClose(); }
   return {
     open: openP, close: close, toggle: function(){ if(open) close(); else openP(); }, isOpen: function(){ return open; },
-    render: render, root: root, pill: pill,
+    render: render, root: root, pill: pill, search: function(t){ find.value = t == null ? "" : String(t); render(); },
     status: function(t){ if(t == null || t === ""){ pill.hidden = true; return; } if(pill.textContent !== t) pill.textContent = t; pill.hidden = false; },
     destroy: function(){ listeners.forEach(function(l){ l[0].removeEventListener(l[1], l[2]); }); listeners = [];
                          [root, pill].forEach(function(n){ if(n.parentNode) n.parentNode.removeChild(n); }); }
@@ -274,6 +295,6 @@ function mount(stage, opts){
 }
 
 HQV.hqCall = {kerb: kerb, arrival: arrival, pathFor: pathFor, run: run, step: step, aheadOf: aheadOf, spawnPick: spawnPick,
-              eta: eta, etaOf: etaOf, BUDGET: BUDGET, capAt: capAt, pointAt: pointAt, poly: poly, join: join, mount: mount, owns: owns, RETURN_S: 5, RAMP_V: RAMP_V,
+              eta: eta, etaOf: etaOf, BUDGET: BUDGET, matches: matches, capAt: capAt, pointAt: pointAt, poly: poly, join: join, mount: mount, owns: owns, RETURN_S: 5, RAMP_V: RAMP_V,
               CRUISE: CRUISE, TURN_V: TURN_V, LANE: LANE, CALL_R: CALL_R, MIN_HIDE: MIN_HIDE, STOP_GAP: STOP_GAP};
 })();

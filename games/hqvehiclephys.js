@@ -11,6 +11,12 @@
  *   t0100(top, acc, floor) -> s        the other way round (Infinity when 100 km/h is past `top`)
  *   estimate0100(spec, kind) -> s      from power-to-weight when the maker gives no figure
  *   voiceFor(spec, kind) -> name       the engine voice for a layout
+ *   engineFor(spec, kind, voice, gears) -> E   its real revs and gearing (spec.engine, researched per vehicle; the voice's
+ *                                     typical revs where a figure is missing): {idle, red, limit, k (rpm per m/s in each
+ *                                     gear, from the gear ratios, primary and final drive and the rear tyre; else from
+ *                                     `gears`), shiftUp, launch, electric, motorMax, cyl, tone} (tone: the exhaust's
+ *                                     depth, rasp, crackle, induction, whistle, 0..1, for games/engine.js)
+ *   tyreCirc("190/55 ZR17") -> m       a tyre's rolling circumference (3% squat under load)
  * entry = {kind: "car"|"bike", type: "sedan"|"coupe"|"suv"|"hatch"|"pickup"|"hyper"|"super"|"naked"|"sport"|
  *          "adventure"|"cruiser"|"scooter"|"dirt"|"classic"|"hypersport", spec: {cc, cyl, layout, aspiration, electric, powerKw,
  *          torqueNm, massKg, drive, topKmh, zeroTo100s, gears}, dims: {lengthM, widthM, heightM, wheelbaseM},
@@ -101,6 +107,46 @@ function gearsFor(top, n, kind, electric){
   return G;
 }
 
+// a voice's typical idle and redline (games/engine.js ENGINES), where the research found no figure
+var ENGINE_VOICES = {single: 1, twin: 1, vtwin: 1, boxer: 1, four: 1, v4: 1, triple: 1, crossplane: 1, supercharged: 1, longstroke: 1,
+                     twin270: 1, vtwin45: 1, turbo4: 1, turbo6: 1, v8tt: 1, v8: 1, six: 1, v10: 1, v12: 1, w16: 1, v16: 1, electric: 1};
+var REVS = {single: [1500, 10500], twin: [1300, 10200], vtwin: [1250, 10000], boxer: [1050, 9000], four: [1200, 14000],
+            v4: [1250, 14500], triple: [1150, 12650], crossplane: [1350, 13800], supercharged: [1100, 12500],
+            longstroke: [800, 6100], twin270: [1050, 7250], vtwin45: [850, 5500], turbo4: [800, 6500], turbo6: [700, 7000],
+            v8tt: [650, 7200], v8: [700, 6200], six: [750, 7400], v10: [1000, 8500], v12: [950, 9500], w16: [900, 6700],
+            v16: [1000, 9000], turbo: [850, 6800], bike: [1400, 11500], electric: [0, 16000]};
+function tyreCirc(t){
+  var m = /(\d{2,3})\s*\/\s*(\d{2,3})\s*[A-Z]*\s*R?\s*(\d{2}(?:\.\d)?)/i.exec(String(t || ""));
+  if(!m) return null;
+  var d = (+m[3])*0.0254 + 2*(+m[1])*(+m[2])/100/1000;
+  return Math.PI*d*0.97;
+}
+function engineFor(spec, kind, voice, gears){
+  spec = spec || {};
+  var R = spec.engine || {}, base = REVS[voice] || REVS[kind === "bike" ? "four" : "turbo6"], electric = !!spec.electric || voice === "electric";
+  var E = {electric: electric, cyl: num(spec.cyl, 0) || null, tone: R.tone || null};
+  if(electric){
+    E.idle = 0; E.motorMax = num(R.motorMax, 16000); E.red = E.motorMax; E.limit = E.motorMax; E.k = null; E.shiftUp = Infinity; E.launch = 0;
+    return E;
+  }
+  E.idle = num(R.idle, base[0]);
+  var red = num(R.red, null), lim = num(R.limit, null);
+  if(red == null && lim != null) red = lim - (kind === "bike" ? 400 : 250);
+  if(red == null) red = num(R.power, 0) > 0 ? Math.round(R.power*1.06/100)*100 : base[1];
+  if(lim == null) lim = red + (kind === "bike" ? 400 : 250);
+  E.red = red; E.limit = Math.max(lim, red);
+  // rpm per m/s in each gear: engine turns = wheel turns x primary x gear x final
+  var circ = tyreCirc(R.tyre), ratios = Array.isArray(R.ratios) && R.ratios.length ? R.ratios.filter(function(r){ return +r > 0; }) : null;
+  if(circ && ratios && ratios.length){
+    var pr = num(R.primary, 1), fd = num(R.final, 1);
+    E.k = ratios.map(function(r){ return Math.round(60*pr*r*fd/circ*1000)/1000; });
+  } else if(gears && gears.length) E.k = gears.map(function(v){ return Math.round(E.red/Math.max(1, v)*1000)/1000; });
+  else E.k = null;
+  E.shiftUp = Math.round(E.red*0.97);
+  E.launch = Math.round(E.idle + (E.red - E.idle)*(kind === "bike" ? 0.3 : 0.28));
+  return E;
+}
+
 function derive(entry){
   entry = entry || {};
   var kind = entry.kind === "bike" ? "bike" : "car", spec = entry.spec || {}, dims = entry.dims || {};
@@ -123,19 +169,22 @@ function derive(entry){
     lean: kind === "bike" ? (LEAN[type] != null ? LEAN[type] : 0.42) : 0,
     box: [kind === "bike" ? 0 : Math.round(W*0.4*100)/100, Math.round(L*0.42*100)/100],
     motor: true, gears: gearsFor(top, spec.gears, kind, electric),
-    eng: entry.sound || voiceFor(spec, kind),
+    eng: (spec.engine && ENGINE_VOICES[spec.engine.voice] && spec.engine.voice) || entry.sound || voiceFor(spec, kind),
     floor: floor,
     // heavier stops longer: 14 m/s² up to 1.6 t, down to 11 at 2.8 t (a bike with its rider: 14)
     brake: kind === "bike" ? BRAKE : Math.round(clamp(BRAKE - (mass - 1600)/400, 11, BRAKE)*10)/10,
     roll: kind === "bike" ? 0 : (ROLL[type] != null ? ROLL[type] : 0.03),
     grip: kind === "bike" ? 0.8 : GRIP[drive], slip: kind === "bike" ? 0.5 : SLIP[drive]
   };
+  // [revs] its real revs and gearing; where the gearing is known, each gear tops out at its real redline speed
+  V.engine = engineFor(spec, kind, V.eng, V.gears);
+  if(V.engine.k && !electric && spec.engine && spec.engine.ratios) V.gears = V.engine.k.map(function(k){ return Math.round(V.engine.red/k*10)/10; });
   var S = SLIDE[kind === "bike" ? "bike" : drive];
   V.slide = {min: S.min, turn: S.turn, grip: S.grip, max: S.max, bleed: S.bleed};
   return V;
 }
 
 HQV.hqVehiclePhys = {derive: derive, accFor: accFor, t0100: t0100, timeTo: timeTo, estimate0100: estimate0100,
-                     voiceFor: voiceFor, gearsFor: gearsFor, CAP_KMH: CAP_KMH, SLIDE: SLIDE, LEAN: LEAN, ROLL: ROLL,
+                     voiceFor: voiceFor, gearsFor: gearsFor, engineFor: engineFor, tyreCirc: tyreCirc, REVS: REVS, CAP_KMH: CAP_KMH, SLIDE: SLIDE, LEAN: LEAN, ROLL: ROLL,
                      FLOOR: FLOOR, FLOOR_EV: FLOOR_EV};
 })();

@@ -99,6 +99,9 @@ out.budget = [[80, 0, 30], [400, 0, 144], [6000, 0, 30], [6000, 1, 144], [6000, 
 { const z = zig(1500, 0), R = H.run(z.xz, 0, null, H.BUDGET); let t = 0, w0 = null;      // a car blocks its last stretch for 1 s
   while(!R.done && t < 60){ if(w0 === null && R.len - R.s < 24) w0 = t; H.step(R, 1/60, w0 !== null && t < w0 + 1 ? 8 : Infinity); t += 1/60; }
   out.budgetBlocked = t; }
+// the call list's search: every word, anywhere in the name, the where-it-is line or the tags; case and accents ignored
+{ const it = {title: "Lamborghini Huracán STO", sub: "In the carpark", tags: "Lamborghini Huracán STO 2021 car super 5000 super v10 5204cc car"};
+  out.match = [H.matches(it, ""), H.matches(it, "huracan"), H.matches(it, "LAMBO v10"), H.matches(it, "carpark sto"), H.matches(it, "bmw"), H.matches(it, "v10 bike")]; }
 out.consts = {CRUISE: H.CRUISE, TURN_V: H.TURN_V, LANE: H.LANE, STOP_GAP: H.STOP_GAP, CALL_R: H.CALL_R, MIN_HIDE: H.MIN_HIDE, RAMP_V: H.RAMP_V};
 console.log(JSON.stringify(out));
 """
@@ -168,6 +171,9 @@ class CallNode(unittest.TestCase):
             self.assertLessEqual(b["vEnd"], self.o["consts"]["CRUISE"] + 1e-9, "the last stretch is driven at street speed")
         self.assertGreater(self.o["budget"][3]["len"], 6000, "the carpark ramps and 6 km of road")
         self.assertLess(self.o["budgetBlocked"], 10, "held up on its last stretch, still under 10 s")
+
+    def test_search_matches_every_word(self):
+        self.assertEqual(self.o["match"], [True, True, True, True, False, False])
 
     def test_redirect_keeps_speed(self):
         self.assertGreater(self.o["redirectV"], 8.5)

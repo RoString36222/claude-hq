@@ -104,7 +104,7 @@ class Presence(unittest.TestCase):
         hq = read("ui", "app", "22-hq.js")
         self.assertIn('(a===5 || a===6) && HQ3D.inst.vehicle && hqNetCan("vehicles")', hq)
         self.assertIn("msg.v=veh.v", hq)
-        self.assertIn("msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg].join", hq, "a paint change is sent at once")
+        self.assertIn("msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,JSON.stringify(msg.pt||0)].join", hq, "a paint change is sent at once")
 
     def test_hq3d_draws_a_peers_catalogue_vehicle(self):
         src = read("games", "hq3d.js")

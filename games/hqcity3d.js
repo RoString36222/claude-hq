@@ -414,6 +414,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var me = (api.me && api.me()) || null, owner = "commons", tier = 5, grow = 1000, cityState = null, assignRows = null;
   var dealerSite = null, dealerB = null;          // the dealership (games/hqdealer.js): its site and building
   var casinoSite = null, casinoB = null;          // the casino (games/hqcasino.js): its site and the building on the street
+  var petSite = null, petB = null;                // [pets 3.14] the Pet shop (games/hqpets.js): its site and building
   var civics = [], civicG = new THREE.Group(), boatG = new THREE.Group(), boats = [], civicLod = null, decks = [];
   var oc = null, sea = null, arch = null, tsim = null, tview = null, nsim = null, ndraw = null;
   var bus = null, menu = null, menuKey = null, talkL = null, ui = null, statsEl = null, statsAt = 0, fadeEl = null, landing = false, npcSkip = 0;
@@ -878,6 +879,10 @@ HQV.hqWorlds.city3d = function(c, w){
         // back out of the casino: on the red carpet, facing the street
         if(w.spawnFrom) w.spawnFrom.casino = {x: KB.door.x, z: KB.door.z, yaw: KB.door.yaw};
       } catch(e){ casinoB = null; }
+    }
+    petB = null;                                                        // [pets 3.14] the Pet shop
+    if(petSite && HQV.hqPets && HQV.hqPets.build){
+      try { var PB = HQV.hqPets.build(c, petSite, {tier: tier, night: night}); civicG.add(PB.g); civics.push(PB); petB = PB; } catch(e){ petB = null; }
     }
     decks = []; civics.forEach(function(B){ (B.decks || []).forEach(function(d){ decks.push(d); }); });
     buildLod();
@@ -2454,6 +2459,7 @@ HQV.hqWorlds.city3d = function(c, w){
       if(line && line.text){ showTalk(line); return true; }
     }
     if(dealerB && c.dealer && (dealerB.inside(p.x, p.z) || Math.hypot(p.x - dealerB.door.x, p.z - dealerB.door.z) < 4)){ c.dealer.open(); return true; }
+    if(petB && petB.near(p.x, p.z) && HQV.petsUi){ HQV.petsUi.open("adopt"); return true; }   // [pets 3.14] the Pet shop
     var rs = rail && rail.station(p.x, p.z); if(rs){ openTravelMenu(rs); return true; }   // rail: at the station's door, before its bus bay
     if(tsim){ var st = tsim.stopsNear(p.x, p.z, STOP_R)[0]; if(st){ openStopMenu(st); return true; } }
     var tm = HQV.hqTravel ? terminalAt(W, tier, p.x, p.z) : null;
@@ -2462,6 +2468,8 @@ HQV.hqWorlds.city3d = function(c, w){
   };
   // the dealership (games/hqdealer.js) for hq3d's dealer panel and test drives: where it is, its forecourt bays
   // (world m, nose out), and a drive route along the roads from (x, z) back to a bay (Float64Array x, z, ...; null: none)
+  // [pets 3.14] the Pet shop: where its door is, and whether you stand at it (E opens the adoption panel)
+  w.petShop = {site: function(){ return petB ? {x: petB.x, z: petB.z, door: petB.door} : null; }, near: function(x, z){ return !!(petB && petB.near(x, z)); }};
   w.dealer = {
     site: function(){ return dealerB ? {id: dealerSite.id, name: dealerSite.name, x: dealerB.x, z: dealerB.z, door: dealerB.door, flagship: !!dealerSite.flagship} : null; },
     forecourt: function(){ return dealerB ? dealerB.forecourt.slice() : []; },
@@ -2694,6 +2702,7 @@ HQV.hqWorlds.city3d = function(c, w){
     S.remove(civicG); S.remove(boatG);
     if(dealerB){ dealerB.dispose(); dealerB = null; }
     if(casinoB){ casinoB.dispose(); casinoB = null; }
+    if(petB){ petB.dispose(); petB = null; }                           // [pets 3.14]
     if(air){ air.destroy(); air = null; }                                  // air:
     carparkDestroy();                                                      // carpark
     ferryPool.forEach(function(F){ F.dispose(); }); ferryPool = []; if(myFerry){ myFerry.dispose(); myFerry = null; }
@@ -2948,6 +2957,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(V2 && HQV.hqDealer){ try { dealerSite = HQV.hqDealer.place(W, tier); } catch(e){ dealerSite = null; } }
     // the casino (games/hqcasino.js) likewise, after the dealership has taken its lot
     if(V2 && HQV.hqCasino){ try { casinoSite = HQV.hqCasino.place(W, tier); } catch(e){ casinoSite = null; } }
+    if(V2 && HQV.hqPets && HQV.hqPets.place){ try { petSite = HQV.hqPets.place(W); } catch(e){ petSite = null; } }   // [pets 3.14] the Pet shop
     indexBuildings();
     wb = HQV.worldbuild.create(c, W, V2 ? {scene: S, quality: 2, tier: tier, gap: !!(HQV.hqBridges && W.river)} : {scene: S, quality: 2});
     S.add(wb.root); S.add(staticG); S.add(hqG);

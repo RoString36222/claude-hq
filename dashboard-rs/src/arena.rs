@@ -161,6 +161,53 @@ pub fn vehicle_park_body(body: &Value) -> Result<Value, &'static str> {
     }
 }
 
+/// Pets (HQ 3.14, backend/src/pets.rs): a species id, and a pet's name as the page may send it (the Arena
+/// trims it, checks it again and filters words).
+static PET_SPECIES_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z]{1,24}$").unwrap());
+static PET_NAME_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9 '-]{1,24}$").unwrap());
+
+fn pet_name(body: &Value) -> Result<Value, &'static str> {
+    body.get("name").and_then(Value::as_str).filter(|n| PET_NAME_RE.is_match(n) && n.trim().chars().count() <= 12)
+        .map(|n| json!(n)).ok_or("name must be 1 to 12 letters, digits, spaces, - or '")
+}
+fn pet_small(body: &Value, k: &str, max: i64) -> Result<Option<Value>, &'static str> {
+    match body.get(k) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_i64().filter(|n| (0..=max).contains(n)).map(|n| Some(json!(n))).ok_or("a pet's numbers are small"),
+    }
+}
+
+/// An adoption's body: `{species, variant?, name}`; anything else is dropped. The Arena sets any price.
+pub fn pet_adopt_body(body: &Value) -> Result<Value, &'static str> {
+    let species = body.get("species").and_then(Value::as_str).filter(|s| PET_SPECIES_RE.is_match(s)).ok_or("species must be a species id")?;
+    let mut o = json!({"species": species, "name": pet_name(body)?});
+    if let Some(v) = pet_small(body, "variant", 15)? { o["variant"] = v; }
+    Ok(o)
+}
+
+/// A pet edit's body: any of `{name, variant, acc, active, home}`, at least one; anything else is dropped.
+pub fn pet_edit_body(body: &Value) -> Result<Value, &'static str> {
+    let mut o = serde_json::Map::new();
+    if body.get("name").is_some() { o.insert("name".into(), pet_name(body)?); }
+    if let Some(v) = pet_small(body, "variant", 15)? { o.insert("variant".into(), v); }
+    if let Some(v) = pet_small(body, "acc", 255)? { o.insert("acc".into(), v); }
+    for k in ["active", "home"] {
+        match body.get(k) {
+            None | Some(Value::Null) => {}
+            Some(Value::Bool(b)) => { o.insert(k.into(), json!(b)); }
+            Some(_) => return Err("active and home are true or false"),
+        }
+    }
+    if o.is_empty() { return Err("nothing to change"); }
+    Ok(Value::Object(o))
+}
+
+/// A pet care's body: `{kind}`, petting, fetch or a trick.
+pub fn pet_care_body(body: &Value) -> Result<Value, &'static str> {
+    body.get("kind").and_then(Value::as_str).filter(|k| matches!(*k, "pet" | "fetch" | "trick"))
+        .map(|k| json!({"kind": k})).ok_or("kind must be pet, fetch or trick")
+}
+
 /// The Casino (HQ 3.7): its one-shot games and the shapes a play may take. The Arena checks every field again
 /// and draws every outcome; these only keep anything else from leaving the machine.
 pub const CASINO_GAMES: [&str; 9] = ["slots", "roulette", "horses", "plinko", "wheel", "rocket", "dice", "scratch", "coin"];
@@ -1329,6 +1376,44 @@ impl App {
         }
     }
 
+    /// GET /v1/pets/mine: your pets, your level and coins (HQ 3.14).
+    pub fn arena_pets_mine(&self) -> (u16, Value) {
+        self.authed_get("/v1/pets/mine")
+    }
+
+    /// GET /v1/pets/home/<user id>: the pets in that HQ's lobby (an open HQ, or yours). Egress: a user id.
+    pub fn arena_pets_home(&self, uid: &str) -> (u16, Value) {
+        if !valid_user_id(uid) {
+            return (400, json!({"error": "bad user id"}));
+        }
+        self.authed_get(&format!("/v1/pets/home/{uid}"))
+    }
+
+    /// POST /v1/pets/adopt. Egress: a species id, a variant and the name you typed for the pet.
+    pub fn arena_pet_adopt(&self, body: &Value) -> (u16, Value) {
+        match pet_adopt_body(body) {
+            Ok(clean) => self.authed_send("POST", "/v1/pets/adopt", clean),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
+    /// POST /v1/pets/<id>/{edit,care,release}. Egress: the pet's id, small numbers, flags, a name, a care word.
+    pub fn arena_pet_post(&self, id: &str, action: &str, body: &Value) -> (u16, Value) {
+        if !OWNED_ID_RE.is_match(id) {
+            return (400, json!({"error": "bad pet id"}));
+        }
+        let clean = match action {
+            "edit" => pet_edit_body(body),
+            "care" => pet_care_body(body),
+            "release" => Ok(json!({})),
+            _ => Err("no such pet route"),
+        };
+        match clean {
+            Ok(c) => self.authed_send("POST", &format!("/v1/pets/{id}/{action}"), c),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
     /// GET /v1/world/claude-hq@2/assign: which Commons HQ lot (a rank) each open
     /// HQ's tower stands on. Egress: the device token and the fixed path only.
     pub fn arena_commons_assign(&self) -> (u16, Value) {
@@ -1744,6 +1829,49 @@ pub(crate) mod tests {
         assert_eq!(urls, vec!["https://arena.example/v1/garages/mine", home.as_str(), home.as_str()]);
         assert_eq!(s[1].3, Some(json!({"home": "basement", "bay": 2})));
         assert_eq!(s[2].3, Some(json!({"home": "carpark"})));
+        assert!(s.iter().all(|x| x.2.as_deref() == Some("T")));
+    }
+
+    #[test]
+    fn pets_forward_only_species_names_numbers_and_flags() {
+        // HQ 3.14
+        assert_eq!(pet_adopt_body(&json!({"species": "icedragon", "variant": 2, "name": "Frost", "price": 0})),
+                   Ok(json!({"species": "icedragon", "variant": 2, "name": "Frost"})));
+        assert_eq!(pet_adopt_body(&json!({"species": "corgi", "name": "Mr Waffles"})), Ok(json!({"species": "corgi", "name": "Mr Waffles"})));
+        for bad in [json!({"species": "../x", "name": "A"}), json!({"species": "corgi"}), json!({"species": "corgi", "name": "<b>"}),
+                    json!({"species": "corgi", "name": "x".repeat(13)}), json!({"species": "corgi", "name": "A", "variant": 99})] {
+            assert!(pet_adopt_body(&bad).is_err(), "{bad}");
+        }
+        assert_eq!(pet_edit_body(&json!({"acc": 9, "active": true, "affection": 1000, "user_id": "x"})), Ok(json!({"acc": 9, "active": true})));
+        assert_eq!(pet_edit_body(&json!({"home": false})), Ok(json!({"home": false})));
+        for bad in [json!({}), json!({"active": 1}), json!({"acc": 256}), json!({"name": "/etc"})] {
+            assert!(pet_edit_body(&bad).is_err(), "{bad}");
+        }
+        assert_eq!(pet_care_body(&json!({"kind": "fetch", "n": 99})), Ok(json!({"kind": "fetch"})));
+        assert!(pet_care_body(&json!({"kind": "feed"})).is_err());
+        use crate::server::pet_post_target;
+        assert_eq!(pet_post_target("/api/arena/pets/abc/edit"), Some(("abc", "edit")));
+        assert_eq!(pet_post_target("/api/arena/pets/abc/release"), Some(("abc", "release")));
+        for bad in ["/api/arena/pets/adopt", "/api/arena/pets//care", "/api/arena/pets/a/b/care", "/api/arena/pets/abc/feed"] {
+            assert_eq!(pet_post_target(bad), None, "{bad}");
+        }
+        let (_d, app) = app();
+        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({})))));
+        let id = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+        assert_eq!(app.arena_pets_mine().0, 200);
+        assert_eq!(app.arena_pet_adopt(&json!({"species": "shiba", "name": "Mochi"})).0, 200);
+        assert_eq!(app.arena_pet_post(id, "care", &json!({"kind": "pet"})).0, 200);
+        assert_eq!(app.arena_pet_post(id, "release", &json!({"x": 1})).0, 200);
+        assert_eq!(app.arena_pet_post("../x", "edit", &json!({"home": true})).0, 400);
+        assert_eq!(app.arena_pets_home(id).0, 200);
+        assert_eq!(app.arena_pets_home("../x").0, 400);
+        let s = sent.lock().unwrap();
+        let urls: Vec<&str> = s.iter().map(|x| x.1.as_str()).collect();
+        let care = format!("https://arena.example/v1/pets/{id}/care");
+        let rel = format!("https://arena.example/v1/pets/{id}/release");
+        let home = format!("https://arena.example/v1/pets/home/{id}");
+        assert_eq!(urls, vec!["https://arena.example/v1/pets/mine", "https://arena.example/v1/pets/adopt", care.as_str(), rel.as_str(), home.as_str()]);
+        assert_eq!(s[3].3, Some(json!({})), "a release sends nothing");
         assert!(s.iter().all(|x| x.2.as_deref() == Some("T")));
     }
 

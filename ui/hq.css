@@ -2494,3 +2494,29 @@ html.hq-calm .hqhud-chip,html.hq-calm .hqhud-vignette{transition:none}
 @media(max-width:420px){.th-good{grid-template-columns:minmax(0,1fr) 52px 52px}.th-acts{grid-column:1 / -1}}
 /* the boombox's player (ui/app/39-boombox.js): playing, but out of sight and out of the way */
 .hq-boom-frame{position:fixed;left:-400px;bottom:0;width:240px;height:200px;border:0;opacity:0;pointer-events:none}
+/* the Pets panel (ui/app/40-pets.js, HQ 3.14) */
+.pets-back{z-index:90}
+.pets-modal{width:min(620px,100%)}
+.pets-panel{display:grid;gap:10px}
+.pets-src{margin:0;font-size:12.5px}
+.pets-list{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.pets-card{display:grid;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel2)}
+.pets-head{display:flex;align-items:center;gap:10px}
+.pets-t{display:grid;flex:1 1 auto;min-width:0}
+.pets-name{color:var(--ink);overflow-wrap:anywhere}
+.pets-ic{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:50%;font-size:19px;border:2px solid var(--line);flex:none}
+.pets-aff{width:110px}
+.pets-acc{gap:4px 12px}
+.pets-rel{justify-self:start}
+.pets-swatches{display:flex;gap:6px}
+.pets-sw{width:28px;height:28px;border-radius:50%;border:2px solid var(--line);cursor:pointer;padding:0}
+.pets-sw.on{border-color:var(--brand);box-shadow:0 0 0 2px var(--brand)}
+.pets-sw:focus-visible,.pets-pick:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.pets-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:6px}
+.pets-pick{display:grid;justify-items:center;gap:2px;padding:8px 6px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel2);color:var(--ink);cursor:pointer;font-size:12.5px;text-align:center}
+.pets-pick:hover{border-color:var(--brand)}
+.pets-pick.on{border-color:var(--brand);background:var(--panel)}
+.pets-ok{color:var(--good)}
+.pets-form{display:grid;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--radius)}
+html.hq-calm .pets-sw,html.hq-calm .pets-pick{transition:none}
+@media (prefers-reduced-motion: reduce){.pets-sw,.pets-pick{transition:none}}

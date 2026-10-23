@@ -55,7 +55,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         m = re.search(r"var HQ_SCRIPTS = (\[[^\]]*\]);", read(HQ_UI))
         self.assertTrue(m, "HQ_SCRIPTS list in 22-hq.js")
         self.assertEqual(json.loads(m.group(1)),
-                         ["engine", "avatar3d", "hq3d", "hqlobby",
+                         ["engine", "avatar3d", "hq3d", "hqpets", "hqlobby",
                           # the basement garage (3.4): the car lift, the garage manager, its effects, B1 itself
                           "hqcarlift", "hqgaragemgr", "hqbasementfx", "hqbasement",
                           "hqbase", "hqskate", "world", "worldgeom",
@@ -94,7 +94,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         self.assertIn("msg.h=Math.max(-50000, Math.min(50000, Math.round(w.h*100)))", m.group(1))
         self.assertIn("Math.max(-90, Math.min(90,", m.group(1))
         self.assertNotRegex(body.replace(m.group(0), ""), r"msg\.[hp]=")
-        self.assertIn("msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg].join", body)   # both in the dedupe key (and the vehicle, the boombox, the convoy)
+        self.assertIn("msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,JSON.stringify(msg.pt||0)].join", body)   # both in the dedupe key (and the vehicle, the boombox, the convoy)
         # the city3d skip comes before anything is sent
         self.assertLess(body.index('w.world==="city3d"'), body.index("ws.send"))
 

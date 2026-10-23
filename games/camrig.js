@@ -52,6 +52,10 @@ var VEHICLE = {
   // helicopters (games/hqheli.js): further back and higher, the horizon tilting a little with the bank
   heli:    {backMul: 2.6, upMul: 1.7, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [-0.4, 1.75, 1.0]}, roll: 0.35},
   attack:  {backMul: 2.8, upMul: 1.8, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [0, 1.95, 2.1]}, roll: 0.35},
+  // your pets (games/hqpetride.js, HQ 3.14): behind and above a dragon (its wings span ~7 m), lower behind a dinosaur or the serpent
+  dragon:  {backMul: 2.3, upMul: 1.6, sideMul: 1,  fovSpeedKick: 0.7, fpAnchor: {seat: [0, 3.4, 0.3]}, roll: 0.3},
+  dino:    {backMul: 1.7, upMul: 1.3, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [0, 2.6, 0.2]}, roll: 0},
+  serpent: {backMul: 2.0, upMul: 1.2, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [0, 1.6, 0.4]}, roll: 0.2},
   // planes (games/hqplane.js, HQ 3.2): well behind and above (the seaplane is 16 m long), the horizon banking a little;
   // first person is the pilot's eye in the cockpit, looking out over the nose
   seaplane: {backMul: 3.4, upMul: 1.5, sideMul: 1, fovSpeedKick: 0.4, fpAnchor: {seat: [0.35, 2.95, 5.6]}, roll: 0.3},

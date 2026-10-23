@@ -1156,11 +1156,12 @@ function mount(el, api){
     Object.keys(peers).forEach(function(u){
       var P = peers[u]; if(!P.pt || P.w !== here) return;
       var a = P.a | 0;
-      list.push({u: u, x: P.x, z: P.z, yaw: P.yaw, speed: a >= 3 ? Math.hypot(P.vx || 0, P.vz || 0) : P.fs || 0, pt: P.pt,
-                 ride: a >= 3 ? {kind: String(a), speed: Math.hypot(P.vx || 0, P.vz || 0), air: a >= 7 && a !== 9, boat: false, h: P.hy || 0} : null});
+      var up = a === 13 ? (P.hy || 0) - groundAt(P.x, P.z) > 2 : a >= 7 && a !== 9;   // [3.14] riding a pet: in the air only when it flies
+      list.push({u: u, x: P.x, z: P.z, yaw: P.yaw, speed: a >= 3 ? Math.hypot(P.vx || 0, P.vz || 0) : P.fs || 0, pt: P.pt, mount: a === 13,
+                 ride: a >= 3 ? {kind: String(a), speed: Math.hypot(P.vx || 0, P.vz || 0), air: up, boat: false, h: P.hy || 0} : null});
     });
     try {
-      PK.frame({t: t, dt: dt, scene: cur.scene, world: cur, worldName: cur.name, owner: petsOwner(), peers: list, night: isNight(), busy: useHere(),
+      PK.frame({t: t, dt: dt, scene: cur.scene, world: cur, worldName: cur.name, owner: petsOwner(), peers: list, night: isNight(), canRide: petRideOk(), busy: useHere(),
                 blocked: function(x, z){ return blocked(x, z); },
                 ground: function(x, z){ return petsWater(x, z) && cur.sea.level ? cur.sea.level(x, z) : groundAt(x, z); },
                 water: petsWater});
@@ -1169,6 +1170,7 @@ function mount(el, api){
   function petsKey(e){
     if(!PK || e.type !== "keydown" || e.repeat || !inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return false;
     if(!{KeyB: 1, KeyU: 1, KeyO: 1, KeyE: 1}[e.code]) return false;
+    if(e.code === "KeyE" && !ride && !PK.near && !useHere() && PK.rideable && PK.rideable()){ e.preventDefault(); e.stopPropagation(); mountPet(PK.rideable()); return true; }   // [3.14] ride it
     if(e.code === "KeyE" && (ride || !PK.near || useHere())) return false;   // [3.13.5] a door, a lift, a ride: E is theirs
     if(PK.key(e.code, petsOwner(), function(x, z){ return blocked(x, z); })){ e.preventDefault(); e.stopPropagation(); return true; }
     return false;
@@ -1460,6 +1462,9 @@ function mount(el, api){
   if(HQV.hqheli) Object.keys(HQV.hqheli.VEHICLES).forEach(function(k){ VEHICLES[k] = HQV.hqheli.VEHICLES[k]; });
   // the planes at the docks and the airports (games/hqplane.js, HQ 3.2: the seaplane and the prop plane; planeMove below)
   if(HQV.hqplane) Object.keys(HQV.hqplane.VEHICLES).forEach(function(k){ VEHICLES[k] = HQV.hqplane.VEHICLES[k]; });
+  // [3.14 riding] your pets (games/hqpetride.js): a dragon flies (heliMove, its state helicopter-shaped), a dinosaur walks and
+  // the sea serpent swims (petGroundMove); "petride": someone else on theirs
+  if(HQV.hqPetRide) Object.keys(HQV.hqPetRide.VEHICLES).forEach(function(k){ VEHICLES[k] = HQV.hqPetRide.VEHICLES[k]; });
   // the catalogue's real cars and bikes (games/vehicles/catalogue.json, docs/plans/dealership-spec.md): keyed by
   // their id, handling derived from their specs (games/hqvehiclephys.js), driven as the car or the motorbike
   // (baseKind), drawn by games/hqvehiclemodels.js. V.cat is the catalogue entry; V.dims its size as drawn (the
@@ -1724,8 +1729,105 @@ function mount(el, api){
     drvMount();                                                        // [3.12] its lights, damage (games/hqdrive.js)
     rideUiSync(true);
   }
+  /* ---------- [3.14] riding your pet (games/hqpetride.js) ----------
+     A grown dragon, the sea serpent or a big dinosaur out with you (the pets runtime offers "E  Ride <name>" beside it,
+     PK.rideable). Only in the 3D City (a world with camModes): a dragon is a helicopter-shaped ride (ride.heli is its
+     state, so the floors, the roof pads, flying on and Go to are the helicopter's), the others walk or swim
+     (petGroundMove). ride.pet = {id, name, sp, breathT}; you get off with E (dismount: not mid-air). */
+  function petRideOk(){ return !!(HQV.hqPetRide && cur && cur.camModes && avatar && !ride); }
+  function petEnv(){
+    return {floor: cur && cur.heliFloor ? cur.heliFloor : groundAt, ground: groundAt, blocked: function(x, z){ return blocked(x, z); },
+            water: petsWater, waterY: function(x, z){ return cur && cur.sea ? (cur.sea.level ? cur.sea.level(x, z) : cur.sea.y || 0) : 0; }};
+  }
+  function mountPet(r){
+    var PR = HQV.hqPetRide; if(!r || !PR || ride || !petRideOk()) return false;
+    var rk = PR.rideKind(r.sp); if(!rk || !VEHICLES[rk]) return false;
+    var B = PR.mountModel(ctx, {species: r.sp.id, variant: r.p.variant, acc: r.p.acc, name: r.p.name}); if(!B) return false;
+    var lean = new THREE.Group(); avatar.g.add(lean); lean.add(B.g);
+    if(avatar.ch){ lean.add(avatar.ch.o); seatOn(avatar.ch, B); }
+    avatar.airborne = false; avatar.vy = 0; avatar.hop = 0; walkTo = null; walkDoor = null;
+    avatar.x = r.x; avatar.z = r.z; avatar.yaw = r.yaw != null ? r.yaw : avatar.yaw; avatar.rideYaw = null;
+    avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0;
+    var env = petEnv(), y0 = rk === "dragon" ? env.floor(avatar.x, avatar.z) : rk === "serpent" ? env.waterY(avatar.x, avatar.z) : groundAt(avatar.x, avatar.z);
+    var st = PR.newState(rk, avatar.x, y0, avatar.z, avatar.yaw, r.sp);
+    ride = {idx: -1, id: null, B: B, lean: lean, speed: 0, steer: 0, head: avatar.yaw, slip: 0, drift: false, gear: 1, rpm: 900,
+            kind: rk, base: rk, V: VEHICLES[rk], car: false, eng: null, pitch: 0, pv: 0, roll: 0, rv: 0, paint: 0, tune: null,
+            boat: null, plane: null, heli: rk === "dragon" ? st : null, ps: st, home: null, assist: true, ap: null,
+            pet: {id: r.p.id, name: r.p.name, sp: r.sp, breathT: 0}};
+    avatar.hy = st.y; avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
+    if(PK && PK.setMounted) PK.setMounted(r.p.id);
+    movedHere = true; E.sfx("go");
+    driveHud(rk); rideUiSync(true);
+    return true;
+  }
+  // E while riding: off once it is down (a dragon: landed, or within DISMOUNT_H m of the ground); the serpent only
+  // beside land. forced (another world, Return to HQ): off where you are. Your pet stands beside you and follows on.
+  function dismountPet(force){
+    var PR = HQV.hqPetRide, st = ride.ps, env = petEnv(), ok = PR ? PR.canDismount(st, env) : {ok: true};
+    if(!ok.ok && !force){ if(api.announce) api.announce(ok.why === "high" ? "Too high to get off: hold Shift to come down, land, then E." : "Swim " + ride.pet.name + " up to the shore to step off."); return false; }
+    var spot = null;
+    if(ride.heli && cur && cur.heliLand){ spot = cur.heliLand({x: st.x, y: env.floor(st.x, st.z), z: st.z, yaw: st.yaw, ground: true}); }   // a roof pad: onto its deck
+    if(!spot && ok.x != null) spot = {x: ok.x, z: ok.z, yaw: st.yaw};
+    if(!spot){ var sx = st.x + 2.2*Math.cos(st.yaw), sz = st.z - 2.2*Math.sin(st.yaw); spot = blocked(sx, sz) ? {x: st.x, z: st.z, yaw: st.yaw} : {x: sx, z: sz, yaw: st.yaw}; }
+    if(avatar.ch){ poseUndo(avatar.ch); avatar.g.add(avatar.ch.o); seatOn(avatar.ch, null); }
+    avatar.g.rotation.x = 0; avatar.g.rotation.z = 0;
+    avatar.g.remove(ride.lean); if(ride.B && ride.B.dispose) ride.B.dispose();
+    var pid = ride.pet.id, px = st.x, pz = st.z, pyaw = st.yaw;
+    avatar.x = spot.x; avatar.z = spot.z; if(spot.yaw != null) avatar.yaw = spot.yaw;
+    ride = null; doorsArmed = false; stopFeet(); settleY(0);
+    if(PK && PK.setMounted) PK.setMounted(null, force ? {x: avatar.x + 1, z: avatar.z, yaw: avatar.yaw} : {x: px, z: pz, yaw: pyaw});
+    avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
+    driveHud(null); rideUiSync(true);
+    return true;
+  }
+  // F: the breath (visual only, nothing in Calm); off the ground for a dragon, anywhere for the others that have one
+  function petBreath(){
+    var PR = HQV.hqPetRide; if(!ride || !ride.pet || !PR) return;
+    var k = PR.breathOf(ride.pet.sp, E.calm());
+    if(!k){ if(api.announce) api.announce(E.calm() ? "Calm is on: no breath effects." : ride.pet.name + " has no breath to show."); return; }
+    ride.pet.breathT = 1.4;
+  }
+  function petBreathStep(dt){
+    var PR = HQV.hqPetRide, P = ride && ride.pet; if(!P || !PR || !(P.breathT > 0)) return false;
+    P.breathT = Math.max(0, P.breathT - dt);
+    var k = PR.breathOf(P.sp, E.calm()); if(!k){ P.breathT = 0; return false; }
+    if(!ride.fx && HQV.hqPets && HQV.hqPets.Fx && cur && cur.scene){ ride.fx = petFx(); }
+    if(ride.fx) PR.breathe(ride.fx, ride.B, ride.ps, dt, k);
+    return true;
+  }
+  // one particle pool for ridden breath (big points), shared by every ride on this page
+  var PFX = null;
+  function petFx(){
+    if(!PFX){ try { PFX = HQV.hqPets.Fx(THREE, cur.scene); PFX.pts.material.size = 0.9; } catch(e){ PFX = null; } }
+    if(PFX && cur && cur.scene && PFX.scene !== cur.scene) PFX.attach(cur.scene);
+    return PFX;
+  }
+  function petFxStep(dt){ if(PFX && PFX.scene && (PFX.used > 0 || (ride && ride.pet && ride.pet.breathT > 0))) PFX.step(dt); }
+  // a dinosaur on its feet, the serpent on the water: W / S, A / D, Shift runs (games/hqpetride.js subGround)
+  function petGroundMove(dt){
+    var gp = padNow(), PR = HQV.hqPetRide, st = ride.ps;
+    var fwd = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+    var turn = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0), run = !!(keys.ShiftLeft || keys.ShiftRight);
+    if(gp){ fwd = E.clamp(fwd + gp.thr, -1, 1); turn = E.clamp(turn - gp.x, -1, 1); run = run || !!gp.slide; }
+    walkTo = null; walkDoor = null;
+    var yaw0 = avatar.yaw, evs = PR.step(st, {fwd: fwd, turn: turn, run: run}, dt, petEnv());
+    evs.forEach(function(ev){ if(ev.type === "bump") E.sfx("hit"); });
+    ride.speed = st.gs; ride.steer = turn;
+    avatar.x = st.x; avatar.z = st.z; avatar.yaw = st.yaw;
+    avatar.rate += ((dt > 0 ? wrapPi(avatar.yaw - yaw0)/dt : 0) - avatar.rate)*ease(10, dt); avatar.rideYaw = avatar.yaw;
+    avatar.travelYaw = st.speed > 0.3 ? (st.gs < 0 ? wrapPi(st.yaw + PI) : st.yaw) : null;
+    var hy = settleY(dt); if(ride.kind === "serpent"){ avatar.hy = st.y; avatar.hyV = 0; } else st.y = hy;
+    ride.pitch = st.pitch; ride.roll = st.roll;
+    var br = petBreathStep(dt);
+    PR.animate(ride.B, st, E.now(), dt, E.calm(), br);
+    keyMove = st.speed > 0.3; keyRun = run && keyMove; if(keyMove) movedHere = true;
+    avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
+    avatar.g.rotation.y = avatar.yaw; avatar.g.rotation.x = -ride.pitch; avatar.g.rotation.z = ride.roll;
+    view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
+  }
   function dismount(force){
     if(!ride) return;
+    if(ride.pet){ dismountPet(force); return; }
     if(!force && (ride.air || ride.loop)){ if(api.announce) api.announce("Not mid-stunt: land first."); return; }   // [stunts]
     if(ride.air || ride.loop){ ride.air = null; ride.loop = null; ride.boost = null; ride.pitch = 0; ride.roll = 0; avatar.hy = groundAt(avatar.x, avatar.z); }
     if(ride.plane){
@@ -2179,7 +2281,7 @@ function mount(el, api){
   var DRV = {wx: null, manual: null, lit: false, fx: null, key: null, dmg: null, grip: null, gripSaid: null, jHeld: false,
              C: null, cvAt: -9, el: null, sig: "", ring: null, routeSig: "", peerLit: false, base: null};
   function Drv(){ return HQV.hqDrive || null; }
-  function drvGround(){ return !!ride && !ride.boat && !ride.heli && !ride.plane && ride.kind !== "skate"; }
+  function drvGround(){ return !!ride && !ride.boat && !ride.heli && !ride.plane && !ride.pet && ride.kind !== "skate"; }
   // the weather here (games/hqweather.js through the City), eased over a few seconds; indoors and elsewhere clear
   function drvWxStep(dt){
     var D = Drv(); if(!D) return;
@@ -2479,9 +2581,9 @@ function mount(el, api){
     if(!rideUi) return;
     var near = ride ? -2 : force ? nearBike() : nearIdx, nb = near >= 0 && cur && cur.bikes ? cur.bikes[near] : null;
     // a helicopter set down where you can't step out (a roof without stairs, the sea): say so instead of "Get out"
-    var hs = ride && ride.heli, noOut = !!(hs && hs.ground && cur && cur.heliLand && !cur.heliLand(hs));
+    var hs = ride && ride.heli, noOut = !!(hs && !ride.pet && hs.ground && cur && cur.heliLand && !cur.heliLand(hs));
     // (flying, the Get out pill steps aside: E only works once you are down, and the route banner needs the room)
-    var aloft = !!(ride && ((ride.plane && !ride.plane.ground) || (ride.heli && !ride.heli.ground)));
+    var aloft = !!(ride && ((ride.plane && !ride.plane.ground) || (ride.heli && !ride.heli.ground && !(ride.pet && ride.heli.agl <= (HQV.hqPetRide ? HQV.hqPetRide.DISMOUNT_H : 3)))));
     var key = ride ? (aloft ? "" : noOut ? "on-noout" : "on") : nb ? "near-" + (nb.kind || "bike") : "";
     if(!force && key === rideUi.dataset.k) return;
     rideUi.dataset.k = key; rideUi.hidden = !key;
@@ -2490,9 +2592,10 @@ function mount(el, api){
     // stands between the top-left buttons and the city's stats
     var vn = Vc ? "the " + Vc.brand + " " + String(Vc.model).replace(/\s*\([^)]*\)\s*$/, "") + " " : "";
     rideUi.textContent = noOut ? "Can't get out here"
+      : ride && ride.pet ? "Get off " + ride.pet.name + " (E)"
       : ride ? (kind === "car" || VEHICLES[kind0].heli || VEHICLES[kind0].plane ? "Get out (E)" : kind === "skate" ? "Step off (E)" : VEHICLES[kind0].boat ? "Step ashore (E)" : "Get off (E)")
       : VEHICLES[kind0].plane ? (kind0 === "seaplane" ? "\uD83D\uDEE9\uFE0F Fly the seaplane (E)" : VEHICLES[kind0].airliner ? "\u2708\uFE0F Fly the airliner (E)" : "\u2708\uFE0F Fly the plane (E)") : VEHICLES[kind0].heli ? "\uD83D\uDE81 Fly (E)" : kind === "rowboat" ? "\uD83D\uDEA3 Row (E)" : kind === "jetski" ? "\uD83C\uDF0A Ride the jet ski (E)" : kind === "car" ? "\uD83D\uDE97 Drive " + vn + "(E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride " + vn + "(E)" : kind === "skate" ? "\uD83D\uDEF9 Skate (E)" : "\uD83D\uDEB2 Ride (E)";
-    rideUi.title = noOut ? "Land on the ground or on a helipad, then E" : ride ? RIDE_HELP[kind] : VEHICLES[kind0].heli || VEHICLES[kind0].plane ? "Take the controls" : VEHICLES[kind0].boat ? "Take the helm" : kind === "car" ? (Vc ? "Get in the " + Vc.brand + " " + Vc.model : "Get in this car") : kind === "moto" ? (Vc ? "Get on the " + Vc.brand + " " + Vc.model : "Get on this motorbike")
+    rideUi.title = noOut ? "Land on the ground or on a helipad, then E" : ride && ride.pet ? RIDE_HELP[ride.kind] : ride ? RIDE_HELP[kind] : VEHICLES[kind0].heli || VEHICLES[kind0].plane ? "Take the controls" : VEHICLES[kind0].boat ? "Take the helm" : kind === "car" ? (Vc ? "Get in the " + Vc.brand + " " + Vc.model : "Get in this car") : kind === "moto" ? (Vc ? "Get on the " + Vc.brand + " " + Vc.model : "Get on this motorbike")
       : kind === "skate" ? "Step on this skateboard" : "Get on this bike";
     if(key === "on" && force) tipRide();
   }
@@ -2507,6 +2610,10 @@ function mount(el, api){
     attack: "Space: climb (hold it to take off) · Shift: descend · W / S: nose down to fly forward, nose up to slow · A / D: turn · E: get out once landed",
     seaplane: "W / S: throttle up / down · A / D: bank (on the water: steer) · Up / Down or drag up / down: nose up / down (past 108 km/h Up lifts off) · F: flaps · X: assisted / manual · K: autopilot · E: get out at a dock",
     prop: "W / S: throttle up / down (S at idle brakes) · A / D: bank (on the ground: steer) · Up / Down or drag up / down: nose up / down (past 86 km/h Up lifts off) · G: gear · F: flaps · Space: brakes · X: assisted / manual · K: autopilot · E: get out",
+    // your pets (HQ 3.14, games/hqpetride.js)
+    dragon: "W / S: faster / slower (S down to a hover) · A / D: turn · Space: climb (on the ground: leap into the air) · Shift: descend (at speed: dive) · let go: glide · F: breath · N: go to · E: get off once landed (or within 3 m of the ground)",
+    dino: "W / S: walk on / back · A / D: turn · Shift: run · F: roar · E: get off",
+    serpent: "W / S: swim on / back · A / D: turn · Shift: faster · F: spray · E: step off beside the shore",
     // the airliners (HQ 3.6): the jets spool up slowly; off the runway only
     airliner: "W / S: thrust up / down (the jets take a few seconds to spool) · A / D: bank (on the ground: steer) · Up / Down: nose up / down (on a runway, past 202 km/h Up lifts off) · G: gear (assisted: by itself) · F: flaps · Space: brakes, in the air speed brakes · X: assisted / manual · K: autopilot · N: go to · E: get out at a stand",
     regional: "W / S: thrust up / down (the jets take a few seconds to spool) · A / D: bank (on the ground: steer) · Up / Down: nose up / down (on a runway, past 166 km/h Up lifts off) · G: gear (assisted: by itself) · F: flaps · Space: brakes, in the air speed brakes · X: assisted / manual · K: autopilot · N: go to · E: get out at a stand"
@@ -2520,6 +2627,9 @@ function mount(el, api){
     jetski: "W throttle · S astern · A/D steer · E step ashore at a dock or a beach",
     heli: "Space climb · Shift descend · W/S forward/back · A/D turn · E get out (landed)",
     attack: "Space climb · Shift descend · W/S forward/back · A/D turn · E get out (landed)",
+    dragon: "W/S faster/slower · A/D turn · Space climb · Shift descend/dive · F breath · N go to · E get off (landed)",
+    dino: "W/S walk · A/D turn · Shift run · F roar · E get off",
+    serpent: "W/S swim · A/D turn · Shift faster · F spray · E step off at the shore",
     seaplane: "W/S throttle · A/D bank · \u2191/\u2193 pitch · F flaps · X assist · K autopilot · N go to · E get out at a dock",
     prop: "W/S throttle · A/D bank · \u2191/\u2193 pitch · G gear · F flaps · Space brakes · X assist · K autopilot · N go to · E get out",
     airliner: "W/S thrust · A/D bank · \u2191/\u2193 pitch (runway only) · G gear · F flaps · Space brakes/spoilers · X assist · K autopilot · N go to · E out at a stand",
@@ -2527,6 +2637,10 @@ function mount(el, api){
   };
   function tipRide(){ if(!api.announce || !ride) return;
     if(ride.kind === "skate") return;                                 // the skate HUD says how
+    if(ride.pet){ var pn = ride.pet.name;
+      api.announce(ride.kind === "dragon" ? "On " + pn + "'s back. Hold Space to leap into the air and climb, W to fly faster, S to slow to a hover, A and D to turn, Shift to come down or dive; let go and " + pn + " glides. F breathes. N picks a destination. Land, then E to get off."
+        : ride.kind === "serpent" ? "On " + pn + ". W swims, S backs off, A and D turn, Shift is faster, F sprays. E steps off beside the shore."
+        : "On " + pn + ". W walks, Shift runs, S backs up, A and D turn, F roars. E gets off."); return; }
     if(ride.plane && ride.V.airliner){ api.announce("In the captain's seat of the " + (ride.kind === "regional" ? "regional jet" : "airliner") + ". W opens the thrust levers, S closes them; the jets take a few seconds to spool up. Taxi onto the runway with A and D, then full thrust: past rotation speed press the Up arrow to lift off. The gear comes up and goes down by itself (G takes it over), F flaps, Space brakes and, in the air, the speed brakes. K autopilot, N picks a destination. Land on a runway, taxi to a stand, stop, then E to get out."); return; }
     if(ride.plane){ api.announce("At the controls" + (ride.kind === "seaplane" ? " of the seaplane" : "") + ". W opens the throttle, S closes it. A and D steer, then bank once you fly. Past rotation speed press the Up arrow to lift off; Up and Down raise and lower the nose, and the plane levels itself when you let go. G gear, F flaps, K autopilot, X switches assisted and manual, N picks a destination. Land, stop, then E to get out."); return; }
     if(ride.heli){ api.announce("At the controls. Hold Space to lift off and climb, Shift to come down, W and S tilt forward and back, A and D turn. Land, then E to get out."); return; }
@@ -2542,7 +2656,8 @@ function mount(el, api){
   // tipRide() announces the keys, and the speed is not worth a running commentary.
   var dhud = null;                      // (not "hud": that is the camera HUD, hqhud)
   var HUD_MAX = {bike: [60, 10, 5], moto: [120, 20, 10], car: [120, 20, 10], rowboat: [20, 5, 1], jetski: [80, 10, 5], heli: [200, 40, 10], attack: [200, 40, 10],
-                 seaplane: [300, 50, 10], prop: [300, 50, 10], airliner: [500, 100, 20], regional: [500, 100, 20]};   // the speed dial: max, major, minor
+                 seaplane: [300, 50, 10], prop: [300, 50, 10], airliner: [500, 100, 20], regional: [500, 100, 20],
+                 dragon: [240, 40, 10], dino: [40, 10, 5], serpent: [60, 10, 5]};   // the speed dial: max, major, minor
   function driveHud(kind0){
     if(dhud){ if(dhud.el.parentNode) dhud.el.parentNode.removeChild(dhud.el); dhud = null; }
     var kind = kind0 && baseKind(kind0), V = kind0 && VEHICLES[kind0];
@@ -2561,7 +2676,7 @@ function mount(el, api){
     // flying (a helicopter or a plane): the way to the waypoint (cur.airGuide): an arrow turned to its bearing, the
     // distance, the time at this speed, the height to fly, and on final the glideslope (a dot high or low of the bar)
     var guide = null;
-    if(VEHICLES[kind] && (VEHICLES[kind].heli || VEHICLES[kind].plane)){
+    if(VEHICLES[kind] && (VEHICLES[kind].heli || VEHICLES[kind].plane || VEHICLES[kind].air)){
       guide = document.createElement("div"); guide.className = "hq3d-drive-guide"; guide.hidden = true;
       var arr = document.createElement("span"); arr.className = "hq3d-drive-bug"; arr.textContent = "\u2191";
       var gt = document.createElement("span"); gt.className = "hq3d-drive-gtxt";
@@ -2749,8 +2864,8 @@ function mount(el, api){
     var lift = (keys.Space ? 1 : 0) - (keys.ShiftLeft || keys.ShiftRight ? 1 : 0);
     if(gp){ fwd = E.clamp(fwd + gp.thr, -1, 1); turn = E.clamp(turn - gp.x, -1, 1); lift = E.clamp(lift + (gp.hand ? 1 : 0) - (gp.slide ? 1 : 0), -1, 1); }
     walkTo = null; walkDoor = null;
-    var yaw0 = avatar.yaw, floor = cur && cur.heliFloor ? cur.heliFloor : groundAt;
-    var evs = Hh.step(st, {fwd: fwd, turn: turn, lift: lift}, dt, {floor: floor});
+    var yaw0 = avatar.yaw, floor = cur && cur.heliFloor ? cur.heliFloor : groundAt, PR = ride.pet ? HQV.hqPetRide : null;
+    var evs = PR ? PR.step(st, {fwd: fwd, turn: turn, lift: lift, run: false}, dt, {floor: floor}) : Hh.step(st, {fwd: fwd, turn: turn, lift: lift}, dt, {floor: floor});   // [3.14] a dragon
     if(cur && cur.heliAssist) cur.heliAssist(st, {fwd: fwd, turn: turn, lift: lift}, dt);   // [hq revamp] an HQ roof pad's landing assist (games/hqroof.js)
     if(evs.length || st.ground) rideUiSync(false);                // "Get out" only where you can
     evs.forEach(function(ev){
@@ -2764,6 +2879,14 @@ function mount(el, api){
     avatar.travelYaw = st.speed > 0.5 ? Math.atan2(st.vx, st.vz) : null;
     avatar.hy = st.y; avatar.hyV = 0;
     ride.pitch = st.pitch; ride.roll = st.roll;
+    if(PR){                                                       // [3.14] a dragon: its wings, its breath; no rotor
+      PR.animate(ride.B, st, E.now(), dt, E.calm(), petBreathStep(dt));
+      keyMove = st.speed > 0.3 || !st.ground; keyRun = false; if(keyMove) movedHere = true;
+      avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
+      avatar.g.rotation.y = avatar.yaw; avatar.g.rotation.x = -ride.pitch; avatar.g.rotation.z = ride.roll;
+      view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
+      return;
+    }
     Hh.animate(ride.B, st, dt, isNight());
     // the rotor's note: the blades spooling up, harder with the collective and the speed (set() every frame or it fades)
     if(st.rpm > 0.02 && E.engineSound){
@@ -2898,7 +3021,7 @@ function mount(el, api){
   // the street: -1e9, never 1e9 (3.13.5: "above everything" put you up on your helideck, which overhangs your front door)
   function stopFeet(y){ avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0; avatar.travelYaw = null; avatar.hy = y != null && isFinite(y) ? +y : -1e9; }
   function moveAvatar(dt){
-    if(ride){ if(ride.kind === "skate") skateMove(dt); else if(ride.boat) boatMove(dt); else if(ride.heli) heliMove(dt); else if(ride.plane) planeMove(dt); else rideMove(dt); return; }
+    if(ride){ if(ride.pet && !ride.heli) petGroundMove(dt); else if(ride.kind === "skate") skateMove(dt); else if(ride.boat) boatMove(dt); else if(ride.heli) heliMove(dt); else if(ride.plane) planeMove(dt); else rideMove(dt); return; }
     // on a bus or a tram (games/hqcity3d.js w.carry): the vehicle's seat, its timetable's pose
     var cp = cur && cur.carry ? cur.carry() : null;
     if(cp){
@@ -4235,6 +4358,9 @@ function mount(el, api){
     if(ride && ride.plane && PLANE_KEYS[e.code] && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey){
       e.preventDefault(); e.stopPropagation(); if(e.type === "keydown" && !e.repeat) planeKey(e.code); return;
     }
+    if(ride && ride.pet && e.code === "KeyF" && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey){   // [3.14] the breath
+      e.preventDefault(); e.stopPropagation(); if(e.type === "keydown" && !e.repeat) petBreath(); return;
+    }
     if(drvKey(e)) return;                                              // [3.12] L lights, Y convoy, J (held) formation
     if(camKey(e)) return;
     if(!inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -4263,7 +4389,7 @@ function mount(el, api){
     propHomeStep();                                                    // [3.13.4] your roof's helicopter back on its pad
     testStep(dt);                                                      // a dealership test drive
     if(cur && cur.onBoat) cur.onBoat(ride && ride.boat ? {st: ride.boat, kind: ride.kind, beam: ride.V.beam || 1} : null);   // the City's wake, landings
-    if(cur && cur.onHeli) cur.onHeli(ride && (ride.heli || (ride.plane && !ride.plane.ground)) ? {st: ride.heli || ride.plane, kind: ride.kind} : null);                          // flying on to another island
+    if(cur && cur.onHeli) cur.onHeli(ride && (ride.heli || (ride.plane && !ride.plane.ground)) ? {st: ride.heli || ride.plane, kind: ride.pet ? "heli" : ride.kind} : null);                          // flying on to another island (a dragon: as a helicopter)
     nearIdx = ride ? -1 : nearBike();
     rideUiSync(false); homeUiSync();
     keys = kp;
@@ -4288,6 +4414,7 @@ function mount(el, api){
     }
     placePeers(dt, t);
     petsFrame(t, dt);                                                  // [pets 3.14]
+    petFxStep(dt);                                                     // [3.14 riding] the ridden breath
     drvFrame(t, dt);                                                   // [3.12] lights, spray, smoke, convoys
     fxStep(t, dt); driveHudDraw(t);
     acc.sky += dt; if(acc.sky > 30){ acc.sky = 0; applyTime(); }
@@ -4486,7 +4613,7 @@ function mount(el, api){
     Object.keys(peers).forEach(function(u){ if(!seen[u]){ var P = peers[u]; if(P.g.parent) P.g.parent.remove(P.g); delete peers[u]; } });
   };
   // what another player is on, from their presence `a`, and how they sit on it
-  var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop", 11: "regional", 12: "airliner"};
+  var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop", 11: "regional", 12: "airliner", 13: "petride"};
   function placePeers(dt, t){
     Object.keys(peers).forEach(function(u){
       // the floor they are on: the 3D city sends "city3d" (w.net), so legacy and 3D clients never mix
@@ -4547,13 +4674,16 @@ function mount(el, api){
       if(vk && !VEHICLES[vk]) vk = null;                          // no games/hqheli.js here
       // the catalogue vehicle they drive (a car or a bike, matching a = 5 / 6), its paint part of what is drawn
       if(P.v && (P.a === 5 || P.a === 6) && baseKind(P.v) === vk && HQV.hqVehicleModels) vk = P.v;
-      var vsig = (vk && VEHICLES[vk].cat ? vk + ":" + P.vp : vk) + (vk && P.vt ? "~" + P.vt : "");   // [3.13] and its tune
-      if(P.bike && P.vkind !== vsig){ if(P.ch){ P.g.add(P.ch.o); seatOn(P.ch, null); } P.g.remove(P.lean); P.bike = null; P.lean = null; P.vkind = null; }
+      // [3.14] on their pet (13): the first pet in their `pt` is the mount (none known here: on foot)
+      var pmount = vk === "petride" && HQV.hqPetRide && HQV.hqPets && P.pt ? HQV.hqPets.decode(P.pt)[0] || null : null;
+      if(vk === "petride" && !(pmount && HQV.hqPetRide.rideKind(pmount.sp))) vk = null;
+      var vsig = (vk && VEHICLES[vk].cat ? vk + ":" + P.vp : vk) + (vk && P.vt ? "~" + P.vt : "") + (pmount && vk ? "~" + JSON.stringify(P.pt[0]) : "");   // [3.13] and its tune
+      if(P.bike && P.vkind !== vsig){ if(P.ch){ P.g.add(P.ch.o); seatOn(P.ch, null); } P.g.remove(P.lean); if(P.bike.dispose) P.bike.dispose(); P.bike = null; P.lean = null; P.vkind = null; }
       if(vk && !P.bike){
         P.lean = new THREE.Group(); P.g.add(P.lean); P.vkind = vsig; P.steer = 0;
         var Vc = VEHICLES[vk].cat, ph = Vc && Vc.paints && Vc.paints[P.vp] && /^#[0-9a-fA-F]{6}$/.test(Vc.paints[P.vp].hex) ? parseInt(Vc.paints[P.vp].hex.slice(1), 16) : bikeColor(u);
         var ptn = P.vt && HQV.hqTuning && (vk === "car" || vk === "moto" || Vc) ? HQV.hqTuning.decode(P.vt, (Vc ? VEHICLES[vk].kind === "bike" : vk === "moto") ? "bike" : "car") : null;   // [3.13]
-        P.bike = Vc ? HQV.hqVehicleModels.build(ctx, Vc, ph, {tune: ptn}) : VEHICLES[vk].plane ? HQV.hqplane.model(ctx, vk, bikeColor(u)) : VEHICLES[vk].heli ? HQV.hqheli.model(ctx, vk, bikeColor(u)) : vk === "car" ? carModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : vk === "moto" ? motoModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : bikeModel(bikeColor(u));
+        P.bike = vk === "petride" ? HQV.hqPetRide.mountModel(ctx, {species: pmount.sp.id, variant: pmount.variant, acc: pmount.acc, name: pmount.name}) : Vc ? HQV.hqVehicleModels.build(ctx, Vc, ph, {tune: ptn}) : VEHICLES[vk].plane ? HQV.hqplane.model(ctx, vk, bikeColor(u)) : VEHICLES[vk].heli ? HQV.hqheli.model(ctx, vk, bikeColor(u)) : vk === "car" ? carModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : vk === "moto" ? motoModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : bikeModel(bikeColor(u));
         if(ptn && !Vc && (vk === "car" || vk === "moto") && HQV.hqVehicleModels && HQV.hqVehicleModels.tuneStarter) HQV.hqVehicleModels.tuneStarter(THREE, P.bike, ptn, vk === "car" ? "car" : "bike");
         P.lean.add(P.bike.g); if(P.ch){ P.lean.add(P.ch.o); seatOn(P.ch, P.bike); }
       }
@@ -4572,6 +4702,10 @@ function mount(el, api){
         } else if(VEHICLES[vk].heli){                // rotors at flying speed, the strobe blinking, the searchlight at night
           P.hst = P.hst || {rpm: 1, t: 0, ground: false}; P.hst.t += dt || 0;
           HQV.hqheli.animate(P.bike, P.hst, dt, isNight());
+        } else if(VEHICLES[vk].petride){             // [3.14] their pet's wings or gait, from how they move
+          var pagl = P.th != null ? P.th - groundAt(P.x, P.z) : 0, pvy = dt > 0 && P.phy != null ? (P.hy - P.phy)/dt : 0; P.phy = P.hy;
+          var pst = HQV.hqPetRide.peerState(P.bike, v, pvy, pagl); pst.yaw = P.yaw;
+          HQV.hqPetRide.animate(P.bike, pst, t || 0, dt, E.calm(), false);
         } else if(P.bike.roll) P.bike.roll(jump ? 0 : mv, P.steer);   // a catalogue vehicle's own wheels
         else (vk === "car" ? carRoll : vk === "moto" ? motoRoll : bikeRoll)(P.bike, jump ? 0 : mv, P.steer);
         var pl = E.calm() || baseKind(vk) === "car" ? 0 : -P.steer*Math.min(1, v/6)*VEHICLES[vk].lean;
@@ -4580,7 +4714,7 @@ function mount(el, api){
         if(P.pv != null && dt > 0 && (P.pv - v)/dt > 3 && v > 0.5) P.brakeT = 0.4; else P.brakeT = (P.brakeT || 0) - dt;
         P.pv = v; if(P.bike.brake) P.bike.brake(P.brakeT > 0);
         // [3.12] their lights, from this page's night and weather (games/hqdrive.js; no network)
-        if(Drv() && !VEHICLES[vk].plane && !VEHICLES[vk].heli){ try { Drv().beam(THREE, P.bike, {base: baseKind(vk), shared: true}); Drv().lights(P.bike, DRV.peerLit, false, t, true, isNight() ? 1 : 0.35); } catch(e){} }
+        if(Drv() && !VEHICLES[vk].plane && !VEHICLES[vk].heli && !VEHICLES[vk].petride){ try { Drv().beam(THREE, P.bike, {base: baseKind(vk), shared: true}); Drv().lights(P.bike, DRV.peerLit, false, t, true, isNight() ? 1 : 0.35); } catch(e){} }
       }
       // on foot: their pace from how fast they really move (smoothed), so the same blend as yours and no gliding
       var fv = P.sv != null ? (jump ? 0 : P.sv) : dt > 0 && !jump ? Math.hypot(P.x - (P.px == null ? P.x : P.px), P.z - (P.pz == null ? P.z : P.pz))/dt : 0;
@@ -4605,7 +4739,8 @@ function mount(el, api){
   // (a boat has no presence animation of its own yet: others see you standing, or walking while it moves)
   // 9 the seaplane, 10 the prop plane (the page sends them only where the Arena lists "plane"; HQ 3.2); 11 the regional
   // jet, 12 the airliner (only where it lists "airliner", HQ 3.6; else they go as the prop plane, 10)
-  inst.moving = function(){ return ride ? (ride.plane ? (ride.kind === "seaplane" ? 9 : ride.kind === "regional" ? 11 : ride.kind === "airliner" ? 12 : 10) : ride.heli ? (ride.kind === "attack" ? 8 : 7) : ride.boat ? (keyMove ? 1 : 0) : RIDE_A[ride.base || ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
+  // 13 riding your pet (a dragon, the serpent, a dinosaur: HQ 3.14; only where the Arena lists "petride", else on foot)
+  inst.moving = function(){ return ride ? (ride.pet ? 13 : ride.plane ? (ride.kind === "seaplane" ? 9 : ride.kind === "regional" ? 11 : ride.kind === "airliner" ? 12 : 10) : ride.heli ? (ride.kind === "attack" ? 8 : 7) : ride.boat ? (keyMove ? 1 : 0) : RIDE_A[ride.base || ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
   // on a board: what others should see you doing ({k, y}); null otherwise
   inst.skate = function(){ return ride && ride.kind === "skate" ? skateNet() : null; };
   inst.riding = function(){ return !!ride; };
@@ -4697,13 +4832,22 @@ function mount(el, api){
                          peers: function(){ return Object.keys(peers).map(function(u){ var P = peers[u]; return {u: u, a: P.a, v: P.v, vp: P.vp, drawn: P.vkind || null, x: P.g ? P.g.position.x : null, z: P.g ? P.g.position.z : null}; }); },
                          // in a helicopter (ride('heli') first): put it in the air at x, y, z, rotor up to speed
                          fly: function(x, y, z, yaw){ var h = ride && ride.heli; if(!h) return false; h.x = +x; h.y = +y; h.z = +z; if(yaw != null) h.yaw = +yaw;
-                           h.ground = false; h.rpm = 1; h.vx = h.vy = h.vz = 0; return true; },
+                           h.ground = false; h.rpm = 1; h.vx = h.vy = h.vz = 0; if(h.tgt != null) h.tgt = 0; return true; },
                          // in a plane (ride('prop') / ride('seaplane') first): airborne at x, y, z heading yaw at speed m/s
                          flyPlane: function(x, y, z, yaw, speed){ var p = ride && ride.plane; if(!p) return false; p.x = +x; p.y = +y; p.z = +z; if(yaw != null) p.yaw = +yaw;
                            p.ground = false; p.water = false; p.speed = speed != null ? +speed : 45; p.thr = 0.7; p.rpm = 0.7; p.cmd = 0.05; p.pitch = 0.05; p.gamma = 0; p.gear = 0; p.gearUp = true; return true; },
                          planes: function(){ return cur && cur.planes ? cur.planes() : []; },
                          plane: function(){ var p = ride && ride.plane; return p ? {x: p.x, y: p.y, z: p.z, yaw: p.yaw, speed: p.speed, vy: p.vy, agl: p.agl, ground: p.ground, water: p.water, thr: p.thr, stall: p.stall, crashed: p.crashed, gear: p.gear, flaps: p.flaps} : null; },
                          heli: function(){ var h = ride && ride.heli; return h ? {x: h.x, y: h.y, z: h.z, yaw: h.yaw, speed: h.speed, agl: h.agl, ground: h.ground, rpm: h.rpm} : null; },
+                         // [3.14] riding your pet: mount the one you could ride now (or the first out with you, put beside you), its state, off
+                         petRide: function(force){ if(ride) return false; var r = PK && PK.rideable ? PK.rideable() : null;
+                           if(!r && force && PK){ var o = PK.out()[0], p = o && (petsOwned || []).filter(function(q){ return q.id === o.id; })[0]; if(p) r = {p: p, sp: HQV.hqPets.speciesOf(p.species), x: avatar.x, z: avatar.z, yaw: avatar.yaw}; }
+                           return r ? mountPet(r) : false; },
+                         petState: function(){ var s2 = ride && ride.ps; return s2 ? {kind: s2.kind, x: s2.x, y: s2.y, z: s2.z, yaw: s2.yaw, speed: s2.speed, tgt: s2.tgt, agl: s2.agl, ground: s2.ground, wing: s2.wing,
+                           pet: ride.pet ? ride.pet.name : null, breath: ride.pet ? ride.pet.breathT : 0, fx: PFX ? PFX.used : 0, moving: inst.moving()} : null; },
+                         petPrompt: function(){ var r = PK && PK.rideable ? PK.rideable() : null; return r ? r.p.name : null; },
+                         petOff: function(){ if(!ride || !ride.pet) return false; dismount(false); return !ride; },
+                         roofs: function(){ return cur && cur.roofs ? cur.roofs() : []; },
                          // the City's navigation (route, minimap, panel), for tools that follow a route
                          nav: function(){ return cur && cur.nav ? cur.nav() : null; },
                          // the City's park and landmarks (games/hqspectacle.js) and its weather (games/hqweather.js)

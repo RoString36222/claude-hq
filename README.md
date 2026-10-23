@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.13.6** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.14.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -187,6 +187,16 @@ paired), published maps and work signals (off by default) add a few listed field
   progress is a local `games-save.json`; in an Arena room only game moves are shared.
 
 - **🔥 Flexible streaks:** a streak survives a quiet day or two. It only breaks when you're inactive on 3 days within any 7 (at least 5 active days in every 7), and today never counts as a miss while it's still going. The Arena leaderboard uses the same rule.
+- **🐉 Ride your pets** (3D City): walk up to a grown pet that is out with you and press **E** ("Ride <name>").
+  - **Dragons** (all seven, grown): **W / S** faster / slower (S slows to a hover), **A / D** turn and bank,
+    **Space** climb (on the ground: leap into the air with big wing beats), **Shift** descend (at speed: a dive),
+    let go to glide; **F** breathes its element (fire, frost, lightning, prism, shadow, glitter; off in Calm),
+    **N** Go to. Land anywhere flat, including any HQ roof helipad (the landing assist lines you up), then **E**
+    gets off (not mid-air: landed or within 3 m of the ground). Cruise 25-45 m/s, a dive to about 57 m/s.
+  - **Big dinosaurs** (Triceratops, Brachiosaurus, Stegosaurus, T-Rex, from 400 affection): **W / S** walk,
+    **Shift** run, **A / D** turn, **F** roar, **E** off. **Sea serpent** (grown): on the water only, E beside
+    the shore to step off.
+  - Friends see you riding where the Arena lists `petride` (presence a = 13); elsewhere you show on foot.
 
 **Quality-of-life**
 - Command palette (⌘/Ctrl-K), keyboard shortcuts (`?` for help, `1`–`8` for views, `/` search, `r`
@@ -399,6 +409,24 @@ and feature guide.
 
 ## Changelog
 
+- **3.14.0 — Ride your pets.** A grown dragon (any of the seven), the grown sea serpent or a big dinosaur
+  (Triceratops, Brachiosaurus, Stegosaurus, T-Rex, from the grown mark of 400 affection) that is out with you can
+  be ridden in the 3D City: beside it, "E  Ride <name>". You sit in a saddle on its back (added when it has none),
+  the camera goes to a chase view behind and above, and the pet's own model carries you, big. **Dragons fly**
+  (games/hqpetride.js, a slow, agile glider / helicopter hybrid): W / S set the speed it holds (25-45 m/s, S down
+  to a hover with fast short beats), A / D turn and bank it, Space climbs with big beats (up to 8 m/s; on the
+  ground a leap into the air), Shift descends (from a hover straight down, at speed a dive with the wings folded
+  back, up to about 57 m/s), and with neither it glides on spread wings, sinking about 1 m/s. It lands anywhere
+  flat, the HQ roof helipads with their landing assist included, and uses the helicopters' floors, ceiling
+  (800 m), island-to-island flying on and Go to (N). E gets you off once landed or within 3 m of the ground. F
+  breathes the dragon's element forward (fire, frost, lightning, prism, shadow wisps, gold glitter; visual only,
+  none in Calm). **Dinosaurs walk** (W / S, Shift runs, their walk and run animations) and the **serpent swims**
+  (on the water only). HUD hints, the ride pill and screen-reader tips say how. **Multiplayer:** a new presence
+  code a = 13 (riding a pet; the first pet in `pt` is the mount, the height in `h`) behind the new `petride`
+  capability; the Arena checks the mount can carry a rider (a grown dragon or serpent, a big dinosaur) and drops
+  the frame otherwise. Others draw you on your pet, its wings and gait following your movement. Older Arenas:
+  others see you on foot with your pet beside you. **Needs an Arena deploy** for others to see riders. Privacy:
+  nothing new leaves the machine (the same pet numbers and name as 3.13's `pt`). Third-party assets: none new.
 - **3.13.6 — Players are solid.** Other people in the City (and Mission Control) stop you as a wall does: a
   body on foot or on a board, the box of the bike, motorbike or car they ride or drive (turned their way; a car
   from the dealership at its own size), so you bump off them instead of walking or driving through. Not while they

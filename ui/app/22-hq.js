@@ -19,11 +19,11 @@ function hqWebGL(){ try { return !!document.createElement("canvas").getContext("
 // before the City that wires them (games/hqcity3d.js). Navigation (3.1): the road router, the minimap, the
 // route's chevrons and the Go to panel / route banner, also before the City. City 3.2: the weather, and the
 // landmarks and amusement park (hqspectacle), also before the City.
-var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqpets","hqlobby","hqcarlift","hqgaragemgr","hqbasementfx","hqbasement","hqstyle","hqtower","hqroof","hqdecor","hqbase","hqskate","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
+var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqpets","hqpetride","hqlobby","hqcarlift","hqgaragemgr","hqbasementfx","hqbasement","hqstyle","hqtower","hqroof","hqdecor","hqbase","hqskate","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
                   "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqdrive","hqnetsmooth","hqshowroom","hqgarage", "hqdealer","hqtuning","hqcasinoui","hqcasino","hqcall","hqtravel","hqvoyage","hqships","hqbridges","hqairfield","hqair","hqaircraft","hqplane","hqairport3d","hqairbldg","hqairground","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcarpark","hqweather","hqspectacle","hqstunts","hqcity3d"];
 // The 3D City's own files: if one fails, the classic City still works (games/hq3d.js falls back to it);
 // a Cities part that fails only takes its own feature out of the 3D City.
-var HQ_SCRIPTS_3D = {hqpets:1, hqcarlift:1, hqgaragemgr:1, hqbasementfx:1, hqbasement:1, world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
+var HQ_SCRIPTS_3D = {hqpets:1, hqpetride:1, hqcarlift:1, hqgaragemgr:1, hqbasementfx:1, hqbasement:1, world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
                      hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqdrive:1, hqnetsmooth:1, hqshowroom:1, hqgarage:1, hqdealer:1, hqtuning:1, hqcasinoui:1, hqcasino:1, hqcall:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqairfield:1, hqair:1, hqaircraft:1, hqplane:1, hqairport3d:1, hqairbldg:1, hqairground:1, hqairbase:1,
                      hqnav:1, hqminimap:1, hqroutefx:1, hqnavui:1, hqrail:1, hqcarpark:1, hqweather:1, hqspectacle:1, hqstunts:1};
 // ?hqsmoke=1 (tools/ui_smoke.py, tools/hq_shots.py): HQ opens straight into the City with three synthetic HQs.
@@ -522,6 +522,7 @@ function hqNetSend(){
   if((a===7 || a===8) && !hqNetCan("fly")) a = 0;   // a helicopter (7 / 8) needs "fly": else you stand where it is
   if((a===11 || a===12) && !hqNetCan("airliner")) a = 10;   // an airliner (11 the regional jet, 12 the narrow-body, HQ 3.6) needs "airliner": else a plane
   if((a===9 || a===10) && !hqNetCan("plane")) a = 0;   // a plane (9 the seaplane, 10 the prop plane, HQ 3.2) needs "plane" likewise
+  if(a===13 && !hqNetCan("petride")) a = 0;   // [3.14] riding your pet (13) needs "petride": else you stand, your pets beside you
   var msg={type:"game", g:"hq", op:"pos", w:w.world, x:Math.round(w.x*100), z:Math.round(w.z*100),
            r:Math.round(((w.yaw*180/Math.PI)%360+360)%360), a:a};
   // on a board: the trick you are doing (k) and how high you are (y, decimetres), so others see it
@@ -562,7 +563,7 @@ setInterval(function(){ if(VIEW==="hq") hqSync(); hqNetSync(); hqNetSend(); }, 1
 // "Here now": who else is in this HQ, and on which floor.
 var HQ_FLOOR_NAME = {base:"outside", city:"in Arena City", city3d:"in Arena City", lobby:"in the Lobby", mission:"in Mission Control"};
 // (riding a bike shows as "on a bike" beside the floor, a skateboard as "skating", and so on)
-var HQ_MOVING_NAME = {3:" · on a bike", 4:" · skating", 5:" · driving", 6:" · on a motorbike", 7:" · flying", 8:" · flying"};
+var HQ_MOVING_NAME = {3:" · on a bike", 4:" · skating", 5:" · driving", 6:" · on a motorbike", 7:" · flying", 8:" · flying", 13:" · riding their pet"};
 function hqRenderHere(){
   var box=$("hqHere"); if(!box) return;
   var ps=HQNET.peers||[];

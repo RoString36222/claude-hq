@@ -355,7 +355,8 @@ var KINDS = {
   funpark: ["Amusement park", "🎡"], landmark: ["Landmark", "🏙️"],
   skatepark: ["Skatepark", "🛹"], dealer: ["Dealership", "🚘"], carpark: ["Garage", "🅿️"],
   casino: ["Casino", "🎰"],                    // games/hqcasino.js (its own name: The Lucky Byte)
-  tuning: ["Tuning shop", "🔧"]                // [3.13] games/hqtuning.js (its own name: Redline Tuning)
+  tuning: ["Tuning shop", "🔧"],                // [3.13] games/hqtuning.js (its own name: Redline Tuning)
+  petshop: ["Pet shop", "🐾"]                  // [pets 3.14] games/hqpets.js (its own name: Paws & Claws)
 };
 var ICON = {myhq: "🏠", hq: "🏢", travel: "⛴️"};
 var DOOR_OUT = 2;   // a door stands this far out past the site's edge (m)

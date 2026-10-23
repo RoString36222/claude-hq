@@ -229,6 +229,7 @@ HQV.hqWorlds.lobby = function(c, w){
   w.spawnFrom = {base: {x: -R + 2.4, z: 0, yaw: PI/2}, mission: {x: 9.9, z: -R + 2.6, yaw: 0},
                  basement: {x: R - 2.6, z: -8, yaw: -PI/2}};   // [basement 3.4] out of the B1 lift
   w.blocked = blocked;
+  if(HQV.hqPets && HQV.hqPets.lobby) HQV.hqPets.lobby(w, w.petSpots || null);   // [pets 3.14] your stay-home pets live here
   w.setTime = function(night){
     S.background = new THREE.Color(night ? 0x0a1520 : 0x7fb2d6);
     hemi.intensity = night ? 1.8 : 2.4; sun.intensity = night ? 0.6 : 1.6;

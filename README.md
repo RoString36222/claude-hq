@@ -350,6 +350,11 @@ replies, file paths, project or folder names, session ids, or titles.
   reels, puzzle guesses, battle picks, your team as species numbers and species names, golf
   shots and your golfer's position on the course. The server keeps game state in memory (the
   shared farm is stored) and never sees session titles, prompts or project names.
+- **Pets are what you chose for them.** With an Arena that has pets, your pets live there: species,
+  colours, accessories, affection and the names you typed for them (checked and word-filtered by the
+  server). The pets out with you ride in your presence (species, colour, accessory and growth numbers and
+  the name, at most two), and visitors to your open HQ see the ones in your lobby. Without one, pets live
+  only in this browser. Nothing about your sessions goes into them.
 - The wire format rejects unknown fields outright, so a future client change
   can't silently start leaking one.
 

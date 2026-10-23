@@ -1126,6 +1126,59 @@ function mount(el, api){
       aimBone(R.ra, B.hand.getWorldPosition(boomV), R.rav, "x", 0.9, 0);
     }
   }
+  /* ---------- [pets 3.14] your pets and everyone else's (games/hqpets.js) ----------
+     A small hook: the pets runtime is made on the first frame, fed your pose, what you ride, the floor's blocked /
+     ground / water helpers and the people here (their `pt`, the "pets" capability), and gets B / U / O / E. */
+  var PK = null, petsOwned = null, petsLobby = null;
+  function petsRt(){
+    if(PK || !HQV.hqPets || !THREE) return PK;
+    try {
+      PK = HQV.hqPets.create(ctx, {calm: function(){ return E.calm(); }, say: function(t){ if(api.announce) api.announce(t); if(api.toast) api.toast(t); },
+        onCare: function(id, kind){ if(api.petCare) api.petCare(id, kind); }, onToggle: function(id, out){ if(api.petToggle) api.petToggle(id, out); }});
+      if(petsOwned) PK.setOwned(petsOwned);
+      if(petsLobby) PK.setLobby(petsLobby);
+    } catch(e){ PK = null; }
+    return PK;
+  }
+  function petsOwner(){
+    var r = null;
+    if(ride){
+      var fl = ride.heli || ride.plane;
+      r = {kind: ride.kind, speed: Math.abs(ride.speed || 0), air: !!(ride.heli ? !ride.heli.ground : ride.plane && !ride.plane.ground && !ride.plane.water),
+           boat: !!ride.boat, water: !!(ride.plane && ride.plane.water), h: fl ? fl.y : avatar.hy};
+    }
+    return {x: avatar.x, z: avatar.z, yaw: avatar.yaw, speed: ride ? Math.abs(ride.speed || 0) : Math.abs(avatar.speed || 0), run: keyRun, ride: r};
+  }
+  function petsWater(x, z){ return !!(cur && cur.sea && cur.sea.land && !cur.sea.land(x, z)); }
+  function petsFrame(t, dt){
+    if(!avatar || !cur || !cur.scene || !petsRt()) return;
+    var here = cur.net || cur.name, list = [];
+    Object.keys(peers).forEach(function(u){
+      var P = peers[u]; if(!P.pt || P.w !== here) return;
+      var a = P.a | 0;
+      list.push({u: u, x: P.x, z: P.z, yaw: P.yaw, speed: a >= 3 ? Math.hypot(P.vx || 0, P.vz || 0) : P.fs || 0, pt: P.pt,
+                 ride: a >= 3 ? {kind: String(a), speed: Math.hypot(P.vx || 0, P.vz || 0), air: a >= 7 && a !== 9, boat: false, h: P.hy || 0} : null});
+    });
+    try {
+      PK.frame({t: t, dt: dt, scene: cur.scene, world: cur, worldName: cur.name, owner: petsOwner(), peers: list, night: isNight(),
+                blocked: function(x, z){ return blocked(x, z); },
+                ground: function(x, z){ return petsWater(x, z) && cur.sea.level ? cur.sea.level(x, z) : groundAt(x, z); },
+                water: petsWater});
+    } catch(e){ if(window.console) console.warn("pets", e); }
+  }
+  function petsKey(e){
+    if(!PK || e.type !== "keydown" || e.repeat || !inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return false;
+    if(!{KeyB: 1, KeyU: 1, KeyO: 1, KeyE: 1}[e.code]) return false;
+    if(e.code === "KeyE" && (ride || !PK.near)) return false;
+    if(PK.key(e.code, petsOwner(), function(x, z){ return blocked(x, z); })){ e.preventDefault(); e.stopPropagation(); return true; }
+    return false;
+  }
+  // your pets (ui/app/40-pets.js): [{id, species, variant, name, acc, affection, active, home}]; a host's lobby pets on a visit
+  inst.setPets = function(list){ petsOwned = Array.isArray(list) ? list : []; if(PK) PK.setOwned(petsOwned); };
+  inst.setLobbyPets = function(list){ petsLobby = Array.isArray(list) ? list : null; if(PK) PK.setLobby(petsLobby); };
+  // presence `pt` ("pets" capability): the pets out with you
+  inst.petsNet = function(){ return PK ? PK.net() : (HQV.hqPets && petsOwned ? HQV.hqPets.encode(petsOwned.filter(function(p){ return p.active; })) : []); };
+  inst.petsDebug = function(){ return PK; };
   function buildDesk(s, at){
     var root = new THREE.Group(); root.position.set(at[0], 0, at[1]); root.lookAt(TABLE.x, 0, TABLE.z); scene.add(root);
     var top = mat(0x2b3947, {roughness: 0.45, metalness: 0.3}), body = mat(0x1c2834, {roughness: 0.7});
@@ -3901,6 +3954,7 @@ function mount(el, api){
       else if(e.type === "keyup") cTap = 0;
     }
     if(e.type === "keydown" && inst.running && rigOn() && !typing(e.target)) noteInput();
+    if(petsKey(e)) return;                                             // [pets 3.14] B ball, U pet, O trick, E lobby
     if(e.code === "KeyE" && e.type === "keydown" && !e.repeat && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey
        && (ride || nearBike() >= 0 || (rigOn() && rig.mode === "fp") || (cur && cur.use))){ if(useKey()) e.preventDefault(); return; }
     if((e.code === "KeyT" || e.code === "Home") && e.type === "keydown" && !e.repeat && inst.running && cur === worlds.city && !typing(e.target)
@@ -3957,6 +4011,7 @@ function mount(el, api){
       boomStep(avatar.ch, bOn, t, bOn);
     }
     placePeers(dt, t);
+    petsFrame(t, dt);                                                  // [pets 3.14]
     drvFrame(t, dt);                                                   // [3.12] lights, spray, smoke, convoys
     fxStep(t, dt); driveHudDraw(t);
     acc.sky += dt; if(acc.sky > 30){ acc.sky = 0; applyTime(); }
@@ -4072,6 +4127,7 @@ function mount(el, api){
       P.vt = typeof p.vt === "string" && /^[0-9][0-9A-Za-z_-]{9,32}$/.test(p.vt) ? p.vt : null;   // [3.13] its tune (the "tuning" capability)
       // their boombox (`bb`, the "boombox" capability): the song it plays, while it plays
       P.bb = typeof p.bb === "string" && /^[A-Za-z0-9_-]{11}$/.test(p.bb) ? p.bb : null;
+      P.pt = Array.isArray(p.pt) && p.pt.length ? p.pt.slice(0, 2) : null;   // [pets 3.14] their pets (`pt`): drawn by games/hqpets.js
       // [3.12] convoys (the "convoy" capability): whom they invite (ci), whom they follow (cv), where they lead (cg, cm)
       var UR = /^[A-Za-z0-9_-]{1,64}$/;
       P.ci = typeof p.ci === "string" && UR.test(p.ci) ? p.ci : null; P.cv = typeof p.cv === "string" && UR.test(p.cv) ? p.cv : null;
@@ -4368,6 +4424,7 @@ function mount(el, api){
   };
   inst.destroy = function(){
     inst.alive = false; inst.pause(); driveHud(null); exitLock(); rigLeave(); dropNext();
+    if(PK){ try { PK.dispose(); } catch(e){} PK = null; }             // [pets 3.14]
     if(ownUnsub){ try { ownUnsub(); } catch(e){} ownUnsub = null; }
     window.removeEventListener("keydown", onKey, true); window.removeEventListener("keyup", onKey, true); window.removeEventListener("blur", onBlur);
     window.removeEventListener("gamepadconnected", onPadOn); window.removeEventListener("gamepaddisconnected", onPadOff);

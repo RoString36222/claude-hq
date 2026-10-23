@@ -3408,9 +3408,9 @@ function mount(el, api){
       if(T && T.mode === "call") sub = "On its way · " + Math.max(0, Math.round(T.run.len - T.run.s)) + " m";
       else if(T) sub = "Going back to " + (T.K ? (T.K.lift ? "your basement (B1)" : "the carpark") : "your garage");   // [basement 3.4]
       else if(it.b1) sub = "In your basement (B1) · up the car lift";   // [basement 3.4]
-      else if(b){ var d = Math.hypot(b.x - avatar.x, b.z - avatar.z); sub = d < 12 ? "Right here" : (d < H.CALL_R ? Math.round(d) + " m away · ~" + H.eta(d*1.3) + " s" : "Far away · arrives in ~20 s"); }
-      else if(K) sub = "In the carpark";
-      else sub = "Parked elsewhere · arrives in ~20 s";
+      else if(b){ var d = Math.hypot(b.x - avatar.x, b.z - avatar.z); sub = d < 12 ? "Right here" : (d < H.CALL_R ? Math.round(d) + " m away · ~" + H.eta(d*1.3) + " s" : "Far away · arrives in ~" + H.BUDGET + " s"); }
+      else if(K) sub = "In the carpark · arrives in ~" + H.BUDGET + " s";
+      else sub = "Parked elsewhere · arrives in ~" + H.BUDGET + " s";
       return {key: it.key, title: callTitle(it), sub: sub, busy: !!(T && T.mode === "call"), col: hexOf(it.o ? it.o.color : b && b.color)};
     });
   }
@@ -3479,12 +3479,12 @@ function mount(el, api){
     var start = {x: path[0], z: path[1], yaw: Math.atan2(path[2] - path[0], path[3] - path[1]) || 0};
     if(!b){ it.o.world = worldKey(C); it.o.stored = false; b = propMake(it.o, C, start.x, start.z, start.yaw); if(!b) return false; }
     else if(from || head) placeProp(b, start.x, start.z, start.yaw);
-    var run = H.run(path, v0, ys);
+    var run = H.run(path, v0, ys, H.BUDGET);
     if(T0) run.yaw = b.yaw;
     tripStart({mode: "call", key: key, b: b, C: C, run: run, title: callTitle(it), K: K, bay: bay});
     // out of its bay: the carpark stops drawing it parked there (stored() shows it again when it comes back)
     if(head && K && K.cp.release){ try { K.cp.release(K.site, key); } catch(e){} }
-    callSay(callTitle(it) + " is on its way: about " + H.eta(run.len) + " s.");
+    callSay(callTitle(it) + " is on its way: about " + H.etaOf(run) + " s.");
     return true;
   }
   // back to the carpark (its bay, up entryPath) or, with none, to its place by your HQ's garage
@@ -3530,19 +3530,20 @@ function mount(el, api){
   }
   function callStop(park){ trips.slice().forEach(function(T){ tripEnd(T, park); }); }
   function tripStep(T, dt){
-    var H = HQV.hqCall, r = T.run, RD = cur.callRoad;
-    T.t += dt;
-    // it waits for you always, and for the traffic until it has waited 4 s: a crossing car that is itself waiting
+    var H = HQV.hqCall, r = T.run, RD = cur.callRoad, now = E.now();
+    if(T.wall != null) dt = Math.min(0.5, Math.max(0, now - T.wall));   // real time (frames are capped at 0.05 s): a slow machine still keeps the call's time budget
+    T.wall = now; T.t += dt;
+    // it waits for you always, and for the traffic until it has waited 4 s (a call: 1 s, it has a time budget): a crossing car that is itself waiting
     // for it (it is an obstacle to the traffic, games/hqcity3d.js) would otherwise hold both forever; then it noses on
     var obs = [{x: avatar.x, z: avatar.z, r: 1.2}];
-    if(T.stuck >= 4) T.nose = 3;
+    if(T.stuck >= (T.mode === "call" ? 1 : 4)) T.nose = 3;
     T.nose = Math.max(0, (T.nose || 0) - dt);
     if(!(T.nose > 0)) (RD.traffic() || []).forEach(function(v){ if(v && Math.abs(v.x - r.x) < 60 && Math.abs(v.z - r.z) < 60) obs.push({x: v.x, z: v.z, r: 2}); });
     // over its last 12 m it pulls in beside you (or into its bay) rather than stopping for you; never in the carpark
     var y0 = r.y, inside = y0 === y0;
     var ahead = inside ? Infinity : H.aheadOf(r.x, r.z, r.yaw, r.len - r.s < 12 ? obs.slice(1) : obs, 1.4, 30);
     var s0 = r.s;
-    H.step(r, Math.min(dt, 0.05), ahead);
+    for(var left = dt; left > 1e-6 && !r.done; left -= 0.05) H.step(r, Math.min(left, 0.05), ahead);
     placeProp(T.b, r.x, r.z, r.yaw); T.b.g.position.y = r.y === r.y ? r.y : groundAt(r.x, r.z);
     if(T.b.rig && T.b.rig.roll) T.b.rig.roll(r.s - s0, 0);
     T.hz.visible = (T.t % 0.9) < 0.45;
@@ -3567,7 +3568,7 @@ function mount(el, api){
       rideUiSync(true);
       return;
     }
-    if(callUi && T.mode === "call") callUi.status("📞 " + T.title + " on its way · " + Math.round(r.len - r.s) + " m · ~" + H.eta(r.len - r.s) + " s");
+    if(callUi && T.mode === "call") callUi.status("📞 " + T.title + " on its way · " + Math.round(r.len - r.s) + " m · ~" + H.etaOf(r) + " s");
   }
   function callStep(dt){
     if(callMsgT > 0 && (callMsgT -= dt) <= 0 && callUi && !trips.some(function(T){ return T.mode === "call"; })) callUi.status(null);
@@ -3594,7 +3595,7 @@ function mount(el, api){
     return null;
   });
   inst.call = {open: function(){ return callToggle(); }, pick: callPick, list: function(){ return callOn() ? callItems() : []; },
-               state: function(){ var T = trips.filter(function(x){ return x.mode === "call"; })[0] || trips[0]; return T ? {mode: T.mode, key: T.key, x: T.run.x, y: T.run.y, z: T.run.z, yaw: T.run.yaw, v: T.run.v, s: T.run.s, len: T.run.len, done: T.run.done, carpark: !!T.K} : null; },
+               state: function(){ var T = trips.filter(function(x){ return x.mode === "call"; })[0] || trips[0]; return T ? {mode: T.mode, key: T.key, x: T.run.x, y: T.run.y, z: T.run.z, yaw: T.run.yaw, v: T.run.v, s: T.run.s, len: T.run.len, done: T.run.done, t: T.run.t, hurry: T.run.hurry, stuck: T.stuck, carpark: !!T.K} : null; },
                trips: function(){ return trips.map(function(T){ return {mode: T.mode, key: T.key, x: T.run.x, z: T.run.z, v: T.run.v, s: T.run.s, len: T.run.len, carpark: !!T.K}; }); },
                own: function(){ return JSON.parse(JSON.stringify(own)); }, prop: function(k){ var b = propOf(k); return b ? {x: b.x, z: b.z, yaw: b.yaw, world: worldKey(b.world), calling: !!b.calling, returnAt: b.returnAt || 0} : null; },
                back: function(k){ var b = propOf(k); return b ? goBack(b) : false; },

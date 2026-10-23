@@ -83,6 +83,22 @@ const J2 = H.join(P1, new Float64Array([5, 10, 5, 130]));
   while(!R.done && t < 120){ H.step(R, 1/60, Infinity); t += 1/60;
     if(R.y === R.y){ vRamp = Math.max(vRamp, R.v); if(yMid === null && R.s >= 10) yMid = R.y; } else vRoad = Math.max(vRoad, R.v); }
   out.ramp = {done: R.done, vRampMax: vRamp, vRoadMax: vRoad, yStart, yMid}; }
+// a call (a time budget) from far away: a zig-zag of right angles every 80 m, after 300 m of carpark ramps
+function zig(L, ramp){
+  const xz = [], y = []; let x = 0, z = 0, d = 0;
+  if(ramp){ for(let i = 0; i <= 30; i++){ xz.push(i & 1 ? 10 : 0, i*10); y.push(15 - i*0.5); } z = 310; }
+  xz.push(x, z); y.push(NaN);
+  for(let k = 0; k < L; k += 80){ d ^= 1; if(d) x += 80; else z += 80; xz.push(x, z); y.push(NaN); }
+  return {xz: Float64Array.from(xz), y: ramp ? Float64Array.from(y) : null};
+}
+out.budget = [[80, 0, 30], [400, 0, 144], [6000, 0, 30], [6000, 1, 144], [6000, 1, 20]].map(([L, ramp, hz]) => {
+  const z = zig(L, ramp), R = H.run(z.xz, 0, z.y, H.BUDGET); let t = 0, vEnd = 0;
+  while(!R.done && t < 60){ H.step(R, 1/hz, Infinity); t += 1/hz; if(R.len - R.s < 20) vEnd = Math.max(vEnd, R.v); }
+  return {len: R.len, t, done: R.done, vEnd, x: R.x, z: R.z};
+});
+{ const z = zig(1500, 0), R = H.run(z.xz, 0, null, H.BUDGET); let t = 0, w0 = null;      // a car blocks its last stretch for 1 s
+  while(!R.done && t < 60){ if(w0 === null && R.len - R.s < 24) w0 = t; H.step(R, 1/60, w0 !== null && t < w0 + 1 ? 8 : Infinity); t += 1/60; }
+  out.budgetBlocked = t; }
 out.consts = {CRUISE: H.CRUISE, TURN_V: H.TURN_V, LANE: H.LANE, STOP_GAP: H.STOP_GAP, CALL_R: H.CALL_R, MIN_HIDE: H.MIN_HIDE, RAMP_V: H.RAMP_V};
 console.log(JSON.stringify(out));
 """
@@ -144,6 +160,14 @@ class CallNode(unittest.TestCase):
         self.assertTrue(o["done"], "it carries on once the way is clear")
         self.assertGreater(o["minGap"], c["STOP_GAP"] - 2.5, "never runs into it")
         self.assertGreater(o["t"], self.o["d60"]["t"] + 5, "it waited")
+
+    def test_a_call_is_there_within_its_budget_from_anywhere(self):
+        for b in self.o["budget"]:
+            self.assertTrue(b["done"], b)
+            self.assertLess(b["t"], 9, b)
+            self.assertLessEqual(b["vEnd"], self.o["consts"]["CRUISE"] + 1e-9, "the last stretch is driven at street speed")
+        self.assertGreater(self.o["budget"][3]["len"], 6000, "the carpark ramps and 6 km of road")
+        self.assertLess(self.o["budgetBlocked"], 10, "held up on its last stretch, still under 10 s")
 
     def test_redirect_keeps_speed(self):
         self.assertGreater(self.o["redirectV"], 8.5)

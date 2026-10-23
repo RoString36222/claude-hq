@@ -73,7 +73,8 @@ var DIMS = {
   "bike.adventure": {lengthM: 2.21, widthM: 0.95, heightM: 1.45, wheelbaseM: 1.52},
   "bike.classic": {lengthM: 2.14, widthM: 0.79, heightM: 1.12, wheelbaseM: 1.40},
   "bike.cruiser": {lengthM: 2.37, widthM: 0.94, heightM: 1.10, wheelbaseM: 1.665},
-  "bike.hypersport": {lengthM: 2.13, widthM: 0.75, heightM: 1.15, wheelbaseM: 1.47}
+  "bike.hypersport": {lengthM: 2.13, widthM: 0.75, heightM: 1.15, wheelbaseM: 1.47},
+  "bike.scooter": {lengthM: 1.87, widthM: 0.69, heightM: 1.16, wheelbaseM: 1.265}
 };
 // body proportions: heights as a share of the height (belt line, the nose's top, the tail's top); lengths in
 // m from the axles: cowl (the windscreen's foot behind the front axle, × wheelbase), ws (the windscreen's run
@@ -99,7 +100,9 @@ var BIKE = {
   // arms out to wide pulled-back bars, leaning back a touch; a hypersport tucked like a sport bike
   classic:   {Rr: 0.33, Rf: 0.34, head: 0.84, seat: 0.80, lean: 0.12},
   cruiser:   {Rr: 0.34, Rf: 0.34, head: 0.78, seat: 0.66, lean: -0.06},
-  hypersport: {Rr: 0.31, Rf: 0.30, head: 0.90, seat: 0.82, lean: 0.50}
+  hypersport: {Rr: 0.31, Rf: 0.30, head: 0.90, seat: 0.82, lean: 0.50},
+  // [3.14.1] a scooter: small wheels (10" rear, 12" front), sat upright with your feet on the floorboard
+  scooter:   {Rr: 0.22, Rf: 0.23, head: 0.98, seat: 0.77, lean: 0.14}
 };
 var COL = {
   black: 0x15171a, dark: 0x24272c, grey: 0x4a4f57, steel: 0x8d959e, alu: 0xc9ced4, chrome: 0xdfe4ea,
@@ -1273,6 +1276,89 @@ function buildBike(T, entry, st, d, G){
                           plates: [{p: [pn[0]*0.0075, py + pn[1]*0.0075, pz + pn[2]*0.0075], ry: PI, rx: 0.4, w: 0.17, h: 0.11}]}};
 }
 
+// [3.14.1] a step-through scooter: a leg shield and apron in front, a flat floorboard, the body under a long seat
+// over the engine-and-swingarm unit (left) and the silencer (right), a handlebar cover carrying the lamp and the
+// clocks, a grab rail; seats for three (the rider, then two behind: a-seat-1, a-seat-2)
+function buildScooter(T, entry, st, d, G){
+  G = G || GEO0;
+  var B = new Builder(T), root = new T.Group(), body = B.node(root, "body"), t2 = function(){ return B.t("tone2"); };
+  var S = BIKE.scooter, WB = d.wheelbaseM, sc = d.heightM/DIMS["bike.scooter"].heightM, L = d.lengthM, W = d.widthM;
+  var Rr = S.Rr, Rf = S.Rf, zr = -WB/2, zf = WB/2, yh = S.head*sc, ys = S.seat*Math.min(1.1, Math.max(0.9, sc));
+  var zh = zf - 0.16, yf = 0.3, zfl0 = zf - 0.3, zfl1 = zr + WB*0.5, zt = -L/2 + 0.05, bw = Math.min(0.42, W*0.62);
+  // the leg shield and the front apron (a wedge from the front fender's top up to the bar cover)
+  B.side(body, "paint", null, [[zf - 0.22, yf - 0.04], [zf - 0.02, yf + 0.12], [zf + 0.04, yh - 0.3, zf + 0.06, yf + 0.4], [zh + 0.02, yh - 0.1],
+                               [zh - 0.08, yh - 0.12], [zfl0 + 0.02, yf + 0.3, zfl0 + 0.04, yh - 0.4], [zfl0, yf]], 0.34, 0.02);
+  t2().box(body, "paint", null, 0.36, 0.04, 0.12, 0, yh - 0.42, zf + 0.0, -1.2, 0, 0);                         // the apron's crease
+  B.box(body, "trim", COL.dark, 0.3, 0.42, 0.02, 0, yf + 0.3, zfl0 - 0.02, 0.12, 0, 0);                          // the inner shield, its hook
+  B.box(body, "trim", COL.black, 0.05, 0.04, 0.03, 0, yf + 0.5, zfl0 - 0.04);
+  [1, -1].forEach(function(sx){                                                                                    // the apron's indicators
+    B.box(body, "light", COL.amber, 0.06, 0.03, 0.03, sx*0.13, yh - 0.36, zf + 0.02, -0.5, sx*0.4, 0);
+  });
+  B.t("bikehead").plate(body, "light", COL.head, 0.12, 0.07, 0.02, 0.02, 0, yh - 0.28, zf + 0.06, 0);           // the apron lamp
+  // the floorboard, its rubber mat, the frame under it
+  B.box(body, "trim", COL.dark, 0.34, 0.05, zfl0 - zfl1, 0, yf - 0.02, (zfl0 + zfl1)/2);
+  B.box(body, "trim", COL.black, 0.3, 0.012, zfl0 - zfl1 - 0.06, 0, yf + 0.01, (zfl0 + zfl1)/2);
+  [1, -1].forEach(function(sx){ B.box(body, "paint", null, 0.03, 0.1, zfl0 - zfl1 + 0.04, sx*0.18, yf - 0.06, (zfl0 + zfl1)/2); });
+  // the body: from the floor's end up under the seat and back over the rear wheel to the tail
+  var bodyPts = [[zfl1 + 0.02, yf - 0.06], [zfl1, ys - 0.12, zfl1 + 0.02, ys - 0.24], [zr + 0.05, ys - 0.03], [zt + 0.06, ys - 0.06, zt - 0.02, ys - 0.03],
+                 [zt, ys - 0.2], [zr - 0.02, Rr + 0.2, zr - 0.12, Rr + 0.18], [zr + 0.22, Rr + 0.14], [zr + 0.3, yf - 0.08]];
+  B.side(body, "paint", null, bodyPts, bw, 0.03, 6, 2);
+  if(G.two === 2 || G.two === 3) t2().box(body, "paint", null, bw + 0.01, 0.025, 0.4, 0, ys - 0.14, zr + 0.18, 0.05, 0, 0);   // a side stripe
+  B.box(body, "trim", COL.chrome, bw + 0.012, 0.02, 0.22, 0, ys - 0.2, zfl1 - 0.12, -0.25, 0, 0);               // the side garnish
+  // the seat: long and flat, a step for the pillion
+  B.side(body, "trim", COL.black, [[zfl1 - 0.02, ys - 0.02], [zfl1 + 0.02, ys + 0.06, zfl1, ys + 0.05], [zr + 0.05, ys + 0.07], [zr - 0.02, ys + 0.1],
+                                   [zt + 0.1, ys + 0.09, zt + 0.06, ys + 0.1], [zt + 0.08, ys - 0.01]], bw - 0.04, 0.025, 5, 2);
+  B.box(body, "trim", COL.dark, bw - 0.02, 0.012, L*0.42, 0, ys + 0.0, (zfl1 + zt)/2 + 0.06);                   // its piping
+  // the grab rail round the seat's back, the tail lamp and indicators, the plate on its hanger
+  [1, -1].forEach(function(sx){ B.bar(body, "trim", COL.alu, [sx*(bw/2 - 0.01), ys + 0.02, zr + 0.06], [sx*(bw/2 - 0.03), ys + 0.04, zt + 0.08], 0.016, null, true); });
+  B.bar(body, "trim", COL.alu, [bw/2 - 0.03, ys + 0.04, zt + 0.08], [-(bw/2 - 0.03), ys + 0.04, zt + 0.08], 0.016, null, true);
+  B.box(body, "tail", COL.red, 0.2, 0.06, 0.03, 0, ys - 0.12, zt - 0.01, 0.3, 0, 0);
+  [1, -1].forEach(function(sx){ B.box(body, "light", COL.amber, 0.05, 0.03, 0.02, sx*0.14, ys - 0.13, zt + 0.0, 0.3, 0, 0); });
+  var py = Rr + 0.24, pz = zt + 0.02;
+  B.box(body, "trim", COL.black, 0.16, 0.2, 0.02, 0, py + 0.05, pz + 0.04, 0.4, 0, 0);
+  B.t("plate").box(body, "trim", 0xf2f2f2, 0.16, 0.1, 0.006, 0, py, pz, 0.4, PI, 0);
+  // the rear mudguard; the engine-and-swingarm unit and its belt cover (left), the silencer and its guard (right), the shock
+  B.add(body, "trim", new T.CylinderGeometry(Rr + 0.04, Rr + 0.04, 0.14, 10, 1, true, PI*0.15, PI*0.65), COL.black, 0, Rr, zr, 0, 0, PI/2);
+  B.side(body, "trim", COL.grey, [[zr + 0.38, 0.32], [zr + 0.36, 0.14], [zr - 0.02, Rr - 0.06], [zr - 0.06, Rr + 0.06], [zr + 0.1, Rr + 0.14], [zr + 0.38, 0.34]], 0.08, 0.01);
+  B.box(body, "trim", COL.dark, 0.012, 0.16, 0.42, 0.09, Rr + 0.03, zr + 0.17, -0.12, 0, 0);
+  B.box(body, "trim", COL.black, 0.14, 0.14, 0.16, 0, 0.26, zr + 0.42);
+  B.bar(body, "trim", COL.dark, [-0.14, 0.2, zr + 0.25], [-0.17, Rr + 0.02, zr - 0.18], 0.06, 0.09);
+  B.add(body, "trim", new T.CylinderGeometry(0.05, 0.045, 0.3, 10), COL.steel, -0.17, Rr + 0.03, zr - 0.08, PI/2 - 0.12, 0, 0);
+  B.box(body, "trim", COL.black, 0.02, 0.06, 0.22, -0.22, Rr + 0.08, zr - 0.06, -0.12, 0, 0);
+  B.bar(body, "trim", COL.dark, [0.1, Rr + 0.02, zr - 0.02], [0.1, ys - 0.12, zr + 0.1], 0.02, null, true);
+  B.spring(body, "trim", COL.alu, [0.1, Rr + 0.06, zr - 0.01], [0.1, ys - 0.16, zr + 0.09], 0.03, 0.006, 5);
+  B.box(body, "trim", COL.dark, 0.05, 0.03, 0.18, 0, 0.14, zfl1 + 0.05);                                       // the centre stand, folded
+  // the pillion's footrests (folded out), behind the floorboard
+  [1, -1].forEach(function(sx){ B.box(body, "trim", COL.black, 0.07, 0.02, 0.06, sx*(bw/2 + 0.04), yf + 0.02, zr + 0.36); });
+  anchor(T, root, "a-foot-l", 0.11, yf + 0.03, zfl0 - 0.12); anchor(T, root, "a-foot-r", -0.11, yf + 0.03, zfl0 - 0.12);
+  anchor(T, root, "a-seat", 0, ys + 0.06, zfl1 - 0.05);
+  anchor(T, root, "a-seat-1", 0, ys + 0.08, zfl1 - 0.37);
+  anchor(T, root, "a-seat-2", 0, ys + 0.1, zfl1 - 0.66);
+  // the steering: one fork leg each side under a full front fender, the bar cover (the clocks in it), bars, mirrors
+  var steer = B.node(root, "steer", 0, yh, zh);
+  var fx = [zf - zh, Rf - yh];
+  [1, -1].forEach(function(sx){ B.bar(steer, "trim", COL.dark, [sx*0.07, -0.22, 0.0], [sx*0.07, fx[1] + 0.04, fx[0] - 0.01], 0.026, null, true); });
+  B.add(steer, "paint", new T.CylinderGeometry(Rf + 0.04, Rf + 0.04, 0.13, 12, 1, true, PI*0.05, PI*0.75), null, 0, fx[1], fx[0], 0, 0, PI/2);
+  B.side(steer, "paint", null, [[0.12, -0.02], [0.14, 0.06, 0.15, 0.03], [0.06, 0.12], [-0.12, 0.11], [-0.16, 0.04, -0.17, 0.08], [-0.1, -0.03]], 0.48, 0.02, 4, 2);
+  B.box(steer, "trim", COL.black, 0.2, 0.02, 0.12, 0, 0.118, -0.04, 0.25, 0, 0);
+  B.box(steer, "light", 0x9fd8ff, 0.14, 0.008, 0.08, 0, 0.122, -0.04, 0.25, 0, 0);                               // the clocks
+  var grips = [0.33, 0.04, -0.06];
+  [1, -1].forEach(function(sx){
+    B.add(steer, "trim", new T.CylinderGeometry(0.026, 0.026, 0.11, 8), COL.black, sx*(grips[0] - 0.02), grips[1], grips[2], 0, 0, PI/2);
+    B.bar(steer, "trim", COL.alu, [sx*0.22, grips[1] + 0.01, grips[2] + 0.04], [sx*(grips[0] + 0.02), grips[1], grips[2] + 0.06], 0.007, 0.012);
+    B.bar(steer, "trim", COL.black, [sx*0.18, 0.1, -0.02], [sx*0.25, 0.13, -0.04], 0.008, null, true);   // the mirrors
+    B.box(steer, "trim", COL.black, 0.11, 0.06, 0.02, sx*0.28, 0.15, -0.04, 0, sx*0.2, 0);
+  });
+  anchor(T, steer, "a-grip-l", grips[0], grips[1], grips[2]); anchor(T, steer, "a-grip-r", -grips[0], grips[1], grips[2]);
+  var rim = G.rimCol != null ? G.rimCol : COL.grey;
+  bikeWheel(B, root, "wheel-0", Rr, 0.1, rim, [], 0, Rr, zr, false, false, COL.black, false, G.rim || 0, G.size);
+  bikeWheel(B, steer, "wheel-1", Rf, 0.09, rim, [1], 0, fx[1], fx[0], false, false, COL.black, false, G.rim || 0, G.size);
+  finish(T, root);
+  var pn = [0, Math.sin(0.4), -Math.cos(0.4)];
+  return {g: root, meta: {kind: "bike", R: Rr, radii: [Rr, Rf], lean: S.lean, riderK: null, seats: 3,
+                          plates: [{p: [pn[0]*0.0075, py + pn[1]*0.0075, pz + pn[2]*0.0075], ry: PI, rx: 0.4, w: 0.16, h: 0.1}]}};
+}
+
 /* ---------- materials, the cache, the rig ---------- */
 var PER = typeof WeakMap === "function" ? new WeakMap() : null;   // per three.js (keyed on its Mesh class: a module namespace is frozen)
 function store(T){
@@ -1299,7 +1385,7 @@ function blueprint(T, entry, G){
   G = G || GEO0;
   var st = styleOf(entry), d = dims(entry), k = scaleOf(entry), sig = geoSig(G), key = keyOf(entry, st, d, k) + (sig ? "|t:" + sig : ""), BP = store(T).bp;
   if(BP[key]) return BP[key];
-  var bp = st.kind === "bike" ? buildBike(T, entry, st, d, G) : buildCar(T, entry, st, d, G);
+  var bp = st.kind === "bike" ? (st.type === "scooter" ? buildScooter(T, entry, st, d, G) : buildBike(T, entry, st, d, G)) : buildCar(T, entry, st, d, G);
   return (BP[key] = {st: st, d: d, k: k, bp: k === 1 ? bp : scaled(bp, k)});
 }
 

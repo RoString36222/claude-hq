@@ -12,6 +12,8 @@
  *           dmgRepair / dmgRepairAll / dmgAll (localStorage "hq3d.damage.v1", keyed by the vehicle's own key)
  *   convoy: slotOf(i, air), slotPoint(L, s, lead), assist(me, L, s, air), inForm(dist, air), followersOf(peers, uid),
  *           convoyNew(), convoyStep(C, o), convoyKey(C, o), convoyNet(C, o)
+ *   carpool (3.15): poolSeats(base, type, seats, band) how many it carries (the driver too), poolSeat(me, driver, list, n, mine)
+ *           the passenger seat to take (1..n-1; 0: full)
  * Drawing half (needs THREE): beam(T, rig, o) a headlight pool and a faint cone in one additive mesh; fx(T, scene)
  *   wet-road spray and engine smoke in one Points; dent(T, rig, st, key) / undent(rig) the cosmetic damage;
  *   lights(rig, on, cracked) the lamps.
@@ -202,6 +204,32 @@ function convoyKey(C, o){
   return {t: "invited", u: best.u, n: best.n || "Visitor"};
 }
 // what presence carries: ci while an invitation is open, cv while you follow, cg while you lead with a route
+/* ---------- [3.15] carpooling: a passenger seat in someone's car, behind them on a bike or a scooter ---------- */
+// how many it carries, the driver too: a car four (a coupe, a hypercar, a supercar and the starter hatchback two), a
+// scooter three, a super sports bike only its rider (a hypersport, a sport bike over 950 cc: no pillion), any other
+// bike two (base: car | moto | bike, the bicycle; type / band: the catalogue class's, or null; seats: the catalogue
+// entry's own count, 1-4, when it gives one)
+var POOL_TWO = {coupe: 1, hyper: 1, "super": 1};
+function poolSeats(base, type, seats, band){
+  if(!(base === "car" || base === "moto" || base === "bike")) return 0;
+  if(seats === (seats | 0) && seats >= 1 && seats <= 4) return seats;
+  if(base === "car") return !type || POOL_TWO[type] ? 2 : 4;
+  if(base === "moto") return type === "scooter" ? 3 : type === "hypersport" || (type === "sport" && band === "over950") ? 1 : 2;
+  return base === "bike" ? 2 : 0;
+}
+// the seat to take in driver's vehicle (n seats): list [{u, pb, ps}] is everyone here; mine the seat you hold (0: none).
+// Two who take one seat at once: the lower user id keeps it, the other moves to a free one (0: none left)
+function poolSeat(me, driver, list, n, mine){
+  var taken = {};
+  (list || []).forEach(function(p){
+    if(!p || p.u === me || p.pb !== driver || !(p.ps >= 1 && p.ps < n)) return;
+    if(mine && p.ps === mine && String(p.u) > String(me)) return;   // yours: you were first by id
+    taken[p.ps] = 1;
+  });
+  if(mine >= 1 && mine < n && !taken[mine]) return mine;
+  for(var i = 1; i < n; i++) if(!taken[i]) return i;
+  return 0;
+}
 function convoyNet(C, o){
   o = o || {}; var m = {};
   if(C.invite && UID_RE.test(C.invite)) m.ci = C.invite;
@@ -411,7 +439,7 @@ HQV.hqDrive = {
   dmgPull: dmgPull, dmgAll: dmgAll, dmgLoad: dmgLoad, dmgSave: dmgSave, dmgRepair: dmgRepair, dmgRepairAll: dmgRepairAll,
   INVITE_R: INVITE_R, INVITE_TTL: INVITE_TTL, LEAVE_R: LEAVE_R, MAX_FOLLOW: MAX_FOLLOW, UID_RE: UID_RE,
   slotOf: slotOf, slotPoint: slotPoint, inForm: inForm, assist: assist, followersOf: followersOf,
-  convoyNew: convoyNew, convoyStep: convoyStep, convoyKey: convoyKey, convoyNet: convoyNet,
+  convoyNew: convoyNew, convoyStep: convoyStep, convoyKey: convoyKey, convoyNet: convoyNet, poolSeats: poolSeats, poolSeat: poolSeat,
   beam: beam, lights: lights, fx: fx, dent: dent, undent: undent, rigBox: rigBox, _store: store
 };
 })();

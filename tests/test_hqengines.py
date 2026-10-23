@@ -48,7 +48,7 @@ class Engines(unittest.TestCase):
 
     def test_the_research_is_in(self):
         missing = [v["id"] for v in self.o["v"] if not v["researched"]]
-        self.assertLessEqual(len(missing), 7, missing)          # KTM's six may follow; everything else is researched
+        self.assertEqual(missing, [], "every vehicle is researched")
 
     def test_real_gearing_reaches_its_top_speed(self):
         for v in self.o["v"]:

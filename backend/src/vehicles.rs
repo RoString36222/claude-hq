@@ -100,6 +100,14 @@ pub(crate) fn parse_catalogue(src: &str) -> HashMap<String, Model> {
         .collect()
 }
 
+/// The catalogue's vehicles on sale, sorted (tests that need several different vehicles take them from here).
+#[cfg(test)]
+pub(crate) fn on_sale_ids() -> Vec<String> {
+    let mut v: Vec<String> = CATALOGUE.iter().filter(|(_, m)| m.on_sale).map(|(k, _)| k.clone()).collect();
+    v.sort();
+    v
+}
+
 static CATALOGUE: LazyLock<HashMap<String, Model>> =
     LazyLock::new(|| parse_catalogue(include_str!("../data/vehicles.json")));
 

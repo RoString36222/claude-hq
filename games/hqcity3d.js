@@ -3050,6 +3050,7 @@ HQV.hqWorlds.city3d = function(c, w){
   w.onLeave = function(){ overlays(false); };
   w.onEnter = function(){ overlays(true); };
   w.mapWaypoint = function(x, z){ return navPick(x, z); };
+  w.navGraph = function(){ return W && HQV.hqnav ? navGraph() : null; };   // [autopilot] the roads a car follows with no route
   // for tests and tools: the route as it stands
   w.nav = function(){ return {route: route ? {x: route.x, z: route.z, label: route.label, kind: route.kind, mode: route.mode, done: route.done, R: route.R} : null,
                               minimap: mm, ui: nui, fx: fx, places: W && HQV.hqnav ? navPlaces : null, goTo: navTo, clear: navClear, step: navStep}; };

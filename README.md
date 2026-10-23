@@ -503,6 +503,13 @@ and feature guide.
   and on quickshifts, tyre smoke, skid marks, a shift light, **H** horn, and a timer for 0–100, 0–200 and the quarter
   mile with personal bests per vehicle (`games/hqvfx.js`, nitroStep/perfStep/wheelieStep node-tested). Calm mode shows
   no effects.
+  **I** is the autopilot in anything you drive, ride, sail or fly (`games/hqautopilot.js`, node-tested against the
+  real boat and helicopter physics). With a route (**N**) it takes you there and stops: a car or a bike keeps to the
+  right-hand lane, slows for corners, brakes for traffic and players in its lane, and nudges on if a car is waiting for
+  it; a boat steers round the coast; a helicopter lifts off, climbs over whatever is in the way and lands on the spot.
+  With no route a car follows its road, straight on at junctions, and a boat or a helicopter holds its course. It only
+  works the controls, so the gears, the sound and your drive mode still apply (Comfort cruises at 47 km/h, Track at
+  79). Any steering or throttle of yours takes over. Planes keep their own autopilot (**K**, now also **I**).
 - **Next — Stunts across every city** (`games/hqstunts.js`, tests/test_hqstunts.py). Placed per city from its
   own layout, deterministically (every client builds the same set): a 4 m free-land grid of everything that is not
   road, river, sea, a site, an HQ or a tower district; building lots elsewhere may be cleared (at most 8 a stunt,

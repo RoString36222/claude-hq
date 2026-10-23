@@ -65,7 +65,7 @@ var g0 = H.shot({s: 70000, x: 12.34, y: 1.55, z: -3.2, vx: 1.234, vy: 70, vz: -2
 out.wire = H.toWire(g0, 300.4); out.back = H.fromWire(out.wire);
 out.far = H.toWire(H.shot({x: 2000}), 0);
 out.old = H.toWire(H.shot({}), 99999)[8];
-out.bad = [[1, 2, 3], [0, 0, 0, 0, 0, 0, 0, 1, 0], [0, 0, 0, 0, 0, 0, 0, 0, 2001], [0.5, 0, 0, 0, 0, 0, 0, 0, 0],
+out.bad = [[1, 2, 3], [0, 0, 0, 0, 0, 0, 0, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 2001], [0.5, 0, 0, 0, 0, 0, 0, 0, 0],
            [0, 0, 0, 0, 7000, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, "1"], [-1, 0, 0, 0, 0, 0, 0, 0, 0], [65536, 0, 0, 0, 0, 0, 0, 0, 0],
            [0, 102401, 0, 0, 0, 0, 0, 0, 0], [0, 0, 50001, 0, 0, 0, 0, 0, 0], null, "x", [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]].map(H.fromWire);
 out.K = H.KINDS[0]; out.LOFT = H.LOFT; out.WIRE = H.WIRE; out.DT = H.DT; out.junk = H.shot(null);
@@ -170,10 +170,10 @@ class GrenadeWiring(unittest.TestCase):
         cls.mod = read("games", "hqgrenade.js")
 
     def test_keys_and_click(self):
-        self.assertIn('(e.code === "KeyX" || (e.code === "KeyF" && GN.out)) && !ride && inst.running && gnHere() && !typing(e.target)', self.hq)
-        self.assertIn('if(e.code === "KeyX") gnToggle(); else gnFire();', self.hq)
+        self.assertIn('(e.code === "KeyX" || (e.code === "KeyF" && (GN.out || tkGunner()))) && !ride && inst.running && gnHere() && !typing(e.target)', self.hq)
+        self.assertIn('if(e.code === "KeyX") gnToggle(); else if(!tkFire()) gnFire();', self.hq)
         # a captured click (Mouse steering) fires; no repeat fire from a held key
-        self.assertIn("if(e.button === 0) gnFire();", func_body(self.hq, "onDown"))
+        self.assertIn("if(e.button === 0 && !tkFire()) gnFire();", func_body(self.hq, "onDown"))
         self.assertIn('if(e.type === "keydown" && !e.repeat)', self.hq)
         # only on foot in the 3D City, never on a ride, a trip or a bus seat
         can = func_body(self.hq, "gnCan")
@@ -209,13 +209,13 @@ class GrenadeWiring(unittest.TestCase):
     def test_presence_wiring(self):
         self.assertIn('var gr = hqNetCan("grenade") && HQ3D.inst.grenadeNet ? HQ3D.inst.grenadeNet() : null;', self.ui)
         self.assertIn("msg.gn=gr.gn.slice(0,4)", self.ui)
-        self.assertIn("msg.rpm,msg.gl,JSON.stringify(msg.gn||0)].join", self.ui)
-        self.assertIn('"hqstunts","hqgrenade","hqcity3d"]', self.ui)
+        self.assertIn("msg.rpm,msg.gl,JSON.stringify(msg.gn||0),JSON.stringify(msg.ts||0),JSON.stringify(msg.sb||0),JSON.stringify(msg.ta||0)].join", self.ui)
+        self.assertIn('"hqstunts","hqgrenade","hqtank","hqcity3d"]', self.ui)
         self.assertIn("hqgrenade:1", self.ui)
         net = self.hq[self.hq.index("inst.grenadeNet = function(){"):]
         self.assertIn("H.toWire(g.launch,", net[:400])                # the launch, never where it is now
         self.assertIn("if(Array.isArray(p.gn) && p.w === curW()) gnSeen(p.u, p.gn);", self.hq)
-        self.assertIn('"petride", "grenade"]', self.proto)
+        self.assertIn('"petride", "grenade", "tank"]', self.proto)
 
     def test_bounds_match_the_arena(self):
         def const(name):

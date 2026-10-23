@@ -272,7 +272,7 @@ class Wiring(unittest.TestCase):
         self.assertIn('"hqpets","hqpetride","hqlobby"', hq)
         self.assertIn("hqpetride:1", hq)
         g = read("games/hq3d.js")
-        self.assertIn("return ride ? (ride.pet ? 13 :", g)
+        self.assertIn("return ride ? (ride.tank ? 14 : ride.pet ? 13 :", g)   # [3.17] a tank first
         self.assertIn('13: "petride"', g)
         self.assertIn("HQV.hqPetRide.mountModel(ctx, {species: pmount.sp.id", g)   # remote riders on their pet
         self.assertIn("HQV.hqPetRide.animate(P.bike, pst", g)
@@ -281,7 +281,7 @@ class Wiring(unittest.TestCase):
         proto = read("backend/src/protocol.rs")
         self.assertRegex(proto, r'\("hq", 4, &\[[^\]]*"petride"[^\]]*\]')
         hqrs = read("backend/src/valley/hq.rs")
-        self.assertIn("13.0].contains(&f)", hqrs)
+        self.assertIn("13.0, 14.0].contains(&f)", hqrs)   # [3.17] 14: a tank
         self.assertIn("crate::pets::rideable(t.0, t.3)", hqrs)
 
     def test_pets_runtime_hides_the_mount_and_offers_the_ride(self):

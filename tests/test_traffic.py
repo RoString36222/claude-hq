@@ -373,6 +373,376 @@ class Traffic(unittest.TestCase):
         self.assertEqual(v["n"]["beacon"], 2, "an emergency vehicle has its light bar")
 
 
+# ---- with a city (o.city): a stub director with citysim's contract shapes, and the real one when present ----
+CITY_HARNESS = r"""
+import fs from "fs";
+import { createRequire } from "module";
+const root = %(root)s, require = createRequire(root + "/tests/");
+globalThis.window = {HQV: {}};
+new Function(fs.readFileSync(root + "/games/traffic.js", "utf8"))();
+const T = window.HQV.traffic, city = require(root + "/tests/fixtures/traffic_city.js"), out = {};
+const ALL = {x: 0, z: 0}, FAR = 1e6, S = 1000, W = 1200, T0 = Date.UTC(2026, 9, 19, 6);
+function find(list, id){ for(var i = 0; i < list.length; i++) if(list[i].id === id) return list[i]; return null; }
+
+// The stub D: every 20 minutes a fire (two engines, a police car), a medical call (ambulance to a "hospital"),
+// a robbery (getaway along a route, two chasers), a crash (police, tow), a school run, a market van; patrols
+// and delivery rounds per 2 h; rush 07-09 UTC. Node ids on the n x n grid are r*n + c.
+function stub(n){
+  n = n || 7;
+  function id(r, c){ return r*n + c; }
+  var memo = {};
+  function win(w){
+    if(memo[w]) return memo[w];
+    var t = w*W*S, list = [];
+    function ev(kind, off, node, units, extra){
+      var e = {id: kind + ":" + w, kind: kind, start: t + off*S, end: t + (off + 1000)*S, node: node, x: 0, z: 0, units: units, severity: 2, label: kind};
+      for(var k in extra || {}) e[k] = extra[k];
+      e.units.forEach(function(u){ ["dispatch", "arrive", "leave", "back", "drop"].forEach(function(f){ if(u[f] != null) u[f] = t + u[f]*S; }); });
+      list.push(e);
+    }
+    ev("fire", 30, id(4, 2), [{kind: "fire", station: "fire:0", home: id(1, 1), node: id(4, 2), dispatch: 60, arrive: 120, leave: 700, back: 800},
+                              {kind: "fire", station: "fire:0", home: id(1, 1), node: id(4, 2), dispatch: 150, arrive: 210, leave: 730, back: 830},
+                              {kind: "police", station: "police:0", home: id(1, 5), node: id(4, 2), dispatch: 60, arrive: 120, leave: 760, back: 860}]);
+    ev("medical", 200, id(2, 2), [{kind: "ambulance", station: "clinic:0", home: id(5, 5), node: id(2, 2), dispatch: 230, arrive: 300, leave: 500, drop: 600, back: 800}], {dest: "transit:0"});
+    ev("crime", 400, id(3, 1), [{kind: "getaway", station: null, home: null, node: id(5, 4), dispatch: 420, arrive: 520, leave: 700, back: 700},
+                                {kind: "police", station: "police:0", home: id(1, 5), node: id(5, 4), lag: 3.5, dispatch: 423.5, arrive: 523.5, leave: 700, back: 800},
+                                {kind: "police", station: "police:0", home: id(1, 5), node: id(5, 4), lag: 5.2, dispatch: 425.2, arrive: 525.2, leave: 700, back: 800}],
+       {route: [id(3, 1), id(3, 2), id(3, 3), id(3, 4), id(4, 4), id(5, 4)]});
+    ev("crash", 600, id(2, 4), [{kind: "police", station: "police:0", home: id(1, 5), node: id(2, 4), dispatch: 610, arrive: 650, leave: 900, back: 960},
+                                {kind: "tow", station: "transit:0", home: id(3, 3), node: id(2, 4), dispatch: 620, arrive: 680, leave: 880, back: 950}]);
+    ev("school", 800, id(1, 3), [{kind: "schoolbus", station: "transit:0", home: id(3, 3), node: id(1, 3), dispatch: 800, arrive: 860, leave: 1000, back: 1080}]);
+    ev("market", 900, id(5, 2), [{kind: "van", station: "transit:0", home: id(3, 3), node: id(5, 2), dispatch: 900, arrive: 960, leave: 1100, back: 1180}]);
+    if(w %% 6 === 0){
+      for(var j = 0; j < 3; j++) list.push({id: "patrol:" + w + ":" + j, kind: "patrol", start: t, end: t + 7200*S, node: id(1, 5), units: [{kind: "police", station: "police:0", home: id(1, 5), node: id(1, 5), dispatch: t, arrive: t, leave: t + 7200*S, back: t + 7200*S}]});
+      for(j = 0; j < 2; j++) list.push({id: "delivery:" + w + ":" + j, kind: "delivery", start: t, end: t + 3600*S, node: id(3, 3), units: [{kind: "van", station: "transit:0", home: id(3, 3), node: id(3, 3), dispatch: t, arrive: t, leave: t + 3600*S, back: t + 3600*S}]});
+    }
+    return (memo[w] = list);
+  }
+  function events(a, b){
+    var outl = [];
+    for(var w = Math.floor((a - 7200*S)/(W*S)); w <= Math.floor(b/(W*S)); w++) win(w).forEach(function(e){ if(e.start < b && e.end > a) outl.push(e); });
+    return outl.sort(function(x, y){ return x.start - y.start || (x.id < y.id ? -1 : 1); });
+  }
+  function active(ms){ return events(ms, ms + 1).filter(function(e){ return e.start <= ms && ms < e.end; }); }
+  function unitsAt(ms){
+    var o = [];
+    active(ms).forEach(function(e){ e.units.forEach(function(u){ if(ms >= u.dispatch && ms < u.back) o.push({ev: e, unit: u, phase: "responding", from: {x: 0, z: 0}, to: {x: 0, z: 0}}); }); });
+    return o;
+  }
+  function at(ms){ var h = (ms/3600000) %% 24; return {rush: h >= 7 && h < 9 ? 1 : 0, match: null, market: null, school: null, festival: null}; }
+  return {events: events, active: active, unitsAt: unitsAt, at: at, phase: function(){ return "onscene"; }};
+}
+function sim(o){ return T.create(o && o.doc || city(1, 7, true), Object.assign({tier: 5, seed: 7, city: stub()}, o || {})); }
+
+// ---- determinism: the same clock, the same city traffic; a fresh instance asked mid-event agrees ----
+(function(){
+  var a = sim(), b = sim(), same = true, fresh = true, n = 0;
+  for(var t = T0; t < T0 + 3600*S; t += 4.7*S){
+    var A = JSON.stringify(a.at(t, ALL, FAR)), B = JSON.stringify(b.at(t, ALL, FAR));
+    if(A !== B) same = false;
+    n++;
+  }
+  [T0 + 1500*S, T0 + 2300*S, T0 + 2900*S].forEach(function(t){
+    if(JSON.stringify(sim().at(t, ALL, FAR)) !== JSON.stringify(a.at(t, ALL, FAR))) fresh = false;
+  });
+  out.det = {same: same, fresh: fresh, n: n};
+})();
+
+// ---- every unit runs, through its phases, with the right lights; patrols and vans on the rings ----
+(function(){
+  var s = sim(), kinds = {}, phases = {}, units = {}, patrolMax = 0, vanRing = 0, fireMax = 0, siren = {}, lights = {}, pulled = 0;
+  var cars = {rush: [], calm: []};
+  for(var t = T0; t < T0 + 3*3600*S; t += 2*S){
+    var all = s.at(t, ALL, FAR), pat = 0, fires = 0, nc = 0;
+    all.forEach(function(v){
+      if(v.patrol) pat++;
+      if(v.kind === "van" && !v.ev) vanRing++;
+      if(v.kind === "car") nc++;
+      if(!v.ev) return;
+      kinds[v.kind] = 1; units[v.id] = 1; phases[v.kind + ":" + v.phase] = 1;
+      if(v.kind === "fire") fires++;
+      if(v.siren) siren[v.kind + ":" + v.phase] = 1;
+      if(v.lights) lights[v.kind + ":" + v.phase] = 1;
+    });
+    all.forEach(function(v){ if(v.kind === "car" && v.pull > 0) pulled++; });
+    patrolMax = Math.max(patrolMax, pat); fireMax = Math.max(fireMax, fires);
+    var h = ((t/3600000) %% 24);
+    (h >= 7 && h < 9 ? cars.rush : cars.calm).push(nc);
+  }
+  function avg(l){ return l.reduce(function(a, b){ return a + b; }, 0)/l.length; }
+  out.units = {kinds: Object.keys(kinds).sort(), phases: Object.keys(phases).sort(), n: Object.keys(units).length, patrolMax: patrolMax, vanRing: vanRing,
+               fireMax: fireMax, siren: Object.keys(siren).sort(), lights: Object.keys(lights).sort(), pulled: pulled,
+               rush: avg(cars.rush), calm: avg(cars.calm), incidents: s.incidents(T0 + 1300*S).map(function(i){ return i.kind; }).sort()};
+})();
+
+// ---- the chase: the getaway flees along the route, the police pass the same spot their lag behind ----
+(function(){
+  var s = sim(), w = Math.floor(T0/(W*S)) + 1, gid = "crime:" + w + "/0", g = null, t;
+  for(t = T0; !g && t < T0 + 3*W*S; t += 0.5*S){ var v = find(s.at(t, ALL, FAR), gid); if(v && v.speed > 1) g = {t: t, v: v}; }
+  // where the getaway car is 2 s into its run: each chaser passes there its lag behind (later on it may lose
+  // time queueing behind the car ahead at a box)
+  var mark = find(s.at(g.t + 2*S, ALL, FAR), gid), lags = [], sirens = true, held = null;
+  ["crime:" + w + "/1", "crime:" + w + "/2"].forEach(function(pid){
+    var seen = null;
+    for(var u = g.t; u < g.t + 60*S; u += 0.05*S){
+      var p = find(s.at(u, ALL, FAR), pid);
+      if(p && p.phase === "chase" && !p.siren) sirens = false;
+      if(p && Math.hypot(p.x - mark.x, p.z - mark.z) < 1.0){ seen = u; break; }
+    }
+    lags.push(seen == null ? null : (seen - g.t - 2*S)/S);
+  });
+  for(t = g.t; t < g.t + 400*S; t += 1*S){
+    var all = s.at(t, ALL, FAR), G = find(all, gid), P = find(all, "crime:" + w + "/1");
+    if(G && P && G.phase === "caught" && P.phase === "onscene"){ held = Math.hypot(G.x - P.x, G.z - P.z); break; }
+  }
+  out.chase = {lags: lags, sirens: sirens, held: held};
+})();
+
+// ---- nothing overlaps: every vehicle, every 0.5 s, for an hour of events ----
+function boxes(list){
+  var b = [];
+  list.forEach(function(v){
+    if(v.kind === "tram") v.parts.forEach(function(p, j){ b.push({id: v.id + "/" + j, veh: v.id, kind: "tram", x: p.x, z: p.z, yaw: p.yaw, len: T.SPEC.tram.sec, wid: T.SPEC.tram.wid}); });
+    else b.push({id: v.id, veh: v.id, kind: v.kind, x: v.x, z: v.z, yaw: v.yaw, len: T.SPEC[v.kind].len, wid: T.SPEC[v.kind].wid, ev: v.ev});
+  });
+  return b;
+}
+function overlap(a, b, shrink){
+  var ax = [Math.sin(a.yaw), Math.cos(a.yaw)], ay = [ax[1], -ax[0]], bx = [Math.sin(b.yaw), Math.cos(b.yaw)], by = [bx[1], -bx[0]];
+  var d = [b.x - a.x, b.z - a.z], axes = [ax, ay, bx, by];
+  function r(u, x, y, L, Wd){ return Math.abs(x[0]*u[0] + x[1]*u[1])*L/2 + Math.abs(y[0]*u[0] + y[1]*u[1])*Wd/2; }
+  for(var i = 0; i < 4; i++){
+    var u = axes[i];
+    if(Math.abs(d[0]*u[0] + d[1]*u[1]) > r(u, ax, ay, a.len, a.wid - shrink) + r(u, bx, by, b.len, b.wid - shrink)) return false;
+  }
+  return true;
+}
+(function(){
+  var s = sim(), o = {any: 0, cross: 0, first: null, samples: 0, kinds: {}};
+  for(var t = T0 + W*S; t < T0 + 3*W*S; t += 0.5*S){
+    var B = boxes(s.at(t, ALL, FAR));
+    o.samples++;
+    for(var i = 0; i < B.length; i++) for(var j = i + 1; j < B.length; j++){
+      var cars = B[i].kind === "car" && B[j].kind === "car";
+      if(B[i].veh === B[j].veh || !overlap(B[i], B[j], cars ? 0 : 0.2)) continue;
+      // units of two different events are not planned against each other
+      if(B[i].ev && B[j].ev && B[i].ev !== B[j].ev){ o.cross++; continue; }
+      o.any++; o.first = o.first || [t, B[i].id, B[j].id];
+    }
+  }
+  out.overlap = o;
+})();
+
+// ---- perf: 200+ cars and the city's units, planning included ----
+(function(){
+  var doc = city(1, 13), D = stub(13), s = T.create(doc, {tier: 5, seed: 7, city: D}), F = 600, worst = 0, n = 0;
+  for(var k = 0; k < 60; k++) s.at(T0 + k*16.7, ALL, FAR);
+  var t0 = process.hrtime.bigint();
+  for(k = 0; k < F; k++){
+    var t1 = process.hrtime.bigint(), list = s.at(T0 + 25*S + k*1000, ALL, FAR);
+    worst = Math.max(worst, Number(process.hrtime.bigint() - t1)/1e6);
+    n = Math.max(n, list.filter(function(v){ return v.ev; }).length);
+  }
+  out.perf = {step: Number(process.hrtime.bigint() - t0)/1e6/F, worst: worst, units: n, cars: s.info().cars};
+})();
+
+// ---- real citysim when it is there ----
+(function(){
+  var f = root + "/games/citysim.js";
+  if(!fs.existsSync(f)){ out.real = null; return; }
+  new Function(fs.readFileSync(f, "utf8"))();
+  var doc = city(1, 7, true), D = window.HQV.citySim.create(doc, {tier: 5}), s = T.create(doc, {tier: 5, seed: 7, city: D});
+  var D2 = window.HQV.citySim.create(doc, {tier: 5}), s2 = T.create(doc, {tier: 5, seed: 7, city: D2});
+  var kinds = {}, same = true, t0 = process.hrtime.bigint(), frames = 0, units = {}, patrol = 0;
+  for(var t = T0; t < T0 + 6*3600*S; t += 3*S){
+    var A = s.at(t, ALL, FAR); frames++;
+    A.forEach(function(v){ if(v.ev){ kinds[v.kind] = 1; units[v.id] = 1; } if(v.patrol) patrol++; });
+    if(frames %% 97 === 0 && JSON.stringify(A) !== JSON.stringify(s2.at(t, ALL, FAR))) same = false;
+  }
+  var want = {};
+  D.events(T0, T0 + 6*3600*S).forEach(function(e){ if(e.kind !== "patrol" && e.kind !== "delivery") e.units.forEach(function(u, k){ if(u.dispatch < T0 + 6*3600*S - 1200*S && u.home !== u.node) want[e.id + "/" + k] = 1; }); });   // (a unit already there drives nowhere)
+  var got = Object.keys(want).filter(function(id){ return units[id]; }).length;
+  out.real = {kinds: Object.keys(kinds).sort(), same: same, step: Number(process.hrtime.bigint() - t0)/1e6/frames, want: Object.keys(want).length, got: got, patrol: patrol};
+  // and on the real map (claude-hq@2): an hour, at a frame a second near the centre
+  const zlib = require("zlib"), hq = JSON.parse(zlib.gunzipSync(fs.readFileSync(root + "/tests/fixtures/claude-hq@2.json.gz")));
+  var DH = window.HQV.citySim.create(hq, {tier: 5}), sh = T.create(hq, {tier: 5, city: DH}), T1 = Date.UTC(2026, 9, 21, 7), seenH = {}, wantH = 0, gotH = 0;
+  for(var k = 0; k < 4; k++) sh.at(T1 + k*1000, ALL, 400);
+  t0 = process.hrtime.bigint();
+  for(t = T1; t < T1 + 3600*S; t += S) sh.at(t, ALL, 400);
+  var stepH = Number(process.hrtime.bigint() - t0)/1e6/3600;
+  for(t = T1; t < T1 + 3600*S; t += 3*S) sh.at(t, ALL, FAR).forEach(function(v){ if(v.ev) seenH[v.id] = 1; });
+  DH.events(T1, T1 + 3600*S).forEach(function(e){ if(e.kind !== "patrol" && e.kind !== "delivery") e.units.forEach(function(u, k){ if(u.dispatch < T1 + 2400*S && u.home !== u.node){ wantH++; if(seenH[e.id + "/" + k]) gotH++; } }); });
+  out.real.hq = {step: stepH, want: wantH, got: gotH};
+})();
+
+// ---- the view: the new kinds instanced, the getaway in the car meshes, Calm beacons steady ----
+(async function(){
+  const THREE = await import(root + "/games/vendor/three-module.js");
+  var V = T.view({THREE: THREE}), p = {x: 0, y: 0, z: 0, yaw: 0, speed: 5};
+  function veh(id, kind, extra){ var v = Object.assign({id: id, kind: kind}, p, extra || {}); return v; }
+  var list = [veh("c1", "car", {paint: 0xffffff}), veh("g", "getaway", {ev: "x"}), veh("v", "van", {paint: 0xe8b730}), veh("tw", "tow", {lights: true, siren: false}),
+              veh("sb", "schoolbus"), veh("pp", "police", {patrol: true, siren: false}), veh("f", "fire", {siren: true})];
+  var n = V.update(list, 0), calls = V.drawCalls(), inst = true;
+  V.group.traverse(function(o){ if(o.isMesh && !o.isInstancedMesh) inst = false; });
+  var col = new THREE.Color(), beacons = [];
+  [0, 250].forEach(function(ms){
+    V.update(list, ms, {calm: true});
+    var c = []; for(var i = 0; i < V.meshes.beacon.count; i++){ V.meshes.beacon.getColorAt(i, col); c.push(col.getHex()); }
+    beacons.push(c.join(","));
+  });
+  var flashing = [];
+  [0, 250].forEach(function(ms){
+    V.update(list, ms);
+    var c = []; for(var i = 0; i < V.meshes.beacon.count; i++){ V.meshes.beacon.getColorAt(i, col); c.push(col.getHex()); }
+    flashing.push(c.join(","));
+  });
+  out.view = {n: n, calls: calls, instanced: inst, carMesh: V.meshes.car.count, calmSteady: beacons[0] === beacons[1], flashes: flashing[0] !== flashing[1]};
+  V.dispose();
+  console.log(JSON.stringify(out));
+})();
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class CityTraffic(unittest.TestCase):
+    """traffic.create(doc, {city: D}) (Living City plan 2.2): the director's units, chases, patrols, vans, rush."""
+
+    @classmethod
+    def setUpClass(cls):
+        js = CITY_HARNESS % {"root": json.dumps(ROOT)}
+        res = subprocess.run([NODE, "--input-type=module", "-e", js], capture_output=True, text=True, timeout=600)
+        if res.returncode != 0:
+            raise AssertionError("node harness failed:\n" + res.stderr[-4000:])
+        cls.r = json.loads(res.stdout.strip().splitlines()[-1])
+
+    def test_determinism(self):
+        d = self.r["det"]
+        self.assertTrue(d["same"], "two clients with the same city see the same units")
+        self.assertTrue(d["fresh"], "a fresh instance asked mid-event agrees: trips are pure")
+
+    def test_units_run_their_phases(self):
+        u = self.r["units"]
+        self.assertEqual(u["kinds"], ["ambulance", "fire", "getaway", "police", "schoolbus", "tow", "van"])
+        for ph in ("fire:responding", "fire:onscene", "fire:returning", "ambulance:transport", "ambulance:drop",
+                   "getaway:chase", "getaway:caught", "police:chase", "tow:onscene", "schoolbus:responding", "van:onscene"):
+            self.assertIn(ph, u["phases"])
+        self.assertGreaterEqual(u["fireMax"], 2, "several engines at one fire")
+        self.assertIn("fire:responding", u["siren"])
+        self.assertIn("ambulance:transport", u["siren"])
+        self.assertNotIn("fire:returning", u["siren"], "no siren on the way home")
+        self.assertNotIn("tow:responding", u["siren"])
+        self.assertIn("fire:onscene", u["lights"], "lights on at the scene")
+        self.assertIn("tow:responding", u["lights"])
+        self.assertGreater(u["pulled"], 0, "cars pull over for the city's emergency runs")
+        self.assertEqual(u["patrolMax"], 3, "as many patrol cars on the rings as the city has out")
+        self.assertGreater(u["vanRing"], 0, "delivery vans on the rings")
+        self.assertGreater(u["rush"], u["calm"] * 1.2, "more cars in the rush hour")
+        self.assertTrue(u["incidents"])
+
+    def test_chase(self):
+        c = self.r["chase"]
+        for lag in c["lags"]:
+            self.assertIsNotNone(lag, "the police drive the getaway car's path")
+            self.assertGreaterEqual(lag, 2.0)
+            self.assertLessEqual(lag, 9.0, "a few seconds behind (the director's lag, 3-6 s, within the slack)")
+        self.assertTrue(c["sirens"], "chasers have their sirens on")
+        self.assertIsNotNone(c["held"])
+        self.assertLess(c["held"], 15, "the police stop in line behind the caught car")
+
+    def test_no_overlaps(self):
+        o = self.r["overlap"]
+        self.assertGreater(o["samples"], 4000)
+        self.assertEqual(o["any"], 0, "vehicles overlap: %s" % (o["first"],))
+
+    def test_performance(self):
+        p = self.r["perf"]
+        self.assertGreaterEqual(p["cars"], 200)
+        self.assertGreater(p["units"], 2)
+        self.assertLess(p["step"], 3.0, "at() with the city's units in a few ms a frame, planning included")
+
+    def test_real_citysim(self):
+        r = self.r["real"]
+        if r is None:
+            self.skipTest("games/citysim.js is not there yet")
+        self.assertTrue(r["same"])
+        self.assertIn("police", r["kinds"])
+        self.assertGreater(r["patrol"], 0, "the director's patrols ride the rings")
+        self.assertGreater(r["want"], 3)
+        self.assertGreaterEqual(r["got"], 0.8 * r["want"], "most of the director's units drive (%s of %s)" % (r["got"], r["want"]))
+        self.assertLess(r["step"], 3.0)
+        hq = r["hq"]
+        self.assertLess(hq["step"], 3.0, "the real map, with its events planned as they come")
+        self.assertGreater(hq["want"], 3)
+        self.assertGreaterEqual(hq["got"], 0.6 * hq["want"], "most units drive on the real map (%s of %s)" % (hq["got"], hq["want"]))
+
+    def test_view(self):
+        v = self.r["view"]
+        self.assertTrue(v["instanced"])
+        self.assertLessEqual(v["calls"], 13, "a draw call per body kind")
+        self.assertEqual(v["carMesh"], 2, "the getaway car is drawn with the cars")
+        for k in ("van", "tow", "schoolbus", "getaway", "police", "fire"):
+            self.assertEqual(v["n"][k], 1)
+        self.assertEqual(v["n"]["beacon"], 6, "light bars on the police car, the fire engine and the tow truck")
+        self.assertTrue(v["calmSteady"], "Calm: beacons never flash")
+        self.assertTrue(v["flashes"])
+
+
+REAL_HQ = r"""
+var fs = require("fs"), zlib = require("zlib"), root = %(root)s;
+global.window = {HQV: {}};
+["world", "roadsmooth", "citysim", "traffic"].forEach(function(f){ new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))(); });
+var HQV = window.HQV, W = HQV.world.pack(JSON.parse(zlib.gunzipSync(fs.readFileSync(root + "/tests/fixtures/claude-hq@2.json.gz"))));
+var doc = HQV.world.docOf(W), D = HQV.citySim.create(doc, {seed: W.id, tier: 5, coverage: 0.6}), out = {};
+function make(){ return HQV.traffic.create(doc, {tier: 5, seed: W.id, city: D}); }
+function ms(f){ var a = process.hrtime.bigint(); f(); return Number(process.hrtime.bigint() - a)/1e6; }
+// 30 minutes of frames (10 a second) round the camera, warm() given 2 ms a frame as the City does
+var T = make(), C = make(), t0 = Date.UTC(2026, 9, 21, 9, 0, 0), worst = 0, sum = 0, n = 0, wWorst = 0, diff = 0;
+out.setup = ms(function(){ T.warm(t0, Infinity, true); });
+for(var f = 0; f < 30*60*10; f++){
+  var t = t0 + f*100;
+  wWorst = Math.max(wWorst, ms(function(){ T.warm(t, 2); }));
+  var d = ms(function(){ T.at(t, {x: 0, z: 0}, 320, []); }); worst = Math.max(worst, d); sum += d; n++;
+  if(f % 600 === 0 && JSON.stringify(T.incidents(t)) !== JSON.stringify(C.incidents(t))) diff++;
+}
+out.perf = {worst: worst, mean: sum/n, warmWorst: wWorst, diff: diff};
+// a week: the school buses and the market vans drive
+var S = make(), wk = Date.UTC(2026, 9, 19), kinds = {}, vans = {};
+D.events(wk, wk + 7*86400000).filter(function(e){ return e.kind === "school" || e.kind === "market"; }).forEach(function(ev){
+  for(var t = ev.start; t < ev.end; t += 10000) S.incidents(t).forEach(function(x){
+    if(x.ev !== ev.id) return;
+    kinds[ev.kind + ":" + x.kind] = 1;
+    if(ev.kind === "market" && x.kind === "van") (vans[ev.id] = vans[ev.id] || {})[x.id] = 1;
+  });
+});
+out.week = {kinds: Object.keys(kinds).sort(), vans: Object.keys(vans).map(function(k){ return Object.keys(vans[k]).length; })};
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE and os.path.exists(os.path.join(ROOT, "games", "citysim.js")), "node and games/citysim.js needed")
+class RealCityFrames(unittest.TestCase):
+    """The Commons (claude-hq@2, roads smoothed) with the real director at tier 5, coverage 0.6: no frame plans a
+    whole event (warm() plans them a step at a time, ahead), and the school buses and market vans really drive."""
+    @classmethod
+    def setUpClass(cls):
+        p = subprocess.run([NODE, "-e", REAL_HQ.replace("%(root)s", json.dumps(ROOT))], capture_output=True, text=True, timeout=600)
+        if p.returncode != 0:
+            raise AssertionError(p.stderr[-4000:])
+        cls.r = json.loads(p.stdout)
+
+    def test_worst_frame_in_budget(self):
+        p = self.r["perf"]
+        self.assertLess(p["worst"], 3.0, p)                     # at(): never a plan in a frame once warm runs
+        self.assertLess(p["mean"], 0.5, p)
+        self.assertEqual(p["diff"], 0, "warm() changes when an event is planned, never its trips")
+
+    def test_school_buses_and_market_vans_drive(self):
+        w = self.r["week"]
+        self.assertIn("school:schoolbus", w["kinds"])
+        self.assertIn("market:van", w["kinds"])
+        self.assertTrue(w["vans"] and max(w["vans"]) >= 2, w)
+
+
 class Source(unittest.TestCase):
     def test_frame_rate_independent_and_seeded(self):
         with open(os.path.join(ROOT, "games", "traffic.js"), encoding="utf-8") as f:

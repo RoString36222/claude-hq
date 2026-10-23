@@ -5,8 +5,8 @@
  *            harbour basin, the roads by class width (edges whose min_tier is above the tier left out),
  *            in a north-up world bitmap (about 1.5 px/m), plus an atlas of the POI icons
  *   overlay  the visible canvas, redrawn by frame(): the bitmap under a rotation and scale, the POI
- *            icons (upright, from the atlas), the route, the waypoint pin, other players, you (an
- *            arrow) and the N marker on the rim
+ *            icons (upright, from the atlas), the route, the city's incident alerts, other players, the
+ *            waypoint pin, you (an arrow) and the N marker on the rim
  *
  * Bearings (as games/hqhud.js): yaw 0 faces +z and increasing yaw turns LEFT; the clockwise heading
  * is -yaw; N = +z, E = -x. North-up puts +z at the top and -x on the right; heading-up turns the map
@@ -27,8 +27,11 @@
  *                     world bitmap in its real colours: the platform's grass, the apron, taxiways, the runway and its
  *                     pads, the service road, the landside roads, the terminal, concourse and skybridge. Kept across
  *                     setWorld for the same world; null takes it out. It redraws into the same bitmap canvas.
- *     mm.frame({x, z, yaw, view?, speed, route, waypoint, others, dt?})   view: the camera's heading (heading-up turns
- *                    by it; default yaw); yaw: where you face (the arrow)
+ *     mm.frame({x, z, yaw, view?, speed, route, waypoint, others, alerts?, calm?, dt?})   view: the camera's heading
+ *                    (heading-up turns by it; default yaw); yaw: where you face (the arrow); alerts: the city's
+ *                    incidents [{x, z (m), kind: "fire"|"medical"|"crime"|"crash"}] (games/citynews.js alerts(ms)),
+ *                    a disc with its pictogram and a pulsing ring (steady in Calm: html.hq-calm, reduced motion,
+ *                    or calm: true), off the map a smaller disc on the rim
  *     mm.setMode("heading" | "north"), mm.mode(), mm.zoom(+1 | -1), mm.view(), mm.destroy()
  * Clicks and taps call onPick with the world point (the host snaps it to a road); the wheel and the
  * +/- buttons zoom; one button toggles heading-up / north-up, another calls onExpand (the full map).
@@ -61,6 +64,10 @@ var POI = {
   dealer: {col: "#1c66b5", g: "car"}, tuning: {col: "#b8452c", g: "wrench"},   // [3.13] the Tuning shop (games/hqtuning.js)
   carpark: {col: "#1f6fd1", g: "parking"}
 };
+// The incident alerts (city-sim plan 2.6): their disc colour and pictogram (drawn live, they are few).
+var ALERT = {fire: {col: "#e2521d", g: "flame"}, medical: {col: "#d3283a", g: "cross"}, crime: {col: "#2f55c9", g: "shield"},
+             crash: {col: "#d99a14", g: "warn"}};
+var ALERT_MAX = 16, ALERT_R = 8, PULSE_S = 1.4;   // at most 16 drawn; disc radius (CSS px); a pulse every 1.4 s
 var POI_ORDER = ["hq", "school", "market", "fire", "police", "clinic", "hospital", "townhall", "airport", "transit", "dealer", "tuning", "dock", "port", "carpark", "myhq"];
 var PAL = {
   dark: {sea: "#0f2a3d", land: "#1d2620", landEdge: "#33503f", water: "#1a4a6b", bank: "#2f6f8f",
@@ -127,6 +134,15 @@ function sitePlaces(W, tier){
     out.push({id: s.id, kind: s.kind, label: s.kind, x: (s.x|0)/100, z: (s.z|0)/100});
   });
   return out;
+}
+
+// Calm: html.hq-calm or prefers-reduced-motion (as games/core.js), guarded for tests without a DOM.
+function calmNow(doc){
+  try {
+    var de = doc && doc.documentElement;
+    if(de && de.classList && de.classList.contains("hq-calm")) return true;
+    return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  } catch(e){ return false; }
 }
 
 // ---- the static layer -----------------------------------------------------------------------
@@ -312,6 +328,9 @@ function glyph(g, kind, disc){
       g.moveTo(-0.24, 0.56); g.lineTo(-0.24, -0.5); g.lineTo(0.08, -0.5);
       g.quadraticCurveTo(0.46, -0.5, 0.46, -0.16); g.quadraticCurveTo(0.46, 0.18, 0.08, 0.18); g.lineTo(-0.24, 0.18);
       g.stroke(); return;
+    case "warn":                                                         // a warning triangle with a "!"
+      g.moveTo(0, -0.58); g.lineTo(0.6, 0.5); g.lineTo(-0.6, 0.5); g.closePath(); g.fill();
+      g.fillStyle = disc; g.fillRect(-0.07, -0.22, 0.14, 0.4); g.fillRect(-0.07, 0.27, 0.14, 0.12); return;
     case "house":
       g.moveTo(-0.5, -0.05); g.lineTo(0, -0.52); g.lineTo(0.5, -0.05); g.lineTo(0.38, -0.05); g.lineTo(0.38, 0.48);
       g.lineTo(-0.38, 0.48); g.lineTo(-0.38, -0.05); g.closePath(); g.fill(); return;
@@ -625,6 +644,27 @@ function mount(el, opts){
         }
       }
     }
+    // the city's incidents: a disc and pictogram, a ring pulsing out (steady in Calm); off the map, on the rim
+    var A = f.alerts;
+    if(A && A.length){
+      var still = f.calm != null ? !!f.calm : calmNow(doc), ph = still ? 0.5 : (now/1000/PULSE_S) % 1;
+      for(var a = 0, drawn = 0; a < A.length && drawn < ALERT_MAX; a++){
+        var al = A[a], AK = al && ALERT[al.kind];
+        if(!AK || !isFinite(+al.x) || !isFinite(+al.z)) continue;
+        var am = toMini(V, +al.x, +al.z), ae = edgeClamp(am[0], am[1], cssW, cssH, 10), ar = ae[2] ? ALERT_R*0.7 : ALERT_R;
+        drawn++;
+        if(!ae[2]){
+          g.beginPath(); g.arc(ae[0], ae[1], ar + 2 + ph*10, 0, 2*PI);
+          g.lineWidth = 2; g.strokeStyle = AK.col; g.globalAlpha = still ? 0.6 : 0.9*(1 - ph); g.stroke(); g.globalAlpha = 1;
+        }
+        g.beginPath(); g.arc(ae[0], ae[1], ar, 0, 2*PI); g.fillStyle = AK.col; g.fill();
+        g.lineWidth = 1.5; g.strokeStyle = "#fff"; g.stroke();
+        g.save(); g.translate(ae[0], ae[1]); g.scale(ar*0.75, ar*0.75);
+        g.fillStyle = "#fff"; g.strokeStyle = "#fff"; g.lineWidth = 0.14; g.lineCap = "round";
+        glyph(g, AK.g, AK.col);
+        g.restore();
+      }
+    }
     // other players
     var O = f.others;
     if(O && O.length){
@@ -692,5 +732,5 @@ function mount(el, opts){
 }
 
 HQV.hqminimap = {mount: mount, toMini: toMini, fromMini: fromMini, zoomFor: zoomFor, viewFor: viewFor,
-                 edgeClamp: edgeClamp, sitePlaces: sitePlaces, POI: POI, AIR_COL: AIR_COL};
+                 edgeClamp: edgeClamp, sitePlaces: sitePlaces, POI: POI, ALERT: ALERT, AIR_COL: AIR_COL};
 })();

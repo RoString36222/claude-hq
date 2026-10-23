@@ -23,6 +23,11 @@
  *   nameAtlasLayout       the cells of the sign/gantry text atlas (drawn by worldbuild)
  *   view/tierDiff         min_tier: the world as a city tier shows it, and the tiles (per product) two tiers differ in
  *   buildTile             one worker job: {tx, tz, lods, want, tier?} -> the tile message
+ * Curved roads (a W packed with games/roadsmooth.js loaded: W.smoothed): where one smoothed curve was split at a
+ *                         degree-2 node the two ribbons meet on a shared mitre (no trim, no patch), a curve tighter
+ *                         than its ribbon drops stations rather than fold, and a 3+ way junction's kerbs follow the
+ *                         rounded corners of HQV.world.junctionCorners (the arms trimmed back to the arcs, the asphalt
+ *                         out to them, the sidewalk inside its old outline)
  * A @1 doc (no poly, front, min_tier or island) takes the original paths and builds byte-identically.
  * Geo = {pos, nrm, col (rgb 0..1), idx: Uint32Array, bid? (lot id per vertex), lit? (0|1 per vertex)}.
  * Every face is wound counter-clockwise seen from the side its normal points to.
@@ -136,6 +141,16 @@ function face(g, P, c, hint, bid, lit){
   for(var i = 0; i < P.length; i++) vert(g, P[i][0], P[i][1], P[i][2], n, c, bid, lit);
   for(var k = 1; k + 1 < P.length; k++) g.i.push(base, base + k, base + k + 1);
 }
+// face() without the corners that repeat (within 1 mm in plan): a quad pinched to a triangle, nothing when < 3 remain
+function faceU(g, P, c, hint){
+  var Q = [];
+  P.forEach(function(p){
+    if(Q.length && hypot(p[0] - Q[Q.length - 1][0], p[2] - Q[Q.length - 1][2]) < 1e-3) return;
+    Q.push(p);
+  });
+  while(Q.length > 1 && hypot(Q[0][0] - Q[Q.length - 1][0], Q[0][2] - Q[Q.length - 1][2]) < 1e-3) Q.pop();
+  if(Q.length >= 3) face(g, Q, c, hint);
+}
 function fin(g){
   var o = {pos: new Float32Array(g.p), nrm: new Float32Array(g.n), col: new Float32Array(g.c), idx: new Uint32Array(g.i)};
   if(g.b) o.bid = new Float32Array(g.b);
@@ -152,7 +167,7 @@ function prep(W){
   for(var ci = CACHES.length - 1; ci >= 0; ci--) if(CACHES[ci].W === W) return CACHES[ci].C;
   var baseW = W.tierBase || W;
   CACHES = CACHES.filter(function(c){ return (c.W.tierBase || c.W) === baseW; }).slice(-3);
-  var nodes = {}, inc = {}, E = [], byId = {};
+  var nodes = {}, inc = {}, E = [], byId = {}, joints = {}, corners = {};
   (W.nodes || []).forEach(function(n){ nodes[n.id] = {id: n.id, x: n.x/100, y: n.y/100, z: n.z/100}; });
   (W.edges || []).forEach(function(e, ei){
     var p = e.pts, m = p.length/3, P = [], S = [];
@@ -177,11 +192,34 @@ function prep(W){
     var o = {id: e.id, i: ei, cls: cls, a: e.a, b: e.b, name: e.name || "", ref: e.ref != null ? e.ref : null,
              half: e.width/200, cw: (e.width - 2*(e.walk || 0))/200, walk: walk, P: P, S: S, K: K, len: S[S.length - 1], tA: 0, tB: 0};
     if(e.bridge) o.bridge = true;
+    if(W.smoothed) o.sm = true;   // games/roadsmooth.js curves (stations keeps their ribbons from folding)
     E.push(o); byId[o.id] = o;
     (inc[e.a] = inc[e.a] || []).push({E: o, end: 0});
     (inc[e.b] = inc[e.b] || []).push({E: o, end: 1});
   });
   var nodeIds = (W.nodes || []).map(function(n){ return n.id; });
+  // a smoothed W (games/roadsmooth.js): a degree-2 node inside a chain is where one curve was split in two (same class
+  // and width, no bridge, the two ends at one point, turning under JOINT_TURN). The two ribbons meet there on a
+  // shared mitre (E.jA / E.jB: the mitred left vector at that end, see stations) instead of a trim and a patch.
+  function joint(id, arms){
+    if(arms.length !== 2) return false;
+    var a = arms[0], b = arms[1], A = a.E, B = b.E;
+    if(A === B || A.bridge || B.bridge || A.cls !== B.cls || A.half !== B.half || A.cw !== B.cw) return false;
+    var pa = A.P[a.end ? A.P.length - 1 : 0], pb = B.P[b.end ? B.P.length - 1 : 0];
+    if(hypot(pa.x - pb.x, pa.z - pb.z) > 0.02) return false;
+    var ua = awayDir(A, a.end), ub = awayDir(B, b.end);
+    if(!(ua.x*ub.x + ua.z*ub.z < -Math.cos(JOINT_TURN))) return false;
+    [[a, ua, ub], [b, ub, ua]].forEach(function(q){
+      var arm = q[0], u = q[1], v = q[2], sg = arm.end ? 1 : -1;
+      var mx = sg*(v.x - u.x), mz = sg*(v.z - u.z), ml = hypot(mx, mz) || 1, tx = arm.end ? -u.x : u.x, tz = arm.end ? -u.z : u.z;
+      mx /= ml; mz /= ml;
+      var k = 1/Math.max(0.5, mz*tz + mx*tx);   // left (mz, -mx) . own left (tz, -tx)
+      if(arm.end) arm.E.jB = {lx: mz*k, lz: -mx*k}; else arm.E.jA = {lx: mz*k, lz: -mx*k};
+      arm.t = 0;
+    });
+    joints[id] = true;
+    return true;
+  }
   nodeIds.forEach(function(id){
     var arms = inc[id] || [];
     arms.forEach(function(a){
@@ -190,6 +228,7 @@ function prep(W){
       a.dx = dx/l; a.dz = dz/l; a.yaw = Math.atan2(a.dx, a.dz);
       a.t = 0;
     });
+    if(W.smoothed && joint(id, arms)) return;     // one curve runs through: no trim, no patch
     if(arms.length >= 2) arms.forEach(function(a){
       var t = 0;
       arms.forEach(function(b){ if(b !== a) t = Math.max(t, armClear(a.E.half, b.E.half, a.dx*b.dx + a.dz*b.dz) + 0.3); });
@@ -197,8 +236,10 @@ function prep(W){
       if(a.end) a.E.tB = a.t; else a.E.tA = a.t;
     });
     arms.sort(function(p, q){ return p.yaw - q.yaw || p.E.id - q.E.id; });
+    if(W.smoothed && arms.length >= 3) corners[id] = cornersAt(W, id, arms);
   });
-  var cache = {nodes: nodes, inc: inc, E: E, byId: byId, nodeIds: nodeIds, props: null, routes: null, segs: null};
+  var cache = {nodes: nodes, inc: inc, E: E, byId: byId, nodeIds: nodeIds, joints: joints, corners: corners,
+               props: null, routes: null, segs: null};
   CACHES.push({W: W, C: cache});
   return cache;
 }
@@ -207,6 +248,48 @@ function deg(C, id){ return (C.inc[id] || []).length; }
 // directions have dot product `c`: the edge point (t, ha) sits hb from b's axis at t = (hb + ha cos)/sin; an obtuse
 // pair is also clear once that point is behind b's start (t = ha sin/-cos)
 var TRIM_MAX = 25;
+// a smoothed W: the largest turn (rad) between two chained edges' ends that still meet on a mitre (stations)
+var JOINT_TURN = 35*Math.PI/180;
+// unit direction (x, z) of edge E away from its end (0: a, 1: b), along its first/last piece
+function awayDir(E, end){
+  var P = E.P, n = P.length, p = end ? P[n - 1] : P[0], q = end ? P[n - 2] : P[1], l = hypot(q.x - p.x, q.z - p.z) || 1;
+  return {x: (q.x - p.x)/l, z: (q.z - p.z)/l};
+}
+// how far along arm a (from its end at the node) the point [x, z] lies
+function alongArm(a, p){
+  var E = a.E, P0 = E.P[a.end ? E.P.length - 1 : 0], u = awayDir(E, a.end);
+  return (p[0] - P0.x)*u.x + (p[1] - P0.z)*u.z;
+}
+// a smoothed W's rounded kerb corners at a 3+ way node (HQV.world.junctionCorners: games/roadsmooth.js's, less those
+// that would pave a lot or a site; the same corners are road to world.js), one per arm k (arms
+// sorted by yaw): the corner between arm k's left kerb and arm k+1's right kerb, {pts: [[x, z], ...] from arm k to
+// arm k+1, c: [x, z], r}, or null where roadSmooth gives none (nearly opposite arms: the old straight corner). Each
+// arm's trim grows to reach past its corners' tangent points, so its ribbon stops where the arcs begin; a corner
+// whose tangent point lies beyond FILLET_TRIM of its arm is dropped. null without them.
+var FILLET_TRIM = 0.48;
+function cornersAt(W, id, arms){
+  var Q = WQ(), n = arms.length, seen = {}, by = {};
+  if(!Q || typeof Q.junctionCorners !== "function") return null;
+  for(var k = 0; k < n; k++){ if(seen[arms[k].E.id]) return null; seen[arms[k].E.id] = 1; }
+  Q.junctionCorners(W, id).forEach(function(c){ by[c.a + "|" + c.b] = c; });
+  // roadSmooth sorts arms counter-clockwise from +x (atan2(dz, dx)), the yaw order here runs the other way:
+  // its corner (a, b) runs from a's kerb to b's, between our arms k+1 and k
+  var out = arms.map(function(a, k){
+    var b = arms[(k + 1) % n], c = by[b.E.id + "|" + a.E.id];
+    if(!c || c.pts.length < 2) return null;
+    var pts = c.pts.slice().reverse(), da = alongArm(a, pts[0]), db = alongArm(b, pts[pts.length - 1]);
+    if(!(da >= 0 && db >= 0) || da > a.E.len*FILLET_TRIM || db > b.E.len*FILLET_TRIM) return null;
+    return {pts: pts, c: c.c, r: c.r, da: da, db: db};
+  });
+  arms.forEach(function(a, k){
+    var p = out[(k + n - 1) % n], q = out[k], t = a.t;
+    if(p) t = Math.max(t, p.db);
+    if(q) t = Math.max(t, q.da);
+    a.t = t;
+    if(a.end) a.E.tB = t; else a.E.tA = t;
+  });
+  return out;
+}
 function armClear(ha, hb, c){
   c = clamp(c, -1, 1);
   var s = Math.sqrt(1 - c*c);
@@ -231,6 +314,9 @@ function pointAt(E, s){
 function stations(E, s0, s1){
   var P = E.P, S = E.S, first = pointAt(E, s0), last = pointAt(E, s1), keep = [], ls = s0, prev = first;
   first.s = s0; last.s = s1;
+  // a smoothed chain's joint (prep): both edges end on the same mitre, so their ribbons meet without a seam
+  if(E.jA && s0 <= 1e-6){ first.lx = E.jA.lx; first.lz = E.jA.lz; }
+  if(E.jB && s1 >= E.len - 1e-6){ last.lx = E.jB.lx; last.lz = E.jB.lz; }
   for(var j = 1; j < P.length - 1; j++){
     if(S[j] <= s0 + 0.01 || S[j] >= s1 - 0.01 || (E.K && !E.K[j])) continue;
     if(S[j] - ls < MINSEG || s1 - S[j] < MINSEG/2) continue;
@@ -239,17 +325,35 @@ function stations(E, s0, s1){
     if((q.x - prev.x)*(n.x - q.x) + (q.z - prev.z)*(n.z - q.z) < 0) continue;
     keep.push(j); ls = S[j]; prev = q;
   }
-  var out = [first];
-  keep.forEach(function(j, i){
-    var a = i ? P[keep[i - 1]] : first, b = P[j], c = i + 1 < keep.length ? P[keep[i + 1]] : last;
-    var d1 = hypot(b.x - a.x, b.z - a.z) || 1, d2 = hypot(c.x - b.x, c.z - b.z) || 1;
-    var l1x = (b.z - a.z)/d1, l1z = -(b.x - a.x)/d1, l2x = (c.z - b.z)/d2, l2z = -(c.x - b.x)/d2;
-    var mx = l1x + l2x, mz = l1z + l2z, ml = hypot(mx, mz) || 1;
-    mx /= ml; mz /= ml;
-    var k = 1/Math.max(0.5, mx*l1x + mz*l1z);
-    out.push({x: b.x, y: b.y, z: b.z, dx: (c.x - a.x)/(d1 + d2), dz: (c.z - a.z)/(d1 + d2), lx: mx*k, lz: mz*k, s: S[j]});
-  });
-  out.push(last);
+  function build(){
+    var out = [first];
+    keep.forEach(function(j, i){
+      var a = i ? P[keep[i - 1]] : first, b = P[j], c = i + 1 < keep.length ? P[keep[i + 1]] : last;
+      var d1 = hypot(b.x - a.x, b.z - a.z) || 1, d2 = hypot(c.x - b.x, c.z - b.z) || 1;
+      var l1x = (b.z - a.z)/d1, l1z = -(b.x - a.x)/d1, l2x = (c.z - b.z)/d2, l2z = -(c.x - b.x)/d2;
+      var mx = l1x + l2x, mz = l1z + l2z, ml = hypot(mx, mz) || 1;
+      mx /= ml; mz /= ml;
+      var k = 1/Math.max(0.5, mx*l1x + mz*l1z);
+      out.push({x: b.x, y: b.y, z: b.z, dx: (c.x - a.x)/(d1 + d2), dz: (c.z - a.z)/(d1 + d2), lx: mx*k, lz: mz*k, s: S[j]});
+    });
+    out.push(last);
+    return out;
+  }
+  var out = build();
+  // a smoothed curve tighter than the ribbon is wide would fold the ribbon's inner side: drop interior stations (the
+  // corner becomes one mitre, as a kink was) until every piece runs forward at both outer edges
+  if(E.sm) for(var guard = keep.length; guard > 0; guard--){
+    var bad = -1;
+    for(var i = 0; i + 1 < out.length && bad < 0; i++){
+      var A = out[i], B = out[i + 1], fx = B.x - A.x, fz = B.z - A.z;
+      [-E.half, E.half].forEach(function(o){
+        if((fx + (B.lx - A.lx)*o)*fx + (fz + (B.lz - A.lz)*o)*fz <= 0) bad = i;
+      });
+    }
+    if(bad < 0) break;
+    keep.splice(bad + 1 < out.length - 1 ? bad : bad - 1, 1);   // out[i] is keep[i - 1]: drop B, or A at the end
+    out = build();
+  }
   return out;
 }
 
@@ -688,7 +792,7 @@ function roadTile(W, tx, tz, flat, gap){
     if(flat) return;
     if(E.bridge && br) bridgeTile(br, W, E, tx, tz, s0, s1);
     // markings, stopped short of junction patches and crossings
-    var m0 = s0 + (endA && crossed(C, E, 0) ? 5.5 : 0.5), m1 = s1 - (endB && crossed(C, E, 1) ? 5.5 : 0.5);
+    var m0 = s0 + (endA && crossed(C, E, 0) ? 5.5 : (endA && E.jA ? 0 : 0.5)), m1 = s1 - (endB && crossed(C, E, 1) ? 5.5 : (endB && E.jB ? 0 : 0.5));
     if(m1 - m0 > 0.5) markLines(E).forEach(function(ln){
       if(!ln.dash){ strip(marks, W, E, stations(E, m0, m1), ln.o - ln.w/2, ln.o + ln.w/2, MARK_LIFT, ln.c, tx, tz); return; }
       for(var d = Math.ceil(m0/9)*9; d < m1; d += 9){
@@ -700,7 +804,7 @@ function roadTile(W, tx, tz, flat, gap){
   // junction patches, corner sidewalks, zebra crossings: by the tile holding the node
   C.nodeIds.forEach(function(id){
     var arms = C.inc[id] || [], n = C.nodes[id];
-    if(arms.length < 2 || !n || !inTile(n.x, n.z, tx, tz)) return;
+    if(arms.length < 2 || !n || C.joints[id] || !inTile(n.x, n.z, tx, tz)) return;
     junction(W, C, n, arms, asph, flat ? geo() : marks, kerb, walk);
   });
   var out = {asphalt: fin(asph), marks: fin(marks), kerb: fin(kerb), walk: fin(walk)};
@@ -714,34 +818,79 @@ function armStation(E, end, t){
   return S;
 }
 function junction(W, C, n, arms, asph, marks, kerb, walk){
-  var Q = WQ(), ring = [];
-  arms.forEach(function(a){
+  var Q = WQ(), ring = [], cs = C.corners && C.corners[n.id];
+  arms.forEach(function(a, k){
     var S = armStation(a.E, a.end, a.t);
     a.S = S;
     ring.push(at(S, -a.E.cw, 0), at(S, a.E.cw, 0));
+    // a smoothed W: the rounded kerb corner on to the next arm (cornersAt), its arc points marked for their height
+    if(cs && cs[k]) cs[k].pts.forEach(function(p){ var v = [p[0], 0, p[1]]; v.arc = true; ring.push(v); });
   });
   function yAt(p, up){
     var y = Q.roadY(W, p[0], p[2]);
     if(y == null){ var r = Q.nearestRoad(W, p[0], p[2], 20); y = r ? r.y : n.y; }
     return y + (up || 0);
   }
+  // the carriageway y at a corner point (off every carriage band, roadY there is the sidewalk's)
+  function yArc(p){ var y = ySurf(W, p[0], p[2], false); return y != null ? y : n.y; }
   var cy = yAt([n.x, 0, n.z]) + LIFT;
-  ring.forEach(function(p){ p[1] = yAt(p) + LIFT; });
+  ring.forEach(function(p){ p[1] = (p.arc ? yArc(p) : yAt(p)) + LIFT; });
   for(var k = 0; k < ring.length; k++){
     var p = ring[k], q = ring[(k + 1) % ring.length];
     face(asph, [[n.x, cy, n.z], p, q], COL.asphalt, UP);
   }
+  var wy = function(P){ var r = Q.nearestRoad(W, P[0], P[2], 20); return (r ? r.y : n.y) + KERB + LIFT; };
   // corner sidewalks between consecutive arms (a's left faces b, b's right faces a)
   for(k = 0; k < arms.length; k++){
     var a = arms[k], b = arms[(k + 1) % arms.length];
     if(!(a.E.walk > 0 || b.E.walk > 0)) continue;
     var Sa = a.S, Sb = b.S;
+    if(cs && cs[k]){ roundCorner(a, b, cs[k]); continue; }
     var ain = at(Sa, a.E.cw, 0), aout = at(Sa, a.E.half, 0), bout = at(Sb, -b.E.half, 0), bin = at(Sb, -b.E.cw, 0);
-    var wy = function(P){ var r = Q.nearestRoad(W, P[0], P[2], 20); return (r ? r.y : n.y) + KERB + LIFT; };
     var yi = wy(ain), yo = wy(aout), yj = wy(bout), yk = wy(bin);
     face(walk, [[ain[0], yi, ain[2]], [aout[0], yo, aout[2]], [bout[0], yj, bout[2]], [bin[0], yk, bin[2]]], COL.walk, UP);
     face(kerb, [[ain[0], yi, ain[2]], [bin[0], yk, bin[2]], [bin[0], yAt(bin) + LIFT - 0.02, bin[2]], [ain[0], yAt(ain) + LIFT - 0.02, ain[2]]],
          COL.kerb, [n.x - (ain[0] + bin[0])/2, 0, n.z - (ain[2] + bin[2])/2]);
+  }
+  // a rounded corner: the kerb runs from a's kerb at its trim along its line to the arc, round it and on to b's.
+  // The sidewalk keeps its old outer outline (each arm's walk line, meeting at their sharp corner), so it never reaches
+  // a lot: each arc point's outer point is where the ray from the arc's centre through it leaves that outline.
+  function roundCorner(a, b, co){
+    var c = co.c, r = co.r, P = co.pts, m = P.length;
+    // the kerb normals (centre -> tangent point: towards the road) and each walk line's distance from the centre
+    var na = [(P[0][0] - c[0])/r, (P[0][1] - c[1])/r], nb = [(P[m - 1][0] - c[0])/r, (P[m - 1][1] - c[1])/r];
+    var da = r - a.E.walk, db = r - b.E.walk;
+    function outAt(p){
+      var ux = (p[0] - c[0])/r, uz = (p[1] - c[1])/r, t = r, ka = ux*na[0] + uz*na[1], kb = ux*nb[0] + uz*nb[1];
+      if(ka > 1e-6) t = Math.min(t, da/ka);
+      if(kb > 1e-6) t = Math.min(t, db/kb);
+      t = Math.max(0, t);
+      return [c[0] + ux*t, 0, c[1] + uz*t, ka*t >= da - 1e-6 ? 0 : 1];   // [3]: on a's walk line (0) or b's (1)
+    }
+    var inner = [at(a.S, a.E.cw, 0)], outer = [at(a.S, a.E.half, 0)];
+    outer[0][3] = 0;
+    P.forEach(function(p){ inner.push([p[0], 0, p[1]]); outer.push(outAt(p)); });
+    inner.push(at(b.S, -b.E.cw, 0)); outer.push(at(b.S, -b.E.half, 0));
+    outer[outer.length - 1][3] = 1;
+    var I = [], O = [];
+    inner.forEach(function(p, i){   // drop repeats (a trim exactly at a tangent point)
+      if(I.length && hypot(p[0] - I[I.length - 1][0], p[2] - I[I.length - 1][2]) < 0.01) return;
+      I.push(p); O.push(outer[i]);
+    });
+    // the walk lines' sharp corner: where the outer points change line
+    var den = na[0]*nb[1] - na[1]*nb[0], kc = null;
+    if(Math.abs(den) > 1e-6){
+      var ex = (da*nb[1] - db*na[1])/den, ez = (db*na[0] - da*nb[0])/den;
+      kc = [c[0] + ex, 0, c[1] + ez];
+    }
+    var ys = I.map(function(p){ return [wy(p), yArc(p) + LIFT - 0.02]; }), yo = O.map(wy), yk = kc ? wy(kc) : 0;
+    for(var i = 0; i + 1 < I.length; i++){
+      var p = I[i], q = I[i + 1], po = O[i], qo = O[i + 1];
+      faceU(walk, [[p[0], ys[i][0], p[2]], [po[0], yo[i], po[2]], [qo[0], yo[i + 1], qo[2]], [q[0], ys[i + 1][0], q[2]]], COL.walk, UP);
+      if(kc && po[3] !== qo[3]) faceU(walk, [[po[0], yo[i], po[2]], [kc[0], yk, kc[2]], [qo[0], yo[i + 1], qo[2]]], COL.walk, UP);
+      face(kerb, [[p[0], ys[i][0], p[2]], [q[0], ys[i + 1][0], q[2]], [q[0], ys[i + 1][1], q[2]], [p[0], ys[i][1], p[2]]],
+           COL.kerb, [(p[0] + q[0])/2 - c[0], 0, (p[2] + q[2])/2 - c[1]]);
+    }
   }
   // zebra crossings on street/avenue arms of real junctions, 2 m back from the patch
   if(arms.length >= 3) arms.forEach(function(a){

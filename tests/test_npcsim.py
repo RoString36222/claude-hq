@@ -376,5 +376,339 @@ class NpcSimTest(unittest.TestCase):
         self.assertNotRegex(src, r"Math\.min\(\s*1\s*,\s*dt")
 
 
+CITY_HARNESS = r"""
+var fs = require("fs"), root = %(root)s;
+global.window = {HQV: {}};
+new Function(fs.readFileSync(root + "/games/npcsim.js", "utf8"))();
+var S = window.HQV.npcSim, doc = JSON.parse(fs.readFileSync(root + "/tests/fixtures/npc_town@2.json", "utf8"));
+var L = doc.layers, H = S.HOUR, DAY = S.DAY, MIN = 60000, D0 = 20*DAY, out = {}, ALL = {x: 0, z: 0}, BIG = 5000;
+var site = {}; L.sites.forEach(function(s){ site[s.id] = s; });
+function m(v){ return (v | 0)/100; }
+// the busiest home lot (most residents' homes within 120 m) for the fire and the medical call
+var probe = S.create(doc, {tier: 5, grow: 1000, seed: "city"}), homes = {};
+probe.residents.forEach(function(r){ if(r.home) homes[r.home] = (homes[r.home] | 0) + 1; });
+var lots = probe.places.filter(function(p){ return homes[p.key]; }), bestLot = null, bestN = -1;
+lots.forEach(function(p){ var n = 0; lots.forEach(function(q){ if(Math.hypot(p.x - q.x, p.z - q.z) <= 120) n += homes[q.key]; }); if(n > bestN){ bestN = n; bestLot = p; } });
+var lotId = bestLot.key.slice(4), fs0 = site["fire:0"], hs = site["hospital:0"], ps = site["police:0"];
+var node = L.roads.nodes.reduce(function(a, n){ return Math.hypot(n.x, n.z) < Math.hypot(a.x, a.z) ? n : a; });
+function U(kind, st, s, en, o){ return {kind: kind, station: st, dispatch: s + 20000, arrive: s + 3*MIN, leave: en - (o || 5)*MIN, back: en + 3*MIN}; }
+// the stub director: the contract's shapes (UTC ms; the tests run the local clock at UTC: clockTzMin 0)
+var EV = [
+  {id: "fire-1", kind: "fire", start: D0 + 10*H, end: D0 + 10*H + 40*MIN, x: bestLot.x, z: bestLot.z, lot: lotId, street: "Elm <b>Street</b>", severity: 3, label: "Fire",
+   units: [U("fire", "fire:0", D0 + 10*H, D0 + 10*H + 40*MIN), U("police", "police:0", D0 + 10*H, D0 + 10*H + 40*MIN)]},
+  {id: "med-1", kind: "medical", start: D0 + 11*H, end: D0 + 11*H + 30*MIN, x: bestLot.x + 10, z: bestLot.z, street: "Oak Road", severity: 1,
+   units: [U("ambulance", "hospital:0", D0 + 11*H, D0 + 11*H + 30*MIN, 12)], dest: "hospital:0"},
+  {id: "crash-1", kind: "crash", start: D0 + 14*H, end: D0 + 14*H + 20*MIN, x: m(node.x), z: m(node.z), node: node.id, street: "Mill Lane", severity: 2, units: []},
+  {id: "school-1", kind: "school", start: D0 + 8*H, end: D0 + 15*H, site: "school:0", x: m(site["school:0"].x), z: m(site["school:0"].z), units: []},
+  {id: "market-1", kind: "market", start: D0 + 8*H, end: D0 + 13*H, site: "market:0", x: m(site["market:0"].x), z: m(site["market:0"].z), units: []},
+  {id: "match-1", kind: "match", start: D0 + 19*H, end: D0 + 21*H, site: "stadium:0", x: m(site["stadium:0"].x), z: m(site["stadium:0"].z), units: []},
+  {id: "fest-1", kind: "festival", start: D0 + 20*H + 30*MIN, end: D0 + 23*H, site: "townhall:0", x: m(site["townhall:0"].x), z: m(site["townhall:0"].z), units: []}
+];
+var calls = 0;
+var D = {
+  events: function(a, b){ calls++; return EV.filter(function(e){ return e.end >= a && e.start <= b; }); },
+  active: function(ms){ return EV.filter(function(e){ return e.start <= ms && ms < e.end && e.kind in {fire: 1, medical: 1, crime: 1, crash: 1}; }); },
+  at: function(ms){ var o = {rush: 0, match: null, market: null, school: null, festival: null}; EV.forEach(function(e){ if(e.start <= ms && ms < e.end && e.kind in o) o[e.kind] = e; }); return o; },
+  phase: function(e, ms){ return ms < e.start ? "reported" : ms < e.end ? "onscene" : "done"; },
+  unitsAt: function(){ return []; }
+};
+function mk(seed){ return S.create(doc, {tier: 5, grow: 1000, seed: seed || "city", city: D, clockTzMin: 0}); }
+var C = mk(), byKind = function(t){ var k = {}; C.joined(t).forEach(function(j){ k[j.kind] = (k[j.kind] | 0) + 1; }); return k; };
+function near(rows, x, z, R){ return rows.filter(function(r){ return Math.hypot(r.x - x, r.z - z) <= R; }); }
+function rowsOf(t, kind){ var ids = {}; C.joined(t).forEach(function(j){ if(!kind || j.kind === kind) ids[j.id] = 1; }); return C.at(t, ALL, BIG).filter(function(r){ return ids[r.id]; }); }
+
+// the fire: onlookers at the cordon, crews at the station, then the scene
+var tf = D0 + 10*H + 20*MIN, gawk = rowsOf(tf, "gawk");
+out.fire = {kinds: byKind(tf), gawk: gawk.length, gawkNear: near(gawk, bestLot.x, bestLot.z, 60).length,
+            gawkIdle: gawk.filter(function(r){ return r.anim === "idle"; }).length,
+            before: (byKind(D0 + 10*H - MIN).gawk | 0), after: (byKind(D0 + 12*H).gawk | 0) + (byKind(D0 + 12*H).crew | 0)};
+var crew0 = rowsOf(D0 + 10*H + 15000, "crew"), crewS = rowsOf(D0 + 10*H + 10*MIN, "crew");
+out.crew = {station: crew0.length, atStation: near(crew0, m(fs0.x), m(fs0.z), 80).length + near(crew0, m(ps.x), m(ps.z), 80).length,
+            scene: crewS.length, atScene: near(crewS, bestLot.x, bestLot.z, 60).length, riding: (byKind(D0 + 10*H + 2*MIN).crew | 0),
+            jobs: C.joined(D0 + 10*H + 15000).filter(function(j){ return j.kind === "crew"; }).map(function(j){ return C.residents[j.id].job.job; }).sort()};
+// the medical call: one patient lying, gone once the ambulance leaves
+var pt = rowsOf(D0 + 11*H + 5*MIN, "patient"), pAway = byKind(D0 + 11*H + 25*MIN).patient | 0, pRows = rowsOf(D0 + 11*H + 25*MIN, "patient");
+out.medical = {lying: pt.map(function(r){ return r.anim; }), away: pAway, awayVisible: pRows.length, ambo: near(rowsOf(D0 + 11*H + 10*MIN, "crew"), bestLot.x, bestLot.z, 80).length};
+// the match: fans cheering outside before kick-off, inside during it, out after
+var st = site["stadium:0"], sx = m(st.x), sz = m(st.z), fanB = rowsOf(D0 + 19*H - 8*MIN, "fan"), fanIn = rowsOf(D0 + 20*H, "fan");
+out.match = {joined: byKind(D0 + 19*H - 8*MIN).fan | 0, cheer: fanB.filter(function(r){ return r.anim === "cheer"; }).length,
+             near: near(fanB, sx, sz, 160).length, inside: byKind(D0 + 20*H).fan | 0, insideVisible: fanIn.length,
+             outAfter: rowsOf(D0 + 21*H + 6*MIN, "fan").length, early: byKind(D0 + 16*H).fan | 0};
+// school, market, festival
+var sc = site["school:0"], pu = rowsOf(D0 + 8*H - 2*MIN, "pupil");
+out.school = {joined: byKind(D0 + 8*H - 2*MIN).pupil | 0, visible: pu.length, near: near(pu, m(sc.x), m(sc.z), 80).length,
+              noon: byKind(D0 + 12*H).pupil | 0, noonVisible: rowsOf(D0 + 12*H, "pupil").length,
+              jobless: C.joined(D0 + 12*H).filter(function(j){ return j.kind === "pupil"; }).every(function(j){ return !C.residents[j.id].job; })};
+var mk0 = site["market:0"], shop = [], shopMax = 0;
+for(var h = 8.5; h < 13; h += 0.5){ var sr = rowsOf(D0 + h*H, "shopper"); shopMax = Math.max(shopMax, sr.length); if(h === 10) shop = sr; }
+out.market = {max: shopMax, near: near(shop, m(mk0.x), m(mk0.z), 80).length, at10: shop.length};
+var fe = rowsOf(D0 + 21.5*H, "festival");
+out.festival = {visible: fe.length, cheer: fe.filter(function(r){ return r.anim === "cheer"; }).length};
+var w = C.joined(D0 + 10*H + 20*MIN).filter(function(j){ return j.kind === "gawk"; })[0];
+out.where = w ? C.where(w.id, D0 + 10*H + 20*MIN) : null;
+
+// determinism: another sim asked in the reverse order agrees; the index matches asking everyone
+var C2 = mk(), times = [], diff = 0, idx = 0, pairs = 0;
+for(var hh = 7; hh < 23.5; hh += 0.23) times.push(D0 + Math.round(hh*H));
+var A1 = {}; times.forEach(function(t){ A1[t] = JSON.stringify(C.at(t, {x: 40, z: -30}, 400)); });
+times.slice().reverse().forEach(function(t){ if(JSON.stringify(C2.at(t, {x: 40, z: -30}, 400)) !== A1[t]) diff++; });
+var C3 = mk();
+times.forEach(function(t){
+  C3.atScan(t, ALL, BIG).filter(function(r, i){ return i % 37 === 0; }).forEach(function(r){
+    pairs++; if(JSON.stringify(C3.at(t, r, 60)) !== JSON.stringify(C3.atScan(t, r, 60))) idx++;
+  });
+});
+out.det = {diff: diff, idx: idx, pairs: pairs, calls: calls};
+
+// continuity: residents walking or standing never jump between 1 s samples (a turn into the crowd: < 3 m)
+var jump = {walk: 0, any: 0, n: 0}, C4 = mk();
+[[D0 + 10*H - 30000, 900], [D0 + 19*H - 50*MIN, 1200], [D0 + 21*H - 60000, 1500], [D0 + 8*H - 30*MIN, 900]].forEach(function(w){
+  var prev = {};
+  for(var s = 0; s < w[1]; s++){
+    var cur = {};
+    C4.at(w[0] + s*1000, ALL, BIG).forEach(function(r){
+      cur[r.id] = r; var q = prev[r.id]; if(!q || q.anim === "drive" || r.anim === "drive") return;
+      var d = Math.hypot(r.x - q.x, r.z - q.z); jump.n++;
+      if(q.anim === "walk" && r.anim === "walk") jump.walk = Math.max(jump.walk, d);
+      jump.any = Math.max(jump.any, d);
+    });
+    prev = cur;
+  }
+});
+out.jump = jump;
+
+// nobody inside a block or in the water, whatever the events
+var blocks = L.blocks.map(function(b){ return b.poly.map(function(p){ return [p[0]/100, p[1]/100]; }); });
+var Dl = L.districts, WATER = Dl.legend.indexOf("water"), geo = {checked: 0, inBlock: 0, onWater: 0, badY: 0, anims: {}};
+for(var mm = 6*60; mm < 24*60; mm += 4){
+  rowsOf(D0 + mm*MIN).forEach(function(r){
+    geo.checked++; geo.anims[r.anim] = 1;
+    if(!(r.y > 0.4 && r.y < 0.8)) geo.badY++;
+    for(var b = 0; b < blocks.length; b++) if(S.inPoly(blocks[b], r.x, r.z)){ geo.inBlock++; break; }
+    var ci = Math.floor((r.x*100 - Dl.origin_cm)/Dl.cell_cm), cj = Math.floor((r.z*100 - Dl.origin_cm)/Dl.cell_cm);
+    if(Dl.kinds[cj*Dl.n + ci] === WATER) geo.onWater++;
+  });
+}
+out.geo = geo;
+
+// speech: lines about the events, by street, plain text
+var sp = {fire: 0, gawk: 0, html: 0, match: 0, same: true};
+C.residents.forEach(function(r){
+  [D0 + 10*H + 20*MIN, D0 + 11*H, D0 + 17*H].forEach(function(t){
+    var s1 = C.speak(r.id, t); if(s1 !== C.speak(r.id, t)) sp.same = false;
+    if(/[<>&]/.test(s1)) sp.html++;
+    if(/fire on Elm bStreet|fire on Elm Street/.test(s1)) sp.fire++;
+    if(/match/i.test(s1)) sp.match++;
+  });
+});
+C.joined(tf).forEach(function(j){ if(j.kind === "gawk" && /Elm/.test(C.speak(j.id, tf))) sp.gawk++; });
+out.speak = sp;
+
+// O(visible): a street-level circle works out a fraction of the town; fast with the crowds out
+var P = mk(), t9 = D0 + 19*H - 8*MIN, cands = [], ms = [];
+P.at(t9, ALL, BIG);
+[[0, 0], [200, -200], [sx, sz], [-300, 300], [300, 100]].forEach(function(c){
+  var t0 = process.hrtime.bigint();
+  for(var k = 0; k < 50; k++) P.at(t9 + k*200, {x: c[0], z: c[1]}, 150);
+  ms.push(Number(process.hrtime.bigint() - t0)/1e6/50);
+  cands.push(P.stats.cand);
+});
+out.perf = {cand: cands, ms: ms, pop: P.population};
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE and os.path.exists(FIXTURE), "node and tests/fixtures/npc_town@2.json needed")
+class NpcCityTest(unittest.TestCase):
+    """Residents reacting to the city's events (opts.city, a stub director in the contract's shapes)."""
+    @classmethod
+    def setUpClass(cls):
+        js = CITY_HARNESS.replace("%(root)s", json.dumps(ROOT))
+        p = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=300)
+        if p.returncode != 0:
+            raise AssertionError("node harness failed:\n" + p.stderr[-4000:])
+        cls.r = json.loads(p.stdout)
+
+    def test_fire_onlookers(self):
+        f = self.r["fire"]
+        self.assertGreater(f["gawk"], 2)
+        self.assertLessEqual(f["kinds"]["gawk"], 12)            # 3 + 3 x severity at most
+        self.assertEqual(f["gawkNear"], f["gawk"])               # at the cordon
+        self.assertGreater(f["gawkIdle"], 0)
+        self.assertEqual(f["before"], 0)
+        self.assertEqual(f["after"], 0)
+
+    def test_crews_turn_out(self):
+        c = self.r["crew"]
+        self.assertGreater(c["station"], 0)
+        self.assertEqual(c["atStation"], c["station"])           # at the bay when the run starts
+        self.assertGreater(c["riding"], 0)                       # then away on the engine
+        self.assertGreater(c["scene"], 0)
+        self.assertEqual(c["atScene"], c["scene"])
+        self.assertTrue(set(c["jobs"]) <= {"firefighter", "officer"}, c["jobs"])
+
+    def test_patient(self):
+        m = self.r["medical"]
+        self.assertEqual(m["lying"], ["lie"])
+        self.assertEqual(m["away"], 1)                           # in the ambulance, not on the street
+        self.assertEqual(m["awayVisible"], 0)
+        self.assertGreater(m["ambo"], 0)
+
+    def test_match_day(self):
+        m = self.r["match"]
+        self.assertGreater(m["joined"], 50)
+        self.assertGreater(m["cheer"], 20)
+        self.assertGreater(m["near"], 20)
+        self.assertGreater(m["inside"], 50)
+        self.assertEqual(m["insideVisible"], 0)
+        self.assertGreater(m["outAfter"], 5)
+        self.assertEqual(m["early"], 0)
+
+    def test_school_market_festival(self):
+        s = self.r["school"]
+        self.assertGreater(s["joined"], 5)
+        self.assertGreater(s["near"], 0)
+        self.assertGreater(s["noon"], 5)
+        self.assertEqual(s["noonVisible"], 0)                   # in class
+        self.assertTrue(s["jobless"])
+        self.assertGreater(self.r["market"]["max"], 3)
+        self.assertGreater(self.r["festival"]["cheer"], 5)
+        self.assertEqual(self.r["where"]["state"], "gawk")
+
+    def test_deterministic_and_indexed(self):
+        d = self.r["det"]
+        self.assertEqual(d["diff"], 0)
+        self.assertGreater(d["pairs"], 200)
+        self.assertEqual(d["idx"], 0)                            # the index answers as asking everyone does
+
+    def test_continuity(self):
+        j = self.r["jump"]
+        self.assertGreater(j["n"], 10000)
+        self.assertLess(j["walk"], 2.5, j)
+        self.assertLess(j["any"], 8, j)
+
+    def test_on_the_sidewalks(self):
+        g = self.r["geo"]
+        self.assertGreater(g["checked"], 1000)
+        self.assertEqual(g["inBlock"], 0)
+        self.assertEqual(g["onWater"], 0)
+        self.assertEqual(g["badY"], 0)
+        self.assertTrue({"lie", "cheer", "idle", "walk"} <= set(g["anims"]), g["anims"])
+
+    def test_speech_about_events(self):
+        s = self.r["speak"]
+        self.assertTrue(s["same"])
+        self.assertEqual(s["html"], 0)                           # the street's markup is stripped
+        self.assertGreater(s["fire"] + s["gawk"], 0)
+        self.assertGreater(s["match"], 0)
+
+    def test_visible_cost(self):
+        p = self.r["perf"]
+        self.assertEqual(p["pop"], 2000)
+        self.assertTrue(all(c < p["pop"] / 3 for c in p["cand"]), p["cand"])
+        self.assertLess(max(p["ms"]), 3.0, p)
+
+
+REAL_HARNESS = r"""
+var fs = require("fs"), root = %(root)s;
+global.window = {HQV: {}};
+new Function(fs.readFileSync(root + "/games/citysim.js", "utf8"))();
+new Function(fs.readFileSync(root + "/games/npcsim.js", "utf8"))();
+var S = window.HQV.npcSim, doc = JSON.parse(fs.readFileSync(root + "/tests/fixtures/npc_town@2.json", "utf8"));
+var H = S.HOUR, DAY = S.DAY, MIN = 60000, D0 = 20*DAY, out = {};   // 1970-01-21: a Wednesday (match, market, school)
+var D = window.HQV.citySim.create(doc, {tier: 5, seed: "town"});
+var C = S.create(doc, {tier: 5, grow: 1000, seed: "town", city: D, clockTzMin: 0});
+var match = D.events(D0, D0 + DAY).filter(function(e){ return e.kind === "match"; })[0];
+var st = C.places.filter(function(p){ return p.key === "site:" + match.site; })[0];
+var seen = {}, anims = {}, t0 = Date.now(), idx = 0, pairs = 0;
+for(var h = 6; h < 24; h += 0.25){
+  var t = D0 + h*H;
+  C.joined(t).forEach(function(j){ seen[j.kind] = 1; });
+  var rows = C.at(t, {x: 0, z: 0}, 5000);
+  rows.forEach(function(r){ anims[r.anim] = 1; });
+  rows.filter(function(r, i){ return i % 29 === 0; }).forEach(function(r){
+    pairs++; if(JSON.stringify(C.at(t, r, 80)) !== JSON.stringify(C.atScan(t, r, 80))) idx++;
+  });
+}
+var ms = Date.now() - t0;
+function fans(t){ var ids = {}; C.joined(t).forEach(function(j){ if(j.kind === "fan") ids[j.id] = 1; });
+  return C.at(t, {x: 0, z: 0}, 5000).filter(function(r){ return ids[r.id]; }); }
+var before = fans(match.kick - 6*MIN), during = fans(match.kick + H);
+out = {seen: Object.keys(seen).sort(), anims: Object.keys(anims).sort(), ms: ms, idx: idx, pairs: pairs,
+       cheer: before.filter(function(r){ return r.anim === "cheer" && Math.hypot(r.x - st.x, r.z - st.z) < 200; }).length,
+       during: during.length, joinedDuring: C.joined(match.kick + H).filter(function(j){ return j.kind === "fan"; }).length};
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE and os.path.exists(FIXTURE) and os.path.exists(os.path.join(ROOT, "games", "citysim.js")),
+                     "node, the fixture and games/citysim.js needed")
+class NpcRealCityTest(unittest.TestCase):
+    """The residents on the real director (games/citysim.js) for a whole Wednesday."""
+    @classmethod
+    def setUpClass(cls):
+        js = REAL_HARNESS.replace("%(root)s", json.dumps(ROOT))
+        p = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=300)
+        if p.returncode != 0:
+            raise AssertionError("node harness failed:\n" + p.stderr[-4000:])
+        cls.r = json.loads(p.stdout)
+
+    def test_everyone_reacts(self):
+        self.assertTrue({"gawk", "crew", "patient", "fan", "pupil", "shopper"} <= set(self.r["seen"]), self.r["seen"])
+        self.assertTrue({"walk", "idle", "lie", "cheer"} <= set(self.r["anims"]), self.r["anims"])
+
+    def test_match_on_the_real_clock(self):
+        self.assertGreater(self.r["cheer"], 20)                  # outside before kick-off
+        self.assertGreater(self.r["joinedDuring"], 50)
+        self.assertEqual(self.r["during"], 0)                    # inside for the match
+
+    def test_index_and_cost(self):
+        self.assertGreater(self.r["pairs"], 100)
+        self.assertEqual(self.r["idx"], 0)
+        self.assertLess(self.r["ms"], 8000, self.r["ms"])        # 72 whole-town asks with every event built
+
+
+FRAME_HARNESS = r"""
+var fs = require("fs"), zlib = require("zlib"), root = %(root)s;
+global.window = {HQV: {}};
+["world", "roadsmooth", "citysim", "npcsim"].forEach(function(f){ new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))(); });
+var HQV = window.HQV, W = HQV.world.pack(JSON.parse(zlib.gunzipSync(fs.readFileSync(root + "/tests/fixtures/claude-hq@2.json.gz"))));
+var doc = HQV.world.docOf(W), D = HQV.citySim.create(doc, {seed: W.id, tier: 5, coverage: 0.6});
+function make(){ return HQV.npcSim.create(doc, {tier: 5, seed: W.seed || W.id, city: D, clockTzMin: 0}); }
+var t0 = Date.UTC(2026, 9, 24, 13, 0, 0), out = {};   // a Saturday: a match at 15:00
+function ms(f){ var a = process.hrtime.bigint(); var r = f(); return [Number(process.hrtime.bigint() - a)/1e6, r]; }
+var A = make(), B = make();
+out.prewarm = ms(function(){ return A.warm(t0, 1e9); })[0];
+out.first = ms(function(){ return A.at(t0, {x: 0, z: 0}, 150); })[0];
+var worst = 0, diff = 0;
+for(var s = 1; s < 2*3600; s++){
+  var t = t0 + s*1000; A.warm(t, 3);
+  var r = ms(function(){ return A.at(t, {x: 0, z: 0}, 150); }); worst = Math.max(worst, r[0]);
+  if(s %% 120 === 0 && JSON.stringify(r[1]) !== JSON.stringify(B.at(t, {x: 0, z: 0}, 150))) diff++;
+}
+out.worst = worst; out.diff = diff;
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE and os.path.exists(os.path.join(ROOT, "games", "citysim.js")), "node and games/citysim.js needed")
+class NpcCityFrameCost(unittest.TestCase):
+    """On the Commons (claude-hq@2, roads smoothed) with the real director at tier 5 through a Saturday match: once
+    warmed at setup, no frame's at() builds a crowd (warm() does it a little at a time, ahead), and the rows are
+    the same as a cold instance's."""
+    @classmethod
+    def setUpClass(cls):
+        js = FRAME_HARNESS.replace("%(root)s", json.dumps(ROOT)).replace("%%", "%")
+        p = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=300)
+        if p.returncode != 0:
+            raise AssertionError("node harness failed:\n" + p.stderr[-4000:])
+        cls.r = json.loads(p.stdout)
+
+    def test_frames_stay_in_budget(self):
+        self.assertLess(self.r["first"], 20, self.r)             # the first frame after the setup warm
+        self.assertLess(self.r["worst"], 8, self.r)              # 2 h of frames, events coming and going
+        self.assertEqual(self.r["diff"], 0)                      # warm() changes when, never what
+
+
 if __name__ == "__main__":
     unittest.main()

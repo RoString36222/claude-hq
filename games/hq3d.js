@@ -5000,6 +5000,7 @@ function mount(el, api){
                            friend: P ? {k: poolKind(P), bike: !!P.bike, lean: !!P.lean, sv: P.sv, vx: P.vx, vz: P.vz, hy: P.hy, d: avatar ? Math.hypot(P.x - avatar.x, P.z - avatar.z) : null} : null, hy: avatar ? avatar.hy : null}; },
                          peer: function(f){ if(SMOKE.peer && f && typeof f === "object") Object.keys(f).forEach(function(k){ SMOKE.peer[k] = f[k]; }); inst.setPeers(lastPeers); return SMOKE.peer; },
                          weather: function(){ return cur && cur.weather ? cur.weather() : null; },
+                         citysim: function(){ return cur && cur.citysim ? cur.citysim() : null; },
                          // avatar + camera, for tools that drive the keys and record motion
                          probe: function(){ var c = curCam(); return {x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: avatar.yaw, speed: avatar.speed || 0,
                            travelYaw: avatar.travelYaw, turnRate: avatar.rate || 0, heading: rig && rig.moveYaw != null ? rig.moveYaw : null,

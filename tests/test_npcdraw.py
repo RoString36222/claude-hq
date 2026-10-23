@@ -74,6 +74,14 @@ var M = Array.from(B.mat.slice(0, 32)).map(function(v){ return Math.round(v*1e6)
 out.pack = {n: n, m0: M.slice(0, 16), m1t: M.slice(28, 31), gait: Array.from(B.gait.slice(0, 6)),
             shirt7: Array.from(B.shirt.slice(0, 3)), want7: Array.from(cols.slice(63, 66)), lin: [D.lin(0xffffff), D.lin(0), D.lin(0x808080)]};
 
+// the city's poses: a patient lies on its back, fans wave (a negative swing)
+var B2 = D.farBuffers(3);
+D.packFar([R(1, 0, {x: 3, y: 0.6, z: 4, yaw: 0, anim: "lie", speed: 0}), R(2, 0, {anim: "cheer", speed: 0}),
+           R(3, 0, {x: 0, z: 0, yaw: Math.PI/2, anim: "lie", speed: 0})], B2, null);
+out.poses = {lie: Array.from(B2.mat.slice(0, 16)).map(function(v){ return Math.round(v*1e6)/1e6; }),
+             lie90: Array.from(B2.mat.slice(32, 48)).map(function(v){ return Math.round(v*1e6)/1e6; }),
+             gait: Array.from(B2.gait.slice(0, 6)), clips: D.CLIPS};
+
 // talk: the nearest drawn within reach
 out.talk = {pick: (D.pickTalk([R(1, 0, {x: 2, z: 0}), R(2, 0, {x: 1, z: 1}), R(3, 0, {x: 0.5, z: 0, ax: 9, az: 9})], {x: 0, z: 0}) || {}).id,
             none: D.pickTalk([R(1, 0, {x: 5, z: 0})], {x: 0, z: 0})};
@@ -212,6 +220,19 @@ class NpcDrawTest(unittest.TestCase):
         self.assertEqual(p["lin"][0], [1, 1, 1])
         self.assertEqual(p["lin"][1], [0, 0, 0])
         self.assertAlmostEqual(p["lin"][2][0], 0.2158605, places=5)
+
+    def test_city_poses(self):
+        p = self.r["poses"]
+        m = p["lie"]
+        self.assertEqual(m[4:7], [0, 0, -1])                     # lying: the head (local +y) toward -z
+        self.assertEqual(m[8:11], [0, 1, 0])                     # the face (local +z) up
+        self.assertEqual(m[12:15], [3, 0.75, 4])                 # lifted out of the ground
+        self.assertEqual(p["lie90"][4:7], [-1, 0, 0])            # turned with its yaw
+        self.assertEqual(p["gait"][1:3], [0, 0])                 # lying still
+        self.assertGreater(p["gait"][4], 0)
+        self.assertLess(p["gait"][5], 0)                         # cheering: the arms-overhead wave
+        self.assertEqual(p["clips"]["lie"], "die")
+        self.assertEqual(p["clips"]["cheer"], "emote-yes")
 
     def test_talk_pick(self):
         self.assertEqual(self.r["talk"]["pick"], 2)              # 3 has stepped aside to (9, 9)

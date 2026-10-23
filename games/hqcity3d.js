@@ -32,6 +32,12 @@
  *   travel        E at a dock, port, station or airport: games/hqtravel.js trips (ferry, rail, plane, fast
  *                 travel), the ride's camera through w.camPose; the "My island" / "The Commons" button.
  *   net room      city3d:<world id> where the Arena's presence lists "isles" (protocol v3), else city3d.
+ *   living city   games/citysim.js, the event director (fires, medical calls, crimes and chases, crashes, patrols,
+ *                 deliveries, matches, markets, school runs, festivals, rush hour: a pure function of the doc and
+ *                 the UTC clock), drives traffic's runs, the residents' reactions and the civic buildings' fleets;
+ *                 citysimfx.js draws the scenes (smoke, flames, cordons, beacons), citynews.js the ticker and the
+ *                 minimap's alerts; the nearest emergency vehicles' sirens as traffic draws them. Every part is
+ *                 feature-detected: without one, the City runs as before.
  * Navigation (3.1, every 3D City, v1 too): the minimap (games/hqminimap.js), the Go to panel and the route banner
  * (hqnavui.js, N or the Go to button), chevrons and a pillar (hqroutefx.js) along hqnav.js's road route; while a
  * menu or the panel is open no key reaches the page's shortcuts or moves you.
@@ -474,6 +480,9 @@ HQV.hqWorlds.city3d = function(c, w){
   var petSite = null, petB = null;                // [pets 3.14] the Pet shop (games/hqpets.js): its site and building
   var civics = [], civicG = new THREE.Group(), boatG = new THREE.Group(), boats = [], civicLod = null, decks = [];
   var oc = null, sea = null, arch = null, tsim = null, tview = null, nsim = null, ndraw = null;
+  // Living City: the director (games/citysim.js), its scene effects (citysimfx.js), the news (citynews.js); the
+  // director's units by station (for the civic fleets, refreshed every CITY_UNITS_MS), the sirens playing, the alerts
+  var city = null, cfx = null, news = null, cityU = {at: -Infinity, by: {}}, cityEv = {}, sirens = {}, alertsNow = [], alertsAt = -Infinity;
   var bus = null, menu = null, menuKey = null, talkL = null, ui = null, statsEl = null, statsAt = 0, fadeEl = null, landing = false, npcSkip = 0;
 
   function ground(x, z){ return W ? WD.groundAt(W, x, z) : 0; }
@@ -882,9 +891,18 @@ HQV.hqWorlds.city3d = function(c, w){
   var CLEAR_UNDER = 2.4;     // m: a civic mass whose underside is higher than this off its site's ground does not block
   var BOAT_SIDE = 3;         // m: the two boats moored either side of a berth (a dock with no pier drawn)
   var NPC_BUDGET = 3;        // ms: residents whose update took longer than this update every other frame
+  var NPC_PREWARM = 400;     // ms the residents may spend at setup on who joins the city's events now (npcsim warm)
   var TALK_SHOW = 5;         // s a resident's line stays over their head
+  var CITY_TZ = 0;           // the city's clock (min east of UTC) for school, market, match days: one shared schedule
+  var CITY_UNITS_MS = 250;   // ms: the director's units (the civic fleets, matches, school bells) are read this often
+  var TRAFFIC_WARM_MS = 2;   // ms a frame traffic may spend planning the city's coming runs (traffic.warm)
+  var ALERTS_MS = 500;       // ms: the minimap's incident alerts are read this often
+  var SIREN_R = 400;         // m: the sirens of the nearest SIREN_VOICES emergency vehicles within this are heard
+  var SIREN_VOICES = 2;
+  var CIVIC_SFX_M = 250;     // m: a civic building's bell, whistle or roar is heard within this
   function island(){ return worldId !== COMMONS && worldId !== LEGACY; }
   function say(t){ if(!t) return; if(api.announce) api.announce(t); if(api.toast) api.toast(t); }
+  function calmNow(){ return !!(c.E && c.E.calm && c.E.calm()); }
   function npcMs(){ return HQV.npcSim && HQV.npcSim.localMs ? HQV.npcSim.localMs(new Date(Date.now())) : Date.now(); }
   function within(p, ms){
     return new Promise(function(res, rej){ var t = setTimeout(function(){ rej(new Error("timeout")); }, ms); Promise.resolve(p).then(function(v){ clearTimeout(t); res(v); }, function(e){ clearTimeout(t); rej(e); }); });
@@ -933,6 +951,7 @@ HQV.hqWorlds.city3d = function(c, w){
       if(site.kind === "townhall") site = Object.assign({}, site, {view: null});
       var B;
       try { B = HQV.hqCivic.build(c, site, {tier: tier, night: night}); } catch(e){ return; }
+      B.siteId = site.id != null ? String(site.id) : null;      // the director's units at this station (cityUnits)
       civicG.add(B.g); civics.push(B);
       B.hits.forEach(function(o){ hits.push(o); });
       B.doors.forEach(function(d){ if(d.live) doors.push(d); });
@@ -1058,19 +1077,113 @@ HQV.hqWorlds.city3d = function(c, w){
   // traffic, buses and trams (games/traffic.js), and the residents (games/npcsim.js, npcdraw.js)
   function setupLife(){
     var doc = WD.docOf(W);
+    city = setupCity(doc);
     if(HQV.traffic){
       try {
-        tsim = HQV.traffic.create(doc, {tier: tier, grow: grow, seed: W.id, onFare: payFare});
+        var topt = {tier: tier, grow: grow, seed: W.id, onFare: payFare}; if(city) topt.city = city;
+        tsim = HQV.traffic.create(doc, topt);
+        if(city && tsim.warm) tsim.warm(Date.now(), Infinity, true);   // the city's runs already out, before the first frame
         tview = HQV.traffic.view(c); S.add(tview.group);
       } catch(e){ tsim = null; tview = null; }
     }
     if(HQV.npcSim && HQV.npcDraw){
       try {
         var sdoc = Object.assign({}, doc, {layers: Object.assign({}, doc.layers, {zones: simZones(doc.layers.zones)})});
-        nsim = HQV.npcSim.create(sdoc, {tier: tier, grow: grow, seed: W.seed || W.id});
+        var nopt = {tier: tier, grow: grow, seed: W.seed || W.id}; if(city) nopt.city = city;   // (npcsim's own local clock)
+        nsim = HQV.npcSim.create(sdoc, nopt);
+        if(city && nsim.warm) nsim.warm(npcMs(), NPC_PREWARM);   // who joins the events now, before the first frame
         ndraw = HQV.npcDraw.create(THREE, S, nsim, {lib: c.L});
       } catch(e){ nsim = null; ndraw = null; }
     }
+  }
+  // Living City: the event director, its rates and response times from the city's fire, police and clinic cover
+  // (cityStats), on the city's clock; the news ticker over the City's HUD (its nearby toasts go through say)
+  function setupCity(doc){
+    if(!HQV.citySim) return null;
+    var D = null;
+    try {
+      var cov = {}, K = cityStats(W, tier, cityState);
+      K.parts.forEach(function(p){ if(p.key === "safety" || p.key === "police" || p.key === "health") cov[p.key] = Math.max(0, Math.min(1, p.pct/100)); });
+      D = HQV.citySim.create(doc, {seed: W.id, tier: tier, coverage: Object.keys(cov).length ? cov : 1, tzMin: CITY_TZ});
+    } catch(e){ return null; }
+    if(HQV.cityNews && c.el){
+      try { news = HQV.cityNews.create(c.el, D, {say: say, tzMin: CITY_TZ, me: function(){ var a = c.avatar(); return a ? {x: a.x, z: a.z} : null; }}); }
+      catch(e){ news = null; }
+    }
+    return D;
+  }
+  // the director's runs by station, plus each match and school day by its site (a match as its kick-off, a school
+  // day as its bell: hqcivic's scoreboard and bell read start/end), read every CITY_UNITS_MS. Patrols and
+  // delivery rounds are left out (traffic has them on its rings; they would keep a station's bays always empty).
+  // With traffic driving the units, a station's vehicle leaves its bay as its trip appears on the road and comes
+  // back in as it is gone (tsim.cityRuns); one traffic never drives stays in its bay.
+  function cityUnits(ms){
+    if(!city || (ms - cityU.at < CITY_UNITS_MS && ms >= cityU.at)) return;
+    var by = {}, live = {}, C = HQV.hqCivic || {}, OUT = (C.DOOR_MS || 5000) + (C.PULL_MS || 7000), IN = C.PULL_MS || 7000;
+    function put(k, e){ k = String(k); (by[k] = by[k] || []).push(e); }
+    function round(ev){ return !ev || ev.kind === "patrol" || ev.kind === "delivery"; }
+    if(tsim && tsim.cityRuns) try {
+      (tsim.cityRuns(ms) || []).forEach(function(x){
+        var u = x && x.unit; if(!u || u.station == null || round(x.ev)) return;
+        var d = x.start - OUT, b = x.end + IN;
+        if(ms >= d && ms < b) put(u.station, {ev: x.ev, unit: {kind: u.kind, station: u.station, dispatch: d, back: b}, src: u, phase: "out"});
+      });
+    } catch(e){}
+    else try { (city.unitsAt(ms) || []).forEach(function(U){ if(U && U.unit && U.unit.station != null && !round(U.ev)) put(U.unit.station, U); }); } catch(e){}
+    try {
+      (city.active(ms) || []).forEach(function(ev){
+        if(!ev || ev.site == null || !((ev.kind === "match" && ev.kick != null) || (ev.kind === "school" && ev.bell != null))) return;
+        var k = String(ev.id), t0 = ev.kind === "match" ? +ev.kick : +ev.bell;
+        live[k] = cityEv[k] || {id: ev.id, kind: ev.kind, site: ev.site, start: t0, end: ev.kind === "match" ? t0 + 7200000 : t0};
+        put(ev.site, {ev: live[k]});
+      });
+    } catch(e){}
+    cityEv = live; cityU = {at: ms, by: by};
+  }
+  // a civic building's sounds this frame (each once), heard within CIVIC_SFX_M of the camera and quieter with
+  // distance (the stadium's whistle and roar take it as opt.dist; the bell is a near one anyway)
+  function civicSfx(list, cam){
+    var E = HQV.engine, seen = {};
+    if(!E || !E.sfx || !cam || cam.x == null) return;
+    list.forEach(function(s){
+      var d = s ? Math.hypot(s.x - cam.x, s.z - cam.z, (+cam.y || 0) - (+s.y || 0)) : Infinity;
+      if(!s || seen[s.sfx] || d > CIVIC_SFX_M) return;
+      seen[s.sfx] = 1; E.sfx(s.sfx, {dist: d});
+    });
+  }
+  // The sirens of the SIREN_VOICES nearest emergency vehicles traffic draws with theirs on (within SIREN_R), each
+  // with its approach speed (m/s, smoothed) for the Doppler bend; a voice whose vehicle drops out stops.
+  function sirenStep(items, cam, dt){
+    var E = HQV.engine; if(!E || !E.siren || !cam || cam.x == null) return;
+    var pick = [], keep = {};
+    (items || []).forEach(function(it){
+      if(!it || !it.siren) return;
+      var d = Math.hypot(it.x - cam.x, it.z - cam.z); if(d < SIREN_R) pick.push({id: String(it.id), kind: it.kind, d: d});
+    });
+    pick.sort(function(a, b){ return a.d - b.d || (a.id < b.id ? -1 : 1); });
+    pick.slice(0, SIREN_VOICES).forEach(function(p){
+      keep[p.id] = 1;
+      var V = sirens[p.id];
+      if(!V){ try { V = sirens[p.id] = {v: E.siren(p.kind), d: p.d, ap: 0}; } catch(e){ return; } }
+      var ap = dt > 0 ? (V.d - p.d)/dt : 0; V.ap += (Math.max(-80, Math.min(80, ap)) - V.ap)*Math.min(1, dt*4); V.d = p.d;
+      V.v.set(p.d, V.ap);
+    });
+    Object.keys(sirens).forEach(function(k){ if(!keep[k]){ try { sirens[k].v.stop(); } catch(e){} delete sirens[k]; } });
+  }
+  function sirensOff(){ Object.keys(sirens).forEach(function(k){ try { sirens[k].v.stop(); } catch(e){} }); sirens = {}; }
+  // Go to -> the incidents going on now (kind "incidents": the panel's search finds them by that word)
+  function incidentPlaces(me0){
+    if(!city || !HQV.cityNews) return [];
+    var ms = Date.now(), N = HQV.cityNews, out = [];
+    try {
+      (city.active(ms) || []).forEach(function(ev){
+        if(!ev || !N.isIncident(ev.kind) || city.phase(ev, ms) === "done" || !isFinite(ev.x) || !isFinite(ev.z)) return;
+        var label = String(N.headline(ev, ms, city, CITY_TZ) || ev.label || ev.kind).slice(0, 90);
+        out.push({id: "incident:" + ev.id, kind: "incidents", label: label, icon: "\u26A0\uFE0F", x: ev.x, z: ev.z, door: {x: ev.x, z: ev.z},
+                  dist: Math.hypot(ev.x - me0.x, ev.z - me0.z)});
+      });
+    } catch(e){ return []; }
+    return out;
   }
   // a ride's fare goes to this city's treasury (the owner rides free; an unpaired page rides free too)
   function payFare(f){
@@ -2514,6 +2627,8 @@ HQV.hqWorlds.city3d = function(c, w){
 
   // the residents this City draws (read-only, for tests and tools)
   w.npcSim = function(){ return nsim; };
+  // for tools and tests: the Living City's director, scene effects and news (null where a part is missing)
+  w.city = function(){ return {D: city, fx: cfx, news: news, sirens: Object.keys(sirens), alerts: alertsNow, bySite: cityU.by}; };
   // the HUD's E prompt at a terminal's door (what E opens there), while nothing else holds E
   var promptK = null, promptV = null;
   w.prompt = function(p){
@@ -2731,13 +2846,17 @@ HQV.hqWorlds.city3d = function(c, w){
     var nowMs = Date.now();
     if(cp) carparkUpdate(dt, cam);                                         // carpark
     if(statsEl && nowMs - statsAt > 60000){ statsAt = nowMs; fetchCity().then(function(){ if(!dead) statsUi(); }); }
-    // civic buildings near the camera are drawn in full, the rest (the map's too, from up there) as boxes
+    // civic buildings near the camera are drawn in full, the rest (the map's too, from up there) as boxes; their
+    // fleets, lamps, scoreboard and bell follow the director's runs at their own station
+    cityUnits(nowMs);
     civics.forEach(function(B){
       if(cam && cam.x != null){
         var d = Math.hypot(B.x - cam.x, B.z - cam.z, (+cam.y || 0) - B.y), full = B.g.visible ? d < CIVIC_NEAR : d < CIVIC_NEAR - HQ_FAR_HYST;
         if(B.g.visible !== full || B.far !== !full){ B.g.visible = full; lodShow(B, !full); }
       }
-      if(B.g.visible) B.animate(t, dt, k);
+      if(!B.g.visible) return;
+      var snd = B.animate(t, dt, k, B.siteId != null ? cityU.by[B.siteId] : undefined, nowMs);
+      if(snd && snd.length) civicSfx(snd, cam);
     });
     // bikes, boards and boats far from the camera are not drawn: their meshes sit in an inner group, as
     // hq3d hides the prop itself (g.visible) while you ride it
@@ -2765,7 +2884,17 @@ HQV.hqWorlds.city3d = function(c, w){
       var obs = boatNow || (mo && mo.air) ? [] : [{x: me0.x, z: me0.z, r: myR}];
       if(bridges) obs = obs.concat(bridges.obstacles());
       if(callObs) obs.push(callObs);                       // a vehicle you called, on its way: traffic stops behind it
-      try { callTraffic = tsim.at(nowMs, {x: cam ? cam.x : me0.x, z: cam ? cam.z : me0.z}, 320, obs); tview.update(callTraffic, nowMs); } catch(e){}
+      // the city's coming runs are planned a little each frame (TRAFFIC_WARM_MS), not all on the frame they are needed
+      if(city && tsim.warm) try { tsim.warm(nowMs, TRAFFIC_WARM_MS); } catch(e){}
+      try { callTraffic = tsim.at(nowMs, {x: cam ? cam.x : me0.x, z: cam ? cam.z : me0.z}, 320, obs); tview.update(callTraffic, nowMs, {calm: calmNow()}); } catch(e){}
+      sirenStep(callTraffic, cam, dt);
+    }
+    if(cfx){ try { cfx.update(nowMs, dt, cam); } catch(e){} }
+    if(news){
+      try {
+        news.update(nowMs);
+        if(nowMs - alertsAt >= ALERTS_MS || nowMs < alertsAt){ alertsAt = nowMs; alertsNow = news.alerts(nowMs) || []; }
+      } catch(e){ alertsNow = []; }
     }
     if(ndraw && cam){
       if(npcSkip > 0) npcSkip--;
@@ -2787,6 +2916,9 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   function citiesDestroy(){
     closeMenu();
+    sirensOff();
+    if(news){ try { news.destroy(); } catch(e){} news = null; }
+    city = null; alertsNow = [];
     if(ui && ui.parentNode) ui.parentNode.removeChild(ui);
     if(statsEl && statsEl.parentNode) statsEl.parentNode.removeChild(statsEl);
     if(fadeEl && fadeEl.parentNode) fadeEl.parentNode.removeChild(fadeEl);
@@ -2894,6 +3026,7 @@ HQV.hqWorlds.city3d = function(c, w){
       hqs: hqs.map(function(E){ return {userId: E.h.userId, name: E.name || E.h.name, lot: E.lot}; })});
     var m = c.motion ? c.motion() : null;
     if(m && m.air) return airNavPlaces(m, me0).concat(list);
+    list = list.concat(incidentPlaces(me0));                // Living City: the incidents going on now
     // the planes you can fly (HQ 3.2): their own places, where they stand now, so Go to finds them
     planeProps.forEach(function(p){
       var sea = p.kind === "seaplane", jet = p.kind === "airliner" || p.kind === "regional", dx = Math.sin(p.yaw + Math.PI/2)*(sea ? 0 : 7), dz = Math.cos(p.yaw + Math.PI/2)*(sea ? 0 : 7);
@@ -2984,7 +3117,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(nui) nui.banner(info);
     if(fx) fx.update(dt, me0, cam);
     if(mm) mm.frame({x: me0.x, z: me0.z, yaw: m ? m.yaw : 0, view: m && m.view != null ? m.view : null, speed: m ? m.speed : 0, route: pts,
-                     waypoint: route ? {x: route.x, z: route.z} : null, others: c.others ? c.others() : [], dt: dt});
+                     waypoint: route ? {x: route.x, z: route.z} : null, others: c.others ? c.others() : [], dt: dt, alerts: alertsNow});
   }
   // the minimap's places: civic sites and the HQs as they are placed now (redrawn only when the HQs change)
   function navRefresh(){
@@ -3044,8 +3177,8 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   // in another floor (the Lobby, your Base) the City's overlays are hidden
   function overlays(on){
-    [mm && mm.el, nui && nui.root, goBtn, ui, statsEl].forEach(function(el){ if(el && el.style){ el.hidden = !on; el.style.display = on ? "" : "none"; } });
-    if(!on){ closeMenu(); if(nui) nui.close(); }
+    [mm && mm.el, nui && nui.root, goBtn, ui, statsEl, news && news.el].forEach(function(el){ if(el && el.style){ el.hidden = !on; el.style.display = on ? "" : "none"; } });
+    if(!on){ closeMenu(); if(nui) nui.close(); sirensOff(); }
   }
   w.onLeave = function(){ overlays(false); };
   w.onEnter = function(){ overlays(true); };
@@ -3097,6 +3230,21 @@ HQV.hqWorlds.city3d = function(c, w){
       // the park and the landmarks take the snow and the wet like the rest of the city
       if(spx && wb.settle) spx.g.traverse(function(o){ if(o.isMesh) [].concat(o.material).forEach(function(m){ if(m && m.isMeshStandardMaterial) wb.settle(m); }); });
       if(spx) spx.setNight(night);
+      // Living City: the incidents' scenes (smoke, flames, cordons, beacons) and their crackle and crowd. Its own
+      // sirens are left out (it is handed the engine without siren()): the City plays them from traffic's vehicles
+      // where they are drawn (sirenStep), not from the director's straight-line estimate of where they are.
+      if(V2 && city && HQV.citySimFx){
+        var E0 = HQV.engine;
+        try {
+          if(E0) HQV.engine = Object.assign({}, E0, {siren: null});
+          // traffic drives the director's units (when it is there): cfx leaves their bodies and beacons to it
+          var fxo = {scene: S, ground: groundY, say: say, calm: calmNow};
+          if(tsim && tview) fxo.vehicles = function(){ return callTraffic || []; };
+          cfx = HQV.citySimFx.create(c, W, city, fxo);
+          cfx.setNight(night);
+        } catch(e){ cfx = null; }
+        finally { HQV.engine = E0; }
+      }
       if(stApi) try {
         stx = HQV.hqStunts.create(c, W, {scene: S, ground: function(x, z){ var s0 = stApi; stApi = null; var y = groundY(x, z); stApi = s0; return y; }});
         if(stx){ stx.setNight(night); if(wb.settle) stx.g.traverse(function(o){ if(o.isMesh && o.material && o.material.isMeshStandardMaterial) wb.settle(o.material); }); }
@@ -3123,6 +3271,7 @@ HQV.hqWorlds.city3d = function(c, w){
   w.destroy = function(){
     dead = true;
     if(spx){ spx.destroy(); spx = null; }
+    if(cfx){ try { cfx.destroy(); } catch(e){} cfx = null; }
     if(stx){ stx.destroy(); stx = null; } stApi = null;
     if(wx){ wx.destroy(); wx = null; }
     if(wb){ wb.destroy(); wb = null; }
@@ -3153,6 +3302,8 @@ HQV.hqWorlds.city3d = function(c, w){
     // for tools and tests: what the park and the weather are doing
     w.spectacle = function(){ return spx; };
     w.weather = function(){ return wx; };
+    // the Living City (games/citysim.js, citysimfx.js, citynews.js) and the traffic it rides on
+    w.citysim = function(){ return {sim: city, fx: cfx, news: news, traffic: tsim, alerts: alertsNow, ms: Date.now()}; };
   })();
   w.hits = hits; w.doors = doors; w.span = 18; w.zoom = 0.8; w.camY = 2.5; w.follow = 1; w.camPitch = 0.72;
   w.bounds = [-1018, 1018, -1018, 1018];
@@ -3261,7 +3412,8 @@ HQV.hqWorlds.city3d = function(c, w){
     civics.forEach(function(B){ B.setNight(n); }); if(oc) oc.setTime(n); if(rail) rail.setNight(n);
     if(cp) cp.B.setNight(n);                                               // carpark
     if(air) air.setNight(n);                                               // air:
-    if(spx) spx.setNight(n); if(stx) stx.setNight(n); if(wx) wx.setNight(n); wxKey = ""; };
+    if(spx) spx.setNight(n); if(stx) stx.setNight(n); if(wx) wx.setNight(n); wxKey = "";
+    if(cfx) cfx.setNight(n); };
   // Fading: in classic the buildings between you and hq3d's orthographic view (as hqbase.js
   // hqCutaway decides it); in every rig mode hq3d passes the occluders to w.setFaded. Switching
   // between the two clears the other's fades. Either way the fade itself eases (fadeStep).

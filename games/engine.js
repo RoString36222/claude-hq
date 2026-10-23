@@ -485,6 +485,143 @@ function ambientLoop(freq, q){
   var L = noiseLoop(freq, q);
   return {set: function(gain, fq){ L.set(ambientOn() ? gain : 0, fq); }, stop: L.stop};
 }
+/* ---------- sirens, a crowd and a fire (Living City: games/citysimfx.js drives them) ---------- */
+// siren(kind) -> {set(dist m, approach m/s), stop()}: a police car's wail (a yelp up close), an ambulance's hi-lo, a
+// fire engine's slow mechanical wail with an air horn's blasts up close. Heard only within SIREN_M of the camera,
+// fading out to that edge (as the fireworks' boomVol); a Doppler bend from the approach speed (closing: higher).
+// Calm: a soft steady tone instead of the wail, and no horn. sirenHz / doppler / sirenVol are pure (the tests).
+var SIREN_M = 700, SOUND_C = 343, SIREN_NEAR = 70;
+function sirenVol(dist){ dist = +dist; return isFinite(dist) && dist >= 0 && dist < SIREN_M ? 0.3*Math.pow(1 - dist/SIREN_M, 2) : 0; }
+// the heard frequency of a source closing at v m/s (negative: going away), clamped to a plausible road speed
+function doppler(f, v){ v = clamp(+v || 0, -80, 80); return f*SOUND_C/(SOUND_C - v); }
+// the siren's note (Hz) t seconds into its cycle; near: a police car yelps instead of wailing
+function sirenHz(kind, t, near, calmed){
+  t = Math.max(0, +t || 0);
+  if(calmed) return kind === "ambulance" ? 620 : kind === "fire" ? 480 : 560;
+  if(kind === "ambulance") return (t % 1.2) < 0.6 ? 960 : 770;
+  if(kind === "fire"){ var u = (t % 6)/6; return 420 + 680*Math.sin(Math.PI*u); }                  // slow rise and fall
+  if(near){ var y = (t % 0.32)/0.32; return 700 + 800*(y < 0.8 ? y/0.8 : (1 - y)/0.2); }          // the yelp
+  return 650 + 850*(0.5 - 0.5*Math.cos(2*Math.PI*(t % 4.2)/4.2));                                 // the wail
+}
+// a fire engine's air horn: two short blasts every 7 s while it is near
+function hornOn(t){ t = (Math.max(0, +t || 0)) % 7; return t < 0.55 || (t > 0.75 && t < 1.3); }
+var SIREN_LVL = {police: 1, ambulance: 0.9, fire: 1};
+function siren(kind){
+  kind = SIREN_LVL[kind] ? kind : "police";
+  var a = sfxVolume() > 0 ? audio() : null; if(!a) return {set: function(){}, stop: function(){}};
+  var B = engineBus(a), t0 = a.currentTime, nodes = [];
+  var g = a.createGain(), f = a.createBiquadFilter(), o = a.createOscillator(), og = a.createGain();
+  g.gain.value = 0; og.gain.value = 1; f.type = "lowpass"; f.frequency.value = 2600; f.Q.value = 0.7;
+  o.type = kind === "ambulance" ? "square" : "sawtooth"; o.frequency.value = sirenHz(kind, 0, false, false);
+  o.connect(og); og.connect(f); f.connect(g); g.connect(B.out); o.start(); nodes.push(o);
+  var h1 = null, h2 = null, hg = null;
+  if(kind === "fire"){                        // the air horn: a low, brassy minor third
+    h1 = a.createOscillator(); h2 = a.createOscillator(); hg = a.createGain(); h1.type = h2.type = "sawtooth";
+    h1.frequency.value = 233; h2.frequency.value = 277; hg.gain.value = 0;
+    h1.connect(hg); h2.connect(hg); hg.connect(f); h1.start(); h2.start(); nodes.push(h1, h2);
+  }
+  var off = (kind.length*0.37) % 1, wasCalm = null;
+  return {
+    set: function(dist, approach){
+      var t = a.currentTime, on = sfxVolume() > 0, cm = calm(), d = clamp(+dist || 0, 0, 1e5), s = t - t0 + off;
+      if(cm !== wasCalm){ o.type = cm ? "sine" : kind === "ambulance" ? "square" : "sawtooth"; wasCalm = cm; }
+      var hz = doppler(sirenHz(kind, s, d < SIREN_NEAR, cm), approach);
+      o.frequency.setTargetAtTime(hz, t, kind === "ambulance" && !cm ? 0.004 : 0.02);
+      f.frequency.setTargetAtTime(cm ? 1200 : 900 + 2400*(1 - d/SIREN_M), t, 0.1);        // farther: duller
+      og.gain.setTargetAtTime(cm ? 0.35 : 1, t, 0.05);
+      if(hg) hg.gain.setTargetAtTime(!cm && d < 200 && hornOn(s) ? 0.8 : 0, t, 0.01);
+      // the dead man's switch (engineSound): silent 0.25 s after the last set()
+      var lvl = on ? sirenVol(d)*SIREN_LVL[kind] : 0;
+      g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(lvl, t, 0.08); g.gain.setTargetAtTime(0, t + 0.25, 0.05);
+    },
+    stop: function(){
+      try { g.gain.cancelScheduledValues(a.currentTime); g.gain.setTargetAtTime(0, a.currentTime, 0.05);
+            nodes.forEach(function(nd){ nd.stop(a.currentTime + 0.3); }); } catch(e){}
+    }
+  };
+}
+// SFX "siren": a 1.5 s burst of a siren heard at opt.dist, closing at opt.approach (m/s); kind as siren()
+SFX.siren = function(a, o){
+  o = o || {}; var kind = SIREN_LVL[o.kind] ? o.kind : "police", d = clamp(+o.dist || 0, 0, 1e5), vol = sirenVol(d)*SIREN_LVL[kind];
+  if(!(vol > 0)) return;
+  var cm = calm(), t = a.currentTime, os = a.createOscillator(), g = a.createGain();
+  os.type = cm ? "sine" : kind === "ambulance" ? "square" : "sawtooth";
+  for(var s = 0; s <= 1.5; s += 0.03) os.frequency.setValueAtTime(doppler(sirenHz(kind, s, d < SIREN_NEAR, cm), o.approach), t + s);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol*(cm ? 0.35 : 1), t + 0.05);
+  g.gain.setValueAtTime(vol*(cm ? 0.35 : 1), t + 1.3); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+  os.connect(g); g.connect(SND.master); os.start(t); os.stop(t + 1.55);
+};
+// The stadium's one-shots (games/hqcivic.js on a match): SFX "whistle" (the referee's: a short and a long trill)
+// and "roar" (the crowd on a goal: a 1.5 s band-passed noise swell), each heard at opt.dist m and fading to nothing
+// at CIVIC_M; softer and steadier under Calm. civicVol(dist) is their level (0..1).
+var CIVIC_M = 250;
+function civicVol(dist){ dist = +dist; if(!isFinite(dist) || dist < 0) dist = 0; return dist >= CIVIC_M ? 0 : Math.pow(1 - dist/CIVIC_M, 2); }
+SFX.whistle = function(a, o){
+  var k = civicVol(o && o.dist), cm = calm(); if(!(k > 0)) return;
+  [[0, 0.2], [0.3, 0.55]].forEach(function(w){
+    var t = a.currentTime + w[0], d = w[1], os = a.createOscillator(), lfo = a.createOscillator(), lg = a.createGain(), g = a.createGain(), v = 0.08*k*(cm ? 0.5 : 1);
+    os.type = "sine"; os.frequency.setValueAtTime(3000, t);
+    lfo.type = "sine"; lfo.frequency.setValueAtTime(cm ? 6 : 34, t); lg.gain.setValueAtTime(cm ? 40 : 200, t);     // the pea's trill
+    lfo.connect(lg); lg.connect(os.frequency);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v, t + 0.012);
+    g.gain.setValueAtTime(v, t + d - 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    os.connect(g); g.connect(SND.master); os.start(t); lfo.start(t); os.stop(t + d + 0.02); lfo.stop(t + d + 0.02);
+  });
+};
+SFX.roar = function(a, o){
+  var k = civicVol(o && o.dist), cm = calm(); if(!(k > 0)) return;
+  var t = a.currentTime, src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain(), v = 0.3*k*(cm ? 0.4 : 1);
+  src.buffer = engineBus(a).noise; src.loop = true;
+  f.type = "bandpass"; f.frequency.setValueAtTime(700, t); f.Q.setValueAtTime(0.7, t);
+  if(!cm) f.frequency.exponentialRampToValueAtTime(1100, t + 0.6);                   // voices rising
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v, t + (cm ? 0.6 : 0.35));
+  g.gain.setValueAtTime(v, t + 0.9); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+  src.connect(f); f.connect(g); g.connect(SND.master); src.start(t); src.stop(t + 1.55);
+};
+// Ambient loops (under the Ambient sounds switch): crowdLoop() a stadium's roar, crackleLoop() a burning building.
+// Both -> {set(dist m, level 0..1), stop()}; silent until set(), and silent again 0.25 s after the last set().
+var CROWD_M = 900, CRACKLE_M = 260;
+function crowdVol(dist, level){ dist = +dist; return isFinite(dist) && dist >= 0 && dist < CROWD_M ? 0.22*clamp(+level || 0, 0, 1)*Math.pow(1 - dist/CROWD_M, 2) : 0; }
+function crackleVol(dist, level){ dist = +dist; return isFinite(dist) && dist >= 0 && dist < CRACKLE_M ? 0.16*clamp(+level || 0, 0, 1)*Math.pow(1 - dist/CRACKLE_M, 2) : 0; }
+function ambientVoice(build){
+  var a = ambientOn() && sfxVolume() > 0 ? audio() : null; if(!a) return {set: function(){}, stop: function(){}};
+  var B = engineBus(a), g = a.createGain(), src = a.createBufferSource(), nodes = [src];
+  g.gain.value = 0; g.connect(B.out); src.buffer = B.noise; src.loop = true; src.start();
+  function band(type, fq, q, lvl){ var bf = a.createBiquadFilter(), bg = a.createGain(); bf.type = type; bf.frequency.value = fq; bf.Q.value = q; bg.gain.value = lvl;
+    src.connect(bf); bf.connect(bg); bg.connect(g); return {f: bf, g: bg}; }
+  var V = build(a, band, nodes, g);
+  return {
+    set: function(dist, level){
+      var t = a.currentTime, lvl = ambientOn() && sfxVolume() > 0 ? V.vol(dist, level) : 0;
+      if(V.step) V.step(t, lvl, level);
+      g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(lvl, t, 0.15); g.gain.setTargetAtTime(0, t + 0.25, 0.08);
+    },
+    stop: function(){ try { g.gain.cancelScheduledValues(a.currentTime); g.gain.setTargetAtTime(0, a.currentTime, 0.05);
+                            nodes.forEach(function(nd){ nd.stop(a.currentTime + 0.3); }); } catch(e){} }
+  };
+}
+function crowdLoop(){
+  return ambientVoice(function(a, band, nodes){
+    var lo = band("bandpass", 420, 0.8, 1); band("bandpass", 1300, 1.1, 0.55);
+    var sw = a.createOscillator(), sd = a.createGain();                           // a slow swell: the stands breathe
+    sw.frequency.value = 0.13; sd.gain.value = 0.25; sw.connect(sd); sd.connect(lo.g.gain); sw.start(); nodes.push(sw);
+    return {vol: crowdVol};
+  });
+}
+function crackleLoop(){
+  return ambientVoice(function(a, band){
+    band("lowpass", 380, 0.7, 1);                                                // the roar of the burning
+    var pop = band("bandpass", 2400, 3, 0), seed = 4242, next = 0;
+    function rnd(){ seed = (seed*1103515245 + 12345) & 0x7fffffff; return seed/0x7fffffff; }
+    return {vol: crackleVol, step: function(t, lvl, level){
+      if(!(lvl > 0) || t < next) return;                                         // the timber snaps: seeded, not Math.random
+      next = t + 0.05 + rnd()*0.3/Math.max(0.2, clamp(+level || 0, 0, 1));
+      var at = t + 0.005; pop.f.frequency.setValueAtTime(1400 + rnd()*2800, at);
+      pop.g.gain.setValueAtTime(1.5 + 2.5*rnd(), at); pop.g.gain.setTargetAtTime(0, at + 0.004, 0.02);
+    }};
+  });
+}
+
 // Browsers allow audio only after a user gesture: wake it on the first one.
 if(typeof window.addEventListener === "function"){
   window.addEventListener("pointerdown", function(){ if(sfxVolume() > 0) audio(); }, {once: true, capture: true});
@@ -519,6 +656,9 @@ HQV.engine = {now: now, clamp: clamp, hex: hex, angLerp: angLerp, calm: calm, sa
               senderTime: senderTime, jitter: jitter, pushSnap: pushSnap, bracket: bracket,
               sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES), engineProfile: engineProfile, exhausts: Object.keys(EXHAUST), engineHz: engineHz, watchBar: watchBar,
               noiseLoop: noiseLoop, ambientLoop: ambientLoop, ambientOn: ambientOn, ambientSet: ambientSet,
+              siren: siren, sirenHz: sirenHz, sirenVol: sirenVol, doppler: doppler, hornOn: hornOn, SIREN_M: SIREN_M,
+              crowdLoop: crowdLoop, crackleLoop: crackleLoop, crowdVol: crowdVol, crackleVol: crackleVol, civicVol: civicVol, CIVIC_M: CIVIC_M,
+              hasSfx: function(name){ return !!SFX[name]; },
               // the shared AudioContext and its master gain (the SFX volume), or null when sound is off:
               // for a game that shapes its own sound (the City's thunder) instead of a named sfx
               audioOut: function(){ var a = sfxVolume() > 0 ? audio() : null; return a && SND.master ? {ctx: a, out: SND.master} : null; },

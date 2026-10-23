@@ -640,7 +640,7 @@ hq.forEach(function(l){
 });
 // junctions: where two edges' carriageways overlap, the surface must not jump where the nearest edge switches;
 // 10 cm steps along x and z lines through a 24 m box around every junction, each step a 1 cm bisected check
-out.junc = {checked: 0, worst: 0, at: null};
+out.junc = {checked: 0, worst: 0, at: null, over: 0};
 H.junctions(W).forEach(function(j){
   for(var o = -12; o <= 12; o += 3) [0, 1].forEach(function(ax){
     var prev = null;
@@ -651,6 +651,7 @@ H.junctions(W).forEach(function(j){
         var x1 = x - (ax ? 0.01 : 0), z1 = z - (ax ? 0 : 0.01), y1 = H.roadY(W, x1, z1);
         // the kerb is a deliberate step; only compare samples on the same kind of surface
         var d = y1 === null || H.surfaceAt(W, x, z) !== H.surfaceAt(W, x1, z1) ? 0 : Math.abs(y - y1);
+        if(d > 0.02) out.junc.over++;
         if(d > out.junc.worst){ out.junc.worst = d; out.junc.at = [j.node, x, z]; }
       }
       prev = y;
@@ -665,6 +666,8 @@ done(out);
 @unittest.skipUnless(NODE, "node is not installed")
 @unittest.skipUnless(os.path.exists(REAL), "tests/fixtures/claude-hq@1.json.gz is missing")
 class RealWorld(unittest.TestCase):
+    PREFIX = ""
+
     @classmethod
     def setUpClass(cls):
         with gzip.open(REAL, "rt", encoding="utf-8") as f:
@@ -680,7 +683,7 @@ class RealWorld(unittest.TestCase):
         if os.path.exists(SAMPLES):
             with open(SAMPLES, encoding="utf-8") as f:
                 cls.samples = json.load(f)
-        cls.out = run_node(REAL_BODY, stdin={"pts": cls.pts, "samples": cls.samples["samples"] if cls.samples else None})
+        cls.out = run_node(cls.PREFIX + REAL_BODY, stdin={"pts": cls.pts, "samples": cls.samples["samples"] if cls.samples else None})
 
     def test_pack(self):
         self.assertEqual(self.out["hash"], self.doc["hashes"]["world"])
@@ -763,6 +766,129 @@ class RealWorld(unittest.TestCase):
         self.assertEqual(self.out["doorsUnreached"], [])
         self.assertEqual(self.out["sitesUnreached"], [])
         self.assertEqual(self.out["edgesReached"], [True, True, True, True])
+
+
+# world.js again with games/roadsmooth.js loaded first: pack() smooths the roads (the page and the build worker load it)
+CURVED = r"""
+global.window = {HQV: {}};
+new Function(fs.readFileSync(root + "/games/roadsmooth.js", "utf8"))();
+new Function(fs.readFileSync(root + "/games/world.js", "utf8"))();
+H = window.HQV.world;
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+@unittest.skipUnless(os.path.exists(REAL), "tests/fixtures/claude-hq@1.json.gz is missing")
+class CurvedRealWorld(RealWorld):
+    """Every RealWorld check on Arena City with curved roads: the surface, the kerbs, the junctions (rounded corners
+    included), the trees and the flood fill hold on the smoothed geometry too."""
+    PREFIX = CURVED
+
+    def test_junction_surface_continuous(self):
+        # the relaxed ring and highway now overlap at the edges of both bands in one sharp gore (node 536), where two
+        # graded arms 0.3 m apart blend with near-zero weights: one 1 cm step of 3 cm in 1.3 M, nothing else over 2 cm
+        j = self.out["junc"]
+        self.assertGreater(j["checked"], 5000)
+        self.assertLessEqual(j["over"], 2, "roadY jumps %.3f m per 1 cm at %s (node, x, z)" % (j["worst"], j["at"]))
+        self.assertLess(j["worst"], 0.05, "roadY jumps %.3f m per 1 cm at %s (node, x, z)" % (j["worst"], j["at"]))
+
+
+COMMONS = os.path.join(ROOT, "tests", "fixtures", "claude-hq@2.json.gz")
+CURVED_BODY = r"""
+function gz(f){ return JSON.parse(zlib.gunzipSync(fs.readFileSync(root + "/tests/fixtures/" + f))); }
+var out = {packV: H.PACK_V};
+var doc = gz("claude-hq@2.json.gz"), W = H.pack(doc), RS = window.HQV.roadSmooth;
+out.smoothed = W.smoothed;
+out.pts0 = W.edges.every(function(e){ return e.pts0 instanceof Int32Array && e.pts instanceof Int32Array; });
+out.morePts = [W.edges.reduce(function(a, e){ return a + e.pts.length; }, 0), W.edges.reduce(function(a, e){ return a + e.pts0.length; }, 0)];
+// docOf hands the curves to traffic, npcsim, ocean and hqtravel
+var D = H.docOf(W);
+out.docOf = D.layers.roads.edges.every(function(e, i){
+  var p = W.edges[i].pts; return e.points.length === p.length/3 && e.points.every(function(q, j){ return q[0] === p[3*j] && q[1] === p[3*j+1] && q[2] === p[3*j+2]; });
+});
+// the cache record keeps the curves (and the originals): a cached W is never smoothed twice
+var C = H.cacheCopy(W);
+out.cache = C.smoothed && C.edges.every(function(e, i){ return e.pts === W.edges[i].pts && e.pts0 === W.edges[i].pts0; });
+// rounded junction corners: the sliver between each arc and its kerbs' sharp corner is road; a point just inside the
+// arc (in the block) is not; without roadsmooth the same sliver point is sidewalk or off the road
+var I = (H.groundAt(W, 0, 0), W.index), F = I.filList || [], raw = (function(){ var rs = window.HQV.roadSmooth; delete window.HQV.roadSmooth;
+  try { return H.pack(doc); } finally { window.HQV.roadSmooth = rs; } })();
+out.fil = {n: F.length, road: 0, rawRoad: 0, inside: 0, insideRoad: 0, yBad: 0};
+F.forEach(function(f){
+  var mx = (f.ax + f.bx)/2 - f.cx, mz = (f.az + f.bz)/2 - f.cz, l = Math.hypot(mx, mz), ax = f.cx + mx/l*f.r, az = f.cz + mz/l*f.r;
+  var px = (f.kx + ax)/2, pz = (f.kz + az)/2;
+  if(H.surfaceAt(W, px, pz) === "road") out.fil.road++;
+  if(H.surfaceAt(raw, px, pz) === "road") out.fil.rawRoad++;
+  var y = H.roadY(W, px, pz), r = H.nearestRoad(W, px, pz, 30);
+  if(y === null || !r || Math.abs(y - r.y) > 0.5) out.fil.yBad++;
+  var qx = f.cx + mx/l*(f.r - 0.3), qz = f.cz + mz/l*(f.r - 0.3);
+  if(Math.hypot(qx - f.kx, qz - f.kz) > 0.3){ out.fil.inside++; if(H.surfaceAt(W, qx, qz) === "road") out.fil.insideRoad++; }
+});
+// no tree in a sliver; trees still plenty
+var T = H.trees(W);
+out.trees = {n: T.length, inFillet: T.filter(function(t){ return H.surfaceAt(W, t.x, t.z) === "road"; }).length};
+// a structured clone (IndexedDB, the build worker) keeps the curves and the corners
+var W2 = require("v8").deserialize(require("v8").serialize(W));
+W2.index = null;
+out.clone = W2.smoothed && H.groundAt(W2, F[0].kx, F[0].kz) === H.groundAt(W, F[0].kx, F[0].kz) && (W2.index.filList || []).length === F.length;
+// a cached record is read back with the roads this page makes: a straight one (packed while roadsmooth.js failed to
+// load) is smoothed and stored again; a smoothed one on a page without roadsmooth.js goes back to the server's points
+(async function(){
+  function idb(rec){ var s = {puts: 0}; s.get = function(){ return Promise.resolve(rec); }; s.put = function(){ s.puts++; return Promise.resolve(); }; return s; }
+  function f304(){ return Promise.resolve({status: 304, headers: {get: function(){ return null; }}}); }
+  function same(A, B){ return A.edges.every(function(e, i){ return JSON.stringify(Array.from(e.pts)) === JSON.stringify(Array.from(B.edges[i].pts)); }); }
+  var straight = (function(){ var rs = window.HQV.roadSmooth; delete window.HQV.roadSmooth; try { return H.pack(doc); } finally { window.HQV.roadSmooth = rs; } })();
+  var I1 = idb({v: H.PACK_V, etag: "e", packed: require("v8").deserialize(require("v8").serialize(H.cacheCopy(straight)))}), A = await H.load({id: "claude-hq@1", fetch: f304, idb: I1});
+  out.cacheStraight = {v: A.smoothed && A.smoothed.v, sameAsPack: same(A, W), puts: I1.puts};
+  var I2 = idb({v: H.PACK_V, etag: "e", packed: require("v8").deserialize(require("v8").serialize(H.cacheCopy(W)))}), rs = window.HQV.roadSmooth;
+  delete window.HQV.roadSmooth;
+  try { var B = await H.load({id: "claude-hq@2", fetch: f304, idb: I2}); } finally { window.HQV.roadSmooth = rs; }
+  out.cacheNoRs = {smoothed: !!B.smoothed, sameAsStraight: same(B, straight), pts0: B.edges.some(function(e){ return !!e.pts0; }), puts: I2.puts};
+  var I3 = idb({v: H.PACK_V, etag: "e", packed: require("v8").deserialize(require("v8").serialize(H.cacheCopy(W)))}), C3 = await H.load({id: "user:00000000-0000-0000-0000-000000000001@2", fetch: f304, idb: I3});
+  out.cacheSame = {puts: I3.puts, v: C3.smoothed.v};
+  done(out);
+})().catch(function(e){ console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+@unittest.skipUnless(os.path.exists(COMMONS), "tests/fixtures/claude-hq@2.json.gz is missing")
+class CurvedRoads(unittest.TestCase):
+    """pack() with games/roadsmooth.js loaded (the Commons): the curves reach every reader and the rounded junction
+    corners are road."""
+    @classmethod
+    def setUpClass(cls):
+        cls.out = run_node(CURVED + CURVED_BODY)
+
+    def test_pack_smooths(self):
+        o = self.out
+        self.assertEqual(o["packV"], 5)
+        self.assertEqual(o["smoothed"]["v"], 2)
+        self.assertTrue(o["pts0"])
+        self.assertGreater(o["morePts"][0], 1.5 * o["morePts"][1], "3 m samples: more points than the server's 24 m pieces")
+        self.assertTrue(o["docOf"])
+        self.assertTrue(o["cache"])
+        self.assertTrue(o["clone"])
+
+    def test_cache_read_with_this_pages_roads(self):
+        o = self.out
+        self.assertEqual(o["cacheStraight"], {"v": 2, "sameAsPack": True, "puts": 1})    # smoothed, stored again
+        self.assertEqual(o["cacheNoRs"], {"smoothed": False, "sameAsStraight": True, "pts0": False, "puts": 1})
+        self.assertEqual(o["cacheSame"], {"puts": 0, "v": 2})                             # already right: left alone
+
+    def test_rounded_corners_are_road(self):
+        f = self.out["fil"]
+        self.assertGreater(f["n"], 300)
+        self.assertEqual(f["road"], f["n"])
+        self.assertLess(f["rawRoad"], f["n"] * 0.2, "straight corners left the sliver to the sidewalk")
+        self.assertEqual(f["yBad"], 0)
+        self.assertGreater(f["inside"], 100)
+        self.assertLess(f["insideRoad"], f["inside"] * 0.1, "inside the arc stays sidewalk (except where another road is)")
+
+    def test_trees_clear_of_corners(self):
+        t = self.out["trees"]
+        self.assertGreater(t["n"], 500)
+        self.assertEqual(t["inFillet"], 0)
 
 
 if __name__ == "__main__":

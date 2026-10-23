@@ -461,6 +461,17 @@ and feature guide.
   level (the street, or the deck for the roof lift). Tests: E priority (door before pet), facing and distance, lobby
   pets after a late list, the Arena reload, front gate to the street, lobby door destinations and triggers.
 
+- **Next — Living City: curved roads and a city that runs.** Roads are smoothed on the client from the same world
+  doc (`games/roadsmooth.js`: chains through bends, Catmull-Rom with fillets, 3 m samples, never more than 45% of the
+  half-width off the original line, so no lot or world moves; rounded kerbs at junctions), and physics, rendering,
+  traffic and navigation all read the same curves. An event director (`games/citysim.js`, the UTC clock, so every
+  player sees the same) schedules fires, medical calls, robberies with getaway chases, crashes, police patrols, match
+  days, market days, school runs, deliveries, festivals and rush hour, scaled by the city's service coverage. Fire
+  engines, ambulances (scene to hospital), police and tow trucks drive real routes in traffic (`traffic.js`); residents
+  gather to watch, patients ride away, fans pour into the stadium, pupils walk to school (`npcsim.js`); fires burn with
+  smoke and flames, scenes get cordons and beacons, sirens with distance and Doppler (`citysimfx.js`, `engine.js`); the
+  fire station, hospital, police and stadium react (`hqcivic.js`); a news ticker and minimap alerts
+  (`citynews.js`, `hqminimap.js`). Calm: no flashing, no wail.
 - **Next — Stunts across every city** (`games/hqstunts.js`, tests/test_hqstunts.py). Placed per city from its
   own layout, deterministically (every client builds the same set): a 4 m free-land grid of everything that is not
   road, river, sea, a site, an HQ or a tower district; building lots elsewhere may be cleared (at most 8 a stunt,

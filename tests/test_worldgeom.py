@@ -30,7 +30,7 @@ def read(p):
 HARNESS = r"""
 var fs = require("fs"), zlib = require("zlib"), crypto = require("crypto"), root = %(root)s;
 global.window = {HQV: {}};
-["world.js", "worldgeom.js", "worldbuild.js"].forEach(function(f){ new Function(fs.readFileSync(root + "/games/" + f, "utf8"))(); });
+%(scripts)s.forEach(function(f){ new Function(fs.readFileSync(root + "/games/" + f, "utf8"))(); });
 var Q = window.HQV.world, G = window.HQV.worldgeom, B = window.HQV.worldbuild;
 var doc = JSON.parse(zlib.gunzipSync(fs.readFileSync(root + "/tests/fixtures/claude-hq@1.json.gz")));
 var W = Q.pack(doc), out = {}, NT = G.NT;
@@ -297,7 +297,8 @@ function terrainAt(lk, lod, x, z){
       var t = G.tileOf(bx, bz), g = G.roadTile(W, t.tx, t.tz).asphalt, ux = d1x/l1, uz = d1z/l1, lo = 1e9, hi = -1e9, n = 0;
       for(var i = 0; i < g.pos.length/3; i++){
         var qx = g.pos[3*i] - bx, qz = g.pos[3*i+2] - bz, along = qx*ux + qz*uz, lat = qx*uz - qz*ux;
-        if(Math.abs(along) > 0.01 || Math.abs(lat) > e.width/200 + 0.3) continue;
+        // (curved roads: a station's mitre may lean a few mrad off this piece's normal, so `along` grows with the offset)
+        if(Math.abs(along) > 0.01 + 0.004*Math.abs(lat) || Math.abs(lat) > e.width/200 + 0.3) continue;
         n++; lo = Math.min(lo, lat); hi = Math.max(hi, lat);
       }
       if(!n) continue;
@@ -461,10 +462,12 @@ process.stdout.write(JSON.stringify(out));
 @unittest.skipUnless(os.path.exists(WORLD), "games/world.js (B3) is missing")
 class WorldGeomTest(unittest.TestCase):
     out = None
+    SCRIPTS = ["world.js", "worldgeom.js", "worldbuild.js"]
 
     @classmethod
     def setUpClass(cls):
-        r = subprocess.run([NODE, "-e", HARNESS.replace("%(root)s", json.dumps(ROOT))], capture_output=True, text=True, timeout=600)
+        src = HARNESS.replace("%(root)s", json.dumps(ROOT)).replace("%(scripts)s", json.dumps(cls.SCRIPTS))
+        r = subprocess.run([NODE, "-e", src], capture_output=True, text=True, timeout=600)
         if r.returncode != 0:
             raise AssertionError("node harness failed:\n" + r.stderr[-4000:])
         cls.out = json.loads(r.stdout)
@@ -608,6 +611,14 @@ class WorldGeomTest(unittest.TestCase):
         self.assertEqual(self.out["merge"]["tris"], self.out["merge"]["want"])
 
 
+@unittest.skipUnless(NODE, "node is not installed")
+@unittest.skipUnless(os.path.exists(FIXTURE), "tests/fixtures/claude-hq@1.json.gz is missing")
+class CurvedWorldGeomTest(WorldGeomTest):
+    """Every check above on curved roads: games/roadsmooth.js loaded first, so pack() smooths Arena City and the
+    junctions get their rounded kerb corners."""
+    SCRIPTS = ["roadsmooth.js", "world.js", "worldgeom.js", "worldbuild.js"]
+
+
 class SourceTest(unittest.TestCase):
     def test_house_rules(self):
         for p in (GEOM, BUILD, WORKER):
@@ -617,7 +628,7 @@ class SourceTest(unittest.TestCase):
             self.assertNotRegex(src, r"\b(let|const)\s", p)
             self.assertNotIn("localStorage", src, p)
             self.assertNotRegex(src, r"fetch\(|XMLHttpRequest|WebSocket", p)
-        self.assertIn('importScripts("/games/world.js", "/games/worldgeom.js")', read(WORKER))
+        self.assertIn('importScripts("/games/roadsmooth.js", "/games/world.js", "/games/worldgeom.js")', read(WORKER))
         self.assertIn("HQV.worldgeom = {", read(GEOM))
         self.assertIn("HQV.worldbuild = {", read(BUILD))
 
@@ -633,6 +644,115 @@ class SourceTest(unittest.TestCase):
         # far roads: marks merged into the asphalt are lifted clear of depth precision; tree trunks skip the instance tint
         self.assertIn("lifted(m.roads.marks, FAR_MARK_LIFT)", src)
         self.assertIn("if(lit > 0.5) vColor.xyz = color.xyz;", src)
+
+
+COMMONS = os.path.join(ROOT, "tests", "fixtures", "claude-hq@2.json.gz")
+CURVED_HARNESS = r"""
+var fs = require("fs"), zlib = require("zlib"), root = %(root)s;
+global.window = {HQV: {}};
+["roadsmooth.js", "world.js", "worldgeom.js"].forEach(function(f){ new Function(fs.readFileSync(root + "/games/" + f, "utf8"))(); });
+var Q = window.HQV.world, G = window.HQV.worldgeom, out = {};
+var W = Q.pack(JSON.parse(zlib.gunzipSync(fs.readFileSync(root + "/tests/fixtures/claude-hq@2.json.gz"))));
+var tiles = {}, t0 = Date.now();
+for(var tz = 0; tz < G.NT; tz++) for(var tx = 0; tx < G.NT; tx++) tiles[tx + "," + tz] = G.roadTile(W, tx, tz);
+out.buildMs = Date.now() - t0;
+// a product of the tiles around (x, z) (a ribbon piece lands in the tile of its middle, a junction in its node's)
+function around(x, z, k){
+  var t = G.tileOf(x, z), L = [];
+  for(var dz = -1; dz <= 1; dz++) for(var dx = -1; dx <= 1; dx++){ var T = tiles[(t.tx + dx) + "," + (t.tz + dz)]; if(T) L.push(T[k]); }
+  return L;
+}
+function near(L, x, z, r){   // distinct vertex positions (1 cm) within r m in plan, and how often they appear
+  var seen = {}, n = 0;
+  L.forEach(function(g){
+    for(var i = 0; i < g.pos.length/3; i++){
+      if(Math.hypot(g.pos[3*i] - x, g.pos[3*i+2] - z) > r) continue;
+      seen[Math.round(g.pos[3*i]*100) + "," + Math.round(g.pos[3*i+2]*100)] = 1; n++;
+    }
+  });
+  return {distinct: Object.keys(seen).length, n: n};
+}
+// chain joints (a degree-2 node inside a smoothed chain): the two ribbons share their two end vertices, no patch
+var inc = {};
+W.edges.forEach(function(e){ (inc[e.a] = inc[e.a] || []).push(e); (inc[e.b] = inc[e.b] || []).push(e); });
+out.joints = {checked: 0, seamless: 0, bad: []};
+W.nodes.forEach(function(nd){
+  var L = inc[nd.id] || [];
+  if(L.length !== 2 || L[0] === L[1]) return;
+  var e = L[0], f = L[1];
+  if(e.bridge || f.bridge || e.cls !== f.cls || e.width !== f.width || e.cls === "highway" || e.cls === "ring") return;
+  var p = e.pts, j = e.a === nd.id ? 0 : p.length/3 - 1, x = p[3*j]/100, z = p[3*j+2]/100, cw = (e.width - 2*e.walk)/200;
+  var q = f.pts, k = f.a === nd.id ? 0 : q.length/3 - 1;
+  if(q[3*k] !== p[3*j] || q[3*k+2] !== p[3*j+2]) return;   // not split from one curve
+  // the turn between the two end pieces must be one stations() mitres (under 35 deg)
+  var ux = p[3*(j ? j - 1 : 1)] - p[3*j], uz = p[3*(j ? j - 1 : 1) + 2] - p[3*j+2], vx = q[3*(k ? k - 1 : 1)] - q[3*k], vz = q[3*(k ? k - 1 : 1) + 2] - q[3*k+2];
+  if((ux*vx + uz*vz)/Math.hypot(ux, uz)/Math.hypot(vx, vz) > -Math.cos(35*Math.PI/180)) return;
+  out.joints.checked++;
+  var r = near(around(x, z, "asphalt"), x, z, cw*1.1);
+  if(r.distinct === 2 && r.n === 4) out.joints.seamless++; else if(out.joints.bad.length < 5) out.joints.bad.push([nd.id, x, z, r]);
+});
+// rounded corners: the kerb runs through each kept arc's middle, the asphalt covers the sliver between it and the
+// kerbs' sharp corner, and the arm's ribbon stops short of the arc
+function inTri(px, pz, g, t){
+  var P = g.pos, a = g.idx[t], b = g.idx[t+1], c = g.idx[t+2];
+  function sd(i, j){ return (P[3*j] - P[3*i])*(pz - P[3*i+2]) - (P[3*j+2] - P[3*i+2])*(px - P[3*i]); }
+  var s1 = sd(a, b), s2 = sd(b, c), s3 = sd(c, a);
+  return (s1 >= 0 && s2 >= 0 && s3 >= 0) || (s1 <= 0 && s2 <= 0 && s3 <= 0);
+}
+out.corners = {nodes: 0, arcs: 0, walked: 0, kerb: 0, paved: 0, raised: 0, bad: []};
+var byId = {};
+W.edges.forEach(function(e){ byId[e.id] = e; });
+W.nodes.forEach(function(nd){
+  var C = Q.junctionCorners(W, nd.id);
+  if(!C.length) return;
+  out.corners.nodes++;
+  C.forEach(function(c){
+    out.corners.arcs++;
+    var P = c.pts, m = P[P.length >> 1];
+    if(byId[c.a].walk > 0 || byId[c.b].walk > 0){   // no sidewalk on either arm (ring, highway): no kerb either
+      out.corners.walked++;
+      if(near(around(m[0], m[1], "kerb"), m[0], m[1], 0.02).n > 0) out.corners.kerb++;
+    }
+    // a point 0.3 m off the arc's middle, away from its centre: asphalt (and no raised sidewalk over it)
+    var ux = m[0] - c.c[0], uz = m[1] - c.c[1], l = Math.hypot(ux, uz), px = m[0] + ux/l*0.3, pz = m[1] + uz/l*0.3, hit = false, up = false;
+    around(px, pz, "asphalt").forEach(function(g){ for(var t = 0; t < g.idx.length && !hit; t += 3) hit = inTri(px, pz, g, t); });
+    around(px, pz, "walk").forEach(function(g){ for(var t = 0; t < g.idx.length && !up; t += 3) up = g.nrm[3*g.idx[t]+1] > 0.9 && inTri(px, pz, g, t); });
+    if(hit) out.corners.paved++; else if(out.corners.bad.length < 5) out.corners.bad.push([nd.id, px, pz]);
+    if(up) out.corners.raised++;
+  });
+});
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+@unittest.skipUnless(os.path.exists(COMMONS), "tests/fixtures/claude-hq@2.json.gz is missing")
+class CurvedCommonsTest(unittest.TestCase):
+    """The Commons with curved roads (games/roadsmooth.js): chained edges meet on a shared mitre with no patch, and
+    the junctions' rounded corners are drawn (kerb along the arc, asphalt out to it, no sidewalk over it)."""
+    @classmethod
+    def setUpClass(cls):
+        r = subprocess.run([NODE, "-e", CURVED_HARNESS.replace("%(root)s", json.dumps(ROOT))], capture_output=True, text=True, timeout=600)
+        if r.returncode != 0:
+            raise AssertionError("node harness failed:\n" + r.stderr[-4000:])
+        cls.out = json.loads(r.stdout)
+
+    def test_chain_joints_seamless(self):
+        j = self.out["joints"]
+        self.assertGreater(j["checked"], 100)
+        self.assertEqual(j["seamless"], j["checked"], j["bad"])
+
+    def test_rounded_corners(self):
+        c = self.out["corners"]
+        self.assertGreater(c["nodes"], 100)
+        self.assertGreater(c["arcs"], 2 * c["nodes"])
+        self.assertGreater(c["walked"], c["arcs"] * 0.9)
+        self.assertEqual(c["kerb"], c["walked"])
+        self.assertEqual(c["paved"], c["arcs"], c["bad"])
+        self.assertEqual(c["raised"], 0)
+
+    def test_build_time(self):
+        self.assertLess(self.out["buildMs"], 4000)
 
 
 if __name__ == "__main__":

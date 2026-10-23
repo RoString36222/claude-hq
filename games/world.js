@@ -25,6 +25,14 @@
  * (h & 0xffff)/65536 < p (forest 0.55, park 0.18, residential 0.04); x jitter from h bits
  * 16..23, z jitter from h2 bits 0..7 (1..7 m into the cell), s = 0.8 + 0.6 * (h2 bits 8..15)/255,
  * kind "pine" when h2 bits 16..17 are 0 ("round" otherwise; forest flips it: mostly pine).
+ * Curved roads: when games/roadsmooth.js is loaded first, pack() hands W to HQV.roadSmooth.smooth, so every edge's
+ * pts is the smoothed curve (3 m samples; the server's points stay in e.pts0, W.smoothed is set) and every query
+ * here, docOf, worldgeom, traffic and the residents read the same curves. Node ids and positions never move. On a
+ * smoothed W the rounded kerb corners of 3+ way junctions (roadSmooth.junctionCorners) are carriageway too: the
+ * asphalt worldgeom draws between a corner's arc and the kerbs' sharp corner is road to roadUnder, not sidewalk
+ * (junctionCorners(W, node): the corners kept, none that would pave a lot or a site).
+ * Without roadsmooth.js, pack() builds today's straight roads. A W read back from IndexedDB is given the roads this
+ * page would pack (roadsAsHere: smoothed by this roadSmooth.VERSION, or straight without it), whatever packed it.
  * Pure core: no THREE, no DOM at load time, so node, a worker (importScripts) and the page all load it.
  */
 (function(){
@@ -36,8 +44,8 @@ var ID = "claude-hq@1", URL = "/api/arena/world/claude-hq@1", IDB = {db: "hq-wor
 var COMMONS = "claude-hq@2";
 // the worlds the client may ask for: the fixed ones and a personal island (the dashboard checks again)
 var WORLD_RE = /^(claude-hq@[12]|user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@2)$/;
-var PACK_V = 4;   // bump whenever pack()'s output changes; cached records with another v are refetched
-                  // (4: v3 records could hold the 3D City's client-side claims, see cacheCopy)
+var PACK_V = 5;   // bump whenever pack()'s output changes; cached records with another v are refetched
+                  // (4: v3 records could hold the 3D City's client-side claims, see cacheCopy; 5: curved roads)
 var ONE = 65536, BUCKET = 64, TRUNK = 0.45, CLEAR = 2, BLEND = 4, SIDEWALK_UP = 0.15;
 var TREE_P = {forest: 0.55, park: 0.18, residential: 0.04};
 var WALK_OLD = {street: 150, avenue: 200};   // sidewalk (cm, each side) for docs older than the walk field
@@ -95,6 +103,8 @@ function pack(doc){
   if(L.transit) W.transit = L.transit;
   if(L.zones) W.zones = L.zones;
   if(L.river) W.river = L.river;
+  // curved roads (games/roadsmooth.js), when the page or worker loaded it: e.pts becomes the curve, e.pts0 the original
+  if(HQV.roadSmooth && typeof HQV.roadSmooth.smooth === "function") HQV.roadSmooth.smooth(W);
   return W;
 }
 
@@ -178,8 +188,98 @@ function index(W){
                  function(b){ I.segs[b].push(ei, s); });
     }
   });
+  fillets(W, I);
   W.index = I;
   return I;
+}
+
+// A smoothed W's junction corners: games/roadsmooth.js junctionCorners, fitted to the sidewalks. Where an arc would
+// cut deeper than the sidewalk less CORNER_WALK m into the corner, the corner shrinks about the kerbs' sharp corner K
+// (a fillet scaled about K is still tangent to both kerbs) until it does not; a corner left reaching more than
+// CORNER_GORE m from K (a sharp gore), with a radius under its widest sidewalk + 0.3 m, or with an arc point on a lot
+// or a site, is dropped. The kept ones are the corners worldgeom draws (junctionCorners below) and road here: the
+// sliver between each arc and K, inside the triangle T1 K T2 and outside the arc's circle, as
+// {cx, cz, r, ax, az, bx, bz, kx, kz, y}, bucketed (I.fil, I.filList; null otherwise). I.corners: per node.
+// The arcs are resampled in chords of at most CORNER_CHORD m and CORNER_TURN rad (fewer triangles than roadSmooth's 1 m).
+var CORNER_WALK = 0.6, CORNER_GORE = 6, CORNER_CHORD = 2.5, CORNER_TURN = Math.PI/8;
+function inPolyCm(P, x, z){
+  var c = false;
+  for(var i = 0, j = P.length - 1; i < P.length; j = i++){
+    var xi = P[i][0], zi = P[i][1], xj = P[j][0], zj = P[j][1];
+    if((zi > z) !== (zj > z) && x < (xj - xi)*(z - zi)/(zj - zi) + xi) c = !c;
+  }
+  return c;
+}
+// is (x, z) (m) on a lot (its polygon when it has one) or a site?
+function onGround(W, I, x, z){
+  var b = bOf(W, z, I.nb)*I.nb + bOf(W, x, I.nb), L = I.lots[b], xc = x*100, zc = z*100, i;
+  for(i = 0; i < L.length; i++){
+    var l = W.lots[L[i]];
+    if(l.poly && l.poly.length >= 3 ? inPolyCm(l.poly, xc, zc) : inRectCm(l, xc, zc)) return true;
+  }
+  L = I.sites[b];
+  for(i = 0; i < L.length; i++) if(inRectCm(W.sites[L[i]], xc, zc)) return true;
+  return false;
+}
+function fillets(W, I){
+  I.fil = null; I.filList = null; I.corners = null;
+  var RS = HQV.roadSmooth;
+  if(!W.smoothed || !RS || typeof RS.junctionCorners !== "function") return;
+  var dg = {}, byId = {}, nb = I.nb, list = [], B = lists(nb*nb), K = {};
+  W.edges.forEach(function(e){ dg[e.a] = (dg[e.a] || 0) + 1; dg[e.b] = (dg[e.b] || 0) + 1; byId[e.id] = e; });
+  W.nodes.forEach(function(nd){
+    if((dg[nd.id] || 0) < 3) return;
+    var kept = K[nd.id] = [];
+    RS.junctionCorners(W, nd.id).forEach(function(c0){
+      var P = c0.pts, A = P[0], Bp = P[P.length - 1], ea = byId[c0.a], eb = byId[c0.b], r = c0.r;
+      if(!ea || !eb || P.length < 2) return;
+      var vx = (A[0] + Bp[0])/2 - c0.c[0], vz = (A[1] + Bp[1])/2 - c0.c[1], cos2 = (vx*vx + vz*vz)/(r*r);
+      if(!(cos2 > 1e-3)) return;
+      var kx = c0.c[0] + vx/cos2, kz = c0.c[1] + vz/cos2, deep = r*(1 - Math.sqrt(cos2));   // the arc's depth past the kerbs
+      var wmin = Math.min(ea.walk || 0, eb.walk || 0)/100, wmax = Math.max(ea.walk || 0, eb.walk || 0)/100, s = 1;
+      if(wmin > CORNER_WALK && deep > wmin - CORNER_WALK) s = (wmin - CORNER_WALK)/deep;
+      function sc(p){ return [kx + (p[0] - kx)*s, kz + (p[1] - kz)*s]; }
+      var c = {a: c0.a, b: c0.b, r: r*s, c: sc(c0.c), pts: arc(sc(c0.c), r*s, sc(A), sc(Bp))};
+      if(c.r < wmax + 0.3 || Math.hypot(kx - c.c[0], kz - c.c[1]) - c.r > CORNER_GORE) return;
+      for(var j = 0; j < c.pts.length; j++) if(onGround(W, I, c.pts[j][0], c.pts[j][1])) return;
+      var f = {cx: c.c[0], cz: c.c[1], r: c.r, ax: c.pts[0][0], az: c.pts[0][1], bx: c.pts[c.pts.length - 1][0], bz: c.pts[c.pts.length - 1][1],
+               kx: kx, kz: kz, y: nd.y/100}, i = list.length;
+      kept.push(c);
+      list.push(f);
+      eachBucket(W, nb, Math.min(f.ax, f.bx, f.kx), Math.max(f.ax, f.bx, f.kx), Math.min(f.az, f.bz, f.kz), Math.max(f.az, f.bz, f.kz),
+                 function(b){ B[b].push(i); });
+    });
+  });
+  I.corners = K;
+  if(list.length){ I.fil = B; I.filList = list; }
+}
+// the arc of radius r about c from tangent point t1 to t2 (the short way), in chords of CORNER_CHORD / CORNER_TURN
+function arc(c, r, t1, t2){
+  var a1 = Math.atan2(t1[1] - c[1], t1[0] - c[0]), sw = Math.atan2(t2[1] - c[1], t2[0] - c[0]) - a1;
+  while(sw > Math.PI) sw -= 2*Math.PI;
+  while(sw < -Math.PI) sw += 2*Math.PI;
+  var m = Math.max(2, Math.ceil(Math.max(Math.abs(sw)*r/CORNER_CHORD, Math.abs(sw)/CORNER_TURN))), out = [t1];
+  for(var j = 1; j < m; j++) out.push([c[0] + r*Math.cos(a1 + sw*j/m), c[1] + r*Math.sin(a1 + sw*j/m)]);
+  out.push(t2);
+  return out;
+}
+// the rounded kerb corners worldgeom draws at node id: roadSmooth.junctionCorners less those fillets() drops
+// ([] on a W that is not smoothed, or without roadsmooth.js)
+function junctionCorners(W, id){
+  var I = index(W);
+  return (I.corners && I.corners[id]) || [];
+}
+function side(ax, az, bx, bz, x, z){ return (bx - ax)*(z - az) - (bz - az)*(x - ax); }
+// the junction corner sliver holding (x, z), or null
+function filletAt(W, I, x, z){
+  var L = I.fil[bOf(W, z, I.nb)*I.nb + bOf(W, x, I.nb)];
+  for(var i = 0; i < L.length; i++){
+    var f = I.filList[L[i]], dx = x - f.cx, dz = z - f.cz;
+    if(dx*dx + dz*dz <= f.r*f.r) continue;
+    var s1 = side(f.ax, f.az, f.kx, f.kz, x, z), s2 = side(f.kx, f.kz, f.bx, f.bz, x, z), s3 = side(f.bx, f.bz, f.ax, f.az, x, z);
+    if((s1 >= 0 && s2 >= 0 && s3 >= 0) || (s1 <= 0 && s2 <= 0 && s3 <= 0)) return f;
+  }
+  return null;
 }
 
 // project (x, z) on segment s of edge e; results in the scratch S (no allocation in hot loops)
@@ -211,7 +311,11 @@ function roadUnder(W, x, z){
     if(k === n){ n++; CE[k] = L[i]; CD[k] = Infinity; }
     if(S.d < CD[k]){ CD[k] = S.d; CS[k] = L[i+1]; CT[k] = S.t; CY[k] = S.y; }
   }
-  if(!n) return 0;
+  if(!n){
+    var f0 = I.fil ? filletAt(W, I, x, z) : null;   // a rounded corner reaching past every sidewalk (no walk)
+    if(f0){ var r0 = nearestRoad(W, x, z, 2*f0.r + 10); ROAD.y = r0 ? r0.y : f0.y; return 1; }
+    return 0;
+  }
   var sw = 0, sy = 0, best = 0;
   for(k = 0; k < n; k++){
     var ek = W.edges[CE[k]], hk = ek.width/200, y = bendY(ek, CS[k], x, z, CT[k], CY[k]);
@@ -220,7 +324,7 @@ function roadUnder(W, x, z){
     if(CD[k] < CD[best]) best = k;
   }
   ROAD.y = sw > 0 ? sy/sw : CY[best];
-  if(gap <= 0) return 1;
+  if(gap <= 0 || (I.fil && filletAt(W, I, x, z))) return 1;
   ROAD.y += SIDEWALK_UP;
   return 2;
 }
@@ -414,7 +518,7 @@ function trees(W){
     var x = (D.origin + ix*D.cell)/100 + 1 + ((h >>> 16) & 0xff)/255*(D.cell/100 - 2);
     var z = (D.origin + iz*D.cell)/100 + 1 + (h2 & 0xff)/255*(D.cell/100 - 2);
     if(Math.abs(x) > W.half - CLEAR || Math.abs(z) > W.half - CLEAR) continue;
-    if(roadNear(W, x, z, CLEAR) || lotAt(W, x, z) || siteAt(W, x, z)) continue;
+    if(roadNear(W, x, z, CLEAR) || lotAt(W, x, z) || siteAt(W, x, z) || (I.fil && filletAt(W, I, x, z))) continue;
     if(W.river && (riverAt(W, x, z) || riverAt(W, x + CLEAR, z) || riverAt(W, x - CLEAR, z) || riverAt(W, x, z + CLEAR) || riverAt(W, x, z - CLEAR))) continue;
     var pine = ((h2 >>> 16) & 3) === 0;
     out.push({x: x, z: z, s: 0.8 + ((h2 >>> 8) & 0xff)/255*0.6, kind: (name === "forest" ? !pine : pine) ? "pine" : "round"});
@@ -589,6 +693,21 @@ function unclaim(W){
   if(W.sites) W.sites = W.sites.filter(function(s){ return s && !s.claimed; });
   return W;
 }
+// A cached W's roads made as pack() makes them on this page: smoothed by this roadsmooth.js's VERSION when it is
+// loaded (smooth() restarts from the server's e.pts0), else the server's straight pieces. A record packed while
+// roadsmooth.js failed to load, by an older VERSION, or on a page with it when this one has none, would otherwise
+// give this client other edges than its peers (traffic's timetables, npcsim's and citysim's routes) and draw
+// corners its physics does not have. -> true when it changed W.
+function roadsAsHere(W){
+  var RS = HQV.roadSmooth, want = RS && typeof RS.smooth === "function" ? RS.VERSION || 1 : 0, has = W.smoothed ? W.smoothed.v || 0 : 0;
+  if(want === has) return false;
+  if(want) RS.smooth(W);
+  else {
+    (W.edges || []).forEach(function(e){ if(e.pts0){ e.pts = e.pts0; delete e.pts0; } });
+    delete W.smoothed; W.index = null; W.docView = null;
+  }
+  return true;
+}
 function idbPut(idb, rec, id){
   if(!idb) return;
   try { Promise.resolve(idb.put(id, rec)).catch(function(){}); } catch(e){}
@@ -643,6 +762,8 @@ function load(opts){
     if(rec && rec.v === PACK_V && rec.packed && rec.packed.terrain){   // other v: packed by older code, refetch
       var W = unclaim(rec.packed);
       W.etag = rec.etag || W.etag || null;
+      // the roads as this page smooths them (whatever page packed the record): re-stored when that changed them
+      if(roadsAsHere(W)) idbPut(idb, {v: PACK_V, etag: W.etag, packed: cacheCopy(W)}, id);
       state.cur = W;
       state.cacheMs = Math.round(now() - t0);
       log("hq-world cache " + state.cacheMs);
@@ -673,6 +794,7 @@ var api = HQV.world = {
   nearestRoad: nearestRoad, roadY: roadY, surfaceAt: surfaceAt, padOf: padOf, groundAt: groundAt,
   normalAt: normalAt, slopeAlong: slopeAlong, slopeFactor: slopeFactor, buildingRect: buildingRect,
   blockedAt: blockedAt, trees: trees, riverAt: riverAt, rayGround: rayGround, roadLabels: roadLabels, junctions: junctions,
+  junctionCorners: junctionCorners,
   load: load, onChange: onChange, current: current, cacheMs: cacheMs
 };
 })();

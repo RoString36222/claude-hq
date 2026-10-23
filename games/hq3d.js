@@ -1392,7 +1392,25 @@ function mount(el, api){
     avatar.tag = label(short(api.name || "You", 14), frameHex(api.frame && api.frame()) || HEX.amber, 0.5);
     avatar.tag.position.y = 2.3; avatar.g.add(avatar.tag);
   }
-  function blocked(x, z){ return cur === worlds.mission ? missionBlocked(x, z) : cur.blocked(x, z); }
+  function blocked(x, z){ return (cur === worlds.mission ? missionBlocked(x, z) : cur.blocked(x, z)) || peerBlocked(x, z); }
+  // [3.13.2] other players are solid too: on foot or on a board a body (0.55 m), riding or driving their vehicle's box
+  // turned their way (a catalogue car's own size); not while they fly, nor a floor above or below you. You can't push
+  // them: they stop you, as a wall does (and one who walks into you can always be walked away from).
+  function peerBlocked(x, z){
+    if(!cur) return false;
+    var my = avatar ? avatar.g.position.y : 0;
+    for(var u in peers){
+      var P = peers[u];
+      if(P.g.parent !== cur.scene || P.x == null) continue;
+      var dx = x - P.x, dz = z - P.z, a = P.a | 0;
+      if(dx*dx + dz*dz > 64 || a >= 7 || (P.hy != null && Math.abs(P.hy - my) > 2.2)) continue;   // 7..12 fly
+      var V = a === 4 ? null : VEHICLES[P.v && VEHICLES[P.v] ? P.v : PEER_VEHICLE[a]];
+      if(!V || !V.box){ if(dx*dx + dz*dz < 0.55*0.55) return true; continue; }
+      var sy = Math.sin(P.yaw), cy = Math.cos(P.yaw);
+      if(Math.abs(dx*sy + dz*cy) <= V.box[1] + 0.2 && Math.abs(dx*cy - dz*sy) <= Math.max(V.box[0], 0.3) + 0.2) return true;
+    }
+    return false;
+  }
   var MS = null;                                                     // [hq revamp] Mission Control's HQ Studio theme
   function missionBlocked(x, z){
     if(Math.abs(x) > ROOM - 0.8 || Math.abs(z) > ROOM - 0.8) return true;

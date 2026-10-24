@@ -3,7 +3,7 @@
  * The building every HQ shows, at its Base and on every City lot (HQV.hqBuilding, games/hqbase.js, is this make()):
  * a stone plinth and steps, a double-height podium with the grand entrance (canopy, portico, arch, glass box or
  * torii; a revolving door, planters and flag poles), the tower in setback tiers that grow with the HQ level, wings
- * (level 10 and 30) and skybridges, a crown, rooftop extras and, always, a helipad on the roof. Its facade system
+ * (level 10 and 30, attached to the tower), a crown, rooftop extras and, always, a helipad on the roof. Its facade system
  * (Glass Modern, Art Deco, Brutalist, Neo-Tokyo, Classic Stone, Eco Green), colours, glass tint, sign font and
  * colour, night light, flags and landscaping come from the owner's style (look.style; HQV.hqStyle.clean()).
  *
@@ -13,13 +13,15 @@
  * shows only its masses. The look is HQV.hqStyle's; nothing here reads the network.
  *
  * Pure parts (node-tested, tests/test_hqtower.py):
- *   massing(level, grand, stars, room) -> {podium, tiers, wings, roof, pad, top}: the building's boxes (m, its own frame,
- *     door to +z). grand 0..1 is how much bigger than the old tower a lot allows (+18% wide, +8% deep at 1);
- *     every tier is a floor-height multiple; heli (x, z, r, y): the helideck, raised HELI_UP over the top roof on
- *     legs and cantilevered past it; the pad (x, z, r, y) in its middle, clear for a helicopter's rotor: r = PAD_R, or
- *     less (to PAD_MIN) where the lot holds less room (the largest disc round the roof's middle inside it).
- *   footprint(grand, wings) -> [[cx, cz, hx, hz]]: the tower, its entrance apron, then each wing (what a lot's
- *     car-lift bay and its run out must keep clear of; hqcity3d's garagePlace and hqBoxes).
+ *   massing(level, grand, stars, room, facade) -> {podium, tiers, wings, roof, pad, heli, top, front}: the building's boxes
+ *     (m, its own frame, door to +z). 3.19: one broad building over most of its lot: the podium (front always at FRONT),
+ *     a base block over all of it (tiers[0], part "base"), the main tower (about 1:1.3) and its setbacks by style
+ *     (COMPOSE: stacked slabs, wedding cake, top-heavy...), and the wings (level 10, 30) risen from the base flush with
+ *     the tower's sides. grand 0..1 is how much of the lot it may fill (plan(): 11 x 8 m to 25 x 14 m); every part is
+ *     a floor-height multiple from one datum (BASE_Y); heli (x, z, r, y): the helideck on the top roof (HELI_UP over
+ *     it); the pad (x, z, r, y) in its middle: r = PAD_R, or less (to PAD_MIN) where the lot holds less room.
+ *   footprint(grand, wings) -> [[cx, cz, hx, hz]]: the podium, its entrance apron, then each wing (on the podium: what a
+ *     lot's car-lift bay and its run out must keep clear of; hqcity3d's garagePlace and hqBoxes).
  *   crownSlots(M) -> [{x, z}]: where the roof lift, a crown's and the roof extras' pieces stand (the helideck's
  *     walkway, on its diagonals): never on the pad.
  *   roofDeck(M) -> {x, z, hw, hd, r, y}: the helideck you can walk on (a disc of radius r, inside its rail).
@@ -36,44 +38,97 @@ var CORNICE = 0.4;
 var TILE_W = 4.8, TILE_H = 4*FH;   // the facade tile: 4 bays of 1.2 m by 4 floors
 var POD_W = 4.8, POD_H = PODIUM_H; // the podium's tile: 2 bays of 2.4 m, the full height
 var LOD_FAR = 1;
-var PAD_R = 9;              // the helipad's radius (m): a helicopter's rotor (5.4 m, the attack's 6) with room round it
+var PAD_R = 8.6;            // the helipad's radius (m): a helicopter's rotor (5.4 m, the attack's 6) with room round it
 var PAD_MIN = 7.5;         // on a small lot no less (the walkway may then reach out over the pavement)
 var WALK = 1.6;            // the helideck's walkway round the pad
-var HELI_UP = 3.0;         // the helideck over the top roof
+var HELI_UP = 1.2;         // the helideck over the top roof (3.19: on it, on a low steel frame)
 
 /* ---------- the shape (pure) ---------- */
+// 3.19: the massing revamp. One broad, cohesive building filling most of its lot: a podium across the frontage (its
+// front always FRONT m ahead of the lot's HQ point, so the door, steps and street exit stay put; it grows back and to
+// the sides with grand), a base block of offices over it (the whole podium, less a 0.3 m reveal), a wide main tower
+// on the base set back from the street (about 1:1.3, never a pencil), stepped setbacks by style, and wings that are
+// the base risen beside the tower (attached, flush with its side walls: no satellite boxes). Every part keeps the
+// same floor height from the same datum (BASE_Y), so the windows line up across the whole building.
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
-function massing(level, grand, stars, room){
+var FRONT = 3.8;                       // the podium's front face (the door, HQ_DOOR 4.8, is a metre in front of it)
+var BASE_Y = PLINTH + PODIUM_H + CORNICE;
+var WING_MIN = 2.6;                    // a wing narrower than this is not built (the tower takes the base's width)
+// the tower's tiers by style, over the main tower's footprint: [width, depth, share of its floors]
+//   glass: stacked slabs; deco: a wedding cake; brutal: top-heavy (its upper slab oversails); tokyo: a slab that
+//   turns narrow; stone: classic setbacks; eco: terraces stepping back
+var COMPOSE = {
+  glass:  [[1, 1, 6], [0.86, 0.86, 3], [0.76, 0.78, 1.5]],
+  deco:   [[1, 1, 5], [0.84, 0.86, 3], [0.72, 0.76, 2], [0.62, 0.68, 1.2]],
+  brutal: [[1, 1, 6], [1.1, 1.06, 3], [0.86, 0.88, 1.2]],
+  tokyo:  [[1, 1, 4], [0.78, 1, 3], [0.7, 0.84, 2]],
+  stone:  [[1, 1, 5], [0.82, 0.84, 3], [0.68, 0.74, 1.6]],
+  eco:    [[1, 1, 4], [0.92, 0.8, 3], [0.84, 0.66, 2]]
+};
+// the floors over the podium by level: 3 at level 1 (a solid mid-rise), 10 at 30, 19 at 50 (a landmark), at most 20
+function floorsOf(level){ level = Math.max(1, level | 0); return Math.min(20, 3 + Math.floor(level/5) + (level >= 25 ? Math.floor((level - 25)/4) : 0)); }
+// the ground plan at grand (0..1): the podium 11 x 8 m (a tight lot) to 25 x 14 m; the base, the main tower, the wings' width
+function plan(grand){
+  grand = clamp(+grand || 0, 0, 1);
+  var w = 11 + 14*grand, d = 8 + 6*grand, bw = w - 0.6, bd = d - 0.6, z = FRONT - d/2;
+  var dt = Math.max(4.6, bd - 2.0), wt = Math.max(dt*0.9, Math.min(bw*0.6, dt*1.35)), ww = (bw - wt)/2;
+  return {w: w, d: d, z: z, bw: bw, bd: bd, wt: wt, dt: dt, zt: z - 0.4, ww: ww, wings: ww >= WING_MIN};
+}
+// the tower's axis (its roof's middle, the helideck's) at grand: hqcity3d roomOf looks round it
+function axis(grand){ return plan(grand).zt; }
+function massing(level, grand, stars, room, facade){
   level = Math.max(1, level | 0); grand = clamp(+grand || 0, 0, 1); stars = clamp(stars | 0, 0, 5);
-  var W0 = 9*(1 + 0.18*grand), D0 = 7*(1 + 0.08*grand);
-  var pod = {x: 0, z: 0, w: W0, d: D0, y0: PLINTH, h: PODIUM_H};
-  var y = PLINTH + PODIUM_H + CORNICE, tiers = [];
-  var floorsLow = Math.min(8, 1 + Math.floor(level/5)), floorsHigh = level >= 25 ? Math.min(8, 1 + Math.floor((level - 25)/4)) : 0;
-  var t1 = {x: 0, z: 0, w: W0 - 0.8, d: D0 - 0.6, y0: y, floors: floorsLow, h: floorsLow*FH}; tiers.push(t1); y += t1.h;
-  if(floorsHigh){ var t2 = {x: 0, z: -0.35, w: t1.w*0.72, d: t1.d*0.74, y0: y + 0.5, floors: floorsHigh, h: floorsHigh*FH}; tiers.push(t2); y = t2.y0 + t2.h; }
-  if(level >= 45 && floorsHigh){ var t2b = tiers[tiers.length - 1], t3 = {x: 0, z: t2b.z, w: t2b.w*0.88, d: t2b.d*0.92, y0: y + 0.5, floors: 1, h: FH}; tiers.push(t3); y = t3.y0 + t3.h; }
+  var Pl = plan(grand), comp = COMPOSE[facade] || COMPOSE.glass, F = floorsOf(level);
+  var pod = {x: 0, z: Pl.z, w: Pl.w, d: Pl.d, y0: PLINTH, h: PODIUM_H};
+  var y = BASE_Y, tiers = [];
+  // the base: every floor below level 5; then one penthouse floor over it; from level 10 two to four floors
+  var fb = level < 5 ? F : level < 10 ? F - 1 : Math.min(4, 2 + Math.floor((level - 10)/15)), ft = F - fb;
+  tiers.push({x: 0, z: Pl.z, w: Pl.bw, d: Pl.bd, y0: y, floors: fb, h: fb*FH, part: "base"}); y += fb*FH;
+  var wt = Pl.wt, dt = Pl.dt;
+  if(level < 10){ wt = Pl.bw - 2*Math.max(1.6, Pl.bw*0.12); dt = Math.max(4.6, Pl.bd - 2.4); }       // a penthouse, set back all round
+  else if(!Pl.wings) wt = Math.max(dt*0.9, Math.min(dt*1.5, Pl.bw - 1.2));                            // no room for wings: the tower takes the width (to 1:1.5)
+  var nT = ft <= 0 ? 0 : level < 10 ? 1 : level < 25 ? (facade === "deco" || facade === "stone" ? 2 : 1) : level < 45 ? 2 : Math.min(comp.length, facade === "deco" ? 4 : 3);
+  nT = Math.min(nT, ft);
+  if(nT){
+    var sum = 0, fl = [], i;
+    for(i = 0; i < nT; i++) sum += comp[i][2];
+    var left = ft;
+    for(i = 0; i < nT; i++){ var n = i === nT - 1 ? left : Math.max(1, Math.min(left - (nT - 1 - i), Math.round(ft*comp[i][2]/sum))); fl.push(n); left -= n; }
+    for(i = 0; i < nT; i++){
+      var s = level < 10 ? [1, 1] : comp[i];
+      tiers.push({x: 0, z: Pl.zt, w: Math.min(Pl.bw - 0.4, wt*s[0]), d: Math.min(Pl.bd - 0.4, dt*s[1]), y0: y, floors: fl[i], h: fl[i]*FH, part: i ? "setback" : "tower"});
+      y += fl[i]*FH;
+    }
+  }
   var last = tiers[tiers.length - 1], prest = null;
   if(stars){ prest = {x: last.x, z: last.z, w: last.w - 0.2, d: last.d - 0.2, y0: y + 0.3, floors: stars, h: stars*2.4}; y = prest.y0 + prest.h + 0.3; }
   var R = prest || last, roof = {x: R.x, z: R.z, w: R.w, d: R.d, y: y};
-  // 3.13.4: the helideck, a steel deck raised HELI_UP over the top roof on legs and cantilevered past it (no top roof
-  // is near big enough for a helicopter's rotor), the pad (PAD_R) in its middle, a walkway (WALK) round it
+  // the helideck: a steel deck on the top roof (HELI_UP over it), the pad (PAD_R) in its middle, a walkway (WALK) round it
   // room: the biggest disc round the roof's middle the lot holds (hqcity3d roomOf; null: any): the pad keeps inside it
   var pr = room != null && isFinite(+room) ? clamp(+room - 0.6, PAD_MIN, PAD_R) : PAD_R;
   var hy = y + HELI_UP, pad = {x: R.x, z: R.z, r: pr, y: hy + 0.02};
   var heli = {x: R.x, z: R.z, r: pr + WALK, y: hy, base: y};
-  var wings = [], floorsW = Math.max(1, floorsLow - 2);
-  [[-1, 10], [1, 30]].forEach(function(s){
-    if(level < s[1]) return;
-    wings.push({x: s[0]*(10.5 + 1.6*grand), z: 0.5, w: 5.5 + 0.8*grand, d: 5 + 0.4*grand, y0: PLINTH, h: PODIUM_H + CORNICE + floorsW*FH, floors: floorsW, side: s[0]});
-  });
-  return {level: level, grand: grand, podium: pod, tiers: tiers, prestige: prest, roof: roof, pad: pad, heli: heli, wings: wings, top: y, lowTop: t1.y0 + t1.h};
+  // the wings (level 10, west; 30, east): the base risen beside the tower, flush with its side walls, a metre behind its face
+  var wings = [], T1 = tiers[1];
+  if(level >= 10 && T1 && Pl.wings){
+    var fw = Math.max(1, Math.min(T1.floors - 1, Math.round(T1.floors*0.6)));
+    [[-1, 10], [1, 30]].forEach(function(q){
+      if(level < q[1]) return;
+      var wy = BASE_Y + fb*FH;
+      wings.push({x: q[0]*(wt/2 + Pl.ww/2), z: Pl.zt - 0.5, w: Pl.ww, d: dt - 1.0, y0: wy, floors: fw, h: fw*FH, side: q[0], top: wy + fw*FH + 0.2});
+    });
+  }
+  return {level: level, grand: grand, facade: COMPOSE[facade] ? facade : "glass", podium: pod, tiers: tiers, prestige: prest, roof: roof, pad: pad, heli: heli, wings: wings,
+    top: y, lowTop: BASE_Y + fb*FH, front: FRONT, floors: F};
 }
+// the ground the building stands on (what a lot's car-lift bay and its run out keep clear of): the podium (and its
+// plinth), its entrance apron, then each wing (on the podium: the same ground, kept for the bay rules' shape)
 function footprint(grand, wings){
-  grand = clamp(+grand || 0, 0, 1);
-  var hx = 4.5*(1 + 0.18*grand) + 0.3, hz = 3.5*(1 + 0.08*grand) + 0.3;
-  var out = [[0, 0, hx, hz], [0, hz + 1.25, Math.min(hx, 4.4), 1.25]];
-  if(wings >= 1) out.push([-(10.5 + 1.6*grand), 0.5, 3 + 0.4*grand, 2.8 + 0.2*grand]);
-  if(wings >= 2) out.push([10.5 + 1.6*grand, 0.5, 3 + 0.4*grand, 2.8 + 0.2*grand]);
+  var Pl = plan(grand), out = [[0, Pl.z, Pl.w/2 + 0.3, Pl.d/2 + 0.3], [0, FRONT + 1.55, 4.4, 1.25]];
+  if(Pl.wings){
+    if(wings >= 1) out.push([-(Pl.wt/2 + Pl.ww/2), Pl.zt - 0.5, Pl.ww/2 + 0.3, (Pl.dt - 1)/2 + 0.3]);
+    if(wings >= 2) out.push([Pl.wt/2 + Pl.ww/2, Pl.zt - 0.5, Pl.ww/2 + 0.3, (Pl.dt - 1)/2 + 0.3]);
+  }
   return out;
 }
 // the helideck's four diagonals (qx, qz: the old corners' signs), on its walkway's outer edge, past the pad's circle
@@ -191,7 +246,9 @@ function keepTex(k, t){
   return t;
 }
 function tile(c, X, kind){ var k = ["map", kind, X.facade, X.material, X.body, X.trim, X.tint].join("|"); return TEX[k] || keepTex(k, drawTile(c, X, kind).t); }
-function nightTile(c, X, kind, share){ var k = ["emi", kind, X.facade, X.body, X.trim, X.night, share].join("|"); return TEX[k] || keepTex(k, drawNight(c, X, kind, share).t); }
+// (3.19: it tiles like the day tile, up every floor of a tall part, not only the first four)
+function nightTile(c, X, kind, share){ var k = ["emi", kind, X.facade, X.body, X.trim, X.night, share].join("|"); if(TEX[k]) return TEX[k];
+  var t = drawNight(c, X, kind, share).t; if(c.THREE && t){ t.wrapS = t.wrapT = c.THREE.RepeatWrapping; } return keepTex(k, t); }
 
 /* ---------- batching: one mesh per material ---------- */
 function kit(THREE){
@@ -312,30 +369,27 @@ function make(c, opts){
     var st = styleOf(look), X = st.ext;
     while(baseG.children.length) baseG.remove(baseG.children[0]);
     hits.length = 0; doors.length = 0;
-    var M = massing(level, grand, stars, typeof opts.room === "function" ? opts.room() : opts.room);
+    var M = massing(level, grand, stars, typeof opts.room === "function" ? opts.room() : opts.room, X.facade);
     var MT = mats(X);
     dyn = {M: M, X: X, mats: MT, glows: [], flags: null, flagN: 0, revolve: null, sock: null, beacons: [], beaconGlows: [], heli: null, prestige: null, fireworks: [], decorFlags: [], banners: [], jets: [], karts: [], core: null, detail: null};
     var core = new THREE.Group(), detail = new THREE.Group(); core.name = "hqt-core"; detail.name = "hqt-detail";
     baseG.add(core); baseG.add(detail); dyn.core = core; dyn.detail = detail;
     var K = kit(THREE), Kd = kit(THREE), F = X.facade;
-    var P = M.podium, front = P.d/2;
-    /* --- the masses: plinth, podium, tiers, wings (core) --- */
-    K.box("stone", P.w + 1.0, PLINTH, P.d + 1.0, 0, PLINTH/2, 0);
-    K.geo("pod", sideGeo(THREE, P.w, P.h, P.d, POD_W, POD_H, 0), 0, P.y0 + P.h/2, 0);
-    K.box("body", P.w + 0.5, CORNICE, P.d + 0.5, 0, P.y0 + P.h + CORNICE/2, 0);
+    var P = M.podium, front = P.z + P.d/2, pz = P.z;
+    /* --- the masses: plinth, podium, the base, the tower's tiers, the wings (core); every facade's windows from one
+       datum (BASE_Y), so the floors line up across the parts --- */
+    K.box("stone", P.w + 1.0, PLINTH, P.d + 1.0, 0, PLINTH/2, pz);
+    K.geo("pod", sideGeo(THREE, P.w, P.h, P.d, POD_W, POD_H, 0), 0, P.y0 + P.h/2, pz);
+    K.box("body", P.w + 0.5, CORNICE, P.d + 0.5, 0, P.y0 + P.h + CORNICE/2, pz);
     M.tiers.forEach(function(T, n){
-      K.geo("fac", sideGeo(THREE, T.w, T.h, T.d, TILE_W, TILE_H, 0), T.x, T.y0 + T.h/2, T.z);
+      K.geo("fac", sideGeo(THREE, T.w, T.h, T.d, TILE_W, TILE_H, T.y0 - BASE_Y), T.x, T.y0 + T.h/2, T.z);
       K.box("roof", T.w + 0.1, 0.2, T.d + 0.1, T.x, T.y0 + T.h + 0.1, T.z);
-      if(n > 0) K.box("body", M.tiers[n - 1].w*0.98, 0.5, M.tiers[n - 1].d*0.98, M.tiers[n - 1].x, T.y0 - 0.25, M.tiers[n - 1].z);   // the setback's terrace slab
+      K.box("body", T.w + 0.36, 0.34, T.d + 0.36, T.x, T.y0 + T.h - 0.17, T.z);                         // each part's cornice band
     });
     M.wings.forEach(function(Wg){
-      K.box("stone", Wg.w + 0.6, PLINTH, Wg.d + 0.6, Wg.x, PLINTH/2, Wg.z);
-      K.geo("pod", sideGeo(THREE, Wg.w, PODIUM_H, Wg.d, POD_W, POD_H, 0), Wg.x, PLINTH + PODIUM_H/2, Wg.z);
-      K.box("body", Wg.w + 0.3, CORNICE, Wg.d + 0.3, Wg.x, PLINTH + PODIUM_H + CORNICE/2, Wg.z);
-      var wy = PLINTH + PODIUM_H + CORNICE, wh = Wg.floors*FH;
-      K.geo("fac", sideGeo(THREE, Wg.w - 0.4, wh, Wg.d - 0.4, TILE_W, TILE_H, 0), Wg.x, wy + wh/2, Wg.z);
-      K.box("roof", Wg.w - 0.3, 0.2, Wg.d - 0.3, Wg.x, wy + wh + 0.1, Wg.z);
-      Wg.top = wy + wh + 0.2;
+      K.geo("fac", sideGeo(THREE, Wg.w, Wg.h, Wg.d, TILE_W, TILE_H, Wg.y0 - BASE_Y), Wg.x, Wg.y0 + Wg.h/2, Wg.z);
+      K.box("roof", Wg.w, 0.2, Wg.d, Wg.x, Wg.y0 + Wg.h + 0.1, Wg.z);
+      K.box("body", Wg.w + 0.18, 0.34, Wg.d + 0.36, Wg.x + Wg.side*0.09, Wg.y0 + Wg.h - 0.17, Wg.z);
     });
     if(M.prestige){
       var Pp = M.prestige;
@@ -384,7 +438,7 @@ function make(c, opts){
       }
     });
     // the podium's cornice by style, and the uplights along its base
-    if(F === "deco" || F === "stone") Kd.box("trim", P.w + 0.7, 0.18, P.d + 0.7, 0, P.y0 + P.h + CORNICE + 0.09, 0);
+    if(F === "deco" || F === "stone") Kd.box("trim", P.w + 0.7, 0.18, P.d + 0.7, 0, P.y0 + P.h + CORNICE + 0.09, pz);
     for(var ux = -P.w/2 + 0.6; ux <= P.w/2 - 0.5; ux += 1.2){ if(Math.abs(ux) < 1.8) continue; Kd.box("lit", 0.18, 0.08, 0.18, ux, PLINTH + 0.04, front + 0.3); }
     /* --- the entrance (z from the podium's front out to about front + 2.5) --- */
     var E = X.entrance, ez = front;
@@ -508,8 +562,9 @@ function make(c, opts){
     if(extras.indexOf("beacon") >= 0 && cr !== "spire" && cr !== "antenna" && spot) beacon(spot.x, hy + 3.2, spot.z), Kd.cyl("trim", 0.05, 0.05, 3, spot.x, hy + 1.5, spot.z, 6);
     // the lower roofs (the setback terraces and the wings) take the roof extras: tank, antennas, solar, garden
     var lows = [];
-    if(M.tiers.length > 1){ var T0 = M.tiers[0], T1b = M.tiers[1]; lows.push({x: T0.x - T0.w/2 + 0.9, z: T0.z + T0.d/2 - 0.8, y: T1b.y0}); lows.push({x: T0.x + T0.w/2 - 0.9, z: T0.z + T0.d/2 - 0.8, y: T1b.y0}); }
-    M.wings.forEach(function(Wg){ lows.push({x: Wg.x - Wg.side*0.6, z: Wg.z - 0.9, y: Wg.top}); });
+    M.wings.forEach(function(Wg){ lows.push({x: Wg.x, z: Wg.z - Wg.d/2 + 1.2, y: Wg.top}); });                      // the wings' roofs, behind their pads
+    if(M.tiers.length > 1){ var T0 = M.tiers[0], T1b = M.tiers[1], bk = T0.z - T0.d/2 + 0.7;                    // the base's back terrace corners
+      if(T1b.z - T1b.d/2 - bk > 0.9){ lows.push({x: T0.x - T0.w/2 + 0.9, z: bk, y: T1b.y0}); lows.push({x: T0.x + T0.w/2 - 0.9, z: bk, y: T1b.y0}); } }
     if(!lows.length) [fl2, fr2].forEach(function(q){ if(q) lows.push({x: q.x, z: q.z, y: hy}); });
     var li = 0;
     function nextLow(){ return lows.length ? lows[li++ % lows.length] : null; }
@@ -518,15 +573,12 @@ function make(c, opts){
     if(extras.indexOf("solar") >= 0){ var ls = nextLow(); if(ls){ for(var sp2 = -1; sp2 <= 1; sp2++) Kd.geo("dark", new THREE.BoxGeometry(0.9, 0.05, 0.6), ls.x + sp2*0.25, ls.y + 0.4, ls.z + sp2*0.0, -0.5, 0, 0); } }
     if(extras.indexOf("garden") >= 0 || level >= 25){                                // the sky terrace garden (level 25), or a roof garden
       var T0g = M.tiers[0];
-      if(M.tiers.length > 1){ [-1, 1].forEach(function(sx){ Kd.box("green2", 0.9, 0.3, T0g.d - 1.2, T0g.x + sx*(T0g.w/2 - 0.5), M.tiers[1].y0 - 0.35, T0g.z); for(var gi = 0; gi < 3; gi++) Kd.sph("green", 0.4, T0g.x + sx*(T0g.w/2 - 0.5), M.tiers[1].y0 + 0.1, T0g.z - 1.4 + gi*1.4); }); }
+      if(M.tiers.length > 1){ var gz0 = T0g.z + T0g.d/2 - 0.55, gy = M.tiers[1].y0, gw = Math.max(2, T0g.w - 2.4);   // a planted strip along the base's front terrace
+        Kd.box("green2", gw, 0.3, 0.8, T0g.x, gy + 0.15, gz0); for(var gi = 0, gn = Math.max(2, Math.round(gw/2.4)); gi < gn; gi++) Kd.sph("green", 0.42, T0g.x - gw/2 + 0.6 + gi*(gw - 1.2)/Math.max(1, gn - 1), gy + 0.55, gz0); }
       else { var lg = nextLow(); if(lg) Kd.sph("green", 0.5, lg.x, lg.y + 0.5, lg.z); }
     }
-    /* --- level features: skybridges (30), the observatory (40), the crew billboard (45) --- */
-    M.wings.forEach(function(Wg){
-      if(level >= 30){ var T0s = M.tiers[0], by = Math.max(PLINTH + PODIUM_H + 1.2, Wg.top - 1.6), x0 = Wg.side*T0s.w/2, x1 = Wg.x - Wg.side*(Wg.w/2 - 0.2);
-        var sb = new THREE.Mesh(new THREE.BoxGeometry(Math.abs(x1 - x0), 1.6, 2), MT.glass); sb.position.set((x0 + x1)/2, by, 0.5); detail.add(sb); }
-    });
-    if(level >= 40){ var ob = M.tiers.length > 1 ? {x: M.tiers[0].x + M.tiers[0].w/2 - 1.4, z: M.tiers[0].z - M.tiers[0].d/2 + 1.3, y: M.tiers[1].y0} : null;
+    /* --- level features: the observatory (40, on the base's front terrace), the crew billboard (45) --- */
+    if(level >= 40){ var ob = M.tiers.length > 1 ? {x: M.tiers[0].x + M.tiers[0].w/2 - 1.6, z: M.tiers[0].z + M.tiers[0].d/2 - 1.3, y: M.tiers[1].y0} : null;
       if(ob){ var dm = new THREE.Mesh(new THREE.SphereGeometry(1.1, 18, 9, 0, PI*2, 0, PI/2), MT.glass); dm.position.set(ob.x, ob.y, ob.z); detail.add(dm); Kd.cyl("stone", 1.15, 1.15, 0.3, ob.x, ob.y + 0.05, ob.z, 18); } }
     if(level >= 45 && M.tiers.length > 1){
       var live = opts.live ? opts.live() : 0, T2 = M.tiers[1];
@@ -640,12 +692,12 @@ function make(c, opts){
   function decor(look, M, parent, Kd){
     var top = M.top, Rf = M.roof;
     if(look.decor === "flags"){
-      for(var fi = 0; fi < 8; fi++){ var fa = fi/8*PI*2 + 0.2, fx = Math.cos(fa)*(M.podium.w/2 + 1.2), fz = Math.sin(fa)*(M.podium.d/2 + 1.2);
-        if(fz > M.podium.d/2 && Math.abs(fx) < 4.6) continue;                       // not on the steps
+      for(var fi = 0; fi < 8; fi++){ var fa = fi/8*PI*2 + 0.2, fx = Math.cos(fa)*(M.podium.w/2 + 1.2), fz = M.podium.z + Math.sin(fa)*(M.podium.d/2 + 1.2);
+        if(fz > M.front && Math.abs(fx) < 4.6) continue;                       // not on the steps
         Kd.cyl("trim", 0.05, 0.05, 4.2, fx, 2.1, fz, 6);
         var fl = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.7, 0.03), new THREE.MeshStandardMaterial({color: [0xff6b5b, 0x5fd3e6, 0xffb347, 0x6fd38a][fi % 4]})); fl.position.set(fx + 0.55, 3.75, fz); fl.userData.wave = fi; parent.add(fl); dyn.decorFlags.push(fl); }
     } else if(look.decor === "gnomes"){
-      for(var gi = 0; gi < 6; gi++){ var gx = (gi < 3 ? -1 : 1)*(2.6 + (gi % 3)*0.45), gz = M.podium.d/2 + 2.1 + (gi % 3)*0.2;
+      for(var gi = 0; gi < 6; gi++){ var gx = (gi < 3 ? -1 : 1)*(2.6 + (gi % 3)*0.45), gz = M.front + 2.1 + (gi % 3)*0.2;
         Kd.cyl("dark", 0.15, 0.19, 0.3, gx, 0.15, gz, 8); Kd.sph("stone", 0.12, gx, 0.4, gz); Kd.cone("neon", 0.13, 0.3, gx, 0.6, gz, 8); }
     } else if(look.decor === "fireworks"){
       for(var fw = 0; fw < 3; fw++){ var g = new THREE.Group(); parent.add(g); var parts = [];
@@ -658,9 +710,10 @@ function make(c, opts){
       var band = new THREE.Mesh(new THREE.CylinderGeometry(cr, cr - 0.1, 0.8, 32, 1, true), gm); band.position.y = 0.6; crown.add(band);
       for(var ci = 0; ci < 8; ci++){ var ca = ci/8*PI*2, pt = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.2, 4), gm); pt.position.set(Math.cos(ca)*cr, 1.6, Math.sin(ca)*cr); crown.add(pt); }
     } else if(look.decor === "neon"){
-      var T = M.tiers[0], hw = T.w/2 + 0.1, hd = T.d/2 + 0.1, y0 = PLINTH, y1 = top;
+      var T = M.tiers[0], hw = T.w/2 + 0.1, hd = T.d/2 + 0.1, y0 = T.y0, y1 = T.y0 + T.h;
       [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function(q){ Kd.box("neon", 0.16, y1 - y0, 0.16, q[0]*hw, (y0 + y1)/2, T.z + q[1]*hd); });
       for(var nf = T.y0; nf < T.y0 + T.h; nf += FH*2){ Kd.box("neon", T.w + 0.3, 0.08, 0.08, 0, nf, T.z + hd); Kd.box("neon", T.w + 0.3, 0.08, 0.08, 0, nf, T.z - hd); }
+      M.tiers.slice(1).forEach(function(Tn){ [[-1, 1], [1, 1]].forEach(function(q){ Kd.box("neon", 0.14, Tn.h, 0.14, q[0]*(Tn.w/2 + 0.08), Tn.y0 + Tn.h/2, Tn.z + q[1]*(Tn.d/2 + 0.08)); }); });
       var ng = c.glow(dyn.mats.neon.color.getHex(), 9, 0.35); ng.position.set(0, M.heli.y + 1, 0); parent.add(ng); dyn.glows.push(ng);
     }
   }
@@ -697,9 +750,9 @@ function make(c, opts){
     var fp = footprint(B.grand, B.wings), T = fp[0];
     if(Math.abs(x - T[0]) < T[2] && Math.abs(z - T[1]) < T[3]) return true;                       // the tower
     for(var i = 2; i < fp.length; i++){ var Wb = fp[i]; if(Math.abs(x - Wb[0]) < Wb[2] && Math.abs(z - Wb[1]) < Wb[3]) return true; }
-    var fz = T[3] - 0.3 + 1.4;                                                                     // the planters either side of the steps
+    var fz = FRONT + 1.4;                                                                     // the planters either side of the steps
     if(Math.abs(Math.abs(x) - 3.5) < 0.95 && Math.abs(z - fz) < 0.95) return true;
-    if(dyn && (dyn.X.flags === "flags" || dyn.X.flags === "both") && Math.abs(Math.abs(x) - 4.2) < 0.3 && (Math.abs(z - (T[3] - 0.3 + 2.3)) < 0.3)) return true;
+    if(dyn && (dyn.X.flags === "flags" || dyn.X.flags === "both") && Math.abs(Math.abs(x) - 4.2) < 0.3 && (Math.abs(z - (FRONT + 2.3)) < 0.3)) return true;
     if(!opts.campus) return false;
     if(B.level >= 5 && Math.hypot(x, z - 10.4) < 2.8) return true;                               // the Base's fountain
     if(B.level >= 50 && Math.abs(x - 7.4) < 1.1 && Math.abs(z - 9.6) < 1.1) return true;
@@ -764,9 +817,9 @@ function preview(c, canvas, o){
     var M = B && B.M, top = B ? B.top() : 20;
     if(!M) return {full: {pitch: 0.22, dist: 60, ty: 10, tz: 0}};
     var span = Math.max(M.podium.w, M.podium.d), Rf = M.roof;
-    return {full: {pitch: 0.2, dist: Math.max(top*1.55, span*3.2) + 8, ty: top*0.45, tz: 0},
+    return {full: {pitch: 0.2, dist: Math.max(top*1.55, span*2.2) + 8, ty: top*0.45, tz: M.podium.z},
             roof: {pitch: 0.62, dist: Math.max(Rf.w, Rf.d)*2.4 + 16, ty: top + 1.5, tz: Rf.z || 0},
-            street: {pitch: 0.12, dist: span*1.9 + 10, ty: M.podium.h*0.55 + 0.6, tz: M.podium.d/2}};
+            street: {pitch: 0.12, dist: span*1.9 + 10, ty: M.podium.h*0.55 + 0.6, tz: M.front}};
   }
   function aim(snap){ var b = bounds(), g = b[part] || b.full; goal.pitch = g.pitch; goal.dist = g.dist; goal.ty = g.ty; goal.tz = g.tz; if(snap){ orb.pitch = g.pitch; orb.dist = g.dist; orb.ty = g.ty; orb.tz = g.tz; } dirty = true; }
   function lights(){
@@ -818,5 +871,5 @@ function preview(c, canvas, o){
   };
 }
 
-HQV.hqTower = {make: make, preview: preview, massing: massing, footprint: footprint, crownSlots: crownSlots, roofDeck: roofDeck, PAD_R: PAD_R, PAD_MIN: PAD_MIN, WALK: WALK, HELI_UP: HELI_UP, FH: FH, PODIUM_H: PODIUM_H, TINT: TINT, FONT: FONT};
+HQV.hqTower = {make: make, preview: preview, massing: massing, footprint: footprint, plan: plan, axis: axis, floorsOf: floorsOf, COMPOSE: COMPOSE, FRONT: FRONT, BASE_Y: BASE_Y, crownSlots: crownSlots, roofDeck: roofDeck, PAD_R: PAD_R, PAD_MIN: PAD_MIN, WALK: WALK, HELI_UP: HELI_UP, FH: FH, PODIUM_H: PODIUM_H, TINT: TINT, FONT: FONT};
 })();

@@ -81,12 +81,12 @@ const P = window.HQV.hqVehiclePhys, cat = JSON.parse(fs.readFileSync(path.join(R
 const m = cat.vehicles.find(v => v.id === 'bmw-m3-competition'), E = P.engineFor(m.spec, 'car', 'turbo6');
 const dt = 1/60, out = {limit: E.limit, k: E.k};
 function drive(G, v, inp, secs){ let o; for (let t = 0; t < secs; t += dt){ o = P.gearStep(G, Object.assign({speed: v}, inp), E, dt); } return o; }
-// automatic, flat out: up at the redline, never past the limiter
-{ const G = P.gearState(E); let v = 0, maxRpm = 0, ups = [];
-  let prev = 0;
-  for (let i = 0; i < 1800; i++){ const o = P.gearStep(G, {thr: 1, speed: v}, E, dt); v = Math.min(o.cap, v + 7*o.drive*dt);
-    maxRpm = Math.max(maxRpm, o.rpm); if (o.events.includes('up')) ups.push(Math.round(prev)); prev = o.rpm; }
-  out.auto = {gear: G.gear, maxRpm, ups}; }
+// automatic, flat out: up at the mode's up point (Sport short of the redline, Track at it), never past the limiter
+['sport', 'track'].forEach(mode => { const G = P.gearState(E); let v = 0, maxRpm = 0, ups = [];
+  for (let i = 0; i < 1800; i++){ const w = v*E.k[G.gear - 1], o = P.gearStep(G, {thr: 1, speed: v, mode}, E, dt); v = Math.min(o.cap, v + 7*o.drive*dt);
+    maxRpm = Math.max(maxRpm, o.rpm); if (o.events.includes('up')) ups.push(Math.round(w)); }
+  out[mode === 'sport' ? 'auto' : 'autoTrack'] = {gear: G.gear, maxRpm, ups}; });
+out.red = E.red;
 // manual: up, down (rev-matched), a refused over-rev, neutral, the gear's limiter is its top speed
 { const G = P.gearState(E); G.manual = true; G.gear = 3;
   const v3top = E.limit/E.k[2];
@@ -125,11 +125,12 @@ class Gearbox(unittest.TestCase):
             raise AssertionError(r.stderr[-3000:])
         cls.o = json.loads(r.stdout.strip().splitlines()[-1])
 
-    def test_automatic_shifts_at_the_redline_and_never_over_revs(self):
-        a = self.o["auto"]
+    def test_automatic_shifts_at_its_up_point_and_never_over_revs(self):
+        a, t, red = self.o["auto"], self.o["autoTrack"], self.o["red"]
         self.assertGreaterEqual(a["gear"], 6)
-        self.assertLessEqual(a["maxRpm"], self.o["limit"])
-        self.assertTrue(all(r > 6000 for r in a["ups"]), a["ups"])
+        self.assertLessEqual(max(a["maxRpm"], t["maxRpm"]), self.o["limit"])
+        self.assertTrue(all(red*0.78 < r < red*0.9 for r in a["ups"]), ("Sport: short of the redline", a["ups"]))
+        self.assertTrue(all(r > red*0.94 for r in t["ups"]), ("Track: at the redline", t["ups"]))
 
     def test_each_gear_tops_out_at_its_limiter(self):
         self.assertAlmostEqual(self.o["cap3"], self.o["limit"]/self.o["k"][2], places=6)
@@ -243,14 +244,23 @@ const out = {};
   const gears = L.map(x => x.g); out.brake = {first: gears[0], last: gears[gears.length - 1],
     monotonic: gears.every((g, i) => i === 0 || g <= gears[i - 1]),
     rpmMid: L.filter(x => x.v > 8).map(x => x.rpm).reduce((a, b) => Math.min(a, b), 1e9),
-    downs: L.filter(x => x.ev.includes('down')).length}; }
-{ const L = run(80/3.6, 8, () => ({thr: 1}), 0.4); out.kick = {gear: L[L.length - 1].g, first: L.findIndex(x => x.ev.includes('down'))}; }
+    downs: L.filter(x => x.ev.includes('down')).length, ups: L.filter(x => x.ev.includes('up')).length,
+    downAt: L.filter(x => x.ev.includes('down')).map(x => x.t), steps: L.every((x, i) => i === 0 || Math.abs(x.g - L[i - 1].g) <= 1)}; }
+{ const L = run(80/3.6, 8, () => ({thr: 1}), 1.2); out.kick = {gear: L[L.length - 1].g, first: L.findIndex(x => x.ev.includes('down')), steps: L.every((x, i) => Math.abs(x.g - (i ? L[i - 1].g : 8)) <= 1)}; }
 { const L = run(60/3.6, 2, () => ({thr: 0.25}), 4); out.cruise = {gear: L[L.length - 1].g, rpm: L[L.length - 1].rpm}; }
-{ const L = run(120/3.6, 3, () => ({thr: 0}), 4); out.coast = {gear: L[L.length - 1].g, rpm: L[L.length - 1].rpm}; }
+{ const L = run(120/3.6, 3, () => ({thr: 0}), 4); out.coast = {gear: L[L.length - 1].g, ups: L.filter(x => x.ev.includes('up')).length}; }
+// a long lift from 200 km/h in 6th to a crawl: down a gear (or two) at a time, spaced out, never up
+{ const L = run(200/3.6, 6, () => ({thr: 0}), 30).filter(x => x.v > 1.5);
+  out.lift = {ups: L.filter(x => x.ev.includes('up')).length, downAt: L.filter(x => x.ev.includes('down')).map(x => x.t), last: L[L.length - 1].g,
+    steps: L.every((x, i) => i === 0 || Math.abs(x.g - L[i - 1].g) <= 1)}; }
 // steady speed, steady throttle: settles and stays (no hunting)
 { const G = P.gearState(E); G.gear = 2; let shifts = 0;
   for (let t = 0; t < 12; t += dt){ const o = P.gearStep(G, {speed: 70/3.6, thr: 0.3}, E, dt); if (t > 2) shifts += o.events.filter(e => e === 'up' || e === 'down').length; }
   out.steady = shifts; }
+// flat out to its top speed (290 km/h): it tops out in 7th high in the revs, as the real car, in every mode
+out.topOut = ['comfort', 'sport', 'track'].map(mode => { const G = P.gearState(E), top = 290/3.6; let v = 0, o;
+  for (let t = 0; t < 90; t += dt){ o = P.gearStep(G, {speed: v, thr: 1, mode, top}, E, dt); v = Math.min(top, o.cap, v + 6*o.drive*Math.max(0.25, 1 - v/top)*dt); }
+  return [G.gear, Math.round(o.rpm), Math.round(v*3.6)]; });
 out.span = [E.idle, E.red, E.shiftUp];
 console.log(JSON.stringify(out));
 """
@@ -272,21 +282,37 @@ class AutomaticGearbox(unittest.TestCase):
         self.assertTrue(b["monotonic"], "down a gear at a time, never back up while braking")
         self.assertGreaterEqual(b["downs"], 4)
         self.assertGreater(b["rpmMid"], 1500, "kept in the pulling band while braking, not lugging at idle")
+        self.assertEqual(b["ups"], 0, "never up on the brakes")
+        self.assertLess(b["downAt"][0], 1.0, "the first downshift comes as the braking starts")
+        gaps = [y - x for x, y in zip(b["downAt"], b["downAt"][1:])]
+        self.assertTrue(all(g >= 0.29 for g in gaps), ("one at a time, not all together", gaps))
+        self.assertTrue(b["steps"], "never skips a gear")
 
-    def test_kickdown_skips_straight_down(self):
+    def test_kickdown_steps_down_quickly(self):
         k = self.o["kick"]
-        self.assertLessEqual(k["gear"], 4)
-        self.assertLess(k["first"], 15, "within a quarter of a second")
+        self.assertLessEqual(k["gear"], 4, "8th to 4th within 1.2 s")
+        self.assertLess(k["first"], 15, "starting within a quarter of a second")
+        self.assertTrue(k["steps"], "a gear at a time, never a jump")
 
     def test_part_throttle_cruises_in_a_tall_gear(self):
         c = self.o["cruise"]
         self.assertGreaterEqual(c["gear"], 4)
         self.assertLess(c["rpm"], 4200)
 
-    def test_coasting_relaxes(self):
-        c = self.o["coast"]
-        self.assertGreaterEqual(c["gear"], 6)
-        self.assertLess(c["rpm"], 2800)
+    def test_a_lift_holds_the_gear(self):
+        c, l = self.o["coast"], self.o["lift"]
+        self.assertEqual((c["gear"], c["ups"]), (3, 0), "off the throttle: no upshift")
+        self.assertEqual(l["ups"], 0)
+        self.assertLessEqual(l["last"], 2)
+        gaps = [y - x for x, y in zip(l["downAt"], l["downAt"][1:])]
+        self.assertTrue(all(g >= 0.49 for g in gaps), ("spaced out", gaps))
+        self.assertTrue(l["steps"], "never skips a gear")
+
+    def test_tops_out_in_the_right_gear(self):
+        red = self.o["span"][1]
+        for gear, rpm, kmh in self.o["topOut"]:
+            self.assertEqual((gear, kmh), (7, 290), self.o["topOut"])
+            self.assertGreater(rpm, red*0.8, "at top speed high in the revs, not in a tall cruising gear")
 
     def test_no_hunting(self):
         self.assertLessEqual(self.o["steady"], 1)
@@ -320,7 +346,7 @@ out.stopped = wsim(i => ({trick: true, brake: true, speed: 0, gear: 1}), 120);
 // drive modes: the automatic's choice at a light throttle, 70 km/h, in an M3
 { const cat = JSON.parse(fs.readFileSync(path.join(R0, 'games/vehicles/catalogue.json'), 'utf8')), m = cat.vehicles.find(x => x.id === 'bmw-m3-competition');
   const E = P.engineFor(m.spec, 'car', 'turbo6'), v = 70/3.6;
-  out.modes = ['comfort', 'sport', 'track'].map(md => { const g = P.autoGear(E, E.k, v, 0.4, false, md); return [md, g, Math.round(v*E.k[g - 1])]; }); }
+  out.modes = ['comfort', 'sport', 'track'].map(md => { let g = 1, n; while ((n = P.autoGear(E, E.k, v, 0.4, false, md, g)) !== g) g = n; return [md, g, Math.round(v*E.k[g - 1])]; }); }
 console.log(JSON.stringify(out));
 """
 
@@ -367,7 +393,7 @@ class InsaneVehicles(unittest.TestCase):
     def test_drive_modes(self):
         (c, gc, rc), (s, gs, rs), (t, gt, rt) = self.o["modes"]
         self.assertGreaterEqual(gc, gs); self.assertGreaterEqual(gs, gt)
-        self.assertLess(rc, rs); self.assertLess(rs, rt)
+        self.assertLessEqual(rc, rs); self.assertLessEqual(rs, rt); self.assertLess(rc, rt)
 
     def test_wiring(self):
         src = open(os.path.join(ROOT, "games", "hq3d.js")).read()

@@ -111,12 +111,11 @@ fn the_grid_in_the_city() {
         assert!(c["accent"] == true && c["paintIsRig"] == true && c["tail"] == true, "{id}: the livery's accent, the chosen paint, a rain light");
     }
 
-    // handling: grippier and quicker to stop than a hypercar, barely sliding, never rolling, capped at the city's 300 km/h
+    // handling: grippier and quicker to stop than a hypercar, barely sliding, never rolling, at its real 345 km/h
     let hy = &o["hyper"];
     for p in o["phys"].as_array().unwrap() {
         let id = p["id"].as_str().unwrap();
-        assert!(f(&p["top"]) <= 300.0 / 3.6 + 0.01, "{id}: top {}", p["top"]);
-        assert!(f(&p["top"]) > 300.0 / 3.6 - 0.5, "{id}: an F1 car reaches the cap");
+        assert!((f(&p["top"]) - 345.0 / 3.6).abs() < 0.5, "{id}: top {}", p["top"]);
         assert_eq!(p["eng"], "v6", "{id}");
         assert_eq!((p["type"].as_str(), p["drive"].as_str()), (Some("formula"), Some("rwd")), "{id}");
         assert!(f(&p["grip"]) >= 1.0 && f(&p["slip"]) <= 0.15 && f(&p["roll"]) == 0.0, "{id}: {p}");

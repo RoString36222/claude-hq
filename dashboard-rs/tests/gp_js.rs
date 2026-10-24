@@ -188,21 +188,20 @@ console.log(JSON.stringify([5, 20, 40, 60, 90].map(v => [v, C.steerScale(spec, v
 }
 
 #[test]
-fn the_city_derives_an_f1_car_under_its_cap() {
+fn the_city_derives_an_f1_car_at_its_real_top_speed() {
     let script = r#"
 const fs = require('fs'), path = require('path'), R0 = process.argv[1];
 globalThis.window = undefined;
 eval(fs.readFileSync(path.join(R0, 'games/hqvehiclephys.js'), 'utf8'));
 const Ph = globalThis.HQV.hqVehiclePhys, cat = JSON.parse(fs.readFileSync(path.join(R0, 'games/vehicles/catalogue.json'), 'utf8'));
-const out = cat.vehicles.filter(v => v.body === 'formula').map(v => { const d = Ph.derive({kind: 'car', type: 'formula', spec: v.spec, dims: v.dims, sound: v.sound}); return {id: v.id, top: d.top, acc: d.acc, eng: d.eng, roll: d.roll}; });
-console.log(JSON.stringify({out, cap: Ph.CAP_KMH.car}));
+const out = cat.vehicles.filter(v => v.body === 'formula').map(v => { const d = Ph.derive({kind: 'car', type: 'formula', spec: v.spec, dims: v.dims, sound: v.sound}); return {id: v.id, top: d.top, real: v.spec.topKmh/3.6, acc: d.acc, eng: d.eng, roll: d.roll}; });
+console.log(JSON.stringify({out}));
 "#;
     let Some(o) = node(script) else { return };
-    let cap = o["cap"].as_f64().unwrap() / 3.6;
     let out = o["out"].as_array().unwrap();
     assert_eq!(out.len(), 11);
     for v in out {
-        assert!(v["top"].as_f64().unwrap() <= cap + 1e-6 && v["acc"].as_f64().unwrap() > 0.0, "{v}");
+        assert!((v["top"].as_f64().unwrap() - v["real"].as_f64().unwrap()).abs() < 0.01 && v["acc"].as_f64().unwrap() > 0.0, "{v}");
         assert_eq!(v["eng"], "v6");
     }
 }

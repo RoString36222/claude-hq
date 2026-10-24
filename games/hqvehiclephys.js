@@ -19,8 +19,9 @@
  *   tyreCirc("190/55 ZR17") -> m       a tyre's rolling circumference (3% squat under load)
  *   gearState(E) -> G / gearStep(G, inp, E, dt) -> out   the gearbox and clutch, per frame (games/hq3d.js drives on it):
  *     inp = {thr 0..1, brake (S held), clutch (X held), up / down / toggle (a press this frame: . , G), speed (m/s,
- *     signed)}. G.manual: you shift (. up, , down, through neutral below 1st); else it shifts itself at the redline
- *     under power, half way up the revs when cruising, and down as the revs sag. A downshift is rev-matched (the
+ *     signed)}. G.manual: you shift (. up, , down, through neutral below 1st); else it shifts itself (autoGear: up
+ *     under power, early at a light throttle; never up off the throttle; down a gear at a time as the revs sag, sooner
+ *     on the brakes). A downshift is rev-matched (the
  *     revs jump to the lower gear's, a throttle blip), refused if it would over-rev; each gear tops out at its
  *     limiter (out.cap: you bounce off it, the speed held). The clutch in (or neutral, or mid-shift) frees the
  *     engine: W revs it to the limiter; let it out with the revs up at low speed and it launches with wheelspin.
@@ -34,13 +35,12 @@
  *          "adventure"|"cruiser"|"scooter"|"dirt"|"classic"|"hypersport"|"formula" ([3.17] an F1 car), spec: {cc, cyl, layout, aspiration, electric, powerKw,
  *          torqueNm, massKg, drive, topKmh, zeroTo100s, gears}, dims: {lengthM, widthM, heightM, wheelbaseM},
  *          sound (optional: a voice name that overrides voiceFor)}
- * Real figures go in; the game's caps (CAP_KMH) keep a hypercar inside a city.
+ * Real figures go in, real top speeds included (a Chiron Super Sport does its 440 km/h).
  */
 (function(){
 var HQV = (typeof window !== "undefined" ? window : globalThis).HQV = (typeof window !== "undefined" ? window : globalThis).HQV || {};
 
 var V100 = 100/3.6;                                   // m/s
-var CAP_KMH = {car: 300, bike: 280};                  // the game's top speed caps (the spec's)
 var FLOOR = 0.25, FLOOR_EV = 0.45;                    // pull left near the top: hq3d's 0.25; a motor keeps more
 var RIDER_KG = 75;                                    // a bike's figures are without its rider
 // A powerslide by drivetrain, as hq3d's: from `min` m/s, turning `turn` times as hard, the tail letting go
@@ -59,7 +59,7 @@ var LEAN = {naked: 0.42, sport: 0.5, adventure: 0.34, cruiser: 0.3, scooter: 0.3
 // body roll by type (rad at full lock and speed); hq3d's starter car has none
 var ROLL = {hatch: 0, sedan: 0.035, coupe: 0.025, hyper: 0.015, super: 0.018, suv: 0.075, pickup: 0.08, formula: 0};
 // [3.17] an F1 car (docs/plans/grand-prix-spec.md): downforce and slicks. It barely slides, launches on every bit of
-// its grip, stops in a car length and does not roll; still capped at the city's 300 km/h like every car.
+// its grip, stops in a car length and does not roll.
 var FORMULA = {grip: 1, slip: 0.12, brake: 19, slide: {min: 11, turn: 1.12, grip: 4.6, max: 0.16, bleed: 4.8}};
 var BRAKE = 14;                                       // m/s², hq3d's
 
@@ -168,35 +168,37 @@ function engineFor(spec, kind, voice, gears){
   return E;
 }
 
-// The automatic's choice: the gear for what the driver is doing. Flat out (thr > 0.85): the lowest gear below the shift
-// point (the most power: up at the redline, a kickdown skips straight down). Part throttle: the gear whose revs come
-// closest to a target that rises with the pedal. Braking: revs kept in the pulling band (a downshift at a time, ready
-// for the exit). Coasting: a relaxed band. A gear is a candidate only between 1.05 x idle and the shift point; with a
-// comfort margin (6% of the rev range) the current gear is kept rather than hunting.
-// Drive modes (Shift+G): how high the automatic holds the revs (want), where it shifts flat out (shift, of the shift
-// point), how fast a shift is (shiftT), and the exhaust (gain, pops: games/engine.js). Sport is the car as it comes.
+// The automatic's choice from gear g: a shift schedule, as a real automatic's. Up when the revs reach the up point
+// (Comfort early, Sport high, Track at the redline; at a light throttle much earlier, for a tall cruising gear); never
+// up off the throttle or on the brakes (a lift holds the gear, the engine braking). Down a gear when the revs sag
+// below the down point (on the brakes, as soon as the next gear fits under a ceiling, so they come through the stop
+// in turn), only if the lower gear lands well under the up point (no hunting). Never skips a gear either way: flat
+// out and lugging, a kickdown steps down a gear at a time, quickly, until it pulls. Drive modes (Shift+G): the up point flat out (up), the down points off the throttle (lift) and on
+// the brakes (brake), each a share of the rev range; how fast a shift is (shiftT); the exhaust (gain, pops:
+// games/engine.js). Sport is the car as it comes.
 var MODES = {
-  comfort: {label: "Comfort", want: 0.75, shift: 0.82, shiftT: 1.4, gain: 0.82, pops: 0.15},
-  sport:   {label: "Sport",   want: 1,    shift: 1,    shiftT: 1,   gain: 1,    pops: 1},
-  track:   {label: "Track",   want: 1.2,  shift: 1,    shiftT: 0.6, gain: 1.15, pops: 1.6}
+  comfort: {label: "Comfort", up: 0.55, lift: 0.2,  brake: 0.32, shiftT: 1.4, gain: 0.82, pops: 0.15},
+  sport:   {label: "Sport",   up: 0.82, lift: 0.28, brake: 0.45, shiftT: 1,   gain: 1,    pops: 1},
+  track:   {label: "Track",   up: 1,    lift: 0.36, brake: 0.55, shiftT: 0.6, gain: 1.15, pops: 1.6}
 };
 var MODE_ORDER = ["comfort", "sport", "track"];
 function modeOf(m){ return MODES[m] || MODES.sport; }
-function autoGear(E, K, v, thr, brake, mode){
-  var n = K.length, span = E.red - E.idle, best = 1, bd = Infinity, i, M = modeOf(mode), top = E.shiftUp*M.shift;
-  function rpm(g){ return v*K[g - 1]; }
-  if(thr > 0.85){
-    for(i = 1; i <= n; i++) if(rpm(i) <= top*0.995) return i;
-    return n;
-  }
-  var want = E.idle + span*Math.min(0.85, M.want*(thr > 0.05 ? 0.2 + 0.45*thr : brake ? 0.45 : 0.22));
-  var lo = E.idle*1.05, hi = E.shiftUp*(thr > 0.05 || brake ? 0.92 : 0.8);
-  for(i = 1; i <= n; i++){
-    var r = rpm(i); if(r > hi) continue;
-    var d = Math.abs(r - want) + (r < lo ? span : 0);
-    if(d < bd - 1e-9){ bd = d; best = i; }
-  }
-  return best;
+function shiftPoints(E, thr, brake, mode){
+  var M = modeOf(mode), span = E.red - E.idle, full = Math.min(E.shiftUp, E.idle + span*M.up);
+  if(brake) return {up: Infinity, down: E.idle + span*M.brake, ceil: E.idle + span*(M.brake + 0.3), full: full};
+  if(thr <= 0.05) return {up: Infinity, down: E.idle + span*M.lift, ceil: E.idle + span*(M.lift + 0.3), full: full};
+  return {up: Math.min(E.shiftUp, E.idle + span*(0.22 + (M.up - 0.22)*thr)), down: E.idle + span*(M.lift*(1 - thr) + 0.45*M.up*thr), full: full};
+}
+function autoGear(E, K, v, thr, brake, mode, g){
+  var n = K.length, S = shiftPoints(E, thr, brake, mode);
+  g = Math.max(1, Math.min(n, g || 1));
+  function rpm(i){ return v*K[i - 1]; }
+  if(g < n && rpm(g) >= S.up) return g + 1;
+  // slowing (braking, or the revs sagging off the throttle): the next gear down as soon as it fits under the ceiling
+  if(g > 1 && (brake || (thr <= 0.05 && rpm(g) < S.down))) return rpm(g - 1) <= S.ceil ? g - 1 : g;
+  // under power and lugging: the next gear down (flat out, a kickdown, a quick gear at a time until it pulls)
+  if(g > 1 && rpm(g) < S.down && rpm(g - 1) <= Math.min(S.up, S.full)*0.95) return g - 1;
+  return g;
 }
 /* Nitrous (K held): a 4 s charge that refills in about 16 s. N = {charge 0..1}; -> true while it fires. */
 function nitroStep(N, held, thr, speed, dt){
@@ -289,22 +291,18 @@ function gearStep(G, inp, E, dt){
   } else {
     if(g < 1) g = 1;
     G.since = (G.since || 0) + dt;
-    if(sp < 0 || v < 1.2){ if(g !== 1 && G.shiftT <= 0){ g = 1; G.since = 0; } }
+    if(sp < 0 || v < 1.2){ if(g > 1 && G.shiftT <= 0 && G.since >= 0.15){ g--; G.since = 0; } }   // stopped: down to 1st, a gear at a time
     else if(G.shiftT <= 0){
-      var M = modeOf(inp.mode), tg = autoGear(E, K, v, thr, !!inp.brake, inp.mode), cur = at(g);
-      if(tg !== g && thr <= 0.85 && cur < E.shiftUp*0.92 && cur > E.idle*1.05){
-        // keep this gear unless the other is clearly better (no hunting between two close gears)
-        var span = E.red - E.idle, want = E.idle + span*Math.min(0.85, M.want*(thr > 0.05 ? 0.2 + 0.45*thr : inp.brake ? 0.45 : 0.22));
-        if(Math.abs(at(tg) - want) > Math.abs(cur - want) - span*0.06) tg = g;
-      }
-      if(cur >= E.shiftUp*(thr > 0.85 ? M.shift : 1) && g < n){   // never sit on the limiter (Comfort shifts early): up now
-        tg = Math.max(tg, g + 1);
-      }
+      var M = modeOf(inp.mode), tg = autoGear(E, K, v, thr, !!inp.brake, inp.mode, g), cur = at(g);
+      // flat out it never goes past the gear it tops out in (its top speed under the shift point there): at top speed
+      // it sits high in the revs as the real car, not in a tall cruising gear
+      if(tg > g && thr > 0.85 && inp.top > 0 && inp.top*K[g - 1] < E.shiftUp) tg = g;
+      if(cur >= E.shiftUp && g < n) tg = g + 1;                   // never sit on the limiter, even off the throttle
       if(tg > g && (G.since >= 0.45 || cur >= E.shiftUp)){
         var aq = E.qs && thr > 0.4; g++; G.shiftT = aq ? 0.05 : 0.25*M.shiftT; G.since = 0; ev.push("up"); if(aq) ev.push("qs");
-      } else if(tg < g && (G.since >= (thr > 0.85 ? 0.12 : 0.3))){
-        // a kickdown drops straight to the gear it wants; otherwise one gear at a time, each rev-matched
-        var to = thr > 0.85 ? tg : g - 1;
+      } else if(tg < g && (G.since >= (thr > 0.85 ? 0.12 : inp.brake ? 0.3 : 0.5))){
+        // never skips a gear: one at a time, each rev-matched
+        var to = tg;
         g = to; G.shiftT = 0.18; G.since = 0; G.blipTo = at(g); ev.push("down");
       }
     }
@@ -353,10 +351,10 @@ function derive(entry){
   var type = entry.type || (kind === "bike" ? "naked" : "hatch"), electric = !!spec.electric;
   var drive = kind === "bike" ? "rwd" : (spec.drive === "fwd" || spec.drive === "awd" ? spec.drive : "rwd");
   var topU = num(spec.topKmh, kind === "bike" ? 150 : 170)/3.6;            // the real top speed
-  var top = Math.min(topU, CAP_KMH[kind]/3.6);
+  var top = topU;
   var floor = electric ? FLOOR_EV : FLOOR;
   var t = num(spec.zeroTo100s, 0) > 0 ? +spec.zeroTo100s : estimate0100(spec, kind);
-  // acc from the real 0-100 on the game's (capped) top speed; a car that cannot reach 100 km/h is timed to 85% of its
+  // acc from the real 0-100 on its top speed; a car that cannot reach 100 km/h is timed to 85% of its
   // top, scaled from its 0-100 (the starters)
   var acc;
   if(topU > V100*1.02) acc = accFor(top, t, floor);
@@ -386,7 +384,7 @@ function derive(entry){
 }
 
 HQV.hqVehiclePhys = {derive: derive, accFor: accFor, t0100: t0100, timeTo: timeTo, estimate0100: estimate0100,
-                     voiceFor: voiceFor, gearsFor: gearsFor, engineFor: engineFor, tyreCirc: tyreCirc, gearState: gearState, gearStep: gearStep, autoGear: autoGear, MODES: MODES, MODE_ORDER: MODE_ORDER,
-                     nitroStep: nitroStep, perfStep: perfStep, wheelieStep: wheelieStep, WHEELIE: {BAL: BAL, LOOP: LOOP, OVER: OVER, STOPPIE_V: STOPPIE_V}, REVS: REVS, CAP_KMH: CAP_KMH, SLIDE: SLIDE, LEAN: LEAN, ROLL: ROLL,
+                     voiceFor: voiceFor, gearsFor: gearsFor, engineFor: engineFor, tyreCirc: tyreCirc, gearState: gearState, gearStep: gearStep, autoGear: autoGear, shiftPoints: shiftPoints, MODES: MODES, MODE_ORDER: MODE_ORDER,
+                     nitroStep: nitroStep, perfStep: perfStep, wheelieStep: wheelieStep, WHEELIE: {BAL: BAL, LOOP: LOOP, OVER: OVER, STOPPIE_V: STOPPIE_V}, REVS: REVS, SLIDE: SLIDE, LEAN: LEAN, ROLL: ROLL,
                      FLOOR: FLOOR, FLOOR_EV: FLOOR_EV, FORMULA: FORMULA};
 })();

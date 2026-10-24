@@ -25,6 +25,7 @@
  *   driverStats() / recordFare(r)     -> {score, fares, rating (average stars, 0 with none)}  localStorage, guarded
  *   etaSay(prev, eta)                 -> true when an ETA announcement is due (each 30 s mark, and at 1 min)
  *   seatOf(cls) / seatWorld(pose, seat) the rear right seat (pillion on a bike) in the vehicle's frame / in the world
+ *   revs(v, electric)                 -> the cab engine's revs at v m/s (engineSound's 900..7600); voices: by class
  * Controller (THREE optional: with no c.THREE it runs headless, for the tests and a hidden tab):
  *   mount(c, w, deps) -> {request(dest, cls, ms) -> handle, cancel(), state(), quote(dest, cls), classes(), use(),
  *          driver: {on(bool) -> {ok, text}, offers(), accept(id) -> bool, state(), bump()}, carry(ms), camPose(ms, look),
@@ -32,11 +33,16 @@
  *     w = {W (the packed world, or a function returning it), me() -> {x, y, z, yaw, speed, driving: bool, street: bool,
  *          kerbHits}, ground(x, z), group (the Object3D the cabs hang from; default c.scene), seed, now()}
  *     deps = {call (HQV.hqCall), route(from, to) -> {pts, len} (default hqnav), snap(x, z) -> {x, z, ux, uz, half}
- *          (default hqnav), announce, toast, sfx(name), calm(), models (HQV.hqVehicleModels), catalogue (cat or fn),
- *          heli (the hqHeliCall controller), water ({taxi(fromPier, toPier)}), showRoute(pts | null, label),
- *          fade(ms), tickets (HQV.hqRide.tickets), achievements (HQV.hqRide.achievements), seatCam (HQV.hqRide.seatCam)}
+ *          (default hqnav), announce, toast, sfx(name, {pos, kind}), calm(), models (HQV.hqVehicleModels),
+ *          catalogue (cat or fn), heli (the hqHeliCall controller), water ({taxi(fromPier, toPier)}),
+ *          showRoute(pts | null, label), fade(ms), tickets (HQV.hqRide.tickets), achievements (HQV.hqRide.achievements),
+ *          seatCam (HQV.hqRide.seatCam)}
  *     handle = {state() -> {phase: "matching"|"coming"|"here"|"riding"|"done"|"cancelled", eta, metres, driver, cls,
  *          dest, canSkip, skipping, exit}, cancel(), board() (E), skip(), rate(stars), driver}
+ * Sounds (Sound PR B), each where it is: the cab's engine (a pool of one, kind vehicle: its model's voice and revs from
+ * its speed, while it comes, waits, drives you and lets you out), its indicator as it pulls up (vehicle) and its door
+ * chime as you get in and out (door); in driver mode your passenger's door chime is your own car's (own). The match
+ * chime is the phone's (UI, centred).
  * Drawing: every cab is one instance of a stand-in body scaled to its catalogue model's size (hqVehicleModels.dims),
  * in its seeded paint, a terracotta band and door decals (one vertex-coloured livery mesh) and a lit CLAUDE CABS roof
  * sign (a canvas texture): paint + livery + sign + figures (drivers, passengers) + the pickup beacon = at most 5 draw
@@ -86,6 +92,10 @@ var FIRST = ["Amara", "Bastian", "Calla", "Devraj", "Elif", "Farah", "Gideon", "
              "Xochitl", "Yusuf", "Zinnia", "Anselm", "Bryony", "Cosmin", "Delphine", "Emeka", "Fenna", "Ghassan", "Ilse"];
 var LAST = "ABCDEFGHJKLMNOPRSTVWZ";
 var PLATE = "ABCDEFGHJKLMNPRSTUVWXYZ";
+// the cab's engine (Sound PR B): its model's voice (hqVehiclePhys.voiceFor on its catalogue spec), else the class's;
+// an automatic changing up through gears that start at CAB_GEARS m/s (a calm driver's early shifts)
+var CAB_VOICE = {bike: "single", go: "turbo", cab: "turbo", xl: "turbo6", lux: "electric"};
+var CAB_GEARS = [0, 4.5, 8.5, 13, 18, 24];
 
 /* ---------- small helpers ---------- */
 function hash32(str){
@@ -320,6 +330,15 @@ function seatWorld(pose, seat){
   var yaw = num(pose.yaw, 0), fx = Math.sin(yaw), fz = Math.cos(yaw), lx = Math.cos(yaw), lz = -Math.sin(yaw);
   return {x: num(pose.x, 0) + fx*seat.z + lx*seat.x, y: num(pose.y, 0) + seat.y, z: num(pose.z, 0) + fz*seat.z + lz*seat.x, yaw: yaw};
 }
+// the cab's revs at v m/s, on games/engine.js engineSound's game scale (900 idle .. 7600): pulling away in first from
+// idle, each higher gear from about 1,700 to 3,500 as it gathers speed; an electric motor's with the speed in one gear
+function revs(v, electric){
+  v = Math.abs(num(v, 0));
+  if(electric) return 900 + 6600*clamp(v/40, 0, 1);
+  for(var g = 1; g < CAB_GEARS.length - 1 && v >= CAB_GEARS[g]; g++){}
+  var lo = CAB_GEARS[g - 1], hi = CAB_GEARS[g];
+  return g === 1 ? 900 + 2600*clamp(v/hi, 0, 1) : 1700 + 1800*clamp((v - lo)/(hi - lo), 0, 1);
+}
 
 /* ---------- the controller ---------- */
 function mount(c, w, deps){
@@ -333,7 +352,34 @@ function mount(c, w, deps){
   function calm(){ try { return !!(deps.calm && deps.calm()); } catch(e){ return false; } }
   function say(t){ try { if(deps.announce) deps.announce(t); } catch(e){} }
   function toast(t){ try { if(deps.toast) deps.toast(t); } catch(e){} }
-  function sfx(n){ try { if(deps.sfx) deps.sfx(n); } catch(e){} }
+  // o: {pos, kind} puts a sound where it is (games/engine.js's spatial voices through hqRide.sfx); none: centred (UI)
+  function sfx(n, o){ try { if(deps.sfx) deps.sfx(n, o); } catch(e){} }
+  function cabAt(J, up){ var R = J && J.R; return R ? {x: num(R.x, 0), y: ground(num(R.x, 0), num(R.z, 0)) + (up != null ? up : 1), z: num(R.z, 0)} : null; }
+  function meAt(){ var m = me(), x = num(m.x, 0), z = num(m.z, 0); return {x: x, y: num(m.y, ground(x, z)) + 1, z: z}; }
+  // the cab's engine: a pool of one (HQV.engine.pool, kind vehicle) sounding it while it comes, waits, drives you and
+  // lets you out, its revs from its speed; nothing when it is beyond earshot, no listener or the sound is off
+  var engP = null;
+  function voiceOf(J){
+    var VP = HQV.hqVehiclePhys, L = catVehicles(deps.catalogue), e = null;
+    for(var i = 0; i < L.length && !e; i++) if(L[i] && L[i].id === J.driver.modelId) e = L[i];
+    if(e && e.spec && VP && typeof VP.voiceFor === "function"){ try { var v = VP.voiceFor(e.spec, J.cls.id === "bike" ? "bike" : "car"); if(v) return v; } catch(x){} }
+    return CAB_VOICE[J.cls.id] || "turbo";
+  }
+  function engineStep(J, dt){
+    var E = HQV.engine;
+    if(!engP && E && typeof E.pool === "function" && typeof E.engineSound === "function")
+      engP = E.pool("vehicle", {voices: 1, idle: 2, key: function(s){ return s.voice; },
+        make: function(s){ return E.engineSound(s.voice); },
+        play: function(h, s){ h.set(s.rpm, {thr: s.thr, speed: s.v, pos: s, sk: "vehicle"}); }});
+    if(!engP) return;
+    var L = [];
+    if(J && !J.delegated && J.R && (J.phase === "coming" || J.phase === "here" || J.phase === "riding" || J.phase === "done")){
+      var v = Math.abs(num(J.R.v, 0)), acc = dt > 0 && J.vWas != null ? (v - J.vWas)/dt : 0, voice = J.voice || (J.voice = voiceOf(J)), at = cabAt(J, 0.6);
+      J.vWas = v;
+      L.push({id: "cab:" + J.key, voice: voice, x: at.x, y: at.y, z: at.z, v: v, rpm: revs(v, voice === "electric"), thr: v < 0.3 ? 0.1 : clamp(0.3 + acc*0.25, 0, 1)});
+    }
+    engP.update(L);
+  }
   function show(pts, label){ try { if(deps.showRoute) deps.showRoute(pts, label); } catch(e){} }
   function seed(){ return seedOf(W(), w.seed); }
   function clock(ms){ if(ms != null && isFinite(ms)) return +ms; if(nowMs) return nowMs; try { return w.now ? +w.now() : Date.now(); } catch(e){ return 0; } }
@@ -459,10 +505,11 @@ function mount(c, w, deps){
     if(!J || J.phase !== "here" || !J.R) return false;
     var m = me();
     if(dist(m, {x: J.R.x, z: J.R.z}) > BOARD_R + 1.5) return false;
+    var door = cabAt(J);                                                   // its door, at the kerb you get in at
     var RR = routeFor({x: J.R.x, z: J.R.z}, J.dest), spot = kerbFor(RR.pts, J.dest.x, J.dest.z), A = runAlong(RR.pts, spot);
     J.R = A.R; J.path = A.path; J.phase = "riding"; J.rideAt = clock(); J.from = {x: m.x, z: m.z};
     show(A.path, J.dest.name);
-    sfx("door-chime");
+    sfx("door-chime", {pos: door, kind: "door"});
     say("Riding to " + J.dest.name + ". About " + etaText(J.R.len/STREET_V) + "." + (J.R.len > SKIP_OVER ? " You can skip ahead in the phone." : ""));
     return true;
   }
@@ -495,7 +542,7 @@ function mount(c, w, deps){
     var R = J.R, yaw = num(R.yaw, 0);
     J.exit = {x: R.x - Math.cos(yaw)*1.8, z: R.z + Math.sin(yaw)*1.8, yaw: yaw};   // out on the kerb side (the right)
     show(null);
-    sfx("door-chime");
+    sfx("door-chime", {pos: cabAt(J), kind: "door"});
     say("You've arrived at " + J.dest.name + ". Thanks for riding Claude Cabs.");
     try {
       var Tk = tickets();
@@ -518,7 +565,7 @@ function mount(c, w, deps){
       var e = etaOf(J.R);
       if(etaSay(J.lastEta, e)) say("Your Claude Cab is " + etaText(e) + " away.");
       J.lastEta = e;
-      if(J.R.done){ J.phase = "here"; J.hereAt = ms; sfx("indicator"); say("Your Claude Cab is here: " + J.driver.model + ", plate " + J.driver.plate + ". Press E to get in."); }
+      if(J.R.done){ J.phase = "here"; J.hereAt = ms; sfx("indicator", {pos: cabAt(J, 0.8), kind: "vehicle"}); say("Your Claude Cab is here: " + J.driver.model + ", plate " + J.driver.plate + ". Press E to get in."); }
     } else if(J.phase === "riding"){
       CALL.step(J.R, dt*(J.skipping ? SKIP_K : 1), Infinity);
       if(J.skipping && J.R.len - J.R.s < 120) J.skipping = false;
@@ -561,7 +608,7 @@ function mount(c, w, deps){
     var m = me(), v = Math.abs(num(m.speed, 0)), o = D.offer;
     if(drv.phase === "pickup"){
       if(!m.driving){ return; }
-      if(dist(m, o.pickup) <= STOP_R && v < STOP_V){ drv.phase = "boarding"; D.t = ms; say("Your passenger is getting in."); sfx("door-chime"); }
+      if(dist(m, o.pickup) <= STOP_R && v < STOP_V){ drv.phase = "boarding"; D.t = ms; say("Your passenger is getting in."); sfx("door-chime", {pos: meAt(), kind: "own"}); }
     } else if(drv.phase === "boarding"){
       if(ms - D.t >= BOARD_MS){
         drv.phase = "trip"; D.t0 = ms; D.kerb0 = num(m.kerbHits, 0);
@@ -574,7 +621,7 @@ function mount(c, w, deps){
       var L = D.log.samples, t = (ms - D.t0)/1000;
       if(!L.length || t - L[L.length - 1].t >= 0.25) L.push({t: t, v: v, street: m.street !== false});
       D.log.kerb = Math.max(0, num(m.kerbHits, 0) - D.kerb0) + drv.kerb;
-      if(dist(m, o.drop) <= DROP_R && v < STOP_V){ drv.phase = "alighting"; D.t = ms; sfx("door-chime"); }
+      if(dist(m, o.drop) <= DROP_R && v < STOP_V){ drv.phase = "alighting"; D.t = ms; sfx("door-chime", {pos: meAt(), kind: "own"}); }
     } else if(drv.phase === "alighting"){
       if(ms - D.t >= ALIGHT_MS){
         var secs = (D.t - D.t0)/1000, res = scoreTrip({samples: D.log.samples, kerb: D.log.kerb, metres: o.metres, secs: secs, expect: D.expect});
@@ -655,7 +702,7 @@ function mount(c, w, deps){
     driverRig: function(){ return view ? view.rig() : null; },
     update: function(ms, dt){
       nowMs = num(ms, nowMs); dt = clamp(num(dt, 0), 0, 0.25);
-      stepRider(nowMs, dt); stepDriver(nowMs);
+      stepRider(nowMs, dt); stepDriver(nowMs); engineStep(job, dt);
       if(view) view.update(nowMs, dt, cabsToDraw(nowMs), figuresToDraw(nowMs), beaconAt());
     },
     drawCalls: function(){ return view ? view.drawCalls() : 0; },
@@ -676,7 +723,7 @@ function mount(c, w, deps){
         return {pos: {x: num(m.x, b.x) + (num(m.x, b.x) - b.x)*0.3, y: by + 6, z: num(m.z, b.z) + (num(m.z, b.z) - b.z)*0.3 - 8}, look: {x: b.x, y: by + 2, z: b.z}, fov: 55}; }
       return null;
     }},
-    dispose: function(){ if(view) view.dispose(); view = null; job = null; drv.on = false; drv.job = null; }
+    dispose: function(){ if(engP){ engP.stop(); engP = null; } if(view) view.dispose(); view = null; job = null; drv.on = false; drv.job = null; }
   };
   return api;
 }
@@ -812,7 +859,7 @@ function makeView(c, w, deps, calmF){
 
 HQV.hqCabs = {classes: classes, classOf: classOf, quote: quote, driverFor: driverFor, requests: requests, rateDrive: rateDrive,
               scoreTrip: scoreTrip, driverStats: driverStats, recordFare: recordFare, etaSay: etaSay, etaText: etaText,
-              seatOf: seatOf, seatWorld: seatWorld, roadEdges: roadEdges, mount: mount, hash32: hash32,
+              seatOf: seatOf, seatWorld: seatWorld, roadEdges: roadEdges, mount: mount, hash32: hash32, revs: revs, voices: CAB_VOICE,
               consts: {STREET_V: STREET_V, SLOT_MS: SLOT_MS, OFFER_MS: OFFER_MS, NEAR_R: NEAR_R, DROP_MIN: DROP_MIN, DROP_MAX: DROP_MAX,
                        SKIP_OVER: SKIP_OVER, SKIP_K: SKIP_K, STOP_R: STOP_R, STOP_V: STOP_V, HARSH: HARSH, SPEED_LIMIT: SPEED_LIMIT,
                        MATCH_MIN: MATCH_MIN, MATCH_SPAN: MATCH_SPAN, STATS_KEY: STATS_KEY}};

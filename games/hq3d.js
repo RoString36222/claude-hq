@@ -209,7 +209,8 @@ function peerSound(u, P, V, EN){
 // [sound] The pools those sources play through (E: games/engine.js; null without pools): only the nearest few of a
 // kind sound at once, each an engineSound made once and reused (its voice, exhaust and real engine are in the key).
 // "peer": cars, motorbikes and tanks, the kind's 3 within 150 m; "heli" and "plane": the nearest one each, within 1.5
-// and 2.5 km. -> {update(sources): the playing ids by kind, stop()}
+// and 2.5 km (a plane as the "peerplane" kind: someone's plane is not ambience, so Ambient sounds at 0%, which silences
+// the City's own aircraft, never mutes a person). -> {update(sources): the playing ids by kind, stop()}
 function peerPools(E){
   if(!E || typeof E.pool !== "function" || typeof E.engineSound !== "function") return null;
   function mk(kind, n){
@@ -217,7 +218,7 @@ function peerPools(E){
       make: function(s){ return E.engineSound(s.voice, s.ex, s.real || undefined); },
       play: function(h, s){ h.set(s.rpm, {thr: s.thr, speed: s.speed, pos: s, sk: kind}); }});
   }
-  var P = {peer: mk("peer"), heli: mk("heli", 1), plane: mk("plane", 1)};
+  var P = {peer: mk("peer"), heli: mk("heli", 1), plane: mk("peerplane", 1)};
   return {
     update: function(list){
       var by = {peer: [], heli: [], plane: []};
@@ -2681,7 +2682,7 @@ function mount(el, api){
     var c = e.code, down = e.type === "keydown";
     if(c === "KeyK"){ e.preventDefault(); GIN.nitro = down; return true; }                       // nitrous, held
     if(c === "KeyF" && ride.base === "moto"){ e.preventDefault(); GIN.trick = down; return true; }   // wheelie / stoppie, held
-    if(c === "KeyH"){ e.preventDefault(); if(down && !e.repeat){ E.sfx("horn", {bike: ride.base !== "car"}); hornN = hornN % 15 + 1; } return true; }   // (hornN: others hear it, inst.hornNet)
+    if(c === "KeyH"){ e.preventDefault(); if(down && !e.repeat) E.sfx("horn", {bike: ride.base !== "car"}); return true; }
     if(c !== "Period" && c !== "Comma" && c !== "KeyG") return false;
     e.preventDefault(); e.stopPropagation();
     if(down && !e.repeat){
@@ -3915,6 +3916,14 @@ function mount(el, api){
   }
   // The camera that draws and picks: the perspective one in every rig mode but Classic.
   function curCam(){ return rigOn() && rig.mode !== "classic" && pcam ? pcam : cam; }
+  // [sound] where that camera hears from (E.listener's at, with its facing): Classic from what it looks at, the Map from
+  // the ground at its centre (its camera is hundreds of metres up, past every world sound's reach), the rest from the
+  // camera itself (null)
+  function earAt(c){
+    if(c === cam) return view.target;
+    if(c && c.position && rigOn() && rig.mode === "map"){ var x = c.position.x, z = c.position.z; return {x: x, y: groundAt(x, z) + 1.6, z: z}; }
+    return null;
+  }
   function groundAt(x, z){ return cur && cur.camModes && cur.groundY ? cur.groundY(x, z) : 0; }
   // grade (dy/ds) along yaw over +-len m: world.js slopeAlong, on the world's own ground (roads, pads)
   function slopeAlong(x, z, yaw, len){ var sx = Math.sin(yaw)*len, sz = Math.cos(yaw)*len; return (groundAt(x + sx, z + sz) - groundAt(x - sx, z - sz))/(2*len); }
@@ -5352,7 +5361,7 @@ function mount(el, api){
     studioFrame();
     var ease = 1 - Math.exp(-dt*(ride ? 4 + Math.min(6, Math.abs(ride.speed)*0.3) : 4)); view.target.lerp(view.goal, ease);
     resize(); placeCam();
-    if(E.listener) E.listener(curCam(), curCam() === cam ? view.target : null);   // [sound] the ears: this frame's camera (Classic hears from what it looks at)
+    if(E.listener) E.listener(curCam(), earAt(curCam()));             // [sound] the ears: this frame's camera (earAt)
     if(avatar && avatar.ch){
       var skp = ride && ride.kind === "skate" && ride.sk ? ride.sk.pose : null;
       if(skp || avatar.ch._po) poseUndo(avatar.ch);
@@ -5561,10 +5570,6 @@ function mount(el, api){
       // a catalogue vehicle (`v`, only while driving): the real car or bike, in its paint; unknown here: the starter
       P.v = typeof p.v === "string" && VEHICLES[p.v] && VEHICLES[p.v].cat ? p.v : null; P.vp = Math.max(0, p.vp | 0);
       P.vt = typeof p.vt === "string" && /^[0-9][0-9A-Za-z_-]{9,32}$/.test(p.vt) ? p.vt : null;   // [3.13] its tune (the "tuning" capability)
-      // [sound] their horn (`hn`: 1..15 while they drive, one more each time they sound it): heard where they are (peerSounds)
-      var hn = (p.hn | 0) >= 1 && (p.hn | 0) <= 15 ? p.hn | 0 : 0;
-      if(hn && P.hn && hn !== P.hn) P.honk = nowS;
-      P.hn = hn;
       // their boombox (`bb`, the "boombox" capability): the song it plays, while it plays
       P.bb = typeof p.bb === "string" && /^[A-Za-z0-9_-]{11}$/.test(p.bb) ? p.bb : null;
       P.pt = Array.isArray(p.pt) && p.pt.length ? p.pt.slice(0, 2) : null;   // [pets 3.14] their pets (`pt`): drawn by games/hqpets.js
@@ -5745,19 +5750,18 @@ function mount(el, api){
   }
   /* ---------- [sound] other players' vehicles (Sound PR B) ----------
      Each frame after placePeers: every engine where it is drawn (HQV.hq3dPure.peerSound), the nearest few of a kind
-     playing (peerPools); their horn where they sound it. The engines need nothing new on the wire (presence carries
-     what they ride, where, and their revs); a horn travels as a count (`hn`, inst.hornNet). */
+     playing (peerPools). Nothing new on the wire: presence carries what they ride, where, and their revs. (Their horn
+     is not heard here: presence does not carry it.) */
   var PSND = null;
   function peerSounds(){
     if(!PSND) PSND = HQV.hq3dPure.peerPools(E);                       // (null: an engine without pools)
     if(!PSND || !cur) return;
     var list = [];
     Object.keys(peers).forEach(function(u){
-      var P = peers[u], honk = P.honk && E.now() - P.honk < 0.5; P.honk = 0;   // (a honk while you were away is not saved up)
+      var P = peers[u];
       if(!P.bike || !P.vk || P.g.parent !== cur.scene) return;           // on a vehicle, on this floor
       var V = VEHICLES[P.vk], EN = V && V.motor && V.gears ? engineOf(V, baseKind(P.vk)) : null, s = HQV.hq3dPure.peerSound(u, P, V, EN);
       if(s) list.push(s);
-      if(honk && V && V.motor && E.sfxAt) E.sfxAt("horn", {x: P.x, y: (+P.hy || 0) + 1, z: P.z}, {kind: "peer", bike: baseKind(P.vk) !== "car"});
     });
     PSND.update(list);
   }
@@ -5789,10 +5793,6 @@ function mount(el, api){
     var Tn = HQV.hqTuning, k = ride && (ride.base === "car" || ride.base === "moto") ? (ride.base === "moto" ? "bike" : "car") : null;
     return k && ride.tune && Tn && !Tn.isStock(ride.tune, k) ? Tn.encode(ride.tune, k) : null;
   };
-  // [sound] your horn for presence (`hn`): 1..15 while you drive a car, motorbike or tank, one more each time you sound
-  // it (H, gearKey), so the others hear it where you are (their peerSounds); 0 otherwise. A count, nothing else.
-  var hornN = 1;
-  inst.hornNet = function(){ return drvGround() && ride.V && ride.V.motor ? hornN : 0; };
   // read-only, for the HUD's tests and tools: what you are driving and how
   inst.drive = function(){ return ride ? {kind: ride.kind, speed: ride.speed, slip: ride.slip, drift: !!ride.drift, gear: ride.gear, rpm: Math.round(ride.rpm)} : null; };
 
@@ -6058,8 +6058,9 @@ function mount(el, api){
   }
   inst.setFilter = function(p){ filter = p || null; if(scene) applyFilter(); };
   inst.pause = function(){ inst.running = false; keys = {}; exitLock(); if(raf){ cancelAnimationFrame(raf); raf = 0; }
-    if(E.listener) E.listener(null);                                  // [sound] no view, no ears: nothing is placed
+    if(E.listener) E.listener(null);                                  // [sound] no view, no ears: nothing is placed, every pool's voices go
     peerSoundsOff();                                                  // (theirs too: the next frame starts them again)
+    if(cur && cur.soundPause){ try { cur.soundPause(); } catch(e){} } // the floor's own voices (the City's: rebuilt with its next frame)
     if(ride && ride.eng){ ride.eng.stop(); ride.eng = null; } };     // (the engine starts again with the next frame you drive)
   inst.resume = function(){
     if(!inst.alive || inst.running || !scene) { if(!scene) inst.wantRun = true; return; }

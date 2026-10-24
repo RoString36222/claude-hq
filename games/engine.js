@@ -114,7 +114,7 @@ function bracket(sn, rt){
 /* ---------- sound (HQ 2.1 sound pack): every sound is synthesised, no files ---------- */
 // One volume for every game and the HQ: localStorage hq_sfx (0..1). Off by default under Calm
 // mode or reduced motion (until you set a volume yourself). Audio starts after your first click.
-var SND = {ctx: null, master: null, amb: null};
+var SND = {ctx: null, master: null, amb: null, woke: -Infinity};
 function sfxVolume(){
   var v = null; try { v = localStorage.getItem("hq_sfx"); } catch(e){}
   if(v === null || v === "") return calm() ? 0 : 0.5;
@@ -136,8 +136,13 @@ function ambientSetVolume(v){
 }
 function ambientOn(){ return ambientVolume() > 0; }
 function ambientSet(on){ ambientSetVolume(on ? 1 : 0); }
-function audio(){
-  if(SND.ctx) { if(SND.ctx.state === "suspended") SND.ctx.resume().catch(function(){}); return SND.ctx; }
+// The shared context. A suspended one is woken at most once a second: loops, pools and one-shots reach this every
+// frame, and before your first click Chrome refuses each try and logs it. force (a gesture's, below): always.
+function audio(force){
+  if(SND.ctx){
+    if(SND.ctx.state === "suspended" && (force || now() - SND.woke >= 1)){ SND.woke = now(); try { SND.ctx.resume().catch(function(){}); } catch(e){} }
+    return SND.ctx;
+  }
   var C = window.AudioContext || window.webkitAudioContext; if(!C) return null;
   try { SND.ctx = new C(); SND.master = SND.ctx.createGain(); SND.master.gain.value = sfxVolume(); SND.master.connect(SND.ctx.destination); } catch(e){ return null; }
   try { SND.amb = SND.ctx.createGain(); SND.amb.gain.value = ambientVolume(); SND.amb.connect(SND.master); } catch(e){ SND.amb = null; }
@@ -551,8 +556,10 @@ function bandLoop(freq, q, sk, ambient){
  * set once a frame by whatever renders the view (hq3d.js frame(), each 3D game's own loop):
  *   listener(cam, at)  cam: a THREE camera (its matrixWorld: position, right = column 0, forward = -column 2), or
  *                      {x, y, z, yaw} (yaw 0 faces +z, right = (-cos yaw, sin yaw)), or null for no listener: then
- *                      every positional call plays centred at its raw level (2D games, tests). at: optional {x, y, z}
- *                      to hear from there with the camera's facing (a top-down view hears from what it looks at)
+ *                      every positional call plays centred at its raw level (2D games, tests) and every pool lets its
+ *                      voices go at once (a paused view, a hidden tab: their engines would run on, silent), to make
+ *                      them again under the next listener. at: optional {x, y, z} to hear from there with the camera's
+ *                      facing (a top-down view hears from what it looks at)
  *   listenerAt()       a copy {x, y, z, rx, rz, fx, fz} (right and forward on the ground, unit), or null
  * Kinds (spatial.KINDS, tuned in this one table): ref (m: full volume within), max (m: silent at and past it),
  * roll (how fast it fades between), voices (how many of the kind sound at once), bus ("engine": the engines'
@@ -569,8 +576,10 @@ function bandLoop(freq, q, sk, ambient){
  *   hear(kind, pos, opt)        -> {g, pan, d} | null (past max): what a source there gets now. opt: {gain, curve}
  *   spatialOut(kind, pos, opt)  -> {ctx, out, d, delay, move(pos, gain), end(sec)} | null: a voice for a module that
  *                                  makes its own sound: connect into out, start at ctx.currentTime + delay. null at
- *                                  volume 0 (or ambient 0 for an ambient kind), past max, or when the kind's one-shot
- *                                  limit keeps nearer ones. opt: gain (level, default 1), curve (false: gain is the
+ *                                  volume 0 (or ambient 0 for an ambient kind), past max, while the context is not
+ *                                  running (before your first click: a held voice too, so nothing queues up at its
+ *                                  frozen clock to sound all at once), or when the kind's one-shot limit keeps nearer
+ *                                  ones. opt: gain (level, default 1), curve (false: gain is the
  *                                  whole level, pan only), delay (true: d/343 s, false: none, a number: s; default the
  *                                  kind's sos), dur (s it sounds, default 2), key (a repeat from the same key replaces
  *                                  the last one), hold (true: a held voice, no limit, lives until end())
@@ -582,17 +591,20 @@ function bandLoop(freq, q, sk, ambient){
  *                                  set() and stopped soon after (it can never leak); the next set() starts it again
  *   pool(kind, o) -> {update(sources), stop()}: the nearest o.voices (default the kind's) of sources [{id, x, y, z}]
  *                                  within max play; a playing one keeps its voice unless another is 15% nearer, ties
- *                                  by id. o.make(src) -> a handle (made once, reused: same id, else same o.key(src),
- *                                  default src.kind); o.play(handle, src, hear(kind, src)) each update; a dropped
- *                                  handle falls silent by its own dead man's switch and is stopped after o.idle s
- *                                  (default 2). No listener or volume 0: nothing plays.
+ *                                  by id. The kind's voices are shared by every pool of it (the City's traffic and
+ *                                  the cab coming to you, each rail line's trains): the nearest of all their sources
+ *                                  win, each pool's own o.voices at most (share, below). o.make(src) -> a handle
+ *                                  (made once, reused: same id, else same o.key(src), default src.kind);
+ *                                  o.play(handle, src, hear(kind, src)) each update; a dropped handle falls silent by
+ *                                  its own dead man's switch and is stopped after o.idle s (default 2). No listener,
+ *                                  volume 0 or (an ambient kind) Ambient sounds at 0%: nothing plays.
  * One-shot limit per kind: under it a one-shot plays; at it, only if nearer than the farthest live one, which fades
  * out in 50 ms. Test seam: spatial.{KINDS, falloff, panOf, pick, hear, state()}; the pure ones need no AudioContext.
  */
 var KINDS = {
   own:          {ref: 6,   max: Infinity, roll: 0, voices: 0, bus: "master", pan: 0.25},   // your vehicle, your avatar
   vehicle:      {ref: 5,   max: 120,  roll: 1,   voices: 6, bus: "engine"},                // NPC cars, the cab coming to you
-  peer:         {ref: 5,   max: 150,  roll: 1,   voices: 3, bus: "engine"},                // other players' vehicles, horns
+  peer:         {ref: 5,   max: 150,  roll: 1,   voices: 3, bus: "engine"},                // other players' vehicles
   bus:          {ref: 6,   max: 180,  roll: 1,   voices: 3, bus: "engine"},
   tram:         {ref: 6,   max: 200,  roll: 1,   voices: 3, bus: "engine"},
   siren:        {ref: 10,  max: 600,  roll: 0.7, voices: 2, bus: "master"},
@@ -602,6 +614,7 @@ var KINDS = {
   horn:         {ref: 30,  max: 1500, roll: 0.6, voices: 2, bus: "master"},                // ship and ferry horns
   heli:         {ref: 15,  max: 1500, roll: 0.8, voices: 2, bus: "engine"},
   plane:        {ref: 40,  max: 2500, roll: 0.7, voices: 2, bus: "ambient"},               // scenic airliners, airport stands
+  peerplane:    {ref: 40,  max: 2500, roll: 0.7, voices: 1, bus: "engine"},                // other players' planes: people, not ambience
   jet:          {ref: 60,  max: 1500, roll: 0.8, voices: 2, bus: "ambient", sos: true},    // the air base's jets
   door:         {ref: 2,   max: 40,   roll: 1,   voices: 4, bus: "master"},                // doors, gangways, validators, lifts
   bell:         {ref: 5,   max: 250,  roll: 1,   voices: 3, bus: "master"},                // tram, lift and bike bells
@@ -632,8 +645,11 @@ function rel(L, p){
   REL.dx = x - L.x; REL.dy = y - L.y; REL.dz = z - L.z; REL.d = Math.sqrt(REL.dx*REL.dx + REL.dy*REL.dy + REL.dz*REL.dz);
   return true;
 }
+// no ears: every pool lets its voices go now (no update would park them while nothing draws), made again on its next
+// update under a listener
+function poolsRest(){ SP.pools.forEach(function(P){ try { P.rest(); } catch(e){} }); }
 function listener(cam, at){
-  if(!cam){ SP.L = null; return null; }
+  if(!cam){ SP.L = null; poolsRest(); return null; }
   var x, y, z, rx, rz, m = cam.matrixWorld && cam.matrixWorld.elements;
   if(m && m.length >= 16){
     if(typeof cam.updateMatrixWorld === "function"){ try { cam.updateMatrixWorld(); } catch(e){} m = cam.matrixWorld.elements; }
@@ -644,7 +660,7 @@ function listener(cam, at){
     x = +cam.x; y = cam.y != null ? +cam.y : 0; z = +cam.z; rx = -Math.cos(yaw); rz = Math.sin(yaw);
   }
   if(at){ x = +at.x; z = +at.z; if(at.y != null) y = +at.y; }
-  if(!(isFinite(x) && isFinite(z))){ SP.L = null; return null; }
+  if(!(isFinite(x) && isFinite(z))){ SP.L = null; poolsRest(); return null; }
   if(!isFinite(y)) y = 0;
   var rl = Math.sqrt(rx*rx + rz*rz); if(rl > 1e-6){ rx /= rl; rz /= rl; } else { rx = 1; rz = 0; }
   var L = SP.L || (SP.L = {});
@@ -706,7 +722,7 @@ function spatialOut(kind, pos, opt){
   opt = opt || {};
   var spec = kindOf(kind), hold = !!opt.hold;
   if(sfxVolume() <= 0 || (spec.bus === "ambient" && ambientVolume() <= 0)) return null;
-  var a = audio(); if(!a || (!hold && a.state !== "running")) return null;
+  var a = audio(); if(!a || a.state !== "running") return null;           // (held ones too: their callers try again)
   var h = hear(kind, pos, opt); if(!h) return null;
   var t = a.currentTime, lvl = opt.gain != null ? clamp(+opt.gain || 0, 0, 4) : 1;
   var delay = hold ? 0 : opt.delay === true ? h.d/343 : typeof opt.delay === "number" ? Math.max(0, opt.delay) || 0 : opt.delay == null && spec.sos ? h.d/343 : 0;
@@ -866,24 +882,49 @@ function loop(name, sk){
     alive: function(){ return !!V && V.a.currentTime < V.stopAt; }
   };
 }
+// The voices of a kind across all its pools: this pool's own nearest (mine, pick()'s: its own voices at most) and those
+// of every other pool of the kind as of its last update (if within FRESH s: a pool nothing updates holds none), nearest
+// first with a playing voice's 15% hold, ties by id; at most the kind's voices in all -> the ones of mine that sound.
+// The others give up theirs on their own next update, the same frame.
+var FRESH = 0.5;
+function share(me, mine, bound, t){
+  me.mine = mine.map(function(c){ return {id: c.id, s: bound[c.id] ? c.d*0.85 : c.d}; }); me.at = t;
+  var cap = kindOf(me.kind).voices, all = [];
+  if(!(cap > 0)) return mine;                                            // ("own", "ui": no limit)
+  SP.pools.forEach(function(P, n){
+    if(P.kind !== me.kind || (P !== me && !(t - P.at <= FRESH))) return;
+    P.mine.forEach(function(e, i){ all.push({s: e.s, id: e.id, n: n, i: P === me ? i : -1}); });
+  });
+  if(all.length <= cap) return mine;
+  all.sort(function(a, b){ return a.s - b.s || (a.id < b.id ? -1 : a.id > b.id ? 1 : a.n - b.n); });
+  var ok = {}; all.slice(0, cap).forEach(function(e){ if(e.i >= 0) ok[e.i] = 1; });
+  return mine.filter(function(c, i){ return !!ok[i]; });
+}
 function pool(kind, o){
   o = o || {};
   var spec = kindOf(kind), N = o.voices != null ? Math.max(0, o.voices | 0) : spec.voices;
   var MAX = o.max != null ? +o.max : spec.max, IDLE = o.idle != null ? Math.max(0, +o.idle || 0) : 2;
   var keyOf = typeof o.key === "function" ? o.key : function(s){ return s.kind != null ? s.kind : ""; };
-  var bound = {}, parked = [], me = {kind: kind, ids: []};
+  var bound = {}, parked = [], me = {kind: kind, ids: [], mine: [], at: -Infinity, rest: rest};
   SP.pools.push(me);
   function quit(h){ try { if(h && typeof h.stop === "function") h.stop(); } catch(e){} }
   function sweep(t){ parked = parked.filter(function(b){ if(t - b.at > IDLE){ quit(b.h); return false; } return true; }); }
   function park(id){ var b = bound[id]; b.id = id; parked.push(b); delete bound[id]; }
+  // every handle stopped now (listener(null): poolsRest); the pool stays and makes them again on a later update
+  function rest(){
+    Object.keys(bound).forEach(function(id){ quit(bound[id].h); }); parked.forEach(function(b){ quit(b.h); });
+    bound = {}; parked = []; me.ids = []; me.mine = []; me.at = -Infinity;
+  }
   return {
     update: function(sources){
       var t = now(), L = SP.L, cand = [];
-      if(sfxVolume() <= 0 || !L){ Object.keys(bound).forEach(park); sweep(t); me.ids = []; return []; }
+      if(sfxVolume() <= 0 || !L || (spec.bus === "ambient" && ambientVolume() <= 0)){
+        Object.keys(bound).forEach(park); sweep(t); me.ids = []; me.mine = []; return [];
+      }
       (Array.isArray(sources) ? sources : []).forEach(function(s){
         if(s && s.id != null && rel(L, s) && REL.d < MAX) cand.push({id: String(s.id), d: REL.d, src: s});
       });
-      var keep = pick(cand, N, MAX, bound), want = {};
+      var keep = share(me, pick(cand, N, MAX, bound), bound, t), want = {};
       keep.forEach(function(c){ want[c.id] = 1; });
       Object.keys(bound).forEach(function(id){ if(!want[id]) park(id); });
       keep.forEach(function(c){
@@ -905,8 +946,7 @@ function pool(kind, o){
       return me.ids.slice();
     },
     stop: function(){
-      Object.keys(bound).forEach(function(id){ quit(bound[id].h); }); parked.forEach(function(b){ quit(b.h); });
-      bound = {}; parked = []; me.ids = [];
+      rest();
       var i = SP.pools.indexOf(me); if(i >= 0) SP.pools.splice(i, 1);
     }
   };
@@ -926,8 +966,13 @@ function ambientPreview(){
 }
 // Browsers allow audio only after a user gesture: wake it on the first one.
 if(typeof window.addEventListener === "function"){
-  window.addEventListener("pointerdown", function(){ if(sfxVolume() > 0) audio(); }, {once: true, capture: true});
-  window.addEventListener("keydown", function(){ if(sfxVolume() > 0) audio(); }, {once: true, capture: true});
+  window.addEventListener("pointerdown", function(){ if(sfxVolume() > 0) audio(true); }, {once: true, capture: true});
+  window.addEventListener("keydown", function(){ if(sfxVolume() > 0) audio(true); }, {once: true, capture: true});
+}
+// A hidden tab draws no frames, so no pool is updated to let its engines go: no ears (every pool's voices stop) until a
+// frame sets the listener again
+if(typeof document !== "undefined" && document && typeof document.addEventListener === "function"){
+  document.addEventListener("visibilitychange", function(){ if(document.hidden) listener(null); });
 }
 
 /* ---------- spectating (HQ 2.1): "Watching X  ◀ ▶" with [ and ] ---------- */

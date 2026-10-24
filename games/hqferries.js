@@ -841,7 +841,7 @@ function taxiStart(C, fromId, seed){
 // pier head (water: under Ambient sounds), and the engines as held loops that follow their hulls (boat): a pool keeps
 // the nearest HUM_VOICES of the water buses and launches sounding, the water taxi has its own
 var ALIAS = {"engine-hum": "motor", "gangway-clank": "gondola-clunk", "water-lap": null, "ferry-horn": "ferry-horn"};
-var HUM_VOICES = 2;                // this pool's voices (the City's ferries and ships have a pool of their own: games/hqcity3d.js)
+var HUM_VOICES = 2;                // this pool's voices (it shares the boat kind's 3 with the City's ferries and ships: games/hqcity3d.js)
 function sound(f, name, o){
   if(typeof f !== "function") return null;
   var R = HQV.hqRide, list = R && R.SFX;

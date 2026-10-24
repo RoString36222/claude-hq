@@ -286,6 +286,37 @@ const E0 = HQV.engine; HQV.engine = null; out.noEngine = C3.citySound(); HQV.eng
 console.log(JSON.stringify(out));
 """
 
+
+SUSPENDED = FAKE + r"""
+for (const f of ["hqride", "traffic", "hqcivic", "hqships", "hqcity3d"]) new Function(fs.readFileSync(path.join(R0, "games", f + ".js"), "utf8"))();
+const HQV = window.HQV, E = HQV.engine, CV = HQV.hqCivic, out = {}, rings = [];
+const ring = CV.ring; CV.ring = function(V){ rings.push(V.ctx.state); return ring.apply(CV, arguments); };
+const H = 3600000, bell = {id: "townhall:2:bell", x: 100, y: 30, z: 100, kind: "clock", seed: 3};
+E.listener({x: 0, y: 1.6, z: 0, yaw: 0});
+const ctx = E.audioOut().ctx, snd = HQV.hqCity3d.citySound();
+// a frame every 100 ms of the wall clock; the audio clock runs only while the context does
+function frame(ms, running){ pnow += 0.1; if(running) now += 0.1; snd.update({bells: [bell], localMs: ms}); }
+// 15:00 strikes three, 2.4 s apart (each rings 4.5 s): the first rings, then the audio is suspended (the system's)
+frame(15*H - 50, true); frame(15*H + 10, true);
+out.first = rings.length;
+ctx.state = "suspended";
+for (let x = 110; x <= 9010; x += 100) frame(15*H + x, false);
+out.whileSuspended = rings.length - out.first;            // its tower's voice still held, but nothing rung into it
+ctx.state = "running";
+for (let x = 9110; x <= 9510; x += 100) frame(15*H + x, true);
+out.afterWaking = rings.length - out.first;               // nothing queued at the frozen clock: no chord on waking
+// suspended from the start (before your first click): 16:00's four strikes are dropped, no voice is made
+ctx.state = "suspended";
+frame(16*H - 50, false); for (let x = 10; x <= 9010; x += 100) frame(16*H + x, false);
+out.beforeClick = rings.length - out.first;
+ctx.state = "running";
+frame(17*H - 50, true); frame(17*H + 10, true);
+out.nextHour = rings.length - out.first;                  // awake again: 17:00's first strike rings
+out.states = rings;
+snd.stop();
+console.log(JSON.stringify(out));
+"""
+
 GATHER = r"""
 const fs = require("fs"), R0 = %(root)s;
 global.window = {HQV: {}};
@@ -629,6 +660,23 @@ class CitySound(unittest.TestCase):
         self.assertEqual(self.o["stopped"]["pools"], {})
         self.assertTrue(self.o["stopped"]["loops"])
         self.assertIsNone(self.o["noEngine"])
+
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class BellsWhileSuspended(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.o = run(fill(SUSPENDED))
+
+    def test_no_strike_queues_up_at_a_frozen_clock(self):
+        o = self.o
+        self.assertEqual(o["first"], 1)
+        self.assertEqual(o["whileSuspended"], 0, "a strike due while the audio is suspended is dropped")
+        self.assertEqual(o["afterWaking"], 0, "so waking it plays no chord of every strike queued")
+        self.assertEqual(o["beforeClick"], 0, "before the first click: no held voice, no strike")
+        self.assertEqual(o["nextHour"], 1)
+        self.assertEqual(set(o["states"]), {"running"}, "every strike rung into a running context")
 
 
 @unittest.skipUnless(NODE, "node is not installed")

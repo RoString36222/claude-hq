@@ -5,11 +5,12 @@ this page plays them (HQV.hq3dPure.peerSound: a helicopter's rotor, a prop's dro
 motorbike's or tank's own voice at the revs their presence sends, else a guess from their speed, silent standing with
 nothing sent, no engine for a bicycle or a pet) and the pools they play through (HQV.hq3dPure.peerPools: the nearest 3
 cars, the nearest helicopter and plane, handles made once and reused, a new voice for a changed vehicle, nothing at sfx
-volume 0); the grenade's boom where it goes off (hqGrenade.boomAt: through spatialOut("blast"), panned, at the ears'
-distance, its own sound-travel delay only, cut at 400 m, one of the blast kind's voices; centred through audioOut()
-on an engine without spatialOut); the basement's car lift and its bell at the lift (hqBasementFx). The rest reads
-games/hq3d.js: your own engines are "own" at you, the peers' sounds and horns are wired, the blasts go through boomAt,
-and the pins other tests rely on are intact. Skipped without node. Stdlib only."""
+volume 0, and their planes not muted by Ambient sounds at 0%: a person, not ambience); the grenade's boom where it goes
+off (hqGrenade.boomAt: through spatialOut("blast"), panned, at the ears' distance, its own sound-travel delay only, cut
+at 400 m, one of the blast kind's voices; centred through audioOut() on an engine without spatialOut); the basement's
+car lift and its bell at the lift (hqBasementFx). The rest reads
+games/hq3d.js: your own engines are "own" at you, the peers' sounds are wired, the blasts go through boomAt, a paused
+view lets its floor's voices go, and the pins other tests rely on are intact. Skipped without node. Stdlib only."""
 import json
 import os
 import re
@@ -93,6 +94,7 @@ out.ids2 = PP.update(list2); out.made2 = engines.length;
 const list3 = list2.slice(); list3[0] = H.peerSound('c0', {x: 10, hy: 0, z: 0, pv: 8, rpm: 2500, vk: 'car', ex: 'sport'}, CAR, EN_CAR);
 out.ids3 = PP.update(list3); out.made3 = engines.slice(out.made2);  // another exhaust: its own voice
 store.hq_sfx = '0'; out.muted = PP.update(list3); store.hq_sfx = '0.5';
+E.ambientSetVolume(0); out.ambient0 = PP.update(list3); E.ambientSetVolume(1);   // a person's plane is not ambience
 E.listener(null); out.noEars = PP.update(list3); E.listener({x: 0, y: 0, z: 0, yaw: Math.PI/2});
 PP.stop(); out.stopped = S.state().pools;
 out.noPools = [H.peerPools(null), H.peerPools({engineSound: es}), H.peerPools({pool: E.pool})];
@@ -208,10 +210,10 @@ class PeerVehicles(unittest.TestCase):
     def test_pools_play_the_nearest_of_each_kind(self):
         o = self.o
         self.assertEqual(o["ids1"], {"peer": ["c0|car~", "c1|car~", "c2|car~"], "heli": ["h|heli~"], "plane": ["j|airliner~"]})
-        self.assertEqual(o["state1"], o["ids1"])
+        self.assertEqual(o["state1"], {"peer": o["ids1"]["peer"], "heli": o["ids1"]["heli"], "peerplane": o["ids1"]["plane"]})
         self.assertEqual(sorted(o["made1"]), sorted([["turbo", None, True]]*3 + [["rotor", None, False], ["jet", None, False]]))
         kinds = {s[0]: s[2] for s in o["sets1"]}
-        self.assertEqual(kinds, {"turbo": "peer", "rotor": "heli", "jet": "plane"})   # each heard as its own kind
+        self.assertEqual(kinds, {"turbo": "peer", "rotor": "heli", "jet": "peerplane"})   # each heard as its own kind
         self.assertTrue(all(s[3] for s in o["sets1"]))       # ...from where it is
         self.assertIn(["turbo", 2500, "peer", True], o["sets1"])
         self.assertEqual(o["ids2"]["peer"], ["c0|car~", "c1|car~", "c3|car~"])
@@ -221,6 +223,7 @@ class PeerVehicles(unittest.TestCase):
         empty = {"peer": [], "heli": [], "plane": []}
         self.assertEqual(o["muted"], empty)                   # sfx volume 0 (Calm, mute): nothing plays
         self.assertEqual(o["noEars"], empty)                  # no listener (a paused view): nothing placed
+        self.assertEqual(o["ambient0"]["plane"], ["j|airliner~"])   # Ambient sounds 0% never mutes someone's plane
         self.assertEqual(o["stopped"], {})                    # stop(): no pool left behind
         self.assertEqual(o["noPools"], [None, None, None])    # an engine without pools: none
 
@@ -317,22 +320,14 @@ class Hq3dWiring(unittest.TestCase):
         self.assertLess(fr.index("placePeers(dt, t);"), fr.index("peerSounds();"))      # where they are drawn now
         ps = func_body(hq, "peerSounds")
         for k in ("HQV.hq3dPure.peerPools(E)", "P.g.parent !== cur.scene", "engineOf(V, baseKind(P.vk))",
-                  "HQV.hq3dPure.peerSound(u, P, V, EN)", "PSND.update(list)",
-                  'E.sfxAt("horn", {x: P.x, y: (+P.hy || 0) + 1, z: P.z}, {kind: "peer", bike: baseKind(P.vk) !== "car"})'):
+                  "HQV.hq3dPure.peerSound(u, P, V, EN)", "PSND.update(list)"):
             self.assertIn(k, ps, k)
         self.assertIn("P.vk = vk; P.ex = ptn && HQV.hqTuning.exhaustOf ? HQV.hqTuning.exhaustOf(ptn) : null;", func_body(hq, "placePeers"))
         pause = hq[hq.index("  inst.pause = function(){"):hq.index("  inst.resume = function(){")]
         self.assertIn("peerSoundsOff();", pause)                # a paused or closed view lets every voice go
+        self.assertIn("if(cur && cur.soundPause){ try { cur.soundPause(); } catch(e){} }", pause)   # its floor's too
+        self.assertIn('plane: mk("peerplane", 1)', func_body(hq, "peerPools"))
         self.assertIn("(base || (ride && ride.base)) === \"moto\"", func_body(hq, "engineOf"))   # safe for someone else's
-
-    def test_horns_travel_as_a_count(self):
-        hq = self.hq
-        self.assertIn("hornN = hornN % 15 + 1;", func_body(hq, "gearKey"))
-        self.assertIn("inst.hornNet = function(){ return drvGround() && ride.V && ride.V.motor ? hornN : 0; };", hq)
-        sp = hq[hq.index("  inst.setPeers = function(list){"):hq.index("  var PEER_VEHICLE")]
-        self.assertIn("var hn = (p.hn | 0) >= 1 && (p.hn | 0) <= 15 ? p.hn | 0 : 0;", sp)
-        self.assertIn("if(hn && P.hn && hn !== P.hn) P.honk = nowS;", sp)   # never on first sight, never on getting in
-        self.assertIn("honk = P.honk && E.now() - P.honk < 0.5; P.honk = 0;", func_body(hq, "peerSounds"))   # nor saved up
 
     def test_blasts_and_shots_are_placed(self):
         hq = self.hq
@@ -348,7 +343,7 @@ class Hq3dWiring(unittest.TestCase):
         hq = self.hq
         for pin in ('E.sfx("door")', 'E.sfx("crank")', 'E.sfx("horn"', "sfx: phoneSfx",
                     "E.engineSound(V.eng, ride.tune && HQV.hqTuning ? HQV.hqTuning.exhaustOf(ride.tune) : null)",
-                    "if(E.listener) E.listener(curCam(), curCam() === cam ? view.target : null);", "if(E.listener) E.listener(null);"):
+                    "if(E.listener) E.listener(curCam(), earAt(curCam()));", "if(E.listener) E.listener(null);"):
             self.assertIn(pin, hq, pin)
 
     def test_ui_sounds_stay_centred(self):

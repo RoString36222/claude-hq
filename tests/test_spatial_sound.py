@@ -10,7 +10,10 @@ nearest voices, reuse their handles and stop idle ones, named loops fall silent 
 at sfx volume 0 (Calm, mute) and ambient kinds are silent at Ambient sounds 0%. hq_ambient migrates with no step:
 "0" (the old Off) is 0%, "1" (On), unset and garbage are 100%, and the slider's value scales the ambient bus. hqRide's
 transit sounds take opts.pos through the same graph, its loops can no longer leak, the rotor honours opts.rate and
-the announcer's chime goes through the master volume. Skipped without node. Stdlib only."""
+the announcer's chime goes through the master volume. A kind's voices are shared by all its pools (the nearest of
+every pool's sources, each pool to its own count), every pool lets its voices go when the ears do (listener(null): a
+paused view, a hidden tab), an ambient kind's pool plays nothing at Ambient sounds 0%, a suspended context is woken
+at most once a second (a gesture always) and no held voice is made on one. Skipped without node. Stdlib only."""
 import json
 import os
 import shutil
@@ -277,6 +280,87 @@ hl.stop();
 // the announcer's chime: through the master (the Game sounds volume), not straight to the speakers
 const ka = nodes.length, an = R.announcer({announce: () => {}, calm: () => false, audio: () => ctx, voiceOn: () => false});
 an.say('Next stop: Harbour Street.'); out.chime = since(ka)[0].out[0] === A.out;
+console.log(JSON.stringify(out));
+"""
+
+
+SHARED = FAKE + r"""
+store.hq_sfx = '0.5';
+E.listener({x: 0, y: 0, z: 0, yaw: Math.PI/2});
+const at = d => ({x: d, y: 0, z: 0});
+let mades = 0, stopped = 0;
+const mk = (kind, n) => E.pool(kind, {voices: n, make: () => { mades++; return {stop(){ stopped++; }}; }, play: () => {}});
+// ---- the kind's voices across its pools: the City's traffic (6) and the cab coming to you (1) share the vehicle's 6 ----
+const city = mk('vehicle', 6), cab = mk('vehicle', 1);
+const cars = [10, 20, 30, 40, 50, 60, 70, 80].map((d, i) => Object.assign({id: 'c' + i}, at(d)));
+const cabAt = [Object.assign({id: 'cab'}, at(25))];
+const f1 = [city.update(cars), cab.update(cabAt)];
+pnow += 1/60;
+const f2 = [city.update(cars), cab.update(cabAt)];
+out.share = {f1, f2, total: f2[0].length + f2[1].length, state: S.state().pools.vehicle.length};
+pnow += 0.6;                                                    // the cab's pool not updated for 0.6 s: it holds no voice
+out.stale = city.update(cars);
+cab.stop(); city.stop();
+// three rail lines, a voice a pool: the train kind's two go to the nearest two trains
+const lines = [mk('train', 1), mk('train', 1), mk('train', 1)], far = [50, 100, 150];
+let rows = [];
+for (let k = 0; k < 3; k++){ pnow += 1/60; rows = lines.map((P, i) => P.update([Object.assign({id: 't' + i}, at(far[i]))])); }
+out.trains = rows;
+const nearer = [Object.assign({id: 't2'}, at(20))];             // the third line's train comes nearest of all
+for (let k = 0; k < 2; k++){ pnow += 1/60; rows = lines.map((P, i) => P.update(i === 2 ? nearer : [Object.assign({id: 't' + i}, at(far[i]))])); }
+out.trainsNearer = rows;
+lines.forEach(P => P.stop());
+// ---- no ears (a paused view): every pool's voices go at once, made again under the next listener ----
+mades = 0; stopped = 0;
+const bp = mk('bus', 3), buses = [10, 20, 30].map((d, i) => Object.assign({id: 'b' + i}, at(d)));
+bp.update(buses); const made1 = mades;
+E.listener(null); const stoppedNoEars = stopped, paused = S.state().pools.bus;
+E.listener({x: 0, y: 0, z: 0, yaw: Math.PI/2}); pnow += 0.1;
+out.rest = {made1, stoppedNoEars, paused, again: bp.update(buses), made2: mades};
+E.listener({x: NaN, z: 0}); out.rest.garbage = stopped - stoppedNoEars;       // a broken camera: no ears either
+E.listener({x: 0, y: 0, z: 0, yaw: Math.PI/2});
+bp.stop();
+// ---- an ambient kind's pool at Ambient sounds 0%: nothing plays and its voices are let go; another player's plane
+// (peerplane, the engines' bus) still sounds ----
+mades = 0; stopped = 0;
+const pl = mk('plane', 2), pp = mk('peerplane', 1), jets = [Object.assign({id: 'j'}, at(300))];
+const a1 = [pl.update(jets), pp.update(jets)];
+E.ambientSetVolume(0); pnow += 0.1;
+const a0 = [pl.update(jets), pp.update(jets)];
+pnow += 2.5; pl.update(jets); pp.update(jets); const stoppedAmb = stopped;
+E.ambientSetVolume(1); pnow += 0.1;
+out.amb = {a1, a0, stoppedAmb, back: [pl.update(jets), pp.update(jets)], made: mades, kinds: [S.KINDS.plane.bus, S.KINDS.peerplane.bus]};
+pl.stop(); pp.stop();
+console.log(JSON.stringify(out));
+"""
+
+WAKE = FAKE + r"""
+// a page of its own, whose document and window keep their listeners (the hidden tab, the first gesture)
+const on = {}, doc = {documentElement: document.documentElement, hidden: false, addEventListener(k, f){ on['d:' + k] = f; }};
+const win = {HQV: {}, matchMedia: () => ({matches: false}), AudioContext: AC, addEventListener(k, f){ on['w:' + k] = f; }};
+new Function('window', 'document', fs.readFileSync(path.join(R0, 'games', 'engine.js'), 'utf8'))(win, doc);
+const E2 = win.HQV.engine;
+store.hq_sfx = '0.5';
+out.listens = Object.keys(on).sort();
+// ---- a hidden tab draws no frames: no ears, every pool's voices go ----
+E2.listener({x: 0, y: 0, z: 0, yaw: 0});
+let stops = 0; const P = E2.pool('vehicle', {make: () => ({stop(){ stops++; }}), play: () => {}});
+P.update([{id: 'a', x: 0, y: 0, z: 10}, {id: 'b', x: 0, y: 0, z: 20}]);
+on['d:visibilitychange'](); out.shown = {ears: !!E2.listenerAt(), stops};
+doc.hidden = true; on['d:visibilitychange'](); out.hidden = {ears: E2.listenerAt(), stops};
+P.stop();
+// ---- a suspended context (before your first click): woken at most once a second, by a gesture always ----
+const ctx = E2.audioOut().ctx; let resumes = 0; ctx.resume = () => { resumes++; return Promise.resolve(); };
+ctx.state = 'suspended';
+E2.listener({x: 0, y: 0, z: 0, yaw: 0});
+const hum = E2.loop('hum');
+for (let i = 0; i < 120; i++){ pnow += 1/60; hum.set(1, {pos: {x: 0, y: 0, z: 30}}); E2.audioOut(); E2.spatialOut('door', {x: 0, y: 0, z: 2}); }
+out.frames = resumes;
+const r0 = resumes; on['w:pointerdown'](); on['w:keydown'](); out.gesture = resumes - r0;
+// ---- a held voice on a suspended context: none (the belfries' strikes would queue at its frozen clock) ----
+out.held = {suspended: E2.spatialOut('civicbell', {x: 0, y: 0, z: 50}, {hold: true}), oneShot: E2.spatialOut('door', {x: 0, y: 0, z: 2})};
+ctx.state = 'running';
+out.held.running = !!E2.spatialOut('civicbell', {x: 0, y: 0, z: 50}, {hold: true});
 console.log(JSON.stringify(out));
 """
 
@@ -560,6 +644,66 @@ class TransitSounds(unittest.TestCase):
         self.assertTrue(self.o["chime"])
 
 
+
+@unittest.skipUnless(NODE, "node is not installed")
+class SharedVoices(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.o = run(SHARED)
+
+    def test_a_kinds_voices_are_shared_by_its_pools(self):
+        s = self.o["share"]
+        self.assertEqual(s["f1"], [["c0", "c1", "c2", "c3", "c4", "c5"], ["cab"]])   # the first frame: the cab's pool new
+        self.assertEqual(s["f2"], [["c0", "c1", "c2", "c3", "c4"], ["cab"]])         # then the cab (25 m) takes the 60 m car's
+        self.assertEqual(s["total"], 6)                                              # the vehicle kind's 6, no more
+        self.assertEqual(s["state"], 6)
+        self.assertEqual(self.o["stale"], ["c0", "c1", "c2", "c3", "c4", "c5"])      # a pool nothing updates holds none
+
+    def test_one_voice_a_line_two_for_the_kind(self):
+        self.assertEqual(self.o["trains"], [["t0"], ["t1"], []])                    # the nearest two of three lines' trains
+        self.assertEqual(self.o["trainsNearer"], [["t0"], [], ["t2"]])              # a nearer one takes the farther's
+
+    def test_no_ears_lets_every_voice_go(self):
+        r = self.o["rest"]
+        self.assertEqual(r["made1"], 3)
+        self.assertEqual(r["stoppedNoEars"], 3)                # stopped at once: no engine runs on, silent, while paused
+        self.assertEqual(r["paused"], [])
+        self.assertEqual(r["again"], ["b0", "b1", "b2"])      # under the next listener: made again
+        self.assertEqual(r["made2"], 6)
+        self.assertEqual(r["garbage"], 3)
+
+    def test_ambient_pools_at_zero(self):
+        a = self.o["amb"]
+        self.assertEqual(a["a1"], [["j"], ["j"]])
+        self.assertEqual(a["a0"], [[], ["j"]])                # the City's aircraft go quiet; another player's plane does not
+        self.assertEqual(a["stoppedAmb"], 1)                  # and the silent one is let go, not left running
+        self.assertEqual(a["back"], [["j"], ["j"]])
+        self.assertEqual(a["kinds"], ["ambient", "engine"])
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class WakeAndHide(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.o = run(WAKE)
+
+    def test_a_hidden_tab_has_no_ears(self):
+        self.assertEqual(self.o["listens"], ["d:visibilitychange", "w:keydown", "w:pointerdown"])
+        self.assertEqual(self.o["shown"], {"ears": True, "stops": 0})   # shown again: nothing happens
+        self.assertEqual(self.o["hidden"], {"ears": None, "stops": 2})  # hidden: the pool's engines stop
+
+    def test_a_suspended_context_is_woken_at_most_once_a_second(self):
+        self.assertGreaterEqual(self.o["frames"], 1)
+        self.assertLessEqual(self.o["frames"], 3)             # 2 s of frames (a loop, audioOut, a one-shot each): not 360
+        self.assertEqual(self.o["gesture"], 2)                # a click or a key: at once, every time
+
+    def test_held_voices_wait_for_a_running_context(self):
+        h = self.o["held"]
+        self.assertIsNone(h["suspended"])                     # nothing queued at a frozen clock
+        self.assertIsNone(h["oneShot"])
+        self.assertTrue(h["running"])
+
+
 class Wiring(unittest.TestCase):
     def read(self, *p):
         with open(os.path.join(ROOT, *p), encoding="utf-8") as f:
@@ -568,9 +712,15 @@ class Wiring(unittest.TestCase):
     def test_listener_hooks(self):
         hq = self.read("games", "hq3d.js")
         i, j = hq.index("    resize(); placeCam();\n"), hq.index("    if(cur !== worlds.mission){")
-        self.assertIn("if(E.listener) E.listener(curCam(), curCam() === cam ? view.target : null);", hq[i:j])
+        self.assertIn("if(E.listener) E.listener(curCam(), earAt(curCam()));", hq[i:j])
+        ear = hq[hq.index("  function earAt(c){"):hq.index("  function steerOn(){")]
+        self.assertIn("if(c === cam) return view.target;", ear)              # Classic: from what it looks at
+        self.assertIn('rig.mode === "map"', ear)                             # the Map: the ground at its centre,
+        self.assertIn("return {x: x, y: groundAt(x, z) + 1.6, z: z};", ear)   # not its camera hundreds of metres up
         pause = hq[hq.index("  inst.pause = function(){"):hq.index("  inst.resume = function(){")]
         self.assertIn("E.listener(null)", pause)
+        self.assertIn("if(cur && cur.soundPause){ try { cur.soundPause(); } catch(e){} }", pause)   # the floor's own voices too
+        self.assertIn("w.soundPause = function(){ soundStop(); };", self.read("games", "hqcity3d.js"))
         for game, cam in (("kart", "camera"), ("strike", "camera"), ("rally", "R3.camera")):
             src = self.read("games", game + ".js")
             self.assertIn("if(E.listener) E.listener(%s);" % cam, src, game)

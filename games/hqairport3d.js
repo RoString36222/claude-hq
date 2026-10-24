@@ -925,7 +925,8 @@ function create(c, L, o){
   // update()'s tr and hp: the City's airport traffic now (games/hqair.js traffic(), archipelago metres) and that frame's
   // offset from this city's ({x, z}: games/hqcity3d.js hereArch()). Each jet parked on a stand runs its APU: an idle
   // turbofan's whine there (games/engine.js engineSound "jet" as the plane kind: the Ambient sounds volume), the nearest
-  // one (the City's air traffic, the aircraft that move and taxi past these stands, has its own pool: games/hqcity3d.js).
+  // one (the City's air traffic, the aircraft that move and taxi past these stands, has a pool of its own in
+  // games/hqcity3d.js; the two share the plane kind's voices).
   // Without tr (or the spatial API): silent, as before.
   var E = c.E || HQV.engine || {};
   var standP = E.pool && E.engineSound ? E.pool("plane", {voices: 1, make: function(){ return E.engineSound("jet"); },

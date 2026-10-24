@@ -396,8 +396,8 @@ function netRoom(world, isles){ return isles && worldOk(world) ? "city3d:" + wor
                 vehicles' engines (vehicle, 6 voices), the buses' (bus), the trams' traction motors at their nearer
                 section (tram); all of them together the city's hum (hum: from their middle, louder the more there are)
      sirens     traffic.js sirens(): a run's two-tone on its way to the scene (siren)
-     ships      [{id, x, y, z, speed}] the ferries, cruise and cargo ships: their engines' hum (boat, 2 voices: the water
-                buses in games/hqferries.js have the kind's own pool)
+     ships      [{id, x, y, z, speed}] the ferries, cruise and cargo ships: their engines' hum (boat, 2 voices, sharing the
+                kind's 3 with the water buses' pool in games/hqferries.js)
      horns      [{key, name, x, y, z}] a ship sailing this frame: its horn, once (horn)
      planes     [{id, x, y, z, voice: "jet" | "prop", phase}] the airliners, hoppers and seaplanes, and the scenic
                 airliners up high: their engines by flight phase (plane: through the Ambient sounds volume)
@@ -484,7 +484,9 @@ function citySound(){
     Object.keys(motors).forEach(function(k){ if(!seen[k]){ motors[k].stop(); delete motors[k]; } });   // a bridge gone: its machinery too
   }
   // the belfries: each strike due since the last frame into the tower's held voice (made with its first strike), the
-  // voice moved with the ears while it rings and ended once its last strike has died away
+  // voice moved with the ears while it rings and ended once its last strike has died away. A strike due while the
+  // audio is suspended (before your first click, or the system's) is dropped: its clock is frozen, so every one queued
+  // there would sound at once when it wakes
   function bells(src, up){
     var C = HQV.hqCivic, now = +src.localMs;
     if(C && typeof C.due === "function" && typeof C.ring === "function" && isFinite(now)){
@@ -494,7 +496,7 @@ function citySound(){
         T.at = b;
         C.due(b, lastLocal, now).forEach(function(s){
           if(!T.V && E.spatialOut) T.V = E.spatialOut("civicbell", b, {hold: true});
-          if(T.V && C.ring(T.V, s.f, s.g, s.d, 0)) T.until = Math.max(T.until, s.at + s.d*1000);
+          if(T.V && T.V.ctx && T.V.ctx.state === "running" && C.ring(T.V, s.f, s.g, s.d, 0)) T.until = Math.max(T.until, s.at + s.d*1000);
         });
       });
       lastLocal = now;
@@ -3297,6 +3299,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(!on){ closeMenu(); if(nui) nui.close(); }
   }
   w.onLeave = function(){ overlays(false); soundStop(); };      // [Sound PR B] the City's voices go with you
+  w.soundPause = function(){ soundStop(); };                   // ...and with a paused view (hq3d inst.pause); the next frame rebuilds them
   w.onEnter = function(){ overlays(true); if(transit && transit.activate) transit.activate(); };
   w.mapWaypoint = function(x, z){ return navPick(x, z); };
   w.navGraph = function(){ return W && HQV.hqnav ? navGraph() : null; };   // [autopilot] the roads a car follows with no route

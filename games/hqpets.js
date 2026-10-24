@@ -777,6 +777,7 @@ var FC = {dz: 0, dy: 0};
 // head toward (you, or the ball), {x, z} in the world, or null.
 function pose(Mo, st, t, calm, look){
   if(!Mo) return;
+  t = +t; if(!isFinite(t)) t = Mo.sm && isFinite(Mo.sm.lastT) ? Mo.sm.lastT : 0;   // a NaN clock would stick in the pose's state
   if(Mo.rig) return poseRig(Mo, st, t, calm, look);
   if(Mo.wy) return poseWyvern(Mo, st, t, calm, look);
   var T3 = Mo.g, a = st.anim || "stand", ph = st.ph || 0, d = Mo.dims, sp = Mo.sp, kind = sp.kind, k = calm ? 0.35 : 1, S = Mo.sm, v = Mo.tv;

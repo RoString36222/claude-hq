@@ -50,6 +50,21 @@ class MessageTests(unittest.TestCase):
         self.assertFalse(m["question"])
         self.assertLessEqual(len(m["toolInput"]["command"]), hook.STR_MAX)
 
+    def test_env_carries_kitty_pid(self):
+        # the notch picks the kitty instance's watcher socket by its pid
+        old = {k: os.environ.get(k) for k in ("KITTY_PID", "KITTY_WINDOW_ID", "HOME")}
+        os.environ.update({"KITTY_PID": "15226", "KITTY_WINDOW_ID": "3"})
+        try:
+            env = hook.build_message({"hook_event_name": "Stop", "session_id": "s"}, [])["env"]
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        self.assertEqual((env.get("KITTY_PID"), env.get("KITTY_WINDOW_ID")), ("15226", "3"))
+        self.assertNotIn("HOME", env)
+
     def test_post_tool_use_counts_only_for_edits(self):
         m = hook.build_message({"hook_event_name": "PostToolUse", "session_id": "s", "tool_name": "Edit",
                                 "tool_input": {"old_string": "a", "new_string": "b\nc"}}, [])

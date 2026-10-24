@@ -201,16 +201,16 @@ var ENGINES = {
   diesel: {cyl: 6, idle: 650, red: 3400,  h: [1, .3, .7, .2, .5, .15, .35, .1, .2, .08], sub: .2, det: 4, grit: 3.2, cut: [320, 1500], q: 1, gain: 0.055, lope: [6, 0.2], rough: .4, air: .35, rattle: 0.035},
   turbo:  {cyl: 4, idle: 850, red: 6800,  h: [1, .4, .5, .22, .3, .12, .16, .08], sub: .1, det: 9, grit: 1.8, cut: [520, 3400], q: 1.2, gain: 0.05,  lope: [9, 0.12], rough: .25, pops: .35, turbo: 1800, air: .55},
   hotrod: {cyl: 8, idle: 780, red: 6600,  h: [1, .85, .6, .55, .35, .3, .2, .14, .1], sub: .9, det: 11, grit: 2.8, cut: [420, 2800], q: 2, gain: 0.06,  lope: [3.5, 0.5], rough: .9, pops: .8, air: .6},
-  bike:   {cyl: 2, idle: 1400, red: 11500, h: [1, .55, .45, .3, .22, .15, .1, .08], sub: .35, det: 8, grit: 2, cut: [700, 4200], q: 1.2, gain: 0.04,  lope: [16, 0.15], rough: .4, pops: .6, air: .6},
+  bike:   {cyl: 2, idle: 1400, red: 11500, h: [1, .7, .6, .45, .35, .25, .18, .12], sub: .35, det: 8, grit: 2, cut: [700, 4200], q: 1.2, gain: 0.04,  lope: [16, 0.15], rough: .4, pops: .6, air: .6},
   // Valley Rally: a turbo four with its whistle, a straight six, a high-revving four (also the superbikes' inline-4)
   turbo4: {cyl: 4, idle: 900, red: 7200,  h: [1, .38, .5, .2, .32, .12, .18, .08], sub: .12, det: 8, grit: 1.9, cut: [560, 3800], q: 1.3, gain: 0.05,  lope: [11, 0.08], rough: .2, pops: .7, turbo: 2300, air: .6},
   six:    {cyl: 6, idle: 750, red: 7400,  h: [1, .45, .3, .38, .15, .22, .1, .12, .06], sub: 0, det: 6, grit: 1.6, cut: [500, 3600], q: 1.2, gain: 0.055, lope: [8, 0.06], rough: .15, pops: .45, air: .5},
-  four:   {cyl: 4, idle: 1200, red: 14000, h: [1, .3, .55, .18, .32, .1, .2, .07, .12, .05], sub: 0, det: 10, grit: 1.7, cut: [800, 5600], q: 1.4, gain: 0.045, lope: [16, 0.1], rough: .2, pops: .8, air: .7},
+  four:   {cyl: 4, idle: 1200, red: 14000, h: [1, .5, .75, .35, .5, .22, .32, .14, .18, .08], sub: 0, det: 10, grit: 1.7, cut: [800, 5600], q: 1.4, gain: 0.045, lope: [16, 0.1], rough: .2, pops: .8, air: .7},
   // the real vehicles (games/hqvehiclephys.js voiceFor): a thumping single, a 270-degree parallel twin, a loping V-twin,
   // a flat boxer, turbo sixes and V8s with their whistle, a W16's deep smooth roar, a V16's higher shriek, and an
   // electric motor's whine (no firing, no lope, no gears: it climbs with the speed)
   single:   {cyl: 1, idle: 1500, red: 10500, h: [1, .9, .75, .55, .45, .35, .28, .22, .17, .13, .1, .08], sub: 0, det: 5, grit: 2.6, cut: [420, 2600], q: 1.6, gain: 0.05, lope: [3, 0.25], rough: .7, pops: .7, air: .55},
-  twin:     {cyl: 2, idle: 1300, red: 10200, h: [1, .6, .45, .3, .2, .15, .1, .08], sub: .5, det: 7, grit: 2.2, cut: [600, 3800], q: 1.3, gain: 0.045, lope: [5, 0.3], rough: .55, pops: .7, air: .6},
+  twin:     {cyl: 2, idle: 1300, red: 10200, h: [1, .72, .6, .45, .35, .25, .18, .12], sub: .5, det: 7, grit: 2.2, cut: [600, 3800], q: 1.3, gain: 0.045, lope: [5, 0.3], rough: .55, pops: .7, air: .6},
   vtwin:    {cyl: 2, idle: 1250, red: 10000, h: [1, .7, .5, .35, .25, .18, .12, .08], sub: .8, det: 6, grit: 2.4, cut: [520, 3200], q: 1.5, gain: 0.055, lope: [4, 0.45], rough: .8, pops: .8, air: .6},
   boxer:    {cyl: 2, idle: 1050, red: 9000,  h: [1, .5, .6, .25, .3, .12, .15, .06], sub: .45, det: 5, grit: 2, cut: [500, 3000], q: 1.2, gain: 0.05, lope: [4.5, 0.3], rough: .5, pops: .3, air: .5},
   turbo6:   {cyl: 6, idle: 720, red: 7200,  h: [1, .42, .3, .36, .15, .2, .1, .1, .06], sub: 0, det: 6, grit: 1.7, cut: [460, 3200], q: 1.2, gain: 0.055, lope: [8, 0.05], rough: .12, pops: .6, turbo: 2000, air: .5},
@@ -228,8 +228,8 @@ var ENGINES = {
   // four's uneven growl (the R1), a supercharged four with the blower's whine and a chirp on a lift (the H2), a
   // long-stroke single's slow thump (the Classic 350), a low-revving 270-degree twin (the Interceptor) and a 45-degree
   // V-twin's lumpy potato-potato (the Fat Boy)
-  v4:           {cyl: 4, idle: 1250, red: 14500, h: [1, .6, .35, .4, .2, .22, .1, .12, .06], sub: .45, det: 9, grit: 2.3, cut: [650, 5200], q: 1.6, gain: 0.05, lope: [7, 0.18], rough: .35, pops: .9, air: .7},
-  triple:       {cyl: 3, idle: 1150, red: 12650, h: [1, .5, .55, .3, .35, .15, .2, .08], sub: .3, det: 7, grit: 2, cut: [600, 4800], q: 1.5, gain: 0.05, lope: [9, 0.1], rough: .2, pops: .75, air: .65},
+  v4:           {cyl: 4, idle: 1250, red: 14500, h: [1, .75, .5, .55, .35, .35, .2, .2, .1], sub: .45, det: 9, grit: 2.3, cut: [650, 5200], q: 1.6, gain: 0.05, lope: [7, 0.18], rough: .35, pops: .9, air: .7},
+  triple:       {cyl: 3, idle: 1150, red: 12650, h: [1, .65, .7, .45, .5, .28, .32, .16, .12], sub: .3, det: 7, grit: 2, cut: [600, 4800], q: 1.5, gain: 0.05, lope: [9, 0.1], rough: .2, pops: .75, air: .65},
   crossplane:   {cyl: 4, idle: 1350, red: 13800, h: [1, .75, .5, .45, .3, .25, .15, .1], sub: .55, det: 8, grit: 2.4, cut: [600, 5000], q: 1.6, gain: 0.05, lope: [6, 0.22], rough: .45, pops: .85, air: .7},
   supercharged: {cyl: 4, idle: 1100, red: 12500, h: [1, .3, .5, .18, .3, .1, .18, .07, .1], sub: .05, det: 8, grit: 1.8, cut: [700, 5400], q: 1.4, gain: 0.048, lope: [14, 0.08], rough: .15, pops: .5, turbo: 3200, air: .65},
   longstroke:   {cyl: 1, idle: 800, red: 6100, h: [1, .95, .8, .6, .5, .38, .3, .22, .16, .12], sub: 0, det: 4, grit: 2.8, cut: [300, 1700], q: 1.6, gain: 0.055, lope: [2.4, 0.35], rough: .85, pops: .4, air: .45},
@@ -324,21 +324,67 @@ function engineWave(a, B, kind, P){
   for(var i = 0; i < P.h.length; i++) im[i + 1] = P.h[i]*(i % 2 ? 0.9 : 1);    // sine terms: a buzzy, pulse-ish wave
   return (B.waves[kind] = a.createPeriodicWave(re, im));
 }
+// the firing pulses over one engine cycle (two crank turns): one bang per cylinder, at its place in the firing
+// order (an even four or a single; a 270-degree twin or a V-twin's uneven pair; a crossplane four's 270-180-90-180),
+// each its own height (no two cylinders burn alike: deterministic per voice); a PeriodicWave played at the cycle rate
+var UNEVEN = {twin: [0, .375], twin270: [0, .375], vtwin: [0, .396], vtwin45: [0, .4375], boxer: [0, .5], crossplane: [0, .375, .625, .75], v4: [0, .25, .5, .875]};
+function pulseWave(a, B, kind, cyl){
+  var key = kind + ":" + cyl; B.pulses = B.pulses || {};
+  if(B.pulses[key] || !a.createPeriodicWave) return B.pulses[key] || null;
+  var pos = UNEVEN[kind] && UNEVEN[kind].length === cyl ? UNEVEN[kind] : null, N = 512, x = new Float32Array(N), sd = 99;
+  for(var i = 0; i < kind.length; i++) sd = (sd*31 + kind.charCodeAt(i)) & 0x7fffffff;
+  for(var c = 0; c < cyl; c++){
+    sd = (sd*1103515245 + 12345) & 0x7fffffff;
+    var at = pos ? pos[c] : c/cyl, h = 0.6 + 0.8*sd/0x7fffffff, w = 0.16/cyl;
+    for(var j = 0; j < N; j++){ var d = j/N - at; d -= Math.round(d); x[j] += h*Math.exp(-d*d/(2*w*w)); }
+  }
+  var H = Math.min(48, 8*cyl), re = new Float32Array(H + 1), im = new Float32Array(H + 1);
+  for(var k = 1; k <= H; k++){ var r = 0, m = 0; for(j = 0; j < N; j++){ r += x[j]*Math.cos(2*Math.PI*k*j/N); m += x[j]*Math.sin(2*Math.PI*k*j/N); } re[k] = r/N; im[k] = m/N; }
+  return (B.pulses[key] = a.createPeriodicWave(re, im));
+}
 function engineCurve(B, k){
   var key = Math.round(k*10); if(B.curves[key]) return B.curves[key];
   var c = new Float32Array(1024), th = Math.tanh(k);
   for(var i = 0; i < 1024; i++){ var x = i/511.5 - 1; c[i] = Math.tanh(k*x)/th; }
   return (B.curves[key] = c);
 }
+// engineSound(kind, ex, real) -> {set(rpm, opt), stop()}: the voice below behind a watchdog. A voice that
+// has not had set() for WATCH_S seconds (a dismount, a world change, a replaced ride, a hidden tab, a game that
+// forgot stop()) is stopped outright: every node, not just faded; the next set() builds it afresh (and a voice made
+// while muted is built once the sound is back on).
+var WATCH_S = 0.5, VOICES = [], watchId = null;
+function watchdog(){
+  for(var i = VOICES.length - 1; i >= 0; i--){ var w = VOICES[i]; if(w.idle() > WATCH_S) w.halt(); }
+  if(!VOICES.length && watchId != null){ clearInterval(watchId); watchId = null; }
+}
+function arm(w){
+  if(VOICES.indexOf(w) < 0) VOICES.push(w);
+  if(watchId == null && typeof setInterval === "function"){ watchId = setInterval(watchdog, 200); if(watchId && watchId.unref) watchId.unref(); }
+}
 function engineSound(kind, ex, real){
+  var v = engineVoice(kind, ex, real), last = 0, W = {
+    idle: function(){ return v && v.ac ? v.ac.currentTime - last : 0; },
+    halt: function(){ if(v){ v.stop(); v = null; } var i = VOICES.indexOf(W); if(i >= 0) VOICES.splice(i, 1); },
+    set: function(rpm, opt){
+      if(!v || (!v.ac && sfxVolume() > 0)) v = engineVoice(kind, ex, real);
+      if(!v.ac) return;
+      last = v.ac.currentTime;
+      arm(W); v.set(rpm, opt);
+    },
+    stop: function(){ W.halt(); }
+  };
+  if(v.ac){ last = v.ac.currentTime; arm(W); }
+  return {set: W.set, stop: W.stop};
+}
+function engineVoice(kind, ex, real){
   var P = engineProfile(kind, ex, real);
-  var a = sfxVolume() > 0 ? audio() : null; if(!a) return {set: function(){}, stop: function(){}};
+  var a = sfxVolume() > 0 ? audio() : null; if(!a) return {set: function(){}, stop: function(){}, ac: null};
   var B = engineBus(a), t0 = a.currentTime, nodes = [];
   // the output first (the dead man's switch lives here), then the chain into it:
   // [main + twin + sub] -> drive -> grit -> low-pass -> amp (lope, shift cut) -> out -> bus
   var g = a.createGain(), amp = a.createGain(), cut = a.createGain(), drv = a.createGain(), f = a.createBiquadFilter();
   g.gain.value = 0; amp.gain.value = 1; cut.gain.value = 1; drv.gain.value = P.grit || 1;
-  f.type = "lowpass"; f.frequency.value = P.cut[0]; f.Q.value = P.q;
+  f.type = "lowpass"; f.frequency.value = P.cut[0]; f.Q.value = Math.min(P.q, P.cyl && P.cyl <= 4 ? 0.9 : 1.4);   // no resonant peak to ring as a buzz
   var o = a.createOscillator(), o2 = a.createOscillator(), os = a.createOscillator(), sg = a.createGain();
   var wave = engineWave(a, B, kind, P);
   if(wave){ o.setPeriodicWave(wave); o2.setPeriodicWave(wave); } else { o.type = P.h ? "sawtooth" : "sine"; o2.type = P.h ? "sawtooth" : "triangle"; }
@@ -359,6 +405,22 @@ function engineSound(kind, ex, real){
   }
   // one noise source fans out to every noisy layer
   var src = a.createBufferSource(); src.buffer = B.noise; src.loop = true; src.start(); nodes.push(src);
+  // a piston engine is a train of bangs, not a held note: the firing pulses (amp's gain beats at the firing
+  // frequency, deepest for a single, smoothing with the cylinder count and the revs; their depth and timing jitter
+  // cycle to cycle) and the exhaust's own roar (low-passed noise through the same pulses, with the throttle and revs)
+  var TRIM = P.cyl === 1 ? 0.72 : P.cyl === 2 ? 0.85 : 1, JIT = 2000, FIRE = P.cyl ? clamp(0.8 - 0.06*P.cyl, 0.15, 0.7) : 0, fp = null, fpd = null, exf = null, exg = null, jf = null, jg = null;
+  if(FIRE){
+    fp = a.createOscillator(); fpd = a.createGain(); var pw = pulseWave(a, B, kind, P.cyl);
+    if(pw) fp.setPeriodicWave(pw); else fp.type = "sawtooth";
+    fpd.gain.value = FIRE; fp.connect(fpd); fpd.connect(amp.gain); fp.start(); nodes.push(fp);
+    exf = a.createBiquadFilter(); exg = a.createGain(); exf.type = "lowpass"; exf.frequency.value = 400; exf.Q.value = 0.5; exg.gain.value = 0;
+    src.connect(exf); exf.connect(exg); exg.connect(amp);
+    // and no two cycles last quite the same: slow random FM (low-passed noise into the detune, in cents) smears every
+    // partial into a band instead of a held sine
+    jf = a.createBiquadFilter(); jg = a.createGain(); jf.type = "lowpass"; jf.frequency.value = 35; jf.Q.value = 0.5; jg.gain.value = 0;
+    src.connect(jf); jf.connect(jg);
+    [o, o2, os, fp].forEach(function(n){ if(n.detune) jg.connect(n.detune); });
+  }
   function band(type, fq, q){
     var bf = a.createBiquadFilter(), bg = a.createGain(); bf.type = type; bf.frequency.value = fq; bf.Q.value = q; bg.gain.value = 0;
     src.connect(bf); bf.connect(bg); bg.connect(g); return {f: bf, g: bg};
@@ -382,9 +444,10 @@ function engineSound(kind, ex, real){
   // state: deterministic randomness (a seed from the kind), the load, the boost, the overrun and the gear
   var seed = 7; for(var i = 0; i < kind.length; i++) seed = (seed*31 + kind.charCodeAt(i)) & 0x7fffffff;
   function rnd(){ seed = (seed*1103515245 + 12345) & 0x7fffffff; return seed/0x7fffffff; }
-  var S = {t: t0, rpm: null, load: 0.3, boost: 0, lift: 9, pop: 0, wob: 0, gear: null, blip: 0, thr: 0, lim: 0};
+  var S = {t: t0, jw: 0, rpm: null, load: 0.3, boost: 0, lift: 9, pop: 0, wob: 0, gear: null, blip: 0, thr: 0, lim: 0};
   function tgt(p, v, tc){ p.setTargetAtTime(v, a.currentTime, tc); }
   return {
+    ac: a,
     set: function(rpm, opt){
       opt = opt || {};
       var t = a.currentTime, on = sfxVolume() > 0, dt = clamp(t - S.t, 0, 0.1), F = engineHz(kind, rpm, P), u = Math.min(1, F.u), hz = F.hz;
@@ -417,13 +480,18 @@ function engineSound(kind, ex, real){
       if(S.thr > 0.5 && thr < 0.15){ S.lift = 0; if(bov && S.boost > 0.35) blowOff(t); }
       S.thr = thr; S.lift += dt;
       // the notes: firing frequency, its detuned twin, the half-order sub; a lumpy, irregular idle
-      tgt(o.frequency, hz, 0.03); tgt(o2.frequency, hz*(P.r2 || 1), 0.03); tgt(os.frequency, hz*0.5, 0.03);
-      if(P.rough && t >= S.wob){
+      // never a dead-steady rpm: a wobble of 0.6..1.8 % (the road's load, the idle's hunt) every 60-150 ms
+      if((P.rough || FIRE) && t >= S.wob){
         S.wob = t + 0.06 + rnd()*0.09;
         var idle = (1 - u)*(1 - u);
-        if(o.detune) tgt(o.detune, (rnd() - 0.5)*2*P.rough*45*idle, 0.03);
-        tgt(sg.gain, (P.sub || 0)*(0.7 + 0.6*rnd()*idle), 0.04);
+        if(FIRE) S.jw = (rnd() - 0.5)*2*(0.006 + 0.012*idle);
+        if(o.detune && P.rough) tgt(o.detune, (rnd() - 0.5)*2*P.rough*45*idle, 0.03);
+        if(P.rough) tgt(sg.gain, (P.sub || 0)*(0.7 + 0.6*rnd()*idle), 0.04);
+        if(fpd) tgt(fpd.gain, FIRE*(1 - 0.45*u)*(0.7 + 0.6*rnd()), 0.02);
       }
+      var hzw = hz*(1 + (S.jw || 0));
+      tgt(o.frequency, hzw, 0.03); tgt(o2.frequency, hzw*(P.r2 || 1), 0.03); tgt(os.frequency, hzw*0.5, 0.03);
+      if(fp) tgt(fp.frequency, hzw/P.cyl, 0.03);           // the cycle: every cylinder fires once
       if(l){
         if(P.blades) tgt(l.frequency, (F.rpm/60)*P.blades, 0.05);           // the prop's blade-pass buzz
         else if(P.rotor) tgt(l.frequency, 9 + 9*u, 0.1);                     // rotor slap with the revs
@@ -431,6 +499,8 @@ function engineSound(kind, ex, real){
       }
       var L = S.load, dist = opt.dist != null ? clamp(+opt.dist || 0, 0, 1e4) : 0, far = 1/(1 + dist/12);
       tgt(drv.gain, (P.grit || 1)*(0.45 + 0.9*L), 0.05);
+      if(jg) tgt(jg.gain, JIT*(1.4 - 0.6*u), 0.1);
+      if(exg){ tgt(exf.frequency, clamp(hz*5 + 250 + 1800*L*u, 150, 5000), 0.06); tgt(exg.gain, 2.4*(0.35 + 0.65*L)*(0.5 + 0.5*u)*(0.6 + 0.6*(P.air || 0.5)), 0.06); }
       var fc = (P.cut[0] + (P.cut[1] - P.cut[0])*u)*(0.45 + 0.75*L)*(0.4 + 0.6*far);
       tgt(f.frequency, clamp(Math.max(fc, hz*2.5), 60, 16000), 0.06);
       // intake / exhaust roar, road rumble, a squeal in a slide
@@ -467,7 +537,7 @@ function engineSound(kind, ex, real){
       // a dead man's switch: each set() fades the note out 0.25 s from now and the next frame's
       // set() cancels that, so the engine falls silent whenever the game stops calling (a hidden
       // tab, another view, a stalled loop) instead of droning on at its last revs
-      var lvl = on ? P.gain*MD.gain*(0.6 + 0.45*u)*(0.55 + 0.45*L)*far : 0;
+      var lvl = on ? TRIM*P.gain*MD.gain*(0.6 + 0.45*u)*(0.55 + 0.45*L)*far : 0;
       g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(lvl, t, 0.1); g.gain.setTargetAtTime(0, t + 0.25, 0.05);
     },
     stop: function(){
@@ -546,5 +616,6 @@ HQV.engine = {now: now, clamp: clamp, hex: hex, angLerp: angLerp, calm: calm, sa
               // the shared AudioContext and its master gain (the SFX volume), or null when sound is off:
               // for a game that shapes its own sound (the City's thunder) instead of a named sfx
               audioOut: function(){ var a = sfxVolume() > 0 ? audio() : null; return a && SND.master ? {ctx: a, out: SND.master} : null; },
+              liveEngines: function(){ return VOICES.length; }, engineWatch: watchdog,   // the watchdog (tests run it by hand)
               ambientOut: function(){ var a = ambientOn() && sfxVolume() > 0 ? audio() : null; return a && SND.master ? {ctx: a, out: SND.master} : null; }};
 })();

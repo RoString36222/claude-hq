@@ -285,7 +285,8 @@ class Tuning(unittest.TestCase):
         self.assertLess(sp["gain"]/st["gain"], 1.3, "slightly")
         self.assertTrue(e["ev"] and e["same"] and e["untouched"], "an electric motor and stock keep their own profile")
         src = read("games", "engine.js")
-        self.assertIn("function engineSound(kind, ex, real){\n  var P = engineProfile(kind, ex, real);", src)
+        self.assertIn("function engineVoice(kind, ex, real){\n  var P = engineProfile(kind, ex, real);", src)
+        self.assertIn("function engineSound(kind, ex, real){\n  var v = engineVoice(kind, ex, real)", src)   # behind the watchdog
         self.assertIn("E.engineSound(V.eng, ride.tune && HQV.hqTuning ? HQV.hqTuning.exhaustOf(ride.tune) : null)", read("games", "hq3d.js"))
 
     def test_the_store(self):

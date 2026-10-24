@@ -16,7 +16,8 @@
  *   spotFor(sp, spots, i)   which lobby "pet spot" ({x, z, kind}) a species uses
  *   throwBall(o, blocked)   where a thrown ball lands (short of a wall)
  *   model(THREE, o)         a pet: smooth merged parts (body, head) + instanced jointed legs, neck, tail, jaw, eyelids, ears,
- *                           membrane wings rebuilt each frame (pose: IK gaits, blinks, look-at): at most 6 draw calls
+ *                           membrane wings rebuilt each frame (pose: IK gaits, blinks, look-at): at most 6 draw calls;
+ *                           the wyvern (3.18.1) its own build (wyvernModel / poseWyvern): wings for arms, a veined membrane
  *   create(c, opts)         the runtime games/hq3d.js drives each frame (frame, key, net, setOwned, setLobby)
  *   lobby(world, spots)     marks a world as your pets' home (the HQ revamp's lobby calls it with its pet spots)
  *   place / build           the Pet shop on a City lot (games/hqcity3d.js), its own name: Paws & Claws
@@ -70,8 +71,9 @@ var SPECIES = [
     pal: [[0x7a5a3a, 0x3e2a1a, 0xe6d6c0, 0xc8a83a], [0xc8783a, 0x8a4a1a, 0xf4e0c8, 0xc8a83a], [0x34363a, 0x18191c, 0xc8cacc, 0xd8b84a], [0xe8d4b4, 0xc8a878, 0xfaf0e0, 0x7ab84a]]}),
   S("blackcat", "Black cat", "cat", 1, 0, false, false, {form: "quad", L: 0.45, H: 0.19, W: 0.17, legH: 0.19, head: 0.105, snout: 0.04, ears: "point", tail: "long", fin: "matte", size: 1,
     pal: [[0x1c1b20, 0x26252c, 0x2a2930, 0xf0d040], [0x1c1b20, 0x26252c, 0x2a2930, 0x6ad86a], [0x1c1b20, 0x26252c, 0x2a2930, 0x5ab4f4], [0x1c1b20, 0x26252c, 0xf4f4f4, 0xf0a040]]}),
-  S("wyvern", "Wyvern", "dragon", 6, 400, false, true, {form: "biped", L: 0.5, H: 0.24, W: 0.2, legH: 0.22, head: 0.12, snout: 0.12, ears: "horn", tail: "dragon", fly: true, fin: "matte", size: 1,
-    pal: [[0x4caf6a, 0x2e7a44, 0xd8e8a0, 0xf0c030], [0x8a5ac8, 0x5a3a8a, 0xe0c8f0, 0xf0c030], [0x2ab0a8, 0x1a7a74, 0xc0f0e0, 0xf08030], [0xb8603a, 0x7a3a20, 0xf0d0a0, 0xf0e040]]}),
+  S("wyvern", "Wyvern", "dragon", 6, 400, false, true, {form: "biped", L: 0.5, H: 0.22, W: 0.18, legH: 0.2, head: 0.085, snout: 0.16, ears: "none", tail: "dragon", fly: true, fin: "matte", size: 1,
+    // its own build (wyvernModel): ember, ash, venom, and the frost-blue elder (more spines, torn wings)
+    pal: [[0x2b2326, 0xc8442c, 0x7a5046, 0xffa83a], [0x5e5b57, 0xe2d8c2, 0xa89e8e, 0x8fd8ff], [0x18241a, 0x86d23c, 0x4e6844, 0xe0ff4a], [0x36404e, 0xb4dcf0, 0x8e9cac, 0x7ae8ff]]}),
   S("firedragon", "Fire dragon", "dragon", 10, 800, true, true, {form: "quad", L: 0.62, H: 0.28, W: 0.26, legH: 0.2, head: 0.14, snout: 0.14, ears: "horn", tail: "dragon", fly: true, spikes: 1, fin: "matte", fx: "fire", size: 1,
     pal: [[0xd8342a, 0x8a1a14, 0xf8b040, 0xffd040], [0xe86a1a, 0xa83a10, 0xf8d060, 0xffe060], [0x6a1a1a, 0x3a0c0c, 0xf86a2a, 0xff8a2a], [0xf0a020, 0xb05a10, 0xfff0a0, 0xd02a10]]}),
   S("icedragon", "Ice dragon", "dragon", 10, 800, true, true, {form: "quad", L: 0.62, H: 0.28, W: 0.26, legH: 0.2, head: 0.14, snout: 0.14, ears: "horn", tail: "dragon", fly: true, spikes: 2, frost: 1, fin: "ice", fx: "ice", size: 1,
@@ -498,6 +500,7 @@ var TAILS = {curl: [4, 0.42, 0.17, 0.12, 1.25, 0.6], plume: [4, 0.6, 0.12, 0.17,
 // segs, legs, eyes, meshes (draw calls), tris, sp, dims, parts}. g is placed by the caller; its y rotation is the pet's yaw.
 function model(T, o){
   o = o || {}; var sp = speciesOf(o.species) || SPECIES[0], pal = sp.pal[Math.max(0, Math.min(VARIANTS - 1, o.variant | 0))];
+  if(sp.id === "wyvern") return wyvernModel(T, o, sp);
   var A = pal[0], B2 = pal[1], C = pal[2], EYE = pal[3], acc = accOk(sp, o.acc) ? o.acc | 0 : 0;
   var L = sp.L, H = sp.H, W = sp.W || 0.24, lh = sp.legH, hr = sp.head, sn = sp.snout || 0.08, kind = sp.kind;
   var g = new T.Group(), Pg = new T.Group(); g.add(Pg);
@@ -772,6 +775,7 @@ var FC = {dz: 0, dy: 0};
 function pose(Mo, st, t, calm, look){
   if(!Mo) return;
   if(Mo.rig) return poseRig(Mo, st, t, calm, look);
+  if(Mo.wy) return poseWyvern(Mo, st, t, calm, look);
   var T3 = Mo.g, a = st.anim || "stand", ph = st.ph || 0, d = Mo.dims, sp = Mo.sp, kind = sp.kind, k = calm ? 0.35 : 1, S = Mo.sm, v = Mo.tv;
   if(!UP){ UP = new v[0].constructor(0, 1, 0); TE = new v[0].constructor(); TS = new v[0].constructor(); TQ = Mo.q.clone(); TM = Mo.mm.clone(); }
   var dt = S.lastT == null ? 0 : Math.max(0, Math.min(0.1, t - S.lastT)); S.lastT = t;
@@ -953,6 +957,479 @@ function pose(Mo, st, t, calm, look){
 }
 var Q = null;
 
+/* ---------- the wyvern (HQ 3.18.1): its own build, an original design after the classic fantasy wyvern ---------- */
+// No forelegs: its wings are its arms. On the ground it walks on its wing-wrists (a clawed thumb on each, like a bat)
+// and two strong hind legs, wings folded tight along its flanks; in the air an arm, a forearm and four long finger
+// spars spread a veined membrane (one small procedural texture per page, its trailing edge torn and scalloped) that
+// billows on the fast downstroke, the tips lagging, and folds in on the slower upstroke. A lean, bony, long-snouted
+// skull with teeth, a crown of back-swept spines that rises when it roars, a lower jaw that opens; a thorny collar
+// round the neck, spines down the back, a whip tail ending in a barbed blade. Variant 3 is the elder: more spines,
+// longer crown, torn wings. Draw calls as every pet: body, head, glowing eyes, limbs, bits, wings (6).
+var WY_FX = ["fire", "smoke", "venom", "ice"];                  // its breath, by variant
+var WY_MEM = [0xd85a3c, 0xdcd0b8, 0x88c440, 0x94c6e6];        // the membrane's tint, by variant
+var WY_HUM = 0.16, WY_FORE = 0.27, WY_THUMB = 0.05, WY_FING = [0.62, 0.58, 0.47, 0.34];
+var WY_OPEN = {hum: 0.45, fore: -0.25, fing: [0.05, -0.38, -0.8, -1.22]};   // open: angles in the wing's plane (+ forward)
+var WY_NR = 5, WY_NA = 4, WY_PAN = 6;                          // membrane panels: rings out from the wrist x steps across
+var WY_SEAT = [0, 0.15, 0.2], WY_PITCH = -0.16;                // the saddle point (body space) and the standing pitch
+var WYTEX = {}, WYTEX_N = 0;
+function wyTexCount(){ return WYTEX_N; }
+// The membrane: greyscale (the vertex colours tint it per variant), thicker over the spars and toward the wrist, veins
+// wandering out from the spars and the wrist and branching, the trailing edge ragged with notches (the elder's torn,
+// with holes). One band of the texture per panel (u: out from the wrist, v: across the panel). Built as pixels (a
+// DataTexture): deterministic, no canvas, cached per page.
+function wyVeins(T, elder){
+  var key = elder ? "elder" : "std"; if(WYTEX[key]) return WYTEX[key];
+  var TW = 128, TH = 512, BH = TH/WY_PAN, val = new Float32Array(TW*TH), vn = new Float32Array(TW*TH), al = new Uint8Array(TW*TH), x, y, b;
+  for(y = 0; y < TH; y++){
+    b = Math.min(WY_PAN - 1, (y/BH) | 0); var a = (y - b*BH)/BH;
+    for(x = 0; x < TW; x++){
+      var u = x/(TW - 1), mott = 0.035*Math.sin(x*0.23 + b*1.7)*Math.sin(y*0.19 + b) + 0.03*Math.sin(x*0.07 + y*0.11 + b*3.1);
+      val[y*TW + x] = (0.92 + mott)*(0.74 + 0.26*Math.pow(Math.sin(PI*a), 0.5))*(0.72 + 0.28*Math.min(1, u*3.5))*(elder ? 0.93 : 1);
+      al[y*TW + x] = 255;
+    }
+  }
+  function stamp(b, px, py, r, dk){
+    var y0 = Math.max(b*BH, Math.floor(py - r - 1)), y1 = Math.min((b + 1)*BH - 1, Math.ceil(py + r + 1));
+    for(var yy = y0; yy <= y1; yy++) for(var xx = Math.max(0, Math.floor(px - r - 1)); xx <= Math.min(TW - 1, Math.ceil(px + r + 1)); xx++){
+      var f = Math.max(0, Math.min(1, r + 0.5 - Math.hypot(xx - px, yy - py)))*dk, j = yy*TW + xx; if(f > vn[j]) vn[j] = f;
+    }
+  }
+  function vein(b, px, py, ang, len, w, dk, depth, R){
+    for(var s = 0; s < len; s++){
+      ang += (R() - 0.5)*0.32; ang *= 0.985;                     // wandering, drawn outward
+      px += Math.cos(ang); py += Math.sin(ang)*0.9;
+      if(px >= TW*0.95 || py < b*BH + 1 || py > (b + 1)*BH - 2) return;
+      stamp(b, px, py, w*(1 - 0.6*s/len), dk);
+      if(depth > 0 && R() < 0.045) vein(b, px, py, ang + (R() < 0.5 ? -1 : 1)*(0.5 + R()*0.5), len*0.5, w*0.65, dk*0.85, depth - 1, R);
+    }
+  }
+  for(b = 0; b < WY_PAN; b++){
+    var R = mulberry32(hashStr("wyvern-veins:" + b));
+    for(var sx = 4; sx < TW*0.8; sx += 13 + R()*9){
+      vein(b, sx, b*BH + 2.5, 0.45 + R()*0.45, 40 + R()*50, 1.3, 0.5, 3, R);
+      vein(b, sx + 6, (b + 1)*BH - 3.5, -0.45 - R()*0.45, 40 + R()*50, 1.3, 0.5, 3, R);
+    }
+    vein(b, 1, b*BH + BH*0.5, (R() - 0.5)*0.4, 100, 1.8, 0.55, 3, R);
+    if(b > 3) continue;                                            // the inner panels end on the body: no ragged edge
+    var R2 = mulberry32(hashStr("wyvern-tatters:" + key + ":" + b)), nN = elder ? 4 + (R2()*2 | 0) : 1 + (R2()*2 | 0), cuts = [];
+    for(var n = 0; n < nN; n++) cuts.push([0.14 + R2()*0.72, 0.05 + R2()*0.07, elder ? 0.1 + R2()*0.22 : 0.04 + R2()*0.08]);
+    for(y = b*BH; y < (b + 1)*BH; y++){
+      var a2 = (y - b*BH)/BH, cut = 0.985 - 0.02*Math.abs(Math.sin(y*1.7 + b)) - (elder ? 0.035*Math.abs(Math.sin(y*0.53 + b*2)) : 0);
+      for(var ci = 0; ci < cuts.length; ci++){ var q = Math.abs(a2 - cuts[ci][0])/cuts[ci][1]; if(q < 1) cut = Math.min(cut, 1 - cuts[ci][2]*(1 - q) - 0.012*Math.sin(y*2.3)); }
+      if(a2 < 0.05 || a2 > 0.95) cut = 2;                          // the finger tips stay whole
+      for(x = 0; x < TW; x++){ var u2 = x/(TW - 1), j = y*TW + x;
+        if(u2 > cut) al[j] = 0; else if(u2 > cut - 0.035) val[j] *= 0.72; else if(u2 > 0.9) val[j] *= 0.9; }
+    }
+    if(elder) for(var h = 0; h < 2; h++){                          // holes torn through
+      var hx = (0.45 + R2()*0.4)*TW, hy = b*BH + (0.25 + R2()*0.5)*BH, hr = 2 + R2()*2.5;
+      for(y = Math.floor(hy - hr - 2); y <= hy + hr + 2; y++) for(x = Math.floor(hx - hr - 2); x <= hx + hr + 2; x++){
+        if(x < 0 || x >= TW) continue; var dd = Math.hypot((x - hx)*0.8, y - hy), j2 = y*TW + x;
+        if(dd < hr) al[j2] = 0; else if(dd < hr + 1.6) val[j2] *= 0.7; }
+    }
+  }
+  var data = new Uint8Array(TW*TH*4);
+  for(var i = 0; i < TW*TH; i++){ var g = Math.max(0, Math.min(1, val[i]*(1 - vn[i])))*255; data[i*4] = g; data[i*4 + 1] = g*0.94; data[i*4 + 2] = g*0.92; data[i*4 + 3] = al[i]; }
+  var tx = new T.DataTexture(data, TW, TH, T.RGBAFormat);
+  tx.colorSpace = T.SRGBColorSpace; tx.magFilter = T.LinearFilter; tx.minFilter = T.LinearMipmapLinearFilter; tx.generateMipmaps = true; tx.anisotropy = 4;
+  tx.wrapS = tx.wrapT = T.ClampToEdgeWrapping; tx.needsUpdate = true; tx.userData.wyvern = key;
+  WYTEX[key] = tx; WYTEX_N++;
+  return tx;
+}
+// The hide on the body and the head: small rounded scales in the shader (each a little lighter or darker, dark seams),
+// no texture at all, 55 to a unit of the part's own space
+var WY_SCALES = "{ vec3 wq = vWyP*55.0; vec3 wc = fract(wq) - 0.5; float we = smoothstep(0.36, 0.62, length(wc));\n" +
+  "  float wh = fract(sin(dot(floor(wq), vec3(12.9898, 78.233, 37.719)))*43758.5453); diffuseColor.rgb *= (0.88 + 0.16*wh)*(1.0 - 0.32*we); }";
+function wyMat(T, part, elder){
+  var key = "wy|" + part + (part === "m" && elder ? "e" : ""); if(FIN[key]) return FIN[key];
+  var m;
+  if(part === "m"){
+    var tx = wyVeins(T, elder);
+    // the membrane, lit through from behind a little (its thin parts glow in the variant's tint)
+    m = new T.MeshStandardMaterial({map: tx, vertexColors: true, side: T.DoubleSide, alphaTest: 0.5, roughness: 0.62, metalness: 0,
+                                    emissive: new T.Color(0xffffff), emissiveMap: tx, emissiveIntensity: 0.3});
+    m.onBeforeCompile = function(sh){ sh.fragmentShader = sh.fragmentShader.replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n#ifdef USE_COLOR\n  totalEmissiveRadiance *= vColor.rgb;\n#endif"); };
+    m.customProgramCacheKey = function(){ return "wymem"; };
+  } else if(part === "i") m = new T.MeshStandardMaterial({roughness: 0.7, metalness: 0.04});   // the jointed parts: plain hide (scales would band them)
+  else {
+    m = new T.MeshStandardMaterial({vertexColors: true, roughness: 0.7, metalness: 0.04});
+    m.onBeforeCompile = function(sh){
+      sh.vertexShader = "varying vec3 vWyP;\n" + sh.vertexShader.replace("#include <begin_vertex>", "#include <begin_vertex>\n  vWyP = position;");
+      sh.fragmentShader = "varying vec3 vWyP;\n" + sh.fragmentShader.replace("#include <color_fragment>", "#include <color_fragment>\n" + WY_SCALES);
+    };
+    m.customProgramCacheKey = function(){ return "wyhide"; };
+  }
+  m.userData.fin = "wyvern"; FIN[key] = m;
+  return m;
+}
+// a cone from (x, y, z) pointing along (dx, dy, dz)
+function dcone(P, x, y, z, dx, dy, dz, r, h, hex, seg){
+  var T = P.T, d = new T.Vector3(dx, dy, dz).normalize(), q = new T.Quaternion().setFromUnitVectors(new T.Vector3(0, 1, 0), d);
+  P.add(new T.ConeGeometry(r, h, seg || 5), new T.Matrix4().compose(new T.Vector3(x + d.x*h*0.45, y + d.y*h*0.45, z + d.z*h*0.45), q, new T.Vector3(1, 1, 1)), hex);
+}
+// the membrane's mesh: per side, six panels fanned from the wrist (four between the fingers, one from the last finger
+// to the flank, one from the flank to the shoulder, one ahead of the arm), each a grid of WY_NR rings x WY_NA steps; indexed (smooth)
+function wyWing(T, mem, hide, elder){
+  var per = 1 + WY_NR*(WY_NA + 1), nV = per*WY_PAN*2, uv = new Float32Array(nV*2), col = new Float32Array(nV*3), idx = [];
+  var cM = new T.Color(lerpHex(mem, 0x8a8a8a, elder ? 0.22 : 0)), cR = new T.Color(lerpHex(mem, hide, 0.55)), c = new T.Color();
+  for(var sd = 0; sd < 2; sd++) for(var p = 0; p < WY_PAN; p++){
+    var base = (sd*WY_PAN + p)*per;
+    for(var vi = 0; vi < per; vi++){
+      var ri = vi ? Math.floor((vi - 1)/(WY_NA + 1)) + 1 : 0, ai = vi ? (vi - 1) % (WY_NA + 1) : WY_NA/2, r = ri/WY_NR, a = ai/WY_NA;
+      uv[(base + vi)*2] = r; uv[(base + vi)*2 + 1] = (p + 0.03 + a*0.94)/WY_PAN;
+      c.copy(cR).lerp(cM, Math.pow(r, 0.7)*(p === 4 ? 0.55 : 1)); col[(base + vi)*3] = c.r; col[(base + vi)*3 + 1] = c.g; col[(base + vi)*3 + 2] = c.b;
+    }
+    var V = function(ri, ai){ return base + 1 + (ri - 1)*(WY_NA + 1) + ai; };
+    for(var a0 = 0; a0 < WY_NA; a0++) idx.push(base, V(1, a0), V(1, a0 + 1));
+    for(var r0 = 1; r0 < WY_NR; r0++) for(var a1 = 0; a1 < WY_NA; a1++) idx.push(V(r0, a1), V(r0 + 1, a1), V(r0 + 1, a1 + 1), V(r0, a1), V(r0 + 1, a1 + 1), V(r0, a1 + 1));
+  }
+  var geo = new T.BufferGeometry();
+  geo.setAttribute("position", new T.BufferAttribute(new Float32Array(nV*3), 3)); geo.setAttribute("normal", new T.BufferAttribute(new Float32Array(nV*3), 3));
+  geo.setAttribute("uv", new T.BufferAttribute(uv, 2)); geo.setAttribute("color", new T.BufferAttribute(col, 3)); geo.setIndex(idx);
+  return {geo: geo, tris: idx.length/3, per: per, open: 0, fingers: WY_FING.length, panels: WY_PAN, elder: !!elder};
+}
+function wyvernModel(T, o, sp){
+  var vi = Math.max(0, Math.min(VARIANTS - 1, o.variant | 0)), pal = sp.pal[vi], A = pal[0], B2 = pal[1], C = pal[2], EYE = pal[3], elder = vi === 3;
+  var acc = accOk(sp, o.acc) ? o.acc | 0 : 0, ivory = 0xeee4cc, horn = lerpHex(B2, 0xf0e6d0, 0.35), claw = 0x2a2420, dark = 0x140e0e;
+  var L = 0.5, H = 0.22, W = 0.18, lh = 0.2, hr = 0.085, cy = 0.27, hipZ = -0.06, oz = -hipZ;
+  var g = new T.Group(), Pg = new T.Group(); g.add(Pg);
+  var parts = {}, meshes = 0, tris = 0, matB = wyMat(T, "b");
+  function mesh(name, P, parent, m){ var me = new T.Mesh(P.geometry(), m || matB); me.name = "pet-" + name; parent.add(me); meshes++; tris += P.tris(); parts[name] = me; me.castShadow = name === "body"; return me; }
+  var LI = [], BI = [];
+  function li(hex){ LI.push(hex); return LI.length - 1; }
+  function bi(hex){ BI.push(hex); return BI.length - 1; }
+  // ---- the body (pivot at the hips; body space: +z forward) ----
+  var body = new T.Group(); body.position.set(0, cy, hipZ); Pg.add(body);
+  var Pb = new Part(T);
+  ell(Pb, 0, H*0.06, 0.21, [W*0.56, H*0.6, 0.16], A, 0, 0, 9);            // the deep chest
+  ell(Pb, 0, 0, 0.1, [W*0.46, H*0.5, 0.15], A, 0, 0, 9);                  // the waist
+  ell(Pb, 0, -0.005, -0.02, [W*0.5, H*0.5, 0.12], A, 0, 0, 9);            // the hips
+  ell(Pb, 0, -H*0.25, 0.11, [W*0.34, H*0.27, 0.19], C, 0, 0, 9);           // the belly, lighter
+  ell(Pb, 0, -H*0.12, 0.27, [W*0.38, H*0.38, 0.08], C, 0, 0, 9);           // the keel of the breastbone
+  [-1, 1].forEach(function(s){
+    ell(Pb, s*W*0.36, H*0.16, 0.25, [W*0.26, H*0.3, 0.08], A, 0, 0, 8);    // the flight muscles
+    ell(Pb, s*W*0.42, -H*0.1, 0, [W*0.22, H*0.38, 0.1], A, 0.2, 0, 8);     // a thigh
+  });
+  // spines down the back behind the saddle, a thorny collar round the base of the neck (branching, coral-like)
+  var nsp = elder ? 8 : 5;
+  for(var i = 0; i < nsp; i++){ var f = i/(nsp - 1); dcone(Pb, 0, H*0.5 - f*0.012, 0.1 - f*0.22, 0, 1, -0.7, 0.012, (0.035 + 0.02*Math.sin(f*PI))*(elder ? 1.35 : 1), i % 2 ? B2 : horn, 4); }
+  var nm = elder ? 13 : 9;
+  for(var m2 = 0; m2 < nm; m2++){
+    var ph = -2.1 + 4.2*m2/(nm - 1), ox = Math.sin(ph), oy = Math.cos(ph), len = (0.06 + 0.035*Math.cos(ph*0.7))*(elder ? 1.3 : 1);
+    var bx0 = ox*0.065, by0 = 0.075 + oy*0.06, bz0 = 0.33 - Math.abs(ph)*0.012;
+    dcone(Pb, bx0, by0, bz0, ox*0.8, oy*0.8 + 0.25, -0.75, 0.013, len, B2, 4);
+    dcone(Pb, bx0 + ox*len*0.4, by0 + (oy*0.8 + 0.25)*len*0.38, bz0 - len*0.3, ox*0.3 + (m2 % 2 ? 0.4 : -0.4), oy*0.4 + 0.8, -0.5, 0.007, len*0.5, lerpHex(B2, A, 0.25), 4);
+    if(Math.abs(ph) > 0.9) dcone(Pb, ox*0.09, 0.05 + oy*0.07, 0.27, ox, oy*0.6, -0.6, 0.01, len*0.6, lerpHex(B2, horn, 0.4), 4);
+  }
+  if(acc & ACC.collar){ Pb.add(new T.TorusGeometry(0.058, 0.012, 5, 14), M4(T, 0, 0.09, 0.37, -0.5, 0, 0), 0xd8342a); ell(Pb, 0, 0.04, 0.4, [0.016, 0.02, 0.01], 0xf0c030); }
+  if(acc & ACC.bandana) cone(Pb, 0, 0.03, 0.39, 0.06, 0.09, 0x3a6ad8, PI*0.88, 0, 0, 3);
+  // ---- the head: a lean, bony skull, a long snout full of teeth; the crown of spines is instanced (it rises) ----
+  var head = new T.Group(); head.rotation.order = "YXZ"; head.position.set(0, 0.22, 0.57); body.add(head);
+  var Ph = new Part(T), Pgl = new Part(T);
+  ell(Ph, 0, hr*0.32, -hr*0.05, [hr*0.6, hr*0.55, hr*0.8], A, 0, 0, 9);            // the braincase
+  ell(Ph, 0, hr*0.2, hr*0.95, [hr*0.36, hr*0.3, hr*1.0], A, 0.06, 0, 9);            // the long snout
+  ell(Ph, 0, hr*0.12, hr*1.85, [hr*0.25, hr*0.2, hr*0.3], A, 0, 0, 7);               // its tip
+  ell(Ph, 0, -hr*0.03, hr*0.95, [hr*0.27, hr*0.07, hr*0.95], 0x4a1414, 0, 0, 6);     // the roof of the mouth (seen when it opens)
+  [0.55, 1.0, 1.45].forEach(function(z, i){ ell(Ph, 0, hr*(0.47 - i*0.06), hr*z, [hr*0.15, hr*0.07, hr*0.24], horn, 0.08, 0, 6); });   // plates down the nose
+  ell(Ph, 0, hr*0.55, -hr*0.62, [hr*0.42, hr*0.18, hr*0.22], horn, -0.4, 0, 7);      // the back of the skull
+  var eyes = [], er = hr*0.13;
+  [-1, 1].forEach(function(s){
+    ell(Ph, s*hr*0.42, hr*0.4, hr*0.4, [hr*0.17, hr*0.13, hr*0.17], dark, 0, 0, 7);              // the socket
+    ell(Ph, s*hr*0.36, hr*0.62, hr*0.36, [hr*0.2, hr*0.08, hr*0.36], horn, -0.15, s*0.25, 7);     // the brow ridge
+    ell(Ph, s*hr*0.38, hr*0.08, hr*0.55, [hr*0.1, hr*0.1, hr*0.48], horn, 0, s*0.12, 7);          // the cheekbone
+    ell(Ph, s*hr*0.12, hr*0.28, hr*2.06, [hr*0.05, hr*0.04, hr*0.05], dark, 0, 0, 4);              // a nostril
+    for(var ti = 0; ti < 6; ti++){ var th = ti === 0 || ti === 2 ? 0.03 : 0.02; cone(Ph, s*hr*(0.17 + ti*0.03), -hr*0.1 - th*0.4, hr*(1.98 - ti*0.3), 0.0055, th, ivory, PI, 0, 0, 3); }
+    dcone(Ph, s*hr*0.35, hr*0.7, -hr*0.45, s*0.25, 0.42, -1, hr*0.13, hr*1.7*(elder ? 1.25 : 1), horn, 5);    // the great swept-back horn
+    dcone(Ph, s*hr*0.48, hr*0.02, -hr*0.25, s*0.55, -0.1, -1, hr*0.06, hr*0.6, horn, 4);             // a jaw spike
+    // the eye, glowing (unlit: it shows at night), a slit pupil
+    var ex = s*hr*0.47, ey = hr*0.42, ez = hr*0.44, ny = Math.sin(0.1), nx = s*Math.sin(0.8), nz = Math.cos(0.8);
+    ell(Pgl, ex, ey, ez, [er, er*0.75, er*0.8], EYE, 0, s*0.8, 7);
+    ell(Ph, ex + nx*er*0.55, ey, ez + nz*er*0.55, [er*0.16, er*0.62, er*0.2], 0x080404, 0, s*0.8, 4);
+    eyes.push({c: [ex, ey, ez], n: [nx, ny, nz], r: er, lid: li(A)});
+  });
+  if(acc & ACC.hat){ cone(Ph, hr*0.05, hr*1.5, 0, hr*0.42, hr*0.9, 0x6a3ad8, 0, 0, -0.2, 10); cyl(Ph, 0, hr*1.08, 0, hr*0.55, hr*0.55, 0.012, 0x6a3ad8, 0, 0, -0.2, 12); ell(Ph, hr*0.22, hr*1.95, 0, [0.025, 0.025, 0.025], 0xfff0a0); }
+  if(acc & ACC.bow) [-1, 1].forEach(function(s){ cone(Ph, s*hr*0.2, hr*0.9, -hr*0.2, hr*0.16, hr*0.32, 0xf05aa0, 0, 0, s*PI/2, 5); });
+  mesh("head", Ph, head); mesh("glow", Pgl, head, glowMat(T));
+  // the crown: spines fanned round the back of the skull
+  var frill = [], nf = elder ? 9 : 7;
+  for(var fi = 0; fi < nf; fi++){ var fp = -1.25 + 2.5*fi/(nf - 1);
+    frill.push({i: bi(fi % 2 ? B2 : horn), b: [Math.sin(fp)*hr*0.5, hr*0.5 + Math.cos(fp)*hr*0.18, -hr*0.62], phi: fp, len: hr*(1.35 - 0.45*Math.abs(fp)/1.25)*(elder ? 1.3 : 1)}); }
+  // ---- the jaw and its teeth; the neck; the hind legs; the arms (the wings' bones); the tail ----
+  var jaw = {h: [0, -hr*0.03, hr*0.05], tip: [0, -hr*0.13, hr*1.9], w: hr*0.29, th: hr*0.12, i: li(lerpHex(A, C, 0.35)), teeth: []};
+  [-1, 1].forEach(function(s){ [0.45, 0.68, 0.9].forEach(function(f){ jaw.teeth.push({s: s, f: f, i: bi(ivory)}); }); });
+  var neck = {n: 5, r0: 0.055, r1: 0.034, i: [], sp: []}, nb = new T.Vector3(0, 0.06, 0.32);
+  for(var ni = 0; ni < 5; ni++){ neck.i.push(li(A)); if(ni > 0) neck.sp.push(bi(ni % 2 ? B2 : horn)); }
+  var legs = [];
+  [-1, 1].forEach(function(s){ legs.push({s: s, i: li(A), j: li(A), k: li(lerpHex(A, dark, 0.3)), toes: [bi(claw), bi(claw), bi(claw), bi(claw)], att: new T.Vector3(s*0.08, -0.04, 0), tot: 0.3}); });
+  var bone = lerpHex(A, B2, 0.22), arms = [];
+  [-1, 1].forEach(function(s){ arms.push({s: s, hum: li(A), fore: li(A), thumb: li(bone), fing: [li(bone), li(bone), li(bone), li(bone)],
+    spur: bi(horn), claw: bi(claw), hook: bi(claw), knuck: [bi(horn), bi(horn), bi(horn), bi(horn)]}); });
+  var tail = {n: 9, len: 0.82, r0: 0.045, r1: 0.008, i: [], sp: [], blade: -1, barbs: []};
+  for(var tj = 0; tj < tail.n; tj++){ tail.i.push(li(A)); tail.sp.push(tj < (elder ? 9 : 7) ? bi(tj % 2 ? horn : B2) : -1); }
+  tail.blade = bi(B2); tail.barbs = [bi(horn), bi(horn)];
+  function inst(name, geo, cols){
+    var im = new T.InstancedMesh(geo, wyMat(T, "i"), cols.length), c3 = new T.Color(), m0 = new T.Matrix4().makeScale(0, 0, 0);
+    for(var i = 0; i < cols.length; i++){ im.setColorAt(i, c3.setHex(cols[i])); im.setMatrixAt(i, m0); }
+    im.name = "pet-" + name; im.frustumCulled = false; im.castShadow = name === "limbs"; Pg.add(im); meshes++; tris += cols.length*(geo.index ? geo.index.count : geo.attributes.position.count)/3; parts[name] = im;
+    return im;
+  }
+  if(!GEO.wlimb){ var lg = new T.CapsuleGeometry(0.5, 1, 1, 6); lg.translate(0, 1, 0); lg.scale(1, 0.5, 1); var lp = lg.attributes.position;
+    for(var vv = 0; vv < lp.count; vv++){ var kk = 1 - 0.1*Math.max(0, Math.min(1, lp.getY(vv))); lp.setX(vv, lp.getX(vv)*kk); lp.setZ(vv, lp.getZ(vv)*kk); }
+    lg.computeVertexNormals(); lg.userData.shared = true; GEO.wlimb = lg; }
+  if(!GEO.wbit){ var bg = new T.ConeGeometry(0.5, 1, 5, 1, true); bg.translate(0, 0.5, 0); bg.userData.shared = true; GEO.wbit = bg; }
+  var limbs = inst("limbs", GEO.wlimb, LI), bits = inst("bits", GEO.wbit, BI);
+  // ---- the wings' membrane ----
+  var wing = wyWing(T, WY_MEM[vi], A, elder), wingMesh = new T.Mesh(wing.geo, wyMat(T, "m", elder));
+  wingMesh.name = "pet-wings"; wingMesh.frustumCulled = false; Pg.add(wingMesh); meshes++; tris += wing.tris; parts.wings = wingMesh;
+  mesh("body", Pb, body);
+  var stage = sp.grows ? Math.max(0, Math.min(2, o.stage | 0)) : 0, scale = (sp.size || 1)*(sp.grows ? [0.7, 1, 1.35][stage] : 1);
+  Pg.scale.setScalar(scale);
+  var seedF = (hashStr(sp.id + ":" + vi + ":" + (o.name || "")) % 1000)/1000*TAU;
+  var v = []; for(var q = 0; q < 40; q++) v.push(new T.Vector3());
+  var sy = WY_SEAT[1]*Math.cos(WY_PITCH) - WY_SEAT[2]*Math.sin(WY_PITCH), sz = WY_SEAT[1]*Math.sin(WY_PITCH) + WY_SEAT[2]*Math.cos(WY_PITCH);
+  var Mo = {g: g, P: Pg, body: body, head: head, limbs: limbs, bits: bits, wingMesh: wingMesh, wing: wing, glow: parts.glow, segs: null,
+          legs: legs, arms: null, tail: tail, neck: neck, nb: nb, eyes: eyes, earsB: [], flop: [], jaw: jaw, tongue: -1, fin: -1, hp0: head.position.clone(),
+          meshes: meshes, tris: Math.round(tris), sp: sp, scale: scale, variant: vi, acc: acc, biped: true, seedF: seedF, tv: v, Mh: new T.Matrix4(), q: new T.Quaternion(), mm: new T.Matrix4(),
+          sm: {look: 0, jaw: 0, turn: 0, lastT: null, lastYaw: null},
+          dims: {L: L, H: H, W: W, lh: lh, cy: cy, oz: oz, hipZ: hipZ, hr: hr}, parts: parts,
+          wy: {arms: arms, frill: frill, elder: elder, seatL: WY_SEAT}, fx: WY_FX[vi], elder: elder,
+          seat: [cy + sy, hipZ + sz]};                              // where a rider sits (the pet's own space, before its scale)
+  poseWyvern(Mo, {anim: "stand", ph: 0, yaw: 0, speed: 0}, 0, false, null);
+  return Mo;
+}
+// the flap: a fast downstroke (36% of the beat), the tips lagging up behind it and the membrane billowing; a slower
+// upstroke with the hand folding in and the tips trailing down
+function wyFlap(f){
+  f -= Math.floor(f);
+  if(f < 0.36){ var x = f/0.36, e = (1 - Math.cos(x*PI))/2, s = Math.sin(x*PI);
+    return {roll: 1.0 - 1.7*e, lag: 0.45*s, curl: 0, fold: 0, sweep: 0.12*s, sag: 0.08*s + 0.02, lift: s}; }
+  var x2 = (f - 0.36)/0.64, e2 = (1 - Math.cos(x2*PI))/2, s2 = Math.sin(x2*PI);
+  return {roll: -0.7 + 1.7*e2, lag: -0.55*s2, curl: 0.8*s2, fold: 0.35*s2, sweep: -0.18*s2, sag: -0.04*s2, lift: -0.35*s2};
+}
+// a direction in body space: folded (fx, fy, fz) toward open (an angle in the wing's plane, rolled up by `roll`), by k
+function wyDir(out, s, fx, fy, fz, ang, roll, k){
+  var fl = Math.hypot(fx, fy, fz), ca = Math.cos(ang), ox = s*Math.cos(roll)*ca, oy = Math.sin(roll)*ca, oz = Math.sin(ang);
+  out.set(fx/fl*(1 - k) + ox*k, fy/fl*(1 - k) + oy*k, fz/fl*(1 - k) + oz*k);
+  if(out.lengthSq() < 1e-6) out.set(s, 0, 0);
+  return out.normalize();
+}
+function poseWyvern(Mo, st, t, calm, look){
+  var S = Mo.sm, Wy = Mo.wy, d = Mo.dims, a = st.anim || "stand", k = calm ? 0.35 : 1, v = Mo.tv;
+  if(!UP){ UP = new v[0].constructor(0, 1, 0); TE = new v[0].constructor(); TS = new v[0].constructor(); TQ = Mo.q.clone(); TM = Mo.mm.clone(); }
+  var dt = S.lastT == null ? 0 : Math.max(0, Math.min(0.1, t - S.lastT)); S.lastT = t;
+  S.frame = (S.frame | 0) + 1;
+  if(Mo.lod && S.posed && S.frame % 4) return;                    // far off: a fresh pose every fourth frame
+  S.posed = true;
+  var body = Mo.body, head = Mo.head, P = Mo.P, IM = Mo.limbs, BM = Mo.bits, hr = d.hr;
+  P.position.set(0, 0, 0); P.rotation.set(0, 0, 0); body.rotation.set(0, 0, 0);
+  if(S.lastYaw != null && dt > 0){ var tr = wrapPi(st.yaw - S.lastYaw)/dt; S.turn += (Math.max(-4, Math.min(4, tr)) - S.turn)*Math.min(1, dt*4); }
+  S.lastYaw = st.yaw;
+  var fly = a === "fly", walk = a === "walk" || a === "run" || a === "carry" || a === "slither" || a === "swim", run = a === "run" || (walk && st.speed > 3.2);
+  var trick = st.trick ? st.trick.t/st.trick.dur : 0, big = a === "big" && !calm, air = fly || big;
+  var sitting = a === "sit" || a === "look" || a === "beg" || a === "coil" || a === "float";
+  var c = (st.ph || 0)*0.5, mount = Mo.g.scale.x > 2;
+  var br = Math.sin(t*(a === "sleep" ? 1.3 : run ? 6 : 2.2) + Mo.seedF)*(a === "sleep" ? 0.03 : 0.015);
+  // what the wings do: spread k, the arm's roll (+ up), the hand's lag behind it, the fingers' curl, sweep (+ forward),
+  // the membrane's billow; ground: how planted the wrists are (1: walking on them)
+  var wg = {k: 0, roll: 0.15, lag: 0, curl: 0, sweep: 0, sag: 0.012, lift: 0, ground: 1, kS: null};
+  var pitch = WY_PITCH, bank = 0, legs = "stand", jaw = 0.03, frill = 0.12, hx = 0, hy = 0.22, hz = 0.57, hpx = 0.12, hpy = 0, mode = null;
+  if(air){
+    // [riding] st.wing: "climb" big beats, "hover" quick short ones, "glide" spread and still, "dive" folded back;
+    // near the ground coming in it flares (wings forward and cupped, feet reaching). A pet flying along: low beats, glides.
+    var ride = !!st.wing, agl = st.agl != null ? +st.agl : +st.y || 0, rate = (mount ? 0.72 : 1)*(calm ? 0.55 : 1);
+    wg.ground = 0; legs = "tuck"; pitch = 0.02; hy = 0.13; hz = 0.6; hpx = 0.22;
+    mode = ride ? st.wing : big || agl < 0.6 ? "climb" : !calm && Math.sin(t*0.45 + Mo.seedF) > 0.55 ? "glide" : "flap";
+    if(ride && (mode === "glide" || mode === "hover") && agl < 4 && (+st.vy || 0) < -0.4) mode = "flare";
+    if(mode === "glide" || (calm && mode === "flap")){ wg.k = 1; wg.roll = 0.14 + Math.sin(t*1.3 + Mo.seedF)*0.04; wg.lag = 0.1; wg.sag = 0.06; }
+    else if(mode === "dive"){ wg.k = 0.3; wg.roll = 0.35; wg.sweep = -0.35; wg.curl = 0.2; pitch = 0.25; }
+    else if(mode === "flare"){ wg.k = 1; wg.roll = 0.62 + Math.sin(t*6)*0.08*k; wg.sweep = 0.5; wg.lag = 0.3; wg.sag = 0.12; pitch = -0.75; legs = "reach"; hy = 0.22; hz = 0.52; hpx = 0.35; }
+    else {
+      var hov = mode === "hover", F0 = wyFlap(t*(hov ? 3.0 : mode === "climb" ? 2.5 : 1.9)*rate + Mo.seedF);
+      wg.k = 1 - F0.fold*(calm ? 0.5 : 1); wg.roll = F0.roll*(hov ? 0.75 : 1) + (hov ? 0.2 : 0); wg.lag = F0.lag*k; wg.curl = F0.curl*k; wg.sweep = F0.sweep + (hov ? 0.25 : 0); wg.sag = F0.sag; wg.lift = F0.lift;
+      if(hov){ pitch = -0.55; legs = "reach"; } else if(mode === "climb"){ pitch = -0.25; if(agl < 0.6 || st.leap) legs = "push"; }
+    }
+    if(st.leap) legs = "push";                                    // the takeoff leap: legs thrusting down
+  } else {
+    if(walk){ legs = "gait"; pitch = -0.12; hy = 0.22; hz = 0.54; hpx = 0.18; }
+    if(sitting){ pitch = a === "beg" ? -0.95 : -0.5; legs = "sit"; hy = 0.3; hz = 0.42; hpx = a === "look" ? 0 : 0.25; if(a === "beg"){ wg.ground = 0; wg.k = 0.12; } }
+    if(a === "sleep"){ pitch = 0.04; legs = "sleep"; hx = 0.2; hy = -0.07; hz = 0.2; hpx = 0.3; frill = 0; }
+    if(a === "sniff"){ pitch = 0.08; hy = 0.03; hz = 0.6; hpx = 0.9 + Math.sin(t*9)*0.05*k; }
+    if(a === "wings" || a === "stretch"){
+      var wk = 0.5 + 0.5*Math.sin(t*1.6); wg.k = (0.25 + 0.7*wk)*k + (1 - k)*0.3; wg.ground = Math.max(0, 1 - wg.k*1.6);
+      wg.roll = 0.55 + Math.sin(t*3.2)*0.2*k*wk; wg.lag = Math.sin(t*3.2 - 0.8)*0.2*k; wg.sag = 0.04; pitch = -0.35; hy = 0.3; hz = 0.47; hpx = -0.1;
+    }
+    if(a === "roar" || a === "breath" || a === "puff" || a === "crackle" || a === "yawn"){
+      var ro = a === "roar"; pitch = ro ? -0.38 : -0.24; hy = ro ? 0.34 : 0.28; hz = ro ? 0.5 : 0.56;
+      hpx = ro ? -0.35 + Math.sin(t*18)*0.04*k : a === "yawn" ? -0.45 : 0.05;
+      jaw = ro ? 0.8 : a === "breath" ? 0.6 : a === "yawn" ? 0.75 : 0.3; frill = ro || a === "breath" ? 1 : 0.6;
+      if(ro){ wg.k = 0.5*k; wg.ground = 1 - 0.7*k; wg.roll = 0.6; wg.sweep = 0.3; }    // mantling: wings half-raised
+    }
+    if(a === "shake"){ bank = Math.sin(t*28)*0.18*k; wg.k = 0.2 + 0.15*Math.sin(t*20)*k; wg.ground = 0.6; }
+    if(a === "groom"){ hx = 0.17; hy = 0.18; hz = 0.22; hpx = 0.6; wg.kS = [0, 0.55]; }
+    if(a === "stomp") legs = "stomp";
+    if(a === "carry") jaw = 0.22;
+    if(a === "roll" && !calm) bank = trick*TAU;
+  }
+  if(a === "spin") P.rotation.y = trick*TAU*(calm ? 0 : 1);
+  if(big){ P.position.y = Math.sin(trick*PI)*1.6; P.rotation.x = -trick*TAU; }
+  // idling: the head sways, now and then the crown lifts
+  if(!air && !walk && a !== "sleep" && a !== "sniff" && a !== "groom"){ hpy += Math.sin(t*0.6 + Mo.seedF)*0.18*k; hx += Math.sin(t*0.6 + Mo.seedF)*0.02*k; hy += Math.sin(t*0.9)*0.008*k;
+    frill = Math.max(frill, Math.max(0, Math.sin(t*0.23 + Mo.seedF*2) - 0.8)*3*k); }
+  var lookW = 0;
+  if(look && !walk && !air && a !== "sleep" && a !== "sniff" && a !== "groom" && a !== "roll" && a !== "spin" && a !== "shake"){
+    var lx = look.x - Mo.g.position.x, lz = look.z - Mo.g.position.z;
+    if(lx*lx + lz*lz < 144) lookW = Math.max(-1, Math.min(1, wrapPi(Math.atan2(lx, lz) - st.yaw)));
+  }
+  var ease = S.hx == null ? 1 : Math.min(1, dt*6);
+  S.look += (lookW - S.look)*Math.min(1, dt*4);
+  S.hx = S.hx == null ? hx : S.hx + (hx - S.hx)*ease; S.hy = S.hy == null ? hy : S.hy + (hy - S.hy)*ease; S.hz = S.hz == null ? hz : S.hz + (hz - S.hz)*ease;
+  S.pitch = S.pitch == null ? pitch : S.pitch + (pitch - S.pitch)*Math.min(1, dt*5);
+  S.jaw += (jaw*(calm && jaw > 0.3 ? 0.6 : 1) - S.jaw)*(dt ? Math.min(1, dt*8) : 1); S.frill = S.frill == null ? frill : S.frill + (frill - S.frill)*(dt ? Math.min(1, dt*5) : 1);
+  // ---- the body: the saddle point (between the shoulders) held where the rider sits, standing, walking or flying ----
+  var bp = S.pitch + (walk ? Math.sin(c*TAU*2)*0.03*k : 0);
+  body.rotation.x = bp; body.rotation.z = bank + (walk ? Math.sin(c*TAU)*0.04*k : 0) + (air ? -S.turn*0.06 : 0);
+  body.scale.set(1 + br*0.7, 1 + br, 1);
+  var Ls = Wy.seatL, ry = Ls[1]*Math.cos(bp) - Ls[2]*Math.sin(bp), by = Mo.seat[0] - ry;
+  if(legs === "sit") by = d.cy - 0.06; else if(legs === "sleep") by = 0.12;
+  if(walk) by += Math.abs(Math.cos(c*TAU*2))*0.012*k;
+  if(air) by -= wg.lift*0.02*k;
+  body.position.set(0, by, d.hipZ);
+  head.position.set(S.hx, S.hy, S.hz); head.rotation.set(hpx + (air ? 0 : br*0.6), hpy + S.look*0.85, 0);
+  body.updateMatrix(); head.updateMatrix();
+  var Bm = body.matrix, Mh = Mo.Mh.multiplyMatrices(Bm, head.matrix);
+  var up = v[30].set(0, 1, 0).transformDirection(Bm);
+  // ---- the neck: a curve from the shoulders up to the skull, spines along its top ----
+  var N = Mo.neck, nb = Mo.nb, hp = head.position, dn = Math.hypot(hp.y - nb.y, hp.z - nb.z);
+  var c1y = nb.y + dn*0.5, c1z = nb.z + dn*0.12, c2y = hp.y - dn*0.08, c2z = hp.z - dn*0.4;
+  var prev = v[0].set(0, nb.y, nb.z).applyMatrix4(Bm);
+  for(var ni = 1; ni <= N.n; ni++){
+    var u = ni/N.n, iu = 1 - u, ny = iu*iu*iu*nb.y + 3*iu*iu*u*c1y + 3*iu*u*u*c2y + u*u*u*hp.y, nz = iu*iu*iu*nb.z + 3*iu*iu*u*c1z + 3*iu*u*u*c2z + u*u*u*hp.z;
+    var cur = v[1].set(hp.x*u, ny, nz).applyMatrix4(Bm), r = N.r0 + (N.r1 - N.r0)*u;
+    segAt(IM, N.i[ni - 1], prev, cur, r, null, r*1.1);
+    if(ni > 1){ var sd = v[2].copy(cur).sub(prev).normalize(); v[3].copy(prev).lerp(cur, 0.5).addScaledVector(up, r*0.8);
+      v[4].copy(v[3]).addScaledVector(up, 0.03).addScaledVector(sd, -0.025); segAt(BM, N.sp[ni - 2], v[3], v[4], 0.011, 0.006); }
+    prev.copy(cur);
+  }
+  // ---- the hind legs: thigh, shin, the long foot bone, three talons forward and one back ----
+  var gaitW = run ? [0, 0.1, 0.5, 0.6] : [0, 0.5, 0.25, 0.75], duty = run ? 0.4 : 0.62, stride = run ? 0.3 : 0.16, lift = run ? 0.06 : 0.035;
+  Mo.legs.forEach(function(Lg, li2){
+    var s = Lg.s, Hp = v[0].set(s*0.08, -0.04, 0).applyMatrix4(Bm), An = v[1], Fo = v[2], K = v[3], gnd = true;
+    if(legs === "tuck"){ An.set(s*0.1, -0.13, -0.17).applyMatrix4(Bm); Fo.set(s*0.1, -0.16, -0.27).applyMatrix4(Bm); gnd = false; }
+    else if(legs === "reach"){ An.set(s*0.1, -0.24, 0.05).applyMatrix4(Bm); Fo.set(s*0.1, -0.31, 0.1).applyMatrix4(Bm); gnd = false; }
+    else if(legs === "push"){ An.set(s*0.09, -0.27, -0.1).applyMatrix4(Bm); Fo.set(s*0.09, -0.34, -0.15).applyMatrix4(Bm); gnd = false; }
+    else if(legs === "sit"){ Fo.set(s*0.12, 0.012, 0.05); An.set(Fo.x, 0.03, Fo.z - 0.085); }
+    else if(legs === "sleep"){ Fo.set(s*0.16, 0.01, 0.0); An.set(Fo.x, 0.025, -0.085); }
+    else {
+      Fo.set(s*0.1, 0.012, -0.04);
+      if(legs === "gait"){ footCycle(c + gaitW[li2], duty, stride*(calm ? 0.8 : 1), lift, FC); Fo.z += FC.dz; Fo.y += FC.dy; }
+      if(legs === "stomp"){ var sp2 = Math.max(0, Math.sin(t*7 + li2*PI)); Fo.y += sp2*0.05*k; }
+      An.set(Fo.x, Fo.y + 0.07, Fo.z - 0.045);
+    }
+    ik(Hp, An, 0.15, 0.15, s*0.3, 0.1, 1, K);
+    segAt(IM, Lg.i, Hp, K, 0.042, null, 0.012); segAt(IM, Lg.j, K, An, 0.027, null, 0.008); segAt(IM, Lg.k, An, Fo, 0.019, null, 0.006);
+    var fw = gnd ? v[4].set(0, 0, 1) : v[4].copy(Fo).sub(An).normalize(), side = v[5].set(1, 0, 0).transformDirection(Bm);
+    for(var ti = 0; ti < 4; ti++){
+      var back = ti === 3, dd = v[6].copy(fw).multiplyScalar(back ? -1 : 1).addScaledVector(side, back ? 0 : (ti - 1)*0.4*s).addScaledVector(up, gnd ? -0.15 : -0.35).normalize();
+      segAt(BM, Lg.toes[ti], Fo, v[7].copy(Fo).addScaledVector(dd, back ? 0.03 : 0.052), 0.013, 0.01);
+    }
+  });
+  // ---- the wings: arm, forearm, a clawed thumb, four finger spars; on the ground it walks on its wrists ----
+  var Wg = Mo.wing, pos = Wg.geo.attributes.position.array, per = Wg.per, kSum = 0;
+  Wy.arms.forEach(function(Ar, si){
+    var s = Ar.s, kk = wg.kS ? wg.kS[si] : wg.k, gw = wg.kS ? (kk > 0.1 ? 0 : 1) : wg.ground; kSum += kk;
+    var Sp = v[8].set(s*0.075, 0.07, 0.27).applyMatrix4(Bm), E = v[9], X = v[10], dh = v[11], df = v[12], G = v[13];
+    wyDir(dh, s, s*0.55, -0.3, -0.78, WY_OPEN.hum + wg.sweep, wg.roll, kk).transformDirection(Bm);
+    wyDir(df, s, s*0.25, 0.1, 0.96, WY_OPEN.fore + wg.sweep*0.6, wg.roll, kk).transformDirection(Bm);
+    X.copy(Sp).addScaledVector(dh, WY_HUM).addScaledVector(df, WY_FORE);
+    if(gw > 0){
+      var gx = s*0.17, gz = 0.32, gy = 0.05;
+      if(legs === "gait"){ footCycle(c + gaitW[si + 2], duty, stride*(calm ? 0.8 : 1), lift, FC); gz += FC.dz; gy += FC.dy; }
+      else if(legs === "sit"){ gz = 0.28; gx = s*0.16; }
+      else if(legs === "sleep"){ gz = 0.18; gx = s*0.22; gy = 0.04; }
+      G.set(gx, gy, gz); X.lerp(G, gw);
+    }
+    var hint = v[14].set(s*0.5*(1 - kk), 0.5*(1 - kk) + 0.1*kk, -0.7*(1 - kk) + kk).transformDirection(Bm);
+    ik(Sp, X, WY_HUM, WY_FORE, hint.x, hint.y, hint.z, E);
+    segAt(IM, Ar.hum, Sp, E, 0.03, null, 0.012); segAt(IM, Ar.fore, E, X, 0.022, null, 0.01);
+    var td = wyDir(v[15], s, s*0.15, -0.7, 0.7, 0.6, 0.1, kk).transformDirection(Bm), Th = v[16].copy(X).addScaledVector(td, WY_THUMB);
+    segAt(IM, Ar.thumb, X, Th, 0.012, null, 0.004);
+    segAt(BM, Ar.claw, Th, v[17].copy(Th).addScaledVector(td, 0.014).addScaledVector(up, -0.022), 0.009, 0.006);
+    var Fs = [v[18], v[19], v[20], v[21]], Fd = [v[22], v[23], v[24], v[25]];
+    for(var i = 0; i < 4; i++){
+      var ki = Math.max(0, Math.min(1, kk - wg.curl*(0.22 + 0.16*i)));
+      wyDir(Fd[i], s, s*(0.16 + 0.05*i), 0.72 - 0.07*i, -0.85, WY_OPEN.fing[i] + wg.sweep*(1 + 0.25*i), wg.roll + wg.lag*(0.8 + 0.12*i), ki).transformDirection(Bm);
+      Fs[i].copy(X).addScaledVector(Fd[i], WY_FING[i]);
+      segAt(IM, Ar.fing[i], X, Fs[i], 0.013 - i*0.001, null, 0.004);
+      v[26].copy(X).addScaledVector(Fd[i], WY_FING[i]*0.3); v[27].copy(v[26]).addScaledVector(up, 0.02).addScaledVector(Fd[i], -0.012);
+      segAt(BM, Ar.knuck[i], v[26], v[27], 0.007, 0.005);            // a knuckle spur
+    }
+    v[26].copy(E).sub(X).normalize(); v[27].copy(X).addScaledVector(v[26], -0.01).addScaledVector(up, 0.006);
+    segAt(BM, Ar.spur, v[27], v[28].copy(v[27]).addScaledVector(v[26], -0.03).addScaledVector(up, 0.035).addScaledVector(Fd[3], 0.015), 0.012, 0.008);   // the wrist spur
+    segAt(BM, Ar.hook, Fs[0], v[28].copy(Fs[0]).addScaledVector(Fd[0], 0.018).addScaledVector(up, -0.015), 0.006, 0.004);
+    // the membrane: six panels fanned from the wrist; their trailing edges scalloped between the spars and billowing
+    var Rr = v[29].set(s*0.065, -0.03, -0.05).applyMatrix4(Bm);
+    var PAN = [[Fs[0], Fs[1], 0.14, 1], [Fs[1], Fs[2], 0.14, 1], [Fs[2], Fs[3], 0.13, 1], [Fs[3], Rr, 0.1, 1], [Rr, Sp, 0, 0], [Sp, E, 0, 0]];
+    var nrm = v[31], ea = v[32], eb = v[33], ep = v[34];
+    for(var p = 0; p < WY_PAN; p++){
+      var Ap = PAN[p][0], Bp = PAN[p][1], pull = PAN[p][2], trail = PAN[p][3], base = (si*WY_PAN + p)*per;
+      ea.copy(Ap).sub(X); eb.copy(Bp).sub(X); nrm.crossVectors(ea, eb); if(nrm.lengthSq() < 1e-10) nrm.copy(up); nrm.normalize(); if(nrm.dot(up) < 0) nrm.negate();
+      var wdt = Ap.distanceTo(Bp), sag = (trail ? wg.sag : wg.sag*0.4)*wdt*(0.3 + 0.7*kk);
+      pos[base*3] = X.x; pos[base*3 + 1] = X.y; pos[base*3 + 2] = X.z;
+      for(var ai = 0; ai <= WY_NA; ai++){
+        var aa = ai/WY_NA, sn = Math.sin(aa*PI);
+        ep.copy(Ap).lerp(Bp, aa); ep.lerp(X, pull*sn);              // the scalloped edge
+        for(var ri = 1; ri <= WY_NR; ri++){
+          var rr = ri/WY_NR, j = (base + 1 + (ri - 1)*(WY_NA + 1) + ai)*3, bump = sn*(trail ? rr : Math.sin(rr*PI))*sag;
+          pos[j] = X.x + (ep.x - X.x)*rr + nrm.x*bump; pos[j + 1] = X.y + (ep.y - X.y)*rr + nrm.y*bump; pos[j + 2] = X.z + (ep.z - X.z)*rr + nrm.z*bump;
+        }
+      }
+    }
+  });
+  Wg.open = kSum/2; Wg.mode = air ? mode : gwMode(wg);
+  Wg.geo.attributes.position.needsUpdate = true; Wg.geo.computeVertexNormals();
+  // ---- the tail: a long whip swishing slowly, small spines down it, a barbed blade at its end ----
+  var Tl = Mo.tail, n = Tl.n, sl = Tl.len/n, p0 = air ? 0.02 : a === "sleep" ? -0.32 : sitting ? -0.45 : -0.2, dp = air ? 0 : sitting ? 0.07 : 0.032;
+  var curl = a === "sleep" ? 0.36 : sitting ? 0.16 : 0, amp = a === "wag" || a === "greet" ? 0.35 : walk ? 0.16 : 0.1, frq = a === "wag" || a === "greet" ? 6 : walk ? 4 : 1.1;
+  var pt = v[0].set(0, 0.02, -0.13).applyMatrix4(Bm), pitch2 = p0, yaw = 0, dir = v[1], nx2 = v[2];
+  for(var i2 = 0; i2 < n; i2++){
+    var f2 = i2/(n - 1);
+    yaw += curl + Math.sin(t*frq - i2*0.55)*amp*(0.3 + f2)*k/(n*0.4) - S.turn*0.05*(0.3 + f2) + (air ? Math.sin(t*3 - i2*0.7)*0.05*k : 0);
+    if(i2) pitch2 += dp + (air ? Math.sin(t*2.2 - i2*0.6)*0.03*k : 0);
+    dir.set(Math.sin(yaw)*Math.cos(pitch2), Math.sin(pitch2), -Math.cos(yaw)*Math.cos(pitch2)).transformDirection(Bm);
+    nx2.copy(pt).addScaledVector(dir, sl);
+    var r2 = Tl.r0 + (Tl.r1 - Tl.r0)*Math.pow(f2, 0.8);
+    segAt(IM, Tl.i[i2], pt, nx2, r2, null, r2*1.3);   // overlapping: one smooth whip, no links
+    if(Tl.sp[i2] >= 0){ v[3].copy(pt).addScaledVector(dir, sl*0.5).addScaledVector(up, r2*0.75); v[4].copy(v[3]).addScaledVector(up, (0.034 - f2*0.02)*(Mo.elder ? 1.4 : 1)).addScaledVector(dir, 0.02);
+      segAt(BM, Tl.sp[i2], v[3], v[4], 0.01, 0.006); }
+    pt.copy(nx2);
+  }
+  var sideT = v[5].crossVectors(dir, up).normalize();
+  segAt(BM, Tl.blade, v[3].copy(pt).addScaledVector(dir, -0.015), v[4].copy(pt).addScaledVector(dir, 0.08), 0.034, 0.007);
+  [-1, 1].forEach(function(s2, bi2){ v[6].copy(pt).addScaledVector(dir, 0.012); segAt(BM, Tl.barbs[bi2], v[6], v[7].copy(v[6]).addScaledVector(dir, -0.035).addScaledVector(sideT, s2*0.038), 0.011, 0.005); });
+  // ---- the head: the jaw and its teeth, the crown of spines (raised to roar), the eyelids ----
+  var J = Mo.jaw, h0 = J.h, ja = S.jaw, tz = J.tip[2] - h0[2], ty = J.tip[1] - h0[1];
+  var jx = v[0].set(h0[0], h0[1], h0[2]).applyMatrix4(Mh), jt = v[1].set(0, h0[1] + ty*Math.cos(ja) - tz*Math.sin(ja), h0[2] + tz*Math.cos(ja) + ty*Math.sin(ja)).applyMatrix4(Mh);
+  segAt(IM, J.i, jx, jt, J.w, J.th, J.th*0.5);
+  var jup = v[2].set(0, Math.cos(ja), Math.sin(ja)).transformDirection(Mh), jsd = v[3].set(1, 0, 0).transformDirection(Mh);
+  J.teeth.forEach(function(Tt){ v[4].copy(jx).lerp(jt, Tt.f).addScaledVector(jsd, Tt.s*hr*0.2*(1 - Tt.f*0.35)).addScaledVector(jup, hr*0.05); segAt(BM, Tt.i, v[4], v[5].copy(v[4]).addScaledVector(jup, Tt.f > 0.85 ? 0.026 : 0.018), 0.006, 0.005); });
+  Mo.mouthP = Mo.mouthP || jt.clone(); Mo.mouthP.copy(v[4].set(0, -hr*0.05, hr*1.95).applyMatrix4(Mh)).lerp(jt, 0.5);
+  var fr = S.frill;
+  Wy.frill.forEach(function(Fr){
+    var dx = Math.sin(Fr.phi)*(0.35 + 0.5*fr), dy = Math.cos(Fr.phi)*(0.2 + 0.85*fr) + 0.12, dz = -1 + 0.45*fr, dl = Math.hypot(dx, dy, dz);
+    var B0 = v[6].set(Fr.b[0], Fr.b[1], Fr.b[2]).applyMatrix4(Mh), D = v[7].set(dx/dl, dy/dl, dz/dl).transformDirection(Mh);
+    segAt(BM, Fr.i, B0, v[8].copy(B0).addScaledVector(D, Fr.len), 0.011, 0.006);
+  });
+  var bt2 = (t + Mo.seedF*0.7) % 4.3, blink = a === "sleep" ? 1 : a === "yawn" ? 0.5 : bt2 < 0.16 ? Math.sin(bt2/0.16*PI) : 0;
+  Mo.blink = blink;
+  Mo.eyes.forEach(function(e){
+    if(blink < 0.04){ hideAt(IM, e.lid); return; }
+    var c0 = e.c, n0 = e.n, r = e.r;
+    var top = v[0].set(c0[0] + n0[0]*r*0.15, c0[1] + r*0.85, c0[2] + n0[2]*r*0.15).applyMatrix4(Mh), bot = v[1].set(c0[0] + n0[0]*r*0.15, c0[1] + r*(0.85 - 1.8*blink), c0[2] + n0[2]*r*0.15).applyMatrix4(Mh);
+    segAt(IM, e.lid, top, bot, r*1.15, r*0.8, r*0.2);
+  });
+  IM.instanceMatrix.needsUpdate = true; BM.instanceMatrix.needsUpdate = true;
+}
+function gwMode(wg){ return wg.k < 0.05 ? "fold" : "spread"; }
+
 /* ---------- real models (CC0, Quaternius; games/pets/, LICENSE-quaternius.txt) ---------- */
 // Swapped in over the procedural pet once loaded (the procedural one shows meanwhile, and stays when there is no
 // loader, under node, offline or on an error). file, length in m (at the species' size 1), eyes: add our own (the
@@ -1132,7 +1609,7 @@ function facing(o, x, z, maxD){
 }
 var LOD_D = 25;   // past this a pet's model keeps its pose and refreshes it every 8th frame
 var FXC = {fire: [0xffb030, 0xff5a1a], ember: [0xffa030, 0xff3a10], ice: [0xd8f4ff, 0x8ad0ff], snow: [0xffffff, 0xe8f4ff], sparkle: [0xffffff, 0xb8e0ff],
-           prism: [0xff8ad8, 0x8ad8ff], wisp: [0xb46aff, 0x4a2a8a], glitter: [0xfff0a0, 0xffc030], smoke: [0x8a8a90, 0x4a4a50], bubbles: [0xc8f8ff, 0x6ad8f0], dust: [0xd8c8a8, 0x8a7a5a]};
+           prism: [0xff8ad8, 0x8ad8ff], wisp: [0xb46aff, 0x4a2a8a], glitter: [0xfff0a0, 0xffc030], smoke: [0x8a8a90, 0x4a4a50], bubbles: [0xc8f8ff, 0x6ad8f0], dust: [0xd8c8a8, 0x8a7a5a], venom: [0xd8ff50, 0x4a9a1a]};
 function Fx(T, scene){
   var N = 192, pos = new Float32Array(N*3), col = new Float32Array(N*3), g = new T.BufferGeometry();
   g.setAttribute("position", new T.BufferAttribute(pos, 3)); g.setAttribute("color", new T.BufferAttribute(col, 3));
@@ -1201,7 +1678,7 @@ function Fx(T, scene){
 // each species' element: what its idle puffs and breathes, what trails it while it moves (all skipped in Calm)
 function elementFx(F, sp, st, M, a, t, dt){
   if(!F || !M) return;
-  var fx = sp.fx, g = M.g, s = M.scale || 1, yaw = st.yaw, fx0 = Math.sin(yaw), fz0 = Math.cos(yaw);
+  var fx = M.fx || sp.fx, g = M.g, s = M.scale || 1, yaw = st.yaw, fx0 = Math.sin(yaw), fz0 = Math.cos(yaw);
   var hx = g.position.x + fx0*(M.dims.oz + M.dims.L*0.6)*s, hz = g.position.z + fz0*(M.dims.oz + M.dims.L*0.6)*s, hy = g.position.y + (M.dims.cy + M.dims.H*0.6 + 0.12)*s;
   if(M.mouthP){ M.g.updateMatrixWorld(true); var mw = M.mw || (M.mw = M.mouthP.clone()); M.P.localToWorld(mw.copy(M.mouthP)); hx = mw.x; hy = mw.y; hz = mw.z; }   // the open jaw
   st.fxT = (st.fxT || 0) + dt;
@@ -1209,7 +1686,7 @@ function elementFx(F, sp, st, M, a, t, dt){
   if(!tick) return;
   if(a === "breath"){ if(fx === "fire") F.emit("fire", hx, hy, hz, 3, fx0, fz0, 2.6, 0.5, 0.5, 0.15); else if(fx === "ice") F.emit("ice", hx, hy, hz, 3, fx0, fz0, 2.2, 0.5, 0.6, 0.05); else if(fx === "storm") F.zap(hx, hy - 0.3, hz); else F.emit(FXC[fx] ? fx : "smoke", hx, hy, hz, 2, fx0, fz0, 1.2, 0.4, 0.6); }
   if(a === "puff" || a === "crackle"){
-    var kind = fx === "fire" ? "ember" : fx === "ice" ? "snow" : fx === "bubbles" ? "bubbles" : fx === "sparkle" ? "prism" : fx === "wisp" ? "wisp" : fx === "glitter" ? "glitter" : "smoke";
+    var kind = fx === "fire" ? "ember" : fx === "ice" ? "snow" : fx === "bubbles" ? "bubbles" : fx === "sparkle" ? "prism" : fx === "wisp" ? "wisp" : fx === "glitter" ? "glitter" : fx === "venom" ? "venom" : "smoke";
     if(fx === "storm"){ if(Math.sin(t*13) > 0.6) F.zap(g.position.x, g.position.y + 0.2*s, g.position.z); }
     else F.emit(kind, hx, hy, hz, 2, 0, 0, 0, 0.6, 0.9, 0.5);
   }
@@ -1606,6 +2083,6 @@ HQV.hqPets = {
   speciesOf: speciesOf, stageOf: stageOf, tricksFor: tricksFor, nextTrick: nextTrick, cleanName: cleanName, accOk: accOk, canAdopt: canAdopt,
   encode: encode, decode: decode, newState: newState, step: step, lobbyStep: lobbyStep, spotFor: spotFor, followTarget: followTarget,
   trailPush: trailPush, trailAt: trailAt, throwBall: throwBall, besideOwner: besideOwner, hashStr: hashStr,
-  facing: facing, LEAVE_D: LEAVE_D, TAKE_D: TAKE_D, model: model, pose: pose, create: create, upgrade: upgrade, Fx: Fx, FXC: FXC, MODELS: MODELS, modelFor: modelFor, rig: rig, LOD_D: LOD_D, lobby: lobby, place: place, build: build, pick: shopPick, SHOP_ID: SHOP_ID, SHOP_NAME: SHOP_NAME
+  facing: facing, LEAVE_D: LEAVE_D, TAKE_D: TAKE_D, model: model, pose: pose, wyTexCount: wyTexCount, WY_SEAT: WY_SEAT, create: create, upgrade: upgrade, Fx: Fx, FXC: FXC, MODELS: MODELS, modelFor: modelFor, rig: rig, LOD_D: LOD_D, lobby: lobby, place: place, build: build, pick: shopPick, SHOP_ID: SHOP_ID, SHOP_NAME: SHOP_NAME
 };
 })();

@@ -117,6 +117,17 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
     out.models[s.id] = {draws: n, seatY: B.seat.position.y, saddle: B.saddle.length, len: Math.max(sz.x, sz.z), h: sz.y, kind: B.rk, scale: B.RS, hasWings: !!B.M.wing,
                         mouth: B.mouth().toArray().map(function(v){ return Math.round(v*100)/100; })};
   });
+  // the wyvern: the saddle between its wing-shoulders, at its back standing, walking and flying; its wings clear the ground landed
+  var Bw = R.mountModel(ctx, {species: "wyvern", variant: 0, name: "Wy"}), sw = R.newState("dragon", 0, 0, 0, 0, sp("wyvern")), wyS = {};
+  function backY(){ Bw.g.updateMatrixWorld(true); var p = new THREE.Vector3().fromArray(P.WY_SEAT); Bw.M.body.localToWorld(p); return p.y; }
+  function memMin(){ Bw.g.updateMatrixWorld(true); return new THREE.Box3().setFromObject(Bw.M.wingMesh, true).min.y; }
+  [["stand", true, "fold", 0], ["walk", true, "fold", 3], ["glide", false, "glide", 30], ["climb", false, "climb", 20]].forEach(function(c){
+    sw.ground = c[1]; sw.wing = c[2]; sw.speed = c[3]; sw.agl = c[1] ? 0 : 40; sw.vy = 0;
+    for(var i = 0; i < 40; i++) R.animate(Bw, sw, 3 + i/60, 1/60, false, false);
+    wyS[c[0]] = {back: backY(), mem: memMin()};
+  });
+  wyS.top = Bw.seat.position.y - 0.16; wyS.s = Bw.s;
+  out.wyvern = wyS;
   // a breath through a pooled Fx (a stand-in: emit / zap recorded)
   var em = [], F = {emit: function(k, x, y, z, n, dx, dz, spd){ em.push([k, n, Math.round(spd)]); }, zap: function(){ em.push(["zap"]); }};
   var Bf = R.mountModel(ctx, {species: "firedragon", variant: 0, name: "Ember"}), sf = R.newState("dragon", 0, 50, 0, 0); sf.speed = 30;
@@ -263,6 +274,14 @@ class PetRide(unittest.TestCase):
         self.assertTrue(m["firedragon"]["hasWings"])
         self.assertEqual(m["seaserpent"]["kind"], "serpent")
         self.assertEqual(self.o["peer"], ["glide", "climb", "hover", "dive", True])
+
+
+    def test_the_wyvern_seat(self):
+        w = self.o["wyvern"]
+        for k in ("stand", "walk", "glide", "climb"):
+            self.assertLess(abs(w[k]["back"] - w["top"]), 0.15, k + ": the rider sits on its back between the shoulders")
+        self.assertGreater(w["stand"]["mem"], -0.02, "landed, its folded wings clear the ground")
+        self.assertGreater(w["top"], 1.5)
 
 
 class Wiring(unittest.TestCase):

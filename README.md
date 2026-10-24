@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.18.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.18.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,20 @@ and feature guide.
 
 ## Changelog
 
+- **3.18.1 — The wyvern.** The Wyvern pet is rebuilt as a true wyvern, an **original design inspired by classic fantasy
+  wyverns** (no borrowed silhouettes, colours or textures). **No forelegs: its wings are its arms.** On the ground it
+  walks on its wing-wrists (a clawed thumb on each, like a bat) and two strong taloned hind legs, wings folded tight;
+  in the air an arm, a forearm and four long finger spars with knuckle spurs spread a span far wider than its body, a
+  thin **veined membrane** (a small procedural texture made once per page: branching veins, lit through from behind,
+  a ragged, scalloped trailing edge) sagging between the spars. A fast downstroke with the tips lagging, a folding
+  upstroke, glides, dives, a **takeoff leap** and a **landing flare** (wings forward and cupped, feet reaching). A lean,
+  bony, long-snouted skull with teeth, glowing eyes, a lower jaw that opens and a **crown of back-swept spines that
+  rises when it roars**; a thorny collar round the neck, scaled dark hide with a lighter belly, a long whip tail with
+  spines and a barbed blade. Four looks, each breathing its own: **ember** (fire), **ash** (smoke), **venom** and the
+  frost-blue **elder** (ice; more spines, a longer crown, torn wings). Idles: breathing, a swaying head, a swishing
+  tail, wing stretches, a roar with its wings mantled. Riding it, you sit between its wing-shoulders, held there
+  standing, walking and flying, and its folded wings clear the ground when it lands. Still 6 draw calls; far-off
+  wyverns pose every fourth frame. The other dragons are unchanged.
 - **3.18.0 — The transport revamp.** **Every city is at its highest level** (the Arena reports tier 5 and full growth
   for every city, so every line, stop, airport and building is open; population and tax still follow the owner's
   real XP) and **getting around is free**: no fares, no day pass and no coins for buses, trams, the metro, trains,

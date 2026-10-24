@@ -20,7 +20,8 @@
  *   lounge(ctx, g, at)           -> {update(t, dt, k)}   a fishtank: fish swim on fixed loops (Calm: still)
  *   lighting(w, {night, weather}) -> {warm, sheen, exposure}   warmer at night, a wet sheen when it rains
  *   photoSpot(ctx, g, at)        -> {g, hit, spot, tip}   a backdrop; hit.userData.tip "Press P for photo mode"
- *   sound(name)                     through HQV.engine.sfx when present; silent otherwise
+ *   sound(name, at)                 through HQV.engine.sfx when present (sfxAt at `at`, the lift's place, when
+ *                                   given); silent otherwise
  *   enter(ctx, w) / update(t, dt, k) / setTime(night, weather) / leave()   B's world hooks
  *   _reset()                        test hook
  * Frames as the 3D city's: metres, y up, yaw 0 faces +z.
@@ -42,9 +43,14 @@ function mulberry32(a){ a = a >>> 0; return function(){ a = (a + 0x6D2B79F5) >>>
 function T(ctx){ return ctx && ctx.THREE && ctx.THREE.Group ? ctx.THREE : null; }
 function kOf(k){ return clamp(num(k, 1), 0, 1); }
 
-function sound(name){
+// at: where it sounds ({x, z} in the world's frame: Sound PR B, engine.js sfxAt: a door fades out by 40 m, a bell by
+// 250 m, panned to its side); without one (or an engine without sfxAt) it is centred
+function sound(name, at){
   var E = HQV.engine; if(!E || typeof E.sfx !== "function") return false;
-  try { E.sfx(name); return true; } catch(e){ return false; }
+  try {
+    if(at && typeof E.sfxAt === "function"){ E.sfxAt(name, {x: num(at.x, 0), y: 1.2, z: num(at.z, 0)}); return true; }
+    E.sfx(name); return true;
+  } catch(e){ return false; }
 }
 function toast(msg){
   try { if(HQV.api && typeof HQV.api.toast === "function"){ HQV.api.toast(msg); return; } } catch(e){}
@@ -64,6 +70,8 @@ function ride(ctx, w, kind, dir){
   var THREE = T(ctx), down = dir !== "up", total = kind === "carlift" ? LIFT_T : 1.6, t = 0, fired = 0, over = false;
   var floors = down ? ["G", "B1"] : ["B1", "G"], st = {floor: floors[0], sweep: 0, doors: 0, dust: 0, chimed: false, kind: kind, dir: down ? "down" : "up"};
   var parent = w && (w.scene || w.group || w.g) || null, g = null, sweep = null, dust = null, dustBase = null;
+  // where the lift is: the car lift's pad, the person lift's doors (when the world says where they are)
+  var at = (w && w.fxPad) || (kind === "carlift" ? padOf(w) : (w && w.liftDoor) || null), here = w ? at : null;
   if(THREE && parent && parent.add){
     try {
       g = new THREE.Group(); g.name = "basementfx:" + kind;
@@ -78,19 +86,18 @@ function ride(ctx, w, kind, dir){
       var geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
       dust = new THREE.Points(geo, new THREE.PointsMaterial({color: 0xd8cfc0, size: 0.05, transparent: true, opacity: 0, depthWrite: false}));
       g.add(dust);
-      var at = (w && w.fxPad) || (kind === "carlift" ? padOf(w) : (w && w.liftDoor) || null);
       if(at) g.position.set(num(at.x, 0), 0, num(at.z, 0));
       parent.add(g);
     } catch(e){ g = null; sweep = null; dust = null; }
   }
-  sound(kind === "carlift" ? "door" : "ui");
+  if(kind === "carlift") sound("door", here); else sound("ui");          // the car lift sets off at its pad; the person lift's tick is UI
   function apply(){
     var u = clamp(t/total, 0, 1);
     st.sweep = ease(Math.min(1, u/0.75));
     st.floor = u < 0.6 ? floors[0] : floors[1];
     st.doors = clamp((u - 0.75)/0.25, 0, 1);
     st.dust = u > 0.7 ? clamp(1 - (u - 0.7)/0.3, 0, 1) : 0;
-    if(st.doors > 0 && !st.chimed){ st.chimed = true; sound("bell"); }
+    if(st.doors > 0 && !st.chimed){ st.chimed = true; sound("bell", here); }        // the bell at the lift as its doors part
     if(sweep){ sweep.position.y = down ? 4.4 - st.sweep*4.4 : st.sweep*4.4; sweep.material.opacity = 0.55*(1 - Math.abs(st.sweep - 0.5)*2); }
     if(dust && dust.geometry && dustBase){
       var a = dust.geometry.attributes && dust.geometry.attributes.position;

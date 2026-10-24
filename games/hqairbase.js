@@ -457,6 +457,10 @@ function create(c, S, o){
 
   /* the jets in the sky: a pool of four */
   for(var j = 0; j < 4; j++){ var J = jetModel(c, 0x6f7a84); merge(c, J.g); J.g.visible = false; root.add(J.g); jets.push(J); }
+  // [Sound PR B] each jet's own roar where it flies, panned (games/engine.js E.loop "jet-roar": the Ambient sounds
+  // volume, brighter the nearer it is), the nearest two; louder on its afterburner. An older engine: one band for all.
+  var roarP = E.pool && E.loop ? E.pool("jet", {voices: 2, make: function(){ return E.loop("jet-roar", "jet"); },
+    play: function(h, s){ h.set(s.lvl, {pos: s}); }}) : null;
 
   A.props = function(mine){
     if(mine && !homeDone){
@@ -511,22 +515,28 @@ function create(c, S, o){
     k = k == null ? 1 : k;
     if(radar) radar.rotation.y += dt*1.1*k;
     anims.forEach(function(f){ f(dt, k); });
-    var now = Date.now(), P = jetsAt(now, {cx: 0, cz: 0, seed: A.seed, carrier: carrier}), near = Infinity;
+    var now = Date.now(), P = jetsAt(now, {cx: 0, cz: 0, seed: A.seed, carrier: carrier}), near = Infinity, loud = [];
     for(var i = 0; i < jets.length; i++){
       var p = P[i];
       if(!p){ jets[i].g.visible = false; continue; }
       poseJet(jets[i], p);
+      // heard: flying, or run up to full afterburner on the catapult
+      if(p.v > 20 || p.ab > 0.5) loud.push({id: p.id, x: p.x, y: p.y, z: p.z, lvl: 0.55 + 0.45*clamp(p.ab, 0, 1)});
       if(cam && cam.x != null){
         var d = Math.hypot(p.x - cam.x, p.y - (+cam.y || 0), p.z - cam.z);
         if(p.v > 20) near = Math.min(near, d);
-        // the boom: once per jet per sortie, when it passes within 260 m of you
+        // the boom: once per jet per sortie, when it passes within 260 m of you, from the jet (arriving d/343 s on)
         var key = p.id + ":" + Math.floor(now/CYCLE);
-        if(d < 260 && p.v > 150 && !boomAt[key]){ boomAt[key] = 1; if(E.sfx){ E.sfx("door"); E.sfx("shot"); } }
+        if(d < 260 && p.v > 150 && !boomAt[key]){
+          boomAt[key] = 1;
+          if(E.sfxAt){ E.sfxAt("door", p, {kind: "jet"}); E.sfxAt("shot", p, {kind: "jet"}); } else if(E.sfx){ E.sfx("door"); E.sfx("shot"); }
+        }
       }
     }
     if(Object.keys(boomAt).length > 20) boomAt = {};
-    // the roar: one noise band for all of them, louder the nearer the nearest
-    if(near < 1500 && E.noiseLoop){
+    if(roarP) roarP.update(loud);
+    // the roar on an older engine: one noise band for all of them, louder the nearer the nearest
+    else if(near < 1500 && E.noiseLoop){
       if(!roar) roar = (E.ambientLoop || E.noiseLoop)(320, 0.8);   // [3.11.1] an ambient sound
       roar.set(clamp(0.5/(1 + Math.pow(near/180, 2)), 0, 0.5), 220 + 900/(1 + near/200));
     }
@@ -559,6 +569,7 @@ function create(c, S, o){
   A.destroy = function(){
     dead = true; S.remove(root);
     if(roar){ try { roar.stop(); } catch(e){} roar = null; }
+    if(roarP){ roarP.stop(); roarP = null; }
   };
   A.setNight(night);
   HQV.hqAirbase.last = A;                 // for tools (tools/ui_smoke.py sessions): the City's air side

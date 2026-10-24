@@ -15,7 +15,8 @@
  *   rain   streaks in a box anchored to the world around the camera: a shader moves them, nothing is uploaded per frame
  *   snow   soft flakes that sway as they fall
  *   cloud  a deck of soft billboards drifting with the wind, darker under a storm and at night
- *   storm  rain at full and lightning: a forked bolt, the sky lit for a moment, thunder after the light (343 m/s)
+ *   storm  rain at full and lightning: a forked bolt, the sky lit for a moment, thunder after the light (343 m/s), heard
+ *          from where it struck
  * Calm and reduced motion: nothing falls and nothing flashes (a lightning flash is a photosensitivity hazard);
  * the sky, the fog and the cloud deck still change, slowly. The map view (top down) draws no weather.
  */
@@ -209,14 +210,17 @@ function create(c, o){
     boltG.dispose(); boltG = new THREE.BufferGeometry(); boltG.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
     bolt.geometry = boltG;
   }
-  function thunder(dist, seed){
+  // [Sound PR B] the rumble comes from the strike (at: {x, y, z}): a spatial voice (games/engine.js spatialOut, the
+  // ambient bus) pans it there and keeps the three nearest; thunderVol is still its whole level (curve: false) and the
+  // pending queue has already waited the d/343 s it takes to arrive (delay: false). An older engine: centred, as before.
+  function thunder(dist, seed, at){
     var vol = thunderVol(dist); if(!(vol > 0)) return;
-    var A = E.ambientOut ? E.ambientOut() : E.audioOut ? E.audioOut() : null; if(!A) return;
+    var A = E.spatialOut ? E.spatialOut("thunder", at || null, {gain: 1, delay: false, dur: 3.4}) : E.ambientOut ? E.ambientOut() : E.audioOut ? E.audioOut() : null; if(!A) return;
     try {
       var ac = A.ctx, dur = 3.4, n = Math.floor(ac.sampleRate*dur), buf = ac.createBuffer(1, n, ac.sampleRate), d = buf.getChannelData(0);
       var r = c.rng((seed % 100000) + 3), last = 0;
       for(var q = 0; q < n; q++){ last = (last + 0.02*(r()*2 - 1))/1.02; d[q] = last*3.4*(1 + 0.6*Math.sin(q/ac.sampleRate*9)); }   // brown noise, rolling
-      var src = ac.createBufferSource(), lp = ac.createBiquadFilter(), gn = ac.createGain(), t0 = ac.currentTime;
+      var src = ac.createBufferSource(), lp = ac.createBiquadFilter(), gn = ac.createGain(), t0 = ac.currentTime + (A.delay || 0);
       src.buffer = buf; lp.type = "lowpass"; lp.frequency.value = 140 + 520*Math.max(0, 1 - dist/1500);
       gn.gain.setValueAtTime(0.0001, t0); gn.gain.exponentialRampToValueAtTime(vol, t0 + 0.06); gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
       src.connect(lp); lp.connect(gn); gn.connect(A.out); src.start(t0); src.stop(t0 + dur);
@@ -251,7 +255,8 @@ function create(c, o){
         SU.uTime.value = t; SU.uCam.value.set(cx, cy, cz); SU.uAmt.value = snowA;
         SU.uVel.value.set(L.wx*L.wind*2.2, -1.5, L.wz*L.wind*2.2); SU.uBright.value = night ? 0.62 : 1;
       }
-      // rain on the ground: a hiss that follows the rain (engine.js noiseLoop needs set() every frame)
+      // rain on the ground: a hiss that follows the rain (engine.js noiseLoop needs set() every frame); [Sound PR B] a bed
+      // through the Ambient sounds volume, with no place and no pan (it falls all round you)
       if(rainA > 0.05 && !hiss && E.noiseLoop) hiss = (E.ambientLoop || E.noiseLoop)(2600, 0.35);   // [3.11.1] an ambient sound
       if(hiss){ if(rainA > 0.05) hiss.set(0.04 + rainA*0.11); else { hiss.stop(); hiss = null; } }
       // the cloud deck, drifting with the wind, wrapped around the camera
@@ -276,11 +281,11 @@ function create(c, o){
             var gy = o.ground ? o.ground(st.x, st.z) : 0, dist = Math.hypot(st.x - cx, st.z - cz);
             makeBolt(st, gy); boltLeft = 0.32; bolt.visible = true;
             flash = Math.max(flash, 1 - Math.min(0.75, dist/2400));
-            if(dist < THUNDER_M) pending.push({at: sec + dist/343, dist: dist, seed: st.seed});
+            if(dist < THUNDER_M) pending.push({at: sec + dist/343, dist: dist, seed: st.seed, pos: {x: st.x, y: gy, z: st.z}});
           }
         });
       } else if(boltLeft <= 0) bolt.visible = false;
-      pending = pending.filter(function(p){ if(p.at <= sec){ thunder(p.dist, p.seed); return false; } return true; });
+      pending = pending.filter(function(p){ if(p.at <= sec){ thunder(p.dist, p.seed, p.pos); return false; } return true; });
       L.flash = calm ? 0 : flash;
       // what lies on the ground: worked out about once a second (it changes over minutes)
       if(!gnd || t - gndAt > 1){ gnd = settled(world, nowMs); gndAt = t; }

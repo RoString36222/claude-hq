@@ -14,6 +14,7 @@ view lets its floor's voices go, and the pins other tests rely on are intact. Sk
 import json
 import os
 import re
+import subprocess
 import sys
 import unittest
 
@@ -311,7 +312,51 @@ class Hq3dWiring(unittest.TestCase):
         for fn in ("engineStep", "engineReal", "gearboxSound", "heliMove"):
             self.assertIn('pos: ownAt(), sk: "own"}', func_body(hq, fn), fn)
         self.assertEqual(func_body(hq, "planeMove").count('pos: ownAt(), sk: "own"}'), 2)
-        self.assertIn("function ownAt(){ return avatar ? {x: avatar.x, y: (+avatar.hy || 0) + 0.8, z: avatar.z} : null; }", hq)
+        self.assertIn("E.listener(curCam(), earAt(curCam()), ownRef());", func_body(hq, "frame"))   # how far your own things carry
+
+    @unittest.skipUnless(NODE, "node is not installed")
+    def test_own_vehicle_fades_only_from_a_detached_camera(self):
+        # ownAt / ownRef as hq3d.js has them, run with camrig.js's real tables: Infinity (no distance loss) while the
+        # camera rides with you; from photo, cine and the Map the far chase camera's reach for the vehicle
+        hq = self.hq
+        i = hq.index("  function ownAt(){")
+        j = hq.index("  function ownRef(){")
+        block = hq[i:j] + "  " + func_body(hq, "ownRef") + "\n"     # ownAt, OWN_DETACHED and ownRef
+        js = r"""
+const fs = require("fs"); global.window = {HQV: {}};
+new Function(fs.readFileSync(%(cam)s, "utf8"))();
+const HQV = window.HQV, E = {clamp: (v, a, b) => v < a ? a : v > b ? b : v};
+let rig = null, cur = {camModes: true}, ride = null, avatar = {x: 5, hy: 300, z: -7};
+function rigOn(){ return !!(rig && cur && cur.camModes); }
+%(block)s
+const out = {};
+const at = (mode, r) => { rig = mode ? {mode} : null; ride = r; return {ref: ownRef(), at: ownAt()}; };
+out.noRig = at(null, {base: "car", V: {size: 1}});
+["far", "chase", "near", "fp", "classic", "selfie"].forEach(m => { out[m] = at(m, {base: "car", V: {size: 1}}).ref; });
+out.car = ["photo", "cine", "map"].map(m => at(m, {base: "car", V: {size: 1}}).ref);
+out.airliner = at("photo", {base: "airliner", V: {size: 1}}).ref;
+out.longCar = at("photo", {base: "car", V: {size: 2}}).ref;
+out.unknown = at("photo", {kind: "hoverboard", V: {}}).ref;
+out.onFoot = at("photo", null).ref;
+out.map = at("map", {base: "airliner", V: {}}).at;
+out.chaseAt = at("chase", {base: "airliner", V: {}}).at;
+console.log(JSON.stringify(out, (k, v) => v === Infinity ? "inf" : v));
+""" % {"cam": json.dumps(os.path.join(ROOT, "games", "camrig.js")), "block": block}
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-3000:])
+        o = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(o["noRig"]["ref"], "inf")             # the Base, the Lobby: Classic's ears at you
+        for m in ("far", "chase", "near", "fp", "classic", "selfie"):
+            self.assertEqual(o[m], "inf", m)                   # the camera rides with it: no distance loss
+        car = (15 * 1.35) ** 2 + (9 * 0.85) ** 2
+        for v in o["car"]:
+            self.assertAlmostEqual(v, car ** 0.5, places=6)    # detached: the far chase camera's reach (21.6 m)
+        self.assertAlmostEqual(o["airliner"], ((15 * 7) ** 2 + (9 * 3.2) ** 2) ** 0.5, places=6)   # 108.9 m
+        self.assertAlmostEqual(o["longCar"], ((15 * 1.35 * 1.5) ** 2 + (9 * 0.85) ** 2) ** 0.5, places=6)
+        self.assertAlmostEqual(o["unknown"], (15 ** 2 + 9 ** 2) ** 0.5, places=6)   # a kind camrig does not know: its default
+        self.assertAlmostEqual(o["onFoot"], (15 ** 2 + 9 ** 2) ** 0.5, places=6)
+        self.assertEqual(o["map"], {"x": 5, "z": -7})          # the Map: along the ground (a plane up high still heard)
+        self.assertEqual(o["chaseAt"], {"x": 5, "y": 300.8, "z": -7})
 
     def test_peers_are_heard(self):
         hq = self.hq
@@ -343,7 +388,7 @@ class Hq3dWiring(unittest.TestCase):
         hq = self.hq
         for pin in ('E.sfx("door")', 'E.sfx("crank")', 'E.sfx("horn"', "sfx: phoneSfx",
                     "E.engineSound(V.eng, ride.tune && HQV.hqTuning ? HQV.hqTuning.exhaustOf(ride.tune) : null)",
-                    "if(E.listener) E.listener(curCam(), earAt(curCam()));", "if(E.listener) E.listener(null);"):
+                    "if(E.listener) E.listener(curCam(), earAt(curCam()), ownRef());", "if(E.listener) E.listener(null);"):
             self.assertIn(pin, hq, pin)
 
     def test_ui_sounds_stay_centred(self):

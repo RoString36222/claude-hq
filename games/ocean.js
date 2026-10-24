@@ -45,9 +45,10 @@
  *                               over sea level, over the highest crest, so the sea plane under it never shows through
  *                               (a river drawn with waves on its few, far-apart outline vertices had the sea plane's
  *                               crests poke through it in stripes)
- * mount(c, parent) -> {g, step(t, dt, cam), setTime(night), setSun(dir), setRiver(R), setWater(Wd), wake(boats), dispose, drawCalls}:
- * setRiver(riverOf(doc)) lays wakes on the river's calm surface, setWater(waterOf(doc)) on the @3 bodies'; step() also
- * voices the water where it meets you (waterHeard: games/engine.js E.loop "water" in a pool, the nearest two); a polar-grid
+ * mount(c, parent) -> {g, step(t, dt, cam), setTime(night), setSun(dir), setRiver(R), setWater(Wd), setCoast(C), wake(boats),
+ * dispose, drawCalls}: setRiver(riverOf(doc)) lays wakes on the river's calm surface, setWater(waterOf(doc)) on the @3
+ * bodies', setCoast(coastOf(doc)) gives the sea's surf its shore on any world (@1 and @2 have no water layer); step()
+ * also voices the water where it meets you (waterHeard: games/engine.js E.loop "water" in a pool, the nearest two); a polar-grid
  * sea plane that follows the camera (a shader: waves, fresnel sky, sun or moon glint, day/night tint,
  * the scene's fog), island impostors as seven InstancedMeshes (one silhouette, a skyline per tier and one
  * for the Commons: the draw calls stay seven for any number of islands) and a fading foam V behind each boat.
@@ -568,7 +569,7 @@ function mount(c, parent){
     sky.forEach(function(m, k){ m.count = counts[k]; m.instanceMatrix.needsUpdate = true; });
     return H.n;
   }
-  // [Sound PR B] the water heard where it meets you (waterHeard): the sea on the coast (setWater's coast), the river and
+  // [Sound PR B] the water heard where it meets you (waterHeard): the sea on the coast (setCoast's, or a water layer's), the river and
   // the calm waters at their banks; each an E.loop "water" (the Ambient sounds volume: full within 4 m, gone past 60 m),
   // the nearest two. An older engine: silent, as before.
   var E = c.E || {}, coast = null, stillW = [];
@@ -591,9 +592,11 @@ function mount(c, parent){
     setTime: function(n){ nightGoal = n ? 1 : 0; },
     // the river (riverOf(doc), or null): wakes on it lie on its calm surface, and it is heard at its banks
     setRiver: function(R){ river = R || null; stillW = calmOf(river, water); },
-    // the @3 bodies (waterOf(doc), or null): wakes on them lie on their calm surface (y over the sea's); they and the
-    // coast (the sea's surf) are heard
-    setWater: function(Wd){ water = Wd || null; coast = water && water.coast && water.coast.length >= 3 ? water.coast : null; stillW = calmOf(river, water); },
+    // the @3 bodies (waterOf(doc), or null): wakes on them lie on their calm surface (y over the sea's); they are heard,
+    // and its coast (the sea's surf) when it has one (null leaves the coast setCoast gave)
+    setWater: function(Wd){ water = Wd || null; if(water && water.coast && water.coast.length >= 3) coast = water.coast; stillW = calmOf(river, water); },
+    // the island's coast (coastOf(doc): [[x, z]] metres, every world version), where the sea's surf is heard; null: none
+    setCoast: function(C){ coast = Array.isArray(C) && C.length >= 3 ? C : null; },
     // the direction toward the sun (or the moon by night) for the glint: {x, y, z}
     setSun: function(d){ if(d && isFinite(d.x) && isFinite(d.y) && isFinite(d.z)) seaM.uniforms.uSunDir.value.set(d.x, d.y, d.z).normalize(); },
     // boats = [{id, x, z, yaw, speed, beam}]: push each trail; a boat no longer listed lets its wake fade then goes

@@ -222,6 +222,22 @@ const W = WD.pack(raw);
   out.water.loops = calls.loop.filter(c => c.args[0] === "water").length;
   oc.dispose();
   out.water.after = "water" in live();
+  // @1 and @2 have no water layer (waterOf is null): the coast comes on its own (setCoast, before setWater as the City
+  // calls them), so the surf is heard on their beaches too; ears 5 m off the first coast vertex
+  for (const f of ["claude-hq@2", "island@2", "claude-hq@3"]){
+    const d = JSON.parse(zlib.gunzipSync(fs.readFileSync(root + "/tests/fixtures/" + f + ".json.gz")).toString("utf8")), C = O.coastOf(d), v = C[0];
+    const surf = withCoast => {
+      const o2 = O.mount({THREE, E}, new THREE.Scene()); o2.g.position.y = -4;
+      o2.setRiver(O.riverOf(d)); if(withCoast) o2.setCoast(C); o2.setWater(O.waterOf(d));
+      E.listener({x: v[0] + 5, y: 1.6, z: v[1], yaw: 0}); now += 1;
+      o2.step(1, 0.016, {x: v[0] + 5, y: 1.6, z: v[1]});
+      const wp = pools("water").slice(-1)[0], ids = wp && wp.ids ? wp.ids.slice() : null; o2.dispose(); return ids;
+    };
+    out.water[f] = {waterOf: !!O.waterOf(d), coast: C.length, heard: surf(true), before: surf(false)};
+  }
+  const o3 = O.mount({THREE, E}, new THREE.Scene()); o3.setCoast(null); o3.setCoast([[0, 0], [1, 1]]);
+  E.listener({x: 0, y: 1.6, z: 0, yaw: 0}); o3.step(1, 0.016, {x: 0, y: 1.6, z: 0});
+  out.water.badCoast = pools("water").slice(-1)[0].ids; o3.dispose();
 }
 console.log(JSON.stringify(out));
 """
@@ -373,6 +389,17 @@ class SkyWeatherAmbientSound(unittest.TestCase):
         self.assertEqual(w["island"], [["lake:0", 290, -1, 300, 0.5]])    # on the lake's island: its own shore, not the lake's
         self.assertEqual(w["onLake"], [["lake:0", 300, -1, 280, 0.5]])
 
+    def test_the_surf_on_every_world_version(self):
+        w = self.o["water"]
+        for f in ("claude-hq@2", "island@2"):
+            self.assertFalse(w[f]["waterOf"], f)                 # no water layer on @2
+            self.assertGreaterEqual(w[f]["coast"], 3, f)
+            self.assertIn("sea", w[f]["heard"], f)               # setCoast: the beach is heard
+            self.assertNotIn("sea", w[f]["before"], f)           # (waterOf's coast alone left @2 silent)
+        self.assertIn("sea", w["claude-hq@3"]["heard"])
+        self.assertIn("sea", w["claude-hq@3"]["before"])         # @3 had it through waterOf, and still does
+        self.assertEqual(w["badCoast"], [])
+
     def test_the_mounted_ocean_plays_the_nearest_water(self):
         w = self.o["water"]
         voices, ids, srcs = w["mounted"]
@@ -400,6 +427,11 @@ class SourceRules(unittest.TestCase):
         self.assertIn('if(E.sfxAt){ E.sfxAt("door", p, {kind: "jet"}); E.sfxAt("shot", p, {kind: "jet"}); } else if(E.sfx)', base)
         self.assertIn("var standP = E.pool && E.engineSound ?", self.read("hqairport3d.js"))
         self.assertIn("var waterP = E.pool && E.loop && E.listenerAt ?", self.read("ocean.js"))
+
+    def test_the_city_hands_the_ocean_its_coast(self):
+        c = self.read("hqcity3d.js")
+        i = c.index("oc.setCoast(HQV.ocean.coastOf(doc));")
+        self.assertLess(i, c.index("oc.setWater(HQV.ocean.waterOf(doc));"))   # before setWater: a null layer keeps it
 
     def test_the_city_hands_the_airport_its_parked_jets(self):
         # the stands' APUs play only with the City's airport traffic (the parked jets as drawn) and its frame offset

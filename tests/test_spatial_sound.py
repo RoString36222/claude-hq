@@ -13,7 +13,11 @@ transit sounds take opts.pos through the same graph, its loops can no longer lea
 the announcer's chime goes through the master volume. A kind's voices are shared by all its pools (the nearest of
 every pool's sources, each pool to its own count), every pool lets its voices go when the ears do (listener(null): a
 paused view, a hidden tab), an ambient kind's pool plays nothing at Ambient sounds 0%, a suspended context is woken
-at most once a second (a gesture always) and no held voice is made on one. Skipped without node. Stdlib only."""
+at most once a second (a gesture always) and no held voice is made on one. Your own vehicle (own) fades with the
+distance unless the listener says the camera rides with it (its own reach); a pool nothing updates for 2 s lets its
+voices go (you left the City: the airport stands' APUs); a steady voice posts its level and little else, one barely
+heard only its level and pan; noise buffers are made once per length and band; the slider glides its bus; and the
+pools' fixed slots choose exactly as the old full sort did. Skipped without node. Stdlib only."""
 import json
 import os
 import shutil
@@ -25,9 +29,9 @@ NODE = shutil.which("node")
 
 FAKE = r"""
 const fs = require('fs'), path = require('path'), R0 = process.argv[1];
-let now = 0, pnow = 0, made = 0, calmOn = false; const store = {}, nodes = [];
+let now = 0, pnow = 0, made = 0, calmOn = false, posts = 0, bufs = 0; const store = {}, nodes = [];
 function param(v){ const p = {value: v, ev: [],
-  setTargetAtTime(x, t, tc){ p.ev.push(['T', x, t, tc]); }, cancelScheduledValues(t){ p.ev = p.ev.filter(e => e[2] < t); },
+  setTargetAtTime(x, t, tc){ posts++; p.ev.push(['T', x, t, tc]); }, cancelScheduledValues(t){ p.ev = p.ev.filter(e => e[2] < t); },
   setValueAtTime(x, t){ p.ev.push(['V', x, t]); }, exponentialRampToValueAtTime(x, t){ p.ev.push(['E', x, t]); },
   linearRampToValueAtTime(x, t){ p.ev.push(['L', x, t]); }}; return p; }
 function node(kind){ made++; const n = {kind, id: made, out: [], stops: [], connect(d){ n.out.push(d); return d; }, disconnect(){ n.out = []; },
@@ -40,7 +44,7 @@ class AC { constructor(){ this.state = 'running'; this.sampleRate = 8000; this.d
   createWaveShaper(){ return node('shaper'); } createPeriodicWave(){ return {}; }
   createDynamicsCompressor(){ const n = node('comp'); ['threshold', 'knee', 'ratio', 'attack', 'release'].forEach(k => n[k] = param(0)); return n; }
   createStereoPanner(){ const n = node('pan'); n.pan = param(0); return n; }
-  createBuffer(c, n){ const d = new Float32Array(n); return {getChannelData: () => d}; } }
+  createBuffer(c, n){ bufs++; const d = new Float32Array(n); return {getChannelData: () => d}; } }
 const window = {HQV: {}, matchMedia: () => ({matches: false}), AudioContext: AC};
 const document = {documentElement: {classList: {contains: k => k === 'hq-calm' && calmOn}}};
 global.window = window;
@@ -70,6 +74,21 @@ Object.keys(K).forEach(k => {
 out.falloff = fo;
 out.door10 = S.falloff('door', 10);
 out.vehicle60 = S.falloff(K.vehicle, 60);
+// your own vehicle (own) fades too now; a source's own reference distance (hear's opt.ref) holds it at full volume
+// further, its max moved out by as much; Infinity: the camera rides with it, no distance loss at all
+E.listener({x: 0, y: 0, z: 0, yaw: 0});
+const hg = (kind, d, o) => { const h = S.hear(kind, {x: 0, y: 0, z: d}, o); return h ? r4(h.g) : null; };
+out.own = {at: [10, 50, 200, 1000].map(d => hg('own', d)), vehicle: [10, 50, 200].map(d => hg('vehicle', d)),
+           ride: [10, 50, 1000, 1e5].map(d => hg('own', d, {ref: Infinity})),
+           plane: [100, 109, 300, 496, 498].map(d => hg('own', d, {ref: 109})), want300: r4(S.falloff({ref: 109, max: 497, roll: 1}, 300)),
+           small: hg('own', 50, {ref: 3}), nan: hg('own', 50, {ref: NaN}),
+           pan: r4(S.hear('own', {x: -30, y: 0, z: 0}, {ref: Infinity}).pan), panKind: r4(S.hear('own', {x: -30, y: 0, z: 0}).pan)};
+// the listener carries how far your own things reach this frame (hq3d.js ownRef): every "own" source follows it
+E.listener({x: 0, y: 0, z: 0, yaw: 0}, null, Infinity);
+out.own.riding = {own: E.listenerAt().own === Infinity ? 'inf' : E.listenerAt().own, at: [50, 1000].map(d => hg('own', d)), door: hg('door', 30)};
+E.listener({x: 0, y: 0, z: 0, yaw: 0}, null, 109); out.own.detached = [100, 300, 498].map(d => hg('own', d));
+E.listener({x: 0, y: 0, z: 0, yaw: 0}, null, 'x'); out.own.garbage = [E.listenerAt().own, hg('own', 50)];
+E.listener(null);
 // ---- pan: a yaw listener (yaw 0 faces +z, its right is -x) and THREE cameras' matrixWorld ----
 const Ly = {x: 0, y: 0, z: 0, yaw: 0};
 out.panYaw = {right: S.panOf(Ly, {x: -10, z: 0}, 5), left: S.panOf(Ly, {x: 10, z: 0}, 5), ahead: S.panOf(Ly, {x: 0, z: 10}, 5),
@@ -119,9 +138,12 @@ const aOut = lv({pos: at(130, 0), sk: 'vehicle'});
 now += 0.1; eng.set(3000, {thr: 0.5, pos: at(20, Math.PI/2), sk: 'vehicle'}); const panR = lastT(pan.pan);
 now += 0.1; eng.set(3000, {thr: 0.5, pos: at(20, -Math.PI/2), sk: 'vehicle'}); const panL = lastT(pan.pan);
 const own0 = lv({pos: at(0.5, 0)}), own30 = lv({pos: at(30, 0)}), ownLegacy = lv({});
+E.listener({x: 0, y: 0, z: 0, yaw: Math.PI/2}, null, Infinity);   // the camera rides with you: your own engine carries
+const ownRide = lv({pos: at(30, 0)}), ownChime = r4(E.spatialOut('own', at(50, 0)).out.gain.value);
+E.listener({x: 0, y: 0, z: 0, yaw: Math.PI/2});
 now += 0.1; eng.set(3000, {thr: 0.5, pos: at(30, Math.PI/2)}); const ownPan = lastT(pan.pan);
 eng.stop();
-out.engine = {short: aShort, mid: aMid, far: aFar, outside: aOut, panR, panL, own0, own30, ownLegacy, ownPan,
+out.engine = {short: aShort, mid: aMid, far: aFar, outside: aOut, panR, panL, own0, own30, ownRide, ownChime, ownLegacy, ownPan,
               panTo: pan.out[0] && pan.out[0].kind, gTo: g.out[0] && g.out[0].kind};
 // ---- one-shots: the voice limit (door: 4), the steal, the key, the sos delay ----
 const V = [5, 10, 15, 20].map(d => E.spatialOut('door', at(d, 0.3)));
@@ -223,12 +245,16 @@ out.read = vals;
 delete store.hq_ambient; store.hq_sfx = '0.5';
 const A = E.ambientOut(), bus = A.out;
 out.bus = {start: bus.gain.value, master: bus.out[0] === E.audioOut().out, notMaster: bus !== E.audioOut().out};
-E.ambientSetVolume(0.35); out.set = {stored: store.hq_ambient, bus: bus.gain.value, vol: E.ambientVolume(), on: E.ambientOn()};
+const v0 = bus.gain.value;
+E.ambientSetVolume(0.35); out.set = {stored: store.hq_ambient, bus: lastT(bus.gain), vol: E.ambientVolume(), on: E.ambientOn()};
+out.glide = {value: bus.gain.value === v0, ev: bus.gain.ev.filter(e => e[0] === 'T').slice(-1).map(e => [e[1], e[3]])[0]};
+const M = E.audioOut().out; E.sfxSetVolume(0.3); out.sfxGlide = {value: M.gain.value, ev: M.gain.ev.filter(e => e[0] === 'T').slice(-1).map(e => [r4(e[1]), e[3]])[0]};
+E.sfxSetVolume(0.5);
 E.ambientSetVolume(0.333333); out.round = store.hq_ambient;
 E.ambientSetVolume(5); out.clampHi = store.hq_ambient;
-E.ambientSetVolume(-2); out.clampLo = [store.hq_ambient, bus.gain.value, E.ambientOut()];
-E.ambientSet(true); out.on = [store.hq_ambient, bus.gain.value];
-E.ambientSet(false); out.off = [store.hq_ambient, bus.gain.value, E.ambientOn(), E.ambientOut()];
+E.ambientSetVolume(-2); out.clampLo = [store.hq_ambient, lastT(bus.gain), E.ambientOut()];
+E.ambientSet(true); out.on = [store.hq_ambient, lastT(bus.gain)];
+E.ambientSet(false); out.off = [store.hq_ambient, lastT(bus.gain), E.ambientOn(), E.ambientOut()];
 // a fresh context reads the stored volume into its ambient bus
 store.hq_ambient = '0.6';
 const w2 = {HQV: {}, matchMedia: () => ({matches: false}), AudioContext: AC};
@@ -365,6 +391,156 @@ console.log(JSON.stringify(out));
 """
 
 
+STALE = FAKE + r"""
+store.hq_sfx = '0.5';
+const ears = () => E.listener({x: 0, y: 0, z: 0, yaw: 0});
+const frame = dt => { pnow += dt; now += dt; ears(); };
+ears();
+// the City's airport stands (a plane pool of engineSound("jet")) heard for a moment; then you leave the City: nothing
+// updates that pool again, while the next floor keeps setting the ears every frame
+const k0 = nodes.length;
+const stands = E.pool('plane', {voices: 1, make: () => E.engineSound('jet'), play: (h, s) => h.set(900, {thr: 0, pos: s, sk: 'plane'})});
+const jets = [{id: 'stand:1', x: 0, y: 3, z: 200}];
+for (let i = 0; i < 10; i++){ frame(1/60); stands.update(jets); }
+const srcs = since(k0).filter(n => n.kind === 'osc' || n.kind === 'src'), running = () => srcs.filter(n => !n.stops.length).length;
+out.stale = {made: srcs.length, before: running()};
+for (let i = 0; i < 114; i++) frame(1/60);                       // 1.9 s on: still held (a late frame is not a floor left)
+out.stale.at19 = running();
+for (let i = 0; i < 600; i++) frame(1);                          // 600 s away
+out.stale.after = running(); out.stale.pools = S.state().pools.plane || [];
+// a pool its owner keeps updating is left alone; the stale one makes its voice again on its next update
+let keptStops = 0;
+const kept = E.pool('vehicle', {make: () => ({stop(){ keptStops++; }}), play: () => {}});
+for (let i = 0; i < 300; i++){ frame(1/60); kept.update([{id: 'c', x: 0, y: 0, z: 10}]); }
+out.stale.keptStops = keptStops;
+const k1 = nodes.length; stands.update(jets); out.stale.again = nodes.length - k1 > 0; out.stale.ids = S.state().pools.plane;
+stands.stop(); kept.stop();
+console.log(JSON.stringify(out));
+"""
+
+POSTS = FAKE + r"""
+store.hq_sfx = '0.5';
+E.listener({x: 0, y: 0, z: 0, yaw: 0});
+const step = f => { pnow += 1/60; now += 1/60; const p0 = posts; f(); return posts - p0; };
+// a steady pooled engine (same revs, same place) for 3 s, then the average posts a frame over one more second
+function steady(kind, sk, o){
+  const h = E.engineSound(kind), opt = Object.assign({thr: 0.4, speed: 9, pos: {x: 8, y: 0, z: 25}, sk: sk}, o || {});
+  for (let i = 0; i < 180; i++) step(() => h.set(3000, opt));
+  let n = 0; for (let i = 0; i < 60; i++) n += step(() => h.set(3000, opt));
+  h.stop(); return Math.round(n/60*100)/100;
+}
+out.engines = {turbo: steady('turbo', 'vehicle'), diesel: steady('diesel', 'bus'), jet: steady('jet', 'plane'), v8: steady('v8', 'vehicle')};
+// one still moving: its revs climbing post the pitch, its place moving the pan
+{
+  const k = nodes.length, h = E.engineSound('turbo'), o1 = since(k).find(x => x.kind === 'osc'); let n = 0, rpm = 2000;   // its main note
+  for (let i = 0; i < 60; i++) step(() => h.set(2000, {thr: 0.4, pos: {x: 8, y: 0, z: 25}, sk: 'vehicle'}));
+  for (let i = 0; i < 30; i++){ rpm += 60; n += step(() => h.set(rpm, {thr: 0.4, pos: {x: 8 - i*0.4, y: 0, z: 25}, sk: 'vehicle'})); }
+  out.moving = Math.round(n/30*100)/100; out.pitch = [o1.kind, r4(lastT(o1.frequency)), r4(E.engineHz('turbo', rpm).hz)]; h.stop();
+}
+// one barely heard (a car 110 m off: far < 0.02): its level and pan alone, whatever its revs do
+{
+  const h = E.engineSound('turbo'); let n = 0;
+  for (let i = 0; i < 5; i++) step(() => h.set(2000 + i*400, {thr: 0.4, pos: {x: 0, y: 0, z: 110}, sk: 'vehicle'}));
+  for (let i = 0; i < 30; i++) n += step(() => h.set(2000 + (i % 7)*700, {thr: (i % 3)/2, pos: {x: 0, y: 0, z: 110}, sk: 'vehicle'}));
+  out.quiet = Math.round(n/30*100)/100; out.quietFar = r4(S.falloff('vehicle', 110)); h.stop();
+}
+// the named loops at rest: the dead man's switch only (its level and its fade), no pan or timbre reposted
+out.loops = {};
+['tram-run', 'train-run', 'hum', 'siren', 'jet-roar', 'fountain'].forEach(name => {
+  const L = E.loop(name); for (let i = 0; i < 30; i++) step(() => L.set(1, {pos: {x: -20, y: 0, z: 40}, speed: 8}));
+  let n = 0; for (let i = 0; i < 30; i++) n += step(() => L.set(1, {pos: {x: -20, y: 0, z: 40}, speed: 8}));
+  out.loops[name] = n/30; L.stop();
+});
+// a band loop at rest: its level and fade only; its pan once it moves past 0.01
+{
+  const L = E.noiseLoop(900, 1, 'water'); for (let i = 0; i < 10; i++) step(() => L.set(0.2, 900, {x: -10, y: 0, z: 10}));
+  out.band = step(() => L.set(0.2, 900, {x: -10, y: 0, z: 10})); out.bandMoved = step(() => L.set(0.2, 900, {x: 10, y: 0, z: 10})); L.stop();
+}
+console.log(JSON.stringify(out));
+"""
+
+BUFFERS = FAKE + r"""
+store.hq_sfx = '0.5';
+E.audioOut();
+const b0 = bufs; E.sfx('boom'); const b1 = bufs; E.sfx('boom'); E.sfx('boom'); const b2 = bufs;
+E.listener({x: 0, y: 0, z: 0, yaw: 0}); E.sfxAt('boom', {x: 0, y: 0, z: 50}); E.sfxAt('door', {x: 0, y: 0, z: 5}); const b3 = bufs; E.sfxAt('door', {x: 1, y: 0, z: 5});
+out.oneShots = {first: b1 - b0, again: b2 - b1, door: bufs - b3};
+const l0 = bufs; const A = E.noiseLoop(110, 0.8, 'gondola'), B = E.noiseLoop(110, 0.8, 'gondola'), C = E.noiseLoop(900, 1);
+out.bands = {made: bufs - l0, same: (() => { const s = nodes.filter(n => n.kind === 'src').slice(-3); return s[0].buffer === s[1].buffer && s[1].buffer !== s[2].buffer; })()};
+A.stop(); B.stop(); C.stop();
+console.log(JSON.stringify(out));
+"""
+
+# the pools' slots (games/engine.js slot) against the old choice, kept here as the reference: every candidate sorted
+# (pick), then the kind's voices shared by sorting every fresh pool's nearest (share)
+EQUIV = FAKE + r"""
+store.hq_sfx = '0.5';
+const L0 = {x: 3, y: 1.6, z: -2, yaw: 0.3};
+E.listener(L0);
+const K = S.KINDS, FRESH = 0.5, ref = [];
+function oldPick(list, n, max, keep){
+  const c = [];
+  list.forEach(e => { const d = +e.d, id = String(e.id); if(d < max) c.push({e, id, s: keep[id] ? d*0.85 : d}); });
+  c.sort((a, b) => a.s - b.s || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return c.slice(0, n).map(x => x.e);
+}
+function refPool(kind, N){
+  const me = {kind, mine: [], at: -Infinity, bound: {}}, MAX = K[kind].max; ref.push(me);
+  return function(sources, t){
+    const cand = [];
+    sources.forEach(s => {
+      if(!s || s.id == null) return;
+      const x = +s.x, y = s.y != null ? +s.y : L0.y, z = +s.z; if(!(isFinite(x) && isFinite(y) && isFinite(z))) return;
+      const dx = x - L0.x, dy = y - L0.y, dz = z - L0.z, d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      if(d < MAX) cand.push({id: String(s.id), d});
+    });
+    const mine = oldPick(cand, N, MAX, me.bound);
+    me.mine = mine.map(c => ({id: c.id, s: me.bound[c.id] ? c.d*0.85 : c.d})); me.at = t;
+    const cap = K[kind].voices; let keep = mine;
+    if(cap > 0){
+      const all = [];
+      ref.forEach((P, n) => { if(P.kind !== me.kind || (P !== me && !(t - P.at <= FRESH))) return; P.mine.forEach((e, i) => all.push({s: e.s, id: e.id, n, i: P === me ? i : -1})); });
+      if(all.length > cap){
+        all.sort((a, b) => a.s - b.s || (a.id < b.id ? -1 : a.id > b.id ? 1 : a.n - b.n));
+        const ok = {}; all.slice(0, cap).forEach(e => { if(e.i >= 0) ok[e.i] = 1; });
+        keep = mine.filter((c, i) => !!ok[i]);
+      }
+    }
+    me.bound = {}; keep.forEach(c => { me.bound[c.id] = 1; });
+    return keep.map(c => c.id);
+  };
+}
+// five pools (three of the vehicle kind sharing its 6, a bus pool, an own pool with no limit), moving sources: ties at
+// equal distances, number and string ids, broken positions, sources past max; a pool now and then not updated
+const specs = [['vehicle', 6, 400], ['vehicle', 1, 5], ['vehicle', 3, 60], ['bus', 3, 40], ['own', 2, 30]];
+const real = specs.map(([k, n]) => E.pool(k, {voices: n, make: () => ({stop(){}}), play: () => {}}));
+const refs = specs.map(([k, n]) => refPool(k, n));
+let seed = 12345; const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0)/4294967296;
+const srcs = specs.map(([k, n, m], pi) => Array.from({length: m}, (_, i) => ({id: i % 4 ? pi + ':' + i : pi*1000 + i, r: 5 + rnd()*150, a: rnd()*6.283, w: (rnd() - 0.5)*0.04, y: rnd()*4})));
+let bad = 0, frames = 0, played = 0;
+const first = [];
+for (let f = 0; f < 400; f++){
+  pnow += 1/60;
+  specs.forEach((sp, pi) => {
+    if((f*7 + pi*3) % 11 === 0) return;                              // not updated this frame
+    const list = srcs[pi].map((s, i) => {
+      if(i === 3 && f % 5 === 0) return {id: s.id, x: NaN, y: 0, z: 0};
+      if(i === 4) return {id: s.id + 'tie', x: L0.x + 20, y: L0.y, z: L0.z};       // two at exactly 20 m, ids apart
+      if(i === 5) return {id: s.id + 'tia', x: L0.x - 20, y: L0.y, z: L0.z};
+      const a = s.a + s.w*f; return {id: s.id, x: L0.x + 40 + Math.cos(a)*s.r, y: s.y, z: L0.z - 25 + Math.sin(a)*s.r};   // circles off the ears: nearer, farther
+    });
+    if(f % 13 === 0) list.push(null, {x: 1, y: 1, z: 1});
+    const got = real[pi].update(list), want = refs[pi](list, pnow);
+    frames++; played += got.length;
+    if(JSON.stringify(got) !== JSON.stringify(want)){ bad++; if(first.length < 3) first.push({f, pi, got, want}); }
+  });
+}
+real.forEach(P => P.stop());
+out.equiv = {frames, bad, first, played};
+console.log(JSON.stringify(out));
+"""
+
+
 def run(script):
     r = subprocess.run([NODE, "-e", script, ROOT], capture_output=True, text=True, timeout=120)
     if r.returncode:
@@ -392,7 +568,30 @@ class SpatialPure(unittest.TestCase):
                 self.assertEqual(f["far"], 0, k)
         self.assertAlmostEqual(self.o["door10"], 2 / (2 + 8) * (1 - (8 / 38) ** 2))
         self.assertAlmostEqual(self.o["vehicle60"], 5 / (5 + 55) * (1 - (55 / 115) ** 2))
-        self.assertEqual(self.o["falloff"]["own"]["far"], 1)  # your own vehicle loses nothing with distance
+        self.assertEqual(self.o["falloff"]["own"]["far"], 0)  # your own vehicle fades too (a detached camera)
+
+    def test_own_fades_unless_the_camera_rides_with_it(self):
+        o = self.o["own"]
+        self.assertEqual(o["at"][0], 1)                       # 10 m: the chase camera, full volume
+        self.assertTrue(0 < o["at"][1] < 0.3)                 # 50 m off: fading (a photo camera, a panned Map)...
+        self.assertTrue(0 < o["at"][2] < o["at"][1])
+        self.assertIsNone(o["at"][3])                         # ...silent past 400 m
+        self.assertTrue(all(a > b for a, b in zip(o["at"][:3], o["vehicle"]) if b is not None))   # louder than an NPC's
+        self.assertEqual(o["ride"], [1, 1, 1, 1])             # ref Infinity: riding along, no distance loss
+        self.assertEqual(o["plane"][:2], [1, 1])              # an airliner's reach (109 m): full within it
+        self.assertAlmostEqual(o["plane"][2], o["want300"])   # then the kind's fade, its max moved out by as much
+        self.assertGreater(o["plane"][3], 0)
+        self.assertIsNone(o["plane"][4])
+        self.assertEqual(o["small"], o["at"][1])              # a ref under the kind's changes nothing
+        self.assertEqual(o["nan"], o["at"][1])
+        self.assertEqual(o["pan"], o["panKind"])              # the pan keeps the kind's own reference
+        self.assertGreater(o["pan"], 0.2)
+        self.assertEqual(o["riding"], {"own": "inf", "at": [1, 1], "door": o["riding"]["door"]})   # the listener's own
+        self.assertLess(o["riding"]["door"], 1)               # (only "own" follows it: a door still fades)
+        self.assertEqual(o["detached"][:1], [1])
+        self.assertAlmostEqual(o["detached"][1], o["want300"])
+        self.assertIsNone(o["detached"][2])
+        self.assertEqual(o["garbage"], [None, o["at"][1]])    # no reach given: the kind's
 
     def test_pan_sign(self):
         p = self.o["panYaw"]
@@ -450,7 +649,9 @@ class SpatialGraph(unittest.TestCase):
         self.assertEqual(e["outside"], 0)                     # past the kind's max: silent
         self.assertGreater(e["panR"], 0.5)                    # on the camera's right: right
         self.assertLess(e["panL"], -0.5)
-        self.assertAlmostEqual(e["own30"], e["own0"], delta=e["own0"] * 0.001)   # your own engine: no distance loss
+        self.assertLess(e["own30"], e["own0"] * 0.6)                              # your own engine fades 30 m off...
+        self.assertAlmostEqual(e["ownRide"], e["own0"], delta=e["own0"] * 0.001)  # ...unless the camera rides with it
+        self.assertEqual(e["ownChime"], 1)                                        # (your cab's chime too: kind own)
         self.assertAlmostEqual(e["ownLegacy"], e["own0"], delta=e["own0"] * 0.001)
         self.assertGreater(e["ownPan"], 0)                    # only a hint of pan (x0.25)
         self.assertLess(e["ownPan"], 0.25)
@@ -581,6 +782,8 @@ class AmbientVolume(unittest.TestCase):
         o = self.o
         self.assertEqual(o["bus"], {"start": 1, "master": True, "notMaster": True})
         self.assertEqual(o["set"], {"stored": "0.35", "bus": 0.35, "vol": 0.35, "on": True})
+        self.assertEqual(o["glide"], {"value": True, "ev": [0.35, 0.03]})     # a 30 ms glide, never a bare .value (a click)
+        self.assertEqual(o["sfxGlide"], {"value": 0.5, "ev": [0.3, 0.03]})   # the Game sounds volume too
         self.assertEqual(o["round"], "0.33")
         self.assertEqual(o["clampHi"], "1")
         self.assertEqual(o["clampLo"], ["0", 0, None])
@@ -704,6 +907,78 @@ class WakeAndHide(unittest.TestCase):
         self.assertTrue(h["running"])
 
 
+@unittest.skipUnless(NODE, "node is not installed")
+class StalePools(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.o = run(STALE)
+
+    def test_a_pool_nothing_updates_lets_its_voices_go(self):
+        s = self.o["stale"]
+        self.assertGreater(s["made"], 5)
+        self.assertEqual(s["before"], s["made"])               # the APU's oscillators and noise running
+        self.assertEqual(s["at19"], s["made"])                 # a frame or two late: still held
+        self.assertEqual(s["after"], 0)                        # you left the City: every one of them stopped
+        self.assertEqual(s["pools"], [])
+        self.assertEqual(s["keptStops"], 0)                    # a pool still updated is left alone
+        self.assertTrue(s["again"])                            # and the stale one plays again when it is updated
+        self.assertEqual(s["ids"], ["stand:1"])
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class Posting(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.o = run(POSTS)
+
+    def test_a_steady_engine_posts_its_level_and_little_else(self):
+        # before: 14-20 params a frame each (turbo 16, diesel 15, jet 20, v8 14); now the dead man's switch (2) and the
+        # rough idle's wobble now and then
+        for k, n in self.o["engines"].items():
+            self.assertLessEqual(n, 3, k)
+        self.assertLess(self.o["moving"], 12)                  # revving and passing: what moves (the pitch, the pan)...
+        osc, got, want = self.o["pitch"]
+        self.assertEqual(osc, "osc")
+        self.assertAlmostEqual(got, want, delta=want * 0.003)  # ...and the note follows the revs
+
+    def test_a_voice_barely_heard_moves_only_its_level_and_pan(self):
+        self.assertLess(self.o["quietFar"], 0.02)
+        self.assertLessEqual(self.o["quiet"], 3)
+
+    def test_loops_at_rest_post_only_their_level(self):
+        for k, n in self.o["loops"].items():
+            self.assertEqual(n, 2, k)                          # its level and the fade HOLD s on
+        self.assertEqual(self.o["band"], 2)
+        self.assertEqual(self.o["bandMoved"], 3)               # the pan, once it moved
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class Buffers(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.o = run(BUFFERS)
+
+    def test_noise_is_made_once_per_length_and_band(self):
+        o = self.o["oneShots"]
+        self.assertEqual(o["first"], 3)                        # a blast: three bursts of three lengths
+        self.assertEqual(o["again"], 0)                        # the next blasts reuse them
+        self.assertEqual(o["door"], 0)
+        self.assertEqual(self.o["bands"], {"made": 2, "same": True})   # one per band: two loops of one band share it
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class SlotsMatchTheSort(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.o = run(EQUIV)
+
+    def test_the_pools_choose_as_the_full_sort_did(self):
+        e = self.o["equiv"]
+        self.assertGreater(e["frames"], 1500)
+        self.assertGreater(e["played"], 1000)
+        self.assertEqual(e["bad"], 0, e["first"])
+
+
 class Wiring(unittest.TestCase):
     def read(self, *p):
         with open(os.path.join(ROOT, *p), encoding="utf-8") as f:
@@ -712,7 +987,7 @@ class Wiring(unittest.TestCase):
     def test_listener_hooks(self):
         hq = self.read("games", "hq3d.js")
         i, j = hq.index("    resize(); placeCam();\n"), hq.index("    if(cur !== worlds.mission){")
-        self.assertIn("if(E.listener) E.listener(curCam(), earAt(curCam()));", hq[i:j])
+        self.assertIn("if(E.listener) E.listener(curCam(), earAt(curCam()), ownRef());", hq[i:j])   # and how far you carry
         ear = hq[hq.index("  function earAt(c){"):hq.index("  function steerOn(){")]
         self.assertIn("if(c === cam) return view.target;", ear)              # Classic: from what it looks at
         self.assertIn('rig.mode === "map"', ear)                             # the Map: the ground at its centre,

@@ -167,7 +167,8 @@ const near = (p, q, r) => !!p && Math.hypot(p.x - q.x, p.z - q.z) <= r;
     clunks: clunk.length, mine: mine.length, clunkOk: clunk.filter(q => q.ok).length, clunkKinds: [...new Set(clunk.map(q => q.o.kind))], liveMax};
   // Ambient sounds at 0%: the wind's bus is silent and a fresh wind is not started; the rumble (machinery) goes on
   E.ambientSetVolume(0);
-  out.gondola.amb0 = {bus: ambBus.gain.value, fresh: !!sfxM("gondola-wind", {pos: {x: cam.x, y: 20, z: cam.z}, kind: "rain"}),
+  const busT = ambBus.gain.ev.filter(e => e[0] === "T");                  // the bus glides to 0% (a bare .value would click)
+  out.gondola.amb0 = {bus: busT.length ? busT[busT.length - 1][1] : ambBus.gain.value, fresh: !!sfxM("gondola-wind", {pos: {x: cam.x, y: 20, z: cam.z}, kind: "rain"}),
                       rumble: !!sfxM("gondola-rumble", {pos: {x: cam.x, y: 6, z: cam.z}, kind: "gondola"})};
   E.ambientSetVolume(1);
   V.dispose();

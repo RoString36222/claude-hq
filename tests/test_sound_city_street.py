@@ -1,8 +1,9 @@
 """Sound PR B, the City's street (games/hqcity3d.js, traffic.js, hqcivic.js, hqbridges.js, hqships.js, hqcityparts.js).
 
 Every world sound in the 3D City is placed through games/engine.js's spatial sound: citySound() (hqcity3d.js) runs the
-voice pools (NPC cars and the emergency vehicles' engines, buses, trams, sirens, ships, aircraft), the city's hum, ship
-horns, the plaza fountain, the civic bells and the opening bridges' bells and machinery. These tests check, under node:
+voice pools (NPC cars and the emergency vehicles' engines, buses, trams, sirens, ships, aircraft, the HQs' rooftop
+helicopters, the opening bridges' machinery), the city's hum, ship horns, the plaza fountain, the civic bells and the
+bridges' bells. These tests check, under node:
   - traffic.js: an emergency run's siren sounds only on its way to the scene (wail), sirens() lists the runs farther
     out than the drawn traffic, and soundOf() gives each vehicle its spatial kind, engine and revs (seeded by its id);
   - hqcivic.js: the town hall's clock strikes the hour and the university's tower rings a seeded peal (strikes, due),
@@ -10,9 +11,11 @@ horns, the plaza fountain, the civic bells and the opening bridges' bells and ma
   - hqbridges.js: sounds() rings the warning bell at the nearer barrier while the lamps flash and runs the machinery
     only while the span moves; hqships.js: each ship's horn on its funnel, F.speed; hqcityparts.js: the fountain's at;
   - citySound() against a fake AudioContext: only the nearest few of each kind play, each where it is, a siren only
-    while it wails, nothing below the street, without a listener or at volume 0, and stop() lets everything go;
-  - the per-frame gather (soundStep, run on its own with stand-ins): the sources it hands over, the horns as ferries
-    sail and big ships weigh anchor, hulls heard along their keel, and nothing while the City is not the one you see.
+    while it wails, nothing below the street, without a listener or at volume 0, and stop() lets everything go; the
+    bridges' machinery within the gondola kind's two voices, a still span's stopped once idle;
+  - the per-frame gather (soundStep, run on its own with stand-ins): the sources it hands over (a near tower's rooftop
+    helicopter from its lot's frame), the horns as ferries sail and big ships weigh anchor, hulls heard along their
+    keel, and nothing while the City is not the one you see.
 Skipped without node. Stdlib only."""
 import json
 import os
@@ -228,8 +231,9 @@ const planes = [{id: "jet:0", x: 0, y: 300, z: 500, voice: "jet", phase: "climb"
                 {id: "amb:0", x: 0, y: 1800, z: 0, voice: "jet", phase: "cruise"}];
 const bell = {id: "townhall:2:bell", x: 100, y: 30, z: 100, kind: "clock", seed: 3};
 const near = {id: "plaza", x: 10, y: 1.6, z: 10}, far = {id: "far", x: 200, y: 1.6, z: 0};
+const roof = {id: "heli:u1", x: 30, y: 40, z: 30, rpm: 4000};
 function frame(o){ now += 0.05; pnow += 0.05; snd.update(o); }
-function src(k, x){ return Object.assign({traffic, sirens: ev, ships, planes, fountains: [near, far], bells: [bell], localMs: T15 + x}, k || {}); }
+function src(k, x){ return Object.assign({traffic, sirens: ev, ships, planes, fountains: [near, far], bells: [bell], helis: [roof], localMs: T15 + x}, k || {}); }
 const snd = C3.citySound();
 out.made = !!snd;
 // frame 0: everything; the clock's hour is 50 ms off, the bridge's lamps are on (beat 0) and its span moves
@@ -253,6 +257,7 @@ out.horns = calls.ride.filter(r => /horn/.test(r.name)).map(r => [r.name, r.opts
 out.planes = calls.eng.filter(r => r.sets.length && r.sets[0][1].sk === "plane").map(r => [r.kind, r.sets[0][1].pos.id, r.sets[0][0], r.sets[0][1].thr]);
 out.dings = calls.sfxAt.map(c => [c.name, c.o.kind, c.o.key, c.ok]);
 out.motor = calls.noise.map(r => [r.f, r.q, r.sk, r.sets.length, r.sets[0][0], r.sets[0][2].x]);
+out.roof = calls.eng.filter(r => r.kind === "rotor").map(r => [r.sets[0][0], r.sets[0][1].sk, r.sets[0][1].pos === roof]);
 // then 100 ms frames: the bridge's beat 0, 1, dark, lit again (its span still); meanwhile the clock strikes three
 // (15:00, :02.4, :04.8) and rings out
 const br = (beat, lit, moving) => ({id: "br", beat: beat, bell: lit ? {x: 20, y: 3, z: -20} : null, motor: moving ? {x: 25, y: 1, z: -20} : null});
@@ -283,6 +288,30 @@ frame(src({}, 9900));
 snd.stop();
 out.stopped = {pools: S.state().pools, loops: calls.loop.every(r => r.stops > 0 || !r.sets.length)};
 const E0 = HQV.engine; HQV.engine = null; out.noEngine = C3.citySound(); HQV.engine = E0;
+console.log(JSON.stringify(out));
+"""
+
+
+BRIDGES = FAKE + r"""
+for (const f of ["hqride", "traffic", "hqcivic", "hqships", "hqcity3d"]) new Function(fs.readFileSync(path.join(R0, "games", f + ".js"), "utf8"))();
+const HQV = window.HQV, E = HQV.engine, S = E.spatial, out = {};
+const loops = [], real = E.noiseLoop;
+E.noiseLoop = function(f, q, sk){ const h = real.apply(E, arguments), rec = {sk, sets: 0, stops: 0}; loops.push(rec);
+  return {set(){ rec.sets++; h.set.apply(h, arguments); }, stop(){ rec.stops++; h.stop(); }}; };
+E.listener({x: 0, y: 1.6, z: 0, yaw: 0});
+const snd = HQV.hqCity3d.citySound();
+const span = (id, z) => ({id, beat: 0, bell: null, motor: {x: 0, y: 1, z}});
+function frame(list){ now += 0.05; pnow += 0.05; snd.update({bridges: list}); }
+// four spans moving at once: 10, 20 and 30 m off, and one 200 m off (past the gondola kind's 120 m)
+for (let i = 0; i < 4; i++) frame([span("a", 10), span("b", 20), span("c", 30), span("d", 200)]);
+out.moving = {made: loops.length, sks: loops.map(r => r.sk), ids: S.state().pools.gondola, sets: loops.map(r => r.sets)};
+// the nearest stops: the third takes its voice (made again only if no parked one fits: it reuses the stopped span's)
+for (let i = 0; i < 4; i++) frame([span("b", 20), span("c", 30), span("d", 200)]);
+out.next = {made: loops.length, ids: S.state().pools.gondola};
+// every span still: parked, then stopped once idle (2 s), not left running for as long as they stay still
+for (let i = 0; i < 60; i++) frame([]);
+out.still = {stops: loops.map(r => r.stops), ids: S.state().pools.gondola};
+snd.stop();
 console.log(JSON.stringify(out));
 """
 
@@ -351,6 +380,15 @@ var airPool = {jet: [plane(0, 300, 500, true, "takeoff")], sea: [plane(0, 1, 900
 var airAmbPool = [plane(0, 1800, 0, true)], myPlane = plane(10, 50, 10, true, "climb");
 function airMine(F){ return !!(F && F.mine); }
 var civics = [{bells: [{id: "townhall:1:bell", x: 1, y: 30, z: 2, kind: "clock", seed: 5}]}, {bells: []}, {}];
+var PAD_UP = 0.05;
+/*TOWORLD*/
+function tower(lod, heli){ return {lod: function(){ return lod; }, sounds: function(){ return {fountain: null, karts: [], heli: heli}; }}; }
+var roofHeli = {id: "heli", x: 3, y: 12, z: 1, rpm: 4000};
+var hqs = [{h: {userId: "u1"}, x: 100, y: 2, z: 50, rot: Math.PI/2, g: {visible: true}, B: tower(0, roofHeli)},
+           {h: {userId: "u2"}, x: 0, y: 0, z: 0, rot: 0, g: {visible: true}, B: tower(1, roofHeli)},        // far: its masses only
+           {h: {userId: "u3"}, x: 0, y: 0, z: 0, rot: 0, g: {visible: false}, B: tower(0, roofHeli)},       // not drawn
+           {h: {userId: "u4"}, x: 0, y: 0, z: 0, rot: 0, g: {visible: true}, B: tower(0, null)},            // no helicopter (under level 20)
+           {h: {userId: "u5"}, x: 0, y: 0, z: 0, rot: 0, g: {visible: true}, B: {}}];                        // an older tower
 var dNow = Date.now; Date.now = function(){ return NOW; };
 /*BLOCK*/
 var B = 120000*1000;
@@ -592,6 +630,9 @@ class CitySound(unittest.TestCase):
         self.assertEqual(p["siren"], ["e1", "e3"], "only the runs whose siren wails, within 600 m")
         self.assertEqual(p["boat"], ["ferry:0", "big:cargo0"], "two ship voices")
         self.assertEqual(p["plane"], ["amphib:0", "jet:0"], "two aircraft: the nearest")
+        self.assertEqual(p["gondola"], ["bridge:br"], "the bridge's machinery in the gondola kind's pool")
+        self.assertEqual(p["heli"], ["heli:u1"])
+        self.assertEqual(self.o["roof"], [[4000, "heli", True]], "a rooftop helicopter: its rotor where it is")
 
     def test_each_engine_where_its_vehicle_is(self):
         c = self.o["carSet"]
@@ -644,13 +685,13 @@ class CitySound(unittest.TestCase):
 
     def test_nothing_below_the_street(self):
         u = self.o["under"]
-        self.assertEqual(u["pools"], {"vehicle": [], "bus": [], "tram": [], "siren": [], "boat": [], "plane": []})
+        self.assertEqual(u["pools"], {"vehicle": [], "bus": [], "tram": [], "siren": [], "boat": [], "plane": [], "gondola": [], "heli": []})
         self.assertEqual(u["horns"], 1)
         self.assertEqual(u["dings"], 3)
         self.assertEqual(u["motors"], 1)
 
     def test_nothing_without_ears_or_volume(self):
-        empty = {"vehicle": [], "bus": [], "tram": [], "siren": [], "boat": [], "plane": []}
+        empty = {"vehicle": [], "bus": [], "tram": [], "siren": [], "boat": [], "plane": [], "gondola": [], "heli": []}
         self.assertEqual(self.o["noEars"], empty)
         self.assertEqual(self.o["noEarsSets"], 0, "no listener: no loop set, no horn, no bell (nothing would be placed)")
         self.assertEqual(self.o["mute"]["pools"], empty)
@@ -661,6 +702,26 @@ class CitySound(unittest.TestCase):
         self.assertTrue(self.o["stopped"]["loops"])
         self.assertIsNone(self.o["noEngine"])
 
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class BridgeMachinery(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.o = run(fill(BRIDGES))
+
+    def test_the_nearest_two_spans_sound_within_the_gondola_kinds_voices(self):
+        m = self.o["moving"]
+        self.assertEqual(m["made"], 2, "two machinery voices, not one per moving span")
+        self.assertEqual(m["sks"], ["gondola", "gondola"])
+        self.assertEqual(m["ids"], ["bridge:a", "bridge:b"])
+        self.assertTrue(all(n >= 3 for n in m["sets"]))
+        n = self.o["next"]
+        self.assertEqual(n["ids"], ["bridge:b", "bridge:c"])
+        self.assertEqual(n["made"], 2, "the third span takes the stopped one's voice")
+        s = self.o["still"]
+        self.assertEqual(s["ids"], [])
+        self.assertEqual(s["stops"], [1, 1], "parked, then stopped once idle: none left running")
 
 
 @unittest.skipUnless(NODE, "node is not installed")
@@ -683,7 +744,7 @@ class BellsWhileSuspended(unittest.TestCase):
 class Gather(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.o = run(fill(GATHER).replace("/*BLOCK*/", gather_block()))
+        cls.o = run(fill(GATHER).replace("/*BLOCK*/", gather_block()).replace("/*TOWORLD*/", re.search(r"^function toWorld\(p, lx, lz\)\{.*$", CITY, re.M).group(0)))
 
     def test_the_sources_handed_over(self):
         f = self.o["f1"]
@@ -703,6 +764,12 @@ class Gather(unittest.TestCase):
         self.assertFalse(f["under"])
         self.assertEqual(self.o["localMs"], 0, "the bells keep the local wall clock")
         self.assertEqual(self.o["madeOnce"], 1, "one citySound, kept")
+        h = f["helis"]
+        self.assertEqual([x["id"] for x in h], ["heli:u1"], "a near, drawn tower's helicopter only")
+        self.assertAlmostEqual(h[0]["x"], 101)                    # from its lot's frame (turned 90 degrees) to the street's
+        self.assertAlmostEqual(h[0]["z"], 47)
+        self.assertAlmostEqual(h[0]["y"], 2 + 0.05 + 12)
+        self.assertEqual(h[0]["rpm"], 4000)
 
     def test_hulls_heard_along_their_keel(self):
         s = {v["id"]: v for v in self.o["f1"]["ships"]}

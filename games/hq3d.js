@@ -2604,8 +2604,22 @@ function mount(el, api){
     var P = HQV.hqVehiclePhys; if(!P || !P.engineFor || !V.gears) return null;
     return (V.engine = P.engineFor({}, V.kind === "bike" || (base || (ride && ride.base)) === "moto" ? "bike" : "car", V.eng, V.gears));
   }
-  // [sound] where your own vehicle sounds from: you, riding in it (engine.js kind "own": no distance loss, a hint of pan)
-  function ownAt(){ return avatar ? {x: avatar.x, y: (+avatar.hy || 0) + 0.8, z: avatar.z} : null; }
+  // [sound] where your own vehicle sounds from: you, riding in it (engine.js kind "own": a hint of pan); on the Map from
+  // where you are on the ground (no y: level with its ears, so a plane up high is heard while the Map is on it)
+  function ownAt(){ return avatar ? (rigOn() && rig.mode === "map" ? {x: avatar.x, z: avatar.z} : {x: avatar.x, y: (+avatar.hy || 0) + 0.8, z: avatar.z}) : null; }
+  // ...and how far your own things carry (engine.js listener's own: the "own" kind's reference distance, the engines and
+  // the cab's chimes alike): while the camera rides with you (Classic, the chase cameras, first person, the selfie) they
+  // lose nothing to distance; a detached camera (photo, cine, the Map) hears them at full volume within the far chase
+  // camera's reach for this vehicle (22 m for a car, 110 m behind an airliner: camrig.js), fading past that and silent
+  // about 400 m further
+  var OWN_DETACHED = {photo: 1, cine: 1, map: 1};
+  function ownRef(){
+    if(!rigOn() || !OWN_DETACHED[rig.mode]) return Infinity;
+    var C = HQV.camrig, M = C && C.MODES ? C.MODES.far : null, V = C && C.VEHICLE && ride ? C.VEHICLE[ride.base || ride.kind] : null;
+    if(!M) return 12;
+    var sz = V && ride.V && ride.V.size > 0 ? E.clamp(ride.V.size, 0.85, 1.5) : 1, b = M.back*(V ? V.backMul : 1)*sz, u = M.up*(V ? V.upMul : 1);
+    return Math.max(12, Math.sqrt(b*b + u*u));
+  }
   // [gearbox] per frame, before the speed moves: the gearbox's answer (null for a vehicle without one: a bicycle, a
   // boat, a vehicle whose engine has no gearing); the presses of . , G since the last frame go in once
   var GIN = {up: false, down: false, toggle: false, nitro: false, trick: false};
@@ -5361,7 +5375,7 @@ function mount(el, api){
     studioFrame();
     var ease = 1 - Math.exp(-dt*(ride ? 4 + Math.min(6, Math.abs(ride.speed)*0.3) : 4)); view.target.lerp(view.goal, ease);
     resize(); placeCam();
-    if(E.listener) E.listener(curCam(), earAt(curCam()));             // [sound] the ears: this frame's camera (earAt)
+    if(E.listener) E.listener(curCam(), earAt(curCam()), ownRef());   // [sound] the ears: this frame's camera (earAt), your reach
     if(avatar && avatar.ch){
       var skp = ride && ride.kind === "skate" && ride.sk ? ride.sk.pose : null;
       if(skp || avatar.ch._po) poseUndo(avatar.ch);

@@ -129,6 +129,45 @@ function baseViewRing(){
 }
 HQV.hqBaseViewRing = baseViewRing;
 
+/* ---------- [Sound PR B] a floor's own world sounds: its cars and karts, fountains and rooftop helicopters ----------
+ * streetSound() -> {update(src), stop()}, or null without the engine's spatial sound (games/engine.js). Each frame,
+ * once everything has moved, the floor (the Base, Arena City: games/hqcity.js) hands it src in the scene's metres:
+ *   cars       [{id, x, y, z, speed, voice?}] the cars going round and the karts (the vehicle kind's pool: the nearest
+ *              few engines, each fading with its distance and panned to its side; voice an engine.js ENGINES name, else
+ *              the 3D City's car voices by id, games/traffic.js soundOf)
+ *   fountains  [{id, x, y, z}] a fountain's falling water (an E.loop "fountain" each: the Ambient sounds volume)
+ *   helis      [{id, x, y, z, rpm}] a tower's helicopter (games/hqtower.js B.sounds: the heli kind's pool, its rotor)
+ * Nothing plays without a listener or at volume 0; stop() lets every voice go (the floor's onLeave, soundPause, destroy). */
+function streetSound(){
+  var E = HQV.engine;
+  if(!E || typeof E.pool !== "function" || typeof E.engineSound !== "function") return null;
+  function voice(s){ var T = HQV.traffic; return T && T.soundOf ? T.soundOf(s) : {voice: typeof s.voice === "string" ? s.voice : "turbo", rpm: 2400}; }
+  var cars = E.pool("vehicle", {key: function(s){ return voice(s).voice; }, make: function(s){ return E.engineSound(voice(s).voice); },
+                                play: function(h, s){ h.set(voice(s).rpm, {speed: s.speed, pos: s, sk: "vehicle", mode: "comfort"}); }});
+  var helis = E.pool("heli", {key: function(){ return "rotor"; }, make: function(){ return E.engineSound("rotor"); },
+                              play: function(h, s){ h.set(+s.rpm || 2800, {pos: s, sk: "heli"}); }});
+  var falls = {};
+  return {
+    update: function(src){
+      src = src || {};
+      var up = !!(E.listenerAt && E.listenerAt()) && !(E.sfxVolume && E.sfxVolume() <= 0);
+      cars.update(up && Array.isArray(src.cars) ? src.cars : []);
+      helis.update(up && Array.isArray(src.helis) ? src.helis : []);
+      (up && typeof E.loop === "function" && typeof E.hear === "function" && Array.isArray(src.fountains) ? src.fountains : []).forEach(function(f){
+        if(!f || !E.hear("fountain", f)) return;
+        var id = f.id != null ? String(f.id) : "fountain", h = falls[id] || (falls[id] = E.loop("fountain"));
+        if(h) h.set(1, {pos: f});
+      });
+    },
+    stop: function(){
+      cars.stop(); helis.stop();
+      Object.keys(falls).forEach(function(k){ if(falls[k]) falls[k].stop(); });
+      falls = {};
+    }
+  };
+}
+HQV.hqStreetSound = streetSound;
+
 HQV.hqWorlds.base = function(c, w){
   var THREE = c.THREE, PI = c.PI, S = w.scene, COL = c.COL, HEX = c.HEX;
   var mat = c.mat, emis = c.emis, box = c.box, cyl = c.cyl, sph = c.sph;
@@ -251,6 +290,22 @@ HQV.hqWorlds.base = function(c, w){
     hemi.intensity = n ? 1.3 : 2.4; sun.intensity = n ? 0.7 : 2.4; sun.color.set(n ? 0xa9b8ff : 0xfff2dc); applyTime(); };
   w.onData = function(list){ Bld.setLive((list || []).filter(function(s){ return c.crewState(s) !== "stale"; }).length); };
   w.onLook = function(){ Bld.build(); };
+  // [Sound PR B] the campus heard where it is (streetSound, above): the cars on the ring road, the karts, the plaza
+  // fountain and the helicopter on the west wing (the building's B.sounds: its frame is the Base's)
+  var snd = null;
+  function soundStep(k){
+    var E = HQV.engine;
+    if(!E || !E.listenerAt || !E.listenerAt()) return;
+    if(!snd && !(snd = streetSound())) return;
+    var q = Bld.sounds ? Bld.sounds() : null, src = {cars: [], fountains: q && q.fountain ? [q.fountain] : [], helis: q && q.heli ? [q.heli] : []};
+    cars.forEach(function(k2, i){ var p = k2.c.g.position; src.cars.push({id: "ring:" + i, x: p.x, y: 0.5, z: p.z, speed: Math.abs(k2.v*k2.r*k)}); });
+    ((q && q.karts) || []).forEach(function(kt){ src.cars.push(kt); });
+    snd.update(src);
+  }
+  function soundStop(){ if(snd){ try { snd.stop(); } catch(e){} snd = null; } }
+  w.onLeave = function(){ soundStop(); };        // its voices go with you (the next visit makes them again)
+  w.soundPause = function(){ soundStop(); };     // ...and with a paused view (hq3d inst.pause)
+  w.destroy = function(){ soundStop(); };
   w.update = function(t, dt, k){
     acc += dt;
     if(acc > 2){ acc = 0; if(Bld.stale()) Bld.build(); }
@@ -261,6 +316,7 @@ HQV.hqWorlds.base = function(c, w){
     strollers.forEach(function(s){ var a = t*0.12*s.dir*k + s.ph, x = Math.cos(a)*s.rx, z = 9.6 + Math.sin(a)*s.rz; s.g.position.set(x, 0, z);
       var dx = -Math.sin(a)*s.rx*s.dir, dz = Math.cos(a)*s.rz*s.dir; s.g.rotation.y = Math.atan2(dx, dz); if(s.ch) s.ch.mixer.update(dt*k); });
     clouds.position.x = ((t*0.6*k) % 40) - 20;
+    soundStep(k);
   };
   return w;
 };

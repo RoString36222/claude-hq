@@ -2207,7 +2207,8 @@ function makeGame(host, opts){
     if(miss.srv) return;  // server-flown: the "b" snapshot rows bring the boom and the damage
     var x = miss.x, y = miss.y, z = miss.z;
     if(R3) R3.boom(x, y, z, t);
-    E.sfx("boom");
+    // [sound] heard where it went off: the blast kind's distance fade (curve on), its side of you, d/343 s late
+    if(E.sfxAt) E.sfxAt("boom", [x, y, z], {kind: "blast", curve: true}); else E.sfx("boom");
     V.shakeAt = t;
     var shooter = miss.owner; // null: the local player; else a bot
     // while The Warden lives, blasts only bruise the boss — players and bots take nothing
@@ -2874,7 +2875,8 @@ function makeGame(host, opts){
           ai.fireAt = t; P.mag[LAUNCH_W]--; P.n++; P.protUntil = 0;
           var ldir = FS.dirOf(aim_y, clamp(aim_p, -89, 89));
           spawnMissile(t, [x, P.ai.body.y + FS.EYE, z], ldir, P);
-          E.sfx("shot", {w: LAUNCH_W});
+          // [sound] the launch at the bot, not at full volume wherever it is: fades with the distance, panned
+          if(E.sfxAt) E.sfxAt("shot", [x, P.ai.body.y + FS.EYE, z], {w: LAUNCH_W, kind: "blast", curve: true}); else E.sfx("shot", {w: LAUNCH_W});
           if(P.mag[LAUNCH_W] <= 0 && (P.res[LAUNCH_W]|0) > 0) P.reloadAt = t + FS.LAUNCH.reload * ((V.disaster === "absolutezero" && disLive(t)) ? 1.5 : 1);
         }
       } else if(P.w !== GRAPPLE_W && clearNow && ai.seenAt != null && t - ai.seenAt >= BOT_REACT*df.react && t >= ai.fireAt + Math.max(wp.interval, wp.interval*(df.rate || 1)) - 0.01 && P.mag[P.w] > 0 && !P.reloadAt){
@@ -3589,7 +3591,7 @@ function makeGame(host, opts){
       if(!Array.isArray(bm) || bm.length < 3) return;
       var x = bm[0]/100, y = bm[1]/100, z = bm[2]/100;
       if(R3) R3.boom(x, y, z, t);
-      E.sfx("boom");
+      if(E.sfxAt) E.sfxAt("boom", [x, y, z], {kind: "blast", curve: true}); else E.sfx("boom");   // [sound] at the blast (as detonate's)
       var near = Math.sqrt((V.me.x - x)*(V.me.x - x) + (V.me.y + 0.9 - y)*(V.me.y + 0.9 - y) + (V.me.z - z)*(V.me.z - z));
       if(!V.dead && near < FS.BLAST_R + 6){
         V.shakeAt = t;

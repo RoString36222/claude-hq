@@ -372,7 +372,7 @@ function makeGame(host, opts){
     }));
     tools.appendChild(api.btn("Camera", "", function(){ V.cam = (V.cam + 1) % 3; if(canvas) canvas.focus(); }));
   }
-  function resetRace(){ clearCars(); V.phase = "idle"; V.track = null; V.results = null; V.finishedAt = null; cardBox.classList.add("hidden"); cdBox.classList.add("hidden"); if(R3) R3.clearTrack(); }
+  function resetRace(){ clearCars(); V.phase = "idle"; V.track = null; V.results = null; V.finishedAt = null; cardBox.classList.add("hidden"); cdBox.classList.add("hidden"); if(R3) R3.clearTrack(); peersStop(); }
 
   /* ---------- practice: a solo time trial ---------- */
   function startPractice(id, laps){
@@ -632,6 +632,28 @@ function makeGame(host, opts){
     C.steer = clamp(C.w/TURN, -1, 1); C.wheel += v*dt/0.3;
     C.rpm = 900 + 6500*clamp(Math.abs(v)/VMAX, 0, 1);
   }
+  // [sound] the other racers' engines, each where its car is: E.pool keeps the nearest few ("peer": its three
+  // voices, silent past 150 m) and reuses their voices. On the grid, after the flag or with no word of it from the
+  // Arena for 2 s (a car standing still is still sent every second) a car idles; one that is out or away is silent.
+  // The car is in the id, so a new car is a new voice.
+  var PEERS = null;
+  function peerSounds(t){
+    if(!E.pool) return;
+    var list = [];
+    V.order.forEach(function(uid){
+      var C = V.cars[uid]; if(uid === myId() || !C || C.dnf || C.away) return;
+      var last = C.snaps[C.snaps.length - 1], live = C.fin == null && !!last && t - last.t < 2;
+      list.push({id: uid + "/" + (C.car|0), kind: (CARS[C.car|0] || CARS[0]).eng, x: C.x, y: 0.6, z: C.z,
+                 rpm: live ? C.rpm : 900, speed: live ? Math.abs(C.v) : 0});
+    });
+    if(!PEERS){
+      if(!list.length) return;
+      PEERS = E.pool("peer", {make: function(s){ return E.engineSound(s.kind); },
+                              play: function(h, s){ h.set(s.rpm, {speed: s.speed, pos: s, sk: "peer"}); }});
+    }
+    PEERS.update(list);
+  }
+  function peersStop(){ if(PEERS){ PEERS.stop(); PEERS = null; } }
 
   /* ---------- the loop ---------- */
   function update(dt, t){
@@ -654,6 +676,7 @@ function makeGame(host, opts){
       if(V.phase === "race") lapCheck(C);
     }
     V.order.forEach(function(uid){ if(uid !== myId()) sampleSnaps(V.cars[uid], t, dt); });
+    peerSounds(t);
     sendPos(t);
     warn.classList.toggle("hidden", !(V.wrongFor > 1.2 && racing));
     if(cdBox.dataset.until && t > +cdBox.dataset.until){ cdBox.classList.add("hidden"); cdBox.dataset.until = ""; }
@@ -1032,6 +1055,7 @@ function makeGame(host, opts){
   V.destroy = function(){
     if(E.listener) E.listener(null);
     if(V.eng){ V.eng.stop(); V.eng = null; }
+    peersStop();
     if(WB){ WB.destroy(); WB = null; }
     V.alive = false;
     if(raf) cancelAnimationFrame(raf); raf = 0;

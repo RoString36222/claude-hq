@@ -1085,6 +1085,7 @@ function makeGame(host, opts){
         camera.position.copy(camPos); camera.lookAt(look);
         sun.position.set(F.x + 10, F.y + 25, F.z + 6); sun.target.position.set(F.x, F.y, F.z);
       }
+      if(E.listener) E.listener(camera);                               // [sound] the ears: this camera
       renderer.render(scene, camera);
     };
     R.dispose = function(){
@@ -1111,6 +1112,7 @@ function makeGame(host, opts){
     function(){ V.note = "Couldn't load the levels."; renderMenu(); });
   if(!raf) raf = requestAnimationFrame(frame);
   V.destroy = function(){
+    if(E.listener) E.listener(null);
     if(WB){ WB.destroy(); WB = null; }
     V.alive = false;
     if(raf) cancelAnimationFrame(raf); raf = 0;

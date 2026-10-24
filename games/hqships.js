@@ -3,7 +3,7 @@
  *   ferry(c, opts) -> F   c: the hq3d ctx (THREE, mat); opts {name, funnel (hex)}
  *     F.g        the group: origin on the waterline at the hull's middle, forward +z, model +x is LEFT (port)
  *     F.seats    [Object3D]: benches on the open sun deck, a rider sits at seat.position (facing +z)
- *     F.update(dt, speed (m/s), night (bool))   the wake's flow and strength, the window glow
+ *     F.update(dt, speed (m/s), night (bool))   the wake's flow and strength, the window glow (F.speed: the last speed)
  *     F.clone()  another ferry sharing every geometry and material (the wake keeps its own)
  *     F.dispose()
  * Every part is merged by material (hull, white, deck, glass, funnel, dark, lifeboats, lights): about ten
@@ -14,6 +14,7 @@
  *   cargo(c, opts)  -> the same API: a 95 m container ship, dark hull, the bridge house aft, ~200 containers in one
  *     vertex-coloured mesh, three deck cranes; its seats are on the bridge wings; F.containers. ~14 draws.
  *   Both take opts {name, funnel (hex)}; cargo also {seed} (which containers, how high).
+ *   SOUND {ferry, cruise, cargo}: {horn (a games/hqride.js sound name), at: [x, y, z] its funnel, in the ship's frame}.
  */
 (function(){
 "use strict";
@@ -420,9 +421,10 @@ function wake(c, ft, wk){
 function finish(c, g, seats, M, geos, nameM, nameG, own, wk){
   var THREE = c.THREE, ft = foamTex(THREE), W = ft ? wake(c, ft, wk) : null, flow = 0, lit = -1;
   if(W) g.add(W.o);
-  var F = {g: g, seats: seats};
+  var F = {g: g, seats: seats, speed: 0};
   F.update = function(dt, speed, night){
     var v = Math.abs(+speed || 0);
+    F.speed = v;                                   // [sound] its engines' hum follows it (games/hqcity3d.js)
     if(W){
       flow = (flow + dt*v/40) % 1; ft.offset.y = flow;
       W.m.opacity += (Math.min(0.8, v/(wk && wk.full || 14)) - W.m.opacity)*(1 - Math.exp(-dt*3));
@@ -446,6 +448,11 @@ function finish(c, g, seats, M, geos, nameM, nameG, own, wk){
   return F;
 }
 
-HQV.hqShips = {ferry: ferry, cruise: cruise, cargo: cargo, LENGTH: L, SUN_DECK: SUN, merge: merge,
+// [Sound PR B] each kind's horn (a games/hqride.js sound) and where it sounds: on the funnel, in the ship's frame
+// (x, y over the waterline, z forward). games/hqcity3d.js blows it as the ship sails.
+var SOUND = {ferry: {horn: "ferry-horn", at: [0, SUN + 3.2, -13.6]}, cruise: {horn: "ship-horn", at: [0, CPOOL + 7, -29.5]},
+             cargo: {horn: "ship-horn", at: [0, GDECK + 18.5, -45.5]}};
+
+HQV.hqShips = {ferry: ferry, cruise: cruise, cargo: cargo, LENGTH: L, SUN_DECK: SUN, merge: merge, SOUND: SOUND,
                CRUISE: {LENGTH: CL, BEAM: 21, POOL: CPOOL}, CARGO: {LENGTH: GL, BEAM: 16}};
 })();

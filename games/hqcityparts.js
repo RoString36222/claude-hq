@@ -12,7 +12,8 @@ var HQV = window.HQV = window.HQV || {};
 
 /* ---------- the fountain: a stone basin, two bowls, falling water, a jet on top ---------- */
 var FOUNT_R = 4.4;
-// {g, step(t), R}: g stands at (x, y, z) in parent; step(t) runs the water (still under Calm)
+// {g, step(t), R, at}: g stands at (x, y, z) in parent; step(t) runs the water (still under Calm); at {x, y, z}: its
+// falling water's middle, in parent's frame (where it is heard)
 function fountain(c, parent, x, y, z){
   var THREE = c.THREE, PI = c.PI, COL = c.COL, mat = c.mat;
   function lathe(pts, m, ly, p){
@@ -67,7 +68,8 @@ function fountain(c, parent, x, y, z){
     }
     jet.geometry.attributes.position.needsUpdate = true;
   }
-  return {g: g, step: step, R: FOUNT_R};
+  // at: where its water falls, in the parent's frame ([Sound PR B] games/hqcity3d.js plays the fountain there)
+  return {g: g, step: step, R: FOUNT_R, at: {x: x, y: y + 1.6, z: z}};
 }
 
 /* ---------- the skatepark (games/hqskate.js is its shape and physics) ---------- */

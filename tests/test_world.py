@@ -447,6 +447,27 @@ async function run(){
   M = fresh(); idb = stubIdb(undefined, {throws: true}); f = stubFetch(200, tiny(), "\"e4\"");
   out.idbThrows = (await M.load({fetch: f.fn, idb: idb})).etag;
   M = fresh(); out.noIdb = (await M.load({fetch: stubFetch(200, tiny(), "\"e5\"").fn, idb: null})).etag;
+  // 7. the deadlines count the page's own time: the main thread busy for longer than the whole budget (a slow machine's
+  // first frame compiling its shaders) while the answer comes in, a hop at a time as a browser hands it over, does not
+  // time it out: the headers and then the body, and the IndexedDB read (open, then the record)
+  function later(v, ms){ return new Promise(function(r){ setTimeout(function(){ r(v); }, ms); }); }
+  function stall(ms){ var a = Date.now(); while(Date.now() - a < ms){} }
+  M = fresh();
+  var pend = M.load({idb: null, timeoutMs: 500, fetch: function(){
+    return later({status: 200, headers: {get: function(n){ return n.toLowerCase() === "etag" ? "\"s1\"" : null; }}, json: function(){ return later(tiny(), 5); }}, 5);
+  }});
+  await null; await null;                                       // the request is under way
+  stall(800);
+  out.stallNet = await pend.then(function(W){ return W.etag; }, function(e){ return e.message; });
+  M = fresh(); cached = packedTiny();
+  var idb2 = {get: function(){ return later(null, 5).then(function(){ return later({v: H.PACK_V, etag: "\"s2\"", packed: cached}, 5); }); },
+              put: function(){ return Promise.resolve(); }};
+  pend = M.load({idb: idb2, timeoutMs: 500, fetch: stubFetch(304, null, "\"s2\"").fn});
+  stall(800);
+  out.stallIdb = await pend.then(function(W){ return {hit: W === cached, cacheMs: M.cacheMs() != null}; }, function(e){ return e.message; });
+  // ...while a request that never answers still runs out, after its budget of a responsive page
+  M = fresh(); var t1 = Date.now();
+  out.hung = {msg: await rejects(M, {fetch: function(){ return new Promise(function(){}); }, idb: null, timeoutMs: 500}), ms: Date.now() - t1};
   done(out);
 }
 run().catch(function(e){ console.error(e && e.stack || e); process.exit(1); });
@@ -512,6 +533,16 @@ run().catch(function(e){ console.error(e && e.stack || e); process.exit(1); });
         self.assertEqual(self.out["jTimeout"], "world unavailable: timeout")
         self.assertEqual(self.out["jAbort"], {"aborted": 1, "signal": True})
         self.assertEqual(self.out["retry"], "0123456789abcdef")
+
+    def test_deadline_counts_the_pages_own_time(self):
+        # a stall longer than the budget, the answer arriving during it: not a timeout (the City kept its world)
+        self.assertEqual(self.out["stallNet"], "\"s1\"")
+        self.assertEqual(self.out["stallIdb"], {"hit": True, "cacheMs": True})
+        # a hung request on a responsive page still runs out, after the budget (not before, not forever)
+        h = self.out["hung"]
+        self.assertEqual(h["msg"], "world unavailable: timeout")
+        self.assertGreaterEqual(h["ms"], 495)
+        self.assertLess(h["ms"], 5000)
 
 
 REAL_BODY = r"""

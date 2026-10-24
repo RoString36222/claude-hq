@@ -5145,8 +5145,8 @@ function mount(el, api){
         entering = null; clearTimeout(to); loading.remove();
         if(ok) w.isReady = true;
         else if(!cityRetried && /unavailable: timeout/.test((err && err.message) || "")){
-          // world.js's deadline is wall-clock: a long first-frame shader compile (cold profile, software GL) can
-          // trip it although the doc arrived. Drop this City and build a fresh one, once, before falling back.
+          // world.js's deadline counts the page's own time (a long first-frame shader compile no longer trips it), so
+          // this is a slow Arena: drop this City and build a fresh one, once, before falling back.
           cityRetried = true;
           if(worlds[name] === w) delete worlds[name];
           if(w.destroy){ try { w.destroy(); } catch(e){} }

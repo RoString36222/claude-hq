@@ -38,8 +38,9 @@
  * that clears both car lanes), takes each box when nothing that clashes is in it, and starts when
  * its time on tram tracks and bus lanes misses every tram and bus; cars within EV_YIELD m pull over.
  * at(timeMs, center, radius, obstacles): the vehicles within radius, nearest first, as {id, kind, x,
- * y, z, yaw, speed} (the body's centre) plus paint / line / pull / siren, and a tram's two sections
- * as parts [{x, y, z, yaw}]. Obstacles (the player's vehicle, {x, z, r}) make cars and transit brake
+ * y, z, yaw, speed} (the body's centre) plus paint / line / pull / siren (wail: its siren sounding, on the
+ * way to the scene), and a tram's two sections as parts [{x, y, z, yaw}]. sirens(timeMs, center, radius):
+ * only the emergency runs, as at() lists them. Obstacles (the player's vehicle, {x, z, r}) make cars and transit brake
  * behind them: a local override (a lag per vehicle, eased back to the timetable once clear),
  * deterministic for the same sequence of calls, and never fed back into the shared schedule.
  * Riding: stopsNear(x, z, r), nextArrival(stopId, timeMs), rideTo(line, from, to, timeMs) -> a trip
@@ -1149,7 +1150,18 @@ function create(doc, o){
     var s = o.s, v = o.v;
     ringPose(R, s, SPEC[I.kind].wb, o);
     o.speed = v; o.s = s;
+    o.wail = R === I.out && u < P.T;      // [sound] its siren sounds on the way to the scene (lights only on scene and back)
     return o;
+  }
+  // [sound] the emergency runs within radius of center, nearest first, as at() lists them: a siren carries farther than
+  // the traffic is drawn
+  function sirens(timeMs, center, radius){
+    var t = num(timeMs, 0)/1000, cx = center ? num(center.x, 0) : 0, cz = center ? num(center.z, 0) : 0, rad = num(radius, Infinity), out = [];
+    activeIncidents(t).forEach(function(I){
+      var e = evPose(I, t, {id: I.id, kind: I.kind}), d = Math.hypot(e.x - cx, e.z - cz);
+      if(d <= rad) out.push({id: e.id, kind: e.kind, x: e.x, y: e.y, z: e.z, yaw: e.yaw, speed: e.speed, d: d, siren: true, wail: e.wail});
+    });
+    return out.sort(function(a, b){ return a.d - b.d || (a.id < b.id ? -1 : 1); });
   }
 
   // ---- poses ----
@@ -1276,7 +1288,7 @@ function create(doc, o){
     lines.forEach(function(r){ run(r, r.vehicles, SPEC[r.kind]); });
     evs.forEach(function(e){
       var d = Math.hypot(e.x - cx, e.z - cz);
-      if(d <= rad) out.push({id: e.id, kind: e.kind, x: e.x, y: e.y, z: e.z, yaw: e.yaw, speed: e.speed, d: d, siren: true});
+      if(d <= rad) out.push({id: e.id, kind: e.kind, x: e.x, y: e.y, z: e.z, yaw: e.yaw, speed: e.speed, d: d, siren: true, wail: e.wail});
     });
     out.sort(function(a, b){ return a.d - b.d || (a.id < b.id ? -1 : 1); });
     return out;
@@ -1346,7 +1358,7 @@ function create(doc, o){
   }
 
   return {
-    tier: tier, grow: grow, H: H, at: at, stopsNear: stopsNear, nextArrival: nextArrival, rideTo: rideTo,
+    tier: tier, grow: grow, H: H, at: at, sirens: sirens, stopsNear: stopsNear, nextArrival: nextArrival, rideTo: rideTo,
     onFare: function(fn){ fareHook = typeof fn === "function" ? fn : null; },
     incidents: function(timeMs){ return activeIncidents(num(timeMs, 0)/1000).map(function(I){ return {id: I.id, kind: I.kind, station: I.station, node: I.node, start: Math.round(I.start*1000), end: Math.round(I.end*1000)}; }); },
     lines: function(){ return lines.map(function(r){ return {id: r.id, kind: r.kind, tier: r.tier, lap: r.prof.T, headway: r.headway, vehicles: r.vehicles.length,
@@ -1641,6 +1653,22 @@ function service(sim, kind, opts){
           trip: trip, vehicles: vehicles, name: nameOf, seats: SEATS[kind], stands: STANDS[kind], doors: DOORS[kind], floor: FLOOR[kind]};
 }
 
+/* ---------- sound (Sound PR B): what a vehicle sounds like, for the City's voice pools (games/hqcity3d.js) ---------- */
+// soundOf(v) -> {sk, voice, rpm} for an at() pose: sk its spatial kind in games/engine.js (vehicle, bus, tram), voice its
+// engineSound profile (null for a tram: the engine's tram-run loop takes its speed instead; v.voice overrides it) and
+// rpm the game's 900..7600 for its speed through a three-speed automatic (an electric one has no gears). A car's engine
+// is picked by its id, so the same car always sounds the same.
+var VOICE = {bus: "diesel", fire: "diesel", ambulance: "diesel", police: "v8"};
+var CAR_VOICES = ["turbo", "turbo", "turbo4", "six", "electric", "diesel"];
+function soundOf(v){
+  v = v || {};
+  var k = Object.prototype.hasOwnProperty.call(SPEC, v.kind) ? v.kind : "car", sk = k === "bus" ? "bus" : k === "tram" ? "tram" : "vehicle";
+  var voice = typeof v.voice === "string" ? v.voice : k === "tram" ? null : k === "car" ? CAR_VOICES[hash32(v.id) % CAR_VOICES.length] : VOICE[k];
+  var s = clamp(num(v.speed, 0)/SPEC[k].vmax, 0, 1.2), g = Math.min(2, Math.floor(s*3)), u = s*3 - g;
+  var rpm = voice === "electric" ? 900 + 5000*s : g ? 1900 + 2300*u : 950 + 3000*u;
+  return {sk: sk, voice: voice, rpm: Math.round(rpm)};
+}
+
 /* ---------- drawing: instanced bodies (THREE from c.THREE, only inside view()) ---------- */
 function view(c){
   var THREE = c.THREE, group = new THREE.Group(), meshes = {}, mtx = new THREE.Matrix4(), q = new THREE.Quaternion(),
@@ -1793,6 +1821,6 @@ function view(c){
 
 HQV.traffic = {create: create, view: view, SPEC: SPEC, GAP: GAP, DWELL: DWELL, FARE: FARE, DENS: DENS, CAP: CAP, INC_W: INC_W,
                lanes: lanes, tramPaths: tramPaths, tramStops: tramStops, service: service, SEATS: SEATS, STANDS: STANDS, DOORS: DOORS, FLOOR: FLOOR,
-               lineColor: lineColor, shortOf: shortOf, loadCurve: loadCurve,
+               lineColor: lineColor, shortOf: shortOf, loadCurve: loadCurve, soundOf: soundOf,
                _: {plOf: plOf, plAt: plAt, offsetPts: offsetPts, trimPts: trimPts, Profile: Profile, fastest: fastest, ease: ease}};
 })();

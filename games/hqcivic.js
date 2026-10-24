@@ -8,7 +8,7 @@
  * (palette, roof, which side the wing goes, the company on the sign) comes from the site id, so
  * every client builds the same building.
  *
- *   build(c, site, opts) -> {g, doors, hits, glows, setNight(n), animate(t, dt, k), top, boxes, lod, tint, decks, kind, tier}
+ *   build(c, site, opts) -> {g, doors, hits, glows, setNight(n), animate(t, dt, k), top, boxes, lod, tint, decks, kind, tier, bells}
  *     c: the hq3d ctx (THREE, mat, emis, box, cyl, sph, canvasTex, glow, label, rng, hashStr, ...).
  *     site: {id, kind, tier, x, y, z (cm), poly: [[x, z], ...] (cm, CCW) | w, d (cm, world axes),
  *            front: [fx, fz] (Q16 unit vector the door faces), view?: "<tab>", name?}.
@@ -29,6 +29,8 @@
  *     or a port lays out over the water (empty for any other kind): its deck (y: its top), the middle of
  *     its far end, the way it points (out to sea) and its width. games/ocean.js puts the berth off its head.
  *   deckAt(decks, x, z) -> the deck's top y under (x, z), or null.
+ *   bells: [{id, x, y, z (world m: the belfry), kind: "clock" | "peal", seed}]: the town hall's clock and the
+ *     university's bell tower; strikes(bell, hour), due(bell, fromMs, toMs) and ring(V, f, g, d, at) (below) ring them.
  *   KINDS: every kind build() knows, with its sign name and default footprint.
  * Nothing touches THREE until build() is called; tests/test_hqcivic.py runs it under node against
  * the vendored three.js and a stub ctx.
@@ -371,6 +373,11 @@ KP.lamp = function(x, z, h, col, glow){
   if(glow !== false) this.glow(col, x, PLINTH + h, z, 2.4, 0.6);
 };
 KP.glow = function(col, x, y, z, s, op){ var gl = this.c.glow(col, s, op); gl.position.set(x, y, z); this.g.add(gl); this.glows.push(gl); return gl; };
+// [Sound PR B] a belfry at the lot's (lx, lz), y up: kind "clock" (strikes the hours) or "peal" (rings a peal on the hour)
+KP.bell = function(lx, y, lz, kind){
+  var o = this.world(lx, lz), id = String(this.site.id != null ? this.site.id : this.kind) + ":bell";
+  (this.bells = this.bells || []).push({id: id, x: o.x, y: this.F.y + y, z: o.z, kind: kind, seed: hash32(id + ":" + kind)});
+};
 KP.fence = function(x0, z0, x1, z1, h){
   h = h || 1.4; var m = this.m(0x6f7b86, {metalness: 0.5, roughness: 0.5}), y = PLINTH;
   var sides = [[x0, z0, x1, z0], [x1, z0, x1, z1], [x1, z1, x0, z1], [x0, z1, x0, z0]], self = this;
@@ -564,6 +571,7 @@ BUILD.townhall = function(k){
   });
   var sp = k.mesh(new k.THREE.ConeGeometry(tw*0.75, 4 + T, 4), roof, 0, th + 0.5 + (4 + T)/2, tz); sp.rotation.y = PI/4;
   k.top = Math.max(k.top, th + 4.5 + T);
+  k.bell(0, th - 1, tz, "clock");                                  // its hour bell, over the clock faces
   // flags and lamps out front
   var pole = k.m(0xc4ccd4, {metalness: 0.8, roughness: 0.3});
   [-1, 1].forEach(function(s){
@@ -695,6 +703,7 @@ BUILD.university = function(k){
   var sp = k.mesh(new k.THREE.ConeGeometry(3.1, 6, 4), k.m(0x4a4f5a, {roughness: 0.7}), 0, th + 3, zc - 1); sp.rotation.y = PI/4;
   k.box(1.8, 1.8, 0.1, k.n(0xf3ead2, 0xfff1c8, 0.15, 1.6), 0, th - 2.2, zc + 1.1);
   k.top = Math.max(k.top, th + 6);
+  k.bell(0, th - 1, zc - 1, "peal");                               // its ring of six, under the spire
   k.columns(4, -4, 4, zc + d/2 + 1, PLINTH, 6.5, 0.4, stone);
   k.box(10, 0.8, 2.6, stone, 0, PLINTH + 6.9, zc + d/2 + 1);
   k.sign(k.title, 8, 0.8, 0, PLINTH + 6.9, zc + d/2 + 2.35, 0, "#3a2a10", "#efe2c4");
@@ -1280,6 +1289,69 @@ function deckAt(decks, x, z){
   return null;
 }
 
+/* ---------- the bells (Sound PR B): the town hall's clock and the university's bell tower ---------- */
+// Pure and seeded: every client rings the same strikes at the same local hour.
+//   strikes(bell, hour) -> [{t (s after the hour), f (Hz), g (0..1), d (s it rings)}]; hour: hours since the epoch on the
+//     local wall clock. A clock strikes the hour (1..12) on its hour bell, CLOCK_GAP s apart; a bell tower rings rounds
+//     on its six bells twice, a few changes of plain hunt (how many: by its seed and the hour), then rounds, a bell
+//     every PEAL_GAP s with the handstroke's open beat after every second row.
+//   due(bell, fromMs, toMs) -> the strikes between those local wall-clock ms, (from, to]: [{at (ms), f, g, d}]
+//   ring(V, f, g, d, at): one strike into a voice V ({ctx, out, delay}: games/engine.js spatialOut), at s from now: a
+//     minor-third bell's hum, prime, tierce, quint, nominal and superquint, the higher ones dying sooner
+var CLOCK_GAP = 2.4, CLOCK_RING = 4.5, PEAL_GAP = 0.3, PEAL_RING = 2.2, HOUR_MS = 3600000;
+var RING6 = [9, 7, 5, 4, 2, 0];                                  // a ring of six: the treble down to the tenor (semitones)
+var PARTIALS = [[0.5, 0.5, 1], [1, 1, 0.8], [1.2, 0.6, 0.6], [1.5, 0.35, 0.5], [2, 0.45, 0.4], [3, 0.12, 0.25]];   // [x f, level, x d]
+function hash32(s){
+  s = String(s == null ? "" : s);
+  var h = 0x811c9dc5;
+  for(var i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h >>> 0;
+}
+function strikes(bell, hour){
+  bell = bell || {}; hour = Math.floor(+hour || 0);
+  var seed = (+bell.seed >>> 0) || hash32(bell.id), out = [];
+  if(bell.kind === "peal"){
+    var tenor = 220*Math.pow(2, (seed % 5)/12), changes = 4 + hash32(seed + ":" + hour) % 5, row = [0, 1, 2, 3, 4, 5], t = 0;
+    for(var r = 0; r < changes + 3; r++){
+      if(r >= 2 && r < changes + 2){                             // plain hunt: swap 1-2, 3-4, 5-6, then 2-3, 4-5
+        for(var i = r % 2 ? 1 : 0; i + 1 < row.length; i += 2){ var x = row[i]; row[i] = row[i + 1]; row[i + 1] = x; }
+      } else if(r === changes + 2) row = [0, 1, 2, 3, 4, 5];       // and rounds again
+      for(var j = 0; j < row.length; j++){ out.push({t: t, f: tenor*Math.pow(2, RING6[row[j]]/12), g: 0.55, d: PEAL_RING}); t += PEAL_GAP; }
+      if(r % 2) t += PEAL_GAP;
+    }
+    return out;
+  }
+  var n = (((hour % 24) + 24) % 24) % 12 || 12, f = 150*Math.pow(2, (seed % 7)/12);
+  for(var k = 0; k < n; k++) out.push({t: k*CLOCK_GAP, f: f, g: 0.9, d: CLOCK_RING});
+  return out;
+}
+function due(bell, fromMs, toMs){
+  var out = []; fromMs = +fromMs; toMs = +toMs;
+  if(!(toMs > fromMs) || toMs - fromMs > HOUR_MS) return out;
+  for(var H = Math.floor(fromMs/HOUR_MS); H*HOUR_MS <= toMs; H++){
+    var t0 = H*HOUR_MS;
+    if(t0 + 120000 < fromMs) continue;                           // every peal is over two minutes into its hour
+    strikes(bell, H).forEach(function(s){ var at = t0 + s.t*1000; if(at > fromMs && at <= toMs) out.push({at: at, f: s.f, g: s.g, d: s.d}); });
+  }
+  return out;
+}
+function ring(V, f, g, d, at){
+  var a = V && V.ctx, out = V && V.out;
+  f = +f; if(!a || !out || !(f > 0)) return false;
+  g = Math.max(0, Math.min(1, +g || 0)); d = Math.max(0.2, +d || 2);
+  var t = (+a.currentTime || 0) + (+V.delay || 0) + Math.max(0, +at || 0);
+  try {
+    PARTIALS.forEach(function(p){
+      var o = a.createOscillator(), e = a.createGain(), dd = d*p[2];
+      o.type = "sine"; o.frequency.setValueAtTime(f*p[0], t);
+      e.gain.setValueAtTime(0.0001, t); e.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.09*g*p[1]), t + 0.004);
+      e.gain.exponentialRampToValueAtTime(0.0001, t + dd);
+      o.connect(e); e.connect(out); o.start(t); o.stop(t + dd + 0.05);
+    });
+  } catch(err){ return false; }
+  return true;
+}
+
 /* ---------- build ---------- */
 function build(c, site, opts){
   site = site || {}; opts = opts || {};
@@ -1307,7 +1379,7 @@ function build(c, site, opts){
   function apply(){ k.night.forEach(function(r){ r.m.emissiveIntensity = night ? r.night : r.day; }); k.glows.forEach(function(gl){ gl.visible = night; }); }
   apply();
   return {g: k.g, doors: k.doors, hits: k.hits, glows: k.glows, boxes: k.boxes, lod: k.lod, tint: k.tint, decks: pierOf(site),
-    top: k.top, kind: k.kind, tier: k.tier, nave: k.nave || null,
+    top: k.top, kind: k.kind, tier: k.tier, nave: k.nave || null, bells: k.bells || [],
     // the airport's departures board: lines of text (canvas fillText, never markup)
     setBoard: function(lines){ if(k.board) k.board(Array.isArray(lines) ? lines : []); },
     x: k.F.x, y: k.F.y, z: k.F.z, rot: k.F.rot, w: k.W, d: k.D,
@@ -1319,5 +1391,6 @@ function build(c, site, opts){
     }};
 }
 
-HQV.hqCivic = {build: build, fit: fit, frame: frame, pierOf: pierOf, deckAt: deckAt, KINDS: KINDS, STYLES: STYLES, AIRPORT_NAVE: AIRPORT_NAVE};
+HQV.hqCivic = {build: build, fit: fit, frame: frame, pierOf: pierOf, deckAt: deckAt, KINDS: KINDS, STYLES: STYLES, AIRPORT_NAVE: AIRPORT_NAVE,
+               strikes: strikes, due: due, ring: ring};
 })();

@@ -16,6 +16,8 @@
  *     B.open(id) -> 0..1    B.blockedAt(x, z): on a gap while its span is not fully down, or at a lowered barrier
  *     B.obstacles() -> [{x, z, r}]   for games/traffic.js at(): the inbound lanes at each lowered barrier
  *     B.list()  the bridges (find's objects)     B.state(id) {u, bar, lights}     B.dispose()
+ *     B.sounds(x, z) -> [{id, beat, bell, motor}]   what each one sounds like now (the warning bell at the nearer barrier
+ *                           while its lights flash, a strike on each beat; its machinery at the nearer bank while it moves)
  * Each bridge is one group: the fixed parts (abutments, towers, cabins, piers, barrier posts) merged into one mesh
  * of vertex colours, every moving part (a leaf, a span, an arm) its own merged mesh, the warning lamps two meshes
  * whose materials flash in turn. Frames: the bridge's local +z runs a -> b, +x is its left, y = 0 is the road's top.
@@ -417,7 +419,20 @@ function create(c, W, scene, opts){
   return {
     group: group,
     list: function(){ return list.slice(); },
-    update: function(dt, ships){ items.forEach(function(it){ step(it.b, it.st, dt, ships); pose(it); }); },
+    update: function(dt, ships){ items.forEach(function(it){ var u0 = it.st.u; step(it.b, it.st, dt, ships); it.moving = it.st.u !== u0; pose(it); }); },
+    // [Sound PR B] what each bridge sounds like now (games/hqcity3d.js plays it), for a listener at (x, z):
+    // [{id, beat (its lamps' changes so far: the warning bell strikes on each), bell ({x, y, z}: the warning bell at the
+    // nearer barrier while its lights flash, else null), motor (its machinery at the nearer bank while the span moves)}]
+    sounds: function(x, z){
+      x = +x || 0; z = +z || 0;
+      return items.map(function(it){
+        var b = it.b, st = it.st, nearA = Math.hypot(x - b.a.x, z - b.a.z) <= Math.hypot(x - b.b.x, z - b.b.z);
+        var s = nearA ? -BARRIER_AT : b.len + BARRIER_AT, bank = nearA ? b.a : b.b;
+        return {id: b.id, beat: Math.floor(st.flash*1.6),
+                bell: st.lights ? {x: b.a.x + b.axis[0]*s, y: b.y + 2.6, z: b.a.z + b.axis[1]*s} : null,
+                motor: it.moving ? {x: bank.x, y: b.y - 1, z: bank.z} : null};
+      });
+    },
     open: function(id){ var it = byId(id); return it ? smooth(it.st.u) : 0; },
     state: function(id){ var it = byId(id); return it ? {u: it.st.u, bar: it.st.bar, lights: !!it.st.lights, active: it.st.active} : null; },
     blockedAt: function(x, z){

@@ -67,6 +67,10 @@ JS_ERRORS = ("Uncaught", "SyntaxError", "ReferenceError", "TypeError")
 # how long a page may take to load the world and draw 30 frames: the cold whole-map load is ~37 s on a
 # fast Mac under SwiftShader and slower on CI's shared macOS runners (the budgets below are the real checks)
 SMOKE_TIMEOUT = 180.0
+# one DevTools call while the page's main thread is busy: a cold frame links ~90 shader programs at once under
+# SwiftShader (three.js blocks in WebGLProgram onFirstUse), ~12 s locally and past 30 s on CI's shared macOS runners,
+# so a Runtime.evaluate queued behind it waits that long. Not a hang: the poll's own deadline (SMOKE_TIMEOUT) still holds.
+EVAL_TIMEOUT = 120.0
 MAX_DRAW_CALLS = 400            # the world's tiles (HQ3D_DEBUG.stats().worldDrawCalls)
 MAX_TRIANGLES = 1_500_000
 # the whole frame (stats().drawCalls: the renderer's own count, the shadow pass included): the synthetic city's spawn
@@ -416,8 +420,8 @@ class Page:
         chrome.call("Page.addScriptToEvaluateOnNewDocument", {"source": PRELUDE}, session=self.sid)
         chrome.call("Page.navigate", {"url": url}, session=self.sid)
 
-    def eval(self, expr):
-        r = self.c.call("Runtime.evaluate", {"expression": expr, "returnByValue": True}, session=self.sid)
+    def eval(self, expr, timeout=EVAL_TIMEOUT):
+        r = self.c.call("Runtime.evaluate", {"expression": expr, "returnByValue": True}, session=self.sid, timeout=timeout)
         return r.get("result", {}).get("value")
 
     def _events(self):

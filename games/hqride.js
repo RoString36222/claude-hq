@@ -673,10 +673,20 @@ function noiseBuf(ctx){
 }
 var SFX_NAMES = ["door-chime", "door-hiss", "validator", "stop-bell", "tram-bell", "air-brake", "motor", "rail-joint", "tunnel-rumble",
                  "gondola-clunk", "ferry-horn", "indicator", "rotor", "ring", "dial", "shutter", "chime"];
+// the looping sounds ("motor", "tunnel-rumble", "rotor") are ONE live voice per context and name: asking for
+// one again refreshes the live one (its speed, its gain) instead of starting another, {stop: true} ends it, and a
+// loop nobody refreshes fades out and stops by itself LOOP_TTL s (opts.ttl) after it was last asked for. (The metro
+// asked for a new "motor" every 0.5 s and never stopped one: a growing stack of sawtooths droned on everywhere.)
+var LOOP_NAMES = ["motor", "tunnel-rumble", "rotor"], LOOP_TTL = 3;
 function sfx(ctx, name, opts){
   opts = opts || {};
-  if(!ctx || opts.mute || SFX_NAMES.indexOf(name) < 0) return null;
+  if(!ctx || SFX_NAMES.indexOf(name) < 0) return null;
+  var isLoop = LOOP_NAMES.indexOf(name) >= 0, live = isLoop ? (ctx.__hqLoops || (ctx.__hqLoops = {})) : null;
+  if(live && live[name] && !live[name].alive()) delete live[name];
+  if(live && (opts.stop || opts.mute)){ if(live[name]) live[name].stop(); return null; }
+  if(opts.mute || opts.stop) return null;
   var vol = clamp(num(opts.gain, num(opts.volume, 1)), 0, 1);
+  if(live && live[name]){ live[name].set(opts); return live[name]; }
   if(vol <= 0) return null;
   try {
     var t = num(ctx.currentTime, 0) + num(opts.delay, 0), nodes = [];
@@ -739,10 +749,24 @@ function sfx(ctx, name, opts){
         break;
       }
     }
-    var H = {name: name, loop: !!loopH, stop: function(){
-      try { var n2 = num(ctx.currentTime, 0); out.gain.setTargetAtTime(0.0001, n2, 0.08);
-        nodes.forEach(function(nd){ if(nd && typeof nd.stop === "function"){ try { nd.stop(n2 + 0.4); } catch(e){} } }); } catch(e){}
-    }, set: loopH ? loopH.set : function(){}};
+    var dead = false, until = Infinity, ttl = Math.max(0.5, num(opts.ttl, LOOP_TTL));
+    function stopAt(at){ nodes.forEach(function(nd){ if(nd && typeof nd.stop === "function"){ try { nd.stop(at); } catch(e){} } }); }
+    // a loop's dead man's switch: fade out at `until`, every node stopped just after; each refresh pushes both on
+    function keep(g2){
+      var n2 = num(ctx.currentTime, 0); until = n2 + ttl;
+      try { if(out.gain.cancelScheduledValues) out.gain.cancelScheduledValues(n2);
+        out.gain.setTargetAtTime(g2, n2, 0.05); out.gain.setTargetAtTime(0.0001, until, 0.15); } catch(e){}
+      stopAt(until + 0.9);
+    }
+    var H = {name: name, loop: !!loopH, alive: function(){ return !dead && num(ctx.currentTime, 0) < until; }, stop: function(){
+      if(dead) return; dead = true; if(live && live[name] === H) delete live[name];
+      try { var n2 = num(ctx.currentTime, 0); if(out.gain.cancelScheduledValues) out.gain.cancelScheduledValues(n2); out.gain.setTargetAtTime(0.0001, n2, 0.08); stopAt(n2 + 0.4); } catch(e){}
+    }, set: function(o2){
+      if(!loopH || dead) return;
+      if(o2 && (o2.gain != null || o2.volume != null)) vol = clamp(num(o2.gain, num(o2.volume, vol)), 0, 1);
+      keep(vol); loopH.set(o2);
+    }};
+    if(loopH && live){ keep(vol); live[name] = H; }
     return H;
   } catch(e){ return null; }
 }

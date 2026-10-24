@@ -79,6 +79,36 @@ function jetAt(rpm, thr, n){ for (let i = 0; i < n; i++){ now += 1/60; jet.set(r
   return {fan: Math.max(...oscs.slice(oj).map(o => lastV(o.frequency))), layers: gains.slice(gj + 1).reduce((a, p) => a + lastV(p), 0)}; }
 const mj1 = made; out.jetIdle = jetAt(900, 0, 60); out.jetFull = jetAt(7600, 1, 60); out.jetPerFrame = made - mj1;
 jet.stop();
+// a motorbike is a train of bangs, not a held note: for every bike voice a firing-pulse oscillator on the
+// engine cycle (rpm/120) with a cosine (pulse) PeriodicWave whose cylinders differ, the rpm never dead steady at a
+// steady throttle, the jitter (FM) and exhaust layers on, no resonant low-pass
+out.bikes = {};
+for (const k of ['bike', 'single', 'twin', 'vtwin', 'boxer', 'four', 'v4', 'triple', 'crossplane', 'supercharged', 'longstroke', 'twin270', 'vtwin45']){
+  const P0 = E.engineProfile(k), o1 = oscs.length, f1 = filters.length, g1 = gains.length;
+  const ek = E.engineSound(k, null, {idle: P0.idle, red: P0.red, limit: P0.red + 400, cyl: P0.cyl});
+  const hs = [];
+  for (let i = 0; i < 240; i++){ now += 1/60; ek.set(7000, {thr: 0.3, gear: 4, speed: 20}); hs.push(lastV(oscs[o1].frequency)); }
+  const pulse = oscs.slice(o1).find(o => o.wave && o.wave.re.some(x => x !== 0));
+  let off = 0, all = 0;
+  if (pulse) pulse.wave.re.forEach((r, i) => { const e = r*r + pulse.wave.im[i]*pulse.wave.im[i]; all += e; if (P0.cyl > 1 && i % P0.cyl) off += e; });
+  const fq = filters.slice(f1), lp = fq.find(f => f.type === 'lowpass');
+  out.bikes[k] = {cyl: P0.cyl, hz: 7000/60*P0.cyl/2, pulseHz: pulse ? lastV(pulse.frequency) : 0, uneven: all ? off/all : 0,
+    spread: Math.max(...hs.slice(60))/Math.min(...hs.slice(60)), q: lp.Q.value,
+    layers: fq.filter(f => f.type === 'lowpass' && f.Q.value === 0.5).length};
+  ek.stop();
+}
+// the watchdog: a voice nobody set() for half a second is stopped outright (a dismount, a world change, a
+// forgotten stop()); the next set() builds it again
+{
+  const o1 = oscs.length, m1 = made, ew = E.engineSound('four', null, {idle: 1200, red: 15100, limit: 15100, cyl: 4});
+  for (let i = 0; i < 30; i++){ now += 1/60; ew.set(7000, {thr: 0.3}); }
+  const mine = oscs.slice(o1), live0 = E.liveEngines();
+  now += 0.3; E.engineWatch(); const keptAt03 = mine.every(o => !o.stopped);
+  now += 0.4; E.engineWatch();
+  out.watch = {live0, keptAt03, stopped: mine.every(o => o.stopped), liveAfter: E.liveEngines()};
+  const m2 = made; ew.set(7000, {thr: 0.3}); out.watch.rebuilt = made > m2; out.watch.liveAgain = E.liveEngines();
+  ew.stop(); out.watch.liveStopped = E.liveEngines();
+}
 // the catalogue's vehicles on their voices
 const cat = JSON.parse(fs.readFileSync(process.argv[4], 'utf8'));
 out.cat = {}; cat.vehicles.forEach(v => { out.cat[v.id] = [v.sound, P.voiceFor(v.spec, String(v['class']).split('.')[0] === 'bike' ? 'bike' : 'car')]; });
@@ -111,7 +141,7 @@ class EngineSound(unittest.TestCase):
         self.assertGreater(o["made"], 10)            # one graph, made once...
         self.assertEqual(o["perFrame"], 0)           # ...and 300 frames make nothing new
         self.assertEqual(o["mainType"], "custom")    # a PeriodicWave timbre
-        self.assertAlmostEqual(o["mainHz"], o["wantHz"], places=3)
+        self.assertAlmostEqual(o["mainHz"], o["wantHz"], delta=o["wantHz"]*0.02)   # with its +-2 % wobble
         self.assertTrue(o["stopped"])
 
     def test_load_shifts_blowoff_and_crackle(self):
@@ -127,6 +157,28 @@ class EngineSound(unittest.TestCase):
         self.assertGreater(o["on"], 0)
         self.assertEqual(o["muted"], 0)
         self.assertLess(o["far"][1], o["far"][0]*0.5)
+
+    def test_bikes_fire_pulses_not_a_held_note(self):
+        # the "buzz" on a motorbike: every bike voice beats with its firing pulses on the engine cycle,
+        # its cylinders not identical, its rpm wandering a little at a steady throttle, noise layers on, no resonance
+        for k, b in self.o["bikes"].items():
+            self.assertAlmostEqual(b["pulseHz"], b["hz"]/b["cyl"], delta=b["hz"]/b["cyl"]*0.03, msg=k)
+            if b["cyl"] > 1:
+                self.assertGreater(b["uneven"], 0.01, k)          # energy between the firing orders: uneven cylinders
+            self.assertGreater(b["spread"], 1.003, k)             # never a dead-steady note...
+            self.assertLess(b["spread"], 1.05, k)                 # ...but only a small wobble
+            self.assertLessEqual(b["q"], 0.9, k)
+            self.assertEqual(b["layers"], 2, k)                   # the exhaust roar and the FM jitter
+
+    def test_watchdog_stops_a_forgotten_voice(self):
+        w = self.o["watch"]
+        self.assertGreaterEqual(w["live0"], 1)
+        self.assertTrue(w["keptAt03"])                            # 0.3 s without set(): still there
+        self.assertTrue(w["stopped"])                             # 0.7 s: every node stopped
+        self.assertEqual(w["liveAfter"], 0)                       # nothing anywhere left running
+        self.assertTrue(w["rebuilt"])
+        self.assertEqual(w["liveAgain"], 1)
+        self.assertEqual(w["liveStopped"], 0)
 
     def test_catalogue_voices(self):
         c = self.o["cat"]

@@ -83,10 +83,19 @@ out.massing = [];
   out.massing.push({L, g, st, top: M.top, w: M.podium.w, d: M.podium.d, wings: M.wings.length,
     padIn: Math.hypot(P.x - M.heli.x, P.z - M.heli.z) + P.r <= M.heli.r - T.WALK + 1e-6, padR: P.r, padY: P.y - R.y, overRoof: Math.abs(P.x - R.x) < 1e-6 && Math.abs(P.z - R.z) < 1e-6,
     slotsOut: slots.every(s => Math.hypot(s.x - P.x, s.z - P.z) > P.r + 0.6 && Math.hypot(s.x - M.heli.x, s.z - M.heli.z) < M.heli.r - 0.5), nslots: slots.length,
-    tiers: M.tiers.map(t => [t.floors, +(t.h/T.FH).toFixed(6)])});
+    tiers: M.tiers.map(t => [t.floors, +(t.h/T.FH).toFixed(6)]),
+    parts: M.tiers.map(t => ({x: t.x, z: t.z, w: t.w, d: t.d, y0: t.y0, h: t.h, part: t.part})), wingParts: M.wings.map(w => ({x: w.x, z: w.z, w: w.w, d: w.d, y0: w.y0, h: w.h})),
+    pod: {z: M.podium.z, w: M.podium.w, d: M.podium.d}, front: M.podium.z + M.podium.d/2});
+}); }); });
+/* ---------- every style's composition (3.19) ---------- */
+out.styles = [];
+Object.keys(T.COMPOSE).forEach(function(fa){ [1, 10, 25, 30, 45, 50].forEach(function(L){ [0, 0.5, 1].forEach(function(g){
+  var M = T.massing(L, g, 0, null, fa);
+  out.styles.push({fa, L, g, top: M.top, base: M.tiers[0], tiers: M.tiers, wings: M.wings, pod: M.podium, roof: M.roof, heli: M.heli});
 }); }); });
 /* ---------- every Commons lot (and the island's) ---------- */
 function inRing(P, x, z){ var inside = false; for(var i = 0, j = P.length - 1; i < P.length; j = i++){ var xi = P[i][0], zi = P[i][1], xj = P[j][0], zj = P[j][1]; if((zi > z) !== (zj > z) && x < (xj - xi)*(z - zi)/(zj - zi) + xi) inside = !inside; } return inside; }
+function polyArea(P){ var a = 0; for(var i = 0, j = P.length - 1; i < P.length; j = i++) a += (P[j][0] + P[i][0])*(P[j][1] - P[i][1]); return Math.abs(a/2); }
 function boxIn(P, p, b){ for(var i = -1; i <= 1; i += 0.5) for(var j = -1; j <= 1; j += 0.5){ var w = C3.toWorld(p, b[0] + i*b[2], b[1] + j*b[3]); if(!inRing(P, w.x, w.z)) return false; } return true; }
 var G = HQV.hqLotExtras.garage;
 out.lots = [];
@@ -94,9 +103,11 @@ out.lots = [];
   var W = HQV.world.pack(gz(wd[1]));
   W.lots.filter(l => l.kind === "hq").forEach(function(l){
     var P = l.poly.map(q => [q[0]/100, q[1]/100]), p = C3.placeLot(l), g = C3.grandOf(l, p), o = {world: wd[0], id: l.id, grand: g, worse: 0, bays: []};
+    var f0 = T.footprint(g, 0)[0]; o.podIn = boxIn(P, p, [f0[0], f0[1], f0[2] - 0.3, f0[3] - 0.3]); o.use = 4*(f0[2] - 0.3)*(f0[3] - 0.3)/polyArea(P);
+    o.useOld = 4*4.5*1.18*3.5*1.08/polyArea(P);   // the 3.13 tower's podium (9 x 7 m, at grand 1)
     for(var wings = 0; wings <= 2; wings++){
       var b0 = C3.hqFoot(0, wings), b1 = C3.hqFoot(g, wings);
-      b1.forEach(function(b, i){ if(i !== 1 && boxIn(P, p, b0[i]) && !boxIn(P, p, b)) o.worse++; });       // a part that fitted no longer does
+      b1.forEach(function(b, i){ if(i !== 1 && (!b0[i] || boxIn(P, p, b0[i])) && !boxIn(P, p, b)) o.worse++; });       // a part that fitted no longer does
       var bay = C3.garagePlace(l, p, wings, g);
       if(!bay){ o.bays.push(null); continue; }
       var inLot = true; for(var i = -1; i <= 1; i++) for(var j = -1; j <= 1; j++){ var w = C3.toWorld(p, bay.x + i*(G.w/2 + 0.3), bay.z + j*(G.d/2 + 0.3)); if(!inRing(P, w.x, w.z)) inLot = false; }
@@ -186,28 +197,73 @@ class HqTower(unittest.TestCase):
                 for floors, fh in m["tiers"]:
                     self.assertAlmostEqual(floors, fh)
 
-    def test_a_bit_bigger(self):
+    def test_bulky_and_scaled_by_level(self):
+        tops = {}
         for m in self.out["massing"]:
             if m["st"]:
                 continue
-            ratio = m["top"] / old_top(m["L"])
+            tops.setdefault(m["g"], []).append((m["L"], m["top"]))
             with self.subTest(level=m["L"], grand=m["g"]):
-                self.assertGreaterEqual(ratio, 1.15 if m["L"] >= 10 else 1.15)
-                if m["L"] >= 25:
-                    self.assertLessEqual(ratio, 1.35, "taller, not a different scale")
+                self.assertGreaterEqual(m["top"], old_top(m["L"]) * 1.15, "never smaller than the old tower")
+                self.assertAlmostEqual(m["front"], 3.8, places=6, msg="the podium's front (the door, the street exit) stays put")
                 if m["g"] == 1:
-                    area = m["w"] * m["d"] / (9 * 7)
-                    self.assertTrue(1.2 <= area <= 1.3, area)
+                    self.assertGreaterEqual(m["w"] * m["d"], 300, "a broad podium on a big lot")
+                    self.assertGreaterEqual(m["w"] * m["d"] / (9 * 1.18 * 7 * 1.08), 4, "about 4x the 3.13 tower's ground")
+                if m["L"] == 1:
+                    self.assertGreaterEqual(m["top"], 12, "level 1: a solid mid-rise block")
+                if m["L"] >= 50:
+                    self.assertGreaterEqual(m["top"], 55, "level 50: a landmark")
+        for g, ts in tops.items():
+            ts.sort()
+            self.assertEqual([t for _, t in ts], sorted(t for _, t in ts), "taller with every level")
+
+    def test_one_cohesive_building(self):
+        """every part stands on the one below (no detached boxes), none is a token: a wing or setback at least a
+        quarter of the main tower's plan; the main tower about 1:1.3, never a pencil; wings flush with its walls"""
+        self.assertGreater(len(self.out["styles"]), 100)
+        for s in self.out["styles"]:
+            with self.subTest(style=s["fa"], level=s["L"], grand=s["g"]):
+                tiers, base, pod = s["tiers"], s["base"], s["pod"]
+                self.assertEqual(base["part"], "base")
+                self.assertGreaterEqual(base["w"], pod["w"] - 0.61)
+                self.assertGreaterEqual(base["d"], pod["d"] - 0.61)
+                for a, b in zip(tiers, tiers[1:]):
+                    self.assertAlmostEqual(b["y0"], a["y0"] + a["h"], places=6, msg="each tier sits on the last (one floor datum)")
+                    self.assertLessEqual(abs(b["x"] - base["x"]) + b["w"] / 2, base["w"] / 2 + 1e-6, "inside the base")
+                    self.assertLessEqual(abs(b["z"] - base["z"]) + b["d"] / 2, base["d"] / 2 + 1e-6, "inside the base")
+                main = tiers[1] if len(tiers) > 1 else base
+                ma = main["w"] * main["d"]
+                for t in tiers[1:] + s["wings"]:
+                    self.assertGreaterEqual(t["w"] * t["d"] / ma, 0.25, "no tiny block")
+                if s["L"] >= 10 and len(tiers) > 1:
+                    asp = max(main["w"], main["d"]) / min(main["w"], main["d"])
+                    self.assertLessEqual(asp, 1.6, "the main tower about 1:1.3")
+                    self.assertGreaterEqual(min(main["w"], main["d"]), 4.5)
+                    self.assertGreaterEqual(ma / (base["w"] * base["d"]), 0.3, "a strong tower over the base")
+                for w in s["wings"]:
+                    self.assertAlmostEqual(abs(w["x"]) - w["w"] / 2, main["w"] / 2, places=6, msg="a wing is flush with the tower's side")
+                    self.assertAlmostEqual(w["y0"], base["y0"] + base["h"], places=6, msg="a wing rises from the base's roof")
+                    self.assertLessEqual(w["y0"] + w["h"], main["y0"] + main["h"] - 2.8, "below the tower's top floor")
+                    self.assertLessEqual(abs(w["x"]) + w["w"] / 2, base["w"] / 2 + 1e-6)
+                if s["L"] >= 30 and s["g"] >= 0.5:
+                    self.assertEqual(len(s["wings"]), 2)
+                self.assertLessEqual(s["heli"]["y"] - s["roof"]["y"], 1.5, "the helideck sits on the top roof")
 
     def test_every_commons_lot_fits(self):
         lots = [l for l in self.out["lots"] if l["world"] == "commons"]
         self.assertGreater(len(lots), 60)
         for l in self.out["lots"]:
             with self.subTest(world=l["world"], lot=l["id"]):
-                self.assertIn(l["grand"], (0, 0.25, 0.5, 0.75, 1))
+                self.assertIn(l["grand"], [k / 8 for k in range(9)])
                 self.assertEqual(l["worse"], 0, "a footprint part that fitted the lot no longer does")
-        grand = [l for l in lots if l["grand"] >= 0.75]
-        self.assertGreater(len(grand) / len(lots), 0.75, "most lots get the bigger tower")
+                if l["grand"] > 0:
+                    self.assertTrue(l["podIn"], "the podium inside the lot")
+                if l["grand"] >= 0.5:
+                    self.assertGreaterEqual(l["use"], 0.15, "the building fills its lot")
+        grand = [l for l in lots if l["grand"] >= 0.5]
+        self.assertGreater(len(grand) / len(lots), 0.75, "most lots get a broad building")
+        use = sorted(l["use"] for l in lots)
+        self.assertGreaterEqual(use[len(use) // 2], 0.25, "the median HQ covers a quarter of its lot (the old one: under a tenth)")
 
     def test_car_lift_bays_still_hold(self):
         for l in self.out["lots"]:

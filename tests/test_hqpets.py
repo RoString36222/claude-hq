@@ -73,6 +73,15 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   for(var lf = 0; lf < 8; lf++){ P.pose(Wv, wst, 12 + lf/30, false); var sn = wspan(Wv).snap; if(sn !== lastS) lodN++; lastS = sn; }
   wyv.lodPosed = lodN; Wv.lod = false;
   out.wyvern = wyv;
+  // ---- the dragons (3.18.2): the drake build on four legs, a tail tip by element; the roar winds up before the jaw opens ----
+  var drk = {};
+  ["firedragon", "icedragon", "stormdragon", "crystaldragon", "shadowdragon", "golddragon"].forEach(function(id){
+    var M = P.model(THREE, {species: id, variant: 0}); drk[id] = {drake: !!M.wy, legs: M.legs.length, front: M.legs.filter(function(l){ return l.front; }).length, tip: M.tail.tip, mem: !!M.wingMesh.material.map}; });
+  var Rd = P.model(THREE, {species: "firedragon", variant: 0}), rs = P.newState(4, 0, 0, 0), rj = [];
+  rs.anim = "stand"; for(var ri = 0; ri < 30; ri++) P.pose(Rd, rs, 20 + ri/30, false);
+  rs.anim = "roar"; for(ri = 0; ri < 30; ri++){ P.pose(Rd, rs, 21 + ri/30, false); rj.push(Rd.sm.jaw); }
+  drk.roarJaw = [rj[3], rj[29]];
+  out.drakes = drk;
   // eyes and a blink; jointed legs (upper and lower apart, a knee between)
   var dg = P.model(THREE, {species: "corgi", variant: 0}), ds = P.newState(5, 0, 0, 0), lids = [];
   for(var bt = 0; bt < 80; bt++){ ds.anim = "stand"; P.pose(dg, ds, bt*0.05, false); lids.push(dg.blink > 0.5 ? 1 : 0); }
@@ -414,6 +423,17 @@ class PetsEngine(unittest.TestCase):
         self.assertEqual(w["lodPosed"], 2, "far off it poses every fourth frame")
         self.assertLessEqual(self.o["models"]["wyvern"]["meshes"], 6)
         self.assertLessEqual(self.o["models"]["wyvern"]["tris"], 4500)
+
+    def test_the_dragons(self):
+        # the six dragons share the wyvern's drake build on four legs: forelegs, the veined membrane, a tail tip by element
+        d = self.o["drakes"]
+        ids = ("firedragon", "icedragon", "stormdragon", "crystaldragon", "shadowdragon", "golddragon")
+        for i in ids:
+            self.assertTrue(d[i]["drake"] and d[i]["mem"], i)
+            self.assertEqual((d[i]["legs"], d[i]["front"]), (4, 2), i + ": four clawed feet")
+        self.assertEqual([d[i]["tip"] for i in ids], ["flame", "shard", "fork", "gem", "wisp", "ornate"])
+        self.assertLess(d["roarJaw"][0], 0.3, "the roar winds up (head drawn back) before the jaw opens")
+        self.assertGreater(d["roarJaw"][1], 0.6)
 
     def test_real_models(self):
         # CC0 Quaternius models, vendored with their licence; under node (no loader) the procedural pets stay

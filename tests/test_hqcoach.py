@@ -105,8 +105,10 @@ out.calm = {open: [K.doorOpen(0.3, true), K.doorOpen(0.7, true), K.doorOpen(0.3,
 
 // ---- the view: budgets, focus, hide, stop requests, shots ----
 (function(){
-  var sim = T.create(city(1, 7, true), {tier: 5, seed: 7}), sounds = [], calm = false;
-  var V = K.view({THREE: THREE}, sim, {sfx: function(n){ sounds.push(n); }, night: function(){ return true; }, calm: function(){ return calm; }});
+  var sim = T.create(city(1, 7, true), {tier: 5, seed: 7}), sounds = [], calm = false, placed = {};
+  // [sound] every sound but the stop bell carries its place and kind
+  var V = K.view({THREE: THREE}, sim, {sfx: function(n, o){ sounds.push(n); var p = o && o.pos, k = n + ":" + (o && o.kind) + ":" + (p && isFinite(p.x) && isFinite(p.y) && isFinite(p.z) ? "pos" : "none");
+                                                              placed[k] = (placed[k] || 0) + 1; }, night: function(){ return true; }, calm: function(){ return calm; }});
   var tram = V.services.tram.vehicles(1e6)[0], worst = {far: 0, near: 0, people: 0, total: 0, tris: 0};
   V.focus(tram.id);
   for(var t = 1e6; t < 1e6 + 900e3; t += 1500){
@@ -135,7 +137,7 @@ out.calm = {open: [K.doorOpen(0.3, true), K.doorOpen(0.7, true), K.doorOpen(0.3,
   var shots = {};
   ["tram-interior", "bus-interior", "tram-stop", "tram-junction"].forEach(function(n){ shots[n] = !!V.tools.shotCam(n); });
   out.view = {worst: worst, hidden: hidden, focus: tram.id, req: req, bell: soundsAfter, sounds: sounds.filter(function(v, i, a){ return a.indexOf(v) === i; }).sort(),
-              calmDoors: doorsMoving != null, shots: shots, atlas: V.atlas().cells.length};
+              calmDoors: doorsMoving != null, shots: shots, atlas: V.atlas().cells.length, placed: Object.keys(placed).sort()};
   V.dispose();
 })();
 console.log(JSON.stringify(out));
@@ -228,6 +230,9 @@ class Coach(unittest.TestCase):
         self.assertEqual(v["bell"], "stop-bell")
         for s in ("door", "hiss", "tram-bell"):
             self.assertIn(s, v["sounds"])
+        # Sound PR B: each at its vehicle, with its spatial kind; the stop bell is yours and centred
+        self.assertEqual(set(v["placed"]) - {"air-brake:bus:pos"},
+                         {"door:door:pos", "hiss:door:pos", "tram-bell:bell:pos", "stop-bell:undefined:none"}, v["placed"])
         self.assertTrue(v["calmDoors"])
         self.assertEqual(v["shots"], {"tram-interior": True, "bus-interior": True, "tram-stop": True, "tram-junction": True})
         self.assertGreater(v["atlas"], 0)

@@ -21,7 +21,8 @@
  *   viaduct on round piers (a truss over water), catenary masts every 50 m with wires over both tracks, elevated
  *   station boxes (platforms, canopies, stairs and a lift to the pavement, departure boards), cream-and-green trains,
  *   commuters in their windows, and the focused train's seats, racks and luggage with a faint shell. Five draw calls
- *   (static, boards, two for the trains, commuters) and two more for a focused train.
+ *   (static, boards, two for the trains, commuters) and two more for a focused train. The trains run with
+ *   games/engine.js's train-run loop, the nearest moving one at a time, each from its part nearest your ears.
  * No unseeded randomness: everything is seeded by the world id. Nothing here moves under Calm but the trains themselves.
  */
 (function(){
@@ -343,17 +344,22 @@ function view(c, sim, opts){
   root2.add(trains.g); root2.add(inside.g); root2.add(riders.g);
   if(c.scene && opts.attach !== false) c.scene.add(root2);
   var focusId = null, lastMs = 0, seed = sim.seed;
+  // the trains' running sound (Sound PR B): games/engine.js's train-run loop at the nearest moving train (yours too),
+  // from its part nearest your ears (hqRail's trainPool: one voice, as the Island Link's)
+  var runP = PT.trainPool ? PT.trainPool() : null;
   var V = {g: root2,
     update: function(ms, dt, cam){
       lastMs = ms;
-      var all = [], ride = [], fc = null;
+      var all = [], ride = [], fc = null, snd = [], ear = runP ? PT.earAt(cam) : null;
       trains.night(typeof opts.night === "function" ? opts.night() : false);
       sim.vehicles(ms).forEach(function(v){
+        if(runP && +v.speed > 0.5 && hyp(v.x - ear.x, v.z - ear.z) < PT.SND_R){ var q = PT.nearOn(v.cars, ear, 1.5, H.CAR_L); if(q) snd.push({id: v.id, x: q.x, y: q.y, z: q.z, speed: +v.speed}); }
         if(v.id === focusId){ fc = v.cars; ride = ride.concat(PT.ridersOf("rail", v.id, v.cars, H.SEATS, ms, seed, opts.mySeat != null ? opts.mySeat : -1)); return; }
         all = all.concat(v.cars);
         if(cam && hyp(v.x - cam.x, v.z - cam.z) < 250) ride = ride.concat(PT.ridersOf("rail", v.id, v.cars, H.SEATS, ms, seed, -1));
       });
       trains.set(all); inside.set(fc); riders.set(ride);
+      if(runP) runP.update(snd);
       if(boardMesh && RN) B.forEach(function(b){ b.tex.draw(RN.boardRows(sim.departures(b.st.id, ms, 4), ms), ms); });
     },
     focus: function(id){ focusId = id || null; if(!focusId) inside.set(null); },
@@ -378,6 +384,7 @@ function view(c, sim, opts){
       return null;
     }},
     dispose: function(){
+      if(runP){ runP.stop(); runP = null; }
       if(root2.parent) root2.parent.remove(root2);
       if(stat) stat.geometry.dispose(); mat.dispose();
       if(boardMesh){ boardMesh.geometry.dispose(); bmat.dispose(); }

@@ -76,10 +76,14 @@ function create(c, o){
     var a = audio(); if(!a || !R || !R.sfx) return null;
     return tryf(function(){ return R.sfx(a.ctx, name, Object.assign({dest: a.out}, so || {})); }, null);
   }
-  // sound names some modules use that hqRide has no synth for: the nearest one it has
-  var SFX_MAP = {"gondola-rumble": "motor", "gondola-wind": "tunnel-rumble", "engine-hum": "motor", "gangway-clank": "gondola-clunk", "water-lap": null};
+  // sound names a module uses that hqRide has no synth for, mapped to the nearest one it has: none today (Sound PR B
+  // gave door, hiss, engine-hum, gangway-clank, water-lap, gondola-rumble, gondola-wind and ship-horn their own).
+  // so (a module's options) passes through untouched: so.pos places the sound in the world, so.kind is its spatial kind
+  var SFX_MAP = {};
   function sfxM(name, so){ var n = Object.prototype.hasOwnProperty.call(SFX_MAP, name) ? SFX_MAP[name] : name; return n ? sfx(n, so) : null; }
+  // the announcer's chime goes to the master gain (the Game sounds volume, silent at 0 as every transit sound)
   var ANN = R && R.announcer ? R.announcer({announce: announce, calm: calm, audio: function(){ var a = audio(); return a && a.ctx; },
+    dest: function(){ var a = audio(); return a ? a.out : null; },
     voiceOn: function(){ var P = HQV.hqPhone && HQV.hqPhone.prefs; return tryf(function(){ return P ? P.get("transitVoice") !== false && !P.get("transitTextOnly") : true; }, true); }}) : null;
   function ground(x, z){ return tryf(function(){ return HQV.world.groundAt(W, x, z); }, 0); }
   function street(x, z){ return tryf(function(){ return HQV.world.streetAt ? HQV.world.streetAt(W, x, z) : HQV.world.groundAt(W, x, z, true); }, 0); }
@@ -181,7 +185,7 @@ function create(c, o){
     if(ride) tryf(function(){ ride.cancel(true); });
     var Sx = null;
     Sx = R.session({trip: trip, view: viewFor(trip.mode), announce: announce, toast: o.toast, calm: function(){ return calm() || reduced(); }, reduced: reduced(),
-      sfx: function(n){ sfxM(n); }, me: function(){ var m = me(); return {x: m.x, y: m.y, z: m.z}; }, userId: o.userId, world: worldId, seed: seed,
+      sfx: function(n, so){ sfxM(n, so); }, me: function(){ var m = me(); return {x: m.x, y: m.y, z: m.z}; }, userId: o.userId, world: worldId, seed: seed,
       announcer: ANN, now: function(){ return Date.now(); },
       under: function(){ /* the underground controller follows the ride (ctl.step riding) */ },
       travel: function(t){

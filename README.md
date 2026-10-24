@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.15.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.18.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -373,7 +373,7 @@ replies, file paths, project or folder names, session ids, or titles.
   server). The pets out with you ride in your presence (species, colour, accessory and growth numbers and
   the name, at most two), and visitors to your open HQ see the ones in your lobby. Without one, pets live
   only in this browser. Nothing about your sessions goes into them.
-- **Messages, nearby chat and calls are only what you type, and only when you opt in (3.15).** Text
+- **Messages, nearby chat and calls are only what you type, and only when you opt in (3.18).** Text
   messages carry at most 160 characters you typed and the recipient's id; you send only after a one-time
   opt-in, anyone can block or mute you, and the Arena erases a message's text once it is delivered (undelivered
   ones go after 7 days). Nearby chat (at most 200 characters, with Nearby on) reaches only players within 40 m
@@ -415,7 +415,7 @@ and feature guide.
 
 ## Changelog
 
-- **3.15.0 — The transport revamp.** **Every city is at its highest level** (the Arena reports tier 5 and full growth
+- **3.18.0 — The transport revamp.** **Every city is at its highest level** (the Arena reports tier 5 and full growth
   for every city, so every line, stop, airport and building is open; population and tax still follow the owner's
   real XP) and **getting around is free**: no fares, no day pass and no coins for buses, trams, the metro, trains,
   boats, Claude Cabs or helicopters (the old 2-coin bus and tram fares are gone; fast travel is unchanged).
@@ -438,10 +438,67 @@ and feature guide.
   muted; the Arena erases the text once delivered and keeps undelivered ones 7 days), **nearby chat** (at most 200
   characters you type, only with Nearby on, relayed only to opted-in players within 40 m in the same city, never
   stored) and **calls** (only with Calls on: the ring and the WebRTC setup go to the one person you call; the audio is
-  peer to peer). Notifications never show a message's text unless Messages is open. Presence gains `a = 14` (riding
+  peer to peer). Notifications never show a message's text unless Messages is open. Presence gains `a = 15` (riding
   transit: a mode code and a vehicle id) behind the new `transit` capability. Photos never leave this computer
   (IndexedDB). Nothing transcript-derived goes into any of it. **Needs the Arena release** (world @3, max level, free
   fares, SMS, nearby and call relays). Third-party assets: none new.
+- **3.17.0 — Grand Prix: every F1 circuit, and the 2026 grid in the dealership.** A new Valley game, **Grand Prix**
+  (🏎️), puts you on full-size F1 circuits: the 23 rounds of the 2026 calendar and 17 classics (Imola, Istanbul, Kyalami,
+  Watkins Glen…), each its own world at true length. They are built from the real centre lines of
+  [bacinger/f1-circuits](https://github.com/bacinger/f1-circuits) (MIT, shipped as `games/gp/LICENSE-f1-circuits.md`;
+  converted by `cargo run --bin f1circuits`). The game is a time trial on Valley Rally's car physics: laps, three
+  sectors, the delta to your best, a ghost of your best lap and a minimap. In the City, a **Grand Prix Circuit** (Go to
+  🏁, from tier 2) has a pit building, a start gantry and a grandstand. E under its arch picks a circuit and a car and
+  takes you there. The dealership adds a **Formula 1** class with all 11 teams of 2026 (McLaren, Ferrari, Red Bull
+  Racing, Mercedes-AMG, Aston Martin, Alpine, Williams, Racing Bulls, Haas, Audi, Cadillac), each in its team
+  colours. The cars are free like the rest, and drivable everywhere: at the circuit at 345 km/h, and on the city
+  streets at the city's 300 km/h cap. A class may now list more than 4 vehicles through its own `slots` (the F1 grid
+  lists 11; Arena: `backend/src/vehicles.rs`). The vehicle catalogue test moved from Python to Rust
+  (`dashboard-rs/tests/catalogue.rs`). Privacy: Grand Prix is solo and sends nothing; the circuit data is bundled, never
+  fetched at runtime. Team names live only in the catalogue; there are no logos, sponsor marks or driver names.
+- **3.16.1 — Fireworks that crackle.** The show over the park fires about half as many shells (around 40 a show
+  instead of 90), with room between bursts and a shorter, sparser finale. Each burst is now a soft thump followed by
+  the stars crackling as they fall, a long sizzle for a willow and a thick crackle for a chrysanthemum or a strobe,
+  instead of one sharp bang that sounded like gunfire. It is all heard as if from far off: muffled, soft, with a
+  faint echo off the towers.
+- **3.16.0 — Mouse steering, a grenade launcher and a tank for four.** In the 3D City:
+  - **Mouse steering** (a new switch in the camera settings, the gear): click the view and the mouse turns you and
+    the chase camera together, as in a shooter; <kbd>W</kbd> / <kbd>S</kbd> walk forward and step back, <kbd>A</kbd> /
+    <kbd>D</kbd> step sideways, the tilt stays where you put it. On a ride the captured mouse does what a drag does.
+    <kbd>Esc</kbd>, any panel, the big map, a field you type in or another camera gives the cursor back. Off by
+    default; no network traffic.
+  - **A grenade launcher:** on foot, <kbd>X</kbd> takes it out (on your left shoulder) and <kbd>F</kbd>, or a click with
+    the mouse captured, lobs a grenade where the camera looks. It bounces off the ground, walls and roofs, sinks in
+    water and goes off after 1.8 s: a fireball, smoke, a shock ring and a boom heard late from far off. The City has
+    no health: a blast knocks back everyone within 6 m, you too (on foot up into the air, in a car a shove and a
+    dent; Calm keeps you on the ground and drops the flash and the shake). Each shot rides in its shooter's presence
+    for 1.5 s (the "grenade" capability: `gl`, `gn`) and every page flies it the same way, in fixed steps against the
+    same world; each page knocks back only its own player (games/hqgrenade.js).
+  - **A tank for four:** <kbd>K</kbd> rolls your tank up beside you (<kbd>K</kbd> again sends it away), <kbd>E</kbd>
+    beside it and you drive: 40 km/h, slow to pull away, <kbd>A</kbd> / <kbd>D</kbd> turn it on the spot, solid to
+    everyone. The turret follows your camera and <kbd>F</kbd> or a captured click fires a shell (it goes off on
+    whatever it hits, an 8 m blast). Its three other seats are carpool seats: while you drive, others climb in with
+    <kbd>E</kbd>; the first in becomes the gunner and takes the turret over, the next two ride on the back. Blasts never move a tank or anyone in it.
+    The "tank" capability adds a = 14, shells (grenade kind 1) and the turret's aim `ta`, sent by whoever has
+    the turret: the gunner beside their carpool seat, or the driver (games/hqtank.js). An original stand-in tank: hull, treads on six road wheels a side, a turret, a long barrel.
+
+  The new presence fields are numbers and the user ids carpooling already sends; backend/src/valley/hq.rs checks
+  every one, and relays them only when sent. Needs the Arena redeployed.
+- **3.15.0 — Carpooling, pillion riders, and the Suzuki Access 125.** Beside someone driving in the City (stopped or
+  crawling, on your level), E takes the next free seat: "Ride with <name>" for a car, "Hop on behind <name>" for a
+  bicycle, a motorbike or a scooter. They drive and you go where they go, sat in their vehicle on everyone's screen,
+  hands on your lap or round the rider ahead; E gets you out beside it (your own side's door), and you are put off
+  when they get out, leave, or the last seat goes to someone else at the same moment (the lower user id keeps it).
+  A car takes four (a coupe, a hypercar, a supercar and the starter hatchback two), a scooter three, a super sports
+  bike only its rider (a hypersport, a sport bike over 950 cc: no pillion), any other bike two.
+  Players riding with someone are not solid to their driver. New in the dealership: the **Suzuki Access 125**
+  (`bike.scooter.400`, 124 cc single, CVT as one gear), the first scooter, with its own stand-in body (leg shield,
+  floorboard, long seat for three, 10"/12" wheels) and seats for its rider and two behind. Presence carries `pb`
+  (whose vehicle) and `ps` (the seat) only where the Arena lists the new "carpool" capability (backend/src/valley/hq.rs
+  validates both; a bad one drops the frame). Tests: seat counts and the seat race, the scooter's body and seats,
+  the catalogue entry, the presence wiring and the Arena's validation. Also: a car more than 85 % damaged no longer
+  pulls left or right by itself while you drive (the dents, cracked lights and smoke stay; the garage still repairs it).
+
 - **3.14.1 — Dragons and dinosaurs ride from day one.** Every dragon and the sea serpent now comes fully grown from adoption (any affection; the Arena's `pets.rs stage_of` and the page agree), and the big dinosaurs (T-Rex, Triceratops, Brachiosaurus, Stegosaurus) can be ridden straight away: walk up and press E. Affection still unlocks tricks. Needs the Arena release.
 - **3.14.0 — Ride your pets.** A grown dragon (any of the seven), the grown sea serpent or a big dinosaur
   (Triceratops, Brachiosaurus, Stegosaurus, T-Rex, from the grown mark of 400 affection) that is out with you can
@@ -479,6 +536,32 @@ and feature guide.
   level (the street, or the deck for the roof lift). Tests: E priority (door before pet), facing and distance, lobby
   pets after a late list, the Arena reload, front gate to the street, lobby door destinations and triggers.
 
+- **Next — A real gearbox: manual, rev-matched, clutch, launch control; damage opt in.** (`games/hqvehiclephys.js
+  gearStep`, node-tested.) **G** switches manual / automatic (remembered); in manual **.** shifts up and **,** down,
+  through neutral below 1st; hold **X** for the clutch. Every gear tops out at its own limiter (its real top speed from
+  the gearing: you bounce off it, the speed held). Downshifts are rev-matched: the revs blip up to the lower gear's
+  with the throttle blip and pops, and one that would over-rev is refused ("Too fast for 2nd"). Clutch in (or
+  neutral): W revs the engine free to the limiter; let it out with the revs up and it launches with wheelspin.
+  Automatic: brake and throttle together at a standstill hold the revs (launch control), let go of the brake to go.
+  Quickshifter on sporty bikes (70 kW+) and 7+ speed DCT/automatic cars: upshifts flat out are a 50 ms ignition cut
+  with a bark and a pop, no clutch, no lift (the rev counter reads MANUAL QS). Off the throttle the engine brakes
+  harder in a lower gear. Vehicle damage (dents, smoke, cracked lights, a bent
+  car's pull) is now opt in: Settings → Vehicle damage, off by default.
+  Also in this release: the engine stays on in neutral and stopped, and starts with a crank. **Shift+G** cycles drive
+  modes (Comfort shifts early and quietly, Sport, Track holds revs and crackles; remembered). **K** is nitrous (about
+  4 s, blue flames; once empty it waits for a 15% refill). **Space+W** does a burnout, and steering makes donuts (not on
+  front-wheel-drive cars). On bikes, **F** wheelies (feather the throttle or you loop out) and **F+S** stoppies (too fast
+  and you go over the bars); a stopped bike leans on its side stand, parked ones too. Flames and pops on the overrun
+  and on quickshifts, tyre smoke, skid marks, a shift light, **H** horn, and a timer for 0–100, 0–200 and the quarter
+  mile with personal bests per vehicle (`games/hqvfx.js`, nitroStep/perfStep/wheelieStep node-tested). Calm mode shows
+  no effects.
+  **I** is the autopilot in anything you drive, ride, sail or fly (`games/hqautopilot.js`, node-tested against the
+  real boat and helicopter physics). With a route (**N**) it takes you there and stops: a car or a bike keeps to the
+  right-hand lane, slows for corners, brakes for traffic and players in its lane, and nudges on if a car is waiting for
+  it; a boat steers round the coast; a helicopter lifts off, climbs over whatever is in the way and lands on the spot.
+  With no route a car follows its road, straight on at junctions, and a boat or a helicopter holds its course. It only
+  works the controls, so the gears, the sound and your drive mode still apply (Comfort cruises at 47 km/h, Track at
+  79). Any steering or throttle of yours takes over. Planes keep their own autopilot (**K**, now also **I**).
 - **Next — Stunts across every city** (`games/hqstunts.js`, tests/test_hqstunts.py). Placed per city from its
   own layout, deterministically (every client builds the same set): a 4 m free-land grid of everything that is not
   road, river, sea, a site, an HQ or a tower district; building lots elsewhere may be cleared (at most 8 a stunt,

@@ -8,7 +8,8 @@
  *                          "5000" | "over5000"; "ev" for an electric drivetrain
  *   classes(cat)           -> the classes, starter excluded, bikes before cars, each kind by type then band
  *   byClass(cat, classId)  -> that class's vehicles: slot 1, slot 2, then reserves
- *   onSale(cat)            -> the classes with 1 to 4 listed vehicles (slots 1-4; HQ 3.9): the dealership's
+ *   onSale(cat)            -> the classes with 1 to 4 listed vehicles (slots 1-4; HQ 3.9; a class's own `slots`
+ *                          raises that, as the Formula 1 grid's 11 do, HQ 3.17): the dealership's
  *   get(cat, id)           -> a vehicle by id, or null
  */
 (function(){
@@ -45,20 +46,31 @@ function classes(cat){
   });
 }
 
-// [3.9] a class lists 1 to 4 vehicles (slots 1-4); a reserve waits outside them
-var MAX_SLOTS = 4;
-function isSlot(v){ return v && typeof v.slot === "number" && v.slot >= 1 && v.slot <= MAX_SLOTS && v.slot % 1 === 0; }
-function slotRank(v){ return isSlot(v) ? v.slot - 1 : MAX_SLOTS; }
+// [3.9] a class lists 1 to 4 vehicles (slots 1-4); a reserve waits outside them.
+// [3.17] a class may list more: its `slots` (the Formula 1 grid lists all 11 teams).
+var MAX_SLOTS = 4, SLOTS_CAP = 12;
+function classOf(cat, id){
+  var L = (cat && cat.classes) || [];
+  for(var i = 0; i < L.length; i++) if(L[i].id === id) return L[i];
+  return null;
+}
+function slotsOf(c){ var n = c && c.slots; return typeof n === "number" && n % 1 === 0 ? Math.max(MAX_SLOTS, Math.min(SLOTS_CAP, n)) : MAX_SLOTS; }
+// without the catalogue, a vehicle is listed in slots 1-4 as before
+function isSlot(v, cat){
+  var max = cat && typeof cat === "object" && cat.classes ? slotsOf(classOf(cat, v && v.class)) : MAX_SLOTS;
+  return !!v && typeof v.slot === "number" && v.slot >= 1 && v.slot <= max && v.slot % 1 === 0;
+}
+function slotRank(v, cat){ return isSlot(v, cat) ? v.slot - 1 : SLOTS_CAP; }
 
 function byClass(cat, classId){
   return ((cat && cat.vehicles) || []).filter(function(v){ return v.class === classId; })
-    .sort(function(a, b){ return slotRank(a) - slotRank(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0); });
+    .sort(function(a, b){ return slotRank(a, cat) - slotRank(b, cat) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0); });
 }
 
 function onSale(cat){
   return classes(cat).filter(function(c){
-    var s = byClass(cat, c.id).filter(isSlot);
-    return s.length >= 1 && s.length <= MAX_SLOTS;
+    var s = byClass(cat, c.id).filter(function(v){ return isSlot(v, cat); });
+    return s.length >= 1 && s.length <= slotsOf(c);
   });
 }
 
@@ -68,5 +80,5 @@ function get(cat, id){
   return null;
 }
 
-HQV.hqVehicles = {load: load, bandOf: bandOf, classes: classes, byClass: byClass, onSale: onSale, isSlot: isSlot, MAX_SLOTS: MAX_SLOTS, get: get, URL: URL};
+HQV.hqVehicles = {load: load, bandOf: bandOf, classes: classes, byClass: byClass, onSale: onSale, isSlot: isSlot, slotsOf: slotsOf, MAX_SLOTS: MAX_SLOTS, get: get, URL: URL};
 })();

@@ -183,7 +183,7 @@ TOUR = [
     ("30a-camera-selfie", "Camera selfie mode", [S + "hangup()", ph("camera"), 1, click("^Selfie$"), 2], {}),
     ("30b-gallery", "The local-only gallery", [S + "shutter()", 2, ph("gallery"), 2], {}),
     ("31a-achievements", "Achievements", [ph("achievements"), 1], {}),
-    ("31b-patch-notes", "The 3.15.0 patch notes", [ph("notes"), 1], {}),
+    ("31b-patch-notes", "The 3.18.0 patch notes", [ph("notes"), 1], {}),
     ("32-settings", "Opt-ins: SMS sending, Nearby, Calls; transit voice; clock; cab class", [ph("settings"), 1], {}),
     ("33a-budget-surface", "Draw calls within budget at the busiest surface camera (<= 700 a frame)",
      ["RELOAD", S + "busiest()", 3], {}),

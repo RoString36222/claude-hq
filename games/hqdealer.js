@@ -1,7 +1,8 @@
 /* Claude HQ: the dealership (HQV.hqDealer), docs/plans/dealership-spec.md "The dealership".
  *
  * One dealership in every city from tier 2 (the Commons has the flagship): a glass showroom with the city's
- * on-sale vehicles (HQV.hqVehicles.onSale: the classes listing 1 to 4 vehicles) on slowly turning turntables,
+ * on-sale vehicles (HQV.hqVehicles.onSale: the classes listing 1 to 4 vehicles, or to a class's own `slots`: the
+ * Formula 1 grid's 11, HQ 3.17) on slowly turning turntables (the F1 cars parked side by side on a pit-lane plinth),
  * a forecourt in front where a test drive starts and a vehicle you get waits, brand flags and a pylon sign.
  * Its door opens the dealer panel (E): Bikes / Cars, type and cc band, the two vehicles of each class side by
  * side with their real specs and paints, a turning 3D preview, Test drive and Get it.
@@ -58,6 +59,10 @@ var CANDIDATES = 400;            // the best this many by district and size get 
 var TURN = 0.22;                 // rad/s: the turntables
 // m: a turntable's square in the hall, round the longest vehicle as drawn (HQV.hqVehicleModels.SCALE) turning on it
 var CAR_CELL = 6.6, BIKE_CELL = 3.4;
+// [3.17] the F1 grid does not turn: the cars stand side by side, noses to the glass, on a gallery along the hall's back
+// wall (half way up), like a team's display balcony over the floor (a 5.3 m car on a turntable takes a 6.6 m square;
+// parked, 2.5 m of the gallery). The floor keeps its rows for everything else.
+var GRID_W = 2.5, GRID_D = 6.4, GAL_BACK = 0.6, GAL_EDGE = 1.2;
 var PLINTH = 0.15;
 
 /* ---------- placement (pure) ---------- */
@@ -146,18 +151,27 @@ function place(W, tier){
 
 /* ---------- the panel model (pure) ---------- */
 var TYPE_LABEL = {naked: "Naked", sport: "Sport", adventure: "Adventure", cruiser: "Cruiser", scooter: "Scooter", dirt: "Dirt", classic: "Classic", hypersport: "Hypersport",
-                  hatch: "Hatchback", sedan: "Sedan", coupe: "Coupé", suv: "SUV", pickup: "Pickup", hyper: "Hypercar", super: "Supercar"};
+                  hatch: "Hatchback", sedan: "Sedan", coupe: "Coupé", suv: "SUV", pickup: "Pickup", hyper: "Hypercar", super: "Supercar",
+                  formula: "Formula 1"};
 var KIND_LABEL = {bike: "Bikes", car: "Cars"};
 function onSale(cat){
   if(HQV.hqVehicles && HQV.hqVehicles.onSale) return HQV.hqVehicles.onSale(cat);
   var by = {};
-  ((cat && cat.vehicles) || []).forEach(function(v){ if(listed(v)) (by[v["class"]] = by[v["class"]] || []).push(v); });
-  return ((cat && cat.classes) || []).filter(function(c){ var n = (by[c.id] || []).length; return c.id !== "starter" && n >= 1 && n <= 4; });
+  ((cat && cat.vehicles) || []).forEach(function(v){ if(listed(v, cat)) (by[v["class"]] = by[v["class"]] || []).push(v); });
+  return ((cat && cat.classes) || []).filter(function(c){ var n = (by[c.id] || []).length; return c.id !== "starter" && n >= 1 && n <= slotsOf(c); });
 }
-// [3.9] a listed vehicle: slot 1 to 4 of its class
-function listed(v){ return !!v && typeof v.slot === "number" && v.slot >= 1 && v.slot <= 4 && v.slot % 1 === 0; }
+// [3.9] a listed vehicle: slot 1 to 4 of its class ([3.17] or to the class's own `slots`)
+function classOf(cat, id){ var L = (cat && cat.classes) || []; for(var i = 0; i < L.length; i++) if(L[i].id === id) return L[i]; return null; }
+function slotsOf(c){
+  if(HQV.hqVehicles && HQV.hqVehicles.slotsOf) return HQV.hqVehicles.slotsOf(c);
+  var n = c && c.slots; return typeof n === "number" && n % 1 === 0 ? Math.max(4, Math.min(12, n)) : 4;
+}
+function listed(v, cat){
+  var max = cat && typeof cat === "object" ? slotsOf(classOf(cat, v && v["class"])) : 4;
+  return !!v && typeof v.slot === "number" && v.slot >= 1 && v.slot <= max && v.slot % 1 === 0;
+}
 function slotVehicles(cat, id){
-  return ((cat && cat.vehicles) || []).filter(function(v){ return listed(v) && v["class"] === id; })
+  return ((cat && cat.vehicles) || []).filter(function(v){ return listed(v, cat) && v["class"] === id; })
     .sort(function(a, b){ return a.slot - b.slot; });
 }
 function specLine(v){
@@ -177,12 +191,12 @@ function model(cat, o){
   var level = Math.max(0, +o.level || 0), owned = {}, garage = !!o.garage, out = [], K = {};
   (o.owned || []).forEach(function(id){ owned[id] = (owned[id] || 0) + 1; });
   onSale(cat).forEach(function(c){
-    var vs = slotVehicles(cat, c.id); if(!vs.length || vs.length > 4) return;
+    var vs = slotVehicles(cat, c.id); if(!vs.length || vs.length > slotsOf(c)) return;
     var k = K[c.kind];
     if(!k){ k = K[c.kind] = {kind: c.kind, label: KIND_LABEL[c.kind] || c.kind, sections: [], T: {}}; out.push(k); }
     var t = k.T[c.type];
     if(!t){ t = k.T[c.type] = {type: c.type, label: TYPE_LABEL[c.type] || c.type, classes: []}; k.sections.push(t); }
-    t.classes.push({id: c.id, label: c.label || c.id, band: c.band, vehicles: vs.map(function(v){
+    t.classes.push({id: c.id, label: c.label || c.id, band: c.band, grid: c.type === "formula", vehicles: vs.map(function(v){
       var minLevel = Math.max(0, +(v.minLevel != null ? v.minLevel : c.minLevel) || 0), locked = minLevel > 0 && level < minLevel;
       var price = Math.max(0, +v.price || 0);
       return {id: v.id, brand: v.brand || "", model: v.model || v.id, spec: specLine(v), kind: c.kind,
@@ -208,11 +222,20 @@ function layout(F, items, flagship){
   var zf = D/2 - fcD - 1, zb = zf - hd, H = flagship ? 9 : 7.5;
   var hall = {x0: -hw/2, x1: hw/2, z0: zb, z1: zf, h: H, w: hw, d: hd};
   // shelves from the front glass back: cars, then bikes; a 2 m aisle behind the front glass
-  var cells = [], m = 1.4, x = hall.x0 + m, z = hall.z1 - 2.2, rowD = 0, list = items || [];
+  var cells = [], m = 1.4, x = hall.x0 + m, z = hall.z1 - 2.2, rowD = 0, list = items || [], full = false, gal = null, gx = hall.x0 + m;
   for(var i = 0; i < list.length; i++){
+    if(list[i] && list[i].grid){
+      // [3.17] the gallery: as many of the grid as its width holds (a hall too shallow for a floor under it has none)
+      if(hall.d < GRID_D + GAL_BACK + GAL_EDGE + 6 || gx + GRID_W > hall.x1 - m) continue;
+      if(!gal) gal = {y: Math.round(H*0.5*100)/100, z0: hall.z0, z1: hall.z0 + GAL_BACK + GRID_D + GAL_EDGE, x0: hall.x0, x1: hall.x1};
+      // a parked F1 car's plinth is a long oval (rx across, rz along); r is what fits inside it
+      cells.push({x: gx + GRID_W/2, z: hall.z0 + GAL_BACK + GRID_D/2, y: gal.y, r: GRID_W/2 - 0.1, rx: GRID_W/2 - 0.1, rz: GRID_D/2 - 0.2, grid: true, i: i});
+      gx += GRID_W; continue;
+    }
+    if(full) continue;
     var cs = list[i] && list[i].kind === "bike" ? BIKE_CELL : CAR_CELL;
     if(x + cs > hall.x1 - m){ x = hall.x0 + m; z -= rowD; rowD = 0; }
-    if(z - cs < hall.z0 + m) break;                      // the hall is full: the rest stay in the catalogue
+    if(z - cs < hall.z0 + m){ full = true; continue; }   // the hall is full: the rest stay in the catalogue
     cells.push({x: x + cs/2, z: z - cs/2, r: cs/2 - 0.35, i: i});
     x += cs; rowD = Math.max(rowD, cs);
   }
@@ -220,7 +243,7 @@ function layout(F, items, flagship){
   var fz = D/2 - fcD/2, slots = [], walk = 4.5;
   [1, -1].forEach(function(s){ for(var k = 0; k < 3; k++){ var sx = s*(walk/2 + 3 + k*5.2); if(Math.abs(sx) + 2.6 < W/2) slots.push({x: sx, z: fz, yaw: 0}); } });
   slots.sort(function(a, b){ return Math.abs(a.x) - Math.abs(b.x) || a.x - b.x; });
-  return {W: W, D: D, fc: {z0: D/2 - fcD, z1: D/2, d: fcD}, hall: hall, cells: cells, slots: slots, door: {x: 0, z: zf}};
+  return {W: W, D: D, fc: {z0: D/2 - fcD, z1: D/2, d: fcD}, hall: hall, cells: cells, slots: slots, door: {x: 0, z: zf}, gallery: gal};
 }
 
 /* ---------- the building (THREE) ---------- */
@@ -271,6 +294,20 @@ function brandCol(b){
   if(BRAND_COL[b]) return BRAND_COL[b];
   var h = 0; for(var i = 0; i < b.length; i++) h = (h*31 + b.charCodeAt(i)) >>> 0;
   return ["hsl(" + (h % 360) + ",55%,40%)", "#ffffff"];
+}
+// [3.17] several geometries in one (non-indexed: position, normal, uv), for one draw call
+function mergeGeos(T, list){
+  var P = [], N = [], U = [];
+  list.forEach(function(g0){
+    var g = g0.index ? g0.toNonIndexed() : g0;
+    P.push.apply(P, g.attributes.position.array); N.push.apply(N, g.attributes.normal.array); U.push.apply(U, g.attributes.uv.array);
+    if(g !== g0) g.dispose();
+    g0.dispose();
+  });
+  var out = new T.BufferGeometry();
+  out.setAttribute("position", new T.Float32BufferAttribute(P, 3)); out.setAttribute("normal", new T.Float32BufferAttribute(N, 3));
+  out.setAttribute("uv", new T.Float32BufferAttribute(U, 2)); out.computeBoundingSphere();
+  return out;
 }
 function signTex(c, w, h, draw){
   var t = c.canvasTex(w, h, draw);
@@ -359,39 +396,66 @@ function build(c, site, opts){
     // the floor: cars first, then bikes, in class order, both of each class side by side
     var items = [];
     var tabs = model(cat, {}).tabs;
-    tabs.forEach(function(k){ k.sections.forEach(function(s){ s.classes.forEach(function(cl){ cl.vehicles.forEach(function(v){ items.push({kind: k.kind, id: v.id}); }); }); }); });
+    tabs.forEach(function(k){ k.sections.forEach(function(s){ s.classes.forEach(function(cl){ cl.vehicles.forEach(function(v){ items.push({kind: k.kind, id: v.id, grid: !!cl.grid}); }); }); }); });
     var L = layout(F, items, flagship), discs = [], rings = [];
+    // [3.17] the F1 grid's gallery: a slab on two columns, its glass balustrade and a light strip along its edge
+    if(L.gallery){
+      var gv = L.gallery, gw = gv.x1 - gv.x0 - 0.2, gd = gv.z1 - gv.z0, gcx = (gv.x0 + gv.x1)/2, gcz = (gv.z0 + gv.z1)/2;
+      var deck = new T.Mesh(new T.BoxGeometry(gw, 0.3, gd), floorM); deck.position.set(gcx, PLINTH + gv.y - 0.15, gcz); deck.receiveShadow = true; deck.name = "dealer-gallery"; dyn.add(deck);
+      var bal = new T.Mesh(new T.BoxGeometry(gw, 1.0, 0.04), glassM); bal.position.set(gcx, PLINTH + gv.y + 0.5, gv.z1 - 0.05); bal.renderOrder = 2; dyn.add(bal);
+      var edge = new T.Mesh(new T.BoxGeometry(gw, 0.06, 0.08), ringM); edge.position.set(gcx, PLINTH + gv.y - 0.27, gv.z1 - 0.04); dyn.add(edge);
+      var colG = new T.BoxGeometry(0.35, gv.y - 0.3, 0.35);
+      [gv.x0 + gw*0.25, gv.x0 + gw*0.75].forEach(function(cx){ var cm = new T.Mesh(colG, dark); cm.position.set(cx, PLINTH + (gv.y - 0.3)/2, gv.z1 - 0.6); cm.castShadow = true; dyn.add(cm); });
+    }
     L.cells.forEach(function(cell, n){
       var it = items[cell.i], v = HQV.hqVehicles && HQV.hqVehicles.get ? HQV.hqVehicles.get(cat, it.id) : null;
       if(!v) (cat.vehicles || []).forEach(function(x){ if(x.id === it.id) v = x; });
       discs.push(cell); rings.push(cell);
       var geo = v ? bakedOf(c, v) : null; if(!geo) return;
-      var m = new T.Mesh(geo, vehMat); m.position.set(cell.x, PLINTH + 0.26, cell.z); m.rotation.y = (n*0.7) % (2*PI);
-      m.castShadow = true; m.name = "dealer-vehicle:" + it.id; dyn.add(m); spin.push({m: m, a: m.rotation.y});
+      var m = new T.Mesh(geo, vehMat); m.position.set(cell.x, PLINTH + 0.26 + (cell.y || 0), cell.z); m.rotation.y = cell.grid ? 0 : (n*0.7) % (2*PI);
+      m.castShadow = true; m.name = "dealer-vehicle:" + it.id; dyn.add(m);
+      if(!cell.grid) spin.push({m: m, a: m.rotation.y});                // the F1 grid stands still, noses to the glass
     });
     // turntables: two InstancedMeshes (the discs, their glowing rims), whatever the count
     if(discs.length){
       var dg = new T.CylinderGeometry(1, 1, 0.22, 32), rg = new T.CylinderGeometry(1, 1, 0.06, 32, 1, true);
       var D = new T.InstancedMesh(dg, discM, discs.length), R = new T.InstancedMesh(rg, ringM, rings.length), M4 = new T.Matrix4();
       discs.forEach(function(cl, i){
-        M4.makeScale(cl.r, 1, cl.r); M4.setPosition(cl.x, PLINTH + 0.13, cl.z); D.setMatrixAt(i, M4);
-        M4.makeScale(cl.r + 0.04, 1, cl.r + 0.04); M4.setPosition(cl.x, PLINTH + 0.21, cl.z); R.setMatrixAt(i, M4);
+        var rx = cl.rx || cl.r, rz = cl.rz || cl.r;
+        M4.makeScale(rx, 1, rz); M4.setPosition(cl.x, PLINTH + 0.13 + (cl.y || 0), cl.z); D.setMatrixAt(i, M4);
+        M4.makeScale(rx + 0.04, 1, rz + 0.04); M4.setPosition(cl.x, PLINTH + 0.21 + (cl.y || 0), cl.z); R.setMatrixAt(i, M4);
       });
       D.name = "dealer-discs"; R.name = "dealer-rims"; D.receiveShadow = true;
       tableG.add(D); tableG.add(R);
     }
     // a flag per brand on the forecourt's front edge
+    // [3.17] one mesh for every pole and one for every flag (the 2026 grid brought eleven more brands): the flags share one
+    // canvas, a cell each, and each is baked with a ripple (a merged mesh cannot sway flag by flag)
     var brands = brandsOf(cat), poleM = mat(0xd5d9de, {metalness: 0.7, roughness: 0.3}), fx0 = -(brands.length - 1)*2.4/2;
-    brands.forEach(function(b, i){
-      var x = fx0 + i*2.4, z = Dd/2 - 0.6, pole = c.cyl(0.06, 0.06, 7, poleM, x, PLINTH + 3.5, z, flagsG, 8);
-      var cols = brandCol(b), tex = signTex(c, 256, 160, function(g2, w, h){
-        g2.fillStyle = cols[0]; g2.fillRect(0, 0, w, h); g2.fillStyle = cols[1]; g2.font = "800 " + (b.length > 6 ? 40 : 56) + "px system-ui, sans-serif";
-        g2.textAlign = "center"; g2.textBaseline = "middle"; g2.fillText(b.toUpperCase(), w/2, h/2);
+    var FC = 4, FR = Math.max(1, Math.ceil(brands.length/FC)), poles = [], flags = [];
+    var tex = brands.length ? signTex(c, 256*FC, 160*FR, function(g2){
+      brands.forEach(function(b, i){
+        var cols = brandCol(b), x0 = (i % FC)*256, y0 = Math.floor(i/FC)*160;
+        g2.fillStyle = cols[0]; g2.fillRect(x0, y0, 256, 160); g2.fillStyle = cols[1]; g2.font = "800 " + (b.length > 9 ? 30 : b.length > 6 ? 40 : 56) + "px system-ui, sans-serif";
+        g2.textAlign = "center"; g2.textBaseline = "middle"; g2.fillText(b.toUpperCase(), x0 + 128, y0 + 80);
       });
-      var flag = new T.Mesh(new T.PlaneGeometry(1.5, 0.95), new T.MeshStandardMaterial({map: tex || null, color: tex ? 0xffffff : 0x1c66b5, side: T.DoubleSide, roughness: 0.8}));
-      flag.position.set(x + 0.78, PLINTH + 6.4, z); flag.userData.flag = true; flagsG.add(flag);
-      pole.userData.pole = true;
+    }) : null;
+    brands.forEach(function(b, i){
+      var x = fx0 + i*2.4, z = Dd/2 - 0.6, pg = new T.CylinderGeometry(0.06, 0.06, 7, 8);
+      pg.translate(x, PLINTH + 3.5, z); poles.push(pg);
+      var fg = new T.PlaneGeometry(1.5, 0.95, 6, 1), P = fg.attributes.position, U = fg.attributes.uv, cx = i % FC, cy = Math.floor(i/FC);
+      for(var k = 0; k < P.count; k++){
+        var u = (P.getX(k) + 0.75)/1.5;
+        P.setZ(k, Math.sin(u*5.5 + i*0.9)*0.07*u);
+        U.setXY(k, (cx + U.getX(k))/FC, 1 - (cy + 1 - U.getY(k))/FR);
+      }
+      fg.computeVertexNormals(); fg.translate(x + 0.78, PLINTH + 6.4, z); flags.push(fg);
     });
+    if(brands.length){
+      var poleMesh = new T.Mesh(mergeGeos(T, poles), poleM); poleMesh.castShadow = true; poleMesh.userData.pole = true; flagsG.add(poleMesh);
+      var flagMesh = new T.Mesh(mergeGeos(T, flags), new T.MeshStandardMaterial({map: tex || null, color: tex ? 0xffffff : 0x1c66b5, side: T.DoubleSide, roughness: 0.8}));
+      flagMesh.userData.flags = brands.length; flagsG.add(flagMesh);
+    }
     B.layout = L;
   }
   B.setCatalogue = setCatalogue;
@@ -413,8 +477,6 @@ function build(c, site, opts){
   B.animate = function(t, dt, k){
     var r = (+dt || 0)*TURN*(k == null ? 1 : k);
     if(r) spin.forEach(function(s){ s.a += r; s.m.rotation.y = s.a; });
-    var sw = Math.sin((+t || 0)*1.3)*0.12*(k == null ? 1 : k);
-    flagsG.children.forEach(function(o){ if(o.userData.flag) o.rotation.y = sw; });
   };
   // the masses: the hall (blocks you, the camera's and the far boxes), the pylon
   function note(cx, cz, w, d, ya, yb){
@@ -536,8 +598,9 @@ function mountPanel(stage, opts){
         s.classes.forEach(function(cl){
           var row = mk("div", "hqdealer-class", sec);
           mk("div", "hqdealer-class-label", row, cl.label);
-          var pair = mk("div", "hqdealer-pair", row);
-          cl.vehicles.forEach(function(v){ if(!first) first = v; card(pair, v); });
+          // up to 4 a row ([3.17] the F1 grid's 11 wrap onto three)
+          var pair = null;
+          cl.vehicles.forEach(function(v, i){ if(i % 4 === 0) pair = mk("div", "hqdealer-pair", row); if(!first) first = v; card(pair, v); });
         });
       });
     });

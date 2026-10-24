@@ -8,7 +8,7 @@ hqRide (bus, tram, metro, rail, gondola, ferry), the views built, E at a stop op
 ride through the hqRide session (walk, wait, board, seated with the "sit" carry and the seat camera, off at the stop),
 S and V while riding, E at a metro entrance taking you below the street (HQV.hqUnderground: the surface hidden, the
 dark fog, the metro's floors as the ground), E on the platform offering the way out, a peer seated in a vehicle
-(presence a = 14), the draw-call sums, and a destroyed City restoring everything. Skipped without node or fixture."""
+(presence a = 15), the draw-call sums, and a destroyed City restoring everything. Skipped without node or fixture."""
 import json
 import os
 import shutil
@@ -82,7 +82,7 @@ if(T){
     out.bus.ended = !T.session(); out.bus.carryAfter = wc.carry(); out.bus.fares = calls.post.filter(q => /fare/.test(q[0])).length;
   })();
 
-  /* ---------- a peer seated in a vehicle (presence a = 14) ---------- */
+  /* ---------- a peer seated in a vehicle (presence a = 15) ---------- */
   (function(){
     var bus = HQV.hqRide.services().filter(s => s.mode === "bus")[0], v = bus ? bus.vehicles(NOW)[0] : null;
     out.peer = v ? T.peerSeat(1, v.id, "peer-1", NOW) : null;
@@ -187,7 +187,7 @@ class TransitHub(unittest.TestCase):
         self.assertEqual(b["seatCam"]["fov"], 70)
         self.assertTrue(b["keys"]["v"]); self.assertEqual(b["keys"]["mode"], "window")
         self.assertTrue(b["keys"]["s"]); self.assertTrue(b["keys"]["stop"])
-        self.assertEqual(b["keys"]["net"]["tk"], 1, "presence a = 14: the bus's mode code")
+        self.assertEqual(b["keys"]["net"]["tk"], 1, "presence a = 15: the bus's mode code")
         self.assertGreater(b["moved"], 20, "the bus carries you along the line")
         self.assertTrue(b["ended"])
         self.assertIsNone(b["carryAfter"])

@@ -734,6 +734,161 @@ function create(THREE, canvas, opts){
     }
   }
 
+  /* ---------- Grand Prix circuits (HQ 3.17, games/gp/circuit.js stages: st.circuitStage) ---------- */
+  // The racing surface: dark asphalt with white edge lines (no centre line), seeded speckle, a faint darker line
+  // where the cars run; the kerbs, walls, grandstands, pits, the start gantry and the street circuits' city blocks.
+  var gpLights = null;
+  function asphaltTex(seed){
+    var rng = mulberry32(hashStr("asphalt|" + seed));
+    return canvasTex(256, 1024, function(g, w, h){
+      g.fillStyle = "#44474c"; g.fillRect(0, 0, w, h);
+      for(var i = 0; i < 30; i++){
+        var x = rng()*w, y = rng()*h, rx = 20 + rng()*70, ry = 80 + rng()*200;
+        g.fillStyle = rng() < 0.5 ? "#4b4e53" : "#3d4045"; g.globalAlpha = 0.5;
+        [-h, 0, h].forEach(function(o){ g.beginPath(); g.ellipse(x, y + o, rx, ry, 0, 0, Math.PI*2); g.fill(); });
+      }
+      g.globalAlpha = 1;
+      for(var s = 0; s < 2600; s++){ g.fillStyle = rng() < 0.5 ? "#34373b" : "#5a5d62"; g.globalAlpha = 0.45; g.fillRect(rng()*w, rng()*h, 1 + rng()*1.4, 1 + rng()*1.4); }
+      g.globalAlpha = 0.16; g.fillStyle = "#1c1d20"; g.fillRect(w*0.3, 0, w*0.4, h);
+      g.globalAlpha = 1; g.fillStyle = "rgba(242,242,236,0.95)"; g.fillRect(3, 0, 6, h); g.fillRect(w - 9, 0, 6, h);
+    }, true);
+  }
+  function checkerTex(){
+    return canvasTex(256, 32, function(g, w, h){
+      for(var x = 0; x < w; x += 16) for(var y = 0; y < h; y += 16){ g.fillStyle = ((x + y)/16) % 2 ? "#111214" : "#f4f4f0"; g.fillRect(x, y, 16, 16); }
+    });
+  }
+  function buildCircuitRoad(st){
+    var pts = st.pts, n = pts.length, W = st.roadHalf, K = st.kerb || 1.2, COLS = [-1, -0.7, -0.35, 0, 0.35, 0.7, 1];
+    var pos = [], uv = [], col = [], idx = [], rows = 0;
+    for(var i = 0; i < n; i++){
+      var P = pts[i], cx = Math.cos(P.h), sz = Math.sin(P.h);
+      for(var c = 0; c < COLS.length; c++){
+        var lat = COLS[c]*W, x = P.x + cx*lat, z = P.z + sz*lat;
+        pos.push(x, st.env.height(x, z) + 0.03, z); uv.push((COLS[c] + 1)/2, P.s/ROAD_REPEAT);
+        var k = 0.97 + ((hashStr(i + "|" + c + "|" + st.seed) % 1000)/1000)*0.05; col.push(k, k, k);
+      }
+      if(i > 0){ var a = (rows - 1)*COLS.length, b = rows*COLS.length; for(c = 0; c < COLS.length - 1; c++) idx.push(a + c, a + c + 1, b + c, a + c + 1, b + c + 1, b + c); }
+      rows++;
+    }
+    var g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+    g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3)); g.setIndex(idx); g.computeVertexNormals(); g.computeBoundingSphere();
+    var m = new THREE.Mesh(g, toon({map: asphaltTex(st.seed), vertexColors: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2}, true));
+    m.receiveShadow = true; m.matrixAutoUpdate = false; world.add(m); R.deco.push(m); M.extra.push(m.material);
+    // kerbs: red and white, a metre a stripe, both sides of every kerb run
+    var kp = [], kc = [], RED = new THREE.Color(0xd23a2a), WHITE = new THREE.Color(0xf2f2ec);
+    (st.kerbs || []).forEach(function(r){
+      for(var s0 = r.s0, j = 0; s0 < r.s1; s0 += 1, j++){
+        var A = st.pointAtS(s0), B = st.pointAtS(Math.min(r.s1, s0 + 1)), C2 = j % 2 ? RED : WHITE;
+        [-1, 1].forEach(function(sd){
+          var ax = Math.cos(A.h)*sd, az = Math.sin(A.h)*sd, bx = Math.cos(B.h)*sd, bz = Math.sin(B.h)*sd;
+          var q = [[A.x + ax*W, A.z + az*W], [A.x + ax*(W + K), A.z + az*(W + K)], [B.x + bx*W, B.z + bz*W], [B.x + bx*(W + K), B.z + bz*(W + K)]];
+          var y = q.map(function(v){ return st.env.height(v[0], v[1]) + 0.035; });
+          var tri = sd > 0 ? [0, 2, 1, 1, 2, 3] : [0, 1, 2, 1, 3, 2];
+          tri.forEach(function(t){ kp.push(q[t][0], y[t], q[t][1]); kc.push(C2.r, C2.g, C2.b); });
+        });
+      }
+    });
+    // the start line (chequered) and the grid boxes (white)
+    var wp = [], wc = [];
+    function quad(list, cl, a, b, c, d){ [a, b, c, a, c, d].forEach(function(v){ list.push(v[0], st.env.height(v[0], v[1]) + 0.04, v[1]); cl.push(0.95, 0.95, 0.93); }); }
+    function along(p, f, l){ var tx = Math.sin(p.h), tz = -Math.cos(p.h), rx = Math.cos(p.h), rz = Math.sin(p.h); return [p.x + tx*f + rx*l, p.z + tz*f + rz*l]; }
+    (st.slots || []).forEach(function(sl){
+      var p = {x: sl.x, z: sl.z, h: sl.h};
+      quad(wp, wc, along(p, 2.9, -1.1), along(p, 2.9, 1.1), along(p, 2.7, 1.1), along(p, 2.7, -1.1));
+      [-1.1, 1.1].forEach(function(l){ quad(wp, wc, along(p, 2.9, l - 0.1), along(p, 2.9, l + 0.1), along(p, 1.6, l + 0.1), along(p, 1.6, l - 0.1)); });
+    });
+    [[kp, kc], [wp, wc]].forEach(function(L){
+      if(!L[0].length) return;
+      var gg = new THREE.BufferGeometry(); gg.setAttribute("position", new THREE.Float32BufferAttribute(L[0], 3)); gg.setAttribute("color", new THREE.Float32BufferAttribute(L[1], 3));
+      gg.computeVertexNormals(); gg.computeBoundingSphere();
+      var mm = new THREE.Mesh(gg, toon({vertexColors: true, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3}, true));
+      mm.receiveShadow = true; mm.matrixAutoUpdate = false; world.add(mm); R.deco.push(mm); M.extra.push(mm.material);
+    });
+    var L0 = st.pointAtS(0), lg = new THREE.PlaneGeometry(W*2, 1.2), lm = toon({map: checkerTex(), polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4}, true);
+    lm.map.wrapS = THREE.RepeatWrapping; lm.map.repeat.set(W/3, 1); M.extra.push(lm);
+    var line = new THREE.Mesh(lg, lm); line.rotation.set(-Math.PI/2, 0, 0, "YXZ"); line.rotation.y = -L0.h; line.rotation.order = "YXZ";
+    line.position.set(L0.x, st.env.height(L0.x, L0.z) + 0.045, L0.z); line.receiveShadow = true; world.add(line); R.deco.push(line);
+  }
+  // the road heading h -> a Y rotation that lays a box's local x along the road (local z then points right)
+  function alongY(h){ return Math.PI/2 - h; }
+  function buildCircuitDeco(st){
+    var sc = st.scenery;
+    // walls: armco (a grey rail with a blue stripe on posts) or a street circuit's concrete with a catch fence
+    var armco = merge([prim(new THREE.BoxGeometry(1, 0.42, 0.12), 0xc9cdd2, tr(0, 0.55, 0), function(x, y){ return y > 0.6 && y < 0.7 ? COL.set(0x2a5d8f) : null; }),
+                       prim(new THREE.BoxGeometry(0.08, 0.7, 0.08), 0x7d848b, tr(0, 0.35, 0.1))]);
+    var concrete = merge([prim(new THREE.BoxGeometry(1, 1.05, 0.55), 0xd9d6cf, tr(0, 0.52, 0), function(x, y){ return y > 0.95 ? COL.set(0xc63a2e) : null; }),
+                          prim(new THREE.BoxGeometry(1, 2.6, 0.03), 0x3a3f46, tr(0, 2.35, 0.2)), prim(new THREE.BoxGeometry(0.07, 2.9, 0.07), 0x5a6068, tr(0, 2.5, 0.22))]);
+    [armco, concrete].forEach(function(geo, kind){
+      var L = sc.walls.filter(function(w){ return w.kind === kind; }); if(!L.length) return;
+      var hull = hullGeo(geo);
+      bucketed(L, 180).forEach(function(list){
+        addInked(geo, hull, M.flat, M.inkTree, list, function(o, m){ EUL.set(0, alongY(o.h) + (o.side < 0 ? Math.PI : 0), 0, "YXZ"); Q.setFromEuler(EUL); m.compose(TMP.set(o.x, o.y - 0.05, o.z), Q, TMP2.set(o.len, 1, 1)); }, true, 520, 0, 1);
+      });
+    });
+    // grandstands: rising rows of seats (a crowd of colours) under a roof on posts; unit length, scaled along the road
+    var crowd = [0xc4372b, 0x2a5d8f, 0xf0b23a, 0xf4f2ea, 0x2f6a4f, 0xe07b39];
+    function standGeo(depth){
+      var parts = [], rows = 7, rd = depth/rows;
+      for(var r = 0; r < rows; r++) parts.push(prim(new THREE.BoxGeometry(1, 0.9 + r*1.1, rd), 0x9aa1a8, tr(0, (0.9 + r*1.1)/2, 2 + r*rd + rd/2), (function(rr){ return function(x, y, z, ny, c, i){ return ny > 0.5 ? COL.set(crowd[(Math.floor((x + 0.5)*29) + rr*3) % crowd.length]) : null; }; })(r)));
+      parts.push(prim(new THREE.BoxGeometry(1.02, 0.25, depth + 1.5), 0xe9ecef, tr(0, 0.9 + rows*1.1 + 2.6, 2 + depth/2 - 0.2, -0.08, 0, 0)));
+      parts.push(prim(new THREE.BoxGeometry(1, 0.9 + rows*1.1 + 2.6, 0.5), 0x6f767d, tr(0, (0.9 + rows*1.1 + 2.6)/2, 2 + depth + 0.2)));
+      return merge(parts);
+    }
+    sc.stands.forEach(function(s){
+      var geo = standGeo(s.depth), m = new THREE.Mesh(geo, M.flat);
+      m.position.set(s.x - Math.cos(s.h)*s.side*(s.depth/2 + 2), s.y - 0.2, s.z - Math.sin(s.h)*s.side*(s.depth/2 + 2));
+      m.rotation.order = "YXZ"; m.rotation.y = alongY(s.h) + (s.side < 0 ? Math.PI : 0); m.scale.set(s.len, 1, 1);
+      m.castShadow = true; m.receiveShadow = true; world.add(m); R.deco.push(m);
+      var hm = new THREE.Mesh(hullGeo(geo), M.inkTree); hm.position.copy(m.position); hm.rotation.copy(m.rotation); hm.scale.copy(m.scale); world.add(hm); R.deco.push(hm);
+    });
+    // the pit building: a long white block, a dark glass band upstairs, garage doors on the ground floor
+    if(sc.pits){
+      var p = sc.pits, parts2 = [prim(new THREE.BoxGeometry(1, 8, p.depth), 0xeef0f2, tr(0, 4, 2 + p.depth/2)),
+        prim(new THREE.BoxGeometry(1.002, 1.8, p.depth + 0.04), 0x1d2a3a, tr(0, 5.6, 2 + p.depth/2)),
+        prim(new THREE.BoxGeometry(1.004, 3.2, p.depth + 0.06), 0x2b2f36, tr(0, 1.6, 2 + p.depth/2), function(x){ return Math.abs(((x + 0.5)*40) % 1 - 0.5) > 0.44 ? COL.set(0xeef0f2) : null; }),
+        prim(new THREE.BoxGeometry(1, 1.0, 0.4), 0xd9d6cf, tr(0, 0.5, -1.2))];
+      var pg = merge(parts2), pm = new THREE.Mesh(pg, M.flat);
+      pm.position.set(p.x - Math.cos(p.h)*p.side*(p.depth/2 + 2), p.y - 0.1, p.z - Math.sin(p.h)*p.side*(p.depth/2 + 2));
+      pm.rotation.order = "YXZ"; pm.rotation.y = alongY(p.h) + (p.side < 0 ? Math.PI : 0); pm.scale.set(p.len, 1, 1); pm.castShadow = true; pm.receiveShadow = true;
+      world.add(pm); R.deco.push(pm);
+      var phm = new THREE.Mesh(hullGeo(pg), M.inkTree); phm.position.copy(pm.position); phm.rotation.copy(pm.rotation); phm.scale.copy(pm.scale); world.add(phm); R.deco.push(phm);
+    }
+    // the start gantry: two towers, a truss over the track and five pairs of red lights
+    if(sc.gantry){
+      var G0 = sc.gantry, gw = G0.w, grp = new THREE.Group();
+      var tower = new THREE.BoxGeometry(0.7, 8, 0.7), beam = new THREE.BoxGeometry(gw*2 + 0.7, 1.1, 0.6), box2 = new THREE.BoxGeometry(0.9, 0.9, 0.35);
+      [-1, 1].forEach(function(sd){ var t = new THREE.Mesh(tower, M.dark); t.position.set(sd*(gw + 0.3), 4, 0); t.castShadow = true; grp.add(t); var th = new THREE.Mesh(hullGeo(tower), M.inkTree); th.position.copy(t.position); grp.add(th); });
+      var bm = new THREE.Mesh(beam, M.dark); bm.position.set(0, 7.4, 0); bm.castShadow = true; grp.add(bm);
+      var bh = new THREE.Mesh(hullGeo(beam), M.inkTree); bh.position.copy(bm.position); grp.add(bh);
+      gpLights = [];
+      for(var li = 0; li < 5; li++){
+        var lmat = toon({color: 0x3a0d0d, emissive: 0x000000}); M.extra.push(lmat); gpLights.push(lmat);
+        var bx = new THREE.Mesh(box2, M.dark); bx.position.set((li - 2)*1.3, 6.4, 0.1); grp.add(bx);
+        // facing back down the straight, toward the grid
+        [0.18, -0.18].forEach(function(yy){ var lamp = new THREE.Mesh(new THREE.CircleGeometry(0.16, 14), lmat); lamp.position.set((li - 2)*1.3, 6.4 + yy, 0.29); grp.add(lamp); });
+      }
+      grp.position.set(G0.x, G0.y - 0.1, G0.z); grp.rotation.y = -G0.h; world.add(grp); R.deco.push(grp);
+    }
+    // the street circuits' city: plain blocks with a darker window band pattern, four colourways
+    if(sc.blocks.length){
+      var cols = [[0xd8d2c4, 0x6d7a88], [0xb9c3cc, 0x3f5468], [0xe6e1d5, 0x8a7a66], [0x9aa5ae, 0x2f3b47]];
+      cols.forEach(function(cw, vi){
+        var L = sc.blocks.filter(function(b){ return Math.floor(b.v*4) === vi; }); if(!L.length) return;
+        var geo = prim(new THREE.BoxGeometry(1, 1, 1, 1, 8, 1), cw[0], tr(0, 0.5, 0), function(x, y, z, ny){ return Math.abs(ny) < 0.5 && Math.floor(y*16) % 2 ? COL.set(cw[1]) : null; });
+        bucketed(L, 260).forEach(function(list){
+          addBucket(instanced(geo, M.flat, list, function(o, m){ EUL.set(0, o.r, 0, "YXZ"); Q.setFromEuler(EUL); m.compose(TMP.set(o.x, o.y - 0.5, o.z), Q, TMP2.set(o.w, o.hgt, o.d)); }, true), list, 900);
+        });
+      });
+    }
+  }
+  // the start lights: n of 5 lit (0: all out)
+  R.startLights = function(n){
+    if(!gpLights) return;
+    gpLights.forEach(function(m, i){ var on = i < (n|0); m.emissive.setHex(on ? 0xff2a1a : 0x000000); m.emissiveIntensity = on ? 1.6 : 0; m.color.setHex(on ? 0xff3a2a : 0x3a0d0d); });
+  };
+
   /* ---------- setStage ---------- */
   R.setStage = function(st){
     R.clearStage();
@@ -760,8 +915,9 @@ function create(THREE, canvas, opts){
     R.noiseA = makeNoise(hashStr("landA|" + st.seed)); R.noiseB = makeNoise(hashStr("landB|" + st.seed));
     buildSky(st, pal);
     buildTerrain(st, pal);
-    buildRoad(st, pal);
-    buildScenery(st, pal);
+    gpLights = null;
+    if(st.circuitStage){ buildCircuitRoad(st); buildScenery(st, pal); buildCircuitDeco(st); }
+    else { buildRoad(st, pal); buildScenery(st, pal); }
     fxInit();
   };
   R.clearStage = function(){
@@ -940,8 +1096,155 @@ function create(THREE, canvas, opts){
     m.customProgramCacheKey = function(){ return "rally-mud"; };
     return m;
   }
+  /* ---------- a Formula 1 car (HQ 3.17: spec.body or o.body "formula"; spec from HQV.gpCircuit.carSpec) ---------- */
+  // An open-wheel single-seater at the 2026 proportions: the nose and a two-element front wing, the tub with the
+  // driver's helmet under the halo, sidepods, the engine cover with its airbox and fin, a rear wing on a pylon, the
+  // floor, wishbones and four exposed slick tyres. Painted from the livery (base, accent, trim); toon-shaded and
+  // inked like the rally cars, the same handle shape (poseCar, carLights, removeCar all work on it).
+  function slickWallTex(band){
+    return canvasTex(256, 256, function(g, w){
+      var c = 128; g.fillStyle = "#1e1f22"; g.fillRect(0, 0, w, w);
+      g.strokeStyle = band; g.lineWidth = 9; g.beginPath(); g.arc(c, c, 100, 0, Math.PI*2); g.stroke();
+      g.strokeStyle = "#2e3034"; g.lineWidth = 3; g.beginPath(); g.arc(c, c, 86, 0, Math.PI*2); g.stroke();
+    });
+  }
+  function noseNumTex(num, ink, bg){
+    return canvasTex(128, 128, function(g, w){
+      g.fillStyle = bg; g.fillRect(0, 0, w, w); g.fillStyle = ink; g.font = "italic 900 84px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(String(num), 64, 70);
+    });
+  }
+  // a box tapering along z: front (z = -len/2) w0 x h0, back w1 x h1, its base flat at y = 0
+  function taperBox(w0, h0, w1, h1, len){
+    var g = new THREE.BoxGeometry(1, 1, 1, 1, 1, 1), p = g.attributes.position;
+    for(var i = 0; i < p.count; i++){
+      var front = p.getZ(i) < 0, y = p.getY(i) + 0.5;
+      p.setX(i, p.getX(i)*(front ? w0 : w1)); p.setY(i, y*(front ? h0 : h1)); p.setZ(i, p.getZ(i)*len);
+    }
+    g.computeVertexNormals();
+    return g;
+  }
+  function addFormula(spec, o){
+    var ghost = !!o.ghost, inked = !ghost, lv = spec.livery || {}, cs = spec.colors || {};
+    var mats = [];
+    function mat(c, extra){
+      var p = {color: c}; for(var k in (extra || {})) p[k] = extra[k];
+      if(ghost){ p.transparent = true; p.opacity = 0.38; p.depthWrite = false; }
+      var m = toon(p); mats.push(m); return m;
+    }
+    var paint = mat(o.color || lv.base || cs.body || "#d02020"), accent = mat(lv.accent || cs.stripe || "#f4f4f2"), trim = mat(lv.trim || cs.stripe2 || "#151515");
+    var carbon = mat(0x17181b), metal = mat(0x8d969c), visor = mat(0x10141c);
+    var lampMat = mat(0xfff6d8, {emissive: 0x000000});
+    var tailT = tailTex(), tailMat = mat(0xffffff, {map: tailT, emissive: 0xffffff, emissiveMap: tailT, emissiveIntensity: 0.12});
+    var car = new THREE.Group(), body = new THREE.Group(); car.add(body);
+    var R0 = spec.radius || 0.36, a = spec.a || 1.8, b = spec.b || 1.6, tw = (spec.track || 1.6)/2;
+    var sag = (spec.mass*9.81*0.25)/(((spec.spring || [150000, 150000])[0] + (spec.spring || [150000, 150000])[1])/2);
+    var gy = -(R0 + (spec.lfree || 0.12) - sag - (spec.hpY || 0));          // the ground under the car at rest
+    function part(geo, m, x, y, z, rx, ry, rz){ var me = new THREE.Mesh(geo, m); me.position.set(x, gy + y, z); me.rotation.set(rx || 0, ry || 0, rz || 0); body.add(me); return me; }
+    function bx(w, h, d, m, x, y, z, rx, ry, rz){ return part(new THREE.BoxGeometry(w, h, d), m, x, y, z, rx, ry, rz); }
+    var cockpitZ = -0.45;
+    // floor and plank
+    bx(1.45, 0.045, a + b - 0.55, carbon, 0, 0.06, (b - a)/2 + 0.12);
+    bx(0.3, 0.02, a + b - 1.0, mat(0x6b5a3e), 0, 0.03, (b - a)/2 + 0.1);
+    // the nose: low and slim, rising into the tub
+    part(taperBox(0.15, 0.11, 0.38, 0.34, 1.15), paint, 0, 0.13, -a - 0.2);
+    // the tub (survival cell) round the driver
+    part(taperBox(0.38, 0.36, 0.62, 0.5, a + 0.1), paint, 0, 0.1, (-a + 0.1)/2);
+    // sidepods, with dark inlets at their fronts and an accent line along the top
+    [-1, 1].forEach(function(sd){
+      part(taperBox(0.42, 0.44, 0.18, 0.2, b + 0.1), paint, sd*0.5, 0.08, (b - 0.6)/2 - 0.2);
+      bx(0.34, 0.3, 0.04, carbon, sd*0.5, 0.26, -0.6 - 0.02);
+      bx(0.025, 0.04, b - 0.2, accent, sd*0.72, 0.45, (b - 0.6)/2 - 0.35);
+      // mirrors on stalks
+      bx(0.14, 0.07, 0.05, paint, sd*0.42, 0.66, cockpitZ - 0.25);
+      bx(0.02, 0.02, 0.14, carbon, sd*0.36, 0.62, cockpitZ - 0.2);
+    });
+    // the engine cover from behind the driver to the gearbox, the airbox over the helmet and the fin
+    part(taperBox(0.62, 0.72, 0.2, 0.3, b + 0.2), paint, 0, 0.1, (b + 0.2)/2 + 0.05);
+    bx(0.26, 0.3, 0.42, trim, 0, 0.98, 0.32);
+    bx(0.16, 0.18, 0.04, carbon, 0, 1.02, 0.1);
+    bx(0.022, 0.32, 1.25, paint, 0, 0.9, b - 0.3);
+    bx(0.024, 0.06, 1.2, accent, 0, 1.02, b - 0.3);
+    // the cockpit opening, the driver's helmet and visor, and the halo
+    bx(0.36, 0.05, 0.78, carbon, 0, 0.6, cockpitZ - 0.05);
+    var helmet = mat(lv.accent || "#f4f4f2");
+    part(new THREE.SphereGeometry(0.135, 16, 12), helmet, 0, 0.7, cockpitZ + 0.1);
+    bx(0.2, 0.06, 0.05, visor, 0, 0.72, cockpitZ - 0.02);
+    var halo = new THREE.TorusGeometry(0.34, 0.028, 8, 20, Math.PI); halo.rotateX(-Math.PI/2);
+    part(halo, carbon, 0, 0.8, cockpitZ + 0.12);
+    bx(0.045, 0.3, 0.045, carbon, 0, 0.66, cockpitZ - 0.24, 0.35);
+    // the front wing: a main plane, a flap, end plates
+    bx(1.8, 0.03, 0.44, accent, 0, 0.09, -a - 0.62);
+    bx(1.66, 0.026, 0.22, trim, 0, 0.16, -a - 0.52, 0.28);
+    [-1, 1].forEach(function(sd){ bx(0.02, 0.22, 0.52, paint, sd*0.9, 0.15, -a - 0.6); });
+    // the rear wing on its pylon, with end plates and a beam wing; the crash structure and the rain light
+    bx(1.0, 0.04, 0.38, accent, 0, 0.9, b + 0.42);
+    bx(1.0, 0.03, 0.2, paint, 0, 1.0, b + 0.52, -0.35);
+    [-1, 1].forEach(function(sd){ bx(0.025, 0.58, 0.66, paint, sd*0.51, 0.78, b + 0.42); });
+    bx(0.8, 0.03, 0.2, carbon, 0, 0.45, b + 0.4);
+    bx(0.05, 0.52, 0.1, carbon, 0, 0.62, b + 0.3);
+    bx(0.2, 0.13, 0.36, carbon, 0, 0.32, b + 0.5);
+    var tl = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.07), tailMat); tl.position.set(0, gy + 0.32, b + 0.69); tl.userData.keep = true; body.add(tl);
+    // wishbones and push rods to each wheel (fixed to the body)
+    [[-a, 1], [b, -1]].forEach(function(ax){
+      [-1, 1].forEach(function(sd){
+        var len = tw - 0.28;
+        [R0*0.55, R0*1.25].forEach(function(hy){ bx(len, 0.03, 0.05, carbon, sd*(0.28 + len/2), hy, ax[0]); });
+        bx(len*0.9, 0.025, 0.04, carbon, sd*(0.3 + len*0.45), R0*0.95, ax[0] + ax[1]*0.12, 0, 0, sd*0.35);
+      });
+    });
+    // the car's number: on the nose and on both sides of the engine cover
+    if(!ghost){
+      var num = String(o.number || 1), nt = noseNumTex(num, lv.trim || "#151515", lv.accent || "#f4f4f2"), nm = mat(0xffffff, {map: nt});
+      var np = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.2), nm); np.rotation.x = -Math.PI/2 + 0.22; np.position.set(0, gy + 0.33, -a + 0.05); body.add(np);
+      [-1, 1].forEach(function(sd){ var sp = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.26), nm); sp.rotation.y = sd*Math.PI/2; sp.position.set(sd*0.235, gy + 0.62, 0.95); body.add(sp); });
+    }
+    bake(body);
+    body.traverse(function(n){ if(n.isMesh){ n.castShadow = !ghost; n.receiveShadow = !ghost; } });
+    var inkC = inked ? inkMat(2.2, 9) : null, hulls = [];
+    if(inked){
+      body.children.slice().forEach(function(n){
+        if(!n.isMesh || n.material.map) return;
+        var hm = new THREE.Mesh(hullGeo(n.geometry), inkC); hm.position.copy(n.position); hm.quaternion.copy(n.quaternion); hm.scale.copy(n.scale); body.add(hm); hulls.push(hm);
+      });
+    }
+    // wheels: suspension (y) > steer (y rot) > spin (x rot), the hardpoints at +-track/2 as in the physics
+    var wheels = [], rimSharp = rimTex(cs.rim || "#20242a", false), rimBlur = rimTex(cs.rim || "#20242a", true);
+    var tyreMat = mat(0x1d1e21, {emissive: 0x111214}), wallMat = mat(0xffffff, {map: slickWallTex("#d23a2a"), emissive: 0x141518}), dishMat = mat(0x2c2d31, {side: THREE.DoubleSide});
+    var rimMat = mat(0xffffff, {map: rimSharp, alphaTest: 0.5, side: THREE.DoubleSide}), discMat = mat(0x8e9298);
+    [[-1, 1], [1, 1], [-1, -1], [1, -1]].forEach(function(w){
+      var front = w[1] > 0, TW = front ? 0.3 : 0.38, RIN = R0*0.62, o2 = w[0];
+      var sus = new THREE.Group(), steer = new THREE.Group(), spin = new THREE.Group();
+      sus.position.set(o2*tw, 0, front ? -a : b);
+      var tg = new THREE.CylinderGeometry(R0, R0, TW, 30, 1, true); tg.rotateZ(Math.PI/2);
+      var tyre = new THREE.Mesh(tg, tyreMat); tyre.castShadow = !ghost; spin.add(tyre);
+      var wg = new THREE.RingGeometry(RIN, R0, 30, 1);
+      [1, -1].forEach(function(face){ var wl = new THREE.Mesh(wg, wallMat); wl.position.x = o2*face*TW/2; wl.rotation.y = o2*face*Math.PI/2; spin.add(wl); });
+      var dg = new THREE.CylinderGeometry(RIN, RIN, 0.07, 20, 1, true); dg.rotateZ(Math.PI/2);
+      var dish = new THREE.Mesh(dg, dishMat); dish.position.x = o2*(TW/2 - 0.035); spin.add(dish);
+      var rim = new THREE.Mesh(new THREE.CircleGeometry(RIN*0.98, 28), rimMat); rim.position.x = o2*(TW/2 - 0.045); rim.rotation.y = o2*Math.PI/2; spin.add(rim);
+      var disc = new THREE.Mesh(new THREE.CircleGeometry(R0*0.45, 20), discMat); disc.position.x = o2*(TW/2 - 0.1); disc.rotation.y = o2*Math.PI/2; spin.add(disc);
+      if(inked){ var th = new THREE.Mesh(hullGeo(new THREE.CylinderGeometry(R0, R0, TW, 30, 1).rotateZ(Math.PI/2)), inkC); spin.add(th); }
+      steer.add(spin); sus.add(steer); car.add(sus);
+      wheels.push({sus: sus, steer: steer, spin: spin});
+    });
+    var h = {g: car, body: body, wheels: wheels, spec: spec, ghost: ghost, lamps: [lampMat], tail: tailMat, lights: null, tag: null, mats: mats, mud: {value: 0}, ink: inkC, hulls: hulls,
+             rim: {mat: rimMat, sharp: rimSharp, blur: rimBlur, on: false}, formula: true};
+    if(inkC) mats.push(inkC);
+    if(o.name){
+      var tc = document.createElement("canvas"), tg2 = tc.getContext("2d"); tc.width = 256; tc.height = 64;
+      tg2.font = "700 30px sans-serif"; tg2.textAlign = "center"; tg2.textBaseline = "middle";
+      var tw2 = Math.min(250, tg2.measureText(o.name).width + 28);
+      tg2.fillStyle = "rgba(20,24,32,0.72)"; tg2.fillRect(128 - tw2/2, 8, tw2, 48); tg2.fillStyle = "#ffffff"; tg2.fillText(String(o.name).slice(0, 18), 128, 33);
+      var tt = new THREE.CanvasTexture(tc); tt.colorSpace = THREE.SRGBColorSpace;
+      var spt = new THREE.Sprite(new THREE.SpriteMaterial({map: tt, depthTest: false, transparent: true})); spt.scale.set(2.6, 0.65, 1); spt.position.set(0, 1.4, 0); spt.renderOrder = 10;
+      car.add(spt); h.tag = spt; mats.push(spt.material);
+    }
+    scene.add(car); R.cars.push(h);
+    return h;
+  }
   R.addCar = function(spec, o){
     o = o || {};
+    if((spec && spec.body === "formula") || o.body === "formula") return addFormula(spec, o);
     var S = SHAPES[spec.id] || SHAPES.moraine, cs = spec.colors || {};
     var ghost = !!o.ghost, inked = !ghost;
     var MU = {mud: {value: 0}, col: {value: new THREE.Color(0x6e5a44)}};
@@ -1226,7 +1529,7 @@ function create(THREE, canvas, opts){
     for(i = 0; i < 4; i++){
       var w = car.wheels[i];
       if(!w.contact) { FX.tr.last[i] = null; continue; }
-      var sid = w.surf, loose = sid !== 0;
+      var sid = w.surf > 6 ? 0 : w.surf, loose = sid !== 0;   // (a surface past the rally's own seven: Grand Prix's slick tarmac)
       var slip = Math.min(3, w.slip || 0), wheelSpeed = Math.abs(w.omega*car.spec.radius), ground = Math.abs(w.vx) + Math.abs(w.vy);
       mudGain += (MUD_RATE[sid] || 0)*Math.min(1, ground/15)*(1 + slip*0.5);
       var amount = (loose ? 0.3*Math.min(1, ground/16) : 0) + Math.max(0, slip - 1)*0.45 + (loose ? Math.min(1.5, Math.abs(wheelSpeed - Math.abs(w.vx))*0.06) : 0);

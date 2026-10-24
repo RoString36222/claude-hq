@@ -673,7 +673,7 @@ WS (main.rs, hq rooms):
                                               valley's last position for each), ≤200 chars, the chat rate limit
   {type: "ring", to, id} / {type: "ring_ans", to, id, ok}  to the target's sockets in the room only; 6 a minute
   then the existing {type: "signal"} for SDP/ICE
-Presence caps (protocol.rs): "transit": a = 14 (a seated passenger) with tk (mode code 1..9) and tv (vehicle id,
+Presence caps (protocol.rs): "transit": a = 15 (a seated passenger; 14 became the tank in 3.16 on main) with tk (mode code 1..9) and tv (vehicle id,
   ≤24 chars); "phone": the near / ring messages.
 ```
 
@@ -722,7 +722,7 @@ has created those files (`worldlines` creates compiling stubs with the final sig
      underground lights; show `V.underground(true)`; the avatar's ground comes from `V.walkable`. Entrances are E
      targets and walk-in triggers; exits teleport to the street side.
    - Seated pose for passengers (`anim: "sit"`, `hands: "rail"`) in `moveAvatar` / `avatar3d`; peers with
-     `a = 14` drawn seated at their `tv` vehicle.
+     `a = 15` drawn seated at their `tv` vehicle.
    - The phone: mounted beside `callUi`, in the `onKey` owns-chain, Backquote / `I`, the button, Cmd-K entry,
      `#phoneBack` in `currentModal()`; the `host` object (5.8) built from the hub's state.
    - `HQ3D_DEBUG.transit` (8) and `smokeStats` sums of every `drawCalls()`.

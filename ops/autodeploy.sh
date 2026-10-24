@@ -4,7 +4,7 @@
 #
 # Checks the tracked branch for new commits and, if there are any, hands the
 # release to ops/release.sh. Install with ops/install-autodeploy.sh. Logs to
-# /var/log/arena-deploy.log.
+# $ARENA_DIR/.arena-deploy.log (shared with the deploy panel; /var/log/arena-deploy.log links to it).
 #
 # WHY THIS DELEGATES RATHER THAN DRIVING COMPOSE ITSELF
 #
@@ -38,7 +38,10 @@ set -euo pipefail
 DIR="${ARENA_DIR:-/root/claude-hq}"
 BRANCH="${ARENA_BRANCH:-main}"
 DOMAIN="${ARENA_DOMAIN:-}"
-LOG="${ARENA_DEPLOY_LOG:-/var/log/arena-deploy.log}"
+# The ONE deploy log, in the checkout: the deploy panel (a container with the checkout mounted) reads and writes
+# the same file, so every release shows on every open panel whoever started it. /var/log/arena-deploy.log is a
+# link to it (ops/install-autodeploy.sh).
+LOG="${ARENA_DEPLOY_LOG:-$DIR/.arena-deploy.log}"
 
 log() { printf '%s  %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" >> "$LOG"; }
 

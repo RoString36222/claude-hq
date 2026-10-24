@@ -33,7 +33,7 @@
  *   T.under(), T.fog, T.session(), T.startRide(planOrTrip) -> S | null, T.board(stopId, mode?) -> items
  *   T.cabs, T.heli, T.water {taxi, hire, piers, targets}, T.link(world) -> bool, T.track(vehicleId)
  *   T.peerSeat(tk, tv, uid, ms) -> {x, y, z, yaw} | null   another player's seat in their vehicle
- *   T.net() -> {tk, tv} | null      your own (presence a = 14)
+ *   T.net() -> {tk, tv} | null      your own (presence a = 15)
  *   T.drawCalls() / T.drawCallsBy() / T.debug / T.dispose()
  */
 (function(){
@@ -348,7 +348,7 @@ function create(c, o){
   };
   T.under = function(){ return under; };
 
-  /* ---------- other players riding (presence a = 14) ---------- */
+  /* ---------- other players riding (presence a = 15) ---------- */
   T.net = function(){
     var i = ride && tryf(function(){ return ride.info(); }, null);
     if(i && (i.phase === "seated" || i.phase === "standing") && TK[i.mode] && i.vehicle != null) return {tk: TK[i.mode], tv: String(i.vehicle).slice(0, 24)};

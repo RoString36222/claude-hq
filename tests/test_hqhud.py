@@ -87,8 +87,8 @@ out.ticksE = H.compassTicks(-Math.PI/2);      // turned right a quarter: heading
 out.ticksOdd = H.compassTicks(0.3);
 out.kmh = [H.kmh(10), H.kmh(0), H.kmh(13.9), H.kmh(null), H.kmh('x')];
 out.junk = [H.loadSettings('{not json'), H.loadSettings(null), H.loadSettings('[1,2]'),
-  H.loadSettings({fov: 500, sens: -4, invertY: 'yes', reduced: true, headBob: 0, quality: 'ultra', preferred: 'cine'}),
-  H.loadSettings(JSON.stringify({fov: 70, sens: 2.5, preferred: 'fp', quality: 'low'}))];
+  H.loadSettings({fov: 500, sens: -4, invertY: 'yes', reduced: true, headBob: 0, quality: 'ultra', preferred: 'cine', mouseSteer: 'on'}),
+  H.loadSettings(JSON.stringify({fov: 70, sens: 2.5, preferred: 'fp', quality: 'low', mouseSteer: true}))];
 
 // ---- mounted HUD ----
 const stage = new El('div'); stage.clientWidth = 400; stage.clientHeight = 300;
@@ -284,13 +284,15 @@ class HudNodeTests(unittest.TestCase):
         self.assertEqual(self.o["kmh"], [36, 0, 50, 0, 0])
 
     def test_load_settings(self):
-        defaults = {"fov": 65, "sens": 1, "invertY": False, "reduced": False, "headBob": True, "quality": "auto", "preferred": "chase"}
+        defaults = {"fov": 65, "sens": 1, "invertY": False, "reduced": False, "headBob": True, "quality": "auto", "preferred": "chase",
+                    "damage": False,                 # vehicle damage is opt in
+                    "mouseSteer": False}
         junk, none, arr, clamped, good = self.o["junk"]
         self.assertEqual(junk, defaults)
         self.assertEqual(none, defaults)
         self.assertEqual(arr, defaults)
         self.assertEqual(clamped, dict(defaults, fov=100, sens=0.2, reduced=True))
-        self.assertEqual(good, dict(defaults, fov=70, sens=2.5, preferred="fp", quality="low"))
+        self.assertEqual(good, dict(defaults, fov=70, sens=2.5, preferred="fp", quality="low", mouseSteer=True))
 
     def test_dom_parts_and_settings_panel(self):
         o = self.o
@@ -304,6 +306,7 @@ class HudNodeTests(unittest.TestCase):
         ctl = {c[0]: c for c in o["controls"]}
         for k in ("fov", "sens", "invertY", "reduced", "headBob", "quality", "preferred"):
             self.assertIn(k, ctl)
+        self.assertEqual(ctl["mouseSteer"][1], "checkbox")               # [3.15] Mouse steering
         self.assertEqual(ctl["fov"][1:], ["range", "60", "100"])
         self.assertEqual(ctl["sens"][1:], ["range", "0.2", "3"])
         self.assertEqual(ctl["invertY"][1], "checkbox")

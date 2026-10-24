@@ -40,6 +40,8 @@ ENTRIES = [
     {"id": "t-super", "class": "car.super.over5000", "brand": "Lamborghini", "model": "Revuelto"},
     {"id": "t-sto", "class": "car.super.over5000", "brand": "Lamborghini", "model": "Huracán STO"},
     {"id": "t-urus", "class": "car.suv.5000", "brand": "Lamborghini", "model": "Urus Performante"},
+    {"id": "t-scooter", "class": "bike.scooter.400", "brand": "Suzuki", "model": "Access 125", "spec": {"cc": 124, "cyl": 1},
+     "dims": {"lengthM": 1.87, "widthM": 0.69, "heightM": 1.16, "wheelbaseM": 1.265}},
 ]
 
 HARNESS = r"""
@@ -174,8 +176,9 @@ class VehicleModels(unittest.TestCase):
             self.assertAlmostEqual(med/size(self.STARTER[kind]), 1, delta=0.15, msg=(kind, med))
         self.assertGreaterEqual(by["bike"]["bmw-s-1000-rr"], size(self.STARTER["bike"]))
         for i, s in by["car"].items():
-            # [3.9] the one exception: the 1974 Countach (4.14 x 1.89 x 1.07 m), drawn at its real size under the hatch
-            self.assertGreaterEqual(s, size(self.STARTER["car"])*(0.92 if i == "lamborghini-countach-lp400" else 0.98), i)
+            # [3.9] the exceptions: the 1974 Countach (4.14 x 1.89 x 1.07 m) and [3.17] the F1 cars (5.3 x 1.9 x 0.95 m), long
+            # and low, drawn at their real size under the hatch
+            self.assertGreaterEqual(s, size(self.STARTER["car"])*(0.92 if i == "lamborghini-countach-lp400" or i.startswith("f1-") else 0.98), i)
         self.assertGreater(by["car"]["bmw-x5-40i"], by["car"]["bmw-m135-xdrive"]*1.1)      # an SUV still over a hatch
         self.assertGreater(by["bike"]["bmw-r-1300-gs"], by["bike"]["ktm-rc-390"]*1.1)
         # the rider's seat at the starters' height: a bike's about the starter motorbike's (1.06 m)

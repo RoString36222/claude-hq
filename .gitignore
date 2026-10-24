@@ -49,6 +49,7 @@ backend/.release.env
 backend/.release.env.tmp
 backend/.releases
 .autodeploy-tried
+.arena-deploy.log
 .music-cache/
 # Pokémon sprite disk cache (dashboard-rs sprite.rs): third-party art, never commit
 .sprite-cache/

@@ -71,9 +71,10 @@ var POI = {
   police: {col: "#2d4a8a", g: "shield"}, fire: {col: "#d0611f", g: "flame"}, market: {col: "#3f8f4f", g: "basket"},
   school: {col: "#a07a12", g: "book"}, myhq: {col: "#ffb347", g: "star"}, hq: {col: "#5fd3e6", g: "house"},
   dealer: {col: "#1c66b5", g: "car"}, tuning: {col: "#b8452c", g: "wrench"},   // [3.13] the Tuning shop (games/hqtuning.js)
+  gp: {col: "#c8262c", g: "flag"},                                                // [3.17] the Grand Prix Circuit (games/hqgpvenue.js)
   carpark: {col: "#1f6fd1", g: "parking"}
 };
-var POI_ORDER = ["hq", "school", "market", "fire", "police", "clinic", "hospital", "townhall", "airport", "transit", "dealer", "tuning", "dock", "port", "carpark", "myhq"];
+var POI_ORDER = ["hq", "school", "market", "fire", "police", "clinic", "hospital", "townhall", "airport", "transit", "dealer", "tuning", "gp", "dock", "port", "carpark", "myhq"];
 var PAL = {
   dark: {sea: "#0f2a3d", land: "#1d2620", landEdge: "#33503f", water: "#1a4a6b", bank: "#2f6f8f", quay: "#8a8578", pier: "#c8b48a",
          station: "#ffffff",
@@ -401,6 +402,10 @@ function glyph(g, kind, disc){
       g.lineWidth = 0.22; g.lineCap = "round"; g.moveTo(-0.42, 0.42); g.lineTo(0.12, -0.12); g.stroke();
       g.beginPath(); g.arc(0.24, -0.24, 0.27, 0, 2*PI); g.fill();
       g.fillStyle = disc; g.beginPath(); g.moveTo(0.24, -0.24); g.lineTo(0.62, -0.42); g.lineTo(0.42, -0.62); g.closePath(); g.fill(); return;
+    case "flag":                                                         // [3.17] a chequered flag on its pole
+      g.lineWidth = 0.14; g.lineCap = "round"; g.moveTo(-0.42, 0.6); g.lineTo(-0.42, -0.6); g.stroke();
+      g.fillRect(-0.36, -0.58, 0.9, 0.62);
+      g.fillStyle = disc; g.fillRect(-0.36, -0.58, 0.3, 0.31); g.fillRect(0.24, -0.58, 0.3, 0.31); g.fillRect(-0.06, -0.27, 0.3, 0.31); return;
     case "parking":
       g.lineWidth = 0.26; g.lineCap = "butt"; g.lineJoin = "round";
       g.moveTo(-0.24, 0.56); g.lineTo(-0.24, -0.5); g.lineTo(0.08, -0.5);

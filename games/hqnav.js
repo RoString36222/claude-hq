@@ -357,6 +357,7 @@ var KINDS = {
   skatepark: ["Skatepark", "🛹"], dealer: ["Dealership", "🚘"], carpark: ["Garage", "🅿️"],
   casino: ["Casino", "🎰"],                    // games/hqcasino.js (its own name: The Lucky Byte)
   tuning: ["Tuning shop", "🔧"],                // [3.13] games/hqtuning.js (its own name: Redline Tuning)
+  gp: ["Grand Prix Circuit", "🏁"],             // [3.17] games/hqgpvenue.js: the way into every F1 circuit
   petshop: ["Pet shop", "🐾"],                 // [pets 3.14] games/hqpets.js (its own name: Paws & Claws)
   stunt: ["Stunt", "🚀"]                       // [stunts] games/hqstunts.js (each its own name: Sky Cannon, Mega Loop...)
 };

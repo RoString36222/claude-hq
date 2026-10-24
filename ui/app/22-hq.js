@@ -18,16 +18,17 @@ function hqWebGL(){ try { return !!document.createElement("canvas").getContext("
 // pure sim before its drawing), traffic and transit, the sea and the boats, and island travel, all
 // before the City that wires them (games/hqcity3d.js). Navigation (3.1): the road router, the minimap, the
 // route's chevrons and the Go to panel / route banner, also before the City. City 3.2: the weather, and the
-// landmarks and amusement park (hqspectacle), also before the City. Transport 3.15: the ride core, commuters, tramway,
+// landmarks and amusement park (hqspectacle), also before the City. Transport 3.18: the ride core, commuters, tramway,
 // coaches, metro and the underground, City Line and gondola, ferries, cabs and heli calling, the phone and its apps, and
 // hqtransit (the City's transport glue), also before the City; each one missing only takes its own feature out.
 var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqpets","hqpetride","hqlobby","hqcarlift","hqgaragemgr","hqbasementfx","hqbasement","hqstyle","hqtower","hqroof","hqdecor","hqbase","hqskate","world","worldgeom","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
-                  "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqdrive","hqnetsmooth","hqshowroom","hqgarage", "hqdealer","hqtuning","hqcasinoui","hqcasino","hqcall","hqtravel","hqvoyage","hqships","hqbridges","hqairfield","hqair","hqaircraft","hqplane","hqairport3d","hqairbldg","hqairground","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcarpark","hqweather","hqspectacle","hqstunts",
-                  "hqride","hqcommute","hqtramway","hqcoach","hqmetro","hqunderground","hqcityrail","hqgondola","hqferries","hqcabs","hqhelicall","hqphone","hqphoneapps","hqphonecabs","hqphonecomms","hqgallery","hqtransit","hqcity3d"];
+                  "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqdrive","hqvfx","hqnetsmooth","hqshowroom","hqgarage", "hqdealer","hqtuning","hqgpvenue","hqcasinoui","hqcasino","hqcall","hqautopilot","hqtravel","hqvoyage","hqships","hqbridges","hqairfield","hqair","hqaircraft","hqplane","hqairport3d","hqairbldg","hqairground","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcarpark","hqweather","hqspectacle",
+                  "hqride","hqcommute","hqtramway","hqcoach","hqmetro","hqunderground","hqcityrail","hqgondola","hqferries","hqcabs","hqhelicall","hqphone","hqphoneapps","hqphonecabs","hqphonecomms","hqgallery","hqtransit",
+                  "hqstunts","hqgrenade","hqtank","hqcity3d"];
 // The 3D City's own files: if one fails, the classic City still works (games/hq3d.js falls back to it);
 // a Cities part that fails only takes its own feature out of the 3D City.
-var HQ_SCRIPTS_3D = {hqpets:1, hqpetride:1, hqcarlift:1, hqgaragemgr:1, hqbasementfx:1, hqbasement:1, world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
-                     hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqdrive:1, hqnetsmooth:1, hqshowroom:1, hqgarage:1, hqdealer:1, hqtuning:1, hqcasinoui:1, hqcasino:1, hqcall:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqairfield:1, hqair:1, hqaircraft:1, hqplane:1, hqairport3d:1, hqairbldg:1, hqairground:1, hqairbase:1,
+var HQ_SCRIPTS_3D = {hqpets:1, hqpetride:1, hqgrenade:1, hqtank:1, hqcarlift:1, hqgaragemgr:1, hqbasementfx:1, hqbasement:1, world:1, worldgeom:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
+                     hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqdrive:1, hqvfx:1, hqnetsmooth:1, hqshowroom:1, hqgarage:1, hqdealer:1, hqtuning:1, hqgpvenue:1, hqcasinoui:1, hqcasino:1, hqcall:1, hqautopilot:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqairfield:1, hqair:1, hqaircraft:1, hqplane:1, hqairport3d:1, hqairbldg:1, hqairground:1, hqairbase:1,
                      hqnav:1, hqminimap:1, hqroutefx:1, hqnavui:1, hqrail:1, hqcarpark:1, hqweather:1, hqspectacle:1, hqstunts:1,
                      hqride:1, hqcommute:1, hqtramway:1, hqcoach:1, hqmetro:1, hqunderground:1, hqcityrail:1, hqgondola:1, hqferries:1, hqcabs:1, hqhelicall:1, hqphone:1, hqphoneapps:1, hqphonecabs:1, hqphonecomms:1, hqgallery:1, hqtransit:1};
 // ?hqsmoke=1 (tools/ui_smoke.py, tools/hq_shots.py): HQ opens straight into the City with three synthetic HQs.
@@ -66,6 +67,8 @@ function hqApi(){
                                                           style: typeof hqStyleDoc==="function" ? hqStyleDoc() : null}); },   // HQ Studio (ui/app/40-studio.js)
     // HQ Studio: open the panel (the lobby's kiosk)
     studio: function(tab){ if(typeof hqStudioOpen==="function") hqStudioOpen(tab); },
+    // HQ 3.17 the Grand Prix Circuit (games/hqgpvenue.js): Go opens the Valley's Grand Prix on that circuit and car
+    grandPrix: function(o){ setView("valley"); valleyLoad().then(function(){ if(window.HQV && window.HQV.gpLaunch) window.HQV.gpLaunch(o || {}); }, function(){}); },
     startWorld: HQ_SMOKE ? "base" : (function(){ try { var w=localStorage.getItem("hq_world"); return w==="base"||w==="lobby"||w==="mission" ? w : "base"; } catch(e){ return "base"; } })(),
     // HQ 2.1 Arena City: outside is the street of open HQs unless you are private (HQ closed)
     outside: function(){ return HQ_SMOKE || hqCityOn() ? "city" : "base"; },
@@ -580,15 +583,16 @@ function hqNetSend(){
   if((a===11 || a===12) && !hqNetCan("airliner")) a = 10;   // an airliner (11 the regional jet, 12 the narrow-body, HQ 3.6) needs "airliner": else a plane
   if((a===9 || a===10) && !hqNetCan("plane")) a = 0;   // a plane (9 the seaplane, 10 the prop plane, HQ 3.2) needs "plane" likewise
   if(a===13 && !hqNetCan("petride")) a = 0;   // [3.14] riding your pet (13) needs "petride": else you stand, your pets beside you
-  if(a===14 && !hqNetCan("transit")) a = 0;   // [3.15] a seated passenger (14) needs "transit": else you stand where your seat is
+  if(a===14 && !hqNetCan("tank")) a = 0;      // [3.17] driving your tank (14) needs "tank": else you stand where it is
+  if(a===15 && !hqNetCan("transit")) a = 0;   // [3.18] a seated passenger (15) needs "transit": else you stand where your seat is
   var msg={type:"game", g:"hq", op:"pos", w:w.world, x:Math.round(w.x*100), z:Math.round(w.z*100),
            r:Math.round(((w.yaw*180/Math.PI)%360+360)%360), a:a};
   // on a board: the trick you are doing (k) and how high you are (y, decimetres), so others see it
   var sk = a===4 && HQ3D.inst.skate ? HQ3D.inst.skate() : null;
   if(sk){ msg.k=sk.k|0; msg.y=sk.y|0; }
-  // [3.15] "transit": the mode code (tk, 1..9) and the vehicle id (tv) you sit in, so others draw you in your seat;
-  // without both the Arena drops the frame, so a=14 goes out only with them
-  if(a===14){
+  // [3.18] "transit": the mode code (tk, 1..9) and the vehicle id (tv) you sit in, so others draw you in your seat;
+  // without both the Arena drops the frame, so a=15 goes out only with them
+  if(a===15){
     var tr = HQ3D.inst.transitNet ? HQ3D.inst.transitNet() : null;
     if(tr && (tr.tk|0)>=1 && (tr.tk|0)<=9 && /^[A-Za-z0-9:_-]{1,24}$/.test(String(tr.tv||""))){ msg.tk=tr.tk|0; msg.tv=String(tr.tv); }
     else msg.a=0;
@@ -610,6 +614,9 @@ function hqNetSend(){
   if(cv){ var UR=/^[A-Za-z0-9_-]{1,64}$/;
     if(UR.test(cv.ci||"")) msg.ci=cv.ci; if(UR.test(cv.cv||"")) msg.cv=cv.cv;
     if(Array.isArray(cv.cg) && cv.cg.length===2 && isFinite(cv.cg[0]) && isFinite(cv.cg[1])) msg.cg=[Math.max(-102400, Math.min(102400, Math.round(cv.cg[0]))), Math.max(-102400, Math.min(102400, Math.round(cv.cg[1])))]; }
+  // "carpool" (HQ 3.15, games/hqdrive.js): riding as a passenger, whose vehicle (pb, a user id) and which seat (ps, 1-3)
+  var pl = hqNetCan("carpool") && HQ3D.inst.poolNet ? HQ3D.inst.poolNet() : null;
+  if(pl && /^[A-Za-z0-9_-]{1,64}$/.test(pl.pb||"") && pl.ps>=1 && pl.ps<=3){ msg.pb=pl.pb; msg.ps=pl.ps|0; }
   // [pets 3.14] "pets": the pets out with you (pt: [species, variant, acc, stage, name] x2), drawn following you
   var pt = hqNetCan("pets") && HQ3D.inst.petsNet ? HQ3D.inst.petsNet() : null;
   if(Array.isArray(pt) && pt.length) msg.pt=pt.slice(0,2);
@@ -619,7 +626,15 @@ function hqNetSend(){
   if(mo){ var cl=function(v,m){ v=Math.round(+v||0); return Math.max(-m, Math.min(m, v)); };
     msg.t=Math.round(performance.now())%1000000000; msg.vx=cl(mo.vx*100, 40000); msg.vz=cl(mo.vz*100, 40000);
     msg.yr=cl(mo.yr*180/Math.PI, 3600); msg.rpm=Math.max(0, Math.min(25000, Math.round(+mo.rpm||0))); }
-  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm].join(",")+","+msg.tk+","+msg.tv, now=Date.now();
+  // [3.16] "grenade" (games/hqgrenade.js): your launcher out (gl) and your shots of the last moment (gn: launch point
+  // and velocity in cm and cm/s, kind, age in ms), so everyone flies the same grenades; numbers about the shots only
+  var gr = hqNetCan("grenade") && HQ3D.inst.grenadeNet ? HQ3D.inst.grenadeNet() : null;
+  if(gr){ if(gr.gl) msg.gl=1; if(Array.isArray(gr.gn) && gr.gn.length) msg.gn=gr.gn.slice(0,4); }
+  // [3.16] "tank" (games/hqtank.js): your turret aim (ta: degrees) in a tank's gunner's seat (a carpool seat, pb / ps),
+  // or driving it (14) while nobody is in that seat
+  var tk = hqNetCan("tank") && (msg.pb || a===14) && HQ3D.inst.tankNet ? HQ3D.inst.tankNet() : null;
+  if(tk && Array.isArray(tk.ta)) msg.ta=tk.ta;
+  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.pb,msg.ps,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm,msg.gl,JSON.stringify(msg.gn||0),JSON.stringify(msg.ta||0)].join(",")+","+msg.tk+","+msg.tv, now=Date.now();
   if(key===HQNET.last && now-HQNET.sentAt<2000) return;
   HQNET.last=key; HQNET.sentAt=now;
   try { ws.send(JSON.stringify(msg)); } catch(e){}
@@ -628,7 +643,7 @@ setInterval(function(){ if(VIEW==="hq") hqSync(); hqNetSync(); hqNetSend(); }, 1
 // "Here now": who else is in this HQ, and on which floor.
 var HQ_FLOOR_NAME = {base:"outside", city:"in Arena City", city3d:"in Arena City", lobby:"in the Lobby", mission:"in Mission Control"};
 // (riding a bike shows as "on a bike" beside the floor, a skateboard as "skating", and so on)
-var HQ_MOVING_NAME = {3:" · on a bike", 4:" · skating", 5:" · driving", 6:" · on a motorbike", 7:" · flying", 8:" · flying", 13:" · riding their pet", 14:" · riding transit"};
+var HQ_MOVING_NAME = {3:" · on a bike", 4:" · skating", 5:" · driving", 6:" · on a motorbike", 7:" · flying", 8:" · flying", 13:" · riding their pet", 14:" · driving a tank", 15:" · riding transit"};
 function hqRenderHere(){
   var box=$("hqHere"); if(!box) return;
   var ps=HQNET.peers||[];

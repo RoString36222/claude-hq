@@ -53,8 +53,9 @@ pub const ACC_SADDLE: i64 = 8;
 pub const AFFECTION_MAX: i64 = 1000;
 /// Affection a pet may gain per UTC day.
 pub const CARE_PER_DAY: i64 = 40;
-/// Affection at which a grower reaches stage 1 and 2.
-#[allow(dead_code)] // kept for the record since 3.14.1 (stage_of no longer reads it); clippy -D warnings stays green
+/// Affection at which a grower reaches stage 1 and 2. Since 3.14.1 nothing here reads it (stage_of grows every pet
+/// from adoption); kept as the page's twin (games/hqpets.js STAGE_AT, tests/test_hqpets.py checks they agree).
+#[allow(dead_code)]
 pub const STAGE_AT: [i64; 2] = [150, 400];
 
 /// One species: its id, the HQ level from which it is free, its price in Poke Coins

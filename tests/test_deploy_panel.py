@@ -417,3 +417,111 @@ class BuildStageProgress(unittest.TestCase):
             self.assertTrue(tail.startswith("line "), tail[:40])
         finally:
             _os.unlink(path)
+
+
+# --- everyone's releases: history and the shared live view -----------------------------------
+def T(ts, msg):
+    return "%s  %s\n" % (ts, msg)
+
+
+SAY = "\x1b[1;34m==>\x1b[0m %s\n"
+HIST_LOG = (
+    # 1. the timer ships two commits
+    T("2026-10-20T10:00:00Z", "new commits aaaaaaa -> bbbbbbb")
+    + T("2026-10-20T10:00:00Z", "    bbbbbbb Fix the thing")
+    + T("2026-10-20T10:00:00Z", "    ccccccc Add the other thing")
+    + T("2026-10-20T10:00:00Z", "releasing with ops/release.sh")
+    + SAY % "Fetching main" + SAY % "Checking GitHub CI for bbbbbbb" + "    CI passed\n"
+    + SAY % "Building rs 2026.10.20-bbbbbbb" + SAY % "Starting rs 2026.10.20-bbbbbbb"
+    + SAY % "Released 2026.10.20-bbbbbbb (rs)"
+    + T("2026-10-20T10:09:30Z", "deployed bbbbbbb OK")
+    + T("2026-10-20T10:09:31Z", "  public endpoint healthy")
+    # 2. alice presses Deploy; CI fails
+    + T("2026-10-21T09:00:00Z", "panel: deploy requested by alice")
+    + T("2026-10-21T09:00:01Z", "new commits bbbbbbb -> ddddddd")
+    + T("2026-10-21T09:00:01Z", "    ddddddd Break CI")
+    + T("2026-10-21T09:00:01Z", "releasing with ops/release.sh")
+    + SAY % "Fetching main" + SAY % "Checking GitHub CI for ddddddd"
+    + "    ✗ CI failed for this commit (ARENA_SKIP_CI=1 to override)\n"
+    + T("2026-10-21T09:03:00Z", "ERROR: release failed -- see the ops/release.sh output above")
+    # 3. bob rolls back
+    + T("2026-10-21T09:10:00Z", "panel: rollback requested by bob")
+    + SAY % "Rolling back to 2026.10.19-9999999 (rs)" + "    ✓ rolled back, running 2026.10.19-9999999\n"
+    + T("2026-10-21T09:10:40Z", "panel: rolled back OK")
+    # 4. the timer finds it already running
+    + T("2026-10-22T08:00:00Z", "retrying release of eeeeeee (released: ddddddd)")
+    + T("2026-10-22T08:00:00Z", "releasing with ops/release.sh")
+    + SAY % "Fetching main" + "    ✓ 2026.10.22-eeeeeee (rs) is already running\n"
+    # 5. in progress now
+    + T("2026-10-23T12:00:00Z", "new commits eeeeeee -> fffffff")
+    + T("2026-10-23T12:00:00Z", "releasing with ops/release.sh")
+    + SAY % "Fetching main" + SAY % "Checking GitHub CI for fffffff" + "    CI passed\n"
+    + SAY % "Building rs 2026.10.23-fffffff"
+)
+RELEASES = ("2026-10-19T08:00:00Z 2026.10.19-9999999 rs 9999999\n"
+            "2026-10-20T10:09:29Z 2026.10.20-bbbbbbb rs bbbbbbb\n")
+NOW = 1792756800  # 2026-10-23T12:00:00Z
+
+
+class History(unittest.TestCase):
+    def test_every_release_newest_first_with_who_what_and_how(self):
+        h = deploy_panel.parse_history(HIST_LOG, RELEASES, active=True)
+        got = [(r["kind"], r["by"], r["to"], r["result"], r["reason"]) for r in h]
+        self.assertEqual(got, [
+            ("deploy", "auto", "fffffff", "running", None),
+            ("deploy", "auto", "eeeeeee", "noop", None),
+            ("rollback", "bob", None, "ok", None),
+            ("deploy", "alice", "ddddddd", "fail", "ci_failed"),
+            ("deploy", "auto", "bbbbbbb", "ok", None),
+            ("deploy", "host", "9999999", "ok", None),        # only backend/.releases knows this one
+        ])
+
+    def test_details(self):
+        h = {(r["kind"], r["to"]): r for r in deploy_panel.parse_history(HIST_LOG, RELEASES)}
+        ship = h[("deploy", "bbbbbbb")]
+        self.assertEqual(ship["version"], "2026.10.20-bbbbbbb")
+        self.assertEqual(ship["end"] - ship["start"], 570)
+        self.assertEqual(ship["public"], True)
+        self.assertEqual([c["subject"] for c in ship["commits"]], ["Fix the thing", "Add the other thing"])
+        self.assertEqual(h[("rollback", None)]["version"], "2026.10.19-9999999")
+        # the release made in the log is not listed twice from backend/.releases
+        self.assertEqual(sum(1 for r in deploy_panel.parse_history(HIST_LOG, RELEASES) if r["version"] == "2026.10.20-bbbbbbb"), 1)
+
+    def test_not_running_unless_told(self):
+        self.assertEqual(deploy_panel.parse_history(HIST_LOG, "")[0]["result"], "interrupted")
+
+    def test_the_cap(self):
+        log = "".join(T("2026-10-20T10:%02d:00Z" % i, "new commits a%06d -> b%06d" % (i, i)) for i in range(50))
+        self.assertEqual(len(deploy_panel.parse_history(log, "")), deploy_panel.HISTORY_MAX)
+
+
+class Live(unittest.TestCase):
+    def test_a_release_in_progress_is_seen_by_everyone(self):
+        j = deploy_panel.live(HIST_LOG, mtime=NOW - 30, now=NOW)
+        self.assertTrue(j["active"])
+        self.assertEqual((j["by"], j["kind"], j["to"], j["phase"], j["started"]), ("auto", "deploy", "fffffff", "BUILD", NOW))
+
+    def test_a_silent_log_is_not_in_progress(self):
+        self.assertFalse(deploy_panel.live(HIST_LOG, mtime=NOW - deploy_panel.STALE_SECS - 1, now=NOW)["active"])
+
+    def test_an_ended_run_is_not_in_progress(self):
+        done = HIST_LOG + SAY % "Starting rs 2026.10.23-fffffff" + SAY % "Released 2026.10.23-fffffff (rs)" \
+            + T("2026-10-23T12:09:00Z", "deployed fffffff OK")
+        self.assertFalse(deploy_panel.live(done, mtime=NOW, now=NOW)["active"])
+        noop = HIST_LOG.split("# 5")[0] if "# 5" in HIST_LOG else HIST_LOG[:HIST_LOG.index("2026-10-23T12:00:00Z")]
+        self.assertFalse(deploy_panel.live(noop, mtime=NOW, now=NOW)["active"])
+
+    def test_a_panel_deploy_names_who_pressed_it(self):
+        log = T("2026-10-23T12:00:00Z", "panel: deploy requested by alice") + T("2026-10-23T12:00:01Z", "new commits a -> b") \
+            + SAY % "Fetching main"
+        j = deploy_panel.live(log, mtime=NOW, now=NOW)
+        self.assertTrue(j["active"])
+        self.assertEqual(j["by"], "alice")
+
+    def test_the_page_follows_everyones_release_and_shows_history(self):
+        page = deploy_panel.PAGE
+        self.assertIn('id="hist"', page)
+        self.assertIn('fetch("/api/history"', page)
+        self.assertIn("function tick()", page)
+        block = page[page.index("function history()"):page.index("function tick()")]
+        self.assertNotIn("innerHTML", block)              # data reaches the page as text only

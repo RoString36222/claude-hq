@@ -10,7 +10,7 @@ below-ground notes, the departures list with chips and favourites, a board, the 
 interchanges, dashed underground stretches and water, vehicles, seeded seats and gates, the boarding-pass pattern, patch
 notes newest first, achievements); and the apps rendered (Tickets planning, booking and checking in for free,
 Departures expanding to a real table, the Transit map's SVG and its text list, Settings). Python: patchnotes.json
-parses, newest first, 3.15.0 on top; no innerHTML and no Math.random in any of the phone's files.
+parses, newest first, 3.18.0 on top; no innerHTML and no Math.random in any of the phone's files.
 Skipped when node is not installed. Stdlib only."""
 import json
 import os
@@ -646,10 +646,10 @@ console.log(JSON.stringify(o)); process.exit(0);
         self.assertEqual(out["cab"], "go")
         self.assertEqual(out["ach"][0], ["100", "30"])
         self.assertIn("Score50", out["ach"][1])
-        self.assertEqual(out["notes"][0], 11)
+        self.assertEqual(out["notes"][0], 15)
         self.assertTrue(out["notes"][1])
         self.assertFalse(out["notes"][2])
-        self.assertEqual(out["notes"][3], "3.15.0 The transport revamp")
+        self.assertEqual(out["notes"][3], "3.18.0 The transport revamp")
         ids = {i[0]: i for i in out["ids"]}
         for k in ("tickets", "departures", "map", "achievements", "notes", "settings"):
             self.assertIn(k, ids)
@@ -663,7 +663,7 @@ class Static(unittest.TestCase):
         j = json.loads(read("games", "patchnotes.json"))
         e = j["entries"]
         self.assertGreaterEqual(len(e), 8)
-        self.assertEqual(e[0]["version"], "3.15.0")
+        self.assertEqual(e[0]["version"], "3.18.0")
         self.assertEqual(e[0]["title"], "The transport revamp")
         for x in e:
             self.assertIsInstance(x["version"], str)

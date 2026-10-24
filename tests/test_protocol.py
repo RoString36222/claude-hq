@@ -41,8 +41,8 @@ class ProtocolTables(unittest.TestCase):
             self.assertTrue(cp[g][0] <= int(v) <= cp[g][1], g)
 
     def test_hq_lists_the_315_phone_and_transit_caps_without_a_bump(self):
-        # HQ 3.15: "transit" (a = 14, a seated passenger, tk / tv) and "phone" (nearby chat, call ringing) are
-        # additive, so hq stays v4 -- a bump would tell every pre-3.15 page "update Claude HQ" (CLIENT_PROTO hq [1, 4]).
+        # HQ 3.18: "transit" (a = 15, a seated passenger, tk / tv; 14 is a tank) and "phone" (nearby chat, call ringing) are
+        # additive, so hq stays v4 -- a bump would tell every pre-3.18 page "update Claude HQ" (CLIENT_PROTO hq [1, 4]).
         rs = read("backend", "src", "protocol.rs")
         m = re.search(r'\("hq", (\d+), &\[([^\]]*)\]\)', rs)
         self.assertIsNotNone(m, "no hq row in protocol.rs")

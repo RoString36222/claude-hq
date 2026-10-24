@@ -110,7 +110,7 @@ B.g.traverse(o => { if((o.isMesh || o.isSprite) && o.visible){ dc++; if(o.isInst
 const r0 = veh.length ? veh[0].rotation.y : 0; B.animate(1, 0.5, 1); const r1 = veh.length ? veh[0].rotation.y : 0;
 const F = D.frame(site), cr = Math.cos(F.rot), sr = Math.sin(F.rot);
 const local = p => ({x: (p.x - F.cx)*cr - (p.z - F.cz)*sr, z: (p.x - F.cx)*sr + (p.z - F.cz)*cr});
-out.build = {dc: dc, vehicles: veh.length, cells: B.layout.cells.length, onSale: H.hqVehicles.onSale(cat).reduce((n, c) => n + H.hqVehicles.byClass(cat, c.id).filter(H.hqVehicles.isSlot).length, 0), hall: B.layout.hall, FW: [D.frame(site).w, D.frame(site).d], inst: inst, turned: r1 - r0,
+out.build = {dc: dc, vehicles: veh.length, cells: B.layout.cells.length, onSale: H.hqVehicles.onSale(cat).reduce((n, c) => n + H.hqVehicles.byClass(cat, c.id).filter(v => H.hqVehicles.isSlot(v, cat)).length, 0), hall: B.layout.hall, FW: [D.frame(site).w, D.frame(site).d], inst: inst, turned: r1 - r0,
   boxes: B.boxes.length, lod: B.lod.length, doors: B.doors.map(d => ({kind: d.kind, live: d.live, hit: !!B.hits[0] && B.hits[0].userData.door === d})),
   forecourt: B.forecourt.map(local), door: local(B.door), F: {w: F.w, d: F.d}, x: B.x, z: B.z, top: B.top,
   insideDoor: B.inside(B.forecourt[0].x, B.forecourt[0].z), insideFar: B.inside(B.x + 500, B.z + 500),
@@ -178,6 +178,7 @@ class DealerNode(unittest.TestCase):
             raise AssertionError(r.stderr[-3000:])
         cls.o = json.loads(r.stdout.strip().splitlines()[-1])
         cls.cat = json.loads(read("games", "vehicles", "catalogue.json"))
+        cls.slots = {c["id"]: c["slots"] for c in cls.cat["classes"] if "slots" in c}   # [3.17] a class listing more than 4
 
     def test_the_commons_flagship_takes_one_building_lot(self):
         c = self.o["commons"]
@@ -256,7 +257,7 @@ class DealerNode(unittest.TestCase):
         for t in M:
             for s in t["sections"]:
                 for c in s["classes"]:
-                    self.assertIn(len(c["vehicles"]), (1, 2, 3, 4), c["id"])   # 3.9: 1 to 4 a class
+                    self.assertTrue(1 <= len(c["vehicles"]) <= self.slots.get(c["id"], 4), c["id"])   # 3.9: 1 to 4 a class ([3.17] or its slots)
                     on_sale += 1
                     for v in c["vehicles"]:
                         self.assertFalse(v["locked"], v["id"])
@@ -265,9 +266,9 @@ class DealerNode(unittest.TestCase):
                         self.assertEqual(v["priceText"], "Free", v["id"])
         by_class = {}
         for v in self.cat["vehicles"]:
-            if v.get("slot") in (1, 2, 3, 4):
+            if isinstance(v.get("slot"), int) and 1 <= v["slot"] <= self.slots.get(v["class"], 4):
                 by_class.setdefault(v["class"], []).append(v)
-        self.assertEqual(on_sale, sum(1 for k, vs in by_class.items() if 1 <= len(vs) <= 4))
+        self.assertEqual(on_sale, sum(1 for k, vs in by_class.items() if 1 <= len(vs) <= self.slots.get(k, 4)))
         m2 = [v for t in M for s in t["sections"] for c in s["classes"] for v in c["vehicles"] if v["id"] == "bmw-m2"][0]
         self.assertEqual(m2["owned"], 1)
 

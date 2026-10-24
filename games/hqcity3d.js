@@ -480,6 +480,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var dealerSite = null, dealerB = null;          // the dealership (games/hqdealer.js): its site and building
   var casinoSite = null, casinoB = null;          // the casino (games/hqcasino.js): its site and the building on the street
   var tuningSite = null, tuningB = null;          // [3.13] the Tuning shop (games/hqtuning.js): its site and the workshop
+  var gpSite = null, gpB = null;                  // [3.17] the Grand Prix Circuit (games/hqgpvenue.js): its site and the venue
   var petSite = null, petB = null;                // [pets 3.14] the Pet shop (games/hqpets.js): its site and building
   var civics = [], civicG = new THREE.Group(), boatG = new THREE.Group(), boats = [], civicLod = null, decks = [];
   var oc = null, sea = null, arch = null, tsim = null, tview = null, nsim = null, ndraw = null;
@@ -976,6 +977,14 @@ HQV.hqWorlds.city3d = function(c, w){
         civicG.add(TB.g); civics.push(TB); tuningB = TB;
         TB.hits.forEach(function(o){ hits.push(o); }); TB.doors.forEach(function(d){ doors.push(d); });
       } catch(e){ tuningB = null; }
+    }
+    gpB = null;                                                                      // [3.17] the Grand Prix Circuit
+    if(gpSite && HQV.hqGpVenue && (gpSite.tier == null || (gpSite.tier | 0) <= tier)){
+      try {
+        var GB = HQV.hqGpVenue.build(c, gpSite, {tier: tier, night: night});
+        civicG.add(GB.g); civics.push(GB); gpB = GB;
+        GB.hits.forEach(function(o){ hits.push(o); }); GB.doors.forEach(function(d){ doors.push(d); });
+      } catch(e){ gpB = null; }
     }
     petB = null;                                                        // [pets 3.14] the Pet shop
     if(petSite && HQV.hqPets && HQV.hqPets.build){
@@ -2636,6 +2645,7 @@ HQV.hqWorlds.city3d = function(c, w){
     }
     if(dealerB && c.dealer && (dealerB.inside(p.x, p.z) || Math.hypot(p.x - dealerB.door.x, p.z - dealerB.door.z) < 4)){ c.dealer.open(); return true; }
     if(tuningB && c.tuning && (tuningB.inside(p.x, p.z) || Math.hypot(p.x - tuningB.door.x, p.z - tuningB.door.z) < 4)){ c.tuning.open(); return true; }   // [3.13]
+    if(gpB && c.gp && (gpB.inside(p.x, p.z) || Math.hypot(p.x - gpB.door.x, p.z - gpB.door.z) < 4)){ c.gp.open(); return true; }   // [3.17]
     if(petB && petB.near(p.x, p.z) && HQV.petsUi){ HQV.petsUi.open("adopt"); return true; }   // [pets 3.14] the Pet shop
     var rs = rail && rail.station(p.x, p.z); if(rs){ openTravelMenu(rs); return true; }   // rail: at the station's door, before its bus bay
     if(transit){ if(transit.use(p)) return true; }                                        // [3.15] a stop, station, pier or entrance: the board menu
@@ -2661,6 +2671,9 @@ HQV.hqWorlds.city3d = function(c, w){
   // [3.13] the Tuning shop, for tools (as .dealer): where it is and its door
   w.tuning = {site: function(){ return tuningB ? {id: tuningSite.id, name: tuningSite.name, x: tuningB.x, z: tuningB.z, door: tuningB.door} : null; },
               inside: function(x, z){ return !!(tuningB && tuningB.inside(x, z)); }};
+  // [3.17] the Grand Prix Circuit, for tools (as .tuning): where it is and its door
+  w.gp = {site: function(){ return gpB ? {id: gpSite.id, name: gpSite.name, x: gpB.x, z: gpB.z, door: gpB.door} : null; },
+          inside: function(x, z){ return !!(gpB && gpB.inside(x, z)); }};
   // a stop's or a terminal's menu, or the Go to panel: hq3d's keys stand still (the keys are theirs)
   w.menuOpen = function(){ return !!menu || !!(nui && nui.isOpen()); };
   function showTalk(line){
@@ -2874,7 +2887,8 @@ HQV.hqWorlds.city3d = function(c, w){
     }
     if(talkL && nowMs > talkL.until){ S.remove(talkL.o); disposeTree(talkL.o); talkL = null; }
     if(dealerB && c.active && c.active(w)) HQV.hqCity3d.dealer = w.dealer;
-    if(tuningB && c.active && c.active(w)) HQV.hqCity3d.tuning = w.tuning;   // [3.13]   // the dealership, for tools (as .ships, .air)
+    if(tuningB && c.active && c.active(w)) HQV.hqCity3d.tuning = w.tuning;   // [3.13]
+    if(gpB && c.active && c.active(w)) HQV.hqCity3d.gp = w.gp;               // [3.17]   // the dealership, for tools (as .ships, .air)
     if(c.active && c.active(w)){ HQV.hqCity3d.trafficAt = trafficAt; HQV.hqCity3d.trafficNow = w.callRoad.traffic; }   // for tools
     busStep();
     if(air) air.update(t, dt, k, cam);                                     // air: jets, the radar
@@ -2898,6 +2912,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(dealerB){ dealerB.dispose(); dealerB = null; }
     if(casinoB){ casinoB.dispose(); casinoB = null; }
     if(tuningB){ tuningB.dispose(); tuningB = null; }
+    if(gpB){ gpB.dispose(); gpB = null; }                              // [3.17]
     if(petB){ petB.dispose(); petB = null; }                           // [pets 3.14]
     if(air){ air.destroy(); air = null; }                                  // air:
     carparkDestroy();                                                      // carpark
@@ -3152,6 +3167,7 @@ HQV.hqWorlds.city3d = function(c, w){
   w.onLeave = function(){ overlays(false); };
   w.onEnter = function(){ overlays(true); if(transit && transit.activate) transit.activate(); };
   w.mapWaypoint = function(x, z){ return navPick(x, z); };
+  w.navGraph = function(){ return W && HQV.hqnav ? navGraph() : null; };   // [autopilot] the roads a car follows with no route
   // for tests and tools: the route as it stands
   w.nav = function(){ return {route: route ? {x: route.x, z: route.z, label: route.label, kind: route.kind, mode: route.mode, done: route.done, R: route.R} : null,
                               minimap: mm, ui: nui, fx: fx, places: W && HQV.hqnav ? navPlaces : null, goTo: navTo, clear: navClear, step: navStep}; };
@@ -3183,6 +3199,8 @@ HQV.hqWorlds.city3d = function(c, w){
     // [stunts] the jumps, the loop and the sea launch (games/hqstunts.js): open land the shops have left, read off this
     // city's own layout; the building lots under them are cleared before anything indexes or draws them
     if(V2 && HQV.hqStunts){ try { stApi = HQV.hqStunts.api(HQV.hqStunts.claim(W, tier)); } catch(e){ stApi = null; } }
+    // [3.17] the Grand Prix Circuit: after the shops and the stunts, so it moves none of them (from tier 2)
+    if(V2 && HQV.hqGpVenue){ try { gpSite = HQV.hqGpVenue.place(W, tier); } catch(e){ gpSite = null; } }
     indexBuildings();
     wb = HQV.worldbuild.create(c, W, V2 ? {scene: S, quality: 2, tier: tier, gap: !!(HQV.hqBridges && W.river)} : {scene: S, quality: 2});
     S.add(wb.root); S.add(staticG); S.add(hqG);
@@ -3274,6 +3292,7 @@ HQV.hqWorlds.city3d = function(c, w){
   w.camModes = ["map", "far", "chase", "near", "fp", "classic", "photo", "cine"];
   w.startMode = "chase";           // the full 3D map view is heavy: M grows the minimap instead (w.bigMap)
   w.bigMap = function(){ if(!mm) return false; mm.expand(); return true; };
+  w.bigMapOpen = function(){ return !!(mm && mm.isBig()); };   // [3.15] hq3d gives a captured mouse back for it
   if(arriveAt) w.startMode = "chase";            // off a ferry, a train, a boat: on the ground, not over the map
   w.skateBase = 0; w.skatepark = null;
   w.spawn = {x: 0, y: 0, z: 10, yaw: 0, camYaw: 0.55}; w.spawnFrom = {lobby: w.spawn};

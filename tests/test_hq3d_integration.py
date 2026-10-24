@@ -73,7 +73,71 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           # rail (3.x): the lines between cities, their trains
                           "hqrail",
                           # the vehicle garage (3.4); City 3.2: the weather, the landmarks and the amusement park
-                          "hqcarpark", "hqweather", "hqspectacle", "hqstunts", "hqcity3d"])
+                          "hqcarpark", "hqweather", "hqspectacle", "hqstunts",
+                          # transport (3.15): the ride core and commuters, the tramway and coaches, the metro and the
+                          # underground, City Line and gondola, water buses, cabs and heli calling, the phone and its apps,
+                          # the gallery, and the City's transport glue; all before the City that wires them
+                          "hqride", "hqcommute", "hqtramway", "hqcoach", "hqmetro", "hqunderground", "hqcityrail", "hqgondola",
+                          "hqferries", "hqcabs", "hqhelicall", "hqphone", "hqphoneapps", "hqphonecabs", "hqphonecomms", "hqgallery",
+                          "hqtransit", "hqcity3d"])
+
+    def test_transport_scripts_are_optional(self):
+        # [3.15] every transport part is a 3D-City part: one failing to load takes only its feature out
+        m = re.search(r"var HQ_SCRIPTS_3D = \{([^}]*)\};", read(HQ_UI))
+        self.assertTrue(m)
+        for n in ("hqride", "hqcommute", "hqtramway", "hqcoach", "hqmetro", "hqunderground", "hqcityrail", "hqgondola", "hqferries",
+                  "hqcabs", "hqhelicall", "hqphone", "hqphoneapps", "hqphonecabs", "hqphonecomms", "hqgallery", "hqtransit"):
+            self.assertIn(n + ":1", m.group(1), n)
+        # and each is feature-detected where the City uses it
+        city = read(os.path.join(ROOT, "games", "hqcity3d.js"))
+        self.assertIn("if(!HQV.hqTransit || !W) return;", city)
+        hub = read(os.path.join(ROOT, "games", "hqtransit.js"))
+        for g in ("HQV.hqMetro &&", "HQV.hqCityRail &&", "HQV.hqGondola &&", "HQV.hqFerries &&", "HQV.hqCabs && HQV.hqCabs.mount",
+                  "HQV.hqHeliCall && HQV.hqHeliCall.mount", "HQV.hqTramway", "HQV.hqCoach", "HQV.hqUndergroundCtl"):
+            self.assertIn(g, hub, g)
+        self.assertNotIn("innerHTML", hub)
+        self.assertNotIn("Math.random", hub)
+
+    def test_the_phone_is_wired(self):
+        # [3.15] the phone: mounted beside the call list, in the onKey owns-chain, Backquote / I, a button, the host
+        hq = read(os.path.join(ROOT, "games", "hq3d.js"))
+        on_key = func_body(hq, "onKey")
+        self.assertIn("if(phoneUi && phoneUi.isOpen()){ keys = {}; if(phoneUi.owns(e)) return; }", on_key)
+        self.assertLess(on_key.index("callUi.isOpen()"), on_key.index("phoneUi.isOpen()"), "after the call list in the owns-chain")
+        self.assertIn('(e.code === "Backquote" || (e.code === "KeyI" && cur === worlds.city))', on_key)
+        self.assertIn("HQV.hqPhone.mount(el, phoneHost)", hq)
+        self.assertIn("HQV.hqPhoneComms.attach(phoneUi)", hq)
+        self.assertIn('phoneBtn.setAttribute("aria-label", "Phone")', hq)
+        for k in ("startRide:", "places:", "get cabs()", "get heli()", "get water()", "vehicles:", "dealer:", "air:", "travel:", "photo: photoBlob",
+                  "selfie:", "track:", "get social()", "sfx: phoneSfx", "settings:"):
+            self.assertIn(k, hq, k)
+        # the page: #phoneBack is a modal, Cmd-K has "Phone", Backquote from anywhere, the stylesheet and 41-phone.js
+        drawer = read(os.path.join(ROOT, "ui", "app", "09-drawer.js"))
+        self.assertIn('if($("phoneBack") && $("phoneBack").classList.contains("open")) return $("phoneBack");', drawer)
+        self.assertIn('e.code==="Backquote"', drawer)
+        self.assertIn('label:"Phone"', read(os.path.join(ROOT, "ui", "app", "14-overlays.js")))
+        idx = read(os.path.join(ROOT, "index.html"))
+        self.assertIn('<link rel="stylesheet" href="/games/hqphone.css">', idx)
+        self.assertIn("//@include ui/app/40-studio.js\n//@include ui/app/41-phone.js\n", idx)
+
+    def test_the_ride_holds_and_seats_you(self):
+        # [3.15] the carry's anim: seated (hips at the seat), at a pole, walking on and off; a seat camera shows you only in chase
+        hq = read(os.path.join(ROOT, "games", "hq3d.js"))
+        body = func_body(hq, "moveAvatar")
+        self.assertIn('avatar.hy = cp.anim === "sit" ? cp.y - SIT_H : cp.y;', body)
+        self.assertIn('if(cp.anim === "sit") setAnim(avatar.ch, "sit");', body)
+        self.assertIn('showAvatar(cp.mode === "chase");', func_body(hq, "tripCam"))
+        # others riding (a = 14) are drawn in their seat from this page's own timetable
+        self.assertIn("if(P.a === 14 && P.tv && !P.board && !P.bike && cur.transit){", func_body(hq, "placePeers"))
+        self.assertIn("if(!ride && inst.transitNet()) return 14;", hq)
+
+    def test_presence_transit_is_gated(self):
+        # [3.15] a seated passenger (a = 14) goes out only where the Arena lists "transit", and only with tk and tv
+        body = func_body(read(HQ_UI), "hqNetSend")
+        self.assertIn('if(a===14 && !hqNetCan("transit")) a = 0;', body)
+        self.assertIn("msg.tk=tr.tk|0; msg.tv=String(tr.tv);", body)
+        self.assertIn("else msg.a=0;", body)
+        self.assertIn('+","+msg.tk+","+msg.tv', body)       # in the dedupe key
 
     def test_multi_hq_range_covers_server(self):
         m = re.search(r"\bhq:\[(\d+),(\d+)\]", read(MULTI))

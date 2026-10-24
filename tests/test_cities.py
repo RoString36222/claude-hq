@@ -486,8 +486,8 @@ class CitiesTest(unittest.TestCase):
     def test_pure_helpers(self):
         p = self.out["pure"]
         self.assertEqual(p["owner"], [ME, "commons", "commons", "commons"])
-        self.assertEqual(p["islandOf"], ["user:" + ME + "@2", None, None])
-        self.assertEqual(p["worldOk"], [True, True, True, False, False, False, False])
+        self.assertEqual(p["islandOf"], ["user:" + ME + "@3", None, None])           # live islands are @3 (3.15, D2)
+        self.assertEqual(p["worldOk"], [True, True, True, True, False, False, False])  # claude-hq@3 is the live Commons
         self.assertEqual(p["net"], ["city3d:claude-hq@2", "city3d:user:" + ME + "@2", "city3d", "city3d"])
         # by the Arena's ranks: a row for a rank with no lot, or a user not on the list, places nobody
         self.assertEqual(p["ranks"], [["a", 5], ["b", 0]])
@@ -610,7 +610,7 @@ class CitiesTest(unittest.TestCase):
         self.assertEqual(n["goBtn"], 1, "a Go to button under the island / Commons button")
         for k in ("dock", "port", "travel", "townhall", "hq"):     # the Commons' HQs here are c0's and c1's
             self.assertIn(k, n["kinds"])
-        self.assertEqual(n["ferry"], ["My island (ferry)", "user:" + ME + "@2"])
+        self.assertEqual(n["ferry"], ["My island (ferry)", "user:" + ME + "@3"])     # live islands are @3 (3.15, D2)
         self.assertTrue(n["dockDoorLand"], "the dock's door (where a route ends) is on land")
 
     def test_go_to_panel_keys_do_not_leak(self):
@@ -684,7 +684,7 @@ class CitiesTest(unittest.TestCase):
         self.assertFalse(b["menuAfter"])
         self.assertIsNone(b["carryWaiting"], "waiting at the stop, you still walk")
         self.assertTrue(b["boarded"])
-        self.assertEqual(b["fare"], [["/api/arena/city/commons/fare", {"kind": "bus"}]], "one fare, at boarding")
+        self.assertEqual(b["fare"], [], "every ride is free (3.15, D4): no fare is posted")
         self.assertGreater(b["moved"], 20, "the bus carries you along the line")
         self.assertEqual(b["off"], 1, "you step off at your stop")
         self.assertIsNone(b["carryAfter"])
@@ -725,7 +725,7 @@ class CitiesTest(unittest.TestCase):
         self.assertTrue(i["home"])
         self.assertIn("⛲ The Commons", i["button"])
         self.assertEqual(i["townHall"], [ME, True], "your own town hall: owner controls")
-        self.assertEqual(i["buttonGo"], [["claude-hq@2", None]])
+        self.assertEqual(i["buttonGo"], [["claude-hq@3", None]])     # the live Commons (an older Arena: the chain falls back to @2)
         self.assertEqual(self.out["leftover"], 0, "a destroyed City leaves no buttons or menus behind")
 
     def test_fallbacks(self):

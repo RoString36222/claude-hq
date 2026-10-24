@@ -26,6 +26,19 @@
 //! before any street grows, bridged by the arterials and the graded roads, the dock on
 //! its bank near the plaza and the port on its basin.
 //!
+//! Version 3 (`claude-hq@3`, `user:<uuid>@3`, HQ 3.15) is version 2 with water and
+//! lines: lakes, canals and a marina laid with the river before any street grows
+//! (water.rs: the canals join the river, the lakes and the marina ride on it as pools,
+//! so everything that keeps off the river keeps off them), carved into the base
+//! terrain; once the roads are seated and carved, the piers, the harbour office, the
+//! water network and routes; then the metro, the railway and the gondola (metro.rs,
+//! railway.rs, gondola.rs), whose claims become sites (a claimed lot is no longer a lot,
+//! never an HQ's); then every lot and site seated on the final ground:
+//!
+//!   river -> water (lay) -> base terrain (coast, river and canals shaped, lakes and
+//!     marina carved) -> organic city -> civic, transit, island as @2 -> edits, roads
+//!     seated and carved -> water (finish) -> metro, railway, gondola -> seat
+//!
 //! Layout (where roads, blocks, lots and sites are) comes from the seed and the
 //! profile only; terrain edits change heights, never layout. The result is a
 //! WorldDoc of plain data layers; features read the layers they need. Every
@@ -37,19 +50,28 @@
 pub mod city;
 pub mod civic;
 pub mod districts;
+pub mod gondola;
 pub mod island;
+pub mod lines;
+pub mod metro;
 pub mod noise;
 pub mod organic;
 pub mod profile;
+pub mod railway;
 pub mod river;
 pub mod rng;
 pub mod roads;
 pub mod terrain;
 pub mod transit;
+pub mod water;
 pub mod zones;
 
 #[cfg(test)]
+mod lines_tests;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod v3_tests;
 
 use serde::Serialize;
 
@@ -58,17 +80,19 @@ pub use terrain::Edit;
 /// The generator's versions. Add one when a change would alter an existing
 /// world, and keep the old behaviour reachable: things are stored against a
 /// world id (lots, maps, scores), so `claude-hq@1` must keep generating the
-/// same world forever. 1 is the grid city, 2 the organic one.
-pub const VERSION: [u32; 2] = [1, 2];
+/// same world forever. 1 is the grid city, 2 the organic one, 3 the organic one with
+/// its water and lines (HQ 3.15).
+pub const VERSION: [u32; 3] = [1, 2, 3];
 
 /// The profile a world id's seed and version select: the grid city at @1; at @2
-/// a personal island for a `user:` seed, else the Commons.
+/// a personal island for a `user:` seed, else the Commons; at @3 the same with water.
 pub fn profile_for(seed: &str, version: u32) -> profile::Profile {
-    match version {
+    let p = match version {
         1 => profile::city(),
         _ if seed.starts_with("user:") => profile::island(),
         _ => profile::commons(),
-    }
+    };
+    if version >= 3 { profile::with_water(p) } else { p }
 }
 
 /// Where world `id`'s river meets the sea, in the world's own frame: [x, z] cm of the
@@ -128,6 +152,16 @@ pub struct Layers {
     /// Organic worlds (@2): the river, from the sea to its harbour basin.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub river: Option<river::River>,
+    /// @3: the lakes, canals and marina, the piers and the water routes (water.rs); the
+    /// metro (metro.rs), the City Line and Island Link (railway.rs), the gondola (gondola.rs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub water: Option<water::Water>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metro: Option<metro::Metro>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rail: Option<railway::Rail>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gondola: Option<gondola::Gondola>,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -144,6 +178,14 @@ pub struct Hashes {
     pub island: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub river: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub water: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metro: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gondola: Option<String>,
     pub edits: String,
     /// Of all the above: the world's one fingerprint.
     pub world: String,
@@ -172,8 +214,16 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
     let seed = rng::fnv1a64(seed_str.as_bytes());
     let p = profile_for(seed_str, version);
 
-    let river = river::River::new(seed, &p)?;
-    let base = terrain::generate_with(seed, &p, river.as_ref());
+    let mut river = river::River::new(seed, &p)?;
+    // @3: the water, laid with the river before any street grows
+    let mut plan = match (&mut river, island::Coast::new(seed, &p)) {
+        (Some(r), Some(c)) if p.water => Some(water::lay(seed, &p, r, &c)),
+        _ => None,
+    };
+    let mut base = terrain::generate_with(seed, &p, river.as_ref());
+    if let Some(plan) = plan.as_mut() {
+        plan.shape(&mut base);
+    }
     let (mut city, mut roads, districts) = if version == 1 {
         let city = city::generate(seed, &p, &base)?;
         let roads = roads::generate(seed, &p, &base, &city.blocks)?;
@@ -201,9 +251,23 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
     terrain.apply(edits)?;
     roads.seat(&terrain, &p)?;
     roads.carve(&mut terrain);
+    // @3: the rest of the water, then the lines, their claims made sites before every
+    // lot and site is seated on the final ground
+    let water = match (plan, river.as_ref(), island::Coast::new(seed, &p)) {
+        (Some(plan), Some(r), Some(c)) => Some(plan.finish(&p, &roads, &mut city, r, &c)),
+        _ => None,
+    };
+    let (metro, rail, gondola) = if version >= 3 {
+        let (m, r, g) = lines(seed, &p, &terrain, &roads, &mut city, river.as_ref(), water.as_ref(), island.as_ref())?;
+        (Some(m), Some(r), Some(g))
+    } else {
+        (None, None, None)
+    };
     city.seat(&terrain);
 
-    let layers = Layers { terrain, districts, roads, blocks: city.blocks, lots: city.lots, sites: city.sites, zones, transit, island, river };
+    let layers = Layers {
+        terrain, districts, roads, blocks: city.blocks, lots: city.lots, sites: city.sites, zones, transit, island, river, water, metro, rail, gondola,
+    };
     let mut hashes = Hashes {
         terrain: hash(&layers.terrain),
         districts: hash(&layers.districts),
@@ -214,9 +278,103 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         transit: layers.transit.as_ref().map(hash),
         island: layers.island.as_ref().map(hash),
         river: layers.river.as_ref().map(hash),
+        water: layers.water.as_ref().map(hash),
+        metro: layers.metro.as_ref().map(hash),
+        rail: layers.rail.as_ref().map(hash),
+        gondola: layers.gondola.as_ref().map(hash),
         edits: hash(&edits),
         world: String::new(),
     };
     hashes.world = hash(&hashes);
     Ok(WorldDoc { id: format!("{seed_str}@{version}"), seed: seed_str.to_string(), version, profile: p.name, size_cm: p.size_cm, layers, hashes })
+}
+
+/// @3: the metro, the railway and the gondola, planned in that order on the finished
+/// world (each planner sees the claims of those before it applied), their claims made
+/// sites.
+#[allow(clippy::too_many_arguments)] // the world the lines are planned on
+fn lines(
+    seed: u64,
+    p: &profile::Profile,
+    terrain: &terrain::Terrain,
+    roads: &roads::Roads,
+    city: &mut city::City,
+    river: Option<&river::River>,
+    water: Option<&water::Water>,
+    island: Option<&island::Island>,
+) -> Result<(metro::Metro, railway::Rail, gondola::Gondola), String> {
+    let mut polys: Vec<Vec<[i64; 2]>> = water.map_or(Vec::new(), |w| w.bodies.iter().map(|b| b.poly.clone()).collect());
+    if let Some(r) = river {
+        polys.push(r.poly.clone());
+    }
+    let coast = island.map(|i| i.coast.as_slice());
+    let ctx = |city: &city::City| -> (Vec<city::Lot>, Vec<city::Site>) { (city.lots.clone(), city.sites.clone()) };
+    let (lots, sites) = ctx(city);
+    let c = lines::Ctx { seed, profile: p, terrain, roads, lots: &lots, sites: &sites, river, water: &polys, coast };
+    let (metro, mut taken) = metro::plan(&c)?;
+    claim(city, &taken)?;
+    let (lots, sites) = ctx(city);
+    let c = lines::Ctx { lots: &lots, sites: &sites, ..c };
+    let (rail, rc) = railway::plan(&c, &metro)?;
+    claim(city, &rc)?;
+    taken.extend(rc);
+    let (lots, sites) = ctx(city);
+    let c = lines::Ctx { lots: &lots, sites: &sites, ..c };
+    let (gondola, gc) = gondola::plan(&c, &taken)?;
+    claim(city, &gc)?;
+    Ok((metro, rail, gondola))
+}
+
+/// Apply a planner's claims: each a site of the claim's kind, id, tier, footprint and
+/// front; a claimed lot is no longer a lot (never an HQ's: that is an error). The lots
+/// are numbered again (ids and growth ranks in order), as the organic generator leaves them.
+fn claim(city: &mut city::City, claims: &[lines::Claim]) -> Result<(), String> {
+    use organic::geom::{extent, left, P};
+    let mut gone = std::collections::BTreeSet::new();
+    for c in claims {
+        if let Some(id) = c.lot {
+            let l = city.lots.iter().find(|l| l.id == id).ok_or_else(|| format!("claim {}: no lot {id}", c.id))?;
+            if l.kind == "hq" {
+                return Err(format!("claim {}: lot {id} is an HQ's", c.id));
+            }
+            gone.insert(id);
+        }
+        if city.sites.iter().any(|s| s.id == c.id) {
+            return Err(format!("claim {}: the site id is taken", c.id));
+        }
+    }
+    for c in claims {
+        let poly: Vec<P> = c.poly.iter().map(|q| (q[0], q[1])).collect();
+        let f: P = (c.front[0], c.front[1]);
+        let (w, d) = if poly.is_empty() {
+            (0, 0)
+        } else {
+            let ((a0, a1), (b0, b1)) = (extent(&poly, left(f)), extent(&poly, f));
+            (a1 - a0, b1 - b0)
+        };
+        let block = c
+            .lot
+            .and_then(|id| city.lots.iter().find(|l| l.id == id).map(|l| l.block))
+            .or_else(|| city.blocks.iter().min_by_key(|b| ((b.x - c.x).pow(2) + (b.z - c.z).pow(2), b.id)).map(|b| b.id))
+            .unwrap_or(0);
+        city.sites.push(city::Site {
+            id: c.id.clone(), kind: c.kind, block, x: c.x, y: 0, z: c.z, w, d,
+            facing: if c.front[1] >= 0 { city::Facing::North } else { city::Facing::South },
+            tier: Some(c.tier), poly: (!c.poly.is_empty()).then(|| c.poly.clone()), front: Some(c.front), view: None,
+        });
+    }
+    if !gone.is_empty() {
+        city.lots.retain(|l| !gone.contains(&l.id));
+        let mut by_grow: Vec<(u32, usize)> = city.lots.iter().enumerate().map(|(k, l)| (l.grow.unwrap_or(u32::MAX), k)).collect();
+        by_grow.sort();
+        for (rank, &(g, k)) in by_grow.iter().enumerate() {
+            if g != u32::MAX {
+                city.lots[k].grow = Some(rank as u32);
+            }
+        }
+        for (k, l) in city.lots.iter_mut().enumerate() {
+            l.id = k as u32;
+        }
+    }
+    Ok(())
 }

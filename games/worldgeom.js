@@ -23,6 +23,17 @@
  *   nameAtlasLayout       the cells of the sign/gantry text atlas (drawn by worldbuild)
  *   view/tierDiff         min_tier: the world as a city tier shows it, and the tiles (per product) two tiers differ in
  *   buildTile             one worker job: {tx, tz, lods, want, tier?} -> the tile message
+ * HQ 3.15 (@3 docs; a doc without these layers builds exactly as before):
+ *   holes                 every terrain hole (HQV.world.holesOf: metro entrances and portals, the Island Link portal) is
+ *                         cut out of the terrain, road and ground tiles in plan (cutHoles: triangle minus hole, a clean
+ *                         edge, the surface unchanged elsewhere; skirts and kerbs in a hole dropped); the stair well and
+ *                         trench walls inside are games/hqmetro.js's. The terrain under a hole's rim is the street
+ *                         (HQV.world.streetAt), never the hole's floor; no lamp, sign or parked car stands in a hole
+ *   waterGeo              lakes, canals and the marina (HQV.world.waterOf): the surface (one geo, islands cut out, `lit`
+ *                         1 on a lake for the calm lake shader), quay walls with coping and mooring rings, the breakwater,
+ *                         lily pads and reeds (works) and shore foam; a bank body's shore strip is a ground item
+ *   tramEdges             the edges a tram runs on (as games/traffic.js picks them): their marks are the tram lanes' two
+ *                         white edge lines instead of a centre line
  * A @1 doc (no poly, front, min_tier or island) takes the original paths and builds byte-identically.
  * Geo = {pos, nrm, col (rgb 0..1), idx: Uint32Array, bid? (lot id per vertex), lit? (0|1 per vertex)}.
  * Every face is wound counter-clockwise seen from the side its normal points to.
@@ -254,6 +265,8 @@ function stations(E, s0, s1){
 }
 
 /* ---------- surface heights (the ONE road surface: HQV.world.roadY) ---------- */
+// the ground at street level: HQV.world.groundAt, but over a terrain hole (@3) the street, not the hole's floor
+function gY(W, x, z){ var Q = WQ(); return Q.streetAt ? Q.streetAt(W, x, z) : Q.groundAt(W, x, z); }
 // HQV.world.roadY at the vertex itself, moved onto the carriageway (walk false) or the sidewalk (walk true):
 // roadY adds 0.15 where the point is sidewalk, so only the kerb step is corrected
 function ySurf(W, x, z, walk){
@@ -382,7 +395,7 @@ function onBridge(W, x, z){
 function terrainY(W, x, z, step){
   var C = prep(W), memo = C.ty || (C.ty = {}), key = step + ":" + x + "," + z;
   if(key in memo) return memo[key];
-  var S = clampPieces(W), y = onBridge(W, x, z) ? WQ().heightAt(W, x, z) : WQ().groundAt(W, x, z), stamp = ++S.n;
+  var S = clampPieces(W), y = onBridge(W, x, z) ? WQ().heightAt(W, x, z) : gY(W, x, z), stamp = ++S.n;
   var B = W.tierBase || W, wet = !!(B.river && WQ().riverAt(B, x, z)), fine = step === LOD_STEP[0] && !wet;
   for(var j = Math.floor((z - step)/CELL); j <= Math.floor((z + step)/CELL); j++)
     for(var i = Math.floor((x - step)/CELL); i <= Math.floor((x + step)/CELL); i++){
@@ -478,6 +491,9 @@ function terrainTile(W, tx, tz, lods){
       }
     });
   }
+  // @3: the terrain holes (metro entrances and portals) are cut out of the tile
+  var H = holeSet(W);
+  if(H) cutHoles(g, H.filter(function(h){ return boxHit(h.b, {x0: x0 - 1, x1: x0 + TILE + 1, z0: z0 - 1, z1: z0 + TILE + 1}); }));
   return fin(g);
 }
 // a skirt quad below the top edge (ia, ib); reuses the top vertices, adds two bottom ones
@@ -502,6 +518,79 @@ function markLines(E){
   if(aveish(E.cls)) return [{o: -0.15, w: 0.1, c: COL.yellow}, {o: 0.15, w: 0.1, c: COL.yellow}];
   if(E.cls === "ring") return [{o: 0, w: 0.12, dash: true, c: COL.white}, {o: -(cw - 1), w: 0.15, c: COL.white}, {o: cw - 1, w: 0.15, c: COL.white}];
   return [{o: -0.15, w: 0.1, c: COL.yellow}, {o: 0.15, w: 0.1, c: COL.yellow}, {o: -(cw - 1), w: 0.15, c: COL.white}, {o: cw - 1, w: 0.15, c: COL.white}];
+}
+// A street a tram runs on (tramEdges) has no centre line: the tram's two lanes take the middle (traffic.js tramOff,
+// 1.475 m each side of the centre, a 2.65 m body), so it gets their two edge lines TRAM_EDGE m outside each lane, in
+// white, and a ring or highway keeps its outer edge lines; nothing yellow is left under a tram.
+var TRAM_INNER = 0.15, TRAM_W = 2.65, TRAM_EDGE = 0.15, TRAM_TIER = 5;
+function tramLines(W, E){
+  var off = tramOffOf(W, E), o = off + TRAM_W/2 + TRAM_EDGE, cw = E.cw, out = [];
+  if(o + 0.06 <= cw - 0.15) out.push({o: -o, w: 0.12, c: COL.white}, {o: o, w: 0.12, c: COL.white});
+  if((E.cls === "ring" || E.cls === "highway") && cw - 1 > o + 0.3) out.push({o: -(cw - 1), w: 0.15, c: COL.white}, {o: cw - 1, w: 0.15, c: COL.white});
+  return out;
+}
+// the tram lane's offset on E: games/traffic.js lanes(W, tier) when it is loaded (the page; never in the worker: the
+// same number either way), else the one traffic.js drives on (its inner gap + half the body)
+function tramOffOf(W, E){
+  var C = prep(W), T = HQV.traffic;
+  if(C.lanes === undefined){
+    C.lanes = null;
+    if(T && typeof T.lanes === "function"){
+      try {
+        var L = T.lanes(W.tierBase || W, W.tier != null ? W.tier : TRAM_TIER), by = {};
+        (Array.isArray(L) ? L : []).forEach(function(o){ if(o && o.id != null) by[o.id] = o; });
+        C.lanes = by;
+      } catch(e){ C.lanes = null; }
+    }
+  }
+  var r = C.lanes ? C.lanes[E.id] : null;
+  return r && r.tramOff != null && isFinite(+r.tramOff) && +r.tramOff > 0 ? +r.tramOff : TRAM_INNER + TRAM_W/2;
+}
+// {edge id: true} for every edge a tram runs on, exactly as games/traffic.js create() picks them: the doc's transit
+// lines of kind "tram" open at the tier (every city is tier 5 since HQ 3.15, D1; a tier view keeps its own), each
+// consecutive pair of path nodes joined by the open edge between them that is an arterial before a non-arterial, then
+// the shorter; a line that misses a link is dropped whole; a path not closed and with no edge back runs out and back
+function tramEdges(W){
+  var C = prep(W);
+  if(C.tram) return C.tram;
+  var B = W.tierBase || W, set = {}, lines = (B.transit && B.transit.lines) || [], tier = W.tier != null ? +W.tier : TRAM_TIER;
+  if(lines.some(function(l){ return l && l.kind === "tram"; })){
+    var nodes = {}, inc = {}, ART = {arterial: 1, avenue: 1, highway: 1, ring: 1};
+    (B.nodes || []).forEach(function(n){ nodes[n.id] = n; inc[n.id] = []; });
+    (B.edges || []).forEach(function(e){
+      if(e.min_tier != null && (e.min_tier|0) > tier) return;
+      var A = nodes[e.a], Bn = nodes[e.b];
+      if(!A || !Bn || e.a === e.b) return;
+      var p = e.pts || [], len = 0;
+      if(p.length >= 6) for(var j = 3; j + 2 < p.length; j += 3) len += hypot((p[j] - p[j-3])/100, (p[j+2] - p[j-1])/100);
+      else len = hypot((Bn.x - A.x)/100, (Bn.z - A.z)/100);
+      if(len < 1) return;
+      var o = {id: e.id, a: e.a, b: e.b, art: !!ART[e.cls === "country" ? "highway" : e.cls], len: len};
+      inc[e.a].push(o); inc[e.b].push(o);
+    });
+    var between = function(u, v){
+      var best = null;
+      (inc[u] || []).forEach(function(E){
+        if((E.a === u && E.b === v) || (E.b === u && E.a === v)) if(!best || (E.art && !best.art) || (E.art === best.art && E.len < best.len)) best = E;
+      });
+      return best;
+    };
+    lines.forEach(function(l){
+      if(!l || l.kind !== "tram" || (l.tier|0) > tier) return;
+      var path = (l.path || []).slice();
+      if(path.length < 2) return;
+      if(path[0] === path[path.length - 1]) path.pop();
+      else if(!between(path[path.length - 1], path[0])) path = path.concat(path.slice(1, -1).reverse());
+      var got = [];
+      for(var i = 0; i < path.length; i++){
+        var e = between(path[i], path[(i + 1) % path.length]);
+        if(!e) return;
+        got.push(e.id);
+      }
+      got.forEach(function(id){ set[id] = true; });
+    });
+  }
+  return (C.tram = set);
 }
 function graded(E){ return E.cls === "highway" || E.cls === "ring"; }
 function crossed(C, E, end){ return (streetish(E.cls) || aveish(E.cls)) && deg(C, end ? E.b : E.a) >= 3; }
@@ -689,7 +778,7 @@ function roadTile(W, tx, tz, flat, gap){
     if(E.bridge && br) bridgeTile(br, W, E, tx, tz, s0, s1);
     // markings, stopped short of junction patches and crossings
     var m0 = s0 + (endA && crossed(C, E, 0) ? 5.5 : 0.5), m1 = s1 - (endB && crossed(C, E, 1) ? 5.5 : 0.5);
-    if(m1 - m0 > 0.5) markLines(E).forEach(function(ln){
+    if(m1 - m0 > 0.5) (tramEdges(W)[E.id] ? tramLines(W, E) : markLines(E)).forEach(function(ln){
       if(!ln.dash){ strip(marks, W, E, stations(E, m0, m1), ln.o - ln.w/2, ln.o + ln.w/2, MARK_LIFT, ln.c, tx, tz); return; }
       for(var d = Math.ceil(m0/9)*9; d < m1; d += 9){
         var a = Math.max(d, m0), b = Math.min(d + 3, m1);
@@ -703,6 +792,9 @@ function roadTile(W, tx, tz, flat, gap){
     if(arms.length < 2 || !n || !inTile(n.x, n.z, tx, tz)) return;
     junction(W, C, n, arms, asph, flat ? geo() : marks, kerb, walk);
   });
+  // @3: a hole on a pavement or a carriageway (a metro entrance) is cut out of the road too
+  var H = holeSet(W);
+  if(H) [asph, marks, kerb, walk].forEach(function(gg){ cutHoles(gg, H); });
   var out = {asphalt: fin(asph), marks: fin(marks), kerb: fin(kerb), walk: fin(walk)};
   if(br && !flat) out.bridge = fin(br);   // only in a doc with bridges: every other doc builds as before
   return out;
@@ -1083,6 +1175,15 @@ function groundItems(W){
                                  keep: function(p){ return inPoly(coast, p[0], p[2]) && ringDist(coast, p[0], p[2]) > BANK_MOUTH; }});
     }
   }
+  // @3: a shaded bank strip (as the river's) along every bank body's shore with land behind it, and round its islands
+  var WR = waterRings(W);
+  if(WR) WR.bodies.forEach(function(r){
+    if(r.b.edge === "quay" || r.b.kind === "marina") return;
+    function keep(p){ return !wetElse(W, WR, p[0], p[2], r); }
+    var bo = {kind: "bank", inW: BANK_IN, outW: BANK_OUT, dry: COL.bank, wet: COL.wetBank, keep: keep};
+    beach(W, r.P, r.b.y, out, Object.assign({sign: -1}, bo));
+    r.I.forEach(function(I){ beach(W, I, r.b.y, out, Object.assign({sign: 1}, bo)); });
+  });
   C.ground = out;
   return out;
 }
@@ -1151,7 +1252,363 @@ function groundTile(W, tx, tz){
     }
     if(it.walls) kerbWalls(W, g, it);
   });
+  var H = holeSet(W);
+  if(H) cutHoles(g, H);
   return fin(g);
+}
+
+/* ---------- @3 terrain holes: metro entrances, portals, the Island Link portal ---------- */
+// Every hole of W (HQV.world.holesOf: metres) as convex pieces (its ring triangulated, each CCW) with boxes, once per W.
+// A geo is cut by them in plan (cutHoles): each triangle overlapping a hole is replaced by triangle minus hole, the
+// pieces from clipping it against each convex piece's edges in turn (Sutherland-Hodgman), every attribute interpolated
+// along the clipped edges (exact on a planar triangle), so the edge is clean and the surface unchanged elsewhere. A
+// triangle that stands up (a skirt, a kerb, a verge wall: no area in plan) is dropped when its centre is in a hole.
+var HOLE_EPS = 1e-6;
+function holeSet(W){
+  var C = prep(W);
+  if(C.holes !== undefined) return C.holes;
+  var Q = WQ(), B = W.tierBase || W, rings = Q.holesOf && (B.metro || B.rail) ? Q.holesOf(B) : [], out = [];
+  rings.forEach(function(R){
+    var P = [];
+    (R || []).forEach(function(q){ var L = P[P.length - 1]; if(q && isFinite(q[0]) && isFinite(q[1]) && !(L && L[0] === q[0] && L[1] === q[1])) P.push([q[0], q[1]]); });
+    if(P.length > 2 && P[0][0] === P[P.length - 1][0] && P[0][1] === P[P.length - 1][1]) P.pop();
+    if(P.length < 3 || !(Math.abs(polyArea(P)) > 1e-4)) return;
+    if(polyArea(P) < 0) P.reverse();
+    var h = cutterOf(P);
+    if(h) out.push(h);
+  });
+  C.holes = out.length ? out : null;
+  return C.holes;
+}
+function boxOf(P){
+  var b = {x0: Infinity, z0: Infinity, x1: -Infinity, z1: -Infinity};
+  P.forEach(function(q){ b.x0 = Math.min(b.x0, q[0]); b.x1 = Math.max(b.x1, q[0]); b.z0 = Math.min(b.z0, q[1]); b.z1 = Math.max(b.z1, q[1]); });
+  return b;
+}
+function boxHit(a, b){ return a.x0 < b.x1 && a.x1 > b.x0 && a.z0 < b.z1 && a.z1 > b.z0; }
+function inHoles(H, x, z){
+  for(var i = 0; i < H.length; i++) if(x >= H[i].b.x0 && x <= H[i].b.x1 && z >= H[i].b.z0 && z <= H[i].b.z1 && inPoly(H[i].P, x, z)) return true;
+  return false;
+}
+// clip polygon S (points: [x, y, z, ...attributes]) to the side of the line a -> b where side*cross >= 0
+function clipHalf(S, a, b, side){
+  var out = [], n = S.length;
+  function d(p){ return side*((b[0] - a[0])*(p[2] - a[1]) - (b[1] - a[1])*(p[0] - a[0])); }
+  for(var i = 0; i < n; i++){
+    var P = S[i], R = S[(i + 1) % n], dp = d(P), dr = d(R);
+    if(dp >= 0) out.push(P);
+    if((dp >= 0) !== (dr >= 0)){
+      var t = dp/(dp - dr), M = new Array(P.length);
+      for(var k = 0; k < P.length; k++) M[k] = P[k] + (R[k] - P[k])*t;
+      out.push(M);
+    }
+  }
+  return out;
+}
+function planArea(S){
+  var s = 0;
+  for(var i = 0; i < S.length; i++){ var a = S[i], b = S[(i + 1) % S.length]; s += a[0]*b[2] - b[0]*a[2]; }
+  return s/2;
+}
+// polygon S minus the convex CCW triangle K: the pieces outside each of K's edges in turn
+function subtractConvex(S, K){
+  var pieces = [], rem = S;
+  for(var e = 0; e < K.length && rem.length >= 3; e++){
+    var a = K[e], b = K[(e + 1) % K.length], outP = clipHalf(rem, a, b, -1);
+    if(outP.length >= 3 && Math.abs(planArea(outP)) > HOLE_EPS) pieces.push(outP);
+    rem = clipHalf(rem, a, b, 1);
+  }
+  return pieces;
+}
+// cut the geo builder g (geo()) by the holes H in place
+function cutHoles(g, H){
+  if(!H || !g.i.length) return g;
+  var all = {x0: Infinity, z0: Infinity, x1: -Infinity, z1: -Infinity};
+  H.forEach(function(h){ all.x0 = Math.min(all.x0, h.b.x0); all.x1 = Math.max(all.x1, h.b.x1); all.z0 = Math.min(all.z0, h.b.z0); all.z1 = Math.max(all.z1, h.b.z1); });
+  var idx = g.i, keep = [], p = g.p, nb = !!g.b, nl = !!g.l, add = [];
+  function pt(v){
+    var o = [p[3*v], p[3*v+1], p[3*v+2], g.n[3*v], g.n[3*v+1], g.n[3*v+2], g.c[3*v], g.c[3*v+1], g.c[3*v+2]];
+    if(nb) o.push(g.b[v]);
+    if(nl) o.push(g.l[v]);
+    return o;
+  }
+  for(var t = 0; t < idx.length; t += 3){
+    var ia = idx[t], ib = idx[t+1], ic = idx[t+2];
+    var ax = p[3*ia], az = p[3*ia+2], bx = p[3*ib], bz = p[3*ib+2], cx = p[3*ic], cz = p[3*ic+2];
+    var tb = {x0: Math.min(ax, bx, cx), x1: Math.max(ax, bx, cx), z0: Math.min(az, bz, cz), z1: Math.max(az, bz, cz)};
+    if(!boxHit(tb, all) || !H.some(function(h){ return boxHit(tb, h.b); })){ keep.push(ia, ib, ic); continue; }
+    var area = ((bx - ax)*(cz - az) - (bz - az)*(cx - ax))/2;
+    if(Math.abs(area) < 1e-4){
+      // standing up: in or out by its centre
+      if(!inHoles(H, (ax + bx + cx)/3, (az + bz + cz)/3)) keep.push(ia, ib, ic);
+      continue;
+    }
+    var polys = [[pt(ia), pt(ib), pt(ic)]], cut = false;
+    H.forEach(function(h){
+      if(!boxHit(tb, h.b)) return;
+      h.parts.forEach(function(k){
+        if(!boxHit(tb, k.b)) return;
+        var next = [];
+        polys.forEach(function(S){
+          var sb = boxOf(S.map(function(q){ return [q[0], q[2]]; }));
+          if(!boxHit(sb, k.b)){ next.push(S); return; }
+          var r = subtractConvex(S, k.K);
+          if(r.length !== 1 || r[0].length !== S.length || r[0].some(function(q, i){ return q !== S[i]; })) cut = true;
+          next = next.concat(r);
+        });
+        polys = next;
+      });
+    });
+    if(!cut){ keep.push(ia, ib, ic); continue; }
+    polys.forEach(function(S){ add.push(S); });
+  }
+  g.i = keep;
+  add.forEach(function(S){
+    var base = g.p.length/3;
+    S.forEach(function(q){
+      g.p.push(q[0], q[1], q[2]); g.n.push(q[3], q[4], q[5]); g.c.push(q[6], q[7], q[8]);
+      if(nb) g.b.push(q[9]);
+      if(nl) g.l.push(q[nb ? 10 : 9]);
+    });
+    // a fan, without the slivers repeated or collinear clip points leave (no area in plan)
+    for(var k = 1; k + 1 < S.length; k++){
+      var A = S[0], B2 = S[k], C2 = S[k + 1];
+      if(Math.abs((B2[0] - A[0])*(C2[2] - A[2]) - (B2[2] - A[2])*(C2[0] - A[0])) > 2e-6) g.i.push(base, base + k, base + k + 1);
+    }
+  });
+  return g;
+}
+
+/* ---------- @3 water: lakes, canals, the marina (HQV.world.waterOf; drawn world-wide by games/worldbuild.js) ---------- */
+// waterGeo(W) -> {surface, works, foam} (one geo each, for the whole world):
+//   surface  every body at its y (the calm level boats float on), its islands cut out; `lit` = 1 on a lake (the shader's
+//            calm lake variant: smaller ripples, more of the sky), 0 on a canal or the marina
+//   works    the quay walls along every quay body and the marina where land is behind them (from under the bed up to the
+//            street, a coping stone on top over-hanging the water, mooring rings every RING_STEP m), the breakwater
+//            (rock armour sloping from the sea bed, seeded boulders, a concrete crown walk BREAKWATER_UP over the sea), and
+//            on the lakes' banks a few lily pads and reeds (seeded by the world hash and the body id)
+//   foam     a FOAM_W strip along every bank shore (lakes and their islands), a thin one at the foot of the quays
+// A bank body's shore strip (bank colours, like the river's) is a ground item in the terrain tiles (groundItems).
+var FOAM_W = 1.2, QUAY_FOAM = 0.45, COPING_W = 0.6, COPING_T = 0.16, COPING_OUT = 0.12, RING_STEP = 12, RING_R = 0.2, RING_IN = 0.14;
+var QUAY_UP = 0.8, BW_BASE = 7, BW_CROWN = 2.6, BW_WALK = 1.8, BW_DEEP = 3, LILY_MAX = 120, REED_MAX = 360;
+var WCOL = {quay: [0.55, 0.53, 0.49], coping: [0.74, 0.72, 0.67], iron: [0.16, 0.16, 0.18], rock: [0.47, 0.46, 0.43],
+            walk: [0.68, 0.67, 0.64], lily: [0.22, 0.46, 0.20], flower: [0.95, 0.86, 0.92], reed: [0.50, 0.56, 0.28], foam: [0.94, 0.97, 0.99]};
+function ringOfFlat(f){
+  var P = [];
+  for(var i = 0; i + 1 < f.length; i += 2){ var L = P[P.length - 1]; if(!L || L[0] !== f[i] || L[1] !== f[i+1]) P.push([f[i], f[i+1]]); }
+  if(P.length > 2 && P[0][0] === P[P.length - 1][0] && P[0][1] === P[P.length - 1][1]) P.pop();
+  return polyArea(P) < 0 ? P.reverse() : P;
+}
+// a ring as a cutter for cutHoles: its convex pieces
+function cutterOf(P){
+  var tri = triangulate(flatOf(P)), parts = [];
+  for(var t = 0; t < tri.length; t += 3){
+    var K = [P[tri[t]], P[tri[t+1]], P[tri[t+2]]];
+    if(polyArea(K) < 0) K.reverse();
+    if(polyArea(K) > 1e-9) parts.push({K: K, b: boxOf(K)});
+  }
+  return parts.length ? {P: P, parts: parts, b: boxOf(P)} : null;
+}
+// the bodies of W as rings (m, CCW) with their islands, once per W
+function waterRings(W){
+  var C = prep(W);
+  if(C.water !== undefined) return C.water;
+  var Q = WQ(), B = W.tierBase || W, V = B.water && Q.waterOf ? Q.waterOf(B) : null;
+  C.water = V ? {V: V, bodies: V.bodies.map(function(b){
+    var P = ringOfFlat(b.poly);
+    return {b: b, P: P, box: boxOf(P), I: b.islands.map(ringOfFlat).filter(function(R){ return R.length >= 3; })};
+  }).filter(function(r){ return r.P.length >= 3; })} : null;
+  return C.water;
+}
+function coastRing(W){
+  var C = prep(W), B = W.tierBase || W;
+  if(C.coast === undefined) C.coast = coastOf(B) ? polyM(B.island.coast) : null;
+  return C.coast;
+}
+// is (x, z) on water other than body `self`: another body, the river, or the sea past the coast?
+function wetElse(W, R, x, z, self){
+  var B = W.tierBase || W;
+  for(var i = 0; i < R.bodies.length; i++){
+    var r = R.bodies[i];
+    if(r === self || x < r.box.x0 || x > r.box.x1 || z < r.box.z0 || z > r.box.z1 || !inPoly(r.P, x, z)) continue;
+    if(!r.I.some(function(I){ return inPoly(I, x, z); })) return true;
+  }
+  if(B.river && WQ().riverAt(B, x, z)) return true;
+  var c = coastRing(W);
+  return !!(c && !inPoly(c, x, z));
+}
+function waterGeo(W){
+  var C = prep(W);
+  if(C.waterGeo) return C.waterGeo;
+  var R = waterRings(W), surf = geo(false, true), works = geo(), foam = geo();
+  if(R){
+    var Q = WQ(), B = W.tierBase || W, sea = seaY(B), hash = B.hash || "", RR = riverRing(W), riverCut = RR ? cutterOf(RR) : null;
+    R.bodies.forEach(function(r){
+      var b = r.b, y = b.y, lake = b.kind === "lake" ? 1 : 0, P = r.P, n = P.length;
+      // the surface, islands cut out
+      var g = geo(false, true), tri = triangulate(flatOf(P));
+      P.forEach(function(p){ vert(g, p[0], y, p[1], UP, COL.water, 0, lake); });
+      for(var t = 0; t < tri.length; t += 3){
+        var a = P[tri[t]], c1 = P[tri[t+1]], c2 = P[tri[t+2]];
+        if((c1[1] - a[1])*(c2[0] - a[0]) - (c1[0] - a[0])*(c2[1] - a[1]) >= 0) g.i.push(tri[t], tri[t+1], tri[t+2]);
+        else g.i.push(tri[t], tri[t+2], tri[t+1]);
+      }
+      // its islands, and where it overlaps the river (a canal starts inside it) the river's own surface: no two
+      // coplanar sheets of water
+      var cut = r.I.map(cutterOf).filter(Boolean);
+      if(riverCut && boxHit(riverCut.b, r.box)) cut.push(riverCut);
+      if(cut.length) cutHoles(g, cut);
+      append(surf, g);
+      var rnd = rng(Q.hash32(hash + ":water:" + b.id));
+      function side(k){   // edge k: a, b, unit u, its water side (left of a CCW ring) and its land side
+        var a = P[k], c = P[(k + 1) % n], dx = c[0] - a[0], dz = c[1] - a[1], l = hypot(dx, dz) || 1;
+        return {a: a, b: c, l: l, ux: dx/l, uz: dz/l, wx: -dz/l, wz: dx/l};
+      }
+      if(b.edge === "quay" || b.kind === "marina") quays(W, R, r, works, foam);
+      else {
+        // bank foam along the shore where land is behind it, and round each island
+        for(var k = 0; k < n; k++){
+          var e = side(k), mx = (e.a[0] + e.b[0])/2, mz = (e.a[1] + e.b[1])/2;
+          if(wetElse(W, R, mx - e.wx*1.5, mz - e.wz*1.5, r)) continue;
+          strip2(foam, e.a, e.b, e.wx, e.wz, 0, FOAM_W, y + 0.025, WCOL.foam);
+        }
+        r.I.forEach(function(I){
+          for(var k = 0; k < I.length; k++){
+            var a = I[k], c = I[(k + 1) % I.length], dx = c[0] - a[0], dz = c[1] - a[1], l = hypot(dx, dz) || 1;
+            strip2(foam, a, c, dz/l, -dx/l, 0, FOAM_W, y + 0.025, WCOL.foam);
+          }
+        });
+        if(lake) plants(W, R, r, works, rnd);
+      }
+    });
+    var V = R.V;
+    if(V.breakwater) breakwaterGeo(works, V.breakwater, sea != null ? sea : 0, Q, rng(Q.hash32(hash + ":breakwater")));
+  }
+  C.waterGeo = {surface: fin(surf), works: fin(works), foam: fin(foam)};
+  return C.waterGeo;
+}
+// append geo s to d
+function append(d, s){
+  var base = d.p.length/3, k;
+  for(k = 0; k < s.p.length; k++){ d.p.push(s.p[k]); d.n.push(s.n[k]); d.c.push(s.c[k]); }
+  if(d.l) for(k = 0; k < s.p.length/3; k++) d.l.push(s.l ? s.l[k] : 0);
+  if(d.b) for(k = 0; k < s.p.length/3; k++) d.b.push(s.b ? s.b[k] : 0);
+  for(k = 0; k < s.i.length; k++) d.i.push(s.i[k] + base);
+}
+// a flat strip along a -> b from offset o0 to o1 (m) toward (wx, wz), at y, facing up
+function strip2(g, a, b, wx, wz, o0, o1, y, c){
+  face(g, [[a[0] + wx*o0, y, a[1] + wz*o0], [b[0] + wx*o0, y, b[1] + wz*o0], [b[0] + wx*o1, y, b[1] + wz*o1], [a[0] + wx*o1, y, a[1] + wz*o1]], c, UP);
+}
+// The quay walls of body r: on every edge with land behind it (not another water, the river or the sea), from under the
+// bed to the coping. The top at a corner is the street 1.5 m behind it, at least QUAY_UP over the water.
+function quays(W, R, r, works, foam){
+  var b = r.b, P = r.P, n = P.length, y = b.y, bot = y - Math.max(0.5, b.bed) - 0.3, top = [];
+  for(var k = 0; k < n; k++){
+    var a = P[(k + n - 1) % n], q = P[k], c = P[(k + 1) % n];
+    var d1 = hypot(q[0] - a[0], q[1] - a[1]) || 1, d2 = hypot(c[0] - q[0], c[1] - q[1]) || 1;
+    var lx = (q[1] - a[1])/d1 + (c[1] - q[1])/d2, lz = -(q[0] - a[0])/d1 - (c[0] - q[0])/d2, ll = hypot(lx, lz) || 1;
+    top.push(Math.max(gY(W, q[0] + lx/ll*1.5, q[1] + lz/ll*1.5), y + QUAY_UP));
+  }
+  for(k = 0; k < n; k++){
+    var A = P[k], Bp = P[(k + 1) % n], dx = Bp[0] - A[0], dz = Bp[1] - A[1], l = hypot(dx, dz);
+    if(!(l > 0.05)) continue;
+    var ux = dx/l, uz = dz/l, wx = -uz, wz = ux, mx = (A[0] + Bp[0])/2, mz = (A[1] + Bp[1])/2;
+    if(wetElse(W, R, mx - wx*2, mz - wz*2, r) || inPoly(P, mx - wx*2, mz - wz*2)) continue;
+    var ya = top[k], yb = top[(k + 1) % n];
+    // the wall's face, toward the water
+    face(works, [[A[0], bot, A[1]], [Bp[0], bot, Bp[1]], [Bp[0], yb, Bp[1]], [A[0], ya, A[1]]], WCOL.quay, [wx, 0, wz]);
+    // the coping stone: COPING_OUT over the water, COPING_W onto the land, COPING_T thick
+    var o0 = COPING_OUT, o1 = -COPING_W, t = COPING_T;
+    face(works, [[A[0] + wx*o0, ya + t, A[1] + wz*o0], [Bp[0] + wx*o0, yb + t, Bp[1] + wz*o0], [Bp[0] + wx*o1, yb + t, Bp[1] + wz*o1], [A[0] + wx*o1, ya + t, A[1] + wz*o1]], WCOL.coping, UP);
+    face(works, [[A[0] + wx*o0, ya, A[1] + wz*o0], [Bp[0] + wx*o0, yb, Bp[1] + wz*o0], [Bp[0] + wx*o0, yb + t, Bp[1] + wz*o0], [A[0] + wx*o0, ya + t, A[1] + wz*o0]], WCOL.coping, [wx, 0, wz]);
+    face(works, [[A[0] + wx*o0, ya, A[1] + wz*o0], [Bp[0] + wx*o0, yb, Bp[1] + wz*o0], [Bp[0], yb, Bp[1]], [A[0], ya, A[1]]], WCOL.coping, [0, -1, 0]);
+    // mooring rings
+    for(var s = RING_STEP/2; s < l - 2; s += RING_STEP){
+      var cx = A[0] + ux*s + wx*0.04, cz = A[1] + uz*s + wz*0.04, cy = ya + (yb - ya)*s/l - 0.45;
+      for(var j = 0; j < 8; j++){
+        var a0 = j/8*2*Math.PI, a1 = (j + 1)/8*2*Math.PI, c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+        face(works, [[cx + ux*c0*RING_IN, cy + s0*RING_IN, cz + uz*c0*RING_IN], [cx + ux*c1*RING_IN, cy + s1*RING_IN, cz + uz*c1*RING_IN],
+                     [cx + ux*c1*RING_R, cy + s1*RING_R, cz + uz*c1*RING_R], [cx + ux*c0*RING_R, cy + s0*RING_R, cz + uz*c0*RING_R]], WCOL.iron, [wx, 0, wz]);
+      }
+    }
+    strip2(foam, A, Bp, wx, wz, 0, QUAY_FOAM, y + 0.025, WCOL.foam);
+  }
+}
+// The breakwater along polyline L (m): rock armour from BW_DEEP under the sea up to the crown BREAKWATER_UP over it,
+// BW_BASE half wide at the foot and BW_CROWN at the top, end caps, seeded boulders on both slopes, and the crown walk
+function breakwaterGeo(g, L, sea, Q, rnd){
+  var up = Q.BREAKWATER_UP != null ? Q.BREAKWATER_UP : 2.5, yb = sea - BW_DEEP, yc = sea + up;
+  for(var k = 0; k + 1 < L.length; k++){
+    var a = L[k], c = L[k + 1], dx = c[0] - a[0], dz = c[1] - a[1], l = hypot(dx, dz);
+    if(!(l > 0.05)) continue;
+    var ux = dx/l, uz = dz/l, lx = uz, lz = -ux;
+    function P(p, o, y){ return [p[0] + lx*o, y, p[1] + lz*o]; }
+    [-1, 1].forEach(function(sg){
+      face(g, [P(a, sg*BW_BASE, yb), P(c, sg*BW_BASE, yb), P(c, sg*BW_CROWN, yc), P(a, sg*BW_CROWN, yc)], jit(WCOL.rock, rnd, 0.05), [lx*sg, 0.6, lz*sg]);
+    });
+    face(g, [P(a, -BW_CROWN, yc), P(c, -BW_CROWN, yc), P(c, BW_CROWN, yc), P(a, BW_CROWN, yc)], WCOL.rock, UP);
+    // the crown walk: a concrete slab
+    var ys = yc + 0.08;
+    face(g, [P(a, -BW_WALK, ys), P(c, -BW_WALK, ys), P(c, BW_WALK, ys), P(a, BW_WALK, ys)], WCOL.walk, UP);
+    [-1, 1].forEach(function(sg){ face(g, [P(a, sg*BW_WALK, yc), P(c, sg*BW_WALK, yc), P(c, sg*BW_WALK, ys), P(a, sg*BW_WALK, ys)], WCOL.walk, [lx*sg, 0, lz*sg]); });
+    if(k === 0) face(g, [P(a, -BW_BASE, yb), P(a, BW_BASE, yb), P(a, BW_CROWN, yc), P(a, -BW_CROWN, yc)], WCOL.rock, [-ux, 0.3, -uz]);
+    if(k + 2 === L.length) face(g, [P(c, -BW_BASE, yb), P(c, BW_BASE, yb), P(c, BW_CROWN, yc), P(c, -BW_CROWN, yc)], WCOL.rock, [ux, 0.3, uz]);
+    // boulders every 2.5 m on each slope, above the water
+    for(var s = 1.2; s < l; s += 2.5) [-1, 1].forEach(function(sg){
+      var f = 0.25 + rnd()*0.5, o = sg*(BW_CROWN + (BW_BASE - BW_CROWN)*f), y = yc + (yb - yc)*f;
+      if(y < sea - 0.6) return;
+      var h = 0.5 + rnd()*0.5, yaw = rnd()*Math.PI, cx = a[0] + ux*s + lx*o, cz = a[1] + uz*s + lz*o;
+      boulder(g, cx, y, cz, 0.6 + rnd()*0.5, h, yaw, jit(WCOL.rock, rnd, 0.1));
+    });
+  }
+}
+function boulder(g, x, y, z, r, h, yaw, c){
+  var cs = Math.cos(yaw), sn = Math.sin(yaw), C = [];
+  [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(function(q){ C.push([x + (q[0]*cs - q[1]*sn)*r, z + (q[0]*sn + q[1]*cs)*r]); });
+  var lo = y - 0.3, hi = y + h;
+  face(g, [[C[0][0], hi, C[0][1]], [C[1][0], hi, C[1][1]], [C[2][0], hi, C[2][1]], [C[3][0], hi, C[3][1]]], c, UP);
+  for(var k = 0; k < 4; k++){
+    var p = C[k], q = C[(k + 1) % 4], ox = (p[0] + q[0])/2 - x, oz = (p[1] + q[1])/2 - z;
+    face(g, [[p[0], lo, p[1]], [q[0], lo, q[1]], [q[0], hi, q[1]], [p[0], hi, p[1]]], c, [ox, 0, oz]);
+  }
+}
+// Lily pads (octagons with a notch, in clusters 2-7 m off the shore) and reeds (crossed blades in the shallows) on a
+// lake's banks: one try every 10 m of shore with land behind it, seeded; at most LILY_MAX pads and REED_MAX blades a world
+function plants(W, R, r, g, rnd){
+  var C = prep(W), cnt = C.plantCount || (C.plantCount = {lily: 0, reed: 0}), P = r.P, n = P.length, y = r.b.y;
+  for(var k = 0; k < n; k++){
+    var a = P[k], c = P[(k + 1) % n], dx = c[0] - a[0], dz = c[1] - a[1], l = hypot(dx, dz);
+    if(!(l > 0.5)) continue;
+    var ux = dx/l, uz = dz/l, wx = -uz, wz = ux;
+    for(var s = rnd()*10; s < l; s += 10){
+      var bx = a[0] + ux*s, bz = a[1] + uz*s, pick = rnd();
+      if(wetElse(W, R, bx - wx*1.5, bz - wz*1.5, r)) continue;
+      if(pick < 0.4 && cnt.lily < LILY_MAX){
+        var m = 3 + Math.floor(rnd()*3), d0 = 2 + rnd()*5;
+        for(var j = 0; j < m && cnt.lily < LILY_MAX; j++){
+          var px = bx + wx*(d0 + rnd()*2) + ux*(rnd() - 0.5)*3, pz = bz + wz*(d0 + rnd()*2) + uz*(rnd() - 0.5)*3;
+          if(!inPoly(P, px, pz) || r.I.some(function(I){ return inPoly(I, px, pz); })) continue;
+          lily(g, px, y + 0.02, pz, 0.35 + rnd()*0.25, rnd()*2*Math.PI, jit(WCOL.lily, rnd, 0.12), rnd() < 0.2);
+          cnt.lily++;
+        }
+      } else if(pick < 0.85 && cnt.reed < REED_MAX){
+        var mb = 6 + Math.floor(rnd()*5);
+        for(var q = 0; q < mb && cnt.reed < REED_MAX; q++){
+          var rx = bx + wx*rnd()*1.8 + ux*(rnd() - 0.5)*2.5, rz = bz + wz*rnd()*1.8 + uz*(rnd() - 0.5)*2.5, h = 1 + rnd()*0.7, yw = rnd()*Math.PI;
+          var ex = Math.cos(yw)*0.06, ez = Math.sin(yw)*0.06, tip = [rx + (rnd() - 0.5)*0.3, y + h, rz + (rnd() - 0.5)*0.3], cr = jit(WCOL.reed, rnd, 0.12);
+          face(g, [[rx - ex, y - 0.3, rz - ez], [rx + ex, y - 0.3, rz + ez], tip], cr, [-ez, 0, ex]);
+          face(g, [[rx + ez, y - 0.3, rz - ex], [rx - ez, y - 0.3, rz + ex], tip], cr, [ex, 0, ez]);
+          cnt.reed++;
+        }
+      }
+    }
+  }
+}
+function lily(g, x, y, z, rad, rot, c, flower){
+  var pts = [];
+  for(var k = 0; k < 8; k++){ var t = rot + k/8*2*Math.PI; pts.push([x + Math.cos(t)*rad, y, z + Math.sin(t)*rad]); }
+  for(k = 0; k < 7; k++) face(g, [[x, y, z], pts[k], pts[k + 1]], c, UP);   // the eighth wedge is the notch
+  if(flower) face(g, [[x - 0.08, y + 0.08, z], [x + 0.08, y + 0.08, z], [x, y + 0.08, z + 0.1]], WCOL.flower, UP);
 }
 
 /* ---------- buildings ---------- */
@@ -1204,7 +1661,7 @@ function building(W, lot, detail, body, win){
   if(F){ oriented(W, lot, detail, body, win, F); return; }
   var R = Q.buildingRect(lot);
   if(!(R.x1 - R.x0 > 0.5 && R.z1 - R.z0 > 0.5)) return;
-  var ys = [Q.groundAt(W, R.x0, R.z0), Q.groundAt(W, R.x1, R.z0), Q.groundAt(W, R.x0, R.z1), Q.groundAt(W, R.x1, R.z1)];
+  var ys = [gY(W, R.x0, R.z0), gY(W, R.x1, R.z0), gY(W, R.x0, R.z1), gY(W, R.x1, R.z1)];
   shell(W, lot, detail, body, win, R, ys, lot.facing);
 }
 function frontOf(lot){
@@ -1276,7 +1733,7 @@ function oriented(W, lot, detail, body, win, F){
   if(!fit) return;
   var o = fit.o, R = {x0: -fit.hu, x1: fit.hu, z0: -fit.hv, z1: fit.hv};
   function wx(u, v){ return [o.x + u*F.z + v*F.x, o.z - u*F.x + v*F.z]; }
-  var ys = [wx(R.x0, R.z0), wx(R.x1, R.z0), wx(R.x0, R.z1), wx(R.x1, R.z1)].map(function(p){ return Q.groundAt(W, p[0], p[1]); });
+  var ys = [wx(R.x0, R.z0), wx(R.x1, R.z0), wx(R.x0, R.z1), wx(R.x1, R.z1)].map(function(p){ return gY(W, p[0], p[1]); });
   var tb = geo(true), tw = geo(true, true);
   shell(W, lot, detail, tb, tw, R, ys, "north");
   place(tb, body, o, F); place(tw, win, o, F);
@@ -1473,8 +1930,8 @@ function gantryAt(W, C, Rt, s, dir, kind, frame){
   var p = pointAt(Rt, s), dest = destOf(C, Rt, s, dir), o = GANTRY_POST;
   var text = Rt.cls === "ring" ? Rt.label + " → " + dest : Rt.label + " " + dest;
   // the ground under the two posts (+-GANTRY_POST along the road's left); the frame's posts reach GANTRY_SINK below y
-  var g1 = Q.groundAt(W, p.x + p.lx*o, p.z + p.lz*o), g2 = Q.groundAt(W, p.x - p.lx*o, p.z - p.lz*o);
-  return {x: p.x, y: Q.groundAt(W, p.x, p.z), z: p.z, yaw: Math.atan2(-dir*p.dx, -dir*p.dz), ref: Rt.ref, text: text,
+  var g1 = gY(W, p.x + p.lx*o, p.z + p.lz*o), g2 = gY(W, p.x - p.lx*o, p.z - p.lz*o);
+  return {x: p.x, y: gY(W, p.x, p.z), z: p.z, yaw: Math.atan2(-dir*p.dx, -dir*p.dz), ref: Rt.ref, text: text,
           dir: dir, kind: kind, frame: !!frame, route: Rt.key, s: s, postLow: Math.min(g1, g2), postHigh: Math.max(g1, g2)};
 }
 function gantries(W, C){
@@ -1521,19 +1978,21 @@ function allProps(W){
   var C = prep(W);
   if(C.props) return C.props;
   var Q = WQ(), B = {}, hash = W.hash;
+  var HS = holeSet(W);
   function put(kind, o){
+    if(HS && inHoles(HS, o.x, o.z)) return;   // @3: nothing stands in a terrain hole
     var t = tileOf(o.x, o.z), k = tileKey(t.tx, t.tz);
     var b = B[k] || (B[k] = {trees: [], lamps: [], parked: [], signs: [], gantries: []});
     b[kind].push(o);
   }
-  Q.trees(W).forEach(function(t){ put("trees", {x: t.x, y: Q.groundAt(W, t.x, t.z), z: t.z, s: t.s, kind: t.kind}); });
+  Q.trees(W).forEach(function(t){ put("trees", {x: t.x, y: gY(W, t.x, t.z), z: t.z, s: t.s, kind: t.kind}); });
   C.E.forEach(function(E){
     if(E.walk > 0 && (streetish(E.cls) || aveish(E.cls))){
       // lamps every 30 m on both sidewalks, staggered by 15 m
       [1, -1].forEach(function(sg){
         for(var s = E.tA + 6 + (sg < 0 ? 15 : 0); s < E.len - E.tB - 6; s += 30){
           var p = pointAt(E, s), o = sg*(E.half - 0.35), x = p.x + p.lx*o, z = p.z + p.lz*o;
-          put("lamps", {x: x, y: Q.groundAt(W, x, z), z: z, yaw: Math.atan2(-sg*p.lx, -sg*p.lz)});
+          put("lamps", {x: x, y: gY(W, x, z), z: z, yaw: Math.atan2(-sg*p.lx, -sg*p.lz)});
         }
       });
     }
@@ -1549,7 +2008,7 @@ function allProps(W){
           var h = Q.hash32(hash + ":park:" + E.id + ":" + k + ":" + sg);
           if(h/4294967296 >= 0.25) return;
           var o = sg*(E.cw - 0.95), x = p.x + p.lx*o, z = p.z + p.lz*o;
-          put("parked", {x: x, y: Q.groundAt(W, x, z), z: z, yaw: Math.atan2(sg*p.dx, sg*p.dz), color: CAR_COLORS[(h >>> 8) % CAR_COLORS.length]});
+          put("parked", {x: x, y: gY(W, x, z), z: z, yaw: Math.atan2(sg*p.dx, sg*p.dz), color: CAR_COLORS[(h >>> 8) % CAR_COLORS.length]});
         });
       }
     }
@@ -1570,12 +2029,12 @@ function allProps(W){
         if(d >= E.len/2 || Q.surfaceAt(W, x, z) !== "road") break;
         d += 0.5;
       }
-      put("signs", {x: x, y: Q.groundAt(W, x, z), z: z, yaw: Math.atan2(S.dx, S.dz), name: E.name, ref: E.ref, edge: E.id, node: id});
+      put("signs", {x: x, y: gY(W, x, z), z: z, yaw: Math.atan2(S.dx, S.dz), name: E.name, ref: E.ref, edge: E.id, node: id});
       // corner lamp between this arm and the next (this arm's left side)
       if(E.walk > 0 && (streetish(E.cls) || aveish(E.cls))){
         var C2 = armStation(E, a.end, Math.min(a.t + 0.8, E.len/2)), lo = E.half - 0.35;
         var lx = C2.x + C2.lx*lo, lz = C2.z + C2.lz*lo;
-        put("lamps", {x: lx, y: Q.groundAt(W, lx, lz), z: lz, yaw: Math.atan2(-C2.lx, -C2.lz)});
+        put("lamps", {x: lx, y: gY(W, lx, lz), z: lz, yaw: Math.atan2(-C2.lx, -C2.lz)});
       }
     });
   });
@@ -1754,6 +2213,7 @@ HQV.worldgeom = {
   groundTile: groundTile, groundItems: groundItems, triangulate: triangulate, hasGround: hasGround, seaY: seaY, view: view,
   tierDiff: tierDiff, footprint: footprint, riverWater: riverWater, riverRing: riverRing, bridgeGaps: bridgeGaps,
   BRIDGE: {DECK_T: DECK_T, PARA_W: PARA_W, PARA_H: PARA_H, RAIL_H: RAIL_H, ABUT: ABUT}, RIVER_LIFT: RIVER_LIFT,
-  SEA_HIDE: SEA_HIDE, meshY: meshY
+  SEA_HIDE: SEA_HIDE, meshY: meshY,
+  waterGeo: waterGeo, tramEdges: tramEdges, cutHoles: cutHoles, holeSet: holeSet, TRAM: {INNER: TRAM_INNER, W: TRAM_W, EDGE: TRAM_EDGE}
 };
 })();

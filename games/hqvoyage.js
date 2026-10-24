@@ -26,7 +26,11 @@ var OFFSHORE = 260;             // m: the sea lane round a coast, outside its fu
 var NOMINAL_COAST = 900, NOMINAL_RIVER = 600;
 var STEP = 30;                  // m between points on an arc or a straight
 var EVERY = 120000;             // ms between sailings on a route
-var COMMONS_WORLD = "claude-hq@2";
+// the live Commons (HQ 3.15, D2: "claude-hq@3", from HQV.world.COMMONS); the @2 Commons is still the Commons (older
+// Arenas and clients), and the @3 Commons keeps the @2 airport site, so the airfield capsule below holds for both
+var COMMONS_FALLBACK = "claude-hq@3", COMMONS_IDS = {"claude-hq@2": 1, "claude-hq@3": 1};
+function commonsId(){ var w = HQV.world; return w && typeof w.COMMONS === "string" && w.COMMONS ? w.COMMONS : COMMONS_FALLBACK; }
+function isCommons(world){ return typeof world === "string" && (COMMONS_IDS[world] === 1 || world === commonsId()); }
 var COMMONS_AIRFIELD = {a: [-1015, -1220], b: [-1015, 1220], r: 180};   // m, the Commons' frame: L.keepOut.capsule
 var AIR_CLEAR = 40, AIR_LANE = 120;   // m past the capsule: never closer; the ferry lane's hull
 
@@ -40,7 +44,7 @@ function axisNear(air, x, z){
 }
 function airClear(air, x, z){ if(!air) return Infinity; var q = axisNear(air, x, z); return hyp(x - q.x, z - q.z) - air.r; }
 // the airfield in a city's own frame (m), or null: the Commons' capsule
-function airOf(world){ return world === COMMONS_WORLD ? COMMONS_AIRFIELD : null; }
+function airOf(world){ return isCommons(world) ? COMMONS_AIRFIELD : null; }
 function shiftAir(air, x, z){ return air ? {a: [air.a[0] + x, air.a[1] + z], b: [air.b[0] + x, air.b[1] + z], r: air.r} : null; }
 
 // the coast's furthest point from the city's centre (m)
@@ -261,7 +265,7 @@ function bigCities(arch){
     }
     out.push(c);
   }
-  if(arch.commons) add(arch.commons, arch.commons.world || "claude-hq@2", "The Commons");
+  if(arch.commons) add(arch.commons, arch.commons.world || commonsId(), "The Commons");
   var isl = (Array.isArray(arch.islands) ? arch.islands : []).slice().sort(function(a, b){ return String(a.world) < String(b.world) ? -1 : 1; });
   isl.forEach(function(o){ if(o && o.world) add(o, o.world, String(o.name || "An island").slice(0, 40)); });
   return out;
@@ -559,5 +563,6 @@ HQV.hqVoyage = {route: route, poseAt: poseAt, sailings: sailings, nextSailing: n
                 inland: inland, coastR: coastR, EVERY: EVERY, RIVER_V: RIVER_V, SEA_V: SEA_V,
                 seaLoop: seaLoop, fleet: fleet, shipAt: shipAt, loopT: loopT, nextStop: nextStop, calls: calls, bigCities: bigCities,
                 BIG_NOMINAL: BIG_NOMINAL, CRUISE_V: CRUISE_V, CARGO_V: CARGO_V,
-                COMMONS_AIRFIELD: COMMONS_AIRFIELD, AIR_CLEAR: AIR_CLEAR, airClear: airClear};
+                COMMONS_AIRFIELD: COMMONS_AIRFIELD, AIR_CLEAR: AIR_CLEAR, airClear: airClear,
+                commons: commonsId, isCommons: isCommons, airOf: airOf};
 })();

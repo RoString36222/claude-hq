@@ -269,13 +269,21 @@ fn across(g: &mut Graph, c: &Ctx, u: u32, road: u32) -> Option<(u32, u32, P)> {
     let r = c.river?;
     let pos = g.nodes[u as usize];
     let center: Vec<P> = r.center.iter().map(|q| (q[0], q[1])).collect();
-    let (k, (foot, d2)) = (1..center.len()).map(|k| (k, nearest_on(pos, center[k - 1], center[k]))).min_by_key(|&(k, (_, d2))| (d2, k))?;
+    let near = |line: &[P]| (1..line.len()).map(|k| (k, nearest_on(pos, line[k - 1], line[k]))).min_by_key(|&(k, (_, d2))| (d2, k));
+    let (mut k, (mut foot, mut d2)) = near(&center)?;
+    let mut line = &center;
+    // @3: or a canal's, if nearer
+    for arm in &r.arms {
+        if let Some((ka, (fa, da))) = near(arm).filter(|a| a.1 .1 < d2) {
+            (k, foot, d2, line) = (ka, fa, da, arm);
+        }
+    }
     let reach = ART_STEP_CM + BANK_CM + r.width_cm / 2 + BAY_REACH_CM;
     if d2 > reach * reach || foot == pos {
         return None;
     }
     // square to the river: along its normal, the way to the water
-    let t = unit(sub(center[k], center[k - 1]));
+    let t = unit(sub(line[k], line[k - 1]));
     let n = if dot(left(t), sub(foot, pos)) > 0 { left(t) } else { neg(left(t)) };
     [0, 15, -15, 30, -30].into_iter().find_map(|deg| bridge(g, c, u, turn(n, deg), road))
 }

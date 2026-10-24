@@ -66,7 +66,14 @@ pub const GAMES: &[(&str, i64, &[&str])] = &[
     // "petride" (HQ 3.14 riding): a = 13 (riding your pet: a grown dragon, the sea serpent, a big dinosaur), pt's first the mount, at the height `h`
     // "motion": pos may carry t (the sender's clock, ms), vx / vz (cm/s), yr (deg/s) and rpm, so a listener can draw
     // them smoothly between frames of their own clock (valley/hq.rs Motion)
-    ("hq", 4, &["ride", "look", "skate", "drive", "alt", "isles", "fly", "plane", "vehicles", "airliner", "boombox", "convoy", "tuning", "pets", "hqstyle", "motion", "petride"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`; "drive": a = 5 (a car), 6 (a motorbike)
+    // "transit" (HQ 3.15): a = 14 (a seated passenger) with tk (the mode, 1..9) and tv (the vehicle id, at most 24 of
+    // [A-Za-z0-9:_-]); the floor may also be a world @3 (city3d:claude-hq@3, city3d:user:<uuid>@3)
+    // "phone" (HQ 3.15): the socket takes {type:"near_on"}, nearby chat ({type:"say", data:{kind:"near"}}, within 40 m)
+    // and call ringing ({type:"ring"} / {type:"ring_ans"}) in hq rooms (main.rs); SMS is /v1/sms/* (sms.rs)
+    // Both are additive, so the version stays 4: a v4 page that never sends them is exactly what it always was, and a
+    // bump would tell every page from before 3.15 to update (games/multi.js CLIENT_PROTO hq [1, 4]). They sit before
+    // "convoy" in the list (pages test membership, never order; tests/test_hqpets.py pins the tail).
+    ("hq", 4, &["ride", "look", "skate", "drive", "alt", "isles", "fly", "plane", "vehicles", "airliner", "boombox", "transit", "phone", "convoy", "tuning", "pets", "hqstyle", "motion", "petride"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`; "drive": a = 5 (a car), 6 (a motorbike)
     ("type", 1, &[]),
     ("td", 1, &[]),
     ("bowl", 1, &[]),
@@ -116,7 +123,8 @@ mod tests {
         // "alt" (v2): h / p ride along, x / z span the 2 km world, floor "city3d".
         // "isles" (v3): the floor may be a world's own room, city3d:<world id>.
         // "vehicles" (v4): while driving, v / vp name the catalogue vehicle and its paint.
-        assert_eq!(info["games"]["hq"], json!({"v": 4, "caps": ["ride", "look", "skate", "drive", "alt", "isles", "fly", "plane", "vehicles", "airliner", "boombox", "convoy", "tuning", "pets", "hqstyle", "motion", "petride"]}));
+        // "transit" / "phone" (HQ 3.15): a seated passenger, and nearby chat + call ringing.
+        assert_eq!(info["games"]["hq"], json!({"v": 4, "caps": ["ride", "look", "skate", "drive", "alt", "isles", "fly", "plane", "vehicles", "airliner", "boombox", "transit", "phone", "convoy", "tuning", "pets", "hqstyle", "motion", "petride"]}));
         assert_eq!(version("fps"), 1);
         assert_eq!(version("pond"), 1);
         // An unknown game still answers 1, as Python's PROTOCOL.get(g, {}) does.

@@ -74,6 +74,27 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>) -
         }
         (first, first + r.quay as u32)
     });
+    // @3: the other bodies of water in reach of the city (lakes, the marina), each its
+    // own loop of wall (none before @3: the streets are as they were)
+    let mut pools: Vec<(u32, u32)> = Vec::new();
+    if let Some(r) = river.filter(|r| !r.pools.is_empty()) {
+        let road = streets.len() as u32;
+        streets.push(Street { name: "Water".to_string(), kind: Kind::Water });
+        for (_, bank) in &r.pools {
+            if bank.poly.iter().all(|&q| geom::len(q) > p.city_r_cm + 2_000) {
+                continue;
+            }
+            let first = g.nodes.len() as u32;
+            let n = bank.poly.len() as u32;
+            for &q in &bank.poly {
+                g.node(q);
+            }
+            for k in 0..n {
+                g.link(first + k, first + (k + 1) % n, Kind::Water, road);
+            }
+            pools.push((first, n));
+        }
+    }
     let mut chains = streets::arterials(&mut g, &ctx, &mut grow, &mut streets, art_names)?;
     // the dock's quay: a street to the bank behind the dock from the nearest arterial,
     // else (once the local streets have grown) from the nearest street; none if a street
@@ -93,6 +114,23 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>) -
     };
     let quay = quay.filter(|&(to, road)| !laid(&g, to) && !g.spur(to, 12_000, streets::MIN_CM, Kind::Local, road));
     streets::locals(&mut g, &ctx, &mut grow, &chains, &mut streets, local_names);
+    // @3: a pool no street reaches gets one, to its shore nearest the plaza (else its
+    // wall would float inside a block)
+    for &(first, n) in &pools {
+        let touched = (first..first + n).any(|k| g.adj[k as usize].iter().any(|&e| g.edges[e as usize].kind != Kind::Water));
+        if touched {
+            continue;
+        }
+        let road = streets.len() as u32;
+        streets.push(Street { name: format!("{} Shore", local_names[(road as usize) % local_names.len()]), kind: Kind::Local });
+        let mut by: Vec<(i64, u32)> = (first..first + n).map(|k| (dist2(g.nodes[k as usize], (0, 0)), k)).collect();
+        by.sort();
+        for (_, k) in by.into_iter().take(8) {
+            if g.spur(k, 12_000, streets::MIN_CM, Kind::Local, road) {
+                break;
+            }
+        }
+    }
     if let Some((to, road)) = quay {
         if !laid(&g, to) && !g.spur(to, 12_000, streets::MIN_CM, Kind::Local, road) {
             return Err(format!("profile {}: no road reaches the dock", p.name));
@@ -110,7 +148,11 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>) -
     };
 
     // blocks, the plaza first, then nearest it first; then the river's wall comes down
-    let faces = blocks::blocks(&g, |e: u32| width(g.edges[e as usize].kind) / 2);
+    let mut faces = blocks::blocks(&g, |e: u32| width(g.edges[e as usize].kind) / 2);
+    // @3: no block over a pool's water (one whose wall no street reached)
+    if let Some(r) = river.filter(|r| !r.pools.is_empty()) {
+        faces.retain(|f| !r.pools.iter().any(|z| z.0.meets(&f.poly)));
+    }
     for k in 0..g.edges.len() {
         if g.edges[k].alive && g.edges[k].kind == Kind::Water {
             g.kill(k as u32);
@@ -158,6 +200,10 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>) -
         for cut in lots::split_sides(&sides, ch.lot_m2 * 10_000, &mut rng) {
             let c = centroid(&cut.poly);
             if hs.iter().any(|h| inside(c, h)) || !clear_of_roads(&g, &cut.poly, half) || !on_a_road(&g, cut.door, half) {
+                continue;
+            }
+            // @3: never on a pool's bank
+            if river.is_some_and(|r| r.pools.iter().any(|z| z.1.meets(&cut.poly))) {
                 continue;
             }
             let floors = rng.range(ch.floors.0, ch.floors.1);
@@ -409,7 +455,7 @@ fn district_map(seed: u64, p: &Profile, base: &Terrain, ctx: &Ctx, g: &Graph, bl
             let (x, z) = (centre(ix), centre(iz));
             let h = base.height_at(x, z);
             let wild = value(ns, x, z, 25_600);
-            kinds.push(if ctx.wet((x, z)) {
+            kinds.push(if ctx.wet((x, z)) || ctx.river.is_some_and(|r| r.in_pool((x, z))) {
                 district::WATER
             } else if ctx.zoning.district((x, z)) == Some(district::PARK) {
                 district::PARK

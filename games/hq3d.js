@@ -746,7 +746,7 @@ function mount(el, api){
     look: function(){ return (api.look && api.look()) || {}; }, api: api,
     // Cities: put you somewhere in this world (off a bus, back at a dock), or build the City again on
     // another world (an island, the Commons) and arrive at spawn
-    teleport: function(x, z, yaw){ if(avatar){ if(ride) dismount(true); placeAvatar(x, z, yaw); } },
+    teleport: function(x, z, yaw, y){ if(avatar){ if(ride) dismount(true); placeAvatar(x, z, yaw, y); } },   // [3.15] y: below the street
     goCity: function(world, spawn){ return inst.goCity ? inst.goCity(world, spawn) : false; },
     // navigation (HQ 3.1, games/hqcity3d.js): where you face and how fast, and what you ride (kind, a boat or not);
     // the other players in this world; is world w the one you are in; the full map (M)
@@ -1573,6 +1573,9 @@ function mount(el, api){
     b.ll.rotation.x += o.l; b.rl.rotation.x += o.l;
     ch._po = o;
   }
+  // [3.15] standing in a full bus, tram or train: the right arm up to the ceiling rail (undone before the next mixer step)
+  function railUndo(ch){ var b = poseBones(ch), o = ch && ch._rail; if(!b || !o) return; b.ra.rotation.z -= o; ch._rail = 0; }
+  function railApply(ch){ var b = poseBones(ch); if(!b || E.calm()) return; var o = -2.5; b.ra.rotation.z += o; ch._rail = o; }
   // the pose for a skater, from the sim's state (yours) or from a trick id k (someone else's)
   function skatePoseOf(k, air, crouchT){
     var K = HQV.hqSkateSim ? HQV.hqSkateSim.K : {};
@@ -3019,15 +3022,20 @@ function mount(el, api){
   // a teleport: standing still where you land, at the ground's height (no spring from where you were)
   // y: the level you land on (a roof deck's spawn carries its y; a dismount keeps the height you rode at). Without it,
   // the street: -1e9, never 1e9 (3.13.5: "above everything" put you up on your helideck, which overhangs your front door)
+  var SIT_H = 0.45;            // [3.15] m: the "sit" clip's seat height over the feet (a carry's y is the seat's top)
   function stopFeet(y){ avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0; avatar.travelYaw = null; avatar.hy = y != null && isFinite(y) ? +y : -1e9; }
   function moveAvatar(dt){
     if(ride){ if(ride.pet && !ride.heli) petGroundMove(dt); else if(ride.kind === "skate") skateMove(dt); else if(ride.boat) boatMove(dt); else if(ride.heli) heliMove(dt); else if(ride.plane) planeMove(dt); else rideMove(dt); return; }
-    // on a bus or a tram (games/hqcity3d.js w.carry): the vehicle's seat, its timetable's pose
+    // on a bus or a tram (games/hqcity3d.js w.carry): the vehicle's seat, its timetable's pose. [3.15] carry.anim: "sit"
+    // in a seat (y is the seat's top: the sit clip's hips sit SIT_H above the feet), "stand" at a pole (hands: "rail",
+    // the right arm up to the rail), "walk" on and off (the scripted 1.2 s walk)
     var cp = cur && cur.carry ? cur.carry() : null;
     if(cp){
       walkTo = null; walkDoor = null; keyMove = false; movedHere = true;
       avatar.x = cp.x; avatar.z = cp.z; avatar.yaw = cp.yaw; avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.travelYaw = cp.yaw;
-      avatar.hy = cp.y; avatar.hyV = 0; setAnim(avatar.ch, "idle");
+      avatar.seat = cp.anim === "sit" || cp.anim === "stand" || cp.anim === "walk" ? cp.anim : null; avatar.rail = cp.hands === "rail";
+      avatar.hy = cp.anim === "sit" ? cp.y - SIT_H : cp.y; avatar.hyV = 0;
+      if(cp.anim === "sit") setAnim(avatar.ch, "sit"); else if(cp.anim === "walk") setAnim(avatar.ch, "walk", 0.8); else setAnim(avatar.ch, "idle");
       avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
       view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
       return;
@@ -3279,9 +3287,9 @@ function mount(el, api){
       if(api.announce) api.announce("Photo saved");
     }, "image/png");
   }
-  function placeAvatar(x, z, yaw){
+  function placeAvatar(x, z, yaw, y){
     avatar.x = x; avatar.z = z; if(yaw != null) avatar.yaw = yaw;
-    avatar.hop = 0; avatar.vy = 0; avatar.airborne = false; stopFeet();
+    avatar.hop = 0; avatar.vy = 0; avatar.airborne = false; stopFeet(y);     // y: the level you land on (a station hall, a platform)
     walkTo = null; walkDoor = null; doorsArmed = false; movedHere = true;
     moveAvatar(0); view.target.copy(view.goal);
     if(rig && yaw != null && HQV.camrig.snap) HQV.camrig.snap(rig);     // the chase camera behind your new heading
@@ -3372,14 +3380,23 @@ function mount(el, api){
       var D = tripV.d.set(cp.look.x - cp.pos.x, cp.look.y - cp.pos.y, cp.look.z - cp.pos.z), Uu = tripV.u.set(cp.up ? cp.up.x : 0, cp.up ? cp.up.y : 1, cp.up ? cp.up.z : 0).normalize();
       D.applyAxisAngle(Uu, tripLook.yaw);
       var Rr = tripV.r.copy(D).cross(Uu).normalize(); if(Rr.lengthSq() > 0.5) D.applyAxisAngle(Rr, tripLook.pitch);
-      cp = {camera: true, pos: cp.pos, up: cp.up, fov: cp.fov, look: {x: cp.pos.x + D.x, y: cp.pos.y + D.y, z: cp.pos.z + D.z}};
+      cp = {camera: true, pos: cp.pos, up: cp.up, fov: cp.fov, mode: cp.mode, look: {x: cp.pos.x + D.x, y: cp.pos.y + D.y, z: cp.pos.z + D.z}};
     }
     if(rig.mode === "classic" || rig.mode === "map" || rig.mode === "photo") HQV.camrig.setMode(rig, "chase", {instant: true});
     pcam.position.set(cp.pos.x, cp.pos.y, cp.pos.z);
     if(cp.up) pcam.up.set(cp.up.x, cp.up.y, cp.up.z);
     pcam.lookAt(cp.look.x, cp.look.y, cp.look.z);
     pcam.fov = cp.fov || 60; pcam.far = Math.max(pcam.far, 3000); pcam.updateProjectionMatrix(); pcam.updateMatrixWorld();
-    showAvatar(false);
+    showAvatar(cp.mode === "chase");          // [3.15] a seat or window camera is your own eyes; the chase camera sees you in your seat
+  }
+  // [3.15] HQ3D_DEBUG.transit.shot: a transport module's fixed camera ({pos, look, fov}: objects or [x, y, z]) holds the shot
+  function shotCamApply(){
+    var sc = SMOKE && SMOKE.on ? SMOKE.shot : null; if(!sc || !pcam || !rigOn()) return;
+    var v = function(q){ return Array.isArray(q) ? {x: +q[0] || 0, y: +q[1] || 0, z: +q[2] || 0} : {x: +q.x || 0, y: +q.y || 0, z: +q.z || 0}; };
+    var P = v(sc.pos), L = v(sc.look);
+    pcam.position.set(P.x, P.y, P.z); pcam.up.set(0, 1, 0); pcam.lookAt(L.x, L.y, L.z);
+    pcam.fov = +sc.fov || 60; pcam.near = 0.1; pcam.far = Math.max(pcam.far, 3000); pcam.updateProjectionMatrix(); pcam.updateMatrixWorld();
+    if(!sc.avatar) showAvatar(false);         // the tour moved you under the camera to build the tiles: not in the picture
   }
   // Gamepad: polled only after a gamepadconnected (and until a gamepaddisconnected).
   function onPadOn(){ pad.on = true; }
@@ -3769,7 +3786,10 @@ function mount(el, api){
       else sub = "Parked elsewhere · arrives in ~" + H.BUDGET + " s";
       var cat = it.o && VEHICLES[it.o.vehicleId] ? VEHICLES[it.o.vehicleId].cat : null, sp = cat && cat.spec || {};
       var tags = cat ? [cat.brand, cat.model, cat.year, String(cat["class"] || "").replace(/\./g, " "), cat.body, sp.layout, sp.cc ? sp.cc + "cc" : "",
-                        sp.cyl ? sp.cyl + " cylinder" : "", sp.aspiration, sp.electric ? "electric ev" : "", /^(moto|bike)/.test(String(cat["class"])) ? "bike motorbike motorcycle" : "car"].join(" ")
+                        sp.cyl ? sp.cyl + " cylinder" : "", sp.aspiration, sp.electric ? "electric ev" : "",
+                        // [3.15] the call list's chips (games/hqcall.js chipOf): helicopters, boats, bikes, cars
+                        VEHICLES[it.o.vehicleId].heli || /heli/.test(String(cat["class"])) ? "heli helicopter" : VEHICLES[it.o.vehicleId].boat || /boat/.test(String(cat["class"])) ? "boat"
+                          : /^(moto|bike)/.test(String(cat["class"])) ? "bike motorbike motorcycle" : "car"].join(" ")
                      : it.starter === "moto" ? "bike motorbike motorcycle starter" : "car starter";
       return {key: it.key, title: callTitle(it), sub: sub, busy: !!(T && T.mode === "call"), col: hexOf(it.o ? it.o.color : b && b.color), tags: tags};
     });
@@ -4137,6 +4157,86 @@ function mount(el, api){
                    riding: !!(ride && ride.id === "testdrive"), back: T.back ? {s: T.back.s, len: T.back.len} : null, bay: T.bay} : null; },
                  endTest: function(){ if(testDrive) testDrive.until = Date.now(); },
                  loaded: function(){ return catLoad.then(function(){ return !!CAT; }); }};
+  /* ---------- [3.15] the phone (games/hqphone.js and its apps), next to the call button: Backquote or I opens it ----------
+     The host (docs/plans/transport-revamp.md 5.8) reads this City's transport (cur.transit(): rides, cabs, the heli, the
+     water taxi), your vehicles (the call list), the dealership (remote), the airport, the camera and the social store
+     (window.hqPhoneSocial, ui/app/41-phone.js). Photos stay on this machine (games/hqgallery.js: IndexedDB). */
+  var phoneUi = null, phoneDetach = null, phoneBtn = null, selfieOn = false, phoneBadgeAt = 0;
+  function phoneTransit(){ try { return cur && cur.transit ? cur.transit() : null; } catch(e){ return null; } }
+  function phoneInCity(){ return !!(cur && cur === worlds.city && cur.camModes); }
+  function phoneSfx(n, o){ var a = E.audioOut ? E.audioOut() : null; if(a && HQV.hqRide && HQV.hqRide.sfx) try { return HQV.hqRide.sfx(a.ctx, n, Object.assign({dest: a.out}, o || {})); } catch(e){} return null; }
+  function photoBlob(){
+    return new Promise(function(res){
+      if(!renderer || !cur || !canvas.toBlob){ res(null); return; }
+      try { renderer.render(cur.scene, curCam()); canvas.toBlob(function(b){ res(b || null); }, "image/png"); } catch(e){ res(null); }
+    });
+  }
+  var phoneHost = {
+    announce: function(t){ if(api.announce) api.announce(t); }, toast: function(t){ if(api.toast) api.toast(t); },
+    now: function(){ return Date.now(); }, clock: function(){ var d = new Date(); return {h: d.getHours(), m: d.getMinutes()}; },
+    calm: function(){ return E.calm(); },
+    reducedMotion: function(){ try { return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch(e){ return false; } },
+    inCity: phoneInCity,
+    me: function(){ var w0 = cur && cur.world ? cur.world() : null; return avatar ? {x: avatar.x, z: avatar.z, world: w0, owner: w0 && HQV.world && HQV.world.ownerOf ? HQV.world.ownerOf(w0) : null, userId: api.me ? api.me() : null} : {}; },
+    ride: HQV.hqRide || null,
+    session: function(){ var TR = phoneTransit(); return TR ? TR.session() : null; },
+    startRide: function(p){ var TR = phoneTransit(); return TR ? TR.startRide(p) : null; },
+    places: function(){ return cur && cur.placesList ? cur.placesList() : []; },
+    islands: function(){ return cur && cur.islandList ? cur.islandList() : []; },
+    owners: function(){ return []; },
+    doc: function(){ return cur && cur.doc ? cur.doc() : null; },
+    get cabs(){ var TR = phoneTransit(); return TR ? TR.cabs : null; },
+    get heli(){ var TR = phoneTransit(); return TR ? TR.heli : null; },
+    get water(){ var TR = phoneTransit(); return TR ? TR.water : null; },
+    vehicles: {list: function(){ return callOn() ? callItems() : []; }, call: function(k){ return callPick(k); }, state: function(){ return inst.call.state(); }},
+    dealer: {mount: function(elx, onDone){
+      if(!HQV.hqDealer || !HQV.hqDealer.mountPanel) return null;
+      gamesCss();
+      var ui = HQV.hqDealer.mountPanel(elx, {remote: true, catalogue: function(){ return CAT; }, level: function(){ return ctx.level(); }, three: THREE, ctx: ctx, name: "Claude Motors",
+        garage: function(){ return true; }, owned: function(){ return Object.keys(own); }, announce: api.announce,
+        onBought: function(r){ if(onDone) onDone({id: r.id, key: "own:" + r.id, name: r.name}); }});
+      if(ui && ui.open) ui.open();
+      return ui;
+    }},
+    air: {flights: function(ms){ return cur && cur.air && cur.air.flights ? cur.air.flights(ms) : []; },
+          checkIn: function(f){ return cur && cur.air && cur.air.checkIn ? cur.air.checkIn(f) : null; }},
+    travel: {link: function(world){ var TR = phoneTransit(); return TR ? TR.link(world) : false; }},
+    photo: photoBlob,
+    selfie: function(on){
+      if(!rig || !HQV.camrig || !HQV.camrig.setMode) return false;
+      if(on && !selfieOn){ selfieOn = true; rig.selfiePrev = rig.mode; HQV.camrig.setMode(rig, "selfie", {instant: true}); }
+      else if(!on && selfieOn){ selfieOn = false; HQV.camrig.setMode(rig, rig.selfiePrev && rig.selfiePrev !== "selfie" ? rig.selfiePrev : "chase", {instant: true}); }
+      return true;
+    },
+    track: function(id){ var TR = phoneTransit(); return TR ? TR.track(id) : false; },
+    get social(){ return window.hqPhoneSocial || null; },
+    sfx: phoneSfx,
+    netCan: function(cap){ return api.netCan ? api.netCan(cap) : false; },
+    settings: api.settings || null,
+    atJetty: function(){ return false; }
+  };
+  function phoneGet(){
+    if(phoneUi || !HQV.hqPhone || !HQV.hqPhone.mount) return phoneUi;
+    try { phoneUi = HQV.hqPhone.mount(el, phoneHost); } catch(e){ phoneUi = null; return null; }
+    if(HQV.hqPhoneComms && HQV.hqPhoneComms.attach) try { phoneDetach = HQV.hqPhoneComms.attach(phoneUi); } catch(e){ phoneDetach = null; }
+    return phoneUi;
+  }
+  function phoneToggle(){ var u = phoneGet(); if(!u) return false; keys = {}; u.toggle(); phoneBadge(); return true; }
+  if(HQV.hqPhone){
+    phoneBtn = document.createElement("button"); phoneBtn.type = "button"; phoneBtn.className = "hq3d-home hq3d-phone-btn";
+    phoneBtn.style.top = "212px"; phoneBtn.textContent = "\uD83D\uDCF1 Phone (`)"; phoneBtn.title = "Your phone: tickets, departures, the transit map, Claude Cabs, messages (` or I)";
+    phoneBtn.setAttribute("aria-label", "Phone");
+    phoneBtn.addEventListener("click", function(){ phoneToggle(); }); el.appendChild(phoneBtn);
+  }
+  // the badge count on the button (unread messages, a missed call, an active ride), refreshed once a second
+  function phoneBadge(){
+    if(!phoneBtn) return;
+    var n = phoneUi && phoneUi.badgeTotal ? phoneUi.badgeTotal() | 0 : 0;
+    var t = "\uD83D\uDCF1 Phone (`)" + (n > 0 ? " · " + n : "");
+    if(phoneBtn.textContent !== t){ phoneBtn.textContent = t; phoneBtn.setAttribute("aria-label", n > 0 ? "Phone, " + n + " new" : "Phone"); }
+  }
+  inst.phone = {open: function(app, arg){ var u = phoneGet(); if(u) u.open(app, arg); return !!u; }, close: function(){ if(phoneUi) phoneUi.close(); },
+                toggle: function(){ return phoneToggle(); }, isOpen: function(){ return !!(phoneUi && phoneUi.isOpen()); }, ui: function(){ return phoneUi; }, host: phoneHost};
   function showLoading(text){ loading.textContent = text; if(!loading.parentNode) el.appendChild(loading); }
   // The 3D City could not load (no world route on this Arena, a timeout): the classic City, under the same name.
   function cityFallback(name, w, err){
@@ -4343,6 +4443,10 @@ function mount(el, api){
       }
       return;
     }
+    // [3.15] the phone has the keys while it is open (its own handlers: Esc back, ` closes); ` or I opens it
+    if(phoneUi && phoneUi.isOpen()){ keys = {}; if(phoneUi.owns(e)) return; }
+    if(e.type === "keydown" && !e.repeat && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey && HQV.hqPhone
+       && (e.code === "Backquote" || (e.code === "KeyI" && cur === worlds.city))){ e.preventDefault(); e.stopPropagation(); phoneToggle(); return; }
     // C: a tap opens the call list (games/hqcall.js); held, it still raises the camera (camKey below)
     if(e.code === "KeyC" && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey && callOn()){
       if(e.type === "keydown" && !e.repeat) cTap = E.now();
@@ -4361,6 +4465,8 @@ function mount(el, api){
     if(ride && ride.pet && e.code === "KeyF" && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey){   // [3.14] the breath
       e.preventDefault(); e.stopPropagation(); if(e.type === "keydown" && !e.repeat) petBreath(); return;
     }
+    // [3.15] riding (games/hqtransit.js): S requests the stop, V cycles seat -> window -> chase, Esc gets off
+    if(!ride && inst.running && !typing(e.target) && cur && cur.transitKey && cur.transitKey(e)){ e.preventDefault(); e.stopPropagation(); return; }
     if(drvKey(e)) return;                                              // [3.12] L lights, Y convoy, J (held) formation
     if(camKey(e)) return;
     if(!inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -4392,9 +4498,11 @@ function mount(el, api){
     if(cur && cur.onHeli) cur.onHeli(ride && (ride.heli || (ride.plane && !ride.plane.ground)) ? {st: ride.heli || ride.plane, kind: ride.pet ? "heli" : ride.kind} : null);                          // flying on to another island (a dragon: as a helicopter)
     nearIdx = ride ? -1 : nearBike();
     rideUiSync(false); homeUiSync();
+    if((phoneBadgeAt += dt) > 1){ phoneBadgeAt = 0; phoneBadge(); }    // [3.15] the phone button's badge
     keys = kp;
     if(rigOn()) rigFrame(t, dt);
     tripCam();
+    shotCamApply();                                                    // ?hqsmoke=1 (tools/transit_tour.py): a module's fixed shot
     keys = kb;
     // the camera keeps up better the faster you go (a car at full speed stays on screen)
     studioFrame();
@@ -4404,7 +4512,9 @@ function mount(el, api){
       var skp = ride && ride.kind === "skate" && ride.sk ? ride.sk.pose : null;
       if(skp || avatar.ch._po) poseUndo(avatar.ch);
       headUndo(avatar.ch);
+      railUndo(avatar.ch);
       avatar.ch.mixer.update(dt); if(avatar.ch.update) avatar.ch.update(t);
+      if(avatar.rail && avatar.seat === "stand" && cur && cur.carry && cur.carry()) railApply(avatar.ch); else avatar.rail = false;   // [3.15] holding the rail
       if(ride && ride.kind !== "skate" && avatar.ch.o.parent === ride.lean) ridePose(avatar.ch, ride.B, ride.steer, avatar.g);
       if(skp) poseApply(avatar.ch, skp);                               // Calm: no pose (skp is null)
       if(!ride && avatar.lean) headApply(avatar.ch, avatar.lean.h);     // on foot: the head into the turn
@@ -4413,6 +4523,7 @@ function mount(el, api){
       boomStep(avatar.ch, bOn, t, bOn);
     }
     placePeers(dt, t);
+    bubblesStep();                                                     // [3.15] nearby chat over heads
     petsFrame(t, dt);                                                  // [pets 3.14]
     petFxStep(dt);                                                     // [3.14 riding] the ridden breath
     drvFrame(t, dt);                                                   // [3.12] lights, spray, smoke, convoys
@@ -4605,6 +4716,8 @@ function mount(el, api){
       P.bb = typeof p.bb === "string" && /^[A-Za-z0-9_-]{11}$/.test(p.bb) ? p.bb : null;
       P.pt = Array.isArray(p.pt) && p.pt.length ? p.pt.slice(0, 2) : null;   // [pets 3.14] their pets (`pt`): drawn by games/hqpets.js
       P.u = p.u;   // (3.13.1) or a live set (boomLive, keyed by their Arena user id)
+      // [3.15] a seated passenger (a = 14, the "transit" capability): the mode (tk) and the vehicle (tv) they sit in
+      P.tk = Math.max(0, Math.min(9, p.tk | 0)); P.tv = typeof p.tv === "string" && /^[A-Za-z0-9:_-]{1,24}$/.test(p.tv) ? p.tv : null;
       // [3.12] convoys (the "convoy" capability): whom they invite (ci), whom they follow (cv), where they lead (cg, cm)
       var UR = /^[A-Za-z0-9_-]{1,64}$/;
       P.ci = typeof p.ci === "string" && UR.test(p.ci) ? p.ci : null; P.cv = typeof p.cv === "string" && UR.test(p.cv) ? p.cv : null;
@@ -4614,6 +4727,23 @@ function mount(el, api){
   };
   // what another player is on, from their presence `a`, and how they sit on it
   var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto", 7: "heli", 8: "attack", 9: "seaplane", 10: "prop", 11: "regional", 12: "airliner", 13: "petride"};
+  // [3.15] nearby chat (games/hqphonecomms.js bubbles(): user-typed lines from players within 40 m, 6 s each) as a label
+  // over the speaker's head: theirs, or yours (your user id, else "me"); faded by alpha (Calm: no fade)
+  var BUB_Y = 2.85;
+  function bubbleOn(g, holder, b){
+    if(!b){ if(holder.bub){ if(holder.bub.parent) holder.bub.parent.remove(holder.bub); if(holder.bub.material.map) holder.bub.material.map.dispose(); holder.bub.material.dispose(); holder.bub = null; holder.bubT = null; } return; }
+    var text = short(String(b.text || ""), 60);
+    if(holder.bubT !== text){ bubbleOn(g, holder, null); holder.bub = label(text, HEX.cyan || HEX.green, 0.6); holder.bub.name = "bubble"; holder.bub.position.y = BUB_Y; g.add(holder.bub); holder.bubT = text; }
+    if(holder.bub.parent !== g) g.add(holder.bub);
+    holder.bub.material.opacity = Math.max(0, Math.min(1, b.alpha != null ? +b.alpha : 1));
+  }
+  function bubblesStep(){
+    var PC = HQV.hqPhoneComms, list = [];
+    if(PC && PC.bubbles){ try { list = PC.bubbles() || []; } catch(e){ list = []; } }
+    var by = {}; list.forEach(function(b){ if(b && b.userId != null) by[String(b.userId)] = b; });
+    Object.keys(peers).forEach(function(u){ var P = peers[u]; bubbleOn(P.g, P, by[u] || null); });
+    if(avatar && avatar.g){ var meId = api.me ? api.me() : null; bubbleOn(avatar.g, avatar, by[meId || "me"] || by.me || null); }
+  }
   function placePeers(dt, t){
     Object.keys(peers).forEach(function(u){
       // the floor they are on: the 3D city sends "city3d" (w.net), so legacy and 3D clients never mix
@@ -4644,6 +4774,16 @@ function mount(el, api){
         P.sv = null; P.syr = null;
       }
       P.g.position.set(P.x, P.hy, P.z); P.g.rotation.y = P.yaw; P.g.rotation.x = -P.pitch;
+      // [3.15] riding transit (a = 14): seated in their vehicle as this page draws it (the same timetable everywhere)
+      if(P.a === 14 && P.tv && !P.board && !P.bike && cur.transit){
+        var TRs = null, sq = null; try { TRs = cur.transit(); sq = TRs && TRs.peerSeat ? TRs.peerSeat(P.tk, P.tv, u, Date.now()) : null; } catch(e){ sq = null; }
+        if(sq){
+          P.g.position.set(sq.x, sq.y - SIT_H, sq.z); P.g.rotation.y = sq.yaw; P.g.rotation.x = 0;
+          if(P.ch){ headUndo(P.ch); setAnim(P.ch, "sit"); P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0); }
+          P.px = P.x; P.pz = P.z; P.pyaw = P.yaw;
+          return;
+        }
+      }
       var skates = P.a === 4;
       // on a board: stood on it side-on, lifted to the height they send, the trick they send played here
       if(skates && !P.board){ if(P.bike){ if(P.ch) P.g.add(P.ch.o); P.g.remove(P.lean); P.bike = null; P.vkind = null; }
@@ -4740,7 +4880,9 @@ function mount(el, api){
   // 9 the seaplane, 10 the prop plane (the page sends them only where the Arena lists "plane"; HQ 3.2); 11 the regional
   // jet, 12 the airliner (only where it lists "airliner", HQ 3.6; else they go as the prop plane, 10)
   // 13 riding your pet (a dragon, the serpent, a dinosaur: HQ 3.14; only where the Arena lists "petride", else on foot)
-  inst.moving = function(){ return ride ? (ride.pet ? 13 : ride.plane ? (ride.kind === "seaplane" ? 9 : ride.kind === "regional" ? 11 : ride.kind === "airliner" ? 12 : 10) : ride.heli ? (ride.kind === "attack" ? 8 : 7) : ride.boat ? (keyMove ? 1 : 0) : RIDE_A[ride.base || ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
+  // 14 a seated passenger on a bus, tram, train, boat or gondola ([3.15]; only where the Arena lists "transit")
+  inst.transitNet = function(){ var TR = cur && cur.transit ? cur.transit() : null; try { return TR && TR.net ? TR.net() : null; } catch(e){ return null; } };
+  inst.moving = function(){ if(!ride && inst.transitNet()) return 14; return ride ? (ride.pet ? 13 : ride.plane ? (ride.kind === "seaplane" ? 9 : ride.kind === "regional" ? 11 : ride.kind === "airliner" ? 12 : 10) : ride.heli ? (ride.kind === "attack" ? 8 : 7) : ride.boat ? (keyMove ? 1 : 0) : RIDE_A[ride.base || ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
   // on a board: what others should see you doing ({k, y}); null otherwise
   inst.skate = function(){ return ride && ride.kind === "skate" ? skateNet() : null; };
   inst.riding = function(){ return !!ride; };
@@ -4771,8 +4913,12 @@ function mount(el, api){
     // worldDrawCalls / worldTriangles
     s = Object.assign({}, s, {worldDrawCalls: s.drawCalls != null ? s.drawCalls : null, worldTriangles: s.triangles != null ? s.triangles : null});
     if(ri && ri.calls > 0){ s.drawCalls = ri.calls; s.triangles = ri.triangles; }
+    // [3.15] every transport module's own drawCalls() (games/hqtransit.js), and whether you are below the street (the
+    // underground's own budget: 120 calls)
+    var TRs = null; try { TRs = cur && cur.transit ? cur.transit() : null; } catch(e){ TRs = null; }
+    if(TRs){ try { s.transit = TRs.drawCallsBy(); s.transitDrawCalls = TRs.drawCalls(); s.underground = TRs.under(); } catch(e){} }
     return Object.assign({}, s, {labels: hud && hud.labelCounts ? hud.labelCounts() : null, mode: rig ? rig.mode : "classic",
-      cache: HQV.world && typeof HQV.world.cacheMs === "function" ? HQV.world.cacheMs() : null,
+      cache: HQV.world && typeof HQV.world.cacheMs === "function" ? HQV.world.cacheMs(w.world ? w.world() : undefined) : null,   // the world this City is on (3.15: @3)
       vehicle: ride ? {pitch: ride.pitch || 0, roll: ride.roll || 0} : null, world: w.net || w.name || null});
   }
   // &cam=<mode> once ready; "fp-bonnet" is first person from a car's bonnet
@@ -4818,7 +4964,7 @@ function mount(el, api){
   }
   if(SMOKE && SMOKE.on){
     window.HQ3D_DEBUG = {mode: function(m){ smokeCam(m); }, scene: function(){ return cur && cur.scene; }, teleport: function(x, z, yaw){ smokeTeleport(+x || 0, +z || 0, yaw == null ? null : +yaw); },
-                         ride: function(kind){ smokeRide(kind); }, stats: function(){ return smokeStats(); },
+                         ride: function(kind){ smokeRide(kind); }, unride: function(){ if(ride) dismount(true); return !ride; }, stats: function(){ return smokeStats(); },
                          // [stunts] the City's stunts, and where you are in one (tools drive them headless)
                          stunts: function(){ var S = stuntsNow(); return S ? S.list.map(function(s){ return {id: s.id, kind: s.kind, name: s.name, x: s.x, z: s.z, yaw: s.yaw, respawn: s.respawn,
                            pad: s.pads[0] ? {x: s.pads[0].x, z: s.pads[0].z, v: s.pads[0].v} : null, jump: s.jump ? {D: s.jump.D, v: s.jump.v, t: s.jump.t, apex: s.jump.apex, lip: s.jump.lip, target: s.jump.target} : null}; }) : null; },
@@ -4826,6 +4972,8 @@ function mount(el, api){
                            loop: ride.loop ? {phi: ride.loop.phi} : null, boost: ride.boost ? ride.boost.v : null, speed: ride.speed, x: avatar.x, y: avatar.hy, z: avatar.z, pitch: ride.pitch,
                            msg: stuntEl && !stuntEl.hidden ? stuntEl.textContent : null} : null; },
                          stuntsDrawn: function(){ var D = cur && cur.stuntsDrawn ? cur.stuntsDrawn() : null; return D ? {calls: D.drawCalls(), n: D.list.length} : null; },
+                         // the world the City is built on (games/hqcity3d.js: claude-hq@3, an island, a fallback)
+                         world: function(){ return cur && cur.world ? cur.world() : null; },
                          // the floor-building ctx (THREE, the starter models car / moto / bike), for tools that measure vehicles
                          ctx: function(){ return ctx; },
                          // other players as drawn: what they ride (a, the catalogue vehicle v + paint vp) and the model shown
@@ -4860,6 +5008,51 @@ function mount(el, api){
                          peer: function(f){ if(SMOKE.peer && f && typeof f === "object") Object.keys(f).forEach(function(k){ SMOKE.peer[k] = f[k]; }); inst.setPeers(lastPeers); return SMOKE.peer; },
                          weather: function(){ return cur && cur.weather ? cur.weather() : null; },
                          // avatar + camera, for tools that drive the keys and record motion
+                         // [3.15] transport, for tools/transit_tour.py (docs/plans/transport-revamp.md 8): go somewhere, board a
+                         // line, the ride's phase and seat camera, freeze the clock, below the street, a module's shot camera, the
+                         // phone, a cab, the heli, a water taxi or a hire boat, the Island Link
+                         transit: (function(){
+                           function T0(){ try { return cur && cur.transit ? cur.transit() : null; } catch(e){ return null; } }
+                           function D(){ var T = T0(); return T && T.debug ? T.debug : null; }
+                           return {
+                             go: function(id){ var T = T0(); if(!T) return null; var hit = null;
+                               T.services().forEach(function(sv){ (sv.stops() || []).forEach(function(st){ if(!hit && (st.id === id || st.name === id)) hit = st; }); });
+                               if(!hit) return null; smokeTeleport(hit.x, hit.z, null);
+                               if(hit.under && HQV.hqUnderground){ HQV.hqUnderground.set(true, "tour"); placeAvatar(hit.x, hit.z, null, hit.y); }
+                               return {id: hit.id, name: hit.name, x: hit.x, y: hit.y, z: hit.z, under: !!hit.under}; },
+                             stops: function(mode){ var d = D(); return d ? d.stops(mode) : []; },
+                             lines: function(mode){ var d = D(); return d ? d.lines(mode) : []; },
+                             board: function(mode, line, from, to, ms){ var d = D(); return d ? d.board(mode, line, from, to, ms) : null; },
+                             phase: function(){ var d = D(); return d ? d.phase() : null; },
+                             info: function(){ var d = D(); return d ? d.info() : null; },
+                             seatCam: function(m){ var d = D(); return d ? d.seatCam(m) : null; },
+                             // the clock as everything in the City reads it (Date.now): held at ms, or (run) running on from ms; null: real time
+                             freeze: function(ms, run){
+                               var real = SMOKE.realNow || (SMOKE.realNow = Date.now.bind(Date));
+                               if(ms == null || !isFinite(+ms)){ Date.now = real; SMOKE.freeze = null; return null; }
+                               var at = +ms, off = at - real();
+                               Date.now = run ? function(){ return real() + off; } : function(){ return at; };
+                               SMOKE.freeze = at; return at; },
+                             under: function(on){ var d = D(); return d ? d.under(on) : null; },
+                             shot: function(mod, name){ var d = D(); var sc = d ? d.shot(mod, name) : null;
+                               if(sc && sc.pos && rig && pcam){ HQV.camrig.setMode(rig, "photo", {instant: true}); SMOKE.shot = sc; if(sc.under != null && d) d.under(!!sc.under); }      // held below the street for the shot
+                               return sc; },
+                             shotClear: function(){ if(SMOKE.shot) showAvatar(true); SMOKE.shot = null; },
+                             // any fixed camera ({pos, look, fov, under}), held like a module's shot
+                             cam: function(sc){ if(!sc || !sc.pos || !rig || !pcam) return null; HQV.camrig.setMode(rig, "photo", {instant: true}); SMOKE.shot = sc;
+                               var d = D(); if(sc.under != null && d) d.under(!!sc.under); return sc; },
+                             phone: function(app, arg){ return inst.phone.open(app, arg); },
+                             phoneClose: function(){ inst.phone.close(); return true; },
+                             cab: function(cls, dest){ var d = D(); return d ? !!d.cab(cls, dest) : false; },
+                             cabDriver: function(on){ var d = D(); return d ? d.cabDriver(on) : null; },
+                             heli: function(spot){ var d = D(); return d ? !!d.heli(spot) : false; },
+                             water: function(kind, a, b){ var d = D(); return d ? !!d.water(kind, a, b) : false; },
+                             link: function(world){ var d = D(); return d ? d.link(world) : false; },
+                             drawCalls: function(){ var d = D(); return d ? d.drawCalls() : null; },
+                             services: function(){ var d = D(); return d ? d.services() : []; },
+                             views: function(){ var d = D(); return d ? d.views() : []; }
+                           };
+                         })(),
                          probe: function(){ var c = curCam(); return {x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: avatar.yaw, speed: avatar.speed || 0,
                            travelYaw: avatar.travelYaw, turnRate: avatar.rate || 0, heading: rig && rig.moveYaw != null ? rig.moveYaw : null,
                            mode: rig && rig.mode, moveYaw: rig && rig.moveYaw, lookYaw: rig && rig.lookYaw,
@@ -4975,7 +5168,7 @@ function mount(el, api){
     if(!inst.alive) return;
     L = lib; THREE = lib.THREE;
     ray = new THREE.Raycaster(); ptr = new THREE.Vector2();
-    renderer = new THREE.WebGLRenderer({canvas: canvas, antialias: true});
+    renderer = new THREE.WebGLRenderer({canvas: canvas, antialias: true, stencil: true});   // [3.15] stencil: the sea is not drawn down a metro well
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;

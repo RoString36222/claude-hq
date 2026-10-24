@@ -13,7 +13,8 @@
  *                                   than BACK m, with hysteresis (state kept on R), nowMs (default Date.now()) times how
  *                                   long you have been off the route for needsReroute
  *   needsReroute(P, mode)     -> off by more than OFF[mode] m for over OFF_S s
- *   places(W, tier, o)        -> the "Go to" list, sorted by straight-line distance from (o.x, o.z)
+ *   places(W, tier, o)        -> the "Go to" list, sorted by straight-line distance from (o.x, o.z); its travel
+ *                                   entry names the live world (HQ 3.15, D2: HQV.world.COMMONS / islandId(uid), the @3 ids)
  * Turns (bearings as games/hqhud.js: yaw = atan2(dx, dz), increasing yaw turns LEFT): at a junction (a
  * node with 3+ roads) a heading change over 30 deg is a step; under 30 is "straight" and only kept when
  * the road name changes (at any node); 30-60 "slight", 60-135 plain, 135+ "sharp", turning back onto
@@ -392,6 +393,12 @@ function lotDoor(l){
   return doorOf(l);
 }
 
+// the live ids (HQ 3.15, D2): HQV.world's when loaded, else the @3 forms
+function liveCommons(){ var A = HQV.world; return A && A.COMMONS ? A.COMMONS : "claude-hq@3"; }
+function liveIsland(uid){
+  var A = HQV.world, id = A && A.islandId ? A.islandId(uid) : null;
+  return id || "user:" + String(uid).replace(/^user:/, "").replace(/@[0-9]+$/, "") + "@3";
+}
 function places(W, tier, o){
   o = o || {}; tier = tier == null ? 5 : tier | 0;
   var px = +o.x || 0, pz = +o.z || 0, out = [], terminals = [];
@@ -417,7 +424,7 @@ function places(W, tier, o){
   // dock or port open at this tier
   if(W.island && terminals.length){
     var t = terminals.slice().sort(function(a, b){ return a.dist - b.dist; })[0];
-    var world = o.island ? "claude-hq@2" : (o.me ? "user:" + o.me + "@2" : null);
+    var world = o.island ? liveCommons() : (o.me ? liveIsland(o.me) : null);
     if(world) add({id: "travel:" + world, kind: "travel", label: o.island ? "The Commons (ferry)" : "My island (ferry)",
                    icon: ICON.travel, x: t.x, z: t.z, door: {x: t.door.x, z: t.door.z}, world: world, via: t.id});
   }

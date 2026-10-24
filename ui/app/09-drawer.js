@@ -1004,6 +1004,8 @@ document.addEventListener("keydown",function(e){
   else if(e.key==="j"||e.key==="J"){ e.preventDefault(); setView("music"); }
   else if(e.key==="w"||e.key==="W"){ if(!$("workshopView")) return; e.preventDefault(); setView("workshop"); }
   else if(e.key==="c"||e.key==="C"){ e.preventDefault(); setView("compete"); }
+  // [3.15] the phone from anywhere (the 3D HQ handles its own Backquote / I first: this is the page's fallback)
+  else if(e.code==="Backquote" && !e.repeat && typeof hqPhoneToggle==="function"){ e.preventDefault(); hqPhoneToggle(); }
   // In a voice call, from any view: M mutes, V switches the camera, S shares your screen. Holding a key down
   // doesn't repeat it, and outside a call these keys do nothing.
   else if(VCHAN.on && !e.repeat && (e.key==="m"||e.key==="M")){ e.preventDefault(); voiceToggleMute(); }
@@ -1022,6 +1024,7 @@ function currentModal(){
   if($("notchInviteBack") && $("notchInviteBack").classList.contains("open")) return $("notchInviteBack");
   if($("townHallBack") && $("townHallBack").classList.contains("open")) return $("townHallBack");
   if($("petsBack") && $("petsBack").classList.contains("open")) return $("petsBack");   // [pets 3.14]
+  if($("phoneBack") && $("phoneBack").classList.contains("open")) return $("phoneBack");   // [3.15] the phone
   if($("evoPickBack") && $("evoPickBack").classList.contains("open")) return $("evoPickBack");
   if($("evoPreviewBack") && $("evoPreviewBack").classList.contains("open")) return $("evoPreviewBack");
   if(typeof CMDK_OPEN!=="undefined" && CMDK_OPEN) return $("cmdk");

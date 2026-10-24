@@ -46,6 +46,7 @@ mod server_stats;
 mod service;
 mod skate;
 mod skills;
+mod sms; // HQ 3.15 the phone's Messages
 mod sounds;
 #[cfg(test)]
 mod story_check;
@@ -439,9 +440,11 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
     let rally = st.rally.clone();
     let valley = st.valley.clone();
     let music = st.music.clone();
+    let phone_valley = st.valley.clone();
     let mut inbound = tokio::spawn(async move {
         let mut music_lim = music::ConnLimits::new();
         let mut chat_times: VecDeque<Instant> = VecDeque::with_capacity(rooms::CHAT_RATE_COUNT);
+        let mut phone_lim = phone::Limits::default();
         while let Some(Ok(msg)) = recv.next().await {
             let Message::Text(text) = msg else { continue };
             // Both rejections are answered, not dropped: a client sending frames
@@ -466,7 +469,18 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
                     continue;
                 }
             };
-            match v.get("type").and_then(|t| t.as_str()) {
+            // HQ 3.15 the phone: nearby chat and call ringing (hq rooms only), before the generic arms.
+            let kind = v.get("type").and_then(|t| t.as_str());
+            let near_say = kind == Some("say")
+                && v.get("data").and_then(|d| d.get("kind")).and_then(|k| k.as_str()) == Some("near");
+            if near_say || matches!(kind, Some("near_on") | Some("ring") | Some("ring_ans")) {
+                let pv = phone_valley.clone();
+                let r2 = rid.clone();
+                phone::handle(&rooms, &rid, conn_id, &me, &v, &mut phone_lim, &mut chat_times,
+                              move || pv.with_room(&r2, |rv| rv.hq.positions()).unwrap_or_default()).await;
+                continue;
+            }
+            match kind {
                 Some("say") => {
                     let data = v.get("data");
                     // Lobby chat rides the generic "say" relay as {kind: "chat", text},
@@ -1021,6 +1035,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(server_stats::routes())
         .merge(skate::routes())
         .merge(skills::routes())
+        .merge(sms::routes()) // HQ 3.15 the phone's Messages
         .merge(sounds::routes())
         .merge(vehicles::routes())
         .merge(casino::routes())
@@ -1074,6 +1089,297 @@ async fn serve() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// HQ 3.15 the phone over the room socket (docs/plans/transport-revamp.md 5.11), in hq rooms only (`hq_<owner>`
+/// and `hq_city`), the "phone" capability in protocol.rs:
+///   {type: "near_on", on}                       nearby chat on or off for THIS socket (rooms::set_near)
+///   {type: "say", data: {kind: "near", text}}   to the sockets in the room that turned nearby on and whose person
+///                                               stands on the sender's floor within NEAR_CM (valley/hq.rs
+///                                               positions); at most NEAR_MAX_CHARS, under the lobby chat's rate
+///                                               limit, never kept in the room's chat history
+///   {type: "ring", to, id} / {type: "ring_ans", to, id, ok}   to the target's sockets in this room only; RING_PER_MIN
+///                                               rings a minute per socket; the call itself is WebRTC set up over
+///                                               the existing {type: "signal"} and flows browser to browser
+/// Nothing here is stored. The text is what a player typed into Nearby.
+mod phone {
+    use crate::rooms::{self, Member, RoomManager};
+    use chrono::{SecondsFormat, Utc};
+    use serde_json::{json, Value};
+    use std::collections::VecDeque;
+    use std::time::Instant;
+
+    /// Nearby means the same floor and within 40 m (cm).
+    pub const NEAR_CM: i64 = 4_000;
+    pub const NEAR_MAX_CHARS: usize = 200;
+    pub const RING_PER_MIN: usize = 6;
+    pub const RING_ANS_PER_MIN: usize = 12;
+
+    /// A sliding one-minute window.
+    #[derive(Default)]
+    pub struct Window(VecDeque<Instant>);
+
+    impl Window {
+        pub fn allow(&mut self, now: Instant, max: usize) -> bool {
+            while self.0.front().is_some_and(|t| now.duration_since(*t).as_secs_f64() >= 60.0) {
+                self.0.pop_front();
+            }
+            if self.0.len() >= max {
+                return false;
+            }
+            self.0.push_back(now);
+            true
+        }
+    }
+
+    /// One socket's phone allowances.
+    #[derive(Default)]
+    pub struct Limits {
+        pub ring: Window,
+        pub ans: Window,
+    }
+
+    /// The lobby chat's flood guard (main.rs "say" kind "chat"), shared so nearby and lobby chat spend one allowance.
+    pub fn chat_allow(times: &mut VecDeque<Instant>, now: Instant) -> bool {
+        let fresh = times.len() < rooms::CHAT_RATE_COUNT
+            || now.duration_since(times[0]).as_secs_f64() >= rooms::CHAT_RATE_WINDOW;
+        if !fresh {
+            return false;
+        }
+        if times.len() == rooms::CHAT_RATE_COUNT {
+            times.pop_front();
+        }
+        times.push_back(now);
+        true
+    }
+
+    /// The lobby chat's cleaning (unprintables become spaces, runs of whitespace fold), cut at NEAR_MAX_CHARS.
+    pub fn clean_near(raw: &str) -> Option<String> {
+        let cleaned: String = raw.chars().map(|c| if rooms::py_printable(c) { c } else { ' ' }).collect();
+        let text: String = cleaned.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(NEAR_MAX_CHARS).collect();
+        (!text.is_empty()).then_some(text)
+    }
+
+    /// Who hears `from`: everyone else on the same floor within NEAR_CM, with the distance in whole metres. None
+    /// when the sender has no known position (they never sent one).
+    pub fn audience(pos: &[(String, String, i64, i64)], from: &str) -> Option<Vec<(String, i64)>> {
+        let (_, w, x, z) = pos.iter().find(|p| p.0 == from)?;
+        Some(pos.iter().filter(|p| p.0 != from && p.1 == *w).filter_map(|p| {
+            let (dx, dz) = ((p.2 - x) as f64, (p.3 - z) as f64);
+            let d = (dx * dx + dz * dz).sqrt();
+            (d <= NEAR_CM as f64).then(|| (p.0.clone(), (d / 100.0).round() as i64))
+        }).collect())
+    }
+
+    fn call_id_ok(s: &str) -> bool {
+        !s.is_empty() && s.len() <= 40 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    }
+
+    async fn error(rooms: &RoomManager, rid: &str, conn: u64, e: &str) {
+        rooms.send_conn(rid, conn, json!({"type": "error", "error": e}).to_string()).await;
+    }
+
+    #[allow(clippy::too_many_arguments)] // the socket's own context, passed through from handle_socket
+    pub async fn handle(rooms: &RoomManager, rid: &str, conn: u64, me: &Member, v: &Value, lim: &mut Limits,
+                        chat_times: &mut VecDeque<Instant>, positions: impl FnOnce() -> Vec<(String, String, i64, i64)>) {
+        if !rid.starts_with("hq_") {
+            return error(rooms, rid, conn, "phone: only in an HQ or the City").await;
+        }
+        let now = Instant::now();
+        match v.get("type").and_then(Value::as_str) {
+            Some("near_on") => {
+                let on = v.get("on").and_then(Value::as_bool).unwrap_or(false);
+                rooms.set_near(rid, conn, on).await;
+                rooms.send_conn(rid, conn, json!({"type": "near_on", "on": on}).to_string()).await;
+            }
+            Some("say") => {
+                if !rooms.near_on(rid, conn).await {
+                    return error(rooms, rid, conn, "nearby: turn on Nearby first").await;
+                }
+                let Some(raw) = v.get("data").and_then(|d| d.get("text")).and_then(Value::as_str) else {
+                    return error(rooms, rid, conn, "nearby: text must be a string").await;
+                };
+                let Some(text) = clean_near(raw) else { return error(rooms, rid, conn, "nearby: empty message").await };
+                if !chat_allow(chat_times, now) {
+                    return error(rooms, rid, conn, &format!("chat: slow down \u{2014} at most {} messages every {} seconds",
+                                                            rooms::CHAT_RATE_COUNT, rooms::CHAT_RATE_WINDOW as i64)).await;
+                }
+                let Some(who) = audience(&positions(), &me.user_id) else {
+                    return error(rooms, rid, conn, "nearby: walk into the City first").await;
+                };
+                let id = hex::encode(rand::random::<[u8; 6]>());
+                let at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, false);
+                let mut reached = 0;
+                for (uid, d) in &who {
+                    let msg = json!({"type": "say", "from": me.public(), "data": {"kind": "near", "text": text, "d": d},
+                                     "id": id, "at": at});
+                    reached += rooms.send_near(rid, conn, |m| m.user_id == *uid, msg.to_string()).await;
+                }
+                rooms.send_conn(rid, conn, json!({"type": "near_ack", "id": id, "n": reached}).to_string()).await;
+            }
+            Some(k @ ("ring" | "ring_ans")) => {
+                let to = v.get("to").and_then(Value::as_str).filter(|t| !t.is_empty() && *t != me.user_id);
+                let id = v.get("id").and_then(Value::as_str).filter(|i| call_id_ok(i));
+                let (Some(to), Some(id)) = (to, id) else {
+                    return error(rooms, rid, conn, &format!("{k} needs a target userId and a call id")).await;
+                };
+                let ring = k == "ring";
+                let ok = v.get("ok").and_then(Value::as_bool);
+                if !ring && ok.is_none() {
+                    return error(rooms, rid, conn, "ring_ans: ok must be true or false").await;
+                }
+                let allowed = if ring { lim.ring.allow(now, RING_PER_MIN) } else { lim.ans.allow(now, RING_ANS_PER_MIN) };
+                if !allowed {
+                    return error(rooms, rid, conn, "calls: slow down \u{2014} at most 6 calls a minute").await;
+                }
+                let msg = if ring {
+                    json!({"type": "ring", "from": me.public(), "id": id})
+                } else {
+                    json!({"type": "ring_ans", "from": me.public(), "id": id, "ok": ok})
+                };
+                let n = rooms.send_where_except(rid, conn, |m| m.user_id == to, msg.to_string()).await;
+                if ring {
+                    rooms.send_conn(rid, conn, json!({"type": "ring_ack", "to": to, "id": id, "delivered": n}).to_string()).await;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn member(id: &str) -> Member {
+            Member { user_id: id.into(), handle: id.into(), display_name: id.into(), avatar_url: String::new(), cos: Value::Null }
+        }
+
+        fn p(u: &str, w: &str, x: i64, z: i64) -> (String, String, i64, i64) {
+            (u.into(), w.into(), x, z)
+        }
+
+        fn drain(rx: &mut tokio::sync::mpsc::Receiver<String>) -> Vec<Value> {
+            let mut out = Vec::new();
+            while let Ok(m) = rx.try_recv() {
+                out.push(serde_json::from_str(&m).unwrap());
+            }
+            out
+        }
+
+        #[test]
+        fn who_is_near() {
+            let w = "city3d:claude-hq@3";
+            let pos = vec![p("a", w, 0, 0), p("b", w, 3000, 2600), p("c", w, 4000, 0), p("d", w, 4001, 0),
+                           p("e", "city3d:claude-hq@2", 10, 0), p("f", w, -100, 0)];
+            assert_eq!(audience(&pos, "a").unwrap(), vec![("b".into(), 40), ("c".into(), 40), ("f".into(), 1)]);
+            assert!(audience(&pos, "zed").is_none());
+            assert_eq!(audience(&[p("a", w, 0, 0)], "a").unwrap(), vec![]);
+        }
+
+        #[test]
+        fn the_text_and_the_windows() {
+            assert_eq!(clean_near("  hi\u{202e}  there\n").unwrap(), "hi there");
+            assert!(clean_near(" \u{200b} ").is_none());
+            assert_eq!(clean_near(&"x".repeat(500)).unwrap().chars().count(), NEAR_MAX_CHARS);
+            let t0 = Instant::now();
+            let mut w = Window::default();
+            for _ in 0..RING_PER_MIN {
+                assert!(w.allow(t0, RING_PER_MIN));
+            }
+            assert!(!w.allow(t0 + std::time::Duration::from_secs(59), RING_PER_MIN));
+            assert!(w.allow(t0 + std::time::Duration::from_secs(60), RING_PER_MIN));
+            let mut ct = VecDeque::new();
+            for _ in 0..rooms::CHAT_RATE_COUNT {
+                assert!(chat_allow(&mut ct, t0));
+            }
+            assert!(!chat_allow(&mut ct, t0));
+            assert!(chat_allow(&mut ct, t0 + std::time::Duration::from_secs(11)));
+        }
+
+        #[tokio::test]
+        async fn nearby_goes_to_opted_in_people_within_forty_metres_and_is_not_kept() {
+            let r = RoomManager::new();
+            let rid = "hq_city";
+            let (_, mut a, _, _) = r.join_direct(rid, 1, member("ann")).await.unwrap();
+            let (_, mut b, _, _) = r.join_direct(rid, 2, member("bob")).await.unwrap();
+            let (_, mut c, _, _) = r.join_direct(rid, 3, member("cat")).await.unwrap();
+            let (_, mut d, _, _) = r.join_direct(rid, 4, member("dan")).await.unwrap();
+            let w = "city3d:claude-hq@3";
+            let pos = move || vec![p("ann", w, 0, 0), p("bob", w, 1000, 0), p("cat", w, 9000, 0), p("dan", w, 500, 0)];
+            let (mut lim, mut ct) = (Limits::default(), VecDeque::new());
+            let say = json!({"type": "say", "data": {"kind": "near", "text": " hello  there "}});
+            // not opted in: refused
+            handle(&r, rid, 1, &member("ann"), &say, &mut lim, &mut ct, pos).await;
+            assert_eq!(drain(&mut a)[0]["error"], "nearby: turn on Nearby first");
+            for conn in [1, 2, 3] {
+                handle(&r, rid, conn, &member(["ann", "bob", "cat"][conn as usize - 1]), &json!({"type": "near_on", "on": true}),
+                       &mut lim, &mut ct, pos).await;
+            }
+            assert_eq!(drain(&mut a), vec![json!({"type": "near_on", "on": true})]);
+            drain(&mut b);
+            drain(&mut c);
+            handle(&r, rid, 1, &member("ann"), &say, &mut lim, &mut ct, pos).await;
+            let got = drain(&mut b);
+            assert_eq!(got.len(), 1);
+            assert_eq!(got[0]["type"], "say");
+            assert_eq!(got[0]["data"], json!({"kind": "near", "text": "hello there", "d": 10}));
+            assert_eq!(got[0]["from"]["userId"], "ann");
+            assert!(drain(&mut c).is_empty(), "cat is 90 m away");
+            assert!(drain(&mut d).is_empty(), "dan is near but never turned nearby on");
+            let ack = drain(&mut a);
+            assert_eq!(ack[0]["type"], "near_ack");
+            assert_eq!(ack[0]["n"], 1);
+            assert_eq!(r.chat_history(rid).await, json!([]), "never kept in the room's chat");
+            // the shared chat allowance runs dry
+            for _ in 0..rooms::CHAT_RATE_COUNT {
+                handle(&r, rid, 1, &member("ann"), &say, &mut lim, &mut ct, pos).await;
+            }
+            let last = drain(&mut a);
+            assert!(last.last().unwrap()["error"].as_str().unwrap().starts_with("chat: slow down"));
+            // outside an hq room: refused
+            let (_, mut q, _, _) = r.join_direct("lobby", 9, member("ann")).await.unwrap();
+            handle(&r, "lobby", 9, &member("ann"), &json!({"type": "near_on", "on": true}), &mut lim, &mut ct, Vec::new).await;
+            assert_eq!(drain(&mut q)[0]["error"], "phone: only in an HQ or the City");
+        }
+
+        #[tokio::test]
+        async fn rings_reach_only_the_target_in_the_room_six_a_minute() {
+            let r = RoomManager::new();
+            let rid = "hq_ann";
+            let (_, mut a, _, _) = r.join_direct(rid, 1, member("ann")).await.unwrap();
+            let (_, mut b, _, _) = r.join_direct(rid, 2, member("bob")).await.unwrap();
+            let (_, mut c, _, _) = r.join_direct(rid, 3, member("cat")).await.unwrap();
+            let (_, mut b_elsewhere, _, _) = r.join_direct("hq_city", 4, member("bob")).await.unwrap();
+            let mut lim = Limits::default();
+            let mut ct = VecDeque::new();
+            let ring = json!({"type": "ring", "to": "bob", "id": "call-1"});
+            handle(&r, rid, 1, &member("ann"), &ring, &mut lim, &mut ct, Vec::new).await;
+            assert_eq!(drain(&mut b), vec![json!({"type": "ring", "from": member("ann").public(), "id": "call-1"})]);
+            assert!(drain(&mut c).is_empty() && drain(&mut b_elsewhere).is_empty());
+            assert_eq!(drain(&mut a), vec![json!({"type": "ring_ack", "to": "bob", "id": "call-1", "delivered": 1})]);
+            let mut blim = Limits::default();
+            handle(&r, rid, 2, &member("bob"), &json!({"type": "ring_ans", "to": "ann", "id": "call-1", "ok": true}),
+                   &mut blim, &mut ct, Vec::new).await;
+            assert_eq!(drain(&mut a), vec![json!({"type": "ring_ans", "from": member("bob").public(), "id": "call-1", "ok": true})]);
+            assert!(drain(&mut b).is_empty() && drain(&mut c).is_empty());
+            // bad frames
+            for bad in [json!({"type": "ring", "to": "bob"}), json!({"type": "ring", "id": "x"}), json!({"type": "ring", "to": "ann", "id": "x"}),
+                        json!({"type": "ring", "to": "bob", "id": "a b"}), json!({"type": "ring_ans", "to": "ann", "id": "x"})] {
+                handle(&r, rid, 1, &member("ann"), &bad, &mut Limits::default(), &mut ct, Vec::new).await;
+                assert!(drain(&mut a)[0]["error"].is_string(), "{bad}");
+                assert!(drain(&mut b).is_empty());
+            }
+            // six a minute (one went already)
+            for i in 0..5 {
+                handle(&r, rid, 1, &member("ann"), &json!({"type": "ring", "to": "cat", "id": format!("c{i}")}), &mut lim, &mut ct, Vec::new).await;
+            }
+            assert_eq!(drain(&mut c).len(), 5);
+            drain(&mut a);
+            handle(&r, rid, 1, &member("ann"), &json!({"type": "ring", "to": "cat", "id": "c9"}), &mut lim, &mut ct, Vec::new).await;
+            assert!(drain(&mut c).is_empty());
+            assert!(drain(&mut a)[0]["error"].as_str().unwrap().contains("6 calls"));
+        }
+    }
 }
 
 #[cfg(test)]

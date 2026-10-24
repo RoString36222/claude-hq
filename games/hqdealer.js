@@ -29,6 +29,9 @@
  *                              opts = {catalogue() -> cat, level() -> n, owned() -> Promise<[ids]>, garage() -> bool,
  *                                      onTest(id, hex), onGet(id, hex) -> Promise<{ok, text}>, three, ctx, name,
  *                                      announce, onClose}
+ *                              opts.remote (HQ 3.15, the phone's Dealership call): no Test drive, the note says
+ *                              "Delivered to your carpark", and Get it buys through HQV.hqGarage.buy(id, paint index)
+ *                              (opts.onGet is not used); onBought({id, vehicleId, name}) after a buy
  *   owns(e)                 -> true for a key event inside the panel (the host's capture-phase handler skips it)
  * Pure parts run under node (tests/test_hqdealer.py). textContent only.
  */
@@ -40,7 +43,11 @@ var HQV = G.HQV = G.HQV || {};
 var PI = Math.PI, Q16 = 65536;
 var MIN_TIER = 2;                // the first city tier with a dealership
 var SITE_ID = "dealer:0";
-var COMMONS = "claude-hq@2";
+var COMMONS = "claude-hq@3";      // the live Commons (HQV.world.COMMONS); @2 / @3 ids are the same place (D2)
+function isCommons(id){
+  var W = HQV.world;
+  return typeof id === "string" && (id === (W && W.COMMONS || COMMONS) || /^claude-hq@[23]$/.test(id));
+}
 var MIN_W = 30, MIN_D = 24;      // m: the smallest footprint a showroom and its forecourt fit on
 var PREF = {commercial: 5, downtown: 5, office: 3, finance: 3, oldtown: 2, tech: 2, media: 2, studio: 1, logistics: 1, civic: 1};
 var LINEUP = 26;                 // vehicles a showroom should fit (today's on-sale lineup); more room counts for no more
@@ -131,7 +138,7 @@ function place(W, tier){
   var s = {id: SITE_ID, kind: "dealer", tier: MIN_TIER, lot: l.id, block: l.block, district: l.district,
            x: Math.round(F.cx*100), y: y, z: Math.round(F.cz*100), w: Math.round(F.w*100), d: Math.round(F.d*100),
            front: [Math.round(F.f[0]*Q16), Math.round(F.f[1]*Q16)], facing: l.facing || "north",
-           flagship: W.id === COMMONS, name: W.id === COMMONS ? "Flagship Dealership" : "Dealership", claimed: 1};
+           flagship: isCommons(W.id), name: isCommons(W.id) ? "Flagship Dealership" : "Dealership", claimed: 1};
   W.sites.push(s);
   W.index = null;                          // world.js rebuilds its lot/site buckets
   return s;
@@ -451,7 +458,9 @@ function mountPanel(stage, opts){
   root.setAttribute("role", "dialog"); root.setAttribute("aria-label", String(opts.name || "Dealership"));
   var head = mk("div", "hqdealer-head", root);
   var title = mk("div", "hqdealer-title", head, "🚘 " + String(opts.name || "Dealership"));
-  var note = mk("div", "hqdealer-note", head, "Test drive any of them, then get it.");
+  var remote = !!opts.remote;
+  var REMOTE_NOTE = "Delivered to your carpark.";
+  var note = mk("div", "hqdealer-note", head, remote ? REMOTE_NOTE : "Test drive any of them, then get it.");
   var closeBtn = mk("button", "hqdealer-close", head, "✕"); closeBtn.type = "button"; closeBtn.setAttribute("aria-label", "Leave the dealership");
   var top = mk("div", "hqdealer-top", root);
   var prevBox = mk("div", "hqdealer-preview", top); prevBox.setAttribute("aria-hidden", "true");
@@ -514,7 +523,7 @@ function mountPanel(stage, opts){
     if(!cat){ mk("div", "hqdealer-empty", body, "Loading the showroom…"); return; }
     var M = model(cat, {level: level(), owned: owned, garage: garage()}), first = null, free = true;
     M.tabs.forEach(function(k){ k.sections.forEach(function(s){ s.classes.forEach(function(cl){ cl.vehicles.forEach(function(v){ if(v.price > 0 || v.minLevel > 0) free = false; }); }); }); });
-    note.textContent = free ? "Every vehicle is free: test drive it, then get it." : "Test drive any of them, then get it.";
+    note.textContent = remote ? (free ? "Every vehicle is free. " : "") + REMOTE_NOTE : free ? "Every vehicle is free: test drive it, then get it." : "Test drive any of them, then get it.";
     if(!M.tabs.some(function(k){ return k.kind === kindNow; }) && M.tabs[0]) kindNow = M.tabs[0].kind;
     M.tabs.forEach(function(k){
       var t = mk("button", "hqdealer-tab" + (k.kind === kindNow ? " on" : ""), tabs, k.label);
@@ -557,20 +566,33 @@ function mountPanel(stage, opts){
     });
     mk("div", "hqdealer-tag", c, v.locked ? "Needs level " + v.minLevel : v.priceText + (v.owned ? " · yours" : ""));
     var acts = mk("div", "hqdealer-acts", c);
-    var test = mk("button", "hqdealer-test", acts, "Test drive"); test.type = "button";
-    on(test, "click", function(){
-      var p = v.paints[sel[v.id] || 0];
-      close();
-      if(opts.onTest) opts.onTest(v.id, p ? p.hex : null);
-    });
+    if(!remote){
+      var test = mk("button", "hqdealer-test", acts, "Test drive"); test.type = "button";
+      on(test, "click", function(){
+        var p = v.paints[sel[v.id] || 0];
+        close();
+        if(opts.onTest) opts.onTest(v.id, p ? p.hex : null);
+      });
+    }
     var get = mk("button", "hqdealer-get", acts, v.action); get.type = "button"; get.disabled = !v.canGet || busy;
     on(get, "click", function(){
-      if(!v.canGet || busy || !opts.onGet) return;
-      var p = v.paints[sel[v.id] || 0];
+      if(!v.canGet || busy || !(remote || opts.onGet)) return;
+      var pi = sel[v.id] || 0, p = v.paints[pi];
       busy = true; get.disabled = true; setStatus("Getting your " + v.brand + " " + v.model + "…");
-      Promise.resolve(opts.onGet(v.id, p ? p.hex : null)).then(function(r){
+      Promise.resolve(remote ? remoteGet(v, pi) : opts.onGet(v.id, p ? p.hex : null)).then(function(r){
         busy = false; setStatus((r && r.text) || ""); if(r && r.ok) refreshOwned(); else render();
       }, function(){ busy = false; setStatus("That didn't work. Try again in a moment."); render(); });
+    });
+  }
+  // the phone's call: bought through the garage client, delivered to your carpark (no test drive from a phone)
+  function remoteGet(v, pi){
+    var Gr = HQV.hqGarage;
+    if(!Gr || !Gr.buy) return Promise.resolve({ok: false, text: "The dealership can't take orders right now."});
+    return Promise.resolve(Gr.buy(v.id, pi)).then(function(r){
+      if(!r || r.error || r.id == null) return {ok: false, text: "That didn't work" + (r && r.error ? ": " + String(r.error) + "." : ".") + " Try again in a moment."};
+      var name = v.brand + " " + v.model;
+      if(typeof opts.onBought === "function") try { opts.onBought({id: r.id, vehicleId: v.id, name: name}); } catch(e){}
+      return {ok: true, text: "Your new " + name + " is on its way. " + REMOTE_NOTE};
     });
   }
   function setStatus(t){ statusText = String(t || ""); status.textContent = statusText; if(statusText) announce(statusText); }
@@ -609,5 +631,5 @@ function mountPanel(stage, opts){
 }
 
 HQV.hqDealer = {place: place, pick: pick, frame: frame, layout: layout, model: model, priceText: priceText, build: build,
-                mountPanel: mountPanel, owns: owns, MIN_TIER: MIN_TIER, SITE_ID: SITE_ID, TEST_S: 180};
+                mountPanel: mountPanel, owns: owns, isCommons: isCommons, MIN_TIER: MIN_TIER, SITE_ID: SITE_ID, TEST_S: 180};
 })();

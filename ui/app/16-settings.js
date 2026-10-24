@@ -136,6 +136,7 @@ function openSettings(){
   var ab=$("setAccountBoard"); if(ab) ab.checked = c.arenaAccountBoard===true;
   var tn=$("setTrainer"); if(tn) tn.value=trainerPref();
   if(typeof syncAccentControls==="function") syncAccentControls();
+  phoneSettingsFill();   // [3.15] the phone's opt-ins
   $("settingsBack").classList.add("open");
   $("setTheme").focus();
 }
@@ -172,6 +173,7 @@ function saveSettings(){
   };
   if($("setWorkSignals")){ body.workSignals=!!$("setWorkSignals").checked; body.workSignalsPRs=body.workSignals && !!($("setWorkSignalsPRs") && $("setWorkSignalsPRs").checked); }
   if($("setAccountBoard")) body.arenaAccountBoard=!!$("setAccountBoard").checked;
+  phoneSettingsRead(body);   // [3.15] the phone: local keys into body, the SMS opt-in to the Arena
   var acctWas = (typeof CONFIG!=="undefined" && CONFIG && CONFIG.arenaAccountBoard===true);
   if(body.character===undefined) delete body.character;   // no WebGL2: the 3D character is left as it was
   // localStorage mirror so the Trainer Card paints instantly on next boot,
@@ -412,3 +414,72 @@ function ambientOnNow(){
 })();
 // Work signals: the PR switch only means something while the main one is on.
 (function(){ var ws=$("setWorkSignals"), wp=$("setWorkSignalsPRs"); if(ws && wp) ws.addEventListener("change", function(){ wp.disabled=!ws.checked; if(!ws.checked) wp.checked=false; }); })();
+
+/* ---- [3.15] the phone: SMS sending (held by the Arena), Nearby, Calls, transit voice, clock, default cab class ----
+   Built here rather than in index.html so the section ships with its logic; textContent only. Each switch says in
+   one line what it shares. SMS sending is the Arena's opt-in (window.hqPhoneSocial, ui/app/41-phone.js); the rest
+   are Settings keys (phoneNear, phoneCalls, transitVoice, phoneClock24, cabClass). */
+var PHONE_SET = {smsWas: null};
+// the classes dashboard-rs keeps for cabClass (app.rs CAB_CLASSES); its default is "go"
+var PHONE_CAB_CLASSES = [["bike","Bike"],["go","Go (hatchback)"],["cab","Cab (sedan)"],["xl","XL (SUV)"],["lux","Lux (EV)"]];
+var PHONE_TOGGLES = [
+  {id:"setPhoneSms", text:"Send text messages (SMS)", hint:"Lets you text any player. Only what you type (at most 160 characters) and who it is for go through the Arena, kept there until delivered and at most 7 days. Receiving is always on; block or mute anyone in Messages."},
+  {id:"setPhoneNear", key:"phoneNear", def:false, text:"Nearby chat", hint:"Lines you type (at most 200 characters) go to players within 40 m of you in the same City, shown over your head for 6 seconds. Nothing is kept."},
+  {id:"setPhoneCalls", key:"phoneCalls", def:false, text:"Calls", hint:"Players in the same room can ring you. The call is audio straight between your two browsers; its setup, which carries your network address, goes to that one person only."},
+  {id:"setTransitVoice", key:"transitVoice", def:true, text:"Transit voice", hint:"Spoken stop announcements on buses, trams and trains, using only this computer's own voices. The text still shows. Nothing is sent."},
+  {id:"setPhoneClock24", key:"phoneClock24", def:false, text:"24-hour clock", hint:"The phone's clock and departure times. Nothing is sent."}
+];
+function phoneSettingsBuild(){
+  if($("setPhoneSms")) return true;
+  var form=document.querySelector("#settingsBack .setform"); if(!form) return false;
+  var anchor=$("setPetsOpen"), before=anchor ? anchor.closest(".setrow") : form.querySelector(".setfoot");
+  var row=document.createElement("div"); row.className="setrow"; row.id="setPhoneRow";
+  row.setAttribute("role","group"); row.setAttribute("aria-labelledby","setPhoneLbl");
+  var lbl=document.createElement("label"); lbl.id="setPhoneLbl"; lbl.textContent="Phone"; row.appendChild(lbl);
+  PHONE_TOGGLES.forEach(function(t){
+    var l=document.createElement("label"); l.className="dex-toggle";
+    var cb=document.createElement("input"); cb.type="checkbox"; cb.id=t.id; cb.setAttribute("aria-describedby", t.id+"Hint");
+    l.appendChild(cb); l.appendChild(document.createTextNode(" "+t.text)); row.appendChild(l);
+    var h=document.createElement("span"); h.className="hint"; h.id=t.id+"Hint"; h.textContent=t.hint; row.appendChild(h);
+  });
+  var cl=document.createElement("label"); cl.setAttribute("for","setCabClass"); cl.textContent="Default Claude Cabs class"; row.appendChild(cl);
+  var sel=document.createElement("select"); sel.id="setCabClass"; sel.setAttribute("aria-describedby","setCabClassHint");
+  PHONE_CAB_CLASSES.forEach(function(c){ var o=document.createElement("option"); o.value=c[0]; o.textContent=c[1]; sel.appendChild(o); });
+  row.appendChild(sel);
+  var ch=document.createElement("span"); ch.className="hint"; ch.id="setCabClassHint"; ch.textContent="The class the Claude Cabs app picks first (rides are free). Nothing is sent."; row.appendChild(ch);
+  if(before && before.parentNode===form) form.insertBefore(row, before); else form.appendChild(row);
+  return true;
+}
+function phoneSettingsFill(){
+  if(!phoneSettingsBuild()) return;
+  var c=CONFIG||{};
+  PHONE_TOGGLES.forEach(function(t){ if(!t.key) return; var cb=$(t.id); if(cb) cb.checked = t.def ? c[t.key]!==false : c[t.key]===true; });
+  var sel=$("setCabClass"); if(sel){ var v=c.cabClass; sel.value = PHONE_CAB_CLASSES.some(function(k){ return k[0]===v; }) ? v : "go"; }
+  var sms=$("setPhoneSms"), hint=$("setPhoneSmsHint"), paired=!!(window.ARENA && ARENA.paired), S=window.hqPhoneSocial;
+  if(!sms) return;
+  sms.disabled = !paired || !S;
+  sms.checked = !!(S && S.enabled().smsSend);
+  PHONE_SET.smsWas = sms.checked;
+  sms.title = paired ? "" : "Pair with the Arena first";
+  if(hint) hint.setAttribute("data-paired", paired ? "1" : "0");
+  // the opt-in lives on the Arena: read it fresh, unless the person already changed the box
+  if(paired && S && S.sms && S.sms.refresh){
+    var was=sms.checked;
+    S.sms.refresh().then(function(){ if(sms.checked===was){ sms.checked=!!S.enabled().smsSend; PHONE_SET.smsWas=sms.checked; } }).catch(function(){});
+  }
+}
+function phoneSettingsRead(body){
+  PHONE_TOGGLES.forEach(function(t){ if(!t.key) return; var cb=$(t.id); if(cb) body[t.key]=!!cb.checked; });
+  var sel=$("setCabClass"); if(sel && sel.value) body.cabClass=sel.value;
+  var sms=$("setPhoneSms"), S=window.hqPhoneSocial;
+  if(sms && !sms.disabled && S && PHONE_SET.smsWas!==null && sms.checked!==PHONE_SET.smsWas){
+    var on=sms.checked;
+    S.setEnabled("smsSend", on).then(function(r){
+      if(r && r.ok){ toast(on ? "💬 You can send text messages now" : "💬 Sending text messages is off", "level"); if(typeof announce==="function") announce(on ? "Sending text messages is on" : "Sending text messages is off"); }
+      else toast("⚠ Could not change text messages: "+((r && r.error) || "the Arena did not answer"), "ach");
+    });
+    PHONE_SET.smsWas=on;
+  }
+  // Nearby turned off: say so on the open socket at once
+  if(S && body.phoneNear===false && CONFIG && CONFIG.phoneNear===true) S.setEnabled("near", false);
+}

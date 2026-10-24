@@ -29,6 +29,15 @@
  *   mount(c, w, o)    the lines touching a City: viaduct, track, piers, masts, platforms, stairs, waiting people, the
  *                     timetable's trains with passengers in their windows, your ride (HQV.hqRail.ride) and its panel.
  * Seeding: no line exists until a player builds one (backend/src/rail.rs).
+ *
+ * HQ 3.15 (docs/plans/transport-revamp.md 3.4, 4.2, D2, D7):
+ *   Live ids are @3 (HQV.world.COMMONS / islandId, else "claude-hq@3"); @2 ids are accepted wherever ids are checked
+ *   (WORLD_RE), compared by place (canon) so an older Arena's @2 lines still show in an @3 world.
+ *   The Island Link (pure, see "the Island Link" below): linkService(o) / link(islandWorld, o) (a Service, mode "link",
+ *   Trip.world = the destination), linkRoute, linkSpawn, linkDepartures / linkNext (every 300 s each way per island),
+ *   linkPlatform (Commons Central's platform). Drawn by linkView(c, sim, opts) (plan 5.4).
+ *   parts: the few-draw-call kit (merged vertex-coloured statics, instanced trains, a focused train's inside) shared
+ *   with games/hqcityrail.js and games/hqgondola.js.
  */
 (function(){
 "use strict";
@@ -44,12 +53,13 @@ var CITY_V = 22, SEA_V = 45, ACC = 1.0, A_LAT = 2.0, CURVE_MIN = 8;
 var CAR_L = 17, CAR_GAP = 1.2, CARS = 4;
 var TRAIN_L = CARS*CAR_L + (CARS - 1)*CAR_GAP;
 var PLAT = 92;             // m: a platform's length along the line, from the station end
+var PLAT_TOP = 0.95;         // m over the rail head: a platform's top and a car's floor
 var STOP_END = 8;          // m: the head stops this short of the line's end
 var EVERY = 180000;        // ms between departures, each way
 var DWELL = 40;            // s a train stands at a platform before leaving and after arriving
 var COST = 500;            // coins: a line, from the builder's island treasury
 var NOMINAL_COAST = 880;
-var COMMONS = "claude-hq@2";
+var COMMONS_FALLBACK = "claude-hq@3";   // the live Commons when HQV.world does not say (HQ 3.15, D2: the live worlds are @3)
 var LANE = 7.7;            // m between the tracks of lines leaving one station side by side: one double viaduct, a shared
                            // island platform between them
 var TAPER = 90;            // m: a lane eases back to the street's middle over this once its lines part
@@ -59,10 +69,23 @@ var SHARE_MIN = 24;        // m: lines running beside each other no further than
 function hyp(x, z){ return Math.sqrt(x*x + z*z); }
 function wrap(a){ while(a > Math.PI) a -= 2*Math.PI; while(a < -Math.PI) a += 2*Math.PI; return a; }
 function WDo(){ return HQV.world || null; }
+// live ids: HQV.world's (COMMONS, islandId) when it has them; @2 and @3 ids are both accepted everywhere (older Arenas)
+function commonsId(){ var W = WDo(); return (W && W.COMMONS) || COMMONS_FALLBACK; }
+function isCommonsId(w){ return /^claude-hq@[0-9]+$/.test(String(w)); }
+function canon(w){ return String(w).replace(/@[0-9]+$/, ""); }                       // the place, whatever the version
+function verOf(w){ var m = /@([0-9]+)$/.exec(String(w)); return m ? +m[1] : 0; }
+function sameWorld(a, b){ return a != null && b != null && canon(a) === canon(b); }
+function asVersion(w, v){ return v ? canon(w) + "@" + v : String(w); }
+function islandIdOf(uid, v){
+  var W = WDo(), u = String(uid == null ? "" : uid).toLowerCase().replace(/^user:/, "").replace(/@[0-9]+$/, "");
+  v = v === 2 ? 2 : 3;
+  if(W && W.islandId){ var r = W.islandId(u, v); if(r) return r; }
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(u) ? "user:" + u + "@" + v : null;
+}
 
 // a city's station: its transit site (any tier: a line needs one, the Arena checks the tier)
 function stationOf(W){
-  var sites = (W && W.sites) || [];
+  var sites = (W && (W.sites || (W.layers && W.layers.sites))) || [];
   for(var i = 0; i < sites.length; i++) if(sites[i] && sites[i].kind === "transit") return sites[i];
   return null;
 }
@@ -346,7 +369,10 @@ function alignment(A, B){
 function reverse(R0){
   var n = R0.n, pts = new Float64Array(3*n), s = new Float64Array(n), r = new Float64Array(n);
   for(var i = 0; i < n; i++){ var j = n - 1 - i; pts[3*i] = R0.pts[3*j]; pts[3*i + 1] = R0.pts[3*j + 1]; pts[3*i + 2] = R0.pts[3*j + 2]; r[i] = R0.r[j]; s[i] = R0.len - R0.s[j]; }
-  return timing({pts: pts, s: s, r: r, len: R0.len, seaA: R0.len - R0.seaB, seaB: R0.len - R0.seaA, from: R0.to, to: R0.from, A: R0.B, B: R0.A, n: n});
+  var R = {pts: pts, s: s, r: r, len: R0.len, seaA: R0.len - R0.seaB, seaB: R0.len - R0.seaA, from: R0.to, to: R0.from, A: R0.B, B: R0.A, n: n};
+  // the Island Link's segment kinds: the segment starting at reversed i is the original one ending at n - 1 - i
+  if(R0.k){ R.k = new Uint8Array(n); for(var q = 0; q < n; q++) R.k[q] = R0.k[Math.max(0, n - 2 - q)]; R.plat = R0.plat; }
+  return timing(R);
 }
 // the speed (the leg's limit, the curve's, standing at both platforms), the time at each point, T and the handover
 function timing(R){
@@ -448,43 +474,405 @@ function departures(a, b, nowMs, back, ahead){
 }
 function nextDeparture(a, b, nowMs){ var off = offsetOf(a, b); return Math.ceil((nowMs - off)/EVERY)*EVERY + off; }
 // GET /api/arena/rail's lines touching `world`: [{other, a, b}] (rows with both ends shaped as world ids)
-var WORLD_RE = /^(claude-hq@2|user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@2)$/;
+// @2 or @3 ids (an older Arena lists @2 lines); `other` comes back in `world`'s version so it matches that world's places
+var WORLD_RE = /^(claude-hq@[23]|user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@[23])$/;
 function linesAt(rail, world){
-  var L = rail && Array.isArray(rail.lines) ? rail.lines : [];
-  return L.filter(function(l){ return l && WORLD_RE.test(String(l.a)) && WORLD_RE.test(String(l.b)) && l.a !== l.b && (l.a === world || l.b === world); })
-          .map(function(l){ return {other: l.a === world ? l.b : l.a, a: l.a, b: l.b}; });
+  var L = rail && Array.isArray(rail.lines) ? rail.lines : [], v = verOf(world);
+  return L.filter(function(l){ return l && WORLD_RE.test(String(l.a)) && WORLD_RE.test(String(l.b)) && !sameWorld(l.a, l.b) && (sameWorld(l.a, world) || sameWorld(l.b, world)); })
+          .map(function(l){ return {other: asVersion(sameWorld(l.a, world) ? l.b : l.a, v), a: l.a, b: l.b}; });
 }
-function built(rail, a, b){ return linesAt(rail, a).some(function(l){ return l.other === b; }); }
+function built(rail, a, b){ return linesAt(rail, a).some(function(l){ return sameWorld(l.other, b); }); }
 // The station menu's rail rows: a ride on each built line from here; for your own island (tier 2+) a line to every
 // place it is not yet linked to that has a station; elsewhere a note that lines are built from an island's station.
 // places: travelPlaces (metres, with tier), me: your island's world id (or null), myTier: its tier.
 function menuRows(rail, here, places, mine, myTier, nowMs){
   var out = [], cost = rail && rail.cost > 0 ? rail.cost | 0 : COST, minT = rail && rail.min_tier > 0 ? rail.min_tier | 0 : 2;
   (places || []).forEach(function(p){
-    if(!p || p.world === here) return;
+    if(!p || sameWorld(p.world, here)) return;
     if(built(rail, here, p.world)){
       var dep = nextDeparture(here, p.world, nowMs); if(dep - nowMs < 8000) dep += EVERY;
       out.push({kind: "ride", to: p, departs: dep});
     }
   });
   (places || []).forEach(function(p){
-    if(!p || p.world === here || built(rail, here, p.world)) return;
-    var stationThere = p.world === COMMONS || (p.tier | 0) >= minT;
-    if(here === mine && stationThere && myTier >= minT) out.push({kind: "build", to: p, cost: cost});
-    else if(here !== mine && p.world === mine && myTier >= minT) out.push({kind: "build-from", to: p, cost: cost});
+    if(!p || sameWorld(p.world, here) || built(rail, here, p.world)) return;
+    var stationThere = isCommonsId(p.world) || (p.tier | 0) >= minT;
+    if(sameWorld(here, mine) && stationThere && myTier >= minT) out.push({kind: "build", to: p, cost: cost});
+    else if(!sameWorld(here, mine) && sameWorld(p.world, mine) && myTier >= minT) out.push({kind: "build-from", to: p, cost: cost});
   });
   // elsewhere: one note for the islands with a station and no line here yet (their owners build them)
-  if(here !== mine){
-    var un = (places || []).filter(function(p){ return p && p.world !== here && p.world !== mine && p.world !== COMMONS && (p.tier | 0) >= minT && !built(rail, here, p.world); });
+  if(!sameWorld(here, mine)){
+    var un = (places || []).filter(function(p){ return p && !sameWorld(p.world, here) && !sameWorld(p.world, mine) && !isCommonsId(p.world) && (p.tier | 0) >= minT && !built(rail, here, p.world); });
     if(un.length) out.push({kind: "note", to: un[0], more: un.length - 1});
   }
   return out;
 }
 
+/* ---------- the Island Link (HQ 3.15, D7): every island <-> the Commons, pre-built by the @3 generator ----------
+   Each island's doc carries an IL line (layers.rail, kind "island") from Central's underground IL platforms through a
+   tunnel and a coastal portal to layers.rail.sea, the sea viaduct's abutment; the Commons' doc carries Commons Central
+   (a terminal of LINK_PLATS platforms) and its sea junction. The sea crossing between an abutment and the junction is
+   laid here from the archipelago positions (leaving the abutment along its front, arriving along the junction's,
+   SEA_UP m over the water), so one route serves both worlds. A doc without the layer (an @2 world) gets a nominal leg
+   from its station to its coast. Departures: every LINK_EVERY ms each way per island, a pure function of the island's
+   id (the version is ignored, so @2 and @3 clients agree); the Commons' platform for an island is linkPlatform().
+     linkRoute(I, C, o)  I, C = {world, x, z (archipelago m), W (packed world or raw doc) | null, sea?} -> R (island ->
+                         Commons; reverse(R) the other way), as alignment()'s R plus k (the kind of each point's
+                         segment: K_TUNNEL, ...) and plat
+     linkService(o)      a Service (plan 5.3, mode "link") for the world you are in; link(islandWorld, o) one island's
+     linkSpawn(W, world, island?, list?)  where you step off at a world's IL platform {world, site, x, y, z, yaw, under}
+     linkDepartures(island, dir ("out": island -> Commons | "in"), nowMs, back, ahead) / linkNext(island, dir, ms)
+   Seats: SEATS / STAND (car-local: +x left, z forward, y over the floor), 2+2 transverse in facing bays, the cab
+   ends and car 1's luggage stack without seats; shared by the City Line (games/hqcityrail.js). */
+var LINK_EVERY = 300000, LINK_PLATS = 6, LINK_PLAT_GAP = 5.5, LINK_COLOR = "#6d4bb3";
+var K_GRADE = 0, K_TUNNEL = 1, K_PORTAL = 2, K_VIADUCT = 3, K_BRIDGE = 4, K_SEA = 5;
+var KCODE = {grade: K_GRADE, tunnel: K_TUNNEL, portal: K_PORTAL, viaduct: K_VIADUCT, bridge: K_BRIDGE, sea: K_SEA};
+var SEAT_UP = 0.45;          // m: a seat's top over the car floor
+var DOOR_Z = CAR_L*0.22;     // m: the doors either side of a car's middle (carModel's)
+
+// the seats of one train: [{car, x, y, z, back (faces the rear), window, side ("left"|"right")}] and standing spots
+var SEATS = [], STAND = [];
+(function(){
+  var X = [1.05, 0.5, -0.5, -1.05];
+  var ROWS = [{z: -6.6, b: 0, end: -1}, {z: -5.0, b: 1, end: -1}, {z: -2.2, b: 0}, {z: -0.75, b: 1}, {z: 0.75, b: 0}, {z: 2.2, b: 1},
+              {z: 5.0, b: 0, end: 1}, {z: 6.6, b: 1, end: 1}];
+  for(var c = 0; c < CARS; c++){
+    ROWS.forEach(function(r){
+      if(c === 0 && r.end) return;                    // car 1: its cab at the front, the luggage stack at the back
+      if(c === CARS - 1 && r.end === -1) return;      // the last car: its cab at the back
+      X.forEach(function(x){ SEATS.push({car: c, x: x, y: SEAT_UP, z: r.z, back: !!r.b, window: Math.abs(x) > 0.8, side: x < 0 ? "right" : "left"}); });
+    });
+    [-DOOR_Z, DOOR_Z].forEach(function(dz){ [[0.75, -0.35], [-0.75, -0.35], [0.75, 0.35], [-0.75, 0.35]].forEach(function(q){ STAND.push({car: c, x: q[0], y: 0, z: dz + q[1]}); }); });
+  }
+})();
+
+// layers.rail in metres: HQV.world.railOf on a packed world, else converted here (W.rail, or a raw doc's layers.rail; cm)
+var RAIL_MEMO = typeof WeakMap === "function" ? new WeakMap() : null;
+function railView(W){
+  if(!W || typeof W !== "object") return null;
+  var WD = WDo();
+  if(W.rail && WD && WD.railOf){ try { var rv = WD.railOf(W); if(rv) return rv; } catch(e){} }
+  var L = W.rail || (W.layers && W.layers.rail);
+  if(!L || typeof L !== "object") return null;
+  if(RAIL_MEMO && RAIL_MEMO.has(L)) return RAIL_MEMO.get(L);
+  function cm(v){ v = +v; return isFinite(v) ? v/100 : 0; }
+  function unit(f){ var fx = f ? +f[0] || 0 : 0, fz = f ? +f[1] || 0 : 1, l = hyp(fx, fz); return l > 1e-9 ? [fx/l, fz/l] : [0, 1]; }
+  var sea = L.sea, su = sea ? unit(sea.front) : null;
+  var out = {
+    lines: (L.lines || []).filter(Boolean).map(function(l){
+      return {id: String(l.id), kind: l.kind === "island" ? "island" : "city", stations: (l.stations || []).map(String),
+              path: (l.path || []).filter(function(p){ return p && p.length >= 3; }).map(function(p){ return [cm(p[0]), cm(p[1]), cm(p[2])]; }),
+              kinds: (l.kinds || []).map(String), tier: (l.tier | 0) || 1};
+    }),
+    stations: (L.stations || []).filter(Boolean).map(function(s){
+      var u = unit(s.along);
+      return {id: String(s.id), kind: String(s.kind || "elevated"), x: cm(s.x), y: cm(s.y), z: cm(s.z), along: u, yaw: Math.atan2(u[0], u[1]),
+              len: cm(s.len), platforms: Math.max(1, s.platforms | 0), lines: (s.lines || []).map(String),
+              stairs: (s.stairs || []).filter(function(p){ return p && p.length >= 2; }).map(function(p){ return [cm(p[0]), cm(p[1])]; })};
+    }),
+    sea: sea ? {x: cm(sea.x), y: cm(sea.y), z: cm(sea.z), front: su, yaw: Math.atan2(su[0], su[1])} : null,
+    holes: []
+  };
+  if(RAIL_MEMO) RAIL_MEMO.set(L, out);
+  return out;
+}
+function seaLevelOf(W){
+  var I = W && (W.island || (W.layers && W.layers.island));
+  return I && I.sea_cm != null ? (+I.sea_cm || 0)/100 : 0;
+}
+// a world's IL in its own frame: {station, sea, P: [[x, y, z]] from behind the platform out to the sea point, K: segment kinds}
+function ilOf(W){
+  var R = railView(W);
+  if(!R) return null;
+  var line = R.lines.filter(function(l){ return l.kind === "island" && l.path.length >= 2; })[0];
+  if(!line) return null;
+  var st = null;
+  R.stations.forEach(function(s){ if(!st && line.stations.indexOf(s.id) >= 0) st = s; });
+  var P = line.path.map(function(p){ return p.slice(); }), K = line.kinds.map(function(k){ return KCODE[k] != null ? KCODE[k] : K_GRADE; });
+  while(K.length < P.length - 1) K.push(K.length ? K[K.length - 1] : K_GRADE);
+  K = K.slice(0, P.length - 1);
+  var n = P.length;
+  if(st && hyp(P[n - 1][0] - st.x, P[n - 1][2] - st.z) < hyp(P[0][0] - st.x, P[0][2] - st.z)){ P.reverse(); K.reverse(); }
+  // the path starts at the platform's middle: run it back so a train's middle stands there (head TRAIN_L/2 + STOP_END on)
+  var ref = st || {x: P[0][0], z: P[0][2]};
+  if(hyp(P[0][0] - ref.x, P[0][2] - ref.z) < 5){
+    var bx = P[0][0] - P[1][0], bz = P[0][2] - P[1][2], bl = hyp(bx, bz) || 1, h = TRAIN_L/2 + STOP_END;
+    P.unshift([P[0][0] + bx/bl*h, P[0][1], P[0][2] + bz/bl*h]); K.unshift(K[0]);
+  }
+  var sea = R.sea;
+  if(sea && hyp(P[P.length - 1][0] - sea.x, P[P.length - 1][2] - sea.z) > 3){ P.push([sea.x, sea.y, sea.z]); K.push(K_VIADUCT); }
+  return {station: st, sea: sea, P: P, K: K, platforms: st ? st.platforms : 1};
+}
+// no IL in the doc (an @2 world, or no doc yet): a nominal leg from the station (else the centre) to the coast facing (dx, dz)
+function fallbackLeg(W, dx, dz, seaY){
+  var st = W ? stationOf(W) : null, C = coastExit(W && (W.island || (W.layers && W.layers.island)) ? {island: W.island || W.layers.island} : null, dx, dz);
+  var sx = st ? st.x/100 : 0, sz = st ? st.z/100 : 0, y0 = seaY + DECK_UP, h = TRAIN_L/2 + STOP_END;
+  var P = [[sx - dx*h, y0, sz - dz*h], [sx, y0, sz], [C[0], seaY + SEA_UP, C[1]]];
+  return {station: null, sea: {x: C[0], y: seaY + SEA_UP, z: C[1], front: [dx, dz]}, P: P, K: [K_VIADUCT, K_VIADUCT], platforms: 1};
+}
+// points every `step` m (in plan) along V [[x, y, z]] with the kind of the segment each lies on
+function resample3(V, K, step){
+  var P = [V[0].slice()], KO = [K[0]], carry = 0;
+  for(var i = 1; i < V.length; i++){
+    var a = V[i - 1], b = V[i], d = hyp(b[0] - a[0], b[2] - a[2]);
+    if(d < 1e-9) continue;
+    var u = step - carry;
+    while(u <= d){ var f = u/d; P.push([a[0] + (b[0] - a[0])*f, a[1] + (b[1] - a[1])*f, a[2] + (b[2] - a[2])*f]); KO.push(K[i - 1]); u += step; }
+    carry = d - (u - step);
+  }
+  var L = V[V.length - 1], q = P[P.length - 1];
+  if(hyp(L[0] - q[0], L[2] - q[2]) > step*0.3){ P.push(L.slice()); KO.push(K[V.length - 2]); } else P[P.length - 1] = L.slice();
+  return {P: P, K: KO};
+}
+function linkRoute(I, C, o){
+  o = o || {};
+  var Ix = +I.x || 0, Iz = +I.z || 0, Cx = +C.x || 0, Cz = +C.z || 0, dx = Cx - Ix, dz = Cz - Iz, l = hyp(dx, dz) || 1;
+  dx /= l; dz /= l;
+  var seaI = I.sea != null ? +I.sea || 0 : seaLevelOf(I.W), seaC = C.sea != null ? +C.sea || 0 : seaLevelOf(C.W);
+  var a = ilOf(I.W) || fallbackLeg(I.W, dx, dz, seaI), b = ilOf(C.W) || fallbackLeg(C.W, -dx, -dz, seaC);
+  var V = [], KK = [], i;
+  a.P.forEach(function(p, j){ V.push([p[0] + Ix, p[1], p[2] + Iz]); KK.push(a.K[Math.min(j, a.K.length - 1)]); });
+  var iA = V.length - 1, ea = V[iA], bl = b.P[b.P.length - 1], eb = [bl[0] + Cx, bl[1], bl[2] + Cz];
+  KK[iA] = K_SEA;
+  // the sea crossing: a cubic leaving the abutment along its front and arriving along the junction's
+  var fa = a.sea && a.sea.front ? a.sea.front : [dx, dz], fb = b.sea && b.sea.front ? b.sea.front : [-dx, -dz];
+  var D = hyp(eb[0] - ea[0], eb[2] - ea[2]), kk = Math.min(600, D/3), n = Math.max(2, Math.ceil(D/STEP));
+  var p1 = [ea[0] + fa[0]*kk, ea[2] + fa[1]*kk], p2 = [eb[0] + fb[0]*kk, eb[2] + fb[1]*kk];
+  for(i = 1; i < n; i++){
+    var t = i/n, u = 1 - t, w0 = u*u*u, w1 = 3*u*u*t, w2 = 3*u*t*t, w3 = t*t*t;
+    V.push([w0*ea[0] + w1*p1[0] + w2*p2[0] + w3*eb[0], NaN, w0*ea[2] + w1*p1[1] + w2*p2[1] + w3*eb[2]]); KK.push(K_SEA);
+  }
+  var iB = V.length;
+  for(var j = b.P.length - 1; j >= 0; j--){ var q = b.P[j]; V.push([q[0] + Cx, q[1], q[2] + Cz]); KK.push(j > 0 ? b.K[Math.min(j - 1, b.K.length - 1)] : K_GRADE); }
+  // the sea viaduct's height: SEA_UP over the water, eased from and to the abutments at GRADE
+  var S = [0];
+  for(i = 1; i < V.length; i++) S.push(S[i - 1] + hyp(V[i][0] - V[i - 1][0], V[i][2] - V[i - 1][2]));
+  var sA = S[iA], sB = S[iB], Ls = Math.max(1, sB - sA), ya = ea[1], yb = eb[1];
+  var rA = Math.min(Ls/2, Math.abs(ya - (seaI + SEA_UP))/GRADE), rB = Math.min(Ls/2, Math.abs(yb - (seaC + SEA_UP))/GRADE);
+  for(i = iA + 1; i < iB; i++){
+    var ss = S[i] - sA, tg = seaI + (seaC - seaI)*ss/Ls + SEA_UP;
+    var ea1 = rA > 0 ? Math.max(0, 1 - ss/rA) : 0, eb1 = rB > 0 ? Math.max(0, 1 - (Ls - ss)/rB) : 0;
+    V[i][1] = tg + (ya - (seaI + SEA_UP))*ea1 + (yb - (seaC + SEA_UP))*eb1;
+  }
+  var RS = resample3(V, KK, STEP), P = RS.P, KO = RS.K, m = P.length;
+  var s = new Float64Array(m);
+  for(i = 1; i < m; i++) s[i] = s[i - 1] + hyp(P[i][0] - P[i - 1][0], P[i][2] - P[i - 1][2]);
+  var len = s[m - 1];
+  // the Commons' platform: the last stretch moved sideways onto its track (+ to the left of the way in), eased in over TAPER
+  var plat = Math.max(1, Math.min(LINK_PLATS, (o.plat | 0) || 1)), off = o.plat ? (plat - (LINK_PLATS + 1)/2)*LINK_PLAT_GAP : 0;
+  if(off){
+    var hold = TRAIN_L + STOP_END + 20, Q = P.map(function(p){ return p.slice(); });
+    for(i = 0; i < m; i++){
+      var e = len - s[i], f = e <= hold ? 1 : Math.max(0, 1 - (e - hold)/TAPER);
+      if(f <= 0) continue;
+      var i0 = Math.max(0, i - 2), i1 = Math.min(m - 1, i + 2), tx = P[i1][0] - P[i0][0], tz = P[i1][2] - P[i0][2], tl = hyp(tx, tz) || 1;
+      var g = off*f*f*(3 - 2*f);
+      Q[i][0] = P[i][0] + tz/tl*g; Q[i][2] = P[i][2] - tx/tl*g;
+    }
+    P = Q;
+    for(i = 1; i < m; i++) s[i] = s[i - 1] + hyp(P[i][0] - P[i - 1][0], P[i][2] - P[i - 1][2]);
+    len = s[m - 1];
+  }
+  var pts = new Float64Array(3*m), k = new Uint8Array(m), seaA = 0, seaB = len;
+  for(i = 0; i < m; i++){ pts[3*i] = P[i][0]; pts[3*i + 1] = P[i][1]; pts[3*i + 2] = P[i][2]; k[i] = KO[i]; }
+  for(i = 0; i < m; i++) if(k[i] === K_SEA){ seaA = s[i]; break; }
+  for(i = m - 1; i >= 0; i--) if(k[i] === K_SEA){ seaB = s[Math.min(m - 1, i + 1)]; break; }
+  var R = {pts: pts, s: s, r: radii(P.map(function(p){ return [p[0], p[2]]; })), len: len, seaA: seaA, seaB: seaB, from: I.world, to: C.world,
+           A: {x: Ix, z: Iz}, B: {x: Cx, z: Cz}, n: m, k: k, plat: plat};
+  return timing(R);
+}
+function kAt(R, along){ return R.k ? R.k[idxAt(R, Math.max(0, Math.min(R.len, along)))] : K_GRADE; }
+function underAt(R, along){ return !!R.k && R.k[idxAt(R, Math.max(0, Math.min(R.len, along)))] === K_TUNNEL; }
+
+// the timetable: the same for both versions of an island's id
+function linkOff(island, dir){ var o = hash("il:" + canon(island)) % LINK_EVERY; return dir === "in" ? (o + LINK_EVERY/2) % LINK_EVERY : o; }
+function linkDepartures(island, dir, nowMs, back, ahead){
+  var off = linkOff(island, dir), out = [], k0 = Math.floor((nowMs - (back || 0) - off)/LINK_EVERY), k1 = Math.ceil((nowMs + (ahead || 0) - off)/LINK_EVERY);
+  for(var k = k0; k <= k1; k++){ var d = k*LINK_EVERY + off; if(d >= nowMs - (back || 0) && d <= nowMs + (ahead || 0)) out.push(d); }
+  return out;
+}
+function linkNext(island, dir, ms){ var off = linkOff(island, dir); return Math.ceil((ms - off)/LINK_EVERY)*LINK_EVERY + off; }
+// the Commons' platform (1..LINK_PLATS) for an island: its rank among `list` (the islands in view) by a hash of their ids,
+// so each has its own until there are more than LINK_PLATS, then they share; no list: the hash alone
+function linkPlatform(island, list){
+  var c = canon(island), seen = {}, L = [];
+  (list || []).forEach(function(w){ if(w == null || isCommonsId(w)) return; var k = canon(w); if(!seen[k]){ seen[k] = 1; L.push(k); } });
+  L.sort(function(a, b){ var ha = hash("ilp:" + a), hb = hash("ilp:" + b); return ha - hb || (a < b ? -1 : a > b ? 1 : 0); });
+  var i = L.indexOf(c);
+  return (i < 0 ? hash("ilp:" + c) : i) % LINK_PLATS + 1;
+}
+// where you step off at a world's IL platform (its own frame): on the platform beside the train, facing it
+function linkSpawn(W, world, island, list){
+  var a = ilOf(W);
+  if(!a || !a.station){
+    var st0 = W ? stationOf(W) : null;
+    if(!st0) return null;
+    var d = doorOf(st0);
+    return {world: world, site: st0.id, x: d.x, y: (st0.y || 0)/100, z: d.z, yaw: d.yaw, under: false};
+  }
+  var st = a.station, P = a.P, fx = P[1][0] - P[0][0], fz = P[1][2] - P[0][2], fl = hyp(fx, fz) || 1;
+  fx /= fl; fz /= fl;                                                       // the way out of the station
+  var off = 0;
+  if(isCommonsId(world) && island) off = -(linkPlatform(island, list) - (LINK_PLATS + 1)/2)*LINK_PLAT_GAP;   // linkRoute's (+ left of the way in)
+  var lx = fz, lz = -fx, side = 2.7;                                        // left of the way out; the platform on its right
+  var x = st.x + lx*off - lx*side, z = st.z + lz*off - lz*side;
+  return {world: world, site: st.id, x: x, y: st.y + PLAT_TOP, z: z, yaw: Math.atan2(lx, lz), under: st.kind === "underground"};
+}
+
+// the Service for the world you are in. o = {here (world id), W (its packed world), arch (GET /v1/archipelago: {commons:
+// {x, z}, islands: [{world, x, z, name?}]}, cm), docs ({worldId: packed world or raw doc}: the far ends, when loaded),
+// islands (ids: on the Commons the lines to run; default every island in arch), names ({worldId: name}), seed}
+function linkService(o){
+  o = o || {};
+  var here = String(o.here || o.world || ""), W = o.W || null, arch = o.arch || {}, docs = o.docs || {}, isC = isCommonsId(here);
+  var v = verOf(here) || 3, commons = isC ? here : asVersion(commonsId(), v), names = o.names || {};
+  var archIs = (Array.isArray(arch.islands) ? arch.islands : []).filter(function(x){ return x && WORLD_RE.test(String(asVersion(x.world, v))); });
+  var platList = archIs.map(function(x){ return x.world; });
+  var want = isC ? (o.islands || platList) : [here], seen = {}, islands = [];
+  want.forEach(function(w){ w = asVersion(w, v); if(!WORLD_RE.test(w) || isCommonsId(w) || seen[canon(w)]) return; seen[canon(w)] = 1; islands.push(w); });
+  islands.sort();
+  if(!platList.length) platList = islands.slice();
+  function docOf(w){
+    if(sameWorld(w, here)) return W;
+    for(var k in docs) if(Object.prototype.hasOwnProperty.call(docs, k) && sameWorld(k, w)) return docs[k];
+    return null;
+  }
+  function pos(w){
+    var h = isCommonsId(w) ? arch.commons : archIs.filter(function(x){ return sameWorld(x.world, w); })[0];
+    if(h && isFinite(+h.x) && isFinite(+h.z)) return {x: (+h.x || 0)/100, z: (+h.z || 0)/100};
+    return isCommonsId(w) ? {x: 0, z: 0} : null;
+  }
+  function nameOf(w){
+    if(isCommonsId(w)) return "The Commons";
+    for(var k in names) if(Object.prototype.hasOwnProperty.call(names, k) && sameWorld(k, w)) return String(names[k]);
+    var h = archIs.filter(function(x){ return sameWorld(x.world, w); })[0];
+    return h && h.name ? String(h.name) : "the island";
+  }
+  var hp = pos(here) || {x: 0, z: 0}, routes = {};
+  function route(iw){
+    var key = canon(iw);
+    if(routes[key] !== undefined) return routes[key];
+    var ip = pos(iw), cp = pos(commons);
+    if(!ip || !cp){ routes[key] = null; return null; }
+    var plat = linkPlatform(iw, platList);
+    var R = linkRoute({world: iw, x: ip.x, z: ip.z, W: docOf(iw)}, {world: commons, x: cp.x, z: cp.z, W: docOf(commons)}, {plat: plat});
+    routes[key] = {out: R, "in": reverse(R), plat: plat};
+    return routes[key];
+  }
+  var localId = "il:" + here, mine = ilOf(W), RN = HQV.hqRide;
+  var localName = isC ? "Commons Central" : (RN && RN.stationName && W && mine && mine.station ? RN.stationName(W, mine.station.x, mine.station.z, "rail") : "Central");
+  var LINES = [], FAR = {};
+  islands.forEach(function(iw){
+    var rt = route(iw);
+    if(!rt) return;
+    var far = isC ? iw : commons, id = "IL:" + canon(iw), R = isC ? rt["in"] : rt.out, e = at(R, R.len - TRAIN_L/2 - STOP_END);
+    FAR[id] = {id: "il:" + far, name: isC ? nameOf(iw) : "Commons Central", world: far, x: e.x - hp.x, y: e.y + PLAT_TOP, z: e.z - hp.z,
+               under: !isC ? false : true, mode: "link", lines: [id], kind: "station"};
+    LINES.push({id: id, mode: "link", name: "Island Link to " + (isC ? nameOf(iw) : "the Commons"), short: "IL", color: LINK_COLOR,
+                stops: [localId, FAR[id].id], headway: LINK_EVERY/1000, loop: false, world: far, island: iw, plat: isC ? rt.plat : 1});
+  });
+  var L0 = LINES[0], st0 = mine && mine.station;
+  var local = {id: localId, name: localName, mode: "link", lines: LINES.map(function(l){ return l.id; }), kind: "station",
+               x: st0 ? st0.x : 0, y: st0 ? st0.y + PLAT_TOP : 0, z: st0 ? st0.z : 0, under: st0 ? st0.kind === "underground" : false};
+  if(!st0 && L0){ var rt0 = route(L0.island), R0 = isC ? rt0["in"] : rt0.out, p0 = at(R0, TRAIN_L/2 + STOP_END); local.x = p0.x - hp.x; local.y = p0.y + PLAT_TOP; local.z = p0.z - hp.z; }
+  var dir = isC ? "in" : "out";
+  function lineById(id){ return LINES.filter(function(l){ return l.id === id; })[0] || null; }
+  function routeOf(l, d){ var rt = route(l.island); return rt ? rt[d] : null; }
+  function stopsAll(){ var out = [local]; LINES.forEach(function(l){ out.push(FAR[l.id]); }); return out; }
+  // a train on a route t s after leaving: its middle (local frame, or minus `frame` {x, z}), the floor's height
+  function mid(R, t, fr){
+    var hd = poseAt(R, t), p = at(R, hd.along - TRAIN_L/2), f = fr || hp;
+    return {x: p.x - f.x, y: p.y + PLAT_TOP, z: p.z - f.z, yaw: p.yaw, pitch: p.pitch, speed: hd.speed, along: hd.along, head: hd, under: underAt(R, hd.along - TRAIN_L/2)};
+  }
+  function doorsAt(R, t){ return t <= -2 && t >= -DWELL ? 1 : t < 0 && t > -2 ? -t/2 : t >= R.T && t <= R.T + DWELL ? 1 : 0; }
+  function makeTrip(l, dep){
+    var R = routeOf(l, dir); if(!R) return null;
+    var far = FAR[l.id], fp = pos(far.world) || hp, T = R.T, shift = {x: fp.x - hp.x, z: fp.z - hp.z};
+    var trip = {mode: "link", line: l.id, short: "IL", vehicle: l.id + ":" + dir + ":" + dep, from: localId, to: far.id,
+      fromName: local.name, toName: far.name, arrive: dep - DWELL*1000, depart: dep, reach: Math.round(dep + T*1000), hand: Math.round(dep + R.hand*1000),
+      stops: [{id: localId, name: local.name, at: dep}, {id: far.id, name: far.name, at: Math.round(dep + T*1000)}],
+      seats: SEATS.length, standing: STAND.length, seatMeta: SEATS, world: far.world, from_world: here, shift: shift, plat: l.plat, R: R,
+      // the floor's centre (the middle car's floor); frame "to": in the destination's frame
+      pose: function(ms, frame){
+        var t = ((+ms || 0) - dep)/1000, p = mid(R, t, frame === "to" ? fp : hp);
+        return {x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, speed: p.speed, doors: doorsAt(R, t), under: p.under, done: t >= T,
+                leg: p.head.leg, u: p.head.u};
+      },
+      seat: function(i, ms, frame){
+        i = Math.max(0, i | 0);
+        var S0 = i < SEATS.length ? SEATS[i] : STAND[Math.min(STAND.length - 1, i - SEATS.length)], t = ((+ms || 0) - dep)/1000, hd = poseAt(R, t);
+        var p = at(R, hd.along - S0.car*(CAR_L + CAR_GAP) - CAR_L/2), f = frame === "to" ? fp : hp, c = Math.cos(p.yaw), sn = Math.sin(p.yaw);
+        return {x: p.x - f.x + c*S0.x + sn*S0.z, y: p.y + PLAT_TOP + S0.y, z: p.z - f.z - sn*S0.x + c*S0.z, yaw: p.yaw + (S0.back ? Math.PI : 0),
+                car: S0.car, stand: i >= SEATS.length};
+      },
+      // the right-hand front door of the second car (the platform side)
+      door: function(ms, frame){
+        var t = ((+ms || 0) - dep)/1000, hd = poseAt(R, t), p = at(R, hd.along - (CAR_L + CAR_GAP) - CAR_L/2 + DOOR_Z), f = frame === "to" ? fp : hp;
+        return {x: p.x - f.x - Math.cos(p.yaw)*1.5, z: p.z - f.z + Math.sin(p.yaw)*1.5};
+      }};
+    return trip;
+  }
+  var sim = {
+    mode: "link", here: here, commons: commons,
+    lines: function(){ return LINES.map(function(l){ var c = {}; for(var k in l) c[k] = l[k]; c.stops = l.stops.slice(); return c; }); },
+    stops: function(){ return stopsAll().map(function(s){ var c = {}; for(var k in s) c[k] = s[k]; c.lines = s.lines.slice(); return c; }); },
+    stopsNear: function(x, z, r){
+      return stopsAll().map(function(s){ return {id: s.id, name: s.name, dist: hyp(s.x - x, s.z - z), mode: "link", lines: s.lines.slice()}; })
+        .filter(function(s){ return s.dist <= r; }).sort(function(a, b){ return a.dist - b.dist || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0); });
+    },
+    departures: function(stopId, ms, n){
+      if(stopId !== localId) return [];
+      n = Math.max(1, (n | 0) || 4);
+      var rows = [];
+      LINES.forEach(function(l){
+        linkDepartures(l.island, dir, ms, 0, LINK_EVERY*n).forEach(function(d){
+          rows.push({line: l.id, short: "IL", to: FAR[l.id].name, at: d, plat: String(l.plat), boarding: ms >= d - DWELL*1000 && ms < d, delay: 0});
+        });
+      });
+      rows.sort(function(a, b){ return a.at - b.at || (a.line < b.line ? -1 : 1); });
+      return rows.slice(0, n);
+    },
+    trip: function(lineId, fromStop, toStop, ms){
+      var l = lineById(lineId);
+      if(!l || fromStop !== localId || toStop !== FAR[l.id].id) return null;
+      return makeTrip(l, linkNext(l.island, dir, +ms || 0));
+    },
+    // every train on the lines here, both ways, standing at a platform DWELL s either side of the run
+    vehicles: function(ms){
+      var out = [], C = HQV.hqCommute;
+      LINES.forEach(function(l){
+        ["out", "in"].forEach(function(d){
+          var R = routeOf(l, d); if(!R) return;
+          linkDepartures(l.island, d, ms, (R.T + DWELL)*1000, DWELL*1000).forEach(function(dep){
+            var t = (ms - dep)/1000; if(t < -DWELL || t > R.T + DWELL) return;
+            var p = mid(R, t), id = l.id + ":" + d + ":" + dep;
+            out.push({id: id, line: l.id, mode: "link", x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, speed: p.speed, doors: doorsAt(R, t),
+                      load: C && C.load ? C.load("link", l.id, id, ms, o.seed != null ? o.seed : here) : 0.5, under: p.under, along: p.head.along, dir: d, dep: dep});
+          });
+        });
+      });
+      return out;
+    },
+    route: function(lineId, d){ var l = lineById(lineId); return l ? routeOf(l, d || dir) : null; },
+    origin: function(){ return {x: hp.x, z: hp.z}; },
+    spawn: function(){ return linkSpawn(W, here, isC ? null : here, platList); }
+  };
+  return sim;
+}
+function link(islandWorld, o){ o = o || {}; var c = {}; for(var k in o) c[k] = o[k]; if(isCommonsId(c.here || c.world)) c.islands = [islandWorld]; else c.here = c.here || islandWorld; return linkService(c); }
+
 HQV.hqRail = {alignment: alignment, reverse: reverse, poseAt: poseAt, at: at, departures: departures, nextDeparture: nextDeparture, lineKey: lineKey,
   linesAt: linesAt, built: built, menuRows: menuRows, lanes: lanes, LANE: LANE, stationOf: stationOf, doorOf: doorOf, cityLeg: cityLeg, coastExit: coastExit,
   simplify: simplify, EVERY: EVERY, DWELL: DWELL, DECK_UP: DECK_UP, SEA_UP: SEA_UP, GRADE: GRADE, CAR_L: CAR_L,
-  CAR_GAP: CAR_GAP, CARS: CARS, TRAIN_L: TRAIN_L, PLAT: PLAT, COST: COST, CITY_V: CITY_V, SEA_V: SEA_V, ACC: ACC, CUT: CUT};
+  CAR_GAP: CAR_GAP, CARS: CARS, TRAIN_L: TRAIN_L, PLAT: PLAT, COST: COST, CITY_V: CITY_V, SEA_V: SEA_V, ACC: ACC, CUT: CUT,
+  PLAT_TOP: 0.95, STEP: STEP, STOP_END: STOP_END,
+  // live ids
+  commonsId: commonsId, isCommonsId: isCommonsId, canon: canon, sameWorld: sameWorld, islandIdOf: islandIdOf, WORLD_RE: WORLD_RE,
+  // the Island Link
+  link: link, linkService: linkService, linkRoute: linkRoute, linkSpawn: linkSpawn, linkDepartures: linkDepartures, linkNext: linkNext,
+  linkPlatform: linkPlatform, linkOff: linkOff, railView: railView, ilOf: ilOf, underAt: underAt, kAt: kAt, timing: timing, radii: radii,
+  SEATS: SEATS, STAND: STAND, SEAT_UP: SEAT_UP, DOOR_Z: DOOR_Z, LINK_EVERY: LINK_EVERY, LINK_PLATS: LINK_PLATS, LINK_COLOR: LINK_COLOR,
+  K: {GRADE: K_GRADE, TUNNEL: K_TUNNEL, PORTAL: K_PORTAL, VIADUCT: K_VIADUCT, BRIDGE: K_BRIDGE, SEA: K_SEA}};
 /* ---------- drawing (THREE): the viaduct, the track, the stations' platforms, the trains, their passengers ----------
    Everything repetitive is instanced or merged: per line the deck, rails, wire, platforms and canopies are one
    extruded mesh each, the piers, caps, sleepers, masts, arms, posts, steps and people one InstancedMesh each; a
@@ -492,7 +880,6 @@ HQV.hqRail = {alignment: alignment, reverse: reverse, poseAt: poseAt, at: at, de
 var DRAW_R = 2600;           // m: a city draws the track this near its centre (the rest is far behind the haze)
 var PIER_EVERY = 25, SLEEPER_EVERY = 0.65, MAST_EVERY = 50;
 var DECK = [[-3.85, 0.55], [-3.6, 0.55], [-3.6, -0.35], [3.6, -0.35], [3.6, 0.55], [3.85, 0.55], [3.85, -0.9], [2.3, -1.9], [-2.3, -1.9], [-3.85, -0.9]];
-var PLAT_TOP = 0.95;         // m over the rail head: a platform's top and a car's floor
 
 function merge(THREE, parts){
   var pos = [], nor = [];
@@ -719,6 +1106,390 @@ function lineView(c, M, R, o, ends, ground, seaY, door, lane){
   }};
 }
 
+/* ---------- a kit for few draw calls (Island Link, City Line, gondola): merged vertex-coloured statics, instanced
+   trains (two calls for every train in view: cab cars and middle cars, windows in the vertex colours, warm at
+   night), one call for a focused train's interior (unit boxes with instance colours) and one for its faint shell,
+   one for seated commuters (HQV.hqCommute's figures) ---------- */
+function kit(THREE){
+  function col(hex){ return new THREE.Color(hex); }
+  // a non-indexed geometry with a colour attribute, uv dropped (so every part merges)
+  function paint(geo, hex){
+    var g = geo.index ? geo.toNonIndexed() : geo;
+    if(g !== geo) geo.dispose();
+    if(!g.attributes.normal) g.computeVertexNormals();
+    var c = col(hex), n = g.attributes.position.count, a = new Float32Array(3*n);
+    for(var i = 0; i < n; i++){ a[3*i] = c.r; a[3*i + 1] = c.g; a[3*i + 2] = c.b; }
+    g.setAttribute("color", new THREE.BufferAttribute(a, 3));
+    return g;
+  }
+  function box(w, h, d, x, y, z, hex, ry, rx){
+    var g = new THREE.BoxGeometry(w, h, d);
+    if(rx) g.rotateX(rx);
+    if(ry) g.rotateY(ry);
+    g.translate(x, y, z);
+    return paint(g, hex);
+  }
+  function cyl(rt, rb, h, seg, x, y, z, hex){ var g = new THREE.CylinderGeometry(rt, rb, h, seg || 10); g.translate(x, y + h/2, z); return paint(g, hex); }
+  // a segment between two points as a thin box (wires, ropes, braces)
+  function strut(a, b, w, hex){
+    var dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2], L = Math.sqrt(dx*dx + dy*dy + dz*dz) || 0.01;
+    var g = new THREE.BoxGeometry(w, w, L), m = new THREE.Matrix4(), q = new THREE.Quaternion();
+    q.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(dx/L, dy/L, dz/L));
+    m.compose(new THREE.Vector3((a[0] + b[0])/2, (a[1] + b[1])/2, (a[2] + b[2])/2), q, new THREE.Vector3(1, 1, 1));
+    g.applyMatrix4(m);
+    return paint(g, hex);
+  }
+  function xform(g, m){ g.applyMatrix4(m); return g; }
+  function mergeC(list){
+    var n = 0; list.forEach(function(g){ if(g) n += g.attributes.position.count; });
+    var P = new Float32Array(3*n), N = new Float32Array(3*n), C = new Float32Array(3*n), o = 0;
+    list.forEach(function(g){
+      if(!g) return;
+      P.set(g.attributes.position.array, o); N.set(g.attributes.normal.array, o); C.set(g.attributes.color.array, o);
+      o += g.attributes.position.count*3; g.dispose();
+    });
+    var out = new THREE.BufferGeometry();
+    out.setAttribute("position", new THREE.BufferAttribute(P, 3));
+    out.setAttribute("normal", new THREE.BufferAttribute(N, 3));
+    out.setAttribute("color", new THREE.BufferAttribute(C, 3));
+    out.computeBoundingSphere();
+    return out;
+  }
+  function extrudeC(S, prof, closed, hex){ return paint(extrude(THREE, S, prof, closed), hex); }
+  return {paint: paint, box: box, cyl: cyl, strut: strut, xform: xform, merge: mergeC, extrude: extrudeC, col: col};
+}
+function vcMat(c, o){ return c.mat(0xffffff, Object.assign({vertexColors: true, roughness: 0.75, metalness: 0.1}, o || {})); }
+
+// one car's geometry at the rail head, forward +z (carModel's shapes); nose +1: a cab at the front. Windows are kept
+// apart (glassAt: their first and last vertex) so the night can warm them
+function carGeo(THREE, K, L, nose, pant, liv){
+  var parts = [], H0 = PLAT_TOP - 0.1, H = 3.0, bodyL = nose ? L - 2.6 : L, bz = nose ? -nose*1.3 : 0;
+  parts.push(K.box(2.9, H, bodyL, 0, H0 + H/2, bz, liv.body));
+  if(nose){
+    var g = new THREE.BoxGeometry(2.9, H, 2.6), P = g.attributes.position;
+    for(var i = 0; i < P.count; i++){
+      var zz = P.getZ(i)*nose, yy = P.getY(i);
+      if(zz > 0 && yy > 0){ P.setZ(i, P.getZ(i) - nose*2.1); P.setY(i, yy - 0.45); }
+      if(zz > 0 && yy < 0) P.setX(i, P.getX(i)*0.86);
+    }
+    g.computeVertexNormals(); g.translate(0, H0 + H/2, nose*(L/2 - 1.3));
+    parts.push(K.paint(g, liv.body));
+    parts.push(K.box(0.4, 0.16, 0.08, 0.95, H0 + 0.75, nose*(L/2 - 0.02), 0xfff6dd), K.box(0.4, 0.16, 0.08, -0.95, H0 + 0.75, nose*(L/2 - 0.02), 0xfff6dd));
+  }
+  parts.push(K.box(2.94, 0.28, L - 0.6, 0, H0 + 1.15, 0, liv.accent));                       // the stripe
+  [-1, 1].forEach(function(e){ parts.push(K.box(2.98, 2.15, 1.3, 0, H0 + 1.15, e*L*0.22, liv.door || liv.accent)); });
+  parts.push(K.box(2.5, 0.25, L - 1.2, 0, H0 + H + 0.12, 0, 0x22282e));                        // the roof's equipment
+  [-1, 1].forEach(function(e){ parts.push(K.box(2.3, 0.75, 2.6, 0, 0.45, e*(L/2 - 3.2), 0x22282e)); });   // bogies
+  parts.push(K.box(2.7, 0.35, L - 7.5, 0, H0 - 0.15, 0, 0x22282e));
+  if(pant){ parts.push(K.box(0.08, 1.3, 0.08, 0, H0 + H + 0.8, -1, 0x22282e), K.box(1.6, 0.06, 0.25, 0, H0 + H + 1.45, -0.4, 0x22282e)); }
+  var before = 0; parts.forEach(function(p){ before += p.attributes.position.count; });
+  parts.push(K.box(2.96, 0.95, L - 5.2, 0, H0 + 2.15, 0, liv.glass));                          // the window band
+  if(nose) parts.push(K.box(2.5, 1.0, 0.1, 0, H0 + 2.35, nose*(L/2 - 1.55), liv.glass));
+  var g2 = K.merge(parts);
+  g2.userData.glass = [before, g2.attributes.position.count];
+  return g2;
+}
+// every train of a line in view: cab cars and middle cars as two InstancedMeshes
+function trainKit(c, liv, cap){
+  var THREE = c.THREE, K = kit(THREE), mat = vcMat(c, {roughness: 0.4, metalness: 0.25});
+  cap = Math.max(4, cap | 0);
+  var gc = carGeo(THREE, K, CAR_L, 1, false, liv), gm = carGeo(THREE, K, CAR_L, 0, true, liv);
+  var cab = new THREE.InstancedMesh(gc, mat, cap), mid = new THREE.InstancedMesh(gm, mat, cap), grp = new THREE.Group();
+  cab.count = 0; mid.count = 0; cab.castShadow = mid.castShadow = true; cab.frustumCulled = mid.frustumCulled = false;
+  grp.add(cab); grp.add(mid);
+  var dummy = new THREE.Object3D(), night = null;
+  return {g: grp,
+    // cars [{x, y, z, yaw, pitch, nose: 1 (a cab at the front) | -1 (a cab at the back) | 0}] (the rail head, local m)
+    set: function(cars){
+      var nc = 0, nm = 0;
+      cars.forEach(function(p){
+        var flip = p.nose < 0, M = p.nose ? cab : mid, i = p.nose ? nc : nm;
+        if(i >= cap) return;
+        dummy.position.set(p.x, p.y, p.z);
+        dummy.rotation.set(flip ? p.pitch : -p.pitch, p.yaw + (flip ? Math.PI : 0), 0, "YXZ");
+        dummy.updateMatrix(); M.setMatrixAt(i, dummy.matrix);
+        if(p.nose) nc++; else nm++;
+      });
+      cab.count = nc; mid.count = nm;
+      cab.instanceMatrix.needsUpdate = true; mid.instanceMatrix.needsUpdate = true;
+    },
+    night: function(on){
+      on = !!on; if(on === night) return; night = on;
+      var cc = K.col(on ? liv.glassNight || 0xffd9a0 : liv.glass);
+      [gc, gm].forEach(function(g){
+        var r = g.userData.glass, a = g.attributes.color;
+        for(var i = r[0]; i < r[1]; i++) a.setXYZ(i, cc.r, cc.g, cc.b);
+        a.needsUpdate = true;
+      });
+    },
+    drawCalls: function(){ return (grp.visible ? (cab.count ? 1 : 0) + (mid.count ? 1 : 0) : 0); },
+    dispose: function(){ gc.dispose(); gm.dispose(); mat.dispose(); }
+  };
+}
+// the cars of a train whose head is `head` m along R: [{x, y, z, yaw, pitch, nose, s}] in the frame minus o
+function carsOf(R, head, o, cars){
+  var out = [];
+  cars = cars || CARS;
+  for(var k = 0; k < cars; k++){
+    var sc = head - k*(CAR_L + CAR_GAP) - CAR_L/2, p = at(R, sc);
+    out.push({x: p.x - o.x, y: p.y, z: p.z - o.z, yaw: p.yaw, pitch: p.pitch, nose: k === 0 ? 1 : k === cars - 1 ? -1 : 0, s: sc, k: k});
+  }
+  return out;
+}
+// a focused train's inside: unit boxes (floor, seats, racks, a light strip, car 1's luggage stack) with instance colours,
+// one call; and a faint shell per car, one call. seats: SEATS-shaped [{car, x, y, z, back}]
+var UNIT = null;
+function interiorKit(c, seats, o){
+  var THREE = c.THREE; o = o || {};
+  seats = seats || SEATS;
+  var cars = o.cars || CARS, L = o.carL || CAR_L, F = o.floor != null ? o.floor : PLAT_TOP;
+  var B = [];                                          // [car, x, y, z, sx, sy, sz, hex]
+  for(var k = 0; k < cars; k++){
+    B.push([k, 0, F - 0.03, 0, 2.7, 0.06, L - 0.5, o.floorHex || 0x8f9294]);
+    [-1, 1].forEach(function(sd){ B.push([k, sd*1.2, F + 1.95, 0, 0.36, 0.04, L - 6.5, 0x9aa3ab]); });   // luggage racks
+    B.push([k, 0, F + 2.4, 0, 0.22, 0.03, L - 2, 0xfff3d6]);                                            // the light strip
+    B.push([k, 0, F + 2.46, 0, 2.8, 0.04, L - 0.5, o.ceilHex || 0xeeebe3]);                              // the ceiling, over the strip
+    [-1, 1].forEach(function(sd){ B.push([k, sd*1.42, F + 0.45, 0, 0.05, 0.9, L - 0.5, o.wallHex || 0xd8d3c7]); });   // the walls under the windows
+    [-1, 1].forEach(function(sd){ B.push([k, sd*1.42, F + 2.3, 0, 0.05, 0.3, L - 0.5, o.wallHex || 0xd8d3c7]); });    // and over them
+  }
+  seats.forEach(function(s){
+    if(s.car >= cars) return;
+    var d = s.back ? -1 : 1;
+    B.push([s.car, s.x, F + s.y - 0.05, s.z, 0.46, 0.1, 0.45, o.seatHex || 0x2f6b4f]);
+    B.push([s.car, s.x, F + s.y + 0.3, s.z - d*0.24, 0.46, 0.62, 0.08, o.seatHex || 0x2f6b4f]);
+  });
+  if(o.luggage != null){
+    var lc = [0x7a4a2a, 0x2b4a7a, 0x8a1f2e, 0x3d3d3d, 0xb08a3c, 0x4f6b3a];
+    for(var q = 0; q < 6; q++) B.push([o.luggage, (q % 2 ? 0.75 : -0.75), F + 0.3 + Math.floor(q/2)*0.55, -L/2 + 2.6 + (q % 3)*0.12, 0.7, 0.5, 0.45, lc[q]]);
+  }
+  if(!UNIT || UNIT.THREE !== THREE) UNIT = {THREE: THREE, g: new THREE.BoxGeometry(1, 1, 1)};
+  var mat = c.mat(0xffffff, {roughness: 0.8});
+  var inside = new THREE.InstancedMesh(UNIT.g, mat, B.length), cc = new THREE.Color();
+  B.forEach(function(b, i){ inside.setColorAt(i, cc.setHex(b[7])); });
+  var smat = c.mat(o.shellHex || 0xf2ead2, {transparent: true, opacity: 0.16, depthWrite: false, roughness: 0.4});
+  var shell = new THREE.InstancedMesh(UNIT.g, smat, cars), grp = new THREE.Group();
+  inside.frustumCulled = shell.frustumCulled = false;
+  grp.add(inside); grp.add(shell); grp.visible = false;
+  var m = new THREE.Matrix4(), mc = new THREE.Matrix4(), dummy = new THREE.Object3D();
+  return {g: grp,
+    // carPoses: carsOf() of the focused train (null: hide)
+    set: function(carPoses){
+      if(!carPoses){ grp.visible = false; return; }
+      grp.visible = true;
+      var M = [];
+      carPoses.forEach(function(p, k){
+        dummy.position.set(p.x, p.y, p.z); dummy.rotation.set(-p.pitch, p.yaw, 0, "YXZ");
+        dummy.scale.set(1, 1, 1); dummy.updateMatrix(); M[k] = dummy.matrix.clone();
+        shell.setMatrixAt(k, mc.copy(M[k]).multiply(m.compose(new THREE.Vector3(0, PLAT_TOP - 0.1 + 1.5, 0), new THREE.Quaternion(), new THREE.Vector3(2.92, 3.0, L))));
+      });
+      B.forEach(function(b, i){
+        var base = M[b[0]] || M[0];
+        inside.setMatrixAt(i, mc.copy(base).multiply(m.compose(new THREE.Vector3(b[1], b[2], b[3]), new THREE.Quaternion(), new THREE.Vector3(b[4], b[5], b[6]))));
+      });
+      inside.instanceMatrix.needsUpdate = true; shell.instanceMatrix.needsUpdate = true;
+    },
+    drawCalls: function(){ return grp.visible ? 2 : 0; },
+    dispose: function(){ mat.dispose(); smat.dispose(); }
+  };
+}
+// seated commuters: HQV.hqCommute's figures (one InstancedMesh, the shirt tinted per instance)
+function commuterKit(c, cap){
+  var THREE = c.THREE, F = HQV.hqCommute && HQV.hqCommute.figures ? HQV.hqCommute.figures(THREE) : null, own = null;
+  if(!F){ own = {g: figureGeo(THREE, true), m: c.mat(0xffffff, {roughness: 0.8})}; }
+  var I = new THREE.InstancedMesh(F ? F.seated : own.g, F ? F.material : own.m, Math.max(1, cap | 0)), dummy = new THREE.Object3D(), cc = new THREE.Color();
+  I.count = 0; I.frustumCulled = false;
+  return {g: I,
+    // list [{x, y (the seat top), z, yaw, key}]: painted by hqCommute.paint(key) (else the PEOPLE colours)
+    set: function(list){
+      var n = Math.min(list.length, I.instanceMatrix.count);
+      for(var i = 0; i < n; i++){
+        var p = list[i]; dummy.position.set(p.x, p.y - (F ? 0 : 0.45), p.z); dummy.rotation.set(0, p.yaw, 0); dummy.updateMatrix();
+        I.setMatrixAt(i, dummy.matrix);
+        var pt = HQV.hqCommute && HQV.hqCommute.paint ? HQV.hqCommute.paint(p.key) : null;
+        if(pt && pt.shirt) cc.setRGB(pt.shirt[0], pt.shirt[1], pt.shirt[2]); else cc.setHex(PEOPLE[hash(String(p.key)) % PEOPLE.length]);
+        I.setColorAt(i, cc);
+      }
+      I.count = n; I.instanceMatrix.needsUpdate = true; if(I.instanceColor) I.instanceColor.needsUpdate = true;
+    },
+    drawCalls: function(){ return I.visible && I.count ? 1 : 0; },
+    dispose: function(){ if(own){ own.g.dispose(); own.m.dispose(); } }
+  };
+}
+// the seated commuters of one train (a vehicle id, its trip key and its cars): world-space seat poses
+function ridersOf(mode, vid, cars, seats, ms, seed, skipSeat){
+  var C = HQV.hqCommute, out = [];
+  if(!C || !C.occupied) return out;
+  var occ = C.occupied(mode, vid, vid, seats.length, 0, ms, seed);
+  (occ && occ.seats || []).forEach(function(i){
+    if(i === skipSeat) return;
+    var s = seats[i], p = s && cars[s.car]; if(!p) return;
+    var cy = Math.cos(p.yaw), sy = Math.sin(p.yaw);
+    out.push({x: p.x + cy*s.x + sy*s.z, y: p.y + PLAT_TOP + s.y, z: p.z - sy*s.x + cy*s.z, yaw: p.yaw + (s.back ? Math.PI : 0), key: vid + ":" + i});
+  });
+  return out;
+}
+
+/* ---------- the Island Link drawn in a world: HQV.hqRail.linkView(c, sim, opts) -> V (plan 5.4) ----------
+   sim: linkService(). Above ground: the IL from its coastal portal (the trench, the track at grade) out over the sea
+   viaduct (the player-built lines' style: a concrete deck SEA_UP m over the water on piers, masts every MAST_EVERY m)
+   within DRAW_R of this world, merged into one mesh; the trains in two calls; seated commuters in one. Below ground
+   (opts.under() true, the integrator's underground view): the tunnel as a lit box section and only the trains in it.
+   focus(vehicleId): that train's inside and faint shell (the camera rides in it). */
+var IL_LIVERY = {body: 0xf3f1f6, accent: 0x6d4bb3, door: 0x5a3d99, glass: 0x1d2530, glassNight: 0xffd9a0};
+// the portal's open U trench, as wide as its terrain hole (railway.rs TRENCH_W_CM): a floor under the ballast and a
+// retaining wall each side from the floor up to just over the ground beside it, so the hole shows no void
+var TRENCH_HW = 6;
+function trenchGeo(THREE, K, S, ground){
+  var pos = [];
+  function v(p, lat, y){ var c = Math.cos(p.yaw), s = Math.sin(p.yaw); return [p.x + c*lat, y, p.z - s*lat]; }
+  function quad(a, b, cc, d){ pos.push(a[0], a[1], a[2], b[0], b[1], b[2], cc[0], cc[1], cc[2], a[0], a[1], a[2], cc[0], cc[1], cc[2], d[0], d[1], d[2]); }
+  function top(p, lat){ var q = v(p, lat, 0), g = ground(q[0], q[2]); return Math.max(p.y + 0.4, (isFinite(g) ? g : p.y) + 0.3); }
+  for(var i = 0; i + 1 < S.length; i++){
+    var A = S[i], B = S[i + 1], fa = A.y - 0.6, fb = B.y - 0.6;
+    quad(v(A, -TRENCH_HW, fa), v(B, -TRENCH_HW, fb), v(B, TRENCH_HW, fb), v(A, TRENCH_HW, fa));
+    [-1, 1].forEach(function(sd){
+      var x = sd*TRENCH_HW, ta = top(A, x + sd*0.4), tb = top(B, x + sd*0.4);
+      quad(v(A, x, fa), v(B, x, fb), v(B, x, tb), v(A, x, ta));
+      quad(v(A, x, ta), v(B, x, tb), v(B, x + sd*0.4, tb), v(A, x + sd*0.4, ta));      // the coping
+    });
+  }
+  var n = pos.length;                                  // both faces (the surface material is one-sided)
+  for(var t = 0; t < n; t += 9) pos.push(pos[t], pos[t + 1], pos[t + 2], pos[t + 6], pos[t + 7], pos[t + 8], pos[t + 3], pos[t + 4], pos[t + 5]);
+  var g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals();
+  return K.paint(g, 0xb9bcbf);
+}
+function mouthGeo(THREE, K, S, M, ground){
+  var pos = [], col = [], dark = new THREE.Color(0x3a3d40), wall = new THREE.Color(0xb9bcbf), ROOF = 5.6;
+  function v(p, lat, y){ var c = Math.cos(p.yaw), s = Math.sin(p.yaw); return [p.x + c*lat, y, p.z - s*lat]; }
+  function quad(a, b, cc, d, k){ [a, b, cc, a, cc, d, a, cc, b, a, d, cc].forEach(function(q){ pos.push(q[0], q[1], q[2]); col.push(k.r, k.g, k.b); }); }
+  // the roof is at least the ground over it, so the terrain hole past the mouth is closed by its lid
+  function roofY(p){ var g = ground(p.x, p.z); return Math.max(p.y + ROOF, (isFinite(g) ? g : p.y) + 0.05); }
+  var lid = new THREE.Color(0x8e918f);
+  for(var i = 0; i + 1 < S.length; i++){
+    var A = S[i], B = S[i + 1], ra = roofY(A), rb = roofY(B);
+    quad(v(A, -TRENCH_HW, A.y - 0.6), v(B, -TRENCH_HW, B.y - 0.6), v(B, TRENCH_HW, B.y - 0.6), v(A, TRENCH_HW, A.y - 0.6), dark);
+    quad(v(A, -TRENCH_HW, A.y + ROOF), v(B, -TRENCH_HW, B.y + ROOF), v(B, TRENCH_HW, B.y + ROOF), v(A, TRENCH_HW, A.y + ROOF), dark);
+    quad(v(A, -TRENCH_HW - 0.4, ra), v(B, -TRENCH_HW - 0.4, rb), v(B, TRENCH_HW + 0.4, rb), v(A, TRENCH_HW + 0.4, ra), lid);
+    [-1, 1].forEach(function(sd){ quad(v(A, sd*TRENCH_HW, A.y - 0.6), v(B, sd*TRENCH_HW, B.y - 0.6), v(B, sd*TRENCH_HW, rb), v(A, sd*TRENCH_HW, ra), dark); });
+  }
+  // the far end, dark: the tunnel beyond is drawn only below ground
+  var Fe = S[0] === M ? S[S.length - 1] : S[0];
+  quad(v(Fe, -TRENCH_HW, Fe.y - 0.6), v(Fe, TRENCH_HW, Fe.y - 0.6), v(Fe, TRENCH_HW, Fe.y + ROOF), v(Fe, -TRENCH_HW, Fe.y + ROOF), new THREE.Color(0x1c1e20));
+  // the headwall over the mouth, up to just over the ground
+  var g0 = ground(M.x, M.z), top = Math.max(M.y + ROOF + 0.6, (isFinite(g0) ? g0 : M.y) + 0.6);
+  quad(v(M, -TRENCH_HW - 0.4, M.y + ROOF), v(M, TRENCH_HW + 0.4, M.y + ROOF), v(M, TRENCH_HW + 0.4, top), v(M, -TRENCH_HW - 0.4, top), wall);
+  var g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals();
+  g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  return g;
+}
+function linkView(c, sim, opts){
+  var THREE = c.THREE, K = kit(THREE); opts = opts || {};
+  var root2 = new THREE.Group(); root2.name = "rail:island-link";
+  var o = sim && sim.origin ? sim.origin() : {x: 0, z: 0}, lines = sim ? sim.lines() : [];
+  var underF = typeof opts.under === "function" ? opts.under : function(){ return false; };
+  var parts = [], tube = [], seaY = typeof opts.seaY === "number" ? opts.seaY : 0;
+  var ground = typeof opts.ground === "function" ? opts.ground : function(){ return seaY - 6; };
+  function near(p){ return hyp(p.x - o.x, p.z - o.z) < DRAW_R; }
+  lines.forEach(function(l){
+    var R = sim.route(l.id, "out"); if(!R) return;
+    // runs of one kind of structure within DRAW_R: tunnel (below ground only), portal/grade (on the ground), viaduct/sea
+    var runs = [], cur = null;
+    for(var s = 0; s <= R.len; s += 4){
+      var p = at(R, s), kk = kAt(R, s), cls = kk === K_TUNNEL ? "tunnel" : kk === K_PORTAL ? "portal" : kk === K_GRADE ? "ground" : "deck";
+      if(!near(p)){ cur = null; continue; }
+      if(!cur || cur.cls !== cls){ cur = {cls: cls, a: Math.max(0, s - 4), b: s}; runs.push(cur); } else cur.b = s;
+    }
+    runs.forEach(function(r){
+      var S = samples(R, r.a, Math.min(R.len, r.b + 4), 4, o);
+      if(S.length < 2) return;
+      var rails = [];
+      [-0.75, 0.75].forEach(function(lt){ rails.push([[lt - 0.04, 0], [lt + 0.04, 0], [lt + 0.04, -0.17], [lt - 0.04, -0.17]]); });
+      if(r.cls === "tunnel"){
+        tube.push(K.extrude(S, [[-3.6, -0.6], [3.6, -0.6], [3.6, 5.6], [-3.6, 5.6]], true, 0x9a9890));
+        tube.push(K.extrude(S, [[-2.4, -0.3], [2.4, -0.3]], false, 0x55524c));
+        rails.forEach(function(pr){ tube.push(K.extrude(S, pr, true, 0x8a9096)); });
+        tube.push(K.extrude(S, [[3.2, 4.9], [3.5, 4.9], [3.5, 5.0], [3.2, 5.0]], true, 0xfff2d0));   // the lit cable tray
+        return;
+      }
+      rails.forEach(function(pr){ parts.push(K.extrude(S, pr, true, 0x6f7882)); });
+      parts.push(K.extrude(S, [[-0.02, 5.6], [0.02, 5.6], [0.02, 5.55], [-0.02, 5.55]], true, 0x2b2f33));
+      if(r.cls === "ground" || r.cls === "portal"){
+        parts.push(K.extrude(S, [[-2.6, -0.25], [2.6, -0.25], [2.1, -0.45], [-2.1, -0.45]], true, 0x77736c));          // ballast
+        if(r.cls === "portal"){
+          parts.push(trenchGeo(THREE, K, S, ground));                                                                    // the U trench
+          // the tunnel mouth: 14 m of dark box tunnel under a headwall (the tunnel itself is drawn only below ground)
+          var atA = kAt(R, Math.max(0, r.a - 4)) === K_TUNNEL, ms = atA ? r.a : Math.min(R.len, r.b + 4);
+          var SM = atA ? samples(R, Math.max(0, ms - 14), ms, 2, o) : samples(R, ms, Math.min(R.len, ms + 14), 2, o);
+          if(SM.length >= 2) parts.push(mouthGeo(THREE, K, SM, atA ? SM[SM.length - 1] : SM[0], ground));
+        }
+      } else {
+        parts.push(K.extrude(S, DECK, true, 0xb9bcbf));
+        var piers = samples(R, Math.ceil(r.a/PIER_EVERY)*PIER_EVERY, r.b, PIER_EVERY, o);
+        piers.forEach(function(p){
+          var gy = ground(p.x, p.z); if(!isFinite(gy) || gy < seaY - 0.2) gy = seaY - 6;
+          var h = Math.max(0.5, p.y - 1.9 - gy);
+          parts.push(K.cyl(0.85, 1.05, h, 10, p.x, gy, p.z, 0xa9adb1));
+          parts.push(K.box(5.4, 0.9, 2.4, p.x, p.y - 2.3, p.z, 0xa9adb1, p.yaw));
+        });
+      }
+      samples(R, Math.ceil(r.a/MAST_EVERY)*MAST_EVERY + 12, r.b, MAST_EVERY, o).forEach(function(p){
+        var cx = Math.cos(p.yaw), sx = Math.sin(p.yaw);
+        parts.push(K.cyl(0.12, 0.14, 6.4, 8, p.x + cx*3.35, p.y + 0.5 - 0.0, p.z - sx*3.35, 0x3d5566));
+        parts.push(K.box(3.6, 0.1, 0.1, p.x + cx*1.6, p.y + 5.75, p.z - sx*1.6, 0x3d5566, p.yaw));
+      });
+    });
+  });
+  var mat = vcMat(c, {roughness: 0.85}), surf = null, tun = null;
+  if(parts.length){ surf = new THREE.Mesh(K.merge(parts), mat); surf.receiveShadow = true; surf.castShadow = true; root2.add(surf); }
+  if(tube.length){ var tm = vcMat(c, {roughness: 0.9, side: THREE.DoubleSide}); tun = new THREE.Mesh(K.merge(tube), tm); tun.userData.mat = tm; tun.visible = false; root2.add(tun); }
+  var trains = trainKit(c, IL_LIVERY, 4*Math.max(2, lines.length*2)), inside = interiorKit(c, SEATS, {luggage: 0, seatHex: 0x4b3d7a, shellHex: 0xf3f1f6});
+  var riders = commuterKit(c, 260);
+  root2.add(trains.g); root2.add(inside.g); root2.add(riders.g);
+  if(c.scene && opts.attach !== false) c.scene.add(root2);
+  var focusId = null, mySeat = opts.mySeat != null ? opts.mySeat : -1, seed = opts.seed != null ? opts.seed : (sim && sim.here) || "";
+  var V = {g: root2,
+    update: function(ms, dt, cam){
+      var under = !!underF(), cars = [], ride = [], fc = null;
+      if(surf) surf.visible = !under;
+      if(tun) tun.visible = under;
+      trains.night(typeof opts.night === "function" ? opts.night() : false);
+      (sim ? sim.vehicles(ms) : []).forEach(function(v){
+        var R = sim.route(v.line, v.dir); if(!R) return;
+        var cs = carsOf(R, v.along, o), inTunnel = underAt(R, v.along - TRAIN_L/2);
+        if(v.id === focusId){ fc = cs; ride = ride.concat(ridersOf("link", v.id, cs, SEATS, ms, seed, mySeat)); return; }
+        if(inTunnel !== under) return;
+        if(cam && hyp(cs[0].x - cam.x, cs[0].z - cam.z) > TRAIN_FAR) return;
+        cars = cars.concat(cs);
+        if(cam && hyp(cs[1].x - cam.x, cs[1].z - cam.z) < 250) ride = ride.concat(ridersOf("link", v.id, cs, SEATS, ms, seed, -1));
+      });
+      trains.set(cars); inside.set(fc); riders.set(ride);
+    },
+    focus: function(id){ focusId = id || null; if(!focusId) inside.set(null); },
+    focused: function(){ return focusId; },
+    drawCalls: function(){ return (surf && surf.visible ? 1 : 0) + (tun && tun.visible ? 1 : 0) + trains.drawCalls() + inside.drawCalls() + riders.drawCalls(); },
+    tools: {shotCam: function(name){
+      var l = lines[0], R = l && sim.route(l.id, "out"); if(!R) return null;
+      if(name === "link-viaduct"){ var s1 = (R.seaA + Math.min(R.seaB, R.seaA + 400))/2, p = at(R, s1); var cx = Math.cos(p.yaw), sx = Math.sin(p.yaw);
+        return {pos: {x: p.x - o.x + cx*60, y: p.y + 14, z: p.z - o.z - sx*60}, look: {x: p.x - o.x, y: p.y, z: p.z - o.z}, fov: 55}; }
+      if(name === "link-portal"){
+        // from over the trench's open end, looking down it into the tunnel mouth
+        var s0 = -1, s1 = -1;
+        for(var s = 0; s < R.len; s += 2) if(kAt(R, s) === K_PORTAL){ if(s0 < 0) s0 = s; s1 = s; }
+        if(s0 < 0) return null;
+        var mouthS = kAt(R, Math.max(0, s0 - 4)) === K_TUNNEL ? s0 : s1, openS = mouthS === s0 ? s1 : s0;
+        var m = at(R, mouthS), op = at(R, openS), dx = op.x - m.x, dz = op.z - m.z, dl = hyp(dx, dz) || 1; dx /= dl; dz /= dl;
+        return {pos: {x: op.x - o.x + dx*18 + dz*5, y: op.y + 9, z: op.z - o.z + dz*18 - dx*5}, look: {x: m.x - o.x, y: m.y + 1, z: m.z - o.z}, fov: 55};
+      }
+      return null;
+    }},
+    dispose: function(){
+      if(root2.parent) root2.parent.remove(root2);
+      if(surf) surf.geometry.dispose(); if(tun){ tun.geometry.dispose(); tun.userData.mat.dispose(); }
+      mat.dispose(); trains.dispose(); inside.dispose(); riders.dispose();
+    }};
+  return V;
+}
+
 /* ---------- running it in a City (games/hqcity3d.js's rail block) ----------
    mount(c, w, o) -> {update(t, dt), carry(), use(), rows(arch) (the station menu's rail rows), has(world), setNight(n),
    destroy(), tools}. o: {W, world, me (user id), sea (m), here() (archipelago m), arch() (a promise), get(path),
@@ -736,13 +1507,13 @@ function mount(c, w, o){
   var world = o.world, rail = null, arch = null, lines = [], views = [], pool = [], mine = null, dead = false, night = !!o.night;
   var hp = o.here ? o.here() : {x: 0, z: 0}, myTier = 0, fetchedAt = 0, seed = 1, loading = {};
   function tierOf(a, wid){
-    if(wid === "claude-hq@2") return 5;
-    var i = (a && Array.isArray(a.islands) ? a.islands : []).filter(function(x){ return x && x.world === wid; })[0];
+    if(isCommonsId(wid)) return 5;
+    var i = (a && Array.isArray(a.islands) ? a.islands : []).filter(function(x){ return x && sameWorld(x.world, wid); })[0];
     return i ? Math.max(1, Math.min(5, i.tier | 0)) : 1;
   }
-  function myIsland(){ return o.me ? "user:" + o.me + "@2" : null; }
+  function myIsland(){ return o.me ? islandIdOf(o.me, verOf(world)) : null; }
   function posOf(a, wid){
-    var h = wid === "claude-hq@2" ? a && a.commons : (a && a.islands || []).filter(function(i){ return i && i.world === wid; })[0];
+    var h = isCommonsId(wid) ? a && a.commons : (a && a.islands || []).filter(function(i){ return i && sameWorld(i.world, wid); })[0];
     return h && isFinite(+h.x) && isFinite(+h.z) ? {x: (+h.x || 0)/100, z: (+h.z || 0)/100} : null;
   }
   // a line's lanes at a station: from every line there (the same on every client); memoised per station and lines
@@ -767,7 +1538,7 @@ function mount(c, w, o){
     return Promise.all([o.get("/api/arena/rail"), o.arch()]).then(function(r){
       if(dead) return;
       rail = r[0] && typeof r[0] === "object" ? r[0] : {lines: []}; arch = r[1];
-      var h = world === "claude-hq@2" ? arch && arch.commons : (arch && arch.islands || []).filter(function(i){ return i && i.world === world; })[0];
+      var h = isCommonsId(world) ? arch && arch.commons : (arch && arch.islands || []).filter(function(i){ return i && sameWorld(i.world, world); })[0];
       hp = {x: h ? (+h.x || 0)/100 : 0, z: h ? (+h.z || 0)/100 : 0}; myTier = tierOf(arch, myIsland());
       var want = linesAt(rail, world), have = {};
       // a line built since: the lines beside it move into their lanes (not the one you are riding)
@@ -942,7 +1713,7 @@ function mount(c, w, o){
       } else if(r.kind === "build"){
         out.push({text: "🛤 Build a rail line to " + r.to.name + " · " + r.cost + " coins from your treasury", fn: function(){ build(r.to); }});
       } else if(r.kind === "build-from"){
-        var hereP = {world: world, name: world === "claude-hq@2" ? "The Commons" : "this island"};
+        var hereP = {world: world, name: isCommonsId(world) ? "The Commons" : "this island"};
         out.push({text: "🛤 Build a rail line from your island to " + hereP.name + " · " + r.cost + " coins from its treasury", fn: function(){ build(hereP); }});
       } else if(r.kind === "note"){
         out.push({text: "No line to " + r.to.name + (r.more ? " and " + r.more + " more" : "") + " yet · lines can be built from an island's station", off: true, fn: function(){}});
@@ -980,5 +1751,9 @@ function mount(c, w, o){
 }
 HQV.hqRail.mount = mount;
 HQV.hqRail.view = lineView;
+HQV.hqRail.linkView = linkView;
+// the few-draw-call drawing kit, shared by games/hqcityrail.js and games/hqgondola.js
+HQV.hqRail.parts = {kit: kit, vcMat: vcMat, trainKit: trainKit, carsOf: carsOf, interiorKit: interiorKit, commuterKit: commuterKit, ridersOf: ridersOf,
+  carGeo: carGeo, samples: samples, extrude: extrude, DECK: DECK, PIER_EVERY: PIER_EVERY, MAST_EVERY: MAST_EVERY, DRAW_R: DRAW_R};
 HQV.hqRail.ride = RIDE;
 })();

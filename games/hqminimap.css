@@ -62,4 +62,8 @@
   .hq3d-minimap,.hq3d-minimap-scrim,.hq3d-minimap-legend{transition:none}
   .hq3d-minimap.hq3d-minimap-big::after{animation:none}
 }
+html.hq-calm .hq3d-minimap,html.hq-calm .hq3d-minimap-scrim,html.hq-calm .hq3d-minimap-legend{transition:none}
+html.hq-calm .hq3d-minimap.hq3d-minimap-big::after{animation:none}
+/* underground (games/hqminimap.js opts.under()): the map dims the surface and brings the metro up; the box says so too */
+.hq3d-minimap[data-under="true"]{border-color:var(--brand);box-shadow:0 0 0 1px color-mix(in srgb,var(--brand) 45%,transparent),var(--shadow-lg)}
 /* ==== end of the 3D City minimap ==== */

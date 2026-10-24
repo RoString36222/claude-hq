@@ -705,3 +705,22 @@ fn sprite_route_caches_allowlisted_urls_only() {
     assert_eq!(get(srv.port, "/api/sprite", "").0, 400);
     assert_eq!(n.load(Ordering::SeqCst), 2);
 }
+
+#[test]
+fn transport_routes_are_gated_and_local() {
+    // HQ 3.15: the phone's patch notes are served (the one top-level JSON); the SMS posts need the CSRF token and
+    // a same-site Origin, and unpaired they never leave the machine; the live Commons' ranks answer locally too
+    let srv = serve();
+    assert!(srv.app.game_file("patchnotes.json").is_some(), "games/patchnotes.json");
+    assert!(srv.app.game_file("catalogue.json").is_none());
+    for p in ["/api/arena/sms/send", "/api/arena/sms/optin", "/api/arena/sms/block"] {
+        assert_eq!(post(&srv, p, b"{}", "", false).0, 403, "{}", p);
+        assert_eq!(post(&srv, p, b"{}", "Origin: https://evil.example\r\n", true).0, 403, "{}", p);
+    }
+    let (code, body) = post(&srv, "/api/arena/sms/send", json!({"to": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d", "text": "hi"}).to_string().as_bytes(), "", true);
+    assert_ne!(code, 200, "unpaired: {body}");
+    for p in ["/api/arena/sms/me", "/api/arena/world/claude-hq@3/assign"] {
+        let (code, _, _) = get(srv.port, p, "");
+        assert_ne!(code, 200, "{}: nothing to proxy to while unpaired", p);
+    }
+}

@@ -1,5 +1,5 @@
 /* Claude HQ: the generated worlds on the client: Arena City (claude-hq@1), the Commons
- * (claude-hq@2) and the personal islands (user:<id>@2).
+ * (claude-hq@2, live: claude-hq@3) and the personal islands (user:<id>@2, live: user:<id>@3).
  *
  * HQV.world turns the Arena's WorldDoc (integer cm, +y up, +z north) into a packed,
  * structured-clone-friendly object W and answers every ground question the 3D City asks
@@ -25,6 +25,32 @@
  * (h & 0xffff)/65536 < p (forest 0.55, park 0.18, residential 0.04); x jitter from h bits
  * 16..23, z jitter from h2 bits 0..7 (1..7 m into the cell), s = 0.8 + 0.6 * (h2 bits 8..15)/255,
  * kind "pine" when h2 bits 16..17 are 0 ("round" otherwise; forest flips it: mostly pine).
+ * Live ids (HQ 3.15, D2): the live worlds are @3 (LIVE_V); COMMONS is the live Commons, COMMONS_V2 its @2 fallback.
+ *   islandId(uid, v?) "user:<uid>@3" (v 2 or 3) | null; isLive(id) any id the client may load (@1, @2, @3 forms);
+ *   ownerOf(id) the island's uid | "commons" | null; versionOf(id) 1|2|3, 0 for anything else.
+ * @3 docs add four layers (cm, integers; docs/plans/transport-revamp.md 5.1), packed as they come (W.water, W.metro,
+ * W.rail, W.gondola: plain objects, so they ride the worker's structured clone untouched) with memoised metre views
+ * (null when the doc has none, so @1/@2 behave exactly as before):
+ *   waterOf(W)   {bodies: [{id, kind, poly: [x, z, ...] (m, flat), level, bed, y, edge, islands: [[x, z, ...]], joins,
+ *                tier, box: {x0, z0, x1, z1}}], piers: [{id, body, kind, x, y, z, fx, fz, yaw, len, w, tier}], berths:
+ *                [{body, x, z, yaw}], breakwater: [[x, z]] | null, lighthouse: [x, z] | null, office, net: {nodes: [[x, z]],
+ *                edges}, routes}. `level` is body.level; `y` is the surface boats float on and the water is drawn at: level,
+ *                raised to sea + RIVER_LIFT (0.3 m, the river's calm level) when it is lower, so the sea's crests never
+ *                show through. A pier is a deck centred on (x, z), `len` m along its front (from 3 m inland to its head
+ *                over the water: water.rs), `w` wide; the breakwater a
+ *                polyline you walk along within BREAKWATER_HALF m, its crown walk BREAKWATER_UP m over the sea.
+ *   deckAt(W, x, z)   the y of the pier deck or breakwater crown at (x, z) | null; groundAt is that deck there
+ *   metroOf(W), railOf(W), gondolaOf(W): the layers in metres, every Q16 front/along also as a unit [fx, fz] and a
+ *                yaw (yaw 0 faces +z, increasing yaw turns left: yaw = atan2(fx, fz))
+ *   waterAt(W, x, z)  the body (from waterOf) whose water (x, z) is on: inside its outline, not on one of its
+ *                islands, a pier or the breakwater (a bounding box first) | null
+ *   holeAt(W, x, z)   inside a terrain hole (metro entrances and portals, the Island Link portal): every ring of
+ *                metro.holes, the entrances' and portals' own holes and rail.holes; holesOf(W) lists them (m)
+ *   holeFloor(W, x, z) the floor under a hole (m): an entrance's ticket-hall floor, a portal's track, else 6 m down
+ * groundAt in a hole is its floor (no ground at street level, so the avatar can go down; groundAt(W, x, z, true) and
+ * streetAt(W, x, z) give the street level over it); rayGround passes through a hole the same way. blockedAt is true on a
+ * water body (not on a bridge's deck, a pier or the breakwater); surfaceAt says "water" there; no tree stands in a body or
+ * a hole.
  * Pure core: no THREE, no DOM at load time, so node, a worker (importScripts) and the page all load it.
  */
 (function(){
@@ -33,14 +59,19 @@ var root = typeof window !== "undefined" ? window : self;
 var HQV = root.HQV = root.HQV || {};
 
 var ID = "claude-hq@1", URL = "/api/arena/world/claude-hq@1", IDB = {db: "hq-world", store: "docs"};
-var COMMONS = "claude-hq@2";
+// the live worlds are @3 (HQ 3.15, D2); @2 (and @1) stay served for older Arenas and clients
+var LIVE_V = 3, COMMONS = "claude-hq@3", COMMONS_V2 = "claude-hq@2";
+var UID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // the worlds the client may ask for: the fixed ones and a personal island (the dashboard checks again)
-var WORLD_RE = /^(claude-hq@[12]|user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@2)$/;
+var WORLD_RE = /^(claude-hq@[123]|user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@[23])$/;
 var PACK_V = 4;   // bump whenever pack()'s output changes; cached records with another v are refetched
                   // (4: v3 records could hold the 3D City's client-side claims, see cacheCopy)
 var ONE = 65536, BUCKET = 64, TRUNK = 0.45, CLEAR = 2, BLEND = 4, SIDEWALK_UP = 0.15;
 var TREE_P = {forest: 0.55, park: 0.18, residential: 0.04};
 var WALK_OLD = {street: 150, avenue: 200};   // sidewalk (cm, each side) for docs older than the walk field
+// @3 water: the calm surface over sea level (games/ocean.js RIVER_Y, games/worldgeom.js RIVER_LIFT), the breakwater's
+// walkable half width, how far down a hole with nothing under it goes
+var RIVER_LIFT = 0.3, BREAKWATER_HALF = 4, BREAKWATER_UP = 2.5, HOLE_DEPTH = 6;
 
 function clamp(v, a, b){ return v < a ? a : (v > b ? b : v); }
 function smoothstep(t){ t = clamp(t, 0, 1); return t*t*(3 - 2*t); }
@@ -95,6 +126,11 @@ function pack(doc){
   if(L.transit) W.transit = L.transit;
   if(L.zones) W.zones = L.zones;
   if(L.river) W.river = L.river;
+  // @3: the water, metro, rail and gondola layers, as they come (cm); metre views below
+  if(L.water) W.water = L.water;
+  if(L.metro) W.metro = L.metro;
+  if(L.rail) W.rail = L.rail;
+  if(L.gondola) W.gondola = L.gondola;
   return W;
 }
 
@@ -119,6 +155,10 @@ function docOf(W){
   if(W.transit) layers.transit = W.transit;
   if(W.island) layers.island = W.island;
   if(W.river) layers.river = W.river;
+  if(W.water) layers.water = W.water;
+  if(W.metro) layers.metro = W.metro;
+  if(W.rail) layers.rail = W.rail;
+  if(W.gondola) layers.gondola = W.gondola;
   var doc = {id: W.id, seed: W.seed || W.id, version: W.v || 1, profile: W.profile || "city", size_cm: W.sizeCm, layers: layers};
   try { Object.defineProperty(W, "docView", {value: doc, enumerable: false, configurable: true, writable: true}); } catch(e){}
   return doc;
@@ -320,6 +360,7 @@ function surfaceAt(W, x, z){
   var r = roadUnder(W, x, z);
   if(r === 1) return "road";
   if(r === 2) return "sidewalk";
+  if(W.water && waterAt(W, x, z)) return "water";
   if(siteAt(W, x, z)) return "site";
   if(lotAt(W, x, z)) return "lot";
   var n = districtAt(W, x, z).name;
@@ -336,7 +377,10 @@ function padOf(W, x, z){
   return null;
 }
 
-function groundAt(W, x, z){
+// street: true gives the street level over a terrain hole too (@3); without it a hole's ground is its floor (holeFloor)
+function groundAt(W, x, z, street){
+  if(!street && (W.metro || W.rail)){ var f = holeFloor(W, x, z); if(f != null) return f; }
+  if(W.water){ var dk = deckAt(W, x, z); if(dk != null) return dk; }   // @3: a pier's deck, the breakwater's crown
   if(roadUnder(W, x, z)) return ROAD.y;
   var I = index(W), nb = I.nb, L = I.pads[bOf(W, z, nb)*nb + bOf(W, x, nb)], bd = Infinity, py = 0;
   for(var i = 0; i < L.length; i++){
@@ -350,6 +394,8 @@ function groundAt(W, x, z){
   if(bd < BLEND) return py + (h - py)*smoothstep(bd/BLEND);
   return h;
 }
+
+function streetAt(W, x, z){ return groundAt(W, x, z, true); }
 
 function normalAt(W, x, z){
   var e = 0.5;
@@ -401,6 +447,243 @@ function riverAt(W, x, z){
   return inside;
 }
 
+/* ---------- @3 layers: metre views, memoised per world (null when the doc has none) ---------- */
+// one memo per world; a tier view (games/worldgeom.js view) shares its world's (tierBase): the layers are the same
+var MEMO = typeof WeakMap === "function" ? new WeakMap() : null;
+function memoOf(W){
+  var B = W.tierBase || W, m;
+  if(MEMO){ m = MEMO.get(B); if(!m){ m = {}; MEMO.set(B, m); } return m; }
+  if(!B.layerViews){ try { Object.defineProperty(B, "layerViews", {value: {}, enumerable: false, configurable: true, writable: true}); } catch(e){ return {}; } }
+  return B.layerViews;
+}
+function cm(v){ v = +v; return isFinite(v) ? v/100 : 0; }
+// a Q16 unit vector [fx, fz] (doc) as a unit [x, z] (+z when there is none)
+function q16(f){
+  var x = f && isFinite(+f[0]) ? +f[0]/ONE : 0, z = f && isFinite(+f[1]) ? +f[1]/ONE : 1, l = Math.sqrt(x*x + z*z);
+  return l > 1e-9 ? [x/l, z/l] : [0, 1];
+}
+function yawOf(u){ return Math.atan2(u[0], u[1]); }
+function ringM(P){
+  var out = [];
+  (P || []).forEach(function(p){ if(p && isFinite(+p[0]) && isFinite(+p[1])) out.push([+p[0]/100, +p[1]/100]); });
+  return out;
+}
+function flatM(P){ var o = []; ringM(P).forEach(function(q){ o.push(q[0], q[1]); }); return o; }
+function pathM(P){ return (P || []).filter(function(p){ return p && p.length >= 3; }).map(function(p){ return [cm(p[0]), cm(p[1]), cm(p[2])]; }); }
+function strs(L){ return (L || []).map(String); }
+function boxFlat(f){
+  var b = {x0: Infinity, z0: Infinity, x1: -Infinity, z1: -Infinity};
+  for(var i = 0; i + 1 < f.length; i += 2){ b.x0 = Math.min(b.x0, f[i]); b.x1 = Math.max(b.x1, f[i]); b.z0 = Math.min(b.z0, f[i+1]); b.z1 = Math.max(b.z1, f[i+1]); }
+  return b;
+}
+function inBox(b, x, z){ return x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1; }
+// even-odd point in a flat ring [x0, z0, x1, z1, ...]
+function inFlat(f, x, z){
+  var inside = false, n = f.length >> 1;
+  for(var i = 0, j = n - 1; i < n; j = i++){
+    var ax = f[2*i], az = f[2*i+1], cx = f[2*j], cz = f[2*j+1];
+    if((az > z) !== (cz > z) && x < (cx - ax)*(z - az)/(cz - az) + ax) inside = !inside;
+  }
+  return inside;
+}
+function seaLevel(W){ var B = W.tierBase || W, I = B && B.island; return I && I.sea_cm != null && isFinite(+I.sea_cm) ? +I.sea_cm/100 : null; }
+function waterOf(W){
+  if(!W || !W.water) return null;
+  var M = memoOf(W);
+  if(M.water !== undefined) return M.water;
+  var L = W.water, sea = seaLevel(W);
+  var bodies = [];
+  (L.bodies || []).forEach(function(b){
+    if(!b) return;
+    var poly = flatM(b.poly);
+    if(poly.length < 6) return;
+    var level = cm(b.level), y = sea != null && level < sea + RIVER_LIFT ? sea + RIVER_LIFT : level;
+    bodies.push({id: String(b.id), kind: String(b.kind || "lake"), poly: poly, level: level, bed: cm(b.bed), y: y,
+                 edge: b.edge === "quay" ? "quay" : "bank", islands: (b.islands || []).map(flatM).filter(function(f){ return f.length >= 6; }),
+                 joins: b.joins != null ? String(b.joins) : null, tier: (b.tier|0) || 1, box: boxFlat(poly)});
+  });
+  var piers = (L.piers || []).filter(Boolean).map(function(p){
+    var u = q16(p.front);
+    return {id: String(p.id), body: String(p.body || ""), kind: String(p.kind || "waterbus"), x: cm(p.x), y: cm(p.y), z: cm(p.z),
+            fx: u[0], fz: u[1], yaw: yawOf(u), len: Math.max(0, cm(p.len)), w: Math.max(0, cm(p.w)), tier: (p.tier|0) || 1};
+  });
+  var berths = (L.berths || []).filter(Boolean).map(function(b){
+    var u = q16(b.front);
+    return {body: String(b.body || ""), x: cm(b.x), z: cm(b.z), fx: u[0], fz: u[1], yaw: yawOf(u)};
+  });
+  var bw = ringM(L.breakwater), lh = L.lighthouse && L.lighthouse.length >= 2 ? [cm(L.lighthouse[0]), cm(L.lighthouse[1])] : null;
+  var net = L.net || {};
+  M.water = {bodies: bodies, piers: piers, berths: berths, breakwater: bw.length >= 2 ? bw : null, lighthouse: lh,
+             office: L.office != null ? L.office : null,
+             net: {nodes: ringM(net.nodes), edges: (net.edges || []).filter(function(e){ return e && e.length >= 2; }).map(function(e){ return [e[0]|0, e[1]|0]; })},
+             routes: (L.routes || []).filter(Boolean).map(function(r){
+               return {id: String(r.id), kind: String(r.kind || "waterbus"), piers: strs(r.piers), path: (r.path || []).map(function(i){ return i|0; }),
+                       loop: !!r.loop, tier: (r.tier|0) || 1};
+             })};
+  return M.water;
+}
+
+// the deck you stand on at (x, z): a pier's (its y) or the breakwater's crown walk (BREAKWATER_UP over the sea) | null
+function deckAt(W, x, z){
+  var V = W && W.water ? waterOf(W) : null;
+  if(!V) return null;
+  var P = V.piers, i;
+  for(i = 0; i < P.length; i++){
+    var p = P[i], dx = x - p.x, dz = z - p.z, a = dx*p.fx + dz*p.fz, c = dx*p.fz - dz*p.fx;
+    if(Math.abs(a) <= p.len/2 && Math.abs(c) <= p.w/2) return p.y;
+  }
+  var B = V.breakwater;
+  if(B) for(i = 0; i + 1 < B.length; i++){
+    var ax = B[i][0], az = B[i][1], ux = B[i+1][0] - ax, uz = B[i+1][1] - az, L2 = ux*ux + uz*uz;
+    var t = L2 > 0 ? clamp(((x - ax)*ux + (z - az)*uz)/L2, 0, 1) : 0, qx = x - ax - ux*t, qz = z - az - uz*t;
+    if(qx*qx + qz*qz <= BREAKWATER_HALF*BREAKWATER_HALF){ var sl = seaLevel(W); return (sl != null ? sl : 0) + BREAKWATER_UP; }
+  }
+  return null;
+}
+// the body whose outline holds (x, z), off its islands (decks not considered) | null
+function bodyAt(W, x, z){
+  var V = waterOf(W);
+  if(!V) return null;
+  for(var i = 0; i < V.bodies.length; i++){
+    var b = V.bodies[i];
+    if(!inBox(b.box, x, z) || !inFlat(b.poly, x, z)) continue;
+    for(var k = 0; k < b.islands.length; k++) if(inFlat(b.islands[k], x, z)) return null;
+    return b;
+  }
+  return null;
+}
+function waterAt(W, x, z){
+  var b = bodyAt(W, x, z);
+  return b && deckAt(W, x, z) == null ? b : null;
+}
+function metroOf(W){
+  if(!W || !W.metro) return null;
+  var M = memoOf(W);
+  if(M.metro !== undefined) return M.metro;
+  var L = W.metro;
+  M.metro = {
+    lines: (L.lines || []).filter(Boolean).map(function(l){
+      return {id: String(l.id), stations: strs(l.stations), path: pathM(l.path), kinds: strs(l.kinds), depot: l.depot != null ? String(l.depot) : null, tier: (l.tier|0) || 1};
+    }),
+    stations: (L.stations || []).filter(Boolean).map(function(s){
+      var u = q16(s.along);
+      return {id: String(s.id), x: cm(s.x), y: cm(s.y), z: cm(s.z), along: u, yaw: yawOf(u), len: cm(s.len), platform: s.platform === "island" ? "island" : "side",
+              lines: strs(s.lines), hall_y: cm(s.hall_y), entrances: strs(s.entrances)};
+    }),
+    entrances: (L.entrances || []).filter(Boolean).map(function(e){
+      var u = q16(e.front);
+      return {id: String(e.id), station: String(e.station || ""), x: cm(e.x), y: cm(e.y), z: cm(e.z), front: u, yaw: yawOf(u), w: cm(e.w), d: cm(e.d),
+              kind: String(e.kind || "stairs"), hole: ringM(e.hole)};
+    }),
+    portals: (L.portals || []).filter(Boolean).map(function(p){
+      var u = q16(p.front);
+      return {id: String(p.id), line: String(p.line || ""), x: cm(p.x), y: cm(p.y), z: cm(p.z), front: u, yaw: yawOf(u), w: cm(p.w), len: cm(p.len), hole: ringM(p.hole)};
+    }),
+    depots: (L.depots || []).filter(Boolean).map(function(d){
+      return {id: String(d.id), line: String(d.line || ""), poly: ringM(d.poly), tracks: (d.tracks || []).map(pathM)};
+    }),
+    holes: (L.holes || []).map(ringM).filter(function(P){ return P.length >= 3; })
+  };
+  return M.metro;
+}
+function railOf(W){
+  if(!W || !W.rail) return null;
+  var M = memoOf(W);
+  if(M.rail !== undefined) return M.rail;
+  var L = W.rail, sea = L.sea, su = sea ? q16(sea.front) : null;
+  M.rail = {
+    lines: (L.lines || []).filter(Boolean).map(function(l){
+      return {id: String(l.id), kind: l.kind === "island" ? "island" : "city", stations: strs(l.stations), path: pathM(l.path), kinds: strs(l.kinds), tier: (l.tier|0) || 1};
+    }),
+    stations: (L.stations || []).filter(Boolean).map(function(s){
+      var u = q16(s.along);
+      return {id: String(s.id), kind: String(s.kind || "elevated"), x: cm(s.x), y: cm(s.y), z: cm(s.z), along: u, yaw: yawOf(u), len: cm(s.len),
+              platforms: Math.max(1, s.platforms|0), lines: strs(s.lines), stairs: ringM(s.stairs)};
+    }),
+    sea: sea ? {x: cm(sea.x), y: cm(sea.y), z: cm(sea.z), front: su, yaw: yawOf(su)} : null,
+    holes: (L.holes || []).map(ringM).filter(function(P){ return P.length >= 3; })
+  };
+  return M.rail;
+}
+function gondolaOf(W){
+  if(!W || !W.gondola) return null;
+  var M = memoOf(W);
+  if(M.gondola !== undefined) return M.gondola;
+  M.gondola = {lines: (W.gondola.lines || []).filter(Boolean).map(function(l){
+    return {id: String(l.id), kind: l.kind === "summit" ? "summit" : "crossing", tier: (l.tier|0) || 1,
+            stations: (l.stations || []).filter(Boolean).map(function(s){
+              var u = q16(s.front);
+              return {id: String(s.id), x: cm(s.x), y: cm(s.y), z: cm(s.z), front: u, yaw: yawOf(u)};
+            }),
+            towers: (l.towers || []).filter(Boolean).map(function(t){ return {x: cm(t.x), y: cm(t.y), z: cm(t.z), h: cm(t.h)}; })};
+  })};
+  return M.gondola;
+}
+// every terrain hole once, {P: [[x, z], ...] (m), b (box), kind: "entrance"|"portal"|"hole"|"rail", ref}, in a 32 m grid
+var HOLE_CELL = 32;
+function holeIndex(W){
+  if(!W || !(W.metro || W.rail)) return null;
+  var M = memoOf(W);
+  if(M.holes !== undefined) return M.holes;
+  var list = [], seen = {}, grid = {}, mo = metroOf(W), ro = railOf(W);
+  function add(P, kind, ref){
+    if(!P || P.length < 3) return;
+    var key = P.map(function(q){ return Math.round(q[0]*100) + "," + Math.round(q[1]*100); }).join(";");
+    if(seen[key]) return;
+    seen[key] = 1;
+    var f = [];
+    P.forEach(function(q){ f.push(q[0], q[1]); });
+    var h = {P: P, f: f, b: boxFlat(f), kind: kind, ref: ref || null};
+    list.push(h);
+    for(var j = Math.floor(h.b.z0/HOLE_CELL); j <= Math.floor(h.b.z1/HOLE_CELL); j++)
+      for(var i = Math.floor(h.b.x0/HOLE_CELL); i <= Math.floor(h.b.x1/HOLE_CELL); i++) (grid[i + "," + j] = grid[i + "," + j] || []).push(h);
+  }
+  if(mo){
+    mo.entrances.forEach(function(e){ add(e.hole, "entrance", e); });
+    mo.portals.forEach(function(p){ add(p.hole, "portal", p); });
+    mo.holes.forEach(function(P){ add(P, "hole", null); });
+  }
+  if(ro) ro.holes.forEach(function(P){ add(P, "rail", null); });
+  M.holes = list.length ? {list: list, grid: grid} : null;
+  return M.holes;
+}
+function holeRec(W, x, z){
+  var H = holeIndex(W);
+  if(!H) return null;
+  var L = H.grid[Math.floor(x/HOLE_CELL) + "," + Math.floor(z/HOLE_CELL)];
+  if(L) for(var i = 0; i < L.length; i++) if(inBox(L[i].b, x, z) && inFlat(L[i].f, x, z)) return L[i];
+  return null;
+}
+function holeAt(W, x, z){ return !!holeRec(W, x, z); }
+function holesOf(W){ var H = holeIndex(W); return H ? H.list.map(function(h){ return h.P; }) : []; }
+// the y of the nearest point (in plan) of a set of [x, y, z] paths (m), or null
+function nearestPathY(paths, x, z){
+  var bd = Infinity, by = null;
+  paths.forEach(function(P){
+    for(var i = 0; i + 1 < P.length; i++){
+      var a = P[i], b = P[i+1], ux = b[0] - a[0], uz = b[2] - a[2], L2 = ux*ux + uz*uz;
+      var t = L2 > 0 ? clamp(((x - a[0])*ux + (z - a[2])*uz)/L2, 0, 1) : 0, qx = x - a[0] - ux*t, qz = z - a[2] - uz*t, d = qx*qx + qz*qz;
+      if(d < bd){ bd = d; by = a[1] + (b[1] - a[1])*t; }
+    }
+  });
+  return by;
+}
+// the floor under a hole at (x, z) (m), or null off every hole
+function holeFloor(W, x, z){
+  var h = holeRec(W, x, z);
+  if(!h) return null;
+  var street = groundAt(W, x, z, true), y = null, mo = metroOf(W), ro = railOf(W);
+  if(h.kind === "entrance" && mo){
+    var st = mo.stations.filter(function(s){ return s.id === h.ref.station; })[0];
+    if(st && st.hall_y < street - 1) y = st.hall_y;
+  } else if(h.kind === "portal" && mo){
+    y = nearestPathY(mo.lines.filter(function(l){ return l.id === h.ref.line; }).map(function(l){ return l.path; }), x, z);
+  } else if(h.kind === "rail" && ro){
+    y = nearestPathY(ro.lines.map(function(l){ return l.path; }), x, z);
+  }
+  return y != null && isFinite(y) && y < street - 0.5 ? y : street - HOLE_DEPTH;
+}
+
 function trees(W){
   var I = index(W);
   if(I.treeList) return I.treeList;
@@ -416,6 +699,9 @@ function trees(W){
     if(Math.abs(x) > W.half - CLEAR || Math.abs(z) > W.half - CLEAR) continue;
     if(roadNear(W, x, z, CLEAR) || lotAt(W, x, z) || siteAt(W, x, z)) continue;
     if(W.river && (riverAt(W, x, z) || riverAt(W, x + CLEAR, z) || riverAt(W, x - CLEAR, z) || riverAt(W, x, z + CLEAR) || riverAt(W, x, z - CLEAR))) continue;
+    // @3: none in a lake, canal or the marina, on a pier, or in a terrain hole
+    if(W.water && (bodyAt(W, x, z) || bodyAt(W, x + CLEAR, z) || bodyAt(W, x - CLEAR, z) || bodyAt(W, x, z + CLEAR) || bodyAt(W, x, z - CLEAR) || deckAt(W, x, z) != null)) continue;
+    if((W.metro || W.rail) && (holeRec(W, x, z) || holeRec(W, x + CLEAR, z) || holeRec(W, x - CLEAR, z) || holeRec(W, x, z + CLEAR) || holeRec(W, x, z - CLEAR))) continue;
     var pine = ((h2 >>> 16) & 3) === 0;
     out.push({x: x, z: z, s: 0.8 + ((h2 >>> 8) & 0xff)/255*0.6, kind: (name === "forest" ? !pine : pine) ? "pine" : "round"});
   }
@@ -446,6 +732,8 @@ function blockedAt(W, x, z){
     var dx = x - xz[2*T[i]], dz = z - xz[2*T[i]+1];
     if(dx*dx + dz*dz < TRUNK*TRUNK) return true;
   }
+  // @3: a lake, canal or the marina is water (a bridge's deck, a pier and the breakwater are not)
+  if(W.water && waterAt(W, x, z) && !roadUnder(W, x, z)) return true;
   return false;
 }
 
@@ -657,17 +945,35 @@ function load(opts){
 }
 // on a page (not the build worker), start the IndexedDB read as soon as this script runs, so a late
 // load() finds the record already in memory instead of racing the (HTTP-cached) world fetch
-// (the Commons, the world the City opens on, and claude-hq@1, where an Arena without @2 sends it)
+// (the live Commons, the world the City opens on, its @2 and claude-hq@1, where an older Arena sends it)
 var PRE = {idb: null, recs: {}};
 try {
-  if(root.document && root.indexedDB){ PRE.idb = defaultIdb(); if(PRE.idb) [COMMONS, ID].forEach(function(id){ PRE.recs[id] = idbGet(PRE.idb, 6000, id); }); }
+  if(root.document && root.indexedDB){ PRE.idb = defaultIdb(); if(PRE.idb) [COMMONS, COMMONS_V2, ID].forEach(function(id){ PRE.recs[id] = idbGet(PRE.idb, 6000, id); }); }
 } catch(e){ PRE.idb = null; PRE.recs = {}; }
+/* ---------- live ids (HQ 3.15, D2) ---------- */
+// an island's live id (v: 2 or 3, default LIVE_V) for a uid (a lowercase uuid; a "user:" prefix or "@n" suffix is
+// dropped), or null
+function islandId(uid, v){
+  var u = String(uid == null ? "" : uid).toLowerCase().replace(/^user:/, "").replace(/@[0-9]+$/, "");
+  v = v == null ? LIVE_V : +v;
+  return UID_RE.test(u) && (v === 2 || v === 3) ? "user:" + u + "@" + v : null;
+}
+function isLive(id){ return typeof id === "string" && WORLD_RE.test(id); }
+function ownerOf(id){
+  if(!isLive(id)) return null;
+  return id.indexOf("claude-hq@") === 0 ? "commons" : id.slice(5, id.lastIndexOf("@"));
+}
+function versionOf(id){ return isLive(id) ? +id.slice(id.lastIndexOf("@") + 1) : 0; }
+
 function onChange(cb, id){ if(typeof cb === "function") stateOf(id || ID).listeners.push(cb); }
 function current(id){ return stateOf(id || ID).cur; }
 function cacheMs(id){ return stateOf(id || ID).cacheMs; }
 
 var api = HQV.world = {
   ID: ID, URL: URL, IDB: IDB, PACK_V: PACK_V, SIDEWALK_UP: SIDEWALK_UP, COMMONS: COMMONS, WORLD_RE: WORLD_RE,
+  LIVE_V: LIVE_V, COMMONS_V2: COMMONS_V2, islandId: islandId, isLive: isLive, ownerOf: ownerOf, versionOf: versionOf,
+  waterOf: waterOf, metroOf: metroOf, railOf: railOf, gondolaOf: gondolaOf, waterAt: waterAt, holeAt: holeAt, holesOf: holesOf,
+  holeFloor: holeFloor, streetAt: streetAt, deckAt: deckAt, RIVER_LIFT: RIVER_LIFT, BREAKWATER_HALF: BREAKWATER_HALF, BREAKWATER_UP: BREAKWATER_UP,
   pack: pack, docOf: docOf, hash32: hash32, cacheCopy: cacheCopy,
   heightCm: heightCm, heightAt: heightAt, districtAt: districtAt, lotAt: lotAt, siteAt: siteAt,
   nearestRoad: nearestRoad, roadY: roadY, surfaceAt: surfaceAt, padOf: padOf, groundAt: groundAt,

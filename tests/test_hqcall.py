@@ -210,6 +210,147 @@ class CallNode(unittest.TestCase):
         self.assertAlmostEqual(r["yMid"], 3, places=1)
 
 
+CHIPS = r"""
+import fs from "fs";
+const root = %(root)s;
+function El(tag){ this.tagName = String(tag).toLowerCase(); this.children = []; this.parentNode = null; this.attrs = {}; this.ls = {};
+  this.style = {}; this.hidden = false; this._t = ""; this.className = ""; this.type = ""; this.value = ""; this.tabIndex = 0; }
+El.prototype.appendChild = function(k){ k.parentNode = this; this.children.push(k); return k; };
+El.prototype.removeChild = function(k){ var i = this.children.indexOf(k); if(i >= 0) this.children.splice(i, 1); k.parentNode = null; return k; };
+Object.defineProperty(El.prototype, "firstChild", {get(){ return this.children[0] || null; }});
+Object.defineProperty(El.prototype, "textContent", {get(){ return this._t + this.children.map(k => k.textContent).join(""); }, set(v){ this.children = []; this._t = String(v); }});
+Object.defineProperty(El.prototype, "classList", {get(){ var el = this; return {contains(c){ return (" " + el.className + " ").indexOf(" " + c + " ") >= 0; }}; }});
+El.prototype.setAttribute = function(k, v){ this.attrs[k] = String(v); };
+El.prototype.getAttribute = function(k){ return this.attrs[k] != null ? this.attrs[k] : null; };
+El.prototype.addEventListener = function(t, f){ (this.ls[t] = this.ls[t] || []).push(f); };
+El.prototype.removeEventListener = function(){};
+El.prototype.all = function(){ var o = [this]; this.children.forEach(k => { o = o.concat(k.all()); }); return o; };
+El.prototype.querySelectorAll = function(sel){ var t = sel.match(/^[a-z]+/), cs = sel.replace(/^[a-z]+/, "").split(".").filter(Boolean);
+  return this.all().slice(1).filter(n => (!t || n.tagName === t[0]) && cs.every(c => n.classList.contains(c))); };
+El.prototype.querySelector = function(sel){ return this.querySelectorAll(sel)[0] || null; };
+El.prototype.closest = function(sel){ var c = sel.replace(".", ""); for(var n = this; n; n = n.parentNode) if(n.classList.contains(c)) return n; return null; };
+El.prototype.focus = function(){ globalThis.document.activeElement = this; };
+El.prototype.click = function(){ (this.ls.click || []).slice().forEach(f => f({target: this})); };
+El.prototype.key = function(k){ var e = {type: "keydown", key: k, target: this, preventDefault(){}, stopPropagation(){}};
+  for(var n = this; n; n = n.parentNode) (n.ls.keydown || []).slice().forEach(f => f(e)); };
+globalThis.document = {createElement: t => new El(t), activeElement: null};
+const store = {}; let lsThrow = false;
+Object.defineProperty(globalThis, "localStorage", {configurable: true, get(){ if(lsThrow) throw new Error("denied");
+  return {getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }}; }});
+globalThis.window = {HQV: {}};
+globalThis.setTimeout = (f) => 0;
+new Function(fs.readFileSync(root + "/games/hqcall.js", "utf8"))();
+const H = window.HQV.hqCall, out = {};
+const items = [
+  {key: "a", title: "BMW M2", sub: "In the carpark", tags: "BMW M2 2023 car coupe rwd 2993cc 6 cylinder car"},
+  {key: "b", title: "KTM 390 Duke", sub: "In the carpark", tags: "KTM 390 Duke 2024 bike naked 399cc bike motorbike motorcycle"},
+  {key: "c", title: "Your car", sub: "Right here", tags: "car starter"},
+  {key: "d", title: "Skyhawk", sub: "On the roof", tags: "Skyhawk heli helicopter car"},
+  {key: "e", title: "Nothing", sub: "", tags: ""},
+  {key: "f", title: "Jet ski", sub: "At the jetty", tags: "jetski boat"}
+];
+out.chipOf = items.map(H.chipOf);
+out.counts = H.chipCounts(items);
+out.filter = {cars: H.filterItems(items, "car", "").map(i => i.key), bikes: H.filterItems(items, "bike", "").map(i => i.key),
+  heli: H.filterItems(items, "heli", "").map(i => i.key), all: H.filterItems(items, "all", "").map(i => i.key),
+  carsBmw: H.filterItems(items, "car", "bmw").map(i => i.key), bikesBmw: H.filterItems(items, "bike", "bmw").map(i => i.key),
+  bogus: H.filterItems(items, "spaceship", "ktm").map(i => i.key), carpark: H.filterItems(items, "car", "carpark").map(i => i.key)};
+out.chips = [H.chips(false).map(c => c.label), H.chips(true).map(c => c.label)];
+// the C list: chips over the list, a count on each, arrows pick, remembered, an empty chip explains
+let list = items.slice(0, 3), jetty = false;
+const stage = new El("div"), picks = [];
+const ui = H.mount(stage, {items: () => list, onPick: k => picks.push(k), atJetty: () => jetty});
+ui.open();
+const root2 = ui.root, group = root2.querySelector(".hqcall-chips");
+const chipsNow = () => root2.querySelectorAll(".hqcall-chip").map(b => [b.textContent, b.getAttribute("role"), b.getAttribute("aria-checked"), b.tabIndex]);
+const names = () => root2.querySelectorAll(".hqcall-name").map(n => n.textContent);
+out.ui = {role: group.getAttribute("role"), label: group.getAttribute("aria-label"), chips: chipsNow(), names: names()};
+root2.querySelectorAll(".hqcall-chip")[0].key("ArrowRight");
+out.ui.afterRight = chipsNow().map(c => c[2]); out.ui.namesCars = names(); out.ui.stored = store["hq_call_chip"];
+out.ui.focus = document.activeElement && document.activeElement.textContent;
+root2.querySelectorAll(".hqcall-chip")[1].key("ArrowLeft"); root2.querySelectorAll(".hqcall-chip")[0].key("ArrowLeft");
+out.ui.wrapLeft = chipsNow().map(c => c[2]);
+out.ui.heliEmpty = root2.querySelector(".hqcall-empty") ? root2.querySelector(".hqcall-empty").textContent : null;
+root2.querySelectorAll(".hqcall-chip")[1].click();
+ui.search("bmw"); out.ui.carsBmw = names();
+ui.search("ktm"); out.ui.carsKtm = root2.querySelector(".hqcall-empty").textContent;
+ui.search("");
+// remembered: a new panel opens on Cars
+const ui2 = H.mount(new El("div"), {items: () => list, onPick(){}}); ui2.open();
+out.ui.remembered = ui2.root.querySelectorAll(".hqcall-chip").filter(b => b.getAttribute("aria-checked") === "true").map(b => b.textContent);
+// boats only at a jetty
+jetty = true; ui.render(); out.ui.jettyChips = chipsNow().map(c => c[0]);
+// a throwing localStorage: still works, starts on All
+lsThrow = true;
+const ui3 = H.mount(new El("div"), {items: () => list, onPick(){}}); ui3.open();
+out.ui.throwing = ui3.root.querySelectorAll(".hqcall-chip").filter(b => b.getAttribute("aria-checked") === "true").map(b => b.textContent);
+ui3.root.querySelectorAll(".hqcall-chip")[2].click();
+out.ui.throwingClick = ui3.root.querySelectorAll(".hqcall-chip").filter(b => b.getAttribute("aria-checked") === "true").map(b => b.textContent);
+lsThrow = false;
+// no vehicles at all: the old message, no chips
+list = []; ui.render(); out.ui.none = [root2.querySelector(".hqcall-empty").textContent, group.hidden];
+// keys inside the chips stay in the panel
+out.ui.owns = H.owns({target: root2.querySelector(".hqcall-chip")});
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class CallChips(unittest.TestCase):
+    """The filter chips (transport revamp 3.11): All · Cars · Bikes · Helicopters (· Boats at a jetty)."""
+
+    @classmethod
+    def setUpClass(cls):
+        r = subprocess.run([NODE, "--input-type=module", "-e", CHIPS % {"root": json.dumps(ROOT)}],
+                           capture_output=True, text=True, timeout=120)
+        if r.returncode:
+            raise AssertionError(r.stderr[-3000:])
+        cls.o = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_pure_chip_of_and_counts(self):
+        self.assertEqual(self.o["chipOf"], ["car", "bike", "car", "heli", "car", "boat"])
+        self.assertEqual(self.o["counts"], {"all": 6, "car": 3, "bike": 1, "heli": 1, "boat": 1})
+
+    def test_filter_combines_with_text(self):
+        f = self.o["filter"]
+        self.assertEqual(f["cars"], ["a", "c", "e"])
+        self.assertEqual(f["bikes"], ["b"])
+        self.assertEqual(f["heli"], ["d"])
+        self.assertEqual(f["all"], ["a", "b", "c", "d", "e", "f"])
+        self.assertEqual(f["carsBmw"], ["a"])
+        self.assertEqual(f["bikesBmw"], [])
+        self.assertEqual(f["bogus"], ["b"], "an unknown chip is All")
+        self.assertEqual(f["carpark"], ["a"], "the search reads the where-it-is line too; the chip reads only the tags")
+
+    def test_chip_list(self):
+        self.assertEqual(self.o["chips"][0], ["All", "Cars", "Bikes", "Helicopters"])
+        self.assertEqual(self.o["chips"][1], ["All", "Cars", "Bikes", "Helicopters", "Boats"])
+
+    def test_the_c_list(self):
+        u = self.o["ui"]
+        self.assertEqual(u["role"], "radiogroup")
+        self.assertEqual(u["label"], "Vehicle type")
+        self.assertEqual([c[0] for c in u["chips"]], ["All 3", "Cars 2", "Bikes 1", "Helicopters 0"])
+        self.assertEqual({c[1] for c in u["chips"]}, {"radio"})
+        self.assertEqual([c[2] for c in u["chips"]], ["true", "false", "false", "false"])
+        self.assertEqual([c[3] for c in u["chips"]], [0, -1, -1, -1], "roving tabindex")
+        self.assertEqual(u["names"], ["BMW M2", "KTM 390 Duke", "Your car"])
+        self.assertEqual(u["afterRight"], ["false", "true", "false", "false"])
+        self.assertEqual(u["namesCars"], ["BMW M2", "Your car"])
+        self.assertEqual(u["stored"], "car", "remembered")
+        self.assertEqual(u["focus"], "Cars 2", "focus follows the pick")
+        self.assertEqual(u["wrapLeft"], ["false", "false", "false", "true"], "Left from All wraps to Helicopters")
+        self.assertEqual(u["heliEmpty"], "No helicopters yet: the dealership has them.")
+        self.assertEqual(u["carsBmw"], ["BMW M2"])
+        self.assertEqual(u["carsKtm"], "Nothing matches “ktm”.")
+        self.assertEqual(u["remembered"], ["Cars 2"])
+        self.assertEqual(u["jettyChips"][-1], "Boats 0")
+        self.assertEqual(u["throwing"], ["All 3"])
+        self.assertEqual(u["throwingClick"], ["Bikes 1"])
+        self.assertEqual(u["none"], ["No vehicles yet. Pick one in the Showroom (G).", True])
+        self.assertTrue(u["owns"])
+
+
 class CallWiring(unittest.TestCase):
     """games/hq3d.js: C opens the list (a tap; held it still raises the camera), the list keeps its keys, the call
     steps every frame, your vehicles are put back in their world, a called vehicle can't be boarded on the move."""

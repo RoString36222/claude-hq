@@ -97,6 +97,9 @@ pub struct Profile {
     /// The river's width (cm), from the sea to a harbour basin in town (river.rs). None:
     /// no river (a world without a coast has nowhere for one to run).
     pub river_cm: Option<i64>,
+    /// Generator @3 (water.rs): lakes, canals and a marina laid before the streets, and
+    /// the water transport round them. Only the @3 profiles set it.
+    pub water: bool,
 }
 
 pub mod district {
@@ -185,6 +188,7 @@ pub fn city() -> Profile {
         coast_r_cm: None,
         sea_cm: None,
         river_cm: None,
+        water: false,
     }
 }
 
@@ -244,6 +248,12 @@ pub fn commons() -> Profile {
         river_cm: Some(3_600),
         ..city()
     }
+}
+
+/// A world at generator version 3: the version 2 profile (`commons` or `island`) with
+/// its water laid (water.rs).
+pub fn with_water(p: Profile) -> Profile {
+    Profile { water: true, ..p }
 }
 
 /// A personal city (`user:<uuid>@2`): a 1.8 km island, the sea round a coast at

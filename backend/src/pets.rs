@@ -54,6 +54,7 @@ pub const AFFECTION_MAX: i64 = 1000;
 /// Affection a pet may gain per UTC day.
 pub const CARE_PER_DAY: i64 = 40;
 /// Affection at which a grower reaches stage 1 and 2.
+#[allow(dead_code)] // kept for the record since 3.14.1 (stage_of no longer reads it); clippy -D warnings stays green
 pub const STAGE_AT: [i64; 2] = [150, 400];
 
 /// One species: its id, the HQ level from which it is free, its price in Poke Coins

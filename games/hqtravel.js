@@ -6,6 +6,14 @@
  *   rail    30-45 s; each end is tier 4+ with a station (the transit site) or is the Commons; free
  *   plane   a short cutscene (14-20 s) then a landing played in the destination; each end is tier 5 with an
  *           airport or is the Commons airport; free
+ *   link    the Island Link (HQ 3.15, D7): the Commons <-> any island, a train every 300 s each way per island (the
+ *           same timetable as HQV.hqRail.linkNext); free. You board at the IL platform, ride through the tunnel (the
+ *           pose says under: true) and out over the sea viaduct in your seat; the destination loads during the sea
+ *           crossing and onArrive fires at the mid-sea handover (the host swaps the city there), then the ride plays
+ *           on in the destination's frame ("arriving") to its IL platform, where trip.spawn stands. hooks.trip: the
+ *           hqRail link Trip (sim.trip(...) of HQV.hqRail.linkService) for the seat camera; without it a generic
+ *           cinematic. Offered when one end is the Commons and the other an island, each either without a doc (an
+ *           @3 id: presumed) or with a doc carrying layers.rail.
  *   fast    a fade; only to an island you have visited (the Commons is always open); 1 coin via hooks.fare
  *   boat    driven by the player (games/hqboat.js); travel only lands you: arrive(world, dockSiteId, hooks)
  * A trip loads the destination doc and city state AT departure and builds it during the ride: arrival
@@ -22,7 +30,8 @@
 "use strict";
 var HQV = window.HQV = window.HQV || {};
 
-var COMMONS = "claude-hq@2";
+// the live Commons (HQ 3.15, D2): HQV.world's when it has one; @2 and @3 ids are accepted everywhere (older Arenas)
+var COMMONS = (HQV.world && HQV.world.COMMONS) || "claude-hq@3";
 var ISLAND_RE = /^user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@[0-9]+$/;
 var WORLD_RE = /^claude-hq@[0-9]+$/;
 var VISITED_KEY = "hq_travel_visited", VISITED_MAX = 200;
@@ -33,9 +42,11 @@ var MODES = {
   ferry: {min: 60, max: 90, speed: 12, height: 0, arrive: 0, kinds: ["port", "dock"], free: true},
   rail:  {min: 30, max: 45, speed: 45, height: 6, arrive: 0, kinds: ["transit"], tier: 4, free: true},
   plane: {min: 14, max: 20, speed: 120, height: 420, arrive: 6, kinds: ["airport"], tier: 5, free: true},
+  link:  {min: 60, max: 150, speed: 40, height: 13, arrive: 0, kinds: ["rail", "transit"], free: true},
   fast:  {min: 1.5, max: 1.5, speed: 0, height: 0, arrive: 0.5, kinds: ["spawn", "townhall"], fee: 1}
 };
-var ORDER = ["ferry", "rail", "plane", "fast"];
+var ORDER = ["ferry", "rail", "link", "plane", "fast"];
+var LINK_EVERY = 300000;        // ms between Island Link trains, each way per island (games/hqrail.js's LINK_EVERY)
 var FERRY_EVERY = 90000;        // ms between sailings on a route
 var NEAR = 3000, FAR = 15000;   // archipelago distances (m) mapped onto a mode's min..max ride time
 var LOAD_TIMEOUT = 45;          // s past the ride's minimum before a load that never settles counts as failed
@@ -48,7 +59,7 @@ function v3(x, y, z){ return {x: x, y: y, z: z}; }
 
 /* ---------- ids and rooms ---------- */
 function validWorld(w){ return typeof w === "string" && (WORLD_RE.test(w) || ISLAND_RE.test(w)); }
-function isCommons(w){ return w === COMMONS; }
+function isCommons(w){ return typeof w === "string" && WORLD_RE.test(w); }
 function isIsland(w){ return typeof w === "string" && ISLAND_RE.test(w); }
 // the net room for an island's players; null for anything that is not a world id
 function roomFor(w){ return validWorld(w) ? "city3d:" + w : null; }
@@ -128,16 +139,37 @@ function nextSailing(fromWorld, toWorld, nowMs){
   var off = (routeHash(fromWorld, toWorld) % (FERRY_EVERY/1000))*1000;
   return Math.ceil((nowMs - off)/FERRY_EVERY)*FERRY_EVERY + off;
 }
+/* ---------- the Island Link ---------- */
+function canon(w){ return String(w).replace(/@[0-9]+$/, ""); }
+function verOf(w){ var m = /@([0-9]+)$/.exec(String(w)); return m ? +m[1] : 0; }
+// the island end of a Commons <-> island pair, and which way ("out": island -> Commons, "in"); null for any other pair
+function linkEnds(fromW, toW){
+  if(isCommons(fromW) && isIsland(toW)) return {island: toW, dir: "in"};
+  if(isIsland(fromW) && isCommons(toW)) return {island: fromW, dir: "out"};
+  return null;
+}
+// the next IL train at or after ms: FNV-1a of the island's id without its version, as HQV.hqRail.linkNext
+function linkNext(island, dir, ms){
+  var s = "il:" + canon(island), h = 2166136261;
+  for(var i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  var off = h % LINK_EVERY; if(dir === "in") off = (off + LINK_EVERY/2) % LINK_EVERY;
+  return Math.ceil((ms - off)/LINK_EVERY)*LINK_EVERY + off;
+}
+// an end has its IL: its doc carries layers.rail, or (no doc yet) it is a live @3 world
+function linkEnd(c){ return c.doc ? !!(c.doc.layers && c.doc.layers.rail) : verOf(c.world) >= 3; }
+function linkOk(from, to){ return !!linkEnds(from.world, to.world) && linkEnd(from) && linkEnd(to); }
+
 // The ways from one city to another: [{mode, seconds, fee, departs?}], or [] for the same city.
 // "boat" is listed when both ends have docks; the player drives it, so start() refuses it.
 function options(from, to, nowMs){
   if(!from || !to || !validWorld(from.world) || !validWorld(to.world) || from.world === to.world) return [];
   var out = [];
   ORDER.forEach(function(m){
-    var M = MODES[m], ok = m === "fast" ? unlocked(to.world) : hasTerminal(from, m) && hasTerminal(to, m);
+    var M = MODES[m], ok = m === "fast" ? unlocked(to.world) : m === "link" ? linkOk(from, to) : hasTerminal(from, m) && hasTerminal(to, m);
     if(!ok) return;
     var o = {mode: m, seconds: rideSeconds(m, from, to), fee: M.fee || 0};
     if(m === "ferry" && nowMs != null) o.departs = nextSailing(from.world, to.world, nowMs);
+    if(m === "link"){ var le = linkEnds(from.world, to.world); o.line = "IL"; if(nowMs != null) o.departs = linkNext(le.island, le.dir, nowMs); }
     out.push(o);
   });
   if(hasTerminal(from, "ferry") && hasTerminal(to, "ferry")) out.push({mode: "boat", seconds: null, fee: 0, self: true});
@@ -197,6 +229,7 @@ var SHOTS = {
   ferry: [{u: 0, back: 22, up: 9, side: 0}, {u: 0.3, back: 45, up: 22, side: 18},
           {u: 0.65, back: 4, up: 7, side: 40}, {u: 1, back: -35, up: 10, side: 12}],
   rail:  [{u: 0, back: 18, up: 6, side: 0}, {u: 0.4, back: 10, up: 4, side: 24}, {u: 1, back: -30, up: 8, side: 8}],
+  link:  [{u: 0, back: 18, up: 6, side: 0}, {u: 0.4, back: 10, up: 4, side: 24}, {u: 1, back: -30, up: 8, side: 8}],
   plane: [{u: 0, back: 40, up: 8, side: 0}, {u: 0.35, back: 30, up: -6, side: 50}, {u: 1, back: 70, up: 25, side: 10}]
 };
 function shotAt(list, u){
@@ -231,11 +264,43 @@ function arrivePose(mode, spawn, t){
 }
 
 /* ---------- trips ---------- */
-var NAMES = {ferry: "dock", rail: "station", plane: "airport", fast: "plaza"};
+var NAMES = {ferry: "dock", rail: "station", link: "Island Link platform", plane: "airport", fast: "plaza"};
 function failMsg(mode, to, why){
   var where = to.name ? String(to.name) : "the island";
   return why === "fare" ? "Fast travel needs " + MODES.fast.fee + " coin; you're still here."
        : "Couldn't reach " + where + ". You're back at the " + NAMES[mode] + ".";
+}
+
+// the Island Link's ends: HQV.hqRail.linkSpawn when loaded (the doc's IL platform), else null (the caller falls back)
+function linkSpawnOf(doc, world, island){
+  var HR = HQV.hqRail;
+  if(!doc || !HR || typeof HR.linkSpawn !== "function") return null;
+  try { var sp = HR.linkSpawn(doc, world, island); return sp ? {world: world, site: sp.site, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, under: !!sp.under} : null; }
+  catch(e){ return null; }
+}
+function firstWindow(T){
+  var M = T && Array.isArray(T.seatMeta) ? T.seatMeta : [];
+  for(var i = 0; i < M.length; i++) if(M[i] && M[i].window && M[i].side === "right" && M[i].car === 1) return i;
+  return 0;
+}
+// The Island Link's pose at ms: your seat camera on the train (frame "from" until the handover, "to" after it), the
+// vehicle and under (true in the tunnel: the host's underground switch). Without the hqRail trip: a generic
+// cinematic, under for the first stretch. Calm (hooks.calm()): the seat camera is level and still.
+function linkPose(trip, T, now, hooks){
+  var frame = trip.phase === "arriving" || trip.phase === "done" ? "to" : "from";
+  if(T){
+    var vp = T.pose(now, frame), sp = T.seat ? T.seat(trip.seat, now, frame) : vp, RD = HQV.hqRide, cam = null;
+    var calm = hooks && typeof hooks.calm === "function" ? !!hooks.calm() : false;
+    if(RD && typeof RD.seatCam === "function") cam = RD.seatCam(sp, vp, (hooks && typeof hooks.look === "function" && hooks.look()) || null, "seat", calm, {t: now});
+    if(!cam){ var e = v3(sp.x, sp.y + 1.15, sp.z); cam = {pos: e, look: v3(e.x + Math.sin(sp.yaw)*10, e.y, e.z + Math.cos(sp.yaw)*10), up: v3(0, 1, 0), fov: 70}; }
+    return {frame: frame, camera: trip.phase !== "done", pos: cam.pos, look: cam.look, up: cam.up || v3(0, 1, 0), fov: cam.fov || 70, fade: 0,
+            vehicle: {pos: v3(vp.x, vp.y, vp.z), yaw: vp.yaw, u: clamp((now - trip.departAt)/1000/trip.total, 0, 1)}, under: !!vp.under, seat: sp};
+  }
+  var t = trip.departAt != null && trip.phase !== "boarding" ? (now - trip.departAt)/1000 : 0;
+  if(frame === "to") return {frame: "to", camera: false, pos: null, look: null, up: v3(0, 1, 0), fov: 65, fade: 0, vehicle: null, under: false};
+  var p = ridePose("link", trip.frame, trip.total, t);
+  p.under = t > 0 && t < trip.total*0.15;
+  return p;
 }
 
 // start(mode, from, to, hooks) -> a trip (ok: true) or {ok: false, error}. hooks:
@@ -257,6 +322,16 @@ function start(mode, from, to, hooks){
   var doc = null, city = null, built = null, ok = false, err = null, ended = false;
   markVisited(from.world);
   if(mode === "ferry") trip.departAt = nextSailing(from.world, to.world, t0);
+  // the Island Link: the whole run is trip.total s; the destination must be built by the mid-sea handover (trip.seconds)
+  var LT = null, le = mode === "link" ? linkEnds(from.world, to.world) : null;
+  if(le){
+    LT = hooks.trip && isFinite(+hooks.trip.depart) && isFinite(+hooks.trip.reach) && typeof hooks.trip.pose === "function" ? hooks.trip : null;
+    trip.departAt = LT ? +LT.depart : linkNext(le.island, le.dir, t0);
+    trip.total = LT ? (+LT.reach - +LT.depart)/1000 : trip.seconds;
+    trip.seconds = LT && isFinite(+LT.hand) ? Math.max(1, (+LT.hand - +LT.depart)/1000) : trip.total*0.55;
+    trip.line = "IL"; trip.island = le.island; trip.dir = le.dir;
+    trip.seat = hooks.seat != null ? Math.max(0, hooks.seat | 0) : firstWindow(LT);
+  }
 
   function progress(){
     if(!hooks.onProgress) return;
@@ -288,7 +363,7 @@ function start(mode, from, to, hooks){
     ended = true;
     trip.phase = "failed";
     trip.message = failMsg(mode, to, why);
-    var sp = spawnAt(from.world, originSite);
+    var sp = (le && linkSpawnOf(from.doc, from.world, le.island)) || spawnAt(from.world, originSite);
     sp.failed = true; sp.message = trip.message;
     trip.spawn = sp;
     progress();
@@ -297,10 +372,10 @@ function start(mode, from, to, hooks){
   function arrive(){
     // the tier the city state just fetched says, else the one the archipelago listed
     var at = {world: to.world, tier: city && city.tier != null ? city.tier : to.tier};
-    trip.spawn = spawnAt(to.world, terminal(at, mode, doc));
+    trip.spawn = (le && linkSpawnOf(doc, to.world, le.island)) || spawnAt(to.world, terminal(at, mode, doc));
     // the moment both the ride and the build were done, not the frame that noticed: the landing stays frame-rate independent
     trip.arrivedAt = Math.max(trip.departAt + trip.seconds*1000, trip.builtAt);
-    trip.phase = M.arrive ? "arriving" : "done";
+    trip.phase = M.arrive || (le && trip.arrivedAt < trip.departAt + trip.total*1000) ? "arriving" : "done";
     markVisited(to.world);
     progress();
     if(hooks.onArrive) hooks.onArrive(trip.spawn, built);
@@ -314,10 +389,10 @@ function start(mode, from, to, hooks){
       var t = (now - trip.departAt)/1000;
       if(err) fail("load");
       else if(ok && t >= trip.seconds) arrive();
-      else if(t >= trip.seconds + LOAD_TIMEOUT) fail("load");
+      else if(t >= (le ? trip.total : trip.seconds) + LOAD_TIMEOUT) fail("load");      // the IL rolls on to its far platform first
       else { if(t >= trip.seconds) trip.phase = "holding"; progress(); }
     } else if(trip.phase === "arriving"){
-      if((now - trip.arrivedAt)/1000 >= M.arrive){ trip.phase = "done"; ended = true; progress(); }
+      if(le ? now >= trip.departAt + trip.total*1000 : (now - trip.arrivedAt)/1000 >= M.arrive){ trip.phase = "done"; ended = true; progress(); }
     } else if(trip.phase === "boarding") progress();
     if(trip.phase === "done") ended = true;
     return trip.phase;
@@ -325,6 +400,7 @@ function start(mode, from, to, hooks){
   // the cinematic for the camera rig (and the vehicle and fade) now
   trip.pose = function(){
     var now = clock();
+    if(le && trip.phase !== "failed") return linkPose(trip, LT, now, hooks);
     if(trip.phase === "arriving" || trip.phase === "done") return arrivePose(mode, trip.spawn, (now - trip.arrivedAt)/1000);
     // back at the origin terminal: no cinematic, and any fade lifts
     if(trip.phase === "failed") return {frame: "from", camera: false, pos: null, look: null, up: v3(0, 1, 0), fov: 65,
@@ -337,7 +413,7 @@ function start(mode, from, to, hooks){
     trip.phase = "paying";
     Promise.resolve().then(function(){ return hooks.fare ? hooks.fare("fast", to) : null; })
       .then(function(){ if(!ended) depart(); }, function(){ if(!ended) fail("fare"); });
-  } else if(mode !== "ferry") depart();
+  } else if(mode !== "ferry" && mode !== "link") depart();
   return trip;
 }
 
@@ -368,6 +444,7 @@ function arrive(world, dockSiteId, hooks){
 
 HQV.hqTravel = {MODES: MODES, ORDER: ORDER, COMMONS: COMMONS, FERRY_EVERY: FERRY_EVERY, LOAD_TIMEOUT: LOAD_TIMEOUT,
   options: options, start: start, arrive: arrive, roomFor: roomFor, nextSailing: nextSailing, rideSeconds: rideSeconds,
+  linkNext: linkNext, linkEnds: linkEnds, LINK_EVERY: LINK_EVERY, isCommons: isCommons,
   visited: visitedList, markVisited: markVisited, unlocked: unlocked, spawnAt: spawnAt, ridePose: ridePose,
   arrivePose: arrivePose, smootherstep: smootherstep};
 })();

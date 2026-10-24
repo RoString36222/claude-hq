@@ -1011,6 +1011,10 @@ html.hq-calm .hq3d-drive-read{display:block}
 .hqcall-search{margin:8px 8px 0;padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:var(--panel2,var(--panel));color:var(--ink);font:inherit;font-size:13px}
 .hqcall-search:focus-visible{border-color:var(--brand);outline:none}
 .hqcall-search[hidden]{display:none}
+.hqcall-chips{display:flex;flex-wrap:wrap;gap:4px;padding:8px 8px 0}
+.hqcall-chip{font:inherit;font-size:12.5px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;font-variant-numeric:tabular-nums}
+.hqcall-chip.on{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.hqcall-chip:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .hqcall-list{overflow:auto;padding:8px;display:grid;gap:6px}
 .hqcall-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;border:1px solid var(--line);
   background:color-mix(in srgb,var(--panel) 80%,var(--bg));color:var(--ink);text-align:left;cursor:pointer;font:inherit}

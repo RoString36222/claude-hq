@@ -40,6 +40,19 @@ class ProtocolTables(unittest.TestCase):
         for g, v in rows:
             self.assertTrue(cp[g][0] <= int(v) <= cp[g][1], g)
 
+    def test_hq_lists_the_315_phone_and_transit_caps_without_a_bump(self):
+        # HQ 3.15: "transit" (a = 14, a seated passenger, tk / tv) and "phone" (nearby chat, call ringing) are
+        # additive, so hq stays v4 -- a bump would tell every pre-3.15 page "update Claude HQ" (CLIENT_PROTO hq [1, 4]).
+        rs = read("backend", "src", "protocol.rs")
+        m = re.search(r'\("hq", (\d+), &\[([^\]]*)\]\)', rs)
+        self.assertIsNotNone(m, "no hq row in protocol.rs")
+        caps = re.findall(r'"(\w+)"', m.group(2))
+        self.assertEqual(int(m.group(1)), 4)
+        self.assertIn("transit", caps)
+        self.assertIn("phone", caps)
+        self.assertEqual(len(caps), len(set(caps)))
+        self.assertLessEqual(int(m.group(1)), client_proto()["hq"][1])
+
 
 @unittest.skipUnless(shutil.which("node"), "node not installed")
 class ProtoCheck(unittest.TestCase):

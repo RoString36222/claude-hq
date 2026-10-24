@@ -258,5 +258,167 @@ class BoatTest(unittest.TestCase):
             self.assertIsNone(re.search(r"Math\.random\(", src), f)
 
 
+HIRE_HARNESS = r"""
+import fs from "fs";
+const root = process.argv[1], doc = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const THREE = await import(root + "/games/vendor/three-module.js");
+globalThis.window = {HQV: {}};
+for (const f of ["world", "ocean", "hqboat"]) new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
+const B = window.HQV.hqboat, WD = window.HQV.world, W = WD.pack(doc), out = {};
+out.kinds = {KINDS: B.KINDS, HIRE: B.HIRE_KINDS, ALL: B.ALL_KINDS, hire: B.ALL_KINDS.map(k => [k, !!B.VEHICLES[k].hire, !!B.VEHICLES[k].boat])};
+out.top = ["pedalo", "kayak"].map(k => { const st = B.newState(k, 0, 0, 0); for (let i = 0; i < 60*90; i++) B.step(st, {thr: 1}, 1/60, {}); return [k, st.speed, B.VEHICLES[k].top]; });
+out.hireKinds = {marinaHire: B.hireKinds(W, "pier:4"), lakeHire: B.hireKinds(W, "pier:7"), fuel: B.hireKinds(W, "pier:5"), bus: B.hireKinds(W, "pier:0"), none: B.hireKinds(W, "pier:99")};
+out.refuse = [B.hire(W, "pier:7", "jetski").reason, B.hire(W, "pier:99", "rowboat").reason, B.hire(W, "pier:0", "rowboat").reason, B.hire(null, "pier:7", "rowboat").reason];
+// the fence: a hired boat full ahead into every shore of its lake, at 30 and 120 Hz; never outside the lake
+function lake(kind, hz, heading){
+  const h = B.hire(W, "pier:7", kind), st = h.st, sea = h.sea, body = B.water(W).bodies.filter(b => b.id === "lake:0")[0];
+  st.yaw = heading; let out = 0, beached = false, ev = [];
+  for (let i = 0; i < hz*80; i++) {
+    B.step(st, {thr: 1, steer: (Math.floor(i/hz/7) % 3) - 1}, 1/hz, sea).forEach(e => ev.push(e.type));
+    if (!B.inBody(body, st.x, st.z)) out++;
+    const V = B.VEHICLES[st.kind], bx = st.x + Math.sin(st.yaw)*V.len/2, bz = st.z + Math.cos(st.yaw)*V.len/2;
+    if (!B.inBody(body, bx, bz) && Math.abs(st.speed) > 0.5) out++;      // under way (a turn at the bank may swing the bow over it)
+    beached = beached || st.beached;
+  }
+  return {ok: h.ok, kind: h.kind, body: h.body, out, beached, beaches: ev.filter(e => e === "beach").length, x: st.x, z: st.z, y: st.y};
+}
+out.fence = [];
+for (const k of ["pedalo", "rowboat", "kayak"]) for (const hz of [30, 120]) for (const hd of [0, 1.3, 2.6, 4.0, 5.2]) out.fence.push([k, hz, hd, lake(k, hz, hd)]);
+// a canal boat stops at the marina's mouth (the canal is its body), and its sea floats it at the canal's level
+(function(){
+  const sea = B.bodySea(W, "canal:0"), st = B.newState("kayak", 80, 0, Math.PI/2), body = B.water(W).bodies.filter(b => b.id === "canal:0")[0];
+  for (let i = 0; i < 60*60; i++) B.step(st, {thr: 1}, 1/60, sea);
+  out.canal = {x: st.x, beached: st.beached, inside: B.inBody(body, st.x, st.z), y: sea.y, kind: sea.kind, docks: sea.docks.map(d => d.id)};
+})();
+// the jet ski at the marina's hire jetty and its fuel jetty
+out.jet = ["pier:4", "pier:5"].map(j => { const h = B.hire(W, j, "jetski"); return [j, h.ok, h.body, h.ok && !h.sea.land(h.st.x, h.st.z)]; });
+// returning at a jetty with E: at it (moored or slow and close), not out on the water
+(function(){
+  const h = B.hire(W, "pier:7", "rowboat"), st = h.st, sea = h.sea, r = {};
+  r.atStart = B.returnAt(W, st, sea);
+  st.dock = null; st.left = "pier:7";
+  for (let i = 0; i < 60*12; i++) B.step(st, {thr: -0.6}, 1/60, sea);
+  r.away = Math.hypot(st.x - sea.docks.filter(d => d.id === "pier:7")[0].x, st.z - sea.docks.filter(d => d.id === "pier:7")[0].z);
+  r.far = B.returnAt(W, st, sea);
+  const lp = sea.docks.filter(d => d.id === "pier:6")[0];
+  st.x = lp.x + 3; st.z = lp.z; st.speed = 0.3; st.dock = null;
+  r.near = B.returnAt(W, st, sea);
+  st.speed = 2.5; r.tooFast = B.returnAt(W, st, sea);
+  st.dock = "pier:7"; r.moored = B.returnAt(W, st, sea);
+  out.ret = r;
+})();
+// calm water: a ripple of a few cm, less under Calm
+(function(){
+  let calm = false; const sea = B.bodySea(W, "lake:0", {calm: () => calm}), a = [], b = [];
+  for (let t = 0; t < 20; t += 0.25) a.push(sea.surface(-100, -180, t) - sea.y);
+  calm = true; for (let t = 0; t < 20; t += 0.25) b.push(sea.surface(-100, -180, t) - sea.y);
+  out.ripple = {free: Math.max(...a.map(Math.abs)), calm: Math.max(...b.map(Math.abs)), y: sea.y, lakeY: B.water(W).bodies.filter(x => x.id === "lake:0")[0].y};
+})();
+// the models: anchors for the rider, the right size, the wheel and the paddle move (less under Calm)
+const c = {THREE, mat: (col, o) => new THREE.MeshStandardMaterial(Object.assign({color: col}, o || {}))};
+out.models = ["pedalo", "kayak"].map(k => {
+  const M = B.model(c, k, 0x3366aa, 0xffffff), bb = new THREE.Box3().setFromObject(M.g), sz = bb.getSize(new THREE.Vector3());
+  let meshes = 0; M.g.traverse(o => { if (o.isMesh) meshes++; });
+  B.animate(M, {steer: 0}, {thr: 1}, 0.2, false);
+  const free = M.paddle ? Math.abs(M.paddle.rotation.z) + Math.abs(M.paddle.rotation.y) : M.wheel.rotation.x;
+  const M2 = B.model(c, k, 0x3366aa, 0xffffff); B.animate(M2, {steer: 0}, {thr: 1}, 0.2, true);
+  const calm = M2.paddle ? Math.abs(M2.paddle.rotation.z) + Math.abs(M2.paddle.rotation.y) : M2.wheel.rotation.x;
+  return {kind: k, name: M.g.name, size: [sz.x, sz.y, sz.z], minY: bb.min.y, meshes, anchors: !!(M.seat && M.grips[0] && M.grips[1] && M.feet[0] && M.feet[1]), free, calm};
+});
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class HireTest(unittest.TestCase):
+    """HQ 3.15 boat hire (plan 3.8): the pedalo and the kayak beside the rowboat, the jet ski only at the marina, the
+    body polygon as the fence, return at any jetty."""
+
+    @classmethod
+    def setUpClass(cls):
+        import sys
+        import tempfile
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from water_fixture import synthetic_doc
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            json.dump(synthetic_doc(), fh)
+            path = fh.name
+        try:
+            r = subprocess.run([NODE, "--input-type=module", "-e", HIRE_HARNESS, ROOT, path], capture_output=True, text=True, timeout=300)
+        finally:
+            os.unlink(path)
+        if r.returncode != 0:
+            raise AssertionError(r.stderr[-3000:])
+        cls.o = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_kinds(self):
+        k = self.o["kinds"]
+        self.assertEqual(k["KINDS"], ["rowboat", "jetski"])          # the sea docks keep their two boats
+        self.assertEqual(k["HIRE"], ["pedalo", "rowboat", "kayak"])
+        for kind, hire, boat in k["hire"]:
+            self.assertTrue(boat, kind)
+            self.assertEqual(hire, kind != "jetski", kind)
+        for kind, v, top in self.o["top"]:
+            self.assertAlmostEqual(v, top, delta=0.01 * top, msg=kind)
+
+    def test_what_each_jetty_hires(self):
+        h = self.o["hireKinds"]
+        self.assertEqual(h["marinaHire"], ["pedalo", "rowboat", "kayak", "jetski"])
+        self.assertEqual(h["lakeHire"], ["pedalo", "rowboat", "kayak"])
+        self.assertEqual(h["fuel"], ["jetski"])
+        self.assertEqual(h["bus"], [])
+        self.assertEqual(h["none"], [])
+        self.assertEqual(self.o["refuse"], ["kind", "no-jetty", "kind", "no-water"])
+        for j, ok, body, wet in self.o["jet"]:
+            self.assertTrue(ok, j)
+            self.assertEqual(body, "marina:0")
+            self.assertTrue(wet)
+
+    def test_lake_boats_stay_in_the_lake(self):
+        hit = 0
+        for kind, hz, hd, r in self.o["fence"]:
+            self.assertTrue(r["ok"])
+            self.assertEqual(r["kind"], kind)
+            self.assertEqual(r["body"], "lake:0")
+            self.assertEqual(r["out"], 0, (kind, hz, hd))
+            hit += r["beaches"]
+        self.assertGreater(hit, 10)                                     # they do run into the shore (and stop there)
+        c = self.o["canal"]
+        self.assertTrue(c["inside"])
+        self.assertTrue(c["beached"])
+        self.assertLess(c["x"], 100)                                    # the marina starts at x = 100: not for a canal boat
+        self.assertEqual(c["kind"], "canal")
+        self.assertIn("pier:0", c["docks"])
+
+    def test_return_at_a_jetty(self):
+        r = self.o["ret"]
+        self.assertIsNotNone(r["atStart"])
+        self.assertGreater(r["away"], 10)
+        self.assertIsNone(r["far"])
+        self.assertEqual(r["near"]["id"], "pier:6")                     # any jetty of the lake, not only where you hired
+        self.assertIsNone(r["tooFast"])
+        self.assertEqual(r["moored"]["id"], "pier:7")
+        for k in ("x", "y", "z", "yaw"):
+            self.assertIn(k, r["near"])
+
+    def test_calm_lake_water(self):
+        rp = self.o["ripple"]
+        self.assertAlmostEqual(rp["y"], rp["lakeY"], places=6)
+        self.assertGreater(rp["free"], 0.005)
+        self.assertLess(rp["free"], 0.05)
+        self.assertLess(rp["calm"], rp["free"] * 0.5)
+
+    def test_new_models(self):
+        for m in self.o["models"]:
+            self.assertEqual(m["name"], m["kind"])
+            self.assertTrue(m["anchors"])
+            self.assertLess(m["meshes"], 40)
+            self.assertGreater(m["size"][2], 2.4)
+            self.assertLess(m["size"][2], 5.0)
+            self.assertLess(m["minY"], 0)
+            self.assertGreater(m["free"], 0)
+            self.assertLess(m["calm"], m["free"])                       # Calm: a smaller, slower stroke
+
+
 if __name__ == "__main__":
     unittest.main()

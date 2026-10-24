@@ -115,6 +115,13 @@ pub struct River {
     pub port: (P, P),
     #[serde(skip)]
     sea_cm: i64,
+    /// Generator @3 (water.rs): the canals' centre lines (mouth first), whose water and
+    /// banks are joined into `water` and `bank`, and the other bodies of water (lakes, the
+    /// marina) as (water, bank). Empty before @3, so nothing else changes there.
+    #[serde(skip)]
+    pub arms: Vec<Vec<P>>,
+    #[serde(skip)]
+    pub pools: Vec<(Zone, Zone)>,
 }
 
 /// A place a bridge may cross the river square: a point of the centre line, its normal
@@ -140,7 +147,7 @@ pub struct Zone {
 }
 
 impl Zone {
-    fn new(poly: Vec<P>) -> Zone {
+    pub(super) fn new(poly: Vec<P>) -> Zone {
         let (x0, x1) = poly.iter().fold((i64::MAX, i64::MIN), |m, q| (m.0.min(q.0), m.1.max(q.0)));
         let (z0, z1) = poly.iter().fold((i64::MAX, i64::MIN), |m, q| (m.0.min(q.1), m.1.max(q.1)));
         let lo = (x0 - CELL_CM, z0 - CELL_CM);
@@ -188,7 +195,7 @@ impl Zone {
     }
 
     /// The squared distance (cm2) from q to the outline, if it is within a cell (16 m).
-    fn near2(&self, q: P) -> Option<i64> {
+    pub(super) fn near2(&self, q: P) -> Option<i64> {
         let (i, j) = self.cell(q);
         let n = self.poly.len();
         let mut best: Option<i64> = None;
@@ -266,15 +273,124 @@ impl River {
         }
     }
 
-    /// Is q on the river or its bank (where no street, block, lot or site goes)?
+    /// Is q on the river or its bank (where no street, block, lot or site goes)? From @3
+    /// also on any other body of water or its bank.
     pub fn zone(&self, q: P) -> bool {
-        self.bank.holds(q)
+        self.bank.holds(q) || self.pools.iter().any(|z| z.1.holds(q))
     }
 
-    /// Is q on the water?
+    /// Is q on the water (from @3: any body's)?
     pub fn wet(&self, q: P) -> bool {
-        self.water.holds(q)
+        self.water.holds(q) || self.in_pool(q)
     }
+
+    /// Is q on one of the other bodies of water (@3: a lake, the marina)?
+    pub fn in_pool(&self, q: P) -> bool {
+        self.pools.iter().any(|z| z.0.holds(q))
+    }
+
+    /// Does the footprint meet the river's bank, or (@3) another body's?
+    pub fn bank_meets(&self, poly: &[P]) -> bool {
+        self.bank.meets(poly) || self.pools.iter().any(|z| z.1.meets(poly))
+    }
+
+    /// Does segment ab cross the water's edge (the river's, or @3 another body's)?
+    pub fn water_crosses(&self, a: P, b: P) -> bool {
+        self.water.crosses(a, b) || self.pools.iter().any(|z| z.0.crosses(a, b))
+    }
+
+    /// The sea level the river runs out to (cm).
+    pub fn sea_cm(&self) -> i64 {
+        self.sea_cm
+    }
+
+    /// Join a canal (@3) into the river: its water and its bank outlines (counter-clockwise,
+    /// each starting inside the river's own) are merged into the river's, so the organic
+    /// generator walls, bridges and builds round one body of water. The quay and the
+    /// crossings follow the bank's vertices; a crossing the canal swallowed is dropped.
+    /// False (and nothing changed) when the outlines do not meet the river's cleanly.
+    pub fn join(&mut self, water: &[P], bank: &[P], arm: Vec<P>) -> bool {
+        let (Some((w, _)), Some((b, map))) = (union(&self.water.poly, water), union(&self.bank.poly, bank)) else {
+            return false;
+        };
+        let Some(quay) = map[self.quay] else { return false };
+        self.quay = quay;
+        self.crossings.retain_mut(|x| match (map[x.left], map[x.right]) {
+            (Some(l), Some(r)) => {
+                (x.left, x.right) = (l, r);
+                true
+            }
+            _ => false,
+        });
+        self.water = Zone::new(w);
+        self.bank = Zone::new(b);
+        self.arms.push(arm);
+        true
+    }
+}
+
+/// The union of two simple counter-clockwise polygons whose outlines cross exactly
+/// twice (a canal's mouth inside the river): `a` round the outside of `b`, then `b`
+/// round the outside of `a`. Also, for each of `a`'s vertices, its index in the union
+/// (None where `b` swallowed it). None if they do not cross twice or the union is no
+/// simple polygon.
+pub(super) fn union(a: &[P], b: &[P]) -> Option<(Vec<P>, Vec<Option<usize>>)> {
+    let (n, m) = (a.len(), b.len());
+    let mut xs: Vec<(usize, usize, P)> = Vec::new();
+    for i in 0..n {
+        let (p, q) = (a[i], a[(i + 1) % n]);
+        let (x0, x1, z0, z1) = (p.0.min(q.0), p.0.max(q.0), p.1.min(q.1), p.1.max(q.1));
+        for j in 0..m {
+            let (c, d) = (b[j], b[(j + 1) % m]);
+            if c.0.max(d.0) < x0 || c.0.min(d.0) > x1 || c.1.max(d.1) < z0 || c.1.min(d.1) > z1 {
+                continue;
+            }
+            if let Some((num, den)) = super::organic::geom::crossing(p, q, c, d) {
+                xs.push((i, j, lerp(p, q, num, den)));
+                if xs.len() > 2 {
+                    return None;
+                }
+            }
+        }
+    }
+    let [x, y] = xs[..] else { return None };
+    if x.0 == y.0 || x.1 == y.1 {
+        return None;
+    }
+    // leaving b along a: the vertex after the crossing is outside b
+    let (leave, enter) = if !inside(a[(x.0 + 1) % n], b) { (x, y) } else { (y, x) };
+    if inside(a[(leave.0 + 1) % n], b) || inside(b[(enter.1 + 1) % m], a) {
+        return None;
+    }
+    let mut out = vec![leave.2];
+    let mut map = vec![None; n];
+    let mut k = (leave.0 + 1) % n;
+    loop {
+        map[k] = Some(out.len());
+        out.push(a[k]);
+        if k == enter.0 {
+            break;
+        }
+        k = (k + 1) % n;
+    }
+    out.push(enter.2);
+    let mut k = (enter.1 + 1) % m;
+    loop {
+        out.push(b[k]);
+        if k == leave.1 {
+            break;
+        }
+        k = (k + 1) % m;
+    }
+    out.dedup();
+    if out.first() == out.last() {
+        out.pop();
+    }
+    // a repeated point would shift the map: refuse rather than mend
+    if out.len() != map.iter().flatten().count() + 2 + (leave.1 + m - enter.1) % m || area2(&out) <= 0 || !simple(&out) {
+        return None;
+    }
+    Some((out, map))
 }
 
 /// The point a fraction `f` (Q16) of the way between two Q16 units, as a Q16 unit.
@@ -283,7 +399,7 @@ fn blend(a: P, b: P, f: i64) -> P {
 }
 
 /// `pts` resampled to equal steps of about `step` cm, the ends kept.
-fn resample(pts: &[P], step: i64) -> Vec<P> {
+pub(super) fn resample(pts: &[P], step: i64) -> Vec<P> {
     let mut at = vec![0i64; pts.len()];
     for k in 1..pts.len() {
         at[k] = at[k - 1] + len(sub(pts[k], pts[k - 1]));
@@ -333,8 +449,8 @@ fn sector(dirs: &[P], v: P) -> usize {
 /// centre line, the polygon's index of its left side's point and of its right side's
 /// (None where the basin swallows it), and where the channel meets the basin (the middle
 /// of its two rim points).
-type Sides = Vec<(Option<usize>, Option<usize>)>;
-fn outline(c: &[P], normals: &[P], half: &[(i64, i64)], b: P, rb: i64, extra: i64, apron: Option<P>) -> Option<(Vec<P>, Sides, P)> {
+pub(super) type Sides = Vec<(Option<usize>, Option<usize>)>;
+pub(super) fn outline(c: &[P], normals: &[P], half: &[(i64, i64)], b: P, rb: i64, extra: i64, apron: Option<P>) -> Option<(Vec<P>, Sides, P)> {
     let rr = rb + extra;
     let side = |s: i64| -> Vec<P> {
         (0..c.len()).map(|i| {
@@ -493,6 +609,8 @@ fn course(seed: u64, p: &Profile, coast: &Coast, width: i64, attempt: i64) -> Op
         dock: (dock, front),
         port: (along(b, u, rb + PORT_STAND_CM), (-u.0, -u.1)),
         sea_cm: coast.sea_cm,
+        arms: Vec::new(),
+        pools: Vec::new(),
     })
 }
 

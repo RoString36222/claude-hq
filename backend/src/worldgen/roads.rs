@@ -312,7 +312,7 @@ fn bridged(nodes: &mut Vec<Node>, t: &Terrain, paths: Vec<Edge>, river: &River) 
             let last = rest.points.len() - 1;
             let Some(i) = (from..=last).find(|&k| river.zone(at(k))) else { break };
             let Some(j) = (i..=last).find(|&k| !river.zone(at(k))) else { break };
-            if i == 0 || !(river.water.crosses(at(i - 1), at(j)) || river.wet(lerp2(at(i - 1), at(j)))) {
+            if i == 0 || !(river.water_crosses(at(i - 1), at(j)) || river.wet(lerp2(at(i - 1), at(j)))) {
                 from = j;
                 continue;
             }

@@ -526,10 +526,15 @@ mod tests {
         for z in crate::worldgen::zones::INDUSTRY.iter() {
             assert!(good(z.good).is_some(), "the market has no {}", z.good);
         }
-        let doc = crate::worldgen::generate("claude-hq@2", &[]).unwrap();
-        let made = doc.layers.zones.unwrap().into_iter().find(|z| z.specialty).unwrap().good;
-        assert_eq!(world_good("claude-hq@2"), Some(made));
+        // the Commons at every organic version this server generates: @2 (still served) and the live @3
+        for v in crate::worldgen::VERSION.iter().filter(|&&v| v >= 2) {
+            let id = format!("claude-hq@{v}");
+            let doc = crate::worldgen::generate(&id, &[]).unwrap();
+            let made = doc.layers.zones.unwrap().into_iter().find(|z| z.specialty).unwrap().good;
+            assert_eq!(world_good(&id), Some(made), "{id}");
+        }
         assert_eq!(world_good("not a world"), None);
+        assert_eq!(world_good("claude-hq@99"), None, "no such generator version");
     }
 
     #[test]

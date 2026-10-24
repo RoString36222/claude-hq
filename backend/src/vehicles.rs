@@ -45,6 +45,7 @@ use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+use crate::archipelago;
 use crate::cities::{self, Refuse};
 
 /// Most vehicles one player may own.
@@ -137,10 +138,10 @@ fn id_ok(s: &str) -> bool {
     (1..=48).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-/// A world a vehicle can be parked in: the Commons (@1 or @2) or an island.
+/// A world a vehicle can be parked in: Arena City (claude-hq@1), the Commons (@2 or
+/// @3) or an island (@2 or @3).
 fn world_ok(w: &str) -> bool {
-    matches!(w, "claude-hq@1" | "claude-hq@2")
-        || w.strip_prefix("user:").and_then(|r| r.strip_suffix("@2")).is_some_and(cities::is_uuid)
+    w == "claude-hq@1" || archipelago::is_commons(w) || archipelago::is_island_world(w)
 }
 
 fn object(bytes: &[u8], keys: &[&str]) -> Result<Map<String, Value>, String> {
@@ -189,15 +190,18 @@ pub(crate) fn parse_park(bytes: &[u8]) -> Result<Spot, String> {
     if x.abs() > MAX_COORD || z.abs() > MAX_COORD {
         return Err("x and z are out of range".into());
     }
-    Ok(Spot::Out(world.to_string(), x, z, yaw.rem_euclid(std::f64::consts::TAU)))
+    // stored as the live id: a @2 Commons or island is the same city at @3
+    Ok(Spot::Out(archipelago::canonical_world(world), x, z, yaw.rem_euclid(std::f64::consts::TAU)))
 }
 
 fn row_json(r: &sqlx::sqlite::SqliteRow) -> Value {
+    // At home (null) unless it has a world and a position: migration 0024 clears the
+    // position of a vehicle left in a world whose layout moved, which sends it home.
     let world: Option<String> = r.get("parked_world");
-    let parked = match world {
-        Some(w) => json!({"world": w, "x": r.get::<f64, _>("parked_x"), "z": r.get::<f64, _>("parked_z"),
-                          "yaw": r.get::<f64, _>("parked_yaw")}),
-        None => Value::Null,
+    let pos: (Option<f64>, Option<f64>, Option<f64>) = (r.get("parked_x"), r.get("parked_z"), r.get("parked_yaw"));
+    let parked = match (world, pos) {
+        (Some(w), (Some(x), Some(z), Some(yaw))) => json!({"world": w, "x": x, "z": z, "yaw": yaw}),
+        _ => Value::Null,
     };
     json!({"id": r.get::<String, _>("id"), "vehicle_id": r.get::<String, _>("vehicle_id"),
            "paint": r.get::<i64, _>("paint"), "bought_at": r.get::<i64, _>("bought_at"), "parked": parked})
@@ -507,6 +511,30 @@ mod tests {
         assert!(parse_park(br#"{"world":"claude-hq@2","x":1e9,"z":1,"yaw":0}"#).is_err());
         assert!(parse_park(br#"{"world":"claude-hq@2","x":1,"z":1}"#).is_err());
         assert_eq!(parse_park(br#"{"garage":true}"#), Ok(Spot::Garage));
+    }
+
+    #[test]
+    fn a_park_body_takes_every_live_world_form_and_stores_the_live_id() {
+        const U: &str = "0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c";
+        let at = |w: &str| parse_park(format!(r#"{{"world":"{w}","x":1,"z":2,"yaw":0}}"#).as_bytes());
+        let world = |w: &str| match at(w) {
+            Ok(Spot::Out(w, ..)) => w,
+            other => panic!("{w}: {other:?}"),
+        };
+        assert_eq!(world("claude-hq@1"), "claude-hq@1", "Arena City stays Arena City");
+        assert_eq!(world("claude-hq@2"), "claude-hq@3");
+        assert_eq!(world("claude-hq@3"), "claude-hq@3");
+        assert_eq!(world(&format!("user:{U}@2")), format!("user:{U}@3"));
+        assert_eq!(world(&format!("user:{U}@3")), format!("user:{U}@3"));
+        for bad in [
+            "claude-hq@4".to_string(),
+            format!("user:{U}@1"),
+            format!("user:{U}@4"),
+            format!("user:{}@3", U.to_uppercase()),
+            "user:../x@3".into(),
+        ] {
+            assert!(at(&bad).is_err(), "{bad}");
+        }
         assert!(parse_park(br#"{"garage":false}"#).is_err());
         assert!(parse_park(br#"{"garage":true,"x":1}"#).is_err());
     }
@@ -598,10 +626,10 @@ mod tests {
         let (v, _) = buy(&p, A, "bmw-g-310-r", 0, NOW).await.unwrap_or_else(|_| panic!("buys"));
         let id = v["id"].as_str().unwrap();
         assert_eq!(mine(&p, A).await.unwrap()[0]["parked"], Value::Null, "a new vehicle is in its garage");
-        let out = Spot::Out("claude-hq@2".into(), 1.0, 2.0, 0.5);
+        let out = Spot::Out("claude-hq@3".into(), 1.0, 2.0, 0.5);
         assert_eq!(code(park(&p, B, id, &out).await), StatusCode::NOT_FOUND);
         park(&p, A, id, &out).await.unwrap_or_else(|_| panic!("parks"));
-        assert_eq!(mine(&p, A).await.unwrap()[0]["parked"], json!({"world": "claude-hq@2", "x": 1.0, "z": 2.0, "yaw": 0.5}));
+        assert_eq!(mine(&p, A).await.unwrap()[0]["parked"], json!({"world": "claude-hq@3", "x": 1.0, "z": 2.0, "yaw": 0.5}));
         park(&p, A, id, &Spot::Garage).await.unwrap_or_else(|_| panic!("goes home"));
         assert_eq!(mine(&p, A).await.unwrap()[0]["parked"], Value::Null, "back in the garage");
     }

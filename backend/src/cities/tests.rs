@@ -162,18 +162,50 @@ fn population_grows_smoothly_across_tier_boundaries() {
 async fn the_city_tier_reads_the_owners_xp_and_the_table() {
     let d = db().await;
     prompts(&d.pool, A, 200).await; // 2,000 XP
+    let snap = snapshot(&d.pool, A, NOW).await.unwrap().unwrap();
+    assert_eq!((snap.tier, snap.xp, snap.population), (2, 2_000, 200));
     let s = city_state(&d.pool, A, NOW).await.unwrap().unwrap();
-    assert_eq!((s.tier, s.xp, s.grow, s.population), (2, 2_000, 0, 200));
+    assert_eq!((s.tier, s.grow), shown(2, 0, ALL_CITIES_MAX));
+    assert_eq!((s.xp, s.population), (2_000, 200));
     assert_eq!(s.tier_xp, [0, 2_000, 10_000, 40_000, 120_000]);
-    assert_eq!(s.world, format!("user:{A}@2"));
+    assert_eq!(s.world, format!("user:{A}@3"));
     assert_eq!((s.privacy.as_str(), s.treasury, s.tax_pm), ("arena", 0, TAX_PM));
     // Retuning the table moves the city without a deploy.
     sqlx::query("UPDATE city_tiers SET xp = 2001 WHERE tier = 2").execute(&d.pool).await.unwrap();
-    assert_eq!(city_state(&d.pool, A, NOW).await.unwrap().unwrap().tier, 1);
+    assert_eq!(snapshot(&d.pool, A, NOW).await.unwrap().unwrap().tier, 1);
     // No such user, or not an active one: no city.
     assert!(city_state(&d.pool, GONE, NOW).await.unwrap().is_none());
     let commons = city_state(&d.pool, COMMONS, NOW).await.unwrap().unwrap();
-    assert_eq!((commons.tier, commons.world.as_str(), commons.name.as_str()), (5, "claude-hq@2", "The Commons"));
+    assert_eq!((commons.tier, commons.world.as_str(), commons.name.as_str()), (5, "claude-hq@3", "The Commons"));
+}
+
+#[tokio::test]
+async fn every_city_reports_max_level_but_grows_from_real_xp() {
+    let d = db().await;
+    // A 0-XP owner: tier 5, fully grown, on the CityState; a tier-1 city's population (and tax).
+    let s = city_state(&d.pool, A, NOW).await.unwrap().unwrap();
+    assert_eq!((s.tier, s.grow, s.xp), (5, 1000, 0));
+    assert_eq!(s.population, population(1, 0, &SEED_TIERS), "the real tier's population");
+    assert_eq!(s.population, 50);
+    let snap = snapshot(&d.pool, A, NOW).await.unwrap().unwrap();
+    assert_eq!((snap.tier, snap.shown_tier, snap.shown_grow), (1, 5, 1000));
+    // tax follows the real tier: the district multiplier waits for the real tier
+    assert_eq!(snap.tax_rate(), 50 * TAX_PM * tax_mult_pm(market::district_pm(&snap.row.specialty, 1), 0));
+    // the archipelago lists the same tier
+    assert_eq!(name_and_tier(&d.pool, A).await.unwrap().1, 5);
+    // a city part way through tier 3 still reports 5/1000 and the tier-3 figures underneath
+    prompts(&d.pool, B, 2_500).await; // 25,000 XP: halfway through tier 3
+    let s = city_state(&d.pool, B, NOW).await.unwrap().unwrap();
+    assert_eq!((s.tier, s.grow, s.population), (5, 1000, population(3, 500, &SEED_TIERS)));
+}
+
+#[test]
+fn the_max_level_switch_restores_the_real_tier() {
+    assert_eq!(shown(1, 0, true), (5, 1000));
+    assert_eq!(shown(3, 420, true), (5, 1000));
+    assert_eq!(shown(1, 0, false), (1, 0));
+    assert_eq!(shown(3, 420, false), (3, 420));
+    assert_eq!(shown(5, 1000, false), (5, 1000));
 }
 
 // ----------------------------------------------------------- accrual --
@@ -285,9 +317,11 @@ async fn upgrades_cost_their_level_and_respect_tier_and_max() {
     assert_eq!(treasury(&d.pool, A).await, 10_000 - 150 - 600);
     build(&d.pool, A, "tax_office", NOW).await.unwrap();
     assert!(matches!(build(&d.pool, A, "tax_office", NOW).await, Err(Refuse::Say(StatusCode::CONFLICT, _))));
-    // The workshop needs tier 2.
-    assert!(matches!(build(&d.pool, A, "workshop", NOW).await, Err(Refuse::Say(StatusCode::CONFLICT, _))));
-    prompts(&d.pool, A, 200).await;
+    // The workshop needs tier 2: every city is (ALL_CITIES_MAX), else XP gets it there.
+    if !ALL_CITIES_MAX {
+        assert!(matches!(build(&d.pool, A, "workshop", NOW).await, Err(Refuse::Say(StatusCode::CONFLICT, _))));
+        prompts(&d.pool, A, 200).await;
+    }
     build(&d.pool, A, "workshop", NOW).await.unwrap();
     let s = city_state(&d.pool, A, NOW).await.unwrap().unwrap();
     assert_eq!(s.upgrades.get("tax_office"), Some(&3));
@@ -300,8 +334,51 @@ async fn upgrades_cost_their_level_and_respect_tier_and_max() {
     assert_ledgers_balance(&d.pool).await;
 }
 
+#[test]
+fn transit_is_free_and_the_switch_restores_the_fares() {
+    for tier in 1..=5 {
+        // free: what a ride costs, wherever there is one
+        assert_eq!(fare_with("bus", tier, true).unwrap_or(0), 0);
+        assert_eq!(fare_with("tram", tier, true).unwrap_or(0), 0);
+        assert_eq!(fare_with("fast", tier, true), Ok(FARE_FAST), "fast travel unchanged");
+        assert_eq!(fare_with("park", tier, true), Ok(0), "the park unchanged");
+    }
+    assert_eq!(fare_of("bus", 5), Ok(0));
+    assert_eq!(fare_of("tram", 5), Ok(0));
+    assert_eq!(fare_of("fast", 5), Ok(1));
+    // off: the old prices and the old tier gates
+    assert_eq!(fare_with("bus", 2, false), Ok(2));
+    assert_eq!(fare_with("tram", 4, false), Ok(2));
+    assert!(fare_with("bus", 1, false).is_err());
+    assert!(fare_with("tram", 3, false).is_err());
+    assert_eq!(fare_with("fast", 1, false), Ok(1));
+}
+
+#[tokio::test]
+async fn a_bus_or_tram_ride_is_free_in_every_city() {
+    let d = db().await;
+    set_coins(&d.pool, B, 0).await;
+    // a tier-1 (0 XP) city: max level, so it has buses and a tram, and they cost nothing
+    for kind in ["bus", "tram"] {
+        for owner in [A, COMMONS] {
+            assert_eq!(fare(&d.pool, owner, B, kind, NOW).await.unwrap(), 0, "{kind} in {owner}");
+        }
+    }
+    assert_eq!((coins(&d.pool, B).await, treasury(&d.pool, A).await), (0, 0));
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM city_ledger WHERE kind = 'fare'").fetch_one(&d.pool).await.unwrap();
+    assert_eq!(n, 0, "a free ride writes nothing");
+    // fast travel still costs its coin
+    set_coins(&d.pool, B, 3).await;
+    assert_eq!(fare(&d.pool, A, B, "fast", NOW).await.unwrap(), 1);
+    assert_eq!((coins(&d.pool, B).await, treasury(&d.pool, A).await), (2, 1));
+    assert_ledgers_balance(&d.pool).await;
+}
+
 #[tokio::test]
 async fn fares_go_from_the_rider_to_the_city() {
+    if FREE_TRANSIT || ALL_CITIES_MAX {
+        return; // the paid, tier-gated fares (both switches off); the pure gates are tested above
+    }
     let d = db().await;
     set_coins(&d.pool, B, 10).await;
     // A tier-1 city has no buses, and no tram before tier 4; fast travel is 1.

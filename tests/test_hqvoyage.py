@@ -100,8 +100,6 @@ class VoyageTest(unittest.TestCase):
         self.assertTrue(self.o["next"])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 # the big ships' sea loops (fleet, seaLoop, shipAt, calls) on synthetic archipelagos: islands >= 3 km apart
@@ -251,3 +249,84 @@ class BigShipsTest(unittest.TestCase):
             self.assertLessEqual(r["call"], r["T"]*1000, r)
             self.assertGreater(r["callLeave"], 60000, r)   # it stays a while at anchor
             self.assertEqual(r["next"], 1, r)
+
+
+COMMONS_SCRIPT = r"""
+const fs = require('fs'), zlib = require('zlib'), path = require('path'), R0 = process.argv[1];
+const src = f => fs.readFileSync(path.join(R0, 'games', f + '.js'), 'utf8'), out = {};
+// without games/world.js: the fallback live id
+global.window = {HQV: {}};
+eval(src('hqvoyage'));
+let V = window.HQV.hqVoyage;
+out.bare = {commons: V.commons(), at2: V.isCommons('claude-hq@2'), at3: V.isCommons('claude-hq@3'), at1: V.isCommons('claude-hq@1'),
+            island: V.isCommons('user:x@3'), junk: V.isCommons(null),
+            cities: V.bigCities({commons: {x: 0, z: 0}, islands: [{world: 'user:a@3', x: 4000, z: 0}]}).map(c => [c.world, !!c.air])};
+// with games/world.js: HQV.world.COMMONS is the live id
+global.window = {HQV: {}};
+eval(src('world')); eval(src('hqvoyage'));
+V = window.HQV.hqVoyage;
+const WD = window.HQV.world;
+const doc = f => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(R0, 'tests/fixtures', f + '.json.gz'))));
+const Wc = WD.pack(doc('claude-hq@2'));
+function clearOf(P){ let m = 1e9; for(let k = 0; k + 2 < P.length; k += 2) for(let j = 0; j <= 6; j++){ const u = j/6;
+  m = Math.min(m, V.airClear(V.COMMONS_AIRFIELD, P[k] + (P[k + 2] - P[k])*u, P[k + 1] + (P[k + 3] - P[k + 1])*u)); } return m; }
+out.live = {commons: V.commons(), world: WD.COMMONS, at2: V.isCommons('claude-hq@2'), at3: V.isCommons(WD.COMMONS),
+            air3: V.airOf('claude-hq@3') === V.COMMONS_AIRFIELD, air2: V.airOf('claude-hq@2') === V.COMMONS_AIRFIELD, airIsland: V.airOf('user:a@3'),
+            cities: V.bigCities({commons: {x: 0, z: 0}}).map(c => [c.world, !!c.air])};
+// a ferry from the @3 Commons keeps off its airfield exactly as the @2 one did
+out.ferries = [];
+for(let i = 0; i < 12; i++){
+  const a = i/12*2*Math.PI, I = {world: 'user:t' + i + '@3', x: Math.sin(a)*4000, z: Math.cos(a)*4000, W: null};
+  const r3 = V.route({world: 'claude-hq@3', x: 0, z: 0, W: Wc}, I), r2 = V.route({world: 'claude-hq@2', x: 0, z: 0, W: Wc}, I);
+  out.ferries.push([clearOf(r3.pts), JSON.stringify(Array.from(r3.pts)) === JSON.stringify(Array.from(r2.pts))]);
+}
+// the fleet at the @3 Commons calls there under its @3 id
+const F = V.fleet({commons: {world: 'claude-hq@3', x: 0, z: 0}, islands: [{world: 'user:a@3', x: 3500, z: 1200}, {world: 'user:b@3', x: -3000, z: 2600}]});
+out.calls3 = F.cruise.length ? V.calls(F.cruise[0], 'claude-hq@3', 1e12, F.cruise[0].R.T*1000).length : -1;
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class CommonsV3Test(unittest.TestCase):
+    """The live worlds move to @3 (HQ 3.15, D2): the @3 Commons is the Commons, and keeps its airfield."""
+
+    @classmethod
+    def setUpClass(cls):
+        r = subprocess.run([NODE, "-e", COMMONS_SCRIPT, ROOT], capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            raise AssertionError(r.stderr)
+        cls.o = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_ids_without_world_js(self):
+        b = self.o["bare"]
+        self.assertEqual(b["commons"], "claude-hq@3")
+        self.assertTrue(b["at2"])
+        self.assertTrue(b["at3"])
+        self.assertFalse(b["at1"])
+        self.assertFalse(b["island"])
+        self.assertFalse(b["junk"])
+        self.assertEqual(b["cities"][0], ["claude-hq@3", True])
+        self.assertEqual(b["cities"][1], ["user:a@3", False])
+
+    def test_ids_from_world_js(self):
+        lv = self.o["live"]
+        self.assertEqual(lv["commons"], lv["world"])
+        self.assertTrue(lv["at2"])
+        self.assertTrue(lv["at3"])
+        self.assertTrue(lv["air3"])
+        self.assertTrue(lv["air2"])
+        self.assertIsNone(lv["airIsland"])
+        self.assertEqual(lv["cities"], [[lv["world"], True]])
+
+    def test_v3_commons_ferries_keep_off_the_airfield(self):
+        for clear, same in self.o["ferries"]:
+            self.assertGreaterEqual(clear, 40 - 1e-6)
+            self.assertTrue(same)             # the same lane as from the @2 Commons
+
+    def test_fleet_calls_at_the_v3_commons(self):
+        self.assertGreater(self.o["calls3"], 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -6,6 +6,8 @@
 //!   cargo run --release --bin worldgen -- claude-hq@1 --samples       probe points for client tests
 //!   cargo run --release --bin worldgen -- claude-hq@2                 the Commons (organic)
 //!   cargo run --release --bin worldgen -- user:<uuid>@2               a personal island
+//!   cargo run --release --bin worldgen -- claude-hq@3                 the Commons with water and lines (HQ 3.15)
+//!   cargo run --release --bin worldgen -- user:<uuid>@3               a personal island, likewise
 use std::time::Instant;
 
 use serde::Serialize;
@@ -64,6 +66,23 @@ fn main() {
         let bridges = l.roads.edges.iter().filter(|e| e.bridge.is_some()).count();
         println!("  river     {} m wide, {} points, basin r {} m at ({}, {}) m, {} bridges", r.width_cm / 100, r.center.len(), r.basin.r / 100,
                  r.basin.x / 100, r.basin.z / 100, bridges);
+    }
+    if let Some(wa) = &l.water {
+        let kinds: Vec<String> = wa.bodies.iter().map(|b| format!("{} ({} m)", b.id, b.level / 100)).collect();
+        let piers: Vec<String> = wa.piers.iter().map(|p| format!("{} {}", p.kind, p.body)).collect();
+        println!("  water     {}", kinds.join(", "));
+        println!("            piers: {}", piers.join(", "));
+        println!("            {} berths, office {:?}, net {} nodes / {} edges, routes {}", wa.berths.len(), wa.office, wa.net.nodes.len(), wa.net.edges.len(),
+                 wa.routes.iter().map(|r| format!("{} ({} piers)", r.id, r.piers.len())).collect::<Vec<_>>().join(", "));
+    }
+    if let Some(m) = &l.metro {
+        println!("  metro     {} lines, {} stations, {} entrances, {} portals, {} depots", m.lines.len(), m.stations.len(), m.entrances.len(), m.portals.len(), m.depots.len());
+    }
+    if let Some(r) = &l.rail {
+        println!("  rail      {} lines, {} stations", r.lines.len(), r.stations.len());
+    }
+    if let Some(g) = &l.gondola {
+        println!("  gondola   {} lines", g.lines.len());
     }
     println!("  lots      {} ({} HQ in the pool)", l.lots.len(), l.lots.iter().filter(|x| x.kind == "hq").count());
     println!("  sites     {}", l.sites.iter().map(|s| s.id.as_str()).collect::<Vec<_>>().join(" "));

@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.14.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.15.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -373,6 +373,12 @@ replies, file paths, project or folder names, session ids, or titles.
   server). The pets out with you ride in your presence (species, colour, accessory and growth numbers and
   the name, at most two), and visitors to your open HQ see the ones in your lobby. Without one, pets live
   only in this browser. Nothing about your sessions goes into them.
+- **Messages, nearby chat and calls are only what you type, and only when you opt in (3.15).** Text
+  messages carry at most 160 characters you typed and the recipient's id; you send only after a one-time
+  opt-in, anyone can block or mute you, and the Arena erases a message's text once it is delivered (undelivered
+  ones go after 7 days). Nearby chat (at most 200 characters, with Nearby on) reaches only players within 40 m
+  in the same city who turned it on, and is never stored. Calls (with Calls on) send the ring and the WebRTC
+  setup to the one person you call; the audio goes browser to browser.
 - The wire format rejects unknown fields outright, so a future client change
   can't silently start leaking one.
 
@@ -409,6 +415,33 @@ and feature guide.
 
 ## Changelog
 
+- **3.15.0 — The transport revamp.** **Every city is at its highest level** (the Arena reports tier 5 and full growth
+  for every city, so every line, stop, airport and building is open; population and tax still follow the owner's
+  real XP) and **getting around is free**: no fares, no day pass and no coins for buses, trams, the metro, trains,
+  boats, Claude Cabs or helicopters (the old 2-coin bus and tram fares are gone; fast travel is unchanged).
+  **New worlds: the live worlds moved to world generator version 3** (`claude-hq@3`, `user:<id>@3`). Every island and
+  the Commons are laid out again with lakes, canals and a marina, and the transport is designed around them; your HQ
+  keeps its rank and is placed on the new layout, and vehicles parked out in the streets go home to their bay
+  (migration `0024_live_v3`). `@1` and `@2` still generate byte for byte as before and stay served for older clients;
+  the page falls back @3 -> @2 -> @1 on an older Arena. **Ways to travel**: real street trams (grooved rails, overhead
+  wire, crossovers, boarding islands), buses and trams you board and ride in a seat (or at a pole at rush hour), a
+  **metro in real tunnels** (M1 and M2 crossing at Central, underground stations with stairs, escalators and lifts,
+  an underground view below the street), the elevated **City Line**, the **Island Link** train from every island to
+  the Commons, a **gondola**, **water buses**, a lake launch, **water taxis** and **boat hire** (pedalo, rowboat,
+  kayak), **Claude Cabs** (ride or drive for a score), a helicopter you call, and your own vehicles filtered by kind.
+  Commuters fill vehicles by time of day; stops announce themselves (local voices only). Seat cameras (V: seat,
+  window, chase), S requests the stop, E gets on and off. **The phone** (Backquote, or I in the City; a button by
+  Call; "Phone" in Cmd-K): Tickets (journey planner, free tickets, airport check-in), Departures, the Transit map
+  with live vehicles, Claude Cabs, Vehicles, the Dealership, Messages, Nearby, Phone, Camera, Gallery, Achievements,
+  Patch notes and Settings. **Privacy (new egress, all opt-in to send, all user-typed):** **text messages** (at most
+  160 characters you type, plus the recipient's id; sending needs your one-time opt-in, receiving can be blocked or
+  muted; the Arena erases the text once delivered and keeps undelivered ones 7 days), **nearby chat** (at most 200
+  characters you type, only with Nearby on, relayed only to opted-in players within 40 m in the same city, never
+  stored) and **calls** (only with Calls on: the ring and the WebRTC setup go to the one person you call; the audio is
+  peer to peer). Notifications never show a message's text unless Messages is open. Presence gains `a = 14` (riding
+  transit: a mode code and a vehicle id) behind the new `transit` capability. Photos never leave this computer
+  (IndexedDB). Nothing transcript-derived goes into any of it. **Needs the Arena release** (world @3, max level, free
+  fares, SMS, nearby and call relays). Third-party assets: none new.
 - **3.14.1 — Dragons and dinosaurs ride from day one.** Every dragon and the sea serpent now comes fully grown from adoption (any affection; the Arena's `pets.rs stage_of` and the page agree), and the big dinosaurs (T-Rex, Triceratops, Brachiosaurus, Stegosaurus) can be ridden straight away: walk up and press E. Affection still unlocks tricks. Needs the Arena release.
 - **3.14.0 — Ride your pets.** A grown dragon (any of the seven), the grown sea serpent or a big dinosaur
   (Triceratops, Brachiosaurus, Stegosaurus, T-Rex, from the grown mark of 400 affection) that is out with you can

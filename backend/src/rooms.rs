@@ -13,7 +13,7 @@
 //! one slow player never holds up the others.
 
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
@@ -92,6 +92,9 @@ pub struct Room {
     /// catch up. Memory only: it goes when the room empties or the server
     /// restarts.
     pub chat: VecDeque<Value>,
+    /// Sockets that turned on nearby chat (`{type: "near_on", on: true}`, HQ 3.15 phone). Per socket, like
+    /// the chat allowance; forgotten when the socket leaves.
+    pub near: HashSet<u64>,
 }
 
 #[derive(Clone, Default)]
@@ -141,6 +144,7 @@ impl RoomManager {
             state: json!({}),
             direct: HashMap::new(),
             chat: VecDeque::new(),
+            near: HashSet::new(),
         });
         if room.members.len() >= MAX_ROOM_MEMBERS {
             return None;
@@ -167,6 +171,7 @@ impl RoomManager {
         let Some(pos) = room.members.iter().position(|(c, _)| *c == conn_id) else { return };
         let (_, member) = room.members.remove(pos);
         room.direct.remove(&conn_id);
+        room.near.remove(&conn_id);
         if room.members.is_empty() {
             rooms.remove(room_id);
             return;
@@ -248,6 +253,35 @@ impl RoomManager {
         let rooms = self.rooms.lock().await;
         let Some(room) = rooms.get(room_id) else { return 0 };
         Self::fan_out(room, &|c, m| c != conn_id && pick(m), &msg)
+    }
+
+    /// Turn nearby chat on or off for one socket. False when the socket is not in the room.
+    pub async fn set_near(&self, room_id: &str, conn_id: u64, on: bool) -> bool {
+        let mut rooms = self.rooms.lock().await;
+        let Some(room) = rooms.get_mut(room_id) else { return false };
+        if !room.members.iter().any(|(c, _)| *c == conn_id) {
+            return false;
+        }
+        if on {
+            room.near.insert(conn_id);
+        } else {
+            room.near.remove(&conn_id);
+        }
+        true
+    }
+
+    /// Has this socket turned nearby chat on?
+    pub async fn near_on(&self, room_id: &str, conn_id: u64) -> bool {
+        let rooms = self.rooms.lock().await;
+        rooms.get(room_id).is_some_and(|r| r.near.contains(&conn_id))
+    }
+
+    /// A nearby-chat line: to every socket in the room that turned nearby on, is not the sender's, and whose
+    /// user passes `pick` (the distance test). Returns how many sockets it reached.
+    pub async fn send_near(&self, room_id: &str, conn_id: u64, pick: impl Fn(&Member) -> bool, msg: String) -> usize {
+        let rooms = self.rooms.lock().await;
+        let Some(room) = rooms.get(room_id) else { return 0 };
+        Self::fan_out(room, &|c, m| c != conn_id && room.near.contains(&c) && pick(m), &msg)
     }
 
     /// Every socket of `user_id` in every room (game invites). Returns how many.
@@ -419,6 +453,33 @@ mod tests {
             assert!(m.send_conn("q", 1, "x".into()).await);
         }
         assert!(!m.send_conn("q", 1, "x".into()).await);
+    }
+
+    #[tokio::test]
+    async fn nearby_reaches_only_opted_in_sockets_and_never_the_sender() {
+        let m = RoomManager::new();
+        let (_, mut a, _, _) = m.join_direct("hq_city", 1, member("ann")).await.unwrap();
+        let (_, mut b1, _, _) = m.join_direct("hq_city", 2, member("bob")).await.unwrap();
+        let (_, mut b2, _, _) = m.join_direct("hq_city", 3, member("bob")).await.unwrap();
+        let (_, mut c, _, _) = m.join_direct("hq_city", 4, member("cat")).await.unwrap();
+        assert!(m.set_near("hq_city", 1, true).await);
+        assert!(m.set_near("hq_city", 2, true).await);
+        assert!(m.set_near("hq_city", 4, true).await);
+        assert!(!m.set_near("hq_city", 99, true).await, "not a socket in the room");
+        assert!(!m.set_near("elsewhere", 1, true).await);
+        assert!(m.near_on("hq_city", 1).await && !m.near_on("hq_city", 3).await);
+        // cat is too far (the pick says no); bob's second socket never opted in; ann sent it
+        let n = m.send_near("hq_city", 1, |x| x.user_id != "cat", "hi".into()).await;
+        assert_eq!(n, 1);
+        assert_eq!(b1.try_recv().unwrap(), "hi");
+        assert!(a.try_recv().is_err() && b2.try_recv().is_err() && c.try_recv().is_err());
+        // off again, and a socket that leaves forgets its flag
+        assert!(m.set_near("hq_city", 2, false).await);
+        assert_eq!(m.send_near("hq_city", 1, |_| true, "x".into()).await, 1);
+        assert_eq!(c.try_recv().unwrap(), "x");
+        m.leave("hq_city", 4).await;
+        m.join_direct("hq_city", 4, member("cat")).await.unwrap();
+        assert!(!m.near_on("hq_city", 4).await);
     }
 
     #[tokio::test]

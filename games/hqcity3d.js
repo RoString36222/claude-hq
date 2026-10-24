@@ -1819,7 +1819,8 @@ HQV.hqWorlds.city3d = function(c, w){
       apB.setBridge(id, out ? 1 : 0);
     });
     if(apB) apB.update(dt, t, 1);
-    ap3.update(dt, t, cam && cam.x != null ? {position: {x: cam.x, y: cam.y, z: cam.z}} : null);
+    // [Sound PR B] with the parked jets as drawn (yours is heard on its own) and this frame's offset: their APUs on the stands
+    ap3.update(dt, t, cam && cam.x != null ? {position: {x: cam.x, y: cam.y, z: cam.z}} : null, {parked: apParkedList(tr, hp)}, hp);
     apParked(tr, hp);
     apPlanes = apGroundPlanes(tr, hp);
     // the vehicles: at the apron (level 2, within 900 m of it), 30 times a second at most

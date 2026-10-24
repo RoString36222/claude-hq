@@ -338,7 +338,7 @@ class SkyWeatherAmbientSound(unittest.TestCase):
     def test_parked_jets_run_their_apus_on_their_stands(self):
         a = self.o["airport"]
         self.assertEqual(a["none"], [])                           # no traffic handed in: silent
-        self.assertEqual(a["pool"][0], 1)                         # the plane kind's other voice: the City's moving aircraft
+        self.assertEqual(a["pool"][0], 1)                         # one (the City's moving aircraft have their own pool)
         self.assertEqual(a["pool"][1], ["stand:1"])               # the nearest
         self.assertEqual([s[0] for s in a["srcs"]], [w[0] for w in a["want"]])   # jets only: the amphibian has no APU
         for (sid, at), (wid, want) in zip(a["srcs"], a["want"]):
@@ -400,6 +400,11 @@ class SourceRules(unittest.TestCase):
         self.assertIn('if(E.sfxAt){ E.sfxAt("door", p, {kind: "jet"}); E.sfxAt("shot", p, {kind: "jet"}); } else if(E.sfx)', base)
         self.assertIn("var standP = E.pool && E.engineSound ?", self.read("hqairport3d.js"))
         self.assertIn("var waterP = E.pool && E.loop && E.listenerAt ?", self.read("ocean.js"))
+
+    def test_the_city_hands_the_airport_its_parked_jets(self):
+        # the stands' APUs play only with the City's airport traffic (the parked jets as drawn) and its frame offset
+        self.assertIn("ap3.update(dt, t, cam && cam.x != null ? {position: {x: cam.x, y: cam.y, z: cam.z}} : null, "
+                      "{parked: apParkedList(tr, hp)}, hp);", self.read("hqcity3d.js"))
 
 
 if __name__ == "__main__":

@@ -218,11 +218,16 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   const H = window.HQV.hqMetro;
   // a 2D context that draws nothing
   const g2 = new Proxy({}, {get: (t, k) => k === "measureText" ? (() => ({width: 10})) : (typeof k === "string" && /^[a-z]/.test(k) && !["fillStyle","font","textAlign","textBaseline","strokeStyle","lineWidth","lineCap","globalAlpha"].includes(k)) ? (() => {}) : t[k], set: (t, k, v) => { t[k] = v; return true; }});
-  const scene = new THREE.Scene(), sounds = [];
+  const scene = new THREE.Scene(), sounds = [], placed = {}, sets = {}, made = {};
   let calm = false, avatar = null;
   const c = {THREE, scene, canvasTex: (w, h, d) => { if(d) d(g2, w, h); return {t: new THREE.Texture(), g: g2}; }, avatar: () => avatar};
   const sim = H.create(doc, {tier: 5});
-  const V = H.view(c, sim, {calm: () => calm, night: () => false, sfx: (n, o) => sounds.push(o && o.screenDoors ? "screen" : n)});
+  // [sound] every sound carries its place and kind; the motor and the rumble are held handles, set every frame
+  const sfx = (n, o) => { const s = o && o.screenDoors ? "screen" : n, p = o && o.pos; sounds.push(s);
+    const k = s + ":" + (o && o.kind) + ":" + (p && isFinite(p.x) && isFinite(p.y) && isFinite(p.z) ? "pos" : "none"); placed[k] = (placed[k] || 0) + 1;
+    if(n !== "motor" && n !== "tunnel-rumble") return null;
+    made[n] = (made[n] || 0) + 1; return {loop: true, set: () => { sets[n] = (sets[n] || 0) + 1; }, stop(){}}; };
+  const V = H.view(c, sim, {calm: () => calm, night: () => false, sfx});
   const out = {shots: {}};
   const T0 = Date.UTC(2026, 9, 21, 8, 0, 0);
   V.update(T0, 0.016, {x: -600, y: 30, z: 0});
@@ -247,17 +252,18 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   avatar = {x: gate.x, z: gate.z, hy: cst.hallY};
   sounds.length = 0; calm = true;
   V.update(T0 + 2500, 0.016, {x: cst.x, y: cst.hallY + 1.7, z: cst.z});
-  out.gate = {beeps: sounds.filter(s => s === "validator").length};
+  out.gate = {beeps: sounds.filter(s => s === "validator").length, placed: Object.keys(placed).filter(k => /^validator:/.test(k))};
   // back to the surface: the underground groups are hidden, the surface budget again
   V.underground(false);
   V.update(T0 + 3000, 0.016, {x: -600, y: 30, z: 0});
   out.back = {draws: V.drawCalls(), stats: V.stats()};
   // riding: sounds for the focused train
-  sounds.length = 0; calm = false;
+  sounds.length = 0; calm = false; Object.keys(sets).forEach(k => { sets[k] = 0; });
   const tr = sim.trip("M1", "metro:0", "metro:2", T0); V.focus(tr.vehicle); V.underground(true);
   for(let t = tr.arrive - 8000; t < tr.depart + 60000; t += 250){ const P = tr.pose(t); avatar = {x: P.x, z: P.z, hy: P.y}; V.update(t, 0.25, {x: P.x, y: P.y + 1.5, z: P.z}); }
   out.sounds = {chime: sounds.filter(s => s === "door-chime").length, beep: sounds.filter(s => s === "screen").length, motor: sounds.filter(s => s === "motor").length,
-                joint: sounds.filter(s => s === "rail-joint").length, rumble: sounds.filter(s => s === "tunnel-rumble").length};
+                joint: sounds.filter(s => s === "rail-joint").length, rumble: sounds.filter(s => s === "tunnel-rumble").length,
+                placed: Object.keys(placed).sort(), sets: sets, made: made};
   V.dispose();
   out.disposed = scene.children.length;
   console.log(JSON.stringify(out));
@@ -479,7 +485,18 @@ class MetroView(unittest.TestCase):
         s = self.o["sounds"]
         self.assertGreaterEqual(s["chime"], 1); self.assertGreaterEqual(s["beep"], 1)
         self.assertLessEqual(s["beep"], 8, "one double beep per train at the platform, not one per door")
-        self.assertGreater(s["motor"], 0); self.assertGreater(s["joint"], 0); self.assertGreater(s["rumble"], 0)
+        self.assertGreater(s["joint"], 0)
+        # Sound PR B: every sound of the run where it is (door chimes and joints at the train, the screen doors on the
+        # platform, the gate at the gate), with its kind
+        self.assertEqual(s["placed"], ["door-chime:door:pos", "door-hiss:door:pos", "motor:metro:pos", "rail-joint:metro:pos", "screen:door:pos",
+                                       "tunnel-rumble:metro:pos", "validator:door:pos"])
+        # the motor and the rumble: held loops set every frame of the ride, made once for the whole run (the old code fired a
+        # new motor every 0.5 s and a rumble every 2.5 s, and never stopped one)
+        self.assertGreater(s["sets"]["motor"], 100); self.assertGreater(s["sets"]["tunnel-rumble"], 50)
+        self.assertEqual(s["made"], {"motor": 1, "tunnel-rumble": 1})
+
+    def test_gate_beeps_at_the_gate(self):
+        self.assertEqual(self.o["gate"]["placed"], ["validator:door:pos"])
 
     def test_dispose(self):
         self.assertEqual(self.o["disposed"], 0)

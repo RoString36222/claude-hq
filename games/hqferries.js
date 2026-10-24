@@ -38,9 +38,12 @@
  *     board (handle.board()), it runs you over and lands you (handle.ashore()). handle.state() -> {state:
  *     "coming"|"here"|"riding"|"done"|"cancelled", eta (s), metres}. deps = {W, now(), me() -> {x, z}, announce(text),
  *     sfx(name, o), calm(), seed}.
- * Sounds (opts.sfx / deps.sfx): "ferry-horn" on departure, "engine-hum" while under way near you, "water-lap" by the
- * piers, "gangway-clank" as it lands; named from HQV.hqRide.SFX when it knows them, else an alias ("motor",
- * "gondola-clunk").
+ * Sounds (opts.sfx / deps.sfx, each with {pos, kind}: heard where it is through games/engine.js's spatial voices):
+ * "ferry-horn" from the wheelhouse on departure (kind horn), "gangway-clank" at the gangway's hinge as it lands and at
+ * the water taxi when it comes in (door), "water-lap" at the nearest pier head (water), and "engine-hum" as held loops
+ * that follow their hulls: a pool (HQV.engine.pool, kind boat) keeps the nearest HUM_VOICES water buses and launches
+ * sounding, the water taxi holds its own while it is about; named from HQV.hqRide.SFX when it knows them, else an
+ * alias ("motor", "gondola-clunk").
  * Frames as the 3D city's: metres, +y up, yaw 0 faces +z, increasing yaw turns left, the right of travel is (-cos yaw, sin yaw).
  */
 (function(){
@@ -833,13 +836,55 @@ function taxiStart(C, fromId, seed){
 }
 
 /* ---------- sounds ---------- */
+// Every sound is where it is (Sound PR B: o.pos and o.kind go through hqRide.sfx to games/engine.js's spatial voices):
+// the horn at the wheelhouse (kind horn), the gangway landing at its hinge (door), the water lapping at the nearest
+// pier head (water: under Ambient sounds), and the engines as held loops that follow their hulls (boat): a pool keeps
+// the nearest HUM_VOICES of the water buses and launches sounding, the water taxi has its own
 var ALIAS = {"engine-hum": "motor", "gangway-clank": "gondola-clunk", "water-lap": null, "ferry-horn": "ferry-horn"};
+var HUM_VOICES = 2;                // this pool's voices (it shares the boat kind's 3 with the City's ferries and ships: games/hqcity3d.js)
 function sound(f, name, o){
-  if(typeof f !== "function") return;
+  if(typeof f !== "function") return null;
   var R = HQV.hqRide, list = R && R.SFX;
   var n = list && list.indexOf(name) < 0 ? ALIAS[name] : name;
-  if(!n) return;
-  try { f(n, o || {}); } catch(e){}
+  if(!n) return null;
+  try { return f(n, o || {}); } catch(e){ return null; }
+}
+// a held loop's handle (hqRide's set / stop), else null
+function loopOf(h){ return h && typeof h.set === "function" && typeof h.stop === "function" ? h : null; }
+// the farthest a spatial kind is heard (games/engine.js KINDS), else d
+function reach(kind, d){ var E = HQV.engine, K = E && E.spatial && E.spatial.KINDS, k = K && K[kind]; return k && k.max > 0 ? k.max : d; }
+// where sounds are heard from: the spatial listener (the camera, or what a Classic view looks at), else p
+function earOf(p){
+  var E = HQV.engine, L = null;
+  try { L = E && typeof E.listenerAt === "function" ? E.listenerAt() : null; } catch(e){ L = null; }
+  return L || p || null;
+}
+// one held loop: started by start(o) when asked to sound, set(o) every frame after, stop() when its source goes; a
+// start that fails (sound off, out of range) is tried again at most once a second (t: ms)
+function heldLoop(start){
+  var h = null, again = -Infinity;
+  return {
+    set: function(t, o){
+      if(h){ try { h.set(o); } catch(e){} return; }
+      if(t < again) return;
+      again = t + 1000; h = loopOf(start(o));
+    },
+    stop: function(){ if(h){ try { h.stop(); } catch(e){} h = null; } again = -Infinity; }
+  };
+}
+// where a vessel's sounds come from: its horn (the wheelhouse mast; the launch's stern), its engines (the hulls aft),
+// the gangway's hinge (the cabin's after door on the pier's side)
+function hornAt(v){
+  var bus = v.kind !== "launch", q = toWorld(v, {x: 0, z: bus ? 5.4 : -3});
+  return {x: q.x, y: v.y + (bus ? CRAFT.waterbus.floor + 4.6 : CRAFT.launch.floor + 1.2), z: q.z};
+}
+function hullAt(v){
+  var q = toWorld(v, {x: 0, z: v.kind === "launch" ? -3 : -8});
+  return {id: v.id, kind: v.kind, x: q.x, y: v.y + 0.8, z: q.z, speed: v.speed};
+}
+function gangAt(v){
+  var q = toWorld(v, {x: (v.side || 1)*4.1, z: v.hz != null ? v.hz : GANG_Z});
+  return {x: q.x, y: v.y + CRAFT.waterbus.floor, z: q.z};
 }
 
 /* ---------- drawing ---------- */
@@ -1157,7 +1202,22 @@ function view(c, sim, opts){
     boardMesh.translateZ(0.07);
     boardPier = stop.id;
   }
-  var last = {ms: 0, list: [], cam: null}, focusId = null, prev = {}, lapT = 0, humT = 0, t0 = null;
+  var last = {ms: 0, list: [], cam: null}, focusId = null, prev = {}, lapT = 0, t0 = null;
+  // the water laps at every pier's head (the stops, the hire and fuel jetties), at the water's level there
+  var lapSpots = [];
+  if(W) W.V.piers.forEach(function(p){ var hd = headOf(p); lapSpots.push({x: hd.x, y: pierWaterY(W, p) + 0.2, z: hd.z}); });
+  else boardStops.forEach(function(s){ lapSpots.push({x: s.x, y: s.y, z: s.z}); });
+  // the engines: the nearest HUM_VOICES vessels within earshot each hold an engine-hum loop that follows the hull
+  // (made once a vessel comes near, handed on to the next one of its kind, stopped when idle: none ever leaks)
+  var humP = null;
+  function hums(){
+    var E = HQV.engine;
+    if(!humP && E && typeof E.pool === "function" && typeof opts.sfx === "function")
+      humP = E.pool("boat", {voices: HUM_VOICES, idle: 2, key: function(s){ return s.kind; },
+        make: function(s){ return loopOf(sound(opts.sfx, "engine-hum", {pos: s, kind: "boat", speed: s.speed, gain: s.kind === "launch" ? 0.5 : 1})); },
+        play: function(h, s){ h.set({pos: s, speed: s.speed}); }});
+    return humP;
+  }
   function update(ms, dt, cam){
     ms = num(ms, 0); dt = Math.max(0, num(dt, 0));
     if(t0 == null) t0 = ms;
@@ -1165,15 +1225,15 @@ function view(c, sim, opts){
     var list = sim ? sim.vehicles(ms) : [], tt = (ms - t0)/1000, amp = quiet ? 0.3 : 1;
     var jump = Math.abs(ms - last.ms) > 5000;          // a jump in time (the first frame, a skip): no sounds for what changed
     last.ms = ms; last.list = list; last.cam = {x: cx, y: cy, z: cz};
-    var ib = 0, il = 0, iw = 0, sfx = jump ? null : opts.sfx, near = null, nd = Infinity;
+    var ib = 0, il = 0, iw = 0, sfx = jump ? null : opts.sfx;
+    var ear = earOf(cam), ex = ear ? num(ear.x, 0) : cx, ez = ear ? num(ear.z, 0) : cz, hornM = reach("horn", 1500), doorM = reach("door", 40);
     list.forEach(function(v){
       var d = d2(v.x, v.z, cx, cz);
-      if(d < nd){ nd = d; near = v; }
-      // sounds: the horn on leaving a pier, the gangway landing; within earshot
+      // sounds: the horn on leaving a pier, the gangway landing; each where it is, within its kind's earshot
       var was = prev[v.id];
       if(was && sfx){
-        if(was.stop && !v.stop && d < 300) sound(sfx, "ferry-horn", {gain: clamp(1 - d/300, 0.1, 1)});
-        if(v.kind !== "launch" && was.doors < 1 && v.doors >= 1 && d < 80) sound(sfx, "gangway-clank", {gain: clamp(1 - d/80, 0.1, 1)});
+        if(was.stop && !v.stop){ var hp = hornAt(v); if(d2(hp.x, hp.z, ex, ez) < hornM) sound(sfx, "ferry-horn", {pos: hp, kind: "horn"}); }
+        if(v.kind !== "launch" && was.doors < 1 && v.doors >= 1){ var gp = gangAt(v); if(d2(gp.x, gp.z, ex, ez) < doorM) sound(sfx, "gangway-clank", {pos: gp, kind: "door"}); }
       }
       prev[v.id] = {stop: v.stop, doors: v.doors};
       if(d > LOD) return;
@@ -1199,11 +1259,14 @@ function view(c, sim, opts){
     ["waterbus", "glass", "gangway"].forEach(function(n){ if(meshes[n]){ meshes[n].count = ib; meshes[n].instanceMatrix.needsUpdate = true; } });
     if(meshes.launch){ meshes.launch.count = il; meshes.launch.instanceMatrix.needsUpdate = true; }
     if(meshes.bow){ meshes.bow.count = iw; meshes.bow.instanceMatrix.needsUpdate = true; }
-    // the engine under way close by, the water lapping at the piers
-    if(sfx && near && nd < 60 && near.speed > 0.5){ humT -= dt; if(humT <= 0){ humT = 2; sound(sfx, "engine-hum", {gain: clamp(1 - nd/60, 0.1, 0.8)}); } }
-    if(sfx && boardStops.length){
-      var sd = Infinity; boardStops.forEach(function(s){ sd = Math.min(sd, d2(s.x, s.z, cx, cz)); });
-      if(sd < 30){ lapT -= dt; if(lapT <= 0){ lapT = 4 + (hash32(seedS + Math.floor(ms/4000)) % 3); sound(sfx, "water-lap", {gain: 0.4}); } }
+    // the engines (every water bus, idling at a pier or under way; a launch under way): the pool sounds the nearest
+    var HP = hums();
+    if(HP){ var hs = []; list.forEach(function(v){ if(v.kind !== "launch" || v.speed > 0.5) hs.push(hullAt(v)); }); HP.update(hs); }
+    // the water lapping at the nearest pier head within earshot, a lap every 4-6 s (seeded by the clock)
+    if(sfx && lapSpots.length){
+      var lp = null, ld = reach("water", 60);
+      lapSpots.forEach(function(s){ var dd = d2(s.x, s.z, ex, ez); if(dd < ld){ ld = dd; lp = s; } });
+      if(lp){ lapT -= dt; if(lapT <= 0){ lapT = 4 + (hash32(seedS + Math.floor(ms/4000)) % 3); sound(sfx, "water-lap", {pos: lp, kind: "water"}); } }
     }
     // night: lit windows, lamps, the lighthouse's beam (a slow sweep; Calm: still, pointing out to sea)
     var glow = nt ? 1.4 : 0;
@@ -1269,6 +1332,7 @@ function view(c, sim, opts){
       .sort(function(a, b){ return a.d - b.d; }).slice(0, 4);
   }
   function dispose(){
+    if(humP){ humP.stop(); humP = null; }
     parts.forEach(function(p){ p.geo.dispose(); if(p.mat && p.mat.dispose) p.mat.dispose(); });
     Object.keys(meshes).forEach(function(k){ if(meshes[k].dispose) meshes[k].dispose(); });
     if(board) board.dispose();
@@ -1290,7 +1354,18 @@ function taxiController(c, w, deps){
   var announce = typeof deps.announce === "function" ? deps.announce : function(){};
   var seed = deps.seed != null ? String(deps.seed) : (C ? C.id : "world");
   var cur = null, n = 0, model = null, THREE = c && c.THREE;
+  // its engine: one held engine-hum loop at the outdrive while it comes, waits, runs you over and lingers
+  var hum = heldLoop(function(o){ return sound(deps.sfx, "engine-hum", o); });
   function say(t){ try { announce(t); } catch(e){} }
+  function meNow(){ try { return typeof deps.me === "function" ? deps.me() : null; } catch(e){ return null; } }
+  function sternAt(P){ var q = toWorld(P, {x: 0, z: -4.2}); return {x: q.x, y: (P.water != null ? P.water : P.y - CRAFT.taxi.floor) + 0.4, z: q.z}; }
+  // P: the taxi's pose this frame, null when there is none to hear (its engine stops)
+  function engineAt(ms, P){
+    if(!P){ hum.stop(); return; }
+    var at = sternAt(P), ear = earOf(meNow()), dd = ear ? d2(at.x, at.z, num(ear.x, 0), num(ear.z, 0)) : 0, M = reach("boat", 400);
+    if(dd < M) hum.set(ms, {pos: at, kind: "boat", speed: P.speed});
+    else if(dd > M*1.1) hum.stop();
+  }
   function nearestPier(x, z, to){
     if(!C) return null;
     var best = null, bd = Infinity;
@@ -1321,7 +1396,6 @@ function taxiController(c, w, deps){
       if(!r){ h.cancel(); return false; }
       h.ride = r; h.ride.skipper = h.skipper; h.st = "riding";
       say("Water taxi to " + h.toName + ". About " + Math.max(1, Math.round(r.secs/60)) + " min.");
-      sound(deps.sfx, "engine-hum", {gain: 0.7});
       return true;
     };
     h.cancel = function(){ if(h.st === "done" || h.st === "cancelled") return; h.st = "cancelled"; say("Water taxi cancelled."); };
@@ -1346,13 +1420,18 @@ function taxiController(c, w, deps){
     ms = ms != null ? num(ms, 0) : num(now(), 0);
     var h = cur;
     if(h){
-      if(h.st === "coming" && ms >= h.approach.reach){ h.st = "here"; h.hereAt = ms; say("Your water taxi is here at " + h.fromName + ". Press E to board."); sound(deps.sfx, "gangway-clank", {gain: 0.5}); }
+      if(h.st === "coming" && ms >= h.approach.reach){
+        h.st = "here"; h.hereAt = ms; say("Your water taxi is here at " + h.fromName + ". Press E to board.");
+        var pz = h.pose(ms);
+        sound(deps.sfx, "gangway-clank", pz ? {pos: {x: pz.x, y: (pz.water != null ? pz.water : pz.y) + 0.9, z: pz.z}, kind: "door", gain: 0.5} : {gain: 0.5});
+      }
       if(h.st === "coming"){ var left = (h.approach.reach - ms)/1000, mark = Math.ceil(left/30); if(left > 5 && mark !== h.said.m && left % 30 < 1.5){ h.said.m = mark; say("Water taxi: " + Math.max(1, Math.round(left/60)) + " min."); } }
       if(h.st === "here" && ms - h.hereAt > TAXI.wait*1000){ h.st = "cancelled"; say("The water taxi could not wait any longer."); }
       if(h.st === "riding" && ms >= h.ride.reach){ h.st = "done"; h.doneAt = ms; say("Arrived at " + h.toName + "."); }
     }
+    var show = h && (h.st === "coming" || h.st === "here" || h.st === "riding" || (h.st === "done" && ms - h.doneAt < TAXI.linger*1000));
+    engineAt(ms, show ? h.pose(ms) : null);
     if(THREE){
-      var show = h && (h.st === "coming" || h.st === "here" || h.st === "riding" || (h.st === "done" && ms - h.doneAt < TAXI.linger*1000));
       if(show && !model){
         model = new THREE.Mesh(speedboatGeo(THREE), new THREE.MeshStandardMaterial({vertexColors: true, roughness: 0.35, metalness: 0.1}));
         model.name = "hqferries-taxi"; model.castShadow = true;
@@ -1393,7 +1472,7 @@ function taxiController(c, w, deps){
       var P = cur.pose(num(now(), 0));
       return {pos: {x: P.x - Math.sin(P.yaw)*12 + Math.cos(P.yaw)*6, y: P.y + 4, z: P.z - Math.cos(P.yaw)*12 - Math.sin(P.yaw)*6}, look: {x: P.x, y: P.y, z: P.z}, fov: 55};
     }},
-    dispose: function(){ if(model){ model.geometry.dispose(); model.material.dispose(); if(model.parent) model.parent.remove(model); model = null; } }
+    dispose: function(){ hum.stop(); if(model){ model.geometry.dispose(); model.material.dispose(); if(model.parent) model.parent.remove(model); model = null; } }
   };
 }
 

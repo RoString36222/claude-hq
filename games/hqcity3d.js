@@ -32,6 +32,8 @@
  *   travel        E at a dock, port, station or airport: games/hqtravel.js trips (ferry, rail, plane, fast
  *                 travel), the ride's camera through w.camPose; the "My island" / "The Commons" button.
  *   net room      city3d:<world id> where the Arena's presence lists "isles" (protocol v3), else city3d.
+ *   sound         citySound() (Sound PR B): the traffic, sirens, ships and their horns, aircraft, the fountain, the
+ *                 civic bells and the opening bridges, each heard where it is (games/engine.js voice pools).
  * Navigation (3.1, every 3D City, v1 too): the minimap (games/hqminimap.js), the Go to panel and the route banner
  * (hqnavui.js, N or the Go to button), chevrons and a pillar (hqroutefx.js) along hqnav.js's road route; while a
  * menu or the panel is open no key reaches the page's shortcuts or moves you.
@@ -388,11 +390,143 @@ function simZones(zones){
 // the presence room: a world's own where the Arena knows rooms per world ("isles"), else the 3D City's
 function netRoom(world, isles){ return isles && worldOk(world) ? "city3d:" + world : "city3d"; }
 
+/* ---------- [Sound PR B] the City's world sounds (games/engine.js spatial sound) ----------
+   citySound() -> {update(src), stop()}, or null without the engine. Each frame w.update hands it the frame's sources in
+   scene metres, once everything has moved; each kind sounds through a voice pool (only the nearest few play, each one
+   fading with its distance and panned to its side of the camera) or a loop at its place:
+     traffic    traffic.js at() poses (and the v1 streets' cars, the apron's vehicles): the cars' and the emergency
+                vehicles' engines (vehicle, 6 voices), the buses' (bus), the trams' traction motors at their nearer
+                section (tram); all of them together the city's hum (hum: from their middle, louder the more there are)
+     sirens     traffic.js sirens(): a run's two-tone on its way to the scene (siren)
+     ships      [{id, x, y, z, speed}] the ferries, cruise and cargo ships: their engines' hum (boat, 2 voices, sharing the
+                kind's 3 with the water buses' pool in games/hqferries.js)
+     horns      [{key, name, x, y, z}] a ship sailing this frame: its horn, once (horn)
+     planes     [{id, x, y, z, voice: "jet" | "prop", phase}] the airliners, hoppers and seaplanes, and the scenic
+                airliners up high: their engines by flight phase (plane: through the Ambient sounds volume)
+     fountains  [{id, x, y, z}] a fountain's falling water (fountain)
+     helis      [{id, x, y, z, rpm}] the helicopter on an HQ's roof (games/hqtower.js B.sounds), its rotor (heli)
+     bells      [{id, x, y, z, kind, seed}] games/hqcivic.js's belfries, struck on their hours by localMs, the local wall
+                clock (civicbell: one held voice per tower while it rings)
+     bridges    games/hqbridges.js sounds(): the warning bell on each beat of the lamps (bell), the machinery while the
+                span moves (gondola: a pool, sharing the kind's 2 voices with the gondola's and the rides')
+   NPC engines run in comfort mode (city driving: no overrun crackle). Nothing plays with src.under (below the street:
+   nothing up there is heard), without a listener or at sfx volume 0, and the aircraft, the hum and the fountains not
+   at Ambient sounds 0% either. Your own trip's door, sailing and arrival chimes (shipSfx) stay centred. */
+var PLANE_PWR = {pushback: [1500, 0.05], taxi: [2600, 0.12], hold: [2300, 0.08], lineup: [3200, 0.25], takeoff: [7400, 1],
+                 climb: [7100, 0.9], cruise: [6200, 0.6], descent: [3600, 0.2], approach: [4600, 0.35], flare: [3800, 0.25],
+                 rollout: [6400, 0.75], exit: [2800, 0.15]};    // [game rpm, throttle] by hqair.js flight phase
+function citySound(){
+  var E = HQV.engine;
+  if(!E || typeof E.pool !== "function" || typeof E.engineSound !== "function") return null;
+  function voice(s){ var T = HQV.traffic; return T && T.soundOf ? T.soundOf(s) : {voice: "turbo", rpm: 2000}; }
+  function ride(){ var A = E.audioOut ? E.audioOut() : null, R = HQV.hqRide; return A && R && typeof R.sfx === "function" ? {A: A, R: R} : null; }
+  function loop(name){ return typeof E.loop === "function" ? E.loop(name) : null; }
+  function hears(kind, p){ return typeof E.hear === "function" && !!E.hear(kind, p); }
+  function jet(s){ return s.voice === "prop" ? "prop" : "jet"; }
+  var P = {
+    vehicle: E.pool("vehicle", {voices: 6, key: function(s){ return voice(s).voice; }, make: function(s){ return E.engineSound(voice(s).voice); },
+                                play: function(h, s){ h.set(voice(s).rpm, {speed: s.speed, pos: s, sk: "vehicle", mode: "comfort"}); }}),
+    bus: E.pool("bus", {key: function(){ return "bus"; }, make: function(){ return E.engineSound("diesel"); },
+                        play: function(h, s){ h.set(voice(s).rpm, {speed: s.speed, pos: s, sk: "bus", mode: "comfort"}); }}),
+    tram: E.pool("tram", {key: function(){ return "tram"; }, make: function(){ return loop("tram-run"); },
+                          play: function(h, s){ h.set(1, {pos: s, speed: s.speed}); }}),
+    siren: E.pool("siren", {key: function(){ return "siren"; }, make: function(){ return loop("siren"); }, play: function(h, s){ h.set(1, {pos: s}); }}),
+    boat: E.pool("boat", {voices: 2, key: function(){ return "hum"; },
+                          make: function(s){ var r = ride(); return r ? r.R.sfx(r.A.ctx, "engine-hum", {pos: s, speed: s.speed, kind: "boat", dest: r.A.out}) : null; },
+                          play: function(h, s){ h.set({pos: s, speed: s.speed}); }}),
+    plane: E.pool("plane", {key: jet, make: function(s){ return E.engineSound(jet(s)); },
+                            play: function(h, s){ var w = Object.prototype.hasOwnProperty.call(PLANE_PWR, s.phase) ? PLANE_PWR[s.phase] : PLANE_PWR.cruise;
+                                                  h.set(w[0], {thr: w[1], pos: s, sk: "plane"}); }}),
+    motor: E.pool("gondola", {key: function(){ return "motor"; }, make: function(){ return E.noiseLoop ? E.noiseLoop(110, 0.8, "gondola") : null; },
+                              play: function(h, s){ h.set(0.22, 0, s); }}),
+    heli: E.pool("heli", {key: function(){ return "rotor"; }, make: function(){ return E.engineSound("rotor"); },
+                          play: function(h, s){ h.set(+s.rpm || 2800, {pos: s, sk: "heli"}); }})
+  };
+  var hum = null, falls = {}, towers = {}, beats = {}, lastLocal = null;
+  // a tram is 27 m long: heard from its section nearer the ears
+  function nearer(v, L){
+    var S = v.parts; if(!L || !S || !S.length) return v;
+    var q = S[0], best = Infinity;
+    for(var i = 0; i < S.length; i++){ var d = Math.hypot(S[i].x - L.x, S[i].z - L.z); if(d < best){ best = d; q = S[i]; } }
+    return {id: v.id, x: q.x, y: q.y, z: q.z, speed: v.speed};
+  }
+  function update(src){
+    src = src || {};
+    // nothing is heard below the street, without ears or at volume 0 (the ambient kinds not at Ambient sounds 0% either)
+    var L = E.listenerAt ? E.listenerAt() : null, up = !src.under && !!L && !(E.sfxVolume && E.sfxVolume() <= 0);
+    var amb = up && (!E.ambientOn || E.ambientOn()), list = up && Array.isArray(src.traffic) ? src.traffic : [];
+    var car = [], bus = [], tram = [], n = 0, cx = 0, cy = 0, cz = 0;
+    for(var i = 0; i < list.length; i++){
+      var v = list[i]; if(!v || !isFinite(v.x) || !isFinite(v.z)) continue;
+      if(v.kind === "bus") bus.push(v); else if(v.kind === "tram") tram.push(nearer(v, L)); else car.push(v);
+      n++; cx += v.x; cy += +v.y || 0; cz += v.z;
+    }
+    P.vehicle.update(car); P.bus.update(bus); P.tram.update(tram);
+    P.siren.update(up && Array.isArray(src.sirens) ? src.sirens.filter(function(s){ return s && s.siren && s.wail !== false; }) : []);
+    P.boat.update(up && Array.isArray(src.ships) ? src.ships : []);
+    P.plane.update(amb && Array.isArray(src.planes) ? src.planes : []);
+    P.heli.update(up && Array.isArray(src.helis) ? src.helis : []);
+    var mid = amb && n ? {x: cx/n, y: cy/n + 2, z: cz/n} : null;
+    if(mid && hears("hum", mid) && (hum || (hum = loop("hum")))) hum.set(Math.min(1, Math.sqrt(n)/8), {pos: mid});
+    var r = up ? ride() : null;
+    (up && r && Array.isArray(src.horns) ? src.horns : []).forEach(function(h){
+      if(h && h.name) r.R.sfx(r.A.ctx, h.name, {pos: h, kind: "horn", key: h.key, dest: r.A.out});
+    });
+    (amb && Array.isArray(src.fountains) ? src.fountains : []).forEach(function(f){
+      if(!f || !hears("fountain", f)) return;
+      var id = f.id != null ? String(f.id) : "fountain", h = falls[id] || (falls[id] = loop("fountain"));
+      if(h) h.set(1, {pos: f});
+    });
+    bells(src, up);
+    var spans = [];
+    (Array.isArray(src.bridges) ? src.bridges : []).forEach(function(b){
+      if(!b || b.id == null) return;
+      var k = String(b.id), last = beats[k];
+      beats[k] = b.bell ? b.beat : null;                         // the lamps off: the next flash strikes at once
+      if(up && b.bell && (last == null || b.beat !== last) && E.sfxAt) E.sfxAt("bell", b.bell, {kind: "bell", key: "bridge:" + k});
+      var m = b.motor;                                           // the machinery while the span moves: the nearest in the pool
+      if(up && m && isFinite(m.x) && isFinite(m.z)) spans.push({id: "bridge:" + k, x: m.x, y: m.y, z: m.z});
+    });
+    P.motor.update(spans);
+  }
+  // the belfries: each strike due since the last frame into the tower's held voice (made with its first strike), the
+  // voice moved with the ears while it rings and ended once its last strike has died away. A strike due while the
+  // audio is suspended (before your first click, or the system's) is dropped: its clock is frozen, so every one queued
+  // there would sound at once when it wakes
+  function bells(src, up){
+    var C = HQV.hqCivic, now = +src.localMs;
+    if(C && typeof C.due === "function" && typeof C.ring === "function" && isFinite(now)){
+      if(up && lastLocal != null && now > lastLocal && now - lastLocal < 2000) (Array.isArray(src.bells) ? src.bells : []).forEach(function(b){
+        if(!b || b.id == null) return;
+        var T = towers[b.id] || (towers[b.id] = {V: null, until: 0});
+        T.at = b;
+        C.due(b, lastLocal, now).forEach(function(s){
+          if(!T.V && E.spatialOut) T.V = E.spatialOut("civicbell", b, {hold: true});
+          if(T.V && T.V.ctx && T.V.ctx.state === "running" && C.ring(T.V, s.f, s.g, s.d, 0)) T.until = Math.max(T.until, s.at + s.d*1000);
+        });
+      });
+      lastLocal = now;
+    }
+    Object.keys(towers).forEach(function(id){
+      var T = towers[id]; if(!T.V) return;
+      if(!up || !(now <= T.until)){ T.V.end(0.1); T.V = null; } else T.V.move(T.at);
+    });
+  }
+  function stop(){
+    Object.keys(P).forEach(function(k){ try { P[k].stop(); } catch(e){} });
+    if(hum){ hum.stop(); hum = null; }
+    Object.keys(falls).forEach(function(k){ if(falls[k]) falls[k].stop(); });
+    Object.keys(towers).forEach(function(k){ if(towers[k].V) towers[k].V.end(0.1); });
+    falls = {}; towers = {}; beats = {}; lastLocal = null;
+  }
+  return {update: update, stop: stop};
+}
+
 HQV.hqCity3d = {assign: assign, placeLot: placeLot, placeView: placeView, toWorld: toWorld, pickAt: pickAt, segBox: segBox,
   snapShadow: snapShadow, hqKey: hqKey, keepMesh: keepMesh, HQ_DOOR: HQ_DOOR, VIEW_DOOR: VIEW_DOOR, HQ_FAR: HQ_FAR,
   COMMONS: COMMONS, COMMONS_V2: COMMONS_V2, isCommons: isCommons, olderOf: olderOf, samePlace: samePlace, ownerOf: ownerOf, islandOf: islandOf, worldOk: worldOk, frontOf: frontOf, assignRanks: assignRanks,
   assignIsland: assignIsland, garagePlace: garagePlace, grandOf: grandOf, roomOf: roomOf, hqFoot: hqFoot, civicSites: civicSites, doorOf: doorOf, backOf: backOf, terminalAt: terminalAt, stopMenu: stopMenu,
-  waitText: waitText, travelPlaces: travelPlaces, netRoom: netRoom, simZones: simZones, cityStats: cityStats};
+  waitText: waitText, travelPlaces: travelPlaces, netRoom: netRoom, simZones: simZones, cityStats: cityStats, citySound: citySound};
 // Which world the next City is built on, and where you arrive in it (games/hq3d.js goCity). A trip
 // that is still landing (a plane) rides across the rebuild in NAV.trip.
 var NAV = {world: null, spawn: null, trip: null};
@@ -1044,6 +1178,7 @@ HQV.hqWorlds.city3d = function(c, w){
     sea.land = function(x, z){ return coast(x, z) || (decks.length > 0 && HQV.hqCivic.deckAt(decks, x, z) != null); };
     var river = HQV.ocean.riverOf(doc), riverY = HQV.ocean.RIVER_Y || 0;     // the river is calm water, RIVER_Y up
     try { oc = HQV.ocean.mount(c, S); oc.g.position.y = sea.y; if(oc.setRiver) oc.setRiver(river); if(wb && wb.sea) wb.sea.visible = false; } catch(e){ oc = null; }
+    if(oc && oc.setCoast){ try { oc.setCoast(HQV.ocean.coastOf(doc)); } catch(e){} }   // [Sound PR B] the surf on the coast, @1 and @2 too
     if(oc && oc.setWater && HQV.ocean.waterOf){ try { oc.setWater(HQV.ocean.waterOf(doc)); } catch(e){} }   // [3.15] wakes on the lakes, canals and marina
     S.add(boatG);
     if(HQV.hqboat) sea.docks.forEach(function(d, n){
@@ -1569,7 +1704,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var AF = HQV.hqAirfield, AP3 = HQV.hqAirport3d, ABL = HQV.hqAirbldg, AGR = HQV.hqAirground;
   var apL, apP = null, ap3 = null, apB = null, apV = null, apFleet = null, apRects = null, apLevel = -1, apYRef = null;
   var apTr = null, apCtx = null, apDests = null, apIsles = {}, apVehT = 0, apSlowT = -1, apFleetKey = "", apBoardKey = "", apCivic = null;
-  var apPerf = {n: 0, ms: 0, last: 0}, apComm = null, apPlanes = [];
+  var apPerf = {n: 0, ms: 0, last: 0}, apComm = null, apPlanes = [], apGround = null;   // apGround: the apron's vehicles as drawn ([sound])
   var AP_REACH = 1240, AP_NEAR = 600, AP_MID = 1800, AP_HYST = 50, AP_VEH_DT = 1/30, AP_JET_FAR = 40000;   // the jets' far ends: past the horizon, so they cruise away
   var AP_AIRWAYS = ["Far Shoals", "Westmark", "Long Reef", "Cape Token", "Driftholm"];      // the jets' invented far ends
   // this city's airfield layout (the Commons; no other site fits one), once per city; null without one
@@ -1692,18 +1827,20 @@ HQV.hqWorlds.city3d = function(c, w){
       apB.setBridge(id, out ? 1 : 0);
     });
     if(apB) apB.update(dt, t, 1);
-    ap3.update(dt, t, cam && cam.x != null ? {position: {x: cam.x, y: cam.y, z: cam.z}} : null);
+    // [Sound PR B] with the parked jets as drawn (yours is heard on its own) and this frame's offset: their APUs on the stands
+    ap3.update(dt, t, cam && cam.x != null ? {position: {x: cam.x, y: cam.y, z: cam.z}} : null, {parked: apParkedList(tr, hp)}, hp);
     apParked(tr, hp);
     apPlanes = apGroundPlanes(tr, hp);
     // the vehicles: at the apron (level 2, within 900 m of it), 30 times a second at most
     if(apV){
       var ce = apV.centre, near = apLevel >= 2 && cam && cam.x != null && Math.hypot(cam.x - ce[0], cam.z - ce[1]) <= (apV.HIDE_BEYOND || 900);
       apV.setVisible(near);
+      if(!near) apGround = null;
       apVehT += dt;
       if(near && apVehT >= AP_VEH_DT){
         apVehT = 0;
         var ahead = function(e, d){ return e && e.R && e.pose ? AIR.aheadOf(e.R, e.pose.along, d) : null; };
-        try { apV.set(AGR.poses(L, tr.stands, tr.moving, now, ahead, {cx: hp.x, cz: hp.z})); } catch(e){ apErr(e); apV.setVisible(false); }
+        try { apV.set(apGround = AGR.poses(L, tr.stands, tr.moving, now, ahead, {cx: hp.x, cz: hp.z})); } catch(e){ apGround = null; apErr(e); apV.setVisible(false); }
       }
     }
     var mine = F && airMine(F) ? F.mvId : null;
@@ -1816,6 +1953,7 @@ HQV.hqWorlds.city3d = function(c, w){
   function placePlane(P, p, kind, t, dt){
     var hp = hereArch(), x = p.x - hp.x, z = p.z - hp.z, y = p.y, land = kind === "jet" || (apL && AF.floorAt(apL, x, z) != null);
     if(kind !== "jet" && !p.air && !land) y = Math.max(y, waterY(x, z, t) - 0.15);
+    P.phase = p.phase;                                                   // [sound] its engines follow the flight's phase
     P.place(p, x, y, z);
     P.update(dt, t, night, p.gear, p.speed, p.phase, {surface: land ? "land" : "water"});
   }
@@ -3166,7 +3304,8 @@ HQV.hqWorlds.city3d = function(c, w){
     [mm && mm.el, nui && nui.root, goBtn, ui, statsEl].forEach(function(el){ if(el && el.style){ el.hidden = !on; el.style.display = on ? "" : "none"; } });
     if(!on){ closeMenu(); if(nui) nui.close(); }
   }
-  w.onLeave = function(){ overlays(false); };
+  w.onLeave = function(){ overlays(false); soundStop(); };      // [Sound PR B] the City's voices go with you
+  w.soundPause = function(){ soundStop(); };                   // ...and with a paused view (hq3d inst.pause); the next frame rebuilds them
   w.onEnter = function(){ overlays(true); if(transit && transit.activate) transit.activate(); };
   w.mapWaypoint = function(x, z){ return navPick(x, z); };
   w.navGraph = function(){ return W && HQV.hqnav ? navGraph() : null; };   // [autopilot] the roads a car follows with no route
@@ -3253,6 +3392,7 @@ HQV.hqWorlds.city3d = function(c, w){
     S.remove(staticG); S.remove(hqG);
     citiesDestroy();
     navDestroy();
+    soundStop();                                                   // [Sound PR B]
   };
 
   /* ---------- the world contract ---------- */
@@ -3455,6 +3595,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(stx) stx.update(t, dt, cam);
     if(wx) weatherApply(wx.update(t, dt, cam));
     navStep(dt, cam);
+    try { soundStep(); } catch(e){}                                                 // [Sound PR B] everything heard where it is
   };
   // The weather dims the sun and the sky light, pulls the fog in and tints it, leans the sky to its overcast and
   // lights everything for a moment under lightning; the sky is repainted only when how it looks changes.
@@ -3470,6 +3611,76 @@ HQV.hqWorlds.city3d = function(c, w){
     var key = (night ? "n" : "d") + Math.round(wl.tintK*40) + ":" + wl.tint + ":" + Math.round(f*10) + ":" + (wl.cloud > 0.75 ? 1 : 0);
     if(key !== wxKey){ wxKey = key; paintSky(night, wl); }
   }
+  /* ---------- [Sound PR B] this frame's sound sources, in scene metres, for citySound (above) ---------- */
+  var snd = null, sndMs = 0;
+  var APRON_V = {drive: 6, lead: 8, off: 8, "return": 3, push: 1, work: 0};     // m/s by phase: an apron vehicle's revs (parked: off)
+  function soundStep(){
+    var E = HQV.engine, L = E && E.listenerAt ? E.listenerAt() : null;
+    if(!L || (c.active && !c.active(w))) return;
+    if(!snd && !(snd = citySound())) return;
+    var now = Date.now(), last = sndMs || now, SH = HQV.hqShips;
+    sndMs = now;
+    var src = {under: !!(transit && transit.under && transit.under()), localMs: now - new Date(now).getTimezoneOffset()*60000,
+               traffic: (callTraffic || []).slice(), sirens: tsim && tsim.sirens ? tsim.sirens(now, L, 650) : callTraffic || [],
+               ships: [], horns: [], planes: [], fountains: fount && fount.at ? [fount.at] : [], bells: [],
+               bridges: bridges && bridges.sounds ? bridges.sounds(L.x, L.z) : []};
+    cars.forEach(function(cr, i){ var p = cr.g.position; src.traffic.push({id: "street:" + i, kind: "car", x: p.x, y: p.y, z: p.z, speed: cr.turn > 0 ? 2 : cr.v}); });
+    (apGround || []).forEach(function(q, i){
+      if(!q || q.type === "cart" || !Object.prototype.hasOwnProperty.call(APRON_V, q.phase)) return;
+      src.traffic.push({id: "apron:" + (q.id || q.type + i), kind: q.type === "bus" ? "bus" : "car", voice: q.type === "followme" ? "turbo" : "diesel",
+                        x: q.x, y: q.y, z: q.z, speed: APRON_V[q.phase]});
+    });
+    // a hull is heard from the nearest point of its keel (a cruise ship is 120 m long); its horn from its funnel
+    function hull(F, id, half){
+      if(!F || !F.g || !F.g.visible) return;
+      var p = F.g.position, ax = Math.sin(F.g.rotation.y), az = Math.cos(F.g.rotation.y), u = Math.max(-half, Math.min(half, (L.x - p.x)*ax + (L.z - p.z)*az));
+      src.ships.push({id: id, x: p.x + ax*u, y: p.y + 2, z: p.z + az*u, speed: F.speed || 0});
+    }
+    function horn(kind, key, x, y, z, yaw){
+      var H = SH && SH.SOUND && SH.SOUND[kind]; if(!H) return;
+      var a = H.at, cs = Math.cos(yaw), sn = Math.sin(yaw);
+      src.horns.push({key: key, name: H.horn, x: x + a[0]*cs + a[2]*sn, y: y + a[1], z: z - a[0]*sn + a[2]*cs});
+    }
+    ferryPool.forEach(function(F, i){ hull(F, "ferry:" + i, SH ? SH.LENGTH/2 : 19); });
+    hull(myFerry, "ferry:mine", SH ? SH.LENGTH/2 : 19);
+    if(VOY && ferryRoutes && now > last && now - last < 2000){            // a ferry sailing from this berth (yours too)
+      var hp = hereArch();
+      ferryRoutes.forEach(function(r){
+        VOY.sailings(worldId, r.to.world, now, now - last, 0).forEach(function(dep){
+          if(dep <= last) return;
+          var p = VOY.poseAt(r.out, 0);
+          horn("ferry", "berth:" + worldId, p.x - hp.x, sea ? sea.y : 0, p.z - hp.z, p.yaw);
+        });
+      });
+    }
+    // the cruise and cargo ships (yours at your own pace): a horn as one weighs anchor
+    if(bigFleet && VOY) bigFleet.cruise.concat(bigFleet.cargo).forEach(function(sh){
+      var C = NAV.cruise, own = !!(C && C.city === worldId && C.phase === "aboard" && C.kind === sh.kind && C.k === sh.k), F = own ? myCruise : bigShips[sh.kind + sh.k];
+      if(!F) return;
+      if(!F.g.visible){ F.sndT = null; return; }
+      hull(F, "big:" + (own ? "mine" : sh.kind + sh.k), bigHalf(sh.kind));
+      var tl = VOY.loopT(sh, now, own ? C.warp : 0), t0 = F.sndT;
+      F.sndT = tl;
+      if(t0 != null && tl > t0 && tl - t0 < 2 && sh.R.stops.some(function(st){ return t0 < st.t1 && st.t1 <= tl; }))
+        horn(sh.kind, "big:" + sh.kind + sh.k, F.g.position.x, F.g.position.y, F.g.position.z, F.g.rotation.y);
+    });
+    function craft(P, id, v){ if(P && P.g && P.g.visible){ var p = P.g.position; src.planes.push({id: id, x: p.x, y: p.y, z: p.z, voice: v, phase: P.phase || "cruise"}); } }
+    ["jet", "sea", "amphib"].forEach(function(k){ (airPool[k] || []).forEach(function(P, i){ craft(P, k + ":" + i, k === "jet" ? "jet" : "prop"); }); });
+    airAmbPool.forEach(function(P, i){ craft(P, "amb:" + i, "jet"); });
+    if(NAV.flight && airMine(NAV.flight)) craft(myPlane, "plane:mine", NAV.flight.kind === "jet" ? "jet" : "prop");
+    civics.forEach(function(B){ (B.bells || []).forEach(function(b){ src.bells.push(b); }); });
+    // each HQ's rooftop helicopter (games/hqtower.js B.sounds, in its lot's frame), heard while it is drawn (a far tower
+    // shows its masses only)
+    src.helis = [];
+    hqs.forEach(function(H){
+      var q = H.g && H.g.visible && H.B && H.B.sounds && !(H.B.lod && H.B.lod()) ? H.B.sounds() : null, hh = q && q.heli;
+      if(!hh || !H.h) return;
+      var wp = toWorld(H, hh.x, hh.z);
+      src.helis.push({id: "heli:" + H.h.userId, x: wp.x, y: (+H.y || 0) + PAD_UP + hh.y, z: wp.z, rpm: hh.rpm});
+    });
+    snd.update(src);
+  }
+  function soundStop(){ if(snd){ try { snd.stop(); } catch(e){} snd = null; } sndMs = 0; }
   w.setTime(night);
   return w;
 };

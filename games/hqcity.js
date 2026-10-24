@@ -315,12 +315,33 @@ HQV.hqWorlds.city = function(c, w){
     if(s < 2*ax) return {x: ax - s, z: az, dx: -1, dz: 0}; s -= 2*ax;
     return {x: -ax, z: az - s, dx: 0, dz: -1};
   }
+  // [Sound PR B] the street heard where it is (games/hqbase.js streetSound): the cars round the edge of the city, the
+  // plaza fountain, and each HQ's helicopter on its roof (its tower's B.sounds, from the lot's frame to the street's)
+  var snd = null;
+  function soundStep(k){
+    var E = HQV.engine;
+    if(!E || !E.listenerAt || !E.listenerAt()) return;
+    if(!snd && !(snd = HQV.hqStreetSound ? HQV.hqStreetSound() : null)) return;
+    var src = {cars: [], fountains: fount && fount.at ? [fount.at] : [], helis: []};
+    cars.forEach(function(cr, i){ var p = cr.g.position; src.cars.push({id: "edge:" + i, x: p.x, y: 0.5, z: p.z, speed: Math.abs(cr.v*k)}); });
+    city.lots.forEach(function(L){
+      var q = L.B && L.B.sounds ? L.B.sounds() : null, hh = q && q.heli; if(!hh || !L.h) return;
+      var cr = Math.cos(L.rot), sr = Math.sin(L.rot);
+      src.helis.push({id: "heli:" + L.h.userId, x: L.x + hh.x*cr + hh.z*sr, y: hh.y, z: L.z - hh.x*sr + hh.z*cr, rpm: hh.rpm});
+    });
+    snd.update(src);
+  }
+  function soundStop(){ if(snd){ try { snd.stop(); } catch(e){} snd = null; } }
+  w.onLeave = function(){ soundStop(); };        // its voices go with you (the next visit makes them again)
+  w.soundPause = function(){ soundStop(); };     // ...and with a paused view (hq3d inst.pause)
+  w.destroy = function(){ soundStop(); };
   w.update = function(t, dt, k){
     fadeAcc += dt; if(fadeAcc > 0.15){ fadeAcc = 0; cutaway(); }
     lotsB.concat(viewsB).forEach(function(B){ B.animate(t, dt, k); });
     if(fount) fount.step(t);
     cars.forEach(function(cr){ cr.s += cr.v*dt*k; var p = rectAt(cr.s, cr.ax, cr.az), sg = cr.v < 0 ? -1 : 1;
       cr.g.position.set(p.x, 0, p.z); cr.g.rotation.y = Math.atan2(-p.dz*sg, p.dx*sg); });
+    soundStep(k);
   };
   return w;
 };

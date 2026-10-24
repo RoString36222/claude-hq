@@ -4,7 +4,8 @@ node loads hqride.js (and world.js for station names) against a stub `window` an
 Services with exact timetables: the planner picks the fastest, keeps the change minimum and the underground add,
 caps the options at 3 and plans an Island Link leg to a world; the session advances by time (walk, wait, board,
 seated, alight, done), picks seats by the rules (window on the pavement side, any seat, standing at the rail),
-alights early on request and gives a level, still seat camera under Calm; station names are unique and
+plays its door cues as yours (from the door you board at, then your seat), alights early on request and gives a
+level, still seat camera under Calm; station names are unique and
 deterministic on the @2 fixture; the announcer never uses a non-local voice; tickets and achievements persist
 through a fake localStorage and survive a throwing one. Skipped when node is not installed. Stdlib only."""
 import json
@@ -84,22 +85,30 @@ out.planToStop = R.plan({x: 0, z: 0}, {stop: "m1"}, T0, {modes: ["metro"]}).map(
 // ---- the session ----
 var C = {occ: null}; window.HQV.hqCommute = {occupied: function(){ return C.occ || {seats: [], standing: []}; }};
 function ride(o){
-  var said = [], ended = [], under = [], travel = [];
+  var said = [], ended = [], under = [], travel = [], snd = [], clock = {ms: 0};
   var t = o.trip || tram.trip("T1", "a0", "a2", T0);
   var s = R.session({trip: t, announce: function(x){ said.push(x); }, calm: function(){ return o.calm !== false; },
-    me: function(){ return o.me || {x: 0, z: 0}; }, onEnd: function(r){ ended.push(r); }, sfx: function(){},
+    me: function(){ return o.me || {x: 0, z: 0}; }, onEnd: function(r){ ended.push(r); },
+    sfx: function(n, so){ snd.push({n: n, kind: so && so.kind || null, pos: so && so.pos || null, ms: clock.ms}); },
     under: function(on){ under.push(on); }, travel: function(tr){ travel.push(tr.world); }});
-  return {s: s, t: t, said: said, ended: ended, under: under, travel: travel};
+  return {s: s, t: t, said: said, ended: ended, under: under, travel: travel, snd: snd, clock: clock};
 }
 C.occ = null;
 var r1 = ride({}), ph = [];
 [[-60, null], [0, null], [0.6, "carry"], [1.3, "carry"], [50, null], [105, null], [200, null], [200.6, "carry"], [201.3, null]].forEach(function(st){
-  var ms = T0 + st[0]*S; r1.s.step(ms);
+  var ms = T0 + st[0]*S; r1.clock.ms = ms; r1.s.step(ms);
   var e = [st[0], r1.s.phase];
   if(st[1]){ var c = r1.s.carry(ms); e.push(c ? c.anim : null, c && c.hands || null); }
   ph.push(e);
 });
-out.session = {phases: ph, ended: r1.ended, said: r1.said};
+// each sound, its kind and where it is: "door" (the door you board at, then), "seat" (your seat, then) or null (centred)
+var seat1 = r1.s.info().seat;
+function where(e){
+  if(!e.pos) return null;
+  var d = r1.t.door(e.ms), s = r1.t.seat(seat1, e.ms);
+  return Math.hypot(e.pos.x - d.x, e.pos.z - d.z) < 1e-9 ? "door" : Math.hypot(e.pos.x - s.x, e.pos.z - s.z) < 1e-9 ? "seat" : "elsewhere";
+}
+out.session = {phases: ph, ended: r1.ended, said: r1.said, sounds: r1.snd.map(function(e){ return [(e.ms - T0)/S, e.n, e.kind, where(e)]; })};
 // seat choice and the camera, Calm on
 var r2 = ride({}); r2.s.step(T0 - 10*S); r2.s.step(T0); r2.s.step(T0 + 1.3*S);
 var info2 = r2.s.info(T0 + 50*S), seatAt = r2.t.seat(info2.seat, T0 + 50*S), seatAt2 = r2.t.seat(info2.seat, T0 + 80*S);
@@ -218,6 +227,12 @@ var aliveFed = l1.alive(), madeFed = lc.made.n - ln;
 lc.currentTime += 5; var aliveLeft = l1.alive(), l2 = R.sfx(lc, "motor", {speed: 0.6});
 var l3 = R.sfx(lc, "rotor", {gain: 0.4}), st = R.sfx(lc, "rotor", {stop: true});
 out.loops = {same: same, aliveFed: aliveFed, madeFed: madeFed, aliveLeft: aliveLeft, fresh: !!l2 && l2 !== l1, stopNull: st === null, rotorDead: !l3.alive()};
+// a placed loop (opts.pos) is one voice per handle (two trains: two motors), and an unplaced ask takes neither; an
+// unplaced handle that stopped and was replaced sets the name's live voice instead of starting a second
+var pc = fakeCtx(), pa = R.sfx(pc, "motor", {pos: {x: 0, z: 10}, speed: 3}), pb = R.sfx(pc, "motor", {pos: {x: 0, z: 40}, speed: 3});
+var un = R.sfx(pc, "motor", {speed: 3}), two = !!pa && !!pb && pa !== pb && !!un && un !== pa && un !== pb;
+pc.currentTime += 5; var un2 = R.sfx(pc, "motor", {speed: 4}), pn0 = pc.made.n; un.set({speed: 5});
+out.placed = {two: two, fwd: pc.made.n === pn0 && un2 !== un && un2.alive() && !un.alive(), revived: (pa.set({pos: {x: 0, z: 12}}), pa.alive())};
 out.sfx = {sounds: sounds, mute: R.sfx(fakeCtx(), "door-chime", {mute: true}), noCtx: R.sfx(null, "door-chime"), unknown: R.sfx(fakeCtx(), "explosion"), zero: R.sfx(fakeCtx(), "ring", {gain: 0})};
 
 // ---- tickets and achievements: persisted, and surviving a throwing localStorage ----
@@ -336,6 +351,14 @@ class HqRideTest(unittest.TestCase):
         self.assertIn("Next stop: a2. This is your stop.", said)
         self.assertNotIn("coins", said.lower())                    # D4: free
         self.assertNotIn("fare", said.lower())
+
+    def test_session_door_cues_are_yours(self):
+        # your vehicle's doors are your own things (kind "own": full level while the camera rides with you): from the
+        # door you board at, then from your seat; never the vehicle's pose (its middle: far from an end car of a long
+        # train, or from the chase camera). The validator is centred
+        self.assertEqual(self.r["session"]["sounds"], [[0, "tram-bell", "own", "door"], [0, "validator", None, None],
+                                                       [50, "door-chime", "own", "seat"], [50, "door-hiss", "own", "seat"],
+                                                       [200, "door-chime", "own", "seat"]])
 
     def test_seat_choice(self):
         s = self.r["seats"]
@@ -468,7 +491,9 @@ class HqRideTest(unittest.TestCase):
             self.assertTrue(ok, name)
             self.assertGreater(nodes, 1, name)
         for want in ("door-chime", "door-hiss", "validator", "stop-bell", "tram-bell", "air-brake", "motor", "rail-joint",
-                     "tunnel-rumble", "gondola-clunk", "ferry-horn", "indicator", "rotor", "ring", "dial", "shutter"):
+                     "tunnel-rumble", "gondola-clunk", "ferry-horn", "indicator", "rotor", "ring", "dial", "shutter",
+                     # Sound PR B: the names transit modules used to alias (or that were silent) have synths of their own
+                     "door", "hiss", "engine-hum", "gangway-clank", "water-lap", "gondola-rumble", "gondola-wind", "ship-horn"):
             self.assertIn(want, s["sounds"])
         self.assertIsNone(s["mute"])
         self.assertIsNone(s["noCtx"])
@@ -484,6 +509,12 @@ class HqRideTest(unittest.TestCase):
         self.assertTrue(L["fresh"])
         self.assertTrue(L["stopNull"])
         self.assertTrue(L["rotorDead"])            # {stop: true} ends the live one
+
+    def test_placed_loops_are_one_voice_per_handle(self):
+        p = self.r["placed"]
+        self.assertTrue(p["two"])                  # two trains' motors: two voices; an unplaced ask takes neither
+        self.assertTrue(p["fwd"])                  # a stopped unplaced handle sets the name's live voice: still one
+        self.assertTrue(p["revived"])              # a placed handle set() after it stopped sounds again
 
     # ---- tickets, achievements ----
     def test_tickets_persist_newest_30(self):

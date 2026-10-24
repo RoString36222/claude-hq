@@ -158,6 +158,17 @@ function nearestOn(P, x, z){
   }
   return best;
 }
+// the point of a polyline [{x, y, z}] nearest p ({x, z}), dy m up: where a 78 m train sounds from (its part beside you)
+function nearLine(line, p, dy){
+  var px = +(p && p.x) || 0, pz = +(p && p.z) || 0, bd = Infinity, best = line && line[0] ? {x: line[0].x, y: line[0].y, z: line[0].z} : {x: px, y: 0, z: pz};
+  for(var i = 0; line && i + 1 < line.length; i++){
+    var a = line[i], b = line[i + 1], ex = b.x - a.x, ez = b.z - a.z, l2 = ex*ex + ez*ez;
+    var u = l2 > 1e-9 ? clamp(((px - a.x)*ex + (pz - a.z)*ez)/l2, 0, 1) : 0, x = a.x + ex*u, z = a.z + ez*u, d = (px - x)*(px - x) + (pz - z)*(pz - z);
+    if(d < bd){ bd = d; best = {x: x, y: a.y + (b.y - a.y)*u, z: z}; }
+  }
+  best.y += +dy || 0;
+  return best;
+}
 
 function normalize(W, tier){
   var R = rawOf(W);
@@ -664,7 +675,7 @@ function layout(sim, W){
 
 HQV.hqMetro = {
   create: create, layout: function(sim){ return sim && sim.layout ? sim.layout() : null; },
-  normalize: normalize, legTime: legTime, legAt: legAt, pathAt: pathAt, nearestOn: nearestOn, runAt: runAt, linesText: linesText,
+  normalize: normalize, legTime: legTime, legAt: legAt, pathAt: pathAt, nearestOn: nearestOn, nearLine: nearLine, runAt: runAt, linesText: linesText,
   rect: rect, inRect: inRect, rLocal: rLocal, hash32: hash32,
   SEATS: SEATS, STAND: STAND, DOORS_Z: DOORS_Z,
   HEADWAY: HEADWAY, DWELL: DWELL, VMAX: VMAX, ACC: ACC, REV: REV, CARS: CARS, CAR_L: CAR_L, CAR_GAP: CAR_GAP, PITCH: PITCH, TRAIN_L: TRAIN_L,
@@ -673,7 +684,9 @@ HQV.hqMetro = {
 
 /* ===================================================================================== drawing (THREE) ===
  * view(c, sim, opts) -> V. c: hq3d's ctx (THREE, scene or root, canvasTex, avatar); opts: {calm(), night(), sfx(name, o),
- * under() (the integrator's underground flag), me() -> {x, y, z} (the walker, else c.avatar())}.
+ * under() (the integrator's underground flag), me() -> {x, y, z} (the walker, else c.avatar())}. Sounds through
+ * opts.sfx with o.pos and o.kind (where they are: door chimes at each train, screen doors and gates where they stand,
+ * each train's motor and tunnel rumble as held loops in one pool, rail joints): see sounds() below.
  * Everything static is merged into vertex-coloured buffers, one draw per material class:
  *   surface (always on, <= 8 draws): opaque, atlas (signs and every lit strip, vertex colour on the atlas's white
  *   cell), glass; the trains (body, line band, windows, door leaves, end caps) are 5 instanced meshes shared with
@@ -827,7 +840,7 @@ function view(c, sim, opts){
     try { return !!(root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch(e){ return false; }
   }
   function night(){ try { return !!(opts.night && opts.night()); } catch(e){ return false; } }
-  function sfx(name, o){ try { if(opts.sfx) opts.sfx(name, o || {}); } catch(e){} }
+  function sfx(name, o){ try { if(opts.sfx) return opts.sfx(name, o || {}); } catch(e){} return null; }
   function me(){
     try { if(opts.me){ var m = opts.me(); if(m) return m; } } catch(e){}
     try { var a = c.avatar && c.avatar(); if(a) return {x: a.x, y: a.hy != null ? a.hy : null, z: a.z}; } catch(e){}
@@ -1503,11 +1516,15 @@ function view(c, sim, opts){
     var w = me(), nearest = null, nd = 1.6;   // one gate opens for the walker: the nearest within 1.6 m
     if(w) built.forEach(function(B){ B.gates.forEach(function(g){ var d = hyp(w.x - g.x, w.z - g.z); if(d < nd && (w.y == null || Math.abs(w.y - g.y) < 2)){ nd = d; nearest = g; } }); });
     built.forEach(function(B){
-      // the screen doors' double beep: once a train's doors start to open, heard within 60 m of the station
+      // the screen doors' double beep: once a train's doors start to open, heard within 60 m of the station, from the
+      // screen door on that side nearest the walker
       B.open = B.open || {};
       [1, -1].forEach(function(dir){
         var o2 = at[B.id + "|" + dir] || 0, st = Lay.byId[B.id];
-        if(o2 > 0 && !B.open[dir] && w && st && hyp(w.x - st.x, w.z - st.z) < 60) { sfx("validator", {screenDoors: true}); sfx("validator", {screenDoors: true, delay: 0.18}); }
+        if(o2 > 0 && !B.open[dir] && w && st && hyp(w.x - st.x, w.z - st.z) < 60){
+          var sp = screenDoorAt(B, dir, w);
+          sfx("validator", {screenDoors: true, pos: sp, kind: "door"}); sfx("validator", {screenDoors: true, delay: 0.18, pos: sp, kind: "door"});
+        }
         B.open[dir] = o2 > 0;
       });
       B.psd.forEach(function(p){
@@ -1523,7 +1540,7 @@ function view(c, sim, opts){
         var near = g === nearest;
         var target = near ? 1 : 0;
         g.open = snap ? target : g.open + clamp(target - g.open, -dt*3, dt*3);
-        if(near && !g.beep){ g.beep = true; sfx("validator"); }
+        if(near && !g.beep){ g.beep = true; sfx("validator", {pos: {x: g.x, y: g.y + 1, z: g.z}, kind: "door"}); }   // at the gate
         if(!near) g.beep = false;
         [-1, 1].forEach(function(lr){
           if(ng >= 400) return;
@@ -1575,21 +1592,83 @@ function view(c, sim, opts){
     for(var k = 0; k < CARS; k++){ var cp = sim.carPose(v, k); strip.mesh.setMatrixAt(k, carMatrix(cp)); }
     strip.mesh.count = CARS; strip.mesh.instanceMatrix.needsUpdate = true; strip.mesh.visible = true;
   }
+  // the screen door on side dir of a built station nearest p ({x, y?, z}): its beeper, over the opening
+  function screenDoorAt(B, dir, p){
+    var best = null, bd = Infinity;
+    B.psd.forEach(function(q){
+      if(q.dir !== dir) return;
+      var P = tf(q.F, q.lat, q.y + 2.2, q.z), dy = p.y != null ? P[1] - p.y : 0, d = (P[0] - p.x)*(P[0] - p.x) + (P[2] - p.z)*(P[2] - p.z) + dy*dy;
+      if(d < bd){ bd = d; best = {x: P[0], y: P[1], z: P[2]}; }
+    });
+    var st = Lay.byId[B.id];
+    return best || (st ? {x: st.x, y: st.y, z: st.z} : null);
+  }
+  /* ---- sound (Sound PR B): every train where it is, from the part of it nearest your ears (a train is 78 m long):
+     door chimes and hiss as its doors open and close (the door kind: 40 m); its motor while it moves and its rumble in
+     a tunnel as one pool of hqRide's held loops (games/engine.js pool, the metro kind: the two nearest trains within
+     250 m; each loop is set every frame and falls silent by itself when it is not, so none can pile up); the rail
+     joints under the trains that play. A train in a tunnel is heard below the street, one in the open above it, the
+     one you ride always. With no pool (an older engine): one set of loops, for your train else the nearest in 60 m. */
+  var E = HQV.engine, runP = null, run1 = null;
+  function earAt(){ var L = null; try { L = E && E.listenerAt ? E.listenerAt() : null; } catch(e){ L = null; } return L || lastCam; }
+  // a train's centre line at rail level: its front end, its cars' middles, its rear end
+  function trainLine(v){
+    var P = [];
+    for(var k = 0; k < CARS; k++){ var cp = sim.carPose(v, k); if(cp) P.push(cp); }
+    if(!P.length) return [{x: v.x, y: v.y, z: v.z}];
+    var a = P[0], b = P[P.length - 1], h = CAR_L/2;
+    return [{x: a.x + Math.sin(a.yaw)*h, y: a.y, z: a.z + Math.cos(a.yaw)*h}].concat(P, [{x: b.x - Math.sin(b.yaw)*h, y: b.y, z: b.z - Math.cos(b.yaw)*h}]);
+  }
+  // one train's running sound: hqRide's motor (above 0.5 m/s) and tunnel rumble (in a tunnel, above 3 m/s), each a
+  // held loop made once and set every frame with the train's place and speed (m/s)
+  function runner(){
+    var H = {"motor": null, "tunnel-rumble": null};
+    function keep(name, s, on){
+      if(!on) return;                                                // not set: its dead man's switch fades it out
+      var h = H[name];
+      if(!h || typeof h.set !== "function") h = H[name] = sfx(name, {pos: s, speed: s.speed, kind: "metro"});
+      if(h && typeof h.set === "function") h.set({pos: s, speed: s.speed});
+    }
+    return {
+      play: function(s){ keep("motor", s, s.speed > 0.5); keep("tunnel-rumble", s, s.under && s.speed > 3); },
+      stop: function(){ Object.keys(H).forEach(function(k){ var h = H[k]; H[k] = null; if(h && typeof h.stop === "function"){ try { h.stop(); } catch(e){} } }); }
+    };
+  }
+  if(E && typeof E.pool === "function"){
+    try { runP = E.pool("metro", {key: function(){ return "train"; }, make: function(){ return runner(); }, play: function(h, s){ h.play(s); }}); } catch(e){ runP = null; }
+  }
   function sounds(ms, dt, vs, cam){
     if(!opts.sfx) return;
-    var it = null;
-    vs.forEach(function(o){ if(o.v.id === focusId) it = o; });
-    if(!it) vs.forEach(function(o){ if(!o.v.depot && o.d < 60 && (!it || o.d < it.d)) it = o; });
-    if(!it) return;
-    var v = it.v, S = sndState[v.id] || (sndState = {}, sndState[v.id] = {doors: v.doors, s: v.s, joint: v.s, rumble: 0, motor: 0});
-    if(v.doors > 0 && S.doors <= 0){ sfx("door-chime"); sfx("door-hiss"); }
-    if(v.doors < 1 && S.doors >= 1) sfx("door-chime", {closing: true});
-    S.doors = v.doors;
-    S.motor += dt; if(S.motor > 0.5 && v.speed > 0.5){ S.motor = 0; sfx("motor", {speed: v.speed/VMAX}); }
-    if(v.id === focusId){
-      if(Math.abs(v.s - S.joint) > 18 && v.speed > 2){ S.joint = v.s; sfx("rail-joint", {speed: v.speed/VMAX}); }
-      S.rumble += dt; if(v.under && v.speed > 3 && S.rumble > 2.5){ S.rumble = 0; sfx("tunnel-rumble", {speed: v.speed/VMAX}); }
+    var ear = earAt(), next = {}, src = [], byId = {}, playing = [];
+    vs.forEach(function(o){
+      var v = o.v; if(v.depot) return;
+      var S = sndState[v.id] || {doors: v.doors, joint: v.s}, p = null;
+      next[v.id] = S;
+      if(v.id !== focusId && !!v.under !== isUnderOn){ S.doors = v.doors; S.joint = v.s; return; }   // through the ground: not heard
+      function at(){ return p || (p = nearLine(trainLine(v), ear, 1.5)); }
+      if(v.doors > 0 && S.doors <= 0){ sfx("door-chime", {pos: at(), kind: "door"}); sfx("door-hiss", {pos: at(), kind: "door"}); }
+      if(v.doors < 1 && S.doors >= 1) sfx("door-chime", {closing: true, pos: at(), kind: "door"});
+      S.doors = v.doors;
+      if(+v.speed > 0.5 && (v.id === focusId || hyp(v.x - ear.x, v.z - ear.z) < LOD_R)){   // a standing train has nothing to play
+        var q = at(), s = {id: v.id, x: q.x, y: q.y, z: q.z, speed: +v.speed || 0, under: !!v.under, d: hyp(q.x - ear.x, q.z - ear.z), v: v};
+        src.push(s); byId[v.id] = s;
+      }
+    });
+    sndState = next;
+    if(runP) playing = runP.update(src) || [];
+    else {
+      var one = focusId && byId[focusId] ? byId[focusId] : null;
+      if(!one) src.forEach(function(s){ if(s.d < 60 && (!one || s.d < one.d)) one = s; });
+      if(one){ (run1 || (run1 = runner())).play(one); playing = [one.id]; }
     }
+    // rail joints every 18 m above 2 m/s under the trains that play; the others start counting when they do
+    var on = {};
+    playing.forEach(function(id){
+      var s = byId[id], S = next[id]; if(!s || !S) return;
+      on[id] = 1;
+      if(Math.abs(s.v.s - S.joint) > 18 && s.speed > 2){ S.joint = s.v.s; sfx("rail-joint", {pos: s, speed: s.speed, kind: "metro"}); }
+    });
+    src.forEach(function(s){ if(!on[s.id]) next[s.id].joint = s.v.s; });
   }
   function update(ms, dt, cam){
     cam = cam || lastCam; dt = Math.min(0.25, Math.max(0, +dt || 0)); lastMs = ms; lastCam = {x: +cam.x || 0, y: +cam.y || 0, z: +cam.z || 0};
@@ -1667,6 +1746,8 @@ function view(c, sim, opts){
       chunks: chunkKey ? chunkKey.split(",").length : 0, stations: built.length, under: isUnderOn}; },
     tools: {shotCam: shotCam, chunks: function(){ return chunkKey ? chunkKey.split(",") : []; }},
     dispose: function(){
+      if(runP){ try { runP.stop(); } catch(e){} runP = null; }
+      if(run1){ run1.stop(); run1 = null; }
       if(root3.parent) root3.parent.remove(root3);
       disp.forEach(function(x){ try { x.dispose(); } catch(e){} }); disp = []; chunkCache = {}; stCache = {};
       Object.keys(boardTex).forEach(function(k){ boardTex[k].dispose(); }); boardTex = {};

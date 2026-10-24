@@ -315,6 +315,7 @@ function makeGame(host, opts){
     if(R3){ if(V.handle){ R3.removeCar(V.handle); V.handle = null; } if(V.ghost && V.ghost.handle){ R3.removeCar(V.ghost.handle); } Object.keys(V.others).forEach(function(u){ var o = V.others[u]; if(o.handle) R3.removeCar(o.handle); o.handle = null; }); }
     V.ghost = null; V.car = null; V.rec = null;
     if(eng){ eng.stop(); eng = null; } if(skid){ skid.stop(); skid = null; } if(gravel){ gravel.stop(); gravel = null; }
+    peersStop();
   }
   function buildStageFor(info, doc){
     var st = doc ? S.build({seed: doc.data.seed, biome: doc.data.biome, night: doc.data.night, length: doc.data.length, name: doc.name}, doc)
@@ -506,6 +507,38 @@ function makeGame(host, opts){
     o.x += (x - o.x)*k; o.y += (y - o.y)*k; o.z += (z - o.z)*k; o.yaw = E.angLerp(o.yaw, yaw, Math.min(1, k*1.5)); o.v = v; o.dr = A.dr;
     o.ang += v*dt/0.31;
   }
+  // [sound] the other drivers' engines, each where its car is: E.pool keeps the nearest few ("peer": its three
+  // voices, silent past 150 m). A car the Arena has not moved for a second (finished, gone) is silent. The car is in
+  // the id, so a new car is a new voice.
+  var PEERS = null;
+  function peerSounds(t){
+    if(!E.pool || !P) return;
+    var list = [];
+    Object.keys(V.others).forEach(function(uid){
+      var o = V.others[uid], last = o.snaps[o.snaps.length - 1];
+      if(!last || t - last.t > 1) return;
+      var spec = P.CARS[clamp(o.car|0, 0, P.CARS.length - 1)], g = remoteGear(o, spec);
+      list.push({id: uid + "/" + (o.car|0), kind: spec.eng || "turbo", x: o.x, y: o.y + 0.5, z: o.z, rpm: g.rpm, gear: g.gear, speed: Math.abs(o.v)});
+    });
+    if(!PEERS){
+      if(!list.length) return;
+      PEERS = E.pool("peer", {make: function(s){ return E.engineSound(s.kind); },
+                              play: function(h, s){ h.set(s.rpm, {gear: s.gear, speed: s.speed, pos: s, sk: "peer"}); }});
+    }
+    PEERS.update(list);
+  }
+  function peersStop(){ if(PEERS){ PEERS.stop(); PEERS = null; } }
+  // Another car's gear and revs (the game's 900..7600, as audioUpdate's) from its speed alone: up a gear past the
+  // car's shift point, down once the lower gear would sit under 72% of it (no hunting between two), held on o.
+  function remoteGear(o, spec){
+    var e = spec.engine, n = spec.gears.length, w = Math.abs(+o.v || 0)/(spec.radius || 0.31)*30/Math.PI;   // wheel rpm
+    var g = clamp(o.sndGear|0 || 1, 1, n);
+    while(g < n && w*spec.gears[g - 1]*spec.final > spec.shiftUp) g++;
+    while(g > 1 && w*spec.gears[g - 2]*spec.final < spec.shiftUp*0.72) g--;
+    o.sndGear = g;
+    var rpm = clamp(w*spec.gears[g - 1]*spec.final, e.idle, e.limiter);
+    return {gear: g, rpm: 900 + (rpm - e.idle)/(e.limiter - e.idle)*6700};
+  }
   function sendPos(t){
     var C = V.car; if(V.mode !== "mp" || !MP || !C || V.phase !== "race" || V.finishMs != null || V.offline) return;
     if(t - V.sendAt < SEND_EVERY) return;
@@ -583,6 +616,7 @@ function makeGame(host, opts){
     V.hint = st.locate(C.p[0], C.p[2], V.hint).i;
     // remote cars
     Object.keys(V.others).forEach(function(u2){ sampleOther(V.others[u2], t, dt); });
+    peerSounds(t);
     sendPos(t);
     audioUpdate(C);
     if(cdBox.dataset.until && t > +cdBox.dataset.until){ cdBox.classList.add("hidden"); cdBox.dataset.until = ""; }
@@ -957,6 +991,7 @@ function makeGame(host, opts){
     });
     R3.fx(C, dt, calm(), V.handle);
     R3.render(dt, {mode: V.phase === "done" ? 3 : V.cam, pose: POSE, car: C, calm: calm()});
+    if(E.listener) E.listener(R3.camera);                              // [sound] the ears: this frame's camera (the other drivers)
   }
   var perf = {t: 0, n: 0, slow: 0, pr: null, auto: null};
   // Graphics: a fixed level is applied at once; Auto measures ~3 s of driving after each change
@@ -1014,7 +1049,9 @@ function makeGame(host, opts){
 
   V.destroy = function(){
     V.alive = false;
+    if(E.listener) E.listener(null);
     if(eng){ eng.stop(); eng = null; } if(skid){ skid.stop(); skid = null; } if(gravel){ gravel.stop(); gravel = null; }
+    peersStop();
     if(raf) cancelAnimationFrame(raf); raf = 0;
     window.removeEventListener("resize", onResize); if(ro) ro.disconnect();
     if(IN){ IN.destroy(); IN = null; }

@@ -21,8 +21,11 @@
  * Drawing: view(c, sim, opts) -> V (plan 5.4): stations (bull-wheel housing, boarding platform, the summit's viewing
  *   deck), lattice towers with sheave trains on their arms, the rope, and the cabins (frame + benches + map placard,
  *   one call; glass all round, one call), swaying gently in the wind from HQV.hqWeather (none under Calm or reduced
- *   motion). Sounds through opts.sfx(name): "gondola-rumble" near a bull wheel, "gondola-clunk" when your cabin passes
- *   a tower, "gondola-wind" high up in a wind. Static stations, towers and rope: one merged mesh. Three calls in all.
+ *   motion). Sounds through opts.sfx(name, {pos, kind}), each where it is (games/engine.js's spatial voices):
+ *   "gondola-rumble" a held loop at each station's bull wheel while you are within earshot (kind gondola),
+ *   "gondola-clunk" at a cabin's grip as it rolls over a tower's sheaves (yours, and every cabin within earshot), and
+ *   "gondola-wind" a held loop round your cabin high up in a wind (weather: the ambient rain bed). Static stations,
+ *   towers and rope: one merged mesh. Three calls in all.
  * No unseeded randomness: sway phases are seeded by the world id and the cabin.
  */
 (function(){
@@ -48,6 +51,31 @@ var SEATS = [];
 function hyp(x, z){ return Math.sqrt(x*x + z*z); }
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
 function fin(v, d){ v = +v; return isFinite(v) ? v : d; }
+
+/* ---------- sound (Sound PR B: each sound where it is, through hqRide.sfx's {pos, kind} and games/engine.js) ---------- */
+// the farthest a spatial kind is heard (games/engine.js KINDS), else d
+function reach(kind, d){ var E = HQV.engine, K = E && E.spatial && E.spatial.KINDS, k = K && K[kind]; return k && k.max > 0 ? k.max : d; }
+// where sounds are heard from: the spatial listener (the camera, or what a Classic view looks at), else p
+function earOf(p){
+  var E = HQV.engine, L = null;
+  try { L = E && typeof E.listenerAt === "function" ? E.listenerAt() : null; } catch(e){ L = null; }
+  return L || p || null;
+}
+// one held hqRide loop: started by start(o) when asked to sound, set(o) every frame after, stop() when its source goes;
+// a start that fails (sound off, out of range) is tried again at most once a second (t: ms)
+function heldLoop(start){
+  var h = null, again = -Infinity;
+  return {
+    set: function(t, o){
+      if(h){ try { h.set(o); } catch(e){} return; }
+      if(t < again) return;
+      again = t + 1000;
+      var n = null; try { n = start(o); } catch(e){ n = null; }
+      h = n && typeof n.set === "function" && typeof n.stop === "function" ? n : null;
+    },
+    stop: function(){ if(h){ try { h.stop(); } catch(e){} h = null; } again = -Infinity; }
+  };
+}
 function hash32(s){ var h = 2166136261 >>> 0; s = String(s); for(var i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h >>> 0; }
 function mod(a, b){ return ((a % b) + b) % b; }
 
@@ -334,16 +362,39 @@ function view(c, sim, opts){
   cabs.castShadow = true; cabs.frustumCulled = glass.frustumCulled = false;
   root2.add(cabs); root2.add(glass);
   if(c.scene && opts.attach !== false) c.scene.add(root2);
-  var dummy = new THREE.Object3D(), focusId = null, lastMs = 0, lastD = null, nextRumble = 0, nextWind = 0;
+  var dummy = new THREE.Object3D(), focusId = null, lastMs = null;
   var towersD = sim.supports().filter(function(s){ return s.kind === "tower"; }).map(function(s){ return s.d; });
+  // the sounds: each station's bull wheel rumbles (a held loop at its hub, while you are within earshot), every
+  // cabin's grip clunks over a tower's sheaves (yours always, the others within earshot), and the wind whistles round
+  // your cabin high up in a wind (a held loop; weather, so a bed under Ambient sounds: the rain kind)
+  var WHEELS = F.ST.map(function(S){ var depth = RAMP + lp.straight; return {x: S.s.x + S.inx*depth, y: S.rope - 0.2, z: S.s.z + S.inz*depth}; });
+  var rumble = WHEELS.map(function(){ return heldLoop(function(o){ return sfx("gondola-rumble", o); }); });
+  var windL = heldLoop(function(o){ return sfx("gondola-wind", o); }), cabD = [];
   function windNow(ms){
     var WX = HQV.hqWeather;
     if(!WX || !WX.look) return 0;
     try { return +WX.look(opts.world || sim.seed, ms).wind || 0; } catch(e){ return 0; }
   }
+  function sounds(ms, cam, list, mine, wind){
+    var ear = earOf(cam), M = reach("gondola", 120), jump = lastMs == null || Math.abs(ms - lastMs) > 2000;
+    WHEELS.forEach(function(wh, i){
+      var d = ear ? hyp(fin(ear.x, 0) - wh.x, fin(ear.z, 0) - wh.z) : Infinity;
+      if(d < M) rumble[i].set(ms, {pos: wh, kind: "gondola", speed: LINE_V});      // the haul rope runs at LINE_V
+      else if(d > M*1.1) rumble[i].stop();
+    });
+    // a clunk as a grip rolls over a tower's sheaves (a jump in time: none for what changed)
+    list.forEach(function(p, i){
+      var was = cabD[i]; cabD[i] = p.station < 0 && p.d != null ? p.d : null;
+      if(jump || was == null || cabD[i] == null) return;
+      if(p.id !== focusId && !(ear && hyp(fin(ear.x, 0) - p.x, fin(ear.z, 0) - p.z) < M)) return;
+      towersD.forEach(function(d){ if((was < d) !== (p.d < d)) sfx("gondola-clunk", {pos: {x: p.x, y: p.y + HANG, z: p.z}, kind: "gondola"}); });
+    });
+    var g = mine ? ground(mine.x, mine.z) : NaN;
+    if(!mine) windL.stop();
+    else if(wind > 0.3 && isFinite(g) && mine.y - g > 15) windL.set(ms, {pos: {x: mine.x, y: mine.y + 1.5, z: mine.z}, kind: "rain", speed: mine.speed});
+  }
   var V = {g: root2,
     update: function(ms, dt, cam){
-      lastMs = ms;
       var wind = windNow(ms), still = !!calm() || !!opts.reduced, list = sim.cabins(ms), mine = null;
       list.forEach(function(p, i){
         var sw = swayAt(i, ms, wind, still, sim.seed);
@@ -354,16 +405,10 @@ function view(c, sim, opts){
         if(p.id === focusId) mine = p;
       });
       cabs.instanceMatrix.needsUpdate = true; glass.instanceMatrix.needsUpdate = true;
-      // sounds: the bull wheel's rumble near a station, a clunk as your cabin rolls over a tower's sheaves, the wind up high
-      if(cam && ms >= nextRumble && [A, B].some(function(s){ return hyp(cam.x - s.x, cam.z - s.z) < 40; })){ nextRumble = ms + 4000; sfx("gondola-rumble"); }
-      if(mine){
-        if(mine.d != null && lastD != null) towersD.forEach(function(d){ if((lastD - d)*(mine.d - d) < 0) sfx("gondola-clunk"); });
-        lastD = mine.d != null ? mine.d : null;
-        var g = ground(mine.x, mine.z);
-        if(wind > 0.3 && ms >= nextWind && isFinite(g) && mine.y - g > 15){ nextWind = ms + 6000; sfx("gondola-wind"); }
-      } else lastD = null;
+      sounds(ms, cam, list, mine, wind);
+      lastMs = ms;
     },
-    focus: function(id){ focusId = id || null; lastD = null; glass.material.opacity = focusId ? 0.16 : 0.28; },
+    focus: function(id){ focusId = id || null; glass.material.opacity = focusId ? 0.16 : 0.28; },
     drawCalls: function(){ return 3; },
     tools: {shotCam: function(name){
       var mid = F.AL/2, mx = A.x + F.ux*mid, mz = A.z + F.uz*mid, my = sim.ropeAt(mid);
@@ -378,6 +423,7 @@ function view(c, sim, opts){
       return null;
     }},
     dispose: function(){
+      rumble.forEach(function(r){ r.stop(); }); windL.stop();
       if(root2.parent) root2.parent.remove(root2);
       stat.geometry.dispose(); mat.dispose(); cabGeo.dispose(); glassGeo.dispose(); cmat.dispose(); gmat.dispose();
     }};

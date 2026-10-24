@@ -850,13 +850,9 @@ function defaultIdb(){
 function idbGet(idb, ms, id){
   if(!idb) return Promise.resolve(null);
   if(idb === PRE.idb && PRE.recs[id]) return PRE.recs[id];   // read already started at script load
-  return new Promise(function(res){
-    var done = false, t = setTimeout(function(){ done = true; res(null); }, ms);   // only guards a hung IDB
-    try {
-      Promise.resolve(idb.get(id)).then(function(v){ if(!done){ clearTimeout(t); res(v || null); } },
-                                        function(){ if(!done){ clearTimeout(t); res(null); } });
-    } catch(e){ clearTimeout(t); res(null); }
-  });
+  var p;
+  try { p = idb.get(id); } catch(e){ return Promise.resolve(null); }
+  return deadline(p, {left: ms}, null).then(function(v){ return v || null; }, function(){ return null; });   // only guards a hung IDB
 }
 // What the cache keeps: W as pack() made it. The client claims ground on a packed W after it is loaded
 // (games/hqspectacle.js: a site marked `claimed`, a lot's kind with its own in `was`, W.spectacle), and the
@@ -881,28 +877,45 @@ function idbPut(idb, rec, id){
   if(!idb) return;
   try { Promise.resolve(idb.put(id, rec)).catch(function(){}); } catch(e){}
 }
-function deadline(p, ms, ctl){
-  // settles with p, or rejects "world unavailable: timeout" (and aborts the request) once ms run out
+// The deadlines count the page's own time, not the wall clock: B.left (ms) is spent in TICK steps and a step costs at
+// most what it asked for, so one that comes back late because the main thread was busy (three.js loading, a first frame
+// compiling its shaders under software GL, a slow machine's startup) costs only its TICK. A world's bytes are in within
+// milliseconds and our own startup work only delays their turn on the main thread: it must not time them out (the City
+// would fall back to an older world and cache nothing). A hung Arena or IndexedDB still runs out after B.left ms of a
+// responsive page.
+var TICK = 250;
+function deadline(p, B, ctl){
+  // settles with p, or rejects "world unavailable: timeout" (and aborts the request) once B.left runs out
   return new Promise(function(res, rej){
-    var t = setTimeout(function(){ try { if(ctl) ctl.abort(); } catch(e){} rej(new Error("world unavailable: timeout")); }, Math.max(0, ms));
-    Promise.resolve(p).then(function(v){ clearTimeout(t); res(v); }, function(e){ clearTimeout(t); rej(e); });
+    var t = null, at = 0, d = 0;
+    function spent(){ B.left -= Math.min(d, Math.max(0, now() - at)); d = 0; }   // the step under way, at most its TICK
+    (function step(){
+      d = Math.min(Math.max(0, B.left), TICK); at = now();
+      t = setTimeout(function(){
+        B.left -= d; d = 0;
+        if(B.left > 0){ step(); return; }
+        try { if(ctl) ctl.abort(); } catch(e){}
+        rej(new Error("world unavailable: timeout"));
+      }, d);
+    })();
+    Promise.resolve(p).then(function(v){ clearTimeout(t); spent(); res(v); }, function(e){ clearTimeout(t); spent(); rej(e); });
   });
 }
 function revalidate(f, idb, cached, timeoutMs, id){
-  // the whole request, body read included, runs under one timeoutMs deadline
+  // the whole request, body read included, spends one timeoutMs budget (deadline)
   var state = stateOf(id), url = id === ID ? URL : "/api/arena/world/" + id;
-  var t0 = now(), ctl = null, opts = {cache: "no-cache", headers: cached && cached.etag ? {"If-None-Match": cached.etag} : {}}, p;
+  var B = {left: timeoutMs}, ctl = null, opts = {cache: "no-cache", headers: cached && cached.etag ? {"If-None-Match": cached.etag} : {}}, p;
   try { if(root.AbortController){ ctl = new root.AbortController(); opts.signal = ctl.signal; } } catch(e){ ctl = null; }
   try { p = f(url, opts); } catch(e){ p = Promise.reject(e); }
   p = Promise.resolve(p).then(null, function(){ throw new Error("world unavailable: network"); });
-  return deadline(p, timeoutMs, ctl).then(function(r){
+  return deadline(p, B, ctl).then(function(r){
     var status = r && r.status;
     if(status === 304 && cached){ log("hq-world 304"); return cached; }
     if(status !== 200) throw new Error("world unavailable: " + status);
     var body;
     try { body = Promise.resolve(r.json()).then(null, function(){ throw new Error("world unavailable: bad json"); }); }
     catch(e){ body = Promise.reject(new Error("world unavailable: bad json")); }
-    return deadline(body, timeoutMs - (now() - t0), ctl).then(function(json){
+    return deadline(body, B, ctl).then(function(json){
       var W = api.pack(json);
       W.etag = (r.headers && r.headers.get && r.headers.get("ETag")) || null;
       idbPut(idb, {v: PACK_V, etag: W.etag, packed: cacheCopy(W)}, id);   // the index is rebuilt on use

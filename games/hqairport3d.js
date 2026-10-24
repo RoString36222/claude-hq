@@ -23,7 +23,9 @@
  *     A.setWind({yaw, speed}) the socks ease toward yaw (where they point: downwind) and droop below 12 m/s
  *     A.setDetail(level)     2 near (all), 1 mid (ground, white + yellow paint, lamps + glow + rabbit at night),
  *                            0 far (ground, white paint, glow at night). Toggles `visible` only.
- *     A.update(dt, t, cam)   PAPI against cam's elevation, obstruction blink (1 Hz), the rabbit (2 Hz), socks
+ *     A.update(dt, t, cam, tr, hp)   PAPI against cam's elevation, obstruction blink (1 Hz), the rabbit (2 Hz), socks;
+ *                            tr, hp (optional): the City's traffic now and its frame's offset: each parked jet's APU, heard
+ *                            on its stand (Sound PR B)
  *     A.stats() -> {lamps, glow, tris, canvasBytes, detail, night, endIdx}     A.dispose()
  * Draw calls: ground 3 (vertex-coloured mesh, runway rubber canvas, apron joint canvas), paint 4, lamps + glow +
  * PAPI + rabbit + pools 5, fixtures 1, signs 1, fence 1, socks 1: 16 at night near, 8 mid, 5 far.
@@ -919,9 +921,27 @@ function create(c, L, o){
   A.setHold = function(i, clear){ i = i === 1 ? 1 : 0; clear = !!clear; if(st.clear[i] !== clear){ st.clear[i] = clear; recolor(); } };
   A.setWind = function(w){ w = w || {}; wind.yaw = num(w.yaw, wind.yaw); wind.speed = Math.max(0, num(w.speed, wind.speed)); };
   A.setDetail = function(level){ level = level | 0; st.detail = Math.max(0, Math.min(2, level)); vis(); };
+  /* ----- sound (Sound PR B): the aircraft on their stands, heard where they stand ----- */
+  // update()'s tr and hp: the City's airport traffic now (games/hqair.js traffic(), archipelago metres) and that frame's
+  // offset from this city's ({x, z}: games/hqcity3d.js hereArch()). Each jet parked on a stand runs its APU: an idle
+  // turbofan's whine there (games/engine.js engineSound "jet" as the plane kind: the Ambient sounds volume), the nearest
+  // one (the City's air traffic, the aircraft that move and taxi past these stands, has a pool of its own in
+  // games/hqcity3d.js; the two share the plane kind's voices).
+  // Without tr (or the spatial API): silent, as before.
+  var E = c.E || HQV.engine || {};
+  var standP = E.pool && E.engineSound ? E.pool("plane", {voices: 1, make: function(){ return E.engineSound("jet"); },
+    play: function(h, s){ h.set(900, {thr: 0, pos: s, sk: "plane"}); }}) : null;
+  function standSounds(tr, hp){
+    var out = [], ox = hp ? num(hp.x, 0) : 0, oz = hp ? num(hp.z, 0) : 0, y = num(L.y, 0) + 3;
+    ((tr && tr.parked) || []).forEach(function(p){
+      if(p && p.kind === "jet" && isFinite(+p.x) && isFinite(+p.z)) out.push({id: "stand:" + p.stand, x: +p.x - ox, y: y, z: +p.z - oz});
+    });
+    return out;
+  }
   var camV = new THREE.Vector3();
-  A.update = function(dt, t, camera){
+  A.update = function(dt, t, camera, tr, hp){
     dt = Math.max(0, num(dt, 0)); t = num(t, 0);
+    if(standP) standP.update(standSounds(tr, hp));
     var b = (t % 1 + 1) % 1 < 0.5;
     if(b !== st.blink){ st.blink = b; for(var i = 0; i < obstIx.length; i++) setLamp(obstIx[i], lampColor(LT[obstIx[i]], st.endIdx, st.clear, b));
       lamps.instanceColor.needsUpdate = true; gg.attributes.color.needsUpdate = true; }
@@ -958,6 +978,7 @@ function create(c, L, o){
   };
   A.lampColors = function(){ var out = []; for(var i = 0; i < n; i++) out.push([lamps.instanceColor.getX(i), lamps.instanceColor.getY(i), lamps.instanceColor.getZ(i)]); return out; };
   A.dispose = function(){
+    if(standP){ standP.stop(); standP = null; }
     if(g.parent) g.parent.remove(g);
     geos.forEach(function(x){ x.dispose(); }); mats.forEach(function(x){ x.dispose(); }); texs.forEach(function(x){ if(x && x.dispose) x.dispose(); });
     canv.forEach(function(T){ if(T && T.c){ T.c.width = 0; T.c.height = 0; } });

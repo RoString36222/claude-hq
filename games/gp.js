@@ -634,6 +634,7 @@ function makeGame(host){
     }
     R3.fx(Cc, dt, calm(), V.handle);
     R3.render(dt, {mode: V.phase === "done" ? 3 : V.cam, pose: POSE, car: Cc, calm: calm()});
+    if(E.listener) E.listener(R3.camera);                              // [sound] the ears: this frame's camera
   }
   var perf = {t: 0, n: 0, pr: null, auto: null};
   function applyGfx(user){
@@ -693,6 +694,7 @@ function makeGame(host){
 
   V.destroy = function(){
     V.alive = false;
+    if(E.listener) E.listener(null);
     if(eng){ eng.stop(); eng = null; } if(skid){ skid.stop(); skid = null; }
     if(raf) cancelAnimationFrame(raf); raf = 0;
     window.removeEventListener("resize", onResize); if(ro) ro.disconnect();

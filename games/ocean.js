@@ -32,7 +32,10 @@
  *                                (metres, yaw). A doc without layers.water is exactly as before.
  *   riverOf(doc)                 the river's water polygon (metres) and its bridge decks, or null
  *   waterOf(doc)                 layers.water in metres for the boats: {bodies: [{id, kind, poly, islands, y, inWater(x, z)}],
- *                                piers, onDeck(x, z) (a pier or the breakwater), bodyAt(x, z)}, or null
+ *                                piers, onDeck(x, z) (a pier or the breakwater), bodyAt(x, z), coast}, or null
+ *   waterHeard(L, coast, calm, seaY) where the water is heard from for ears at L (Sound PR B): the sea's surf on the
+ *                                nearest point of the coast, each calm water (calmOf(river, water)) under you or at its
+ *                                nearest bank, within WATER_M m -> [{id, x, y, z, lvl}]
  *   wakePush / wakeStrip         a boat's wake as a trail of points, and the strip that draws it
  * material()                    the sea material of the mounted ocean (null when none is), for other water at sea level
  * riverMaterial()               the mounted ocean's calm-water material (null when none is): the sea's own uniforms,
@@ -42,8 +45,10 @@
  *                               over sea level, over the highest crest, so the sea plane under it never shows through
  *                               (a river drawn with waves on its few, far-apart outline vertices had the sea plane's
  *                               crests poke through it in stripes)
- * mount(c, parent) -> {g, step(t, dt, cam), setTime(night), setSun(dir), setRiver(R), setWater(Wd), wake(boats), dispose, drawCalls}:
- * setRiver(riverOf(doc)) lays wakes on the river's calm surface, setWater(waterOf(doc)) on the @3 bodies'; a polar-grid
+ * mount(c, parent) -> {g, step(t, dt, cam), setTime(night), setSun(dir), setRiver(R), setWater(Wd), setCoast(C), wake(boats),
+ * dispose, drawCalls}: setRiver(riverOf(doc)) lays wakes on the river's calm surface, setWater(waterOf(doc)) on the @3
+ * bodies', setCoast(coastOf(doc)) gives the sea's surf its shore on any world (@1 and @2 have no water layer); step()
+ * also voices the water where it meets you (waterHeard: games/engine.js E.loop "water" in a pool, the nearest two); a polar-grid
  * sea plane that follows the camera (a shader: waves, fresnel sky, sun or moon glint, day/night tint,
  * the scene's fog), island impostors as seven InstancedMeshes (one silhouette, a skyline per tier and one
  * for the Commons: the draw calls stay seven for any number of islands) and a fading foam V behind each boat.
@@ -253,7 +258,8 @@ function decksOf(doc){
   return {decks: decks, onDeck: onDeck};
 }
 // layers.water (@3, cm) in metres for the boats: the bodies (CCW not needed: even-odd tests) with their islands and
-// the y they float at, the piers and the breakwater as decks; null without the layer
+// the y they float at, the piers and the breakwater as decks, and the coast (coastOf: where the sea meets the island,
+// for the surf the mounted ocean voices); null without the layer
 var BREAKWATER_HALF = 4;
 function waterOf(doc){
   var L = (doc && doc.layers) || {}, Wl = L.water;
@@ -291,7 +297,7 @@ function waterOf(doc){
     return false;
   }
   function bodyAt(x, z){ for(var i = 0; i < bodies.length; i++) if(bodies[i].inWater(x, z)) return bodies[i]; return null; }
-  return {bodies: bodies, piers: piers, breakwater: bw.length >= 2 ? bw : null, onDeck: onDeck, bodyAt: bodyAt};
+  return {bodies: bodies, piers: piers, breakwater: bw.length >= 2 ? bw : null, onDeck: onDeck, bodyAt: bodyAt, coast: coastOf(doc)};
 }
 function coastOf(doc){
   var I = ((doc && doc.layers) || {}).island || {};
@@ -473,6 +479,49 @@ function skylineGeo(THREE, t){
   return pieces(THREE, list);
 }
 
+/* ---------- the water's sound (Sound PR B) ---------- */
+// Where the water is heard from, for ears at L ({x, z}): the sea's surf at the nearest point of the coast, and each calm
+// water ({id, rings, inWater, b (bounds), y or up (over the sea's y), lvl}: calmOf) right under you when you are out on
+// it (a boat, a bridge, a pier), else at the nearest point of its banks; only those within WATER_M m of you on the
+// ground. -> [{id, x, y, z, lvl}] for the mounted ocean's pool (each a games/engine.js E.loop "water")
+var WATER_M = 60;
+function nearOnRing(P, x, z, best){
+  for(var i = 0, j = P.length - 1; i < P.length; j = i++){
+    var ax = P[j][0], az = P[j][1], dx = P[i][0] - ax, dz = P[i][1] - az, L2 = dx*dx + dz*dz;
+    var u = L2 > 0 ? Math.max(0, Math.min(1, ((x - ax)*dx + (z - az)*dz)/L2)) : 0, px = ax + dx*u, pz = az + dz*u, d = Math.hypot(x - px, z - pz);
+    if(d < best[2]){ best[0] = px; best[1] = pz; best[2] = d; }
+  }
+  return best;
+}
+function bounds(P){
+  var b = [Infinity, Infinity, -Infinity, -Infinity];
+  P.forEach(function(q){ b[0] = Math.min(b[0], q[0]); b[1] = Math.min(b[1], q[1]); b[2] = Math.max(b[2], q[0]); b[3] = Math.max(b[3], q[1]); });
+  return b;
+}
+// the river (riverOf) and the @3 lakes, canals and marina (waterOf's bodies) as calm waters to hear
+function calmOf(R, Wd){
+  var out = [];
+  if(R && R.poly && R.poly.length >= 3) out.push({id: "river", rings: [R.poly], inWater: R.inWater, b: bounds(R.poly), up: RIVER_Y, lvl: 0.6});
+  ((Wd && Wd.bodies) || []).forEach(function(B){
+    if(B && B.poly && B.poly.length >= 3) out.push({id: B.id, rings: [B.poly].concat(B.islands || []), inWater: B.inWater, b: bounds(B.poly), y: B.y, lvl: 0.5});
+  });
+  return out;
+}
+function waterHeard(L, coast, calm, seaY){
+  var out = [];
+  if(!L || !isFinite(+L.x) || !isFinite(+L.z)) return out;
+  var x = +L.x, z = +L.z, y0 = +seaY || 0, b;
+  if(coast && coast.length >= 3){ b = nearOnRing(coast, x, z, [0, 0, Infinity]); if(b[2] < WATER_M) out.push({id: "sea", x: b[0], y: y0, z: b[1], lvl: 1}); }
+  (calm || []).forEach(function(C){
+    if(x < C.b[0] - WATER_M || x > C.b[2] + WATER_M || z < C.b[1] - WATER_M || z > C.b[3] + WATER_M) return;
+    var wy = C.y != null ? C.y : y0 + (C.up || 0);
+    if(C.inWater && C.inWater(x, z)){ out.push({id: C.id, x: x, y: wy, z: z, lvl: C.lvl}); return; }
+    b = [0, 0, Infinity]; C.rings.forEach(function(R){ nearOnRing(R, x, z, b); });
+    if(b[2] < WATER_M) out.push({id: C.id, x: b[0], y: wy, z: b[1], lvl: C.lvl});
+  });
+  return out;
+}
+
 // the sea material of the ocean mounted now (null when none is), and its calm twin the river wears (games/worldbuild.js):
 // the same uniforms, so the river shows the tint and glint of the sea it meets, without its waves
 var LIVE = {mat: null, river: null};
@@ -520,6 +569,12 @@ function mount(c, parent){
     sky.forEach(function(m, k){ m.count = counts[k]; m.instanceMatrix.needsUpdate = true; });
     return H.n;
   }
+  // [Sound PR B] the water heard where it meets you (waterHeard): the sea on the coast (setCoast's, or a water layer's), the river and
+  // the calm waters at their banks; each an E.loop "water" (the Ambient sounds volume: full within 4 m, gone past 60 m),
+  // the nearest two. An older engine: silent, as before.
+  var E = c.E || {}, coast = null, stillW = [];
+  var waterP = E.pool && E.loop && E.listenerAt ? E.pool("water", {voices: 2, make: function(){ return E.loop("water"); },
+    play: function(h, s){ h.set(s.lvl, {pos: s}); }}) : null;
   // wakes: one ribbon per boat id, rebuilt from its trail each frame
   var wakeM = new THREE.MeshBasicMaterial({color: 0xf4fbff, vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: true});
   var wakes = {}, clock = 0;
@@ -535,10 +590,13 @@ function mount(c, parent){
   }
   var o = {g: g, sea: sea, sil: function(){ return sil; }, sky: function(){ return sky; },
     setTime: function(n){ nightGoal = n ? 1 : 0; },
-    // the river (riverOf(doc), or null): wakes on it lie on its calm surface
-    setRiver: function(R){ river = R || null; },
-    // the @3 bodies (waterOf(doc), or null): wakes on them lie on their calm surface (y over the sea's)
-    setWater: function(Wd){ water = Wd || null; },
+    // the river (riverOf(doc), or null): wakes on it lie on its calm surface, and it is heard at its banks
+    setRiver: function(R){ river = R || null; stillW = calmOf(river, water); },
+    // the @3 bodies (waterOf(doc), or null): wakes on them lie on their calm surface (y over the sea's); they are heard,
+    // and its coast (the sea's surf) when it has one (null leaves the coast setCoast gave)
+    setWater: function(Wd){ water = Wd || null; if(water && water.coast && water.coast.length >= 3) coast = water.coast; stillW = calmOf(river, water); },
+    // the island's coast (coastOf(doc): [[x, z]] metres, every world version), where the sea's surf is heard; null: none
+    setCoast: function(C){ coast = Array.isArray(C) && C.length >= 3 ? C : null; },
     // the direction toward the sun (or the moon by night) for the glint: {x, y, z}
     setSun: function(d){ if(d && isFinite(d.x) && isFinite(d.y) && isFinite(d.z)) seaM.uniforms.uSunDir.value.set(d.x, d.y, d.z).normalize(); },
     // boats = [{id, x, z, yaw, speed, beam}]: push each trail; a boat no longer listed lets its wake fade then goes
@@ -564,10 +622,12 @@ function mount(c, parent){
         }
         P.needsUpdate = true; C.needsUpdate = true; w.m.geometry.setDrawRange(0, Math.max(0, S.n - 1)*30);
       });
+      if(waterP) waterP.update(waterHeard(E.listenerAt(), coast, stillW, g.position.y));
       return impostors(cam.x || 0, cam.z || 0);
     },
     drawCalls: function(){ return 1 + 1 + sky.length + Object.keys(wakes).length; },
     dispose: function(){
+      if(waterP){ waterP.stop(); waterP = null; }
       parent.remove(g);
       g.traverse(function(m){ if(m.geometry) m.geometry.dispose(); });
       if(LIVE.mat === seaM) LIVE.mat = null;
@@ -584,6 +644,6 @@ HQV.ocean = {WAVES: WAVES, COAST_R: COAST_R, SKY_R: SKY_R, ARRIVE: ARRIVE, HORIZ
   inPoly: inPoly, landTest: landTest, coastOf: coastOf, docksOf: docksOf, seaOf: seaOf, riverOf: riverOf, waterOf: waterOf,
   BREAKWATER_HALF: BREAKWATER_HALF,
   material: function(){ return LIVE.mat; }, riverMaterial: function(){ return LIVE.river; }, RIVER_Y: RIVER_Y,
-  wakePush: wakePush, wakeStrip: wakeStrip, mount: mount,
+  wakePush: wakePush, wakeStrip: wakeStrip, mount: mount, waterHeard: waterHeard, calmOf: calmOf, WATER_M: WATER_M,
   current: function(){ return {world: ARCH.cur, x: ARCH.ox, z: ARCH.oz, count: ARCH.list.length}; }};
 })();

@@ -406,6 +406,7 @@ LaneView.prototype.draw3d = function(s){
   this.camZ = api.calm() || s.snap ? want : this.camZ + (want - this.camZ)*0.18;
   th.cam.position.set(0, s.cam === "deck" ? 1.0 : 1.2, this.camZ);
   th.cam.lookAt(0, 0.1, this.camZ + 7);
+  if(E.listener) E.listener(th.cam);                                 // [sound] the ears: the lane's camera
   th.r.render(th.scene, th.cam);
 };
 LaneView.prototype.draw2d = function(s){
@@ -447,6 +448,7 @@ LaneView.prototype.draw2d = function(s){
 };
 LaneView.prototype.destroy = function(){
   this.alive = false;
+  if(E.listener) E.listener(null);
   if(this.three){ try { this.three.r.dispose(); } catch(e){} this.three = null; }
 };
 

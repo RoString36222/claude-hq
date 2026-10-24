@@ -5,8 +5,9 @@
  * walls and floor in your finish, the lighting mood, a reception desk (curve, block, wood, marble or neon) with the
  * greeter bot, a centrepiece (a fountain, a statue, an aquarium column, a giant screen or an indoor tree), a seating
  * set, art or posters, rugs, signage with your HQ's name (on the wall, hanging, a floor monument or neon), an ambience
- * (heard only while Ambient sounds is on), and the decor you placed on its grid (games/hqdecor.js, instanced),
- * pet furniture among it (your pets come and use it: HQV.hqPets.lobby, when that is loaded).
+ * (heard only while Ambient sounds is up; a fountain's from the centrepiece), and the decor you placed on its grid
+ * (games/hqdecor.js, instanced), pet furniture among it (your pets come and use it: HQV.hqPets.lobby, when that is
+ * loaded).
  * Also: the "Today at HQ" screen, a check-in kiosk, the HQ Studio kiosk, security gates, the trophy case, and the
  * lifts: two up to Mission Control, one up to your Roof deck, one down to the B1 garage. The glass doors on the left
  * lead back outside.
@@ -342,10 +343,11 @@ HQV.hqWorlds.lobby = function(c, w){
       .filter(function(p){ return !placed.some(function(it){ return it.x === p.x && it.z === p.z; }); });
     dyn.items = D.items(c, g, plants.concat(placed));
     dyn.blockers.push(function(x, z){ return dyn.items.blocked(x, z); });
-    // the ambience (only while Ambient sounds is on: engine.ambientLoop checks it on every set)
+    // the ambience (only while Ambient sounds is up: engine.ambientLoop checks it on every set); [Sound PR B] a fountain
+    // is heard from the centrepiece's spot (its 4th entry: a positional "fountain" loop), the other beds fill the hall
     if(amb){ amb.stop(); amb = null; }
-    var AMB = {fountain: [900, 0.6, 0.05], nature: [500, 0.4, 0.04], city: [220, 0.5, 0.05], jazz: [650, 3, 0.025], lofi: [2800, 2, 0.02]}[L.ambience];
-    dyn.amb = AMB || null;
+    var AMB = {fountain: [900, 0.6, 0.05, "fountain"], nature: [500, 0.4, 0.04], city: [220, 0.5, 0.05], jazz: [650, 3, 0.025], lofi: [2800, 2, 0.02]}[L.ambience];
+    dyn.amb = AMB || null; dyn.ambAt = {x: cx0, y: 1.5, z: cz0};
     // your pets come to their furniture (feat/pets: HQV.hqPets.lobby); spots in lobby metres
     petsHook(st);
   }
@@ -386,7 +388,7 @@ HQV.hqWorlds.lobby = function(c, w){
     (list || []).forEach(function(s){ var st = c.crewState(s); if(counts[st] != null) counts[st]++; });
   };
   w.onLook = function(){ build(); drawSign(); if(w.setTime) w.setTime(nightNow); };
-  w.onEnter = function(){ if(dyn && dyn.amb && c.E && c.E.ambientLoop && !amb){ try { amb = c.E.ambientLoop(dyn.amb[0], dyn.amb[1]); } catch(e){ amb = null; } } };
+  w.onEnter = function(){ if(dyn && dyn.amb && c.E && c.E.ambientLoop && !amb){ try { amb = c.E.ambientLoop(dyn.amb[0], dyn.amb[1], dyn.amb[3]); } catch(e){ amb = null; } } };
   w.onLeave = function(){ if(amb){ amb.stop(); amb = null; } };
   // HQ Studio's Layout tab: the grid on this floor and its cursor (null: hidden)
   w.studioGrid = function(o){ if(!gridO) return; gridO.show(!!o && o.f === "lobby"); if(o) gridO.set(o.x, o.z, o); };
@@ -395,7 +397,7 @@ HQV.hqWorlds.lobby = function(c, w){
     acc += dt; if(acc > 0.08){ acc = 0; drawTicker(t);
       if(dyn && dyn.screen){ var sg = dyn.screen.g; sg.fillStyle = "#06111a"; sg.fillRect(0, 0, 1024, 512); sg.fillStyle = c.HEX.amber; sg.font = "800 92px system-ui, sans-serif"; sg.textAlign = "center"; sg.fillText(c.short(((c.look() || {}).sign || "CLAUDE HQ").toUpperCase(), 14), 512, 210);
         sg.fillStyle = c.HEX.cyan; sg.font = "600 44px ui-monospace, Menlo, monospace"; sg.fillText(counts.working + " working · " + counts.needs + " need you · level " + c.level(), 512, 320); sg.textAlign = "left"; dyn.screen.t.needsUpdate = true; } }
-    if(amb && dyn && dyn.amb) amb.set(dyn.amb[2]*(k > 0 ? 1 : 0.6));
+    if(amb && dyn && dyn.amb) amb.set(dyn.amb[2]*(k > 0 ? 1 : 0.6), 0, dyn.amb[3] ? dyn.ambAt : null);
     var av = c.avatar();
     var near = av && Math.hypot(av.x, av.z + 10) < 6.5;
     botBody.position.y = Math.sin(t*1.6)*0.08*k; hover.material.opacity = 0.45 + Math.sin(t*3)*0.15;

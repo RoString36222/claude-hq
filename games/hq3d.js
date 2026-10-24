@@ -181,9 +181,56 @@ function locoWeights(speed, rate){
   var wv = Math.max(v, shuffle > 0 ? Math.abs(rate)*STRIDE.shuffle : 0);
   return {idle: still, walk: walk, sprint: sprint, walkTs: dir*wv/STRIDE.walk, sprintTs: dir*v/STRIDE.sprint};
 }
+// [sound] Someone else's vehicle as this page plays it (Sound PR B: games/engine.js pools), from what their presence
+// says. u: their id; P: {x, hy, z (where they are drawn), pv (their speed, m/s), rpm (their revs as sent: the "motion"
+// capability, else none), vk (the VEHICLES key they ride), ex (its tuned exhaust)}; V: VEHICLES[vk]; EN: its real
+// engine (games/hqvehiclephys.js engineFor) or null. A helicopter is "heli" (its rotor), a plane "plane" (a prop's
+// drone, an airliner's turbofans), a car, motorbike or tank "peer" (its own voice at the revs they send, else a guess
+// from their speed; standing with no revs sent: its engine is off). -> a pool source {id, key, x, y, z, sk, voice, ex,
+// real, rpm, thr, speed}: id and key change with the vehicle (a new one gets its own voice), or null (no engine: a
+// bicycle, a pet).
+function peerSound(u, P, V, EN){
+  if(!P || !V) return null;
+  var v = Math.abs(+P.pv || 0), sent = +P.rpm > 0 ? +P.rpm : 0, f = Math.min(1, v/(+V.top > 0 ? +V.top : 20)), s = null;
+  if(V.heli && V.eng) s = {sk: "heli", voice: V.eng, real: null, rpm: 900 + 6700*(0.55 + 0.2*f), speed: 0};
+  else if(V.plane){
+    var n = Math.min(0.95, 0.3 + 0.6*f);
+    s = V.airliner ? {sk: "plane", voice: V.eng || "jet", real: null, rpm: 900 + 6700*n, thr: (n - 0.12)/0.88, speed: 0}
+                   : {sk: "plane", voice: !V.eng || V.eng === "six" ? "prop" : V.eng, real: null, rpm: 900 + 5600*n, speed: 0};
+  } else if(V.motor && V.eng && (sent || v >= 0.3)){
+    var real = !!(EN && (EN.k || EN.electric));
+    s = {sk: "peer", voice: V.eng, real: real ? EN : null, speed: v, rpm: sent || (real ? EN.idle + (EN.red - EN.idle)*f*0.6 : 900 + 6600*f)};
+  }
+  if(!s) return null;
+  s.key = String(P.vk || "") + "~" + (P.ex || ""); s.id = String(u) + "|" + s.key; s.ex = P.ex || null;
+  s.x = +P.x || 0; s.y = (+P.hy || 0) + 0.8; s.z = +P.z || 0;
+  return s;
+}
+// [sound] The pools those sources play through (E: games/engine.js; null without pools): only the nearest few of a
+// kind sound at once, each an engineSound made once and reused (its voice, exhaust and real engine are in the key).
+// "peer": cars, motorbikes and tanks, the kind's 3 within 150 m; "heli" and "plane": the nearest one each, within 1.5
+// and 2.5 km (a plane as the "peerplane" kind: someone's plane is not ambience, so Ambient sounds at 0%, which silences
+// the City's own aircraft, never mutes a person). -> {update(sources): the playing ids by kind, stop()}
+function peerPools(E){
+  if(!E || typeof E.pool !== "function" || typeof E.engineSound !== "function") return null;
+  function mk(kind, n){
+    return E.pool(kind, {voices: n, key: function(s){ return s.key; },
+      make: function(s){ return E.engineSound(s.voice, s.ex, s.real || undefined); },
+      play: function(h, s){ h.set(s.rpm, {thr: s.thr, speed: s.speed, pos: s, sk: kind}); }});
+  }
+  var P = {peer: mk("peer"), heli: mk("heli", 1), plane: mk("peerplane", 1)};
+  return {
+    update: function(list){
+      var by = {peer: [], heli: [], plane: []};
+      (Array.isArray(list) ? list : []).forEach(function(s){ if(s && by[s.sk]) by[s.sk].push(s); });
+      return {peer: P.peer.update(by.peer), heli: P.heli.update(by.heli), plane: P.plane.update(by.plane)};
+    },
+    stop: function(){ P.peer.stop(); P.heli.stop(); P.plane.stop(); }
+  };
+}
 HQV.hq3dPure = {cityImplOf: cityImplOf, shotName: shotName, padToInput: padToInput, doorUnderCrosshair: doorUnderCrosshair,
                 mapClickAction: mapClickAction, spring: spring, ease: ease, footStep: footStep, steerStep: steerStep, travelYawOf: travelYawOf,
-                locoWeights: locoWeights, STRIDE: STRIDE, FOOT: FOOT, CHASE: CHASE, MODE_LABEL: MODE_LABEL};
+                locoWeights: locoWeights, peerSound: peerSound, peerPools: peerPools, STRIDE: STRIDE, FOOT: FOOT, CHASE: CHASE, MODE_LABEL: MODE_LABEL};
 
 var E = HQV.engine;
 if(!E){ return; }
@@ -1184,18 +1231,28 @@ function mount(el, api){
       GN.seen[key] = now;
       if(o.age >= H.KINDS[o.k].fuse) return;                         // too late: it has gone off already
       var g = H.shot(o); g.t0 = now - o.age; g.w = curW(); GN.live.push(g);
+      gnShotSound(o);
     });
+  }
+  // [sound] someone else's shot where they fired it (yours is gnFire's / tkFire's E.sfx("shot")): only a fresh one, as
+  // late as its sound still has to travel to your ears (the blast kind: 10 m, silent past 400 m)
+  function gnShotSound(o){
+    var L = E.sfxAt && E.listenerAt ? E.listenerAt() : null;
+    if(!L || !(o.age < 0.5)) return;
+    var d = Math.hypot(o.x - L.x, o.y - L.y, o.z - L.z);
+    E.sfxAt("shot", {x: o.x, y: o.y, z: o.z}, {kind: "blast", curve: true, delay: Math.max(0, d/343 - o.age)});
   }
   function gnEnv(){
     return {ground: groundAt, hit: cur && cur.camHit ? cur.camHit : null,
             water: cur && cur.waterAt ? function(x, z){ return cur.waterAt(x, z); } : null};
   }
-  // a blast: its fireball and smoke (Calm: smoke only), its boom (late by the distance), a shake, and your knock
+  // a blast: its fireball and smoke (Calm: smoke only), its boom (where it went off: panned, late by the distance), a
+  // shake, and your knock
   function gnBlast(b){
     var H = HQV.hqGrenade, calm = E.calm(), c = curCam();
     if(GN.fx) GN.fx.blast(b.x, b.y, b.z, b.k, b.wet, calm);
     var d = c ? Math.hypot(c.position.x - b.x, c.position.y - b.y, c.position.z - b.z) : 0;
-    H.boom(E.audioOut ? E.audioOut() : null, d, b.wet);
+    H.boomAt(E, {x: b.x, y: b.y, z: b.z}, d, b.wet);
     if(!calm && !(camSet && camSet.reduced)) GN.shake = Math.max(GN.shake, Math.max(0, 1 - d/40)*0.45);
     gnKnock(b);
   }
@@ -2540,11 +2597,29 @@ function mount(el, api){
   // counter and your ears: revs climb through each gear and drop as it changes up; a slide spins
   // the wheels up a little.
   // [revs] a vehicle's real engine (games/hqvehiclephys.js engineFor): a catalogue one's from its researched figures, a
-  // starter's (and a boat's) from its voice's typical revs on its gear speeds; made once per vehicle
-  function engineOf(V){
+  // starter's (and a boat's) from its voice's typical revs on its gear speeds; made once per vehicle. base: the code path
+  // it drives on (baseKind), yours by default (someone else's for the sound of theirs: peerSounds)
+  function engineOf(V, base){
     if(V.engine) return V.engine;
     var P = HQV.hqVehiclePhys; if(!P || !P.engineFor || !V.gears) return null;
-    return (V.engine = P.engineFor({}, V.kind === "bike" || ride.base === "moto" ? "bike" : "car", V.eng, V.gears));
+    return (V.engine = P.engineFor({}, V.kind === "bike" || (base || (ride && ride.base)) === "moto" ? "bike" : "car", V.eng, V.gears));
+  }
+  // [sound] where your own vehicle sounds from: you, riding in it (engine.js kind "own": a hint of pan); on the Map from
+  // where you are on the ground (no y: level with its ears, so a plane up high is heard while the Map is on it)
+  function ownAt(){ return avatar ? (rigOn() && rig.mode === "map" ? {x: avatar.x, z: avatar.z} : {x: avatar.x, y: (+avatar.hy || 0) + 0.8, z: avatar.z}) : null; }
+  // ...and how far your own things carry (engine.js listener's own: the "own" kind's reference distance, the engines, the
+  // cab's chimes and your ride's doors alike): while the camera rides with you (Classic, the chase cameras, first person,
+  // the selfie, a ride's camera whatever the rig's mode under it: the idle fly-by starts beneath a long ride) they lose
+  // nothing to distance; a detached camera (photo, cine, the Map) hears them at full volume within the far chase
+  // camera's reach for this vehicle (22 m for a car, 110 m behind an airliner: camrig.js), fading past that and silent
+  // about 400 m further
+  var OWN_DETACHED = {photo: 1, cine: 1, map: 1};
+  function ownRef(){
+    if(!rigOn() || !OWN_DETACHED[rig.mode] || tripHeld()) return Infinity;
+    var C = HQV.camrig, M = C && C.MODES ? C.MODES.far : null, V = C && C.VEHICLE && ride ? C.VEHICLE[ride.base || ride.kind] : null;
+    if(!M) return 12;
+    var sz = V && ride.V && ride.V.size > 0 ? E.clamp(ride.V.size, 0.85, 1.5) : 1, b = M.back*(V ? V.backMul : 1)*sz, u = M.up*(V ? V.upMul : 1);
+    return Math.max(12, Math.sqrt(b*b + u*u));
   }
   // [gearbox] per frame, before the speed moves: the gearbox's answer (null for a vehicle without one: a bicycle, a
   // boat, a vehicle whose engine has no gearing); the presses of . , G since the last frame go in once
@@ -2650,7 +2725,7 @@ function mount(el, api){
     if(!ride.eng && E.engineSound) ride.eng = E.engineSound(V.eng, ride.tune && HQV.hqTuning ? HQV.hqTuning.exhaustOf(ride.tune) : null);   // [3.13] a tuned exhaust
     // the throttle (load), the gear (an upshift cuts, a downshift blips), road rumble and a squeal in a slide
     if(ride.eng) ride.eng.set(ride.rpm, {thr: thr > 0 ? thr : 0, gear: ride.gear, speed: V.boat ? 0 : v,
-      slip: ride.drift && !V.boat ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0});
+      slip: ride.drift && !V.boat ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0, pos: ownAt(), sk: "own"});
   }
   // The real thing: rpm from the road speed through the gear you are in (rpm per m/s, EN.k), a clutch that slips to
   // EN.launch pulling away, upshifts at its redline under power (half way up its revs when cruising), downshifts as the
@@ -2677,7 +2752,7 @@ function mount(el, api){
     if(v < 0.3 && !(thr > 0)) return;
     if(!ride.eng && E.engineSound) ride.eng = E.engineSound(V.eng, ride.tune && HQV.hqTuning ? HQV.hqTuning.exhaustOf(ride.tune) : null, EN);
     if(ride.eng) ride.eng.set(ride.rpm, {thr: thr > 0 ? thr : 0, gear: ride.gear, speed: v, limiter: lim,
-      slip: ride.drift ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0});
+      slip: ride.drift ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0, pos: ownAt(), sk: "own"});
   }
   // [gearbox] the engine's note from the gearbox: its rpm (free-revving with the clutch in or in neutral, held for a
   // launch), the limiter's stutter, the rev-matched blip on a downshift (engine.js blips on a lower gear), wheelspin
@@ -2701,7 +2776,7 @@ function mount(el, api){
     if(!ride.eng && E.engineSound) ride.eng = E.engineSound(V.eng, ride.tune && HQV.hqTuning ? HQV.hqTuning.exhaustOf(ride.tune) : null, V.engine);
     if(ride.eng) ride.eng.set(ride.rpm, {thr: w ? 1 : thr > 0 ? thr : 0, gear: o.gear > 0 ? o.gear : null, speed: v, limiter: o.limiter, qs: o.events.indexOf("qs") >= 0,
       mode: ride.mode, boost: !!(ride.nitro && ride.nitro.on), crackle: FX.popT > 0,
-      slip: Math.max(o.slip, ride.drift ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0)});
+      slip: Math.max(o.slip, ride.drift ? E.clamp(Math.abs(ride.slip || 0)*2.5, 0, 1) : 0), pos: ownAt(), sk: "own"});
   }
   /* ---------- skating (games/hqskate.js does the physics) ---------- */
   // ride.sk = {st (the sim's state, in the park's frame), cx, cz (the park's centre), prev (keys last frame)}
@@ -3565,7 +3640,7 @@ function mount(el, api){
     // the rotor's note: the blades spooling up, harder with the collective and the speed (set() every frame or it fades)
     if(st.rpm > 0.02 && E.engineSound){
       if(!ride.eng) ride.eng = E.engineSound(ride.V.eng);
-      ride.eng.set(900 + 6700*E.clamp(st.rpm*0.55 + Math.max(0, lift)*0.25 + st.speed/ride.V.top*0.2, 0, 1));
+      ride.eng.set(900 + 6700*E.clamp(st.rpm*0.55 + Math.max(0, lift)*0.25 + st.speed/ride.V.top*0.2, 0, 1), {pos: ownAt(), sk: "own"});
     }
     keyMove = st.speed > 0.3 || !st.ground; keyRun = false; if(keyMove) movedHere = true;
     avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
@@ -3619,8 +3694,8 @@ function mount(el, api){
       // a prop's drone; an airliner's turbofans (HQ 3.6: "jet", the whine on N1, which lags the levers as the jets
       // spool, the roar with the thrust)
       if(!ride.eng) ride.eng = E.engineSound(V.plane && (!V.eng || V.eng === "six") ? "prop" : V.eng);
-      if(V.airliner) ride.eng.set(900 + 6700*E.clamp(st.rpm, 0, 1), {thr: E.clamp((st.rpm - 0.12)/0.88, 0, 1)});
-      else ride.eng.set(900 + 5600*E.clamp(st.rpm, 0, 1));
+      if(V.airliner) ride.eng.set(900 + 6700*E.clamp(st.rpm, 0, 1), {thr: E.clamp((st.rpm - 0.12)/0.88, 0, 1), pos: ownAt(), sk: "own"});
+      else ride.eng.set(900 + 5600*E.clamp(st.rpm, 0, 1), {pos: ownAt(), sk: "own"});
     }
     keyMove = st.speed > 0.3 || !st.ground; keyRun = false; if(keyMove) movedHere = true;
     avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
@@ -3856,6 +3931,14 @@ function mount(el, api){
   }
   // The camera that draws and picks: the perspective one in every rig mode but Classic.
   function curCam(){ return rigOn() && rig.mode !== "classic" && pcam ? pcam : cam; }
+  // [sound] where that camera hears from (E.listener's at, with its facing): Classic from what it looks at, the Map from
+  // the ground at its centre (its camera is hundreds of metres up, past every world sound's reach), the rest from the
+  // camera itself (null)
+  function earAt(c){
+    if(c === cam) return view.target;
+    if(c && c.position && rigOn() && rig.mode === "map"){ var x = c.position.x, z = c.position.z; return {x: x, y: groundAt(x, z) + 1.6, z: z}; }
+    return null;
+  }
   function groundAt(x, z){ return cur && cur.camModes && cur.groundY ? cur.groundY(x, z) : 0; }
   // grade (dy/ds) along yaw over +-len m: world.js slopeAlong, on the world's own ground (roads, pads)
   function slopeAlong(x, z, yaw, len){ var sx = Math.sin(yaw)*len, sz = Math.cos(yaw)*len; return (groundAt(x + sx, z + sz) - groundAt(x - sx, z - sz))/(2*len); }
@@ -5062,8 +5145,8 @@ function mount(el, api){
         entering = null; clearTimeout(to); loading.remove();
         if(ok) w.isReady = true;
         else if(!cityRetried && /unavailable: timeout/.test((err && err.message) || "")){
-          // world.js's deadline is wall-clock: a long first-frame shader compile (cold profile, software GL) can
-          // trip it although the doc arrived. Drop this City and build a fresh one, once, before falling back.
+          // world.js's deadline counts the page's own time (a long first-frame shader compile no longer trips it), so
+          // this is a slow Arena: drop this City and build a fresh one, once, before falling back.
           cityRetried = true;
           if(worlds[name] === w) delete worlds[name];
           if(w.destroy){ try { w.destroy(); } catch(e){} }
@@ -5293,6 +5376,7 @@ function mount(el, api){
     studioFrame();
     var ease = 1 - Math.exp(-dt*(ride ? 4 + Math.min(6, Math.abs(ride.speed)*0.3) : 4)); view.target.lerp(view.goal, ease);
     resize(); placeCam();
+    if(E.listener) E.listener(curCam(), earAt(curCam()), ownRef());   // [sound] the ears: this frame's camera (earAt), your reach
     if(avatar && avatar.ch){
       var skp = ride && ride.kind === "skate" && ride.sk ? ride.sk.pose : null;
       if(skp || avatar.ch._po) poseUndo(avatar.ch);
@@ -5311,6 +5395,7 @@ function mount(el, api){
     }
     placePeers(dt, t);
     tankFrame(dt);                                                     // [3.16] tanks: the turret, a gunner's aim
+    peerSounds();                                                      // [sound] their engines (the nearest few) and horns
     bubblesStep();                                                     // [3.15] nearby chat over heads
     petsFrame(t, dt);                                                  // [pets 3.14]
     petFxStep(dt);                                                     // [3.14 riding] the ridden breath
@@ -5624,6 +5709,7 @@ function mount(el, api){
         var ptn = P.vt && HQV.hqTuning && (vk === "car" || vk === "moto" || Vc) ? HQV.hqTuning.decode(P.vt, (Vc ? VEHICLES[vk].kind === "bike" : vk === "moto") ? "bike" : "car") : null;   // [3.13]
         P.bike = vk === "tank" && HQV.hqTank ? HQV.hqTank.model(THREE) : vk === "petride" ? HQV.hqPetRide.mountModel(ctx, {species: pmount.sp.id, variant: pmount.variant, acc: pmount.acc, name: pmount.name}) : Vc ? HQV.hqVehicleModels.build(ctx, Vc, ph, {tune: ptn}) : VEHICLES[vk].plane ? HQV.hqplane.model(ctx, vk, bikeColor(u)) : VEHICLES[vk].heli ? HQV.hqheli.model(ctx, vk, bikeColor(u)) : vk === "car" ? carModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : vk === "moto" ? motoModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : bikeModel(bikeColor(u));
         if(ptn && !Vc && (vk === "car" || vk === "moto") && HQV.hqVehicleModels && HQV.hqVehicleModels.tuneStarter) HQV.hqVehicleModels.tuneStarter(THREE, P.bike, ptn, vk === "car" ? "car" : "bike");
+        P.vk = vk; P.ex = ptn && HQV.hqTuning.exhaustOf ? HQV.hqTuning.exhaustOf(ptn) : null;   // [sound] what it sounds like (peerSounds)
         P.lean.add(P.bike.g); if(P.ch){ P.lean.add(P.ch.o); seatOn(P.ch, P.bike); }
       }
       if(P.bike){
@@ -5677,6 +5763,25 @@ function mount(el, api){
       }
     });
   }
+  /* ---------- [sound] other players' vehicles (Sound PR B) ----------
+     Each frame after placePeers: every engine where it is drawn (HQV.hq3dPure.peerSound), the nearest few of a kind
+     playing (peerPools). Nothing new on the wire: presence carries what they ride, where, and their revs. (Their horn
+     is not heard here: presence does not carry it.) */
+  var PSND = null;
+  function peerSounds(){
+    if(!PSND) PSND = HQV.hq3dPure.peerPools(E);                       // (null: an engine without pools)
+    if(!PSND || !cur) return;
+    var list = [];
+    Object.keys(peers).forEach(function(u){
+      var P = peers[u];
+      if(!P.bike || !P.vk || P.g.parent !== cur.scene) return;           // on a vehicle, on this floor
+      var V = VEHICLES[P.vk], EN = V && V.motor && V.gears ? engineOf(V, baseKind(P.vk)) : null, s = HQV.hq3dPure.peerSound(u, P, V, EN);
+      if(s) list.push(s);
+    });
+    PSND.update(list);
+  }
+  // their engines off, every node let go (a paused or closed view; the next frame's peerSounds starts afresh)
+  function peerSoundsOff(){ if(PSND){ PSND.stop(); PSND = null; } }
   // 0 still, 1 walk, 2 run, 3 on a bike (any speed: others draw you riding), 4 on a skateboard,
   // 5 driving a car, 6 on a motorbike (the page sends 5 / 6 only where the Arena lists "drive").
   var RIDE_A = {bike: 3, skate: 4, car: 5, moto: 6};
@@ -5968,6 +6073,9 @@ function mount(el, api){
   }
   inst.setFilter = function(p){ filter = p || null; if(scene) applyFilter(); };
   inst.pause = function(){ inst.running = false; keys = {}; exitLock(); if(raf){ cancelAnimationFrame(raf); raf = 0; }
+    if(E.listener) E.listener(null);                                  // [sound] no view, no ears: nothing is placed, every pool's voices go
+    peerSoundsOff();                                                  // (theirs too: the next frame starts them again)
+    if(cur && cur.soundPause){ try { cur.soundPause(); } catch(e){} } // the floor's own voices (the City's: rebuilt with its next frame)
     if(ride && ride.eng){ ride.eng.stop(); ride.eng = null; } };     // (the engine starts again with the next frame you drive)
   inst.resume = function(){
     if(!inst.alive || inst.running || !scene) { if(!scene) inst.wantRun = true; return; }

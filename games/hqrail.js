@@ -1236,6 +1236,39 @@ function carsOf(R, head, o, cars){
   }
   return out;
 }
+/* ---------- the trains' sound (Sound PR B), shared with games/hqcityrail.js ----------
+   nearOn(cars, p, dy, carL): where a train sounds from, the point of its centre line (carsOf()-shaped poses, front car
+   first, from its nose to its tail) nearest p ({x, z}), dy m over the rails: a 72 m train sounds from its part beside
+   you. earAt(cam): the ears games/engine.js hears from this frame (its listener), else cam. trainPool(): a pool of
+   the engine's train-run loops (null without one): update([{id, x, y, z, speed}]) each frame plays the nearest moving
+   train; one voice per pool, as the City Line, the Island Link and the built lines share the train kind's two. */
+function nearOn(cars, p, dy, carL){
+  var n = cars ? cars.length : 0; if(!n) return null;
+  var px = +(p && p.x) || 0, pz = +(p && p.z) || 0, h = (carL || CAR_L)/2, a = cars[0], b = cars[n - 1];
+  var line = [{x: a.x + Math.sin(a.yaw)*h, y: a.y, z: a.z + Math.cos(a.yaw)*h}].concat(cars, [{x: b.x - Math.sin(b.yaw)*h, y: b.y, z: b.z - Math.cos(b.yaw)*h}]);
+  var best = {x: line[0].x, y: line[0].y, z: line[0].z}, bd = Infinity;
+  for(var i = 0; i + 1 < line.length; i++){
+    var A = line[i], B = line[i + 1], ex = B.x - A.x, ez = B.z - A.z, l2 = ex*ex + ez*ez;
+    var u = l2 > 1e-9 ? Math.max(0, Math.min(1, ((px - A.x)*ex + (pz - A.z)*ez)/l2)) : 0, x = A.x + ex*u, z = A.z + ez*u, d = (px - x)*(px - x) + (pz - z)*(pz - z);
+    if(d < bd){ bd = d; best = {x: x, y: A.y + (B.y - A.y)*u, z: z}; }
+  }
+  best.y += +dy || 0;
+  return best;
+}
+function earAt(cam){
+  var E = HQV.engine, L = null;
+  try { L = E && E.listenerAt ? E.listenerAt() : null; } catch(e){ L = null; }
+  return L || (cam && cam.x != null ? cam : {x: 0, y: 0, z: 0});
+}
+var SND_R = 600;             // m: a train's head this near the ears is worth placing (the train kind fades out by 400 m)
+function trainPool(){
+  var E = HQV.engine;
+  if(!E || typeof E.pool !== "function" || typeof E.loop !== "function") return null;
+  try {
+    return E.pool("train", {voices: 1, key: function(){ return "run"; }, make: function(){ return E.loop("train-run", "train"); },
+                            play: function(h, s){ h.set(1, {pos: s, speed: s.speed}); }});
+  } catch(e){ return null; }
+}
 // a focused train's inside: unit boxes (floor, seats, racks, a light strip, car 1's luggage stack) with instance colours,
 // one call; and a faint shell per car, one call. seats: SEATS-shaped [{car, x, y, z, back}]
 var UNIT = null;
@@ -1334,7 +1367,8 @@ function ridersOf(mode, vid, cars, seats, ms, seed, skipSeat){
    viaduct (the player-built lines' style: a concrete deck SEA_UP m over the water on piers, masts every MAST_EVERY m)
    within DRAW_R of this world, merged into one mesh; the trains in two calls; seated commuters in one. Below ground
    (opts.under() true, the integrator's underground view): the tunnel as a lit box section and only the trains in it.
-   focus(vehicleId): that train's inside and faint shell (the camera rides in it). */
+   focus(vehicleId): that train's inside and faint shell (the camera rides in it). The trains you see (and yours) run
+   with games/engine.js's train-run loop, the nearest moving one at a time (trainPool above). */
 var IL_LIVERY = {body: 0xf3f1f6, accent: 0x6d4bb3, door: 0x5a3d99, glass: 0x1d2530, glassNight: 0xffd9a0};
 // the portal's open U trench, as wide as its terrain hole (railway.rs TRENCH_W_CM): a floor under the ballast and a
 // retaining wall each side from the floor up to just over the ground beside it, so the hole shows no void
@@ -1447,22 +1481,29 @@ function linkView(c, sim, opts){
   root2.add(trains.g); root2.add(inside.g); root2.add(riders.g);
   if(c.scene && opts.attach !== false) c.scene.add(root2);
   var focusId = null, mySeat = opts.mySeat != null ? opts.mySeat : -1, seed = opts.seed != null ? opts.seed : (sim && sim.here) || "";
+  var runP = trainPool();      // the trains' running sound: heard as they are drawn (in the tunnel only below ground), yours too
   var V = {g: root2,
     update: function(ms, dt, cam){
-      var under = !!underF(), cars = [], ride = [], fc = null;
+      var under = !!underF(), cars = [], ride = [], fc = null, snd = [], ear = earAt(cam);
       if(surf) surf.visible = !under;
       if(tun) tun.visible = under;
       trains.night(typeof opts.night === "function" ? opts.night() : false);
+      function heard(v, cs){
+        if(!runP || !(+v.speed > 0.5) || hyp(cs[0].x - ear.x, cs[0].z - ear.z) > SND_R) return;
+        var q = nearOn(cs, ear, 1.5); snd.push({id: v.id, x: q.x, y: q.y, z: q.z, speed: +v.speed});
+      }
       (sim ? sim.vehicles(ms) : []).forEach(function(v){
         var R = sim.route(v.line, v.dir); if(!R) return;
         var cs = carsOf(R, v.along, o), inTunnel = underAt(R, v.along - TRAIN_L/2);
-        if(v.id === focusId){ fc = cs; ride = ride.concat(ridersOf("link", v.id, cs, SEATS, ms, seed, mySeat)); return; }
+        if(v.id === focusId){ fc = cs; ride = ride.concat(ridersOf("link", v.id, cs, SEATS, ms, seed, mySeat)); heard(v, cs); return; }
         if(inTunnel !== under) return;
         if(cam && hyp(cs[0].x - cam.x, cs[0].z - cam.z) > TRAIN_FAR) return;
         cars = cars.concat(cs);
+        heard(v, cs);
         if(cam && hyp(cs[1].x - cam.x, cs[1].z - cam.z) < 250) ride = ride.concat(ridersOf("link", v.id, cs, SEATS, ms, seed, -1));
       });
       trains.set(cars); inside.set(fc); riders.set(ride);
+      if(runP) runP.update(snd);
     },
     focus: function(id){ focusId = id || null; if(!focusId) inside.set(null); },
     focused: function(){ return focusId; },
@@ -1483,6 +1524,7 @@ function linkView(c, sim, opts){
       return null;
     }},
     dispose: function(){
+      if(runP){ runP.stop(); runP = null; }
       if(root2.parent) root2.parent.remove(root2);
       if(surf) surf.geometry.dispose(); if(tun){ tun.geometry.dispose(); tun.userData.mat.dispose(); }
       mat.dispose(); trains.dispose(); inside.dispose(); riders.dispose();
@@ -1587,10 +1629,17 @@ function mount(c, w, o){
     while(pool.length <= i){ var T = trainModel(c, M, seed++ * 13); root.add(T.g); pool.push(T); }
     return pool[i];
   }
-  // the timetable's trains near the camera; yours on its own
+  // the timetable's trains near the camera; yours on its own. They run with the train-run loop (Sound PR B): the
+  // nearest moving one, yours included, from its part nearest your ears
+  var runP = trainPool();
   function update(t, dt, cam){
     if(!arch && o.here) hp = o.here();                                                    // until the lines load
     var now = Date.now(), n = 0, V = RIDE.trip, cx = cam && cam.x != null ? cam.x : 0, cz = cam && cam.z != null ? cam.z : 0;
+    var snd = [], ear = earAt(cam);
+    function heard(id, R, p){
+      if(!runP || !(p.speed > 0.5) || hyp(p.x - hp.x - ear.x, p.z - hp.z - ear.z) > SND_R) return;
+      var q = nearOn(carsOf(R, p.along, hp), ear, 1.5); snd.push({id: id, x: q.x, y: q.y, z: q.z, speed: p.speed});
+    }
     if(now - fetchedAt > 60000) refresh();
     lines.forEach(function(L){
       [[L.out, world, L.other], [L.inb, L.other, world]].forEach(function(d){
@@ -1601,17 +1650,20 @@ function mount(c, w, o){
           var p = poseAt(R, tt);
           if(hyp(p.x - hp.x - cx, p.z - hp.z - cz) > TRAIN_FAR) return;
           placeTrain(trainOf(n++), R, p.along, hp);
+          heard(d[1] + ">" + d[2] + ":" + dep, R, p);
         });
       });
     });
     for(var i = n; i < pool.length; i++) pool[i].g.visible = false;
+    if(ours(V)) heard("yours", V.R, poseAt(V.R, Math.max(-1, rideT(V))));
+    if(runP) runP.update(snd);
     rideStep(dt);
     if(c.active && c.active(w)) HQV.hqRail.tools = tools;                                // tools reach the City you are in
   }
   // your ride
   function ours(V){ return !!V && (V.from === world || V.to === world); }
   function rideT(V){ return Math.min(V.R.T, (Date.now() - V.dep)/1000 + V.warp); }
-  function sfx(n){ if(HQV.engine && HQV.engine.sfx) HQV.engine.sfx(n); }
+  function sfx(n){ if(HQV.engine && HQV.engine.sfx) HQV.engine.sfx(n); }        // your ride's own (board, depart, arrive): centred
   function board(L){
     var now = Date.now(), dep = nextDeparture(world, L.other, now);
     if(dep - now < 8000) dep += EVERY;                                                      // too late for this one
@@ -1723,6 +1775,7 @@ function mount(c, w, o){
   }
   function destroy(){
     dead = true;
+    if(runP){ runP.stop(); runP = null; }
     S.remove(root);
     views.forEach(function(V){ V.dispose(); });
     pool.forEach(function(T){ T.g.traverse(function(x){ if(x.geometry && x.geometry !== M.seatedGeo) x.geometry.dispose(); }); });
@@ -1754,6 +1807,7 @@ HQV.hqRail.view = lineView;
 HQV.hqRail.linkView = linkView;
 // the few-draw-call drawing kit, shared by games/hqcityrail.js and games/hqgondola.js
 HQV.hqRail.parts = {kit: kit, vcMat: vcMat, trainKit: trainKit, carsOf: carsOf, interiorKit: interiorKit, commuterKit: commuterKit, ridersOf: ridersOf,
-  carGeo: carGeo, samples: samples, extrude: extrude, DECK: DECK, PIER_EVERY: PIER_EVERY, MAST_EVERY: MAST_EVERY, DRAW_R: DRAW_R};
+  carGeo: carGeo, samples: samples, extrude: extrude, DECK: DECK, PIER_EVERY: PIER_EVERY, MAST_EVERY: MAST_EVERY, DRAW_R: DRAW_R,
+  nearOn: nearOn, earAt: earAt, trainPool: trainPool, SND_R: SND_R};
 HQV.hqRail.ride = RIDE;
 })();

@@ -904,7 +904,12 @@ function create(c, W, o){
           return {p: fr.p.clone().addScaledVector(fr.up, 1.45).addScaledVector(fr.t, -0.3).applyMatrix4(M),
                   t: fr.t.clone().transformDirection(M), up: fr.up.clone().transformDirection(M)};
         },
-        watch: {x: st0.x - 26, z: st0.z + 30, y: 18}
+        watch: {x: st0.x - 26, z: st0.z + 30, y: 18},
+        // [Sound PR B] the train's middle (the park's frame) and its speed (m/s; 0 while it waits in the station)
+        sound: function(sec){
+          var tau = ((sec % LAP) + LAP) % LAP, f = sAt(sec), p = frame(f - 1.5*CAR_GAP).p, v = tau < DWELL ? 0 : vS[Math.floor(f) % N] || 0;
+          return {x: p.x, y: p.y, z: p.z, lvl: clamp(v/18, 0, 1), speed: v};
+        }
       };
     }
     // the Ferris wheel: 24 gondolas that stay level, a rim of lights
@@ -949,7 +954,8 @@ function create(c, W, o){
         },
         seat: function(sec, k){ var gd = gonds[k], an = ang(sec, k), p = new THREE.Vector3(0.5, gd.position.y - 1.4, gd.position.z); wg.localToWorld(p);
           var out = new THREE.Vector3(0.75, -0.3, -Math.sin(an)*1.1).normalize().transformDirection(wg.matrixWorld); return {p: p, t: out, up: new THREE.Vector3(0, 1, 0)}; },
-        watch: {x: o3.x + R*1.4, z: o3.z - R*0.8, y: 6}, g: wg
+        watch: {x: o3.x + R*1.4, z: o3.z - R*0.8, y: 6}, g: wg,
+        sound: function(){ return {x: o3.x, y: ly(o3.x, o3.z) + 2, z: o3.z, lvl: 0.5}; }    // [Sound PR B] its drive, always turning
       };
     }
     // the drop tower: up slowly, a pause with the whole city below, then a free fall
@@ -983,7 +989,9 @@ function create(c, W, o){
         update: function(sec){ ringG.position.y = yAt(sec); },
         seat: function(sec){ var p = new THREE.Vector3(Math.sin(face)*4.6, yAt(sec) + 0.6, Math.cos(face)*4.6); dg.localToWorld(p);
           var t = new THREE.Vector3(Math.sin(face), -0.28, Math.cos(face)).transformDirection(dg.matrixWorld); return {p: p, t: t, up: new THREE.Vector3(0, 1, 0)}; },
-        watch: {x: o3.x + 24, z: o3.z - 10, y: 8}
+        watch: {x: o3.x + 24, z: o3.z - 10, y: 8},
+        // [Sound PR B] the seats' ring, loudest as it falls and brakes (m/s up or down)
+        sound: function(sec){ var v = Math.abs(yAt(sec + 0.05) - yAt(sec - 0.05))*10; return {x: o3.x, y: ly(o3.x, o3.z) + yAt(sec), z: o3.z, lvl: clamp(v/16, 0, 1)}; }
       };
     }
     // the carousel: horses that rise and fall under a striped canopy edged in bulbs
@@ -1029,7 +1037,8 @@ function create(c, W, o){
         update: function(sec){ spin.rotation.y = -angAt(sec); horses.forEach(function(h, k){ h.body.position.y = bob(sec, k); }); },
         seat: function(sec){ var h = horses[outer], p = new THREE.Vector3(0, bob(sec, outer) + 1.05, 0); h.g.localToWorld(p);
           var t = new THREE.Vector3(0, -0.1, 1).transformDirection(h.g.matrixWorld); return {p: p, t: t, up: new THREE.Vector3(0, 1, 0)}; },
-        watch: {x: o3.x + r + 9, z: o3.z + 6, y: 4}
+        watch: {x: o3.x + r + 9, z: o3.z + 6, y: 4},
+        sound: function(sec){ var t = ((sec % CYC) + CYC) % CYC; return {x: o3.x, y: ly(o3.x, o3.z) + 1, z: o3.z, lvl: 0.6*omega(t)/W2}; }   // [Sound PR B] its drive while it turns
       };
     }
     // the wave swinger: chairs flung out on chains under a spinning, tilting crown
@@ -1070,7 +1079,8 @@ function create(c, W, o){
         },
         seat: function(sec){ var ch = chairs[0], p = new THREE.Vector3(0, -LC + 0.9, 0); ch.hang.localToWorld(p);
           var t = new THREE.Vector3(0, -0.15, 1).transformDirection(ch.hang.matrixWorld); return {p: p, t: t, up: new THREE.Vector3(0, 1, 0)}; },
-        watch: {x: o3.x + rt + LC + 14, z: o3.z - 8, y: 5}
+        watch: {x: o3.x + rt + LC + 14, z: o3.z - 8, y: 5},
+        sound: function(sec){ var t = ((sec % CYC) + CYC) % CYC; return {x: o3.x, y: ly(o3.x, o3.z) + MH, z: o3.z, lvl: omega(t)/WMAX}; }   // [Sound PR B] the chairs' rush
       };
     }
 
@@ -1169,7 +1179,9 @@ function create(c, W, o){
           sg3.updateMatrixWorld(); m4.extractRotation(sg3.matrixWorld);
           return {p: sg3.localToWorld(p), t: f.applyMatrix4(m4), up: up.applyMatrix4(m4)};
         },
-        watch: {x: o3.x + 18, z: o3.z - 14, y: 7}
+        watch: {x: o3.x + 18, z: o3.z - 14, y: 7},
+        // [Sound PR B] the ship's rush through the bottom of its swing (its speed there, m/s, over 12)
+        sound: function(sec){ var w = Math.abs(thAt(sec + 0.05) - thAt(sec - 0.05))*10; return {x: o3.x, y: ly(o3.x, o3.z) + PIV - ARM, z: o3.z, lvl: clamp(w*ARM/12, 0, 1)}; }
       };
     }
 
@@ -1263,7 +1275,7 @@ function create(c, W, o){
         if((gx2*gx2)/((lrx + 1)*(lrx + 1)) + (gz2*gz2)/((lrz + 1)*(lrz + 1)) <= 1) hits.push({x: lx0 + gx2, z: lz0 + gz2, r: 0.95});
       }
       zones.push({x: lx0, z: lz0, hw: lrx + 2, hd: lrz + 2});
-      lagoon = {water: water, wm: wm, WT: WT, FU: FU, spray: spray, fmat: fmat, NJ: NJ, jetH: jetH};
+      lagoon = {water: water, wm: wm, WT: WT, FU: FU, spray: spray, fmat: fmat, NJ: NJ, jetH: jetH, snd: {x: lx0, y: yw + 0.6, z: lz0}};   // snd: where it is heard (the park's frame)
     }
 
     // The food court: parasol tables by the cotton candy, strung with lights
@@ -1625,6 +1637,29 @@ function create(c, W, o){
       bm.beam.material.uniforms.uA.value = night ? 0.085 : 0;
     });
   }
+  // [Sound PR B] the park heard where it is, each frame it is drawn: the lagoon's dancing fountain (louder as its jets
+  // climb), the coaster's train on its rails, and the other rides (the nearest two): the air rushing past the drop
+  // tower's seats, the swing's chairs and the galleon, the wheel's and the carousel's drives. Each is a named loop of
+  // games/engine.js (E.loop) set from the ride's own motion (r.sound(sec): the park's frame), in a pool per kind, so only
+  // the nearest play and the rest cost nothing.
+  var RIDE_LOOP = {coaster: "train-run", drop: "jet-roar", swing: "jet-roar", galleon: "jet-roar", wheel: "hum", carousel: "hum"};
+  function setLoop(h, s){ h.set(s.lvl, {pos: s, speed: s.speed}); }
+  var parkSnd = park && E.pool && E.loop ? {
+    fount: E.pool("fountain", {voices: 1, make: function(){ return E.loop("fountain"); }, play: setLoop}),
+    coaster: E.pool("train", {voices: 1, make: function(){ return E.loop("train-run", "train"); }, play: setLoop}),
+    rides: E.pool("gondola", {voices: 2, key: function(s){ return s.loop; }, make: function(s){ return E.loop(s.loop, "gondola"); }, play: setLoop})
+  } : null;
+  function parkSound(sec){
+    if(!parkSnd) return;
+    var y0 = park.g.position.y, co = [], rs = [], fo = [], Lg = park.fx.lagoon;
+    function at(id, s, loop){ var w = park.toW(s.x, s.z); return {id: id, x: w.x, y: y0 + s.y, z: w.z, lvl: clamp(+s.lvl || 0, 0, 1), speed: s.speed, loop: loop}; }
+    park.rides.forEach(function(r){ var s = r.sound ? r.sound(sec) : null; if(s) (r.id === "coaster" ? co : rs).push(at(r.id, s, RIDE_LOOP[r.id] || "hum")); });
+    if(Lg){
+      for(var j = 0, m = 0; j < Lg.NJ; j++) m += Lg.FU.uH.value[j];
+      fo.push(at("lagoon", {x: Lg.snd.x, y: Lg.snd.y, z: Lg.snd.z, lvl: 0.35 + 0.65*Math.min(1, m/Lg.NJ/7)}));
+    }
+    parkSnd.coaster.update(co); parkSnd.rides.update(rs); parkSnd.fount.update(fo);
+  }
   // The fireworks: the shells of the show in progress into their slots, a boom for each as it bursts (the sound
   // arriving at the speed of sound), and a word when a show starts. Only by night, never in Calm.
   var fwSaid = -1, fwLast = 0, boomBuf = null;
@@ -1640,8 +1675,8 @@ function create(c, W, o){
       A.set(s2.burst.x, s2.burst.y, s2.burst.z, s2.t - base); B.set(s2.launch.x, park.ly(s2.launch.x, s2.launch.z) + 0.4, s2.launch.z, s2.k);
       col.setHex(s2.col); C.set(col.r, col.g, col.b, s2.size); col.setHex(s2.col2); D.set(col.r, col.g, col.b, s2.seed);
       if(s2.t > fwLast && s2.t <= sec && cam && cam.x != null){
-        var w = park.toW(s2.burst.x, s2.burst.z), d = Math.hypot(w.x - cam.x, park.g.position.y + s2.burst.y - (cam.y || 0), w.z - cam.z);
-        if(d < BOOM_M) boom(d, s2.i, s2.k);
+        var w = park.toW(s2.burst.x, s2.burst.z), by = park.g.position.y + s2.burst.y, d = Math.hypot(w.x - cam.x, by - (cam.y || 0), w.z - cam.z);
+        if(d < BOOM_M) boom(d, s2.i, s2.k, {x: w.x, y: by, z: w.z});
       }
     });
     fwLast = sec;
@@ -1667,9 +1702,13 @@ function create(c, W, o){
     for(i = 0; m > 1 && i < n; i++) d[i] /= m;
     return b;
   }
-  function boom(dist, seed, kind){
+  // [Sound PR B] each burst from where it bursts (at: {x, y, z}): a spatial voice (games/engine.js spatialOut, the
+  // ambient bus) pans it there and keeps the six nearest; boomVol is still its whole level (curve: false), and t0 below
+  // already waits the d/343 s it takes to arrive (delay: false; dur covers that wait and the echo). An older engine:
+  // centred, as before.
+  function boom(dist, seed, kind, at){
     var vol = boomVol(dist); if(!(vol > 0)) return;
-    var A = E.ambientOut ? E.ambientOut() : E.audioOut ? E.audioOut() : null; if(!A) return;
+    var A = E.spatialOut ? E.spatialOut("firework", at || null, {gain: 1, delay: false, dur: dist/343 + 3}) : E.ambientOut ? E.ambientOut() : E.audioOut ? E.audioOut() : null; if(!A) return;
     try {
       var ac = A.ctx, near = Math.max(0, 1 - dist/BOOM_M), t0 = ac.currentTime + dist/343;
       if(!boomBuf || boomBuf.sampleRate !== ac.sampleRate){ boomBuf = thumpBuf(ac); crackBufs = [0, 1, 2, 3].map(function(v){ return crackleBuf(ac, v); }); }
@@ -1737,6 +1776,7 @@ function create(c, W, o){
       }
       park.balloons.forEach(function(bl){ var u = bl.userData; bl.position.set(u.bx + (calm ? 0 : Math.sin(sec*0.8 + u.ph)*0.12), park.ly(u.bx, u.bz) + 3.2 + (calm ? 0 : Math.sin(sec*1.1 + u.ph)*0.15), u.bz); });
       parkFx(sec, cam, calm, mid);
+      parkSound(sec);
       // riding: off at the end of the lap or cycle
       if(riding && sec >= riding.until) leave(true);
       promptUi(riding ? null : nearest());
@@ -1799,6 +1839,7 @@ function create(c, W, o){
     debug: function(){ return park ? {park: spec.park, rides: park.rides.map(function(r){ return {id: r.id, name: r.name, entry: park.toW(r.entry.x, r.entry.z)}; }), gate: park.toW(park.gate.x, park.gate.z), free: true} : null; },
     destroy: function(){
       dead = true; if(prompt && prompt.parentNode) prompt.parentNode.removeChild(prompt); prompt = null;
+      if(parkSnd){ parkSnd.fount.stop(); parkSnd.coaster.stop(); parkSnd.rides.stop(); parkSnd = null; }
       S.remove(g);
       g.traverse(function(x){ if(x.geometry) x.geometry.dispose(); });
     }

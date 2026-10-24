@@ -141,7 +141,8 @@ class EngineSound(unittest.TestCase):
         self.assertGreater(o["made"], 10)            # one graph, made once...
         self.assertEqual(o["perFrame"], 0)           # ...and 300 frames make nothing new
         self.assertEqual(o["mainType"], "custom")    # a PeriodicWave timbre
-        self.assertAlmostEqual(o["mainHz"], o["wantHz"], delta=o["wantHz"]*0.02)   # with its +-2 % wobble
+        # with its wobble (up to +-1.8 %; +-0.6 % this near the redline), posted once it moved 0.3 % (5 cents)
+        self.assertAlmostEqual(o["mainHz"], o["wantHz"], delta=o["wantHz"]*0.02)
         self.assertTrue(o["stopped"])
 
     def test_load_shifts_blowoff_and_crackle(self):

@@ -209,7 +209,8 @@ function fx(T, scene){
   return {ball: ball, blast: blast, step: step, attach: attach, clear: clear, root: root, busy: function(){ return booms.length; }};
 }
 // The boom: shaped brown noise through a low-pass, heard within BOOM_M (as the fireworks are), late by the distance
-// over the speed of sound. out: engine.js audioOut() ({ctx, out}), so the sound volume (and Calm's 0) applies.
+// over the speed of sound. out: {ctx, out}: a voice from engine.js spatialOut (boomAt, below) or audioOut(), so the
+// sound volume (and Calm's 0) applies.
 var BOOM_M = 400, boomBuf = null;
 function boomVol(dist){ dist = +dist; return isFinite(dist) && dist >= 0 && dist < BOOM_M ? 0.7*Math.pow(1 - dist/BOOM_M, 2) : 0; }
 function boom(out, dist, wet){
@@ -228,8 +229,22 @@ function boom(out, dist, wet){
     src.connect(lp); lp.connect(gn); gn.connect(out.out); src.start(ac.currentTime + dist/343);
   } catch(e){}
 }
+// [sound] The boom where the blast is (Sound PR B): through E.spatialOut("blast") (games/engine.js: panned to its side,
+// one of the blast kind's voices, nothing past its 400 m), at the listener's distance (else dist, the caller's), the
+// voice adding no delay of its own (boom() waits for the sound to travel) and held for as long as the boom lasts. An
+// engine without spatialOut: centred through audioOut(). -> the voice, or null when it is not heard.
+function boomAt(E, at, dist, wet){
+  if(!E) return null;
+  var L = typeof E.listenerAt === "function" ? E.listenerAt() : null;
+  if(L && at){ var dx = num(at.x, 0) - L.x, dy = num(at.y, L.y) - L.y, dz = num(at.z, 0) - L.z; dist = Math.sqrt(dx*dx + dy*dy + dz*dz); }
+  dist = Math.max(0, num(dist, 0));
+  var out = typeof E.spatialOut === "function" ? E.spatialOut("blast", at, {delay: false, dur: dist/343 + (wet ? 2.4 : 1.5)})
+          : typeof E.audioOut === "function" ? E.audioOut() : null;
+  boom(out, dist, wet);
+  return out;
+}
 
 HQV.hqGrenade = {G: G, DT: DT, KINDS: KINDS, LOFT: LOFT, COOL: COOL, KEEP: KEEP, WIRE: WIRE, R: R,
                  aim: aim, shot: shot, step: step, advance: advance, knock: knock, toWire: toWire, fromWire: fromWire,
-                 launcherModel: launcherModel, fx: fx, boom: boom, boomVol: boomVol};
+                 launcherModel: launcherModel, fx: fx, boom: boom, boomVol: boomVol, boomAt: boomAt};
 })();

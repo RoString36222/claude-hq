@@ -5,8 +5,10 @@ and a knoll under one span). Checks: cabins every 18 s, 90 m apart on the rope a
 stations round the bull wheel, a loop that is a whole number of 18 s, the rope as a catenary with 2 % sag (less only
 where a cabin would come within 3 m of the ground), cabins never below that clearance, the two facing benches of 4,
 trips and departures, the seeded wind sway (none under Calm), and (with the vendored three.js) the view: three draw
-calls, the screenshot cameras, a clunk at each tower, and no sway under Calm. Also runs tests/fixtures/world_v3_tiny.json
-(a crossing) and the @3 fixtures when present (skipped while their gondola layer is empty).
+calls, the screenshot cameras, a clunk at each tower (your cabin's, and every cabin's within earshot, each at its grip),
+the bull wheel's rumble and the wind placed where they are, and no sway under Calm. Also runs
+tests/fixtures/world_v3_tiny.json (a crossing) and the @3 fixtures when present (skipped while their gondola layer is
+empty).
 """
 import json
 import os
@@ -83,13 +85,20 @@ const H = window.HQV, W = H.world.pack(JSON.parse(fs.readFileSync(path.join(R0, 
 const scene = new THREE.Scene(), c = {THREE, scene, mat: (col, o) => new THREE.MeshStandardMaterial(Object.assign({color: col}, o || {}))};
 H.hqWeather.look = () => ({wind: 1});                                  // a gale, so the sway shows
 const sim = H.hqGondola.create(W, {seed: 'v'});
-let calm = false; const sounds = [];
-const V = H.hqGondola.view(c, sim, {ground: (x, z) => H.world.groundAt(W, x, z), calm: () => calm, sfx: n => sounds.push(n)});
+let calm = false, cur = 0; const sounds = [];
+const V = H.hqGondola.view(c, sim, {ground: (x, z) => H.world.groundAt(W, x, z), calm: () => calm, sfx: (n, o) => sounds.push({n, o: o || {}, ms: cur})});
 const ms = 1.7e12, L = sim.loop(), out = {};
 V.focus('G1:0');
-for (let t = 0; t < L.T; t += 0.5) V.update(ms + t*1000, 0.5, {x: -180, z: 100});
+for (let t = 0; t < L.T; t += 0.5) { cur = ms + t*1000; V.update(cur, 0.5, {x: -180, z: 100}); }
 out.calls = V.drawCalls();
-out.sounds = {clunk: sounds.filter(n => n === 'gondola-clunk').length, rumble: sounds.filter(n => n === 'gondola-rumble').length};
+// each clunk is at a cabin's grip: yours (G1:0) at each tower both ways, and every other cabin's within earshot
+const clunks = sounds.filter(s => s.n === 'gondola-clunk'), F = sim.frame();
+const atCab = (s, i) => { const p = sim.cabins(s.ms)[i]; return !!s.o.pos && Math.hypot(s.o.pos.x - p.x, s.o.pos.z - p.z) < 1e-6 && Math.abs(s.o.pos.y - p.y - H.hqGondola.HANG) < 1e-6; };
+const rum = sounds.filter(s => s.n === 'gondola-rumble'), wind = sounds.filter(s => s.n === 'gondola-wind');
+out.sounds = {clunk: clunks.filter(s => atCab(s, 0)).length, all: clunks.length, n: L.n, towers: sim.supports().filter(s => s.kind === 'tower').length,
+  atSome: clunks.every(s => sim.cabins(s.ms).some((p, i) => atCab(s, i))), clunkKinds: [...new Set(clunks.map(s => s.o.kind))],
+  rumble: rum.length, rumbleKinds: [...new Set(rum.map(s => s.o.kind))], rumbleFromA: rum.length ? Math.hypot(rum[0].o.pos.x - F.A.x, rum[0].o.pos.z - F.A.z) : null,
+  wind: wind.length, windKinds: [...new Set(wind.map(s => s.o.kind))], unplaced: sounds.filter(s => !s.o.pos).length};
 const cabs = scene.getObjectByName('gondola').children.filter(o => o.isInstancedMesh)[0], m = new THREE.Matrix4(), e = new THREE.Euler();
 function maxRoll(){ let r = 0; for (let i = 0; i < cabs.count; i++) { cabs.getMatrixAt(i, m); e.setFromRotationMatrix(m, 'YXZ'); r = Math.max(r, Math.abs(e.z), Math.abs(e.x)); } return r; }
 V.update(ms + 7000, 0.016, {x: 0, z: 0}); out.rollWind = maxRoll();
@@ -198,8 +207,18 @@ class GondolaTest(unittest.TestCase):
             raise AssertionError(r.stderr)
         v = json.loads(r.stdout)
         self.assertEqual(v["calls"], 3)
-        self.assertEqual(v["sounds"]["clunk"], 2*2, "a clunk at each of the two towers, both ways")
-        self.assertGreater(v["sounds"]["rumble"], 0)
+        s = v["sounds"]
+        self.assertEqual(s["clunk"], 2*2, "your cabin: a clunk at each of the two towers, both ways")
+        # both towers are within earshot here: every cabin clunks at each, both ways, once a loop, at its own grip
+        self.assertEqual(s["all"], s["n"] * s["towers"] * 2)
+        self.assertTrue(s["atSome"])
+        self.assertEqual(s["clunkKinds"], ["gondola"])
+        self.assertGreater(s["rumble"], 0)
+        self.assertEqual(s["rumbleKinds"], ["gondola"])
+        self.assertLess(s["rumbleFromA"], 25, "the rumble comes from the bull wheel of the station beside the camera")
+        self.assertGreater(s["wind"], 0, "a gale, high up: the wind round your cabin")
+        self.assertEqual(s["windKinds"], ["rain"], "weather: the ambient bed")
+        self.assertEqual(s["unplaced"], 0, "every gondola sound is where it is")
         self.assertGreater(v["rollWind"], 0.005)
         self.assertLess(v["rollWind"], 0.06)
         self.assertLess(v["rollCalm"], 1e-9, "Calm: no sway")

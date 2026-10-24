@@ -8,6 +8,8 @@
  *   figures(kind, occ) -> [{x, y, z, yaw, pose: "sit"|"stand", seat}]  vehicle-local (traffic SEATS / STANDS)
  *   toWorld(kind, v, p) -> {x, y, z, yaw}       a vehicle-local point on a vehicle row (a tram's two sections)
  *   doorOpen(doors, calm) / kneel(kind, doors, calm)   the door and kneel poses (Calm: pose only, no slide)
+ *   lineOf(v) / nearOn(line, p, dy)   a row's centre line, front to back, and its point nearest p (dy m up): where a
+ *       vehicle's sound comes from (a 27 m tram sounds from the part of it beside you)
  * view(c, sim, opts) -> V (the View contract, plan 5.4) over the traffic sim's buses and trams:
  *   far additions (every bus and tram): lit destination displays from the atlas, route colour bands and warm
  *     windows at night in one merged mesh; seated passengers in the windows as one InstancedMesh
@@ -20,9 +22,11 @@
  *   V.update(ms, dt, cam), V.focus(vehicleId|null), V.requestStop(vehicleId), V.hide() -> {id: true} for
  *   traffic.view's update (the near ones are drawn here), V.drawCalls(), V.triangles(), V.tools.shotCam(name)
  *   ("tram-interior", "bus-interior", "tram-stop", "tram-junction"), V.dispose().
- * opts = {calm(), reduced(), night(), sfx(name), traffic() -> the frame's traffic.at() list (poses with the
- * obstacle lag), W (for stop names), parent (a THREE.Object3D to add to)}. Sounds through opts.sfx: "door",
- * "hiss", "tram-bell", "air-brake", "stop-bell". Rides are free: nothing here takes a fare.
+ * opts = {calm(), reduced(), night(), sfx(name, o), traffic() -> the frame's traffic.at() list (poses with the
+ * obstacle lag), W (for stop names), parent (a THREE.Object3D to add to)}. Sounds through opts.sfx, every bus and
+ * tram's where it happens (o.pos, o.kind: games/engine.js fades and pans it by its kind and keeps the nearest few):
+ * "door" + "hiss" (doors opening, kind door), "air-brake" (a bus at its stop, bus), "tram-bell" (a tram's doors shut,
+ * bell, at its leading cab); "stop-bell" (S, aboard) is yours and centred. Rides are free: nothing here takes a fare.
  */
 (function(){
 "use strict";
@@ -112,6 +116,27 @@ function toWorld(kind, v, p){
 }
 function doorOpen(doors, calm){ doors = clamp(num(doors, 0), 0, 1); return calm ? (doors > 0.5 ? 1 : 0) : smooth(doors); }
 function kneel(kind, doors, calm){ return kind !== "bus" ? 0 : KNEEL*(calm ? (num(doors, 0) > 0 ? 1 : 0) : smooth(num(doors, 0)*2)); }
+// a row's centre line, front to back: a bus's two ends, a tram's front end, its sections' middles and its rear end
+function lineOf(v){
+  v = v || {};
+  var P = v.kind === "tram" && v.parts && v.parts.length === 2 ? v.parts : [v], h = (BODY[v.kind] || BODY.bus).len/2, a = P[0], b = P[P.length - 1];
+  function end(q, k){ var yw = num(q.yaw, 0); return {x: num(q.x, 0) + k*Math.sin(yw)*h, y: num(q.y, 0), z: num(q.z, 0) + k*Math.cos(yw)*h}; }
+  var out = [end(a, 1)];
+  if(P.length > 1) out.push(end(a, 0), end(b, 0));
+  out.push(end(b, -1));
+  return out;
+}
+// the point of a centre line nearest p ({x, z}), dy m up
+function nearOn(line, p, dy){
+  var px = num(p && p.x, 0), pz = num(p && p.z, 0), bd = Infinity, best = line && line[0] ? {x: line[0].x, y: line[0].y, z: line[0].z} : {x: px, y: 0, z: pz};
+  for(var i = 0; line && i + 1 < line.length; i++){
+    var a = line[i], b = line[i + 1], ex = b.x - a.x, ez = b.z - a.z, l2 = ex*ex + ez*ez;
+    var t = l2 > 1e-9 ? clamp(((px - a.x)*ex + (pz - a.z)*ez)/l2, 0, 1) : 0, x = a.x + ex*t, z = a.z + ez*t, d = (px - x)*(px - x) + (pz - z)*(pz - z);
+    if(d < bd){ bd = d; best = {x: x, y: a.y + (b.y - a.y)*t, z: z}; }
+  }
+  best.y += num(dy, 0);
+  return best;
+}
 
 /* ---------- geometry builders (plain arrays; THREE only wraps them) ---------- */
 function Builder(rgba){ this.pos = []; this.col = []; this.uv = []; this.rgba = !!rgba; }
@@ -323,7 +348,7 @@ function view(c, sim, opts){
   var calmF = typeof opts.calm === "function" ? opts.calm : function(){ return false; };
   var reducedF = typeof opts.reduced === "function" ? opts.reduced : function(){ return false; };
   function still(){ return !!(calmF() || reducedF()); }
-  function sfx(name){ if(typeof opts.sfx === "function") try { opts.sfx(name); } catch(err){} }
+  function sfx(name, so){ if(typeof opts.sfx === "function") try { opts.sfx(name, so); } catch(err){} }
   function canvas(w, h){
     if(typeof document === "undefined" || !document.createElement) return null;
     try { var cv = document.createElement("canvas"); cv.width = w; cv.height = h; return cv.getContext("2d") ? cv : null; } catch(err){ return null; }
@@ -474,13 +499,7 @@ function view(c, sim, opts){
       // the displays: next stop, line and destination
       var nx = v.next, text = (v.short || "") + " " + (v.to || "") + "|" + (nx ? (nx.here ? nx.name : "Next stop: " + nx.name) : "") + "|" + (req ? 1 : 0);
       if(text !== M.text){ M.text = text; drawDisplay(M, v, nx, req); }
-      // sounds for the vehicle you ride (or stand beside): doors, the tram's bell, the bus's air brakes
       var prev = s.prev;
-      if(prev && (v.id === focusId || v.d < NEAR_R)){
-        if(prev.doors <= 0 && v.doors > 0){ sfx("door"); sfx("hiss"); }
-        if(v.kind === "bus" && prev.speed > 0.3 && v.speed <= 0.3 && v.next && v.next.here) sfx("air-brake");
-        if(v.kind === "tram" && prev.doors > 0 && v.doors <= 0) sfx("tram-bell");
-      }
       s.prev = {doors: v.doors, speed: v.speed};
       if(v.doors <= 0 && prev && prev.doors > 0 && stopReq[v.id]) delete stopReq[v.id];
       // the people aboard (and the driver in the leading cab)
@@ -494,7 +513,26 @@ function view(c, sim, opts){
     });
     seatedI.count = nSeat; standI.count = nStand;
     [seatedI, standI].forEach(function(m){ m.instanceMatrix.needsUpdate = true; if(m.instanceColor) m.instanceColor.needsUpdate = true; });
+    sounds(list, cam);
     far(list, night, cam);
+  }
+  // the sounds of every bus and tram within FAR_R, where they happen: doors opening and their hiss at the vehicle's
+  // part nearest your ears, a bus's air brakes as it stops at a stop, a tram's bell at its leading cab once its doors
+  // have shut. Each kind's reach (door 40 m, bus 180 m, bell 250 m) and its nearest-few limit are games/engine.js's.
+  var was = {};
+  function sounds(list, cam){
+    var E = HQV.engine, ear = null, next = {};
+    try { ear = E && E.listenerAt ? E.listenerAt() : null; } catch(err){ ear = null; }
+    ear = ear || cam;
+    list.forEach(function(v){
+      var p = was[v.id], L = null;
+      next[v.id] = {doors: v.doors, speed: v.speed};
+      if(!p || !(v.d <= FAR_R)) return;                              // first seen: no edge yet
+      if(p.doors <= 0 && v.doors > 0){ L = lineOf(v); var at = nearOn(L, ear, 1.2); sfx("door", {pos: at, kind: "door"}); sfx("hiss", {pos: at, kind: "door"}); }
+      if(v.kind === "bus" && p.speed > 0.3 && v.speed <= 0.3 && v.next && v.next.here) sfx("air-brake", {pos: nearOn(L || lineOf(v), ear, 0.6), kind: "bus"});
+      if(v.kind === "tram" && p.doors > 0 && v.doors <= 0){ var f = (L || lineOf(v))[0]; sfx("tram-bell", {pos: {x: f.x, y: f.y + 1, z: f.z}, kind: "bell"}); }
+    });
+    was = next;
   }
   function tint(m, i, vid, k){
     var P = HQV.hqCommute && HQV.hqCommute.paint ? (function(){ try { return HQV.hqCommute.paint(vid + ":" + k); } catch(err){ return null; } })() : null;
@@ -635,7 +673,7 @@ function view(c, sim, opts){
           services: svc, atlas: function(){ return atlas; }, tools: {shotCam: shotCam}, dispose: dispose};
 }
 
-HQV.hqCoach = {atlasLayout: atlasLayout, occupied: occupied, figures: figures, toWorld: toWorld, doorOpen: doorOpen, kneel: kneel, view: view,
+HQV.hqCoach = {atlasLayout: atlasLayout, occupied: occupied, figures: figures, toWorld: toWorld, doorOpen: doorOpen, kneel: kneel, lineOf: lineOf, nearOn: nearOn, view: view,
                NEAR_R: NEAR_R, NEAR_N: NEAR_N, MAX_CHARS: MAX_CHARS, KNEEL: KNEEL, BODY: BODY,
                _: {busBody: busBody, tramBody: tramBody, busLit: busLit, tramLit: tramLit, busLeaves: busLeaves, tramLeaves: tramLeaves, canvasRects: canvasRects, fit: fit}};
 })();

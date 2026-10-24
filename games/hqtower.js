@@ -371,7 +371,8 @@ function make(c, opts){
     hits.length = 0; doors.length = 0;
     var M = massing(level, grand, stars, typeof opts.room === "function" ? opts.room() : opts.room, X.facade);
     var MT = mats(X);
-    dyn = {M: M, X: X, mats: MT, glows: [], flags: null, flagN: 0, revolve: null, sock: null, beacons: [], beaconGlows: [], heli: null, prestige: null, fireworks: [], decorFlags: [], banners: [], jets: [], karts: [], core: null, detail: null};
+    dyn = {M: M, X: X, mats: MT, glows: [], flags: null, flagN: 0, revolve: null, sock: null, beacons: [], beaconGlows: [], heli: null, prestige: null, fireworks: [], decorFlags: [], banners: [], jets: [], karts: [], core: null, detail: null,
+           snd: {fountain: null, karts: [], heli: null}};
     var core = new THREE.Group(), detail = new THREE.Group(); core.name = "hqt-core"; detail.name = "hqt-detail";
     baseG.add(core); baseG.add(detail); dyn.core = core; dyn.detail = detail;
     var K = kit(THREE), Kd = kit(THREE), F = X.facade;
@@ -602,6 +603,7 @@ function make(c, opts){
       var rotor = new THREE.Group(); rotor.position.y = 1.92; heli.add(rotor);
       var bl = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.03, 0.18), MT.dark); rotor.add(bl); var bl2 = bl.clone(); bl2.rotation.y = PI/2; rotor.add(bl2);
       heli.position.set(Wh.x, Wh.top, Wh.z); heli.rotation.y = PI/2; heli.userData.anim = true; detail.add(heli); dyn.heli = {g: heli, rotor: rotor, y: Wh.top, x: Wh.x};
+      dyn.snd.heli = {id: "heli", x: Wh.x, y: Wh.top + 1.9, z: Wh.z, rpm: 2800};
     }
     /* --- the HQ 2.1 decor cosmetics and the crew banner (the roof's front corners, clear of the pad) --- */
     decor(look, M, detail, Kd);
@@ -617,6 +619,7 @@ function make(c, opts){
       c.cyl(2.3, 2.3, 0.05, new THREE.MeshStandardMaterial({color: 0x2a7fa8, emissive: new THREE.Color(COL.cyan), emissiveIntensity: 0.35, transparent: true, opacity: 0.85, roughness: 0.05}), 0, 0.5, 0, fg, 32);
       c.cyl(0.9, 1.0, 0.5, c.mat(0x9aa7b5), 0, 0.75, 0, fg, 20); c.cyl(0.25, 0.3, 1.0, c.mat(0x9aa7b5), 0, 1.4, 0, fg, 12);
       for(var j = 0; j < 10; j++){ var jg = c.glow(0x9fe3f0, 0.35, 0.9); fg.add(jg); dyn.jets.push({g: jg, a: j/10*PI*2, o: (j % 5)/5}); }
+      dyn.snd.fountain = {id: "fountain", x: 0, y: 1.6, z: 10.4};                     // its water, where it is heard
     }
     if(opts.campus && level >= 50){
       var stat = new THREE.Group(); stat.position.set(7.4, 0, 9.6); detail.add(stat);
@@ -627,7 +630,8 @@ function make(c, opts){
     if(opts.campus && level >= 35){
       var ktT = c.canvasTex(512, 768, function(g){ g.fillStyle = "#1f3d2c"; g.fillRect(0, 0, 512, 768); g.lineWidth = 92; g.strokeStyle = "#2a2f36"; g.beginPath(); g.ellipse(256, 384, 176, 300, 0, 0, 7); g.stroke(); g.lineWidth = 10; g.setLineDash([22, 22]); g.strokeStyle = "#d14a5c"; g.beginPath(); g.ellipse(256, 384, 222, 346, 0, 0, 7); g.stroke(); g.setLineDash([]); });
       var kt = new THREE.Mesh(new THREE.PlaneGeometry(14, 21), new THREE.MeshStandardMaterial({map: ktT.t, roughness: 0.9})); kt.rotation.x = -PI/2; kt.position.set(-31, 0.03, 0); kt.receiveShadow = true; detail.add(kt);
-      [0xd14a5c, 0x4a7bd1, 0x6fd38a].forEach(function(col, n){ var kg = new THREE.Group(); c.box(1.1, 0.3, 0.65, c.mat(col, {metalness: 0.5}), 0, 0.3, 0, kg); detail.add(kg); dyn.karts.push({g: kg, o: n*0.33}); });
+      [0xd14a5c, 0x4a7bd1, 0x6fd38a].forEach(function(col, n){ var kg = new THREE.Group(); c.box(1.1, 0.3, 0.65, c.mat(col, {metalness: 0.5}), 0, 0.3, 0, kg); detail.add(kg);
+        var ks = {id: "kart:" + n, voice: "single", x: -31, y: 0.4, z: 0, speed: 0}; dyn.karts.push({g: kg, o: n*0.33, snd: ks}); dyn.snd.karts.push(ks); });
       var kl = c.label("Kart Racing", HEX.coral, 0.9); kl.position.set(-31, 4.5, 0); detail.add(kl);
     }
     if(opts.campus && level >= 55){
@@ -741,6 +745,11 @@ function make(c, opts){
   // a far tower: its masses only (hqcity3d past HQ_LOD)
   B.setLod = function(l){ l = l ? LOD_FAR : 0; if(l === lod) return; lod = l; applyLod(); };
   B.lod = function(){ return lod; };
+  // [Sound PR B] what it sounds like, in the building's frame, kept current by animate() (null before it is built):
+  // fountain {id, x, y, z} (the Base's plaza fountain's falling water) or null; karts [{id, voice: "single", x, y, z,
+  // speed}] (the Base's kart track: m/s); heli {id, x, y, z, rpm} (the helicopter on the west wing, hopping now and then:
+  // its rotor's game rpm, idling on the pad, full in the air) or null. The floor that draws it plays them.
+  B.sounds = function(){ return dyn ? dyn.snd : null; };
   // the pad, the roof deck and the roof lift's door, in the building's frame (null before it is built)
   B.pad = function(){ return dyn ? dyn.M.pad : null; };
   B.roofDeck = function(){ return dyn ? roofDeck(dyn.M) : null; };
@@ -766,13 +775,15 @@ function make(c, opts){
     if(dyn.sock) dyn.sock.rotation.y = 0.6 + Math.sin(t*0.4)*0.5*k;
     if(dyn.flags){ var F = dyn.flags; F.at.forEach(function(a, i){ flagE.set(0, Math.sin(t*2.2 + i)*0.3*k, 0); flagQ.setFromEuler(flagE); flagP.set(a[0], a[1], a[2]); flagM4.compose(flagP, flagQ, flagS); F.mesh.setMatrixAt(i, flagM4); }); F.mesh.instanceMatrix.needsUpdate = true; }
     if(dyn.heli){ dyn.heli.rotor.rotation.y = t*14*k; var hv = (t % 24)/24, lift = hv < 0.4 ? 0 : hv < 0.5 ? (hv - 0.4)*10 : hv < 0.9 ? 1 : (1 - hv)*10;
-      dyn.heli.g.position.y = dyn.heli.y + lift*6*k; dyn.heli.g.position.x = dyn.heli.x + lift*Math.sin(t*0.4)*3*k; }
+      dyn.heli.g.position.y = dyn.heli.y + lift*6*k; dyn.heli.g.position.x = dyn.heli.x + lift*Math.sin(t*0.4)*3*k;
+      var hs = dyn.snd.heli; if(hs){ hs.x = dyn.heli.g.position.x; hs.y = dyn.heli.g.position.y + 1.9; hs.rpm = 2800 + 2800*lift; } }
     dyn.beacons.forEach(function(b, n){ var on = ((t + n*0.3) % 1.4) < 0.25; b.material.emissiveIntensity = on ? 3 : 0.4; dyn.beaconGlows[n].material.opacity = on ? 1 : 0.1; });
     if(dyn.prestige){ var pb = dyn.prestige; if(k >= 1){ pb.beam.rotation.y = t*0.8; pb.mat.opacity = 0.25 + 0.15*Math.sin(t*2.2); } else { pb.beam.rotation.y = 0; pb.mat.opacity = 0.35; } }
     dyn.banners.forEach(function(b, n){ b.rotation.x = Math.sin(t*1.6 + n)*0.06*k; });
     dyn.decorFlags.forEach(function(f){ f.rotation.y = Math.sin(t*2.4 + f.userData.wave)*0.35*k; });
     dyn.jets.forEach(function(j){ var u = (t*0.9*k + j.o) % 1, r = 0.6 + u*1.4; j.g.position.set(Math.cos(j.a)*r, 2.0 + Math.sin(u*PI)*1.3 - u*0.9, Math.sin(j.a)*r); j.g.material.opacity = 0.9*(1 - u*0.6); });
-    dyn.karts.forEach(function(kk){ var a = t*0.7*k + kk.o*PI*2; kk.g.position.set(-31 + Math.cos(a)*4.4, 0.05, Math.sin(a)*8); kk.g.rotation.y = Math.atan2(-Math.cos(a)*8, -Math.sin(a)*4.4); });
+    dyn.karts.forEach(function(kk){ var a = t*0.7*k + kk.o*PI*2; kk.g.position.set(-31 + Math.cos(a)*4.4, 0.05, Math.sin(a)*8); kk.g.rotation.y = Math.atan2(-Math.cos(a)*8, -Math.sin(a)*4.4);
+      if(kk.snd){ kk.snd.x = kk.g.position.x; kk.snd.z = kk.g.position.z; kk.snd.speed = 0.7*k*Math.hypot(4.4*Math.sin(a), 8*Math.cos(a)); } });
     dyn.fireworks.forEach(function(fw){ var u = (t*0.35*k + fw.o) % 1; fw.g.visible = night && u > 0.15;
       fw.parts.forEach(function(p){ var r = (u - 0.15)*9; p.s.position.set(fw.x + Math.cos(p.a)*r, fw.y + Math.sin(p.a)*r*0.8 - u*u*4 + p.b, Math.sin(p.a)*r*0.4); p.s.material.opacity = Math.max(0, 1 - u); }); });
   };

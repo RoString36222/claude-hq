@@ -127,7 +127,7 @@ class HqRoofs(unittest.TestCase):
                 if p["room"] >= 4:
                     self.assertLessEqual(p["deckOver"], 4, "the helideck's walkway reaches out over the pavement at most")
                 self.assertEqual(p["flyOn"], 0, "no island swap over a tower")
-        self.assertGreater(sum(p["padR"] == 9 for p in pads) / len(pads), 0.5, "most get the full pad")
+        self.assertGreater(sum(p["padR"] == 8.6 for p in pads) / len(pads), 0.5, "most get the full pad (hqtower PAD_R)")
 
     def test_pads_are_floors(self):
         self.assertEqual(len(self.out["roofs"]), 2)

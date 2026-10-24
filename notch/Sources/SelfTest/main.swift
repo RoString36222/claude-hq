@@ -151,6 +151,20 @@ expect(o.sessions["need"]?.label == "Fix the bug" && o.sessions["new"]?.label ==
 expect(o.sessions["new"]?.folder == "y" && o.sessions["new"]?.status == .working, "HQ seeds live sessions")
 expect(o.sessions["old"] == nil, "archived not seeded")
 
+// an open tab quiet for a day: seeded as stale, sorted last, woken by any hook event
+let staleJSON = #"{"sessions":[{"sessionId":"tab","status":"stale","kind":"interactive","pid":7,"stale":true},{"sessionId":"gone","status":"stale","kind":"interactive","stale":true}]}"#
+let sh = HQSession.parse(Data(staleJSON.utf8))
+expect(sh.filter(\.live).map(\.sessionId) == ["tab"], "open stale tab is live; no pid is not")
+o.mergeHQ(sh, now: t0)
+expect(o.sessions["tab"]?.bucket == .stale && o.sessions["tab"]?.status == .idle, "stale tab seeded")
+expect(o.ordered.last?.id == "tab", "stale sorts last")
+o.apply(msg(#"{"event":"UserPromptSubmit","sessionId":"tab"}"#), now: t0.addingTimeInterval(10))
+expect(o.sessions["tab"]?.bucket == .working, "a prompt wakes a stale tab")
+o.mergeHQ(sh, now: t0.addingTimeInterval(20))
+expect(o.sessions["tab"]?.stale == false, "a lagging HQ poll does not re-stale it")
+o.apply(msg(#"{"event":"Stop","sessionId":"tab"}"#), now: t0.addingTimeInterval(30))
+expect(o.sessions["tab"]?.bucket == .idle, "done counts as idle")
+
 // MARK: plans, diffs, phone alerts
 
 // a plan waiting for approval

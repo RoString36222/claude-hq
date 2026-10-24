@@ -33,7 +33,15 @@ struct NotchRoot: View {
     var body: some View {
         VStack(spacing: 0) {
             Group {
-                if model.expanded { expanded } else { closed }
+                if model.expanded {
+                    // Content grows out of the pill as the shape opens, and fades fast on the way back.
+                    expanded.transition(.asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.94, anchor: .top))
+                            .animation(.spring(response: 0.36, dampingFraction: 0.86).delay(0.04)),
+                        removal: .opacity.animation(.easeOut(duration: 0.12))))
+                } else {
+                    closed.transition(.opacity.animation(.easeInOut(duration: 0.18)))
+                }
             }
             .background(NotchShape(radius: model.expanded ? 22 : 12).fill(Theme.bg))
             .clipShape(NotchShape(radius: model.expanded ? 22 : 12))
@@ -41,7 +49,7 @@ struct NotchRoot: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: model.expanded)
+        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: model.expanded)
     }
 
     // MARK: closed
@@ -51,9 +59,9 @@ struct NotchRoot: View {
         let needs = model.store.pending.count + live.filter { $0.status == .needs && !model.store.hasPending($0.id) }.count
         return HStack(spacing: 0) {
             HStack(spacing: -6) {
-                ForEach(live.prefix(3)) { s in
-                    CreatureSprite(sessionId: s.id, creature: model.creature(s), status: s.status,
-                                   size: max(18, notch.height - 6), pack: model.pack)
+                // Orbs: just the top session's (the one that needs you first, else the busiest).
+                ForEach(live.prefix(model.spriteSetting == .orb ? 1 : 3)) { s in
+                    SessionAvatar(model: model, session: s, size: max(18, notch.height - 6))
                 }
             }
             .frame(width: Self.wing, alignment: .leading)
@@ -97,9 +105,11 @@ struct NotchRoot: View {
                     Text("+\(model.store.pending.count - 2) more waiting").font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Theme.alert)
                 }
+                FilterBar(model: model)
                 let list = model.visibleSessions
                 if list.isEmpty {
-                    Text(model.hqReachable ? "No live Claude sessions." : "No live Claude sessions. Start one and it shows up here.")
+                    Text(model.filter != .all ? "No \(model.filter.label.lowercased()) sessions."
+                         : model.hqReachable ? "No live Claude sessions." : "No live Claude sessions. Start one and it shows up here.")
                         .font(.system(size: 12)).foregroundStyle(Theme.subtle)
                         .frame(maxWidth: .infinity, alignment: .center).padding(.vertical, 18)
                 } else {
@@ -126,8 +136,12 @@ struct NotchRoot: View {
 
     private func cards(_ list: [Session]) -> some View {
         VStack(spacing: 6) {
-            ForEach(list) { s in SessionCard(model: model, session: s) }
+            ForEach(list) { s in
+                SessionCard(model: model, session: s)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
+        .animation(.snappy(duration: 0.25), value: list.map(\.id))
     }
 
     private var header: some View {
@@ -159,6 +173,23 @@ struct IconButton: View {
 
 // MARK: session card
 
+/// The session's orb or Pokémon, whichever Settings picks. `status` overrides the session's own.
+struct SessionAvatar: View {
+    @ObservedObject var model: AppModel
+    let session: Session
+    var size: CGFloat
+    var status: SessionStatus? = nil
+
+    var body: some View {
+        if model.spriteSetting == .orb {
+            OrbView(session: session, status: status ?? session.status, size: size)
+        } else {
+            CreatureSprite(sessionId: session.id, creature: model.creature(session), status: status ?? session.status,
+                           size: size, pack: model.pack)
+        }
+    }
+}
+
 struct SessionCard: View {
     @ObservedObject var model: AppModel
     let session: Session
@@ -167,12 +198,13 @@ struct SessionCard: View {
     var body: some View {
         let cr = model.creature(session)
         HStack(alignment: .top, spacing: 10) {
-            CreatureSprite(sessionId: session.id, creature: cr, status: session.status, size: 46, pack: model.pack)
+            SessionAvatar(model: model, session: session, size: 46)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(session.label).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.text)
                         .lineLimit(1)
-                    Text(session.title.isEmpty ? cr.name(sessionId: session.id, pack: model.pack)
+                    Text(model.spriteSetting == .orb ? (session.title.isEmpty ? "" : session.folder)
+                         : session.title.isEmpty ? cr.name(sessionId: session.id, pack: model.pack)
                                                : "\(session.folder) · \(cr.name(sessionId: session.id, pack: model.pack))")
                         .font(.system(size: 10.5)).foregroundStyle(Theme.faint).lineLimit(1).layoutPriority(-1)
                     if session.subagents > 0 {
@@ -180,7 +212,7 @@ struct SessionCard: View {
                             .foregroundStyle(Theme.subtle)
                     }
                     Spacer(minLength: 4)
-                    StatusChip(status: session.status)
+                    StatusChip(status: session.status, stale: session.bucket == .stale)
                 }
                 if !session.now.isEmpty {
                     Text(session.now).font(.system(size: 11.5)).foregroundStyle(Theme.subtle).lineLimit(1)
@@ -205,16 +237,40 @@ struct SessionCard: View {
     }
 }
 
+/// All / Working / Idle / Stale, with a count on each.
+struct FilterBar: View {
+    @ObservedObject var model: AppModel
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(SessionFilter.allCases) { f in
+                let on = model.filter == f
+                Button { withAnimation(.snappy(duration: 0.25)) { model.filter = f } } label: {
+                    Text("\(f.label) \(model.count(f))").font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                        .foregroundStyle(on ? Theme.buttonText : Theme.subtle)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(Capsule().fill(on ? Theme.text : Theme.card))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+            Spacer()
+        }
+    }
+}
+
 struct StatusChip: View {
     let status: SessionStatus
+    var stale = false
     var body: some View {
-        let label: String = switch status {
+        let base: String = switch status {
         case .working: "Working"
         case .needs: "Needs you"
         case .done: "Done"
         case .error: "Error"
         case .idle: "Idle"
         }
+        let label = stale ? "Stale" : base
         Text(label).font(.system(size: 9.5, weight: .bold, design: .rounded))
             .foregroundStyle(status == .needs ? Theme.alertText : Theme.color(status))
             .padding(.horizontal, 6).padding(.vertical, 2)
@@ -328,7 +384,7 @@ struct RequestCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 if let s {
-                    CreatureSprite(sessionId: s.id, creature: model.creature(s), status: .needs, size: 34, pack: model.pack)
+                    SessionAvatar(model: model, session: s, size: 34, status: .needs)
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(s?.label ?? "Claude").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text)
@@ -633,6 +689,7 @@ struct SettingsView: View {
 
     private var spriteNote: String {
         switch model.spriteSetting {
+        case .orb: return "HQ's thinking orbs: the motion follows what the session is doing, the colour its status."
         case .twoD: return "Animated 2D sprites. Apex is the line's final form."
         case .threeD: return "Animated 3D sprites, as in HQ's 3D pack. Apex Pokémon with a Mega show their Mega form."
         case .matchHQ: return "Whatever HQ uses: now \(model.hqPack == .threeD ? "3D" : "2D")."
@@ -643,7 +700,7 @@ struct SettingsView: View {
     private var previewRow: some View {
         HStack(spacing: 6) {
             ForEach(model.visibleSessions.prefix(6)) { s in
-                CreatureSprite(sessionId: s.id, creature: model.creature(s), status: .working, size: 34, pack: model.pack)
+                SessionAvatar(model: model, session: s, size: 34, status: .working)
             }
         }
     }

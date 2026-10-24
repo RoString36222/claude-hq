@@ -31,10 +31,10 @@ enum Theme {
 }
 
 enum SpriteSetting: String, CaseIterable, Identifiable {
-    case twoD = "2d", threeD = "3d", matchHQ = "hq"
+    case orb = "orb", twoD = "2d", threeD = "3d", matchHQ = "hq"
     var id: String { rawValue }
     var label: String {
-        switch self { case .twoD: "2D"; case .threeD: "3D"; case .matchHQ: "Match HQ" }
+        switch self { case .orb: "Orbs"; case .twoD: "2D"; case .threeD: "3D"; case .matchHQ: "Match HQ" }
     }
 }
 
@@ -52,6 +52,10 @@ final class AppModel: ObservableObject {
     }
     @Published var showIdle = UserDefaults.standard.object(forKey: "hqnotch.showIdle") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showIdle, forKey: "hqnotch.showIdle") }
+    }
+    /// The panel's All / Working / Idle / Stale filter.
+    @Published var filter = SessionFilter(rawValue: UserDefaults.standard.string(forKey: "hqnotch.filter") ?? "") ?? .all {
+        didSet { UserDefaults.standard.set(filter.rawValue, forKey: "hqnotch.filter") }
     }
     @Published var approvals = UserDefaults.standard.object(forKey: "hqnotch.approvals") as? Bool ?? true {
         didSet { UserDefaults.standard.set(approvals, forKey: "hqnotch.approvals") }
@@ -71,7 +75,7 @@ final class AppModel: ObservableObject {
         if found != otherNotchApp { otherNotchApp = found }
     }
     /// Which sprites to draw: 2D, 3D, or whatever pack HQ itself uses.
-    @Published var spriteSetting = SpriteSetting(rawValue: UserDefaults.standard.string(forKey: "hqnotch.sprites") ?? "") ?? .twoD {
+    @Published var spriteSetting = SpriteSetting(rawValue: UserDefaults.standard.string(forKey: "hqnotch.sprites") ?? "") ?? .orb {
         didSet { UserDefaults.standard.set(spriteSetting.rawValue, forKey: "hqnotch.sprites") }
     }
     /// HQ's own pack (its `creaturePack`), for "Match HQ".
@@ -79,7 +83,7 @@ final class AppModel: ObservableObject {
     /// The settings view is showing in place of the session list.
     @Published var showSettings = false
     var pack: SpritePack {
-        switch spriteSetting { case .twoD: .gen5; case .threeD: .threeD; case .matchHQ: hqPack }
+        switch spriteSetting { case .orb, .twoD: .gen5; case .threeD: .threeD; case .matchHQ: hqPack }
     }
     /// HQ's address; only 127.0.0.1 / localhost is ever used.
     let hqURL = UserDefaults.standard.string(forKey: "hqnotch.hqURL") ?? "http://127.0.0.1:8765"
@@ -131,8 +135,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// "Show idle sessions" applies to All; picking Idle or Stale shows them anyway. A session
+    /// that needs you shows under every filter.
     var visibleSessions: [Session] {
-        store.ordered.filter { showIdle || $0.status != .idle }
+        store.ordered.filter { s in
+            switch filter {
+            case .all: showIdle || s.bucket == .working
+            default: s.bucket == filter || s.status == .needs
+            }
+        }
+    }
+
+    func count(_ f: SessionFilter) -> Int {
+        f == .all ? store.sessions.count : store.sessions.values.filter { $0.bucket == f }.count
     }
 
     func creature(_ s: Session) -> Creature {

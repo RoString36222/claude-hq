@@ -646,10 +646,10 @@ console.log(JSON.stringify(o)); process.exit(0);
         self.assertEqual(out["cab"], "go")
         self.assertEqual(out["ach"][0], ["100", "30"])
         self.assertIn("Score50", out["ach"][1])
-        self.assertEqual(out["notes"][0], 15)
+        self.assertEqual(out["notes"][0], 16)
         self.assertTrue(out["notes"][1])
         self.assertFalse(out["notes"][2])
-        self.assertEqual(out["notes"][3], "3.18.0 The transport revamp")
+        self.assertEqual(out["notes"][3], "3.19.0 Sound that comes from somewhere")
         ids = {i[0]: i for i in out["ids"]}
         for k in ("tickets", "departures", "map", "achievements", "notes", "settings"):
             self.assertIn(k, ids)
@@ -663,8 +663,8 @@ class Static(unittest.TestCase):
         j = json.loads(read("games", "patchnotes.json"))
         e = j["entries"]
         self.assertGreaterEqual(len(e), 8)
-        self.assertEqual(e[0]["version"], "3.18.0")
-        self.assertEqual(e[0]["title"], "The transport revamp")
+        self.assertEqual(e[0]["version"], "3.19.0")
+        self.assertEqual(e[0]["title"], "Sound that comes from somewhere")
         for x in e:
             self.assertIsInstance(x["version"], str)
             self.assertIsInstance(x["title"], str)

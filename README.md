@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.18.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.19.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,7 @@ and feature guide.
 
 ## Changelog
 
+- **3.19.0 — Sound that comes from somewhere.** Every world sound now plays **where it is**: traffic, other players' vehicles, trams, buses, trains, the metro, boats, helicopters, planes, doors, bells, the gondola, construction, fountains and the city's hum get louder as you get closer, fade with distance (inverse-distance falloff from a reference distance, silent past a maximum per kind) and pan left or right to where they are, heard from the camera. Only the nearest few sources of each kind play at once (voice pools), so a busy street stays clear and cheap. Your own vehicle stays at full level while the camera rides with you and fades when you leave it in photo, cine or the Map. A new **Ambient sounds** slider in Settings (0–100%) replaces the on/off switch and sets the level of weather, fireworks, jets, water and the city's hum; 0% is off, and an old "off" carries over as 0%. Calm and mute stay silent. Web Audio only, no new network calls.
 - **3.18.0 — The transport revamp.** **Every city is at its highest level** (the Arena reports tier 5 and full growth
   for every city, so every line, stop, airport and building is open; population and tax still follow the owner's
   real XP) and **getting around is free**: no fares, no day pass and no coins for buses, trams, the metro, trains,

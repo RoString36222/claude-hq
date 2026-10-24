@@ -18,6 +18,7 @@ What it touches (and nothing else):
 import json
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -46,6 +47,7 @@ TIMEOUTS = {"PermissionRequest": 120}
 # from the notch whether or not Claude Code routes them through PermissionRequest.
 ASK_TIMEOUT = 120
 MARKER = "HQNotch/hq_notch_hook.py"
+CLT_SDKS = "/Library/Developer/CommandLineTools/SDKs"
 
 
 def hook_command(*args):
@@ -110,11 +112,45 @@ def write_settings(install):
     return True
 
 
+def fallback_sdk(names, current):
+    """The newest MacOSX<N>.sdk among `names` older than major version `current`, else None.
+    The macOS 27 SDK makes SwiftUI's @State a macro whose plugin ships only with Xcode, so the
+    Command Line Tools alone cannot build against it; an older SDK they also ship can. Pure (tested)."""
+    best = None
+    for n in names:
+        m = re.fullmatch(r"MacOSX(\d+(?:\.\d+)*)\.sdk", n)
+        if not m:
+            continue
+        v = tuple(int(x) for x in m.group(1).split("."))
+        if v[0] < current and (best is None or v > best[0]):
+            best = (v, n)
+    return best[1] if best else None
+
+
+def older_sdk():
+    r = subprocess.run(["xcrun", "--show-sdk-version"], capture_output=True, text=True)
+    try:
+        cur = int(r.stdout.strip().split(".")[0])
+        names = os.listdir(CLT_SDKS)
+    except (ValueError, OSError):
+        return None
+    n = fallback_sdk(names, cur)
+    return os.path.join(CLT_SDKS, n) if n else None
+
+
 def build():
     print("building (swift build -c release)…")
-    subprocess.run(["swift", "build", "-c", "release", "--package-path", NOTCH], check=True)
-    out = subprocess.run(["swift", "build", "-c", "release", "--package-path", NOTCH, "--show-bin-path"],
-                         check=True, capture_output=True, text=True).stdout.strip()
+    cmd = ["swift", "build", "-c", "release", "--package-path", NOTCH]
+    env = None
+    r = subprocess.run(cmd)
+    if r.returncode != 0:
+        sdk = None if os.environ.get("SDKROOT") else older_sdk()
+        if not sdk:
+            raise subprocess.CalledProcessError(r.returncode, cmd)
+        print("  retrying with %s (the default SDK's SwiftUI macros need Xcode)" % sdk)
+        env = dict(os.environ, SDKROOT=sdk)
+        subprocess.run(cmd, check=True, env=env)
+    out = subprocess.run(cmd + ["--show-bin-path"], check=True, capture_output=True, text=True, env=env).stdout.strip()
     return os.path.join(out, "HQNotch")
 
 

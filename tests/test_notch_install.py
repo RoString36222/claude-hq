@@ -63,6 +63,20 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(base, {"hooks": {"Stop": [{"hooks": [OTHER]}]}})
 
 
+class SdkFallbackTests(unittest.TestCase):
+    NAMES = ["MacOSX.sdk", "MacOSX26.sdk", "MacOSX26.5.sdk", "MacOSX27.0.sdk", "MacOSX27.sdk", "notes.txt"]
+
+    def test_picks_newest_older_major(self):
+        self.assertEqual(inst.fallback_sdk(self.NAMES, 27), "MacOSX26.5.sdk")
+
+    def test_none_when_nothing_older(self):
+        self.assertIsNone(inst.fallback_sdk(["MacOSX.sdk", "MacOSX27.sdk"], 27))
+        self.assertIsNone(inst.fallback_sdk([], 27))
+
+    def test_compares_versions_not_strings(self):
+        self.assertEqual(inst.fallback_sdk(["MacOSX9.sdk", "MacOSX15.4.sdk", "MacOSX15.10.sdk"], 26), "MacOSX15.10.sdk")
+
+
 class PokeDataSyncTests(unittest.TestCase):
     def test_generated_swift_is_current(self):
         r = subprocess.run([sys.executable, os.path.join(REPO, "notch", "tools", "gen_pokedata.py"), "--check"],

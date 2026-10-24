@@ -387,7 +387,7 @@ class FerriesTest(unittest.TestCase):
             self.assertIn("look", s)
         self.assertIsNone(v["shots"]["nope"])
         self.assertIn("ferry-horn", v["sounds"])
-        self.assertIn("gondola-clunk", v["sounds"])               # the gangway's clank (hqRide has no clank of its own)
+        self.assertIn("gangway-clank", v["sounds"])               # the gangway's own clank (hqRide has one since Sound PR B)
         g = v["gang"]
         self.assertGreater(g["offMoving"], 0.2)                   # part way round, swinging
         self.assertLess(g["offCalm"], 1e-6)                       # Calm: simply out

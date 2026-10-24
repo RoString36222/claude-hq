@@ -1177,6 +1177,7 @@ html.hq-calm .ach-tier.claimable,html.hq-calm .ach-tier.claimable{animation:none
 .setrow input:not([type=checkbox]):not([type=range]),.setrow select{background:var(--panel2);border:1px solid var(--line);color:var(--ink);
   border-radius:8px;height:36px;padding:0 10px;outline:none}
 .setrow input:focus,.setrow select:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft)}
+.setrow input[type=range]{accent-color:var(--brand);cursor:pointer;border-radius:8px}
 .setfoot{display:flex;justify-content:flex-end;gap:8px;margin-top:4px;padding-top:14px;border-top:1px solid var(--line)}
 .accent-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .accent-row input[type=range]{flex:1;min-width:140px;accent-color:var(--brand)}

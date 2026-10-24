@@ -1000,6 +1000,7 @@ function makeGame(host, opts){
         if(Math.abs(camera.fov - fov) > 0.1){ camera.fov += (fov - camera.fov)*Math.min(1, dt*3); camera.updateProjectionMatrix(); }
         sun.position.set(F.x + 12, 30, F.z + 8); sun.target.position.set(F.x, 0, F.z);
       }
+      if(E.listener) E.listener(camera);                               // [sound] the ears: this camera (the other racers' engines)
       renderer.render(scene, camera);
     };
     R.dispose = function(){
@@ -1029,6 +1030,7 @@ function makeGame(host, opts){
     function(){ V.note = "Couldn't load the tracks."; renderMenu(); });
   if(!raf) raf = requestAnimationFrame(frame);
   V.destroy = function(){
+    if(E.listener) E.listener(null);
     if(V.eng){ V.eng.stop(); V.eng = null; }
     if(WB){ WB.destroy(); WB = null; }
     V.alive = false;

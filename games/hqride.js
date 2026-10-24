@@ -13,7 +13,8 @@
  *   stationName(W, x, z, kind)          the nearest named road, else the nearest site's word; unique per world
  *   dueText(at, ms, boarding, o) / boardRows(deps, ms, o)    departure board text (pure)
  *   boardTexture(THREE, rows, opts)     amber dot-matrix boards, sharing one canvas atlas within 150 m
- *   sfx(audioCtx, name, opts)           synthesised transit sounds (WebAudio only, no files)
+ *   sfx(audioCtx, name, opts)           synthesised transit sounds (WebAudio only, no files); opts.pos (+ opts.kind) puts one
+ *                                       in the world through HQV.engine.spatialOut; loops stop by themselves when not set()
  *   announcer(opts)                     chime (G5-E5-C5, not under Calm) + a LOCAL voice only + announce()
  *   tickets, achievements               local only (localStorage, guarded; an in-memory copy when it throws)
  * Determinism: no random numbers anywhere; names, sways and noise are pure functions of their inputs.
@@ -308,7 +309,7 @@ function session(o){
   var at = o.at || o.stop || call(trip, "door", num(trip.arrive, 0)) || call(trip, "pose", num(trip.arrive, 0)) || {x: 0, z: 0};
   var label = (trip.short || trip.line || "") + "";
   var modeWord = {bus: "Bus", tram: "Tram", metro: "Train", rail: "Train", link: "Island Link", ferry: "Water bus", gondola: "Cabin"}[trip.mode] || "Service";
-  function sfx(n){ try { sfxf(n); } catch(e){} }
+  function sfx(n, so){ try { sfxf(n, so); } catch(e){} }           // so.pos: a door sound at the vehicle (the validator, the stop bell: yours, centred)
   function poseAt(ms){ return call(trip, "pose", ms) || {x: at.x, y: 0, z: at.z, yaw: 0, speed: 0, doors: 0, under: false}; }
   function end(reason){
     if(ended) return; ended = true;
@@ -374,7 +375,7 @@ function session(o){
       } else if(me && d2(me, at) > LEFT_STOP){ say("You left the stop."); end("left"); return S.phase; }
       if(S.phase === "wait" && ms >= num(trip.arrive, 0)){
         p = poseAt(ms);
-        if(!arrivedSaid){ arrivedSaid = true; say(modeWord + " " + label + " to " + (trip.toName || trip.to) + " arriving, doors open."); sfx(trip.mode === "tram" ? "tram-bell" : "door-chime"); }
+        if(!arrivedSaid){ arrivedSaid = true; say(modeWord + " " + label + " to " + (trip.toName || trip.to) + " arriving, doors open."); sfx(trip.mode === "tram" ? "tram-bell" : "door-chime", {pos: p}); }
         if(num(p.doors, 1) >= 0.5 || ms >= num(trip.arrive, 0) + 1500){
           var occ = null;
           var C = HQV.hqCommute;
@@ -397,7 +398,7 @@ function session(o){
     }
     if(S.phase === "seated" || S.phase === "standing"){
       p = poseAt(ms);
-      if(!closing && ms >= num(trip.depart, 0) - 3000){ closing = true; sfx("door-chime"); sfx("door-hiss"); }
+      if(!closing && ms >= num(trip.depart, 0) - 3000){ closing = true; sfx("door-chime", {pos: p}); sfx("door-hiss", {pos: p}); }
       if(trip.world && !handed && ms >= num(trip.depart, 0)){ handed = true; if(typeof o.travel === "function"){ try { o.travel(trip); } catch(e){} } }
       var u = !!p.under;
       if(u !== lastUnder){ lastUnder = u; if(typeof o.under === "function"){ try { o.under(u); } catch(e){} } announce(u ? "Going underground." : "Back above ground."); }
@@ -413,7 +414,7 @@ function session(o){
         var right = 1.6, yaw = num(p.yaw, 0);
         var kerb = {x: door.x - Math.cos(yaw)*right, y: num(p.y, 0), z: door.z + Math.sin(yaw)*right};
         alightPath = {a: {x: sp.x, y: num(p.y, 0), z: sp.z}, b: {x: door.x, y: num(p.y, 0), z: door.z}, c: kerb};
-        t0 = ms; S.phase = "alight"; sfx("door-chime");
+        t0 = ms; S.phase = "alight"; sfx("door-chime", {pos: p});
         var es = stops[endIdx] || {};
         say("This is " + (es.name || trip.toName || trip.to) + ". Doors open.");
       }
@@ -672,15 +673,63 @@ function noiseBuf(ctx){
   return b;
 }
 var SFX_NAMES = ["door-chime", "door-hiss", "validator", "stop-bell", "tram-bell", "air-brake", "motor", "rail-joint", "tunnel-rumble",
-                 "gondola-clunk", "ferry-horn", "indicator", "rotor", "ring", "dial", "shutter", "chime"];
+                 "gondola-clunk", "ferry-horn", "indicator", "rotor", "ring", "dial", "shutter", "chime",
+                 "door", "hiss", "engine-hum", "gangway-clank", "water-lap", "gondola-rumble", "gondola-wind", "ship-horn"];
+// The loops sound until stop(), or fall silent HOLD s after their last set() (a dead man's switch) and stop soon after,
+// so a handle dropped on the floor can no longer leak; set() on one that stopped starts it again.
+var LOOPS = {"motor": 1, "tunnel-rumble": 1, "rotor": 1, "engine-hum": 1, "gondola-rumble": 1, "gondola-wind": 1}, HOLD = 0.6;
+// opts.pos ({x, y, z}): where the sound is, through games/engine.js's spatial graph (the distance fade, the pan, each
+// kind's voice limit); opts.kind is its spatial kind, by default:
+var NAME_KIND = {"door-chime": "door", "door-hiss": "door", "validator": "door", "door": "door", "hiss": "door", "gangway-clank": "door",
+  "stop-bell": "bell", "tram-bell": "bell", "air-brake": "bus", "motor": "metro", "rail-joint": "metro", "tunnel-rumble": "metro",
+  "gondola-clunk": "gondola", "gondola-rumble": "gondola", "gondola-wind": "gondola", "ferry-horn": "horn", "ship-horn": "horn",
+  "engine-hum": "boat", "water-lap": "water", "indicator": "vehicle", "rotor": "heli", "ring": "ui", "dial": "ui", "shutter": "ui", "chime": "ui"};
+// how long each one-shot sounds (s): its voice is held that long (the one-shot voice limit)
+var SFX_DUR = {"door-chime": 0.95, "chime": 1.2, "door-hiss": 0.75, "validator": 0.2, "stop-bell": 0.95, "tram-bell": 0.95, "air-brake": 0.6,
+  "rail-joint": 0.3, "gondola-clunk": 0.35, "ferry-horn": 1.8, "ship-horn": 3.1, "indicator": 0.45, "ring": 1.05, "dial": 2.05, "shutter": 0.15,
+  "door": 0.65, "hiss": 0.6, "gangway-clank": 0.45, "water-lap": 1.6};
+function rateOf(o, d){ var r = num(o && o.rate, d); return clamp(r > 0 ? r : d, 0.5, 2); }   // Doppler: every pitch times rate
 function sfx(ctx, name, opts){
   opts = opts || {};
   if(!ctx || opts.mute || SFX_NAMES.indexOf(name) < 0) return null;
   var vol = clamp(num(opts.gain, num(opts.volume, 1)), 0, 1);
   if(vol <= 0) return null;
+  if(LOOPS[name]) return held(ctx, name, opts, vol);
+  var V = spot(ctx, name, opts, false); if(V === false) return null;
+  var H = make(ctx, name, opts, vol, V);
+  if(!H && V) V.end(0);
+  return H;
+}
+// the spatial voice for a sound at opts.pos: null when it is not positional (no pos, no engine, a UI sound, another
+// AudioContext), false when it is not heard (too far, the kind's voices all nearer, sound off)
+function spot(ctx, name, opts, hold){
+  if(!opts.pos) return null;
+  var E = HQV.engine; if(!E || typeof E.spatialOut !== "function") return null;
+  var kind = opts.kind || NAME_KIND[name] || "door";
+  if(kind === "ui") return null;
+  var V = null; try { V = E.spatialOut(kind, opts.pos, {hold: hold, dur: SFX_DUR[name] || 1, key: opts.key}); } catch(e){ V = null; }
+  if(!V) return false;
+  if(V.ctx !== ctx){ try { V.end(0); } catch(e){} return null; }
+  return V;
+}
+// a loop's handle: a fresh voice when the last one stopped (no set() for a while), so set() always sounds
+function held(ctx, name, opts, vol){
+  var o = {}, k; for(k in opts) o[k] = opts[k];
+  function fresh(){ var V = spot(ctx, name, o, true); if(V === false) return null; var h = make(ctx, name, o, vol, V); if(!h && V) V.end(0); return h; }
+  var cur = fresh(); if(!cur) return null;
+  return {name: name, loop: true,
+    set: function(o2){
+      o2 = o2 || {}; for(var k2 in o2) o[k2] = o2[k2];
+      if(!cur || num(ctx.currentTime, 0) >= cur.stopAt - 0.02){ if(cur) cur.stop(); cur = fresh(); if(!cur) return; }
+      cur.set(o2);
+    },
+    stop: function(){ if(cur){ cur.stop(); cur = null; } },
+    alive: function(){ return !!cur && num(ctx.currentTime, 0) < cur.stopAt; }};
+}
+function make(ctx, name, opts, vol, V){
   try {
-    var t = num(ctx.currentTime, 0) + num(opts.delay, 0), nodes = [];
-    var out = ctx.createGain(); out.gain.value = vol; out.connect(opts.dest || ctx.destination); nodes.push(out);
+    var t = num(ctx.currentTime, 0) + num(opts.delay, 0) + (V ? num(V.delay, 0) : 0), nodes = [];
+    var out = ctx.createGain(); out.gain.value = vol; out.connect(V ? V.out : (opts.dest || ctx.destination)); nodes.push(out);
     var env = function(g, t0, peak, dur, attack){
       g.gain.setValueAtTime(0.0001, t0);
       g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t0 + (attack || 0.01));
@@ -701,7 +750,7 @@ function sfx(ctx, name, opts){
       src.connect(f); f.connect(g); g.connect(out); src.start(t0); if(!loop) src.stop(t0 + dur + 0.05);
       nodes.push(src, f, g); return {src: src, f: f, g: g};
     };
-    var loopH = null, sp = clamp(num(opts.speed, 0), 0, 60);
+    var loopH = null, sp = clamp(num(opts.speed, 0), 0, 60), rt = rateOf(opts, 1);
     switch(name){
       case "door-chime": tone(659.3, t, 0.35, "sine", 0.35); tone(523.3, t + 0.22, 0.35, "sine", 0.35); tone(392, t + 0.44, 0.5, "sine", 0.35); break;
       case "chime": tone(784, t, 0.4, "sine", 0.3); tone(659.3, t + 0.28, 0.4, "sine", 0.3); tone(523.3, t + 0.56, 0.6, "sine", 0.3); break;
@@ -720,29 +769,82 @@ function sfx(ctx, name, opts){
                    tone(440, t + 0.6, 0.4, "sine", 0.2, 0.01); tone(480, t + 0.6, 0.4, "sine", 0.2, 0.01); break;
       case "dial": tone(350, t, 2, "sine", 0.15, 0.02); tone(440, t, 2, "sine", 0.15, 0.02); break;
       case "shutter": noise(t, 0.03, "highpass", 4000, 0.4, false, 0.001); noise(t + 0.07, 0.04, "highpass", 2500, 0.3, false, 0.001); break;
+      // a sliding door's run, then its thunk; a bus's pneumatic doors; a gangway's steel landing; water slapping a pier
+      case "door": noise(t, 0.45, "bandpass", 700, 0.22, false, 0.05); tone(130, t + 0.4, 0.2, "sine", 0.3, 0.004); break;
+      case "hiss": noise(t, 0.55, "highpass", 3400, 0.22, false, 0.01); noise(t, 0.3, "bandpass", 1800, 0.08, false, 0.01); break;
+      case "gangway-clank": tone(180, t, 0.25, "triangle", 0.35, 0.002); tone(247, t + 0.09, 0.3, "triangle", 0.25, 0.002);
+                            noise(t, 0.12, "bandpass", 1300, 0.18, false, 0.002); break;
+      case "water-lap": noise(t, 0.9, "lowpass", 650, 0.22, false, 0.18); noise(t + 0.55, 1, "lowpass", 480, 0.14, false, 0.22); break;
+      case "ship-horn": tone(73.4, t, 3, "sawtooth", 0.3, 0.3); tone(110, t, 3, "sawtooth", 0.16, 0.3); break;   // a ship's deep horn
       case "motor": {
         var os = ctx.createOscillator(), lp = ctx.createBiquadFilter(), g = ctx.createGain();
-        os.type = "sawtooth"; os.frequency.setValueAtTime(110 + sp*18, t);
+        os.type = "sawtooth"; os.frequency.setValueAtTime((110 + sp*18)*rt, t);
         lp.type = "lowpass"; lp.frequency.setValueAtTime(900, t);
         g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.08, t + 0.3);
         os.connect(lp); lp.connect(g); g.connect(out); os.start(t); nodes.push(os, lp, g);
-        loopH = {set: function(o2){ var s2 = clamp(num(o2 && o2.speed, 0), 0, 60); os.frequency.setTargetAtTime(110 + s2*18, num(ctx.currentTime, 0), 0.2); }};
+        loopH = {set: function(o2){ sp = clamp(num(o2.speed, sp), 0, 60); rt = rateOf(o2, rt); os.frequency.setTargetAtTime((110 + sp*18)*rt, num(ctx.currentTime, 0), 0.2); }};
         break;
       }
       case "tunnel-rumble": { var nr = noise(t, 0, "lowpass", 180, 0.3, true, 0.5);
-        loopH = {set: function(o2){ nr.g.gain.setTargetAtTime(0.05 + 0.3*clamp(num(o2 && o2.speed, 0)/22, 0, 1), num(ctx.currentTime, 0), 0.3); }}; break; }
-      case "rotor": {
-        var nn = noise(t, 0, "lowpass", 400, 0.35, true, 0.4), lfo = ctx.createOscillator(), lg = ctx.createGain();
-        lfo.type = "sine"; lfo.frequency.setValueAtTime(14 + sp*0.2, t); lg.gain.value = 0.3;
+        loopH = {set: function(o2){ sp = clamp(num(o2.speed, sp), 0, 60); nr.g.gain.setTargetAtTime(0.05 + 0.3*clamp(sp/22, 0, 1), num(ctx.currentTime, 0), 0.3); }}; break; }
+      case "rotor": {          // the blades' slap and the turbine's noise, both shifted by opts.rate (Doppler)
+        var nn = noise(t, 0, "lowpass", 400*rt, 0.35, true, 0.4), lfo = ctx.createOscillator(), lg = ctx.createGain();
+        lfo.type = "sine"; lfo.frequency.setValueAtTime((14 + sp*0.2)*rt, t); lg.gain.value = 0.3;
         lfo.connect(lg); lg.connect(nn.g.gain); lfo.start(t); nodes.push(lfo, lg);
-        loopH = {set: function(o2){ lfo.frequency.setTargetAtTime(14 + clamp(num(o2 && o2.speed, 0), 0, 60)*0.2, num(ctx.currentTime, 0), 0.3); }};
+        loopH = {set: function(o2){ sp = clamp(num(o2.speed, sp), 0, 60); rt = rateOf(o2, rt); var n = num(ctx.currentTime, 0);
+          lfo.frequency.setTargetAtTime((14 + sp*0.2)*rt, n, 0.3); nn.f.frequency.setTargetAtTime(400*rt, n, 0.3); }};
+        break;
+      }
+      case "engine-hum": {     // a boat's diesel throbbing under the deck (speed: m/s)
+        var eo = ctx.createOscillator(), elp = ctx.createBiquadFilter(), eg = ctx.createGain(), el = ctx.createOscillator(), eld = ctx.createGain();
+        eo.type = "sawtooth"; eo.frequency.setValueAtTime((46 + sp*2.5)*rt, t);
+        elp.type = "lowpass"; elp.frequency.setValueAtTime(260, t);
+        eg.gain.setValueAtTime(0.0001, t); eg.gain.exponentialRampToValueAtTime(0.12, t + 0.5);
+        el.type = "sine"; el.frequency.setValueAtTime(5.5, t); eld.gain.value = 0.04;
+        eo.connect(elp); elp.connect(eg); eg.connect(out); el.connect(eld); eld.connect(eg.gain); eo.start(t); el.start(t);
+        nodes.push(eo, elp, eg, el, eld);
+        loopH = {set: function(o2){ sp = clamp(num(o2.speed, sp), 0, 60); rt = rateOf(o2, rt); eo.frequency.setTargetAtTime((46 + sp*2.5)*rt, num(ctx.currentTime, 0), 0.3); }};
+        break;
+      }
+      case "gondola-rumble": { // the bull wheel turning: a low drone, the haul rope's rumble, the sheaves' beat
+        var gw = ctx.createOscillator(), gg = ctx.createGain(), gr = noise(t, 0, "lowpass", 140, 0.18, true, 0.6), gl = ctx.createOscillator(), gld = ctx.createGain();
+        gw.type = "sine"; gw.frequency.setValueAtTime(38 + sp*1.5, t); gg.gain.setValueAtTime(0.0001, t); gg.gain.exponentialRampToValueAtTime(0.1, t + 0.6);
+        gl.type = "sine"; gl.frequency.setValueAtTime(0.8 + sp*0.25, t); gld.gain.value = 0.06;
+        gw.connect(gg); gg.connect(out); gl.connect(gld); gld.connect(gr.g.gain); gw.start(t); gl.start(t);
+        nodes.push(gw, gg, gl, gld);
+        loopH = {set: function(o2){ sp = clamp(num(o2.speed, sp), 0, 60); var n = num(ctx.currentTime, 0);
+          gl.frequency.setTargetAtTime(0.8 + sp*0.25, n, 0.3); gw.frequency.setTargetAtTime(38 + sp*1.5, n, 0.3); }};
+        break;
+      }
+      case "gondola-wind": {   // wind past your cabin, gusting slowly, louder with the speed
+        var wn = noise(t, 0, "bandpass", 420 + sp*30, 0.16, true, 0.8), wl = ctx.createOscillator(), wld = ctx.createGain();
+        wn.f.Q.setValueAtTime(0.7, t); wl.type = "sine"; wl.frequency.setValueAtTime(0.23, t); wld.gain.value = 0.08;
+        wl.connect(wld); wld.connect(wn.g.gain); wl.start(t); nodes.push(wl, wld);
+        loopH = {set: function(o2){ sp = clamp(num(o2.speed, sp), 0, 60); wn.f.frequency.setTargetAtTime(420 + sp*30, num(ctx.currentTime, 0), 0.5); }};
         break;
       }
     }
-    var H = {name: name, loop: !!loopH, stop: function(){
-      try { var n2 = num(ctx.currentTime, 0); out.gain.setTargetAtTime(0.0001, n2, 0.08);
+    var H = {name: name, loop: !!loopH, stopAt: Infinity, stop: function(){
+      try { var n2 = num(ctx.currentTime, 0); if(out.gain.cancelScheduledValues) out.gain.cancelScheduledValues(n2);
+        out.gain.setTargetAtTime(0.0001, n2, 0.08); H.stopAt = n2 + 0.4;
         nodes.forEach(function(nd){ if(nd && typeof nd.stop === "function"){ try { nd.stop(n2 + 0.4); } catch(e){} } }); } catch(e){}
-    }, set: loopH ? loopH.set : function(){}};
+      if(V){ try { V.end(0.4); } catch(e){} }
+    }, set: function(){}};
+    if(loopH){
+      // the dead man's switch: full level now, silent HOLD s on unless set() comes again; a rolling stop keeps the
+      // nodes' end ~1-2 s past the last set(), so a loop nobody set()s any more stops by itself
+      var hold = function(n){
+        var p = out.gain;
+        if(p.cancelScheduledValues) p.cancelScheduledValues(n);
+        p.setTargetAtTime(vol, n, 0.05); p.setTargetAtTime(0.0001, n + HOLD, 0.08);
+        if(n + HOLD + 0.4 > H.stopAt || H.stopAt === Infinity){
+          H.stopAt = n + HOLD + 1.2;
+          nodes.forEach(function(nd){ if(nd && typeof nd.stop === "function"){ try { nd.stop(H.stopAt); } catch(e){} } });
+        }
+      };
+      H.set = function(o2){ o2 = o2 || {}; hold(Math.max(t, num(ctx.currentTime, 0))); try { loopH.set(o2); } catch(e){} if(V && o2.pos) V.move(o2.pos); };
+      hold(t);
+    }
     return H;
   } catch(e){ return null; }
 }
@@ -773,7 +875,12 @@ function announcer(o){
       if(!text) return {chime: false, voice: false};
       if(typeof o.announce === "function"){ try { o.announce(text); } catch(e){} }
       var chimed = false, ctx = typeof o.audio === "function" ? o.audio() : null;
-      if(so.chime !== false && !calm() && ctx){ chimed = !!sfx(ctx, "chime", {gain: typeof o.gain === "function" ? o.gain() : 1, mute: typeof o.mute === "function" && o.mute()}); }
+      if(so.chime !== false && !calm() && ctx){
+        // into o.dest, else the engine's master (the Game sounds volume) when it is the same context, else the speakers
+        var dest = typeof o.dest === "function" ? o.dest() : o.dest || null, E = HQV.engine;
+        if(!dest && E && typeof E.audioOut === "function"){ var A = null; try { A = E.audioOut(); } catch(e){} if(A && A.ctx === ctx) dest = A.out; }
+        chimed = !!sfx(ctx, "chime", {gain: typeof o.gain === "function" ? o.gain() : 1, mute: typeof o.mute === "function" && o.mute(), dest: dest || undefined});
+      }
       var on = false; try { on = !!voiceOn(); } catch(e){}
       if(!on) return {chime: chimed, voice: false};
       if(chimed){ later(function(){ speak(text); }, 1100); return {chime: true, voice: "later"}; }

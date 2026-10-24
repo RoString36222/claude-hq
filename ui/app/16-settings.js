@@ -397,19 +397,30 @@ function sfxVolumeNow(){
   });
   r.addEventListener("change", function(){ if(window.HQV && HQV.engine) HQV.engine.sfx("coin"); });
 })();
-/* ---- [3.11.1] ambient sounds on/off (localStorage hq_ambient, "0" = off; on by default) ---- */
-function ambientOnNow(){
-  if(window.HQV && HQV.engine && HQV.engine.ambientOn) return HQV.engine.ambientOn();
+/* ---- ambient sounds volume (localStorage hq_ambient, 0..1; unset = 100%). The 3.11.1 switch stored "0" for off and
+   "1" for on, so an old Off reads as 0% and On as 100%: no migration step ---- */
+function ambientVolumeNow(){
+  if(window.HQV && HQV.engine && HQV.engine.ambientVolume) return HQV.engine.ambientVolume();
   var v=null; try { v=localStorage.getItem("hq_ambient"); } catch(e){}
-  return v!=="0";
+  if(v===null || v==="") return 1;
+  v=parseFloat(v); return isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
 }
 (function(){
-  var cb=$("setAmbient"); if(!cb) return;
-  function show(){ cb.checked=ambientOnNow(); }
+  var r=$("setAmbient"), lbl=$("setAmbientVal"); if(!r) return;
+  function label(v){ if(lbl) lbl.textContent = v ? v+"%" : "off"; r.setAttribute("aria-valuetext", v ? v+"%" : "Off"); }
+  function show(){ var v=Math.round(ambientVolumeNow()*100); r.value=v; label(v); }
   show();
   var back=$("settingsBack"); if(back) new MutationObserver(function(){ if(back.classList.contains("open")) show(); }).observe(back, {attributes:true, attributeFilter:["class"]});
-  cb.addEventListener("change", function(){
-    if(window.HQV && HQV.engine && HQV.engine.ambientSet) HQV.engine.ambientSet(cb.checked); else { try { localStorage.setItem("hq_ambient", cb.checked ? "1" : "0"); } catch(e){} }
+  r.addEventListener("input", function(){
+    var v=Math.max(0, Math.min(100, Math.round(+r.value||0)));
+    if(window.HQV && HQV.engine && HQV.engine.ambientSetVolume) HQV.engine.ambientSetVolume(v/100); else { try { localStorage.setItem("hq_ambient", String(v/100)); } catch(e){} }
+    label(v);
+  });
+  r.addEventListener("change", function(){
+    var v=Math.max(0, Math.min(100, Math.round(+r.value||0)));
+    announce(v ? "Ambient sounds "+v+"%" : "Ambient sounds off");
+    var E=window.HQV && HQV.engine;                                   // a soft far-off rumble at the new level (not under Calm)
+    if(v && E && E.ambientPreview && !(E.calm && E.calm())) E.ambientPreview();
   });
 })();
 // Work signals: the PR switch only means something while the main one is on.

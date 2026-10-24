@@ -957,6 +957,7 @@ function makeGame(host, opts){
     });
     R3.fx(C, dt, calm(), V.handle);
     R3.render(dt, {mode: V.phase === "done" ? 3 : V.cam, pose: POSE, car: C, calm: calm()});
+    if(E.listener) E.listener(R3.camera);                              // [sound] the ears: this frame's camera (the other drivers)
   }
   var perf = {t: 0, n: 0, slow: 0, pr: null, auto: null};
   // Graphics: a fixed level is applied at once; Auto measures ~3 s of driving after each change
@@ -1014,6 +1015,7 @@ function makeGame(host, opts){
 
   V.destroy = function(){
     V.alive = false;
+    if(E.listener) E.listener(null);
     if(eng){ eng.stop(); eng = null; } if(skid){ skid.stop(); skid = null; } if(gravel){ gravel.stop(); gravel = null; }
     if(raf) cancelAnimationFrame(raf); raf = 0;
     window.removeEventListener("resize", onResize); if(ro) ro.disconnect();

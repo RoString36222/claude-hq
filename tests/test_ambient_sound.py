@@ -1,7 +1,8 @@
-"""Ambient sounds (HQ 3.11.1): thunder and fireworks are heard only within about a kilometre of the camera, fading
-to nothing at that edge (no floor), and an "Ambient sounds" switch (localStorage hq_ambient, on by default) silences
-thunder, fireworks, the rain's hiss and the jets' roar without touching engines or game sounds. Node with a fake
-AudioContext; skipped without node."""
+"""Ambient sounds (HQ 3.11.1, Sound PR B): thunder and fireworks are heard only within about a kilometre of the camera,
+fading to nothing at that edge (no floor), and an "Ambient sounds" volume (localStorage hq_ambient, 0..1, 100% by
+default; Sound PR B made the 3.11.1 switch a slider, its stored "0" still off) silences thunder, fireworks, the rain's
+hiss and the jets' roar at 0% without touching engines or game sounds. Node with a fake AudioContext; skipped without
+node. The volume's scaling and the migration: tests/test_spatial_sound.py."""
 import json
 import os
 import shutil
@@ -101,13 +102,17 @@ class AmbientSoundTests(unittest.TestCase):
         self.assertIn("if(d < BOOM_M) boom(", s)
         self.assertIn("(E.ambientLoop || E.noiseLoop)(320", a)
 
-    def test_settings_has_the_switch(self):
+    def test_settings_has_the_slider(self):
         html, js = self.read("index.html"), self.read("ui", "app", "16-settings.js")
-        self.assertIn('id="setAmbient"', html)
-        self.assertIn(">Ambient sounds<", html)
+        self.assertIn('<label for="setAmbient">Ambient sounds <span id="setAmbientVal" class="hint" aria-hidden="true"></span></label>', html)
+        self.assertIn('<input id="setAmbient" type="range" min="0" max="100" step="5" aria-describedby="setAmbientHint">', html)
+        self.assertIn('id="setAmbientHint"', html)
+        self.assertNotIn('type="checkbox" id="setAmbient"', html)     # the 3.11.1 switch is gone
         self.assertIn('$("setAmbient")', js)
-        self.assertIn("HQV.engine.ambientSet(cb.checked)", js)
+        self.assertIn("HQV.engine.ambientSetVolume(v/100)", js)
         self.assertIn('"hq_ambient"', js)
+        self.assertIn('r.setAttribute("aria-valuetext", v ? v+"%" : "Off")', js)
+        self.assertIn('announce(v ? "Ambient sounds "+v+"%" : "Ambient sounds off")', js)
 
 
 if __name__ == "__main__":

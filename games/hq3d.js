@@ -5293,6 +5293,7 @@ function mount(el, api){
     studioFrame();
     var ease = 1 - Math.exp(-dt*(ride ? 4 + Math.min(6, Math.abs(ride.speed)*0.3) : 4)); view.target.lerp(view.goal, ease);
     resize(); placeCam();
+    if(E.listener) E.listener(curCam(), curCam() === cam ? view.target : null);   // [sound] the ears: this frame's camera (Classic hears from what it looks at)
     if(avatar && avatar.ch){
       var skp = ride && ride.kind === "skate" && ride.sk ? ride.sk.pose : null;
       if(skp || avatar.ch._po) poseUndo(avatar.ch);
@@ -5968,6 +5969,7 @@ function mount(el, api){
   }
   inst.setFilter = function(p){ filter = p || null; if(scene) applyFilter(); };
   inst.pause = function(){ inst.running = false; keys = {}; exitLock(); if(raf){ cancelAnimationFrame(raf); raf = 0; }
+    if(E.listener) E.listener(null);                                  // [sound] no view, no ears: nothing is placed
     if(ride && ride.eng){ ride.eng.stop(); ride.eng = null; } };     // (the engine starts again with the next frame you drive)
   inst.resume = function(){
     if(!inst.alive || inst.running || !scene) { if(!scene) inst.wantRun = true; return; }

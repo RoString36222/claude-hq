@@ -194,7 +194,7 @@ function hqStudioRender(){
     hqsChoices(rm, HQS_NAMES.ceiling, L.ceiling.enum, d.int.lobby.ceiling, function(v){ d.int.lobby.ceiling=v; });
     var pc=hqsSection(body, "Set pieces");
     ["reception","centre","seating","art","rug","signage","ambience"].forEach(function(k){ hqsChoices(pc, HQS_NAMES[k], L[k].enum, d.int.lobby[k], function(v){ d.int.lobby[k]=v; }); });
-    var amb=document.createElement("p"); amb.className="muted hqs-hint"; amb.textContent="Ambience plays only while Ambient sounds is on in Settings."; pc.appendChild(amb);
+    var amb=document.createElement("p"); amb.className="muted hqs-hint"; amb.textContent="Ambience plays at the Ambient sounds volume in Settings (0% turns it off)."; pc.appendChild(amb);
     var lk=document.createElement("button"); lk.type="button"; lk.className="hbtn ghost"; lk.textContent="Place decor and pet furniture in the lobby…"; lk.addEventListener("click", function(){ HQ_STUDIO.tab="layout"; HQ_STUDIO.cur.f="lobby"; hqStudioRender(); hqStudioScene(); }); body.appendChild(lk);
   } else if(tab==="floors"){
     body.appendChild(hqsLiveHint("Mission Control behind this panel shows every change as you click."));

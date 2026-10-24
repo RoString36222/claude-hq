@@ -460,7 +460,9 @@ class HqRideTest(unittest.TestCase):
             self.assertTrue(ok, name)
             self.assertGreater(nodes, 1, name)
         for want in ("door-chime", "door-hiss", "validator", "stop-bell", "tram-bell", "air-brake", "motor", "rail-joint",
-                     "tunnel-rumble", "gondola-clunk", "ferry-horn", "indicator", "rotor", "ring", "dial", "shutter"):
+                     "tunnel-rumble", "gondola-clunk", "ferry-horn", "indicator", "rotor", "ring", "dial", "shutter",
+                     # Sound PR B: the names transit modules used to alias (or that were silent) have synths of their own
+                     "door", "hiss", "engine-hum", "gangway-clank", "water-lap", "gondola-rumble", "gondola-wind", "ship-horn"):
             self.assertIn(want, s["sounds"])
         self.assertIsNone(s["mute"])
         self.assertIsNone(s["noCtx"])

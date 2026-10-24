@@ -114,35 +114,50 @@ function bracket(sn, rt){
 /* ---------- sound (HQ 2.1 sound pack): every sound is synthesised, no files ---------- */
 // One volume for every game and the HQ: localStorage hq_sfx (0..1). Off by default under Calm
 // mode or reduced motion (until you set a volume yourself). Audio starts after your first click.
-var SND = {ctx: null, master: null};
+var SND = {ctx: null, master: null, amb: null};
 function sfxVolume(){
   var v = null; try { v = localStorage.getItem("hq_sfx"); } catch(e){}
   if(v === null || v === "") return calm() ? 0 : 0.5;
   v = parseFloat(v); return isFinite(v) ? clamp(v, 0, 1) : 0.5;
 }
 function sfxSetVolume(v){ try { localStorage.setItem("hq_sfx", String(clamp(+v || 0, 0, 1))); } catch(e){} if(SND.master) SND.master.gain.value = sfxVolume(); }
-// [3.11.1] Ambient sounds (thunder, fireworks, rain, the jets' roar): their own switch, localStorage hq_ambient
-// ("0" off, anything else or unset on), separate from engines and game sounds; still under the one volume.
-function ambientOn(){ var v = null; try { v = localStorage.getItem("hq_ambient"); } catch(e){} return v !== "0"; }
-function ambientSet(on){ try { localStorage.setItem("hq_ambient", on ? "1" : "0"); } catch(e){} }
+// Ambient sounds (thunder, rain, fireworks, jets, planes, water, fountains, the city's hum, civic bells): their own
+// volume, localStorage hq_ambient as a number 0..1 (Sound PR B; 3.11.1 stored "0" for off and "1" for on, so the old
+// Off reads as 0% and On as 100% with no migration step; unset or garbage is 100%, today's loudness). It feeds
+// SND.amb, a gain into the master: every ambient sound is ambient x sfx volume, so Calm and mute silence it too.
+function ambientVolume(){
+  var v = null; try { v = localStorage.getItem("hq_ambient"); } catch(e){}
+  if(v === null || v === "") return 1;
+  v = parseFloat(v); return isFinite(v) ? clamp(v, 0, 1) : 1;
+}
+function ambientSetVolume(v){
+  try { localStorage.setItem("hq_ambient", String(Math.round(clamp(+v || 0, 0, 1)*100)/100)); } catch(e){}
+  if(SND.amb) SND.amb.gain.value = ambientVolume();
+}
+function ambientOn(){ return ambientVolume() > 0; }
+function ambientSet(on){ ambientSetVolume(on ? 1 : 0); }
 function audio(){
   if(SND.ctx) { if(SND.ctx.state === "suspended") SND.ctx.resume().catch(function(){}); return SND.ctx; }
   var C = window.AudioContext || window.webkitAudioContext; if(!C) return null;
   try { SND.ctx = new C(); SND.master = SND.ctx.createGain(); SND.master.gain.value = sfxVolume(); SND.master.connect(SND.ctx.destination); } catch(e){ return null; }
+  try { SND.amb = SND.ctx.createGain(); SND.amb.gain.value = ambientVolume(); SND.amb.connect(SND.master); } catch(e){ SND.amb = null; }
   return SND.ctx;
 }
+// tone() and noise() build the named sfx; sfxAt() points them at a spatial voice (DEST) and its sound-travel delay (OFF)
+var DEST = null, OFF = 0;
 function tone(ac, type, f0, f1, dur, vol, at){
-  var t = ac.currentTime + (at || 0), o = ac.createOscillator(), g = ac.createGain();
+  var t = ac.currentTime + OFF + (at || 0), o = ac.createOscillator(), g = ac.createGain();
   o.type = type; o.frequency.setValueAtTime(f0, t); if(f1) o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(g); g.connect(SND.master); o.start(t); o.stop(t + dur + 0.02);
+  o.connect(g); g.connect(DEST || SND.master); o.start(t); o.stop(t + dur + 0.02);
 }
+// a fading burst of white noise, seeded by its length: the same burst every time (nothing heard is left to chance)
 function noise(ac, dur, vol, freq, at){
-  var t = ac.currentTime + (at || 0), n = Math.floor(ac.sampleRate*dur), b = ac.createBuffer(1, n, ac.sampleRate), d = b.getChannelData(0);
-  for(var i = 0; i < n; i++) d[i] = (Math.random()*2 - 1)*(1 - i/n);
+  var t = ac.currentTime + OFF + (at || 0), n = Math.floor(ac.sampleRate*dur), b = ac.createBuffer(1, n, ac.sampleRate), d = b.getChannelData(0);
+  for(var i = 0, s = (Math.imul(n, 0x9e3779b1) + 977) >>> 0; i < n; i++){ s = (Math.imul(s, 1664525) + 1013904223) >>> 0; d[i] = (s/2147483648 - 1)*(1 - i/n); }
   var src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
   src.buffer = b; f.type = "bandpass"; f.frequency.value = freq || 1200; g.gain.value = vol;
-  src.connect(f); f.connect(g); g.connect(SND.master); src.start(t);
+  src.connect(f); f.connect(g); g.connect(DEST || SND.master); src.start(t);
 }
 var SFX = {
   ui: function(a){ tone(a, "sine", 660, 0, 0.06, 0.08); },
@@ -168,8 +183,14 @@ var SFX = {
     for(var i = 0; i < 4; i++) tone(a, "sawtooth", 95 + i*6, 80, 0.11, 0.035, i*0.12);
     noise(a, 0.5, 0.025, 380);
   },
-  bell: function(a){ tone(a, "sine", 2093, 2050, 0.35, 0.1); tone(a, "sine", 2637, 2600, 0.3, 0.06); tone(a, "sine", 2093, 2050, 0.35, 0.1, 0.14); }   // a bike bell
+  bell: function(a){ tone(a, "sine", 2093, 2050, 0.35, 0.1); tone(a, "sine", 2637, 2600, 0.3, 0.06); tone(a, "sine", 2093, 2050, 0.35, 0.1, 0.14); },   // a bike bell
+  // a blast (a missile's detonation, games/strike.js): the crack, the deep thump and its long rumble
+  boom: function(a){ noise(a, 0.22, 0.3, 1100); tone(a, "sine", 95, 32, 0.55, 0.3); noise(a, 1.4, 0.38, 170); noise(a, 0.9, 0.12, 420, 0.08); }
 };
+// how long each named sfx sounds (s), for the one-shot voice limit of sfxAt
+var SFX_DUR = {sink: 0.45, finish: 0.5, levelup: 0.6, crank: 0.55, horn: 0.45, bell: 0.5, boom: 1.45};
+// the spatial kind sfxAt gives a named sfx unless opt.kind says otherwise (game feedback: your own)
+var SFX_KIND = {door: "door", bell: "bell", horn: "vehicle", crank: "vehicle", shot: "blast", boom: "blast"};
 function sfx(name, opt){
   if(sfxVolume() <= 0 || !SFX[name]) return;
   var a = audio(); if(!a || a.state !== "running") return;
@@ -184,7 +205,8 @@ function sfx(name, opt){
 // the lumpy ones (V-twin, boxer, cross-plane V8), a waveshaper for grit and a low-pass that opens
 // with the revs and the load. opt (all optional): thr (0..1 throttle; without it the load is read
 // from the revs' climb), gear (an upshift cuts, a downshift blips), speed (m/s: road rumble),
-// slip (0..1: tyre squeal), dist (m: a farther engine is quieter and duller).
+// slip (0..1: tyre squeal), dist (m: a farther engine is quieter and duller), pos + sk (where it is and its spatial
+// kind, below: the listener's distance fade and pan replace dist; sk defaults to "own", your own vehicle).
 // Layers on the same output: intake / exhaust roar (filtered noise), a turbo's whistle and its
 // blow-off on a lift, crackle on the overrun for the sporty ones (deterministic, not under Calm),
 // a diesel's clatter, a prop's blade-pass buzz, a rotor's slap. Every node is made once per engine;
@@ -335,8 +357,9 @@ function engineSound(kind, ex, real){
   var a = sfxVolume() > 0 ? audio() : null; if(!a) return {set: function(){}, stop: function(){}};
   var B = engineBus(a), t0 = a.currentTime, nodes = [];
   // the output first (the dead man's switch lives here), then the chain into it:
-  // [main + twin + sub] -> drive -> grit -> low-pass -> amp (lope, shift cut) -> out -> bus
+  // [main + twin + sub] -> drive -> grit -> low-pass -> amp (lope, shift cut) -> out -> pan -> bus
   var g = a.createGain(), amp = a.createGain(), cut = a.createGain(), drv = a.createGain(), f = a.createBiquadFilter();
+  var pn = a.createStereoPanner ? a.createStereoPanner() : null;     // left/right from where it is (set(.., {pos}))
   g.gain.value = 0; amp.gain.value = 1; cut.gain.value = 1; drv.gain.value = P.grit || 1;
   f.type = "lowpass"; f.frequency.value = P.cut[0]; f.Q.value = P.q;
   var o = a.createOscillator(), o2 = a.createOscillator(), os = a.createOscillator(), sg = a.createGain();
@@ -348,7 +371,7 @@ function engineSound(kind, ex, real){
   o.connect(drv); o2.connect(o2g); o2g.connect(drv); os.connect(sg); sg.connect(drv);
   var sh = a.createWaveShaper ? a.createWaveShaper() : null;
   if(sh){ sh.curve = engineCurve(B, P.grit || 1); drv.connect(sh); sh.connect(f); } else drv.connect(f);
-  f.connect(amp); amp.connect(cut); cut.connect(g); g.connect(B.out);
+  f.connect(amp); amp.connect(cut); cut.connect(g); if(pn){ g.connect(pn); pn.connect(B.out); } else g.connect(B.out);
   o.start(); o2.start(); os.start(); nodes.push(o, o2, os);
   // lope: the gain wobbles (a cam's lope, a bike's idle), or a prop's blade-pass buzz, or a rotor's slap
   var l = null, ld = null;
@@ -382,7 +405,7 @@ function engineSound(kind, ex, real){
   // state: deterministic randomness (a seed from the kind), the load, the boost, the overrun and the gear
   var seed = 7; for(var i = 0; i < kind.length; i++) seed = (seed*31 + kind.charCodeAt(i)) & 0x7fffffff;
   function rnd(){ seed = (seed*1103515245 + 12345) & 0x7fffffff; return seed/0x7fffffff; }
-  var S = {t: t0, rpm: null, load: 0.3, boost: 0, lift: 9, pop: 0, wob: 0, gear: null, blip: 0, thr: 0, lim: 0};
+  var S = {t: t0, rpm: null, load: 0.3, boost: 0, lift: 9, pop: 0, wob: 0, gear: null, blip: 0, thr: 0, lim: 0, pan: 0};
   function tgt(p, v, tc){ p.setTargetAtTime(v, a.currentTime, tc); }
   return {
     set: function(rpm, opt){
@@ -429,7 +452,13 @@ function engineSound(kind, ex, real){
         else if(P.rotor) tgt(l.frequency, 9 + 9*u, 0.1);                     // rotor slap with the revs
         else tgt(ld.gain, P.lope[1]*(1 - 0.85*u), 0.1);                      // the lope smooths out with revs
       }
-      var L = S.load, dist = opt.dist != null ? clamp(+opt.dist || 0, 0, 1e4) : 0, far = 1/(1 + dist/12);
+      // where it is (Sound PR B): opt.pos and opt.sk (its spatial kind, default "own": your own vehicle, no distance
+      // loss) give the distance fade (far, which also dulls it), the pan and, for an ambient kind, the Ambient sounds
+      // volume; with no position (or no listener) the legacy opt.dist (m) still quietens and dulls it
+      var L = S.load, sk = opt.sk != null ? String(opt.sk) : "own", sp = opt.pos ? hear(sk, opt.pos) : null, far, amb = 1;
+      if(opt.pos && SP.L){ far = sp ? sp.g : 0; if(kindOf(sk).bus === "ambient") amb = ambientVolume(); }
+      else { var dist = opt.dist != null ? clamp(+opt.dist || 0, 0, 1e4) : 0; far = 1/(1 + dist/12); }
+      if(pn && ((sp && sp.pan) || S.pan)){ S.pan = sp ? sp.pan : 0; tgt(pn.pan, S.pan, 0.05); }
       tgt(drv.gain, (P.grit || 1)*(0.45 + 0.9*L), 0.05);
       var fc = (P.cut[0] + (P.cut[1] - P.cut[0])*u)*(0.45 + 0.75*L)*(0.4 + 0.6*far);
       tgt(f.frequency, clamp(Math.max(fc, hz*2.5), 60, 16000), 0.06);
@@ -467,7 +496,7 @@ function engineSound(kind, ex, real){
       // a dead man's switch: each set() fades the note out 0.25 s from now and the next frame's
       // set() cancels that, so the engine falls silent whenever the game stops calling (a hidden
       // tab, another view, a stalled loop) instead of droning on at its last revs
-      var lvl = on ? P.gain*MD.gain*(0.6 + 0.45*u)*(0.55 + 0.45*L)*far : 0;
+      var lvl = on ? P.gain*MD.gain*(0.6 + 0.45*u)*(0.55 + 0.45*L)*far*amb : 0;
       g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(lvl, t, 0.1); g.gain.setTargetAtTime(0, t + 0.25, 0.05);
     },
     stop: function(){
@@ -485,29 +514,415 @@ function engineSound(kind, ex, real){
     bov.g.gain.setValueAtTime(0, t); bov.g.gain.setTargetAtTime(0.05, t, 0.012); bov.g.gain.setTargetAtTime(0, t + 0.07, 0.11);
   }
 }
-// A looping band of noise (tyre scrub, gravel under the car): noiseLoop(freq, q) ->
-// {set(gain, freq), stop()}. Silent until set() is called with a gain.
-function noiseLoop(freq, q){
+// A looping band of noise (tyre scrub, gravel under the car): noiseLoop(freq, q, sk) ->
+// {set(gain, freq, pos), stop()}. Silent until set() is called with a gain. sk (a spatial kind, below) makes it
+// positional: set()'s pos then fades it with the distance and pans it (an ambient kind also follows Ambient sounds).
+function noiseLoop(freq, q, sk){ return bandLoop(freq, q, sk, false); }
+// an ambient noiseLoop: through the ambient volume (SND.amb) and silent at 0% (checked every set(), so the slider
+// acts at once); sk + set()'s pos make it positional, as noiseLoop's
+function ambientLoop(freq, q, sk){
+  var L = bandLoop(freq, q, sk, true);
+  return {set: function(gain, fq, pos){ L.set(ambientOn() ? gain : 0, fq, pos); }, stop: L.stop};
+}
+function bandLoop(freq, q, sk, ambient){
   var a = sfxVolume() > 0 ? audio() : null; if(!a) return {set: function(){}, stop: function(){}};
   var n = Math.floor(a.sampleRate*0.6), b = a.createBuffer(1, n, a.sampleRate), d = b.getChannelData(0);
-  for(var i = 0; i < n; i++) d[i] = Math.random()*2 - 1;
-  var src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
+  var s = (Math.imul(Math.round(+freq || 1000), 0x9e3779b1) + Math.round((+q || 1)*1000)) >>> 0;     // seeded by the band
+  for(var i = 0; i < n; i++){ s = (Math.imul(s, 1664525) + 1013904223) >>> 0; d[i] = s/2147483648 - 1; }
+  var spec = sk != null ? kindOf(sk) : null, bus = (ambient || (spec && spec.bus === "ambient")) && SND.amb ? SND.amb : SND.master;
+  var src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain(), pn = spec && a.createStereoPanner ? a.createStereoPanner() : null, was = 0;
   src.buffer = b; src.loop = true; f.type = "bandpass"; f.frequency.value = freq || 1000; f.Q.value = q || 1; g.gain.value = 0;
-  src.connect(f); f.connect(g); g.connect(SND.master); src.start();
+  src.connect(f); f.connect(g); if(pn){ g.connect(pn); pn.connect(bus); } else g.connect(bus); src.start();
   return {
-    set: function(gain, fq){
-      var t = a.currentTime, on = sfxVolume() > 0;
-      g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(on ? clamp(+gain || 0, 0, 0.3) : 0, t, 0.06);
+    set: function(gain, fq, pos){
+      var t = a.currentTime, on = sfxVolume() > 0, k = 1, pan = 0;
+      if(spec && pos && SP.L){ var h = hear(sk, pos); k = h ? h.g : 0; pan = h ? h.pan : 0; }
+      g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(on ? clamp(+gain || 0, 0, 0.3)*k : 0, t, 0.06);
       g.gain.setTargetAtTime(0, t + 0.25, 0.05);                       // silent when set() stops coming (engineSound)
       if(fq) f.frequency.setTargetAtTime(clamp(fq, 60, 8000), t, 0.1);
+      if(pn && (pan || was)){ was = pan; pn.pan.setTargetAtTime(pan, t, 0.05); }
     },
     stop: function(){ try { g.gain.cancelScheduledValues(a.currentTime); g.gain.setTargetAtTime(0, a.currentTime, 0.05); src.stop(a.currentTime + 0.3); } catch(e){} }
   };
 }
-// an ambient noiseLoop: silent while Ambient sounds is off (checked every set(), so the switch acts at once)
-function ambientLoop(freq, q){
-  var L = noiseLoop(freq, q);
-  return {set: function(gain, fq){ L.set(ambientOn() ? gain : 0, fq); }, stop: L.stop};
+/* ---------- spatial sound (Sound PR B): every world sound where it is ----------
+ * Positions are metres in the active 3D scene's frame (what games/hq3d.js camInfo() reports), y up; a position is
+ * {x, y, z} (a THREE.Vector3 too) or [x, y, z], and a missing y is level with the ears. The listener is the camera,
+ * set once a frame by whatever renders the view (hq3d.js frame(), each 3D game's own loop):
+ *   listener(cam, at)  cam: a THREE camera (its matrixWorld: position, right = column 0, forward = -column 2), or
+ *                      {x, y, z, yaw} (yaw 0 faces +z, right = (-cos yaw, sin yaw)), or null for no listener: then
+ *                      every positional call plays centred at its raw level (2D games, tests). at: optional {x, y, z}
+ *                      to hear from there with the camera's facing (a top-down view hears from what it looks at)
+ *   listenerAt()       a copy {x, y, z, rx, rz, fx, fz} (right and forward on the ground, unit), or null
+ * Kinds (spatial.KINDS, tuned in this one table): ref (m: full volume within), max (m: silent at and past it),
+ * roll (how fast it fades between), voices (how many of the kind sound at once), bus ("engine": the engines'
+ * compressor, "master", "ambient": the Ambient sounds volume too), sos (a one-shot starts d/343 s late, the sound
+ * travelling), curve: false (its callers bring their own distance curve: thunderVol, boomVol, hqGrenade.boomVol),
+ * pan (a multiplier: "own" 0.25, beds 0). Nothing plays while the sfx volume is 0 (Calm's default, mute).
+ *   falloff(spec, d)   1 within ref, 0 at max and past it, else ref/(ref + roll*(d - ref)) * (1 - ((d - ref)/(max - ref))^2)
+ *   panOf(L, pos, ref) -1 (left) .. 1 (right): the source's share along the listener's right, * min(1, d/ref) * 0.85
+ *                      (never one ear only; a source at the ears is centred; one overhead is centred too)
+ * Nodes per voice: [its sources] -> gain (falloff x level) -> StereoPannerNode -> the kind's bus, values pushed with
+ * setTargetAtTime. No StereoPanner (old browsers, the tests' fake contexts): gain only. No PannerNode: its distance
+ * models never reach 0 at maxDistance, its listener orientation differs across browsers, HRTF costs a lot per voice.
+ * Calls:
+ *   hear(kind, pos, opt)        -> {g, pan, d} | null (past max): what a source there gets now. opt: {gain, curve}
+ *   spatialOut(kind, pos, opt)  -> {ctx, out, d, delay, move(pos, gain), end(sec)} | null: a voice for a module that
+ *                                  makes its own sound: connect into out, start at ctx.currentTime + delay. null at
+ *                                  volume 0 (or ambient 0 for an ambient kind), past max, or when the kind's one-shot
+ *                                  limit keeps nearer ones. opt: gain (level, default 1), curve (false: gain is the
+ *                                  whole level, pan only), delay (true: d/343 s, false: none, a number: s; default the
+ *                                  kind's sos), dur (s it sounds, default 2), key (a repeat from the same key replaces
+ *                                  the last one), hold (true: a held voice, no limit, lives until end())
+ *   sfxAt(name, pos, opt)       a named sfx at a place (opt.kind, default by name; opt.gain); sfx(name) stays centred
+ *   engineSound(..).set(rpm, {pos, sk})   sk: the engine's kind (default "own": your own vehicle, no distance loss)
+ *   noiseLoop(freq, q, sk) / ambientLoop(freq, q, sk) -> {set(gain, fq, pos), stop()}
+ *   loop(name, sk) -> {set(level 0..1, {pos, speed, rate, fq}), stop(), alive()}: a named loop (LOOPS: siren, rain,
+ *                                  hum, fountain, water, tram-run, train-run, jet-roar), silent HOLD s after its last
+ *                                  set() and stopped soon after (it can never leak); the next set() starts it again
+ *   pool(kind, o) -> {update(sources), stop()}: the nearest o.voices (default the kind's) of sources [{id, x, y, z}]
+ *                                  within max play; a playing one keeps its voice unless another is 15% nearer, ties
+ *                                  by id. o.make(src) -> a handle (made once, reused: same id, else same o.key(src),
+ *                                  default src.kind); o.play(handle, src, hear(kind, src)) each update; a dropped
+ *                                  handle falls silent by its own dead man's switch and is stopped after o.idle s
+ *                                  (default 2). No listener or volume 0: nothing plays.
+ * One-shot limit per kind: under it a one-shot plays; at it, only if nearer than the farthest live one, which fades
+ * out in 50 ms. Test seam: spatial.{KINDS, falloff, panOf, pick, hear, state()}; the pure ones need no AudioContext.
+ */
+var KINDS = {
+  own:          {ref: 6,   max: Infinity, roll: 0, voices: 0, bus: "master", pan: 0.25},   // your vehicle, your avatar
+  vehicle:      {ref: 5,   max: 120,  roll: 1,   voices: 6, bus: "engine"},                // NPC cars, the cab coming to you
+  peer:         {ref: 5,   max: 150,  roll: 1,   voices: 3, bus: "engine"},                // other players' vehicles, horns
+  bus:          {ref: 6,   max: 180,  roll: 1,   voices: 3, bus: "engine"},
+  tram:         {ref: 6,   max: 200,  roll: 1,   voices: 3, bus: "engine"},
+  siren:        {ref: 10,  max: 600,  roll: 0.7, voices: 2, bus: "master"},
+  train:        {ref: 12,  max: 400,  roll: 1,   voices: 2, bus: "master"},                // City Line, Island Link
+  metro:        {ref: 10,  max: 250,  roll: 1,   voices: 2, bus: "master"},
+  boat:         {ref: 12,  max: 400,  roll: 1,   voices: 3, bus: "master"},                // water bus, taxi, ferries, ships
+  horn:         {ref: 30,  max: 1500, roll: 0.6, voices: 2, bus: "master"},                // ship and ferry horns
+  heli:         {ref: 15,  max: 1500, roll: 0.8, voices: 2, bus: "engine"},
+  plane:        {ref: 40,  max: 2500, roll: 0.7, voices: 2, bus: "ambient"},               // scenic airliners, airport stands
+  jet:          {ref: 60,  max: 1500, roll: 0.8, voices: 2, bus: "ambient", sos: true},    // the air base's jets
+  door:         {ref: 2,   max: 40,   roll: 1,   voices: 4, bus: "master"},                // doors, gangways, validators, lifts
+  bell:         {ref: 5,   max: 250,  roll: 1,   voices: 3, bus: "master"},                // tram, lift and bike bells
+  civicbell:    {ref: 30,  max: 900,  roll: 0.6, voices: 2, bus: "ambient"},               // clock and bell towers
+  gondola:      {ref: 6,   max: 120,  roll: 1,   voices: 2, bus: "master"},
+  construction: {ref: 10,  max: 200,  roll: 1,   voices: 2, bus: "master"},
+  fountain:     {ref: 4,   max: 70,   roll: 1,   voices: 2, bus: "ambient"},
+  water:        {ref: 4,   max: 60,   roll: 1,   voices: 2, bus: "ambient"},               // lapping at piers, surf
+  rain:         {ref: 1,   max: Infinity, roll: 0, voices: 2, bus: "ambient", pan: 0},      // a bed round the camera
+  hum:          {ref: 40,  max: 800,  roll: 0.5, voices: 2, bus: "ambient"},               // the city's hum, lobby ambience
+  thunder:      {ref: 100, max: 1000, roll: 0.7, voices: 3, bus: "ambient", sos: true, curve: false},
+  firework:     {ref: 40,  max: 1000, roll: 0.8, voices: 6, bus: "ambient", sos: true, curve: false},
+  blast:        {ref: 10,  max: 400,  roll: 1,   voices: 4, bus: "master", sos: true, curve: false},
+  ui:           {ref: 1,   max: Infinity, roll: 0, voices: 0, bus: "master", pan: 0}       // never positional
+};
+var GENERIC = {ref: 5, max: 150, roll: 1, voices: 3, bus: "master"};   // a kind the table does not know
+var HOLD = 0.6;                   // s: a named loop falls silent this long after its last set()
+var SP = {L: null, live: {}, pools: [], n: 0};
+function kindOf(k){ return typeof k === "string" && Object.prototype.hasOwnProperty.call(KINDS, k) ? KINDS[k] : GENERIC; }
+// the source relative to the ears, into REL (a scratch: read it at once); false when pos is not a position
+var REL = {dx: 0, dy: 0, dz: 0, d: 0};
+function rel(L, p){
+  if(!L || !p) return false;
+  var x, y, z;
+  if(Array.isArray(p)){ x = +p[0]; y = p[1]; z = +p[2]; } else { x = +p.x; y = p.y; z = +p.z; }
+  y = y != null ? +y : L.y;
+  if(!(isFinite(x) && isFinite(y) && isFinite(z))) return false;
+  REL.dx = x - L.x; REL.dy = y - L.y; REL.dz = z - L.z; REL.d = Math.sqrt(REL.dx*REL.dx + REL.dy*REL.dy + REL.dz*REL.dz);
+  return true;
+}
+function listener(cam, at){
+  if(!cam){ SP.L = null; return null; }
+  var x, y, z, rx, rz, m = cam.matrixWorld && cam.matrixWorld.elements;
+  if(m && m.length >= 16){
+    if(typeof cam.updateMatrixWorld === "function"){ try { cam.updateMatrixWorld(); } catch(e){} m = cam.matrixWorld.elements; }
+    x = m[12]; y = m[13]; z = m[14]; rx = m[0]; rz = m[2];
+    if(!(rx*rx + rz*rz > 1e-8)){ rx = m[10]; rz = -m[8]; }           // rolled on its side: right from the forward
+  } else {
+    var yaw = +cam.yaw || 0;
+    x = +cam.x; y = cam.y != null ? +cam.y : 0; z = +cam.z; rx = -Math.cos(yaw); rz = Math.sin(yaw);
+  }
+  if(at){ x = +at.x; z = +at.z; if(at.y != null) y = +at.y; }
+  if(!(isFinite(x) && isFinite(z))){ SP.L = null; return null; }
+  if(!isFinite(y)) y = 0;
+  var rl = Math.sqrt(rx*rx + rz*rz); if(rl > 1e-6){ rx /= rl; rz /= rl; } else { rx = 1; rz = 0; }
+  var L = SP.L || (SP.L = {});
+  L.x = x; L.y = y; L.z = z; L.rx = rx; L.rz = rz; L.fx = rz; L.fz = -rx;   // forward = up x right, on the ground
+  return L;
+}
+function listenerAt(){ var L = SP.L; return L ? {x: L.x, y: L.y, z: L.z, rx: L.rx, rz: L.rz, fx: L.fx, fz: L.fz} : null; }
+// pure: the distance fade of a kind (spec: a KINDS entry or a kind's name)
+function falloff(spec, d){
+  if(typeof spec === "string") spec = kindOf(spec);
+  spec = spec || GENERIC; d = +d;
+  if(d !== d) return 0;
+  var ref = Math.max(0, +spec.ref || 0), max = spec.max != null ? +spec.max : Infinity, roll = Math.max(0, +spec.roll || 0);
+  if(d <= ref) return 1;
+  if(!(d < max)) return 0;
+  var u = (d - ref)/(max - ref);
+  return (roll > 0 ? ref/(ref + roll*(d - ref)) : 1)*(1 - u*u);
+}
+// pure: the pan of a source at pos for listener L (listenerAt()'s shape, or {x, y, z, yaw})
+function panOf(L, pos, ref){
+  if(L && L.rx == null && L.yaw != null){ var yw = +L.yaw || 0; L = {x: +L.x, y: L.y != null ? +L.y : 0, z: +L.z, rx: -Math.cos(yw), rz: Math.sin(yw)}; }
+  if(!L || !rel(L, pos) || !(REL.d > 1e-6)) return 0;
+  var r = +ref > 0 ? +ref : 1, s = clamp((REL.dx*L.rx + REL.dz*L.rz)/REL.d, -1, 1);
+  return s*Math.min(1, REL.d/r)*0.85;
+}
+// pure: the nearest n of list [{id, d}] within max; an id in keep (an array or a map of playing ids) keeps its place
+// unless another is 15% nearer; ties by id. Returns the chosen entries, nearest first.
+function pick(list, n, max, keep){
+  n = n == null ? Infinity : Math.max(0, Math.floor(+n) || 0);
+  max = max != null ? +max : Infinity;
+  var K = Object.create(null), c = [];
+  if(Array.isArray(keep)) keep.forEach(function(id){ K[String(id)] = 1; });
+  else if(keep) for(var k in keep) if(Object.prototype.hasOwnProperty.call(keep, k)) K[k] = 1;
+  (Array.isArray(list) ? list : []).forEach(function(e){
+    if(!e || e.id == null) return;
+    var d = +e.d, id = String(e.id);
+    if(d < max) c.push({e: e, id: id, s: K[id] ? d*0.85 : d});
+  });
+  c.sort(function(a, b){ return a.s - b.s || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0); });
+  return c.slice(0, n).map(function(x){ return x.e; });
+}
+function hear(kind, pos, opt){
+  opt = opt || {};
+  var spec = kindOf(kind), lvl = opt.gain != null ? clamp(+opt.gain || 0, 0, 4) : 1, L = SP.L;
+  if(kind === "ui" || !pos || !L) return {g: lvl, pan: 0, d: 0};
+  if(!rel(L, pos)) return null;
+  var d = REL.d;
+  if(!(d < spec.max)) return null;
+  var own = opt.curve === false || (opt.curve == null && spec.curve === false);
+  return {g: own ? lvl : lvl*falloff(spec, d), pan: panOf(L, pos, spec.ref)*(spec.pan != null ? spec.pan : 1), d: d};
+}
+function busOf(a, spec){ return spec.bus === "ambient" ? (SND.amb || SND.master) : spec.bus === "engine" ? engineBus(a).out : SND.master; }
+function prune(kind, t){ var L = SP.live[kind] || (SP.live[kind] = []); for(var i = L.length - 1; i >= 0; i--) if(L[i].until <= t) L.splice(i, 1); return L; }
+function quiet(e, t){        // a voice out in 50 ms (a stolen one-shot, a replaced repeat)
+  try { if(e.g.gain.cancelScheduledValues) e.g.gain.cancelScheduledValues(t); e.g.gain.setTargetAtTime(0, t, 0.0125); } catch(err){}
+  e.until = t;
+}
+function spatialOut(kind, pos, opt){
+  opt = opt || {};
+  var spec = kindOf(kind), hold = !!opt.hold;
+  if(sfxVolume() <= 0 || (spec.bus === "ambient" && ambientVolume() <= 0)) return null;
+  var a = audio(); if(!a || (!hold && a.state !== "running")) return null;
+  var h = hear(kind, pos, opt); if(!h) return null;
+  var t = a.currentTime, lvl = opt.gain != null ? clamp(+opt.gain || 0, 0, 4) : 1;
+  var delay = hold ? 0 : opt.delay === true ? h.d/343 : typeof opt.delay === "number" ? Math.max(0, opt.delay) || 0 : opt.delay == null && spec.sos ? h.d/343 : 0;
+  var key = opt.key != null ? String(opt.key) : null, live = null;
+  if(!hold){
+    live = prune(kind, t);
+    if(key !== null) for(var i = 0; i < live.length; i++) if(live[i].key === key){ quiet(live[i], t); live.splice(i, 1); break; }
+    var N = opt.voices != null ? Math.max(0, opt.voices | 0) : spec.voices;
+    if(N > 0 && live.length >= N){
+      var far = 0; for(var j = 1; j < live.length; j++) if(live[j].d > live[far].d || (live[j].d === live[far].d && live[j].n < live[far].n)) far = j;
+      if(!(h.d < live[far].d)) return null;                // every voice of the kind is nearer: not heard
+      quiet(live[far], t); live.splice(far, 1);            // the farthest gives its voice up
+    }
+  }
+  var g = a.createGain(), p = a.createStereoPanner ? a.createStereoPanner() : null;
+  g.gain.value = h.g; if(p) p.pan.value = h.pan;
+  var bus = busOf(a, spec); if(p){ g.connect(p); p.connect(bus); } else g.connect(bus);
+  var dur = opt.dur != null ? Math.max(0, +opt.dur || 0) : 2;
+  var e = {n: ++SP.n, key: key, d: h.d, until: hold ? Infinity : t + delay + dur, g: g};
+  if(!hold) live.push(e);
+  var V = {ctx: a, out: g, d: h.d, delay: delay,
+    move: function(np, ng){                                // a moving source (or a new level for your own curve)
+      if(ng != null) lvl = clamp(+ng || 0, 0, 4);
+      var h2 = hear(kind, np, {gain: lvl, curve: opt.curve}), n = a.currentTime;
+      if(!h2){ g.gain.setTargetAtTime(0, n, 0.05); e.d = V.d = Infinity; return false; }
+      g.gain.setTargetAtTime(h2.g, n, 0.05); if(p) p.pan.setTargetAtTime(h2.pan, n, 0.05);
+      e.d = V.d = h2.d; return true;
+    },
+    end: function(sec){                                    // it ends sec s from now (a 50 ms fade); frees its voice
+      var n = a.currentTime + Math.max(0, +sec || 0);
+      try { g.gain.setTargetAtTime(0, n, 0.0125); } catch(err){}
+      e.until = Math.min(e.until, n + 0.06);
+    }};
+  return V;
+}
+function sfxAt(name, pos, opt){
+  opt = opt || {};
+  var kind = opt.kind || SFX_KIND[name] || "own";
+  if(!pos || kind === "ui"){ sfx(name, opt); return sfxVolume() > 0 && !!SFX[name]; }
+  if(sfxVolume() <= 0 || !SFX[name]) return false;
+  var V = spatialOut(kind, pos, {gain: opt.gain, curve: opt.curve, delay: opt.delay, key: opt.key, dur: SFX_DUR[name] || 0.4});
+  if(!V) return false;
+  DEST = V.out; OFF = V.delay;
+  try { SFX[name](V.ctx, opt); } catch(e){}
+  DEST = null; OFF = 0;
+  return true;
+}
+// the named loops: make(ctx, out) wires its sources into out (the voice's level gain) and returns {nodes, set(opt, t, hear)}
+function noiseSrc(a){ var s = a.createBufferSource(); s.buffer = engineBus(a).noise; s.loop = true; s.start(); return s; }
+function lband(a, src, type, hz, q, gain, into){
+  var f = a.createBiquadFilter(), g = a.createGain();
+  f.type = type; f.frequency.value = hz; f.Q.value = q; g.gain.value = gain;
+  src.connect(f); f.connect(g); g.connect(into); return {f: f, g: g};
+}
+function losc(a, type, hz, gain, into){
+  var o = a.createOscillator(), g = a.createGain(); o.type = type; o.frequency.value = hz; g.gain.value = gain;
+  o.connect(g); g.connect(into); o.start(); return {o: o, g: g};
+}
+function lwob(a, hz, depth, g){        // a slow wobble on a gain: waves, a fountain's splash, the wheels' rhythm
+  var o = a.createOscillator(), d = a.createGain(); o.type = "sine"; o.frequency.value = hz; d.gain.value = depth;
+  o.connect(d); d.connect(g.gain); o.start(); return o;
+}
+function rateOf(opt){ var r = +opt.rate; return r > 0 ? clamp(r, 0.5, 2) : 1; }    // Doppler: every pitch times rate
+var LOOPS = {
+  // an emergency run's two-tone siren (hi-lo, ~0.55 s a tone)
+  siren: {sk: "siren", gain: 0.06, make: function(a, out){
+    var o = a.createOscillator(), f = a.createBiquadFilter(), lf = a.createOscillator(), ld = a.createGain();
+    o.type = "square"; o.frequency.value = 860; f.type = "lowpass"; f.frequency.value = 2200; f.Q.value = 0.7;
+    lf.type = "square"; lf.frequency.value = 0.9; ld.gain.value = 95;
+    lf.connect(ld); ld.connect(o.frequency); o.connect(f); f.connect(out); o.start(); lf.start();
+    return {nodes: [o, lf], set: function(opt, t){ var r = rateOf(opt); o.frequency.setTargetAtTime(860*r, t, 0.05); ld.gain.setTargetAtTime(95*r, t, 0.05); }};
+  }},
+  // rain on the ground round you: a hiss and its sparkle
+  rain: {sk: "rain", gain: 0.12, make: function(a, out){
+    var s = noiseSrc(a); lband(a, s, "bandpass", 2600, 0.35, 1, out); lband(a, s, "highpass", 5200, 0.5, 0.25, out);
+    return {nodes: [s]};
+  }},
+  // a busy district's hum: traffic far off, a mains drone
+  hum: {sk: "hum", gain: 0.08, make: function(a, out){
+    var s = noiseSrc(a), m = losc(a, "sine", 100, 0.1, out); lband(a, s, "lowpass", 210, 0.7, 1, out); lband(a, s, "bandpass", 900, 0.5, 0.12, out);
+    return {nodes: [s, m.o]};
+  }},
+  // a fountain: falling water, splashing in a slow rhythm
+  fountain: {sk: "fountain", gain: 0.1, make: function(a, out){
+    var s = noiseSrc(a), b = lband(a, s, "bandpass", 1700, 0.6, 0.8, out), w = lwob(a, 0.55, 0.25, b.g); lband(a, s, "highpass", 4200, 0.4, 0.3, out);
+    return {nodes: [s, w]};
+  }},
+  // water lapping at a pier or a shore, wave by wave
+  water: {sk: "water", gain: 0.12, make: function(a, out){
+    var s = noiseSrc(a), b = lband(a, s, "lowpass", 420, 0.5, 0.7, out), w = lwob(a, 0.22, 0.45, b.g);
+    return {nodes: [s, w]};
+  }},
+  // a tram running: the traction motor's whine with the speed (m/s), the wheels' rumble
+  "tram-run": {sk: "tram", gain: 0.08, make: function(a, out){
+    var s = noiseSrc(a), r = lband(a, s, "lowpass", 150, 0.7, 0.4, out), m = losc(a, "triangle", 220, 0.25, out);
+    return {nodes: [s, m.o], set: function(opt, t){
+      var v = clamp(+opt.speed || 0, 0, 30);
+      m.o.frequency.setTargetAtTime((180 + v*24)*rateOf(opt), t, 0.2); m.g.gain.setTargetAtTime(0.05 + 0.25*Math.min(1, v/12), t, 0.2);
+      r.g.gain.setTargetAtTime(0.15 + 0.6*Math.min(1, v/15), t, 0.2);
+    }};
+  }},
+  // a train running: the rumble, the wheels over the joints quickening with the speed (m/s), the motors' drone
+  "train-run": {sk: "train", gain: 0.12, make: function(a, out){
+    var s = noiseSrc(a), r = lband(a, s, "lowpass", 120, 0.8, 0.6, out), c = lband(a, s, "bandpass", 700, 1.2, 0.12, out);
+    var w = lwob(a, 2, 0.1, c.g), m = losc(a, "sawtooth", 55, 0.08, out);
+    return {nodes: [s, w, m.o], set: function(opt, t){
+      var v = clamp(+opt.speed || 0, 0, 60);
+      r.g.gain.setTargetAtTime(0.2 + 0.8*Math.min(1, v/25), t, 0.3); w.frequency.setTargetAtTime(0.5 + v*0.12, t, 0.3);
+      m.o.frequency.setTargetAtTime((45 + v*0.8)*rateOf(opt), t, 0.3);
+    }};
+  }},
+  // a jet's roar: brighter the nearer it is (or opt.fq), its hiss on top
+  "jet-roar": {sk: "jet", gain: 0.3, make: function(a, out){
+    var s = noiseSrc(a), r = lband(a, s, "bandpass", 320, 0.8, 1, out); lband(a, s, "highpass", 2400, 0.6, 0.15, out);
+    return {nodes: [s], set: function(opt, t, h){
+      var fq = opt.fq ? +opt.fq : h && h.d ? 220 + 900/(1 + h.d/200) : 0;
+      if(fq > 0) r.f.frequency.setTargetAtTime(clamp(fq, 60, 4000)*rateOf(opt), t, 0.1);
+    }};
+  }}
+};
+function loop(name, sk){
+  var D = Object.prototype.hasOwnProperty.call(LOOPS, name) ? LOOPS[name] : null;
+  if(!D) return {set: function(){}, stop: function(){}, alive: function(){ return false; }};
+  var kind = typeof sk === "string" && Object.prototype.hasOwnProperty.call(KINDS, sk) ? sk : D.sk, spec = KINDS[kind], V = null;
+  function build(a){
+    var lg = a.createGain(), pn = a.createStereoPanner ? a.createStereoPanner() : null, bus = busOf(a, spec);
+    lg.gain.value = 0;
+    if(pn){ lg.connect(pn); pn.connect(bus); } else lg.connect(bus);
+    var M = D.make(a, lg) || {};
+    return {a: a, lg: lg, pn: pn, M: M, nodes: M.nodes || [], stopAt: 0, pan: 0};
+  }
+  return {
+    set: function(level, opt){
+      opt = opt || {};
+      var on = sfxVolume() > 0 && (spec.bus !== "ambient" || ambientVolume() > 0);
+      if(!on && !V) return;
+      var a = audio(); if(!a) return;
+      var t = a.currentTime;
+      if(!V || t >= V.stopAt - 0.02) V = build(a);           // the first set(), or it fell silent and stopped: a fresh voice
+      var h = opt.pos ? hear(kind, opt.pos) : null, k = opt.pos && SP.L ? (h ? h.g : 0) : 1, pan = h ? h.pan : 0;
+      var g = V.lg.gain, lvl = on ? clamp(+level || 0, 0, 1)*D.gain*k : 0;
+      g.cancelScheduledValues(t); g.setTargetAtTime(lvl, t, 0.05); g.setTargetAtTime(0, t + HOLD, 0.08);   // the dead man's switch
+      if(V.pn && (pan || V.pan)){ V.pan = pan; V.pn.pan.setTargetAtTime(pan, t, 0.05); }
+      if(V.M.set){ try { V.M.set(opt, t, h); } catch(e){} }
+      if(t + HOLD + 0.4 > V.stopAt){                         // a rolling stop: without set() its nodes stop ~1-2 s on
+        V.stopAt = t + HOLD + 1.2;
+        V.nodes.forEach(function(nd){ try { nd.stop(V.stopAt); } catch(e){} });
+      }
+    },
+    stop: function(){
+      if(!V) return;
+      var t = V.a.currentTime;
+      try { V.lg.gain.cancelScheduledValues(t); V.lg.gain.setTargetAtTime(0, t, 0.05); } catch(e){}
+      V.nodes.forEach(function(nd){ try { nd.stop(t + 0.3); } catch(e){} });
+      V = null;
+    },
+    alive: function(){ return !!V && V.a.currentTime < V.stopAt; }
+  };
+}
+function pool(kind, o){
+  o = o || {};
+  var spec = kindOf(kind), N = o.voices != null ? Math.max(0, o.voices | 0) : spec.voices;
+  var MAX = o.max != null ? +o.max : spec.max, IDLE = o.idle != null ? Math.max(0, +o.idle || 0) : 2;
+  var keyOf = typeof o.key === "function" ? o.key : function(s){ return s.kind != null ? s.kind : ""; };
+  var bound = {}, parked = [], me = {kind: kind, ids: []};
+  SP.pools.push(me);
+  function quit(h){ try { if(h && typeof h.stop === "function") h.stop(); } catch(e){} }
+  function sweep(t){ parked = parked.filter(function(b){ if(t - b.at > IDLE){ quit(b.h); return false; } return true; }); }
+  function park(id){ var b = bound[id]; b.id = id; parked.push(b); delete bound[id]; }
+  return {
+    update: function(sources){
+      var t = now(), L = SP.L, cand = [];
+      if(sfxVolume() <= 0 || !L){ Object.keys(bound).forEach(park); sweep(t); me.ids = []; return []; }
+      (Array.isArray(sources) ? sources : []).forEach(function(s){
+        if(s && s.id != null && rel(L, s) && REL.d < MAX) cand.push({id: String(s.id), d: REL.d, src: s});
+      });
+      var keep = pick(cand, N, MAX, bound), want = {};
+      keep.forEach(function(c){ want[c.id] = 1; });
+      Object.keys(bound).forEach(function(id){ if(!want[id]) park(id); });
+      keep.forEach(function(c){
+        var b = bound[c.id];
+        if(!b){
+          var k = "", j = -1, i;
+          try { k = String(keyOf(c.src)); } catch(e){}
+          for(i = 0; i < parked.length && j < 0; i++) if(parked[i].id === c.id) j = i;
+          for(i = 0; i < parked.length && j < 0; i++) if(parked[i].key === k) j = i;
+          b = j >= 0 ? parked.splice(j, 1)[0] : {h: null};
+          b.key = k; bound[c.id] = b;
+        }
+        if(!b.h && typeof o.make === "function"){ try { b.h = o.make(c.src) || null; } catch(e){ b.h = null; } }   // made once (again if it failed)
+        b.at = t;
+        if(b.h && typeof o.play === "function"){ try { o.play(b.h, c.src, hear(kind, c.src)); } catch(e){} }
+      });
+      sweep(t);
+      me.ids = keep.map(function(c){ return c.id; });
+      return me.ids.slice();
+    },
+    stop: function(){
+      Object.keys(bound).forEach(function(id){ quit(bound[id].h); }); parked.forEach(function(b){ quit(b.h); });
+      bound = {}; parked = []; me.ids = [];
+      var i = SP.pools.indexOf(me); if(i >= 0) SP.pools.splice(i, 1);
+    }
+  };
+}
+function spatialState(){
+  var t = SND.ctx ? SND.ctx.currentTime : 0, live = {}, pools = {};
+  Object.keys(SP.live).forEach(function(k){ var L = prune(k, t); if(L.length) live[k] = L.map(function(e){ return {d: e.d, until: e.until, key: e.key}; }); });
+  SP.pools.forEach(function(P){ pools[P.kind] = (pools[P.kind] || []).concat(P.ids); });
+  return {listener: listenerAt(), live: live, pools: pools};
+}
+// Settings' Ambient sounds slider: a soft far-off rumble through the ambient volume, to hear the level just set
+function ambientPreview(){
+  var a = sfxVolume() > 0 && ambientVolume() > 0 ? audio() : null;
+  if(!a || a.state !== "running" || !SND.amb) return false;
+  DEST = SND.amb; try { noise(a, 1.2, 0.3, 140); noise(a, 0.7, 0.1, 380, 0.06); } catch(e){} DEST = null;
+  return true;
 }
 // Browsers allow audio only after a user gesture: wake it on the first one.
 if(typeof window.addEventListener === "function"){
@@ -543,8 +958,14 @@ HQV.engine = {now: now, clamp: clamp, hex: hex, angLerp: angLerp, calm: calm, sa
               senderTime: senderTime, jitter: jitter, pushSnap: pushSnap, bracket: bracket,
               sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES), engineProfile: engineProfile, exhausts: Object.keys(EXHAUST), engineHz: engineHz, watchBar: watchBar,
               noiseLoop: noiseLoop, ambientLoop: ambientLoop, ambientOn: ambientOn, ambientSet: ambientSet,
+              ambientVolume: ambientVolume, ambientSetVolume: ambientSetVolume, ambientPreview: ambientPreview,
+              // spatial sound (above): the listener, positional one-shots, loops and pools, and the test seam
+              listener: listener, listenerAt: listenerAt, hear: hear, spatialOut: spatialOut, sfxAt: sfxAt,
+              loop: loop, loops: Object.keys(LOOPS), pool: pool,
+              spatial: {KINDS: KINDS, falloff: falloff, panOf: panOf, pick: pick, hear: hear, state: spatialState},
               // the shared AudioContext and its master gain (the SFX volume), or null when sound is off:
               // for a game that shapes its own sound (the City's thunder) instead of a named sfx
               audioOut: function(){ var a = sfxVolume() > 0 ? audio() : null; return a && SND.master ? {ctx: a, out: SND.master} : null; },
-              ambientOut: function(){ var a = ambientOn() && sfxVolume() > 0 ? audio() : null; return a && SND.master ? {ctx: a, out: SND.master} : null; }};
+              // the same into the ambient volume (SND.amb), or null while Ambient sounds is at 0% or sound is off
+              ambientOut: function(){ var a = ambientOn() && sfxVolume() > 0 ? audio() : null; var o = SND.amb || SND.master; return a && o ? {ctx: a, out: o} : null; }};
 })();

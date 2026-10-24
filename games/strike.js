@@ -6698,6 +6698,7 @@ function makeGame(host, opts){
       // the dock breathes: emissive accents pulse gently with the round (off when calm)
       for(var pi = 0; pi < pulseMats.length; pi++){ pulseMats[pi].m.emissiveIntensity = quiet ? pulseMats[pi].max*0.4 : pulseMats[pi].max*(0.55 + 0.45*Math.sin(t*1.4 + pi)); }
       renderer.clear();
+      if(E.listener) E.listener(camera);                               // [sound] the ears: this camera (bots' shots, blasts)
       renderer.render(scene, camera);
       renderer.clearDepth();
       if(!V.watch && !KC) renderer.render(vScene, vCam);  // no weapon in your hands while you watch — or ride a kill cam
@@ -6719,6 +6720,7 @@ function makeGame(host, opts){
     function(){ V.note = "Couldn't load the arena — refresh the page and try again."; renderMenu(); });
   if(!raf) raf = requestAnimationFrame(frame);
   V.destroy = function(){
+    if(E.listener) E.listener(null);
     if(WB){ WB.destroy(); WB = null; }
     V.alive = false;
     if(raf) cancelAnimationFrame(raf); raf = 0;

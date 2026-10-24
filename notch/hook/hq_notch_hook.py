@@ -28,7 +28,7 @@ DIFF_MAX = 4000          # each side of an edit sent for the notch's diff view
 DIFF_EDITS = 8           # at most this many edits of a MultiEdit
 EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 # Environment the app uses to find (and focus) the session's terminal window.
-ENV_KEYS = ("TERM_PROGRAM", "KITTY_WINDOW_ID", "KITTY_LISTEN_ON", "ITERM_SESSION_ID",
+ENV_KEYS = ("TERM_PROGRAM", "KITTY_WINDOW_ID", "KITTY_LISTEN_ON", "KITTY_PID", "ITERM_SESSION_ID",
             "TERM_SESSION_ID", "TMUX", "TMUX_PANE", "__CFBundleIdentifier")
 
 

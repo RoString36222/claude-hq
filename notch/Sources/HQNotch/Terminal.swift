@@ -3,9 +3,10 @@ import Foundation
 import HQNotchCore
 
 /// Bring the session's own terminal window to the front.
-/// kitty: remote-control `focus-window` (via KITTY_LISTEN_ON, or the escape code written
-/// to the session's tty with no_response). Terminal.app / iTerm2: AppleScript by tty /
-/// session id. tmux: select the pane. Anything else: activate the terminal app.
+/// kitty: remote-control `focus-window` via KITTY_LISTEN_ON; else HQ Notch's kitty watcher
+/// (notch/kitty/hq_notch_kitty.py, no remote control needed); else the escape code written to
+/// the session's tty with no_response. Terminal.app / iTerm2: AppleScript by tty / session id.
+/// tmux: select the pane. Anything else: activate the terminal app.
 enum TerminalJump {
     static func focus(_ s: Session) {
         let env = s.env
@@ -17,6 +18,8 @@ enum TerminalJump {
         if let wid = env["KITTY_WINDOW_ID"], Int(wid) != nil {
             if let sock = env["KITTY_LISTEN_ON"], !sock.isEmpty {
                 run(kittyBinary, ["@", "--to", sock, "focus-window", "--match", "id:\(wid)"])
+            } else if let pid = env["KITTY_PID"].flatMap({ Int($0) }), kittyWatcher(pid: pid, windowId: Int(wid)!) {
+                // the watcher switches kitty to the window's tab
             } else if let tty {
                 kittyEscape(tty: tty, windowId: Int(wid)!)
             }
@@ -51,6 +54,31 @@ enum TerminalJump {
             p = Int(f[0]) ?? 0
         }
         return nil
+    }
+
+    /// Ask HQ Notch's kitty watcher (in the kitty with this pid) to focus a window. False when
+    /// the watcher isn't loaded (no socket), so the caller falls back.
+    static func kittyWatcher(pid: Int, windowId: Int) -> Bool {
+        let path = HookServer.dir + "/kitty-\(pid).sock"
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        var nosig: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &nosig, socklen_t(MemoryLayout<Int32>.size))
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let bytes = Array(path.utf8)
+        guard bytes.count < MemoryLayout.size(ofValue: addr.sun_path) else { return false }
+        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+            raw.copyBytes(from: bytes)
+            raw[bytes.count] = 0
+        }
+        let ok = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        guard ok == 0 else { return false }
+        let msg = Array(#"{"focus":\#(windowId)}"#.utf8)
+        return write(fd, msg, msg.count) == msg.count
     }
 
     /// kitty remote-control DCS on the window's own tty. Needs `allow_remote_control yes`.

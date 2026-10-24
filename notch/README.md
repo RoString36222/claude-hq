@@ -2,18 +2,38 @@
 
 Your Claude HQ party, living in the Mac's notch. Every live Claude Code session shows up as
 the **same Pokémon HQ gives it**. It hops while it works, bounces with a `!` when it needs
-you, jumps when it's done, and gets knocked out (grey) when a turn fails. Rest the cursor on the notch for half a second to
-see every session: what it's doing right now, its last prompt, and a live ticker of tool
+you, jumps when it's done, and gets knocked out (grey) when a turn fails. Rest the cursor on the notch: it swells
+at once, and after 0.2 s drops open (one black shape that springs out of the bezel, its content sharpening in
+row by row; it tucks back up without a bounce when you leave) to see every session: what it's doing right now, its last prompt, and a live ticker of tool
 calls with `+N −M` line counts for edits.
 
-When Claude asks for permission, the notch opens on its own. Answer from there:
+When Claude asks for permission, the notch opens on its own and **stays open until the request is answered**
+(here or in the terminal), then folds. Answer from there:
 **Allow**, **Always** (adds the rule Claude Code suggests), **Deny**, or **Terminal** to answer
 in the CLI as usual. `AskUserQuestion` prompts show their choices (single or multi-select)
 and you can answer them right in the notch. A plan waiting for approval (plan mode's
 `ExitPlanMode`) shows as a **plan card**: read the whole plan, then **Approve**, **Keep
 planning** (Claude stays in plan mode) or **Terminal**. Click a session card to jump to its
-terminal window (kitty, Terminal, iTerm2, tmux); click an edit in its ticker (the `›` rows) to
+terminal window (kitty, Terminal, iTerm2, tmux; for kitty tabs see below); click an edit in its ticker (the `›` rows) to
 see what changed: removed lines in red, added in green, a couple of unchanged lines around them.
+
+**Live banners.** When a session finishes or fails, the closed notch widens for a moment into a small
+banner (its creature or orb, its name, "Finished" or the error) and folds back by itself: 4 s for a finish,
+6 s for a failure, a failure first when both happen. Click it to jump to that session; rest on it to open the
+panel. Prompts never just peek: they open the whole panel. Settings → Live banners turns them off.
+
+**kitty tabs.** kitty switches tabs only for programs it lets drive it, and HQ Notch doesn't need remote
+control for that: the installer puts a kitty watcher next to the hook relay. Add one line to `kitty.conf`
+(kitty reloads it, or restart kitty):
+
+```
+watcher ~/Library/Application Support/HQNotch/hq_notch_kitty.py
+```
+
+The watcher listens on `~/Library/Application Support/HQNotch/kitty-<pid>.sock` (directory `0700`, socket
+`0600`) and accepts exactly one request, `{"focus": <window id>}`: nothing it receives can type text or run a
+command. Without it, HQ Notch uses kitty remote control when `KITTY_LISTEN_ON` is set, else only brings kitty
+to the front.
 
 Away from the Mac? Turn on **Phone alerts** in Settings and subscribe to your topic in the
 [ntfy](https://ntfy.sh) app: you get a push when a session needs you, finishes or fails (see
@@ -30,7 +50,8 @@ python3 notch/tools/install.py --status
 python3 notch/tools/install.py --uninstall
 ```
 
-The installer builds with `swift build -c release`, puts `HQ Notch.app` in
+The installer builds with `swift build -c release` (when the default SDK can't build it — the macOS 27
+Command Line Tools' SwiftUI macros need Xcode — it retries once with the newest older SDK the tools ship), puts `HQ Notch.app` in
 `~/Applications`, copies the hook relay to `~/Library/Application Support/HQNotch/`, and adds
 one hook entry per event (plus the `--ask` question hook) to `~/.claude/settings.json`. It backs the file up first
 (`settings.json.bak-hqnotch-<time>`) and only ever adds or removes entries that point at its
@@ -99,7 +120,7 @@ or pin it **In the notch**, **Left of it** or **Right of it**. Beside the notch 
 capsule and the panel opens below it.
 
 Settings: the gear in the notch's header. Sprites (2D / 3D / Match HQ, with a live preview of
-your sessions), sounds, show idle sessions, approve from the notch (off = every request goes
+your sessions), sounds, live banners, show idle sessions, approve from the notch (off = every request goes
 straight to the terminal), phone alerts (server, topic with Copy / New, away-only, Send a
 test), quit. A permission prompt always closes settings (and a diff) so it is never hidden.
 The menu bar icon (hexagon) has the sounds / idle / approvals toggles.
@@ -110,7 +131,7 @@ The menu bar icon (hexagon) has the sounds / idle / approvals toggles.
 swift build -c release --package-path notch
 python3 notch/tools/parity_vectors.py > /tmp/vectors.json            # needs node
 notch/.build/release/hqnotch-selftest /tmp/vectors.json              # core + parity with HQ
-python3 -m unittest tests.test_notch_hook tests.test_notch_install   # relay + installer
+python3 -m unittest tests.test_notch_hook tests.test_notch_install tests.test_notch_kitty   # relay, installer, kitty watcher
 python3 notch/tools/gen_pokedata.py          # after changing HQ's evolution lines
 ```
 

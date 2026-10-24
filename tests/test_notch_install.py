@@ -77,6 +77,15 @@ class SdkFallbackTests(unittest.TestCase):
         self.assertEqual(inst.fallback_sdk(["MacOSX9.sdk", "MacOSX15.4.sdk", "MacOSX15.10.sdk"], 26), "MacOSX15.10.sdk")
 
 
+class KittyHintTests(unittest.TestCase):
+    def test_hint_until_the_watcher_is_loaded(self):
+        self.assertEqual(inst.kitty_hint("font_size 13\n"), "watcher " + inst.KITTY_DST)
+        self.assertEqual(inst.kitty_hint("# watcher hq_notch_kitty.py\n"), "watcher " + inst.KITTY_DST)
+        self.assertIsNone(inst.kitty_hint("watcher /x/session_saver.py\nwatcher " + inst.KITTY_DST + "\n"))
+        self.assertIsNone(inst.kitty_hint("  watcher   ~/Library/Application Support/HQNotch/hq_notch_kitty.py  \n"))
+        self.assertIsNone(inst.kitty_hint(None))
+
+
 class PokeDataSyncTests(unittest.TestCase):
     def test_generated_swift_is_current(self):
         r = subprocess.run([sys.executable, os.path.join(REPO, "notch", "tools", "gen_pokedata.py"), "--check"],

@@ -8,7 +8,7 @@
 
 What it touches (and nothing else):
   ~/Applications/HQ Notch.app
-  ~/Library/Application Support/HQNotch/        hook relay + socket
+  ~/Library/Application Support/HQNotch/        hook relay, kitty watcher + sockets
   ~/Library/LaunchAgents/com.claudehq.notch.plist
   ~/Library/Caches/HQNotch/                     sprite cache (uninstall only)
   ~/.claude/settings.json                       hook entries, backed up first; only entries
@@ -30,6 +30,8 @@ HOME = os.path.expanduser("~")
 APP = os.path.join(HOME, "Applications", "HQ Notch.app")
 SUPPORT = os.path.join(HOME, "Library", "Application Support", "HQNotch")
 HOOK_DST = os.path.join(SUPPORT, "hq_notch_hook.py")
+KITTY_DST = os.path.join(SUPPORT, "hq_notch_kitty.py")
+KITTY_CONF = os.path.join(HOME, ".config", "kitty", "kitty.conf")
 AGENT_LABEL = "com.claudehq.notch"
 AGENT = os.path.join(HOME, "Library", "LaunchAgents", AGENT_LABEL + ".plist")
 CACHE = os.path.join(HOME, "Library", "Caches", "HQNotch")
@@ -142,12 +144,14 @@ def build():
     print("building (swift build -c release)…")
     cmd = ["swift", "build", "-c", "release", "--package-path", NOTCH]
     env = None
-    r = subprocess.run(cmd)
+    r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         sdk = None if os.environ.get("SDKROOT") else older_sdk()
         if not sdk:
+            sys.stdout.write(r.stdout)
+            sys.stderr.write(r.stderr)
             raise subprocess.CalledProcessError(r.returncode, cmd)
-        print("  retrying with %s (the default SDK's SwiftUI macros need Xcode)" % sdk)
+        print("  the default SDK can't build it (its SwiftUI macros need Xcode); retrying with", sdk)
         env = dict(os.environ, SDKROOT=sdk)
         subprocess.run(cmd, check=True, env=env)
     out = subprocess.run(cmd + ["--show-bin-path"], check=True, capture_output=True, text=True, env=env).stdout.strip()
@@ -179,6 +183,19 @@ def install_hook():
     os.chmod(SUPPORT, 0o700)
     shutil.copy2(os.path.join(NOTCH, "hook", "hq_notch_hook.py"), HOOK_DST)
     os.chmod(HOOK_DST, 0o755)
+    shutil.copy2(os.path.join(NOTCH, "kitty", "hq_notch_kitty.py"), KITTY_DST)
+    os.chmod(KITTY_DST, 0o644)
+
+
+def kitty_hint(conf_text):
+    """The kitty.conf line that loads the watcher, when kitty.conf doesn't load it yet. Pure (tested)."""
+    if conf_text is None:
+        return None
+    for line in conf_text.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2 and parts[0] == "watcher" and parts[1].rstrip().endswith("hq_notch_kitty.py"):
+            return None
+    return "watcher " + KITTY_DST
 
 
 def agent_plist():
@@ -226,6 +243,15 @@ def do_install(login):
     if write_settings(True):
         print("  added HQ Notch hooks to", SETTINGS)
     start(login)
+    try:
+        with open(KITTY_CONF, encoding="utf-8") as f:
+            hint = kitty_hint(f.read())
+    except OSError:
+        hint = None
+    if hint:
+        print("  kitty: to switch to a session's tab when you click it, add this line to %s and restart kitty:"
+              % KITTY_CONF)
+        print("    " + hint)
     print("done. HQ Notch is running%s. New Claude Code sessions report to it right away;"
           % (" and starts at login" if login else ""))
     print("sessions already open pick up the hooks when they next reload settings.")
@@ -257,6 +283,7 @@ def do_status():
     running = subprocess.run(["pgrep", "-x", "HQNotch"], capture_output=True).returncode == 0
     print("app:      ", "installed" if os.path.exists(APP) else "missing", "| running" if running else "| not running")
     print("hook:     ", "installed" if os.path.exists(HOOK_DST) else "missing")
+    print("kitty:    ", "watcher installed" if os.path.exists(KITTY_DST) else "watcher missing")
     print("login:    ", "yes" if os.path.exists(AGENT) else "no")
     ask = any(is_ours(h) and "--ask" in h.get("command", "")
               for g in (s.get("hooks") or {}).get("PreToolUse", []) if isinstance(g, dict) for h in g.get("hooks", []))

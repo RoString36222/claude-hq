@@ -4,7 +4,8 @@ node loads hqride.js (and world.js for station names) against a stub `window` an
 Services with exact timetables: the planner picks the fastest, keeps the change minimum and the underground add,
 caps the options at 3 and plans an Island Link leg to a world; the session advances by time (walk, wait, board,
 seated, alight, done), picks seats by the rules (window on the pavement side, any seat, standing at the rail),
-alights early on request and gives a level, still seat camera under Calm; station names are unique and
+plays its door cues as yours (from the door you board at, then your seat), alights early on request and gives a
+level, still seat camera under Calm; station names are unique and
 deterministic on the @2 fixture; the announcer never uses a non-local voice; tickets and achievements persist
 through a fake localStorage and survive a throwing one. Skipped when node is not installed. Stdlib only."""
 import json
@@ -84,22 +85,30 @@ out.planToStop = R.plan({x: 0, z: 0}, {stop: "m1"}, T0, {modes: ["metro"]}).map(
 // ---- the session ----
 var C = {occ: null}; window.HQV.hqCommute = {occupied: function(){ return C.occ || {seats: [], standing: []}; }};
 function ride(o){
-  var said = [], ended = [], under = [], travel = [];
+  var said = [], ended = [], under = [], travel = [], snd = [], clock = {ms: 0};
   var t = o.trip || tram.trip("T1", "a0", "a2", T0);
   var s = R.session({trip: t, announce: function(x){ said.push(x); }, calm: function(){ return o.calm !== false; },
-    me: function(){ return o.me || {x: 0, z: 0}; }, onEnd: function(r){ ended.push(r); }, sfx: function(){},
+    me: function(){ return o.me || {x: 0, z: 0}; }, onEnd: function(r){ ended.push(r); },
+    sfx: function(n, so){ snd.push({n: n, kind: so && so.kind || null, pos: so && so.pos || null, ms: clock.ms}); },
     under: function(on){ under.push(on); }, travel: function(tr){ travel.push(tr.world); }});
-  return {s: s, t: t, said: said, ended: ended, under: under, travel: travel};
+  return {s: s, t: t, said: said, ended: ended, under: under, travel: travel, snd: snd, clock: clock};
 }
 C.occ = null;
 var r1 = ride({}), ph = [];
 [[-60, null], [0, null], [0.6, "carry"], [1.3, "carry"], [50, null], [105, null], [200, null], [200.6, "carry"], [201.3, null]].forEach(function(st){
-  var ms = T0 + st[0]*S; r1.s.step(ms);
+  var ms = T0 + st[0]*S; r1.clock.ms = ms; r1.s.step(ms);
   var e = [st[0], r1.s.phase];
   if(st[1]){ var c = r1.s.carry(ms); e.push(c ? c.anim : null, c && c.hands || null); }
   ph.push(e);
 });
-out.session = {phases: ph, ended: r1.ended, said: r1.said};
+// each sound, its kind and where it is: "door" (the door you board at, then), "seat" (your seat, then) or null (centred)
+var seat1 = r1.s.info().seat;
+function where(e){
+  if(!e.pos) return null;
+  var d = r1.t.door(e.ms), s = r1.t.seat(seat1, e.ms);
+  return Math.hypot(e.pos.x - d.x, e.pos.z - d.z) < 1e-9 ? "door" : Math.hypot(e.pos.x - s.x, e.pos.z - s.z) < 1e-9 ? "seat" : "elsewhere";
+}
+out.session = {phases: ph, ended: r1.ended, said: r1.said, sounds: r1.snd.map(function(e){ return [(e.ms - T0)/S, e.n, e.kind, where(e)]; })};
 // seat choice and the camera, Calm on
 var r2 = ride({}); r2.s.step(T0 - 10*S); r2.s.step(T0); r2.s.step(T0 + 1.3*S);
 var info2 = r2.s.info(T0 + 50*S), seatAt = r2.t.seat(info2.seat, T0 + 50*S), seatAt2 = r2.t.seat(info2.seat, T0 + 80*S);
@@ -342,6 +351,14 @@ class HqRideTest(unittest.TestCase):
         self.assertIn("Next stop: a2. This is your stop.", said)
         self.assertNotIn("coins", said.lower())                    # D4: free
         self.assertNotIn("fare", said.lower())
+
+    def test_session_door_cues_are_yours(self):
+        # your vehicle's doors are your own things (kind "own": full level while the camera rides with you): from the
+        # door you board at, then from your seat; never the vehicle's pose (its middle: far from an end car of a long
+        # train, or from the chase camera). The validator is centred
+        self.assertEqual(self.r["session"]["sounds"], [[0, "tram-bell", "own", "door"], [0, "validator", None, None],
+                                                       [50, "door-chime", "own", "seat"], [50, "door-hiss", "own", "seat"],
+                                                       [200, "door-chime", "own", "seat"]])
 
     def test_seat_choice(self):
         s = self.r["seats"]

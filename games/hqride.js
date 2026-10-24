@@ -309,7 +309,11 @@ function session(o){
   var at = o.at || o.stop || call(trip, "door", num(trip.arrive, 0)) || call(trip, "pose", num(trip.arrive, 0)) || {x: 0, z: 0};
   var label = (trip.short || trip.line || "") + "";
   var modeWord = {bus: "Bus", tram: "Tram", metro: "Train", rail: "Train", link: "Island Link", ferry: "Water bus", gondola: "Cabin"}[trip.mode] || "Service";
-  function sfx(n, so){ try { sfxf(n, so); } catch(e){} }           // so.pos: a door sound at the vehicle (the validator, the stop bell: yours, centred)
+  function sfx(n, so){ try { sfxf(n, so); } catch(e){} }           // so.pos + so.kind: where it is (the validator, the stop bell: centred)
+  // your vehicle's door cues are your own things (engine.js kind "own": full level while the camera rides with you,
+  // fading only from a detached one), heard from your seat, before you have one from the door you board at. Not from
+  // the vehicle's pose: that is its middle, 20-30 m from a seat in an end car of a 72 m train
+  function mine(ms){ return {pos: seatPose(ms) || call(trip, "door", ms) || at, kind: "own"}; }
   function poseAt(ms){ return call(trip, "pose", ms) || {x: at.x, y: 0, z: at.z, yaw: 0, speed: 0, doors: 0, under: false}; }
   function end(reason){
     if(ended) return; ended = true;
@@ -375,7 +379,7 @@ function session(o){
       } else if(me && d2(me, at) > LEFT_STOP){ say("You left the stop."); end("left"); return S.phase; }
       if(S.phase === "wait" && ms >= num(trip.arrive, 0)){
         p = poseAt(ms);
-        if(!arrivedSaid){ arrivedSaid = true; say(modeWord + " " + label + " to " + (trip.toName || trip.to) + " arriving, doors open."); sfx(trip.mode === "tram" ? "tram-bell" : "door-chime", {pos: p}); }
+        if(!arrivedSaid){ arrivedSaid = true; say(modeWord + " " + label + " to " + (trip.toName || trip.to) + " arriving, doors open."); sfx(trip.mode === "tram" ? "tram-bell" : "door-chime", mine(ms)); }
         if(num(p.doors, 1) >= 0.5 || ms >= num(trip.arrive, 0) + 1500){
           var occ = null;
           var C = HQV.hqCommute;
@@ -398,7 +402,7 @@ function session(o){
     }
     if(S.phase === "seated" || S.phase === "standing"){
       p = poseAt(ms);
-      if(!closing && ms >= num(trip.depart, 0) - 3000){ closing = true; sfx("door-chime", {pos: p}); sfx("door-hiss", {pos: p}); }
+      if(!closing && ms >= num(trip.depart, 0) - 3000){ closing = true; sfx("door-chime", mine(ms)); sfx("door-hiss", mine(ms)); }
       if(trip.world && !handed && ms >= num(trip.depart, 0)){ handed = true; if(typeof o.travel === "function"){ try { o.travel(trip); } catch(e){} } }
       var u = !!p.under;
       if(u !== lastUnder){ lastUnder = u; if(typeof o.under === "function"){ try { o.under(u); } catch(e){} } announce(u ? "Going underground." : "Back above ground."); }
@@ -414,7 +418,7 @@ function session(o){
         var right = 1.6, yaw = num(p.yaw, 0);
         var kerb = {x: door.x - Math.cos(yaw)*right, y: num(p.y, 0), z: door.z + Math.sin(yaw)*right};
         alightPath = {a: {x: sp.x, y: num(p.y, 0), z: sp.z}, b: {x: door.x, y: num(p.y, 0), z: door.z}, c: kerb};
-        t0 = ms; S.phase = "alight"; sfx("door-chime", {pos: p});
+        t0 = ms; S.phase = "alight"; sfx("door-chime", mine(ms));
         var es = stops[endIdx] || {};
         say("This is " + (es.name || trip.toName || trip.to) + ". Doors open.");
       }

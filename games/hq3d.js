@@ -2607,14 +2607,15 @@ function mount(el, api){
   // [sound] where your own vehicle sounds from: you, riding in it (engine.js kind "own": a hint of pan); on the Map from
   // where you are on the ground (no y: level with its ears, so a plane up high is heard while the Map is on it)
   function ownAt(){ return avatar ? (rigOn() && rig.mode === "map" ? {x: avatar.x, z: avatar.z} : {x: avatar.x, y: (+avatar.hy || 0) + 0.8, z: avatar.z}) : null; }
-  // ...and how far your own things carry (engine.js listener's own: the "own" kind's reference distance, the engines and
-  // the cab's chimes alike): while the camera rides with you (Classic, the chase cameras, first person, the selfie) they
-  // lose nothing to distance; a detached camera (photo, cine, the Map) hears them at full volume within the far chase
+  // ...and how far your own things carry (engine.js listener's own: the "own" kind's reference distance, the engines, the
+  // cab's chimes and your ride's doors alike): while the camera rides with you (Classic, the chase cameras, first person,
+  // the selfie, a ride's camera whatever the rig's mode under it: the idle fly-by starts beneath a long ride) they lose
+  // nothing to distance; a detached camera (photo, cine, the Map) hears them at full volume within the far chase
   // camera's reach for this vehicle (22 m for a car, 110 m behind an airliner: camrig.js), fading past that and silent
   // about 400 m further
   var OWN_DETACHED = {photo: 1, cine: 1, map: 1};
   function ownRef(){
-    if(!rigOn() || !OWN_DETACHED[rig.mode]) return Infinity;
+    if(!rigOn() || !OWN_DETACHED[rig.mode] || tripHeld()) return Infinity;
     var C = HQV.camrig, M = C && C.MODES ? C.MODES.far : null, V = C && C.VEHICLE && ride ? C.VEHICLE[ride.base || ride.kind] : null;
     if(!M) return 12;
     var sz = V && ride.V && ride.V.size > 0 ? E.clamp(ride.V.size, 0.85, 1.5) : 1, b = M.back*(V ? V.backMul : 1)*sz, u = M.up*(V ? V.upMul : 1);

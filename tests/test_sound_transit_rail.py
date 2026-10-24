@@ -9,8 +9,10 @@ train, screen doors where they stand, gates at the gate; that a long vehicle sou
 that each kind's voices stay within its limit; that the metro's motors and tunnel rumble are one pool of held loops
 (the nearest two trains, a train in a tunnel heard only below the street) whose nodes all stop by themselves, where
 the old timer leaked a loop every half second; that the City Line, Island Link and built lines play the train-run
-loop at the nearest moving train (yours too) and take it away on dispose; that nothing is made at sfx volume 0; and
-hqtransit.js's wiring (no aliases left, the session's door sounds placed, the announcer through the master).
+loop at the nearest moving train (yours too) and take it away on dispose; that nothing is made at sfx volume 0; that
+your ride's own door cues (arriving, closing, getting off) play at full level from the seat, window and chase cameras
+on a 72 m City Line and Island Link train; and hqtransit.js's wiring (no aliases left, the session's door sounds placed,
+the announcer through the master).
 Skipped without node. Stdlib only."""
 import json
 import os
@@ -311,6 +313,42 @@ now += 10; out.leaksEnd = leaks(now);
 """
 
 
+# your ride's own door cues (hqRide.session: the arrival chime, the doors closing, getting off) on a 72 m City Line and
+# Island Link train, through hqRide.sfx and engine.js's spatialOut as hqtransit.js sends them
+SESSION = r"""
+load('world'); load('hqride'); load('hqcommute'); load('hqrail'); load('hqcityrail');
+const WD = H.world, RL = H.hqRail, CR = H.hqCityRail, RD = H.hqRide;
+const W = WD.pack(JSON.parse(fs.readFileSync(path.join(R0, 'tests', 'fixtures', 'world_v3_tiny.json'))));
+H.hqCommute.occupied = () => ({seats: [], standing: []});   // an empty train: the first window seat, in the front car
+// the voice every placed sound gets: its kind and level (null: not heard)
+const VO = [], spatialOut = E.spatialOut;
+E.spatialOut = function(kind, pos, opt){ const V = spatialOut(kind, pos, opt); VO.push({kind, g: V ? V.out.gain.value : null}); return V; };
+// one ride, boarding to getting off: on the platform the ears are where you stand, then the ride camera cam ("seat",
+// "window" or "chase"), which rides with you (the listener's own reach Infinity, as hq3d.js gives it while riding)
+function ride(trip, cam){
+  const k0 = CALLS.length, v0 = VO.length, door = trip.door(trip.arrive), me = {x: door.x, y: trip.pose(trip.arrive).y, z: door.z};
+  const S = RD.session({trip, sfx: tsfx, me: () => me, calm: () => false, announce: () => {}});
+  let far = 0;
+  [trip.arrive - 5000, trip.arrive, trip.arrive + 1500, trip.depart - 3000, trip.reach, trip.reach + 1300].forEach(ms => {
+    now = ms/1000;
+    const c = S.camPose(ms, {yaw: 0, pitch: 0}, cam), p = trip.pose(ms), i = S.info(ms);
+    if(c) E.listener({x: c.pos.x, y: c.pos.y, z: c.pos.z, yaw: Math.atan2(c.look.x - c.pos.x, c.look.z - c.pos.z)}, null, Infinity);
+    else E.listener({x: me.x, y: me.y + 1.6, z: me.z, yaw: p.yaw}, null, Infinity);
+    if(i.seat != null){ const s = trip.seat(i.seat, ms); far = Math.max(far, Math.hypot(s.x - p.x, s.z - p.z)); }
+    S.step(ms);
+  });
+  return {phase: S.phase, names: CALLS.slice(k0).map(c => c.n), voices: VO.slice(v0), far};
+}
+const ISL = 'user:aaaaaaaa-0000-4000-8000-000000000001@3', ms = 1.7e12;
+const cl = CR.create(W, {seed: 's'}), CL = cl.lines()[0];
+const ls = RL.linkService({here: ISL, W, arch: {commons: {x: 0, z: 0}, islands: [{world: ISL, x: 300000, z: -250000}]}}), IL = ls.lines()[0];
+['seat', 'window', 'chase'].forEach(cam => {
+  out['cityLine:' + cam] = ride(cl.trip(CL.id, CL.stops[0], CL.stops[CL.stops.length - 1], ms), cam);
+  out['islandLink:' + cam] = ride(ls.trip(IL.id, IL.stops[0], IL.stops[1], ms), cam);
+});
+"""
+
+
 MOUNT = r"""
 load('world'); load('hqnav'); load('hqrail');
 const WD = H.world, RL = H.hqRail;
@@ -524,6 +562,27 @@ class TrainSounds(unittest.TestCase):
         self.assertEqual(self.o["muted"], {"made": 0, "ids": 0})
         self.assertIsNone(self.o["after"], "both pools leave with their views")
         self.assertEqual(self.o["leaksEnd"], 0)
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class YourRideCues(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.o = run(SESSION)
+
+    def test_your_doors_at_full_level_from_every_ride_camera(self):
+        # hqcityrail and hqrail have no door sounds of their own: the session's cues are all you hear of these doors.
+        # Placed at the train's pose (its middle) as doors, they played at 14% on the platform, 5% from a front-car
+        # seat (25 m from the middle) and 10% from the chase camera; yours, where you are, they lose nothing while the
+        # camera rides along
+        for key in ("cityLine", "islandLink"):
+            for cam in ("seat", "window", "chase"):
+                r = self.o[key + ":" + cam]
+                msg = key + ", " + cam + " camera"
+                self.assertEqual(r["phase"], "done", msg)
+                self.assertEqual(r["names"], ["door-chime", "validator", "door-chime", "door-hiss", "door-chime"], msg)
+                self.assertGreater(r["far"], 20, msg + ": a seat in the front car, far from the train's middle")
+                self.assertEqual(r["voices"], [{"kind": "own", "g": 1}] * 4, msg)
 
 
 @unittest.skipUnless(NODE, "node is not installed")

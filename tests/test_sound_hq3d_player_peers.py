@@ -326,11 +326,13 @@ class Hq3dWiring(unittest.TestCase):
 const fs = require("fs"); global.window = {HQV: {}};
 new Function(fs.readFileSync(%(cam)s, "utf8"))();
 const HQV = window.HQV, E = {clamp: (v, a, b) => v < a ? a : v > b ? b : v};
-let rig = null, cur = {camModes: true}, ride = null, avatar = {x: 5, hy: 300, z: -7};
+let rig = null, cur = {camModes: true}, ride = null, avatar = {x: 5, hy: 300, z: -7}, held = false;
 function rigOn(){ return !!(rig && cur && cur.camModes); }
+function tripHeld(){ return held && rigOn(); }
 %(block)s
 const out = {};
 const at = (mode, r) => { rig = mode ? {mode} : null; ride = r; return {ref: ownRef(), at: ownAt()}; };
+held = true; out.riding = ["photo", "cine", "map"].map(m => at(m, null).ref); held = false;
 out.noRig = at(null, {base: "car", V: {size: 1}});
 ["far", "chase", "near", "fp", "classic", "selfie"].forEach(m => { out[m] = at(m, {base: "car", V: {size: 1}}).ref; });
 out.car = ["photo", "cine", "map"].map(m => at(m, {base: "car", V: {size: 1}}).ref);
@@ -357,6 +359,9 @@ console.log(JSON.stringify(out, (k, v) => v === Infinity ? "inf" : v));
         self.assertAlmostEqual(o["onFoot"], (15 ** 2 + 9 ** 2) ** 0.5, places=6)
         self.assertEqual(o["map"], {"x": 5, "z": -7})          # the Map: along the ground (a plane up high still heard)
         self.assertEqual(o["chaseAt"], {"x": 5, "y": 300.8, "z": -7})
+        # a ride's seat, window or chase camera holds the shot (tripCam) and rides with you, whatever the rig's mode
+        # under it: 45 s without input starts the idle fly-by (cine) beneath a ride, and your doors must not fade
+        self.assertEqual(o["riding"], ["inf", "inf", "inf"])
 
     def test_peers_are_heard(self):
         hq = self.hq

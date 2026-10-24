@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.18.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.19.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,10 @@ and feature guide.
 
 ## Changelog
 
+- **3.19.0 — Grand HQs, smoother dragons, and the buzz is gone.**
+  - **HQ buildings revamped:** your HQ now fills its lot — a broad podium across the street, a base block of offices, a wide main tower with stepped setbacks in your style (stacked glass slabs, an Art Deco wedding cake, a top-heavy Brutalist block, Neo-Tokyo slabs, classic stone setbacks, Eco terraces), and wings at levels 10 and 30 that rise from the base attached to the tower instead of standing apart. Level 1 is a solid mid-rise, level 50 a landmark; the helideck sits on the top roof, and night windows light every floor (median lot use 9% → 32%).
+  - **Wyvern and dragons, smoother and more alive:** the wyvern is sleeker (fewer, smaller spikes, a smooth neck ruff, a low back ridge, a short crest that still rises on a roar, thin tapered wing bones, gently scalloped wings, softer veins). The fire, ice, storm, crystal, shadow and golden dragons share its build on four legs: scaled hides with pale bellies and belly plates, two swept horns and a small crest, glowing slit eyes, claws on every foot, veined wings tinted by species, an element tail tip (flame, shard, fork, gem, wisps, ornate spade) and an element hide (ember cracks, frost, storm veins, crystal facets, a smoky shimmer, polished gold); the sea serpent gets smoother scaled coils. The body bobs with each wingbeat, neck and tail follow through, they bank into turns, dragons walk on diagonal leg pairs, the roar winds up, breath fire inhales first, takeoff crouches and landing settles.
+  - **The buzz is gone:** a steady ~234 Hz drone that kept playing was the City's transit sounds piling up (the metro asked for a new looping "motor" every half second near a train, the heli-call a new "rotor" every 0.4 s, the ferries and gondola too, and none was ever stopped). A looping transit sound is now one live voice per name that fades out by itself after 3 s if nothing refreshes it, and every engine voice has a watchdog that stops it 0.5 s after its last update (dismount, world change, hidden tab). Motorbikes and cars sound like engines, not a held note: firing pulses with uneven cylinders that vary cycle to cycle, revs that wander at a steady throttle, an exhaust roar that grows with throttle, no resonant low-pass and richer harmonics (no bike voice now puts more than 55% of its energy in one partial; it was up to 83%).
 - **3.18.1 — The wyvern.** The Wyvern pet is rebuilt as a true wyvern, an **original design inspired by classic fantasy
   wyverns** (no borrowed silhouettes, colours or textures). **No forelegs: its wings are its arms.** On the ground it
   walks on its wing-wrists (a clawed thumb on each, like a bat) and two strong taloned hind legs, wings folded tight;

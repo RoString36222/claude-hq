@@ -3,11 +3,13 @@ classic Arena City (games/hqcity.js) are heard where they are, as the 3D City is
 
 Node imports the vendored three.js, loads games/engine.js against a fake Web Audio context (with a StereoPanner) and
 the floors in page order, and builds each with a stub hq3d ctx: the Base at level 40 (the plaza fountain from 5, the
-helicopter on the west wing from 20, the kart track from 35) and at level 1, and Arena City with three HQs. The
-engine's makers are spied on (the real ones still run). Python checks: the karts are engines ("single") at their places
-in the vehicle kind's pool with the cars going round the ring road, the fountain an E.loop "fountain" at its water,
-the rooftop helicopter a rotor in the heli kind's pool (on Arena City's lots, from each lot's frame to the street's);
-nothing without ears; onLeave, soundPause and destroy let every voice go, and the next frame makes them again.
+helicopter on the west wing from 20, the kart track from 35) and at level 1, and Arena City with three HQs (as built,
+and again with its towers broad, grand 1: since 3.19 a helicopter stands only on a wing, which the grid's tight lots
+lack). The engine's makers are spied on (the real ones still run). Python checks: the karts are engines ("single") at
+their places in the vehicle kind's pool with the cars going round the ring road, the fountain an E.loop "fountain" at
+its water, the rooftop helicopter a rotor in the heli kind's pool (on Arena City's broad lots, from each lot's frame to
+the street's; none heard where none is drawn); nothing without ears; onLeave, soundPause and destroy let every voice
+go, and the next frame makes them again.
 Skipped without node. Stdlib only."""
 import json
 import os
@@ -138,6 +140,21 @@ function drawnHelis(S0){
   out.city = {made: summary(k0), pools: S.state().pools, plaza: [P.x, P.z], helis: drawnHelis(w.scene), lots: L.lots.map(l => [l.x, l.z, l.rot])};
   w.onLeave(); out.city.left = {pools: S.state().pools, unstopped: made.slice(k0).filter(r => !r.stops).map(r => r.kind)};
 }
+/* ---------- Arena City with broad towers: since 3.19 a helicopter stands only on a wing, and the grid's tight lots
+   (grand 0) have none, so its towers are built at grand 1 here to hear each lot's helicopter where it is drawn ---------- */
+{
+  const realB = HQV.hqBuilding;
+  HQV.hqBuilding = function(c0, o){ return realB(c0, Object.assign({}, o, {grand: 1})); };
+  const w = {scene: new THREE.Scene(), name: "city"}; scene = w.scene;
+  HQV.hqWorlds.city(c, w); w.setTime(true);
+  const L = HQV.hqCityLayout(LIST), P = L.plaza;
+  const k0 = made.length;
+  E.listener({x: P.x, y: 1.6, z: P.z + 7, yaw: Math.PI});        // at the plaza
+  frames(w, 20);
+  out.cityBroad = {made: summary(k0), pools: S.state().pools, helis: drawnHelis(w.scene)};
+  w.onLeave(); out.cityBroad.left = {pools: S.state().pools, unstopped: made.slice(k0).filter(r => !r.stops).map(r => r.kind)};
+  HQV.hqBuilding = realB;
+}
 console.log(JSON.stringify(out));
 """
 
@@ -214,6 +231,14 @@ class FloorSounds(unittest.TestCase):
         self.assertEqual(f[0]["pos"], [px, 1.6, pz])            # hqcityparts' fountain: its water
         cars = c["pools"]["vehicle"]
         self.assertTrue(cars and all(i.startswith("edge:") for i in cars), cars)
+        # 3.19's massing: the grid's tight lots (grand 0) have no wing, so no helicopter stands there, and none is heard
+        self.assertEqual(c["helis"], [])
+        self.assertEqual([m for m in c["made"] if m["kind"] == "rotor"], [])
+        self.assertEqual(c["pools"].get("heli", []), [])
+        self.assertEqual(c["left"]["unstopped"], [])
+
+    def test_arena_city_helicopters_where_they_are_drawn(self):
+        c = self.o["cityBroad"]                                 # the same street, its towers built broad (grand 1)
         rot = [m for m in c["made"] if m["kind"] == "rotor"]
         self.assertEqual(len(c["helis"]), 3, "three lots, a helicopter on each tower")
         self.assertEqual(len(rot), 2, "the heli kind's two voices: the nearest two")

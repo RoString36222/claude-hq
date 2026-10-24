@@ -57,7 +57,7 @@ var VEHICLES = {
   petride: {top: 45, lean: 0, box: [1, 2], petride: true, peer: true}
 };
 var DINO = {triceratops: {walk: 3.2, run: 9}, brachio: {walk: 2.6, run: 6.5, scale: 3.8}, stego: {walk: 3, run: 8}, trex: {walk: 3.6, run: 10.5, scale: 3.8}};
-var BREATH = {fire: "fire", ice: "ice", storm: "sparkle", sparkle: "prism", wisp: "wisp", glitter: "glitter", bubbles: "bubbles"};
+var BREATH = {fire: "fire", ice: "ice", storm: "sparkle", sparkle: "prism", wisp: "wisp", glitter: "glitter", bubbles: "bubbles", venom: "venom", smoke: "smoke"};
 
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
 function wrapPi(a){ a = +a || 0; return Math.atan2(Math.sin(a), Math.cos(a)); }
@@ -216,6 +216,7 @@ function mountModel(c, pet){
   var g = new T.Group(); g.name = "petride"; g.add(M.g);
   // where you sit: on the back, just behind the shoulders (a serpent: its first coils, a long neck: further back)
   var top = rk === "serpent" ? (d.H*0.5 + 0.12)*s : (d.cy + d.H*0.48)*s, zs = rk === "serpent" ? d.L*0.1*s : (sp.neck ? -0.05 : 0.08)*d.L*s;
+  if(M.seat){ top = M.seat[0]*s + 0.02; zs = M.seat[1]*s; }               // [3.18.1] the wyvern: between its wing-shoulders, held there in every gait
   function anchor(x, y, z){ var o = new T.Object3D(); o.position.set(x, y, z); g.add(o); return o; }
   var leather = c.mat ? c.mat(0x6a3a1e, {roughness: 0.75}) : new T.MeshStandardMaterial({color: 0x6a3a1e, roughness: 0.75});
   var cloth = c.mat ? c.mat(0xb8323a, {roughness: 0.85}) : new T.MeshStandardMaterial({color: 0xb8323a, roughness: 0.85});
@@ -244,6 +245,7 @@ function animate(B, st, t, dt, calm, breath){
   if(!B || !B.M || !HQV.hqPets) return;
   var ps = B.pst, sp = B.sp, v = Math.abs(+st.speed || 0), pv = v/(B.RS || 1);
   ps.yaw = +st.yaw || 0; ps.speed = pv; ps.wing = null;
+  ps.agl = +st.agl || 0; ps.vy = +st.vy || 0; ps.leap = (+st.leapT || 0) > 0;   // the wyvern: its takeoff leap and its landing flare
   if(B.rk === "dragon" && !st.ground){ ps.anim = "fly"; ps.wing = st.wing || "glide"; ps.ph += dt*3.2; }
   else if(B.rk === "serpent"){ ps.anim = v > 0.3 ? "swim" : "float"; ps.wet = true; ps.ph += Math.max(0.6, pv)*dt*2.2; }
   else { ps.anim = breath ? "breath" : v > 0.25 ? (v > (st.walk || 4)*1.15 ? "run" : "walk") : "stand"; ps.ph += pv*dt*(sp.kind === "dino" ? 2.2 : 2.2); }
@@ -259,6 +261,7 @@ function peerState(B, v, vy, agl){
 // the breath: a stream forward from the mouth, carried along at the dragon's speed (none at all in Calm: breathOf)
 function breathe(F, B, st, dt, kind){
   if(!F || !B || !kind) return;
+  if(B.M && B.M.fx) kind = BREATH[B.M.fx] || B.M.fx;                        // the wyvern breathes by its colour (fire, smoke, venom, ice)
   B.acc = (B.acc || 0) + dt; if(B.acc < 1/45) return; B.acc = 0;
   var m = B.mouth(), yaw = +st.yaw || 0, fx = Math.sin(yaw), fz = Math.cos(yaw), sp = Math.abs(+st.speed || 0) + 16;
   F.emit(kind, m.x + fx*0.4, m.y, m.z + fz*0.4, 4, fx, fz, sp, 2.6, 0.7, (+st.vy || 0) - (st.pitch || 0)*6);

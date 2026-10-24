@@ -54,6 +54,34 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   fs0.anim = "fly"; P.pose(fd, fs0, 2.3, false); var flying = {span: spanOf(fd), open: fd.wing.open};
   var flaps = []; for(var ft = 0; ft < 10; ft++){ P.pose(fd, fs0, 3 + ft*0.06, false); flaps.push(Math.round(fd.wingMesh.geometry.attributes.position.array[13]*1000)); }
   out.wings = {folded: folded, flying: flying, flaps: flaps, L: fd.dims.L};
+  // ---- the wyvern (3.18.1): no forelegs (its wings are its arms), four finger spars and a veined membrane ----
+  var Wv = P.model(THREE, {species: "wyvern", variant: 0, name: "Rex"}), Wv2 = P.model(THREE, {species: "wyvern", variant: 2, name: "Vee"}), We = P.model(THREE, {species: "wyvern", variant: 3, name: "Old"});
+  var wst = P.newState(9, 0, 0, 0), wyv = {legs: Wv.legs.length, arms: Wv.arms, fingers: Wv.wing.fingers, panels: Wv.wing.panels, memTris: Wv.wing.tris,
+    map: !!Wv.wingMesh.material.map, sameMat: Wv.wingMesh.material === Wv2.wingMesh.material, elderMat: We.wingMesh.material.map !== Wv.wingMesh.material.map, tex: P.wyTexCount()};
+  for(var wb = 0; wb < 3; wb++) P.model(THREE, {species: "wyvern", variant: wb});
+  wyv.texAfter = P.wyTexCount();
+  function holes(tx){ var d = tx.image.data, n = 0; for(var i = 3; i < d.length; i += 4) if(d[i] === 0) n++; return n; }
+  wyv.torn = [holes(Wv.wingMesh.material.map), holes(We.wingMesh.material.map)];
+  wyv.uv = !!Wv.wingMesh.geometry.attributes.uv;
+  function wspan(M){ var a = M.wingMesh.geometry.attributes.position.array, mx = 0, mn = 1e9; for(var i = 0; i < a.length; i += 3){ mx = Math.max(mx, Math.abs(a[i])); mn = Math.min(mn, a[i + 1]); } return {span: mx, minY: mn, snap: Array.prototype.slice.call(a, 0, 90).map(function(x){ return Math.round(x*1000); }).join(",")}; }
+  function wpose(anim, wing, t0){ wst.anim = anim; wst.wing = wing || null; wst.y = anim === "fly" ? 3 : 0; for(var i = 0; i < 12; i++) P.pose(Wv, wst, t0 + i/30, false); var r = wspan(Wv); r.open = Wv.wing.open; r.jaw = Wv.sm.jaw; r.frill = Wv.sm.frill; return r; }
+  wyv.fold = wpose("stand", null, 5); wyv.glide = wpose("fly", "glide", 6); wyv.flap = wpose("fly", "climb", 7); wyv.flap2 = wpose("fly", "climb", 7.13); wyv.dive = wpose("fly", "dive", 8);
+  wyv.roar = wpose("roar", null, 9); wyv.stand = wpose("stand", null, 10);
+  wyv.L = Wv.dims.L; wyv.fx = [Wv.fx, Wv2.fx, We.fx];
+  // far off (lod): a fresh pose only every fourth frame
+  Wv.lod = true; var lodN = 0, lastS = wspan(Wv).snap; wst.anim = "fly"; wst.wing = "climb";
+  for(var lf = 0; lf < 8; lf++){ P.pose(Wv, wst, 12 + lf/30, false); var sn = wspan(Wv).snap; if(sn !== lastS) lodN++; lastS = sn; }
+  wyv.lodPosed = lodN; Wv.lod = false;
+  out.wyvern = wyv;
+  // ---- the dragons (3.18.2): the drake build on four legs, a tail tip by element; the roar winds up before the jaw opens ----
+  var drk = {};
+  ["firedragon", "icedragon", "stormdragon", "crystaldragon", "shadowdragon", "golddragon"].forEach(function(id){
+    var M = P.model(THREE, {species: id, variant: 0}); drk[id] = {drake: !!M.wy, legs: M.legs.length, front: M.legs.filter(function(l){ return l.front; }).length, tip: M.tail.tip, mem: !!M.wingMesh.material.map}; });
+  var Rd = P.model(THREE, {species: "firedragon", variant: 0}), rs = P.newState(4, 0, 0, 0), rj = [];
+  rs.anim = "stand"; for(var ri = 0; ri < 30; ri++) P.pose(Rd, rs, 20 + ri/30, false);
+  rs.anim = "roar"; for(ri = 0; ri < 30; ri++){ P.pose(Rd, rs, 21 + ri/30, false); rj.push(Rd.sm.jaw); }
+  drk.roarJaw = [rj[3], rj[29]];
+  out.drakes = drk;
   // eyes and a blink; jointed legs (upper and lower apart, a knee between)
   var dg = P.model(THREE, {species: "corgi", variant: 0}), ds = P.newState(5, 0, 0, 0), lids = [];
   for(var bt = 0; bt < 80; bt++){ ds.anim = "stand"; P.pose(dg, ds, bt*0.05, false); lids.push(dg.blink > 0.5 ? 1 : 0); }
@@ -366,6 +394,46 @@ class PetsEngine(unittest.TestCase):
         self.assertEqual(w["flying"]["open"], 1)
         self.assertGreater(w["flying"]["span"], w["folded"]["span"] + w["L"]*0.4, "wings spread in flight, folded on the ground")
         self.assertGreater(len(set(w["flaps"])), 5, "they flap")
+
+    def test_the_wyvern(self):
+        # an original design after the classic fantasy wyvern: its wings are its arms
+        w = self.o["wyvern"]
+        self.assertEqual(w["legs"], 2, "two hind legs, no forelegs")
+        self.assertIsNone(w["arms"])
+        self.assertGreaterEqual(w["fingers"], 4)
+        self.assertEqual(w["panels"], 6)
+        self.assertTrue(w["map"] and w["uv"], "a veined membrane")
+        self.assertTrue(w["sameMat"], "one membrane material for every variant (tinted by vertex colour)")
+        self.assertTrue(w["elderMat"], "the elder's torn wings have their own texture")
+        self.assertEqual((w["tex"], w["texAfter"]), (2, 2), "vein textures made once per page and cached")
+        self.assertGreater(w["torn"][1], w["torn"][0] * 1.5, "the elder's wings are more tattered")
+        self.assertGreater(w["torn"][0], 0, "a ragged trailing edge")
+        f, gl, fl, fl2, dv = w["fold"], w["glide"], w["flap"], w["flap2"], w["dive"]
+        self.assertLess(f["open"], 0.05)
+        self.assertEqual(gl["open"], 1)
+        self.assertGreater(gl["span"], f["span"] + 0.5, "wings spread wide in flight, folded on the ground")
+        self.assertGreater(gl["span"] * 2, w["L"] * 3, "a span far wider than its body is long")
+        self.assertGreater(f["minY"], -0.01, "folded wings clear the ground")
+        self.assertLess(dv["open"], 0.5)
+        self.assertEqual(len({f["snap"], gl["snap"], fl["snap"], fl2["snap"], dv["snap"]}), 5, "fold, glide, flap and dive poses differ")
+        self.assertGreater(w["roar"]["jaw"], 0.5, "the jaw opens to roar")
+        self.assertGreater(w["roar"]["frill"], 0.9, "the crown rises")
+        self.assertLess(w["stand"]["jaw"], w["roar"]["jaw"])
+        self.assertEqual(w["fx"], ["fire", "venom", "ice"])
+        self.assertEqual(w["lodPosed"], 2, "far off it poses every fourth frame")
+        self.assertLessEqual(self.o["models"]["wyvern"]["meshes"], 6)
+        self.assertLessEqual(self.o["models"]["wyvern"]["tris"], 4500)
+
+    def test_the_dragons(self):
+        # the six dragons share the wyvern's drake build on four legs: forelegs, the veined membrane, a tail tip by element
+        d = self.o["drakes"]
+        ids = ("firedragon", "icedragon", "stormdragon", "crystaldragon", "shadowdragon", "golddragon")
+        for i in ids:
+            self.assertTrue(d[i]["drake"] and d[i]["mem"], i)
+            self.assertEqual((d[i]["legs"], d[i]["front"]), (4, 2), i + ": four clawed feet")
+        self.assertEqual([d[i]["tip"] for i in ids], ["flame", "shard", "fork", "gem", "wisp", "ornate"])
+        self.assertLess(d["roarJaw"][0], 0.3, "the roar winds up (head drawn back) before the jaw opens")
+        self.assertGreater(d["roarJaw"][1], 0.6)
 
     def test_real_models(self):
         # CC0 Quaternius models, vendored with their licence; under node (no loader) the procedural pets stay

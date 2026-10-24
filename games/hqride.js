@@ -675,8 +675,12 @@ function noiseBuf(ctx){
 var SFX_NAMES = ["door-chime", "door-hiss", "validator", "stop-bell", "tram-bell", "air-brake", "motor", "rail-joint", "tunnel-rumble",
                  "gondola-clunk", "ferry-horn", "indicator", "rotor", "ring", "dial", "shutter", "chime",
                  "door", "hiss", "engine-hum", "gangway-clank", "water-lap", "gondola-rumble", "gondola-wind", "ship-horn"];
-// The loops sound until stop(), or fall silent HOLD s after their last set() (a dead man's switch) and stop soon after,
-// so a handle dropped on the floor can no longer leak; set() on one that stopped starts it again.
+// The loops can never leak, whoever holds them: each falls silent HOLD s (opts.ttl) after it was last asked for or
+// set() (a dead man's switch) and its nodes stop soon after; set() on one that stopped starts it again, and
+// {stop: true} (or mute) ends it. An unplaced loop is ONE live voice per context and name: asking for it again
+// refreshes the live one (its speed, its gain) instead of starting another (the metro asked for a new "motor" every
+// 0.5 s and never stopped one: a growing stack of sawtooths droned on everywhere). A placed one (opts.pos) is one
+// voice per handle, held by its caller (a pool's slot, a station's bull wheel) and set() with its place every frame.
 var LOOPS = {"motor": 1, "tunnel-rumble": 1, "rotor": 1, "engine-hum": 1, "gondola-rumble": 1, "gondola-wind": 1}, HOLD = 0.6;
 // opts.pos ({x, y, z}): where the sound is, through games/engine.js's spatial graph (the distance fade, the pan, each
 // kind's voice limit); opts.kind is its spatial kind, by default:
@@ -691,10 +695,15 @@ var SFX_DUR = {"door-chime": 0.95, "chime": 1.2, "door-hiss": 0.75, "validator":
 function rateOf(o, d){ var r = num(o && o.rate, d); return clamp(r > 0 ? r : d, 0.5, 2); }   // Doppler: every pitch times rate
 function sfx(ctx, name, opts){
   opts = opts || {};
-  if(!ctx || opts.mute || SFX_NAMES.indexOf(name) < 0) return null;
+  if(!ctx || SFX_NAMES.indexOf(name) < 0) return null;
+  var live = LOOPS[name] && !opts.pos ? (ctx.__hqLoops || (ctx.__hqLoops = {})) : null;   // the context's unplaced loops
+  if(live && live[name] && !live[name].alive()) delete live[name];
+  if(live && (opts.stop || opts.mute)){ if(live[name]) live[name].stop(); return null; }
+  if(opts.mute || opts.stop) return null;
   var vol = clamp(num(opts.gain, num(opts.volume, 1)), 0, 1);
+  if(live && live[name]){ live[name].set(opts); return live[name]; }
   if(vol <= 0) return null;
-  if(LOOPS[name]) return held(ctx, name, opts, vol);
+  if(LOOPS[name]) return held(ctx, name, opts, vol, live);
   var V = spot(ctx, name, opts, false); if(V === false) return null;
   var H = make(ctx, name, opts, vol, V);
   if(!H && V) V.end(0);
@@ -712,19 +721,28 @@ function spot(ctx, name, opts, hold){
   if(V.ctx !== ctx){ try { V.end(0); } catch(e){} return null; }
   return V;
 }
-// a loop's handle: a fresh voice when the last one stopped (no set() for a while), so set() always sounds
-function held(ctx, name, opts, vol){
+// a loop's handle: one voice at a time, made afresh when the last one stopped (no set() for a while), so set() always
+// sounds. live (an unplaced loop): the context's register, one live voice per name; a handle whose voice stopped and
+// was replaced there sets the live one instead of starting a second
+function held(ctx, name, opts, vol, live){
   var o = {}, k; for(k in opts) o[k] = opts[k];
   function fresh(){ var V = spot(ctx, name, o, true); if(V === false) return null; var h = make(ctx, name, o, vol, V); if(!h && V) V.end(0); return h; }
   var cur = fresh(); if(!cur) return null;
-  return {name: name, loop: true,
+  var H = {name: name, loop: true,
     set: function(o2){
       o2 = o2 || {}; for(var k2 in o2) o[k2] = o2[k2];
-      if(!cur || num(ctx.currentTime, 0) >= cur.stopAt - 0.02){ if(cur) cur.stop(); cur = fresh(); if(!cur) return; }
+      if(o2.gain != null || o2.volume != null) vol = clamp(num(o2.gain, num(o2.volume, vol)), 0, 1);
+      if(!cur || num(ctx.currentTime, 0) >= cur.stopAt - 0.02){
+        if(live && live[name] && live[name] !== H && live[name].alive()){ live[name].set(o2); return; }
+        if(cur) cur.stop(); cur = fresh(); if(!cur) return;
+        if(live) live[name] = H;
+      }
       cur.set(o2);
     },
-    stop: function(){ if(cur){ cur.stop(); cur = null; } },
+    stop: function(){ if(cur){ cur.stop(); cur = null; } if(live && live[name] === H) delete live[name]; },
     alive: function(){ return !!cur && num(ctx.currentTime, 0) < cur.stopAt; }};
+  if(live) live[name] = H;
+  return H;
 }
 function make(ctx, name, opts, vol, V){
   try {
@@ -831,18 +849,23 @@ function make(ctx, name, opts, vol, V){
       if(V){ try { V.end(0.4); } catch(e){} }
     }, set: function(){}};
     if(loopH){
-      // the dead man's switch: full level now, silent HOLD s on unless set() comes again; a rolling stop keeps the
-      // nodes' end ~1-2 s past the last set(), so a loop nobody set()s any more stops by itself
+      // the dead man's switch: full level now, silent ttl s on (HOLD, or opts.ttl) unless set() comes again; a rolling
+      // stop keeps the nodes' end ~1-2 s past the last set(), so a loop nobody set()s any more stops by itself
+      var ttl = Math.max(0.5, num(opts.ttl, HOLD));
       var hold = function(n){
         var p = out.gain;
         if(p.cancelScheduledValues) p.cancelScheduledValues(n);
-        p.setTargetAtTime(vol, n, 0.05); p.setTargetAtTime(0.0001, n + HOLD, 0.08);
-        if(n + HOLD + 0.4 > H.stopAt || H.stopAt === Infinity){
-          H.stopAt = n + HOLD + 1.2;
+        p.setTargetAtTime(vol, n, 0.05); p.setTargetAtTime(0.0001, n + ttl, 0.08);
+        if(n + ttl + 0.4 > H.stopAt || H.stopAt === Infinity){
+          H.stopAt = n + ttl + 1.2;
           nodes.forEach(function(nd){ if(nd && typeof nd.stop === "function"){ try { nd.stop(H.stopAt); } catch(e){} } });
         }
       };
-      H.set = function(o2){ o2 = o2 || {}; hold(Math.max(t, num(ctx.currentTime, 0))); try { loopH.set(o2); } catch(e){} if(V && o2.pos) V.move(o2.pos); };
+      H.set = function(o2){
+        o2 = o2 || {};
+        if(o2.gain != null || o2.volume != null) vol = clamp(num(o2.gain, num(o2.volume, vol)), 0, 1);   // a refresh's gain
+        hold(Math.max(t, num(ctx.currentTime, 0))); try { loopH.set(o2); } catch(e){} if(V && o2.pos) V.move(o2.pos);
+      };
       hold(t);
     }
     return H;

@@ -933,13 +933,16 @@ class Posting(unittest.TestCase):
 
     def test_a_steady_engine_posts_its_level_and_little_else(self):
         # before: 14-20 params a frame each (turbo 16, diesel 15, jet 20, v8 14); now the dead man's switch (2) and the
-        # rough idle's wobble now and then
+        # wobble now and then (the rough idle's; since 3.19 the revs' and the firing pulses' depth too)
         for k, n in self.o["engines"].items():
             self.assertLessEqual(n, 3, k)
-        self.assertLess(self.o["moving"], 12)                  # revving and passing: what moves (the pitch, the pan)...
+        # revving and passing: what moves (the pitch, the pan, and since 3.19 the firing pulses' rate and the exhaust's
+        # filter and level, which follow the revs as well: 12.1 a frame here, 9.2 before them)...
+        self.assertLess(self.o["moving"], 13)
         osc, got, want = self.o["pitch"]
         self.assertEqual(osc, "osc")
-        self.assertAlmostEqual(got, want, delta=want * 0.003)  # ...and the note follows the revs
+        # ...and the note follows the revs, with their wobble (up to +-1.8 %, as in test_enginesound)
+        self.assertAlmostEqual(got, want, delta=want * 0.02)
 
     def test_a_voice_barely_heard_moves_only_its_level_and_pan(self):
         self.assertLess(self.o["quietFar"], 0.02)

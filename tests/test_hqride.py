@@ -210,6 +210,20 @@ out.voice = {a: sA.spoken, annA: annA, resA: resA, b: sB.spoken, annB: annB, res
              calmNodes: ctx2.made.n, pick: R.localVoice([remote, fr, local]).name, none: R.localVoice([remote])};
 // every sound builds on a context, and mute / no context give nothing
 var sounds = {}; R.SFX.forEach(function(n){ var c = fakeCtx(), h = R.sfx(c, n, {gain: 0.5, speed: 10}); if(h){ h.set({speed: 20}); h.stop(); } sounds[n] = [!!h, c.made.n]; });
+// a loop is ONE voice per context and name: asked for again it is refreshed (no new nodes), {stop: true}
+// ends it, and one nobody refreshes ends by itself (the metro asked for a new "motor" every 0.5 s, never stopped one)
+var lc = fakeCtx(), l1 = R.sfx(lc, "motor", {speed: 0.5}), ln = lc.made.n, same = true;
+for(var li = 0; li < 20; li++){ lc.currentTime += 0.5; if(R.sfx(lc, "motor", {speed: 0.6}) !== l1) same = false; }
+var aliveFed = l1.alive(), madeFed = lc.made.n - ln;
+lc.currentTime += 5; var aliveLeft = l1.alive(), l2 = R.sfx(lc, "motor", {speed: 0.6});
+var l3 = R.sfx(lc, "rotor", {gain: 0.4}), st = R.sfx(lc, "rotor", {stop: true});
+out.loops = {same: same, aliveFed: aliveFed, madeFed: madeFed, aliveLeft: aliveLeft, fresh: !!l2 && l2 !== l1, stopNull: st === null, rotorDead: !l3.alive()};
+// a placed loop (opts.pos) is one voice per handle (two trains: two motors), and an unplaced ask takes neither; an
+// unplaced handle that stopped and was replaced sets the name's live voice instead of starting a second
+var pc = fakeCtx(), pa = R.sfx(pc, "motor", {pos: {x: 0, z: 10}, speed: 3}), pb = R.sfx(pc, "motor", {pos: {x: 0, z: 40}, speed: 3});
+var un = R.sfx(pc, "motor", {speed: 3}), two = !!pa && !!pb && pa !== pb && !!un && un !== pa && un !== pb;
+pc.currentTime += 5; var un2 = R.sfx(pc, "motor", {speed: 4}), pn0 = pc.made.n; un.set({speed: 5});
+out.placed = {two: two, fwd: pc.made.n === pn0 && un2 !== un && un2.alive() && !un.alive(), revived: (pa.set({pos: {x: 0, z: 12}}), pa.alive())};
 out.sfx = {sounds: sounds, mute: R.sfx(fakeCtx(), "door-chime", {mute: true}), noCtx: R.sfx(null, "door-chime"), unknown: R.sfx(fakeCtx(), "explosion"), zero: R.sfx(fakeCtx(), "ring", {gain: 0})};
 
 // ---- tickets and achievements: persisted, and surviving a throwing localStorage ----
@@ -468,6 +482,22 @@ class HqRideTest(unittest.TestCase):
         self.assertIsNone(s["noCtx"])
         self.assertIsNone(s["unknown"])
         self.assertIsNone(s["zero"])
+
+    def test_loops_cannot_pile_up(self):
+        L = self.r["loops"]
+        self.assertTrue(L["same"])                 # asked again: the same live voice
+        self.assertEqual(L["madeFed"], 0)          # 20 asks, no new nodes
+        self.assertTrue(L["aliveFed"])
+        self.assertFalse(L["aliveLeft"])           # nobody asked for 5 s: gone by itself
+        self.assertTrue(L["fresh"])
+        self.assertTrue(L["stopNull"])
+        self.assertTrue(L["rotorDead"])            # {stop: true} ends the live one
+
+    def test_placed_loops_are_one_voice_per_handle(self):
+        p = self.r["placed"]
+        self.assertTrue(p["two"])                  # two trains' motors: two voices; an unplaced ask takes neither
+        self.assertTrue(p["fwd"])                  # a stopped unplaced handle sets the name's live voice: still one
+        self.assertTrue(p["revived"])              # a placed handle set() after it stopped sounds again
 
     # ---- tickets, achievements ----
     def test_tickets_persist_newest_30(self):

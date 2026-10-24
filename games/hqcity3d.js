@@ -157,20 +157,22 @@ function bayClear(b, keep){
   function clear(x, z, ex, ez){ return keep.every(function(K){ return !(Math.abs(x - K[0]) < ex + K[2] && Math.abs(z - K[1]) < ez + K[3]); }); }
   return clear(b.x, b.z, hw, hd) && clear(b.x, b.z + b.f*(G.d/2 + GARAGE_CLEAR/2), G.w/2, GARAGE_CLEAR/2);
 }
-// How much bigger than the old tower an HQ may stand on this lot (the HQ revamp): the largest of 1, .75, .5, .25 (else 0)
-// at which every part of the footprint that fitted inside the lot's polygon at the old size still does, for every wing
-// count, and a car-lift bay still fits beside it. The same for everyone (pure: the lot alone); memoised by lot.
+// How much of its lot an HQ may fill (the HQ revamp; 3.19: in eighths, the tower's plan from 11 x 8 m to 25 x 14 m): the
+// largest step at which every part of the footprint that fitted inside the lot's polygon at the smallest size still
+// does, for every wing count, and a car-lift bay still fits beside it (0 when not even the smallest podium fits). The
+// same for everyone (pure: the lot alone); memoised by lot.
 var GRAND = {};
 function boxInLot(P, p, b){ for(var i = -1; i <= 1; i += 0.5) for(var j = -1; j <= 1; j += 0.5){ var w = toWorld(p, b[0] + i*b[2], b[1] + j*b[3]); if(!inRing(P, w.x, w.z)) return false; } return true; }
 function grandOf(lot, p){
   if(!lot || !lot.poly || lot.poly.length < 3 || !HQV.hqTower) return 0;
   var key = [lot.id, lot.x, lot.z, lot.w, lot.d].join(":"); if(GRAND[key] != null) return GRAND[key];
-  var P = polyOf(lot), walk = [0, HQ_DOOR + 6, 1.6, 6], best = 0, steps = [0.25, 0.5, 0.75, 1];
+  var P = polyOf(lot), walk = [0, HQ_DOOR + 6, 1.6, 6], best = 0, steps = [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1];
+  if(!boxInLot(P, p, hqFoot(0, 0)[0])) return (GRAND[key] = 0);
   for(var si = 0; si < steps.length; si++){
     var g = steps[si], ok = true;
     for(var wings = 0; wings <= 2 && ok; wings++){
       var b0 = hqFoot(0, wings), b = hqFoot(g, wings);
-      for(var i = 0; i < b.length && ok; i++) if(boxInLot(P, p, b0[i]) && !boxInLot(P, p, b[i])) ok = false;
+      for(var i = 0; i < b.length && ok; i++) if((!b0[i] || boxInLot(P, p, b0[i])) && !boxInLot(P, p, b[i])) ok = false;   // a wing the smallest plan has no room for must fit too
       if(ok && !baySearch(P, p, b.concat([walk]), true)) ok = false;
     }
     if(!ok) break; best = g;
@@ -183,9 +185,9 @@ var ROOM = {};
 function roomOf(lot, p){
   var T = HQV.hqTower; if(!lot || !lot.poly || lot.poly.length < 3 || !T) return null;
   var key = [lot.id, lot.x, lot.z, lot.w, lot.d].join(":"); if(ROOM[key] != null) return ROOM[key];
-  var P = polyOf(lot), best = 0, max = T.PAD_R + T.WALK;
+  var P = polyOf(lot), best = 0, max = T.PAD_R + T.WALK, ax = T.axis ? T.axis(grandOf(lot, p)) : 0;   // [3.19] round the tower's axis
   for(var r = 4; r <= max + 1e-6; r += 0.25){
-    var ok = [0, -0.35].every(function(cz){ for(var k = 0; k < 32; k++){ var w = toWorld(p, Math.cos(k*PI/16)*r, cz + Math.sin(k*PI/16)*r); if(!inRing(P, w.x, w.z)) return false; } return true; });
+    var ok = [ax].every(function(cz){ for(var k = 0; k < 32; k++){ var w = toWorld(p, Math.cos(k*PI/16)*r, cz + Math.sin(k*PI/16)*r); if(!inRing(P, w.x, w.z)) return false; } return true; });
     if(!ok) break; best = r;
   }
   return (ROOM[key] = best);

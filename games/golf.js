@@ -1449,6 +1449,7 @@ function makeGame(host, opts){
       c.x += (px - c.x)*k; c.y += (py - c.y)*k; c.z += (pz - c.z)*k;
       c.tx += (tx - c.tx)*k; c.ty += (ty - c.ty)*k; c.tz += (tz - c.tz)*k;
       camera.position.set(c.x, c.y, c.z); camera.lookAt(c.tx, c.ty, c.tz);
+      if(window.HQV && HQV.engine && HQV.engine.listener) HQV.engine.listener(camera);   // [sound] the ears: this camera
       renderer.render(scene, camera);
     };
     r.dispose = function(){
@@ -1571,6 +1572,7 @@ function makeGame(host, opts){
   if(!raf) raf = requestAnimationFrame(frame);
   V.destroy = function(){
     V.alive = false;
+    if(window.HQV && HQV.engine && HQV.engine.listener) HQV.engine.listener(null);
     if(raf) cancelAnimationFrame(raf); raf = 0;
     window.removeEventListener("resize", onResize); if(ro) ro.disconnect();
     if(R3){ R3.dispose(); R3 = null; }

@@ -1176,6 +1176,7 @@ function makeGame(host, opts){
       gunHold.rotation.set(V.kick*(V.w ? 0.12 : 0.05) - dip, 0, 0);
       if(flash){ var fa = t - V.flashAt; flash.visible = fa < (quiet ? 0.03 : 0.05) && !V.dead; flash.scale.setScalar((quiet ? 0.07 : 0.13)*(V.w ? 1.3 : 1)); flash.material.opacity = quiet ? 0.5 : 0.95; flash.material.rotation = V.n*1.3; }
       renderer.clear();
+      if(E.listener) E.listener(camera);                               // [sound] the ears: this camera
       renderer.render(scene, camera);
       renderer.clearDepth();
       if(!V.watch) renderer.render(vScene, vCam);         // no blaster in your hands while you watch
@@ -1198,6 +1199,7 @@ function makeGame(host, opts){
     function(){ V.note = "Couldn't load the arena."; renderMenu(); });
   if(!raf) raf = requestAnimationFrame(frame);
   V.destroy = function(){
+    if(E.listener) E.listener(null);
     if(WB){ WB.destroy(); WB = null; }
     V.alive = false;
     if(raf) cancelAnimationFrame(raf); raf = 0;

@@ -4,9 +4,10 @@
  * airport apron, the hospital's pad, an HQ roof with a pad, the marina breakwater) or the nearest open area at least
  * 26 x 26 m clear of buildings, roads, water and trees within 400 m. A Claude Cabs helicopter (anyone; free, D4) or your
  * own (owners) flies a scripted pure path: cruise at 90 m, a 12 degree glideslope down, a flare, a hover-taxi and a
- * vertical landing. Rotor-wash dust (Calm: none) and a Doppler rotor beat (through deps.sfx). Board on foot (rear left
- * seat); a cab heli then flies you to your destination with the camera in the cabin (V cycles to chase). Your own heli
- * lands and is handed back (handle.landed()) for hq3d's mountOn.
+ * vertical landing. Rotor-wash dust (Calm: none) and its rotor: one held loop at the heli (deps.sfx("rotor", {pos,
+ * kind: "heli", rate})), moved every frame and Doppler-shifted towards the listener, stopped once the heli has gone.
+ * Board on foot (rear left seat); a cab heli then flies you to your destination with the camera in the cabin (V cycles
+ * to chase). Your own heli lands and is handed back (handle.landed()) for hq3d's mountOn.
  *
  * Pure (node-tested, tests/test_hqhelicall.py), metres, yaw 0 faces +z, increasing yaw turns left:
  *   spots(W, x, z, r, extra)  -> [{id, x, y, z, kind: "pad"|"open", name, dist}] by distance then id: every pad (any
@@ -55,6 +56,8 @@ function hash32(str){
 function clamp(v, a, b){ return v < a ? a : (v > b ? b : v); }
 function num(v, d){ v = +v; return isFinite(v) ? v : d; }
 function hyp(x, z){ return Math.sqrt(x*x + z*z); }
+// the farthest a spatial kind is heard (games/engine.js KINDS), else d
+function reach(kind, d){ var E = HQV.engine, K = E && E.spatial && E.spatial.KINDS, k = K && K[kind]; return k && k.max > 0 ? k.max : d; }
 
 /* ---------- landing spots (pure) ---------- */
 function WD(){ return HQV.world || {}; }
@@ -228,12 +231,28 @@ function doppler(src, ear){
 /* ---------- the controller ---------- */
 function mount(c, w, deps){
   c = c || null; w = w || {}; deps = deps || {};
-  var T = c && c.THREE ? c.THREE : null, cur = null, nowMs = 0, sndAt = 0;
+  var T = c && c.THREE ? c.THREE : null, cur = null, nowMs = 0, sndAt = -Infinity, rotor = null;
   function W(){ try { return typeof w.W === "function" ? w.W() : w.W; } catch(e){ return null; } }
   function me(){ try { return (w.me && w.me()) || {}; } catch(e){ return {}; } }
   function calm(){ try { return !!(deps.calm && deps.calm()); } catch(e){ return false; } }
   function say(t){ try { if(deps.announce) deps.announce(t); } catch(e){} }
-  function sfx(n, o){ try { if(deps.sfx) deps.sfx(n, o); } catch(e){} }
+  function sfx(n, o){ try { return deps.sfx ? deps.sfx(n, o) : null; } catch(e){ return null; } }
+  // the rotor: ONE held loop at the heli (deps.sfx "rotor" with {pos, kind: "heli", rate}), moved every frame, its
+  // pitch shifted by the Doppler factor towards your ears (the spatial listener, else your head); started within
+  // earshot (a failed start is tried again after 400 ms), stopped once the heli has gone (left, handed over, disposed)
+  function rotorStop(){ if(rotor){ try { rotor.stop(); } catch(e){} rotor = null; } sndAt = -Infinity; }
+  function rotorAt(p){
+    var E = HQV.engine, L = null, m = me();
+    try { L = E && typeof E.listenerAt === "function" ? E.listenerAt() : null; } catch(e){ L = null; }
+    var ear = L ? {x: L.x, y: L.y, z: L.z} : {x: num(m.x, 0), y: num(m.y, 0) + 1.6, z: num(m.z, 0)}, M = reach("heli", 1500);
+    var at = {x: p.x, y: p.y + 2, z: p.z}, d = Math.sqrt(Math.pow(at.x - ear.x, 2) + Math.pow(at.y - ear.y, 2) + Math.pow(at.z - ear.z, 2));
+    var o = {pos: at, kind: "heli", rate: doppler(p, ear)*(0.6 + 0.4*p.rpm)};
+    if(rotor){ if(d > M*1.1) rotorStop(); else { try { rotor.set(o); } catch(e){} } return; }
+    if(d >= M || nowMs - sndAt < 400) return;
+    sndAt = nowMs;
+    var h = sfx("rotor", o);
+    rotor = h && typeof h.set === "function" && typeof h.stop === "function" ? h : null;
+  }
   function clock(){ if(nowMs) return nowMs; try { return w.now ? +w.now() : Date.now(); } catch(e){ return 0; } }
   function roofs(){ try { return w.roofs ? w.roofs() || [] : []; } catch(e){ return []; } }
   function achv(){ return deps.achievements || (HQV.hqRide && HQV.hqRide.achievements) || null; }
@@ -255,7 +274,7 @@ function mount(c, w, deps){
                                  eta: J.phase === "coming" || J.phase === "riding" ? Math.max(0, Math.round(J.P.T - (clock() - J.t0)/1000)) : 0}; },
       cancel: function(){ if(J.phase === "coming" || J.phase === "here"){ leave(J); J.phase = "cancelled"; return true; } return false; },
       landed: function(){ if(!J.own || J.phase !== "here") return null; var p = J.P.pose(J.P.T); return {x: p.x, y: p.y, z: p.z, yaw: p.yaw, vehicleId: J.own}; },
-      release: function(){ if(J.own){ J.phase = "done"; if(cur === J) cur = null; if(view) view.hide(); return true; } return false; }
+      release: function(){ if(J.own){ J.phase = "done"; if(cur === J){ cur = null; rotorStop(); } if(view) view.hide(); return true; } return false; }
     };
     return J;
   }
@@ -303,21 +322,19 @@ function mount(c, w, deps){
   }
   function update(ms, dt){
     nowMs = num(ms, nowMs);
-    var J = cur; if(!J){ if(view) view.update(null, 0, dt); return; }
+    var J = cur; if(!J){ rotorStop(); if(view) view.update(null, 0, dt); return; }
     var t = (nowMs - J.t0)/1000, p = J.P.pose(t);
     if(J.phase === "coming" && p.done){
-      J.phase = "here"; sfx("rotor", {stop: true});
+      // down, its rotor still turning while it waits for you (the blades and the wash show it): the loop goes on
+      J.phase = "here";
       say(J.own ? "Your helicopter has landed. Press E to fly it." : "Your Claude Cabs helicopter has landed at " + (J.spot.name || "the pad") + ". Walk up and press E to board (rear left seat).");
     } else if(J.phase === "riding" && J.dest && p.done && nowMs - J.t0 > 1000){
       J.phase = "done"; J.doneAt = nowMs; say("Landed at " + J.dest.name + ". Thanks for flying Claude Cabs.");
       var m0 = J.P.pose(J.P.T); J.exit = {x: m0.x + Math.cos(m0.yaw)*2.6, z: m0.z - Math.sin(m0.yaw)*2.6, yaw: m0.yaw};
     } else if(J.phase === "done" && nowMs - J.doneAt > 4000) leave(J);
-    else if((J.phase === "leaving" && p.done) || J.phase === "cancelled" && J.P.pose(t).done){ cur = null; if(view) view.hide(); return; }
-    // the rotor beat, pitched by the Doppler shift, every 400 ms
-    if(nowMs - sndAt > 400 && p.rpm > 0.2){
-      sndAt = nowMs; var m = me(), ear = {x: num(m.x, 0), y: num(m.y, 0) + 1.6, z: num(m.z, 0)}, d = Math.sqrt(Math.pow(p.x - ear.x, 2) + Math.pow(p.y - ear.y, 2) + Math.pow(p.z - ear.z, 2));
-      if(d < 1500) sfx("rotor", {rate: doppler(p, ear)*(0.6 + 0.4*p.rpm), gain: clamp(1 - d/1500, 0, 1)});
-    }
+    else if((J.phase === "leaving" && p.done) || J.phase === "cancelled" && J.P.pose(t).done){ cur = null; rotorStop(); if(view) view.hide(); return; }
+    // the rotor at the heli, pitched by the Doppler shift (spooling: once its rpm is up)
+    if(p.rpm > 0.2) rotorAt(p);
     if(view) view.update(p, t, dt);
   }
   if(T) view = makeView(c, w, deps, calm);
@@ -345,7 +362,7 @@ function mount(c, w, deps){
       if(name === "heli-cabin"){ var s = seatPose(J, clock()); return {pos: {x: s.x, y: s.y + 1.15, z: s.z}, look: {x: s.x + Math.sin(s.yaw)*20, y: s.y - 4, z: s.z + Math.cos(s.yaw)*20}, fov: 70}; }
       return null;
     }},
-    dispose: function(){ if(view) view.dispose(); view = null; cur = null; }
+    dispose: function(){ rotorStop(); if(view) view.dispose(); view = null; cur = null; }
   };
 }
 

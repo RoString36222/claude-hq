@@ -134,10 +134,11 @@ function fakeCall(){
   };
 }
 function machine(calmOn){
-  const said = [], tix = [], ach = [], fades = [], shown = [];
+  const said = [], tix = [], ach = [], fades = [], shown = [], snd = [];
   let me = {x: 0, z: 0, speed: 0, driving: false};
   const C = CB.mount(null, {W: null, me: () => me, seed: "claude-hq@3"}, {call: fakeCall(), announce: t => said.push(t), calm: () => calmOn,
-    tickets: {add(t){ tix.push(t); return t; }}, achievements: {record(e){ ach.push(e); }}, fade(ms){ fades.push(ms); }, showRoute(p, l){ shown.push(p ? l : null); }});
+    tickets: {add(t){ tix.push(t); return t; }}, achievements: {record(e){ ach.push(e); }}, fade(ms){ fades.push(ms); }, showRoute(p, l){ shown.push(p ? l : null); },
+    sfx(n, o){ snd.push([n, o || null]); }});
   const log = [];
   let t = MS;
   const h = C.request({x: 3000, z: 0, name: "Harbour Street"}, "cab", t);
@@ -171,16 +172,17 @@ function machine(calmOn){
   const h2phase = h2.state().phase, cancel = h2.cancel(), h2after = h2.state().phase;
   return {log, matchMs, etaStart, metStart, here: st, farBoard, cabBeforeBoard: cab, board, carry, cam: !!(cam && cam.camera), canSkip, skip,
           skipping: afterSkip.skipping, steps: n, exit, carryDone, rated, said, tix, ach, fades, h2phase, cancel, h2after, shown,
-          state: C.state(), driver: h.driver};
+          state: C.state(), driver: h.driver, snd};
 }
 out.ride = machine(false);
 out.rideCalm = machine(true);
 
 /* ---------- driver mode ---------- */
 {
-  const said = [], ach = [];
+  const said = [], ach = [], snd = [];
   let me = {x: from.x, z: from.z, speed: 0, driving: false, street: true, kerbHits: 0};
-  const C = CB.mount(null, {W: W, me: () => me, seed: "claude-hq@3"}, {call: H.hqCall, announce: t => said.push(t), achievements: {record(e){ ach.push(e); }}});
+  const C = CB.mount(null, {W: W, me: () => me, seed: "claude-hq@3"}, {call: H.hqCall, announce: t => said.push(t), achievements: {record(e){ ach.push(e); }},
+    sfx(n, o){ snd.push([n, o || null, {x: me.x, z: me.z}]); }});
   const d = {};
   d.offWalking = C.driver.on(true);
   me.driving = true;
@@ -209,6 +211,7 @@ out.rideCalm = machine(true);
   const s = C.driver.state();
   d.phase5 = s.phase; d.result = s.result; d.stats = s.stats; d.ach = ach; d.said = said.slice(-1);
   d.off = C.driver.on(false); d.offPhase = C.driver.state().phase;
+  d.snd = snd;
   out.drive = d;
 }
 
@@ -449,6 +452,26 @@ class CabsNode(unittest.TestCase):
         self.assertEqual(res["totals"], d["stats"])
         self.assertEqual(d["ach"][-1]["type"], "fare"); self.assertEqual(d["ach"][-1]["stars"], 4)
         self.assertEqual(d["offPhase"], "off")
+        # your passenger's door, in and out: your own car's sound (kind own), where you are
+        chimes = [s for s in d["snd"] if s[0] == "door-chime"]
+        self.assertEqual(len(chimes), 2)
+        for n, o, m in chimes:
+            self.assertEqual(o["kind"], "own")
+            self.assertLess(((o["pos"]["x"] - m["x"]) ** 2 + (o["pos"]["z"] - m["z"]) ** 2) ** 0.5, 1e-6)
+
+    def test_sounds_are_placed(self):
+        # the match chime is the phone's (centred); the indicator as it pulls up and the doors as you get in and out are
+        # at the cab (the fake call engine parks it at your kerb, (0, 0), and lets you out at Harbour Street, (3000, 0))
+        snd = self.o["ride"]["snd"]
+        self.assertEqual([s[0] for s in snd], ["chime", "indicator", "door-chime", "door-chime", "chime"])
+        self.assertTrue(all(s[1] is None or "pos" not in s[1] for s in snd if s[0] == "chime"))
+        ind, din, dout = snd[1][1], snd[2][1], snd[3][1]
+        self.assertEqual(ind["kind"], "vehicle")
+        self.assertEqual((din["kind"], dout["kind"]), ("door", "door"))
+        self.assertLess(abs(ind["pos"]["x"]) + abs(ind["pos"]["z"]), 1e-6)
+        self.assertLess(abs(din["pos"]["x"]) + abs(din["pos"]["z"]), 1e-6)
+        self.assertLess(abs(dout["pos"]["x"] - 3000) + abs(dout["pos"]["z"]), 1e-6)
+        self.assertGreater(din["pos"]["y"], ind["pos"]["y"] - 1)
 
     def test_phone_apps(self):
         apps = {a["id"]: a for a in self.o["apps"]}

@@ -30,6 +30,16 @@ enum Theme {
     }
 }
 
+/// The notch's motion. Opening drops down with a touch of overshoot; closing tucks back up with
+/// none. Reduce Motion swaps all of it for a short crossfade (`Motion.calm`).
+enum Motion {
+    static let open = Animation.spring(response: 0.42, dampingFraction: 0.8)
+    static let close = Animation.spring(response: 0.34, dampingFraction: 1.0)
+    static let swell = Animation.spring(response: 0.28, dampingFraction: 0.72)
+    static let item = Animation.spring(response: 0.36, dampingFraction: 0.86)
+    static let calm = Animation.easeInOut(duration: 0.15)
+}
+
 enum SpriteSetting: String, CaseIterable, Identifiable {
     case orb = "orb", twoD = "2d", threeD = "3d", matchHQ = "hq"
     var id: String { rawValue }
@@ -42,6 +52,8 @@ enum SpriteSetting: String, CaseIterable, Identifiable {
 final class AppModel: ObservableObject {
     @Published private(set) var store = SessionStore()
     @Published var expanded = false
+    /// The cursor is on the closed pill: it swells a little before it opens.
+    @Published var hovering = false
     @Published var hqReachable = false
     /// Measured size of the expanded panel (drives the hover hit area). Not @Published:
     /// layout writes it, and it must not trigger another layout pass.
@@ -59,6 +71,10 @@ final class AppModel: ObservableObject {
     }
     @Published var approvals = UserDefaults.standard.object(forKey: "hqnotch.approvals") as? Bool ?? true {
         didSet { UserDefaults.standard.set(approvals, forKey: "hqnotch.approvals") }
+    }
+    /// A small banner when a session finishes or fails, instead of nothing.
+    @Published var banners = UserDefaults.standard.object(forKey: "hqnotch.banners") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(banners, forKey: "hqnotch.banners"); if !banners { dismissPeek() } }
     }
     /// Settings speaks in "on" terms.
     var soundsOn: Bool { get { !muted } set { muted = !newValue } }
@@ -118,6 +134,14 @@ final class AppModel: ObservableObject {
     private var passedQuestion: [String: Date] = [:]
     /// Bumped on every needs-you event so the panel can pop open.
     @Published private(set) var attention = 0
+    /// The banner showing now (finished / failed), if any.
+    @Published private(set) var peek: Peek?
+    private var peeks = PeekQueue()
+    private var peekTimer: Timer?
+
+    /// A request is waiting on an answer from the notch: the panel stays open until it is
+    /// answered (here or in the terminal) or its hook gives up.
+    var holdOpen: Bool { !store.pending.isEmpty }
 
     init() {
         server.onMessage = { [weak self] m, id in self?.receive(m, id) }
@@ -253,8 +277,45 @@ final class AppModel: ObservableObject {
             play("Funk")
         case .finished:
             play("Glass")
+            showPeek(e)
         case .failed:
             play("Basso")
+            showPeek(e)
+        }
+    }
+
+    // MARK: banners
+
+    private func showPeek(_ e: StoreEffect) {
+        guard banners, !expanded else { return }
+        peeks.push(e)
+        syncPeek()
+    }
+
+    /// Debug aid (HQNOTCH_SNAPSHOT_DIR): the top session's "finished" banner.
+    func debugPeek() {
+        guard let s = store.ordered.first else { return }
+        peeks.push(.finished(sessionId: s.id))
+        syncPeek()
+    }
+
+    /// The panel opened (it shows everything) or banners were turned off.
+    func dismissPeek() {
+        peeks.dismiss()
+        syncPeek()
+    }
+
+    private func syncPeek() {
+        if peek != peeks.current { peek = peeks.current }
+        peekTimer?.invalidate()
+        peekTimer = nil
+        guard let p = peeks.current else { return }
+        peekTimer = Timer.scheduledTimer(withTimeInterval: max(0.05, p.until.timeIntervalSinceNow), repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.peeks.tick(live: Set(self.store.sessions.keys))
+                self.syncPeek()
+            }
         }
     }
 

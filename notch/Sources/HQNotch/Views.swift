@@ -2,21 +2,49 @@ import AppKit
 import HQNotchCore
 import SwiftUI
 
-/// Notch outline: flush with the top edge, rounded at the bottom.
+/// Notch outline: flush with the top edge, rounded at the bottom, with concave "shoulders" at
+/// the top corners so the panel flows out of the bezel. The body is `shoulder` narrower than the
+/// rect on each side.
 struct NotchShape: Shape {
+    var shoulder: CGFloat
     var radius: CGFloat
-    var animatableData: CGFloat { get { radius } set { radius = newValue } }
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(shoulder, radius) }
+        set { shoulder = newValue.first; radius = newValue.second }
+    }
     func path(in r: CGRect) -> Path {
         var p = Path()
-        let rad = min(radius, r.height / 2, r.width / 2)
+        let t = min(shoulder, r.height / 2, r.width / 4)
+        let rad = min(radius, (r.height - t) / 2, (r.width - 2 * t) / 2)
         p.move(to: CGPoint(x: r.minX, y: r.minY))
-        p.addLine(to: CGPoint(x: r.maxX, y: r.minY))
-        p.addLine(to: CGPoint(x: r.maxX, y: r.maxY - rad))
-        p.addQuadCurve(to: CGPoint(x: r.maxX - rad, y: r.maxY), control: CGPoint(x: r.maxX, y: r.maxY))
-        p.addLine(to: CGPoint(x: r.minX + rad, y: r.maxY))
-        p.addQuadCurve(to: CGPoint(x: r.minX, y: r.maxY - rad), control: CGPoint(x: r.minX, y: r.maxY))
+        p.addQuadCurve(to: CGPoint(x: r.minX + t, y: r.minY + t), control: CGPoint(x: r.minX + t, y: r.minY))
+        p.addLine(to: CGPoint(x: r.minX + t, y: r.maxY - rad))
+        p.addQuadCurve(to: CGPoint(x: r.minX + t + rad, y: r.maxY), control: CGPoint(x: r.minX + t, y: r.maxY))
+        p.addLine(to: CGPoint(x: r.maxX - t - rad, y: r.maxY))
+        p.addQuadCurve(to: CGPoint(x: r.maxX - t, y: r.maxY - rad), control: CGPoint(x: r.maxX - t, y: r.maxY))
+        p.addLine(to: CGPoint(x: r.maxX - t, y: r.minY + t))
+        p.addQuadCurve(to: CGPoint(x: r.maxX, y: r.minY), control: CGPoint(x: r.maxX - t, y: r.minY))
         p.closeSubpath()
         return p
+    }
+}
+
+/// Content coming into the open panel: it sharpens and settles while the shape opens.
+struct Reveal: ViewModifier {
+    let on: Bool
+    func body(content: Content) -> some View {
+        content.opacity(on ? 1 : 0).blur(radius: on ? 0 : 6).scaleEffect(on ? 1 : 0.97, anchor: .top)
+    }
+}
+
+/// Rows of the open panel arrive one after another, 25 ms apart.
+struct Cascade: ViewModifier {
+    let on: Bool
+    let index: Int
+    let reduce: Bool
+    func body(content: Content) -> some View {
+        content.opacity(on || reduce ? 1 : 0).offset(y: on || reduce ? 0 : -6)
+            .animation(reduce ? nil : Motion.item.delay(0.06 + Double(min(index, 8)) * 0.025), value: on)
     }
 }
 
@@ -25,31 +53,80 @@ struct NotchRoot: View {
     let notch: CGSize          // the hardware notch (or a menu-bar sized stand-in)
     var gap: CGFloat           // the room left for the notch in the closed pill (0 beside it)
     var anchor: CGFloat = 0    // the pill's centre, from the panel's centre (beside the notch)
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The open panel's height, measured from its content; animating to it opens the shape.
+    @State private var openHeight: CGFloat = 200
+    @State private var appeared = false
     static let wing: CGFloat = 64
-    /// How far the expanded panel can slide within the window (its width minus the panel's), each way.
-    static let slack: CGFloat = (NotchController.panelSize.width - expandedWidth) / 2
     static let expandedWidth: CGFloat = 500
+    static let closedShoulder: CGFloat = 6
+    static let openShoulder: CGFloat = 10
+    /// How much the closed pill grows while the cursor rests on it.
+    static let swell = CGSize(width: 12, height: 3)
+    /// A banner's height below the notch.
+    static let peekExtra: CGFloat = 40
+    /// How far the expanded panel can slide within the window, each way.
+    static let slack: CGFloat = (NotchController.panelSize.width - expandedWidth - 2 * openShoulder) / 2
+
+    private enum Mode { case closed, peek, open }
+
+    private var peekSession: (Peek, Session)? {
+        guard let p = model.peek, let s = model.store.sessions[p.sessionId] else { return nil }
+        return (p, s)
+    }
+
+    private var mode: Mode { model.expanded ? .open : peekSession != nil ? .peek : .closed }
 
     var body: some View {
+        let m = mode
+        let shoulder = m == .closed ? Self.closedShoulder : Self.openShoulder
+        let shape = NotchShape(shoulder: shoulder, radius: m == .open ? 22 : m == .peek ? 18 : 12)
+        let swell = m == .closed && model.hovering ? Self.swell : .zero
+        let size: CGSize = switch m {
+        case .open: CGSize(width: Self.expandedWidth, height: openHeight)
+        case .peek: CGSize(width: PeekBanner.width, height: notch.height + Self.peekExtra)
+        case .closed: CGSize(width: NotchController.pillWidth(notch: notch, beside: gap == 0) + swell.width,
+                             height: notch.height + swell.height)
+        }
         VStack(spacing: 0) {
-            Group {
-                if model.expanded {
-                    // Content grows out of the pill as the shape opens, and fades fast on the way back.
-                    expanded.transition(.asymmetric(
-                        insertion: .opacity.combined(with: .scale(scale: 0.94, anchor: .top))
-                            .animation(.spring(response: 0.36, dampingFraction: 0.86).delay(0.04)),
-                        removal: .opacity.animation(.easeOut(duration: 0.12))))
+            ZStack(alignment: .top) {
+                if m == .open {
+                    expanded.transition(contentTransition)
+                } else if let ps = peekSession {
+                    PeekBanner(model: model, peek: ps.0, session: ps.1, notch: notch).transition(contentTransition)
                 } else {
-                    closed.transition(.opacity.animation(.easeInOut(duration: 0.18)))
+                    closed.transition(reduceMotion ? .opacity : .asymmetric(
+                        insertion: .opacity.animation(.easeOut(duration: 0.18).delay(0.1)),
+                        removal: .opacity.animation(.easeIn(duration: 0.08))))
                 }
             }
-            .background(NotchShape(radius: model.expanded ? 22 : 12).fill(Theme.bg))
-            .clipShape(NotchShape(radius: model.expanded ? 22 : 12))
-            .offset(x: model.expanded ? min(max(anchor, -Self.slack), Self.slack) : anchor)   // beside the notch: under the pill
+            // One shape whose size springs between pill, banner and panel; the content inside
+            // keeps its own size and is revealed (or tucked away) by the shape's edge.
+            .frame(width: size.width + 2 * shoulder, height: size.height, alignment: .top)
+            .clipShape(shape)
+            .background(shape.fill(Theme.bg)
+                .shadow(color: .black.opacity(m == .open ? 0.45 : m == .peek ? 0.3 : 0), radius: 16, y: 8))
+            .offset(x: m == .open ? min(max(anchor, -Self.slack), Self.slack) : anchor)   // beside the notch: under the pill
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: model.expanded)
+        .animation(reduceMotion ? Motion.calm : m == .closed ? Motion.close : Motion.open, value: m)
+        .animation(reduceMotion ? nil : Motion.swell, value: model.hovering)
+    }
+
+    private var contentTransition: AnyTransition {
+        reduceMotion ? .opacity : .asymmetric(
+            insertion: .modifier(active: Reveal(on: false), identity: Reveal(on: true))
+                .animation(.easeOut(duration: 0.24).delay(0.05)),
+            removal: .modifier(active: Reveal(on: false), identity: Reveal(on: true))
+                .animation(.easeIn(duration: 0.1)))
+    }
+
+    /// The content's natural size: it drives the shape's height and the hover hit area.
+    private func measured(_ s: CGSize) {
+        model.expandedSize = s
+        guard abs(s.height - openHeight) > 0.5 else { return }
+        if reduceMotion { openHeight = s.height } else { withAnimation(Motion.open) { openHeight = s.height } }
     }
 
     // MARK: closed
@@ -69,10 +146,7 @@ struct NotchRoot: View {
             Color.clear.frame(width: gap)
             HStack(spacing: 4) {
                 if needs > 0 {
-                    Text("\(needs)").font(.system(size: 11, weight: .heavy, design: .rounded))
-                        .foregroundStyle(Theme.alertText)
-                        .padding(.horizontal, 6).padding(.vertical, 1)
-                        .background(Capsule().fill(Theme.alert))
+                    NeedsBadge(count: needs)
                 } else if let s = live.first {
                     Circle().fill(Theme.color(s.status)).frame(width: 7, height: 7)
                     Text("\(live.count)").font(.system(size: 11, weight: .semibold, design: .rounded))
@@ -91,21 +165,22 @@ struct NotchRoot: View {
 
     private var expanded: some View {
         VStack(alignment: .leading, spacing: 8) {
-            header
+            header.modifier(Cascade(on: appeared, index: 0, reduce: reduceMotion))
             if let d = model.showDiff {
                 DiffView(model: model, item: d.item, folder: d.folder)
             } else if model.showSettings {
                 SettingsView(model: model)
             } else {
                 // Oldest two requests as cards; the rest wait their turn.
-                ForEach(model.store.pending.prefix(2)) { r in
+                ForEach(Array(model.store.pending.prefix(2).enumerated()), id: \.element.id) { i, r in
                     RequestCard(model: model, request: r)
+                        .modifier(Cascade(on: appeared, index: 1 + i, reduce: reduceMotion))
                 }
                 if model.store.pending.count > 2 {
                     Text("+\(model.store.pending.count - 2) more waiting").font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Theme.alert)
                 }
-                FilterBar(model: model)
+                FilterBar(model: model).modifier(Cascade(on: appeared, index: 1, reduce: reduceMotion))
                 let list = model.visibleSessions
                 if list.isEmpty {
                     Text(model.filter != .all ? "No \(model.filter.label.lowercased()) sessions."
@@ -127,17 +202,21 @@ struct NotchRoot: View {
         .padding(.horizontal, 14)
         .padding(.bottom, 14)
         .frame(width: Self.expandedWidth)
+        .fixedSize(horizontal: false, vertical: true)
         .background(GeometryReader { g in
             Color.clear
-                .onAppear { model.expandedSize = g.size }
-                .onChange(of: g.size) { _, new in model.expandedSize = new }
+                .onAppear { measured(g.size) }
+                .onChange(of: g.size) { _, new in measured(new) }
         })
+        .task { appeared = true }
+        .onDisappear { appeared = false }
     }
 
     private func cards(_ list: [Session]) -> some View {
         VStack(spacing: 6) {
-            ForEach(list) { s in
+            ForEach(Array(list.enumerated()), id: \.element.id) { i, s in
                 SessionCard(model: model, session: s)
+                    .modifier(Cascade(on: appeared, index: 2 + i, reduce: reduceMotion))
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -145,15 +224,79 @@ struct NotchRoot: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Text("Claude HQ").font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(Theme.text)
             Circle().fill(model.hqReachable ? Theme.ok : Theme.faint).frame(width: 6, height: 6)
                 .help(model.hqReachable ? "Connected to Claude HQ" : "Claude HQ is not running: using local creatures")
+            Text(summary).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.faint).lineLimit(1)
             Spacer()
             IconButton(symbol: "square.grid.2x2.fill", help: "Open Claude HQ") { model.openHQ() }
             IconButton(symbol: model.showSettings ? "xmark" : "gearshape.fill",
                        help: model.showSettings ? "Close settings" : "Settings") { model.showSettings.toggle() }
         }
+    }
+
+    /// "1 needs you · 2 working", or "all quiet".
+    private var summary: String {
+        let all = model.store.sessions.values
+        let needs = model.store.pending.count + all.filter { $0.status == .needs && !model.store.hasPending($0.id) }.count
+        let working = all.filter { $0.status == .working }.count
+        var parts: [String] = []
+        if needs > 0 { parts.append("\(needs) need\(needs == 1 ? "s" : "") you") }
+        if working > 0 { parts.append("\(working) working") }
+        return parts.isEmpty ? (all.isEmpty ? "" : "all quiet") : parts.joined(separator: " · ")
+    }
+}
+
+/// The closed pill's count of sessions waiting on you, breathing softly.
+struct NeedsBadge: View {
+    let count: Int
+    @State private var pulse = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        Text("\(count)").font(.system(size: 11, weight: .heavy, design: .rounded))
+            .foregroundStyle(Theme.alertText)
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .background(Capsule().fill(Theme.alert))
+            .background(Capsule().fill(Theme.alert).blur(radius: 5).opacity(pulse ? 0.75 : 0.15))
+            .scaleEffect(pulse ? 1.06 : 1)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
+            .onAppear { if !reduceMotion { pulse = true } }
+    }
+}
+
+/// The banner the pill widens into when a session finishes or fails. A click jumps to its
+/// terminal; resting on it opens the whole panel, as on the pill.
+struct PeekBanner: View {
+    @ObservedObject var model: AppModel
+    let peek: Peek
+    let session: Session
+    let notch: CGSize
+    static let width: CGFloat = 360
+
+    var body: some View {
+        let failed = peek.kind == .failed
+        let tint = failed ? Theme.danger : Theme.ok
+        HStack(spacing: 10) {
+            SessionAvatar(model: model, session: session, size: 26, status: failed ? .error : .done)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(session.label).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text).lineLimit(1)
+                Text(failed ? (session.now.isEmpty ? "Stopped with an error" : session.now) : "Finished")
+                    .font(.system(size: 11)).foregroundStyle(tint).lineLimit(1).truncationMode(.tail)
+            }
+            Spacer(minLength: 6)
+            Image(systemName: failed ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .font(.system(size: 15, weight: .semibold)).foregroundStyle(tint)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, notch.height + 4)
+        .frame(width: Self.width, height: notch.height + NotchRoot.peekExtra, alignment: .top)
+        .contentShape(Rectangle())
+        .onTapGesture { model.jump(session); model.dismissPeek() }
+        .help("Jump to this session's terminal")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(session.label) \(failed ? "stopped with an error" : "finished")")
+        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -161,13 +304,32 @@ struct IconButton: View {
     let symbol: String
     let help: String
     let action: () -> Void
+    @State private var hover = false
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol).font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Theme.subtle).frame(width: 22, height: 22)
+                .foregroundStyle(hover ? Theme.text : Theme.subtle).frame(width: 22, height: 22)
+                .background(Circle().fill(hover ? Theme.cardHover : .clear))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain).help(help).accessibilityLabel(help)
+        .onHover { hover = $0 }
+        .animation(.easeOut(duration: 0.12), value: hover)
+    }
+}
+
+/// An SF Symbol for each tool on the ticker.
+enum ToolIcon {
+    static func symbol(_ tool: String) -> String {
+        switch tool {
+        case "Bash", "BashOutput", "KillShell": "terminal"
+        case "Edit", "MultiEdit", "Write", "NotebookEdit": "pencil"
+        case "Read", "Grep", "Glob", "LS": "doc.text.magnifyingglass"
+        case "WebFetch", "WebSearch": "globe"
+        case "Agent", "Task": "person.2"
+        case "TodoWrite": "checklist"
+        default: tool.hasPrefix("mcp__") ? "puzzlepiece.extension" : "sparkle"
+        }
     }
 }
 
@@ -194,6 +356,7 @@ struct SessionCard: View {
     @ObservedObject var model: AppModel
     let session: Session
     @State private var hover = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let cr = model.creature(session)
@@ -224,10 +387,21 @@ struct SessionCard: View {
                 ForEach(session.ticker.prefix(3)) { t in
                     TickerRow(item: t, onOpen: t.diff == nil ? nil : { model.openDiff(t, in: session) })
                 }
+                // A prompt only the terminal can answer (approvals off, or one the notch never saw).
+                if session.status == .needs && !model.store.hasPending(session.id) {
+                    Button("Answer in the terminal") { model.jump(session) }.buttonStyle(LinkStyle())
+                }
             }
         }
         .padding(8)
+        .padding(.leading, 4)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(hover ? Theme.cardHover : Theme.card))
+        .overlay(alignment: .leading) {
+            Capsule().fill(Theme.color(session.status).opacity(session.status == .idle ? 0.5 : 0.9))
+                .frame(width: 3).padding(.vertical, 10).padding(.leading, 3)
+        }
+        .scaleEffect(hover && !reduceMotion ? 1.01 : 1)
+        .animation(.snappy(duration: 0.18), value: hover)
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture { model.jump(session) }
@@ -240,6 +414,7 @@ struct SessionCard: View {
 /// All / Working / Idle / Stale, with a count on each.
 struct FilterBar: View {
     @ObservedObject var model: AppModel
+    @Namespace private var ns
     var body: some View {
         HStack(spacing: 4) {
             ForEach(SessionFilter.allCases) { f in
@@ -248,7 +423,13 @@ struct FilterBar: View {
                     Text("\(f.label) \(model.count(f))").font(.system(size: 10.5, weight: .semibold, design: .rounded))
                         .foregroundStyle(on ? Theme.buttonText : Theme.subtle)
                         .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(Capsule().fill(on ? Theme.text : Theme.card))
+                        .background {
+                            // the selected highlight slides from tab to tab
+                            ZStack {
+                                Capsule().fill(Theme.card)
+                                if on { Capsule().fill(Theme.text).matchedGeometryEffect(id: "filter", in: ns) }
+                            }
+                        }
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -285,6 +466,8 @@ struct TickerRow: View {
     @State private var hover = false
     var body: some View {
         let row = HStack(spacing: 5) {
+            Image(systemName: ToolIcon.symbol(item.tool)).font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(item.failed ? Theme.danger : Theme.faint).frame(width: 12)
             Text(item.tool).font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                 .foregroundStyle(item.failed ? Theme.danger : Theme.subtle)
             Text(item.target).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.faint)
@@ -418,7 +601,9 @@ struct RequestCard: View {
             }
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.alert.opacity(0.7), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.alert.opacity(0.07)))
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.alert.opacity(0.7), lineWidth: 1)
+            .shadow(color: Theme.alert.opacity(0.35), radius: 6))
     }
 }
 
@@ -637,6 +822,7 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            SectionTitle(text: "Look")
             VStack(alignment: .leading, spacing: 6) {
                 Text("Sprites").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.subtle)
                 Picker("Sprites", selection: $model.spriteSetting) {
@@ -657,12 +843,17 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Divider().overlay(Theme.card)
+            SectionTitle(text: "Behaviour")
             SettingToggle(title: "Sounds", detail: "A chime when a session needs you or finishes.", isOn: $model.soundsOn)
+            SettingToggle(title: "Live banners",
+                          detail: "The notch widens for a moment when a session finishes or fails.",
+                          isOn: $model.banners)
             SettingToggle(title: "Show idle sessions", detail: "Sessions waiting for your next prompt.", isOn: $model.showIdle)
             SettingToggle(title: "Approve from the notch",
                           detail: "Off: every permission prompt and question goes straight to the terminal.",
                           isOn: $model.approvals)
             Divider().overlay(Theme.card)
+            SectionTitle(text: "Phone")
             PhoneSettings(model: model)
             Divider().overlay(Theme.card)
             HStack {
@@ -703,6 +894,13 @@ struct SettingsView: View {
                 SessionAvatar(model: model, session: s, size: 34, status: .working)
             }
         }
+    }
+}
+
+struct SectionTitle: View {
+    let text: String
+    var body: some View {
+        Text(text.uppercased()).font(.system(size: 9.5, weight: .bold)).tracking(0.6).foregroundStyle(Theme.faint)
     }
 }
 

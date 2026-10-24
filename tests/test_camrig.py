@@ -888,5 +888,109 @@ class CamRig(unittest.TestCase):
         self.close(r["fast"], 1.8 * 6 / 4, 1e-6)
 
 
+PASSENGER_HARNESS = r"""
+var fs = require("fs"), root = %(root)s;
+global.window = {HQV: {}};
+new Function(fs.readFileSync(root + "/games/camrig.js", "utf8"))();
+var C = window.HQV.camrig, out = {};
+var FLAT = {ground: function(){ return 0; }, hit: function(){ return 1; }, viewH: 800};
+function run(s, tgt, secs, dt){ dt = dt || 1/60; var p, n = Math.round(secs/dt); for(var i = 0; i < n; i++) p = C.step(s, tgt, dt, FLAT); return p; }
+var KINDS = ["bus", "tram", "metro", "rail", "gondola", "waterbus", "cab", "heli-cabin"];
+out.rows = {}; KINDS.forEach(function(k){ out.rows[k] = C.VEHICLE[k] || null; });
+// first person in a bus seat: the eye is the anchor in the vehicle frame; a chase sits behind a bus further than behind a car
+var tb = {x: 3, y: 0.3, z: -2, yaw: 0.6, pitch: 0, roll: 0, speed: 8, vehicle: "bus", moving: true};
+var fp = run(C.create({mode: "fp", settings: {headBob: false}}), tb, 2);
+out.fp = {pos: fp.pos, want: C.fpAnchorWorld(tb, C.VEHICLE.bus.fpAnchor.seat), hide: fp.hideAvatar};
+function chaseDist(v){ var t = {x: 0, y: 0, z: 0, yaw: 0, speed: 0, vehicle: v}, p = run(C.create({mode: "chase"}), t, 4); return Math.hypot(p.pos.x, p.pos.z); }
+out.chase = {bus: chaseDist("bus"), tram: chaseDist("tram"), car: chaseDist("car")};
+// selfie: at arm's length in front of the face, looking at it; level and still with reduced motion or target.calm
+function selfie(settings, extra, secs){
+  var s = C.create({mode: "chase", settings: settings}), t = {x: 10, y: 0, z: 4, yaw: 1.1, speed: 0};
+  for(var k in extra || {}) t[k] = extra[k];
+  run(s, t, 1); C.setMode(s, "selfie", {instant: true});
+  var a = run(s, t, secs || 1), b = run(s, t, 0.7);
+  return {a: a, b: b, mode: s.mode, t: t};
+}
+var still = selfie({reduced: true}), calm = selfie({}, {calm: true}), live = selfie({});
+var seated = selfie({reduced: true}, {face: 1.1});
+var sw = C.create({mode: "selfie", settings: {reduced: true}}), tw = {x: 0, y: 0, z: 0, yaw: 0};
+run(sw, tw, 0.5); C.input(sw, {look: [-2000, 0]}); var turned = run(sw, tw, 0.5);
+C.cycle(sw, 1); out.cycleFrom = sw.mode;
+out.selfie = {still: still, calm: calm, live: live, seated: seated, turned: turned, inOrder: C.ORDER.indexOf("selfie"), consts: C.SELFIE, mode: C.MODES.selfie};
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class PassengerCameraTest(unittest.TestCase):
+    """HQ 3.15: passenger rows for every ridden kind, and the phone's selfie camera."""
+    @classmethod
+    def setUpClass(cls):
+        p = subprocess.run([NODE, "-e", PASSENGER_HARNESS % {"root": json.dumps(ROOT)}], capture_output=True, text=True, timeout=60)
+        if p.returncode != 0:
+            raise AssertionError("node failed:\n" + p.stderr[-4000:])
+        cls.o = json.loads(p.stdout)
+
+    def test_passenger_rows(self):
+        for k, row in self.o["rows"].items():
+            self.assertIsNotNone(row, k)
+            seat = row["fpAnchor"]["seat"]
+            self.assertEqual(len(seat), 3, k)
+            self.assertTrue(1.0 <= seat[1] <= 1.8, (k, seat))         # a seated eye
+            for key in ("backMul", "upMul", "sideMul", "fovSpeedKick", "roll"):
+                self.assertIn(key, row, (k, key))
+        for k in ("bus", "tram", "metro", "rail", "waterbus"):
+            self.assertAlmostEqual(self.o["rows"][k]["fpAnchor"]["seat"][1], 0.45 + 1.15, places=6)   # over the floor centre
+            self.assertLess(self.o["rows"][k]["fpAnchor"]["seat"][0], 0)                             # the pavement (right) side
+
+    def test_passenger_fp_and_chase(self):
+        f = self.o["fp"]
+        for a in "xyz":
+            self.assertAlmostEqual(f["pos"][a], f["want"][a], places=6)
+        self.assertTrue(f["hide"])
+        c = self.o["chase"]
+        self.assertGreater(c["bus"], c["car"])
+        self.assertGreater(c["tram"], c["bus"])
+
+    def face(self, r, h=1.25):
+        t = r["t"]
+        return {"x": t["x"], "y": t["y"] + h, "z": t["z"]}
+
+    def test_selfie_at_arms_length_facing_the_face(self):
+        for key in ("still", "calm", "live"):
+            r = self.o["selfie"][key]
+            self.assertEqual(r["mode"], "selfie")
+            p, f = r["a"], self.face(r)
+            d = math.dist([p["pos"][a] for a in "xyz"], [f[a] for a in "xyz"])
+            self.assertTrue(1.95 <= d <= 2.1, (key, d))   # the characters have big heads: 0.65 m was inside the cap
+            for a in "xyz":
+                self.assertAlmostEqual(p["look"][a], f[a], places=6)
+            # in front of the avatar: along its facing (sin yaw, cos yaw)
+            yaw = r["t"]["yaw"]
+            ahead = (p["pos"]["x"] - f["x"]) * math.sin(yaw) + (p["pos"]["z"] - f["z"]) * math.cos(yaw)
+            self.assertGreater(ahead, 1.9, key)
+            self.assertFalse(p["hideAvatar"])
+            self.assertFalse(p["hud"])
+
+    def test_selfie_level_and_still_under_calm(self):
+        for key in ("still", "calm"):
+            r = self.o["selfie"][key]
+            self.assertEqual(r["a"]["roll"], 0)
+            self.assertEqual(r["a"]["up"], {"x": 0, "y": 1, "z": 0})
+            self.assertEqual(r["a"]["pos"], r["b"]["pos"])
+        live = self.o["selfie"]["live"]
+        self.assertNotEqual(live["a"]["pos"], live["b"]["pos"])           # a slight hand sway otherwise
+        self.assertLess(abs(live["a"]["roll"]), 0.03)
+        s = self.o["selfie"]["seated"]
+        self.assertAlmostEqual(s["a"]["look"]["y"], s["t"]["y"] + 1.1, places=6)
+
+    def test_selfie_look_swings_round_the_face_and_is_not_in_the_cycle(self):
+        t = self.o["selfie"]["turned"]
+        self.assertGreater(abs(t["pos"]["x"]), 0.3)                      # swung round (capped at 0.7 rad)
+        self.assertLess(abs(math.atan2(t["pos"]["x"], t["pos"]["z"])), 0.7 + 0.2)
+        self.assertEqual(self.o["selfie"]["inOrder"], -1)
+        self.assertNotEqual(self.o["cycleFrom"], "selfie")
+
+
 if __name__ == "__main__":
     unittest.main()

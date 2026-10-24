@@ -678,7 +678,7 @@ fn wet(p: &Profile, t: &Terrain, q: P) -> bool {
 }
 
 /// Is the footprint clear of every road (its half-width and 3 m), every block and every site?
-fn open(roads: &Roads, city: &City, poly: &[P]) -> bool {
+pub(super) fn open(roads: &Roads, city: &City, poly: &[P]) -> bool {
     let (x0, x1) = (poly.iter().map(|q| q.0).min().unwrap(), poly.iter().map(|q| q.0).max().unwrap());
     let (z0, z1) = (poly.iter().map(|q| q.1).min().unwrap(), poly.iter().map(|q| q.1).max().unwrap());
     let n = poly.len();
@@ -760,7 +760,7 @@ fn edge(p: &Profile, t: &Terrain, roads: &Roads, city: &City, river: Option<&Riv
             let poly = rect(c, (-f.0, -f.1), row.w_cm, row.d_cm);
             let score = key(geom::rise(t, &poly), r, k, c);
             let in_world = poly.iter().all(|q| q.0.abs() < p.size_cm / 2 && q.1.abs() < p.size_cm / 2);
-            let dry = !poly.iter().any(|&q| wet(p, t, q)) && !river.is_some_and(|r| r.bank.meets(&poly));
+            let dry = !poly.iter().any(|&q| wet(p, t, q)) && !river.is_some_and(|r| r.bank_meets(&poly));
             if best.is_none_or(|b| score < b.0) && in_world && dry && open(roads, city, &poly) {
                 best = Some((score, k, c));
             }

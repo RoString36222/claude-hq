@@ -10,8 +10,10 @@ API does not answer, when an @include was left unassembled, or when the page
 throws a JavaScript error while loading.
 
 Then the 3D City runs (skipped with --no-3d, or when the world fixture is
-missing): a fake Arena on a free port serves /v1/world/claude-hq@1 (the
-decompressed tests/fixtures JSON, with an ETag and 304s) and /v1/hq/open, and
+missing): a fake Arena on a free port serves the worlds (the decompressed
+tests/fixtures JSON, with an ETag and 304s): the live Commons claude-hq@3 and the
+fixture island user:<id>@3 (HQ 3.15), their @2 forms, and claude-hq@1; the
+Commons' HQ ranks (/v1/world/claude-hq@3/assign) and /v1/hq/open, and
 headless Chrome (swiftshader WebGL, driven over the DevTools pipe) opens
 `/?hqsmoke=1&...` and polls `data-hq-smoke` in real time:
   - cam=map (the whole map, from the plaza): road, shield, HQ and peer labels
@@ -20,6 +22,8 @@ headless Chrome (swiftshader WebGL, driven over the DevTools pipe) opens
     triangles < 1.5M; reports whether the mesh worker ran;
   - C0: the second load with the same profile comes from the IndexedDB cache in
     < 100 ms, and the fake Arena answered a 304;
+  - underground (HQ 3.15): below the street at a metro station (HQ3D_DEBUG.transit):
+    the frame's draw calls < 120;
   - fallback: an Arena answering 401 on /v1/world/* -> the legacy City with the
     "not available" announce and no JavaScript error.
 Stdlib only; needs Google Chrome (or Chromium) for the browser half. Never opens
@@ -48,6 +52,11 @@ ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
 BIN = ARGS[0] if ARGS else os.path.join(ROOT, "dashboard-rs", "target", "release", "claudehq")
 FIXTURE = os.path.join(ROOT, "tests", "fixtures", "claude-hq@1.json.gz")
 WORLD_ID = "claude-hq@1"
+# HQ 3.15 (D2): the live worlds are @3; @2 stays served for older clients. The page asks for the live Commons first.
+ISLAND_UID = "0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c"
+LIVE_ID = "claude-hq@3"
+WORLD_FIXTURES = {"claude-hq@1": "claude-hq@1.json.gz", "claude-hq@2": "claude-hq@2.json.gz", "claude-hq@3": "claude-hq@3.json.gz",
+                  "user:%s@2" % ISLAND_UID: "island@2.json.gz", "user:%s@3" % ISLAND_UID: "island@3.json.gz"}
 CHROMES = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     shutil.which("google-chrome") or "", shutil.which("chromium") or "", shutil.which("chromium-browser") or "",
@@ -63,6 +72,7 @@ MAX_TRIANGLES = 1_500_000
 # the whole frame (stats().drawCalls: the renderer's own count, the shadow pass included): the synthetic city's spawn
 # drew 536 when this was first measured, the Commons spawn ~550 before its airport
 MAX_FRAME_CALLS = 700
+MAX_UNDER_CALLS = 120           # below the street (HQ 3.15): the surface is hidden, the metro has its own budget
 
 
 def free_port():
@@ -104,9 +114,13 @@ class FakeArena:
     /v1/hq/open, everything else 404. With deny_world, /v1/world/* answers 401.
     `log` keeps (path, status) of every request."""
 
-    def __init__(self, world_bytes, deny_world=False):
+    def __init__(self, world_bytes, deny_world=False, worlds=None):
+        # worlds: {id: decompressed JSON}; world_bytes is claude-hq@1's (always served)
+        self.worlds = dict(worlds or {})
+        self.worlds[WORLD_ID] = world_bytes
+        self.etags = {k: '"%s"' % hashlib.sha1(v).hexdigest()[:20] for k, v in self.worlds.items()}
         self.world = world_bytes
-        self.etag = '"%s"' % hashlib.sha1(world_bytes).hexdigest()[:20]
+        self.etag = self.etags[WORLD_ID]
         self.deny = deny_world
         self.log = []
         arena = self
@@ -131,10 +145,21 @@ class FakeArena:
                 path = self.path.split("?")[0]
                 if path.startswith("/v1/world/") and arena.deny:
                     return self.reply(401, b'{"detail":"unauthorised"}')
-                if path == "/v1/world/" + WORLD_ID:
-                    if self.headers.get("If-None-Match") == arena.etag:
-                        return self.reply(304, extra=[("ETag", arena.etag)])
-                    return self.reply(200, arena.world, extra=[("ETag", arena.etag)])
+                if path.startswith("/v1/world/") and path.endswith("/assign") and path[len("/v1/world/"):-len("/assign")] in ("claude-hq@3", "claude-hq@2"):
+                    # the Commons' HQ ranks: the synthetic HQs on ranks 0, 1, 2 (yours first)
+                    rows = [{"user": h["userId"], "lot_rank": i} for i, h in enumerate(synthetic_hqs()["hqs"])]
+                    return self.reply(200, json.dumps(rows).encode())
+                wid = path[len("/v1/world/"):] if path.startswith("/v1/world/") else None
+                if wid in arena.worlds:
+                    tag = arena.etags[wid]
+                    if self.headers.get("If-None-Match") == tag:
+                        return self.reply(304, extra=[("ETag", tag)])
+                    return self.reply(200, arena.worlds[wid], extra=[("ETag", tag)])
+                if path == "/v1/archipelago" and LIVE_ID in arena.worlds:
+                    # the Commons and the fixture island, as an Arena at @3 lists them (cm)
+                    return self.reply(200, json.dumps({"commons": {"world": LIVE_ID, "x": 0, "z": 0},
+                                                       "islands": [{"owner": ISLAND_UID, "name": "Fixture Island", "world": "user:%s@3" % ISLAND_UID,
+                                                                    "x": 310000, "z": 0, "tier": 5}]}).encode())
                 if path == "/v1/hq/open":
                     return self.reply(200, json.dumps(synthetic_hqs()).encode())
                 return self.reply(404, b'{"detail":"Not Found"}')
@@ -153,6 +178,17 @@ class FakeArena:
 def load_world():
     with gzip.open(FIXTURE, "rb") as f:
         return f.read()
+
+
+def load_worlds():
+    """Every fixture world the fake Arena serves besides claude-hq@1 (those present)."""
+    out = {}
+    for wid, name in WORLD_FIXTURES.items():
+        p = os.path.join(ROOT, "tests", "fixtures", name)
+        if wid != WORLD_ID and os.path.exists(p):
+            with gzip.open(p, "rb") as f:
+                out[wid] = f.read()
+    return out
 
 
 def h1_route(d):
@@ -516,7 +552,8 @@ def stop_server(server):
 # ----------------------------------------------------------------- the 3D runs --
 
 def run_3d(chrome_exe, tmp, root, base, arena, world):
-    sp = spots(world)
+    shown = arena.worlds.get(LIVE_ID) or world        # the page builds the live Commons when the Arena has it
+    sp = spots(shown)
     profile = os.path.join(tmp, "chrome-3d")
     try:
         br = Chrome(chrome_exe, profile)
@@ -574,6 +611,27 @@ def run_3d(chrome_exe, tmp, root, base, arena, world):
                 if arena.count(304) < 1:
                     fail("C0: the fake Arena never answered a 304", repr(arena.log))
                 print(f"ok  C0 second load from cache in {cache} ms, Arena 304s: {arena.count(304)}")
+        # 3. below the street (HQ 3.15): the first metro station, its platform, the underground view
+        if LIVE_ID in arena.worlds:
+            pg = br.open(smoke_url(base, "chase", sp["plaza"]))
+            try:
+                pg.wait_smoke()
+                st = pg.eval("(function(){ var T = window.HQ3D_DEBUG && HQ3D_DEBUG.transit; if(!T) return null; var s = T.stops('metro')[0]; return s ? JSON.stringify(T.go(s.id)) : null; })()")
+                if not st:
+                    fail("underground: HQ3D_DEBUG.transit has no metro station", "\n".join(pg.console()[-40:]))
+                time.sleep(3)
+                v = json.loads(pg.eval("JSON.stringify(HQ3D_DEBUG.stats())") or "{}")
+                errs = pg.errors()
+                if errs:
+                    fail("underground: the page threw:\n" + "\n".join(errs[:20]))
+                dc = v.get("drawCalls")
+                if not v.get("underground"):
+                    fail(f"underground: not below the street at {st} ({v})")
+                if not isinstance(dc, (int, float)) or dc <= 0 or dc >= MAX_UNDER_CALLS:
+                    fail(f"underground: the frame's {dc} draw calls (< {MAX_UNDER_CALLS}) at {st}; transit {v.get('transit')}")
+                print(f"ok  underground at {json.loads(st).get('name')}: frame {dc} draw calls / {v.get('triangles')} triangles, transit {v.get('transitDrawCalls')}")
+            finally:
+                pg.close()
         return results
     finally:
         br.close()
@@ -632,7 +690,7 @@ def main():
     if do_3d and world is None:
         print(f"note: {FIXTURE} missing; skipping the 3D runs")
     tmp = tempfile.mkdtemp(prefix="hq-ui-smoke-")
-    arena = FakeArena(world) if world else None
+    arena = FakeArena(world, worlds=load_worlds()) if world else None
     root, home = make_root(tmp, arena.url if arena else None)
     server, base, log_path = start_server(tmp, root, home)
     try:

@@ -605,6 +605,7 @@ function arenaOpenSocket(){
         var kind = m.data && m.data.kind;
         if(kind==="voice") voiceOnAnnounce(m); else if(kind==="mudj"){ if(typeof musicOnSay==="function") musicOnSay(m); } else if(kind==="status") arenaOnStatus(m); else if(kind==="evo") arenaOnEvo(m);
         else if(kind==="game"){ if(window.HQV && window.HQV.onSay){ try{ window.HQV.onSay(m); }catch(e){} } }
+        else if(kind==="near"){}   // [3.15] a nearby line: the phone's (ui/app/41-phone.js listens on this socket), never lobby chat
         else arenaChatReceive(m);
       }
       else if(m.type==="signal"){ if(m.data && m.data.kind==="mudj"){ if(typeof musicOnSignal==="function") musicOnSignal(m); } else voiceOnSignal(m); }

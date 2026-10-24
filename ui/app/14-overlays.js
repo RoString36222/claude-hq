@@ -62,6 +62,11 @@ function buildCmdkItems(q){
   }
   // actions
   items.push({group:"Actions", ic:"⚙️", label:"Open Settings", run:function(){ openSettings(); }});
+  if(typeof hqPhoneOpen==="function"){   // [3.15] the phone
+    items.push({group:"Actions", ic:"\uD83D\uDCF1", label:"Phone", sub:"messages, calls, tickets, departures, the transit map (`)", run:function(){ hqPhoneOpen(); }});
+    items.push({group:"Actions", ic:"\uD83C\uDFAB", label:"Phone: Tickets", sub:"plan a journey, free tickets, airport check-in", run:function(){ hqPhoneOpen("tickets"); }});
+    items.push({group:"Actions", ic:"\uD83D\uDDFA\uFE0F", label:"Phone: Transit map", sub:"every line, live vehicles", run:function(){ hqPhoneOpen("map"); }});
+  }
   if(typeof hqStudioOpen==="function") items.push({group:"Actions", ic:"\uD83C\uDFA8", label:"HQ Studio", sub:"style your tower, lobby and floors", run:function(){ hqStudioOpen(); }});
   if(typeof openNotchInvite==="function") items.push({group:"Actions", ic:"\uD83D\uDCBB", label:"HQ Notch", sub:"install or check the notch app", run:function(){ openNotchInvite(); }});
   items.push({group:"Actions", ic:"⬇️", label:"Export CSV", run:function(){ downloadExport("csv"); }});

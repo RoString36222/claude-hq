@@ -246,16 +246,22 @@ function keepMesh(o){
 function under(o, roots, top){ for(var p = o; p && p !== top; p = p.parent) if(roots[p.uuid]) return true; return false; }
 
 /* ---------- Cities (v2 worlds): pure helpers ---------- */
-var COMMONS = "claude-hq@2", LEGACY = "claude-hq@1";
-var ISLAND_RE = /^user:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})@2$/;
+// Live ids (HQ 3.15, D2) from games/world.js: the Commons claude-hq@3 (claude-hq@2 on an older Arena), islands
+// user:<uid>@3 (@2 on an older Arena), Arena City claude-hq@1
+var WDL = HQV.world || {};
+var COMMONS = WDL.COMMONS || "claude-hq@3", COMMONS_V2 = WDL.COMMONS_V2 || "claude-hq@2", LEGACY = WDL.ID || "claude-hq@1";
+var ISLAND_RE = /^user:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})@[23]$/;
 var UID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 var NOT_CIVIC = {fountain: 1, skatepark: 1, bikepark: 1, spawn: 1, "view-building": 1};   // the plaza's own parts
 var TERMINALS = {dock: 1, port: 1, transit: 1, airport: 1};
 var STOP_R = 14, TERMINAL_R = 24;           // E reaches a stop / a terminal's door within this (m)
 // a world's owner for /api/arena/city/<owner>: an island's user id, else the Commons
 function ownerOf(world){ var m = ISLAND_RE.exec(String(world || "")); return m ? m[1] : "commons"; }
-function islandOf(uid){ return UID_RE.test(String(uid || "")) ? "user:" + uid + "@2" : null; }
-function worldOk(world){ return world === COMMONS || world === LEGACY || ISLAND_RE.test(String(world || "")); }
+function islandOf(uid, v){ return UID_RE.test(String(uid || "")) ? "user:" + uid + "@" + (v === 2 ? 2 : 3) : null; }
+function isCommons(world){ return world === COMMONS || world === COMMONS_V2; }
+function worldOk(world){ return isCommons(world) || world === LEGACY || ISLAND_RE.test(String(world || "")); }
+// the same island (or the Commons) at the other generator version: the fallback when an Arena has no @3 yet
+function olderOf(world){ var m = ISLAND_RE.exec(String(world || "")); return m && /@3$/.test(world) ? "user:" + m[1] + "@2" : world === COMMONS ? COMMONS_V2 : null; }
 // a lot's or a site's door direction: its Q16 front (v2), else its facing
 function frontOf(o){
   var f = o && o.front;
@@ -352,14 +358,16 @@ function stopMenu(sim, stopId, nowMs){
 function waitText(ms){ var s = Math.max(0, Math.round(ms/1000)); return s < 60 ? s + " s" : Math.floor(s/60) + " min " + (s % 60) + " s"; }
 // Where you can travel from `here`: your island first, then the Commons, then the other islands you may
 // visit by name. arch: GET /api/arena/archipelago (cm) -> places in metres, as hqtravel wants them.
+// one place whatever its version: the Commons @2 / @3, an island user:<uid>@2 / @3 (an older Arena lists @2 ids)
+function samePlace(a, b){ return a === b || (isCommons(a) && isCommons(b)) || (ownerOf(a) !== "commons" && ownerOf(a) === ownerOf(b)); }
 function travelPlaces(arch, here, me){
   arch = arch || {}; var out = [], mine = islandOf(me);
   function place(o, name){ return {world: o.world, name: name, x: (+o.x || 0)/100, z: (+o.z || 0)/100, tier: o.tier != null ? Math.max(1, Math.min(5, o.tier | 0)) : 5}; }
   var isl = (Array.isArray(arch.islands) ? arch.islands : []).filter(function(o){ return o && ISLAND_RE.test(String(o.world || "")) && isFinite(+o.x) && isFinite(+o.z); });
-  var own = isl.filter(function(o){ return o.world === mine; })[0];
-  if(own && own.world !== here) out.push(place(own, "My island"));
-  if(arch.commons && here !== COMMONS) out.push(place({world: COMMONS, x: arch.commons.x, z: arch.commons.z, tier: 5}, "The Commons"));
-  isl.filter(function(o){ return o.world !== mine && o.world !== here; })
+  var own = isl.filter(function(o){ return samePlace(o.world, mine); })[0];
+  if(own && !samePlace(own.world, here)) out.push(place(own, "My island"));
+  if(arch.commons && !isCommons(here)) out.push(place({world: COMMONS, x: arch.commons.x, z: arch.commons.z, tier: 5}, "The Commons"));
+  isl.filter(function(o){ return !samePlace(o.world, mine) && !samePlace(o.world, here); })
     .sort(function(a, b){ return String(a.name) < String(b.name) ? -1 : String(a.name) > String(b.name) ? 1 : (a.world < b.world ? -1 : 1); })
     .forEach(function(o){ out.push(place(o, String(o.name || "An island").slice(0, 40))); });
   return out;
@@ -380,7 +388,7 @@ function netRoom(world, isles){ return isles && worldOk(world) ? "city3d:" + wor
 
 HQV.hqCity3d = {assign: assign, placeLot: placeLot, placeView: placeView, toWorld: toWorld, pickAt: pickAt, segBox: segBox,
   snapShadow: snapShadow, hqKey: hqKey, keepMesh: keepMesh, HQ_DOOR: HQ_DOOR, VIEW_DOOR: VIEW_DOOR, HQ_FAR: HQ_FAR,
-  COMMONS: COMMONS, ownerOf: ownerOf, islandOf: islandOf, worldOk: worldOk, frontOf: frontOf, assignRanks: assignRanks,
+  COMMONS: COMMONS, COMMONS_V2: COMMONS_V2, isCommons: isCommons, olderOf: olderOf, samePlace: samePlace, ownerOf: ownerOf, islandOf: islandOf, worldOk: worldOk, frontOf: frontOf, assignRanks: assignRanks,
   assignIsland: assignIsland, garagePlace: garagePlace, grandOf: grandOf, roomOf: roomOf, hqFoot: hqFoot, civicSites: civicSites, doorOf: doorOf, backOf: backOf, terminalAt: terminalAt, stopMenu: stopMenu,
   waitText: waitText, travelPlaces: travelPlaces, netRoom: netRoom, simZones: simZones, cityStats: cityStats};
 // Which world the next City is built on, and where you arrive in it (games/hq3d.js goCity). A trip
@@ -465,6 +473,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var fount = null, skate = null, plaza = {x: 0, y: 0, z: 0}, sig = null;
   var bIdx = null;                                      // building lots by 64 m bucket: [{id, min, max}]
   // Cities (a v2 world): which world, whose, how grown, and what runs on it
+  var COMMONS = HQV.hqCity3d.COMMONS;     // (shadows the module's: the Commons this City is on, claude-hq@2 on an older Arena)
   var want = NAV.world || COMMONS, arriveAt = NAV.spawn, worldId = LEGACY, V2 = false;
   NAV.spawn = null;
   var me = (api.me && api.me()) || null, owner = "commons", tier = 5, grow = 1000, cityState = null, assignRows = null;
@@ -475,6 +484,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var petSite = null, petB = null;                // [pets 3.14] the Pet shop (games/hqpets.js): its site and building
   var civics = [], civicG = new THREE.Group(), boatG = new THREE.Group(), boats = [], civicLod = null, decks = [];
   var oc = null, sea = null, arch = null, tsim = null, tview = null, nsim = null, ndraw = null;
+  var transit = null;                             // [3.15] the City's transport (games/hqtransit.js): rides, metro, cabs, ...
   var bus = null, menu = null, menuKey = null, talkL = null, ui = null, statsEl = null, statsAt = 0, fadeEl = null, landing = false, npcSkip = 0;
 
   function ground(x, z){ return W ? WD.groundAt(W, x, z) : 0; }
@@ -884,7 +894,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var BOAT_SIDE = 3;         // m: the two boats moored either side of a berth (a dock with no pier drawn)
   var NPC_BUDGET = 3;        // ms: residents whose update took longer than this update every other frame
   var TALK_SHOW = 5;         // s a resident's line stays over their head
-  function island(){ return worldId !== COMMONS && worldId !== LEGACY; }
+  function island(){ return !isCommons(worldId) && worldId !== LEGACY; }
   function say(t){ if(!t) return; if(api.announce) api.announce(t); if(api.toast) api.toast(t); }
   function npcMs(){ return HQV.npcSim && HQV.npcSim.localMs ? HQV.npcSim.localMs(new Date(Date.now())) : Date.now(); }
   function within(p, ms){
@@ -905,20 +915,24 @@ HQV.hqWorlds.city3d = function(c, w){
       if(cityState){ tier = Math.max(1, Math.min(5, cityState.tier | 0 || 1)); grow = Math.max(0, Math.min(1000, +cityState.grow || 0)); }
     }, function(){ tier = owner === "commons" ? 5 : 1; grow = owner === "commons" ? 1000 : 0; });
   }
-  // The world: the one asked for, else the Commons, else claude-hq@1 (an Arena without @2).
+  // The world: the one asked for, else the Commons, else claude-hq@1 (an Arena without @2). HQ 3.15: an @3 id
+  // falls back to its @2 form first (an Arena without @3): want -> want@2 -> claude-hq@3 -> claude-hq@2 -> claude-hq@1.
   function loadChain(){
-    var ids = [want]; if(want !== COMMONS) ids.push(COMMONS); ids.push(LEGACY);
-    var err = null;
+    var ids = [want], old = olderOf(want);
+    if(old) ids.push(old);
+    [COMMONS, COMMONS_V2, LEGACY].forEach(function(id){ if(ids.indexOf(id) < 0) ids.push(id); });
+    var err = null, log = HQV.hqCity3d.lastLoad = {ids: ids.slice(), errs: []};          // (for tools: what was tried, what failed)
     function next(i){
       if(i >= ids.length) return Promise.reject(err || new Error("world unavailable"));
       return WD.load({id: ids[i]}).then(function(doc){ worldId = doc && worldOk(doc.id) ? doc.id : ids[i]; return doc; },
-                                        function(e){ err = e; return next(i + 1); });
+                                        function(e){ err = e; log.errs.push(ids[i] + ": " + ((e && e.message) || e)); return next(i + 1); });
     }
     return next(0).then(function(doc){
       V2 = !!doc && (doc.v | 0) >= 2;
       if(!V2) return doc;
       owner = ownerOf(worldId);
-      if(worldId !== want && !w.prebuilt) say(want === COMMONS ? "" : "That island isn't available; you're in the Commons.");   // (not a City built ahead as you fly on: 3.11.1)
+      if(isCommons(worldId)) COMMONS = worldId;
+      if(worldId !== want && worldId !== olderOf(want) && !w.prebuilt) say(isCommons(want) ? "" : "That island isn't available; you're in the Commons.");   // (not a City built ahead as you fly on: 3.11.1)
       return fetchCity().then(function(){ return doc; });
     });
   }
@@ -1028,6 +1042,7 @@ HQV.hqWorlds.city3d = function(c, w){
     sea.land = function(x, z){ return coast(x, z) || (decks.length > 0 && HQV.hqCivic.deckAt(decks, x, z) != null); };
     var river = HQV.ocean.riverOf(doc), riverY = HQV.ocean.RIVER_Y || 0;     // the river is calm water, RIVER_Y up
     try { oc = HQV.ocean.mount(c, S); oc.g.position.y = sea.y; if(oc.setRiver) oc.setRiver(river); if(wb && wb.sea) wb.sea.visible = false; } catch(e){ oc = null; }
+    if(oc && oc.setWater && HQV.ocean.waterOf){ try { oc.setWater(HQV.ocean.waterOf(doc)); } catch(e){} }   // [3.15] wakes on the lakes, canals and marina
     S.add(boatG);
     if(HQV.hqboat) sea.docks.forEach(function(d, n){
       var site = siteById(d.id); if(site && site.tier != null && (site.tier | 0) > tier) return;
@@ -1069,7 +1084,7 @@ HQV.hqWorlds.city3d = function(c, w){
     var doc = WD.docOf(W);
     if(HQV.traffic){
       try {
-        tsim = HQV.traffic.create(doc, {tier: tier, grow: grow, seed: W.id, onFare: payFare});
+        tsim = HQV.traffic.create(doc, {tier: tier, grow: grow, seed: W.id});      // every ride is free (3.15, D4): no fare step
         tview = HQV.traffic.view(c); S.add(tview.group);
       } catch(e){ tsim = null; tview = null; }
     }
@@ -1081,12 +1096,65 @@ HQV.hqWorlds.city3d = function(c, w){
       } catch(e){ nsim = null; ndraw = null; }
     }
   }
-  // a ride's fare goes to this city's treasury (the owner rides free; an unpaired page rides free too)
-  function payFare(f){
-    var kind = f && (f.kind === "tram" ? "tram" : f.kind === "fast" ? "fast" : "bus");
-    postJson("/api/arena/city/" + encodeURIComponent(owner) + "/fare", {kind: kind}).then(function(r){
-      if(r && r.ok === false && r.j && (r.j.error || r.j.detail)) say(String(r.j.error || r.j.detail).slice(0, 120));
-    }, function(){});
+  /* ---------- [3.15] transport (games/hqtransit.js): every Service registered with hqRide, the views, the ride
+     session, the metro's underground, Claude Cabs, the helicopter you call and the water taxi ---------- */
+  var underHidden = null;
+  // the underground switch's surface: everything the City draws above the street (restored as it was)
+  function surfaceShow(on){
+    if(!on){
+      if(underHidden) return;
+      underHidden = [];
+      [wb && wb.root, staticG, hqG, civicG, boatG, sky, oc && oc.g, ferryG, airG, bigG, planeG, apprG, cp && cp.B && cp.B.g, tview && tview.group,
+       ndraw && ndraw.group, spx && spx.g, stx && stx.g, rail && rail.g, talkL && talkL.o].forEach(function(g){
+        if(g && g.visible && underHidden.indexOf(g) < 0){ g.visible = false; underHidden.push(g); }
+      });
+      S.children.forEach(function(g){ if(g && g.name === "weather" && g.visible){ g.visible = false; underHidden.push(g); } });
+    } else if(underHidden){ underHidden.forEach(function(g){ g.visible = true; }); underHidden = null; }
+  }
+  function transitSetup(){
+    if(!HQV.hqTransit || !W) return;
+    try {
+      transit = HQV.hqTransit.create(c, {scene: S, W: W, doc: WD.docOf(W), world: worldId, tier: tier, seed: W.seed || W.id, tsim: tsim,
+        say: say, announce: function(t){ if(api.announce) api.announce(t); }, toast: function(t){ if(api.toast) api.toast(t); },
+        calm: function(){ return !!(c.E && c.E.calm && c.E.calm()); }, night: function(){ return night; },
+        reduced: function(){ try { return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch(e){ return false; } },
+        me: function(){ var a = c.avatar() || {x: 0, z: 0}; return {x: a.x, y: a.hy != null ? a.hy : groundY(a.x, a.z), z: a.z, yaw: a.yaw || 0}; },
+        teleport: function(x, y, z, yaw){ if(c.teleport) c.teleport(x, z, yaw, y); },
+        surface: surfaceShow, fade: function(ms){ fadePulse(ms); }, openMenu: openMenu, traffic: function(){ return callTraffic; },
+        startLink: startLink, arch: getArch, roofs: function(){ return roofs.filter(function(r){ return r && r.pad; }).map(function(r){ return {id: "roof:" + r.uid, x: r.pad.x, y: r.pad.y, z: r.pad.z, name: "HQ roof"}; }); },
+        showRoute: function(pts, label){
+          if(!HQV.hqnav) return;
+          if(!pts){ if(route && route.kind === "transit") navClear(); return; }
+          if(pts.length >= 4) navTo({x: pts[pts.length - 2], z: pts[pts.length - 1], label: label || "your stop", kind: "transit"});
+        },
+        active: function(){ return !w.prebuilt; }, userId: me});
+      // off the Island Link at its underground platform: arrive below the street
+      if(arriveAt && arriveAt.under && HQV.hqUnderground && !w.prebuilt) HQV.hqUnderground.set(true, "arrive");
+    } catch(e){ transit = null; }
+  }
+  // a fade to black and back over ms (the underground's way down and up; hqUndergroundCtl skips it under Calm)
+  var fadeP = null;
+  function fadePulse(ms){ fadeP = {t0: Date.now(), ms: Math.max(100, +ms || 600)}; }
+  function fadePulseStep(){
+    if(!fadeP) return 0;
+    var u = (Date.now() - fadeP.t0)/fadeP.ms; if(u >= 1){ fadeP = null; return 0; }
+    return u < 0.5 ? u*2 : (1 - u)*2;
+  }
+  // the Island Link: at departure the ride hands you to hqTravel's world trip (mode "link": the tunnel, the sea crossing,
+  // the next City built on the way)
+  function startLink(trip, seat){
+    if(!HQV.hqTravel || !trip || !trip.world) return false;
+    var a = arch || {}, I = (a.islands || []).filter(function(i){ return i && (i.world === trip.world || olderOf(i.world) === olderOf(trip.world)); })[0];
+    var to = isCommons(trip.world) || /^claude-hq@/.test(String(trip.world)) ? {world: trip.world, name: "The Commons", x: a.commons ? (+a.commons.x || 0)/100 : 0, z: a.commons ? (+a.commons.z || 0)/100 : 0, tier: 5}
+      : {world: trip.world, name: I && I.name ? String(I.name).slice(0, 40) : "the island", x: I ? (+I.x || 0)/100 : 0, z: I ? (+I.z || 0)/100 : 0, tier: I && I.tier != null ? I.tier : 5};
+    var T0 = null;
+    try { T0 = HQV.hqTravel.start("link", here(), to, Object.assign(travelHooks(), {trip: trip, seat: seat, calm: function(){ return !!(c.E && c.E.calm && c.E.calm()); }})); } catch(e){ T0 = null; }
+    if(!T0 || !T0.ok) return false;
+    var me0 = c.avatar() || {x: 0, z: 0};
+    T0.hold = {x: me0.x, y: me0.hy != null ? me0.hy : groundY(me0.x, me0.z), z: me0.z, yaw: 0};
+    NAV.trip = T0;
+    say("Island Link to " + to.name + ". Sit back: the next stop is across the sea.");
+    return true;
   }
 
   /* the menus: a stop's lines, a terminal's trips; plain DOM, textContent only */
@@ -1124,8 +1192,10 @@ HQV.hqWorlds.city3d = function(c, w){
     // focus the menu itself: Tab reaches the items, a digit picks one; Space or Enter only acts on one you chose
     try { m.focus(); } catch(e){}
   }
+  // a stop's name: hqRide's station names (the same on every board, the phone and the announcements), else the road's
   function stopName(id){
     var s = siteById(id); if(!s) return String(id);
+    if(HQV.hqRide && HQV.hqRide.stationName){ try { return HQV.hqRide.stationName(W, s.x/100, s.z/100, s.kind === "tramstop" ? "tram" : "bus"); } catch(e){} }
     var r = WD.nearestRoad(W, s.x/100, s.z/100, 40);
     return (r && r.name ? r.name : String(id)) + (s.kind === "tramstop" ? " (tram)" : "");
   }
@@ -1143,14 +1213,14 @@ HQV.hqWorlds.city3d = function(c, w){
     var trip = tsim && tsim.rideTo(line, stop.id, to, Date.now());
     if(!trip){ say("That line isn't running from here now."); return; }
     bus = {trip: trip, phase: "wait", at: {x: stop.x, z: stop.z}};
-    say("The " + trip.kind + " to " + stopName(to) + " comes in " + waitText(trip.arrive - Date.now()) + ". Fare " + trip.fare.coins + " coins. E cancels.");
+    say("The " + trip.kind + " to " + stopName(to) + " comes in " + waitText(trip.arrive - Date.now()) + ". Free. E cancels.");
   }
   function busStep(){
     if(!bus) return;
     var now = Date.now(), av = c.avatar();
     if(bus.phase === "wait"){
       if(av && Math.hypot(av.x - bus.at.x, av.z - bus.at.z) > STOP_R*2){ bus = null; say("You left the stop."); return; }
-      if(now >= bus.trip.arrive){ bus.phase = "ride"; bus.trip.pay(); say("All aboard."); }
+      if(now >= bus.trip.arrive){ bus.phase = "ride"; say("All aboard."); }
     } else if(bus.phase === "ride" && now >= bus.trip.reach){
       var p = bus.trip.pose(now), right = 3.5;       // step off onto the kerb, on the right of travel
       var x = p.x - Math.cos(p.yaw)*right, z = p.z + Math.sin(p.yaw)*right;
@@ -1159,6 +1229,7 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   // where you stand while a trip holds you: the bus seat, or the terminal you leave from
   w.carry = function(){
+    var tc = transit ? transit.carry(Date.now()) : null; if(tc) return tc;               // [3.15] a ride, a cab, the heli, a water taxi
     if(bus && bus.phase === "ride"){ var p = bus.trip.pose(Date.now()); return {x: p.x, y: p.y + 0.5, z: p.z, yaw: p.yaw}; }
     var ac = airCarry(); if(ac) return ac;                                                  // AIR: your window seat
     if(mine(NAV.voy) && VOY) return seatPose(NAV.voy);
@@ -1174,7 +1245,7 @@ HQV.hqWorlds.city3d = function(c, w){
     var a = arch || {}, o = worldId === COMMONS ? a.commons : (a.islands || []).filter(function(i){ return i && i.world === worldId; })[0];
     return {world: worldId, tier: tier, doc: WD.docOf(W), city: cityState, name: cityState && cityState.name, x: o ? (+o.x || 0)/100 : 0, z: o ? (+o.z || 0)/100 : 0};
   }
-  var MODE_NAME = {ferry: "Ferry", rail: "Train", plane: "Plane", fast: "Fast travel"};
+  var MODE_NAME = {ferry: "Ferry", rail: "Train", plane: "Plane", fast: "Fast travel", link: "Island Link"};
   function openTravelMenu(site){
     getArch().then(function(a){
       if(dead) return;
@@ -1184,6 +1255,11 @@ HQV.hqWorlds.city3d = function(c, w){
           if(o.self) return;
           if(o.mode === "plane" && airOn()) return;                                       // AIR: the real flights (airMenu)
           if(o.self || (o.mode === "rail" && rail && rail.has(to.world))) return;     // rail: the real train instead
+          if(o.mode === "link"){                                                          // [3.15] the Island Link: free, on its timetable
+            items.push({text: "\uD83D\uDE86 Island Link to " + to.name + (o.departs ? " · departs in " + waitText(o.departs - Date.now()) : "") + " · free",
+                        fn: function(){ if(!(transit && transit.link(to.world))) startTrip("link", from, to, site); }});
+            return;
+          }
           var txt = MODE_NAME[o.mode] + " to " + to.name + " · " + Math.round(o.seconds) + " s" + (o.fee ? " · " + o.fee + " coin" : "");
           if(o.departs) txt += " · sails in " + waitText(o.departs - Date.now());
           if(o.mode === "ferry" && ferryOn()){
@@ -1905,6 +1981,18 @@ HQV.hqWorlds.city3d = function(c, w){
     level: function(){ return apL ? apLevel : null; },
     modules: function(){ return {ground: ap3, buildings: apB, vehicles: apV, fleet: apFleet}; },
     perf: function(){ return {avg: apPerf.n ? apPerf.ms/apPerf.n : 0, last: apPerf.last, n: apPerf.n}; },
+    // [3.15] the phone's airport check-in: the next departures from this city's airfield (text only), and a check-in
+    flights: function(ms){
+      if(!apL || !AF) return [];
+      ms = +ms || Date.now();
+      try {
+        return AF.timetable(worldId, apDests || [], ms, ms + 3*3600000).filter(function(m){ return m.type === "dep"; }).slice(0, 12).map(function(m){
+          var to = m.cls === "jet" ? "Abroad" : apIsles[m.far] ? apIsles[m.far].name : "An island";
+          return {id: String(m.id), to: String(to).slice(0, 32), at: m.tRunway, airline: m.airline, gate: m.stand != null ? String(m.stand) : null, raw: m};
+        });
+      } catch(e){ return []; }
+    },
+    checkIn: function(f){ var r = f && (f.raw || f); return r ? {gate: r.stand != null ? String(r.stand) : null, boardsAt: (+r.tRunway || 0) - 20*60000} : null; },
     book: function(world){
       var I = world === COMMONS ? {name: "The Commons"} : apIsles[world]; if(!I) return null;
       var B = apBook({world: world, name: I.name, x: I.x, z: I.z}, null); return B ? {dep: B.dep, id: B.m.id, stand: B.m.stand, kind: B.R.kind, from: B.R.from, to: B.R.to} : null; }
@@ -2527,6 +2615,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var promptK = null, promptV = null;
   w.prompt = function(p){
     if(!V2 || !p || menu || bus || w.carry()) return null;
+    var tp = transit && transit.prompt ? transit.prompt(p) : null; if(tp) return tp;      // [3.15] a stop, a station, an entrance
     var k = Math.round(p.x) + "," + Math.round(p.z);
     if(k !== promptK){
       promptK = k;
@@ -2539,6 +2628,7 @@ HQV.hqWorlds.city3d = function(c, w){
   w.use = function(p){
     if(!V2 || !p) return false;
     if(menu){ closeMenu(); return true; }
+    if(transit && transit.useHeld(p)) return true;                                       // [3.15] riding, a cab, the heli, below the street
     if(bus){ if(bus.phase === "wait"){ bus = null; say("You stopped waiting."); } return true; }
     if(NAV.trip && NAV.trip.phase === "boarding"){ NAV.trip = null; say("You stayed ashore."); return true; }
     if(airUse()) return true;                                                             // AIR: booked on a flight
@@ -2558,7 +2648,8 @@ HQV.hqWorlds.city3d = function(c, w){
     if(gpB && c.gp && (gpB.inside(p.x, p.z) || Math.hypot(p.x - gpB.door.x, p.z - gpB.door.z) < 4)){ c.gp.open(); return true; }   // [3.17]
     if(petB && petB.near(p.x, p.z) && HQV.petsUi){ HQV.petsUi.open("adopt"); return true; }   // [pets 3.14] the Pet shop
     var rs = rail && rail.station(p.x, p.z); if(rs){ openTravelMenu(rs); return true; }   // rail: at the station's door, before its bus bay
-    if(tsim){ var st = tsim.stopsNear(p.x, p.z, STOP_R)[0]; if(st){ openStopMenu(st); return true; } }
+    if(transit){ if(transit.use(p)) return true; }                                        // [3.15] a stop, station, pier or entrance: the board menu
+    else if(tsim){ var st = tsim.stopsNear(p.x, p.z, STOP_R)[0]; if(st){ openStopMenu(st); return true; } }   // (no hqtransit: the old stop menu)
     var tm = HQV.hqTravel ? terminalAt(W, tier, p.x, p.z) : null;
     if(tm){ if(route && route.travel) navClear(); openTravelMenu(tm); return true; }     // the ferry you were routed to
     return false;
@@ -2604,7 +2695,7 @@ HQV.hqWorlds.city3d = function(c, w){
     ui = document.createElement("button"); ui.type = "button"; ui.className = "hq3d-home"; ui.style.top = "52px";
     ui.textContent = island() ? "⛲ The Commons" : "🏝 My island";
     ui.title = island() ? "Back to the Commons" : "Go to your own island";
-    ui.addEventListener("click", function(){ if(NAV.trip || bus) return; if(c.goCity) c.goCity(to, null); });
+    ui.addEventListener("click", function(){ if(NAV.trip || bus || (transit && transit.session())) return; if(c.goCity) c.goCity(to, null); });
     c.el.appendChild(ui);
   }
   // the city's stats, top right: name, tier and growth, population, happiness (and what it is made of), treasury
@@ -2736,7 +2827,8 @@ HQV.hqWorlds.city3d = function(c, w){
     airSetup();                                                            // air: helipads, the air base, the carrier, jets
     carparkSetup();                                                        // carpark: the multi-storey vehicle garage
     planesSetup();                                                         // planes: the seaplane and the prop plane (HQ 3.2)
-    if(worldId === COMMONS) getJson("/api/arena/world/" + COMMONS + "/assign").then(function(rows){
+    // the HQ ranks: the live Commons' path, else the @2 path (an older Arena; the same ranks)
+    if(isCommons(worldId)) getJson("/api/arena/world/" + worldId + "/assign").then(null, function(){ return worldId === COMMONS_V2 ? null : getJson("/api/arena/world/" + COMMONS_V2 + "/assign"); }).then(function(rows){
       if(dead || !Array.isArray(rows)) return; assignRows = rows; sig = null; build();
     }, function(){});
   }
@@ -2770,7 +2862,9 @@ HQV.hqWorlds.city3d = function(c, w){
     if(sea && sea.surface && cam && cam.x != null) floatParked(cam);
     if(oc && cam){
       oc.step(t, dt, cam);
-      if(boatNow) oc.wake([{id: "you", x: boatNow.st.x, z: boatNow.st.z, yaw: boatNow.st.yaw, speed: boatNow.st.speed || 0, beam: boatNow.beam}]);
+      var wk = boatNow ? [{id: "you", x: boatNow.st.x, z: boatNow.st.z, yaw: boatNow.st.yaw, speed: boatNow.st.speed || 0, beam: boatNow.beam}] : [];
+      if(transit) wk = wk.concat(transit.wakes() || []);                                  // [3.15] the water buses' wakes
+      if(wk.length) oc.wake(wk);
     }
     if(tsim && tview){
       // you, as the traffic sees you: a car's length at the wheel (they stop short of it, not in it)
@@ -2778,8 +2872,10 @@ HQV.hqWorlds.city3d = function(c, w){
       var obs = boatNow || (mo && mo.air) ? [] : [{x: me0.x, z: me0.z, r: myR}];
       if(bridges) obs = obs.concat(bridges.obstacles());
       if(callObs) obs.push(callObs);                       // a vehicle you called, on its way: traffic stops behind it
-      try { callTraffic = tsim.at(nowMs, {x: cam ? cam.x : me0.x, z: cam ? cam.z : me0.z}, 320, obs); tview.update(callTraffic, nowMs); } catch(e){}
+      try { callTraffic = tsim.at(nowMs, {x: cam ? cam.x : me0.x, z: cam ? cam.z : me0.z}, 320, obs); } catch(e){}
     }
+    if(transit){ try { transit.update(nowMs, dt, cam && cam.x != null ? cam : null); } catch(e){} }     // [3.15] first: the coach view's hide set
+    if(tsim && tview && callTraffic){ try { tview.update(callTraffic, nowMs, {hide: transit ? transit.hide() : null}); } catch(e){} }
     if(ndraw && cam){
       if(npcSkip > 0) npcSkip--;
       else {
@@ -2797,13 +2893,18 @@ HQV.hqWorlds.city3d = function(c, w){
     busStep();
     if(air) air.update(t, dt, k, cam);                                     // air: jets, the radar
     var tp = tripStep();
-    fadeTo(tp && (tp.frame === "from" ? NAV.trip && NAV.trip.from === worldId : true) ? tp.fade || 0 : 0);
+    var fp = fadePulseStep();
+    fadeTo(Math.max(fp, tp && (tp.frame === "from" ? NAV.trip && NAV.trip.from === worldId : true) ? tp.fade || 0 : 0));
+    // [3.15] the Island Link's world trip: its tunnel is below the street
+    if(transit && NAV.trip && NAV.trip.mode === "link" && tp && HQV.hqUnderground && tp.under != null && !!tp.under !== HQV.hqUnderground.under()) HQV.hqUnderground.set(!!tp.under, "link");
   }
   function citiesDestroy(){
     closeMenu();
     if(ui && ui.parentNode) ui.parentNode.removeChild(ui);
     if(statsEl && statsEl.parentNode) statsEl.parentNode.removeChild(statsEl);
     if(fadeEl && fadeEl.parentNode) fadeEl.parentNode.removeChild(fadeEl);
+    if(transit){ try { transit.dispose(); } catch(e){} transit = null; }
+    surfaceShow(true);
     if(tview){ try { tview.dispose(); } catch(e){} }
     if(ndraw){ try { ndraw.dispose(); } catch(e){} }
     if(oc){ try { oc.dispose(); } catch(e){} }
@@ -3036,7 +3137,8 @@ HQV.hqWorlds.city3d = function(c, w){
     var announce = function(t){ if(api.announce) api.announce(t); };
     if(HQV.hqroutefx){ try { fx = HQV.hqroutefx.create(c, S); } catch(e){ fx = null; } }
     if(HQV.hqminimap){
-      try { mm = HQV.hqminimap.mount(c.el, {onPick: navPick, onExpand: function(){ mm.expand(); }, announce: announce});
+      try { mm = HQV.hqminimap.mount(c.el, {onPick: navPick, onExpand: function(){ mm.expand(); }, announce: announce,
+                                         under: function(){ return !!(transit && transit.under()); }});   // [3.15] the metro map below the street
             if(mm.setAirfield && V2 && airfield()) mm.setAirfield(airfield()); navRefresh(); }     // AIR: the runway on the map
       catch(e){ if(mm){ try { mm.destroy(); } catch(e2){} } mm = null; }
     }
@@ -3063,7 +3165,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(!on){ closeMenu(); if(nui) nui.close(); }
   }
   w.onLeave = function(){ overlays(false); };
-  w.onEnter = function(){ overlays(true); };
+  w.onEnter = function(){ overlays(true); if(transit && transit.activate) transit.activate(); };
   w.mapWaypoint = function(x, z){ return navPick(x, z); };
   w.navGraph = function(){ return W && HQV.hqnav ? navGraph() : null; };   // [autopilot] the roads a car follows with no route
   // for tests and tools: the route as it stands
@@ -3107,6 +3209,8 @@ HQV.hqWorlds.city3d = function(c, w){
     var extrasOn = false;
     function extras(){
       if(dead || extrasOn) return; extrasOn = true;
+      // [3.15] transport (games/hqtransit.js): its services, views and the underground, after the City's first frame too
+      if(V2) transitSetup();
       if(V2 && HQV.hqSpectacle && W.spectacle) try {
         spx = HQV.hqSpectacle.create(c, W, {scene: S, ground: groundY, owner: owner, night: night, say: say, avatar: function(){ return c.avatar(); },
           city: function(){ return cityState; }});
@@ -3162,6 +3266,17 @@ HQV.hqWorlds.city3d = function(c, w){
     if(W && W.river && WD.riverAt(W, x, z)) return WD.groundAt(W, x, z) + 0.6;
     return null;
   };
+  // [3.15] transport (games/hqtransit.js): the ride's seat camera, a cab's, the heli's, the water taxi's; S and V keys
+  (function(){
+    var cam1 = w.camPose;
+    w.camPose = function(){ var p = transit ? transit.camPose(Date.now()) : null; return p || (cam1 ? cam1.apply(w, arguments) : null); };
+  })();
+  w.transit = function(){ return transit; };
+  // [3.15] the places the phone can take you: this City's (hqnav's Go to list), and the islands and the Commons
+  w.placesList = function(){ try { return W && HQV.hqnav && navPlaces ? navPlaces() : []; } catch(e){ return []; } };
+  w.islandList = function(){ return arch ? travelPlaces(arch, worldId, me).map(function(p){ return {world: p.world, name: p.name}; }) : []; };
+  w.doc = function(){ return W; };
+  w.transitKey = function(e){ return !!(transit && transit.key(e)); };
   // Riding in the park (games/hqspectacle.js) comes first: it holds you in your seat and owns the camera.
   (function(){
     var carry0 = w.carry, cam0 = w.camPose, use0 = w.use;
@@ -3228,8 +3343,12 @@ HQV.hqWorlds.city3d = function(c, w){
     return R && a.hy != null && a.hy > R.deck.y - 2.5 ? R : null;
   }
   w.onRoof = function(){ return !!roofHere(); };
-  w.blocked = function(x, z){ var R = roofHere(); return R ? !HQV.hqRoof.onDeck(R, x, z) : blocked(x, z); };
-  w.groundY = function(x, z){ var R = roofHere(); return R && HQV.hqRoof.onDeck(R, x, z) ? R.deck.y : groundY(x, z); };
+  w.blocked = function(x, z){
+    var ub = transit ? transit.blocked(x, z) : null; if(ub != null) return ub;           // [3.15] below the street: the metro's floors
+    var R = roofHere(); return R ? !HQV.hqRoof.onDeck(R, x, z) : blocked(x, z); };
+  w.groundY = function(x, z){
+    var ug = transit ? transit.ground(x, z) : null; if(ug != null) return ug;
+    var R = roofHere(); return R && HQV.hqRoof.onDeck(R, x, z) ? R.deck.y : groundY(x, z); };
   w.heliAssist = function(st, inp, dt){
     if(!HQV.hqRoof || !roofs.length) return null;
     var o = HQV.hqRoof.step(roofS, st, roofs, inp, dt);
@@ -3280,7 +3399,8 @@ HQV.hqWorlds.city3d = function(c, w){
     civics.forEach(function(B){ B.setNight(n); }); if(oc) oc.setTime(n); if(rail) rail.setNight(n);
     if(cp) cp.B.setNight(n);                                               // carpark
     if(air) air.setNight(n);                                               // air:
-    if(spx) spx.setNight(n); if(stx) stx.setNight(n); if(wx) wx.setNight(n); wxKey = ""; };
+    if(spx) spx.setNight(n); if(stx) stx.setNight(n); if(wx) wx.setNight(n); wxKey = "";
+    if(transit) transit.setNight(n); };
   // Fading: in classic the buildings between you and hq3d's orthographic view (as hqbase.js
   // hqCutaway decides it); in every rig mode hq3d passes the occluders to w.setFaded. Switching
   // between the two clears the other's fades. Either way the fade itself eases (fadeStep).
@@ -3305,7 +3425,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(mode === "classic"){ fadeAcc += dt; if(fadeAcc > FADE_EVERY){ fadeAcc = 0; cutawayGoals(); } }
     hqs.concat(views).forEach(function(E){ fadeStep(E, dt, k); });
     if(wb && cam && cam.frustum){ if(V2) cam.time = Date.now()/1000; wb.update(cam); }   // the shared clock: the same water everywhere
-    S.fog = mode === "map" ? null : fog;
+    S.fog = mode === "map" ? null : transit && transit.under() && transit.fog ? transit.fog : fog;   // [3.15] below the street: a dark fog
     // HQs far from the camera are not drawn (the map shows them all)
     if(cam && cam.x != null) hqs.forEach(function(E){
       var d = Math.hypot(E.x - cam.x, E.z - cam.z), vis = mode === "map" || (E.g.visible ? d < HQ_FAR : d < HQ_FAR - HQ_FAR_HYST);

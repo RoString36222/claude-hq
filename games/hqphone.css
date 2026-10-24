@@ -1,0 +1,308 @@
+/* The phone (games/hqphone.js) and its apps (games/hqphoneapps.js, games/hqgallery.js), HQ 3.15 plan 3.12.
+   Dashboard tokens only (--panel, --ink, --line, --brand, --muted ...), every theme, light and dark, Large text.
+   Two phone tokens of its own: --hqphone-water (the map's water) and --hqphone-flash (the camera's flash).
+   Every motion is gated under html.hq-calm and prefers-reduced-motion. */
+:root{--hqphone-water:hsl(205 70% 74%);--hqphone-flash:white;--hqphone-bezel:color-mix(in srgb,var(--ink) 82%,var(--panel))}
+@media (prefers-color-scheme: dark){:root{--hqphone-water:hsl(205 42% 30%)}}
+:root[data-theme="midnight"]{--hqphone-water:hsl(210 45% 28%)}
+:root[data-theme="forest"]{--hqphone-water:hsl(195 35% 34%)}
+:root[data-theme="mono"]{--hqphone-water:var(--line2)}
+:root[data-theme="contrast"]{--hqphone-water:var(--line2);--hqphone-bezel:var(--ink)}
+
+.hqphone-root{position:absolute;inset:0;z-index:30;pointer-events:none;font-family:var(--font);color:var(--ink);font-size:14px;line-height:1.4}
+.hqphone-root.hqphone-fixed{position:fixed}
+.hqphone-root [hidden]{display:none !important}
+html.hq-large-text .hqphone-root{font-size:16px}
+.hqphone-back{position:absolute;inset:0;pointer-events:auto;background:color-mix(in srgb,var(--scrim) 40%,transparent)}
+.hqphone{position:absolute;right:16px;bottom:16px;width:360px;height:min(740px,calc(100% - 32px));box-sizing:border-box;
+  display:flex;flex-direction:column;overflow:hidden;border-radius:22px;border:5px solid var(--hqphone-bezel);
+  background:var(--bg);color:var(--ink);box-shadow:var(--shadow-lg)}
+.hqphone:focus{outline:none}
+.hqphone-back.hqphone-anim .hqphone{animation:hqphone-up 240ms var(--ease)}
+@keyframes hqphone-up{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
+.hqphone-sr,.hp-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;margin:-1px;padding:0;border:0}
+
+/* status bar: decorative */
+.hqphone-status{flex:none;display:flex;justify-content:space-between;align-items:center;padding:6px 16px 4px;font:600 12px var(--mono);
+  color:var(--ink);font-variant-numeric:tabular-nums}
+.hqphone-sicons{display:flex;align-items:center;gap:6px}
+.hqphone-bar,.hqphone-batt-fill,.hqphone-batt-tip{fill:currentColor}
+.hqphone-batt-case{fill:none;stroke:currentColor;stroke-width:1.2}
+.hqphone-pct{font-size:11px}
+.hqphone-screen{flex:1;min-height:0;display:flex;flex-direction:column}
+
+/* home */
+.hqphone-home{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:space-between;padding:14px 12px 10px;
+  background:linear-gradient(180deg,var(--brand-soft),transparent 60%),var(--bg)}
+.hqphone-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px 6px;align-content:start;overflow:auto;padding:2px}
+.hqphone-dock{display:flex;justify-content:space-around;gap:6px;padding:10px 6px;border-radius:18px;background:var(--panel2);border:1px solid var(--line)}
+.hqphone-dock .hqphone-iname{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.hqphone-icon{display:flex;flex-direction:column;align-items:center;gap:4px;padding:2px;border:0;border-radius:14px;background:none;color:var(--ink);cursor:pointer;font:inherit}
+.hqphone-icon:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.hqphone-squircle{position:relative;width:52px;height:52px;display:grid;place-items:center;border-radius:15px;color:var(--on-brand)}
+.hqphone-t0{background:var(--brand)}
+.hqphone-t1{background:var(--good)}
+.hqphone-t2{background:var(--warn)}
+.hqphone-t3{background:var(--gold)}
+.hqphone-t4{background:var(--need)}
+.hqphone-t5{background:var(--brand2)}
+.hqphone-t6{background:var(--muted)}
+.hqphone-badge{position:absolute;top:-5px;right:-6px;min-width:18px;height:18px;padding:0 5px;box-sizing:border-box;border-radius:9px;
+  background:var(--need);color:var(--on-brand);font:700 11px/18px var(--font);text-align:center;border:2px solid var(--bg)}
+.hqphone-iname{font-size:11.5px;max-width:76px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+html.hq-large-text .hqphone-iname{font-size:13px}
+
+/* an app */
+.hqphone-app{flex:1;min-height:0;display:flex;flex-direction:column}
+.hqphone-apphead{flex:none;display:flex;align-items:center;gap:6px;padding:4px 8px 6px;border-bottom:1px solid var(--line)}
+.hqphone-backbtn,.hqphone-closebtn{display:flex;align-items:center;gap:2px;padding:4px 6px;border-radius:var(--radius-sm);border:1px solid transparent;
+  background:none;color:var(--brand);font:inherit;cursor:pointer}
+.hqphone-closebtn{color:var(--muted);margin-left:auto}
+.hqphone-backbtn:hover,.hqphone-closebtn:hover{border-color:var(--line)}
+.hqphone-backbtn:focus-visible,.hqphone-closebtn:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+.hqphone-apptitle{margin:0;font-size:1.05em;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hqphone-body{flex:1;min-height:0;overflow:auto;padding:10px 12px 14px}
+.hqphone-appbody{min-height:100%}
+.hqphone-empty{color:var(--muted)}
+.hqphone-gate{display:flex;flex-direction:column;align-items:center;gap:10px;padding:48px 16px;text-align:center;color:var(--muted)}
+.hqphone-gate-text{margin:0;font-weight:600;color:var(--ink)}
+
+/* the notification banner */
+.hqphone-banner{position:absolute;top:12px;right:26px;width:340px;max-width:calc(100% - 32px);box-sizing:border-box;pointer-events:auto;
+  display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:16px;border:1px solid var(--line);background:var(--panel);
+  color:var(--ink);box-shadow:var(--shadow-lg);font:inherit;text-align:left;cursor:pointer;z-index:2}
+.hqphone-banner.hqphone-banner-in{top:auto;bottom:calc(16px + min(740px, 100% - 32px) - 76px)}
+.hqphone-banner:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.hqphone-banner.hqphone-anim{animation:hqphone-drop 260ms var(--ease)}
+@keyframes hqphone-drop{from{transform:translateY(-24px);opacity:0}to{transform:none;opacity:1}}
+.hqphone-banner-icon{flex:none;width:34px;height:34px;border-radius:10px}
+.hqphone-banner-text{display:flex;flex-direction:column;min-width:0}
+.hqphone-banner-title{font-size:.95em}
+.hqphone-banner-body{color:var(--muted);font-size:.85em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* under 600 px: a full-screen sheet */
+@media (max-width: 600px){
+  .hqphone{right:0;bottom:0;width:100%;height:100%;border-radius:0;border-width:0}
+  .hqphone-banner{right:8px;left:8px;width:auto;max-width:none}
+  .hqphone-banner.hqphone-banner-in{top:30px;bottom:auto}
+}
+
+/* ---- shared app pieces ---- */
+.hp-app{display:flex;flex-direction:column;gap:10px;color:var(--ink)}
+.hp-btn{font:inherit;padding:6px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+.hp-btn:hover{border-color:var(--line2)}
+.hp-btn:focus-visible,.hp-chip:focus-visible,.hp-tab:focus-visible,.hp-star:focus-visible,.hp-stopbtn:focus-visible,.hp-map:focus-visible,
+.hg-vf:focus-visible,.hg-cell:focus-visible,.hp-note summary:focus-visible,.hp-maplist summary:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.hp-btn.hp-primary{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.hp-btn.hp-ghost{background:transparent}
+.hp-btn.hp-danger{border-color:var(--need);color:var(--need)}
+.hp-btn.hp-danger.hp-primary{background:var(--need);color:var(--on-brand)}
+.hp-btn[aria-pressed="true"]{background:var(--brand-soft);border-color:var(--brand);color:var(--brand)}
+.hp-btn.hp-link{border:0;background:none;padding:2px 0;color:var(--brand);text-align:left;text-decoration:underline}
+.hp-bar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.hp-muted,.hp-hint{color:var(--muted);font-size:.86em;margin:0}
+.hp-hint{display:block}
+.hp-card{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:10px;display:flex;flex-direction:column;gap:6px}
+.hp-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.hp-badge{display:inline-block;min-width:1.9em;padding:1px 6px;border-radius:6px;font:700 .78em/1.5 var(--mono);text-align:center;
+  background:var(--muted);color:var(--on-brand)}
+.hp-badge.hp-m-bus{background:var(--brand)}
+.hp-badge.hp-m-tram{background:var(--good)}
+.hp-badge.hp-m-metro{background:var(--need)}
+.hp-badge.hp-m-rail{background:var(--gold)}
+.hp-badge.hp-m-link{background:var(--warn)}
+.hp-badge.hp-m-ferry{background:var(--hqphone-water);color:var(--ink)}
+.hp-badge.hp-m-gondola{background:var(--brand2)}
+.hp-chips{display:flex;gap:4px;flex-wrap:wrap}
+.hp-chip{font:inherit;font-size:.85em;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+.hp-chip[aria-checked="true"]{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.hp-tabs{display:flex;gap:4px}
+.hp-tab{flex:1;font:inherit;padding:6px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--ink);cursor:pointer}
+.hp-tab[aria-selected="true"]{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.hp-pane{display:flex;flex-direction:column;gap:10px}
+.hp-form{display:flex;flex-direction:column;gap:4px}
+.hp-label{font-size:.85em;font-weight:600;color:var(--muted);margin-top:4px}
+.hp-select,.hp-time{font:inherit;padding:6px 8px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);min-width:0}
+.hp-select:focus-visible,.hp-time:focus-visible,.hp-radio input:focus-visible,.hp-toggle input:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+.hp-when{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin:6px 0}
+.hp-radio{display:flex;align-items:center;gap:4px;cursor:pointer}
+.hp-results{display:flex;flex-direction:column;gap:8px}
+.hp-options{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.hp-optop{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.hp-optsum{font-weight:600;font-variant-numeric:tabular-nums;margin-left:4px}
+.hp-legs{list-style:none;margin:0;padding:0 0 0 10px;border-left:2px solid var(--line);display:flex;flex-direction:column;gap:4px}
+.hp-leg{display:flex;flex-direction:column}
+.hp-leg-walk .hp-legtext{color:var(--muted)}
+.hp-leg.hp-under{border-left:2px dashed var(--need);margin-left:-12px;padding-left:10px}
+.hp-legsub{color:var(--muted);font-size:.85em;font-variant-numeric:tabular-nums}
+.hp-legnote{font-size:.82em;color:var(--warn)}
+.hp-flights{display:flex;flex-direction:column;gap:4px;max-height:180px;overflow:auto}
+.hp-pass{border-style:dashed}
+.hp-pass-head{display:flex;justify-content:space-between;align-items:center}
+.hp-pass-free{font:700 .75em var(--mono);color:var(--good);border:1px solid var(--good);border-radius:6px;padding:0 6px}
+.hp-pass-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:0}
+.hp-pass-grid dt{font-size:.75em;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.hp-pass-grid dd{margin:0;font:700 1em var(--mono);overflow:hidden;text-overflow:ellipsis}
+.hp-pass-pat{width:100%;height:32px;display:block}
+.hp-pass-bar{fill:var(--ink)}
+.hp-pass-dot{fill:var(--brand)}
+
+/* departures */
+.hp-stop{border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.hp-stoprow{display:flex;align-items:stretch}
+.hp-star{flex:none;width:36px;border:0;background:none;color:var(--gold);font-size:1.15em;cursor:pointer}
+.hp-stopbtn{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;padding:8px 8px 8px 0;border:0;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer}
+.hp-stopname{font-weight:600}
+.hp-stopsub{font-size:.85em;color:var(--muted)}
+.hp-boardbox{padding:0 8px 8px}
+.hp-board{width:100%;border-collapse:collapse;font-size:.86em;font-variant-numeric:tabular-nums}
+.hp-board th{text-align:left;font-size:.8em;color:var(--muted);font-weight:600;padding:2px 4px;border-bottom:1px solid var(--line)}
+.hp-board td{padding:3px 4px;border-bottom:1px solid var(--line)}
+.hp-board .hp-due{font-family:var(--mono);white-space:nowrap}
+
+/* transit map */
+.hp-mapwrap{position:relative;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel2)}
+.hp-map{display:block;width:100%;height:auto;aspect-ratio:1;touch-action:none;cursor:grab}
+.hp-water{fill:var(--hqphone-water);stroke:none}
+.hp-line{fill:none;stroke:var(--brand);stroke-width:12;stroke-linecap:round;stroke-linejoin:round}
+.hp-line.hp-line-under{stroke-dasharray:22 14}
+.hp-tick{fill:var(--panel);stroke:var(--ink);stroke-width:4}
+.hp-ring{fill:var(--panel);stroke:var(--ink);stroke-width:5}
+.hp-ring-in{fill:var(--ink)}
+.hp-stn{cursor:pointer}
+.hp-stn-label{font:600 34px var(--font);fill:var(--ink);paint-order:stroke;stroke:var(--panel2);stroke-width:7px}
+.hp-veh{cursor:pointer;transition:transform 1s linear}
+.hp-vdot{fill:var(--brand);stroke:var(--panel);stroke-width:4}
+.hp-veh-under .hp-vdot{stroke-dasharray:6 4}
+.hp-map[data-calm="1"] .hp-veh{transition:none}
+.hp-zoom{position:absolute;right:6px;top:6px;display:flex;flex-direction:column;gap:4px}
+.hp-zbtn{width:32px;height:32px;padding:0;font-size:1.1em;line-height:1}
+.hp-mapdetail{display:flex;flex-direction:column;gap:6px}
+.hp-dtitle{margin:0;font-size:1em;display:flex;align-items:center;gap:6px}
+.hp-maplist summary{cursor:pointer;color:var(--brand);font-weight:600}
+.hp-altline h3{font-size:.95em;margin:8px 0 4px}
+.hp-altstops{margin:0;padding-left:18px}
+
+/* achievements */
+.hp-achrow{display:flex;flex-direction:column;gap:3px;padding:8px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.hp-achtop{display:flex;align-items:center;gap:6px}
+.hp-achmark{width:1.2em;color:var(--good);font-weight:800}
+.hp-prog{height:6px;border-radius:3px;background:var(--panel3);overflow:hidden}
+.hp-progfill{height:100%;background:var(--brand)}
+.hp-done .hp-progfill{background:var(--good)}
+.hp-driver h3{margin:0;font-size:1em}
+
+/* patch notes */
+.hp-note{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:8px 10px}
+.hp-note summary{cursor:pointer;font-weight:600}
+.hp-note p{margin:6px 0 0;font-size:.9em;color:var(--ink)}
+.hp-notever{font:700 .8em var(--mono);color:var(--brand);margin-right:4px}
+
+/* settings */
+.hp-setsec{display:flex;flex-direction:column;gap:6px}
+.hp-setsec h3{margin:4px 0 0;font-size:.95em}
+.hp-setrow{display:flex;flex-direction:column;gap:1px}
+.hp-toggle{display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:600}
+
+/* camera */
+.hg-vf{position:relative;aspect-ratio:3/4;border-radius:14px;overflow:hidden;background:color-mix(in srgb,var(--ink) 88%,var(--bg))}
+.hg-canvas{display:block;width:100%;height:100%}
+.hg-grid{position:absolute;inset:0;pointer-events:none}
+.hg-gl{position:absolute;background:color-mix(in srgb,var(--bg) 55%,transparent)}
+.hg-gl0,.hg-gl1{top:0;bottom:0;width:1px}
+.hg-gl0{left:33.33%}.hg-gl1{left:66.66%}
+.hg-gl2,.hg-gl3{left:0;right:0;height:1px}
+.hg-gl2{top:33.33%}.hg-gl3{top:66.66%}
+.hg-count{position:absolute;inset:0;display:grid;place-items:center;font:800 72px var(--font);color:var(--bg);text-shadow:0 2px 8px var(--scrim)}
+.hg-flash{position:absolute;inset:0;pointer-events:none;background:var(--hqphone-flash);opacity:0}
+.hg-flash.hg-flash-on{animation:hg-flash 260ms ease-out}
+@keyframes hg-flash{from{opacity:.95}to{opacity:0}}
+.hg-controls{display:flex;align-items:center;justify-content:space-between;padding:0 6px}
+.hg-thumb{width:44px;height:44px;padding:0;overflow:hidden;border-radius:10px}
+.hg-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.hg-shutter{width:62px;height:62px;padding:0;border-radius:50%;border:4px solid var(--ink);background:var(--panel);box-shadow:inset 0 0 0 3px var(--bg)}
+.hg-shutter:active{background:var(--panel3)}
+.hg-flip{min-width:64px}
+
+/* gallery */
+.hg-gridlist{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.hg-cell{display:block;width:100%;aspect-ratio:1;padding:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel2);cursor:pointer}
+.hg-cell img{width:100%;height:100%;object-fit:cover;display:block}
+.hg-noimg{font-size:.75em;color:var(--muted)}
+.hg-viewer{margin:0;display:flex;flex-direction:column;gap:4px}
+.hg-big{width:100%;border-radius:10px;display:block;background:var(--panel2)}
+.hg-confirm{border:1px solid var(--need);border-radius:12px;padding:10px;background:var(--panel)}
+.hg-confirm p{margin:0 0 8px;font-weight:600}
+
+/* Claude Cabs, Vehicles and the Dealership (games/hqphonecabs.js) */
+.pc-cabs,.pc-veh,.pc-dealer{display:flex;flex-direction:column;gap:10px;color:var(--ink)}
+.pc-h{margin:0;font-size:1.15em}
+.pc-h3{margin:4px 0 0;font-size:.95em}
+.pc-panel,.pc-live,.pc-job,.pc-offers,.pc-spots,.pc-dealer-body{display:flex;flex-direction:column;gap:8px}
+.pc-tabs{display:flex;gap:4px}
+.pc-tab{flex:1;font:inherit;padding:6px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--ink);cursor:pointer}
+.pc-tab.on{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.pc-label{font-size:.85em;font-weight:600;color:var(--muted)}
+.pc-search{font:inherit;padding:7px 10px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);min-width:0}
+.pc-results,.pc-list{display:flex;flex-direction:column;gap:6px;max-height:240px;overflow:auto}
+.pc-opt,.pc-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 10px;border-radius:10px;border:1px solid var(--line);
+  background:var(--panel);color:var(--ink);font:inherit;text-align:left;cursor:pointer}
+.pc-row{cursor:default}
+.pc-opt.on{border-color:var(--brand);background:var(--brand-soft)}
+.pc-opt-name,.pc-row-name{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pc-opt-sub,.pc-row-sub{flex:none;font-size:.82em;color:var(--muted);font-variant-numeric:tabular-nums}
+.pc-row-sub{flex:1;text-align:right}
+.pc-chips{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.pc-chip{display:flex;flex-direction:column;align-items:center;gap:1px;padding:5px 2px;border-radius:10px;border:1px solid var(--line);
+  background:var(--panel);color:var(--ink);font:inherit;cursor:pointer}
+.pc-chip.on{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.pc-chip-name{font-weight:600;font-size:.88em}
+.pc-chip-eta{font-size:.75em;opacity:.8;font-variant-numeric:tabular-nums}
+.pc-dest,.pc-phase{margin:0;font-weight:600}
+.pc-note,.pc-msg,.pc-eta,.pc-empty{margin:0;font-size:.86em;color:var(--muted)}
+.pc-btn{font:inherit;padding:6px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+.pc-btn:hover{border-color:var(--line2)}
+.pc-btn.pc-primary{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.pc-btn.pc-toggle.on{background:var(--brand-soft);border-color:var(--brand);color:var(--brand)}
+.pc-acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.pc-driver,.pc-offer{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:8px 10px;display:flex;flex-direction:column;gap:4px}
+.pc-driver p,.pc-offer p,.pc-job p{margin:0}
+.pc-driver-name{font-weight:700}
+.pc-driver-car,.pc-offer-left{font-size:.85em;color:var(--muted);font-variant-numeric:tabular-nums}
+.pc-result{font-weight:600;color:var(--good)}
+.pc-rate{display:flex;gap:2px}
+.pc-star{border:0;background:none;color:var(--gold);font-size:1.3em;cursor:pointer;padding:0 2px}
+.pc-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:2px 8px;margin:0}
+.pc-stats dt{font-size:.75em;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;grid-row:1}
+.pc-stats dd{margin:0;font:700 1em var(--mono);grid-row:2}
+.pc-ring{width:56px;height:56px;margin:12px auto;border-radius:50%;border:3px solid var(--brand)}
+.pc-ring.pc-ringing{animation:pc-ring 1s ease-in-out infinite}
+@keyframes pc-ring{50%{transform:scale(1.12);opacity:.6}}
+.pc-tab:focus-visible,.pc-opt:focus-visible,.pc-chip:focus-visible,.pc-btn:focus-visible,.pc-star:focus-visible,.pc-search:focus-visible,
+.hqcall-chip:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+html.hq-calm .pc-ring.pc-ringing{animation:none}
+@media (prefers-reduced-motion: reduce){ .pc-ring.pc-ringing{animation:none} }
+
+/* the Dealership app hosts the dealership's own panel (games/hqdealer.js): in the phone it is a plain section, not a
+   floating dialog, and its two columns stack */
+.pc-dealer-body .hqdealer{position:static;transform:none;width:auto;max-height:none;border-radius:12px;box-shadow:none;z-index:auto}
+.pc-dealer-body .hqdealer-head{grid-template-columns:1fr auto;padding:8px 10px}
+.pc-dealer-body .hqdealer-note{grid-column:1 / -1;grid-row:2}
+.pc-dealer-body .hqdealer-top{grid-template-columns:1fr;padding:8px 10px 0}
+.pc-dealer-body .hqdealer-preview{height:130px}
+.pc-dealer-body .hqdealer-pair{grid-template-columns:1fr}
+.pc-dealer-body .hqdealer-body{overflow:visible}
+
+/* contrast: thicker edges */
+:root[data-theme="contrast"] .hp-card,:root[data-theme="contrast"] .hp-stop,:root[data-theme="contrast"] .hp-chip,
+:root[data-theme="contrast"] .hqphone-dock{border-width:2px}
+
+/* Calm and reduced motion: no slide, no drop, no flash, no vehicle tweening */
+html.hq-calm .hqphone-back .hqphone,html.hq-calm .hqphone-banner,html.hq-calm .hg-flash.hg-flash-on{animation:none}
+html.hq-calm .hp-veh{transition:none}
+html.hq-calm .hg-flash{display:none}
+@media (prefers-reduced-motion: reduce){
+  .hqphone-back .hqphone,.hqphone-banner,.hg-flash.hg-flash-on{animation:none}
+  .hp-veh{transition:none}
+  .hg-flash{display:none}
+}

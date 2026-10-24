@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
-pub const APP_VERSION: &str = "3.17.0";
+pub const APP_VERSION: &str = "3.18.0";
 
 pub static UUID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-fA-F-]{36}$").unwrap());
 pub static RID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_-]{16,64}$").unwrap());
@@ -499,6 +499,8 @@ pub const KNOWN_THEMES: [&str; 4] = ["aurora", "midnight", "forest", "mono"];
 pub const KNOWN_CREATURE_PACKS: [&str; 7] = ["monsters", "pokemon", "pokemon3d", "aniimo", "village", "animals", "faces"];
 pub const TRAINER_MAX: [i64; 9] = [6, 8, 8, 8, 8, 7, 5, 8, 4];
 pub const CHARACTER_MAX: [i64; 10] = [5, 7, 9, 9, 2, 5, 3, 1, 4, 1];
+/// Claude Cabs classes the phone may default to (HQ 3.15, config cabClass).
+pub const CAB_CLASSES: [&str; 5] = ["bike", "go", "cab", "xl", "lux"];
 
 pub fn default_config() -> Obj {
     match json!({
@@ -519,6 +521,11 @@ pub fn default_config() -> Obj {
         "musicCookies": "",
         "workSignals": false,
         "workSignalsPRs": false,
+        "phoneNear": false,
+        "phoneCalls": false,
+        "transitVoice": true,
+        "phoneClock24": false,
+        "cabClass": "go",
     }) {
         Value::Object(o) => o,
         _ => unreachable!(),
@@ -609,9 +616,16 @@ pub fn validate_config(raw: &Value, base: Option<&Obj>) -> Obj {
             cfg.insert(key.into(), Value::Bool(py::truthy(v)));
         }
     }
-    for key in ["workSignals", "workSignalsPRs"] {
+    // HQ 3.15 phone: nearby chat and calls are opt-in egress; transit announcements, the clock and the cab
+    // class are local. Only real booleans (and a known class) change them, as workSignals.
+    for key in ["workSignals", "workSignalsPRs", "phoneNear", "phoneCalls", "transitVoice", "phoneClock24"] {
         if let Some(Value::Bool(b)) = raw.get(key) {
             cfg.insert(key.into(), Value::Bool(*b));
+        }
+    }
+    if let Some(Value::String(c)) = raw.get("cabClass") {
+        if CAB_CLASSES.contains(&c.as_str()) {
+            cfg.insert("cabClass".into(), Value::from(c.clone()));
         }
     }
     cfg
@@ -733,6 +747,30 @@ mod tests {
         assert_eq!(v(json!({"musicShare": "yes"}))["musicShare"], true);
         assert_eq!(v(json!({"musicCookies": "safari"}))["musicCookies"], "safari");
         assert_eq!(v(json!({"musicCookies": "evil"}))["musicCookies"], "");
+    }
+
+    #[test]
+    fn phone_settings() {
+        let d = default_config();
+        for (k, want) in [("phoneNear", false), ("phoneCalls", false), ("transitVoice", true), ("phoneClock24", false)] {
+            assert_eq!(d[k], json!(want), "{k} default");
+        }
+        assert_eq!(d["cabClass"], "go");
+        let on = v(json!({"phoneNear": true, "phoneCalls": true, "transitVoice": false, "phoneClock24": true, "cabClass": "lux"}));
+        assert_eq!((on["phoneNear"].clone(), on["phoneCalls"].clone(), on["transitVoice"].clone(), on["phoneClock24"].clone()),
+                   (json!(true), json!(true), json!(false), json!(true)));
+        assert_eq!(on["cabClass"], "lux");
+        // only real booleans and a known class change them; anything else keeps what was there
+        let kept = validate_config(&json!({"phoneNear": "yes", "phoneCalls": 0, "transitVoice": null, "phoneClock24": 1, "cabClass": "heli"}), Some(&on));
+        assert_eq!((kept["phoneNear"].clone(), kept["phoneCalls"].clone(), kept["transitVoice"].clone(), kept["phoneClock24"].clone()),
+                   (json!(true), json!(true), json!(false), json!(true)));
+        assert_eq!(kept["cabClass"], "lux");
+        for bad in [json!("GO"), json!("go "), json!(1), json!(null), json!("../x")] {
+            assert_eq!(v(json!({"cabClass": bad}))["cabClass"], "go", "{bad}");
+        }
+        for c in CAB_CLASSES {
+            assert_eq!(v(json!({"cabClass": c}))["cabClass"], c);
+        }
     }
 
     #[test]

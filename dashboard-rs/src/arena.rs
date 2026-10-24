@@ -97,18 +97,22 @@ pub struct WorldReply {
     pub body: Vec<u8>,
 }
 
-/// A personal island's world id, `user:<user id>@2`: the only non-fixed world the
-/// page asks for, and the only one that carries the device token.
+/// A personal island's world id, `user:<user id>@3` (the live version since HQ
+/// 3.15) or `@2` (an Arena without @3): the only non-fixed world the page asks
+/// for, and the only one that carries the device token.
 pub static ISLAND_WORLD_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@2$").unwrap());
+    LazyLock::new(|| Regex::new(r"^user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@[23]$").unwrap());
+
+/// The Commons' world ids: the live one (HQ 3.15) and the one before it.
+pub const COMMONS_WORLDS: [&str; 2] = ["claude-hq@3", "claude-hq@2"];
 
 /// A rail build's body: `{to}` when `to` is the Commons or an island's world id,
 /// `{}` (the Commons) when it is absent; any other field is dropped.
 pub fn rail_body(body: &Value) -> Result<Value, &'static str> {
     match body.get("to") {
         None | Some(Value::Null) => Ok(json!({})),
-        Some(Value::String(s)) if s == "claude-hq@2" || ISLAND_WORLD_RE.is_match(s) => Ok(json!({"to": s})),
-        _ => Err("to must be claude-hq@2 or an island's world id"),
+        Some(Value::String(s)) if COMMONS_WORLDS.contains(&s.as_str()) || ISLAND_WORLD_RE.is_match(s) => Ok(json!({"to": s})),
+        _ => Err("to must be claude-hq@3, claude-hq@2 or an island's world id"),
     }
 }
 
@@ -182,12 +186,92 @@ pub fn vehicle_park_body(body: &Value) -> Result<Value, &'static str> {
         return Ok(json!({"garage": true}));
     }
     let world = body.get("world").and_then(Value::as_str)
-        .filter(|w| matches!(*w, "claude-hq@1" | "claude-hq@2") || ISLAND_WORLD_RE.is_match(w))
+        .filter(|w| *w == "claude-hq@1" || COMMONS_WORLDS.contains(w) || ISLAND_WORLD_RE.is_match(w))
         .ok_or("world must be the Commons or an island's world id")?;
     let num = |k: &str| body.get(k).and_then(Value::as_f64).filter(|v| v.is_finite());
     match (num("x"), num("z"), num("yaw")) {
         (Some(x), Some(z), Some(yaw)) if x.abs() <= 20_000.0 && z.abs() <= 20_000.0 => Ok(json!({"world": world, "x": x, "z": z, "yaw": yaw})),
         _ => Err("x, z and yaw must be numbers in range"),
+    }
+}
+
+/// Messages (HQ 3.15, backend/src/sms.rs): the routes the page may use, a message id as the Arena makes
+/// them (a uuid; letters, digits and `-`), the most ids one status read names, the longest text and a
+/// directory search (a handle prefix).
+pub const SMS_GETS: [&str; 4] = ["me", "inbox", "status", "directory"];
+pub const SMS_POSTS: [&str; 5] = ["optin", "send", "ack", "block", "report"];
+static SMS_ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9-]{1,40}$").unwrap());
+static SMS_DIR_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_.-]{2,24}$").unwrap());
+pub const SMS_STATUS_MAX: usize = 50;
+pub const SMS_TEXT_MAX: usize = 160;
+
+/// The query string to forward for a Messages GET (with its `?`, or empty), rebuilt from the one
+/// parameter the route takes: `inbox` an optional `since` (a message id cursor), `status` `ids` (1 to 50
+/// comma-separated message ids), `directory` `q` (2 to 24 of A-Z a-z 0-9 _ . -). Anything else is dropped.
+pub fn sms_get_query(what: &str, query: &str) -> Result<String, &'static str> {
+    let arg = |k: &str| py::qs_first(query, k).unwrap_or_default();
+    match what {
+        "me" => Ok(String::new()),
+        "inbox" => match arg("since") {
+            s if s.is_empty() => Ok(String::new()),
+            s if SMS_ID_RE.is_match(&s) => Ok(format!("?since={s}")),
+            _ => Err("since must be a message id"),
+        },
+        "status" => {
+            let raw = arg("ids");
+            let ids: Vec<&str> = raw.split(',').collect();
+            if raw.is_empty() || ids.len() > SMS_STATUS_MAX || !ids.iter().all(|i| SMS_ID_RE.is_match(i)) {
+                return Err("ids must be 1 to 50 comma-separated message ids");
+            }
+            Ok(format!("?ids={}", ids.join(",")))
+        }
+        "directory" => match arg("q") {
+            q if SMS_DIR_RE.is_match(&q) => Ok(format!("?q={q}")),
+            _ => Err("q must be 2 to 24 letters, digits, _ . or -"),
+        },
+        _ => Err("no such messages route"),
+    }
+}
+
+fn sms_bool(body: &Value, k: &str) -> Result<bool, &'static str> {
+    body.get(k).and_then(Value::as_bool).ok_or("on must be true or false")
+}
+
+fn sms_user(body: &Value, k: &str) -> Result<String, &'static str> {
+    body.get(k).and_then(Value::as_str).filter(|u| USER_ID_RE.is_match(u)).map(String::from).ok_or("must name a user id")
+}
+
+/// A Messages POST body rebuilt from its validated fields; anything else is dropped.
+///   optin {on: bool} | send {to: user id, text: 1..=160 printable characters, trimmed}
+///   ack {upto: message id} | block {user: user id, on: bool} | report {user: user id, id?: message id}
+pub fn sms_body(what: &str, body: &Value) -> Result<Value, &'static str> {
+    match what {
+        "optin" => Ok(json!({"on": sms_bool(body, "on")?})),
+        "send" => {
+            let to = sms_user(body, "to").map_err(|_| "to must be a user id")?;
+            let text = body.get("text").and_then(Value::as_str).map(str::trim).ok_or("text must be a string")?;
+            if text.is_empty() || py::char_len(text) > SMS_TEXT_MAX {
+                return Err("text must be 1 to 160 characters");
+            }
+            if !text.chars().all(py::is_printable) {
+                return Err("text has characters that cannot be shown");
+            }
+            Ok(json!({"to": to, "text": text}))
+        }
+        "ack" => body.get("upto").and_then(Value::as_str).filter(|i| SMS_ID_RE.is_match(i))
+            .map(|i| json!({"upto": i})).ok_or("upto must be a message id"),
+        "block" => Ok(json!({"user": sms_user(body, "user").map_err(|_| "user must be a user id")?, "on": sms_bool(body, "on")?})),
+        "report" => {
+            let user = sms_user(body, "user").map_err(|_| "user must be a user id")?;
+            match body.get("id") {
+                // a person can be reported without naming one of their messages
+                None | Some(Value::Null) => Ok(json!({"user": user})),
+                Some(Value::String(i)) if i.is_empty() => Ok(json!({"user": user})),
+                Some(Value::String(i)) if SMS_ID_RE.is_match(i) => Ok(json!({"user": user, "id": i})),
+                _ => Err("id must be a message id"),
+            }
+        }
+        _ => Err("no such messages route"),
     }
 }
 
@@ -729,7 +813,7 @@ impl App {
     }
 
     /// GET /api/arena/world/:id. Egress: the world id (a fixed one, or an island's
-    /// `user:<user id>@2`) and the page's ETag, to the configured Arena only, plus
+    /// `user:<user id>@3` or `@2`) and the page's ETag, to the configured Arena only, plus
     /// the paired device token for an island; nothing transcript-derived.
     pub fn arena_world(&self, id: &str, inm: &str) -> Result<WorldReply, (u16, Value)> {
         if !WORLD_ID_RE.is_match(id) || (id.starts_with("user:") && !ISLAND_WORLD_RE.is_match(id)) {
@@ -1534,10 +1618,34 @@ impl App {
         }
     }
 
-    /// GET /v1/world/claude-hq@2/assign: which Commons HQ lot (a rank) each open
-    /// HQ's tower stands on. Egress: the device token and the fixed path only.
-    pub fn arena_commons_assign(&self) -> (u16, Value) {
-        self.authed_get("/v1/world/claude-hq@2/assign")
+    /// GET /v1/world/<the Commons>/assign: which Commons HQ lot (a rank) each open
+    /// HQ's tower stands on, for `world` claude-hq@3 or claude-hq@2 (the same ranks).
+    /// Egress: the device token and a fixed path only.
+    pub fn arena_commons_assign(&self, world: &str) -> (u16, Value) {
+        if !COMMONS_WORLDS.contains(&world) {
+            return (404, json!({"error": "not found"}));
+        }
+        self.authed_get(&format!("/v1/world/{world}/assign"))
+    }
+
+    /// GET /v1/sms/{me,inbox,status,directory} (HQ 3.15 Messages). `what` is the route, `query` the
+    /// page's query string: only the one validated parameter each route takes is forwarded (sms_get_query).
+    /// Egress: the device token, a message id cursor, message ids or a handle prefix the user typed.
+    pub fn arena_sms_get(&self, what: &str, query: &str) -> (u16, Value) {
+        match sms_get_query(what, query) {
+            Ok(q) => self.authed_get(&format!("/v1/sms/{what}{q}")),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
+    /// POST /v1/sms/{optin,send,ack,block,report} (HQ 3.15 Messages). The body is rebuilt from its
+    /// validated fields only (sms_body). Egress: a flag, user and message ids, and for `send` the text the
+    /// user typed to another player (at most 160 printable characters): never anything transcript-derived.
+    pub fn arena_sms_post(&self, what: &str, body: &Value) -> (u16, Value) {
+        match sms_body(what, body) {
+            Ok(clean) => self.authed_send("POST", &format!("/v1/sms/{what}"), clean),
+            Err(e) => (400, json!({"error": e})),
+        }
     }
 }
 
@@ -1909,7 +2017,14 @@ pub(crate) mod tests {
         assert_eq!(rail_body(&json!({})), Ok(json!({})));
         assert_eq!(rail_body(&json!({"to": "claude-hq@2", "path": "/secret"})), Ok(json!({"to": "claude-hq@2"})));
         assert_eq!(rail_body(&json!({"to": isl})), Ok(json!({"to": isl})));
-        for bad in [json!({"to": "claude-hq@1"}), json!({"to": "user:../x@2"}), json!({"to": 5}), json!({"to": "USER:A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D@2"})] {
+        // HQ 3.15: the live @3 ids too
+        let isl3 = "user:a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d@3";
+        assert_eq!(rail_body(&json!({"to": "claude-hq@3", "x": 1})), Ok(json!({"to": "claude-hq@3"})));
+        assert_eq!(rail_body(&json!({"to": isl3})), Ok(json!({"to": isl3})));
+        for bad in [json!({"to": "claude-hq@1"}), json!({"to": "user:../x@2"}), json!({"to": 5}), json!({"to": "USER:A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D@2"}),
+                    json!({"to": "claude-hq@4"}), json!({"to": "claude-hq@33"}), json!({"to": "user:a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d@1"}),
+                    json!({"to": "user:a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d@4"}), json!({"to": "user:A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D@3"}),
+                    json!({"to": "user:../../x@3"}), json!({"to": "user:a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d@3\n"})] {
             assert!(rail_body(&bad).is_err(), "{bad}");
         }
         let (_d, app) = app();
@@ -1953,8 +2068,16 @@ pub(crate) mod tests {
         assert_eq!(vehicle_park_body(&json!({"garage": true, "x": 1})), Ok(json!({"garage": true})));
         assert_eq!(vehicle_park_body(&json!({"world": "claude-hq@2", "x": 1.5, "z": -2, "yaw": 0.5, "note": "n"})),
                    Ok(json!({"world": "claude-hq@2", "x": 1.5, "z": -2.0, "yaw": 0.5})));
+        for w in ["claude-hq@1", "claude-hq@3", "user:a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d@2", "user:a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d@3"] {
+            assert_eq!(vehicle_park_body(&json!({"world": w, "x": 1, "z": 2, "yaw": 0})), Ok(json!({"world": w, "x": 1.0, "z": 2.0, "yaw": 0.0})), "{w}");
+        }
         for bad in [json!({"world": "../w", "x": 1, "z": 1, "yaw": 0}), json!({"world": "claude-hq@2", "x": 1e9, "z": 1, "yaw": 0}),
-                    json!({"world": "claude-hq@2", "x": 1}), json!({"garage": false})] {
+                    json!({"world": "claude-hq@2", "x": 1}), json!({"garage": false}),
+                    json!({"world": "claude-hq@4", "x": 1, "z": 1, "yaw": 0}), json!({"world": "CLAUDE-HQ@3", "x": 1, "z": 1, "yaw": 0}),
+                    json!({"world": "user:a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d@1", "x": 1, "z": 1, "yaw": 0}),
+                    json!({"world": "user:a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d@4", "x": 1, "z": 1, "yaw": 0}),
+                    json!({"world": "user:A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D@3", "x": 1, "z": 1, "yaw": 0}),
+                    json!({"world": "user:../x@3", "x": 1, "z": 1, "yaw": 0})] {
             assert!(vehicle_park_body(&bad).is_err(), "{bad}");
         }
         let (_d, app) = app();
@@ -2104,34 +2227,145 @@ pub(crate) mod tests {
         }));
         let me = "0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c";
         let island = format!("user:{me}@2");
+        let island3 = format!("user:{me}@3");
         // unpaired: an island is refused before anything is sent; a fixed world still goes
         app.clear_link();
         app.save_config(&json!({"arenaUrl": "https://arena.example"})).unwrap();
         assert_eq!(app.arena_world(&island, "").err(), Some(not_paired()));
+        assert_eq!(app.arena_world(&island3, "").err(), Some(not_paired()));
         assert!(app.arena_world("claude-hq@2", "").is_ok());
         app.save_link(&json!({"token": "T", "url": "https://arena.example"})).unwrap();
         assert!(app.arena_world(&island, "").is_ok());
         assert!(app.arena_world("claude-hq@1", "").is_ok());
+        assert!(app.arena_world(&island3, "").is_ok());
+        assert!(app.arena_world("claude-hq@3", "").is_ok());
         let s = seen.lock().unwrap();
         assert_eq!(s[0], ("https://arena.example/v1/world/claude-hq@2".to_string(), None));
         assert_eq!(s[1], (format!("https://arena.example/v1/world/{island}"), Some("T".to_string())));
         assert_eq!(s[2].1, None, "the fixed worlds never carry the token");
+        assert_eq!(s[3], (format!("https://arena.example/v1/world/{island3}"), Some("T".to_string())));
+        assert_eq!(s[4], ("https://arena.example/v1/world/claude-hq@3".to_string(), None));
         drop(s);
         // anything user:-shaped that is not exactly an island id is no world, and sends nothing
-        for bad in [format!("user:{me}@1"), format!("user:{}@2", me.to_uppercase()), "user:me@2".into(), format!("user:{me}x@2")] {
+        for bad in [format!("user:{me}@1"), format!("user:{}@2", me.to_uppercase()), "user:me@2".into(), format!("user:{me}x@2"),
+                    format!("user:{me}@4"), format!("user:{}@3", me.to_uppercase()), format!("user:{me}@3@2"), "user:../x@3".into()] {
             assert_eq!(app.arena_world(&bad, "").err().map(|e| e.0), Some(404), "{bad}");
         }
-        assert_eq!(seen.lock().unwrap().len(), 3);
+        assert_eq!(seen.lock().unwrap().len(), 5);
     }
 
     #[test]
     fn the_commons_assignment_is_an_authed_get() {
         let (_d, app) = app();
         let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!([{"user": "u", "lot_rank": 0}])))));
-        assert_eq!(app.arena_commons_assign(), (200, json!([{"user": "u", "lot_rank": 0}])));
+        assert_eq!(app.arena_commons_assign("claude-hq@3"), (200, json!([{"user": "u", "lot_rank": 0}])));
+        assert_eq!(app.arena_commons_assign("claude-hq@2"), (200, json!([{"user": "u", "lot_rank": 0}])));
+        for bad in ["claude-hq@1", "claude-hq@4", "../admin", "user:a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d@3", ""] {
+            assert_eq!(app.arena_commons_assign(bad).0, 404, "{bad}");
+        }
         let s = sent.lock().unwrap();
-        assert_eq!(s[0].1, "https://arena.example/v1/world/claude-hq@2/assign");
-        assert_eq!(s[0].2.as_deref(), Some("T"));
+        assert_eq!(s.len(), 2, "a refused world sends nothing");
+        assert_eq!(s[0].1, "https://arena.example/v1/world/claude-hq@3/assign");
+        assert_eq!(s[1].1, "https://arena.example/v1/world/claude-hq@2/assign");
+        assert!(s.iter().all(|x| x.2.as_deref() == Some("T")));
+    }
+
+    #[test]
+    fn sms_queries_forward_only_the_validated_parameter() {
+        assert_eq!(sms_get_query("me", "x=1&since=5"), Ok(String::new()));
+        assert_eq!(sms_get_query("inbox", ""), Ok(String::new()));
+        assert_eq!(sms_get_query("inbox", "since=1792411200123"), Ok("?since=1792411200123".into()));
+        let id = "0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c";
+        assert_eq!(sms_get_query("inbox", &format!("since={id}&evil=1")), Ok(format!("?since={id}")));
+        for bad in ["since=../x", "since=a%26b", "since=a b", &format!("since={}", "1".repeat(41))] {
+            assert!(sms_get_query("inbox", bad).is_err(), "{bad}");
+        }
+        assert_eq!(sms_get_query("status", &format!("ids={id},abc-1&x=2")), Ok(format!("?ids={id},abc-1")));
+        let fifty: Vec<String> = (0..50).map(|i| format!("m{i}")).collect();
+        assert_eq!(sms_get_query("status", &format!("ids={}", fifty.join(","))).map(|q| !q.is_empty()), Ok(true));
+        let many: Vec<String> = (0..51).map(|i| format!("m{i}")).collect();
+        for bad in ["".to_string(), "ids=".into(), "ids=a,,b".into(), "ids=a,".into(), "ids=a%2Fb".into(), "ids=a;b".into(),
+                    format!("ids={}", many.join(",")), format!("ids={}", "x".repeat(41))] {
+            assert!(sms_get_query("status", &bad).is_err(), "{bad}");
+        }
+        assert_eq!(sms_get_query("directory", "q=ga"), Ok("?q=ga".into()));
+        assert_eq!(sms_get_query("directory", "q=Gary_B.dev-1"), Ok("?q=Gary_B.dev-1".into()));
+        for bad in ["", "q=", "q=g", "q=a%20b", "q=%3Cb%3E", "q=a%26x%3D1", &format!("q={}", "a".repeat(25)), "q=caf%C3%A9"] {
+            assert!(sms_get_query("directory", bad).is_err(), "{bad}");
+        }
+        assert!(sms_get_query("threads", "").is_err());
+        assert!(sms_get_query("../admin", "").is_err());
+    }
+
+    #[test]
+    fn sms_bodies_are_rebuilt_from_validated_fields() {
+        let u = "0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c";
+        assert_eq!(sms_body("optin", &json!({"on": true, "x": 1})), Ok(json!({"on": true})));
+        assert_eq!(sms_body("optin", &json!({"on": false})), Ok(json!({"on": false})));
+        for bad in [json!({}), json!({"on": 1}), json!({"on": "true"}), json!({"on": null})] {
+            assert!(sms_body("optin", &bad).is_err(), "{bad}");
+        }
+        assert_eq!(sms_body("send", &json!({"to": u, "text": "  see you at Central  ", "from": "x", "at": 1})),
+                   Ok(json!({"to": u, "text": "see you at Central"})));
+        assert_eq!(sms_body("send", &json!({"to": u, "text": "é😀中".repeat(53)})).map(|v| v["text"].as_str().unwrap().chars().count()), Ok(159));
+        assert!(sms_body("send", &json!({"to": u, "text": "x".repeat(160)})).is_ok());
+        for bad in [json!({"to": u, "text": "x".repeat(161)}), json!({"to": u, "text": ""}), json!({"to": u, "text": "   "}),
+                    json!({"to": u, "text": "a\nb"}), json!({"to": u, "text": "a\u{7}"}), json!({"to": u, "text": "a\u{202e}b"}),
+                    json!({"to": u, "text": "zero\u{200b}width"}), json!({"to": u, "text": 5}), json!({"to": u}),
+                    json!({"to": u.to_uppercase(), "text": "hi"}), json!({"to": "../x", "text": "hi"}), json!({"text": "hi"})] {
+            assert!(sms_body("send", &bad).is_err(), "{bad}");
+        }
+        assert_eq!(sms_body("ack", &json!({"upto": u, "all": true})), Ok(json!({"upto": u})));
+        for bad in [json!({}), json!({"upto": 5}), json!({"upto": "../x"}), json!({"upto": ""})] {
+            assert!(sms_body("ack", &bad).is_err(), "{bad}");
+        }
+        assert_eq!(sms_body("block", &json!({"user": u, "on": true, "why": "spam"})), Ok(json!({"user": u, "on": true})));
+        for bad in [json!({"user": u}), json!({"on": true}), json!({"user": "x", "on": true}), json!({"user": u, "on": "yes"})] {
+            assert!(sms_body("block", &bad).is_err(), "{bad}");
+        }
+        assert_eq!(sms_body("report", &json!({"user": u, "id": "m-1", "text": "copied"})), Ok(json!({"user": u, "id": "m-1"})));
+        assert_eq!(sms_body("report", &json!({"user": u})), Ok(json!({"user": u})));
+        for bad in [json!({"user": u, "id": "../x"}), json!({"user": u, "id": 3}), json!({"id": "m-1"})] {
+            assert!(sms_body("report", &bad).is_err(), "{bad}");
+        }
+        assert!(sms_body("delete", &json!({})).is_err());
+    }
+
+    #[test]
+    fn sms_routes_reach_the_arena_with_the_token_and_only_clean_bodies() {
+        let (_d, app) = app();
+        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({"ok": true})))));
+        let u = "0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c";
+        assert_eq!(app.arena_sms_get("me", "").0, 200);
+        assert_eq!(app.arena_sms_get("inbox", "since=m1").0, 200);
+        assert_eq!(app.arena_sms_get("status", "ids=a,b").0, 200);
+        assert_eq!(app.arena_sms_get("directory", "q=ga").0, 200);
+        assert_eq!(app.arena_sms_post("optin", &json!({"on": true})).0, 200);
+        assert_eq!(app.arena_sms_post("send", &json!({"to": u, "text": "hi", "session": "secret"})).0, 200);
+        assert_eq!(app.arena_sms_post("ack", &json!({"upto": "m1"})).0, 200);
+        assert_eq!(app.arena_sms_post("block", &json!({"user": u, "on": true})).0, 200);
+        assert_eq!(app.arena_sms_post("report", &json!({"user": u, "id": "m1"})).0, 200);
+        // refused locally: nothing sent
+        assert_eq!(app.arena_sms_get("directory", "q=a").0, 400);
+        assert_eq!(app.arena_sms_post("send", &json!({"to": u, "text": "x".repeat(200)})).0, 400);
+        assert_eq!(app.arena_sms_post("nuke", &json!({})).0, 400);
+        let s = sent.lock().unwrap();
+        let urls: Vec<(&str, &str)> = s.iter().map(|x| (x.0.as_str(), x.1.as_str())).collect();
+        assert_eq!(urls, vec![
+            ("GET", "https://arena.example/v1/sms/me"), ("GET", "https://arena.example/v1/sms/inbox?since=m1"),
+            ("GET", "https://arena.example/v1/sms/status?ids=a,b"), ("GET", "https://arena.example/v1/sms/directory?q=ga"),
+            ("POST", "https://arena.example/v1/sms/optin"), ("POST", "https://arena.example/v1/sms/send"),
+            ("POST", "https://arena.example/v1/sms/ack"), ("POST", "https://arena.example/v1/sms/block"),
+            ("POST", "https://arena.example/v1/sms/report"),
+        ]);
+        assert_eq!(s[5].3, Some(json!({"to": u, "text": "hi"})));
+        assert!(s.iter().all(|x| x.2.as_deref() == Some("T")));
+        drop(s);
+        // unpaired: nothing leaves
+        app.clear_link();
+        assert_eq!(app.arena_sms_get("me", ""), (400, json!({"error": "not paired"})));
+        assert_eq!(app.arena_sms_post("optin", &json!({"on": true})), (400, json!({"error": "not paired"})));
+        assert_eq!(sent.lock().unwrap().len(), 9);
     }
 
     #[test]

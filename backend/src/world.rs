@@ -10,7 +10,8 @@
 //! can be previewed (never stored), and the viewer is served.
 //!
 //! The live worlds: Arena City (claude-hq@1, frozen) and the Commons
-//! (claude-hq@2), public; and every member's island, user:<uuid>@2. An island
+//! (claude-hq@3 since HQ 3.15, archipelago::LIVE_V; claude-hq@2 still served for
+//! older clients), public; and every member's island, user:<uuid>@3 (or @2). An island
 //! needs a device token (the route is public, so the check is made here) and is
 //! served only to someone who may see that city (cities::can_view) while its
 //! owner is active. Anyone else gets the same 404, so the route says nothing
@@ -33,8 +34,9 @@ use serde_json::json;
 use crate::cities;
 use crate::worldgen;
 
-/// The fixed worlds a production Arena serves (plus the islands, see `live`).
-const LIVE: [&str; 2] = ["claude-hq@1", "claude-hq@2"];
+/// The fixed worlds a production Arena serves (plus the islands, see `live`):
+/// Arena City, the Commons at @2 (older clients) and the live Commons.
+const LIVE: [&str; 3] = ["claude-hq@1", crate::archipelago::COMMONS_V2, crate::archipelago::COMMONS];
 /// Generated worlds kept in memory (each ~1 MB of JSON). The fixed worlds are
 /// never evicted; islands share what is left.
 const CACHE_MAX: usize = 8;
@@ -46,13 +48,15 @@ enum Live<'a> {
     Island(&'a str),
 }
 
-/// Which kind of live world `id` names, if any: a fixed world, or user:<uuid>@2
-/// with a uuid matching UUID_RE (36 hex digits and hyphens, as the dashboard checks).
+/// Which kind of live world `id` names, if any: a fixed world, or user:<uuid>@3
+/// (the live island) or user:<uuid>@2 (older clients) with a uuid matching
+/// UUID_RE (36 hex digits and hyphens, as the dashboard checks).
 fn live_kind(id: &str) -> Option<Live<'_>> {
     if LIVE.contains(&id) {
         return Some(Live::Fixed);
     }
-    let uuid = id.strip_prefix("user:")?.strip_suffix("@2")?;
+    let rest = id.strip_prefix("user:")?;
+    let uuid = rest.strip_suffix("@3").or_else(|| rest.strip_suffix("@2"))?;
     (uuid.len() == 36 && uuid.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')).then_some(Live::Island(uuid))
 }
 
@@ -276,13 +280,23 @@ mod tests {
     fn live_ids_are_the_fixed_worlds_and_well_formed_islands() {
         assert_eq!(live_kind("claude-hq@1"), Some(Live::Fixed));
         assert_eq!(live_kind("claude-hq@2"), Some(Live::Fixed));
+        assert_eq!(live_kind("claude-hq@3"), Some(Live::Fixed));
         assert_eq!(live_kind(&format!("user:{U}@2")), Some(Live::Island(U)));
+        assert_eq!(live_kind(&format!("user:{U}@3")), Some(Live::Island(U)));
         assert!(live_kind("user:0B8E4C1A-3F2D-4E5B-9A6C-7D8E9F0A1B2C@2").is_some());
+        assert!(live_kind("user:0B8E4C1A-3F2D-4E5B-9A6C-7D8E9F0A1B2C@3").is_some());
         for bad in [
-            "claude-hq@3".to_string(),
+            "claude-hq@4".to_string(),
+            "claude-hq@0".into(),
             "claude-hq".into(),
             "other@1".into(),
-            format!("user:{U}@1"),                         // islands are @2 only
+            "other@3".into(),
+            format!("user:{U}@1"),                         // islands are @2 or @3 only
+            format!("user:{U}@4"),
+            format!("user:{U}@3@2"),
+            format!("user:{U}@2@3"),
+            format!("user:{U}@3x"),
+            "user:../../../../../../../../../../../../x@3".into(),
             format!("user:{U}@2x"),
             format!("user:{U}0@2"),                        // 37 characters
             "user:0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2@2".into(),  // 35
@@ -302,10 +316,14 @@ mod tests {
         let p = pool().await;
         assert!(live(&p, "claude-hq@1").await.unwrap());
         assert!(live(&p, "claude-hq@2").await.unwrap());
+        assert!(live(&p, "claude-hq@3").await.unwrap());
         assert!(live(&p, &format!("user:{U}@2")).await.unwrap());
+        assert!(live(&p, &format!("user:{U}@3")).await.unwrap());
         assert!(!live(&p, "user:11111111-2222-3333-4444-555555555555@2").await.unwrap(), "no such user");
+        assert!(!live(&p, "user:11111111-2222-3333-4444-555555555555@3").await.unwrap(), "no such user");
         sqlx::query("UPDATE users SET is_active = 0").execute(&p).await.unwrap();
         assert!(!live(&p, &format!("user:{U}@2")).await.unwrap(), "a disabled account");
+        assert!(!live(&p, &format!("user:{U}@3")).await.unwrap(), "a disabled account");
     }
 
     #[tokio::test]
@@ -319,6 +337,29 @@ mod tests {
         assert_eq!(serve_world(&p, "elsewhere@1".into(), &h).await.status(), StatusCode::NOT_FOUND);
         assert_eq!(serve_world(&p, format!("user:{U}@1"), &h).await.status(), StatusCode::NOT_FOUND);
         assert_eq!(serve_world(&p, "user:not-a-uuid@1".into(), &h).await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(serve_world(&p, format!("user:{U}@4"), &h).await.status(), StatusCode::BAD_REQUEST, "no such generator");
+    }
+
+    #[tokio::test]
+    async fn a_live_island_at_3_is_gated_like_one_at_2() {
+        let p = pool().await;
+        let other = "11111111-2222-3333-4444-555555555555";
+        for v in ["@2", "@3"] {
+            let mine = format!("user:{U}{v}");
+            // no token: 401 before anything else, for a member's island and for no one's
+            assert_eq!(serve_world(&p, mine.clone(), &HeaderMap::new()).await.status(), StatusCode::UNAUTHORIZED, "{v}");
+            assert_eq!(serve_world(&p, format!("user:{other}{v}"), &HeaderMap::new()).await.status(), StatusCode::UNAUTHORIZED, "{v}");
+        }
+        // a member: an unknown uuid is the same 404 at either version
+        let h = device(&p, U, "tok-v3").await;
+        for v in ["@2", "@3"] {
+            assert_eq!(serve_world(&p, format!("user:{other}{v}"), &h).await.status(), StatusCode::NOT_FOUND, "{v}");
+        }
+        // the island the owner may see at @3 generates when this server has a @3 generator
+        if worldgen::VERSION.contains(&3) {
+            assert_eq!(serve_world(&p, format!("user:{U}@3"), &h).await.status(), StatusCode::OK);
+            assert_eq!(serve_world(&p, "claude-hq@3".into(), &HeaderMap::new()).await.status(), StatusCode::OK);
+        }
     }
 
     /// A device for `user`; the headers that carry its token.
@@ -411,22 +452,23 @@ mod tests {
     }
 
     fn island(i: usize) -> String {
-        format!("user:00000000-0000-0000-0000-{i:012}@2")
+        format!("user:00000000-0000-0000-0000-{i:012}@3")
     }
 
     #[test]
     fn a_full_cache_evicts_only_the_least_recently_used_island() {
         let mut c = Cache::default();
-        c.cell("claude-hq@1");
-        c.cell("claude-hq@2");
-        for i in 0..CACHE_MAX - 2 {
+        for k in LIVE {
+            c.cell(k);
+        }
+        for i in 0..CACHE_MAX - LIVE.len() {
             c.cell(&island(i));
         }
         c.cell(&island(0)); // asked for again: now the most recent
         c.cell(&island(100));
         assert_eq!(c.worlds.len(), CACHE_MAX);
         assert!(!c.worlds.contains_key(&island(1)), "the least recently used island goes");
-        for k in ["claude-hq@1".to_string(), "claude-hq@2".into(), island(0), island(2), island(100)] {
+        for k in ["claude-hq@1".to_string(), "claude-hq@2".into(), "claude-hq@3".into(), island(0), island(2), island(100)] {
             assert!(c.worlds.contains_key(&k), "{k} kept");
         }
         // cycling through more islands than fit never touches the fixed worlds,
@@ -434,7 +476,7 @@ mod tests {
         for i in 200..230 {
             c.cell(&island(i));
             assert_eq!(c.worlds.len(), CACHE_MAX);
-            assert!(c.worlds.contains_key("claude-hq@1") && c.worlds.contains_key("claude-hq@2"));
+            assert!(LIVE.iter().all(|k| c.worlds.contains_key(*k)), "the fixed worlds stay");
             assert!(i == 200 || c.worlds.contains_key(&island(i - 1)), "the previous island survives the next miss");
         }
     }

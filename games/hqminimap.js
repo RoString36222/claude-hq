@@ -18,8 +18,15 @@
  *   fromMini(view, px, py) -> [x, z]  its inverse (a click -> the world point under it)
  *   zoomFor(speedMps) -> span         220 m on foot easing up to 600 m at 60 km/h and over
  *
+ * HQ 3.15 (@3 docs): the static layer also has the lakes, canals and the marina (W.water: water, their islands as land,
+ * a stone edge on quays, the breakwater) and the piers as dots; frame() draws the lines over it as vectors: the metro
+ * (M1, M2) in its line colour, dashed where it runs underground, with a ring at each station, the City Line and the
+ * Island Link (dashed in tunnel), the gondola (dotted, square stations); the big map names each line at its first
+ * station, so colour is never the only signal. Underground mode (opts.under() true, e.g. on a metro platform or
+ * riding one) dims the surface to UNDER_DIM and draws the metro solid, wider and brighter on top.
+ *
  * Mounted by the 3D City (games/hqcity3d.js):
- *   HQV.hqminimap.mount(stageEl, {onPick(x, z), onExpand(), announce}) -> mm
+ *   HQV.hqminimap.mount(stageEl, {onPick(x, z), onExpand(), announce, under()}) -> mm
  *     mm.setWorld(W, tier, {places, coast, river})  W: the packed world (HQV.world.pack); places: hqnav
  *                     Places (m; default: W's civic sites at this tier); coast, river: cm, as the doc's
  *                     layers (default W.island.coast and W.river)
@@ -49,6 +56,11 @@ var SWING_K = 6, PAN_K = 10;                  // 1/s: the big map swings north-u
 var BITMAP_MAX = 3072, BITMAP_PX_M = 2;       // the static bitmap: device px at most, px per m at most
 var MARGIN = 60;                              // m of sea round the world in the bitmap
 var ICON = 18;                                // CSS px: a POI icon's disc
+var UNDER_DIM = 0.3;                          // underground mode: the surface's alpha
+var PIER_M = 3;                               // m: a pier's dot radius in the bitmap (at least 1.5 px)
+// the transit lines' colours (canvas only; the line's name is drawn beside it on the big map)
+var LINE_COL = {M1: "#d64541", M2: "#2f6fd1", CL: "#3f8f4f", IL: "#8e5bd0", G1: "#d08a1f"};
+var KIND_COL = {metro: "#c2185b", city: "#3f8f4f", island: "#8e5bd0", gondola: "#d08a1f"};
 var ROAD_M = {highway: 22, ring: 18, arterial: 14, avenue: 14, local: 9, street: 9};   // drawn widths
 var ROAD_RANK = {local: 0, street: 0, arterial: 1, avenue: 1, ring: 2, highway: 3};
 // The POI kinds the minimap shows (hqnav Place kinds), their disc colour and pictogram.
@@ -64,11 +76,13 @@ var POI = {
 };
 var POI_ORDER = ["hq", "school", "market", "fire", "police", "clinic", "hospital", "townhall", "airport", "transit", "dealer", "tuning", "gp", "dock", "port", "carpark", "myhq"];
 var PAL = {
-  dark: {sea: "#0f2a3d", land: "#1d2620", landEdge: "#33503f", water: "#1a4a6b", bank: "#2f6f8f",
+  dark: {sea: "#0f2a3d", land: "#1d2620", landEdge: "#33503f", water: "#1a4a6b", bank: "#2f6f8f", quay: "#8a8578", pier: "#c8b48a",
+         station: "#ffffff",
          road: {highway: "#c99a4a", ring: "#b08a50", arterial: "#8d939c", avenue: "#8d939c", local: "#5d636b", street: "#5d636b"},
          casing: "#0b0d10", bridge: "#d8d2c4", route: "#e2805e", routeCase: "#3a1c10", you: "#ffffff", youEdge: "#e2805e",
          pin: "#e2805e", rim: "#ecebe8", other: "#5fd3e6"},
-  light: {sea: "#a9cfe6", land: "#eef0e6", landEdge: "#c9d3bf", water: "#8cc0e0", bank: "#6aa3c8",
+  light: {sea: "#a9cfe6", land: "#eef0e6", landEdge: "#c9d3bf", water: "#8cc0e0", bank: "#6aa3c8", quay: "#8f897c", pier: "#9a7b4a",
+          station: "#ffffff",
           road: {highway: "#e3a64a", ring: "#d6a35c", arterial: "#ffffff", avenue: "#ffffff", local: "#fbfbf8", street: "#fbfbf8"},
           casing: "#b9b4aa", bridge: "#7b7466", route: "#b64e2b", routeCase: "#ffffff", you: "#1d1c1a", youEdge: "#ffffff",
           pin: "#b64e2b", rim: "#1d1c1a", other: "#1f7a8c"}
@@ -179,6 +193,28 @@ function buildStatic(doc, W, tier, coast, river, pal, dpr, reuse){
     g.fillStyle = pal.water; g.fill();
     g.lineWidth = Math.max(1, 2*k); g.strokeStyle = pal.bank; g.stroke();
   }
+  // @3: the lakes, canals and the marina (their islands are land), a stone edge on quays, the breakwater
+  var WL = W && W.water;
+  if(WL && Array.isArray(WL.bodies)){
+    WL.bodies.forEach(function(b){
+      if(!b || !Array.isArray(b.poly) || b.poly.length < 3) return;
+      polyPath(g, b.poly, half, half, k);
+      g.fillStyle = pal.water; g.fill();
+      g.lineWidth = Math.max(1, (b.edge === "quay" ? 2.5 : 2)*k); g.strokeStyle = b.edge === "quay" ? pal.quay : pal.bank; g.stroke();
+      (b.islands || []).forEach(function(I){
+        if(!Array.isArray(I) || I.length < 3) return;
+        polyPath(g, I, half, half, k);
+        g.fillStyle = pal.land; g.fill();
+        g.lineWidth = Math.max(1, 2*k); g.strokeStyle = pal.bank; g.stroke();
+      });
+    });
+    var bw = WL.breakwater;
+    if(Array.isArray(bw) && bw.length >= 2){
+      g.beginPath();
+      bw.forEach(function(p, i){ var bx = (half - p[0]/100)*k, by = (half - p[1]/100)*k; if(i) g.lineTo(bx, by); else g.moveTo(bx, by); });
+      g.lineCap = "round"; g.lineWidth = Math.max(1.5, 8*k); g.strokeStyle = pal.quay; g.stroke();
+    }
+  }
   // the roads, minor classes first, casings under fills; bridges get a pale casing over the water
   var edges = ((W && W.edges) || []).filter(function(e){ return e && e.pts && e.pts.length >= 6 && !(e.min_tier != null && tier != null && e.min_tier > tier); });
   edges.sort(function(a, b){ return ((ROAD_RANK[a.cls] || 0) - (ROAD_RANK[b.cls] || 0)) || (a.id - b.id); });
@@ -200,7 +236,65 @@ function buildStatic(doc, W, tier, coast, river, pal, dpr, reuse){
       g.stroke();
     }
   }
+  // @3: the piers, as dots at their heads
+  if(WL && Array.isArray(WL.piers)) WL.piers.forEach(function(p){
+    if(!p || !isFinite(+p.x) || !isFinite(+p.z)) return;
+    var f = p.front || [0, 65536], fl = Math.hypot(+f[0] || 0, +f[1] || 0) || 1, L = (+p.len || 0)/2;
+    var x = (+p.x + (+f[0] || 0)/fl*L)/100, z = (+p.z + (+f[1] || 0)/fl*L)/100;
+    g.beginPath(); g.arc((half - x)*k, (half - z)*k, Math.max(1.5, PIER_M*k), 0, 2*PI);
+    g.fillStyle = pal.pier; g.fill(); g.lineWidth = Math.max(1, 0.8*k); g.strokeStyle = pal.casing; g.stroke();
+  });
   return B;
+}
+
+// The lines a world's doc lays (W.metro, W.rail, W.gondola; cm) as metre polylines for frame():
+// [{id, kind: "metro"|"city"|"island"|"gondola", col, segs: [{pts: [[x, z]...], under}], stations: [[x, z]...]}]
+function transitLines(W){
+  var out = [];
+  function m(v){ return (+v || 0)/100; }
+  function segsOf(path, kinds, underK){
+    var segs = [], cur = null;
+    for(var i = 0; i + 1 < (path || []).length; i++){
+      var a = path[i], b = path[i + 1];
+      if(!a || !b) continue;
+      var u = !!underK[String((kinds || [])[i])];
+      if(!cur || cur.under !== u){ cur = {pts: [[m(a[0]), m(a[2])]], under: u}; segs.push(cur); }
+      cur.pts.push([m(b[0]), m(b[2])]);
+    }
+    return segs;
+  }
+  function stationsOf(ids, list){
+    var by = {};
+    (list || []).forEach(function(s){ if(s && s.id != null) by[s.id] = s; });
+    return (ids || []).map(function(id){ return by[id]; }).filter(Boolean).map(function(s){ return [m(s.x), m(s.z)]; });
+  }
+  var Mt = W && W.metro;
+  if(Mt) (Mt.lines || []).forEach(function(l){
+    if(!l) return;
+    out.push({id: String(l.id), kind: "metro", col: LINE_COL[l.id] || KIND_COL.metro,
+              segs: segsOf(l.path, l.kinds, {bored: 1, cutcover: 1}), stations: stationsOf(l.stations, Mt.stations)});
+  });
+  var Rl = W && W.rail;
+  if(Rl) (Rl.lines || []).forEach(function(l){
+    if(!l) return;
+    var kind = l.kind === "island" ? "island" : "city";
+    out.push({id: String(l.id), kind: kind, col: LINE_COL[l.id] || KIND_COL[kind],
+              segs: segsOf(l.path, l.kinds, {tunnel: 1}), stations: stationsOf(l.stations, Rl.stations)});
+  });
+  var Gd = W && W.gondola;
+  if(Gd) (Gd.lines || []).forEach(function(l){
+    if(!l) return;
+    var st = (l.stations || []).filter(Boolean), pts = [];
+    // the cable: station, towers in order along it, station
+    if(st.length >= 2){
+      var a = [m(st[0].x), m(st[0].z)], b = [m(st[st.length - 1].x), m(st[st.length - 1].z)], dx = b[0] - a[0], dz = b[1] - a[1];
+      pts = [a].concat((l.towers || []).filter(Boolean).map(function(t){ return [m(t.x), m(t.z)]; })
+             .sort(function(p, q){ return ((p[0] - a[0])*dx + (p[1] - a[1])*dz) - ((q[0] - a[0])*dx + (q[1] - a[1])*dz); })).concat([b]);
+    }
+    out.push({id: String(l.id), kind: "gondola", col: LINE_COL[l.id] || KIND_COL.gondola,
+              segs: pts.length >= 2 ? [{pts: pts, under: false}] : [], stations: st.map(function(s){ return [m(s.x), m(s.z)]; })});
+  });
+  return out;
 }
 
 // The airfield's real colours (docs/plans/airport-spec.md 4), the same in both palettes
@@ -352,9 +446,10 @@ function mount(el, opts){
   var announce = typeof opts.announce === "function" ? opts.announce : function(){};
   var onPick = typeof opts.onPick === "function" ? opts.onPick : function(){};
   var onExpand = typeof opts.onExpand === "function" ? opts.onExpand : function(){};
+  var underFn = typeof opts.under === "function" ? opts.under : function(){ return false; }, wasUnder = false;
   var domL = [], alive = true;
   var mode = "heading", level = 0, span = null, lastT = null, W = null, tier = null;
-  var stat = null, atlas = null, places = [], pal = PAL.dark, coastW = null, riverW = null, airL = null;
+  var stat = null, atlas = null, places = [], pal = PAL.dark, coastW = null, riverW = null, airL = null, lines = [];
   var cssW = 200, cssH = 200, dpr = 1, V = viewFor(mode, 0, 0, 0, WALK_SPAN, cssW, cssH);
   // the big map (M): the same canvas grown to most of the stage, north-up over the whole world, with a pan
   // (m, from you) you drag; rot/ay ease between heading-up and north-up so the map swings round as it grows
@@ -380,6 +475,7 @@ function mount(el, opts){
   root.className = "hq3d-minimap";
   root.setAttribute("role", "group");
   root.setAttribute("aria-label", "Minimap");
+  root.setAttribute("data-under", "false");
   el.appendChild(root);
   var scrim = doc.createElement("div");           // the big map's backdrop (under it by z-index); a click closes it
   scrim.className = "hq3d-minimap-scrim";
@@ -515,8 +611,9 @@ function mount(el, opts){
   function setWorld(w, t, o){
     o = o || {};
     W = w || null; tier = t == null ? null : t|0;
-    stat = null; atlas = null; places = [];
+    stat = null; atlas = null; places = []; lines = [];
     if(!W) return;
+    lines = transitLines(W);
     measure();
     pal = palette(el);
     var coast = Array.isArray(o.coast) ? o.coast : (W.island && W.island.coast) || null;
@@ -587,6 +684,15 @@ function mount(el, opts){
     var s = cssW/span, c = Math.cos(V.rot), n = Math.sin(V.rot), ax = cssW/2, ay = cssH*V.ay;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.fillStyle = pal.sea; g.fillRect(0, 0, cssW, cssH);
+    // underground: the surface dims, the metro comes up bright (a flag on the box for the stylesheet too)
+    var under = false;
+    try { under = !!underFn(); } catch(err){ under = false; }
+    if(under !== wasUnder){
+      wasUnder = under;
+      root.setAttribute("data-under", under ? "true" : "false");
+      cv.setAttribute("aria-label", under ? "Minimap, underground: the metro lines. Click to set a waypoint" : "Minimap: click to set a waypoint");
+    }
+    g.globalAlpha = under ? UNDER_DIM : 1;
     if(stat && stat.g){
       // only the part of the bitmap under the view: its corners' world box -> a source rect
       var x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, corners = [[0, 0], [cssW, 0], [0, cssH], [cssW, cssH]];
@@ -604,6 +710,8 @@ function mount(el, opts){
         g.setTransform(dpr, 0, 0, dpr, 0, 0);
       }
     }
+    g.globalAlpha = 1;
+    drawLines(s, c, n, ax, ay, under);
     // the route: a cased line through every point (m)
     var R = f.route;
     if(R && R.length >= 4){
@@ -667,6 +775,44 @@ function mount(el, opts){
     g.fillStyle = pal.rim; g.font = "700 10px system-ui, sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
     g.fillText("N", mx, my + 0.5);
   }
+  // the transit lines as vectors over the map: metro dashed where it is underground (solid, wider, on top when under),
+  // rail dashed in tunnel, the gondola dotted; stations as rings (squares on the gondola); names on the big map
+  function drawLines(s, c, n, ax, ay, under){
+    if(!lines.length) return;
+    function P(p){ var u = -(p[0] - V.x)*s, v = -(p[1] - V.z)*s; return [ax + u*c + v*n, ay - u*n + v*c]; }
+    var order = under ? lines.filter(function(L){ return L.kind !== "metro"; }).concat(lines.filter(function(L){ return L.kind === "metro"; })) : lines;
+    g.lineCap = "round"; g.lineJoin = "round";
+    order.forEach(function(L){
+      var metro = L.kind === "metro", dim = under && !metro;
+      g.globalAlpha = dim ? UNDER_DIM : 1;
+      L.segs.forEach(function(sg){
+        if(sg.pts.length < 2) return;
+        g.beginPath();
+        sg.pts.forEach(function(p, i){ var q = P(p); if(i) g.lineTo(q[0], q[1]); else g.moveTo(q[0], q[1]); });
+        var w = L.kind === "gondola" ? 1.6 : (metro && under ? 5 : 3);
+        g.setLineDash && g.setLineDash(L.kind === "gondola" ? [1.5, 3] : (sg.under && !(metro && under) ? [5, 4] : []));
+        g.lineWidth = w + 2; g.strokeStyle = pal.casing; g.stroke();
+        g.lineWidth = w; g.strokeStyle = L.col; g.stroke();
+      });
+      g.setLineDash && g.setLineDash([]);
+      L.stations.forEach(function(p){
+        var q = P(p), r = metro && under ? 4.5 : 3.5;
+        if(q[0] < -8 || q[1] < -8 || q[0] > cssW + 8 || q[1] > cssH + 8) return;
+        g.beginPath();
+        if(L.kind === "gondola") g.rect(q[0] - r*0.8, q[1] - r*0.8, r*1.6, r*1.6);
+        else g.arc(q[0], q[1], r, 0, 2*PI);
+        g.fillStyle = pal.station; g.fill();
+        g.lineWidth = 2; g.strokeStyle = L.col; g.stroke();
+      });
+      if(big && L.stations.length){
+        var q0 = P(L.stations[0]);
+        g.font = "700 11px system-ui, sans-serif"; g.textAlign = "left"; g.textBaseline = "middle";
+        g.lineWidth = 3; g.strokeStyle = pal.casing; g.strokeText(L.id, q0[0] + 7, q0[1] - 8);
+        g.fillStyle = pal.rim; g.fillText(L.id, q0[0] + 7, q0[1] - 8);
+      }
+    });
+    g.globalAlpha = 1;
+  }
   function arrowPin(x, y, ang){
     g.save(); g.translate(x, y); g.rotate(ang);
     g.beginPath(); g.moveTo(0, -9); g.lineTo(7, 6); g.lineTo(0, 2); g.lineTo(-7, 6); g.closePath();
@@ -682,7 +828,7 @@ function mount(el, opts){
     if(ro){ try { ro.disconnect(); } catch(e){} ro = null; }
     if(root.parentNode) root.parentNode.removeChild(root);
     if(scrim.parentNode) scrim.parentNode.removeChild(scrim);
-    stat = null; atlas = null; W = null; places = []; airL = null;
+    stat = null; atlas = null; W = null; places = []; airL = null; lines = [];
   }
 
   return {
@@ -692,10 +838,11 @@ function mount(el, opts){
     mode: function(){ return mode; },
     view: function(){ return {x: V.x, z: V.z, rot: V.rot, span: V.span, w: V.w, h: V.h, ay: V.ay}; },
     // for tests and the integrator: the cached static layer (null before setWorld)
-    layers: function(){ return {static: stat && stat.cv, atlas: atlas && atlas.cv, places: places.length}; }
+    layers: function(){ return {static: stat && stat.cv, atlas: atlas && atlas.cv, places: places.length, lines: lines.length}; },
+    under: function(){ return wasUnder; }
   };
 }
 
 HQV.hqminimap = {mount: mount, toMini: toMini, fromMini: fromMini, zoomFor: zoomFor, viewFor: viewFor,
-                 edgeClamp: edgeClamp, sitePlaces: sitePlaces, POI: POI, AIR_COL: AIR_COL};
+                 edgeClamp: edgeClamp, sitePlaces: sitePlaces, POI: POI, AIR_COL: AIR_COL, transitLines: transitLines, LINE_COL: LINE_COL};
 })();

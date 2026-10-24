@@ -39,6 +39,18 @@
  *     class, body, engine) hold every word typed; Enter calls the first, Down goes into the list, Escape closes.
  *   matches(it, q)               every word of q is in the item's title, sub or tags (case- and accent-blind)
  *   owns(e)                      a key event inside the panel (hq3d's capture-phase handler skips it)
+ * Filter chips (HQ 3.15, docs/plans/transport-revamp.md 3.11): All · Cars · Bikes · Helicopters (· Boats when
+ * opts.atJetty() is true), a role="radiogroup" over the list (arrow keys move and pick, Home / End), each chip with its
+ * count, the pick remembered in localStorage (guarded); an empty chip says why ("No helicopters yet: the dealership
+ * has them"). The chip and the search box combine.
+ *   chipOf(it)                   "heli" | "boat" | "bike" | "car" from the item's tags (whole words: heli helicopter /
+ *                                boat jetski / bike motorbike motorcycle moto / car), in that order; no tag: "car"
+ *   chipCounts(items)            -> {all, car, bike, heli, boat}
+ *   filterItems(items, chip, q)  -> the items of that chip ("all": every one) matching q
+ *   chips(atJetty)               -> [{id, label, empty}] the chips shown
+ *   mountChips(parent, {counts() -> chipCounts, value, atJetty(), onChange(id)}) -> {el, value(), set(id), render()}
+ *                                the radiogroup alone (games/hqphonecabs.js's Vehicles app uses it too); Left / Right,
+ *                                Home / End move and pick (Down still goes into the list)
  */
 (function(){
 "use strict";
@@ -230,6 +242,80 @@ function matches(it, q){
   return words.every(function(w){ return hay.indexOf(w) >= 0; });
 }
 
+/* ---------- filter chips ---------- */
+var CHIPS = [
+  {id: "all", label: "All", empty: "No vehicles yet. Pick one in the Showroom (G)."},
+  {id: "car", label: "Cars", empty: "No cars yet: the dealership has them."},
+  {id: "bike", label: "Bikes", empty: "No bikes yet: the dealership has them."},
+  {id: "heli", label: "Helicopters", empty: "No helicopters yet: the dealership has them."},
+  {id: "boat", label: "Boats", empty: "No boats here yet: hire one at the jetty."}
+];
+var CHIP_KEY = "hq_call_chip";
+var TAGW = {heli: ["heli", "helicopter", "helicopters"], boat: ["boat", "boats", "jetski", "kayak", "rowboat", "pedalo"],
+            bike: ["bike", "bikes", "motorbike", "motorcycle", "moto"], car: ["car", "cars"]};
+function chipOf(it){
+  var words = fold(it && it.tags).split(/[^a-z0-9]+/).filter(Boolean), has = {};
+  words.forEach(function(w){ has[w] = 1; });
+  var order = ["heli", "boat", "bike", "car"];
+  for(var i = 0; i < order.length; i++) if(TAGW[order[i]].some(function(w){ return has[w]; })) return order[i];
+  return "car";
+}
+function chipCounts(items){
+  var n = {all: 0, car: 0, bike: 0, heli: 0, boat: 0};
+  (items || []).forEach(function(it){ if(!it) return; n.all++; n[chipOf(it)]++; });
+  return n;
+}
+function filterItems(items, chip, q){
+  chip = chip && chip !== "all" && TAGW[chip] ? chip : "all";
+  return (items || []).filter(function(it){ return it && (chip === "all" || chipOf(it) === chip) && matches(it, q); });
+}
+function chips(atJetty){ return CHIPS.filter(function(c){ return c.id !== "boat" || !!atJetty; }).map(function(c){ return {id: c.id, label: c.label, empty: c.empty}; }); }
+function chipLoad(){ try { var v = typeof localStorage !== "undefined" ? localStorage.getItem(CHIP_KEY) : null; return v && TAGW[v] ? v : "all"; } catch(e){ return "all"; } }
+function chipSave(v){ try { if(typeof localStorage !== "undefined") localStorage.setItem(CHIP_KEY, v); } catch(e){} }
+function mountChips(parent, o){
+  o = o || {};
+  var doc = typeof document !== "undefined" ? document : null; if(!doc) return null;
+  var counts = typeof o.counts === "function" ? o.counts : function(){ return {}; };
+  var atJetty = typeof o.atJetty === "function" ? o.atJetty : function(){ return false; };
+  var val = o.value && (o.value === "all" || TAGW[o.value]) ? o.value : chipLoad(), btns = [];
+  var el = doc.createElement("div"); el.className = "hqcall-chips"; el.setAttribute("role", "radiogroup"); el.setAttribute("aria-label", "Vehicle type");
+  if(parent) parent.appendChild(el);
+  function set(id, focus){
+    var L = chips(atJetty()); if(!L.some(function(c){ return c.id === id; })) id = "all";
+    if(id !== val){ val = id; chipSave(id); }
+    render();
+    if(focus){ var b = btns.filter(function(x){ return x.chip === id; })[0]; if(b && b.el.focus) b.el.focus(); }
+    if(o.onChange) o.onChange(id);
+  }
+  function render(){
+    var L = chips(atJetty()), n = counts() || {};
+    if(!L.some(function(c){ return c.id === val; })) val = "all";
+    while(el.firstChild) el.removeChild(el.firstChild);
+    btns = [];
+    L.forEach(function(c){
+      var b = doc.createElement("button"); b.type = "button"; b.className = "hqcall-chip" + (c.id === val ? " on" : "");
+      var k = n[c.id] | 0;
+      b.textContent = c.label + " " + k;
+      b.setAttribute("role", "radio"); b.setAttribute("aria-checked", c.id === val ? "true" : "false");
+      b.setAttribute("aria-label", c.label + ", " + k + (k === 1 ? " vehicle" : " vehicles"));
+      b.tabIndex = c.id === val ? 0 : -1;
+      b.addEventListener("click", function(){ set(c.id, true); });
+      el.appendChild(b); btns.push({chip: c.id, el: b});
+    });
+  }
+  el.addEventListener("keydown", function(e){
+    var k = e.key, i = -1, L = btns;
+    for(var j = 0; j < L.length; j++) if(L[j].chip === val) i = j;
+    var to = k === "ArrowRight" ? i + 1 : k === "ArrowLeft" ? i - 1 : k === "Home" ? 0 : k === "End" ? L.length - 1 : null;
+    if(to == null || !L.length) return;
+    if(e.preventDefault) e.preventDefault();
+    e.hqChipHandled = true;
+    set(L[(to + L.length) % L.length].chip, true);
+  });
+  render();
+  return {el: el, value: function(){ return val; }, set: function(id){ set(id, false); }, render: render};
+}
+
 function mount(stage, opts){
   opts = opts || {};
   var doc = typeof document !== "undefined" ? document : null;
@@ -245,14 +331,18 @@ function mount(stage, opts){
   var closeBtn = mk("button", "hqcall-close", head, "✕"); closeBtn.type = "button"; closeBtn.setAttribute("aria-label", "Close");
   var find = mk("input", "hqcall-search", root); find.type = "search"; find.placeholder = "Search: brand, model, bike, SUV, V8…";
   find.setAttribute("aria-label", "Search your vehicles"); find.autocomplete = "off"; find.spellcheck = false;
+  var chipUi = mountChips(root, {counts: function(){ return chipCounts(items() || []); }, atJetty: opts.atJetty, onChange: function(){ renderList(); }});
   var list = mk("div", "hqcall-list", root);
   var pill = mk("div", "hqcall-pill", stage); pill.hidden = true; pill.setAttribute("role", "status"); pill.setAttribute("aria-live", "polite");
 
-  function render(){
+  function render(){ if(chipUi) chipUi.render(); renderList(); }
+  function renderList(){
     while(list.firstChild) list.removeChild(list.firstChild);
-    var all = items() || [], L = all.filter(function(it){ return matches(it, find.value); });
+    var all = items() || [], chip = chipUi ? chipUi.value() : "all", inChip = filterItems(all, chip, ""), L = filterItems(all, chip, find.value);
     find.hidden = all.length < 2;
+    if(chipUi) chipUi.el.hidden = !all.length;
     if(!all.length){ mk("div", "hqcall-empty", list, "No vehicles yet. Pick one in the Showroom (G)."); return; }
+    if(!inChip.length){ var C = CHIPS.filter(function(c){ return c.id === chip; })[0]; mk("div", "hqcall-empty", list, C ? C.empty : "Nothing here."); return; }
     if(!L.length){ mk("div", "hqcall-empty", list, "Nothing matches “" + find.value.trim() + "”."); return; }
     L.forEach(function(it, i){
       var b = mk("button", "hqcall-item" + (it.busy ? " busy" : ""), list); b.type = "button";
@@ -278,7 +368,7 @@ function mount(stage, opts){
   }
   on(root, "keydown", contain); on(root, "keyup", contain);
   on(closeBtn, "click", function(){ close(); });
-  on(find, "input", function(){ render(); });
+  on(find, "input", function(){ renderList(); });
   // focus once the key that opened it is done with (its letter must not land in the box)
   function openP(){
     if(open) return; open = true; root.hidden = false; find.value = ""; render();
@@ -295,6 +385,7 @@ function mount(stage, opts){
 }
 
 HQV.hqCall = {kerb: kerb, arrival: arrival, pathFor: pathFor, run: run, step: step, aheadOf: aheadOf, spawnPick: spawnPick,
-              eta: eta, etaOf: etaOf, BUDGET: BUDGET, matches: matches, capAt: capAt, pointAt: pointAt, poly: poly, join: join, mount: mount, owns: owns, RETURN_S: 5, RAMP_V: RAMP_V,
+              eta: eta, etaOf: etaOf, BUDGET: BUDGET, matches: matches, chipOf: chipOf, chipCounts: chipCounts, filterItems: filterItems,
+              chips: chips, mountChips: mountChips, CHIP_KEY: CHIP_KEY, capAt: capAt, pointAt: pointAt, poly: poly, join: join, mount: mount, owns: owns, RETURN_S: 5, RAMP_V: RAMP_V,
               CRUISE: CRUISE, TURN_V: TURN_V, LANE: LANE, CALL_R: CALL_R, MIN_HIDE: MIN_HIDE, STOP_GAP: STOP_GAP};
 })();

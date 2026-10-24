@@ -84,6 +84,11 @@ pub fn pet_post_target(path: &str) -> Option<(&str, &str)> {
     (!id.is_empty() && matches!(action, "edit" | "care" | "release")).then_some((id, action))
 }
 
+/// The Messages action in `/api/arena/sms/{optin,send,ack,block,report}` (HQ 3.15).
+pub fn sms_post_target(path: &str) -> Option<&str> {
+    path.strip_prefix("/api/arena/sms/").filter(|w| crate::arena::SMS_POSTS.contains(w))
+}
+
 /// Every state-changing route; anything else 404s locally.
 pub fn post_paths() -> Vec<&'static str> {
     let mut v = vec![
@@ -331,7 +336,9 @@ impl App {
     }
 }
 
-static GAME_FILE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9_-]{0,40}\.(js|css)$").unwrap());
+// a top-level game script or stylesheet, or the phone's patch notes (HQ 3.15: games/patchnotes.json, the one JSON file)
+static GAME_FILE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?:[a-z][a-z0-9_-]{0,40}\.(?:js|css)|patchnotes\.json)$").unwrap());
 static GAME_ASSET_RE: LazyLock<Regex> = LazyLock::new(|| {
     // Valley Rally (games/rally/) is all generated code: its physics, stage and scene scripts
     // are classic scripts in that folder, so it may serve .js beside its data; Grand Prix
@@ -480,8 +487,16 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
         }
         return Reply::new(200, data, if ct.is_empty() { ctype } else { &ct });
     }
-    if path == "/api/arena/world/claude-hq@2/assign" {
-        let (c, r) = app.arena_commons_assign();
+    // the Commons' HQ lots: the live Commons (@3, HQ 3.15) and the one before it, the same ranks
+    if let Some(world) = path.strip_prefix("/api/arena/world/").and_then(|w| w.strip_suffix("/assign")) {
+        if crate::arena::COMMONS_WORLDS.contains(&world) {
+            let (c, r) = app.arena_commons_assign(world);
+            return Reply::json(c, &r);
+        }
+    }
+    // Messages (HQ 3.15): /api/arena/sms/{me,inbox,status,directory}; arena.rs validates the query
+    if let Some(what) = path.strip_prefix("/api/arena/sms/").filter(|w| crate::arena::SMS_GETS.contains(w)) {
+        let (c, r) = app.arena_sms_get(what, query);
         return Reply::json(c, &r);
     }
     if let Some(raw) = path.strip_prefix("/api/arena/world/") {
@@ -866,6 +881,7 @@ async fn do_post(app: Arc<App>, headers: HeaderMap, path: String, body: Body) ->
         && vehicle_home_target(&path).is_none() // [basement 3.4]
         && vehicle_tuning_target(&path).is_none() // [3.13]
         && pet_post_target(&path).is_none() // HQ 3.14
+        && sms_post_target(&path).is_none() // HQ 3.15
     {
         return reply(Reply::json(404, &json!({"error": "not found"})));
     }
@@ -990,6 +1006,7 @@ fn arena_post(app: &App, path: &str, body: &Value) -> (u16, Value) {
     if let Some(id) = vehicle_home_target(path) { return app.arena_vehicle_home(id, body); } // [basement 3.4]
     if let Some(id) = vehicle_tuning_target(path) { return app.arena_vehicle_tuning_set(id, body); } // [3.13]
     if let Some((id, action)) = pet_post_target(path) { return app.arena_pet_post(id, action, body); } // HQ 3.14
+    if let Some(what) = sms_post_target(path) { return app.arena_sms_post(what, body); } // HQ 3.15 Messages
     if let Some((owner, action)) = city_post_target(path) {
         return if action == "trade" { app.arena_market_trade(&owner, body) } else { app.arena_city_post(&owner, action, body) };
     }
@@ -1062,4 +1079,56 @@ fn arena_post(app: &App, path: &str, body: &Value) -> (u16, Value) {
         }
     };
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sms_posts_are_admitted_only_by_name() {
+        for w in crate::arena::SMS_POSTS {
+            assert_eq!(sms_post_target(&format!("/api/arena/sms/{w}")), Some(w));
+        }
+        for bad in ["/api/arena/sms/", "/api/arena/sms/me", "/api/arena/sms/inbox", "/api/arena/sms/send/x", "/api/arena/sms/../pair",
+                    "/api/arena/sms/SEND", "/api/arena/smss/send", "/api/arena/sms"] {
+            assert_eq!(sms_post_target(bad), None, "{bad}");
+        }
+        // the sms GET routes are not POST routes, and the POST ones are not on the fixed list either:
+        // do_post admits them through sms_post_target, after the CSRF token and the Origin check
+        assert!(!post_paths().iter().any(|p| p.starts_with("/api/arena/sms/")));
+        assert_eq!(post_body_limit("/api/arena/sms/send"), MAX_POST_BODY);
+    }
+
+    #[test]
+    fn the_phone_patch_notes_are_the_only_top_level_json() {
+        for ok in ["hqphone.js", "hqphone.css", "patchnotes.json", "hqcity3d.js"] {
+            assert!(GAME_FILE_RE.is_match(ok), "{ok}");
+        }
+        for bad in ["catalogue.json", "patchnotes.json.bak", "../patchnotes.json", "Patchnotes.json", "x/patchnotes.json", "patchnotes.jsonx", "notes.json"] {
+            assert!(!GAME_FILE_RE.is_match(bad), "{bad}");
+        }
+        assert_eq!(game_type("json"), "application/json; charset=utf-8");
+    }
+
+    #[test]
+    fn the_commons_assign_routes_and_world_reads_do_not_collide() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::app::App::new(crate::app::Paths::new(dir.path(), &dir.path().join("home")));
+        let h = HeaderMap::new();
+        // not paired, no Arena: each assign path answers "not paired" (it is routed), a world read "no Arena"
+        for p in ["/api/arena/world/claude-hq@3/assign", "/api/arena/world/claude-hq@2/assign"] {
+            let r = do_get(&app, p, "", &h);
+            assert_eq!((r.code, String::from_utf8_lossy(&r.body).contains("not paired")), (400, true), "{p}");
+        }
+        for p in ["/api/arena/world/claude-hq@1/assign", "/api/arena/world/claude-hq@4/assign"] {
+            let r = do_get(&app, p, "", &h);
+            assert_eq!(r.code, 404, "{p}: not an assign route, and not a world id");
+        }
+        for (p, q) in [("/api/arena/sms/me", ""), ("/api/arena/sms/inbox", "since=m1")] {
+            let r = do_get(&app, p, q, &h);
+            assert!(String::from_utf8_lossy(&r.body).contains("not paired"), "{p}");
+        }
+        assert!(String::from_utf8_lossy(&do_get(&app, "/api/arena/sms/directory", "q=a", &h).body).contains("q must be"));
+    }
 }

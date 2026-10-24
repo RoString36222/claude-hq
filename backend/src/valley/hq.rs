@@ -62,18 +62,20 @@ pub const HZ: f64 = 8.0;
 pub const FLOORS: [&str; 5] = ["base", "lobby", "mission", "city", "city3d"];
 
 /// A per-world room of the 3D City (protocol v3, "isles"): `city3d:<world id>`,
-/// the Commons (`claude-hq@2`, or `claude-hq@1` on an Arena without it) or a
-/// personal island `user:<user id>@2`, so people on different islands never draw
-/// each other. Checked exactly: anything else drops the frame like an unknown floor.
+/// the Commons (`claude-hq@3` since HQ 3.15's world generator @3, `claude-hq@2`
+/// for pages from before it, or `claude-hq@1` on an Arena without either) or a
+/// personal island `user:<user id>@3` (or `@2`), so people on different islands
+/// never draw each other. Checked exactly: anything else drops the frame like an
+/// unknown floor.
 pub fn floor_ok(w: &str) -> bool {
     if FLOORS.contains(&w) {
         return true;
     }
     let Some(id) = w.strip_prefix("city3d:") else { return false };
-    if id == "claude-hq@1" || id == "claude-hq@2" {
+    if id == "claude-hq@1" || id == "claude-hq@2" || id == "claude-hq@3" {
         return true;
     }
-    id.strip_prefix("user:").and_then(|r| r.strip_suffix("@2")).is_some_and(|u| {
+    id.strip_prefix("user:").and_then(|r| r.strip_suffix("@2").or_else(|| r.strip_suffix("@3"))).is_some_and(|u| {
         u.len() == 36
             && u.bytes().enumerate().all(|(i, b)| if matches!(i, 8 | 13 | 18 | 23) { b == b'-' } else { b.is_ascii_digit() || (b'a'..=b'f').contains(&b) })
     })
@@ -161,6 +163,10 @@ struct Person {
     /// (`yr`, deg/s) and its engine's revs (`rpm`). A listener draws them a moment in the past, between two frames of their
     /// own clock, instead of guessing from when the frames happened to arrive. Per frame: a frame without `t` has none.
     motion: Option<Motion>,
+    /// A seated passenger (a = 15, the "transit" capability, HQ 3.18): the mode code (`tk`, 1..=TRANSIT_K_MAX: bus,
+    /// tram, metro, rail, link, ferry, gondola, cab, heli) and the vehicle's id (`tv`), so others draw them in its
+    /// seat. None whenever a is not 15.
+    transit: Option<(u8, String)>,
     /// A grenade launcher out (`gl`, the "grenade" capability, HQ 3.16; a tank's turret reuses it). Not tied to `a`: a
     /// gunner may sit in a vehicle. Per frame: a frame without `gl` puts it away.
     gl: bool,
@@ -215,6 +221,7 @@ impl Hq {
                 pool: None,
                 pets: None,
                 motion: None,
+                transit: None,
                 gl: false,
                 gn: None,
                 ta: None,
@@ -328,6 +335,15 @@ impl Hq {
         if a.as_f64() == Some(13.0) && !pets.as_ref().and_then(|v| v.first()).is_some_and(|t| crate::pets::rideable(t.0, t.3)) {
             return false;
         }
+        // A seated passenger (15): the mode and the vehicle ride along, both required; a bad or missing one drops the frame.
+        let transit = if a.as_f64() == Some(15.0) {
+            let tk = msg.get("tk").and_then(Value::as_i64).filter(|k| (1..=i64::from(TRANSIT_K_MAX)).contains(k));
+            let tv = msg.get("tv").and_then(Value::as_str).filter(|v| transit_vehicle_ok(v));
+            let (Some(tk), Some(tv)) = (tk, tv) else { return false };
+            Some((tk as u8, tv.to_string()))
+        } else {
+            None
+        };
         // Motion: absent `t` is a page without it; with `t`, a missing one of the rest is 0 and a bad one drops the frame.
         let motion = match msg.get("t") {
             None | Some(Value::Null) => None,
@@ -362,11 +378,17 @@ impl Hq {
         p.pool = pool;
         p.pets = pets;
         p.motion = motion;
+        p.transit = transit;
         p.gl = gl == 1;
         p.gn = gn;
         p.ta = ta;
         self.dirty = true;
         true
+    }
+
+    /// Where everyone stands (HQ 3.15, nearby chat in main.rs): (user id, floor, x cm, z cm), in entry order.
+    pub fn positions(&self) -> Vec<(String, String, i64, i64)> {
+        self.people.iter().map(|(uid, p)| (uid.to_string(), p.w.clone(), p.x, p.z)).collect()
     }
 
     /// The `look` op: spend a token like `pos`, then keep the character only
@@ -463,6 +485,11 @@ impl Hq {
                         m.insert("yr".into(), json!(yr));
                         m.insert("rpm".into(), json!(rpm));
                     }
+                    // only for a seated passenger ("transit" capability, HQ 3.18)
+                    if let Some((tk, tv)) = &p.transit {
+                        m.insert("tk".into(), json!(tk));
+                        m.insert("tv".into(), json!(tv));
+                    }
                     // only while their grenade launcher is out ("grenade" capability, HQ 3.16)
                     if p.gl {
                         m.insert("gl".into(), json!(1));
@@ -497,10 +524,19 @@ fn anim_ok(a: &Value) -> bool {
         // seaplane / the prop plane (the "plane" capability, HQ 3.2; its height rides in `h` too), and 11 / 12,
         // flying the regional jet / the narrow-body airliner (the "airliner" capability, HQ 3.8), and 13, riding your
         // pet (the "petride" capability, HQ 3.14: `pt`'s first pet is the mount, checked in pos), and 14, driving your
-        // tank (the "tank" capability, HQ 3.16: its seats are carpool seats, `pb` / `ps`).
-        Value::Number(n) => n.as_f64().is_some_and(|f| [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0].contains(&f)),
+        // tank (the "tank" capability, HQ 3.16: its seats are carpool seats, `pb` / `ps`), and 15, a seated passenger
+        // (the "transit" capability, HQ 3.18: `tk` and `tv` required, checked in pos).
+        Value::Number(n) => n.as_f64().is_some_and(|f| [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0].contains(&f) || f == 15.0),
         _ => false,
     }
+}
+
+/// A seated passenger's mode code tops out here (1 bus, 2 tram, 3 metro, 4 rail, 5 link, 6 ferry, 7 gondola, 8 cab, 9 heli).
+pub const TRANSIT_K_MAX: u8 = 9;
+/// A seated passenger's vehicle id: 1..=24 of ASCII letters, digits, `:`, `_` or `-`.
+pub const TRANSIT_V_MAX: usize = 24;
+fn transit_vehicle_ok(v: &str) -> bool {
+    !v.is_empty() && v.len() <= TRANSIT_V_MAX && v.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b':' | b'_' | b'-'))
 }
 
 /// A skater's trick id (games/hqskate.js `K`) and height (decimetres) top out here.
@@ -786,10 +822,12 @@ mod tests {
 
     #[test]
     fn a_world_room_is_a_floor_only_for_a_real_world_id() {
-        for ok in ["city3d", "city3d:claude-hq@2", "city3d:claude-hq@1", "city3d:user:0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c@2"] {
+        for ok in ["city3d", "city3d:claude-hq@2", "city3d:claude-hq@1", "city3d:user:0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c@2",
+                   "city3d:claude-hq@3", "city3d:user:0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c@3"] {
             assert!(floor_ok(ok), "{ok}");
         }
-        for bad in ["city3d:", "city3d:claude-hq@3", "city3d:user:0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c@1",
+        for bad in ["city3d:", "city3d:claude-hq@4", "city3d:claude-hq@0", "city3d:user:0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c@1",
+                    "city3d:user:0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c@4", "city3d:user:0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c@3@2",
                     "city3d:user:0B8E4C1A-3F2D-4E5B-9A6C-7D8E9F0A1B2C@2", "city3d:user:0b8e4c1a/3f2d-4e5b-9a6c-7d8e9f0a1b2c@2",
                     "city3d:user:@2", "city:claude-hq@2", "city3dx", "base:claude-hq@2"] {
             assert!(!floor_ok(bad), "{bad}");
@@ -800,6 +838,45 @@ mod tests {
         assert!(p.pos("u", &json!({"w": isl, "x": 0, "z": 0, "r": 0}), 0.1));
         assert_eq!(p.listing()[0]["w"], isl);
         assert!(!p.pos("u", &json!({"w": "city3d:elsewhere@2", "x": 0, "z": 0, "r": 0}), 0.2));
+    }
+
+    #[test]
+    fn a_seated_passenger_carries_a_mode_and_a_vehicle_and_nobody_else_does() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        let w = "city3d:claude-hq@3";
+        assert!(p.pos("u", &json!({"w": w, "x": 0, "z": 0, "r": 0, "a": 15, "tk": 2, "tv": "tram:T1:7"}), 0.1));
+        let l = &p.listing()[0];
+        assert_eq!((l["a"].clone(), l["tk"].clone(), l["tv"].clone()), (json!(15), json!(2), json!("tram:T1:7")));
+        // both are required, and checked
+        for bad in [json!({"tk": 2}), json!({"tv": "bus:1"}), json!({"tk": 0, "tv": "bus:1"}), json!({"tk": 10, "tv": "bus:1"}),
+                    json!({"tk": 2.5, "tv": "bus:1"}), json!({"tk": "2", "tv": "bus:1"}), json!({"tk": 1, "tv": ""}),
+                    json!({"tk": 1, "tv": "x".repeat(25)}), json!({"tk": 1, "tv": "bus 1"}), json!({"tk": 1, "tv": "bus/1"}),
+                    json!({"tk": 1, "tv": 5})] {
+            let mut m = json!({"w": w, "x": 100, "z": 0, "r": 0, "a": 15});
+            for (k, v) in bad.as_object().unwrap() {
+                m[k] = v.clone();
+            }
+            assert!(!p.pos("u", &m, 0.2), "{m}");
+        }
+        assert_eq!(p.listing()[0]["x"], 0, "a dropped frame moved nobody");
+        assert!(p.pos("u", &json!({"w": w, "x": 0, "z": 0, "r": 0, "a": 15, "tk": 9, "tv": &"a:_-9".repeat(5)[..24]}), 0.3));
+        // off the vehicle, tk / tv are ignored and gone from the listing
+        assert!(p.pos("u", &json!({"w": w, "x": 0, "z": 0, "r": 0, "a": 1, "tk": 2, "tv": "tram:T1:7"}), 0.4));
+        let l = &p.listing()[0];
+        assert!(l.get("tk").is_none() && l.get("tv").is_none());
+        // and 16 is still nothing
+        assert!(!p.pos("u", &json!({"w": w, "x": 0, "z": 0, "r": 0, "a": 16}), 0.5));
+    }
+
+    #[test]
+    fn positions_list_everyone_where_they_stand() {
+        let mut p = Hq::default();
+        p.enter("a", json!({"handle": "a"}), 0.0);
+        p.enter("b", json!({"handle": "b"}), 0.0);
+        assert!(p.pos("b", &json!({"w": "city3d:claude-hq@3", "x": 120, "z": -40, "r": 0}), 0.1));
+        assert_eq!(p.positions(), vec![("a".to_string(), "base".to_string(), 0, 1400),
+                                       ("b".to_string(), "city3d:claude-hq@3".to_string(), 120, -40)]);
     }
 
     #[test]
@@ -848,9 +925,9 @@ mod tests {
         assert_eq!(p.listing()[0]["r"], 270); // int(-90) % 360, not Rust's -90
         // a bool x is not a number in Python either
         assert!(!p.pos("u", &json!({"w": "mission", "x": true, "z": 0, "r": 0}), 0.2));
-        // a is 15, which no capability sends (9 and 10 are the planes, HQ 3.2; 11 and 12 the airliners, HQ 3.8; 13 riding a pet, 3.14;
-        // 14 driving a tank, 3.16)
-        assert!(!p.pos("u", &json!({"w": "mission", "x": 0, "z": 0, "r": 0, "a": 15}), 0.3));
+        // a is 16, which no capability sends (9 and 10 are the planes, HQ 3.2; 11 and 12 the airliners, HQ 3.8; 13 riding a pet, 3.14;
+        // 14 driving a tank, 3.16; 15 a seated passenger, 3.18, which also needs tk / tv)
+        assert!(!p.pos("u", &json!({"w": "mission", "x": 0, "z": 0, "r": 0, "a": 16}), 0.3));
         // nobody by that name is standing anywhere
         assert!(!p.pos("nobody", &json!({"w": "base", "x": 0, "z": 0, "r": 0}), 0.4));
         // Every rejection above left the stored position alone.

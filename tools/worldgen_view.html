@@ -73,7 +73,12 @@ var GRADED = {highway: 1, ring: 1, country: 1};
 var DCOL = {wild:"#3d5a3a", farmland:"#a8b56a", forest:"#2f6b3a", plaza:"#e8d9a8", civic:"#7fb3e0", hq:"#ffb000",
   commercial:"#d97a8b", residential:"#c9b79c", park:"#66c46a", industrial:"#8d8f99", street:"#5a6270"};
 var LAYERS = [["terrain","Terrain (hill shade)",true],["districts","Districts",true],["roads","Roads",true],["names","Street names",true],
-  ["lots","Lots",true],["hq","HQ lot pool (rank)",true],["sites","Sites",true]];
+  ["lots","Lots",true],["hq","HQ lot pool (rank)",true],["sites","Sites",true],
+  ["water","Water (@2 river; @3 bodies, piers, net)",true],["metro","Metro (@3)",true],["rail","Rail (@3)",true],["gondola","Gondola (@3)",true]];
+// @3 layers' colours (dev only): water bodies by kind, piers by kind, the lines by mode
+var WCOL = {lake: "rgba(70,150,215,0.9)", canal: "rgba(40,100,190,0.95)", marina: "rgba(30,80,160,0.9)", river: "rgba(45,110,175,0.9)"};
+var PCOL = {waterbus: "#ff5d5d", launch: "#4af626", hire: "#ffe14a", fuel: "#ff9a2a", taxi: "#d58cff"};
+var LCOL = {M1: "#e8423a", M2: "#2f7de1", CL: "#3fae5a", IL: "#b28a3c", G1: "#d58cff"};
 var on = {}; LAYERS.forEach(function(l){ on[l[0]] = l[2]; });
 var cv = document.getElementById("cv"), g = cv.getContext("2d");
 var W = null, terrainImg = null, districtImg = null, edits = [], brush = false;
@@ -161,6 +166,7 @@ function draw(){
   if(on.terrain) g.drawImage(terrainImg, sx(-half), sz(-half), W.size_cm*m, W.size_cm*m);
   if(on.districts){ g.globalAlpha = on.terrain ? 0.45 : 1; g.imageSmoothingEnabled = false;
     g.drawImage(districtImg, sx(-half), sz(-half), W.size_cm*m, W.size_cm*m); g.globalAlpha = 1; g.imageSmoothingEnabled = true; }
+  if(on.water) drawWater(L, m);
   if(on.lots){
     L.lots.forEach(function(l){
       if(l.kind === "hq") return;
@@ -196,6 +202,9 @@ function draw(){
         g.fillText(s.kind === "view-building" ? "view " + s.id.split(":")[1] : s.kind, sx(s.x), sz(s.z)); }
     });
   }
+  if(on.metro && L.metro) drawMetro(L.metro, m);
+  if(on.rail && L.rail) drawRail(L.rail, m);
+  if(on.gondola && L.gondola) drawGondola(L.gondola, m);
   if(on.roads){
     // junctions where graded roads meet (yellow), and the gates on the world's edge (orange, numbered)
     var deg = {}, gref = {};
@@ -237,6 +246,60 @@ function draw(){
   var meters = [10,20,50,100,200,500,1000].find(function(v){ return v*100*m > 80; }) || 1000;
   g.fillStyle = "#e6ebf0"; g.fillRect(cv.clientWidth - 20 - meters*100*m, cv.clientHeight - 24, meters*100*m, 3);
   g.font = "11px " + getComputedStyle(document.body).fontFamily; g.textAlign = "right"; g.fillText(meters + " m", cv.clientWidth - 20, cv.clientHeight - 32);
+}
+
+// ---- @3 layers -------------------------------------------------------------------
+function path2(pts, close){ g.beginPath(); pts.forEach(function(p, i){ var x = p[0], z = p.length > 2 ? p[2] : p[1]; i ? g.lineTo(sx(x), sz(z)) : g.moveTo(sx(x), sz(z)); }); if(close) g.closePath(); }
+function dot(x, z, r, fill){ g.fillStyle = fill; g.strokeStyle = "#111"; g.lineWidth = 1; g.beginPath(); g.arc(sx(x), sz(z), r, 0, 7); g.fill(); g.stroke(); }
+function label(t, x, z, col){ g.font = "600 10.5px " + getComputedStyle(document.body).fontFamily; g.textAlign = "left"; g.textBaseline = "middle";
+  g.fillStyle = "rgba(13,16,20,0.75)"; var w = g.measureText(t).width; g.fillRect(sx(x) + 6, sz(z) - 7, w + 6, 14); g.fillStyle = col || "#f3f1ea"; g.fillText(t, sx(x) + 9, sz(z)); }
+function drawWater(L, m){
+  if(L.river){ g.fillStyle = WCOL.river; path2(L.river.poly, true); g.fill(); }
+  var Wt = L.water; if(!Wt) return;
+  Wt.bodies.forEach(function(b){
+    g.fillStyle = WCOL[b.kind] || WCOL.lake; path2(b.poly, true); g.fill();
+    g.strokeStyle = b.edge === "quay" ? "#d8d2c4" : "#9fc9e8"; g.lineWidth = b.edge === "quay" ? 2 : 1; g.stroke();
+    b.islands.forEach(function(i){ g.fillStyle = "#6f9a5c"; path2(i, true); g.fill(); });
+  });
+  if(Wt.breakwater){ g.strokeStyle = "#c9c4b8"; g.lineWidth = Math.max(2, 600*m); g.lineCap = "round"; path2(Wt.breakwater); g.stroke(); }
+  if(Wt.lighthouse) dot(Wt.lighthouse[0], Wt.lighthouse[1], 4, "#fff");
+  var N = Wt.net.nodes; g.strokeStyle = "rgba(120,240,255,0.7)"; g.lineWidth = 1;
+  Wt.net.edges.forEach(function(e){ g.beginPath(); g.moveTo(sx(N[e[0]][0]), sz(N[e[0]][1])); g.lineTo(sx(N[e[1]][0]), sz(N[e[1]][1])); g.stroke(); });
+  Wt.berths.forEach(function(b){ g.fillStyle = "#f3f1ea"; g.fillRect(sx(b.x) - 1.5, sz(b.z) - 1.5, 3, 3); });
+  Wt.piers.forEach(function(p){
+    var fx = p.front[0]/65536, fz = p.front[1]/65536, h = p.len/2;
+    g.strokeStyle = PCOL[p.kind] || "#fff"; g.lineWidth = Math.max(3, p.w*m); g.lineCap = "butt";
+    g.beginPath(); g.moveTo(sx(p.x - fx*h), sz(p.z - fz*h)); g.lineTo(sx(p.x + fx*h), sz(p.z + fz*h)); g.stroke();
+    if(m > 0.01) label(p.id + " " + p.kind, p.x + fx*h, p.z + fz*h, PCOL[p.kind]);
+  });
+}
+function drawMetro(M, m){
+  // dashed where it runs underground (bored, cut-and-cover), solid in the open
+  M.lines.forEach(function(l){
+    g.strokeStyle = LCOL[l.id] || "#e8423a"; g.lineWidth = 3;
+    for(var i = 1; i < l.path.length; i++){
+      var k = (l.kinds || [])[i - 1], under = k === "bored" || k === "cutcover";
+      g.setLineDash(under ? [8, 5] : []); path2([l.path[i - 1], l.path[i]]); g.stroke();
+    }
+    g.setLineDash([]);
+  });
+  (M.holes || []).forEach(function(h){ g.fillStyle = "rgba(0,0,0,0.6)"; path2(h, true); g.fill(); });
+  M.stations.forEach(function(s){ dot(s.x, s.z, 5, "#fff"); if(m > 0.006) label(s.id + " " + s.lines.join("/"), s.x, s.z); });
+  M.entrances.forEach(function(e){ dot(e.x, e.z, 2.5, "#ffb000"); });
+  M.portals.forEach(function(p){ dot(p.x, p.z, 4, "#888"); if(m > 0.006) label(p.id, p.x, p.z); });
+  M.depots.forEach(function(d){ g.strokeStyle = "#aaa"; g.lineWidth = 1.5; path2(d.poly, true); g.stroke(); });
+}
+function drawRail(R, m){
+  R.lines.forEach(function(l){ g.strokeStyle = LCOL[l.id] || "#3fae5a"; g.lineWidth = 4; path2(l.path); g.stroke(); });
+  R.stations.forEach(function(s){ g.fillStyle = "#3fae5a"; g.fillRect(sx(s.x) - 5, sz(s.z) - 5, 10, 10); if(m > 0.006) label(s.id + " " + s.kind, s.x, s.z); });
+  if(R.sea){ dot(R.sea.x, R.sea.z, 5, "#b28a3c"); label("sea", R.sea.x, R.sea.z); }
+}
+function drawGondola(G, m){
+  G.lines.forEach(function(l){
+    g.strokeStyle = LCOL[l.id] || "#d58cff"; g.lineWidth = 2; g.setLineDash([3, 3]); path2(l.stations.map(function(s){ return [s.x, s.z]; })); g.stroke(); g.setLineDash([]);
+    l.towers.forEach(function(t){ dot(t.x, t.z, 2.5, "#d58cff"); });
+    l.stations.forEach(function(s){ dot(s.x, s.z, 5, "#fff"); if(m > 0.006) label(s.id, s.x, s.z); });
+  });
 }
 
 // ---- queries (the same maths as worldgen's Rust, for the readout) ----------------

@@ -3,6 +3,8 @@
  *   -> {op:"tile", id, tx, tz, lods, want:[...], tier?}      <- {op:"tile", id, tx, tz, tier?, terrain?, roads?, ground?, buildings0?, buildings1?, props?}
  *                                                            <- {op:"error", id, message}
  * `tier` builds the tile as that city tier shows the world (HQV.worldgeom.view; each tier's view is cached here).
+ * A @3 W carries its water, metro, rail and gondola layers as plain objects: they arrive in the clone untouched, and
+ * the holes cut out of the tiles and the bank strips come from them here exactly as on the page.
  * Typed arrays are transferred back. Nothing here leaves the machine.
  */
 importScripts("/games/world.js", "/games/worldgeom.js");

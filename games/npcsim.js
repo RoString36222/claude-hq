@@ -8,7 +8,10 @@
  *               hash(seed, i): a home lot, a look (Kenney character index 0..5 + outfit tints), a walking
  *               speed; a job (a civic site, a shop or a zone building, with its role from the job table)
  *               handed out so every job place gets workers before any gets a second round; and a mode by
- *               distance: walk under WALK_MAX, else the bus when a stop is near both ends, else a car.
+ *               distance: walk under WALK_MAX, else transit when stops are near both ends (the metro when a
+ *               station is within METRO_MAX of both, from HQV.world.metroOf(doc) or layers.metro; else the
+ *               tram when both stops are tram stops, else the bus; each rider counts on one line, r.line),
+ *               else a car.
  *   schedule    plan(day) per resident (hash(seed, i, day) jitter): commute to arrive 5-60 min before the
  *               shift (07:00-09:00 for 9-17 jobs), lunch at 12:00 at the nearest food place, home after the
  *               shift (17:00-19:00), some via the market or a park; nights home; police, fire and nurses
@@ -16,13 +19,16 @@
  *               (office 9-17, tech in flexible waves, studio crew and cast on set). Without a job: an
  *               outing to a park or the market.
  *   at(t, c, r) visible residents near c ({x, z} m) within r m at local ms t, nearest first:
- *               {id, x, y, z, yaw, anim: "walk"|"idle"|"drive", mode: "walk"|"car"|"bus", speed}.
- *               Inside a building or on the bus means not visible. A trip's route is planned once (A* on
+ *               {id, x, y, z, yaw, anim: "walk"|"idle"|"drive", mode: "walk"|"car"|"bus"|"tram"|"metro", speed}.
+ *               Inside a building, on a bus, tram or train, or down in a metro station means not visible
+ *               (hqCommute's seated figures stand for the riders). A trip's route is planned once (A* on
  *               the road graph, cached per place pair and mode) and walked along its sidewalk (drivers on
  *               their lane). Plans never depend on routes (no A* for the whole town up front); a walk
  *               then takes its route at the walker's own pace (rides take their planned time), and the
  *               route is a pure function of the doc, so a position is a pure function of (resident, time).
  *   where(id, t), speak(id, t), warm(ms), localMs(date): see below.
+ *   ridersOn(lineId, t) residents riding that line (layers.transit line id, or a metro line id "M1") at local
+ *               ms t; HQV.npcSim.ridersOn(lineId, t) asks the active sim (the latest created, or use(sim)).
  * Sidewalks: the walk runs SIDE_IN in from the road's outer line (half the sidewalk when the edge has one)
  * on the left of the direction of travel (as hqcity3d's traffic), crossing straight over at junctions.
  * Clock: local wall-clock ms (localMs(new Date()), the same clock the City's day and night use).
@@ -42,12 +48,16 @@ var POP = [50, 200, 600, 1200, 2000];
 var CHARS = 6;                      // the six Kenney Mini Characters (hq3d.js CHAR_FILES)
 var WALK_V = [1.15, 1.55];          // walking speed range (m/s)
 var CAR_V = 9, BUS_V = 7;           // planning speeds (m/s)
-var DETOUR = {walk: 1.3, car: 1.4, bus: 1.5};   // road distance per straight-line metre, for planning
+var DETOUR = {walk: 1.3, car: 1.4, bus: 1.5, tram: 1.5, metro: 1.2};   // road distance per straight-line metre, for planning
 var WALK_MAX = 900;                 // straight-line commute (m) walked; longer ones ride
 var STOP_MAX = 450;                 // a bus stop further than this from home or work: drive instead
 var LUNCH_MAX = 700, VIA_MAX = 800; // food within this of work for lunch; a market or park on the way home
 var EMPLOYED = 0.88;                // share of residents with a job
 var BUS_EVERY = 8*MIN;              // a bus at every stop this often
+var TRANSIT = {bus: 1, tram: 1, metro: 1};
+var EVERY = {bus: BUS_EVERY, tram: BUS_EVERY, metro: 2*MIN};   // a vehicle at every stop this often (the metro: 120 s)
+var RIDE_V = {bus: BUS_V, tram: BUS_V, metro: 15};             // planning speeds (m/s), stops included
+var METRO_MAX = 600;                // a metro station within this of both ends: take the metro
 var SIDEWALK_UP = 0.15, ROAD_UP = 0.04;
 var SIDE_IN = 1.5;                  // the walk line's distance in from the road's outer line, no sidewalk (m)
 var CAR_FAST = {arterial: 1.25, avenue: 1.25, highway: 1.6, ring: 1.4}, FAST_MAX = 1.6;
@@ -96,7 +106,7 @@ var HOME_D = {residential: 1, suburb: 1, oldtown: 1, downtown: 1};
 var FOOD_SITE = {market: 1, mall: 1};
 var FOOD_D = {commercial: 1, downtown: 1, oldtown: 1};
 var PARK_SITE = {fountain: 1, skatepark: 1, bikepark: 1, park: 1, funpark: 1};   // funpark: games/hqspectacle.js
-var STOP_SITE = {busstop: 1};
+var STOP_SITE = {busstop: 1, tramstop: 1};
 var SHIRTS = [0x3d6fd1, 0xe0559b, 0x6fd38a, 0xffb347, 0x9b8cf0, 0xf4f4f4, 0xff6b5b, 0x5fd3e6, 0x2f3b4c, 0xc2a36b, 0x8a3d3d, 0x4c8c6c];
 var PANTS = [0x2a3442, 0x3b4f7a, 0x5a4a3a, 0x1f1f24, 0x6b6f76, 0x7a5c3c, 0x2f4a3a, 0x8a8f99];
 var SKIN = [0xf1d0b5, 0xe0b48f, 0xc68c62, 0xa86b45, 0x7d4b2c, 0x5a3520];
@@ -323,6 +333,26 @@ function create(doc, opts){
   var foods = places.filter(function(p){ return p.food; }), parks = places.filter(function(p){ return p.park; });
   var stops = places.filter(function(p){ return p.stop; }), jobPlaces = places.filter(function(p){ return p.roles; });
   var hasBus = tier >= 2 && stops.length >= 2 && !!(((L.transit || {}).lines) || []).some(function(l){ return l && (l.tier | 0) <= tier; });
+  // the lines calling at each stop (layers.transit), by place key
+  var linesAt = {};
+  (((L.transit || {}).lines) || []).forEach(function(l){
+    if(!l || l.id == null || (l.tier | 0) > tier) return;
+    (l.stops || []).forEach(function(sid){ (linesAt["site:" + sid] = linesAt["site:" + sid] || []).push(String(l.id)); });
+  });
+  // metro stations: underground places (riders waiting there are not visible)
+  var metros = [];
+  metroStations(doc, tier).forEach(function(st){
+    var p = place("station:" + st.id, "metro", {x: Math.round(st.x*100), z: Math.round(st.z*100)}, "");
+    p.stop = true; p.outdoor = false; p.metro = true;
+    linesAt[p.key] = st.lines.slice();
+    metros.push(p);
+  });
+  var hasMetro = metros.length >= 2;
+  function lineFor(a, b){   // a line calling at both stops, else one at the first
+    var la = linesAt[a.key] || [], lb = linesAt[b.key] || [];
+    for(var i = 0; i < la.length; i++) if(lb.indexOf(la[i]) >= 0) return la[i];
+    return la[0] || lb[0] || null;
+  }
   function dist(a, b){ return Math.sqrt((a.x - b.x)*(a.x - b.x) + (a.z - b.z)*(a.z - b.z)); }
   function nearest(list, p, max){
     var best = null, bd = max == null ? Infinity : max;
@@ -365,7 +395,7 @@ function create(doc, opts){
     var home = homes.length ? homes[Math.floor(g()*homes.length)] : null;
     var look = {char: Math.floor(g()*CHARS), shirt: SHIRTS[Math.floor(g()*SHIRTS.length)], pants: PANTS[Math.floor(g()*PANTS.length)], skin: SKIN[Math.floor(g()*SKIN.length)]};
     var r = {id: id, home: home, look: look, v: WALK_V[0] + (WALK_V[1] - WALK_V[0])*g(), job: null, work: null, mode: "walk",
-             phase: g(), stopH: null, stopW: null, food: null, via: null, out: [], days: [null, null, null], dayK: [NaN, NaN, NaN]};
+             phase: g(), stopH: null, stopW: null, line: null, food: null, via: null, out: [], days: [null, null, null], dayK: [NaN, NaN, NaN]};
     var J = jobOf[id];
     if(J && home){
       var wp = jobPlaces[J[0]], role = wp.roles[J[1]];
@@ -373,8 +403,12 @@ function create(doc, opts){
       var d = dist(home, wp);
       if(d > WALK_MAX){
         var sh = hasBus ? nearest(stops, home, STOP_MAX) : null, sw = hasBus ? nearest(stops, wp, STOP_MAX) : null;
-        r.mode = sh && sw && sh !== sw && g() < 0.55 ? "bus" : "car";
-        if(r.mode === "bus"){ r.stopH = sh; r.stopW = sw; }
+        var mh = hasMetro ? nearest(metros, home, METRO_MAX) : null, mw = hasMetro ? nearest(metros, wp, METRO_MAX) : null;
+        var metroOk = !!(mh && mw && mh !== mw), stopOk = !!(sh && sw && sh !== sw);
+        r.mode = (metroOk || stopOk) && g() < 0.55 ? (metroOk ? "metro" : sh.kind === "tramstop" && sw.kind === "tramstop" ? "tram" : "bus") : "car";
+        if(r.mode === "metro"){ r.stopH = mh; r.stopW = mw; }
+        else if(TRANSIT[r.mode]){ r.stopH = sh; r.stopW = sw; }
+        if(TRANSIT[r.mode]) r.line = lineFor(r.stopH, r.stopW);
       }
       r.food = nearest(foods, wp, LUNCH_MAX);
       r.via = g() < 0.5 ? nearest(foods, wp, VIA_MAX) : nearest(parks, wp, VIA_MAX);
@@ -386,27 +420,27 @@ function create(doc, opts){
   /* plans: a day's moves {t0 (ms from the day's start, may pass 24 h), dur, from, to, mode} */
   function walkDur(r, a, b){ return Math.round(dist(a, b)*DETOUR.walk/r.v*1000) + 1000; }
   function carDur(a, b){ return Math.round(dist(a, b)*DETOUR.car/CAR_V*1000) + 30000; }
-  function nextBus(stop, t){
-    var off = hash32(seed + ":bus:" + stop.key) % BUS_EVERY;
-    return Math.ceil((t - off)/BUS_EVERY)*BUS_EVERY + off;
+  function nextBus(stop, t, mode){
+    var every = EVERY[mode] || BUS_EVERY, off = hash32(seed + ":bus:" + stop.key) % every;
+    return Math.ceil((t - off)/every)*every + off;
   }
   // a trip from a to b leaving at t: pushes its moves, returns the arrival time
   function trip(r, out, a, b, t, mode){
     if(!a || !b || a === b) return t;
     if(mode === "car"){ var d = carDur(a, b); out.push({t0: t, dur: d, from: a, to: b, mode: "car"}); return t + d; }
-    if(mode === "bus" && r.stopH && r.stopW){
+    if(TRANSIT[mode] && r.stopH && r.stopW){
       var s1 = a === r.home ? r.stopH : r.stopW, s2 = s1 === r.stopH ? r.stopW : r.stopH;
-      var t1 = trip(r, out, a, s1, t, "walk"), dep = nextBus(s1, t1 + 30000);
-      var ride = Math.round(dist(s1, s2)*DETOUR.bus/BUS_V*1000);
-      out.push({t0: dep, dur: ride, from: s1, to: s2, mode: "bus"});
+      var t1 = trip(r, out, a, s1, t, "walk"), dep = nextBus(s1, t1 + 30000, mode);
+      var ride = Math.round(dist(s1, s2)*DETOUR[mode]/RIDE_V[mode]*1000);
+      out.push({t0: dep, dur: ride, from: s1, to: s2, mode: mode, line: r.line});
       return trip(r, out, s2, b, dep + ride, "walk");
     }
     var w = walkDur(r, a, b); out.push({t0: t, dur: w, from: a, to: b, mode: "walk"}); return t + w;
   }
   function tripDur(r, a, b, mode){   // a trip's planned duration (worst-case bus wait), to leave in time
     if(mode === "car") return carDur(a, b);
-    if(mode === "bus" && r.stopH && r.stopW){ var s1 = a === r.home ? r.stopH : r.stopW, s2 = s1 === r.stopH ? r.stopW : r.stopH;
-      return walkDur(r, a, s1) + 30000 + BUS_EVERY + Math.round(dist(s1, s2)*DETOUR.bus/BUS_V*1000) + walkDur(r, s2, b); }
+    if(TRANSIT[mode] && r.stopH && r.stopW){ var s1 = a === r.home ? r.stopH : r.stopW, s2 = s1 === r.stopH ? r.stopW : r.stopH;
+      return walkDur(r, a, s1) + 30000 + (EVERY[mode] || BUS_EVERY) + Math.round(dist(s1, s2)*DETOUR[mode]/RIDE_V[mode]*1000) + walkDur(r, s2, b); }
     return walkDur(r, a, b);
   }
   function plan(r, day){
@@ -429,7 +463,7 @@ function create(doc, opts){
       }
       // home within the hour after the shift (17:00-19:00 for 9-17), some via the market or a park
       var back = to + Math.round((night ? 15 : 60)*g()*MIN);
-      if(!night && r.via && r.mode !== "bus" && g() < 0.35){
+      if(!night && r.via && !TRANSIT[r.mode] && g() < 0.35){
         var at = trip(r, out, r.work, r.via, back, dist(r.work, r.via) <= WALK_MAX ? "walk" : r.mode);
         home = trip(r, out, r.via, r.home, at + Math.round((20 + 40*g())*MIN), r.mode);
       } else home = trip(r, out, r.work, r.home, back, r.mode);
@@ -576,18 +610,18 @@ function create(doc, opts){
     var mv = moveAt(r, t);
     if(!mv) return {state: r.home ? "home" : "none", place: r.home, mode: null};
     var m = mv.m, f = t - mv.start < m.dur*STRETCH ? (t - mv.start)/durOf(r, m) : 1;
-    if(f < 1) return {state: m.mode === "bus" ? "riding" : "travel", place: null, mode: m.mode, f: f, move: m, start: mv.start};
+    if(f < 1) return {state: TRANSIT[m.mode] ? "riding" : "travel", place: null, mode: m.mode, f: f, move: m, start: mv.start};
     var p = m.to, st = "out";
     if(p === r.home) st = "home";
     else if(p === r.work) st = "work";
     else if(p.stop) st = "stop";
     else if(r.job && p === r.food){ var tod = ((t % DAY) + DAY) % DAY; st = tod >= 11*HOUR && tod < 14*HOUR ? "lunch" : "out"; }
-    return {state: st, place: p, mode: st === "stop" ? "bus" : m.mode, move: m, start: mv.start};
+    return {state: st, place: p, mode: st === "stop" ? (TRANSIT[r.mode] ? r.mode : "bus") : m.mode, move: m, start: mv.start};
   }
 
   var sim = {residents: [], tier: tier, grow: grow, seed: seed, population: N, stats: stats};
   residents.forEach(function(r){
-    sim.residents.push({id: r.id, home: r.home ? r.home.key : null, mode: r.mode, look: r.look, speed: r.v,
+    sim.residents.push({id: r.id, home: r.home ? r.home.key : null, mode: r.mode, line: r.line, look: r.look, speed: r.v,
                         job: r.job ? {job: r.job.job, from: r.job.from, to: r.job.to, kind: r.job.kind, place: r.job.place} : null});
   });
   sim.places = places.map(function(p){ return {key: p.key, kind: p.kind, x: p.x, z: p.z, table: p.table || null, outdoor: p.outdoor}; });
@@ -631,13 +665,29 @@ function create(doc, opts){
         var p = planOf(r, day + dd), base = (day + dd)*DAY;
         for(var i = 0; i < p.length; i++){
           var s = base + p[i].t0;
-          if(p[i].mode !== "bus" && s <= t + HOUR && s + p[i].dur >= t) routeOf(p[i].mode, p[i].from, p[i].to);
+          if(!TRANSIT[p[i].mode] && s <= t + HOUR && s + p[i].dur >= t) routeOf(p[i].mode, p[i].from, p[i].to);
         }
       }
       done++;
     }
     warmAt = (warmAt + done) % Math.max(1, n);
     return done;
+  };
+  // residents riding a line at local ms t (counted once a minute for every line, then cached)
+  var riders = {k: NaN, n: null};
+  sim.ridersOn = function(lineId, t){
+    t = +t || 0;
+    var k = Math.floor(t/MIN);
+    if(riders.k !== k){
+      var n = {};
+      for(var i = 0; i < residents.length; i++){
+        var r = residents[i]; if(!r.line) continue;
+        var mv = moveAt(r, t);
+        if(mv && TRANSIT[mv.m.mode] && t - mv.start < mv.m.dur) n[mv.m.line] = (n[mv.m.line] | 0) + 1;
+      }
+      riders = {k: k, n: n};
+    }
+    return riders.n[String(lineId)] | 0;
   };
   // a speech line for resident id at local ms t (fixed templates: no user data)
   sim.speak = function(id, t){
@@ -653,13 +703,33 @@ function create(doc, opts){
     else if(s.state === "travel" && J && s.move.to === r.food) line = pick(["Lunch break! I know a good place round the corner.", "Twelve o'clock: food first."]);
     else if(s.state === "travel") line = pick(["Just passing through.", "Lovely " + dayPart + " for a walk.", "Running a few errands."]);
     else if(s.state === "home" || s.state === "work" || s.state === "lunch") line = pick(["Hello there!", "Nice " + dayPart + ", isn't it?"]);
+    else if(s.state === "stop" && r.mode === "tram") line = pick(["The next tram should be along in a few minutes.", "Trams every eight minutes, they say."]);
     else if(s.state === "stop") line = pick(["The next bus should be along in a few minutes.", "Buses every eight minutes, they say."]);
     else line = pick(["Lovely " + dayPart + " in the park.", "Just enjoying the city today.", "Nothing beats a bit of fresh air."]);
     var extra = J && FLAVOUR[J.job] && g() < 0.6 ? " " + pick(FLAVOUR[J.job]) : "";
     return line + extra;
   };
+  if(opts.active !== false) ACTIVE = sim;
   return sim;
 }
+// metro stations in metres for npcsim: HQV.world.metroOf (when the world client has it) or the doc's raw
+// layers.metro (cm); a station shows when one of its lines is open at this tier
+function metroStations(doc, tier){
+  var M = null, cm = false;
+  try { var WD = root.HQV && root.HQV.world; if(WD && typeof WD.metroOf === "function") M = WD.metroOf(doc); } catch(e){ M = null; }
+  if(!M || !Array.isArray(M.stations)){ M = (doc.layers || {}).metro || null; cm = true; }
+  if(!M || !Array.isArray(M.stations)) return [];
+  var open = {};
+  (M.lines || []).forEach(function(l){ if(l && l.id != null && (l.tier | 0) <= tier) open[String(l.id)] = 1; });
+  var anyLines = (M.lines || []).length > 0;
+  return M.stations.filter(function(s){ return s && s.id != null; }).map(function(s){
+    var lines = (s.lines || []).map(String).filter(function(id){ return !anyLines || open[id]; });
+    return {id: String(s.id), x: (+s.x || 0)/(cm ? 100 : 1), z: (+s.z || 0)/(cm ? 100 : 1), lines: lines};
+  }).filter(function(s){ return s.lines.length > 0 || !anyLines; });
+}
+var ACTIVE = null;
+function ridersOn(lineId, t){ return ACTIVE && ACTIVE.ridersOn ? ACTIVE.ridersOn(lineId, t) : 0; }
+function use(sim){ ACTIVE = sim && typeof sim.ridersOn === "function" ? sim : null; return ACTIVE; }
 var PLACE_WORD = {townhall: "town hall", clinic: "clinic", hospital: "hospital", fire: "fire station", police: "police station",
   school: "school", university: "university", market: "market", mall: "mall", bank: "bank", library: "library", post: "post office",
   transit: "transit hub", port: "port", dock: "dock", airport: "airport", power: "power station", water: "waterworks",
@@ -677,5 +747,6 @@ var FLAVOUR = {
 };
 
 HQV.npcSim = {create: create, population: population, localMs: localMs, zoneJobs: zoneJobs, inPoly: inPoly, hash32: hash32,
+              ridersOn: ridersOn, use: use, metroStations: metroStations, TRANSIT: TRANSIT, EVERY: EVERY,
               JOBS: JOBS, POP: POP, CHARS: CHARS, DAY: DAY, HOUR: HOUR};
 })();

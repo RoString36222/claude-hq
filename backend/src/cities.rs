@@ -10,6 +10,12 @@
 //! `:owner` is a user id, `me`, or `commons`. Every POST answers
 //! `{city: CityState, coins: <the caller's Poke Coins>}`.
 //!
+//! Every city at max level (HQ 3.15, [`ALL_CITIES_MAX`]): a CityState reports
+//! tier 5 and grow 1000 for every city, so every feature, line and building is
+//! unlocked (upgrades, rail stations, bus and tram). Population and tax still
+//! follow the owner's real tier from their XP, so the economy does not jump.
+//! Transit is free ([`FREE_TRANSIT`]): a bus or tram fare costs 0.
+//!
 //! Money: a city's treasury is apart from its owner's Poke Coins (the
 //! `poke_balances` "coins" row). Every treasury change is one append-only
 //! `city_ledger` row written by [`post_entry`] in the same transaction, so the
@@ -23,7 +29,7 @@
 //! paid only up to 24 h past the owner's last sign of life (a device seen), so
 //! an abandoned city stops earning. 2% of every accrual goes to the Commons.
 //! Moving coins between wallet and treasury costs 10% each way, paid to the
-//! Commons; fares (2 bus or tram, 1 fast travel) go from the rider's wallet to
+//! Commons; fares (bus and tram free since HQ 3.15, 1 fast travel) go from the rider's wallet to
 //! the city's treasury. The amusement park is free for everyone (HQ 3.6): a
 //! `park` fare costs nothing and records nothing, and `GET /v1/city/:owner` no
 //! longer carries a `park` price, which older clients read as free entry. (The
@@ -56,7 +62,12 @@ use crate::{err, AppState, Caller};
 
 /// The Commons' treasury row; never a user id (those are uuids).
 pub(crate) const COMMONS: &str = "commons";
-const COMMONS_WORLD: &str = "claude-hq@2";
+const COMMONS_WORLD: &str = crate::archipelago::COMMONS;
+/// Every city reports tier 5, grow 1000 (HQ 3.15, D1). The real tier still sets
+/// population and tax. false restores the XP-driven tier everywhere.
+pub(crate) const ALL_CITIES_MAX: bool = true;
+/// Bus and tram are free (HQ 3.15, D4). Fast travel and the park are unchanged.
+pub(crate) const FREE_TRANSIT: bool = true;
 /// Offline income stops this long after the owner was last seen.
 const CAP_SECS: i64 = 24 * 3600;
 const LEVY_PCT: i64 = 2;
@@ -202,7 +213,7 @@ pub(crate) async fn ensure_city(conn: &mut SqliteConnection, owner: &str, now: i
         if active.is_none() {
             return Ok(None);
         }
-        format!("user:{owner}@2")
+        crate::archipelago::island_world(owner)
     };
     let tax = if owner == COMMONS { 0 } else { TAX_PM };
     let specialty = market::specialty_for(&seed).await;
@@ -383,10 +394,23 @@ pub(crate) struct Snapshot {
     pub(crate) row: CityRow,
     pub(crate) tiers: Tiers,
     pub(crate) xp: i64,
+    /// The real tier from the owner's XP: population and tax.
     pub(crate) tier: i64,
-    pub(crate) grow: i64,
+    /// What the city reports and every feature gate reads (see [`shown`]).
+    pub(crate) shown_tier: i64,
+    pub(crate) shown_grow: i64,
     pub(crate) population: i64,
     pub(crate) upgrades: BTreeMap<String, i64>,
+}
+
+/// Pure: the (tier, grow) a city reports and its feature gates read: max level
+/// when `all_max`, else the real figures.
+pub(crate) fn shown(tier: i64, grow: i64, all_max: bool) -> (i64, i64) {
+    if all_max {
+        (5, 1000)
+    } else {
+        (tier, grow)
+    }
 }
 
 impl Snapshot {
@@ -418,7 +442,8 @@ pub(crate) async fn snapshot(pool: &SqlitePool, owner: &str, now: i64) -> Result
         let tier = tier_of(xp, &tiers);
         (xp, tier, grow_of(xp, tier, &tiers))
     };
-    Ok(Some(Snapshot { population: population(tier, grow, &tiers), row, tiers, xp, tier, grow, upgrades }))
+    let (shown_tier, shown_grow) = shown(tier, grow, ALL_CITIES_MAX);
+    Ok(Some(Snapshot { population: population(tier, grow, &tiers), row, tiers, xp, tier, shown_tier, shown_grow, upgrades }))
 }
 
 /// The owner's last sign of life: their latest live device, else the city's birth.
@@ -585,10 +610,10 @@ pub(crate) async fn city_state(pool: &SqlitePool, owner: &str, now: i64) -> Resu
         owner: owner.to_string(),
         name,
         world: row.seed,
-        tier: snap.tier,
+        tier: snap.shown_tier,
         xp: snap.xp,
         tier_xp: snap.tiers.xp,
-        grow: snap.grow,
+        grow: snap.shown_grow,
         treasury: row.treasury,
         tax_pm: row.tax_pm,
         specialty: row.specialty,
@@ -621,7 +646,8 @@ pub(crate) async fn name_and_tier(pool: &SqlitePool, owner: &str) -> Result<(Str
     let tiers = tiers(&mut conn).await?;
     drop(conn);
     let xp = crate::progress::progress(pool, &[owner]).await?.get(owner).map(|p| p.xp).unwrap_or(0);
-    Ok((name, tier_of(xp, &tiers).clamp(1, 5) as u8))
+    let tier = tier_of(xp, &tiers).clamp(1, 5);
+    Ok((name, shown(tier, 0, ALL_CITIES_MAX).0 as u8))
 }
 
 // ------------------------------------------------------------ bodies --
@@ -759,7 +785,7 @@ async fn get_city(State(st): State<AppState>, Path(raw): Path<String>, req: Requ
 pub(crate) async fn build(pool: &SqlitePool, owner: &str, key: &str, now: i64) -> Result<(), Refuse> {
     let up = UPGRADES.iter().find(|u| u.key == key).ok_or_else(|| Refuse::say(StatusCode::UNPROCESSABLE_ENTITY, "unknown upgrade"))?;
     let snap = snapshot(pool, owner, now).await?.ok_or_else(|| Refuse::say(StatusCode::NOT_FOUND, "no such city"))?;
-    if snap.tier < up.tier {
+    if snap.shown_tier < up.tier {
         return Err(Refuse::say(StatusCode::CONFLICT, format!("{key} needs a tier {} city", up.tier)));
     }
     accrue(pool, &snap, now).await?;
@@ -886,10 +912,16 @@ async fn post_privacy(State(st): State<AppState>, Path(raw): Path<String>, req: 
 
 /// The fare for a ride, or why there is no such ride here.
 pub(crate) fn fare_of(kind: &str, tier: i64) -> Result<i64, &'static str> {
+    fare_with(kind, tier, FREE_TRANSIT)
+}
+
+/// Pure: [`fare_of`] with transit free or not.
+pub(crate) fn fare_with(kind: &str, tier: i64, free_transit: bool) -> Result<i64, &'static str> {
+    let bus = if free_transit { 0 } else { FARE_BUS };
     match kind {
-        "bus" if tier >= BUS_TIER => Ok(FARE_BUS),
+        "bus" if tier >= BUS_TIER => Ok(bus),
         "bus" => Err("this city has no buses yet"),
-        "tram" if tier >= TRAM_TIER => Ok(FARE_BUS),
+        "tram" if tier >= TRAM_TIER => Ok(bus),
         "tram" => Err("this city has no tram yet"),
         "park" => Ok(0),                       // the amusement park is free for everyone
         _ => Ok(FARE_FAST),
@@ -900,7 +932,7 @@ pub(crate) fn fare_of(kind: &str, tier: i64) -> Result<i64, &'static str> {
 /// fare would be a fee-free way into the treasury). Returns what was paid.
 pub(crate) async fn fare(pool: &SqlitePool, owner: &str, rider: &str, kind: &str, now: i64) -> Result<i64, Refuse> {
     let snap = snapshot(pool, owner, now).await?.ok_or_else(|| Refuse::say(StatusCode::NOT_FOUND, "no such city"))?;
-    let price = fare_of(kind, snap.tier).map_err(|m| Refuse::say(StatusCode::CONFLICT, m))?;
+    let price = fare_of(kind, snap.shown_tier).map_err(|m| Refuse::say(StatusCode::CONFLICT, m))?;
     if owner == rider || price == 0 {
         return Ok(0);
     }

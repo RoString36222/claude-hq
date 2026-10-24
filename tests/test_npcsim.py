@@ -339,7 +339,7 @@ class NpcSimTest(unittest.TestCase):
         m = self.r["modes"]
         self.assertEqual(m["walkFar"], 0)
         self.assertEqual(m["rideNear"], 0)
-        self.assertTrue(set(m["counts"]) <= {"walk", "car", "bus"})
+        self.assertTrue(set(m["counts"]) <= {"walk", "car", "bus"})       # no tram stops or metro in this town
         self.assertGreater(m["counts"].get("walk", 0), 0)
         self.assertGreater(m["counts"].get("car", 0) + m["counts"].get("bus", 0), 0)
         self.assertNotIn("bus", m["tier1"])                    # no buses before tier 2
@@ -374,6 +374,109 @@ class NpcSimTest(unittest.TestCase):
         self.assertNotIn("innerHTML", src)
         self.assertNotRegex(src, r"https?://")
         self.assertNotRegex(src, r"Math\.min\(\s*1\s*,\s*dt")
+
+
+TRANSIT_HARNESS = r"""
+var fs = require("fs"), root = %(root)s;
+global.window = {HQV: {}};
+new Function(fs.readFileSync(root + "/games/npcsim.js", "utf8"))();
+var S = window.HQV.npcSim, H = S.HOUR, DAY = S.DAY, D0 = 20*DAY, out = {};
+function town(){ return JSON.parse(fs.readFileSync(root + "/tests/fixtures/npc_town@2.json", "utf8")); }
+// a metro grid: M1 along z = 0, M2 along z = +-300 m, Central at the origin on both (cm, as the doc's layers)
+function metroLayer(scale){
+  var st = [], k = 0;
+  [-300, 0, 300].forEach(function(z){ [-300, 0, 300].forEach(function(x){
+    st.push({id: "metro:" + (k++), x: x*scale, y: -1400*scale/100, z: z*scale, lines: z === 0 ? (x === 0 ? ["M1", "M2"] : ["M1"]) : ["M2"]});
+  }); });
+  return {lines: [{id: "M1", tier: 1}, {id: "M2", tier: 1}], stations: st};
+}
+function modes(sim){ var c = {}; sim.residents.forEach(function(r){ c[r.mode] = (c[r.mode] | 0) + 1; }); return c; }
+var doc = town(); doc.layers.metro = metroLayer(100);
+var A = S.create(doc, {tier: 5, grow: 500, seed: "m"}), B = S.create(doc, {tier: 5, grow: 500, seed: "m"});
+out.modes = modes(A); out.same = JSON.stringify(A.residents) === JSON.stringify(B.residents);
+out.base = modes(S.create(town(), {tier: 5, grow: 500, seed: "m"}));
+out.metroLines = {}; A.residents.forEach(function(r){ if(r.mode === "metro") out.metroLines[r.line] = 1; });
+out.busLines = {}; A.residents.forEach(function(r){ if(r.mode === "bus") out.busLines[r.line] = 1; });
+// riders: ridersOn agrees with where() (state riding) over the morning, and nobody rides visibly
+var agree = 0, checks = 0, peak = 0, seenMetro = 0, visModes = {}, when = [];
+// sample at the middle of rides (they are short), plus every 10 minutes of the day
+A.residents.forEach(function(r){ A.plan(r.id, 20).forEach(function(mv){ if(mv.mode !== "walk" && mv.mode !== "car" && when.length < 60) when.push(D0 + mv.t0 + mv.dur/2); }); });
+for(var m = 0; m < 24*60; m += 10) when.push(D0 + m*60000);
+when.forEach(function(t){
+  var byLine = {};
+  A.residents.forEach(function(r){ var w = A.where(r.id, t); if(w.state === "riding" && r.line) byLine[r.line] = (byLine[r.line] | 0) + 1; if(w.state === "riding" && w.mode === "metro") seenMetro++; });
+  var ok = true;
+  ["M1", "M2", "bus-1", "bus-2"].forEach(function(l){ if((byLine[l] | 0) !== A.ridersOn(l, t)) ok = false; peak = Math.max(peak, A.ridersOn(l, t)); });
+  if(ok) agree++; checks++;
+  A.at(t, {x: 0, z: 0}, 5000).forEach(function(r){ visModes[r.mode + "/" + r.anim] = 1; });
+});
+out.riders = {agree: agree, checks: checks, peak: peak, seenMetro: seenMetro, night: A.ridersOn("M1", D0 + 3*H), visible: Object.keys(visModes).sort(),
+              stationKey: A.residents.filter(function(r){ return r.mode === "metro"; }).length ? A.plan(A.residents.filter(function(r){ return r.mode === "metro"; })[0].id, 20)[0].to : null};
+// the module-level hook asks the latest sim (or the one in use), not one created with active: false
+var C = S.create(town(), {tier: 5, grow: 500, seed: "c"}), tt = D0 + 8*H;
+out.hook = {latest: S.ridersOn("M1", tt), useA: (S.use(A), S.ridersOn("M1", tt)), direct: A.ridersOn("M1", tt)};
+S.create(town(), {tier: 5, seed: "z", active: false});
+out.hook.inactive = S.ridersOn("M1", tt);
+S.use(null); out.hook.none = S.ridersOn("M1", tt);
+// HQV.world.metroOf (metres) is used when present
+window.HQV.world = {metroOf: function(d){ return d.layers.metro ? null : metroLayer(1); }};
+out.metroOf = modes(S.create(town(), {tier: 5, grow: 500, seed: "m"}));
+delete window.HQV.world;
+// tram stops make tram riders
+var td = town(); td.layers.sites.forEach(function(s){ if(s.kind === "busstop") s.kind = "tramstop"; });
+td.layers.transit.lines.forEach(function(l){ l.kind = "tram"; });
+var T = S.create(td, {tier: 5, grow: 500, seed: "m"}), tv = {};
+out.tram = modes(T);
+for(m = 6*60; m < 24*60; m += 5) T.at(D0 + m*60000, {x: 0, z: 0}, 5000).forEach(function(r){ tv[r.mode + "/" + r.anim] = 1; });
+out.tramVisible = Object.keys(tv).sort();
+out.tramSpeak = (function(){ for(var i = 0; i < T.residents.length; i++){ if(T.residents[i].mode !== "tram") continue;
+  for(var mm = 0; mm < 24*60; mm++){ var w = T.where(i, D0 + mm*60000); if(w.state === "stop") return T.speak(i, D0 + mm*60000); } } return ""; })();
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class TransitRidersTest(unittest.TestCase):
+    """HQ 3.15: residents ride the bus, tram or metro and count into their line's load (hqCommute)."""
+    @classmethod
+    def setUpClass(cls):
+        p = subprocess.run([NODE, "-e", TRANSIT_HARNESS % {"root": json.dumps(ROOT)}], capture_output=True, text=True, timeout=300)
+        if p.returncode != 0:
+            raise AssertionError("node failed:\n" + p.stderr[-4000:])
+        cls.r = json.loads(p.stdout)
+
+    def test_metro_when_stations_near_both_ends(self):
+        r = self.r
+        self.assertTrue(r["same"])
+        self.assertGreater(r["modes"].get("metro", 0), 10)
+        self.assertNotIn("metro", r["base"])                       # no metro layer: no metro riders
+        self.assertLess(r["modes"].get("bus", 0), r["base"].get("bus", 0))
+        self.assertTrue(set(r["metroLines"]) <= {"M1", "M2"} and r["metroLines"])
+        self.assertTrue(set(r["busLines"]) <= {"bus-1", "bus-2"})
+        self.assertGreater(r["metroOf"].get("metro", 0), 10)      # HQV.world.metroOf in metres
+
+    def test_riders_count_into_their_line(self):
+        x = self.r["riders"]
+        self.assertEqual(x["agree"], x["checks"])
+        self.assertGreater(x["peak"], 0)
+        self.assertGreater(x["seenMetro"], 0)
+        self.assertEqual(x["night"], 0)
+        self.assertTrue(x["stationKey"].startswith("station:metro:"), x["stationKey"])
+        # riders are never drawn as walkers (seated figures stand for them); a metro platform is underground
+        self.assertTrue(set(x["visible"]) <= {"walk/walk", "walk/idle", "car/drive", "bus/idle"}, x["visible"])
+
+    def test_module_hook(self):
+        h = self.r["hook"]
+        self.assertEqual(h["latest"], 0)                           # the latest sim (no metro) has none on M1
+        self.assertEqual(h["useA"], h["direct"])
+        self.assertEqual(h["inactive"], h["direct"])
+        self.assertEqual(h["none"], 0)
+
+    def test_tram_riders(self):
+        self.assertGreater(self.r["tram"].get("tram", 0), 0)
+        self.assertNotIn("bus", self.r["tram"])
+        self.assertTrue(set(self.r["tramVisible"]) <= {"walk/walk", "walk/idle", "car/drive", "tram/idle"}, self.r["tramVisible"])
+        self.assertIn("tram", self.r["tramSpeak"].lower())
 
 
 if __name__ == "__main__":

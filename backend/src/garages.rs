@@ -448,7 +448,7 @@ mod tests {
     async fn going_home_clears_parked_and_delete_cascades() {
         let p = pool().await;
         let ids = own(&p, A, 2).await;
-        let out = crate::vehicles::Spot::Out("claude-hq@2".into(), 10.0, -4.0, 1.0);
+        let out = crate::vehicles::Spot::Out("claude-hq@3".into(), 10.0, -4.0, 1.0);
         for id in &ids {
             crate::vehicles::park(&p, A, id, &out).await.unwrap_or_else(|_| panic!("parks"));
         }
@@ -463,6 +463,21 @@ mod tests {
         sqlx::query("DELETE FROM users WHERE id = ?1").bind(A).execute(&p).await.unwrap();
         let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM vehicle_homes").fetch_one(&p).await.unwrap();
         assert_eq!(left, 0, "and a deleted user's homes");
+    }
+
+    #[tokio::test]
+    async fn a_vehicle_with_a_world_but_no_position_is_at_home() {
+        // what migration 0024 leaves for a vehicle out in a world whose layout moved
+        let p = pool().await;
+        let ids = own(&p, A, 1).await;
+        sqlx::query("UPDATE owned_vehicles SET parked_world = 'claude-hq@3', parked_x = NULL, parked_z = NULL, parked_yaw = NULL")
+            .execute(&p)
+            .await
+            .unwrap();
+        assert_eq!(crate::vehicles::mine(&p, A).await.unwrap()[0]["parked"], Value::Null);
+        set_home(&p, A, &ids[0], Home::Basement, None, 0, NOW).await.unwrap();
+        let w: Option<String> = sqlx::query_scalar("SELECT parked_world FROM owned_vehicles").fetch_one(&p).await.unwrap();
+        assert_eq!(w, None, "going home clears it");
     }
 
     #[tokio::test]

@@ -32,10 +32,13 @@ Object.defineProperty(window, "localStorage", {get: function(){
   if(storageMode === "none") return null;
   return {getItem: function(k){ return k in mem ? mem[k] : null; }, setItem: function(k, v){ mem[k] = String(v); }};
 }});
+global.self = window;
+new Function(fs.readFileSync(root + "/games/world.js", "utf8"))();
+new Function(fs.readFileSync(root + "/games/hqrail.js", "utf8"))();
 new Function(fs.readFileSync(root + "/games/hqtravel.js", "utf8"))();
 var H = window.HQV.hqTravel, out = {};
-var A = "user:11111111-2222-4333-8444-555555555555@2", B = "user:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@2";
-var C = "claude-hq@2";
+var A = "user:11111111-2222-4333-8444-555555555555@3", B = "user:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@3";
+var C = "claude-hq@3";
 
 // a site (cm) facing +z (front is Q16)
 function S(id, kind, x, z, tier){ return {id: id, kind: kind, x: x, z: z, w: 1000, d: 1000, tier: tier, front: [0, 65536]}; }
@@ -74,6 +77,7 @@ out.seconds = {};
 
 // ---------- rooms ----------
 out.rooms = [H.roomFor(C), H.roomFor(A), H.roomFor("claude-hq@1"), H.roomFor("user:x@2"), H.roomFor("../etc"), H.roomFor(null)];
+out.rooms2 = [H.roomFor("claude-hq@2"), H.roomFor(A.replace("@3", "@2"))];      // an older Arena's @2 worlds still travel
 
 // ---------- ferry schedule ----------
 out.sail = [H.nextSailing(A, B, 1000000), H.nextSailing(B, A, 1000000), H.nextSailing(A, B, 1000000 + 7)];
@@ -267,6 +271,67 @@ async function main(){
     out.arriveAir = {spawn: sp, worst: worst, start: start, end: end, site: site && site.id, presumed: H.options({world: A, tier: 5}, commons).map(function(o){ return o.mode; })};
   })();
 
+  // ---------- the Island Link ----------
+  var RL = window.HQV.hqRail, I2 = A.replace("@3", "@2"), C2 = "claude-hq@2";
+  var RAILDOC = {id: "isle", layers: {sites: [S("st9", "transit", 0, 0, 1)], island: {sea_cm: 0}, rail: {
+    lines: [{id: "IL", kind: "island", stations: ["rail:2"], path: [[0, -1600, -1000], [-20000, -1600, -20000], [-20000, -300, -23000], [-20000, 400, -26000]], kinds: ["tunnel", "portal", "grade"], tier: 1}],
+    stations: [{id: "rail:2", kind: "underground", x: 0, y: -1600, z: -1000, along: [0, 65536], len: 7000, platforms: 1, lines: ["IL"], stairs: []}],
+    sea: {x: -20000, z: -27000, y: 400, front: [0, -65536]}}}};
+  var CRAIL = {id: "commons", layers: {sites: [S("air1", "airport", 0, 0, 1)], island: {sea_cm: 0}, rail: {lines: [], stations: [], sea: null}}};
+  out.link = {
+    noDocs: modes({world: C, tier: 5}, {world: A, tier: 1}),
+    back: modes({world: A, tier: 1}, {world: C}),
+    v2: modes({world: C2, tier: 5}, {world: I2, tier: 1}),
+    noRail: modes(city(C, null, FULL), {world: A, tier: 1}),
+    withRail: modes(city(C, null, CRAIL), city(A, 1, RAILDOC)),
+    islands: modes({world: A, tier: 5}, {world: B, tier: 5}),
+    departs: H.options({world: A, tier: 1}, {world: C}, 1e12).filter(function(o){ return o.mode === "link"; })[0],
+    next: H.linkNext(A, "out", 1e12), railNext: RL.linkNext(A, "out", 1e12)
+  };
+  // a link trip driven by an hqRail Trip: boarding at the platform until it leaves, the load from departure, the
+  // tunnel (under), the handover mid-sea (onArrive, the destination's frame), on to the far platform, then done
+  var svc = RL.linkService({here: A, W: RAILDOC, arch: {commons: {x: 0, z: 0}, islands: [{world: A, x: 300000, z: -250000}]}, docs: {}});
+  var lt = svc.trip(svc.lines()[0].id, "il:" + A, "il:" + C, 1000000);
+  var CDEST = {id: "cdest", layers: {sites: [], island: {sea_cm: 0}, rail: {
+    lines: [{id: "IL", kind: "island", stations: ["rail:9"], path: [[0, 600, 0], [0, 600, -30000], [0, 400, -60000]], kinds: ["grade", "viaduct"], tier: 1}],
+    stations: [{id: "rail:9", kind: "terminal", x: 0, y: 600, z: 0, along: [0, -65536], len: 9000, platforms: 6, lines: ["IL"], stairs: []}],
+    sea: {x: 0, z: -60000, y: 400, front: [0, -65536]}}}};
+  async function linkRun(buildLate){
+    var r = rig(), seen = [], trip = H.start("link", city(A, 1, RAILDOC), {world: C, tier: 5}, Object.assign({}, r.hooks, {trip: lt, now: function(){ return r.now; }}));
+    var p0 = trip.pose();
+    seen.push({phase: trip.phase, log: r.log.length, frame: p0.frame, camera: p0.camera, under: p0.under});
+    r.now = lt.depart - 500; trip.update(); await flush();
+    seen.push({phase: trip.phase, log: r.log.length});
+    r.now = lt.depart + 20; trip.update(); await flush();
+    var p1 = (r.now = lt.depart + 20000, trip.update(), trip.pose());
+    seen.push({phase: trip.phase, log: r.log.map(function(l){ return l[0]; }), under: p1.under, frame: p1.frame, camera: p1.camera});
+    r.docD.res(CDEST); r.cityD.res({tier: 5}); await flush(); await flush();
+    if(!buildLate){ r.buildD.res("L"); await flush(); await flush(); }
+    r.now = lt.hand - 1000; trip.update(); await flush();
+    seen.push({phase: trip.phase, n: r.arrived.length, under: trip.pose().under});
+    r.now = lt.hand + 1000; trip.update(); await flush();
+    var p2 = trip.pose();
+    seen.push({phase: trip.phase, n: r.arrived.length, frame: p2.frame, under: p2.under});
+    if(buildLate){ r.now = lt.reach + 4000; trip.update(); await flush(); r.buildD.res("L"); await flush(); await flush(); r.now += 16; trip.update(); await flush(); }
+    else { r.now = lt.reach - 2000; trip.update(); await flush(); seen.push({phase: trip.phase}); r.now = lt.reach + 10; trip.update(); await flush(); }
+    var p3 = trip.pose();
+    seen.push({phase: trip.phase, n: r.arrived.length, camera: p3.camera, frame: p3.frame});
+    return {seen: seen, spawn: r.arrived[0] && r.arrived[0].sp, seconds: trip.seconds, total: trip.total, departAt: trip.departAt - lt.depart,
+            arrivedAt: trip.arrivedAt && (trip.arrivedAt - lt.depart)/1000, fare: r.log.filter(function(l){ return l[0] === "fare"; }).length};
+  }
+  out.linkTrip = await linkRun(false);
+  out.linkLate = await linkRun(true);
+  out.linkHand = (lt.hand - lt.depart)/1000; out.linkReach = (lt.reach - lt.depart)/1000;
+  // a failed load: back at the island's IL platform
+  r = rig(); trip = H.start("link", city(A, 1, RAILDOC), {world: C, tier: 5}, Object.assign({}, r.hooks, {trip: lt}));
+  r.now = lt.depart + 10; trip.update(); r.docD.rej(new Error("503")); await flush(); await flush(); await flush(); r.now += 250; trip.update();
+  out.linkFail = {phase: trip.phase, spawn: r.arrived[0] && r.arrived[0].sp, message: trip.message};
+  // no hqRail trip: the timetable from hqTravel itself and a generic cinematic, under at first
+  r = rig(); trip = H.start("link", {world: C, tier: 5}, city(A, 1, null), r.hooks);
+  out.linkBare = {departAt: trip.departAt, next: RL.linkNext(A, "in", 1000000), phase: trip.phase};
+  r.now = trip.departAt + 2000; trip.update(); await flush();
+  var pb = trip.pose(); out.linkBare.under = pb.under; out.linkBare.camera = pb.camera; out.linkBare.phase2 = trip.phase;
+
   // storage that throws or holds garbage: nothing visited, nothing breaks
   storageMode = "throw";
   var threw = false;
@@ -336,9 +401,10 @@ class HqTravel(unittest.TestCase):
         self.assertTrue(all(10 <= v <= 25 for v in s["plane"]))     # a short cutscene
 
     def test_room_ids(self):
-        self.assertEqual(self.o["rooms"], ["city3d:claude-hq@2", "city3d:user:11111111-2222-4333-8444-555555555555@2",
+        self.assertEqual(self.o["rooms"], ["city3d:claude-hq@3", "city3d:user:11111111-2222-4333-8444-555555555555@3",
                                            "city3d:claude-hq@1", None, None, None])
-        self.assertEqual(self.o["railStart"]["room"], "city3d:user:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@2")
+        self.assertEqual(self.o["railStart"]["room"], "city3d:user:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@3")
+        self.assertEqual(self.o["rooms2"], ["city3d:claude-hq@2", "city3d:user:11111111-2222-4333-8444-555555555555@2"])
 
     def test_ferry_schedule_is_shared_and_symmetric(self):
         a, b, c = self.o["sail"]
@@ -363,7 +429,7 @@ class HqTravel(unittest.TestCase):
         self.assertGreaterEqual(a["at"], self.o["railStart"]["seconds"])
         self.assertEqual(a["built"], "BUILT")
         self.assertEqual(a["spawn"]["site"], "st2")                 # the destination station
-        self.assertEqual(a["spawn"]["world"], "user:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@2")
+        self.assertEqual(a["spawn"]["world"], "user:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@3")
         self.assertEqual(a["phase"], "done")
         self.assertEqual(a["fare"], 0)                              # rail is free
 
@@ -394,7 +460,7 @@ class HqTravel(unittest.TestCase):
             self.assertEqual(f["phase"], "failed", k)
             self.assertEqual(f["n"], 1, k)
             self.assertTrue(f["failed"], k)
-            self.assertEqual(f["world"], "user:11111111-2222-4333-8444-555555555555@2", k)
+            self.assertEqual(f["world"], "user:11111111-2222-4333-8444-555555555555@3", k)
             self.assertTrue(f["message"] and f["message"] == f["tripMsg"], k)
             self.assertIn("back at the", f["message"], k)
         self.assertEqual(self.o["fail"]["doc"]["site"], "st1")       # the origin station
@@ -412,7 +478,7 @@ class HqTravel(unittest.TestCase):
         self.assertEqual(f["phase"], "failed")
         self.assertEqual(f["n"], 1)
         self.assertTrue(f["failed"])
-        self.assertEqual(f["world"], "user:11111111-2222-4333-8444-555555555555@2")
+        self.assertEqual(f["world"], "user:11111111-2222-4333-8444-555555555555@3")
         self.assertIn("back at the", f["message"])
         self.assertFalse(f["camera0"])
         self.assertGreater(f["fade0"], 0.5)                         # fades back in from black, no jump cut
@@ -437,7 +503,7 @@ class HqTravel(unittest.TestCase):
         self.assertEqual(d["phase"], "failed")
         self.assertEqual(d["log"], ["fare"])
         self.assertTrue(d["failed"])
-        self.assertEqual(d["world"], "user:11111111-2222-4333-8444-555555555555@2")
+        self.assertEqual(d["world"], "user:11111111-2222-4333-8444-555555555555@3")
         self.assertIn("coin", d["message"])
 
     def test_fast_travel_fades(self):
@@ -455,22 +521,22 @@ class HqTravel(unittest.TestCase):
     def test_boat_arrive(self):
         b = self.o["boat"]
         self.assertEqual(b["spawn"]["site"], "dock2")
-        self.assertEqual(b["spawn"]["world"], "user:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@2")
+        self.assertEqual(b["spawn"]["world"], "user:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@3")
         self.assertAlmostEqual(b["spawn"]["z"], 70 + 7, places=6)   # just outside the dock, on its door side
         self.assertEqual(b["built"], ["BB"])
         self.assertTrue(b["fail"]["failed"] and b["fail"]["message"])
         self.assertTrue(b["bad"]["failed"])
 
     def test_visited_memory(self):
-        self.assertIn("user:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@2", self.o["visitedAfter"])
-        self.assertIn("user:11111111-2222-4333-8444-555555555555@2", self.o["visitedAfter"])  # the origin too
+        self.assertIn("user:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@3", self.o["visitedAfter"])
+        self.assertIn("user:11111111-2222-4333-8444-555555555555@3", self.o["visitedAfter"])  # the origin too
         self.assertFalse(self.o["throwThrew"])
         self.assertEqual(self.o["throwVisited"], [])
         self.assertNotIn("fast", self.o["throwOpts"])
         self.assertEqual(self.o["noneVisited"], [])
         self.assertEqual(self.o["garbage"], [])
-        self.assertEqual(self.o["filtered"], ["user:11111111-2222-4333-8444-555555555555@2",
-                                              "user:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@2"])
+        self.assertEqual(self.o["filtered"], ["user:11111111-2222-4333-8444-555555555555@3",
+                                              "user:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@3"])
 
     def test_poses_are_frame_rate_independent(self):
         a, b = self.o["pose60"], self.o["pose7"]
@@ -503,6 +569,66 @@ class HqTravel(unittest.TestCase):
                 prev = p
         self.assertGreater(self.o["ridePoses"]["plane"][-1]["vehicle"]["pos"]["y"], 300)   # cruising
         self.assertEqual(self.o["ridePoses"]["ferry"][-1]["vehicle"]["pos"]["y"], 0)       # on the sea
+
+    def test_link_offered_commons_and_islands(self):
+        l = self.o["link"]
+        self.assertIn("link", l["noDocs"])                   # live @3 ids: the IL is presumed
+        self.assertIn("link", l["back"])
+        self.assertNotIn("link", l["v2"])                    # an @2 world has no IL
+        self.assertNotIn("link", l["noRail"])                # a doc without layers.rail
+        self.assertIn("link", l["withRail"])
+        self.assertNotIn("link", l["islands"])               # island <-> island is player-built rail
+        self.assertEqual(l["departs"]["departs"], l["next"])
+        self.assertEqual(l["next"], l["railNext"])
+        self.assertEqual(l["departs"]["fee"], 0)
+        self.assertEqual(l["departs"]["line"], "IL")
+
+    def test_link_trip_states(self):
+        for key in ("linkTrip", "linkLate"):
+            t = self.o[key]
+            s = t["seen"]
+            self.assertEqual(t["departAt"], 0, key)
+            self.assertEqual(s[0]["phase"], "boarding", key)
+            self.assertEqual(s[0]["log"], 0, key)            # nothing loads on the platform
+            self.assertTrue(s[0]["under"] and s[0]["camera"], key)   # seated on the train at the underground platform
+            self.assertEqual(s[1], {"phase": "boarding", "log": 0}, key)
+            self.assertEqual(s[2]["phase"], "riding", key)
+            self.assertEqual(s[2]["log"], ["doc", "city"], key)
+            self.assertTrue(s[2]["under"], key)              # in the tunnel: the host's underground switch
+            self.assertEqual(s[2]["frame"], "from", key)
+            self.assertEqual(s[3]["n"], 0, key)
+            self.assertFalse(s[3]["under"], key)             # out over the sea
+            self.assertAlmostEqual(t["seconds"], self.o["linkHand"], places=3)
+            self.assertAlmostEqual(t["total"], self.o["linkReach"], places=3)
+            self.assertEqual(t["fare"], 0)
+        a = self.o["linkTrip"]["seen"]
+        self.assertEqual(a[4]["phase"], "arriving")           # handed over mid-sea: the destination is in
+        self.assertEqual(a[4]["n"], 1)
+        self.assertEqual(a[4]["frame"], "to")
+        self.assertEqual(a[5]["phase"], "arriving")
+        self.assertEqual(a[6]["phase"], "done")
+        self.assertFalse(a[6]["camera"])
+        sp = self.o["linkTrip"]["spawn"]
+        self.assertEqual(sp["world"], "claude-hq@3")
+        self.assertEqual(sp["site"], "rail:9")                # Commons Central
+        self.assertFalse(sp["under"])
+        b = self.o["linkLate"]["seen"]
+        self.assertEqual(b[4]["phase"], "holding")            # the build is late: the train rolls on
+        self.assertEqual(b[5]["phase"], "done")               # it lands after the far platform: straight to done
+        self.assertEqual(b[5]["n"], 1)
+
+    def test_link_failure_and_bare(self):
+        f = self.o["linkFail"]
+        self.assertEqual(f["phase"], "failed")
+        self.assertTrue(f["spawn"]["failed"])
+        self.assertTrue(f["spawn"]["under"])                  # back at the island's IL platform
+        self.assertEqual(f["spawn"]["site"], "rail:2")
+        self.assertIn("Island Link platform", f["message"])
+        b = self.o["linkBare"]
+        self.assertEqual(b["departAt"], b["next"])
+        self.assertEqual(b["phase"], "boarding")
+        self.assertEqual(b["phase2"], "riding")
+        self.assertTrue(b["under"] and b["camera"])
 
     def test_no_markup_or_unvalidated_ids(self):
         src = read(SRC)

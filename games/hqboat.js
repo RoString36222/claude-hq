@@ -10,6 +10,10 @@
  *                   of the throttle and open it again).
  *   model(c, kind, color, accent)        the meshes, from the hq3d ctx `c` (THREE, mat); forward is +z
  *   animate(B, st, inp, dt)              oars and handlebars
+ *   animate(B, st, inp, dt, calm)       oars, handlebars, the pedalo's wheel, the kayak's paddle (Calm: smaller, slower)
+ * HQ 3.15 hire (free): VEHICLES.pedalo and .kayak beside the rowboat (HIRE_KINDS; the jet ski only at the marina),
+ * hire(W, jettyId, kind) on the @3 water, bodySea(W, bodyId) (the body polygon is the fence), returnAt (E at any
+ * jetty): see "boat hire" below.
  * inp = {thr: -1..1 (W +, S -), steer: -1..1 (A +, turns left)}. sea = {land(x, z) -> bool (the coast
  * polygon test: true on an island), docks: [{id, x, z, yaw}] (berths, metres; yaw faces out to sea),
  * y (sea level, m), wave(x, z, t) -> m (games/ocean.js waveAt)}; games/ocean.js seaOf(doc) builds one.
@@ -35,7 +39,16 @@ var VEHICLES = {
   jetski:  {top: 20, acc: 6.5, rev: 2.5, lean: 0.22, box: [0.6, 1.6], boat: true, motor: true, gears: [7, 13, 20], eng: "four",
             len: 3.2, beam: 1.2, draft: 0.08, turn: 1.6, base: 0.08, turnV: 5, turnW: 7, heave: 6, tilt: 7, plane: 0.07}
 };
-var KINDS = ["rowboat", "jetski"];
+// HQ 3.15 boat hire (docs/plans/transport-revamp.md 3.8): a pedalo (two seats, a stern paddle wheel) and a kayak
+// beside the rowboat, hired at the @3 hire jetties (free, D4); the jet ski only at the marina.
+VEHICLES.pedalo = {top: 2.2, acc: 0.8, rev: 1.0, lean: 0.01, box: [0.9, 1.4], boat: true, hire: true,
+                   len: 2.8, beam: 1.7, draft: 0.15, turn: 0.75, base: 0.5, turnV: 1, turnW: 4, heave: 3, tilt: 4, plane: 0};
+VEHICLES.kayak = {top: 2.8, acc: 1.6, rev: 1.2, lean: 0.06, box: [0.4, 2.0], boat: true, hire: true,
+                  len: 4.2, beam: 0.65, draft: 0.08, turn: 1.1, base: 0.5, turnV: 1, turnW: 6, heave: 5, tilt: 6, plane: 0};
+VEHICLES.rowboat.hire = true;
+var KINDS = ["rowboat", "jetski"];                 // the boats moored at the sea docks (as before 3.15)
+var HIRE_KINDS = ["pedalo", "rowboat", "kayak"];   // at any hire jetty; plus the jet ski at the marina's
+var ALL_KINDS = ["rowboat", "jetski", "pedalo", "kayak"];
 // Docking: slower than v m/s with the hull's centre within r m of a berth; held there by ease(k, dt);
 // after leaving a berth you must get rearm*r away before it takes you again. Beaching bisects the
 // last move BISECT times to stop the leading end at the shore.
@@ -174,6 +187,163 @@ function settle(st, V, sea, wave, dt){
   st.y = a[0]; st.yV = a[1]; st.pitch = p[0]; st.pV = p[1]; st.roll = r[0]; st.rV = r[1];
 }
 
+/* ---------- boat hire on the @3 water (HQ 3.15, docs/plans/transport-revamp.md 3.8; free, D4) ----------
+ * water(W)                   layers.water in metres: HQV.world.waterOf(W) when games/world.js is loaded, else the same
+ *                            shape converted here from W.water / W.layers.water (cm); null when the doc has none
+ * inBody(b, x, z)            inside body b's outline (flat [x, z, ...] m) and off its islands (piers not considered)
+ * hireKinds(W, jettyId)      what you can hire there: [] unless it is a "hire" jetty (or the marina's fuel jetty, the
+ *                            jet ski only); the pedalo, rowboat and kayak at a hire jetty, plus the jet ski at the marina's
+ * hire(W, jettyId, kind, o)  -> {ok: true, kind, jetty, body, st (newState at the jetty's moorings, facing out), sea}
+ *                            | {ok: false, reason: "no-water"|"no-jetty"|"kind"}; o = {calm()}
+ * bodySea(W, bodyId, o)      a hull's sea fenced to one body (hqboat's sea: land, docks, y, wave, surface): land is
+ *                            everything outside the body's outline, its islands, every pier deck and the breakwater, so
+ *                            a lake boat never leaves the lake and a canal boat stays in its canal. bodyId "river" uses
+ *                            HQV.world.riverAt. docks: every pier of the body (any kind), berthed off its head. Calm
+ *                            water: a 3 cm ripple, a third of that under Calm (o.calm())
+ * returnAt(W, st, sea, r)    E at a jetty: the pier you are moored at (st.dock) or slow (< 1 m/s) within r (8) m of a
+ *                            pier's berth in the boat's own body -> {id, x, y, z, yaw} (the step-ashore spot on its deck,
+ *                            facing inland) | null
+ */
+var HIRE = {off: 2.5, ret: 8, slowRet: 1.0, ripple: 0.03, calmRipple: 0.3};
+var WCACHE = {W: null, V: null};
+function cmM(v){ v = +v; return isFinite(v) ? v/100 : 0; }
+function flatCm(P){ var o = []; (P || []).forEach(function(p){ if(p && p.length >= 2) o.push(cmM(p[0]), cmM(p[1])); }); return o; }
+function boxOf(f){ var b = {x0: Infinity, z0: Infinity, x1: -Infinity, z1: -Infinity}; for(var i = 0; i + 1 < f.length; i += 2){ b.x0 = Math.min(b.x0, f[i]); b.x1 = Math.max(b.x1, f[i]); b.z0 = Math.min(b.z0, f[i+1]); b.z1 = Math.max(b.z1, f[i+1]); } return b; }
+function unitQ(f){ var x = f && f.length >= 2 ? +f[0]/65536 : 0, z = f && f.length >= 2 ? +f[1]/65536 : 1, l = Math.hypot(x, z); return l > 1e-9 ? [x/l, z/l] : [0, 1]; }
+function water(W){
+  if(!W) return null;
+  var WD = HQV.world;
+  if(WD && typeof WD.waterOf === "function"){ try { var v = WD.waterOf(W); if(v) return v; } catch(e){} }
+  var L = W.water || (W.layers && W.layers.water);
+  if(!L) return null;
+  if(WCACHE.W === W) return WCACHE.V;
+  var I = (W.tierBase || W).island || (W.layers && W.layers.island) || null, sea = I && I.sea_cm != null && isFinite(+I.sea_cm) ? +I.sea_cm/100 : null;
+  var V = {bodies: (L.bodies || []).filter(Boolean).map(function(b){
+             var poly = flatCm(b.poly), lv = cmM(b.level);
+             return {id: String(b.id), kind: String(b.kind || "lake"), poly: poly, level: lv, bed: cmM(b.bed), y: sea != null && lv < sea + 0.3 ? sea + 0.3 : lv,
+                     edge: b.edge === "quay" ? "quay" : "bank", islands: (b.islands || []).map(flatCm).filter(function(f){ return f.length >= 6; }),
+                     joins: b.joins != null ? String(b.joins) : null, tier: (b.tier|0) || 1, box: boxOf(poly)};
+           }).filter(function(b){ return b.poly.length >= 6; }),
+           piers: (L.piers || []).filter(Boolean).map(function(p){
+             var u = unitQ(p.front);
+             return {id: String(p.id), body: String(p.body || ""), kind: String(p.kind || "waterbus"), x: cmM(p.x), y: cmM(p.y), z: cmM(p.z),
+                     fx: u[0], fz: u[1], yaw: Math.atan2(u[0], u[1]), len: Math.max(0, cmM(p.len)), w: Math.max(0, cmM(p.w)), tier: (p.tier|0) || 1};
+           }),
+           berths: (L.berths || []).filter(Boolean).map(function(b){ var u = unitQ(b.front); return {body: String(b.body || ""), x: cmM(b.x), z: cmM(b.z), fx: u[0], fz: u[1], yaw: Math.atan2(u[0], u[1])}; }),
+           breakwater: L.breakwater && L.breakwater.length >= 2 ? L.breakwater.map(function(p){ return [cmM(p[0]), cmM(p[1])]; }) : null,
+           lighthouse: L.lighthouse && L.lighthouse.length >= 2 ? [cmM(L.lighthouse[0]), cmM(L.lighthouse[1])] : null,
+           office: L.office != null ? L.office : null,
+           net: {nodes: ((L.net && L.net.nodes) || []).map(function(p){ return [cmM(p[0]), cmM(p[1])]; }),
+                 edges: ((L.net && L.net.edges) || []).filter(function(e){ return e && e.length >= 2; }).map(function(e){ return [e[0]|0, e[1]|0]; })},
+           routes: (L.routes || []).filter(Boolean).map(function(r){
+             return {id: String(r.id), kind: String(r.kind || "waterbus"), piers: (r.piers || []).map(String), path: (r.path || []).map(function(i){ return i|0; }),
+                     loop: !!r.loop, tier: (r.tier|0) || 1};
+           })};
+  WCACHE.W = W; WCACHE.V = V;
+  return V;
+}
+function inFlat(f, x, z){
+  var inside = false, n = f.length >> 1;
+  for(var i = 0, j = n - 1; i < n; j = i++){
+    var ax = f[2*i], az = f[2*i+1], cx = f[2*j], cz = f[2*j+1];
+    if((az > z) !== (cz > z) && x < (cx - ax)*(z - az)/(cz - az) + ax) inside = !inside;
+  }
+  return inside;
+}
+function inBody(b, x, z){
+  if(!b || !b.poly) return false;
+  var B = b.box;
+  if(B && (x < B.x0 || x > B.x1 || z < B.z0 || z > B.z1)) return false;
+  if(!inFlat(b.poly, x, z)) return false;
+  for(var k = 0; k < (b.islands || []).length; k++) if(inFlat(b.islands[k], x, z)) return false;
+  return true;
+}
+function bodyById(V, id){ for(var i = 0; V && i < V.bodies.length; i++) if(V.bodies[i].id === id) return V.bodies[i]; return null; }
+function pierById(V, id){ for(var i = 0; V && i < V.piers.length; i++) if(V.piers[i].id === id) return V.piers[i]; return null; }
+// on a pier's deck (the deck from its root to its head, w wide) or the breakwater's crown (2.5 m round its line)
+function onDeck(V, x, z){
+  var P = V.piers, i;
+  for(i = 0; i < P.length; i++){
+    var p = P[i], dx = x - p.x, dz = z - p.z, a = dx*p.fx + dz*p.fz, c = dx*p.fz - dz*p.fx;
+    if(Math.abs(a) <= p.len/2 && Math.abs(c) <= p.w/2) return true;
+  }
+  var B = V.breakwater, half = HQV.ocean && HQV.ocean.BREAKWATER_HALF || 2.5;
+  if(B) for(i = 0; i + 1 < B.length; i++){
+    var ax = B[i][0], az = B[i][1], ux = B[i+1][0] - ax, uz = B[i+1][1] - az, L2 = ux*ux + uz*uz;
+    var t = L2 > 0 ? clamp(((x - ax)*ux + (z - az)*uz)/L2, 0, 1) : 0, qx = x - ax - ux*t, qz = z - az - uz*t;
+    if(qx*qx + qz*qz <= half*half) return true;
+  }
+  return false;
+}
+function pierHead(p){ return {x: p.x + p.fx*p.len/2, z: p.z + p.fz*p.len/2}; }
+function riverWet(W, x, z){ var WD = HQV.world; return !!(WD && typeof WD.riverAt === "function" && W && W.river && WD.riverAt(W, x, z)); }
+function riverY(W){ var I = W && ((W.tierBase || W).island || (W.layers && W.layers.island)); return (I && isFinite(+I.sea_cm) ? +I.sea_cm/100 : 0) + (HQV.ocean && HQV.ocean.RIVER_Y || 0.3); }
+function bodySea(W, bodyId, o){
+  o = o || {};
+  var V = water(W), b = bodyById(V, bodyId), river = bodyId === "river" && !b;
+  if(!V || (!b && !river)) return null;
+  var calm = typeof o.calm === "function" ? o.calm : function(){ return false; };
+  var wet = river ? function(x, z){ return riverWet(W, x, z); } : function(x, z){ return inBody(b, x, z); };
+  var y = river ? riverY(W) : b.y;
+  var docks = V.piers.filter(function(p){ return p.body === bodyId; }).map(function(p){
+    var h = pierHead(p);
+    return {id: p.id, x: h.x + p.fx*HIRE.off, z: h.z + p.fz*HIRE.off, yaw: p.yaw, kind: p.kind};
+  });
+  function ripple(x, z, t){
+    var a = HIRE.ripple*(calm() ? HIRE.calmRipple : 1);
+    return a*(Math.sin(x*0.9 + t*1.7) + Math.sin(z*0.7 - t*1.3))*0.5;
+  }
+  var sea = {body: bodyId, kind: river ? "river" : b.kind, y: y, docks: docks, wave: ripple,
+             land: function(x, z){ return !wet(x, z) || onDeck(V, x, z); },
+             surface: function(x, z, t){ return y + ripple(x, z, t); }};
+  sea.boat = sea;
+  return sea;
+}
+function hireKinds(W, jettyId){
+  var V = water(W), p = pierById(V, jettyId);
+  if(!p) return [];
+  var b = bodyById(V, p.body), marina = !!(b && b.kind === "marina");
+  if(p.kind === "hire") return marina ? HIRE_KINDS.concat(["jetski"]) : HIRE_KINDS.slice();
+  if(p.kind === "fuel" && marina) return ["jetski"];
+  return [];
+}
+function hire(W, jettyId, kind, o){
+  var V = water(W);
+  if(!V) return {ok: false, reason: "no-water"};
+  var p = pierById(V, jettyId);
+  if(!p) return {ok: false, reason: "no-jetty"};
+  if(hireKinds(W, jettyId).indexOf(kind) < 0) return {ok: false, reason: "kind"};
+  var sea = bodySea(W, p.body, o);
+  if(!sea) return {ok: false, reason: "no-water"};
+  // the jetty's moorings (its berths within 12 m of the head), else just off the head; the first one in the water
+  var h = pierHead(p), spots = V.berths.filter(function(q){ return q.body === p.body && Math.hypot(q.x - h.x, q.z - h.z) < 12; })
+    .sort(function(a, c){ return Math.hypot(a.x - h.x, a.z - h.z) - Math.hypot(c.x - h.x, c.z - h.z) || a.x - c.x || a.z - c.z; })
+    .map(function(q){ return {x: q.x, z: q.z}; });
+  spots.push({x: h.x + p.fx*HIRE.off, z: h.z + p.fz*HIRE.off}, {x: h.x + p.fx*HIRE.off*2, z: h.z + p.fz*HIRE.off*2});
+  var at = null;
+  for(var i = 0; i < spots.length && !at; i++) if(!sea.land(spots[i].x, spots[i].z)) at = spots[i];
+  if(!at) return {ok: false, reason: "no-water"};
+  var st = newState(kind, at.x, at.z, p.yaw);
+  st.y = sea.y - (VEHICLES[kind].draft || 0); st.hired = {jetty: p.id, body: p.body};
+  st.left = p.id;                                  // pushed off: it does not dock straight back at the jetty you hired it from
+  return {ok: true, kind: st.kind, jetty: p.id, body: p.body, st: st, sea: sea};
+}
+function returnAt(W, st, sea, r){
+  var V = water(W);
+  if(!V || !st) return null;
+  r = r != null ? +r : HIRE.ret;
+  var body = sea && sea.body != null ? sea.body : st.hired && st.hired.body, best = null, bd = Infinity;
+  V.piers.forEach(function(p){
+    if(body != null && p.body !== body) return;
+    var h = pierHead(p), d = Math.hypot(st.x - (h.x + p.fx*HIRE.off), st.z - (h.z + p.fz*HIRE.off));
+    if(st.dock === p.id) d = -1;
+    if(d < bd){ bd = d; best = p; }
+  });
+  if(!best || (bd >= 0 && (bd > r || Math.abs(st.speed || 0) > HIRE.slowRet))) return null;
+  var hd = pierHead(best);
+  return {id: best.id, x: hd.x - best.fx*1.5, y: best.y, z: hd.z - best.fz*1.5, yaw: wrapPi(best.yaw + PI)};
+}
+
 /* ---------- the meshes (THREE only from here on, when a model is asked for) ---------- */
 // A hull lofted through stations [z, half beam at the gunwale, gunwale y, half beam at the chine,
 // chine y, keel y], bow last; both sides and the transom, one double-sided mesh.
@@ -200,7 +370,7 @@ function model(c, kind, color, accent){
   function mesh(geo, m, x, y, z, p){ var o = new THREE.Mesh(geo, m); o.position.set(x || 0, y || 0, z || 0); o.castShadow = true; (p || g).add(o); return o; }
   function box(w, h, d, m, x, y, z, p){ return mesh(new THREE.BoxGeometry(w, h, d), m, x, y, z, p); }
   function anchor(p, x, y, z){ var o = new THREE.Object3D(); o.position.set(x, y, z); p.add(o); return o; }
-  g.name = kind === "jetski" ? "jetski" : "rowboat";
+  g.name = kind === "jetski" || kind === "pedalo" || kind === "kayak" ? kind : "rowboat";
   if(kind === "jetski"){
     var hm = c.mat(0xf4f4f4, {roughness: 0.4});
     var hg = hullGeo(THREE, [[-1.5, 0.52, 0.32, 0.4, -0.05, -0.14], [-0.6, 0.6, 0.36, 0.46, -0.04, -0.16], [0.4, 0.56, 0.38, 0.4, 0.0, -0.12],
@@ -217,6 +387,40 @@ function model(c, kind, color, accent){
     box(0.42, 0.04, 0.08, c.mat(0xff6b5b, {roughness: 0.4}), 0, 0.3, -1.37);               // a reflector at the back
     return {g: g, kind: "jetski", seat: anchor(seat, 0, 0.1, 0.05), grips: [anchor(steer, 0.34, 0.05, -0.04), anchor(steer, -0.34, 0.05, -0.04)],
             feet: [anchor(g, 0.38, 0.47, -0.3), anchor(g, -0.38, 0.47, -0.3)], steer: steer, oars: null, lean: VEHICLES.jetski.lean, brake: function(){}};
+  }
+  if(kind === "pedalo"){
+    // two white floats, a seat for two under a sun canopy, the pedals and a paddle wheel at the stern
+    var pw = c.mat(0xf4f4f0, {roughness: 0.5}), seatM = c.mat(0x2f6f9f, {roughness: 0.6});
+    [1, -1].forEach(function(sx){
+      var fg = hullGeo(THREE, [[-1.4, 0.32, 0.3, 0.26, -0.05, -0.16], [-0.5, 0.36, 0.32, 0.3, -0.06, -0.18], [0.7, 0.33, 0.33, 0.26, -0.05, -0.16], [1.45, 0.02, 0.4, 0.01, 0.2, 0.1]]);
+      var fl = mesh(fg, paint, sx*0.62, 0, 0); fl.material = paint.clone(); fl.material.side = THREE.DoubleSide;
+    });
+    box(1.75, 0.1, 2.3, pw, 0, 0.36, -0.1);                                                  // the deck between the floats
+    var pseat = box(1.3, 0.12, 0.5, seatM, 0, 0.62, -0.55);
+    box(1.3, 0.55, 0.08, seatM, 0, 0.9, -0.82);                                              // the seat back
+    [[0.75, -0.95], [-0.75, -0.95], [0.75, 0.35], [-0.75, 0.35]].forEach(function(q){ box(0.05, 1.05, 0.05, dark, q[0], 0.95, q[1]); });
+    box(1.7, 0.05, 1.5, acc, 0, 1.48, -0.3);                                                 // the canopy
+    var wheel = new THREE.Group(); wheel.position.set(0, 0.32, -1.25); g.add(wheel);
+    for(var k = 0; k < 4; k++){ var vane = box(0.6, 0.04, 0.5, dark, 0, 0, 0, wheel); vane.rotation.x = k*PI/4; }
+    var crank = new THREE.Group(); crank.position.set(0.32, 0.5, 0.25); g.add(crank);
+    box(0.04, 0.3, 0.04, dark, 0, 0, 0, crank); box(0.18, 0.03, 0.1, dark, 0, 0.15, 0, crank); box(0.18, 0.03, 0.1, dark, 0, -0.15, 0, crank);
+    return {g: g, kind: "pedalo", seat: anchor(pseat, 0.32, 0.06, 0.05), grips: [anchor(g, 0.55, 0.85, 0.05), anchor(g, 0.1, 0.85, 0.05)],
+            feet: [anchor(crank, 0.06, 0.15, 0), anchor(crank, -0.06, -0.15, 0)], steer: null, oars: null, wheel: wheel, crank: crank,
+            lean: VEHICLES.pedalo.lean, phase: 0, brake: function(){}};
+  }
+  if(kind === "kayak"){
+    // a slim sit-in hull, its cockpit coaming, and a double paddle held across the rider
+    var kg = hullGeo(THREE, [[-2.1, 0.06, 0.28, 0.03, 0.05, 0.08], [-1.4, 0.26, 0.26, 0.2, -0.04, -0.1], [0, 0.33, 0.28, 0.26, -0.05, -0.12],
+                             [1.3, 0.24, 0.27, 0.18, -0.03, -0.09], [2.1, 0.02, 0.3, 0.01, 0.1, 0.12]]);
+    var kh = mesh(kg, paint); kh.material = paint.clone(); kh.material.side = THREE.DoubleSide;
+    box(0.5, 0.05, 2.9, paint, 0, 0.27, 0);                                                  // the deck
+    var coam = box(0.46, 0.08, 0.9, dark, 0, 0.32, -0.15);
+    var paddle = new THREE.Group(); paddle.position.set(0, 0.75, 0.25); g.add(paddle);
+    var sh = mesh(new THREE.CylinderGeometry(0.018, 0.018, 2.2, 6), dark, 0, 0, 0, paddle); sh.rotation.z = PI/2;
+    box(0.04, 0.14, 0.42, acc, 1.12, 0, 0, paddle); box(0.04, 0.14, 0.42, acc, -1.12, 0, 0, paddle);
+    return {g: g, kind: "kayak", seat: anchor(coam, 0, 0.0, -0.1), grips: [anchor(paddle, 0.35, 0, 0), anchor(paddle, -0.35, 0, 0)],
+            feet: [anchor(g, 0.12, 0.12, 0.8), anchor(g, -0.12, 0.12, 0.8)], steer: null, oars: null, paddle: paddle,
+            lean: VEHICLES.kayak.lean, phase: 0, brake: function(){}};
   }
   var wood = c.mat(0x9b6a3f, {roughness: 0.8});
   var rg = hullGeo(THREE, [[-1.75, 0.62, 0.42, 0.5, -0.02, -0.14], [-0.9, 0.7, 0.45, 0.56, -0.05, -0.18], [0.2, 0.68, 0.47, 0.52, -0.05, -0.18],
@@ -235,12 +439,23 @@ function model(c, kind, color, accent){
           feet: [anchor(g, 0.18, 0.02, 0.55), anchor(g, -0.18, 0.02, 0.55)], steer: null, oars: oars, lean: VEHICLES.rowboat.lean,
           phase: 0, brake: function(){}};
 }
-// Rows (stroke rate from the throttle or the steering, one oar backing water to turn) or turns the bars.
-function animate(B, st, inp, dt){
+// Rows (stroke rate from the throttle or the steering, one oar backing water to turn) or turns the bars; pedals
+// turn the pedalo's wheel; the kayak's paddle dips left and right (Calm (calm true): a slower, smaller stroke).
+function animate(B, st, inp, dt, calm){
   if(!B) return;
   inp = inp || {}; dt = Math.max(0, +dt || 0);
   var steer = st ? st.steer : 0;
   if(B.steer) B.steer.rotation.y = steer*0.5;
+  if(B.wheel || B.paddle){
+    var th = clamp(+inp.thr || 0, -1, 1), wk = Math.max(Math.abs(th), Math.abs(steer)), amp = calm ? 0.35 : 1;
+    B.phase = (B.phase + dt*PI*2*(calm ? 0.45 : 0.9)*wk*(th < 0 ? -1 : 1)) % (PI*2);
+    if(B.wheel){ B.wheel.rotation.x = B.phase; B.crank.rotation.x = B.phase; }
+    if(B.paddle){
+      var on = Math.min(1, wk*3);
+      B.paddle.rotation.z = Math.sin(B.phase)*0.6*amp*on - steer*0.25*amp;          // the blade dips one side, then the other
+      B.paddle.rotation.y = Math.cos(B.phase)*0.35*amp*on;
+    }
+  }
   if(B.oars){
     var thr = clamp(+inp.thr || 0, -1, 1), work = Math.max(Math.abs(thr), Math.abs(steer));
     B.phase = (B.phase + dt*PI*2*0.8*work) % (PI*2);
@@ -251,6 +466,8 @@ function animate(B, st, inp, dt){
   }
 }
 
-HQV.hqboat = {VEHICLES: VEHICLES, KINDS: KINDS, DOCK: DOCK, newState: newState, step: step, turnAt: turnAt,
-              spring: spring, ease: ease, drag: drag, model: model, animate: animate, hullGeo: hullGeo};
+HQV.hqboat = {VEHICLES: VEHICLES, KINDS: KINDS, HIRE_KINDS: HIRE_KINDS, ALL_KINDS: ALL_KINDS, DOCK: DOCK, HIRE: HIRE,
+              newState: newState, step: step, turnAt: turnAt, spring: spring, ease: ease, drag: drag, model: model, animate: animate,
+              hullGeo: hullGeo, water: water, inBody: inBody, onDeck: onDeck, pierHead: pierHead, bodySea: bodySea,
+              hireKinds: hireKinds, hire: hire, returnAt: returnAt};
 })();

@@ -162,6 +162,13 @@ out.T = {left: kinds(T, S0, {x: 95, z: 100}), right: kinds(T, S0, {x: -95, z: 10
   W.sites.forEach(function(s){ out.siteTiers[s.id] = s.tier; });
   out.commonsTravel = N.places(worlds.commons, 5, {x: 0, z: 0, me: ME}).filter(function(p){ return p.kind === "travel"; })
     .map(function(p){ return {label: p.label, world: p.world}; });
+  // the live ids (HQ 3.15, D2): @3 from an island too, and without HQV.world (a fallback, the same @3 forms)
+  out.islandTravel = N.places(worlds.island, 5, {x: 0, z: 0, island: true, me: ME}).filter(function(p){ return p.kind === "travel"; })
+    .map(function(p){ return {label: p.label, world: p.world}; });
+  var keepWorld = window.HQV.world; window.HQV.world = undefined;
+  out.noWorldTravel = [N.places(worlds.commons, 5, {x: 0, z: 0, me: ME}), N.places(worlds.island, 5, {x: 0, z: 0, island: true, me: "user:" + ME + "@2"})]
+    .map(function(L){ return L.filter(function(p){ return p.kind === "travel"; }).map(function(p){ return p.world; }); });
+  window.HQV.world = keepWorld;
   out.v1Kinds = N.places(worlds.v1, 5, {x: 0, z: 0, me: ME}).map(function(p){ return p.kind; });
   // the dock's door is on land (above the sea), the port's too
   var ok = {};
@@ -321,9 +328,18 @@ class HqNavTest(unittest.TestCase):
         self.assertIn("stadium", k5)
         self.assertIn("carpark", k5, "the vehicle garage is a place to go")
         self.assertGreater(len(P["5"]), len(P["1"]))
-        self.assertEqual(self.out["commonsTravel"], [{"label": "My island (ferry)", "world": "user:%s@2" % ME}])
+        self.assertEqual(self.out["commonsTravel"], [{"label": "My island (ferry)", "world": "user:%s@3" % ME}])
         self.assertEqual(set(self.out["v1Kinds"]), {"fountain", "skatepark"})
         self.assertTrue(self.out["doorsOnLand"] and all(self.out["doorsOnLand"].values()), self.out["doorsOnLand"])
+
+    def test_travel_goes_to_the_live_worlds(self):
+        """D2: the live worlds are @3 (HQV.world.COMMONS / islandId), never an @2 literal."""
+        self.assertEqual(self.out["islandTravel"], [{"label": "The Commons (ferry)", "world": "claude-hq@3"}])
+        self.assertEqual(self.out["noWorldTravel"], [["user:%s@3" % ME], ["claude-hq@3"]])
+        with open(os.path.join(ROOT, "games", "hqnav.js"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertNotIn('"claude-hq@2"', src)
+        self.assertNotIn('"@2"', src)
 
     # ---------- performance + style ----------
     def test_performance(self):

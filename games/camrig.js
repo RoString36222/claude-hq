@@ -16,6 +16,11 @@
  *   fp       eye or vehicle seat (car: seat or bonnet), pointer look, head bob
  *   classic  the host's orthographic camera; the rig only reports the mode
  *   photo    detached free camera; cine  deterministic idle orbits and fly-bys
+ *   selfie   the phone's front camera (HQ 3.15): at arm's length in front of the avatar's face, looking back
+ *            at it (look input swings it round the face a little); level and still under reduced motion or
+ *            target.calm, a slight hand sway otherwise. Not in the V cycle (the phone sets it).
+ * Passenger rows (HQ 3.15, games/hqride.js): bus, tram, metro, rail, gondola, waterbus, cab, heli-cabin; their
+ *   fpAnchor.seat is a passenger's eye (1.15 m over the seat) in the vehicle's floor-centre frame.
  * Transitions: a 0.5 s blend between modes (0.3 s under reduced motion), and between the map
  * and 3D a dive (dolly-zoom from the map down behind the target, then settle into the
  * preferred mode) or a rise (the reverse).
@@ -37,7 +42,8 @@ var MODES = {
   fp:      {back: 0, up: 1.65, fov: 75, side: 0, lag: 30, collide: 0.15, near: 0.15},
   classic: {ortho: true},
   photo:   {fov: 60, lag: 10, collide: 0.3, near: 0.15},
-  cine:    {fov: 50, lag: 1.5, collide: 0.4, near: 0.3}
+  cine:    {fov: 50, lag: 1.5, collide: 0.4, near: 0.3},
+  selfie:  {fov: 60, lag: 12, collide: 0, near: 0.05}
 };
 var ORDER = ["far", "chase", "near", "fp", "classic"];
 // anchors in the model-local frame (+z forward, +x LEFT), metres
@@ -64,8 +70,21 @@ var VEHICLE = {
   prop:     {backMul: 2.2, upMul: 1.15, sideMul: 1, fovSpeedKick: 0.5, fpAnchor: {seat: [0.28, 2.05, 0.95]}, roll: 0.3},
   // the airliners (HQ 3.6): far behind a 38 m jet (27 m regional); first person up in the nose, over the glareshield
   airliner: {backMul: 7, upMul: 3.2, sideMul: 1, fovSpeedKick: 0.3, fpAnchor: {seat: [0.5, 4.0, 17.6]}, roll: 0.25},
-  regional: {backMul: 5.2, upMul: 2.5, sideMul: 1, fovSpeedKick: 0.3, fpAnchor: {seat: [0.36, 2.88, 12.67]}, roll: 0.25}
+  regional: {backMul: 5.2, upMul: 2.5, sideMul: 1, fovSpeedKick: 0.3, fpAnchor: {seat: [0.36, 2.88, 12.67]}, roll: 0.25},
+  // passengers (HQ 3.15, games/hqride.js), in the Trip pose's frame (the floor centre): a seat on the pavement (right, -x)
+  // side, the eye 1.15 m over a 0.45 m seat (1.6 m); the cab and the heli cabin in their own vehicle frames (ground);
+  // window: leaning to the glass (a host may set state.fpView = "window"). The chase sits back by the vehicle's
+  // length (12 m bus, 27 m tram, 4-car trains, a 24 m water bus)
+  bus:      {backMul: 2.4, upMul: 1.5, sideMul: 1, fovSpeedKick: 0.3, fpAnchor: {seat: [-0.62, 1.6, 1.2], window: [-1.0, 1.6, 1.2]}, roll: 0},
+  tram:     {backMul: 3.6, upMul: 1.7, sideMul: 1, fovSpeedKick: 0.3, fpAnchor: {seat: [-0.7, 1.6, 2.0], window: [-1.05, 1.6, 2.0]}, roll: 0},
+  metro:    {backMul: 3.2, upMul: 1.5, sideMul: 1, fovSpeedKick: 0.3, fpAnchor: {seat: [-1.1, 1.6, 0], window: [-1.25, 1.6, 0]}, roll: 0},
+  rail:     {backMul: 3.2, upMul: 1.6, sideMul: 1, fovSpeedKick: 0.3, fpAnchor: {seat: [-0.62, 1.6, 0.4], window: [-1.05, 1.6, 0.4]}, roll: 0},
+  gondola:  {backMul: 1.3, upMul: 1.0, sideMul: 1, fovSpeedKick: 0.2, fpAnchor: {seat: [0, 1.6, -0.55], window: [0, 1.6, -0.75]}, roll: 0},
+  waterbus: {backMul: 3.0, upMul: 1.5, sideMul: 1, fovSpeedKick: 0.3, fpAnchor: {seat: [-1.0, 1.6, 0.5], window: [-1.5, 1.6, 0.5]}, roll: 0.1},
+  cab:      {backMul: 1.35, upMul: 0.85, sideMul: 1, fovSpeedKick: 1, fpAnchor: {seat: [-0.38, 1.12, -0.62], window: [-0.62, 1.12, -0.62]}, roll: 0},
+  "heli-cabin": {backMul: 2.6, upMul: 1.7, sideMul: 1, fovSpeedKick: 0.6, fpAnchor: {seat: [0.42, 1.7, -0.3], window: [0.62, 1.7, -0.3]}, roll: 0.35}
 };
+var SELFIE = {arm: 2.0, up: 0.1, right: 0.15, face: 1.25, yawMax: 0.7, pitchMax: 0.4};
 var SPAN_MIN = 44, SPAN_MAX = 2048, HALF = 1024, MAP_TAN = Math.tan(5*DEG);
 var LOOK_H = 1.3;          // chase look point above the target's feet (the "head" the camera frames)
 var FAR = 6000, BLEND = 0.5, BLEND_RED = 0.3, DIVE = 1.2, DIVE_RED = 0.6, FLY_MAP = 0.8;
@@ -164,6 +183,7 @@ function resetMode(s){
   _.colFrac = null; _.colV = 0; _.colG = null; _.fov = null; _.fovV = 0;
   _.fp = null; _.fpOff = 0; _.bobPhase = 0; _.bobAmp = 0; _.bobV = 0;
   _.photo = null; _.cineT = 0; _.cinePivot = null; s.wake = false;
+  _.selfie = {yaw: 0, pitch: 0};
 }
 function setSettings(s, o){ s.settings = normSettings(o, s.settings); }
 // a teleport: the chase family starts over behind the target's new heading (no swing round from the old one)
@@ -278,6 +298,9 @@ function look(s, dx, dy){
   if(s.mode === "photo" && _.photo){
     _.photo.yaw = wrap(_.photo.yaw - dx*k); _.photo.pitch = clamp(_.photo.pitch - dy*k*inv, -1.45, 1.45);
     s.lookYaw = _.photo.yaw; s.lookPitch = _.photo.pitch;
+  } else if(s.mode === "selfie" && _.selfie){
+    _.selfie.yaw = clamp(_.selfie.yaw - dx*k, -SELFIE.yawMax, SELFIE.yawMax);
+    _.selfie.pitch = clamp(_.selfie.pitch - dy*k*inv, -SELFIE.pitchMax, SELFIE.pitchMax);
   } else if(s.mode === "fp"){
     if(_.tgt && _.tgt.vehicle) _.fpOff = wrap(_.fpOff - dx*k); else s.lookYaw = wrap(s.lookYaw - dx*k);
     s.lookPitch = clamp(s.lookPitch - dy*k*inv, -1.45, 1.45);
@@ -335,7 +358,7 @@ function normTgt(t){
           speed: Math.abs(num(t.speed, 0)), vehicle: VEHICLE[t.vehicle] ? t.vehicle : null, lean: num(t.lean, 0), moving: !!t.moving,
           // where you are headed (null when still); a host without it: the facing while moving
           travelYaw: t.travelYaw === undefined ? (t.moving ? num(t.yaw, 0) : null) : (t.travelYaw == null ? null : num(t.travelYaw, null)),
-          turnRate: num(t.turnRate, 0)};
+          turnRate: num(t.turnRate, 0), calm: !!t.calm, face: t.face == null ? null : num(t.face, null)};
 }
 function basePose(mode){
   var M = MODES[mode];
@@ -555,6 +578,24 @@ function cinePose(s, T, dt, q){
   return p;
 }
 
+// The phone's front camera: held at arm's length in front of the face (a little up and to the right hand), looking at it.
+// target.face: the face's height over the target (default 1.25 m standing: the characters' big heads; a seated host passes its own).
+function selfiePose(s, T){
+  var _ = s._, still = s.settings.reduced || T.calm, sf = _.selfie || {yaw: 0, pitch: 0};
+  var face = v3(T.x, T.y + (T.face != null ? T.face : SELFIE.face), T.z);
+  var yaw = T.yaw + sf.yaw, cp = Math.cos(sf.pitch);
+  var f = v3(Math.sin(yaw)*cp, Math.sin(sf.pitch), Math.cos(yaw)*cp), r = rotYaw(-1, 0, yaw);
+  var pos = v3(face.x + f.x*SELFIE.arm + r.x*SELFIE.right, face.y + f.y*SELFIE.arm + SELFIE.up, face.z + f.z*SELFIE.arm + r.z*SELFIE.right);
+  var roll = 0;
+  if(!still){ var t = _.t; pos.x += r.x*0.006*Math.sin(t*1.7); pos.z += r.z*0.006*Math.sin(t*1.7); pos.y += 0.005*Math.sin(t*2.3 + 1); roll = 0.025*Math.sin(t*0.9); }
+  var p = basePose("selfie");
+  p.pos = pos; p.look = face; p.focus = v3(pos.x, pos.y, pos.z);
+  p.fov = MODES.selfie.fov; p.near = MODES.selfie.near; p.roll = roll; p.hud = false; p.hideAvatar = false;
+  s.lookYaw = Math.atan2(face.x - pos.x, face.z - pos.z);
+  s.lookPitch = Math.atan2(face.y - pos.y, Math.sqrt((face.x - pos.x)*(face.x - pos.x) + (face.z - pos.z)*(face.z - pos.z)));
+  return p;
+}
+
 function mapStep(s, dt, q){
   var _ = s._, m = _.map;
   if(m.fly){
@@ -590,6 +631,7 @@ function modePose(s, mode, T, dt, q){
     return photoPose(s, dt, q);
   }
   if(mode === "cine") return cinePose(s, T, dt, q);
+  if(mode === "selfie") return selfiePose(s, T);
   // classic: the host renders its own ortho camera. The rig reports a chase-mode pose that tracks the
   // target, so a rise (M) or a blend out of classic starts at the avatar, not where classic was entered.
   var C = MODES.chase, b = rotYaw(0, -C.back, T.yaw), p = basePose("classic");
@@ -688,5 +730,5 @@ function occluders(pos, lookAt, items){
 HQV.camrig = {snap: snap, setReach: setReach, MODES: MODES, ORDER: ORDER, VEHICLE: VEHICLE, create: create, setSettings: setSettings, setMode: setMode,
   cycle: cycle, dive: dive, rise: rise, flyMap: flyMap, input: input, absorb: absorb, step: step, occluders: occluders, COL_HOLD: COL_HOLD,
   fpAnchorWorld: fpAnchorWorld, spring: spring, smootherstep: smootherstep,
-  consts: {SPAN_MIN: SPAN_MIN, SPAN_MAX: SPAN_MAX, HALF: HALF, LOOK_H: LOOK_H, MAP_TAN: MAP_TAN}};
+  consts: {SPAN_MIN: SPAN_MIN, SPAN_MAX: SPAN_MAX, HALF: HALF, LOOK_H: LOOK_H, MAP_TAN: MAP_TAN}, SELFIE: SELFIE};
 })();

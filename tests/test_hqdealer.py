@@ -74,10 +74,13 @@ function placed(file, id, tier){
     dealers: W.sites.filter(x => x.kind === "dealer").length, buildingLots: W.lots.filter(l => l.kind === "building").length,
     places: places.map(p => ({label: p.label, icon: p.icon})), pick: D.pick(WD.pack(gz(file))).lot.id};
 }
-out.commons = placed(%(commons)s, "claude-hq@2", 5);
-out.commons2 = placed(%(commons)s, "claude-hq@2", 2);
-out.commons1 = placed(%(commons)s, "claude-hq@2", 1);
-out.island = placed(%(island)s, "user:x@2", 3);
+// the live Commons is @3 (D2); the @2 id (an older Arena) is the same place, also the flagship
+out.commons = placed(%(commons)s, "claude-hq@3", 5);
+out.commons2 = placed(%(commons)s, "claude-hq@3", 2);
+out.commons1 = placed(%(commons)s, "claude-hq@3", 1);
+out.commonsV2 = placed(%(commons)s, "claude-hq@2", 5);
+out.island = placed(%(island)s, "user:x@3", 3);
+out.isCommons = ["claude-hq@3", "claude-hq@2", WD.COMMONS, "claude-hq@1", "user:x@3", null].map(D.isCommons);
 
 /* ---------- layout ---------- */
 const items = [];
@@ -99,7 +102,7 @@ function add(o, x, y, z, p){ o.position.set(x, y, z); p.add(o); return o; }
 var c = {THREE: THREE, mat: mat, box(w, h, d, m, x, y, z, p){ return add(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m), x, y, z, p); },
   cyl(rt, rb, h, m, x, y, z, p, seg){ return add(new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg || 12), m), x, y, z, p); },
   canvasTex(w, h, draw){ return {t: new THREE.Texture()}; }, glow(col, s, o){ return new THREE.Sprite(new THREE.SpriteMaterial({color: col, opacity: o, transparent: true})); }};
-const Wc = WD.pack(gz(%(commons)s)); Wc.id = "claude-hq@2";
+const Wc = WD.pack(gz(%(commons)s)); Wc.id = "claude-hq@3";
 const site = D.place(Wc, 5), B = D.build(c, site, {tier: 5, night: true, catalogue: cat});
 B.g.updateMatrixWorld(true);
 let dc = 0, veh = [], inst = 0;
@@ -136,6 +139,30 @@ out.panel.keyStopped = ev.stopped; out.panel.owns = D.owns({target: live}); out.
 root2.querySelectorAll(".hqdealer-test")[1].click();
 out.panel.afterTest = ui.isOpen();
 out.calls = calls;
+
+/* ---------- the phone's Dealership call: remote mode ---------- */
+const buys = [], bought = [];
+let failNext = false;
+H.hqGarage = {buy(id, paint){ buys.push([id, paint]); return Promise.resolve(failNext ? {error: "nope", status: 500} : {id: "0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c"}); }};
+const stage2 = new El("div"), rcalls = {get: 0};
+const ui2 = D.mountPanel(stage2, {remote: true, catalogue: () => cat, level: () => 1, garage: () => true, owned: () => Promise.resolve([]),
+  onGet(){ rcalls.get++; return Promise.resolve({ok: true, text: "not this"}); }, onBought(r){ bought.push(r); }, name: "Claude Motors"});
+ui2.open();
+const r2 = ui2.root;
+out.remote = {tests: r2.querySelectorAll(".hqdealer-test").length, note: r2.querySelector(".hqdealer-note").textContent,
+              gets: r2.querySelectorAll(".hqdealer-get").length};
+// pick the second paint of the first card, then Get it
+const firstCard = r2.querySelector(".hqdealer-card"), sw = firstCard.querySelectorAll(".hqdealer-swatch");
+if(sw[1]) sw[1].click();
+firstCard.querySelector(".hqdealer-get").click();
+await new Promise(r => setTimeout(r, 10));
+out.remote.status = r2.querySelector(".hqdealer-status").textContent;
+out.remote.buys = buys.slice(); out.remote.bought = bought.slice(); out.remote.onGet = rcalls.get;
+// a failed buy says so and calls nothing
+failNext = true;
+r2.querySelectorAll(".hqdealer-get")[1].click(); await new Promise(r => setTimeout(r, 10));
+out.remote.failStatus = r2.querySelector(".hqdealer-status").textContent;
+out.remote.boughtAfterFail = bought.length;
 console.log(JSON.stringify(out));
 """
 
@@ -167,6 +194,28 @@ class DealerNode(unittest.TestCase):
         self.assertEqual(c["dealers"], 1)
         self.assertEqual(c["pick"], s["lot"], "every client picks the same lot")
         self.assertEqual(c["places"], [{"label": "Flagship Dealership", "icon": "🚘"}], "Go to lists it")
+
+    def test_live_commons_ids(self):
+        """D2: the Commons is claude-hq@3 now; the @2 id is the same place (both get the flagship)."""
+        self.assertTrue(self.o["commonsV2"]["site"]["flagship"])
+        self.assertEqual(self.o["commonsV2"]["site"]["lot"], self.o["commons"]["site"]["lot"])
+        self.assertEqual(self.o["isCommons"], [True, True, True, False, False, False])
+        self.assertNotIn('"claude-hq@2"', read("games", "hqdealer.js"))
+
+    def test_remote_mode_for_the_phone(self):
+        r = self.o["remote"]
+        self.assertEqual(r["tests"], 0, "no test drive from a phone")
+        self.assertIn("Delivered to your carpark", r["note"])
+        self.assertGreater(r["gets"], 0)
+        self.assertEqual(len(r["buys"]), 1, "Get it goes through HQV.hqGarage.buy")
+        self.assertEqual(r["buys"][0][1], 1, "with the paint's index")
+        self.assertEqual(r["onGet"], 0, "opts.onGet is not used in remote mode")
+        self.assertEqual(len(r["bought"]), 1)
+        self.assertEqual(r["bought"][0]["vehicleId"], r["buys"][0][0])
+        self.assertEqual(r["bought"][0]["id"], "0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c")
+        self.assertIn("Delivered to your carpark", r["status"])
+        self.assertIn("didn't work", r["failStatus"])
+        self.assertEqual(r["boughtAfterFail"], 1, "a failed buy reports nothing bought")
 
     def test_from_tier_2_only(self):
         self.assertIsNotNone(self.o["commons2"]["site"])

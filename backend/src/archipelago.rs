@@ -3,9 +3,16 @@
 //!   GET /v1/archipelago                -> {commons:{world,x,z,mouth?}, islands:[{owner,name,world,x,z,tier,mouth?}]}
 //!                                         mouth: [x, z, dx, dz], the river's mouth in the world's own
 //!                                         frame (cm) and the way out to sea there (per mille)
-//!   GET /v1/world/claude-hq@2/assign   -> [{user, lot_rank}]
+//!   GET /v1/world/claude-hq@3/assign   -> [{user, lot_rank}]
+//!   GET /v1/world/claude-hq@2/assign   -> the same (older clients)
 //!
-//! The Commons (claude-hq@2) is at the origin. Every active member's island gets
+//! The live worlds are on generator version [`LIVE_V`] (HQ 3.15): the Commons
+//! `claude-hq@3` and every island `user:<uuid>@3`. The @2 ids name the same
+//! cities for older clients: input accepts them and [`canonical_world`] maps
+//! them to @3 wherever a world id is stored. Slots and ranks are id-independent,
+//! so the move to @3 left every island on its slot and every HQ on its rank.
+//!
+//! The Commons (claude-hq@3) is at the origin. Every active member's island gets
 //! a slot on a golden-angle spiral around it, handed out in join order the first
 //! time anyone asks; a slot never moves, so neither does anyone's island. The
 //! archipelago only lists the islands the caller may see (cities::can_view).
@@ -30,8 +37,12 @@ use sqlx::SqlitePool;
 
 use crate::cities;
 
+/// The generator version of the live worlds (the Commons and the islands).
+pub const LIVE_V: u32 = 3;
 /// The Commons' world id; it sits at the origin.
-pub const COMMONS: &str = "claude-hq@2";
+pub const COMMONS: &str = "claude-hq@3";
+/// The Commons' id before HQ 3.15, still accepted on input and still served.
+pub const COMMONS_V2: &str = "claude-hq@2";
 /// The spiral's scale: slot n is SPIRAL_CM * sqrt(n + 3) from the Commons. With
 /// the +3 the first island clears the Commons by 3.1 km and neighbours sit about
 /// 3 km apart (never under 2.9 km).
@@ -46,6 +57,7 @@ const TRIES: usize = 8;
 pub fn routes() -> Router<crate::AppState> {
     Router::new()
         .route("/v1/archipelago", get(get_archipelago))
+        .route("/v1/world/claude-hq@3/assign", get(get_assign))
         .route("/v1/world/claude-hq@2/assign", get(get_assign))
 }
 
@@ -80,9 +92,39 @@ pub fn slot_pos(n: i64) -> (i64, i64) {
     ((r * a.cos()).round() as i64, (r * a.sin()).round() as i64)
 }
 
-/// The island world of `owner`.
+/// The island world of `owner` (the live version).
 pub fn island_world(owner: &str) -> String {
-    format!("user:{owner}@2")
+    format!("user:{owner}@{LIVE_V}")
+}
+
+/// The owner of an island world id, `user:<uuid>@2` or `user:<uuid>@3` with a
+/// lowercase uuid (cities::is_uuid); None for anything else.
+pub fn island_owner(id: &str) -> Option<&str> {
+    let rest = id.strip_prefix("user:")?;
+    let uuid = rest.strip_suffix("@3").or_else(|| rest.strip_suffix("@2"))?;
+    cities::is_uuid(uuid).then_some(uuid)
+}
+
+/// Whether `id` is an island world id, at @2 or @3.
+pub fn is_island_world(id: &str) -> bool {
+    island_owner(id).is_some()
+}
+
+/// Whether `id` is the Commons, at @2 or @3.
+pub fn is_commons(id: &str) -> bool {
+    id == COMMONS || id == COMMONS_V2
+}
+
+/// The id to store for a world: the Commons and the islands at @2 become their
+/// live (@3) id; anything else (claude-hq@1, a malformed id) comes back as is.
+pub fn canonical_world(id: &str) -> String {
+    if is_commons(id) {
+        return COMMONS.to_string();
+    }
+    match island_owner(id) {
+        Some(owner) => island_world(owner),
+        None => id.to_string(),
+    }
 }
 
 /// Give every active member without a slot the next one, oldest account first.
@@ -302,12 +344,15 @@ mod tests {
         assert_eq!(owners, ["a", "b"], "joined first, first slot");
         let first = v["islands"].clone();
         assert_eq!((first[0]["x"].as_i64().unwrap(), first[0]["z"].as_i64().unwrap()), slot_pos(0));
-        assert_eq!(first[0]["world"], "user:a@2");
-        assert_eq!((&v["commons"]["world"], &v["commons"]["x"], &v["commons"]["z"]), (&json!("claude-hq@2"), &json!(0), &json!(0)));
-        let m = v["commons"]["mouth"].as_array().expect("the Commons' river mouth");
-        let (dx, dz) = (m[2].as_i64().unwrap(), m[3].as_i64().unwrap());
-        assert!((990..=1010).contains(&(((dx * dx + dz * dz) as f64).sqrt() as i64)), "the way out is a unit vector");
-        assert!(first[0]["mouth"].as_array().is_some_and(|m| m.len() == 4), "an island's river mouth");
+        assert_eq!(first[0]["world"], "user:a@3");
+        assert_eq!((&v["commons"]["world"], &v["commons"]["x"], &v["commons"]["z"]), (&json!("claude-hq@3"), &json!(0), &json!(0)));
+        // the river mouths come from the generator of the live version (part worldgen adds @3)
+        if crate::worldgen::VERSION.contains(&LIVE_V) {
+            let m = v["commons"]["mouth"].as_array().expect("the Commons' river mouth");
+            let (dx, dz) = (m[2].as_i64().unwrap(), m[3].as_i64().unwrap());
+            assert!((990..=1010).contains(&(((dx * dx + dz * dz) as f64).sqrt() as i64)), "the way out is a unit vector");
+            assert!(first[0]["mouth"].as_array().is_some_and(|m| m.len() == 4), "an island's river mouth");
+        }
 
         // a newcomer, and someone leaving: nobody else's island moves
         user(&p, "0-early-id-late-join", 3).await;
@@ -453,5 +498,157 @@ mod tests {
         for e in before.as_array().unwrap().iter().filter(|e| e["user"] != "u07") {
             assert!(arr.contains(e), "{e} moved");
         }
+    }
+
+    const U: &str = "0b8e4c1a-3f2d-4e5b-9a6c-7d8e9f0a1b2c";
+    const V: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+
+    #[test]
+    fn the_live_worlds_are_at_version_3_and_2_is_still_understood() {
+        assert_eq!(LIVE_V, 3);
+        assert_eq!(COMMONS, "claude-hq@3");
+        assert_eq!(island_world(U), format!("user:{U}@3"));
+        for v in ["@2", "@3"] {
+            assert!(is_island_world(&format!("user:{U}{v}")), "{v}");
+            assert_eq!(island_owner(&format!("user:{U}{v}")), Some(U));
+            assert_eq!(canonical_world(&format!("user:{U}{v}")), format!("user:{U}@3"));
+            assert!(is_commons(&format!("claude-hq{v}")));
+            assert_eq!(canonical_world(&format!("claude-hq{v}")), COMMONS);
+        }
+        // @1 is a different world (Arena City), never rewritten; an island is never @1 or @4
+        assert_eq!(canonical_world("claude-hq@1"), "claude-hq@1");
+        assert!(!is_commons("claude-hq@1") && !is_commons("claude-hq@4"));
+        for bad in [
+            format!("user:{U}@1"),
+            format!("user:{U}@4"),
+            format!("user:{U}@23"),
+            format!("user:{}@3", U.to_uppercase()),
+            "user:../../x@3".into(),
+            "user:@3".into(),
+            format!("user:{U}@3@2"),
+            format!("USER:{U}@3"),
+        ] {
+            assert!(!is_island_world(&bad), "{bad}");
+            assert_eq!(canonical_world(&bad), bad, "left as is");
+        }
+    }
+
+    #[test]
+    fn both_assign_paths_are_routed() {
+        // a second registration of either path would panic: so each is there exactly once
+        let r = std::panic::catch_unwind(|| {
+            let _ = routes().route("/v1/world/claude-hq@3/assign", get(|| async { "" }));
+        });
+        assert!(r.is_err(), "the @3 path is registered");
+        let r = std::panic::catch_unwind(|| {
+            let _ = routes().route("/v1/world/claude-hq@2/assign", get(|| async { "" }));
+        });
+        assert!(r.is_err(), "the @2 path is still registered");
+    }
+
+    /// Migration 0024 (live worlds to @3) on a database that holds @2 rows.
+    #[tokio::test]
+    async fn migration_0024_moves_the_stored_worlds_to_version_3() {
+        let p = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        let mut old = sqlx::migrate!("./migrations");
+        old.migrations = old.migrations.iter().filter(|m| m.version < 24).cloned().collect::<Vec<_>>().into();
+        old.run(&p).await.unwrap();
+        for (i, id) in [U, V].iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO users (id, github_id, handle, display_name, avatar_url, trainer_name, is_active)
+                 VALUES (?1, ?2, ?1, '', '', '', 1)",
+            )
+            .bind(id)
+            .bind(i as i64 + 1)
+            .execute(&p)
+            .await
+            .unwrap();
+        }
+        let (iu, iv) = (format!("user:{U}@2"), format!("user:{V}@2"));
+        for (owner, seed, spec) in [("commons", "claude-hq@2", "fish"), (U, iu.as_str(), "tech"), (V, iv.as_str(), "film")] {
+            sqlx::query(
+                "INSERT INTO city (owner, seed, treasury, tax_pm, specialty, privacy, created, last_accrual)
+                 VALUES (?1, ?2, 7, 50, ?3, 'arena', 0, 0)",
+            )
+            .bind(owner)
+            .bind(seed)
+            .bind(spec)
+            .execute(&p)
+            .await
+            .unwrap();
+        }
+        // lines: the Commons-island one stays ordered; island-island where the @3 rewrite flips nothing;
+        // and one already at @3 (an Arena that ran a newer binary first) untouched
+        for (a, b, by) in [("claude-hq@2", iu.as_str(), U), (iu.as_str(), iv.as_str(), V), ("claude-hq@1", "claude-hq@3", U)] {
+            sqlx::query("INSERT INTO rail_line (a, b, built_by, built_at, cost) VALUES (?1, ?2, ?3, 5, 500)")
+                .bind(a)
+                .bind(b)
+                .bind(by)
+                .execute(&p)
+                .await
+                .unwrap();
+        }
+        for (id, world) in [("v1", Some(iu.as_str())), ("v2", Some("claude-hq@2")), ("v3", Some("claude-hq@1")), ("v4", None)] {
+            sqlx::query(
+                "INSERT INTO owned_vehicles (id, user_id, vehicle_id, paint, price, bought_at, parked_world, parked_x, parked_z, parked_yaw)
+                 VALUES (?1, ?2, ?1, 0, 0, 0, ?3, CASE WHEN ?3 IS NULL THEN NULL ELSE 1.5 END,
+                         CASE WHEN ?3 IS NULL THEN NULL ELSE -2.0 END, CASE WHEN ?3 IS NULL THEN NULL ELSE 0.5 END)",
+            )
+            .bind(id)
+            .bind(U)
+            .bind(world)
+            .execute(&p)
+            .await
+            .unwrap();
+        }
+
+        crate::db::migrate(&p).await.unwrap();
+
+        let cities: Vec<(String, String, String, i64)> =
+            sqlx::query_as("SELECT owner, seed, specialty, treasury FROM city ORDER BY owner").fetch_all(&p).await.unwrap();
+        let mut want = vec![
+            ("commons".to_string(), "claude-hq@3".to_string(), "fish".to_string(), 7),
+            (U.to_string(), format!("user:{U}@3"), "tech".to_string(), 7),
+            (V.to_string(), format!("user:{V}@3"), "film".to_string(), 7),
+        ];
+        want.sort();
+        assert_eq!(cities, want, "seeds move to @3; specialties and treasuries stay");
+
+        let lines: Vec<(String, String, String, i64, i64)> =
+            sqlx::query_as("SELECT a, b, built_by, built_at, cost FROM rail_line ORDER BY a, b").fetch_all(&p).await.unwrap();
+        let mut want = vec![
+            ("claude-hq@1".to_string(), "claude-hq@3".to_string(), U.to_string(), 5, 500),
+            ("claude-hq@3".to_string(), format!("user:{U}@3"), U.to_string(), 5, 500),
+            (format!("user:{U}@3"), format!("user:{V}@3"), V.to_string(), 5, 500),
+        ];
+        want.sort();
+        assert_eq!(lines, want);
+        assert!(lines.iter().all(|l| l.0 < l.1), "a < b holds");
+
+        let cars: Vec<(String, Option<String>, Option<f64>, Option<f64>, Option<f64>)> = sqlx::query_as(
+            "SELECT id, parked_world, parked_x, parked_z, parked_yaw FROM owned_vehicles ORDER BY id",
+        )
+        .fetch_all(&p)
+        .await
+        .unwrap();
+        assert_eq!(
+            cars,
+            vec![
+                ("v1".to_string(), Some(format!("user:{U}@3")), None, None, None),
+                ("v2".to_string(), Some("claude-hq@3".to_string()), None, None, None),
+                ("v3".to_string(), Some("claude-hq@1".to_string()), Some(1.5), Some(-2.0), Some(0.5)),
+                ("v4".to_string(), None, None, None, None),
+            ],
+            "a car out in a moved world goes home; Arena City (@1) did not move"
+        );
+        // and the vehicles list reads a car with no position as at home
+        let mine = crate::vehicles::mine(&p, U).await.unwrap();
+        let parked: Vec<&serde_json::Value> = mine.iter().map(|v| &v["parked"]).collect();
+        assert_eq!(parked.iter().filter(|v| v.is_null()).count(), 3);
+        assert_eq!(*parked[2], json!({"world": "claude-hq@1", "x": 1.5, "z": -2.0, "yaw": 0.5}));
+        // booting again changes nothing
+        crate::db::migrate(&p).await.unwrap();
+        let again: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rail_line").fetch_one(&p).await.unwrap();
+        assert_eq!(again, 3);
     }
 }

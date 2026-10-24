@@ -16,10 +16,15 @@
  *             sea level in the mounted ocean's calm material (games/ocean.js riverMaterial()), else the plane's
  *   bridges   per tile, one mesh of deck slabs, fascias, abutments and railings (worldgeom roadTile's `bridge`);
  *             opts.gap leaves every bridge's pieces over the water out (games/hqbridges.js draws opening spans there)
+ *   water     (@3 docs with Layers.water) world-wide: every lake, canal and the marina as one mesh (worldgeom waterGeo) in
+ *             the river's calm material (games/ocean.js riverMaterial(); the lakes in its calm lake variant: aLake = 1,
+ *             smaller ripples and more of the sky), quays, the breakwater, lily pads and reeds as one vertex-coloured
+ *             mesh, the shore foam as one more (wb.water = {surface, works, foam}); bank strips ride in the terrain tiles
  * Tiers: opts.tier / wb.setTier(t) show the world as city tier t shows it (worldgeom view); a tier change rebuilds
  * only the tiles and products worldgeom.tierDiff names, and a job that finishes at a stale tier is redone.
  * Draw calls: <= 8 per tile within 300 m, <= 4 beyond, + 4 world-wide (+ 1 sea on an island); a river adds 1 world-wide
- * and 1 per tile a bridge crosses.
+ * and 1 per tile a bridge crosses; @3 water adds at most 3 world-wide (surface, works, foam). A terrain hole (@3) is cut
+ * out of the tiles' own meshes and adds none.
  * HQV.worldbuild.governor is pure (node-tested): frame times -> quality level, pixel ratio, shadows (LOD scale stays fixed).
  * No THREE, no DOM at load time: THREE comes from c.THREE inside create().
  */
@@ -207,10 +212,14 @@ function create(c, W, opts){
       sh.fragmentShader = rep(sh.fragmentShader, "emissivemap_fragment", "totalEmissiveRadiance *= vLit * uNight;");
     });
     m.cars = std({roughness: 0.45, metalness: 0.2});
-    if(seaY != null) m.water = waterMat();
+    if(seaY != null || W.water) m.water = waterMat();
+    if(W.water){
+      m.works = std({roughness: 0.8});
+      m.foam = offset(new THREE.MeshBasicMaterial({vertexColors: true, transparent: true, opacity: 0.5, depthWrite: false}), -1);
+    }
     m.frame = new THREE.MeshStandardMaterial({color: 0x8a9096, roughness: 0.5, metalness: 0.5});
     m.bridge = std({roughness: 0.8});
-    ["terrain", "asphalt", "marks", "walk", "body", "body0", "trees", "bridge"].forEach(function(k){ settle(m[k]); });
+    ["terrain", "asphalt", "marks", "walk", "body", "body0", "trees", "bridge", "works"].forEach(function(k){ settle(m[k]); });
     return m;
   }
   // What the weather leaves on the ground (HQ 3.2, games/hqweather.js settled): snow lying in patches on whatever faces
@@ -735,13 +744,20 @@ function create(c, W, opts){
       // never frustum-toggled: it spans every view, and its owner may hide it for good (the City does, under the ocean)
       if(sea.visible){ dc++; tri += tris(sea); }
     }
+    // the mounted ocean's calm water (its tint, glint and ripples, no waves), else the sea plane's
+    var om = (river || lakes) && HQV.ocean && HQV.ocean.riverMaterial ? HQV.ocean.riverMaterial() : null;
     if(river){
-      // the mounted ocean's calm water (its tint, glint and ripples, no waves), else the sea plane's
-      var om = HQV.ocean && HQV.ocean.riverMaterial ? HQV.ocean.riverMaterial() : null;
       river.material = om || M.water;
       river.visible = !fr || fr.intersectsObject(river);
       if(river.visible){ dc++; tri += tris(river); }
     }
+    // @3 water: the bodies' surface (calm, lakes in the lake variant), quays and the rest, the foam
+    [lakes, works, foam].forEach(function(me){
+      if(!me) return;
+      if(me === lakes) me.material = om || M.water;
+      me.visible = !fr || fr.intersectsObject(me);
+      if(me.visible){ dc++; tri += tris(me); }
+    });
     stats = {drawCalls: dc, triangles: Math.round(tri), tiles: nt, pending: queue.length + nIn, worker: useWorker};
   };
   // show the world as city tier t: only the tiles (and products) tierDiff names are rebuilt; -> how many tiles
@@ -779,6 +795,7 @@ function create(c, W, opts){
     Object.keys(world.meshes).forEach(function(k){ var im = world.meshes[k]; if(im){ im.geometry.dispose(); if(im.dispose) im.dispose(); } });
     if(sea) sea.geometry.dispose();
     if(river) river.geometry.dispose();
+    [lakes, works, foam].forEach(function(me){ if(me) me.geometry.dispose(); });
     Object.keys(proto).forEach(function(k){ proto[k].dispose(); });
     Object.keys(M).forEach(function(k){ M[k].dispose(); });
     if(world.plateMat) world.plateMat.dispose();
@@ -800,11 +817,28 @@ function create(c, W, opts){
   // the river's water: one mesh over Layers.river.poly just over sea level (worldgeom riverWater; none without a sea)
   var river = null, rg = seaY != null && W.river ? bufGeo(Gm.riverWater(W)) : null;
   if(rg){
+    rg.setAttribute("aLake", new THREE.BufferAttribute(new Float32Array(rg.attributes.position.count), 1));   // river, not lake
     river = new THREE.Mesh(rg, M.water);
     river.name = "river"; river.receiveShadow = true; river.matrixAutoUpdate = false;
     wb.root.add(river);
   }
   wb.river = river;
+  // @3 water (worldgeom waterGeo): one mesh for every body's surface, one for quays, breakwater and plants, one of foam
+  var lakes = null, works = null, foam = null;
+  if(W.water){
+    var wg = Gm.waterGeo(W), sg = bufGeo(wg.surface);
+    if(sg){
+      sg.setAttribute("aLake", new THREE.BufferAttribute(wg.surface.lit, 1));
+      lakes = new THREE.Mesh(sg, M.water);
+      lakes.name = "water"; lakes.receiveShadow = true; lakes.matrixAutoUpdate = false;
+      wb.root.add(lakes);
+    }
+    works = mesh(wg.works, M.works);
+    if(works){ works.name = "waterworks"; works.castShadow = true; wb.root.add(works); }
+    foam = mesh(wg.foam, M.foam);
+    if(foam){ foam.name = "foam"; foam.receiveShadow = false; foam.renderOrder = 1; wb.root.add(foam); }
+  }
+  wb.water = {surface: lakes, works: works, foam: foam};
 
   // first pass: every tile at lod 2 with roads, far buildings and props (and the v2 ground), nearest the centre first
   tiles.slice().sort(function(a, b){

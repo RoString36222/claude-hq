@@ -373,6 +373,205 @@ class Traffic(unittest.TestCase):
         self.assertEqual(v["n"]["beacon"], 2, "an emergency vehicle has its light bar")
 
 
+STREETS = r"""
+var fs = require("fs"), zlib = require("zlib"), root = %(root)s, FIX = root + "/tests/fixtures/";
+global.window = {HQV: {}};
+for (var f of ["world", "traffic"]) new Function(fs.readFileSync(root + "/games/" + f + ".js", "utf8"))();
+var T = window.HQV.traffic, WD = window.HQV.world, city = require(FIX + "traffic_city.js"), out = {};
+function gz(p){ return JSON.parse(zlib.gunzipSync(fs.readFileSync(FIX + p)).toString("utf8")); }
+var worlds = {city: city(1, 7, true), commons: WD.pack(gz("claude-hq@2.json.gz"))};
+if(fs.existsSync(FIX + "claude-hq@3.json.gz")) worlds.v3 = WD.pack(gz("claude-hq@3.json.gz"));
+function now(){ var t = process.hrtime(); return t[0]*1e3 + t[1]/1e6; }
+function local(p, x, z){ var dx = x - p.x, dz = z - p.z, c = Math.cos(p.yaw), s = Math.sin(p.yaw); return {x: dx*c - dz*s, z: dx*s + dz*c}; }
+Object.keys(worlds).forEach(function(name){
+  var W = worlds[name], t0 = now(), sim = T.create(W, {tier: 5, seed: 7}), build = now() - t0, o = out[name] = {build: build, info: sim.info()};
+  t0 = now();
+  for(var k = 0; k < 300; k++) sim.at(1e6 + k*16.7, {x: 0, z: 0}, Infinity);
+  o.step = (now() - t0)/300;
+  // lanes(): the very numbers the sim drives on, with or without the sim
+  var L = T.lanes(W, 5, sim), L2 = T.lanes(W, 5), E = sim._.edges, bad = 0;
+  L.forEach(function(e, i){
+    var x = E[i], y = L2[i];
+    if(e.id !== x.id || e.tram !== !!x.tram || (x.tram && e.tramOff !== x.tramOff) || e.bus[0] !== x.bus[0] || e.bus[1] !== x.bus[1] ||
+       ((x.bus[0] || x.bus[1]) && e.busOff !== x.busOff) || e.cars !== !!x.cars || (x.cars && e.carOff !== x.carOff)) bad++;
+    if(JSON.stringify(e) !== JSON.stringify(y)) bad++;
+  });
+  o.lanes = {n: L.length, bad: bad, tram: L.filter(function(e){ return e.tram; }).length, tramOffs: L.filter(function(e){ return e.tram; }).map(function(e){ return e.tramOff; }).filter(function(v, i, a){ return a.indexOf(v) === i; })};
+  // tramPaths(): every tram lane covered; the trams drive on the pieces (vehicle centres within 0.2 m)
+  var P = T.tramPaths(W, 5, sim), keys = {};
+  P.forEach(function(p){ keys[p.key] = p; });
+  var missing = 0;
+  sim._.lines.forEach(function(r){ if(r.kind === "tram") r.lanes.forEach(function(ln){ if(!keys["L:" + ln.e.i + ":" + ln.dir]) missing++; }); });
+  var segs = [];
+  P.forEach(function(p){ for(var i = 3; i < p.pts.length; i += 3) segs.push([p.pts[i-3], p.pts[i-1], p.pts[i], p.pts[i+2], p.kind]); });
+  function dist(x, z){
+    var best = 1e9;
+    segs.forEach(function(sg){ var ux = sg[2] - sg[0], uz = sg[3] - sg[1], l = ux*ux + uz*uz, t = l > 1e-12 ? Math.max(0, Math.min(1, ((x - sg[0])*ux + (z - sg[1])*uz)/l)) : 0;
+      var d = Math.hypot(x - sg[0] - ux*t, z - sg[1] - uz*t); if(d < best) best = d; });
+    return best;
+  }
+  var ds = [], tram = T.service(sim, "tram");
+  for(var t = 1000; t < 1000 + 1800; t += 7.3) tram.vehicles(t*1000).forEach(function(v){ ds.push(dist(v.x, v.z)); });
+  ds.sort(function(a, b){ return a - b; });
+  o.paths = {n: P.length, kinds: P.map(function(p){ return p.kind; }).filter(function(v, i, a){ return a.indexOf(v) === i; }).sort(), missing: missing,
+             xovers: P.filter(function(p){ return p.kind === "xover"; }).length, cusps: sim._.lines.reduce(function(a, r){ return a + (r.cusps ? r.cusps.length : 0); }, 0),
+             samples: ds.length, p50: ds[Math.floor(ds.length*0.5)] || 0, p95: ds[Math.floor(ds.length*0.95)] || 0, max: ds[ds.length - 1] || 0};
+  // the Service contract
+  o.svc = {};
+  ["bus", "tram"].forEach(function(kind){
+    var S = T.service(sim, kind), lines = S.lines(), stops = S.stops(), ms = 2e6, r = {kind: kind};
+    r.mode = S.mode; r.lineKeys = lines.length ? Object.keys(lines[0]).sort() : [];
+    r.stopKeys = stops.length ? Object.keys(stops[0]).sort() : [];
+    r.lines = lines.length; r.stops = stops.length; r.unique = stops.map(function(s){ return s.name; }).filter(function(v, i, a){ return a.indexOf(v) === i; }).length;
+    r.shorts = lines.map(function(l){ return l.short; });
+    var st = stops[0], near = S.stopsNear(st.x, st.z, 300);
+    r.nearSorted = near.every(function(x, i){ return !i || near[i-1].dist <= x.dist; }); r.nearFirst = near[0] && near[0].id === st.id;
+    r.nearKeys = near.length ? Object.keys(near[0]).sort() : [];
+    var dep = S.departures(st.id, ms, 6);
+    r.dep = {n: dep.length, sorted: dep.every(function(x, i){ return !i || dep[i-1].at <= x.at; }), keys: dep.length ? Object.keys(dep[0]).sort() : [],
+             future: dep.every(function(x){ return x.dep > ms; }), boardingOk: dep.every(function(x){ return x.boarding === (x.at <= ms && ms < x.dep); })};
+    // a boarding row: ask at a time the first vehicle stands there
+    var d0 = S.departures(st.id, ms, 1)[0], mid = (d0.at + d0.dep)/2, d1 = S.departures(st.id, mid, 1)[0];
+    r.boarding = d1.boarding && d1.at === d0.at;
+    // a trip and its pose, seats and door
+    var l0 = lines[lines.length - 1], trip = S.trip(l0.id, l0.stops[0], l0.stops[Math.min(3, l0.stops.length - 1)], ms), bigJump = 0, outSeat = 0, checked = 0, doorFar = 0, prev = null;
+    r.tripKeys = Object.keys(trip).sort();
+    r.trip = {order: trip.arrive <= trip.depart && trip.depart < trip.reach && trip.arrive >= ms - 60000, last: trip.stops[trip.stops.length - 1].id === trip.to,
+              stopsSorted: trip.stops.every(function(x, i){ return !i || trip.stops[i-1].at <= x.at; }), seats: trip.seats, standing: trip.standing, fare: "fare" in trip || "pay" in trip};
+    var spec = T.SPEC[kind], vehById = function(t2){ return S.vehicles(t2).filter(function(v){ return v.id === trip.vehicle; })[0]; };
+    for(var tm = trip.arrive; tm <= trip.reach; tm += 100){
+      var p = trip.pose(tm);
+      if(prev){ var jump = Math.hypot(p.x - prev.x, p.z - prev.z); if(jump > spec.vmax*0.1 + 0.05) bigJump++; }
+      prev = p;
+      if((tm - trip.arrive) %% 3000 !== 0) continue;
+      var v = vehById(tm), parts = kind === "tram" ? v.parts.map(function(q){ return {x: q.x, z: q.z, yaw: q.yaw, len: spec.sec}; }) : [{x: p.x, z: p.z, yaw: p.yaw, len: spec.len}];
+      if(Math.hypot(v.x - p.x, v.z - p.z) > 0.01) bigJump += 1000;
+      for(var i = 0; i < trip.seats + trip.standing; i++){
+        var sp = trip.seat(i, tm), inside = parts.some(function(q){ var lc = local(q, sp.x, sp.z); return Math.abs(lc.x) < spec.wid/2 - 0.05 && Math.abs(lc.z) < q.len/2 + (kind === "tram" ? 0.55 : 0); });
+        checked++; if(!inside || Math.abs(sp.y - p.y - 0.45) > 0.46) outSeat++;
+      }
+      var dr = trip.door(tm), dl = Math.min.apply(null, parts.map(function(q){ var lc = local(q, dr.x, dr.z); return Math.abs(Math.abs(lc.x) - spec.wid/2) + Math.max(0, Math.abs(lc.z) - q.len/2); }));
+      if(dl > 0.5) doorFar++;
+    }
+    r.trip.bigJump = bigJump; r.trip.outSeat = outSeat; r.trip.checked = checked; r.trip.doorFar = doorFar;
+    var vs = S.vehicles(ms);
+    r.veh = {n: vs.length, keys: vs.length ? Object.keys(vs[0]).sort() : [], loads: vs.every(function(v){ return v.load >= 0 && v.load <= 1.15; }), doors: vs.every(function(v){ return v.doors >= 0 && v.doors <= 1; })};
+    r.det = JSON.stringify(S.departures(st.id, ms, 4)) === JSON.stringify(T.service(T.create(W, {tier: 5, seed: 7}), kind).departures(st.id, ms, 4));
+    o.svc[kind] = r;
+  });
+  // a traffic incident on a tram line: its rows say delayed
+  var tr = T.service(sim, "tram"), e0 = sim._.edges.filter(function(e){ return e.tram; })[0], keep = sim._.incidentsAt;
+  sim._.incidentsAt = function(t){ return [{out: {lanes: [{e: e0, dir: 0}]}, back: {lanes: []}, start: t - 10, end: t + 200}]; };
+  var hit = sim._.lines.filter(function(r){ return r.kind === "tram" && r.lanes.some(function(m){ return m.e === e0; }); })[0], s0 = tr.stops().filter(function(s){ return s.lines.indexOf(hit.id) >= 0; })[0];
+  o.delay = {blocked: tr.departures(s0.id, 2e6, 8).filter(function(x){ return x.line === hit.id; }).map(function(x){ return x.delay; }),
+             other: tr.departures(s0.id, 2e6, 8).filter(function(x){ return !hit.lanes.some(function(m){ return m.e === e0; }) || x.line !== hit.id; }).filter(function(x){ return !sim._.lines.filter(function(r){ return r.id === x.line; })[0].lanes.some(function(m){ return m.e === e0; }); }).map(function(x){ return x.delay; }), bus: T.service(sim, "bus").departures(T.service(sim, "bus").stops()[0].id, 2e6, 2).map(function(x){ return x.delay; })};
+  sim._.incidentsAt = keep;
+  o.delay.clear = tr.departures(s0.id, 2e6, 3).map(function(x){ return x.delay; });
+});
+// the seat table
+out.seats = {bus: T.SEATS.bus.length, tram: T.SEATS.tram.length, stands: [T.STANDS.bus.length, T.STANDS.tram.length]};
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class Streets(unittest.TestCase):
+    """HQ 3.15: lanes(), tramPaths() and the ride Service (docs/plans/transport-revamp.md 3.2, 5.3), on the synthetic
+    hub city, the @2 Commons and (when its fixture exists) the @3 Commons, all at tier 5 (D1: every city max level)."""
+
+    @classmethod
+    def setUpClass(cls):
+        res = subprocess.run([NODE, "-e", STREETS % {"root": json.dumps(ROOT)}], capture_output=True, text=True, timeout=600)
+        if res.returncode != 0:
+            raise AssertionError("node harness failed:\n" + res.stderr[-4000:])
+        cls.r = json.loads(res.stdout.strip().splitlines()[-1])
+
+    def worlds(self):
+        return [k for k in self.r if k not in ("seats",)]
+
+    def test_budgets_at_tier_5(self):
+        for w in self.worlds():
+            o = self.r[w]
+            self.assertEqual(o["info"]["errors"], [], w)
+            self.assertEqual(o["info"]["dropped"], 0, "%s: every line runs at tier 5" % w)
+            self.assertLess(o["build"], 3000, "%s: create() at tier 5" % w)
+            self.assertLess(o["step"], 3.0, "%s: at() a frame at tier 5" % w)
+
+    def test_lanes_are_the_sims_offsets(self):
+        for w in self.worlds():
+            l = self.r[w]["lanes"]
+            self.assertGreater(l["tram"], 0, w)
+            self.assertEqual(l["bad"], 0, "%s: lanes() equals the sim's lateral plan, with or without the sim" % w)
+            self.assertEqual(len(l["tramOffs"]), 1, w)
+            self.assertAlmostEqual(l["tramOffs"][0], 1.475, 9, "%s: a tram lane is 1.475 m off the centre line" % w)
+
+    def test_tram_paths_are_where_trams_drive(self):
+        for w in self.worlds():
+            p = self.r[w]["paths"]
+            self.assertEqual(p["missing"], 0, "%s: every tram lane has its piece" % w)
+            self.assertEqual(p["kinds"], ["lane", "turn", "xover"], w)
+            self.assertGreater(p["xovers"], 0, "%s: crossovers at the termini" % w)
+            self.assertGreater(p["samples"], 100)
+            self.assertLess(p["p95"], 0.2, "%s: trams drive on the track pieces" % w)
+        self.assertLess(self.r["city"]["paths"]["max"], 0.25, "on long lanes every pose is on a piece")
+
+    def test_service_contract(self):
+        for w in self.worlds():
+            for kind, s in self.r[w]["svc"].items():
+                self.assertEqual(s["mode"], kind)
+                self.assertEqual(s["lineKeys"], sorted(["id", "mode", "name", "short", "color", "stops", "headway", "loop"]))
+                self.assertEqual(s["stopKeys"], sorted(["id", "name", "x", "y", "z", "mode", "lines", "kind", "under"]))
+                self.assertEqual(s["nearKeys"], sorted(["id", "name", "dist", "mode", "lines"]))
+                self.assertTrue(s["nearSorted"] and s["nearFirst"])
+                self.assertEqual(s["unique"], s["stops"], "%s %s: stop names are unique" % (w, kind))
+                for sh in s["shorts"]:
+                    self.assertRegex(sh, r"^[BT]\d+$" if kind else "")
+                for k in ("line", "short", "to", "at", "plat", "boarding", "delay"):
+                    self.assertIn(k, s["dep"]["keys"])
+                for k in ("id", "line", "mode", "x", "y", "z", "yaw", "speed", "doors", "load", "under"):
+                    self.assertIn(k, s["veh"]["keys"])
+                self.assertTrue(s["veh"]["loads"] and s["veh"]["doors"])
+                for k in ("mode", "line", "short", "vehicle", "from", "to", "fromName", "toName", "arrive", "depart", "reach", "stops", "seats", "standing", "pose", "seat", "door"):
+                    self.assertIn(k, s["tripKeys"])
+                self.assertTrue(s["det"], "the same departures on two clients")
+
+    def test_departures_ordering(self):
+        for w in self.worlds():
+            for kind, s in self.r[w]["svc"].items():
+                d = s["dep"]
+                self.assertEqual(d["n"], 6)
+                self.assertTrue(d["sorted"], "%s %s: soonest first" % (w, kind))
+                self.assertTrue(d["future"], "a row is a call that has not left yet")
+                self.assertTrue(d["boardingOk"])
+                self.assertTrue(s["boarding"], "%s %s: boarding while it stands at the stop" % (w, kind))
+
+    def test_trip_pose_is_continuous_and_seats_are_inside(self):
+        for w in self.worlds():
+            for kind, s in self.r[w]["svc"].items():
+                t = s["trip"]
+                self.assertTrue(t["order"] and t["last"] and t["stopsSorted"], "%s %s: %s" % (w, kind, t))
+                self.assertFalse(t["fare"], "rides are free (D4): no fare on a Service trip")
+                self.assertEqual(t["seats"], 31 if kind == "bus" else 48)
+                self.assertEqual(t["bigJump"], 0, "%s %s: the pose never jumps (and is the vehicle's)" % (w, kind))
+                self.assertGreater(t["checked"], 100)
+                self.assertEqual(t["outSeat"], 0, "%s %s: every seat and standing spot inside the body, all trip long" % (w, kind))
+                self.assertEqual(t["doorFar"], 0, "%s %s: the door is on the body's side" % (w, kind))
+
+    def test_incident_delays_trams_only(self):
+        for w in self.worlds():
+            d = self.r[w]["delay"]
+            self.assertTrue(d["blocked"] and all(x >= 60 for x in d["blocked"]), "%s: a tram row is delayed while an incident blocks its line" % w)
+            self.assertTrue(all(x == 0 for x in d["other"]), "%s: other lines stay on time" % w)
+            self.assertEqual(d["clear"], [0, 0, 0])
+            self.assertEqual(d["bus"], [0, 0])
+
+    def test_seat_table(self):
+        s = self.r["seats"]
+        self.assertEqual(s["bus"], 31)
+        self.assertEqual(s["tram"], 48)
+        self.assertGreater(min(s["stands"]), 8)
+
+
 class Source(unittest.TestCase):
     def test_frame_rate_independent_and_seeded(self):
         with open(os.path.join(ROOT, "games", "traffic.js"), encoding="utf-8") as f:

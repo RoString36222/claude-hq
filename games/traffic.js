@@ -44,7 +44,15 @@
  * deterministic for the same sequence of calls, and never fed back into the shared schedule.
  * Riding: stopsNear(x, z, r), nextArrival(stopId, timeMs), rideTo(line, from, to, timeMs) -> a trip
  * the integrator moves the player along (trip.pose(ms)); trip.pay() calls the onFare hook once (the
- * integrator POSTs /api/arena/city/:owner/fare {kind}).
+ * integrator POSTs /api/arena/city/:owner/fare {kind}). HQ 3.15 rides are free: new code uses service().
+ * HQ 3.15 (docs/plans/transport-revamp.md 3.1, 3.2, 5.3), pure:
+ *   lanes(W, tier, sim?)      per edge {id, a, b, tram, tramOff, bus: [dir0, dir1], busOff, cars, carOff, half}
+ *   tramPaths(W, tier, sim?)  the tram track centre lines as driven: lanes, turn curves through the boxes and
+ *                             the terminus crossovers, [{line, lines, kind, key, pts: [x, y, z, ...]}]
+ *   tramStops(W, tier, sim?)  where each line's tram stands at each stop
+ *   service(sim, "bus"|"tram", {W}) the Service contract (lines, stops, stopsNear, departures, trip, vehicles)
+ *   SEATS / STANDS / DOORS / FLOOR: the vehicle-local seat table shared with games/hqcoach.js
+ * W may be a doc or a packed world; without a sim a layout-only build (no timetables) is made and memoised.
  */
 (function(){
 "use strict";
@@ -319,10 +327,10 @@ function create(doc, o){
   TL.forEach(function(l){
     var kind = l.kind === "tram" ? "tram" : "bus";
     if((l.tier | 0) > tier) return;
-    var path = (l.path || []).slice();
+    var path = (l.path || []).slice(), outBack = false;
     if(path.length < 2){ errors.push("line " + l.id + ": short path"); return; }
     if(path[0] === path[path.length - 1]) path.pop();
-    else if(!edgeBetween(path[path.length - 1], path[0])) path = path.concat(path.slice(1, -1).reverse());   // out and back
+    else if(!edgeBetween(path[path.length - 1], path[0])){ path = path.concat(path.slice(1, -1).reverse()); outBack = true; }   // out and back
     var lanes = [];
     for(var i = 0; i < path.length; i++){
       var eb = edgeBetween(path[i], path[(i + 1) % path.length]);
@@ -330,7 +338,7 @@ function create(doc, o){
       lanes.push({e: eb.e, dir: eb.dir});
     }
     lanes.forEach(function(ln){ if(kind === "tram") ln.e.tram = true; else ln.e.bus[ln.dir] = true; });
-    lineDefs.push({id: String(l.id), kind: kind, tier: l.tier | 0, lanes: lanes, stops: (l.stops || []).map(String)});
+    lineDefs.push({id: String(l.id), kind: kind, tier: l.tier | 0, lanes: lanes, stops: (l.stops || []).map(String), outBack: outBack});
   });
 
   // lateral plan per edge: m to the right of the centre line, per direction
@@ -491,7 +499,7 @@ function create(doc, o){
   var lines = lineDefs.map(function(d){
     var spec = SPEC[d.kind], lanes = d.lanes.map(function(ln){ return {e: ln.e, dir: ln.dir, off: d.kind === "tram" ? ln.e.tramOff : ln.e.busOff, room: 0}; });
     var r = route(lanes, spec);
-    r.id = d.id; r.kind = d.kind; r.tier = d.tier; r.stops = [];
+    r.id = d.id; r.kind = d.kind; r.tier = d.tier; r.stops = []; r.outBack = d.outBack;
     d.stops.forEach(function(sid){
       var st = sites[sid];
       if(!st){ errors.push("line " + d.id + ": stop " + sid + " missing"); return; }
@@ -544,6 +552,80 @@ function create(doc, o){
     var h = SPEC.bus.len/2 + RAMP;
     r.stops.forEach(function(st){ if(r.ranges.some(function(rg){ return rg[0] <= st.s - h && st.s + h <= rg[1]; })) r.bays.push(st.s); });
   });
+  // ---- the street layout (HQ 3.15): lane offsets per edge and the tram track pieces, exactly what the
+  // vehicles drive on; create(doc, {layoutOnly: true}) stops here (no rings, slots or timetables) ----
+  var layoutMemo = null;
+  function layout(){
+    if(layoutMemo) return layoutMemo;
+    var lanesOut = edges.map(function(E){
+      return {id: E.id, i: E.i, a: E.a, b: E.b, cls: E.cls, len: E.len, half: E.c, tram: !!E.tram, tramOff: E.tram ? E.tramOff : null,
+              bus: [!!E.bus[0], !!E.bus[1]], busOff: E.bus[0] || E.bus[1] ? E.busOff : null, cars: !!E.cars, carOff: E.cars ? E.carOff : null};
+    });
+    var pieces = [], byKey = {}, stopsOut = [];
+    function flat(P){ var f = []; P.forEach(function(p){ f.push(p[0], p[1], p[2]); }); return f; }
+    function addPiece(key, line, kind, extra, P){
+      if(byKey[key]){
+        if(byKey[key].lines.indexOf(line) < 0) byKey[key].lines.push(line);
+        if(kind === "xover" && P.length*3 > byKey[key].pts.length) byKey[key].pts = flat(P);     // the fuller crossover
+        return;
+      }
+      var o = {line: line, lines: [line], kind: kind, key: key, pts: flat(P)};
+      for(var k in extra) o[k] = extra[k];
+      byKey[key] = o; pieces.push(o);
+    }
+    lines.forEach(function(r){
+      if(r.kind !== "tram") return;
+      var n = r.lanes.length, passOf = [], k = 0;
+      r.lanes.forEach(function(ln, i){ passOf[i] = r.rev[i] ? null : r.passes[k++]; });
+      // the inbound track back from the end of lane i over `need` m (earlier lanes and their turns)
+      function backTrack(i, need){
+        var P = lanePts(r.lanes[i].e, r.lanes[i].dir, r.lanes[i].e.tramOff);
+        for(var j = (i - 1 + n) % n, g = 0; len2(P) < need && g < n - 1; j = (j - 1 + n) % n, g++){
+          if(r.rev[j] || !passOf[j]) break;
+          P = lanePts(r.lanes[j].e, r.lanes[j].dir, r.lanes[j].e.tramOff).concat(passOf[j].curve.slice(1, -1), P);
+        }
+        return P;
+      }
+      r.lanes.forEach(function(ln, i){
+        var E = ln.e, P = lanePts(E, ln.dir, E.tramOff);
+        addPiece("L:" + E.i + ":" + ln.dir, r.id, "lane", {edge: E.id, ei: E.i, dir: ln.dir}, P);
+        if(r.rev[i]){
+          var nx = r.lanes[(i + 1) % n], Q = lanePts(nx.e, nx.dir, nx.e.tramOff).slice().reverse(), keep = SPEC.tram.len, X = crossoverPart(P, Q, keep);
+          // a lane too short for the crossover (the sim's tram then changes track within it): lay it back
+          // along the inbound track, onto the parallel outbound one
+          if(len2(X) < XOVER/2){ var PL = backTrack(i, keep + XOVER + 4); X = crossoverPart(PL, offsetPts(PL, -2*E.tramOff), Math.min(keep, len2(PL)*0.3)); }
+          addPiece("X:" + E.i + ":" + ln.dir, r.id, "xover", {edge: E.id, ei: E.i, dir: ln.dir, node: laneNode(E, ln.dir, true)}, X);
+          return;
+        }
+        var p = passOf[i], nl = r.lanes[(i + 1) % n];
+        if(!p) return;
+        addPiece("T:" + p.node + ":" + (E.i*2 + ln.dir) + ">" + (nl.e.i*2 + nl.dir), r.id, "turn", {node: p.node, from: E.i*2 + ln.dir, to: nl.e.i*2 + nl.dir}, p.curve);
+      });
+      var o = {};
+      r.stops.forEach(function(st){
+        ringPose(r, st.s, SPEC.tram.wb, o);
+        var rg = null, li = -1;
+        r.ranges.forEach(function(x, k){ if(li < 0 && x[0] - 1e-6 <= st.s && st.s <= x[1] + 1e-6){ rg = x; li = k; } });
+        var ln = li >= 0 ? r.lanes[li] : null;
+        stopsOut.push({line: r.id, id: st.id, s: st.s, x: o.x, y: o.y, z: o.z, yaw: o.yaw, edge: ln ? ln.e.id : null, ei: ln ? ln.e.i : null, dir: ln ? ln.dir : null});
+      });
+    });
+    layoutMemo = {lanes: lanesOut, tramPaths: pieces, tramStops: stopsOut};
+    return layoutMemo;
+  }
+  // the stretch of a terminus crossover where the tram leaves one track for the other (crossover()'s ease)
+  function crossoverPart(P, Q, keep){
+    var LPl = len2(P), LQ = len2(Q), X = clamp(LPl - keep - 4, 0, XOVER), a = LPl - keep - X, out = [], pp = plOf(P), qq = plOf(Q), o1 = {}, o2 = {};
+    for(var s = a; ; s = Math.min(a + X, s + 1)){
+      plAt(pp, s, o1); plAt(qq, s*LQ/(LPl || 1), o2);
+      var w = X > 0 ? smooth((s - a)/X) : 1;
+      out.push([o1.x + (o2.x - o1.x)*w, o1.y + (o2.y - o1.y)*w, o1.z + (o2.z - o1.z)*w]);
+      if(s >= a + X) break;
+    }
+    return out;
+  }
+  if(o.layoutOnly) return {layout: layout, tier: tier};
+
   // how far right of its lane a route's vehicle is at s (in the lap)
   function bayLat(r, s){
     for(var i = 0; r.bays && i < r.bays.length; i++){ var d = Math.abs(s - r.bays[i]); if(d < RAMP) return BAY*smooth(1 - d/RAMP); }
@@ -660,7 +742,11 @@ function create(doc, o){
         P.piece(w, 0); hold = rec;
       } else {
         e.pass.tIn = P.cur.t;
-        if(e.s2 > e.s){ P.cur.v = e.v; P.piece((e.s2 - e.s)/e.v, 0); P.cur.s = e.s2; }
+        // through the junction at its speed, from where you are: an earlier pass (or a stop inside it) may already
+        // reach past this one's start, and starting again from e.s would set you back (3.15: no backward jumps)
+        var from = Math.max(P.cur.s, e.s);
+        if(e.s2 > from){ P.cur.v = e.v; P.piece((e.s2 - from)/e.v, 0); }
+        P.cur.s = Math.max(P.cur.s, e.s2);
       }
     }
     P.T = P.cur.t; P.L = Lr; P.s0 = s0; P.base = base;
@@ -1267,8 +1353,292 @@ function create(doc, o){
                                                               stops: r.prof.stops.map(function(st){ return {id: st.id, arr: st.arr, dep: st.dep}; })}; }); },
     info: function(){ return {H: H, rings: rings.length, cars: cars.length, slots: totalSlots, lines: lines.length, overfull: overfull, errors: errors.slice(), dropped: dropped,
                               slotted: Object.keys(nodeSlots).length}; },
-    _: {rings: rings, lines: lines, nodeSlots: nodeSlots, atNode: atNode, edges: edges, ringPose: ringPose, lag: function(){ return lag; }}
+    layout: layout, doc: doc, seed: seed,
+    _: {rings: rings, lines: lines, nodeSlots: nodeSlots, atNode: atNode, edges: edges, ringPose: ringPose, lag: function(){ return lag; },
+        sites: sites, stopIndex: stopIndex, partPose: partPose, sections: sections, mod: mod,
+        incidentsAt: function(t){ return activeIncidents(num(t, 0)); }}
   };
+}
+
+/* ---------- the street layout and the ride Service (HQ 3.15, plan 5.3) ---------- */
+// Seats in vehicle-local metres (+x LEFT, +z forward, y above the floor, yaw 0 faces forward), shared by the
+// pure trip (Trip.seat) and the 3D models (games/hqcoach.js). Bus: 12 m low floor, 2+2, a wheelchair bay
+// opposite the middle door, a rear row of 5 (31). Tram: two 13 m sections centred +-7 m, 2+1 in facing
+// bays (48); the rear section is the front one turned round (seat i + 24 is seat i rotated 180 degrees), so
+// a tram changing ends at a terminus maps every seat onto a seat. STANDS: standing spots by the poles.
+var FLOOR = {bus: 0.36, tram: 0.36}, SEAT_Y = 0.45;
+var DOORS = {bus: [5.0, 0.3, -2.75], tram: [10.6, 3.6, -3.6, -10.6]};   // door centres (z), double doors 1.2 / 1.3 m
+var SEATS = {bus: [], tram: []}, STANDS = {bus: [], tram: []};
+(function(){
+  function seat(list, x, z, yaw, win, pri){ list.push({x: x, y: SEAT_Y, z: z, yaw: yaw, window: !!win, priority: !!pri}); }
+  [4.3, 3.5, 2.7, 1.9, -1.4, -2.2, -3.0, -3.8, -4.6].forEach(function(z){ seat(SEATS.bus, 0.82, z, 0, true, z > 2.6); seat(SEATS.bus, 0.36, z, 0, false, z > 2.6); });
+  [3.5, 2.7, -1.25, -4.25].forEach(function(z){ seat(SEATS.bus, -0.82, z, 0, true, z > 2.6); seat(SEATS.bus, -0.36, z, 0, false, z > 2.6); });
+  [0.92, 0.46, 0, -0.46, -0.92].forEach(function(x){ seat(SEATS.bus, x, -5.4, 0, Math.abs(x) > 0.9, false); });
+  [[-0.05, 3.9], [-0.05, 3.1], [-0.05, 2.3], [-0.05, 1.5], [0.7, 0.9], [0.7, 0.1], [0.7, -0.7], [-0.05, -1.0], [-0.05, -1.8], [-0.05, -3.4], [-0.05, -4.2]].forEach(function(p){
+    STANDS.bus.push({x: p[0], y: 0, z: p[1], yaw: 0, window: false, priority: false});
+  });
+  var front = [], bays = [0.95, 4.35, 6.18, 8.01];
+  bays.forEach(function(a, k){
+    [[a + 0.3, 0], [a + 1.45, Math.PI]].forEach(function(row){
+      var pri = (k === 0 && row[1]) || (k === 1 && !row[1]);
+      seat(front, 0.78, row[0], row[1], true, pri); seat(front, 0.32, row[0], row[1], false, pri); seat(front, -0.8, row[0], row[1], true, pri);
+    });
+  });
+  function turn(p){ return {x: p.x ? -p.x : 0, y: p.y, z: p.z ? -p.z : 0, yaw: p.yaw ? (p.yaw + Math.PI) % (2*Math.PI) : Math.PI, window: p.window, priority: p.priority}; }
+  SEATS.tram = front.concat(front.map(turn));
+  var st = [[-0.24, 1.8], [0, 3.6], [-0.24, 5.5], [-0.24, 7.4], [-0.24, 9.2], [0, 10.6], [0.5, 10.6]].map(function(p){ return {x: p[0], y: 0, z: p[1], yaw: 0, window: false, priority: false}; });
+  STANDS.tram = st.concat(st.map(turn)).concat([{x: 0, y: 0, z: 0, yaw: 0, window: false, priority: false}]);
+})();
+
+// lanes / tram paths for a world and tier: from the sim when given (the same object), else a layout-only build
+var layoutCache = [];
+function layoutOf(W, tier, sim){
+  if(sim && typeof sim.layout === "function") return sim.layout();
+  tier = clamp(num(tier, 1) | 0, 1, 5);
+  for(var i = 0; i < layoutCache.length; i++) if(layoutCache[i].W === W && layoutCache[i].tier === tier) return layoutCache[i].L;
+  var L = create(W, {tier: tier, layoutOnly: true}).layout();
+  layoutCache.push({W: W, tier: tier, L: L});
+  if(layoutCache.length > 4) layoutCache.shift();
+  return L;
+}
+// per active edge {id, a, b, tram, tramOff, bus: [dir0, dir1], busOff, cars, carOff, half}: m right of the centre line
+function lanes(W, tier, sim){ return layoutOf(W, tier, sim).lanes; }
+// the track centre lines the trams drive: [{line, lines, kind: "lane"|"turn"|"xover", key, pts: [x, y, z, ...]}]
+function tramPaths(W, tier, sim){ return layoutOf(W, tier, sim).tramPaths; }
+// where trams stand at their stops: [{line, id, s, x, y, z, yaw, edge, dir}]
+function tramStops(W, tier, sim){ return layoutOf(W, tier, sim).tramStops; }
+
+var LINE_COL = [0xd23b3b, 0x2c7be5, 0x2fa36b, 0xe0a020, 0x8a55c8, 0x1aa3b8];
+function lineColor(id){ return LINE_COL[hash32(id) % LINE_COL.length]; }
+function hex6(n){ var s = (n >>> 0).toString(16); while(s.length < 6) s = "0" + s; return "#" + s; }
+function shortOf(id, kind){
+  id = String(id);
+  if(/^[A-Z]{1,2}\d{1,3}$/.test(id)) return id;
+  var m = /(\d+)$/.exec(id);
+  return (kind === "tram" ? "T" : "B") + (m ? (+m[1]) + 1 : 1);
+}
+// the share of seats taken by local hour when hqCommute is not loaded (its curve: peaks 08-09:30 and 17-19)
+function loadCurve(h){
+  h = mod(num(h, 12), 24);
+  function bump(c, w){ var d = Math.abs(h - c); return d < w ? 0.5 + 0.5*Math.cos(Math.PI*d/w) : 0; }
+  return clamp(0.08 + 0.37*smooth((h - 5.5)/2) - 0.37*smooth((h - 21)/2.5) + 0.7*bump(8.75, 1.6) + 0.7*bump(18, 1.8), 0.08, 1.15);
+}
+
+// The Service contract (plan 5.3) for the sim's buses or trams. opts.W: the world handed to station naming
+// (HQV.hqRide.stationName, else the nearest road's name); default the sim's doc.
+function service(sim, kind, opts){
+  opts = opts || {};
+  kind = kind === "tram" ? "tram" : "bus";
+  var I = sim && sim._, spec = SPEC[kind], W = opts.W || (sim && sim.doc), names = {}, o1 = {};
+  var LS = I ? I.lines.filter(function(r){ return r.kind === kind; }) : [];
+  var byId = {};
+  LS.forEach(function(r){ byId[r.id] = r; });
+  function nameOf(id){
+    if(names[id] != null) return names[id];
+    var s = I.sites[id], nm = null;
+    try { if(s && HQV.hqRide && HQV.hqRide.stationName) nm = HQV.hqRide.stationName(W, s.x, s.z, kind); } catch(e){ nm = null; }
+    if(!nm && s && HQV.world && HQV.world.nearestRoad && W && W.edges && W.edges[0] && W.edges[0].pts){
+      try { var rd = HQV.world.nearestRoad(W, s.x, s.z, 40); if(rd && rd.name) nm = rd.name; } catch(e){ nm = null; }
+    }
+    if(!nm){ var m = /(\d+)$/.exec(id); nm = (kind === "tram" ? "Tram stop " : "Bus stop ") + (m ? (+m[1]) + 1 : id); }
+    nm = String(nm);
+    // made unique within the service (hqRide.stationName is unique per world already)
+    if(taken[nm]){ for(var k = 0; taken[nm + (k < SUFFIX.length ? " " + SUFFIX[k] : " " + (k + 2))]; k++); nm += k < SUFFIX.length ? " " + SUFFIX[k] : " " + (k + 2); }
+    taken[nm] = 1;
+    return (names[id] = nm);
+  }
+  // every stop named once, in id order, so names do not depend on which is asked first
+  var taken = {}, SUFFIX = ["Square", "Gate", "Park", "Corner", "Cross", "Market"];
+  // where a line turns back (lap positions): a tram's cusps; an out-and-back bus at the end of each half
+  function turnsOf(r){
+    if(r.turns) return r.turns;
+    var t = r.cusps && r.cusps.length ? r.cusps.slice() : r.outBack ? [r.ranges[r.lanes.length/2 - 1][1], r.pl.len] : [];
+    return (r.turns = t);
+  }
+  // the stop a vehicle at lap position s is heading for: the last stop before the next turn back
+  function destOf(r, s){
+    var T = turnsOf(r), L = r.pl.len, S = r.prof.stops;
+    if(!T.length || !S.length) return {id: null, name: (S.length ? nameOf(S[0].id) + " circular" : "Circular")};
+    var best = null, bd = Infinity;
+    T.forEach(function(c){ var d = mod(c - s - 1e-6, L); if(d < bd){ bd = d; best = c; } });
+    var st = null, sd = Infinity;
+    S.forEach(function(x){ var d = mod(best - x.s, L); if(d < sd){ sd = d; st = x; } });
+    return {id: st.id, name: nameOf(st.id)};
+  }
+  function lineStops(r){ var out = []; r.prof.stops.forEach(function(st){ if(out.indexOf(st.id) < 0) out.push(st.id); }); return out; }
+  (function(){
+    var ids = [];
+    LS.forEach(function(r){ lineStops(r).forEach(function(id){ if(ids.indexOf(id) < 0) ids.push(id); }); });
+    ids.sort(function(a, b){ var x = /(\d+)$/.exec(a), y = /(\d+)$/.exec(b); return (x && y ? (+x[1]) - (+y[1]) : 0) || (a < b ? -1 : a > b ? 1 : 0); }).forEach(nameOf);
+  })();
+  function lineInfo(r){
+    var T = turnsOf(r), ends = T.map(function(c){ return destOf(r, c - 1).name; });
+    return {id: r.id, mode: kind, short: shortOf(r.id, kind), color: hex6(lineColor(r.id)),
+            name: (kind === "tram" ? "Tram " : "Bus ") + shortOf(r.id, kind) + (ends.length >= 2 ? " " + ends[1] + " - " + ends[0] : " circular"),
+            stops: lineStops(r), headway: r.headway, loop: !T.length};
+  }
+  function offOf(r, veh){ return r.prof.base + veh.shift; }
+  // doors 0..1 at a stop: open 0.6 s after it stops, over 1.2 s; shut 1.5 s before it leaves
+  function doorsAt(r, veh, t){
+    var u = mod(t - offOf(r, veh), r.prof.T), S = r.prof.stops;
+    for(var i = 0; i < S.length; i++){
+      var a = S[i].arr, d = S[i].dep, x = u;
+      if(x < a && x + r.prof.T <= d) x += r.prof.T;
+      if(x >= a && x <= d) return clamp(Math.min(x - a - 0.6, d - 1.5 - x)/1.2, 0, 1);
+    }
+    return 0;
+  }
+  function poseOf(r, veh, t, o){
+    var q = r.prof.S(t - offOf(r, veh), {});
+    I.ringPose(r, q.s, spec.wb, o);
+    o.s = q.s; o.speed = q.v;
+    return o;
+  }
+  function blockDelay(r, t){
+    if(kind !== "tram") return 0;
+    var d = 0;
+    I.incidentsAt(t).forEach(function(inc){
+      var hit = [inc.out, inc.back].some(function(R){ return R.lanes.some(function(ln){ return ln.e.tram && r.lanes.some(function(m){ return m.e === ln.e; }); }); });
+      if(hit) d = Math.max(d, 60*clamp(Math.ceil((inc.end - t)/60), 1, 15));
+    });
+    return d;
+  }
+  function loadOf(r, veh, ms){
+    var H = HQV.hqCommute;
+    if(H && H.load){ try { var v = H.load(kind, r.id, veh.id, ms, sim.seed); if(typeof v === "number" && isFinite(v)) return clamp(v, 0, 1.15); } catch(e){} }
+    var h = (ms/3600000) % 24;
+    return clamp(loadCurve(h)*(0.8 + 0.4*h01(sim.seed, hash32(veh.id), Math.floor(ms/1000/r.prof.T))), 0, 1.15);
+  }
+  function stops(){
+    var out = [], seen = {};
+    LS.forEach(function(r){
+      lineStops(r).forEach(function(id){
+        var s = I.sites[id];
+        if(!s) return;
+        if(!seen[id]){ seen[id] = {id: id, name: nameOf(id), x: s.x, y: s.y, z: s.z, mode: kind, lines: [], kind: "stop", under: false}; out.push(seen[id]); }
+        if(seen[id].lines.indexOf(r.id) < 0) seen[id].lines.push(r.id);
+      });
+    });
+    return out;
+  }
+  function stopsNear(x, z, rad){
+    rad = num(rad, 60);
+    var out = [];
+    stops().forEach(function(s){ var d = Math.hypot(s.x - num(x, 0), s.z - num(z, 0)); if(d <= rad) out.push({id: s.id, name: s.name, dist: d, mode: kind, lines: s.lines.slice()}); });
+    out.sort(function(a, b){ return a.dist - b.dist || (a.id < b.id ? -1 : 1); });
+    return out;
+  }
+  // the next n calls at a stop (every line of this kind, every vehicle), soonest first; one that is standing
+  // there with its doors open is "boarding"
+  function departures(stopId, ms, n){
+    var t = num(ms, 0)/1000, rows = [];
+    n = Math.max(1, num(n, 4) | 0);
+    LS.forEach(function(r){
+      var dl = blockDelay(r, t), info = null;
+      r.prof.stops.forEach(function(st){
+        if(st.id !== String(stopId)) return;
+        r.vehicles.forEach(function(veh){
+          var off = offOf(r, veh), k = Math.ceil((t - (off + st.dep))/r.prof.T - 1e-9);
+          for(var j = 0; j < n; j++){
+            var arr = off + st.arr + (k + j)*r.prof.T, dep = off + st.dep + (k + j)*r.prof.T;
+            info = info || lineInfo(r);
+            rows.push({line: r.id, short: info.short, to: destOf(r, st.s + 0.5).name, at: Math.round(arr*1000), dep: Math.round(dep*1000),
+                       plat: null, boarding: t >= arr && t < dep, delay: dl, vehicle: veh.id});
+          }
+        });
+      });
+    });
+    rows.sort(function(a, b){ return a.at - b.at || (a.line < b.line ? -1 : a.line > b.line ? 1 : 0) || (a.vehicle < b.vehicle ? -1 : 1); });
+    return rows.slice(0, n);
+  }
+  // how many times a tram has changed ends between unwrapped positions s0 and s1
+  function flips(r, s0, s1){
+    var n = 0, L = r.pl.len;
+    (r.cusps || []).forEach(function(c){ for(var k = Math.ceil((s0 - c)/L); c + k*L < s1; k++) if(c + k*L > s0) n++; });
+    return n;
+  }
+  // a seat (or standing spot past the seats) in world space for a vehicle at s
+  function seatAt(r, s, i, flip, o){
+    var list = SEATS[kind], p = i < list.length ? list[i] : STANDS[kind][clamp(i - list.length, 0, STANDS[kind].length - 1)];
+    var x = p.x, z = p.z, yaw = p.yaw, d = 0;
+    if(flip){ x = -x; z = -z; yaw += Math.PI; }
+    if(kind === "tram"){ d = z >= 0 ? spec.sec/2 + 0.5 : -spec.sec/2 - 0.5; z -= d; }
+    var q = I.partPose(r, s, d, spec.wb, o), c = Math.cos(q.yaw), sn = Math.sin(q.yaw);
+    return {x: q.x + x*c + z*sn, y: q.y + FLOOR[kind] + p.y, z: q.z - x*sn + z*c, yaw: q.yaw + yaw};
+  }
+  // the call at fromStop (any vehicle of the line that has not left yet) that reaches toStop soonest
+  function pick(r, from, to, t){
+    var best = null, S = r.prof.stops, T = r.prof.T;
+    S.forEach(function(a, ai){
+      if(a.id !== from) return;
+      var dt = Infinity, bi = -1;
+      S.forEach(function(b, j){ if(b.id === to){ var d = mod(b.arr - a.dep, T); if(d > 0 && d < dt){ dt = d; bi = j; } } });
+      if(bi < 0) return;
+      r.vehicles.forEach(function(veh){
+        var off = offOf(r, veh), k = Math.ceil((t - (off + a.dep))/T - 1e-9), dep = off + a.dep + k*T;
+        if(!best || dep + dt < best.reach) best = {veh: veh, ai: ai, arr: off + a.arr + k*T, dep: dep, reach: dep + dt};
+      });
+    });
+    return best;
+  }
+  function trip(lineId, fromStop, toStop, ms){
+    var r = byId[String(lineId)], from = String(fromStop), to = String(toStop);
+    if(!r || from === to) return null;
+    var b = pick(r, from, to, num(ms, 0)/1000);
+    if(!b) return null;
+    var veh = b.veh, info = lineInfo(r), sDep = poseOf(r, veh, b.dep, {}).s, arrS = b.arr, reachS = b.reach, stopsT = [], T = r.prof.T;
+    // the calls on the way, in order, to the one at toStop
+    r.prof.stops.forEach(function(st){
+      var a = offOf(r, veh) + st.arr, k = Math.ceil((b.dep - a)/T - 1e-9), at = a + k*T;
+      if(at > b.dep && at <= b.reach + 1e-6 && st.id != null) stopsT.push({id: st.id, name: nameOf(st.id), at: Math.round(at*1000)});
+    });
+    stopsT.sort(function(x, y){ return x.at - y.at; });
+    function tOf(ms2){ return clamp(num(ms2, 0)/1000, arrS, reachS); }
+    var reachMs = Math.round(b.reach*1000);
+    var out = {mode: kind, line: r.id, short: info.short, color: info.color, vehicle: veh.id, from: from, to: to,
+             fromName: nameOf(from), toName: nameOf(to), headsign: destOf(r, r.prof.stops[b.ai].s + 0.5).name,
+             arrive: Math.round(b.arr*1000), depart: Math.round(b.dep*1000), reach: reachMs, stops: stopsT, seats: SEATS[kind].length, standing: STANDS[kind].length,
+             pose: function(ms2){
+               var t = tOf(ms2), p = poseOf(r, veh, t, {});
+               return {x: p.x, y: p.y + FLOOR[kind], z: p.z, yaw: p.yaw, pitch: 0, speed: p.speed, doors: doorsAt(r, veh, t), under: false, done: num(ms2, 0) >= reachMs};
+             },
+             seat: function(i, ms2){
+               var t = tOf(ms2), q = r.prof.S(t - offOf(r, veh), {});
+               return seatAt(r, q.s, clamp(num(i, 0) | 0, 0, SEATS[kind].length + STANDS[kind].length - 1), flips(r, sDep, q.s) % 2 === 1, {});
+             },
+             door: function(ms2){
+               var t = tOf(ms2), q = r.prof.S(t - offOf(r, veh), {}), dz = DOORS[kind][1], d = 0, flip = flips(r, sDep, q.s) % 2 === 1;
+               if(flip) dz = -dz;
+               if(kind === "tram"){ d = dz >= 0 ? spec.sec/2 + 0.5 : -spec.sec/2 - 0.5; dz -= d; }
+               var p = I.partPose(r, q.s, d, spec.wb, {}), c = Math.cos(p.yaw), sn = Math.sin(p.yaw), x = -spec.wid/2 - 0.3;
+               return {x: p.x + x*c + dz*sn, z: p.z - x*sn + dz*c};
+             }};
+    return out;
+  }
+  // the stop a vehicle is at (doors side) or comes to next: {id, name, at (ms), here}
+  function nextStop(r, veh, t){
+    var T = r.prof.T, u = mod(t - offOf(r, veh), T), best = null, bd = Infinity;
+    r.prof.stops.forEach(function(st){
+      var here = (u >= st.arr && u <= st.dep) || (u + T >= st.arr && u + T <= st.dep), d = here ? -1 : mod(st.arr - u, T);
+      if(d < bd){ bd = d; best = {id: st.id, name: nameOf(st.id), at: Math.round((t + Math.max(0, d))*1000), here: here}; }
+    });
+    return best;
+  }
+  function vehicles(ms){
+    var t = num(ms, 0)/1000, out = [];
+    LS.forEach(function(r){
+      r.vehicles.forEach(function(veh){
+        var p = poseOf(r, veh, t, {}), v = {id: veh.id, line: r.id, mode: kind, x: p.x, y: p.y, z: p.z, yaw: p.yaw, speed: p.speed,
+            doors: doorsAt(r, veh, t), load: loadOf(r, veh, num(ms, 0)), under: false,
+            to: destOf(r, mod(p.s, r.pl.len)).name, short: shortOf(r.id, kind), trip: Math.floor((t - offOf(r, veh))/r.prof.T), next: nextStop(r, veh, t)};
+        if(kind === "tram") v.parts = I.sections(spec).map(function(sc){ var tp = I.partPose(r, p.s, sc[0], spec.wb, {}); return {x: tp.x, y: tp.y, z: tp.z, yaw: tp.yaw}; });
+        out.push(v);
+      });
+    });
+    return out;
+  }
+  return {mode: kind, lines: function(){ return LS.map(lineInfo); }, stops: stops, stopsNear: stopsNear, departures: departures,
+          trip: trip, vehicles: vehicles, name: nameOf, seats: SEATS[kind], stands: STANDS[kind], doors: DOORS[kind], floor: FLOOR[kind]};
 }
 
 /* ---------- drawing: instanced bodies (THREE from c.THREE, only inside view()) ---------- */
@@ -1367,17 +1737,18 @@ function view(c){
   EV_KINDS.forEach(function(k){ inst(k, evGeo(k), CAP[k], vc); });
   inst("beacon", new THREE.BoxGeometry(0.28, 0.14, 0.2), CAP.fire*2 + CAP.ambulance*2 + CAP.police*2, beaconM);
   var BEACON_Y = {fire: 2.6, ambulance: 2.8, police: 1.55}, BEACON_Z = {fire: 3.3, ambulance: 2.6, police: -0.2};
-  var LINE_COL = [0xd23b3b, 0x2c7be5, 0x2fa36b, 0xe0a020, 0x8a55c8, 0x1aa3b8];
 
   function put(m, i, x, y, z, yaw, hex){
     e.set(0, yaw, 0); q.setFromEuler(e); p.set(x, y, z); mtx.compose(p, q, sc); m.setMatrixAt(i, mtx);
     if(hex != null){ col.setHex(hex); m.setColorAt(i, col); }
   }
-  function update(vehicles, timeMs){
+  // opts.hide: {vehicleId: true} for the vehicles a detailed model draws instead (games/hqcoach.js near())
+  function update(vehicles, timeMs, opts){
     var n = {car: 0, bus: 0, tram: 0, fire: 0, ambulance: 0, police: 0, beacon: 0}, flash = Math.floor(num(timeMs, 0)/250) & 1;
+    var hide = opts && opts.hide;
     (vehicles || []).forEach(function(v){
       var k = v.kind;
-      if(n[k] == null) return;
+      if(n[k] == null || (hide && hide[v.id])) return;
       if(k === "tram"){
         if(n.tram + 2 > CAP.tram*2) return;
         // two sections, the rear one turned round (a double-ended tram has a cab at each end)
@@ -1421,5 +1792,7 @@ function view(c){
 }
 
 HQV.traffic = {create: create, view: view, SPEC: SPEC, GAP: GAP, DWELL: DWELL, FARE: FARE, DENS: DENS, CAP: CAP, INC_W: INC_W,
+               lanes: lanes, tramPaths: tramPaths, tramStops: tramStops, service: service, SEATS: SEATS, STANDS: STANDS, DOORS: DOORS, FLOOR: FLOOR,
+               lineColor: lineColor, shortOf: shortOf, loadCurve: loadCurve,
                _: {plOf: plOf, plAt: plAt, offsetPts: offsetPts, trimPts: trimPts, Profile: Profile, fastest: fastest, ease: ease}};
 })();

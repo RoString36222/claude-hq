@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.20.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.20.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,14 @@ and feature guide.
 
 ## Changelog
 
+- **3.20.1 — Big-city roads, and buildings that stay solid.** The live City's streets (generator @3, the Commons
+  and every personal island) are paved wider, each street at its own width: a 7.5 m two-lane side street, a 9.5 m
+  street or an 11.5 m wide one, a 14.5 m four-lane avenue or a 17.5 m boulevard, with dashed lane lines between the
+  lanes and traffic keeping to the kerb-side lane. Every lot, site and HQ stays where it was (the extra width comes
+  off the front of the plots, a lot always keeping at least 60% of its ground, and a street that cannot have its
+  width somewhere steps down there). Driving is swept, not jumped: a fast car meets a wall, a trunk or a building's
+  corner instead of landing inside it, a glancing hit slides along the wall, and a vehicle that ends up in a wall
+  anyway is lifted back onto the road as soon as you try to drive it out ("Back on the road").
 - **3.20.0 — Sound that comes from somewhere.** Every world sound now plays **where it is**: traffic, other players' vehicles, trams, buses, trains, the metro, boats, helicopters, planes, doors, bells, the gondola, construction, fountains and the city's hum get louder as you get closer, fade with distance (inverse-distance falloff from a reference distance, silent past a maximum per kind) and pan left or right to where they are, heard from the camera. Only the nearest few sources of each kind play at once (voice pools), so a busy street stays clear and cheap. Your own vehicle stays at full level while the camera rides with you and fades when you leave it in photo, cine or the Map. A new **Ambient sounds** slider in Settings (0–100%) replaces the on/off switch and sets the level of weather, fireworks, jets, water and the city's hum; 0% is off, and an old "off" carries over as 0%. A looping transit sound placed in the world is one voice per source (an unplaced one stays one per name), and every loop falls silent 0.6 s after its last update (was 3 s). Calm and mute stay silent. Web Audio only, no new network calls. **Fixed:** on a slow machine the 3D City's first load could time out the live world on its own startup work (three.js, a first frame compiling its shaders) and open on the older Commons with nothing cached; the world's load deadlines now count the page's own time, not the wall clock.
 - **3.19.0 — Grand HQs, smoother dragons, and the buzz is gone.**
   - **HQ buildings revamped:** your HQ now fills its lot — a broad podium across the street, a base block of offices, a wide main tower with stepped setbacks in your style (stacked glass slabs, an Art Deco wedding cake, a top-heavy Brutalist block, Neo-Tokyo slabs, classic stone setbacks, Eco terraces), and wings at levels 10 and 30 that rise from the base attached to the tower instead of standing apart. Level 1 is a solid mid-rise, level 50 a landmark; the helideck sits on the top roof, and night windows light every floor (median lot use 9% → 32%).

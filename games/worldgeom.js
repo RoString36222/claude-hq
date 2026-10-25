@@ -512,10 +512,16 @@ function skirtQuad(g, ia, ib, ta, tb, out, depth){
 // @2's classes: a local road is marked and furnished like a street, an arterial like an avenue
 function streetish(cls){ return cls === "street" || cls === "local"; }
 function aveish(cls){ return cls === "avenue" || cls === "arterial"; }
+// [3.20.1] lanes each way on a carriageway `cw` m from centre to kerb: one per 3.3 m, two or three on @3's avenues
+// and boulevards (traffic.js lanesEach drives in them the same way)
+function lanesEach(cw){ return Math.max(1, Math.min(3, Math.floor(cw/3.3))); }
+function laneLines(cw){ var n = lanesEach(cw), out = [];
+  for(var k = 1; k < n; k++) out.push({o: -cw*k/n, w: 0.12, dash: true, c: COL.white}, {o: cw*k/n, w: 0.12, dash: true, c: COL.white});
+  return out; }
 function markLines(E){
   var cw = E.cw;
-  if(streetish(E.cls)) return [{o: 0, w: 0.12, dash: true, c: COL.white}];
-  if(aveish(E.cls)) return [{o: -0.15, w: 0.1, c: COL.yellow}, {o: 0.15, w: 0.1, c: COL.yellow}];
+  if(streetish(E.cls)) return [{o: 0, w: 0.12, dash: true, c: COL.white}].concat(laneLines(cw));
+  if(aveish(E.cls)) return [{o: -0.15, w: 0.1, c: COL.yellow}, {o: 0.15, w: 0.1, c: COL.yellow}].concat(laneLines(cw));
   if(E.cls === "ring") return [{o: 0, w: 0.12, dash: true, c: COL.white}, {o: -(cw - 1), w: 0.15, c: COL.white}, {o: cw - 1, w: 0.15, c: COL.white}];
   return [{o: -0.15, w: 0.1, c: COL.yellow}, {o: 0.15, w: 0.1, c: COL.yellow}, {o: -(cw - 1), w: 0.15, c: COL.white}, {o: cw - 1, w: 0.15, c: COL.white}];
 }

@@ -230,7 +230,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>) -
         l.id = k as u32;
     }
     // the layout is final: pave the roads wider into the strip of block and lot along them
-    let paving = widen::widen(p, base, &g, &mut blocks, &mut lots, &mut sites);
+    let paving = widen::widen(p, seed, base, &g, &mut blocks, &mut lots, &mut sites);
 
     // the road graph as the world's roads (live nodes only), then the graded roads
     let mut renum = vec![u32::MAX; g.nodes.len()];

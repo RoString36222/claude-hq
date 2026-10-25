@@ -1228,7 +1228,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(HQV.npcSim && HQV.npcDraw){
       try {
         var sdoc = Object.assign({}, doc, {layers: Object.assign({}, doc.layers, {zones: simZones(doc.layers.zones)})});
-        nsim = HQV.npcSim.create(sdoc, {tier: tier, grow: grow, seed: W.seed || W.id});
+        nsim = HQV.npcSim.create(sdoc, {tier: tier, grow: grow, seed: W.seed || W.id, world: W});   // [crowds] W: citylife's land use and gathering spots
         ndraw = HQV.npcDraw.create(THREE, S, nsim, {lib: c.L});
       } catch(e){ nsim = null; ndraw = null; }
     }

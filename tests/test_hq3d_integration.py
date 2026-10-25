@@ -81,8 +81,9 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           "hqride", "hqcommute", "hqtramway", "hqcoach", "hqmetro", "hqunderground", "hqcityrail", "hqgondola",
                           "hqferries", "hqcabs", "hqhelicall", "hqphone", "hqphoneapps", "hqphonecabs", "hqphonecomms", "hqgallery",
                           "hqtransit",
-                          # the stunts, then (3.16) the grenade launcher and the tank, last before the City
-                          "hqstunts", "hqgrenade", "hqtank", "hqcity3d"])
+                          # the stunts, then (3.16) the grenade launcher and the tank, then (3.21) the street
+                          # events' props, last before the City
+                          "hqstunts", "hqgrenade", "hqtank", "cityevents3d", "hqcity3d"])
 
     def test_transport_scripts_are_optional(self):
         # [3.15] every transport part is a 3D-City part: one failing to load takes only its feature out

@@ -54,6 +54,13 @@
  *   service(sim, "bus"|"tram", {W}) the Service contract (lines, stops, stopsNear, departures, trip, vehicles)
  *   SEATS / STANDS / DOORS / FLOOR: the vehicle-local seat table shared with games/hqcoach.js
  * W may be a doc or a packed world; without a sim a layout-only build (no timetables) is made and memoised.
+ * HQ 3.21 city life (games/citylife.js, when loaded; o.W the packed world, o.local(ms) -> local ms or a fixed offset,
+ * o.closed(localMs) -> {edge id: kind} to override HQV.cityLife.closed, o.groupAt(x, z, yaw, half) -> a district group
+ * to override the world's): a car is out on a lap when its slot hash is
+ * under density x demand(local hour, the ring's street kind), and a ring through a street closed during the lap waits
+ * the lap out at its start; each car is a car, taxi, van, lorry, scooter or bike by mix(its district, kind, hour).
+ * at() gives a car's type as v.type (kind stays "car"); cars(ms) and closed(ms) list the lap states and closures.
+ * Demand only thins today's density and a closure only takes cars off: rings, slots and timetables are unchanged.
  */
 (function(){
 "use strict";
@@ -69,8 +76,22 @@ var SPEC = {
   tram:      {len: 27, wid: 2.65, vmax: 10, acc: 1.1, wb: 8, sec: 13},
   fire:      {len: 8, wid: 2.5, vmax: 15, acc: 2.5, wb: 4.5},
   ambulance: {len: 6, wid: 2.2, vmax: 16, acc: 3, wb: 3.6},
-  police:    {len: 4.6, wid: 1.9, vmax: 17, acc: 3.5, wb: 2.7}
+  police:    {len: 4.6, wid: 1.9, vmax: 17, acc: 3.5, wb: 2.7},
+  // [3.21 city life] what a car's slot carries (TYPES): it drives the ring's car profile (the slot is the timetable),
+  // so vmax / acc here are what City Gen v4 may give each its own lane speed by; len / wid are its body (solid,
+  // drawn). A van or lorry is nose-aligned with a car (shifted back by (len - car.len)/2): it reaches every box
+  // line where a car would and clears the box within CLEAR of a car's time at turning speed
+  taxi:      {len: 3.8, wid: 1.85, vmax: 12, acc: 2.2, wb: 2.4},
+  van:       {len: 4.6, wid: 1.95, vmax: 11, acc: 1.8, wb: 2.9},
+  lorry:     {len: 6.8, wid: 2.4, vmax: 10, acc: 1.2, wb: 4},
+  scooter:   {len: 1.8, wid: 0.7, vmax: 12, acc: 2.6, wb: 1.25},
+  bike:      {len: 1.75, wid: 0.6, vmax: 7, acc: 1.2, wb: 1.05}
 };
+// [3.21] the vehicle types of HQV.cityLife.mix(); LONG: the longer ones, which need room in front and behind
+var TYPES = ["car", "taxi", "van", "lorry", "scooter", "bike"], LONG = {van: 1, lorry: 1}, TWO = {scooter: 1, bike: 1};
+var LMAX = SPEC.lorry.len, CLOSE_STEP = 9e5;     // the longest body; closures are looked up every 15 min over a lap
+var TAXI = 0xf2b705, TAXI_SIGN = 0xffe27a, VAN_PAINT = [0xf2f2ee, 0xf2f2ee, 0xd9dde2, 0x2a6fd6, 0xc8323c, 0x2b2f36],
+    LORRY_PAINT = [0xf2f2ee, 0xe6e2d6, 0x2a6fd6, 0x2f8f5b, 0xd9772b, 0xc8323c], BIKE_PAINT = [0x2b2f36, 0x2a6fd6, 0xc8323c, 0x2f8f5b, 0xe8b730];
 var GAP = 2.6;                          // bumper to bumper, at the closest
 var V_STRAIGHT = 9, V_TURN = 6.5, V_UTURN = 3, V_CREEP = 2.5, CLEAR = 0.6, CLASH = 0.3, H_MIN = 6, H_MAX = 16, REPS = 3;
 var DWELL = 20, FARE = 2, LAYOVER = 30, XOVER = 30, BLOCK = 15, BAY = 2.9, RAMP = 12, BAY_BLOCK = 3, BAY_YAW = 0.15;
@@ -80,7 +101,7 @@ var INC_W = 240, INC_P = 0.3, INC_LOOK = 3, EV_DWELL = 40, EV_YIELD = 45, EV_NEA
 var EV_KINDS = ["fire", "ambulance", "police"];
 var EV_SITES = {fire: {fire: 1}, ambulance: {hospital: 1, clinic: 1}, police: {police: 1}};
 var PULL_TAPER = 10, LOOK = 34, BRAKE = 14, CATCH = 0.6, CATCH_MAX = 4, OBS_R = 2.4;
-var CAP = {car: 200, bus: 32, tram: 16, fire: 6, ambulance: 6, police: 6};
+var CAP = {car: 200, bus: 32, tram: 16, fire: 6, ambulance: 6, police: 6, van: 80, lorry: 60, scooter: 60, bike: 60, taxi: 60};
 var PAINT = [0xc8323c, 0x2a6fd6, 0xf2f2ee, 0x2b2f36, 0x8a9199, 0xe8b730, 0x2f8f5b, 0x6b4bb8, 0xd9772b, 0x8fb8de, 0x5a1f2b, 0xb7c2a0];
 
 /* ---------- small maths ---------- */
@@ -823,10 +844,99 @@ function create(doc, o){
     cand.forEach(function(i){
       totalSlots++;
       if(h01(seed, r.id*977 + 11, i) >= dens) return;
-      var c = {id: "c" + r.id + "." + i, ring: r, kind: "car", shift: i*H, paint: Math.floor(h01(seed, r.id, i*31 + 5)*PAINT.length)};
+      var c = {id: "c" + r.id + "." + i, ring: r, kind: "car", shift: i*H, paint: Math.floor(h01(seed, r.id, i*31 + 5)*PAINT.length),
+               slot: i, hv: h01(seed, r.id*977 + 11, i), ut: h01(seed, r.id*613 + 29, i)};
       r.cars.push(c); cars.push(c);
     });
   });
+
+  // ---- [3.21] city life (games/citylife.js): how many of the slots' cars are out, what they are, closed streets ----
+  // A car exists when its slot hash hv < dens (above, unchanged); it is out on a lap when hv < dens*demand(local hour
+  // at the lap's start, the ring's street kind): demand only thins today's density (1 at the rush hours), it never
+  // changes a ring, a slot or a timetable (City Gen v4 owns capacity). A ring through a street that is closed at any
+  // time in the lap (HQV.cityLife.closed: a closed segment's capacity is 0) is off the road for that lap: its cars
+  // finish the lap they are on and wait out of sight at its start, the box line of its first slotted turn, so no car
+  // is ever on a closed edge and none vanishes at a barrier (re-pairing the rings round it would move every car's
+  // window and every bus's timetable). The type is pick(mix(the district group where the car is at the ring's base
+  // time, the ring's kind, the hour), ut): fixed per lap, so a car changes only out of sight at the lap start.
+  // Everything is per lap, memoised on the car, and a pure function of (doc, tier, seed, o.local, the clock).
+  var CL = o.life === false ? null : HQV.cityLife, WQ = HQV.world, LW = o.W || (doc.districts && doc.edges && doc.edges.length && doc.edges[0].pts ? doc : null);
+  var life = !!(CL && CL.demand && CL.mix && CL.pick);
+  var localOf = typeof o.local === "function" ? o.local : (function(off){ return function(ms){ return ms + off; }; })(num(o.local, 0));
+  var closedFn = typeof o.closed === "function" ? o.closed : life && LW && CL.closed ? function(ms){ return CL.closed(LW, ms); } : null;
+  var closedMemo = {}, closedKeys = [];
+  // (by the minute, floored: the events start and end on whole minutes, so a time is in one exactly when its minute is)
+  function closedAt(ms){
+    var key = Math.floor(ms/6e4);
+    if(closedMemo.hasOwnProperty(key)) return closedMemo[key];
+    var m = null;
+    try { m = closedFn ? closedFn(key*6e4) : null; } catch(e){ m = null; }
+    closedMemo[key] = m || {}; closedKeys.push(key);
+    if(closedKeys.length > 64) delete closedMemo[closedKeys.shift()];
+    return closedMemo[key];
+  }
+  if(life){
+    // the district a car is in: the lots' beside the road (right of travel, then left; the road's own district is
+    // "street"), 6 m past the carriageway
+    var FA = LW && CL.facts ? CL.facts(LW) : null, SKIP = {street: 1, water: 1};
+    var groupAt = typeof o.groupAt === "function" ? o.groupAt : function(x, z, yaw, half){
+      if(!FA || !WQ || !WQ.districtAt) return "home";
+      var d = null, off = half + 6;
+      for(var sg = 1; sg >= -1; sg -= 2){
+        var q = WQ.districtAt(LW, x - Math.cos(yaw)*off*sg, z + Math.sin(yaw)*off*sg);
+        if(q && q.k != null && !SKIP[q.name]){ d = q; break; }
+      }
+      d = d || WQ.districtAt(LW, x, z);
+      return d && d.k != null ? FA.group(d.k) : "home";
+    };
+    rings.forEach(function(r){
+      // its street kind: the commonest by length; its edges (for closures); whether it turns round anywhere
+      var byKind = {}, best = null;
+      r.edgeIds = {};
+      r.lanes.forEach(function(ln){ var k = CL.road(ln.e.cls).kind; byKind[k] = (byKind[k] || 0) + ln.e.len; r.edgeIds[ln.e.id] = 1; });
+      Object.keys(byKind).sort().forEach(function(k){ if(best == null || byKind[k] > byKind[best]) best = k; });
+      r.kindL = best || "main";
+      r.uturn = r.passes.some(function(p){ return p.v === V_UTURN && p.slot != null; });   // in a box it shares
+      // each car's room: the closest its neighbours (a slot ahead and behind, of every car the slots hold) come
+      var gaps = {}, n = r.cars.length, q = {};
+      function gapTo(d){ d = mod(d, r.m) || r.m; if(gaps[d] == null) gaps[d] = d >= r.m ? r.pl.len : minGap(r.prof, d*H); return gaps[d]; }
+      r.cars.forEach(function(c, j){
+        var ahead = r.cars[(j + n - 1) % n], behind = r.cars[(j + 1) % n];
+        c.room = n < 2 ? r.pl.len : Math.min(gapTo(c.slot - ahead.slot), gapTo(behind.slot - c.slot));
+        r.prof.S(-c.shift, q);
+        var sm = mod(q.s, r.pl.len), p = ringPose(r, sm, SPEC.car.wb, {}), li = 0;
+        while(li < r.ranges.length - 1 && r.ranges[li][1] < sm) li++;
+        c.grp = String(groupAt(p.x, p.z, p.yaw, r.lanes[li].e.c) || "home");
+      });
+    });
+  }
+  function fitsType(c, type){
+    var r = c.ring, L0 = SPEC[type].len;
+    if(type === "lorry" && (r.uturn || (r.kindL !== "main" && r.kindL !== "fast"))) return false;
+    // nose-aligned, so it reaches back (L0 - car.len)/2 further: room for it and the longest neighbour, both shifted
+    return !LONG[type] || c.room >= (L0 + LMAX)/2 + GAP + (LMAX - SPEC.car.len)/2;
+  }
+  function closedOver(r, t0, t1){
+    if(!closedFn) return false;
+    for(var t = t0; ; t = Math.min(t1, t + CLOSE_STEP/1000)){
+      var m = closedAt(localOf(t*1000));
+      for(var id in m) if(r.edgeIds[id]) return true;
+      if(t >= t1) return false;
+    }
+  }
+  // a car's lap state at t (s): {k: its lap, show, type}; without citylife.js every car is out, a car
+  function carState(c, t){
+    var r = c.ring, k = Math.floor((t - r.prof.base - c.shift)/r.prof.T);
+    if(c.st && c.st.k === k) return c.st;
+    if(!life) return (c.st = {k: k, show: true, type: "car", hour: null});
+    var t0 = r.prof.base + c.shift + k*r.prof.T, h = CL.hourOf ? CL.hourOf(localOf(t0*1000)) : mod(localOf(t0*1000)/36e5, 24);
+    var show = c.hv < dens*clamp(num(CL.demand(h, r.kindL), 1), 0, 1) && !closedOver(r, t0, t0 + r.prof.T);
+    var type = CL.pick(CL.mix(c.grp || "home", r.kindL, h), c.ut);
+    if(!SPEC[type] || TYPES.indexOf(type) < 0) type = "car";
+    if(type === "lorry" && !fitsType(c, "lorry")) type = "van";
+    if(type === "van" && !fitsType(c, "van")) type = "car";
+    return (c.st = {k: k, show: show, type: type, hour: h});
+  }
   // Lines that share a lane (the same kind on the same edge and direction: buses through the hub) are
   // kept apart by taking it in turn, a BLOCK m stretch at a time: no two of their vehicles are ever
   // on one block together, and since one can only reach or pass another by sharing a block with it,
@@ -1238,37 +1348,45 @@ function create(doc, o){
       var anyLag = false, st = [];
       if(!near(r.box) && !hasLag(list)) return;
       list.forEach(function(veh){
+        // [3.21] a car out on this lap (city life), as its type: a long one sits back (nose where a car's is)
+        var cs = veh.kind === "car" ? carState(veh, t) : null, vs = cs ? SPEC[cs.type] : spec, back = cs ? (vs.len - spec.len)/2 : 0;
+        if(cs && !cs.show){ delete lag[veh.id]; return; }
         var q = r.prof.S(t - r.prof.base - veh.shift, {}), sBase = q.s, l0 = lag[veh.id] || 0, l = l0;
         if(obs || l > 0){
-          var gapAhead = obs ? obstacleNeed(r, sBase - l, q.v, spec.wid, spec.len, obs) : null;
+          var gapAhead = obs ? obstacleNeed(r, sBase - back - l, q.v, vs.wid, vs.len, obs) : null;
           // brake smoothly to a stop 1.2 m short of it; once clear, ease back onto the timetable
           if(gapAhead != null) l += (q.v - q.v*smooth((gapAhead - 1.2)/BRAKE))*dt;
           else if(l > 0) l = Math.max(0, l - Math.min(CATCH_MAX*dt, l*ease(CATCH, dt)));
           if(l > 0) anyLag = true;
         }
-        st.push({veh: veh, s: sBase - l, sBase: sBase, v: q.v, l: l, l0: l0});
+        st.push({veh: veh, s: sBase - l, sBase: sBase, v: q.v, l: l, l0: l0, cs: cs, vs: vs, back: back});
       });
       // nobody drives into the vehicle they follow: slot order is road order (unwrapped s), the
-      // first vehicle follows the last one a lap ahead
+      // first vehicle follows the last one a lap ahead (bodies centre to centre: s - back)
       if(anyLag && st.length > 1){
-        var G = spec.len + GAP, Lr = r.pl.len;
+        var Lr = r.pl.len;
         for(var pass = 0; pass < 2; pass++) for(var i = 0; i < st.length; i++){
-          var me = st[i], lead = i ? st[i-1].s : st[st.length - 1].s + Lr, gap = lead - me.s;
+          var me = st[i], ld = i ? st[i-1] : st[st.length - 1], lead = ld.s - ld.back + (i ? 0 : Lr), gap = lead - (me.s - me.back), G = (me.vs.len + ld.vs.len)/2 + GAP;
           if(gap < G){ me.s -= G - gap; me.l += G - gap; }
         }
       }
       st.forEach(function(x){
         var id = x.veh.id;
         if(x.l > 1e-4) lag[id] = x.l; else delete lag[id];
-        var p = ringPose(r, x.s, spec.wb, {});
+        var p = ringPose(r, x.s - x.back, x.vs.wb, {});
         var d = Math.hypot(p.x - cx, p.z - cz);
         if(d > rad) return;
         var v = {id: id, kind: x.veh.kind, x: p.x, y: p.y, z: p.z, yaw: p.yaw, speed: dt > 0 ? Math.max(0, x.v - (x.l - x.l0)/dt) : x.v, d: d};
         if(x.veh.kind === "car"){
-          v.paint = PAINT[x.veh.paint];
-          var room = roomAt(r, x.s), pull = 0;
+          var ty = x.cs.type, pi = x.veh.paint;
+          v.type = ty;
+          v.paint = ty === "taxi" ? TAXI : ty === "van" ? VAN_PAINT[pi % VAN_PAINT.length] : ty === "lorry" ? LORRY_PAINT[pi % LORRY_PAINT.length] : ty === "bike" ? BIKE_PAINT[pi % BIKE_PAINT.length] : PAINT[pi];
+          // a scooter or bike rides the kerb side of the lane (its right edge where a car's is), back in line in a box
+          var room = roomAt(r, x.s), pull = 0, kerb = TWO[ty] ? (SPEC.car.wid - x.vs.wid)/2*taperAt(r, x.s) : 0;
           if(room > 0) evs.forEach(function(e){ if(e.speed > 0.5) pull = Math.max(pull, room*smooth((EV_YIELD - Math.hypot(e.x - p.x, e.z - p.z))/15)); });
-          if(pull > 0){ v.x += -Math.cos(p.yaw)*pull; v.z += Math.sin(p.yaw)*pull; v.pull = pull; }
+          var lat = Math.max(pull, kerb);
+          if(lat > 0){ v.x += -Math.cos(p.yaw)*lat; v.z += Math.sin(p.yaw)*lat; }
+          if(pull > 0) v.pull = pull;
         } else {
           v.line = r.id;
           if(x.veh.kind === "tram") v.parts = sections(spec).map(function(sc){ var tp = partPose(r, x.s, sc[0], spec.wb, {}); return {x: tp.x, y: tp.y, z: tp.z, yaw: tp.yaw}; });
@@ -1278,12 +1396,16 @@ function create(doc, o){
     }
     // how far a car may pull over at s: its lane's room, easing to nothing over PULL_TAPER m toward
     // either end of the lane, so a car is back in line before it turns through a box
-    function roomAt(r, s){
+    function roomAt(r, s){ var i = laneAt(r, s); return i < 0 ? 0 : (r.lanes[i].room || 0)*taperAt(r, s); }
+    // the lane (index) a route is on at s, -1 in a box; and 0..1 easing to nothing over PULL_TAPER m to either end
+    function laneAt(r, s){
       var Lr = r.pl.len, sm = mod(s, Lr), R = r.ranges, lo = 0, hi = R.length - 1;
       while(lo < hi){ var mid = (lo + hi + 1) >> 1; if(R[mid][0] <= sm) lo = mid; else hi = mid - 1; }
-      var rg = R[lo];
-      if(sm < rg[0] || sm > rg[1]) return 0;
-      return (r.lanes[lo].room || 0)*smooth(Math.min(sm - rg[0], rg[1] - sm)/PULL_TAPER);
+      return sm < R[lo][0] || sm > R[lo][1] ? -1 : lo;
+    }
+    function taperAt(r, s){
+      var i = laneAt(r, s), sm = mod(s, r.pl.len);
+      return i < 0 ? 0 : smooth(Math.min(sm - r.ranges[i][0], r.ranges[i][1] - sm)/PULL_TAPER);
     }
     function hasLag(list){ for(var i = 0; i < list.length; i++) if(lag[list[i].id]) return true; return false; }
     rings.forEach(function(r){ if(r.cars.length) run(r, r.cars, SPEC.car); });
@@ -1366,7 +1488,10 @@ function create(doc, o){
     lines: function(){ return lines.map(function(r){ return {id: r.id, kind: r.kind, tier: r.tier, lap: r.prof.T, headway: r.headway, vehicles: r.vehicles.length,
                                                               stops: r.prof.stops.map(function(st){ return {id: st.id, arr: st.arr, dep: st.dep}; })}; }); },
     info: function(){ return {H: H, rings: rings.length, cars: cars.length, slots: totalSlots, lines: lines.length, overfull: overfull, errors: errors.slice(), dropped: dropped,
-                              slotted: Object.keys(nodeSlots).length}; },
+                              slotted: Object.keys(nodeSlots).length, life: life}; },
+    // [3.21] every car's lap state at timeMs (out or not, its type, the local hour its lap started), and what is closed
+    cars: function(timeMs){ var t = num(timeMs, 0)/1000; return cars.map(function(c){ var q = carState(c, t); return {id: c.id, ring: c.ring.id, show: q.show, type: q.type, hour: q.hour, group: c.grp || null}; }); },
+    closed: function(timeMs){ return closedFn ? closedAt(localOf(num(timeMs, 0))) : {}; },
     layout: layout, doc: doc, seed: seed,
     _: {rings: rings, lines: lines, nodeSlots: nodeSlots, atNode: atNode, edges: edges, ringPose: ringPose, lag: function(){ return lag; },
         sites: sites, stopIndex: stopIndex, partPose: partPose, sections: sections, mod: mod,
@@ -1662,11 +1787,13 @@ function service(sim, kind, opts){
 // is picked by its id, so the same car always sounds the same.
 var VOICE = {bus: "diesel", fire: "diesel", ambulance: "diesel", police: "v8"};
 var CAR_VOICES = ["turbo", "turbo", "turbo4", "six", "electric", "diesel"];
+var TYPE_VOICE = {van: "diesel", lorry: "diesel", scooter: "electric", bike: "electric"};     // [3.21] by city-life type
 function soundOf(v){
   v = v || {};
   var k = Object.prototype.hasOwnProperty.call(SPEC, v.kind) ? v.kind : "car", sk = k === "bus" ? "bus" : k === "tram" ? "tram" : "vehicle";
-  var voice = typeof v.voice === "string" ? v.voice : k === "tram" ? null : k === "car" ? CAR_VOICES[hash32(v.id) % CAR_VOICES.length] : VOICE[k];
-  var s = clamp(num(v.speed, 0)/SPEC[k].vmax, 0, 1.2), g = Math.min(2, Math.floor(s*3)), u = s*3 - g;
+  var ty = k === "car" && TYPE_VOICE[v.type] ? v.type : null;
+  var voice = typeof v.voice === "string" ? v.voice : k === "tram" ? null : ty ? TYPE_VOICE[ty] : k === "car" ? CAR_VOICES[hash32(v.id) % CAR_VOICES.length] : VOICE[k];
+  var s = clamp(num(v.speed, 0)/SPEC[ty || k].vmax, 0, 1.2), g = Math.min(2, Math.floor(s*3)), u = s*3 - g;
   var rpm = voice === "electric" ? 900 + 5000*s : g ? 1900 + 2300*u : 950 + 3000*u;
   return {sk: sk, voice: voice, rpm: Math.round(rpm)};
 }
@@ -1751,6 +1878,42 @@ function view(c){
     }
     return merge(d);
   }
+  // [3.21] city life's types: one merged, vertex-coloured body each, painted per instance (the paint multiplies the
+  // light parts; glass, tyres and riders stay dark). A taxi is the car in taxi yellow with a lit roof sign (a beacon).
+  function vanGeo(){
+    var d = [[side([[-2.3, 0.32], [2.3, 0.32], [2.3, 0.8], [1.8, 1.25], [1.4, 2.05], [-2.3, 2.05]], 1.94), 0xffffff],
+             [side([[1.82, 1.25], [1.42, 1.98], [1.3, 1.98], [1.68, 1.25]], 1.8), 0x28323e],
+             [box(1.97, 0.5, 0.75), 0x28323e, 0, 1.55, 1.1], [box(1.9, 0.18, 0.12), 0x2a2c30, 0, 0.4, 2.32], [box(1.9, 0.18, 0.12), 0x2a2c30, 0, 0.4, -2.32],
+             [box(0.32, 0.14, 0.04), 0xfff4d0, 0.62, 0.78, 2.31], [box(0.32, 0.14, 0.04), 0xfff4d0, -0.62, 0.78, 2.31],
+             [box(0.22, 0.3, 0.04), 0xc0202a, 0.78, 0.9, -2.31], [box(0.22, 0.3, 0.04), 0xc0202a, -0.78, 0.9, -2.31], [box(0.02, 1.4, 0.02), 0x30343a, 0, 1.2, -2.31]];
+    wheels(d, 0.36, 0.26, [-0.86, 0.86], [-1.45, 1.5]);
+    return merge(d);
+  }
+  // a rigid lorry: a cab, a box body behind it, the chassis and three axles
+  function lorryGeo(){
+    var d = [[box(2.3, 1.9, 1.75), 0xffffff, 0, 1.55, 2.5], [box(2.32, 0.75, 0.06), 0x28323e, 0, 1.95, 3.38], [box(2.33, 0.6, 1.0), 0x28323e, 0, 1.95, 2.7],
+             [box(2.4, 2.6, 4.7), 0xe9e8e2, 0, 2.05, -0.95], [box(2.0, 0.3, 6.7), 0x2a2c30, 0, 0.62, 0], [box(2.3, 0.3, 0.14), 0x2a2c30, 0, 0.62, 3.38],
+             [box(0.36, 0.16, 0.04), 0xfff4d0, 0.8, 0.95, 3.39], [box(0.36, 0.16, 0.04), 0xfff4d0, -0.8, 0.95, 3.39],
+             [box(0.3, 0.2, 0.04), 0xc0202a, 0.95, 0.8, -3.32], [box(0.3, 0.2, 0.04), 0xc0202a, -0.95, 0.8, -3.32], [box(0.03, 2.4, 0.03), 0x9aa0a8, 0, 2.05, -3.31]];
+    wheels(d, 0.48, 0.34, [-1.0, 1.0], [2.4, -1.7, -2.75]);
+    return merge(d);
+  }
+  // a scooter and its rider
+  function scooterGeo(){
+    var d = [[box(0.36, 0.14, 0.9), 0xffffff, 0, 0.32, 0], [box(0.42, 0.62, 0.12), 0xffffff, 0, 0.62, 0.5, -0.25], [box(0.44, 0.36, 0.7), 0xffffff, 0, 0.56, -0.38],
+             [box(0.62, 0.05, 0.05), 0x2a2c30, 0, 1.0, 0.58], [box(0.06, 0.55, 0.06), 0x2a2c30, 0, 0.75, 0.6, -0.25], [box(0.12, 0.08, 0.04), 0xfff4d0, 0, 0.82, 0.72],
+             [box(0.4, 0.58, 0.28), 0x3a4250, 0, 1.12, -0.2, 0.15], [box(0.27, 0.29, 0.3), 0x20242a, 0, 1.58, -0.12], [box(0.36, 0.18, 0.5), 0x2b3340, 0, 0.82, -0.05]];
+    wheels(d, 0.24, 0.12, [0], [-0.6, 0.62]);
+    return merge(d);
+  }
+  // a bicycle and its rider, leaning on the bars
+  function bikeGeo(){
+    var d = [[box(0.05, 0.05, 0.62), 0xffffff, 0, 0.78, 0.02], [box(0.05, 0.05, 0.72), 0xffffff, 0, 0.55, 0.12, -0.75], [box(0.05, 0.5, 0.05), 0xffffff, 0, 0.6, -0.26],
+             [box(0.5, 0.04, 0.04), 0x2a2c30, 0, 0.98, 0.42], [box(0.16, 0.05, 0.24), 0x2a2c30, 0, 0.88, -0.28],
+             [box(0.36, 0.55, 0.25), 0x3f6fa0, 0, 1.22, -0.08, 0.6], [box(0.24, 0.26, 0.26), 0x2a2420, 0, 1.6, 0.18], [box(0.32, 0.5, 0.18), 0x2b3340, 0, 0.66, -0.12, -0.3]];
+    wheels(d, 0.34, 0.05, [0], [-0.52, 0.52]);
+    return merge(d);
+  }
   function inst(name, geo, cap, mat){
     var m = new THREE.InstancedMesh(geo, mat, cap);
     m.count = 0; m.name = "traffic-" + name; m.frustumCulled = false; m.castShadow = true; m.receiveShadow = true;
@@ -1765,16 +1928,18 @@ function view(c){
   inst("bus", BG.paint, CAP.bus, paintM); inst("busDetail", BG.detail, CAP.bus, vc);
   inst("tram", TG.paint, CAP.tram*2, paintM); inst("tramDetail", TG.detail, CAP.tram*2, vc);
   EV_KINDS.forEach(function(k){ inst(k, evGeo(k), CAP[k], vc); });
-  inst("beacon", new THREE.BoxGeometry(0.28, 0.14, 0.2), CAP.fire*2 + CAP.ambulance*2 + CAP.police*2, beaconM);
+  inst("van", vanGeo(), CAP.van, paintM); inst("lorry", lorryGeo(), CAP.lorry, paintM); inst("scooter", scooterGeo(), CAP.scooter, paintM); inst("bike", bikeGeo(), CAP.bike, paintM);
+  inst("beacon", new THREE.BoxGeometry(0.28, 0.14, 0.2), CAP.fire*2 + CAP.ambulance*2 + CAP.police*2 + CAP.taxi, beaconM);   // (and the taxis' roof signs)
   var BEACON_Y = {fire: 2.6, ambulance: 2.8, police: 1.55}, BEACON_Z = {fire: 3.3, ambulance: 2.6, police: -0.2};
 
-  function put(m, i, x, y, z, yaw, hex){
-    e.set(0, yaw, 0); q.setFromEuler(e); p.set(x, y, z); mtx.compose(p, q, sc); m.setMatrixAt(i, mtx);
+  var sc2 = new THREE.Vector3(1, 1, 1);
+  function put(m, i, x, y, z, yaw, hex, sx, sy, sz){
+    e.set(0, yaw, 0); q.setFromEuler(e); p.set(x, y, z); mtx.compose(p, q, sx ? sc2.set(sx, sy, sz) : sc); m.setMatrixAt(i, mtx);
     if(hex != null){ col.setHex(hex); m.setColorAt(i, col); }
   }
   // opts.hide: {vehicleId: true} for the vehicles a detailed model draws instead (games/hqcoach.js near())
   function update(vehicles, timeMs, opts){
-    var n = {car: 0, bus: 0, tram: 0, fire: 0, ambulance: 0, police: 0, beacon: 0}, flash = Math.floor(num(timeMs, 0)/250) & 1;
+    var n = {car: 0, bus: 0, tram: 0, fire: 0, ambulance: 0, police: 0, beacon: 0, van: 0, lorry: 0, scooter: 0, bike: 0}, flash = Math.floor(num(timeMs, 0)/250) & 1;
     var hide = opts && opts.hide;
     (vehicles || []).forEach(function(v){
       var k = v.kind;
@@ -1789,8 +1954,19 @@ function view(c){
         });
         return;
       }
+      // [3.21] a van, lorry, scooter or bike on its own body
+      if(k === "car" && v.type && v.type !== "car" && v.type !== "taxi" && meshes[v.type]){
+        if(n[v.type] < CAP[v.type]) put(meshes[v.type], n[v.type]++, v.x, v.y, v.z, v.yaw, v.paint != null ? v.paint : 0xf2f2ee);
+        return;
+      }
       if(n[k] >= CAP[k]) return;
-      if(k === "car"){ put(meshes.car, n.car, v.x, v.y, v.z, v.yaw, v.paint != null ? v.paint : 0x8a9199); put(meshes.carDetail, n.car, v.x, v.y, v.z, v.yaw); }
+      if(k === "car"){
+        put(meshes.car, n.car, v.x, v.y, v.z, v.yaw, v.paint != null ? v.paint : 0x8a9199); put(meshes.carDetail, n.car, v.x, v.y, v.z, v.yaw);
+        if(v.type === "taxi" && n.beacon < meshes.beacon.instanceMatrix.count){
+          var ts = Math.sin(v.yaw), tc = Math.cos(v.yaw);
+          put(meshes.beacon, n.beacon++, v.x - 0.36*ts, v.y + 1.87, v.z - 0.36*tc, v.yaw, TAXI_SIGN, 2.1, 1.3, 1.2);
+        }
+      }
       else if(k === "bus"){ put(meshes.bus, n.bus, v.x, v.y, v.z, v.yaw, LINE_COL[hash32(v.line) % LINE_COL.length]); put(meshes.busDetail, n.bus, v.x, v.y, v.z, v.yaw); }
       else {
         put(meshes[k], n[k], v.x, v.y, v.z, v.yaw);

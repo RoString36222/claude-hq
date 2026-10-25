@@ -231,8 +231,39 @@ function hotspots(W){
     else if(k === "market") out.push({id: "market:" + id, kind: "market", x: x, z: z, r: 12, cap: 30, hours: [[7, 14]], days: [3, 6]});
     else if(k === "park" || k === "fountain" || k === "skatepark") out.push({id: "park:" + id, kind: k === "park" ? "jog" : "linger", x: x, z: z, r: 14, cap: 10, hours: k === "park" ? [[6, 9], [17, 20]] : [[9, 21]]});
   });
+  parkRuns(W, out);
   if(SPOT_CACHE) SPOT_CACHE.set(W, out);
   return out;
+}
+// [crowds] where no park site has a jog spot, the footpath beside parkland is the jogging track: the three longest
+// footpaths (60 m and more) with park (a district named park, not its lake) along at least 80% of their park side,
+// one per street. A run carries its street and side: {edge, side (+1 the left of a->b)}, x, z its middle, r half its length.
+function parkRuns(W, out){
+  if(out.some(function(s){ return s.kind === "jog"; })) return;
+  var Q = WQ(), runs = [];
+  (W.edges || []).forEach(function(e){
+    if(cm(e.walk) < 1.5 || road(e.cls).kind === "fast") return;
+    var P = edgePts(e), len = 0;
+    for(var i = 1; i < P.length; i++) len += Math.hypot(P[i].x - P[i - 1].x, P[i].z - P[i - 1].z);
+    if(P.length < 2 || len < 60) return;
+    [1, -1].forEach(function(sg){
+      var n = 0, k = 0, mid = null;
+      walkAlong(P, 10, 5, 5, function(p, s){
+        var o = sg*(cm(e.width)/2 + 6), x = p.x + p.lx*o, z = p.z + p.lz*o;
+        k++;
+        if(Q.districtAt(W, x, z).name === "park" && Q.surfaceAt(W, x, z) !== "water") n++;
+        if(!mid || Math.abs(s - len/2) < Math.abs(mid.s - len/2)) mid = {s: s, x: p.x, z: p.z};
+      });
+      if(k && n >= 0.8*k) runs.push({e: e, sg: sg, len: len, mid: mid});
+    });
+  });
+  runs.sort(function(a, b){ return b.len - a.len || a.e.id - b.e.id || b.sg - a.sg; });
+  var used = {};
+  runs.forEach(function(R){
+    if(used[R.e.id] || Object.keys(used).length >= 3) return;
+    used[R.e.id] = 1;
+    out.push({id: "run:" + R.e.id + ":" + R.sg, kind: "jog", x: R.mid.x, z: R.mid.z, r: R.len/2, cap: 8, hours: [[6, 9], [17, 20]], edge: R.e.id, side: R.sg});
+  });
 }
 function hourOf(ms){ return (((ms % 864e5) + 864e5) % 864e5)/36e5; }
 function weekday(ms){ return ((Math.floor(ms/864e5) % 7) + 7 + 4) % 7; }      // 1970-01-01 was a Thursday

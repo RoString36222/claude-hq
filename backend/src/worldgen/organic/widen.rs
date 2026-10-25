@@ -45,7 +45,10 @@ const SITE_CLEAR_CM: i64 = 10;
 pub struct Paving<'a> {
     p: &'a Profile,
     g: &'a Graph,
-    seed: u64,
+    /// Per graph edge, the widths it may be paved at (`ladder`), worked out once.
+    ladders: Vec<Vec<(i64, i64)>>,
+    /// The farthest any road's paved half reaches (cm), for `near`.
+    reach: i64,
     /// How many steps down its ladder graph edge e is paved (a lot it would reach cannot
     /// give way): 0 its street's own width, the last its layout width.
     pub narrow: Vec<u8>,
@@ -72,14 +75,14 @@ impl Paving<'_> {
     /// The widths (cm, with sidewalks) graph edge e may be paved at, widest first: its
     /// street's tier and the narrower ones, the profile's paved width, the layout width
     /// (its sidewalks in the paved width's proportion).
-    fn ladder(&self, e: u32) -> Vec<(i64, i64)> {
-        let (p, ge) = (self.p, &self.g.edges[e as usize]);
+    fn ladder(p: &Profile, g: &Graph, seed: u64, e: u32) -> Vec<(i64, i64)> {
+        let ge = &g.edges[e as usize];
         let (tiers, paved, walk, layout) = match ge.kind {
             Kind::Arterial => (p.arterial_tiers, p.paved_avenue_cm, p.avenue_walk_cm, p.avenue_cm),
             Kind::Local => (p.local_tiers, p.paved_road_cm, p.street_walk_cm, p.road_cm),
             Kind::Water => return vec![(0, 0)],
         };
-        let mut out: Vec<(i64, i64)> = if tiers.is_empty() { vec![] } else { tiers[pick(self.seed, ge.road, tiers)..].iter().map(|t| (t.cm, t.walk_cm)).collect() };
+        let mut out: Vec<(i64, i64)> = if tiers.is_empty() { vec![] } else { tiers[pick(seed, ge.road, tiers)..].iter().map(|t| (t.cm, t.walk_cm)).collect() };
         if out.last().is_none_or(|l| l.0 > paved) {
             out.push((paved, walk));
         }
@@ -91,7 +94,7 @@ impl Paving<'_> {
 
     /// The full width (cm) graph edge e is paved at and its sidewalks.
     pub fn width(&self, e: u32) -> (i64, i64) {
-        let l = self.ladder(e);
+        let l = &self.ladders[e as usize];
         l[(self.narrow[e as usize] as usize).min(l.len() - 1)]
     }
 
@@ -110,7 +113,7 @@ impl Paving<'_> {
 
     /// Pave graph edge e a step narrower: false if it is at its layout width already.
     fn step_down(&mut self, e: u32) -> bool {
-        let n = self.ladder(e).len() as u8;
+        let n = self.ladders[e as usize].len() as u8;
         let k = &mut self.narrow[e as usize];
         if *k + 1 >= n {
             return false;
@@ -121,8 +124,7 @@ impl Paving<'_> {
 
     /// The road segments within reach of the box round `pts`.
     fn near(&self, pts: &[P]) -> Vec<Seg> {
-        let p = self.p;
-        let r = p.local_tiers.iter().chain(p.arterial_tiers).map(|t| t.cm).fold(p.paved_avenue_cm.max(p.paved_road_cm), i64::max);
+        let r = self.reach;
         let (x0, x1) = (pts.iter().map(|q| q.0).min().unwrap() - r, pts.iter().map(|q| q.0).max().unwrap() + r);
         let (z0, z1) = (pts.iter().map(|q| q.1).min().unwrap() - r, pts.iter().map(|q| q.1).max().unwrap() + r);
         let g = self.g;
@@ -234,7 +236,9 @@ fn poly_of(q: &[P]) -> Option<Vec<[i64; 2]>> {
 /// sites and the HQ pool set): trim every lot and block, step the sites back. The
 /// paving says which roads kept their layout width.
 pub fn widen<'a>(p: &'a Profile, seed: u64, t: &Terrain, g: &'a Graph, blocks: &mut [Block], lots: &mut [Lot], sites: &mut [Site]) -> Paving<'a> {
-    let mut pv = Paving { p, g, seed, narrow: vec![0; g.edges.len()] };
+    let ladders: Vec<Vec<(i64, i64)>> = (0..g.edges.len() as u32).map(|e| Paving::ladder(p, g, seed, e)).collect();
+    let reach = p.local_tiers.iter().chain(p.arterial_tiers).map(|t| t.cm).fold(p.paved_avenue_cm.max(p.paved_road_cm), i64::max);
+    let mut pv = Paving { p, g, ladders, reach, narrow: vec![0; g.edges.len()] };
     if p.paved_road_cm == p.road_cm && p.paved_avenue_cm == p.avenue_cm && p.local_tiers.is_empty() && p.arterial_tiers.is_empty() {
         return pv;
     }

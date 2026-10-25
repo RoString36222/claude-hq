@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.20.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.21.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,16 @@ and feature guide.
 
 ## Changelog
 
+- **3.21.0 — A city that lives.** Built around the planned City Gen v4, never into it: everything reads the finished
+  world through one adapter (games/citylife.js), so it works on today's worlds and on v4's the day it ships. Every
+  building has a use (homes, offices, warehouses, workshops) and a ground floor: shopfronts with awnings and signs,
+  cafes with striped awnings, office lobbies, loading bays; rooftops carry AC units, stair housings, antennas and water
+  tanks; windows light by use and hour (offices dark at night, homes lit in the evening, shops in opening hours).
+  Footpaths get benches, bins, bike racks, newsstands, food stalls and cafe tables. Residents work in the shops and
+  cafes and lunch there; people sit on terraces, queue at stalls, wait at stops, gather at the school gate at 08:00
+  and 15:00, jog in the park, crowd the stadium on Saturdays, and parade on Sundays. Traffic follows the hour (rush
+  hours, quiet nights) and the place: taxis, vans, lorries, scooters and bikes. A street market on Wednesdays and
+  Saturdays, roadworks on weekdays and Sunday's parade close their streets, the same for everyone.
 - **3.20.1 — Big-city roads, and buildings that stay solid.** The live City's streets (generator @3, the Commons
   and every personal island) are paved wider, each street at its own width: a 7.5 m two-lane side street, a 9.5 m
   street or an 11.5 m wide one, a 14.5 m four-lane avenue or a 17.5 m boulevard, with dashed lane lines between the

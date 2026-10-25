@@ -50,10 +50,10 @@ function road(cls){ var r = ROAD[normCls(cls)]; return r ? {kind: r.kind, speed:
 
 /* ---------- the adapter: districts ---------- */
 var GROUP = {downtown: "centre", commercial: "centre", finance: "centre", oldtown: "centre", plaza: "civic",
-  office: "work", tech: "work", biotech: "work", studio: "work", campus: "work",
+  office: "work", tech: "work", biotech: "work", studio: "work", campus: "work", media: "work",
   residential: "home", suburb: "home", village: "home",
-  industrial: "industry", port: "industry", docks: "industry",
-  park: "green", forest: "green", farmland: "green", wild: "green",
+  industrial: "industry", port: "industry", docks: "industry", logistics: "industry",
+  park: "green", forest: "green", farmland: "green", farm: "green", wild: "green", water: "green",
   civic: "civic", hq: "civic", street: "civic"};
 function groupOfName(n){ return GROUP[String(n || "").toLowerCase()] || "home"; }
 
@@ -323,13 +323,20 @@ var EV_CACHE = typeof WeakMap === "function" ? new WeakMap() : null;
 function plan(W){
   var P = EV_CACHE && EV_CACHE.get(W);
   if(P) return P;
-  var Q = WQ(), byNode = {}, mainE = [], streetE = [];
+  var Q = WQ(), byNode = {}, mainE = [], streetE = [], pair = {}, transit = {};
+  // streets a bus or tram line runs on (its path is a run of node ids): roadworks never close one, as buses and trams
+  // keep their timetables through closures
+  (W.edges || []).forEach(function(e){ pair[Math.min(e.a, e.b) + ":" + Math.max(e.a, e.b)] = e.id; });
+  ((W.transit && W.transit.lines) || []).forEach(function(l){
+    var P = l.path || [];
+    for(var i = 1; i < P.length; i++){ var id = pair[Math.min(P[i - 1], P[i]) + ":" + Math.max(P[i - 1], P[i])]; if(id != null) transit[id] = true; }
+  });
   (W.edges || []).forEach(function(e){
     var k = road(e.cls).kind, len = 0, p = e.pts || [];
     for(var i = 3; i + 2 < p.length; i += 3) len += Math.hypot(p[i] - p[i - 3], p[i + 2] - p[i - 1])/100;
     var E = {id: e.id, a: e.a, b: e.b, kind: k, len: len, mid: {x: cm(p[3*Math.floor(p.length/6)]), z: cm(p[3*Math.floor(p.length/6) + 2])}};
     (byNode[e.a] = byNode[e.a] || []).push(E); (byNode[e.b] = byNode[e.b] || []).push(E);
-    if(k === "main") mainE.push(E); else if(k !== "fast" && len >= 30) streetE.push(E);
+    if(k === "main") mainE.push(E); else if(k !== "fast" && len >= 30 && !transit[e.id]) streetE.push(E);
   });
   var site = function(kind){ var s = (W.sites || []).filter(function(x){ return x.kind === kind; })[0]; return s ? {x: cm(s.x), z: cm(s.z)} : null; };
   var mk = site("market"), market = null;

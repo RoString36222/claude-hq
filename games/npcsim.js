@@ -743,16 +743,16 @@ function create(doc, opts){
     } else if(s.kind === "queue"){
       // one at the stall's counter (the footpath side), the rest in a line along the kerb behind
       var sg = xh(id + ":q") < 0.5 ? 1 : -1, hx = s.x - fx*1.1, hz = s.z - fz*1.1;
-      for(k = 0; k < cap; k++) pts.push(k ? spotPt(hx + sg*lx*0.75*k, hz + sg*lz*0.75*k, facing(-sg*lx, -sg*lz)) : spotPt(hx, hz, facing(fx, fz)));
+      for(k = 0; k < cap; k++) pts.push(k ? spotPt(hx + sg*lx*1.0*k, hz + sg*lz*1.0*k, facing(-sg*lx, -sg*lz)) : spotPt(hx, hz, facing(fx, fz)));
     } else if(s.kind === "wait" || s.kind === "gate" || s.kind === "event"){
       F = frameAt(s.x, s.z, s.kind === "wait" ? 30 : 80);
       if(F){
-        var rows = s.kind === "wait" ? 1 : F.walk >= 2.6 ? 3 : 2, step = s.kind === "event" ? 1.0 : s.kind === "gate" ? 2.0 : 0.95;
+        var rows = s.kind === "wait" ? 1 : F.walk >= 2.6 ? 3 : 2, step = s.kind === "event" ? 1.3 : s.kind === "gate" ? 2.0 : 1.25;
         for(k = 0; k < cap; k++){
           // gate: pairs, a parent then a child beside them; the stop: one line facing the road; the stadium: rows
           var kid = s.kind === "gate" && (k & 1), g = s.kind === "gate" ? k >> 1 : k, col = Math.floor(g/rows), row = g % rows;
           a = (col & 1 ? 1 : -1)*Math.ceil(col/2)*step + (xh(id + ":a:" + k) - 0.5)*0.4 + (kid ? 0.55 : 0);
-          d = kerbOut(F, s.kind === "wait" ? 0.9 + (xh(id + ":d:" + k) - 0.5)*0.3 : 0.7 + row*0.9 + (kid ? 0.25 : 0));
+          d = kerbOut(F, s.kind === "wait" ? 0.9 + (xh(id + ":d:" + k) - 0.5)*0.3 : 0.7 + row*1.15 + (kid ? 0.25 : 0));
           var px = F.x + F.ux*a + F.nx*d, pz = F.z + F.uz*a + F.nz*d, jit = (xh(id + ":y:" + k) - 0.5)*0.7;
           var yaw = s.kind === "wait" ? facing(-F.nx, -F.nz) + jit : facing(F.nx, F.nz) + jit;    // the road; the gate or the stadium
           var P = spotPt(px, pz, yaw, "idle", kid ? 0.62 : 1);
@@ -834,7 +834,7 @@ function create(doc, opts){
   }
   // the parade (citylife.events kind "parade", Sunday 15:00-16:30): eight rows of four walking its route at 0.9 m/s
   // from its start, turning back at the end onto the other half of the closed carriageway
-  var PARADE_ROWS = 8, PARADE_ACROSS = 4, PARADE_V = 0.9, PARADE_GAP = 1.8;
+  var PARADE_ROWS = 8, PARADE_ACROSS = 4, PARADE_V = 0.9, PARADE_GAP = 2.2;   // (the Kenney figures are broad: room between them)
   function paradeRoute(ev){
     if(XS.parade && XS.parade.key === ev.edges.join(",")) return XS.parade;
     var F = CL.facts(LW), X = [], Y = [], Z = [], node = null;
@@ -860,7 +860,7 @@ function create(doc, opts){
     if(walked < 0 || !(R.len > 1)) return false;
     var pp = pingpong(walked, R.len), i = 0; while(i < R.c.length - 2 && R.c[i + 1] < pp.p) i++;
     var l = R.c[i + 1] - R.c[i], f = l > 0 ? (pp.p - R.c[i])/l : 0, ux = (R.x[i + 1] - R.x[i])/(l || 1), uz = (R.z[i + 1] - R.z[i])/(l || 1);
-    var off = (0.8 + col*1.2)*pp.dir;      // on the left half of the way it goes (the left of a->b is (uz, -ux)): back, the other half
+    var off = (0.8 + col*1.5)*pp.dir;      // on the left half of the way it goes (the left of a->b is (uz, -ux)): back, the other half
     o.x = R.x[i] + (R.x[i + 1] - R.x[i])*f + uz*off; o.z = R.z[i] + (R.z[i + 1] - R.z[i])*f - ux*off;
     o.y = R.y[i] + (R.y[i + 1] - R.y[i])*f + ROAD_UP; o.yaw = Math.atan2(ux*pp.dir, uz*pp.dir);
     o.anim = "walk"; o.speed = PARADE_V; o.size = 1;

@@ -12,7 +12,8 @@
  *   landUse(W)                lot id -> {use, ground, group, corner, front}: use "home" | "office" | "warehouse" |
  *                             "workshop"; ground "door" | "shop" | "cafe" | "lobby" | "loading"
  *   litCode(use, r) / LIT_GLSL  a window's lit attribute for its use (r: the window's own 0..1), and the shader that
- *                             lights it by the hour (offices dark at night, homes lit in the evening)
+ *                             lights it by the hour (offices dark at night, homes lit in the evening); litCode("shop" |
+ *                             "cafe", r) a shopfront's, lit in its opening hours (shops 9-20, cafes 7-23); litAt in JS
  *   furniture(W)              benches, bins, bike racks, newsstands, food stalls and cafe tables along the kerb-side
  *                             strip of every footpath, chosen by what the lots there are for
  *   hotspots(W)               where people gather and when: cafe terraces, food stalls, stops, school gates, the park,
@@ -131,21 +132,27 @@ function landUse(W){
 }
 
 /* ---------- lit windows by use and hour ---------- */
-// lit attribute: 0 never, 1 lit every night (the old flag, kept), 2 + i + r: use i (USES order), lit when r is under
-// that use's share at that hour. LIT_GLSL is the same table for the building shader (uHour, 0..24).
+// lit attribute: 0 never, 1 lit every night (the old flag, kept), 2 + i + r: kind i of LIT (the four USES, then the
+// opening hours of a shop and of a cafe), lit when r is under that kind's share at that hour. LIT_GLSL is the same
+// table for the building shaders (uHour, 0..24); tests/test_citylife.py holds the two to each other.
+var LIT = USES.concat(["shop", "cafe"]);
 function litShare(i, h){
   h = ((h % 24) + 24) % 24;
   if(i === 0) return h >= 18 && h < 23.5 ? 0.72 : h >= 6 && h < 8 ? 0.45 : h >= 23.5 || h < 6 ? 0.08 : 0.18;   // home
   if(i === 1) return h >= 8 && h < 19 ? 0.88 : h >= 19 && h < 22 ? 0.3 : 0.05;                                 // office
-  return h >= 6 && h < 18 ? 0.55 : 0.06;                                                                     // warehouse, workshop
+  if(i <= 3) return h >= 6 && h < 18 ? 0.55 : 0.06;                                                          // warehouse, workshop
+  if(i === 4) return h >= 9 && h < 20 ? 0.97 : 0.04;                                                         // a shop: open 9-20
+  return h >= 7 && h < 23 ? 0.97 : 0.03;                                                                     // a cafe: open 7-23
 }
-function litCode(use, r){ var i = USES.indexOf(use); return i < 0 ? 1 : 2 + i + Math.min(0.999, Math.max(0, +r || 0)); }
-function litAt(code, h){ if(!(code > 0)) return false; if(code < 2) return true; var i = Math.floor(code - 2); return code - 2 - i < litShare(i, h); }
+function litCode(use, r){ var i = LIT.indexOf(use); return i < 0 ? 1 : 2 + i + Math.min(0.999, Math.max(0, +r || 0)); }
+function litAt(code, h){ if(!(code > 0)) return false; if(code < 2) return true; var i = Math.floor(code - 2); return code - 2 - i < litShare(i, ((h % 24) + 24) % 24); }
 var LIT_GLSL = [
   "float hqLitShare(float i, float h){",
   "  if(i < 0.5) return (h >= 18.0 && h < 23.5) ? 0.72 : (h >= 6.0 && h < 8.0) ? 0.45 : (h >= 23.5 || h < 6.0) ? 0.08 : 0.18;",
   "  if(i < 1.5) return (h >= 8.0 && h < 19.0) ? 0.88 : (h >= 19.0 && h < 22.0) ? 0.3 : 0.05;",
-  "  return (h >= 6.0 && h < 18.0) ? 0.55 : 0.06;",
+  "  if(i < 3.5) return (h >= 6.0 && h < 18.0) ? 0.55 : 0.06;",
+  "  if(i < 4.5) return (h >= 9.0 && h < 20.0) ? 0.97 : 0.04;",
+  "  return (h >= 7.0 && h < 23.0) ? 0.97 : 0.03;",
   "}",
   "float hqLitAt(float code, float h){",
   "  if(code < 0.5) return 0.0;",
@@ -331,7 +338,7 @@ function events(W, ms){
 function closed(W, ms){ var o = {}; events(W, ms).forEach(function(ev){ ev.edges.forEach(function(id){ o[id] = ev.kind; }); }); return o; }
 
 HQV.cityLife = {ROAD: ROAD, normCls: normCls, road: road, groupOfName: groupOfName, facts: facts,
-  USES: USES, GROUNDS: GROUNDS, landUse: landUse, litShare: litShare, litCode: litCode, litAt: litAt, LIT_GLSL: LIT_GLSL,
+  USES: USES, GROUNDS: GROUNDS, LIT: LIT, landUse: landUse, litShare: litShare, litCode: litCode, litAt: litAt, LIT_GLSL: LIT_GLSL,
   furniture: furniture, hotspots: hotspots, crowd: crowd, hourOf: hourOf, weekday: weekday,
   demand: demand, mix: mix, pick: pick, events: events, closed: closed};
 })();

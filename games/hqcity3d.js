@@ -968,6 +968,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(apL && AF.floorAt(apL, x, z) != null) return apBlocked(x, z) || !!apPlaneAt(x, z, 0.4);   // AIR: the platform (past the world's edge too), its aircraft
     if(apP && apBlocked(x, z)) return true;                                    // AIR: the airport's buildings on land
     if(WD.blockedAt(W, x, z)) return true;
+    if(wb && wb.furnitureAt && wb.furnitureAt(x, z)) return true;           // [city life] benches, stalls, cafe tables
     if(bridges && bridges.blockedAt(x, z)) return true;                      // an opening bridge's gap or barrier
     if(sea && !sea.land(x, z)) return true;                                    // the sea: take a boat
     if(civics.length && civicBlocked(x, z)) return true;
@@ -3567,6 +3568,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(mode === "classic"){ fadeAcc += dt; if(fadeAcc > FADE_EVERY){ fadeAcc = 0; cutawayGoals(); } }
     hqs.concat(views).forEach(function(E){ fadeStep(E, dt, k); });
     if(wb && cam && cam.frustum){ if(V2) cam.time = Date.now()/1000; wb.update(cam); }   // the shared clock: the same water everywhere
+    if(wb && wb.setHour) wb.setHour((((npcMs() % 864e5) + 864e5) % 864e5)/36e5);   // [city life] windows and shopfronts lit by the local hour
     S.fog = mode === "map" ? null : transit && transit.under() && transit.fog ? transit.fog : fog;   // [3.15] below the street: a dark fog
     // HQs far from the camera are not drawn (the map shows them all)
     if(cam && cam.x != null) hqs.forEach(function(E){

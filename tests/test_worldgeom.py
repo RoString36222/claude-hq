@@ -617,7 +617,7 @@ class SourceTest(unittest.TestCase):
             self.assertNotRegex(src, r"\b(let|const)\s", p)
             self.assertNotIn("localStorage", src, p)
             self.assertNotRegex(src, r"fetch\(|XMLHttpRequest|WebSocket", p)
-        self.assertIn('importScripts("/games/world.js", "/games/worldgeom.js")', read(WORKER))
+        self.assertIn('importScripts("/games/world.js", "/games/citylife.js", "/games/worldgeom.js")', read(WORKER))
         self.assertIn("HQV.worldgeom = {", read(GEOM))
         self.assertIn("HQV.worldbuild = {", read(BUILD))
 

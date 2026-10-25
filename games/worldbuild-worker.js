@@ -7,7 +7,7 @@
  * the holes cut out of the tiles and the bank strips come from them here exactly as on the page.
  * Typed arrays are transferred back. Nothing here leaves the machine.
  */
-importScripts("/games/world.js", "/games/worldgeom.js");
+importScripts("/games/world.js", "/games/citylife.js", "/games/worldgeom.js");
 (function(){
 "use strict";
 var W = null;

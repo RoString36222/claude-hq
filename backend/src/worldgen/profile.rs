@@ -19,6 +19,16 @@ pub struct SiteSpec {
     pub place: Place,
 }
 
+/// One way a street may be paved (generator @3, organic/widen.rs): its full width and
+/// sidewalks (cm), and how often (a weight among its kind's tiers) a street is paved so.
+/// Every segment of one street is paved alike; a street that cannot have its tier where a
+/// lot cannot give way steps down to the next narrower one.
+pub struct Tier {
+    pub cm: i64,
+    pub walk_cm: i64,
+    pub weight: u32,
+}
+
 /// An organic city's district seeds: `count` seeds of `district` on a ring `ring_pm`
 /// per mille of the city's radius out from the plaza. A place is the district of the
 /// seed nearest it (with a seeded wobble), so districts are organic patches.
@@ -100,6 +110,10 @@ pub struct Profile {
     /// Generator @3 (water.rs): lakes, canals and a marina laid before the streets, and
     /// the water transport round them. Only the @3 profiles set it.
     pub water: bool,
+    /// Generator @3: the tiers a local road and an arterial are paved at, widest first
+    /// (organic/widen.rs). Empty: every one at `paved_road_cm` / `paved_avenue_cm`.
+    pub local_tiers: &'static [Tier],
+    pub arterial_tiers: &'static [Tier],
 }
 
 pub mod district {
@@ -169,6 +183,8 @@ pub fn city() -> Profile {
         city_grade_pm: 80,
         country_grade_pm: 140,
         site_flat_cm: 150,
+        local_tiers: &[],
+        arterial_tiers: &[],
         // sizes from today's City: the fountain (games/hqcity.js, r 4.45 m), the skatepark
         // (games/hqskate.js HW 5.75, HD 11) and the bike park's pad
         sites: vec![
@@ -250,10 +266,24 @@ pub fn commons() -> Profile {
     }
 }
 
+/// HQ 3.20.1: big-city roads at @3, still on the same layout (every lot, site and HQ
+/// where it was). Lanes about 3.6 to 4.5 m, as a game's are, the street's width picked
+/// per street: a local road a 7.5 m two-lane side street, a 9.5 m street or an 11.5 m wide
+/// one; an arterial a 14.5 m four-lane avenue or a 17.5 m boulevard.
+pub const LOCAL_TIERS: [Tier; 3] = [
+    Tier { cm: 1_600, walk_cm: 225, weight: 20 },
+    Tier { cm: 1_350, walk_cm: 200, weight: 50 },
+    Tier { cm: 1_100, walk_cm: 175, weight: 30 },
+];
+pub const ARTERIAL_TIERS: [Tier; 2] = [
+    Tier { cm: 2_300, walk_cm: 275, weight: 40 },
+    Tier { cm: 1_950, walk_cm: 250, weight: 60 },
+];
+
 /// A world at generator version 3: the version 2 profile (`commons` or `island`) with
-/// its water laid (water.rs).
+/// its water laid (water.rs) and its streets paved by tier.
 pub fn with_water(p: Profile) -> Profile {
-    Profile { water: true, ..p }
+    Profile { water: true, local_tiers: &LOCAL_TIERS, arterial_tiers: &ARTERIAL_TIERS, ..p }
 }
 
 /// A personal city (`user:<uuid>@2`): a 1.8 km island, the sea round a coast at

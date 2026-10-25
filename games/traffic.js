@@ -346,7 +346,9 @@ function create(doc, o){
   edges.forEach(function(E){
     var inner = 0.15, c = E.c, tw = SPEC.tram.wid, cw = SPEC.car.wid, bw = SPEC.bus.wid;
     E.tramOff = E.tram ? inner + tw/2 : null;
-    var in2 = E.tram ? inner + tw + 0.3 : inner, carOff = Math.max(in2 + cw/2 + 0.1, E.tram ? 0 : c/2), anyBus = E.bus[0] || E.bus[1];
+    // [3.20.1] in the kerb-side lane of a road with two or three each way (worldgeom.js lanesEach), else mid-carriageway
+    var n = Math.max(1, Math.min(3, Math.floor(c/3.3)));
+    var in2 = E.tram ? inner + tw + 0.3 : inner, carOff = Math.max(in2 + cw/2 + 0.1, E.tram ? 0 : c*(2*n - 1)/(2*n)), anyBus = E.bus[0] || E.bus[1];
     if(anyBus) carOff = in2 + cw/2 + 0.1;
     var carEdge = carOff + cw/2;
     E.cars = E.art && carEdge <= c + 0.05 && (!anyBus || carEdge + 0.25 + bw <= c);

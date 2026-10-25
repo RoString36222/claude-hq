@@ -195,6 +195,10 @@ Heap.prototype.pop = function(){   // -> the value; its key in this.top
   return out;
 };
 
+// [3.20.1] a driver's offset from the centre line on a carriageway `c` m centre to kerb: the kerb-side lane of a road
+// with two or three each way (worldgeom.js lanesEach), else mid-carriageway as before
+function npcLane(c){ var n = Math.max(1, Math.min(3, Math.floor(c/3.3))); return Math.max(0.5, c*(2*n - 1)/(2*n)); }
+
 /* ---------- the sim ---------- */
 function create(doc, opts){
   doc = doc || {}; opts = opts || {};
@@ -238,7 +242,7 @@ function create(doc, opts){
     E.push({id: e.id, a: a, b: b, m: m, x: x, y: y, z: z, cum: cum, len: cum[m - 1], nx: nx, nz: nz, cls: cls,
             walkable: cls !== "highway" && cls !== "ring" || walk > 0,
             off: walk > 0 ? half - walk/2 : Math.max(0.5, half - SIDE_IN),
-            lane: Math.max(0.5, (width - 2*walk)/4), fast: CAR_FAST[cls] || 1});
+            lane: npcLane((width - 2*walk)/2), fast: CAR_FAST[cls] || 1});
   });
 
   /* graphs (CSR) for walking and driving */

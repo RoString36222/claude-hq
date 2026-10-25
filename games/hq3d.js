@@ -2298,6 +2298,31 @@ function mount(el, api){
     return n;
   }
   function angDiff(a, b){ return Math.atan2(Math.sin(a - b), Math.cos(a - b)); }
+  // [3.20.1] a vehicle in a wall (landed in one, the street rebuilt round it, a peer parked on it) that cannot move or
+  // turn its way out for UNSTICK_S, while you try to: lifted to the nearest pose where every corner is clear
+  var RIDE_STEP = 0.35, SLIDE_MAX = 0.8, UNSTICK_S = 0.6;
+  function rideUnstick(dt, now, thr, x0, z0, bx){
+    var trying = Math.abs(thr || 0) > 0.05 || Math.abs(ride.steer || 0) > 0.05;
+    if(!(now > 0) || !trying || Math.hypot(avatar.x - x0, avatar.z - z0) > 0.02){ ride.stuck = 0; return false; }
+    ride.stuck = (ride.stuck || 0) + dt;
+    if(ride.stuck < UNSTICK_S) return false;
+    ride.stuck = 0;
+    var spot = freeSpot(avatar.x, avatar.z, avatar.yaw, bx);
+    if(!spot) return false;
+    avatar.x = spot.x; avatar.z = spot.z; avatar.yaw = spot.yaw; ride.head = spot.yaw; ride.speed = 0; ride.slip = 0; ride.drift = false;
+    if(api.toast) api.toast("Back on the road");
+    return true;
+  }
+  // the nearest pose (out to 12 m, this heading, else turned a quarter or half) where the whole body is clear
+  function freeSpot(x, z, yaw, bx){
+    var yaws = [yaw, yaw + PI/2, yaw - PI/2, yaw + PI];
+    for(var r = 0.5; r <= 12; r += 0.5) for(var i = 0, n = Math.max(8, Math.round(r*6)); i < n; i++){
+      var a = i/n*2*PI, px = x + Math.sin(a)*r, pz = z + Math.cos(a)*r;
+      for(var j = 0; j < yaws.length; j++) if(bodyHits(px, pz, yaws[j], bx) === 0) return {x: px, z: pz, yaw: yaws[j]};
+    }
+    return null;
+  }
+
   /* ---------- [stunts] the jumps, the loop and the rings of fire (games/hqstunts.js; the City places them) ----------
      A boost pad sets the exact speed the jump needs (and holds it, steering locked, until you leave the ramp; S or
      Space backs out). Off a ramp's lip you fly: W/S flip, A/D spin, Shift+A/D barrel roll; let go and the nose
@@ -2536,19 +2561,38 @@ function mount(el, api){
     if(d && cur.camModes && !ride.boost) d *= slopeFactor(slopeAlong(avatar.x, avatar.z, ride.head, 1.5)*(d < 0 ? -1 : 1), ride.base);
     var sh = Math.sin(ride.head), ch = Math.cos(ride.head), nx = avatar.x + sh*d, nz = avatar.z + ch*d;
     // the body, every corner of it, stays out of the walls; a body already touching one may still
-    // move or turn as long as that does not push it further in (so nothing is ever stuck)
+    // move or turn as long as that does not push it further in
     var bx = V.box, now = bodyHits(avatar.x, avatar.z, yaw0, bx), sx0 = avatar.x, sz0 = avatar.z;
     if(d || avatar.yaw !== yaw0){
-      var then = bodyHits(nx, nz, avatar.yaw, bx);
-      if(then === 0 || then < now){ avatar.x = nx; avatar.z = nz; }
+      // [3.20.1] swept, not jumped: the move in steps of at most RIDE_STEP m, so a fast vehicle meets a thin wall, a
+      // trunk or a building's corner instead of landing past it (inside); it keeps the ground it made before the hit
+      var steps = Math.max(1, Math.ceil(Math.abs(d)/RIDE_STEP)), went = 0, px = avatar.x, pz = avatar.z;
+      for(var k = 1; k <= steps; k++){
+        var qx = avatar.x + sh*d*k/steps, qz = avatar.z + ch*d*k/steps, then = bodyHits(qx, qz, avatar.yaw, bx);
+        if(then === 0 || then < now){ px = qx; pz = qz; went = k; } else break;
+      }
+      if(went === steps){ avatar.x = nx; avatar.z = nz; }
       else {
-        var turnOnly = bodyHits(avatar.x, avatar.z, avatar.yaw, bx);
-        if(!(turnOnly === 0 || turnOnly < now)) avatar.yaw = yaw0;
-        if(d && Math.abs(ride.speed) > 2.5) E.sfx("hit");
-        if(d) drvHit(ride.speed, d > 0 ? "f" : "r");                    // [3.12] a dent where it hit (cosmetic)
-        ride.speed *= -0.2; d = 0; ride.drift = false; ride.head = avatar.yaw; ride.slip = 0;
+        if(!went){
+          var turnOnly = bodyHits(avatar.x, avatar.z, avatar.yaw, bx);
+          if(!(turnOnly === 0 || turnOnly < now)) avatar.yaw = yaw0;
+        }
+        avatar.x = px; avatar.z = pz;
+        // a glancing blow slides along the wall (the rest of the move turned up to SLIDE_MAX off it), losing speed
+        var rest = d*(steps - went)/steps, slid = 0;
+        if(Math.abs(rest) > 0.001) for(var a = 0.25; a <= SLIDE_MAX && !slid; a += 0.25) for(var sg = -1; sg <= 1 && !slid; sg += 2){
+          var hh = ride.head + sg*a, cr = rest*Math.cos(a), sx = avatar.x + Math.sin(hh)*cr, sz = avatar.z + Math.cos(hh)*cr;
+          if(bodyHits(sx, sz, avatar.yaw, bx) === 0){ avatar.x = sx; avatar.z = sz; slid = Math.cos(a); }
+        }
+        if(slid){ ride.speed *= 0.55 + 0.4*slid; if(Math.abs(ride.speed) > 6) E.sfx("hit"); }
+        else {
+          if(d && Math.abs(ride.speed) > 2.5) E.sfx("hit");
+          if(d) drvHit(ride.speed, d > 0 ? "f" : "r");                  // [3.12] a dent where it hit (cosmetic)
+          ride.speed *= -0.2; d = 0; ride.drift = false; ride.head = avatar.yaw; ride.slip = 0;
+        }
       }
     }
+    rideUnstick(dt, now, thr, sx0, sz0, bx);
     if(STN) stuntGround(STN, sx0, sz0); else { ride.snapY = false; ride.boost = null; }
     if(ride.B.roll) ride.B.roll(d, ride.steer);                       // a catalogue vehicle's own wheels
     else (ride.kind === "car" ? carRoll : ride.kind === "moto" ? motoRoll : bikeRoll)(ride.B, d, ride.steer);

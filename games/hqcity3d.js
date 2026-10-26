@@ -3033,7 +3033,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(transit){ try { transit.update(nowMs, dt, cam && cam.x != null ? cam : null); } catch(e){} }     // [3.15] first: the coach view's hide set
     if(tsim && tview && callTraffic){ try { tview.update(callTraffic, nowMs, {hide: transit ? transit.hide() : null}); } catch(e){} }
     if(cev && cam && cam.x != null){ try { cev.update(npcMs(), cam); } catch(e){} }                  // [3.21] the street events near you
-    if(play){ var ma = c.avatar() || me0; play.update(dt, {ms: nowMs, local: npcMs(), me: {x: ma.x, y: ma.hy != null ? ma.hy : groundY(ma.x, ma.z), z: ma.z, yaw: (c.motion && c.motion() || {}).yaw || 0}, motion: c.motion ? c.motion() : null, traffic: callTraffic, cam: cam}); }   // [3.22]
+    if(play){ var ma = c.avatar() || me0; play.update(dt, {ms: nowMs, local: npcMs(), me: {x: ma.x, y: ma.hy != null ? ma.hy : groundY(ma.x, ma.z), z: ma.z, yaw: (c.motion && c.motion() || {}).yaw || 0}, motion: c.motion ? c.motion() : null, traffic: callTraffic, cam: cam, menu: !!menu || !!(nui && nui.isOpen())}); }   // [3.22] (menu: the City's own panels pause heat)
     if(ndraw && cam){
       if(npcSkip > 0) npcSkip--;
       else {

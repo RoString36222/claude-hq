@@ -27,6 +27,17 @@
  *               then takes its route at the walker's own pace (rides take their planned time), and the
  *               route is a pure function of the doc, so a position is a pure function of (resident, time).
  *   where(id, t), speak(id, t), warm(ms), localMs(date): see below.
+ *   [crowds] with games/citylife.js loaded (HQV.cityLife; opts.world the packed world, else the doc packed here;
+ *               opts.cityLife false turns it off): its landUse decides the lots. A shop ground floor is a job place
+ *               (JOBS.retail, 9-20), a cafe too (JOBS.cafe, baristas 7-15 and 15-23), an office building without a
+ *               zone table gets office workers, offices and works are nobody's home; lunch is at the nearest cafe
+ *               or food shop (SHOP_FOOD of shops), and some go home via a shop (ERRAND) or shop in the morning.
+ *               And its hotspots get people (gather, in at() too): sitting at cafe terraces, queueing at food
+ *               stalls, waiting at stops facing the road, parents and children at the school gate, joggers and dog
+ *               walkers on the park run, the stadium crowd, the market crowd on its closed street, people round
+ *               the fountain, and Sunday's parade (citylife.events) walking its route. They are not residents (ids
+ *               from population up, a resident's look in lk): crowd(spot, t) says how many, and where each one is
+ *               is a pure function of (world, spot, person, t). gather(t, c, r), spots(), extra(id) below.
  *   ridersOn(lineId, t) residents riding that line (layers.transit line id, or a metro line id "M1") at local
  *               ms t; HQV.npcSim.ridersOn(lineId, t) asks the active sim (the latest created, or use(sim)).
  * Sidewalks: the walk runs SIDE_IN in from the road's outer line (half the sidewalk when the edge has one)
@@ -96,7 +107,10 @@ var JOBS = {
   farm: [["farmer", 5, 13, 3], ["farmhand", 6, 14, 2]],
   // ordinary lots
   shop: [["shopkeeper", 9, 18, 2]],
-  civic: [["clerk", 9, 17, 2]]
+  civic: [["clerk", 9, 17, 2]],
+  // [crowds] ground floors from games/citylife.js landUse: a shop open 9-20, a cafe 7-23 in two shifts
+  retail: [["shopkeeper", 9, 20, 1], ["shop assistant", 9, 15, 1], ["shop assistant", 14, 20, 1]],
+  cafe: [["barista", 7, 15, 2], ["barista", 15, 23, 1]]
 };
 // zone district (legend name) -> the job table its building lots use
 var ZONE_LOT = {office: "office", tech: "campus", studio: "studio", finance: "finance", biotech: "biotech",
@@ -107,6 +121,10 @@ var FOOD_SITE = {market: 1, mall: 1};
 var FOOD_D = {commercial: 1, downtown: 1, oldtown: 1};
 var PARK_SITE = {fountain: 1, skatepark: 1, bikepark: 1, park: 1, funpark: 1};   // funpark: games/hqspectacle.js
 var STOP_SITE = {busstop: 1, tramstop: 1};
+var SHOP_FOOD = 0.4;                // [crowds] share of shop ground floors that sell food (a deli, a bakery): lunch goes there
+var ERRAND = 0.3;                   // [crowds] share of workers whose way home (when it has a stop on it) is via a shop
+var XS_IDS = 64;                    // [crowds] ids per gathering spot (a spot's cap is at most this)
+var XS_CELL = 64;                   // [crowds] the spot index's cell (m)
 var SHIRTS = [0x3d6fd1, 0xe0559b, 0x6fd38a, 0xffb347, 0x9b8cf0, 0xf4f4f4, 0xff6b5b, 0x5fd3e6, 0x2f3b4c, 0xc2a36b, 0x8a3d3d, 0x4c8c6c];
 var PANTS = [0x2a3442, 0x3b4f7a, 0x5a4a3a, 0x1f1f24, 0x6b6f76, 0x7a5c3c, 0x2f4a3a, 0x8a8f99];
 var SKIN = [0xf1d0b5, 0xe0b48f, 0xc68c62, 0xa86b45, 0x7d4b2c, 0x5a3520];
@@ -209,6 +227,12 @@ function create(doc, opts){
   var jobs = {}, zj = zoneJobs(L.zones);
   Object.keys(JOBS).forEach(function(k){ jobs[k] = JOBS[k]; });
   Object.keys(zj).forEach(function(k){ jobs[k] = zj[k]; });
+  // [crowds] the city life (games/citylife.js), when loaded: the packed world (opts.world, else this doc packed) and
+  // its land use, so shops and cafes are job places, lunch and errands; opts.cityLife false: without it, as before
+  var CL = HQV.cityLife, LW = null, LU = null;
+  if(CL && opts.cityLife !== false){
+    try { LW = opts.world || (HQV.world && HQV.world.pack ? HQV.world.pack(doc) : null); LU = LW ? CL.landUse(LW) : null; } catch(e){ LW = null; LU = null; }
+  }
   function shown(o, key){ return (o[key] | 0) <= tier; }   // min_tier / tier gates (absent = 1)
   function dname(o){ return o && o.district != null ? (legend[o.district | 0] || "") : ""; }
 
@@ -325,7 +349,24 @@ function create(doc, opts){
     p.home = !!HOME_D[dn];
     var tbl = ZONE_LOT[dn]; if(tbl && jobs[tbl]){ p.roles = jobs[tbl]; p.table = tbl; }
     p.food = !!FOOD_D[dn];
+    if(LU && LU[l.id]) landUse(p, LU[l.id]);
   });
+  // [crowds] a lot as its land use has it: the district's guess at a shop gives way to its real ground floor (a
+  // shop: staff 9-20; a cafe: baristas 7-23; a front door: none), an office building with no zone table gets office
+  // workers, offices and works are nobody's home, and food is a cafe or a food shop. A ground floor under a zone
+  // table's building adds its own staff (rows tagged with their table: [job, from, to, n, kind]).
+  function landUse(p, u){
+    if(p.table === "shop"){ p.roles = null; p.table = null; }
+    if(u.use !== "home") p.home = false;
+    if(u.use === "office" && !p.roles && jobs.office){ p.roles = jobs.office; p.table = "office"; }
+    var gk = u.ground === "cafe" ? "cafe" : u.ground === "shop" ? "retail" : null;
+    if(gk && jobs[gk]){
+      if(!p.roles){ p.roles = jobs[gk]; p.table = gk; }
+      else p.roles = p.roles.concat(jobs[gk].map(function(r){ return [r[0], r[1], r[2], r[3], gk]; }));
+    }
+    p.ground = u.ground; p.shop = u.ground === "shop";
+    p.food = u.ground === "cafe" || (p.shop && (mix(hash32(seed + ":deli:" + p.key)) % 1000)/1000 < SHOP_FOOD);
+  }
   (L.sites || []).forEach(function(s){
     if(!s || !shown(s, "tier")) return;
     var k = String(s.kind || ""), p = place("site:" + s.id, k, s, "");
@@ -336,6 +377,7 @@ function create(doc, opts){
   if(!homes.length) homes = places.filter(function(p){ return p.kind === "lot"; });
   var foods = places.filter(function(p){ return p.food; }), parks = places.filter(function(p){ return p.park; });
   var stops = places.filter(function(p){ return p.stop; }), jobPlaces = places.filter(function(p){ return p.roles; });
+  var shops = places.filter(function(p){ return p.shop; });   // [crowds] shop ground floors (none without the city life)
   var hasBus = tier >= 2 && stops.length >= 2 && !!(((L.transit || {}).lines) || []).some(function(l){ return l && (l.tier | 0) <= tier; });
   // the lines calling at each stop (layers.transit), by place key
   var linesAt = {};
@@ -403,7 +445,7 @@ function create(doc, opts){
     var J = jobOf[id];
     if(J && home){
       var wp = jobPlaces[J[0]], role = wp.roles[J[1]];
-      r.work = wp; r.job = {job: role[0], from: role[1], to: role[2], kind: wp.kind === "lot" ? wp.table : wp.kind, place: wp.key};
+      r.work = wp; r.job = {job: role[0], from: role[1], to: role[2], kind: role[4] || (wp.kind === "lot" ? wp.table : wp.kind), place: wp.key};
       var d = dist(home, wp);
       if(d > WALK_MAX){
         var sh = hasBus ? nearest(stops, home, STOP_MAX) : null, sw = hasBus ? nearest(stops, wp, STOP_MAX) : null;
@@ -416,8 +458,11 @@ function create(doc, opts){
       }
       r.food = nearest(foods, wp, LUNCH_MAX);
       r.via = g() < 0.5 ? nearest(foods, wp, VIA_MAX) : nearest(parks, wp, VIA_MAX);
+      // [crowds] an errand: some go home via a shop (a pure hash, so the draws above are as they were)
+      if(shops.length && (mix(hash32(seed + ":errand:" + id)) % 1000)/1000 < ERRAND) r.via = nearest(shops, wp, VIA_MAX) || r.via;
     }
     if(home){ r.out = [nearest(parks, home), nearest(foods, home)].filter(Boolean); }
+    if(home && shops.length){ var shp = nearest(shops, home); if(shp) r.out.push(shp); }   // [crowds] the morning's shopping
     residents.push(r);
   }
 
@@ -623,6 +668,253 @@ function create(doc, opts){
     return {state: st, place: p, mode: st === "stop" ? (TRANSIT[r.mode] ? r.mode : "bus") : m.mode, move: m, start: mv.start};
   }
 
+  /* ---------- [crowds] people at the city life's gathering spots (games/citylife.js hotspots), and Sunday's parade ----------
+     Not residents: figures drawn where crowd(spot, t) says people are (cheaper than bending 2000 schedules round
+     every table, and a full terrace never empties a street), each borrowing a resident's look (lk). Person k of spot
+     i is id N + XS_IDS*i + k, the parade's j is N + XS_IDS*(spots) + j, so ids never meet a resident's. Where each
+     one sits, stands, queues or runs is a pure function of (the world, the spot, k, local ms): a spot's layout is
+     worked out once, the first time it is near; its count is crowd() at the start of each 10 s (the same for all). */
+  var WQ = HQV.world, XS = null, XSEEN = new Int32Array(0), xsGen = 0, lkOf = {};
+  function xh(key){ return (mix(hash32(seed + ":x:" + key)) % 100000)/100000; }
+  function pingpong(s, len){ var m = ((s % (2*len)) + 2*len) % (2*len); return m < len ? {p: m, dir: 1} : {p: 2*len - m, dir: -1}; }
+  function xsInit(){
+    if(XS || !LW || !CL.hotspots || !WQ || !N) return XS;
+    var list = [];
+    try { list = CL.hotspots(LW) || []; } catch(e){ list = []; }
+    var sites = {}; (LW.sites || []).forEach(function(s){ sites[String(s.id)] = s; });
+    XS = {spots: [], grid: {}, sites: sites, paradeBase: N + XS_IDS*list.length, parade: null};
+    XSEEN = new Int32Array(list.length);
+    list.forEach(function(s, i){
+      var ext = s.kind === "event" ? 36 : s.kind === "market" ? 24 : s.kind === "gate" ? 16 : (+s.r || 0) + 3;
+      var X = {s: s, i: i, ext: ext, lay: null, nk: NaN, n: 0};
+      XS.spots.push(X);
+      for(var gz = Math.floor((s.z - ext)/XS_CELL); gz <= Math.floor((s.z + ext)/XS_CELL); gz++)
+        for(var gx = Math.floor((s.x - ext)/XS_CELL); gx <= Math.floor((s.x + ext)/XS_CELL); gx++)
+          (XS.grid[gx + "," + gz] = XS.grid[gx + "," + gz] || []).push(i);
+    });
+    return XS;
+  }
+  function xsCount(X, t){
+    var k = Math.floor(t/1e4);
+    if(X.nk !== k){ X.nk = k; try { X.n = Math.min(XS_IDS, Math.max(0, CL.crowd(X.s, k*1e4) | 0)); } catch(e){ X.n = 0; } }
+    return X.n;
+  }
+  // the street beside (x, z): its centre point, along (ux, uz), out toward (x, z)'s side (nx, nz), the carriageway's
+  // and the whole road's half widths (c, h) and the footpath (walk, m); null when no street is within max m
+  function frameAt(x, z, max){
+    var n = WQ.nearestRoad(LW, x, z, max || 40); if(!n) return null;
+    var e = CL.facts(LW).edge(n.edge), ux = Math.sin(n.yaw), uz = Math.cos(n.yaw), lx = uz, lz = -ux;
+    var sd = (x - n.x)*lx + (z - n.z)*lz >= 0 ? 1 : -1, walk = e ? Math.max(0, (e.walk | 0)/100) : 0;
+    return {edge: n.edge, x: n.x, z: n.z, ux: ux, uz: uz, nx: lx*sd, nz: lz*sd, c: n.carriage, h: n.half, walk: walk};
+  }
+  // a footpath line d m out from the kerb (on the verge when there is no footpath), kept on the footpath
+  function kerbOut(F, d){ return F.walk > 0 ? F.c + clamp(d, 0.35, Math.max(0.35, F.walk - 0.35)) : F.h + 0.6 + d; }
+  // somewhere to be: not in the water, a building or off the map; not on a carriageway, unless on F's own (closed) one
+  function okAt(x, z, F){
+    var sf = WQ.surfaceAt(LW, x, z);
+    if(sf === "water" || sf === "edge" || sf === "lot") return false;
+    if(sf !== "road") return true;
+    if(!F) return false;
+    var n = WQ.nearestRoad(LW, x, z, 10);
+    return !!(n && n.edge === F.edge);
+  }
+  // a place to be: {x, y, z, yaw, anim, size}, or null where okAt says no
+  function spotPt(x, z, yaw, anim, size, F){
+    if(!okAt(x, z, F)) return null;
+    return {x: x, y: WQ.groundAt(LW, x, z, true), z: z, yaw: yaw, anim: anim || "idle", size: size || 1};
+  }
+  // a stroll back and forth along F from a - span/2 to a + span/2, d out, when both ends are somewhere to be
+  function stroll(F, a, d, v, span, ph, road){
+    for(var e = -1; e <= 1; e += 2) if(!okAt(F.x + F.ux*(a + e*span/2) + F.nx*d, F.z + F.uz*(a + e*span/2) + F.nz*d, road ? F : null)) return null;
+    return {a: a, d: d, v: v, span: span, ph: ph};
+  }
+  function facing(dx, dz){ return Math.atan2(dx, dz); }
+  // a spot's layout, once: {pts: [person k's place | null]} for those who keep still, plus what moves need
+  function layOf(X){
+    if(X.lay) return X.lay;
+    var s = X.s, id = s.id, cap = Math.min(XS_IDS, s.cap | 0), pts = [], L = {pts: pts}, k, F, j, a, d;
+    var fx = Math.sin(+s.yaw || 0), fz = Math.cos(+s.yaw || 0), lx = fz, lz = -fx;   // f: toward the road; l: along the kerb
+    if(s.kind === "terrace"){
+      // three seats round the cafe table (none on the road side) and a fourth friend standing by
+      pts.push(spotPt(s.x - fx*0.62, s.z - fz*0.62, facing(fx, fz), "sit"));
+      pts.push(spotPt(s.x + lx*0.66, s.z + lz*0.66, facing(-lx, -lz), "sit"));
+      pts.push(spotPt(s.x - lx*0.66, s.z - lz*0.66, facing(lx, lz), "sit"));
+      pts.push(spotPt(s.x - fx*1.0 + lx*0.95, s.z - fz*1.0 + lz*0.95, facing(fx - lx, fz - lz), "idle"));
+    } else if(s.kind === "queue"){
+      // one at the stall's counter (the footpath side), the rest in a line along the kerb behind
+      var sg = xh(id + ":q") < 0.5 ? 1 : -1, hx = s.x - fx*1.1, hz = s.z - fz*1.1;
+      for(k = 0; k < cap; k++) pts.push(k ? spotPt(hx + sg*lx*1.0*k, hz + sg*lz*1.0*k, facing(-sg*lx, -sg*lz)) : spotPt(hx, hz, facing(fx, fz)));
+    } else if(s.kind === "wait" || s.kind === "gate" || s.kind === "event"){
+      F = frameAt(s.x, s.z, s.kind === "wait" ? 30 : 80);
+      if(F){
+        var rows = s.kind === "wait" ? 1 : F.walk >= 2.6 ? 3 : 2, step = s.kind === "event" ? 1.3 : s.kind === "gate" ? 2.0 : 1.25;
+        for(k = 0; k < cap; k++){
+          // gate: pairs, a parent then a child beside them; the stop: one line facing the road; the stadium: rows
+          var kid = s.kind === "gate" && (k & 1), g = s.kind === "gate" ? k >> 1 : k, col = Math.floor(g/rows), row = g % rows;
+          a = (col & 1 ? 1 : -1)*Math.ceil(col/2)*step + (xh(id + ":a:" + k) - 0.5)*0.4 + (kid ? 0.55 : 0);
+          d = kerbOut(F, s.kind === "wait" ? 0.9 + (xh(id + ":d:" + k) - 0.5)*0.3 : 0.7 + row*1.15 + (kid ? 0.25 : 0));
+          var px = F.x + F.ux*a + F.nx*d, pz = F.z + F.uz*a + F.nz*d, jit = (xh(id + ":y:" + k) - 0.5)*0.7;
+          var yaw = s.kind === "wait" ? facing(-F.nx, -F.nz) + jit : facing(F.nx, F.nz) + jit;    // the road; the gate or the stadium
+          var P = spotPt(px, pz, yaw, "idle", kid ? 0.62 : 1);
+          // the stadium: every fourth one strolls along the crowd (a, its own pace), the rest stand
+          if(P && s.kind === "event" && k % 4 === 3) P.walk = stroll(F, a, d, 0.8 + 0.5*xh(id + ":v:" + k), 14, xh(id + ":p:" + k));
+          pts.push(P);
+        }
+        L.F = F;
+      }
+    } else if(s.kind === "market"){
+      // on the street the market closes (citylife.events: the street nearest the market), between its stalls
+      F = frameAt(s.x, s.z, 60);
+      if(F){
+        for(k = 0; k < cap; k++){
+          a = (xh(id + ":a:" + k) - 0.5)*36; d = (xh(id + ":d:" + k)*2 - 1)*Math.max(0.5, F.c - 0.8);
+          var M = spotPt(F.x + F.ux*a + F.nx*d, F.z + F.uz*a + F.nz*d, facing(F.nx*(d >= 0 ? 1 : -1), F.nz*(d >= 0 ? 1 : -1)), "idle", 1, F);
+          if(M && (k & 1)) M.walk = stroll(F, a, d, 0.6 + 0.4*xh(id + ":v:" + k), 10, xh(id + ":p:" + k), true);
+          pts.push(M);
+        }
+        L.F = F;
+      }
+    } else if(s.kind === "linger"){
+      // round the fountain or the skatepark, facing it
+      var site = XS.sites[id.slice(id.indexOf(":") + 1)], R = site ? Math.max(site.w | 0, site.d | 0)/200 + 1.3 : 4;
+      for(k = 0; k < cap; k++){
+        var an = 6.2831853*(k + 0.6*xh(id + ":a:" + k))/Math.max(1, cap), rr = R + xh(id + ":d:" + k)*1.2;
+        pts.push(spotPt(s.x + Math.sin(an)*rr, s.z + Math.cos(an)*rr, an + Math.PI));
+      }
+    } else if(s.kind === "jog"){
+      // the run: out and back along the park's footpath (s.edge, s.side), or round a park site
+      var e = s.edge != null ? CL.facts(LW).edge(s.edge) : null;
+      if(e && e.pts && e.pts.length >= 6){
+        var m = e.pts.length/3, X0 = [], Y0 = [], Z0 = [], C0 = [0], NXs = [], NZs = [];
+        for(j = 0; j < m; j++){ X0.push(e.pts[3*j]/100); Y0.push(e.pts[3*j + 1]/100); Z0.push(e.pts[3*j + 2]/100); }
+        for(j = 1; j < m; j++) C0.push(C0[j - 1] + Math.hypot(X0[j] - X0[j - 1], Z0[j] - Z0[j - 1]));
+        for(j = 0; j + 1 < m; j++){ var sl = C0[j + 1] - C0[j] || 1; NXs.push((Z0[j + 1] - Z0[j])/sl); NZs.push(-(X0[j + 1] - X0[j])/sl); }
+        var walkM = (e.walk | 0)/100, half = (e.width | 0)/200;
+        L.run = {x: X0, y: Y0, z: Z0, c: C0, nx: NXs, nz: NZs, len: C0[m - 1], off: (+s.side || 1)*(walkM > 0 ? half - walkM/2 : half + 0.8)};
+      } else L.ring = {R: Math.max(4, (+s.r || 10)*0.7), y: WQ.groundAt(LW, s.x, s.z, true)};
+    }
+    X.lay = L;
+    return L;
+  }
+  // person k of spot X at local ms t -> into o; false when they are not there
+  var TAU = 6.2831853;
+  function personAt(X, L, k, t, o){
+    var s = X.s, id = s.id, P;
+    if(L.run || L.ring){
+      // runners, and every fourth a dog walker going the other way
+      var dog = k % 4 === 3, v = dog ? 1.05 + 0.2*xh(id + ":v:" + k) : 2.3 + 0.9*xh(id + ":v:" + k), ts = (((t % DAY) + DAY) % DAY)/1000;
+      if(L.run){
+        var R = L.run, span = Math.max(4, R.len - 12), pp = pingpong(xh(id + ":p:" + k)*2*span + (dog ? -1 : 1)*v*ts, span), at = 6 + pp.p;
+        var i = 0; while(i < R.c.length - 2 && R.c[i + 1] < at) i++;
+        var l = R.c[i + 1] - R.c[i], f = l > 0 ? (at - R.c[i])/l : 0, ux = (R.x[i + 1] - R.x[i])/(l || 1), uz = (R.z[i + 1] - R.z[i])/(l || 1);
+        var off = R.off + (dog ? -0.4 : 0.3)*(R.off >= 0 ? 1 : -1);
+        o.x = R.x[i] + (R.x[i + 1] - R.x[i])*f + R.nx[i]*off; o.z = R.z[i] + (R.z[i + 1] - R.z[i])*f + R.nz[i]*off;
+        o.y = R.y[i] + (R.y[i + 1] - R.y[i])*f + SIDEWALK_UP;
+        var dr = pp.dir*(dog ? -1 : 1); o.yaw = Math.atan2(ux*dr, uz*dr);
+      } else {
+        var an = xh(id + ":p:" + k)*TAU + (dog ? -1 : 1)*v*ts/L.ring.R, rr = L.ring.R + (dog ? 1.2 : 0);
+        o.x = s.x + Math.sin(an)*rr; o.z = s.z + Math.cos(an)*rr; o.y = L.ring.y;
+        o.yaw = an + (dog ? -1 : 1)*Math.PI/2;
+      }
+      o.anim = dog ? "walk" : "jog"; o.speed = v; o.size = 1;
+      return true;
+    }
+    P = L.pts[k];
+    if(!P) return false;
+    o.y = P.y; o.size = P.size; o.speed = 0; o.anim = P.anim;
+    if(P.walk && L.F){
+      var W2 = P.walk, q = pingpong(W2.ph*2*W2.span + W2.v*(((t % DAY) + DAY) % DAY)/1000, W2.span);
+      var a = W2.a + q.p - W2.span/2;
+      o.x = L.F.x + L.F.ux*a + L.F.nx*W2.d; o.z = L.F.z + L.F.uz*a + L.F.nz*W2.d;
+      o.yaw = Math.atan2(L.F.ux*q.dir, L.F.uz*q.dir); o.anim = "walk"; o.speed = W2.v;
+      return true;
+    }
+    o.x = P.x; o.z = P.z; o.yaw = P.yaw;
+    return true;
+  }
+  // the parade (citylife.events kind "parade", Sunday 15:00-16:30): eight rows of four walking its route at 0.9 m/s
+  // from its start, turning back at the end onto the other half of the closed carriageway
+  var PARADE_ROWS = 8, PARADE_ACROSS = 4, PARADE_V = 0.9, PARADE_GAP = 2.2;   // (the Kenney figures are broad: room between them)
+  function paradeRoute(ev){
+    if(XS.parade && XS.parade.key === ev.edges.join(",")) return XS.parade;
+    var F = CL.facts(LW), X = [], Y = [], Z = [], node = null;
+    ev.edges.forEach(function(eid, n){
+      var e = F.edge(eid); if(!e || !e.pts) return;
+      var fwd = true;
+      if(n === 0){ var nx = ev.edges[1] != null ? F.edge(ev.edges[1]) : null; fwd = !nx || nx.a === e.b || nx.b === e.b; }
+      else fwd = node == null || e.a === node;
+      var m = e.pts.length/3;
+      for(var j = 0; j < m; j++){
+        var q = fwd ? j : m - 1 - j;
+        if(X.length && j === 0) continue;   // the shared junction point
+        X.push(e.pts[3*q]/100); Y.push(e.pts[3*q + 1]/100); Z.push(e.pts[3*q + 2]/100);
+      }
+      node = fwd ? e.b : e.a;
+    });
+    var C = [0]; for(var i = 1; i < X.length; i++) C.push(C[i - 1] + Math.hypot(X[i] - X[i - 1], Z[i] - Z[i - 1]));
+    XS.parade = {key: ev.edges.join(","), x: X, y: Y, z: Z, c: C, len: C[C.length - 1] || 0};
+    return XS.parade;
+  }
+  function paradeAt(R, ev, j, t, o){
+    var row = Math.floor(j/PARADE_ACROSS), col = j % PARADE_ACROSS, walked = PARADE_V*(t - ev.from)/1000 - row*PARADE_GAP;
+    if(walked < 0 || !(R.len > 1)) return false;
+    var pp = pingpong(walked, R.len), i = 0; while(i < R.c.length - 2 && R.c[i + 1] < pp.p) i++;
+    var l = R.c[i + 1] - R.c[i], f = l > 0 ? (pp.p - R.c[i])/l : 0, ux = (R.x[i + 1] - R.x[i])/(l || 1), uz = (R.z[i + 1] - R.z[i])/(l || 1);
+    var off = (0.8 + col*1.5)*pp.dir;      // on the left half of the way it goes (the left of a->b is (uz, -ux)): back, the other half
+    o.x = R.x[i] + (R.x[i + 1] - R.x[i])*f + uz*off; o.z = R.z[i] + (R.z[i + 1] - R.z[i])*f - ux*off;
+    o.y = R.y[i] + (R.y[i + 1] - R.y[i])*f + ROAD_UP; o.yaw = Math.atan2(ux*pp.dir, uz*pp.dir);
+    o.anim = "walk"; o.speed = PARADE_V; o.size = 1;
+    return true;
+  }
+  function lookOf(id){ var v = lkOf[id]; if(v == null) v = lkOf[id] = mix(hash32(seed + ":xl:" + id)) % N; return v; }
+  // the gathering's figures within radius of (cx, cz) at local ms t, pushed onto out (sim.at's rows plus lk, size,
+  // crowd: the spot's kind or "parade", spot: its id)
+  function gather(t, cx, cz, radius, out){
+    if(!xsInit()) return out;
+    var r2 = radius*radius, o = {x: 0, y: 0, z: 0, yaw: 0, anim: "idle", speed: 0, size: 1}, gen = ++xsGen;
+    function put(id, kind, sid){
+      var dx = o.x - cx, dz = o.z - cz, d2 = dx*dx + dz*dz;
+      if(d2 > r2) return;
+      var row = {id: id, lk: lookOf(id), x: o.x, y: o.y, z: o.z, yaw: Math.atan2(Math.sin(o.yaw), Math.cos(o.yaw)), anim: o.anim, mode: "walk", speed: o.speed, d2: d2, crowd: kind, spot: sid};
+      if(o.size !== 1) row.size = o.size;
+      out.push(row);
+    }
+    for(var gz = Math.floor((cz - radius)/XS_CELL); gz <= Math.floor((cz + radius)/XS_CELL); gz++)
+      for(var gx = Math.floor((cx - radius)/XS_CELL); gx <= Math.floor((cx + radius)/XS_CELL); gx++){
+        var cell = XS.grid[gx + "," + gz]; if(!cell) continue;
+        for(var ci = 0; ci < cell.length; ci++){
+          var X = XS.spots[cell[ci]];
+          if(XSEEN[X.i] === gen) continue;
+          XSEEN[X.i] = gen;
+          var ddx = X.s.x - cx, ddz = X.s.z - cz, rr = radius + X.ext;
+          if(ddx*ddx + ddz*ddz > rr*rr) continue;
+          var n = xsCount(X, t); if(!n) continue;
+          var L = layOf(X);
+          for(var k = 0; k < n; k++) if(personAt(X, L, k, t, o)) put(N + XS_IDS*X.i + k, X.s.kind, X.s.id);
+        }
+      }
+    // the parade, on its day and in its hour only (Sunday 15:00-16:30)
+    if(CL.weekday(t) === 0){
+      var h = CL.hourOf(t);
+      if(h >= 15 && h < 16.5){
+        var evs = []; try { evs = CL.events(LW, t); } catch(e){ evs = []; }
+        evs.forEach(function(ev){
+          if(ev.kind !== "parade") return;
+          var R = paradeRoute(ev);
+          for(var j = 0; j < PARADE_ROWS*PARADE_ACROSS; j++) if(paradeAt(R, ev, j, t, o)) put(XS.paradeBase + j, "parade", ev.id);
+        });
+      }
+    }
+    return out;
+  }
+  // who an id >= N is: {kind, spot} (a gathering's person or the parade's), or null
+  function extraOf(id){
+    if(!XS || id < N) return null;
+    if(id >= XS.paradeBase) return id < XS.paradeBase + PARADE_ROWS*PARADE_ACROSS ? {kind: "parade", spot: "parade"} : null;
+    var X = XS.spots[Math.floor((id - N)/XS_IDS)];
+    return X ? {kind: X.s.kind, spot: X.s.id} : null;
+  }
+
   var sim = {residents: [], tier: tier, grow: grow, seed: seed, population: N, stats: stats};
   residents.forEach(function(r){
     sim.residents.push({id: r.id, home: r.home ? r.home.key : null, mode: r.mode, line: r.line, look: r.look, speed: r.v,
@@ -655,9 +947,21 @@ function create(doc, opts){
       if(d2 > r2) continue;
       out.push({id: r.id, x: o.x, y: o.y, z: o.z, yaw: o.yaw, anim: anim, mode: mode, speed: speed, d2: d2});
     }
+    if(LW && opts.crowds !== false) gather(t, cx, cz, radius, out);   // [crowds] the gathering spots' people, the parade
     out.sort(function(a, b){ return a.d2 - b.d2 || a.id - b.id; });
     return out;
   };
+  // [crowds] only the gathering spots' people and the parade within radius of c at local ms t, nearest first: rows as
+  // at()'s ({id >= population, lk: the resident whose look they wear, anim "idle" | "sit" | "walk" | "jog", size
+  // (a child: 0.62; absent: 1), crowd: the spot's kind or "parade", spot: its id}); [] without games/citylife.js
+  sim.gather = function(t, c, radius){
+    c = c || {}; radius = radius == null ? 150 : +radius;
+    var out = LW ? gather(+t || 0, +c.x || 0, +c.z || 0, radius, []) : [];
+    out.sort(function(a, b){ return a.d2 - b.d2 || a.id - b.id; });
+    return out;
+  };
+  sim.spots = function(){ return xsInit() ? XS.spots.map(function(X){ return X.s; }) : []; };
+  sim.extra = extraOf;
   // plan routes ahead (trips in progress or starting within the next hour) for up to `ms` of wall time
   var warmAt = 0;
   sim.warm = function(t, ms){
@@ -695,7 +999,12 @@ function create(doc, opts){
   };
   // a speech line for resident id at local ms t (fixed templates: no user data)
   sim.speak = function(id, t){
-    var r = residents[id | 0]; if(!r) return "";
+    var r = residents[id | 0];
+    if(!r){   // [crowds] someone at a gathering spot or in the parade: a line from where they are
+      var x = extraOf(id | 0); if(!x) return "";
+      var gx = rng(mix(hash32(seed + ":xsay:" + id + ":" + Math.floor((+t || 0)/(10*MIN))))), lines = XSAY[x.kind] || XSAY.linger;
+      return lines[Math.floor(gx()*lines.length)];
+    }
     var s = stateOf(r, +t || 0), tod = ((((+t || 0) % DAY) + DAY) % DAY)/HOUR, g = rng(mix(hash32(seed + ":say:" + id + ":" + Math.floor((+t || 0)/(10*MIN)))));
     function pick(a){ return a[Math.floor(g()*a.length)]; }
     var J = r.job, where = J ? (PLACE_WORD[J.kind] || "work") : "", line;
@@ -734,11 +1043,23 @@ function metroStations(doc, tier){
 var ACTIVE = null;
 function ridersOn(lineId, t){ return ACTIVE && ACTIVE.ridersOn ? ACTIVE.ridersOn(lineId, t) : 0; }
 function use(sim){ ACTIVE = sim && typeof sim.ridersOn === "function" ? sim : null; return ACTIVE; }
+// [crowds] what the people at a gathering spot say (fixed templates: no user data)
+var XSAY = {
+  terrace: ["Best flat white in town, this.", "We come here every week.", "Just one more coffee, then back to it."],
+  queue: ["The queue moves fast, it's worth it.", "I always get the same thing here."],
+  wait: ["The next one should be along in a few minutes.", "Running a bit late today, I think."],
+  gate: ["Home time soon, then homework.", "Same time every day, this gate."],
+  event: ["Big match today!", "Doors open soon, I hope."],
+  market: ["Fresh fruit, and cheaper than the shops.", "Market day's the best day of the week."],
+  jog: ["Morning run, keeps me sane.", "Two more laps!"],
+  linger: ["Lovely spot to sit for a while.", "Just enjoying the city today."],
+  parade: ["Happy Sunday!", "Every Sunday, the parade. Never miss it."]
+};
 var PLACE_WORD = {townhall: "town hall", clinic: "clinic", hospital: "hospital", fire: "fire station", police: "police station",
   school: "school", university: "university", market: "market", mall: "mall", bank: "bank", library: "library", post: "post office",
   transit: "transit hub", port: "port", dock: "dock", airport: "airport", power: "power station", water: "waterworks",
   stadium: "stadium", office: "office", campus: "campus", studio: "studio", finance: "trading floor", biotech: "lab",
-  media: "newsroom", warehouse: "warehouse", farm: "farm", shop: "shop", civic: "office"};
+  media: "newsroom", warehouse: "warehouse", farm: "farm", shop: "shop", civic: "office", retail: "shop", cafe: "cafe"};
 var FLAVOUR = {
   officer: ["Keeping the streets safe.", "Quiet beat so far, touch wood."], firefighter: ["All quiet at the station, touch wood.", "We drill every morning."],
   doctor: ["Remember to drink some water today.", "Busy ward this week."], nurse: ["Double shift, but the team's great.", "Wash your hands!"],
@@ -747,7 +1068,8 @@ var FLAVOUR = {
   trader: ["Markets were wild today."], analyst: ["The spreadsheets never end."], scientist: ["The samples look promising."],
   farmer: ["The harvest's looking good."], loader: ["Forty pallets before lunch."], teacher: ["The kids were brilliant today."],
   vendor: ["Fresh fruit this morning, come by!"], clerk: ["Paperwork, paperwork."], reporter: ["Chasing a story."],
-  editor: ["Deadline's at six."], librarian: ["We've got new books in."], teller: ["The vault's balanced to the coin."]
+  editor: ["Deadline's at six."], librarian: ["We've got new books in."], teller: ["The vault's balanced to the coin."],
+  barista: ["Oat milk's run out again."], "shop assistant": ["We've a sale on this week."]
 };
 
 HQV.npcSim = {create: create, population: population, localMs: localMs, zoneJobs: zoneJobs, inPoly: inPoly, hash32: hash32,

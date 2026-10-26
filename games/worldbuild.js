@@ -8,7 +8,11 @@
  *   buildings detail 0 (window quads) < 350 m, else detail 1 (a box); window bands come from the body
  *             shader (fract(worldY / 3.5)), lit at night; faded lots get a screen-door dither
  *   props     instanced trees + lamps per tile (< 300 m); world-wide instanced parked cars, sign plates,
- *             gantry frames and gantry plates (refilled with what is within 300 m; hidden in map mode)
+ *             gantry frames and gantry plates (refilled with what is within 300 m; hidden in map mode); with city life
+ *             (games/citylife.js) the footpaths' furniture too, one world-wide instanced mesh per kind (FURN)
+ *   hours     with city life a window's lit attribute is its use's code: wb.setHour(h) (the City's local hour, 0..24)
+ *             lights it by HQV.cityLife.LIT_GLSL (offices by day, homes in the evening, shops in opening hours);
+ *             code 1 stays lit every night as before, and the detail-1 body rows follow the lot's use the same way
  *   ground    (v2 docs) block pavements, lot / plaza pads and the beach, merged into the tile's terrain mesh
  *   sea       (island docs) one water plane at Layers.island.sea_cm, its normals rippled by waterPhase(clock):
  *             a pure function of the clock (cam.time s, else performance.now), so it is frame-rate independent
@@ -22,7 +26,8 @@
  *             mesh, the shore foam as one more (wb.water = {surface, works, foam}); bank strips ride in the terrain tiles
  * Tiers: opts.tier / wb.setTier(t) show the world as city tier t shows it (worldgeom view); a tier change rebuilds
  * only the tiles and products worldgeom.tierDiff names, and a job that finishes at a stale tier is redone.
- * Draw calls: <= 8 per tile within 300 m, <= 4 beyond, + 4 world-wide (+ 1 sea on an island); a river adds 1 world-wide
+ * Draw calls: <= 8 per tile within 300 m, <= 4 beyond, + 4 world-wide (+ 1 sea on an island; + at most 6 for city life's
+ * furniture, one per kind within 300 m); a river adds 1 world-wide
  * and 1 per tile a bridge crosses; @3 water adds at most 3 world-wide (surface, works, foam). A terrain hole (@3) is cut
  * out of the tiles' own meshes and adds none.
  * HQV.worldbuild.governor is pure (node-tested): frame times -> quality level, pixel ratio, shadows (LOD scale stays fixed).
@@ -36,6 +41,9 @@ var HQV = root.HQV = root.HQV || {};
 var NEAR = 300, PROPS_NEAR = 300, B0_NEAR = 350, LOD0 = 160, LOD1 = 480, SHADOW_NEAR = 120, HYST = 12;
 var LOD_SCALE = [0.6, 0.8, 1], TREE_DENSITY = [0.5, 0.8, 1], MAX_INFLIGHT = 2;
 var TREE_COL = {pine: [0.17, 0.36, 0.20], round: [0.30, 0.52, 0.24]};
+// city life's footpath furniture: the kinds (one world-wide instanced mesh each) and the radius each one blocks (m)
+var FURN = ["bench", "bin", "bikerack", "newsstand", "stall", "table"], FURN_R = {bench: 0.6, bin: 0.3, bikerack: 0.5, newsstand: 0.9, stall: 0.9, table: 0.8};
+var FURN_CELL = 8;
 // the sea plane spans the world three times over; its ripples repeat every WATER_LOOP s (integer wave speeds below)
 var SEA_SPAN = 3, WATER_LOOP = 600, ALL_TIERS = 1e9;
 
@@ -129,7 +137,7 @@ function create(c, W, opts){
   var quality = opts.quality != null ? clamp(opts.quality|0, 0, 2) : 2, lodScale = LOD_SCALE[quality], shadowsOn = quality > 0;
   var wb = {root: new THREE.Group()}, destroyed = false, nextId = 1, readyLeft = NT*NT;
   wb.root.name = "worldbuild";
-  var U = {uNight: {value: 0}, uFade: {value: [-1, -1, -1, -1, -1, -1, -1, -1]}, uPostUv: {value: new THREE.Vector2(0, 0)}, uWaterT: {value: 0},
+  var U = {uNight: {value: 0}, uHour: {value: 20}, uFade: {value: [-1, -1, -1, -1, -1, -1, -1, -1]}, uPostUv: {value: new THREE.Vector2(0, 0)}, uWaterT: {value: 0},
            uSnow: {value: 0}, uWet: {value: 0}};   // what the weather has left on the ground (settle)
   // tier: null shows every item (ALL_TIERS in tierDiff); ground and sea only exist in v2 / island docs
   var tier = tierOf(opts.tier), hasGround = Gm.hasGround(W), seaY = Gm.seaY(W), diffs = {};
@@ -148,19 +156,21 @@ function create(c, W, opts){
                 box: new THREE.Box3(new THREE.Vector3(ORIGIN + tx*TILE - 3, -50, ORIGIN + tz*TILE - 3), new THREE.Vector3(ORIGIN + (tx + 1)*TILE + 3, 200, ORIGIN + (tz + 1)*TILE + 3)),
                 ylo: Infinity, yhi: -Infinity, m: {}});
   }
-  var world = {parked: [], signs: [], gantries: [], built: false, meshes: {}, refillAt: null};
+  var world = {parked: [], signs: [], gantries: [], furniture: [], built: false, meshes: {}, refillAt: null, furnGrid: null};
 
   /* ----- materials and shader patches ----- */
   function std(o){ return new THREE.MeshStandardMaterial(Object.assign({vertexColors: true, roughness: 0.85, metalness: 0}, o || {})); }
   function offset(m, f){ m.polygonOffset = true; m.polygonOffsetFactor = f; m.polygonOffsetUnits = f; return m; }
   function patch(m, key, vtx, frag){
     m.onBeforeCompile = function(sh){
-      sh.uniforms.uNight = U.uNight; sh.uniforms.uFade = U.uFade; sh.uniforms.uPostUv = U.uPostUv;
+      sh.uniforms.uNight = U.uNight; sh.uniforms.uHour = U.uHour; sh.uniforms.uFade = U.uFade; sh.uniforms.uPostUv = U.uPostUv;
       vtx(sh); frag(sh);
     };
     m.customProgramCacheKey = function(){ return "hq-wb-" + key; };
     return m;
   }
+  // the hour's lit windows (games/citylife.js); without city life every code is the old flag: 0 dark, else lit at night
+  var LIT_GLSL = "uniform float uHour;\n" + (HQV.cityLife && HQV.cityLife.LIT_GLSL ? HQV.cityLife.LIT_GLSL : "float hqLitAt(float code, float h){ return step(0.5, code); }");
   function rep(src, chunk, add){ return src.replace("#include <" + chunk + ">", "#include <" + chunk + ">\n" + add); }
   var FADE = "for(int i = 0; i < 8; i++){ if(abs(vBid - uFade[i]) < 0.5){ vec2 q = mod(floor(gl_FragCoord.xy), 2.0); if(q.x + q.y > 0.5) discard; } }";
   function bidVertex(sh){
@@ -174,16 +184,18 @@ function create(c, W, opts){
   // building body: faded-lot dither; with `bands`, window rows from fract(worldY / 3.5) on vertical walls, lit at night
   function bodyMat(bands){
     return patch(std({roughness: 0.85}), bands ? "body" : "body0", function(sh){
-      sh.vertexShader = rep(sh.vertexShader, "common", "attribute float bid;\nvarying float vBid;\nvarying vec3 vWPos;\nvarying float vNy;");
-      sh.vertexShader = rep(sh.vertexShader, "begin_vertex", "vBid = bid; vNy = normal.y; vWPos = (modelMatrix * vec4(position, 1.0)).xyz;");
+      sh.vertexShader = rep(sh.vertexShader, "common", "attribute float bid;\nattribute float lit;\nvarying float vBid;\nvarying float vUse;\nvarying vec3 vWPos;\nvarying float vNy;");
+      sh.vertexShader = rep(sh.vertexShader, "begin_vertex", "vBid = bid; vUse = lit; vNy = normal.y; vWPos = (modelMatrix * vec4(position, 1.0)).xyz;");
     }, function(sh){
-      sh.fragmentShader = rep(sh.fragmentShader, "common", "uniform float uNight;\nuniform float uFade[8];\nvarying float vBid;\nvarying vec3 vWPos;\nvarying float vNy;\nfloat hqPane(){\n  float wall = 1.0 - step(0.5, abs(vNy));\n  float fy = fract(vWPos.y / 3.5);\n  float fc = fract((vWPos.x + vWPos.z) / 2.6);\n  return wall * step(0.28, fy) * step(fy, 0.68) * step(0.18, fc) * step(fc, 0.82);\n}");
+      sh.fragmentShader = rep(sh.fragmentShader, "common", "uniform float uNight;\nuniform float uFade[8];\nvarying float vBid;\nvarying float vUse;\nvarying vec3 vWPos;\nvarying float vNy;\n" + LIT_GLSL + "\nfloat hqPane(){\n  float wall = 1.0 - step(0.5, abs(vNy));\n  float fy = fract(vWPos.y / 3.5);\n  float fc = fract((vWPos.x + vWPos.z) / 2.6);\n  return wall * step(0.28, fy) * step(fy, 0.68) * step(0.18, fc) * step(fc, 0.82);\n}");
       sh.fragmentShader = rep(sh.fragmentShader, "clipping_planes_fragment", FADE);
       if(!bands) return;
       sh.fragmentShader = rep(sh.fragmentShader, "color_fragment", "float hqP = hqPane();\ndiffuseColor.rgb *= 1.0 - 0.38 * hqP;");
       sh.fragmentShader = rep(sh.fragmentShader, "emissivemap_fragment",
         "float hqH = fract(sin(dot(vec3(vBid, floor(vWPos.y / 3.5), floor((vWPos.x + vWPos.z) / 2.6)), vec3(12.9898, 78.233, 37.719))) * 43758.5453);\n" +
-        "totalEmissiveRadiance += uNight * hqP * step(0.55, hqH) * vec3(1.0, 0.78, 0.45) * 0.6;");
+        // a lot with a use (city life: vUse = 2 + its LIT index) lights its rows by the hour, the rest as before
+        "float hqOn = vUse < 1.5 ? step(0.55, hqH) : hqLitAt(floor(vUse + 0.5) + hqH * 0.999, uHour);\n" +
+        "totalEmissiveRadiance += uNight * hqP * hqOn * vec3(1.0, 0.78, 0.45) * 0.6;");
     });
   }
   function materials(){
@@ -194,10 +206,11 @@ function create(c, W, opts){
     m.walk = offset(std({roughness: 0.85}), -3);
     m.body = bodyMat(true);
     m.body0 = bodyMat(false);   // detail 0 has real window quads: no shader rows (they would z-fight with them)
-    // window quads: per-vertex lit flag, emissive only at night
+    // window quads: per-vertex lit code (games/citylife.js: by use and hour; 1 every night), emissive only at night
     m.win = offset(patch(std({roughness: 0.3, metalness: 0.25, emissive: new THREE.Color(0xffc985), emissiveIntensity: 0.5}), "win", bidVertex, function(sh){
       bidPars(sh);
-      sh.fragmentShader = rep(sh.fragmentShader, "emissivemap_fragment", "totalEmissiveRadiance *= vLit * uNight;");
+      sh.fragmentShader = rep(sh.fragmentShader, "common", LIT_GLSL);
+      sh.fragmentShader = rep(sh.fragmentShader, "emissivemap_fragment", "totalEmissiveRadiance *= hqLitAt(vLit, uHour) * uNight;");
     }), -1);
     // the instance colour tints the foliage only; the trunk (lit = 1 in the tree prototype) keeps its own colour
     m.trees = patch(std({roughness: 0.9}), "tree", function(sh){
@@ -370,6 +383,38 @@ function create(c, W, opts){
     ]);
     return proto;
   }
+  // city life's furniture, low-poly, front (+z) to the road; parts with lit 0 take the instance colour (a stall's
+  // canopy, a parasol), the rest keep their own (the tree material's rule)
+  function furnProtos(){
+    if(proto.bench) return proto;
+    var wood = [0.55, 0.38, 0.22], iron = [0.18, 0.19, 0.2], green = [0.16, 0.32, 0.22], steel = [0.62, 0.64, 0.66], B = THREE.BoxGeometry, Cy = THREE.CylinderGeometry;
+    proto.bench = parts([
+      {g: new B(1.7, 0.06, 0.46), m: at(0, 0.45, 0.02), c: wood, lit: 1}, {g: new B(1.7, 0.36, 0.05), m: at(0, 0.72, -0.2, 0, -0.18), c: wood, lit: 1},
+      {g: new B(0.07, 0.45, 0.46), m: at(-0.72, 0.22, 0), c: iron, lit: 1}, {g: new B(0.07, 0.45, 0.46), m: at(0.72, 0.22, 0), c: iron, lit: 1}]);
+    proto.bin = parts([{g: new Cy(0.26, 0.23, 0.9, 8), m: at(0, 0.45, 0), c: green, lit: 1}, {g: new Cy(0.29, 0.29, 0.06, 8), m: at(0, 0.93, 0), c: iron, lit: 1}]);
+    var rack = [];
+    [-0.8, 0, 0.8].forEach(function(x){
+      rack.push({g: new B(0.05, 0.8, 0.05), m: at(x, 0.4, -0.3), c: steel, lit: 1}, {g: new B(0.05, 0.8, 0.05), m: at(x, 0.4, 0.3), c: steel, lit: 1},
+                {g: new B(0.05, 0.05, 0.65), m: at(x, 0.8, 0), c: steel, lit: 1});
+    });
+    proto.bikerack = parts(rack);
+    proto.newsstand = parts([
+      {g: new B(1.6, 2.1, 1.1), m: at(0, 1.05, -0.1), c: green, lit: 1}, {g: new B(1.9, 0.12, 1.5), m: at(0, 2.16, 0), c: iron, lit: 1},
+      {g: new B(1.3, 0.75, 0.04), m: at(0, 1.35, 0.46), c: [0.86, 0.84, 0.76], lit: 1}, {g: new B(1.6, 0.08, 0.35), m: at(0, 0.95, 0.6), c: wood, lit: 1}]);
+    var st = [{g: new B(2.0, 0.85, 0.9), m: at(0, 0.43, 0), c: wood, lit: 1}, {g: new B(2.4, 0.08, 1.6), m: at(0, 2.25, 0.1, 0, 0.08), c: [1, 1, 1]},
+              {g: new B(2.4, 0.3, 0.03), m: at(0, 2.08, 0.9), c: [1, 1, 1]}];
+    [[-1.1, -0.6], [1.1, -0.6], [-1.1, 0.8], [1.1, 0.8]].forEach(function(q){ st.push({g: new B(0.06, 2.25, 0.06), m: at(q[0], 1.12, q[1]), c: iron, lit: 1}); });
+    proto.stall = parts(st);
+    var tb = [{g: new Cy(0.42, 0.42, 0.04, 10), m: at(0, 0.74, 0), c: [0.9, 0.9, 0.88], lit: 1}, {g: new Cy(0.04, 0.04, 2.3, 5), m: at(0, 1.15, 0), c: iron, lit: 1},
+              {g: new THREE.ConeGeometry(1.35, 0.45, 8), m: at(0, 2.3, 0), c: [1, 1, 1]}];
+    [0, 2.1, 4.2].forEach(function(a){
+      var x = Math.sin(a)*0.72, z = Math.cos(a)*0.72;
+      tb.push({g: new B(0.42, 0.05, 0.42), m: at(x, 0.45, z, a), c: wood, lit: 1}, {g: new B(0.42, 0.42, 0.05), m: at(x + Math.sin(a)*0.2, 0.68, z + Math.cos(a)*0.2, a), c: wood, lit: 1},
+              {g: new B(0.04, 0.45, 0.04), m: at(x, 0.22, z), c: iron, lit: 1});
+    });
+    proto.table = parts(tb);
+    return proto;
+  }
   function plateGeo(w, h, y0, z, post, cell){
     // front face carries the cell uv (0..cell.u, 0..cell.v); back face and post use the plain cell
     var list = [
@@ -441,12 +486,13 @@ function create(c, W, opts){
         return {yaw: (o.x*7.13 + o.z*3.71) % 6.283, sx: s*(pine ? 0.75 : 1.15), sy: s*(pine ? 1.3 : 0.85), sz: s*(pine ? 0.75 : 1.15), c: c};
       }, T, "trees");
       instanced(P.lamp, M.lamps, m.props.lamps, function(o){ return {yaw: o.yaw}; }, T, "lamps");
-      T.pp = {parked: m.props.parked, signs: m.props.signs, gantries: m.props.gantries};
+      T.pp = {parked: m.props.parked, signs: m.props.signs, gantries: m.props.gantries, furniture: m.props.furniture || []};
       if(!T.propsIn){
         T.propsIn = true;
         world.parked = world.parked.concat(m.props.parked);
         world.signs = world.signs.concat(m.props.signs);
         world.gantries = world.gantries.concat(m.props.gantries);
+        world.furniture = world.furniture.concat(T.pp.furniture);
       } else world.stale = true;   // a tier change: the world-wide lists are rebuilt once every tile's props are in
       applyDensity(T);
     }
@@ -510,6 +556,12 @@ function create(c, W, opts){
     world.meshes.signs = wwMesh(plateGeo(2.4, 0.45, 2.4, 0, true, cell), plateMat, world.signs.length, true);
     world.meshes.frames = wwMesh(P.frame, M.frame, world.gantries.length);
     world.meshes.plates = wwMesh(plateGeo(6.0, 1.125, 4.95, 0.25, false, cell), plateMat, world.gantries.length, true);
+    // city life: one mesh per furniture kind (none without it), and the grid furnitureAt reads
+    var nk = {};
+    world.furniture.forEach(function(o){ nk[o.kind] = (nk[o.kind] || 0) + 1; });
+    var FP = world.furniture.length ? furnProtos() : null;
+    FURN.forEach(function(k){ if(nk[k] && FP[k]){ var im = world.meshes["f:" + k] = wwMesh(FP[k], M.trees, nk[k]); im.castShadow = false; im.name = "furniture " + k; } });
+    world.furnGrid = furnGrid(world.furniture);
     world.refillAt = null;
   }
   // the world-wide props again, from every tile's current props (after a tier change)
@@ -517,10 +569,11 @@ function create(c, W, opts){
     Object.keys(world.meshes).forEach(function(k){ var im = world.meshes[k]; if(im){ wb.root.remove(im); im.geometry.dispose(); if(im.dispose) im.dispose(); } });
     if(world.plateMat) world.plateMat.dispose();
     if(world.tex && world.tex.t) world.tex.t.dispose();
-    world.parked = []; world.signs = []; world.gantries = [];
+    world.parked = []; world.signs = []; world.gantries = []; world.furniture = [];
     tiles.forEach(function(T){
       if(!T.pp) return;
       world.parked = world.parked.concat(T.pp.parked); world.signs = world.signs.concat(T.pp.signs); world.gantries = world.gantries.concat(T.pp.gantries);
+      world.furniture = world.furniture.concat(T.pp.furniture || []);
     });
     world.meshes = {}; world.built = false; world.stale = false;
     buildWorldProps();
@@ -546,13 +599,36 @@ function create(c, W, opts){
       put(mm.plates, np, o, o.yaw); pu.setXY(np, o.uv[0], o.uv[1]); np++;
     });
     mm.frames.count = nf; mm.plates.count = np;
-    [mm.parked, mm.signs, mm.frames, mm.plates].forEach(function(im){
+    var fm = [], fn = {};
+    world.furniture.forEach(function(o){
+      var im = mm["f:" + o.kind];
+      if(!im || !near(o)) return;
+      var i = fn[o.kind] || 0;
+      put(im, i, o, o.yaw);
+      if(o.c){ col.setRGB(o.c[0], o.c[1], o.c[2], THREE.SRGBColorSpace); im.setColorAt(i, col); }
+      fn[o.kind] = i + 1;
+    });
+    FURN.forEach(function(k){ var im = mm["f:" + k]; if(im){ im.count = fn[k] || 0; fm.push(im); } });
+    [mm.parked, mm.signs, mm.frames, mm.plates].concat(fm).forEach(function(im){
       im.instanceMatrix.needsUpdate = true;
       if(im.instanceColor) im.instanceColor.needsUpdate = true;
       if(im.geometry.attributes.aUvo) im.geometry.attributes.aUvo.needsUpdate = true;
       im.visible = im.count > 0;
     });
     world.refillAt = {x: cx, z: cz, map: map};
+  }
+
+  // furniture by FURN_CELL m cell (each in every cell its radius reaches, + 0.5 m for a pad), for furnitureAt
+  function furnKey(i, j){ return (i + 4096)*8192 + (j + 4096); }
+  function furnGrid(list){
+    if(!list.length) return null;
+    var G = {};
+    list.forEach(function(o){
+      var r = (FURN_R[o.kind] || 0.5) + 0.5;
+      for(var i = Math.floor((o.x - r)/FURN_CELL); i <= Math.floor((o.x + r)/FURN_CELL); i++)
+        for(var j = Math.floor((o.z - r)/FURN_CELL); j <= Math.floor((o.z + r)/FURN_CELL); j++){ var k = furnKey(i, j); (G[k] = G[k] || []).push(o); }
+    });
+    return G;
   }
 
   /* ----- jobs: worker first, main thread in idle slices as the fallback ----- */
@@ -735,7 +811,7 @@ function create(c, W, opts){
     if(world.built && world.stale && tiles.every(function(T){ return !(T.dirty && T.dirty.props); })){ rebuildWorldProps(); world.refillAt = null; }
     var rf = world.refillAt;
     if(world.built && (!rf || rf.map !== map || Math.abs(rf.x - x) > 15 || Math.abs(rf.z - z) > 15)) refillWorld(x, z, map);
-    ["parked", "signs", "frames", "plates"].forEach(function(k){
+    ["parked", "signs", "frames", "plates"].concat(FURN.map(function(k){ return "f:" + k; })).forEach(function(k){
       var im = world.meshes[k];
       if(im && im.visible && im.count > 0){ dc++; tri += tris(im); }
     });
@@ -774,6 +850,19 @@ function create(c, W, opts){
   };
   wb.tier = function(){ return tier; };
   wb.setNight = function(on){ U.uNight.value = on ? 1 : 0; };
+  // the City's local hour (0..24) for city life's lit windows and shopfronts (citylife.js litAt / LIT_GLSL)
+  wb.setHour = function(h){ h = +h; if(isFinite(h)) U.uHour.value = ((h % 24) + 24) % 24; };
+  // the footpath furniture standing at (x, z) (its kind, with `pad` m more reach), else null: the drawn props at the
+  // current tier, for blocked()
+  wb.furnitureAt = function(x, z, pad){
+    var G = world.furnGrid;
+    if(!G) return null;
+    var L = G[furnKey(Math.floor(x/FURN_CELL), Math.floor(z/FURN_CELL))];
+    if(!L) return null;
+    pad = +pad || 0;
+    for(var i = 0; i < L.length; i++){ var o = L[i], r = FURN_R[o.kind] + pad, dx = x - o.x, dz = z - o.z; if(dx*dx + dz*dz < r*r) return o.kind; }
+    return null;
+  };
   // the weather on the ground (games/hqweather.js settled): snow cover and wetness, 0..1 each
   wb.setGround = function(snow, wet){ U.uSnow.value = Math.max(0, Math.min(1, +snow || 0)); U.uWet.value = Math.max(0, Math.min(1, +wet || 0)); };
   wb.settle = settle;                                       // for the City's own materials (the park)

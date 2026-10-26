@@ -10,6 +10,9 @@
  *                       draw call; a vertex shader swings the legs and arms from a per-instance gait
  *                       (phase, cycles/s, swing), the outfit comes from per-instance colours.
  *   over FAR            not drawn (sim.at is asked for FAR only).
+ * [crowds] sim.at's rows may also carry lk (the resident whose look they wear: the gathering spots' people and the
+ * parade, games/npcsim.js gather), size (a child: under 1) and the anims "sit" (Kenney's sit clip; a far body
+ * sinks to the seat) and "jog" (the sprint clip at the runner's pace; a far body's longer, wider gait).
  * A near resident whose character is still loading is drawn as a body until it is ready. Drivers
  * (anim "drive") are inside their cars, which games/traffic.js draws; riders on a bus are not in sim.at.
  *   draw.update(tMs, cam {x, y?, z}, player {x, z} | null, dt)   once a frame; tMs is the City's local clock
@@ -41,6 +44,8 @@ var WALK_CLIP = 1.4;                // the walk clip's own pace (m/s): its timeS
 var TINT = 0.32;                    // how far a near character's material leans toward the shirt colour
 var TALK_REACH = 3.2;
 var WARM_MS = 0.6;                  // route planning per frame (sim.warm), ms
+var JOG_STRIDE = 2.4, SPRINT_CLIP = 3.2;   // [crowds] metres per jog cycle; the sprint clip's own pace (m/s)
+var SIT_SINK = 0.42;                // [crowds] a far body sitting: how far it sinks (no sit pose at that distance)
 
 /* ---------- pure helpers ---------- */
 // Critically damped spring, exact closed form (as hq3d.js): -> [x, v]
@@ -142,10 +147,12 @@ function packFar(items, B, cols){
     M[o+4] = 0; M[o+5] = 1; M[o+6] = 0; M[o+7] = 0;
     M[o+8] = s; M[o+9] = 0; M[o+10] = c; M[o+11] = 0;
     M[o+12] = x; M[o+13] = r.y || 0; M[o+14] = z; M[o+15] = 1;
-    var walk = r.anim === "walk";
-    G[3*i] = frac(r.id)*6.2831853; G[3*i+1] = walk ? (r.speed || 1.3)/STRIDE : 0; G[3*i+2] = walk ? 0.55 : 0;
+    var walk = r.anim === "walk", jog = r.anim === "jog", sz = r.size > 0 ? +r.size : 1;
+    if(sz !== 1){ M[o] *= sz; M[o+2] *= sz; M[o+5] = sz; M[o+8] *= sz; M[o+10] *= sz; }
+    if(r.anim === "sit") M[o+13] -= SIT_SINK*sz;
+    G[3*i] = frac(r.id)*6.2831853; G[3*i+1] = walk ? (r.speed || 1.3)/STRIDE : jog ? (r.speed || 2.8)/JOG_STRIDE : 0; G[3*i+2] = walk ? 0.55 : jog ? 0.8 : 0;
     if(cols){
-      var k = 9*(r.id | 0);
+      var k = 9*((r.lk != null ? r.lk : r.id) | 0);
       B.shirt[3*i] = cols[k]; B.shirt[3*i+1] = cols[k+1]; B.shirt[3*i+2] = cols[k+2];
       B.pants[3*i] = cols[k+3]; B.pants[3*i+1] = cols[k+4]; B.pants[3*i+2] = cols[k+5];
       B.skin[3*i] = cols[k+6]; B.skin[3*i+1] = cols[k+7]; B.skin[3*i+2] = cols[k+8];
@@ -227,7 +234,7 @@ function engineLoader(THREE, L){
     var E = HQV.engine; if(!E || !L) return;
     E.loadGlb(L, "golf", CHAR_FILES[((look && look.char) | 0) % CHAR_FILES.length]).then(function(g){
       var o = L.clone(g.scene), mixer = new THREE.AnimationMixer(o), acts = {};
-      ["idle", "walk"].forEach(function(n){ var cl = THREE.AnimationClip.findByName(g.animations, n); if(cl) acts[n] = mixer.clipAction(cl); });
+      ["idle", "walk", "sit", "sprint"].forEach(function(n){ var cl = THREE.AnimationClip.findByName(g.animations, n); if(cl) acts[n] = mixer.clipAction(cl); });
       cb({o: o, mixer: mixer, acts: acts});
     }).catch(function(){});
   };
@@ -328,7 +335,7 @@ function create(THREE, parent, sim, opts){
     nearIds = {};
     sp.near.forEach(function(r){
       nearIds[r.id] = 1;
-      var slot = slots[r.id], look = (sim.residents[r.id] || {}).look || {};
+      var slot = slots[r.id], look = (sim.residents[r.lk != null ? r.lk : r.id] || {}).look || {};
       if(!slot){
         var ch = take(look, need);
         if(!ch){ lo.push(r); return; }
@@ -338,7 +345,11 @@ function create(THREE, parent, sim, opts){
       keep[r.id] = 1;
       slot.yaw += wrapPi((r.yaw || 0) - slot.yaw)*ease(TURN_K, dt);
       slot.ch.o.position.set(r.ax, r.y, r.az); slot.ch.o.rotation.y = slot.yaw;
-      if(r.anim === "walk") setAnim(slot.ch, "walk", Math.max(0.5, (r.speed || WALK_CLIP)/WALK_CLIP)); else setAnim(slot.ch, "idle", 1);
+      slot.ch.o.scale.setScalar(BODY_H/CH_H*(r.size > 0 ? +r.size : 1));
+      var acts = slot.ch.acts || {};
+      if(r.anim === "walk" || (r.anim === "jog" && !acts.sprint)) setAnim(slot.ch, "walk", Math.max(0.5, (r.speed || WALK_CLIP)/WALK_CLIP));
+      else if(r.anim === "jog") setAnim(slot.ch, "sprint", Math.max(0.5, (r.speed || SPRINT_CLIP)/SPRINT_CLIP));
+      else setAnim(slot.ch, r.anim === "sit" && acts.sit ? "sit" : "idle", 1);
       if(slot.ch.mixer) slot.ch.mixer.update(dt);
     });
     Object.keys(slots).forEach(function(id){ if(!keep[id]){ give(slots[id]); delete slots[id]; } });

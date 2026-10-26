@@ -60,7 +60,8 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           "hqcarlift", "hqgaragemgr", "hqbasementfx", "hqbasement",
                           # the HQ revamp: HQ Studio's style document and the tower it styles (before the Base that builds it)
                           "hqstyle", "hqtower", "hqroof", "hqdecor", "hqbase", "hqskate", "world", "worldgeom",
-                          "worldbuild", "camrig", "hqhud", "hqcityparts", "hqcity", "hqmerge",
+                          # city life (3.21): read by the world worker and the City, before both
+                          "citylife", "worldbuild", "camrig", "hqhud", "hqcityparts", "hqcity", "hqmerge",
                           # Cities (3.0): the civic kit, residents, traffic, the sea, boats, travel
                           "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqheli",
                           # vehicles (3.2): the catalogue, handling from specs, their bodies, the (temporary) Showroom
@@ -80,8 +81,9 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           "hqride", "hqcommute", "hqtramway", "hqcoach", "hqmetro", "hqunderground", "hqcityrail", "hqgondola",
                           "hqferries", "hqcabs", "hqhelicall", "hqphone", "hqphoneapps", "hqphonecabs", "hqphonecomms", "hqgallery",
                           "hqtransit",
-                          # the stunts, then (3.16) the grenade launcher and the tank, last before the City
-                          "hqstunts", "hqgrenade", "hqtank", "hqcity3d"])
+                          # the stunts, then (3.16) the grenade launcher and the tank, then (3.21) the street
+                          # events' props, last before the City
+                          "hqstunts", "hqgrenade", "hqtank", "cityevents3d", "hqcity3d"])
 
     def test_transport_scripts_are_optional(self):
         # [3.15] every transport part is a 3D-City part: one failing to load takes only its feature out

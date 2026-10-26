@@ -34,6 +34,14 @@
  *                         lily pads and reeds (works) and shore foam; a bank body's shore strip is a ground item
  *   tramEdges             the edges a tram runs on (as games/traffic.js picks them): their marks are the tram lanes' two
  *                         white edge lines instead of a centre line
+ * HQ 3.21 city life (games/citylife.js, when it is loaded; without it every path builds exactly as before):
+ *   buildings             each window's lit attribute is HQV.cityLife.litCode for the lot's use (the shaders light it
+ *                         by the hour), a detail-1 body carries the use code (2 + use) for its shader rows; at detail 0
+ *                         the ground floor's front shows the lot's ground use (a shopfront with an awning and a sign,
+ *                         a cafe's striped awning, a lobby's tall glazed entrance, a loading bay's roller shutter) and a
+ *                         flat roof gets its clutter (AC units, a stair housing, an antenna, a homes' water tank)
+ *   props.furniture       HQV.cityLife.furniture on the ground: [{kind, x, y, z, yaw, c? (a stall's canopy, a cafe
+ *                         table's parasol: rgb 0..1)}]
  * A @1 doc (no poly, front, min_tier or island) takes the original paths and builds byte-identically.
  * Geo = {pos, nrm, col (rgb 0..1), idx: Uint32Array, bid? (lot id per vertex), lit? (0|1 per vertex)}.
  * Every face is wound counter-clockwise seen from the side its normal points to.
@@ -94,6 +102,10 @@ var WALLS = {
 var ROOFS = {res: [[0.55, 0.28, 0.22], [0.40, 0.30, 0.28], [0.46, 0.36, 0.30]], com: [[0.35, 0.36, 0.38]],
              ind: [[0.42, 0.44, 0.46]], civ: [[0.50, 0.52, 0.50]]};
 var GLASS = {res: [0.22, 0.27, 0.34], com: [0.30, 0.42, 0.52], ind: [0.30, 0.34, 0.36], civ: [0.24, 0.28, 0.32]};
+// city life: shopfront glass, awnings (and a stall's canopy, a cafe's parasol), rooftop clutter
+var SHOP_GLASS = [0.46, 0.56, 0.60], AWNINGS = [[0.72, 0.16, 0.14], [0.14, 0.42, 0.28], [0.16, 0.30, 0.56], [0.86, 0.50, 0.12],
+  [0.10, 0.50, 0.52], [0.46, 0.14, 0.22], [0.88, 0.74, 0.20], [0.30, 0.30, 0.32]], CREAM = [0.93, 0.90, 0.82];
+var FASCIA = [0.20, 0.21, 0.23], SHUTTER = [[0.60, 0.61, 0.62], [0.50, 0.51, 0.53]], ROOFKIT = {ac: [0.74, 0.75, 0.76], tank: [0.52, 0.47, 0.40], mast: [0.28, 0.29, 0.31]};
 var CAR_COLORS = [0xd94b3d, 0x3d6fd1, 0xf4f4f4, 0x2a2d33, 0xb8bcc2, 0x6fd38a, 0xffb347, 0x7b4fd0];
 
 function WQ(){ return HQV.world; }
@@ -1763,6 +1775,9 @@ function shell(W, lot, detail, body, win, R, ys, facing){
   var gy = Math.max.apply(null, ys), yb = Math.min.apply(null, ys) - 1;
   var floors = Math.max(1, lot.floors|0), yt = gy + floors*FLOOR_H, bid = +lot.id || 0;
   var style = styleOf(W, lot), r = rng(Q.hash32(W.hash + ":lot:" + lot.id));
+  var lu = useOf(W, lot), CL = lu ? HQV.cityLife : null;
+  // a window's lit attribute: its use's code (lit by the hour) with city life, else the old flag (lit when v < p)
+  function lit(v, p){ return CL ? CL.litCode(lu.use, v) : (v < p ? 1 : 0); }
   var pal = WALLS[style], wc = jit(pal[Math.floor(r()*pal.length)], r, 0.06);
   var rp = ROOFS[style], rc = jit(rp[Math.floor(r()*rp.length)], r, 0.06);
   walls(body, R, yb, yt, wc, bid);
@@ -1779,7 +1794,7 @@ function shell(W, lot, detail, body, win, R, ys, facing){
     for(var t = 0; t < nT; t++){
       var ua = t*tw, ub = ua + tw;
       face(body, [F.p(ua, yt, 0), F.p(ua, yt, V), F.p(ub, yt + th, V), F.p(ub, yt + th, 0)], rc, F.d(-1, 2, 0), bid);
-      face(win, [F.p(ub, yt, 0), F.p(ub, yt + th, 0), F.p(ub, yt + th, V), F.p(ub, yt, V)], GLASS.ind, F.d(1, 0, 0), bid, r() < 0.5 ? 1 : 0);
+      face(win, [F.p(ub, yt, 0), F.p(ub, yt + th, 0), F.p(ub, yt + th, V), F.p(ub, yt, V)], GLASS.ind, F.d(1, 0, 0), bid, lit(r(), 0.5));
       face(body, [F.p(ua, yt, 0), F.p(ub, yt, 0), F.p(ub, yt + th, 0)], wc, F.d(0, 0, -1), bid);
       face(body, [F.p(ua, yt, V), F.p(ub, yt, V), F.p(ub, yt + th, V)], wc, F.d(0, 0, 1), bid);
     }
@@ -1797,13 +1812,17 @@ function shell(W, lot, detail, body, win, R, ys, facing){
       boxFaces(body, R.x0 + 0.1, R.x1 - 0.1, gy + ch, gy + ch + 0.5, za, zb, wc, bid, true);
     }
   }
-  // windows
-  var glass = GLASS[style];
+  // windows (with city life: the ground floor's front is its shopfront, lobby or loading bay instead; a civic block
+  // keeps its portico)
+  var glass = GLASS[style], fd = FACING[facing] || FACING.north, shop = lu && lu.ground !== "door" && style !== "civ";
+  if(lu && (style === "com" || style === "civ")) roofKit(W, lot, lu, body, R, yt, floors, wc, bid);
   wallList(R).forEach(function(wl){
-    for(var f = 0; f < floors; f++){
+    var front = shop && wl.out[0] === fd.x && wl.out[1] === fd.z && wl.L >= 3;
+    if(front) groundFloor(W, lot, lu, body, win, wl, gy, bid);
+    for(var f = front ? 1 : 0; f < floors; f++){
       var fy = gy + f*FLOOR_H;
       if(style === "com"){
-        if(wl.L > 1.4) windowQuad(win, wl, 0.5, wl.L - 0.5, fy + 0.9, fy + 2.7, glass, bid, r() < 0.6 ? 1 : 0);
+        if(wl.L > 1.4) windowQuad(win, wl, 0.5, wl.L - 0.5, fy + 0.9, fy + 2.7, glass, bid, lit(r(), 0.6));
         continue;
       }
       var bay = style === "ind" ? 5 : 3, ww = style === "ind" ? 2.2 : (style === "civ" ? 1.4 : 1.3);
@@ -1813,17 +1832,97 @@ function shell(W, lot, detail, body, win, R, ys, facing){
       var bw = (wl.L - 1)/nb;
       for(var k = 0; k < nb; k++){
         var uc = 0.5 + (k + 0.5)*bw;
-        windowQuad(win, wl, uc - ww/2, uc + ww/2, y0, y1, glass, bid, r() < 0.45 ? 1 : 0);
+        windowQuad(win, wl, uc - ww/2, uc + ww/2, y0, y1, glass, bid, lit(r(), 0.45));
       }
     }
   });
 }
+// ---- city life (HQV.cityLife loaded): the lot's use, read from the whole world (the same at every tier) ----
+function useOf(W, lot){
+  var L = HQV.cityLife;
+  if(!L || !L.landUse || !lot) return null;
+  return L.landUse(W.tierBase || W)[lot.id] || null;
+}
+// a point on wall wl: u along it, d out from it, at height y
+function onWall(wl, u, y, d){ return [wl.o[0] + wl.u[0]*u + wl.out[0]*d, y, wl.o[1] + wl.u[1]*u + wl.out[1]*d]; }
+function wallQuad(g, wl, u0, u1, y0, y1, d, c, bid, lit){
+  face(g, [onWall(wl, u0, y0, d), onWall(wl, u1, y0, d), onWall(wl, u1, y1, d), onWall(wl, u0, y1, d)], c, [wl.out[0], 0, wl.out[1]], bid, lit);
+}
+// a box standing out of wall wl (u0..u1 along it, d0..d1 out, y0..y1): its front, ends, top and underside
+function wallBox(g, wl, u0, u1, d0, d1, y0, y1, c, bid){
+  var s = [wl.u[0], 0, wl.u[1]];
+  wallQuad(g, wl, u0, u1, y0, y1, d1, c, bid);
+  face(g, [onWall(wl, u0, y0, d0), onWall(wl, u0, y0, d1), onWall(wl, u0, y1, d1), onWall(wl, u0, y1, d0)], c, [-s[0], 0, -s[2]], bid);
+  face(g, [onWall(wl, u1, y0, d0), onWall(wl, u1, y0, d1), onWall(wl, u1, y1, d1), onWall(wl, u1, y1, d0)], c, s, bid);
+  face(g, [onWall(wl, u0, y1, d0), onWall(wl, u1, y1, d0), onWall(wl, u1, y1, d1), onWall(wl, u0, y1, d1)], c, UP, bid);
+  face(g, [onWall(wl, u0, y0, d0), onWall(wl, u1, y0, d0), onWall(wl, u1, y0, d1), onWall(wl, u0, y0, d1)], c, [0, -1, 0], bid);
+}
+// The ground floor's front (wall wl, the door's side): "shop" a glazed shopfront under a fascia with a sign plate and an
+// awning in a seeded colour, "cafe" the same under a striped awning, "lobby" a tall glazed entrance under a canopy,
+// "loading" a roller shutter (two on a long wall). Glass and sign plates are window quads lit by opening hours.
+function groundFloor(W, lot, lu, body, win, wl, gy, bid){
+  var Q = WQ(), CL = HQV.cityLife, r = rng(Q.hash32(W.hash + ":front:" + lot.id)), L = wl.L, g0 = lu.ground;
+  var awn = AWNINGS[Math.floor(r()*AWNINGS.length)];
+  if(g0 === "shop" || g0 === "cafe"){
+    var u0 = 0.35, u1 = L - 0.35, code = CL.litCode(g0, r()), yg = gy + 2.7, ya = gy + 2.35, out = 1.2;
+    wallQuad(win, wl, u0, u1, gy + 0.3, yg, 0.04, SHOP_GLASS, bid, code);                     // the shop window
+    wallQuad(body, wl, u0 - 0.1, u1 + 0.1, gy + 0.05, gy + 0.3, 0.06, FASCIA, bid);           // its stall riser
+    wallQuad(body, wl, u0 - 0.1, u1 + 0.1, yg + 0.05, gy + 3.35, 0.06, FASCIA, bid);           // the fascia
+    var sw = Math.min(3.4, 0.6*(u1 - u0)), sc = (u0 + u1)/2;
+    wallQuad(win, wl, sc - sw/2, sc + sw/2, yg + 0.2, gy + 3.2, 0.09, CREAM, bid, code);      // the sign plate
+    // the awning: from the wall under the fascia, down and out over the pavement, with a valance (striped at a cafe)
+    var n = g0 === "cafe" ? Math.max(2, Math.min(14, Math.round((u1 - u0)/0.9))) : 1, du = (u1 - u0)/n;
+    for(var k = 0; k < n; k++){
+      var a = u0 + k*du, b = a + du, c = g0 === "cafe" && k % 2 ? CREAM : awn;
+      var P = [onWall(wl, a, yg + 0.05, 0.06), onWall(wl, b, yg + 0.05, 0.06), onWall(wl, b, ya, out), onWall(wl, a, ya, out)];
+      face(body, P, c, [wl.out[0], 1, wl.out[1]], bid);
+      face(body, P, c, [-wl.out[0]*0.3, -1, -wl.out[1]*0.3], bid);
+      wallQuad(body, wl, a, b, ya - 0.28, ya, out, c, bid);
+    }
+  } else if(g0 === "lobby"){
+    var we = Math.min(L - 1, 4.6), uc = L/2;
+    wallQuad(win, wl, uc - we/2, uc + we/2, gy + 0.1, gy + 3.2, 0.04, SHOP_GLASS, bid, CL.litCode(lu.use === "home" ? "home" : "office", r()));
+    wallBox(body, wl, uc - we/2 - 0.4, uc + we/2 + 0.4, 0, 1.6, gy + 3.3, gy + 3.5, FASCIA, bid);
+  } else if(g0 === "loading"){
+    var ns = L >= 13 ? 2 : 1, sw2 = Math.min(L/ns - 1.2, 4.2);
+    for(var j = 0; j < ns; j++){
+      var cu = L*(j + 0.5)/ns, a2 = cu - sw2/2, b2 = cu + sw2/2, top = gy + 3.0;
+      for(var q = 0; q < 6; q++) wallQuad(body, wl, a2, b2, gy + 0.05 + q*(top - gy - 0.05)/6, gy + 0.05 + (q + 1)*(top - gy - 0.05)/6, 0.05, SHUTTER[q % 2], bid);
+      wallBox(body, wl, a2 - 0.15, b2 + 0.15, 0, 0.25, top, top + 0.3, FASCIA, bid);           // the shutter box
+    }
+  }
+}
+// A flat roof's clutter, seeded: one to four AC units, a stair housing on taller blocks, an antenna, and a water tank
+// on a homes' block in the centre or a home district. Boxes inside the roof, 1.2 m in from its edge.
+function roofKit(W, lot, lu, body, R, yt, floors, wc, bid){
+  var Q = WQ(), r = rng(Q.hash32(W.hash + ":roof:" + lot.id)), lx = R.x1 - R.x0, lz = R.z1 - R.z0;
+  if(!(lx > 5 && lz > 5)) return;
+  function spot(w, d){ return {x: R.x0 + 1.2 + w/2 + r()*(lx - 2.4 - w), z: R.z0 + 1.2 + d/2 + r()*(lz - 2.4 - d)}; }
+  var nAC = 1 + Math.floor(r()*(lx*lz > 400 ? 4 : 3));
+  for(var i = 0; i < nAC; i++){ var p = spot(1.4, 1); boxFaces(body, p.x - 0.7, p.x + 0.7, yt, yt + 0.9, p.z - 0.5, p.z + 0.5, ROOFKIT.ac, bid, true); }
+  if(floors >= 4 && lx > 8 && lz > 8 && r() < 0.7){ var h = spot(2.6, 2.4); boxFaces(body, h.x - 1.3, h.x + 1.3, yt, yt + 2.6, h.z - 1.2, h.z + 1.2, wc, bid, true); }
+  if(r() < 0.45){ var m = spot(0.2, 0.2); boxFaces(body, m.x - 0.05, m.x + 0.05, yt, yt + 3.6, m.z - 0.05, m.z + 0.05, ROOFKIT.mast, bid, true); }
+  if(lu.use === "home" && (lu.group === "centre" || lu.group === "home") && r() < 0.75){
+    var t = spot(2.4, 2.4), y0 = yt + 0.5, y1 = y0 + 1.8, ring = [];
+    boxFaces(body, t.x - 0.9, t.x + 0.9, yt, y0, t.z - 0.9, t.z + 0.9, ROOFKIT.mast, bid, false);
+    for(var k = 0; k < 8; k++){ var a = k/8*2*Math.PI; ring.push([t.x + Math.cos(a)*1.1, t.z + Math.sin(a)*1.1]); }
+    for(k = 0; k < 8; k++){
+      var A = ring[k], B = ring[(k + 1) % 8], mx = (A[0] + B[0])/2 - t.x, mz = (A[1] + B[1])/2 - t.z;
+      face(body, [[A[0], y0, A[1]], [B[0], y0, B[1]], [B[0], y1, B[1]], [A[0], y1, A[1]]], ROOFKIT.tank, [mx, 0, mz], bid);
+    }
+    face(body, ring.map(function(q){ return [q[0], y1, q[1]]; }), ROOFKIT.tank, UP, bid);
+  }
+}
 
 function buildingTile(W, tx, tz, detail){
-  var body = geo(true), win = geo(true, true);
+  var CL = HQV.cityLife && HQV.cityLife.landUse ? HQV.cityLife : null, body = geo(true, !!(CL && detail)), win = geo(true, true);
   (W.lots || []).forEach(function(lot){
     if(lot.kind !== "building" || !inTile(lot.x/100, lot.z/100, tx, tz)) return;
+    var n0 = body.p.length/3;
     building(W, lot, detail ? 1 : 0, body, win);
+    // detail 1 (city life): the body's shader rows light by the lot's use, 2 + its LIT index (the shader adds r)
+    var lu = body.l ? useOf(W, lot) : null;
+    if(lu) for(var k = n0; k < body.l.length; k++) body.l[k] = 2 + CL.LIT.indexOf(lu.use);
   });
   return {body: fin(body), win: fin(win)};
 }
@@ -1988,7 +2087,7 @@ function allProps(W){
   function put(kind, o){
     if(HS && inHoles(HS, o.x, o.z)) return;   // @3: nothing stands in a terrain hole
     var t = tileOf(o.x, o.z), k = tileKey(t.tx, t.tz);
-    var b = B[k] || (B[k] = {trees: [], lamps: [], parked: [], signs: [], gantries: []});
+    var b = B[k] || (B[k] = {trees: [], lamps: [], parked: [], signs: [], gantries: [], furniture: []});
     b[kind].push(o);
   }
   Q.trees(W).forEach(function(t){ put("trees", {x: t.x, y: gY(W, t.x, t.z), z: t.z, s: t.s, kind: t.kind}); });
@@ -2045,13 +2144,22 @@ function allProps(W){
     });
   });
   gantries(W, C).forEach(function(g){ put("gantries", g); });
+  // city life: benches, bins, racks, kiosks, stalls and cafe tables on the kerb-side strip, on the ground
+  var CL = HQV.cityLife;
+  if(CL && CL.furniture) CL.furniture(W).forEach(function(f){
+    var o = {kind: f.kind, x: f.x, y: gY(W, f.x, f.z), z: f.z, yaw: f.yaw};
+    if(f.kind === "stall" || f.kind === "table"){ o.c = AWNINGS[(Q.hash32(hash + ":furn:" + f.edge + ":" + f.x.toFixed(1) + ":" + f.z.toFixed(1)) >>> 0) % AWNINGS.length]; }
+    put("furniture", o);
+  });
   C.props = B;
   return B;
 }
 function props(W, tx, tz){
   var b = allProps(W)[tileKey(tx, tz)];
   function cp(a){ return a ? a.map(function(o){ var c = {}; for(var k in o) c[k] = o[k]; return c; }) : []; }
-  return {trees: cp(b && b.trees), lamps: cp(b && b.lamps), parked: cp(b && b.parked), signs: cp(b && b.signs), gantries: cp(b && b.gantries)};
+  var o = {trees: cp(b && b.trees), lamps: cp(b && b.lamps), parked: cp(b && b.parked), signs: cp(b && b.signs), gantries: cp(b && b.gantries)};
+  if(HQV.cityLife) o.furniture = cp(b && b.furniture);
+  return o;
 }
 
 /* ---------- the text atlas (layout only; worldbuild draws it) ---------- */
@@ -2215,7 +2323,7 @@ HQV.worldgeom = {
   ORIGIN: ORIGIN, TILE: TILE, CHUNK: CHUNK, NT: NT, LOD_STEP: LOD_STEP, FLOOR_H: FLOOR_H, LIFT: LIFT, MARK_LIFT: MARK_LIFT,
   tileOf: tileOf, tileKey: tileKey, terrainTile: terrainTile, roadTile: roadTile, buildingTile: buildingTile,
   props: props, routes: routes, nameAtlasLayout: nameAtlasLayout, buildTile: buildTile, transferables: transferables,
-  emptyGeo: emptyGeo, CAR_COLORS: CAR_COLORS, GANTRY_POST: GANTRY_POST, GANTRY_SINK: GANTRY_SINK,
+  emptyGeo: emptyGeo, CAR_COLORS: CAR_COLORS, AWNINGS: AWNINGS, GANTRY_POST: GANTRY_POST, GANTRY_SINK: GANTRY_SINK,
   groundTile: groundTile, groundItems: groundItems, triangulate: triangulate, hasGround: hasGround, seaY: seaY, view: view,
   tierDiff: tierDiff, footprint: footprint, riverWater: riverWater, riverRing: riverRing, bridgeGaps: bridgeGaps,
   BRIDGE: {DECK_T: DECK_T, PARA_W: PARA_W, PARA_H: PARA_H, RAIL_H: RAIL_H, ABUT: ABUT}, RIVER_LIFT: RIVER_LIFT,

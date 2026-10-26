@@ -621,6 +621,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var civics = [], civicG = new THREE.Group(), boatG = new THREE.Group(), boats = [], civicLod = null, decks = [];
   var oc = null, sea = null, arch = null, tsim = null, tview = null, nsim = null, ndraw = null;
   var transit = null;                             // [3.15] the City's transport (games/hqtransit.js): rides, metro, cabs, ...
+  var cev = null;                                 // [3.21] city life's street events drawn (games/cityevents3d.js)
   var bus = null, menu = null, menuKey = null, talkL = null, ui = null, statsEl = null, statsAt = 0, fadeEl = null, landing = false, npcSkip = 0;
 
   function ground(x, z){ return W ? WD.groundAt(W, x, z) : 0; }
@@ -968,6 +969,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(apL && AF.floorAt(apL, x, z) != null) return apBlocked(x, z) || !!apPlaneAt(x, z, 0.4);   // AIR: the platform (past the world's edge too), its aircraft
     if(apP && apBlocked(x, z)) return true;                                    // AIR: the airport's buildings on land
     if(WD.blockedAt(W, x, z)) return true;
+    if(wb && wb.furnitureAt && wb.furnitureAt(x, z)) return true;           // [city life] benches, stalls, cafe tables
     if(bridges && bridges.blockedAt(x, z)) return true;                      // an opening bridge's gap or barrier
     if(sea && !sea.land(x, z)) return true;                                    // the sea: take a boat
     if(civics.length && civicBlocked(x, z)) return true;
@@ -978,6 +980,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(fount && Math.hypot(x - fount.g.position.x, z - fount.g.position.z) < fount.R + 0.35) return true;   // the fountain
     if(skate && SP.walkBlocked(x - skate.cx, z - skate.cz)) return true;      // its ramps (on foot or wheels; boards ride them)
     if(trafficAt(x, z)) return true;                                       // [3.13.1] the cars, buses and trams going by
+    if(cev && cev.blocked(x, z)) return true;                              // [3.21] a market stall, roadworks barrier, parade rail
     var all = hqs.concat(views);
     for(var i = 0; i < all.length; i++){
       var L = all[i], rx = x - L.x, rz = z - L.z;
@@ -1221,14 +1224,15 @@ HQV.hqWorlds.city3d = function(c, w){
     var doc = WD.docOf(W);
     if(HQV.traffic){
       try {
-        tsim = HQV.traffic.create(doc, {tier: tier, grow: grow, seed: W.id});      // every ride is free (3.15, D4): no fare step
+        tsim = HQV.traffic.create(doc, {tier: tier, grow: grow, seed: W.id, W: W, local: function(ms){ return HQV.npcSim && HQV.npcSim.localMs ? HQV.npcSim.localMs(new Date(ms)) : ms - new Date(ms).getTimezoneOffset()*60000; }});      // every ride is free (3.15, D4): no fare step; [3.21] demand, types and closures by the local clock
         tview = HQV.traffic.view(c); S.add(tview.group);
       } catch(e){ tsim = null; tview = null; }
     }
+    if(HQV.cityEvents3d){ try { cev = HQV.cityEvents3d.create(THREE, S, W); } catch(e){ cev = null; } }     // [3.21] markets, roadworks, the parade
     if(HQV.npcSim && HQV.npcDraw){
       try {
         var sdoc = Object.assign({}, doc, {layers: Object.assign({}, doc.layers, {zones: simZones(doc.layers.zones)})});
-        nsim = HQV.npcSim.create(sdoc, {tier: tier, grow: grow, seed: W.seed || W.id});
+        nsim = HQV.npcSim.create(sdoc, {tier: tier, grow: grow, seed: W.seed || W.id, world: W});   // [crowds] W: citylife's land use and gathering spots
         ndraw = HQV.npcDraw.create(THREE, S, nsim, {lib: c.L});
       } catch(e){ nsim = null; ndraw = null; }
     }
@@ -3016,6 +3020,7 @@ HQV.hqWorlds.city3d = function(c, w){
     }
     if(transit){ try { transit.update(nowMs, dt, cam && cam.x != null ? cam : null); } catch(e){} }     // [3.15] first: the coach view's hide set
     if(tsim && tview && callTraffic){ try { tview.update(callTraffic, nowMs, {hide: transit ? transit.hide() : null}); } catch(e){} }
+    if(cev && cam && cam.x != null){ try { cev.update(npcMs(), cam); } catch(e){} }                  // [3.21] the street events near you
     if(ndraw && cam){
       if(npcSkip > 0) npcSkip--;
       else {
@@ -3046,6 +3051,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(transit){ try { transit.dispose(); } catch(e){} transit = null; }
     surfaceShow(true);
     if(tview){ try { tview.dispose(); } catch(e){} }
+    if(cev){ try { cev.dispose(); } catch(e){} cev = null; }                                         // [3.21]
     if(ndraw){ try { ndraw.dispose(); } catch(e){} }
     if(oc){ try { oc.dispose(); } catch(e){} }
     S.remove(civicG); S.remove(boatG);
@@ -3093,7 +3099,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(!list || !list.length || !SP0) return false;
     var gy = null;
     for(var i = 0; i < list.length; i++){
-      var v = list[i], S = SP0[v.kind];
+      var v = list[i], S = SP0[v.type] || SP0[v.kind];                      // [3.21] a van, lorry, bike: its own body
       if(!S || Math.abs(v.x - x) > 20 || Math.abs(v.z - z) > 20) continue;
       var P = v.parts || [v], hl = S.len/P.length/2 + (P.length > 1 ? 0.6 : 0.15), hw = S.wid/2 + 0.15;
       for(var j = 0; j < P.length; j++){
@@ -3567,6 +3573,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(mode === "classic"){ fadeAcc += dt; if(fadeAcc > FADE_EVERY){ fadeAcc = 0; cutawayGoals(); } }
     hqs.concat(views).forEach(function(E){ fadeStep(E, dt, k); });
     if(wb && cam && cam.frustum){ if(V2) cam.time = Date.now()/1000; wb.update(cam); }   // the shared clock: the same water everywhere
+    if(wb && wb.setHour) wb.setHour((((npcMs() % 864e5) + 864e5) % 864e5)/36e5);   // [city life] windows and shopfronts lit by the local hour
     S.fog = mode === "map" ? null : transit && transit.under() && transit.fog ? transit.fog : fog;   // [3.15] below the street: a dark fog
     // HQs far from the camera are not drawn (the map shows them all)
     if(cam && cam.x != null) hqs.forEach(function(E){

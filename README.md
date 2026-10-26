@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.22.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.22.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,9 @@ and feature guide.
 
 ## Changelog
 
+- **3.22.1 — More traffic lights.** Side streets get lights too: where a main road crosses a side street (a short
+  green for the side street, so the main road barely waits) and at crossroads out of town, spaced at least 60 m apart
+  and only where a waiting bus or tram has room. The Commons goes from 17 lights to 42.
 - **3.22.0 — Things to do in the City.** Traffic lights at real junctions, on a cycle that is the same for everyone:
   cars, vans, buses and bikes stop at red, queue and pull away on green, and people wait at the kerb for the walk
   signal. The City is fuller: about twice the traffic in view by day, parked cars along the kerbs, twice the people

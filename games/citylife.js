@@ -381,7 +381,9 @@ function closed(W, ms){ var o = {}; events(W, ms).forEach(function(ev){ ev.edges
 /* ---------- [3.22] traffic lights at real junctions ---------- */
 // signals(W) -> {node id: sig}: every node where three or more through roads (main roads, collectors, a highway's end:
 // the ones traffic.js runs on) meet, one of them a main road (arterial, avenue, boulevard, highway), and every
-// four-way crossing of local streets downtown (by the blocks on its corners); never where a highway's mainline goes on
+// four-way crossing of local streets downtown (by the blocks on its corners); [3.22.1] and side streets' lights: a
+// four-way where a main road crosses a side street, and one of local streets out of town, each SIDE_GAP m clear of
+// every other light and only where a bus or tram waiting at it has room. Never where a highway's mainline goes on
 // through (two highway arms), nor on an expressway, a ring road or a slip. Two lights a short link (LINK m) apart are
 // one junction: the busier keeps its light, and an arm that is such a link has no head of its own (sig.links; the
 // traffic treats the two as one box). sig:
@@ -397,7 +399,7 @@ function closed(W, ms){ var o = {}; events(W, ms).forEach(function(ev){ ev.edges
 // signalAt(sig, ms, heading) -> "green" | "amber" | "red" for traffic coming in on heading at local ms; walkAt(sig,
 // ms, heading) -> may someone walking along heading cross now (with the parallel traffic's green, never in its
 // last WALK_CLEAR s, so never while the road they cross has green).
-var SIG = {cycle: 60, amber: 3, allRed: 2, walkClear: 6, wave: 11, split: [30, 20], even: [25, 25]}, LINK = 46;
+var SIDE_GAP = 60, SIG = {cycle: 60, amber: 3, allRed: 2, walkClear: 6, wave: 11, split: [30, 20], even: [25, 25], side: [38, 12]}, LINK = 46;
 var FOOT_RE = /^(path|footpath|foot|footway|pedestrian|walk|walkway|trail|cycleway|cycle|steps|track)$/;
 var NOSIG = {expressway: 1, ring: 1, ramp: 1, flyover: 1, underpass: 1};
 function carRoad(cls){ return !FOOT_RE.test(normCls(cls)); }
@@ -425,6 +427,14 @@ function signals(W){
   if(!W || !W.edges || !W.nodes) return S;
   var Q = WQ(), F = facts(W), nodes = {}, inc = {}, edgeById = {};
   W.nodes.forEach(function(n){ nodes[n.id] = n; });
+  var pair = {}, transit = {};
+  W.edges.forEach(function(e){ pair[Math.min(e.a, e.b) + ":" + Math.max(e.a, e.b)] = e.id; });
+  ((W.transit && W.transit.lines) || []).forEach(function(l){
+    var P = l.path || [];
+    // (how much room a waiting bus or tram needs: half its length, and a little)
+    var need = /tram/.test(String(l.id || l.mode || l.kind || "")) ? 14 : 6.5;
+    for(var i = 1; i < P.length; i++){ var id = pair[Math.min(P[i - 1], P[i]) + ":" + Math.max(P[i - 1], P[i])]; if(id != null) transit[id] = Math.max(transit[id] || 0, need); }
+  });
   W.edges.forEach(function(e){
     if(e.a === e.b || !e.pts || e.pts.length < 6) return;
     edgeById[e.id] = e;
@@ -455,8 +465,10 @@ function signals(W){
     if(es.length < 3) return;
     if(es.some(function(e){ return NOSIG[normCls(e.cls)]; })) return;
     if(es.filter(function(e){ return normCls(e.cls) === "highway"; }).length >= 2) return;      // a highway going on through
-    var x = cm(n.x), z = cm(n.z), kind = null;
+    var x = cm(n.x), z = cm(n.z), kind = null, side = false;
     if(es.filter(through).length >= 3 && es.some(function(e){ return mainRoad(e.cls); })) kind = "main";
+    // [3.22.1] a main road crossing a side street (a four-way, not a T: that stays a give-way turning)
+    else if(es.length >= 4 && es.some(function(e){ return mainRoad(e.cls); })){ kind = "main"; side = true; }
     else if(es.length === 4 && es.every(function(e){ var k = road(e.cls).kind; return k === "res" || k === "shop"; })){
       // the blocks on the four corners (the node itself is on the street's own district)
       var nc = 0;
@@ -464,7 +476,8 @@ function signals(W){
         var d = Q.districtAt(W, x + 16*Math.cos(Math.PI/4 + q*Math.PI/2), z + 16*Math.sin(Math.PI/4 + q*Math.PI/2));
         if(d && d.k != null && d.name !== "street" && F.group(d.k) === "centre") nc++;
       }
-      if(nc >= 2) kind = "local";
+      // ([3.22.1] and one out of town too, spaced out as a side street's light: below)
+      kind = "local"; side = nc < 2;
     }
     if(!kind) return;
     var arms = es.map(function(e){ return armOf(e, id); });
@@ -492,9 +505,16 @@ function signals(W){
       sig.r = Math.max(sig.r, a.stop);
       rk[ax] = Math.max(rk[ax], a.rank);
     });
-    sig.green = (rk[0] > rk[1] ? SIG.split : SIG.even).slice();
+    // ([3.22.1] a side street across a main road: a short green, so the main road's traffic barely waits)
+    sig.green = (side && rk[0] > rk[1] ? SIG.side : rk[0] > rk[1] ? SIG.split : SIG.even).slice();
     if(!sig.arms.length) return;
     prio[id] = [es.filter(through).length, es.length];
+    if(side){
+      sig.side = true;
+      sig.wait = arms.filter(function(a){ return transit[a.e.id]; }).map(function(a){
+        return {far: String(String(a.e.a) === String(id) ? a.e.b : a.e.a), edge: a.e.id, room: a.len - a.stop, need: transit[a.e.id]};
+      });
+    }
     S[id] = sig;
   });
   // two lights a short link apart are one junction: the busier keeps its light (more through roads, more arms, the
@@ -504,6 +524,30 @@ function signals(W){
     if((link[id] || []).some(function(f){ return kept[f]; })){ delete S[id]; return; }
     kept[id] = true;
   });
+  // [3.22.1] a side street's light only where a bus or tram waiting at it has room for half its length (traffic.js
+  // holds it by its front) between this stop line and the far end's box: that light's stop line, or the box traffic.js
+  // turns through there (first with the other side streets' lights not yet counted, then once they are placed, all)
+  function farTrim(w, all){
+    var f = S[w.far] && (all || !S[w.far].side) ? S[w.far] : null;
+    if(f){ for(var i = 0; i < f.arms.length; i++) if(f.arms[i].edge === w.edge) return f.arms[i].stop; }
+    var es = inc[w.far] || [], c = 0, minLen = 1e9;
+    es.forEach(function(e){ c = Math.max(c, Math.max(1.5, (cm(e.width) - 2*cm(e.walk))/2)); minLen = Math.min(minLen, lenOf(edgePts(e))); });
+    return Math.min(es.length >= 3 ? c + 2 : es.length === 2 ? 2.5 : 1, 0.4*minLen);
+  }
+  function roomy(all){
+    Object.keys(S).sort(function(a, b){ return (+a) - (+b) || (a < b ? -1 : a > b ? 1 : 0); }).forEach(function(id){
+      if(S[id].side && S[id].wait.some(function(w){ return w.room - farTrim(w, all) < w.need; })) delete S[id];
+    });
+  }
+  roomy(false);
+  // and SIDE_GAP m clear of every other light (the others first, then by id), so a main road crossing a side street
+  // every block is not a light every block
+  Object.keys(S).filter(function(id){ return S[id].side; }).sort(function(a, b){ return (+a) - (+b) || (a < b ? -1 : a > b ? 1 : 0); }).forEach(function(id){
+    var sg = S[id];
+    if(Object.keys(S).some(function(o){ return o !== id && S[o] && Math.hypot(S[o].x - sg.x, S[o].z - sg.z) < SIDE_GAP && (!S[o].side || (+o) < (+id)); })) delete S[id];
+  });
+  roomy(true);
+  Object.keys(S).forEach(function(id){ if(S[id].side){ delete S[id].side; delete S[id].wait; } });
   // offsets: a hash per junction, then along each straight main road the next junction a drive later (a green wave)
   function startOf(sig, ax){ return ax ? sig.green[0] + SIG.amber + SIG.allRed : 0; }
   function headOut(e, node){ var a = armOf(e, node); return Math.atan2(a.ux, a.uz); }
